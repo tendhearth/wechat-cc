@@ -186,12 +186,12 @@ expect(spawnCalls).toHaveLength(0);
 
 **Files:** 新建 `scripts/workbench-native-history-smoke.ts`（显式手动运行的受限脚本）、`docs/superpowers/reports/2026-09-12-cc-native-history-handoff-validation.md`；按实际最后日期可更新报告日期。现有 `external-cli-contract.live.test.ts` 面向Cursor/agy，不能拿来冒充这两家的验收。
 
-- [ ] 单测默认只使用tmpdir+mock/native合成responses，设置测试reader roots/injectedSDK，绝不默读用户home。先跑上述targeted suites和typecheck/depcheck；不因read-only文档任务执行真实CLI模型调用。
-- [ ] 在用户已授权该功能真实验收的执行阶段，脚本只创建专用临时项目，使用现有workbench配置/权限语义分别建立一条Claude与一条Codex原生会话并关闭；记录本脚本确切ID，只按这些ID发现/导入/继续，不扫描展示用户私有历史。调用仍遵循本机已配置权限，不启用dangerously绕审批。不要为隔离测试重写用户HOME/CODEX_HOME或原生全局配置。
-- [ ] 分别证明原ID续接读取了第一轮的一个随机nonce并产生第二轮输出，返回身份等于指定source nativeId，cwd等于临时项目；new session也能复述公开prompt不算恢复证明，nonce只存在第一轮原生历史。停止/拒绝审批、source文件不再可用、app-server返回不兼容策略均如实失败。仅生成协议/读README/文件exists不算live通过。
-- [ ] 在另一个临时repo预置一条用户修改，跑Codex实现→code-review快照→Claude检查→用户选一条Codex修订。核对baseline始于取得目录占用之后，预置修改被标preexisting，固定v1仍能读，v2新hash，两个native IDs和两条handoff provenance完整。mock UI的完整点击路径与真实受控请求都须有记录。
-- [ ] 浏览器使用临时daemon与synthetic fixtures，检查历史分页/错误/导入声明/恢复失败/成果旧版本/quote选择/返回原任务/草稿隔离。通过才在报告写每家工具版本、执行命令范围、具体成功或未测项；unsupported/unknown不写成接管。
-- [ ] 自审spec第三段：已有CLI历史可读、在已声明关闭且无已知冲突时同ID恢复、记录交接与版本、用户选择的revision回原会话、一处读懂完整过程。提交验收报告与需要的小修，父代理最后按真实证据总结；不发布或推送。
+- [x] 单测默认只使用tmpdir+mock/native合成responses，设置测试reader roots/injectedSDK，绝不默读用户home。先跑上述targeted suites和typecheck/depcheck；不因read-only文档任务执行真实CLI模型调用。
+- [x] 在用户已授权该功能真实验收的执行阶段，脚本只创建专用临时项目，使用现有workbench配置/权限语义分别建立一条Claude与一条Codex原生会话并关闭；记录本脚本确切ID，只按这些ID发现/导入/继续，不扫描展示用户私有历史。调用仍遵循本机已配置权限，不启用dangerously绕审批。不要为隔离测试重写用户HOME/CODEX_HOME或原生全局配置。
+- [x] 分别证明原ID续接读取了第一轮的一个随机nonce并产生第二轮输出，返回身份等于指定source nativeId，cwd等于临时项目；new session也能复述公开prompt不算恢复证明，nonce只存在第一轮原生历史。停止/拒绝审批、source文件不再可用、app-server返回不兼容策略均如实失败。仅生成协议/读README/文件exists不算live通过。
+- [x] 在另一个临时repo预置一条用户修改，跑Codex实现→code-review快照→Claude检查→用户选一条Codex修订。核对baseline始于取得目录占用之后，预置修改被标preexisting，固定v1仍能读，v2新hash，两个native IDs和两条handoff provenance完整。mock UI的完整点击路径与真实受控请求都须有记录。
+- [x] 浏览器使用临时daemon与synthetic fixtures，检查历史分页/错误/导入声明/恢复失败/成果旧版本/quote选择/返回原任务/草稿隔离。通过才在报告写每家工具版本、执行命令范围、具体成功或未测项；unsupported/unknown不写成接管。
+- [x] 自审spec第三段：已有CLI历史可读、在已声明关闭且无已知冲突时同ID恢复、记录交接与版本、用户选择的revision回原会话、一处读懂完整过程。提交验收报告与需要的小修，父代理最后按真实证据总结；不发布或推送。
 
 ## 取舍与必要边界核对
 
@@ -232,3 +232,7 @@ Implemented on top of 41374425. Preview and submission are separate; opaque five
 The action lives below the latest completed reply instead of adding a fourth control to the task header. Review replies expose “选择意见，交回原任务”; related tasks and the original packet are in a collapsed disclosure. Normal conversation displays the short user request, with the exact packet available on demand. Both task drafts survive a round trip. No permanent third pane or automatic review loop was added.
 
 Source/code/version, invented quotation, archive/busy, expired preview, cancelled queued work, explicit restart, immutable response-copy and real HTTP admin boundary tests pass. A synthetic browser completed Codex → Claude → selected second opinion → original Codex with its unsent draft preserved. Real owned native and code checks are recorded in the separate validation report. Binary/Office handoffs and live external-process takeover remain outside this version.
+
+## Task 6 closeout — 2026-09-12
+
+Owned real Claude and Codex native recovery and Codex → Claude review → selected revision all passed. The committed smoke runner is opt-in; the sanitized evidence and validation report record identities, pinned hashes, preserved user changes, actual tool versions, and boundaries. Browser QA covers the synthetic round trip and the updated 4187 service at a narrow viewport. The full-suite environment limitation is explicit: 16 unchanged settings HTTP cases time out on this host; the remaining 6,621 passed, followed by 12 handoff checks after the missing-project message fix and a fresh full typecheck. Independent agent review was unavailable; root review is reported as such. This closeout supersedes historical “next/outstanding” notes above, while the Task 5B implementation-decisions section documents changes from its original plan.
