@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import type { AgentAttachment, AgentEvent, AgentExecutionModel, AgentProvider } from '../agent-provider'
+import type { AgentAttachment, AgentEvent, AgentExecutionModel, AgentProvider, AgentWorkbenchRuntime } from '../agent-provider'
 import { discoverWorkbenchCodexConfig, workbenchCodexArgs, workbenchCodexEnv, workbenchCodexNativeConfig } from './codex-config'
 import { validateUserInputAnswers, validateUserInputRequest } from './user-input'
 import { codexActivityEvent, codexItemId } from './codex-activity'
@@ -8,6 +8,8 @@ import { codexNativeCapabilityNotice } from './native-capability-notice'
 import { discoverCodexModels } from './codex-model-catalog'
 import { executionModel, nativeModelId, readCodexModelCatalog } from './native-model-catalog'
 
+import { CodexChildOccurrence } from './codex-runtime'
+
 type RpcId = string | number
 // The JSONL boundary is checked below before any request is routed or action accepted.
 type ObjectValue = Record<string, any>
@@ -15,7 +17,7 @@ interface Message { id?: RpcId; method?: string; params?: ObjectValue; result?: 
 interface Options { codexPathOverride: string; model?: string; rpcTimeoutMs?: number; closeTimeoutMs?: number }
 interface Approval { controller: AbortController; turn: Turn; rejection: 'decline' | 'cancel'; mcp?: boolean }
 interface UserQuestion { controller: AbortController; turn: Turn }
-interface Turn { id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; completedItems: Set<string>; questionIds: Set<RpcId>; startedAt: number }
+interface Turn { terminal?: boolean; threadId: string; occurrence?: CodexChildOccurrence; id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; completedItems: Set<string>; questionIds: Set<RpcId>; startedAt: number }
 
 function turnInput(text: string, attachments: readonly AgentAttachment[] = []) {
   const input: Array<{ type: 'text'; text: string; text_elements: [] } | { type: 'image'; url: string; detail: 'high' }> = text || !attachments.length ? [{ type: 'text', text, text_elements: [] }] : []
@@ -37,12 +39,26 @@ class EventQueue {
   private events: AgentEvent[] = []
   private ended = false
   private wake?: () => void
-  push(event: AgentEvent) { if (!this.ended) { this.events.push(event); this.wake?.() } }
+  private consuming = false
+  private queuedSize = 0
+  private overflowed = false
+  constructor(private onOverflow?: () => void) {}
+  push(event: AgentEvent) {
+    if (this.ended || (this.overflowed && event.kind !== 'error')) return
+    const size = this.onOverflow ? JSON.stringify(event).length : 0
+    if (!this.overflowed && this.onOverflow && (this.events.length >= 2000 || this.queuedSize + size > 8_000_000)) {
+      this.overflowed = true; this.events = []; this.queuedSize = 0
+      this.onOverflow(); return
+    }
+    this.events.push(event); this.queuedSize += size; this.wake?.()
+  }
   end() { this.ended = true; this.wake?.() }
   async *iterate(): AsyncIterable<AgentEvent> {
+    if (this.consuming) throw new Error('codex_events_already_consumed')
+    this.consuming = true
     for (;;) {
       const event = this.events.shift()
-      if (event) { yield event; continue }
+      if (event) { if (this.onOverflow) this.queuedSize -= JSON.stringify(event).length; yield event; continue }
       if (this.ended) return
       await new Promise<void>(resolve => { this.wake = resolve })
       this.wake = undefined
@@ -126,6 +142,47 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
       let closing = false, exited = false, broken: Error | undefined, closePromise: Promise<void> | undefined
       let resolveExit!: () => void
       const exit = new Promise<void>(resolve => { resolveExit = resolve })
+      const lifetime = context.workbenchLifecycle ? new EventQueue(() => fatal('codex_runtime_output_limit')) : undefined
+      let registrationVerified = false
+      let retained = false, runtimeStarted = false, runtimeEnded = false, stopped = false
+      const pendingStarts = new Set<Turn>()
+      const rootTurns = new Map<string, Turn>(), descendants = new Map<string, string>()
+      const childTurns = new Map<string, Turn>(), occurrences = new Map<string, Turn>()
+      const candidates = new Map<string, Message[]>(), unknownBackground = new Set<string>()
+      const current = (turn: Turn) => !stopped && !closing && !turn.cancelled && (turn.occurrence ? childTurns.get(turn.threadId) === turn && turn.occurrence.running : active === turn)
+      const makeTurn = (owner = threadId, id: string | null = null): Turn => ({ threadId: owner, id, cancelled: false, rejectedOperation: false, events: lifetime ?? new EventQueue(), early: [], items: new Map(), completedItems: new Set(), questionIds: new Set(), startedAt: Date.now() })
+      const rememberRequest = (turn: Turn, id: RpcId) => {
+        if (lifetime && !turn.questionIds.has(id) && turn.questionIds.size >= 1000) { fatal('codex_runtime_request_limit'); return false }
+        turn.questionIds.add(id); return true
+      }
+      const requestCapacity = () => {
+        if (lifetime && approvals.size + questions.size >= 1000) { fatal('codex_runtime_request_limit'); return false }
+        return true
+      }
+      const cacheItem = (turn: Turn, item: ObjectValue) => {
+        if (lifetime) {
+          if (!turn.items.has(item.id) && turn.items.size >= 1000) { fatal('codex_runtime_item_limit'); return false }
+          let size = JSON.stringify(item).length
+          for (const [id, value] of turn.items) if (id !== item.id) size += JSON.stringify(value).length
+          if (size > 8_000_000) { fatal('codex_runtime_item_limit'); return false }
+        }
+        turn.items.set(item.id, item); return true
+      }
+      const endRuntime = () => { runtimeEnded = true; lifetime?.end() }
+      const runtimeCapacity = () => {
+        if (rootTurns.size + descendants.size + childTurns.size + occurrences.size + candidates.size + unknownBackground.size >= 10_000) { fatal('codex_runtime_record_limit'); return false }
+        return true
+      }
+      const retainUnknown = (key: string) => { if (!unknownBackground.has(key) && runtimeCapacity()) unknownBackground.add(key) }
+      const bufferCapacity = (incoming?: Message) => {
+        const messages = [...candidates.values()].flat().concat(active?.early ?? [])
+        if (messages.length >= 1000 || messages.reduce((size, message) => size + JSON.stringify(message).length, incoming ? JSON.stringify(incoming).length : 0) > 4_000_000) { fatal('codex_protocol_buffer_limit'); return false }
+        return true
+      }
+      const pruneFinishedTurn = (turn: Turn) => {
+        for (const [id, item] of turn.items) if (item.type !== 'commandExecution' || (turn.completedItems.has(id) && item.status !== 'inProgress')) turn.items.delete(id)
+        turn.completedItems.clear(); turn.questionIds.clear()
+      }
 
       const send = (message: Message, onWritten?: () => void) => {
         if (exited || child.stdin.destroyed || child.stdin.writableEnded) { fatal('codex_protocol_write_failed'); return }
@@ -142,7 +199,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           if (!rpcId(message.id)) return true
           if (trackedRequest(message)) {
             if (queuedTurn.questionIds.has(message.id)) return false
-            queuedTurn.questionIds.add(message.id)
+            if (!stopped && !rememberRequest(queuedTurn, message.id)) return false
           }
           if (reply) send({ id: message.id, result: rejectedRequest(message) })
           return false
@@ -162,10 +219,26 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         for (const rpc of rpcs.values()) { clearTimeout(rpc.timer); rpc.reject(error) }
         rpcs.clear()
       }
+      const retainUnfinishedCommands = (turn: Turn) => {
+        if (!lifetime) return
+        for (const item of turn.items.values()) if (item.type === 'commandExecution' && !turn.completedItems.has(item.id)) { retained = true; retainUnknown(`command:${turn.id}:${item.id}`) }
+      }
       const finish = (turn: Turn, event: AgentEvent) => {
+        if (turn.occurrence) {
+          if (!turn.occurrence.running) return
+          dropPendingRequests(turn); retainUnfinishedCommands(turn)
+          turn.occurrence.finish(event.kind === 'result' ? 'completed' : turn.cancelled ? 'interrupted' : 'failed')
+          turn.events.push(turn.occurrence.event()); childTurns.delete(turn.threadId); pruneFinishedTurn(turn)
+          return
+        }
         if (active !== turn) return
         dropPendingRequests(turn)
-        turn.events.push(event); turn.events.end(); active = undefined
+        if (lifetime) {
+          retainUnfinishedCommands(turn)
+          turn.events.push(event); active = undefined; pruneFinishedTurn(turn)
+          if (event.kind === 'error' || !retained) endRuntime()
+        } else { turn.events.push(event); turn.events.end(); active = undefined }
+
       }
       const signalOwned = (signal: NodeJS.Signals) => {
         try {
@@ -178,30 +251,97 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         try { process.kill(-child.pid, 0); return true }
         catch (error) { return (error as NodeJS.ErrnoException).code !== 'ESRCH' }
       }
+      // Cleanup RPCs remain readable after new input/authority has been blocked.
+      // They use the single close deadline and never create a fresh turn.
+      const cleanupRequest = (method: string, params: ObjectValue, deadline: number): Promise<ObjectValue> => {
+        if (exited || Date.now() >= deadline) return Promise.reject(new Error('codex_terminal_cleanup_unverified'))
+        const id = `cc-close-${++sequence}`
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(() => { rpcs.delete(id); reject(new Error('codex_terminal_cleanup_unverified')) }, Math.max(1, deadline - Date.now()))
+          rpcs.set(id, {resolve,reject,timer}); send({id,method,params})
+        })
+      }
       const close = (): Promise<void> => {
         if (closePromise) return closePromise
-        closing = true
+        stopped = true
+        const unverifiedChildren = [...unknownBackground].filter(key => key.startsWith('child:')).map(key => key.slice(6))
+        for (const waiting of candidates.values()) for (const message of waiting) if (rpcId(message.id)) send({id:message.id,result:rejectedRequest(message)})
         dropPendingRequests()
-        rejectRpcs(new Error('codex_session_closed'))
-        if (active) { active.cancelled = true; active.events.end(); active = undefined }
-        closePromise = (async () => {
-          child.stdin.end()
-          signalOwned('SIGTERM')
-          const timeout = Math.min(options.closeTimeoutMs ?? 2_000, 2_500)
-          const deadline = Date.now() + timeout
+        const stoppingTurns = [...new Set([...(active ? [active] : []), ...rootTurns.values(), ...childTurns.values(), ...pendingStarts])].filter(turn => !turn.terminal)
+        const interruptTargets = stoppingTurns.filter(turn => !turn.cancelled && turn.id)
+        for (const turn of stoppingTurns) turn.cancelled = true
+        const timeout = Math.min(options.closeTimeoutMs ?? 2_000, 2_500), deadline = Date.now() + timeout
+        closePromise = Promise.resolve().then(async () => {
+          let cleanupFailure: Error | undefined
+          if (lifetime && threadId && !exited) {
+            const cleanupDeadline = Date.now() + Math.max(50, Math.floor((deadline - Date.now()) * .55))
+            const fence = async (turn: Turn) => {
+              if (!turn.id || turn.terminal) return
+              turn.cancelled = true
+              try {
+                await cleanupRequest('turn/interrupt', {threadId:turn.threadId,turnId:turn.id}, cleanupDeadline)
+                // Fixed 0.153.4 replies only upon TurnAborted (not submission).
+                if (registrationVerified) turn.terminal = true
+              } catch { if (!turn.terminal) cleanupFailure = new Error('codex_terminal_cleanup_unverified') }
+            }
+            await Promise.all(interruptTargets.map(fence))
+            for (;;) {
+              const producers = [...new Set([...rootTurns.values(), ...occurrences.values(), ...pendingStarts, ...(active ? [active] : [])])].filter(turn => !turn.terminal)
+              const late = producers.filter(turn => !turn.cancelled && turn.id)
+              if (late.length) await Promise.all(late.map(fence))
+              const observedThreads = new Set([...occurrences.values()].map(turn => turn.threadId))
+              const firstTurnPending = [...descendants.keys()].some(id => !observedThreads.has(id))
+              if (!producers.some(turn => !turn.terminal) && !candidates.size && !firstTurnPending) break
+              if (Date.now() >= cleanupDeadline) { cleanupFailure = new Error('codex_terminal_cleanup_unverified'); break }
+              await new Promise<void>(resolve => setTimeout(resolve, 10))
+            }
+
+            const cleanupOwner = async (owner: string) => {
+              try {
+                await cleanupRequest('thread/backgroundTerminals/clean', {threadId:owner}, cleanupDeadline)
+                for (;;) {
+                  const response = await cleanupRequest('thread/backgroundTerminals/list', {threadId:owner,limit:100}, cleanupDeadline)
+                  if (!Array.isArray(response.data)) throw new Error('codex_terminal_cleanup_unverified')
+                  if (!response.data.length && response.nextCursor == null) return
+                  await new Promise<void>(resolve => setTimeout(resolve, 10))
+                }
+              } catch { throw new Error('codex_terminal_cleanup_unverified') }
+            }
+            const cleanupOwners = new Set([threadId, ...descendants.keys()])
+            const cleanupResults = await Promise.allSettled([
+              ...[...cleanupOwners].map(cleanupOwner),
+              ...unverifiedChildren.map(async id => {
+                const response = await cleanupRequest('thread/read', {threadId:id,includeTurns:false}, cleanupDeadline)
+                const parent = response.thread?.source?.subAgent?.thread_spawn?.parent_thread_id
+                if (response.thread?.id !== id || !codexItemId(parent)) throw new Error('codex_terminal_cleanup_unverified')
+                // Lineage permits stopping our child; cwd also gates its authority.
+                if (cleanupOwners.has(parent)) await cleanupOwner(id)
+              }),
+            ])
+            const uncoveredChild = [...unknownBackground].some(key => key.startsWith('child:') && !cleanupOwners.has(key.slice(6)) && !unverifiedChildren.includes(key.slice(6)))
+            if (uncoveredChild || [...descendants.keys()].some(id => !cleanupOwners.has(id)) || candidates.size || [...childTurns.values()].some(turn => !turn.terminal)) cleanupFailure = new Error('codex_terminal_cleanup_unverified')
+            if (cleanupResults.some(result => result.status === 'rejected')) cleanupFailure = new Error('codex_terminal_cleanup_unverified')
+          } else if (lifetime && (retained || unknownBackground.size || stoppingTurns.some(turn => [...turn.items.values()].some(item => item.type === 'commandExecution')))) cleanupFailure = new Error('codex_terminal_cleanup_unverified')
+          closing = true; rejectRpcs(new Error('codex_session_closed'))
+          if (active) { if (!lifetime) active.events.end(); active = undefined }
+          for (const turn of childTurns.values()) { turn.occurrence!.finish('interrupted'); lifetime?.push(turn.occurrence!.event()) }
+          childTurns.clear(); unknownBackground.clear(); endRuntime()
+          child.stdin.end(); signalOwned('SIGTERM')
           let killed = false
           while (!exited || groupAlive()) {
             if (Date.now() >= deadline) throw new Error('codex_process_not_exited')
-            if (!killed && Date.now() >= deadline - Math.max(100, timeout / 2)) { signalOwned('SIGKILL'); killed = true }
+            if (!killed && Date.now() >= deadline - Math.max(50, timeout / 4)) { signalOwned('SIGKILL'); killed = true }
             const pause = new Promise<void>(resolve => setTimeout(resolve, 15))
             await (exited ? pause : Promise.race([exit, pause]))
           }
-        })()
+          if (cleanupFailure) throw cleanupFailure
+        })
         return closePromise
       }
       const fatal = (message: string) => {
         if (broken || closing) return
         broken = new Error(message)
+        if (lifetime && !active) { lifetime.push({kind:'error',message}); endRuntime() }
         dropPendingRequests(undefined, false)
         if (active) finish(active, { kind: 'error', message })
         rejectRpcs(broken)
@@ -219,6 +359,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
       const onApproval = (message: Message, turn: Turn) => {
         const id = message.id!, params = message.params!
         if (approvals.has(id)) { fatal('codex_duplicate_approval_request'); return }
+        if (!requestCapacity()) return
         const controller = new AbortController(), entry = { controller, turn, rejection: rejectionDecision(params) }
         approvals.set(id, entry)
         const file = message.method === 'item/fileChange/requestApproval'
@@ -239,11 +380,11 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           fatal('无法核实或完整显示本次 Codex 权限请求，工作台已停止任务。')
           return
         }
-        void Promise.resolve().then(() => !controller.signal.aborted && active === turn && !turn.cancelled && supported && context.requestPermission
+        void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && supported && context.requestPermission
           ? context.requestPermission({ tool: file ? 'fileChange' : 'commandExecution', description }, controller.signal)
           : false,
         ).catch(() => false).then(allow => {
-          if (approvals.get(id) !== entry || controller.signal.aborted || active !== turn || turn.cancelled || closing) return
+          if (approvals.get(id) !== entry || controller.signal.aborted || !current(turn)) return
           if (allow !== true && entry.rejection === 'cancel') turn.rejectedOperation = true
           send({ id, result: { decision: allow === true ? 'accept' : entry.rejection } }, () => {
             if (approvals.get(id) === entry) approvals.delete(id)
@@ -253,7 +394,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
       const onQuestion = (message: Message, turn: Turn) => {
         const id = message.id!, params = message.params!
         if (turn.questionIds.has(id)) return
-        turn.questionIds.add(id)
+        if (!rememberRequest(turn, id)) return
         if (Array.isArray(params.questions) && params.questions.some((q: unknown) => object(q) && q.isSecret === true)) {
           send({ id, result: { answers: {} } })
           fatal('工作台暂不支持密码等敏感问题，请在原生 Codex 中处理。')
@@ -272,12 +413,13 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           fatal('无法完整显示本次 Codex 问题，工作台已停止任务。')
           return
         }
+        if (!requestCapacity()) return
         const controller = new AbortController(), entry = { controller, turn }
         questions.set(id, entry)
-        void Promise.resolve().then(() => !controller.signal.aborted && active === turn && !turn.cancelled && context.requestUserInput
+        void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && context.requestUserInput
           ? context.requestUserInput(request, controller.signal) : null,
         ).then(answer => answer === null ? null : validateUserInputAnswers(request, answer)).catch(() => null).then(answer => {
-          if (questions.get(id) !== entry || controller.signal.aborted || active !== turn || turn.cancelled || closing) return
+          if (questions.get(id) !== entry || controller.signal.aborted || !current(turn)) return
           questions.delete(id)
           send({ id, result: { answers: answer === null ? {} : Object.fromEntries(Object.entries(answer).map(([key, values]) => [key, { answers: values }])) } })
         })
@@ -285,7 +427,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
       const onMcpApproval = (message: Message, turn: Turn) => {
         const id = message.id!, params = message.params!
         if (turn.questionIds.has(id)) return
-        turn.questionIds.add(id)
+        if (!rememberRequest(turn, id)) return
         const permission = codexMcpApproval(params, turn.items.values(), turn.completedItems, enabledMcp)
         if (!permission) {
           send({ id, result: declinedMcp() })
@@ -295,16 +437,53 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           } })
           return
         }
+        if (!requestCapacity()) return
         const controller = new AbortController(), entry: Approval = { controller, turn, rejection: 'decline', mcp: true }
         approvals.set(id, entry)
-        void Promise.resolve().then(() => !controller.signal.aborted && active === turn && !turn.cancelled && context.requestPermission
+        void Promise.resolve().then(() => !controller.signal.aborted && current(turn) && context.requestPermission
           ? context.requestPermission(permission, controller.signal) : false,
         ).catch(() => false).then(allow => {
-          if (approvals.get(id) !== entry || controller.signal.aborted || active !== turn || turn.cancelled || closing) return
+          if (approvals.get(id) !== entry || controller.signal.aborted || !current(turn)) return
           send({ id, result: { action: allow === true ? 'accept' : 'decline', content: null, _meta: null } }, () => {
             if (approvals.get(id) === entry) approvals.delete(id)
           })
         })
+      }
+      const verifyChild = (metadata: ObjectValue): boolean => {
+        const id = metadata.id, parent = metadata.source?.subAgent?.thread_spawn?.parent_thread_id
+        if (!codexItemId(id) || id === threadId || !codexItemId(parent) || (parent !== threadId && !descendants.has(parent)) || metadata.cwd !== project.path) return false
+        if (!descendants.has(id) && !runtimeCapacity()) return false
+        descendants.set(id, parent); retained = true; unknownBackground.delete(`child:${id}`)
+        const waiting = candidates.get(id); candidates.delete(id)
+        for (const message of waiting ?? []) route(message)
+        return true
+      }
+      const discoverChild = (id: string) => {
+        if (descendants.has(id) || candidates.has(id) || id === threadId) return
+        if (!runtimeCapacity()) return
+        candidates.set(id, []); retainUnknown(`child:${id}`)
+        void request('thread/read', { threadId: id, includeTurns: false }).then(response => {
+          if (closing) return
+          if (!object(response.thread) || response.thread.id !== id || !verifyChild(response.thread)) {
+            const waiting = candidates.get(id); candidates.delete(id)
+            for (const message of waiting ?? []) if (rpcId(message.id)) send({id:message.id,result:rejectedRequest(message)})
+          }
+        }).catch(() => {})
+      }
+      const registerBackground = (message: Message) => {
+        const params = message.params!, item = params.item
+        if (!object(item) || !['item/started', 'item/completed'].includes(message.method!)) return
+        if (['collabAgentToolCall', 'collabToolCall', 'subAgentActivity'].includes(item.type)) {
+          retained = true
+          const ids: unknown[] = item.type === 'subAgentActivity' ? [item.agentThreadId] : [...(Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds : []), item.receiverThreadId, item.newThreadId]
+          for (const id of ids) if (codexItemId(id)) discoverChild(id)
+          // An unknown launch remains retained even when it cannot be counted.
+        }
+        if (item.type === 'commandExecution' && message.method === 'item/completed') {
+          const key = `command:${params.turnId}:${item.id}`
+          if (item.processId && item.exitCode == null && item.status === 'inProgress') { retained = true; retainUnknown(key) }
+          else unknownBackground.delete(key)
+        }
       }
       const route = (message: Message) => {
         if (message.method) {
@@ -316,64 +495,123 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
             else { send({ id: message.id, error: { code: -32601, message: 'This request is not supported in CC Workbench.' } }); fatal('codex_unsupported_server_request') }
             return
           }
-          if (message.method === 'serverRequest/resolved') {
-            if (params.threadId !== threadId) return
-            if (active) {
-              active.early = active.early.filter(queued => queued.id !== params.requestId)
-              if (rpcId(params.requestId)) active.questionIds.add(params.requestId)
+          if (lifetime && !closing) {
+            if (stopped && message.method === 'turn/started' && params.threadId === threadId && codexItemId(params.turn?.id)) {
+              const pending = active && !active.id ? active : [...pendingStarts].find(turn => !turn.id)
+              if (pending) { pending.id = params.turn.id; pending.cancelled = false; pendingStarts.delete(pending); rootTurns.set(pending.id!, pending); for (const early of pending.early.splice(0)) route(early) }
+              return
             }
-            const pending = approvals.get(params.requestId)
+            // Native notifications can precede turn/start's response. Keep their
+            // wire order until the acknowledged root turn can establish lineage.
+            if (active && !active.id && params.threadId !== threadId && params.threadId && !descendants.has(params.threadId) && !candidates.has(params.threadId)) {
+              if (!bufferCapacity(message)) { fatal('codex_protocol_buffer_limit'); return }
+              active.early.push(message); return
+            }
+            if (message.method === 'thread/started' && object(params.thread)) { verifyChild(params.thread); return }
+            const senderOwned = params.threadId === threadId ? rootTurns.has(params.turnId) || active?.id === params.turnId : occurrences.has(`${params.threadId}:${params.turnId}`)
+            if (senderOwned) registerBackground(message)
+            if (params.threadId !== threadId && candidates.has(params.threadId)) {
+              const waiting = candidates.get(params.threadId)!
+              if (!bufferCapacity(message)) { fatal('codex_protocol_buffer_limit'); return }
+              waiting.push(message); return
+            }
+            if (message.method === 'turn/started' && descendants.has(params.threadId) && codexItemId(params.turn?.id)) {
+              const key = `${params.threadId}:${params.turn.id}`
+              if (occurrences.has(key)) return
+              const previous = childTurns.get(params.threadId)
+              if (previous?.occurrence?.running) { fatal('codex_overlapping_child_turn'); return }
+              if (!runtimeCapacity()) return
+              const owned = makeTurn(params.threadId, params.turn.id)
+              owned.occurrence = new CodexChildOccurrence(params.threadId, params.turn.id, descendants.get(params.threadId)!)
+              childTurns.set(params.threadId, owned); occurrences.set(key, owned)
+              owned.events.push(owned.occurrence.event()); return
+            }
+          }
+          if (lifetime && stopped && message.method === 'turn/completed') {
+            const known = params.threadId === threadId ? rootTurns.get(params.turn?.id) : occurrences.get(`${params.threadId}:${params.turn?.id}`)
+            if (known) { known.terminal = true; dropPendingRequests(known) }
+          }
+          if (message.method === 'serverRequest/resolved') {
+            const pending = approvals.get(params.requestId), question = questions.get(params.requestId)
+            const owner = pending?.turn ?? question?.turn
+            if (owner && (owner.threadId !== params.threadId || (params.turnId != null && params.turnId !== owner.id))) return
+            const matching = params.threadId === threadId ? active : childTurns.get(params.threadId)
+            if (!owner && !matching?.early.some(queued => queued.id === params.requestId)) return
+            if (matching) {
+              matching.early = matching.early.filter(queued => queued.id !== params.requestId)
+              if (rpcId(params.requestId) && !rememberRequest(matching, params.requestId)) return
+            }
             if (pending) { approvals.delete(params.requestId); pending.controller.abort() }
-            const question = questions.get(params.requestId)
             if (question) { questions.delete(params.requestId); question.controller.abort() }
             return
           }
-          const turn = active
-          if (isRequest && trackedRequest(message) && params.threadId === threadId && turn?.questionIds.has(message.id!)) return
-          if (!turn || params.threadId !== threadId || (turn.cancelled && message.method !== 'turn/completed') || closing) {
+          if (lifetime && !isRequest && message.method === 'item/completed' && params.item?.type === 'commandExecution') {
+            const previous = params.threadId === threadId ? rootTurns.get(params.turnId) : occurrences.get(`${params.threadId}:${params.turnId}`)
+            if (previous && !current(previous) && previous.items.has(params.item.id)) {
+              const item = {...previous.items.get(params.item.id), ...params.item}, event = codexActivityEvent(item, true)
+              if (event?.kind === 'tool_call' && event.activity) lifetime.push(previous.occurrence ? {...event,activity:{...event.activity,id:`${previous.occurrence.id}:${event.activity.id}`,parentId:previous.occurrence.id}} : event)
+              if (item.status !== 'inProgress') previous.items.delete(item.id)
+              return
+            }
+          }
+          const turn = params.threadId === threadId ? active : lifetime ? childTurns.get(params.threadId) : undefined
+          if (isRequest && trackedRequest(message) && turn?.questionIds.has(message.id!)) return
+          if (!turn || (turn.cancelled && message.method !== 'turn/completed') || closing || stopped) {
             if (isRequest) send({ id: message.id, result: rejectedRequest(message) })
             return
           }
           if (!turn.id) {
+            if (lifetime && !bufferCapacity(message)) return
             if (turn.early.length > 1_000) { fatal('codex_protocol_buffer_limit'); return }
             turn.early.push(message); return
           }
           const eventTurn = message.method.startsWith('turn/') ? params.turn?.id : params.turnId
           if (eventTurn !== turn.id) { if (isRequest) send({ id: message.id, result: rejectedRequest(message) }); return }
+          if (isRequest && (approvals.get(message.id!)?.turn ?? questions.get(message.id!)?.turn) && (approvals.get(message.id!)?.turn ?? questions.get(message.id!)?.turn) !== turn) {
+            send({id:message.id,result:rejectedRequest(message)}); fatal('codex_duplicate_server_request'); return
+          }
           if (isRequest) { if (isMcpRequest(message)) onMcpApproval(message, turn); else if (isUserQuestion(message)) onQuestion(message, turn); else onApproval(message, turn); return }
-          if (message.method === 'model/rerouted' && nativeModelId(params.toModel)) {
+          if (!turn.occurrence && message.method === 'model/rerouted' && nativeModelId(params.toModel)) {
             context.reportExecution?.({model:params.toModel,sessionId:threadId,source:'native_reroute'})
           }
           if (message.method === 'item/started' && object(params.item)) {
             const item = params.item
             if (codexItemId(item.id) && turn.completedItems.has(item.id)) return
-            if (typeof item.id === 'string') turn.items.set(item.id, item)
+            if (typeof item.id === 'string' && !cacheItem(turn, item)) return
             const event = codexActivityEvent(item, false)
-            if (event) turn.events.push(event)
+            if (event) turn.events.push(turn.occurrence && event.kind === 'tool_call' && event.activity ? { ...event, activity: { ...event.activity, id: `${turn.occurrence.id}:${event.activity.id}`, parentId: turn.occurrence.id } } : event)
           } else if (message.method === 'item/fileChange/patchUpdated' && typeof params.itemId === 'string' && Array.isArray(params.changes)) {
             if (turn.completedItems.has(params.itemId)) return
             const item = { ...turn.items.get(params.itemId), id: params.itemId, type: 'fileChange', changes: params.changes }
-            turn.items.set(params.itemId, item)
+            if (!cacheItem(turn, item)) return
             const event = codexActivityEvent(item, false)
-            if (event) turn.events.push(event)
+            if (event) turn.events.push(turn.occurrence && event.kind === 'tool_call' && event.activity ? { ...event, activity: { ...event.activity, id: `${turn.occurrence.id}:${event.activity.id}`, parentId: turn.occurrence.id } } : event)
           } else if (message.method === 'item/agentMessage/delta' && codexItemId(params.itemId) && typeof params.delta === 'string' && params.delta && !turn.completedItems.has(params.itemId)) {
-            turn.events.push({ kind: 'text', itemId: params.itemId, textMode: 'append', text: params.delta })
+            if (turn.occurrence) { turn.occurrence.text(params.itemId, params.delta, false); turn.events.push(turn.occurrence.event()) }
+            else turn.events.push({ kind: 'text', itemId: params.itemId, textMode: 'append', text: params.delta })
           } else if (message.method === 'item/completed' && object(params.item)) {
             const item = { ...turn.items.get(params.item.id), ...params.item }
             if (codexItemId(item.id)) {
               if (turn.completedItems.has(item.id)) return
               turn.completedItems.add(item.id)
-              turn.items.set(item.id, item)
+              if (!cacheItem(turn, item)) return
             }
             if (item.type === 'agentMessage' && typeof item.text === 'string') {
-              turn.events.push({ kind: 'text', text: item.text, ...(codexItemId(item.id) ? { itemId: item.id, textMode: 'replace' as const } : {}) })
+              if (turn.occurrence) { turn.occurrence.text(item.id, item.text, true); turn.events.push(turn.occurrence.event()) }
+              else turn.events.push({ kind: 'text', text: item.text, ...(codexItemId(item.id) ? { itemId: item.id, textMode: 'replace' as const } : {}) })
             } else {
               const event = codexActivityEvent(item, true)
-              if (event) turn.events.push(event)
+              if (event) turn.events.push(turn.occurrence && event.kind === 'tool_call' && event.activity ? { ...event, activity: { ...event.activity, id: `${turn.occurrence.id}:${event.activity.id}`, parentId: turn.occurrence.id } } : event)
             }
           } else if (message.method === 'error' && !params.willRetry) {
             finish(turn, { kind: 'error', message: typeof params.error?.message === 'string' ? params.error.message : 'codex_turn_failed' })
           } else if (message.method === 'turn/completed') {
+            turn.terminal = true
+            if (turn.occurrence) {
+              for (const item of Array.isArray(params.turn?.items) ? params.turn.items : []) if (item.type === 'agentMessage' && codexItemId(item.id) && typeof item.text === 'string') turn.occurrence.text(item.id, item.text, true)
+              dropPendingRequests(turn); retainUnfinishedCommands(turn); turn.occurrence.finish(params.turn?.status)
+              turn.events.push(turn.occurrence.event()); childTurns.delete(turn.threadId); pruneFinishedTurn(turn); return
+            }
             if (params.turn?.status === 'completed' && !turn.cancelled) finish(turn, { kind: 'result', sessionId: threadId, numTurns: 1, durationMs: typeof params.turn.durationMs === 'number' ? params.turn.durationMs : Date.now() - turn.startedAt })
             else if (params.turn?.status === 'interrupted') finish(turn, { kind: 'error', message: turn.cancelled ? 'Codex 本轮已停止。' : turn.rejectedOperation ? '这次操作已被拒绝，Codex 已结束本轮。可以补充要求后继续。' : 'Codex 本轮已中断，未能确认完成。可以补充要求后继续。' })
             else finish(turn, { kind: 'error', message: typeof params.turn?.error?.message === 'string' ? params.turn.error.message : 'Codex 本轮未能完成，可以补充要求后重试。' })
@@ -411,7 +649,11 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         if (!closing) fatal(`codex_process_exited: ${signal ?? code ?? 'unknown'}`)
       })
       try {
-        const initialized = await request('initialize', { clientInfo: { name: 'cc_workbench', title: 'CC Workbench', version: '0.6.4' }, capabilities: { experimentalApi: false, requestAttestation: false } })
+        const initialized = await request('initialize', { clientInfo: { name: 'cc_workbench', title: 'CC Workbench', version: '0.6.4' }, capabilities: { experimentalApi: !!lifetime, requestAttestation: false } })
+        // Registration-before-parent-result was verified with this exact native
+        // protocol version. New/unknown versions retain instead of claiming EOF.
+        registrationVerified = typeof initialized.userAgent === 'string' && /^[^/\r\n]+\/0\.153\.4(?:\s|$)/.test(initialized.userAgent)
+        if (lifetime && !registrationVerified) retained = true
         send({ method: 'initialized' })
         const native = await request('config/read', { cwd: project.path, includeLayers: false })
         const config = workbenchCodexNativeConfig(discovery.servers, native.config)
@@ -441,21 +683,74 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         if (catalog && execution) selectedModel = executionModel(catalog, execution, response.model)
         if (nativeModelId(response.model)) context.reportExecution?.({model:response.model,...(nativeModelId(response.reasoningEffort) ? {reasoningEffort:response.reasoningEffort} : {}),sessionId:threadId,source:'native_response'})
       } catch (error) { await close(); throw error }
+      const launch = (text: string, attachments?: readonly AgentAttachment[]) => {
+        if (active) throw new Error('codex_turn_already_running')
+        if (closing || exited || broken || stopped || runtimeEnded) throw broken ?? new Error('codex_session_closed')
+        validateAttachments(attachments)
+        const input = turnInput(text, attachments), turn = makeTurn()
+        active = turn; if (lifetime) pendingStarts.add(turn); turn.events.push({ kind: 'init', sessionId: threadId })
+        const accepted = request('turn/start', { threadId, input }).then(response => {
+          if (closing) throw new Error('codex_session_closed')
+          if (typeof response.turn?.id !== 'string' || !response.turn.id) { fatal('codex_missing_turn_id'); throw new Error('codex_missing_turn_id') }
+          if (lifetime && !runtimeCapacity()) throw new Error('codex_runtime_record_limit')
+          if (turn.id && turn.id !== response.turn.id) { fatal('codex_turn_start_mismatch'); throw new Error('codex_turn_start_mismatch') }
+          const hadId = !!turn.id
+          turn.id = response.turn.id; if (lifetime) { pendingStarts.delete(turn); rootTurns.set(turn.id!, turn) }
+          if (lifetime && stopped) { if (!hadId) turn.cancelled = false; for (const message of turn.early.splice(0)) route(message); throw new Error('codex_session_closed') }
+          if (turn.cancelled) { void request('turn/interrupt', { threadId, turnId: turn.id }).catch(() => {}); throw new Error('codex_turn_cancelled') }
+          for (const message of turn.early.splice(0)) route(message)
+        }).catch(error => {
+          if (!broken && !stopped) pendingStarts.delete(turn)
+          if (active === turn) finish(turn, {kind:'error',message:error instanceof Error ? error.message : 'codex_turn_start_failed'})
+          throw error
+        })
+        return { turn, accepted }
+      }
+      const submitted = new Map<string, { fingerprint: string; accepted: Promise<void> }>()
+      let initialAcceptance: Promise<void> = Promise.resolve(), submitTail: Promise<void> = Promise.resolve()
+      const runtime: AgentWorkbenchRuntime | undefined = lifetime ? {
+        events: { [Symbol.asyncIterator]: () => lifetime.iterate()[Symbol.asyncIterator]() },
+        start(text, attachments) {
+          if (runtimeStarted) throw new Error('codex_runtime_already_started')
+          const launched = launch(text, attachments); runtimeStarted = true
+          initialAcceptance = launched.accepted
+          void initialAcceptance.catch(error => { if (active === launched.turn) finish(launched.turn, { kind: 'error', message: String(error.message ?? error) }) })
+        },
+        submit(requestId, text, attachments) {
+          attachments = attachments?.map(item => ({...item}))
+          if (!runtimeStarted || runtimeEnded || closing || stopped || broken) return Promise.reject(new Error('codex_session_closed'))
+          try {
+            if (!codexItemId(requestId) || typeof text !== 'string' || (!text.trim() && !attachments?.length)) throw new Error('codex_empty_input')
+            validateAttachments(attachments); turnInput(text, attachments)
+          } catch (error) { return Promise.reject(error) }
+          const fingerprint = JSON.stringify([text, attachments?.map(item => [item.name, item.mime, item.sha256])])
+          const prior = submitted.get(requestId)
+          if (prior) return prior.fingerprint === fingerprint ? prior.accepted : Promise.reject(new Error('codex_input_id_conflict'))
+          if (submitted.size >= 1000) return Promise.reject(new Error('codex_input_limit'))
+          // Keep the epoch while an accepted native input can produce additional turns.
+          // RPC uncertainty also retains ownership; it must never trigger an automatic retry.
+          retained = true
+          const accepted = submitTail.then(async () => {
+            await initialAcceptance
+            if (closing || stopped || runtimeEnded || broken) throw new Error('codex_session_closed')
+            if (!active) { await launch(text, attachments).accepted; return }
+            const turn = active, expectedTurnId = turn.id
+            if (!expectedTurnId || turn.cancelled) throw new Error('codex_no_active_turn')
+            const response = await request('turn/steer', { threadId, expectedTurnId, input: turnInput(text, attachments) })
+            if (response.turnId !== expectedTurnId) throw new Error('codex_steer_turn_mismatch')
+            if (closing || stopped || broken || turn.cancelled) throw new Error('codex_session_closed')
+          })
+          submitted.set(requestId, { fingerprint, accepted }); submitTail = accepted.catch(() => {})
+          return accepted
+        },
+        snapshot() { return { retained, foreground: stopped || closing ? 'idle' : active ? 'running' : 'idle', backgroundCount: childTurns.size + unknownBackground.size, input: stopped || closing || runtimeEnded ? 'queue' : active ? active.id ? 'steer' : 'queue' : 'send' } },
+      } : undefined
       return {
+        ...(runtime ? { workbenchRuntime: runtime } : {}),
         dispatch(text, attachments) {
-          if (active) throw new Error('codex_turn_already_running')
-          if (closing || exited || broken) throw broken ?? new Error('codex_session_closed')
-          validateAttachments(attachments)
-          const input = turnInput(text, attachments)
-          const turn: Turn = { id: null, cancelled: false, rejectedOperation: false, events: new EventQueue(), early: [], items: new Map(), completedItems: new Set(), questionIds: new Set(), startedAt: Date.now() }
-          active = turn; turn.events.push({ kind: 'init', sessionId: threadId })
-          void request('turn/start', { threadId, input }).then(response => {
-            if (active !== turn || closing) return
-            if (typeof response.turn?.id !== 'string' || !response.turn.id) { fatal('codex_missing_turn_id'); return }
-            turn.id = response.turn.id
-            if (turn.cancelled) { void request('turn/interrupt', { threadId, turnId: turn.id }).catch(() => {}); return }
-            for (const message of turn.early.splice(0)) route(message)
-          }).catch(error => { if (active === turn) finish(turn, { kind: 'error', message: error instanceof Error ? error.message : 'codex_turn_start_failed' }) })
+          if (runtime) throw new Error('codex_runtime_requires_lifetime_stream')
+          const { turn, accepted } = launch(text, attachments)
+          void accepted.catch(error => { if (active === turn) finish(turn, { kind: 'error', message: error instanceof Error ? error.message : 'codex_turn_start_failed' }) })
           return turn.events.iterate()
         },
         async steer(text, attachments) {
@@ -466,9 +761,16 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           const expectedTurnId = turn.id
           const response = await request('turn/steer', { threadId, expectedTurnId, input: turnInput(text, attachments) })
           if (response.turnId !== expectedTurnId) throw new Error('codex_steer_turn_mismatch')
-          if (active !== turn || turn.cancelled || closing || exited || broken) throw new Error('codex_steer_no_longer_active')
+          if (!current(turn) || exited || broken) throw new Error('codex_steer_no_longer_active')
         },
         async cancel() {
+          if (lifetime) {
+            if (stopped) return
+            stopped = true; dropPendingRequests()
+            const turns = [...(active ? [active] : []), ...childTurns.values()]
+            await Promise.allSettled(turns.map(turn => { turn.cancelled = true; return turn.id ? request('turn/interrupt', { threadId: turn.threadId, turnId: turn.id }).then(() => { if (registrationVerified) turn.terminal = true }) : Promise.resolve() }))
+            return
+          }
           const turn = active
           if (!turn || closing) return
           turn.cancelled = true; dropPendingRequests(turn)

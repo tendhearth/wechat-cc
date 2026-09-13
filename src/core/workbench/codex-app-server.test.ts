@@ -12,7 +12,7 @@ type Rpc = { id?: string | number; method?: string; params?: any; result?: any; 
 class FakeProcess extends EventEmitter {
   stdin = new PassThrough(); stdout = new PassThrough(); stderr = new PassThrough()
   exitCode: number | null = null; signalCode: string | null = null
-  sent: Rpc[] = []; autoExit = true; autoTurnStart = true
+  sent: Rpc[] = []; autoExit = true; autoTurnStart = true; autoInterrupt = true
   kill = vi.fn((signal = 'SIGTERM') => { if (this.autoExit) queueMicrotask(() => this.exit(null, signal)); return true })
   constructor(readonly probe: boolean) {
     super()
@@ -28,7 +28,10 @@ class FakeProcess extends EventEmitter {
         if (message.method === 'model/list') queueMicrotask(() => this.send({ id: message.id, result: { data: [{id:modelPresetId,model:'native-model',displayName:'Native model',description:'Native',isDefault:true,defaultReasoningEffort:'deep-native',supportedReasoningEfforts:[{reasoningEffort:'deep-native',description:'Native'}],inputModalities:modelModalities}],nextCursor:null } }))
         if (message.method === 'thread/start' || message.method === 'thread/resume') queueMicrotask(() => this.send({ id: message.id, result: { thread: { id: message.params.threadId ?? 'thread-1' }, cwd: '/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: { type: 'workspaceWrite', writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true }, ...threadResponse } }))
         if (message.method === 'turn/start' && this.autoTurnStart) queueMicrotask(() => this.send({ id: message.id, result: { turn: { id: `turn-${this.sent.filter(m => m.method === 'turn/start').length}` } } }))
-        if (message.method === 'turn/interrupt') queueMicrotask(() => this.send({ id: message.id, result: {} }))
+        if (message.method === 'thread/read') queueMicrotask(() => this.send({ id: message.id, result: { thread: nativeThreads[message.params.threadId] } }))
+        if (message.method === 'thread/backgroundTerminals/clean') queueMicrotask(() => this.send(terminalCleanup === 'unavailable' ? {id:message.id,error:{message:'unsupported terminal API'}} : {id:message.id,result:{}}))
+        if (message.method === 'thread/backgroundTerminals/list') queueMicrotask(() => this.send({id:message.id,result:{data:terminalCleanup === 'running' ? [{processId:'owned-running'}] : [],nextCursor:null}}))
+        if (message.method === 'turn/interrupt' && this.autoInterrupt) queueMicrotask(() => this.send({ id: message.id, result: {} }))
       }
     })
   }
@@ -44,6 +47,8 @@ let children: FakeProcess[], sessions: AgentSession[], discovery: string, discov
 let nativeConfig: Record<string, unknown>, initializeResponse: Record<string, unknown>
 let modelModalities: string[]
 let modelPresetId: string
+let nativeThreads: Record<string, any>
+let terminalCleanup: 'normal' | 'unavailable' | 'running'
 const context = (extra = {}): SpawnContext => ({ tierProfile: TIER_PROFILES.trusted, permissionMode: 'strict', chatId: 'workbench:task', appendInstructions: 'task instructions', ...extra })
 async function start(extra = {}, options = {}) {
   const session = await createWorkbenchCodexProvider({ codexPathOverride: '/codex', rpcTimeoutMs: 200, closeTimeoutMs: 250, ...options }).spawn({ alias: 'workbench:task', path: '/project' }, context(extra))
@@ -74,6 +79,8 @@ function enableExternal() {
   nativeConfig = { mcp_servers: { external: { command: '/tools/external', tools: { create_note: { approval_mode: 'approve' } } } } }
 }
 beforeEach(() => {
+  terminalCleanup = 'normal'
+  nativeThreads = {}
   modelModalities=['text','image']
   modelPresetId='native-model'
   children = []; sessions = []; discovery = '[{"name":"personal","env":{"SECRET":"private"}}]'; discoveryExit = 0; threadResponse = {}
@@ -789,5 +796,259 @@ describe('workbench Codex app-server', () => {
     expect(signal.aborted).toBe(true)
     expect(run.events.some(e => e.kind === 'result')).toBe(false)
     await expect.poll(() => child.kill.mock.calls.length).toBeGreaterThan(0)
+  })
+})
+
+
+describe('Codex retained workbench runtime', () => {
+  async function runtime(extra = {}) {
+    const started = await start({ workbenchLifecycle: true, ...extra })
+    expect(started.session.workbenchRuntime).toBeDefined()
+    const events: AgentEvent[] = []; let ended = false
+    const api = started.session.workbenchRuntime!
+    const done = (async () => { for await (const event of api.events) events.push(event); ended = true })()
+    api.start('parent'); await begun(started.child)
+    return { ...started, api, events, done, ended: () => ended }
+  }
+  function launch(child: FakeProcess, mode = 'v1', id = 'child-1', parent = 'thread-1', turn = 'turn-1') {
+    nativeThreads[id] = { id, source: { subAgent: { thread_spawn: { parent_thread_id: parent } } }, cwd: '/project', turns: [] }
+    child.notify('item/started', { threadId: parent, turnId: turn, item: mode === 'v1'
+      ? { type: 'collabAgentToolCall', id: `spawn-${id}`, tool: 'spawnAgent', status: 'inProgress', senderThreadId: parent, receiverThreadIds: [id] }
+      : { type: 'subAgentActivity', id: `spawn-${id}`, kind: 'started', agentThreadId: id, agentPath: '/root/child' } })
+    child.notify('turn/started', { threadId: id, turn: { id: 'child-turn-1', status: 'inProgress' } })
+  }
+  function childEnd(child: FakeProcess, status = 'completed', turn = 'child-turn-1') {
+    child.notify('turn/completed', { threadId: 'child-1', turn: { id: turn, status, items: [{ id: 'public', type: 'agentMessage', text: 'child public reply' }] } })
+  }
+  it('is opt-in and ordinary no-background completion ends the lifetime', async () => {
+    expect((await start()).session.workbenchRuntime).toBeUndefined()
+    const run = await runtime(); completed(run.child); await run.done
+    expect(run.api.snapshot()).toMatchObject({ retained: false, foreground: 'idle', backgroundCount: 0 })
+    expect(() => run.api.start('again')).toThrow()
+    await expect(run.api.submit('later', 'again')).rejects.toThrow()
+  })
+  it.each(['v1', 'v2'])('retains %s children, scopes late output, and deduplicates occurrence lifecycle', async mode => {
+    const reportExecution = vi.fn(); const run = await runtime({ reportExecution })
+    launch(run.child, mode); await expect.poll(() => run.api.snapshot().backgroundCount).toBe(1)
+    completed(run.child); await expect.poll(() => run.events.filter(e => e.kind === 'result').length).toBe(1)
+    expect(run.ended()).toBe(false); expect(run.api.snapshot()).toEqual({ retained: true, foreground: 'idle', backgroundCount: 1, input: 'send' })
+    run.child.notify('item/completed', { threadId: 'child-1', turnId: 'child-turn-1', item: { id: 'public', type: 'agentMessage', text: 'x'.repeat(41000) } })
+    childEnd(run.child); childEnd(run.child)
+    run.child.notify('turn/started', { threadId: 'child-1', turn: { id: 'child-turn-1' } })
+    await expect.poll(() => run.api.snapshot().backgroundCount).toBe(0)
+    expect(run.events.filter(e => e.kind === 'text')).toEqual([])
+    expect(run.events.filter(e => e.kind === 'tool_call' && e.activity?.output).every(e => e.kind === 'tool_call' && e.activity!.output!.length <= 40000)).toBe(true)
+    const finished = run.events.findLast(e => e.kind === 'tool_call' && e.activity?.output)
+    expect(finished).toMatchObject({ activity: { status: 'completed', output: 'child public reply' } })
+    run.child.notify('model/rerouted', { threadId: 'child-1', turnId: 'child-turn-1', toModel: 'wrong-child-model' })
+    expect(reportExecution).not.toHaveBeenCalled()
+    run.child.notify('turn/started', { threadId: 'child-1', turn: { id: 'child-turn-2' } })
+    await expect.poll(() => run.api.snapshot().backgroundCount).toBe(1)
+    childEnd(run.child, 'failed', 'child-turn-2')
+    await expect.poll(() => run.api.snapshot().backgroundCount).toBe(0)
+    expect(run.events.filter(e => e.kind === 'error')).toEqual([])
+    const ids = new Set(run.events.flatMap(e => e.kind === 'tool_call' && e.activity?.output ? [e.activity.id] : []))
+    expect(ids.size).toBe(2)
+    const snapshot = run.api.snapshot(); snapshot.retained = false; expect(run.api.snapshot().retained).toBe(true)
+    await run.session.close(); await run.done
+  })
+  it('accepts child permission after parent result but rejects foreign, stale, or closed authority', async () => {
+    let decide!: (value: boolean) => void
+    const permit = vi.fn(() => new Promise<boolean>(resolve => { decide = resolve }))
+    const run = await runtime({ requestPermission: permit }); launch(run.child)
+    await expect.poll(() => run.api.snapshot().backgroundCount).toBe(1); completed(run.child)
+    approval(run.child, 'foreign', undefined, { threadId: 'not-owned', turnId: 'child-turn-1' })
+    approval(run.child, 'stale', undefined, { threadId: 'child-1', turnId: 'old' })
+    approval(run.child, 'owned', undefined, { threadId: 'child-1', turnId: 'child-turn-1' })
+    await expect.poll(() => permit.mock.calls.length).toBe(1)
+    expect(run.child.sent.find(m => m.id === 'foreign')?.result.decision).toBe('decline')
+    expect(run.child.sent.find(m => m.id === 'stale')?.result.decision).toBe('decline')
+    run.child.notify('serverRequest/resolved', { threadId: 'not-owned', requestId: 'owned' })
+    decide(true); await expect.poll(() => run.child.sent.find(m => m.id === 'owned')?.result.decision).toBe('accept')
+    approval(run.child, 'late', undefined, { threadId: 'child-1', turnId: 'child-turn-1' })
+    await expect.poll(() => permit.mock.calls.length).toBe(2)
+    await run.session.cancel!(); decide(true); await run.session.close(); await run.done
+    expect(run.child.sent.find(m => m.id === 'late')?.result.decision).toBe('decline')
+    expect(run.child.sent.some(m => m.method === 'turn/interrupt' && m.params.threadId === 'child-1')).toBe(true)
+  })
+  it('requires native acknowledgements for steer and same-parent followup; submitted input retains epoch', async () => {
+    const run = await runtime(); const accepted = run.api.submit('input-1', 'followup')
+    await expect.poll(() => run.child.sent.some(m => m.method === 'turn/steer')).toBe(true)
+    const steer = run.child.sent.find(m => m.method === 'turn/steer')!
+    run.child.send({ id: steer.id, result: { turnId: 'turn-1' } }); await accepted
+    completed(run.child); await expect.poll(() => run.api.snapshot().foreground).toBe('idle')
+    expect(run.api.snapshot().retained).toBe(true); expect(run.ended()).toBe(false)
+    run.child.autoTurnStart = false; let acknowledged = false
+    const followup = run.api.submit('input-2', 'after result').then(() => { acknowledged = true })
+    await begun(run.child, 2); expect(acknowledged).toBe(false)
+    const request = run.child.sent.filter(m => m.method === 'turn/start').at(-1)!
+    expect(request.params.threadId).toBe('thread-1')
+    run.child.send({ id: request.id, result: { turn: { id: 'turn-2' } } }); await followup
+    await run.api.submit('input-2', 'after result')
+    expect(run.child.sent.filter(m => m.method === 'turn/start')).toHaveLength(2)
+    await expect(run.api.submit('input-2', 'different')).rejects.toThrow()
+    await run.session.close(); await run.done
+  })
+  it('has exactly one lifetime reader and verifies descendant lineage before granting child authority', async () => {
+    const run = await runtime({ requestPermission: vi.fn(async () => true) })
+    const other = run.api.events[Symbol.asyncIterator]()
+    await expect(other.next()).rejects.toThrow('codex_events_already_consumed')
+    nativeThreads['foreign-child'] = { id: 'foreign-child', cwd: '/project', source: { subAgent: { thread_spawn: { parent_thread_id: 'foreign-parent' } } } }
+    run.child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'subAgentActivity', id: 'spawn', agentThreadId: 'foreign-child', kind: 'started' } })
+    run.child.notify('turn/started', { threadId: 'foreign-child', turn: { id: 'foreign-turn' } })
+    approval(run.child, 'no-authority', undefined, { threadId: 'foreign-child', turnId: 'foreign-turn' })
+    await expect.poll(() => run.child.sent.find(m => m.id === 'no-authority')?.result.decision).toBe('decline')
+    await run.session.close(); await run.done
+  })
+  it('aborts child questions only when their exact native owner resolves or stops', async () => {
+    let answer!: (value: any) => void
+    const requestUserInput = vi.fn(() => new Promise<any>(resolve => { answer = resolve }))
+    const run = await runtime({ requestUserInput }); launch(run.child)
+    await expect.poll(() => run.api.snapshot().backgroundCount).toBe(1); completed(run.child)
+    question(run.child, 'child-question', { threadId: 'child-1', turnId: 'child-turn-1' })
+    await expect.poll(() => requestUserInput.mock.calls.length).toBe(1)
+    run.child.notify('serverRequest/resolved', { threadId: 'thread-1', requestId: 'child-question' })
+    answer({ format: ['PDF'] })
+    await expect.poll(() => run.child.sent.find(m => m.id === 'child-question')?.result.answers).toEqual({ format: { answers: ['PDF'] } })
+    await run.session.close(); await run.done
+  })
+  it('buffers child registration and requests that precede the parent start acknowledgement', async () => {
+    const permit = vi.fn(async () => true), { session, child } = await start({ workbenchLifecycle: true, requestPermission: permit })
+    child.autoTurnStart = false; const api = session.workbenchRuntime!, events: AgentEvent[] = []
+    const done = (async () => { for await (const event of api.events) events.push(event) })()
+    api.start('parent'); await begun(child)
+    launch(child)
+    approval(child, 'early-child', undefined, { threadId: 'child-1', turnId: 'child-turn-1' })
+    expect(permit).not.toHaveBeenCalled()
+    const request = child.sent.find(m => m.method === 'turn/start')!
+    child.send({ id: request.id, result: { turn: { id: 'turn-1' } } })
+    await expect.poll(() => permit.mock.calls.length).toBe(1)
+    completed(child); await expect.poll(() => api.snapshot().backgroundCount).toBe(1)
+    await session.close(); await done
+  })
+  it('freezes submitted image bytes while waiting on the initial native start acknowledgement', async () => {
+    const {session, child} = await start({workbenchLifecycle:true}); child.autoTurnStart = false
+    const api = session.workbenchRuntime!, done = (async () => { for await (const _event of api.events) {} })()
+    api.start('parent'); await begun(child)
+    const attachments = [{name:'owned.png',mime:'image/png',path:'/owned.png',sha256:'a'.repeat(64),data:'T1JJR0lOQUw='}]
+    const accepted = api.submit('frozen', 'inspect', attachments)
+    attachments[0]!.data = 'UkVQTEFDRUQ='
+    const initial = child.sent.find(m => m.method === 'turn/start')!
+    child.send({id:initial.id,result:{turn:{id:'turn-1'}}})
+    await expect.poll(() => child.sent.some(m => m.method === 'turn/steer')).toBe(true)
+    const steer = child.sent.find(m => m.method === 'turn/steer')!
+    expect(steer.params.input[1].url).toBe('data:image/png;base64,T1JJR0lOQUw=')
+    child.send({id:steer.id,result:{turnId:'turn-1'}}); await accepted
+    await session.close(); await done
+  })
+  it('projects late command completion from its original root turn without restoring old authority', async () => {
+    const permit = vi.fn(async () => true), run = await runtime({requestPermission:permit})
+    const item = {type:'commandExecution',id:'background-command',command:'owned task',processId:'123',status:'inProgress'}
+    run.child.notify('item/started',{threadId:'thread-1',turnId:'turn-1',item})
+    completed(run.child); await expect.poll(() => run.api.snapshot().foreground).toBe('idle')
+    await run.api.submit('next','followup'); await begun(run.child,2)
+    run.child.notify('item/completed',{threadId:'thread-1',turnId:'turn-1',item:{...item,status:'completed',exitCode:0}})
+    approval(run.child,'old-permission',undefined,{turnId:'turn-1'})
+    await expect.poll(() => run.events.some(event => event.kind==='tool_call'&&event.activity?.id==='background-command'&&event.activity.status==='completed')).toBe(true)
+    expect(run.api.snapshot()).toMatchObject({backgroundCount:0,foreground:'running'})
+    expect(permit).not.toHaveBeenCalled()
+    expect(run.child.sent.find(m=>m.id==='old-permission')?.result.decision).toBe('decline')
+    await run.session.close(); await run.done
+  })
+  it('retains unknown native versions rather than asserting a no-background registration barrier', async () => {
+    initializeResponse.userAgent='future-native/9.0.0 (owned fixture)'
+    const run = await runtime(); completed(run.child)
+    await expect.poll(() => run.api.snapshot().foreground).toBe('idle')
+    expect(run.api.snapshot().retained).toBe(true); expect(run.ended()).toBe(false)
+    await run.session.close(); await run.done
+  })
+  it('cleans each owned native terminal registry before returning from close', async () => {
+    const run=await runtime();launch(run.child);await expect.poll(()=>run.api.snapshot().backgroundCount).toBe(1)
+    completed(run.child); await run.session.close(); await run.done
+    expect(run.child.sent.find(m=>m.method==='initialize')?.params.capabilities.experimentalApi).toBe(true)
+    expect(run.child.sent.filter(m=>m.method==='thread/backgroundTerminals/clean').map(m=>m.params.threadId).sort()).toEqual(['child-1','thread-1'])
+    expect(run.child.sent.filter(m=>m.method==='thread/backgroundTerminals/list').map(m=>m.params.threadId).sort()).toEqual(['child-1','thread-1'])
+  })
+  it.each(['unavailable','running'] as const)('refuses to confirm close when native terminal cleanup is %s', async state => {
+    const run=await runtime();terminalCleanup=state
+    const closing=run.session.close()
+    await expect(run.api.submit('late','must not send')).rejects.toThrow('codex_session_closed')
+    await expect(closing).rejects.toThrow('codex_terminal_cleanup_unverified')
+    await run.done;expect(run.child.kill).toHaveBeenCalled()
+  })
+  it('never repeats an already requested native interrupt while closing the same epoch', async () => {
+    const run=await runtime();launch(run.child);await expect.poll(()=>run.api.snapshot().backgroundCount).toBe(1)
+    completed(run.child);await run.session.cancel!();await run.session.cancel!();await run.session.close();await run.done
+    expect(run.child.sent.filter(m=>m.method==='turn/interrupt'&&m.params.threadId==='child-1')).toHaveLength(1)
+  })
+  it('does not treat unloaded metadata as proof that native background terminals were cleaned', async () => {
+    const run=await runtime();terminalCleanup='unavailable'
+    nativeThreads['thread-1']={id:'thread-1',status:{type:'notLoaded'}}
+    await expect(run.session.close()).rejects.toThrow('codex_terminal_cleanup_unverified');await run.done
+  })
+  it('bounds unread lifetime output and fails closed instead of accumulating an unbounded stream', async () => {
+    const {session,child}=await start({workbenchLifecycle:true});const api=session.workbenchRuntime!
+    api.start('parent');await begun(child)
+    for(let index=0;index<12;index++)child.notify('item/agentMessage/delta',{threadId:'thread-1',turnId:'turn-1',itemId:'huge-reply',delta:'x'.repeat(1_000_000)})
+    const events:AgentEvent[]=[];for await(const event of api.events)events.push(event)
+    expect(events.some(event=>event.kind==='error'&&event.message==='codex_runtime_output_limit')).toBe(true)
+    await session.close()
+  })
+  it('keeps late child registrations for teardown after authority has closed', async () => {
+    const run=await runtime();await run.session.cancel!()
+    launch(run.child)
+    await expect.poll(()=>run.api.snapshot().backgroundCount).toBe(1)
+    await run.session.close();await run.done
+    expect(run.child.sent.some(m=>m.method==='turn/interrupt'&&m.params.threadId==='child-1')).toBe(true)
+    expect(run.child.sent.some(m=>m.method==='thread/backgroundTerminals/clean'&&m.params.threadId==='child-1')).toBe(true)
+  })
+  it('waits a previously requested interrupt fence when cancel and close overlap', async () => {
+    const run=await runtime();run.child.autoInterrupt=false
+    const cancelled=run.session.cancel!(),closing=run.session.close()
+    await expect.poll(()=>run.child.sent.filter(m=>m.method==='turn/interrupt').length).toBe(1)
+    expect(run.child.sent.some(m=>m.method==='thread/backgroundTerminals/clean')).toBe(false)
+    const request=run.child.sent.find(m=>m.method==='turn/interrupt')!
+    run.child.send({id:request.id,result:{}})
+    await cancelled;await closing;await run.done
+    expect(run.child.sent.filter(m=>m.method==='turn/interrupt')).toHaveLength(1)
+  })
+  it.each([true,false])('closes a pending start only with its exact observed native ID (identified=%s)', async identified => {
+    const {session,child}=await start({workbenchLifecycle:true});child.autoTurnStart=false
+    const api=session.workbenchRuntime!,done=(async()=>{for await(const _event of api.events){}})()
+    api.start('parent');await begun(child)
+    const closing=session.close()
+    if(identified){
+      child.notify('turn/started',{threadId:'thread-1',turn:{id:'actual-pending-turn'}})
+      await closing
+      expect(child.sent.some(m=>m.method==='turn/interrupt'&&m.params.turnId==='actual-pending-turn')).toBe(true)
+    }else await expect(closing).rejects.toThrow('codex_terminal_cleanup_unverified')
+    await done
+  })
+  it('keeps isolation after native process loss when unknown background ownership was retained', async () => {
+    const run=await runtime()
+    run.child.notify('item/started',{threadId:'thread-1',turnId:'turn-1',item:{type:'collabToolCall',id:'unknown-launch',tool:'futureBackground'}})
+    completed(run.child);await expect.poll(()=>run.api.snapshot().foreground).toBe('idle')
+    run.child.exit(7)
+    await expect(run.session.close()).rejects.toThrow('codex_terminal_cleanup_unverified');await run.done
+  })
+  it('quarantines a newly observed unverified child outside the initial close cohort', async () => {
+    const run=await runtime();run.child.autoInterrupt=false
+    const closing=run.session.close()
+    await expect.poll(()=>run.child.sent.some(m=>m.method==='turn/interrupt')).toBe(true)
+    nativeThreads['late-unverified']={id:'late-unverified',cwd:'/other-worktree',source:{subAgent:{thread_spawn:{parent_thread_id:'thread-1'}}}}
+    run.child.notify('item/started',{threadId:'thread-1',turnId:'turn-1',item:{type:'subAgentActivity',id:'late-launch',kind:'started',agentThreadId:'late-unverified'}})
+    await expect.poll(()=>run.child.sent.some(m=>m.method==='thread/read'&&m.params.threadId==='late-unverified')).toBe(true)
+    const interrupt=run.child.sent.find(m=>m.method==='turn/interrupt')!
+    run.child.send({id:interrupt.id,result:{}})
+    await expect(closing).rejects.toThrow('codex_terminal_cleanup_unverified');await run.done
+    expect(run.child.kill).toHaveBeenCalled()
+  })
+  it('retains unknown launches and still-running command work at a parent milestone', async () => {
+    for (const item of [{ type: 'collabToolCall', id: 'future', tool: 'futureBackground' }, { type: 'commandExecution', id: 'cmd', processId: '123', status: 'inProgress', command: 'owned task' }]) {
+      const run = await runtime(); run.child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item })
+      completed(run.child); await expect.poll(() => run.api.snapshot().foreground).toBe('idle')
+      expect(run.api.snapshot().retained).toBe(true); expect(run.ended()).toBe(false)
+      await run.session.close(); await run.done
+    }
   })
 })
