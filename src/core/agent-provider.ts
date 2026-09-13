@@ -31,9 +31,20 @@ export interface AgentProject {
  *               result.subtype !== 'success'). Iterator continues to
  *               close normally — true exceptions throw instead.
  */
+/** Public execution activity, never raw model reasoning or unrestricted tool input. */
+export interface AgentActivity {
+  id: string
+  type: 'command' | 'read' | 'edit' | 'search' | 'tool' | 'agent'
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+  label: string
+  detail?: string
+  parentId?: string
+  agentIds?: string[]
+}
+
 export type AgentEvent =
-  | { kind: 'text'; text: string }
-  | { kind: 'tool_call'; server?: string; tool: string }
+  | { kind: 'text'; text: string; itemId?: string; textMode?: 'append' | 'replace' }
+  | { kind: 'tool_call'; server?: string; tool: string; activity?: AgentActivity }
   | { kind: 'init'; sessionId: string }
   | { kind: 'result'; sessionId: string; numTurns: number; durationMs: number }
   | { kind: 'error'; message: string; code?: string }
@@ -107,6 +118,8 @@ export type AgentUserInputAnswers = Record<string, string[]>
  * thread `permissionMode` explicitly.
  */
 export interface SpawnContext {
+  /** Workbench-only ordered activity updates. Normal chat consumers keep legacy events. */
+  workbenchTimeline?: boolean
   tierProfile: TierProfile
   permissionMode: PermissionMode
   /** Bound at spawn time so per-session canUseTool closures resolve the

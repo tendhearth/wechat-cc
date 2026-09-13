@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import type { AgentEvent, AgentProvider } from '../agent-provider'
 import { discoverWorkbenchCodexConfig, workbenchCodexArgs, workbenchCodexEnv } from './codex-config'
 import { validateUserInputAnswers, validateUserInputRequest } from './user-input'
+import { codexActivityEvent, codexItemId } from './codex-activity'
 
 type RpcId = string | number
 // The JSONL boundary is checked below before any request is routed or action accepted.
@@ -10,7 +11,7 @@ interface Message { id?: RpcId; method?: string; params?: ObjectValue; result?: 
 interface Options { codexPathOverride: string; model?: string; rpcTimeoutMs?: number; closeTimeoutMs?: number }
 interface Approval { controller: AbortController; turn: Turn; rejection: 'decline' | 'cancel' }
 interface UserQuestion { controller: AbortController; turn: Turn }
-interface Turn { id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; questionIds: Set<RpcId>; startedAt: number }
+interface Turn { id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; completedItems: Set<string>; questionIds: Set<RpcId>; startedAt: number }
 
 class EventQueue {
   private events: AgentEvent[] = []
@@ -284,12 +285,31 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           if (isRequest) { if (isUserQuestion(message)) onQuestion(message, turn); else onApproval(message, turn); return }
           if (message.method === 'item/started' && object(params.item)) {
             const item = params.item
+            if (codexItemId(item.id) && turn.completedItems.has(item.id)) return
             if (typeof item.id === 'string') turn.items.set(item.id, item)
-            if (['commandExecution', 'fileChange', 'webSearch', 'collabAgentToolCall'].includes(item.type)) turn.events.push({ kind: 'tool_call', tool: item.type })
+            const event = codexActivityEvent(item, false)
+            if (event) turn.events.push(event)
           } else if (message.method === 'item/fileChange/patchUpdated' && typeof params.itemId === 'string' && Array.isArray(params.changes)) {
-            turn.items.set(params.itemId, { type: 'fileChange', changes: params.changes })
-          } else if (message.method === 'item/completed' && params.item?.type === 'agentMessage' && typeof params.item.text === 'string') {
-            turn.events.push({ kind: 'text', text: params.item.text })
+            if (turn.completedItems.has(params.itemId)) return
+            const item = { ...turn.items.get(params.itemId), id: params.itemId, type: 'fileChange', changes: params.changes }
+            turn.items.set(params.itemId, item)
+            const event = codexActivityEvent(item, false)
+            if (event) turn.events.push(event)
+          } else if (message.method === 'item/agentMessage/delta' && codexItemId(params.itemId) && typeof params.delta === 'string' && params.delta && !turn.completedItems.has(params.itemId)) {
+            turn.events.push({ kind: 'text', itemId: params.itemId, textMode: 'append', text: params.delta })
+          } else if (message.method === 'item/completed' && object(params.item)) {
+            const item = { ...turn.items.get(params.item.id), ...params.item }
+            if (codexItemId(item.id)) {
+              if (turn.completedItems.has(item.id)) return
+              turn.completedItems.add(item.id)
+              turn.items.set(item.id, item)
+            }
+            if (item.type === 'agentMessage' && typeof item.text === 'string') {
+              turn.events.push({ kind: 'text', text: item.text, ...(codexItemId(item.id) ? { itemId: item.id, textMode: 'replace' as const } : {}) })
+            } else {
+              const event = codexActivityEvent(item, true)
+              if (event) turn.events.push(event)
+            }
           } else if (message.method === 'error' && !params.willRetry) {
             finish(turn, { kind: 'error', message: typeof params.error?.message === 'string' ? params.error.message : 'codex_turn_failed' })
           } else if (message.method === 'turn/completed') {
@@ -354,7 +374,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         dispatch(text) {
           if (active) throw new Error('codex_turn_already_running')
           if (closing || exited || broken) throw broken ?? new Error('codex_session_closed')
-          const turn: Turn = { id: null, cancelled: false, rejectedOperation: false, events: new EventQueue(), early: [], items: new Map(), questionIds: new Set(), startedAt: Date.now() }
+          const turn: Turn = { id: null, cancelled: false, rejectedOperation: false, events: new EventQueue(), early: [], items: new Map(), completedItems: new Set(), questionIds: new Set(), startedAt: Date.now() }
           active = turn; turn.events.push({ kind: 'init', sessionId: threadId })
           void request('turn/start', { threadId, input: [{ type: 'text', text, text_elements: [] }] }).then(response => {
             if (active !== turn || closing) return

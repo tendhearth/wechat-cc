@@ -90,7 +90,153 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
 
 import * as sdk from '@anthropic-ai/claude-agent-sdk'
 
+const emitSdk = (message: unknown) => (sdk as unknown as { __test_yield: (message: unknown) => void }).__test_yield(message)
+const finishSdkTurn = () => emitSdk({ type: 'result', subtype: 'success', session_id: 'timeline-session', num_turns: 1, duration_ms: 1 })
+
 describe('claude-agent-provider', () => {
+  it('preserves workbench text-tool-text order and native tool identity without exposing tool input', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test', workbenchTimeline: true })
+    const eventsPromise = drain(session.dispatch('inspect'))
+    emitSdk({ type: 'assistant', uuid: 'message-1', parent_tool_use_id: null, message: { content: [
+      { type: 'text', text: 'Before' },
+      { type: 'tool_use', id: 'read-1', name: 'Read', input: { file_path: '/private/SECRET_INPUT', token: 'SECRET_TOKEN' } },
+      { type: 'thinking', thinking: 'PRIVATE_REASONING' },
+      { type: 'text', text: 'After' },
+    ] } })
+    emitSdk({ type: 'user', parent_tool_use_id: null, message: { content: [
+      { type: 'tool_result', tool_use_id: 'read-1', content: 'SECRET_RESULT' },
+    ] } })
+    finishSdkTurn()
+    const events = await eventsPromise
+    expect(events.map(event => event.kind)).toEqual(['text', 'tool_call', 'text', 'tool_call', 'result'])
+    expect(events[0]).toMatchObject({ kind: 'text', text: 'Before', itemId: expect.any(String) })
+    expect(events[2]).toMatchObject({ kind: 'text', text: 'After', itemId: expect.any(String) })
+    expect((events[0] as { itemId: string }).itemId).not.toEqual((events[2] as { itemId: string }).itemId)
+    expect(events[1]).toMatchObject({ kind: 'tool_call', tool: 'Read', activity: { id: 'read-1', type: 'read', status: 'running', label: expect.any(String) } })
+    expect(events[3]).toMatchObject({ kind: 'tool_call', tool: 'Read', activity: { id: 'read-1', type: 'read', status: 'completed' } })
+    expect(JSON.stringify(events)).not.toMatch(/SECRET_|PRIVATE_REASONING/)
+    await session.close()
+  })
+
+  it('correlates failed tool results and native subagent activities without inventing completions', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test', workbenchTimeline: true })
+    const eventsPromise = drain(session.dispatch('inspect'))
+    emitSdk({ type: 'assistant', uuid: 'message-agent', parent_tool_use_id: null, message: { content: [
+      { type: 'tool_use', id: 'agent-1', name: 'Agent', input: { prompt: 'SECRET_PROMPT' } },
+      { type: 'tool_use', id: 'task-1', name: 'Task', input: { prompt: 'SECRET_PROMPT' } },
+    ] } })
+    emitSdk({ type: 'assistant', uuid: 'message-child', parent_tool_use_id: 'agent-1', message: { content: [
+      { type: 'tool_use', id: 'bash-1', name: 'Bash', input: { command: 'TOKEN=SECRET_COMMAND curl somewhere' } },
+    ] } })
+    emitSdk({ type: 'user', parent_tool_use_id: 'agent-1', message: { content: [
+      { type: 'tool_result', tool_use_id: 'unknown-id', is_error: true, content: 'SECRET_UNKNOWN' },
+      { type: 'tool_result', tool_use_id: 'bash-1', is_error: true, content: 'SECRET_FAILURE' },
+      { type: 'tool_result', tool_use_id: 'bash-1', content: 'Duplicate stale success' },
+    ] } })
+    emitSdk({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'agent-1', content: 'done' }] } })
+    finishSdkTurn()
+    const events = await eventsPromise
+    const activities = events.flatMap(event => event.kind === 'tool_call' && event.activity ? [event.activity] : [])
+    expect(activities).toMatchObject([
+      { id: 'agent-1', type: 'agent', status: 'running' },
+      { id: 'task-1', type: 'agent', status: 'running' },
+      { id: 'bash-1', type: 'command', status: 'running', parentId: 'agent-1' },
+      { id: 'bash-1', type: 'command', status: 'failed', parentId: 'agent-1' },
+      { id: 'agent-1', type: 'agent', status: 'completed' },
+    ])
+    expect(JSON.stringify(events)).not.toContain('SECRET_')
+    await session.close()
+  })
+
+  it('keeps normal chat tool-first combined text and ignores tool-result lifecycle', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
+    const eventsPromise = drain(session.dispatch('inspect'))
+    emitSdk({ type: 'assistant', uuid: 'message-chat', message: { content: [
+      { type: 'text', text: 'Before' }, { type: 'tool_use', id: 'read-1', name: 'Read', input: {} }, { type: 'text', text: 'After' },
+    ] } })
+    emitSdk({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'read-1', content: 'done' }] } })
+    finishSdkTurn()
+    expect((await eventsPromise).slice(0, -1)).toEqual([{ kind: 'tool_call', tool: 'Read' }, { kind: 'text', text: 'BeforeAfter' }])
+    await session.close()
+  })
+
+  it('identifies generic workbench tools with bounded sanitized names without copying their payload', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test', workbenchTimeline: true })
+    const eventsPromise = drain(session.dispatch('inspect'))
+    emitSdk({ type: 'assistant', message: { content: [
+      { type: 'tool_use', id: 'local-tool', name: 'InspectWidget', input: { key: 'SECRET_INPUT' } },
+      { type: 'tool_use', id: 'mcp-tool', name: 'mcp__inventory__find_widget', input: { token: 'SECRET_TOKEN' } },
+      { type: 'tool_use', id: 'messy-tool', name: 'odd\n<tool>' + 'x'.repeat(300), input: {} },
+    ] } })
+    emitSdk({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'mcp-tool', content: 'SECRET_OUTPUT' }] } })
+    finishSdkTurn()
+    const events = await eventsPromise
+    const activities = events.flatMap(event => event.kind === 'tool_call' && event.activity ? [event.activity] : [])
+    expect(activities[0]).toMatchObject({ id: 'local-tool', type: 'tool', detail: 'InspectWidget' })
+    expect(activities[1]).toMatchObject({ id: 'mcp-tool', type: 'tool', detail: 'inventory/find_widget' })
+    expect(activities[2]?.detail).toMatch(/^odd_tool_x+$/)
+    expect(activities[2]?.detail?.length).toBeLessThanOrEqual(160)
+    expect(activities[3]).toMatchObject({ id: 'mcp-tool', status: 'completed', detail: 'inventory/find_widget' })
+    expect(JSON.stringify(events)).not.toContain('SECRET_')
+    await session.close()
+  })
+
+  it('keeps replayed text identity and does not regress completed tools or accept a different parent result', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test', workbenchTimeline: true })
+    const eventsPromise = drain(session.dispatch('inspect'))
+    const message = { type: 'assistant', uuid: 'message-replayed', parent_tool_use_id: 'parent-1', message: { content: [
+      { type: 'text', text: 'Checking' }, { type: 'tool_use', id: 'edit-1', name: 'Edit', input: { new_string: 'SECRET_CONTENT' } },
+    ] } }
+    emitSdk(message)
+    emitSdk({ type: 'user', parent_tool_use_id: 'other-parent', message: { content: [{ type: 'tool_result', tool_use_id: 'edit-1', is_error: true }] } })
+    emitSdk({ type: 'user', parent_tool_use_id: 'parent-1', message: { content: [{ type: 'tool_result', tool_use_id: 'edit-1' }] } })
+    emitSdk(message)
+    finishSdkTurn()
+    const events = await eventsPromise
+    const texts = events.filter(event => event.kind === 'text')
+    expect(texts).toHaveLength(2)
+    expect(texts[0]).toEqual(texts[1])
+    expect(texts[0]).toMatchObject({ textMode: 'replace' })
+    expect(events.flatMap(event => event.kind === 'tool_call' ? [event.activity] : [])).toMatchObject([
+      { id: 'edit-1', type: 'edit', status: 'running', parentId: 'parent-1' },
+      { id: 'edit-1', type: 'edit', status: 'completed', parentId: 'parent-1' },
+    ])
+    await session.close()
+  })
+
+  it('retains authentication sentinel protection across workbench text blocks', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test', workbenchTimeline: true })
+    const eventsPromise = drain(session.dispatch('inspect'))
+    emitSdk({ type: 'assistant', uuid: 'message-auth', message: { content: [
+      { type: 'text', text: 'Not logged ' }, { type: 'text', text: 'in · Please run /login' },
+    ] } })
+    finishSdkTurn()
+    const events = await eventsPromise
+    expect(events.filter(event => event.kind === 'text')).toEqual([])
+    expect(events.filter(event => event.kind === 'error')).toMatchObject([{ code: 'auth_failed' }])
+    await session.close()
+  })
+
+  it('does not carry workbench tool identities or late results into the next dispatch', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test', workbenchTimeline: true })
+    const first = drain(session.dispatch('first'))
+    emitSdk({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'old-tool', name: 'Read', input: {} }] } })
+    finishSdkTurn()
+    await first
+    const second = drain(session.dispatch('second'))
+    emitSdk({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'old-tool', content: 'late' }] } })
+    finishSdkTurn()
+    expect((await second).filter(event => event.kind === 'tool_call')).toEqual([])
+    await session.close()
+  })
+
   it('routes AskUserQuestion through structured input before permission classification', async () => {
     const requestPermission = vi.fn(async () => true)
     const requestUserInput = vi.fn(async () => ({ 'question-tool:0': ['PDF', 'Word'], 'question-tool:1': ['Custom note'] }))

@@ -1,5 +1,5 @@
 import { query, type CanUseTool, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities, SpawnContext } from './agent-provider'
+import type { AgentActivity, AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities, SpawnContext } from './agent-provider'
 import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind } from './user-tier'
 import { WORKBENCH_PERMISSION_DESCRIPTION_MAX, WORKBENCH_PERMISSION_TOOL_MAX } from './workbench/permissions'
 import { validateUserInputAnswers, validateUserInputRequest } from './workbench/user-input'
@@ -230,12 +230,17 @@ const CLAUDE_CHEAP_MODEL_DEFAULT = 'claude-haiku-4-5'
 
 // Local mirror of the SDK message variants this provider actually reads.
 // The SDK's full union (`SDKMessage`) covers many more variants but our
-// streaming loop only branches on these three. Defining a narrow local
+// streaming loop only branches on these variants. Defining a narrow local
 // type means every reach into the message shape goes through one cast
 // (`narrow` below) — when the SDK changes shape, that's the only place
 // to update.
-type AssistantContent = string | Array<{ type?: string; text?: string; name?: string }>
-type AssistantMsg = { type: 'assistant'; message?: { content?: AssistantContent } }
+type AssistantBlock = { type?: string; text?: string; name?: string; id?: string }
+type AssistantContent = string | Array<AssistantBlock>
+type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: string | null; message?: { id?: string; content?: AssistantContent } }
+// SDKUserMessage.message is the Anthropic MessageParam. Its tool_result
+// blocks correlate to tool_use.id through tool_use_id; result content can
+// contain private file or command output and is deliberately not read here.
+type UserMsg = { type: 'user'; parent_tool_use_id?: string | null; message?: { content?: string | Array<{ type?: string; tool_use_id?: string; is_error?: boolean }> } }
 type ResultMsg = {
   type: 'result'
   subtype?: string
@@ -245,14 +250,14 @@ type ResultMsg = {
   result?: unknown
 }
 type SystemMsg = { type: 'system'; subtype?: string; session_id?: string }
-type NarrowedMsg = AssistantMsg | ResultMsg | SystemMsg
+type NarrowedMsg = AssistantMsg | UserMsg | ResultMsg | SystemMsg
 
 // Returns null for SDK message types we don't branch on (rate_limit_event,
 // stream_event, partial_assistant, etc.). The caller's for-await loop
 // simply skips these.
 function narrow(msg: SDKMessage): NarrowedMsg | null {
   const t = (msg as { type?: string }).type
-  if (t === 'assistant' || t === 'result' || t === 'system') {
+  if (t === 'assistant' || t === 'user' || t === 'result' || t === 'system') {
     return msg as unknown as NarrowedMsg
   }
   return null
@@ -308,11 +313,39 @@ function swallowSdkLifecycleError(fn: (() => unknown) | undefined): void {
  * into our normalised `{ server, tool }` shape. Built-in tools (Read,
  * Bash) lack the prefix — those return `{ tool: name }` with no server.
  */
-function parseToolUseToEvent(block: { name?: string }): AgentEvent {
+function parseToolUseToEvent(block: { name?: string }): Extract<AgentEvent, { kind: 'tool_call' }> {
   const name = block.name ?? ''
   const m = /^mcp__([^_]+)__(.+)$/.exec(name)
   if (m) return { kind: 'tool_call', server: m[1], tool: m[2]! }
   return { kind: 'tool_call', tool: name }
+}
+
+type ActivityEvent = Extract<AgentEvent, { kind: 'tool_call' }> & { activity: AgentActivity }
+
+function nativeTimelineId(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 && value.length <= 200 && !/[\u0000-\u001f\u007f]/.test(value) ? value : undefined
+}
+
+// Public activity labels are chosen from tool names only. In particular,
+// commands, agent prompts, edit contents, URLs and tool outputs are not
+// copied into the persisted workbench timeline.
+function claudeActivityLabel(name: string): Pick<AgentActivity, 'type' | 'label'> {
+  switch (name) {
+    case 'Bash': return { type: 'command', label: '运行命令' }
+    case 'KillShell': return { type: 'command', label: '停止命令' }
+    case 'Read': return { type: 'read', label: '读取文件' }
+    case 'LS': return { type: 'read', label: '查看文件列表' }
+    case 'WebFetch': return { type: 'read', label: '读取网页' }
+    case 'Glob': return { type: 'search', label: '查找文件' }
+    case 'Grep': return { type: 'search', label: '搜索内容' }
+    case 'WebSearch': return { type: 'search', label: '搜索网页' }
+    case 'Write': return { type: 'edit', label: '写入文件' }
+    case 'Edit': return { type: 'edit', label: '编辑文件' }
+    case 'NotebookEdit': return { type: 'edit', label: '编辑笔记本' }
+    case 'Task': case 'Agent': return { type: 'agent', label: '协作任务' }
+    case 'AskUserQuestion': return { type: 'tool', label: '询问用户' }
+    default: return { type: 'tool', label: '调用工具' }
+  }
 }
 
 export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): AgentProvider {
@@ -387,6 +420,8 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       let activeEventQueue: AsyncQueue<AgentEvent> | null = null
       let closed = false
       let droppedAssistantChunks = 0
+      const activities = new Map<string, ActivityEvent>()
+      let assistantSequence = 0
       let drainResolve: (() => void) | undefined
       const drainPromise = new Promise<void>(resolve => { drainResolve = resolve })
 
@@ -426,6 +461,43 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
               aq.push({ kind: 'init', sessionId: msg.session_id ?? '' })
             } else if (msg.type === 'assistant') {
               const content = msg.message?.content
+              if (spawnOpts.workbenchTimeline) {
+                const messageId = nativeTimelineId(msg.uuid) ?? nativeTimelineId(msg.message?.id) ?? `message-${++assistantSequence}`
+                const parentId = nativeTimelineId(msg.parent_tool_use_id)
+                const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : content ?? []
+                // Inspect the combined text before emitting any block, so a
+                // login sentinel split across blocks cannot leak as a reply.
+                const text = extractText(content)
+                const authFailed = isAuthFail('claude-sentinel', text)
+                let authReported = false
+                for (const [index, block] of blocks.entries()) {
+                  if (block?.type === 'text' && block.text) {
+                    if (authFailed) {
+                      if (!authReported) aq.push({ kind: 'error', code: 'auth_failed', message: `claude reports not logged in: ${text.slice(0, 160)}` })
+                      authReported = true
+                    } else {
+                      aq.push({ kind: 'text', text: block.text, itemId: `claude:${messageId}:text:${index}`, textMode: 'replace' })
+                    }
+                  } else if (block?.type === 'tool_use') {
+                    const event = parseToolUseToEvent(block)
+                    const id = nativeTimelineId(block.id)
+                    if (!id) { aq.push(event); continue }
+                    // A replay must not create a second start or regress a
+                    // completed tool back to running.
+                    if (activities.has(id)) continue
+                    const activity: AgentActivity = { id, ...claudeActivityLabel(block.name ?? ''), status: 'running', ...(parentId ? { parentId } : {}) }
+                    if (activity.type === 'tool') {
+                      const identifier = [event.server, event.tool].filter(Boolean).join('/')
+                      const detail = identifier.replace(/[^A-Za-z0-9_.:/-]+/g, '_').slice(0, 160)
+                      if (detail) activity.detail = detail
+                    }
+                    const start = { ...event, activity }
+                    activities.set(id, start)
+                    aq.push(start)
+                  }
+                }
+                continue
+              }
               // Emit tool_call events for each tool_use block
               if (Array.isArray(content)) {
                 for (const block of content as Array<{ type?: string; name?: string }>) {
@@ -449,6 +521,17 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 } else {
                   aq.push({ kind: 'text', text })
                 }
+              }
+            } else if (msg.type === 'user' && spawnOpts.workbenchTimeline) {
+              const content = msg.message?.content
+              if (Array.isArray(content)) for (const block of content) {
+                if (block?.type !== 'tool_result') continue
+                const id = nativeTimelineId(block.tool_use_id)
+                const previous = id ? activities.get(id) : undefined
+                if (!previous || previous.activity.status !== 'running' || previous.activity.parentId !== nativeTimelineId(msg.parent_tool_use_id)) continue
+                const event: ActivityEvent = { ...previous, activity: { ...previous.activity, status: block.is_error === true ? 'failed' : 'completed' } }
+                activities.set(previous.activity.id, event)
+                aq.push(event)
               }
             } else if (msg.type === 'result') {
               if (msg.subtype && msg.subtype !== 'success') {
@@ -493,6 +576,8 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
             throw new Error(`claude provider: previous dispatch still in flight (alias=${project.alias})`)
           }
           const queue = new AsyncQueue<AgentEvent>()
+          activities.clear()
+          assistantSequence = 0
           activeEventQueue = queue
           sdkQueue.push({
             type: 'user',

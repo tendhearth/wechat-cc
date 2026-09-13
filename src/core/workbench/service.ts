@@ -286,6 +286,7 @@ export function makeWorkbenchService(opts: Options) {
       store.update(task.id,running.cancelled ? 'cancelling' : 'running')
       if (running.cancelled) { finalStatus='cancelled'; return }
       spawning=entry.provider.spawn({alias:`workbench:${task.id}`,path:running.path},{
+        workbenchTimeline:true,
         tierProfile:TIER_PROFILES.trusted,permissionMode:'strict',chatId:task.ownerChatId ?? `workbench:${task.id}`,
         ...(resume ? {resumeSessionId:resume} : {}),mcpEnv:sessionAuthEnv('trusted',token),appendInstructions:instructions,
         requestPermission:(request,signal) => {running.interactionAt=Date.now();return running.permissions.request(request,signal).finally(()=>{running.interactionAt=Date.now()})},
@@ -317,9 +318,7 @@ export function makeWorkbenchService(opts: Options) {
           if (running.cancelled) return
           if(running.queuedInputId&&['text','tool_call','result'].includes(ev.kind))store.liveInputs.set(running.queuedInputId,'delivered')
           if (ev.kind==='init' && ev.sessionId) {if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId)}
-          if (ev.kind==='text') store.addEvent(task.id,'text',ev.text)
-          if (ev.kind==='tool_call') store.addEvent(task.id,'tool_call',ev.server ? `${ev.server}/${ev.tool}` : ev.tool)
-          if (ev.kind==='error') store.addEvent(task.id,'error',ev.message)
+          if (ev.kind==='text'||ev.kind==='tool_call'||ev.kind==='error') store.recordAgentEvent(task.id,running.identity,ev)
         },()=>running.questions.pending().length>0||running.permissions.pending().length>0,()=>running.interactionAt)
       if (!summary) { finalStatus='cancelled'; return }
       if (summary.result?.sessionId) {if(resume&&summary.result.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,summary.result.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,summary.result.sessionId)}
@@ -350,7 +349,10 @@ export function makeWorkbenchService(opts: Options) {
       if (!running.uncertain) await collect(running)
       revokeCredentials(running)
       if (running.uncertain) { finalStatus='interrupted'; finalError='writer_not_closed' }
-      try { store.update(task.id,running.cancelled && !running.uncertain ? 'cancelled' : finalStatus,finalError) } catch { /* never unlock an uncertain writer for a status failure */ }
+      try {
+        store.finishRunActivities(task.id,running.identity,running.cancelled&&!running.uncertain?'cancelled':'interrupted')
+        store.update(task.id,running.cancelled && !running.uncertain ? 'cancelled' : finalStatus,finalError)
+      } catch { /* never unlock an uncertain writer for a status failure */ }
       running.publicFinished=true; running.resolveDone()
       if (!running.uncertain) releaseReservation(running)
       if(finalStatus==='completed'&&!running.cancelled&&!running.uncertain&&!stopping)drainInputs(task.id,running.directoryIdentity)
@@ -396,8 +398,10 @@ export function makeWorkbenchService(opts: Options) {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
     if(opts.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
     if([...runsByTask.values()].some(run=>task.sessionId&&run.task.providerId===task.providerId&&run.task.sessionId===task.sessionId))throw new Error('native_session_busy')
-    if(nativeResume)store.addEvent(task.id,'system',`用户声明原 ${task.providerId} 执行程序已关闭，选择${nativeResume.mode==='native_resume'?'恢复原会话':'带已确认的记录新开一轮'}。原会话：${nativeResume.nativeId}。`)
-    const requestEventId=store.addEvent(task.id,'user',text)
+    const runId=randomUUID()
+    const addRunEvent=(kind:'user'|'system',text:string)=>store.addEvent(task.id,kind,text,null,runId)
+    if(nativeResume)addRunEvent('system',`用户声明原 ${task.providerId} 执行程序已关闭，选择${nativeResume.mode==='native_resume'?'恢复原会话':'带已确认的记录新开一轮'}。原会话：${nativeResume.nativeId}。`)
+    const requestEventId=addRunEvent('user',text)
     if(handoffId)store.recordHandoffEvent(handoffId,requestEventId)
     store.update(task.id,'queued')
     let signalStop!:()=>void,resolveDone!:()=>void
@@ -406,16 +410,16 @@ export function makeWorkbenchService(opts: Options) {
     const permissions=makeRunPermissions({
       taskId:task.id,timeoutMs:opts.permissionTimeoutMs ?? WORKBENCH_PERMISSION_TIMEOUT_MS,
       audit:event => event.type==='request'
-        ? store.addEvent(task.id,'system',`权限请求：${event.permission.tool} · ${event.permission.description} · ${event.permission.id}`)
-        : store.addEvent(task.id,'system',`权限结果：${event.permission.tool} · ${event.outcome} · ${event.permission.id}`),
+        ? addRunEvent('system',`权限请求：${event.permission.tool} · ${event.permission.description} · ${event.permission.id}`)
+        : addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome} · ${event.permission.id}`),
     })
     const questions=makeRunUserInput({taskId:task.id,audit:event=>{
-      if(event.type==='request')store.addEvent(task.id,'system',`执行者提问：${JSON.stringify(event.request)}`)
-      else if(event.type==='answer')store.addEvent(task.id,'user',`回答执行者的问题：\n${event.request.questions.map(q=>`${q.question}\n${event.answers?.[q.id]?.join('、')??''}`).join('\n\n')}`)
-      else store.addEvent(task.id,'system',`问题已结束，未提交回答：${event.request.id}`)
+      if(event.type==='request')addRunEvent('system',`执行者提问：${JSON.stringify(event.request)}`)
+      else if(event.type==='answer')addRunEvent('user',`回答执行者的问题：\n${event.request.questions.map(q=>`${q.question}\n${event.answers?.[q.id]?.join('、')??''}`).join('\n\n')}`)
+      else addRunEvent('system',`问题已结束，未提交回答：${event.request.id}`)
     }})
     const running:Active={
-      interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:randomUUID(),taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
+      interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
       cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,credentialsMinted:false,credentialsRevoked:false,
     }
     runsByTask.set(task.id,running); runningText.set(running.identity,text); queue.push(running); pump()
@@ -645,7 +649,12 @@ export function makeWorkbenchService(opts: Options) {
     },
     detail(id:string) {
       const detail=store.detail(id),running=runsByTask.get(id)
-      return {...detail,task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],...(running&&!running.cancelled&&!running.finishing&&!running.uncertain?{runId:running.identity,inputMode:running.session?.steer?'steer' as const:'queue' as const}:{}),permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:continuation(store.get(id)),...(store.source(id)?.firstDispatchedAt===null?{requiresExternalClose:true}:{})} : {})}
+      return {...detail,task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
+        // The timeline stays live through cancellation and process cleanup;
+        // accepting supplemental input is a separate, narrower capability.
+        ...(running?{runId:running.identity}:{}),
+        ...(running&&!running.cancelled&&!running.finishing&&!running.uncertain?{inputMode:running.session?.steer?'steer' as const:'queue' as const}:{}),
+        permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:continuation(store.get(id)),...(store.source(id)?.firstDispatchedAt===null?{requiresExternalClose:true}:{})} : {})}
     },
     create(input:CreateTask):WorkbenchTaskView {
       ensureAccepting()

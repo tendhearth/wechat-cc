@@ -67,7 +67,7 @@ describe('workbench rendering', () => {
     expect(renderTaskControls('running',continuation)).not.toContain('data-action="restart"')
   })
 
-  it('renders every user and provider message in chronological order while tool logs stay collapsed', async () => {
+  it('renders every user and provider message in arrival order with finished tools folded in place', async () => {
     const { renderWorkbench } = await import('./workbench.js')
     const html = renderWorkbench({tasks:[], providers:[{id:'codex',displayName:'Codex'}], defaultProvider:'codex',canWechat:false,selectedId:'A', selectedArtifactId:null,error:'',preview:null,
       detail:{task:{id:'A',title:'整理资料',path:'/work',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null},artifacts:[],events:[
@@ -80,8 +80,10 @@ describe('workbench rendering', () => {
     expect(html.indexOf('先整理访谈。')).toBeLessThan(html.indexOf('Codex 第一轮回复。'))
     expect(html.indexOf('Codex 第一轮回复。')).toBeLessThan(html.indexOf('再补充引用。'))
     expect(html.indexOf('再补充引用。')).toBeLessThan(html.indexOf('Codex 第二轮回复。'))
-    expect(html).toMatch(/<details[^>]*id="wb-tools"[^>]*>/)
-    expect(html).not.toMatch(/<details[^>]*id="wb-tools"[^>]* open/)
+    expect(html.indexOf('Codex 第一轮回复。')).toBeLessThan(html.indexOf('读取文件'))
+    expect(html.indexOf('读取文件')).toBeLessThan(html.indexOf('再补充引用。'))
+    expect(html).toMatch(/<details[^>]*data-timeline-group[^>]*>/)
+    expect(html).not.toMatch(/<details[^>]*data-timeline-group[^>]* open/)
     expect(html).toContain('读取文件')
     expect(html).toContain('Codex')
     expect(html).not.toContain('alt="CC"')
@@ -1192,6 +1194,120 @@ describe('workbench mutations', () => {
     const approve = new FakeElement(); approve.dataset.action = 'approve-artifact'
     await click({ target: approve })
     expect(invokeWorkbenchApi).toHaveBeenCalledWith('POST', '/v1/workbench/approve', { id: 'REVIEW', artifactId: 'DIFF', sha256: 'b'.repeat(64) })
+    stopWorkbenchPolling()
+  })
+
+  it('creates closed operation groups at run end and preserves manual choices, focus, drafts and reading position across polling', async () => {
+    vi.useFakeTimers()
+    const field = new FakeElement(); field.id = 'wb-followup-text'
+    const page = installFakePage({ 'wb-followup-text':field })
+    const content = new FakeElement(); content.clientHeight = 400; content.scrollHeight = 1000
+    const notice = new FakeElement()
+    let markup = ''
+    let disclosures = new Map<string, FakeElement>()
+    let summaries = new Map<string, FakeElement>()
+    Object.defineProperty(page, 'innerHTML', { get:() => markup, set:(value:string) => {
+      markup = value; disclosures = new Map(); summaries = new Map()
+      for (const [, id] of value.matchAll(/<details\b[^>]*id="([^"]+)"[^>]*data-timeline-disclosure[^>]*>/g)) {
+        const disclosure = new FakeElement(); disclosure.id = id!
+        const summary = new FakeElement(); summary.parentElement = disclosure; summary.focus = vi.fn()
+        disclosures.set(id!, disclosure); summaries.set(id!, summary)
+      }
+    } })
+    page.querySelector = (selector:string) => {
+      if (selector === '.wb-content') return content
+      if (selector === '.wb-reading-bar') return notice
+      if (selector === '[data-timeline-disclosure][open]') return [...disclosures.values()].find(node => node.hasAttribute('open')) ?? null
+      if (selector.endsWith(' > summary')) return summaries.get(selector.slice(1, -10)) ?? null
+      return disclosures.get(selector.slice(1)) ?? null
+    }
+    ;(page as any).querySelectorAll = (selector:string) => selector === '[data-timeline-disclosure]' ? [...disclosures.values()] : selector === '[data-timeline-disclosure][open]' ? [...disclosures.values()].filter(node => node.hasAttribute('open')) : []
+    const task = { id:'A', title:'Timeline', path:'/work', providerId:'codex', status:'running', createdAt:1, updatedAt:2, error:null }
+    const other = { ...task, id:'B', status:'completed' }
+    const operation = (taskId:string) => ({ id:'read', taskId, runId:'run1', kind:'tool_call', text:'Read source', createdAt:3, activity:{ id:'read', type:'read', status:'completed', label:'Read source' } })
+    const invokeWorkbenchApi = vi.fn(async (_method:string, path:string) => path === '/v1/workbench' ? { tasks:[task,other], providers:[], defaultProvider:null, canWechat:false }
+      : { task:path.endsWith('B') ? other : task, events:[operation(path.endsWith('B') ? 'B' : 'A')], artifacts:[], runId:'run1' })
+    const { initWorkbenchPage, stopWorkbenchPolling } = await import('./workbench.js')
+    const controller = initWorkbenchPage({ invokeWorkbenchApi, pollMs:60_000 })!
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    expect(disclosures.size).toBe(0)
+    field.value = 'Keep my draft'
+    task.status = 'completed'; await controller.refresh()
+    const groupId = [...disclosures.keys()][0]!
+    expect(groupId).toBeTruthy()
+    expect(disclosures.get(groupId)?.hasAttribute('open')).toBe(false)
+    disclosures.get(groupId)?.setAttribute('open', '')
+    content.scrollTop = 600
+    const doc = root.document as { activeElement:unknown }; doc.activeElement = summaries.get(groupId)
+    task.updatedAt++; await controller.refresh()
+    expect(disclosures.get(groupId)?.hasAttribute('open')).toBe(true)
+    expect(summaries.get(groupId)?.focus).toHaveBeenCalledWith({ preventScroll:true })
+    expect(content.scrollTop).toBe(600)
+    expect(field.value).toBe('Keep my draft')
+    doc.activeElement = null
+    await controller.selectTask('B')
+    expect([...disclosures.values()].every(node => !node.hasAttribute('open'))).toBe(true)
+    await controller.selectTask('A')
+    expect(disclosures.get(groupId)?.hasAttribute('open')).toBe(true)
+    const latest = new FakeElement(); latest.dataset.action = 'latest-content'
+    const click = [...page.listeners.get('click')!][0]!
+    await click({ target:latest })
+    expect(disclosures.get(groupId)?.hasAttribute('open')).toBe(false)
+    expect(content.scrollTop).toBe(1000)
+    stopWorkbenchPolling()
+  })
+
+  it.each(['reply', 'operation'] as const)('keeps a visible %s at the same viewport offset when completion folds earlier operations, without borrowing another task anchor', async kind => {
+    vi.useFakeTimers()
+    const page = installFakePage()
+    const content = new FakeElement(); content.clientHeight = 400
+    ;(content as any).getBoundingClientRect = () => ({ top:100, bottom:500, height:400 })
+    let markup = '', currentTask = '', targetTop = 0
+    let target = new FakeElement(), group:FakeElement|null = null
+    const targetRect = () => group && !group.hasAttribute('open') ? { top:0, bottom:0, height:0 }
+      : { top:100 + targetTop - content.scrollTop, bottom:200 + targetTop - content.scrollTop, height:100 }
+    Object.defineProperty(page, 'innerHTML', { get:() => markup, set:(value:string) => {
+      markup = value; content.scrollTop = 0
+      currentTask = value.includes('A reading target') ? 'A' : 'B'
+      const folded = /<details\b[^>]*data-timeline-group/.test(value)
+      // A completed group above the reply removes 300 px from its document
+      // position. An operation remains at its old position only if its group
+      // is kept open while that operation is being read.
+      targetTop = currentTask === 'A' ? kind === 'reply' && folded ? 420 : 720 : 240
+      content.scrollHeight = currentTask === 'A' && folded ? 1300 : 1600
+      const article = [...value.matchAll(/<article\b[^>]*>[\s\S]*?<\/article>/g)].find(match => match[0].includes(`${currentTask} reading target`))?.[0] ?? ''
+      target = new FakeElement(); target.id = article.match(/\bid="([^"]+)"/)?.[1] ?? `target-${currentTask}`
+      group = kind === 'operation' && folded ? new FakeElement() : null
+      ;(target as any).getBoundingClientRect = targetRect
+      target.closest = (selector?:string) => selector === 'details[data-timeline-group]' ? group : null
+    } })
+    page.querySelector = (selector:string) => selector === '.wb-content' ? content : selector === `#${target.id}` ? target : null
+    ;(page as any).querySelectorAll = (selector:string) => selector === '[data-timeline-anchor]' ? [target] : []
+    const task = { id:'A', title:'A', path:'/work', providerId:'codex', status:'running', createdAt:1, updatedAt:2, error:null }
+    const other = { ...task, id:'B', status:'completed' }
+    const detail = (id:string) => ({ task:id === 'A' ? task : other, runId:'run1', artifacts:[], events:[
+      { id:'tool', taskId:id, runId:'run1', kind:'tool_call', text:'Earlier operations', createdAt:1 },
+      { id:'target', taskId:id, runId:'run1', kind:kind === 'reply' ? 'text' : 'tool_call', text:`${id} reading target`, createdAt:2 },
+    ] })
+    const invokeWorkbenchApi = vi.fn(async (_method:string, path:string) => path === '/v1/workbench' ? { tasks:[task,other], providers:[], defaultProvider:null, canWechat:false } : detail(path.endsWith('B') ? 'B' : 'A'))
+    const { initWorkbenchPage, stopWorkbenchPolling } = await import('./workbench.js')
+    const controller = initWorkbenchPage({ invokeWorkbenchApi, pollMs:60_000 })!
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    content.scrollTop = 650
+    const before = targetRect().top
+    expect(before).toBe(170)
+    task.status = 'completed'; await controller.refresh()
+    expect(targetRect().top).toBe(before)
+    expect(content.scrollTop).toBe(kind === 'reply' ? 350 : 650)
+    if (kind === 'operation') expect((group as FakeElement|null)?.hasAttribute('open')).toBe(true)
+    await controller.selectTask('B')
+    expect(content.scrollTop).toBe(1600)
+    ;(group as FakeElement|null)?.setAttribute('open', '')
+    content.scrollTop = 180
+    await controller.selectTask('A')
+    expect(targetRect().top).toBe(170)
+    await controller.selectTask('B')
+    expect(targetRect().top).toBe(160)
     stopWorkbenchPolling()
   })
 

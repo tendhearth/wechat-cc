@@ -254,12 +254,118 @@ describe('workbench Codex app-server', () => {
     child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'commandExecution', id: 'item-1', command: 'pwd' } })
     child.notify('item/completed', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', id: 'answer', text: 'Real answer' } })
     completed(child); await first.done
-    expect(first.events).toEqual([{ kind: 'init', sessionId: 'thread-1' }, { kind: 'tool_call', tool: 'commandExecution' }, { kind: 'text', text: 'Real answer' }, { kind: 'result', sessionId: 'thread-1', numTurns: 1, durationMs: 4 }])
+    expect(first.events).toEqual([{ kind: 'init', sessionId: 'thread-1' }, { kind: 'tool_call', tool: 'commandExecution', activity: { id: 'item-1', type: 'command', status: 'running', label: '运行命令' } }, { kind: 'text', text: 'Real answer', itemId: 'answer', textMode: 'replace' }, { kind: 'result', sessionId: 'thread-1', numTurns: 1, durationMs: 4 }])
     const second = collect(session, 'follow-up'); await begun(child, 2)
     child.notify('item/completed', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', text: 'stale' } })
     completed(child, 'completed', 'turn-2'); await second.done
     expect(second.events.some(e => e.kind === 'text')).toBe(false)
     expect(child.sent.filter(m => m.method === 'thread/start')).toHaveLength(1)
+  })
+
+  it('streams ordered text deltas and replaces the same message with its authoritative completion', async () => {
+    const { session, child } = await start(); const run = collect(session); await begun(child)
+    const scope = { threadId: 'thread-1', turnId: 'turn-1' }
+    child.notify('item/agentMessage/delta', { ...scope, itemId: 'progress', delta: 'Inspecting ' })
+    child.notify('item/agentMessage/delta', { ...scope, itemId: 'progress', delta: 'files' })
+    child.notify('item/started', { ...scope, item: { type: 'commandExecution', id: 'read', status: 'inProgress', command: 'cat private.txt', cwd: '/project', commandActions: [{ type: 'read', command: 'cat private.txt', name: 'private.txt', path: '/project/private.txt' }] } })
+    child.notify('item/completed', { ...scope, item: { type: 'agentMessage', id: 'progress', text: 'Inspecting files.' } })
+    child.notify('item/agentMessage/delta', { ...scope, itemId: 'progress', delta: 'late duplicate' })
+    child.notify('item/agentMessage/delta', { ...scope, threadId: 'other-thread', itemId: 'wrong', delta: 'wrong thread' })
+    child.notify('item/agentMessage/delta', { ...scope, turnId: 'old-turn', itemId: 'wrong', delta: 'wrong turn' })
+    child.notify('item/completed', { ...scope, item: { type: 'agentMessage', id: 'answer', text: 'Done.' } })
+    completed(child); await run.done
+    expect(run.events.slice(1, -1)).toEqual([
+      { kind: 'text', itemId: 'progress', textMode: 'append', text: 'Inspecting ' },
+      { kind: 'text', itemId: 'progress', textMode: 'append', text: 'files' },
+      { kind: 'tool_call', tool: 'commandExecution', activity: { id: 'read', type: 'read', status: 'running', label: '读取文件', detail: '/project/private.txt' } },
+      { kind: 'text', itemId: 'progress', textMode: 'replace', text: 'Inspecting files.' },
+      { kind: 'text', itemId: 'answer', textMode: 'replace', text: 'Done.' },
+    ])
+  })
+
+  it('updates command and file activities by native item identity without exposing command output or patches', async () => {
+    const { session, child } = await start(); const run = collect(session); await begun(child)
+    const scope = { threadId: 'thread-1', turnId: 'turn-1' }
+    const item = { type: 'commandExecution', id: 'read', status: 'inProgress', command: 'SECRET_COMMAND', cwd: '/project', commandActions: [{ type: 'read', command: 'SECRET_COMMAND', name: 'a.txt', path: '/project/a.txt' }] }
+    child.notify('item/started', { ...scope, item })
+    child.notify('item/completed', { ...scope, item: { ...item, status: 'completed', exitCode: 0, aggregatedOutput: 'SECRET_OUTPUT' } })
+    child.notify('item/started', { ...scope, item: { type: 'fileChange', id: 'edit', status: 'inProgress', changes: [{ path: '/project/a.txt', kind: { type: 'update' }, diff: 'SECRET_DIFF' }] } })
+    child.notify('item/fileChange/patchUpdated', { ...scope, itemId: 'edit', changes: [{ path: '/project/b.txt', kind: { type: 'update' }, diff: 'SECRET_NEW_DIFF' }] })
+    child.notify('item/completed', { ...scope, item: { type: 'fileChange', id: 'edit', status: 'completed' } })
+    completed(child); await run.done
+    const activities = run.events.flatMap(event => event.kind === 'tool_call' ? [event.activity] : [])
+    expect(activities).toEqual([
+      { id: 'read', type: 'read', status: 'running', label: '读取文件', detail: '/project/a.txt' },
+      { id: 'read', type: 'read', status: 'completed', label: '读取文件', detail: '/project/a.txt' },
+      { id: 'edit', type: 'edit', status: 'running', label: '修改文件', detail: '/project/a.txt' },
+      { id: 'edit', type: 'edit', status: 'running', label: '修改文件', detail: '/project/b.txt' },
+      { id: 'edit', type: 'edit', status: 'completed', label: '修改文件', detail: '/project/b.txt' },
+    ])
+    expect(JSON.stringify(run.events)).not.toContain('SECRET_')
+  })
+
+  it.each([
+    ['failed', 1, 'failed'], ['declined', null, 'cancelled'], ['completed', 2, 'failed'], ['interrupted', null, 'interrupted'],
+  ])('preserves command outcome %s rather than assuming success at item completion', async (status, exitCode, expected) => {
+    const { session, child } = await start(); const run = collect(session); await begun(child)
+    child.notify('item/completed', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'commandExecution', id: 'cmd', status, exitCode, command: 'SECRET', commandActions: [], cwd: '/project' } })
+    completed(child); await run.done
+    expect(run.events.find(event => event.kind === 'tool_call')).toMatchObject({ activity: { id: 'cmd', type: 'command', status: expected } })
+  })
+
+  it.each(['collabAgentToolCall', 'collabToolCall'])('keeps %s relationships and reported child states without leaking prompts', async type => {
+    const { session, child } = await start(); const run = collect(session); await begun(child)
+    const scope = { threadId: 'thread-1', turnId: 'turn-1' }
+    const targets = type === 'collabAgentToolCall' ? { receiverThreadIds: ['child-1'], agentsStates: { 'child-1': { status: 'pendingInit', message: 'SECRET_MESSAGE' } } } : { newThreadId: 'child-1', agentStatus: 'pendingInit' }
+    const runningState = type === 'collabAgentToolCall' ? { agentsStates: { 'child-1': { status: 'running', message: 'SECRET_MESSAGE' } } } : { agentStatus: 'running' }
+    const item = { type, id: 'spawn', tool: 'spawnAgent', senderThreadId: 'thread-1', status: 'inProgress', prompt: 'SECRET_PROMPT', ...targets }
+    child.notify('item/started', { ...scope, item })
+    child.notify('item/completed', { ...scope, item: { ...item, status: 'completed', ...runningState } })
+    child.notify('item/completed', { ...scope, item: { ...item, id: 'send', tool: 'sendMessage', status: 'completed' } })
+    completed(child); await run.done
+    const activities = run.events.flatMap(event => event.kind === 'tool_call' ? [event.activity] : [])
+    expect(activities).toMatchObject([
+      { id: 'spawn', type: 'agent', status: 'running', parentId: 'thread-1', agentIds: ['child-1'] },
+      { id: 'spawn', type: 'agent', status: 'completed', parentId: 'thread-1', agentIds: ['child-1'], detail: '子助手 1：正在处理' },
+      { id: 'send', type: 'agent', status: 'completed', label: '给子助手发送消息' },
+    ])
+    expect(JSON.stringify(run.events)).not.toContain('SECRET_')
+  })
+
+  it('does not expose raw MCP or dynamic tool payloads and bounds activity details', async () => {
+    const { session, child } = await start(); const run = collect(session); await begun(child)
+    const scope = { threadId: 'thread-1', turnId: 'turn-1' }
+    child.notify('item/completed', { ...scope, item: { type: 'mcpToolCall', id: 'mcp', server: 'files', tool: 'read', status: 'failed', arguments: { secret: 'SECRET_ARG' }, error: { message: 'SECRET_ERROR' }, result: { content: 'SECRET_RESULT' } } })
+    child.notify('item/completed', { ...scope, item: { type: 'dynamicToolCall', id: 'dynamic', tool: 'inspect', status: 'completed', success: false, arguments: 'SECRET_ARG', contentItems: ['SECRET_RESULT'] } })
+    child.notify('item/completed', { ...scope, item: { type: 'fileChange', id: 'large', status: 'completed', changes: Array.from({ length: 100 }, (_, i) => ({ path: `/project/${i}-${'x'.repeat(1000)}\u0000.txt`, diff: 'SECRET_DIFF' })) } })
+    completed(child); await run.done
+    const activities = run.events.flatMap(event => event.kind === 'tool_call' && event.activity ? [event.activity] : [])
+    expect(activities).toMatchObject([{ id: 'mcp', type: 'tool', status: 'failed' }, { id: 'dynamic', type: 'tool', status: 'failed' }, { id: 'large', type: 'edit', status: 'completed' }])
+    expect(activities[2]!.detail!.length).toBeLessThanOrEqual(2000)
+    expect(activities[2]!.detail).not.toContain('\u0000')
+    expect(JSON.stringify(run.events)).not.toContain('SECRET_')
+  })
+
+  it('uses native search actions and ignores stale or private activity notifications', async () => {
+    const { session, child } = await start(); const run = collect(session); await begun(child)
+    const scope = { threadId: 'thread-1', turnId: 'turn-1' }
+    const web = { type: 'webSearch', id: 'web', query: 'SECRET_QUERY', results: ['SECRET_RESULTS'] }
+    child.notify('item/started', { ...scope, item: web })
+    child.notify('item/completed', { ...scope, item: web })
+    child.notify('item/started', { ...scope, item: web })
+    child.notify('item/completed', { ...scope, item: web })
+    child.notify('item/completed', { ...scope, item: { type: 'commandExecution', id: 'search', status: 'completed', command: 'SECRET_COMMAND', commandActions: [{ type: 'search', command: 'SECRET_COMMAND', path: '/project/src', query: 'SECRET_QUERY' }] } })
+    child.notify('item/completed', { ...scope, threadId: 'child-1', item: { type: 'commandExecution', id: 'other', status: 'completed' } })
+    child.notify('item/completed', { ...scope, turnId: 'old-turn', item: { type: 'fileChange', id: 'old', status: 'completed', changes: [] } })
+    child.notify('item/completed', { ...scope, item: { type: 'reasoning', id: 'private', text: 'SECRET_REASONING' } })
+    completed(child); await run.done
+    const activities = run.events.flatMap(event => event.kind === 'tool_call' ? [event.activity] : [])
+    expect(activities).toEqual([
+      { id: 'web', type: 'search', status: 'running', label: '搜索网页' },
+      { id: 'web', type: 'search', status: 'completed', label: '搜索网页' },
+      { id: 'search', type: 'search', status: 'completed', label: '检索文件', detail: '/project/src' },
+    ])
+    expect(JSON.stringify(run.events)).not.toContain('SECRET_')
   })
 
   it.each([true, false])('replies to the exact approval RPC id with one-shot decision %s', async allow => {

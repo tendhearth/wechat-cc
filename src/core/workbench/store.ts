@@ -5,6 +5,8 @@ import {publicSource,type StoredNativeSource} from './native-adoption'
 import type {NativeHistoryMessage} from './native-history'
 import type { Db } from '../../lib/db'
 import {makeLiveInputStore} from './live-inputs'
+import {makeTimelineEvents} from './timeline-events'
+import type {AgentActivity} from '../agent-provider'
 
 export type TaskStatus = 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 export interface Task {
@@ -12,7 +14,7 @@ export interface Task {
   createdAt: number; updatedAt: number; error: string | null; archivedAt: number | null
 }
 export interface StoredTask extends Task { ownerChatId: string | null; sessionId: string | null }
-export interface TaskEvent { id: number; taskId: string; kind: 'user' | 'text' | 'tool_call' | 'system' | 'error'; text: string; createdAt: number; sourceId?:string|null }
+export interface TaskEvent { id: number; taskId: string; kind: 'user' | 'text' | 'tool_call' | 'system' | 'error'; text: string; createdAt: number; sourceId?:string|null; runId?:string; activity?:AgentActivity }
 export interface Artifact { id: string; taskId: string; name: string; mime: string; size: number; sha256: string; createdAt: number; approvedAt: number | null }
 export interface StoredArtifact extends Artifact { storagePath: string }
 const TASK_SELECT = 'SELECT id,title,path,provider_id AS providerId,owner_chat_id AS ownerChatId,session_id AS sessionId,status,error,created_at AS createdAt,updated_at AS updatedAt,archived_at AS archivedAt FROM workbench_tasks'
@@ -60,10 +62,7 @@ export function makeWorkbenchStore(db: Db) {
     return task
   }
   const artifacts = (id: string) => db.query<StoredArtifact, [string]>(`${ART_SELECT} WHERE task_id=? ORDER BY created_at DESC,rowid DESC`).all(id)
-  const events = (id: string) => db.query<TaskEvent, [string]>('SELECT id,task_id AS taskId,kind,text,created_at AS createdAt,source_id AS sourceId FROM workbench_events WHERE task_id=? ORDER BY id').all(id)
-  const addEvent = (id: string, kind: TaskEvent['kind'], text: string,sourceId:string|null=null) => {
-    return Number(db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,source_id) VALUES(?,?,?,?,?)').run(id, kind, text.slice(0, 40_000), Date.now(),sourceId).lastInsertRowid)
-  }
+  const {events,addEvent,recordAgentEvent,finishRunActivities}=makeTimelineEvents(db)
   const sourceRow=(row:StoredNativeSource|null)=>row?{...row,truncated:!!row.truncated}:null
   const source=(id:string)=>sourceRow(db.query<StoredNativeSource,[string]>(SOURCE_SELECT+' WHERE task_id=?').get(id))
   const sourceByIdentity=(providerId:string,nativeId:string)=>sourceRow(db.query<StoredNativeSource,[string,string]>(SOURCE_SELECT+' WHERE provider_id=? AND native_id=?').get(providerId,nativeId))
@@ -73,7 +72,7 @@ export function makeWorkbenchStore(db: Db) {
   })
   return {
     liveInputs:makeLiveInputStore(db),
-    get, artifacts, events, addEvent,source,sourceByIdentity,handoffs,
+    get, artifacts, events, addEvent,recordAgentEvent,finishRunActivities,source,sourceByIdentity,handoffs,
     recordHandoffNative:(id:string,nativeId:string)=>db.query('UPDATE workbench_handoffs SET target_native_id=? WHERE id=? AND target_native_id IS NULL').run(nativeId,id),
     recordHandoffEvent:(id:string,eventId:number)=>db.query('UPDATE workbench_handoffs SET request_event_id=? WHERE id=?').run(eventId,id),
     handoffByToken:(hash:string)=>db.query<StoredHandoff,[string]>(HANDOFF_SELECT+' WHERE token_hash=?').get(hash),
@@ -156,6 +155,7 @@ export function makeWorkbenchStore(db: Db) {
       const rows = db.query<{ id: string; path: string; status: TaskStatus }, []>("SELECT id,path,status FROM workbench_tasks WHERE status IN ('queued','running','cancelling')").all()
       db.transaction(() => {
         for (const { id,path,status } of rows) {
+          finishRunActivities(id,null,'interrupted')
           db.query("UPDATE workbench_tasks SET status='interrupted',error='daemon_restarted',updated_at=? WHERE id=?").run(Date.now(),id)
           addEvent(id, 'system', status === 'queued'
             ? '服务重启时任务仍在等待，未自动派发。原请求已保留，请补充要求后手动继续。'
