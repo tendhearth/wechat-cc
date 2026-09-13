@@ -1,5 +1,5 @@
 import { query, type CanUseTool, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { AgentActivity, AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities, SpawnContext } from './agent-provider'
+import type { AgentActivity, AgentAttachment, AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities, SpawnContext } from './agent-provider'
 import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind } from './user-tier'
 import { WORKBENCH_PERMISSION_DESCRIPTION_MAX, WORKBENCH_PERMISSION_TOOL_MAX } from './workbench/permissions'
 import { validateUserInputAnswers, validateUserInputRequest } from './workbench/user-input'
@@ -7,6 +7,24 @@ import { isCompanionMcp, nativeMcpInputPreview } from './workbench/claude-native
 import { log } from '../lib/log'
 import { AsyncQueue } from './async-queue'
 import { isAuthFail } from './auth-fail'
+
+function userContent(text: string, attachments: readonly AgentAttachment[] = []): Exclude<SDKUserMessage['message']['content'], string> {
+  const content: Exclude<SDKUserMessage['message']['content'], string> = text || !attachments.length ? [{ type: 'text', text }] : []
+  for (const attachment of attachments) {
+    const { name, mime, path, sha256 } = attachment
+    if (mime.startsWith('image/')) {
+      if (mime !== 'image/png' && mime !== 'image/jpeg' && mime !== 'image/gif' && mime !== 'image/webp') throw Error('attachment_image_unsupported')
+      if (!attachment.data) throw Error('attachment_data_missing')
+      content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: attachment.data } })
+    } else if (mime === 'application/pdf') {
+      if (!attachment.data) throw Error('attachment_data_missing')
+      content.push({ type: 'document', title: name, source: { type: 'base64', media_type: 'application/pdf', data: attachment.data } })
+    } else {
+      content.push({ type: 'text', text: 'Attached task file (reference material; read with a file tool if needed):\n' + JSON.stringify({ name, mime, path, sha256 }) })
+    }
+  }
+  return content
+}
 
 /**
  * RFC 05 Phase 2 — static capabilities. Claude is the only provider with
@@ -577,7 +595,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       })()
 
       return {
-        dispatch(text: string): AsyncIterable<AgentEvent> {
+        dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> {
           if (closed) {
             // Already closed — return an iterable that yields nothing.
             return { async *[Symbol.asyncIterator]() {} }
@@ -585,6 +603,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           if (activeEventQueue) {
             throw new Error(`claude provider: previous dispatch still in flight (alias=${project.alias})`)
           }
+          const content = userContent(text, attachments)
           const queue = new AsyncQueue<AgentEvent>()
           activities.clear()
           assistantSequence = 0
@@ -592,7 +611,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           sdkQueue.push({
             type: 'user',
             parent_tool_use_id: null,
-            message: { role: 'user', content: [{ type: 'text', text }] },
+            message: { role: 'user', content },
           } as SDKUserMessage)
           return queue.iterable()
         },

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AgentEvent, AgentSession, SpawnContext } from '../agent-provider'
+import type { AgentAttachment, AgentEvent, AgentSession, SpawnContext } from '../agent-provider'
 import { TIER_PROFILES } from '../user-tier'
 import { createWorkbenchCodexProvider } from './codex-app-server'
 
@@ -47,9 +47,9 @@ async function start(extra = {}, options = {}) {
   sessions.push(session)
   return { session, child: children.at(-1)! }
 }
-function collect(session: AgentSession, text = 'original user text') {
+function collect(session: AgentSession, text = 'original user text', attachments?: readonly AgentAttachment[]) {
   const events: AgentEvent[] = []
-  const done = (async () => { for await (const event of session.dispatch(text)) events.push(event) })()
+  const done = (async () => { for await (const event of session.dispatch(text, attachments)) events.push(event) })()
   return { events, done }
 }
 async function begun(child: FakeProcess, n = 1) { await expect.poll(() => child.sent.filter(m => m.method === 'turn/start').length).toBe(n); await Promise.resolve() }
@@ -83,6 +83,38 @@ beforeEach(() => {
 afterEach(async () => { for (const session of sessions) await session.close().catch(() => {}); vi.restoreAllMocks() })
 
 describe('workbench Codex app-server', () => {
+  it('sends immutable image bytes and explicit file references on initial and subsequent turns', async () => {
+    const image = { name: 'image.png', mime: 'image/png', path: '/not-read/image.png', sha256: 'a'.repeat(64), data: 'UE5H' }
+    const file = { name: 'report\n"quoted".pdf', mime: 'application/pdf', path: '/project/report.pdf', sha256: 'b'.repeat(64), data: 'UERG' }
+    const { session, child } = await start()
+    for (let turn = 1; turn <= 2; turn++) {
+      const run = collect(session, 'inspect', [image, file]); await begun(child, turn)
+      const input = child.sent.filter(m => m.method === 'turn/start').at(-1)!.params.input
+      expect(input[0]).toEqual({ type: 'text', text: 'inspect', text_elements: [] })
+      expect(input[1]).toEqual({ type: 'image', url: 'data:image/png;base64,UE5H', detail: 'high' })
+      expect(input[2].type).toBe('text')
+      expect(input[2].text).toContain(JSON.stringify({ name: file.name, mime: file.mime, path: file.path, sha256: file.sha256 }))
+      expect(input[2].text).not.toContain(file.data)
+      expect(input.some((item: any) => item.type === 'localImage' || item.type === 'document')).toBe(false)
+      completed(child, 'completed', `turn-${turn}`); await run.done
+    }
+  })
+  it('accepts image-only steering through the same active turn acknowledgement', async () => {
+    const { session, child } = await start(); const run = collect(session); await begun(child)
+    const pending = session.steer!('', [{ name: 'new.webp', mime: 'image/webp', path: '/not-read.webp', sha256: 'a'.repeat(64), data: 'V0VCUA==' }]).then(() => null, error => error)
+    await expect.poll(() => child.sent.some(m => m.method === 'turn/steer')).toBe(true)
+    const rpc = child.sent.find(m => m.method === 'turn/steer')!
+    expect(rpc.params.expectedTurnId).toBe('turn-1')
+    expect(rpc.params.input).toEqual([{ type: 'image', url: 'data:image/webp;base64,V0VCUA==', detail: 'high' }])
+    child.send({ id: rpc.id, result: { turnId: 'turn-1' } }); expect(await pending).toBeNull()
+    completed(child); await run.done
+  })
+  it('rejects missing image bytes before reserving a native turn rather than degrading to a pathname', async () => {
+    const { session, child } = await start()
+    expect(() => session.dispatch('inspect', [{ name: 'missing.png', mime: 'image/png', path: '/missing.png', sha256: 'a'.repeat(64) }])).toThrow('attachment_data_missing')
+    expect(child.sent.some(m => m.method === 'turn/start')).toBe(false)
+    const run = collect(session); await begun(child); completed(child); await run.done
+  })
   it('reads native overrides while tools are disabled and applies review policy again on resume', async () => {
     enableExternal(); nativeConfig.web_search = 'live'
     initializeResponse.userAgent = 'Codex Desktop/0.153.4 (Mac OS; arm64) dumb (cc_workbench; 1)'

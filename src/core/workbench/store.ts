@@ -5,6 +5,7 @@ import {publicSource,type StoredNativeSource} from './native-adoption'
 import type {NativeHistoryMessage} from './native-history'
 import type { Db } from '../../lib/db'
 import {makeLiveInputStore} from './live-inputs'
+import {makeTaskAttachmentStore} from './attachments'
 import {makeControlReceiptStore} from './control-receipts'
 import {makeTimelineEvents} from './timeline-events'
 import type {AgentActivity} from '../agent-provider'
@@ -15,7 +16,7 @@ export interface Task {
   createdAt: number; updatedAt: number; error: string | null; archivedAt: number | null
 }
 export interface StoredTask extends Task { ownerChatId: string | null; sessionId: string | null }
-export interface TaskEvent { id: number; taskId: string; kind: 'user' | 'text' | 'tool_call' | 'system' | 'error'; text: string; createdAt: number; sourceId?:string|null; runId?:string; activity?:AgentActivity }
+export interface TaskEvent { id: number; taskId: string; kind: 'user' | 'text' | 'tool_call' | 'system' | 'error'; text: string; createdAt: number; sourceId?:string|null; runId?:string; activity?:AgentActivity; attachments?:import('./attachments').Attachment[] }
 export interface Artifact { id: string; taskId: string; name: string; mime: string; size: number; sha256: string; createdAt: number; approvedAt: number | null }
 export interface StoredArtifact extends Artifact { storagePath: string }
 const TASK_SELECT = 'SELECT id,title,path,provider_id AS providerId,owner_chat_id AS ownerChatId,session_id AS sessionId,status,error,created_at AS createdAt,updated_at AS updatedAt,archived_at AS archivedAt FROM workbench_tasks'
@@ -72,6 +73,8 @@ export function makeWorkbenchStore(db: Db) {
     return{...h,artifacts:JSON.parse(artifactRefsJson),quote:quoteJson?JSON.parse(quoteJson):null,sourceTitle:a.title,targetTitle:b.title,sourceProviderId:a.providerId,targetProviderId:b.providerId,sourceStatus:a.status,targetStatus:b.status}
   })
   return {
+    atomic:<T>(operation:()=>T):T=>db.transaction(operation)(),
+    attachments:makeTaskAttachmentStore(db),
     liveInputs:makeLiveInputStore(db),
     controlReceipts:makeControlReceiptStore(db),
     get, artifacts, events, addEvent,recordAgentEvent,finishRunActivities,source,sourceByIdentity,handoffs,

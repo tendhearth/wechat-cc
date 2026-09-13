@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import type { AgentEvent, AgentProvider } from '../agent-provider'
+import type { AgentAttachment, AgentEvent, AgentProvider } from '../agent-provider'
 import { discoverWorkbenchCodexConfig, workbenchCodexArgs, workbenchCodexEnv, workbenchCodexNativeConfig } from './codex-config'
 import { validateUserInputAnswers, validateUserInputRequest } from './user-input'
 import { codexActivityEvent, codexItemId } from './codex-activity'
@@ -14,6 +14,22 @@ interface Options { codexPathOverride: string; model?: string; rpcTimeoutMs?: nu
 interface Approval { controller: AbortController; turn: Turn; rejection: 'decline' | 'cancel'; mcp?: boolean }
 interface UserQuestion { controller: AbortController; turn: Turn }
 interface Turn { id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; completedItems: Set<string>; questionIds: Set<RpcId>; startedAt: number }
+
+function turnInput(text: string, attachments: readonly AgentAttachment[] = []) {
+  const input: Array<{ type: 'text'; text: string; text_elements: [] } | { type: 'image'; url: string; detail: 'high' }> = text || !attachments.length ? [{ type: 'text', text, text_elements: [] }] : []
+  for (const attachment of attachments) {
+    if (attachment.mime.startsWith('image/')) {
+      if (!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(attachment.mime)) throw Error('attachment_image_unsupported')
+      if (!attachment.data) throw Error('attachment_data_missing')
+      // Use accepted immutable bytes, never reopen a possibly replaced local path.
+      input.push({ type: 'image', url: `data:${attachment.mime};base64,${attachment.data}`, detail: 'high' })
+    } else {
+      const { name, mime, path, sha256 } = attachment
+      input.push({ type: 'text', text: 'Attached task file (reference material; read with a file tool if needed):\n' + JSON.stringify({ name, mime, path, sha256 }), text_elements: [] })
+    }
+  }
+  return input
+}
 
 class EventQueue {
   private events: AgentEvent[] = []
@@ -410,12 +426,13 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         threadId = response.thread.id
       } catch (error) { await close(); throw error }
       return {
-        dispatch(text) {
+        dispatch(text, attachments) {
           if (active) throw new Error('codex_turn_already_running')
           if (closing || exited || broken) throw broken ?? new Error('codex_session_closed')
+          const input = turnInput(text, attachments)
           const turn: Turn = { id: null, cancelled: false, rejectedOperation: false, events: new EventQueue(), early: [], items: new Map(), completedItems: new Set(), questionIds: new Set(), startedAt: Date.now() }
           active = turn; turn.events.push({ kind: 'init', sessionId: threadId })
-          void request('turn/start', { threadId, input: [{ type: 'text', text, text_elements: [] }] }).then(response => {
+          void request('turn/start', { threadId, input }).then(response => {
             if (active !== turn || closing) return
             if (typeof response.turn?.id !== 'string' || !response.turn.id) { fatal('codex_missing_turn_id'); return }
             turn.id = response.turn.id
@@ -424,12 +441,12 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           }).catch(error => { if (active === turn) finish(turn, { kind: 'error', message: error instanceof Error ? error.message : 'codex_turn_start_failed' }) })
           return turn.events.iterate()
         },
-        async steer(text) {
+        async steer(text, attachments) {
           const turn = active
           if (!turn?.id || turn.cancelled || closing || exited || broken) throw new Error('codex_no_active_turn')
-          if (typeof text !== 'string' || !text.trim()) throw new Error('codex_empty_input')
+          if (typeof text !== 'string' || (!text.trim() && !attachments?.length)) throw new Error('codex_empty_input')
           const expectedTurnId = turn.id
-          const response = await request('turn/steer', { threadId, expectedTurnId, input: [{ type: 'text', text, text_elements: [] }] })
+          const response = await request('turn/steer', { threadId, expectedTurnId, input: turnInput(text, attachments) })
           if (response.turnId !== expectedTurnId) throw new Error('codex_steer_turn_mismatch')
           if (active !== turn || turn.cancelled || closing || exited || broken) throw new Error('codex_steer_no_longer_active')
         },

@@ -49,9 +49,18 @@ export type AgentEvent =
   | { kind: 'result'; sessionId: string; numTurns: number; durationMs: number }
   | { kind: 'error'; message: string; code?: string }
 
+/** Validated task-owned immutable material; image/PDF data is exact base64 bytes. */
+export interface AgentAttachment {
+  name: string
+  mime: string
+  path: string
+  sha256: string
+  data?: string
+}
+
 export interface AgentSession {
   /** Native acknowledgement of supplemental input to the current turn only. */
-  steer?(text: string): Promise<void>
+  steer?(text: string, attachments?: readonly AgentAttachment[]): Promise<void>
   /**
    * Send `text` to the agent and yield events as they arrive. The
    * iterator closes after the first `result` (or `error`) event.
@@ -60,7 +69,7 @@ export interface AgentSession {
    * dispatches. Claude provider serialises (one in-flight per session);
    * Codex provider runs each turn as a separate runStreamed.
    */
-  dispatch(text: string): AsyncIterable<AgentEvent>
+  dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent>
   /**
    * Interrupt the in-flight dispatch (if any) without closing the
    * session — future dispatches still work. Wired into the chatroom

@@ -611,7 +611,7 @@ it('upgrades a real v46 database retaining task history, native identity and app
       const upgraded=openDb({path})
       try {
         expect(upgraded.query('SELECT * FROM workbench_tasks').get()).toEqual({...oldTask as object,archived_at:null})
-        expect(upgraded.query('SELECT * FROM workbench_events').all()).toEqual(oldEvents.map(row=>({...row as object,source_id:null,run_id:null,event_key:null,activity_json:null})))
+        expect(upgraded.query('SELECT * FROM workbench_events').all()).toEqual(oldEvents.map(row=>({...row as object,source_id:null,run_id:null,event_key:null,activity_json:null,attachments_json:'[]'})))
         expect(upgraded.query('SELECT * FROM workbench_artifacts').all()).toEqual(oldArtifacts)
       } finally {upgraded.close()}
     }
@@ -632,8 +632,23 @@ it('upgrades v51 with separate durable control receipts while preserving task hi
     db.query('INSERT INTO workbench_control_receipts(id,task_id,run_id,action,text_hash,created_at) VALUES(?,?,?,?,?,?)').run('stop-one','deadbeef','run-original','stop','hash',5)
     runMigrations(db)
     expect(db.query('SELECT * FROM workbench_tasks').all()).toEqual(tasks)
-    expect(db.query('SELECT * FROM workbench_events').all()).toEqual(events)
-    expect(db.query('SELECT * FROM workbench_live_inputs').all()).toEqual(inputs)
+    expect(db.query('SELECT * FROM workbench_events').all()).toEqual(events.map(row=>({...row as object,attachments_json:'[]'})))
+    expect(db.query('SELECT * FROM workbench_live_inputs').all()).toEqual(inputs.map(row=>({...row as object,attachments_json:'[]'})))
     expect(db.query('SELECT * FROM workbench_control_receipts').all()).toHaveLength(1)
+  }finally{db.close()}
+})
+
+it('upgrades v52 with staged attachments and empty refs on existing messages and inputs',()=>{
+  const db=new Database(':memory:')
+  try{
+    for(const migration of migrations.slice(0,52))migration(db)
+    db.exec('PRAGMA user_version=52')
+    db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('deadbeef','task','/project','claude','completed',1,2)
+    db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,run_id) VALUES(?,?,?,?,?)').run('deadbeef','user','original',3,'run-original')
+    db.query('INSERT INTO workbench_live_inputs(id,task_id,run_id,text,status,created_at) VALUES(?,?,?,?,?,?)').run('input-one','deadbeef','run-original','supplement','held',4)
+    runMigrations(db);runMigrations(db)
+    expect(db.query('SELECT attachments_json FROM workbench_events').get()).toEqual({attachments_json:'[]'})
+    expect(db.query('SELECT attachments_json FROM workbench_live_inputs').get()).toEqual({attachments_json:'[]'})
+    expect(db.query("SELECT name FROM sqlite_master WHERE name='workbench_attachments'").get()).toEqual({name:'workbench_attachments'})
   }finally{db.close()}
 })

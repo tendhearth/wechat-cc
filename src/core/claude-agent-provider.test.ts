@@ -94,6 +94,52 @@ const emitSdk = (message: unknown) => (sdk as unknown as { __test_yield: (messag
 const finishSdkTurn = () => emitSdk({ type: 'result', subtype: 'success', session_id: 'timeline-session', num_turns: 1, duration_ms: 1 })
 
 describe('claude-agent-provider', () => {
+  it('supports image-only messages without an empty native text block', async () => {
+    const session = await createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) }).spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
+    const sent = () => (sdk as unknown as { __test_sent: () => any[] }).__test_sent()
+    try {
+      const before = sent().length, done = drain(session.dispatch('', [{ name: 'image.png', mime: 'image/png', path: '/not-read.png', sha256: 'a'.repeat(64), data: 'UE5H' }]))
+      await expect.poll(() => sent().length).toBe(before + 1)
+      expect(sent().at(-1).message.content).toEqual([{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'UE5H' } }])
+      finishSdkTurn(); await done
+    } finally { await session.close() }
+  })
+  it('appends direct image content and safe ordinary-file metadata to successive native user messages', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
+    const sent = () => (sdk as unknown as { __test_sent: () => any[] }).__test_sent()
+    const file = { name: 'data\n"quoted".csv', mime: 'text/csv', path: '/task/data.csv', sha256: 'b'.repeat(64) }
+    try {
+      for (let i = 0; i < 2; i++) {
+        const before = sent().length
+        const done = drain(session.dispatch('inspect', [{ name: 'image.png', mime: 'image/png', path: '/not-read.png', sha256: 'a'.repeat(64), data: 'UE5H' }, file]))
+        await expect.poll(() => sent().length).toBe(before + 1)
+        const content = sent().at(-1).message.content
+        expect(content[0]).toEqual({ type: 'text', text: 'inspect' })
+        expect(content[1]).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'UE5H' } })
+        expect(content[2].text).toContain(JSON.stringify(file))
+        finishSdkTurn(); await done
+      }
+    } finally { await session.close() }
+  })
+  it('sends a direct PDF document block when resuming the specified native session', async () => {
+    const session = await createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) }).spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test', resumeSessionId: 'native-existing' })
+    const sent = () => (sdk as unknown as { __test_sent: () => any[] }).__test_sent()
+    try {
+      const before = sent().length, done = drain(session.dispatch('review', [{ name: 'report.pdf', mime: 'application/pdf', path: '/not-read.pdf', sha256: 'a'.repeat(64), data: 'UERG' }]))
+      await expect.poll(() => sent().length).toBe(before + 1)
+      expect(sent().at(-1).message.content[1]).toEqual({ type: 'document', title: 'report.pdf', source: { type: 'base64', media_type: 'application/pdf', data: 'UERG' } })
+      expect((sdk as unknown as { __test_last_options: () => unknown }).__test_last_options()).toMatchObject({ resume: 'native-existing' })
+      finishSdkTurn(); await done
+    } finally { await session.close() }
+  })
+  it.each(['image/png', 'application/pdf'])('rejects missing %s bytes without occupying the session dispatch queue', async mime => {
+    const session = await createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) }).spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
+    try {
+      expect(() => session.dispatch('inspect', [{ name: 'missing', mime, path: '/missing', sha256: 'a'.repeat(64) }])).toThrow('attachment_data_missing')
+      const done = drain(session.dispatch('still works')); finishSdkTurn(); await done
+    } finally { await session.close() }
+  })
   it('preserves workbench text-tool-text order and native tool identity without exposing tool input', async () => {
     const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
     const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test', workbenchTimeline: true })
