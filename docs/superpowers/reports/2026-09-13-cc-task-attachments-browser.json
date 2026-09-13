@@ -1,0 +1,21 @@
+{
+  "ok": true,
+  "transport": "production browser API + browser proxy + internal HTTP",
+  "execution": "fixture AgentProvider only",
+  "taskCount": 2,
+  "dispatchCount": 5,
+  "attachmentHashes": {
+    "reference.png": "4c5d573cfb85b8ab0a5659062b830a058d1a449e51a6d79c13b483a77ea7ed28",
+    "brief.txt": "8bddab58c7cdc818523b4ad9a1b1fc892252a0f0403b798f785feaa30e72605b",
+    "followup.txt": "8240e46199aecd6af6cb9b8b5f7853dbd4cdf2d8068eec9ece0a9c71602e2009",
+    "queued.txt": "98c6628e76d1ac2532c9c3e3b685601d402430fd3e8393203bed6ff7a9674154"
+  },
+  "queuedReceipt": {
+    "id": "d2f3e308-cfba-4237-943d-bbf4d293cc27",
+    "runId": "ab7237ea-6006-4940-b340-8b50b1e791d1",
+    "status": "delivered"
+  },
+  "databaseReopened": true,
+  "refusedClaimedDiscards": 1,
+  "evidenceDirectory": "/private/var/folders/yc/y9bc_lbd69z5_3_dqbt5bn6c0000gn/T/cc-attachments-browser-evidence-3nUh3I"
+}
