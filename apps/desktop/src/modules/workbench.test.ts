@@ -399,6 +399,8 @@ describe('workbench mutations', () => {
     innerHTML = ''
     scrollTop = 0
     scrollHeight = 0
+    clientHeight = 0
+    hidden = false
     parentElement: FakeElement | null = null
     attributes = new Map<string, string>()
     listeners = new Map<string, Set<(event: any) => void>>()
@@ -423,6 +425,102 @@ describe('workbench mutations', () => {
     vi.stubGlobal('Element',FakeElement)
     return page
   }
+
+  it('saves a task draft on input before polling and restores the selected task after page reload', async () => {
+    const stored = new Map<string,string>()
+    const storage = { getItem:(key:string)=>stored.get(key)??null, setItem:(key:string,value:string)=>{stored.set(key,value)}, removeItem:(key:string)=>{stored.delete(key)} }
+    const field = new FakeElement(); field.id = 'wb-followup-text'
+    const page = installFakePage({'wb-followup-text':field})
+    root.window = {sessionStorage:storage}
+    const task = (id:string)=>({id,title:id,path:'/work',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null})
+    const api = vi.fn(async(_method:string,path:string)=>path==='/v1/workbench'?{tasks:[task('aaaaaaaa'),task('bbbbbbbb')],providers:[],defaultProvider:'codex',canWechat:false}:{task:task(path.endsWith('bbbbbbbb')?'bbbbbbbb':'aaaaaaaa'),events:[],artifacts:[]})
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({invokeWorkbenchApi:api,pollMs:100000})!
+    for(let i=0;i<8;i++)await Promise.resolve()
+    await controller.selectTask('bbbbbbbb'); field.value='B 的未发送要求'
+    for(const listener of page.listeners.get('input')??[])listener({target:field})
+    const {createWorkbenchDraftStore,loadWorkbenchView}=await import('./workbench-window-state.js')
+    expect(createWorkbenchDraftStore(storage).get('task:bbbbbbbb').followup).toBe('B 的未发送要求')
+    expect(loadWorkbenchView(storage).scope).toBe('task:bbbbbbbb')
+    module.stopWorkbenchPolling();vi.resetModules()
+    const restoredField=new FakeElement();restoredField.id='wb-followup-text'
+    installFakePage({'wb-followup-text':restoredField});root.window={sessionStorage:storage}
+    const reloaded=await import('./workbench.js')
+    const next=reloaded.initWorkbenchPage({invokeWorkbenchApi:api,pollMs:100000})!
+    for(let i=0;i<8;i++)await Promise.resolve()
+    expect(next.state.selectedId).toBe('bbbbbbbb');expect(restoredField.value).toBe('B 的未发送要求')
+    expect(api.mock.calls.every(([method])=>method==='GET')).toBe(true)
+    reloaded.stopWorkbenchPolling()
+  })
+
+  it.each([true, false])('follows new replies only when already at the end: %s', async following => {
+    const content = new FakeElement(); content.clientHeight = 400; content.scrollHeight = 1000
+    const notice = new FakeElement(); notice.hidden = true
+    const page = installFakePage({}, content)
+    page.querySelector = selector => selector === '.wb-content' ? content : selector === '.wb-reading-bar' ? notice : null
+    let html = ''
+    Object.defineProperty(page, 'innerHTML', { get: () => html, set: value => { html = value; content.scrollHeight = value.includes('New reply') ? 1400 : 1000 } })
+    const task = { id: 'READ', title: 'Read', path: '/work', providerId: 'codex', status: 'running', createdAt: 1, updatedAt: 2, error: null }
+    const events = [{ id: 'e1', taskId: task.id, kind: 'text', text: 'First reply', createdAt: 1 }]
+    const invokeWorkbenchApi = vi.fn(async (_method: string, path: string) => path === '/v1/workbench' ? { tasks: [task], providers: [], defaultProvider: 'codex', canWechat: false } : { task, events: [...events], artifacts: [] })
+    const { initWorkbenchPage, stopWorkbenchPolling } = await import('./workbench.js')
+    const controller = initWorkbenchPage({ invokeWorkbenchApi, pollMs: 100000 })!
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    content.scrollTop = following ? 600 : 100
+    events.push({ id: 'e2', taskId: task.id, kind: 'text', text: 'New reply', createdAt: 2 })
+    await controller.refresh()
+    expect(content.scrollTop).toBe(following ? 1400 : 100)
+    expect(notice.hidden).toBe(following)
+    if (!following) {
+      const latest = new FakeElement(); latest.dataset.action = 'latest-content'
+      await [...page.listeners.get('click')!][0]!({ target: latest })
+      expect(content.scrollTop).toBe(1400); expect(notice.hidden).toBe(true)
+    }
+    stopWorkbenchPolling()
+  })
+
+  it('keeps reading position and unread updates scoped to each task', async () => {
+    const content = new FakeElement(); content.clientHeight = 400; content.scrollHeight = 1000
+    const notice = new FakeElement(); notice.hidden = true
+    const page = installFakePage({}, content)
+    page.querySelector = selector => selector === '.wb-content' ? content : selector === '.wb-reading-bar' ? notice : null
+    const task = (id: string) => ({ id, title: id, path: '/work', providerId: 'codex', status: 'running', createdAt: 1, updatedAt: 2, error: null })
+    let revision = 1
+    const invokeWorkbenchApi = vi.fn(async (_method: string, path: string) => path === '/v1/workbench' ? { tasks: [task('A'), task('B')], providers: [], defaultProvider: 'codex', canWechat: false } : { task: task(path.endsWith('B') ? 'B' : 'A'), events: [{ id: '1', kind: 'text', text: String(revision), createdAt: 1 }], artifacts: [] })
+    const { initWorkbenchPage, stopWorkbenchPolling } = await import('./workbench.js')
+    const controller = initWorkbenchPage({ invokeWorkbenchApi, pollMs: 100000 })!
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    content.scrollTop = 150; revision++; await controller.refresh()
+    expect(notice.hidden).toBe(false)
+    await controller.selectTask('B'); expect(notice.hidden).toBe(true)
+    await controller.selectTask('A'); expect(content.scrollTop).toBe(150); expect(notice.hidden).toBe(false)
+    content.scrollTop = 600
+    for (const listener of page.listeners.get('scroll') ?? []) listener({ target: content })
+    expect(notice.hidden).toBe(true)
+    stopWorkbenchPolling()
+  })
+
+  it('does not pull a reader out of expanded results when a task updates', async () => {
+    const content=new FakeElement();content.clientHeight=400;content.scrollHeight=1000
+    const notice=new FakeElement(),results=new FakeElement()
+    const page=installFakePage({},content)
+    page.querySelector=selector=>selector==='.wb-content'?content:selector==='.wb-reading-bar'?notice:selector==='#wb-artifacts'||selector==='#wb-artifacts[open]'&&results.hasAttribute('open')?results:null
+    const task={id:'RESULT',title:'Review',path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
+    const api=vi.fn(async(_method:string,path:string)=>path==='/v1/workbench'?{tasks:[task],providers:[],defaultProvider:'codex',canWechat:false}:{task,events:[],artifacts:[]})
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const controller=initWorkbenchPage({invokeWorkbenchApi:api,pollMs:100000})!
+    for(let i=0;i<8;i++)await Promise.resolve()
+    results.setAttribute('open','');content.scrollTop=600;task.status='completed'
+    await controller.refresh()
+    expect(content.scrollTop).toBe(600);expect(notice.hidden).toBe(false);expect(results.hasAttribute('open')).toBe(true)
+    // Scrolling inside the open result is not reading the new conversation.
+    for(const listener of page.listeners.get('scroll')??[])listener({target:content})
+    expect(notice.hidden).toBe(false)
+    const latest=new FakeElement();latest.dataset.action='latest-content'
+    await [...page.listeners.get('click')!][0]!({target:latest})
+    expect(results.hasAttribute('open')).toBe(false);expect(notice.hidden).toBe(true)
+    stopWorkbenchPolling()
+  })
 
   it('archives and restores the selected task through one busy guard, keeping its detail readable', async () => {
     vi.useFakeTimers()

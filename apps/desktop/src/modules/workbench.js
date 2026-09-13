@@ -1,5 +1,8 @@
 // @ts-check
 
+import { createWorkbenchDraftStore, loadWorkbenchView, saveWorkbenchView, workbenchWindowStorage } from './workbench-window-state.js'
+export { createWorkbenchDraftStore } from './workbench-window-state.js'
+
 import { mountHandoffDialog, mountHandoffRecord, defaultReviewArtifacts } from './workbench-handoff.js'
 import { mountHistoryDialog } from './workbench-history.js'
 import { Marked } from '../vendor/marked.js'
@@ -25,32 +28,20 @@ import { WORKBENCH_CODE_REVIEW_MIME, renderWorkbenchCodeReview } from './workben
 /** @typedef {{path:string,text:string,title:string,providerId:string,followup:string}} Draft */
 /** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number}} WorkbenchDeps */
 
+const windowStorage = workbenchWindowStorage()
+const savedView = loadWorkbenchView(windowStorage)
+
 /** @type {{timer:ReturnType<typeof setInterval>,cleanup:()=>void}|null} */
 let active = null
 /** @type {string|null} */
-let resumeScope = null
+let resumeScope = savedView.scope
 /** @type {TaskQuery} */
-let resumeQuery = { q: '', archived: 'exclude' }
-let resumeSearch = ''
+let resumeQuery = savedView.query
+let resumeSearch = savedView.search
 
 const emptyDraft = () => ({ path: '', text: '', title: '', providerId: '', followup: '' })
 
-export function createWorkbenchDraftStore() {
-  /** @type {Map<string,Draft>} */
-  const values = new Map()
-  return {
-    /** @param {string} key @param {Draft} value */
-    set(key, value) { values.set(key, { ...value }) },
-    /** @param {string} key */
-    get(key) { return { ...(values.get(key) ?? emptyDraft()) } },
-    /** @param {string} key */
-    has(key) { return values.has(key) },
-    /** @param {string} key */
-    delete(key) { values.delete(key) },
-  }
-}
-
-const pageDrafts = createWorkbenchDraftStore()
+const pageDrafts = createWorkbenchDraftStore(windowStorage)
 
 /** @param {unknown} value */
 export function escapeWorkbenchHtml(value) {
@@ -243,7 +234,7 @@ export function renderWorkbench(state) {
         <button class="wb-btn wb-btn-primary" type="submit"${state.providers.length ? '' : ' disabled'}>开始任务</button>
       </form></div>`
   const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderTaskControls(detail.task.status, detail.continuation, detail.task.archivedAt,{requiresClose:!!detail.requiresExternalClose,decision:state.nativeResume?.taskId===detail.task.id?state.nativeResume:null})}</div></div>` : ''
-  return `<div class="workbench-shell"><aside class="wb-sidebar"><header><p class="wb-kicker">任务</p><button type="button" class="wb-new" data-action="new-task">＋ 新建</button></header>${listControls}<div class="wb-task-list">${taskList}</div>${pagination}</aside><main class="wb-main">${taskHeader}<div class="wb-content"><div class="wb-content-inner">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${content}</div></div>${controls}</main></div>`
+  return `<div class="workbench-shell"><aside class="wb-sidebar"><header><p class="wb-kicker">任务</p><button type="button" class="wb-new" data-action="new-task">＋ 新建</button></header>${listControls}<div class="wb-task-list">${taskList}</div>${pagination}</aside><main class="wb-main">${taskHeader}<div class="wb-content"><div class="wb-content-inner">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main></div>`
 }
 
 /** @param {{invokeWorkbenchApi:WorkbenchDeps['invokeWorkbenchApi'],render:(state:WorkbenchState)=>void,initialScope?:string|null,initialQuery?:TaskQuery}} deps */
@@ -413,12 +404,20 @@ export function initWorkbenchPage(deps) {
   const disclosures = new Map()
   /** @type {Map<string, number>} */
   const scrollPositions = new Map()
+  /** @type {Map<string,{signature:string,following:boolean,unread:boolean}>} */
+  const reading = new Map()
+  const atEnd = (/** @type {Element|null} */ element) => !!element && element.clientHeight > 0 && element.scrollHeight - element.clientHeight - element.scrollTop <= 48
+  const showReadingNotice = () => {
+    const bar = /** @type {HTMLElement|null} */ (root.querySelector('.wb-reading-bar'))
+    if (bar) bar.hidden = !reading.get(renderedScope)?.unread
+  }
   /** @type {Map<string, {signature:string,scrollTop:number}>} */
   const permissionScrollPositions = new Map()
   /** @type {Map<string, number>} */
   const taskInfoScrollPositions = new Map()
   /** @type {Map<string,number>} */
   const resultReturnPositions = new Map()
+  const browsingResults = () => !!root.querySelector('#wb-artifacts[open]') || !!root.querySelector('#wb-tools[open]') || resultReturnPositions.has(renderedScope)
   const scopeFor = (/** @type {WorkbenchState} */ state) => state.selectedId ? `task:${state.selectedId}` : state.newScope ?? 'new'
   const permissionSignatureFor = (/** @type {WorkbenchState} */ state) => JSON.stringify((state.detail?.permissions ?? []).filter(permission => permission.taskId === state.detail?.task.id).map(permission => permission.id).sort())
   const captureDraft = () => {
@@ -448,7 +447,16 @@ export function initWorkbenchPage(deps) {
     const openState = new Map(['wb-tools', 'wb-artifacts', 'wb-options', 'wb-task-info', 'wb-restart-context', 'wb-artifact-source','wb-handoffs'].map(id => [id, !!root.querySelector(`#${id}[open]`)]))
     for (const disclosure of root.querySelectorAll?.('[data-review-disclosure]') ?? []) openState.set(disclosure.id, disclosure.hasAttribute('open'))
     disclosures.set(renderedScope, openState)
-    const contentScroll = root.querySelector('.wb-content')?.scrollTop ?? 0
+    const oldContent = root.querySelector('.wb-content')
+    const contentScroll = oldContent?.scrollTop ?? 0
+    const previousReading = reading.get(renderedScope)
+    if (previousReading) previousReading.following = atEnd(oldContent) && !browsingResults()
+    const nextReading = reading.get(nextScope) ?? { signature: '', following: true, unread: false }
+    const signature = state.detail ? JSON.stringify([state.detail.task.status, state.detail.task.error, state.detail.events, state.detail.artifacts.map(a => [a.id, a.sha256])]) : ''
+    const newActivity = signature !== nextReading.signature
+    if (nextReading.signature && newActivity && !nextReading.following) nextReading.unread = true
+    nextReading.signature = signature
+    reading.set(nextScope, nextReading)
     const sidebarScroll = root.querySelector('.wb-sidebar')?.scrollTop ?? 0
     scrollPositions.set(renderedScope, contentScroll)
     const currentPermissionScroll = root.querySelector('.wb-permissions')?.scrollTop
@@ -464,7 +472,11 @@ export function initWorkbenchPage(deps) {
     const sidebar = root.querySelector('.wb-sidebar'); if (sidebar) sidebar.scrollTop = sidebarScroll
     for (const [id, open] of disclosures.get(scopeFor(state)) ?? []) root.querySelector(`#${id}`)?.toggleAttribute('open', open)
     const content = root.querySelector('.wb-content')
-    if (content) content.scrollTop = hasStoredScroll ? (scrollPositions.get(nextScope) ?? 0) : nextScope.startsWith('task:') ? content.scrollHeight : 0
+    if (content) {
+      const follow = nextScope.startsWith('task:') && nextReading.following && (newActivity || !sameScope)
+      content.scrollTop = follow ? content.scrollHeight : hasStoredScroll ? (scrollPositions.get(nextScope) ?? 0) : nextScope.startsWith('task:') ? content.scrollHeight : 0
+      if (follow) nextReading.unread = false
+    }
     const permissionPanel = root.querySelector('.wb-permissions')
     if (permissionPanel) {
       const saved = permissionScrollPositions.get(nextScope)
@@ -475,6 +487,8 @@ export function initWorkbenchPage(deps) {
     const taskInfoBody = root.querySelector('.wb-task-info-body')
     if (taskInfoBody) taskInfoBody.scrollTop = taskInfoScrollPositions.get(nextScope) ?? 0
     renderedScope = scopeFor(state)
+    if (!state.loadingId) saveWorkbenchView(windowStorage,{scope:renderedScope,query:state.query ?? {q:'',archived:'exclude'},search:searchDraft})
+    showReadingNotice()
     restoreDraft(renderedScope)
     syncWorkbenchProviderLabel(root)
     if (focusedDisclosure && sameScope) {
@@ -530,6 +544,15 @@ export function initWorkbenchPage(deps) {
     if (target.dataset.taskId) { captureDraft(); navigationGeneration++; artifactRequest++; return controller.selectTask(target.dataset.taskId).catch(fail) }
     let action = target.dataset.action
     if (target.dataset.artifactId) { artifactRequest++; controller.state.selectedArtifactId = target.dataset.artifactId; controller.state.preview = null; controller.paint(); action = 'preview-artifact' }
+    if (action === 'latest-content') {
+      for (const id of ['wb-artifacts', 'wb-tools']) root.querySelector(`#${id}`)?.removeAttribute('open')
+      resultReturnPositions.delete(renderedScope)
+      const content = root.querySelector('.wb-content'), current = reading.get(renderedScope)
+      if (current) { current.following = true; current.unread = false }
+      if (content) { content.scrollTop = content.scrollHeight; scrollPositions.set(renderedScope, content.scrollTop) }
+      showReadingNotice(); input('wb-followup-text')?.focus({ preventScroll: true })
+      return
+    }
     if (action === 'show-artifacts') {
       const details = root.querySelector('#wb-artifacts')
       const content = root.querySelector('.wb-content')
@@ -679,19 +702,33 @@ export function initWorkbenchPage(deps) {
       }
     }
   }
-  const onChange = () => syncWorkbenchProviderLabel(root)
+  const onScroll = (/** @type {Event} */ event) => {
+    const content = root.querySelector('.wb-content')
+    if (event.target !== content || !content) return
+    scrollPositions.set(renderedScope, content.scrollTop)
+    const current = reading.get(renderedScope)
+    if (current && atEnd(content) && !browsingResults()) { current.unread = false; showReadingNotice() }
+  }
+  root.addEventListener('scroll', onScroll, true)
+  const saveWindowState = () => {
+    captureDraft()
+    saveWorkbenchView(windowStorage,{scope:renderedScope,query:controller.state.query ?? {q:'',archived:'exclude'},search:input('wb-search')?.value ?? searchDraft})
+  }
+  const onChange = () => { syncWorkbenchProviderLabel(root); saveWindowState() }
+  root.addEventListener('input', saveWindowState)
+  window.addEventListener?.('pagehide', saveWindowState)
   root.addEventListener('change', onChange)
   root.addEventListener('click', onClick)
   root.addEventListener('submit', onSubmit)
   controller.refresh().catch(fail)
   const timer = setInterval(() => { if (!root.closest('[hidden]')) controller.refresh().catch(fail) }, deps.pollMs ?? 3000)
   active = { timer, cleanup: () => {
-    captureDraft()
+    saveWindowState()
     resumeQuery = { ...(controller.state.query ?? { q: '', archived: 'exclude' }) }
     resumeSearch = input('wb-search')?.value ?? searchDraft
     if (controller.state.selectedId) resumeScope = `task:${controller.state.selectedId}`
     else if (document.getElementById('wb-create-form')) resumeScope = scopeFor(controller.state)
-    handoffCleanup?.(); nativeHistoryCleanup?.(); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
+    handoffCleanup?.(); nativeHistoryCleanup?.(); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', saveWindowState); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
   } }
   return controller
 }

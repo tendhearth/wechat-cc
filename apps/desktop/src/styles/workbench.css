@@ -265,3 +265,8 @@
 .wb-handoff-footer>span { font-size:11px; color:#77746b; }
 .wb-handoff-footer button { flex:none; }
 @media(max-width:560px){ .wb-handoff-body{padding:16px}.wb-handoff-footer{padding:16px;flex-wrap:wrap}.wb-handoff-footer>span{flex:1 1 100%} }
+
+/* Latest updates stay optional while the user reads earlier work. */
+.wb-reading-bar { position:relative; height:0; flex:none; z-index:2; }
+.wb-reading-bar[hidden] { display:none; }
+.wb-reading-bar button { position:absolute; bottom:12px; left:50%; transform:translateX(-50%); white-space:nowrap; padding:7px 14px; border-radius:18px; background:var(--wb-surface); box-shadow:0 3px 12px #272a2018; font-size:12px; }
