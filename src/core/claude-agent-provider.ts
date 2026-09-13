@@ -9,6 +9,7 @@ import { AsyncQueue } from './async-queue'
 import { isAuthFail } from './auth-fail'
 import { discoverClaudeModels } from './workbench/claude-model-catalog'
 import { executionModel, nativeModelId } from './workbench/native-model-catalog'
+import { createClaudeWorkbenchSession } from './claude-workbench-runtime'
 
 function userContent(text: string, attachments: readonly AgentAttachment[] = []): Exclude<SDKUserMessage['message']['content'], string> {
   const content: Exclude<SDKUserMessage['message']['content'], string> = text || !attachments.length ? [{ type: 'text', text }] : []
@@ -464,6 +465,10 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // now actually reaps the subprocess through this.
       const aborter = options.abortController ?? new AbortController()
       options.abortController = aborter
+
+      if (spawnOpts.workbenchLifecycle) {
+        return createClaudeWorkbenchSession(options, spawnOpts, { content: userContent, tool: parseToolUseToEvent, label: claudeActivityLabel })
+      }
 
       const q = query({ prompt: sdkQueue.iterable(), options })
       let observedSessionId=spawnOpts.resumeSessionId
