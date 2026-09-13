@@ -982,6 +982,14 @@ async fn workbench_api(method: String, path: String, body: Option<String>) -> Re
     let state_dir = std::env::var("WECHAT_STATE_DIR").unwrap_or_else(|_| {
         PathBuf::from(home).join(".claude").join("channels").join("wechat").to_string_lossy().to_string()
     });
+    // Match the browser development proxy's isolated workbench runtime while
+    // keeping companion/CLI discovery on WECHAT_STATE_DIR. Release builds
+    // always use the shared daemon and do not read this development override.
+    #[cfg(debug_assertions)]
+    let state_dir = std::env::var("WECHAT_CC_WORKBENCH_STATE_DIR")
+        .ok()
+        .filter(|path| !path.trim().is_empty())
+        .unwrap_or(state_dir);
     let info_path = PathBuf::from(state_dir).join("internal-api-info.json");
     let info: Value = serde_json::from_str(&std::fs::read_to_string(&info_path)
         .map_err(|e| format!("read {}: {e}", info_path.display()))?)
@@ -1212,6 +1220,52 @@ pub fn run() {
 #[cfg(test)]
 mod workbench_proxy_tests {
     use super::workbench_request_allowed;
+
+    #[test]
+    fn isolated_workbench_state_is_debug_only_and_leaves_shared_state_unchanged() {
+        // Exercise the actual command's discovery path using nonexistent,
+        // unique directories: this must never contact a real daemon.
+        let root = std::env::temp_dir().join(format!(
+            "wechat-workbench-state-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let shared = root.join("shared");
+        let isolated = root.join("isolated");
+        let previous_shared = std::env::var_os("WECHAT_STATE_DIR");
+        let previous_workbench = std::env::var_os("WECHAT_CC_WORKBENCH_STATE_DIR");
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+
+        std::env::set_var("WECHAT_STATE_DIR", &shared);
+        std::env::set_var("WECHAT_CC_WORKBENCH_STATE_DIR", &isolated);
+        let override_result = runtime.block_on(super::workbench_api("GET".into(), "/v1/workbench".into(), None));
+        let shared_after_request = std::env::var_os("WECHAT_STATE_DIR");
+        std::env::set_var("WECHAT_CC_WORKBENCH_STATE_DIR", "");
+        let empty_result = runtime.block_on(super::workbench_api("GET".into(), "/v1/workbench".into(), None));
+        std::env::remove_var("WECHAT_CC_WORKBENCH_STATE_DIR");
+        let absent_result = runtime.block_on(super::workbench_api("GET".into(), "/v1/workbench".into(), None));
+
+        // Restore process state before assertions, including when one fails.
+        for (key, previous) in [
+            ("WECHAT_STATE_DIR", previous_shared),
+            ("WECHAT_CC_WORKBENCH_STATE_DIR", previous_workbench),
+        ] {
+            match previous {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        let selected = if cfg!(debug_assertions) { &isolated } else { &shared };
+        assert!(override_result.unwrap_err().starts_with(&format!(
+            "read {}:", selected.join("internal-api-info.json").display()
+        )));
+        for result in [empty_result, absent_result] {
+            assert!(result.unwrap_err().starts_with(&format!(
+                "read {}:", shared.join("internal-api-info.json").display()
+            )));
+        }
+        assert_eq!(shared_after_request, Some(shared.into_os_string()));
+    }
 
     #[test]
     fn allows_only_the_exact_workbench_method_route_pairs() {
