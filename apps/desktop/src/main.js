@@ -464,7 +464,6 @@ function switchPane(name) {
     workbenchNavigation?.setWorkbenchActive(true)
     return
   }
-  workbenchNavigation?.setWorkbenchActive(name === "workbench")
   document.querySelector(".cc-life-nav-more")?.removeAttribute("open")
   const overviewWasHidden = name === "overview" && !!(/** @type {HTMLElement | null} */ (document.querySelector('.dash-pane[data-pane="overview"]')))?.hidden
   const backstagePanes = new Set(["sessions", "plugins", "logs"])
@@ -479,6 +478,8 @@ function switchPane(name) {
     const htmlEl = /** @type {HTMLElement} */ (el)
     htmlEl.hidden = htmlEl.dataset.pane !== name
   })
+  // The destination must be visible before navigation transfers keyboard focus.
+  workbenchNavigation?.setWorkbenchActive(name === "workbench")
   if (overviewWasHidden) {
     advanceCompanionHeroCopy()
     if (doctorPoller.current) renderDashboardIfActive(doctorPoller.current)

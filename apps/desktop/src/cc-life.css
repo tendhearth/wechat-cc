@@ -50,8 +50,9 @@
 
 /* Production shell follows art/cc-presence-entry: a home, work, and recollections. */
 .dashboard{--app-bg:#faf8f3;--paper:#faf8f3;--ink:#493e32;--hair:#e9e3d9;--hair-2:#e4ddd2}
-.dashboard .dash-window{position:relative;grid-template-columns:177px minmax(0,1fr);grid-template-rows:minmax(0,1fr);background:#faf8f3}
-.dashboard .dash-rail{padding:34px 17px 19px;flex-direction:column;align-items:stretch;overflow:visible;border-right:1px solid #e9e3d9;background:#f6f3ed;z-index:70}
+.dashboard .dash-window{--cc-rail-width:177px;--cc-nav-duration:220ms;--cc-nav-easing:cubic-bezier(.2,.75,.25,1);position:relative;grid-template-columns:var(--cc-rail-width) minmax(0,1fr);grid-template-rows:minmax(0,1fr);background:#faf8f3;transition:grid-template-columns var(--cc-nav-duration) var(--cc-nav-easing)}
+/* Keep the rail's own geometry stable; only its reserved space and position move. */
+.dashboard .dash-rail{position:absolute;inset:0 auto 0 0;width:var(--cc-rail-width);padding:34px 17px 19px;flex-direction:column;align-items:stretch;overflow:visible;border-right:1px solid #e9e3d9;background:#f6f3ed;z-index:70;visibility:visible;transform:translateX(0);transition:transform var(--cc-nav-duration) var(--cc-nav-easing),box-shadow var(--cc-nav-duration) var(--cc-nav-easing),visibility 0s}
 [data-platform=macos] .dashboard .dash-rail{padding-top:48px}
 .dashboard .dash-rail::before{display:none}
 .dashboard .dash-brand{transform:none;flex-direction:column;align-items:flex-start;gap:10px;padding:0 13px}
@@ -73,21 +74,19 @@
 .dashboard .rail-gear{height:38px;display:flex;width:100%;align-items:center;justify-content:flex-start;gap:10px;padding:8px 13px;font-size:11px;color:#675c4e;white-space:nowrap}
 .dashboard .rail-gear>span{display:inline-flex}
 .dashboard .rail-gear .ic{width:18px}
-.dashboard .dash-main{overflow:hidden;background:#faf8f3}
+.dashboard .dash-main{grid-column:2;grid-row:1;overflow:hidden;background:#faf8f3}
 .dashboard .dash-pane{background:#faf8f3;overflow:auto}
-.dashboard .dash-window.is-workbench-focused{grid-template-columns:0 minmax(0,1fr)}
-.dashboard .dash-window.is-workbench-focused>.dash-main{grid-column:1/-1}
-.dashboard .dash-window.is-workbench-focused>.dash-rail{position:absolute;inset:0 auto 0 0;width:177px;max-width:calc(100% - 44px);z-index:70;visibility:hidden;opacity:0;pointer-events:none;transform:translateX(calc(-100% - 10px));box-shadow:0 18px 46px #40362429;transition:transform .18s ease,opacity .14s ease,visibility 0s linear .18s}
-.dashboard .dash-window.is-workbench-nav-open>.dash-rail{visibility:visible;opacity:1;pointer-events:auto;transform:translateX(0);transition-delay:0s}
-.workbench-nav-scrim{position:absolute;z-index:65;inset:0;background:#3f35271f}
+.dashboard .dash-window.is-workbench-focused{grid-template-columns:0px minmax(0,1fr)}
+.dashboard .dash-window.is-workbench-focused>.dash-rail{visibility:hidden;pointer-events:none;transform:translateX(-100%);transition-delay:0s,0s,var(--cc-nav-duration)}
+.dashboard .dash-window.is-workbench-nav-open>.dash-rail{visibility:visible;pointer-events:auto;transform:translateX(0);box-shadow:8px 0 28px #4036241f;transition-delay:0s}
+/* Mounted while working so closing and rapid reversals retain their exit frames. */
+.workbench-nav-scrim{position:absolute;z-index:65;inset:0;background:#3f35271f;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--cc-nav-duration) var(--cc-nav-easing),visibility 0s linear var(--cc-nav-duration)}
+.is-workbench-nav-open>.workbench-nav-scrim{opacity:1;visibility:visible;pointer-events:auto;transition-delay:0s}
+@media(prefers-reduced-motion:reduce){.dashboard .dash-window,.dashboard .dash-rail,.workbench-nav-scrim{transition:none}}
 .workbench-topline-start{display:inline-flex;align-items:center;gap:12px}
 .workbench-nav-toggle{display:inline-flex;align-items:center;justify-content:center;width:32px;height:27px;border:1px solid #ddd3c4;border-radius:8px;padding:0;background:#fffdfa;color:#69563d;font:600 11px/1 -apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif;letter-spacing:.02em;cursor:pointer}
 .workbench-nav-toggle:hover{background:#f3e9d9;border-color:#cfbea6}
 [data-platform=macos] .workbench-pane>.cc-life-topline{padding-left:84px}
-.dashboard .dash-window.is-workbench-nav-open>.dash-rail .dash-nav-link{height:44px;flex-direction:row;justify-content:flex-start;gap:12px;padding:12px 14px;font-size:14px}
-.dashboard .dash-window.is-workbench-nav-open>.dash-rail .dash-brand{padding:0 13px;align-items:flex-start}
-.dashboard .dash-window.is-workbench-nav-open>.dash-rail .cc-brand-note{display:block}
-.dashboard .dash-window.is-workbench-nav-open>.dash-rail .rail-gear{height:38px;flex-direction:row;padding:8px 13px;font-size:11px;gap:10px}
 .dashboard .cc-now-pane{position:relative;overflow:hidden}
 .cc-life-topline{flex:none;height:67px;display:flex;align-items:center;justify-content:space-between;padding:0 32px;font-size:12px;color:#544a3e}
 .cc-life-topline>span:last-child{font-size:10px;color:#928778}
@@ -129,8 +128,8 @@
 .dashboard .cc-recollections{padding:45px clamp(24px,5vw,72px);overflow:auto}
 .cc-recollections>header,.cc-memory-tabs,#cc-memory-postcards,#cc-memory-records,.cc-recollections>footer{width:100%;max-width:1010px;margin-left:auto;margin-right:auto}
 .dashboard button:focus-visible,.dashboard summary:focus-visible{outline:2px solid #b18a54;outline-offset:3px}
-@media(max-width:1050px){.dashboard .dash-window{grid-template-columns:145px minmax(0,1fr)}.dashboard .dash-rail{padding-left:12px;padding-right:12px}.dashboard .dash-brand{padding-left:8px}.cc-brand-note{font-size:9px}.cc-now-pane .cc-current-activity{padding-left:24px;padding-right:24px}}
-@media(max-width:740px){.dashboard .dash-window{grid-template-columns:72px minmax(0,1fr)}.dashboard .dash-rail{padding:32px 7px 12px}.dashboard .dash-brand{padding:0;align-items:center}.dashboard .dash-brand .name{font-size:26px}.cc-brand-note{display:none}.dashboard .dash-nav{margin-top:34px}.dashboard .dash-nav-link{height:61px;flex-direction:column;gap:5px;padding:8px 2px;font-size:11px}.dashboard .cc-life-nav-more summary{padding:10px 2px;text-align:center;font-size:10px}.dashboard .rail-gear{flex-direction:column;height:auto;padding:8px 0;font-size:9px;gap:5px}.dashboard .cc-life-nav-more .dash-nav-link{flex-direction:row;justify-content:flex-start;padding:8px 12px}.cc-life-topline{padding-left:20px}.cc-now-pane .cc-life-topline>span:last-child{display:none}.cc-now-pane .cc-current-activity h1{font-size:24px}.cc-now-pane .cc-now-scene{width:225px;height:230px}.cc-now-pane .converse-compose{width:calc(100% - 32px)}.cc-now-pane .converse-scroll:has(.converse-msg,.converse-error-line,.converse-system-line){padding:12px 16px}.cc-now-pane .cc-home-details{right:20px}}
+@media(max-width:1050px){.dashboard .dash-window{--cc-rail-width:145px}.dashboard .dash-rail{padding-left:12px;padding-right:12px}.dashboard .dash-brand{padding-left:8px}.cc-brand-note{font-size:9px}.cc-now-pane .cc-current-activity{padding-left:24px;padding-right:24px}}
+@media(max-width:740px){.dashboard .dash-window{--cc-rail-width:72px}.dashboard .dash-rail{padding:32px 7px 12px}.dashboard .dash-brand{padding:0;align-items:center}.dashboard .dash-brand .name{font-size:26px}.cc-brand-note{display:none}.dashboard .dash-nav{margin-top:34px}.dashboard .dash-nav-link{height:61px;flex-direction:column;gap:5px;padding:8px 2px;font-size:11px}.dashboard .cc-life-nav-more summary{padding:10px 2px;text-align:center;font-size:10px}.dashboard .rail-gear{flex-direction:column;height:auto;padding:8px 0;font-size:9px;gap:5px}.dashboard .cc-life-nav-more .dash-nav-link{flex-direction:row;justify-content:flex-start;padding:8px 12px}.cc-life-topline{padding-left:20px}.cc-now-pane .cc-life-topline>span:last-child{display:none}.cc-now-pane .cc-current-activity h1{font-size:24px}.cc-now-pane .cc-now-scene{width:225px;height:230px}.cc-now-pane .converse-compose{width:calc(100% - 32px)}.cc-now-pane .converse-scroll:has(.converse-msg,.converse-error-line,.converse-system-line){padding:12px 16px}.cc-now-pane .cc-home-details{right:20px}}
 @media(max-height:740px){.cc-now-pane .cc-now-scene{width:200px;height:205px;margin-bottom:10px}.cc-now-pane .cc-current-activity{padding-top:0;padding-bottom:12px}.cc-now-pane .cc-current-activity h1{font-size:24px}.cc-now-pane:has(.converse-msg,.converse-error-line,.converse-system-line) .cc-now-scene{width:80px;height:80px}.cc-now-pane .cc-life-topline{height:57px}}
 
 /* Recollections read like dated keepsakes rather than a dashboard of cards. */

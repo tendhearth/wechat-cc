@@ -15,8 +15,10 @@ export function createWorkbenchNavigation({ shell, rail, toggle, scrim, document
     shell.classList.toggle('is-workbench-focused', workbenchActive)
     shell.classList.toggle('is-workbench-nav-open', visible)
     toggle.setAttribute('aria-expanded', String(visible))
-    toggle.setAttribute('aria-label', visible ? '关闭主导航' : '打开主导航')
-    scrim.hidden = !visible
+    const label = visible ? '关闭主导航' : '打开主导航'
+    toggle.setAttribute('aria-label', label)
+    toggle.setAttribute('title', label)
+    scrim.hidden = !workbenchActive
     rail.inert = workbenchActive && !visible
     if (rail.inert) rail.setAttribute('aria-hidden', 'true')
     else rail.removeAttribute('aria-hidden')
@@ -38,13 +40,16 @@ export function createWorkbenchNavigation({ shell, rail, toggle, scrim, document
     }
     open = true
     render()
-    const target = /** @type {HTMLElement|null} */ (rail.querySelector('.dash-nav-link.active:not(.disabled), .dash-nav-link:not(.disabled)'))
+    const target = /** @type {HTMLElement|null} */ (
+      rail.querySelector('.dash-nav-link.active:not(.disabled)')
+      ?? rail.querySelector('.dash-nav-link:not(.disabled)')
+    )
     target?.focus({ preventScroll: true })
   }
   const onScrim = () => close(true)
   /** @param {KeyboardEvent} event */
   const onKeydown = event => {
-    if (event.key !== 'Escape' || !workbenchActive || !open) return
+    if (event.defaultPrevented || event.key !== 'Escape' || !workbenchActive || !open) return
     event.preventDefault()
     close(true)
   }
@@ -55,15 +60,20 @@ export function createWorkbenchNavigation({ shell, rail, toggle, scrim, document
   render()
 
   return {
-    /** @param {boolean} active */
+    /**
+     * Sync navigation after the target pane's visibility has been updated.
+     * @param {boolean} active
+     */
     setWorkbenchActive(active) {
       if (active && workbenchActive && open) {
         close(true)
         return
       }
+      const entering = active && !workbenchActive
       workbenchActive = active
       open = false
       render()
+      if (entering) toggle.focus({ preventScroll: true })
     },
     destroy() {
       toggle.removeEventListener('click', onToggle)
