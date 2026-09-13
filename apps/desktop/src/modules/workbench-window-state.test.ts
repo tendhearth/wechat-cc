@@ -38,3 +38,13 @@ it('restores navigation and validates it independently of task text',()=>{
  expect(loadWorkbenchView(storage)).toEqual({scope:'task:deadbeef',query:{q:'project',archived:'only'},search:'not submitted'})
  expect(loadWorkbenchView({getItem:()=>'{"scope":"task:deadbeef","query":{"q":{},"archived":"bad"}}'})).toEqual({scope:null,query:{q:'',archived:'exclude'},search:''})
 })
+it('persists explicit automatic execution choices and isolates them across projects and tasks',()=>{
+ const storage=memory(),first=createWorkbenchDraftStore(storage),choice={defaults:'native' as const,model:null,reasoningEffort:null}
+ first.set('task:deadbeef',{...draft('keep'),execution:choice})
+ first.set('new:/A',{...draft('A'),execution:{defaults:'provider',model:'model-A',reasoningEffort:'deep'}})
+ const copy=first.get('new:/A');copy.execution!.model='mutated'
+ const restored=createWorkbenchDraftStore(storage)
+ expect(restored.get('task:deadbeef').execution).toEqual(choice)
+ expect(restored.get('new:/A').execution?.model).toBe('model-A')
+ expect(restored.get('new:/B').execution).toBeUndefined()
+})

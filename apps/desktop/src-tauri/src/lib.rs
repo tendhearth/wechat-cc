@@ -944,6 +944,7 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
     matches!(
         (method, route),
         ("GET", "/v1/workbench")
+            | ("GET", "/v1/workbench/models")
             | ("GET", "/v1/workbench/sessions")
             | ("GET", "/v1/workbench/session")
             | ("GET", "/v1/workbench/task")
@@ -959,6 +960,7 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("POST", "/v1/workbench/archive")
             | ("POST", "/v1/workbench/import")
             | ("POST", "/v1/workbench/prepare-resume")
+            | ("POST", "/v1/workbench/prepare-continuation")
             | ("POST", "/v1/workbench/handoff-preview")
             | ("POST", "/v1/workbench/handoff")
             | ("GET", "/v1/workbench/handoff")
@@ -1322,6 +1324,7 @@ mod workbench_proxy_tests {
             ("GET", "/v1/workbench"),
             ("GET", "/v1/workbench/task?id=A1B2C3D4"),
             ("GET", "/v1/workbench/sessions?providerId=claude"),
+            ("GET", "/v1/workbench/models?providerId=codex&path=%2Fwork"),
             ("GET", "/v1/workbench/session?key=opaque"),
             ("GET", "/v1/workbench/artifact?id=A1B2C3D4&artifactId=file-1"),
             ("POST", "/v1/workbench/attachment"),
@@ -1335,6 +1338,7 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/archive"),
             ("POST", "/v1/workbench/import"),
             ("POST", "/v1/workbench/prepare-resume"),
+            ("POST", "/v1/workbench/prepare-continuation"),
             ("POST", "/v1/workbench/handoff-preview"),
             ("POST", "/v1/workbench/handoff"),
             ("GET", "/v1/workbench/handoff"),
@@ -1358,9 +1362,13 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/archive/extra"),
             ("GET", "/v1/workbench/import"),
             ("GET", "/v1/workbench/prepare-resume"),
+            ("GET", "/v1/workbench/prepare-continuation"),
+            ("POST", "/v1/workbench/prepare-continuation/extra"),
             ("POST", "/v1/workbench/import/extra"),
             ("GET", "/v1/workbench/task/extra"),
             ("POST", "/v1/workbench/sessions"),
+            ("POST", "/v1/workbench/models"),
+            ("GET", "/v1/workbench/models/extra"),
             ("POST", "/v1/workbench/session"),
             ("GET", "/v1/workbench/session/extra"),
             ("POST", "/v1/workbench/attention"),

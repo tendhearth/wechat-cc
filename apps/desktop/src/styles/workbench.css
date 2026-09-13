@@ -339,3 +339,13 @@
 .wb-reading-bar { position:relative; height:0; flex:none; z-index:2; }
 .wb-reading-bar[hidden] { display:none; }
 .wb-reading-bar button { position:absolute; bottom:12px; left:50%; transform:translateX(-50%); white-space:nowrap; padding:7px 14px; border-radius:18px; background:var(--wb-surface); box-shadow:0 3px 12px #272a2018; font-size:12px; }
+
+/* Execution choices stay inside the existing optional disclosures. */
+.wb-execution-controls { display:grid; gap:12px; margin-top:16px; }
+.wb-execution-controls label { display:grid; gap:7px; color:var(--wb-secondary); font-size:12px; }
+.wb-execution-controls select { width:100%; min-width:0; border:1px solid #dedbd2; border-radius:7px; padding:9px 10px; background:#fffefa; color:var(--wb-text); font:inherit; }
+.wb-execution-controls small,.wb-execution-observation { color:var(--wb-muted); font-size:11px; line-height:1.7; }
+.wb-execution-controls select:disabled { opacity:.65; }
+.wb-task-execution { border-top:1px solid var(--wb-line); padding-top:14px; margin-top:10px; }
+.wb-task-execution h3 { margin:0; color:var(--wb-secondary); font-size:12px; font-weight:500; }
+.wb-execution-observation { margin:14px 0 0; overflow-wrap:anywhere; }

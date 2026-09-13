@@ -10,6 +10,26 @@ afterEach(() => {
 })
 
 describe('workbench rendering', () => {
+  it('keeps model controls in the existing disclosures and distinguishes observations from next-run choices',async()=>{
+    const {renderWorkbench}=await import('./workbench.js')
+    const execution={defaults:'native' as const,model:'requested-model',reasoningEffort:'deep'},task={id:'deadbeef',title:'Task',path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
+    const state={tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',selectedId:task.id,detail:{task,events:[],artifacts:[],execution,lastExecution:{taskId:task.id,runId:'run-A',choice:execution,effective:{model:'observed-model',source:'native_response'}}},selectedArtifactId:null,error:'',preview:null,canWechat:false}
+    const html=renderWorkbench(state)
+    expect(html).toMatch(/id="wb-task-info"[\s\S]*id="wb-model"[\s\S]*<\/details>/)
+    expect(html).toContain('下一轮使用');expect(html).toContain('observed-model');expect(html).toContain('思考强度未报告')
+    expect(html.match(/<select[^>]* disabled/g)).toHaveLength(2)
+    expect(html.slice(html.indexOf('class="wb-controls"'))).not.toContain('id="wb-model"')
+    const create=renderWorkbench({...state,selectedId:null,detail:null})
+    expect(create).toMatch(/id="wb-options"[\s\S]*id="wb-model"[\s\S]*id="wb-title"/)
+  })
+
+  it('shows an actionable execution failure in the task banner without rewriting stored error data',async()=>{
+    const {renderWorkbench}=await import('./workbench.js')
+    const task={id:'deadbeef',title:'Task',path:'/work',providerId:'codex',status:'failed',createdAt:1,updatedAt:2,error:'execution_image_unsupported'}
+    const html=renderWorkbench({tasks:[task],providers:[],defaultProvider:'codex',selectedId:task.id,detail:{task,events:[],artifacts:[]},selectedArtifactId:null,error:'',preview:null,canWechat:false})
+    expect(html).toContain('不接收图片');expect(html).not.toContain('execution_image_unsupported');expect(task.error).toBe('execution_image_unsupported')
+  })
+
   it('offers running supplements only with an active run and explains native versus next-round delivery', async () => {
     const { renderWorkbench } = await import('./workbench.js')
     const task = { id: 'A', title: 'Working', path: '/work', providerId: 'codex', status: 'running', createdAt: 1, updatedAt: 2, error: null }
@@ -431,6 +451,7 @@ describe('workbench mutations', () => {
     listeners = new Map<string, Set<(event: any) => void>>()
     addEventListener(name: string, fn: (event: any) => void) { const set = this.listeners.get(name) ?? new Set(); set.add(fn); this.listeners.set(name, set) }
     removeEventListener(name: string, fn: (event: any) => void) { this.listeners.get(name)?.delete(fn) }
+    dispatchEvent(event:Event) { Object.defineProperty(event,'target',{value:this});for(let node:FakeElement|null=this;node;node=event.bubbles?node.parentElement:null)for(const fn of node.listeners.get(event.type)??[])fn(event);return true }
     closest(selector?: string) { return selector === 'button' || selector === 'summary' ? this : null }
     contains(element: unknown) { return element !== null }
     querySelector(_selector?: string): FakeElement | null { return null }
@@ -444,12 +465,153 @@ describe('workbench mutations', () => {
 
   function installFakePage(fields: Record<string, FakeElement> = {}, content?: FakeElement) {
     const page = new FakeElement()
+    for(const field of Object.values(fields))field.parentElement=page
     if(content)(page as any).querySelector=(selector:string)=>selector==='.wb-content'?content:null
     root.document = {getElementById:(id:string)=>id==='workbench-root'?page:fields[id]??null,activeElement:null,createElement:()=>new FakeElement()}
     root.window = {}
     vi.stubGlobal('Element',FakeElement)
     return page
   }
+
+  it('saves a native folder selection and refreshes the catalog for that selected directory',async()=>{
+    const values=new Map<string,string>(),storage={getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>{values.set(key,value)},removeItem:(key:string)=>{values.delete(key)}}
+    const fields=Object.fromEntries(['wb-create-form','wb-path','wb-create-text','wb-provider'].map(id=>{const f=new FakeElement();f.id=id;f.tagName=id==='wb-path'?'INPUT':'';return[id,f]}))
+    const page=installFakePage(fields);root.window={sessionStorage:storage}
+    const settings=new FakeElement();settings.id='wb-options';settings.setAttribute('open','')
+    page.querySelector=selector=>selector==='#wb-options[open]'?settings:null
+    const api=vi.fn(async(_method:string,path:string)=>path.startsWith('/v1/workbench/models?')?{catalog:{source:'native',models:[{id:'model-for-'+new URLSearchParams(path.split('?')[1]).get('path'),displayName:'Selected folder model',reasoningEfforts:[]}]}}:{tasks:[],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex'})
+    const invoke=vi.fn(async()=>'/selected folder')
+    const module=await import('./workbench.js'),controller=module.initWorkbenchPage({invokeWorkbenchApi:api,invoke,pollMs:100000})!
+    await vi.waitFor(()=>expect(controller.state.providers).toHaveLength(1))
+    fields['wb-path']!.value='/before';fields['wb-provider']!.value='codex'
+    await [...page.listeners.get('toggle')!][0]!({target:settings})
+    await vi.waitFor(()=>expect(api).toHaveBeenCalledWith('GET','/v1/workbench/models?providerId=codex&path=%2Fbefore'))
+    const choose=new FakeElement();choose.dataset.action='choose-folder'
+    await [...page.listeners.get('click')!][0]!({target:choose})
+    await vi.waitFor(()=>expect(api).toHaveBeenCalledWith('GET','/v1/workbench/models?providerId=codex&path=%2Fselected+folder'))
+    expect(invoke).toHaveBeenCalledWith('choose_workbench_folder',{})
+    const {createWorkbenchDraftStore}=await import('./workbench-window-state.js')
+    expect(createWorkbenchDraftStore(storage).get('new').path).toBe('/selected folder')
+    expect(fields['wb-path']!.value).toBe('/selected folder')
+    module.stopWorkbenchPolling()
+  })
+
+  it.each(['new-scope','task'] as const)('ignores a late native folder result after navigating to %s',async destination=>{
+    const fields=Object.fromEntries(['wb-create-form','wb-path','wb-create-text','wb-provider','wb-followup-text'].map(id=>{const f=new FakeElement();f.id=id;return[id,f]})),page=installFakePage(fields)
+    const task={id:'deadbeef',title:'Task',path:'/task',providerId:'codex',status:'completed',createdAt:1,updatedAt:2}
+    const api=vi.fn(async(_method:string,path:string)=>path==='/v1/workbench'?{tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex'}:{task,events:[],artifacts:[]})
+    let finish!:(path:string)=>void
+    const module=await import('./workbench.js'),controller=module.initWorkbenchPage({invokeWorkbenchApi:api,invoke:async()=>await new Promise<string>(resolve=>{finish=resolve}),pollMs:100000})!
+    await vi.waitFor(()=>expect(controller.state.selectedId).toBe(task.id))
+    const click=[...page.listeners.get('click')!][0]!,create=new FakeElement();create.dataset.action='new-task';await click({target:create})
+    fields['wb-path']!.value='/original';fields['wb-provider']!.value='codex'
+    const choose=new FakeElement();choose.dataset.action='choose-folder';const choosing=click({target:choose})
+    const next=new FakeElement();next.dataset=destination==='task'?{taskId:task.id}:{action:'new-project-task',projectPath:'/other'}
+    await click({target:next})
+    fields['wb-path']!.value='/current';fields['wb-followup-text']!.value='Current draft'
+    finish('/late-picked');await choosing
+    expect(fields['wb-path']!.value).toBe('/current');expect(fields['wb-followup-text']!.value).toBe('Current draft')
+    expect(api.mock.calls.some(([,path])=>path.includes('late-picked'))).toBe(false)
+    expect(controller.state.error).toBe('')
+    module.stopWorkbenchPolling()
+  })
+
+  it('restores automatic selection, submits a frozen execution choice and preserves later setting edits',async()=>{
+    const values=new Map<string,string>(),storage={getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>{values.set(key,value)},removeItem:(key:string)=>{values.delete(key)}}
+    const automatic={defaults:'native' as const,model:null,reasoningEffort:null},stored={...automatic,model:'old-model'}
+    const {createWorkbenchDraftStore,saveWorkbenchView}=await import('./workbench-window-state.js')
+    createWorkbenchDraftStore(storage).set('task:deadbeef',{path:'',text:'',title:'',providerId:'',followup:'Continue',execution:automatic})
+    saveWorkbenchView(storage,{scope:'task:deadbeef',query:{q:'',archived:'exclude'},search:''})
+    const fields=Object.fromEntries(['wb-followup-text','wb-model','wb-reasoning-effort'].map(id=>{const f=new FakeElement();f.id=id;return[id,f]}))
+    fields['wb-model']!.value='old-model'
+    const page=installFakePage(fields);root.window={sessionStorage:storage}
+    const task={id:'deadbeef',title:'Task',path:'/work',providerId:'codex',status:'completed',createdAt:1,updatedAt:2}
+    let sent:any,finish!:(value:any)=>void
+    const api=async(method:string,path:string,body?:any)=>method==='POST'?(sent=body,await new Promise(resolve=>{finish=resolve})):path==='/v1/workbench'?{tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex'}:{task,events:[],artifacts:[],execution:stored}
+    const module=await import('./workbench.js'),controller=module.initWorkbenchPage({invokeWorkbenchApi:api,pollMs:100000})!
+    await vi.waitFor(()=>expect(controller.state.selectedId).toBe(task.id));expect(fields['wb-model']!.value).toBe('')
+    const form=new FakeElement();form.tagName='FORM';form.dataset.action='continue'
+    const submitting=[...page.listeners.get('submit')!][0]!({target:form,preventDefault(){}})
+    await vi.waitFor(()=>expect(sent).toBeTruthy());expect(sent.execution).toEqual(automatic)
+    fields['wb-model']!.value='new-model'
+    await [...page.listeners.get('change')!][0]!({target:fields['wb-model']})
+    finish({task});await submitting
+    const kept=createWorkbenchDraftStore(storage).get('task:deadbeef')
+    expect(kept.execution?.model).toBe('new-model');expect(kept.followup).toBe('Continue')
+    module.stopWorkbenchPolling()
+  })
+
+  it('loads models only after opening settings and invalidates prepared native continuation after an execution edit',async()=>{
+    const fields=Object.fromEntries(['wb-followup-text','wb-model','wb-reasoning-effort'].map(id=>{const f=new FakeElement();f.id=id;return[id,f]}))
+    const page=installFakePage(fields),settings=new FakeElement();settings.id='wb-task-info';settings.tagName='DETAILS'
+    page.querySelector=selector=>selector==='#wb-task-info[open]'&&settings.hasAttribute('open')?settings:null
+    const task={id:'deadbeef',title:'Task',path:'/work A',providerId:'codex',status:'completed',createdAt:1,updatedAt:2}
+    const execution={defaults:'native' as const,model:null,reasoningEffort:null}
+    const api=vi.fn(async(_method:string,path:string)=>path.startsWith('/v1/workbench/models?')?{catalog:{source:'native',models:[{id:'native-model',displayName:'Native model',reasoningEfforts:['deep']}]}}:path==='/v1/workbench'?{tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex'}:{task,events:[],artifacts:[],execution,requiresExternalClose:true})
+    const module=await import('./workbench.js'),controller=module.initWorkbenchPage({invokeWorkbenchApi:api,pollMs:100000})!
+    await vi.waitFor(()=>expect(controller.state.selectedId).toBe(task.id));expect(api.mock.calls.some(c=>c[1].startsWith('/v1/workbench/models'))).toBe(false)
+    settings.setAttribute('open','');await [...page.listeners.get('toggle')!][0]!({target:settings})
+    await vi.waitFor(()=>expect(page.innerHTML).toContain('Native model'))
+    expect(api).toHaveBeenCalledWith('GET','/v1/workbench/models?providerId=codex&path=%2Fwork+A')
+    controller.state.nativeResume={taskId:task.id,token:'prepared'} as any
+    fields['wb-model']!.value='native-model';await [...page.listeners.get('change')!][0]!({target:fields['wb-model']})
+    expect(controller.state.nativeResume).toBeNull()
+    module.stopWorkbenchPolling()
+  })
+
+  it('waits for the chosen restart preview and ignores late original-choice responses and stale submit tokens',async()=>{
+    const values=new Map<string,string>(),storage={getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>{values.set(key,value)},removeItem:(key:string)=>{values.delete(key)}}
+    const execution={defaults:'native' as const,model:'A',reasoningEffort:null}
+    const {createWorkbenchDraftStore,saveWorkbenchView}=await import('./workbench-window-state.js')
+    createWorkbenchDraftStore(storage).set('task:deadbeef',{path:'',text:'',title:'',providerId:'',followup:'Restart please',execution})
+    saveWorkbenchView(storage,{scope:'task:deadbeef',query:{q:'',archived:'exclude'},search:''})
+    const fields=Object.fromEntries(['wb-followup-text','wb-model','wb-reasoning-effort'].map(id=>{const f=new FakeElement();f.id=id;return[id,f]})),page=installFakePage(fields);root.window={sessionStorage:storage}
+    const task={id:'deadbeef',title:'Task',path:'/work',providerId:'codex',status:'completed',createdAt:1,updatedAt:2}
+    const preview=(token:string,context:string)=>({mode:'restart_required',restart:{token,context,eventCount:1,includedEventCount:1,truncated:false}})
+    const pending=new Map<string,{resolve:(value:any)=>void,reject:(error:any)=>void}>(),sent:any[]=[]
+    const api=async(method:string,path:string,body?:any)=>{
+      if(path==='/v1/workbench/prepare-continuation')return await new Promise((resolve,reject)=>pending.set(body.execution.model,{resolve,reject}))
+      if(method==='POST'){sent.push(body);return{task}}
+      return path==='/v1/workbench'?{tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex'}:{task,events:[],artifacts:[],execution,continuation:preview('a'.repeat(64),'original preview A')}
+    }
+    const module=await import('./workbench.js'),controller=module.initWorkbenchPage({invokeWorkbenchApi:api,pollMs:100000})!
+    await vi.waitFor(()=>expect(pending.has('A')).toBe(true))
+    fields['wb-model']!.value='B';await [...page.listeners.get('change')!][0]!({target:fields['wb-model']})
+    await vi.waitFor(()=>expect(pending.has('B')).toBe(true))
+    expect(page.innerHTML).not.toContain('original preview A');expect(page.innerHTML).toMatch(/type="submit" disabled/)
+    const form=new FakeElement();form.tagName='FORM';form.dataset={action:'restart',restartToken:'a'.repeat(64)}
+    const submit=[...page.listeners.get('submit')!][0]!
+    await submit({target:form,preventDefault(){}});expect(sent).toHaveLength(0)
+    pending.get('B')!.reject(Error('lost_response'));await vi.waitFor(()=>expect(page.innerHTML).toContain('重新读取恢复说明'))
+    const retry=new FakeElement();retry.dataset.action='retry-continuation-preview';await [...page.listeners.get('click')!][0]!({target:retry})
+    pending.get('B')!.resolve({continuation:preview('b'.repeat(64),'chosen preview B')})
+    await vi.waitFor(()=>expect(page.innerHTML).toContain('chosen preview B'))
+    pending.get('A')!.resolve({continuation:preview('a'.repeat(64),'late preview A')});await new Promise(resolve=>setTimeout(resolve,0))
+    expect(page.innerHTML).not.toContain('late preview A')
+    await submit({target:form,preventDefault(){}});expect(sent).toHaveLength(0)
+    form.dataset.restartToken='b'.repeat(64)
+    await submit({target:form,preventDefault(){}})
+    expect(sent[0]).toMatchObject({execution:{...execution,model:'B'},restartToken:'b'.repeat(64)})
+    module.stopWorkbenchPolling()
+  })
+
+  it('shows an actionable execution failure after submission and retains the draft',async()=>{
+    const field=new FakeElement();field.id='wb-followup-text'
+    const page=installFakePage({'wb-followup-text':field})
+    const task={id:'deadbeef',title:'Task',path:'/work',providerId:'codex',status:'completed',createdAt:1,updatedAt:2}
+    const api=async(method:string,path:string)=>{
+      if(method==='POST')throw Error('execution_model_unsupported')
+      return path==='/v1/workbench'?{tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex'}:{task,events:[],artifacts:[]}
+    }
+    const module=await import('./workbench.js'),controller=module.initWorkbenchPage({invokeWorkbenchApi:api,pollMs:100000})!
+    await vi.waitFor(()=>expect(controller.state.selectedId).toBe(task.id))
+    field.value='Keep my request'
+    const form=new FakeElement();form.tagName='FORM';form.dataset.action='continue'
+    await [...page.listeners.get('submit')!][0]!({target:form,preventDefault(){}})
+    expect(controller.state.error).toContain('重新选择模型');expect(controller.state.error).not.toContain('execution_model_unsupported')
+    expect(field.value).toBe('Keep my request')
+    module.stopWorkbenchPolling()
+  })
 
   it('keeps uploaded files with the initiating task and submits attachment-only continuation',async()=>{
     const field=new FakeElement();field.id='wb-followup-text'

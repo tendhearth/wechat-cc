@@ -85,6 +85,8 @@ it('keeps archive writes behind explicit host write access while passing literal
 })
 
 const liveRoutes = [
+ ['POST', '/v1/workbench/prepare-continuation'],
+ ['GET', '/v1/workbench/models'],
  ['POST', '/v1/workbench/attachment'],
  ['GET', '/v1/workbench/attachment'],
  ['POST', '/v1/workbench/discard-attachment'],

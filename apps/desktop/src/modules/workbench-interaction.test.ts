@@ -82,6 +82,52 @@ describe('workbench live interactions', () => {
     expect(reloaded.continuationRequest('A','New request',[a])).not.toBe(id)
   })
 
+  it('binds terminal retry identity and reconciliation to execution choices across reload',async()=>{
+    const {createWorkbenchInteractions}=await import('./workbench-interaction.js')
+    const saved=storage(),a={defaults:'native' as const,model:'model-A',reasoningEffort:'deep'},b={...a,model:'model-B'}
+    const first=createWorkbenchInteractions({storage:saved,invokeWorkbenchApi:vi.fn()})
+    const id=first.continuationRequest('A','same text',[],a)
+    const reloaded=createWorkbenchInteractions({storage:saved,invokeWorkbenchApi:vi.fn()})
+    expect(reloaded.continuationRequest('A','same text',[],a)).toBe(id)
+    const receipt={id,taskId:'A',runId:'run-A',text:'same text',status:'delivered' as const,createdAt:1,error:null,execution:a}
+    expect(reloaded.acknowledgedInputDraft('A',[receipt],[],b)).toBeNull()
+    expect(reloaded.acknowledgedInputDraft('A',[{...receipt,execution:b}],[],a)).toBeNull()
+    expect(reloaded.acknowledgedInputDraft('A',[receipt],[],a)).toBe('same text')
+    expect(reloaded.continuationRequest('A','same text',[],b)).not.toBe(id)
+  })
+
+  it('uses execution only for live-input receipt identity, never as a steering override',async()=>{
+    const {createWorkbenchInteractions}=await import('./workbench-interaction.js')
+    const execution={defaults:'native' as const,model:'model-A',reasoningEffort:null},calls:any[]=[]
+    const ui=createWorkbenchInteractions({invokeWorkbenchApi:async(_m,_p,body)=>{calls.push(body);return{input:{id:body!.requestId,taskId:'A',runId:'run-A',text:'text',status:'pending',createdAt:1,error:null,execution}}}})
+    expect((await ui.sendInput('A','run-A','text',{execution}))?.status).toBe('pending')
+    expect(calls[0]).not.toHaveProperty('execution')
+    expect(ui.acknowledgedInputDraft('A',[],[],execution)).toBeNull()
+  })
+
+  it('binds live receipts to the current run while keeping a different next-turn draft choice',async()=>{
+    const {createWorkbenchInteractions}=await import('./workbench-interaction.js')
+    const draftExecution={defaults:'native' as const,model:'draft-model-A',reasoningEffort:null},execution={...draftExecution,model:'running-model-B'}
+    const saved=storage();let receipt:any
+    const ui=createWorkbenchInteractions({storage:saved,invokeWorkbenchApi:async(_m,_p,body)=>({input:receipt={id:body!.requestId,taskId:'A',runId:'run-B',text:'supplement',status:'pending',createdAt:1,error:null,execution}})})
+    expect((await ui.sendInput('A','run-B','supplement',{execution,draftExecution}))?.status).toBe('pending')
+    const reloaded=createWorkbenchInteractions({storage:saved,invokeWorkbenchApi:vi.fn()})
+    expect(reloaded.acknowledgedInputDraft('A',[receipt],[],execution)).toBeNull()
+    expect(reloaded.acknowledgedInputDraft('A',[receipt],[],draftExecution)).toBe('supplement')
+  })
+
+  it('retains an uncertain terminal model choice when another window has advanced the active model',async()=>{
+    const {createWorkbenchInteractions}=await import('./workbench-interaction.js')
+    const draftExecution={defaults:'native' as const,model:'model-A',reasoningEffort:null},execution={...draftExecution,model:'model-B'},sent:any[]=[]
+    const saved=storage(),ui=createWorkbenchInteractions({storage:saved,invokeWorkbenchApi:async(_m,_p,body)=>{sent.push(body);throw Error('input_conflict')}})
+    const id=ui.continuationRequest('A','same',[],draftExecution)
+    await ui.sendInput('A','run-B','same',{execution,draftExecution})
+    expect(sent[0].requestId).toBe(id)
+    const reloaded=createWorkbenchInteractions({storage:saved,invokeWorkbenchApi:vi.fn()})
+    const original={id,taskId:'A',runId:'run-A',text:'same',status:'delivered' as const,createdAt:1,error:null,execution:draftExecution}
+    expect(reloaded.acknowledgedInputDraft('A',[original],[],draftExecution)).toBe('same')
+  })
+
   it('retains answer drafts over reload but isolates tasks and replaced requests', async () => {
     const { createWorkbenchInteractions } = await import('./workbench-interaction.js')
     const saved = storage()

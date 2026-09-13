@@ -1,14 +1,18 @@
 // @ts-check
+import {executionSignature} from './workbench-execution.js'
+/** @typedef {import('./workbench-execution.js').ExecutionChoice} ExecutionChoice */
 import {attachmentSignature,renderMessageAttachments} from './workbench-attachments.js'
 /** @typedef {import('./workbench-attachments.js').Attachment} Attachment */
 /** @typedef {{id:string,header:string,question:string,options:Array<{label:string,description:string}>,multiSelect?:boolean,allowOther?:boolean}} Question */
 /** @typedef {{id:string,taskId:string,createdAt:number,questions:Question[]}} QuestionRequest */
-/** @typedef {{id:string,taskId:string,runId:string,text:string,status:'pending'|'sending'|'delivered'|'held'|'withdrawn',createdAt:number,error:string|null,attachments?:Attachment[]}} LiveInput */
+/** @typedef {{id:string,taskId:string,runId:string,text:string,status:'pending'|'sending'|'delivered'|'held'|'withdrawn',createdAt:number,error:string|null,attachments?:Attachment[],execution?:ExecutionChoice}} LiveInput */
 /** @typedef {Record<string,{selected:string[],other:string}>} AnswerDraft */
 /** @typedef {{busy:boolean,error:string,resolved?:boolean}} ActionState */
-/** @typedef {{id:string,runId:string,text:string,draftText?:string,acknowledged?:boolean,attachments?:Attachment[],kind?:'continue'}} InputAttempt */
+/** @typedef {{id:string,runId:string,text:string,draftText?:string,acknowledged?:boolean,attachments?:Attachment[],execution?:ExecutionChoice,draftExecution?:ExecutionChoice|null,kind?:'continue'}} InputAttempt */
 /** @typedef {Pick<Storage,'getItem'|'setItem'|'removeItem'>} StorageLike */
 /** @typedef {ReturnType<typeof createWorkbenchInteractions>} Interactions */
+/** @param {InputAttempt} attempt */
+const attemptDraftExecution=attempt=>attempt.draftExecution!==undefined?attempt.draftExecution:attempt.execution
 const PREFIX = 'cc.workbench.interaction.v1:'
 const escape = (/** @type {unknown} */ value) => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character)
 const keyFor = (/** @type {string} */ taskId, /** @type {string} */ requestId) => JSON.stringify([taskId, requestId])
@@ -61,19 +65,19 @@ export function createWorkbenchInteractions(deps) {
     /** @param {string} taskId */
     inputState(taskId) { return stateFor('input:' + taskId) },
     /** Explicitly composing different content starts a new supplement; polling never calls this.
-     * @param {string} taskId @param {string} text @param {Attachment[]} [attachments] */
-    editInputDraft(taskId, text, attachments=[]) {
+     * @param {string} taskId @param {string} text @param {Attachment[]} [attachments] @param {ExecutionChoice} [execution] */
+    editInputDraft(taskId, text, attachments=[],execution) {
       const attempt = attempts.get(taskId) ?? read('input:' + taskId)
-      if (attempt && typeof attempt.text === 'string' && (attempt.acknowledged || attempt.text.trim() !== text.trim() || attachmentSignature(attempt.attachments)!==attachmentSignature(attachments))) this.resetInput(taskId, attempt.id)
+      if (attempt && typeof attempt.text === 'string' && (attempt.acknowledged || attempt.text.trim() !== text.trim() || attachmentSignature(attempt.attachments)!==attachmentSignature(attachments)||executionSignature(attemptDraftExecution(attempt))!==executionSignature(execution))) this.resetInput(taskId, attempt.id)
     },
     /** A terminal continuation gets its run ID only after the service accepts it.
      * Persist its request identity before sending so reloads can retry or reconcile it.
-     * @param {string} taskId @param {string} text @param {Attachment[]} [attachments] */
-    continuationRequest(taskId,text,attachments=[]) {
+     * @param {string} taskId @param {string} text @param {Attachment[]} [attachments] @param {ExecutionChoice} [execution] */
+    continuationRequest(taskId,text,attachments=[],execution) {
       const previous=attempts.get(taskId)??read('input:'+taskId)
-      const same=previous?.kind==='continue'&&typeof previous.id==='string'&&typeof previous.text==='string'&&previous.text.trim()===text.trim()&&attachmentSignature(previous.attachments)===attachmentSignature(attachments)
+      const same=previous?.kind==='continue'&&typeof previous.id==='string'&&typeof previous.text==='string'&&previous.text.trim()===text.trim()&&attachmentSignature(previous.attachments)===attachmentSignature(attachments)&&executionSignature(previous.execution)===executionSignature(execution)
       /** @type {InputAttempt} */
-      const attempt={id:same?previous.id:crypto.randomUUID(),kind:'continue',runId:'',text:text.trim(),draftText:text,...(attachments.length?{attachments:structuredClone(attachments)}:{})}
+      const attempt={id:same?previous.id:crypto.randomUUID(),kind:'continue',runId:'',text:text.trim(),draftText:text,...(execution?{execution:structuredClone(execution)}:{}),...(attachments.length?{attachments:structuredClone(attachments)}:{})}
       attempts.set(taskId,attempt);write('input:'+taskId,attempt)
       return attempt.id
     },
@@ -84,36 +88,40 @@ export function createWorkbenchInteractions(deps) {
       if (attempt?.id === requestId) { attempts.delete(taskId); write('input:' + taskId, null) }
     },
     /** Reconcile a preserved composer only against its own durable receipt.
-     * @param {string} taskId @param {LiveInput[]} inputs @param {Attachment[]} [attachments] @returns {string|null} */
-    acknowledgedInputDraft(taskId, inputs, attachments=[]) {
+     * @param {string} taskId @param {LiveInput[]} inputs @param {Attachment[]} [attachments] @param {ExecutionChoice} [execution] @returns {string|null} */
+    acknowledgedInputDraft(taskId, inputs, attachments=[],execution) {
       const attempt = attempts.get(taskId) ?? read('input:' + taskId)
-      if (!attempt || typeof attempt.text !== 'string' || attachmentSignature(attempt.attachments)!==attachmentSignature(attachments)) return null
-      const receipt = inputs.find(input => input.id === attempt.id && input.taskId === taskId && (attempt.kind==='continue'||input.runId === attempt.runId) && input.text === attempt.text.trim() && attachmentSignature(input.attachments)===attachmentSignature(attempt.attachments))
+      if (!attempt || typeof attempt.text !== 'string' || attachmentSignature(attempt.attachments)!==attachmentSignature(attachments)||executionSignature(attemptDraftExecution(attempt))!==executionSignature(execution)) return null
+      const receipt = inputs.find(input => input.id === attempt.id && input.taskId === taskId && (attempt.kind==='continue'||input.runId === attempt.runId) && input.text === attempt.text.trim() && attachmentSignature(input.attachments)===attachmentSignature(attempt.attachments)&&(!attempt.execution||executionSignature(input.execution)===executionSignature(attempt.execution)))
       if (!receipt || !['pending', 'sending', 'delivered', 'held', 'withdrawn'].includes(receipt.status)) return null
       acknowledge(taskId, attempt.id)
       return attempt.draftText ?? attempt.text
     },
     /** @param {string} taskId @param {string} requestId */
     questionState(taskId, requestId) { return stateFor('answer:' + keyFor(taskId, requestId)) },
-    /** @param {string} taskId @param {string} runId @param {string} text @param {{attachments?:Attachment[],draftId?:string}} [files] @returns {Promise<LiveInput|null>} */
+    /** @param {string} taskId @param {string} runId @param {string} text @param {{attachments?:Attachment[],draftId?:string,execution?:ExecutionChoice,draftExecution?:ExecutionChoice}} [files] @returns {Promise<LiveInput|null>} */
     async sendInput(taskId, runId, text, files={}) {
-      const attachments=files.attachments??[]
+      const attachments=files.attachments??[],execution=files.execution,draftExecution='draftExecution' in files?files.draftExecution:execution
       const draftText = text
       text = text.trim()
       const state = this.inputState(taskId)
       if (state.busy || !taskId || !runId || (!text&&!attachments.length)) return null
       if (text.length > 20000) { state.error = '补充最多 20,000 字，请缩短后发送。'; changed(); return null }
       const previous = attempts.get(taskId) ?? read('input:' + taskId)
-      const attempt = previous && typeof previous.id === 'string' && (previous.kind==='continue'||previous.runId === runId) && typeof previous.text === 'string' && previous.text.trim() === text && attachmentSignature(previous.attachments)===attachmentSignature(attachments)
-        // Preserve a terminal identity even when another window has advanced the
-        // task to a later run: a rejected steer must still reconcile the first receipt.
-        ? { id: previous.id, runId, text, draftText, ...(previous.kind==='continue'?{kind:/** @type {const} */('continue')}:{}), ...(attachments.length?{attachments}:{}) } : { id: crypto.randomUUID(), runId, text, draftText, ...(attachments.length?{attachments}:{}) }
+      const sameDraft=previous&&typeof previous.id==='string'&&typeof previous.text==='string'&&previous.text.trim()===text&&attachmentSignature(previous.attachments)===attachmentSignature(attachments)&&executionSignature(attemptDraftExecution(previous))===executionSignature(draftExecution)
+      // A pending terminal request retains its original accepted choice even if
+      // another window starts a later run. A live supplement otherwise belongs
+      // to the current run, separately from the composer's next-turn settings.
+      /** @type {InputAttempt} */
+      const attempt=sameDraft&&previous.kind==='continue'
+        ? {...previous,draftText}
+        : {id:sameDraft&&previous.runId===runId&&executionSignature(previous.execution)===executionSignature(execution)?previous.id:crypto.randomUUID(),runId,text,draftText,draftExecution:structuredClone(draftExecution??null),...(execution?{execution:structuredClone(execution)}:{}),...(attachments.length?{attachments:structuredClone(attachments)}:{})}
       attempts.set(taskId, attempt); write('input:' + taskId, attempt)
       state.busy = true; state.error = ''; changed()
       try {
         const result = /** @type {{input?:LiveInput}} */ (await deps.invokeWorkbenchApi('POST', '/v1/workbench/input', { id: taskId, runId, requestId: attempt.id, text, ...(attachments.length?{attachmentIds:attachments.map(a=>a.id),draftId:files.draftId}:{}) }))
         const receipt = result?.input
-        if (!receipt || receipt.id !== attempt.id || receipt.taskId !== taskId || receipt.runId !== runId || receipt.text !== text || attachmentSignature(receipt.attachments)!==attachmentSignature(attachments) || !['pending', 'sending', 'delivered', 'held', 'withdrawn'].includes(receipt.status)) throw new Error('unconfirmed_receipt')
+        if (!receipt || receipt.id !== attempt.id || receipt.taskId !== taskId || receipt.runId !== runId || receipt.text !== text || attachmentSignature(receipt.attachments)!==attachmentSignature(attachments) || (attempt.execution&&executionSignature(receipt.execution)!==executionSignature(attempt.execution)) || !['pending', 'sending', 'delivered', 'held', 'withdrawn'].includes(receipt.status)) throw new Error('unconfirmed_receipt')
         // A remounted composer can still show this text when the old request settles.
         // Keep its identity so an immediate retry cannot dispatch it a second time.
         acknowledge(taskId, attempt.id)

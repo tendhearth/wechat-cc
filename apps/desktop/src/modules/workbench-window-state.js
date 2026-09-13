@@ -1,6 +1,7 @@
 // @ts-check
+import {parseExecutionChoice} from './workbench-execution.js'
 import {parseDraftAttachments} from './workbench-attachments.js'
-/** @typedef {{path:string,text:string,title:string,providerId:string,followup:string,draftId?:string,attachments?:import('./workbench-attachments.js').DraftAttachment[]}} Draft */
+/** @typedef {{path:string,text:string,title:string,providerId:string,followup:string,execution?:import('./workbench-execution.js').ExecutionChoice,draftId?:string,attachments?:import('./workbench-attachments.js').DraftAttachment[]}} Draft */
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} Query */
 /** @typedef {{scope:string|null,query:Query,search:string}} View */
 /** @typedef {Pick<Storage,'getItem'|'setItem'|'removeItem'>} StorageLike */
@@ -16,6 +17,7 @@ function parseDraft(value,recover=false) {
     if (typeof data[key] !== 'string') return null
     result[key] = /** @type {string} */ (data[key])
   }
+  const execution=parseExecutionChoice(data.execution);if(execution)result.execution=execution
   if(typeof data.draftId==='string'&&/^[a-f0-9-]{36}$/i.test(data.draftId))result.draftId=data.draftId
   if(Array.isArray(data.attachments))result.attachments=parseDraftAttachments(data.attachments,recover)
   return result
