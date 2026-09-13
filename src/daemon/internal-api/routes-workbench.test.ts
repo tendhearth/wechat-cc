@@ -26,6 +26,25 @@ function service(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Workbench internal HTTP API', () => {
+  it('gates live input, question answers and unpaginated attention behind exact admin routes',async()=>{
+    const submitInput=vi.fn(async()=>({status:'pending'})),resolveAnswer=vi.fn(),withdrawInput=vi.fn(),attention=vi.fn(()=>({tasks:[]}))
+    const {request,trustedToken}=await start(service({submitInput,resolveAnswer,withdrawInput,attention}))
+    const requestId=crypto.randomUUID(),runId=crypto.randomUUID()
+    for(const [path,body] of [
+      ['/v1/workbench/input',{id:TASK.id,runId,requestId,text:'补充'}],
+      ['/v1/workbench/answer',{id:TASK.id,requestId,answers:{q:['文字']}}],
+      ['/v1/workbench/withdraw-input',{id:TASK.id,requestId}],
+    ] as const){
+      expect((await request(path,{method:'POST',body:JSON.stringify(body)},trustedToken)).status).toBe(403)
+      expect((await request(path,{method:'POST',body:JSON.stringify(body)})).status).toBe(200)
+      expect((await request(path+'/extra',{method:'POST',body:JSON.stringify(body)})).status).toBe(404)
+    }
+    expect(submitInput).toHaveBeenCalledExactlyOnceWith(TASK.id,{runId,requestId,text:'补充'})
+    expect(resolveAnswer).toHaveBeenCalledExactlyOnceWith(TASK.id,requestId,{q:['文字']})
+    expect((await request('/v1/workbench/attention',{},trustedToken)).status).toBe(403)
+    expect((await request('/v1/workbench/attention')).status).toBe(200)
+    expect((await request('/v1/workbench/input',{method:'POST',body:JSON.stringify({id:TASK.id,runId:'bad',requestId,text:'x'})})).status).toBe(400)
+  })
   let stateDir: string
   let api: InternalApi | null
 

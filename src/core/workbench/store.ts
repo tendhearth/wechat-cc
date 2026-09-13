@@ -4,6 +4,7 @@ import type {StoredHandoff,HandoffView} from './handoff-record'
 import {publicSource,type StoredNativeSource} from './native-adoption'
 import type {NativeHistoryMessage} from './native-history'
 import type { Db } from '../../lib/db'
+import {makeLiveInputStore} from './live-inputs'
 
 export type TaskStatus = 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 export interface Task {
@@ -71,6 +72,7 @@ export function makeWorkbenchStore(db: Db) {
     return{...h,artifacts:JSON.parse(artifactRefsJson),quote:quoteJson?JSON.parse(quoteJson):null,sourceTitle:a.title,targetTitle:b.title,sourceProviderId:a.providerId,targetProviderId:b.providerId,sourceStatus:a.status,targetStatus:b.status}
   })
   return {
+    liveInputs:makeLiveInputStore(db),
     get, artifacts, events, addEvent,source,sourceByIdentity,handoffs,
     recordHandoffNative:(id:string,nativeId:string)=>db.query('UPDATE workbench_handoffs SET target_native_id=? WHERE id=? AND target_native_id IS NULL').run(nativeId,id),
     recordHandoffEvent:(id:string,eventId:number)=>db.query('UPDATE workbench_handoffs SET request_event_id=? WHERE id=?').run(eventId,id),

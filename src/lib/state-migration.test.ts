@@ -61,7 +61,7 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  it('opens a fresh db with PRAGMA user_version = 49 and the expected tables', () => {
+  it('opens a fresh db with PRAGMA user_version = 50 and the expected tables', () => {
     const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
     // v14 (dialogue real data): messages / threads / thread_extract_state tables added;
     // events.kind widened with 'threads_extracted'.
@@ -103,7 +103,8 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // v43 (旧社交表退役): 删除 social_seek / social_echo / social_pledge / social_relay / social_seen_intent.
     // v44 (per-chat model pin): conversations gains a nullable mode_model column — no new tables.
     // v46–49: tasks/artifacts, archive state, native sources and recorded handoffs.
-    expect(v).toBe(49)
+    // v50: durable in-flight supplements, retained as unsent after restart.
+    expect(v).toBe(50)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',
@@ -112,7 +113,7 @@ describe('full state-dir migration — upgrading-user smoke', () => {
       'session_turns_fts', 'session_turns_fts_config', 'session_turns_fts_content', 'session_turns_fts_data',
       'session_turns_fts_docsize', 'session_turns_fts_idx',
       'sessions', 'thread_extract_state', 'threads', 'turn_records',
-      'workbench_artifacts', 'workbench_events', 'workbench_handoffs', 'workbench_sources', 'workbench_tasks',
+      'workbench_artifacts', 'workbench_events', 'workbench_handoffs', 'workbench_live_inputs', 'workbench_sources', 'workbench_tasks',
     ])
   })
 

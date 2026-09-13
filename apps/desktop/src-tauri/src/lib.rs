@@ -959,6 +959,10 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("POST", "/v1/workbench/handoff-preview")
             | ("POST", "/v1/workbench/handoff")
             | ("GET", "/v1/workbench/handoff")
+            | ("GET", "/v1/workbench/attention")
+            | ("POST", "/v1/workbench/input")
+            | ("POST", "/v1/workbench/answer")
+            | ("POST", "/v1/workbench/withdraw-input")
     )
 }
 
@@ -1228,6 +1232,10 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/handoff-preview"),
             ("POST", "/v1/workbench/handoff"),
             ("GET", "/v1/workbench/handoff"),
+            ("GET", "/v1/workbench/attention"),
+            ("POST", "/v1/workbench/input"),
+            ("POST", "/v1/workbench/withdraw-input"),
+            ("POST", "/v1/workbench/answer"),
             ("GET", "/v1/workbench?q=..&archived=all"),
         ] {
             assert!(workbench_request_allowed(method, path), "expected {method} {path} to be allowed");
@@ -1244,6 +1252,22 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/sessions"),
             ("POST", "/v1/workbench/session"),
             ("GET", "/v1/workbench/session/extra"),
+            ("POST", "/v1/workbench/attention"),
+            ("GET", "/v1/workbench/input"),
+            ("GET", "/v1/workbench/withdraw-input"),
+            ("GET", "/v1/workbench/answer"),
+            ("DELETE", "/v1/workbench/attention"),
+            ("DELETE", "/v1/workbench/input"),
+            ("DELETE", "/v1/workbench/withdraw-input"),
+            ("DELETE", "/v1/workbench/answer"),
+            ("GET", "/v1/workbench/attention/extra"),
+            ("POST", "/v1/workbench/input/extra"),
+            ("POST", "/v1/workbench/withdraw-input/extra"),
+            ("POST", "/v1/workbench/answer/extra"),
+            ("GET", "/v1/workbench/attention/"),
+            ("POST", "/v1/workbench/input/"),
+            ("POST", "/v1/workbench/withdraw-input/"),
+            ("POST", "/v1/workbench/answer/"),
             ("GET", "/v1/workbench/../companion/presence"),
             ("DELETE", "/v1/workbench/task?id=A1B2C3D4"),
             ("GET", "/v1/customer-review"),

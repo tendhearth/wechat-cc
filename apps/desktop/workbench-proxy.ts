@@ -9,6 +9,7 @@ const ROUTES = new Set([
   'POST /v1/workbench/handoff-preview',
   'POST /v1/workbench/handoff',
   'GET /v1/workbench/handoff',
+  'GET /v1/workbench/attention','POST /v1/workbench/input','POST /v1/workbench/answer','POST /v1/workbench/withdraw-input',
 ])
 interface Options {
   stateDir:string; dryRun:boolean; allowWrites:boolean

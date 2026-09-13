@@ -10,6 +10,29 @@ afterEach(() => {
 })
 
 describe('workbench rendering', () => {
+  it('offers running supplements only with an active run and explains native versus next-round delivery', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const task = { id: 'A', title: 'Working', path: '/work', providerId: 'codex', status: 'running', createdAt: 1, updatedAt: 2, error: null }
+    const state = { tasks: [task], providers: [], defaultProvider: 'codex', canWechat: false, selectedId: 'A', selectedArtifactId: null, error: '', preview: null, detail: { task, events: [], artifacts: [], runId: 'run-A', inputMode: 'steer' as const } }
+    const native = renderWorkbench(state)
+    expect(native).toContain('data-action="send-input"'); expect(native).toContain('data-run-id="run-A"')
+    expect(native).toContain('发送补充'); expect(native).toContain('收到确认后显示已交付')
+    const queued = renderWorkbench({ ...state, detail: { ...state.detail, inputMode: 'queue' } })
+    expect(queued).toContain('加入下一轮'); expect(queued).toContain('正常结束后')
+    expect(renderWorkbench({ ...state, detail: { ...state.detail, runId: undefined } })).not.toContain('data-action="send-input"')
+    expect(renderWorkbench({ ...state, detail: { ...state.detail, task: { ...task, status: 'cancelling' } } })).not.toContain('data-action="send-input"')
+  })
+
+  it('marks pending questions separately and never renders another task question in the current controls', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const task = { id: 'A', title: 'Working', path: '/work', providerId: 'codex', status: 'running', createdAt: 1, updatedAt: 2, error: null, pendingQuestionCount: 2 }
+    const html = renderWorkbench({ tasks: [task], providers: [], defaultProvider: 'codex', canWechat: false, selectedId: 'A', selectedArtifactId: null, error: '', preview: null, detail: { task, events: [], artifacts: [], questions: [
+      { id: 'Q-A', taskId: 'A', createdAt: 1, questions: [{ id: 'q', header: 'Plan', question: 'Own question', options: [] }] },
+      { id: 'Q-B', taskId: 'B', createdAt: 1, questions: [{ id: 'q', header: 'Plan', question: 'Wrong question', options: [] }] },
+    ] } })
+    expect(html).toContain('2 项问题等你回答'); expect(html).toContain('Own question'); expect(html).not.toContain('Wrong question')
+    expect(html.indexOf('class="wb-questions"')).toBeLessThan(html.indexOf('id="wb-followup-text"'))
+  })
   it('escapes task and event content before putting it in the page', async () => {
     const { renderWorkbench } = await import('./workbench.js')
     const html = renderWorkbench({
@@ -426,6 +449,53 @@ describe('workbench mutations', () => {
     return page
   }
 
+  it('opens attention targets without sending and keeps newer navigation plus the old task draft', async () => {
+    const field = new FakeElement(); field.id = 'wb-followup-text'
+    installFakePage({ 'wb-followup-text': field })
+    let finish!: (value: unknown) => void
+    const task = (id: string) => ({ id, title: id, path: '/work', providerId: 'codex', status: 'running', createdAt: 1, updatedAt: 2, error: null })
+    const detail = (id: string) => ({ task: task(id), events: [], artifacts: [] })
+    const api = vi.fn(async (_method: string, path: string) => path === '/v1/workbench' ? { tasks: [task('A')], providers: [], defaultProvider: '', canWechat: false } : path.endsWith('B') ? new Promise(resolve => { finish = resolve }) : detail(path.endsWith('C') ? 'C' : 'A'))
+    const module = await import('./workbench.js')
+    module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 100000 })!
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    field.value = 'Keep A draft'
+    const opening = module.openWorkbenchTask('B')
+    expect(module.getActiveWorkbenchTaskId()).toBe('B')
+    await module.openWorkbenchTask('C'); finish(detail('B')); await opening
+    expect(module.getActiveWorkbenchTaskId()).toBe('C')
+    await module.openWorkbenchTask('A'); expect(field.value).toBe('Keep A draft')
+    expect(api.mock.calls.every(([method]) => method === 'GET')).toBe(true)
+    module.stopWorkbenchPolling(); expect(module.getActiveWorkbenchTaskId()).toBeNull()
+  })
+
+  it('sends a run-bound supplement once, preserves edits and ignores a detached stale form', async () => {
+    const field = new FakeElement(); field.id = 'wb-followup-text'
+    const page = installFakePage({ 'wb-followup-text': field })
+    let finish!: (value: unknown) => void
+    const task = (id: string) => ({ id, title: id, path: '/work', providerId: 'codex', status: 'running', createdAt: 1, updatedAt: 2, error: null })
+    const posts: any[] = []
+    const api = vi.fn(async (method: string, path: string, body?: Record<string, unknown>) => {
+      if (method === 'POST') { posts.push(body); return new Promise(resolve => { finish = resolve }) }
+      const id = path.endsWith('B') ? 'B' : 'A'
+      return path === '/v1/workbench' ? { tasks: [task('A'), task('B')], providers: [], defaultProvider: '', canWechat: false } : { task: task(id), events: [], artifacts: [], runId: 'run-' + id, inputMode: 'steer' }
+    })
+    const module = await import('./workbench.js')
+    module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 100000 })!
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    field.value = 'For A'
+    const form = new FakeElement(); form.tagName = 'FORM'; form.dataset = { action: 'send-input', ownerTask: 'A', runId: 'run-A' }
+    const submit = [...page.listeners.get('submit')!][0]!
+    const sending = submit({ target: form, preventDefault() {} })
+    await submit({ target: form, preventDefault() {} })
+    expect(posts).toHaveLength(1); expect(posts[0]).toMatchObject({ id: 'A', runId: 'run-A', text: 'For A' })
+    await module.openWorkbenchTask('B'); field.value = 'For B'
+    await submit({ target: form, preventDefault() {} }); expect(posts).toHaveLength(1)
+    finish({ input: { id: posts[0].requestId, taskId: 'A', runId: 'run-A', text: 'For A', status: 'delivered', createdAt: 1, error: null } }); await sending
+    expect(module.getActiveWorkbenchTaskId()).toBe('B'); expect(field.value).toBe('For B')
+    module.stopWorkbenchPolling()
+  })
+
   it('saves a task draft on input before polling and restores the selected task after page reload', async () => {
     const stored = new Map<string,string>()
     const storage = { getItem:(key:string)=>stored.get(key)??null, setItem:(key:string,value:string)=>{stored.set(key,value)}, removeItem:(key:string)=>{stored.delete(key)} }
@@ -451,6 +521,92 @@ describe('workbench mutations', () => {
     expect(next.state.selectedId).toBe('bbbbbbbb');expect(restoredField.value).toBe('B 的未发送要求')
     expect(api.mock.calls.every(([method])=>method==='GET')).toBe(true)
     reloaded.stopWorkbenchPolling()
+  })
+
+  it.each([false, true])('clears only the original whitespace-padded supplement draft, with mid-send edit=%s', async edited => {
+    const field = new FakeElement(); field.id = 'wb-followup-text'
+    const page = installFakePage({ 'wb-followup-text': field })
+    const task = { id: 'A', title: 'A', path: '/work', providerId: 'codex', status: 'running', createdAt: 1, updatedAt: 2, error: null }
+    let finish!: (value: unknown) => void, body: any
+    const receipts: any[] = []
+    const api = vi.fn(async (method: string, path: string, request?: Record<string, unknown>) => {
+      if (method === 'POST') { body = request; return new Promise(resolve => { finish = resolve }) }
+      return path === '/v1/workbench' ? { tasks: [task], providers: [], defaultProvider: '', canWechat: false } : { task, events: [], artifacts: [], inputs: receipts, runId: 'run-A', inputMode: 'steer' }
+    })
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 100000 })!
+    try {
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+      field.value = ' \n Original supplement\t '
+      const form = new FakeElement(); form.tagName = 'FORM'; form.dataset = { action: 'send-input', ownerTask: 'A', runId: 'run-A' }
+      const sending = [...page.listeners.get('submit')!][0]!({ target: form, preventDefault() {} })
+      if (edited) field.value = ' Original supplement\n' // Even a whitespace-only edit remains a new draft.
+      const receipt = { id: body.requestId, taskId: 'A', runId: 'run-A', text: 'Original supplement', status: 'delivered', createdAt: 1, error: null }
+      receipts.push(receipt); finish({ input: receipt }); await sending
+      expect(controller.state.detail?.inputs?.[0]?.status).toBe('delivered')
+      expect(field.value).toBe(edited ? ' Original supplement\n' : '')
+      expect(page.innerHTML).not.toContain('暂时没能确认提交结果')
+    } finally { module.stopWorkbenchPolling() }
+  })
+
+  it.each([[false, false], [false, true], [true, false], [true, true]])('reconciles a late supplement receipt after page remount with edits=%s and storage=%s', async (edited, persistent) => {
+    const saved = new Map<string, string>(), storage = { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => { saved.set(key, value) }, removeItem: (key: string) => { saved.delete(key) } }
+    const oldField = new FakeElement(); oldField.id = 'wb-followup-text'
+    const oldPage = installFakePage({ 'wb-followup-text': oldField }); root.window = persistent ? { sessionStorage: storage } : {}
+    const task = { id: 'A', title: 'A', path: '/work', providerId: 'codex', status: 'running', createdAt: 1, updatedAt: 2, error: null }
+    let finish!: (value: unknown) => void, body: any
+    const receipts: any[] = []
+    const api = vi.fn(async (method: string, path: string, request?: Record<string, unknown>) => {
+      if (method === 'POST') { body = request; return new Promise(resolve => { finish = resolve }) }
+      return path === '/v1/workbench' ? { tasks: [task], providers: [], defaultProvider: '', canWechat: false } : { task, events: [], artifacts: [], inputs: [...receipts], runId: 'run-A', inputMode: 'steer' }
+    })
+    const module = await import('./workbench.js')
+    module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 100000 })!
+    try {
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+      oldField.value = ' \n Original supplement\t '
+      const form = new FakeElement(); form.tagName = 'FORM'; form.dataset = { action: 'send-input', ownerTask: 'A', runId: 'run-A' }
+      const sending = [...oldPage.listeners.get('submit')!][0]!({ target: form, preventDefault() {} })
+      module.stopWorkbenchPolling()
+      const current = new FakeElement(); current.id = 'wb-followup-text'
+      installFakePage({ 'wb-followup-text': current }); root.window = persistent ? { sessionStorage: storage } : {}
+      const mounted = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 100000 })!
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+      expect(current.value).toBe(' \n Original supplement\t ')
+      if (edited) current.value = 'New draft written after remount'
+      const receipt = { id: body.requestId, taskId: 'A', runId: 'run-A', text: 'Original supplement', status: 'delivered', createdAt: 1, error: null }
+      receipts.push(receipt); finish({ input: receipt }); await sending
+      await mounted.refresh()
+      expect(current.value).toBe(edited ? 'New draft written after remount' : '')
+      expect(api.mock.calls.filter(([method]) => method === 'POST')).toHaveLength(1)
+    } finally { module.stopWorkbenchPolling() }
+  })
+
+  it('treats returning a held supplement to the composer as an explicit new submission', async () => {
+    const field = new FakeElement(); field.id = 'wb-followup-text'
+    const page = installFakePage({ 'wb-followup-text': field })
+    const task = { id: 'A', title: 'A', path: '/work', providerId: 'codex', status: 'running', createdAt: 1, updatedAt: 2, error: null }
+    const receipts: any[] = [], posts: any[] = []
+    const api = vi.fn(async (method: string, path: string, body?: Record<string, unknown>) => {
+      if (method === 'POST') { posts.push(body); const receipt = { id: body!.requestId, taskId: 'A', runId: 'run-A', text: body!.text, status: 'held', createdAt: 1, error: null }; receipts.push(receipt); return { input: receipt } }
+      return path === '/v1/workbench' ? { tasks: [task], providers: [], defaultProvider: '', canWechat: false } : { task, events: [], artifacts: [], inputs: [...receipts], runId: 'run-A', inputMode: 'steer' }
+    })
+    const module = await import('./workbench.js'), controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 100000 })!
+    try {
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+      field.value = 'Preserved supplement'
+      const form = new FakeElement(); form.tagName = 'FORM'; form.dataset = { action: 'send-input', ownerTask: 'A', runId: 'run-A' }
+      const submit = [...page.listeners.get('submit')!][0]!
+      await submit({ target: form, preventDefault() {} })
+      const copy = new FakeElement(); copy.dataset = { action: 'copy-held-input', ownerTask: 'A', requestId: receipts[0].id }
+      await [...page.listeners.get('click')!][0]!({ target: copy })
+      task.updatedAt++
+      await controller.refresh()
+      expect(field.value).toBe('Preserved supplement')
+      expect(posts).toHaveLength(1)
+      await submit({ target: form, preventDefault() {} })
+      expect(posts[1].requestId).not.toBe(posts[0].requestId)
+    } finally { module.stopWorkbenchPolling() }
   })
 
   it.each([true, false])('follows new replies only when already at the end: %s', async following => {

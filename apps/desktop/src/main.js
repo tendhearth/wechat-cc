@@ -49,8 +49,9 @@ import { refreshWxvaultOnAppStart } from "./modules/wxvault-refresh.js"
 import { loadAtelierGallery } from "./modules/atelier-gallery.js"
 import { mountCurrentActivity, createLifeArchive } from "./modules/cc-life.js"
 import { refreshPostcardAlbum } from "./modules/postcard-album.js"
-import { initWorkbenchPage, stopWorkbenchPolling } from "./modules/workbench.js"
+import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getActiveWorkbenchTaskId } from "./modules/workbench.js"
 import { createWorkbenchNavigation, isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
+import { mountWorkbenchAttention } from "./modules/workbench-attention.js"
 
 const state = {
   setup: /** @type {SetupQrJson | null} */ (null),
@@ -147,6 +148,28 @@ async function loadLifeCategory(category) {
 }
 
 const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 10000 })
+
+/** @type {ReturnType<typeof mountWorkbenchAttention>|null} */
+let workbenchAttention = null
+function startWorkbenchAttention() {
+  const host = document.getElementById('workbench-attention')
+  if (!host || workbenchAttention) return
+  workbenchAttention = mountWorkbenchAttention({
+    host, invokeWorkbenchApi, invoke,
+    getContext: () => ({
+      taskId: state.mode === 'dashboard' ? getActiveWorkbenchTaskId() : null,
+      focused: document.visibilityState === 'visible' && document.hasFocus(),
+    }),
+    openTask: id => {
+      if (state.mode !== 'dashboard') setMode('dashboard')
+      switchPane('workbench')
+      return openWorkbenchTask(id)
+    },
+  })
+  void workbenchAttention.start()
+}
+window.addEventListener('pagehide', () => { workbenchAttention?.destroy(); workbenchAttention = null })
+window.addEventListener('pageshow', event => { if (event.persisted) startWorkbenchAttention() })
 
 // Bag passed to module functions instead of imported singletons. Keeps each
 // module testable in isolation (any conformant deps object → run the module
@@ -1408,6 +1431,7 @@ async function boot() {
   mountHugeicons()
   wireDoctorSubscribers()
   wireEvents()
+  startWorkbenchAttention()
   initConversePage(deps, { focus: false })
   startAppUpdateChecks()
   // Refresh an already-configured local WeChat archive on every desktop

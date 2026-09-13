@@ -39,6 +39,8 @@ export type AgentEvent =
   | { kind: 'error'; message: string; code?: string }
 
 export interface AgentSession {
+  /** Native acknowledgement of supplemental input to the current turn only. */
+  steer?(text: string): Promise<void>
   /**
    * Send `text` to the agent and yield events as they arrive. The
    * iterator closes after the first `result` (or `error`) event.
@@ -72,6 +74,17 @@ export interface AgentSession {
  * callsites in chatroom moderator + companion introspect.
  */
 export type CheapEval = (prompt: string) => Promise<string>
+
+export interface AgentUserQuestion {
+  id: string
+  header: string
+  question: string
+  options: Array<{label:string;description:string}>
+  multiSelect?: boolean
+  allowOther?: boolean
+}
+export interface AgentUserInputRequest { questions: AgentUserQuestion[] }
+export type AgentUserInputAnswers = Record<string, string[]>
 
 /**
  * Per-spawn context passed to every `AgentProvider.spawn`. RFC 05 — the
@@ -139,6 +152,7 @@ export interface SpawnContext {
     request: { tool: string; description: string },
     signal?: AbortSignal,
   ) => Promise<boolean>
+  requestUserInput?: (request: AgentUserInputRequest, signal?: AbortSignal) => Promise<AgentUserInputAnswers | null>
 }
 
 /**

@@ -91,6 +91,44 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
 import * as sdk from '@anthropic-ai/claude-agent-sdk'
 
 describe('claude-agent-provider', () => {
+  it('routes AskUserQuestion through structured input before permission classification', async () => {
+    const requestPermission = vi.fn(async () => true)
+    const requestUserInput = vi.fn(async () => ({ 'question-tool:0': ['PDF', 'Word'], 'question-tool:1': ['Custom note'] }))
+    const signal = new AbortController().signal
+    const input = { questions: [
+      { header: 'Formats', question: 'Which formats?', options: [{ label: 'PDF', description: 'Fixed' }, { label: 'Word', description: 'Editable' }], multiSelect: true },
+      { header: 'Note', question: 'Which note?', options: [{ label: 'Brief', description: 'Short' }, { label: 'Full', description: 'Long' }], multiSelect: false },
+    ], metadata: { source: 'review' } }
+    const gate = makeWorkbenchClaudeCanUseTool(requestPermission, requestUserInput)
+    await expect(gate('AskUserQuestion', input, { signal, toolUseID: 'question-tool' })).resolves.toEqual({ behavior: 'allow', updatedInput: { ...input, answers: { 'Which formats?': 'PDF, Word', 'Which note?': 'Custom note' } } })
+    expect(requestUserInput).toHaveBeenCalledWith({ questions: [
+      { id: 'question-tool:0', header: 'Formats', question: 'Which formats?', options: input.questions[0]!.options, multiSelect: true, allowOther: true },
+      { id: 'question-tool:1', header: 'Note', question: 'Which note?', options: input.questions[1]!.options, multiSelect: false, allowOther: true },
+    ] }, signal)
+    expect(requestPermission).not.toHaveBeenCalled()
+  })
+
+  it.each(['missing', 'declined', 'failed', 'invalid-answer', 'aborted'])('denies unanswered Claude questions on %s', async reason => {
+    const controller = new AbortController()
+    const input = { questions: [{ header: 'Format', question: 'Which format?', options: [{ label: 'PDF', description: 'Fixed' }, { label: 'Word', description: 'Editable' }], multiSelect: false }] }
+    const requestUserInput = reason === 'missing' ? undefined : async (): Promise<Record<string, string[]> | null> => {
+      if (reason === 'failed') throw new Error('UI gone')
+      if (reason === 'aborted') controller.abort()
+      if (reason === 'invalid-answer') return { unknown: ['PDF'] }
+      return reason === 'declined' ? null : { 'question-tool:0': ['PDF'] }
+    }
+    const gate = makeWorkbenchClaudeCanUseTool(undefined, requestUserInput)
+    await expect(gate('AskUserQuestion', input, { signal: controller.signal, toolUseID: 'question-tool' })).resolves.toMatchObject({ behavior: 'deny' })
+  })
+
+  it('rejects duplicate Claude question text because native answers are keyed by question text', async () => {
+    const requestUserInput = vi.fn(async () => ({ 'question-tool:0': ['PDF'], 'question-tool:1': ['Word'] }))
+    const q = { header: 'Format', question: 'Which format?', options: [{ label: 'PDF', description: 'Fixed' }, { label: 'Word', description: 'Editable' }], multiSelect: false }
+    const gate = makeWorkbenchClaudeCanUseTool(undefined, requestUserInput)
+    await expect(gate('AskUserQuestion', { questions: [q, q] }, { signal: new AbortController().signal, toolUseID: 'question-tool' })).resolves.toMatchObject({ behavior: 'deny' })
+    expect(requestUserInput).not.toHaveBeenCalled()
+  })
+
   it('forwards spawnOpts.appendInstructions to sdkOptionsForProject (unified prompt seam)', async () => {
     const seen: unknown[] = []
     const provider = createClaudeAgentProvider({

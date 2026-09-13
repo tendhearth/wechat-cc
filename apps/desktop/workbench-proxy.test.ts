@@ -61,3 +61,48 @@ it('keeps archive writes behind explicit host write access while passing literal
  expect(upstream.mock.calls.at(-1)?.[0]).toBe('http://127.0.0.1:9001/v1/workbench?q=..&archived=all&limit=10')
  expect((await writable(req('/v1/workbench/archive/extra','POST')))?.status).toBe(405)
 })
+
+const liveRoutes = [
+ ['GET', '/v1/workbench/attention'],
+ ['POST', '/v1/workbench/input'],
+ ['POST', '/v1/workbench/withdraw-input'],
+ ['POST', '/v1/workbench/answer'],
+] as const
+
+it.each(liveRoutes)('forwards authorized %s %s with the exact method and host credential',async(method,path)=>{
+ const upstream=vi.fn(async(_url:string,_init?:RequestInit)=>Response.json({ok:true},{status:202}))
+ const proxy=createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:method==='POST',fetch:upstream})
+ const response=await proxy(req(path,method))
+ expect(response?.status).toBe(202)
+ expect(await response!.json()).toEqual({ok:true})
+ expect(upstream).toHaveBeenCalledTimes(1)
+ expect(upstream.mock.calls[0]?.[0]).toBe('http://127.0.0.1:9001'+path)
+ expect(upstream.mock.calls[0]?.[1]).toMatchObject({method,headers:{authorization:'Bearer server-only','content-type':'application/json'}})
+ expect(upstream.mock.calls[0]?.[1]?.body).toBe(method==='POST'?'{"text":"test"}':undefined)
+})
+
+it.each(liveRoutes)('refuses the wrong method and extended paths around %s %s',async(method,path)=>{
+ const upstream=vi.fn()
+ const proxy=createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})
+ for(const [candidateMethod,candidatePath] of [
+  [method==='GET'?'POST':'GET',path],
+  ['DELETE',path],
+  [method,path+'/extra'],
+  [method,path+'/'],
+ ])expect((await proxy(req(candidatePath!,candidateMethod!)))?.status).toBe(405)
+ expect(upstream).not.toHaveBeenCalled()
+})
+
+it.each(liveRoutes)('keeps %s %s isolated from mock previews and foreign pages',async(method,path)=>{
+ const upstream=vi.fn()
+ const dry=createWorkbenchProxy({stateDir:dir,dryRun:true,allowWrites:true,fetch:upstream})
+ expect((await dry(req(path,method)))?.status).toBe(503)
+ const proxy=createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})
+ expect((await proxy(req(path,method,{origin:'https://foreign.example'})))?.status).toBe(403)
+ expect((await proxy(req(path,method,{'sec-fetch-site':'cross-site'})))?.status).toBe(403)
+ if(method==='POST'){
+  const readonly=createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:false,fetch:upstream})
+  expect((await readonly(req(path,method)))?.status).toBe(403)
+ }
+ expect(upstream).not.toHaveBeenCalled()
+})

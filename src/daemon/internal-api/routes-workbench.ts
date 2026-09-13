@@ -28,6 +28,8 @@ function errorCode(err: unknown): string {
 
 function mappedError(err: unknown): ReturnType<RouteHandler> {
   const code = errorCode(err)
+  if (['input_stale','input_conflict','input_delivery_busy','question_stale','input_limit'].includes(code))return{status:409,body:{error:code}}
+  if (code === 'invalid_question'||code === 'invalid_answer')return{status:400,body:{error:code}}
   if (code === 'workbench_archived' || code === 'workbench_busy' || code === 'artifact_changed' || code === 'permission_stale' || code === 'restart_confirmation_required' || code === 'restart_confirmation_stale') return { status: 409, body: { error: code } }
   if (['handoff_changed','native_history_changed','native_session_already_managed','native_session_busy','native_session_identity_mismatch','external_close_confirmation_required','external_close_confirmation_stale'].includes(code))return{status:409,body:{error:code}}
   if(code==='handoff_artifact_unsupported')return{status:422,body:{error:code}}
@@ -42,6 +44,28 @@ function mappedError(err: unknown): ReturnType<RouteHandler> {
 
 export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
   return {
+    'GET /v1/workbench/attention':async()=>{
+      if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
+      try{return{status:200,body:deps.workbench.attention()}}catch(err){return mappedError(err)}
+    },
+    'POST /v1/workbench/input':async(_query,body)=>{
+      const value=objectBody(body)
+      if(!value||typeof value.id!=='string'||!TASK_ID.test(value.id)||typeof value.runId!=='string'||!REQUEST_ID.test(value.runId)||typeof value.requestId!=='string'||!REQUEST_ID.test(value.requestId)||typeof value.text!=='string'||!value.text.trim()||value.text.length>20_000)return invalid()
+      if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
+      try{return{status:200,body:{input:await deps.workbench.submitInput(value.id,{runId:value.runId,requestId:value.requestId,text:value.text})}}}catch(err){return mappedError(err)}
+    },
+    'POST /v1/workbench/answer':async(_query,body)=>{
+      const value=objectBody(body)
+      if(!value||typeof value.id!=='string'||!TASK_ID.test(value.id)||typeof value.requestId!=='string'||!REQUEST_ID.test(value.requestId)||(value.answers!==null&&!objectBody(value.answers))||JSON.stringify(value.answers).length>20_000)return invalid()
+      if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
+      try{deps.workbench.resolveAnswer(value.id,value.requestId,value.answers);return{status:200,body:{ok:true}}}catch(err){return mappedError(err)}
+    },
+    'POST /v1/workbench/withdraw-input':async(_query,body)=>{
+      const value=objectBody(body)
+      if(!value||typeof value.id!=='string'||!TASK_ID.test(value.id)||typeof value.requestId!=='string'||!REQUEST_ID.test(value.requestId))return invalid()
+      if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
+      try{deps.workbench.withdrawInput(value.id,value.requestId);return{status:200,body:{ok:true}}}catch(err){return mappedError(err)}
+    },
     'GET /v1/workbench': async query => {
       for(const key of ['q','archived','limit','cursor'])if(query.getAll(key).length>1)return invalid()
       const q=query.get('q')?.trim(),archived=query.get('archived'),rawLimit=query.get('limit'),cursor=query.get('cursor')

@@ -9,6 +9,7 @@ import { makeWorkbenchStore } from './store'
 import { makeWorkbenchService, type WorkbenchService } from './service'
 
 let root: string, project: string, db: Db, service: WorkbenchService
+let testStore:ReturnType<typeof makeWorkbenchStore>
 const result: AgentEvent = { kind: 'result', sessionId: 'session-one', numTurns: 1, durationMs: 1 }
 function setup(provider: AgentProvider, owner: () => string | null = () => 'owner', permissionTimeoutMs?: number, extra: {
   timeoutMs?:number; closeTimeoutMs?:number; holdBusy?:(label:string)=>()=>void
@@ -17,7 +18,8 @@ function setup(provider: AgentProvider, owner: () => string | null = () => 'owne
   const registry = createProviderRegistry()
   registry.register('claude', provider, { displayName: 'Claude', canResume: () => true })
   registry.register('codex', provider, { displayName: 'Codex', canResume: () => true })
-  service = makeWorkbenchService({ store: makeWorkbenchStore(db), registry, stateDir: root, ownerChatId: owner, permissionTimeoutMs, ...extra })
+  testStore=makeWorkbenchStore(db)
+  service = makeWorkbenchService({ store: testStore, registry, stateDir: root, ownerChatId: owner, permissionTimeoutMs, ...extra })
   return registry
 }
 function create(text = '整理周报') { return service.create({ path: project, providerId: 'claude', text }) }
@@ -39,6 +41,85 @@ beforeEach(() => {
 afterEach(async () => { await service?.shutdown(); db.close(); rmSync(root, { recursive: true, force: true }) })
 
 describe('persistent workbench', () => {
+  it('gives the executor a fresh idle budget after the user answers a question',async()=>{
+    setup({async spawn(_p,ctx){return{async *dispatch(){await ctx.requestUserInput!({questions:[{id:'q',header:'选择',question:'做什么？',options:[],allowOther:true}]});await new Promise(r=>setTimeout(r,80));yield result},async close(){}}}},undefined,undefined,{timeoutMs:160})
+    const task=create();await expect.poll(()=>service.detail(task.id).questions.length,{interval:5}).toBe(1)
+    await new Promise(r=>setTimeout(r,120))
+    service.resolveAnswer(task.id,service.detail(task.id).questions[0]!.id,{q:['继续']});await settle(task.id)
+    expect(service.detail(task.id).task.status).toBe('completed')
+  })
+  it('stops the writer even when persisting unsubmitted supplements fails',async()=>{
+    const gate=deferred();let closed=false
+    setup({async spawn(){return{async *dispatch(){await gate.promise;yield result},async close(){closed=true;gate.resolve()}}}})
+    const task=create();await expect.poll(()=>service.detail(task.id).task.status).toBe('running')
+    testStore.liveInputs.hold=()=>{throw Error('storage offline')}
+    await expect(service.cancel(task.id)).resolves.toBeDefined();await settle(task.id)
+    expect(closed).toBe(true)
+  })
+  it('does not auto-run a supplement in a replaced project folder',async()=>{
+    const gate=deferred(),seen:string[]=[]
+    setup({async spawn(){return{async *dispatch(text){seen.push(text);await gate.promise;yield result},async close(){}}}})
+    const task=create();await expect.poll(()=>seen.length).toBe(1)
+    await service.submitInput(task.id,{runId:service.detail(task.id).runId!,requestId:crypto.randomUUID(),text:'next'})
+    renameSync(project,project+'-old');mkdirSync(project);gate.resolve();await settle(task.id)
+    expect(seen).toHaveLength(1);expect(service.detail(task.id).inputs[0]?.status).toBe('held')
+  })
+  it('does not mark an unstarted failing supplementary dispatch delivered',async()=>{
+    const gate=deferred();let calls=0
+    setup({async spawn(){return{async *dispatch(){if(calls++)throw Error('not sent');await gate.promise;yield result},async close(){}}}})
+    const task=create();await expect.poll(()=>calls).toBe(1)
+    await service.submitInput(task.id,{runId:service.detail(task.id).runId!,requestId:crypto.randomUUID(),text:'next'})
+    gate.resolve();await expect.poll(()=>calls).toBe(2);await settle(task.id)
+    expect(service.detail(task.id).inputs[0]?.status).toBe('held')
+  })
+  it('keeps waiting for a real question beyond the normal silent-execution deadline',async()=>{
+    setup({async spawn(_p,ctx){return{async *dispatch(){await ctx.requestUserInput!({questions:[{id:'q',header:'选择',question:'做什么？',options:[],allowOther:true}]});yield result},async close(){}}}},undefined,undefined,{timeoutMs:30})
+    const task=create();await expect.poll(()=>service.detail(task.id).questions.length).toBe(1)
+    await new Promise(r=>setTimeout(r,100))
+    expect(service.detail(task.id).task.status).toBe('running')
+    service.resolveAnswer(task.id,service.detail(task.id).questions[0]!.id,{q:['继续']});await settle(task.id)
+  })
+  it('delivers queued supplements as separate turns of the same native session',async()=>{
+    const gate=deferred(),seen:string[]=[],resumes:Array<string|undefined>=[]
+    setup({async spawn(_p,ctx){resumes.push(ctx.resumeSessionId);return{
+      async *dispatch(text){seen.push(text);if(seen.length===1)await gate.promise;yield result},async close(){},
+    }}})
+    const task=create('first')
+    await expect.poll(()=>seen.length).toBe(1)
+    const detail=service.detail(task.id),requestId=crypto.randomUUID()
+    expect(await service.submitInput(task.id,{runId:detail.runId!,requestId,text:'second'})).toMatchObject({status:'pending'})
+    await service.submitInput(task.id,{runId:detail.runId!,requestId,text:'second'})
+    expect(seen).toEqual(['first'])
+    gate.resolve();await expect.poll(()=>seen.length).toBe(2);await settle(task.id)
+    expect(seen).toEqual(['first','second']);expect(resumes).toEqual([undefined,'session-one'])
+    expect(service.detail(task.id).inputs[0]?.status).toBe('delivered')
+  })
+
+  it('native supplements are acknowledged once, stale runs fail, and stop keeps queued text',async()=>{
+    const gate=deferred(),seen:string[]=[]
+    setup({async spawn(){return{async *dispatch(){yield {kind:'init',sessionId:'session-one'} as AgentEvent;await gate.promise;yield result},async steer(text){seen.push(text)},async close(){gate.resolve()}}}})
+    const task=create(),id=crypto.randomUUID()
+    await expect.poll(()=>service.detail(task.id).inputMode).toBe('steer')
+    const runId=service.detail(task.id).runId!
+    await expect(service.submitInput(task.id,{runId:'old',requestId:id,text:'x'})).rejects.toThrow('input_stale')
+    await service.submitInput(task.id,{runId,requestId:id,text:'new condition'})
+    await service.submitInput(task.id,{runId,requestId:id,text:'new condition'})
+    expect(seen).toEqual(['new condition']);expect(service.detail(task.id).inputs[0]?.status).toBe('delivered')
+    await service.cancel(task.id);await settle(task.id)
+  })
+
+  it('routes answers and attention only to their owning task and closes questions on stop',async()=>{
+    let context:SpawnContext|undefined,answer:unknown
+    setup({async spawn(_p,ctx){context=ctx;return{async *dispatch(){answer=await ctx.requestUserInput!({questions:[{id:'q',header:'格式',question:'需要什么？',options:[],allowOther:true}]});yield result},async close(){}}}})
+    const task=create()
+    await expect.poll(()=>service.detail(task.id).questions.length).toBe(1)
+    const pending=service.detail(task.id).questions[0]!
+    expect(service.attention().tasks[0]).toMatchObject({id:task.id,pendingQuestionCount:1})
+    expect(()=>service.resolveAnswer('another',pending.id,{q:['报告']})).toThrow('question_stale')
+    service.resolveAnswer(task.id,pending.id,{q:['报告']});await settle(task.id)
+    expect(answer).toEqual({q:['报告']});expect(service.attention().tasks).toEqual([])
+    expect(await context!.requestUserInput!({questions:[{id:'q',header:'格式',question:'晚到的问题',options:[],allowOther:true}]})).toBeNull()
+  })
   it('preserves task events and immutable artifact versions across continuation and restart', async () => {
     let n = 0
     setup({ async spawn(p) { return {

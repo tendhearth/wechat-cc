@@ -210,8 +210,43 @@
   .wb-task-head h2 { font-size:15px; }
   .wb-message[data-kind=user] { max-width:95%; }
   .wb-control-actions { gap:12px; }
-  .wb-control-actions small { font-size:10px; }
+.wb-control-actions small { font-size:10px; }
 }
+
+/* Questions stay distinct from permission decisions and keep native form controls. */
+.wb-controls { max-height:60%; overflow:auto; }
+.wb-questions { max-height:min(34vh,360px); overflow:auto; margin-bottom:12px; padding:12px 14px; border:1px solid #d8ddcf; border-radius:9px; background:#f6f7f1; }
+.wb-questions>header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; color:var(--wb-accent); }
+.wb-questions h3 { margin:0; font-size:12px; font-weight:600; }
+.wb-questions>header>span { font-size:11px; }
+.wb-question-form+.wb-question-form { margin-top:16px; padding-top:14px; border-top:1px solid #d8ddcf; }
+.wb-question-form fieldset { min-width:0; padding:0; margin:0 0 15px; border:0; }
+.wb-question-form legend { max-width:100%; padding:0; color:var(--wb-text); font-size:13px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
+.wb-question-form legend>span { display:block; margin-bottom:3px; color:var(--wb-secondary); font-size:11px; }
+.wb-question-form fieldset>small { color:var(--wb-muted); font-size:11px; }
+.wb-question-options { display:grid; gap:5px; margin-top:8px; }
+.wb-question-options>label { display:flex; align-items:flex-start; gap:9px; padding:7px 9px; border:1px solid #dfE2d7; border-radius:6px; background:#fffefa; font-size:12px; line-height:1.55; cursor:pointer; }
+.wb-question-options input { flex:none; margin:3px 0 0; accent-color:var(--wb-accent); }
+.wb-question-options label>span { min-width:0; overflow-wrap:anywhere; }
+.wb-question-options small { display:block; color:var(--wb-muted); font-size:11px; }
+.wb-question-other { display:grid; gap:5px; margin-top:10px; color:var(--wb-secondary); font-size:11px; }
+.wb-question-other textarea { width:100%; min-height:58px; box-sizing:border-box; resize:vertical; border:1px solid #d8dbcf; border-radius:6px; padding:8px 10px; background:#fffefa; color:var(--wb-text); font-family:inherit; font-size:13px; line-height:1.6; }
+.wb-question-actions { display:flex; justify-content:flex-end; gap:8px; }
+.wb-question-actions .wb-btn { font-size:12px; }
+.wb-question-form :focus-visible { outline:2px solid #748069; outline-offset:3px; }
+.wb-question-form :disabled { cursor:default; opacity:.6; }
+.wb-followup.wb-followup-live { display:grid; grid-template-columns:minmax(0,1fr); }
+.wb-followup-live .wb-control-actions { flex-wrap:wrap; }
+.wb-followup-live .wb-control-actions small { flex:1 1 180px; }
+.wb-followup-live .wb-control-actions button { flex:none; }
+.wb-interaction-error { margin:6px 0; color:#96563a; font-size:12px; line-height:1.6; }
+.wb-inputs { margin-bottom:12px; }
+.wb-input-record { padding:11px 0; border-bottom:1px solid var(--wb-line); }
+.wb-input-record:last-child { border-bottom:0; }
+.wb-input-record header { display:flex; justify-content:space-between; align-items:center; gap:12px; color:var(--wb-muted); font-size:11px; }
+.wb-input-record[data-input-status=held] header,.wb-input-record[data-input-status=sending] header { color:#8b6833; }
+.wb-input-record p { margin:4px 0; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--wb-secondary); font-size:12px; line-height:1.65; }
+.wb-input-record>small { color:var(--wb-muted); font-size:11px; line-height:1.6; }
 @media(max-width:600px) {
   .workbench-shell { display:flex; flex-direction:column; --wb-gutter:16px; }
   .wb-sidebar { flex:none; max-height:175px; border-right:0; border-bottom:1px solid var(--wb-line); }

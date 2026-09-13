@@ -2,6 +2,7 @@ import { query, type CanUseTool, type Options, type PermissionResult, type SDKMe
 import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities, SpawnContext } from './agent-provider'
 import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind } from './user-tier'
 import { WORKBENCH_PERMISSION_DESCRIPTION_MAX, WORKBENCH_PERMISSION_TOOL_MAX } from './workbench/permissions'
+import { validateUserInputAnswers, validateUserInputRequest } from './workbench/user-input'
 import { log } from '../lib/log'
 import { AsyncQueue } from './async-queue'
 import { isAuthFail } from './auth-fail'
@@ -134,10 +135,40 @@ function taskInputPreview(input: Record<string, unknown>): string | null {
  * allow/relay/deny policy, with relay decisions owned by the active task run. */
 export function makeWorkbenchClaudeCanUseTool(
   requestPermission?: SpawnContext['requestPermission'],
+  requestUserInput?: SpawnContext['requestUserInput'],
 ): CanUseTool {
   return async (toolName, input, options) => {
     if (options.signal.aborted) {
       return { behavior:'deny', message:'This task tool call was cancelled.' } satisfies PermissionResult
+    }
+    if (toolName === 'AskUserQuestion') {
+      // Native answers are supplied through updatedInput, keyed by the exact
+      // question text. This is a question callback, never an execution grant.
+      const denied = { behavior: 'deny', message: 'The task question was declined, invalid, or is no longer active.' } satisfies PermissionResult
+      if (!requestUserInput) return denied
+      try {
+        if (typeof options.toolUseID !== 'string' || !options.toolUseID || !Array.isArray(input.questions)) return denied
+        const texts = new Set<string>()
+        const request = validateUserInputRequest({ questions: input.questions.map((value: unknown, index: number) => {
+          if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid_question')
+          const q = value as Record<string, unknown>
+          if (typeof q.question !== 'string' || texts.has(q.question) || typeof q.multiSelect !== 'boolean' || !Array.isArray(q.options) || q.options.length < 2 || q.options.length > 4) throw new Error('invalid_question')
+          texts.add(q.question)
+          return {
+            id: `${options.toolUseID}:${index}`, header: q.header, question: q.question, multiSelect: q.multiSelect, allowOther: true,
+            options: q.options.map((value: unknown) => {
+              if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid_question')
+              const option = value as Record<string, unknown>
+              if (option.preview !== undefined && typeof option.preview !== 'string') throw new Error('invalid_question')
+              return { label: option.label, description: option.preview && typeof option.description === 'string' ? `${option.description}\n${option.preview}` : option.description }
+            }),
+          }
+        }) })
+        const response = await requestUserInput(request, options.signal)
+        if (response === null || options.signal.aborted) return denied
+        const answers = validateUserInputAnswers(request, response)
+        return { behavior: 'allow', updatedInput: { ...input, answers: Object.fromEntries(request.questions.map(question => [question.question, answers[question.id]!.join(', ')])) } } satisfies PermissionResult
+      } catch { return denied }
     }
     if (toolName.startsWith('mcp__')) {
       return { behavior: 'deny', message: 'Task sessions cannot use messaging, memory, or other MCP tools.' } satisfies PermissionResult

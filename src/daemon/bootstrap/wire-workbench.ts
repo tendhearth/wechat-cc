@@ -42,7 +42,7 @@ export function wireWorkbench(opts: {
   if (claude) registry.register('claude',createClaudeAgentProvider({
     sdkOptionsForProject(alias,path,tier,chatId,env,instructions,context) {
       const base=opts.boot.sdkOptionsForProject(alias,path,tier,chatId,env,instructions)
-      const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission)
+      const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput)
       return workbenchClaudeOptions(base,instructions ?? '',permit)
     },
   }),claude.opts)

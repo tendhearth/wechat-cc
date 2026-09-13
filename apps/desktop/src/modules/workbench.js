@@ -7,9 +7,10 @@ import { mountHandoffDialog, mountHandoffRecord, defaultReviewArtifacts } from '
 import { mountHistoryDialog } from './workbench-history.js'
 import { Marked } from '../vendor/marked.js'
 import { WORKBENCH_CODE_REVIEW_MIME, renderWorkbenchCodeReview } from './workbench-code-review.js'
+import { createWorkbenchInteractions, captureWorkbenchQuestionDrafts, syncWorkbenchQuestionChoice, renderWorkbenchQuestions, renderWorkbenchInputs } from './workbench-interaction.js'
 
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed'}} WaitingFor */
-/** @typedef {{id:string,title:string,path:string,providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean}} Task */
+/** @typedef {{id:string,title:string,path:string,providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean}} Task */
 /** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,sourceId?:string|null}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
 /** @typedef {{id:string,taskId:string,tool:string,description:string,createdAt:number}} Permission */
@@ -19,7 +20,7 @@ import { WORKBENCH_CODE_REVIEW_MIME, renderWorkbenchCodeReview } from './workben
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeSource} NativeSource */
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeResumeDecision} NativeResume */
 /** @typedef {import('../../../../src/core/workbench/handoff').HandoffView} Handoff */
-/** @typedef {{handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation}} Detail */
+/** @typedef {{handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'queue',questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[]}} Detail */
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} TaskQuery */
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],page?:TaskPage,projectProviders?:Record<string,string>}} ListResult */
@@ -31,7 +32,7 @@ import { WORKBENCH_CODE_REVIEW_MIME, renderWorkbenchCodeReview } from './workben
 const windowStorage = workbenchWindowStorage()
 const savedView = loadWorkbenchView(windowStorage)
 
-/** @type {{timer:ReturnType<typeof setInterval>,cleanup:()=>void}|null} */
+/** @type {{timer:ReturnType<typeof setInterval>,cleanup:()=>void,openTask:(id:string)=>Promise<void>,getTaskId:()=>string|null}|null} */
 let active = null
 /** @type {string|null} */
 let resumeScope = savedView.scope
@@ -42,6 +43,8 @@ let resumeSearch = savedView.search
 const emptyDraft = () => ({ path: '', text: '', title: '', providerId: '', followup: '' })
 
 const pageDrafts = createWorkbenchDraftStore(windowStorage)
+/** @type {Map<string,import('./workbench-interaction.js').InputAttempt>} */
+const pageInputAttempts = new Map()
 
 /** @param {unknown} value */
 export function escapeWorkbenchHtml(value) {
@@ -89,9 +92,10 @@ function statusLabel(status) {
   return ({ queued: '等待中', running: '进行中', cancelling: '正在停止', completed: '已完成', failed: '未完成', cancelled: '已停止', interrupted: '已中断' })[status] ?? status
 }
 
-/** @param {string} status @param {Continuation} [continuation] @param {number|null} [archivedAt] @param {{requiresClose:boolean,decision?:NativeResume|null}} [native] */
-export function renderTaskControls(status, continuation, archivedAt,native) {
+/** @param {string} status @param {Continuation} [continuation] @param {number|null} [archivedAt] @param {{requiresClose:boolean,decision?:NativeResume|null}} [native] @param {{taskId:string,runId?:string,inputMode?:'steer'|'queue',busy?:boolean,error?:string}} [live] */
+export function renderTaskControls(status, continuation, archivedAt,native,live) {
   if (archivedAt != null) return '<div class="wb-archived-controls"><p>已归档 <span>恢复后可继续</span></p><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>'
+  if (status === 'running' && live?.runId && live.inputMode) return `<form class="wb-followup wb-followup-live" data-action="send-input" data-owner-task="${escapeWorkbenchHtml(live.taskId)}" data-run-id="${escapeWorkbenchHtml(live.runId)}" aria-label="运行中补充要求"><label class="wb-sr-only" for="wb-followup-text">补充要求</label><textarea id="wb-followup-text" rows="2" maxlength="20000" aria-describedby="wb-followup-timing" placeholder="补充或调整这项任务的要求…"></textarea>${live.error ? `<p class="wb-interaction-error" role="alert">${escapeWorkbenchHtml(live.error)}</p>` : ''}<div class="wb-control-actions"><small id="wb-followup-timing">${live.inputMode === 'steer' ? '交给当前一轮；收到确认后显示已交付。' : '本轮正常结束后，在同一会话继续。停止或失败时保留为未发送。'}</small><button class="wb-btn wb-btn-danger" type="button" data-action="cancel">停止任务</button><button class="wb-btn wb-btn-primary" type="submit"${live.busy ? ' disabled' : ''}>${live.busy ? '正在提交…' : live.inputMode === 'steer' ? '发送补充' : '加入下一轮'}</button></div></form>`
   if (status === 'queued') {
     return `<form class="wb-followup wb-followup-waiting" aria-label="任务补充草稿">
     <label class="wb-sr-only" for="wb-followup-text">补充要求</label><textarea id="wb-followup-text" rows="2" aria-describedby="wb-followup-timing" placeholder="可以先写在这里"></textarea>
@@ -150,25 +154,26 @@ export function groupWorkbenchTasks(tasks) {
 function renderTask(task, providers, selectedId) {
   const provider = providers.find(item => item.id === task.providerId)?.displayName || task.providerId || '未知执行者'
   const pendingPermissionCount = task.pendingPermissionCount ?? 0
+  const pendingQuestionCount = task.pendingQuestionCount ?? 0
   const title = task.title || '未命名任务'
   const updated = time(task.updatedAt)
   const waitingLabel = task.waitingFor?.reason === 'writer_not_closed' ? '等待执行程序退出确认' : task.waitingFor ? '等待前项任务' : ''
-  const attention = pendingPermissionCount > 0 ? `，${pendingPermissionCount} 项权限请求等你确认` : ''
+  const attention = (pendingPermissionCount > 0 ? `，${pendingPermissionCount} 项权限请求等你确认` : '') + (pendingQuestionCount > 0 ? `，${pendingQuestionCount} 项问题等你回答` : '')
   const waiting = task.waitingFor?.reason === 'writer_not_closed'
     ? `，等待执行程序退出确认，阻塞任务「${task.waitingFor.title}」`
     : task.waitingFor ? `，等待「${task.waitingFor.title}」` : ''
   const accessibleLabel = `${title}，${provider}，${(task.importedOnly?'尚未执行':statusLabel(task.status))}${attention}${waiting}${updated ? `，更新于 ${updated}` : ''}`
   const stateHtml = pendingPermissionCount > 0
     ? `<span class="wb-task-attention" data-status="${escapeWorkbenchHtml(task.importedOnly?'imported':task.status)}" aria-label="${escapeWorkbenchHtml((task.importedOnly?'尚未执行':statusLabel(task.status)))}，${escapeWorkbenchHtml(pendingPermissionCount)} 项权限请求等你确认">等你确认 · ${escapeWorkbenchHtml(pendingPermissionCount)}</span>`
-    : `<span class="wb-status" data-status="${escapeWorkbenchHtml(task.importedOnly?'imported':task.status)}">${escapeWorkbenchHtml(waitingLabel || (task.importedOnly?'尚未执行':statusLabel(task.status)))}</span>`
+    : pendingQuestionCount > 0 ? `<span class="wb-task-attention" aria-label="${escapeWorkbenchHtml(pendingQuestionCount)} 项问题等你回答">等你回答 · ${escapeWorkbenchHtml(pendingQuestionCount)}</span>` : `<span class="wb-status" data-status="${escapeWorkbenchHtml(task.importedOnly?'imported':task.status)}">${escapeWorkbenchHtml(waitingLabel || (task.importedOnly?'尚未执行':statusLabel(task.status)))}</span>`
   return `<button type="button" class="wb-task ${task.id === selectedId ? 'is-selected' : ''}" data-task-id="${escapeWorkbenchHtml(task.id)}" aria-label="${escapeWorkbenchHtml(accessibleLabel)}"${updated ? ` title="${escapeWorkbenchHtml(`${title} · ${updated}`)}"` : ''}>
     <span class="wb-task-title" title="${escapeWorkbenchHtml(title)}">${escapeWorkbenchHtml(title)}</span>
     <span class="wb-task-meta"><span class="wb-task-provider">${escapeWorkbenchHtml(provider)}</span>${stateHtml}</span>
   </button>`
 }
 
-/** @param {WorkbenchState} state */
-export function renderWorkbench(state) {
+/** @param {WorkbenchState} state @param {import('./workbench-interaction.js').Interactions} [interactions] */
+export function renderWorkbench(state, interactions) {
   const tasks = state.tasks ?? []
   const detail = state.detail
   const query = state.query ?? { q: '', archived: 'exclude' }
@@ -219,6 +224,7 @@ export function renderWorkbench(state) {
     ${related}
     <section class="wb-dialogue" aria-live="polite">${dialogueHtml}</section>
     ${queuedGuidance}
+    ${renderWorkbenchInputs(detail.task.id, detail.inputs ?? [], interactions)}
     ${operationHtml}
     ${detail.task.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(detail.task.error)}</div>` : ''}
     ${artifactHtml}` : state.loadingId ? `
@@ -233,7 +239,7 @@ export function renderWorkbench(state) {
         <label>任务名称 <span class="wb-optional">可选</span><input id="wb-title" name="title" placeholder="留空时使用任务要求的前 40 个字"></label></details>
         <button class="wb-btn wb-btn-primary" type="submit"${state.providers.length ? '' : ' disabled'}>开始任务</button>
       </form></div>`
-  const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderTaskControls(detail.task.status, detail.continuation, detail.task.archivedAt,{requiresClose:!!detail.requiresExternalClose,decision:state.nativeResume?.taskId===detail.task.id?state.nativeResume:null})}</div></div>` : ''
+  const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderWorkbenchQuestions(detail.task.id, detail.questions ?? [], interactions)}${renderTaskControls(detail.task.status, detail.continuation, detail.task.archivedAt,{requiresClose:!!detail.requiresExternalClose,decision:state.nativeResume?.taskId===detail.task.id?state.nativeResume:null},{taskId:detail.task.id,runId:detail.runId,inputMode:detail.inputMode,...interactions?.inputState(detail.task.id)})}</div></div>` : ''
   return `<div class="workbench-shell"><aside class="wb-sidebar"><header><p class="wb-kicker">任务</p><button type="button" class="wb-new" data-action="new-task">＋ 新建</button></header>${listControls}<div class="wb-task-list">${taskList}</div>${pagination}</aside><main class="wb-main">${taskHeader}<div class="wb-content"><div class="wb-content-inner">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main></div>`
 }
 
@@ -250,9 +256,9 @@ export function createWorkbenchController(deps) {
   let preferredInitialId = deps.initialScope?.startsWith('task:') ? deps.initialScope.slice(5) : null
   let alive = true
   let lastPaint = ''
-  const paint = () => {
+  const paint = (force = false) => {
     const snapshot = JSON.stringify(state)
-    if (snapshot === lastPaint) return
+    if (!force && snapshot === lastPaint) return
     lastPaint = snapshot
     deps.render(state)
   }
@@ -268,6 +274,7 @@ export function createWorkbenchController(deps) {
   const dedupe = tasks => [...new Map(tasks.map(task => [task.id, task])).values()]
   return {
     state,
+    getTargetTaskId() { return desiredId ?? state.selectedId },
     /** @param {{force?:boolean}} [options] */
     async refresh({ force = false } = {}) {
       if (!alive) return
@@ -400,6 +407,7 @@ export function initWorkbenchPage(deps) {
   let searchDraft = resumeSearch
   let renderedScope = initialScope ?? 'new'
   let hasPainted = false
+  const interactions = createWorkbenchInteractions({ invokeWorkbenchApi: deps.invokeWorkbenchApi, storage: windowStorage, inputAttempts: pageInputAttempts, changed: () => { if (alive) controller.paint(true) } })
   /** @type {Map<string, Map<string, boolean>>} */
   const disclosures = new Map()
   /** @type {Map<string, number>} */
@@ -421,6 +429,7 @@ export function initWorkbenchPage(deps) {
   const scopeFor = (/** @type {WorkbenchState} */ state) => state.selectedId ? `task:${state.selectedId}` : state.newScope ?? 'new'
   const permissionSignatureFor = (/** @type {WorkbenchState} */ state) => JSON.stringify((state.detail?.permissions ?? []).filter(permission => permission.taskId === state.detail?.task.id).map(permission => permission.id).sort())
   const captureDraft = () => {
+    captureWorkbenchQuestionDrafts(root, interactions)
     if (!document.getElementById('wb-create-form') && !input('wb-followup-text')) return
     pageDrafts.set(renderedScope, { path: input('wb-path')?.value ?? '', text: input('wb-create-text')?.value ?? '', title: input('wb-title')?.value ?? '', providerId: input('wb-provider')?.value ?? '', followup: input('wb-followup-text')?.value ?? '' })
   }
@@ -433,6 +442,16 @@ export function initWorkbenchPage(deps) {
   const controller = createWorkbenchController({ invokeWorkbenchApi: deps.invokeWorkbenchApi, initialScope, initialQuery: resumeQuery, render: state => {
     if (!alive) return
     if (hasPainted) { captureDraft(); searchDraft = input('wb-search')?.value ?? searchDraft }
+    if (state.detail) {
+      const taskScope = `task:${state.detail.task.id}`
+      const acknowledged = interactions.acknowledgedInputDraft(state.detail.task.id, state.detail.inputs ?? [])
+      if (acknowledged !== null) {
+        const draft = pageDrafts.get(taskScope)
+        if (draft.followup === acknowledged) { draft.followup = ''; pageDrafts.set(taskScope, draft) }
+        const field = input('wb-followup-text')
+        if (renderedScope === taskScope && field?.value === acknowledged) field.value = ''
+      }
+    }
     const activeField = document.activeElement instanceof Element && root.contains(document.activeElement) && 'value' in document.activeElement
       ? /** @type {HTMLInputElement|HTMLTextAreaElement|HTMLSelectElement} */ (document.activeElement)
       : null
@@ -445,6 +464,7 @@ export function initWorkbenchPage(deps) {
     const nextScope = scopeFor(state)
     const hasStoredScroll = scrollPositions.has(nextScope) || renderedScope === nextScope
     const openState = new Map(['wb-tools', 'wb-artifacts', 'wb-options', 'wb-task-info', 'wb-restart-context', 'wb-artifact-source','wb-handoffs'].map(id => [id, !!root.querySelector(`#${id}[open]`)]))
+    if (root.querySelector('#wb-inputs')) openState.set('wb-inputs', !!root.querySelector('#wb-inputs[open]'))
     for (const disclosure of root.querySelectorAll?.('[data-review-disclosure]') ?? []) openState.set(disclosure.id, disclosure.hasAttribute('open'))
     disclosures.set(renderedScope, openState)
     const oldContent = root.querySelector('.wb-content')
@@ -466,7 +486,10 @@ export function initWorkbenchPage(deps) {
     if (currentTaskInfoScroll !== undefined) taskInfoScrollPositions.set(renderedScope, currentTaskInfoScroll)
     const nextPermissionSignature = permissionSignatureFor(state)
     const sameScope = renderedScope === scopeFor(state)
-    root.innerHTML = renderWorkbench(state)
+    const questionPanelScroll = root.querySelector('.wb-questions')?.scrollTop ?? 0
+    root.innerHTML = renderWorkbench(state, interactions)
+    const questionPanel = root.querySelector('.wb-questions')
+    if (questionPanel && sameScope) questionPanel.scrollTop = questionPanelScroll
     hasPainted = true
     const search = input('wb-search'); if (search) search.value = searchDraft
     const sidebar = root.querySelector('.wb-sidebar'); if (sidebar) sidebar.scrollTop = sidebarScroll
@@ -537,12 +560,49 @@ export function initWorkbenchPage(deps) {
       return false
     } finally { busy.delete(key) }
   }
+  const openTask = async (/** @type {string} */ id) => {
+    if (!alive || !id) return
+    captureDraft(); artifactRequest++
+    const navigation = ++navigationGeneration
+    try { await controller.selectTask(id) }
+    catch (error) { if (alive && navigation === navigationGeneration) fail(error) }
+  }
+  const refreshInteraction = async (/** @type {string} */ taskId, /** @type {number} */ navigation) => {
+    if (!alive || navigation !== navigationGeneration || controller.getTargetTaskId() !== taskId) return
+    try { await controller.refresh({ force: true }) }
+    catch { /* The acknowledged receipt remains visible; ordinary polling can reconnect. */ }
+  }
+  const answerQuestion = async (/** @type {string|undefined} */ taskId, /** @type {string|undefined} */ requestId, decline = false) => {
+    if (!taskId || controller.getTargetTaskId() !== taskId) return
+    const request = controller.state.detail?.questions?.find(item => item.taskId === taskId && item.id === requestId)
+    if (!request) return
+    captureDraft()
+    const navigation = navigationGeneration
+    if (await interactions.answer(request, decline)) await refreshInteraction(taskId, navigation)
+  }
   /** @param {Event} event */
   const onClick = async event => {
     const target = event.target instanceof Element ? event.target.closest('button') : null
     if (!target) return
-    if (target.dataset.taskId) { captureDraft(); navigationGeneration++; artifactRequest++; return controller.selectTask(target.dataset.taskId).catch(fail) }
+    if (target.dataset.taskId) return openTask(target.dataset.taskId)
     let action = target.dataset.action
+    if (action === 'decline-question') return answerQuestion(target.dataset.ownerTask, target.dataset.requestId, true)
+    if (action === 'withdraw-input' || action === 'copy-held-input') {
+      const taskId = target.dataset.ownerTask, requestId = target.dataset.requestId
+      if (!taskId || !requestId || controller.getTargetTaskId() !== taskId) return
+      const receipt = controller.state.detail?.inputs?.find(item => item.taskId === taskId && item.id === requestId)
+      if (action === 'copy-held-input' && receipt?.status === 'held') {
+        const field = input('wb-followup-text')
+        if (field) { interactions.resetInput(taskId, requestId); field.value = field.value.trim() ? `${field.value}\n\n${receipt.text}` : receipt.text; captureDraft(); field.focus({ preventScroll: true }) }
+      } else if (action === 'withdraw-input' && receipt?.status === 'pending') {
+        const navigation = navigationGeneration
+        if (await interactions.withdraw(taskId, requestId)) {
+          if (alive && controller.state.detail?.task.id === taskId) { receipt.status = 'withdrawn'; controller.paint(true) }
+          await refreshInteraction(taskId, navigation)
+        }
+      }
+      return
+    }
     if (target.dataset.artifactId) { artifactRequest++; controller.state.selectedArtifactId = target.dataset.artifactId; controller.state.preview = null; controller.paint(); action = 'preview-artifact' }
     if (action === 'latest-content') {
       for (const id of ['wb-artifacts', 'wb-tools']) root.querySelector(`#${id}`)?.removeAttribute('open')
@@ -646,6 +706,26 @@ export function initWorkbenchPage(deps) {
     event.preventDefault()
     const form = event.target instanceof Element && event.target.tagName === 'FORM' ? /** @type {HTMLFormElement} */ (event.target) : null
     if (!form) return
+    if (form.dataset.action === 'answer-question') return answerQuestion(form.dataset.ownerTask, form.dataset.requestId)
+    if (form.dataset.action === 'send-input') {
+      const detail = controller.state.detail, taskId = form.dataset.ownerTask, runId = form.dataset.runId
+      if (!taskId || !runId || controller.getTargetTaskId() !== taskId || detail?.task.id !== taskId || detail.runId !== runId || !detail.inputMode || detail.task.status !== 'running' || detail.task.archivedAt != null) return
+      const text = input('wb-followup-text')?.value ?? '', navigation = navigationGeneration
+      captureDraft()
+      const receipt = await interactions.sendInput(taskId, runId, text)
+      if (!receipt) return
+      const scope = `task:${taskId}`, draft = pageDrafts.get(scope)
+      if (draft.followup === text) { draft.followup = ''; pageDrafts.set(scope, draft) }
+      if (!alive) return
+      const current = input('wb-followup-text')
+      if (controller.state.selectedId === taskId && current?.value === text) current.value = ''
+      if (controller.state.detail?.task.id === taskId) {
+        controller.state.detail.inputs = [...(controller.state.detail.inputs ?? []).filter(item => item.id !== receipt.id), receipt].slice(-50)
+        controller.paint(true)
+      }
+      await refreshInteraction(taskId, navigation)
+      return
+    }
     if (form.id === 'wb-search-form') {
       searchDraft = input('wb-search')?.value ?? ''
       return controller.filterTasks({ q: searchDraft, archived: controller.state.query?.archived ?? 'exclude' }).catch(fail)
@@ -714,21 +794,26 @@ export function initWorkbenchPage(deps) {
     captureDraft()
     saveWorkbenchView(windowStorage,{scope:renderedScope,query:controller.state.query ?? {q:'',archived:'exclude'},search:input('wb-search')?.value ?? searchDraft})
   }
-  const onChange = () => { syncWorkbenchProviderLabel(root); saveWindowState() }
-  root.addEventListener('input', saveWindowState)
+  const onInput = (/** @type {Event} */ event) => {
+    if (event.target instanceof Element && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) syncWorkbenchQuestionChoice(/** @type {HTMLInputElement|HTMLTextAreaElement} */ (event.target))
+    if (event.target === input('wb-followup-text') && controller.state.selectedId) interactions.editInputDraft(controller.state.selectedId, input('wb-followup-text')?.value ?? '')
+    saveWindowState()
+  }
+  const onChange = (/** @type {Event} */ event) => { syncWorkbenchProviderLabel(root); onInput(event) }
+  root.addEventListener('input', onInput)
   window.addEventListener?.('pagehide', saveWindowState)
   root.addEventListener('change', onChange)
   root.addEventListener('click', onClick)
   root.addEventListener('submit', onSubmit)
   controller.refresh().catch(fail)
   const timer = setInterval(() => { if (!root.closest('[hidden]')) controller.refresh().catch(fail) }, deps.pollMs ?? 3000)
-  active = { timer, cleanup: () => {
+  active = { timer, openTask, getTaskId: () => controller.getTargetTaskId(), cleanup: () => {
     saveWindowState()
     resumeQuery = { ...(controller.state.query ?? { q: '', archived: 'exclude' }) }
     resumeSearch = input('wb-search')?.value ?? searchDraft
     if (controller.state.selectedId) resumeScope = `task:${controller.state.selectedId}`
     else if (document.getElementById('wb-create-form')) resumeScope = scopeFor(controller.state)
-    handoffCleanup?.(); nativeHistoryCleanup?.(); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', saveWindowState); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
+    handoffCleanup?.(); nativeHistoryCleanup?.(); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', onInput); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
   } }
   return controller
 }
@@ -737,3 +822,13 @@ export function stopWorkbenchPolling() {
   if (!active) return
   clearInterval(active.timer); active.cleanup(); active = null
 }
+
+/** The caller opens the workbench pane first. This never submits a draft.
+ * @param {string} id */
+export async function openWorkbenchTask(id) {
+  if (!id) return
+  if (active) await active.openTask(id)
+  else resumeScope = `task:${id}`
+}
+
+export function getActiveWorkbenchTaskId() { return active?.getTaskId() ?? null }

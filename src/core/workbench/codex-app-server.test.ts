@@ -55,6 +55,9 @@ function completed(child: FakeProcess, status = 'completed', turn = 'turn-1') { 
 function approval(child: FakeProcess, id: string | number = 'approve-1', method = 'item/commandExecution/requestApproval', extra = {}) {
   child.send({ id, method, params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'item-1', kind: 'command', command: 'rm report.txt', cwd: '/project', reason: 'replace file', ...extra } })
 }
+function question(child: FakeProcess, id: string | number = 'question-1', extra = {}) {
+  child.send({ id, method: 'item/tool/requestUserInput', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'question-item', isBlocking: true, autoResolutionMs: null, questions: [{ id: 'format', header: 'Format', question: 'Which format?', isOther: true, isSecret: false, options: [{ label: 'PDF', description: 'Fixed layout' }, { label: 'Word', description: 'Editable' }] }], ...extra } })
+}
 beforeEach(() => {
   children = []; sessions = []; discovery = '[{"name":"personal","env":{"SECRET":"private"}}]'; discoveryExit = 0; threadResponse = {}
   mocks.spawn.mockReset().mockImplementation((_binary: string, args: string[]) => {
@@ -66,6 +69,152 @@ beforeEach(() => {
 afterEach(async () => { for (const session of sessions) await session.close().catch(() => {}); vi.restoreAllMocks() })
 
 describe('workbench Codex app-server', () => {
+  it('steers the active native turn with exact text and waits for its matching acknowledgement', async () => {
+    const { session, child } = await start(); const run = collect(session); await begun(child)
+    expect(session.steer).toBeTypeOf('function')
+    let accepted = false
+    const pending = session.steer!('  Keep the appendix.\n').then(() => { accepted = true })
+    const rpc = child.sent.find(m => m.method === 'turn/steer')!
+    expect(rpc.params).toEqual({ threadId: 'thread-1', expectedTurnId: 'turn-1', input: [{ type: 'text', text: '  Keep the appendix.\n', text_elements: [] }] })
+    await Promise.resolve(); expect(accepted).toBe(false)
+    child.send({ id: rpc.id, result: { turnId: 'turn-1' } }); await pending
+    expect(accepted).toBe(true); completed(child); await run.done
+  })
+
+  it.each(['wrong-turn', 'rpc-error', 'completed', 'cancelled'])('does not acknowledge rejected or stale steering: %s', async failure => {
+    const { session, child } = await start(); const run = collect(session); await begun(child)
+    expect(session.steer).toBeTypeOf('function')
+    const pending = session.steer!('extra').then(() => 'accepted', () => 'rejected')
+    const rpc = child.sent.find(m => m.method === 'turn/steer')!
+    if (failure === 'completed') completed(child)
+    if (failure === 'cancelled') await session.cancel!()
+    child.send(failure === 'rpc-error' ? { id: rpc.id, error: { code: -32601, message: 'unsupported' } } : { id: rpc.id, result: { turnId: failure === 'wrong-turn' ? 'other-turn' : 'turn-1' } })
+    expect(await pending).toBe('rejected')
+    if (failure !== 'completed') completed(child, failure === 'cancelled' ? 'interrupted' : 'completed')
+    await run.done
+  })
+
+  it('refuses steering before a turn id exists or after it ended', async () => {
+    const { session, child } = await start(); child.autoTurnStart = false
+    expect(session.steer).toBeTypeOf('function')
+    await expect(session.steer!('before')).rejects.toThrow()
+    const run = collect(session); await begun(child)
+    await expect(session.steer!('starting')).rejects.toThrow()
+    child.send({ id: child.sent.find(m => m.method === 'turn/start')!.id, result: { turn: { id: 'turn-1' } } })
+    await Promise.resolve(); completed(child); await run.done
+    await expect(session.steer!('ended')).rejects.toThrow()
+    expect(child.sent.some(m => m.method === 'turn/steer')).toBe(false)
+  })
+
+  it('maps native structured questions and replies only to the exact RPC id including zero', async () => {
+    const requestUserInput = vi.fn(async () => ({ format: ['Word'] }))
+    const { session, child } = await start({ requestUserInput }); const run = collect(session); await begun(child)
+    question(child, 0)
+    await expect.poll(() => child.sent.find(m => m.id === 0)?.result).toEqual({ answers: { format: { answers: ['Word'] } } })
+    expect(requestUserInput).toHaveBeenCalledWith({ questions: [{ id: 'format', header: 'Format', question: 'Which format?', options: [{ label: 'PDF', description: 'Fixed layout' }, { label: 'Word', description: 'Editable' }], multiSelect: false, allowOther: true }] }, expect.any(AbortSignal))
+    completed(child); await run.done
+  })
+
+  it.each(['cancel', 'resolved', 'completed', 'exit'])('aborts a pending question and ignores a late answer on %s', async action => {
+    let answer!: (value: Record<string, string[]>) => void, signal!: AbortSignal
+    const { session, child } = await start({ requestUserInput: (_request: unknown, s: AbortSignal) => { signal = s; return new Promise(resolve => { answer = resolve }) } })
+    const run = collect(session); await begun(child); question(child)
+    await expect.poll(() => !!answer).toBe(true)
+    if (action === 'cancel') await session.cancel!()
+    if (action === 'resolved') child.notify('serverRequest/resolved', { threadId: 'thread-1', requestId: 'question-1' })
+    if (action === 'completed') completed(child)
+    if (action === 'exit') child.exit(7)
+    expect(signal.aborted).toBe(true)
+    answer({ format: ['Word'] }); await Promise.resolve(); await Promise.resolve()
+    expect(child.sent.some(m => m.id === 'question-1' && m.result?.answers?.format)).toBe(false)
+    if (action === 'cancel' || action === 'resolved') completed(child, action === 'cancel' ? 'interrupted' : 'completed')
+    await run.done
+  })
+
+  it('does not resurrect a question resolved before the turn-start response', async () => {
+    const requestUserInput = vi.fn(async () => ({ format: ['PDF'] }))
+    const { session, child } = await start({ requestUserInput }); child.autoTurnStart = false
+    const run = collect(session); await begun(child); question(child)
+    child.notify('serverRequest/resolved', { threadId: 'thread-1', requestId: 'question-1' })
+    child.send({ id: child.sent.find(m => m.method === 'turn/start')!.id, result: { turn: { id: 'turn-1' } } })
+    await Promise.resolve(); await Promise.resolve(); completed(child); await run.done
+    expect(requestUserInput).not.toHaveBeenCalled()
+  })
+
+  it('answers duplicate native question delivery once and ignores a resolution for another thread', async () => {
+    let answer!: (value: Record<string, string[]>) => void, signal!: AbortSignal
+    const requestUserInput = vi.fn((_request: unknown, s: AbortSignal) => { signal = s; return new Promise(resolve => { answer = resolve }) })
+    const { session, child } = await start({ requestUserInput }); const run = collect(session); await begun(child)
+    question(child); question(child)
+    await expect.poll(() => !!answer).toBe(true)
+    child.notify('serverRequest/resolved', { threadId: 'different-thread', requestId: 'question-1' })
+    expect(signal.aborted).toBe(false)
+    answer({ format: ['PDF'] })
+    await expect.poll(() => child.sent.filter(m => m.id === 'question-1').length).toBe(1)
+    question(child); await Promise.resolve(); await Promise.resolve()
+    expect(child.sent.filter(m => m.id === 'question-1')).toHaveLength(1)
+    expect(requestUserInput).toHaveBeenCalledTimes(1)
+    completed(child); await run.done
+  })
+
+  it('declines a duplicated early question once when cancelled before turn-start acknowledgement', async () => {
+    const requestUserInput = vi.fn(async () => ({ format: ['PDF'] }))
+    const { session, child } = await start({ requestUserInput }); child.autoTurnStart = false
+    const run = collect(session); await begun(child); question(child); question(child)
+    await session.cancel!()
+    expect(child.sent.filter(m => m.id === 'question-1')).toEqual([{ id: 'question-1', result: { answers: {} } }])
+    question(child); await Promise.resolve()
+    expect(child.sent.filter(m => m.id === 'question-1')).toHaveLength(1)
+    expect(requestUserInput).not.toHaveBeenCalled()
+    await session.close(); await run.done
+  })
+
+  it('supports native free text questions without selectable options', async () => {
+    const requestUserInput = vi.fn(async () => ({ note: ['Keep all tables.'] }))
+    const { session, child } = await start({ requestUserInput }); const run = collect(session); await begun(child)
+    question(child, 'free', { questions: [{ id: 'note', header: 'Note', question: 'Any other requirements?', isOther: false, isSecret: false, options: null }], isBlocking: false, autoResolutionMs: 60000 })
+    await expect.poll(() => child.sent.find(m => m.id === 'free')?.result).toEqual({ answers: { note: { answers: ['Keep all tables.'] } } })
+    expect(requestUserInput).toHaveBeenCalledWith({ questions: [{ id: 'note', header: 'Note', question: 'Any other requirements?', options: [], multiSelect: false, allowOther: true }] }, expect.any(AbortSignal))
+    completed(child); await run.done
+  })
+
+  it.each(['missing', 'declined', 'failed'])('returns no answer when the question callback is %s', async mode => {
+    const requestUserInput = mode === 'missing' ? undefined : async () => { if (mode === 'failed') throw new Error('UI gone'); return null }
+    const { session, child } = await start({ requestUserInput }); const run = collect(session); await begun(child); question(child)
+    await expect.poll(() => child.sent.find(m => m.id === 'question-1')?.result).toEqual({ answers: {} })
+    completed(child); await run.done
+  })
+
+  it('rejects malformed native questions without opening a truncated or ambiguous prompt', async () => {
+    const requestUserInput = vi.fn(async () => ({ format: ['PDF'] }))
+    const { session, child } = await start({ requestUserInput }); const run = collect(session); await begun(child)
+    question(child, 'malformed', { questions: [{ id: 'format', header: 'Format', question: 'Which format?', isOther: false, isSecret: false, options: [{ label: 'PDF', description: 'a'.repeat(21000) }] }] })
+    await run.done
+    expect(requestUserInput).not.toHaveBeenCalled()
+    expect(child.sent.find(m => m.id === 'malformed')?.result).toEqual({ answers: {} })
+    expect(run.events.some(event => event.kind === 'error')).toBe(true)
+  })
+
+  it('rejects secret questions without forwarding their contents to task storage', async () => {
+    const requestUserInput = vi.fn(async () => ({ password: ['secret'] }))
+    const { session, child } = await start({ requestUserInput }); const run = collect(session); await begun(child)
+    question(child, 'secret', { questions: [{ id: 'password', header: 'Password', question: 'Sensitive question detail', isOther: true, isSecret: true, options: null }] })
+    await run.done
+    expect(requestUserInput).not.toHaveBeenCalled()
+    expect(child.sent.find(m => m.id === 'secret')?.result).toEqual({ answers: {} })
+    expect(run.events).toContainEqual({ kind: 'error', message: expect.stringContaining('敏感') })
+    expect(JSON.stringify(run.events)).not.toContain('Sensitive question detail')
+  })
+
+  it('declines unavailable, invalid and foreign question answers without granting permissions', async () => {
+    const requestUserInput = vi.fn(async () => ({ unknown: ['bad'] }))
+    const { session, child } = await start({ requestUserInput }); const run = collect(session); await begun(child)
+    question(child, 'invalid-answer'); question(child, 'other-thread', { threadId: 'elsewhere' }); question(child, 'old-turn', { turnId: 'turn-old' })
+    await expect.poll(() => child.sent.find(m => m.id === 'invalid-answer')?.result).toEqual({ answers: {} })
+    expect(child.sent.find(m => m.id === 'other-thread')?.result).toEqual({ answers: {} })
+    expect(child.sent.find(m => m.id === 'old-turn')?.result).toEqual({ answers: {} })
+    expect(requestUserInput).toHaveBeenCalledTimes(1); completed(child); await run.done
+  })
   it('probes selected cwd, initializes and starts a strictly isolated native thread', async () => {
     const { child } = await start({ mcpEnv: { WECHAT_SESSION_TOKEN: 'do-not-forward' } })
     expect(mocks.spawn.mock.calls[0]![2]).toMatchObject({ cwd: '/project' })

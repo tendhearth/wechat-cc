@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import type { AgentEvent, AgentProvider } from '../agent-provider'
 import { discoverWorkbenchCodexConfig, workbenchCodexArgs, workbenchCodexEnv } from './codex-config'
+import { validateUserInputAnswers, validateUserInputRequest } from './user-input'
 
 type RpcId = string | number
 // The JSONL boundary is checked below before any request is routed or action accepted.
@@ -8,7 +9,8 @@ type ObjectValue = Record<string, any>
 interface Message { id?: RpcId; method?: string; params?: ObjectValue; result?: ObjectValue; error?: { code?: number; message?: string } }
 interface Options { codexPathOverride: string; model?: string; rpcTimeoutMs?: number; closeTimeoutMs?: number }
 interface Approval { controller: AbortController; turn: Turn; rejection: 'decline' | 'cancel' }
-interface Turn { id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; startedAt: number }
+interface UserQuestion { controller: AbortController; turn: Turn }
+interface Turn { id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; questionIds: Set<RpcId>; startedAt: number }
 
 class EventQueue {
   private events: AgentEvent[] = []
@@ -32,6 +34,8 @@ const preview = (value: unknown) => typeof value === 'string' ? value : JSON.str
 const onlyKeys = (value: ObjectValue, keys: string[]) => Object.keys(value).every(key => keys.includes(key))
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every(item => typeof item === 'string')
 const rejectionDecision = (params?: ObjectValue): 'decline' | 'cancel' => Array.isArray(params?.availableDecisions) && !params.availableDecisions.includes('decline') && params.availableDecisions.includes('cancel') ? 'cancel' : 'decline'
+const isUserQuestion = (message: Message) => message.method === 'item/tool/requestUserInput'
+const rejectedRequest = (message: Message) => isUserQuestion(message) ? { answers: {} } : { decision: rejectionDecision(message.params) }
 const networkAmendment = (value: unknown) => object(value) && onlyKeys(value, ['host', 'action']) && typeof value.host === 'string' && ['allow', 'deny'].includes(value.action)
 const approvalDecision = (value: unknown) => {
   if (typeof value === 'string') return ['accept', 'acceptForSession', 'decline', 'cancel'].includes(value)
@@ -82,6 +86,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
       })
       const rpcs = new Map<RpcId, { resolve: (value: ObjectValue) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>()
       const approvals = new Map<RpcId, Approval>()
+      const questions = new Map<RpcId, UserQuestion>()
       let sequence = 0, threadId = '', active: Turn | undefined, buffer = ''
       let closing = false, exited = false, broken: Error | undefined, closePromise: Promise<void> | undefined
       let resolveExit!: () => void
@@ -96,17 +101,26 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           })
         } catch { fatal('codex_protocol_write_failed') }
       }
-      const dropApprovals = (turn?: Turn, reply = true) => {
+      const dropPendingRequests = (turn?: Turn, reply = true) => {
         const queuedTurn = turn ?? active
         if (queuedTurn) queuedTurn.early = queuedTurn.early.filter(message => {
           if (!rpcId(message.id)) return true
-          if (reply) send({ id: message.id, result: { decision: rejectionDecision(message.params) } })
+          if (isUserQuestion(message)) {
+            if (queuedTurn.questionIds.has(message.id)) return false
+            queuedTurn.questionIds.add(message.id)
+          }
+          if (reply) send({ id: message.id, result: rejectedRequest(message) })
           return false
         })
         for (const [id, entry] of approvals) {
           if (turn && entry.turn !== turn) continue
           approvals.delete(id); entry.controller.abort()
           if (reply) send({ id, result: { decision: entry.rejection } })
+        }
+        for (const [id, entry] of questions) {
+          if (turn && entry.turn !== turn) continue
+          questions.delete(id); entry.controller.abort()
+          if (reply) send({ id, result: { answers: {} } })
         }
       }
       const rejectRpcs = (error: Error) => {
@@ -115,7 +129,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
       }
       const finish = (turn: Turn, event: AgentEvent) => {
         if (active !== turn) return
-        dropApprovals(turn)
+        dropPendingRequests(turn)
         turn.events.push(event); turn.events.end(); active = undefined
       }
       const signalOwned = (signal: NodeJS.Signals) => {
@@ -132,7 +146,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
       const close = (): Promise<void> => {
         if (closePromise) return closePromise
         closing = true
-        dropApprovals()
+        dropPendingRequests()
         rejectRpcs(new Error('codex_session_closed'))
         if (active) { active.cancelled = true; active.events.end(); active = undefined }
         closePromise = (async () => {
@@ -153,7 +167,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
       const fatal = (message: string) => {
         if (broken || closing) return
         broken = new Error(message)
-        dropApprovals(undefined, false)
+        dropPendingRequests(undefined, false)
         if (active) finish(active, { kind: 'error', message })
         rejectRpcs(broken)
         void close().catch(() => {})
@@ -201,26 +215,64 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           })
         })
       }
+      const onQuestion = (message: Message, turn: Turn) => {
+        const id = message.id!, params = message.params!
+        if (turn.questionIds.has(id)) return
+        turn.questionIds.add(id)
+        if (Array.isArray(params.questions) && params.questions.some((q: unknown) => object(q) && q.isSecret === true)) {
+          send({ id, result: { answers: {} } })
+          fatal('工作台暂不支持密码等敏感问题，请在原生 Codex 中处理。')
+          return
+        }
+        let request
+        try {
+          if (typeof params.itemId !== 'string' || !params.itemId || !Array.isArray(params.questions) ||
+              (params.isBlocking !== undefined && typeof params.isBlocking !== 'boolean')) throw new Error('invalid_question')
+          request = validateUserInputRequest({ questions: params.questions.map((q: unknown) => {
+            if (!object(q) || typeof q.isOther !== 'boolean' || q.isSecret !== false || (q.options !== null && !Array.isArray(q.options))) throw new Error('invalid_question')
+            return { id: q.id, header: q.header, question: q.question, options: q.options ?? [], multiSelect: false, allowOther: q.options === null || q.isOther }
+          }) })
+        } catch {
+          send({ id, result: { answers: {} } })
+          fatal('无法完整显示本次 Codex 问题，工作台已停止任务。')
+          return
+        }
+        const controller = new AbortController(), entry = { controller, turn }
+        questions.set(id, entry)
+        void Promise.resolve().then(() => !controller.signal.aborted && active === turn && !turn.cancelled && context.requestUserInput
+          ? context.requestUserInput(request, controller.signal) : null,
+        ).then(answer => answer === null ? null : validateUserInputAnswers(request, answer)).catch(() => null).then(answer => {
+          if (questions.get(id) !== entry || controller.signal.aborted || active !== turn || turn.cancelled || closing) return
+          questions.delete(id)
+          send({ id, result: { answers: answer === null ? {} : Object.fromEntries(Object.entries(answer).map(([key, values]) => [key, { answers: values }])) } })
+        })
+      }
       const route = (message: Message) => {
         if (message.method) {
           const params = message.params ?? {}
           const isRequest = rpcId(message.id)
           const approval = message.method === 'item/commandExecution/requestApproval' || message.method === 'item/fileChange/requestApproval'
-          if (isRequest && !approval) {
+          if (isRequest && !approval && !isUserQuestion(message)) {
             if (message.method === 'item/permissions/requestApproval') send({ id: message.id, result: { permissions: {}, scope: 'turn' } })
             else { send({ id: message.id, error: { code: -32601, message: 'This request is not supported in CC Workbench.' } }); fatal('codex_unsupported_server_request') }
             return
           }
           if (message.method === 'serverRequest/resolved') {
             if (params.threadId !== threadId) return
-            if (active) active.early = active.early.filter(queued => queued.id !== params.requestId)
+            if (active) {
+              active.early = active.early.filter(queued => queued.id !== params.requestId)
+              if (rpcId(params.requestId)) active.questionIds.add(params.requestId)
+            }
             const pending = approvals.get(params.requestId)
             if (pending) { approvals.delete(params.requestId); pending.controller.abort() }
+            const question = questions.get(params.requestId)
+            if (question) { questions.delete(params.requestId); question.controller.abort() }
             return
           }
           const turn = active
+          if (isRequest && isUserQuestion(message) && params.threadId === threadId && turn?.questionIds.has(message.id!)) return
           if (!turn || params.threadId !== threadId || (turn.cancelled && message.method !== 'turn/completed') || closing) {
-            if (isRequest) send({ id: message.id, result: { decision: rejectionDecision(params) } })
+            if (isRequest) send({ id: message.id, result: rejectedRequest(message) })
             return
           }
           if (!turn.id) {
@@ -228,8 +280,8 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
             turn.early.push(message); return
           }
           const eventTurn = message.method.startsWith('turn/') ? params.turn?.id : params.turnId
-          if (eventTurn !== turn.id) { if (isRequest) send({ id: message.id, result: { decision: rejectionDecision(params) } }); return }
-          if (isRequest) { onApproval(message, turn); return }
+          if (eventTurn !== turn.id) { if (isRequest) send({ id: message.id, result: rejectedRequest(message) }); return }
+          if (isRequest) { if (isUserQuestion(message)) onQuestion(message, turn); else onApproval(message, turn); return }
           if (message.method === 'item/started' && object(params.item)) {
             const item = params.item
             if (typeof item.id === 'string') turn.items.set(item.id, item)
@@ -302,7 +354,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         dispatch(text) {
           if (active) throw new Error('codex_turn_already_running')
           if (closing || exited || broken) throw broken ?? new Error('codex_session_closed')
-          const turn: Turn = { id: null, cancelled: false, rejectedOperation: false, events: new EventQueue(), early: [], items: new Map(), startedAt: Date.now() }
+          const turn: Turn = { id: null, cancelled: false, rejectedOperation: false, events: new EventQueue(), early: [], items: new Map(), questionIds: new Set(), startedAt: Date.now() }
           active = turn; turn.events.push({ kind: 'init', sessionId: threadId })
           void request('turn/start', { threadId, input: [{ type: 'text', text, text_elements: [] }] }).then(response => {
             if (active !== turn || closing) return
@@ -313,10 +365,19 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           }).catch(error => { if (active === turn) finish(turn, { kind: 'error', message: error instanceof Error ? error.message : 'codex_turn_start_failed' }) })
           return turn.events.iterate()
         },
+        async steer(text) {
+          const turn = active
+          if (!turn?.id || turn.cancelled || closing || exited || broken) throw new Error('codex_no_active_turn')
+          if (typeof text !== 'string' || !text.trim()) throw new Error('codex_empty_input')
+          const expectedTurnId = turn.id
+          const response = await request('turn/steer', { threadId, expectedTurnId, input: [{ type: 'text', text, text_elements: [] }] })
+          if (response.turnId !== expectedTurnId) throw new Error('codex_steer_turn_mismatch')
+          if (active !== turn || turn.cancelled || closing || exited || broken) throw new Error('codex_steer_no_longer_active')
+        },
         async cancel() {
           const turn = active
           if (!turn || closing) return
-          turn.cancelled = true; dropApprovals(turn)
+          turn.cancelled = true; dropPendingRequests(turn)
           if (turn.id) await request('turn/interrupt', { threadId, turnId: turn.id })
           // The acknowledgement means interruption was requested. close()
           // still owns process termination and must confirm actual exit.

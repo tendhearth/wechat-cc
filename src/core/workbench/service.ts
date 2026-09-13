@@ -1,3 +1,4 @@
+import {makeRunUserInput,type RunUserInput} from './user-input'
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import type { AgentEvent, AgentSession } from '../agent-provider'
@@ -46,6 +47,11 @@ interface Active extends PathReservation {
   stop: Promise<null>
   signalStop: () => void
   permissions: RunPermissions
+  questions: RunUserInput
+  queuedInputId?:string
+  finishing?:boolean
+  delivering?:boolean
+  interactionAt:number
   releaseBusy?: () => void
   publicFinished: boolean
   uncertain: boolean
@@ -55,7 +61,7 @@ interface Active extends PathReservation {
   credentialsRevoked: boolean
 }
 export interface CreateTask { title?: string; path: string; providerId: string; text: string }
-export interface WorkbenchTaskView extends Task { importedOnly?:boolean; canArchive:boolean; waitingFor: WaitingFor | null; pendingPermissionCount?: number }
+export interface WorkbenchTaskView extends Task { importedOnly?:boolean; canArchive:boolean; waitingFor: WaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number }
 
 function checkedText(text: string): string {
   if (typeof text !== 'string' || !text.trim() || text.length > 20_000) throw new Error('invalid_text')
@@ -73,17 +79,22 @@ const STATUS_NAMES: Record<string,string> = {
 }
 
 /** Cancellation must clear the idle timer even if a broken adapter leaves next() pending. */
-async function collectWorkbenchTurn(events: AsyncIterable<AgentEvent>, stop: Promise<null>, timeoutMs: number, observe: (event: AgentEvent) => void) {
+async function collectWorkbenchTurn(events: AsyncIterable<AgentEvent>, stop: Promise<null>, timeoutMs: number, observe: (event: AgentEvent) => void, waiting:()=>boolean=()=>false,interactionAt:()=>number=()=>0) {
   const iterator=events[Symbol.asyncIterator]()
   let result: Extract<AgentEvent,{kind:'result'}> | undefined
   let error: string | undefined
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     for (;;) {
-      const step=await Promise.race([
-        iterator.next(),stop,
-        new Promise<never>((_resolve,reject) => { timer=setTimeout(() => reject(new Error('turn_timeout')),timeoutMs) }),
-      ])
+      const startedAt=Date.now(),next=iterator.next(),idle=Symbol('idle')
+      const step=await (async()=>{
+        for(;;){
+          const value=await Promise.race([next,stop,new Promise<typeof idle>(resolve=>{timer=setTimeout(()=>resolve(idle),waiting()?timeoutMs:Math.max(1,timeoutMs-(Date.now()-Math.max(startedAt,interactionAt()))))})])
+          if(timer){clearTimeout(timer);timer=undefined}
+          if(value!==idle)return value
+          if(!waiting()&&Date.now()-Math.max(startedAt,interactionAt())>=timeoutMs)throw Error('turn_timeout')
+        }
+      })()
       if (timer) { clearTimeout(timer); timer=undefined }
       if (!step) return null
       if (step.done) return { result,error }
@@ -99,6 +110,11 @@ async function collectWorkbenchTurn(events: AsyncIterable<AgentEvent>, stop: Pro
 
 export function makeWorkbenchService(opts: Options) {
   const { store } = opts
+  const autoContinueBlocked=new Set<string>()
+  function holdInputs(id:string,error:string){
+    autoContinueBlocked.add(id)
+    try{store.liveInputs.hold(id,error);autoContinueBlocked.delete(id)}catch{/* Stop must not depend on a successful disk write. */}
+  }
   const runsByTask=new Map<string,Active>()
   const reservations=new Map<string,Active>()
   const queue:Active[]=[]
@@ -111,6 +127,7 @@ export function makeWorkbenchService(opts: Options) {
   let shutdownComplete=false
   let shutdownPromise:Promise<void> | undefined
   store.recover()
+  store.liveInputs.recover()
 
   function provider(id: string) {
     const entry = SUPPORTED.includes(id) ? opts.registry.get(id) : null
@@ -165,7 +182,7 @@ export function makeWorkbenchService(opts: Options) {
       ...(!running&&TERMINAL_TASK_STATUSES.includes(task.status)&&store.source(task.id)?.firstDispatchedAt===null?{importedOnly:true}:{}),
       canArchive:TERMINAL_TASK_STATUSES.includes(task.status) && !running && task.error!=='writer_not_closed',
       waitingFor:running ? waitingFor(running) : null,
-      ...(includePermissions ? { pendingPermissionCount:running?.permissions.pending().length ?? 0 } : {}),
+      ...(includePermissions ? { pendingPermissionCount:running?.permissions.pending().length ?? 0,pendingQuestionCount:running?.questions.pending().length ?? 0 } : {}),
     }
   }
   function collect(running:Active):Promise<void> {
@@ -271,7 +288,8 @@ export function makeWorkbenchService(opts: Options) {
       spawning=entry.provider.spawn({alias:`workbench:${task.id}`,path:running.path},{
         tierProfile:TIER_PROFILES.trusted,permissionMode:'strict',chatId:task.ownerChatId ?? `workbench:${task.id}`,
         ...(resume ? {resumeSessionId:resume} : {}),mcpEnv:sessionAuthEnv('trusted',token),appendInstructions:instructions,
-        requestPermission:(request,signal) => running.permissions.request(request,signal),
+        requestPermission:(request,signal) => {running.interactionAt=Date.now();return running.permissions.request(request,signal).finally(()=>{running.interactionAt=Date.now()})},
+        requestUserInput:(request,signal) => {running.interactionAt=Date.now();return running.questions.request(request,signal).finally(()=>{running.interactionAt=Date.now()})},
       }).catch(error => { spawnRejected=true; throw error })
       let spawnTimer:ReturnType<typeof setTimeout>|undefined
       try {
@@ -293,14 +311,16 @@ export function makeWorkbenchService(opts: Options) {
       }
       if (running.cancelled) { finalStatus='cancelled'; return }
       store.markSourceDispatched(task.id)
-      const summary=await collectWorkbenchTurn(running.session.dispatch(history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n本轮要求：\n${text}` : text),running.stop,opts.timeoutMs ?? 10*60_000,
+      const stream=running.session.dispatch(history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n本轮要求：\n${text}` : text)
+      const summary=await collectWorkbenchTurn(stream,running.stop,opts.timeoutMs ?? 10*60_000,
         ev => {
           if (running.cancelled) return
+          if(running.queuedInputId&&['text','tool_call','result'].includes(ev.kind))store.liveInputs.set(running.queuedInputId,'delivered')
           if (ev.kind==='init' && ev.sessionId) {if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId)}
           if (ev.kind==='text') store.addEvent(task.id,'text',ev.text)
           if (ev.kind==='tool_call') store.addEvent(task.id,'tool_call',ev.server ? `${ev.server}/${ev.tool}` : ev.tool)
           if (ev.kind==='error') store.addEvent(task.id,'error',ev.message)
-        })
+        },()=>running.questions.pending().length>0||running.permissions.pending().length>0,()=>running.interactionAt)
       if (!summary) { finalStatus='cancelled'; return }
       if (summary.result?.sessionId) {if(resume&&summary.result.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,summary.result.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,summary.result.sessionId)}
       if (running.cancelled) finalStatus='cancelled'
@@ -313,6 +333,7 @@ export function makeWorkbenchService(opts: Options) {
       finalStatus=running.cancelled ? 'cancelled' : 'failed'; finalError=running.cancelled ? null : message
       if (!running.cancelled) store.addEvent(task.id,'error',message==='restart_confirmation_required' ? RECOVERY_MESSAGE : message)
     } finally {
+      running.finishing=true;running.questions.close()
       running.permissions.rejectAll(running.cancelled ? 'cancelled' : 'ended')
       let closePromise:Promise<void>|undefined
       let closeTimer:ReturnType<typeof setTimeout>|undefined
@@ -332,7 +353,21 @@ export function makeWorkbenchService(opts: Options) {
       try { store.update(task.id,running.cancelled && !running.uncertain ? 'cancelled' : finalStatus,finalError) } catch { /* never unlock an uncertain writer for a status failure */ }
       running.publicFinished=true; running.resolveDone()
       if (!running.uncertain) releaseReservation(running)
+      if(finalStatus==='completed'&&!running.cancelled&&!running.uncertain&&!stopping)drainInputs(task.id,running.directoryIdentity)
+      else holdInputs(task.id,'任务已停止或未正常完成；这条补充尚未发送。')
     }
+  }
+
+  function drainInputs(id:string,expectedDirectoryIdentity:string){
+    if(autoContinueBlocked.has(id))return
+    const next=store.liveInputs.next(id);if(!next)return
+    try{
+      const task=store.get(id),decision=continuation(task)
+      if(decision.mode!=='resume')throw Error('原会话需要你确认恢复方式，补充尚未发送。')
+      const path=canonicalProject(task.path);if(path!==task.path||directoryIdentity(path)!==expectedDirectoryIdentity)throw Error('invalid_path')
+      store.liveInputs.set(next.id,'sending')
+      start(task,next.text,expectedDirectoryIdentity,{mode:'resume',sessionId:task.sessionId!},undefined,undefined,undefined,next.id)
+    }catch(error){holdInputs(id,error instanceof Error?error.message:'input_not_delivered')}
   }
 
   function pump() {
@@ -348,7 +383,7 @@ export function makeWorkbenchService(opts: Options) {
     for (const running of launch) {
       void Promise.resolve().then(() => execute(running.task,runningText.get(running.identity)!,running)).catch(() => {
         if (running.publicFinished) return
-        try { running.permissions.rejectAll(running.cancelled ? 'cancelled' : 'ended') } catch { /* fail closed */ }
+        try { running.questions.close(); running.permissions.rejectAll(running.cancelled ? 'cancelled' : 'ended') } catch { /* fail closed */ }
         revokeCredentials(running)
         if (running.session) markUncertain(running)
         running.publicFinished=true; running.resolveDone()
@@ -357,7 +392,7 @@ export function makeWorkbenchService(opts: Options) {
     }
   }
 
-  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string):WorkbenchTaskView {
+  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string):WorkbenchTaskView {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
     if(opts.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
     if([...runsByTask.values()].some(run=>task.sessionId&&run.task.providerId===task.providerId&&run.task.sessionId===task.sessionId))throw new Error('native_session_busy')
@@ -374,8 +409,13 @@ export function makeWorkbenchService(opts: Options) {
         ? store.addEvent(task.id,'system',`权限请求：${event.permission.tool} · ${event.permission.description} · ${event.permission.id}`)
         : store.addEvent(task.id,'system',`权限结果：${event.permission.tool} · ${event.outcome} · ${event.permission.id}`),
     })
+    const questions=makeRunUserInput({taskId:task.id,audit:event=>{
+      if(event.type==='request')store.addEvent(task.id,'system',`执行者提问：${JSON.stringify(event.request)}`)
+      else if(event.type==='answer')store.addEvent(task.id,'user',`回答执行者的问题：\n${event.request.questions.map(q=>`${q.question}\n${event.answers?.[q.id]?.join('、')??''}`).join('\n\n')}`)
+      else store.addEvent(task.id,'system',`问题已结束，未提交回答：${event.request.id}`)
+    }})
     const running:Active={
-      handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:randomUUID(),taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
+      interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:randomUUID(),taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
       cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,credentialsMinted:false,credentialsRevoked:false,
     }
     runsByTask.set(task.id,running); runningText.set(running.identity,text); queue.push(running); pump()
@@ -383,6 +423,7 @@ export function makeWorkbenchService(opts: Options) {
   }
 
   function cancelRun(running:Active):void {
+    running.questions.close();holdInputs(running.taskId,'任务已停止，补充尚未发送。')
     if (running.state==='queued') {
       running.cancelled=true; running.permissions.rejectAll('cancelled'); running.signalStop()
       const index=queue.indexOf(running); if (index>=0) queue.splice(index,1)
@@ -403,6 +444,46 @@ export function makeWorkbenchService(opts: Options) {
   }
 
   const service={
+    attention(){
+      const tasks=Array.from(runsByTask.values()).flatMap(run=>{
+        const permissions=run.permissions.pending(),questions=run.questions.pending()
+        if(!permissions.length&&!questions.length)return[]
+        return[{id:run.taskId,title:run.title,providerId:run.task.providerId,pendingPermissionCount:permissions.length,pendingQuestionCount:questions.length,attentionKey:JSON.stringify([...permissions,...questions].map(q=>q.id).sort())}]
+      })
+      return{tasks}
+    },
+    resolveAnswer(id:string,requestId:string,answers:unknown){
+      const running=runsByTask.get(id)
+      if(!running||running.cancelled||running.finishing||!running.questions.resolve(requestId,answers))throw Error('question_stale')
+    },
+    withdrawInput(id:string,requestId:string){
+      const input=store.liveInputs.get(requestId)
+      if(!input||input.taskId!==id||input.status!=='pending')throw Error('input_stale')
+      store.liveInputs.set(requestId,'withdrawn')
+    },
+    async submitInput(id:string,input:{runId:string;requestId:string;text:string}){
+      ensureAccepting()
+      const text=checkedText(input.text)
+      if(autoContinueBlocked.has(id))throw Error('input_storage_unavailable')
+      if(!/^[a-f0-9-]{36}$/.test(input.requestId))throw Error('invalid_request')
+      const prior=store.liveInputs.get(input.requestId)
+      if(prior){if(prior.taskId!==id||prior.runId!==input.runId||prior.text!==text)throw Error('input_conflict');return prior}
+      const running=runsByTask.get(id)
+      if(!running||running.identity!==input.runId||running.cancelled||running.finishing||running.uncertain)throw Error('input_stale')
+      if(running.delivering)throw Error('input_delivery_busy')
+      if(store.liveInputs.count(id)>=10)throw Error('input_limit')
+      const saved=store.liveInputs.add({id:input.requestId,taskId:id,runId:input.runId,text})
+      if(!running.session?.steer)return saved
+      running.delivering=true;store.liveInputs.set(saved.id,'sending')
+      try{
+        await running.session.steer(text)
+        running.interactionAt=Date.now()
+        store.liveInputs.set(saved.id,'delivered')
+        store.addEvent(id,'user',text)
+      }catch(error){store.liveInputs.set(saved.id,'held',`未确认执行者收到，请检查当前对话后再决定是否重发。${error instanceof Error?' '+error.message:''}`)}
+      finally{running.delivering=false}
+      return store.liveInputs.get(saved.id)!
+    },
     async previewHandoff(raw:HandoffInput):Promise<HandoffPreview> {
       ensureAccepting()
       const input=validateHandoffInput(raw),source=store.get(input.sourceTaskId),version=taskVersion(source)
@@ -564,7 +645,7 @@ export function makeWorkbenchService(opts: Options) {
     },
     detail(id:string) {
       const detail=store.detail(id),running=runsByTask.get(id)
-      return {...detail,task:taskView(detail.task),permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:continuation(store.get(id)),...(store.source(id)?.firstDispatchedAt===null?{requiresExternalClose:true}:{})} : {})}
+      return {...detail,task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],...(running&&!running.cancelled&&!running.finishing&&!running.uncertain?{runId:running.identity,inputMode:running.session?.steer?'steer' as const:'queue' as const}:{}),permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:continuation(store.get(id)),...(store.source(id)?.firstDispatchedAt===null?{requiresExternalClose:true}:{})} : {})}
     },
     create(input:CreateTask):WorkbenchTaskView {
       ensureAccepting()
