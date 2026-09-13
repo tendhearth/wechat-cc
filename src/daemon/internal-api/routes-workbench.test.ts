@@ -67,6 +67,25 @@ describe('Workbench internal HTTP API', () => {
     expect(minTierFor('GET /v1/workbench/sessions')).toBe('admin');expect(minTierFor('GET /v1/workbench/session')).toBe('admin')
   })
 
+  it('keeps handoff previews read-only, submits explicit tokens and serves records only on exact admin routes',async()=>{
+    const previewHandoff=vi.fn(async()=>({token:'a'.repeat(64),context:'chosen v1'})),handoff=vi.fn(async()=>({task:TASK})),handoffRecord=vi.fn(()=>({packet:{context:'chosen v1'}}))
+    const {request,trustedToken}=await start(service({previewHandoff,handoff,handoffRecord}))
+    const input={sourceTaskId:TASK.id,targetProviderId:'claude',purpose:'review',request:'检查',artifacts:[]}
+    expect((await request('/v1/workbench/handoff-preview',{method:'POST',body:JSON.stringify(input)})).status).toBe(200)
+    expect(previewHandoff).toHaveBeenCalledWith(input);expect(handoff).not.toHaveBeenCalled()
+    expect((await request('/v1/workbench/handoff',{method:'POST',body:JSON.stringify({token:'a'.repeat(64)})})).status).toBe(202)
+    expect(handoff).toHaveBeenCalledWith({token:'a'.repeat(64)})
+    expect((await request('/v1/workbench/handoff?taskId=deadbeef&handoffId=123e4567-e89b-42d3-a456-426614174000')).status).toBe(200)
+    for(const [method,path] of [['POST','/v1/workbench/handoff-preview'],['POST','/v1/workbench/handoff'],['GET','/v1/workbench/handoff']]){
+      expect(minTierFor(`${method} ${path}`)).toBe('admin')
+      expect((await request(path!,{method},trustedToken)).status).toBe(403)
+    }
+    expect((await request('/v1/workbench/handoff',{method:'POST',body:JSON.stringify({token:'../unsafe'})})).status).toBe(400)
+    expect((await request('/v1/workbench/handoff?taskId=deadbeef&taskId=cafefeed&handoffId=123e4567-e89b-42d3-a456-426614174000')).status).toBe(400)
+    previewHandoff.mockRejectedValueOnce(new Error('handoff_changed'))
+    expect((await request('/v1/workbench/handoff-preview',{method:'POST',body:JSON.stringify(input)})).status).toBe(409)
+  })
+
   it('declares every Workbench route admin-only and rejects the trusted file token', async () => {
     const { request, trustedToken } = await start(service())
     const keys = [

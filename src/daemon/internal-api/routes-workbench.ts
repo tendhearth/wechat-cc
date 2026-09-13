@@ -1,3 +1,4 @@
+import {validateHandoffInput,type HandoffInput} from '../../core/workbench/handoff'
 import {nativeImportInput,type NativeImportInput} from '../../core/workbench/native-adoption'
 import { decodeNativeHistoryKey, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryProvider } from '../../core/workbench/native-history'
 import { isAbsolute } from 'node:path'
@@ -28,7 +29,8 @@ function errorCode(err: unknown): string {
 function mappedError(err: unknown): ReturnType<RouteHandler> {
   const code = errorCode(err)
   if (code === 'workbench_archived' || code === 'workbench_busy' || code === 'artifact_changed' || code === 'permission_stale' || code === 'restart_confirmation_required' || code === 'restart_confirmation_stale') return { status: 409, body: { error: code } }
-  if (['native_history_changed','native_session_already_managed','native_session_busy','native_session_identity_mismatch','external_close_confirmation_required','external_close_confirmation_stale'].includes(code))return{status:409,body:{error:code}}
+  if (['handoff_changed','native_history_changed','native_session_already_managed','native_session_busy','native_session_identity_mismatch','external_close_confirmation_required','external_close_confirmation_stale'].includes(code))return{status:409,body:{error:code}}
+  if(code==='handoff_artifact_unsupported')return{status:422,body:{error:code}}
   if(code==='native_import_too_large')return{status:400,body:{error:code}}
   if (code === 'native_history_unsupported') return {status:422,body:{error:code}}
   if (code === 'native_history_unavailable') return {status:503,body:{error:code}}
@@ -75,6 +77,24 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
         const input=normalizeHistoryRead({limit:rawLimit===null?100:Number(rawLimit),...(query.has('cursor')?{cursor:query.get('cursor')!}:{})})
         return {status:200,body:await deps.workbench.readNativeHistory(key,input)}
       }catch(error){return mappedError(error)}
+    },
+
+    'POST /v1/workbench/handoff-preview':async(_query,body)=>{
+      if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
+      try{return{status:200,body:await deps.workbench.previewHandoff(validateHandoffInput(body as HandoffInput))}}catch(error){return mappedError(error)}
+    },
+    'POST /v1/workbench/handoff':async(_query,body)=>{
+      const value=objectBody(body),token=value?.token,restartToken=value?.restartToken,sourceClosedToken=value?.sourceClosedToken
+      if(typeof token!=='string'||!SHA256.test(token))return invalid()
+      for(const optional of [restartToken,sourceClosedToken])if(optional!==undefined&&(typeof optional!=='string'||!SHA256.test(optional)))return invalid()
+      if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
+      try{return{status:202,body:await deps.workbench.handoff({token,...(typeof restartToken==='string'?{restartToken}:{}),...(typeof sourceClosedToken==='string'?{sourceClosedToken}:{})})}}catch(error){return mappedError(error)}
+    },
+    'GET /v1/workbench/handoff':async query=>{
+      const taskId=query.get('taskId'),handoffId=query.get('handoffId')
+      if(query.getAll('taskId').length!==1||query.getAll('handoffId').length!==1||!taskId||!TASK_ID.test(taskId)||!handoffId||!REQUEST_ID.test(handoffId))return invalid()
+      if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
+      try{return{status:200,body:deps.workbench.handoffRecord(taskId,handoffId)}}catch(error){return mappedError(error)}
     },
 
     'POST /v1/workbench/import':async(_query,body)=>{

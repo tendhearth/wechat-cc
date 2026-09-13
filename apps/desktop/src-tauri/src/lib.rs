@@ -956,6 +956,9 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("POST", "/v1/workbench/archive")
             | ("POST", "/v1/workbench/import")
             | ("POST", "/v1/workbench/prepare-resume")
+            | ("POST", "/v1/workbench/handoff-preview")
+            | ("POST", "/v1/workbench/handoff")
+            | ("GET", "/v1/workbench/handoff")
     )
 }
 
@@ -1222,6 +1225,9 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/archive"),
             ("POST", "/v1/workbench/import"),
             ("POST", "/v1/workbench/prepare-resume"),
+            ("POST", "/v1/workbench/handoff-preview"),
+            ("POST", "/v1/workbench/handoff"),
+            ("GET", "/v1/workbench/handoff"),
             ("GET", "/v1/workbench?q=..&archived=all"),
         ] {
             assert!(workbench_request_allowed(method, path), "expected {method} {path} to be allowed");

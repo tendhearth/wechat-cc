@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
+import type {StoredHandoff,HandoffView} from './handoff-record'
 import {publicSource,type StoredNativeSource} from './native-adoption'
 import type {NativeHistoryMessage} from './native-history'
 import type { Db } from '../../lib/db'
@@ -14,6 +15,7 @@ export interface TaskEvent { id: number; taskId: string; kind: 'user' | 'text' |
 export interface Artifact { id: string; taskId: string; name: string; mime: string; size: number; sha256: string; createdAt: number; approvedAt: number | null }
 export interface StoredArtifact extends Artifact { storagePath: string }
 const TASK_SELECT = 'SELECT id,title,path,provider_id AS providerId,owner_chat_id AS ownerChatId,session_id AS sessionId,status,error,created_at AS createdAt,updated_at AS updatedAt,archived_at AS archivedAt FROM workbench_tasks'
+const HANDOFF_SELECT='SELECT id,source_task_id AS sourceTaskId,target_task_id AS targetTaskId,purpose,request,packet_sha256 AS packetSha256,artifact_refs_json AS artifactRefsJson,quote_json AS quoteJson,created_at AS createdAt,request_event_id AS requestEventId,source_native_id AS sourceNativeId,target_native_id AS targetNativeId,packet_json AS packetJson,token_hash AS tokenHash FROM workbench_handoffs'
 const SOURCE_SELECT='SELECT id,task_id AS taskId,provider_id AS providerId,native_id AS nativeId,cwd,imported_at AS importedAt,first_dispatched_at AS firstDispatchedAt,snapshot_sha256 AS snapshotSha256,observed_fingerprint AS observedFingerprint,selected_message_count AS selectedMessageCount,truncated,snapshot_json AS snapshotJson,pages_json AS pagesJson FROM workbench_sources'
 const ART_SELECT = 'SELECT id,task_id AS taskId,name,mime,size,sha256,storage_path AS storagePath,created_at AS createdAt,approved_at AS approvedAt FROM workbench_artifacts'
 export function publicTask({ ownerChatId: _owner, sessionId: _session, ...task }: StoredTask): Task { return task }
@@ -59,13 +61,33 @@ export function makeWorkbenchStore(db: Db) {
   const artifacts = (id: string) => db.query<StoredArtifact, [string]>(`${ART_SELECT} WHERE task_id=? ORDER BY created_at DESC,rowid DESC`).all(id)
   const events = (id: string) => db.query<TaskEvent, [string]>('SELECT id,task_id AS taskId,kind,text,created_at AS createdAt,source_id AS sourceId FROM workbench_events WHERE task_id=? ORDER BY id').all(id)
   const addEvent = (id: string, kind: TaskEvent['kind'], text: string,sourceId:string|null=null) => {
-    db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,source_id) VALUES(?,?,?,?,?)').run(id, kind, text.slice(0, 40_000), Date.now(),sourceId)
+    return Number(db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,source_id) VALUES(?,?,?,?,?)').run(id, kind, text.slice(0, 40_000), Date.now(),sourceId).lastInsertRowid)
   }
   const sourceRow=(row:StoredNativeSource|null)=>row?{...row,truncated:!!row.truncated}:null
   const source=(id:string)=>sourceRow(db.query<StoredNativeSource,[string]>(SOURCE_SELECT+' WHERE task_id=?').get(id))
   const sourceByIdentity=(providerId:string,nativeId:string)=>sourceRow(db.query<StoredNativeSource,[string,string]>(SOURCE_SELECT+' WHERE provider_id=? AND native_id=?').get(providerId,nativeId))
+  const handoffs=(id:string):HandoffView[]=>db.query<StoredHandoff,[string,string]>(HANDOFF_SELECT+' WHERE source_task_id=? OR target_task_id=? ORDER BY created_at,rowid').all(id,id).map(({packetJson:_packet,tokenHash:_token,artifactRefsJson,quoteJson,...h})=>{
+    const a=get(h.sourceTaskId),b=get(h.targetTaskId)
+    return{...h,artifacts:JSON.parse(artifactRefsJson),quote:quoteJson?JSON.parse(quoteJson):null,sourceTitle:a.title,targetTitle:b.title,sourceProviderId:a.providerId,targetProviderId:b.providerId,sourceStatus:a.status,targetStatus:b.status}
+  })
   return {
-    get, artifacts, events, addEvent,source,sourceByIdentity,
+    get, artifacts, events, addEvent,source,sourceByIdentity,handoffs,
+    recordHandoffNative:(id:string,nativeId:string)=>db.query('UPDATE workbench_handoffs SET target_native_id=? WHERE id=? AND target_native_id IS NULL').run(nativeId,id),
+    recordHandoffEvent:(id:string,eventId:number)=>db.query('UPDATE workbench_handoffs SET request_event_id=? WHERE id=?').run(eventId,id),
+    handoffByToken:(hash:string)=>db.query<StoredHandoff,[string]>(HANDOFF_SELECT+' WHERE token_hash=?').get(hash),
+    handoffRecord(taskId:string,id:string){
+      const record=db.query<StoredHandoff,[string,string,string]>(HANDOFF_SELECT+' WHERE id=? AND (source_task_id=? OR target_task_id=?)').get(id,taskId,taskId)
+      if(!record)throw new Error('not_found');return record
+    },
+    createHandoff(input:Omit<StoredHandoff,'targetTaskId'|'createdAt'|'targetNativeId'|'requestEventId'> & {targetTaskId:string|null;targetProviderId:string;path:string;title:string;ownerChatId:string|null}) {
+      return db.transaction(()=>{
+        const old=this.handoffByToken(input.tokenHash);if(old)return old
+        const task=input.targetTaskId?get(input.targetTaskId):this.create({title:input.title,path:input.path,providerId:input.targetProviderId,ownerChatId:input.ownerChatId})
+        if(!input.targetTaskId)this.update(task.id,'interrupted')
+        db.query('INSERT INTO workbench_handoffs(id,source_task_id,target_task_id,purpose,request,packet_sha256,artifact_refs_json,quote_json,created_at,source_native_id,target_native_id,packet_json,token_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(input.id,input.sourceTaskId,task.id,input.purpose,input.request,input.packetSha256,input.artifactRefsJson,input.quoteJson,Date.now(),input.sourceNativeId,null,input.packetJson,input.tokenHash)
+        return this.handoffRecord(task.id,input.id)
+      })()
+    },
     taskByNativeIdentity:(providerId:string,nativeId:string)=>db.query<StoredTask,[string,string]>(TASK_SELECT+' WHERE provider_id=? AND session_id=? LIMIT 1').get(providerId,nativeId),
     markSourceDispatched(id:string){db.query('UPDATE workbench_sources SET first_dispatched_at=COALESCE(first_dispatched_at,?) WHERE task_id=?').run(Date.now(),id)},
     importSource(input:Omit<StoredNativeSource,'id'|'taskId'|'importedAt'|'firstDispatchedAt'|'selectedMessageCount'> & {title:string;ownerChatId:string|null;messages:NativeHistoryMessage[]}) {
@@ -152,7 +174,7 @@ export function makeWorkbenchStore(db: Db) {
       if (a.sha256 !== sha256) throw new Error('artifact_changed')
       db.query('UPDATE workbench_artifacts SET approved_at=? WHERE task_id=? AND id=? AND sha256=?').run(Date.now(),taskId,id,sha256)
     },
-    detail(id: string) { const origin=source(id);return {...(origin?{source:publicSource(origin)}:{}), task: publicTask(get(id)), events: events(id), artifacts: artifacts(id).map(publicArtifact) } },
+    detail(id: string) { const origin=source(id);return {handoffs:handoffs(id),...(origin?{source:publicSource(origin)}:{}), task: publicTask(get(id)), events: events(id), artifacts: artifacts(id).map(publicArtifact) } },
   }
 }
 export type WorkbenchStore = ReturnType<typeof makeWorkbenchStore>

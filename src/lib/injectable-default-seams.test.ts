@@ -39,6 +39,7 @@ const REPO_ROOT = join(dirname(SELF), '..', '..')
  *  filesystem probing. These must be named by at least one test file — the
  *  test is expected to drive the real default, not a stand-in. */
 const BOUNDARY: Record<string, string> = {
+  defaultSdk: 'imports the installed Claude SDK and reads its native history index (workbench/native-claude-history.ts)',
   defaultSpawn: 'spawns the embed subprocess (src/core/knowledge/embed-runner.ts)',
   defaultSpawnBun: 'spawns `bun add` to realign the codex SDK (src/lib/codex-autofix.ts)',
   defaultImporter: 'dynamic import of the hearth MCP client (src/daemon/hearth-adapter.ts)',

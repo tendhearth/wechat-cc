@@ -1,3 +1,6 @@
+import {mkdtempSync,rmSync} from 'node:fs'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { createClaudeHistoryReader, type ClaudeHistorySdk } from './native-claude-history'
 import { encodeNativeHistoryKey } from './native-history'
@@ -82,4 +85,9 @@ it('bounds the entire Claude scan instead of resetting the timeout per batch',as
   expect(await result).toBe('native_history_unavailable')
   expect(sdk.listSessions).toHaveBeenCalledTimes(2)
  } finally {vi.useRealTimers()}
+})
+
+it('exercises defaultSdk against an owned empty project without listing personal histories',async()=>{
+ const cwd=mkdtempSync(join(tmpdir(),'cc-claude-empty-history-'))
+ try{expect(await createClaudeHistoryReader().list({cwd,q:'',limit:10})).toEqual({items:[],nextCursor:null,coverage:'native_supported_history'})}finally{rmSync(cwd,{recursive:true,force:true})}
 })

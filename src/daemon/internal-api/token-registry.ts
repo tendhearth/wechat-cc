@@ -184,6 +184,9 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           'POST /v1/workbench/archive',
       'POST /v1/workbench/import',
       'POST /v1/workbench/prepare-resume',
+      'POST /v1/workbench/handoff-preview',
+      'POST /v1/workbench/handoff',
+      'GET /v1/workbench/handoff',
         ]),
       })
     },

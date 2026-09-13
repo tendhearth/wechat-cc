@@ -163,8 +163,8 @@ export interface HandoffPreview {
 
 v1交接输入范围明确：`text/plain,text/markdown,application/json,application/vnd.cc.workbench-review+json`，最多10个用户选定artifact；目标prompt正文总体24000字符，预览列出截断。二进制/Office文件仍可在成果区查看下载，但此期不得当作“已把内容交给审核者”；返回 `handoff_artifact_unsupported`，请用户选择已生成文字/代码差异版本。这样本期代码实现→审阅闭环不需要新Office解析器、共享stateDir权限或把二进制塞base64给模型。
 
-- [ ] Migration新增 `workbench_handoffs(id TEXT PRIMARY KEY,source_task_id TEXT NOT NULL REFERENCES workbench_tasks(id),target_task_id TEXT NOT NULL REFERENCES workbench_tasks(id),purpose TEXT NOT NULL CHECK(purpose IN('review','revision')),request TEXT NOT NULL,packet_sha256 TEXT NOT NULL,artifact_refs_json TEXT NOT NULL,quote_json TEXT,created_at INTEGER NOT NULL,source_native_id TEXT,target_native_id TEXT)`，以来源/接收task双向索引。packet通过blob helper保存不可变请求、确切文本与selected hashes；token绑定source当前对话版本、target provider/task、request、artifact triples、quote与实际传递文本。不要覆写旧handoff记录来表示下一轮。
-- [ ] 单测先证明数据边界：sourceTaskA不能选择taskB的artifact；批准与否不影响用户主动发起review，但UI区分批准状态；changed hash/不存在artifact/超量/未知mime明确拒绝；同名旧新版本按id+sha选择；只读preview无spawn；quote必须是指定review task/event里的实际子串，不能凭模型自动解析出一条finding就当用户已选择。
+- [x] Migration新增 `workbench_handoffs(id TEXT PRIMARY KEY,source_task_id TEXT NOT NULL REFERENCES workbench_tasks(id),target_task_id TEXT NOT NULL REFERENCES workbench_tasks(id),purpose TEXT NOT NULL CHECK(purpose IN('review','revision')),request TEXT NOT NULL,packet_sha256 TEXT NOT NULL,artifact_refs_json TEXT NOT NULL,quote_json TEXT,created_at INTEGER NOT NULL,source_native_id TEXT,target_native_id TEXT)`，以来源/接收task双向索引。packet通过blob helper保存不可变请求、确切文本与selected hashes；token绑定source当前对话版本、target provider/task、request、artifact triples、quote与实际传递文本。不要覆写旧handoff记录来表示下一轮。
+- [x] 单测先证明数据边界：sourceTaskA不能选择taskB的artifact；批准与否不影响用户主动发起review，但UI区分批准状态；changed hash/不存在artifact/超量/未知mime明确拒绝；同名旧新版本按id+sha选择；只读preview无spawn；quote必须是指定review task/event里的实际子串，不能凭模型自动解析出一条finding就当用户已选择。
 
 ```ts
 const selected={taskId:source.id,artifactId:oldVersion.id,sha256:oldVersion.sha256};
@@ -176,11 +176,11 @@ expect(spawnCalls).toHaveLength(0);
 ```
 
 此例放在handoff integration fixture内，source/oldVersion由已有service+store helpers真实创建；spawnCalls由测试provider.spawn记录。新增公开方法为 `service.previewHandoff(input):Promise<HandoffPreview>` / `service.handoff(input:{token:string;restartToken?:string;sourceClosedToken?:string}):Promise<{task:Task;handoffId:string;sourceTaskId:string}>`，并在该模块输出相同接口类型，避免route自行拼packet。
-- [ ] Review默认创建一个新的目标provider task，path沿用source canonical project，owner继承当前owner，原task记录不变；若同目录source仍active则review按原scheduler排队，并在真正dispatch前确认选择snapshot仍可读取。传给reviewer的是不可变snapshot文本，不让它把当前工作目录误称被选版本；prompt明确“下面是待审阅的固定版本；若检查当前文件，应分别说明差异”。没有把stateDir路径或原生私有全文授予reviewer。review不会自动修改源task，也不会自动调用外发工具。
-- [ ] 单一事务/幂等：preview token对应随机handoff ID，submit相同token重试返回已创建target/handoff而不再派发；事务先创建关联记录和task，再进入现有start路径，失败留有真实failed/未开始状态，不能落下一条无来源的queued孤儿。动态取到的真实target nativeId在init验证后回填handoff来源字段，失败时保持null，不提前捏造。
-- [ ] 目标review task输出的text events正常显示，源detail增加双向related handoffs summaries（source/target taskId、provider、purpose、createdAt、当前status、artifact refs）。源任务头部动作“交给 Claude 检查/交给 Codex 检查”打开预填panel，默认选择有真实来源的最新代码review artifact，用户可换旧版本；panel展示实际将发送的内容与截断，再按“开始检查”。同一个右侧工作视图可打开检查对话并一键返回原任务，保持两边草稿和滚动位置，不新增常驻第三栏。
-- [ ] Revision面板从review text中由用户选择一段，携带quote与用户具体要求；targetTaskId固定原来源任务，不让任意task ID重定向。提交时使用该目标任务原provider和现有continueTask的decision/令牌。原Codex session可resume则仍使用原ID；不能resume则preview明确显示父代理的restart context且等待matching restartToken，绝不为方便新建无关联Codex任务。quote、来源packet版本及选择artifact triples均写新handoff记录，purpose=revision。只执行一次用户选择，不根据review回复自动再送一轮。
-- [ ] 测试全部往返：Codex A输出v1→Claude B收到精确v1→B给两条意见→用户选择第二条→A收到第二条quote而非整份自动指令→A生成v2；A原sessionId和v1 hash保持，B有独立sessionId，两条handoff完整可查。另测重复submit、源active同目录排队、文件更改不偷换artifact版本、revision busy/archive拒绝、需要restart时无token零副作用、task切换/迟到preview不覆盖draft。运行handoff/service/routes/UI/migration/typecheck/depcheck，独立提交 `feat(workbench): record artifact-bound review and revision handoffs`。
+- [x] Review默认创建一个新的目标provider task，path沿用source canonical project，owner继承当前owner，原task记录不变；若同目录source仍active则review按原scheduler排队，并在真正dispatch前确认选择snapshot仍可读取。传给reviewer的是不可变snapshot文本，不让它把当前工作目录误称被选版本；prompt明确“下面是待审阅的固定版本；若检查当前文件，应分别说明差异”。没有把stateDir路径或原生私有全文授予reviewer。review不会自动修改源task，也不会自动调用外发工具。
+- [x] 单一事务/幂等：preview token对应随机handoff ID，submit相同token重试返回已创建target/handoff而不再派发；事务先创建关联记录和task，再进入现有start路径，失败留有真实failed/未开始状态，不能落下一条无来源的queued孤儿。动态取到的真实target nativeId在init验证后回填handoff来源字段，失败时保持null，不提前捏造。
+- [x] 目标review task输出的text events正常显示，源detail增加双向related handoffs summaries（source/target taskId、provider、purpose、createdAt、当前status、artifact refs）。源任务头部动作“交给 Claude 检查/交给 Codex 检查”打开预填panel，默认选择有真实来源的最新代码review artifact，用户可换旧版本；panel展示实际将发送的内容与截断，再按“开始检查”。同一个右侧工作视图可打开检查对话并一键返回原任务，保持两边草稿和滚动位置，不新增常驻第三栏。
+- [x] Revision面板从review text中由用户选择一段，携带quote与用户具体要求；targetTaskId固定原来源任务，不让任意task ID重定向。提交时使用该目标任务原provider和现有continueTask的decision/令牌。原Codex session可resume则仍使用原ID；不能resume则preview明确显示父代理的restart context且等待matching restartToken，绝不为方便新建无关联Codex任务。quote、来源packet版本及选择artifact triples均写新handoff记录，purpose=revision。只执行一次用户选择，不根据review回复自动再送一轮。
+- [x] 测试全部往返：Codex A输出v1→Claude B收到精确v1→B给两条意见→用户选择第二条→A收到第二条quote而非整份自动指令→A生成v2；A原sessionId和v1 hash保持，B有独立sessionId，两条handoff完整可查。另测重复submit、源active同目录排队、文件更改不偷换artifact版本、revision busy/archive拒绝、需要restart时无token零副作用、task切换/迟到preview不覆盖draft。运行handoff/service/routes/UI/migration/typecheck/depcheck，独立提交 `feat(workbench): record artifact-bound review and revision handoffs`。
 
 ## Task 6: 合成数据集成与两家真实闭环验收
 
@@ -223,3 +223,12 @@ The current CLI event hub has no authoritative active/exited field. We do not in
 Synthetic browser exercise: browse → read → import without execution → type follow-up → explicit closure declaration → same fake session result/artifacts. Import status uses a neutral 尚未执行 label; original history is labelled separately. Known stale, expiry, queue-change, mismatched ID, conflict, explicit fresh restart, admin route, source snapshot and migration cases have regression coverage. 375 focused tests and full typecheck passed before final migration fixture/copy cleanup; final counts are recorded in the validation report.
 
 Real controlled test (owned temporary projects only): Claude SDK0.2.116 and CodexCLI0.153.4 each created and closed a two-message native session, then CC read/imported/resumed that exact ID. A random marker appeared only in turn1; both models recovered it on turn2 without re-supplying it. Both second turns completed with original identity preserved. Raw owned QA results are in /private/var/folders/yc/y9bc_lbd69z5_3_dqbt5bn6c0000gn/T/cc-native-live-IbI6ix/results.json. No pre-existing personal sessions were read. Recorded review/revision handoff is still next.
+
+
+## Task 5C completion — 2026-09-12
+
+Implemented on top of 41374425. Preview and submission are separate; opaque five-minute tokens pin a copy of the exact packet and source/target versions. The SQLite handoff row stores the packet JSON and hash, selected artifact hashes, selected review quotation, and the actual request event. Actual target native identity is recorded only by that handoff's execution, so an unstarted or cancelled handoff cannot later claim an unrelated session. Token hashes make repeat submissions idempotent across daemon restarts.
+
+The action lives below the latest completed reply instead of adding a fourth control to the task header. Review replies expose “选择意见，交回原任务”; related tasks and the original packet are in a collapsed disclosure. Normal conversation displays the short user request, with the exact packet available on demand. Both task drafts survive a round trip. No permanent third pane or automatic review loop was added.
+
+Source/code/version, invented quotation, archive/busy, expired preview, cancelled queued work, explicit restart, immutable response-copy and real HTTP admin boundary tests pass. A synthetic browser completed Codex → Claude → selected second opinion → original Codex with its unsent draft preserved. Real owned native and code checks are recorded in the separate validation report. Binary/Office handoffs and live external-process takeover remain outside this version.

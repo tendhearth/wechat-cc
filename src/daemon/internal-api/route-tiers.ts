@@ -31,6 +31,9 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/workbench/archive': 'admin',
   'POST /v1/workbench/import': 'admin',
   'POST /v1/workbench/prepare-resume': 'admin',
+  'POST /v1/workbench/handoff-preview': 'admin',
+  'POST /v1/workbench/handoff': 'admin',
+  'GET /v1/workbench/handoff': 'admin',
   // guest — liveness + read/reply
   'GET /v1/health': 'guest',
   'POST /v1/wechat/reply': 'guest',

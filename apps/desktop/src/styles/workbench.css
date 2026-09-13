@@ -241,3 +241,27 @@
 .wb-history-import{border-top:1px solid #dedbd3;margin-top:24px;padding-top:18px;font-size:13px}.wb-history-import>p{color:#737169;font-size:12px;line-height:1.6}.wb-history-import details{max-height:260px;overflow:auto}.wb-history-import summary{cursor:pointer}
 
 .wb-status[data-status=imported]{color:var(--wb-muted,#79766e)}
+
+/* A handoff is a task action. Its packet stays out of the reading column. */
+.wb-handoff-action { margin-top:12px; font-size:12px; }
+.wb-handoffs { margin:0 0 25px; font-size:12px; }
+.wb-handoff-link { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:10px 0; }
+.wb-handoff-link button { text-align:left; font-size:12px; }
+.wb-handoff-link button:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wb-handoff-link button:last-child { flex:none; }
+.wb-handoff-dialog { width:min(660px,calc(100vw - 32px)); height:fit-content; max-height:calc(100dvh - 48px); }
+.wb-handoff-dialog>header,.wb-handoff-footer { flex:none; }
+.wb-handoff-dialog>header button { font-size:13px; }
+.wb-handoff-body { min-height:0; overflow:auto; padding:22px 26px; }
+.wb-handoff-field { display:grid; gap:8px; margin-bottom:20px; font-size:13px; }
+.wb-handoff-field textarea { resize:vertical; width:100%; box-sizing:border-box; border:1px solid #dedbd2; border-radius:7px; padding:10px 12px; color:#35342f; background:#fffefd; font:14px/1.65 system-ui,sans-serif; }
+.wb-handoff-field small { color:#77746b; font-size:12px; }
+.wb-handoff-body summary { cursor:pointer; padding:8px 0; }
+.wb-handoff-body pre { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.8 system-ui,sans-serif; color:#57554d; }
+.wb-handoff-body code { word-break:break-all; }
+.wb-handoff-file { display:flex; align-items:start; gap:10px; padding:9px 0; color:#4b4942; }
+.wb-handoff-file small { display:block; color:#89857a; font-size:11px; }
+.wb-handoff-footer { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 26px; border-top:1px solid #e8e5dd; }
+.wb-handoff-footer>span { font-size:11px; color:#77746b; }
+.wb-handoff-footer button { flex:none; }
+@media(max-width:560px){ .wb-handoff-body{padding:16px}.wb-handoff-footer{padding:16px;flex-wrap:wrap}.wb-handoff-footer>span{flex:1 1 100%} }

@@ -8,6 +8,7 @@ import { captureGitBaseline, finishGitReview, serializeGitReview, GIT_REVIEW_MIM
 import { decodeNativeHistoryKey, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryReader, type NativeHistoryProvider, type NativeHistoryListInput, type NativeHistoryReadInput } from './native-history'
 import {readNativeImport,nativeImportInput,publicSource,pageInput,nativeResumeToken,snapshotHash,type ImportPage,type NativeImportInput,type NativeResumeDecision,type AcceptedNativeResume} from './native-adoption'
 import {historyDeadline} from './native-history'
+import {handoffToken,handoffTokenHash,validateHandoffInput,handoffArtifactText,handoffContext,type HandoffInput,type HandoffPreview,type ArtifactSelection} from './handoff'
 import {pathsConflict} from './scheduler'
 import { restartPreview, type Continuation, type RestartPreview } from './continuation'
 import { makeRunPermissions, type PermissionDecision, type RunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
@@ -31,6 +32,8 @@ interface Options {
 }
 type AcceptedContinuation = { mode: 'new' } | { mode: 'resume'; sessionId: string } | { mode: 'restart'; preview: RestartPreview }
 interface Active extends PathReservation {
+  handoffId?:string
+  handoffArtifacts?:ArtifactSelection[]
   nativeResume?:AcceptedNativeResume
   reviewBaseline?: GitBaseline
   continuation: AcceptedContinuation
@@ -102,6 +105,7 @@ export function makeWorkbenchService(opts: Options) {
   const runningText=new Map<string,string>()
   const collections=new Set<Promise<void>>()
   const nativeDecisions=new Map<string,AcceptedNativeResume>()
+  const handoffDecisions=new Map<string,{preview:HandoffPreview;sourceVersion:string;targetVersion:string|null;directoryIdentity:string;expiresAt:number}>()
   let order=0
   let stopping=false
   let shutdownComplete=false
@@ -256,6 +260,7 @@ export function makeWorkbenchService(opts: Options) {
       if(running.cancelled){finalStatus='cancelled';return}
       if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
       if(running.nativeResume)await validateNativeDecision(store.get(task.id),running.nativeResume,true)
+      for(const ref of running.handoffArtifacts??[])handoffArtifactText(store,ref,ref.taskId,opts.stateDir)
       if(running.cancelled){finalStatus='cancelled';return}
       if(opts.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
       const token=opts.mintSessionToken?.(sessionKey)
@@ -291,13 +296,13 @@ export function makeWorkbenchService(opts: Options) {
       const summary=await collectWorkbenchTurn(running.session.dispatch(history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n本轮要求：\n${text}` : text),running.stop,opts.timeoutMs ?? 10*60_000,
         ev => {
           if (running.cancelled) return
-          if (ev.kind==='init' && ev.sessionId) {if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId)}
+          if (ev.kind==='init' && ev.sessionId) {if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId)}
           if (ev.kind==='text') store.addEvent(task.id,'text',ev.text)
           if (ev.kind==='tool_call') store.addEvent(task.id,'tool_call',ev.server ? `${ev.server}/${ev.tool}` : ev.tool)
           if (ev.kind==='error') store.addEvent(task.id,'error',ev.message)
         })
       if (!summary) { finalStatus='cancelled'; return }
-      if (summary.result?.sessionId) {if(resume&&summary.result.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,summary.result.sessionId)}
+      if (summary.result?.sessionId) {if(resume&&summary.result.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,summary.result.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,summary.result.sessionId)}
       if (running.cancelled) finalStatus='cancelled'
       else if (summary.error || !summary.result) {
         const error=summary.error ?? 'stream_ended_without_result'
@@ -352,12 +357,14 @@ export function makeWorkbenchService(opts: Options) {
     }
   }
 
-  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume):WorkbenchTaskView {
+  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string):WorkbenchTaskView {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
     if(opts.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
     if([...runsByTask.values()].some(run=>task.sessionId&&run.task.providerId===task.providerId&&run.task.sessionId===task.sessionId))throw new Error('native_session_busy')
     if(nativeResume)store.addEvent(task.id,'system',`用户声明原 ${task.providerId} 执行程序已关闭，选择${nativeResume.mode==='native_resume'?'恢复原会话':'带已确认的记录新开一轮'}。原会话：${nativeResume.nativeId}。`)
-    store.addEvent(task.id,'user',text); store.update(task.id,'queued')
+    const requestEventId=store.addEvent(task.id,'user',text)
+    if(handoffId)store.recordHandoffEvent(handoffId,requestEventId)
+    store.update(task.id,'queued')
     let signalStop!:()=>void,resolveDone!:()=>void
     const stop=new Promise<null>(resolve => { signalStop=() => resolve(null) })
     const done=new Promise<void>(resolve => { resolveDone=resolve })
@@ -368,7 +375,7 @@ export function makeWorkbenchService(opts: Options) {
         : store.addEvent(task.id,'system',`权限结果：${event.permission.tool} · ${event.outcome} · ${event.permission.id}`),
     })
     const running:Active={
-      nativeResume,continuation:acceptedContinuation,identity:randomUUID(),taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
+      handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:randomUUID(),taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
       cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,credentialsMinted:false,credentialsRevoked:false,
     }
     runsByTask.set(task.id,running); runningText.set(running.identity,text); queue.push(running); pump()
@@ -396,6 +403,92 @@ export function makeWorkbenchService(opts: Options) {
   }
 
   const service={
+    async previewHandoff(raw:HandoffInput):Promise<HandoffPreview> {
+      ensureAccepting()
+      const input=validateHandoffInput(raw),source=store.get(input.sourceTaskId),version=taskVersion(source)
+      provider(input.targetProviderId)
+      if(source.providerId===input.targetProviderId)throw new Error('invalid_request')
+      if(canonicalProject(source.path)!==source.path)throw new Error('invalid_path')
+      const identity=directoryIdentity(source.path)
+      let artifacts=input.artifacts,target:StoredTask|null=null,targetContinuation:Continuation|undefined,nativeResume:NativeResumeDecision|undefined
+      if(input.purpose==='revision') {
+        target=store.get(input.targetTaskId!)
+        if(target.archivedAt!==null)throw new Error('workbench_archived')
+        if(runsByTask.has(target.id)||!TERMINAL_TASK_STATUSES.includes(target.status)||target.error==='writer_not_closed')throw new Error('workbench_busy')
+        if(target.providerId!==input.targetProviderId||target.path!==source.path)throw new Error('invalid_handoff_target')
+        const origin=store.handoffs(source.id).find(h=>h.purpose==='review'&&h.sourceTaskId===target!.id&&h.targetTaskId===source.id)
+        const event=store.events(source.id).find(e=>e.id===input.quote!.eventId&&e.kind==='text')
+        if(!origin||!event?.text.includes(input.quote!.text))throw new Error('invalid_handoff_quote')
+        artifacts=origin.artifacts
+        targetContinuation=continuation(target)
+        if(store.source(target.id)?.firstDispatchedAt===null)nativeResume=await service.prepareNativeResume(target.id,targetContinuation.mode==='restart_required'?'fresh_context':'native_resume')
+      }
+      const files=artifacts.map(a=>handoffArtifactText(store,a,target?.id??source.id,opts.stateDir))
+      const packet=handoffContext(input,source,store.events(source.id),files)
+      ensureAccepting()
+      if(taskVersion(store.get(source.id))!==version)throw new Error('handoff_changed')
+      const preview:HandoffPreview={token:handoffToken(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:input.targetProviderId,purpose:input.purpose,request:input.request,...packet,artifacts,quote:input.quote??null,...(targetContinuation?{targetContinuation}:{}),...(nativeResume?{nativeResume}:{})}
+      for(const [token,d] of handoffDecisions)if(d.expiresAt<Date.now()||d.preview.sourceTaskId===source.id)handoffDecisions.delete(token)
+      if(handoffDecisions.size>=100)handoffDecisions.delete(handoffDecisions.keys().next().value!)
+      handoffDecisions.set(preview.token,{preview:structuredClone(preview),sourceVersion:version,targetVersion:target?taskVersion(target):null,directoryIdentity:identity,expiresAt:Date.now()+5*60_000})
+      return preview
+    },
+    async handoff(input:{token:string;restartToken?:string;sourceClosedToken?:string}) {
+      ensureAccepting()
+      if(!input||typeof input.token!=='string'||! /^[a-f0-9]{64}$/.test(input.token))throw new Error('invalid_request')
+      for(const optional of [input.restartToken,input.sourceClosedToken])if(optional!==undefined&&(typeof optional!=='string'||! /^[a-f0-9]{64}$/.test(optional)))throw new Error('invalid_request')
+      const hash=handoffTokenHash(input.token),previous=store.handoffByToken(hash)
+      if(previous)return{task:taskView(publicTask(store.get(previous.targetTaskId))),handoffId:previous.id,sourceTaskId:previous.sourceTaskId}
+      const decision=handoffDecisions.get(input.token)
+      if(!decision||decision.expiresAt<Date.now())throw new Error('handoff_changed')
+      const p=decision.preview,source=store.get(p.sourceTaskId),target=p.targetTaskId?store.get(p.targetTaskId):null
+      const assertCurrent=()=>{
+        ensureAccepting()
+        if(handoffDecisions.get(input.token)!==decision||decision.expiresAt<Date.now()||taskVersion(store.get(source.id))!==decision.sourceVersion||(target&&taskVersion(store.get(target.id))!==decision.targetVersion))throw new Error('handoff_changed')
+        if(canonicalProject(source.path)!==source.path||directoryIdentity(source.path)!==decision.directoryIdentity)throw new Error('invalid_path')
+        if(target?.archivedAt!=null)throw new Error('workbench_archived')
+        if(target&&(runsByTask.has(target.id)||!TERMINAL_TASK_STATUSES.includes(target.status)||target.error==='writer_not_closed'))throw new Error('workbench_busy')
+        if(opts.executionConflict?.(source.path,p.targetProviderId,target?.sessionId??null))throw new Error('native_session_busy')
+      }
+      assertCurrent();provider(p.targetProviderId)
+      for(const ref of p.artifacts)handoffArtifactText(store,ref,target?.id??source.id,opts.stateDir)
+      let accepted:AcceptedContinuation={mode:'new'},native:AcceptedNativeResume|undefined
+      if(target){
+        const current=continuation(target)
+        if(current.mode==='restart_required'){
+          if(!input.restartToken)throw new Error('restart_confirmation_required')
+          if(input.restartToken!==current.restart.token||p.targetContinuation?.mode!=='restart_required'||input.restartToken!==p.targetContinuation.restart.token)throw new Error('restart_confirmation_stale')
+          accepted={mode:'restart',preview:current.restart}
+        }else{
+          if(input.restartToken!==undefined)throw new Error('restart_confirmation_stale')
+          accepted=current.mode==='resume'?{mode:'resume',sessionId:target.sessionId!}:{mode:'new'}
+        }
+        if(store.source(target.id)?.firstDispatchedAt===null){
+          native=input.sourceClosedToken?nativeDecisions.get(input.sourceClosedToken):undefined
+          if(!native||input.sourceClosedToken!==p.nativeResume?.token)throw new Error('external_close_confirmation_required')
+          await validateNativeDecision(target,native)
+          assertCurrent()
+          if(nativeDecisions.get(native.token)!==native)throw new Error('external_close_confirmation_stale')
+        }
+      }
+      const packetJson=JSON.stringify({context:p.context,request:p.request,artifacts:p.artifacts,quote:p.quote,truncated:p.truncated,continuation:accepted})
+      const record=store.createHandoff({id:randomUUID(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:p.targetProviderId,path:source.path,title:`检查 · ${source.title}`.slice(0,120),ownerChatId:source.ownerChatId,purpose:p.purpose,request:p.request,packetSha256:snapshotHash(packetJson),packetJson,artifactRefsJson:JSON.stringify(p.artifacts),quoteJson:p.quote?JSON.stringify(p.quote):null,sourceNativeId:source.sessionId,tokenHash:hash})
+      handoffDecisions.delete(input.token)
+      if(native)nativeDecisions.delete(native.token)
+      let task:WorkbenchTaskView
+      try{task=start(store.get(record.targetTaskId),p.context,decision.directoryIdentity,accepted,native,p.artifacts,record.id)}
+      catch(error){
+        if(!target)store.update(record.targetTaskId,'failed',error instanceof Error?error.message:'task_failed')
+        store.addEvent(record.targetTaskId,'system','交接已记录，但本轮未启动。请查看任务状态，手动决定是否继续。')
+        throw error
+      }
+      return{task,handoffId:record.id,sourceTaskId:source.id}
+    },
+    handoffRecord(taskId:string,id:string){
+      const record=store.handoffRecord(taskId,id)
+      if(snapshotHash(record.packetJson)!==record.packetSha256)throw new Error('artifact_changed')
+      return{id:record.id,sourceTaskId:record.sourceTaskId,targetTaskId:record.targetTaskId,createdAt:record.createdAt,sourceNativeId:record.sourceNativeId,targetNativeId:record.targetNativeId,packetSha256:record.packetSha256,packet:JSON.parse(record.packetJson) as {context:string;request:string;truncated:boolean;artifacts:ArtifactSelection[];continuation:AcceptedContinuation}}
+    },
     conflictsExternal(path:string,providerId:string,nativeId:string|null):boolean {
       let canonical:string
       try{canonical=canonicalProject(path)}catch{return true}

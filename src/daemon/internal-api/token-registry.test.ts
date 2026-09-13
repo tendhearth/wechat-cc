@@ -62,6 +62,9 @@ describe('token-registry', () => {
       'POST /v1/workbench/archive',
       'POST /v1/workbench/import',
       'POST /v1/workbench/prepare-resume',
+      'POST /v1/workbench/handoff-preview',
+      'POST /v1/workbench/handoff',
+      'GET /v1/workbench/handoff',
     ]))
     expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })
@@ -87,6 +90,9 @@ describe('token-registry', () => {
       'POST /v1/workbench/archive',
       'POST /v1/workbench/import',
       'POST /v1/workbench/prepare-resume',
+      'POST /v1/workbench/handoff-preview',
+      'POST /v1/workbench/handoff',
+      'GET /v1/workbench/handoff',
     ])
     expect(r.resolve('cc'.repeat(32))?.routeAllow).toBeUndefined()
     expect(r.resolve(session)?.routeAllow).toBeUndefined()

@@ -6,6 +6,9 @@ const ROUTES = new Set([
   'POST /v1/workbench/create','POST /v1/workbench/continue','POST /v1/workbench/cancel','POST /v1/workbench/approve','POST /v1/workbench/permission','POST /v1/workbench/archive',
   'POST /v1/workbench/import',
   'POST /v1/workbench/prepare-resume',
+  'POST /v1/workbench/handoff-preview',
+  'POST /v1/workbench/handoff',
+  'GET /v1/workbench/handoff',
 ])
 interface Options {
   stateDir:string; dryRun:boolean; allowWrites:boolean
