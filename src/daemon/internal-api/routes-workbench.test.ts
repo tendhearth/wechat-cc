@@ -143,6 +143,46 @@ describe('Workbench internal HTTP API', () => {
     expect(await create.json()).toEqual({ task: TASK })
   })
 
+  it.each([
+    ['GET', '/v1/workbench/attention'],
+    ['POST', '/v1/workbench/input'],
+    ['POST', '/v1/workbench/withdraw-input'],
+    ['POST', '/v1/workbench/answer'],
+  ])('allows the generated desktop operator file token through HTTP for %s %s', async (method, path) => {
+    const requestId = crypto.randomUUID(), runId = crypto.randomUUID()
+    const receipt = { id: requestId, taskId: TASK.id, runId, text: '补充', status: 'pending' }
+    const pending = { tasks: [{ id: TASK.id, title: TASK.title, providerId: TASK.providerId, pendingPermissionCount: 0, pendingQuestionCount: 1, attentionKey: JSON.stringify([requestId]) }] }
+    const attention = vi.fn(() => pending), submitInput = vi.fn(async () => receipt)
+    const resolveAnswer = vi.fn(), withdrawInput = vi.fn()
+    const { request, operatorToken, trustedToken } = await start(service({ attention, submitInput, resolveAnswer, withdrawInput }))
+    const calls: Record<string, { body?: unknown; response: unknown }> = {
+      '/v1/workbench/attention': { response: pending },
+      '/v1/workbench/input': { body: { id: TASK.id, runId, requestId, text: '补充' }, response: { input: receipt } },
+      '/v1/workbench/withdraw-input': { body: { id: TASK.id, requestId }, response: { ok: true } },
+      '/v1/workbench/answer': { body: { id: TASK.id, requestId, answers: { q: ['文字'] } }, response: { ok: true } },
+    }
+    const call = calls[path!]!
+    const init = { method, ...(call.body ? { body: JSON.stringify(call.body) } : {}) }
+    expect(minTierFor(`${method} ${path}`)).toBe('admin')
+    const refused = await request(path!, init, trustedToken)
+    expect(refused.status).toBe(403)
+    expect(await refused.json()).toMatchObject({ error: 'forbidden', required: 'admin' })
+    expect(attention).not.toHaveBeenCalled(); expect(submitInput).not.toHaveBeenCalled()
+    expect(resolveAnswer).not.toHaveBeenCalled(); expect(withdrawInput).not.toHaveBeenCalled()
+
+    // This comes from api.start().operatorTokenFilePath, just as both desktop
+    // proxies load it; a minted admin session would miss routeAllow failures.
+    const response = await request(path!, init, operatorToken)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual(call.response)
+    expect((await request(path + '/extra', init, operatorToken)).status).toBe(404)
+    expect((await request(path!, { method: method === 'GET' ? 'POST' : 'GET' }, operatorToken)).status).toBe(404)
+    if (path === '/v1/workbench/attention') expect(attention).toHaveBeenCalledExactlyOnceWith()
+    if (path === '/v1/workbench/input') expect(submitInput).toHaveBeenCalledExactlyOnceWith(TASK.id, { runId, requestId, text: '补充' })
+    if (path === '/v1/workbench/withdraw-input') expect(withdrawInput).toHaveBeenCalledExactlyOnceWith(TASK.id, requestId)
+    if (path === '/v1/workbench/answer') expect(resolveAnswer).toHaveBeenCalledExactlyOnceWith(TASK.id, requestId, { q: ['文字'] })
+  })
+
   it('serves all eight routes with the documented wire shapes and 202 mutations', async () => {
     const workbench = service()
     const { request } = await start(workbench)

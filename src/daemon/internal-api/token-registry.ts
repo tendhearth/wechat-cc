@@ -187,6 +187,10 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
       'POST /v1/workbench/handoff-preview',
       'POST /v1/workbench/handoff',
       'GET /v1/workbench/handoff',
+          'GET /v1/workbench/attention',
+          'POST /v1/workbench/input',
+          'POST /v1/workbench/answer',
+          'POST /v1/workbench/withdraw-input',
         ]),
       })
     },
