@@ -15,7 +15,7 @@ export function defaultReviewArtifacts(artifacts){
 }
 const errorCopy=(/** @type {unknown} */error)=>{
  const code=error instanceof Error?error.message:String(error)
- return Object.entries({handoff_changed:'记录已变化，请重新查看交接内容。',invalid_handoff_quote:'请保留这条回复中的一段原文；补充要求写在下方。',workbench_busy:'原任务还在执行，结束后再交回。',workbench_archived:'请先恢复已归档的原任务。',restart_confirmation_required:'原会话暂时不能恢复，请重新查看恢复选项。',external_close_confirmation_stale:'原会话状态已变化，请重新查看并确认原程序已关闭。',native_session_busy:'此文件夹或原会话仍在使用，请结束原执行后再试。'}).find(([key])=>code.includes(key))?.[1]??'交接暂未完成，可以重试；重复提交不会多开任务。'
+ return Object.entries({invalid_path:'原项目文件夹已不存在或位置发生变化。请先恢复到原位置，再发起检查。',handoff_changed:'记录已变化，请重新查看交接内容。',invalid_handoff_quote:'请保留这条回复中的一段原文；补充要求写在下方。',workbench_busy:'原任务还在执行，结束后再交回。',workbench_archived:'请先恢复已归档的原任务。',restart_confirmation_required:'原会话暂时不能恢复，请重新查看恢复选项。',external_close_confirmation_stale:'原会话状态已变化，请重新查看并确认原程序已关闭。',native_session_busy:'此文件夹或原会话仍在使用，请结束原执行后再试。'}).find(([key])=>code.includes(key))?.[1]??'交接暂未完成，可以重试；重复提交不会多开任务。'
 }
 /** @param {Invoke} invoke @param {()=>void} render @param {Input} initial @param {(id:string)=>void|Promise<void>} opened */
 export function createHandoffController(invoke,render,initial,opened){
