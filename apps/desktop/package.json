@@ -10,6 +10,7 @@
     "dev:mock": "WECHAT_CC_DRY_RUN=1 bun test-shim.ts",
     "dev:unsafe": "WECHAT_CC_DEV_ALLOW_MUTATIONS=1 bun test-shim.ts",
     "build-sidecar": "bun scripts/build-sidecar.ts",
+    "build:icons": "bun scripts/build-brand-icons.ts",
     "build": "tauri build",
     "test:e2e:browser": "playwright test"
   },

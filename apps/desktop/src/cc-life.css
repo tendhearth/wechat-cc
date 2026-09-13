@@ -58,6 +58,8 @@
 .dashboard .dash-brand{transform:none;flex-direction:column;align-items:flex-start;gap:10px;padding:0 13px}
 .dashboard .dash-brand .name{font-size:31px;letter-spacing:-2px;color:#403a32;line-height:1.2}
 .cc-brand-note{font-size:10px;font-weight:400;white-space:nowrap;color:#877d6f;letter-spacing:0}
+.cc-brand-lockup{display:inline-flex;align-items:center;gap:11px}
+.cc-brand-mark{display:block;width:29px;height:36px;flex:none}
 .dashboard .dash-nav{position:static;transform:none;max-width:none;overflow:visible;width:100%;margin-top:56px;display:flex;flex-direction:column;align-items:stretch;gap:9px}
 .dashboard .dash-nav-link{width:100%;min-width:0;height:44px;justify-content:flex-start;gap:12px;padding:12px 14px;border-radius:10px;font-size:14px;color:#514638}
 .dashboard .dash-nav-link .ic{display:inline-flex;align-items:center;flex:none}
@@ -84,7 +86,8 @@
 .is-workbench-nav-open>.workbench-nav-scrim{opacity:1;visibility:visible;pointer-events:auto;transition-delay:0s}
 @media(prefers-reduced-motion:reduce){.dashboard .dash-window,.dashboard .dash-rail,.workbench-nav-scrim{transition:none}}
 .workbench-topline-start{display:inline-flex;align-items:center;gap:12px}
-.workbench-nav-toggle{display:inline-flex;align-items:center;justify-content:center;width:32px;height:27px;border:1px solid #ddd3c4;border-radius:8px;padding:0;background:#fffdfa;color:#69563d;font:600 11px/1 -apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif;letter-spacing:.02em;cursor:pointer}
+.workbench-nav-toggle{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid transparent;border-radius:8px;padding:4px;background:transparent;color:#353731;cursor:pointer}
+.workbench-nav-toggle img{display:block;width:19px;height:24px;pointer-events:none}
 .workbench-nav-toggle:hover{background:#f3e9d9;border-color:#cfbea6}
 [data-platform=macos] .workbench-pane>.cc-life-topline{padding-left:84px}
 .dashboard .cc-now-pane{position:relative;overflow:hidden}
