@@ -424,6 +424,215 @@ describe('workbench mutations', () => {
     return page
   }
 
+  it('archives and restores the selected task through one busy guard, keeping its detail readable', async () => {
+    vi.useFakeTimers()
+    const page = installFakePage()
+    const base = { id: 'A', title: 'A', path: '/work', providerId: 'codex', status: 'completed', createdAt: 1, updatedAt: 2, error: null, canArchive: true }
+    let archivedAt: number | null = null
+    let finishArchive!: () => void
+    const archivePending = new Promise<void>(resolve => { finishArchive = resolve })
+    const invokeWorkbenchApi = vi.fn(async (method: string, path: string, body?: Record<string, unknown>) => {
+      if (method === 'POST') { await archivePending; archivedAt = body?.archived ? 5 : null; return { task: { ...base, archivedAt } } }
+      const task = { ...base, archivedAt }
+      return path === '/v1/workbench' ? { tasks: archivedAt ? [] : [task], providers: [], defaultProvider: null, canWechat: false } : { task, events: [], artifacts: [] }
+    })
+    const { initWorkbenchPage, stopWorkbenchPolling } = await import('./workbench.js')
+    const controller = initWorkbenchPage({ invokeWorkbenchApi, pollMs: 60_000 })!
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    const action = new FakeElement(); action.dataset.action = 'archive-task'
+    const click = [...page.listeners.get('click')!][0]!
+    const pending = click({ target: action })
+    await click({ target: action })
+    expect(invokeWorkbenchApi.mock.calls.filter(([method]) => method === 'POST')).toEqual([['POST', '/v1/workbench/archive', { id: 'A', archived: true }]])
+    finishArchive(); await pending
+    expect(controller.state.tasks).toEqual([])
+    expect(controller.state.detail?.task.archivedAt).toBe(5)
+    expect(controller.state.selectedId).toBe('A')
+    action.dataset.action = 'restore-task'; await click({ target: action })
+    expect(invokeWorkbenchApi).toHaveBeenCalledWith('POST', '/v1/workbench/archive', { id: 'A', archived: false })
+    expect(controller.state.detail?.task.archivedAt).toBeNull()
+    stopWorkbenchPolling()
+  })
+
+  it('refreshes the loaded prefix after archive and discards an older pending page that contains the archived task', async () => {
+    vi.useFakeTimers()
+    const page = installFakePage()
+    const task = (id: string) => ({ id, title: id, path: '/work', providerId: 'codex', status: 'completed', createdAt: 1, updatedAt: 2, error: null, canArchive: true, archivedAt: id === 'OLD' && archived ? 5 : null })
+    let archived = false
+    let finishMore!: (value: unknown) => void
+    const more = new Promise(resolve => { finishMore = resolve })
+    const list = (id: string, cursor: string | null) => ({ tasks: [task(id)], providers: [], defaultProvider: null, canWechat: false, page: { limit: 1, total: archived ? 2 : 3, hasMore: !!cursor, nextCursor: cursor } })
+    const invokeWorkbenchApi = vi.fn(async (method: string, path: string) => {
+      if (method === 'POST') { archived = true; return { task: task('OLD') } }
+      if (path.includes('/task?')) return { task: task(path.includes('OLD') ? 'OLD' : 'A'), events: [], artifacts: [] }
+      if (path.includes('cursor=late')) return more
+      if (path.includes('cursor=')) return list('B', archived ? null : 'late')
+      return list('A', archived ? 'fresh-second' : 'second')
+    })
+    const { initWorkbenchPage, stopWorkbenchPolling } = await import('./workbench.js')
+    const controller = initWorkbenchPage({ invokeWorkbenchApi, pollMs: 60_000 })!
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    await controller.loadMore()
+    await controller.selectTask('OLD')
+    const pending = controller.loadMore()
+    const action = new FakeElement(); action.dataset.action = 'archive-task'
+    await [...page.listeners.get('click')!][0]!({ target: action })
+    const staleTask = { ...task('OLD'), archivedAt: null }
+    finishMore({ ...list('OLD', null), tasks: [staleTask] })
+    await pending
+    expect(controller.state.tasks.map(task => task.id)).toEqual(['A', 'B'])
+    expect(invokeWorkbenchApi).toHaveBeenCalledWith('GET', '/v1/workbench?cursor=fresh-second')
+    expect(controller.state.loadingMore).toBe(false)
+    expect(controller.state.selectedId).toBe('OLD')
+    expect(controller.state.detail?.task.archivedAt).toBe(5)
+    stopWorkbenchPolling()
+  })
+
+  it('rejects a stale continue or restart submission for an archived task without dispatching execution', async () => {
+    vi.useFakeTimers()
+    const followup = new FakeElement(); followup.value = 'Keep this request'
+    const page = installFakePage({ 'wb-followup-text': followup })
+    const task = { id: 'A', title: 'A', path: '/work', providerId: 'codex', status: 'completed', createdAt: 1, updatedAt: 2, error: null, archivedAt: 5, canArchive: false }
+    const invokeWorkbenchApi = vi.fn(async (_method: string, path: string) => path === '/v1/workbench' ? { tasks: [task], providers: [], defaultProvider: null, canWechat: false } : { task, events: [], artifacts: [] })
+    const { initWorkbenchPage, stopWorkbenchPolling } = await import('./workbench.js')
+    const controller = initWorkbenchPage({ invokeWorkbenchApi, pollMs: 60_000 })!
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    const form = new FakeElement(); form.tagName = 'FORM'; form.dataset.action = 'continue'
+    const submit = [...page.listeners.get('submit')!][0]!
+    await submit({ target: form, preventDefault() {} })
+    form.dataset.action = 'restart'; form.dataset.restartToken = 'a'.repeat(64)
+    await submit({ target: form, preventDefault() {} })
+    expect(invokeWorkbenchApi.mock.calls.filter(([method]) => method === 'POST')).toEqual([])
+    expect(controller.state.error).toContain('恢复后可继续')
+    expect(followup.value).toBe('Keep this request')
+    stopWorkbenchPolling()
+  })
+
+  it.each([false, true])('preserves project drafts and latest executor inheritance with filtered project metadata=%s', async useProjectProviders => {
+    vi.useFakeTimers()
+    const fields = Object.fromEntries(['wb-create-form', 'wb-path', 'wb-create-text', 'wb-title', 'wb-provider', 'wb-followup-text'].map(id => { const field = new FakeElement(); field.id = id; return [id, field] }))
+    const page = installFakePage(fields)
+    let html = ''
+    Object.defineProperty(page, 'innerHTML', { get: () => html, set: value => { html = value; for (const field of Object.values(fields)) field.value = ''; fields['wb-provider']!.value = 'codex' } })
+    root.document = { getElementById: (id: string) => id === 'workbench-root' ? page : html.includes(`id="${id}"`) ? fields[id] : null, activeElement: null }
+    const label = { textContent: '' }
+    page.querySelector = ((selector: string) => selector === '#wb-options summary span' ? label : selector === '#wb-provider' ? { selectedOptions: [{ textContent: fields['wb-provider']!.value === 'claude' ? 'Claude Code' : 'Codex' }] } : null) as any
+    const older = { id: 'OLD', title: 'Old', path: '/work', providerId: 'codex', status: 'completed', createdAt: 1, updatedAt: 2, error: null }
+    const recent = { ...older, id: 'RECENT', providerId: 'claude', updatedAt: 3 }
+    const invokeWorkbenchApi = vi.fn(async (_method: string, path: string) => path === '/v1/workbench' ? { tasks: useProjectProviders ? [older] : [older, recent], projectProviders: useProjectProviders ? { '/work': 'claude' } : undefined, providers: [{ id: 'codex', displayName: 'Codex' }, { id: 'claude', displayName: 'Claude Code' }], defaultProvider: 'codex', canWechat: false } : { task: older, events: [], artifacts: [] })
+    const { initWorkbenchPage, stopWorkbenchPolling } = await import('./workbench.js')
+    const controller = initWorkbenchPage({ invokeWorkbenchApi, pollMs: 60_000 })!
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    const click = [...page.listeners.get('click')!][0]!
+    const globalNew = new FakeElement(); globalNew.dataset.action = 'new-task'
+    await click({ target: globalNew })
+    fields['wb-path']!.value = '/global'; fields['wb-create-text']!.value = 'Global draft'
+    const projectNew = new FakeElement(); projectNew.dataset.action = 'new-project-task'; projectNew.dataset.projectPath = '/work'
+    await click({ target: projectNew })
+    expect(fields['wb-path']!.value).toBe('/work')
+    expect(fields['wb-provider']!.value).toBe('claude')
+    expect(label.textContent).toBe('当前使用 Claude Code')
+    expect(fields['wb-create-text']!.value).toBe('')
+    fields['wb-create-text']!.value = 'Project draft'; fields['wb-provider']!.value = 'codex'
+    await click({ target: globalNew })
+    expect(fields['wb-path']!.value).toBe('/global')
+    expect(fields['wb-create-text']!.value).toBe('Global draft')
+    await click({ target: projectNew })
+    expect(fields['wb-create-text']!.value).toBe('Project draft')
+    expect(fields['wb-provider']!.value).toBe('codex')
+    expect(controller.state.selectedId).toBeNull()
+    stopWorkbenchPolling()
+    const resumed = initWorkbenchPage({ invokeWorkbenchApi, pollMs: 60_000 })!
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    expect(resumed.state.selectedId).toBeNull()
+    expect(fields['wb-create-text']!.value).toBe('Project draft')
+    expect(fields['wb-path']!.value).toBe('/work')
+    stopWorkbenchPolling()
+  })
+
+  it.each(['none', 'text', 'provider'])('reseeds a submitted project draft from the latest executor and preserves edits during submission: %s', async edit => {
+    vi.useFakeTimers()
+    const fields = Object.fromEntries(['wb-create-form', 'wb-path', 'wb-create-text', 'wb-title', 'wb-provider'].map(id => { const field = new FakeElement(); field.id = id; return [id, field] }))
+    fields['wb-create-form']!.tagName = 'FORM'
+    const page = installFakePage(fields)
+    let html = ''
+    Object.defineProperty(page, 'innerHTML', { get: () => html, set: value => { html = value; for (const field of Object.values(fields)) field.value = ''; fields['wb-provider']!.value = 'codex' } })
+    root.document = { getElementById: (id: string) => id === 'workbench-root' ? page : html.includes(`id="${id}"`) ? fields[id] : null, activeElement: null }
+    const originalFormData = globalThis.FormData
+    vi.stubGlobal('FormData', class {
+      values = new Map([['path', fields['wb-path']!.value], ['text', fields['wb-create-text']!.value], ['title', fields['wb-title']!.value], ['providerId', fields['wb-provider']!.value]])
+      get(name: string) { return this.values.get(name) ?? null }
+    })
+    let latestProvider = 'claude'
+    let finishCreate!: () => void
+    const pendingCreate = new Promise<void>(resolve => { finishCreate = resolve })
+    const task = (id: string) => ({ id, title: id, path: '/work', providerId: 'claude', status: 'completed', createdAt: 1, updatedAt: 2, error: null })
+    const invokeWorkbenchApi = vi.fn(async (method: string, path: string) => {
+      if (method === 'POST') { await pendingCreate; return { task: task('CREATED') } }
+      if (path.includes('/task?')) return { task: task(path.includes('CREATED') ? 'CREATED' : 'OLD'), events: [], artifacts: [] }
+      return { tasks: [task('OLD')], projectProviders: { '/work': latestProvider }, providers: [{ id: 'codex', displayName: 'Codex' }, { id: 'claude', displayName: 'Claude Code' }], defaultProvider: 'codex', canWechat: false }
+    })
+    const { initWorkbenchPage, stopWorkbenchPolling } = await import('./workbench.js')
+    try {
+      const controller = initWorkbenchPage({ invokeWorkbenchApi, pollMs: 60_000 })!
+      for (let i = 0; i < 8; i++) await Promise.resolve()
+      const click = [...page.listeners.get('click')!][0]!
+      const projectNew = new FakeElement(); projectNew.dataset = { action: 'new-project-task', projectPath: '/work' }
+      await click({ target: projectNew })
+      expect(fields['wb-provider']!.value).toBe('claude')
+      fields['wb-create-text']!.value = 'Submitted request'; fields['wb-title']!.value = 'Submitted name'
+      const submitting = [...page.listeners.get('submit')!][0]!({ target: fields['wb-create-form'], preventDefault() {} })
+      if (edit === 'text') fields['wb-create-text']!.value = 'Unsent request'
+      if (edit === 'provider') fields['wb-provider']!.value = 'codex'
+      finishCreate(); await submitting
+      expect(invokeWorkbenchApi).toHaveBeenCalledWith('POST', '/v1/workbench/create', { path: '/work', text: 'Submitted request', title: 'Submitted name', providerId: 'claude' })
+      latestProvider = edit === 'provider' ? 'claude' : 'codex'
+      await controller.refresh()
+      await click({ target: projectNew })
+      expect(fields['wb-path']!.value).toBe('/work')
+      expect(fields['wb-create-text']!.value).toBe(edit === 'text' ? 'Unsent request' : '')
+      expect(fields['wb-provider']!.value).toBe(edit === 'text' ? 'claude' : 'codex')
+    } finally {
+      stopWorkbenchPolling()
+      vi.stubGlobal('FormData', originalFormData)
+    }
+  })
+
+  it('submits sidebar filters without dropping the followup draft or pending permission, and retains search across remounts', async () => {
+    vi.useFakeTimers()
+    const followup = new FakeElement(); followup.id = 'wb-followup-text'
+    const search = new FakeElement(); search.id = 'wb-search'
+    const page = installFakePage({ 'wb-followup-text': followup, 'wb-search': search })
+    let html = ''
+    Object.defineProperty(page, 'innerHTML', { get: () => html, set: value => { html = value; followup.value = ''; search.value = '' } })
+    const task = { id: 'A', title: 'A', path: '/work', providerId: 'codex', status: 'running', createdAt: 1, updatedAt: 2, error: null }
+    const invokeWorkbenchApi = vi.fn(async (_method: string, path: string) => path.includes('/task?') ? { task, events: [], artifacts: [], permissions: [{ id: 'REQ', taskId: 'A', tool: 'Shell', description: 'Run tests', createdAt: 1 }] } : { tasks: path.includes('?') ? [] : [task], providers: [], defaultProvider: null, canWechat: false })
+    const { initWorkbenchPage, stopWorkbenchPolling } = await import('./workbench.js')
+    const controller = initWorkbenchPage({ invokeWorkbenchApi, pollMs: 60_000 })!
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    followup.value = 'Task draft'; search.value = 'older project'
+    await controller.refresh()
+    expect(search.value).toBe('older project')
+    expect(invokeWorkbenchApi.mock.calls.some(([, path]) => path.includes('q='))).toBe(false)
+    const form = new FakeElement(); form.tagName = 'FORM'; form.id = 'wb-search-form'
+    await [...page.listeners.get('submit')!][0]!({ target: form, preventDefault() {} })
+    expect(invokeWorkbenchApi).toHaveBeenCalledWith('GET', '/v1/workbench?q=older+project')
+    expect(followup.value).toBe('Task draft')
+    expect(controller.state.selectedId).toBe('A')
+    expect(page.innerHTML).toContain('data-request-id="REQ"')
+    const archiveView = new FakeElement(); archiveView.dataset.action = 'toggle-archived'
+    await [...page.listeners.get('click')!][0]!({ target: archiveView })
+    expect(invokeWorkbenchApi).toHaveBeenCalledWith('GET', '/v1/workbench?q=older+project&archived=only')
+    expect(followup.value).toBe('Task draft')
+    stopWorkbenchPolling(); search.value = ''
+    const resumed = initWorkbenchPage({ invokeWorkbenchApi, pollMs: 60_000 })!
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    expect(search.value).toBe('older project')
+    expect(resumed.state.selectedId).toBe('A')
+    expect(resumed.state.query?.archived).toBe('only')
+    stopWorkbenchPolling()
+  })
+
   it('sends a restart token only for the explicit fresh-session action, retaining the request after a stale decision', async () => {
     vi.useFakeTimers()
     const field=new FakeElement();field.id='wb-followup-text';field.value='继续整理资料'

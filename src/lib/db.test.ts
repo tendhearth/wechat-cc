@@ -593,3 +593,27 @@ describe('旧社交表退役(spec 2026-09-04-wish-postcard §3)', () => {
     expect((db.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(migrations.length)
   })
 })
+
+
+it('upgrades a real v46 database retaining task history, native identity and approved artifacts',()=>{
+  const dir=mkdtempSync(join(tmpdir(),'workbench-v46-')),path=join(dir,'state.db')
+  try {
+    const prior=new Database(path)
+    prior.exec('PRAGMA foreign_keys=ON')
+    for(const migration of migrations.slice(0,46))migration(prior)
+    prior.exec('PRAGMA user_version=46')
+    prior.query('INSERT INTO workbench_tasks(id,title,path,provider_id,owner_chat_id,session_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run('deadbeef','old task','/missing/project','codex','owner','native-session','completed',1,2)
+    prior.query('INSERT INTO workbench_events(task_id,kind,text,created_at) VALUES(?,?,?,?)').run('deadbeef','user','old request',3)
+    prior.query('INSERT INTO workbench_artifacts(id,task_id,name,mime,size,sha256,storage_path,created_at,approved_at) VALUES(?,?,?,?,?,?,?,?,?)').run('artifact-id','deadbeef','report.md','text/plain',7,'a'.repeat(64),'/immutable/file',4,5)
+    const oldTask=prior.query('SELECT * FROM workbench_tasks').get(),oldEvents=prior.query('SELECT * FROM workbench_events').all(),oldArtifacts=prior.query('SELECT * FROM workbench_artifacts').all()
+    prior.close()
+    for(let i=0;i<2;i++) {
+      const upgraded=openDb({path})
+      try {
+        expect(upgraded.query('SELECT * FROM workbench_tasks').get()).toEqual({...oldTask as object,archived_at:null})
+        expect(upgraded.query('SELECT * FROM workbench_events').all()).toEqual(oldEvents)
+        expect(upgraded.query('SELECT * FROM workbench_artifacts').all()).toEqual(oldArtifacts)
+      } finally {upgraded.close()}
+    }
+  } finally {rmSync(dir,{recursive:true,force:true})}
+})

@@ -3,7 +3,7 @@
 import { Marked } from '../vendor/marked.js'
 
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed'}} WaitingFor */
-/** @typedef {{id:string,title:string,path:string,providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,pendingPermissionCount?:number,waitingFor?:WaitingFor|null}} Task */
+/** @typedef {{id:string,title:string,path:string,providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,waitingFor?:WaitingFor|null}} Task */
 /** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
 /** @typedef {{id:string,taskId:string,tool:string,description:string,createdAt:number}} Permission */
@@ -11,9 +11,11 @@ import { Marked } from '../vendor/marked.js'
 /** @typedef {{token:string,context:string,eventCount:number,includedEventCount:number,truncated:boolean}} RestartPreview */
 /** @typedef {{mode:string,restart?:RestartPreview}} Continuation */
 /** @typedef {{task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation}} Detail */
-/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string,canWechat:boolean}} ListResult */
+/** @typedef {{q:string,archived:'exclude'|'only'|'all'}} TaskQuery */
+/** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
+/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,page?:TaskPage,projectProviders?:Record<string,string>}} ListResult */
 /** @typedef {{artifactId:string,html:string}|null} Preview */
-/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string,canWechat:boolean,selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,preview:Preview}} WorkbenchState */
+/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,preview:Preview,query?:TaskQuery,page?:TaskPage,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string}} WorkbenchState */
 /** @typedef {{path:string,text:string,title:string,providerId:string,followup:string}} Draft */
 /** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number}} WorkbenchDeps */
 
@@ -21,6 +23,9 @@ import { Marked } from '../vendor/marked.js'
 let active = null
 /** @type {string|null} */
 let resumeScope = null
+/** @type {TaskQuery} */
+let resumeQuery = { q: '', archived: 'exclude' }
+let resumeSearch = ''
 
 const emptyDraft = () => ({ path: '', text: '', title: '', providerId: '', followup: '' })
 
@@ -32,6 +37,10 @@ export function createWorkbenchDraftStore() {
     set(key, value) { values.set(key, { ...value }) },
     /** @param {string} key */
     get(key) { return { ...(values.get(key) ?? emptyDraft()) } },
+    /** @param {string} key */
+    has(key) { return values.has(key) },
+    /** @param {string} key */
+    delete(key) { values.delete(key) },
   }
 }
 
@@ -82,8 +91,9 @@ function statusLabel(status) {
   return ({ queued: '等待中', running: '进行中', cancelling: '正在停止', completed: '已完成', failed: '未完成', cancelled: '已停止', interrupted: '已中断' })[status] ?? status
 }
 
-/** @param {string} status @param {Continuation} [continuation] */
-export function renderTaskControls(status, continuation) {
+/** @param {string} status @param {Continuation} [continuation] @param {number|null} [archivedAt] */
+export function renderTaskControls(status, continuation, archivedAt) {
+  if (archivedAt != null) return '<div class="wb-archived-controls"><p>已归档 <span>恢复后可继续</span></p><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>'
   if (status === 'queued') {
     return `<form class="wb-followup wb-followup-waiting" aria-label="任务补充草稿">
     <label class="wb-sr-only" for="wb-followup-text">补充要求</label><textarea id="wb-followup-text" rows="2" aria-describedby="wb-followup-timing" placeholder="可以先写在这里"></textarea>
@@ -157,11 +167,15 @@ function renderTask(task, providers, selectedId) {
 export function renderWorkbench(state) {
   const tasks = state.tasks ?? []
   const detail = state.detail
+  const query = state.query ?? { q: '', archived: 'exclude' }
+  const listEmptyCopy = state.error ? '暂时没能读取任务列表。' : query.q ? '没有找到匹配的任务。试试其他任务名称或文件夹。' : query.archived === 'only' ? '还没有已归档的任务。' : '还没有任务。选一个文件夹，把要做的事交给执行者。'
   const selectedArtifact = detail?.artifacts?.find(a => a.id === state.selectedArtifactId)
   const taskList = tasks.length ? groupWorkbenchTasks(tasks).map((project, index) => `<section class="wb-project" aria-labelledby="wb-project-${index}">
-    <header title="${escapeWorkbenchHtml(project.path)}"><h3 id="wb-project-${index}">${escapeWorkbenchHtml(project.label)}</h3></header>
+    <header title="${escapeWorkbenchHtml(project.path)}"><h3 id="wb-project-${index}">${escapeWorkbenchHtml(project.label)}</h3><button type="button" class="wb-new wb-project-new" data-action="new-project-task" data-project-path="${escapeWorkbenchHtml(project.path)}" aria-label="在 ${escapeWorkbenchHtml(project.label)} 新建任务">＋</button></header>
     <div>${project.tasks.map(task => renderTask(task, state.providers, state.loadingId ?? state.selectedId)).join('')}</div>
-  </section>`).join('') : `<p class="wb-empty-copy">${state.error ? '暂时没能读取任务列表。' : '还没有任务。选一个文件夹，把要做的事交给执行者。'}</p>`
+  </section>`).join('') : `<p class="wb-empty-copy">${listEmptyCopy}</p>`
+  const listControls = `<div class="wb-list-controls"><form id="wb-search-form" class="wb-search"><label class="wb-sr-only" for="wb-search">搜索任务名称、文件夹或任务编号</label><input id="wb-search" name="q" type="search" maxlength="200" placeholder="搜索任务或文件夹" value="${escapeWorkbenchHtml(query.q)}"><button class="wb-new" type="submit" aria-label="搜索任务">搜索</button></form><div class="wb-list-filters"><button class="wb-new" type="button" data-action="toggle-archived" aria-pressed="${query.archived === 'only'}">${query.archived === 'only' ? '返回任务' : '已归档'}</button>${query.q ? '<button class="wb-new" type="button" data-action="clear-search">清除搜索</button>' : ''}</div>${query.archived === 'only' ? '<p class="wb-archive-label">已归档的任务</p>' : ''}</div>`
+  const pagination = state.page?.hasMore ? `<button type="button" class="wb-new wb-load-more" data-action="load-more"${state.loadingMore ? ' disabled' : ''}>${state.loadingMore ? '正在加载…' : '加载更早的任务'}</button>` : ''
   const helper = state.providers.find(p => p.id === detail?.task.providerId)?.displayName || detail?.task.providerId || '执行助手'
   const events = detail?.events ?? []
   const dialogue = events.filter(event => event.kind === 'user' || event.kind === 'text')
@@ -186,7 +200,7 @@ export function renderWorkbench(state) {
   const artifacts = detail?.artifacts?.length ? detail.artifacts.map(artifact => `<button type="button" class="wb-artifact ${artifact.id === state.selectedArtifactId ? 'is-selected' : ''}" data-artifact-id="${escapeWorkbenchHtml(artifact.id)}"><span>${escapeWorkbenchHtml(artifact.name)}</span><small>${escapeWorkbenchHtml((artifact.size / 1024).toFixed(1))} KB · ${artifact.approvedAt ? '已确认' : '待确认'}</small></button>`).join('') : ''
   const previewContent = selectedArtifact && state.preview?.artifactId === selectedArtifact.id ? state.preview.html : '<p class="wb-preview-hint">选择文件，查看保存的成果版本。</p>'
   const artifactHtml = detail?.artifacts?.length ? `<details id="wb-artifacts" class="wb-disclosure wb-artifacts"><summary><span>成果</span><small>${detail.artifacts.length} 件</small></summary><button type="button" class="wb-new wb-back-dialogue" data-action="back-to-dialogue">返回对话</button><div class="wb-artifact-list">${artifacts}</div><div id="wb-preview" class="wb-preview">${selectedArtifact ? `<p class="wb-preview-name">${escapeWorkbenchHtml(selectedArtifact.name)}</p><div class="wb-preview-content">${previewContent}</div><button type="button" class="wb-btn" data-action="download-artifact">下载</button>${selectedArtifact.approvedAt ? '<p class="wb-approved">已确认此版本</p>' : '<button type="button" class="wb-btn wb-btn-primary" data-action="approve-artifact">确认这份成果</button>'}` : ''}</div></details>` : ''
-  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${escapeWorkbenchHtml(pathParts(detail.task.path).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2></div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<span class="wb-status" data-status="${escapeWorkbenchHtml(detail.task.status)}">${escapeWorkbenchHtml(statusLabel(detail.task.status))}</span><details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div></dl>${state.canWechat ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
+  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${escapeWorkbenchHtml(pathParts(detail.task.path).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2></div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<span class="wb-status" data-status="${escapeWorkbenchHtml(detail.task.status)}">${escapeWorkbenchHtml(statusLabel(detail.task.status))}</span><details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div></dl>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button></div>' : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
   const content = detail ? `
     <section class="wb-dialogue" aria-live="polite">${dialogueHtml}</section>
     ${queuedGuidance}
@@ -204,19 +218,20 @@ export function renderWorkbench(state) {
         <label>任务名称 <span class="wb-optional">可选</span><input id="wb-title" name="title" placeholder="留空时使用任务要求的前 40 个字"></label></details>
         <button class="wb-btn wb-btn-primary" type="submit"${state.providers.length ? '' : ' disabled'}>开始任务</button>
       </form></div>`
-  const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderTaskControls(detail.task.status, detail.continuation)}</div></div>` : ''
-  return `<div class="workbench-shell"><aside class="wb-sidebar"><header><p class="wb-kicker">任务</p><button type="button" class="wb-new" data-action="new-task">＋ 新建</button></header><div class="wb-task-list">${taskList}</div></aside><main class="wb-main">${taskHeader}<div class="wb-content"><div class="wb-content-inner">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${content}</div></div>${controls}</main></div>`
+  const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderTaskControls(detail.task.status, detail.continuation, detail.task.archivedAt)}</div></div>` : ''
+  return `<div class="workbench-shell"><aside class="wb-sidebar"><header><p class="wb-kicker">任务</p><button type="button" class="wb-new" data-action="new-task">＋ 新建</button></header>${listControls}<div class="wb-task-list">${taskList}</div>${pagination}</aside><main class="wb-main">${taskHeader}<div class="wb-content"><div class="wb-content-inner">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${content}</div></div>${controls}</main></div>`
 }
 
-/** @param {{invokeWorkbenchApi:WorkbenchDeps['invokeWorkbenchApi'],render:(state:WorkbenchState)=>void,initialScope?:string|null}} deps */
+/** @param {{invokeWorkbenchApi:WorkbenchDeps['invokeWorkbenchApi'],render:(state:WorkbenchState)=>void,initialScope?:string|null,initialQuery?:TaskQuery}} deps */
 export function createWorkbenchController(deps) {
   /** @type {WorkbenchState} */
-  const state = { tasks: [], providers: [], defaultProvider: '', canWechat: false, selectedId: null, loadingId: null, detail: null, selectedArtifactId: null, error: '', preview: null }
+  const state = { tasks: [], providers: [], defaultProvider: '', canWechat: false, selectedId: null, loadingId: null, detail: null, selectedArtifactId: null, error: '', preview: null, query: { ...(deps.initialQuery ?? { q: '', archived: 'exclude' }) }, loadingMore: false, newScope: deps.initialScope?.startsWith('new:') ? deps.initialScope : 'new' }
   let detailRequest = 0
   let listRequest = 0
+  let loadedPages = 1
   /** @type {string|null} */
   let desiredId = null
-  let composingNewTask = deps.initialScope === 'new'
+  let composingNewTask = deps.initialScope === 'new' || !!deps.initialScope?.startsWith('new:')
   let preferredInitialId = deps.initialScope?.startsWith('task:') ? deps.initialScope.slice(5) : null
   let alive = true
   let lastPaint = ''
@@ -226,25 +241,82 @@ export function createWorkbenchController(deps) {
     lastPaint = snapshot
     deps.render(state)
   }
+  /** @param {string|null} [cursor] */
+  const listPath = cursor => {
+    const params = new URLSearchParams()
+    if (state.query?.q) params.set('q', state.query.q)
+    if (state.query?.archived && state.query.archived !== 'exclude') params.set('archived', state.query.archived)
+    if (cursor) params.set('cursor', cursor)
+    return `/v1/workbench${params.size ? `?${params}` : ''}`
+  }
+  /** @param {Task[]} tasks */
+  const dedupe = tasks => [...new Map(tasks.map(task => [task.id, task])).values()]
   return {
     state,
-    async refresh() {
+    /** @param {{force?:boolean}} [options] */
+    async refresh({ force = false } = {}) {
+      if (!alive) return
+      if (force) state.loadingMore = false
+      if (state.loadingMore) {
+        if (state.selectedId && !desiredId) await this.selectTask(state.selectedId)
+        return
+      }
       const request = ++listRequest
       /** @type {ListResult} */
       let result
-      try { result = /** @type {ListResult} */ (await deps.invokeWorkbenchApi('GET', '/v1/workbench')) }
+      let pages = 1
+      try {
+        result = /** @type {ListResult} */ (await deps.invokeWorkbenchApi('GET', listPath()))
+        if (!alive || request !== listRequest) return
+        while (pages < loadedPages && result.page?.hasMore && result.page.nextCursor) {
+          const next = /** @type {ListResult} */ (await deps.invokeWorkbenchApi('GET', listPath(result.page.nextCursor)))
+          if (!alive || request !== listRequest) return
+          result = { ...next, tasks: dedupe([...result.tasks, ...next.tasks]), projectProviders: { ...result.projectProviders, ...next.projectProviders } }
+          pages++
+        }
+      }
       catch (error) { if (!alive || request !== listRequest) return; throw error }
       if (!alive || request !== listRequest) return
-      Object.assign(state, result)
+      loadedPages = pages
+      Object.assign(state, result, { tasks: dedupe(result.tasks), page: result.page, projectProviders: result.projectProviders ?? {} })
       state.error = ''
       if (desiredId) paint()
       else if (state.selectedId) await this.selectTask(state.selectedId)
-      else if (!composingNewTask && state.tasks[0]?.id) {
-        const target = preferredInitialId && state.tasks.some(task => task.id === preferredInitialId) ? preferredInitialId : state.tasks[0].id
+      else if (!composingNewTask && (preferredInitialId || state.tasks[0]?.id)) {
+        const target = preferredInitialId || state.tasks[0]?.id
         preferredInitialId = null
-        await this.selectTask(target)
+        if (target) await this.selectTask(target)
       }
       else paint()
+    },
+    async loadMore() {
+      if (!alive || state.loadingMore || !state.page?.hasMore || !state.page.nextCursor) return
+      const request = ++listRequest
+      const path = listPath(state.page.nextCursor)
+      state.loadingMore = true
+      paint()
+      try {
+        const result = /** @type {ListResult} */ (await deps.invokeWorkbenchApi('GET', path))
+        if (!alive || request !== listRequest) return
+        state.tasks = dedupe([...state.tasks, ...result.tasks])
+        state.page = result.page
+        state.projectProviders = { ...state.projectProviders, ...result.projectProviders }
+        state.error = ''
+        loadedPages++
+      } catch (error) { if (!alive || request !== listRequest) return; throw error }
+      finally { if (alive && request === listRequest) { state.loadingMore = false; paint() } }
+    },
+    /** @param {TaskQuery} query */
+    async filterTasks(query) {
+      listRequest++
+      loadedPages = 1
+      state.query = { q: query.q.trim().slice(0, 200), archived: query.archived }
+      state.tasks = []
+      state.page = undefined
+      state.projectProviders = {}
+      state.loadingMore = false
+      paint()
+      await this.refresh()
     },
     /** @param {string} id */
     async selectTask(id) {
@@ -271,7 +343,8 @@ export function createWorkbenchController(deps) {
       state.error = ''
       paint()
     },
-    newTask() { detailRequest++; desiredId = null; composingNewTask = true; state.selectedId = null; state.loadingId = null; state.detail = null; state.selectedArtifactId = null; paint() },
+    /** @param {string} [path] */
+    newTask(path) { detailRequest++; desiredId = null; composingNewTask = true; state.newScope = path ? `new:${path}` : 'new'; state.selectedId = null; state.loadingId = null; state.detail = null; state.selectedArtifactId = null; paint() },
     destroy() { alive = false; detailRequest++; listRequest++ },
     paint,
   }
@@ -307,6 +380,7 @@ export function initWorkbenchPage(deps) {
   /** @type {string|null} */
   let objectUrl = null
   const initialScope = resumeScope
+  let searchDraft = resumeSearch
   let renderedScope = initialScope ?? 'new'
   let hasPainted = false
   /** @type {Map<string, Map<string, boolean>>} */
@@ -319,7 +393,7 @@ export function initWorkbenchPage(deps) {
   const taskInfoScrollPositions = new Map()
   /** @type {Map<string,number>} */
   const resultReturnPositions = new Map()
-  const scopeFor = (/** @type {WorkbenchState} */ state) => state.selectedId ? `task:${state.selectedId}` : 'new'
+  const scopeFor = (/** @type {WorkbenchState} */ state) => state.selectedId ? `task:${state.selectedId}` : state.newScope ?? 'new'
   const permissionSignatureFor = (/** @type {WorkbenchState} */ state) => JSON.stringify((state.detail?.permissions ?? []).filter(permission => permission.taskId === state.detail?.task.id).map(permission => permission.id).sort())
   const captureDraft = () => {
     if (!document.getElementById('wb-create-form') && !input('wb-followup-text')) return
@@ -331,9 +405,9 @@ export function initWorkbenchPage(deps) {
       const field = input(id); if (field && value) field.value = value
     }
   }
-  const controller = createWorkbenchController({ invokeWorkbenchApi: deps.invokeWorkbenchApi, initialScope, render: state => {
+  const controller = createWorkbenchController({ invokeWorkbenchApi: deps.invokeWorkbenchApi, initialScope, initialQuery: resumeQuery, render: state => {
     if (!alive) return
-    if (hasPainted) captureDraft()
+    if (hasPainted) { captureDraft(); searchDraft = input('wb-search')?.value ?? searchDraft }
     const activeField = document.activeElement instanceof Element && root.contains(document.activeElement) && 'value' in document.activeElement
       ? /** @type {HTMLInputElement|HTMLTextAreaElement|HTMLSelectElement} */ (document.activeElement)
       : null
@@ -348,6 +422,7 @@ export function initWorkbenchPage(deps) {
     const openState = new Map(['wb-tools', 'wb-artifacts', 'wb-options', 'wb-task-info', 'wb-restart-context', 'wb-artifact-source'].map(id => [id, !!root.querySelector(`#${id}[open]`)]))
     disclosures.set(renderedScope, openState)
     const contentScroll = root.querySelector('.wb-content')?.scrollTop ?? 0
+    const sidebarScroll = root.querySelector('.wb-sidebar')?.scrollTop ?? 0
     scrollPositions.set(renderedScope, contentScroll)
     const currentPermissionScroll = root.querySelector('.wb-permissions')?.scrollTop
     const currentPermissionState = permissionScrollPositions.get(renderedScope)
@@ -358,6 +433,8 @@ export function initWorkbenchPage(deps) {
     const sameScope = renderedScope === scopeFor(state)
     root.innerHTML = renderWorkbench(state)
     hasPainted = true
+    const search = input('wb-search'); if (search) search.value = searchDraft
+    const sidebar = root.querySelector('.wb-sidebar'); if (sidebar) sidebar.scrollTop = sidebarScroll
     for (const [id, open] of disclosures.get(scopeFor(state)) ?? []) root.querySelector(`#${id}`)?.toggleAttribute('open', open)
     const content = root.querySelector('.wb-content')
     if (content) content.scrollTop = hasStoredScroll ? (scrollPositions.get(nextScope) ?? 0) : nextScope.startsWith('task:') ? content.scrollHeight : 0
@@ -389,7 +466,8 @@ export function initWorkbenchPage(deps) {
     const recovery = recoveryCode(error)
     controller.state.error = recovery === 'stale' ? '记录已更新，尚未重新开始。请核对新的恢复内容。'
       : recovery === 'required' ? '原会话无法恢复，任务尚未开始。请查看恢复说明后再决定。'
-        : ['HTTP 404','workbench_endpoint_missing'].includes(message) ? '当前运行的后台还没有提供这个接口，请更新后台后重试。' : message === 'workbench_read_only_preview' ? '当前预览只允许查看任务，请使用已启用执行的桌面端。' : message === 'workbench_connection_unavailable' ? '暂时连不上任务服务，请检查后台是否运行。' : message
+        : /\bworkbench_archived\b/.test(message) ? '这项任务已归档，恢复后可继续。'
+          : ['HTTP 404','workbench_endpoint_missing'].includes(message) ? '当前运行的后台还没有提供这个接口，请更新后台后重试。' : message === 'workbench_read_only_preview' ? '当前预览只允许查看任务，请使用已启用执行的桌面端。' : message === 'workbench_connection_unavailable' ? '暂时连不上任务服务，请检查后台是否运行。' : message
     controller.paint()
   }
   /** @param {'GET'|'POST'} method @param {string} path @param {Record<string,unknown>} body */
@@ -402,7 +480,7 @@ export function initWorkbenchPage(deps) {
       const result = /** @type {{task?:Task}} */ (await deps.invokeWorkbenchApi(method, path, body))
       if (!alive) return false
       const id = result.task?.id ?? controller.state.selectedId
-      await controller.refresh()
+      await controller.refresh({ force: true })
       if (alive && path === '/v1/workbench/create' && navigation === navigationGeneration && id && controller.state.selectedId !== id) await controller.selectTask(id)
       return alive
     } catch (e) {
@@ -443,8 +521,28 @@ export function initWorkbenchPage(deps) {
     }
     if (action === 'refresh') return controller.refresh().catch(fail)
     if (action === 'new-task') { captureDraft(); navigationGeneration++; artifactRequest++; return controller.newTask() }
+    if (action === 'new-project-task' && target.dataset.projectPath) {
+      captureDraft()
+      const path = target.dataset.projectPath
+      const scope = `new:${path}`
+      if (!pageDrafts.has(scope)) {
+        const recent = controller.state.tasks.filter(task => task.path === path).sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0]
+        pageDrafts.set(scope, { ...emptyDraft(), path, providerId: controller.state.projectProviders?.[path] ?? recent?.providerId ?? controller.state.defaultProvider ?? '' })
+      }
+      navigationGeneration++; artifactRequest++
+      return controller.newTask(path)
+    }
+    if (action === 'load-more') return controller.loadMore().catch(fail)
+    if (action === 'clear-search') {
+      searchDraft = ''
+      const field = input('wb-search'); if (field) field.value = ''
+      return controller.filterTasks({ q: '', archived: controller.state.query?.archived ?? 'exclude' }).catch(fail)
+    }
+    if (action === 'toggle-archived') return controller.filterTasks({ q: controller.state.query?.q ?? '', archived: controller.state.query?.archived === 'only' ? 'exclude' : 'only' }).catch(fail)
     if (action === 'choose-folder') { try { const path = await deps.invoke?.('choose_workbench_folder', {}); const field = input('wb-path'); if (typeof path === 'string' && field) field.value = path } catch (e) { fail(e) } return }
     if (action === 'cancel') return mutate('POST', '/v1/workbench/cancel', { id: controller.state.selectedId })
+    if (action === 'archive-task' && controller.state.detail?.task.canArchive === true) return mutate('POST', '/v1/workbench/archive', { id: controller.state.selectedId, archived: true })
+    if (action === 'restore-task' && controller.state.detail?.task.archivedAt != null) return mutate('POST', '/v1/workbench/archive', { id: controller.state.selectedId, archived: false })
     if ((action === 'allow-permission' || action === 'deny-permission') && target.dataset.requestId) return mutate('POST', '/v1/workbench/permission', { id: controller.state.selectedId, requestId: target.dataset.requestId, decision: action === 'allow-permission' ? 'allow' : 'deny' })
     if (action === 'copy-wechat-command' && controller.state.selectedId) { try { await navigator.clipboard.writeText(`任务 ${controller.state.selectedId}`) } catch { fail(new Error('复制不了，请手动选中任务编号。')) } return }
     const artifact = controller.state.detail?.artifacts?.find(a => a.id === controller.state.selectedArtifactId)
@@ -478,16 +576,25 @@ export function initWorkbenchPage(deps) {
     event.preventDefault()
     const form = event.target instanceof Element && event.target.tagName === 'FORM' ? /** @type {HTMLFormElement} */ (event.target) : null
     if (!form) return
+    if (form.id === 'wb-search-form') {
+      searchDraft = input('wb-search')?.value ?? ''
+      return controller.filterTasks({ q: searchDraft, archived: controller.state.query?.archived ?? 'exclude' }).catch(fail)
+    }
     if (form?.id === 'wb-create-form') {
       const data = new FormData(form)
-      const sent = { path:String(data.get('path') ?? ''), text:String(data.get('text') ?? ''), title:String(data.get('title') ?? '') }
+      const sent = { path:String(data.get('path') ?? ''), text:String(data.get('text') ?? ''), title:String(data.get('title') ?? ''), providerId:String(data.get('providerId') ?? '') }
+      const scope = renderedScope
       captureDraft()
-      if (await mutate('POST', '/v1/workbench/create', { title: sent.title || undefined, path: sent.path, providerId: data.get('providerId'), text: sent.text })) {
-        const draft = pageDrafts.get('new')
-        if (draft.path === sent.path) draft.path = ''
+      if (await mutate('POST', '/v1/workbench/create', { title: sent.title || undefined, path: sent.path, providerId: sent.providerId, text: sent.text })) {
+        const draft = pageDrafts.get(scope)
+        if (scope.startsWith('new:') && draft.path === sent.path && draft.text === sent.text && draft.title === sent.title && draft.providerId === sent.providerId) {
+          pageDrafts.delete(scope)
+          return
+        }
+        if (scope === 'new' && draft.path === sent.path) draft.path = ''
         if (draft.text === sent.text) draft.text = ''
         if (draft.title === sent.title) draft.title = ''
-        pageDrafts.set('new', draft)
+        pageDrafts.set(scope, draft)
       }
       return
     }
@@ -497,6 +604,7 @@ export function initWorkbenchPage(deps) {
       if (!text?.trim()) return
       const taskId = controller.state.selectedId
       captureDraft()
+      if (controller.state.detail?.task.archivedAt != null) return fail(new Error('workbench_archived'))
       const restart = form.dataset.action === 'restart'
       if (!restart && controller.state.detail?.continuation?.mode === 'restart_required') return fail(new Error('restart_confirmation_required'))
       const restartToken = form.dataset.restartToken
@@ -519,8 +627,10 @@ export function initWorkbenchPage(deps) {
   const timer = setInterval(() => { if (!root.closest('[hidden]')) controller.refresh().catch(fail) }, deps.pollMs ?? 3000)
   active = { timer, cleanup: () => {
     captureDraft()
+    resumeQuery = { ...(controller.state.query ?? { q: '', archived: 'exclude' }) }
+    resumeSearch = input('wb-search')?.value ?? searchDraft
     if (controller.state.selectedId) resumeScope = `task:${controller.state.selectedId}`
-    else if (document.getElementById('wb-create-form')) resumeScope = 'new'
+    else if (document.getElementById('wb-create-form')) resumeScope = scopeFor(controller.state)
     alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
   } }
   return controller

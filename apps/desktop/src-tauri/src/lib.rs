@@ -937,10 +937,10 @@ async fn customer_review_api(
 }
 
 fn workbench_request_allowed(method: &str, path: &str) -> bool {
-    if path.contains("..") {
+    let route = path.split('?').next().unwrap_or("");
+    if route.contains("..") {
         return false;
     }
-    let route = path.split('?').next().unwrap_or("");
     matches!(
         (method, route),
         ("GET", "/v1/workbench")
@@ -951,6 +951,7 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("POST", "/v1/workbench/cancel")
             | ("POST", "/v1/workbench/approve")
             | ("POST", "/v1/workbench/permission")
+            | ("POST", "/v1/workbench/archive")
     )
 }
 
@@ -1212,12 +1213,16 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/cancel"),
             ("POST", "/v1/workbench/approve"),
             ("POST", "/v1/workbench/permission"),
+            ("POST", "/v1/workbench/archive"),
+            ("GET", "/v1/workbench?q=..&archived=all"),
         ] {
             assert!(workbench_request_allowed(method, path), "expected {method} {path} to be allowed");
         }
         for (method, path) in [
             ("POST", "/v1/workbench"),
             ("GET", "/v1/workbench/create"),
+            ("GET", "/v1/workbench/archive"),
+            ("POST", "/v1/workbench/archive/extra"),
             ("GET", "/v1/workbench/task/extra"),
             ("GET", "/v1/workbench/../companion/presence"),
             ("DELETE", "/v1/workbench/task?id=A1B2C3D4"),

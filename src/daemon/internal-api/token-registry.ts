@@ -181,6 +181,7 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           'GET /v1/workbench/artifact',
           'POST /v1/workbench/approve',
           'POST /v1/workbench/permission',
+          'POST /v1/workbench/archive',
         ]),
       })
     },

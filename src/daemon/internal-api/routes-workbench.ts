@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path'
+import type { WorkbenchListQuery } from '../../core/workbench/store'
 import type { InternalApiDeps, RouteHandler, RouteTable } from './types'
 
 const TASK_ID = /^[a-f0-9]{8}$/
@@ -24,31 +25,29 @@ function errorCode(err: unknown): string {
 
 function mappedError(err: unknown): ReturnType<RouteHandler> {
   const code = errorCode(err)
-  if (code === 'workbench_busy' || code === 'artifact_changed' || code === 'permission_stale' || code === 'restart_confirmation_required' || code === 'restart_confirmation_stale') return { status: 409, body: { error: code } }
+  if (code === 'workbench_archived' || code === 'workbench_busy' || code === 'artifact_changed' || code === 'permission_stale' || code === 'restart_confirmation_required' || code === 'restart_confirmation_stale') return { status: 409, body: { error: code } }
   if (code === 'not_found') return { status: 404, body: { error: code } }
   if (code === 'unavailable_provider') return { status: 422, body: { error: code } }
   if (code.startsWith('invalid_')) return { status: 400, body: { error: code } }
   return { status: 500, body: { error: 'internal' } }
 }
 
-function withService(
-  deps: InternalApiDeps,
-  fn: (service: NonNullable<InternalApiDeps['workbench']>) => unknown | Promise<unknown>,
-  successStatus = 200,
-): RouteHandler {
-  return async () => {
-    if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
-    try {
-      return { status: successStatus, body: await fn(deps.workbench) }
-    } catch (err) {
-      return mappedError(err)
-    }
-  }
-}
-
 export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
   return {
-    'GET /v1/workbench': withService(deps, service => service.list()),
+    'GET /v1/workbench': async query => {
+      for(const key of ['q','archived','limit','cursor'])if(query.getAll(key).length>1)return invalid()
+      const q=query.get('q')?.trim(),archived=query.get('archived'),rawLimit=query.get('limit'),cursor=query.get('cursor')
+      if((q!==undefined && q.length>200) || (archived!==null && !['exclude','only','all'].includes(archived)) ||
+          (rawLimit!==null && (!/^\d+$/.test(rawLimit) || Number(rawLimit)<1 || Number(rawLimit)>100)))return invalid()
+      if(cursor!==null && (!cursor || cursor.length>1024))return {status:400,body:{error:'invalid_cursor'}}
+      if(!deps.workbench)return {status:503,body:{error:'workbench_not_wired'}}
+      const filters:WorkbenchListQuery={
+        ...(q!==undefined ? {q} : {}),...(archived!==null ? {archived:archived as WorkbenchListQuery['archived']} : {}),
+        ...(rawLimit!==null ? {limit:Number(rawLimit)} : {}),...(cursor!==null ? {cursor} : {}),
+      }
+      try {return {status:200,body:await (Object.keys(filters).length ? deps.workbench.list(filters) : deps.workbench.list())}}
+      catch(err){return mappedError(err)}
+    },
 
     'GET /v1/workbench/task': async (query) => {
       const id = query.get('id')
@@ -95,6 +94,14 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       } catch (err) {
         return mappedError(err)
       }
+    },
+
+    'POST /v1/workbench/archive': async (_query,body) => {
+      const value=objectBody(body),id=typeof value?.id==='string' ? value.id : '',archived=value?.archived
+      if(!TASK_ID.test(id) || typeof archived!=='boolean')return invalid()
+      if(!deps.workbench)return {status:503,body:{error:'workbench_not_wired'}}
+      try {return {status:200,body:{task:await deps.workbench.setArchived(id,archived)}}}
+      catch(err){return mappedError(err)}
     },
 
     'POST /v1/workbench/cancel': async (_query, body) => {

@@ -1,20 +1,51 @@
-import { randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import type { Db } from '../../lib/db'
 
 export type TaskStatus = 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 export interface Task {
   id: string; title: string; path: string; providerId: string; status: TaskStatus
-  createdAt: number; updatedAt: number; error: string | null
+  createdAt: number; updatedAt: number; error: string | null; archivedAt: number | null
 }
 export interface StoredTask extends Task { ownerChatId: string | null; sessionId: string | null }
 export interface TaskEvent { id: number; taskId: string; kind: 'user' | 'text' | 'tool_call' | 'system' | 'error'; text: string; createdAt: number }
 export interface Artifact { id: string; taskId: string; name: string; mime: string; size: number; sha256: string; createdAt: number; approvedAt: number | null }
 export interface StoredArtifact extends Artifact { storagePath: string }
-const TASK_SELECT = 'SELECT id,title,path,provider_id AS providerId,owner_chat_id AS ownerChatId,session_id AS sessionId,status,error,created_at AS createdAt,updated_at AS updatedAt FROM workbench_tasks'
+const TASK_SELECT = 'SELECT id,title,path,provider_id AS providerId,owner_chat_id AS ownerChatId,session_id AS sessionId,status,error,created_at AS createdAt,updated_at AS updatedAt,archived_at AS archivedAt FROM workbench_tasks'
 const ART_SELECT = 'SELECT id,task_id AS taskId,name,mime,size,sha256,storage_path AS storagePath,created_at AS createdAt,approved_at AS approvedAt FROM workbench_artifacts'
 export function publicTask({ ownerChatId: _owner, sessionId: _session, ...task }: StoredTask): Task { return task }
 export function publicArtifact({ storagePath: _path, ...artifact }: StoredArtifact): Artifact { return artifact }
+
+export interface WorkbenchListQuery {
+  q?: string
+  archived?: 'exclude' | 'only' | 'all'
+  limit?: number
+  cursor?: string
+}
+export interface TaskPage {
+  tasks: Task[]
+  page: {limit: number; total: number; hasMore: boolean; nextCursor: string | null}
+}
+export const TERMINAL_TASK_STATUSES: readonly TaskStatus[]=['completed','failed','cancelled','interrupted']
+
+function listFilters(query:WorkbenchListQuery) {
+  const q=query.q===undefined ? '' : typeof query.q==='string' ? query.q.trim() : null
+  const archived=query.archived??'exclude',limit=query.limit??50
+  if(q===null || q.length>200 || !['exclude','only','all'].includes(archived) || !Number.isInteger(limit) || limit<1 || limit>100) throw new Error('invalid_request')
+  const filterHash=createHash('sha256').update(JSON.stringify({q,archived})).digest('hex')
+  let cursor:{v:1;updatedAt:number;id:string;filterHash:string}|undefined
+  if(query.cursor!==undefined) {
+    try {
+      if(typeof query.cursor!=='string' || query.cursor.length>1024 || !/^[A-Za-z0-9_-]+$/.test(query.cursor)) throw new Error()
+      const bytes=Buffer.from(query.cursor,'base64url')
+      if(bytes.toString('base64url')!==query.cursor) throw new Error()
+      const decoded=JSON.parse(bytes.toString('utf8'))
+      if(!decoded || decoded.v!==1 || !Number.isSafeInteger(decoded.updatedAt) || decoded.updatedAt<0 || typeof decoded.id!=='string' || !/^[a-f0-9]{8}$/.test(decoded.id) || decoded.filterHash!==filterHash) throw new Error()
+      cursor=decoded
+    } catch {throw new Error('invalid_cursor')}
+  }
+  return {q,archived,limit,filterHash,cursor}
+}
 
 export function makeWorkbenchStore(db: Db) {
   const get = (id: string): StoredTask => {
@@ -29,7 +60,44 @@ export function makeWorkbenchStore(db: Db) {
   }
   return {
     get, artifacts, events, addEvent,
+    projectProvider: (path:string) => db.query<{providerId:string},[string]>('SELECT provider_id AS providerId FROM workbench_tasks WHERE path=? ORDER BY updated_at DESC,id DESC LIMIT 1').get(path)?.providerId ?? null,
     list: () => db.query<StoredTask, []>(`${TASK_SELECT} ORDER BY updated_at DESC,rowid DESC LIMIT 200`).all().map(publicTask),
+    /** Real-time keyset paging, not a snapshot: updated tasks can move before a cursor. */
+    listPage(query:WorkbenchListQuery={}):TaskPage {
+      const {q,archived,limit,filterHash,cursor}=listFilters(query)
+      const where:string[]=[],args:Array<string|number>=[]
+      if(archived!=='all')where.push(archived==='only' ? 'archived_at IS NOT NULL' : 'archived_at IS NULL')
+      if(q) {
+        const pattern='%'+q.replace(/[\\%_]/g,char=>'\\'+char)+'%'
+        where.push("(title LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\')")
+        args.push(pattern,pattern,pattern)
+      }
+      const filter=where.length ? ' WHERE '+where.join(' AND ') : ''
+      return db.transaction(()=>{
+        const total=db.query<{count:number},Array<string|number>>('SELECT COUNT(*) AS count FROM workbench_tasks'+filter).get(...args)!.count
+        const pageWhere=[...where],pageArgs=[...args]
+        if(cursor) {
+          pageWhere.push('(updated_at < ? OR (updated_at = ? AND id < ?))')
+          pageArgs.push(cursor.updatedAt,cursor.updatedAt,cursor.id)
+        }
+        const rows=db.query<StoredTask,Array<string|number>>(TASK_SELECT+(pageWhere.length ? ' WHERE '+pageWhere.join(' AND ') : '')+' ORDER BY updated_at DESC,id DESC LIMIT ?').all(...pageArgs,limit+1)
+        const hasMore=rows.length>limit,tasks=rows.slice(0,limit).map(publicTask),last=tasks.at(-1)
+        const nextCursor=hasMore && last ? Buffer.from(JSON.stringify({v:1,updatedAt:last.updatedAt,id:last.id,filterHash})).toString('base64url') : null
+        return {tasks,page:{limit,total,hasMore,nextCursor}}
+      })()
+    },
+    setArchived(id:string,archived:boolean):StoredTask {
+      if(typeof archived!=='boolean')throw new Error('invalid_request')
+      get(id)
+      if(archived) {
+        const result=db.query("UPDATE workbench_tasks SET archived_at=COALESCE(archived_at,?) WHERE id=? AND status IN ('completed','failed','cancelled','interrupted') AND (error IS NULL OR error!='writer_not_closed')").run(Date.now(),id)
+        if(!result.changes)throw new Error('workbench_busy')
+      } else db.query('UPDATE workbench_tasks SET archived_at=NULL WHERE id=?').run(id)
+      return get(id)
+    },
+    clearWriterError(id:string) {
+      db.query("UPDATE workbench_tasks SET error=NULL WHERE id=? AND error='writer_not_closed'").run(id)
+    },
     create(input: { title: string; path: string; providerId: string; ownerChatId: string | null }): StoredTask {
       let id: string
       do { id = randomBytes(4).toString('hex') } while (db.query('SELECT 1 FROM workbench_tasks WHERE id=?').get(id))

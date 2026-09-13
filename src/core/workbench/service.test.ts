@@ -632,6 +632,78 @@ describe('persistent workbench', () => {
     expect(service.detail(task.id).task.status).toBe('failed')
   })
 
+  it('keeps the latest project executor independent of search and archive filters',()=>{
+    setup({async spawn(){throw Error('must not spawn')}})
+    const store=makeWorkbenchStore(db)
+    const old=store.create({title:'older-match',path:project,providerId:'codex',ownerChatId:'owner'})
+    store.update(old.id,'completed')
+    const latest=store.create({title:'latest',path:project,providerId:'claude',ownerChatId:'owner'})
+    store.update(latest.id,'completed')
+    db.query('UPDATE workbench_tasks SET updated_at=? WHERE id=?').run(100,old.id)
+    db.query('UPDATE workbench_tasks SET updated_at=? WHERE id=?').run(200,latest.id)
+    store.setArchived(latest.id,true)
+    expect(service.list({q:'older-match'}).projectProviders).toEqual({[project]:'claude'})
+  })
+
+  it('archives only inactive work and requires restore before desktop or WeChat continuation', async()=>{
+    let spawns=0
+    setup({async spawn(p){spawns++;return{async *dispatch(){writeFileSync(join(p.path,'.cc-workbench',p.alias.split(':')[1]!,'kept.txt'),'kept');yield result},async close(){}}}})
+    const task=create();await settle(task.id)
+    const before=service.detail(task.id)
+    expect(before.task.canArchive).toBe(true)
+    expect(service.list().page).toMatchObject({limit:50,total:1,hasMore:false,nextCursor:null})
+    const archived=service.setArchived(task.id,true)
+    expect(archived).toMatchObject({archivedAt:expect.any(Number),canArchive:true})
+    expect(service.list().tasks).toEqual([])
+    expect(service.list({archived:'only'}).tasks.map(t=>t.id)).toEqual([task.id])
+    expect(()=>service.continueTask(task.id,'hidden run')).toThrow('workbench_archived')
+    expect(await service.handleWechat('owner',`任务 ${task.id} hidden run`)).toMatch(/桌面.*恢复/)
+    expect(spawns).toBe(1)
+    expect(service.detail(task.id).events).toEqual(before.events)
+    expect(service.detail(task.id).artifacts).toEqual(before.artifacts)
+    renameSync(project,join(root,'moved-project'))
+    expect(service.setArchived(task.id,false).archivedAt).toBeNull()
+    expect(service.setArchived(task.id,true).archivedAt).toEqual(expect.any(Number))
+  })
+
+  it('rejects queued, running and cancelling archive attempts', async()=>{
+    const closeGate=deferred()
+    setup({async spawn(){return{async *dispatch(){await new Promise(()=>{})},async cancel(){},async close(){await closeGate.promise}}}})
+    const running=create();await expect.poll(()=>service.detail(running.id).task.status).toBe('running')
+    const queued=create('queued')
+    for(const task of [running,queued]) {
+      expect(service.detail(task.id).task.canArchive).toBe(false)
+      expect(()=>service.setArchived(task.id,true)).toThrow('workbench_busy')
+    }
+    await service.cancel(running.id)
+    expect(service.detail(running.id).task.status).toBe('cancelling')
+    expect(()=>service.setArchived(running.id,true)).toThrow('workbench_busy')
+    await service.cancel(queued.id);closeGate.resolve();await settle(running.id)
+    expect(service.setArchived(queued.id,true).archivedAt).not.toBeNull()
+  })
+
+  it('allows archive only after positive late writer exit evidence and preserves interrupted history',async()=>{
+    const closeGate=deferred()
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){await closeGate.promise}}}},()=>null,undefined,{closeTimeoutMs:5})
+    const task=create();await settle(task.id)
+    const before=service.detail(task.id)
+    expect(before.task).toMatchObject({status:'interrupted',error:'writer_not_closed',canArchive:false})
+    expect(()=>service.setArchived(task.id,true)).toThrow('workbench_busy')
+    closeGate.resolve()
+    await expect.poll(()=>service.detail(task.id).task.canArchive).toBe(true)
+    expect(service.detail(task.id).task).toMatchObject({status:'interrupted',error:null})
+    expect(service.detail(task.id).events).toEqual(before.events)
+    expect(service.setArchived(task.id,true).archivedAt).not.toBeNull()
+  })
+
+  it('keeps an uncertain writer unarchivable across service recreation without exit evidence',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){throw new Error('still alive')}}}})
+    const task=create();await settle(task.id);await service.shutdown()
+    setup({async spawn(){throw new Error('must not spawn')}})
+    expect(service.detail(task.id).task).toMatchObject({status:'interrupted',error:'writer_not_closed',canArchive:false})
+    expect(()=>service.setArchived(task.id,true)).toThrow('workbench_busy')
+  })
+
   it('quarantines only overlapping paths and retains busy ownership when a writer fails to close', async () => {
     const other=join(root,'close-other');mkdirSync(other)
     const released=new Set<string>()

@@ -16,6 +16,7 @@ function service(overrides: Record<string, unknown> = {}) {
     detail: vi.fn(() => ({ task: TASK, events: [], artifacts: [] })),
     create: vi.fn(() => TASK),
     continueTask: vi.fn(() => TASK),
+    setArchived: vi.fn(() => ({ ...TASK, archivedAt: 123, canArchive: true })),
     cancel: vi.fn(async () => ({ ...TASK, status: 'cancelling' })),
     artifact: vi.fn(() => ({ name: 'draft.md', mime: 'text/markdown', size: 5, sha256: 'a'.repeat(64), contentBase64: 'aGVsbG8=' })),
     approve: vi.fn(() => undefined),
@@ -159,6 +160,39 @@ describe('Workbench internal HTTP API', () => {
     const response = await request('/v1/workbench')
     expect(response.status).toBe(expected)
     expect(await response.json()).toEqual(expected === 500 ? { error: 'internal' } : { error: code })
+  })
+
+  it('parses list filters and rejects invalid query values before reading tasks',async()=>{
+    const workbench=service(),{request}=await start(workbench)
+    expect((await request('/v1/workbench?q=%20report%20&archived=all&limit=25&cursor=opaque')).status).toBe(200)
+    expect(workbench.list).toHaveBeenCalledWith({q:'report',archived:'all',limit:25,cursor:'opaque'})
+    workbench.list.mockClear()
+    for(const query of ['limit=0','limit=101','limit=1.5','limit=1e1','limit=','archived=no','q='+ 'x'.repeat(201),'cursor='+ 'x'.repeat(1025),'limit=5&limit=6']) {
+      const response=await request('/v1/workbench?'+query)
+      expect(response.status).toBe(400)
+    }
+    expect(workbench.list).not.toHaveBeenCalled()
+  })
+
+  it('allows desktop archive and restore, denies agent credentials, and rejects malformed bodies',async()=>{
+    const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
+    const agentToken=api!.mintSessionToken('trusted','claude/default/agent')
+    for(const token of [trustedToken,agentToken]) {
+      expect((await request('/v1/workbench/archive',{method:'POST',body:JSON.stringify({id:'deadbeef',archived:true})},token)).status).toBe(403)
+    }
+    expect(workbench.setArchived).not.toHaveBeenCalled()
+    for(const archived of [true,false]) {
+      const response=await request('/v1/workbench/archive',{method:'POST',body:JSON.stringify({id:'deadbeef',archived})},operatorToken)
+      expect(response.status).toBe(200);expect(await response.json()).toMatchObject({task:{id:'deadbeef',canArchive:true}})
+      expect(workbench.setArchived).toHaveBeenCalledWith('deadbeef',archived)
+    }
+    for(const body of [{id:'deadbeef'},{id:'bad',archived:true},{id:'deadbeef',archived:'true'}])expect((await request('/v1/workbench/archive',{method:'POST',body:JSON.stringify(body)})).status).toBe(400)
+  })
+
+  it.each([['invalid_cursor',400],['workbench_archived',409]])('maps list/archive errors %s to %i',async(code,status)=>{
+    const {request}=await start(service({list:()=>{throw new Error(code)}}))
+    const response=await request('/v1/workbench')
+    expect(response.status).toBe(status);expect(await response.json()).toEqual({error:code})
   })
 
   it('validates optional restart tokens and forwards approval only when supplied', async () => {

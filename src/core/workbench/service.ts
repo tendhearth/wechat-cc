@@ -7,7 +7,7 @@ import { canonicalProject, collectArtifacts, outputDirectory, readArtifactSnapsh
 import { restartPreview, type Continuation, type RestartPreview } from './continuation'
 import { makeRunPermissions, type PermissionDecision, type RunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
 import { findPathBlocker, type PathReservation, type WaitingFor } from './scheduler'
-import { publicTask, type StoredTask, type Task, type TaskStatus, type WorkbenchStore } from './store'
+import { publicTask, TERMINAL_TASK_STATUSES, type WorkbenchListQuery, type StoredTask, type Task, type TaskStatus, type WorkbenchStore } from './store'
 
 interface Options {
   store: WorkbenchStore
@@ -42,7 +42,7 @@ interface Active extends PathReservation {
   credentialsRevoked: boolean
 }
 export interface CreateTask { title?: string; path: string; providerId: string; text: string }
-export interface WorkbenchTaskView extends Task { waitingFor: WaitingFor | null; pendingPermissionCount?: number }
+export interface WorkbenchTaskView extends Task { canArchive:boolean; waitingFor: WaitingFor | null; pendingPermissionCount?: number }
 
 function checkedText(text: string): string {
   if (typeof text !== 'string' || !text.trim() || text.length > 20_000) throw new Error('invalid_text')
@@ -123,6 +123,7 @@ export function makeWorkbenchService(opts: Options) {
     const running=runsByTask.get(task.id)
     return {
       ...task,
+      canArchive:TERMINAL_TASK_STATUSES.includes(task.status) && !running && task.error!=='writer_not_closed',
       waitingFor:running ? waitingFor(running) : null,
       ...(includePermissions ? { pendingPermissionCount:running?.permissions.pending().length ?? 0 } : {}),
     }
@@ -152,6 +153,7 @@ export function makeWorkbenchService(opts: Options) {
   function confirmLateClose(running:Active,capture:boolean) {
     if (!running.uncertain) return
     if (capture) collect(running)
+    try { store.clearWriterError(running.taskId) } catch { /* keep the persistent guard if storage is unavailable */ }
     running.uncertain=false
     running.state='active'
     if (running.publicFinished) releaseReservation(running)
@@ -286,7 +288,7 @@ export function makeWorkbenchService(opts: Options) {
     }
   }
 
-  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'}):Task {
+  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'}):WorkbenchTaskView {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
     store.addEvent(task.id,'user',text); store.update(task.id,'queued')
     let signalStop!:()=>void,resolveDone!:()=>void
@@ -303,7 +305,7 @@ export function makeWorkbenchService(opts: Options) {
       cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,credentialsMinted:false,credentialsRevoked:false,
     }
     runsByTask.set(task.id,running); runningText.set(running.identity,text); queue.push(running); pump()
-    return publicTask({...task,status:'queued',error:null})
+    return taskView(publicTask({...task,status:'queued',error:null}))
   }
 
   function cancelRun(running:Active):void {
@@ -327,15 +329,17 @@ export function makeWorkbenchService(opts: Options) {
   }
 
   const service={
-    list() {
+    list(query:WorkbenchListQuery={}) {
       const providers=SUPPORTED.flatMap(id => { const p=opts.registry.get(id); return p ? [{id,displayName:p.opts.displayName}] : [] })
-      return {tasks:store.list().map(task => taskView(task,true)),providers,defaultProvider:providers.find(p=>p.id===opts.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!opts.ownerChatId()}
+      const result=store.listPage(query)
+      const projectProviders=Object.fromEntries([...new Set(result.tasks.map(task=>task.path))].map(path=>[path,store.projectProvider(path)]))
+      return {tasks:result.tasks.map(task => taskView(task,true)),page:result.page,projectProviders,providers,defaultProvider:providers.find(p=>p.id===opts.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!opts.ownerChatId()}
     },
     detail(id:string) {
       const detail=store.detail(id),running=runsByTask.get(id)
       return {...detail,task:taskView(detail.task),permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:continuation(store.get(id))} : {})}
     },
-    create(input:CreateTask):Task {
+    create(input:CreateTask):WorkbenchTaskView {
       ensureAccepting()
       const text=checkedText(input.text); provider(input.providerId)
       if (input.title!==undefined && (typeof input.title!=='string' || !input.title.trim() || input.title.length>120)) throw new Error('invalid_title')
@@ -343,10 +347,12 @@ export function makeWorkbenchService(opts: Options) {
       const acceptedDirectoryIdentity=directoryIdentity(path)
       return start(store.create({title:input.title?.trim() ?? text.slice(0,40),path,providerId:input.providerId,ownerChatId:opts.ownerChatId()}),text,acceptedDirectoryIdentity)
     },
-    continueTask(id:string,text:string,options?:{restartToken?:string}):Task {
+    continueTask(id:string,text:string,options?:{restartToken?:string}):WorkbenchTaskView {
       ensureAccepting()
       if (runsByTask.has(id)) throw new Error('workbench_busy')
-      const task=store.get(id); provider(task.providerId)
+      const task=store.get(id)
+      if(task.archivedAt!==null)throw new Error('workbench_archived')
+      provider(task.providerId)
       if (canonicalProject(task.path)!==task.path) throw new Error('invalid_path')
       const request=checkedText(text),acceptedDirectoryIdentity=directoryIdentity(task.path)
       const restartToken=options?.restartToken
@@ -359,10 +365,16 @@ export function makeWorkbenchService(opts: Options) {
         : decision.mode==='resume' ? {mode:'resume',sessionId:task.sessionId!} : {mode:'new'}
       return start(task,request,acceptedDirectoryIdentity,accepted)
     },
-    async cancel(id:string):Promise<Task> {
+    setArchived(id:string,archived:boolean):WorkbenchTaskView {
+      if(typeof archived!=='boolean')throw new Error('invalid_request')
+      const task=store.get(id)
+      if(archived && !taskView(publicTask(task)).canArchive)throw new Error('workbench_busy')
+      return taskView(publicTask(store.setArchived(id,archived)))
+    },
+    async cancel(id:string):Promise<WorkbenchTaskView> {
       const running=runsByTask.get(id)
       if (running) cancelRun(running)
-      return publicTask(store.get(id))
+      return taskView(publicTask(store.get(id)))
     },
     artifact(id:string,artifactId:string) {
       const a=store.artifact(id,artifactId),bytes=readArtifactSnapshot(a.storagePath,opts.stateDir,a.sha256)
@@ -390,6 +402,7 @@ export function makeWorkbenchService(opts: Options) {
         return [`${task.title} · ${id}`,STATUS_NAMES[task.status] ?? task.status,last.slice(0,1500),detail.artifacts.length ? `已保存 ${detail.artifacts.length} 份成果版本，可在桌面工作台查看。` : '',`继续：任务 ${id} <补充要求>`].filter(Boolean).join('\n')
       } catch (err) {
         const code=(err as Error).message
+        if (code==='workbench_archived') return '这项任务已归档。请在桌面工作台恢复任务后再继续。'
         if (code==='restart_confirmation_required' || code==='restart_confirmation_stale') return RECOVERY_MESSAGE
         return code==='workbench_busy' ? '这项任务正在处理，请等待完成或先停止它。' : '暂时无法继续，请在桌面工作台查看任务状态。'
       }

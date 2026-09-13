@@ -46,3 +46,15 @@ it('rejects non-loopback Host even with matching same-origin headers',async()=>{
  expect(res?.status).toBe(403)
  expect(upstream).not.toHaveBeenCalled()
 })
+
+it('keeps archive writes behind explicit host write access while passing literal search queries',async()=>{
+ const upstream=vi.fn(async(_url:string,_init?:RequestInit)=>Response.json({task:{id:'deadbeef'}},{status:200}))
+ const readonly=createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:false,fetch:upstream})
+ expect((await readonly(req('/v1/workbench/archive','POST')))?.status).toBe(403)
+ expect(upstream).not.toHaveBeenCalled()
+ const writable=createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})
+ expect((await writable(req('/v1/workbench/archive','POST')))?.status).toBe(200)
+ expect((await readonly(req('/v1/workbench?q=..&archived=all&limit=10')))?.status).toBe(200)
+ expect(upstream.mock.calls.at(-1)?.[0]).toBe('http://127.0.0.1:9001/v1/workbench?q=..&archived=all&limit=10')
+ expect((await writable(req('/v1/workbench/archive/extra','POST')))?.status).toBe(405)
+})

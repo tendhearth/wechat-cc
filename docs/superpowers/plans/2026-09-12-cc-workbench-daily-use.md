@@ -45,10 +45,10 @@ Files: a focused workbench artifact-presentation module and tests, modules/workb
 
 Files: workbench store/service/routes and DB migration/tests; modules/workbench.js/.test.ts and styles/workbench.css.
 
-- [ ] Define and test paged search across all stored tasks, rather than filtering only the previous 200. Use stable ordering and escaped literal search; include a way to retrieve archived tasks.
-- [ ] Add reversible archive status only for inactive tasks; reject archiving active/queued/cancelling tasks. Show search and archive access compactly, without new navigation columns.
-- [ ] Let an existing project start a task with its directory and last executor already selected. Keep global New for a different project; keep optional naming/settings folded.
-- [ ] Preserve selection, drafts and pending permissions when list filters change. Verify migration is non-destructive, archived history is retrievable, and overlapping project writers remain serialized. Commit independently.
+- [x] Define and test paged search across all stored tasks, rather than filtering only the previous 200. Use stable ordering and escaped literal search; include a way to retrieve archived tasks.
+- [x] Add reversible archive status only for inactive tasks; reject archiving active/queued/cancelling tasks. Show search and archive access compactly, without new navigation columns.
+- [x] Let an existing project start a task with its directory and last executor already selected. Keep global New for a different project; keep optional naming/settings folded.
+- [x] Preserve selection, drafts and pending permissions when list filters change. Verify migration is non-destructive, archived history is retrievable, and overlapping project writers remain serialized. Commit independently.
 
 ## Task 4 — code change review foundation
 
