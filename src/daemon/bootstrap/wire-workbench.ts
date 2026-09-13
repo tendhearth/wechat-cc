@@ -11,22 +11,44 @@ import type { PermissionRelayDeps } from '../../core/permission-relay'
 import { TIER_PROFILES } from '../../core/user-tier'
 import { makeWorkbenchStore } from '../../core/workbench/store'
 import { makeWorkbenchService } from '../../core/workbench/service'
+import { readNativeClaudeTools, workbenchClaudeEnvironment, type NativeClaudeTools } from '../../core/workbench/claude-native-config'
+import { claudeNativeCapabilityNotice } from '../../core/workbench/native-capability-notice'
 import { loadCompanionConfig } from '../companion/config'
 import type { Bootstrap } from './types'
 import type { InternalApi } from '../internal-api/types'
 
 /** Reuse transport/model setup, never the companion's prompt or bypass. */
-export function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool): Options {
+export function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}): Options {
+  const tier = tierProfileToClaudeSdkOpts(TIER_PROFILES.trusted,'strict')
   return {
-    ...base,
-    ...tierProfileToClaudeSdkOpts(TIER_PROFILES.trusted,'strict'),
-    mcpServers:{},
-    settingSources:[],
+    cwd:base.cwd, model:base.model, pathToClaudeCodeExecutable:base.pathToClaudeCodeExecutable,
+    executable:base.executable, executableArgs:base.executableArgs,
+    env:workbenchClaudeEnvironment(base.env),
+    ...tier,
+    allowDangerouslySkipPermissions:false,
+    allowedTools:[],
+    disallowedTools:[...(tier.disallowedTools ?? []),'mcp__wechat__*','mcp__delegate__*'],
+    tools:{type:'preset',preset:'claude_code'},
+    mcpServers:native.servers,
+    strictMcpConfig:true,
+    settingSources:['project','local'],
+    settings:{
+      ...native.nativeMcpPolicy,
+      // Flag settings override disk env values. Empty values neutralize these
+      // automatic companion pointers; this is not filesystem/process isolation.
+      env:Object.fromEntries((native.privateEnvironmentKeys??[]).map(name=>[name,''])),
+      disableAllHooks:true, disableSkillShellExecution:true,
+      enabledPlugins:native.disabledPlugins ?? {},
+      permissions:{defaultMode:'default',disableBypassPermissionsMode:'disable',
+        ask:['Bash','Write','Edit','NotebookEdit','AskUserQuestion',...Object.keys(native.servers).map(name=>`mcp__${name}__*`)],
+        deny:['mcp__wechat__*','mcp__delegate__*'],
+      },
+    },
     hooks:{},
     plugins:[],
     systemPrompt:{type:'preset',preset:'claude_code',append:instructions},
-    canUseTool: async (tool,input,context) => tool.startsWith('mcp__')
-      ? { behavior:'deny',message:'This task uses local files only. Messaging and companion memory tools are unavailable.' }
+    canUseTool: async (tool,input,context) => tool.startsWith('mcp__') && !Object.keys(native.servers).some(name=>tool.startsWith(`mcp__${name}__`))
+      ? {behavior:'deny',message:'This tool is not registered for the task.'}
       : permit(tool,input,context),
   }
 }
@@ -42,8 +64,11 @@ export function wireWorkbench(opts: {
   if (claude) registry.register('claude',createClaudeAgentProvider({
     sdkOptionsForProject(alias,path,tier,chatId,env,instructions,context) {
       const base=opts.boot.sdkOptionsForProject(alias,path,tier,chatId,env,instructions)
-      const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput)
-      return workbenchClaudeOptions(base,instructions ?? '',permit)
+      const native=readNativeClaudeTools(path)
+      const notice=claudeNativeCapabilityNotice(native)
+      if(notice)context?.reportNotice?.(notice)
+      const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers))
+      return workbenchClaudeOptions(base,instructions ?? '',permit,native)
     },
   }),claude.opts)
   const codex=opts.boot.registry.get('codex')
@@ -51,8 +76,8 @@ export function wireWorkbench(opts: {
   if (codex && binary) registry.register('codex',createWorkbenchCodexProvider({
     codexPathOverride:binary,
     model:modelForProvider(loadAgentConfig(opts.stateDir),'codex'),
-    // The adapter discovers and explicitly disables inherited MCPs before
-    // starting a private app-server with native task-scoped approval requests.
+    // The adapter discovers native tools, excludes companion services, and
+    // routes admitted tool calls through this task's approval requests.
   }),codex.opts)
   return makeWorkbenchService({
     executionConflict:opts.executionConflict,

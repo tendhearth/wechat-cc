@@ -311,6 +311,33 @@ describe('claude-agent-provider', () => {
     await expect(gate('Bash', { command: 'git reset --hard HEAD' }, { signal } as never)).resolves.toMatchObject({ behavior: 'deny' })
   })
 
+  it('asks the owning task before using an admitted native MCP and redacts credential fields', async () => {
+    const permission = vi.fn(async (_request: {tool:string;description:string}, _signal?: AbortSignal) => true), signal = new AbortController().signal
+    const gate = makeWorkbenchClaudeCanUseTool(permission, undefined, ['my_catalog'])
+    await expect(gate('mcp__my_catalog__lookup', { query:'item', api_key:'never-store', url:'https://user:url-secret@example.test/?token=query-secret', headers:[{name:'Authorization',value:'Bearer header-secret'}] }, { signal } as never)).resolves.toMatchObject({ behavior:'allow' })
+    expect(permission).toHaveBeenCalledOnce()
+    expect(permission.mock.calls[0]?.[0]).toMatchObject({ tool:'mcp__my_catalog__lookup', description:expect.stringContaining('item') })
+    expect(JSON.stringify(permission.mock.calls)).not.toContain('never-store')
+    for (const value of ['url-secret','query-secret','header-secret']) expect(JSON.stringify(permission.mock.calls)).not.toContain(value)
+    for (const tool of ['mcp__my_catalog_other__lookup','mcp__wechat__reply','mcp__delegate__run']) {
+      await expect(gate(tool, {}, { signal } as never)).resolves.toMatchObject({ behavior:'deny' })
+    }
+    expect(permission).toHaveBeenCalledOnce()
+  })
+
+  it('denies admitted MCP when approval is missing, refused, failed or cancelled', async () => {
+    for (const result of ['missing','refused','failed','cancelled']) {
+      const controller = new AbortController()
+      const permission = result === 'missing' ? undefined : async () => {
+        if (result === 'failed') throw Error('closed')
+        if (result === 'cancelled') controller.abort()
+        return result !== 'refused'
+      }
+      const gate = makeWorkbenchClaudeCanUseTool(permission, undefined, ['catalog'])
+      await expect(gate('mcp__catalog__lookup', { query:'item' }, { signal:controller.signal } as never)).resolves.toMatchObject({ behavior:'deny' })
+    }
+  })
+
   it('fails closed when the full destructive input cannot fit in the bounded permission detail', async () => {
     const signal = new AbortController().signal
     const requestPermission = vi.fn(async () => false)

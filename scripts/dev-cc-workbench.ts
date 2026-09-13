@@ -14,6 +14,8 @@ import {createProviderRegistry} from '../src/core/provider-registry'
 import {createWorkbenchCodexProvider} from '../src/core/workbench/codex-app-server'
 import {createClaudeAgentProvider,makeWorkbenchClaudeCanUseTool} from '../src/core/claude-agent-provider'
 import {workbenchClaudeOptions} from '../src/daemon/bootstrap/wire-workbench'
+import {readNativeClaudeTools} from '../src/core/workbench/claude-native-config'
+import {claudeNativeCapabilityNotice} from '../src/core/workbench/native-capability-notice'
 import {makeWorkbenchStore} from '../src/core/workbench/store'
 import {makeWorkbenchService} from '../src/core/workbench/service'
 import {createInternalApi,type InternalApiDeps} from '../src/daemon/internal-api'
@@ -41,16 +43,19 @@ if(binary)registry.register('codex',createWorkbenchCodexProvider({codexPathOverr
   {displayName:'Codex',canResume:(_cwd,id)=>codexSessionJsonlPaths(homedir(),id).some(existsSync)})
 if(claudeBinary)registry.register('claude',createClaudeAgentProvider({
   sdkOptionsForProject(_alias,path,_tier,_chatId,_env,instructions,context) {
-    // Reuse login only; task sessions do not import CLI hooks or private MCPs.
+    // Match production: native project rules and admitted tools, task approvals.
     const settingsPath=join(homedir(),'.claude','settings.json')
     let settings:unknown={}
     if(existsSync(settingsPath)) {
       try { settings=JSON.parse(readFileSync(settingsPath,'utf8')) }
       catch { throw new Error('无法读取 Claude 登录设置，请检查设置文件格式。') }
     }
+    const native=readNativeClaudeTools(path)
+    const notice=claudeNativeCapabilityNotice(native)
+    if(notice)context?.reportNotice?.(notice)
     return workbenchClaudeOptions({cwd:path,pathToClaudeCodeExecutable:claudeBinary,
       env:{...process.env,...workbenchClaudeAuthEnv(settings,process.env)}},
-      instructions ?? '',makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput))
+      instructions ?? '',makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers)),native)
   },
 }),{displayName:'Claude Code',canResume:(cwd,id)=>existsSync(claudeSessionJsonlPath(homedir(),cwd,id))})
 // Unused companion dependencies are deliberately absent. Only the explicit

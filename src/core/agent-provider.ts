@@ -166,6 +166,9 @@ export interface SpawnContext {
     signal?: AbortSignal,
   ) => Promise<boolean>
   requestUserInput?: (request: AgentUserInputRequest, signal?: AbortSignal) => Promise<AgentUserInputAnswers | null>
+  /** Public native-capability notice for the active task journal only, never
+   * assistant text or an instruction injected into the executor. */
+  reportNotice?: (message: string) => void
 }
 
 /**

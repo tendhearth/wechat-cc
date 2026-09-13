@@ -287,6 +287,11 @@ export function makeWorkbenchService(opts: Options) {
       if (running.cancelled) { finalStatus='cancelled'; return }
       spawning=entry.provider.spawn({alias:`workbench:${task.id}`,path:running.path},{
         workbenchTimeline:true,
+        reportNotice:message=>{
+          if(runsByTask.get(task.id)!==running||running.cancelled||running.finishing)return
+          const notice=message.trim().slice(0,2000)
+          if(notice)store.addEvent(task.id,'system',notice,null,running.identity)
+        },
         tierProfile:TIER_PROFILES.trusted,permissionMode:'strict',chatId:task.ownerChatId ?? `workbench:${task.id}`,
         ...(resume ? {resumeSessionId:resume} : {}),mcpEnv:sessionAuthEnv('trusted',token),appendInstructions:instructions,
         requestPermission:(request,signal) => {running.interactionAt=Date.now();return running.permissions.request(request,signal).finally(()=>{running.interactionAt=Date.now()})},

@@ -23,7 +23,8 @@ class FakeProcess extends EventEmitter {
         const end = lines.indexOf('\n'), line = lines.slice(0, end); lines = lines.slice(end + 1)
         const message = JSON.parse(line) as Rpc
         this.sent.push(message)
-        if (message.method === 'initialize') queueMicrotask(() => this.send({ id: message.id, result: {} }))
+        if (message.method === 'initialize') queueMicrotask(() => this.send({ id: message.id, result: initializeResponse }))
+        if (message.method === 'config/read') queueMicrotask(() => this.send({ id: message.id, result: { config: nativeConfig } }))
         if (message.method === 'thread/start' || message.method === 'thread/resume') queueMicrotask(() => this.send({ id: message.id, result: { thread: { id: message.params.threadId ?? 'thread-1' }, cwd: '/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: { type: 'workspaceWrite', writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true }, ...threadResponse } }))
         if (message.method === 'turn/start' && this.autoTurnStart) queueMicrotask(() => this.send({ id: message.id, result: { turn: { id: `turn-${this.sent.filter(m => m.method === 'turn/start').length}` } } }))
         if (message.method === 'turn/interrupt') queueMicrotask(() => this.send({ id: message.id, result: {} }))
@@ -39,6 +40,7 @@ class FakeProcess extends EventEmitter {
   }
 }
 let children: FakeProcess[], sessions: AgentSession[], discovery: string, discoveryExit: number, threadResponse: Record<string, unknown>
+let nativeConfig: Record<string, unknown>, initializeResponse: Record<string, unknown>
 const context = (extra = {}): SpawnContext => ({ tierProfile: TIER_PROFILES.trusted, permissionMode: 'strict', chatId: 'workbench:task', appendInstructions: 'task instructions', ...extra })
 async function start(extra = {}, options = {}) {
   const session = await createWorkbenchCodexProvider({ codexPathOverride: '/codex', rpcTimeoutMs: 200, closeTimeoutMs: 250, ...options }).spawn({ alias: 'workbench:task', path: '/project' }, context(extra))
@@ -58,8 +60,20 @@ function approval(child: FakeProcess, id: string | number = 'approve-1', method 
 function question(child: FakeProcess, id: string | number = 'question-1', extra = {}) {
   child.send({ id, method: 'item/tool/requestUserInput', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'question-item', isBlocking: true, autoResolutionMs: null, questions: [{ id: 'format', header: 'Format', question: 'Which format?', isOther: true, isSecret: false, options: [{ label: 'PDF', description: 'Fixed layout' }, { label: 'Word', description: 'Editable' }] }], ...extra } })
 }
+function mcpRequest(child: FakeProcess, id: string | number = 0, extra = {}) {
+  child.send({ id, method: 'mcpServer/elicitation/request', params: { threadId: 'thread-1', turnId: 'turn-1', serverName: 'external', mode: 'form', message: 'Run external tool?', _meta: { codex_approval_kind: 'mcp_tool_call', tool_params: { note: 'review me', api_key: 'credential-value' } }, requestedSchema: { type: 'object', properties: {} }, ...extra } })
+}
+function mcpItem(child: FakeProcess, extra = {}) {
+  child.notify('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'mcpToolCall', id: 'mcp-1', server: 'external', tool: 'create_note', status: 'inProgress', arguments: { note: 'review me', api_key: 'credential-value' }, ...extra } })
+}
+function enableExternal() {
+  discovery = '[{"name":"external","enabled":true}]'
+  nativeConfig = { mcp_servers: { external: { command: '/tools/external', tools: { create_note: { approval_mode: 'approve' } } } } }
+}
 beforeEach(() => {
   children = []; sessions = []; discovery = '[{"name":"personal","env":{"SECRET":"private"}}]'; discoveryExit = 0; threadResponse = {}
+  nativeConfig = { mcp_servers: { personal: { command: '/tools/personal' } } }
+  initializeResponse = { userAgent: 'cc_workbench/0.153.4 (Mac OS; arm64)' }
   mocks.spawn.mockReset().mockImplementation((_binary: string, args: string[]) => {
     const child = new FakeProcess(args.includes('mcp')); children.push(child)
     if (child.probe) queueMicrotask(() => { child.stdout.write(discovery); child.exit(discoveryExit) })
@@ -69,6 +83,75 @@ beforeEach(() => {
 afterEach(async () => { for (const session of sessions) await session.close().catch(() => {}); vi.restoreAllMocks() })
 
 describe('workbench Codex app-server', () => {
+  it('reads native overrides while tools are disabled and applies review policy again on resume', async () => {
+    enableExternal(); nativeConfig.web_search = 'live'
+    initializeResponse.userAgent = 'Codex Desktop/0.153.4 (Mac OS; arm64) dumb (cc_workbench; 1)'
+    const { child } = await start({ resumeSessionId: 'existing' })
+    expect(mocks.spawn.mock.calls[1]![1]).toContain('mcp_servers.external.enabled=false')
+    expect(mocks.spawn.mock.calls[1]![1]).not.toContain('web_search="disabled"')
+    expect(child.sent.find(m => m.method === 'thread/resume')?.params.config).toMatchObject({ web_search: 'live', features: { tool_call_mcp_elicitation: true }, mcp_servers: { external: { enabled: true, default_tools_approval_mode: 'prompt', tools: { create_note: { approval_mode: 'prompt' } } } } })
+  })
+
+  it.each([true, false])('relays MCP invocation approval once and returns a one-shot decision: %s', async allowed => {
+    enableExternal(); let decide!: (value: boolean) => void
+    const permit = vi.fn((_request: { tool: string; description: string }) => new Promise<boolean>(resolve => { decide = resolve }))
+    const { session, child } = await start({ requestPermission: permit }); const run = collect(session); await begun(child)
+    mcpItem(child); mcpRequest(child); mcpRequest(child)
+    await expect.poll(() => permit.mock.calls.length).toBe(1)
+    expect(child.sent.some(m => m.id === 0)).toBe(false)
+    const request = permit.mock.calls[0]![0]
+    expect(request).toEqual({ tool: 'mcp__external__create_note', description: expect.stringContaining('review me') })
+    expect(JSON.stringify(request)).not.toContain('credential-value')
+    decide(allowed)
+    await expect.poll(() => child.sent.find(m => m.id === 0)?.result).toEqual({ action: allowed ? 'accept' : 'decline', content: null, _meta: null })
+    mcpRequest(child); await Promise.resolve()
+    expect(child.sent.filter(m => m.id === 0)).toHaveLength(1)
+    expect(run.events).toContainEqual(expect.objectContaining({ kind: 'tool_call', activity: expect.objectContaining({ id: 'mcp-1', status: 'running' }) }))
+    completed(child); await run.done
+  })
+
+  it.each(['cancel', 'resolved', 'completed', 'exit'])('never accepts a late MCP approval after %s', async action => {
+    enableExternal(); let decide!: (value: boolean) => void, signal!: AbortSignal
+    const { session, child } = await start({ requestPermission: (_request: unknown, s: AbortSignal) => { signal = s; return new Promise<boolean>(resolve => { decide = resolve }) } })
+    const run = collect(session); await begun(child); mcpItem(child); mcpRequest(child)
+    await expect.poll(() => !!decide).toBe(true)
+    if (action === 'cancel') await session.cancel!()
+    if (action === 'resolved') child.notify('serverRequest/resolved', { threadId: 'thread-1', requestId: 0 })
+    if (action === 'completed') completed(child)
+    if (action === 'exit') child.exit(7)
+    expect(signal.aborted).toBe(true)
+    decide(true); await Promise.resolve(); await Promise.resolve()
+    expect(child.sent.some(m => m.id === 0 && m.result?.action === 'accept')).toBe(false)
+    if (action === 'cancel' || action === 'completed') expect(child.sent.find(m => m.id === 0)?.result).toEqual({ action: 'decline', content: null, _meta: null })
+    if (action === 'cancel' || action === 'resolved') completed(child, action === 'cancel' ? 'interrupted' : 'completed')
+    await run.done
+  })
+
+  it('declines foreign, stale, uncorrelated and unsupported MCP forms without stopping a valid turn', async () => {
+    enableExternal(); const permit = vi.fn(async () => true)
+    const { session, child } = await start({ requestPermission: permit }); const run = collect(session); await begun(child); mcpItem(child)
+    for (const [id, extra] of Object.entries({ foreign: { threadId: 'other' }, stale: { turnId: 'old' }, unrelated: { turnId: null }, missingItem: { serverName: 'other' }, form: { _meta: null, requestedSchema: { type: 'object', properties: { secret: { type: 'string' } } } }, url: { mode: 'url', url: 'https://example.test/auth' } })) mcpRequest(child, id, extra)
+    await expect.poll(() => child.sent.filter(m => m.result?.action === 'decline').length).toBe(6)
+    expect(permit).not.toHaveBeenCalled(); expect(child.kill).not.toHaveBeenCalled()
+    expect(run.events.some(e => e.kind === 'tool_call' && e.activity?.status === 'failed')).toBe(true)
+    completed(child); await run.done
+  })
+
+  it('declines an ambiguous tool binding without exposing raw arguments', async () => {
+    enableExternal(); const permit = vi.fn(async () => true)
+    const { session, child } = await start({ requestPermission: permit }); const run = collect(session); await begun(child)
+    mcpItem(child); mcpItem(child, { id: 'mcp-2', tool: 'another_tool' }); mcpRequest(child)
+    await expect.poll(() => child.sent.find(m => m.id === 0)?.result.action).toBe('decline')
+    expect(permit).not.toHaveBeenCalled(); expect(JSON.stringify(run.events)).not.toContain('credential-value')
+    completed(child); await run.done
+  })
+
+  it('refuses to enable external tools on an unverified older native protocol', async () => {
+    enableExternal(); initializeResponse.userAgent = 'cc_workbench/0.144.4 (Mac OS; arm64)'
+    await expect(start()).rejects.toThrow('0.153.4')
+    expect(children.at(-1)!.sent.some(m => m.method === 'thread/start')).toBe(false)
+  })
+
   it('steers the active native turn with exact text and waits for its matching acknowledgement', async () => {
     const { session, child } = await start(); const run = collect(session); await begun(child)
     expect(session.steer).toBeTypeOf('function')
@@ -220,9 +303,10 @@ describe('workbench Codex app-server', () => {
     expect(mocks.spawn.mock.calls[0]![2]).toMatchObject({ cwd: '/project' })
     expect(mocks.spawn.mock.calls[1]![1]).toEqual(expect.arrayContaining(['app-server', '--listen', 'stdio://', 'mcp_servers.personal.enabled=false']))
     expect(JSON.stringify(mocks.spawn.mock.calls)).not.toContain('do-not-forward')
-    expect(child.sent.map(m => m.method)).toEqual(['initialize', 'initialized', 'thread/start'])
+    expect(child.sent.map(m => m.method)).toEqual(['initialize', 'initialized', 'config/read', 'thread/start'])
     expect(child.sent[0]!.params.capabilities.experimentalApi).toBe(false)
-    expect(child.sent[2]!.params).toMatchObject({ cwd: '/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write', developerInstructions: 'task instructions', config: { mcp_servers: { personal: { enabled: false } } } })
+    expect(child.sent[2]!.params).toEqual({ cwd: '/project', includeLayers: false })
+    expect(child.sent[3]!.params).toMatchObject({ cwd: '/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write', developerInstructions: 'task instructions', config: { web_search: 'cached', mcp_servers: { personal: { enabled: false } } } })
   })
 
   it('resumes exactly the supplied native thread without a new thread', async () => {

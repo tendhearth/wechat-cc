@@ -3,6 +3,7 @@ import type { AgentActivity, AgentEvent, AgentProject, AgentProvider, AgentSessi
 import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind } from './user-tier'
 import { WORKBENCH_PERMISSION_DESCRIPTION_MAX, WORKBENCH_PERMISSION_TOOL_MAX } from './workbench/permissions'
 import { validateUserInputAnswers, validateUserInputRequest } from './workbench/user-input'
+import { isCompanionMcp, nativeMcpInputPreview } from './workbench/claude-native-config'
 import { log } from '../lib/log'
 import { AsyncQueue } from './async-queue'
 import { isAuthFail } from './auth-fail'
@@ -130,12 +131,13 @@ function taskInputPreview(input: Record<string, unknown>): string | null {
   }
 }
 
-/** Claude's task-only permission gate. Workbench has no messaging or memory
- * MCP surface; local built-ins retain the existing trusted/solo/strict
+/** Claude's task-only permission gate. Workbench has no CC-private messaging
+ * or personal-memory MCP surface; local built-ins retain trusted/solo/strict
  * allow/relay/deny policy, with relay decisions owned by the active task run. */
 export function makeWorkbenchClaudeCanUseTool(
   requestPermission?: SpawnContext['requestPermission'],
   requestUserInput?: SpawnContext['requestUserInput'],
+  admittedMcpServers: readonly string[] = [],
 ): CanUseTool {
   return async (toolName, input, options) => {
     if (options.signal.aborted) {
@@ -171,7 +173,15 @@ export function makeWorkbenchClaudeCanUseTool(
       } catch { return denied }
     }
     if (toolName.startsWith('mcp__')) {
-      return { behavior: 'deny', message: 'Task sessions cannot use messaging, memory, or other MCP tools.' } satisfies PermissionResult
+      const denied = { behavior:'deny',message:'The task tool was not admitted, or approval was denied or expired.' } satisfies PermissionResult
+      const server = admittedMcpServers.find(name => !isCompanionMcp(name) && toolName.startsWith(`mcp__${name}__`) && toolName.length > name.length + 7)
+      if (!server || !requestPermission || toolName.length > WORKBENCH_PERMISSION_TOOL_MAX) return denied
+      const inputPreview = nativeMcpInputPreview(input)
+      if (!inputPreview || inputPreview.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX - 256) return denied
+      try {
+        const allowed = await requestPermission({tool:toolName,description:`${toolName}\n${inputPreview}`}, options.signal)
+        return allowed && !options.signal.aborted ? {behavior:'allow'} : denied
+      } catch { return denied }
     }
     const kind = classifyToolUse(toolName, input)
     // Load after provider module initialization. permission-relay depends on

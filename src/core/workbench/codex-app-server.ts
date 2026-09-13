@@ -1,15 +1,17 @@
 import { spawn } from 'node:child_process'
 import type { AgentEvent, AgentProvider } from '../agent-provider'
-import { discoverWorkbenchCodexConfig, workbenchCodexArgs, workbenchCodexEnv } from './codex-config'
+import { discoverWorkbenchCodexConfig, workbenchCodexArgs, workbenchCodexEnv, workbenchCodexNativeConfig } from './codex-config'
 import { validateUserInputAnswers, validateUserInputRequest } from './user-input'
 import { codexActivityEvent, codexItemId } from './codex-activity'
+import { codexMcpApproval, supportsCodexMcpApproval } from './codex-mcp-approval'
+import { codexNativeCapabilityNotice } from './native-capability-notice'
 
 type RpcId = string | number
 // The JSONL boundary is checked below before any request is routed or action accepted.
 type ObjectValue = Record<string, any>
 interface Message { id?: RpcId; method?: string; params?: ObjectValue; result?: ObjectValue; error?: { code?: number; message?: string } }
 interface Options { codexPathOverride: string; model?: string; rpcTimeoutMs?: number; closeTimeoutMs?: number }
-interface Approval { controller: AbortController; turn: Turn; rejection: 'decline' | 'cancel' }
+interface Approval { controller: AbortController; turn: Turn; rejection: 'decline' | 'cancel'; mcp?: boolean }
 interface UserQuestion { controller: AbortController; turn: Turn }
 interface Turn { id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; completedItems: Set<string>; questionIds: Set<RpcId>; startedAt: number }
 
@@ -36,7 +38,10 @@ const onlyKeys = (value: ObjectValue, keys: string[]) => Object.keys(value).ever
 const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every(item => typeof item === 'string')
 const rejectionDecision = (params?: ObjectValue): 'decline' | 'cancel' => Array.isArray(params?.availableDecisions) && !params.availableDecisions.includes('decline') && params.availableDecisions.includes('cancel') ? 'cancel' : 'decline'
 const isUserQuestion = (message: Message) => message.method === 'item/tool/requestUserInput'
-const rejectedRequest = (message: Message) => isUserQuestion(message) ? { answers: {} } : { decision: rejectionDecision(message.params) }
+const isMcpRequest = (message: Message) => message.method === 'mcpServer/elicitation/request'
+const trackedRequest = (message: Message) => isUserQuestion(message) || isMcpRequest(message)
+const declinedMcp = () => ({ action: 'decline', content: null, _meta: null })
+const rejectedRequest = (message: Message) => isMcpRequest(message) ? declinedMcp() : isUserQuestion(message) ? { answers: {} } : { decision: rejectionDecision(message.params) }
 const networkAmendment = (value: unknown) => object(value) && onlyKeys(value, ['host', 'action']) && typeof value.host === 'string' && ['allow', 'deny'].includes(value.action)
 const approvalDecision = (value: unknown) => {
   if (typeof value === 'string') return ['accept', 'acceptForSession', 'decline', 'cancel'].includes(value)
@@ -80,8 +85,12 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
   return {
     async spawn(project, context) {
       if (process.platform === 'win32') throw new Error('Codex 工作台暂不支持 Windows：尚未验证任务进程树清理。')
-      const config = await discoverWorkbenchCodexConfig(options.codexPathOverride, project.path)
-      const child = spawn(options.codexPathOverride, [...workbenchCodexArgs(config), 'app-server', '--listen', 'stdio://'], {
+      const discovery = await discoverWorkbenchCodexConfig(options.codexPathOverride, project.path)
+      // Startup has no turn. Keep MCPs disabled while reading the native layers,
+      // without overwriting the user's web-search mode before config/read.
+      const { web_search: _startupSearch, ...startupConfig } = discovery.config
+      const enabledMcp = new Set<string>()
+      const child = spawn(options.codexPathOverride, [...workbenchCodexArgs(startupConfig), 'app-server', '--listen', 'stdio://'], {
         cwd: project.path, env: workbenchCodexEnv(), stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true, detached: true,
       })
@@ -106,7 +115,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         const queuedTurn = turn ?? active
         if (queuedTurn) queuedTurn.early = queuedTurn.early.filter(message => {
           if (!rpcId(message.id)) return true
-          if (isUserQuestion(message)) {
+          if (trackedRequest(message)) {
             if (queuedTurn.questionIds.has(message.id)) return false
             queuedTurn.questionIds.add(message.id)
           }
@@ -116,7 +125,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         for (const [id, entry] of approvals) {
           if (turn && entry.turn !== turn) continue
           approvals.delete(id); entry.controller.abort()
-          if (reply) send({ id, result: { decision: entry.rejection } })
+          if (reply) send({ id, result: entry.mcp ? declinedMcp() : { decision: entry.rejection } })
         }
         for (const [id, entry] of questions) {
           if (turn && entry.turn !== turn) continue
@@ -248,12 +257,36 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           send({ id, result: { answers: answer === null ? {} : Object.fromEntries(Object.entries(answer).map(([key, values]) => [key, { answers: values }])) } })
         })
       }
+      const onMcpApproval = (message: Message, turn: Turn) => {
+        const id = message.id!, params = message.params!
+        if (turn.questionIds.has(id)) return
+        turn.questionIds.add(id)
+        const permission = codexMcpApproval(params, turn.items.values(), turn.completedItems, enabledMcp)
+        if (!permission) {
+          send({ id, result: declinedMcp() })
+          turn.events.push({ kind: 'tool_call', tool: 'mcpElicitation', activity: {
+            id: `mcp-request-${String(id).slice(0, 100)}`, type: 'tool', status: 'failed', label: '工具请求未能处理',
+            detail: '此工具需要尚未支持的表单、外部认证，或无法唯一核实的调用；已拒绝本次请求。',
+          } })
+          return
+        }
+        const controller = new AbortController(), entry: Approval = { controller, turn, rejection: 'decline', mcp: true }
+        approvals.set(id, entry)
+        void Promise.resolve().then(() => !controller.signal.aborted && active === turn && !turn.cancelled && context.requestPermission
+          ? context.requestPermission(permission, controller.signal) : false,
+        ).catch(() => false).then(allow => {
+          if (approvals.get(id) !== entry || controller.signal.aborted || active !== turn || turn.cancelled || closing) return
+          send({ id, result: { action: allow === true ? 'accept' : 'decline', content: null, _meta: null } }, () => {
+            if (approvals.get(id) === entry) approvals.delete(id)
+          })
+        })
+      }
       const route = (message: Message) => {
         if (message.method) {
           const params = message.params ?? {}
           const isRequest = rpcId(message.id)
           const approval = message.method === 'item/commandExecution/requestApproval' || message.method === 'item/fileChange/requestApproval'
-          if (isRequest && !approval && !isUserQuestion(message)) {
+          if (isRequest && !approval && !trackedRequest(message)) {
             if (message.method === 'item/permissions/requestApproval') send({ id: message.id, result: { permissions: {}, scope: 'turn' } })
             else { send({ id: message.id, error: { code: -32601, message: 'This request is not supported in CC Workbench.' } }); fatal('codex_unsupported_server_request') }
             return
@@ -271,7 +304,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
             return
           }
           const turn = active
-          if (isRequest && isUserQuestion(message) && params.threadId === threadId && turn?.questionIds.has(message.id!)) return
+          if (isRequest && trackedRequest(message) && params.threadId === threadId && turn?.questionIds.has(message.id!)) return
           if (!turn || params.threadId !== threadId || (turn.cancelled && message.method !== 'turn/completed') || closing) {
             if (isRequest) send({ id: message.id, result: rejectedRequest(message) })
             return
@@ -282,7 +315,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           }
           const eventTurn = message.method.startsWith('turn/') ? params.turn?.id : params.turnId
           if (eventTurn !== turn.id) { if (isRequest) send({ id: message.id, result: rejectedRequest(message) }); return }
-          if (isRequest) { if (isUserQuestion(message)) onQuestion(message, turn); else onApproval(message, turn); return }
+          if (isRequest) { if (isMcpRequest(message)) onMcpApproval(message, turn); else if (isUserQuestion(message)) onQuestion(message, turn); else onApproval(message, turn); return }
           if (message.method === 'item/started' && object(params.item)) {
             const item = params.item
             if (codexItemId(item.id) && turn.completedItems.has(item.id)) return
@@ -350,8 +383,14 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         if (!closing) fatal(`codex_process_exited: ${signal ?? code ?? 'unknown'}`)
       })
       try {
-        await request('initialize', { clientInfo: { name: 'cc_workbench', title: 'CC Workbench', version: '0.6.4' }, capabilities: { experimentalApi: false, requestAttestation: false } })
+        const initialized = await request('initialize', { clientInfo: { name: 'cc_workbench', title: 'CC Workbench', version: '0.6.4' }, capabilities: { experimentalApi: false, requestAttestation: false } })
         send({ method: 'initialized' })
+        const native = await request('config/read', { cwd: project.path, includeLayers: false })
+        const config = workbenchCodexNativeConfig(discovery.servers, native.config)
+        for (const [name, server] of Object.entries(config.mcp_servers)) if (server.enabled) enabledMcp.add(name)
+        const capabilityNotice = codexNativeCapabilityNotice(discovery.servers, enabledMcp)
+        if (capabilityNotice) context.reportNotice?.(capabilityNotice)
+        if (enabledMcp.size && !supportsCodexMcpApproval(initialized.userAgent)) throw new Error('原生工具逐次批准需要 Codex 0.153.4 或更新版本，请先更新 Codex。')
         const response = await request(context.resumeSessionId ? 'thread/resume' : 'thread/start', {
           ...(context.resumeSessionId ? { threadId: context.resumeSessionId, excludeTurns: true } : {}),
           cwd: project.path, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write',

@@ -41,6 +41,21 @@ beforeEach(() => {
 afterEach(async () => { await service?.shutdown(); db.close(); rmSync(root, { recursive: true, force: true }) })
 
 describe('persistent workbench', () => {
+  it('records bounded native capability notices only for their current uncancelled run',async()=>{
+    const contexts:SpawnContext[]=[],turns:Array<{resolve:()=>void}>=[]
+    setup({async spawn(_p,ctx){const turn=deferred();contexts.push(ctx);turns.push(turn);return{async *dispatch(){yield {kind:'init',sessionId:'session-one'};await turn.promise;yield result},async close(){turn.resolve()}}}})
+    const task=create();await expect.poll(()=>contexts.length).toBe(1)
+    const firstRun=service.detail(task.id).runId
+    contexts[0]!.reportNotice?.('暂未带入：'+ 'x'.repeat(3000))
+    const notice=testStore.events(task.id).find(e=>e.kind==='system'&&e.text.startsWith('暂未带入：'))
+    expect(notice?.runId).toBe(firstRun);expect(notice?.text.length).toBeLessThanOrEqual(2000)
+    turns[0]!.resolve();await settle(task.id)
+    service.continueTask(task.id,'next');await expect.poll(()=>contexts.length).toBe(2)
+    contexts[0]!.reportNotice?.('stale provider callback')
+    await service.cancel(task.id)
+    contexts[1]!.reportNotice?.('cancelled provider callback')
+    expect(testStore.events(task.id).map(e=>e.text).join('\n')).not.toContain('provider callback')
+  })
   it('gives the executor a fresh idle budget after the user answers a question',async()=>{
     setup({async spawn(_p,ctx){return{async *dispatch(){await ctx.requestUserInput!({questions:[{id:'q',header:'选择',question:'做什么？',options:[],allowOther:true}]});await new Promise(r=>setTimeout(r,80));yield result},async close(){}}}},undefined,undefined,{timeoutMs:160})
     const task=create();await expect.poll(()=>service.detail(task.id).questions.length,{interval:5}).toBe(1)

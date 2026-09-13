@@ -1,7 +1,11 @@
 import { spawn } from 'node:child_process'
+import { isCompanionMcp } from './native-tools'
 
 export const workbenchFeatureConfig = { features: { plugins: false, apps: false, hooks: false } }
 const shellEnvironmentKeys = ['PATH', 'SHELL', 'TMPDIR', 'TEMP', 'TMP', 'HOME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'LOGNAME', 'USER']
+const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
+const serverName = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]+$/.test(value)
+const configFailure = () => new Error('无法核实 Codex 的工具配置；暂不启动任务。')
 
 /** An empty MCP table merges with inherited config; disable every discovered name. */
 export function workbenchCodexConfig(servers: unknown) {
@@ -18,6 +22,33 @@ export function workbenchCodexConfig(servers: unknown) {
     web_search: 'disabled',
     mcp_servers: Object.fromEntries(servers.map(server => [server.name, { enabled: false }])),
   }
+}
+
+/** Only overrides are returned: native credentials and tool allow/deny lists
+ * remain in their original config layers. Discovery alone never enables MCP. */
+export function workbenchCodexNativeConfig(discovered: unknown, effective: unknown) {
+  const base = workbenchCodexConfig(discovered)
+  if (!object(effective) || (effective.mcp_servers != null && !object(effective.mcp_servers))) throw configFailure()
+  const native = effective.mcp_servers as Record<string, unknown> | undefined ?? {}
+  const entries = discovered as { name: string; enabled?: boolean }[]
+  if (entries.some(entry => entry.enabled != null && typeof entry.enabled !== 'boolean')) throw configFailure()
+  const enabled = new Set(entries.filter(entry => entry.enabled === true).map(entry => entry.name))
+  const servers: Record<string, { enabled: boolean; default_tools_approval_mode?: string; tools?: Record<string, { approval_mode: string }> }> = Object.assign(Object.create(null), base.mcp_servers)
+  for (const [name, value] of Object.entries(native)) {
+    if (!serverName(name) || !object(value)) throw configFailure()
+    servers[name] = { enabled: false }
+    if (!enabled.has(name) || isCompanionMcp(name, value) || (value.environment_id != null && value.environment_id !== 'local') || value.experimental_environment === 'remote') continue
+    if (typeof value.command !== 'string' && typeof value.url !== 'string') continue
+    if (value.tools != null && !object(value.tools)) throw configFailure()
+    const overrides: Record<string, { approval_mode: string }> = Object.fromEntries(Object.entries(value.tools ?? {}).map(([tool, settings]) => {
+      if (!tool || /[\u0000-\u001f\u007f]/.test(tool) || !object(settings)) throw configFailure()
+      return [tool, { approval_mode: 'prompt' }]
+    }))
+    servers[name] = { enabled: true, default_tools_approval_mode: 'prompt', ...(Object.keys(overrides).length ? { tools: overrides } : {}) }
+  }
+  const search = effective.web_search ?? 'cached'
+  if (!['disabled', 'cached', 'live'].includes(String(search))) throw configFailure()
+  return { ...base, features: { ...base.features, tool_call_mcp_elicitation: true }, web_search: search as string, mcp_servers: servers }
 }
 
 /** CLI -c uses TOML values. All keys are fixed or validated MCP names. */
@@ -42,7 +73,7 @@ export function workbenchCodexEnv(source: NodeJS.ProcessEnv = process.env): Node
 
 /** Read configuration names only, in the selected project; never launch MCPs. */
 export async function discoverWorkbenchCodexConfig(binary: string, cwd: string) {
-  return new Promise<ReturnType<typeof workbenchCodexConfig>>((resolve, reject) => {
+  return new Promise<{ config: ReturnType<typeof workbenchCodexConfig>; servers: unknown }>((resolve, reject) => {
     const child = spawn(binary, [...workbenchCodexArgs(workbenchFeatureConfig), 'mcp', 'list', '--json'], {
       cwd, env: workbenchCodexEnv(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     })
@@ -63,8 +94,11 @@ export async function discoverWorkbenchCodexConfig(binary: string, cwd: string) 
       if (settled) return
       if (code !== 0) { fail(); return }
       try {
-        const config = workbenchCodexConfig(JSON.parse(output))
-        settled = true; clearTimeout(timer); resolve(config)
+        const parsed: unknown = JSON.parse(output), config = workbenchCodexConfig(parsed)
+        // Transport credentials need not survive discovery. The native process
+        // resolves its own config; CC retains only identity and enabled state.
+        const servers = (parsed as { name: string; enabled?: boolean }[]).map(({ name, enabled }) => ({ name, enabled }))
+        settled = true; clearTimeout(timer); resolve({ config, servers })
       } catch { fail() }
     })
   })
