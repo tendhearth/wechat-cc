@@ -944,6 +944,8 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
     matches!(
         (method, route),
         ("GET", "/v1/workbench")
+            | ("GET", "/v1/workbench/sessions")
+            | ("GET", "/v1/workbench/session")
             | ("GET", "/v1/workbench/task")
             | ("GET", "/v1/workbench/artifact")
             | ("POST", "/v1/workbench/create")
@@ -1207,6 +1209,8 @@ mod workbench_proxy_tests {
         for (method, path) in [
             ("GET", "/v1/workbench"),
             ("GET", "/v1/workbench/task?id=A1B2C3D4"),
+            ("GET", "/v1/workbench/sessions?providerId=claude"),
+            ("GET", "/v1/workbench/session?key=opaque"),
             ("GET", "/v1/workbench/artifact?id=A1B2C3D4&artifactId=file-1"),
             ("POST", "/v1/workbench/create"),
             ("POST", "/v1/workbench/continue"),
@@ -1224,6 +1228,9 @@ mod workbench_proxy_tests {
             ("GET", "/v1/workbench/archive"),
             ("POST", "/v1/workbench/archive/extra"),
             ("GET", "/v1/workbench/task/extra"),
+            ("POST", "/v1/workbench/sessions"),
+            ("POST", "/v1/workbench/session"),
+            ("GET", "/v1/workbench/session/extra"),
             ("GET", "/v1/workbench/../companion/presence"),
             ("DELETE", "/v1/workbench/task?id=A1B2C3D4"),
             ("GET", "/v1/customer-review"),

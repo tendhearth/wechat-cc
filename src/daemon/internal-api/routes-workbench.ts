@@ -1,3 +1,4 @@
+import { decodeNativeHistoryKey, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryProvider } from '../../core/workbench/native-history'
 import { isAbsolute } from 'node:path'
 import type { WorkbenchListQuery } from '../../core/workbench/store'
 import type { InternalApiDeps, RouteHandler, RouteTable } from './types'
@@ -26,6 +27,8 @@ function errorCode(err: unknown): string {
 function mappedError(err: unknown): ReturnType<RouteHandler> {
   const code = errorCode(err)
   if (code === 'workbench_archived' || code === 'workbench_busy' || code === 'artifact_changed' || code === 'permission_stale' || code === 'restart_confirmation_required' || code === 'restart_confirmation_stale') return { status: 409, body: { error: code } }
+  if (code === 'native_history_unsupported') return {status:422,body:{error:code}}
+  if (code === 'native_history_unavailable') return {status:503,body:{error:code}}
   if (code === 'not_found') return { status: 404, body: { error: code } }
   if (code === 'unavailable_provider') return { status: 422, body: { error: code } }
   if (code.startsWith('invalid_')) return { status: 400, body: { error: code } }
@@ -47,6 +50,28 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       }
       try {return {status:200,body:await (Object.keys(filters).length ? deps.workbench.list(filters) : deps.workbench.list())}}
       catch(err){return mappedError(err)}
+    },
+
+    'GET /v1/workbench/sessions': async query => {
+      for(const key of ['providerId','q','limit','cursor','cwd'])if(query.getAll(key).length>1)return invalid()
+      const providerId=query.get('providerId')
+      if(!providerId||!PROVIDERS.has(providerId))return invalid()
+      if(!deps.workbench)return {status:503,body:{error:'workbench_not_wired'}}
+      try {
+        const rawLimit=query.get('limit');if(rawLimit!==null&&!/^\d+$/.test(rawLimit))return invalid()
+        const input=normalizeHistoryList({q:query.get('q')??'',limit:rawLimit===null?50:Number(rawLimit),...(query.has('cursor')?{cursor:query.get('cursor')!}:{}),...(query.has('cwd')?{cwd:query.get('cwd')!}:{})})
+        return {status:200,body:await deps.workbench.listNativeHistory(providerId as NativeHistoryProvider,input)}
+      }catch(error){return mappedError(error)}
+    },
+    'GET /v1/workbench/session': async query => {
+      for(const field of ['key','limit','cursor'])if(query.getAll(field).length>1)return invalid()
+      if(!deps.workbench)return {status:503,body:{error:'workbench_not_wired'}}
+      try {
+        const key=query.get('key')??'';decodeNativeHistoryKey(key)
+        const rawLimit=query.get('limit');if(rawLimit!==null&&!/^\d+$/.test(rawLimit))return invalid()
+        const input=normalizeHistoryRead({limit:rawLimit===null?100:Number(rawLimit),...(query.has('cursor')?{cursor:query.get('cursor')!}:{})})
+        return {status:200,body:await deps.workbench.readNativeHistory(key,input)}
+      }catch(error){return mappedError(error)}
     },
 
     'GET /v1/workbench/task': async (query) => {

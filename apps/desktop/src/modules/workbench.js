@@ -1,5 +1,6 @@
 // @ts-check
 
+import { mountHistoryDialog } from './workbench-history.js'
 import { Marked } from '../vendor/marked.js'
 import { WORKBENCH_CODE_REVIEW_MIME, renderWorkbenchCodeReview } from './workbench-code-review.js'
 
@@ -14,9 +15,9 @@ import { WORKBENCH_CODE_REVIEW_MIME, renderWorkbenchCodeReview } from './workben
 /** @typedef {{task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation}} Detail */
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} TaskQuery */
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
-/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,page?:TaskPage,projectProviders?:Record<string,string>}} ListResult */
+/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],page?:TaskPage,projectProviders?:Record<string,string>}} ListResult */
 /** @typedef {{artifactId:string,html:string}|null} Preview */
-/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,preview:Preview,query?:TaskQuery,page?:TaskPage,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string}} WorkbenchState */
+/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,preview:Preview,query?:TaskQuery,page?:TaskPage,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string}} WorkbenchState */
 /** @typedef {{path:string,text:string,title:string,providerId:string,followup:string}} Draft */
 /** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number}} WorkbenchDeps */
 
@@ -176,7 +177,7 @@ export function renderWorkbench(state) {
     <header title="${escapeWorkbenchHtml(project.path)}"><h3 id="wb-project-${index}">${escapeWorkbenchHtml(project.label)}</h3><button type="button" class="wb-new wb-project-new" data-action="new-project-task" data-project-path="${escapeWorkbenchHtml(project.path)}" aria-label="在 ${escapeWorkbenchHtml(project.label)} 新建任务">＋</button></header>
     <div>${project.tasks.map(task => renderTask(task, state.providers, state.loadingId ?? state.selectedId)).join('')}</div>
   </section>`).join('') : `<p class="wb-empty-copy">${listEmptyCopy}</p>`
-  const listControls = `<div class="wb-list-controls"><form id="wb-search-form" class="wb-search"><label class="wb-sr-only" for="wb-search">搜索任务名称、文件夹或任务编号</label><input id="wb-search" name="q" type="search" maxlength="200" placeholder="搜索任务或文件夹" value="${escapeWorkbenchHtml(query.q)}"><button class="wb-new" type="submit" aria-label="搜索任务">搜索</button></form><div class="wb-list-filters"><button class="wb-new" type="button" data-action="toggle-archived" aria-pressed="${query.archived === 'only'}">${query.archived === 'only' ? '返回任务' : '已归档'}</button>${query.q ? '<button class="wb-new" type="button" data-action="clear-search">清除搜索</button>' : ''}</div>${query.archived === 'only' ? '<p class="wb-archive-label">已归档的任务</p>' : ''}</div>`
+  const listControls = `<div class="wb-list-controls"><form id="wb-search-form" class="wb-search"><label class="wb-sr-only" for="wb-search">搜索任务名称、文件夹或任务编号</label><input id="wb-search" name="q" type="search" maxlength="200" placeholder="搜索任务或文件夹" value="${escapeWorkbenchHtml(query.q)}"><button class="wb-new" type="submit" aria-label="搜索任务">搜索</button></form><div class="wb-list-filters"><button class="wb-new" type="button" data-action="toggle-archived" aria-pressed="${query.archived === 'only'}">${query.archived === 'only' ? '返回任务' : '已归档'}</button>${state.historyProviders?.length?'<button class="wb-new" type="button" data-action="native-history">已有会话</button>':''}${query.q ? '<button class="wb-new" type="button" data-action="clear-search">清除搜索</button>' : ''}</div>${query.archived === 'only' ? '<p class="wb-archive-label">已归档的任务</p>' : ''}</div>`
   const pagination = state.page?.hasMore ? `<button type="button" class="wb-new wb-load-more" data-action="load-more"${state.loadingMore ? ' disabled' : ''}>${state.loadingMore ? '正在加载…' : '加载更早的任务'}</button>` : ''
   const helper = state.providers.find(p => p.id === detail?.task.providerId)?.displayName || detail?.task.providerId || '执行助手'
   const events = detail?.events ?? []
@@ -377,6 +378,7 @@ export function initWorkbenchPage(deps) {
   /** @type {Set<string>} */
   const busy = new Set()
   let alive = true
+  let nativeHistoryCleanup = /** @type {(()=>void)|null} */ (null)
   let artifactRequest = 0
   let navigationGeneration = 0
   /** @type {string|null} */
@@ -522,6 +524,7 @@ export function initWorkbenchPage(deps) {
       resultReturnPositions.delete(renderedScope)
       return
     }
+    if (action === 'native-history') { captureDraft(); nativeHistoryCleanup?.(); nativeHistoryCleanup=mountHistoryDialog(deps.invokeWorkbenchApi,controller.state.historyProviders??[]); return }
     if (action === 'refresh') return controller.refresh().catch(fail)
     if (action === 'new-task') { captureDraft(); navigationGeneration++; artifactRequest++; return controller.newTask() }
     if (action === 'new-project-task' && target.dataset.projectPath) {
@@ -634,7 +637,7 @@ export function initWorkbenchPage(deps) {
     resumeSearch = input('wb-search')?.value ?? searchDraft
     if (controller.state.selectedId) resumeScope = `task:${controller.state.selectedId}`
     else if (document.getElementById('wb-create-form')) resumeScope = scopeFor(controller.state)
-    alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
+    nativeHistoryCleanup?.(); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
   } }
   return controller
 }

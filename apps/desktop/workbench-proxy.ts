@@ -2,7 +2,7 @@ import {readFile} from 'node:fs/promises'
 import {join} from 'node:path'
 
 const ROUTES = new Set([
-  'GET /v1/workbench','GET /v1/workbench/task','GET /v1/workbench/artifact',
+  'GET /v1/workbench','GET /v1/workbench/sessions','GET /v1/workbench/session','GET /v1/workbench/task','GET /v1/workbench/artifact',
   'POST /v1/workbench/create','POST /v1/workbench/continue','POST /v1/workbench/cancel','POST /v1/workbench/approve','POST /v1/workbench/permission','POST /v1/workbench/archive',
 ])
 interface Options {

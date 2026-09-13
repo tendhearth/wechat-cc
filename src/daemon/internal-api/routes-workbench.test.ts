@@ -52,6 +52,21 @@ describe('Workbench internal HTTP API', () => {
     return { request, trustedToken, operatorToken }
   }
 
+  it('reads native history only through exact admin routes with bounded query input',async()=>{
+    const listNativeHistory=vi.fn(async()=>({items:[],nextCursor:null,coverage:'native_indexed_history'})),readNativeHistory=vi.fn(async()=>({messages:[],nextCursor:null}))
+    const {request,trustedToken}=await start(service({listNativeHistory,readNativeHistory}))
+    const key=Buffer.from(JSON.stringify({v:1,providerId:'codex',nativeId:'source-id'})).toString('base64url')
+    expect((await request('/v1/workbench/sessions?providerId=codex&q=hello&limit=25')).status).toBe(200)
+    expect(listNativeHistory).toHaveBeenCalledWith('codex',{q:'hello',limit:25})
+    expect((await request(`/v1/workbench/session?key=${key}&limit=50`)).status).toBe(200)
+    expect(readNativeHistory).toHaveBeenCalledWith(key,{limit:50})
+    for(const route of ['/v1/workbench/sessions?providerId=codex','/v1/workbench/session?key='+key])expect((await request(route,{},trustedToken)).status).toBe(403)
+    for(const suffix of ['providerId=unknown','providerId=codex&providerId=claude','providerId=codex&limit=101','providerId=codex&q='+ 'x'.repeat(201)])expect((await request('/v1/workbench/sessions?'+suffix)).status).toBe(400)
+    expect((await request('/v1/workbench/session?key=../secret')).status).toBe(400)
+    expect((await request('/v1/workbench/sessions/extra?providerId=codex')).status).toBe(404)
+    expect(minTierFor('GET /v1/workbench/sessions')).toBe('admin');expect(minTierFor('GET /v1/workbench/session')).toBe('admin')
+  })
+
   it('declares every Workbench route admin-only and rejects the trusted file token', async () => {
     const { request, trustedToken } = await start(service())
     const keys = [

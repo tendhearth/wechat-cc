@@ -1,3 +1,5 @@
+import {createClaudeHistoryReader} from '../../core/workbench/native-claude-history'
+import {createCodexHistoryReader} from '../../core/workbench/native-codex-history'
 import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk'
 import type { Db } from '../../lib/db'
 import { loadAgentConfig, modelForProvider } from '../../lib/agent-config'
@@ -52,6 +54,7 @@ export function wireWorkbench(opts: {
     // starting a private app-server with native task-scoped approval requests.
   }),codex.opts)
   return makeWorkbenchService({
+    nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
     store:makeWorkbenchStore(opts.db),registry,stateDir:opts.stateDir,ownerChatId,
     defaultProvider:opts.boot.defaultProviderId,holdBusy:opts.boot.holdBusy,
     // Empty allowlist is deliberate: office tasks never send messages or read

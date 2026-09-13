@@ -174,7 +174,7 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           // requests with this operator credential; the webview never sees
           // the token. Keep the grant to the exact Workbench methods.
           'GET /v1/workbench',
-          'GET /v1/workbench/task',
+          'GET /v1/workbench/sessions','GET /v1/workbench/session','GET /v1/workbench/task',
           'POST /v1/workbench/create',
           'POST /v1/workbench/continue',
           'POST /v1/workbench/cancel',

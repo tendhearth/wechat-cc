@@ -5,6 +5,7 @@ import type { ProviderRegistry } from '../provider-registry'
 import { TIER_PROFILES, sessionAuthEnv } from '../user-tier'
 import { canonicalProject, collectArtifacts, outputDirectory, readArtifactSnapshot, saveArtifactSnapshot } from './artifacts'
 import { captureGitBaseline, finishGitReview, serializeGitReview, GIT_REVIEW_MIME, type GitBaseline } from './git-review'
+import { decodeNativeHistoryKey, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryReader, type NativeHistoryProvider, type NativeHistoryListInput, type NativeHistoryReadInput } from './native-history'
 import { restartPreview, type Continuation, type RestartPreview } from './continuation'
 import { makeRunPermissions, type PermissionDecision, type RunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
 import { findPathBlocker, type PathReservation, type WaitingFor } from './scheduler'
@@ -16,6 +17,7 @@ interface Options {
   stateDir: string
   ownerChatId: () => string | null
   defaultProvider?: string
+  nativeHistory?:Partial<Record<NativeHistoryProvider,NativeHistoryReader>>
   mintSessionToken?: (sessionKey: string) => string
   revokeSessionToken?: (sessionKey: string) => void
   holdBusy?: (label: string) => () => void
@@ -356,11 +358,21 @@ export function makeWorkbenchService(opts: Options) {
   }
 
   const service={
+    async listNativeHistory(providerId:NativeHistoryProvider,input:NativeHistoryListInput) {
+      const reader=opts.nativeHistory?.[providerId]
+      if(!reader)throw new Error('native_history_unsupported')
+      return reader.list(normalizeHistoryList(input))
+    },
+    async readNativeHistory(key:string,input:NativeHistoryReadInput) {
+      const {providerId}=decodeNativeHistoryKey(key),reader=opts.nativeHistory?.[providerId]
+      if(!reader)throw new Error('native_history_unsupported')
+      return reader.read(key,normalizeHistoryRead(input))
+    },
     list(query:WorkbenchListQuery={}) {
       const providers=SUPPORTED.flatMap(id => { const p=opts.registry.get(id); return p ? [{id,displayName:p.opts.displayName}] : [] })
       const result=store.listPage(query)
       const projectProviders=Object.fromEntries([...new Set(result.tasks.map(task=>task.path))].map(path=>[path,store.projectProvider(path)]))
-      return {tasks:result.tasks.map(task => taskView(task,true)),page:result.page,projectProviders,providers,defaultProvider:providers.find(p=>p.id===opts.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!opts.ownerChatId()}
+      return {tasks:result.tasks.map(task => taskView(task,true)),page:result.page,projectProviders,providers,historyProviders:Object.keys(opts.nativeHistory??{}),defaultProvider:providers.find(p=>p.id===opts.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!opts.ownerChatId()}
     },
     detail(id:string) {
       const detail=store.detail(id),running=runsByTask.get(id)

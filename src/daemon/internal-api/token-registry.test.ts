@@ -50,6 +50,8 @@ describe('token-registry', () => {
       'POST /v1/permissions/resolve',
       'POST /v1/federation/mint',
       'GET /v1/workbench',
+      'GET /v1/workbench/sessions',
+      'GET /v1/workbench/session',
       'GET /v1/workbench/task',
       'POST /v1/workbench/create',
       'POST /v1/workbench/continue',
@@ -63,7 +65,7 @@ describe('token-registry', () => {
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })
   })
 
-  it('operator token grants exactly the nine Workbench routes without widening agent tokens', () => {
+  it('operator token grants exactly the supported Workbench routes without widening agent tokens', () => {
     const r = makeTokenRegistry(() => 'ee'.repeat(32))
     r.registerOperatorToken('dd'.repeat(32))
     r.registerFileToken('cc'.repeat(32))
@@ -71,6 +73,8 @@ describe('token-registry', () => {
     const workbenchRoutes = [...(r.resolve('dd'.repeat(32))?.routeAllow ?? [])].filter(route => route.includes('/v1/workbench'))
     expect(workbenchRoutes).toEqual([
       'GET /v1/workbench',
+      'GET /v1/workbench/sessions',
+      'GET /v1/workbench/session',
       'GET /v1/workbench/task',
       'POST /v1/workbench/create',
       'POST /v1/workbench/continue',

@@ -23,6 +23,8 @@ describe('route-tiers', () => {
   it('task permission decisions require admin', () => {
     expect(minTierFor('POST /v1/workbench/permission')).toBe('admin')
     expect(ROUTE_MIN_TIER['POST /v1/workbench/archive']).toBe('admin')
+    expect(ROUTE_MIN_TIER['GET /v1/workbench/sessions']).toBe('admin')
+    expect(ROUTE_MIN_TIER['GET /v1/workbench/session']).toBe('admin')
   })
 
   it('reply/health/memory-read are guest; broadcast/a2a are trusted', () => {

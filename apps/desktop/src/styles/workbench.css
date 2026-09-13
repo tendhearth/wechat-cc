@@ -223,3 +223,17 @@
   .wb-welcome { padding-top:28px; }
   .wb-permissions { max-height:25vh; }
 }
+
+/* History is a temporary reader, not another permanent work column. */
+.wb-history-dialog { --wb-secondary:#68665e; --wb-text:#35342f; --wb-line:#e8e5dd; --wb-accent:#58654c; width:min(760px,calc(100vw - 32px)); height:min(700px,calc(100vh - 48px)); padding:0; border:1px solid #dedbd2; border-radius:12px; background:#fcfbf8; color:#35342f; font:14px/1.6 system-ui,sans-serif; box-shadow:0 20px 70px #29251b24; }
+.wb-history-dialog[open] { display:flex; flex-direction:column; }
+.wb-history-dialog::backdrop { background:#24251f45; }
+.wb-history-dialog>header { display:flex; align-items:start; justify-content:space-between; gap:20px; padding:20px 26px 14px; border-bottom:1px solid #e8e5dd; }
+.wb-history-dialog h2 { margin:0; font-size:18px; }.wb-history-dialog header p { margin:3px 0 0; color:#77746b; font-size:12px; }
+.wb-history-dialog button { font:inherit; cursor:pointer; }.wb-history-dialog button:disabled { opacity:.5; cursor:default; }
+.wb-history-dialog header button { border:0; background:transparent; color:#77746b; font-size:23px; line-height:1.2; }
+.wb-history-body { padding:20px 26px 30px; overflow:auto; min-height:0; }
+.wb-history-providers { display:flex; gap:6px; margin-bottom:14px; }.wb-history-providers button { border:0; background:transparent; color:#68665e; border-radius:6px; padding:5px 14px; }.wb-history-providers button[aria-pressed=true] { background:#eae9e1; color:#35342f; }
+.wb-history-search { display:flex; border:1px solid #dedbd2; border-radius:7px; margin-bottom:16px; }.wb-history-search input { min-width:0; flex:1; border:0; background:transparent; padding:9px 12px; color:inherit; font:inherit; }.wb-history-search button { border:0; background:transparent; color:#58654c; padding:8px 14px; }
+.wb-history-row { display:block; width:100%; padding:13px 8px; border:0; border-bottom:1px solid #e8e5dd; background:transparent; text-align:left; color:inherit; }.wb-history-row:hover { background:#f1f0ea; }.wb-history-row strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; }.wb-history-row span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#77746b; font-size:12px; }
+.wb-history-meta,.wb-history-note { color:#77746b; font-size:12px; }.wb-history-error { color:#8c532f; font-size:13px; }.wb-history-message { margin:24px 0; }.wb-history-message strong { font-size:12px; color:#77746b; font-weight:500; }.wb-history-message p { margin:5px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }.wb-history-dialog details { font-size:12px; color:#77746b; overflow-wrap:anywhere; }.wb-history-dialog h3 { font-size:17px; font-weight:500; overflow-wrap:anywhere; }

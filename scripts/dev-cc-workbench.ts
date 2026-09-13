@@ -1,3 +1,5 @@
+import {createClaudeHistoryReader} from '../src/core/workbench/native-claude-history'
+import {createCodexHistoryReader} from '../src/core/workbench/native-codex-history'
 /** Live development: production task engine, isolated state, existing companion untouched.
  * bun scripts/dev-cc-workbench.ts
  * Only workbench writes are enabled in the frontend; no sample tasks are seeded.
@@ -55,6 +57,7 @@ if(claudeBinary)registry.register('claude',createClaudeAgentProvider({
 // workbench routes are reachable through the frontend proxy in this runner.
 const api=createInternalApi({stateDir,daemonPid:process.pid} as InternalApiDeps)
 const workbench=makeWorkbenchService({
+    nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
   store:makeWorkbenchStore(db),registry,stateDir,ownerChatId:()=>null,defaultProvider:'codex',
   mintSessionToken:key=>api.mintSessionToken('trusted',key,{routeAllow:new Set()}),
   revokeSessionToken:key=>api.invalidateSession(key),
