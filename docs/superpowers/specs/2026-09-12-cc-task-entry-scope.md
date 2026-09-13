@@ -107,4 +107,5 @@ CC 负责组织项目、维持会话、登记执行状态、递送请求、呈�
 
 - 第一段：`ed4bc53c` 完成原生 Claude / Codex 单任务循环、权限、连续对话和沉浸导航。见 [单任务验证](../reports/2026-09-12-cc-task-loop-validation.md)。
 - 第二段：完成任务级并行、相同/父子目录 FIFO、任务独立的权限/停止/草稿/成果；真实 Claude 与 Codex 并行及服务重启后原会话续接已核对。见 [并发实施计划](../plans/2026-09-12-cc-task-concurrency.md) 与 [并发验证记录](../reports/2026-09-12-cc-task-concurrency-validation.md)。
-- 第三段尚未交付。当前能续接的是 CC 已绑定的原生会话，不能称为外部运行中会话接管，亦未实现 Claude ↔ Codex 成果交接动作。
+- 第三段：`41374425` 和 `43e61a66` 完成支持来源的原生历史导入、明确关闭声明后的同 ID 恢复，以及固定成果版本的检查和选中意见交回。真实 Claude / Codex 恢复与代码往返已验证，见 [原生历史与交接验收](../reports/2026-09-12-cc-native-history-handoff-validation.md)。仍不承诺接管外部正在运行的进程。
+- 日常阅读补齐：新回复跟随末尾、翻阅旧内容时提示更新、各任务的窗口内草稿刷新恢复。见 [连续阅读与草稿验证](../reports/2026-09-12-cc-workbench-reading-validation.md)。
