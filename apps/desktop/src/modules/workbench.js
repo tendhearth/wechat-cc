@@ -5,19 +5,21 @@ import { Marked } from '../vendor/marked.js'
 import { WORKBENCH_CODE_REVIEW_MIME, renderWorkbenchCodeReview } from './workbench-code-review.js'
 
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed'}} WaitingFor */
-/** @typedef {{id:string,title:string,path:string,providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,waitingFor?:WaitingFor|null}} Task */
-/** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number}} WorkbenchEvent */
+/** @typedef {{id:string,title:string,path:string,providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean}} Task */
+/** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,sourceId?:string|null}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
 /** @typedef {{id:string,taskId:string,tool:string,description:string,createdAt:number}} Permission */
 /** @typedef {{id:string,displayName:string}} Provider */
 /** @typedef {{token:string,context:string,eventCount:number,includedEventCount:number,truncated:boolean}} RestartPreview */
 /** @typedef {{mode:string,restart?:RestartPreview}} Continuation */
-/** @typedef {{task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation}} Detail */
+/** @typedef {import('../../../../src/core/workbench/native-adoption').NativeSource} NativeSource */
+/** @typedef {import('../../../../src/core/workbench/native-adoption').NativeResumeDecision} NativeResume */
+/** @typedef {{requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation}} Detail */
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} TaskQuery */
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],page?:TaskPage,projectProviders?:Record<string,string>}} ListResult */
 /** @typedef {{artifactId:string,html:string}|null} Preview */
-/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,preview:Preview,query?:TaskQuery,page?:TaskPage,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string}} WorkbenchState */
+/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,preview:Preview,query?:TaskQuery,page?:TaskPage,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string}} WorkbenchState */
 /** @typedef {{path:string,text:string,title:string,providerId:string,followup:string}} Draft */
 /** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number}} WorkbenchDeps */
 
@@ -94,8 +96,8 @@ function statusLabel(status) {
   return ({ queued: '等待中', running: '进行中', cancelling: '正在停止', completed: '已完成', failed: '未完成', cancelled: '已停止', interrupted: '已中断' })[status] ?? status
 }
 
-/** @param {string} status @param {Continuation} [continuation] @param {number|null} [archivedAt] */
-export function renderTaskControls(status, continuation, archivedAt) {
+/** @param {string} status @param {Continuation} [continuation] @param {number|null} [archivedAt] @param {{requiresClose:boolean,decision?:NativeResume|null}} [native] */
+export function renderTaskControls(status, continuation, archivedAt,native) {
   if (archivedAt != null) return '<div class="wb-archived-controls"><p>已归档 <span>恢复后可继续</span></p><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>'
   if (status === 'queued') {
     return `<form class="wb-followup wb-followup-waiting" aria-label="任务补充草稿">
@@ -111,6 +113,12 @@ export function renderTaskControls(status, continuation, archivedAt) {
     <label class="wb-sr-only" for="wb-followup-text">补充要求</label><textarea id="wb-followup-text" rows="2" placeholder="可以先写在这里"></textarea>
     <div class="wb-control-actions"><small>正在等待执行程序确认退出。</small><button class="wb-btn" type="button" disabled>正在停止…</button></div>
   </form>`
+  if(native?.requiresClose){
+    const decision=native.decision,fresh=continuation?.mode==='restart_required'
+    const note=decision?`请先关闭原来的 ${escapeWorkbenchHtml(decision.providerId==='claude'?'Claude':'Codex')} 执行程序，再从这里继续。CC 无法替你确认外部程序已退出。`:fresh?'原会话暂时无法恢复。可以查看将带入的记录，再决定新开一轮。':'已加入任务列表，尚未执行。写下接着要做的事，就能从原会话继续。'
+    const context=fresh&&continuation?.restart?`<details id="wb-restart-context"><summary>查看将带入的记录</summary><pre>${escapeWorkbenchHtml(continuation.restart.context)}</pre></details>`:''
+    return `<section class="wb-recovery"><p>${note}</p>${decision?.changedSinceImport?'<p>原会话加入后有新内容；继续会使用原工具现在保存的历史。</p>':''}${context}</section><form class="wb-followup" data-action="${decision?'native-continue':'native-prepare'}" data-native-token="${escapeWorkbenchHtml(decision?.token??'')}" data-restart-token="${escapeWorkbenchHtml(fresh?continuation?.restart?.token??'':'')}"><label class="wb-sr-only" for="wb-followup-text">继续这个任务</label><textarea id="wb-followup-text" rows="2" placeholder="接下来要做什么…"></textarea><button class="wb-btn wb-btn-primary" type="submit">${decision?(fresh?'原程序已关闭，带记录新开':'原程序已关闭，继续'):fresh?'查看恢复方式':'继续'}</button></form>`
+  }
   if (continuation?.mode === 'restart_required' && continuation.restart) {
     const restart = continuation.restart
     return `<section class="wb-recovery" aria-label="继续任务前的恢复说明"><h3>原会话无法恢复</h3><p>可以带上这项任务的记录，新开一轮。原对话和成果仍然保留。</p><details id="wb-restart-context"><summary>查看将带入的记录 · ${restart.includedEventCount} / ${restart.eventCount} 条</summary>${restart.truncated ? '<p>更早的记录或过长内容未包含。</p>' : ''}<pre>${escapeWorkbenchHtml(restart.context)}</pre></details></section>
@@ -156,10 +164,10 @@ function renderTask(task, providers, selectedId) {
   const waiting = task.waitingFor?.reason === 'writer_not_closed'
     ? `，等待执行程序退出确认，阻塞任务「${task.waitingFor.title}」`
     : task.waitingFor ? `，等待「${task.waitingFor.title}」` : ''
-  const accessibleLabel = `${title}，${provider}，${statusLabel(task.status)}${attention}${waiting}${updated ? `，更新于 ${updated}` : ''}`
+  const accessibleLabel = `${title}，${provider}，${(task.importedOnly?'尚未执行':statusLabel(task.status))}${attention}${waiting}${updated ? `，更新于 ${updated}` : ''}`
   const stateHtml = pendingPermissionCount > 0
-    ? `<span class="wb-task-attention" data-status="${escapeWorkbenchHtml(task.status)}" aria-label="${escapeWorkbenchHtml(statusLabel(task.status))}，${escapeWorkbenchHtml(pendingPermissionCount)} 项权限请求等你确认">等你确认 · ${escapeWorkbenchHtml(pendingPermissionCount)}</span>`
-    : `<span class="wb-status" data-status="${escapeWorkbenchHtml(task.status)}">${escapeWorkbenchHtml(waitingLabel || statusLabel(task.status))}</span>`
+    ? `<span class="wb-task-attention" data-status="${escapeWorkbenchHtml(task.importedOnly?'imported':task.status)}" aria-label="${escapeWorkbenchHtml((task.importedOnly?'尚未执行':statusLabel(task.status)))}，${escapeWorkbenchHtml(pendingPermissionCount)} 项权限请求等你确认">等你确认 · ${escapeWorkbenchHtml(pendingPermissionCount)}</span>`
+    : `<span class="wb-status" data-status="${escapeWorkbenchHtml(task.importedOnly?'imported':task.status)}">${escapeWorkbenchHtml(waitingLabel || (task.importedOnly?'尚未执行':statusLabel(task.status)))}</span>`
   return `<button type="button" class="wb-task ${task.id === selectedId ? 'is-selected' : ''}" data-task-id="${escapeWorkbenchHtml(task.id)}" aria-label="${escapeWorkbenchHtml(accessibleLabel)}"${updated ? ` title="${escapeWorkbenchHtml(`${title} · ${updated}`)}"` : ''}>
     <span class="wb-task-title" title="${escapeWorkbenchHtml(title)}">${escapeWorkbenchHtml(title)}</span>
     <span class="wb-task-meta"><span class="wb-task-provider">${escapeWorkbenchHtml(provider)}</span>${stateHtml}</span>
@@ -195,7 +203,7 @@ export function renderWorkbench(state) {
     ? `<p class="wb-queue-guidance" role="status">${queuedCopy}</p>`
     : ''
   const dialogueHtml = dialogue.length ? dialogue.map(event => `<article class="wb-message" data-kind="${escapeWorkbenchHtml(event.kind)}">
-    <header><span>${event.kind === 'user' ? '你' : `<span class="wb-provider-badge">${escapeWorkbenchHtml(helper)}</span>`}</span><time>${escapeWorkbenchHtml(time(event.createdAt))}</time></header>
+    <header><span>${event.kind === 'user' ? '你' : `<span class="wb-provider-badge">${escapeWorkbenchHtml(helper)}</span>`}</span><time>${escapeWorkbenchHtml((event.sourceId?'原会话记录':time(event.createdAt)))}</time></header>
     ${event.kind === 'text' ? `<div class="wb-message-body wb-markdown">${renderWorkbenchMarkdown(event.text)}</div>` : `<p class="wb-message-body">${escapeWorkbenchHtml(event.text)}</p>`}
   </article>`).join('') : `<p class="wb-empty-copy">${detail?.task.status === 'running' ? `${escapeWorkbenchHtml(helper)} 正在处理，有回复时会按顺序显示在这里。` : detail?.task.status === 'queued' ? queuedCopy : '这项任务还没有对话记录。'}</p>`
   const operationHtml = operations.length ? `<details id="wb-tools" class="wb-disclosure wb-tools"><summary>工具与运行记录 <span>${operations.length} 条</span></summary><div class="wb-events">${operations.map(event => `<article class="wb-event" data-kind="${escapeWorkbenchHtml(event.kind)}"><div class="wb-event-meta"><span>${escapeWorkbenchHtml(event.kind === 'tool_call' ? '工具' : event.kind === 'error' ? '错误' : '系统')}</span><time>${escapeWorkbenchHtml(time(event.createdAt))}</time></div><p>${escapeWorkbenchHtml(event.text)}</p></article>`).join('')}</div></details>` : ''
@@ -203,7 +211,7 @@ export function renderWorkbench(state) {
   const artifacts = detail?.artifacts?.length ? detail.artifacts.map(artifact => `<button type="button" class="wb-artifact ${artifact.id === state.selectedArtifactId ? 'is-selected' : ''}" data-artifact-id="${escapeWorkbenchHtml(artifact.id)}"><span>${escapeWorkbenchHtml(artifact.name)}</span><small>${escapeWorkbenchHtml((artifact.size / 1024).toFixed(1))} KB · ${artifact.approvedAt ? '已确认' : '待确认'}</small></button>`).join('') : ''
   const previewContent = selectedArtifact && state.preview?.artifactId === selectedArtifact.id ? state.preview.html : '<p class="wb-preview-hint">选择文件，查看保存的成果版本。</p>'
   const artifactHtml = detail?.artifacts?.length ? `<details id="wb-artifacts" class="wb-disclosure wb-artifacts"><summary><span>成果</span><small>${detail.artifacts.length} 件</small></summary><button type="button" class="wb-new wb-back-dialogue" data-action="back-to-dialogue">返回对话</button><div class="wb-artifact-list">${artifacts}</div><div id="wb-preview" class="wb-preview">${selectedArtifact ? `<p class="wb-preview-name">${escapeWorkbenchHtml(selectedArtifact.name)}</p><div class="wb-preview-content">${previewContent}</div><button type="button" class="wb-btn" data-action="download-artifact">下载</button>${selectedArtifact.approvedAt ? '<p class="wb-approved">已确认此版本</p>' : '<button type="button" class="wb-btn wb-btn-primary" data-action="approve-artifact">确认这份成果</button>'}` : ''}</div></details>` : ''
-  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${escapeWorkbenchHtml(pathParts(detail.task.path).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2></div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<span class="wb-status" data-status="${escapeWorkbenchHtml(detail.task.status)}">${escapeWorkbenchHtml(statusLabel(detail.task.status))}</span><details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div></dl>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button></div>' : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
+  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${escapeWorkbenchHtml(pathParts(detail.task.path).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2></div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<span class="wb-status" data-status="${escapeWorkbenchHtml(detail.task.importedOnly?'imported':detail.task.status)}">${escapeWorkbenchHtml((detail.task.importedOnly?'尚未执行':statusLabel(detail.task.status)))}</span><details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div>${detail.source?`<div><dt>原会话</dt><dd>${escapeWorkbenchHtml(detail.source.providerId)} · <code>${escapeWorkbenchHtml(detail.source.nativeId)}</code></dd></div><div><dt>已保存的原记录</dt><dd>${detail.source.selectedMessageCount} 段${detail.source.truncated?' · 部分文字':''}</dd></div>`:''}</dl>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button></div>' : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
   const content = detail ? `
     <section class="wb-dialogue" aria-live="polite">${dialogueHtml}</section>
     ${queuedGuidance}
@@ -221,7 +229,7 @@ export function renderWorkbench(state) {
         <label>任务名称 <span class="wb-optional">可选</span><input id="wb-title" name="title" placeholder="留空时使用任务要求的前 40 个字"></label></details>
         <button class="wb-btn wb-btn-primary" type="submit"${state.providers.length ? '' : ' disabled'}>开始任务</button>
       </form></div>`
-  const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderTaskControls(detail.task.status, detail.continuation, detail.task.archivedAt)}</div></div>` : ''
+  const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderTaskControls(detail.task.status, detail.continuation, detail.task.archivedAt,{requiresClose:!!detail.requiresExternalClose,decision:state.nativeResume?.taskId===detail.task.id?state.nativeResume:null})}</div></div>` : ''
   return `<div class="workbench-shell"><aside class="wb-sidebar"><header><p class="wb-kicker">任务</p><button type="button" class="wb-new" data-action="new-task">＋ 新建</button></header>${listControls}<div class="wb-task-list">${taskList}</div>${pagination}</aside><main class="wb-main">${taskHeader}<div class="wb-content"><div class="wb-content-inner">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${content}</div></div>${controls}</main></div>`
 }
 
@@ -468,6 +476,9 @@ export function initWorkbenchPage(deps) {
   const fail = error => {
     if (!alive) return
     const message = error instanceof Error ? error.message : String(error)
+    if(/external_close_confirmation_stale|native_history_changed/.test(message))controller.state.nativeResume=null
+    const nativeErrors=/** @type {Record<string,string>} */({'external_close_confirmation_required':'请先确认原执行程序已关闭，再从这里继续。','external_close_confirmation_stale':'原会话或恢复信息已更新。任务尚未开始，请重新点击继续。','native_session_busy':'这条会话或文件夹仍被另一项任务占用，请先结束原任务。','native_session_identity_mismatch':'原工具返回了另一条会话，CC 已停止处理并保留原记录。','native_history_changed':'原会话记录已更新，请重新打开确认。','native_history_unsupported':'当前版本不支持读取这类原会话。','native_history_unavailable':'暂时读不到原会话，记录仍然保留，请稍后重试。'})
+    if(nativeErrors[message]){controller.state.error=nativeErrors[message];controller.paint();return}
     const recovery = recoveryCode(error)
     controller.state.error = recovery === 'stale' ? '记录已更新，尚未重新开始。请核对新的恢复内容。'
       : recovery === 'required' ? '原会话无法恢复，任务尚未开始。请查看恢复说明后再决定。'
@@ -524,7 +535,7 @@ export function initWorkbenchPage(deps) {
       resultReturnPositions.delete(renderedScope)
       return
     }
-    if (action === 'native-history') { captureDraft(); nativeHistoryCleanup?.(); nativeHistoryCleanup=mountHistoryDialog(deps.invokeWorkbenchApi,controller.state.historyProviders??[]); return }
+    if (action === 'native-history') { captureDraft(); nativeHistoryCleanup?.(); nativeHistoryCleanup=mountHistoryDialog(deps.invokeWorkbenchApi,controller.state.historyProviders??[],async id=>{if(!alive)return;navigationGeneration++;await controller.refresh({force:true});await controller.selectTask(id)}); return }
     if (action === 'refresh') return controller.refresh().catch(fail)
     if (action === 'new-task') { captureDraft(); navigationGeneration++; artifactRequest++; return controller.newTask() }
     if (action === 'new-project-task' && target.dataset.projectPath) {
@@ -604,18 +615,31 @@ export function initWorkbenchPage(deps) {
       }
       return
     }
-    if (form.dataset.action === 'continue' || form.dataset.action === 'restart') {
+    if(form.dataset.action==='native-prepare'){
+      const id=controller.state.selectedId,text=input('wb-followup-text')?.value
+      if(!id||!text?.trim()||busy.has(`task:${id}`))return
+      captureDraft();busy.add(`task:${id}`)
+      try{
+        const mode=controller.state.detail?.continuation?.mode==='restart_required'?'fresh_context':'native_resume'
+        const decision=/** @type {NativeResume} */(await deps.invokeWorkbenchApi('POST','/v1/workbench/prepare-resume',{id,mode}))
+        if(alive&&controller.state.selectedId===id){controller.state.nativeResume=decision;controller.paint()}
+      }catch(error){await controller.refresh({force:true}).catch(()=>{});if(alive&&controller.state.selectedId===id)fail(error)}
+      finally{busy.delete(`task:${id}`)}
+      return
+    }
+    if (form.dataset.action === 'continue' || form.dataset.action === 'restart' || form.dataset.action==='native-continue') {
       const field = input('wb-followup-text')
       const text = field?.value
       if (!text?.trim()) return
       const taskId = controller.state.selectedId
       captureDraft()
       if (controller.state.detail?.task.archivedAt != null) return fail(new Error('workbench_archived'))
-      const restart = form.dataset.action === 'restart'
+      const sourceClosedToken=form.dataset.action==='native-continue'?form.dataset.nativeToken:undefined
+      const restart = form.dataset.action === 'restart'||(!!sourceClosedToken&&controller.state.detail?.continuation?.mode==='restart_required')
       if (!restart && controller.state.detail?.continuation?.mode === 'restart_required') return fail(new Error('restart_confirmation_required'))
       const restartToken = form.dataset.restartToken
       if (restart && !/^[a-f0-9]{64}$/.test(restartToken ?? '')) return fail(new Error('restart_confirmation_stale'))
-      if (await mutate('POST', '/v1/workbench/continue', { id: taskId, text, ...(restart ? { restartToken } : {}) })) {
+      if (await mutate('POST', '/v1/workbench/continue', { id: taskId, text, ...(restart ? { restartToken } : {}),...(sourceClosedToken?{sourceClosedToken}:{}) })) {
         const scope = `task:${taskId}`
         const draft = pageDrafts.get(scope)
         if (draft.followup === text) draft.followup = ''

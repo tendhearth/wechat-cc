@@ -17,7 +17,7 @@ import { stripMarkdown, INLINE_MAX, type CliEventHub, type CliSessionInfo } from
 export const RESUME_TIMEOUT_MS = 10 * 60_000
 const TRANSCRIPT_READ_MAX = 512 * 1024
 
-export interface RunResult { code: number | null; stdout: string; stderr: string; timedOut: boolean }
+export interface RunResult { code: number | null; stdout: string; stderr: string; timedOut: boolean; closed?:boolean }
 export type Runner = (cmd: string, args: string[], cwd: string, timeoutMs: number) => Promise<RunResult>
 
 /**
@@ -28,11 +28,12 @@ export const defaultRunner: Runner = (cmd, args, cwd, timeoutMs) => new Promise(
   const posix = process.platform !== 'win32'
   const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: posix })
   let stdout = '', stderr = '', timedOut = false, done = false
+  const closed=()=>{if(!child.pid)return false;if(!posix)return child.exitCode!==null;try{process.kill(-child.pid,0);return false}catch(error){return (error as NodeJS.ErrnoException).code==='ESRCH'}}
   const finish = (code: number | null, extraErr?: string) => {
     if (done) return
     done = true
     clearTimeout(t)
-    resolve({ code, stdout, stderr: extraErr ? stderr + extraErr : stderr, timedOut })
+    resolve({ code, stdout, stderr: extraErr ? stderr + extraErr : stderr, timedOut,closed:closed() })
   }
   const killAll = () => {
     try { if (posix && child.pid) process.kill(-child.pid, 'SIGTERM'); else child.kill('SIGTERM') } catch { /* 已经没了 */ }
@@ -47,6 +48,8 @@ export const defaultRunner: Runner = (cmd, args, cwd, timeoutMs) => new Promise(
 })
 
 export interface CliReplyCoreDeps {
+  executionConflict?:(s:CliSessionInfo)=>boolean
+  reserveExecution?:(s:CliSessionInfo)=>(closed:boolean)=>void
   hub: Pick<CliEventHub, 'lookup' | 'sessions'>
   run?: Runner
   holdBusy?: (label: string) => () => void
@@ -85,18 +88,22 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
       catch (err) { return { ok: false, error: `读不到记录:${err instanceof Error ? err.message : String(err)}` } }
     },
     async resume(s, text) {
+      if(deps.executionConflict?.(s))return{kind:'failed',text:'这条会话或文件夹已由 CC 工作台管理，请在那里继续。'}
+      let settle:((closed:boolean)=>void)|undefined,closed=false
+      try{settle=deps.reserveExecution?.(s)}catch{return{kind:'failed',text:'这个文件夹有另一项任务正在执行，请稍后再试。'}}
       const { cmd, args } = resumeCommand(s.source, s.session_id, text, deps.dangerously)
       const release = deps.holdBusy?.(`cli-resume:${s.session_id.slice(0, 6)}`) ?? (() => {})
       try {
         deps.log('CLI_REPLY', `resume ${s.source}/${s.session_id.slice(0, 6)} in ${s.cwd}`)
         const r = await run(cmd, args, s.cwd, RESUME_TIMEOUT_MS)
+        closed=r.closed===true
         const out = r.stdout.trim()
         if (r.timedOut) return { kind: 'timeout', text: out }
         if (r.code !== 0 && !out) return { kind: 'failed', text: `exit ${r.code ?? '?'}:${r.stderr.trim().slice(0, 400) || '没有错误输出'}` }
         return { kind: 'ok', text: out || '(没有输出)' }
       } catch (err) {
         return { kind: 'failed', text: err instanceof Error ? err.message : String(err) }
-      } finally { release() }
+      } finally { release();settle?.(closed) }
     },
   }
 }

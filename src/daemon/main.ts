@@ -65,6 +65,8 @@ import { SUPERVISED_ENV } from '../core/supervised-env'
 import { SubsystemSupervisor } from './subsystems'
 import { removeAgyGlobalMcp } from './bootstrap/agy-mcp-config'
 import { removeCursorGlobalMcp } from './bootstrap/cursor-mcp-config'
+import {makeExecutionClaims} from '../core/workbench/execution-claims'
+import {randomUUID as claimUuid} from 'node:crypto'
 import { wireWorkbench } from './bootstrap/wire-workbench'
 
 function errorDetails(err: unknown): string {
@@ -593,7 +595,14 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       status: (h) => cliPermissions.status(h),
       wait: (h, ms) => forwarder?.ownsHash(h) ? forwarder.permissionWait(h, ms) : cliPermissions.wait(h, ms),
     })
-    const replyCore = makeCliReplyCore({ hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously })
+    const legacyClaims=makeExecutionClaims()
+    const executionConflict=(s:import('../core/cli-events').CliSessionInfo)=>workbench?.conflictsExternal(s.cwd,s.source,s.session_id)??false
+    const reserveExecution=(s:import('../core/cli-events').CliSessionInfo)=>{
+      const release=legacyClaims.acquire({owner:claimUuid(),path:s.cwd,providerId:s.source,nativeId:s.session_id})
+      // A legacy runner's early pipe return is not proof that its writer exited.
+      return(closed:boolean)=>{if(closed)release()}
+    }
+    const replyCore = makeCliReplyCore({ executionConflict,reserveExecution,hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously })
     const handExecutor = makeHandReplyExecutor(replyCore, {
       hub: cliEvents,
       notifyBrain: async (text) => {
@@ -622,6 +631,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     })
     // 「看 码」「@码 文本」:主人对某条终端会话说话。只认主人;那边的会话 v1 先说明。
     const cliReplyHandler = makeCliReplyHandler({
+      executionConflict,reserveExecution,
       hub: cliEvents,
       isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
       sendMessage: (c, t) => ilink.sendMessage(c, t),
@@ -632,7 +642,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       localMachine: osHostname(),
       ...(a2a ? { remote: makeRemoteReply({ registry: a2a.registry, client: a2a.client, selfId: boot.selfId }) } : {}),
     })
-    const workbench = wireWorkbench({ db, stateDir, boot, internalApi, askUser: ilink.askUser, log: (t,l) => log(t,l) })
+    const workbench = wireWorkbench({ db, stateDir, boot, internalApi,
+      executionConflict:(path,providerId,nativeId)=>boot.sessionManager.hasProjectConflict(path)||
+        (!!nativeId&&Object.values(boot.sessionStore.all()).some(s=>s.provider===providerId&&s.session_id===nativeId))||
+        legacyClaims.conflicts({owner:'workbench',path,providerId,nativeId})||
+        (!!nativeId&&cliEvents.sessions().some(s=>s.source===providerId&&s.session_id===nativeId&&!!s.origin_agent)), askUser: ilink.askUser, log: (t,l) => log(t,l) })
+    boot.sessionManager.setExecutionGuard((path,providerId,nativeId)=>workbench.conflictsExternal(path,providerId,nativeId))
     internalApi.setWorkbench(workbench)
     lc.register({ name: 'workbench', stop: () => workbench.shutdown() })
     const wired = wireMain({

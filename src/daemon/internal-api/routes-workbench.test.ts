@@ -238,4 +238,21 @@ describe('Workbench internal HTTP API', () => {
     expect(response.status).toBe(409)
     expect(await response.json()).toEqual({error:'permission_stale'})
   })
+  it('requires owner routes for import and closure preparation and forwards native tokens separately',async()=>{
+    const importNativeHistory=vi.fn(async()=>({task:TASK,source:{id:'source'},created:true})),prepareNativeResume=vi.fn(async()=>({token:'a'.repeat(64)})),continueNativeTask=vi.fn(async()=>TASK)
+    const workbench=service({importNativeHistory,prepareNativeResume,continueNativeTask}),{request,operatorToken,trustedToken}=await start(workbench)
+    const key=Buffer.from(JSON.stringify({v:1,providerId:'claude',nativeId:'native'})).toString('base64url'),input={key,pages:[{limit:100,cursor:null,sourceFingerprint:'b'.repeat(64)}],messageIds:['u']}
+    for(const [path,body] of [['/v1/workbench/import',input],['/v1/workbench/prepare-resume',{id:TASK.id}] ] as const){
+      expect(minTierFor('POST '+path)).toBe('admin')
+      expect((await request(path,{method:'POST',body:JSON.stringify(body)},trustedToken)).status).toBe(403)
+      expect((await request(path,{method:'POST',body:JSON.stringify(body)},operatorToken)).status).toBe(200)
+      expect((await request(path+'/extra',{method:'POST',body:JSON.stringify(body)},operatorToken)).status).toBe(404)
+    }
+    expect(importNativeHistory).toHaveBeenCalledWith(input);expect(prepareNativeResume).toHaveBeenCalledWith(TASK.id,'native_resume')
+    const response=await request('/v1/workbench/continue',{method:'POST',body:JSON.stringify({id:TASK.id,text:'next',sourceClosedToken:'a'.repeat(64)})},operatorToken)
+    expect(response.status).toBe(202);expect(continueNativeTask).toHaveBeenCalledWith(TASK.id,'next','a'.repeat(64),undefined);expect(workbench.continueTask).not.toHaveBeenCalled()
+    expect((await request('/v1/workbench/import',{method:'POST',body:JSON.stringify({...input,pages:[]})},operatorToken)).status).toBe(400)
+    expect((await request('/v1/workbench/continue',{method:'POST',body:JSON.stringify({id:TASK.id,text:'next',sourceClosedToken:'bad'})},operatorToken)).status).toBe(400)
+  })
+
 })

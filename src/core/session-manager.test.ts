@@ -1009,3 +1009,17 @@ function mockSession() {
     events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
   })
 }
+
+it('guards cached dispatch and retains directory ownership while a close is pending',async()=>{
+ let blocked=false,finish!:()=>void
+ const registry=createProviderRegistry(),spawn=vi.fn(async()=>({async *dispatch(){yield{kind:'text' as const,text:'x'}},close:()=>new Promise<void>(r=>finish=r)}))
+ registry.register('claude',{spawn},{displayName:'Claude',canResume:()=>false})
+ const manager=new SessionManager({registry,maxConcurrent:5,idleEvictMs:1000})
+ manager.setExecutionGuard(()=>blocked)
+ const req={alias:'one',path:'/project',providerId:'claude',chatId:'owner',tierProfile:TIER_PROFILES.trusted,permissionMode:'strict' as const}
+ const handle=await manager.acquire(req);expect(manager.hasProjectConflict('/project/sub')).toBe(true)
+ blocked=true;await expect(manager.acquire(req)).rejects.toThrow('native_session_busy')
+ await expect((async()=>{for await(const _ of handle.dispatch('should not start')){}})()).rejects.toThrow('native_session_busy')
+ const closing=manager.release(req);expect(manager.hasProjectConflict('/project/sub')).toBe(true);finish();await closing
+ expect(manager.hasProjectConflict('/project/sub')).toBe(false);expect(spawn).toHaveBeenCalledTimes(1)
+})

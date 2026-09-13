@@ -3,6 +3,8 @@ import type { AgentEvent, AgentSession } from './agent-provider'
 import type { ProviderRegistry } from './provider-registry'
 import { tierNameFromProfile, sessionAuthEnv, type TierProfile, type UserTier } from './user-tier'
 import type { PermissionMode } from './capability-matrix'
+import {pathsConflict} from './workbench/scheduler'
+import {canonicalClaimPath} from './workbench/execution-claims'
 import { log } from '../lib/log'
 
 export interface SessionManagerOptions {
@@ -138,6 +140,18 @@ export class SessionManager {
   // promise instead of forking a duplicate subprocess. Without this, the
   // companion tick + an inbound message racing on the same chat would both
   // miss the cache and both spawn — first one ends up orphaned.
+  private executionGuard:((path:string,providerId:string,nativeId:string|null)=>boolean)|undefined
+  private readonly pendingPaths=new Map<string,string>()
+  private readonly closingPaths=new Map<string,string>()
+  setExecutionGuard(guard:(path:string,providerId:string,nativeId:string|null)=>boolean){this.executionGuard=guard}
+  hasProjectConflict(path:string):boolean {
+    const target=canonicalClaimPath(path)
+    return [...this.pendingPaths.values(),...this.closingPaths.values(),...[...this.sessions.values()].map(s=>s.handle.path)].some(p=>pathsConflict(canonicalClaimPath(p),target))
+  }
+  private checkExecution(req:AcquireRequest){
+    const nativeId=this.opts.sessionStore?.get({alias:req.alias,provider:req.providerId,chatId:req.chatId})?.session_id??null
+    if(this.executionGuard?.(req.path,req.providerId,nativeId))throw new Error('native_session_busy')
+  }
   private readonly pending = new Map<string, Promise<SessionHandle>>()
   // In-flight dispatch counter keyed by (provider, alias, chatId). Each
   // dispatch() iterator increments on first .next() entry and decrements
@@ -161,6 +175,7 @@ export class SessionManager {
    * required for per-chat tier policy + per-chat conversation isolation.
    */
   async acquire(req: AcquireRequest): Promise<SessionHandle> {
+    this.checkExecution(req)
     const k = sessionKey({ alias: req.alias, providerId: req.providerId, chatId: req.chatId })
     const existing = this.sessions.get(k)
     if (existing) {
@@ -169,8 +184,9 @@ export class SessionManager {
     }
     const inFlight = this.pending.get(k)
     if (inFlight) return inFlight
+    this.pendingPaths.set(k,req.path)
     const promise = this.spawn(req).finally(() => {
-      this.pending.delete(k)
+      this.pending.delete(k);this.pendingPaths.delete(k)
     })
     this.pending.set(k, promise)
     return promise
@@ -243,13 +259,14 @@ export class SessionManager {
 
     const sessionStore = this.opts.sessionStore
     const k = sessionKey({ alias: req.alias, providerId: req.providerId, chatId: req.chatId })
-    const inFlight = this.inFlight
+    const inFlight = this.inFlight,checkExecution=()=>this.checkExecution(req)
     const handle: SessionHandle = {
       alias: req.alias,
       path: req.path,
       providerId: req.providerId,
       lastUsedAt: Date.now(),
       dispatch(text: string): AsyncIterable<AgentEvent> {
+        checkExecution()
         handle.lastUsedAt = Date.now()
         const inner = session.dispatch(text)
         // Track in-flight under (provider, alias, chatId) so sweepIdle
@@ -259,6 +276,7 @@ export class SessionManager {
         // mid-stream.
         return {
           async *[Symbol.asyncIterator]() {
+            checkExecution()
             inFlight.set(k, (inFlight.get(k) ?? 0) + 1)
             try {
               for await (const ev of inner) {
@@ -292,12 +310,14 @@ export class SessionManager {
     const key = sessionKey(k)
     const s = this.sessions.get(key)
     if (!s) return
+    this.closingPaths.set(key,s.handle.path)
     this.sessions.delete(key)
     // Revoke the session's auth token on EVERY release path (coordinator +
     // internal LRU/idle/shutdown eviction). The token key matches what the
     // coordinator minted: provider/alias/chatId (NOT the cache `sessionKey`).
     this.opts.invalidateSessionToken?.(`${k.providerId}/${k.alias}/${k.chatId}`)
     await s.handle.close()
+    this.closingPaths.delete(key)
   }
 
   /**

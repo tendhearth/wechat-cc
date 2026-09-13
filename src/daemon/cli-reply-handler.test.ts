@@ -144,3 +144,11 @@ describe('手侧 A2A 面(makeHandReplyExecutor)', () => {
     expect(await exec({ kind: 'say', session_id: s.session_id })).toEqual({ ok: false, error: 'text_required' })
   })
 })
+
+it('refuses workbench-owned native replies and only releases a positively closed legacy writer',async()=>{
+ const run=vi.fn(async()=>({code:0,stdout:'done',stderr:'',timedOut:false,closed:false})),settle=vi.fn(),reserveExecution=vi.fn(()=>settle)
+ const deps={hub:{lookup:()=>sess(),sessions:()=>[sess()]},run,reserveExecution,log:()=>{},dangerously:false}
+ expect((await makeCliReplyCore({...deps,executionConflict:()=>true}).resume(sess(),'go')).kind).toBe('failed');expect(run).not.toHaveBeenCalled();expect(reserveExecution).not.toHaveBeenCalled()
+ await makeCliReplyCore(deps).resume(sess(),'go');expect(settle).toHaveBeenCalledWith(false)
+ run.mockResolvedValueOnce({code:0,stdout:'done',stderr:'',timedOut:false,closed:true});await makeCliReplyCore(deps).resume(sess(),'go');expect(settle).toHaveBeenLastCalledWith(true)
+})

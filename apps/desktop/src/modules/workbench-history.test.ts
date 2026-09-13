@@ -1,5 +1,5 @@
 import {expect,it,vi} from 'vitest'
-import {createHistoryController,renderHistoryPanel} from './workbench-history.js'
+import {createHistoryController,renderHistoryPanel,nativeImportMessages} from './workbench-history.js'
 import type {NativeHistoryItem} from '../../../../src/core/workbench/native-history'
 const item:NativeHistoryItem={key:'opaque',providerId:'claude',nativeId:'original',title:'旧任务',cwd:'/project',updatedAt:1,remote:false,observedState:'unknown',titleSource:'native_custom'}
 it('reads only when opened, pages empty search batches and never dispatches a task',async()=>{
@@ -39,4 +39,15 @@ it('retries an initial read failure on the same native identity',async()=>{
  expect(renderHistoryPanel(controller.state)).toContain('data-history="retry"')
  await controller.retry();expect(controller.state.preview?.session.nativeId).toBe('original')
  expect(invoke.mock.calls).toHaveLength(2)
+})
+
+it('imports only the displayed bounded selection and never resumes on import',async()=>{
+ const page={session:item,messages:[{id:'u',role:'user',text:'original',truncated:false}],nextCursor:null,page:{limit:100,cursor:null},sourceFingerprint:'a'.repeat(64),truncated:false}
+ const invoke=vi.fn(async(method:string)=>method==='GET'?page:{task:{id:'new-task'}})
+ const controller=createHistoryController(invoke,()=>{},['claude']);await controller.select(item)
+ expect(await controller.importSelected()).toBe('new-task')
+ expect(invoke.mock.calls[1]).toEqual(['POST','/v1/workbench/import',{key:item.key,pages:[{...page.page,sourceFingerprint:page.sourceFingerprint}],messageIds:['u']}])
+ expect(JSON.stringify(invoke.mock.calls)).not.toContain('continue')
+ const selected=nativeImportMessages({...page,messages:[{id:'large',role:'user',text:'x'.repeat(24001),truncated:false},{id:'recent',role:'assistant',text:'recent',truncated:false}] } as any)
+ expect(selected.map(m=>m.id)).toEqual(['recent'])
 })

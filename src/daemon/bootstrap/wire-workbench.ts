@@ -33,6 +33,7 @@ export function workbenchClaudeOptions(base: Options, instructions: string, perm
 
 export function wireWorkbench(opts: {
   db: Db; stateDir: string; boot: Bootstrap; internalApi: Pick<InternalApi, 'mintSessionToken' | 'invalidateSession'>
+  executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
   askUser: PermissionRelayDeps['askUser']; log: PermissionRelayDeps['log']
 }) {
   const ownerChatId=() => loadCompanionConfig(opts.stateDir).default_chat_id ?? null
@@ -54,6 +55,7 @@ export function wireWorkbench(opts: {
     // starting a private app-server with native task-scoped approval requests.
   }),codex.opts)
   return makeWorkbenchService({
+    executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
     store:makeWorkbenchStore(opts.db),registry,stateDir:opts.stateDir,ownerChatId,
     defaultProvider:opts.boot.defaultProviderId,holdBusy:opts.boot.holdBusy,

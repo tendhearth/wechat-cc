@@ -6,6 +6,9 @@ import { TIER_PROFILES, sessionAuthEnv } from '../user-tier'
 import { canonicalProject, collectArtifacts, outputDirectory, readArtifactSnapshot, saveArtifactSnapshot } from './artifacts'
 import { captureGitBaseline, finishGitReview, serializeGitReview, GIT_REVIEW_MIME, type GitBaseline } from './git-review'
 import { decodeNativeHistoryKey, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryReader, type NativeHistoryProvider, type NativeHistoryListInput, type NativeHistoryReadInput } from './native-history'
+import {readNativeImport,nativeImportInput,publicSource,pageInput,nativeResumeToken,snapshotHash,type ImportPage,type NativeImportInput,type NativeResumeDecision,type AcceptedNativeResume} from './native-adoption'
+import {historyDeadline} from './native-history'
+import {pathsConflict} from './scheduler'
 import { restartPreview, type Continuation, type RestartPreview } from './continuation'
 import { makeRunPermissions, type PermissionDecision, type RunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
 import { findPathBlocker, type PathReservation, type WaitingFor } from './scheduler'
@@ -17,6 +20,7 @@ interface Options {
   stateDir: string
   ownerChatId: () => string | null
   defaultProvider?: string
+  executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
   nativeHistory?:Partial<Record<NativeHistoryProvider,NativeHistoryReader>>
   mintSessionToken?: (sessionKey: string) => string
   revokeSessionToken?: (sessionKey: string) => void
@@ -27,6 +31,7 @@ interface Options {
 }
 type AcceptedContinuation = { mode: 'new' } | { mode: 'resume'; sessionId: string } | { mode: 'restart'; preview: RestartPreview }
 interface Active extends PathReservation {
+  nativeResume?:AcceptedNativeResume
   reviewBaseline?: GitBaseline
   continuation: AcceptedContinuation
   task: StoredTask
@@ -47,7 +52,7 @@ interface Active extends PathReservation {
   credentialsRevoked: boolean
 }
 export interface CreateTask { title?: string; path: string; providerId: string; text: string }
-export interface WorkbenchTaskView extends Task { canArchive:boolean; waitingFor: WaitingFor | null; pendingPermissionCount?: number }
+export interface WorkbenchTaskView extends Task { importedOnly?:boolean; canArchive:boolean; waitingFor: WaitingFor | null; pendingPermissionCount?: number }
 
 function checkedText(text: string): string {
   if (typeof text !== 'string' || !text.trim() || text.length > 20_000) throw new Error('invalid_text')
@@ -96,6 +101,7 @@ export function makeWorkbenchService(opts: Options) {
   const queue:Active[]=[]
   const runningText=new Map<string,string>()
   const collections=new Set<Promise<void>>()
+  const nativeDecisions=new Map<string,AcceptedNativeResume>()
   let order=0
   let stopping=false
   let shutdownComplete=false
@@ -117,6 +123,29 @@ export function makeWorkbenchService(opts: Options) {
     if (canResume(task)) return {mode:'resume'}
     return {mode:'restart_required',restart:restartPreview(task,events)}
   }
+  function taskVersion(task:StoredTask){return snapshotHash(JSON.stringify({updatedAt:task.updatedAt,status:task.status,sessionId:task.sessionId,events:store.events(task.id),source:store.source(task.id)?.firstDispatchedAt}))}
+  function nativeReader(id:string){const reader=opts.nativeHistory?.[id as NativeHistoryProvider];if(!reader)throw new Error('native_history_unsupported');return reader}
+  async function currentNativePages(task:StoredTask,pages:ImportPage[]) {
+    const call=historyDeadline(),key=Buffer.from(JSON.stringify({v:1,providerId:task.providerId,nativeId:store.source(task.id)!.nativeId})).toString('base64url')
+    const current:ImportPage[]=[]
+    for(const page of pages){
+      const preview=await call(()=>nativeReader(task.providerId).read(key,pageInput(page)))
+      if(preview.session.key!==key||preview.session.cwd!==task.path)throw new Error('native_history_changed')
+      if(preview.session.remote||preview.session.observedState==='active'||opts.executionConflict?.(task.path,task.providerId,store.source(task.id)!.nativeId))throw new Error('native_session_busy')
+      current.push({...page,sourceFingerprint:preview.sourceFingerprint})
+    }
+    return current
+  }
+  async function validateNativeDecision(task:StoredTask,decision:AcceptedNativeResume,dispatch=false) {
+    if(decision.taskId!==task.id||decision.sourceId!==store.source(task.id)?.id||decision.expiresAt<Date.now()||(!dispatch&&decision.taskVersion!==taskVersion(task)))throw new Error('external_close_confirmation_stale')
+    if(directoryIdentity(task.path)!==decision.directoryIdentity||canonicalProject(task.path)!==task.path)throw new Error('invalid_path')
+    if(opts.executionConflict?.(task.path,task.providerId,decision.nativeId))throw new Error('native_session_busy')
+    if(decision.mode==='native_resume'){
+      if(task.sessionId!==decision.nativeId||!canResume(task))throw new Error('restart_confirmation_required')
+      const current=await currentNativePages(task,decision.pages)
+      if(JSON.stringify(current)!==JSON.stringify(decision.pages))throw new Error('external_close_confirmation_stale')
+    }
+  }
   function ensureAccepting() {
     if (stopping) throw new Error('workbench_stopping')
   }
@@ -129,6 +158,7 @@ export function makeWorkbenchService(opts: Options) {
     const running=runsByTask.get(task.id)
     return {
       ...task,
+      ...(!running&&TERMINAL_TASK_STATUSES.includes(task.status)&&store.source(task.id)?.firstDispatchedAt===null?{importedOnly:true}:{}),
       canArchive:TERMINAL_TASK_STATUSES.includes(task.status) && !running && task.error!=='writer_not_closed',
       waitingFor:running ? waitingFor(running) : null,
       ...(includePermissions ? { pendingPermissionCount:running?.permissions.pending().length ?? 0 } : {}),
@@ -196,6 +226,7 @@ export function makeWorkbenchService(opts: Options) {
     try {
       running.releaseBusy=opts.holdBusy?.(sessionKey)
       if (canonicalProject(task.path) !== running.path || directoryIdentity(running.path) !== running.directoryIdentity) throw new Error('invalid_path')
+      if(opts.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
       const acceptedContinuation=running.continuation
       let resume:string|undefined,history=''
       if (acceptedContinuation.mode==='resume') {
@@ -224,6 +255,9 @@ export function makeWorkbenchService(opts: Options) {
       running.reviewBaseline=await captureGitBaseline(running.path,{},reviewStop.signal)
       if(running.cancelled){finalStatus='cancelled';return}
       if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
+      if(running.nativeResume)await validateNativeDecision(store.get(task.id),running.nativeResume,true)
+      if(running.cancelled){finalStatus='cancelled';return}
+      if(opts.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
       const token=opts.mintSessionToken?.(sessionKey)
       running.credentialsMinted=!!opts.mintSessionToken
       if (running.cancelled) revokeCredentials(running)
@@ -253,16 +287,17 @@ export function makeWorkbenchService(opts: Options) {
         }
       }
       if (running.cancelled) { finalStatus='cancelled'; return }
+      store.markSourceDispatched(task.id)
       const summary=await collectWorkbenchTurn(running.session.dispatch(history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n本轮要求：\n${text}` : text),running.stop,opts.timeoutMs ?? 10*60_000,
         ev => {
           if (running.cancelled) return
-          if (ev.kind==='init' && ev.sessionId) store.session(task.id,ev.sessionId)
+          if (ev.kind==='init' && ev.sessionId) {if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId)}
           if (ev.kind==='text') store.addEvent(task.id,'text',ev.text)
           if (ev.kind==='tool_call') store.addEvent(task.id,'tool_call',ev.server ? `${ev.server}/${ev.tool}` : ev.tool)
           if (ev.kind==='error') store.addEvent(task.id,'error',ev.message)
         })
       if (!summary) { finalStatus='cancelled'; return }
-      if (summary.result?.sessionId) store.session(task.id,summary.result.sessionId)
+      if (summary.result?.sessionId) {if(resume&&summary.result.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,summary.result.sessionId)}
       if (running.cancelled) finalStatus='cancelled'
       else if (summary.error || !summary.result) {
         const error=summary.error ?? 'stream_ended_without_result'
@@ -317,8 +352,11 @@ export function makeWorkbenchService(opts: Options) {
     }
   }
 
-  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'}):WorkbenchTaskView {
+  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume):WorkbenchTaskView {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
+    if(opts.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
+    if([...runsByTask.values()].some(run=>task.sessionId&&run.task.providerId===task.providerId&&run.task.sessionId===task.sessionId))throw new Error('native_session_busy')
+    if(nativeResume)store.addEvent(task.id,'system',`用户声明原 ${task.providerId} 执行程序已关闭，选择${nativeResume.mode==='native_resume'?'恢复原会话':'带已确认的记录新开一轮'}。原会话：${nativeResume.nativeId}。`)
     store.addEvent(task.id,'user',text); store.update(task.id,'queued')
     let signalStop!:()=>void,resolveDone!:()=>void
     const stop=new Promise<null>(resolve => { signalStop=() => resolve(null) })
@@ -330,7 +368,7 @@ export function makeWorkbenchService(opts: Options) {
         : store.addEvent(task.id,'system',`权限结果：${event.permission.tool} · ${event.outcome} · ${event.permission.id}`),
     })
     const running:Active={
-      continuation:acceptedContinuation,identity:randomUUID(),taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
+      nativeResume,continuation:acceptedContinuation,identity:randomUUID(),taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
       cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,credentialsMinted:false,credentialsRevoked:false,
     }
     runsByTask.set(task.id,running); runningText.set(running.identity,text); queue.push(running); pump()
@@ -358,6 +396,61 @@ export function makeWorkbenchService(opts: Options) {
   }
 
   const service={
+    conflictsExternal(path:string,providerId:string,nativeId:string|null):boolean {
+      let canonical:string
+      try{canonical=canonicalProject(path)}catch{return true}
+      if(nativeId&&(store.sourceByIdentity(providerId,nativeId)||store.taskByNativeIdentity(providerId,nativeId)))return true
+      return [...runsByTask.values()].some(run=>pathsConflict(run.path,canonical))
+    },
+    async importNativeHistory(raw:NativeImportInput) {
+      ensureAccepting()
+      const input=nativeImportInput(raw),{providerId,nativeId}=decodeNativeHistoryKey(input.key)
+      const existing=store.sourceByIdentity(providerId,nativeId)
+      if(existing)return{task:taskView(publicTask(store.get(existing.taskId))),source:publicSource(existing),created:false}
+      const managed=store.taskByNativeIdentity(providerId,nativeId)
+      if(managed)throw new Error('native_session_already_managed')
+      const read=await readNativeImport(nativeReader(providerId),input)
+      ensureAccepting()
+      if(!read.session.cwd)throw new Error('invalid_path')
+      const path=canonicalProject(read.session.cwd)
+      if(path!==read.session.cwd)throw new Error('invalid_path')
+      const result=store.importSource({providerId,nativeId,cwd:path,title:read.session.title.slice(0,120),ownerChatId:opts.ownerChatId(),messages:read.messages,snapshotJson:read.snapshotJson,snapshotSha256:read.snapshotSha256,pagesJson:read.pagesJson,observedFingerprint:read.observedFingerprint,truncated:read.truncated})
+      return{...result,task:taskView(publicTask(result.task))}
+    },
+    async prepareNativeResume(id:string,mode:'native_resume'|'fresh_context'='native_resume'):Promise<NativeResumeDecision> {
+      ensureAccepting()
+      const task=store.get(id),source=store.source(id)
+      if(!source||source.firstDispatchedAt!==null)throw new Error('invalid_request')
+      if(mode!=='native_resume'&&mode!=='fresh_context')throw new Error('invalid_request')
+      if(runsByTask.has(id)||task.archivedAt!==null)throw new Error('workbench_busy')
+      provider(task.providerId)
+      const identity=directoryIdentity(task.path),version=taskVersion(task),pages=JSON.parse(source.pagesJson) as ImportPage[]
+      if(opts.executionConflict?.(task.path,task.providerId,source.nativeId))throw new Error('native_session_busy')
+      const current=mode==='native_resume'?await currentNativePages(task,pages):pages
+      if(mode==='native_resume'&&!canResume(task))throw new Error('restart_confirmation_required')
+      const recovery=continuation(task)
+      if(mode==='fresh_context'&&recovery.mode!=='restart_required')throw new Error('invalid_request')
+      ensureAccepting()
+      if(taskVersion(store.get(id))!==version||runsByTask.has(id))throw new Error('external_close_confirmation_stale')
+      const preview=restartPreview(task,store.events(id))
+      const decision:AcceptedNativeResume={token:nativeResumeToken(),taskId:id,sourceId:source.id,providerId:source.providerId,nativeId:source.nativeId,path:task.path,mode,expiresAt:Date.now()+5*60_000,context:mode==='fresh_context'?preview.context:'',truncated:source.truncated,changedSinceImport:JSON.stringify(current)!==JSON.stringify(pages),pages:current,taskVersion:version,directoryIdentity:identity,...(mode==='fresh_context'?{restartToken:preview.token}:{})}
+      for(const [token,value] of nativeDecisions)if(value.expiresAt<Date.now()||value.taskId===id)nativeDecisions.delete(token)
+      if(nativeDecisions.size>=100)nativeDecisions.delete(nativeDecisions.keys().next().value!)
+      nativeDecisions.set(decision.token,decision)
+      const {pages:_pages,taskVersion:_version,directoryIdentity:_identity,restartToken:_restart,...result}=decision;return result
+    },
+    async continueNativeTask(id:string,text:string,sourceClosedToken:string,restartToken?:string):Promise<WorkbenchTaskView> {
+      ensureAccepting();const task=store.get(id),decision=nativeDecisions.get(sourceClosedToken),request=checkedText(text)
+      if(!decision)throw new Error('external_close_confirmation_stale')
+      if(runsByTask.has(id)||task.archivedAt!==null)throw new Error('workbench_busy')
+      await validateNativeDecision(task,decision)
+      ensureAccepting()
+      if(taskVersion(store.get(id))!==decision.taskVersion||runsByTask.has(id)||nativeDecisions.get(sourceClosedToken)!==decision)throw new Error('external_close_confirmation_stale')
+      const accepted:AcceptedContinuation=decision.mode==='native_resume'?{mode:'resume',sessionId:decision.nativeId}:{mode:'restart',preview:restartPreview(task,store.events(id))}
+      if(accepted.mode==='restart'&&(restartToken!==accepted.preview.token||restartToken!==decision.restartToken))throw new Error('restart_confirmation_stale')
+      nativeDecisions.delete(sourceClosedToken)
+      return start(task,request,decision.directoryIdentity,accepted,decision)
+    },
     async listNativeHistory(providerId:NativeHistoryProvider,input:NativeHistoryListInput) {
       const reader=opts.nativeHistory?.[providerId]
       if(!reader)throw new Error('native_history_unsupported')
@@ -366,7 +459,9 @@ export function makeWorkbenchService(opts: Options) {
     async readNativeHistory(key:string,input:NativeHistoryReadInput) {
       const {providerId}=decodeNativeHistoryKey(key),reader=opts.nativeHistory?.[providerId]
       if(!reader)throw new Error('native_history_unsupported')
-      return reader.read(key,normalizeHistoryRead(input))
+      const preview=await reader.read(key,normalizeHistoryRead(input)),{nativeId}=decodeNativeHistoryKey(key)
+      const managedTaskId=store.sourceByIdentity(providerId,nativeId)?.taskId??store.taskByNativeIdentity(providerId,nativeId)?.id
+      return {...preview,...(managedTaskId?{managedTaskId}:{})}
     },
     list(query:WorkbenchListQuery={}) {
       const providers=SUPPORTED.flatMap(id => { const p=opts.registry.get(id); return p ? [{id,displayName:p.opts.displayName}] : [] })
@@ -376,7 +471,7 @@ export function makeWorkbenchService(opts: Options) {
     },
     detail(id:string) {
       const detail=store.detail(id),running=runsByTask.get(id)
-      return {...detail,task:taskView(detail.task),permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:continuation(store.get(id))} : {})}
+      return {...detail,task:taskView(detail.task),permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:continuation(store.get(id)),...(store.source(id)?.firstDispatchedAt===null?{requiresExternalClose:true}:{})} : {})}
     },
     create(input:CreateTask):WorkbenchTaskView {
       ensureAccepting()
@@ -384,12 +479,14 @@ export function makeWorkbenchService(opts: Options) {
       if (input.title!==undefined && (typeof input.title!=='string' || !input.title.trim() || input.title.length>120)) throw new Error('invalid_title')
       const path=canonicalProject(input.path)
       const acceptedDirectoryIdentity=directoryIdentity(path)
+      if(opts.executionConflict?.(path,input.providerId,null))throw new Error('native_session_busy')
       return start(store.create({title:input.title?.trim() ?? text.slice(0,40),path,providerId:input.providerId,ownerChatId:opts.ownerChatId()}),text,acceptedDirectoryIdentity)
     },
     continueTask(id:string,text:string,options?:{restartToken?:string}):WorkbenchTaskView {
       ensureAccepting()
       if (runsByTask.has(id)) throw new Error('workbench_busy')
       const task=store.get(id)
+      if(store.source(id)?.firstDispatchedAt===null)throw new Error('external_close_confirmation_required')
       if(task.archivedAt!==null)throw new Error('workbench_archived')
       provider(task.providerId)
       if (canonicalProject(task.path)!==task.path) throw new Error('invalid_path')

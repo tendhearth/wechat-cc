@@ -12,6 +12,7 @@ export interface NativeHistoryPage {items:NativeHistoryItem[];nextCursor:string|
 export interface NativeHistoryListInput {q:string;limit:number;cursor?:string;cwd?:string}
 export interface NativeHistoryReadInput {limit:number;cursor?:string}
 export interface NativeHistoryPreview {
+  managedTaskId?:string
   session:NativeHistoryItem;messages:NativeHistoryMessage[];nextCursor:string|null;sourceFingerprint:string
   page:{limit:number;cursor:string|null};truncated:boolean
 }

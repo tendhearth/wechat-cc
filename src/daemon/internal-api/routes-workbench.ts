@@ -1,3 +1,4 @@
+import {nativeImportInput,type NativeImportInput} from '../../core/workbench/native-adoption'
 import { decodeNativeHistoryKey, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryProvider } from '../../core/workbench/native-history'
 import { isAbsolute } from 'node:path'
 import type { WorkbenchListQuery } from '../../core/workbench/store'
@@ -27,6 +28,8 @@ function errorCode(err: unknown): string {
 function mappedError(err: unknown): ReturnType<RouteHandler> {
   const code = errorCode(err)
   if (code === 'workbench_archived' || code === 'workbench_busy' || code === 'artifact_changed' || code === 'permission_stale' || code === 'restart_confirmation_required' || code === 'restart_confirmation_stale') return { status: 409, body: { error: code } }
+  if (['native_history_changed','native_session_already_managed','native_session_busy','native_session_identity_mismatch','external_close_confirmation_required','external_close_confirmation_stale'].includes(code))return{status:409,body:{error:code}}
+  if(code==='native_import_too_large')return{status:400,body:{error:code}}
   if (code === 'native_history_unsupported') return {status:422,body:{error:code}}
   if (code === 'native_history_unavailable') return {status:503,body:{error:code}}
   if (code === 'not_found') return { status: 404, body: { error: code } }
@@ -74,6 +77,17 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       }catch(error){return mappedError(error)}
     },
 
+    'POST /v1/workbench/import':async(_query,body)=>{
+      if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
+      try{return{status:200,body:await deps.workbench.importNativeHistory(nativeImportInput(body as NativeImportInput))}}catch(error){return mappedError(error)}
+    },
+    'POST /v1/workbench/prepare-resume':async(_query,body)=>{
+      const value=objectBody(body),id=value?.id,mode=value?.mode??'native_resume'
+      if(typeof id!=='string'||!TASK_ID.test(id)||(mode!=='native_resume'&&mode!=='fresh_context'))return invalid()
+      if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
+      try{return{status:200,body:await deps.workbench.prepareNativeResume(id,mode)}}catch(error){return mappedError(error)}
+    },
+
     'GET /v1/workbench/task': async (query) => {
       const id = query.get('id')
       if (!id || !TASK_ID.test(id)) return invalid()
@@ -107,12 +121,14 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       const value = objectBody(body)
       const id = typeof value?.id === 'string' ? value.id : ''
       const text = typeof value?.text === 'string' ? value.text.trim() : ''
+      const sourceClosedToken=value?.sourceClosedToken
+      if(sourceClosedToken!==undefined&&(typeof sourceClosedToken!=='string'||!SHA256.test(sourceClosedToken)))return invalid()
       const restartToken = value?.restartToken
       if (!TASK_ID.test(id) || !text || text.length > 20_000 ||
           (restartToken !== undefined && (typeof restartToken !== 'string' || !SHA256.test(restartToken)))) return invalid()
       if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
       try {
-        const task = restartToken === undefined
+        const task = sourceClosedToken!==undefined ? await deps.workbench.continueNativeTask(id,text,sourceClosedToken as string,restartToken as string|undefined) : restartToken === undefined
           ? await deps.workbench.continueTask(id, text)
           : await deps.workbench.continueTask(id, text, { restartToken: restartToken as string })
         return { status: 202, body: { task } }

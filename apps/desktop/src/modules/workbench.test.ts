@@ -1328,3 +1328,12 @@ it('does not rebuild unchanged task UI on each poll while the user types',async(
   await controller.refresh();await controller.refresh()
   expect(render).toHaveBeenCalledTimes(1)
 })
+
+it('imported tasks ask for explicit original-tool closure before native continuation',async()=>{
+ const {renderTaskControls}=await import('./workbench.js')
+ const initial=renderTaskControls('interrupted',{mode:'resume'},null,{requiresClose:true})
+ expect(initial).toContain('尚未执行');expect(initial).toContain('data-action="native-prepare"');expect(initial).not.toContain('data-action="continue"')
+ const decision={taskId:'task',sourceId:'source',token:'a'.repeat(64),mode:'native_resume' as const,providerId:'claude' as const,nativeId:'original',path:'/project',context:'',truncated:false,changedSinceImport:false,expiresAt:Date.now()+1000}
+ const confirmed=renderTaskControls('interrupted',{mode:'resume'},null,{requiresClose:true,decision})
+ expect(confirmed).toContain('原程序已关闭，继续');expect(confirmed).toContain('data-native-token="'+decision.token+'"');expect(confirmed).not.toContain('已检测到退出')
+})

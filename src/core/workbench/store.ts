@@ -1,5 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
+import {publicSource,type StoredNativeSource} from './native-adoption'
+import type {NativeHistoryMessage} from './native-history'
 import type { Db } from '../../lib/db'
 
 export type TaskStatus = 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
@@ -8,10 +10,11 @@ export interface Task {
   createdAt: number; updatedAt: number; error: string | null; archivedAt: number | null
 }
 export interface StoredTask extends Task { ownerChatId: string | null; sessionId: string | null }
-export interface TaskEvent { id: number; taskId: string; kind: 'user' | 'text' | 'tool_call' | 'system' | 'error'; text: string; createdAt: number }
+export interface TaskEvent { id: number; taskId: string; kind: 'user' | 'text' | 'tool_call' | 'system' | 'error'; text: string; createdAt: number; sourceId?:string|null }
 export interface Artifact { id: string; taskId: string; name: string; mime: string; size: number; sha256: string; createdAt: number; approvedAt: number | null }
 export interface StoredArtifact extends Artifact { storagePath: string }
 const TASK_SELECT = 'SELECT id,title,path,provider_id AS providerId,owner_chat_id AS ownerChatId,session_id AS sessionId,status,error,created_at AS createdAt,updated_at AS updatedAt,archived_at AS archivedAt FROM workbench_tasks'
+const SOURCE_SELECT='SELECT id,task_id AS taskId,provider_id AS providerId,native_id AS nativeId,cwd,imported_at AS importedAt,first_dispatched_at AS firstDispatchedAt,snapshot_sha256 AS snapshotSha256,observed_fingerprint AS observedFingerprint,selected_message_count AS selectedMessageCount,truncated,snapshot_json AS snapshotJson,pages_json AS pagesJson FROM workbench_sources'
 const ART_SELECT = 'SELECT id,task_id AS taskId,name,mime,size,sha256,storage_path AS storagePath,created_at AS createdAt,approved_at AS approvedAt FROM workbench_artifacts'
 export function publicTask({ ownerChatId: _owner, sessionId: _session, ...task }: StoredTask): Task { return task }
 export function publicArtifact({ storagePath: _path, ...artifact }: StoredArtifact): Artifact { return artifact }
@@ -54,12 +57,28 @@ export function makeWorkbenchStore(db: Db) {
     return task
   }
   const artifacts = (id: string) => db.query<StoredArtifact, [string]>(`${ART_SELECT} WHERE task_id=? ORDER BY created_at DESC,rowid DESC`).all(id)
-  const events = (id: string) => db.query<TaskEvent, [string]>('SELECT id,task_id AS taskId,kind,text,created_at AS createdAt FROM workbench_events WHERE task_id=? ORDER BY id').all(id)
-  const addEvent = (id: string, kind: TaskEvent['kind'], text: string) => {
-    db.query('INSERT INTO workbench_events(task_id,kind,text,created_at) VALUES(?,?,?,?)').run(id, kind, text.slice(0, 40_000), Date.now())
+  const events = (id: string) => db.query<TaskEvent, [string]>('SELECT id,task_id AS taskId,kind,text,created_at AS createdAt,source_id AS sourceId FROM workbench_events WHERE task_id=? ORDER BY id').all(id)
+  const addEvent = (id: string, kind: TaskEvent['kind'], text: string,sourceId:string|null=null) => {
+    db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,source_id) VALUES(?,?,?,?,?)').run(id, kind, text.slice(0, 40_000), Date.now(),sourceId)
   }
+  const sourceRow=(row:StoredNativeSource|null)=>row?{...row,truncated:!!row.truncated}:null
+  const source=(id:string)=>sourceRow(db.query<StoredNativeSource,[string]>(SOURCE_SELECT+' WHERE task_id=?').get(id))
+  const sourceByIdentity=(providerId:string,nativeId:string)=>sourceRow(db.query<StoredNativeSource,[string,string]>(SOURCE_SELECT+' WHERE provider_id=? AND native_id=?').get(providerId,nativeId))
   return {
-    get, artifacts, events, addEvent,
+    get, artifacts, events, addEvent,source,sourceByIdentity,
+    taskByNativeIdentity:(providerId:string,nativeId:string)=>db.query<StoredTask,[string,string]>(TASK_SELECT+' WHERE provider_id=? AND session_id=? LIMIT 1').get(providerId,nativeId),
+    markSourceDispatched(id:string){db.query('UPDATE workbench_sources SET first_dispatched_at=COALESCE(first_dispatched_at,?) WHERE task_id=?').run(Date.now(),id)},
+    importSource(input:Omit<StoredNativeSource,'id'|'taskId'|'importedAt'|'firstDispatchedAt'|'selectedMessageCount'> & {title:string;ownerChatId:string|null;messages:NativeHistoryMessage[]}) {
+      return db.transaction(()=>{
+        const existing=sourceByIdentity(input.providerId,input.nativeId)
+        if(existing)return{task:get(existing.taskId),source:publicSource(existing),created:false}
+        const task=this.create({title:input.title,path:input.cwd,providerId:input.providerId,ownerChatId:input.ownerChatId}),id=randomUUID(),now=Date.now()
+        db.query('INSERT INTO workbench_sources(id,task_id,provider_id,native_id,cwd,imported_at,snapshot_sha256,observed_fingerprint,selected_message_count,truncated,snapshot_json,pages_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(id,task.id,input.providerId,input.nativeId,input.cwd,now,input.snapshotSha256,input.observedFingerprint,input.messages.length,input.truncated?1:0,input.snapshotJson,input.pagesJson)
+        for(const message of input.messages)addEvent(task.id,message.role==='user'?'user':'text',message.text,id)
+        this.session(task.id,input.nativeId);this.update(task.id,'interrupted')
+        return{task:get(task.id),source:publicSource(source(task.id)!),created:true}
+      })()
+    },
     projectProvider: (path:string) => db.query<{providerId:string},[string]>('SELECT provider_id AS providerId FROM workbench_tasks WHERE path=? ORDER BY updated_at DESC,id DESC LIMIT 1').get(path)?.providerId ?? null,
     list: () => db.query<StoredTask, []>(`${TASK_SELECT} ORDER BY updated_at DESC,rowid DESC LIMIT 200`).all().map(publicTask),
     /** Real-time keyset paging, not a snapshot: updated tasks can move before a cursor. */
@@ -133,7 +152,7 @@ export function makeWorkbenchStore(db: Db) {
       if (a.sha256 !== sha256) throw new Error('artifact_changed')
       db.query('UPDATE workbench_artifacts SET approved_at=? WHERE task_id=? AND id=? AND sha256=?').run(Date.now(),taskId,id,sha256)
     },
-    detail(id: string) { return { task: publicTask(get(id)), events: events(id), artifacts: artifacts(id).map(publicArtifact) } },
+    detail(id: string) { const origin=source(id);return {...(origin?{source:publicSource(origin)}:{}), task: publicTask(get(id)), events: events(id), artifacts: artifacts(id).map(publicArtifact) } },
   }
 }
 export type WorkbenchStore = ReturnType<typeof makeWorkbenchStore>

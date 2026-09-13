@@ -4,6 +4,8 @@ import {join} from 'node:path'
 const ROUTES = new Set([
   'GET /v1/workbench','GET /v1/workbench/sessions','GET /v1/workbench/session','GET /v1/workbench/task','GET /v1/workbench/artifact',
   'POST /v1/workbench/create','POST /v1/workbench/continue','POST /v1/workbench/cancel','POST /v1/workbench/approve','POST /v1/workbench/permission','POST /v1/workbench/archive',
+  'POST /v1/workbench/import',
+  'POST /v1/workbench/prepare-resume',
 ])
 interface Options {
   stateDir:string; dryRun:boolean; allowWrites:boolean
