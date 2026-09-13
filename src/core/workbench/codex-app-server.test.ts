@@ -25,6 +25,7 @@ class FakeProcess extends EventEmitter {
         this.sent.push(message)
         if (message.method === 'initialize') queueMicrotask(() => this.send({ id: message.id, result: initializeResponse }))
         if (message.method === 'config/read') queueMicrotask(() => this.send({ id: message.id, result: { config: nativeConfig } }))
+        if (message.method === 'model/list') queueMicrotask(() => this.send({ id: message.id, result: { data: [{id:modelPresetId,model:'native-model',displayName:'Native model',description:'Native',isDefault:true,defaultReasoningEffort:'deep-native',supportedReasoningEfforts:[{reasoningEffort:'deep-native',description:'Native'}],inputModalities:modelModalities}],nextCursor:null } }))
         if (message.method === 'thread/start' || message.method === 'thread/resume') queueMicrotask(() => this.send({ id: message.id, result: { thread: { id: message.params.threadId ?? 'thread-1' }, cwd: '/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: { type: 'workspaceWrite', writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true }, ...threadResponse } }))
         if (message.method === 'turn/start' && this.autoTurnStart) queueMicrotask(() => this.send({ id: message.id, result: { turn: { id: `turn-${this.sent.filter(m => m.method === 'turn/start').length}` } } }))
         if (message.method === 'turn/interrupt') queueMicrotask(() => this.send({ id: message.id, result: {} }))
@@ -41,6 +42,8 @@ class FakeProcess extends EventEmitter {
 }
 let children: FakeProcess[], sessions: AgentSession[], discovery: string, discoveryExit: number, threadResponse: Record<string, unknown>
 let nativeConfig: Record<string, unknown>, initializeResponse: Record<string, unknown>
+let modelModalities: string[]
+let modelPresetId: string
 const context = (extra = {}): SpawnContext => ({ tierProfile: TIER_PROFILES.trusted, permissionMode: 'strict', chatId: 'workbench:task', appendInstructions: 'task instructions', ...extra })
 async function start(extra = {}, options = {}) {
   const session = await createWorkbenchCodexProvider({ codexPathOverride: '/codex', rpcTimeoutMs: 200, closeTimeoutMs: 250, ...options }).spawn({ alias: 'workbench:task', path: '/project' }, context(extra))
@@ -71,6 +74,8 @@ function enableExternal() {
   nativeConfig = { mcp_servers: { external: { command: '/tools/external', tools: { create_note: { approval_mode: 'approve' } } } } }
 }
 beforeEach(() => {
+  modelModalities=['text','image']
+  modelPresetId='native-model'
   children = []; sessions = []; discovery = '[{"name":"personal","env":{"SECRET":"private"}}]'; discoveryExit = 0; threadResponse = {}
   nativeConfig = { mcp_servers: { personal: { command: '/tools/personal' } } }
   initializeResponse = { userAgent: 'cc_workbench/0.153.4 (Mac OS; arm64)' }
@@ -83,6 +88,67 @@ beforeEach(() => {
 afterEach(async () => { for (const session of sessions) await session.close().catch(() => {}); vi.restoreAllMocks() })
 
 describe('workbench Codex app-server', () => {
+  it('rejects images on a known text-only selected model before dispatch or steer',async()=>{
+    modelModalities=['text']
+    const {session,child}=await start({execution:{defaults:'native',model:'native-model',reasoningEffort:null}})
+    const attachments=[{name:'owned.png',mime:'image/png',path:'/owned.png',sha256:'a'.repeat(64),data:'UE5H'}]
+    expect(()=>session.dispatch('inspect',attachments)).toThrow(/execution_image_unsupported/)
+    expect(child.sent.some(message=>message.method==='turn/start')).toBe(false)
+    const run=collect(session);await begun(child)
+    await expect(session.steer!('inspect',attachments)).rejects.toThrow(/execution_image_unsupported/)
+    expect(child.sent.some(message=>message.method==='turn/steer')).toBe(false)
+    completed(child);await run.done
+  })
+  it('discovers models without starting a thread or admitting MCPs',async()=>{
+    const provider=createWorkbenchCodexProvider({codexPathOverride:'/codex',rpcTimeoutMs:200,closeTimeoutMs:250})
+    expect(typeof provider.modelCatalog).toBe('function')
+    const catalog=await provider.modelCatalog!({alias:'test',path:'/project'})
+    expect(catalog.models[0]?.reasoningEfforts).toEqual(['deep-native'])
+    const child=children.at(-1)!
+    expect(child.sent.some(m=>m.method?.startsWith('thread/')||m.method?.startsWith('turn/'))).toBe(false)
+    expect(child.kill).toHaveBeenCalled()
+  })
+  it('applies explicit native model and effort and reports only native acknowledgement',async()=>{
+    threadResponse={model:'native-model',reasoningEffort:'deep-native'}
+    const reportExecution=vi.fn()
+    const {child}=await start({execution:{defaults:'provider',model:'native-model',reasoningEffort:'deep-native'},reportExecution},{model:'cc-fallback'})
+    expect(child.sent.find(m=>m.method==='thread/start')?.params).toMatchObject({model:'native-model',config:{model_reasoning_effort:'deep-native'}})
+    expect(reportExecution).toHaveBeenCalledWith({model:'native-model',reasoningEffort:'deep-native',sessionId:'thread-1',source:'native_response'})
+  })
+  it.each([undefined,'existing'])('dispatches the advertised execution slug when a Codex preset id differs (resume=%s)',async(resumeSessionId)=>{
+    modelPresetId='picker-only-preset'
+    threadResponse={model:'native-model',reasoningEffort:'deep-native'}
+    const provider=createWorkbenchCodexProvider({codexPathOverride:'/codex',rpcTimeoutMs:200,closeTimeoutMs:250})
+    const catalog=await provider.modelCatalog!({alias:'test',path:'/project'})
+    const model=catalog.models[0]!.id
+    expect(model).toBe('native-model')
+    const {session,child}=await start({resumeSessionId,execution:{defaults:'native',model,reasoningEffort:'deep-native'}})
+    expect(child.sent.find(message=>message.method===(resumeSessionId?'thread/resume':'thread/start'))?.params.model).toBe('native-model')
+    const run=collect(session);await begun(child)
+    child.notify('turn/completed',{threadId:resumeSessionId??'thread-1',turn:{id:'turn-1',status:'completed',error:null,durationMs:4}})
+    await run.done
+  })
+  it.each(['provider','native'])('omits CC fallback during opted-in automatic %s resume',async(defaults)=>{
+    const {child}=await start({resumeSessionId:'existing',execution:{defaults,model:null,reasoningEffort:null}},{model:'cc-fallback'})
+    const params=child.sent.find(m=>m.method==='thread/resume')!.params
+    expect(params).not.toHaveProperty('model')
+    expect(params.config).not.toHaveProperty('model_reasoning_effort')
+  })
+  it('rejects an unadvertised model or effort before any native model turn',async()=>{
+    for(const [model,reasoningEffort] of [['unknown',null],['native-model','unsupported']]) {
+      await expect(start({execution:{defaults:'native',model,reasoningEffort}})).rejects.toThrow(/execution_(model|effort)_unsupported/)
+    }
+    expect(children.flatMap(child=>child.sent).some(m=>m.method==='turn/start')).toBe(false)
+  })
+  it('reports rerouting only for the active originating turn',async()=>{
+    const reportExecution=vi.fn(); const {session,child}=await start({reportExecution}); const run=collect(session); await begun(child)
+    for(const turnId of ['stale','turn-1'])child.notify('model/rerouted',{threadId:'thread-1',turnId,fromModel:'native-model',toModel:'rerouted-native',reason:'highRiskCyberActivity'})
+    await expect.poll(()=>reportExecution.mock.calls.length).toBe(1)
+    expect(reportExecution).toHaveBeenCalledWith({model:'rerouted-native',sessionId:'thread-1',source:'native_reroute'})
+    completed(child); await run.done
+    child.notify('model/rerouted',{threadId:'thread-1',turnId:'turn-1',toModel:'stale'}); await Promise.resolve()
+    expect(reportExecution).toHaveBeenCalledTimes(1)
+  })
   it('sends immutable image bytes and explicit file references on initial and subsequent turns', async () => {
     const image = { name: 'image.png', mime: 'image/png', path: '/not-read/image.png', sha256: 'a'.repeat(64), data: 'UE5H' }
     const file = { name: 'report\n"quoted".pdf', mime: 'application/pdf', path: '/project/report.pdf', sha256: 'b'.repeat(64), data: 'UERG' }

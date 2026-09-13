@@ -12,6 +12,32 @@ export interface AgentProject {
   path: string
 }
 
+/** Null omits a task override; it does not reset retained native settings. */
+export interface AgentExecutionChoice {
+  defaults: 'provider' | 'native'
+  model: string | null
+  reasoningEffort: string | null
+}
+export interface AgentExecutionModel {
+  id: string
+  displayName: string
+  description?: string
+  reasoningEfforts: string[]
+  defaultReasoningEffort?: string
+  inputModalities?: string[]
+}
+export interface AgentModelCatalog {
+  models: AgentExecutionModel[]
+  defaultModel?: string
+  source: 'native'
+}
+export interface AgentExecutionObservation {
+  model: string
+  reasoningEffort?: string
+  sessionId?: string
+  source: 'native_response' | 'native_message' | 'native_reroute'
+}
+
 /**
  * The provider-agnostic event a session yields on a dispatch turn.
  *
@@ -168,6 +194,8 @@ export interface SpawnContext {
    * just injects it. (Claude has an equivalent per-spawn reader of its own.)
    */
   model?: string
+  execution?: AgentExecutionChoice
+  reportExecution?(value: AgentExecutionObservation): void
   /** A task-local approval bridge. It is bound to one active run and fails
    * closed after that run is cancelled, completed, or restarted. */
   requestPermission?: (
@@ -280,6 +308,8 @@ export interface ProviderCapabilities {
 }
 
 export interface AgentProvider {
+  /** Discovery owns one bounded native deadline and subprocess cleanup; no model turn is sent. */
+  modelCatalog?(project: AgentProject): Promise<AgentModelCatalog>
   /**
    * Spawn a session. See `SpawnContext` for the per-spawn shape;
    * provider-construction opts (model, mcpServers, claude binary,

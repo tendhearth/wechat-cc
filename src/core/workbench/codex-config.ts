@@ -72,25 +72,30 @@ export function workbenchCodexEnv(source: NodeJS.ProcessEnv = process.env): Node
 }
 
 /** Read configuration names only, in the selected project; never launch MCPs. */
-export async function discoverWorkbenchCodexConfig(binary: string, cwd: string) {
+export async function discoverWorkbenchCodexConfig(binary: string, cwd: string, deadline = Date.now() + 15_000) {
+  if (Date.now() >= deadline) throw configFailure()
   return new Promise<{ config: ReturnType<typeof workbenchCodexConfig>; servers: unknown }>((resolve, reject) => {
     const child = spawn(binary, [...workbenchCodexArgs(workbenchFeatureConfig), 'mcp', 'list', '--json'], {
-      cwd, env: workbenchCodexEnv(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+      cwd, env: workbenchCodexEnv(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32',
     })
-    let output = '', settled = false
+    let output = '', settled = false, closed = false
+    const stop = () => {
+      try { if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL'); else if (!closed) child.kill('SIGKILL') } catch { /* Already reaped. */ }
+    }
     const fail = () => {
       if (settled) return
       settled = true; clearTimeout(timer)
-      child.kill('SIGKILL')
+      stop()
       reject(new Error('无法核实 Codex 的工具配置；暂不启动任务。'))
     }
-    const timer = setTimeout(fail, 15_000)
+    const timer = setTimeout(fail, Math.max(0, deadline - Date.now()))
     child.stdin.end()
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', chunk => { output += String(chunk); if (output.length > 1_000_000) fail() })
     child.stderr.resume() // Drain diagnostics without exposing configuration/auth details.
     child.on('error', fail)
     child.on('close', code => {
+      closed = true
       if (settled) return
       if (code !== 0) { fail(); return }
       try {
@@ -98,7 +103,7 @@ export async function discoverWorkbenchCodexConfig(binary: string, cwd: string) 
         // Transport credentials need not survive discovery. The native process
         // resolves its own config; CC retains only identity and enabled state.
         const servers = (parsed as { name: string; enabled?: boolean }[]).map(({ name, enabled }) => ({ name, enabled }))
-        settled = true; clearTimeout(timer); resolve({ config, servers })
+        settled = true; clearTimeout(timer); stop(); resolve({ config, servers })
       } catch { fail() }
     })
   })

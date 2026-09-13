@@ -21,7 +21,7 @@ import type { InternalApi } from '../internal-api/types'
 export function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}): Options {
   const tier = tierProfileToClaudeSdkOpts(TIER_PROFILES.trusted,'strict')
   return {
-    cwd:base.cwd, model:base.model, pathToClaudeCodeExecutable:base.pathToClaudeCodeExecutable,
+    cwd:base.cwd, model:base.model, effort:base.effort, thinking:base.thinking, pathToClaudeCodeExecutable:base.pathToClaudeCodeExecutable,
     executable:base.executable, executableArgs:base.executableArgs,
     env:workbenchClaudeEnvironment(base.env),
     ...tier,

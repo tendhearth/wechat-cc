@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process'
-import type { AgentAttachment, AgentEvent, AgentProvider } from '../agent-provider'
+import type { AgentAttachment, AgentEvent, AgentExecutionModel, AgentProvider } from '../agent-provider'
 import { discoverWorkbenchCodexConfig, workbenchCodexArgs, workbenchCodexEnv, workbenchCodexNativeConfig } from './codex-config'
 import { validateUserInputAnswers, validateUserInputRequest } from './user-input'
 import { codexActivityEvent, codexItemId } from './codex-activity'
 import { codexMcpApproval, supportsCodexMcpApproval } from './codex-mcp-approval'
 import { codexNativeCapabilityNotice } from './native-capability-notice'
+import { discoverCodexModels } from './codex-model-catalog'
+import { executionModel, nativeModelId, readCodexModelCatalog } from './native-model-catalog'
 
 type RpcId = string | number
 // The JSONL boundary is checked below before any request is routed or action accepted.
@@ -99,7 +101,14 @@ function approvalScope(params: ObjectValue): string | null {
 /** Workbench-only native protocol adapter. Normal chats continue using the SDK. */
 export function createWorkbenchCodexProvider(options: Options): AgentProvider {
   return {
+    modelCatalog: project => discoverCodexModels(options.codexPathOverride, project.path, options.rpcTimeoutMs),
     async spawn(project, context) {
+      const execution = context.execution ? {...context.execution} : undefined
+      const model = execution ? execution.model ?? (execution.defaults === 'provider' && !context.resumeSessionId ? context.model ?? options.model : undefined) : context.model ?? options.model
+      let selectedModel: AgentExecutionModel | undefined
+      const validateAttachments = (attachments?: readonly AgentAttachment[]) => {
+        if (selectedModel?.inputModalities && !selectedModel.inputModalities.includes('image') && attachments?.some(item => item.mime.startsWith('image/'))) throw new Error('execution_image_unsupported')
+      }
       if (process.platform === 'win32') throw new Error('Codex 工作台暂不支持 Windows：尚未验证任务进程树清理。')
       const discovery = await discoverWorkbenchCodexConfig(options.codexPathOverride, project.path)
       // Startup has no turn. Keep MCPs disabled while reading the native layers,
@@ -332,6 +341,9 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           const eventTurn = message.method.startsWith('turn/') ? params.turn?.id : params.turnId
           if (eventTurn !== turn.id) { if (isRequest) send({ id: message.id, result: rejectedRequest(message) }); return }
           if (isRequest) { if (isMcpRequest(message)) onMcpApproval(message, turn); else if (isUserQuestion(message)) onQuestion(message, turn); else onApproval(message, turn); return }
+          if (message.method === 'model/rerouted' && nativeModelId(params.toModel)) {
+            context.reportExecution?.({model:params.toModel,sessionId:threadId,source:'native_reroute'})
+          }
           if (message.method === 'item/started' && object(params.item)) {
             const item = params.item
             if (codexItemId(item.id) && turn.completedItems.has(item.id)) return
@@ -403,6 +415,8 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         send({ method: 'initialized' })
         const native = await request('config/read', { cwd: project.path, includeLayers: false })
         const config = workbenchCodexNativeConfig(discovery.servers, native.config)
+        const catalog = execution && (execution.model || execution.reasoningEffort) ? await readCodexModelCatalog(request, project.path) : undefined
+        if (catalog && execution?.model) selectedModel = executionModel(catalog, execution)
         for (const [name, server] of Object.entries(config.mcp_servers)) if (server.enabled) enabledMcp.add(name)
         const capabilityNotice = codexNativeCapabilityNotice(discovery.servers, enabledMcp)
         if (capabilityNotice) context.reportNotice?.(capabilityNotice)
@@ -410,8 +424,8 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         const response = await request(context.resumeSessionId ? 'thread/resume' : 'thread/start', {
           ...(context.resumeSessionId ? { threadId: context.resumeSessionId, excludeTurns: true } : {}),
           cwd: project.path, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'workspace-write',
-          developerInstructions: context.appendInstructions ?? '', config,
-          ...((context.model ?? options.model) ? { model: context.model ?? options.model } : {}),
+          developerInstructions: context.appendInstructions ?? '', config: {...config,...(execution?.reasoningEffort ? {model_reasoning_effort:execution.reasoningEffort} : {})},
+          ...(model ? {model} : {}),
         })
         if (typeof response.thread?.id !== 'string' || !response.thread.id) throw new Error('codex_missing_thread_id')
         if (context.resumeSessionId && response.thread.id !== context.resumeSessionId) throw new Error('codex_resume_thread_mismatch')
@@ -424,11 +438,14 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           throw new Error('codex_unverified_thread_policy')
         }
         threadId = response.thread.id
+        if (catalog && execution) selectedModel = executionModel(catalog, execution, response.model)
+        if (nativeModelId(response.model)) context.reportExecution?.({model:response.model,...(nativeModelId(response.reasoningEffort) ? {reasoningEffort:response.reasoningEffort} : {}),sessionId:threadId,source:'native_response'})
       } catch (error) { await close(); throw error }
       return {
         dispatch(text, attachments) {
           if (active) throw new Error('codex_turn_already_running')
           if (closing || exited || broken) throw broken ?? new Error('codex_session_closed')
+          validateAttachments(attachments)
           const input = turnInput(text, attachments)
           const turn: Turn = { id: null, cancelled: false, rejectedOperation: false, events: new EventQueue(), early: [], items: new Map(), completedItems: new Set(), questionIds: new Set(), startedAt: Date.now() }
           active = turn; turn.events.push({ kind: 'init', sessionId: threadId })
@@ -444,6 +461,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         async steer(text, attachments) {
           const turn = active
           if (!turn?.id || turn.cancelled || closing || exited || broken) throw new Error('codex_no_active_turn')
+          validateAttachments(attachments)
           if (typeof text !== 'string' || (!text.trim() && !attachments?.length)) throw new Error('codex_empty_input')
           const expectedTurnId = turn.id
           const response = await request('turn/steer', { threadId, expectedTurnId, input: turnInput(text, attachments) })

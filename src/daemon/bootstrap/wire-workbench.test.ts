@@ -44,3 +44,10 @@ it('passes merged native MCP allow and deny policy at flag scope', () => {
   const options=workbenchClaudeOptions({cwd:'/project'},'',vi.fn(),{servers:{catalog:{command:'catalog-server'}},omitted:[],nativeMcpPolicy})
   expect(options.settings).toMatchObject(nativeMcpPolicy)
 })
+
+it('retains provider reasoning defaults for a fresh task while excluding unrelated companion options',()=>{
+  const options=workbenchClaudeOptions({cwd:'/project',model:'configured-model',effort:'low',thinking:{type:'adaptive'},fallbackModel:'companion-fallback'},'',vi.fn())
+  expect(options.effort).toBe('low')
+  expect(options.thinking).toEqual({type:'adaptive'})
+  expect(options.fallbackModel).toBeUndefined()
+})

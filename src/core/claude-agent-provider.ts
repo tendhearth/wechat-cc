@@ -7,6 +7,8 @@ import { isCompanionMcp, nativeMcpInputPreview } from './workbench/claude-native
 import { log } from '../lib/log'
 import { AsyncQueue } from './async-queue'
 import { isAuthFail } from './auth-fail'
+import { discoverClaudeModels } from './workbench/claude-model-catalog'
+import { executionModel, nativeModelId } from './workbench/native-model-catalog'
 
 function userContent(text: string, attachments: readonly AgentAttachment[] = []): Exclude<SDKUserMessage['message']['content'], string> {
   const content: Exclude<SDKUserMessage['message']['content'], string> = text || !attachments.length ? [{ type: 'text', text }] : []
@@ -264,7 +266,7 @@ const CLAUDE_CHEAP_MODEL_DEFAULT = 'claude-haiku-4-5'
 // to update.
 type AssistantBlock = { type?: string; text?: string; name?: string; id?: string }
 type AssistantContent = string | Array<AssistantBlock>
-type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: string | null; message?: { id?: string; content?: AssistantContent } }
+type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: string | null; message?: { id?: string; model?: string; content?: AssistantContent } }
 // SDKUserMessage.message is the Anthropic MessageParam. Its tool_result
 // blocks correlate to tool_use.id through tool_use_id; result content can
 // contain private file or command output and is deliberately not read here.
@@ -277,7 +279,7 @@ type ResultMsg = {
   duration_ms?: number
   result?: unknown
 }
-type SystemMsg = { type: 'system'; subtype?: string; session_id?: string }
+type SystemMsg = { type: 'system'; subtype?: string; session_id?: string; model?: string }
 type NarrowedMsg = AssistantMsg | UserMsg | ResultMsg | SystemMsg
 
 // Returns null for SDK message types we don't branch on (rate_limit_event,
@@ -412,6 +414,11 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     return text.trim().length > 0 ? text : resultText
   }
   return {
+    modelCatalog(project) {
+      const deadline=Date.now()+15_000
+      const options=opts.sdkOptionsForProject(project.alias,project.path,TIER_PROFILES.trusted,'workbench:catalog')
+      return discoverClaudeModels(options,Math.max(0,deadline-Date.now()))
+    },
     // One-shot haiku-class eval. Used by chatroom convergence check +
     // companion introspect via ProviderRegistry.getCheapEval(). Env override
     // lets users pin to a newer haiku without a code change.
@@ -428,7 +435,22 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // chatId is threaded into sdkOptionsForProject so the builder can
       // produce a canUseTool whose tier/mode closures are bound to THIS
       // session — see bootstrap/index.ts:buildCanUseTool().
-      const options = opts.sdkOptionsForProject(project.alias, project.path, spawnOpts.tierProfile, spawnOpts.chatId, spawnOpts.mcpEnv, spawnOpts.appendInstructions, spawnOpts)
+      const options = {...opts.sdkOptionsForProject(project.alias, project.path, spawnOpts.tierProfile, spawnOpts.chatId, spawnOpts.mcpEnv, spawnOpts.appendInstructions, spawnOpts)}
+      const execution = spawnOpts.execution ? {...spawnOpts.execution} : undefined
+      if (execution) {
+        if (execution.model) options.model=execution.model
+        else if (execution.defaults === 'native' || spawnOpts.resumeSessionId) delete options.model
+        if (execution.reasoningEffort) {
+          // Validated below against this native model's advertised effort levels.
+          options.effort=execution.reasoningEffort as Options['effort']
+        } else if (execution.defaults === 'native' || spawnOpts.resumeSessionId) {
+          delete options.effort; delete options.thinking; delete options.maxThinkingTokens
+        }
+        if (execution.model || execution.reasoningEffort) {
+          const catalog=await discoverClaudeModels(options)
+          executionModel(catalog,execution,options.model)
+        }
+      }
       if (spawnOpts.resumeSessionId) {
         ;(options as Options & { resume?: string }).resume = spawnOpts.resumeSessionId
       }
@@ -444,6 +466,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       options.abortController = aborter
 
       const q = query({ prompt: sdkQueue.iterable(), options })
+      let observedSessionId=spawnOpts.resumeSessionId
 
       let activeEventQueue: AsyncQueue<AgentEvent> | null = null
       let closed = false
@@ -483,11 +506,14 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
             const aq = activeEventQueue as AsyncQueue<AgentEvent>
 
             if (msg.type === 'system' && msg.subtype === 'init') {
+              if (nativeModelId(msg.session_id)) observedSessionId=msg.session_id
+              if (nativeModelId(msg.model)) spawnOpts.reportExecution?.({model:msg.model,...(observedSessionId ? {sessionId:observedSessionId} : {}),source:'native_message'})
               // Routed via log() (info-level) so the line lands in
               // channel.log + dashboard, not just stderr.
               log('SESSION_INIT', `alias=${project.alias} session_id=${msg.session_id ?? ''}`)
               aq.push({ kind: 'init', sessionId: msg.session_id ?? '' })
             } else if (msg.type === 'assistant') {
+              if (!msg.parent_tool_use_id && nativeModelId(msg.message?.model)) spawnOpts.reportExecution?.({model:msg.message.model,...(observedSessionId ? {sessionId:observedSessionId} : {}),source:'native_message'})
               const content = msg.message?.content
               if (spawnOpts.workbenchTimeline) {
                 const messageId = nativeTimelineId(msg.uuid) ?? nativeTimelineId(msg.message?.id) ?? `message-${++assistantSequence}`

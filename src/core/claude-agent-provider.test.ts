@@ -44,6 +44,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
     // `interrupt` method — mirrors the shape of @anthropic-ai/claude-agent-sdk's
     // `query()` return value (Query is a Promise + AsyncIterable with helpers).
     return {
+      supportedModels: async()=>[{value:'native-a',displayName:'Native A',description:'Native',supportsEffort:true,supportedEffortLevels:['low','max'],supportsAdaptiveThinking:true}],
+      close() { endFn?.() },
       [Symbol.asyncIterator]() {
         return {
           next() {
@@ -92,6 +94,43 @@ import * as sdk from '@anthropic-ai/claude-agent-sdk'
 
 const emitSdk = (message: unknown) => (sdk as unknown as { __test_yield: (message: unknown) => void }).__test_yield(message)
 const finishSdkTurn = () => emitSdk({ type: 'result', subtype: 'success', session_id: 'timeline-session', num_turns: 1, duration_ms: 1 })
+
+describe('Claude native execution choice',()=>{
+  const project={alias:'task',path:'/tmp'}
+  const context={tierProfile:TIER_PROFILES.trusted,permissionMode:'strict' as const,chatId:'task'}
+  const options=()=> (sdk as unknown as {__test_last_options:()=>any}).__test_last_options()
+  it('discovers a bounded native catalog without prompt, tool, hook or session persistence',async()=>{
+    const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({mcpServers:{user:{command:'must-not-start'}},hooks:{},model:'cc-fallback'})})
+    expect(typeof provider.modelCatalog).toBe('function')
+    expect(await provider.modelCatalog!(project)).toEqual({source:'native',models:[{id:'native-a',displayName:'Native A',description:'Native',reasoningEfforts:['low','max']}]})
+    expect(options()).toMatchObject({tools:[],mcpServers:{},strictMcpConfig:true,persistSession:false,hooks:{},plugins:[],settings:{disableAllHooks:true}})
+    expect(options().abortController.signal.aborted).toBe(true)
+  })
+  it.each(['provider','native'] as const)('omits global fallback on opted-in %s auto resume',async(defaults)=>{
+    const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({model:'cc-fallback',effort:'high',thinking:{type:'disabled'}})})
+    const session=await provider.spawn(project,{...context,resumeSessionId:'existing',execution:{defaults,model:null,reasoningEffort:null}})
+    expect(options()).not.toHaveProperty('model'); expect(options()).not.toHaveProperty('effort')
+    expect(options()).not.toHaveProperty('thinking')
+    expect(options().resume).toBe('existing'); await session.close()
+  })
+  it('maps explicit model and effort while preserving strict options and reports native response models',async()=>{
+    const reportExecution=vi.fn()
+    const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({model:'cc-fallback',permissionMode:'default',allowDangerouslySkipPermissions:false})})
+    const session=await provider.spawn(project,{...context,execution:{defaults:'provider',model:'native-a',reasoningEffort:'max'},reportExecution})
+    expect(options()).toMatchObject({model:'native-a',effort:'max',permissionMode:'default',allowDangerouslySkipPermissions:false})
+    expect(reportExecution).not.toHaveBeenCalled()
+    const run=drain(session.dispatch('hello'))
+    emitSdk({type:'system',subtype:'init',session_id:'native-session',model:'native-resolved'})
+    emitSdk({type:'assistant',parent_tool_use_id:'child',message:{model:'child-model',content:[]}})
+    emitSdk({type:'assistant',parent_tool_use_id:null,message:{model:'fallback-native',content:[{type:'text',text:'Done'}]}})
+    finishSdkTurn(); await run; await session.close()
+    expect(reportExecution.mock.calls.map(call=>call[0])).toEqual([{model:'native-resolved',sessionId:'native-session',source:'native_message'},{model:'fallback-native',sessionId:'native-session',source:'native_message'}])
+  })
+  it('rejects unknown explicit models and model-specific effort before dispatch',async()=>{
+    const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({})})
+    for(const [model,reasoningEffort] of [['unknown',null],['native-a','medium']])await expect(provider.spawn(project,{...context,execution:{defaults:'native',model:model!,reasoningEffort:reasoningEffort??null}})).rejects.toThrow(/execution_(model|effort)_unsupported/)
+  })
+})
 
 describe('claude-agent-provider', () => {
   it('supports image-only messages without an empty native text block', async () => {
