@@ -864,3 +864,70 @@ describe('persistent workbench', () => {
     expect(await service.handleWechat('new-owner', `任务 ${task.id}`)).not.toContain('周报已更新')
   })
 })
+
+describe('project code review snapshots',()=>{
+ async function repository(){
+  const {execFileSync}=await import('node:child_process')
+  const git=(...args:string[])=>execFileSync('git',args,{cwd:project,stdio:'pipe'})
+  git('init','-q');git('config','user.email','test@localhost');git('config','user.name','Test')
+  writeFileSync(join(project,'app.ts'),'const n = 1\n');git('add','.');git('commit','-qm','base')
+  writeFileSync(join(project,'app.ts'),'const n = 2\n')
+ }
+ function reviews(id:string){return service.detail(id).artifacts.filter(a=>a.mime==='application/vnd.cc.workbench-review+json')}
+ it('captures actual pre-spawn files and publishes only after confirmed close, preserving each turn',async()=>{
+  await repository();const closing=deferred();let closingStarted=false,n=2
+  setup({async spawn(){writeFileSync(join(project,'app.ts'),`const n = ${++n}\n`);return{
+   async *dispatch(){yield result},async close(){closingStarted=true;await closing.promise},
+  }}})
+  const task=create();await expect.poll(()=>closingStarted).toBe(true)
+  expect(reviews(task.id)).toEqual([])
+  closing.resolve();await settle(task.id)
+  expect(reviews(task.id)).toHaveLength(1)
+  const first=reviews(task.id)[0]!,read=()=>JSON.parse(Buffer.from(service.artifact(task.id,first.id).contentBase64,'base64').toString())
+  expect(read().files[0].diff).toContain('-const n = 2');expect(read().files[0].diff).toContain('+const n = 3')
+  service.continueTask(task.id,'再改一轮');await settle(task.id)
+  expect(reviews(task.id)).toHaveLength(2);expect(read().files[0].diff).toContain('+const n = 3')
+ })
+ it('keeps uncertain-close snapshots unpublished and the next task queued until close arrives',async()=>{
+  await repository();const closing=deferred();let starts=0
+  setup({async spawn(){const number=++starts;return{
+   async *dispatch(){writeFileSync(join(project,'app.ts'),`const n = ${number+2}\n`);yield result},
+   async close(){if(number===1)await closing.promise},
+  }}},()=>null,undefined,{closeTimeoutMs:10})
+  const task=create();await settle(task.id);expect(service.detail(task.id).task.error).toBe('writer_not_closed');expect(reviews(task.id)).toEqual([])
+  const next=create('next');expect(service.detail(next.id).task.status).toBe('queued')
+  closing.resolve();await expect.poll(()=>reviews(task.id).length).toBe(1);await settle(next.id)
+  const first=reviews(task.id)[0]!
+  expect(JSON.parse(Buffer.from(service.artifact(task.id,first.id).contentBase64,'base64').toString()).files[0].diff).toContain('+const n = 3')
+  expect(reviews(next.id)).toHaveLength(1)
+ })
+})
+it('waits for late-close collection already in progress when the service shuts down',async()=>{
+ const {execFileSync}=await import('node:child_process');const git=(...args:string[])=>execFileSync('git',args,{cwd:project,stdio:'pipe'})
+ git('init','-q');git('config','user.email','test@localhost');git('config','user.name','Test')
+ writeFileSync(join(project,'app.ts'),'before\n');git('add','.');git('commit','-qm','base')
+ const close=deferred()
+ setup({async spawn(p){return{async *dispatch(){
+  writeFileSync(join(project,'app.ts'),'after\n');writeFileSync(join(project,'.cc-workbench',p.alias.split(':')[1]!,'output.md'),'delivered')
+  yield result
+ },async close(){await close.promise}}}},()=>null,undefined,{closeTimeoutMs:1})
+ const task=create();await settle(task.id);expect(service.detail(task.id).task.error).toBe('writer_not_closed')
+ close.resolve();await Promise.resolve();await Promise.resolve();await service.shutdown()
+ expect(service.detail(task.id).artifacts.map(a=>a.mime)).toContain('application/vnd.cc.workbench-review+json')
+ expect(service.detail(task.id).artifacts.map(a=>a.name)).toContain('output.md')
+})
+
+it('still collects ordinary results if saving the generated review fails',async()=>{
+ const {execFileSync}=await import('node:child_process');const git=(...args:string[])=>execFileSync('git',args,{cwd:project,stdio:'pipe'})
+ git('init','-q');git('config','user.email','test@localhost');git('config','user.name','Test')
+ writeFileSync(join(project,'app.ts'),'before\n');git('add','.');git('commit','-qm','base')
+ db.exec("CREATE TRIGGER reject_review BEFORE INSERT ON workbench_artifacts WHEN NEW.mime = 'application/vnd.cc.workbench-review+json' BEGIN SELECT RAISE(FAIL,'simulated review storage failure'); END")
+ setup({async spawn(p){return{async *dispatch(){
+  writeFileSync(join(project,'app.ts'),'after\n');writeFileSync(join(project,'.cc-workbench',p.alias.split(':')[1]!,'result.md'),'kept')
+  yield result
+ },async close(){}}}})
+ const task=create();await settle(task.id)
+ expect(service.detail(task.id).task.status).toBe('completed')
+ expect(service.detail(task.id).artifacts.map(a=>a.name)).toEqual(['result.md'])
+ expect(service.detail(task.id).events.some(e=>e.text.includes('代码对比未能保存'))).toBe(true)
+})

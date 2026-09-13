@@ -54,9 +54,9 @@ Files: workbench store/service/routes and DB migration/tests; modules/workbench.
 
 Files and interfaces are defined from the existing artifact collector before implementation; retain a read-only, task-scoped snapshot boundary.
 
-- [ ] Capture and present project code differences with an honest origin: distinguish an end-of-task working-directory snapshot from edits proven to originate in the task. Include pre-existing modifications explicitly.
-- [ ] Do not mutate the user index, checkout or history; use bounded read-only Git commands and existing artifact hashing/storage. Plain folders remain usable.
-- [ ] Validate file scoping, unsupported/binary/large changes, hostile text and task-specific snapshots. Render readable changes without claiming an empty diff proves success. Commit independently.
+- [x] Capture and present project code differences with an honest origin: distinguish an end-of-task working-directory snapshot from edits proven to originate in the task. Include pre-existing modifications explicitly.
+- [x] Do not mutate the user index, checkout or history; use bounded read-only Git commands and existing artifact hashing/storage. Plain folders remain usable.
+- [x] Validate file scoping, unsupported/binary/large changes, hostile text and task-specific snapshots. Render readable changes without claiming an empty diff proves success. Commit independently.
 
 ## Next approved phase
 

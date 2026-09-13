@@ -12,6 +12,7 @@ const MIMES: Record<string,string> = {
   '.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   '.pptx':'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 }
+for(const extension of ['ts','tsx','js','jsx','mjs','cjs','py','go','rs','java','c','h','cpp','hpp','css','html','sql','sh','yaml','yml','toml','xml','diff','patch'])MIMES[`.${extension}`]='text/plain'
 export function canonicalProject(path: string): string {
   if (!isAbsolute(path)) throw new Error('invalid_path')
   try { const real = realpathSync(path); if (lstatSync(real).isDirectory()) return real } catch { /* invalid/missing */ }
@@ -68,7 +69,8 @@ function openRelative(dirfd: number, name: string, flags: number): number {
  * Bun exposes openat through FFI on macOS and Linux; unsupported platforms
  * fail closed instead of falling back to pathname validation with a race.
  */
-export function readAnchoredRegular(root: string, relativeName: string): Buffer {
+export function readAnchoredRegular(root: string, relativeName: string, maxBytes = MAX_ARTIFACT_BYTES): Buffer {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_ARTIFACT_BYTES) throw new Error('invalid_artifact_size')
   if (!isAbsolute(root) || isAbsolute(relativeName)) throw new Error('invalid_artifact_path')
   const parts = relativeName.split(/[\\/]/)
   if (!parts.length || parts.some(part => !part || part === '.' || part === '..')) throw new Error('invalid_artifact_path')
@@ -82,18 +84,20 @@ export function readAnchoredRegular(root: string, relativeName: string): Buffer 
       closeSync(current)
       current = next
     }
-    const fd = openRelative(current, parts.at(-1)!, constants.O_RDONLY | noFollow | cloexec)
+    const fd = openRelative(current, parts.at(-1)!, constants.O_RDONLY | noFollow | cloexec | constants.O_NONBLOCK)
     try {
       const stat = fstatSync(fd)
-      if (!stat.isFile() || stat.size > MAX_ARTIFACT_BYTES) throw new Error('invalid_artifact_size')
-      const bytes = Buffer.allocUnsafe(MAX_ARTIFACT_BYTES + 1)
+      if (!stat.isFile() || stat.size > maxBytes) throw new Error('invalid_artifact_size')
+      const bytes = Buffer.allocUnsafe(maxBytes + 1)
       let length = 0
       while (length < bytes.length) {
         const n = readSync(fd, bytes, length, bytes.length - length, null)
         if (n === 0) break
         length += n
       }
-      if (length > MAX_ARTIFACT_BYTES) throw new Error('invalid_artifact_size')
+      if (length > maxBytes) throw new Error('invalid_artifact_size')
+      const after = fstatSync(fd)
+      if (after.size !== stat.size || length !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ctimeMs !== stat.ctimeMs) throw new Error('artifact_changed')
       return bytes.subarray(0, length)
     } finally { closeSync(fd) }
   } finally { closeSync(current) }
@@ -109,11 +113,21 @@ function readRegular(root: string, file: string): Buffer {
   if (!within(root,file)) throw new Error('invalid_artifact_path')
   return readAnchoredRegular(root,relative(root,file))
 }
+export function saveArtifactSnapshot(store: WorkbenchStore, taskId: string, input: { name:string; mime:string; bytes:Buffer }, stateDir:string) {
+  const {name,mime,bytes}=input
+  if(bytes.length>MAX_ARTIFACT_BYTES)throw new Error('invalid_artifact_size')
+  const storageRoot=resolve(stateDir,'workbench-artifacts')
+  mkdirSync(storageRoot,{recursive:true,mode:0o700})
+  if(lstatSync(storageRoot).isSymbolicLink())throw new Error('invalid_artifact_path')
+  const sha256=createHash('sha256').update(bytes).digest('hex'),storagePath=join(storageRoot,sha256)
+  try{writeFileSync(storagePath,bytes,{flag:'wx',mode:0o600})}catch(error){
+    if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error
+    if(createHash('sha256').update(readRegular(storageRoot,storagePath)).digest('hex')!==sha256)throw new Error('artifact_changed')
+  }
+  return store.addArtifact({taskId,name,mime,size:bytes.length,sha256,storagePath})
+}
 export function collectArtifacts(store: WorkbenchStore, taskId: string, project: string, stateDir: string): string[] {
   const output = outputDirectory(project,taskId)
-  const storageRoot = resolve(stateDir,'workbench-artifacts')
-  mkdirSync(storageRoot,{recursive:true,mode:0o700})
-  if (lstatSync(storageRoot).isSymbolicLink()) throw new Error('invalid_artifact_path')
   const warnings: string[] = []
   const known = new Set(store.artifacts(taskId).map(a => `${a.name}\0${a.sha256}`))
   let count=0, visited=0
@@ -133,13 +147,7 @@ export function collectArtifacts(store: WorkbenchStore, taskId: string, project:
         const sha256 = createHash('sha256').update(bytes).digest('hex')
         const name=relative(output,file)
         if (known.has(`${name}\0${sha256}`)) continue
-        const storagePath = join(storageRoot,sha256)
-        // Atomic create, never overwrite an earlier approved version.
-        try { writeFileSync(storagePath,bytes,{flag:'wx',mode:0o600}) } catch (err) {
-          if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
-          if (createHash('sha256').update(readRegular(storageRoot,storagePath)).digest('hex') !== sha256) throw new Error('artifact_changed')
-        }
-        store.addArtifact({ taskId,name,mime,size:bytes.length,sha256,storagePath })
+        saveArtifactSnapshot(store,taskId,{name,mime,bytes},stateDir)
         count++
       } catch { warnings.push(`无法收集 ${entry.name}（须为目录内普通文件，且不超过 8 MiB）。`) }
     }

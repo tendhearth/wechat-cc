@@ -3,7 +3,8 @@ import { statSync } from 'node:fs'
 import type { AgentEvent, AgentSession } from '../agent-provider'
 import type { ProviderRegistry } from '../provider-registry'
 import { TIER_PROFILES, sessionAuthEnv } from '../user-tier'
-import { canonicalProject, collectArtifacts, outputDirectory, readArtifactSnapshot } from './artifacts'
+import { canonicalProject, collectArtifacts, outputDirectory, readArtifactSnapshot, saveArtifactSnapshot } from './artifacts'
+import { captureGitBaseline, finishGitReview, serializeGitReview, GIT_REVIEW_MIME, type GitBaseline } from './git-review'
 import { restartPreview, type Continuation, type RestartPreview } from './continuation'
 import { makeRunPermissions, type PermissionDecision, type RunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
 import { findPathBlocker, type PathReservation, type WaitingFor } from './scheduler'
@@ -24,6 +25,7 @@ interface Options {
 }
 type AcceptedContinuation = { mode: 'new' } | { mode: 'resume'; sessionId: string } | { mode: 'restart'; preview: RestartPreview }
 interface Active extends PathReservation {
+  reviewBaseline?: GitBaseline
   continuation: AcceptedContinuation
   task: StoredTask
   directoryIdentity: string
@@ -38,6 +40,7 @@ interface Active extends PathReservation {
   publicFinished: boolean
   uncertain: boolean
   artifactsCollected: boolean
+  collection?:Promise<void>
   credentialsMinted: boolean
   credentialsRevoked: boolean
 }
@@ -90,6 +93,7 @@ export function makeWorkbenchService(opts: Options) {
   const reservations=new Map<string,Active>()
   const queue:Active[]=[]
   const runningText=new Map<string,string>()
+  const collections=new Set<Promise<void>>()
   let order=0
   let stopping=false
   let shutdownComplete=false
@@ -128,11 +132,28 @@ export function makeWorkbenchService(opts: Options) {
       ...(includePermissions ? { pendingPermissionCount:running?.permissions.pending().length ?? 0 } : {}),
     }
   }
-  function collect(running:Active) {
+  function collect(running:Active):Promise<void> {
+    if(running.collection)return running.collection
+    if(shutdownComplete)return Promise.resolve()
+    const pending=captureOutputs(running)
+    running.collection=pending;collections.add(pending)
+    void pending.then(()=>collections.delete(pending),()=>collections.delete(pending))
+    return pending
+  }
+  async function captureOutputs(running:Active) {
     if (running.artifactsCollected || shutdownComplete) return
     running.artifactsCollected=true
     try {
       if (canonicalProject(running.path) !== running.path || directoryIdentity(running.path) !== running.directoryIdentity) throw new Error('invalid_path')
+      if(running.reviewBaseline && running.session) {
+        try {
+          const report=await finishGitReview(running.reviewBaseline)
+          if(shutdownComplete)return
+          if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
+          if(report)saveArtifactSnapshot(store,running.taskId,{name:`代码变更-${running.identity.slice(0,8)}.json`,mime:GIT_REVIEW_MIME,bytes:serializeGitReview(report)},opts.stateDir)
+        } catch { store.addEvent(running.taskId,'system','代码对比未能保存；其他成果仍会单独收集。') }
+      }
+      if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
       for (const warning of collectArtifacts(store,running.taskId,running.path,opts.stateDir)) store.addEvent(running.taskId,'system',warning)
     }
     catch { try { store.addEvent(running.taskId,'system','本轮成果目录无法读取，请检查文件夹权限或是否被移动。') } catch { /* storage is already unavailable */ } }
@@ -150,9 +171,9 @@ export function makeWorkbenchService(opts: Options) {
     try { release?.() } catch { /* busy registry releases are best effort and idempotent */ }
     if (!stopping) pump()
   }
-  function confirmLateClose(running:Active,capture:boolean) {
+  async function confirmLateClose(running:Active,capture:boolean) {
     if (!running.uncertain) return
-    if (capture) collect(running)
+    if (capture) await collect(running)
     try { store.clearWriterError(running.taskId) } catch { /* keep the persistent guard if storage is unavailable */ }
     running.uncertain=false
     running.state='active'
@@ -195,6 +216,12 @@ export function makeWorkbenchService(opts: Options) {
         '回复直接输出文本。不要调用微信发消息、发文件、记忆或社交工具，不替用户发布或发送成果。',
         '不要声称完成没有做过的检查。缺依赖、权限或信息时说明具体缺项。',
       ].join('\n')
+      const reviewStop=new AbortController()
+      void running.stop.then(()=>reviewStop.abort())
+      if(running.cancelled){finalStatus='cancelled';return}
+      running.reviewBaseline=await captureGitBaseline(running.path,{},reviewStop.signal)
+      if(running.cancelled){finalStatus='cancelled';return}
+      if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
       const token=opts.mintSessionToken?.(sessionKey)
       running.credentialsMinted=!!opts.mintSessionToken
       if (running.cancelled) revokeCredentials(running)
@@ -219,7 +246,7 @@ export function makeWorkbenchService(opts: Options) {
           markUncertain(running)
           void spawning.then(async session => {
             try { await session.close() } catch { return }
-            confirmLateClose(running,false)
+            await confirmLateClose(running,false)
           },() => confirmLateClose(running,false))
         }
       }
@@ -257,7 +284,7 @@ export function makeWorkbenchService(opts: Options) {
           if (closePromise) void closePromise.then(() => confirmLateClose(running,true),() => {})
         } finally { if (closeTimer) clearTimeout(closeTimer) }
       }
-      if (!running.uncertain) collect(running)
+      if (!running.uncertain) await collect(running)
       revokeCredentials(running)
       if (running.uncertain) { finalStatus='interrupted'; finalError='writer_not_closed' }
       try { store.update(task.id,running.cancelled && !running.uncertain ? 'cancelled' : finalStatus,finalError) } catch { /* never unlock an uncertain writer for a status failure */ }
@@ -422,6 +449,7 @@ export function makeWorkbenchService(opts: Options) {
           }
         }
         await Promise.allSettled(snapshot.map(running => running.done))
+        while(collections.size)await Promise.allSettled([...collections])
         shutdownComplete=true
         for (const running of [...runsByTask.values()]) releaseReservation(running)
       })()

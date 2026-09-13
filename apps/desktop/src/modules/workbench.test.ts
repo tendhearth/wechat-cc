@@ -847,12 +847,12 @@ describe('workbench mutations', () => {
     stopWorkbenchPolling()
   })
 
-  it('ignores an artifact response after another task is selected', async () => {
+  it.each(['text/plain', 'application/vnd.cc.workbench-review+json'])('ignores a late %s artifact response after another task is selected', async reviewMime => {
     vi.useFakeTimers()
     const page=installFakePage()
     const firstTask={id:'FIRST',title:'First',path:'/one',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
     const secondTask={...firstTask,id:'SECOND',title:'Second',path:'/two'}
-    const artifact={id:'FILE',taskId:'FIRST',name:'report.txt',mime:'text/plain',size:4,sha256:'hash',createdAt:3,approvedAt:null}
+    const artifact={id:'FILE',taskId:'FIRST',name:'report.txt',mime:reviewMime,size:4,sha256:'hash',createdAt:3,approvedAt:null}
     let finishArtifact!:(value:unknown)=>void
     const pendingArtifact=new Promise(resolve=>{finishArtifact=resolve})
     const invokeWorkbenchApi=vi.fn((_method:string,path:string)=>{
@@ -870,7 +870,7 @@ describe('workbench mutations', () => {
     const previewing=click({target:preview});await Promise.resolve()
     const second=new FakeElement();second.dataset.taskId='SECOND'
     await click({target:second})
-    finishArtifact({name:'report.txt',mime:'text/plain',contentBase64:'ZGF0YQ==',size:4,sha256:'hash'});await previewing
+    finishArtifact({name:'report.txt',mime:reviewMime,contentBase64:'ZGF0YQ==',size:4,sha256:'hash'});await previewing
     expect(controller.state.detail?.task.id).toBe('SECOND')
     expect(controller.state.preview).toBeNull()
     stopWorkbenchPolling()
@@ -906,6 +906,38 @@ describe('workbench mutations', () => {
     await click({target:back})
     expect(content.scrollTop).toBe(120)
     expect(show.focus).toHaveBeenCalledWith({preventScroll:true})
+    stopWorkbenchPolling()
+  })
+
+  it('previews a generated code review with hash-bound approval and preserves file disclosure choices on refresh', async () => {
+    vi.useFakeTimers()
+    const page = installFakePage()
+    const fileDisclosure = new FakeElement(); fileDisclosure.id = 'wb-review-file-0'
+    let html = ''
+    Object.defineProperty(page, 'innerHTML', { get: () => html, set: value => { html = value; fileDisclosure.removeAttribute('open'); if (/id="wb-review-file-0"[^>]* open/.test(value)) fileDisclosure.setAttribute('open', '') } })
+    page.querySelector = (selector: string) => selector === '#wb-review-file-0' ? fileDisclosure : null
+    ;(page as any).querySelectorAll = () => html.includes('data-review-disclosure') ? [fileDisclosure] : []
+    const task = { id: 'REVIEW', title: 'Review', path: '/work', providerId: 'codex', status: 'completed', createdAt: 1, updatedAt: 2, error: null }
+    const artifact = { id: 'DIFF', taskId: 'REVIEW', name: '本轮文件对比.json', mime: 'application/vnd.cc.workbench-review+json', size: 100, sha256: 'b'.repeat(64), createdAt: 3, approvedAt: null }
+    const source = JSON.stringify({ version: 1, scope: 'working-tree-before-after', startedAt: 1, finishedAt: 2, headBefore: null, headAfter: null, status: 'complete', notes: [], preexistingPaths: [], files: [{ path: 'app.ts', kind: 'added', preexisting: false, diff: '@@ -0,0 +1 @@\n+const value = 1' }] })
+    const invokeWorkbenchApi = vi.fn(async (method: string, path: string) => method === 'POST' ? { task } : path.includes('/artifact?') ? { ...artifact, contentBase64: Buffer.from(source).toString('base64') } : path === '/v1/workbench' ? { tasks: [task], providers: [], defaultProvider: null, canWechat: false } : { task, events: [], artifacts: [artifact] })
+    const { initWorkbenchPage, stopWorkbenchPolling } = await import('./workbench.js')
+    const controller = initWorkbenchPage({ invokeWorkbenchApi, pollMs: 60_000 })!
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    const click = [...page.listeners.get('click')!][0]!
+    const file = new FakeElement(); file.dataset.artifactId = 'DIFF'
+    await click({ target: file })
+    expect(controller.state.preview?.html).toContain('class="wb-code-review"')
+    expect(page.innerHTML).toContain('data-action="download-artifact"')
+    expect(page.innerHTML).toContain('data-action="approve-artifact"')
+    expect(fileDisclosure.hasAttribute('open')).toBe(true)
+    fileDisclosure.removeAttribute('open')
+    task.updatedAt = 4
+    await controller.refresh()
+    expect(fileDisclosure.hasAttribute('open')).toBe(false)
+    const approve = new FakeElement(); approve.dataset.action = 'approve-artifact'
+    await click({ target: approve })
+    expect(invokeWorkbenchApi).toHaveBeenCalledWith('POST', '/v1/workbench/approve', { id: 'REVIEW', artifactId: 'DIFF', sha256: 'b'.repeat(64) })
     stopWorkbenchPolling()
   })
 

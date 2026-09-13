@@ -1,6 +1,7 @@
 // @ts-check
 
 import { Marked } from '../vendor/marked.js'
+import { WORKBENCH_CODE_REVIEW_MIME, renderWorkbenchCodeReview } from './workbench-code-review.js'
 
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed'}} WaitingFor */
 /** @typedef {{id:string,title:string,path:string,providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,waitingFor?:WaitingFor|null}} Task */
@@ -74,6 +75,7 @@ export function renderWorkbenchMarkdown(value) {
 
 /** @param {string} name @param {string} mime @param {string} text */
 export function renderWorkbenchArtifactText(name, mime, text) {
+  if (mime === WORKBENCH_CODE_REVIEW_MIME) return renderWorkbenchCodeReview(text)
   const source = `<pre>${escapeWorkbenchHtml(text)}</pre>`
   if (mime.split(';')[0] === 'text/markdown' || /\.(md|markdown)$/i.test(name)) {
     return `<article class="wb-document wb-markdown">${renderWorkbenchMarkdown(text)}</article><details id="wb-artifact-source" class="wb-disclosure"><summary>查看原文</summary>${source}</details>`
@@ -420,6 +422,7 @@ export function initWorkbenchPage(deps) {
     const nextScope = scopeFor(state)
     const hasStoredScroll = scrollPositions.has(nextScope) || renderedScope === nextScope
     const openState = new Map(['wb-tools', 'wb-artifacts', 'wb-options', 'wb-task-info', 'wb-restart-context', 'wb-artifact-source'].map(id => [id, !!root.querySelector(`#${id}[open]`)]))
+    for (const disclosure of root.querySelectorAll?.('[data-review-disclosure]') ?? []) openState.set(disclosure.id, disclosure.hasAttribute('open'))
     disclosures.set(renderedScope, openState)
     const contentScroll = root.querySelector('.wb-content')?.scrollTop ?? 0
     const sidebarScroll = root.querySelector('.wb-sidebar')?.scrollTop ?? 0
@@ -560,7 +563,7 @@ export function initWorkbenchPage(deps) {
         objectUrl = URL.createObjectURL(new Blob([decodeBase64(data.contentBase64)], { type: data.mime }))
         if (action === 'download-artifact') { const a = document.createElement('a'); a.href = objectUrl; a.download = data.name; a.click(); return }
         let html = '<p class="wb-preview-hint">这种文件请下载后在本机应用中查看。</p>'
-        if (data.mime.startsWith('text/') || data.mime === 'application/json') html = renderWorkbenchArtifactText(data.name, data.mime, new TextDecoder().decode(decodeBase64(data.contentBase64)))
+        if (data.mime === WORKBENCH_CODE_REVIEW_MIME || data.mime.startsWith('text/') || data.mime === 'application/json') html = renderWorkbenchArtifactText(data.name, data.mime, new TextDecoder().decode(decodeBase64(data.contentBase64)))
         else if (data.mime.startsWith('image/')) html = `<img src="${objectUrl}" alt="${escapeWorkbenchHtml(data.name)}">`
         else if (data.mime === 'application/pdf') html = `<iframe src="${objectUrl}" title="${escapeWorkbenchHtml(data.name)}"></iframe>`
         controller.state.preview = { artifactId: artifact.id, html }
