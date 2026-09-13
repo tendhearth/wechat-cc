@@ -107,6 +107,8 @@
 .wb-artifact span { display:block; overflow:hidden; font-size:12px; font-weight:500; text-overflow:ellipsis; white-space:nowrap; }
 .wb-artifact small { display:block; margin-top:5px; color:var(--wb-muted); font-size:10px; }
 .wb-preview { display:flex; flex-wrap:wrap; gap:8px; padding:14px 0 0; }
+.wb-document { padding:18px 20px; border:1px solid var(--wb-line); border-radius:8px; background:#fffefa; color:var(--wb-text); font-size:14px; line-height:1.8; overflow-wrap:anywhere; }
+.wb-back-dialogue { margin-top:10px; }
 .wb-preview-name { width:100%; margin:0; color:var(--wb-secondary); font-size:12px; word-break:break-all; }
 .wb-preview-content { width:100%; }
 .wb-preview pre { width:100%; max-height:55vh; overflow:auto; border:1px solid var(--wb-line); border-radius:7px; padding:14px; background:#fffefa; color:var(--wb-text); white-space:pre-wrap; word-break:break-word; font:12px/1.7 var(--mono); }

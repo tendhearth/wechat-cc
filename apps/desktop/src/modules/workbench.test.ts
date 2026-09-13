@@ -237,6 +237,7 @@ describe('workbench rendering', () => {
     const task={id:'TASK',title:'No artifacts',path:'/work',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
     const html=renderWorkbench({tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:'TASK',detail:{task,events:[],artifacts:[]},selectedArtifactId:null,error:'',preview:null})
     expect(html).not.toContain('id="wb-artifacts"')
+    expect(html).not.toContain('data-action="show-artifacts"')
     expect(html).not.toContain('成果文件会在这里出现')
   })
 
@@ -273,6 +274,23 @@ describe('workbench rendering', () => {
     expect(html).not.toMatch(/<details[^>]*id="wb-artifacts"[^>]* open/)
     expect(html).toContain('data-action="download-artifact"')
     expect(html).toContain('data-action="approve-artifact"')
+    expect(html).toMatch(/<header class="wb-task-head">[\s\S]*?data-action="show-artifacts"[\s\S]*?<\/header>/)
+    expect(html).toContain('data-action="back-to-dialogue"')
+  })
+
+  it('presents Markdown artifacts as documents while retaining escaped original text', async () => {
+    const {renderWorkbenchArtifactText}=await import('./workbench.js')
+    const text='# Findings\n\n| Item | Result |\n| --- | --- |\n| A | Passed |\n\n```js\nconst a = "<b>"\n```\n\n<script>alert(1)</script>\n\n[bad](javascript:alert(1))'
+    const html=renderWorkbenchArtifactText('report.md','text/markdown',text)
+    expect(html).toContain('<h1>Findings</h1>')
+    expect(html).toContain('<table>')
+    expect(html).toContain('<code class="language-js">')
+    expect(html).toContain('查看原文')
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
+    expect(html).not.toContain('<script>')
+    expect(html).not.toContain('href="javascript:')
+    expect(renderWorkbenchArtifactText('report.MD','text/plain','# Findings')).toContain('<h1>Findings</h1>')
+    expect(renderWorkbenchArtifactText('page.html','text/html','<script>alert(1)</script>')).toBe('<pre>&lt;script&gt;alert(1)&lt;/script&gt;</pre>')
   })
 
   it('shows the explicit WeChat continuation command only when available', async () => {
@@ -388,7 +406,7 @@ describe('workbench mutations', () => {
     removeEventListener(name: string, fn: (event: any) => void) { this.listeners.get(name)?.delete(fn) }
     closest(selector?: string) { return selector === 'button' || selector === 'summary' ? this : null }
     contains(element: unknown) { return element !== null }
-    querySelector() { return null }
+    querySelector(_selector?: string): FakeElement | null { return null }
     focus() {}
     setSelectionRange(start: number, end: number) { this.selectionStart=start; this.selectionEnd=end }
     setAttribute(name:string,value:string) { this.attributes.set(name,value) }
@@ -646,6 +664,39 @@ describe('workbench mutations', () => {
     finishArtifact({name:'report.txt',mime:'text/plain',contentBase64:'ZGF0YQ==',size:4,sha256:'hash'});await previewing
     expect(controller.state.detail?.task.id).toBe('SECOND')
     expect(controller.state.preview).toBeNull()
+    stopWorkbenchPolling()
+  })
+
+  it('opens results directly, previews the selected report, and returns to the same conversation position', async () => {
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const content=new FakeElement();content.scrollTop=120;content.scrollHeight=900
+    const page=installFakePage({},content)
+    const summary=new FakeElement();summary.focus=vi.fn()
+    const details=Object.assign(new FakeElement(),{scrollIntoView:vi.fn(),querySelector:()=>summary})
+    const show=new FakeElement();show.dataset.action='show-artifacts';show.focus=vi.fn()
+    page.querySelector=(selector:string)=>selector==='.wb-content'?content:selector==='#wb-artifacts'?details:selector==='[data-action="show-artifacts"]'?show:null
+    const task={id:'abcd1234',title:'Review',path:'/tmp/report',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const artifact={id:'report',taskId:task.id,name:'report.md',mime:'text/markdown',size:16,sha256:'hash',createdAt:3,approvedAt:null}
+    const invokeWorkbenchApi=vi.fn(async(_method:string,path:string)=>path.includes('/artifact?')?{...artifact,contentBase64:Buffer.from('# Ready\n\nSafe result.').toString('base64')}:path==='/v1/workbench'?{tasks:[task],providers:[],defaultProvider:'codex',canWechat:false}:{task,events:[],artifacts:[artifact]})
+    const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:100000})!
+    for(let i=0;i<6;i++)await Promise.resolve()
+    content.scrollTop=120
+    const click=[...page.listeners.get('click')!][0]!
+    await click({target:show})
+    expect(details.hasAttribute('open')).toBe(true)
+    expect(details.scrollIntoView).toHaveBeenCalledWith({block:'start'})
+    expect(summary.focus).toHaveBeenCalledWith({preventScroll:true})
+    const file=new FakeElement();file.dataset.artifactId='report'
+    await click({target:file})
+    expect(invokeWorkbenchApi).toHaveBeenCalledWith('GET','/v1/workbench/artifact?id=abcd1234&artifactId=report')
+    expect(controller.state.preview?.html).toContain('<h1>Ready</h1>')
+    expect(controller.state.preview?.artifactId).toBe('report')
+    content.scrollTop=800
+    await click({target:show})
+    const back=new FakeElement();back.dataset.action='back-to-dialogue'
+    await click({target:back})
+    expect(content.scrollTop).toBe(120)
+    expect(show.focus).toHaveBeenCalledWith({preventScroll:true})
     stopWorkbenchPolling()
   })
 

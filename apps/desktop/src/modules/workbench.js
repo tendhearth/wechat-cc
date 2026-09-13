@@ -63,6 +63,15 @@ export function renderWorkbenchMarkdown(value) {
   return /** @type {string} */ (workbenchMarkdown.parse(String(value ?? '')))
 }
 
+/** @param {string} name @param {string} mime @param {string} text */
+export function renderWorkbenchArtifactText(name, mime, text) {
+  const source = `<pre>${escapeWorkbenchHtml(text)}</pre>`
+  if (mime.split(';')[0] === 'text/markdown' || /\.(md|markdown)$/i.test(name)) {
+    return `<article class="wb-document wb-markdown">${renderWorkbenchMarkdown(text)}</article><details id="wb-artifact-source" class="wb-disclosure"><summary>查看原文</summary>${source}</details>`
+  }
+  return source
+}
+
 /** @param {number} value */
 function time(value) {
   return Number.isFinite(value) ? new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : ''
@@ -175,9 +184,9 @@ export function renderWorkbench(state) {
   const operationHtml = operations.length ? `<details id="wb-tools" class="wb-disclosure wb-tools"><summary>工具与运行记录 <span>${operations.length} 条</span></summary><div class="wb-events">${operations.map(event => `<article class="wb-event" data-kind="${escapeWorkbenchHtml(event.kind)}"><div class="wb-event-meta"><span>${escapeWorkbenchHtml(event.kind === 'tool_call' ? '工具' : event.kind === 'error' ? '错误' : '系统')}</span><time>${escapeWorkbenchHtml(time(event.createdAt))}</time></div><p>${escapeWorkbenchHtml(event.text)}</p></article>`).join('')}</div></details>` : ''
   const permissionHtml = permissions.length ? `<section class="wb-permissions" aria-label="等待处理的权限请求"><header><h3>需要你的决定</h3><span>${permissions.length} 项</span></header>${permissions.map(permission => `<article class="wb-permission"><div><span class="wb-permission-tool">${escapeWorkbenchHtml(permission.tool)}</span><p>${escapeWorkbenchHtml(permission.description)}</p><time>${escapeWorkbenchHtml(time(permission.createdAt))}</time></div><div class="wb-permission-actions"><button class="wb-btn" type="button" data-action="deny-permission" data-request-id="${escapeWorkbenchHtml(permission.id)}">拒绝</button><button class="wb-btn wb-btn-primary" type="button" data-action="allow-permission" data-request-id="${escapeWorkbenchHtml(permission.id)}">允许</button></div></article>`).join('')}</section>` : ''
   const artifacts = detail?.artifacts?.length ? detail.artifacts.map(artifact => `<button type="button" class="wb-artifact ${artifact.id === state.selectedArtifactId ? 'is-selected' : ''}" data-artifact-id="${escapeWorkbenchHtml(artifact.id)}"><span>${escapeWorkbenchHtml(artifact.name)}</span><small>${escapeWorkbenchHtml((artifact.size / 1024).toFixed(1))} KB · ${artifact.approvedAt ? '已确认' : '待确认'}</small></button>`).join('') : ''
-  const previewContent = selectedArtifact && state.preview?.artifactId === selectedArtifact.id ? state.preview.html : '<p class="wb-preview-hint">选择“打开预览”读取这份不可变快照。</p>'
-  const artifactHtml = detail?.artifacts?.length ? `<details id="wb-artifacts" class="wb-disclosure wb-artifacts"><summary><span>成果</span><small>${detail.artifacts.length} 件</small></summary><div class="wb-artifact-list">${artifacts}</div><div id="wb-preview" class="wb-preview">${selectedArtifact ? `<p class="wb-preview-name">${escapeWorkbenchHtml(selectedArtifact.name)}</p><div class="wb-preview-content">${previewContent}</div><button type="button" class="wb-btn" data-action="preview-artifact">打开预览</button><button type="button" class="wb-btn" data-action="download-artifact">下载</button>${selectedArtifact.approvedAt ? '<p class="wb-approved">已确认此版本</p>' : '<button type="button" class="wb-btn wb-btn-primary" data-action="approve-artifact">确认这份成果</button>'}` : ''}</div></details>` : ''
-  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${escapeWorkbenchHtml(pathParts(detail.task.path).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2></div><div class="wb-task-head-actions"><span class="wb-status" data-status="${escapeWorkbenchHtml(detail.task.status)}">${escapeWorkbenchHtml(statusLabel(detail.task.status))}</span><details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div></dl>${state.canWechat ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
+  const previewContent = selectedArtifact && state.preview?.artifactId === selectedArtifact.id ? state.preview.html : '<p class="wb-preview-hint">选择文件，查看保存的成果版本。</p>'
+  const artifactHtml = detail?.artifacts?.length ? `<details id="wb-artifacts" class="wb-disclosure wb-artifacts"><summary><span>成果</span><small>${detail.artifacts.length} 件</small></summary><button type="button" class="wb-new wb-back-dialogue" data-action="back-to-dialogue">返回对话</button><div class="wb-artifact-list">${artifacts}</div><div id="wb-preview" class="wb-preview">${selectedArtifact ? `<p class="wb-preview-name">${escapeWorkbenchHtml(selectedArtifact.name)}</p><div class="wb-preview-content">${previewContent}</div><button type="button" class="wb-btn" data-action="download-artifact">下载</button>${selectedArtifact.approvedAt ? '<p class="wb-approved">已确认此版本</p>' : '<button type="button" class="wb-btn wb-btn-primary" data-action="approve-artifact">确认这份成果</button>'}` : ''}</div></details>` : ''
+  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${escapeWorkbenchHtml(pathParts(detail.task.path).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2></div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<span class="wb-status" data-status="${escapeWorkbenchHtml(detail.task.status)}">${escapeWorkbenchHtml(statusLabel(detail.task.status))}</span><details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div></dl>${state.canWechat ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
   const content = detail ? `
     <section class="wb-dialogue" aria-live="polite">${dialogueHtml}</section>
     ${queuedGuidance}
@@ -308,6 +317,8 @@ export function initWorkbenchPage(deps) {
   const permissionScrollPositions = new Map()
   /** @type {Map<string, number>} */
   const taskInfoScrollPositions = new Map()
+  /** @type {Map<string,number>} */
+  const resultReturnPositions = new Map()
   const scopeFor = (/** @type {WorkbenchState} */ state) => state.selectedId ? `task:${state.selectedId}` : 'new'
   const permissionSignatureFor = (/** @type {WorkbenchState} */ state) => JSON.stringify((state.detail?.permissions ?? []).filter(permission => permission.taskId === state.detail?.task.id).map(permission => permission.id).sort())
   const captureDraft = () => {
@@ -334,7 +345,7 @@ export function initWorkbenchPage(deps) {
       : null
     const nextScope = scopeFor(state)
     const hasStoredScroll = scrollPositions.has(nextScope) || renderedScope === nextScope
-    const openState = new Map(['wb-tools', 'wb-artifacts', 'wb-options', 'wb-task-info', 'wb-restart-context'].map(id => [id, !!root.querySelector(`#${id}[open]`)]))
+    const openState = new Map(['wb-tools', 'wb-artifacts', 'wb-options', 'wb-task-info', 'wb-restart-context', 'wb-artifact-source'].map(id => [id, !!root.querySelector(`#${id}[open]`)]))
     disclosures.set(renderedScope, openState)
     const contentScroll = root.querySelector('.wb-content')?.scrollTop ?? 0
     scrollPositions.set(renderedScope, contentScroll)
@@ -409,8 +420,27 @@ export function initWorkbenchPage(deps) {
     const target = event.target instanceof Element ? event.target.closest('button') : null
     if (!target) return
     if (target.dataset.taskId) { captureDraft(); navigationGeneration++; artifactRequest++; return controller.selectTask(target.dataset.taskId).catch(fail) }
-    if (target.dataset.artifactId) { artifactRequest++; controller.state.selectedArtifactId = target.dataset.artifactId; controller.state.preview = null; return controller.paint() }
-    const action = target.dataset.action
+    let action = target.dataset.action
+    if (target.dataset.artifactId) { artifactRequest++; controller.state.selectedArtifactId = target.dataset.artifactId; controller.state.preview = null; controller.paint(); action = 'preview-artifact' }
+    if (action === 'show-artifacts') {
+      const details = root.querySelector('#wb-artifacts')
+      const content = root.querySelector('.wb-content')
+      if (!details) return
+      if (!resultReturnPositions.has(renderedScope)) resultReturnPositions.set(renderedScope, content?.scrollTop ?? 0)
+      details.setAttribute('open', '')
+      const summary = /** @type {HTMLElement|null} */ (details.querySelector('summary'))
+      summary?.focus({ preventScroll:true })
+      details.scrollIntoView({ block:'start' })
+      return
+    }
+    if (action === 'back-to-dialogue') {
+      const content = root.querySelector('.wb-content')
+      const results = /** @type {HTMLElement|null} */ (root.querySelector('[data-action="show-artifacts"]'))
+      results?.focus({ preventScroll:true })
+      if (content) content.scrollTop = resultReturnPositions.get(renderedScope) ?? 0
+      resultReturnPositions.delete(renderedScope)
+      return
+    }
     if (action === 'refresh') return controller.refresh().catch(fail)
     if (action === 'new-task') { captureDraft(); navigationGeneration++; artifactRequest++; return controller.newTask() }
     if (action === 'choose-folder') { try { const path = await deps.invoke?.('choose_workbench_folder', {}); const field = input('wb-path'); if (typeof path === 'string' && field) field.value = path } catch (e) { fail(e) } return }
@@ -432,7 +462,7 @@ export function initWorkbenchPage(deps) {
         objectUrl = URL.createObjectURL(new Blob([decodeBase64(data.contentBase64)], { type: data.mime }))
         if (action === 'download-artifact') { const a = document.createElement('a'); a.href = objectUrl; a.download = data.name; a.click(); return }
         let html = '<p class="wb-preview-hint">这种文件请下载后在本机应用中查看。</p>'
-        if (data.mime.startsWith('text/') || data.mime === 'application/json') html = `<pre>${escapeWorkbenchHtml(new TextDecoder().decode(decodeBase64(data.contentBase64)))}</pre>`
+        if (data.mime.startsWith('text/') || data.mime === 'application/json') html = renderWorkbenchArtifactText(data.name, data.mime, new TextDecoder().decode(decodeBase64(data.contentBase64)))
         else if (data.mime.startsWith('image/')) html = `<img src="${objectUrl}" alt="${escapeWorkbenchHtml(data.name)}">`
         else if (data.mime === 'application/pdf') html = `<iframe src="${objectUrl}" title="${escapeWorkbenchHtml(data.name)}"></iframe>`
         controller.state.preview = { artifactId: artifact.id, html }

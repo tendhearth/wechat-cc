@@ -36,10 +36,10 @@ Interface: detail exposes continuation `{mode: 'new'|'resume'|'restart_required'
 
 Files: a focused workbench artifact-presentation module and tests, modules/workbench.js/.test.ts, styles/workbench.css.
 
-- [ ] Add failing tests for a Markdown report with headings/table/code, escaping HTML, refusing executable links, and keeping the source representation accessible.
-- [ ] Reuse the safe existing Markdown renderer, display image/PDF previews without changing snapshot identity, and retain plaintext for formats without a supported renderer. Preserve download and hash-bound confirmation semantics.
-- [ ] Put a compact Results action in the task header when actual artifacts exist. Opening it reveals the existing in-page result area, preserving a route back to the conversation and avoiding a permanent third column.
-- [ ] Verify unsupported formats honestly guide users to the original file, errors remain visible, task changes cannot show another task's preview, and all source/native-artifact paths remain task-bound. Commit independently.
+- [x] Add failing tests for a Markdown report with headings/table/code, escaping HTML, refusing executable links, and keeping the source representation accessible.
+- [x] Reuse the safe existing Markdown renderer, display image/PDF previews without changing snapshot identity, and retain plaintext for formats without a supported renderer. Preserve download and hash-bound confirmation semantics.
+- [x] Put a compact Results action in the task header when actual artifacts exist. Opening it reveals the existing in-page result area, preserving a route back to the conversation and avoiding a permanent third column.
+- [x] Verify unsupported formats honestly guide users to the original file, errors remain visible, task changes cannot show another task's preview, and all source/native-artifact paths remain task-bound. Commit independently.
 
 ## Task 3 — task retrieval, archive and project-local creation
 
