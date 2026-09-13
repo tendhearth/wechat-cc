@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readJsonFile } from '../../lib/read-json-file'
 import { join } from 'node:path'
 import type { InternalApiDeps, RouteTable } from './types'
 
@@ -7,7 +7,7 @@ export function thoughtRoutes(deps: InternalApiDeps): RouteTable {
   return {'GET /v1/companion/thoughts': () => {
     try {
       let raw: unknown
-      try {raw=JSON.parse(readFileSync(join(deps.stateDir,'companion','plan-log.json'),'utf8'))}
+      try {raw=readJsonFile(join(deps.stateDir,'companion','plan-log.json'))}
       catch(e) {if((e as NodeJS.ErrnoException).code==='ENOENT')return {status:200,body:{items:[]}};throw e}
       if(!raw||typeof raw!=='object')throw new Error('invalid_plan_log')
       const r=raw as {days?:Record<string,unknown>; day?:string; entries?:unknown[]}

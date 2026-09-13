@@ -11,7 +11,7 @@ it('reads retained thoughts without exposing chat ids, and does not claim they w
   const stateDir=mkdtempSync(join(tmpdir(),'cc-thoughts-'))
   try {
     mkdirSync(join(stateDir,'companion'))
-    writeFileSync(join(stateDir,'companion/plan-log.json'),JSON.stringify({days:{'2026-09-11':[{at:'2026-09-11T12:00:00Z',chatId:'private-id',decision:'visit',why:'想去看看朋友',source:'model',executed:false},{at:'2026-09-11T13:00:00Z',chatId:'private-id',decision:'visit',why:'fallback:timeout',source:'fallback'}]}}))
+    writeFileSync(join(stateDir,'companion/plan-log.json'),'\ufeff'+JSON.stringify({days:{'2026-09-11':[{at:'2026-09-11T12:00:00Z',chatId:'private-id',decision:'visit',why:'想去看看朋友',source:'model',executed:false},{at:'2026-09-11T13:00:00Z',chatId:'private-id',decision:'visit',why:'fallback:timeout',source:'fallback'}]}}))
     const r=await thoughtRoutes({stateDir} as InternalApiDeps)['GET /v1/companion/thoughts']!(new URLSearchParams(),undefined)
     expect(r.status).toBe(200)
     expect(JSON.stringify(r.body)).toContain('想去看看朋友')
