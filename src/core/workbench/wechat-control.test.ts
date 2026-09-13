@@ -1,7 +1,7 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest'
 import {mkdtempSync,mkdirSync,realpathSync,rmSync} from 'node:fs'
 import {createHash} from 'node:crypto'
-import {wechatTaskMessageKey} from './wechat-control'
+import {makeWechatWorkbenchControl,wechatTaskMessageKey} from './wechat-control'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
@@ -24,6 +24,39 @@ beforeEach(()=>{root=realpathSync(mkdtempSync(join(tmpdir(),'cc-wechat-control-'
 afterEach(async()=>{await service?.shutdown();db.close();rmSync(root,{recursive:true,force:true})})
 
 describe('WeChat task control through the shared service',()=>{
+  it('shows retained runtime observations in list/detail while keeping child output out of the main reply',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=store.create({title:'后台校对',path:project,providerId:'claude',ownerChatId:'owner'})
+    store.update(task.id,'running')
+    store.addEvent(task.id,'text','主回复已经到达。')
+    store.recordAgentEvent(task.id,'epoch',{kind:'tool_call',tool:'Agent',activity:{id:'child',type:'agent',status:'completed',label:'子助手',output:'不作为主回复的子结果'}})
+    const runtime={retained:true,foreground:'idle' as const,backgroundCount:0,input:'send' as const}
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,detail:id=>({...service.detail(id),runtime})}})
+    expect(await control('owner','任务')).toContain('会话保留中')
+    const reply=await control('owner',`任务 ${task.id}`)
+    expect(reply).toContain('会话保留中')
+    expect(reply).toContain('主回复已经到达。')
+    expect(reply).not.toContain('不作为主回复的子结果')
+    expect(reply).toContain(`结束：任务 ${task.id} 停止`)
+    runtime.backgroundCount=2
+    expect(await control('owner',`任务 ${task.id}`)).toContain('后台执行中 · 2')
+    store.update(task.id,'cancelling')
+    expect(await control('owner',`任务 ${task.id}`)).toContain('正在停止')
+    expect(await control('owner',`任务 ${task.id}`)).not.toContain('会话保留中')
+  })
+  it('does not promise a new round for a retained queue-only runtime',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=store.create({title:'后台会话',path:project,providerId:'claude',ownerChatId:'owner'})
+    store.update(task.id,'running')
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,
+      detail:id=>({...service.detail(id),runId:'epoch',inputMode:'queue',runtime:{retained:true,foreground:'idle',backgroundCount:0,input:'queue'}}),
+      submitInput:async(id,input)=>store.liveInputs.add({id:input.requestId,taskId:id,runId:input.runId,text:input.text}),
+    }})
+    const reply=await control('owner',`任务 ${task.id} 补充 保留接口`,identity)
+    expect(reply).toContain('不会自动发送')
+    expect(reply).not.toContain('下一轮')
+    expect(await control('owner',`任务 ${task.id} 补充 保留接口`,identity)).toBe(reply)
+  })
   it('lists only the current owner original tasks and keeps ordinary conversation out of the workbench',async()=>{
     setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
     const mine=store.create({title:'我的报告',path:project,providerId:'claude',ownerChatId:'owner'})

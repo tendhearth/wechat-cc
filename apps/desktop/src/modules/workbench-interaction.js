@@ -218,11 +218,11 @@ export function captureWorkbenchQuestionDrafts(root, interactions) {
   }
 }
 
-/** @param {string} taskId @param {LiveInput[]} inputs @param {Interactions} [interactions] */
-export function renderWorkbenchInputs(taskId, inputs, interactions) {
+/** @param {string} taskId @param {LiveInput[]} inputs @param {Interactions} [interactions] @param {boolean} [retained] */
+export function renderWorkbenchInputs(taskId, inputs, interactions,retained=false) {
   const own = inputs.filter(input => input.taskId === taskId).slice(-50)
   if (!own.length) return ''
-  const labels = { pending: '等待下一轮', sending: '等待交付确认', delivered: '已交付', held: '未发送', withdrawn: '已撤回' }
+  const labels = { pending: retained ? '已保存，尚未发送' : '等待下一轮', sending: '等待交付确认', delivered: '已交付', held: '未发送', withdrawn: '已撤回' }
   const unresolved = own.some(input => ['pending', 'sending', 'held'].includes(input.status))
   return `<details id="wb-inputs" class="wb-disclosure wb-inputs"${unresolved ? ' open' : ''}><summary>补充记录 <small>${own.length} 条</small></summary>${own.map(input => {
     const state = interactions?.withdrawalState(taskId, input.id)

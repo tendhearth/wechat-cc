@@ -3,7 +3,7 @@
 import { icon } from './icons.js'
 
 /** @typedef {import('./workbench.js').WorkbenchEvent} WorkbenchEvent */
-/** @typedef {{status:string,runId?:string,renderMessage:(event:WorkbenchEvent)=>string,escapeHtml:(value:unknown)=>string,formatTime:(value:number)=>string}} TimelineOptions */
+/** @typedef {{status:string,runId?:string,runtime?:import('./workbench-runtime.js').RuntimeSnapshot,renderMessage:(event:WorkbenchEvent)=>string,escapeHtml:(value:unknown)=>string,formatTime:(value:number)=>string}} TimelineOptions */
 
 const activityTypes = /** @type {const} */ (['command', 'read', 'edit', 'search', 'tool', 'agent', 'system'])
 const typeLabels = { command:'命令', read:'读取', edit:'修改', search:'搜索', tool:'工具', agent:'协作', system:'运行记录' }
@@ -89,9 +89,10 @@ function renderOperation(event, options) {
   const detail = activity?.detail && activity.detail !== label ? `<pre>${escape(activity.detail)}</pre>` : ''
   const agents = activity?.agentIds?.length ? `<p class="wb-operation-agents">协作执行者 · ${activity.agentIds.map(id => `<code>${escape(id)}</code>`).join('、')}</p>` : ''
   const parent = activity?.parentId ? `<p class="wb-operation-parent">上级操作 · <code>${escape(activity.parentId)}</code></p>` : ''
-  const extra = detail + agents + parent
+  const output = activity?.output ? `<section class="wb-operation-output" aria-label="子助手回复"><pre>${escape(activity.output)}</pre></section>` : ''
+  const extra = output + detail + agents + parent
   const extraHtml = extra ? issue ? `<div class="wb-operation-detail">${extra}</div>`
-    : `<details id="${disclosureId('activity', event)}" class="wb-operation-detail" data-timeline-disclosure><summary>查看详情</summary>${extra}</details>` : ''
+    : `<details id="${disclosureId('activity', event)}" class="wb-operation-detail" data-timeline-disclosure><summary>${output ? '查看子助手回复' : '查看详情'}</summary>${extra}</details>` : ''
   return `<article class="wb-operation" id="${workbenchTimelineEventId(event)}" data-timeline-anchor data-kind="${escape(event.kind)}" data-activity-type="${escape(type)}"${activity ? ` data-status="${escape(activity.status)}"` : ''}${issue ? ` role="${event.kind === 'error' || activity?.status === 'failed' ? 'alert' : 'status'}"` : ''}>
     <div class="wb-operation-line"><span class="wb-operation-type">${icon(event.kind === 'error' ? 'alert-02' : typeIcons[type], { size:13 })}<span class="wb-sr-only">${escape(event.kind === 'error' ? '错误' : typeLabels[type])}</span></span><span class="wb-operation-label">${escape(label)}</span>${activity ? `<span class="wb-operation-status">${escape(statusLabels[activity.status])}</span>` : ''}<time>${escape(formatTime(event.createdAt))}</time></div>${extraHtml}
   </article>`
@@ -103,6 +104,7 @@ function renderGroup(events, options) {
   if (!first) return ''
   const live = ['running', 'cancelling'].includes(options.status)
     && (options.runId ? first.runId === options.runId : !first.runId)
+    && !(options.status === 'running' && options.runtime?.retained && options.runtime.foreground === 'idle' && !events.some(event => event.activity?.status === 'running'))
   const rows = `<div class="wb-operation-list">${events.map(event => renderOperation(event, options)).join('')}</div>`
   // Live groups are not disclosures. Finishing a run therefore creates a new,
   // closed disclosure instead of preserving an automatically opened state.

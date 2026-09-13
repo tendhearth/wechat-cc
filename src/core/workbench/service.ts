@@ -1,10 +1,10 @@
 import {makeRunUserInput,type RunUserInput} from './user-input'
 import {makeWechatWorkbenchControl,type WechatMessageIdentity} from './wechat-control'
-import {normalizeInputRequestId,sameAttachments} from './live-inputs'
+import {normalizeInputRequestId,sameAttachments,type LiveInput} from './live-inputs'
 import type {Attachment} from './attachments'
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
-import type { AgentEvent, AgentSession, AgentExecutionChoice, AgentModelCatalog } from '../agent-provider'
+import type { AgentEvent, AgentSession, AgentExecutionChoice, AgentModelCatalog, AgentRuntimeSnapshot } from '../agent-provider'
 import {executionFailureMessage,normalizeExecutionChoice,PROVIDER_EXECUTION_CHOICE,sameExecutionChoice} from './execution-settings'
 import type { ProviderRegistry } from '../provider-registry'
 import { TIER_PROFILES, sessionAuthEnv } from '../user-tier'
@@ -57,6 +57,7 @@ interface Active extends PathReservation {
   queuedInputId?:string
   finishing?:boolean
   delivering?:boolean
+  runtimeInputs?:Map<string,LiveInput>
   interactionAt:number
   releaseBusy?: () => void
   publicFinished: boolean
@@ -68,7 +69,7 @@ interface Active extends PathReservation {
 }
 export interface InputMaterials {attachmentIds?:string[];draftId?:string;execution?:unknown}
 export interface CreateTask extends InputMaterials { title?: string; path: string; providerId: string; text: string }
-export interface WorkbenchTaskView extends Task { importedOnly?:boolean; canArchive:boolean; waitingFor: WaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number }
+export interface WorkbenchTaskView extends Task { importedOnly?:boolean; canArchive:boolean; waitingFor: WaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number; runtime?:AgentRuntimeSnapshot }
 
 function checkedText(text: string,attachments:readonly Attachment[]=[]): string {
   if (typeof text !== 'string' || (!text.trim()&&!attachments.length) || text.length > 20_000) throw new Error('invalid_text')
@@ -81,21 +82,29 @@ function directoryIdentity(path:string):string {
 }
 const RECOVERY_MESSAGE='原执行会话暂时无法恢复。请打开桌面工作台，查看恢复选项并确认是否带此前记录重新开始。'
 const SUPPORTED = ['claude','codex']
+const INPUT_UNCONFIRMED='未确认执行者收到，请检查当前对话后再决定是否重发。'
 
 /** Cancellation must clear the idle timer even if a broken adapter leaves next() pending. */
-async function collectWorkbenchTurn(events: AsyncIterable<AgentEvent>, stop: Promise<null>, timeoutMs: number, observe: (event: AgentEvent) => void, waiting:()=>boolean=()=>false,interactionAt:()=>number=()=>0) {
+async function collectWorkbenchTurn(events: AsyncIterable<AgentEvent>, stop: Promise<null>, timeoutMs: number, observe: (event: AgentEvent) => void, waiting:()=>boolean=()=>false,interactionAt:()=>number=()=>0,begin?:()=>void) {
   const iterator=events[Symbol.asyncIterator]()
   let result: Extract<AgentEvent,{kind:'result'}> | undefined
   let error: string | undefined
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
+    // Install the lifetime consumer before native start can publish any events.
+    begin?.()
     for (;;) {
-      const startedAt=Date.now(),next=iterator.next(),idle=Symbol('idle')
+      let startedAt=Date.now(),paused=waiting()
+      const next=iterator.next(),idle=Symbol('idle')
       const step=await (async()=>{
         for(;;){
-          const value=await Promise.race([next,stop,new Promise<typeof idle>(resolve=>{timer=setTimeout(()=>resolve(idle),waiting()?timeoutMs:Math.max(1,timeoutMs-(Date.now()-Math.max(startedAt,interactionAt()))))})])
+          const nowPaused=waiting()
+          if(nowPaused||paused)startedAt=Date.now()
+          paused=nowPaused
+          const value=await Promise.race([next,stop,new Promise<typeof idle>(resolve=>{timer=setTimeout(()=>resolve(idle),paused?timeoutMs:Math.max(1,timeoutMs-(Date.now()-Math.max(startedAt,interactionAt()))))})])
           if(timer){clearTimeout(timer);timer=undefined}
           if(value!==idle)return value
+          if(paused)continue
           if(!waiting()&&Date.now()-Math.max(startedAt,interactionAt())>=timeoutMs)throw Error('turn_timeout')
         }
       })()
@@ -133,7 +142,17 @@ export function makeWorkbenchService(opts: Options) {
   const autoContinueBlocked=new Set<string>()
   function holdInputs(id:string,error:string){
     autoContinueBlocked.add(id)
-    try{store.liveInputs.hold(id,error);autoContinueBlocked.delete(id)}catch{/* Stop must not depend on a successful disk write. */}
+    try{
+      store.atomic(()=>{
+        // A native send awaiting acknowledgement is ambiguous, even after stop.
+        for(const saved of runsByTask.get(id)?.runtimeInputs?.values()??[]){
+          const current=store.liveInputs.get(saved.id)
+          if(current?.status==='sending'&&current.taskId===saved.taskId&&current.runId===saved.runId&&current.text===saved.text&&sameAttachments(current.attachments,saved.attachments))store.liveInputs.set(saved.id,'held',INPUT_UNCONFIRMED)
+        }
+        store.liveInputs.hold(id,error)
+      })
+      autoContinueBlocked.delete(id)
+    }catch{/* Stop must not depend on a successful disk write. */}
   }
   const runsByTask=new Map<string,Active>()
   const reservations=new Map<string,Active>()
@@ -195,10 +214,19 @@ export function makeWorkbenchService(opts: Options) {
     const earlier=queue.filter(item => item.order < running.order && item.state === 'queued')
     return findPathBlocker(running,[...reservations.values(),...earlier])
   }
+  function runtimeSnapshot(running:Active|undefined):AgentRuntimeSnapshot|undefined {
+    const runtime=running?.session?.workbenchRuntime
+    return runtime?{...runtime.snapshot()}:undefined
+  }
+  function inputMode(running:Active):'steer'|'send'|'queue' {
+    return runtimeSnapshot(running)?.input??(running.session?.steer?'steer':'queue')
+  }
   function taskView(task:Task, includePermissions=false):WorkbenchTaskView {
     const running=runsByTask.get(task.id)
+    const runtime=runtimeSnapshot(running)
     return {
       ...task,
+      ...(runtime?{runtime}:{}),
       ...(!running&&TERMINAL_TASK_STATUSES.includes(task.status)&&store.source(task.id)?.firstDispatchedAt===null?{importedOnly:true}:{}),
       canArchive:TERMINAL_TASK_STATUSES.includes(task.status) && !running && task.error!=='writer_not_closed',
       waitingFor:running ? waitingFor(running) : null,
@@ -307,6 +335,7 @@ export function makeWorkbenchService(opts: Options) {
       if (running.cancelled) { finalStatus='cancelled'; return }
       spawning=entry.provider.spawn({alias:`workbench:${task.id}`,path:running.path},{
         workbenchTimeline:true,
+        workbenchLifecycle:true,
         execution:{...running.execution},
         reportExecution:value=>{
           if(runsByTask.get(task.id)!==running||running.cancelled||running.finishing)return
@@ -344,20 +373,26 @@ export function makeWorkbenchService(opts: Options) {
       if (running.cancelled) { finalStatus='cancelled'; return }
       store.markSourceDispatched(task.id)
       const material=store.attachments.prepare(task.id,running.attachments,running.path,opts.stateDir)
-      const stream=running.session.dispatch(history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n本轮要求：\n${text}` : text,material)
+      const request=history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n本轮要求：\n${text}` : text
+      const runtime=running.session.workbenchRuntime
+      const stream=runtime?.events??running.session.dispatch(request,material)
       const summary=await collectWorkbenchTurn(stream,running.stop,opts.timeoutMs ?? 10*60_000,
         ev => {
           if (running.cancelled) return
           if(running.queuedInputId&&['text','tool_call','result'].includes(ev.kind))store.liveInputs.set(running.queuedInputId,'delivered')
-          if (ev.kind==='init' && ev.sessionId) {if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId)}
+          if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId)}
           if (ev.kind==='text'||ev.kind==='tool_call'||ev.kind==='error') store.recordAgentEvent(task.id,running.identity,ev)
-        },()=>running.questions.pending().length>0||running.permissions.pending().length>0,()=>running.interactionAt)
+        },()=>{
+          const snapshot=runtimeSnapshot(running)
+          return running.questions.pending().length>0||running.permissions.pending().length>0||!!(snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0)
+        },()=>running.interactionAt,runtime?()=>runtime.start(request,material):undefined)
       if (!summary) { finalStatus='cancelled'; return }
       if (summary.result?.sessionId) {if(resume&&summary.result.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,summary.result.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,summary.result.sessionId)}
       if (running.cancelled) finalStatus='cancelled'
-      else if (summary.error || !summary.result) {
-        const error=summary.error ?? 'stream_ended_without_result'
-        finalStatus='failed'; finalError=error; store.addEvent(task.id,'error',executionFailureMessage(error))
+      else if (summary.error || !summary.result || runtime?.snapshot().retained) {
+        // An old foreground result cannot turn an unexpected retained EOF into success.
+        const error=summary.error ?? (runtime?.snapshot().retained?'background_runtime_ended':'stream_ended_without_result')
+        finalStatus='failed'; finalError=error; store.addEvent(task.id,'error',error==='background_runtime_ended'?'后台执行会话意外结束；对话已保留，请检查后再继续。':executionFailureMessage(error))
       } else finalStatus='completed'
     } catch (error) {
       const message=error instanceof Error ? error.message : 'task_failed'
@@ -365,6 +400,7 @@ export function makeWorkbenchService(opts: Options) {
       if (!running.cancelled) store.addEvent(task.id,'error',message==='restart_confirmation_required' ? RECOVERY_MESSAGE : executionFailureMessage(message))
     } finally {
       running.finishing=true;running.questions.close()
+      for(const input of running.runtimeInputs?.values()??[])settleRuntimeInput(running,input,new Error('runtime_closed_before_input_acknowledgement'))
       running.permissions.rejectAll(running.cancelled ? 'cancelled' : 'ended')
       let closePromise:Promise<void>|undefined
       let closeTimer:ReturnType<typeof setTimeout>|undefined
@@ -403,6 +439,28 @@ export function makeWorkbenchService(opts: Options) {
       const execution=next.execution??store.execution.run(id,next.runId)?.choice??store.execution.choice(id)
       start(task,next.text,expectedDirectoryIdentity,{mode:'resume',sessionId:task.sessionId!},undefined,undefined,undefined,next.id,next.attachments,undefined,execution)
     }catch(error){holdInputs(id,error instanceof Error?error.message:'input_not_delivered')}
+  }
+
+  function settleRuntimeInput(running:Active,saved:LiveInput,error?:unknown) {
+    if(shutdownComplete){running.runtimeInputs?.delete(saved.id);return}
+    try {
+      store.atomic(()=>{
+        const current=store.liveInputs.get(saved.id)
+        if(!current||current.taskId!==saved.taskId||current.runId!==saved.runId||current.text!==saved.text||!sameAttachments(current.attachments,saved.attachments))return
+        if(error!==undefined){
+          // Stop/recovery may already have held it. Never revive an old send.
+          if(current.status==='sending')store.liveInputs.set(saved.id,'held',`${INPUT_UNCONFIRMED}${error instanceof Error?' '+error.message:''}`)
+          return
+        }
+        if(current.status!=='sending'&&current.status!=='held')return
+        // A late positive native acknowledgement is truthful only for this receipt.
+        store.liveInputs.set(saved.id,'delivered')
+        store.addEvent(saved.taskId,'user',saved.text,null,saved.runId,saved.attachments)
+      })
+      // Keep delivery uncertainty tracked if the durable transition failed.
+      running.runtimeInputs?.delete(saved.id)
+      if(runsByTask.get(saved.taskId)===running&&!running.cancelled&&!running.finishing)running.interactionAt=Date.now()
+    }catch{autoContinueBlocked.add(saved.taskId)}
   }
 
   function pump() {
@@ -528,6 +586,24 @@ export function makeWorkbenchService(opts: Options) {
         store.attachments.bind(attachments.map(a=>a.id),id,input.draftId)
         return store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text,attachments,execution:running.execution})
       })
+      const runtime=running.session?.workbenchRuntime
+      if(runtime){
+        if(inputMode(running)==='queue')return saved
+        store.liveInputs.set(saved.id,'sending')
+        ;(running.runtimeInputs??=new Map()).set(saved.id,saved)
+        try{
+          if(canonicalProject(running.path)!==running.path||directoryIdentity(running.path)!==running.directoryIdentity)throw Error('invalid_path')
+          const material=store.attachments.prepare(id,attachments,running.path,opts.stateDir)
+          running.interactionAt=Date.now()
+          // Replay acknowledgement may wait behind an autonomous native turn.
+          // The HTTP receipt is already durable; never wait here or auto-resend.
+          void runtime.submit(saved.id,text,material).then(
+            ()=>settleRuntimeInput(running,saved),
+            error=>settleRuntimeInput(running,saved,error??new Error('input_not_delivered')),
+          )
+        }catch(error){settleRuntimeInput(running,saved,error??new Error('input_not_delivered'))}
+        return store.liveInputs.get(saved.id)!
+      }
       if(!running.session?.steer)return saved
       running.delivering=true;store.liveInputs.set(saved.id,'sending')
       try{
@@ -731,11 +807,12 @@ export function makeWorkbenchService(opts: Options) {
     },
     detail(id:string) {
       const detail=store.detail(id),running=runsByTask.get(id)
-      return {...detail,execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
+      const runtime=runtimeSnapshot(running)
+      return {...detail,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
         // The timeline stays live through cancellation and process cleanup;
         // accepting supplemental input is a separate, narrower capability.
         ...(running?{runId:running.identity}:{}),
-        ...(running&&!running.cancelled&&!running.finishing&&!running.uncertain?{inputMode:running.session?.steer?'steer' as const:'queue' as const}:{}),
+        ...(running&&!running.cancelled&&!running.finishing&&!running.uncertain?{inputMode:inputMode(running)}:{}),
         permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:continuation(store.get(id)),...(store.source(id)?.firstDispatchedAt===null?{requiresExternalClose:true}:{})} : {})}
     },
     create(input:CreateTask):WorkbenchTaskView {
