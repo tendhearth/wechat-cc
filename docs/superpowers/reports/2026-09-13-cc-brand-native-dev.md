@@ -46,5 +46,22 @@ debug executable; that browser observation is not claimed as native window QA.
   asset references and CC asset kit.
 - Repository typecheck and `git diff --check` pass.
 - No changes under `apps/desktop/src/assets/pet` or `apps/desktop/art/cc-v1`.
-- Native development compiled and is running. No mobile application or installed
-  macOS bundle was built; generated mobile icons do not imply platform support.
+- Native development compiled and is running. Generated mobile icons do not
+  imply that a mobile application has been built or verified.
+
+## Follow-up: native Dock icon cache
+
+Tauri 2.10.3 already sets the development Dock icon from its embedded ICNS.
+The existing executable still embedded the previous icon because Cargo watched
+the cached OUT_DIR copy instead of the editable icon sources. `build.rs` now
+tracks the icons directory to invalidate that cache.
+
+- Rebuilt with the normal frontend/sidecar hooks using `tauri build --debug
+  --bundles app` (updater artifacts disabled only for this local QA build).
+- The resulting `target/debug/bundle/macos/wechat-cc.app` ICNS matches the source:
+  `3ca24e5312523928635cd548ed2b87a624fefbc7274b31cb5fd97c452e7dd1ce`.
+- After relaunching Tauri dev, the executable contains the current source ICNS
+  bytes; before the rebuild it did not.
+- The running release companion and its installed bundle were not replaced.
+  This confirms the rebuilt files and dev embedding, not a native screenshot
+  assessment of macOS Dock appearance.
