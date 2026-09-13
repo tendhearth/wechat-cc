@@ -27,7 +27,7 @@ it('claims a staged upload once and restricts reads to its owning task',()=>{
   expect(()=>store.attachments.getTask(second,a.id)).toThrow('not_found')
   expect(store.attachments.read(first,a.id,root)).toEqual({attachment:a,base64:input.base64})
   expect(store.attachments.list(first)).toEqual([a])
-  expect(statSync(join(root,'workbench-attachments',a.sha256)).mode&0o777).toBe(0o600)
+  if(process.platform!=='win32') expect(statSync(join(root,'workbench-attachments',a.sha256)).mode&0o777).toBe(0o600)
 })
 
 it('makes upload retries exact even after claiming and keeps copies separately owned',()=>{
@@ -85,7 +85,7 @@ it('materializes pinned bytes, supplies native image/PDF data and rejects change
   const prepared=store.attachments.prepare(owner,[a,image,pdf],project,root)
   expect(prepared[0]).toEqual({name:a.name,mime:a.mime,sha256:a.sha256,path:join(project,'.cc-workbench-inputs',owner,a.id,a.name)})
   expect(readFileSync(prepared[0]!.path,'utf8')).toBe('original bytes')
-  expect(statSync(prepared[0]!.path).mode&0o777).toBe(0o600)
+  if(process.platform!=='win32') expect(statSync(prepared[0]!.path).mode&0o777).toBe(0o600)
   expect(prepared[1]!.data).toBe(png.toString('base64'));expect(prepared[2]!.data).toBeDefined()
   expect(store.attachments.prepare(owner,[a],project,root)).toEqual([prepared[0]])
   expect(()=>store.attachments.prepare(owner,[{...a,sha256:'a'.repeat(64)}],project,root)).toThrow('attachment_changed')
