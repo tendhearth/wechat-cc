@@ -10,6 +10,16 @@ const activity:AgentActivity={id:'native-item',type:'read',label:'读取文件',
 const create=()=>store.create({title:'timeline',path:'/tmp/timeline',providerId:'codex',ownerChatId:null}).id
 
 describe('durable ordered execution timeline',()=>{
+  it('keeps a bounded public child reply inside its activity, separate from the main reply',()=>{
+    const id=create()
+    store.recordAgentEvent(id,'run-1',{kind:'text',text:'主回复'})
+    store.recordAgentEvent(id,'run-1',{kind:'tool_call',tool:'Agent',activity:{id:'child:turn-1',type:'agent',status:'completed',label:'子助手',output:'子'.repeat(40_100),rawOutput:'private tool payload'} as AgentActivity})
+    const rows=store.events(id)
+    expect(rows.filter(row=>row.kind==='text').map(row=>row.text)).toEqual(['主回复'])
+    expect(rows[1]?.activity?.output).toHaveLength(40_000)
+    expect(rows[1]?.text).toBe('子助手')
+    expect(JSON.stringify(rows)).not.toContain('private tool payload')
+  })
   it('updates an operation where it first arrived, between the original replies',()=>{
     const id=create()
     store.recordAgentEvent(id,'run-1',{kind:'text',text:'先检查输入。'})

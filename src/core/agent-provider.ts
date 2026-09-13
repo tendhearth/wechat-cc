@@ -64,6 +64,8 @@ export interface AgentActivity {
   status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
   label: string
   detail?: string
+  /** Intentionally public child reply, not tool output or hidden reasoning. */
+  output?: string
   parentId?: string
   agentIds?: string[]
 }
@@ -84,7 +86,29 @@ export interface AgentAttachment {
   data?: string
 }
 
+/** Observations, not an assertion that native notification queues are drained. */
+export interface AgentRuntimeSnapshot {
+  retained: boolean
+  foreground: 'running' | 'idle' | 'unknown'
+  backgroundCount: number
+  input: 'steer' | 'send' | 'queue'
+}
+
+/** Workbench-only stream: parent results are milestones, not runtime closure. */
+export interface AgentWorkbenchRuntime {
+  /** One consumer, installed before start; ends only on safe no-background completion or close/failure. */
+  events: AsyncIterable<AgentEvent>
+  /** Exactly one initial request per owned runtime epoch. */
+  start(text: string, attachments?: readonly AgentAttachment[]): void
+  /** Same epoch. Resolves only on native acceptance evidence; local enqueue is insufficient. */
+  submit(requestId: string, text: string, attachments?: readonly AgentAttachment[]): Promise<void>
+  /** Synchronous, non-throwing copy; retained is sticky after observed background work. */
+  snapshot(): AgentRuntimeSnapshot
+}
+
 export interface AgentSession {
+  /** Optional owned lifetime capability; legacy dispatch remains unchanged. */
+  workbenchRuntime?: AgentWorkbenchRuntime
   /** Native acknowledgement of supplemental input to the current turn only. */
   steer?(text: string, attachments?: readonly AgentAttachment[]): Promise<void>
   /**
@@ -155,6 +179,8 @@ export type AgentUserInputAnswers = Record<string, string[]>
 export interface SpawnContext {
   /** Workbench-only ordered activity updates. Normal chat consumers keep legacy events. */
   workbenchTimeline?: boolean
+  /** Enable retained native background execution only for the workbench consumer. */
+  workbenchLifecycle?: boolean
   tierProfile: TierProfile
   permissionMode: PermissionMode
   /** Bound at spawn time so per-session canUseTool closures resolve the

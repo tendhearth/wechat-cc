@@ -11,6 +11,7 @@ const SELECT='SELECT id,task_id AS taskId,kind,text,created_at AS createdAt,sour
 function publicActivity(a:AgentActivity):AgentActivity {
   return {id:a.id,type:a.type,status:a.status,label:a.label.slice(0,200),
     ...(a.detail?{detail:a.detail.slice(0,2000)}:{}),
+    ...(a.output?{output:a.output.slice(0,40_000)}:{}),
     ...(a.parentId?{parentId:a.parentId.slice(0,500)}:{}),
     ...(a.agentIds?{agentIds:a.agentIds.slice(0,20).map(id=>id.slice(0,500))}:{}),
   }
