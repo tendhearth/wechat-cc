@@ -10,6 +10,78 @@ const request = { id: 'request-A', taskId: 'A', createdAt: 1, questions: [
 ] }
 
 describe('workbench live interactions', () => {
+  it('sends attachment-only supplements and binds retry identities and receipts to their files',async()=>{
+    const {createWorkbenchInteractions}=await import('./workbench-interaction.js')
+    const saved=storage(),a={id:crypto.randomUUID(),name:'image.png',mime:'image/png',size:3,sha256:'a'.repeat(64)},b={...a,id:crypto.randomUUID()},draftId=crypto.randomUUID()
+    const bodies:any[]=[]
+    const invoke=async(_method:string,_path:string,body:any)=>{bodies.push(body);throw Error('timeout')}
+    const first=createWorkbenchInteractions({storage:saved,invokeWorkbenchApi:invoke})
+    await first.sendInput('A','run-A','',{attachments:[a],draftId})
+    expect(bodies[0]).toMatchObject({text:'',attachmentIds:[a.id],draftId})
+    const reloaded=createWorkbenchInteractions({storage:saved,invokeWorkbenchApi:invoke})
+    await reloaded.sendInput('A','run-A','',{attachments:[a],draftId})
+    expect(bodies[1].requestId).toBe(bodies[0].requestId)
+    await reloaded.sendInput('A','run-A','',{attachments:[b],draftId})
+    expect(bodies[2].requestId).not.toBe(bodies[0].requestId)
+    const receipt={id:bodies[2].requestId,taskId:'A',runId:'run-A',text:'',attachments:[a],status:'delivered' as const,createdAt:1,error:null}
+    expect(reloaded.acknowledgedInputDraft('A',[receipt],[b])).toBeNull()
+    expect(reloaded.acknowledgedInputDraft('A',[{...receipt,attachments:[b]}],[b])).toBe('')
+  })
+  it('persists terminal continuation identity across reload and binds it to task, text and ordered files',async()=>{
+    const {createWorkbenchInteractions}=await import('./workbench-interaction.js')
+    const saved=storage(),a={id:crypto.randomUUID(),name:'notes.txt',mime:'text/plain',size:3,sha256:'a'.repeat(64)},b={...a,id:crypto.randomUUID()}
+    const first=createWorkbenchInteractions({storage:saved,invokeWorkbenchApi:vi.fn()})
+    const requestId=first.continuationRequest('A','  original ',[a,b])
+    const reloaded=createWorkbenchInteractions({storage:saved,invokeWorkbenchApi:vi.fn()})
+    expect(reloaded.continuationRequest('A','original',[a,b])).toBe(requestId)
+    expect(reloaded.continuationRequest('B','original',[a,b])).not.toBe(requestId)
+    expect(reloaded.continuationRequest('A','original',[b,a])).not.toBe(requestId)
+    expect(reloaded.continuationRequest('A','changed',[a,b])).not.toBe(requestId)
+  })
+
+  it('reconciles a lost terminal response only against its own durable continuation receipt',async()=>{
+    const {createWorkbenchInteractions}=await import('./workbench-interaction.js')
+    const saved=storage(),a={id:crypto.randomUUID(),name:'image.png',mime:'image/png',size:3,sha256:'a'.repeat(64)}
+    const first=createWorkbenchInteractions({storage:saved,invokeWorkbenchApi:vi.fn()})
+    const id=first.continuationRequest('A','',[a])
+    const reloaded=createWorkbenchInteractions({storage:saved,invokeWorkbenchApi:vi.fn()})
+    const receipt={id,taskId:'A',runId:'assigned-by-service',text:'',attachments:[a],status:'delivered' as const,createdAt:1,error:null}
+    expect(reloaded.acknowledgedInputDraft('A',[{...receipt,taskId:'B'}],[a])).toBeNull()
+    expect(reloaded.acknowledgedInputDraft('A',[{...receipt,attachments:[]}],[a])).toBeNull()
+    expect(reloaded.acknowledgedInputDraft('A',[receipt],[])).toBeNull()
+    expect(reloaded.acknowledgedInputDraft('A',[receipt],[a])).toBe('')
+    reloaded.editInputDraft('A','',[a])
+    expect(reloaded.continuationRequest('A','',[a])).not.toBe(id)
+  })
+
+  it('keeps an uncertain terminal request identity when its composer becomes a running-task supplement',async()=>{
+    const {createWorkbenchInteractions}=await import('./workbench-interaction.js')
+    const saved=storage(),a={id:crypto.randomUUID(),name:'notes.txt',mime:'text/plain',size:3,sha256:'a'.repeat(64)},sent:any[]=[]
+    const first=createWorkbenchInteractions({storage:saved,invokeWorkbenchApi:vi.fn()})
+    const id=first.continuationRequest('A','',[a])
+    const reloaded=createWorkbenchInteractions({storage:saved,invokeWorkbenchApi:async(_method,_path,body)=>{
+      sent.push(body);return{input:{id,taskId:'A',runId:'assigned-by-service',text:'',attachments:[a],status:'delivered',createdAt:1,error:null}}
+    }})
+    expect((await reloaded.sendInput('A','assigned-by-service','',{attachments:[a],draftId:crypto.randomUUID()}))?.id).toBe(id)
+    expect(sent[0].requestId).toBe(id)
+  })
+
+  it('preserves an uncertain continuation after a cross-run input conflict and reconciles its original receipt',async()=>{
+    const {createWorkbenchInteractions}=await import('./workbench-interaction.js')
+    const saved=storage(),a={id:crypto.randomUUID(),name:'notes.txt',mime:'text/plain',size:3,sha256:'a'.repeat(64)},sent:any[]=[]
+    const first=createWorkbenchInteractions({storage:saved,invokeWorkbenchApi:vi.fn()})
+    const id=first.continuationRequest('A','',[a])
+    const advanced=createWorkbenchInteractions({storage:saved,invokeWorkbenchApi:async(_method,_path,body)=>{sent.push(body);throw Error('input_conflict')}})
+    expect(await advanced.sendInput('A','run-B','',{attachments:[a],draftId:crypto.randomUUID()})).toBeNull()
+    expect(sent[0].requestId).toBe(id)
+    const reloaded=createWorkbenchInteractions({storage:saved,invokeWorkbenchApi:vi.fn()})
+    const receipt={id,taskId:'A',runId:'run-A',text:'',attachments:[a],status:'delivered' as const,createdAt:1,error:null}
+    expect(reloaded.acknowledgedInputDraft('A',[receipt],[a])).toBe('')
+    expect(reloaded.continuationRequest('A','',[a])).toBe(id)
+    reloaded.editInputDraft('A','New request',[a])
+    expect(reloaded.continuationRequest('A','New request',[a])).not.toBe(id)
+  })
+
   it('retains answer drafts over reload but isolates tasks and replaced requests', async () => {
     const { createWorkbenchInteractions } = await import('./workbench-interaction.js')
     const saved = storage()

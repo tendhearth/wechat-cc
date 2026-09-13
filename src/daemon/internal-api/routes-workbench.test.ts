@@ -63,18 +63,20 @@ describe('Workbench internal HTTP API', () => {
   })
   it('bounds chunked uploads without trusting a content length and keeps the API usable',async()=>{
     const uploadAttachment=vi.fn(),{port,adminToken,request}=await start(service({uploadAttachment}))
-    const result=await new Promise<{status:number;body:string}>((resolve,reject)=>{
+    const result=await new Promise<{status:number;body:string;connection:string|undefined}>((resolve,reject)=>{
       const req=httpRequest({host:'127.0.0.1',port,path:'/v1/workbench/attachment',method:'POST',headers:{authorization:`Bearer ${adminToken}`,'content-type':'application/json','transfer-encoding':'chunked'}},res=>{
-        let body='';res.setEncoding('utf8');res.on('data',chunk=>{body+=chunk});res.on('end',()=>resolve({status:res.statusCode!,body}));res.on('error',reject)
+        let body='';res.setEncoding('utf8');res.on('data',chunk=>{body+=chunk});res.on('end',()=>resolve({status:res.statusCode!,body,connection:res.headers.connection}));res.on('error',reject)
       })
       req.on('error',reject)
       for(let i=0;i<13;i++)req.write(Buffer.alloc(1024*1024,32))
       req.end()
     })
     expect(result.status).toBe(413)
+    expect(result.connection).toBe('close')
     expect(JSON.parse(result.body)).toEqual({error:'request_body_too_large'})
     expect(uploadAttachment).not.toHaveBeenCalled()
-    expect((await request('/v1/workbench')).status).toBe(200)
+    const following=await request('/v1/workbench')
+    expect({status:following.status,body:await following.text()}).toEqual({status:200,body:JSON.stringify({tasks:[TASK],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:true})})
   })
   it('gates live input, question answers and unpaginated attention behind exact admin routes',async()=>{
     const submitInput=vi.fn(async()=>({status:'pending'})),resolveAnswer=vi.fn(),withdrawInput=vi.fn(),attention=vi.fn(()=>({tasks:[]}))

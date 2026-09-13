@@ -1,5 +1,6 @@
 // @ts-check
 
+import {createWorkbenchAttachments,attachmentSignature,renderAttachmentComposer,renderMessageAttachments} from './workbench-attachments.js'
 import { createWorkbenchDraftStore, loadWorkbenchView, saveWorkbenchView, workbenchWindowStorage } from './workbench-window-state.js'
 export { createWorkbenchDraftStore } from './workbench-window-state.js'
 
@@ -13,7 +14,7 @@ import { renderWorkbenchTimeline, workbenchTimelineEventId, captureWorkbenchTime
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed'}} WaitingFor */
 /** @typedef {{id:string,title:string,path:string,providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean}} Task */
 /** @typedef {{id:string,type:'command'|'read'|'edit'|'search'|'tool'|'agent',status:'running'|'completed'|'failed'|'cancelled'|'interrupted',label:string,detail?:string,parentId?:string,agentIds?:string[]}} WorkbenchActivity */
-/** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,sourceId?:string|null,runId?:string,activity?:WorkbenchActivity}} WorkbenchEvent */
+/** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,activity?:WorkbenchActivity}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
 /** @typedef {{id:string,taskId:string,tool:string,description:string,createdAt:number}} Permission */
 /** @typedef {{id:string,displayName:string}} Provider */
@@ -22,13 +23,13 @@ import { renderWorkbenchTimeline, workbenchTimelineEventId, captureWorkbenchTime
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeSource} NativeSource */
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeResumeDecision} NativeResume */
 /** @typedef {import('../../../../src/core/workbench/handoff').HandoffView} Handoff */
-/** @typedef {{handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'queue',questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[]}} Detail */
+/** @typedef {{attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'queue',questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[]}} Detail */
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} TaskQuery */
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],page?:TaskPage,projectProviders?:Record<string,string>}} ListResult */
 /** @typedef {{artifactId:string,html:string}|null} Preview */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,preview:Preview,query?:TaskQuery,page?:TaskPage,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string}} WorkbenchState */
-/** @typedef {{path:string,text:string,title:string,providerId:string,followup:string}} Draft */
+/** @typedef {import('./workbench-window-state.js').Draft} Draft */
 /** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number}} WorkbenchDeps */
 
 const windowStorage = workbenchWindowStorage()
@@ -95,7 +96,7 @@ function statusLabel(status) {
 }
 
 /** @param {string} status @param {Continuation} [continuation] @param {number|null} [archivedAt] @param {{requiresClose:boolean,decision?:NativeResume|null}} [native] @param {{taskId:string,runId?:string,inputMode?:'steer'|'queue',busy?:boolean,error?:string}} [live] */
-export function renderTaskControls(status, continuation, archivedAt,native,live) {
+function renderTaskControlsBase(status, continuation, archivedAt,native,live) {
   if (archivedAt != null) return '<div class="wb-archived-controls"><p>已归档 <span>恢复后可继续</span></p><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>'
   if (status === 'running' && live?.runId && live.inputMode) return `<form class="wb-followup wb-followup-live" data-action="send-input" data-owner-task="${escapeWorkbenchHtml(live.taskId)}" data-run-id="${escapeWorkbenchHtml(live.runId)}" aria-label="运行中补充要求"><label class="wb-sr-only" for="wb-followup-text">补充要求</label><textarea id="wb-followup-text" rows="2" maxlength="20000" aria-describedby="wb-followup-timing" placeholder="补充或调整这项任务的要求…"></textarea>${live.error ? `<p class="wb-interaction-error" role="alert">${escapeWorkbenchHtml(live.error)}</p>` : ''}<div class="wb-control-actions"><small id="wb-followup-timing">${live.inputMode === 'steer' ? '交给当前一轮；收到确认后显示已交付。' : '本轮正常结束后，在同一会话继续。停止或失败时保留为未发送。'}</small><button class="wb-btn wb-btn-danger" type="button" data-action="cancel">停止任务</button><button class="wb-btn wb-btn-primary" type="submit"${live.busy ? ' disabled' : ''}>${live.busy ? '正在提交…' : live.inputMode === 'steer' ? '发送补充' : '加入下一轮'}</button></div></form>`
   if (status === 'queued') {
@@ -124,6 +125,12 @@ export function renderTaskControls(status, continuation, archivedAt,native,live)
     <form class="wb-followup wb-followup-restart" data-action="restart" data-restart-token="${escapeWorkbenchHtml(restart.token)}"><label class="wb-sr-only" for="wb-followup-text">接下来要做什么</label><textarea id="wb-followup-text" rows="2" placeholder="接下来要做什么…"></textarea><button class="wb-btn wb-btn-primary" type="submit">带这些记录新开一轮</button></form>`
   }
   return '<form class="wb-followup" data-action="continue"><label class="wb-sr-only" for="wb-followup-text">继续这个任务</label><textarea id="wb-followup-text" rows="2" placeholder="继续这个任务…"></textarea><button class="wb-btn wb-btn-primary" type="submit">继续</button></form>'
+}
+
+/** @param {string} status @param {Continuation} [continuation] @param {number|null} [archivedAt] @param {{requiresClose:boolean,decision?:NativeResume|null}} [native] @param {{taskId:string,runId?:string,inputMode?:'steer'|'queue',busy?:boolean,error?:string}} [live] @param {Draft} [draft] @param {string} [attachmentError] */
+export function renderTaskControls(status,continuation,archivedAt,native,live,draft,attachmentError='') {
+  const html=renderTaskControlsBase(status,continuation,archivedAt,native,live).replace('</textarea>','</textarea>'+renderAttachmentComposer(draft,attachmentError))
+  return draft?.attachments?.some(a=>a.status!=='ready')?html.replace(/type="submit"(?! disabled)/g,'type="submit" disabled'):html
 }
 
 /** @param {Artifact[]} artifacts @param {string|null} current */
@@ -174,8 +181,8 @@ function renderTask(task, providers, selectedId) {
   </button>`
 }
 
-/** @param {WorkbenchState} state @param {import('./workbench-interaction.js').Interactions} [interactions] */
-export function renderWorkbench(state, interactions) {
+/** @param {WorkbenchState} state @param {import('./workbench-interaction.js').Interactions} [interactions] @param {Draft} [draft] @param {string} [attachmentError] */
+export function renderWorkbench(state, interactions, draft, attachmentError='') {
   const tasks = state.tasks ?? []
   const detail = state.detail
   const query = state.query ?? { q: '', archived: 'exclude' }
@@ -214,6 +221,7 @@ export function renderWorkbench(state, interactions) {
   const renderMessage = event => `<article class="wb-message" id="${workbenchTimelineEventId(event)}" data-timeline-anchor data-kind="${escapeWorkbenchHtml(event.kind)}">
     <header><span>${event.kind === 'user' ? '你' : `<span class="wb-provider-badge">${escapeWorkbenchHtml(helper)}</span>`}</span><time>${escapeWorkbenchHtml((event.sourceId?'原会话记录':time(event.createdAt)))}</time></header>
     ${handoffs.some(h=>h.requestEventId===Number(event.id))?`<div class="wb-message-body"><p>${escapeWorkbenchHtml(handoffs.find(h=>h.requestEventId===Number(event.id))?.request)}</p><button class="wb-new" data-action="handoff-record" data-handoff-id="${escapeWorkbenchHtml(handoffs.find(h=>h.requestEventId===Number(event.id))?.id)}">查看随附的交接内容</button></div>`:event.kind === 'text' ? `<div class="wb-message-body wb-markdown">${renderWorkbenchMarkdown(event.text)}</div>` : `<p class="wb-message-body">${escapeWorkbenchHtml(event.text)}</p>`}
+    ${renderMessageAttachments(detail?.task.id??'',event.attachments)}
     ${actionable&&event.kind==='text'&&(origin||(event===lastReply&&otherProvider))?`<button type="button" class="wb-new wb-handoff-action" data-action="${origin?'handoff-revision':'handoff-review'}" data-event-id="${event.id}">${origin?'选择意见，交回原任务':`交给 ${escapeWorkbenchHtml(otherProvider?.displayName)} 检查`}</button>`:''}
   </article>`
   const dialogueHtml = events.length ? renderWorkbenchTimeline(events, { status:detail?.task.status ?? '', runId:detail?.runId, renderMessage, escapeHtml:escapeWorkbenchHtml, formatTime:time })
@@ -235,13 +243,14 @@ export function renderWorkbench(state, interactions) {
     <div class="wb-welcome" ${state.error && !state.providers.length ? 'hidden' : ''}><p class="wb-kicker">新的一件事</p><h1>我们一起做点什么？</h1><p>说说你想做的事，再选一个放材料的文件夹。</p>
       <form id="wb-create-form" class="wb-create-form">
         <label>文件夹<div class="wb-folder-row"><input id="wb-path" name="path" required aria-describedby="wb-folder-help" placeholder="选择或粘贴一个本机文件夹"><button type="button" class="wb-btn" data-action="choose-folder">选择…</button></div><small id="wb-folder-help" class="wb-field-help">也可以直接粘贴完整路径；原生选择目前只在 macOS 提供。</small></label>
-        <label>要做什么<textarea id="wb-create-text" name="text" rows="4" required placeholder="例如：整理这些访谈记录，做一份主题摘要和引用表"></textarea></label>
+        <label>要做什么<textarea id="wb-create-text" name="text" rows="4" maxlength="20000" placeholder="例如：整理这些访谈记录，做一份主题摘要和引用表"></textarea></label>
+        ${renderAttachmentComposer(draft,attachmentError)}
         ${state.providers.length ? '' : '<p class="wb-provider-missing" role="alert">没有检测到可用的 Claude Code 或 Codex。安装并连接其中一个后才能开始任务。</p>'}
         <details id="wb-options" class="wb-options"><summary>执行者与命名 <span>当前使用 ${escapeWorkbenchHtml(state.providers.find(p => p.id === state.defaultProvider)?.displayName || '尚未选择执行者')}</span></summary><label>执行者<select id="wb-provider" name="providerId">${(state.providers ?? []).map((p) => `<option value="${escapeWorkbenchHtml(p.id)}" ${p.id === state.defaultProvider ? 'selected' : ''}>${escapeWorkbenchHtml(p.displayName)}</option>`).join('')}</select></label>
         <label>任务名称 <span class="wb-optional">可选</span><input id="wb-title" name="title" placeholder="留空时使用任务要求的前 40 个字"></label></details>
-        <button class="wb-btn wb-btn-primary" type="submit"${state.providers.length ? '' : ' disabled'}>开始任务</button>
+        <button class="wb-btn wb-btn-primary" type="submit"${state.providers.length&&!draft?.attachments?.some(a=>a.status!=='ready') ? '' : ' disabled'}>开始任务</button>
       </form></div>`
-  const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderWorkbenchQuestions(detail.task.id, detail.questions ?? [], interactions)}${renderTaskControls(detail.task.status, detail.continuation, detail.task.archivedAt,{requiresClose:!!detail.requiresExternalClose,decision:state.nativeResume?.taskId===detail.task.id?state.nativeResume:null},{taskId:detail.task.id,runId:detail.runId,inputMode:detail.inputMode,...interactions?.inputState(detail.task.id)})}</div></div>` : ''
+  const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderWorkbenchQuestions(detail.task.id, detail.questions ?? [], interactions)}${renderTaskControls(detail.task.status, detail.continuation, detail.task.archivedAt,{requiresClose:!!detail.requiresExternalClose,decision:state.nativeResume?.taskId===detail.task.id?state.nativeResume:null},{taskId:detail.task.id,runId:detail.runId,inputMode:detail.inputMode,...interactions?.inputState(detail.task.id)},draft,attachmentError)}</div></div>` : ''
   return `<div class="workbench-shell"><aside class="wb-sidebar"><header><p class="wb-kicker">任务</p><button type="button" class="wb-new" data-action="new-task">＋ 新建</button></header>${listControls}<div class="wb-task-list">${taskList}</div>${pagination}</aside><main class="wb-main">${taskHeader}<div class="wb-content"><div class="wb-content-inner">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main></div>`
 }
 
@@ -405,6 +414,7 @@ export function initWorkbenchPage(deps) {
   let navigationGeneration = 0
   /** @type {string|null} */
   let objectUrl = null
+  let attachmentPreviewCleanup=/** @type {(()=>void)|null} */(null)
   const initialScope = resumeScope
   let searchDraft = resumeSearch
   let renderedScope = initialScope ?? 'new'
@@ -435,7 +445,7 @@ export function initWorkbenchPage(deps) {
   const captureDraft = () => {
     captureWorkbenchQuestionDrafts(root, interactions)
     if (!document.getElementById('wb-create-form') && !input('wb-followup-text')) return
-    pageDrafts.set(renderedScope, { path: input('wb-path')?.value ?? '', text: input('wb-create-text')?.value ?? '', title: input('wb-title')?.value ?? '', providerId: input('wb-provider')?.value ?? '', followup: input('wb-followup-text')?.value ?? '' })
+    pageDrafts.set(renderedScope, { ...pageDrafts.get(renderedScope), path: input('wb-path')?.value ?? '', text: input('wb-create-text')?.value ?? '', title: input('wb-title')?.value ?? '', providerId: input('wb-provider')?.value ?? '', followup: input('wb-followup-text')?.value ?? '' })
   }
   const restoreDraft = (/** @type {string} */ scope) => {
     const draft = pageDrafts.get(scope)
@@ -443,15 +453,17 @@ export function initWorkbenchPage(deps) {
       const field = input(id); if (field && value) field.value = value
     }
   }
+  const attachments=createWorkbenchAttachments({drafts:pageDrafts,invokeWorkbenchApi:deps.invokeWorkbenchApi,changed:scope=>{if(alive&&scope===renderedScope)controller.paint(true)}})
+  const attachmentPayload=(/** @type {Draft} */ draft)=>draft.attachments?.length?{attachmentIds:draft.attachments.map(a=>a.id),draftId:draft.draftId}:{}
   const controller = createWorkbenchController({ invokeWorkbenchApi: deps.invokeWorkbenchApi, initialScope, initialQuery: resumeQuery, render: state => {
     if (!alive) return
     if (hasPainted) { captureDraft(); searchDraft = input('wb-search')?.value ?? searchDraft }
     if (state.detail) {
       const taskScope = `task:${state.detail.task.id}`
-      const acknowledged = interactions.acknowledgedInputDraft(state.detail.task.id, state.detail.inputs ?? [])
+      const acknowledged = interactions.acknowledgedInputDraft(state.detail.task.id, state.detail.inputs ?? [],pageDrafts.get(taskScope).attachments)
       if (acknowledged !== null) {
         const draft = pageDrafts.get(taskScope)
-        if (draft.followup === acknowledged) { draft.followup = ''; pageDrafts.set(taskScope, draft) }
+        if (draft.followup === acknowledged) { draft.followup = ''; if(draft.attachments?.length)draft.attachments=[]; pageDrafts.set(taskScope, draft) }
         const field = input('wb-followup-text')
         if (renderedScope === taskScope && field?.value === acknowledged) field.value = ''
       }
@@ -495,7 +507,7 @@ export function initWorkbenchPage(deps) {
     const nextPermissionSignature = permissionSignatureFor(state)
     const sameScope = renderedScope === scopeFor(state)
     const questionPanelScroll = root.querySelector('.wb-questions')?.scrollTop ?? 0
-    root.innerHTML = renderWorkbench(state, interactions)
+    root.innerHTML = renderWorkbench(state, interactions,pageDrafts.get(nextScope),attachments.error(nextScope))
     const questionPanel = root.querySelector('.wb-questions')
     if (questionPanel && sameScope) questionPanel.scrollTop = questionPanelScroll
     hasPainted = true
@@ -598,6 +610,33 @@ export function initWorkbenchPage(deps) {
     if (!target) return
     if (target.dataset.taskId) return openTask(target.dataset.taskId)
     let action = target.dataset.action
+    if(action==='choose-attachments'){
+      captureDraft();const scope=renderedScope
+      const picker=document.createElement('input');picker.type='file';picker.multiple=true
+      picker.addEventListener('change',()=>{void attachments.add(scope,Array.from(picker.files??[]))},{once:true})
+      picker.click();return
+    }
+    if(action==='remove-attachment'&&target.dataset.attachmentId){captureDraft();attachments.remove(renderedScope,target.dataset.attachmentId);if(controller.state.selectedId)interactions.editInputDraft(controller.state.selectedId,input('wb-followup-text')?.value??'',pageDrafts.get(renderedScope).attachments);return}
+    if((action==='preview-input-attachment'||action==='download-input-attachment')&&target.dataset.attachmentId){
+      const taskId=target.dataset.ownerTask,id=target.dataset.attachmentId,navigation=navigationGeneration
+      if(!taskId||controller.getTargetTaskId()!==taskId)return
+      try{
+        const data=/** @type {{attachment:import('./workbench-attachments.js').Attachment,base64:string}} */(await deps.invokeWorkbenchApi('GET',`/v1/workbench/attachment?taskId=${encodeURIComponent(taskId)}&id=${encodeURIComponent(id)}`))
+        if(!alive||navigation!==navigationGeneration||controller.state.selectedId!==taskId)return
+        if(data.attachment.id!==id)throw Error('附件版本不匹配，请重新打开。')
+        const a=data.attachment,bytes=decodeBase64(data.base64),url=URL.createObjectURL(new Blob([bytes],{type:a.mime}))
+        const download=()=>{const link=document.createElement('a');link.href=url;link.download=a.name;link.click()}
+        if(action==='download-input-attachment'){download();setTimeout(()=>URL.revokeObjectURL(url),1000);return}
+        attachmentPreviewCleanup?.()
+        const dialog=document.createElement('dialog');dialog.className='wb-history-dialog wb-input-preview';dialog.setAttribute('aria-label',a.name)
+        const body=a.mime.startsWith('image/')?`<img src="${url}" alt="${escapeWorkbenchHtml(a.name)}">`:a.mime==='application/pdf'?`<iframe src="${url}" title="${escapeWorkbenchHtml(a.name)}"></iframe>`:a.mime.startsWith('text/')||a.mime==='application/json'?`<pre>${escapeWorkbenchHtml(new TextDecoder().decode(bytes))}</pre>`:'<p>下载后可在本机应用中查看。</p>'
+        dialog.innerHTML=`<header><h2>${escapeWorkbenchHtml(a.name)}</h2><button type="button" class="wb-new" data-close-attachment>关闭</button></header><div class="wb-input-preview-body">${body}</div><footer><button type="button" class="wb-btn" data-download-attachment>下载</button></footer>`
+        const cleanup=()=>{URL.revokeObjectURL(url);dialog.remove();if(attachmentPreviewCleanup===cleanup)attachmentPreviewCleanup=null}
+        attachmentPreviewCleanup=cleanup;dialog.addEventListener('close',cleanup,{once:true});dialog.querySelector('[data-close-attachment]')?.addEventListener('click',()=>dialog.close());dialog.querySelector('[data-download-attachment]')?.addEventListener('click',download)
+        document.body.append(dialog);dialog.showModal()
+      }catch(error){if(alive&&navigation===navigationGeneration&&controller.state.selectedId===taskId)fail(error)}
+      return
+    }
     if (action === 'decline-question') return answerQuestion(target.dataset.ownerTask, target.dataset.requestId, true)
     if (action === 'withdraw-input' || action === 'copy-held-input') {
       const taskId = target.dataset.ownerTask, requestId = target.dataset.requestId
@@ -605,7 +644,12 @@ export function initWorkbenchPage(deps) {
       const receipt = controller.state.detail?.inputs?.find(item => item.taskId === taskId && item.id === requestId)
       if (action === 'copy-held-input' && receipt?.status === 'held') {
         const field = input('wb-followup-text')
-        if (field) { interactions.resetInput(taskId, requestId); field.value = field.value.trim() ? `${field.value}\n\n${receipt.text}` : receipt.text; captureDraft(); field.focus({ preventScroll: true }) }
+        if (field) {
+          captureDraft();const scope=`task:${taskId}`,draft=pageDrafts.get(scope),existing=draft.attachments??[]
+          const restored=(receipt.attachments??[]).filter(a=>!existing.some(b=>b.id===a.id)).map(a=>({...a,status:/** @type {const} */('ready')}))
+          if(existing.length+restored.length>8||[...existing,...restored].reduce((n,a)=>n+a.size,0)>24*1024*1024)return fail(new Error('请先移除一些草稿附件，再放回这条补充。'))
+          if(restored.length)pageDrafts.set(scope,{...draft,draftId:draft.draftId??crypto.randomUUID(),attachments:[...existing,...restored]})
+          interactions.resetInput(taskId, requestId); field.value = field.value.trim() ? `${field.value}\n\n${receipt.text}` : receipt.text; captureDraft(); controller.paint(true); input('wb-followup-text')?.focus({ preventScroll: true }) }
       } else if (action === 'withdraw-input' && receipt?.status === 'pending') {
         const navigation = navigationGeneration
         if (await interactions.withdraw(taskId, requestId)) {
@@ -659,7 +703,7 @@ export function initWorkbenchPage(deps) {
       const quote=event&&(selection&&event.text.includes(selection)?selection:event.text)
       if(revision&&quote&&quote.length>8000)return fail(new Error('这段回复较长，请先选中要采纳的一段原文，再交回。'))
       captureDraft();handoffCleanup?.()
-      handoffCleanup=mountHandoffDialog(deps.invokeWorkbenchApi,{sourceTaskId:detail.task.id,targetProviderId:providerId,purpose:revision?'revision':'review',request:revision?'请按选中的意见修改，并说明验证结果。':'请检查是否符合本任务要求，指出有依据的问题和遗漏。',artifacts:revision?[]:defaultReviewArtifacts(detail.artifacts),...(revision&&origin&&event?{targetTaskId:origin.sourceTaskId,quote:{taskId:detail.task.id,eventId:Number(event.id),text:quote??''}}:{})},revision?[]:detail.artifacts,detail.task.title,async id=>{if(!alive)return;navigationGeneration++;artifactRequest++;await controller.refresh({force:true});await controller.selectTask(id)})
+      handoffCleanup=mountHandoffDialog(deps.invokeWorkbenchApi,{sourceTaskId:detail.task.id,targetProviderId:providerId,purpose:revision?'revision':'review',request:revision?'请按选中的意见修改，并说明验证结果。':'请检查是否符合本任务要求，指出有依据的问题和遗漏。',artifacts:revision?[]:defaultReviewArtifacts(detail.artifacts),...(revision&&origin&&event?{targetTaskId:origin.sourceTaskId,quote:{taskId:detail.task.id,eventId:Number(event.id),text:quote??''}}:{})},revision?[]:detail.artifacts,detail.task.title,async id=>{if(!alive)return;navigationGeneration++;artifactRequest++;await controller.refresh({force:true});await controller.selectTask(id)},(detail.attachments??[]).map(a=>({...a,taskId:detail.task.id})))
       return
     }
     if (action === 'native-history') { captureDraft(); nativeHistoryCleanup?.(); nativeHistoryCleanup=mountHistoryDialog(deps.invokeWorkbenchApi,controller.state.historyProviders??[],async id=>{if(!alive)return;navigationGeneration++;await controller.refresh({force:true});await controller.selectTask(id)}); return }
@@ -726,13 +770,17 @@ export function initWorkbenchPage(deps) {
       if (!taskId || !runId || controller.getTargetTaskId() !== taskId || detail?.task.id !== taskId || detail.runId !== runId || !detail.inputMode || detail.task.status !== 'running' || detail.task.archivedAt != null) return
       const text = input('wb-followup-text')?.value ?? '', navigation = navigationGeneration
       captureDraft()
-      const receipt = await interactions.sendInput(taskId, runId, text)
+      const sent=pageDrafts.get(`task:${taskId}`)
+      if(!attachments.ready(`task:${taskId}`))return fail(new Error('请等附件上传完成，或移除上传失败的附件。'))
+      const release=attachments.reserve(`task:${taskId}`,sent)
+      const receipt = await interactions.sendInput(taskId, runId, text,sent).finally(release)
       if (!receipt) return
       const scope = `task:${taskId}`, draft = pageDrafts.get(scope)
-      if (draft.followup === text) { draft.followup = ''; pageDrafts.set(scope, draft) }
+      const unchanged=attachmentSignature(draft.attachments)===attachmentSignature(sent.attachments)
+      if (draft.followup === text&&unchanged) { draft.followup = ''; if(draft.attachments?.length)draft.attachments=[]; pageDrafts.set(scope, draft) }
       if (!alive) return
       const current = input('wb-followup-text')
-      if (controller.state.selectedId === taskId && current?.value === text) current.value = ''
+      if (unchanged&&controller.state.selectedId === taskId && current?.value === text) current.value = ''
       if (controller.state.detail?.task.id === taskId) {
         controller.state.detail.inputs = [...(controller.state.detail.inputs ?? []).filter(item => item.id !== receipt.id), receipt].slice(-50)
         controller.paint(true)
@@ -749,8 +797,17 @@ export function initWorkbenchPage(deps) {
       const sent = { path:String(data.get('path') ?? ''), text:String(data.get('text') ?? ''), title:String(data.get('title') ?? ''), providerId:String(data.get('providerId') ?? '') }
       const scope = renderedScope
       captureDraft()
-      if (await mutate('POST', '/v1/workbench/create', { title: sent.title || undefined, path: sent.path, providerId: sent.providerId, text: sent.text })) {
+      const files=pageDrafts.get(scope)
+      if(!sent.text.trim()&&!files.attachments?.length)return
+      if(!attachments.ready(scope))return fail(new Error('请等附件上传完成，或移除上传失败的附件。'))
+      const release=attachments.reserve(scope,files)
+      if (await mutate('POST', '/v1/workbench/create', { title: sent.title || undefined, path: sent.path, providerId: sent.providerId, text: sent.text,...attachmentPayload(files) }).finally(release)) {
         const draft = pageDrafts.get(scope)
+        const changedAttachments=attachmentSignature(draft.attachments)!==attachmentSignature(files.attachments)
+        // Submitted IDs now belong to the created task. A newly edited task
+        // draft keeps only material that was added after this submission.
+        if(files.attachments?.length)draft.attachments=(draft.attachments??[]).filter(a=>!files.attachments?.some(sent=>sent.id===a.id))
+        if(changedAttachments){pageDrafts.set(scope,draft);return}
         if (scope.startsWith('new:') && draft.path === sent.path && draft.text === sent.text && draft.title === sent.title && draft.providerId === sent.providerId) {
           pageDrafts.delete(scope)
           return
@@ -764,7 +821,8 @@ export function initWorkbenchPage(deps) {
     }
     if(form.dataset.action==='native-prepare'){
       const id=controller.state.selectedId,text=input('wb-followup-text')?.value
-      if(!id||!text?.trim()||busy.has(`task:${id}`))return
+      if(!id||(!text?.trim()&&!pageDrafts.get(renderedScope).attachments?.length)||busy.has(`task:${id}`))return
+      if(!attachments.ready(renderedScope))return fail(new Error('请等附件上传完成，或移除上传失败的附件。'))
       captureDraft();busy.add(`task:${id}`)
       try{
         const mode=controller.state.detail?.continuation?.mode==='restart_required'?'fresh_context':'native_resume'
@@ -776,9 +834,12 @@ export function initWorkbenchPage(deps) {
     }
     if (form.dataset.action === 'continue' || form.dataset.action === 'restart' || form.dataset.action==='native-continue') {
       const field = input('wb-followup-text')
-      const text = field?.value
-      if (!text?.trim()) return
+      const text = field?.value??''
+      const files=pageDrafts.get(renderedScope)
+      if (!text.trim()&&!files.attachments?.length) return
+      if(!attachments.ready(renderedScope))return fail(new Error('请等附件上传完成，或移除上传失败的附件。'))
       const taskId = controller.state.selectedId
+      if(!taskId||busy.has(`task:${taskId}`))return
       captureDraft()
       if (controller.state.detail?.task.archivedAt != null) return fail(new Error('workbench_archived'))
       const sourceClosedToken=form.dataset.action==='native-continue'?form.dataset.nativeToken:undefined
@@ -786,13 +847,16 @@ export function initWorkbenchPage(deps) {
       if (!restart && controller.state.detail?.continuation?.mode === 'restart_required') return fail(new Error('restart_confirmation_required'))
       const restartToken = form.dataset.restartToken
       if (restart && !/^[a-f0-9]{64}$/.test(restartToken ?? '')) return fail(new Error('restart_confirmation_stale'))
-      if (await mutate('POST', '/v1/workbench/continue', { id: taskId, text, ...(restart ? { restartToken } : {}),...(sourceClosedToken?{sourceClosedToken}:{}) })) {
+      const inputRequestId=sourceClosedToken?undefined:interactions.continuationRequest(taskId,text,files.attachments)
+      const release=attachments.reserve(`task:${taskId}`,files)
+      if (await mutate('POST', '/v1/workbench/continue', { id: taskId, text,...attachmentPayload(files),...(inputRequestId?{inputRequestId}:{}), ...(restart ? { restartToken } : {}),...(sourceClosedToken?{sourceClosedToken}:{}) }).finally(release)) {
         const scope = `task:${taskId}`
         const draft = pageDrafts.get(scope)
-        if (draft.followup === text) draft.followup = ''
+        const unchanged=attachmentSignature(draft.attachments)===attachmentSignature(files.attachments)
+        if (draft.followup === text&&unchanged) {draft.followup = '';if(draft.attachments?.length)draft.attachments=[]}
         pageDrafts.set(scope, draft)
         const current = input('wb-followup-text')
-        if (controller.state.selectedId === taskId && current?.value === text) current.value = ''
+        if (unchanged&&controller.state.selectedId === taskId && current?.value === text) current.value = ''
       }
     }
   }
@@ -810,10 +874,19 @@ export function initWorkbenchPage(deps) {
   }
   const onInput = (/** @type {Event} */ event) => {
     if (event.target instanceof Element && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) syncWorkbenchQuestionChoice(/** @type {HTMLInputElement|HTMLTextAreaElement} */ (event.target))
-    if (event.target === input('wb-followup-text') && controller.state.selectedId) interactions.editInputDraft(controller.state.selectedId, input('wb-followup-text')?.value ?? '')
+    if (event.target === input('wb-followup-text') && controller.state.selectedId) interactions.editInputDraft(controller.state.selectedId, input('wb-followup-text')?.value ?? '',pageDrafts.get(renderedScope).attachments)
     saveWindowState()
   }
-  const onChange = (/** @type {Event} */ event) => { syncWorkbenchProviderLabel(root); onInput(event) }
+  const addFiles=(/** @type {File[]} */ files)=>{captureDraft();const scope=renderedScope;void attachments.add(scope,files)}
+  const onChange = (/** @type {Event} */ event) => {
+    if(event.target===input('wb-attachment-files')){const picker=/** @type {HTMLInputElement} */(event.target);const files=Array.from(picker.files??[]);picker.value='';addFiles(files);return}
+    syncWorkbenchProviderLabel(root); onInput(event)
+  }
+  const inComposer=(/** @type {Event} */ event)=>event.target instanceof Element&&!!event.target.closest('#wb-create-form,.wb-followup')
+  const onPaste=(/** @type {ClipboardEvent} */ event)=>{if(!inComposer(event))return;const files=Array.from(event.clipboardData?.files??[]);if(files.length){event.preventDefault();addFiles(files)}}
+  const onDrop=(/** @type {DragEvent} */ event)=>{if(!inComposer(event))return;event.preventDefault();addFiles(Array.from(event.dataTransfer?.files??[]))}
+  const onDragOver=(/** @type {DragEvent} */ event)=>{if(inComposer(event)&&Array.from(event.dataTransfer?.types??[]).includes('Files'))event.preventDefault()}
+  root.addEventListener('paste',onPaste);root.addEventListener('drop',onDrop);root.addEventListener('dragover',onDragOver)
   root.addEventListener('input', onInput)
   window.addEventListener?.('pagehide', saveWindowState)
   root.addEventListener('change', onChange)
@@ -827,7 +900,7 @@ export function initWorkbenchPage(deps) {
     resumeSearch = input('wb-search')?.value ?? searchDraft
     if (controller.state.selectedId) resumeScope = `task:${controller.state.selectedId}`
     else if (document.getElementById('wb-create-form')) resumeScope = scopeFor(controller.state)
-    handoffCleanup?.(); nativeHistoryCleanup?.(); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', onInput); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
+    handoffCleanup?.(); nativeHistoryCleanup?.();attachmentPreviewCleanup?.();root.removeEventListener('paste',onPaste);root.removeEventListener('drop',onDrop);root.removeEventListener('dragover',onDragOver); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', onInput); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
   } }
   return controller
 }

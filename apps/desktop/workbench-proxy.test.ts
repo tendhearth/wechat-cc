@@ -7,6 +7,28 @@ let dir:string
 beforeEach(()=>{dir=mkdtempSync(join(tmpdir(),'cc-wb-proxy-'));writeFileSync(join(dir,'operator'),'server-only');writeFileSync(join(dir,'internal-api-info.json'),JSON.stringify({baseUrl:'http://127.0.0.1:9001',operatorTokenFilePath:join(dir,'operator')}))})
 afterEach(()=>rmSync(dir,{recursive:true,force:true}))
 const req=(path='/v1/workbench',method='GET',headers={})=>new Request('http://127.0.0.1:4187'+path,{method,headers,...(method==='POST'?{body:'{"text":"test"}'}:{})})
+const bodyLimits=[['/v1/workbench/continue',128*1024],['/v1/workbench/attachment?draft=owned',12*1024*1024]] as const
+it.each(bodyLimits)('accepts exactly the UTF-8 byte limit for %s',async(path,limit)=>{
+ const body='é'.repeat(limit/2),upstream=vi.fn(async(_url:string,_init?:RequestInit)=>Response.json({ok:true}))
+ const proxy=createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})
+ const response=await proxy(new Request('http://127.0.0.1:4187'+path,{method:'POST',body}))
+ expect(response?.status).toBe(200);expect(upstream.mock.calls[0]?.[1]?.body).toBe(body)
+})
+it.each(bodyLimits)('stops streamed input above the byte limit for %s before buffering the rest or forwarding',async(path,limit)=>{
+ let reads=0;const cancel=vi.fn(),chunks=[new Uint8Array(limit),new Uint8Array(1),new Uint8Array(64)]
+ const stream=new ReadableStream<Uint8Array>({pull(controller){const chunk=chunks[reads++];if(chunk)controller.enqueue(chunk);else controller.close()},cancel},{highWaterMark:0})
+ const request=new Request('http://127.0.0.1:4187'+path,{method:'POST',body:stream}),upstream=vi.fn(async()=>Response.json({ok:true}))
+ const response=await createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})(request)
+ expect(response?.status).toBe(413);expect(await response!.json()).toEqual({error:'request_body_too_large'})
+ expect(upstream).not.toHaveBeenCalled();expect(reads).toBe(2);expect(cancel).toHaveBeenCalledTimes(1)
+})
+it('rejects a declared oversized upload without reading its body or accessing daemon discovery',async()=>{
+ let reads=0;const cancel=vi.fn(),stream=new ReadableStream<Uint8Array>({pull(controller){reads++;controller.enqueue(new Uint8Array(1));controller.close()},cancel},{highWaterMark:0})
+ const request=new Request('http://127.0.0.1:4187/v1/workbench/attachment',{method:'POST',headers:{'content-length':String(12*1024*1024+1)},body:stream}),upstream=vi.fn()
+ const response=await createWorkbenchProxy({stateDir:join(dir,'missing'),dryRun:false,allowWrites:true,fetch:upstream})(request)
+ expect(response?.status).toBe(413);expect(await response!.json()).toEqual({error:'request_body_too_large'})
+ expect(reads).toBe(0);expect(cancel).toHaveBeenCalledTimes(1);expect(upstream).not.toHaveBeenCalled()
+})
 it('proxies exact reads with a host-only credential and preserves query/status',async()=>{
  const upstream=vi.fn(async(_url:string,_init?:RequestInit)=>Response.json({tasks:[]}, {status:200}))
  const proxy=createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:false,fetch:upstream})
@@ -63,6 +85,9 @@ it('keeps archive writes behind explicit host write access while passing literal
 })
 
 const liveRoutes = [
+ ['POST', '/v1/workbench/attachment'],
+ ['GET', '/v1/workbench/attachment'],
+ ['POST', '/v1/workbench/discard-attachment'],
  ['GET', '/v1/workbench/attention'],
  ['POST', '/v1/workbench/input'],
  ['POST', '/v1/workbench/withdraw-input'],
@@ -85,7 +110,7 @@ it.each(liveRoutes)('refuses the wrong method and extended paths around %s %s',a
  const upstream=vi.fn()
  const proxy=createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})
  for(const [candidateMethod,candidatePath] of [
-  [method==='GET'?'POST':'GET',path],
+  ...(path==='/v1/workbench/attachment'?[]:[[method==='GET'?'POST':'GET',path]]),
   ['DELETE',path],
   [method,path+'/extra'],
   [method,path+'/'],

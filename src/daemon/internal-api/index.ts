@@ -226,7 +226,16 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       try {
         body = await readJsonBody(req,url.pathname==='/v1/workbench/attachment'?12*1024*1024:url.pathname.startsWith('/v1/workbench/')?128*1024:undefined)
       } catch (err) {
-        if(err instanceof Error&&err.message==='request_body_too_large')return send(res,413,{error:'request_body_too_large'},origin)
+        if(err instanceof Error&&err.message==='request_body_too_large'){
+          // A rejected stream may still contain unread chunks. Do not reuse its
+          // connection for a following request before the parser finishes it.
+          // Bun's node:http compatibility layer needs the explicit end as well
+          // as the header; end after finish so the 413 response is flushed first.
+          const socket=req.socket
+          res.once('finish',()=>{if(!socket.destroyed)socket.end()})
+          res.setHeader('connection','close')
+          return send(res,413,{error:'request_body_too_large'},origin)
+        }
         return send(res, 400, { error: 'malformed_json', detail: errMsg(err) }, origin)
       }
     }

@@ -1,6 +1,8 @@
 // @ts-check
-/** @typedef {import('../../../../src/core/workbench/handoff').HandoffInput} Input */
-/** @typedef {import('../../../../src/core/workbench/handoff').HandoffPreview} Preview */
+/** @typedef {{taskId:string,attachmentId:string,sha256:string}} AttachmentRef */
+/** @typedef {import('./workbench-attachments.js').Attachment & {taskId:string}} Attachment */
+/** @typedef {import('../../../../src/core/workbench/handoff').HandoffInput & {attachments?:AttachmentRef[]}} Input */
+/** @typedef {import('../../../../src/core/workbench/handoff').HandoffPreview & {attachments?:AttachmentRef[]}} Preview */
 /** @typedef {Pick<import('../../../../src/core/workbench/store').Artifact,'id'|'taskId'|'name'|'mime'|'sha256'|'createdAt'>} Artifact */
 /** @typedef {{input:Input,preview:Preview|null,busy:boolean,error:string}} State */
 /** @typedef {(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>} Invoke */
@@ -42,25 +44,26 @@ export function createHandoffController(invoke,render,initial,opened){
   destroy(){alive=false;generation++},
  }
 }
-/** @param {State} state @param {Artifact[]} artifacts @param {string} title */
-export function renderHandoffPanel(state,artifacts,title){
+/** @param {State} state @param {Artifact[]} artifacts @param {string} title @param {Attachment[]} [attachments] */
+export function renderHandoffPanel(state,artifacts,title,attachments=[]){
  const i=state.input,p=state.preview,revision=i.purpose==='revision',helper=i.targetProviderId==='claude'?'Claude':'Codex'
  const disabled=state.busy?' disabled':''
  const files=artifacts.filter(a=>supported.has(a.mime)).map(a=>`<label class="wb-handoff-file"><input type="checkbox" data-handoff-artifact="${esc(a.id)}"${i.artifacts.some(ref=>ref.artifactId===a.id)?' checked':''}${disabled}><span>${esc(a.name)}<small>${esc(new Date(a.createdAt).toLocaleString())} · ${esc(a.sha256.slice(0,8))}</small></span></label>`).join('')
+ const inputFiles=attachments.map(a=>`<label class="wb-handoff-file"><input type="checkbox" data-handoff-attachment="${esc(a.id)}"${i.attachments?.some(ref=>ref.attachmentId===a.id)?' checked':''}${disabled}><span>${esc(a.name)}<small>${Math.max(1,Math.ceil(a.size/1024))} KB · ${esc(a.sha256.slice(0,8))}</small></span></label>`).join('')
  const recovery=p?.targetContinuation?.mode==='restart_required'?`<section class="wb-recovery"><h3>原会话无法恢复</h3><p>原任务的对话和成果仍然保留。这次会带记录新开一轮。</p><details><summary>查看将带入的原任务记录</summary><pre>${esc(p.targetContinuation.restart.context)}</pre></details></section>`:''
  const closure=p?.nativeResume?'<p class="wb-history-note">继续前，请关闭原程序里这条会话的执行。CC 无法替你确认其他窗口已经停止。</p>':''
  const label=state.busy?'正在准备…':!p?'查看交接内容':p.nativeResume?'原程序已关闭，交回修改':p.targetContinuation?.mode==='restart_required'?'带记录新开并修改':revision?'交回原任务':'开始检查'
- return `<header class="wb-history-head"><div><h2>${revision?'交回原任务':`交给 ${esc(helper)} 检查`}</h2><p>${esc(title)}</p></div><button type="button" class="wb-new" data-handoff="close" aria-label="关闭交接">关闭</button></header><div class="wb-handoff-body">${revision?`<label class="wb-handoff-field">采纳的意见<textarea id="wb-handoff-quote" rows="5" maxlength="8000"${disabled}>${esc(i.quote?.text)}</textarea><small>保留要采纳的一段原文；这次不会自动采纳其他意见。</small></label>`:'<p class="wb-history-note">另开一项检查，原任务继续保留。检查结果会关联回来。</p>'}<label class="wb-handoff-field">${revision?'修改要求':'检查重点'}<textarea id="wb-handoff-request" rows="2" maxlength="4000"${disabled}>${esc(i.request)}</textarea></label>${!revision?`<details><summary>成果版本 · ${i.artifacts.length} 份</summary>${files||'<p>暂无可附加的文字成果，将使用这项任务的最近对话。</p>'}</details>`:''}${p?`<details class="wb-handoff-packet"><summary>查看将交给 ${esc(helper)} 的内容${p.truncated?' · 部分内容':''}</summary>${p.truncated?'<p>部分历史或文件内容已截断，检查范围有限。</p>':''}<pre>${esc(p.context)}</pre></details>`:''}${recovery}${closure}${state.error?`<p class="wb-error" role="alert">${esc(state.error)}</p>`:''}</div><footer class="wb-handoff-footer"><span>${revision?'回到原任务继续，保留成果版本。':'只带这项任务的记录和选定成果。'}</span><button type="button" class="wb-btn wb-btn-primary" data-handoff="submit"${disabled}>${label}</button></footer>`
+ return `<header class="wb-history-head"><div><h2>${revision?'交回原任务':`交给 ${esc(helper)} 检查`}</h2><p>${esc(title)}</p></div><button type="button" class="wb-new" data-handoff="close" aria-label="关闭交接">关闭</button></header><div class="wb-handoff-body">${revision?`<label class="wb-handoff-field">采纳的意见<textarea id="wb-handoff-quote" rows="5" maxlength="8000"${disabled}>${esc(i.quote?.text)}</textarea><small>保留要采纳的一段原文；这次不会自动采纳其他意见。</small></label>`:'<p class="wb-history-note">另开一项检查，原任务继续保留。检查结果会关联回来。</p>'}<label class="wb-handoff-field">${revision?'修改要求':'检查重点'}<textarea id="wb-handoff-request" rows="2" maxlength="4000"${disabled}>${esc(i.request)}</textarea></label>${!revision?`<details><summary>成果版本 · ${i.artifacts.length} 份</summary>${files||'<p>暂无可附加的文字成果，将使用这项任务的最近对话。</p>'}</details>`:''}${!revision&&attachments.length?`<details><summary>原始附件 · ${i.attachments?.length??0} 个</summary><p class="wb-history-note">勾选这次需要交给另一位助手的材料。</p>${inputFiles}</details>`:''}${p?`<details class="wb-handoff-packet"><summary>查看将交给 ${esc(helper)} 的内容${p.truncated?' · 部分内容':''}</summary>${p.truncated?'<p>部分历史或文件内容已截断，检查范围有限。</p>':''}<p>${revision?`固定沿用 ${p.attachments?.length??0} 个原始附件。`:`已选 ${p.attachments?.length??0} 个原始附件；未选附件不会随本次交接发送。`}</p><pre>${esc(p.context)}</pre></details>`:''}${recovery}${closure}${state.error?`<p class="wb-error" role="alert">${esc(state.error)}</p>`:''}</div><footer class="wb-handoff-footer"><span>${revision?'回到原任务继续，保留成果版本。':'只带这项任务的记录、选定成果和附件。'}</span><button type="button" class="wb-btn wb-btn-primary" data-handoff="submit"${disabled}>${label}</button></footer>`
 }
-/** @param {Invoke} invoke @param {Input} initial @param {Artifact[]} artifacts @param {string} title @param {(id:string)=>Promise<void>} opened */
-export function mountHandoffDialog(invoke,initial,artifacts,title,opened){
+/** @param {Invoke} invoke @param {Input} initial @param {Artifact[]} artifacts @param {string} title @param {(id:string)=>Promise<void>} opened @param {Attachment[]} [attachments] */
+export function mountHandoffDialog(invoke,initial,artifacts,title,opened,attachments=[]){
  const dialog=document.createElement('dialog');dialog.className='wb-history-dialog wb-handoff-dialog';dialog.setAttribute('aria-label',initial.purpose==='review'?'交给另一位助手检查':'交回原任务');document.body.append(dialog)
  let focusId='',focusAction=''
  const render=()=>{
   const active=document.activeElement
   if(active instanceof HTMLElement&&dialog.contains(active)){focusId=active.id;focusAction=active.getAttribute('data-handoff')??''}
   const open=[...dialog.querySelectorAll('details')].map(d=>d.open),scroll=dialog.querySelector('.wb-handoff-body')?.scrollTop??0
-  dialog.innerHTML=renderHandoffPanel(controller.state,artifacts,title)
+  dialog.innerHTML=renderHandoffPanel(controller.state,artifacts,title,attachments)
   dialog.querySelectorAll('details').forEach((d,index)=>{d.open=open[index]??false});const body=dialog.querySelector('.wb-handoff-body');if(body)body.scrollTop=scroll
   const next=focusId?dialog.querySelector(`#${CSS.escape(focusId)}`):focusAction?dialog.querySelector(`[data-handoff="${CSS.escape(focusAction)}"]`):null
   if(next instanceof HTMLElement)next.focus({preventScroll:true})
@@ -71,7 +74,8 @@ export function mountHandoffDialog(invoke,initial,artifacts,title,opened){
  dialog.addEventListener('input',()=>{
   const request=/** @type {HTMLTextAreaElement|null} */(dialog.querySelector('#wb-handoff-request')),quote=/** @type {HTMLTextAreaElement|null} */(dialog.querySelector('#wb-handoff-quote'))
   const selected=[...dialog.querySelectorAll('input[data-handoff-artifact]:checked')].map(e=>e.getAttribute('data-handoff-artifact'))
-  const input={...controller.state.input,request:request?.value??'',artifacts:artifacts.filter(a=>selected.includes(a.id)).map(a=>({taskId:a.taskId,artifactId:a.id,sha256:a.sha256})),...(quote&&controller.state.input.quote?{quote:{...controller.state.input.quote,text:quote.value}}:{})}
+  const selectedInputs=[...dialog.querySelectorAll('input[data-handoff-attachment]:checked')].map(e=>e.getAttribute('data-handoff-attachment'))
+  const input={...controller.state.input,attachments:(controller.state.input.purpose==='revision'?[]:attachments).filter(a=>selectedInputs.includes(a.id)).map(a=>({taskId:a.taskId,attachmentId:a.id,sha256:a.sha256})),request:request?.value??'',artifacts:artifacts.filter(a=>selected.includes(a.id)).map(a=>({taskId:a.taskId,artifactId:a.id,sha256:a.sha256})),...(quote&&controller.state.input.quote?{quote:{...controller.state.input.quote,text:quote.value}}:{})}
   controller.edit(input)
   const button=/** @type {HTMLButtonElement|null} */(dialog.querySelector('[data-handoff="submit"]'));if(button){button.disabled=false;button.textContent='查看交接内容'}
   dialog.querySelector('.wb-handoff-packet')?.remove()

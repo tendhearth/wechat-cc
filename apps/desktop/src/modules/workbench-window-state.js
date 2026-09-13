@@ -1,20 +1,23 @@
 // @ts-check
-/** @typedef {{path:string,text:string,title:string,providerId:string,followup:string}} Draft */
+import {parseDraftAttachments} from './workbench-attachments.js'
+/** @typedef {{path:string,text:string,title:string,providerId:string,followup:string,draftId?:string,attachments?:import('./workbench-attachments.js').DraftAttachment[]}} Draft */
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} Query */
 /** @typedef {{scope:string|null,query:Query,search:string}} View */
 /** @typedef {Pick<Storage,'getItem'|'setItem'|'removeItem'>} StorageLike */
 const PREFIX = 'cc.workbench.window.v1:'
-const emptyDraft = () => ({path:'',text:'',title:'',providerId:'',followup:''})
+const emptyDraft = () => /** @type {Draft} */ ({path:'',text:'',title:'',providerId:'',followup:''})
 const emptyView = () => /** @type {View} */ ({scope:null,query:{q:'',archived:'exclude'},search:''})
 /** @param {unknown} value @returns {Draft|null} */
-function parseDraft(value) {
+function parseDraft(value,recover=false) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const data = /** @type {Record<string,unknown>} */ (value)
-  const result = emptyDraft()
-  for (const key of /** @type {Array<keyof Draft>} */ (Object.keys(result))) {
+  const result = /** @type {Draft} */(emptyDraft())
+  for (const key of /** @type {Array<'path'|'text'|'title'|'providerId'|'followup'>} */ (Object.keys(result))) {
     if (typeof data[key] !== 'string') return null
     result[key] = /** @type {string} */ (data[key])
   }
+  if(typeof data.draftId==='string'&&/^[a-f0-9-]{36}$/i.test(data.draftId))result.draftId=data.draftId
+  if(Array.isArray(data.attachments))result.attachments=parseDraftAttachments(data.attachments,recover)
   return result
 }
 /** @param {Pick<StorageLike,'getItem'>|null} storage @param {string} key */
@@ -36,7 +39,7 @@ export function createWorkbenchDraftStore(storage=null) {
   /** @type {Map<string,Draft>} */ const values = new Map()
   const restore = (/** @type {string} */ key) => {
     if (!values.has(key)) {
-      const draft = parseDraft(read(storage,'draft:' + key))
+      const draft = parseDraft(read(storage,'draft:' + key),true)
       if (draft) values.set(key,draft)
     }
   }
@@ -48,7 +51,7 @@ export function createWorkbenchDraftStore(storage=null) {
       values.set(key,draft); write(storage,'draft:' + key,draft)
     },
     /** @param {string} key */
-    get(key) { restore(key); return {...(values.get(key) ?? emptyDraft())} },
+    get(key) { restore(key); return structuredClone(values.get(key) ?? emptyDraft()) },
     /** @param {string} key */
     has(key) { restore(key); return values.has(key) },
     /** @param {string} key */

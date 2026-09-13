@@ -1,10 +1,12 @@
 // @ts-check
+import {attachmentSignature,renderMessageAttachments} from './workbench-attachments.js'
+/** @typedef {import('./workbench-attachments.js').Attachment} Attachment */
 /** @typedef {{id:string,header:string,question:string,options:Array<{label:string,description:string}>,multiSelect?:boolean,allowOther?:boolean}} Question */
 /** @typedef {{id:string,taskId:string,createdAt:number,questions:Question[]}} QuestionRequest */
-/** @typedef {{id:string,taskId:string,runId:string,text:string,status:'pending'|'sending'|'delivered'|'held'|'withdrawn',createdAt:number,error:string|null}} LiveInput */
+/** @typedef {{id:string,taskId:string,runId:string,text:string,status:'pending'|'sending'|'delivered'|'held'|'withdrawn',createdAt:number,error:string|null,attachments?:Attachment[]}} LiveInput */
 /** @typedef {Record<string,{selected:string[],other:string}>} AnswerDraft */
 /** @typedef {{busy:boolean,error:string,resolved?:boolean}} ActionState */
-/** @typedef {{id:string,runId:string,text:string,draftText?:string,acknowledged?:boolean}} InputAttempt */
+/** @typedef {{id:string,runId:string,text:string,draftText?:string,acknowledged?:boolean,attachments?:Attachment[],kind?:'continue'}} InputAttempt */
 /** @typedef {Pick<Storage,'getItem'|'setItem'|'removeItem'>} StorageLike */
 /** @typedef {ReturnType<typeof createWorkbenchInteractions>} Interactions */
 const PREFIX = 'cc.workbench.interaction.v1:'
@@ -12,7 +14,7 @@ const escape = (/** @type {unknown} */ value) => String(value ?? '').replace(/[&
 const keyFor = (/** @type {string} */ taskId, /** @type {string} */ requestId) => JSON.stringify([taskId, requestId])
 const fieldId = (/** @type {string} */ requestId, /** @type {string} */ questionId) => `wb-question-${encodeURIComponent(requestId)}-${encodeURIComponent(questionId)}`
 
-/** Answers alone are persisted per window; provider question text never enters storage.
+/** Answers and submission identities are persisted per window; provider question text never enters storage.
  * @param {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,storage?:StorageLike|null,inputAttempts?:Map<string,InputAttempt>,changed?:()=>void}} deps */
 export function createWorkbenchInteractions(deps) {
   const storage = deps.storage ?? null
@@ -59,10 +61,21 @@ export function createWorkbenchInteractions(deps) {
     /** @param {string} taskId */
     inputState(taskId) { return stateFor('input:' + taskId) },
     /** Explicitly composing different content starts a new supplement; polling never calls this.
-     * @param {string} taskId @param {string} text */
-    editInputDraft(taskId, text) {
+     * @param {string} taskId @param {string} text @param {Attachment[]} [attachments] */
+    editInputDraft(taskId, text, attachments=[]) {
       const attempt = attempts.get(taskId) ?? read('input:' + taskId)
-      if (attempt && typeof attempt.text === 'string' && (attempt.acknowledged || attempt.text.trim() !== text.trim())) this.resetInput(taskId, attempt.id)
+      if (attempt && typeof attempt.text === 'string' && (attempt.acknowledged || attempt.text.trim() !== text.trim() || attachmentSignature(attempt.attachments)!==attachmentSignature(attachments))) this.resetInput(taskId, attempt.id)
+    },
+    /** A terminal continuation gets its run ID only after the service accepts it.
+     * Persist its request identity before sending so reloads can retry or reconcile it.
+     * @param {string} taskId @param {string} text @param {Attachment[]} [attachments] */
+    continuationRequest(taskId,text,attachments=[]) {
+      const previous=attempts.get(taskId)??read('input:'+taskId)
+      const same=previous?.kind==='continue'&&typeof previous.id==='string'&&typeof previous.text==='string'&&previous.text.trim()===text.trim()&&attachmentSignature(previous.attachments)===attachmentSignature(attachments)
+      /** @type {InputAttempt} */
+      const attempt={id:same?previous.id:crypto.randomUUID(),kind:'continue',runId:'',text:text.trim(),draftText:text,...(attachments.length?{attachments:structuredClone(attachments)}:{})}
+      attempts.set(taskId,attempt);write('input:'+taskId,attempt)
+      return attempt.id
     },
     /** Putting a held record back is an explicit new send decision.
      * @param {string} taskId @param {string} requestId */
@@ -71,33 +84,36 @@ export function createWorkbenchInteractions(deps) {
       if (attempt?.id === requestId) { attempts.delete(taskId); write('input:' + taskId, null) }
     },
     /** Reconcile a preserved composer only against its own durable receipt.
-     * @param {string} taskId @param {LiveInput[]} inputs @returns {string|null} */
-    acknowledgedInputDraft(taskId, inputs) {
+     * @param {string} taskId @param {LiveInput[]} inputs @param {Attachment[]} [attachments] @returns {string|null} */
+    acknowledgedInputDraft(taskId, inputs, attachments=[]) {
       const attempt = attempts.get(taskId) ?? read('input:' + taskId)
-      if (!attempt || typeof attempt.text !== 'string') return null
-      const receipt = inputs.find(input => input.id === attempt.id && input.taskId === taskId && input.runId === attempt.runId && input.text === attempt.text.trim())
+      if (!attempt || typeof attempt.text !== 'string' || attachmentSignature(attempt.attachments)!==attachmentSignature(attachments)) return null
+      const receipt = inputs.find(input => input.id === attempt.id && input.taskId === taskId && (attempt.kind==='continue'||input.runId === attempt.runId) && input.text === attempt.text.trim() && attachmentSignature(input.attachments)===attachmentSignature(attempt.attachments))
       if (!receipt || !['pending', 'sending', 'delivered', 'held', 'withdrawn'].includes(receipt.status)) return null
       acknowledge(taskId, attempt.id)
       return attempt.draftText ?? attempt.text
     },
     /** @param {string} taskId @param {string} requestId */
     questionState(taskId, requestId) { return stateFor('answer:' + keyFor(taskId, requestId)) },
-    /** @param {string} taskId @param {string} runId @param {string} text @returns {Promise<LiveInput|null>} */
-    async sendInput(taskId, runId, text) {
+    /** @param {string} taskId @param {string} runId @param {string} text @param {{attachments?:Attachment[],draftId?:string}} [files] @returns {Promise<LiveInput|null>} */
+    async sendInput(taskId, runId, text, files={}) {
+      const attachments=files.attachments??[]
       const draftText = text
       text = text.trim()
       const state = this.inputState(taskId)
-      if (state.busy || !taskId || !runId || !text) return null
+      if (state.busy || !taskId || !runId || (!text&&!attachments.length)) return null
       if (text.length > 20000) { state.error = '补充最多 20,000 字，请缩短后发送。'; changed(); return null }
       const previous = attempts.get(taskId) ?? read('input:' + taskId)
-      const attempt = previous && typeof previous.id === 'string' && previous.runId === runId && typeof previous.text === 'string' && previous.text.trim() === text
-        ? { id: previous.id, runId, text, draftText } : { id: crypto.randomUUID(), runId, text, draftText }
+      const attempt = previous && typeof previous.id === 'string' && (previous.kind==='continue'||previous.runId === runId) && typeof previous.text === 'string' && previous.text.trim() === text && attachmentSignature(previous.attachments)===attachmentSignature(attachments)
+        // Preserve a terminal identity even when another window has advanced the
+        // task to a later run: a rejected steer must still reconcile the first receipt.
+        ? { id: previous.id, runId, text, draftText, ...(previous.kind==='continue'?{kind:/** @type {const} */('continue')}:{}), ...(attachments.length?{attachments}:{}) } : { id: crypto.randomUUID(), runId, text, draftText, ...(attachments.length?{attachments}:{}) }
       attempts.set(taskId, attempt); write('input:' + taskId, attempt)
       state.busy = true; state.error = ''; changed()
       try {
-        const result = /** @type {{input?:LiveInput}} */ (await deps.invokeWorkbenchApi('POST', '/v1/workbench/input', { id: taskId, runId, requestId: attempt.id, text }))
+        const result = /** @type {{input?:LiveInput}} */ (await deps.invokeWorkbenchApi('POST', '/v1/workbench/input', { id: taskId, runId, requestId: attempt.id, text, ...(attachments.length?{attachmentIds:attachments.map(a=>a.id),draftId:files.draftId}:{}) }))
         const receipt = result?.input
-        if (!receipt || receipt.id !== attempt.id || receipt.taskId !== taskId || receipt.runId !== runId || receipt.text !== text || !['pending', 'sending', 'delivered', 'held', 'withdrawn'].includes(receipt.status)) throw new Error('unconfirmed_receipt')
+        if (!receipt || receipt.id !== attempt.id || receipt.taskId !== taskId || receipt.runId !== runId || receipt.text !== text || attachmentSignature(receipt.attachments)!==attachmentSignature(attachments) || !['pending', 'sending', 'delivered', 'held', 'withdrawn'].includes(receipt.status)) throw new Error('unconfirmed_receipt')
         // A remounted composer can still show this text when the old request settles.
         // Keep its identity so an immediate retry cannot dispatch it a second time.
         acknowledge(taskId, attempt.id)
@@ -203,6 +219,6 @@ export function renderWorkbenchInputs(taskId, inputs, interactions) {
   return `<details id="wb-inputs" class="wb-disclosure wb-inputs"${unresolved ? ' open' : ''}><summary>补充记录 <small>${own.length} 条</small></summary>${own.map(input => {
     const state = interactions?.withdrawalState(taskId, input.id)
     const uncertain = input.status === 'held' && input.error?.startsWith('未确认执行者收到')
-    return `<article class="wb-input-record" data-input-status="${escape(input.status)}"><header><span>${uncertain ? '未确认交付' : labels[input.status] ?? '等待确认'}</span>${input.status === 'pending' ? `<button type="button" class="wb-new" data-action="withdraw-input" data-owner-task="${escape(taskId)}" data-request-id="${escape(input.id)}"${state?.busy ? ' disabled' : ''}>${state?.busy ? '正在撤回…' : '撤回'}</button>` : input.status === 'held' ? `<button type="button" class="wb-new" data-action="copy-held-input" data-owner-task="${escape(taskId)}" data-request-id="${escape(input.id)}">放回输入框</button>` : ''}</header><p>${escape(input.text)}</p>${uncertain ? '<small>请先检查当前对话，再决定是否重发。</small>' : input.status === 'held' ? '<small>已保留，未自动重试。放回输入框后可修改并决定是否发送。</small>' : input.status === 'sending' ? '<small>尚未确认执行者收到；请勿重复发送。</small>' : ''}${state?.error ? `<p class="wb-interaction-error" role="alert">${escape(state.error)}</p>` : ''}</article>`
+    return `<article class="wb-input-record" data-input-status="${escape(input.status)}"><header><span>${uncertain ? '未确认交付' : labels[input.status] ?? '等待确认'}</span>${input.status === 'pending' ? `<button type="button" class="wb-new" data-action="withdraw-input" data-owner-task="${escape(taskId)}" data-request-id="${escape(input.id)}"${state?.busy ? ' disabled' : ''}>${state?.busy ? '正在撤回…' : '撤回'}</button>` : input.status === 'held' ? `<button type="button" class="wb-new" data-action="copy-held-input" data-owner-task="${escape(taskId)}" data-request-id="${escape(input.id)}">放回输入框</button>` : ''}</header><p>${escape(input.text)}</p>${renderMessageAttachments(taskId,input.attachments)}${uncertain ? '<small>请先检查当前对话，再决定是否重发。</small>' : input.status === 'held' ? '<small>已保留，未自动重试。放回输入框后可修改并决定是否发送。</small>' : input.status === 'sending' ? '<small>尚未确认执行者收到；请勿重复发送。</small>' : ''}${state?.error ? `<p class="wb-interaction-error" role="alert">${escape(state.error)}</p>` : ''}</article>`
   }).join('')}</details>`
 }

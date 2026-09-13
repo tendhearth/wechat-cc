@@ -1,6 +1,21 @@
 import {expect,it,vi} from 'vitest'
 import {createHandoffController,renderHandoffPanel,defaultReviewArtifacts} from './workbench-handoff.js'
 const initial={sourceTaskId:'deadbeef',targetProviderId:'claude',purpose:'review' as const,request:'检查',artifacts:[]}
+it('offers original inputs separately, unchecked by default, and shows selected file coverage',()=>{
+ const a={id:crypto.randomUUID(),taskId:'deadbeef',name:'<photo>.png',mime:'image/png',size:12,sha256:'a'.repeat(64)}
+ const html=renderHandoffPanel({input:initial,preview:null,busy:false,error:''},[],'Task',[a])
+ expect(html).toContain('原始附件');expect(html).toContain('data-handoff-attachment=');expect(html).not.toContain(' checked');expect(html).toContain('&lt;photo&gt;.png')
+ const attachments=[{taskId:a.taskId,attachmentId:a.id,sha256:a.sha256}]
+ const selected=renderHandoffPanel({input:{...initial,attachments},preview:{...initial,attachments,context:'检查范围',token:'token',truncated:false} as any,busy:false,error:''},[],'Task',[a])
+ expect(selected).toContain('已选 1 个原始附件');expect(selected).toContain(' checked')
+})
+it('shows pinned originals read-only when returning a revision',()=>{
+ const a={id:crypto.randomUUID(),taskId:'deadbeef',name:'original.png',mime:'image/png',size:12,sha256:'a'.repeat(64)}
+ const input={...initial,purpose:'revision' as const,targetTaskId:'cafefeed',quote:{taskId:'deadbeef',eventId:1,text:'change this'}}
+ const preview={...input,attachments:[{taskId:'cafefeed',attachmentId:a.id,sha256:a.sha256}],context:'固定附件 original.png',token:'token',truncated:false} as any
+ const html=renderHandoffPanel({input,preview,busy:false,error:''},[],'Task',[a])
+ expect(html).not.toContain('data-handoff-attachment=');expect(html).toContain('固定沿用 1 个原始附件');expect(html).toContain('original.png')
+})
 it('explains an unavailable project without suggesting that retry alone can restore it',async()=>{
  const invoke=vi.fn(async()=>{throw new Error('invalid_path')}),opened=vi.fn()
  const c=createHandoffController(invoke,()=>{},initial,opened)

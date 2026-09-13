@@ -451,6 +451,119 @@ describe('workbench mutations', () => {
     return page
   }
 
+  it('keeps uploaded files with the initiating task and submits attachment-only continuation',async()=>{
+    const field=new FakeElement();field.id='wb-followup-text'
+    const picker=new FakeElement();picker.id='wb-attachment-files';picker.tagName='INPUT'
+    const page=installFakePage({'wb-followup-text':field,'wb-attachment-files':picker})
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const tasks=[{id:'deadbeef',title:'A',path:'/A',providerId:'claude',status:'completed',createdAt:1,updatedAt:2},{id:'cafefeed',title:'B',path:'/B',providerId:'claude',status:'completed',createdAt:1,updatedAt:1}]
+    let upload!:(value:any)=>void;let uploadedId='';const calls:any[]=[]
+    const api=async(method:string,path:string,body?:any)=>{
+      calls.push({method,path,body})
+      if(path==='/v1/workbench/attachment'){uploadedId=body.id;return await new Promise(resolve=>{upload=resolve})}
+      if(path==='/v1/workbench/continue')return {task:tasks[0]}
+      if(path.startsWith('/v1/workbench/task'))return {task:tasks.find(t=>path.includes(t.id)),events:[],artifacts:[]}
+      return {tasks,providers:[{id:'claude',displayName:'Claude'}],defaultProvider:'claude'}
+    }
+    class Reader{result='data:text/plain;base64,aGVsbG8=';onload?:()=>void;readAsDataURL(){this.onload?.()}}
+    vi.stubGlobal('FileReader',Reader)
+    const controller=initWorkbenchPage({invokeWorkbenchApi:api,pollMs:60_000})!
+    await vi.waitFor(()=>expect(controller.state.selectedId).toBe('deadbeef'))
+    ;(picker as any).files=[new File(['hello'],'notes.txt',{type:'text/plain'})]
+    await Promise.all([...page.listeners.get('change')!].map(fn=>fn({target:picker})))
+    await vi.waitFor(()=>expect(upload).toBeTypeOf('function'))
+    await controller.selectTask('cafefeed');field.value='keep B'
+    upload({attachment:{id:uploadedId,name:'notes.txt',mime:'text/plain',size:5,sha256:'a'.repeat(64)}})
+    await vi.waitFor(()=>expect(calls.filter(c=>c.path==='/v1/workbench/attachment')).toHaveLength(1))
+    await new Promise(resolve=>setTimeout(resolve,0))
+    expect(field.value).toBe('keep B')
+    await controller.selectTask('deadbeef');field.value=''
+    const form=new FakeElement();form.tagName='FORM';form.dataset.action='continue'
+    await Promise.all([...page.listeners.get('submit')!].map(fn=>fn({target:form,preventDefault(){}})))
+    expect(calls.find(c=>c.path==='/v1/workbench/continue')?.body).toMatchObject({id:'deadbeef',text:'',attachmentIds:[uploadedId],draftId:expect.any(String)})
+    stopWorkbenchPolling()
+  })
+
+  it.each([false,true])('recovers attachment-only terminal continuation after a lost response and reload, edited=%s',async edited=>{
+    const values=new Map<string,string>(),storage={getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>{values.set(key,value)},removeItem:(key:string)=>{values.delete(key)}}
+    const a={id:crypto.randomUUID(),name:'notes.txt',mime:'text/plain',size:5,sha256:'a'.repeat(64),status:'ready' as const},draftId=crypto.randomUUID()
+    const {createWorkbenchDraftStore,saveWorkbenchView}=await import('./workbench-window-state.js')
+    createWorkbenchDraftStore(storage).set('task:deadbeef',{path:'/work',text:'',title:'',providerId:'claude',followup:'',draftId,attachments:[a]})
+    saveWorkbenchView(storage,{scope:'task:deadbeef',query:{q:'',archived:'exclude'},search:''})
+    const field=new FakeElement();field.id='wb-followup-text'
+    const page=installFakePage({'wb-followup-text':field});root.window={sessionStorage:storage}
+    const task={id:'deadbeef',title:'A',path:'/work',providerId:'claude',status:'completed',createdAt:1,updatedAt:2}
+    const accepted=new Map<string,any>(),requests:any[]=[];let showReceipts=false
+    const api=async(method:string,path:string,body?:any)=>{
+      if(path==='/v1/workbench/continue'){
+        requests.push(body);if(!accepted.has(body.inputRequestId))accepted.set(body.inputRequestId,{id:body.inputRequestId,taskId:task.id,runId:crypto.randomUUID(),text:body.text.trim(),attachments:[a],status:'delivered',createdAt:1,error:null})
+        throw Error('response_lost')
+      }
+      if(path.startsWith('/v1/workbench/task'))return{task,events:[],artifacts:[],inputs:showReceipts?[...accepted.values()]:[]}
+      return{tasks:[task],providers:[{id:'claude',displayName:'Claude'}],defaultProvider:'claude'}
+    }
+    const old=await import('./workbench.js'),controller=old.initWorkbenchPage({invokeWorkbenchApi:api,pollMs:100000})!
+    await vi.waitFor(()=>expect(controller.state.selectedId).toBe(task.id))
+    const form=new FakeElement();form.tagName='FORM';form.dataset.action='continue'
+    await [...page.listeners.get('submit')!][0]!({target:form,preventDefault(){}})
+    expect(requests[0].inputRequestId).toEqual(expect.any(String))
+    old.stopWorkbenchPolling();vi.resetModules()
+    const nextField=new FakeElement();nextField.id='wb-followup-text'
+    const nextPage=installFakePage({'wb-followup-text':nextField});root.window={sessionStorage:storage}
+    const next=await import('./workbench.js'),mounted=next.initWorkbenchPage({invokeWorkbenchApi:api,pollMs:100000})!
+    await vi.waitFor(()=>expect(mounted.state.selectedId).toBe(task.id))
+    expect(createWorkbenchDraftStore(storage).get('task:deadbeef').attachments?.map(a=>a.id)).toEqual([a.id])
+    await [...nextPage.listeners.get('submit')!][0]!({target:form,preventDefault(){}})
+    expect(requests[1].inputRequestId).toBe(requests[0].inputRequestId);expect(accepted.size).toBe(1)
+    if(edited){nextField.value='New followup';for(const listener of nextPage.listeners.get('input')??[])listener({target:nextField})}
+    showReceipts=true;task.updatedAt++;await mounted.refresh({force:true})
+    const kept=createWorkbenchDraftStore(storage).get('task:deadbeef')
+    expect(nextField.value).toBe(edited?'New followup':'');expect(kept.attachments?.map(a=>a.id)).toEqual(edited?[a.id]:[])
+    next.stopWorkbenchPolling()
+  })
+
+  it.each(['create','create-add','continue','restart','native-continue','send-input'])('sends attachments through %s and retains a composer edited during submission',async actionName=>{
+    const action=actionName==='create-add'?'create':actionName
+    const scope=action==='create'?'new':'task:deadbeef',values=new Map<string,string>()
+    const storage={getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>{values.set(key,value)},removeItem:(key:string)=>{values.delete(key)}}
+    const a={id:crypto.randomUUID(),name:'notes.txt',mime:'text/plain',size:5,sha256:'a'.repeat(64),status:'ready' as const},draftId=crypto.randomUUID()
+    const {createWorkbenchDraftStore,saveWorkbenchView}=await import('./workbench-window-state.js')
+    const drafts=createWorkbenchDraftStore(storage)
+    drafts.set(scope,{path:'/work',text:'Keep the request',title:'',providerId:'claude',followup:'Keep the request',draftId,attachments:[a]})
+    saveWorkbenchView(storage,{scope,query:{q:'',archived:'exclude'},search:''})
+    const fields=Object.fromEntries((action==='create'?['wb-create-form','wb-path','wb-create-text','wb-title','wb-provider']:['wb-followup-text']).map(id=>{const f=new FakeElement();f.id=id;return[id,f]}))
+    const page=installFakePage(fields);root.window={sessionStorage:storage}
+    const originalFormData=globalThis.FormData
+    vi.stubGlobal('FormData',class{get(name:string){return fields[{'path':'wb-path','text':'wb-create-text','title':'wb-title','providerId':'wb-provider'}[name]??'']?.value??''}})
+    const task={id:'deadbeef',title:'A',path:'/work',providerId:'claude',status:action==='send-input'?'running':'completed',createdAt:1,updatedAt:2}
+    let finish!:(value:any)=>void;let sent:any;let addedId=''
+    const api=async(method:string,path:string,body?:any)=>{
+      if(path==='/v1/workbench/attachment'){addedId=body.id;return{attachment:{...a,id:addedId,name:body.name}}}
+      if(path==='/v1/workbench/discard-attachment')return{ok:true}
+      if(method==='POST'){sent=body;return await new Promise(resolve=>{finish=resolve})}
+      if(path.startsWith('/v1/workbench/task'))return {task,events:[],artifacts:[],runId:'run-A',inputMode:'steer',...(action==='restart'?{continuation:{mode:'restart_required',restart:{token:'a'.repeat(64),context:'history',eventCount:1,includedEventCount:1,truncated:false}}}:{})}
+      return {tasks:[task],providers:[{id:'claude',displayName:'Claude'}],defaultProvider:'claude'}
+    }
+    const module=await import('./workbench.js');const controller=module.initWorkbenchPage({invokeWorkbenchApi:api,pollMs:60_000})!
+    await vi.waitFor(()=>expect(action==='create'?controller.state.providers.length:controller.state.selectedId).toBe(action==='create'?1:'deadbeef'))
+    const form=action==='create'?fields['wb-create-form']!:new FakeElement();form.tagName='FORM';form.dataset={action,ownerTask:'deadbeef',runId:'run-A',restartToken:'a'.repeat(64),nativeToken:'b'.repeat(64)}
+    const submitting=[...page.listeners.get('submit')!][0]!({target:form,preventDefault(){}})
+    await vi.waitFor(()=>expect(sent).toBeTruthy());expect(sent).toMatchObject({text:'Keep the request',attachmentIds:[a.id],draftId})
+    if(actionName==='create-add'){
+      class Reader{result='data:text/plain;base64,aGVsbG8=';onload?:()=>void;readAsDataURL(){this.onload?.()}};vi.stubGlobal('FileReader',Reader)
+      const field=fields['wb-create-text']!;field.closest=()=>form
+      await [...page.listeners.get('drop')!][0]!({target:field,preventDefault(){},dataTransfer:{files:[new File(['hello'],'new.txt',{type:'text/plain'})]}})
+      await vi.waitFor(()=>expect(addedId).toBeTruthy())
+    }else{
+      const remove=new FakeElement();remove.dataset={action:'remove-attachment',attachmentId:a.id}
+      await [...page.listeners.get('click')!][0]!({target:remove})
+    }
+    finish(action==='send-input'?{input:{id:sent.requestId,taskId:'deadbeef',runId:'run-A',text:sent.text,attachments:[a],status:'pending',createdAt:1,error:null}}:{task});await submitting
+    const kept=createWorkbenchDraftStore(storage).get(scope)
+    expect(action==='create'?kept.text:kept.followup).toBe('Keep the request');expect(kept.attachments?.map(a=>a.id)).toEqual(actionName==='create-add'?[addedId]:[])
+    module.stopWorkbenchPolling();vi.stubGlobal('FormData',originalFormData)
+  })
+
   it('opens attention targets without sending and keeps newer navigation plus the old task draft', async () => {
     const field = new FakeElement(); field.id = 'wb-followup-text'
     installFakePage({ 'wb-followup-text': field })
@@ -908,7 +1021,7 @@ describe('workbench mutations', () => {
     expect(field.value).toBe('继续整理资料')
     form.dataset={action:'restart',restartToken:'a'.repeat(64)}
     for(const listener of page.listeners.get('submit')??[])await listener({target:form,preventDefault:vi.fn()})
-    expect(invokeWorkbenchApi).toHaveBeenCalledWith('POST','/v1/workbench/continue',{id:'deadbeef',text:'继续整理资料',restartToken:'a'.repeat(64)})
+    expect(invokeWorkbenchApi).toHaveBeenCalledWith('POST','/v1/workbench/continue',{id:'deadbeef',text:'继续整理资料',restartToken:'a'.repeat(64),inputRequestId:expect.any(String)})
     expect(controller.state.detail?.continuation?.restart?.token).toBe('b'.repeat(64))
     expect(controller.state.error).toContain('记录已更新')
     expect(field.value).toBe('继续整理资料')

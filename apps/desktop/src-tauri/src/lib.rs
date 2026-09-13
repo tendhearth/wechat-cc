@@ -948,6 +948,9 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("GET", "/v1/workbench/session")
             | ("GET", "/v1/workbench/task")
             | ("GET", "/v1/workbench/artifact")
+            | ("GET", "/v1/workbench/attachment")
+            | ("POST", "/v1/workbench/attachment")
+            | ("POST", "/v1/workbench/discard-attachment")
             | ("POST", "/v1/workbench/create")
             | ("POST", "/v1/workbench/continue")
             | ("POST", "/v1/workbench/cancel")
@@ -968,6 +971,15 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
 
 // Workbench owns admin-only folder tasks and artifact snapshots. Keep its
 // operator token in Rust and expose only the exact contract routes above.
+fn validate_workbench_body(method: &str, path: &str, body: Option<&str>) -> Result<(), String> {
+    let route = path.split('?').next().unwrap_or("");
+    let limit = if route == "/v1/workbench/attachment" { 12 * 1024 * 1024 } else { 128 * 1024 };
+    if method == "POST" && body.is_some_and(|value| value.len() > limit) {
+        return Err("request_body_too_large".into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn workbench_api(method: String, path: String, body: Option<String>) -> Result<String, String> {
     use std::time::Duration;
@@ -976,6 +988,7 @@ async fn workbench_api(method: String, path: String, body: Option<String>) -> Re
     if !workbench_request_allowed(&method, &path) {
         return Err(format!("workbench_api refuses request: {method} {path}"));
     }
+    validate_workbench_body(&method, &path, body.as_deref())?;
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|e| format!("cannot resolve home dir: {e}"))?;
@@ -1220,9 +1233,11 @@ pub fn run() {
 #[cfg(test)]
 mod workbench_proxy_tests {
     use super::workbench_request_allowed;
+    static ENVIRONMENT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn isolated_workbench_state_is_debug_only_and_leaves_shared_state_unchanged() {
+        let _guard = ENVIRONMENT_LOCK.lock().unwrap();
         // Exercise the actual command's discovery path using nonexistent,
         // unique directories: this must never contact a real daemon.
         let root = std::env::temp_dir().join(format!(
@@ -1268,6 +1283,40 @@ mod workbench_proxy_tests {
     }
 
     #[test]
+    fn workbench_rejects_oversized_bodies_before_discovery() {
+        let _guard = ENVIRONMENT_LOCK.lock().unwrap();
+        let missing = std::env::temp_dir().join(format!("cc-oversized-body-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let previous: Vec<_> = ["WECHAT_STATE_DIR", "WECHAT_CC_WORKBENCH_STATE_DIR"].into_iter().map(|key| (key, std::env::var_os(key))).collect();
+        for (key, _) in &previous { std::env::set_var(key, &missing); }
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let mut results = Vec::new();
+        for (path, limit) in [
+            ("/v1/workbench/continue", 128 * 1024),
+            ("/v1/workbench/attachment?draft=owned", 12 * 1024 * 1024),
+        ] {
+            // Character count remains below the limit; UTF-8 bytes exceed it.
+            let body = "é".repeat(limit / 2 + 1);
+            let result = runtime.block_on(super::workbench_api("POST".into(), path.into(), Some(body)));
+            results.push((path, result));
+        }
+        for (key, value) in previous { match value { Some(value) => std::env::set_var(key, value), None => std::env::remove_var(key) } }
+        for (path, result) in results { assert_eq!(result.unwrap_err(), "request_body_too_large", "{path}"); }
+    }
+
+    #[test]
+    fn workbench_body_limits_accept_exact_utf8_bytes_and_optional_empty_body() {
+        for (path, limit) in [
+            ("/v1/workbench/continue", 128 * 1024),
+            ("/v1/workbench/attachment?draft=owned", 12 * 1024 * 1024),
+        ] {
+            let exact = "é".repeat(limit / 2);
+            assert!(super::validate_workbench_body("POST", path, Some(&exact)).is_ok());
+            assert_eq!(super::validate_workbench_body("POST", path, Some(&(exact + "x"))).unwrap_err(), "request_body_too_large");
+            assert!(super::validate_workbench_body("POST", path, None).is_ok());
+        }
+    }
+
+    #[test]
     fn allows_only_the_exact_workbench_method_route_pairs() {
         for (method, path) in [
             ("GET", "/v1/workbench"),
@@ -1275,6 +1324,9 @@ mod workbench_proxy_tests {
             ("GET", "/v1/workbench/sessions?providerId=claude"),
             ("GET", "/v1/workbench/session?key=opaque"),
             ("GET", "/v1/workbench/artifact?id=A1B2C3D4&artifactId=file-1"),
+            ("POST", "/v1/workbench/attachment"),
+            ("GET", "/v1/workbench/attachment?taskId=deadbeef&id=file-1"),
+            ("POST", "/v1/workbench/discard-attachment"),
             ("POST", "/v1/workbench/create"),
             ("POST", "/v1/workbench/continue"),
             ("POST", "/v1/workbench/cancel"),
@@ -1295,6 +1347,11 @@ mod workbench_proxy_tests {
             assert!(workbench_request_allowed(method, path), "expected {method} {path} to be allowed");
         }
         for (method, path) in [
+            ("DELETE", "/v1/workbench/attachment"),
+            ("GET", "/v1/workbench/discard-attachment"),
+            ("POST", "/v1/workbench/attachment/extra"),
+            ("GET", "/v1/workbench/attachment/"),
+            ("POST", "/v1/workbench/discard-attachment/extra"),
             ("POST", "/v1/workbench"),
             ("GET", "/v1/workbench/create"),
             ("GET", "/v1/workbench/archive"),
