@@ -8,7 +8,9 @@ import { Marked } from '../vendor/marked.js'
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
 /** @typedef {{id:string,taskId:string,tool:string,description:string,createdAt:number}} Permission */
 /** @typedef {{id:string,displayName:string}} Provider */
-/** @typedef {{task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[]}} Detail */
+/** @typedef {{token:string,context:string,eventCount:number,includedEventCount:number,truncated:boolean}} RestartPreview */
+/** @typedef {{mode:string,restart?:RestartPreview}} Continuation */
+/** @typedef {{task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation}} Detail */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string,canWechat:boolean}} ListResult */
 /** @typedef {{artifactId:string,html:string}|null} Preview */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string,canWechat:boolean,selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,preview:Preview}} WorkbenchState */
@@ -71,8 +73,8 @@ function statusLabel(status) {
   return ({ queued: '等待中', running: '进行中', cancelling: '正在停止', completed: '已完成', failed: '未完成', cancelled: '已停止', interrupted: '已中断' })[status] ?? status
 }
 
-/** @param {string} status */
-export function renderTaskControls(status) {
+/** @param {string} status @param {Continuation} [continuation] */
+export function renderTaskControls(status, continuation) {
   if (status === 'queued') {
     return `<form class="wb-followup wb-followup-waiting" aria-label="任务补充草稿">
     <label class="wb-sr-only" for="wb-followup-text">补充要求</label><textarea id="wb-followup-text" rows="2" aria-describedby="wb-followup-timing" placeholder="可以先写在这里"></textarea>
@@ -87,6 +89,11 @@ export function renderTaskControls(status) {
     <label class="wb-sr-only" for="wb-followup-text">补充要求</label><textarea id="wb-followup-text" rows="2" placeholder="可以先写在这里"></textarea>
     <div class="wb-control-actions"><small>正在等待执行程序确认退出。</small><button class="wb-btn" type="button" disabled>正在停止…</button></div>
   </form>`
+  if (continuation?.mode === 'restart_required' && continuation.restart) {
+    const restart = continuation.restart
+    return `<section class="wb-recovery" aria-label="继续任务前的恢复说明"><h3>原会话无法恢复</h3><p>可以带上这项任务的记录，新开一轮。原对话和成果仍然保留。</p><details id="wb-restart-context"><summary>查看将带入的记录 · ${restart.includedEventCount} / ${restart.eventCount} 条</summary>${restart.truncated ? '<p>更早的记录或过长内容未包含。</p>' : ''}<pre>${escapeWorkbenchHtml(restart.context)}</pre></details></section>
+    <form class="wb-followup wb-followup-restart" data-action="restart" data-restart-token="${escapeWorkbenchHtml(restart.token)}"><label class="wb-sr-only" for="wb-followup-text">接下来要做什么</label><textarea id="wb-followup-text" rows="2" placeholder="接下来要做什么…"></textarea><button class="wb-btn wb-btn-primary" type="submit">带这些记录新开一轮</button></form>`
+  }
   return '<form class="wb-followup" data-action="continue"><label class="wb-sr-only" for="wb-followup-text">继续这个任务</label><textarea id="wb-followup-text" rows="2" placeholder="继续这个任务…"></textarea><button class="wb-btn wb-btn-primary" type="submit">继续</button></form>'
 }
 
@@ -188,7 +195,7 @@ export function renderWorkbench(state) {
         <label>任务名称 <span class="wb-optional">可选</span><input id="wb-title" name="title" placeholder="留空时使用任务要求的前 40 个字"></label></details>
         <button class="wb-btn wb-btn-primary" type="submit"${state.providers.length ? '' : ' disabled'}>开始任务</button>
       </form></div>`
-  const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderTaskControls(detail.task.status)}</div></div>` : ''
+  const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderTaskControls(detail.task.status, detail.continuation)}</div></div>` : ''
   return `<div class="workbench-shell"><aside class="wb-sidebar"><header><p class="wb-kicker">任务</p><button type="button" class="wb-new" data-action="new-task">＋ 新建</button></header><div class="wb-task-list">${taskList}</div></aside><main class="wb-main">${taskHeader}<div class="wb-content"><div class="wb-content-inner">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${content}</div></div>${controls}</main></div>`
 }
 
@@ -327,7 +334,7 @@ export function initWorkbenchPage(deps) {
       : null
     const nextScope = scopeFor(state)
     const hasStoredScroll = scrollPositions.has(nextScope) || renderedScope === nextScope
-    const openState = new Map(['wb-tools', 'wb-artifacts', 'wb-options', 'wb-task-info'].map(id => [id, !!root.querySelector(`#${id}[open]`)]))
+    const openState = new Map(['wb-tools', 'wb-artifacts', 'wb-options', 'wb-task-info', 'wb-restart-context'].map(id => [id, !!root.querySelector(`#${id}[open]`)]))
     disclosures.set(renderedScope, openState)
     const contentScroll = root.querySelector('.wb-content')?.scrollTop ?? 0
     scrollPositions.set(renderedScope, contentScroll)
@@ -363,7 +370,17 @@ export function initWorkbenchPage(deps) {
     if (nextFocus) { nextFocus.focus({ preventScroll: true }); if (focused && focused.start !== null && focused.end !== null && 'setSelectionRange' in nextFocus) nextFocus.setSelectionRange(focused.start, focused.end) }
   } })
   /** @param {unknown} error */
-  const fail = error => { if (!alive) return; const message = error instanceof Error ? error.message : String(error); controller.state.error = ['HTTP 404','workbench_endpoint_missing'].includes(message) ? '当前运行的后台还没有提供这个接口，请更新后台后重试。' : message === 'workbench_read_only_preview' ? '当前预览只允许查看任务，请使用已启用执行的桌面端。' : message === 'workbench_connection_unavailable' ? '暂时连不上任务服务，请检查后台是否运行。' : message; controller.paint() }
+  const recoveryCode = (/** @type {unknown} */ error) => String(error).match(/\brestart_confirmation_(required|stale)\b/)?.[1]
+  /** @param {unknown} error */
+  const fail = error => {
+    if (!alive) return
+    const message = error instanceof Error ? error.message : String(error)
+    const recovery = recoveryCode(error)
+    controller.state.error = recovery === 'stale' ? '记录已更新，尚未重新开始。请核对新的恢复内容。'
+      : recovery === 'required' ? '原会话无法恢复，任务尚未开始。请查看恢复说明后再决定。'
+        : ['HTTP 404','workbench_endpoint_missing'].includes(message) ? '当前运行的后台还没有提供这个接口，请更新后台后重试。' : message === 'workbench_read_only_preview' ? '当前预览只允许查看任务，请使用已启用执行的桌面端。' : message === 'workbench_connection_unavailable' ? '暂时连不上任务服务，请检查后台是否运行。' : message
+    controller.paint()
+  }
   /** @param {'GET'|'POST'} method @param {string} path @param {Record<string,unknown>} body */
   const mutate = async (method, path, body) => {
     const key = path === '/v1/workbench/create' ? 'create' : `task:${String(body.id ?? '')}`
@@ -377,7 +394,15 @@ export function initWorkbenchPage(deps) {
       await controller.refresh()
       if (alive && path === '/v1/workbench/create' && navigation === navigationGeneration && id && controller.state.selectedId !== id) await controller.selectTask(id)
       return alive
-    } catch (e) { if (alive && navigation === navigationGeneration) fail(e); return false } finally { busy.delete(key) }
+    } catch (e) {
+      if (alive && navigation === navigationGeneration) {
+        if (recoveryCode(e)) {
+          try { await controller.refresh() } catch { /* Preserve the actionable recovery error and the draft. */ }
+        }
+        if (alive && navigation === navigationGeneration) fail(e)
+      }
+      return false
+    } finally { busy.delete(key) }
   }
   /** @param {Event} event */
   const onClick = async event => {
@@ -436,13 +461,17 @@ export function initWorkbenchPage(deps) {
       }
       return
     }
-    if (form.dataset.action === 'continue') {
+    if (form.dataset.action === 'continue' || form.dataset.action === 'restart') {
       const field = input('wb-followup-text')
       const text = field?.value
       if (!text?.trim()) return
       const taskId = controller.state.selectedId
       captureDraft()
-      if (await mutate('POST', '/v1/workbench/continue', { id: taskId, text })) {
+      const restart = form.dataset.action === 'restart'
+      if (!restart && controller.state.detail?.continuation?.mode === 'restart_required') return fail(new Error('restart_confirmation_required'))
+      const restartToken = form.dataset.restartToken
+      if (restart && !/^[a-f0-9]{64}$/.test(restartToken ?? '')) return fail(new Error('restart_confirmation_stale'))
+      if (await mutate('POST', '/v1/workbench/continue', { id: taskId, text, ...(restart ? { restartToken } : {}) })) {
         const scope = `task:${taskId}`
         const draft = pageDrafts.get(scope)
         if (draft.followup === text) draft.followup = ''

@@ -161,6 +161,25 @@ describe('Workbench internal HTTP API', () => {
     expect(await response.json()).toEqual(expected === 500 ? { error: 'internal' } : { error: code })
   })
 
+  it('validates optional restart tokens and forwards approval only when supplied', async () => {
+    const workbench=service(),{request}=await start(workbench)
+    for(const restartToken of ['',null,7,'A'.repeat(64),'a'.repeat(63),'a'.repeat(65)]) {
+      const response=await request('/v1/workbench/continue',{method:'POST',body:JSON.stringify({id:'deadbeef',text:'next',restartToken})})
+      expect(response.status).toBe(400);expect(await response.json()).toEqual({error:'invalid_request'})
+    }
+    expect(workbench.continueTask).not.toHaveBeenCalled()
+    const restartToken='a'.repeat(64)
+    const response=await request('/v1/workbench/continue',{method:'POST',body:JSON.stringify({id:'deadbeef',text:' next ',restartToken})})
+    expect(response.status).toBe(202)
+    expect(workbench.continueTask).toHaveBeenCalledWith('deadbeef','next',{restartToken})
+  })
+
+  it.each(['restart_confirmation_required','restart_confirmation_stale'])('returns %s as 409 without echoing the token', async error => {
+    const {request}=await start(service({continueTask:()=>{throw new Error(error)}}))
+    const response=await request('/v1/workbench/continue',{method:'POST',body:JSON.stringify({id:'deadbeef',text:'next',restartToken:'a'.repeat(64)})})
+    expect(response.status).toBe(409);expect(await response.json()).toEqual({error})
+  })
+
   it('returns 409 for a stale task permission response', async () => {
     const workbench=service({resolvePermission:vi.fn(() => {throw new Error('permission_stale')})})
     const {request}=await start(workbench)

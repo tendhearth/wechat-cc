@@ -24,7 +24,7 @@ function errorCode(err: unknown): string {
 
 function mappedError(err: unknown): ReturnType<RouteHandler> {
   const code = errorCode(err)
-  if (code === 'workbench_busy' || code === 'artifact_changed' || code === 'permission_stale') return { status: 409, body: { error: code } }
+  if (code === 'workbench_busy' || code === 'artifact_changed' || code === 'permission_stale' || code === 'restart_confirmation_required' || code === 'restart_confirmation_stale') return { status: 409, body: { error: code } }
   if (code === 'not_found') return { status: 404, body: { error: code } }
   if (code === 'unavailable_provider') return { status: 422, body: { error: code } }
   if (code.startsWith('invalid_')) return { status: 400, body: { error: code } }
@@ -83,10 +83,15 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       const value = objectBody(body)
       const id = typeof value?.id === 'string' ? value.id : ''
       const text = typeof value?.text === 'string' ? value.text.trim() : ''
-      if (!TASK_ID.test(id) || !text || text.length > 20_000) return invalid()
+      const restartToken = value?.restartToken
+      if (!TASK_ID.test(id) || !text || text.length > 20_000 ||
+          (restartToken !== undefined && (typeof restartToken !== 'string' || !SHA256.test(restartToken)))) return invalid()
       if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
       try {
-        return { status: 202, body: { task: await deps.workbench.continueTask(id, text) } }
+        const task = restartToken === undefined
+          ? await deps.workbench.continueTask(id, text)
+          : await deps.workbench.continueTask(id, text, { restartToken: restartToken as string })
+        return { status: 202, body: { task } }
       } catch (err) {
         return mappedError(err)
       }

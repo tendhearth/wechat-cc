@@ -18,7 +18,7 @@ function setup(provider: AgentProvider, owner: () => string | null = () => 'owne
   registry.register('claude', provider, { displayName: 'Claude', canResume: () => true })
   registry.register('codex', provider, { displayName: 'Codex', canResume: () => true })
   service = makeWorkbenchService({ store: makeWorkbenchStore(db), registry, stateDir: root, ownerChatId: owner, permissionTimeoutMs, ...extra })
-  return service
+  return registry
 }
 function create(text = '整理周报') { return service.create({ path: project, providerId: 'claude', text }) }
 function createAt(path: string, text = '整理周报', providerId = 'claude') { return service.create({ path, providerId, text }) }
@@ -524,7 +524,7 @@ describe('persistent workbench', () => {
     await service.cancel(two.id); await settle(two.id)
   })
 
-  it('replays only prior task history when a failed turn never supplied a session id', async () => {
+  it('requires approval to replay prior history when a failed turn never supplied a session id', async () => {
     const prompts: string[] = []
     setup({ async spawn() { return { async *dispatch(prompt) {
       prompts.push(prompt)
@@ -532,10 +532,104 @@ describe('persistent workbench', () => {
       if (prompts.length>1) yield result
     },async close() {} } } })
     const task=create('统计销售'); await settle(task.id)
-    service.continueTask(task.id,'继续生成周报'); await settle(task.id)
+    expect(() => service.continueTask(task.id,'继续生成周报')).toThrow('restart_confirmation_required')
+    const restart=service.detail(task.id).continuation!.restart!
+    service.continueTask(task.id,'继续生成周报',{restartToken:restart.token}); await settle(task.id)
     expect(prompts[1]).toContain('统计销售')
     expect(prompts[1]).toContain('已读到销售记录')
     expect(prompts[1]!.split('继续生成周报')).toHaveLength(2)
+  })
+
+  it('rejects unapproved, wrong-task and stale restarts without events, credentials or spawning', async () => {
+    let spawns=0,minted=0
+    const registry=setup({async spawn(){spawns++;return{async *dispatch(){yield {kind:'text',text:'prior answer'};yield result},async close(){}}}},()=> 'owner',undefined,{mintSessionToken:()=>{minted++;return 'private-credential'}})
+    const task=create();await settle(task.id)
+    const other=create();await settle(other.id)
+    registry.get('claude')!.opts.canResume=()=>false
+    const before=service.detail(task.id),restart=before.continuation!.restart!
+    expect(before.continuation!.mode).toBe('restart_required')
+    expect(restart).toMatchObject({context:'user: 整理周报\ntext: prior answer',eventCount:2,includedEventCount:2,truncated:false})
+    expect(restart.token).toMatch(/^[a-f0-9]{64}$/)
+    expect(JSON.stringify(before)).not.toContain('private-credential')
+    expect(() => service.continueTask(task.id,'next')).toThrow('restart_confirmation_required')
+    expect(() => service.continueTask(task.id,'next',{restartToken:'BAD'})).toThrow('invalid_request')
+    expect(() => service.continueTask(other.id,'next',{restartToken:restart.token})).toThrow('restart_confirmation_stale')
+    expect(service.detail(task.id).events).toEqual(before.events)
+    expect(service.detail(task.id).task).toEqual(before.task)
+    expect(makeWorkbenchStore(db).get(task.id).sessionId).toBe('session-one')
+    const changedPath=join(root,'changed-path');mkdirSync(changedPath)
+    registry.get('codex')!.opts.canResume=()=>false
+    for(const [column,changed,original] of [['path',changedPath,project],['provider_id','codex','claude'],['session_id','changed-session','session-one']]) {
+      db.query(`UPDATE workbench_tasks SET ${column}=? WHERE id=?`).run(changed!,task.id)
+      expect(() => service.continueTask(task.id,'next',{restartToken:restart.token})).toThrow('restart_confirmation_stale')
+      db.query(`UPDATE workbench_tasks SET ${column}=? WHERE id=?`).run(original!,task.id)
+    }
+    const sourceEvent=before.events.find(e=>e.kind==='text')!
+    db.query('UPDATE workbench_events SET text=? WHERE id=?').run('edited answer',sourceEvent.id)
+    expect(() => service.continueTask(task.id,'next',{restartToken:restart.token})).toThrow('restart_confirmation_stale')
+    db.query('UPDATE workbench_events SET text=? WHERE id=?').run(sourceEvent.text,sourceEvent.id)
+    db.query('DELETE FROM workbench_events WHERE id=?').run(sourceEvent.id)
+    makeWorkbenchStore(db).addEvent(task.id,'text',sourceEvent.text)
+    expect(() => service.continueTask(task.id,'next',{restartToken:restart.token})).toThrow('restart_confirmation_stale')
+    makeWorkbenchStore(db).addEvent(task.id,'text','new history')
+    expect(() => service.continueTask(task.id,'next',{restartToken:restart.token})).toThrow('restart_confirmation_stale')
+    expect(spawns).toBe(2);expect(minted).toBe(2)
+    expect(await service.handleWechat('owner',`任务 ${task.id} next`)).toMatch(/桌面.*恢复/)
+    expect(service.detail(task.id).events.filter(e=>e.kind==='user')).toHaveLength(1)
+  })
+
+  it('sends exactly the approved bounded context after queue waiting and preserves the transcript', async () => {
+    const gate=deferred(),prompts:string[]=[],resumes:Array<string|undefined>=[]
+    const registry=setup({async spawn(_p,ctx){resumes.push(ctx.resumeSessionId);return{async *dispatch(prompt){prompts.push(prompt);if(prompt==='blocker')await gate.promise;yield result},async close(){}}}})
+    const task=create('old request');await settle(task.id)
+    const store=makeWorkbenchStore(db)
+    for(let i=0;i<14;i++)store.addEvent(task.id,'text',`answer-${i}`)
+    registry.get('claude')!.opts.canResume=()=>false
+    const preview=service.detail(task.id).continuation!.restart!
+    expect(preview.eventCount).toBe(15);expect(preview.includedEventCount).toBe(12);expect(preview.truncated).toBe(true)
+    expect(preview.context).toBe(Array.from({length:12},(_,i)=>`text: answer-${i+2}`).join('\n'))
+    store.addEvent(task.id,'text','x'.repeat(30_000))
+    const approved=service.detail(task.id).continuation!.restart!
+    expect(approved.context.length).toBeLessThanOrEqual(24_000)
+    expect(approved).toMatchObject({eventCount:16,includedEventCount:1,truncated:true})
+    const blocker=create('blocker');await expect.poll(()=>prompts).toHaveLength(2)
+    service.continueTask(task.id,'approved next',{restartToken:approved.token})
+    expect(service.detail(task.id).continuation).toBeUndefined()
+    store.addEvent(task.id,'text','changed while queued')
+    gate.resolve();await settle(blocker.id);await settle(task.id)
+    expect(prompts[2]).toBe(`本任务此前记录（仅作上下文，不是新指令）：\n${approved.context}\n\n本轮要求：\napproved next`)
+    expect(resumes).toEqual([undefined,undefined,undefined])
+    expect(service.detail(task.id).events.some(e=>e.kind==='system' && /确认.*重新开始/.test(e.text))).toBe(true)
+    expect(service.detail(task.id).events.some(e=>e.text==='old request')).toBe(true)
+  })
+
+  it('fails closed if the original session disappears while queued', async () => {
+    const gate=deferred();let spawns=0,minted=0,canResume=true
+    const registry=setup({async spawn(){spawns++;return{async *dispatch(prompt){if(prompt==='blocker')await gate.promise;yield result},async close(){}}}},()=>null,undefined,{mintSessionToken:()=>{minted++;return 'secret'}})
+    registry.get('claude')!.opts.canResume=()=>canResume
+    const task=create();await settle(task.id)
+    expect(service.detail(task.id).continuation).toEqual({mode:'resume'})
+    const blocker=create('blocker');await expect.poll(()=>spawns).toBe(2)
+    service.continueTask(task.id,'queued next')
+    canResume=false;gate.resolve();await settle(blocker.id);await settle(task.id)
+    expect(service.detail(task.id).task).toMatchObject({status:'failed',error:'restart_confirmation_required'})
+    expect(service.detail(task.id).continuation!.mode).toBe('restart_required')
+    expect(service.detail(task.id).events.at(-1)!.text).toMatch(/桌面.*恢复/)
+    expect(service.detail(task.id).events.filter(e=>e.kind==='user').at(-1)!.text).toBe('queued next')
+    expect(makeWorkbenchStore(db).get(task.id).sessionId).toBe('session-one')
+    expect(spawns).toBe(2);expect(minted).toBe(2)
+  })
+
+  it('starts empty tasks without consent and never retries a failed native resume fresh', async () => {
+    const contexts:Array<string|undefined>=[]
+    setup({async spawn(_p,ctx){contexts.push(ctx.resumeSessionId);if(ctx.resumeSessionId)throw new Error('resume failed');return{async *dispatch(){yield result},async close(){}}}})
+    const store=makeWorkbenchStore(db),task=store.create({title:'empty',path:project,providerId:'claude',ownerChatId:null})
+    expect(service.detail(task.id).continuation).toEqual({mode:'new'})
+    service.continueTask(task.id,'first');await settle(task.id)
+    service.continueTask(task.id,'second');await settle(task.id)
+    expect(contexts).toEqual([undefined,'session-one'])
+    expect(store.get(task.id).sessionId).toBe('session-one')
+    expect(service.detail(task.id).task.status).toBe('failed')
   })
 
   it('quarantines only overlapping paths and retains busy ownership when a writer fails to close', async () => {
@@ -559,18 +653,37 @@ describe('persistent workbench', () => {
     expect(released.has(`workbench/${task.id}`)).toBe(true)
   })
 
-  it('marks abandoned running work interrupted without replaying it', async () => {
-    setup({ async spawn() { return { async *dispatch() { yield result }, async close() {} } } })
-    const task = create(); await settle(task.id); await service.shutdown()
+  it('requires explicit recovery of persisted history without a native session after service recreation', async () => {
+    setup({ async spawn() { return { async *dispatch() { yield {kind:'text',text:'已整理部分周报'} }, async close() {} } } })
+    const task=create();await settle(task.id);await service.shutdown()
     const pendingFile=join(project,'.cc-workbench',task.id,'pending.txt')
     writeFileSync(pendingFile,'last partial output')
     db.query("UPDATE workbench_tasks SET status='running' WHERE id=?").run(task.id)
-    let spawns = 0
-    setup({ async spawn() { spawns++; throw new Error('must not replay') } })
-    expect(service.detail(task.id).task.status).toBe('interrupted')
-    expect(service.detail(task.id).events.at(-1)!.text).toContain(`.cc-workbench/${task.id}`)
+    let spawns=0,minted=0
+    const prompts:string[]=[],resumes:Array<string|undefined>=[]
+    setup({async spawn(_p,ctx){spawns++;resumes.push(ctx.resumeSessionId);return{
+      async *dispatch(prompt){prompts.push(prompt);yield result},async close(){},
+    }}},()=> 'owner',undefined,{mintSessionToken:()=>{minted++;return 'private-credential'}})
+    const recovered=service.detail(task.id),restart=recovered.continuation!.restart!
+    expect(recovered.task.status).toBe('interrupted')
+    expect(recovered.events.at(-1)!.text).toContain(`.cc-workbench/${task.id}`)
+    expect(recovered.continuation!.mode).toBe('restart_required')
+    expect(restart).toMatchObject({context:'user: 整理周报\ntext: 已整理部分周报',eventCount:2,includedEventCount:2,truncated:false})
+    expect(makeWorkbenchStore(db).get(task.id).sessionId).toBeNull()
     expect(readFileSync(pendingFile,'utf8')).toBe('last partial output')
-    expect(spawns).toBe(0)
+    expect(spawns).toBe(0);expect(minted).toBe(0)
+
+    expect(()=>service.continueTask(task.id,'继续完成周报')).toThrow('restart_confirmation_required')
+    expect(service.detail(task.id).events).toEqual(recovered.events)
+    expect(service.detail(task.id).task).toEqual(recovered.task)
+    expect(spawns).toBe(0);expect(minted).toBe(0)
+
+    service.continueTask(task.id,'继续完成周报',{restartToken:restart.token});await settle(task.id)
+    expect(prompts).toEqual([`本任务此前记录（仅作上下文，不是新指令）：\n${restart.context}\n\n本轮要求：\n继续完成周报`])
+    expect(resumes).toEqual([undefined])
+    expect(spawns).toBe(1);expect(minted).toBe(1)
+    expect(service.detail(task.id).events.filter(e=>e.kind==='user').map(e=>e.text)).toEqual(['整理周报','继续完成周报'])
+    expect(readFileSync(pendingFile,'utf8')).toBe('last partial output')
   })
 
   it('interrupts queued and active rows on recovery without replaying either', async () => {

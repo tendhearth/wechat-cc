@@ -26,6 +26,24 @@ describe('workbench rendering', () => {
     expect(html).not.toContain('<img src=x onerror=alert(1)>')
   })
 
+  it('makes a fresh-session decision explicit and displays the exact escaped context', async () => {
+    const {renderTaskControls}=await import('./workbench.js')
+    const continuation={mode:'restart_required',restart:{token:'a'.repeat(64),context:'user: 原来的要求\ntext: <script>bad()</script>',eventCount:18,includedEventCount:12,truncated:true}}
+    const html=renderTaskControls('failed',continuation)
+    expect(html).toContain('原会话无法恢复')
+    expect(html).toContain('18')
+    expect(html).toContain('12')
+    expect(html).toContain('更早的记录或过长内容未包含')
+    expect(html).toContain('user: 原来的要求\ntext: &lt;script&gt;bad()&lt;/script&gt;')
+    expect(html).not.toContain('<script>bad()</script>')
+    expect(html).toContain('data-action="restart"')
+    expect(html).toContain(`data-restart-token="${'a'.repeat(64)}"`)
+    expect(html).toContain('带这些记录新开一轮')
+    expect(html).not.toContain('data-action="continue"')
+    expect(renderTaskControls('completed',{mode:'resume'})).toContain('data-action="continue"')
+    expect(renderTaskControls('running',continuation)).not.toContain('data-action="restart"')
+  })
+
   it('renders every user and provider message in chronological order while tool logs stay collapsed', async () => {
     const { renderWorkbench } = await import('./workbench.js')
     const html = renderWorkbench({tasks:[], providers:[{id:'codex',displayName:'Codex'}], defaultProvider:'codex',canWechat:false,selectedId:'A', selectedArtifactId:null,error:'',preview:null,
@@ -387,6 +405,32 @@ describe('workbench mutations', () => {
     vi.stubGlobal('Element',FakeElement)
     return page
   }
+
+  it('sends a restart token only for the explicit fresh-session action, retaining the request after a stale decision', async () => {
+    vi.useFakeTimers()
+    const field=new FakeElement();field.id='wb-followup-text';field.value='继续整理资料'
+    const page=installFakePage({'wb-followup-text':field})
+    const task={id:'deadbeef',title:'恢复任务',path:'/tmp/recover',providerId:'codex',status:'failed',createdAt:1,updatedAt:2,error:null}
+    let token='a'.repeat(64)
+    const invokeWorkbenchApi=vi.fn(async(method:string,path:string)=>{
+      if(method==='POST') {token='b'.repeat(64);throw new Error('HTTP 409: {"error":"restart_confirmation_stale"}')}
+      if(path==='/v1/workbench')return {tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}
+      return {task,events:[],artifacts:[],continuation:{mode:'restart_required',restart:{token,context:'user: 原请求',eventCount:1,includedEventCount:1,truncated:false}}}
+    })
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    const controller=initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000})!;for(let i=0;i<5;i++)await Promise.resolve()
+    const form=new FakeElement();form.tagName='FORM';form.dataset={action:'continue'}
+    for(const listener of page.listeners.get('submit')??[])await listener({target:form,preventDefault:vi.fn()})
+    expect(invokeWorkbenchApi.mock.calls.filter(([method])=>method==='POST')).toHaveLength(0)
+    expect(field.value).toBe('继续整理资料')
+    form.dataset={action:'restart',restartToken:'a'.repeat(64)}
+    for(const listener of page.listeners.get('submit')??[])await listener({target:form,preventDefault:vi.fn()})
+    expect(invokeWorkbenchApi).toHaveBeenCalledWith('POST','/v1/workbench/continue',{id:'deadbeef',text:'继续整理资料',restartToken:'a'.repeat(64)})
+    expect(controller.state.detail?.continuation?.restart?.token).toBe('b'.repeat(64))
+    expect(controller.state.error).toContain('记录已更新')
+    expect(field.value).toBe('继续整理资料')
+    stopWorkbenchPolling()
+  })
 
   it('does not surface a rejected stale detail request on the newly selected task', async () => {
     vi.useFakeTimers()

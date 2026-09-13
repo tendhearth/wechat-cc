@@ -4,6 +4,7 @@ import type { AgentEvent, AgentSession } from '../agent-provider'
 import type { ProviderRegistry } from '../provider-registry'
 import { TIER_PROFILES, sessionAuthEnv } from '../user-tier'
 import { canonicalProject, collectArtifacts, outputDirectory, readArtifactSnapshot } from './artifacts'
+import { restartPreview, type Continuation, type RestartPreview } from './continuation'
 import { makeRunPermissions, type PermissionDecision, type RunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
 import { findPathBlocker, type PathReservation, type WaitingFor } from './scheduler'
 import { publicTask, type StoredTask, type Task, type TaskStatus, type WorkbenchStore } from './store'
@@ -21,7 +22,9 @@ interface Options {
   closeTimeoutMs?: number
   permissionTimeoutMs?: number
 }
+type AcceptedContinuation = { mode: 'new' } | { mode: 'resume'; sessionId: string } | { mode: 'restart'; preview: RestartPreview }
 interface Active extends PathReservation {
+  continuation: AcceptedContinuation
   task: StoredTask
   directoryIdentity: string
   cancelled: boolean
@@ -50,6 +53,7 @@ function directoryIdentity(path:string):string {
   if (!stat.isDirectory()) throw new Error('invalid_path')
   return `${stat.dev}:${stat.ino}`
 }
+const RECOVERY_MESSAGE='原执行会话暂时无法恢复。请打开桌面工作台，查看恢复选项并确认是否带此前记录重新开始。'
 const SUPPORTED = ['claude','codex']
 const STATUS_NAMES: Record<string,string> = {
   queued:'准备开始',running:'正在处理',cancelling:'正在停止',completed:'这一轮已完成',failed:'需要处理',cancelled:'已停止',interrupted:'已中断',
@@ -96,6 +100,16 @@ export function makeWorkbenchService(opts: Options) {
     const entry = SUPPORTED.includes(id) ? opts.registry.get(id) : null
     if (!entry) throw new Error('unavailable_provider')
     return entry
+  }
+  function canResume(task:StoredTask):boolean {
+    try { return !!task.sessionId && !!provider(task.providerId).opts.canResume(task.path,task.sessionId) }
+    catch { return false }
+  }
+  function continuation(task:StoredTask):Continuation {
+    const events=store.events(task.id)
+    if (!events.some(event => event.kind==='user' || event.kind==='text')) return {mode:'new'}
+    if (canResume(task)) return {mode:'resume'}
+    return {mode:'restart_required',restart:restartPreview(task,events)}
   }
   function ensureAccepting() {
     if (stopping) throw new Error('workbench_stopping')
@@ -157,16 +171,20 @@ export function makeWorkbenchService(opts: Options) {
     try {
       running.releaseBusy=opts.holdBusy?.(sessionKey)
       if (canonicalProject(task.path) !== running.path || directoryIdentity(running.path) !== running.directoryIdentity) throw new Error('invalid_path')
+      const acceptedContinuation=running.continuation
+      let resume:string|undefined,history=''
+      if (acceptedContinuation.mode==='resume') {
+        const current=store.get(task.id)
+        if (current.sessionId!==acceptedContinuation.sessionId || !canResume(current)) throw new Error('restart_confirmation_required')
+        resume=acceptedContinuation.sessionId
+      } else if (acceptedContinuation.mode==='restart') {
+        // Approval belongs to this immutable preview, never a newly sliced queue-time history.
+        history=acceptedContinuation.preview.context
+        store.addEvent(task.id,'system','用户已确认带此前记录重新开始；原任务对话和成果继续保留。')
+        store.session(task.id,null)
+      }
       const directory=outputDirectory(running.path,task.id)
       const entry=provider(task.providerId)
-      const resume=task.sessionId && entry.opts.canResume(task.path,task.sessionId) ? task.sessionId : undefined
-      let history=''
-      const prior=store.events(task.id).slice(0,-1).filter(e => ['user','text'].includes(e.kind))
-      if (!resume && prior.length) {
-        store.addEvent(task.id,'system','原执行会话不可恢复，已用本任务最近的记录重新开始。')
-        store.session(task.id,null)
-        history=prior.slice(-12).map(e => `${e.kind}: ${e.text}`).join('\n').slice(-24_000)
-      }
       const instructions=[
         `你是 CC 的工作助手。当前任务编号 ${task.id}，任务：${task.title}。`,
         `本任务工作目录：${running.path}。成果目录：${directory}。`,
@@ -222,7 +240,7 @@ export function makeWorkbenchService(opts: Options) {
     } catch (error) {
       const message=error instanceof Error ? error.message : 'task_failed'
       finalStatus=running.cancelled ? 'cancelled' : 'failed'; finalError=running.cancelled ? null : message
-      if (!running.cancelled) store.addEvent(task.id,'error',message)
+      if (!running.cancelled) store.addEvent(task.id,'error',message==='restart_confirmation_required' ? RECOVERY_MESSAGE : message)
     } finally {
       running.permissions.rejectAll(running.cancelled ? 'cancelled' : 'ended')
       let closePromise:Promise<void>|undefined
@@ -268,7 +286,7 @@ export function makeWorkbenchService(opts: Options) {
     }
   }
 
-  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string):Task {
+  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'}):Task {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
     store.addEvent(task.id,'user',text); store.update(task.id,'queued')
     let signalStop!:()=>void,resolveDone!:()=>void
@@ -281,7 +299,7 @@ export function makeWorkbenchService(opts: Options) {
         : store.addEvent(task.id,'system',`权限结果：${event.permission.tool} · ${event.outcome} · ${event.permission.id}`),
     })
     const running:Active={
-      identity:randomUUID(),taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
+      continuation:acceptedContinuation,identity:randomUUID(),taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
       cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,credentialsMinted:false,credentialsRevoked:false,
     }
     runsByTask.set(task.id,running); runningText.set(running.identity,text); queue.push(running); pump()
@@ -315,7 +333,7 @@ export function makeWorkbenchService(opts: Options) {
     },
     detail(id:string) {
       const detail=store.detail(id),running=runsByTask.get(id)
-      return {...detail,task:taskView(detail.task),permissions:running?.permissions.pending() ?? []}
+      return {...detail,task:taskView(detail.task),permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:continuation(store.get(id))} : {})}
     },
     create(input:CreateTask):Task {
       ensureAccepting()
@@ -325,12 +343,21 @@ export function makeWorkbenchService(opts: Options) {
       const acceptedDirectoryIdentity=directoryIdentity(path)
       return start(store.create({title:input.title?.trim() ?? text.slice(0,40),path,providerId:input.providerId,ownerChatId:opts.ownerChatId()}),text,acceptedDirectoryIdentity)
     },
-    continueTask(id:string,text:string):Task {
+    continueTask(id:string,text:string,options?:{restartToken?:string}):Task {
       ensureAccepting()
       if (runsByTask.has(id)) throw new Error('workbench_busy')
       const task=store.get(id); provider(task.providerId)
       if (canonicalProject(task.path)!==task.path) throw new Error('invalid_path')
-      return start(task,checkedText(text),directoryIdentity(task.path))
+      const request=checkedText(text),acceptedDirectoryIdentity=directoryIdentity(task.path)
+      const restartToken=options?.restartToken
+      if (restartToken!==undefined && (typeof restartToken!=='string' || !/^[a-f0-9]{64}$/.test(restartToken))) throw new Error('invalid_request')
+      const decision=continuation(task)
+      if (restartToken!==undefined && (decision.mode!=='restart_required' || restartToken!==decision.restart.token)) throw new Error('restart_confirmation_stale')
+      if (decision.mode==='restart_required' && restartToken===undefined) throw new Error('restart_confirmation_required')
+      const accepted:AcceptedContinuation=decision.mode==='restart_required'
+        ? {mode:'restart',preview:decision.restart}
+        : decision.mode==='resume' ? {mode:'resume',sessionId:task.sessionId!} : {mode:'new'}
+      return start(task,request,acceptedDirectoryIdentity,accepted)
     },
     async cancel(id:string):Promise<Task> {
       const running=runsByTask.get(id)
@@ -361,7 +388,11 @@ export function makeWorkbenchService(opts: Options) {
         if (followup) { service.continueTask(id,followup); return `任务 ${id}：已收到补充要求，继续处理。稍后发送「任务 ${id}」查看进展。` }
         const detail=store.detail(id),last=detail.events.filter(e => e.kind==='text' || e.kind==='error').at(-1)?.text ?? ''
         return [`${task.title} · ${id}`,STATUS_NAMES[task.status] ?? task.status,last.slice(0,1500),detail.artifacts.length ? `已保存 ${detail.artifacts.length} 份成果版本，可在桌面工作台查看。` : '',`继续：任务 ${id} <补充要求>`].filter(Boolean).join('\n')
-      } catch (err) { return (err as Error).message==='workbench_busy' ? '这项任务正在处理，请等待完成或先停止它。' : '暂时无法继续，请在桌面工作台查看任务状态。' }
+      } catch (err) {
+        const code=(err as Error).message
+        if (code==='restart_confirmation_required' || code==='restart_confirmation_stale') return RECOVERY_MESSAGE
+        return code==='workbench_busy' ? '这项任务正在处理，请等待完成或先停止它。' : '暂时无法继续，请在桌面工作台查看任务状态。'
+      }
     },
     shutdown():Promise<void> {
       if (shutdownPromise) return shutdownPromise
