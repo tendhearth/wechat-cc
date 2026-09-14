@@ -1,8 +1,9 @@
 import {makeRunUserInput,type RunUserInput} from './user-input'
-import {makeWechatWorkbenchControl,type WechatMessageIdentity} from './wechat-control'
+import {makeWechatWorkbenchControl,type WechatMessageIdentity,type WechatWorkbenchReply} from './wechat-control'
 import {makeProjectCatalog} from './project-catalog'
 import type {CreationReceipt} from './creation-receipts'
 import type {WechatNotificationNotice,WechatNoticeKind} from './wechat-notifications'
+import type {ArtifactDeliveryReceipt} from './artifact-deliveries'
 import {normalizeInputRequestId,sameAttachments,type LiveInput} from './live-inputs'
 import type {Attachment} from './attachments'
 import { randomUUID } from 'node:crypto'
@@ -74,6 +75,7 @@ interface Active extends PathReservation {
 export interface InputMaterials {attachmentIds?:string[];draftId?:string;execution?:unknown}
 export interface CreateTask extends InputMaterials { title?: string; path: string; providerId: string; text: string }
 export interface CreateWechatTask {ownerChatId:string;accountId:string;requestId:string;commandHash:string;projectId:string;providerId?:string;text:string}
+export interface SendWechatArtifact {ownerChatId:string;accountId:string;requestId:string;commandHash:string;taskId:string;artifactId:string}
 export interface WorkbenchTaskView extends Task { importedOnly?:boolean; canArchive:boolean; waitingFor: WaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number; runtime?:AgentRuntimeSnapshot }
 
 function checkedText(text: string,attachments:readonly Attachment[]=[]): string {
@@ -171,6 +173,7 @@ export function makeWorkbenchService(opts: Options) {
   let shutdownComplete=false
   let shutdownPromise:Promise<void> | undefined
   let noticeWake:(context?:{ownerChatId:string;accountId:string})=>Promise<void>=async()=>{}
+  let artifactDelivery:((id:string)=>Promise<ArtifactDeliveryReceipt>)|undefined
   const wakeNotices=(context?:{ownerChatId:string;accountId:string})=>queueMicrotask(()=>{if(!stopping)void noticeWake(context).catch(()=>{})})
   store.recover()
   store.liveInputs.recover()
@@ -627,6 +630,29 @@ export function makeWorkbenchService(opts: Options) {
   }
 
   const service={
+    artifactDeliveryStore:store.artifactDeliveries,
+    setArtifactDelivery(deliver:((id:string)=>Promise<ArtifactDeliveryReceipt>)|undefined){artifactDelivery=deliver},
+    artifactDeliveryEligible(receipt:ArtifactDeliveryReceipt):boolean{
+      return !stopping&&receipt.ownerChatId===opts.ownerChatId()&&store.get(receipt.taskId).ownerChatId===receipt.ownerChatId
+    },
+    async deliverWechatArtifact(input:SendWechatArtifact):Promise<ArtifactDeliveryReceipt>{
+      ensureAccepting()
+      if(!input.ownerChatId||input.ownerChatId!==opts.ownerChatId()||!input.accountId?.trim()||store.get(input.taskId).ownerChatId!==input.ownerChatId)throw Error('invalid_wechat_identity')
+      const id=normalizeInputRequestId(input.requestId)
+      if(!/^[a-f0-9]{64}$/.test(input.commandHash))throw Error('invalid_request')
+      if(store.controlReceipts.get(id)||store.liveInputs.get(id)||store.creationReceipts.get(id))throw Error('artifact_delivery_conflict')
+      const prior=store.artifactDeliveries.get(id)
+      if(prior){
+        if(prior.taskId!==input.taskId||prior.artifactId!==input.artifactId||prior.ownerChatId!==input.ownerChatId||prior.accountId!==input.accountId||prior.commandHash!==input.commandHash)throw Error('artifact_delivery_conflict')
+        if(prior.status==='accepted'||prior.status==='unknown'||prior.status==='blocked')return prior
+      }
+      if(!artifactDelivery)throw Error('artifact_transport_unavailable')
+      if(!prior){
+        const artifact=service.artifact(input.taskId,input.artifactId)
+        store.artifactDeliveries.reserve({id,commandHash:input.commandHash,taskId:input.taskId,artifactId:input.artifactId,ownerChatId:input.ownerChatId,accountId:input.accountId,artifactSha256:artifact.sha256,name:artifact.name,mime:artifact.mime,size:artifact.size})
+      }
+      return artifactDelivery(id)
+    },
     notificationStore:store.wechatNotifications,
     setNotificationWake(wake:(context?:{ownerChatId:string;accountId:string})=>Promise<void>){noticeWake=wake},
     contextAvailable(ownerChatId:string,accountId:string){if(ownerChatId===opts.ownerChatId())wakeNotices({ownerChatId,accountId})},
@@ -1010,7 +1036,7 @@ export function makeWorkbenchService(opts: Options) {
       const running=runsByTask.get(id)
       if (!running || !running.permissions.resolve(requestId,decision)) throw new Error('permission_stale')
     },
-    async handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<string|null>{return wechatControl(chatId,text,identity)},
+    async handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>{return wechatControl(chatId,text,identity)},
     shutdown():Promise<void> {
       if (shutdownPromise) return shutdownPromise
       stopping=true

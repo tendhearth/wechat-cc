@@ -12,9 +12,9 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from './wechat-tool-deps'
 import { parsePermissionReply, type PendingPermissionView } from './pending-permissions'
-import { buildMediaItemFromFile, assertSendable } from './media'
+import { buildMediaItemFromArtifact,buildMediaItemFromFile, assertSendable } from './media'
 import { ilinkSendMessage, botTextMessage } from '../lib/ilink'
-import { sendIlinkWorkbenchText, type WorkbenchNoticeOutcome } from '../lib/ilink-workbench'
+import { sendIlinkWorkbenchItem,sendIlinkWorkbenchText, type ArtifactTransportOutcome,type WorkbenchMediaItem,type WorkbenchNoticeOutcome } from '../lib/ilink-workbench'
 import type { SessionStateStore } from '../core/session-state'
 import { sendReplyOnce, chunk } from '../lib/send-reply'
 import { MAX_TEXT_CHUNK } from '../lib/config'
@@ -82,6 +82,8 @@ export interface IlinkAdapter {
     accountId: string
     text: string
   }, signal?: AbortSignal): Promise<WorkbenchNoticeOutcome>
+  uploadWorkbenchArtifact?(request:{id:string;ownerChatId:string;accountId:string;bytes:Uint8Array;name:string;mime:string},signal?:AbortSignal):Promise<{status:'uploaded';item:WorkbenchMediaItem}|{status:'retryable'|'blocked';reason:string}>
+  sendWorkbenchArtifact?(receipt:{id:string;taskId:string;artifactId:string;artifactSha256:string;ownerChatId:string;accountId:string;name:string},item:WorkbenchMediaItem,signal?:AbortSignal):Promise<ArtifactTransportOutcome>
   projects: WechatProjectsDep
   voice: WechatVoiceDep
   companion: WechatCompanionDep
@@ -335,7 +337,7 @@ export function makeIlinkAdapter(opts: {
         contextToken,
         signal,
       })
-      if (outcome.status === 'accepted') {
+      if (outcome.status === 'accepted'&&!signal?.aborted) {
         try {
           await messagesStore.append({
             id: `workbench:${notice.id}`,
@@ -350,6 +352,32 @@ export function makeIlinkAdapter(opts: {
           log('MESSAGES', `workbench outbound audit failed for notice=${notice.id}: ${err instanceof Error ? err.message : String(err)}`)
         }
       }
+      return outcome
+    },
+
+    async uploadWorkbenchArtifact(request,signal){
+      if(acctStore.get(request.ownerChatId)!==request.accountId)return{status:'blocked',reason:'binding_changed'}
+      const account=accounts.find(candidate=>candidate.id===request.accountId);if(!account)return{status:'blocked',reason:'account_unavailable'}
+      if(!ctxStore.get(request.ownerChatId))return{status:'retryable',reason:'missing_context'}
+      try{
+        const item=await buildMediaItemFromArtifact({bytes:request.bytes,name:request.name,mime:request.mime,toUserId:request.ownerChatId,baseUrl:account.baseUrl,token:account.token,signal})
+        if(acctStore.get(request.ownerChatId)!==request.accountId)return{status:'blocked',reason:'binding_changed'}
+        if(!accounts.some(candidate=>candidate.id===request.accountId))return{status:'blocked',reason:'account_unavailable'}
+        if(!ctxStore.get(request.ownerChatId))return{status:'retryable',reason:'missing_context'}
+        return{status:'uploaded',item}
+      }
+      catch(error){
+        const reason=error instanceof Error?error.message:'upload_failed'
+        return reason==='artifact_too_large'||reason==='invalid_artifact'?{status:'blocked',reason}:{status:'retryable',reason}
+      }
+    },
+
+    async sendWorkbenchArtifact(receipt,item,signal){
+      if(acctStore.get(receipt.ownerChatId)!==receipt.accountId)return{status:'blocked',reason:'binding_changed'}
+      const account=accounts.find(candidate=>candidate.id===receipt.accountId);if(!account)return{status:'blocked',reason:'account_unavailable'}
+      const contextToken=ctxStore.get(receipt.ownerChatId);if(!contextToken)return{status:'deferred',reason:'missing_context'}
+      const outcome=await sendIlinkWorkbenchItem({baseUrl:account.baseUrl,token:account.token,clientId:receipt.id,ownerChatId:receipt.ownerChatId,contextToken,item,signal})
+      if(outcome.status==='accepted'&&!signal?.aborted)try{await messagesStore.append({id:`workbench:${receipt.id}`,chatId:receipt.ownerChatId,ts:new Date().toISOString(),direction:'out',kind:'file',text:receipt.name,source:'workbench'})}catch(error){log('MESSAGES',`workbench artifact audit failed for receipt=${receipt.id}: ${error instanceof Error?error.message:String(error)}`)}
       return outcome
     },
 

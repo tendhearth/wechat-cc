@@ -3,18 +3,21 @@ import type {WorkbenchStore,Task} from './store'
 import type {LiveInput} from './live-inputs'
 import type {PendingWorkbenchPermission,PermissionDecision} from './permissions'
 import type {AgentRuntimeSnapshot} from '../agent-provider'
-import type {CreateWechatTask} from './service'
+import type {CreateWechatTask,SendWechatArtifact} from './service'
+import type {ArtifactDeliveryReceipt} from './artifact-deliveries'
 import type {CreationReceipt} from './creation-receipts'
 import type {ProjectCatalogEntry} from './project-catalog'
 import {validateUserInputAnswers,type PendingUserInput} from './user-input'
 import {resultCommandHelp,resultToken,wechatResultPage} from './wechat-results'
 
 export interface WechatMessageIdentity {accountId:string;userId:string;msgId?:string;createTimeMs:number}
+export type WechatWorkbenchReply=string|{kind:'artifact_delivered';receiptId:string}
 type Detail=ReturnType<WorkbenchStore['detail']>&{runId?:string;runtime?:AgentRuntimeSnapshot;inputMode?:'steer'|'send'|'queue';inputs:LiveInput[];permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];wechatNotifications?:{enabled:boolean;notices:Array<{status:string}>}}
 interface Actions {
   projects():ProjectCatalogEntry[]
   createWechat(input:CreateWechatTask):CreationReceipt
   setWechatWatch(id:string,accountId:string,enabled:boolean):unknown
+  deliverWechatArtifact?(input:SendWechatArtifact):Promise<ArtifactDeliveryReceipt>
   detail(id:string):Detail
   continueTask(id:string,text:string,options?:{inputRequestId?:string}):Task
   cancel(id:string,expectedRunId?:string):Promise<Task>
@@ -51,6 +54,7 @@ function inputId(chatId:string,taskId:string,text:string,identity?:WechatMessage
 /** The early dedup and message audit must use the same identity as the task receipt. */
 export function wechatTaskMessageKey(msg:WechatMessageIdentity&{chatId:string;text:string}):string|null{
   if(!isWechatTaskCommand(msg.text))return null
+  if(/^(?:任务|\/task)\s+[a-f0-9]{8}\s+文件(?:\s|$)/i.test(msg.text.trim()))return 'workbench:'+inputId(msg.chatId,'',msg.text,msg)
   const taskId=/^(?:任务|\/task)\s+([a-f0-9]{8})(?:\s|$)/i.exec(msg.text.trim())?.[1]?.toLowerCase()??''
   return 'workbench:'+inputId(msg.chatId,taskId,msg.text,msg)
 }
@@ -112,7 +116,7 @@ function statusReply(detail:Detail){
   }
   if(error&&['failed','interrupted'].includes(task.status))lines.push('需要处理：'+clip(error,500))
   else if(task.error)lines.push('需要处理：'+clip(task.error,500))
-  if(artifacts.length)lines.push(`已保存 ${artifacts.length} 份成果版本：\n`+artifacts.slice(0,8).map(a=>`• ${singleLine(a.name)} (${a.size} 字节)`).join('\n'))
+  if(artifacts.length)lines.push(`已保存 ${artifacts.length} 份成果版本：\n`+artifacts.slice(0,8).map(a=>`• ${singleLine(a.name)} (${a.size} 字节)\n获取：任务 ${id} 文件 ${a.id}`).join('\n'))
   const held=inputs.filter(input=>input.status==='held').slice(0,3)
   if(held.length)lines.push('尚未交付的补充（已保留）：\n'+held.map(input=>'• '+clip(input.text,200)).join('\n'))
   const queued=inputs.filter(input=>input.status==='pending'||input.status==='sending').length
@@ -124,6 +128,9 @@ function statusReply(detail:Detail){
 }
 function failure(error:unknown,id:string){
   const code=error instanceof Error?error.message:''
+  if(code==='artifact_delivery_conflict')return '这条文件请求与已记录的内容不一致，没有再次发送。请重新查看任务成果。'
+  if(code==='artifact_transport_unavailable')return '文件发送暂不可用，已保存的成果仍可在桌面工作台查看。'
+  if(code==='artifact_changed'||code.startsWith('invalid_artifact'))return '成果文件已变化或未通过校验，没有发送。请在桌面查看保存的版本。'
   if(code==='subscription_conflict')return '提醒绑定的账号已变化，没有把旧提醒转发到新账号。请在原聊天关闭提醒后重新设置。'
   if(code==='permission_stale'||code==='question_stale')return stale
   if(code==='invalid_answer'||error instanceof SyntaxError)return '答案格式或选项不正确，尚未提交。请按问题中的示例回答。'
@@ -144,9 +151,12 @@ function failure(error:unknown,id:string){
 }
 
 export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatId:()=>string|null;actions:Actions}){
-  return async(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<string|null>=>{
+  return async(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>=>{
     if(!isWechatTaskCommand(text))return null
     if(!opts.ownerChatId()||chatId!==opts.ownerChatId()||(identity&&identity.userId!==chatId))return null
+    const artifactRequestId=inputId(chatId,'',text,identity),commandHash=createHash('sha256').update(text).digest('hex')
+    const originalFile=opts.store.artifactDeliveries.get(artifactRequestId)
+    if(originalFile&&(originalFile.commandHash!==commandHash||originalFile.ownerChatId!==chatId||originalFile.accountId!==identity?.accountId))return failure(Error('artifact_delivery_conflict'),originalFile.taskId)
     const command=text.trim().replace(/^(?:任务|\/task)\s*/i,'')
     if(/^项目(?:\s|$)/.test(command)){
       const match=/^项目(?:\s+([1-9]\d{0,3}))?$/.exec(command)
@@ -192,6 +202,20 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
         })
       }
       if(!suffix||['结果','状态','待办'].includes(suffix))return statusReply(opts.actions.detail(id))
+      if(/^文件(?:\s|$)/.test(suffix)){
+        if(opts.store.liveInputs.get(requestId)||opts.store.controlReceipts.get(requestId)||opts.store.creationReceipts.get(artifactRequestId))throw Error('artifact_delivery_conflict')
+        const file=new RegExp(`^文件\\s+(${UUID})$`,'i').exec(suffix)
+        if(!file)return `文件命令格式不正确。请发送「任务 ${id} 结果」，复制对应成果的完整获取命令。`
+        if(!identity?.accountId?.trim())return '无法确认文件应发往哪个微信账号，没有发送。请在原聊天重新索取。'
+        if(!opts.actions.deliverWechatArtifact)throw Error('artifact_transport_unavailable')
+        let delivery:ArtifactDeliveryReceipt
+        try{delivery=await opts.actions.deliverWechatArtifact({ownerChatId:chatId,accountId:identity.accountId,requestId:artifactRequestId,commandHash:textHash,taskId:id,artifactId:file[1]!.toLowerCase()})}
+        catch(error){if(error instanceof Error&&error.message==='not_found')return '没有找到属于这项任务的成果文件。请重新查看结果并复制获取命令。';throw error}
+        if(delivery.status==='accepted')return{kind:'artifact_delivered',receiptId:delivery.id}
+        if(delivery.status==='unknown'||delivery.status==='sending')return '文件是否送达尚未确认，不会自动重发。请先检查微信记录；确认未收到后，可发送一条新的获取命令。'
+        if(delivery.status==='blocked')return '文件未发送，账号绑定或成果校验已失效。请在桌面查看这项任务。'
+        return '文件暂未发送，保存的成果版本未变。请稍后重新发送获取命令。'
+      }
       if(/^正文(?:\s|$)/.test(suffix)){
         const page=/^正文\s+(r[1-9]\d*-[a-f0-9]{12})\s+([1-9]\d*)$/i.exec(suffix)
         if(!page)return resultCommandHelp(id)
@@ -230,7 +254,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
         opts.actions.resolveAnswer(id,requestId,phoneAnswers(request,answer))
         return `任务 ${id}：已提交回答。`
       }
-      if(/^(权限|问题|允许|拒绝|回答|停止|结果|状态|待办|提醒我|静音|正文)(?:\s|$)/.test(suffix))return usage(id)
+      if(/^(权限|问题|允许|拒绝|回答|停止|结果|状态|待办|提醒我|静音|正文|文件)(?:\s|$)/.test(suffix))return usage(id)
       const supplement=suffix.replace(/^(?:补充|继续)(?:\s+|$)/,'').trim()
       if(!supplement)return usage(id)
       const prior=opts.store.liveInputs.get(requestId)

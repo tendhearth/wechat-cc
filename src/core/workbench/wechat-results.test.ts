@@ -11,12 +11,17 @@ afterEach(()=>db.close())
 
 function task(owner='owner') {return store.create({title:'长报告',path:'/tmp/project',providerId:'claude',ownerChatId:owner})}
 function control(continued=vi.fn()){
-  return {continued,handle:makeWechatWorkbenchControl({store,ownerChatId:()=> 'owner',actions:{
+  const handle=makeWechatWorkbenchControl({store,ownerChatId:()=> 'owner',actions:{
     projects:()=>[],createWechat:()=>{throw Error('unused')},setWechatWatch:()=>{},
     detail:id=>({...store.detail(id),inputs:[],permissions:[],questions:[]}),
     continueTask:(id,text)=>{continued(id,text);return store.get(id)},cancel:async id=>store.get(id),
     submitInput:async()=>{throw Error('unused')},resolvePermission:()=>{},resolveAnswer:()=>{},
-  }})}
+  }})
+  return{continued,handle:async(...args:Parameters<typeof handle>)=>{
+    const reply=await handle(...args)
+    if(reply!==null&&typeof reply!=='string')throw Error('A result text query unexpectedly delivered a file')
+    return reply
+  }}
 }
 
 describe('immutable WeChat result pages',()=>{

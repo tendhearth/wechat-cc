@@ -213,11 +213,14 @@ export async function materializeAttachments(
 
 // ── Outbound helpers ──────────────────────────────────────────────────────
 import type { MessageItem } from '../lib/ilink'
+import type {WorkbenchMediaItem} from '../lib/ilink-workbench'
 import { ILINK_BASE_INFO, ilinkPost } from '../lib/ilink'
 import { log } from '../lib/log'
 
 export const UPLOAD_MEDIA_TYPE = { IMAGE: 1, VIDEO: 2, FILE: 3, VOICE: 4 } as const
 export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024 // ilink hard cap is higher; 50MB is safe + avoids slow uploads
+export const WORKBENCH_ARTIFACT_MAX_BYTES=8*1024*1024
+const WORKBENCH_UPLOAD_TIMEOUT_MS=30_000
 
 export const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'])
 export const VIDEO_EXTS = new Set(['mp4', 'mov', 'avi', 'webm'])
@@ -257,6 +260,48 @@ export async function buildMediaItemFromFile(
   }
   const fileName = basename(filePath) || 'file'
   return { type: 4, file_item: { media: mediaRef, file_name: fileName, len: String(uploaded.fileSize) } }
+}
+
+async function uploadWorkbenchBytes(params:{bytes:Uint8Array;toUserId:string;baseUrl:string;token:string;mediaType:number;signal:AbortSignal}){
+  const plaintext=Buffer.from(params.bytes),rawsize=plaintext.length,rawfilemd5=createHash('md5').update(plaintext).digest('hex')
+  const filesize=aesEcbPaddedSize(rawsize),filekey=randomBytes(16).toString('hex'),aeskey=randomBytes(16)
+  const uploadResp=JSON.parse(await ilinkPost(params.baseUrl,'ilink/bot/getuploadurl',{filekey,media_type:params.mediaType,to_user_id:params.toUserId,rawsize,rawfilemd5,filesize,no_need_thumb:true,aeskey:aeskey.toString('hex'),base_info:ILINK_BASE_INFO},params.token,undefined,params.signal)) as {upload_full_url?:string;upload_param?:string}
+  const uploadUrl=uploadResp.upload_full_url?.trim()||(uploadResp.upload_param?`${CDN_BASE_URL}/upload?encrypted_query_param=${encodeURIComponent(uploadResp.upload_param)}&filekey=${encodeURIComponent(filekey)}`:null)
+  if(!uploadUrl)throw Error('getuploadurl returned no upload URL')
+  if(params.signal.aborted)throw new DOMException('aborted','AbortError')
+  const ciphertext=encryptAesEcb(plaintext,aeskey)
+  const response=await fetch(uploadUrl,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:new Uint8Array(ciphertext)})
+  if(!response.ok)throw Error(`CDN upload ${response.status}: ${await response.text()}`)
+  const downloadParam=response.headers.get('x-encrypted-param');if(!downloadParam)throw Error('CDN response missing x-encrypted-param header')
+  return{downloadParam,aeskey:aeskey.toString('hex'),fileSize:rawsize,fileSizeCiphertext:filesize}
+}
+
+function logicalUpload<T>(operation:Promise<T>,signal:AbortSignal):Promise<T>{
+  operation.catch(()=>{})
+  return new Promise<T>((resolve,reject)=>{
+    let settled=false
+    const finish=(fn:()=>void)=>{if(settled)return;settled=true;signal.removeEventListener('abort',abort);fn()}
+    const abort=()=>finish(()=>reject(new DOMException('aborted','AbortError')))
+    if(signal.aborted)return abort()
+    signal.addEventListener('abort',abort,{once:true})
+    operation.then(value=>finish(()=>resolve(value)),error=>finish(()=>reject(error)))
+  })
+}
+
+export async function buildMediaItemFromArtifact(input:{bytes:Uint8Array;name:string;mime:string;toUserId:string;baseUrl:string;token:string;signal?:AbortSignal}):Promise<WorkbenchMediaItem>{
+  if(!(input.bytes instanceof Uint8Array)||input.bytes.byteLength>WORKBENCH_ARTIFACT_MAX_BYTES)throw Error('artifact_too_large')
+  if(!input.name||!input.mime||!input.toUserId)throw Error('invalid_artifact')
+  if(input.signal?.aborted)throw new DOMException('aborted','AbortError')
+  const displayName=basename(input.name)||'file',ext=displayName.split('.').pop()?.toLowerCase()??''
+  const mediaType=input.mime.startsWith('image/')||IMAGE_EXTS.has(ext)?UPLOAD_MEDIA_TYPE.IMAGE:input.mime.startsWith('video/')||VIDEO_EXTS.has(ext)?UPLOAD_MEDIA_TYPE.VIDEO:UPLOAD_MEDIA_TYPE.FILE
+  const controller=new AbortController(),abort=()=>controller.abort(),timer=setTimeout(abort,WORKBENCH_UPLOAD_TIMEOUT_MS)
+  input.signal?.addEventListener('abort',abort,{once:true})
+  let uploaded:Awaited<ReturnType<typeof uploadWorkbenchBytes>>
+  try{uploaded=await logicalUpload(uploadWorkbenchBytes({...input,mediaType,signal:controller.signal}),controller.signal)}finally{clearTimeout(timer);input.signal?.removeEventListener('abort',abort)}
+  const media={encrypt_query_param:uploaded.downloadParam,aes_key:Buffer.from(uploaded.aeskey).toString('base64'),encrypt_type:1 as const}
+  if(mediaType===UPLOAD_MEDIA_TYPE.IMAGE)return{type:2,image_item:{media,mid_size:uploaded.fileSizeCiphertext}}
+  if(mediaType===UPLOAD_MEDIA_TYPE.VIDEO)return{type:5,video_item:{media,video_size:uploaded.fileSizeCiphertext}}
+  return{type:4,file_item:{media,file_name:displayName,len:String(uploaded.fileSize)}}
 }
 
 /** Parse a standard RIFF/WAVE header (PCM only). Returns audio parameters

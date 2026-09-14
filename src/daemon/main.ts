@@ -69,6 +69,7 @@ import {makeExecutionClaims} from '../core/workbench/execution-claims'
 import {randomUUID as claimUuid} from 'node:crypto'
 import { wireWorkbench } from './bootstrap/wire-workbench'
 import {wireWorkbenchNotifications} from './bootstrap/wire-workbench-notifications'
+import {wireWorkbenchArtifacts} from './bootstrap/wire-workbench-artifacts'
 
 function errorDetails(err: unknown): string {
   if (err instanceof Error) return err.stack || err.message
@@ -695,8 +696,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     lc.register(registerSessions(wired.sessionsDeps))
     lc.register(registerIlink(wired.ilinkDeps))
     let workbenchNotifications:ReturnType<typeof wireWorkbenchNotifications>|undefined
+    let workbenchArtifacts:ReturnType<typeof wireWorkbenchArtifacts>|undefined
     // Register before polling so shutdown stops inbound, drains task sends, then flushes ilink.
     lc.register({name:'workbench-notifications',stop:async()=>{await workbenchNotifications?.close()}})
+    lc.register({name:'workbench-artifacts',stop:async()=>{await workbenchArtifacts?.close()}})
     const pollingLc = registerPolling({ ...wired.pollingDeps, runPipeline: pipeline })
     wireRef(wired.refs.polling, pollingLc); lc.register(pollingLc); pollingLcRef = pollingLc
     // Content-blind mailbox transport (Task 8) — mounted only when bootstrap
@@ -758,6 +761,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     didStartup = true
     // The worker can arm timers immediately: construct only once partial-startup cleanup is active.
     workbenchNotifications=wireWorkbenchNotifications({workbench,ilink})
+    workbenchArtifacts=wireWorkbenchArtifacts({workbench,ilink})
     void workbenchNotifications.wake().catch(()=>log('WORKBENCH','Task notifications are waiting for storage recovery.'))
   } catch (err) {
     log('DAEMON', `startup failed mid-init: ${err instanceof Error ? err.message : String(err)}`)

@@ -23,6 +23,7 @@ import { Database } from 'bun:sqlite'
 import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {initializeWechatNotificationSchema} from '../core/workbench/wechat-notifications'
+import {initializeArtifactDeliverySchema} from '../core/workbench/artifact-deliveries'
 
 export type Db = Database
 
@@ -1256,6 +1257,8 @@ export const migrations: Migration[] = [
       INSERT INTO workbench_control_receipts SELECT * FROM workbench_control_receipts_v52;
       DROP TABLE workbench_control_receipts_v52;`)
   },
+  // v57 — explicit owner requests for immutable workbench artifact delivery.
+  (db) => { initializeArtifactDeliverySchema(db) },
 ]
 
 export interface OpenDbOpts {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { sendIlinkWorkbenchText } from './ilink-workbench'
+import { sendIlinkWorkbenchItem,sendIlinkWorkbenchText } from './ilink-workbench'
 
 const realFetch = globalThis.fetch
 afterEach(() => { globalThis.fetch = realFetch })
@@ -75,4 +75,18 @@ describe('sendIlinkWorkbenchText', () => {
     await expect(sendIlinkWorkbenchText({ ...request, signal: ctrl.signal })).resolves.toEqual({ status: 'unknown', reason: 'transport_uncertain' })
     expect(globalThis.fetch).toHaveBeenCalledTimes(1)
   })
+})
+
+describe('sendIlinkWorkbenchItem',()=>{
+  const media={encrypt_query_param:'download',aes_key:'YWVz',encrypt_type:1 as const}
+  const item={type:4 as const,file_item:{media,file_name:'result.pdf',len:'12'}}
+  it('sends exactly one strict media item with the stable receipt id',async()=>{
+    const fetch=fakeResponse('{"ret":0}') as unknown as ReturnType<typeof vi.fn>
+    await expect(sendIlinkWorkbenchItem({...request,item})).resolves.toEqual({status:'accepted'})
+    expect(fetch).toHaveBeenCalledTimes(1);const wire=JSON.parse(String(fetch.mock.calls[0]![1].body))
+    expect(wire.msg).toMatchObject({client_id:'notice-persistent-1',to_user_id:'chat-owner',item_list:[item]});expect(wire.msg.item_list).toHaveLength(1)
+  })
+  it.each(['{}','bad','{"errcode":0,"ret":-2}'])('keeps ambiguous response unknown: %s',async body=>{fakeResponse(body);await expect(sendIlinkWorkbenchItem({...request,item})).resolves.toEqual({status:'unknown',reason:'ambiguous_response'})})
+  it('rejects unsupported or incomplete items before network',async()=>{globalThis.fetch=vi.fn() as unknown as typeof fetch;await expect(sendIlinkWorkbenchItem({...request,item:{type:1,text_item:{text:'x'}} as never})).resolves.toEqual({status:'blocked',reason:'invalid_item'});expect(globalThis.fetch).not.toHaveBeenCalled()})
+  it('rejects extra payload families before network',async()=>{globalThis.fetch=vi.fn() as unknown as typeof fetch;await expect(sendIlinkWorkbenchItem({...request,item:{...item,text_item:{text:'smuggled'}} as never})).resolves.toEqual({status:'blocked',reason:'invalid_item'});expect(globalThis.fetch).not.toHaveBeenCalled()})
 })

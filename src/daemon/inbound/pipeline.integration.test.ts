@@ -63,6 +63,13 @@ const mkCtx = (): InboundCtx => ({
 })
 
 describe('inbound pipeline (integration)', () => {
+  it('consumes an accepted workbench file delivery without a duplicate text reply or companion dispatch',async()=>{
+    const {deps,spy}=fakeDeps(),send=vi.fn(async()=>{})
+    deps.workbench={handleWechat:async()=>({kind:'artifact_delivered',receiptId:'saved-delivery'}),sendMessage:send}
+    const ctx=mkCtx();ctx.msg.text='任务 deadbeef 文件 12345678-1234-4234-8234-123456789012'
+    await buildInboundPipeline(deps)(ctx)
+    expect(ctx.consumedBy).toBe('workbench');expect(send).not.toHaveBeenCalled();expect(spy.dispatch).not.toHaveBeenCalled()
+  })
   it('handles an authorized task before personal recall and unrelated companion LLM health',async()=>{
     const {deps,spy}=fakeDeps(),replies:string[]=[],recall=vi.fn(async()=>[])
     deps.workbench={handleWechat:async(_chat,text)=>text.startsWith('任务')?'任务结果':null,sendMessage:async(_chat,text)=>{replies.push(text)}}

@@ -35,7 +35,11 @@ async function verifyWechat(provider: AgentProvider, directory: string, calls: s
   const registry = createProviderRegistry(), owner = 'owned-offline-chat'
   registry.register('codex', provider, { displayName: 'Codex', canResume: () => true })
   const service = makeWorkbenchService({ store, registry, stateDir: directory, ownerChatId: () => owner, timeoutMs: 15_000, permissionTimeoutMs: 15_000 })
-  const phone = (text: string, msgId = crypto.randomUUID()) => service.handleWechat(owner, text, { accountId: 'owned-offline-account', userId: owner, msgId, createTimeMs: 1 })
+  const phone = async (text: string, msgId = crypto.randomUUID()) => {
+    const reply=await service.handleWechat(owner, text, { accountId: 'owned-offline-account', userId: owner, msgId, createTimeMs: 1 })
+    assert(reply===null||typeof reply==='string','a native approval/query command unexpectedly delivered a file')
+    return reply
+  }
   try {
     const task = service.create({ path: directory, providerId: 'codex', title: 'Offline phone approval fixture', text: 'Call the isolated fixture echo tool once.' })
     const list = await phone('任务')

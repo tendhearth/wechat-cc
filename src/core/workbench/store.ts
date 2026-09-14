@@ -10,6 +10,7 @@ import {makeExecutionSettingsStore,NATIVE_EXECUTION_CHOICE} from './execution-se
 import {makeControlReceiptStore} from './control-receipts'
 import {makeCreationReceiptStore} from './creation-receipts'
 import {makeWechatNotificationStore} from './wechat-notifications'
+import {makeArtifactDeliveryStore} from './artifact-deliveries'
 import {makeTimelineEvents} from './timeline-events'
 import type {AgentActivity} from '../agent-provider'
 
@@ -83,6 +84,7 @@ export function makeWorkbenchStore(db: Db) {
     controlReceipts:makeControlReceiptStore(db),
     creationReceipts:makeCreationReceiptStore(db),
     wechatNotifications:makeWechatNotificationStore(db),
+    artifactDeliveries:makeArtifactDeliveryStore(db),
     get, artifacts, events, addEvent,recordAgentEvent,finishRunActivities,source,sourceByIdentity,handoffs,
     recordHandoffNative:(id:string,nativeId:string)=>db.query('UPDATE workbench_handoffs SET target_native_id=? WHERE id=? AND target_native_id IS NULL').run(nativeId,id),
     recordHandoffEvent:(id:string,eventId:number)=>db.query('UPDATE workbench_handoffs SET request_event_id=? WHERE id=?').run(eventId,id),
