@@ -5,11 +5,19 @@ import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
 import {makeWorkbenchStore} from './store'
 import type {AgentExecutionChoice} from '../agent-provider'
-import {normalizeExecutionChoice,sameExecutionChoice} from './execution-settings'
+import {executionFailureMessage,normalizeExecutionChoice,sameExecutionChoice} from './execution-settings'
 
 const provider:AgentExecutionChoice={defaults:'provider',model:null,reasoningEffort:null}
 const native:AgentExecutionChoice={defaults:'native',model:null,reasoningEffort:null}
 const selected:AgentExecutionChoice={defaults:'provider',model:'model-a',reasoningEffort:'high'}
+
+it('turns API task failures into actionable Chinese guidance',()=>{
+  expect(executionFailureMessage('api_task_attachment_unsupported')).toContain('PDF')
+  expect(executionFailureMessage('api_task_incomplete')).toContain('未完整结束')
+  expect(executionFailureMessage('api_task_response_invalid')).toContain('响应')
+  expect(executionFailureMessage('api_task_scope_changed')).toContain('文件夹')
+  expect(executionFailureMessage('api_task_cancelled')).toContain('已停止')
+})
 let dir:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>
 beforeEach(()=>{dir=mkdtempSync(join(tmpdir(),'cc-execution-'));db=openDb({path:join(dir,'db.sqlite')});store=makeWorkbenchStore(db)})
 afterEach(()=>{db.close();rmSync(dir,{recursive:true,force:true})})

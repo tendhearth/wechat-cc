@@ -24,6 +24,7 @@ import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {initializeWechatNotificationSchema} from '../core/workbench/wechat-notifications'
 import {initializeArtifactDeliverySchema} from '../core/workbench/artifact-deliveries'
+import {initializeApiSessionSchema} from '../core/workbench/api-sessions'
 
 export type Db = Database
 
@@ -1259,6 +1260,8 @@ export const migrations: Migration[] = [
   },
   // v57 — explicit owner requests for immutable workbench artifact delivery.
   (db) => { initializeArtifactDeliverySchema(db) },
+  // v58 — durable transcripts for managed OpenAI-compatible workbench tasks.
+  (db) => { initializeApiSessionSchema(db) },
 ]
 
 export interface OpenDbOpts {

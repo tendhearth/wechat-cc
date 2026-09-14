@@ -20,7 +20,7 @@ import {historyDeadline} from './native-history'
 import {handoffToken,handoffTokenHash,validateHandoffInput,handoffArtifactText,handoffContext,type HandoffInput,type HandoffPreview,type ArtifactSelection,type AttachmentSelection} from './handoff'
 import {pathsConflict} from './scheduler'
 import { restartPreview, type Continuation, type RestartPreview } from './continuation'
-import {isWorkbenchExecutorCapabilities,isWorkbenchProviderId,requireWorkbenchInput,type WorkbenchExecutorCapabilities} from './executor-capabilities'
+import {canResumeWorkbenchExecutor,isWorkbenchExecutorCapabilities,isWorkbenchProviderId,requireWorkbenchInput,type WorkbenchExecutorCapabilities} from './executor-capabilities'
 import { makeRunPermissions, type PermissionDecision, type RunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
 import { findPathBlocker, type PathReservation, type WaitingFor } from './scheduler'
 import { publicTask, TERMINAL_TASK_STATUSES, type WorkbenchListQuery, type StoredTask, type Task, type TaskStatus, type WorkbenchStore } from './store'
@@ -221,7 +221,7 @@ export function makeWorkbenchService(opts: Options) {
   function canResume(task:StoredTask):boolean {
     try {
       const entry=provider(task.providerId)
-      return !!task.sessionId&&entry.opts.workbench.features.nativeResume&&!!entry.opts.canResume(task.path,task.sessionId)
+      return !!task.sessionId&&canResumeWorkbenchExecutor(entry.opts.workbench)&&!!entry.opts.canResume(task.path,task.sessionId)
     }
     catch { return false }
   }

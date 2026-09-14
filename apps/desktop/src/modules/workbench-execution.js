@@ -30,6 +30,18 @@ export function executionErrorMessage(error){
   workbench_execution_unsupported:'这个执行者暂不支持所选执行设置。请改用自动设置，或选择其他执行者。',
   workbench_resume_unsupported:'这个执行者无法安全恢复原会话。请在桌面查看恢复说明，并决定是否带记录重新开始。',
   unavailable_provider:'暂时没有可用的工作执行者。请连接或管理支持工作任务的 Claude Code／Codex 执行者。',
+  api_task_attachment_unsupported:'这个 API 执行者暂不支持 PDF 或其他二进制附件。请改用文字、CSV、JSON 或图片。',
+  api_task_attachment_invalid:'附件内容已变化或无法安全读取，请重新添加后再试。',
+  api_task_input_invalid:'任务内容或附件超出 API 执行者的处理范围，请缩短内容或减少附件。',
+  api_task_incomplete:'API 响应未完整结束，任务没有被标记为完成。请检查服务状态后重试。',
+  api_task_response_invalid:'API 返回了无法安全继续的响应，任务已停止。请检查模型兼容性。',
+  api_task_scope_changed:'任务文件夹已变化，为避免读写错误，API 执行者已停止。请重新打开任务。',
+  api_task_private_scope:'所选文件夹与任务服务的私有状态目录重叠。请选择具体的项目文件夹。',
+  api_task_request_failed:'API 请求失败。请检查端点和网络后重试。',
+  api_task_close_unconfirmed:'API 请求尚未确认结束。请等待或重启服务后查看中断状态，不要重复提交。',
+  api_task_step_limit:'API 任务达到步骤上限。请缩小任务范围后继续。',
+  api_task_tool_failed:'API 执行者未能完成文件操作。请查看任务记录后重试。',
+  api_task_cancelled:'API 任务已停止，没有继续执行后续操作。',
  })
  return messages[code]??null
 }

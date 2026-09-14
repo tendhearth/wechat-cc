@@ -3,7 +3,7 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   plugins:[{name:'bun-native-file-import',enforce:'pre',load(id){
     // Bun embeds this source through its file import attribute; Vite needs the path.
-    if(id.endsWith('/workbench/attachments-native.c'))return `export default ${JSON.stringify(id)}`
+    if(id.endsWith('/workbench/attachments-native.c')||id.endsWith('/workbench/api-files-native.c'))return `export default ${JSON.stringify(id)}`
   }}],
   test: {
     // Never collect tests from Claude's nested worktrees: doing so runs a

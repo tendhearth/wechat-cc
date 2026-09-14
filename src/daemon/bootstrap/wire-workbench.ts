@@ -19,6 +19,7 @@ import { claudeNativeCapabilityNotice } from '../../core/workbench/native-capabi
 import { loadCompanionConfig } from '../companion/config'
 import type { Bootstrap } from './types'
 import type { InternalApi } from '../internal-api/types'
+import {registerWorkbenchApi} from './workbench-api'
 
 /** Reuse transport/model setup, never the companion's prompt or bypass. */
 export function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}): Options {
@@ -63,6 +64,7 @@ export function wireWorkbench(opts: {
 }) {
   const ownerChatId=() => loadCompanionConfig(opts.stateDir).default_chat_id ?? null
   const registry=createProviderRegistry()
+  const agentConfig=loadAgentConfig(opts.stateDir)
   const claude=opts.boot.registry.get('claude')
   if (claude) registry.register('claude',createClaudeAgentProvider({
     sdkOptionsForProject(alias,path,tier,chatId,env,instructions,context) {
@@ -82,6 +84,7 @@ export function wireWorkbench(opts: {
     // The adapter discovers native tools, excludes companion services, and
     // routes admitted tool calls through this task's approval requests.
   }),{...codex.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
+  if(opts.boot.registry.has('openai'))registerWorkbenchApi(registry,opts.db,opts.stateDir,agentConfig,process.env)
   return makeWorkbenchService({
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},

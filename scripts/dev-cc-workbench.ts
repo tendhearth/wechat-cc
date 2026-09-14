@@ -21,6 +21,8 @@ import {makeWorkbenchStore} from '../src/core/workbench/store'
 import {makeWorkbenchService} from '../src/core/workbench/service'
 import {createInternalApi,type InternalApiDeps} from '../src/daemon/internal-api'
 import {workbenchClaudeAuthEnv} from './workbench-claude-config'
+import {loadAgentConfig} from '../src/lib/agent-config'
+import {registerWorkbenchApi} from '../src/daemon/bootstrap/workbench-api'
 
 const root=resolve(import.meta.dir,'..')
 const stateDir=join(homedir(),'.claude','channels','wechat-workbench-dev')
@@ -28,7 +30,6 @@ const infoPath=join(stateDir,'internal-api-info.json')
 const binary=findCodexBinary()
 const claudeCandidate=process.env.CLAUDE_CODE_EXECUTABLE || Bun.which('claude') || join(homedir(),'.local','bin','claude')
 const claudeBinary=existsSync(claudeCandidate) ? claudeCandidate : null
-if(!binary && !claudeBinary)throw new Error('尚未发现 Claude Code 或 Codex，请先安装并登录其中一个。')
 mkdirSync(stateDir,{recursive:true,mode:0o700})
 if(existsSync(infoPath)) {
   const previous=JSON.parse(readFileSync(infoPath,'utf8'))
@@ -59,6 +60,8 @@ if(claudeBinary)registry.register('claude',createClaudeAgentProvider({
       instructions ?? '',makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers)),native)
   },
 }),{workbench:MANAGED_NATIVE_CAPABILITIES,displayName:'Claude Code',canResume:(cwd,id)=>existsSync(claudeSessionJsonlPath(homedir(),cwd,id))})
+registerWorkbenchApi(registry,db,stateDir,loadAgentConfig(stateDir),process.env)
+if(!registry.list().length)throw new Error('暂时没有可用的工作执行者。请配置 API 执行者，或连接 Claude Code／Codex。')
 // Unused companion dependencies are deliberately absent. Only the explicit
 // workbench routes are reachable through the frontend proxy in this runner.
 const api=createInternalApi({stateDir,daemonPid:process.pid} as InternalApiDeps)
@@ -79,7 +82,7 @@ const shim=Bun.spawn(['bun','apps/desktop/test-shim.ts'],{
     WECHAT_CC_WORKBENCH_STATE_DIR:stateDir,
   },
 })
-console.log(`一起做：${[binary?'Codex':null,claudeBinary?'Claude Code':null].filter(Boolean).join(' / ')}，独立任务库 ${stateDir}\n页面：http://127.0.0.1:${port}/`)
+console.log(`一起做：${registry.list().map(id=>registry.get(id)?.opts.displayName).filter(Boolean).join(' / ')}，独立任务库 ${stateDir}\n页面：http://127.0.0.1:${port}/`)
 let stopping=false
 async function stop() {
   if(stopping)return;stopping=true

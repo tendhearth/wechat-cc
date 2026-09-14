@@ -61,7 +61,7 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  it('opens a fresh db with PRAGMA user_version = 54 and the expected tables', () => {
+  it('opens a fresh db with every current migration and the expected tables', () => {
     const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
     // v14 (dialogue real data): messages / threads / thread_extract_state tables added;
     // events.kind widened with 'threads_extracted'.
@@ -106,7 +106,8 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // v50: durable in-flight supplements, retained as unsent after restart.
     // v51–53: ordered activity, control receipts and task attachments.
     // v54: accepted per-run execution choices and native observations.
-    expect(v).toBe(54)
+    // v55–58: creation receipts, WeChat notices, artifact deliveries and API transcripts.
+    expect(v).toBe(58)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',
@@ -115,8 +116,9 @@ describe('full state-dir migration — upgrading-user smoke', () => {
       'session_turns_fts', 'session_turns_fts_config', 'session_turns_fts_content', 'session_turns_fts_data',
       'session_turns_fts_docsize', 'session_turns_fts_idx',
       'sessions', 'thread_extract_state', 'threads', 'turn_records',
-      'workbench_artifacts', 'workbench_attachments', 'workbench_control_receipts', 'workbench_events', 'workbench_handoffs',
-      'workbench_live_inputs', 'workbench_run_execution', 'workbench_sources', 'workbench_tasks',
+      'workbench_api_sessions', 'workbench_artifact_deliveries', 'workbench_artifacts', 'workbench_attachments', 'workbench_control_receipts',
+      'workbench_creation_receipts', 'workbench_events', 'workbench_handoffs', 'workbench_live_inputs', 'workbench_run_execution',
+      'workbench_sources', 'workbench_tasks', 'workbench_wechat_notice_intents', 'workbench_wechat_notices', 'workbench_wechat_subscriptions',
     ])
   })
 

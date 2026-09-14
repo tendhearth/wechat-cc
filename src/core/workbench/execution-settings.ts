@@ -13,6 +13,22 @@ export function executionFailureMessage(code:string):string {
     execution_image_unsupported:'所选模型不接收图片，请更换支持图片的模型，或移除图片。',
     model_catalog_invalid:'暂时无法读取模型，请重新读取后再选择；也可以使用自动。',
     model_catalog_unavailable:'暂时无法读取模型，请重新读取后再选择；也可以使用自动。',
+    api_task_attachment_unsupported:'这个 API 执行者暂不支持 PDF 或其他二进制附件。请改用文字、CSV、JSON 或图片。',
+    api_task_attachment_invalid:'附件内容已变化或无法安全读取，请重新添加后再试。',
+    api_task_input_invalid:'任务内容或附件超出 API 执行者的处理范围，请缩短内容或减少附件。',
+    api_task_incomplete:'API 响应未完整结束，任务没有被标记为完成。请检查服务状态后重试。',
+    api_task_response_invalid:'API 返回了无法安全继续的响应，任务已停止。请检查模型兼容性。',
+    api_task_scope_changed:'任务文件夹已变化，为避免读写错误，API 执行者已停止。请重新打开任务。',
+    api_task_cancelled:'API 任务已停止，没有继续执行后续操作。',
+    api_task_step_limit:'API 任务达到步骤上限，尚未完整完成。请缩小任务范围后继续。',
+    api_task_tool_unsupported:'模型请求了此执行者不支持的操作，任务已停止。请调整要求后继续。',
+    api_task_tool_failed:'API 执行者未能完成已允许的文件操作。请查看任务记录后重试。',
+    api_task_request_failed:'API 请求失败，任务没有被标记为完成。请检查端点和网络后重试。',
+    api_task_close_unconfirmed:'API 请求尚未确认结束。请等待或重启服务后查看中断状态，不要重复提交。',
+    api_task_private_scope:'所选文件夹与任务服务的私有状态目录重叠，无法安全开始。请选择具体的项目文件夹。',
+    api_task_scope_invalid:'无法确认 API 任务的项目范围，任务没有开始。请重新打开项目后再试。',
+    api_task_busy:'这个 API 会话正在处理另一轮，请等待当前轮结束。',
+    api_task_closed:'这个 API 会话已经关闭，请从任务页面重新继续。',
   }
   return messages[code]??code
 }

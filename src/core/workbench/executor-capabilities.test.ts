@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isWorkbenchExecutorCapabilities, isWorkbenchProviderId, MANAGED_NATIVE_CAPABILITIES, requireWorkbenchInput } from './executor-capabilities'
+import { canResumeWorkbenchExecutor, isWorkbenchExecutorCapabilities, isWorkbenchProviderId, MANAGED_API_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES, requireWorkbenchInput } from './executor-capabilities'
 
 const declared = () => ({version:1,permissions:'task',configuration:'task-policy',completion:'native',stop:'confirmed',background:'tracked',
   features:{nativeResume:true,attachments:true,executionSettings:true,modelCatalog:true}})
@@ -51,6 +51,14 @@ describe('workbench executor admission', () => {
     const capabilities={...MANAGED_NATIVE_CAPABILITIES,features:{...MANAGED_NATIVE_CAPABILITIES.features,nativeResume:false}}
     expect(()=>requireWorkbenchInput(capabilities,{...input,resume:false})).not.toThrow()
     expect(()=>requireWorkbenchInput(capabilities,{...input,resume:true})).toThrow('workbench_resume_unsupported')
+  })
+
+  it('admits managed transcripts for continuation without claiming native history',()=>{
+    expect(MANAGED_API_CAPABILITIES).toMatchObject({background:'disabled',features:{nativeResume:false,managedResume:true,attachments:true,executionSettings:false,modelCatalog:false}})
+    expect(canResumeWorkbenchExecutor(MANAGED_API_CAPABILITIES)).toBe(true)
+    expect(canResumeWorkbenchExecutor({...MANAGED_API_CAPABILITIES,features:{...MANAGED_API_CAPABILITIES.features,managedResume:false}})).toBe(false)
+    expect(()=>requireWorkbenchInput(MANAGED_API_CAPABILITIES,{...input,resume:true})).not.toThrow()
+    expect(isWorkbenchExecutorCapabilities({...declared(),features:{...declared().features,managedResume:'yes'}})).toBe(false)
   })
 
   it('shared native registration cannot be changed by one consumer', () => {
