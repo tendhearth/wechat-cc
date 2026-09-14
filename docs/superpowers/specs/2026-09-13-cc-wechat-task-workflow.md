@@ -16,11 +16,12 @@
 
 - 创建回执记录原账号、原 owner、原消息标识对应的请求 ID、完整命令摘要、接受的项目/执行者、任务 ID、首轮 ID、原始回复。任务、首条用户输入、接受的执行设置和回执在同一事务中写入，提交成功后才调度。相同请求 ID 携带不同命令报冲突，先查回执再查已经变化的配置和目录。
 - 项目目录来自只读 registry 与 owner 历史，规范化去重。目录被替换、符号链接改指或已不可访问时，旧编号不能指向新目录。不给上一位 owner 的任务授予访问权。
-- 通知订阅绑定 task + owner + account；取消后不发送已经排队但尚未发送的通知。重新订阅只接收新的事件及当前仍有效的待处理请求，不补推所有历史。
-- 通知 outbox 的不可变身份为 task + run + kind + event/request。消息内容在创建时固定。状态区分 pending、sending、accepted、unknown、suppressed；发送前原子认领，进程重启时 sending 变 unknown，不自动重发可能已送达的消息。
+- 通知订阅绑定 task + owner + account + generation；关闭或换账号时在同一事务抑制旧排队通知及未转出的提醒记录。关闭后重新开启或换账号递增 generation；只为新的事件及当前仍有效的待处理请求创建新通知，不补推历史。发送前同时核对当前 generation，已经认领但还未发送的旧通知也不能绕过关闭。
+- 通知 outbox 的不可变身份为 task + run + kind + event/request + generation。消息内容在创建时固定。状态区分 pending、sending、accepted、unknown、suppressed；发送前原子认领，进程重启时 sending 变 unknown，不自动重发可能已送达的消息。
+- 终态与冻结结果的通知 intent 同一事务提交；随后转入 outbox。转入失败保留 intent，worker 与重启恢复继续处理，不能留下“任务已完成但提醒记录永远丢失”的窗口。整个终态事务失败时不自动开始排队补充。
 - 只有明确服务器确认才记 accepted。发送前已确认窗口不可用则留 pending，恢复后重试；超时、连接中断、响应不明和发送后落库失败都不冒充成功。不承诺微信跨重启 exactly-once。
 - 通知经专用、明确标为 source=workbench 的发送路径；不使用默认 source=live 的陪伴提醒。账号和 owner 变化先核对再发送。通知失败不停止正在执行的工作，查询任务可看到提醒状态。
-- worker 有单一发送队列和有界生命周期；启动、关闭及消息更新 context 的唤醒由 daemon 管理。没有真实微信/API 调用的测试必须覆盖同一生产路径。
+- worker 有单一发送队列和有界生命周期；启动、关闭及消息更新 context 的唤醒由 daemon 管理。普通唤醒或定时唤醒的存储失败均以有界退避恢复未认领通知与 intent，已认领的发送不自动重放。没有真实微信/API 调用的测试必须覆盖同一生产路径。
 
 ## 取舍与后续完整范围
 

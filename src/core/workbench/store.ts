@@ -8,6 +8,8 @@ import {makeLiveInputStore} from './live-inputs'
 import {makeTaskAttachmentStore} from './attachments'
 import {makeExecutionSettingsStore,NATIVE_EXECUTION_CHOICE} from './execution-settings'
 import {makeControlReceiptStore} from './control-receipts'
+import {makeCreationReceiptStore} from './creation-receipts'
+import {makeWechatNotificationStore} from './wechat-notifications'
 import {makeTimelineEvents} from './timeline-events'
 import type {AgentActivity} from '../agent-provider'
 
@@ -79,6 +81,8 @@ export function makeWorkbenchStore(db: Db) {
     execution:makeExecutionSettingsStore(db),
     liveInputs:makeLiveInputStore(db),
     controlReceipts:makeControlReceiptStore(db),
+    creationReceipts:makeCreationReceiptStore(db),
+    wechatNotifications:makeWechatNotificationStore(db),
     get, artifacts, events, addEvent,recordAgentEvent,finishRunActivities,source,sourceByIdentity,handoffs,
     recordHandoffNative:(id:string,nativeId:string)=>db.query('UPDATE workbench_handoffs SET target_native_id=? WHERE id=? AND target_native_id IS NULL').run(nativeId,id),
     recordHandoffEvent:(id:string,eventId:number)=>db.query('UPDATE workbench_handoffs SET request_event_id=? WHERE id=?').run(eventId,id),
@@ -113,6 +117,17 @@ export function makeWorkbenchStore(db: Db) {
     projectProvider: (path:string) => db.query<{providerId:string},[string]>('SELECT provider_id AS providerId FROM workbench_tasks WHERE path=? ORDER BY updated_at DESC,id DESC LIMIT 1').get(path)?.providerId ?? null,
     list: () => db.query<StoredTask, []>(`${TASK_SELECT} ORDER BY updated_at DESC,rowid DESC LIMIT 200`).all().map(publicTask),
     listOwned:(ownerChatId:string,limit=8)=>db.query<StoredTask,[string,number]>(`${TASK_SELECT} WHERE owner_chat_id=? AND archived_at IS NULL ORDER BY updated_at DESC,id DESC LIMIT ?`).all(ownerChatId,Math.max(1,Math.min(20,limit))).map(publicTask),
+    ownedProjects(ownerChatId:string,providers?:readonly string[]):Array<{path:string;providerId:string}> {
+      const rows=db.query<{path:string;providerId:string},[string]>('SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? ORDER BY updated_at DESC,id DESC').all(ownerChatId)
+      const accepted=[...new Set(providers??[])]
+      const available=accepted.length
+        ? db.query<{path:string;providerId:string},string[]>(`SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND provider_id IN (${accepted.map(()=>'?').join(',')}) ORDER BY updated_at DESC,id DESC`).all(ownerChatId,...accepted)
+        : []
+      const preferred=new Map<string,string>()
+      for(const row of available)if(!preferred.has(row.path))preferred.set(row.path,row.providerId)
+      const seen=new Set<string>()
+      return rows.filter(row=>seen.has(row.path)?false:(seen.add(row.path),true)).map(row=>({...row,providerId:preferred.get(row.path)??row.providerId}))
+    },
     /** Real-time keyset paging, not a snapshot: updated tasks can move before a cursor. */
     listPage(query:WorkbenchListQuery={}):TaskPage {
       const {q,archived,limit,filterHash,cursor}=listFilters(query)

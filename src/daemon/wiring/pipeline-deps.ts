@@ -652,6 +652,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     capture: {
       markChatActive: (c, a) => ilink.markChatActive(c, a),
       captureContextToken: (c, t) => ilink.captureContextToken(c, t),
+      onContextAvailable:(c,a)=>opts.workbench?.contextAvailable(c,a),
     },
     typing: { sendTyping: (c, a) => ilink.sendTyping(c, a) },
     ...(opts.workbench?{workbench:{handleWechat:opts.workbench.handleWechat,sendMessage:(chatId:string,text:string)=>ilink.sendMessage(chatId,text,{source:'workbench'})}}:{}),

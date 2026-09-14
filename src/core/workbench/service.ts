@@ -1,5 +1,8 @@
 import {makeRunUserInput,type RunUserInput} from './user-input'
 import {makeWechatWorkbenchControl,type WechatMessageIdentity} from './wechat-control'
+import {makeProjectCatalog} from './project-catalog'
+import type {CreationReceipt} from './creation-receipts'
+import type {WechatNotificationNotice,WechatNoticeKind} from './wechat-notifications'
 import {normalizeInputRequestId,sameAttachments,type LiveInput} from './live-inputs'
 import type {Attachment} from './attachments'
 import { randomUUID } from 'node:crypto'
@@ -26,6 +29,7 @@ interface Options {
   stateDir: string
   ownerChatId: () => string | null
   defaultProvider?: string
+  registeredProjects?:()=>Array<{alias:string;path:string}>
   executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
   nativeHistory?:Partial<Record<NativeHistoryProvider,NativeHistoryReader>>
   mintSessionToken?: (sessionKey: string) => string
@@ -69,6 +73,7 @@ interface Active extends PathReservation {
 }
 export interface InputMaterials {attachmentIds?:string[];draftId?:string;execution?:unknown}
 export interface CreateTask extends InputMaterials { title?: string; path: string; providerId: string; text: string }
+export interface CreateWechatTask {ownerChatId:string;accountId:string;requestId:string;commandHash:string;projectId:string;providerId?:string;text:string}
 export interface WorkbenchTaskView extends Task { importedOnly?:boolean; canArchive:boolean; waitingFor: WaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number; runtime?:AgentRuntimeSnapshot }
 
 function checkedText(text: string,attachments:readonly Attachment[]=[]): string {
@@ -165,8 +170,40 @@ export function makeWorkbenchService(opts: Options) {
   let stopping=false
   let shutdownComplete=false
   let shutdownPromise:Promise<void> | undefined
+  let noticeWake:(context?:{ownerChatId:string;accountId:string})=>Promise<void>=async()=>{}
+  const wakeNotices=(context?:{ownerChatId:string;accountId:string})=>queueMicrotask(()=>{if(!stopping)void noticeWake(context).catch(()=>{})})
   store.recover()
   store.liveInputs.recover()
+
+  function enqueueNotice(task:StoredTask,runId:string,kind:WechatNoticeKind,text:string,requestId:string|null=null){
+    try{
+      const watch=store.wechatNotifications.subscription(task.id)
+      if(!watch?.enabled||watch.ownerChatId!==task.ownerChatId||watch.ownerChatId!==opts.ownerChatId())return
+      store.wechatNotifications.enqueue({taskId:task.id,runId,ownerChatId:watch.ownerChatId,accountId:watch.accountId,kind,requestId,text:text.slice(0,4000)})
+      wakeNotices()
+    }catch{
+      // A notification failure must not deny a valid permission or terminate execution.
+      try{store.addEvent(task.id,'system','微信提醒未能保存；任务仍可在工作台查看。',null,runId)}catch{}
+    }
+  }
+  function requestNotice(task:StoredTask,runId:string,kind:'permission'|'question',id:string,label:string){
+    enqueueNotice(task,runId,kind,`${task.title.replace(/[\r\n]+/g,' ')} · ${task.id}\n${task.providerId} · ${kind==='permission'?'需要你批准':'需要你回答'}\n\n${label.slice(0,600)}\n\n查看：任务 ${task.id} ${kind==='permission'?'权限':'问题'} ${id}`,id)
+  }
+  function stageFinishedNotice(running:Active,status:TaskStatus){
+    if(!TERMINAL_TASK_STATUSES.includes(status))return
+    const watch=store.wechatNotifications.subscription(running.taskId)
+    if(!watch?.enabled||watch.ownerChatId!==running.task.ownerChatId||watch.ownerChatId!==opts.ownerChatId())return
+    const reply=store.events(running.taskId).filter(e=>e.runId===running.identity&&e.kind==='text').at(-1)?.text
+    const label={completed:'这一轮已完成',failed:'这一轮需要处理',interrupted:'这一轮已中断',cancelled:'这一轮已停止'}[status as 'completed'|'failed'|'interrupted'|'cancelled']
+    const artifacts=store.artifacts(running.taskId).slice(0,5)
+    const text=`${running.title.replace(/[\r\n]+/g,' ')} · ${running.taskId}\n${running.task.providerId} · ${label}\n\n${reply?reply.slice(0,1800)+'\n\n':''}${artifacts.length?'已保存成果：'+artifacts.map(a=>a.name).join('、').slice(0,500)+'\n\n':''}查看：任务 ${running.taskId}\n结果：任务 ${running.taskId} 结果`
+    // Persist the frozen result in the same transaction as the terminal task status.
+    store.wechatNotifications.stage({taskId:running.taskId,runId:running.identity,ownerChatId:watch.ownerChatId,accountId:watch.accountId,kind:status as WechatNoticeKind,text:text.slice(0,4000)})
+  }
+  function publishFinishedNotices(){
+    try{store.wechatNotifications.materializeIntents()}catch{/* The durable intent remains available to the worker or next startup. */}
+    wakeNotices()
+  }
 
   function provider(id: string) {
     const entry = SUPPORTED.includes(id) ? opts.registry.get(id) : null
@@ -417,13 +454,20 @@ export function makeWorkbenchService(opts: Options) {
       if (!running.uncertain) await collect(running)
       revokeCredentials(running)
       if (running.uncertain) { finalStatus='interrupted'; finalError='writer_not_closed' }
+      let terminalCommitted=false
       try {
-        store.finishRunActivities(task.id,running.identity,running.cancelled&&!running.uncertain?'cancelled':'interrupted')
-        store.update(task.id,running.cancelled && !running.uncertain ? 'cancelled' : finalStatus,finalError)
+        const status=running.cancelled&&!running.uncertain?'cancelled':finalStatus
+        store.atomic(()=>{
+          store.finishRunActivities(task.id,running.identity,running.cancelled&&!running.uncertain?'cancelled':'interrupted')
+          store.update(task.id,status,finalError)
+          stageFinishedNotice(running,status)
+        })
+        terminalCommitted=true
+        publishFinishedNotices()
       } catch { /* never unlock an uncertain writer for a status failure */ }
       running.publicFinished=true; running.resolveDone()
       if (!running.uncertain) releaseReservation(running)
-      if(finalStatus==='completed'&&!running.cancelled&&!running.uncertain&&!stopping)drainInputs(task.id,running.directoryIdentity)
+      if(terminalCommitted&&finalStatus==='completed'&&!running.cancelled&&!running.uncertain&&!stopping)drainInputs(task.id,running.directoryIdentity)
       else holdInputs(task.id,'任务已停止或未正常完成；这条补充尚未发送。')
     }
   }
@@ -485,7 +529,7 @@ export function makeWorkbenchService(opts: Options) {
     }
   }
 
-  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice):WorkbenchTaskView {
+  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void}):WorkbenchTaskView {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
     if(opts.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
     if([...runsByTask.values()].some(run=>task.sessionId&&run.task.providerId===task.providerId&&run.task.sessionId===task.sessionId))throw new Error('native_session_busy')
@@ -506,18 +550,25 @@ export function makeWorkbenchService(opts: Options) {
       const requestEventId=store.addEvent(task.id,'user',text,null,runId,attachments)
       if(handoffId)store.recordHandoffEvent(handoffId,requestEventId)
       store.update(task.id,'queued')
+      acceptance?.persist(runId)
     })
     let signalStop!:()=>void,resolveDone!:()=>void
     const stop=new Promise<null>(resolve => { signalStop=() => resolve(null) })
     const done=new Promise<void>(resolve => { resolveDone=resolve })
     const permissions=makeRunPermissions({
       taskId:task.id,timeoutMs:opts.permissionTimeoutMs ?? WORKBENCH_PERMISSION_TIMEOUT_MS,
-      audit:event => event.type==='request'
-        ? addRunEvent('system',`权限请求：${event.permission.tool} · ${event.permission.description} · ${event.permission.id}`)
-        : addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome} · ${event.permission.id}`),
+      audit:event => {
+        if(event.type==='request'){
+          addRunEvent('system',`权限请求：${event.permission.tool} · ${event.permission.description} · ${event.permission.id}`)
+          requestNotice(task,runId,'permission',event.permission.id,`${event.permission.tool} · ${event.permission.description}`)
+        }else addRunEvent('system',`权限结果：${event.permission.tool} · ${event.outcome} · ${event.permission.id}`)
+      },
     })
     const questions=makeRunUserInput({taskId:task.id,audit:event=>{
-      if(event.type==='request')addRunEvent('system',`执行者提问：${JSON.stringify(event.request)}`)
+      if(event.type==='request'){
+        addRunEvent('system',`执行者提问：${JSON.stringify(event.request)}`)
+        requestNotice(task,runId,'question',event.request.id,event.request.questions.map(q=>q.question).join('\n'))
+      }
       else if(event.type==='answer')addRunEvent('user',`回答执行者的问题：\n${event.request.questions.map(q=>`${q.question}\n${event.answers?.[q.id]?.join('、')??''}`).join('\n\n')}`)
       else addRunEvent('system',`问题已结束，未提交回答：${event.request.id}`)
     }})
@@ -527,8 +578,28 @@ export function makeWorkbenchService(opts: Options) {
       interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
       cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,credentialsMinted:false,credentialsRevoked:false,
     }
-    runsByTask.set(task.id,running); runningText.set(running.identity,text); queue.push(running); pump()
+    const activate=()=>{runsByTask.set(task.id,running);runningText.set(running.identity,text);queue.push(running);pump()}
+    if(acceptance)acceptance.activate(activate);else activate()
     return taskView(publicTask({...task,status:'queued',error:null}))
+  }
+
+  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void):WorkbenchTaskView {
+    ensureAccepting()
+    const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
+    const attachments=selectAttachments(input),text=checkedText(input.text,attachments);provider(input.providerId)
+    if(input.title!==undefined&&(typeof input.title!=='string'||!input.title.trim()||input.title.length>120))throw Error('invalid_title')
+    const path=canonicalProject(input.path),acceptedDirectoryIdentity=directoryIdentity(path)
+    if(opts.executionConflict?.(path,input.providerId,null))throw Error('native_session_busy')
+    let activate:()=>void=()=>{}
+    const accepted=store.atomic(()=>{
+      const task=store.create({title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:opts.ownerChatId()})
+      return start(task,text,acceptedDirectoryIdentity,undefined,undefined,undefined,undefined,undefined,attachments,input.draftId,execution,{
+        persist:runId=>onAccepted?.(task,runId),activate:fn=>{activate=fn},
+      })
+    })
+    // An accepted in-memory run must never outlive a rolled-back creation transaction.
+    activate()
+    return accepted
   }
 
   function cancelRun(running:Active):void {
@@ -537,7 +608,10 @@ export function makeWorkbenchService(opts: Options) {
       running.cancelled=true; running.permissions.rejectAll('cancelled'); running.signalStop()
       const index=queue.indexOf(running); if (index>=0) queue.splice(index,1)
       runningText.delete(running.identity)
-      try { store.update(running.taskId,'cancelled') } catch { /* in-memory cancellation still must settle */ }
+      try {
+        store.atomic(()=>{store.update(running.taskId,'cancelled');stageFinishedNotice(running,'cancelled')})
+        publishFinishedNotices()
+      } catch { /* in-memory cancellation still must settle */ }
       running.publicFinished=true; running.resolveDone()
       if (runsByTask.get(running.taskId)===running) runsByTask.delete(running.taskId)
       if (!stopping) pump()
@@ -553,6 +627,60 @@ export function makeWorkbenchService(opts: Options) {
   }
 
   const service={
+    notificationStore:store.wechatNotifications,
+    setNotificationWake(wake:(context?:{ownerChatId:string;accountId:string})=>Promise<void>){noticeWake=wake},
+    contextAvailable(ownerChatId:string,accountId:string){if(ownerChatId===opts.ownerChatId())wakeNotices({ownerChatId,accountId})},
+    notificationEligible(notice:WechatNotificationNotice):boolean {
+      const task=store.get(notice.taskId),watch=store.wechatNotifications.subscription(notice.taskId)
+      if(!watch?.enabled||opts.ownerChatId()!==notice.ownerChatId||task.ownerChatId!==notice.ownerChatId||watch.ownerChatId!==notice.ownerChatId||watch.accountId!==notice.accountId||watch.generation!==notice.subscriptionGeneration)return false
+      if(notice.kind!=='permission'&&notice.kind!=='question')return true
+      const run=runsByTask.get(notice.taskId)
+      if(!run||run.identity!==notice.runId||run.cancelled||run.finishing||run.uncertain)return false
+      return notice.kind==='permission'
+        ?run.permissions.pending().some(p=>p.id===notice.requestId&&Date.now()<p.createdAt+(opts.permissionTimeoutMs??WORKBENCH_PERMISSION_TIMEOUT_MS))
+        :run.questions.pending().some(q=>q.id===notice.requestId)
+    },
+    setWechatWatch(id:string,accountId:string,enabled:boolean){
+      const task=store.get(id)
+      if(!task.ownerChatId||task.ownerChatId!==opts.ownerChatId()||!accountId?.trim())throw Error('invalid_wechat_identity')
+      const watch=store.wechatNotifications.watch(id,task.ownerChatId,accountId,enabled)
+      const run=runsByTask.get(id)
+      if(enabled&&run){
+        for(const p of run.permissions.pending())requestNotice(task,run.identity,'permission',p.id,`${p.tool} · ${p.description}`)
+        for(const q of run.questions.pending())requestNotice(task,run.identity,'question',q.id,q.questions.map(q=>q.question).join('\n'))
+      }
+      wakeNotices();return watch
+    },
+    projects(){
+      const ownerChatId=opts.ownerChatId();if(!ownerChatId)return[]
+      const providers=SUPPORTED.filter(id=>!!opts.registry.get(id))
+      return makeProjectCatalog({ownerChatId,registered:opts.registeredProjects?.()??[],known:store.ownedProjects(ownerChatId,providers),providers,defaultProvider:opts.defaultProvider})
+    },
+    createWechat(input:CreateWechatTask):CreationReceipt {
+      ensureAccepting()
+      if(!input.ownerChatId||opts.ownerChatId()!==input.ownerChatId||!input.accountId?.trim())throw Error('invalid_wechat_identity')
+      const id=normalizeInputRequestId(input.requestId)
+      if(!/^[a-f0-9]{64}$/.test(input.commandHash))throw Error('invalid_request')
+      // Replay accepted identity before consulting configuration or a directory that may have moved.
+      const prior=store.creationReceipts.get(id)
+      if(prior){
+        if(prior.ownerChatId!==input.ownerChatId||prior.accountId!==input.accountId||prior.commandHash!==input.commandHash)throw Error('creation_conflict')
+        if(store.get(prior.taskId).ownerChatId!==input.ownerChatId)throw Error('invalid_wechat_identity')
+        return prior
+      }
+      const project=service.projects().find(project=>project.id===input.projectId)
+      if(!project)throw Error('project_stale')
+      const providerId=input.providerId??project.providerId
+      if(!providerId)throw Error('unavailable_provider')
+      let receipt!:CreationReceipt
+      createTask({path:project.path,providerId,text:input.text},(task,runId)=>{
+        store.wechatNotifications.watch(task.id,input.ownerChatId,input.accountId,true)
+        receipt=store.creationReceipts.add({id,accountId:input.accountId,ownerChatId:input.ownerChatId,commandHash:input.commandHash,projectId:input.projectId,path:task.path,providerId:task.providerId,taskId:task.id,runId,
+          reply:`已接下这件事 · ${task.id}\n${task.providerId} · ${task.path}\n\n${task.title}\n\n完成或需要你处理时，会在这里提醒。\n查看：任务 ${task.id}\n补充：任务 ${task.id} 补充 <要求>\n关闭提醒：任务 ${task.id} 静音`,
+        })
+      })
+      return receipt
+    },
     attention(){
       const tasks=Array.from(runsByTask.values()).flatMap(run=>{
         const permissions=run.permissions.pending(),questions=run.questions.pending()
@@ -808,7 +936,9 @@ export function makeWorkbenchService(opts: Options) {
     detail(id:string) {
       const detail=store.detail(id),running=runsByTask.get(id)
       const runtime=runtimeSnapshot(running)
-      return {...detail,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
+      const subscription=store.wechatNotifications.subscription(id)
+      const wechatNotifications={enabled:!!subscription?.enabled,notices:store.wechatNotifications.list(id).slice(-10).map(({id,runId,kind,status,reason,createdAt})=>({id,runId,kind,status,reason,createdAt}))}
+      return {...detail,wechatNotifications,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
         // The timeline stays live through cancellation and process cleanup;
         // accepting supplemental input is a separate, narrower capability.
         ...(running?{runId:running.identity}:{}),
@@ -816,14 +946,7 @@ export function makeWorkbenchService(opts: Options) {
         permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:continuation(store.get(id)),...(store.source(id)?.firstDispatchedAt===null?{requiresExternalClose:true}:{})} : {})}
     },
     create(input:CreateTask):WorkbenchTaskView {
-      ensureAccepting()
-      const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
-      const attachments=selectAttachments(input),text=checkedText(input.text,attachments); provider(input.providerId)
-      if (input.title!==undefined && (typeof input.title!=='string' || !input.title.trim() || input.title.length>120)) throw new Error('invalid_title')
-      const path=canonicalProject(input.path)
-      const acceptedDirectoryIdentity=directoryIdentity(path)
-      if(opts.executionConflict?.(path,input.providerId,null))throw new Error('native_session_busy')
-      return store.atomic(()=>start(store.create({title:input.title?.trim() ?? (text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:opts.ownerChatId()}),text,acceptedDirectoryIdentity,undefined,undefined,undefined,undefined,undefined,attachments,input.draftId,execution))
+      return createTask(input)
     },
     continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials):WorkbenchTaskView {
       ensureAccepting()

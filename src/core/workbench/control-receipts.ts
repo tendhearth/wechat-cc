@@ -1,7 +1,7 @@
 import type {Db} from '../../lib/db'
 
 export interface ControlReceipt {
-  id:string;taskId:string;runId:string|null;action:'stop';textHash:string;result:string|null;createdAt:number
+  id:string;taskId:string;runId:string|null;action:'stop'|'watch'|'mute';textHash:string;result:string|null;createdAt:number
 }
 const SELECT='SELECT id,task_id AS taskId,run_id AS runId,action,text_hash AS textHash,result,created_at AS createdAt FROM workbench_control_receipts'
 

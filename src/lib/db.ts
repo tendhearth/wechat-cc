@@ -22,6 +22,7 @@
 import { Database } from 'bun:sqlite'
 import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import {initializeWechatNotificationSchema} from '../core/workbench/wechat-notifications'
 
 export type Db = Database
 
@@ -1225,6 +1226,35 @@ export const migrations: Migration[] = [
     CREATE INDEX IF NOT EXISTS workbench_run_execution_task ON workbench_run_execution(task_id,created_at);`)
     const inputs=db.query<{name:string},[]>('PRAGMA table_info(workbench_live_inputs)').all()
     if(!inputs.some(column=>column.name==='execution_json'))db.exec('ALTER TABLE workbench_live_inputs ADD COLUMN execution_json TEXT')
+  },
+  // v55 — immutable receipts for idempotent phone-created workbench tasks.
+  (db) => {
+    db.exec(`CREATE TABLE IF NOT EXISTS workbench_creation_receipts (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL,
+      owner_chat_id TEXT NOT NULL,
+      command_hash TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      path TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+      run_id TEXT NOT NULL,
+      reply TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS workbench_creation_receipts_task ON workbench_creation_receipts(task_id);`)
+  },
+  // v56 — original-account task subscriptions and durable delivery state.
+  (db) => {
+    initializeWechatNotificationSchema(db)
+    db.exec(`ALTER TABLE workbench_control_receipts RENAME TO workbench_control_receipts_v52;
+      CREATE TABLE workbench_control_receipts (
+        id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+        run_id TEXT, action TEXT NOT NULL CHECK(action IN ('stop','watch','mute')),
+        text_hash TEXT NOT NULL, result TEXT, created_at INTEGER NOT NULL
+      ) STRICT;
+      INSERT INTO workbench_control_receipts SELECT * FROM workbench_control_receipts_v52;
+      DROP TABLE workbench_control_receipts_v52;`)
   },
 ]
 

@@ -3,11 +3,18 @@ import type {WorkbenchStore,Task} from './store'
 import type {LiveInput} from './live-inputs'
 import type {PendingWorkbenchPermission,PermissionDecision} from './permissions'
 import type {AgentRuntimeSnapshot} from '../agent-provider'
+import type {CreateWechatTask} from './service'
+import type {CreationReceipt} from './creation-receipts'
+import type {ProjectCatalogEntry} from './project-catalog'
 import {validateUserInputAnswers,type PendingUserInput} from './user-input'
+import {resultCommandHelp,resultToken,wechatResultPage} from './wechat-results'
 
 export interface WechatMessageIdentity {accountId:string;userId:string;msgId?:string;createTimeMs:number}
-type Detail=ReturnType<WorkbenchStore['detail']>&{runId?:string;runtime?:AgentRuntimeSnapshot;inputMode?:'steer'|'send'|'queue';inputs:LiveInput[];permissions:PendingWorkbenchPermission[];questions:PendingUserInput[]}
+type Detail=ReturnType<WorkbenchStore['detail']>&{runId?:string;runtime?:AgentRuntimeSnapshot;inputMode?:'steer'|'send'|'queue';inputs:LiveInput[];permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];wechatNotifications?:{enabled:boolean;notices:Array<{status:string}>}}
 interface Actions {
+  projects():ProjectCatalogEntry[]
+  createWechat(input:CreateWechatTask):CreationReceipt
+  setWechatWatch(id:string,accountId:string,enabled:boolean):unknown
   detail(id:string):Detail
   continueTask(id:string,text:string,options?:{inputRequestId?:string}):Task
   cancel(id:string,expectedRunId?:string):Promise<Task>
@@ -29,7 +36,7 @@ const REQUEST_MAX=6000
 const unavailable='没有找到这个任务，请在桌面工作台核对编号。'
 const stale='这条请求已失效或不属于这个任务。请重新查询任务，使用当前请求编号。'
 const stopUnconfirmed='这条停止请求已记录，但尚未确认执行结果。请查询任务状态；如需停止当前轮次，请发送一条新的停止消息。'
-const usage=(id='<任务编号>')=>`用法：任务 ${id}\n补充：任务 ${id} 补充 <要求>\n停止：任务 ${id} 停止\n处理待办时，请复制任务消息中的完整请求编号。`
+const usage=(id='<任务编号>')=>`用法：\n项目：任务 项目\n新建：任务 新建 <项目编号> <要求>\n查看：任务 ${id}\n补充：任务 ${id} 补充 <要求>\n停止：任务 ${id} 停止\n处理待办时，请复制任务消息中的完整请求编号。`
 const clip=(value:string,max:number)=>value.length>max?value.slice(0,max)+'…':value
 const singleLine=(value:string,max=100)=>clip(value.replace(/[\r\n]+/g,' '),max)
 export const isWechatTaskCommand=(text:string)=>/^(?:任务|\/task)(?:\s|$)/i.test(text.trim())
@@ -90,11 +97,19 @@ function phoneAnswers(request:PendingUserInput,text:string):unknown {
 }
 function statusReply(detail:Detail){
   const {task,events,artifacts,permissions,questions,inputs}=detail,id=task.id
-  const latest=events.filter(e=>e.kind==='text').at(-1)?.text
+  const latest=events.filter(e=>e.kind==='text').at(-1)
   const error=events.filter(e=>e.kind==='error').at(-1)?.text
   const lines=[`${singleLine(task.title,120)} · ${id}`,`${task.providerId} · ${runtimeStatus(task.status,detail.runtime)}`]
+  if(detail.wechatNotifications){
+    const unknown=detail.wechatNotifications.notices.filter(n=>n.status==='unknown'||n.status==='sending').length
+    const waiting=detail.wechatNotifications.notices.filter(n=>n.status==='pending').length
+    lines.push(`微信提醒：${detail.wechatNotifications.enabled?'已开启':'已关闭'}${unknown?` · ${unknown} 条尚未确认送达，不会自动重发`:''}${waiting?` · ${waiting} 条等待发送`:''}`)
+  }
   if(task.status==='running'&&detail.runtime?.retained)lines.push(`后续回复仍会留在这个任务里。结束会停止尚未结束的后台工作并保存当前成果。\n结束：任务 ${id} 停止`)
-  if(latest)lines.push('最近回复：\n'+clip(latest,1500))
+  if(latest){
+    lines.push('最近回复：\n'+clip(latest.text,1500))
+    if(latest.text.length>1500)lines.push(`完整正文（第 1 页）：任务 ${id} 正文 ${resultToken(latest)} 1`)
+  }
   if(error&&['failed','interrupted'].includes(task.status))lines.push('需要处理：'+clip(error,500))
   else if(task.error)lines.push('需要处理：'+clip(task.error,500))
   if(artifacts.length)lines.push(`已保存 ${artifacts.length} 份成果版本：\n`+artifacts.slice(0,8).map(a=>`• ${singleLine(a.name)} (${a.size} 字节)`).join('\n'))
@@ -109,6 +124,7 @@ function statusReply(detail:Detail){
 }
 function failure(error:unknown,id:string){
   const code=error instanceof Error?error.message:''
+  if(code==='subscription_conflict')return '提醒绑定的账号已变化，没有把旧提醒转发到新账号。请在原聊天关闭提醒后重新设置。'
   if(code==='permission_stale'||code==='question_stale')return stale
   if(code==='invalid_answer'||error instanceof SyntaxError)return '答案格式或选项不正确，尚未提交。请按问题中的示例回答。'
   if(code==='workbench_archived')return '这项任务已归档。请在桌面工作台恢复任务后再继续。'
@@ -117,6 +133,10 @@ function failure(error:unknown,id:string){
   if(code==='input_stale'||code==='workbench_busy')return '任务轮次已变化或正在停止，这条补充没有发送。请重新查询任务后再提交。'
   if(code==='input_conflict')return '这条消息的内容与已记录的补充不一致，未再次发送。请重新查询任务。'
   if(code==='control_conflict')return '这条消息的内容与已记录的操作不一致，未再次执行。请重新查询任务。'
+  if(code==='creation_conflict')return '这条消息的内容与已记录的新建要求不一致，未再次创建。请发送一条新消息。'
+  if(code==='project_stale')return '这个项目编号已失效或目录已变化，没有开始工作。请发送「任务 项目」重新选择。'
+  if(code==='unavailable_provider')return '这个执行者当前不可用，没有开始工作。请在桌面检查连接，或用 Claude／Codex 明确选择其他执行者。'
+  if(code==='invalid_wechat_identity')return '无法确认这条微信消息的账号和发送者，没有创建任务。请在原聊天重新发送。'
   if(code==='control_stale')return '原请求对应的轮次已结束，未停止当前轮次。请重新查询任务。'
   if(code==='input_limit'||code==='input_delivery_busy')return '仍有补充等待交付，请稍后再试。'
   if(code.startsWith('invalid_'))return usage(id)
@@ -128,9 +148,25 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
     if(!isWechatTaskCommand(text))return null
     if(!opts.ownerChatId()||chatId!==opts.ownerChatId()||(identity&&identity.userId!==chatId))return null
     const command=text.trim().replace(/^(?:任务|\/task)\s*/i,'')
+    if(/^项目(?:\s|$)/.test(command)){
+      const match=/^项目(?:\s+([1-9]\d{0,3}))?$/.exec(command)
+      if(!match)return usage()
+      const page=Number(match[1]??1),projects=opts.actions.projects(),slice=projects.slice((page-1)*8,page*8)
+      if(!projects.length)return '还没有可用的项目。请先在桌面工作台选择一次文件夹，之后就能在这里交代任务。'
+      if(!slice.length)return '没有这一页项目，请发送「任务 项目」查看。'
+      return '选择要工作的项目：\n\n'+slice.map(p=>`${singleLine(p.name)} · ${p.id}\n${singleLine(p.path,240)}\n${p.providerId??'暂无可用执行者'}\n新建：任务 新建 ${p.id} <要求>`).join('\n\n')+`\n\n也可明确指定：任务 新建 ${slice[0]!.id} 用 Codex <要求>`+(projects.length>page*8?`\n下一页：任务 项目 ${page+1}`:'')
+    }
+    if(/^新建(?:\s|$)/.test(command)){
+      if(!identity?.accountId?.trim())return failure(Error('invalid_wechat_identity'),'')
+      const match=/^新建\s+(p-[a-f0-9]{20})\s+([\s\S]+)$/i.exec(command)
+      if(!match)return usage()
+      const choice=/^用\s+(claude|codex)(?:\s+|$)([\s\S]*)$/i.exec(match[2]!)
+      try{return opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),text:choice?choice[2]!:match[2]!}).reply}
+      catch(error){return failure(error,'')}
+    }
     if(!command||command==='列表'){
       const tasks=opts.store.listOwned(chatId,8)
-      return tasks.length?'最近的任务：\n'+tasks.map(t=>`${t.id} · ${singleLine(t.title)} · ${runtimeStatus(t.status,opts.actions.detail(t.id).runtime)}`).join('\n')+'\n\n查看或选择：任务 <任务编号>':'还没有属于你的工作任务。请先在桌面工作台创建。'
+      return tasks.length?'最近的任务：\n'+tasks.map(t=>`${t.id} · ${singleLine(t.title)} · ${runtimeStatus(t.status,opts.actions.detail(t.id).runtime)}`).join('\n')+'\n\n查看或选择：任务 <任务编号>\n新建任务：先发送「任务 项目」':'还没有属于你的工作任务。发送「任务 项目」选择文件夹并交代任务。'
     }
     const match=/^([a-f0-9]{8})(?:\s+([\s\S]+))?$/i.exec(command)
     if(!match)return usage()
@@ -142,9 +178,25 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
       const receipt=opts.store.controlReceipts.get(requestId)
       if(receipt){
         if(receipt.taskId!==id||receipt.textHash!==textHash)throw Error('control_conflict')
-        return receipt.result??stopUnconfirmed
+        return receipt.result??(receipt.action==='stop'?stopUnconfirmed:'这条提醒设置已记录，但尚未确认结果。请查询任务状态。')
+      }
+      if(suffix==='提醒我'||suffix==='静音'){
+        if(!identity?.accountId?.trim())return failure(Error('invalid_wechat_identity'),id)
+        if(opts.store.liveInputs.get(requestId))throw Error('control_conflict')
+        return opts.store.atomic(()=>{
+          opts.store.controlReceipts.reserve({id:requestId,taskId:id,runId:null,action:suffix==='提醒我'?'watch':'mute',textHash})
+          opts.actions.setWechatWatch(id,identity.accountId,suffix==='提醒我')
+          const reply=`任务 ${id}：${suffix==='提醒我'?'已开启这项任务的完成和待处理提醒。':'已关闭这项任务的微信提醒。'}\n查看：任务 ${id}`
+          opts.store.controlReceipts.complete(requestId,reply)
+          return reply
+        })
       }
       if(!suffix||['结果','状态','待办'].includes(suffix))return statusReply(opts.actions.detail(id))
+      if(/^正文(?:\s|$)/.test(suffix)){
+        const page=/^正文\s+(r[1-9]\d*-[a-f0-9]{12})\s+([1-9]\d*)$/i.exec(suffix)
+        if(!page)return resultCommandHelp(id)
+        return wechatResultPage({taskId:id,events:opts.actions.detail(id).events,token:page[1]!.toLowerCase(),page:Number(page[2])})
+      }
       if(suffix==='停止'){
         if(opts.store.liveInputs.get(requestId))throw Error('control_conflict')
         const runId=opts.actions.detail(id).runId??null
@@ -178,7 +230,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
         opts.actions.resolveAnswer(id,requestId,phoneAnswers(request,answer))
         return `任务 ${id}：已提交回答。`
       }
-      if(/^(权限|问题|允许|拒绝|回答|停止|结果|状态|待办)(?:\s|$)/.test(suffix))return usage(id)
+      if(/^(权限|问题|允许|拒绝|回答|停止|结果|状态|待办|提醒我|静音|正文)(?:\s|$)/.test(suffix))return usage(id)
       const supplement=suffix.replace(/^(?:补充|继续)(?:\s+|$)/,'').trim()
       if(!supplement)return usage(id)
       const prior=opts.store.liveInputs.get(requestId)

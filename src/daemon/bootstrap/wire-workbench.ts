@@ -2,6 +2,8 @@ import {createClaudeHistoryReader} from '../../core/workbench/native-claude-hist
 import {createCodexHistoryReader} from '../../core/workbench/native-codex-history'
 import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk'
 import type { Db } from '../../lib/db'
+import {join} from 'node:path'
+import {listProjects} from '../../lib/project-registry'
 import { loadAgentConfig, modelForProvider } from '../../lib/agent-config'
 import { findCodexBinary } from '../../lib/find-codex-binary'
 import { createProviderRegistry } from '../../core/provider-registry'
@@ -83,6 +85,7 @@ export function wireWorkbench(opts: {
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
     store:makeWorkbenchStore(opts.db),registry,stateDir:opts.stateDir,ownerChatId,
+    registeredProjects:()=>listProjects(join(opts.stateDir,'projects.json')),
     defaultProvider:opts.boot.defaultProviderId,holdBusy:opts.boot.holdBusy,
     // Empty allowlist is deliberate: office tasks never send messages or read
     // personal memory through the daemon, even if a CLI discovers old config.

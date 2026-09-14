@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import {mkdirSync,mkdtempSync,realpathSync,rmSync} from 'node:fs'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
 import { openTestDb, type Db } from '../../lib/db'
 import { makeWorkbenchStore } from './store'
+import {makeProjectCatalog} from './project-catalog'
 
 let db:Db,store:ReturnType<typeof makeWorkbenchStore>
 beforeEach(()=>{db=openTestDb();store=makeWorkbenchStore(db)})
@@ -8,6 +12,37 @@ afterEach(()=>db.close())
 function task(title='task') { const row=store.create({title,path:'/tmp/project',providerId:'claude',ownerChatId:'owner'});store.update(row.id,'completed');return row }
 
 describe('workbench full history and archive storage',()=>{
+  it('returns each owner project once with its latest provider, including archived history',()=>{
+    const old=store.create({title:'old',path:'/tmp/shared',providerId:'claude',ownerChatId:'owner'});store.update(old.id,'completed');store.setArchived(old.id,true)
+    const latest=store.create({title:'latest',path:'/tmp/shared',providerId:'codex',ownerChatId:'owner'})
+    db.query('UPDATE workbench_tasks SET updated_at=? WHERE id=?').run(1,old.id)
+    db.query('UPDATE workbench_tasks SET updated_at=? WHERE id=?').run(2,latest.id)
+    store.create({title:'other',path:'/tmp/other-owner',providerId:'claude',ownerChatId:'other'})
+    const archivedOnly=store.create({title:'archived',path:'/tmp/archived-only',providerId:'claude',ownerChatId:'owner'});store.update(archivedOnly.id,'completed');store.setArchived(archivedOnly.id,true)
+    db.query('UPDATE workbench_tasks SET updated_at=? WHERE id=?').run(3,archivedOnly.id)
+    expect(store.ownedProjects('owner')).toEqual([
+      {path:'/tmp/archived-only',providerId:'claude'},
+      {path:'/tmp/shared',providerId:'codex'},
+    ])
+    expect(latest.providerId).toBe('codex')
+  })
+  it('selects the newest available historical provider before project deduplication without dropping unavailable-only paths',()=>{
+    const root=mkdtempSync(join(tmpdir(),'cc-owned-projects-')),project=join(root,'project'),fallbackOnly=join(root,'fallback-only')
+    try {
+      mkdirSync(project);mkdirSync(fallbackOnly)
+      const older=store.create({title:'older',path:project,providerId:'codex',ownerChatId:'owner'})
+      const newest=store.create({title:'newest',path:project,providerId:'removed',ownerChatId:'owner'})
+      const unavailable=store.create({title:'unavailable',path:fallbackOnly,providerId:'removed',ownerChatId:'owner'})
+      db.query('UPDATE workbench_tasks SET updated_at=? WHERE id=?').run(older.createdAt-1,older.id)
+      db.query('UPDATE workbench_tasks SET updated_at=? WHERE id=?').run(newest.createdAt+1,newest.id)
+      db.query('UPDATE workbench_tasks SET updated_at=? WHERE id=?').run(unavailable.createdAt+2,unavailable.id)
+      const known=store.ownedProjects('owner',['claude','codex'])
+      expect(known).toEqual([{path:fallbackOnly,providerId:'removed'},{path:project,providerId:'codex'}])
+      expect(makeProjectCatalog({ownerChatId:'owner',registered:[],known,providers:['claude','codex'],defaultProvider:'claude'}).map(row=>[row.path,row.providerId])).toEqual([
+        [realpathSync(fallbackOnly),'claude'],[realpathSync(project),'codex'],
+      ])
+    } finally {rmSync(root,{recursive:true,force:true})}
+  })
   it('filters the phone owner before limiting recent tasks and omits archived tasks',()=>{
     const mine=task('mine'),archived=task('archived');store.setArchived(archived.id,true)
     db.query('UPDATE workbench_tasks SET updated_at=1 WHERE id=?').run(mine.id)

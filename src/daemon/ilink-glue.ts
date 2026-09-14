@@ -14,6 +14,7 @@ import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from './we
 import { parsePermissionReply, type PendingPermissionView } from './pending-permissions'
 import { buildMediaItemFromFile, assertSendable } from './media'
 import { ilinkSendMessage, botTextMessage } from '../lib/ilink'
+import { sendIlinkWorkbenchText, type WorkbenchNoticeOutcome } from '../lib/ilink-workbench'
 import type { SessionStateStore } from '../core/session-state'
 import { sendReplyOnce, chunk } from '../lib/send-reply'
 import { MAX_TEXT_CHUNK } from '../lib/config'
@@ -70,6 +71,17 @@ export interface IlinkAdapter {
    * chat and needs a valid accountId to dispatch it through the coordinator.
    */
   resolveAccountId(chatId: string): string
+  /** Strict persisted-route lookup for workbench notifications; never falls back. */
+  chatAccountId?(chatId: string): string | null
+  /** Single-attempt task text delivery with explicit server acknowledgement. */
+  sendWorkbenchNotice?(notice: {
+    id: string
+    taskId: string
+    runId: string
+    ownerChatId: string
+    accountId: string
+    text: string
+  }, signal?: AbortSignal): Promise<WorkbenchNoticeOutcome>
   projects: WechatProjectsDep
   voice: WechatVoiceDep
   companion: WechatCompanionDep
@@ -291,6 +303,54 @@ export function makeIlinkAdapter(opts: {
 
     resolveAccountId(chatId) {
       return resolveAccount(chatId).id
+    },
+
+    chatAccountId(chatId) {
+      const persistedId = acctStore.get(chatId)
+      if (!persistedId) return null
+      return accounts.some(account => account.id === persistedId) ? persistedId : null
+    },
+
+    async sendWorkbenchNotice(notice, signal) {
+      if (!notice.text || notice.text.length > 4000) {
+        return { status: 'blocked', reason: 'invalid_text' }
+      }
+
+      // Binding is checked before selecting (and therefore reading credentials
+      // from) the account. A stale notice must never drift to another account.
+      if (acctStore.get(notice.ownerChatId) !== notice.accountId) {
+        return { status: 'blocked', reason: 'binding_changed' }
+      }
+      const account = accounts.find(candidate => candidate.id === notice.accountId)
+      if (!account) return { status: 'blocked', reason: 'account_unavailable' }
+      const contextToken = ctxStore.get(notice.ownerChatId)
+      if (!contextToken) return { status: 'deferred', reason: 'missing_context' }
+
+      const outcome = await sendIlinkWorkbenchText({
+        baseUrl: account.baseUrl,
+        token: account.token,
+        clientId: notice.id,
+        ownerChatId: notice.ownerChatId,
+        text: notice.text,
+        contextToken,
+        signal,
+      })
+      if (outcome.status === 'accepted') {
+        try {
+          await messagesStore.append({
+            id: `workbench:${notice.id}`,
+            chatId: notice.ownerChatId,
+            ts: new Date().toISOString(),
+            direction: 'out',
+            kind: 'text',
+            text: notice.text,
+            source: 'workbench',
+          })
+        } catch (err) {
+          log('MESSAGES', `workbench outbound audit failed for notice=${notice.id}: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+      return outcome
     },
 
     projects: {
