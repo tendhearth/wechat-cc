@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/tendhearth/wechat-cc/releases"><img alt="release" src="https://img.shields.io/github/v/release/tendhearth/wechat-cc"></a>
+  <a href="https://github.com/tendhearth/wechat-cc/releases"><img alt="latest release" src="https://img.shields.io/github/v/release/tendhearth/wechat-cc?display_name=tag"></a>
   <img alt="platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey">
   <img alt="runtime"  src="https://img.shields.io/badge/runtime-Bun-black">
   <img alt="license"  src="https://img.shields.io/badge/license-MIT-green">

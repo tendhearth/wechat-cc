@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/tendhearth/wechat-cc/releases"><img alt="release" src="https://img.shields.io/github/v/release/tendhearth/wechat-cc"></a>
+  <a href="https://github.com/tendhearth/wechat-cc/releases"><img alt="latest release" src="https://img.shields.io/github/v/release/tendhearth/wechat-cc?display_name=tag"></a>
   <img alt="platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey">
   <img alt="runtime"  src="https://img.shields.io/badge/runtime-Bun-black">
   <img alt="license"  src="https://img.shields.io/badge/license-MIT-green">
@@ -30,7 +30,7 @@ Projects have separate task records, drafts, conversations and artifacts. Confli
 
 **Current scope:** Claude/Codex use specialized native adapters. The configured API task adapter handles text/image materials and new text artifacts with a narrower tool set. Existing Cursor/agy chat connections are **not** yet admitted as managed workbench executors. CC does not claim complete feature parity with every CLI or app, or live-process transfer between computers.
 
-> This describes the current **dev branch**, not a newly released installer. Start with the [workspace guide and capability boundaries](docs/cc-workbench.md), the [reference projects and sources](docs/research/2026-09-14-cc-agent-workbench-references.md), and the [batch delivery record](docs/superpowers/reports/2026-09-14-cc-workbench-wrapup.md).
+> This describes the current **dev branch**, not a newly released installer. Start with the [workspace guide and capability boundaries](docs/cc-workbench.md), the [reference projects and sources](docs/research/2026-09-14-cc-agent-workbench-references.md), and the [batch delivery record](docs/superpowers/reports/2026-09-14-cc-workbench-wrapup.md). These three documents are written in Chinese.
 
 Task records are stored locally. Material needed for a task is sent to the AI service you select; local storage does not mean local inference.
 
@@ -675,7 +675,7 @@ entry under [Known limitations](#known-limitations).
 
 ### OpenAI-compatible provider (opt-in)
 
-This section describes the **companion chat** adapter. The [managed workbench API adapter](docs/cc-workbench.md#api-任务执行者) uses separate tools, task approval and persisted transcripts; it does not inherit the shell or companion MCP described below.
+This section describes the **companion chat** adapter. The [managed workbench API adapter](docs/cc-workbench.md#api-任务执行者) (Chinese) uses separate tools, task approval and persisted transcripts; it does not inherit the shell or companion MCP described below.
 
 `openai` is a fourth provider id that talks to any **OpenAI-compatible
 chat-completions API** (DeepSeek, Kimi, Qwen, GLM, OpenRouter, local Ollama,
@@ -1008,7 +1008,7 @@ the OS package manager.
 - **Current source versions:** [CLI/daemon package](package.json) and [desktop bundle configuration](apps/desktop/src-tauri/tauri.conf.json). This batch does not bump or publish a release.
 - **Installers and release status:** [GitHub Releases](https://github.com/tendhearth/wechat-cc/releases). The dev workbench described above may be newer than the latest installer.
 - **Release notes:** [docs/releases](docs/releases/); the [next desktop draft](docs/releases/desktop-v1.6.7.md) is not a release announcement.
-- **Current architecture and delivery evidence:** [architecture](docs/architecture.md), [workbench guide](docs/cc-workbench.md).
+- **Current architecture and delivery evidence:** [architecture](docs/architecture.md), [workbench guide](docs/cc-workbench.md) (Chinese).
 
 ---
 
