@@ -33,10 +33,10 @@
  *     to hit the real fake-ilink HTTP server so the delivery assertion is
  *     against daemon.ilink.outbox(), not a locally-captured array.
  */
-import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { describe, it, expect, vi } from 'vitest'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { startTestDaemon } from '../__e2e__/harness'
+import { tmpdir } from 'node:os'
 import { runReminderSweep } from './sweeper'
 import { makeRemindersStore } from './store'
 import { openWechatDb } from '../../lib/db'
@@ -70,7 +70,16 @@ function sessionTokenOf(opts: Record<string, unknown>): string | undefined {
 describe('e2e: reminders — schedule → sweep → deliver, then no double delivery', () => {
   it('POST /v1/reminders/schedule, one sweep delivers exactly once, a second sweep sends nothing', async () => {
     const spawns: Record<string, unknown>[] = []
+    // The harness imports media/config: load it only after the authorized fixture's state is set.
+    const stateDir = mkdtempSync(join(tmpdir(), 'cc-reminders-e2e-'))
+    const priorStateDir = process.env.WECHAT_STATE_DIR
+    const priorCcStateDir = process.env.WECHAT_CC_STATE_DIR
+    process.env.WECHAT_STATE_DIR = stateDir
+    process.env.WECHAT_CC_STATE_DIR = stateDir
+    vi.resetModules()
+    const { startTestDaemon } = await import('../__e2e__/harness')
     const daemon = await startTestDaemon({
+      stateDirOverride: stateDir,
       claudeScript: { async onDispatch() { return { toolCalls: [], finalText: 'ok' } } },
       recordClaudeSpawnOptions: o => { spawns.push(o) },
     })
@@ -141,6 +150,11 @@ describe('e2e: reminders — schedule → sweep → deliver, then no double deli
     } finally {
       db2?.close()
       await daemon.stop()
+      if (priorStateDir === undefined) delete process.env.WECHAT_STATE_DIR
+      else process.env.WECHAT_STATE_DIR = priorStateDir
+      if (priorCcStateDir === undefined) delete process.env.WECHAT_CC_STATE_DIR
+      else process.env.WECHAT_CC_STATE_DIR = priorCcStateDir
+      rmSync(stateDir, { recursive: true, force: true })
     }
   }, 20_000)
 })
