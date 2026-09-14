@@ -7,12 +7,13 @@ import {createProviderRegistry} from '../provider-registry'
 import type {AgentProvider,AgentEvent,SpawnContext} from '../agent-provider'
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
+import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
 
 let root:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService,owner:string|null
 const message={accountId:'account-one',userId:'owner',msgId:'create',createTimeMs:1}
 const result:AgentEvent={kind:'result',sessionId:'native-one',numTurns:1,durationMs:1}
 function setup(provider:AgentProvider){
-  const registry=createProviderRegistry();registry.register('claude',provider,{displayName:'Claude',canResume:()=>true})
+  const registry=createProviderRegistry();registry.register('claude',provider,{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>owner,registeredProjects:()=>[{alias:'project',path:project}]})
 }
 const gate=()=>{let resolve!:()=>void;const promise=new Promise<void>(r=>{resolve=r});return{promise,resolve}}

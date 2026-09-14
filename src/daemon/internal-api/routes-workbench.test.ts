@@ -10,6 +10,7 @@ import {makeWorkbenchStore} from '../../core/workbench/store'
 import {makeWorkbenchService} from '../../core/workbench/service'
 import {createProviderRegistry} from '../../core/provider-registry'
 import type {AgentExecutionChoice} from '../../core/agent-provider'
+import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
 
 const TASK = {
   id: 'deadbeef', title: 'Draft', path: '/tmp/project', providerId: 'codex',
@@ -52,7 +53,7 @@ describe('Workbench internal HTTP API', () => {
   })
   it('binds restart tokens to the selected execution through real HTTP, service and SQLite',async()=>{
     const db=openDb({path:join(stateDir,'execution.sqlite')}),registry=createProviderRegistry(),seen:AgentExecutionChoice[]=[]
-    registry.register('codex',{async spawn(_project,context){seen.push(context.execution!);return{async *dispatch(){yield{kind:'text' as const,text:'completed fixture'};yield{kind:'result' as const,sessionId:'fixture-native',numTurns:1,durationMs:1}},async close(){}}}},{displayName:'Codex',canResume:()=>false})
+    registry.register('codex',{async spawn(_project,context){seen.push(context.execution!);return{async *dispatch(){yield{kind:'text' as const,text:'completed fixture'};yield{kind:'result' as const,sessionId:'fixture-native',numTurns:1,durationMs:1}},async close(){}}}},{displayName:'Codex',canResume:()=>false,workbench:MANAGED_NATIVE_CAPABILITIES})
     const actual=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir,ownerChatId:()=>null})
     try{
       const {request,operatorToken}=await start(actual as never)
@@ -83,10 +84,27 @@ describe('Workbench internal HTTP API', () => {
     expect((await request(route,{},'invalid')).status).toBe(401)
     expect((await request(route,{method:'POST'},operatorToken)).status).toBe(404)
     expect((await request('/v1/workbench/models/extra?providerId=codex&path=/tmp',{},operatorToken)).status).toBe(404)
-    for(const suffix of ['', 'providerId=codex','providerId=unknown&path=/tmp','providerId=codex&path=relative','providerId=codex&path=/tmp&path=/other','providerId=codex&providerId=claude&path=/tmp','providerId=claude&path=%2Ftmp%00bad','providerId=claude&path=%2F'+'x'.repeat(4096)]){
+    for(const suffix of ['', 'providerId=codex','providerId=bad%2Fprovider&path=/tmp','providerId=codex&path=relative','providerId=codex&path=/tmp&path=/other','providerId=codex&providerId=claude&path=/tmp','providerId=claude&path=%2Ftmp%00bad','providerId=claude&path=%2F'+'x'.repeat(4096)]){
       expect((await request('/v1/workbench/models?'+suffix,{},operatorToken)).status).toBe(400)
     }
     expect(modelCatalog).toHaveBeenCalledTimes(1)
+  })
+  it('passes syntactically valid admitted provider ids through create and model discovery',async()=>{
+    const catalog={source:'native',models:[]},modelCatalog=vi.fn(async()=>catalog),workbench=service({modelCatalog}),{request,operatorToken}=await start(workbench)
+    const providerId='local.managed-1'
+    const models=await request(`/v1/workbench/models?providerId=${providerId}&path=/tmp/project`,{},operatorToken)
+    expect(models.status).toBe(200);expect(await models.json()).toEqual({catalog})
+    expect(modelCatalog).toHaveBeenCalledExactlyOnceWith(providerId,'/tmp/project')
+    const created=await request('/v1/workbench/create',{method:'POST',body:JSON.stringify({path:'/tmp/project',providerId,text:'new'})},operatorToken)
+    expect(created.status).toBe(202)
+    expect(workbench.create).toHaveBeenCalledWith({path:'/tmp/project',providerId,text:'new'})
+  })
+  it('lets the service classify a valid but unavailable provider',async()=>{
+    const create=vi.fn(()=>{throw Error('unavailable_provider')}),modelCatalog=vi.fn(()=>{throw Error('unavailable_provider')}),{request,operatorToken}=await start(service({create,modelCatalog}))
+    const created=await request('/v1/workbench/create',{method:'POST',body:JSON.stringify({path:'/tmp',providerId:'unadmitted',text:'new'})},operatorToken)
+    expect(created.status).toBe(422);expect(await created.json()).toEqual({error:'unavailable_provider'})
+    const models=await request('/v1/workbench/models?providerId=unadmitted&path=/tmp',{},operatorToken)
+    expect(models.status).toBe(422);expect(await models.json()).toEqual({error:'unavailable_provider'})
   })
   it('forwards explicitly supplied execution choices through create, continue and native preparation without attachments',async()=>{
     const prepareNativeResume=vi.fn(async()=>({token:'a'.repeat(64)})),continueNativeTask=vi.fn(async()=>TASK)
@@ -124,6 +142,11 @@ describe('Workbench internal HTTP API', () => {
       create.mockImplementationOnce(()=>{throw Error(code)})
       const response=await request('/v1/workbench/create',{method:'POST',body:JSON.stringify({path:'/tmp',providerId:'claude',text:'start',execution:null})},operatorToken)
       expect(response.status).toBe(status);expect(await response.json()).toEqual({error:code})
+    }
+    for(const code of ['workbench_attachments_unsupported','workbench_execution_unsupported','workbench_resume_unsupported']){
+      create.mockImplementationOnce(()=>{throw Error(code)})
+      const response=await request('/v1/workbench/create',{method:'POST',body:JSON.stringify({path:'/tmp',providerId:'claude',text:'start'})},operatorToken)
+      expect(response.status).toBe(422);expect(await response.json()).toEqual({error:code})
     }
   })
   it('accepts attachment-only messages and forwards scoped material through create, continue and live input',async()=>{

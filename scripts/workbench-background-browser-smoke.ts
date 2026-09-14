@@ -1,3 +1,4 @@
+import {MANAGED_NATIVE_CAPABILITIES} from '../src/core/workbench/executor-capabilities'
 /// <reference lib="dom" />
 /** Production desktop modules → host proxy → internal HTTP → service → SQLite.
  * Native execution alone is a deterministic fixture; this is not native proof.
@@ -67,7 +68,7 @@ async function main(){
       async cancel(){ack.release();pipe.end()},async close(){closed.push(id);pipe.end()},
     }
   }}
-  const registry=createProviderRegistry();registry.register('claude',provider,{displayName:'Claude',canResume:()=>true})
+  const registry=createProviderRegistry();registry.register('claude',provider,{workbench:MANAGED_NATIVE_CAPABILITIES,displayName:'Claude',canResume:()=>true})
   const db=openDb({path:join(stateDir,'workbench.db')}),store=makeWorkbenchStore(db),service=makeWorkbenchService({store,registry,stateDir,ownerChatId:()=>null})
   const api=createInternalApi({stateDir,daemonPid:process.pid,workbench:service,db})
   let host:ReturnType<typeof Bun.serve>|undefined,browser:Browser|undefined,page:Page|undefined

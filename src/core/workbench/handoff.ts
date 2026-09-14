@@ -6,6 +6,7 @@ import type {Continuation} from './continuation'
 import type {StoredTask,TaskEvent,WorkbenchStore} from './store'
 import {readArtifactSnapshot} from './artifacts'
 import type {Attachment} from './attachments'
+import {isWorkbenchProviderId} from './executor-capabilities'
 export interface AttachmentSelection {taskId:string;attachmentId:string;sha256:string}
 export interface HandoffInput {sourceTaskId:string;targetProviderId:string;purpose:'review'|'revision';request:string;artifacts:ArtifactSelection[];attachments?:AttachmentSelection[];quote?:ReviewQuote;targetTaskId?:string}
 export interface HandoffPreview {
@@ -18,7 +19,7 @@ export interface HandoffPreview {
 export const handoffToken=()=>randomBytes(32).toString('hex')
 export const handoffTokenHash=(token:string)=>snapshotHash(token)
 export function validateHandoffInput(input:HandoffInput):HandoffInput {
- if(!input||typeof input.sourceTaskId!=='string'||! /^[a-f0-9]{8}$/.test(input.sourceTaskId)||!['claude','codex'].includes(input.targetProviderId)||!['review','revision'].includes(input.purpose)||typeof input.request!=='string'||!input.request.trim()||input.request.length>4000||!Array.isArray(input.artifacts)||input.artifacts.length>10)throw new Error('invalid_request')
+ if(!input||typeof input.sourceTaskId!=='string'||! /^[a-f0-9]{8}$/.test(input.sourceTaskId)||!isWorkbenchProviderId(input.targetProviderId)||!['review','revision'].includes(input.purpose)||typeof input.request!=='string'||!input.request.trim()||input.request.length>4000||!Array.isArray(input.artifacts)||input.artifacts.length>10)throw new Error('invalid_request')
  if(input.artifacts.some(a=>!a||typeof a.taskId!=='string'||typeof a.artifactId!=='string'||typeof a.sha256!=='string'||! /^[a-f0-9]{64}$/.test(a.sha256))||new Set(input.artifacts.map(a=>a.artifactId)).size!==input.artifacts.length)throw new Error('invalid_handoff_artifact')
  const attachments=input.attachments??[]
  if(!Array.isArray(attachments)||attachments.length>8||attachments.some(a=>!a||typeof a.taskId!=='string'||typeof a.attachmentId!=='string'||typeof a.sha256!=='string'||! /^[a-f0-9]{64}$/.test(a.sha256))||new Set(attachments.map(a=>a.attachmentId)).size!==attachments.length||(input.purpose==='revision'&&attachments.length))throw Error('invalid_handoff_attachment')

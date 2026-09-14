@@ -15,6 +15,7 @@ import { makeMessagesStore } from '../../lib/messages-store'
 import { makeMwCaptureCtx } from '../inbound/mw-capture-ctx'
 import { makeMwWorkbench } from '../inbound/mw-workbench'
 import { createInternalApi } from '../internal-api'
+import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
 
 const databases: Database[] = []
 function fixture() {
@@ -104,7 +105,7 @@ describe('wireWorkbenchNotifications', () => {
         yield { kind: 'result' as const, sessionId: 'native-fixture', numTurns: 1, durationMs: 1 }
       },
       async close() {},
-    } } }, { displayName: 'Claude', canResume: () => true })
+    } } }, { displayName: 'Claude', canResume: () => true,workbench:MANAGED_NATIVE_CAPABILITIES })
     const service = makeWorkbenchService({ store, registry, stateDir: root, ownerChatId: () => 'owner', registeredProjects: () => [{ alias: 'project', path: project }] })
     const ilinkRequests: Array<{ url: string; body: unknown }> = []
     const ilinkServer = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {

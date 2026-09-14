@@ -9,6 +9,7 @@ import {createProviderRegistry} from '../provider-registry'
 import type {AgentAttachment,AgentEvent,AgentProvider,AgentRuntimeSnapshot,AgentSession,AgentWorkbenchRuntime,SpawnContext} from '../agent-provider'
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
+import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
 
 function gate(){let resolve!:()=>void,reject!:(error:Error)=>void;const promise=new Promise<void>((a,b)=>{resolve=a;reject=b});return{promise,resolve,reject}}
 const result:AgentEvent={kind:'result',sessionId:'owned-parent',numTurns:1,durationMs:1}
@@ -51,8 +52,8 @@ function setup(owned:OwnedRuntime,extra:{timeoutMs?:number;closeTimeoutMs?:numbe
     if(spawns++&&other)return other.spawn(p,context)
     owned.context=context;return owned.session
   }}
-  registry.register('claude',provider,{displayName:'Claude',canResume:()=>true})
-  registry.register('codex',provider,{displayName:'Codex',canResume:()=>true})
+  registry.register('claude',provider,{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  registry.register('codex',provider,{displayName:'Codex',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   store=makeWorkbenchStore(db);owned.readReceipt=id=>store.liveInputs.get(id)
   service=makeWorkbenchService({store,registry,stateDir:area,ownerChatId:()=>null,mintSessionToken:()=> 'owned-token',revokeSessionToken:key=>revocations.push(key),...extra})
 }

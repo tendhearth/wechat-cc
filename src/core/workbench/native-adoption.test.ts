@@ -7,6 +7,7 @@ import {createProviderRegistry} from '../provider-registry'
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {encodeNativeHistoryKey,historyPreview,type NativeHistoryItem,type NativeHistoryReader} from './native-history'
+import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
 let dir:string,db:Db,service:WorkbenchService
 beforeEach(()=>{dir=realpathSync(mkdtempSync(join(tmpdir(),'cc-native-adopt-')));db=openDb({path:join(dir,'test.db')})})
 afterEach(async()=>{await service?.shutdown();db.close();rmSync(dir,{recursive:true,force:true})})
@@ -14,7 +15,7 @@ function fixture(){
  const store=makeWorkbenchStore(db),registry=createProviderRegistry(),mint=vi.fn(()=> 'token')
  let version=1,active=false,block=false,resumable=true,resultId:string|undefined,gate:Promise<void>|null=null,release:undefined|(()=>void)
  const spawn=vi.fn(async(_p:any,context:any)=>({async *dispatch(){const id=resultId??context.resumeSessionId??'new-native';yield{kind:'init' as const,sessionId:id};if(gate)await gate;;yield{kind:'text' as const,text:'continued'};yield{kind:'result' as const,sessionId:resultId??context.resumeSessionId??'new-native',numTurns:1,durationMs:1}},async close(){}}))
- registry.register('claude',{spawn},{displayName:'Claude',canResume:()=>resumable})
+ registry.register('claude',{spawn},{displayName:'Claude',canResume:()=>resumable,workbench:MANAGED_NATIVE_CAPABILITIES})
  const item:NativeHistoryItem={key:encodeNativeHistoryKey('claude','original'),providerId:'claude',nativeId:'original',title:'Original task',titleSource:'native_custom',cwd:dir,updatedAt:1,remote:false,observedState:'unknown'}
  const read=vi.fn(async(_key:string,page:any)=>historyPreview({...item,observedState:active?'active':'unknown'},{version},[{id:'u',role:'user',text:'original request',truncated:false},{id:'a',role:'assistant',text:'original answer',truncated:false}],null,page))
  const reader:NativeHistoryReader={list:async()=>({items:[item],nextCursor:null,coverage:'native_supported_history'}),read,currentFingerprint:async(key,page={limit:100})=>(await read(key,page)).sourceFingerprint}

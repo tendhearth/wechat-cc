@@ -286,11 +286,21 @@ describe('workbench rendering', () => {
     expect(html).not.toContain('成果文件会在这里出现')
   })
 
-  it('explains that no task can start when no supported provider is installed', async () => {
+  it('explains that no task can start when no work executor is available', async () => {
     const { renderWorkbench } = await import('./workbench.js')
     const html = renderWorkbench({tasks:[],providers:[],defaultProvider:'',canWechat:false,selectedId:null,detail:null,selectedArtifactId:null,error:'',preview:null})
-    expect(html).toContain('没有检测到可用的 Claude Code 或 Codex')
+    expect(html).toContain('暂时没有可用的工作执行者')
+    expect(html).toContain('连接或管理')
+    expect(html).not.toContain('安装')
     expect(html).toMatch(/<button[^>]*type="submit"[^>]*disabled/)
+  })
+
+  it('offers an admitted non-brand executor as an ordinary review handoff target', async () => {
+    const {renderWorkbench}=await import('./workbench.js')
+    const task={id:'TASK',title:'Done',path:'/work',providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const html=renderWorkbench({tasks:[task],providers:[{id:'codex',displayName:'Codex'},{id:'local-managed',displayName:'Local Managed'}],defaultProvider:'codex',canWechat:false,selectedId:task.id,detail:{task,events:[{id:'reply',taskId:task.id,kind:'text',text:'完成',createdAt:2}],artifacts:[]},selectedArtifactId:null,error:'',preview:null})
+    expect(html).toContain('data-action="handoff-review"')
+    expect(html).toContain('交给 Local Managed 检查')
   })
 
   it('shows a loading surface instead of the new-task form while opening a task from an empty view', async () => {

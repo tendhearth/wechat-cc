@@ -26,6 +26,10 @@ export function executionErrorMessage(error){
   execution_image_unsupported:'所选模型不接收图片，请更换支持图片的模型，或移除图片。',
   model_catalog_invalid:'暂时无法读取模型，请重新读取后再选择；也可以使用自动。',
   model_catalog_unavailable:'暂时无法读取模型，请重新读取后再选择；也可以使用自动。',
+  workbench_attachments_unsupported:'这个执行者暂不支持工作任务附件。请移除附件，或改用支持附件的执行者。',
+  workbench_execution_unsupported:'这个执行者暂不支持所选执行设置。请改用自动设置，或选择其他执行者。',
+  workbench_resume_unsupported:'这个执行者无法安全恢复原会话。请在桌面查看恢复说明，并决定是否带记录重新开始。',
+  unavailable_provider:'暂时没有可用的工作执行者。请连接或管理支持工作任务的 Claude Code／Codex 执行者。',
  })
  return messages[code]??null
 }

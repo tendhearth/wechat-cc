@@ -7,12 +7,13 @@ import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {createProviderRegistry} from '../provider-registry'
 import type {AgentEvent,AgentProvider,SpawnContext} from '../agent-provider'
+import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
 
 let db:Db,root:string,project:string,service:WorkbenchService
 const result:AgentEvent={kind:'result',sessionId:'native-one',numTurns:1,durationMs:1}
 const call:AgentEvent={kind:'tool_call',tool:'Read',activity:{id:'item-1',type:'read',label:'读取文件',status:'running'}}
 function setup(provider:AgentProvider){
-  const registry=createProviderRegistry();registry.register('codex',provider,{displayName:'Codex',canResume:()=>true})
+  const registry=createProviderRegistry();registry.register('codex',provider,{displayName:'Codex',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:root,ownerChatId:()=>null})
 }
 const create=()=>service.create({path:project,providerId:'codex',text:'check local files'})

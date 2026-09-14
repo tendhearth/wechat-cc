@@ -7,13 +7,14 @@ import {createProviderRegistry} from '../provider-registry'
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {saveArtifactSnapshot} from './artifacts'
+import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
 let dir:string,db:Db,service:WorkbenchService
 beforeEach(()=>{dir=realpathSync(mkdtempSync(join(tmpdir(),'cc-handoff-')));db=openDb({path:join(dir,'test.db')})})
 afterEach(async()=>{await service?.shutdown();db.close();rmSync(dir,{recursive:true,force:true})})
 function fixture(){
  const store=makeWorkbenchStore(db),registry=createProviderRegistry(),calls:Array<{providerId:string;resume?:string;text:string}>=[]
  let resumable=true
- for(const providerId of ['claude','codex'])registry.register(providerId,{async spawn(_p,c){return{async *dispatch(text){calls.push({providerId,resume:c.resumeSessionId,text});const id=c.resumeSessionId??`${providerId}-new`;yield{kind:'init' as const,sessionId:id};yield{kind:'text' as const,text:providerId==='claude'?'第一条：改名。\n第二条：补空输入测试。':'已只补空输入测试。'};yield{kind:'result' as const,sessionId:id,numTurns:1,durationMs:1}},async close(){}}}},{displayName:providerId,canResume:()=>resumable})
+ for(const providerId of ['claude','codex'])registry.register(providerId,{async spawn(_p,c){return{async *dispatch(text){calls.push({providerId,resume:c.resumeSessionId,text});const id=c.resumeSessionId??`${providerId}-new`;yield{kind:'init' as const,sessionId:id};yield{kind:'text' as const,text:providerId==='claude'?'第一条：改名。\n第二条：补空输入测试。':'已只补空输入测试。'};yield{kind:'result' as const,sessionId:id,numTurns:1,durationMs:1}},async close(){}}}},{displayName:providerId,canResume:()=>resumable,workbench:MANAGED_NATIVE_CAPABILITIES})
  service=makeWorkbenchService({store,registry,stateDir:dir,ownerChatId:()=>null})
  const source=store.create({path:dir,providerId:'codex',title:'实现计算器',ownerChatId:null});store.update(source.id,'completed');store.session(source.id,'original-codex');store.addEvent(source.id,'user','保持接口不变，修复空输入。');store.addEvent(source.id,'text','实现已完成。')
  saveArtifactSnapshot(store,source.id,{name:'report.md',mime:'text/markdown',bytes:Buffer.from('旧版本的确切内容：v1')},dir)
@@ -92,7 +93,7 @@ it('pins a bounded packet with an explicit truncation notice instead of implying
 it('queues a review behind an active source and records no native ID for a cancelled unstarted review',async()=>{
  const store=makeWorkbenchStore(db),registry=createProviderRegistry(),calls:string[]=[]
  let release!:()=>void;const gate=new Promise<void>(r=>{release=r})
- for(const id of ['claude','codex'])registry.register(id,{async spawn(){return{async *dispatch(){calls.push(id);yield{kind:'text' as const,text:'阶段成果已准备'};if(id==='codex')await gate;yield{kind:'result' as const,sessionId:`owned-${id}`,numTurns:1,durationMs:1}},async close(){}}}},{displayName:id,canResume:()=>true})
+ for(const id of ['claude','codex'])registry.register(id,{async spawn(){return{async *dispatch(){calls.push(id);yield{kind:'text' as const,text:'阶段成果已准备'};if(id==='codex')await gate;yield{kind:'result' as const,sessionId:`owned-${id}`,numTurns:1,durationMs:1}},async close(){}}}},{displayName:id,canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
  service=makeWorkbenchService({store,registry,stateDir:dir,ownerChatId:()=>null})
  const a=service.create({path:dir,providerId:'codex',text:'实现'})
  await vi.waitFor(()=>expect(calls).toEqual(['codex']))

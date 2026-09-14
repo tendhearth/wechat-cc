@@ -1,3 +1,4 @@
+import {MANAGED_NATIVE_CAPABILITIES} from '../src/core/workbench/executor-capabilities'
 /** Explicit, offline native-protocol smoke: only temporary CC-owned MCP servers
  * and a local fake Responses endpoint are started. No user configuration or
  * provider account is used. Run: bun scripts/workbench-codex-native-tools-smoke.ts */
@@ -33,7 +34,7 @@ async function waitFor(label: string, ready: () => boolean, timeoutMs = 15_000) 
 async function verifyWechat(provider: AgentProvider, directory: string, calls: string, companion: string, modelRequests: () => number) {
   const db = openDb({ path: join(directory, 'workbench.db') }), store = makeWorkbenchStore(db)
   const registry = createProviderRegistry(), owner = 'owned-offline-chat'
-  registry.register('codex', provider, { displayName: 'Codex', canResume: () => true })
+  registry.register('codex', provider, { workbench: MANAGED_NATIVE_CAPABILITIES, displayName: 'Codex', canResume: () => true })
   const service = makeWorkbenchService({ store, registry, stateDir: directory, ownerChatId: () => owner, timeoutMs: 15_000, permissionTimeoutMs: 15_000 })
   const phone = async (text: string, msgId = crypto.randomUUID()) => {
     const reply=await service.handleWechat(owner, text, { accountId: 'owned-offline-account', userId: owner, msgId, createTimeMs: 1 })

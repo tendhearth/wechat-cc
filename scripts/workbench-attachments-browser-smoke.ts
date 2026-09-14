@@ -1,3 +1,4 @@
+import {MANAGED_NATIVE_CAPABILITIES} from '../src/core/workbench/executor-capabilities'
 /// <reference lib="dom" />
 /**
  * Run: bun scripts/workbench-attachments-browser-smoke.ts
@@ -125,7 +126,7 @@ async function main(){
       async close(){for(const pending of activeGates)pending.release()},
     }
   }}
-  const registry=createProviderRegistry();registry.register('claude',provider,{displayName:'Claude fixture',canResume:()=>resumeAvailable})
+  const registry=createProviderRegistry();registry.register('claude',provider,{workbench:MANAGED_NATIVE_CAPABILITIES,displayName:'Claude fixture',canResume:()=>resumeAvailable})
   const dbPath=join(stateDir,'workbench.db');let db=openDb({path:dbPath})
   const store=makeWorkbenchStore(db)
   const service=makeWorkbenchService({store,registry,stateDir,ownerChatId:()=>null})

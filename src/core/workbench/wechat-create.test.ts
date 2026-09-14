@@ -6,15 +6,16 @@ import {openDb,type Db} from '../../lib/db'
 import {createProviderRegistry} from '../provider-registry'
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
+import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
 
 let root:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService
 let owner:string|null,registered:Array<{alias:string,path:string}>,seen:Array<{path:string,text:string,provider:string}>
 const message={accountId:'wechat-account',userId:'owner',msgId:'create-message',createTimeMs:1}
-function setup(defaultProvider='codex'){
+function setup(defaultProvider='codex',providerIds=['claude','codex']){
   const registry=createProviderRegistry()
-  for(const provider of ['claude','codex'])registry.register(provider,{async spawn(project){return{
+  for(const provider of providerIds)registry.register(provider,{async spawn(project){return{
     async *dispatch(text){seen.push({path:project.path,text,provider});yield{kind:'text' as const,text:'结果：'+text};yield{kind:'result' as const,sessionId:'native-session',numTurns:1,durationMs:1}},async close(){},
-  }}},{displayName:provider,canResume:()=>true})
+  }}},{displayName:provider,canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   store=makeWorkbenchStore(db)
   service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>owner,defaultProvider,registeredProjects:()=>registered})
 }
@@ -38,6 +39,24 @@ describe('create one shared workbench task from WeChat',()=>{
     expect(seen).toEqual([{path:project,text:'保留原接口\n整理周报',provider:'claude'}])
     service.continueTask(task.id,'桌面追加说明');await settle(task.id)
     expect(await service.handleWechat('owner',`任务 ${task.id}`)).toContain('桌面追加说明')
+  })
+  it('uses explicit @executor tokens for any admitted provider and never guesses a missing executor',async()=>{
+    await service.shutdown();setup('reviewer-v2',['claude','reviewer-v2'])
+    const projects=await service.handleWechat('owner','任务 项目',message)
+    expect(projects).toContain('用 @reviewer-v2');expect(projects).not.toContain('用 Codex')
+    const raw=command('用 @reviewer-v2 核对这一版')
+    const reply=await service.handleWechat('owner',raw,message),task=service.list().tasks[0]!
+    await settle(task.id);expect(reply).toContain(task.id)
+    expect(seen).toEqual([{path:project,text:'核对这一版',provider:'reviewer-v2'}])
+    for(const choice of ['@not-connected','@bad/id','@'+ 'x'.repeat(65),'@']) {
+      await service.handleWechat('owner',command(`用 ${choice} 应当保留`),{...message,msgId:choice})
+    }
+    expect(service.list().tasks).toHaveLength(1);expect(seen).toHaveLength(1)
+  })
+  it('keeps ordinary requirements starting with 用 intact instead of treating them as executor names',async()=>{
+    const reply=await service.handleWechat('owner',command('用 Python 核对数据'),message)
+    const task=service.list().tasks[0]!;await settle(task.id)
+    expect(reply).toContain(task.id);expect(seen[0]).toMatchObject({provider:'codex',text:'用 Python 核对数据'})
   })
   it('replays its original acceptance after finish, restart, provider change and missing project',async()=>{
     const text=command(),first=await service.handleWechat('owner',text,message),task=service.list().tasks[0]!

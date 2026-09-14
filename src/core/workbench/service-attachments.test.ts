@@ -9,12 +9,13 @@ import type {AgentAttachment,AgentEvent,AgentProvider} from '../agent-provider'
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {restartPreview} from './continuation'
+import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
 
 let root:string,project:string,db:Db,service:WorkbenchService,store:ReturnType<typeof makeWorkbenchStore>
 const result:AgentEvent={kind:'result',sessionId:'native-session',numTurns:1,durationMs:1}
 function setup(provider:AgentProvider,resume=true){
   const registry=createProviderRegistry()
-  for(const id of ['claude','codex'] as const)registry.register(id,provider,{displayName:id,canResume:()=>resume})
+  for(const id of ['claude','codex'] as const)registry.register(id,provider,{displayName:id,canResume:()=>resume,workbench:MANAGED_NATIVE_CAPABILITIES})
   store=makeWorkbenchStore(db);service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null})
 }
 function gate(){let resolve!:()=>void;const promise=new Promise<void>(r=>resolve=r);return{promise,resolve}}

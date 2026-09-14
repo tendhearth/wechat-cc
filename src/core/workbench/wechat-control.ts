@@ -9,6 +9,7 @@ import type {CreationReceipt} from './creation-receipts'
 import type {ProjectCatalogEntry} from './project-catalog'
 import {validateUserInputAnswers,type PendingUserInput} from './user-input'
 import {resultCommandHelp,resultToken,wechatResultPage} from './wechat-results'
+import {isWorkbenchProviderId} from './executor-capabilities'
 
 export interface WechatMessageIdentity {accountId:string;userId:string;msgId?:string;createTimeMs:number}
 export type WechatWorkbenchReply=string|{kind:'artifact_delivered';receiptId:string}
@@ -142,7 +143,10 @@ function failure(error:unknown,id:string){
   if(code==='control_conflict')return '这条消息的内容与已记录的操作不一致，未再次执行。请重新查询任务。'
   if(code==='creation_conflict')return '这条消息的内容与已记录的新建要求不一致，未再次创建。请发送一条新消息。'
   if(code==='project_stale')return '这个项目编号已失效或目录已变化，没有开始工作。请发送「任务 项目」重新选择。'
-  if(code==='unavailable_provider')return '这个执行者当前不可用，没有开始工作。请在桌面检查连接，或用 Claude／Codex 明确选择其他执行者。'
+  if(code==='workbench_attachments_unsupported')return '这个执行者暂不支持工作任务附件，没有开始工作。请移除附件，或改用支持附件的执行者。'
+  if(code==='workbench_execution_unsupported')return '这个执行者暂不支持所选执行设置，没有开始工作。请改为自动设置，或选择其他执行者。'
+  if(code==='workbench_resume_unsupported')return '这个执行者无法安全恢复原会话，没有继续工作。请在桌面查看恢复说明，并决定是否带记录重新开始。'
+  if(code==='unavailable_provider')return '暂时没有可用的工作执行者，没有开始工作。请在桌面连接或管理支持工作任务的 Claude Code／Codex 执行者。'
   if(code==='invalid_wechat_identity')return '无法确认这条微信消息的账号和发送者，没有创建任务。请在原聊天重新发送。'
   if(code==='control_stale')return '原请求对应的轮次已结束，未停止当前轮次。请重新查询任务。'
   if(code==='input_limit'||code==='input_delivery_busy')return '仍有补充等待交付，请稍后再试。'
@@ -164,13 +168,17 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
       const page=Number(match[1]??1),projects=opts.actions.projects(),slice=projects.slice((page-1)*8,page*8)
       if(!projects.length)return '还没有可用的项目。请先在桌面工作台选择一次文件夹，之后就能在这里交代任务。'
       if(!slice.length)return '没有这一页项目，请发送「任务 项目」查看。'
-      return '选择要工作的项目：\n\n'+slice.map(p=>`${singleLine(p.name)} · ${p.id}\n${singleLine(p.path,240)}\n${p.providerId??'暂无可用执行者'}\n新建：任务 新建 ${p.id} <要求>`).join('\n\n')+`\n\n也可明确指定：任务 新建 ${slice[0]!.id} 用 Codex <要求>`+(projects.length>page*8?`\n下一页：任务 项目 ${page+1}`:'')
+      const example=slice.find(p=>isWorkbenchProviderId(p.providerId))
+      return '选择要工作的项目：\n\n'+slice.map(p=>`${singleLine(p.name)} · ${p.id}\n${singleLine(p.path,240)}\n${p.providerId??'暂无可用执行者'}\n新建：任务 新建 ${p.id} <要求>`).join('\n\n')+(example?`\n\n也可明确指定：任务 新建 ${example.id} 用 @${example.providerId} <要求>`:'')+(projects.length>page*8?`\n下一页：任务 项目 ${page+1}`:'')
     }
     if(/^新建(?:\s|$)/.test(command)){
       if(!identity?.accountId?.trim())return failure(Error('invalid_wechat_identity'),'')
       const match=/^新建\s+(p-[a-f0-9]{20})\s+([\s\S]+)$/i.exec(command)
       if(!match)return usage()
-      const choice=/^用\s+(claude|codex)(?:\s+|$)([\s\S]*)$/i.exec(match[2]!)
+      // @ makes an executor choice unambiguous; "用 Python 处理数据" remains ordinary input.
+      const explicit=/^用\s+@(\S+)(?:\s+|$)([\s\S]*)$/i.exec(match[2]!)
+      if(/^用\s+@/i.test(match[2]!)&&(!explicit||!isWorkbenchProviderId(explicit[1]!.toLowerCase())))return usage()
+      const choice=explicit??/^用\s+(claude|codex)(?:\s+|$)([\s\S]*)$/i.exec(match[2]!)
       try{return opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),text:choice?choice[2]!:match[2]!}).reply}
       catch(error){return failure(error,'')}
     }

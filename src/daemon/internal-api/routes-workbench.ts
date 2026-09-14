@@ -4,13 +4,15 @@ import { decodeNativeHistoryKey, normalizeHistoryList, normalizeHistoryRead, typ
 import { isAbsolute } from 'node:path'
 import type { WorkbenchListQuery } from '../../core/workbench/store'
 import type {InputMaterials} from '../../core/workbench/service'
+import {isWorkbenchProviderId} from '../../core/workbench/executor-capabilities'
 import type { InternalApiDeps, RouteHandler, RouteTable } from './types'
 
 const TASK_ID = /^[a-f0-9]{8}$/
 const ARTIFACT_ID = /^[a-f0-9-]{8,64}$/
 const SHA256 = /^[a-f0-9]{64}$/
 const REQUEST_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
-const PROVIDERS = new Set(['claude', 'codex'])
+const NATIVE_HISTORY_PROVIDERS = new Set<NativeHistoryProvider>(['claude', 'codex'])
+const isNativeHistoryProvider=(value:string|null):value is NativeHistoryProvider=>value!==null&&NATIVE_HISTORY_PROVIDERS.has(value as NativeHistoryProvider)
 
 type JsonObject = Record<string, unknown>
 
@@ -42,6 +44,7 @@ function mappedError(err: unknown): ReturnType<RouteHandler> {
   if(['attachment_conflict','attachment_changed'].includes(code))return{status:409,body:{error:code}}
   if(code==='attachment_scope')return{status:404,body:{error:'not_found'}}
   if(code==='attachment_platform_unsupported')return{status:422,body:{error:code}}
+  if(['workbench_attachments_unsupported','workbench_execution_unsupported','workbench_resume_unsupported'].includes(code))return{status:422,body:{error:code}}
   if (['input_stale','input_conflict','input_delivery_busy','question_stale','input_limit'].includes(code))return{status:409,body:{error:code}}
   if (code === 'invalid_question'||code === 'invalid_answer')return{status:400,body:{error:code}}
   if (code === 'workbench_archived' || code === 'workbench_busy' || code === 'artifact_changed' || code === 'permission_stale' || code === 'restart_confirmation_required' || code === 'restart_confirmation_stale') return { status: 409, body: { error: code } }
@@ -60,7 +63,7 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
   return {
     'GET /v1/workbench/models':async query=>{
       const providerId=query.get('providerId'),path=query.get('path')
-      if(query.getAll('providerId').length!==1||query.getAll('path').length!==1||!providerId||!PROVIDERS.has(providerId)||!path||path.length>4096||path.includes('\0')||!isAbsolute(path))return invalid()
+      if(query.getAll('providerId').length!==1||query.getAll('path').length!==1||!isWorkbenchProviderId(providerId)||!path||path.length>4096||path.includes('\0')||!isAbsolute(path))return invalid()
       if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
       try{return{status:200,body:{catalog:await deps.workbench.modelCatalog(providerId,path)}}}catch(error){return mappedError(error)}
     },
@@ -123,12 +126,12 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
     'GET /v1/workbench/sessions': async query => {
       for(const key of ['providerId','q','limit','cursor','cwd'])if(query.getAll(key).length>1)return invalid()
       const providerId=query.get('providerId')
-      if(!providerId||!PROVIDERS.has(providerId))return invalid()
+      if(!isNativeHistoryProvider(providerId))return invalid()
       if(!deps.workbench)return {status:503,body:{error:'workbench_not_wired'}}
       try {
         const rawLimit=query.get('limit');if(rawLimit!==null&&!/^\d+$/.test(rawLimit))return invalid()
         const input=normalizeHistoryList({q:query.get('q')??'',limit:rawLimit===null?50:Number(rawLimit),...(query.has('cursor')?{cursor:query.get('cursor')!}:{}),...(query.has('cwd')?{cwd:query.get('cwd')!}:{})})
-        return {status:200,body:await deps.workbench.listNativeHistory(providerId as NativeHistoryProvider,input)}
+        return {status:200,body:await deps.workbench.listNativeHistory(providerId,input)}
       }catch(error){return mappedError(error)}
     },
     'GET /v1/workbench/session': async query => {
@@ -200,10 +203,10 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       const text = typeof value.text === 'string' ? value.text.trim() : ''
       const files=materials(value)
       if ((value.title !== undefined && (!title || title.length > 120)) ||
-          !files || !path || !isAbsolute(path) || !PROVIDERS.has(providerId) || (!text&&!files.attachmentIds?.length) || text.length > 20_000) return invalid()
+          !files || !path || !isAbsolute(path) || !isWorkbenchProviderId(providerId) || (!text&&!files.attachmentIds?.length) || text.length > 20_000) return invalid()
       if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
       try {
-        const task = await deps.workbench.create({ ...(title ? { title } : {}), path, providerId: providerId as 'claude' | 'codex', text,...files,...execution(value) })
+        const task = await deps.workbench.create({ ...(title ? { title } : {}), path, providerId, text,...files,...execution(value) })
         return { status: 202, body: { task } }
       } catch (err) {
         return mappedError(err)

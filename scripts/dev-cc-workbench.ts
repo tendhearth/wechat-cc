@@ -1,3 +1,4 @@
+import {MANAGED_NATIVE_CAPABILITIES} from '../src/core/workbench/executor-capabilities'
 import {createClaudeHistoryReader} from '../src/core/workbench/native-claude-history'
 import {createCodexHistoryReader} from '../src/core/workbench/native-codex-history'
 /** Live development: production task engine, isolated state, existing companion untouched.
@@ -40,7 +41,7 @@ if(existsSync(infoPath)) {
 const db=openDb({path:join(stateDir,'workbench.db')})
 const registry=createProviderRegistry()
 if(binary)registry.register('codex',createWorkbenchCodexProvider({codexPathOverride:binary}),
-  {displayName:'Codex',canResume:(_cwd,id)=>codexSessionJsonlPaths(homedir(),id).some(existsSync)})
+  {workbench:MANAGED_NATIVE_CAPABILITIES,displayName:'Codex',canResume:(_cwd,id)=>codexSessionJsonlPaths(homedir(),id).some(existsSync)})
 if(claudeBinary)registry.register('claude',createClaudeAgentProvider({
   sdkOptionsForProject(_alias,path,_tier,_chatId,_env,instructions,context) {
     // Match production: native project rules and admitted tools, task approvals.
@@ -57,7 +58,7 @@ if(claudeBinary)registry.register('claude',createClaudeAgentProvider({
       env:{...process.env,...workbenchClaudeAuthEnv(settings,process.env)}},
       instructions ?? '',makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers)),native)
   },
-}),{displayName:'Claude Code',canResume:(cwd,id)=>existsSync(claudeSessionJsonlPath(homedir(),cwd,id))})
+}),{workbench:MANAGED_NATIVE_CAPABILITIES,displayName:'Claude Code',canResume:(cwd,id)=>existsSync(claudeSessionJsonlPath(homedir(),cwd,id))})
 // Unused companion dependencies are deliberately absent. Only the explicit
 // workbench routes are reachable through the frontend proxy in this runner.
 const api=createInternalApi({stateDir,daemonPid:process.pid} as InternalApiDeps)

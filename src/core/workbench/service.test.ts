@@ -7,6 +7,7 @@ import { createProviderRegistry } from '../provider-registry'
 import type { AgentEvent, AgentProvider, AgentSession, SpawnContext } from '../agent-provider'
 import { makeWorkbenchStore } from './store'
 import { makeWorkbenchService, type WorkbenchService } from './service'
+import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
 
 let root: string, project: string, db: Db, service: WorkbenchService
 let testStore:ReturnType<typeof makeWorkbenchStore>
@@ -16,8 +17,8 @@ function setup(provider: AgentProvider, owner: () => string | null = () => 'owne
   mintSessionToken?:(key:string)=>string; revokeSessionToken?:(key:string)=>void
 } = {}) {
   const registry = createProviderRegistry()
-  registry.register('claude', provider, { displayName: 'Claude', canResume: () => true })
-  registry.register('codex', provider, { displayName: 'Codex', canResume: () => true })
+  registry.register('claude', provider, { displayName: 'Claude', canResume: () => true,workbench:MANAGED_NATIVE_CAPABILITIES })
+  registry.register('codex', provider, { displayName: 'Codex', canResume: () => true,workbench:MANAGED_NATIVE_CAPABILITIES })
   testStore=makeWorkbenchStore(db)
   service = makeWorkbenchService({ store: testStore, registry, stateDir: root, ownerChatId: owner, permissionTimeoutMs, ...extra })
   return registry
@@ -372,7 +373,7 @@ describe('persistent workbench', () => {
     registry.register('claude',{async spawn(){return{
       async *dispatch(){await dispatchGate.promise;yield result},
       async cancel(){cancelled=true},async close(){closed=true},
-    }}},{displayName:'Claude',canResume:()=>true})
+    }}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
     const base=makeWorkbenchStore(db)
     const store={...base,update(id:string,status:Parameters<typeof base.update>[1],error?:string|null){
       if(status==='cancelling')throw new Error('status storage unavailable')
@@ -427,7 +428,7 @@ describe('persistent workbench', () => {
 
   it('does not unlock an uncertain writer when final status storage throws', async () => {
     const registry=createProviderRegistry(),closeGate=deferred();let spawns=0
-    registry.register('claude',{async spawn(){spawns++;return{async *dispatch(){yield result},async close(){if(spawns===1)await closeGate.promise}}}},{displayName:'Claude',canResume:()=>true})
+    registry.register('claude',{async spawn(){spawns++;return{async *dispatch(){yield result},async close(){if(spawns===1)await closeGate.promise}}}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
     const base=makeWorkbenchStore(db)
     const store={...base,update(id:string,status:Parameters<typeof base.update>[1],error?:string|null){
       if(status==='interrupted')throw new Error('status storage unavailable')
@@ -444,7 +445,7 @@ describe('persistent workbench', () => {
 
   it('starts and settles an accepted run without reading it again in the scheduler', async () => {
     const registry=createProviderRegistry(),gate=deferred();let dispatches=0
-    registry.register('claude',{async spawn(){return{async *dispatch(){dispatches++;await gate.promise;yield result},async close(){}}}},{displayName:'Claude',canResume:()=>true})
+    registry.register('claude',{async spawn(){return{async *dispatch(){dispatches++;await gate.promise;yield result},async close(){}}}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
     const base=makeWorkbenchStore(db)
     const unavailableRead={...base,get(){throw new Error('task read unavailable')}}
     service=makeWorkbenchService({store:unavailableRead,registry,stateDir:root,ownerChatId:()=>null})
@@ -898,7 +899,7 @@ describe('persistent workbench', () => {
         await gates.get(p.path)!.promise;yield result
       },
       async cancel(){cancelled.push(p.path)},async close(){closed.push(p.path)},
-    }}},{displayName:'Claude',canResume:()=>true})
+    }}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
     const base=makeWorkbenchStore(db);let unreadableTask=''
     const store={...base,get(id:string){if(id===unreadableTask)throw new Error('task read unavailable');return base.get(id)}}
     service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null})

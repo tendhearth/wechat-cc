@@ -12,10 +12,13 @@
  * passed via deps. Tests can build their own with mock providers.
  */
 import type { AgentProvider, CheapEval } from './agent-provider'
+import type { WorkbenchExecutorCapabilities } from './workbench/executor-capabilities'
 import type { ProviderId } from './conversation'
 import { hasAuthCode } from '../lib/auth-failure'
 
 export interface ProviderRegistration {
+  /** Explicitly opted-in task protocol; a normal chat provider is not sufficient. */
+  workbench?: WorkbenchExecutorCapabilities
   /** Human-readable name; used by mode-commands prompts and dashboard. */
   displayName: string
   /**

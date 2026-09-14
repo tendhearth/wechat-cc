@@ -9,13 +9,14 @@ import {createProviderRegistry} from '../provider-registry'
 import type {AgentEvent,AgentProvider} from '../agent-provider'
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
+import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
 
 let root:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService,owner:string|null
 const result:AgentEvent={kind:'result',sessionId:'native-one',numTurns:1,durationMs:1}
 const identity={accountId:'account',userId:'owner',msgId:'message-one',createTimeMs:1}
 const gate=()=>{let resolve!:()=>void;const promise=new Promise<void>(r=>{resolve=r});return{promise,resolve}}
 function setup(provider:AgentProvider){
-  const registry=createProviderRegistry();registry.register('claude',provider,{displayName:'Claude',canResume:()=>true})
+  const registry=createProviderRegistry();registry.register('claude',provider,{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>owner})
 }
 const create=(text='整理周报')=>service.create({path:project,providerId:'claude',text})
@@ -24,6 +25,20 @@ beforeEach(()=>{root=realpathSync(mkdtempSync(join(tmpdir(),'cc-wechat-control-'
 afterEach(async()=>{await service?.shutdown();db.close();rmSync(root,{recursive:true,force:true})})
 
 describe('WeChat task control through the shared service',()=>{
+  it.each([
+    ['workbench_attachments_unsupported','移除附件'],
+    ['workbench_execution_unsupported','自动设置'],
+    ['workbench_resume_unsupported','桌面'],
+    ['unavailable_provider','连接或管理'],
+  ])('translates executor admission failure %s into an actionable reply',async(code,hint)=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const projectId='p-'+'a'.repeat(20)
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,projects:()=>[{id:projectId,name:'project',path:project,providerId:'claude'}],createWechat(){throw Error(code)}}})
+    const reply=await control('owner',`任务 新建 ${projectId} 整理周报`,identity)
+    expect(reply).toContain(hint)
+    expect(reply).not.toContain(code)
+    if(code==='unavailable_provider')expect(reply).not.toContain('安装')
+  })
   it('shows retained runtime observations in list/detail while keeping child output out of the main reply',async()=>{
     setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
     const task=store.create({title:'后台校对',path:project,providerId:'claude',ownerChatId:'owner'})

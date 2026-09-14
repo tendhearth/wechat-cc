@@ -13,6 +13,7 @@ import type { PermissionRelayDeps } from '../../core/permission-relay'
 import { TIER_PROFILES } from '../../core/user-tier'
 import { makeWorkbenchStore } from '../../core/workbench/store'
 import { makeWorkbenchService } from '../../core/workbench/service'
+import { MANAGED_NATIVE_CAPABILITIES } from '../../core/workbench/executor-capabilities'
 import { readNativeClaudeTools, workbenchClaudeEnvironment, type NativeClaudeTools } from '../../core/workbench/claude-native-config'
 import { claudeNativeCapabilityNotice } from '../../core/workbench/native-capability-notice'
 import { loadCompanionConfig } from '../companion/config'
@@ -72,7 +73,7 @@ export function wireWorkbench(opts: {
       const permit=makeWorkbenchClaudeCanUseTool(context?.requestPermission,context?.requestUserInput,Object.keys(native.servers))
       return workbenchClaudeOptions(base,instructions ?? '',permit,native)
     },
-  }),claude.opts)
+  }),{...claude.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
   const codex=opts.boot.registry.get('codex')
   const binary=codex ? findCodexBinary() : null
   if (codex && binary) registry.register('codex',createWorkbenchCodexProvider({
@@ -80,7 +81,7 @@ export function wireWorkbench(opts: {
     model:modelForProvider(loadAgentConfig(opts.stateDir),'codex'),
     // The adapter discovers native tools, excludes companion services, and
     // routes admitted tool calls through this task's approval requests.
-  }),codex.opts)
+  }),{...codex.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
   return makeWorkbenchService({
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},

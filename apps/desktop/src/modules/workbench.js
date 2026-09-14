@@ -22,7 +22,7 @@ import { renderWorkbenchTimeline, workbenchTimelineEventId, captureWorkbenchTime
 /** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,activity?:WorkbenchActivity}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
 /** @typedef {{id:string,taskId:string,tool:string,description:string,createdAt:number}} Permission */
-/** @typedef {{id:string,displayName:string}} Provider */
+/** @typedef {{id:string,displayName:string,capabilities?:{attachments?:boolean,execution?:boolean,resume?:boolean}}} Provider */
 /** @typedef {{token:string,context:string,eventCount:number,includedEventCount:number,truncated:boolean}} RestartPreview */
 /** @typedef {{mode:string,restart?:RestartPreview}} Continuation */
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeSource} NativeSource */
@@ -226,7 +226,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
     : ''
   const handoffs=detail?.handoffs??[]
   const origin=handoffs.find(h=>h.purpose==='review'&&h.targetTaskId===detail?.task.id)
-  const otherProvider=state.providers.find(p=>p.id!==detail?.task.providerId&&['claude','codex'].includes(p.id))
+  const otherProvider=state.providers.find(p=>p.id!==detail?.task.providerId)
   const lastReply=dialogue.filter(e=>e.kind==='text').at(-1)
   const actionable=detail?.task.archivedAt==null&&['completed','failed','cancelled','interrupted'].includes(detail?.task.status??'')
   const related=handoffs.length?`<details id="wb-handoffs" class="wb-disclosure wb-handoffs"><summary>交接记录 · ${handoffs.length}</summary>${handoffs.map(h=>{
@@ -264,7 +264,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
         <label>文件夹<div class="wb-folder-row"><input id="wb-path" name="path" required aria-describedby="wb-folder-help" placeholder="选择或粘贴一个本机文件夹"><button type="button" class="wb-btn" data-action="choose-folder">选择…</button></div><small id="wb-folder-help" class="wb-field-help">也可以直接粘贴完整路径；原生选择目前只在 macOS 提供。</small></label>
         <label>要做什么<textarea id="wb-create-text" name="text" rows="4" maxlength="20000" placeholder="例如：整理这些访谈记录，做一份主题摘要和引用表"></textarea></label>
         ${renderAttachmentComposer(draft,attachmentError)}
-        ${state.providers.length ? '' : '<p class="wb-provider-missing" role="alert">没有检测到可用的 Claude Code 或 Codex。安装并连接其中一个后才能开始任务。</p>'}
+        ${state.providers.length ? '' : '<p class="wb-provider-missing" role="alert">暂时没有可用的工作执行者。请连接或管理支持工作任务的 Claude Code／Codex 执行者后再开始任务。</p>'}
         <details id="wb-options" class="wb-options"><summary>执行者与命名 <span>当前使用 ${escapeWorkbenchHtml(state.providers.find(p => p.id === state.defaultProvider)?.displayName || '尚未选择执行者')}</span></summary><label>执行者<select id="wb-provider" name="providerId"${executionView.busy?' disabled':''}>${(state.providers ?? []).map((p) => `<option value="${escapeWorkbenchHtml(p.id)}" ${p.id === state.defaultProvider ? 'selected' : ''}>${escapeWorkbenchHtml(p.displayName)}</option>`).join('')}</select></label>
         ${executionControls}<label>任务名称 <span class="wb-optional">可选</span><input id="wb-title" name="title" placeholder="留空时使用任务要求的前 40 个字"></label></details>
         <button class="wb-btn wb-btn-primary" type="submit"${state.providers.length&&!draft?.attachments?.some(a=>a.status!=='ready') ? '' : ' disabled'}>开始任务</button>

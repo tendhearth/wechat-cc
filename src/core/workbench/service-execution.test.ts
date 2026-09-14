@@ -9,12 +9,13 @@ import type {AgentExecutionChoice,AgentProvider,SpawnContext} from '../agent-pro
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {PROVIDER_EXECUTION_CHOICE as automatic} from './execution-settings'
+import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
 
 let root:string,project:string,db:Db,service:WorkbenchService,store:ReturnType<typeof makeWorkbenchStore>
 const selected:AgentExecutionChoice={defaults:'provider',model:'fixture-model',reasoningEffort:'high'}
 function setup(provider:AgentProvider,resume=true){
   const registry=createProviderRegistry()
-  for(const id of ['claude','codex'])registry.register(id,provider,{displayName:id,canResume:()=>resume})
+  for(const id of ['claude','codex'])registry.register(id,provider,{displayName:id,canResume:()=>resume,workbench:MANAGED_NATIVE_CAPABILITIES})
   store=makeWorkbenchStore(db);service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null})
 }
 function gate(){let resolve!:()=>void;const promise=new Promise<void>(r=>resolve=r);return{promise,resolve}}
