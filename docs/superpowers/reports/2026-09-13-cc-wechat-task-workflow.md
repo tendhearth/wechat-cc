@@ -27,6 +27,6 @@
 
 HTTP 集成使用合成执行者与显式 loopback 服务器；不代表完整 daemon 轮询或真实微信平台验收。最终相关回归日志为 `/tmp/cc-wechat-workflow-release-focused.log`，typecheck 日志为 `/tmp/cc-wechat-workflow-release-typecheck.log`。本轮未重新宣称全仓测试全绿；先前全仓记录仍有未改动的 settings-panel HTTP 超时基线。
 
-## 尚未交付
+## 本阶段之后的交付
 
-Task 5 的不可变成果附件发送已有具体计划，代码尚未实现。更多原生/API 执行者、自动独立工作区和跨电脑执行接管仍属于整体目标，不因本阶段通过而算完成。
+本记录最初结束于 Tasks 1–4。Task 5 的不可变成果附件发送随后已交付，见[成果文件记录](2026-09-13-cc-wechat-artifacts.md)；独立 API 任务路径及最新全仓结果见[2026-09-14 收尾记录](2026-09-14-cc-workbench-wrapup.md)。上文测试数字保留该阶段的历史证据。自动独立工作区与跨电脑执行接管仍未包含在交付范围。

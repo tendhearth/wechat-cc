@@ -1,16 +1,15 @@
 <h1 align="center">wechat-cc</h1>
 
 <p align="center">
-  <b>Reach your Claude Code session from WeChat — and let it reach back.</b>
+  <b>An AI companion and one place to work with Claude, Codex and API models — on desktop and WeChat.</b>
 </p>
 
 <p align="center">
-  <img alt="version"  src="https://img.shields.io/badge/cli-v0.6.3-blue">
-  <img alt="desktop"  src="https://img.shields.io/badge/desktop-v0.6.3-blue">
+  <a href="https://github.com/tendhearth/wechat-cc/releases"><img alt="release" src="https://img.shields.io/github/v/release/tendhearth/wechat-cc"></a>
   <img alt="platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey">
   <img alt="runtime"  src="https://img.shields.io/badge/runtime-Bun-black">
   <img alt="license"  src="https://img.shields.io/badge/license-MIT-green">
-  <a href="https://github.com/ggshr9/wechat-cc/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ggshr9/wechat-cc/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/tendhearth/wechat-cc/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tendhearth/wechat-cc/actions/workflows/ci.yml/badge.svg"></a>
 </p>
 
 <p align="center">
@@ -21,27 +20,19 @@
 
 ## What is this?
 
-`wechat-cc` is a Bun daemon that bridges your **WeChat (微信)** account to
-**Claude Code** (and, since v2.0, **Codex** alongside it) running on your
-computer. Once set up, you can:
+**CC is an AI companion with a shared workspace for getting things done.** It brings Claude Code, Codex and configured API models into one desktop entry, with WeChat access to the same tasks when you step away.
 
-- Send a text / image / file / voice message from your phone — your chosen
-  agent on the desktop receives it, runs tools, and replies back into the
-  chat.
-- Pick a **conversation mode** per chat with `/cc` (Claude only), `/codex`
-  (Codex only), `/both` (both answer in parallel), or `/chat` (they discuss
-  with each other before answering you). See
-  [Features §4](#4--multi-agent-cc-codex-both-chat--claude--codex-on-the-same-chat).
-- Walk away from your desk and keep a long-running task moving via your phone.
-- Let Claude **reach out to you**, not just respond. The Companion layer +
-  the v0.4 dashboard turn it into a long-running AI presence that writes
-  observations, fires milestones, and decides when to push.
+- **Now:** see what CC is doing, with room for quiet companionship.
+- **Together:** start tasks, read the full conversation, handle questions and permissions, inspect results, and continue work without juggling separate agent windows.
+- **Memories:** return to earlier moments, drawings, journal entries and postcards. Personal companion memory stays separate from work-task context.
 
-It's positioned deliberately as a **personal Claude Code companion × depth ×
-non-technical owner** — not a multi-IM, multi-agent broker. If you want
-breadth, see [`cc-connect`](https://github.com/chenhg5/cc-connect). If you
-want a single, deep WeChat × Claude Code experience that feels like a
-relationship, this is it.
+Projects have separate task records, drafts, conversations and artifacts. Conflicting work in the same directory queues; explicit Claude ↔ Codex handoffs preserve the selected context and result versions. WeChat can create tasks in known projects, supply input, handle requests, opt into notifications and retrieve saved results.
+
+**Current scope:** Claude/Codex use specialized native adapters. The configured API task adapter handles text/image materials and new text artifacts with a narrower tool set. Existing Cursor/agy chat connections are **not** yet admitted as managed workbench executors. CC does not claim complete feature parity with every CLI or app, or live-process transfer between computers.
+
+> This describes the current **dev branch**, not a newly released installer. Start with the [workspace guide and capability boundaries](docs/cc-workbench.md), the [reference projects and sources](docs/research/2026-09-14-cc-agent-workbench-references.md), and the [batch delivery record](docs/superpowers/reports/2026-09-14-cc-workbench-wrapup.md).
+
+Task records are stored locally. Material needed for a task is sent to the AI service you select; local storage does not mean local inference.
 
 <p align="center">
   <img alt="Dashboard sessions detail — WeChat-replica chat in iPhone 17 Pro frame, with file + image + quote-reply" src="docs/screenshots/chat-detail.png" width="380">
@@ -56,7 +47,7 @@ relationship, this is it.
 |---|---|---|
 | Who | Anyone, including non-technical users | You're comfortable with bun + git |
 | What you get | A 4-step wizard (env check → agent → QR → service install with live `(M/N) <step>` progress) + a dashboard with bound accounts, memory, sessions (with mode dropdown to switch chat mode from console), logs, one-click upgrades | Same daemon, no GUI |
-| Path | Download a bundle from the [latest release](https://github.com/ggshr9/wechat-cc/releases/latest) | `git clone` + `bun install` + `wechat-cc setup` |
+| Path | Download a bundle from the [latest release](https://github.com/tendhearth/wechat-cc/releases/latest) | `git clone` + `bun install` + `wechat-cc setup` |
 | Caveats | Bundles are unsigned (Apple Dev ID + Windows EV cert not yet provisioned) — first launch needs a one-time OS-warning bypass. macOS Intel not supported (Apple Silicon only). The desktop app shells out to the source-mode CLI, so you also need the source somewhere (or set `WECHAT_CC_ROOT`). | Works everywhere bun runs. |
 
 Most people: grab the desktop bundle. Read on for the terminal path.
@@ -78,7 +69,7 @@ and [Claude Code CLI](https://github.com/anthropics/claude-code).
 ```bash
 # Linux / macOS
 curl -fsSL https://bun.sh/install | bash    # if needed
-git clone https://github.com/ggshr9/wechat-cc.git ~/.claude/plugins/local/wechat
+git clone https://github.com/tendhearth/wechat-cc.git ~/.claude/plugins/local/wechat
 cd ~/.claude/plugins/local/wechat && bun install && bun link
 wechat-cc setup       # scan the QR on your phone
 wechat-cc run         # start the daemon
@@ -89,7 +80,7 @@ wechat-cc run         # start the daemon
 irm bun.sh/install.ps1 | iex                # if needed
 winget install Git.Git                       # if needed
 # Reopen the terminal so the new PATH takes effect.
-git clone https://github.com/ggshr9/wechat-cc.git "$env:USERPROFILE\.claude\plugins\local\wechat"
+git clone https://github.com/tendhearth/wechat-cc.git "$env:USERPROFILE\.claude\plugins\local\wechat"
 cd "$env:USERPROFILE\.claude\plugins\local\wechat"
 bun install ; bun link
 wechat-cc setup ; wechat-cc run
@@ -105,7 +96,7 @@ replies back into the chat.
 <details>
 <summary><b>Quick start (desktop bundle)</b></summary>
 
-Download the bundle for your platform from the [latest release](https://github.com/ggshr9/wechat-cc/releases/latest):
+Download the bundle for your platform from the [latest release](https://github.com/tendhearth/wechat-cc/releases/latest):
 
 | Platform | File | First-launch quirk |
 |:---|:---|:---|
@@ -117,7 +108,7 @@ The desktop app shells out to the `wechat-cc` CLI under the hood, so you
 also need the source available somewhere:
 
 ```bash
-git clone https://github.com/ggshr9/wechat-cc.git ~/.local/share/wechat-cc
+git clone https://github.com/tendhearth/wechat-cc.git ~/.local/share/wechat-cc
 cd ~/.local/share/wechat-cc && bun install
 ```
 
@@ -684,6 +675,8 @@ entry under [Known limitations](#known-limitations).
 
 ### OpenAI-compatible provider (opt-in)
 
+This section describes the **companion chat** adapter. The [managed workbench API adapter](docs/cc-workbench.md#api-任务执行者) uses separate tools, task approval and persisted transcripts; it does not inherit the shell or companion MCP described below.
+
 `openai` is a fourth provider id that talks to any **OpenAI-compatible
 chat-completions API** (DeepSeek, Kimi, Qwen, GLM, OpenRouter, local Ollama,
 …) via the [Vercel AI SDK](https://sdk.vercel.ai/). Unlike claude/codex/cursor
@@ -1012,26 +1005,21 @@ the OS package manager.
 
 ## Versions
 
-- **CLI / daemon**: see [`package.json`](./package.json). Latest tagged release is
-  **v0.6.3** — the one-brain-many-hands (乙) delegation system + work/life
-  memory synthesis (see [`docs/releases/2026-06-16-v0.6.3.md`](./docs/releases/2026-06-16-v0.6.3.md)).
-  Previous: [v0.6.2 — multi-chat navigation + memory-profile overview](./docs/releases/2026-06-04-v0.6.2.md).
-- **Desktop bundle**: latest signed release is
-  [`desktop-v0.6.3`](https://github.com/ggshr9/wechat-cc/releases/tag/desktop-v0.6.3).
-- **Per-version release notes**: [`docs/releases/`](./docs/releases/)
-- **Architecture / design specs**: [`docs/specs/`](./docs/specs/)
-- **Roadmap**: [`docs/rfc/02-post-v1.1-roadmap.md`](./docs/rfc/02-post-v1.1-roadmap.md)
+- **Current source versions:** [CLI/daemon package](package.json) and [desktop bundle configuration](apps/desktop/src-tauri/tauri.conf.json). This batch does not bump or publish a release.
+- **Installers and release status:** [GitHub Releases](https://github.com/tendhearth/wechat-cc/releases). The dev workbench described above may be newer than the latest installer.
+- **Release notes:** [docs/releases](docs/releases/); the [next desktop draft](docs/releases/desktop-v1.6.7.md) is not a release announcement.
+- **Current architecture and delivery evidence:** [architecture](docs/architecture.md), [workbench guide](docs/cc-workbench.md).
 
 ---
 
 ## Contributing
 
-Issues + PRs welcome at [github.com/ggshr9/wechat-cc](https://github.com/ggshr9/wechat-cc/issues).
+Issues + PRs welcome at [github.com/tendhearth/wechat-cc](https://github.com/tendhearth/wechat-cc/issues).
 
 ```bash
 bun install
-bun x vitest run        # full test suite (currently 684 tests)
-bun x tsc --noEmit      # type check
+bun --bun vitest run    # full test suite
+bun run typecheck      # type check
 ```
 
 The `apps/desktop/` directory has a Tauri 2 GUI. One dev server backs every

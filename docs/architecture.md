@@ -1,8 +1,10 @@
 # wechat-cc — System Architecture
 
-> Single source of truth for the whole system. Synthesized 2026-07-11 from an evidence-based
-> sweep of all five layers (file:line anchors throughout). Before this, the architecture lived
-> only in code + memory + ~40 per-feature specs; this doc is the map. Keep it current.
+> Companion architecture baseline: 2026-07-11, with dated amendments below. The managed
+> workbench path was added on 2026-09-14. Older line anchors and provider tables describe the
+> companion path and must not be treated as the current workbench capability contract.
+> Start with [the current product/capability guide](cc-workbench.md) and
+> [batch evidence](superpowers/reports/2026-09-14-cc-workbench-wrapup.md).
 
 ---
 
@@ -11,7 +13,8 @@
 A **companion** that reaches you where you already are (WeChat), runs its own agent loop, and
 keeps your data on your machine. The moat is **real-chat-access × own-loop × data-sovereignty** —
 not "memory" (that's commoditized). Everything below serves that: local-first, self-hosted, the
-knowledge built from your own decrypted chat history, never leaving the box.
+knowledge built from your own decrypted chat history and persisted locally. Selected context
+can be sent to the configured AI service for inference; local persistence is not an offline guarantee.
 
 Two provider families express the strategy: **wrap** an existing subscription harness for raw
 capability (Claude Code, Codex), **self-build** the loop for the companion/differentiation tier
@@ -20,7 +23,46 @@ limits (real voice conversation); WeChat is the funnel.
 
 ---
 
-## 1. One-screen overview
+## 1. Managed workbench and companion paths
+
+The workbench manages project tasks separately from companion conversations. Its identity is
+`task → run → request / event / artifact version`; the chat ID is an authorized entry, not the
+identity of the task. Desktop and WeChat call the same service:
+
+```text
+Desktop workbench ─┐
+WeChat task commands ─┤
+                     ▼
+        workbench service + persistent task journal
+          → project reservation / conflict queue
+          → Claude native SDK | Codex app-server | bounded API task loop
+          → exact permissions, questions, input receipts, background lifecycle
+          → versioned results / attachments / explicit handoff
+                     ▼
+        desktop subscriptions + owner-scoped WeChat delivery
+```
+
+The implementation starts at `src/daemon/bootstrap/wire-workbench.ts` and
+`src/core/workbench/service.ts`. Executors are admitted through the explicit contract in
+`executor-capabilities.ts`; ordinary companion providers do not become workbench executors
+merely by being installed. API registration in `workbench-api.ts` uses a separate file-tool
+and persistent-transcript implementation, without companion shell or private-memory tools.
+
+Different projects may run concurrently. Conflicting directories remain reserved until
+managed resources are confirmed closed; asking to stop does not prove process exit. CC does
+not create isolated Git worktrees automatically. Native continuation preserves an executor's
+session identity; API continuation uses CC-owned tool transcripts. Handoffs carry selected,
+recorded context and result versions rather than sharing hidden runtime state.
+
+WeChat commands address an exact task/request/version and check ownership. Completion notices
+and requested artifacts use durable delivery records; uncertain sends do not silently replay.
+These records are marked as workbench sources, separate from personal companion-memory input.
+The new WeChat flow has isolated HTTP evidence, not real-account acceptance in this batch.
+
+See [capability boundaries](cc-workbench.md), [reference projects and pinned sources](research/2026-09-14-cc-agent-workbench-references.md),
+and the [API task contract](superpowers/specs/2026-09-14-cc-api-task-executor.md).
+
+### Companion path (historical overview)
 
 ```
                  ┌───────────────────────── channels (turn entries) ─────────────────────────┐

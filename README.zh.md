@@ -1,16 +1,15 @@
 <h1 align="center">wechat-cc</h1>
 
 <p align="center">
-  <b>用微信找到电脑上的 Claude Code，让它也能找你回来。</b>
+  <b>陪你生活，也陪你做事。用一个 CC 管理 Claude、Codex 和 API 模型，桌面与微信接着做。</b>
 </p>
 
 <p align="center">
-  <img alt="version"  src="https://img.shields.io/badge/cli-v0.6.3-blue">
-  <img alt="desktop"  src="https://img.shields.io/badge/desktop-v0.6.3-blue">
+  <a href="https://github.com/tendhearth/wechat-cc/releases"><img alt="release" src="https://img.shields.io/github/v/release/tendhearth/wechat-cc"></a>
   <img alt="platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey">
   <img alt="runtime"  src="https://img.shields.io/badge/runtime-Bun-black">
   <img alt="license"  src="https://img.shields.io/badge/license-MIT-green">
-  <a href="https://github.com/ggshr9/wechat-cc/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ggshr9/wechat-cc/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/tendhearth/wechat-cc/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tendhearth/wechat-cc/actions/workflows/ci.yml/badge.svg"></a>
 </p>
 
 <p align="center">
@@ -21,13 +20,19 @@
 
 ## 这是什么
 
-`wechat-cc` 是一个 Bun daemon，把你的**微信**账号和电脑上跑的 **Claude Code** 会话桥起来。装好之后：
+**CC 是一个有陪伴感的 AI，也是管理多种执行者的统一工作入口。** 它把 Claude Code、Codex 和已配置的 API 模型接到同一个桌面工作台；离开电脑后，可以从微信继续同一件事。
 
-- 手机微信发文字 / 图片 / 文件 / 语音——电脑上的 Claude 会收到、调工具、回到聊天里
-- 离开电脑也能继续推进长任务——锁屏出门，从手机继续
-- Claude **可以反过来找你**，不只是被动回复。Companion 层 + v0.4 dashboard 把它变成一个长期 AI 陪伴：会写观察、会触发里程碑、会决定什么时候该 push
+- **此刻**：看看 CC 正在做什么，留一点安静相处的空间。
+- **一起做**：交代任务、补充要求、处理权限和问题，查看完整对话与成果，不用来回打开多个 agent 窗口。
+- **回忆**：收好过去的片段、画作、日记和明信片。陪伴记忆与工作任务上下文分开。
 
-定位故意挑窄：**个人 Claude Code 伴侣 × 深度 × 小白**——不追多 IM 多 agent 的广度赛道。要广度去看 [`cc-connect`](https://github.com/chenhg5/cc-connect)。要一段深度的、像关系的微信 × Claude Code 体验，这个对。
+多个项目保留各自的任务、草稿、对话和成果；同目录的冲突任务排队。需要另一位执行者检查时，明确交接选定的上下文和成果版本，再把意见交回原任务。微信也能在已知项目里新建任务、补充要求、处理请求、订阅提醒和获取保存的成果。
+
+**当前边界：** Claude/Codex 走专用原生适配器；API 任务执行者用于文字/图片材料与新的文本成果，工具范围更小。已有 Cursor/agy 聊天接入，目前还不能当作受管工作执行者。这里不承诺完整覆盖各家 CLI/App，也不把本机会话恢复称为跨电脑接管。
+
+> 以上描述的是 **dev 分支当前能力**，不是已经发布的新安装包。先看[工作台使用与能力边界](docs/cc-workbench.md)、[对标项目与原始来源](docs/research/2026-09-14-cc-agent-workbench-references.md)、[本批交付记录](docs/superpowers/reports/2026-09-14-cc-workbench-wrapup.md)。
+
+任务记录保存在本机；执行所需材料会发送给你选择的 AI 服务。本地保存不代表模型在本地运行。
 
 <p align="center">
   <img alt="dashboard sessions detail — WeChat-replica chat in iPhone 17 Pro frame, with file + image + quote-reply" src="docs/screenshots/chat-detail.png" width="380">
@@ -42,7 +47,7 @@
 |---|---|---|
 | 适合谁 | 任何人，包括非技术 | 你 OK 装 bun + git |
 | 拿到什么 | 4 步向导（环境检查 → 选 agent → 扫码 → 装服务）+ dashboard：绑定账号 / 记忆 / 会话 / 日志 / 一键升级 | 同样的 daemon，没有 GUI |
-| 怎么走 | 从 [最新 release](https://github.com/ggshr9/wechat-cc/releases/latest) 下 bundle | `git clone` + `bun install` + `wechat-cc setup` |
+| 怎么走 | 从 [最新 release](https://github.com/tendhearth/wechat-cc/releases/latest) 下 bundle | `git clone` + `bun install` + `wechat-cc setup` |
 | 注意点 | bundle 没签名（Apple Dev ID + Windows EV 证书未配齐）—— 第一次开需要绕一次 OS 警告。Intel Mac 暂不支持（仅 Apple Silicon）。桌面 app 是个壳，调底层的 source-mode CLI，所以源码也得装一份（或设 `WECHAT_CC_ROOT`）| Bun 跑得起来的地方都行 |
 
 大多数人：抓桌面 bundle。下面是终端路径。
@@ -60,7 +65,7 @@
 ```bash
 # Linux / macOS
 curl -fsSL https://bun.sh/install | bash    # 没装 bun 时
-git clone https://github.com/ggshr9/wechat-cc.git ~/.claude/plugins/local/wechat
+git clone https://github.com/tendhearth/wechat-cc.git ~/.claude/plugins/local/wechat
 cd ~/.claude/plugins/local/wechat && bun install && bun link
 wechat-cc setup       # 手机微信扫码
 wechat-cc run         # 启动 daemon
@@ -71,7 +76,7 @@ wechat-cc run         # 启动 daemon
 irm bun.sh/install.ps1 | iex                # 没装 bun 时
 winget install Git.Git                       # 没装 git 时
 # 装完 bun / git 必须重开终端，PATH 才生效。
-git clone https://github.com/ggshr9/wechat-cc.git "$env:USERPROFILE\.claude\plugins\local\wechat"
+git clone https://github.com/tendhearth/wechat-cc.git "$env:USERPROFILE\.claude\plugins\local\wechat"
 cd "$env:USERPROFILE\.claude\plugins\local\wechat"
 bun install ; bun link
 wechat-cc setup ; wechat-cc run
@@ -84,7 +89,7 @@ wechat-cc setup ; wechat-cc run
 <details>
 <summary><b>桌面 bundle 快速开始</b></summary>
 
-从 [最新 release](https://github.com/ggshr9/wechat-cc/releases/latest) 下你平台的包：
+从 [最新 release](https://github.com/tendhearth/wechat-cc/releases/latest) 下你平台的包：
 
 | 平台 | 文件 | 第一次开 |
 |:---|:---|:---|
@@ -95,7 +100,7 @@ wechat-cc setup ; wechat-cc run
 桌面 app 调用底层 `wechat-cc` CLI，所以源码也得放一份：
 
 ```bash
-git clone https://github.com/ggshr9/wechat-cc.git ~/.local/share/wechat-cc
+git clone https://github.com/tendhearth/wechat-cc.git ~/.local/share/wechat-cc
 cd ~/.local/share/wechat-cc && bun install
 ```
 
@@ -424,24 +429,21 @@ Remove-Item "$env:USERPROFILE\.claude\channels\wechat" -Recurse -Force
 
 ## 版本
 
-- **CLI / daemon**: 1.2.0 —— 见 [`package.json`](./package.json)
-- **桌面 bundle**: 最新签名 release 是
-  [`desktop-v0.4.0`](https://github.com/ggshr9/wechat-cc/releases/tag/desktop-v0.4.0)。
-  v0.4 / v0.4.1 功能（双面镜子 dashboard、真 introspect SDK、per-project 摘要、7-day-streak）已经在 `master`，下次桌面 bundle 出版时一起 ship
-- **每个版本的 release notes**: [`docs/releases/`](./docs/releases/)
-- **架构 / 设计 spec**: [`docs/specs/`](./docs/specs/)
-- **路线图**: [`docs/rfc/02-post-v1.1-roadmap.md`](./docs/rfc/02-post-v1.1-roadmap.md)
+- **源码版本：** 见 [CLI/daemon package](package.json) 与[桌面打包配置](apps/desktop/src-tauri/tauri.conf.json)。本批不修改版本号，也不发布安装包。
+- **安装包与发布状态：** 见 [GitHub Releases](https://github.com/tendhearth/wechat-cc/releases)。上文 dev 工作台能力可能新于最新安装包。
+- **版本记录：** [docs/releases](docs/releases/)；[下一版桌面草稿](docs/releases/desktop-v1.6.7.md)不是发布公告。
+- **当前架构与交付证据：** [架构说明](docs/architecture.md)、[工作台导览](docs/cc-workbench.md)。
 
 ---
 
 ## 参与贡献
 
-Issues + PRs 欢迎： [github.com/ggshr9/wechat-cc](https://github.com/ggshr9/wechat-cc/issues)。
+Issues + PRs 欢迎： [github.com/tendhearth/wechat-cc](https://github.com/tendhearth/wechat-cc/issues)。
 
 ```bash
 bun install
-bun x vitest run        # 完整测试套件 (当前 684 测试)
-bun x tsc --noEmit      # 类型检查
+bun --bun vitest run    # 完整测试套件
+bun run typecheck      # 类型检查
 ```
 
 `apps/desktop/` 是 Tauri 2 GUI。四个模式共用同一个 dev server（[`apps/desktop/test-shim.ts`](./apps/desktop/test-shim.ts)），都带热重载：
