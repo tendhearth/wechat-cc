@@ -1,3 +1,4 @@
+import { pageStatusHtml, showPageStatus } from "./page-status.js"
 import { ccPageArt } from "../cc-page-art.js"
 // @ts-check
 /// <reference lib="dom" />
@@ -1224,7 +1225,7 @@ export async function loadMemoryTopZone(deps) {
   const chatId = await currentChatId(deps)
   if (!chatId) {
     const root = document.getElementById("memory-profile-content")
-    if (root) root.innerHTML = '<div class="cc-page-status"><h2>还没有可用的会话</h2><p>先在首页连接微信，与 CC 聊几句，再回来查看记忆。</p></div>'
+    showPageStatus(root, { title: "还没有可用的会话", detail: "先在首页连接微信，与 CC 聊几句，再回来查看记忆。", actionLabel: "重新检查" }, () => loadMemoryTopZone(deps))
     return
   }
 
@@ -1251,14 +1252,14 @@ export async function loadMemoryTopZone(deps) {
     renderMemoryProfileOverview(deps)
     if (observations.length === 0) {
       // Keep design-language §1.3 #5 — empty states have narrative, not "暂无数据"
-      obsBox.innerHTML = `<p class="empty-state">Claude 还没注意到什么——这是它的安静日子。</p>`
+      obsBox.innerHTML = pageStatusHtml({ title: "还没有新的观察", detail: "随着你们的聊天，CC 会把值得记住的事情整理在这里。" })
     } else {
       obsBox.innerHTML = observations.map(observationRow).join("")
     }
     msBox.innerHTML = (msResp.milestones || []).slice(-2).map(milestoneCard).join("")
   } catch (err) {
     const root = document.getElementById("memory-profile-content")
-    if (root) root.innerHTML = '<div class="cc-page-status" role="status"><h2>暂时无法读取记忆</h2><p>已有记忆不会因此丢失。请到首页检查连接，再重新打开记忆页。</p></div>'
+    showPageStatus(root, { title: "暂时无法读取记忆", detail: "已有记忆不会因此丢失。请检查连接后重试。", actionLabel: "重新加载" }, () => loadMemoryTopZone(deps))
     console.error("memory top zone load failed", err)
   }
 }
@@ -1298,14 +1299,14 @@ export async function loadMemoryDecisions(deps) {
 export async function loadProjectMemory(deps) {
   const box = document.getElementById("memory-projects")
   if (!box) return
-  box.innerHTML = `<p class="empty-state">读取本机项目记忆中…</p>`
+  box.innerHTML = pageStatusHtml({ title: "正在读取项目记忆" })
   let resp
   try {
     resp = /** @type {{ ok?: boolean, projects?: Array<{ name: string, index: string | null, files: Array<{ path: string, content: string }> }> }} */ (
       await deps.invoke("wechat_cli_json", { args: ["memory", "projects", "--json"] })
     )
   } catch (err) {
-    box.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(deps.formatInvokeError(err))}</p>`
+    showPageStatus(box, { title: "暂时无法读取项目记忆", detail: "请稍后重试。", actionLabel: "重新加载" }, () => loadProjectMemory(deps))
     return
   }
   const projects = (resp && resp.projects) || []

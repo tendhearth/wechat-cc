@@ -78,3 +78,15 @@
 .cc-portrait-placeholder svg { width: 32px; height: 32px; color: var(--cc-muted); }
 .profile-panel h2 { border: 0; padding: 8px 12px; min-height: 40px; top: -22px; background: var(--cc-surface); border-radius: 8px; }
 .memory-profile-tags span { border-image: none; border: 1px solid var(--cc-line); border-radius: 12px; padding: 6px 16px; background: var(--cc-surface-soft); }
+
+/* Calm, shared recovery states and a single primary todo action. */
+.cc-page-status { max-width: 680px; box-sizing: border-box; }
+.cc-page-status h2 { font-size: 18px; line-height: 1.4; }
+.cc-page-status p { max-width: 52ch; }
+.cc-page-status button:disabled { opacity: .55; cursor: wait; }
+.todo-more summary { padding: 7px 10px; color: var(--cc-muted); cursor: pointer; border-radius: 8px; font-size: 13px; }
+.todo-more summary:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 3px; }
+.todo-more-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 8px; }
+.todo-actions { align-items: flex-start; flex-wrap: wrap; }
+.todo-more .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 640px) { .todo-item { flex-wrap: wrap; } .todo-actions { width: 100%; } }
