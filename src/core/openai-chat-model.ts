@@ -6,6 +6,7 @@ import {
   type LanguageModel,
 } from 'ai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
+import { makeThinkFilter } from './think-tags'
 
 // Opaque re-export: the rest of the provider treats ChatMessage as a black box
 // it only ever appends. Keeps AI SDK's ModelMessage type from leaking outward.
@@ -71,11 +72,14 @@ export function createChatModelFromLanguageModel(model: LanguageModel, opts: { e
       let streamError: unknown
 
       async function* deltas(): AsyncIterable<TurnDelta> {
+        // 内联在 content 里的思维链不发给主人 —— 见 think-tags.ts。
+        const think = makeThinkFilter()
         for await (const part of result.fullStream) {
           if (part.type === 'text-delta') {
             // v5 fullStream text-delta carries `.text` (confirmed against the
             // installed `ai@5.0.210` types: TextStreamPart's text-delta variant).
-            yield { kind: 'text', text: part.text }
+            const text = think.push(part.text)
+            if (text) yield { kind: 'text', text }
           } else if (part.type === 'tool-call') {
             // v5 tool-call parts carry toolCallId/toolName/input (TypedToolCall).
             toolCalls.push({ id: part.toolCallId, name: part.toolName, input: part.input })
@@ -86,6 +90,8 @@ export function createChatModelFromLanguageModel(model: LanguageModel, opts: { e
           // text-start/end, finish, step markers, etc. are ignored — callers
           // drive their loop off `toolCalls` / the finished text, not these.
         }
+        const tail = think.end()
+        if (tail) yield { kind: 'text', text: tail }
       }
 
       const sharedDeltas = deltas()
@@ -132,7 +138,9 @@ export function createChatModelFromLanguageModel(model: LanguageModel, opts: { e
         }
       }
       try {
-        return await result.text
+        // 一次性调用也要剥 —— cheapEval / 判断题直接拿这个字符串比对。
+        const think = makeThinkFilter()
+        return think.push(await result.text) + think.end()
       } catch (err) {
         throw streamError ?? err
       }

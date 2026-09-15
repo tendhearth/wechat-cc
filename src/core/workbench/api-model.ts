@@ -1,4 +1,5 @@
 import {createOpenAICompatible} from '@ai-sdk/openai-compatible'
+import {makeThinkFilter} from '../think-tags'
 import {jsonSchema,streamText,tool,type LanguageModel,type ModelMessage} from 'ai'
 
 export type ChatMessage=ModelMessage
@@ -47,10 +48,13 @@ export function createApiModel(options:APIModelOptions,languageModelFactory?:Lan
         consumed=true
         const toolCalls:{id:string;name:string;input:unknown}[]=[]
         let finishReason:string|undefined,responseModel:string|null=null,complete=false
+        // 内联在 content 里的思维链不给主人看 —— 见 think-tags.ts。
+        const think=makeThinkFilter()
         try{
           for await(const part of result.fullStream){
             if(part.type==='text-delta'){
-              yield{kind:'text',text:part.text}
+              const text=think.push(part.text)
+              if(text)yield{kind:'text',text}
             }else if(part.type==='tool-call'){
               const call={id:part.toolCallId,name:part.toolName,input:part.input}
               toolCalls.push(call)
@@ -67,6 +71,8 @@ export function createApiModel(options:APIModelOptions,languageModelFactory?:Lan
             }
             // Reasoning and provider-only stream parts are intentionally private.
           }
+          const tail=think.end()
+          if(tail)yield{kind:'text',text:tail}
           if(!finishReason)throw Error('missing_finish_reason')
           const response=await responsePromise
           complete=true

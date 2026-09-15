@@ -41,6 +41,27 @@ describe('APIModel transport',()=>{
     expect(factory).toHaveBeenCalledOnce()
   })
 
+  it('hides an inline think block that the endpoint streams inside content',async()=>{
+    // 2026-09-14 真机:某网关的 DeepSeek 不走 reasoning_content,把思维链内联进
+    // content,标签还被切在 chunk 边界上 —— 主人看到的回复曾经就是 `<think>`。
+    const model=streamModel([
+      {type:'text-start',id:'t1'},
+      {type:'text-delta',id:'t1',delta:'<th'},
+      {type:'text-delta',id:'t1',delta:'ink>\nWe need answer only "ready".\n</thi'},
+      {type:'text-delta',id:'t1',delta:'nk>\nrea'},
+      {type:'text-delta',id:'t1',delta:'dy'},
+      {type:'text-end',id:'t1'},
+      {type:'finish',finishReason:'stop',usage:{inputTokens:1,outputTokens:2,totalTokens:3}},
+    ])
+    const api=createApiModel({baseURL:'http://unused.test/v1',apiKey:'secret',model:'fixture'},vi.fn(()=>model as LanguageModel))
+    const turn=api.stream([user('say ready')],[],new AbortController().signal)
+    const seen=[];for await(const delta of turn.deltas)seen.push(delta)
+    expect(seen.map(d=>d.kind==='text'?d.text:'').join('')).toBe('ready')
+    expect(JSON.stringify(seen)).not.toContain('think')
+    // 协议历史照原样保留 —— 这次修的是主人看见什么,不是回送给模型什么。
+    expect(JSON.stringify((await turn.finished).messages)).toContain('</think>')
+  })
+
   it('propagates the exact abort signal and rejects transport errors through iteration and finished',async()=>{
     const cause=Object.assign(Error('gateway failed'),{statusCode:502}),capture:Record<string,unknown>={};let attempts=0
     const model=new MockLanguageModelV2({doStream:async options=>{attempts++;Object.assign(capture,options);throw cause}})

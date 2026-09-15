@@ -32,10 +32,23 @@ describe('ChatModelClient adapter', () => {
     expect(fin.messages.length).toBeGreaterThan(0)
   })
 
+  it('hides an inline think block streamed inside content (real gateway DeepSeek, tags split across deltas)', async () => {
+    const client = createChatModelFromLanguageModel(textModel(['<th', 'ink>\nWe need answer only "ready".\n</thi', 'nk>\nrea', 'dy']))
+    const turn = client.streamTurn([client.userMessage('say ready')], [])
+    const seen: string[] = []
+    for await (const d of turn.deltas) if (d.kind === 'text') seen.push(d.text)
+    expect(seen.join('')).toBe('ready')
+  })
+
   it('generate() returns the concatenated text for a one-shot call', async () => {
     const client = createChatModelFromLanguageModel(textModel(['42']))
     const out = await client.generate([client.userMessage('answer?')])
     expect(out).toBe('42')
+  })
+
+  it('generate() also hides an inline think block (cheapEval reads this string directly)', async () => {
+    const client = createChatModelFromLanguageModel(textModel(['<think>\nthe answer is yes\n</think>\n\nyes']))
+    expect(await client.generate([client.userMessage('yes or no?')])).toBe('yes')
   })
 
   it('surfaces a tool call (schema-only tool, no execute) as a tool_call delta', async () => {
