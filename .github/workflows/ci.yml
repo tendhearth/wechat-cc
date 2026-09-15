@@ -62,7 +62,11 @@ jobs:
         run: bun run depcheck
 
       - name: Build cli.ts
-        run: bun build cli.ts --target=node --outfile=dist/cli.js
+        # --outdir, not --outfile: the workbench's native fd helpers import
+        # `*-native.c` as file assets, so this entry emits the bundle plus two
+        # assets and a single output file is impossible by design. The release
+        # artifact is `bun build --compile` (desktop.yml), which embeds them.
+        run: bun build cli.ts --target=node --outdir dist
 
       - name: Build docs.ts
         run: bun build docs.ts --target=node --outfile=dist/docs.js

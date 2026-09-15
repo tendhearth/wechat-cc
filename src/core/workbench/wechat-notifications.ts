@@ -66,56 +66,7 @@ const publicNotice=({nextAttemptAt:_nextAttemptAt,deferCount:_deferCount,...row}
 const publicSubscription=(row:StoredSubscription):WechatNotificationSubscription=>({...row,enabled:row.enabled===1})
 const identity=(input:WechatNotificationInput & {subscriptionGeneration:number})=>`wn-${createHash('sha256').update(JSON.stringify([input.taskId,input.runId,input.kind,input.requestId??null,input.subscriptionGeneration])).digest('hex').slice(0,32)}`
 
-export function initializeWechatNotificationSchema(db:Database):void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS workbench_wechat_subscriptions (
-      task_id TEXT PRIMARY KEY NOT NULL REFERENCES workbench_tasks(id) ON DELETE CASCADE,
-      owner_chat_id TEXT NOT NULL,
-      account_id TEXT NOT NULL,
-      enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
-      generation INTEGER NOT NULL CHECK(generation >= 1),
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    ) STRICT;
-    CREATE TABLE IF NOT EXISTS workbench_wechat_notices (
-      id TEXT PRIMARY KEY NOT NULL,
-      task_id TEXT NOT NULL REFERENCES workbench_tasks(id) ON DELETE CASCADE,
-      run_id TEXT NOT NULL,
-      owner_chat_id TEXT NOT NULL,
-      account_id TEXT NOT NULL,
-      subscription_generation INTEGER NOT NULL CHECK(subscription_generation >= 1),
-      kind TEXT NOT NULL CHECK(kind IN ('permission','question','completed','failed','interrupted','cancelled')),
-      request_id TEXT,
-      text TEXT NOT NULL CHECK(length(text) BETWEEN 1 AND 4000),
-      status TEXT NOT NULL CHECK(status IN ('pending','sending','accepted','unknown','suppressed')),
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      reason TEXT,
-      next_attempt_at INTEGER,
-      defer_count INTEGER NOT NULL DEFAULT 0,
-      UNIQUE(task_id,run_id,kind,request_id,subscription_generation)
-    ) STRICT;
-    CREATE INDEX IF NOT EXISTS workbench_wechat_notices_pending ON workbench_wechat_notices(status,next_attempt_at,created_at);
-    CREATE INDEX IF NOT EXISTS workbench_wechat_notices_task ON workbench_wechat_notices(task_id,created_at,id);
-    CREATE TABLE IF NOT EXISTS workbench_wechat_notice_intents (
-      id TEXT PRIMARY KEY NOT NULL,
-      notice_id TEXT NOT NULL UNIQUE,
-      task_id TEXT NOT NULL REFERENCES workbench_tasks(id) ON DELETE CASCADE,
-      run_id TEXT NOT NULL,
-      owner_chat_id TEXT NOT NULL,
-      account_id TEXT NOT NULL,
-      subscription_generation INTEGER NOT NULL CHECK(subscription_generation >= 1),
-      kind TEXT NOT NULL CHECK(kind IN ('permission','question','completed','failed','interrupted','cancelled')),
-      request_id TEXT,
-      text TEXT NOT NULL CHECK(length(text) BETWEEN 1 AND 4000),
-      status TEXT NOT NULL CHECK(status IN ('pending','materialized','suppressed')),
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      reason TEXT
-    ) STRICT;
-    CREATE INDEX IF NOT EXISTS workbench_wechat_notice_intents_pending ON workbench_wechat_notice_intents(status,created_at,id);
-  `)
-}
+export {initializeWechatNotificationSchema} from '../../lib/db'
 
 export function makeWechatNotificationStore(db:Database){
   const readNotice=(id:string)=>db.query<StoredNotice,[string]>(`${NOTICE_SELECT} WHERE id=?`).get(id)

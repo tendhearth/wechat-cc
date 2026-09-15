@@ -9,22 +9,7 @@ const MAX_MESSAGES=10_000,MAX_BYTES=16*1024*1024
 const SELECT=`SELECT id,revision,messages_json AS messagesJson,state,task_id AS taskId,owner,path,directory_identity AS directoryIdentity,config_hash AS configHash FROM workbench_api_sessions WHERE id=?`
 type Row={id:string;revision:number;messagesJson:string;state:string;taskId:string;owner:string;path:string;directoryIdentity:string;configHash:string}
 
-export function initializeApiSessionSchema(db:Db):void{
-  db.exec(`CREATE TABLE IF NOT EXISTS workbench_api_sessions(
-    id TEXT PRIMARY KEY NOT NULL,
-    task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
-    owner TEXT NOT NULL,
-    path TEXT NOT NULL,
-    directory_identity TEXT NOT NULL,
-    config_hash TEXT NOT NULL,
-    revision INTEGER NOT NULL CHECK(revision>=0),
-    messages_json TEXT NOT NULL,
-    state TEXT NOT NULL CHECK(state IN ('active','ready','interrupted')),
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  ) STRICT;
-  CREATE INDEX IF NOT EXISTS idx_workbench_api_sessions_task ON workbench_api_sessions(task_id);`)
-}
+export {initializeApiSessionSchema} from '../../lib/db'
 
 const plain=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value)&&Object.getPrototypeOf(value)===Object.prototype
 function jsonValue(value:unknown,seen:Set<object>):boolean{

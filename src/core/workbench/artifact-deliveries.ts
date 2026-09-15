@@ -19,26 +19,7 @@ const SELECT=`SELECT id,command_hash AS commandHash,task_id AS taskId,artifact_i
 const IMMUTABLE:Array<keyof Omit<ArtifactDeliveryReceipt,'status'|'mediaItemJson'|'reason'|'createdAt'|'updatedAt'>>=
   ['id','commandHash','taskId','artifactId','artifactSha256','name','mime','size','ownerChatId','accountId']
 
-export function initializeArtifactDeliverySchema(db:Db):void {
-  db.exec(`CREATE TABLE IF NOT EXISTS workbench_artifact_deliveries (
-    id TEXT PRIMARY KEY,
-    command_hash TEXT NOT NULL,
-    task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
-    artifact_id TEXT NOT NULL REFERENCES workbench_artifacts(id),
-    artifact_sha256 TEXT NOT NULL,
-    name TEXT NOT NULL,
-    mime TEXT NOT NULL,
-    size INTEGER NOT NULL CHECK(size>=0 AND size<=8388608),
-    owner_chat_id TEXT NOT NULL,
-    account_id TEXT NOT NULL,
-    status TEXT NOT NULL CHECK(status IN ('prepared','uploading','uploaded','sending','accepted','unknown','blocked')),
-    media_item_json TEXT,
-    reason TEXT,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  ) STRICT;
-  CREATE INDEX IF NOT EXISTS workbench_artifact_deliveries_task ON workbench_artifact_deliveries(task_id,created_at);`)
-}
+export {initializeArtifactDeliverySchema} from '../../lib/db'
 
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value)
 
