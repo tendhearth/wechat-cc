@@ -1,0 +1,11 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><base href="../../src/"><title>CC · 记忆维护与设置</title><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="cc-surfaces.css"><style>body{padding:28px;overflow:auto}main{max-width:1100px;margin:auto}h1{font-size:26px}.note{color:var(--cc-muted);line-height:1.6}.preview-grid{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:24px;margin-top:24px}.settings-drawer{position:static;transform:none;visibility:visible;opacity:1;width:100%;height:auto;max-height:none;box-shadow:none;border:1px solid var(--cc-line);border-radius:16px;z-index:auto;pointer-events:auto}.drawer-body{overflow:visible}.memory-preview{background:var(--cc-surface);padding:20px;border:1px solid var(--cc-line);border-radius:16px}.memory-maintenance{grid-template-columns:1fr}.memory-preview button{cursor:default}@media(max-width:800px){.preview-grid{grid-template-columns:1fr}}</style></head><body><main><h1>记忆维护与设置</h1><p class="note">使用正式页面结构的视觉样板。这里的开关只演示保存反馈，不更改真实设置；其他按钮仅展示。</p><div class="preview-grid"><section id="memory-sample" class="memory-preview"></section><section id="settings-sample"></section></div></main><script type="module">
+import { wireSettingsDrawer } from './modules/settings-drawer.js';
+const doc=new DOMParser().parseFromString(await (await fetch('index.html')).text(),'text/html');
+const memory=document.getElementById('memory-sample');
+for(const selector of ['.memory-sources-head','.memory-maintenance']) memory.append(doc.querySelector(selector));
+const drawer=doc.getElementById('settings-drawer');document.getElementById('settings-sample').append(drawer);
+drawer.querySelector('#settings-close').hidden=true;
+drawer.querySelector('#license-status').textContent='会员信息将在正式应用中显示';
+drawer.querySelector('#projects-admin-list').innerHTML='<p class="empty-state">项目会话在正式应用中读取。</p>';
+wireSettingsDrawer({onToggleChange:async()=>{await new Promise(resolve=>setTimeout(resolve,500));return true;}});
+</script></body></html>
