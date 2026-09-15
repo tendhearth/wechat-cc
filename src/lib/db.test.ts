@@ -653,6 +653,35 @@ it('upgrades v52 with staged attachments and empty refs on existing messages and
   }finally{db.close()}
 })
 
+it('adds request_event_id to a workbench_handoffs table that predates the column',()=>{
+  // 真机 2026-09-15:这张表是在源码还没有 request_event_id 时建的,而 v49 用的是
+  // `CREATE TABLE IF NOT EXISTS` —— 对已存在的表是空操作,所以这一列再也补不上,
+  // store.detail() 的 HANDOFF_SELECT 每次都炸,工作台一个任务都显示不了。
+  // 新建库拿不到这个形状,所以这条必须自己造旧表。
+  const db=new Database(':memory:')
+  try{
+    for(const migration of migrations.slice(0,49))migration(db)
+    db.exec('DROP TABLE workbench_handoffs')
+    db.exec(`CREATE TABLE workbench_handoffs (
+      id TEXT PRIMARY KEY, source_task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+      target_task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+      purpose TEXT NOT NULL CHECK(purpose IN ('review','revision')), request TEXT NOT NULL,
+      packet_sha256 TEXT NOT NULL, artifact_refs_json TEXT NOT NULL, quote_json TEXT,
+      created_at INTEGER NOT NULL, source_native_id TEXT, target_native_id TEXT,
+      packet_json TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE
+    ) STRICT`)
+    for(const id of ['srctask1','tgttask1'])db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run(id,'t','/p','claude','completed',1,2)
+    db.query('INSERT INTO workbench_handoffs(id,source_task_id,target_task_id,purpose,request,packet_sha256,artifact_refs_json,quote_json,created_at,source_native_id,target_native_id,packet_json,token_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run('h1','srctask1','tgttask1','review','看一下','sha','[]',null,3,null,null,'{}','tok')
+    db.exec('PRAGMA user_version=49')
+    runMigrations(db);runMigrations(db)
+    const columns=db.query<{name:string},[]>('PRAGMA table_info(workbench_handoffs)').all().map(column=>column.name)
+    expect(columns).toContain('request_event_id')
+    // 补列不能把既有交接记录洗掉。
+    expect(db.query('SELECT id,request,request_event_id AS e FROM workbench_handoffs').all()).toEqual([{id:'h1',request:'看一下',e:null}])
+  }finally{db.close()}
+})
+
 it('upgrades v53 with provider defaults, native import defaults and nullable queued execution snapshots',()=>{
   const db=new Database(':memory:')
   try{

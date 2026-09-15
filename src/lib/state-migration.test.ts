@@ -107,7 +107,8 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // v51–53: ordered activity, control receipts and task attachments.
     // v54: accepted per-run execution choices and native observations.
     // v55–58: creation receipts, WeChat notices, artifact deliveries and API transcripts.
-    expect(v).toBe(58)
+    // v59: backfills the request_event_id column v49 never added to existing databases.
+    expect(v).toBe(59)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',

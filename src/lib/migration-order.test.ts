@@ -109,6 +109,9 @@ const RELEASED: Record<number, string> = {
   56: '5c4924e14c3be87e',
   57: 'f0aadccd2dc525e0',
   58: '6c6a79e410ef7c78',
+  // v59 只修存量库(给 v49 漏掉的列补 ALTER),新建库的 schema 与 v58 完全相同,
+  // 所以指纹也相同 —— 这类修复本守卫结构上抓不到,靠 db.test.ts 的升级路径用例。
+  59: '6c6a79e410ef7c78',
 }
 
 it('every released migration still produces the schema it was published with', () => {
