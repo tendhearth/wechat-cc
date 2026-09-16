@@ -101,13 +101,12 @@ jobs:
         # (PR7 — vitest needs Bun's runtime to resolve `bun:sqlite`).
         run: bun run test
 
-  # 「换运行时的出口是真的」的证明:同一套核心单元测试在 Node 上跑。2026-09-16 起步时
-  # src/lib + src/core 是 2765 过 / 38 红,红的全是还没进适配层的 Bun.serve / Bun.spawn;
-  # 先 continue-on-error 标出差距,收敛到全绿后再改成必绿。
+  # 「换运行时的出口是真的」的证明:同一套单元测试(整个 src,只差 Bun.serve 上的 ws 服务端)
+  # 在 Node 24 上跑。2026-09-16 起步时 lib + core 是 2765 过 / 38 红;适配层补齐后同日整个 src
+  # 全绿,于是改成必绿 —— 以后谁在业务代码里直接用 Bun.*,这里和 no-bun-globals.test 一起红。
   node:
     name: node · core suite
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
