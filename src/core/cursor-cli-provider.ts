@@ -22,6 +22,7 @@ import { assertNotAuthFailed, normalizeWechatMcpServer, type AgentEvent, type Ag
 import { makeCursorStreamParser } from './cursor-cli-stream'
 import { makeTurnEmitter } from './turn-emitter'
 import { drainCappedStderr } from './agy-agent-provider'
+import { spawn } from '../lib/runtime/process'
 
 /** cursorModel 没设时的兜底('auto' = 让 Cursor 自己挑)。 */
 export const DEFAULT_CURSOR_MODEL = 'auto'
@@ -60,7 +61,7 @@ const STDERR_CAP_BYTES = 64 * 1024
 
 function defaultSpawnFn(bin: string): CursorSpawnFn {
   return (args, opts) => {
-    const proc = Bun.spawn([bin, ...args], { cwd: opts.cwd, stdout: 'pipe', stderr: 'pipe' })
+    const proc = spawn([bin, ...args], { cwd: opts.cwd, stdout: 'pipe', stderr: 'pipe' })
     const stderrPromise = drainCappedStderr(proc.stderr as ReadableStream<Uint8Array>, STDERR_CAP_BYTES)
     stderrPromise.catch(() => {})
     return {

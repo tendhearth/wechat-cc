@@ -216,6 +216,7 @@ import type { MessageItem } from '../lib/ilink'
 import type {WorkbenchMediaItem} from '../lib/ilink-workbench'
 import { ILINK_BASE_INFO, ilinkPost } from '../lib/ilink'
 import { log } from '../lib/log'
+import { readFile } from 'node:fs/promises'
 
 export const UPLOAD_MEDIA_TYPE = { IMAGE: 1, VIDEO: 2, FILE: 3, VOICE: 4 } as const
 export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024 // ilink hard cap is higher; 50MB is safe + avoids slow uploads
@@ -344,7 +345,7 @@ export async function buildVoiceItemFromWav(
   filePath: string, chat_id: string, baseUrl: string, token: string,
   transcript?: string,
 ): Promise<MessageItem> {
-  const plaintext = Buffer.from(await Bun.file(filePath).arrayBuffer())
+  const plaintext = await readFile(filePath)
   const { durationMs } = parseWavHeader(plaintext)
 
   // Transcode WAV → MP3 24kHz mono 32kbps to match WeChat voice expectations.
@@ -390,7 +391,7 @@ export async function buildVoiceItemFromWav(
 export async function uploadToCdnOnce(params: {
   filePath: string; toUserId: string; baseUrl: string; token: string; mediaType: number
 }): Promise<{ downloadParam: string; aeskey: string; fileSize: number; fileSizeCiphertext: number }> {
-  const plaintext = Buffer.from(await Bun.file(params.filePath).arrayBuffer())
+  const plaintext = await readFile(params.filePath)
   const rawsize = plaintext.length
   const rawfilemd5 = createHash('md5').update(plaintext).digest('hex')
   const filesize = aesEcbPaddedSize(rawsize)

@@ -1,3 +1,4 @@
+import { spawn as spawnProcess } from '../../lib/runtime/process'
 /**
  * git-head — 读 checkout 当前的 commit,以及(Task 3 review #2)HEAD 上
  * bun.lock 的 blob 哈希。
@@ -10,7 +11,7 @@ const DEFAULT_TIMEOUT_MS = 3_000
 
 export interface GitRevParseDeps {
   cwd: string
-  spawn?: typeof Bun.spawn
+  spawn?: typeof spawnProcess
   timeoutMs?: number
 }
 
@@ -23,7 +24,7 @@ export interface GitRevParseDeps {
  * 调用方自己决定空串怎么解读。
  */
 async function gitCapture(args: string[], deps: GitRevParseDeps): Promise<string | null> {
-  const spawn = deps.spawn ?? Bun.spawn
+  const spawn = deps.spawn ?? spawnProcess
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
   try {
     const proc = spawn(['git', ...args], {

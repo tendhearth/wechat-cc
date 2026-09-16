@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { safeSvg } from '../lib/svg-sanitize'
 import type { StickerLib } from './stickers'
 import { readJsonFile } from '../lib/read-json-file'
+import { spawnSync } from '../lib/runtime/process'
 
 /** Phase-1 moods (基础情绪) — drawn one per DAY until covered. */
 export const STICKER_MOOD_POOL: readonly string[] = [
@@ -96,7 +97,7 @@ export async function rasterizeSvgDarwin(svg: string, workDir: string): Promise<
     mkdirSync(workDir, { recursive: true })
     const svgPath = join(workDir, 'sticker.svg')
     writeFileSync(svgPath, svg)
-    const proc = Bun.spawnSync(['qlmanage', '-t', '-s', '512', '-o', workDir, svgPath])
+    const proc = spawnSync(['qlmanage', '-t', '-s', '512', '-o', workDir, svgPath])
     if (proc.exitCode !== 0) return null
     const out = `${svgPath}.png`
     if (!existsSync(out)) return null

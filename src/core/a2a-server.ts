@@ -24,6 +24,7 @@ import type { A2ARegistry } from './a2a-registry'
 import type { A2AAgentRecord } from '../lib/agent-config'
 import type { ProviderId } from './conversation'
 import { A2A_PROTO_VERSION } from './a2a-intent'
+import { serve, type Server } from '../lib/runtime/http'
 
 /**
  * How long the HAND holds an /a2a/exec connection open with no bytes flowing.
@@ -155,7 +156,7 @@ export interface A2AServer {
 }
 
 export function createA2AServer(opts: A2AServerOpts): A2AServer {
-  let server: ReturnType<typeof Bun.serve> | null = null
+  let server: Server | null = null
 
   // Fire-and-forget wrapper — observability hook must not crash the response.
   function emitAuthFailed(event: AuthFailedEvent): void {
@@ -456,7 +457,7 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
   return {
     async start() {
       if (server) return
-      server = Bun.serve({
+      server = serve({
         hostname: opts.host,
         port: opts.port,
         // /a2a/exec runs a full local agent (tens of seconds to minutes) with
@@ -466,6 +467,7 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
         idleTimeout: A2A_EXEC_IDLE_TIMEOUT_S,
         fetch: handle,
       })
+      await server.ready
     },
     async stop() {
       server?.stop()

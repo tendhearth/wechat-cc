@@ -1,6 +1,7 @@
 import { openSqlite, type SqlDatabase as Database } from '../../lib/runtime/sqlite'
 import {afterEach,describe,expect,it,vi} from 'vitest'
 import {initializeWechatNotificationSchema,makeWechatNotificationStore,makeWechatNotificationWorker,type WechatNotificationNotice} from './wechat-notifications'
+import {rm} from 'node:fs/promises'
 
 const databases:Database[]=[]
 function fixture(path=':memory:'){
@@ -30,7 +31,7 @@ describe('wechat notification store',()=>{
     db=openSqlite(path);databases.push(db);store=makeWechatNotificationStore(db)
     expect(store.subscription('task-1')).toMatchObject({ownerChatId:'owner-1',accountId:'account-1',enabled:true})
     expect(store.list('task-1')).toEqual([notice])
-    Bun.file(path).delete().catch(()=>{})
+    rm(path,{force:true}).catch(()=>{})
   })
 
   it('keeps the original owner while allowing an explicit account replacement',()=>{
@@ -82,7 +83,7 @@ describe('wechat notification store',()=>{
     db=openSqlite(path);databases.push(db);store=makeWechatNotificationStore(db)
     expect(store.materializeIntents()).toBe(1)
     expect(store.list('task-1')).toEqual([expect.objectContaining({id:intent.noticeId,text:'完成',subscriptionGeneration:1,status:'pending'})])
-    Bun.file(path).delete().catch(()=>{})
+    rm(path,{force:true}).catch(()=>{})
   })
 
   it('keeps intent pending when notice insertion fails and retries without changing identity',()=>{

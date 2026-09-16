@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { assertNotAuthFailed, normalizeWechatMcpServer, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type CheapEval, type ProviderCapabilities, type SpawnContext } from './agent-provider'
 import { makeAgyStreamParser } from './agy-stream'
 import { makeTurnEmitter } from './turn-emitter'
+import { spawn } from '../lib/runtime/process'
 
 /**
  * RFC 05 Phase 2 capability declaration. agy has no per-tool callback (print
@@ -122,7 +123,7 @@ export function drainCappedStderr(stream: ReadableStream<Uint8Array>, capBytes: 
 
 function defaultSpawnFn(bin: string): AgySpawnFn {
   return (args, opts) => {
-    const proc = Bun.spawn([bin, ...args], { cwd: opts.cwd, stdout: 'pipe', stderr: 'pipe' })
+    const proc = spawn([bin, ...args], { cwd: opts.cwd, stdout: 'pipe', stderr: 'pipe' })
     // Start draining stderr NOW (concurrently with whatever the caller does
     // with stdout/exited) — see drainCappedStderr's doc comment for why a
     // lazy read-on-demand deadlocks against a chatty child.

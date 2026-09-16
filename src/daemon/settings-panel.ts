@@ -138,6 +138,7 @@ export interface SettingsPanel {
  *  (配手的 `hand invite` 也要用它)。 */
 export { lanIp } from '../lib/local-address'
 import { lanIp } from '../lib/local-address'
+import { serve, type Server } from '../lib/runtime/http'
 
 const DEVICES_FILE = 'settings-devices.json'
 const MAX_DEVICES = 20
@@ -145,7 +146,7 @@ const MAX_DEVICES = 20
 export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   const now = deps.now ?? (() => Date.now())
   let active: { token: string; expiresAt: number } | null = null
-  let server: ReturnType<typeof Bun.serve> | null = null
+  let server: Server | null = null
 
   // 长期设备令牌(随身 CC 配对):在家扫码用短令牌换一枚,加进主屏后
   // 一直有效。落盘 JSON(0600 state dir),上限 MAX_DEVICES 防无限膨胀。
@@ -412,11 +413,12 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     handleRequest,
     async start(port = 0) {
       if (server) return { port: server.port! }
-      server = Bun.serve({
+      server = serve({
         hostname: '0.0.0.0',
         port,
         fetch: handleRequest,
       })
+      await server.ready
       deps.log('SETTINGS', `panel listening on 0.0.0.0:${server.port} (token-gated)`)
       return { port: server.port! }
     },

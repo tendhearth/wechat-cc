@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openSqlite } from './runtime/sqlite'
 import { createBackup, listBackups, pruneBackups, restoreBackup, BACKUP_DIRNAME } from './backup'
+import { spawnSync } from './runtime/process'
 
 function seedStateDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'backup-state-'))
@@ -46,7 +47,7 @@ describe('backup', () => {
     expect(existsSync(r.path)).toBe(true)
     expect(r.path).toContain(BACKUP_DIRNAME)
     expect(r.bytes).toBeGreaterThan(0)
-    const listing = Bun.spawnSync(['tar', '-tzf', r.path]).stdout.toString()
+    const listing = spawnSync(['tar', '-tzf', r.path]).stdout.toString()
     expect(listing).toContain('wechat-cc.db')
     expect(listing).toContain('knowledge/facts.db')
     expect(listing).toContain('knowledge/graph.db')
