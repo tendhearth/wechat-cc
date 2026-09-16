@@ -18,7 +18,7 @@
  * No production code changes — composition-only.
  */
 import { describe, it, expect, vi } from 'vitest'
-import { Database } from 'bun:sqlite'
+import { openSqlite } from '../lib/runtime/sqlite'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -63,7 +63,7 @@ function cross(store: ChannelStore, rowId: string, peer: { pubkey: string; chann
 
 describe('mailbox e2e — relay-direct letter (NAT-simulated: only the relay is shared)', () => {
   it('delivers a letter relay-direct without touching the push leg; relay sees only ciphertext; re-poll is idempotent', async () => {
-    const relayDb = new Database(':memory:')
+    const relayDb = openSqlite(':memory:')
     const relay = makeRelayServer({ db: relayDb })
     const client = inProcClient(relay)
     const sDir = mkdtempSync(join(tmpdir(), 's-')); const qDir = mkdtempSync(join(tmpdir(), 'q-'))

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { Database } from 'bun:sqlite'
+import { openSqlite } from './runtime/sqlite'
 import { createHash } from 'node:crypto'
 import { migrations } from './db'
 
@@ -48,7 +48,7 @@ import { migrations } from './db'
  * constraints and indexes stay fully compared.
  */
 function canonicalSchema(n: number): string {
-  const db = new Database(':memory:')
+  const db = openSqlite(':memory:')
   try {
     db.exec('PRAGMA foreign_keys = ON;')
     for (let i = 0; i < n; i++) migrations[i]!(db)

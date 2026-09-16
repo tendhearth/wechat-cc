@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { Database } from 'bun:sqlite'
+import { openSqlite } from '../../lib/runtime/sqlite'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -244,7 +244,7 @@ describe('knowledge store', () => {
         // no local_type/is_group/kind. CREATE TABLE IF NOT EXISTS in
         // openKnowledge is a no-op against this — the migration must ALTER
         // it in place instead.
-        const oldDb = new Database(join(migDir, 'source.db'), { create: true })
+        const oldDb = openSqlite(join(migDir, 'source.db'), { create: true })
         oldDb.exec(`
           CREATE TABLE messages (
             msg_key TEXT PRIMARY KEY,
@@ -283,7 +283,7 @@ describe('knowledge store', () => {
         migrated!.close()
 
         // PRAGMA table_info confirms the 3 columns now physically exist.
-        const check = new Database(join(migDir, 'source.db'))
+        const check = openSqlite(join(migDir, 'source.db'))
         const cols = check.query<{ name: string }, []>('PRAGMA table_info(messages)').all().map(r => r.name)
         check.close()
         expect(cols).toEqual(
@@ -301,7 +301,7 @@ describe('knowledge store', () => {
         // (e.g. an even older Phase 0/1 snapshot) — CREATE TABLE IF NOT
         // EXISTS in openKnowledge must add it without touching pre-existing
         // tables/rows.
-        const oldDb = new Database(join(migDir, 'source.db'), { create: true })
+        const oldDb = openSqlite(join(migDir, 'source.db'), { create: true })
         oldDb.exec(`
           CREATE TABLE messages (
             msg_key TEXT PRIMARY KEY,
@@ -549,7 +549,7 @@ describe('facts store', () => {
       const migDir = mkdtempSync(join(tmpdir(), 'kk-facts-migrate-'))
       try {
         // Simulate a facts.db created BEFORE the temporal columns existed.
-        const legacy = new Database(join(migDir, 'facts.db'), { create: true })
+        const legacy = openSqlite(join(migDir, 'facts.db'), { create: true })
         legacy.exec(`
           CREATE TABLE IF NOT EXISTS facts (
             id INTEGER PRIMARY KEY, contact TEXT, kind TEXT, predicate TEXT, value TEXT,

@@ -15,7 +15,7 @@
  * deps lives at src/daemon/bootstrap/wire-pairing.ts (Task 6).
  */
 import { describe, it, expect } from 'vitest'
-import { Database } from 'bun:sqlite'
+import { openSqlite } from '../lib/runtime/sqlite'
 import { makeRelayServer } from '../../relay/server'
 import { makePairing, type PairingDeps } from './pairing'
 import type { MailboxClient } from './mailbox-client'
@@ -72,7 +72,7 @@ function makeScheduler() {
 
 describe('pairing integration (two engines, one in-process relay)', () => {
   it('start → accept → poll: both registries get a correct, url-less mailbox record; keys cross', async () => {
-    const srv = makeRelayServer({ db: new Database(':memory:'), now: () => NOW })
+    const srv = makeRelayServer({ db: openSqlite(':memory:'), now: () => NOW })
     const client = inProcessClient(srv)
     const regA = memRegistry(); const regB = memRegistry(); const sched = makeScheduler()
     const relays = ['https://brain.example/mailbox']
@@ -119,7 +119,7 @@ describe('pairing integration (two engines, one in-process relay)', () => {
   })
 
   it('cards on the relay are ciphertext (content-blind spot-check)', async () => {
-    const srv = makeRelayServer({ db: new Database(':memory:'), now: () => NOW })
+    const srv = makeRelayServer({ db: openSqlite(':memory:'), now: () => NOW })
     const client = inProcessClient(srv)
     const regA = memRegistry(); const sched = makeScheduler()
     const relays = ['https://brain.example/mailbox']
@@ -172,7 +172,7 @@ describe('pairing integration (two engines, one in-process relay)', () => {
 
     const stateDir = mkdtempSync(join(tmpdir(), 'pair-disk-'))
     writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude', mailbox_relays: ['https://brain.example/mailbox'] }))
-    const srv = makeRelayServer({ db: new Database(':memory:'), now: () => NOW })
+    const srv = makeRelayServer({ db: openSqlite(':memory:'), now: () => NOW })
     const client = inProcessClient(srv)
     const relays = ['https://brain.example/mailbox']
 

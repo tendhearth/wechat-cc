@@ -8,7 +8,7 @@
 // (mirrors store.test.ts's source.db migration test, GR T1) against a
 // graph.db that predates some of this task's contact columns.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { Database } from 'bun:sqlite'
+import { openSqlite } from '../../lib/runtime/sqlite'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -163,7 +163,7 @@ describe('graph store (graph.db)', () => {
         // CREATE TABLE IF NOT EXISTS in openKnowledge is a no-op against an
         // already-existing `contacts` table, so the migration must ALTER it
         // in place instead — exactly like source.db's `messages` migration.
-        const oldDb = new Database(join(migDir, 'graph.db'), { create: true })
+        const oldDb = openSqlite(join(migDir, 'graph.db'), { create: true })
         oldDb.exec(`
           CREATE TABLE contacts (username TEXT PRIMARY KEY, display TEXT, closeness REAL);
           CREATE TABLE edges (a TEXT, b TEXT, kind TEXT, weight REAL, PRIMARY KEY(a, b, kind));
@@ -197,7 +197,7 @@ describe('graph store (graph.db)', () => {
         expect(reopened.getContact('new_wxid')?.total).toBe(7)
         reopened.close()
 
-        const check = new Database(join(migDir, 'graph.db'))
+        const check = openSqlite(join(migDir, 'graph.db'))
         const cols = check.query<{ name: string }, []>('PRAGMA table_info(contacts)').all().map(r => r.name)
         check.close()
         expect(cols).toEqual(
@@ -211,7 +211,7 @@ describe('graph store (graph.db)', () => {
     it('migrates a graph.db with NO prior rebuildGraph call — the pre-existing row survives with new columns NULL', () => {
       const migDir = mkdtempSync(join(tmpdir(), 'kk-graph-store-migrate-norebuild-'))
       try {
-        const oldDb = new Database(join(migDir, 'graph.db'), { create: true })
+        const oldDb = openSqlite(join(migDir, 'graph.db'), { create: true })
         oldDb.exec(`
           CREATE TABLE contacts (username TEXT PRIMARY KEY, display TEXT, closeness REAL);
           CREATE TABLE edges (a TEXT, b TEXT, kind TEXT, weight REAL, PRIMARY KEY(a, b, kind));

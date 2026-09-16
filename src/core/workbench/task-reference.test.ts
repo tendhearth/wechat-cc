@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveTaskReference, parseTaskIdFromMessage, focusDeclaration, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge } from './task-reference'
+import { makeCheapJudge, resolveTaskReference, parseTaskIdFromMessage, focusDeclaration, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge } from './task-reference'
 
 /**
  * 管家式指称解析(spec 2026-09-16):主人在微信里说"那个整理 TODO 的事"、引用一条任务
@@ -134,7 +134,6 @@ describe('主人真实措辞的 eval 集(确定性各层,模型用假件)', () =
 })
 
 describe('makeCheapJudge:把便宜模型包成只会"选编号或说不确定"的裁判', () => {
-  const { makeCheapJudge } = require('./task-reference') as typeof import('./task-reference')
   const cands = [todo, latency]
   it('回答一个合法编号 ⇒ 有把握、落到那件;提示词里列出了候选和"0=不是在说任务"', async () => {
     let prompt = ''

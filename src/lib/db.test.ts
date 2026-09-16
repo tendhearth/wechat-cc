@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { Database } from 'bun:sqlite'
+import { openSqlite } from './runtime/sqlite'
 import { migrations, openTestDb, openDb, renameMigrated, runMigrations, withLockRetry } from './db'
 import type { Db } from './db'
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
@@ -107,7 +107,7 @@ describe('renameMigrated', () => {
 
 describe('migration v10 — sessions.chat_id', () => {
   it('adds chat_id column with _legacy default for pre-existing rows', () => {
-    const db = new Database(':memory:')
+    const db = openSqlite(':memory:')
     db.exec(`
       PRAGMA user_version = 9;
       CREATE TABLE sessions (
@@ -136,7 +136,7 @@ describe('migration v10 — sessions.chat_id', () => {
   })
 
   it('legacy rows older than 1 day are cleaned up', () => {
-    const db = new Database(':memory:')
+    const db = openSqlite(':memory:')
     const oldTs = new Date(Date.now() - 2 * 86_400_000).toISOString()
     db.exec(`
       PRAGMA user_version = 9;
@@ -183,7 +183,7 @@ describe('migration v12 — a2a_events table', () => {
 
 describe('migration v27/v28 — customer review completed elsewhere and analysis coverage', () => {
   it('upgrades v26 review feedback without losing items or evidence', () => {
-    const db = new Database(':memory:')
+    const db = openSqlite(':memory:')
     db.exec(`
       PRAGMA foreign_keys = ON;
       PRAGMA user_version = 26;
@@ -281,7 +281,7 @@ describe('migration v13→v14 upgrade — events data preserved', () => {
     // rolling back user_version — but since SQLite doesn't support undoing
     // DDL, the cleanest approach is to construct the v13 schema directly,
     // matching the shape the v13 migration leaves behind, then run v14.
-    const db = new Database(':memory:')
+    const db = openSqlite(':memory:')
     // Replicate the exact v13 schema so runMigrations sees user_version=13
     // and only applies v14.
     db.exec(`
@@ -391,7 +391,7 @@ describe('migration v11 — participants column', () => {
 describe('migration v24 — social_seek redacted columns', () => {
   it('adds nullable redacted_topic / redacted_city columns to social_seek (before v43 retirement)', () => {
     // Build a db at exactly v23 (before v24, before v43 drops the tables)
-    const db = new Database(':memory:')
+    const db = openSqlite(':memory:')
     db.exec('PRAGMA foreign_keys = ON;')
     for (let i = 0; i < 24; i++) migrations[i]!(db)
     db.exec('PRAGMA user_version = 24;')
@@ -491,7 +491,7 @@ describe('issue #79 — database left mid-schema by the customer-review branch b
     // 那份手工清单每加一条动 social_*/penpal_* 的迁移就会烂掉一次(v32 就把它
     // 弄红了),而且烂法是「重复的列名」这种看不出因果的报错。改成直接跑
     // migrations[0..20] —— 那就是 1.3.2 真正装出来的库,不需要维护任何清单。
-    const db = new Database(':memory:')
+    const db = openSqlite(':memory:')
     db.exec('PRAGMA foreign_keys = ON;')
     for (let i = 0; i < 21; i++) migrations[i]!(db)
     db.exec('PRAGMA user_version = 21;')
@@ -522,7 +522,7 @@ describe('migration v41 — reminders back-fills columns the old June schema lac
     // that ran June's feat/reminders (a reminders table without the backoff
     // columns) already has the table, so v29's CREATE TABLE IF NOT EXISTS
     // skips it and the columns never arrive. user_version=29 marks v29 done.
-    const db = new Database(':memory:')
+    const db = openSqlite(':memory:')
     db.exec('PRAGMA foreign_keys = ON;')
     db.exec(`
       CREATE TABLE reminders (
@@ -600,7 +600,7 @@ describe('旧社交表退役(spec 2026-09-04-wish-postcard §3)', () => {
 it('upgrades a real v46 database retaining task history, native identity and approved artifacts',{timeout:30_000},()=>{
   const dir=mkdtempSync(join(tmpdir(),'workbench-v46-')),path=join(dir,'state.db')
   try {
-    const prior=new Database(path)
+    const prior=openSqlite(path)
     prior.exec('PRAGMA foreign_keys=ON')
     for(const migration of migrations.slice(0,46))migration(prior)
     prior.exec('PRAGMA user_version=46')
@@ -622,7 +622,7 @@ it('upgrades a real v46 database retaining task history, native identity and app
 
 
 it('upgrades v51 with separate durable control receipts while preserving task history and text inputs',()=>{
-  const db=new Database(':memory:')
+  const db=openSqlite(':memory:')
   try{
     for(const migration of migrations.slice(0,51))migration(db)
     db.exec('PRAGMA user_version=51')
@@ -641,7 +641,7 @@ it('upgrades v51 with separate durable control receipts while preserving task hi
 })
 
 it('upgrades v52 with staged attachments and empty refs on existing messages and inputs',()=>{
-  const db=new Database(':memory:')
+  const db=openSqlite(':memory:')
   try{
     for(const migration of migrations.slice(0,52))migration(db)
     db.exec('PRAGMA user_version=52')
@@ -660,7 +660,7 @@ it('adds request_event_id to a workbench_handoffs table that predates the column
   // `CREATE TABLE IF NOT EXISTS` —— 对已存在的表是空操作,所以这一列再也补不上,
   // store.detail() 的 HANDOFF_SELECT 每次都炸,工作台一个任务都显示不了。
   // 新建库拿不到这个形状,所以这条必须自己造旧表。
-  const db=new Database(':memory:')
+  const db=openSqlite(':memory:')
   try{
     for(const migration of migrations.slice(0,49))migration(db)
     db.exec('DROP TABLE workbench_handoffs')
@@ -685,7 +685,7 @@ it('adds request_event_id to a workbench_handoffs table that predates the column
 })
 
 it('upgrades v53 with provider defaults, native import defaults and nullable queued execution snapshots',()=>{
-  const db=new Database(':memory:')
+  const db=openSqlite(':memory:')
   try{
     for(const migration of migrations.slice(0,53))migration(db)
     db.exec('PRAGMA user_version=53')

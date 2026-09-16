@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Database } from 'bun:sqlite'
+import { openSqlite, type SqlDatabase as Database } from '../../lib/runtime/sqlite'
 import { initializeWechatNotificationSchema, makeWechatNotificationStore } from '../../core/workbench/wechat-notifications'
 import { wireWorkbenchNotifications } from './wire-workbench-notifications'
 import { mkdtempSync, mkdirSync, realpathSync } from 'node:fs'
@@ -20,7 +20,7 @@ import {removeTempDir} from '../../lib/test-temp'
 
 const databases: Database[] = []
 function fixture() {
-  const db = new Database(':memory:'); databases.push(db)
+  const db = openSqlite(':memory:'); databases.push(db)
   db.exec("PRAGMA foreign_keys=ON; CREATE TABLE workbench_tasks(id TEXT PRIMARY KEY NOT NULL) STRICT; INSERT INTO workbench_tasks(id) VALUES('task-1'),('task-2');")
   initializeWechatNotificationSchema(db)
   const notificationStore = makeWechatNotificationStore(db)

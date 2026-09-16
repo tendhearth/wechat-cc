@@ -5,7 +5,7 @@
  * /ack (Ed25519-signed ownership proof). The relay stores `envelope` as an
  * opaque string and NEVER parses it. See spec §3.1.
  */
-import { Database } from 'bun:sqlite'
+import { openSqlite, type SqlDatabase as Database } from '../src/lib/runtime/sqlite'
 import { makeMailboxStore } from './mailbox-store'
 import { verifyFetchSig, verifyAckSig } from './mailbox-auth'
 import { makeRateLimiter } from './rate-limit'
@@ -69,8 +69,8 @@ export function makeRelayServer(opts: {
  *  Serves the mailbox HTTP routes AND the 随身 CC tunnel WebSocket (both
  *  content-blind). Nginx proxies /mailbox/ → /* and /tunnel/ → this port. */
 export function startRelay(opts: { port?: number; dbPath?: string } = {}): { stop(): void; port: number } {
-  const db = new Database(opts.dbPath ?? 'mailbox.sqlite')
-  db.run('PRAGMA journal_mode = WAL')
+  const db = openSqlite(opts.dbPath ?? 'mailbox.sqlite')
+  db.exec('PRAGMA journal_mode = WAL')
   const relay = makeRelayServer({ db })
   const hub = makeTunnelHub()
   // ws.data carries the role so message/close know how to route.

@@ -119,7 +119,13 @@ class NodeDatabase implements SqlDatabase {
   prepare<R, P extends SqlBinding | SqlBinding[]>(sql: string): SqlStatement<R, Params<P>> {
     return new NodeStatementAdapter<R, Params<P>>(this.db.prepare(sql))
   }
-  exec(sql: string): unknown { this.db.exec(sql); return undefined }
+  exec(sql: string): unknown {
+    this.db.exec(sql)
+    // DDL 多半从这里过:node:sqlite 的预编译语句记住的是编译时的列表,迁移加了列之后
+    // 缓存里的 `SELECT *` 还会按旧列返回(Bun 会自己重编译)。丢掉缓存最省事也最稳。
+    this.cache.clear()
+    return undefined
+  }
   transaction<A extends any[], T>(inside: (...args: A) => T): SqlTransaction<A, T> {
     const wrap = (begin: string) => (...args: A): T => {
       // 嵌套用 SAVEPOINT,和 bun:sqlite 一样可以在事务里再开事务。

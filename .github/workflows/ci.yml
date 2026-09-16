@@ -101,6 +101,25 @@ jobs:
         # (PR7 — vitest needs Bun's runtime to resolve `bun:sqlite`).
         run: bun run test
 
+  # 「换运行时的出口是真的」的证明:同一套核心单元测试在 Node 上跑。2026-09-16 起步时
+  # src/lib + src/core 是 2765 过 / 38 红,红的全是还没进适配层的 Bun.serve / Bun.spawn;
+  # 先 continue-on-error 标出差距,收敛到全绿后再改成必绿。
+  node:
+    name: node · core suite
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      - name: Unit tests under Node (src/lib + src/core)
+        run: node node_modules/.bin/vitest run src/lib src/core --reporter=dot
+
   e2e:
     # Heavy suite — skip on direct dev pushes; still runs on master pushes and
     # on every PR (where base is master).

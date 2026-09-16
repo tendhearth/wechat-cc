@@ -6,7 +6,7 @@
 // output and asserts against a REAL KnowledgeStore (openKnowledge), the
 // same "real deps, not mocks" style as routes-knowledge.test.ts.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { Database } from 'bun:sqlite'
+import { openSqlite } from '../../lib/runtime/sqlite'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -39,7 +39,7 @@ function md5(s: string): string {
  *  assert exact msg_key values. */
 function buildFixtureDb(decryptedDir: string): { table: string } {
   const dbPath = join(decryptedDir, 'message_0.sqlite')
-  const db = new Database(dbPath, { create: true })
+  const db = openSqlite(dbPath, { create: true })
   db.exec('CREATE TABLE Name2Id (user_name TEXT, is_session INTEGER)')
   const insertName = db.query<unknown, [string, number]>(
     'INSERT INTO Name2Id (user_name, is_session) VALUES (?, ?)',
@@ -86,7 +86,7 @@ function buildAllKindsFixtureDb(
   decryptedDir: string,
 ): { friendTable: string; roomTable: string } {
   const dbPath = join(decryptedDir, 'message_1.sqlite')
-  const db = new Database(dbPath, { create: true })
+  const db = openSqlite(dbPath, { create: true })
   db.exec('CREATE TABLE Name2Id (user_name TEXT, is_session INTEGER)')
   const insertName = db.query<unknown, [string, number]>(
     'INSERT INTO Name2Id (user_name, is_session) VALUES (?, ?)',
@@ -148,7 +148,7 @@ function buildMinimalDb(
   path: string,
   opts: { walMode?: boolean; realSenderId: number | null; conversation?: string },
 ): { table: string } {
-  const db = new Database(path, { create: true })
+  const db = openSqlite(path, { create: true })
   if (opts.walMode) db.exec('PRAGMA journal_mode=WAL;')
   db.exec('CREATE TABLE Name2Id (user_name TEXT, is_session INTEGER)')
   const insertName = db.query<unknown, [string, number]>(
@@ -187,7 +187,7 @@ function buildMinimalDb(
  *  exercising the display priority (remark > nick_name > alias > username). */
 function buildContactFixtureDb(decryptedDir: string): void {
   const dbPath = join(decryptedDir, 'contact.sqlite')
-  const db = new Database(dbPath, { create: true })
+  const db = openSqlite(dbPath, { create: true })
   db.exec(`
     CREATE TABLE contact (
       username TEXT PRIMARY KEY, remark TEXT, nick_name TEXT, alias TEXT
@@ -424,7 +424,7 @@ describe('runSourceAdapter', () => {
 
     it('a contact.sqlite whose `contact` table is missing expected columns does not crash the adapter', () => {
       const dbPath = join(decryptedDir, 'contact.sqlite')
-      const db = new Database(dbPath, { create: true })
+      const db = openSqlite(dbPath, { create: true })
       db.exec('CREATE TABLE contact (username TEXT PRIMARY KEY, some_other_col TEXT)')
       db.query<unknown, [string, string]>('INSERT INTO contact (username, some_other_col) VALUES (?, ?)').run(
         'wxid_eve',

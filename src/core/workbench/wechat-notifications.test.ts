@@ -1,10 +1,10 @@
-import {Database} from 'bun:sqlite'
+import { openSqlite, type SqlDatabase as Database } from '../../lib/runtime/sqlite'
 import {afterEach,describe,expect,it,vi} from 'vitest'
 import {initializeWechatNotificationSchema,makeWechatNotificationStore,makeWechatNotificationWorker,type WechatNotificationNotice} from './wechat-notifications'
 
 const databases:Database[]=[]
 function fixture(path=':memory:'){
-  const db=new Database(path);databases.push(db)
+  const db=openSqlite(path);databases.push(db)
   db.exec("PRAGMA foreign_keys=ON; CREATE TABLE workbench_tasks(id TEXT PRIMARY KEY NOT NULL) STRICT; INSERT INTO workbench_tasks(id) VALUES('task-1'),('task-2');")
   initializeWechatNotificationSchema(db)
   return {db,store:makeWechatNotificationStore(db)}
@@ -27,7 +27,7 @@ describe('wechat notification store',()=>{
     let {db,store}=fixture(path)
     store.watch('task-1','owner-1','account-1',true);const notice=store.enqueue(input())
     db.close();databases.splice(databases.indexOf(db),1)
-    db=new Database(path);databases.push(db);store=makeWechatNotificationStore(db)
+    db=openSqlite(path);databases.push(db);store=makeWechatNotificationStore(db)
     expect(store.subscription('task-1')).toMatchObject({ownerChatId:'owner-1',accountId:'account-1',enabled:true})
     expect(store.list('task-1')).toEqual([notice])
     Bun.file(path).delete().catch(()=>{})
@@ -79,7 +79,7 @@ describe('wechat notification store',()=>{
     const path=`/tmp/wechat-notification-intent-${crypto.randomUUID()}.sqlite`;let {db,store}=fixture(path)
     store.watch('task-1','owner-1','account-1',true);const intent=store.stage(input())
     expect(store.list('task-1')).toEqual([]);db.close();databases.splice(databases.indexOf(db),1)
-    db=new Database(path);databases.push(db);store=makeWechatNotificationStore(db)
+    db=openSqlite(path);databases.push(db);store=makeWechatNotificationStore(db)
     expect(store.materializeIntents()).toBe(1)
     expect(store.list('task-1')).toEqual([expect.objectContaining({id:intent.noticeId,text:'完成',subscriptionGeneration:1,status:'pending'})])
     Bun.file(path).delete().catch(()=>{})

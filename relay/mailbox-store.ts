@@ -5,7 +5,7 @@
  * or below a cursor; TTL + a per-recipient depth cap bound storage.
  * See docs/superpowers/specs/2026-07-19-penpal-mailbox-transport-B-design.md §3.1.
  */
-import type { Database } from 'bun:sqlite'
+import type { SqlDatabase as Database } from '../src/lib/runtime/sqlite'
 
 export interface MailboxStore {
   drop(to: string, envelope: string, now: number): void
@@ -20,13 +20,13 @@ const DEFAULT_DEPTH_CAP = 256
 export function makeMailboxStore(db: Database, opts: { ttlMs?: number; depthCap?: number } = {}): MailboxStore {
   const ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS
   const depthCap = opts.depthCap ?? DEFAULT_DEPTH_CAP
-  db.run(`CREATE TABLE IF NOT EXISTS mailbox_item (
+  db.exec(`CREATE TABLE IF NOT EXISTS mailbox_item (
     recipient TEXT NOT NULL,
     cursor INTEGER PRIMARY KEY AUTOINCREMENT,
     envelope BLOB NOT NULL,
     expires_at INTEGER NOT NULL
   )`)
-  db.run('CREATE INDEX IF NOT EXISTS idx_mailbox_item_to ON mailbox_item(recipient, cursor)')
+  db.exec('CREATE INDEX IF NOT EXISTS idx_mailbox_item_to ON mailbox_item(recipient, cursor)')
 
   const insert = db.query('INSERT INTO mailbox_item (recipient, envelope, expires_at) VALUES (?, ?, ?)')
   const trim = db.query(`DELETE FROM mailbox_item WHERE recipient = ?1 AND cursor NOT IN

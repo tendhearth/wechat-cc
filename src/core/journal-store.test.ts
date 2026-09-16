@@ -159,9 +159,9 @@ describe('postcard album', () => {
 })
 
 it('upgrades an existing v44 journal without losing its picture and narration', async () => {
-  const { Database } = await import('bun:sqlite')
+  const { openSqlite } = await import('../lib/runtime/sqlite')
   const { runMigrations } = await import('../lib/db')
-  const old = new Database(':memory:')
+  const old = openSqlite(':memory:')
   old.exec("CREATE TABLE journal(id TEXT PRIMARY KEY, image_svg TEXT, note TEXT); INSERT INTO journal VALUES ('old','<svg></svg>','the story'); PRAGMA user_version=44;")
   runMigrations(old)
   expect(old.query('SELECT * FROM journal').get()).toEqual({id:'old',image_svg:'<svg></svg>',note:'the story',favorite:0})

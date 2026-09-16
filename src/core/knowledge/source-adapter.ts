@@ -94,6 +94,7 @@
  * aborts the message ingestion this function otherwise does.
  */
 import { openSqlite, SQLITE_OPEN, type SqlDatabase as Database } from '../../lib/runtime/sqlite'
+import { zstdDecompressSync } from '../../lib/runtime/zstd'
 
 /**
  * Open flags for every read of wxvault's output.
@@ -234,7 +235,7 @@ function decodeRaw(content: Uint8Array | string | null): string {
   let bytes = content
   if (isZstd(bytes)) {
     try {
-      bytes = new Uint8Array(Bun.zstdDecompressSync(bytes))
+      bytes = zstdDecompressSync(bytes)
     } catch {
       // Malformed/truncated frame — fall through and decode the raw
       // (still-compressed) bytes, mirroring text_source.py's final `pass`:

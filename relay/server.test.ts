@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { Database } from 'bun:sqlite'
+import { openSqlite, type SqlDatabase as Database } from '../src/lib/runtime/sqlite'
 import { generateKeyPairSync, sign as edSign, createPrivateKey } from 'node:crypto'
 import { makeRelayServer } from './server'
 
@@ -18,7 +18,7 @@ function post(path: string, body: unknown): Request {
 
 describe('relay/server', () => {
   it('drop → fetch(signed) → ack round-trip; relay never parses the envelope', async () => {
-    const srv = makeRelayServer({ db: new Database(':memory:'), now: () => NOW })
+    const srv = makeRelayServer({ db: openSqlite(':memory:'), now: () => NOW })
     const id = identity()
     // envelope is a deliberately NON-JSON opaque string — proves content-blindness.
     const drop = await srv.fetchHandler(post('/drop', { to: id.addr, envelope: '<<opaque-bytes>>' }), '1.1.1.1')
@@ -34,21 +34,21 @@ describe('relay/server', () => {
   })
 
   it('fetch/ack with a bad signature → 401', async () => {
-    const srv = makeRelayServer({ db: new Database(':memory:'), now: () => NOW })
+    const srv = makeRelayServer({ db: openSqlite(':memory:'), now: () => NOW })
     const id = identity()
     const res = await srv.fetchHandler(post('/fetch', { mailbox: id.addr, since: 0, ts: NOW, sig: 'bad' }), '1.1.1.1')
     expect(res.status).toBe(401)
   })
 
   it('drop over the size cap → 400; drop is open (no signature required)', async () => {
-    const srv = makeRelayServer({ db: new Database(':memory:'), now: () => NOW, maxEnvelopeBytes: 8 })
+    const srv = makeRelayServer({ db: openSqlite(':memory:'), now: () => NOW, maxEnvelopeBytes: 8 })
     const res = await srv.fetchHandler(post('/drop', { to: 'boxA', envelope: 'way-too-long-envelope' }), '1.1.1.1')
     expect(res.status).toBe(400)
     expect((await srv.fetchHandler(post('/drop', { to: 'boxA', envelope: 'ok' }), '1.1.1.1')).status).toBe(200)
   })
 
   it('rate-limit refuses drops over capacity per source-IP → 429', async () => {
-    const srv = makeRelayServer({ db: new Database(':memory:'), now: () => NOW, rate: { capacity: 1, refillPerSec: 0 } })
+    const srv = makeRelayServer({ db: openSqlite(':memory:'), now: () => NOW, rate: { capacity: 1, refillPerSec: 0 } })
     expect((await srv.fetchHandler(post('/drop', { to: 'boxA', envelope: 'a' }), '9.9.9.9')).status).toBe(200)
     expect((await srv.fetchHandler(post('/drop', { to: 'boxA', envelope: 'b' }), '9.9.9.9')).status).toBe(429)
   })
