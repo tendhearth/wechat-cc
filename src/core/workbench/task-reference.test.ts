@@ -167,3 +167,32 @@ describe('真机回归 2026-09-16(第一次真账号试用)', () => {
     expect(await resolveTaskReference({ text: '再加一列百分比', candidates: [todo, failed], nowMs: NOW, focus })).toEqual({ kind: 'task', taskId: 'f3c7234a', via: 'focus' })
   })
 })
+
+describe('评审回归(2026-09-16 独立评审的反例)', () => {
+  it('名称匹配要有把握:单个泛二字词命中不算 —— 普通聊天不能被吞成任务', async () => {
+    for (const chat of ['本周有空吗', '我周三有个会', '帮我整理一下日程', '一个都不要']) {
+      expect((await resolve(chat)).kind, chat).toBe('none')
+    }
+  })
+  it('有把握的写法仍然命中:强关键词(项目名/目录名/ASCII 词),或至少两个不同的标题片段', async () => {
+    expect(await resolve('整理 todo')).toMatchObject({ kind: 'task', taskId: 'a85aec02' })
+    expect(await resolve('本周三件事整理成的那份')).toMatchObject({ kind: 'task', taskId: 'a85aec02' })
+    expect(await resolve('sample-project')).toMatchObject({ kind: 'task', taskId: 'a85aec02' })
+  })
+  it('"先说一下/现在说说"不是焦点声明落不到任务时 ⇒ 放行,不列全部候选', async () => {
+    expect(await resolve('先说一下,明天我不在')).toEqual({ kind: 'none' })
+    expect(await resolve('现在说说你今天干了什么')).toEqual({ kind: 'none' })
+  })
+  it('零命中时,没有"任务感"线索的消息不问模型 —— 普通聊天不付 LLM 往返', async () => {
+    let calls = 0
+    const judge: TaskJudge = async () => { calls++; return { taskId: null, confident: true } }
+    expect(await resolve('早上好', { judge })).toEqual({ kind: 'none' }); expect(calls).toBe(0)
+    expect(await resolve('那个延迟表弄完了吗', { judge })).toEqual({ kind: 'none' }); expect(calls).toBe(1)
+  })
+  it('模型超时 ⇒ 当作没把握,不会卡住主人的消息', async () => {
+    const judge: TaskJudge = () => new Promise(() => {})
+    const t0 = Date.now()
+    expect(await resolve('那个延迟表弄完了吗', { judge, judgeTimeoutMs: 50 })).toEqual({ kind: 'none' })
+    expect(Date.now() - t0).toBeLessThan(2000)
+  })
+})

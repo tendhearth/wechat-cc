@@ -513,6 +513,10 @@ export function makeWorkbenchService(opts: Options) {
           if(running.queuedInputId&&['text','tool_call','result'].includes(ev.kind))store.liveInputs.set(running.queuedInputId,'delivered')
           if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId)}
           if (ev.kind==='text'||ev.kind==='tool_call'||ev.kind==='error') store.recordAgentEvent(task.id,running.identity,ev)
+          // 额度/限流在错误到达时就登记(评审 #5:只在结算时看,保留会话永远等不到结算);
+          // 任何一个成功回合(result)即视为这家恢复。
+          if (ev.kind==='error') quota.note(task.providerId,ev.message)
+          if (ev.kind==='result') quota.clear(task.providerId)
           // 与本函数下面那条「该暂停了」的判据同义:回合真的落定(前台空闲、没有
           // 后台子任务仍在写)才登记,否则会把半成品当成固定版本的成果发布出去。
           if (ev.kind==='result') {

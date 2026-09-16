@@ -62,3 +62,20 @@ it('已订阅时,失败通知带原因和"交给另一位继续?"',async()=>{
   expect(notices[0]!.text).toMatch(/额度/)
   expect(notices[0]!.text).toMatch(/交给 Claude 继续/)
 })
+
+it('评审 #5:额度错误到达时就登记,不等结算;之后任何成功回合即清除',async()=>{
+  // 保留会话:先出一条额度错误事件,run 不结算;然后下一轮正常 result。
+  const {AsyncQueue}=await import('../async-queue')
+  const q=new AsyncQueue<AgentEvent>()
+  let state:AgentRuntimeSnapshot={retained:true,foreground:'running',backgroundCount:0,input:'send'}
+  const registry=createProviderRegistry()
+  registry.register('codex',{async spawn(){return{workbenchRuntime:{events:{[Symbol.asyncIterator]:()=>q.iterable()[Symbol.asyncIterator]()},start:()=>{q.push({kind:'init',sessionId:'s'});q.push({kind:'error',message:'HTTP 429 Too Many Requests'})},submit:async()=>{},snapshot:()=>state},async *dispatch(){},close:async()=>{q.end()}}}},{displayName:'Codex',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  const svc=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>'owner'})
+  try{
+    const task=svc.create({path:project,providerId:'codex',text:'x'})
+    await expect.poll(()=>svc.quotaExhausted('codex')?.kind).toBe('rate_limit')
+    expect(svc.detail(task.id).task.status).toBe('running')
+    state={...state,foreground:'idle'};q.push({kind:'result',sessionId:'s',numTurns:1,durationMs:1})
+    await expect.poll(()=>svc.quotaExhausted('codex')).toBeNull()
+  }finally{await svc.shutdown()}
+})

@@ -111,13 +111,12 @@ describe('mw-task-reference', () => {
 })
 
 describe('真机回归 2026-09-16', () => {
-  it('没有待选问题时回一个裸数字 ⇒ 提示一句,绝不变成某个任务的补充', async () => {
-    const { run, commands, sent } = setup()
+  it('从没问过"哪一件"时回一个裸数字 ⇒ 放行(可能是在回陪伴),绝不变成某个任务的补充', async () => {
+    const { run, commands } = setup()
     await run('整理 TODO 那件继续') // 设了焦点
     const r = await run('2')
-    expect(r.consumed).toBe('workbench')
+    expect(r.nexted).toBe(true)
     expect(commands.filter(c => c.includes('补充 2'))).toEqual([])
-    expect(sent.at(-1)).toMatch(/没有待选/)
   })
   it('待选窗口 30 分钟:8 分钟后回数字仍算选择', async () => {
     const { run, commands, advance } = setup()
@@ -126,11 +125,12 @@ describe('真机回归 2026-09-16', () => {
     await run('2')
     expect(commands).toHaveLength(1); expect(commands[0]).toMatch(/^任务 (f3c7234a|5c12e75a) 补充 project-b 那个继续$/)
   })
-  it('主人从微信第一次点名某件事 ⇒ 顺手为它开提醒(每件一次),失败/完成才到得了手机', async () => {
-    const { run, commands, watches } = setup()
+  it('主人从微信第一次点名某件事 ⇒ 顺手为它开提醒(每件一次,直调 watchTask),失败/完成才到得了手机', async () => {
+    const watched: string[] = []
+    const { run, commands } = setup({ watchTask: async (id) => { watched.push(id) } })
     await run('整理 TODO 那件继续')
     await run('顺便把注释也删了')
-    expect(watches).toEqual(['任务 a85aec02 提醒我'])
+    expect(watched).toEqual(['a85aec02'])
     expect(commands).toEqual(['任务 a85aec02 补充 整理 TODO 那件继续', '任务 a85aec02 补充 顺便把注释也删了'])
   })
 })
@@ -180,5 +180,51 @@ describe('额度止损:执行者额度用完时,不再往它送,直接问"交给
     const { run, created } = quotaOn({ candidates: () => [todo, failed] })
     await run('是')
     expect(created).toHaveLength(1); expect(created[0]!.providerId).toBe('claude')
+  })
+})
+
+describe('评审回归(2026-09-16 独立评审)', () => {
+  it('#1 开提醒走 watchTask 直调,真正的命令仍是 handleWechat 收到的唯一一条 —— 不能撞回执', async () => {
+    const watched: string[] = []
+    const { run, commands } = setup({ watchTask: async (id) => { watched.push(id) } })
+    await run('整理 TODO 那件继续')
+    expect(commands).toEqual(['任务 a85aec02 补充 整理 TODO 那件继续'])
+    expect(watched).toEqual(['a85aec02'])
+  })
+  it('#6 没有待选问题时的裸数字 ⇒ 放行给陪伴(它可能刚问过"几点提醒你")', async () => {
+    const { run, commands } = setup()
+    const r = await run('8')
+    expect(r.nexted).toBe(true); expect(commands).toEqual([])
+  })
+  it('#7 动词只认短句:补充里提到"文件/看看"不改写成只读命令', async () => {
+    const { run, commands } = setup()
+    await run('整理 TODO 那件,把文件名改成中文')
+    await run('sample-project 那个结果')
+    expect(commands).toEqual(['任务 a85aec02 补充 整理 TODO 那件,把文件名改成中文', '任务 a85aec02 结果'])
+  })
+  it('#3 「是/不用」只认整句;待接管时"好像还没开始做"不是同意', async () => {
+    const created: unknown[] = []
+    const { run } = setup({ quotaExhausted: (id) => id === 'codex' ? { kind: 'quota', since: NOW, resetAt: NOW + 60_000, message: 'limit' } : null, fallbackExecutor: () => 'claude', createTask: async (i) => { created.push(i); return { id: 'c0ffee00' } } })
+    await run('project-b 那个 codex 做的,再加一列百分比')
+    await run('好像还没开始做，等等再说')
+    expect(created).toEqual([])
+  })
+  it('#3 没有待接管时,"嗯嗯"/"行吗"不会凭最近一件额度失败的任务开新任务', async () => {
+    const created: unknown[] = []
+    const failed = { ...latency, phase: 'failed', updatedAt: NOW - 60_000, error: 'provider_quota_exhausted' } as TaskCandidate
+    const { run } = setup({ candidates: () => [todo, failed], fallbackExecutor: () => 'claude', createTask: async (i) => { created.push(i); return { id: 'c0ffee00' } } })
+    for (const t of ['嗯嗯', '行吗', '好久不见']) expect((await run(t)).nexted, t).toBe(true)
+    expect(created).toEqual([])
+  })
+  it('#4 接管落账:再说「是」不重开,焦点已移到新任务,下一句自由文本补充给新任务', async () => {
+    const created: Array<{ providerId: string }> = []
+    const { run, commands, sent } = setup({ quotaExhausted: (id) => id === 'codex' ? { kind: 'quota', since: NOW, resetAt: NOW + 60_000, message: 'limit' } : null, fallbackExecutor: () => 'claude', createTask: async (i) => { created.push(i); return { id: 'c0ffee00' } } })
+    await run('project-b 那个 codex 做的,再加一列百分比')
+    await run('是')
+    await run('是')
+    expect(created).toHaveLength(1)
+    expect(sent.at(-1)).toMatch(/已经交给 Claude|c0ffee00/)
+    await run('再加一列百分比')
+    expect(commands.at(-1)).toBe('任务 c0ffee00 补充 再加一列百分比')
   })
 })

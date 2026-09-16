@@ -39,6 +39,8 @@ export interface ResolveInput {
   nowMs: number
   candidates: TaskCandidate[]
   judge?: TaskJudge
+  /** 模型判断的上限;超时当作没把握。主人的消息不能被一个慢网关卡住。 */
+  judgeTimeoutMs?: number
 }
 export type Resolution =
   | { kind: 'task'; taskId: string; via: 'quote' | 'id' | 'name' | 'focus' | 'judge' }
@@ -53,7 +55,10 @@ const TASK_ID = /\b([a-f0-9]{8})\b/i
 const HEADER_ID = /(?:任务\s+|·\s*)([a-f0-9]{8})(?![a-f0-9])/i
 const FOCUS_DECL = /^(?:现在|接下来|先|下面)(?:说|聊|谈|讲)\s*(.+?)\s*[。.!！]?$/
 /** 太泛的二字词,命中它们不算数。 */
-const STOP = new Set(['一个', '那个', '这个', '一下', '什么', '怎么', '可以', '不要', '一件', '这件', '那件', '回答', '只列'])
+const STOP = new Set(['一个', '那个', '这个', '一下', '什么', '怎么', '可以', '不要', '一件', '这件', '那件', '回答', '只列', '本周', '整理', '一句', '一份', '文件', '不用', '然后'])
+/** 零命中时才问模型,而且只在这句话有"任务感"时问 —— 普通聊天不付一次 LLM 往返。 */
+const TASK_CUE = /(任务|那件|这件|哪件|项目|继续|进展|结果|成果|怎么样|做完|好了吗|弄完|做好|接着|停止|交给|换人)/
+const JUDGE_TIMEOUT_MS = 3000
 const PROVIDER_WORDS: Record<string, string[]> = {
   claude: ['claude', '克劳德'], codex: ['codex'], openai: ['api', 'qwen', 'deepseek', 'kimi'], cursor: ['cursor'], agy: ['agy', 'gemini'],
 }
@@ -86,13 +91,18 @@ function keywords(c: TaskCandidate): Set<string> {
   return out
 }
 
+/**
+ * 有把握才算命中(评审 2026-09-16:单个泛二字词命中会把"本周有空吗"吞成任务):
+ * 要么至少一个强关键词(项目名 / 目录名 / ASCII 词),要么至少两个不同的标题片段。
+ */
 function scoreAll(text: string, candidates: TaskCandidate[]): Map<string, number> {
   const t = norm(text)
   const scores = new Map<string, number>()
   for (const c of candidates) {
-    let n = 0
-    for (const k of keywords(c)) if (t.includes(k)) n += /^[a-z0-9]/.test(k) ? 2 : 1
-    if (n > 0) scores.set(c.id, n)
+    let strong = 0, weak = 0
+    for (const k of keywords(c)) if (t.includes(k)) { if (/^[a-z0-9]/.test(k)) strong++; else weak++ }
+    // 单个标题片段只在这句话本身有"任务感"时算数:「检查那件怎么说」算,「我周三有个会」不算。
+    if (strong >= 1 || weak >= 2 || (weak === 1 && TASK_CUE.test(text))) scores.set(c.id, strong * 2 + weak)
   }
   return scores
 }
@@ -117,13 +127,20 @@ function byName(text: string, candidates: TaskCandidate[]): TaskCandidate[] {
 
 const inCandidates = (id: string | null, cs: TaskCandidate[]) => !!id && cs.some(c => c.id === id.toLowerCase())
 
-async function askJudge(judge: TaskJudge | undefined, text: string, candidates: TaskCandidate[]): Promise<string | null> {
+async function askJudge(judge: TaskJudge | undefined, text: string, candidates: TaskCandidate[], timeoutMs = JUDGE_TIMEOUT_MS): Promise<string | null> {
   if (!judge || !candidates.length) return null
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    const v = await judge({ text, candidates })
+    const v = await Promise.race([
+      judge({ text, candidates }),
+      new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), timeoutMs) }),
+    ])
+    if (!v) return null
     return v.confident && inCandidates(v.taskId, candidates) ? v.taskId!.toLowerCase() : null
   } catch {
     return null
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }
 
@@ -140,7 +157,8 @@ export async function resolveTaskReference(input: ResolveInput): Promise<Resolut
     if (id && inCandidates(id, candidates)) return { kind: 'set_focus', taskId: id, via: 'id' }
     const hits = byName(decl, candidates)
     if (hits.length === 1) return { kind: 'set_focus', taskId: hits[0]!.id, via: 'name' }
-    return { kind: 'ambiguous', options: hits.length ? hits : candidates }
+    if (hits.length > 1) return { kind: 'ambiguous', options: hits }
+    // "先说一下,明天我不在"也长得像声明;落不到任务就当普通聊天,不把全部候选列出来问。
   }
 
   const explicit = TASK_ID.exec(input.text)?.[1]?.toLowerCase()
@@ -149,14 +167,15 @@ export async function resolveTaskReference(input: ResolveInput): Promise<Resolut
   const hits = byName(input.text, candidates)
   if (hits.length === 1) return { kind: 'task', taskId: hits[0]!.id, via: 'name' }
   if (hits.length > 1) {
-    const picked = await askJudge(input.judge, input.text, hits)
+    const picked = await askJudge(input.judge, input.text, hits, input.judgeTimeoutMs)
     return picked ? { kind: 'task', taskId: picked, via: 'judge' } : { kind: 'ambiguous', options: hits }
   }
 
   const focus = input.focus
   if (focus && focus.expiresAt > input.nowMs && inCandidates(focus.taskId, candidates)) return { kind: 'task', taskId: focus.taskId, via: 'focus' }
 
-  const picked = await askJudge(input.judge, input.text, candidates)
+  if (!TASK_CUE.test(input.text)) return { kind: 'none' }
+  const picked = await askJudge(input.judge, input.text, candidates, input.judgeTimeoutMs)
   return picked ? { kind: 'task', taskId: picked, via: 'judge' } : { kind: 'none' }
 }
 

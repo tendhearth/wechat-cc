@@ -672,6 +672,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // 额度止损:这家耗尽就不再往它送,问"交给另一位继续?";「是」就在同一文件夹给另一位新开一件。
       quotaExhausted:(id:string)=>opts.workbench!.quotaExhausted(id),
       fallbackExecutor:(id:string)=>opts.workbench!.fallbackExecutor(id),
+      watchTask:async(taskId:string,accountId:string)=>{opts.workbench!.setWechatWatch(taskId,accountId,true)},
       createTask:async(input:{path:string;providerId:string;text:string})=>{const task=await opts.workbench!.create(input);return {id:task.id}},
       handleWechat:opts.workbench.handleWechat,
       sendMessage:(chatId:string,text:string)=>ilink.sendMessage(chatId,text,{source:'workbench'}),
