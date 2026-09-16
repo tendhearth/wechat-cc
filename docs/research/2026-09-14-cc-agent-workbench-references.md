@@ -44,6 +44,16 @@ CC 使用原生 SDK/app-server 接口，保留会话、回合和操作身份，�
 
 `c291e796` 的 [MCP client 设计记录](https://github.com/deepseek-ai/deepseek-harness/blob/c291e7961a515f6d7af9304e7fd1d257929aef26/.agents/notes/implemented/feature/2026-07-07-mcp-client-plugin.md) 区分配置中的服务器身份、模型看到的工具名与线上调用的原始工具名。CC 在原生能力研究中采用这种精确身份边界；这不是 DeepSeek Harness 适配器已落地的声明。通过兼容 API 选择模型，也不等于运行了该 harness。
 
+## 回合、会话、租约：三家都分开
+
+CC 里"这件事做完没有"曾经答不一致：Codex 任务答完自动变成 `completed`，Claude 任务答完停在 `running`。查下来根因是**同一个词 retained 两种含义**——Codex 运行时把它定义为"还有命令或子进程在跑"，没有就自行收尾；Claude 运行时把它定义为"SDK 的 query 流还活着"，于是答完也永远为真、这条 run 永不结算。三家参考项目在这一点上一致：回合、会话、资源占用是三条轴。
+
+- **Paseo**（`agent.ts` @ `d1b705a0`）：`type TurnState = "idle" | "foreground" | "autonomous"`（第 272 行）；`turn_completed | turn_failed | turn_canceled` 是**回合级**终止事件，发出后 `syncTurnState()` 把状态退回 `idle`（第 3415–3432 行），而会话继续存在。回合有终点，会话另有寿命。
+- **Codex**：协议对象就是 `thread → turn → item`，`turn/completed` 是一等公民消息；CC 的 `codex-app-server.ts` 已经在消费它。
+- **Orca**（`codex-structured-session-close.ts` @ `403b62a8`）：会话关闭是一份**租约**——`ended` 事件带 `cause: 'requested-close' | 'unexpected-exit'`、`acquisitionGeneration`、`fence`；注释原话是每条退出路径都得结算，否则 *"waiting for a second callback would strand the lease"*。他们专门防的就是"资源被一个已经结束的东西永久占住"。
+
+CC 两边其实都已握有回合终点（Codex 的 `turn/completed`；Claude SDK 的 `result` 事件，`claude-workbench-runtime.ts` 收到后置 `foreground='idle'`），缺的是拿它驱动三件事：成果登记（2026-09-15 已改为回合落定即登记）、用户可见的状态（统一为「已答复」）、目录租约（答复后释放、续接时再申请）。后两项的落地进度见 [工作台导览](../cc-workbench.md) 的修订记录。这里没有照搬 Orca 的 worktree：CC 的目录占用是普通文件夹上的租约，不是隔离副本。
+
 ## 协议层的借鉴：不守规矩的端点怎么处理
 
 上面五段都是架构形状的借鉴。但 CC 实际出的事故是协议形状的 —— 2026-09-08 cursor 的 envelope 跟我们类推的形状完全不同、一个 tool_call 都没解析出来；2026-09-14 某网关的 DeepSeek 把思维链内联进 `content`，`<think>` 就这么当成回复发给了主人。这一节记各家在这一层怎么做，以及 CC 实际采用了谁的。
