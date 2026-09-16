@@ -15,12 +15,13 @@ const latency = cand({ id: 'f3c7234a', title: '读 DATA.md,哪三个模型在 1 
 const review = cand({ id: '5c12e75a', title: '检查 · 读 DATA.md,哪三个模型在 1 秒以内', project: 'project-b', path: '/s/project-b' })
 
 function setup(over: Partial<TaskReferenceMwDeps> = {}) {
-  const commands: string[] = [], sent: string[] = []
+  const commands: string[] = [], sent: string[] = [], watches: string[] = []
   let t = NOW
   const deps: TaskReferenceMwDeps = {
     ownerChatId: () => OWNER,
     candidates: () => [todo, latency, review],
-    handleWechat: async (_chat, text) => { commands.push(text); return `任务 ${/[a-f0-9]{8}/.exec(text)?.[0]}：好的。` },
+    // 「提醒我」是管家第一次点名时顺手开的,单独记,不混进主要动作的断言。
+    handleWechat: async (_chat, text) => { (/ 提醒我$/.test(text) ? watches : commands).push(text); return `任务 ${/[a-f0-9]{8}/.exec(text)?.[0]}：好的。` },
     sendMessage: async (_chat, text) => { sent.push(text); return {} },
     now: () => t,
     log: () => {},
@@ -33,7 +34,7 @@ function setup(over: Partial<TaskReferenceMwDeps> = {}) {
     await mw(ctx, async () => { nexted = true })
     return { nexted, consumed: ctx.consumedBy }
   }
-  return { run, commands, sent, advance: (ms: number) => { t += ms } }
+  return { run, commands, sent, watches, advance: (ms: number) => { t += ms } }
 }
 
 describe('mw-task-reference', () => {
@@ -106,5 +107,30 @@ describe('mw-task-reference', () => {
     const { run, sent } = setup({ handleWechat: async () => null })
     await run('整理 TODO 那件继续')
     expect(sent[0]).toMatch(/任务控制仅对已绑定的主人开放/)
+  })
+})
+
+describe('真机回归 2026-09-16', () => {
+  it('没有待选问题时回一个裸数字 ⇒ 提示一句,绝不变成某个任务的补充', async () => {
+    const { run, commands, sent } = setup()
+    await run('整理 TODO 那件继续') // 设了焦点
+    const r = await run('2')
+    expect(r.consumed).toBe('workbench')
+    expect(commands.filter(c => c.includes('补充 2'))).toEqual([])
+    expect(sent.at(-1)).toMatch(/没有待选/)
+  })
+  it('待选窗口 30 分钟:8 分钟后回数字仍算选择', async () => {
+    const { run, commands, advance } = setup()
+    await run('project-b 那个继续')
+    advance(8 * 60_000)
+    await run('2')
+    expect(commands).toHaveLength(1); expect(commands[0]).toMatch(/^任务 (f3c7234a|5c12e75a) 补充 project-b 那个继续$/)
+  })
+  it('主人从微信第一次点名某件事 ⇒ 顺手为它开提醒(每件一次),失败/完成才到得了手机', async () => {
+    const { run, commands, watches } = setup()
+    await run('整理 TODO 那件继续')
+    await run('顺便把注释也删了')
+    expect(watches).toEqual(['任务 a85aec02 提醒我'])
+    expect(commands).toEqual(['任务 a85aec02 补充 整理 TODO 那件继续', '任务 a85aec02 补充 顺便把注释也删了'])
   })
 })

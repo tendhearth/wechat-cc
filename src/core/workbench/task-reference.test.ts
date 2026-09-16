@@ -154,3 +154,16 @@ describe('makeCheapJudge:把便宜模型包成只会"选编号或说不确定"�
     expect(await makeCheapJudge(async () => '答案：2')({ text: 'x', candidates: cands })).toEqual({ taskId: 'f3c7234a', confident: true })
   })
 })
+
+describe('真机回归 2026-09-16(第一次真账号试用)', () => {
+  it('引用的是详情回复(「标题 · <编号>」,没有"任务"二字)也能锚定', () => {
+    expect(parseTaskIdFromMessage('📁 project-b · 读 DATA.md · Codex · 已答复\n读 DATA.md,只回答 KIMI 的数值 · 9774656c\n\ncodex · 这一轮已完成')).toBe('9774656c')
+    expect(parseTaskIdFromMessage('订单号 · 12345678 请查收')).toBe('12345678') // 8 位十六进制才算
+    expect(parseTaskIdFromMessage('价格 · 1234 元')).toBeNull()
+  })
+  it('焦点指向的任务失败了(仍在候选里)⇒ 仍归它,主人才看得到"需要处理"', async () => {
+    const failed = { ...latency, phase: 'failed' }
+    const focus = { taskId: failed.id, expiresAt: NOW + FOCUS_TTL_MS }
+    expect(await resolveTaskReference({ text: '再加一列百分比', candidates: [todo, failed], nowMs: NOW, focus })).toEqual({ kind: 'task', taskId: 'f3c7234a', via: 'focus' })
+  })
+})

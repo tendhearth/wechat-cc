@@ -47,7 +47,8 @@ export type Resolution =
 export const FOCUS_TTL_MS = 20 * 60_000
 
 const TASK_ID = /\b([a-f0-9]{8})\b/i
-const HEADER_ID = /任务\s+([a-f0-9]{8})(?![a-f0-9])/i
+/** 「任务 <编号>」,或详情回复里的「标题 · <编号>」—— 两种 CC 出站格式都能当锚。 */
+const HEADER_ID = /(?:任务\s+|·\s*)([a-f0-9]{8})(?![a-f0-9])/i
 const FOCUS_DECL = /^(?:现在|接下来|先|下面)(?:说|聊|谈|讲)\s*(.+?)\s*[。.!！]?$/
 /** 太泛的二字词,命中它们不算数。 */
 const STOP = new Set(['一个', '那个', '这个', '一下', '什么', '怎么', '可以', '不要', '一件', '这件', '那件', '回答', '只列'])

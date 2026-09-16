@@ -29,6 +29,8 @@ const STOP_VERB = /(停止|结束|取消|别做了|不用做了)\s*[。.!！]?$/
 const RESULT_VERB = /(结果|成果|文件|下载)/
 const STATUS_VERB = /(怎么样|怎样|进展|状态|做完了吗|好了吗|完成了吗|查看|看看|到哪了)/
 const BARE_CHOICE = /^\s*(\d{1,2})\s*[.。)]?\s*$/
+/** "你说的是哪一件"的作答窗口。真机 2026-09-16:主人 8 分钟后才回「2」,5 分钟窗口已过,那个「2」被当成了补充。 */
+const CHOICE_TTL_MS = 30 * 60_000
 
 export const header = (c: TaskCandidate) => `📁 ${c.project} · ${c.title} · ${PROVIDER_NAME[c.providerId] ?? c.providerId} · ${PHASE_NAME[c.phase] ?? c.phase}`
 const option = (c: TaskCandidate) => `📁 ${c.project} · ${c.title}（${PROVIDER_NAME[c.providerId] ?? c.providerId}，${PHASE_NAME[c.phase] ?? c.phase}）`
@@ -45,6 +47,8 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): Middleware {
   const now = deps.now ?? Date.now
   const focus = new Map<string, FocusState>()
   const pending = new Map<string, { options: TaskCandidate[]; text: string; expiresAt: number }>()
+  /** 主人从微信点过名的任务:第一次顺手开提醒(每进程每件一次),失败/完成才到得了手机。 */
+  const watched = new Set<string>()
 
   const currentFocus = (chatId: string): FocusState | null => {
     const f = focus.get(chatId)
@@ -77,6 +81,13 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): Middleware {
       const idx = Number(choice[1]) - 1
       pending.delete(msg.chatId)
       if (idx >= 0 && idx < ask.options.length) { picked = ask.options[idx]!; effectiveText = ask.text }
+    } else if (BARE_CHOICE.test(text)) {
+      // 一个裸数字不是任何任务的要求。没有待选问题就说一声,绝不变成"补充 2"送给执行者
+      // (真机 2026-09-16:正是这样把 Codex 的一轮额度烧在了一个「2」上)。
+      pending.delete(msg.chatId)
+      ctx.consumedBy = 'workbench'
+      await deps.sendMessage(msg.chatId, '现在没有待选的问题了。你指的是哪件事？说项目名或标题就行。')
+      return
     }
 
     if (!picked) {
@@ -84,7 +95,7 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): Middleware {
       if (r.kind === 'none') { await next(); return }
       ctx.consumedBy = 'workbench'
       if (r.kind === 'ambiguous') {
-        pending.set(msg.chatId, { options: r.options, text, expiresAt: now() + 5 * 60_000 })
+        pending.set(msg.chatId, { options: r.options, text, expiresAt: now() + CHOICE_TTL_MS })
         await deps.sendMessage(msg.chatId, '你说的是哪一件？\n' + r.options.map((c, i) => `${i + 1}. ${option(c)}`).join('\n') + '\n回数字选择。')
         return
       }
@@ -100,6 +111,10 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): Middleware {
 
     const cmd = command(picked.id, effectiveText)
     const fresh = setFocus(msg.chatId, picked.id)
+    if (!watched.has(picked.id)) {
+      watched.add(picked.id)
+      try { await deps.handleWechat(msg.chatId, `任务 ${picked.id} 提醒我`, identity) } catch { /* 提醒开不开不挡主要动作 */ }
+    }
     const reply = await deps.handleWechat(msg.chatId, cmd, identity)
     if (reply !== null && typeof reply === 'object') return
     const body = reply ?? '任务控制仅对已绑定的主人开放。'

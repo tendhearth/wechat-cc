@@ -659,10 +659,16 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     typing: { sendTyping: (c, a) => ilink.sendTyping(c, a) },
     ...(opts.workbench?{taskReference:{
       ownerChatId:()=>resolveAdminChatId(loadAccess(),loadCompanionConfig(stateDir),null),
-      // 活跃候选:进行中 / 已答复 / 排队;历史任务不参与指称。项目显示名用目录名。
-      candidates:():TaskCandidate[]=>opts.workbench!.list({archived:'exclude',limit:50}).tasks
-        .filter(t=>t.phase==='queued'||t.phase==='working'||t.phase==='replied')
-        .map(t=>({id:t.id,title:t.title,project:pathBasename(t.path),path:t.path,providerId:t.providerId,phase:t.phase,updatedAt:t.updatedAt})),
+      // 可指称的候选:七天内动过、未归档的任务,包括失败 / 中断的 —— 主人问"那件怎么了"
+      // 时它得还在;焦点指向的任务失败了也不能凭空消失(真机 2026-09-16:Codex 额度耗尽
+      // 把任务打成 failed,焦点随之静默失效,后面两句掉进了普通聊天)。项目显示名用目录名。
+      candidates:():TaskCandidate[]=>{
+        const since=Date.now()-7*24*60*60_000
+        return opts.workbench!.list({archived:'exclude',limit:50}).tasks
+          .filter(t=>t.phase!=='cancelled'&&t.updatedAt>=since)
+          .sort((a,b)=>b.updatedAt-a.updatedAt)
+          .map(t=>({id:t.id,title:t.title,project:pathBasename(t.path),path:t.path,providerId:t.providerId,phase:t.phase,updatedAt:t.updatedAt}))
+      },
       handleWechat:opts.workbench.handleWechat,
       sendMessage:(chatId:string,text:string)=>ilink.sendMessage(chatId,text,{source:'workbench'}),
       // 便宜模型只在名称命中多件 / 零命中且无焦点时被问,且只能选编号或说 0。没配就只走确定性各层。
