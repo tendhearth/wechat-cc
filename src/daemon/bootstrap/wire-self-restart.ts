@@ -100,6 +100,8 @@ export async function wireSelfRestart(deps: WireSelfRestartDeps): Promise<WireSe
   // 打包版(loadedHead null)靠这个:记下启动时可执行文件的身份,更新器换入新 .app
   // 后 stale-code 才有东西可比。源码模式下也记,但 wire.ts 只在没有 HEAD 时用它。
   const bootExecIdentity = readExecIdentity(process.execPath)
+  // 编译产物的 execPath 是 sidecar 自己;源码模式是 bun 本体 —— 后者换了不是"代码换了"。
+  const packaged = !/(^|[\\/])bun(\.exe)?$/i.test(process.execPath)
   const marker = makeActivityMarker({ now })
   const requestRestart = deps.requestRestart
   const check = makeSelfRestartCheck({
@@ -107,6 +109,7 @@ export async function wireSelfRestart(deps: WireSelfRestartDeps): Promise<WireSe
     loadedHead,
     bootLockBlob,
     bootExecIdentity,
+    packaged,
     now,
     bootAtMs,
     anyInFlight: () => deps.anyInFlight(),

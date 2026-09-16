@@ -62,6 +62,12 @@ export interface SelfRestartDeps {
    * HEAD,不因为 bun 自己升级而重启。null(启动时 stat 失败)⇒ 这条路永不触发。
    */
   bootExecIdentity: ExecIdentity | null
+  /**
+   * 是不是编译产物(bun --compile 出来的 sidecar)。loadedHead === null 不等于打包版:源码模式
+   * 下 git 超时、git 不在 PATH 也会 null,那时 execPath 是 bun 本体,`bun upgrade` 就会误触发
+   * 一次绕过脏工作树 / 锁文件闸门的重启(评审 #8)。只有打包版才看可执行文件身份。
+   */
+  packaged: boolean
   execPath?: string
   readExecIdentity?: typeof readExecIdentity
   readDirty?: typeof readGitWorktreeDirty
@@ -122,7 +128,7 @@ export function makeSelfRestartCheck(deps: SelfRestartDeps): () => Promise<void>
       if (deps.loadedHead === null) {
         // 打包版:没有 git HEAD 可比,看的是盘上的可执行文件还是不是启动时那一个。
         // 桌面更新器 rename 换入新 .app 后旧进程不会被杀,这里是它唯一的醒来方式。
-        if (deps.bootExecIdentity === null) return
+        if (!deps.packaged || deps.bootExecIdentity === null) return
         const readExec = deps.readExecIdentity ?? readExecIdentity
         const current = readExec(deps.execPath ?? process.execPath)
         if (!execIdentityChanged(deps.bootExecIdentity, current)) return

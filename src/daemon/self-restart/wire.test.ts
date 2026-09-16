@@ -25,6 +25,7 @@ function setup(over: Partial<SelfRestartDeps> = {}) {
     readLockBlob: async () => 'lock000',
     // 源码模式的基线:有 HEAD,可执行文件身份不参与判定(见 wire.ts)。
     bootExecIdentity: null,
+    packaged: false,
     readDirty: async () => 'clean' as const,
     busy: () => false,
     lastPollSuccessAgoMs: () => 0,
@@ -313,7 +314,7 @@ describe('makeSelfRestartCheck · 打包版(读不到 git HEAD)看可执行文�
   const bootId = { ino: 1, size: 100, mtimeMs: 1_000 }
   const moved = { ino: 2, size: 100, mtimeMs: 1_000 }
   function bundled(over: Partial<SelfRestartDeps> = {}) {
-    return setup({ loadedHead: null, bootLockBlob: null, bootExecIdentity: bootId, readExecIdentity: () => moved, ...over })
+    return setup({ loadedHead: null, bootLockBlob: null, bootExecIdentity: bootId, readExecIdentity: () => moved, packaged: true, ...over })
   }
 
   it('盘上的可执行文件换了(新 inode)+ 空闲 ⇒ 重启', async () => {
@@ -350,6 +351,12 @@ describe('makeSelfRestartCheck · 打包版(读不到 git HEAD)看可执行文�
     const { restarts, check } = bundled()
     await check(); await check()
     expect(restarts).toHaveLength(1)
+  })
+
+  it('源码模式但 HEAD 读失败(git 超时)⇒ 不是打包版,可执行文件(bun 本体)换了也不重启 —— 评审 #8', async () => {
+    const { restarts, check } = bundled({ packaged: false })
+    await check()
+    expect(restarts).toEqual([])
   })
 
   it('有 git HEAD 时不走这条路(源码模式照旧只看 HEAD)', async () => {
