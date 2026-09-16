@@ -12,6 +12,7 @@ import type { Middleware } from './types'
 import { isWechatTaskCommand, type WechatMessageIdentity, type WechatWorkbenchReply } from '../../core/workbench/wechat-control'
 import { resolveTaskReference, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge, type FocusState } from '../../core/workbench/task-reference'
 import type { QuotaState } from '../../core/provider-quota'
+import { providerDisplayName } from '../provider-display-names'
 
 export interface TaskReferenceMwDeps {
   ownerChatId(): string | null
@@ -33,7 +34,6 @@ export interface TaskReferenceMwDeps {
   watchTask?(taskId: string, accountId: string): Promise<void>
 }
 
-const PROVIDER_NAME: Record<string, string> = { claude: 'Claude', codex: 'Codex', openai: 'API', cursor: 'Cursor', agy: 'agy' }
 const PHASE_NAME: Record<string, string> = { queued: '排队中', working: '进行中', replied: '已答复', failed: '需要处理', cancelled: '已停止', interrupted: '已中断' }
 const STOP_VERB = /(停止|结束|取消|别做了|不用做了)\s*[。.!！]?$/
 // 只认句尾、只认短句(评审 #7):补充里提到"文件 / 看看"不是在要结果。
@@ -50,8 +50,8 @@ const TAKEOVER_TTL_MS = 30 * 60_000
 /** "你说的是哪一件"的作答窗口。真机 2026-09-16:主人 8 分钟后才回「2」,5 分钟窗口已过,那个「2」被当成了补充。 */
 const CHOICE_TTL_MS = 30 * 60_000
 
-export const header = (c: TaskCandidate) => `📁 ${c.project} · ${c.title} · ${PROVIDER_NAME[c.providerId] ?? c.providerId} · ${PHASE_NAME[c.phase] ?? c.phase}`
-const option = (c: TaskCandidate) => `📁 ${c.project} · ${c.title}（${PROVIDER_NAME[c.providerId] ?? c.providerId}，${PHASE_NAME[c.phase] ?? c.phase}）`
+export const header = (c: TaskCandidate) => `📁 ${c.project} · ${c.title} · ${providerDisplayName(c.providerId)} · ${PHASE_NAME[c.phase] ?? c.phase}`
+const option = (c: TaskCandidate) => `📁 ${c.project} · ${c.title}（${providerDisplayName(c.providerId)}，${PHASE_NAME[c.phase] ?? c.phase}）`
 
 function command(taskId: string, text: string): string {
   const t = text.trim()
@@ -75,7 +75,7 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): Middleware {
   const takenOver = new Map<string, TaskCandidate>()
 
   const minutesLeft = (q: QuotaState) => Math.max(1, Math.ceil((q.resetAt - now()) / 60_000))
-  const providerName = (id: string) => PROVIDER_NAME[id] ?? id
+  const providerName = (id: string) => providerDisplayName(id)
   async function offerTakeover(chatId: string, task: TaskCandidate, q: QuotaState, request: string): Promise<void> {
     const already = takenOver.get(task.id)
     if (already) {

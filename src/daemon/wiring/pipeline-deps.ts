@@ -460,9 +460,11 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     remoteTunnel = { id: did, relay: remoteCfg.remote_relay_url ?? 'wss://cc.tendhearth.com/tunnel/phone' }
   }
 
+  // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
+  const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
   const settingsPanel = makeSettingsPanel({
     stateDir,
-    ownerChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null),
+    ownerChatId,
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
     // 「默认大脑」改完自己重启(与远程开关同一条路)。
     ...(opts.requestRestart ? { requestRestart: (reason: string) => opts.requestRestart!(reason) } : {}),
@@ -658,7 +660,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     },
     typing: { sendTyping: (c, a) => ilink.sendTyping(c, a) },
     ...(opts.workbench?{taskReference:{
-      ownerChatId:()=>resolveAdminChatId(loadAccess(),loadCompanionConfig(stateDir),null),
+      ownerChatId,
       // 可指称的候选:七天内动过、未归档的任务,包括失败 / 中断的 —— 主人问"那件怎么了"
       // 时它得还在;焦点指向的任务失败了也不能凭空消失(真机 2026-09-16:Codex 额度耗尽
       // 把任务打成 failed,焦点随之静默失效,后面两句掉进了普通聊天)。项目显示名用目录名。

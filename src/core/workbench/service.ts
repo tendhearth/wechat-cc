@@ -24,6 +24,7 @@ import {canResumeWorkbenchExecutor,isWorkbenchExecutorCapabilities,isWorkbenchPr
 import { makeRunPermissions, type PermissionDecision, type RunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
 import { findPathBlocker, type PathReservation, type WaitingFor } from './scheduler'
 import { makeQuotaRegistry, classifyProviderError, type QuotaState } from '../provider-quota'
+import { providerDisplayName } from '../provider-display-names'
 import { publicTask, TERMINAL_TASK_STATUSES, type WorkbenchListQuery, type StoredTask, type Task, type TaskStatus, type WorkbenchStore } from './store'
 
 interface Options {
@@ -180,7 +181,6 @@ export function makeWorkbenchService(opts: Options) {
   const reservations=new Map<string,Active>()
   /** 各执行者的额度/限流状态(provider-quota.ts):从失败里认出来、记住、再避开。 */
   const quota=makeQuotaRegistry()
-  const PROVIDER_LABEL:Record<string,string>={claude:'Claude',codex:'Codex',openai:'API'}
   /** 除了 exhaustedId 之外、已准入且没耗尽的原生执行者 —— "交给谁继续"的候选。 */
   function fallbackExecutor(exhaustedId:string):string|null {
     for(const id of opts.registry.list()){
@@ -228,7 +228,7 @@ export function makeWorkbenchService(opts: Options) {
     const label={completed:'这一轮已完成',failed:'这一轮需要处理',interrupted:'这一轮已中断',cancelled:'这一轮已停止'}[status as 'completed'|'failed'|'interrupted'|'cancelled']
     if(status==='failed'&&(error==='provider_quota_exhausted'||error==='provider_rate_limited')){
       const code=error,other=fallbackExecutor(running.task.providerId)
-      reply=`${executionFailureMessage(code)}${other?`\n交给 ${PROVIDER_LABEL[other]??other} 继续？回「是」我就把这件事交给它。`:''}`
+      reply=`${executionFailureMessage(code)}${other?`\n交给 ${providerDisplayName(other)} 继续？回「是」我就把这件事交给它。`:''}`
     }
     const artifacts=store.artifacts(running.taskId).slice(0,5)
     const text=`${running.title.replace(/[\r\n]+/g,' ')} · ${running.taskId}\n${running.task.providerId} · ${label}\n\n${reply?reply.slice(0,1800)+'\n\n':''}${artifacts.length?'已保存成果：'+artifacts.map(a=>a.name).join('、').slice(0,500)+'\n\n':''}查看：任务 ${running.taskId}\n结果：任务 ${running.taskId} 结果`
