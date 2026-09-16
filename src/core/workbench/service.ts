@@ -70,6 +70,7 @@ interface Active extends PathReservation {
   uncertain: boolean
   artifactsCollected: boolean
   collection?:Promise<void>
+  turnCollection?:Promise<void>
   credentialsMinted: boolean
   credentialsRevoked: boolean
 }
@@ -289,6 +290,24 @@ export function makeWorkbenchService(opts: Options) {
     void pending.then(()=>collections.delete(pending),()=>collections.delete(pending))
     return pending
   }
+  /**
+   * 回合结束就把成果登记上。会话保留时这条 run 不会结算,`collect` 也就不会跑,
+   * 于是文件躺在成果目录里而详情的成果列表是空的 —— 主人得先「取消」才看得见
+   * 自己刚拿到的东西(2026-09-15 真机)。`collectArtifacts` 按 name+sha256 去重,
+   * 重复调用安全;结算时那次照旧,代码变更快照仍然只在那里生成。
+   */
+  function collectTurnArtifacts(running:Active) {
+    if (running.artifactsCollected || shutdownComplete || running.turnCollection) return
+    const pending=(async()=>{
+      try {
+        if (canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity) return
+        for (const warning of collectArtifacts(store,running.taskId,running.path,opts.stateDir)) store.addEvent(running.taskId,'system',warning)
+      } catch { /* 结算时还会再收一次,这里不打断本轮 */ }
+    })()
+    running.turnCollection=pending;collections.add(pending)
+    const clear=()=>{collections.delete(pending);if(running.turnCollection===pending)running.turnCollection=undefined}
+    void pending.then(clear,clear)
+  }
   async function captureOutputs(running:Active) {
     if (running.artifactsCollected || shutdownComplete) return
     running.artifactsCollected=true
@@ -431,6 +450,12 @@ export function makeWorkbenchService(opts: Options) {
           if(running.queuedInputId&&['text','tool_call','result'].includes(ev.kind))store.liveInputs.set(running.queuedInputId,'delivered')
           if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId)}
           if (ev.kind==='text'||ev.kind==='tool_call'||ev.kind==='error') store.recordAgentEvent(task.id,running.identity,ev)
+          // 与本函数下面那条「该暂停了」的判据同义:回合真的落定(前台空闲、没有
+          // 后台子任务仍在写)才登记,否则会把半成品当成固定版本的成果发布出去。
+          if (ev.kind==='result') {
+            const snapshot=runtime?.snapshot()
+            if (snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0) collectTurnArtifacts(running)
+          }
         },()=>{
           const snapshot=runtimeSnapshot(running)
           return running.questions.pending().length>0||running.permissions.pending().length>0||!!(snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0)

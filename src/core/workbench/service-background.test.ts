@@ -90,7 +90,10 @@ describe('workbench owned background runtime',()=>{
     expect(service.detail(task.id).runId).toBe(runId)
     expect(service.detail(task.id).task.status).toBe('running')
     expect(store.events(task.id).filter(e=>e.kind==='text').every(e=>e.runId===runId)).toBe(true)
-    expect(owned.closeCount).toBe(0);expect(revocations).not.toContain(`workbench/${task.id}`);expect(service.detail(task.id).artifacts).toEqual([])
+    expect(owned.closeCount).toBe(0);expect(revocations).not.toContain(`workbench/${task.id}`)
+    // 回合落定(前台空闲、后台归零)就登记成果,不必先关会话 —— 主人拿到东西和
+    // 「这条 run 还没拆」是两件事:下面几行仍然要求没有关闭、没有回收凭证。
+    expect(service.detail(task.id).artifacts.map(a=>a.name)).toEqual(['late.txt'])
     expect(()=>service.continueTask(task.id,'Change model',{execution:{model:'another'}})).toThrow('workbench_busy')
     await service.cancel(task.id);await settled(task.id);await settled(same.id)
     expect(service.detail(task.id).task.status).toBe('cancelled')
