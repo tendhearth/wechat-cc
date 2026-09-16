@@ -29,7 +29,8 @@ describe('Claude session discovery', () => {
     expect(claudeSessionJsonlPath('/home', '/' + 'a'.repeat(210), 'session'))
       .toBe(join('/home/.claude/projects', '-' + 'a'.repeat(199) + '-djaaup', 'session.jsonl'))
   })
-  it('preserves ordinary native project paths', () => {
+  // 夹具是 POSIX 路径;win32 上 path.join 会把它写成反斜杠,测的就不再是同一件事。
+  it.skipIf(process.platform === 'win32')('preserves ordinary native project paths', () => {
     expect(claudeSessionJsonlPath('/home', '/work/project', 'session'))
       .toBe('/home/.claude/projects/-work-project/session.jsonl')
   })

@@ -30,6 +30,7 @@ import {
 import { createA2ARegistry } from '../core/a2a-registry'
 import { makeA2AEventsStore } from '../core/a2a-events-store'
 import type { A2AAgentRecord } from '../lib/agent-config'
+import { removeTempDir } from '../lib/test-temp'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -176,7 +177,7 @@ describe('cmdAgentList', () => {
   })
 
   afterEach(() => {
-    rmSync(stateDir, { recursive: true, force: true })
+    removeTempDir(stateDir)
   })
 
   it('prints "no agents registered" when empty', async () => {
@@ -216,7 +217,7 @@ describe('cmdAgentAdd', () => {
   })
 
   afterEach(() => {
-    rmSync(stateDir, { recursive: true, force: true })
+    removeTempDir(stateDir)
   })
 
   it('fetches Agent Card, generates inbound_api_key, persists to registry', async () => {
@@ -305,7 +306,7 @@ describe('cmdAgentPause + cmdAgentRemove', () => {
   })
 
   afterEach(() => {
-    rmSync(stateDir, { recursive: true, force: true })
+    removeTempDir(stateDir)
   })
 
   it('pause flips paused=true', async () => {
@@ -376,7 +377,7 @@ describe('cmdAgentActivity', () => {
   })
 
   afterEach(() => {
-    rmSync(stateDir, { recursive: true, force: true })
+    removeTempDir(stateDir)
   })
 
   it('prints "no activity" when there are no events', async () => {
@@ -441,7 +442,7 @@ describe('cmdAgentActivity', () => {
 describe('readA2AInfo', () => {
   let stateDir: string
   beforeEach(() => { stateDir = tempState() })
-  afterEach(() => { rmSync(stateDir, { recursive: true, force: true }) })
+  afterEach(() => { removeTempDir(stateDir) })
 
   it('returns null when a2a-info.json missing', () => {
     expect(readA2AInfo(stateDir)).toBeNull()
@@ -467,7 +468,7 @@ describe('readA2AInfo', () => {
 describe('cmdAgentInfo', () => {
   let stateDir: string
   beforeEach(() => { stateDir = tempState() })
-  afterEach(() => { rmSync(stateDir, { recursive: true, force: true }) })
+  afterEach(() => { removeTempDir(stateDir) })
 
   it('reports daemon-not-running when a2a-info.json missing', async () => {
     writeConfig(stateDir, [])
@@ -534,7 +535,7 @@ describe('cmdAgentTest', () => {
   })
   afterEach(() => {
     echoServer?.stop()
-    rmSync(stateDir, { recursive: true, force: true })
+    removeTempDir(stateDir)
   })
 
   function writeRunningInfo(): void {
@@ -625,7 +626,7 @@ describe('cmdAgentTest --outbound', () => {
   })
   afterEach(() => {
     internalApi?.stop()
-    rmSync(stateDir, { recursive: true, force: true })
+    removeTempDir(stateDir)
   })
 
   it('throws when agent not registered', async () => {
@@ -676,7 +677,7 @@ describe('cmdAgentTest --outbound', () => {
 describe('cmdAgentAdd with a2a-info.json present', () => {
   let stateDir: string
   beforeEach(() => { stateDir = tempState() })
-  afterEach(() => { rmSync(stateDir, { recursive: true, force: true }) })
+  afterEach(() => { removeTempDir(stateDir) })
 
   it('substitutes actual base URL when daemon running + A2A enabled', async () => {
     writeFileSync(
@@ -712,7 +713,7 @@ describe('cmdAgentAdd with a2a-info.json present', () => {
 describe('cmdAgentEdit', () => {
   let stateDir: string
   beforeEach(() => { stateDir = tempState() })
-  afterEach(() => { rmSync(stateDir, { recursive: true, force: true }) })
+  afterEach(() => { removeTempDir(stateDir) })
 
   it('throws when agent not registered', () => {
     writeConfig(stateDir, [])
@@ -783,7 +784,7 @@ describe('cmdAgentEdit', () => {
 describe('cmdDaemonA2AEnable', () => {
   let stateDir: string
   beforeEach(() => { stateDir = tempState() })
-  afterEach(() => { rmSync(stateDir, { recursive: true, force: true }) })
+  afterEach(() => { removeTempDir(stateDir) })
 
   it('writes a2a_listen to agent-config.json with defaults', async () => {
     writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
@@ -833,7 +834,7 @@ describe('cmdDaemonA2AEnable', () => {
 describe('cmdDaemonA2ADisable', () => {
   let stateDir: string
   beforeEach(() => { stateDir = tempState() })
-  afterEach(() => { rmSync(stateDir, { recursive: true, force: true }) })
+  afterEach(() => { removeTempDir(stateDir) })
 
   it('removes a2a_listen from agent-config.json', async () => {
     writeFileSync(
@@ -857,7 +858,7 @@ describe('cmdDaemonA2ADisable', () => {
 describe('cmdDaemonA2AStatus', () => {
   let stateDir: string
   beforeEach(() => { stateDir = tempState() })
-  afterEach(() => { rmSync(stateDir, { recursive: true, force: true }) })
+  afterEach(() => { removeTempDir(stateDir) })
 
   it('shows disabled config + daemon-not-running', async () => {
     writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))

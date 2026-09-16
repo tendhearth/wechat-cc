@@ -34,12 +34,13 @@
  *     against daemon.ilink.outbox(), not a locally-captured array.
  */
 import { describe, it, expect, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { runReminderSweep } from './sweeper'
 import { makeRemindersStore } from './store'
 import { openWechatDb } from '../../lib/db'
+import { removeTempDir } from '../../lib/test-temp'
 // NOTE: '../ilink-glue' and '../../lib/ilink' both statically import
 // '../../lib/config' (STATE_DIR), which is a module-level `const` frozen at
 // FIRST import from process.env.WECHAT_STATE_DIR. startTestDaemon only sets
@@ -154,7 +155,7 @@ describe('e2e: reminders — schedule → sweep → deliver, then no double deli
       else process.env.WECHAT_STATE_DIR = priorStateDir
       if (priorCcStateDir === undefined) delete process.env.WECHAT_CC_STATE_DIR
       else process.env.WECHAT_CC_STATE_DIR = priorCcStateDir
-      rmSync(stateDir, { recursive: true, force: true })
+      removeTempDir(stateDir)
     }
   }, 20_000)
 })

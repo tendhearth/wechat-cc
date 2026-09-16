@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { Database } from 'bun:sqlite'
 import { migrations, openTestDb, openDb, renameMigrated, runMigrations, withLockRetry } from './db'
 import type { Db } from './db'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { removeTempDir } from './test-temp'
 
 describe('withLockRetry', () => {
   const noop = () => {}
@@ -61,7 +62,7 @@ describe('openDb', () => {
       expect(row?.bot_id).toBe('b1')
       db2.close()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTempDir(dir)
     }
   })
 
@@ -73,7 +74,7 @@ describe('openDb', () => {
       expect(mode.journal_mode.toLowerCase()).toBe('wal')
       db.close()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTempDir(dir)
     }
   })
 })
@@ -88,7 +89,7 @@ describe('renameMigrated', () => {
       expect(existsSync(file)).toBe(false)
       expect(existsSync(`${file}.migrated`)).toBe(true)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTempDir(dir)
     }
   })
 
@@ -99,7 +100,7 @@ describe('renameMigrated', () => {
       // Simulate "another process already renamed it" — file does not exist.
       expect(() => renameMigrated(file)).not.toThrow()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTempDir(dir)
     }
   })
 })
@@ -616,7 +617,7 @@ it('upgrades a real v46 database retaining task history, native identity and app
         expect(upgraded.query('SELECT * FROM workbench_artifacts').all()).toEqual(oldArtifacts)
       } finally {upgraded.close()}
     }
-  } finally {rmSync(dir,{recursive:true,force:true})}
+  } finally {removeTempDir(dir)}
 })
 
 

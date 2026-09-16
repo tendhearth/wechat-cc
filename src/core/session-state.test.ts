@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { makeSessionStateStore } from './session-state'
 import { openTestDb, openDb, type Db } from '../lib/db'
+import { removeTempDir } from '../lib/test-temp'
 
 describe('SessionStateStore', () => {
   let dir: string
@@ -15,7 +16,7 @@ describe('SessionStateStore', () => {
   })
   afterEach(() => {
     db.close()
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   })
 
   it('starts empty', () => {

@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, test } from 'vitest'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { makeConversationStore } from './conversation-store'
 import { modeRequiresParticipantPrefix } from './conversation'
 import { openTestDb, openDb, type Db } from '../lib/db'
+import { removeTempDir } from '../lib/test-temp'
 
 describe('ConversationStore', () => {
   let dir: string
@@ -15,7 +16,7 @@ describe('ConversationStore', () => {
   })
   afterEach(() => {
     db.close()
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   })
 
   it('starts empty', () => {
