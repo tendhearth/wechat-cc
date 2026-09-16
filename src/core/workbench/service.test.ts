@@ -437,7 +437,8 @@ describe('persistent workbench', () => {
     }}
     service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null,closeTimeoutMs:5})
     const first=create('first'),second=create('second')
-    await new Promise(resolve=>setTimeout(resolve,30))
+    // 不用固定 30ms 等(负载高 / Windows 慢机会假红):等到隔离生效为止。
+    await expect.poll(()=>service.detail(second.id).task.waitingFor?.reason).toBe('writer_not_closed')
     expect(spawns).toBe(1)
     expect(service.detail(second.id).task.waitingFor).toMatchObject({taskId:first.id,reason:'writer_not_closed'})
     await service.shutdown()
@@ -836,7 +837,7 @@ describe('persistent workbench', () => {
     }}},()=> 'owner',undefined,{mintSessionToken:()=>{minted++;return 'private-credential'}})
     const recovered=service.detail(task.id),restart=recovered.continuation!.restart!
     expect(recovered.task.status).toBe('interrupted')
-    expect(recovered.events.at(-1)!.text).toContain(`.cc-workbench/${task.id}`)
+    expect(recovered.events.at(-1)!.text).toContain(join('.cc-workbench',task.id))
     expect(recovered.continuation!.mode).toBe('restart_required')
     expect(restart).toMatchObject({context:'user: 整理周报\ntext: 已整理部分周报',eventCount:2,includedEventCount:2,truncated:false})
     expect(makeWorkbenchStore(db).get(task.id).sessionId).toBeNull()

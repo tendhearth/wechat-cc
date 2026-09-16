@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto'
 import {lstatSync} from 'node:fs'
-import {relative} from 'node:path'
+import {relative,sep} from 'node:path'
 import type {AgentAttachment,AgentEvent,AgentProvider,AgentSession,SpawnContext} from '../agent-provider'
 import {AsyncQueue} from '../async-queue'
 import {canonicalProject,readAnchoredRegular} from './artifacts'
@@ -82,7 +82,8 @@ export function createApiTaskProvider(options:Options):AgentProvider&{canResume(
   const scopeIdentity=(path:string)=>{
     const value=identity(path)
     if(path.split(/[\\/]/).some(part=>/^\.cc-workbench/i.test(part)))fail('api_task_private_scope')
-    if(privateRoot&&(path===privateRoot||path.startsWith(privateRoot+'/')||privateRoot.startsWith(path+'/')))fail('api_task_private_scope')
+    // 分隔符按平台来:Windows 上两边都是反斜杠,写死 '/' 会放过与私有状态目录重叠的项目。
+    if(privateRoot&&(path===privateRoot||path.startsWith(privateRoot+sep)||privateRoot.startsWith(path+sep)))fail('api_task_private_scope')
     return value
   }
   return {

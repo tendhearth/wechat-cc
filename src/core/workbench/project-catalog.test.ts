@@ -3,7 +3,7 @@ import {mkdirSync,mkdtempSync,realpathSync,renameSync,rmSync,symlinkSync,writeFi
 import {basename,join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {makeProjectCatalog} from './project-catalog'
-import {removeTempDir} from '../../lib/test-temp'
+import {removeLink,removeTempDir} from '../../lib/test-temp'
 
 const roots:string[]=[]
 const root=()=>{const path=mkdtempSync(join(tmpdir(),'cc-project-catalog-'));roots.push(path);return path}
@@ -40,7 +40,7 @@ describe('project catalog',()=>{
     const area=root(),first=join(area,'first'),second=join(area,'second'),alias=join(area,'alias')
     mkdirSync(first);mkdirSync(second);symlinkSync(first,alias)
     const catalog=()=>makeProjectCatalog({ownerChatId:'owner',registered:[{alias:'project',path:alias}],known:[],providers:['claude']})[0]!
-    const before=catalog();rmSync(alias);symlinkSync(second,alias);const after=catalog()
+    const before=catalog();removeLink(alias);symlinkSync(second,alias);const after=catalog()
     expect(after.path).not.toBe(before.path)
     expect(after.id).not.toBe(before.id)
   })

@@ -1,4 +1,4 @@
-import { rmSync } from 'node:fs'
+import { lstatSync, rmSync, rmdirSync, unlinkSync } from 'node:fs'
 
 /**
  * 测试夹具删临时目录用这个,别直接 rmSync。
@@ -10,6 +10,17 @@ import { rmSync } from 'node:fs'
  * runner 的临时目录清理,打一行警告,不让**清理**把一条已经通过的测试判红。
  * 其他平台行为不变(照旧抛)。
  */
+/**
+ * 删一个链接(文件或目录链接)。bun 的 rmSync 在 Windows 上删目录链接会报 EFAULT;
+ * 目录链接在 Windows 上要用 rmdir,文件链接用 unlink。只删链接本身,从不碰目标。
+ */
+export function removeLink(path: string): void {
+  const stat = lstatSync(path)
+  if (!stat.isSymbolicLink()) throw new Error(`removeLink: not a link: ${path}`)
+  if (process.platform === 'win32') { try { rmdirSync(path); return } catch { /* file link */ } }
+  unlinkSync(path)
+}
+
 export function removeTempDir(path: string): void {
   const win32 = process.platform === 'win32'
   for (let attempt = 0; ; attempt++) {

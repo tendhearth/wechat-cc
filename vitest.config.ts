@@ -19,6 +19,10 @@ export default defineConfig({
         'src/core/workbench/artifacts.test.ts',
         'src/core/workbench/api-files.test.ts',
         'src/core/workbench/git-review.test.ts',
+        // 原生历史读取器的夹具是 POSIX 路径('/fixture'),win32 上 path.join 写成反斜杠,测的不再是同一件事。
+        'src/core/workbench/native-claude-history.test.ts',
+        'src/core/workbench/native-codex-history.test.ts',
+        'src/core/workbench/native-history.test.ts',
       ] : []),
     ],
     // Tests should never touch the operator's real ~/.claude/channels/wechat

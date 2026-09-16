@@ -5,7 +5,7 @@ import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../lib/db'
 import {makeWorkbenchStore} from './store'
-import {removeTempDir} from '../../lib/test-temp'
+import {removeLink,removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=','base64')
@@ -170,7 +170,7 @@ it('does not follow input-directory or materialized-file symlinks',()=>{
   symlinkSync(outside,join(project,'.cc-workbench-inputs'))
   expect(()=>store.attachments.prepare(owner,[a],project,root)).toThrow('invalid_attachment_path')
   expect(()=>readFileSync(join(outside,owner,a.id,a.name))).toThrow()
-  rmSync(join(project,'.cc-workbench-inputs'))
+  removeLink(join(project,'.cc-workbench-inputs'))
   const prepared=store.attachments.prepare(owner,[a],project,root)[0]!,secret=join(outside,'secret.txt');writeFileSync(secret,'untouched')
   rmSync(prepared.path);symlinkSync(secret,prepared.path)
   expect(()=>store.attachments.prepare(owner,[a],project,root)).toThrow('invalid_attachment_path')

@@ -24,7 +24,8 @@ describe('open, then verify',()=>{
     expect(()=>openAnchored(root,['a','leaf'],constants.O_RDONLY,0,'nope')).toThrow('nope')
   })
 
-  it('catches a parent swapped for a link after the descriptor was obtained',()=>{
+  // Windows 不许重命名里面还有打开句柄的目录(EPERM),这个夹具在那里搭不出来;机制本身与平台无关。
+  it.skipIf(process.platform==='win32')('catches a parent swapped for a link after the descriptor was obtained',()=>{
     mkdirSync(join(root,'docs'));writeFileSync(join(root,'docs','f.txt'),'ok')
     const fd=openSync(join(root,'docs','f.txt'),constants.O_RDONLY)
     try{
