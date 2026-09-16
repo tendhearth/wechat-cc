@@ -54,7 +54,17 @@ test('inline companion animation replaces the overview illustration', async ({ p
   await page.locator('#companion-users-toggle').click()
   await expect(page.locator('.moment-body')).not.toHaveClass(/is-companion-users-open/)
   await page.locator('#companion-users-toggle').click()
-  await page.locator('#companion-users-scrim').click({ position: { x: 120, y: 180 } })
+  // 09-13 起左侧全局侧栏(#dash-global-rail)叠在遮罩之上,(120,180) 点到的是侧栏不是遮罩;
+  // 在遮罩上找一个真正露出来的点再点 —— 要验的是「点遮罩收起抽屉」,不是某个像素。
+  const spot = await page.evaluate(() => {
+    const scrim = document.querySelector('#companion-users-scrim')
+    for (const [x, y] of [[640, 700], [640, 360], [1000, 700], [400, 700], [1200, 400]]) {
+      if (document.elementFromPoint(x, y) === scrim) return { x, y }
+    }
+    return null
+  })
+  if (!spot) throw new Error('no exposed point on the users scrim')
+  await page.mouse.click(spot.x, spot.y)
   await expect(page.locator('.moment-body')).not.toHaveClass(/is-companion-users-open/)
   await page.locator('#companion-immersive-exit').click()
   await expect(page.locator('.moment-body')).not.toHaveClass(/is-companion-immersive/)
