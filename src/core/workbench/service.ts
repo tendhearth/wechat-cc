@@ -348,7 +348,7 @@ export function makeWorkbenchService(opts: Options) {
     const pending=(async()=>{
       // 先让出事件流回调:目录扫描 + 哈希是同步的,别让它卡在 SDK 流的消费点上。
       await new Promise<void>(resolve=>setImmediate(resolve))
-      if (shutdownComplete || running.artifactsCollected) return
+      if (shutdownComplete || running.artifactsCollected || running.uncertain || running.finishing || running.cancelled) return
       try {
         if (canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity) return
         noteWarnings(running,collectArtifacts(store,running.taskId,running.path,opts.stateDir))

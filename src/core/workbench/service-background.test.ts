@@ -309,9 +309,11 @@ describe('workbench owned background runtime',()=>{
     const owned=new OwnedRuntime();owned.closeGate=gate()
     setup(owned,{closeTimeoutMs:25}, {async spawn(){return{async *dispatch(){yield result},async close(){}}}})
     const task=create();await started(owned)
-    writeFileSync(join(project,'.cc-workbench',task.id,'after-close.txt'),'owned output')
     // 父回合已答复、租约已释放:同文件夹的任务此时可以进来(会话空闲,不会自己写)。
     const during=service.create({path:project,providerId:'codex',text:'Admitted while idle'});await settled(during.id)
+    // 文件要在父回合的回合末登记**之后**才出现(CI 慢机上 result 事件可能晚于这里被消费,
+    // 先写会被回合末登记收走,那不是这条测试要验的事):此后父任务没有新事件,只剩结算能看见它。
+    writeFileSync(join(project,'.cc-workbench',task.id,'after-close.txt'),'owned output')
     await service.cancel(task.id);await settled(task.id)
     expect(service.detail(task.id).task.error).toBe('writer_not_closed')
     // 退出未确认 → 租约重新挂回,此后到来的任务按 writer_not_closed 等待。

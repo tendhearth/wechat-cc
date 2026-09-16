@@ -595,7 +595,8 @@ describe('旧社交表退役(spec 2026-09-04-wish-postcard §3)', () => {
 })
 
 
-it('upgrades a real v46 database retaining task history, native identity and approved artifacts',()=>{
+// 跑完整条迁移阶梯,CI 慢机上实测 7.5s,默认 5s 会假红。
+it('upgrades a real v46 database retaining task history, native identity and approved artifacts',{timeout:30_000},()=>{
   const dir=mkdtempSync(join(tmpdir(),'workbench-v46-')),path=join(dir,'state.db')
   try {
     const prior=new Database(path)
