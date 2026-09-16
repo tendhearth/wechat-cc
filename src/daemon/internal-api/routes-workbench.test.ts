@@ -166,7 +166,7 @@ describe('Workbench internal HTTP API', () => {
   it('limits upload bodies before decoding and keeps uploads and reads behind exact admin routes',async()=>{
     const attachment={id:crypto.randomUUID(),name:'a.txt',mime:'text/plain',size:1,sha256:'a'.repeat(64)},draftId=crypto.randomUUID()
     const uploadAttachment=vi.fn(()=>attachment),readAttachment=vi.fn(()=>({attachment,base64:'eA=='})),discardAttachment=vi.fn()
-    const {request,trustedToken,operatorToken}=await start(service({uploadAttachment,readAttachment,discardAttachment}))
+    const {request,trustedToken,operatorToken,port}=await start(service({uploadAttachment,readAttachment,discardAttachment}))
     const input={...attachment,draftId,base64:'eA=='}
     expect((await request('/v1/workbench/attachment',{method:'POST',body:JSON.stringify(input)},trustedToken)).status).toBe(403)
     const response=await request('/v1/workbench/attachment',{method:'POST',body:JSON.stringify(input)},operatorToken)
@@ -174,7 +174,16 @@ describe('Workbench internal HTTP API', () => {
     expect((await request('/v1/workbench/attachment?taskId='+TASK.id+'&id='+attachment.id,{},operatorToken)).status).toBe(200)
     expect(readAttachment).toHaveBeenCalledWith(TASK.id,attachment.id)
     expect((await request('/v1/workbench/discard-attachment',{method:'POST',body:JSON.stringify({id:attachment.id,draftId})},operatorToken)).status).toBe(200)
-    expect((await request('/v1/workbench/attachment',{method:'POST',body:' '.repeat(12*1024*1024+1)})).status).toBe(413)
+    // 超长 body:服务端看 content-length 就回 413 并关连接(不把 12MB 读完 —— 那是 DoS 面),
+    // 客户端此时还在写。Bun 的客户端能读到那个 413;Node 的 http 客户端写失败(ECONNRESET)
+    // 就把请求销毁,响应可能读不到。两种都算"在解码之前被拒":要么 413,要么连接被切。
+    const oversized=await new Promise<number>((resolve,reject)=>{
+      const body=' '.repeat(12*1024*1024+1)
+      const req=httpRequest({host:'127.0.0.1',port,path:'/v1/workbench/attachment',method:'POST',headers:{authorization:`Bearer ${operatorToken}`,'content-type':'application/json','content-length':String(body.length)}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode!));res.on('error',reject)})
+      req.on('error',()=>resolve(-1))
+      req.end(body)
+    })
+    expect([413,-1]).toContain(oversized)
     expect(uploadAttachment).toHaveBeenCalledTimes(1)
   })
   it('distinguishes foreign, changed and over-limit attachments from internal errors',async()=>{

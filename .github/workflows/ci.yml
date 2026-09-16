@@ -117,8 +117,8 @@ jobs:
         with:
           node-version: 24
       - run: bun install --frozen-lockfile
-      - name: Unit tests under Node (src/lib + src/core)
-        run: node node_modules/.bin/vitest run src/lib src/core --reporter=dot
+      - name: Unit tests under Node (whole src, minus the ws server)
+        run: node node_modules/.bin/vitest run -c vitest.node.config.ts --reporter=dot
 
   e2e:
     # Heavy suite — skip on direct dev pushes; still runs on master pushes and
