@@ -53,3 +53,25 @@ describe('retained workbench runtime presentation',()=>{
     expect(html.indexOf('校对子助手')).toBeLessThan(html.indexOf('后来收到的汇总'))
   })
 })
+
+describe('phase from the daemon (评审 2026-09-16)', () => {
+  it('renders a replied task as 已答复 even when the runtime snapshot is missing', () => {
+    const task={id:'A',title:'Replied',path:'/project',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,phase:'replied'}
+    const html=renderWorkbench({tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:null,selectedArtifactId:null,error:'',preview:null,detail:null})
+    expect(html).toContain('data-status="retained">已答复')
+  })
+  it('keeps the runtime inference for tasks without a phase', () => {
+    const task={id:'A',title:'Old daemon',path:'/project',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,runtime}
+    const html=renderWorkbench({tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:null,selectedArtifactId:null,error:'',preview:null,detail:null})
+    expect(html).toContain('data-status="retained">会话保留中')
+  })
+})
+
+describe('executor quota (评审 2026-09-16)', () => {
+  it('marks an exhausted or rate-limited executor in the picker', () => {
+    const task={id:'A',title:'T',path:'/project',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
+    const providers=[{id:'codex',displayName:'Codex',quota:{kind:'quota' as const,since:1,resetAt:2,message:'x'}},{id:'claude',displayName:'Claude',quota:{kind:'rate_limit' as const,since:1,resetAt:2,message:'x'}},{id:'openai',displayName:'API',quota:null}]
+    const html=renderWorkbench({tasks:[task],providers,defaultProvider:'codex',canWechat:false,selectedId:null,selectedArtifactId:null,error:'',preview:null,detail:null})
+    expect(html).toContain('Codex（额度已用完）');expect(html).toContain('Claude（限流中）');expect(html).toContain('>API<')
+  })
+})

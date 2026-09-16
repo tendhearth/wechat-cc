@@ -493,6 +493,49 @@ async fn wechat_health_ping(
     }
 }
 
+// /v1/health 的 version 段 + 本包自带的 CLI 版本。桌面更新器换入新 .app 后旧后台仍在跑
+// (docs/cc-workbench.md 修订记录 09-16),重连诊断据此直说「后台还是旧版」。sidecar 由
+// 仓库根 package.json 的版本构建,编译期把它包进来就是"本包期望的后台版本"。
+const ROOT_PACKAGE_JSON: &str = include_str!("../../../../package.json");
+
+#[tauri::command]
+async fn wechat_health_version(
+    token_file_path: String,
+    port: u16,
+    timeout_ms: u32,
+) -> Result<serde_json::Value, String> {
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    let expected = serde_json::from_str::<serde_json::Value>(ROOT_PACKAGE_JSON)
+        .ok()
+        .and_then(|v| v.get("version").and_then(|s| s.as_str()).map(str::to_string));
+    let token = std::fs::read_to_string(&token_file_path)
+        .map(|s| s.trim().to_string())
+        .map_err(|e| format!("token read error: {e}"))?;
+    let url = format!("http://127.0.0.1:{port}/v1/health");
+    let duration = Duration::from_millis(u64::from(timeout_ms));
+    let running = match timeout(duration, async {
+        reqwest::Client::new()
+            .get(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await
+    })
+    .await
+    {
+        Ok(Ok(resp)) if resp.status().as_u16() == 200 => resp
+            .text()
+            .await
+            .ok()
+            .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+            .and_then(|body| body.get("version").cloned())
+            .unwrap_or(serde_json::Value::Null),
+        _ => serde_json::Value::Null,
+    };
+    Ok(serde_json::json!({ "running": running, "expected": expected }))
+}
+
 // App-conversation-channel bridge (voice arc Stage 0): proxies the webview
 // to the daemon's POST /v1/companion/converse endpoint, which drives one
 // real turn on the owner's own session and hands the reply back
@@ -1205,6 +1248,7 @@ pub fn run() {
             wechat_daemon_pid,
             notify_user,
             wechat_health_ping,
+            wechat_health_version,
             open_url,
             pet_permission_resolve,
             agent_converse,

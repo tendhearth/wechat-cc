@@ -199,16 +199,17 @@ export function restartButtonState(daemon, service) {
  *   lastError: unknown | null,
  *   lastRestart?: { pidUnchanged: boolean } | null,
  *   platform?: string,
+ *   daemonVersion?: { running: { cli: string|null, head?: string|null, boot_at?: string } | null, expected: string | null } | null,
  * }} input
  * @returns {{
- *   code: 0|1|2|3|4|5|6|7|8,
+ *   code: 0|1|2|3|4|5|6|7|8|9,
  *   title: string,
  *   hint: string,
  *   primary: { label: string, action: object },
  *   secondary?: { label: string, action: object },
  * }}
  */
-export function diagnose({ report, healthOk, lastError, lastRestart = null, platform = 'linux' }) {
+export function diagnose({ report, healthOk, lastError, lastRestart = null, platform = 'linux', daemonVersion = null }) {
   const daemon = report.checks.daemon
   const service = report.checks.service
   const accounts = report.checks.accounts
@@ -324,6 +325,19 @@ export function diagnose({ report, healthOk, lastError, lastRestart = null, plat
       title: "微信账号已过期",
       hint: "账号过期，bot 无法收发消息，重新扫码可恢复。",
       primary: { label: "重新扫码", action: { kind: 'route-to-wizard', step: 'wechat' } },
+    }
+  }
+
+  // ── 9: daemon alive but still the previous build ──────────────────────
+  // 桌面更新器换入新 .app 后旧后台不会被杀(见 docs/cc-workbench.md 修订记录 09-16);
+  // 后台空闲时会自行换代,但主人点「重连」多半就是在等它 —— 直说,并给一键重启。
+  const runningCli = daemonVersion?.running?.cli ?? null
+  if (daemonVersion?.expected && runningCli && runningCli !== daemonVersion.expected) {
+    return {
+      code: 9,
+      title: "后台还是旧版",
+      hint: `后台跑的是 ${runningCli}，桌面已是 ${daemonVersion.expected}。后台空闲时会自行重启换代；也可以现在重启。`,
+      primary: { label: "现在重启后台", action: { kind: 'run-restart-sequence' } },
     }
   }
 

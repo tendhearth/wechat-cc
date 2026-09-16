@@ -44,7 +44,7 @@ import { initLicense, refreshLicense } from "./modules/license.js"
 import { loadUpdateProbe, applyUpdate } from "./modules/update.js"
 import { wireSettingsDrawer, openSettingsDrawer } from "./modules/settings-drawer.js"
 import { mountHugeicons } from "./modules/icons.js"
-import { pingHealth } from "./health-probe.js"
+import { pingHealth, fetchDaemonVersion } from "./health-probe.js"
 import { refreshWxvaultOnAppStart } from "./modules/wxvault-refresh.js"
 import { loadAtelierGallery } from "./modules/atelier-gallery.js"
 import { mountCurrentActivity, createLifeArchive } from "./modules/cc-life.js"
@@ -240,6 +240,12 @@ const deps = {
     const internal_api = doctorPoller.current?.checks?.daemon?.internal_api
     if (!internal_api) return null
     return pingHealth(internal_api.port, internal_api.token_file_path)
+  },
+  // 后台版本 vs 本包自带的 CLI 版本 —— 桌面更新后旧后台还在跑时,重连诊断据此直说「后台还是旧版」。
+  healthVersion: async () => {
+    const internal_api = doctorPoller.current?.checks?.daemon?.internal_api
+    if (!internal_api) return null
+    return fetchDaemonVersion(internal_api.port, internal_api.token_file_path)
   },
 }
 

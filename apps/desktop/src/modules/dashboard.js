@@ -562,6 +562,7 @@ export async function restartDaemon(deps) {
   }
 
   const healthOk = deps.healthProbe ? await deps.healthProbe() : null
+  const daemonVersion = deps.healthVersion ? await deps.healthVersion() : null
   const capturedLastRestart = _lastRestart
   _lastRestart = null  // consume: one observation per click, never lingers
   const diagnosis = diagnose({
@@ -570,6 +571,7 @@ export async function restartDaemon(deps) {
     lastError: deps.doctorPoller.lastError ?? null,
     lastRestart: capturedLastRestart,
     platform: typeof navigator !== "undefined" ? (navigator.platform || "linux") : "linux",
+    daemonVersion,
   })
 
   // Step 4 — RECONNECT_DIAGNOSE telemetry: fire-and-forget log write.

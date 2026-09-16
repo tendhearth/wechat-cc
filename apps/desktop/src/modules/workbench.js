@@ -17,12 +17,14 @@ import { createWorkbenchInteractions, captureWorkbenchQuestionDrafts, syncWorkbe
 import { renderWorkbenchTimeline, workbenchTimelineEventId, captureWorkbenchTimelineAnchor, restoreWorkbenchTimelineAnchor } from './workbench-timeline.js'
 
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed'}} WaitingFor */
-/** @typedef {{id:string,title:string,path:string,providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot}} Task */
+/** @typedef {{id:string,title:string,path:string,providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot}} Task */
 /** @typedef {{id:string,type:'command'|'read'|'edit'|'search'|'tool'|'agent',status:'running'|'completed'|'failed'|'cancelled'|'interrupted',label:string,detail?:string,output?:string,parentId?:string,agentIds?:string[]}} WorkbenchActivity */
 /** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,activity?:WorkbenchActivity}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
 /** @typedef {{id:string,taskId:string,tool:string,description:string,createdAt:number}} Permission */
-/** @typedef {{id:string,displayName:string,capabilities?:{attachments?:boolean,execution?:boolean,resume?:boolean}}} Provider */
+/** @typedef {{id:string,displayName:string,capabilities?:{attachments?:boolean,execution?:boolean,resume?:boolean},quota?:{kind:'quota'|'rate_limit',resetAt?:number}|null}} Provider */
+/** 执行者名 + 额度状态:额度用完 / 限流中的执行者在选择器里一眼看得出来,不用等任务失败才知道。 @param {Provider} p */
+function providerLabel(p) { return p.quota?.kind === 'quota' ? `${p.displayName}（额度已用完）` : p.quota?.kind === 'rate_limit' ? `${p.displayName}（限流中）` : p.displayName }
 /** @typedef {{token:string,context:string,eventCount:number,includedEventCount:number,truncated:boolean}} RestartPreview */
 /** @typedef {{mode:string,restart?:RestartPreview}} Continuation */
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeSource} NativeSource */
@@ -95,15 +97,15 @@ function time(value) {
   return Number.isFinite(value) ? new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : ''
 }
 
-/** @param {string} status @param {RuntimeSnapshot} [runtime] */
-function statusLabel(status, runtime) {
-  const observed = workbenchRuntimePresentation(status, runtime)
+/** @param {string} status @param {RuntimeSnapshot} [runtime] @param {string} [phase] */
+function statusLabel(status, runtime, phase) {
+  const observed = workbenchRuntimePresentation(status, runtime, phase)
   if (observed) return observed.label
   return ({ queued: '等待中', running: '进行中', cancelling: '正在停止', completed: '已完成', failed: '未完成', cancelled: '已停止', interrupted: '已中断' })[status] ?? status
 }
 
 /** @param {Task} task */
-function statusValue(task) { return task.importedOnly ? 'imported' : workbenchRuntimePresentation(task.status, task.runtime)?.status ?? task.status }
+function statusValue(task) { return task.importedOnly ? 'imported' : workbenchRuntimePresentation(task.status, task.runtime, task.phase)?.status ?? task.status }
 
 /** @param {string} status @param {Continuation} [continuation] @param {number|null} [archivedAt] @param {{requiresClose:boolean,decision?:NativeResume|null}} [native] @param {{taskId:string,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,busy?:boolean,error?:string}} [live] */
 function renderTaskControlsBase(status, continuation, archivedAt,native,live) {
@@ -187,10 +189,10 @@ function renderTask(task, providers, selectedId) {
   const waiting = task.waitingFor?.reason === 'writer_not_closed'
     ? `，等待执行程序退出确认，阻塞任务「${task.waitingFor.title}」`
     : task.waitingFor ? `，等待「${task.waitingFor.title}」` : ''
-  const accessibleLabel = `${title}，${provider}，${(task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime))}${attention}${waiting}${updated ? `，更新于 ${updated}` : ''}`
+  const accessibleLabel = `${title}，${provider}，${(task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime, task.phase))}${attention}${waiting}${updated ? `，更新于 ${updated}` : ''}`
   const stateHtml = pendingPermissionCount > 0
-    ? `<span class="wb-task-attention" data-status="${escapeWorkbenchHtml(statusValue(task))}" aria-label="${escapeWorkbenchHtml((task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime)))}，${escapeWorkbenchHtml(pendingPermissionCount)} 项权限请求等你确认">等你确认 · ${escapeWorkbenchHtml(pendingPermissionCount)}</span>`
-    : pendingQuestionCount > 0 ? `<span class="wb-task-attention" aria-label="${escapeWorkbenchHtml(pendingQuestionCount)} 项问题等你回答">等你回答 · ${escapeWorkbenchHtml(pendingQuestionCount)}</span>` : `<span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue(task))}">${escapeWorkbenchHtml(waitingLabel || (task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime)))}</span>`
+    ? `<span class="wb-task-attention" data-status="${escapeWorkbenchHtml(statusValue(task))}" aria-label="${escapeWorkbenchHtml((task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime, task.phase)))}，${escapeWorkbenchHtml(pendingPermissionCount)} 项权限请求等你确认">等你确认 · ${escapeWorkbenchHtml(pendingPermissionCount)}</span>`
+    : pendingQuestionCount > 0 ? `<span class="wb-task-attention" aria-label="${escapeWorkbenchHtml(pendingQuestionCount)} 项问题等你回答">等你回答 · ${escapeWorkbenchHtml(pendingQuestionCount)}</span>` : `<span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue(task))}">${escapeWorkbenchHtml(waitingLabel || (task.importedOnly?'尚未执行':statusLabel(task.status, task.runtime, task.phase)))}</span>`
   return `<button type="button" class="wb-task ${task.id === selectedId ? 'is-selected' : ''}" data-task-id="${escapeWorkbenchHtml(task.id)}" aria-label="${escapeWorkbenchHtml(accessibleLabel)}"${updated ? ` title="${escapeWorkbenchHtml(`${title} · ${updated}`)}"` : ''}>
     <span class="wb-task-title" title="${escapeWorkbenchHtml(title)}">${escapeWorkbenchHtml(title)}</span>
     <span class="wb-task-meta"><span class="wb-task-provider">${escapeWorkbenchHtml(provider)}</span>${stateHtml}</span>
@@ -265,7 +267,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
         <label>要做什么<textarea id="wb-create-text" name="text" rows="4" maxlength="20000" placeholder="例如：整理这些访谈记录，做一份主题摘要和引用表"></textarea></label>
         ${renderAttachmentComposer(draft,attachmentError)}
         ${state.providers.length ? '' : '<p class="wb-provider-missing" role="alert">暂时没有可用的工作执行者。请连接或管理支持工作任务的 Claude Code／Codex 执行者后再开始任务。</p>'}
-        <details id="wb-options" class="wb-options"><summary>执行者与命名 <span>当前使用 ${escapeWorkbenchHtml(state.providers.find(p => p.id === state.defaultProvider)?.displayName || '尚未选择执行者')}</span></summary><label>执行者<select id="wb-provider" name="providerId"${executionView.busy?' disabled':''}>${(state.providers ?? []).map((p) => `<option value="${escapeWorkbenchHtml(p.id)}" ${p.id === state.defaultProvider ? 'selected' : ''}>${escapeWorkbenchHtml(p.displayName)}</option>`).join('')}</select></label>
+        <details id="wb-options" class="wb-options"><summary>执行者与命名 <span>当前使用 ${escapeWorkbenchHtml((p => p ? providerLabel(p) : '尚未选择执行者')(state.providers.find(p => p.id === state.defaultProvider)))}</span></summary><label>执行者<select id="wb-provider" name="providerId"${executionView.busy?' disabled':''}>${(state.providers ?? []).map((p) => `<option value="${escapeWorkbenchHtml(p.id)}" ${p.id === state.defaultProvider ? 'selected' : ''}>${escapeWorkbenchHtml(providerLabel(p))}</option>`).join('')}</select></label>
         ${executionControls}<label>任务名称 <span class="wb-optional">可选</span><input id="wb-title" name="title" placeholder="留空时使用任务要求的前 40 个字"></label></details>
         <button class="wb-btn wb-btn-primary" type="submit"${state.providers.length&&!draft?.attachments?.some(a=>a.status!=='ready') ? '' : ' disabled'}>开始任务</button>
       </form></div>`
