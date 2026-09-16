@@ -1,12 +1,13 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {createHash,randomUUID} from 'node:crypto'
-import {mkdtempSync,rmSync} from 'node:fs'
+import {mkdtempSync} from 'node:fs'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../lib/db'
 import {makeWorkbenchStore} from './store'
 import type {WorkbenchMediaItem} from '../../lib/ilink-workbench'
 import {initializeArtifactDeliverySchema,makeArtifactDeliveryStore,makeArtifactDeliveryWorker,parseWorkbenchMediaItem,type ArtifactDeliveryReceipt} from './artifact-deliveries'
+import {removeTempDir} from '../../lib/test-temp'
 
 let dir:string,path:string,db:Db,taskId:string,artifactId:string
 const bytes=Buffer.from('immutable report'),sha256=createHash('sha256').update(bytes).digest('hex')
@@ -17,7 +18,7 @@ beforeEach(()=>{
   workbench.addArtifact({taskId,name:'report.txt',mime:'text/plain',size:bytes.length,sha256,storagePath:'/snapshot'})
   artifactId=workbench.artifacts(taskId)[0]!.id
 })
-afterEach(()=>{db.close();rmSync(dir,{recursive:true,force:true})})
+afterEach(()=>{db.close();removeTempDir(dir)})
 const input=(changes:Partial<Omit<ArtifactDeliveryReceipt,'status'|'mediaItemJson'|'reason'|'createdAt'|'updatedAt'>>={})=>({id:randomUUID(),commandHash:'c'.repeat(64),taskId,artifactId,artifactSha256:sha256,name:'report.txt',mime:'text/plain',size:bytes.length,ownerChatId:'owner',accountId:'account',...changes})
 const payload={name:'report.txt',mime:'text/plain',size:bytes.length,sha256,contentBase64:bytes.toString('base64')}
 

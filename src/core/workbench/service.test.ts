@@ -8,6 +8,7 @@ import type { AgentEvent, AgentProvider, AgentSession, SpawnContext } from '../a
 import { makeWorkbenchStore } from './store'
 import { makeWorkbenchService, type WorkbenchService } from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
 
 let root: string, project: string, db: Db, service: WorkbenchService
 let testStore:ReturnType<typeof makeWorkbenchStore>
@@ -39,7 +40,7 @@ beforeEach(() => {
   project = join(root, 'project'); mkdirSync(project)
   db = openDb({ path: join(root, 'state.db') })
 })
-afterEach(async () => { await service?.shutdown(); db.close(); rmSync(root, { recursive: true, force: true }) })
+afterEach(async () => { await service?.shutdown(); db.close(); removeTempDir(root) })
 
 describe('persistent workbench', () => {
   it('records bounded native capability notices only for their current uncancelled run',async()=>{

@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest'
-import {mkdtempSync,mkdirSync,readFileSync,realpathSync,rmSync,writeFileSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,readFileSync,realpathSync,writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {randomUUID} from 'node:crypto'
@@ -10,6 +10,7 @@ import type {AgentAttachment,AgentEvent,AgentProvider,AgentRuntimeSnapshot,Agent
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
 
 function gate(){let resolve!:()=>void,reject!:(error:Error)=>void;const promise=new Promise<void>((a,b)=>{resolve=a;reject=b});return{promise,resolve,reject}}
 const result:AgentEvent={kind:'result',sessionId:'owned-parent',numTurns:1,durationMs:1}
@@ -61,7 +62,7 @@ const create=()=>service.create({path:project,providerId:'claude',text:'Start ow
 const started=async(owned:OwnedRuntime)=>expect.poll(()=>owned.started.length,{interval:5}).toBe(1)
 const settled=async(id:string)=>expect.poll(()=>service.detail(id).task.status,{interval:5}).not.toMatch(/^(queued|running|cancelling)$/)
 beforeEach(()=>{area=realpathSync(mkdtempSync(join(tmpdir(),'cc-service-background-')));project=join(area,'project');mkdirSync(project);db=openDb({path:join(area,'state.db')});revocations=[]})
-afterEach(async()=>{await service?.shutdown();db.close();rmSync(area,{recursive:true,force:true})})
+afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
 
 describe('workbench owned background runtime',()=>{
   it('keeps one run, its permissions and writer reservation after parent results until explicit close',async()=>{

@@ -1,18 +1,19 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest'
-import {mkdtempSync,rmSync} from 'node:fs'
+import {mkdtempSync} from 'node:fs'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../lib/db'
 import {makeWorkbenchStore} from './store'
 import {makeApiSessionStore,type ApiSessionBinding} from './api-sessions'
 import type {ChatMessage} from './api-model'
+import {removeTempDir} from '../../lib/test-temp'
 
 let dir:string,path:string,db:Db,taskId:string
 const messages=(text='hello'):ChatMessage[]=>[{role:'user',content:text}]
 const binding=(changes:Partial<ApiSessionBinding>={}):ApiSessionBinding=>({taskId,owner:'owner',path:'/tmp/project',directoryIdentity:'directory-1',configHash:'a'.repeat(64),...changes})
 
 beforeEach(()=>{dir=mkdtempSync(join(tmpdir(),'cc-api-sessions-'));path=join(dir,'state.db');db=openDb({path});taskId=makeWorkbenchStore(db).create({title:'api',path:'/tmp/project',providerId:'api-model',ownerChatId:'owner'}).id})
-afterEach(()=>{db.close();rmSync(dir,{recursive:true,force:true})})
+afterEach(()=>{db.close();removeTempDir(dir)})
 
 describe('API session transcript store',()=>{
   it('creates an active revision-zero session and persists it across reopen',()=>{

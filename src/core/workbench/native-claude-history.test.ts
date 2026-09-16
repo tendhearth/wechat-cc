@@ -1,9 +1,10 @@
-import {mkdtempSync,rmSync} from 'node:fs'
+import {mkdtempSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { createClaudeHistoryReader, type ClaudeHistorySdk } from './native-claude-history'
 import { encodeNativeHistoryKey } from './native-history'
+import {removeTempDir} from '../../lib/test-temp'
 
 const key=Buffer.from(JSON.stringify({v:1,providerId:'claude',nativeId:'claude-1'})).toString('base64url')
 const info=(extra:Record<string,unknown>={})=>({sessionId:'claude-1',summary:'Summary',customTitle:'My title',firstPrompt:'first',cwd:'/fixture',lastModified:100,fileSize:200,...extra})
@@ -89,5 +90,5 @@ it('bounds the entire Claude scan instead of resetting the timeout per batch',as
 
 it('exercises defaultSdk against an owned empty project without listing personal histories',async()=>{
  const cwd=mkdtempSync(join(tmpdir(),'cc-claude-empty-history-'))
- try{expect(await createClaudeHistoryReader().list({cwd,q:'',limit:10})).toEqual({items:[],nextCursor:null,coverage:'native_supported_history'})}finally{rmSync(cwd,{recursive:true,force:true})}
+ try{expect(await createClaudeHistoryReader().list({cwd,q:'',limit:10})).toEqual({items:[],nextCursor:null,coverage:'native_supported_history'})}finally{removeTempDir(cwd)}
 })

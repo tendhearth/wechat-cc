@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,it} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,rmSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {randomUUID} from 'node:crypto'
@@ -10,6 +10,7 @@ import type {AgentEvent,AgentRuntimeSnapshot,AgentSession,AgentWorkbenchRuntime}
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
 
 /**
  * 文件夹是一份租约(Orca 的思路):谁在写谁持有。此前 Claude 答完后会话为续接保留,
@@ -39,7 +40,7 @@ beforeEach(()=>{
   registry.register('claude',{async spawn(){const r=new TurnRuntime();runtimes.push(r);return r.session}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>null})
 })
-afterEach(async()=>{await service?.shutdown();db.close();rmSync(area,{recursive:true,force:true})})
+afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
 const create=(text:string)=>service.create({path:project,providerId:'claude',text})
 const phase=(id:string)=>service.detail(id).task.phase
 const status=(id:string)=>service.detail(id).task.status

@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,rmSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {randomUUID} from 'node:crypto'
@@ -9,6 +9,7 @@ import type {AgentEvent,AgentProvider} from '../agent-provider'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
+import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,service:WorkbenchService,store:ReturnType<typeof makeWorkbenchStore>
 const result:AgentEvent={kind:'result',sessionId:'native',numTurns:1,durationMs:1}
@@ -24,7 +25,7 @@ function gate(){let resolve!:()=>void;const promise=new Promise<void>(r=>resolve
 async function settle(id:string){await expect.poll(()=>service.detail(id).task.status).not.toMatch(/^(queued|running|cancelling)$/)}
 
 beforeEach(()=>{root=realpathSync(mkdtempSync(join(tmpdir(),'cc-service-cap-')));project=join(root,'project');mkdirSync(project);db=openDb({path:join(root,'state.db')})})
-afterEach(async()=>{await service?.shutdown();db.close();rmSync(root,{recursive:true,force:true})})
+afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(root)})
 
 describe('workbench executor admission',()=>{
   it('does not admit a provider by brand and returns copied capabilities for an admitted arbitrary provider',async()=>{

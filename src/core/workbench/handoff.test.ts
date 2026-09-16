@@ -8,9 +8,10 @@ import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {saveArtifactSnapshot} from './artifacts'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
 let dir:string,db:Db,service:WorkbenchService
 beforeEach(()=>{dir=realpathSync(mkdtempSync(join(tmpdir(),'cc-handoff-')));db=openDb({path:join(dir,'test.db')})})
-afterEach(async()=>{await service?.shutdown();db.close();rmSync(dir,{recursive:true,force:true})})
+afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(dir)})
 function fixture(){
  const store=makeWorkbenchStore(db),registry=createProviderRegistry(),calls:Array<{providerId:string;resume?:string;text:string}>=[]
  let resumable=true

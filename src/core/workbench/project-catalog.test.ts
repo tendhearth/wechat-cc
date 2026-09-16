@@ -3,10 +3,11 @@ import {mkdirSync,mkdtempSync,realpathSync,renameSync,rmSync,symlinkSync,writeFi
 import {basename,join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {makeProjectCatalog} from './project-catalog'
+import {removeTempDir} from '../../lib/test-temp'
 
 const roots:string[]=[]
 const root=()=>{const path=mkdtempSync(join(tmpdir(),'cc-project-catalog-'));roots.push(path);return path}
-afterEach(()=>{for(const path of roots.splice(0))rmSync(path,{recursive:true,force:true})})
+afterEach(()=>{for(const path of roots.splice(0))removeTempDir(path)})
 
 describe('project catalog',()=>{
   it('canonicalizes and deduplicates symlinks while keeping the registered alias',()=>{

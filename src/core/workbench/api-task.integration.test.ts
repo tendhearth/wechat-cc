@@ -1,7 +1,7 @@
 import {afterEach,beforeEach,expect,it} from 'vitest'
 import {createServer,type Server} from 'node:http'
 import {once} from 'node:events'
-import {mkdtempSync,mkdirSync,realpathSync,rmSync,readFileSync,existsSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync,readFileSync,existsSync} from 'node:fs'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../lib/db'
@@ -12,10 +12,11 @@ import {makeApiSessionStore} from './api-sessions'
 import {MANAGED_API_CAPABILITIES} from './executor-capabilities'
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
+import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,state:string,project:string,db:Db,server:Server,service:WorkbenchService
 beforeEach(()=>{root=realpathSync(mkdtempSync(join(tmpdir(),'cc-api-service-')));state=join(root,'state');project=join(root,'project');mkdirSync(state);mkdirSync(project);db=openDb({path:join(state,'test.db')})})
-afterEach(async()=>{await service?.shutdown();if(server){server.closeAllConnections();server.close();await once(server,'close')}db.close();rmSync(root,{recursive:true,force:true})})
+afterEach(async()=>{await service?.shutdown();if(server){server.closeAllConnections();server.close();await once(server,'close')}db.close();removeTempDir(root)})
 type Request={model:string;messages:Array<{role:string;content:unknown}>;tools:Array<{function:{name:string}}>}
 async function endpoint(reply:(request:Request,count:number)=>{text?:string;tool?:{name:string;input:unknown};finish?:string}){
   const requests:Request[]=[]

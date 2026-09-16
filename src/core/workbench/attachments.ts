@@ -1,12 +1,10 @@
 import {createHash,randomUUID} from 'node:crypto'
-import {closeSync,constants,fstatSync,lstatSync,mkdtempSync,openSync,readdirSync,readFileSync,readSync,rmSync,writeFileSync} from 'node:fs'
-import {tmpdir} from 'node:os'
+import {closeSync,constants,fstatSync,lstatSync,readdirSync,readSync,unlinkSync,writeFileSync} from 'node:fs'
 import {basename,dirname,extname,isAbsolute,join,resolve} from 'node:path'
-import {cc,dlopen,ptr} from 'bun:ffi'
-import nativeSource from './attachments-native.c' with {type:'file'}
 import type {Db} from '../../lib/db'
 import type {AgentAttachment} from '../agent-provider'
 import {readAnchoredRegular} from './artifacts'
+import {O_NONBLOCK,lstatNoLink,mkdirAnchored,openAnchored} from './anchored-fs'
 
 export interface Attachment {id:string;name:string;mime:string;size:number;sha256:string}
 export interface AttachmentUpload {id:string;draftId:string;taskId?:string;name:string;mime:string;base64:string}
@@ -71,43 +69,11 @@ function inferredMime(name:string,mime:unknown):string {
   return mime
 }
 
-type NativeFs={openat:(dir:number,name:ReturnType<typeof ptr>,flags:number,mode:number)=>number;mkdirat:(dir:number,name:ReturnType<typeof ptr>,mode:number)=>number;unlinkat:(dir:number,name:ReturnType<typeof ptr>,flags:number)=>number}
-let nativeFs:NativeFs|undefined
-function native():NativeFs {
-  if(nativeFs)return nativeFs
-  const library=process.platform==='darwin'?'/usr/lib/libSystem.B.dylib':process.platform==='linux'?'libc.so.6':null
-  if(!library)throw Error('attachment_platform_unsupported')
-  // TinyCC cannot open Bun's embedded /$bunfs paths. Stage only this fixed source
-  // in a private directory, compile once in memory, and immediately remove it.
-  const directory=mkdtempSync(join(tmpdir(),'cc-attachment-native-'))
-  try{
-    const source=join(directory,'openat.c');writeFileSync(source,readFileSync(nativeSource),{mode:0o600,flag:'wx'})
-    const open=cc({source,symbols:{attachment_openat:{args:['i32','ptr','i32','i32'],returns:'i32'}}})
-    const directories=dlopen(library,{mkdirat:{args:['i32','ptr','i32'],returns:'i32'},unlinkat:{args:['i32','ptr','i32'],returns:'i32'}})
-    nativeFs={openat:open.symbols.attachment_openat,...directories.symbols} as NativeFs
-  }finally{rmSync(directory,{recursive:true,force:true})}
-  return nativeFs
-}
-function flags():number {
-  if(constants.O_NOFOLLOW===undefined||constants.O_DIRECTORY===undefined)throw Error('attachment_platform_unsupported')
-  return constants.O_NOFOLLOW|((constants as unknown as Record<string,number>).O_CLOEXEC??0)
-}
-/** Every created directory and file stays relative to the opened parent, including during renames. */
-function withDirectory<T>(root:string,parts:string[],action:(fd:number)=>T):T {
+/** Every created directory stays a real directory under its parent — a link at any level fails closed (anchored-fs.ts). */
+function withDirectory<T>(root:string,parts:string[],action:(dir:string)=>T):T {
   if(!isAbsolute(root))throw Error('invalid_attachment_path')
-  let fd:number
-  try{fd=openSync(root,constants.O_RDONLY|constants.O_DIRECTORY|flags())}catch{throw Error('invalid_attachment_path')}
-  try{
-    for(const part of parts){
-      fileName(part)
-      const name=Buffer.from(part+'\0')
-      native().mkdirat(fd,ptr(name),0o700)
-      const next=native().openat(fd,ptr(name),constants.O_RDONLY|constants.O_DIRECTORY|flags(),0)
-      if(next<0)throw Error('invalid_attachment_path')
-      closeSync(fd);fd=next
-    }
-    return action(fd)
-  }finally{closeSync(fd)}
+  parts.forEach(part=>fileName(part))
+  return action(mkdirAnchored(root,parts,'invalid_attachment_path'))
 }
 function readFileDescriptor(fd:number):Buffer {
   const before=fstatSync(fd)
@@ -119,12 +85,12 @@ function readFileDescriptor(fd:number):Buffer {
   if(length>MAX_ATTACHMENT_BYTES||length!==before.size||after.size!==before.size||after.mtimeMs!==before.mtimeMs||after.ctimeMs!==before.ctimeMs)throw Error('attachment_changed')
   return bytes.subarray(0,length)
 }
-function writeImmutable(fd:number,name:string,bytes:Buffer,sha256:string):void {
-  const encoded=Buffer.from(fileName(name)+'\0')
-  const created=native().openat(fd,ptr(encoded),constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|flags(),0o600)
-  if(created>=0){try{writeFileSync(created,bytes)}finally{closeSync(created)};return}
-  const existing=native().openat(fd,ptr(encoded),constants.O_RDONLY|constants.O_NONBLOCK|flags(),0)
-  if(existing<0)throw Error('invalid_attachment_path')
+function writeImmutable(dir:string,name:string,bytes:Buffer,sha256:string):void {
+  const leaf=fileName(name)
+  let created:number|undefined
+  try{created=openAnchored(dir,[leaf],constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL,0o600,'invalid_attachment_path')}catch{/* exists (or a link): compare below */}
+  if(created!==undefined){try{writeFileSync(created,bytes)}finally{closeSync(created)};return}
+  const existing=openAnchored(dir,[leaf],constants.O_RDONLY|O_NONBLOCK,0,'invalid_attachment_path')
   try{if(hash(readFileDescriptor(existing))!==sha256)throw Error('attachment_changed')}finally{closeSync(existing)}
 }
 function snapshot(row:StoredAttachment,stateDir:string):Buffer {
@@ -139,12 +105,13 @@ function snapshot(row:StoredAttachment,stateDir:string):Buffer {
   return bytes
 }
 /** Called with the SQLite write transaction held, so another process cannot claim a collected blob. */
-function collectUnusedBlobs(db:Db,root:string,fd:number):void {
+function collectUnusedBlobs(db:Db,root:string,dir:string):void {
   const referenced=new Set(db.query<{storagePath:string},[]>('SELECT DISTINCT storage_path AS storagePath FROM workbench_attachments').all().map(row=>row.storagePath))
   for(const entry of readdirSync(root)){
     if(!/^[a-f0-9]{64}$/.test(entry)||referenced.has(join(root,entry)))continue
-    const name=Buffer.from(entry+'\0')
-    if(native().unlinkat(fd,ptr(name),0)!==0)throw Error('invalid_attachment_path')
+    // 只删真文件;unlink 本身也从不跟链接走。
+    if(!lstatNoLink(join(dir,entry),'invalid_attachment_path').isFile())throw Error('invalid_attachment_path')
+    try{unlinkSync(join(dir,entry))}catch{throw Error('invalid_attachment_path')}
   }
 }
 /** Count any remaining orphan/unknown files too; failed cleanup cannot bypass disk limits. */

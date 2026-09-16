@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,renameSync,rmSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync,renameSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
@@ -7,6 +7,7 @@ import {createProviderRegistry} from '../provider-registry'
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService
 let owner:string|null,registered:Array<{alias:string,path:string}>,seen:Array<{path:string,text:string,provider:string}>
@@ -23,7 +24,7 @@ beforeEach(()=>{
   root=realpathSync(mkdtempSync(join(tmpdir(),'cc-wechat-create-')));project=join(root,'project');mkdirSync(project)
   db=openDb({path:join(root,'state.db')});owner='owner';registered=[{alias:'project',path:project}];seen=[];setup()
 })
-afterEach(async()=>{await service.shutdown();db.close();rmSync(root,{recursive:true,force:true})})
+afterEach(async()=>{await service.shutdown();db.close();removeTempDir(root)})
 const command=(text='整理周报')=>`任务 新建 ${service.projects()[0]!.id} ${text}`
 const settle=async(id:string)=>expect.poll(()=>service.detail(id).task.status).toBe('completed')
 

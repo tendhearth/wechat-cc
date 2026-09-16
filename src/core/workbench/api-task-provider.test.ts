@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,rmSync,readFileSync,writeFileSync,existsSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync,readFileSync,writeFileSync,existsSync} from 'node:fs'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../lib/db'
@@ -9,10 +9,11 @@ import {createApiTaskProvider} from './api-task-provider'
 import type {APIModel,ChatMessage} from './api-model'
 import type {AgentEvent,SpawnContext} from '../agent-provider'
 import {TIER_PROFILES} from '../user-tier'
+import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,taskId:string
 beforeEach(()=>{root=realpathSync(mkdtempSync(join(tmpdir(),'cc-api-task-')));project=join(root,'project');mkdirSync(project);db=openDb({path:join(root,'state.db')});taskId=makeWorkbenchStore(db).create({title:'report',path:project,ownerChatId:'owner',providerId:'openai'}).id})
-afterEach(()=>{db.close();rmSync(root,{recursive:true,force:true})})
+afterEach(()=>{db.close();removeTempDir(root)})
 const ctx=(extra:Partial<SpawnContext>={}):SpawnContext=>({tierProfile:TIER_PROFILES.trusted,permissionMode:'strict',chatId:'owner',appendInstructions:'Work only on this task.',requestPermission:async()=>true,...extra})
 const collect=async(events:AsyncIterable<AgentEvent>)=>{const all:AgentEvent[]=[];for await(const e of events)all.push(e);return all}
 function scripted(turns:Array<{text?:string;call?:{id:string;name:string;input:unknown};finish?:string}>){

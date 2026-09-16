@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,rmSync,writeFileSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync,writeFileSync} from 'node:fs'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {openDb} from '../../lib/db'
@@ -8,9 +8,10 @@ import {MANAGED_API_CAPABILITIES} from '../../core/workbench/executor-capabiliti
 import {registerWorkbenchApi} from './workbench-api'
 import {makeWorkbenchStore} from '../../core/workbench/store'
 import {TIER_PROFILES} from '../../core/user-tier'
+import {removeTempDir} from '../../lib/test-temp'
 
 const roots:string[]=[]
-afterEach(()=>{for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true})})
+afterEach(()=>{for(const root of roots.splice(0))removeTempDir(root)})
 
 it('registers the isolated API task adapter without making a network call',()=>{
   const root=mkdtempSync(join(tmpdir(),'cc-register-api-'));roots.push(root);const db=openDb({path:join(root,'state.db')}),registry=createProviderRegistry(),fetchSpy=vi.spyOn(globalThis,'fetch')

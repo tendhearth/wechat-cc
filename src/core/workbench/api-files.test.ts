@@ -1,9 +1,10 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest'
-import {existsSync,linkSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,renameSync,rmSync,symlinkSync,writeFileSync} from 'node:fs'
+import {existsSync,linkSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,renameSync,symlinkSync,writeFileSync} from 'node:fs'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {execFileSync} from 'node:child_process'
 import {prepareApiFileTool} from './api-files'
+import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,outside:string
 const task='deadbeef'
@@ -13,7 +14,7 @@ beforeEach(()=>{
   mkdirSync(project);mkdirSync(outside)
   writeFileSync(join(outside,'secret.txt'),'private outside material')
 })
-afterEach(()=>rmSync(root,{recursive:true,force:true}))
+afterEach(()=>removeTempDir(root))
 const prepare=(name:string,input:unknown)=>prepareApiFileTool(project,task,name,input)
 const run=(name:string,input:unknown)=>prepare(name,input).execute()
 

@@ -1,28 +1,24 @@
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
-  plugins:[{name:'bun-native-file-import',enforce:'pre',load(id){
-    // Bun embeds this source through its file import attribute; Vite needs the path.
-    if(id.endsWith('/workbench/attachments-native.c')||id.endsWith('/workbench/api-files-native.c'))return `export default ${JSON.stringify(id)}`
-  }}],
   test: {
     // Never collect tests from Claude's nested worktrees: doing so runs a
     // second copy of the suite concurrently and makes every ephemeral-port
     // test contend with its duplicate.
     exclude: [
       '**/node_modules/**', '**/.claude/worktrees/**', '**/__e2e__/**', '**/playwright/**', '**/eval/**',
-      // Windows 上工作台不可用,整块不跑(2026-09-16,windows-latest 466 条红里 ~440 条在这里):
-      // Codex 执行者与 Claude 保留会话在 win32 明确拒绝(codex-app-server.ts / claude-workbench-runtime.ts),
-      // 成果、附件、API 文件、原生历史都依赖 bun:ffi 编译的 *-native.c(openat / dirfd),win32 上
-      // 一律 artifact_platform_unsupported / native_history_unsupported。这些测试在 Windows 上
-      // 测的不是代码,是"平台不支持"这一个事实,每次 400 条红只会教人别看 CI。
-      // 这是产品缺口,不是测试缺口:Windows 用户目前拿不到工作台,见 docs/cc-workbench.md。
+      // win32 上不跑的(2026-09-16 起工作台的文件层已是纯 JS,大部分工作台测试在 Windows 也跑):
+      // - Codex 执行者 / Claude 保留会话 / Codex 原生历史在 win32 明确抛错(进程树清理未验证),
+      //   这些测试在 Windows 上测的只是"平台不支持"这个事实;
+      // - 用到 mkfifo 的夹具(Windows 没有 FIFO);
+      // - git-review 在 Windows 上另有一堆路径 / CRLF 差异,单独一件事。
       ...(process.platform === 'win32' ? [
-        'src/core/workbench/**',
+        'src/core/workbench/codex-app-server.test.ts',
+        'src/core/workbench/codex-history-rpc.test.ts',
         'src/core/claude-workbench-runtime.test.ts',
-        'src/daemon/bootstrap/wire-workbench-*.test.ts',
-        'src/daemon/bootstrap/workbench-api.test.ts',
-        'src/daemon/internal-api/routes-workbench.test.ts',
+        'src/core/workbench/artifacts.test.ts',
+        'src/core/workbench/api-files.test.ts',
+        'src/core/workbench/git-review.test.ts',
       ] : []),
     ],
     // Tests should never touch the operator's real ~/.claude/channels/wechat

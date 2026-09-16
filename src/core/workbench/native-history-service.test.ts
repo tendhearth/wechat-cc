@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
-import {mkdtempSync,rmSync} from 'node:fs'
+import {mkdtempSync} from 'node:fs'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../lib/db'
@@ -8,9 +8,10 @@ import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {encodeNativeHistoryKey,type NativeHistoryReader} from './native-history'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
 let root:string,db:Db,service:WorkbenchService
 beforeEach(()=>{root=mkdtempSync(join(tmpdir(),'cc-native-service-'));db=openDb({path:join(root,'test.db')})})
-afterEach(async()=>{await service?.shutdown();db.close();rmSync(root,{recursive:true,force:true})})
+afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(root)})
 it('lists and previews only explicitly wired readers without creating or executing tasks',async()=>{
  const registry=createProviderRegistry(),spawn=vi.fn(async()=>{throw new Error('must not execute')}),mint=vi.fn(()=> 'unused')
  registry.register('claude',{spawn},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})

@@ -4,11 +4,12 @@ import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,symlinkSync} fro
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {captureGitBaseline,finishGitReview} from './git-review'
+import {removeTempDir} from '../../lib/test-temp'
 let root:string
 function git(...args:string[]){return execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim()}
 function file(name:string,text:string|Buffer){writeFileSync(join(root,name),text)}
 beforeEach(()=>{root=mkdtempSync(join(tmpdir(),'cc-review-'));git('init','-q');git('config','user.email','test@localhost');git('config','user.name','Test');file('app.ts','const answer = 1\n');git('add','.');git('commit','-qm','base')})
-afterEach(()=>rmSync(root,{recursive:true,force:true}))
+afterEach(()=>removeTempDir(root))
 it('compares actual baseline including pre-existing staged edits without changing index or HEAD',async()=>{
  file('app.ts','const answer = 2\n');git('add','app.ts');file('notes.md','already here\n')
  const baseline=await captureGitBaseline(root)
@@ -46,7 +47,7 @@ it('does not turn a non-git folder into a repository and supports unborn git pro
  const plain=join(root,'plain');mkdirSync(plain)
  // An inherited parent repo is still a repository; place a genuinely separate directory outside it.
  const separate=mkdtempSync(join(tmpdir(),'cc-plain-'))
- try{expect(await finishGitReview(await captureGitBaseline(separate))).toBeNull()}finally{rmSync(separate,{recursive:true,force:true})}
+ try{expect(await finishGitReview(await captureGitBaseline(separate))).toBeNull()}finally{removeTempDir(separate)}
  const unborn=join(root,'unborn');mkdirSync(unborn);execFileSync('git',['init','-q'],{cwd:unborn});writeFileSync(join(unborn,'draft.md'),'before\n')
  const baseline=await captureGitBaseline(unborn);writeFileSync(join(unborn,'draft.md'),'after\n')
  expect((await finishGitReview(baseline))?.files[0]?.diff).toContain('-before')

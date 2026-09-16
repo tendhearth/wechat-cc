@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,rmSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
@@ -8,6 +8,7 @@ import type {AgentProvider,AgentEvent,SpawnContext} from '../agent-provider'
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService,owner:string|null
 const message={accountId:'account-one',userId:'owner',msgId:'create',createTimeMs:1}
@@ -18,7 +19,7 @@ function setup(provider:AgentProvider){
 }
 const gate=()=>{let resolve!:()=>void;const promise=new Promise<void>(r=>{resolve=r});return{promise,resolve}}
 beforeEach(()=>{root=realpathSync(mkdtempSync(join(tmpdir(),'cc-task-notices-')));project=join(root,'project');mkdirSync(project);db=openDb({path:join(root,'state.db')});store=makeWorkbenchStore(db);owner='owner'})
-afterEach(async()=>{await service.shutdown();db.close();rmSync(root,{recursive:true,force:true})})
+afterEach(async()=>{await service.shutdown();db.close();removeTempDir(root)})
 async function create(){return service.handleWechat('owner',`任务 新建 ${service.projects()[0]!.id} 整理报告`,message)}
 const settled=async(id:string)=>expect.poll(()=>service.detail(id).task.status).toBe('completed')
 

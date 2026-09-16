@@ -5,11 +5,12 @@ import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../lib/db'
 import {makeWorkbenchStore} from './store'
+import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=','base64')
 beforeEach(()=>{root=realpathSync(mkdtempSync(join(tmpdir(),'cc-attachments-')));project=join(root,'project');mkdirSync(project);db=openDb({path:join(root,'state.db')});store=makeWorkbenchStore(db)})
-afterEach(()=>{db.close();rmSync(root,{recursive:true,force:true})})
+afterEach(()=>{db.close();removeTempDir(root)})
 const task=()=>store.create({title:'task',path:project,providerId:'claude',ownerChatId:null}).id
 const upload=(extra:Record<string,unknown>={})=>({id:randomUUID(),draftId:randomUUID(),name:'notes.txt',mime:'text/plain',base64:Buffer.from('original bytes').toString('base64'),...extra})
 const accepted=(input:ReturnType<typeof upload>&{taskId?:string})=>{const a=store.attachments.upload(input as never,root);store.attachments.bind([a.id],input.taskId as string,input.draftId as string);return a}

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Database } from 'bun:sqlite'
 import { initializeWechatNotificationSchema, makeWechatNotificationStore } from '../../core/workbench/wechat-notifications'
 import { wireWorkbenchNotifications } from './wire-workbench-notifications'
-import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDb } from '../../lib/db'
@@ -16,6 +16,7 @@ import { makeMwCaptureCtx } from '../inbound/mw-capture-ctx'
 import { makeMwWorkbench } from '../inbound/mw-workbench'
 import { createInternalApi } from '../internal-api'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
 
 const databases: Database[] = []
 function fixture() {
@@ -159,7 +160,7 @@ describe('wireWorkbenchNotifications', () => {
       expect((await makeMessagesStore(db).listRange('owner', { limit: 10 })).map(m => m.source)).toEqual(['workbench', 'workbench', 'workbench'])
       expect(replies).toHaveBeenCalledTimes(3)
     } finally {
-      await internalApi.stop(); ilinkServer.stop(true); await wired.close(); await service.shutdown(); await adapter.flush(); db.close(); rmSync(root, { recursive: true, force: true })
+      await internalApi.stop(); ilinkServer.stop(true); await wired.close(); await service.shutdown(); await adapter.flush(); db.close(); removeTempDir(root)
     }
   })
 })

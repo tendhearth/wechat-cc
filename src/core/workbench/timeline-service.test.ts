@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,rmSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openTestDb,type Db} from '../../lib/db'
@@ -8,6 +8,7 @@ import {makeWorkbenchService,type WorkbenchService} from './service'
 import {createProviderRegistry} from '../provider-registry'
 import type {AgentEvent,AgentProvider,SpawnContext} from '../agent-provider'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
 
 let db:Db,root:string,project:string,service:WorkbenchService
 const result:AgentEvent={kind:'result',sessionId:'native-one',numTurns:1,durationMs:1}
@@ -19,7 +20,7 @@ function setup(provider:AgentProvider){
 const create=()=>service.create({path:project,providerId:'codex',text:'check local files'})
 const settle=async(id:string)=>expect.poll(()=>service.detail(id).task.status).not.toMatch(/^(queued|running|cancelling)$/)
 beforeEach(()=>{db=openTestDb();root=realpathSync(mkdtempSync(join(tmpdir(),'cc-timeline-')));project=join(root,'project');mkdirSync(project)})
-afterEach(async()=>{await service?.shutdown();db.close();rmSync(root,{recursive:true,force:true})})
+afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(root)})
 
 describe('task execution timeline integration',()=>{
   it('opts in to workbench events and persists updates at first arrival with a common run ID',async()=>{

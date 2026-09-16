@@ -1,7 +1,7 @@
-import { constants, closeSync, fstatSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { constants, closeSync, lstatSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
-import { dlopen, ptr } from 'bun:ffi'
+import { O_NONBLOCK, openAnchored, readBounded } from './anchored-fs'
 import type { WorkbenchStore } from './store'
 
 export const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024
@@ -33,74 +33,20 @@ function noSymlinks(root: string, file: string) {
   if (!within(realpathSync(root),realpathSync(file))) throw new Error('invalid_artifact_path')
 }
 
-type OpenAt = (dirfd: number, path: ReturnType<typeof ptr>, flags: number) => number
-let openAt: OpenAt | undefined
-
-function nativeOpenAt(): OpenAt {
-  if (openAt) return openAt
-  const library = process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib'
-    : process.platform === 'linux' ? 'libc.so.6'
-    : null
-  if (!library) throw new Error('artifact_platform_unsupported')
-  const handle = dlopen(library, {
-    openat: { args: ['i32', 'ptr', 'i32'], returns: 'i32' },
-  })
-  openAt = handle.symbols.openat as OpenAt
-  return openAt
-}
-
-function requiredFlag(name: 'O_NOFOLLOW' | 'O_DIRECTORY'): number {
-  const value = (constants as unknown as Record<string, number | undefined>)[name]
-  if (value === undefined) throw new Error('artifact_platform_unsupported')
-  return value
-}
-
-function openRelative(dirfd: number, name: string, flags: number): number {
-  const bytes = Buffer.from(`${name}\0`)
-  const fd = nativeOpenAt()(dirfd, ptr(bytes), flags)
-  if (fd < 0) throw new Error('invalid_artifact_path')
-  return fd
-}
-
 /**
- * Read a file through an opened root directory. Every parent component is
- * opened relative to the previous directory descriptor with O_NOFOLLOW, so
- * renaming/replacing a pathname after a check cannot redirect the final open.
- * Bun exposes openat through FFI on macOS and Linux; unsupported platforms
- * fail closed instead of falling back to pathname validation with a race.
+ * Read a file through a verified root. Every component is checked to be a real
+ * directory (never a link) before the open, and checked again after it together
+ * with the descriptor's identity — see anchored-fs.ts for why "open, then verify"
+ * closes the rename race the old openat chain guarded against.
  */
 export function readAnchoredRegular(root: string, relativeName: string, maxBytes = MAX_ARTIFACT_BYTES): Buffer {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_ARTIFACT_BYTES) throw new Error('invalid_artifact_size')
   if (!isAbsolute(root) || isAbsolute(relativeName)) throw new Error('invalid_artifact_path')
   const parts = relativeName.split(/[\\/]/)
   if (!parts.length || parts.some(part => !part || part === '.' || part === '..')) throw new Error('invalid_artifact_path')
-  const noFollow = requiredFlag('O_NOFOLLOW')
-  const directory = requiredFlag('O_DIRECTORY')
-  const cloexec = (constants as unknown as Record<string, number | undefined>).O_CLOEXEC ?? 0
-  let current = openSync(root, constants.O_RDONLY | noFollow | directory | cloexec)
-  try {
-    for (const part of parts.slice(0, -1)) {
-      const next = openRelative(current, part, constants.O_RDONLY | noFollow | directory | cloexec)
-      closeSync(current)
-      current = next
-    }
-    const fd = openRelative(current, parts.at(-1)!, constants.O_RDONLY | noFollow | cloexec | constants.O_NONBLOCK)
-    try {
-      const stat = fstatSync(fd)
-      if (!stat.isFile() || stat.size > maxBytes) throw new Error('invalid_artifact_size')
-      const bytes = Buffer.allocUnsafe(maxBytes + 1)
-      let length = 0
-      while (length < bytes.length) {
-        const n = readSync(fd, bytes, length, bytes.length - length, null)
-        if (n === 0) break
-        length += n
-      }
-      if (length > maxBytes) throw new Error('invalid_artifact_size')
-      const after = fstatSync(fd)
-      if (after.size !== stat.size || length !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ctimeMs !== stat.ctimeMs) throw new Error('artifact_changed')
-      return bytes.subarray(0, length)
-    } finally { closeSync(fd) }
-  } finally { closeSync(current) }
+  const fd = openAnchored(root, parts, constants.O_RDONLY | O_NONBLOCK, 0, 'invalid_artifact_path')
+  try { return readBounded(fd, maxBytes, 'invalid_artifact_size', 'artifact_changed').bytes }
+  finally { closeSync(fd) }
 }
 export function outputDirectory(project: string, id: string) {
   const base = join(project,'.cc-workbench')

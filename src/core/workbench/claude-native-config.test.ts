@@ -1,11 +1,12 @@
 import { afterEach, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readNativeClaudeTools } from './claude-native-config'
+import {removeTempDir} from '../../lib/test-temp'
 
 const roots: string[] = []
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+afterEach(() => { for (const root of roots.splice(0)) removeTempDir(root) })
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'cc-claude-config-')); roots.push(root)
   const project = join(root, 'project'); mkdirSync(join(project, '.claude'), { recursive: true })

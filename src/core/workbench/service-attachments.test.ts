@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,it} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,rmSync,readFileSync,writeFileSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync,readFileSync,writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {randomUUID} from 'node:crypto'
@@ -10,6 +10,7 @@ import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {restartPreview} from './continuation'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,service:WorkbenchService,store:ReturnType<typeof makeWorkbenchStore>
 const result:AgentEvent={kind:'result',sessionId:'native-session',numTurns:1,durationMs:1}
@@ -26,7 +27,7 @@ function upload(name='brief.txt',text='original input',taskId?:string){
 }
 async function settled(id:string){await expect.poll(()=>service.detail(id).task.status).not.toMatch(/^(queued|running|cancelling)$/)}
 beforeEach(()=>{root=realpathSync(mkdtempSync(join(tmpdir(),'cc-attachment-service-')));project=join(root,'project');mkdirSync(project);db=openDb({path:join(root,'state.db')})})
-afterEach(async()=>{await service?.shutdown();db.close();rmSync(root,{recursive:true,force:true})})
+afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(root)})
 
 it('dispatches attachment-only input as pinned material and binds it to the user event',async()=>{
   const received:AgentAttachment[][]=[]

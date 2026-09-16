@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import {mkdirSync,mkdtempSync,realpathSync,rmSync} from 'node:fs'
+import {mkdirSync,mkdtempSync,realpathSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import { openTestDb, type Db } from '../../lib/db'
 import { makeWorkbenchStore } from './store'
 import {makeProjectCatalog} from './project-catalog'
+import {removeTempDir} from '../../lib/test-temp'
 
 let db:Db,store:ReturnType<typeof makeWorkbenchStore>
 beforeEach(()=>{db=openTestDb();store=makeWorkbenchStore(db)})
@@ -41,7 +42,7 @@ describe('workbench full history and archive storage',()=>{
       expect(makeProjectCatalog({ownerChatId:'owner',registered:[],known,providers:['claude','codex'],defaultProvider:'claude'}).map(row=>[row.path,row.providerId])).toEqual([
         [realpathSync(fallbackOnly),'claude'],[realpathSync(project),'codex'],
       ])
-    } finally {rmSync(root,{recursive:true,force:true})}
+    } finally {removeTempDir(root)}
   })
   it('filters the phone owner before limiting recent tasks and omits archived tasks',()=>{
     const mine=task('mine'),archived=task('archived');store.setArchived(archived.id,true)

@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { collectArtifacts, MAX_ARTIFACT_BYTES, readAnchoredRegular } from './artifacts'
+import {removeTempDir} from '../../lib/test-temp'
 
 let root: string
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'workbench-artifacts-')) })
-afterEach(() => { rmSync(root, { recursive: true, force: true }) })
+afterEach(() => { removeTempDir(root) })
 
 describe('anchored artifact reads', () => {
   it('reads a valid nested regular file relative to the opened root', () => {
@@ -23,7 +24,7 @@ describe('anchored artifact reads', () => {
       symlinkSync(outside, join(root, 'swapped-parent'))
       expect(() => readAnchoredRegular(root, 'swapped-parent/secret.txt')).toThrow('invalid_artifact_path')
     } finally {
-      rmSync(outside, { recursive: true, force: true })
+      removeTempDir(outside)
     }
   })
 

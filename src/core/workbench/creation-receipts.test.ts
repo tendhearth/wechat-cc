@@ -1,14 +1,15 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest'
-import {mkdtempSync,rmSync} from 'node:fs'
+import {mkdtempSync} from 'node:fs'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../lib/db'
 import {makeWorkbenchStore} from './store'
 import {makeCreationReceiptStore,type CreationReceipt} from './creation-receipts'
+import {removeTempDir} from '../../lib/test-temp'
 
 let dir:string,path:string,db:Db,taskId:string
 beforeEach(()=>{dir=mkdtempSync(join(tmpdir(),'cc-creation-receipts-'));path=join(dir,'state.db');db=openDb({path});taskId=makeWorkbenchStore(db).create({title:'task',path:'/tmp/project',providerId:'claude',ownerChatId:'owner'}).id})
-afterEach(()=>{db.close();rmSync(dir,{recursive:true,force:true})})
+afterEach(()=>{db.close();removeTempDir(dir)})
 const input=(changes:Partial<Omit<CreationReceipt,'createdAt'>>={})=>({id:'request-1',accountId:'account',ownerChatId:'owner',commandHash:'hash',projectId:'p-123',path:'/tmp/project',providerId:'claude',taskId,runId:'run-1',reply:'created',...changes})
 
 describe('creation receipt store',()=>{

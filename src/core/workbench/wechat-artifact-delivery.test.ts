@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,rmSync,writeFileSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync,writeFileSync} from 'node:fs'
 import {createHash} from 'node:crypto'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
@@ -10,6 +10,7 @@ import {makeWorkbenchService,type WorkbenchService} from './service'
 import {saveArtifactSnapshot} from './artifacts'
 import {wechatTaskMessageKey} from './wechat-control'
 import {wireWorkbenchArtifacts} from '../../daemon/bootstrap/wire-workbench-artifacts'
+import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,db:Db,store:WorkbenchStore,service:WorkbenchService,owner:string|null,account:string
 let wiring:ReturnType<typeof wireWorkbenchArtifacts>|undefined
@@ -30,7 +31,7 @@ function transport(){
   return{upload,send}
 }
 beforeEach(()=>{root=realpathSync(mkdtempSync(join(tmpdir(),'cc-phone-artifact-')));mkdirSync(join(root,'artifacts'));db=openDb({path:join(root,'state.db')});store=makeWorkbenchStore(db);owner='owner';account='account-one';setup()})
-afterEach(async()=>{await wiring?.close();wiring=undefined;await service.shutdown();db.close();rmSync(root,{recursive:true,force:true})})
+afterEach(async()=>{await wiring?.close();wiring=undefined;await service.shutdown();db.close();removeTempDir(root)})
 
 describe('explicit owner artifact delivery through the shared workbench',()=>{
   it('sends a saved version once, consumes accepted replay, and keeps ordinary result queries silent',async()=>{

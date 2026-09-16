@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { request as httpRequest } from 'node:http'
@@ -11,6 +11,7 @@ import {makeWorkbenchService} from '../../core/workbench/service'
 import {createProviderRegistry} from '../../core/provider-registry'
 import type {AgentExecutionChoice} from '../../core/agent-provider'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
 
 const TASK = {
   id: 'deadbeef', title: 'Draft', path: '/tmp/project', providerId: 'codex',
@@ -229,7 +230,7 @@ describe('Workbench internal HTTP API', () => {
 
   afterEach(async () => {
     await api?.stop()
-    rmSync(stateDir, { recursive: true, force: true })
+    removeTempDir(stateDir)
   })
 
   async function start(initial?: ReturnType<typeof service>) {

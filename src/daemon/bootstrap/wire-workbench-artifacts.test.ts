@@ -1,6 +1,6 @@
 import {afterEach,describe,expect,it,vi} from 'vitest'
 import {createDecipheriv,createHash} from 'node:crypto'
-import {mkdirSync,mkdtempSync,realpathSync,rmSync} from 'node:fs'
+import {mkdirSync,mkdtempSync,realpathSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
@@ -13,6 +13,7 @@ import {saveArtifactSnapshot} from '../../core/workbench/artifacts'
 import {makeIlinkAdapter} from '../ilink-glue'
 import {makeMwWorkbench} from '../inbound/mw-workbench'
 import {wireWorkbenchArtifacts} from './wire-workbench-artifacts'
+import {removeTempDir} from '../../lib/test-temp'
 
 type Server=ReturnType<typeof Bun.serve>
 const cleanups:Array<()=>Promise<void>>=[]
@@ -50,7 +51,7 @@ async function fixture(finalResponses:unknown[]){
   const middleware=makeMwWorkbench({handleWechat:service.handleWechat,sendMessage:ordinary})
   const command=`任务 ${task.id} 文件 ${artifact.id}`
   const invoke=async()=>{const ctx={msg:{chatId:'owner',userId:'owner',accountId:'account-1',text:command,msgType:'text',createTimeMs:1,msgId:'artifact-command',contextToken:'context-1'},receivedAtMs:1,requestId:'artifact-command'};await middleware(ctx,async()=>{});return ctx}
-  cleanups.push(async()=>{await wiring.close();await service.shutdown();server.stop(true);db.close();rmSync(root,{recursive:true,force:true})})
+  cleanups.push(async()=>{await wiring.close();await service.shutdown();server.stop(true);db.close();removeTempDir(root)})
   return{db,service,task,artifact,original,uploads,uploadDescriptors,sends,ordinary,invoke,messages:makeMessagesStore(db)}
 }
 

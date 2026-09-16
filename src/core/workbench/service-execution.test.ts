@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,it} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,rmSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {randomUUID} from 'node:crypto'
@@ -10,6 +10,7 @@ import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {PROVIDER_EXECUTION_CHOICE as automatic} from './execution-settings'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,service:WorkbenchService,store:ReturnType<typeof makeWorkbenchStore>
 const selected:AgentExecutionChoice={defaults:'provider',model:'fixture-model',reasoningEffort:'high'}
@@ -25,7 +26,7 @@ function executor(onSpawn?:(context:SpawnContext,index:number)=>void,wait?:Promi
   return {async spawn(_project,context){const i=index++;onSpawn?.(context,i);return{async *dispatch(){yield {kind:'init',sessionId:context.resumeSessionId??`native-${i}`};if(wait&&i===0)await wait;yield {kind:'text',text:'review detail'};yield {kind:'result',sessionId:context.resumeSessionId??`native-${i}`,numTurns:1,durationMs:1}},async close(){}}}}
 }
 beforeEach(()=>{root=realpathSync(mkdtempSync(join(tmpdir(),'cc-execution-service-')));project=join(root,'project');mkdirSync(project);db=openDb({path:join(root,'state.db')})})
-afterEach(async()=>{await service?.shutdown();db.close();rmSync(root,{recursive:true,force:true})})
+afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(root)})
 
 it('dispatches the accepted task choice and keeps actual native evidence separate',async()=>{
   const contexts:SpawnContext[]=[]

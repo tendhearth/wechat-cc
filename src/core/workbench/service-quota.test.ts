@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,it} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,rmSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
@@ -9,6 +9,7 @@ import type {AgentEvent,AgentRuntimeSnapshot,AgentSession,AgentWorkbenchRuntime}
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
 
 /**
  * 真机 2026-09-16:Codex 额度耗尽,任务 failed,task.error 是一长串原文,微信通知正文空白,
@@ -34,7 +35,7 @@ beforeEach(()=>{area=realpathSync(mkdtempSync(join(tmpdir(),'cc-quota-')));proje
   registry.register('codex',{async spawn(){return new FailingRuntime().session}},{displayName:'Codex',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   registry.register('claude',{async spawn(){return new FailingRuntime().session}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   store=makeWorkbenchStore(db);service=makeWorkbenchService({store,registry,stateDir:area,ownerChatId:()=>'owner'})})
-afterEach(async()=>{await service?.shutdown();db.close();rmSync(area,{recursive:true,force:true})})
+afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
 const settled=async(id:string)=>{await expect.poll(()=>service.detail(id).task.status).not.toMatch(/^(running|queued|cancelling)$/)}
 
 it('额度耗尽 ⇒ 任务 failed、错误码 provider_quota_exhausted、事件里是人话、服务登记这家耗尽',async()=>{

@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,it} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,rmSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
@@ -9,6 +9,7 @@ import type {AgentEvent,AgentProvider,AgentRuntimeSnapshot,AgentSession,AgentWor
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
 
 /**
  * 「这件事做完没有」两家曾答不一致:Codex 答完自动 completed,Claude 答完停在
@@ -38,7 +39,7 @@ class TurnRuntime {
 
 let area:string,project:string,db:Db,service:WorkbenchService
 beforeEach(()=>{area=realpathSync(mkdtempSync(join(tmpdir(),'cc-phase-')));project=join(area,'project');mkdirSync(project);db=openDb({path:join(area,'state.db')})})
-afterEach(async()=>{await service?.shutdown();db.close();rmSync(area,{recursive:true,force:true})})
+afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
 
 function wire(provider:AgentProvider){
   const registry=createProviderRegistry()

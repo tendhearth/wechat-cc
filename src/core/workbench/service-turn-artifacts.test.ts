@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,it} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,rmSync,writeFileSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync,writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
@@ -9,6 +9,7 @@ import type {AgentEvent,AgentProvider,AgentRuntimeSnapshot,AgentSession,AgentWor
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
 
 /**
  * 真机 2026-09-15:Claude 答完、写好文件、`foreground` 回到 `idle`,但会话为续接
@@ -43,7 +44,7 @@ beforeEach(()=>{
   project=join(area,'project');mkdirSync(project)
   db=openDb({path:join(area,'state.db')})
 })
-afterEach(async()=>{await service?.shutdown();db.close();rmSync(area,{recursive:true,force:true})})
+afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
 
 it('registers a finished turn’s artifacts while the session is still retained',async()=>{
   const owned=new TurnRuntime()

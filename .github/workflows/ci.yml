@@ -69,10 +69,9 @@ jobs:
 
       - name: Build cli.ts
         if: ${{ !cancelled() }}
-        # --outdir, not --outfile: the workbench's native fd helpers import
-        # `*-native.c` as file assets, so this entry emits the bundle plus two
-        # assets and a single output file is impossible by design. The release
-        # artifact is `bun build --compile` (desktop.yml), which embeds them.
+        # --outdir rather than --outfile: kept from the days the workbench bundled
+        # `*-native.c` file assets (gone since 2026-09-16, the file layer is pure
+        # JS now); --outdir still works and is what the release path exercises.
         run: bun build cli.ts --target=node --outdir dist
 
       - name: Build docs.ts

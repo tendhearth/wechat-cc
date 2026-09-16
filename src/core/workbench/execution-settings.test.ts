@@ -1,11 +1,12 @@
 import {afterEach,beforeEach,expect,it} from 'vitest'
-import {mkdtempSync,rmSync} from 'node:fs'
+import {mkdtempSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
 import {makeWorkbenchStore} from './store'
 import type {AgentExecutionChoice} from '../agent-provider'
 import {executionFailureMessage,normalizeExecutionChoice,sameExecutionChoice} from './execution-settings'
+import {removeTempDir} from '../../lib/test-temp'
 
 const provider:AgentExecutionChoice={defaults:'provider',model:null,reasoningEffort:null}
 const native:AgentExecutionChoice={defaults:'native',model:null,reasoningEffort:null}
@@ -20,7 +21,7 @@ it('turns API task failures into actionable Chinese guidance',()=>{
 })
 let dir:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>
 beforeEach(()=>{dir=mkdtempSync(join(tmpdir(),'cc-execution-'));db=openDb({path:join(dir,'db.sqlite')});store=makeWorkbenchStore(db)})
-afterEach(()=>{db.close();rmSync(dir,{recursive:true,force:true})})
+afterEach(()=>{db.close();removeTempDir(dir)})
 function task(){return store.create({title:'task',path:'/owned/project',providerId:'claude',ownerChatId:null})}
 function execution(){expect(store).toHaveProperty('execution');return store.execution}
 

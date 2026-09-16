@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
-import {mkdtempSync,realpathSync,rmSync} from 'node:fs'
+import {mkdtempSync,realpathSync} from 'node:fs'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../lib/db'
@@ -8,9 +8,10 @@ import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {encodeNativeHistoryKey,historyPreview,type NativeHistoryItem,type NativeHistoryReader} from './native-history'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
 let dir:string,db:Db,service:WorkbenchService
 beforeEach(()=>{dir=realpathSync(mkdtempSync(join(tmpdir(),'cc-native-adopt-')));db=openDb({path:join(dir,'test.db')})})
-afterEach(async()=>{await service?.shutdown();db.close();rmSync(dir,{recursive:true,force:true})})
+afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(dir)})
 function fixture(){
  const store=makeWorkbenchStore(db),registry=createProviderRegistry(),mint=vi.fn(()=> 'token')
  let version=1,active=false,block=false,resumable=true,resultId:string|undefined,gate:Promise<void>|null=null,release:undefined|(()=>void)

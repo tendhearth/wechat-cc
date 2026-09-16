@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,rmSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
 import {createHash} from 'node:crypto'
 import {makeWechatWorkbenchControl,wechatTaskMessageKey} from './wechat-control'
 import {tmpdir} from 'node:os'
@@ -10,6 +10,7 @@ import type {AgentEvent,AgentProvider} from '../agent-provider'
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService,owner:string|null
 const result:AgentEvent={kind:'result',sessionId:'native-one',numTurns:1,durationMs:1}
@@ -22,7 +23,7 @@ function setup(provider:AgentProvider){
 const create=(text='整理周报')=>service.create({path:project,providerId:'claude',text})
 const settled=async(id:string)=>{await expect.poll(()=>service.detail(id).task.status).not.toMatch(/^(queued|running|cancelling)$/)}
 beforeEach(()=>{root=realpathSync(mkdtempSync(join(tmpdir(),'cc-wechat-control-')));project=join(root,'project');mkdirSync(project);db=openDb({path:join(root,'state.db')});store=makeWorkbenchStore(db);owner='owner'})
-afterEach(async()=>{await service?.shutdown();db.close();rmSync(root,{recursive:true,force:true})})
+afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(root)})
 
 describe('WeChat task control through the shared service',()=>{
   it.each([
