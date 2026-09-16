@@ -310,9 +310,12 @@ describe('workbench owned background runtime',()=>{
     setup(owned,{closeTimeoutMs:25}, {async spawn(){return{async *dispatch(){yield result},async close(){}}}})
     const task=create();await started(owned)
     writeFileSync(join(project,'.cc-workbench',task.id,'after-close.txt'),'owned output')
-    const next=service.create({path:project,providerId:'codex',text:'Wait for owned close'})
+    // 父回合已答复、租约已释放:同文件夹的任务此时可以进来(会话空闲,不会自己写)。
+    const during=service.create({path:project,providerId:'codex',text:'Admitted while idle'});await settled(during.id)
     await service.cancel(task.id);await settled(task.id)
     expect(service.detail(task.id).task.error).toBe('writer_not_closed')
+    // 退出未确认 → 租约重新挂回,此后到来的任务按 writer_not_closed 等待。
+    const next=service.create({path:project,providerId:'codex',text:'Wait for owned close'})
     expect(service.detail(next.id).task.waitingFor?.reason).toBe('writer_not_closed')
     expect(service.detail(task.id).artifacts).toEqual([])
     await expect(service.submitInput(task.id,{runId:service.detail(task.id).runId!,requestId:randomUUID(),text:'Too late'})).rejects.toThrow('input_stale')

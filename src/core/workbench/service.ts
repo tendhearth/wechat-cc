@@ -355,6 +355,23 @@ export function makeWorkbenchService(opts: Options) {
     running.credentialsRevoked=true
     try { opts.revokeSessionToken?.(`workbench/${running.taskId}`) } catch { /* token expiry remains fail closed */ }
   }
+  /**
+   * 文件夹是一份租约,谁在写谁持有。回合答复后会话为续接保留,但它不再写东西 ——
+   * 此时还握着租约,同一文件夹的下一个任务就得无限期排队,主人只能「取消」一件
+   * 做成了的事来疏通(2026-09-15 真机)。答复即释放;续接时 acquireTurnLease 再申请。
+   * 结算时的 releaseReservation 照旧,对已释放的 run 是幂等的。
+   */
+  function releaseTurnLease(running:Active) {
+    if (reservations.get(running.identity)!==running) return
+    reservations.delete(running.identity)
+    if (!stopping) pump()
+  }
+  /** 续接一个已释放租约的 run:文件夹若正被别的任务占用,明确拒绝,不悄悄并写。 */
+  function acquireTurnLease(running:Active) {
+    if (reservations.has(running.identity)) return
+    if (findPathBlocker(running,[...reservations.values()])) throw Error('workbench_busy')
+    reservations.set(running.identity,running)
+  }
   function releaseReservation(running:Active) {
     if (reservations.get(running.identity) === running) reservations.delete(running.identity)
     if (runsByTask.get(running.taskId) === running) runsByTask.delete(running.taskId)
@@ -374,6 +391,10 @@ export function makeWorkbenchService(opts: Options) {
   function markUncertain(running:Active) {
     running.uncertain=true
     running.state='uncertain'
+    // 答复时已把租约放掉;现在没能确认它退出,重新挂回去 —— 之后到来的同文件夹任务
+    // 按 writer_not_closed 等待,直到 confirmLateClose。空闲窗口里已被放行的任务照常跑:
+    // 一个前台空闲、没有后台工作的会话不会自己写文件,而主人要续接它会被 acquireTurnLease 拦住。
+    reservations.set(running.identity,running)
   }
 
   async function execute(task:StoredTask,text:string,running:Active) {
@@ -479,6 +500,7 @@ export function makeWorkbenchService(opts: Options) {
           if (ev.kind==='result') {
             const snapshot=runtime?.snapshot()
             if (snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0) collectTurnArtifacts(running)
+            if (isReplied(running)) releaseTurnLease(running)
           }
         },()=>{
           const snapshot=runtimeSnapshot(running)
@@ -799,6 +821,7 @@ export function makeWorkbenchService(opts: Options) {
       if(running.delivering)throw Error('input_delivery_busy')
       if(store.liveInputs.count(id)>=10)throw Error('input_limit')
       requireInput(running.task.providerId,attachments,running.execution)
+      if(running.session?.workbenchRuntime&&inputMode(running)!=='queue')acquireTurnLease(running)
       const saved=store.atomic(()=>{
         store.attachments.bind(attachments.map(a=>a.id),id,input.draftId)
         return store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text,attachments,execution:running.execution})
@@ -816,9 +839,9 @@ export function makeWorkbenchService(opts: Options) {
           // The HTTP receipt is already durable; never wait here or auto-resend.
           void runtime.submit(saved.id,text,material).then(
             ()=>settleRuntimeInput(running,saved),
-            error=>settleRuntimeInput(running,saved,error??new Error('input_not_delivered')),
+            error=>{settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));if(isReplied(running))releaseTurnLease(running)},
           )
-        }catch(error){settleRuntimeInput(running,saved,error??new Error('input_not_delivered'))}
+        }catch(error){settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));if(isReplied(running))releaseTurnLease(running)}
         return store.liveInputs.get(saved.id)!
       }
       if(!running.session?.steer)return saved
