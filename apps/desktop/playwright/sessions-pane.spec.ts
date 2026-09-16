@@ -21,7 +21,7 @@
 //     test is removed.
 //   - Hardcoded tag counts / specific tag text (brittle, mock-dependent)
 
-import { test, expect } from './fixtures'
+import { test, expect, clickNav } from './fixtures'
 
 async function bootAndOpenDialogue(page: import('@playwright/test').Page, shimUrl: string, shim: { invoke(cmd: string, args?: unknown): Promise<unknown> }) {
   await shim.invoke('demo.seed', { chat_id: 'dialogue_preview', daemonAlive: true })
@@ -39,7 +39,7 @@ async function bootAndOpenDialogue(page: import('@playwright/test').Page, shimUr
     document.documentElement.dataset.mode = 'dashboard'
   })
   await expect(page.locator('main.dashboard')).toBeVisible({ timeout: 5_000 })
-  await page.locator('button.dash-nav-link[data-pane="sessions"]').click()
+  await clickNav(page, 'sessions')
   await expect(page.locator('#dialogue-root')).toBeVisible()
 }
 

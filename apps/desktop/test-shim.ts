@@ -1504,6 +1504,11 @@ Bun.serve({
     if (dryRun && url.pathname === '/v1/companion/presence' && req.method === 'GET') {
       return Response.json(__mockState.presence)
     }
+    // 切换后端的下拉菜单从这里拿「已配置的 AI 服务」(dashboard.js refreshServiceChoices,
+    // 2026-08-26 起与「大脑」同源);演示模式给三家,和 doctor 报告里的 provider 对得上。
+    if (dryRun && url.pathname === '/v1/llm/health' && req.method === 'GET') {
+      return Response.json({ ok: true, registered: ['claude', 'codex', 'cursor'] })
+    }
     if (dryRun && url.pathname.startsWith('/v1/a2a/')) {
       const authHeader = req.headers.get('authorization') ?? ''
       if (authHeader !== `Bearer ${A2A_TOKEN}`) {

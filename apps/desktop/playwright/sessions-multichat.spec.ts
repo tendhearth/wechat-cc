@@ -22,7 +22,7 @@
 // per-chat content can be tested with explicit mock setup in
 // dialogue-timeline.spec.ts.
 
-import { test, expect } from './fixtures'
+import { test, expect, clickNav } from './fixtures'
 
 async function bootAndOpenDialogue(page: import('@playwright/test').Page, shimUrl: string) {
   await page.goto(shimUrl)
@@ -37,7 +37,7 @@ async function bootAndOpenDialogue(page: import('@playwright/test').Page, shimUr
     document.documentElement.dataset.mode = 'dashboard'
   })
   await expect(page.locator('main.dashboard')).toBeVisible({ timeout: 5_000 })
-  await page.locator('button.dash-nav-link[data-pane="sessions"]').click()
+  await clickNav(page, 'sessions')
   await expect(page.locator('article.dash-pane[data-pane="sessions"]')).toBeVisible()
 }
 

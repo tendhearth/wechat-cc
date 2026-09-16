@@ -13,7 +13,7 @@
 // shim intercepts that call (added in this commit) so the seeded test_chat
 // becomes available without writing real files to disk.
 
-import { test, expect } from './fixtures'
+import { test, expect, clickNav } from './fixtures'
 
 async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl: string) {
   await page.goto(shimUrl)
@@ -31,7 +31,7 @@ async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl:
 }
 
 async function switchToMemoryPane(page: import('@playwright/test').Page) {
-  await page.locator('button.dash-nav-link[data-pane="memory"]').click()
+  await clickNav(page, 'memory')
   await expect(page.locator('article.dash-pane[data-pane="memory"]')).toBeVisible()
 }
 

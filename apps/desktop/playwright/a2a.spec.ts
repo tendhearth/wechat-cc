@@ -15,7 +15,7 @@
 //   page typically boots into wizard mode, but the dashboard <main> is always in
 //   the DOM and CSS toggles visibility via [data-mode="dashboard"].
 
-import { test, expect } from './fixtures'
+import { test, expect, clickNav } from './fixtures'
 
 // Helper: navigate to shimUrl, wait for boot, force dashboard mode, click the
 // A2A pane nav button, then wait for the list to settle (not "加载中…").
@@ -30,7 +30,7 @@ async function gotoA2APane(page: import('@playwright/test').Page, shimUrl: strin
   )
   // Force dashboard mode (DRY_RUN boot lands in wizard if no accounts bound)
   await page.evaluate(() => { document.documentElement.dataset.mode = 'dashboard' })
-  await page.locator('button[data-pane="a2a-agents"]').click()
+  await clickNav(page, 'a2a-agents')
   // Wait until the list is no longer in the loading state
   await page.waitForFunction(
     () => {

@@ -6,7 +6,7 @@
 // --tail N --json` and returns synthetic LogEntry shape mocking 5
 // daemon log lines when seeded, empty otherwise.
 
-import { test, expect } from './fixtures'
+import { test, expect, clickNav } from './fixtures'
 
 // 日志不再是顶层导航项。2026-08-24 的导航重构(58e73cbb「待办升一级,
 // 「后厨」收纳会话/插件/日志」)把它收进了后厨:先点顶层的 sessions
@@ -15,7 +15,7 @@ import { test, expect } from './fixtures'
 async function bootAndOpenLogs(page: import('@playwright/test').Page, shimUrl: string) {
   await page.goto(shimUrl)
   await page.waitForFunction(() => document.documentElement.dataset.mode === 'dashboard', { timeout: 10_000 })
-  await page.locator('button.dash-nav-link[data-pane="sessions"]').click()
+  await clickNav(page, 'sessions')
   // 标签栏在 sessions/plugins/logs 三个面板里各渲染一份,必须限定到当前
   // 可见的那一份,否则 Playwright 严格模式会命中 3 个元素。
   await page.locator('article.dash-pane[data-pane="sessions"] .dialogue-workspace-tab[data-backstage-pane="logs"]').click()

@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures'
+import { test, expect, reveal } from './fixtures'
 
 test('inline companion animation replaces the overview illustration', async ({ page, shimUrl, shim }) => {
   // 场景里要有 CC 才能测悬停问候:presence 由 shim 的 /v1/companion/presence 提供,默认在线空闲。
@@ -6,6 +6,8 @@ test('inline companion animation replaces the overview illustration', async ({ p
   await page.goto(shimUrl)
   await page.waitForFunction(() => document.documentElement.dataset.mode === 'dashboard')
 
+  // 09-13 起鱼缸收进「鱼缸与连接」折叠区,先展开再看画布。
+  await reveal(page, '#companion-stage')
   const canvas = page.locator('#companion-stage')
   await expect(canvas).toBeVisible()
   const box = await canvas.boundingBox()
