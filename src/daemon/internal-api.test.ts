@@ -15,6 +15,7 @@ import type { A2AClient, SendResult, AgentCard } from '../core/a2a-client'
 import type { A2AEventsStore, EventRow, AppendInput } from '../core/a2a-events-store'
 import { openKnowledge } from '../core/knowledge/store'
 import { semanticSearch } from '../core/knowledge/search'
+import { serve } from '../lib/runtime/http'
 
 describe('internal-api', () => {
   let stateDir: string
@@ -3530,7 +3531,7 @@ describe('internal-api request validation', () => {
         version: '1.0.0',
         capabilities: [{ name: 'chat', endpoint: '/v1/chat', method: 'POST' }],
       }
-      const fake = Bun.serve({
+      const fake = serve({
         hostname: '127.0.0.1',
         port: 0,
         fetch(req) {
@@ -3541,6 +3542,7 @@ describe('internal-api request validation', () => {
           return new Response('not found', { status: 404 })
         },
       })
+      await fake.ready
       try {
         const baseUrl = `http://127.0.0.1:${fake.port}`
         const a2aDeps = buildA2ADeps({ cardResult: card })

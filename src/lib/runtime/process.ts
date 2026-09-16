@@ -10,6 +10,8 @@ import type {Readable, Writable} from 'node:stream'
 
 export type Stdio = 'pipe' | 'ignore' | 'inherit'
 export interface SpawnOptions {
+  /** Windows 上不弹控制台窗口(subsystem=2 前提);两条路都默认带上。 */
+  windowsHide?: boolean
   cwd?: string
   env?: Record<string, string | undefined>
   stdin?: Stdio

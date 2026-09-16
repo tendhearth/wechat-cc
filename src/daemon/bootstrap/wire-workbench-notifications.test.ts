@@ -17,6 +17,7 @@ import { makeMwWorkbench } from '../inbound/mw-workbench'
 import { createInternalApi } from '../internal-api'
 import {MANAGED_NATIVE_CAPABILITIES} from '../../core/workbench/executor-capabilities'
 import {removeTempDir} from '../../lib/test-temp'
+import { serve } from '../../lib/runtime/http'
 
 const databases: Database[] = []
 function fixture() {
@@ -109,10 +110,11 @@ describe('wireWorkbenchNotifications', () => {
     } } }, { displayName: 'Claude', canResume: () => true,workbench:MANAGED_NATIVE_CAPABILITIES })
     const service = makeWorkbenchService({ store, registry, stateDir: root, ownerChatId: () => 'owner', registeredProjects: () => [{ alias: 'project', path: project }] })
     const ilinkRequests: Array<{ url: string; body: unknown }> = []
-    const ilinkServer = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+    const ilinkServer = serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
       ilinkRequests.push({ url: request.url, body: await request.json() })
       return Response.json({ errcode: 0 })
     } })
+    await ilinkServer.ready
     const adapter = makeIlinkAdapter({ stateDir: root, accounts: [{ id: 'account-1', botId: 'bot', userId: 'user', baseUrl: `http://127.0.0.1:${ilinkServer.port}`, token: 'secret', syncBuf: '' }], db, conversationStore: makeConversationStore(db) })
     const wired = wireWorkbenchNotifications({ workbench: service, ilink: adapter })
     const internalApi = createInternalApi({ stateDir: root, daemonPid: 1, workbench: service } as never)

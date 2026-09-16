@@ -14,8 +14,8 @@ import {makeIlinkAdapter} from '../ilink-glue'
 import {makeMwWorkbench} from '../inbound/mw-workbench'
 import {wireWorkbenchArtifacts} from './wire-workbench-artifacts'
 import {removeTempDir} from '../../lib/test-temp'
+import { serve, type Server } from '../../lib/runtime/http'
 
-type Server=ReturnType<typeof Bun.serve>
 const cleanups:Array<()=>Promise<void>>=[]
 afterEach(async()=>{for(const cleanup of cleanups.splice(0).reverse())await cleanup()})
 
@@ -29,7 +29,7 @@ async function fixture(finalResponses:unknown[]){
   const artifact=store.artifacts(task.id)[0]!
   const uploads:Buffer[]=[],uploadDescriptors:Array<Record<string,unknown>>=[],sends:Array<Record<string,any>>=[]
   let server!:Server
-  server=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request){
+  server=serve({hostname:'127.0.0.1',port:0,async fetch(request){
     const path=new URL(request.url).pathname
     if(path==='/ilink/bot/getuploadurl'){
       uploadDescriptors.push(await request.json() as Record<string,unknown>)
@@ -45,6 +45,7 @@ async function fixture(finalResponses:unknown[]){
     }
     return new Response('missing',{status:404})
   }})
+  await server.ready
   const adapter=makeIlinkAdapter({stateDir:root,accounts:[{id:'account-1',botId:'bot',userId:'user',baseUrl:`http://127.0.0.1:${server.port}`,token:'secret',syncBuf:''}],db,conversationStore:makeConversationStore(db)})
   adapter.routeChatToAccount('owner','account-1');adapter.captureContextToken('owner','context-1')
   const wiring=wireWorkbenchArtifacts({workbench:service,ilink:adapter}),ordinary=vi.fn(async()=>({msgId:'ordinary'}))

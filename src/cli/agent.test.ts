@@ -31,6 +31,7 @@ import { createA2ARegistry } from '../core/a2a-registry'
 import { makeA2AEventsStore } from '../core/a2a-events-store'
 import type { A2AAgentRecord } from '../lib/agent-config'
 import { removeTempDir } from '../lib/test-temp'
+import { serve, type Server } from '../lib/runtime/http'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -77,7 +78,7 @@ function captureLog(fn: () => unknown | Promise<unknown>): Promise<string[]> {
 
 // ── fake HTTP server for inspect / add ───────────────────────────────────────
 
-let fakeServer: ReturnType<typeof Bun.serve> | null = null
+let fakeServer: Server | null = null
 
 const FAKE_CARD = {
   name: 'deploy-bot',
@@ -90,8 +91,8 @@ const FAKE_CARD = {
   ],
 }
 
-beforeAll(() => {
-  fakeServer = Bun.serve({
+beforeAll(async () => {
+  fakeServer = serve({
     hostname: '127.0.0.1',
     port: 0,
     fetch(req) {
@@ -104,6 +105,7 @@ beforeAll(() => {
       return new Response('not found', { status: 404 })
     },
   })
+  await fakeServer.ready
 })
 
 afterAll(() => {
@@ -265,7 +267,7 @@ describe('cmdAgentAdd', () => {
 
   it('throws when agent name slugifies to empty (e.g. Chinese-only name)', async () => {
     // Serve a card with a CJK-only name
-    const cjkServer = Bun.serve({
+    const cjkServer = serve({
       hostname: '127.0.0.1',
       port: 0,
       fetch(req) {
@@ -278,6 +280,7 @@ describe('cmdAgentAdd', () => {
         return new Response('not found', { status: 404 })
       },
     })
+    await cjkServer.ready
     try {
       await expect(
         captureLog(() => cmdAgentAdd(stateDir, `http://127.0.0.1:${cjkServer.port}`)),
@@ -508,13 +511,13 @@ describe('cmdAgentInfo', () => {
 
 describe('cmdAgentTest', () => {
   let stateDir: string
-  let echoServer: ReturnType<typeof Bun.serve> | null = null
+  let echoServer: Server | null = null
   const received: Array<{ headers: Record<string, string>; body: string }> = []
 
-  beforeEach(() => {
+  beforeEach(async () => {
     stateDir = tempState()
     received.length = 0
-    echoServer = Bun.serve({
+    echoServer = serve({
       hostname: '127.0.0.1',
       port: 0,
       async fetch(req) {
@@ -532,6 +535,7 @@ describe('cmdAgentTest', () => {
         return new Response('not found', { status: 404 })
       },
     })
+    await echoServer.ready
   })
   afterEach(() => {
     echoServer?.stop()
@@ -589,15 +593,15 @@ describe('cmdAgentTest', () => {
 
 describe('cmdAgentTest --outbound', () => {
   let stateDir: string
-  let internalApi: ReturnType<typeof Bun.serve> | null = null
+  let internalApi: Server | null = null
   const apiReceived: Array<{ headers: Record<string, string>; body: string }> = []
   let nextResponse: { status: number; body: string } = { status: 200, body: '{"ok":true,"http_status":200,"response":{"ack":true}}' }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     stateDir = tempState()
     apiReceived.length = 0
     nextResponse = { status: 200, body: '{"ok":true,"http_status":200,"response":{"ack":true}}' }
-    internalApi = Bun.serve({
+    internalApi = serve({
       hostname: '127.0.0.1', port: 0,
       async fetch(req) {
         const body = await req.text()
@@ -611,6 +615,7 @@ describe('cmdAgentTest --outbound', () => {
         })
       },
     })
+    await internalApi.ready
     // Write internal-api-info.json + a token file pointing at the fake server.
     const tokenFilePath = join(stateDir, 'internal-api-token')
     writeFileSync(tokenFilePath, 'fake-token-deadbeef')

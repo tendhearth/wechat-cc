@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { determineScenario, pollSetupQrStatus, requestSetupQrCode, defaultFetchBinary, persistConfirmedAccount } from './setup-flow'
 import { avatarInfo } from '../core/avatar/store'
+import { serve } from '../lib/runtime/http'
 
 describe('setup-flow', () => {
   it('returns QR payload for desktop installers without printing terminal UI', async () => {
@@ -315,10 +316,11 @@ describe('determineScenario', () => {
 // so this is real HTTP with no external network and nothing to be flaky about.
 describe('defaultFetchBinary (real fetch, local server)', () => {
   it('fetches bytes over real HTTP', async () => {
-    const server = Bun.serve({
+    const server = serve({
       hostname: '127.0.0.1', port: 0,
       fetch: () => new Response(new Uint8Array([1, 2, 3, 4])),
     })
+    await server.ready
     try {
       const buf = await defaultFetchBinary(`http://127.0.0.1:${server.port}/x.png`)
       expect([...buf]).toEqual([1, 2, 3, 4])
@@ -326,10 +328,11 @@ describe('defaultFetchBinary (real fetch, local server)', () => {
   })
 
   it('throws with the status and body when the server refuses', async () => {
-    const server = Bun.serve({
+    const server = serve({
       hostname: '127.0.0.1', port: 0,
       fetch: () => new Response('nope', { status: 404 }),
     })
+    await server.ready
     try {
       await expect(defaultFetchBinary(`http://127.0.0.1:${server.port}/x.png`))
         .rejects.toThrow(/404.*nope/)
@@ -337,10 +340,11 @@ describe('defaultFetchBinary (real fetch, local server)', () => {
   })
 
   it('aborts rather than hanging when the server never responds', async () => {
-    const server = Bun.serve({
+    const server = serve({
       hostname: '127.0.0.1', port: 0,
       fetch: () => new Promise<Response>(() => {}),   // never resolves
     })
+    await server.ready
     try {
       await expect(defaultFetchBinary(`http://127.0.0.1:${server.port}/x.png`, 50)).rejects.toThrow()
     } finally { server.stop(true) }
