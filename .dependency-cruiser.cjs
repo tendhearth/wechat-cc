@@ -33,6 +33,13 @@ module.exports = {
       to: { circular: true },
     },
     {
+      name: 'bun-builtins-only-in-runtime',
+      severity: 'error',
+      comment: 'Bun 专属模块(bun:sqlite / bun:ffi …)只许出现在 src/lib/runtime/;别处走适配层,保住换运行时的出口(2026-09-16)。测试暂不受限。',
+      from: { path: '^src/', pathNot: ['^src/lib/runtime/', '\\.test\\.ts$'] },
+      to: { path: '^bun:' },
+    },
+    {
       name: 'lib-must-not-depend-on-anything-internal',
       severity: 'error',
       comment: 'src/lib/ is the bottom of the dependency tree — utilities only.',

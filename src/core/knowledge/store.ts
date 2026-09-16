@@ -24,7 +24,7 @@
  * Float32Array-concat) vectors from two different embedding models into
  * one matrix of mismatched dimension.
  */
-import { Database } from 'bun:sqlite'
+import { openSqlite as openRuntimeSqlite, type SqlDatabase as Database } from '../../lib/runtime/sqlite'
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Contact, Edge } from './graph'
@@ -255,7 +255,7 @@ export interface KnowledgeStore {
 }
 
 function openSqlite(path: string): Database {
-  const db = new Database(path, { create: true })
+  const db = openRuntimeSqlite(path, { create: true })
   db.exec('PRAGMA journal_mode = WAL;')
   db.exec('PRAGMA busy_timeout = 5000;')
   return db

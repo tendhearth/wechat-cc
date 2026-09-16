@@ -23,7 +23,7 @@
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { Database } from 'bun:sqlite'
+import { openSqlite } from './runtime/sqlite'
 
 export const BACKUP_DIRNAME = 'backups'
 const BACKUP_PREFIX = 'wechat-cc-backup-'
@@ -47,7 +47,7 @@ function stamp(now: Date): string {
 
 /** VACUUM INTO — consistent snapshot of a possibly-live WAL database. */
 function snapshotSqlite(src: string, dest: string): void {
-  const db = new Database(src, { readonly: true })
+  const db = openSqlite(src, { readonly: true })
   try {
     db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`)
   } finally {

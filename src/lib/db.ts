@@ -19,7 +19,8 @@
  * statements. bun:sqlite is API-compatible enough with better-sqlite3
  * that swapping later (if Bun ever drops the builtin) would be local.
  */
-import { Database } from 'bun:sqlite'
+import { openSqlite, type SqlDatabase as Database } from './runtime/sqlite'
+import { sleepSync } from './runtime'
 import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
@@ -1405,7 +1406,7 @@ export function withLockRetry<T>(
 ): T {
   const attempts = opts.attempts ?? 12
   const delayMs = opts.delayMs ?? 250
-  const sleep = opts.sleep ?? ((ms: number) => { Bun.sleepSync(ms) })
+  const sleep = opts.sleep ?? sleepSync
   let lastErr: unknown
   for (let i = 0; i < attempts; i++) {
     try {
@@ -1428,7 +1429,7 @@ export function openDb(opts: OpenDbOpts): Database {
   // restart the SIGKILLed old process may still hold it (busy_timeout doesn't
   // cover the journal-mode switch). Retry instead of crashing the boot.
   const db = withLockRetry(() => {
-    const d = new Database(opts.path, { create: true })
+    const d = openSqlite(opts.path, { create: true })
     d.exec('PRAGMA journal_mode = WAL;')
     return d
   })

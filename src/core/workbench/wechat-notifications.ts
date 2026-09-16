@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto'
-import type {Database} from 'bun:sqlite'
+import type {SqlDatabase as Database} from '../../lib/runtime/sqlite'
 
 export type WechatNoticeStatus='pending'|'sending'|'accepted'|'unknown'|'suppressed'
 export type WechatNoticeKind='permission'|'question'|'completed'|'failed'|'interrupted'|'cancelled'
