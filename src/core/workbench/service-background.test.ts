@@ -96,7 +96,10 @@ describe('workbench owned background runtime',()=>{
     expect(service.detail(task.id).artifacts.map(a=>a.name)).toEqual(['late.txt'])
     expect(()=>service.continueTask(task.id,'Change model',{execution:{model:'another'}})).toThrow('workbench_busy')
     await service.cancel(task.id);await settled(task.id);await settled(same.id)
-    expect(service.detail(task.id).task.status).toBe('cancelled')
+    // 停止请求到达时本轮早已答复(前台空闲、后台归零、无待批):这是收工,不是取消。
+    // 一件做成了的事不该记成 cancelled —— 2026-09-15 真机上五个成功任务四个显示「已取消」。
+    expect(service.detail(task.id).task.status).toBe('completed')
+    expect(service.detail(task.id).task.phase).toBe('replied')
     expect(owned.closeCount).toBe(1);expect(revocations).toContain(`workbench/${task.id}`)
     expect(service.detail(task.id).artifacts.map(a=>a.name)).toContain('late.txt')
   })

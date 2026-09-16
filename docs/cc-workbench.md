@@ -88,3 +88,4 @@ CC 的目标是：日常管理 Claude/Codex 工作时，只打开 CC 就够。�
 ## 修订记录
 
 - **2026-09-16**：成果改为每一回合答复后即登记，不再等任务结束（此前文件已写入却要先取消任务才出现在成果列表）。补一条迁移，修复从早期开发构建升级的库缺少 `workbench_handoffs.request_event_id` 而导致任务详情打不开的问题；已发布安装包的库不受影响。新增「回合与会话是两件事」一节。
+- **2026-09-16**：任务视图新增 `phase`（`queued / working / replied / failed / cancelled / interrupted`），两家执行者一致：Claude 会话保留中的空闲任务与 Codex 自行收尾的任务都是「已答复」。停止一个已答复的任务记为 `completed`（收工），不再记成 `cancelled`。

@@ -71,6 +71,8 @@ interface Active extends PathReservation {
   artifactsCollected: boolean
   collection?:Promise<void>
   turnCollection?:Promise<void>
+  /** 停止请求到达时本轮已经答复 —— 那是收工,不是取消,终态记 completed。 */
+  closedWhileReplied?: boolean
   credentialsMinted: boolean
   credentialsRevoked: boolean
 }
@@ -78,7 +80,13 @@ export interface InputMaterials {attachmentIds?:string[];draftId?:string;executi
 export interface CreateTask extends InputMaterials { title?: string; path: string; providerId: string; text: string }
 export interface CreateWechatTask {ownerChatId:string;accountId:string;requestId:string;commandHash:string;projectId:string;providerId?:string;text:string}
 export interface SendWechatArtifact {ownerChatId:string;accountId:string;requestId:string;commandHash:string;taskId:string;artifactId:string}
-export interface WorkbenchTaskView extends Task { importedOnly?:boolean; canArchive:boolean; waitingFor: WaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number; runtime?:AgentRuntimeSnapshot }
+/**
+ * 主人眼里的进度,两家执行者一致。持久化的 status 记的是这条 run 的生命周期
+ * (Claude 会话保留时它永远是 running,Codex 自行收尾后是 completed),而主人要问的
+ * 是「本轮做完没有、还能不能接着说」—— 那是 replied,与进程留不留无关。
+ */
+export type WorkbenchPhase='queued'|'working'|'replied'|'failed'|'cancelled'|'interrupted'
+export interface WorkbenchTaskView extends Task { phase:WorkbenchPhase; importedOnly?:boolean; canArchive:boolean; waitingFor: WaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number; runtime?:AgentRuntimeSnapshot }
 
 function checkedText(text: string,attachments:readonly Attachment[]=[]): string {
   if (typeof text !== 'string' || (!text.trim()&&!attachments.length) || text.length > 20_000) throw new Error('invalid_text')
@@ -270,11 +278,27 @@ export function makeWorkbenchService(opts: Options) {
   function inputMode(running:Active):'steer'|'send'|'queue' {
     return runtimeSnapshot(running)?.input??(running.session?.steer?'steer':'queue')
   }
+  /** 本轮做完、会话闲着、没有子任务在写、也没有在等主人拍板 —— 只差主人下一句话。 */
+  function isReplied(running:Active):boolean {
+    if (running.cancelled||running.finishing||running.uncertain) return false
+    const snapshot=runtimeSnapshot(running)
+    return !!snapshot&&snapshot.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0
+      &&running.permissions.pending().length===0&&running.questions.pending().length===0
+  }
+  function phaseOf(task:Task, running:Active|undefined):WorkbenchPhase {
+    switch (task.status) {
+      case 'queued': return 'queued'
+      case 'running': case 'cancelling': return running&&isReplied(running)?'replied':'working'
+      case 'completed': return 'replied'
+      case 'failed': case 'cancelled': case 'interrupted': return task.status
+    }
+  }
   function taskView(task:Task, includePermissions=false):WorkbenchTaskView {
     const running=runsByTask.get(task.id)
     const runtime=runtimeSnapshot(running)
     return {
       ...task,
+      phase:phaseOf(task,running),
       ...(runtime?{runtime}:{}),
       ...(!running&&TERMINAL_TASK_STATUSES.includes(task.status)&&store.source(task.id)?.firstDispatchedAt===null?{importedOnly:true}:{}),
       canArchive:TERMINAL_TASK_STATUSES.includes(task.status) && !running && task.error!=='writer_not_closed',
@@ -493,7 +517,7 @@ export function makeWorkbenchService(opts: Options) {
       if (running.uncertain) { finalStatus='interrupted'; finalError='writer_not_closed' }
       let terminalCommitted=false
       try {
-        const status=running.cancelled&&!running.uncertain?'cancelled':finalStatus
+        const status=running.cancelled&&!running.uncertain?(running.closedWhileReplied?'completed':'cancelled'):finalStatus
         store.atomic(()=>{
           store.finishRunActivities(task.id,running.identity,running.cancelled&&!running.uncertain?'cancelled':'interrupted')
           store.update(task.id,status,finalError)
@@ -659,6 +683,7 @@ export function makeWorkbenchService(opts: Options) {
     }
     if (running.state==='uncertain') return
     if (!running.cancelled) {
+      if (isReplied(running)) running.closedWhileReplied=true
       running.cancelled=true; running.permissions.rejectAll('cancelled'); revokeCredentials(running); running.signalStop()
       try { store.update(running.taskId,'cancelling') } catch { /* stop the writer even when persistence is unavailable */ }
       try { if (running.session?.cancel) void running.session.cancel().catch(() => {}) }
