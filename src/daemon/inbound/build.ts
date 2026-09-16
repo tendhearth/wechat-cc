@@ -22,6 +22,7 @@ import { makeMwRecall, type RecallMwDeps } from './mw-recall'
 import { makeMwLlmHealth, type MwLlmHealthDeps } from './mw-llm-health'
 import { makeMwDispatch, type DispatchMwDeps } from './mw-dispatch'
 import {makeMwWorkbench,type WorkbenchMwDeps} from './mw-workbench'
+import { makeMwTaskReference, type TaskReferenceMwDeps } from './mw-task-reference'
 
 export interface InboundPipelineDeps {
   trace: TraceMwDeps
@@ -30,6 +31,8 @@ export interface InboundPipelineDeps {
   dedup: DedupMwDeps
   capture: CaptureCtxMwDeps
   workbench?:WorkbenchMwDeps
+  /** 管家式指称:主人用自然语言说某件事 ⇒ 落定到活跃任务再走 workbench 命令;缺席 ⇒ 不挂。 */
+  taskReference?: TaskReferenceMwDeps
   typing: TypingMwDeps
   admin: AdminMwDeps
   mode: ModeMwDeps
@@ -86,6 +89,9 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     makeMwActivity(d.activity),
     makeMwMilestone(d.milestone),
     makeMwWelcome(d.welcome),
+    // 管家指称在 transcribe-voice 之后(语音先转文字)、recall 之前(被它消费的
+    // 消息不付嵌入成本);落不定就 next(),普通聊天照旧。
+    ...(d.taskReference ? [makeMwTaskReference(d.taskReference)] : []),
     // Recall runs after every consuming middleware (only messages that will
     // reach dispatch pay the embed cost) and BEFORE llm-health/dispatch so
     // the <recall> element is on ctx.msg when dispatch formats the envelope.

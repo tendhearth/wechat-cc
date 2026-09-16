@@ -31,6 +31,8 @@ import { loadCompanionConfig } from '../companion/config'
 import { readPlanLogDays } from '../companion/plan-memory'
 import { readJournalSeen, writeJournalSeen } from '../../core/journal-seen'
 import { resolveAdminChatId } from '../companion/resolve-admin'
+import { makeCheapJudge, type TaskCandidate } from '../../core/workbench/task-reference'
+import { basename as pathBasename } from 'node:path'
 import { makeSettingsPanel } from '../settings-panel'
 import { makeCommandRouter } from './command-router'
 import { makeEventsStore } from '../events/store'
@@ -655,6 +657,18 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       onContextAvailable:(c,a)=>opts.workbench?.contextAvailable(c,a),
     },
     typing: { sendTyping: (c, a) => ilink.sendTyping(c, a) },
+    ...(opts.workbench?{taskReference:{
+      ownerChatId:()=>resolveAdminChatId(loadAccess(),loadCompanionConfig(stateDir),null),
+      // 活跃候选:进行中 / 已答复 / 排队;历史任务不参与指称。项目显示名用目录名。
+      candidates:():TaskCandidate[]=>opts.workbench!.list({archived:'exclude',limit:50}).tasks
+        .filter(t=>t.phase==='queued'||t.phase==='working'||t.phase==='replied')
+        .map(t=>({id:t.id,title:t.title,project:pathBasename(t.path),path:t.path,providerId:t.providerId,phase:t.phase,updatedAt:t.updatedAt})),
+      handleWechat:opts.workbench.handleWechat,
+      sendMessage:(chatId:string,text:string)=>ilink.sendMessage(chatId,text,{source:'workbench'}),
+      // 便宜模型只在名称命中多件 / 零命中且无焦点时被问,且只能选编号或说 0。没配就只走确定性各层。
+      ...(boot.registry.getCheapEval()?{judge:makeCheapJudge(boot.registry.getCheapEval()!)}:{}),
+      log,
+    }}:{}),
     ...(opts.workbench?{workbench:{handleWechat:opts.workbench.handleWechat,sendMessage:(chatId:string,text:string)=>ilink.sendMessage(chatId,text,{source:'workbench'})}}:{}),
     admin: { adminHandler: adminCommandsHandler },
     mode: { modeHandler },
