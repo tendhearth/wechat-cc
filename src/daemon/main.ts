@@ -5,6 +5,7 @@ if (!process.env.CLAUDE_CODE_ENTRYPOINT) { process.env.CLAUDE_CODE_ENTRYPOINT = 
 // 就直接退出,不然 daemon 自己的每个回合都会被推回微信。
 process.env.WECHAT_CC_DAEMON_CHILD = '1'
 import { join } from 'node:path'
+import selfPkg from '../../package.json' with { type: 'json' }
 import { homedir } from 'node:os'
 import { acquireInstanceLock, releaseInstanceLock, isHeartbeatFresh, writeHeartbeat, startHeartbeatTicker, HEARTBEAT_FILE, HEARTBEAT_STALE_MS } from './single-instance'
 import { openDb } from '../lib/db'
@@ -181,6 +182,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   let shuttingDown = false; let didStartup = false
   let pollingLcRef: { reconcile(): Promise<void> } | null = null
   let ticksRef: TickBodies | null = null
+  const BOOT_AT_ISO = new Date().toISOString()
   let bootRef: import('./bootstrap').Bootstrap | null = null
 
   const shutdown = async () => {
@@ -317,6 +319,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // (after this registration) — returns null until then, so the route 503s.
       listSessions: () => bootRef?.sessionManager?.list() ?? null,
       heartbeatFresh: () => isHeartbeatFresh(HEARTBEAT_PATH),
+      // 后台在跑的版本(2026-09-16):桌面更新器换入新 .app 后旧 daemon 不会被杀,
+      // app 只有看到这个才知道后台还是旧的。head 是 thunk-over-bootRef(self-restart
+      // 在 bootstrap 里才接线)。
+      version: () => ({ cli: selfPkg.version, head: bootRef?.codeHead ?? null, boot_at: BOOT_AT_ISO }),
       // Subsystem degraded-boot (spec 2026-08-17) — sup 在本调用之前创建,
       // 直接传引用,无需 thunk-over-bootRef 姿势。
       subsystems: () => sup.statuses(),

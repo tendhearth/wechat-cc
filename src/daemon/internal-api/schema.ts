@@ -30,6 +30,8 @@ export const HealthResponse = z.object({
   turns_store_wired: z.boolean().optional(),
   sessions_live: z.number().optional(),
   heartbeat_fresh: z.boolean().nullable().optional(),
+  // 后台在跑的版本(2026-09-16):桌面更新后 app 用它判断 daemon 是否还是旧的。
+  version: z.object({ cli: z.string(), head: z.string().nullable(), boot_at: z.string() }).optional(),
   // Subsystem degraded-boot (spec 2026-08-17) — 启动降级状态表。
   subsystems: z.array(SubsystemStatusSchema).optional(),
   // 文件访问(macOS TCC,2026-09-04)—— daemon 进程自己能不能读主人的文件夹。

@@ -14,6 +14,7 @@
  * 打断那个 tick 上的其它工作。
  */
 import { shouldSelfRestart, BOOT_GRACE_MS } from './stale-code'
+import { execIdentityChanged, readExecIdentity, type ExecIdentity } from './exec-identity'
 import { readGitHead, readGitLockfileBlob, readGitWorktreeDirty } from './git-head'
 
 /** 空闲要求:最近这么久没有任何入站消息。 */
@@ -55,6 +56,14 @@ export interface SelfRestartDeps {
    */
   bootLockBlob: string | null
   readLockBlob?: typeof readGitLockfileBlob
+  /**
+   * 打包版的第二个信号(exec-identity.ts):启动时记下的 process.execPath 身份。
+   * 只在 loadedHead === null(bundle 里不是 git 仓库)时启用 —— 源码模式照旧只看
+   * HEAD,不因为 bun 自己升级而重启。null(启动时 stat 失败)⇒ 这条路永不触发。
+   */
+  bootExecIdentity: ExecIdentity | null
+  execPath?: string
+  readExecIdentity?: typeof readExecIdentity
   readDirty?: typeof readGitWorktreeDirty
   /**
    * 是否有工作在跑(busy 登记处,spec 2026-08-11 §5)——覆盖不经
@@ -103,13 +112,31 @@ export function makeSelfRestartCheck(deps: SelfRestartDeps): () => Promise<void>
       // non-git checkout, still inside the boot-grace window, or not idle.
       // Pure reorder — every one of these is a strict prerequisite of
       // shouldSelfRestart's own checks, so the final decision is unchanged.
-      if (deps.loadedHead === null) return
       const nowMs = deps.now()
       if (nowMs - deps.bootAtMs < BOOT_GRACE_MS) return
       const ago = deps.lastPollSuccessAgoMs(nowMs)
       const fresh = ago !== null && ago <= POLL_FRESH_MS
       const idle = !deps.anyInFlight() && !deps.busy() && deps.quietFor(nowMs) >= IDLE_QUIET_MS && fresh
       if (!idle) return
+
+      if (deps.loadedHead === null) {
+        // 打包版:没有 git HEAD 可比,看的是盘上的可执行文件还是不是启动时那一个。
+        // 桌面更新器 rename 换入新 .app 后旧进程不会被杀,这里是它唯一的醒来方式。
+        if (deps.bootExecIdentity === null) return
+        const readExec = deps.readExecIdentity ?? readExecIdentity
+        const current = readExec(deps.execPath ?? process.execPath)
+        if (!execIdentityChanged(deps.bootExecIdentity, current)) return
+        const nowMs2 = deps.now()
+        const ago2 = deps.lastPollSuccessAgoMs(nowMs2)
+        if (deps.anyInFlight() || deps.busy() || deps.quietFor(nowMs2) < IDLE_QUIET_MS || ago2 === null || ago2 > POLL_FRESH_MS) {
+          logStaleBlocked('recheck_raced', nowMs2)
+          return
+        }
+        requested = true
+        deps.log('SELF_RESTART', `executable on disk replaced (inode ${deps.bootExecIdentity.ino} → ${current?.ino}); idle, restarting to load it`)
+        deps.requestRestart()
+        return
+      }
 
       const currentHead = await readHead({ cwd: deps.cwd })
       if (!shouldSelfRestart({

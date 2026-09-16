@@ -18,6 +18,7 @@
  */
 import { makeActivityMarker } from '../self-restart/activity-marker'
 import { makeSelfRestartCheck } from '../self-restart/wire'
+import { readExecIdentity } from '../self-restart/exec-identity'
 import { readGitHead, readGitLockfileBlob } from '../self-restart/git-head'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -71,6 +72,8 @@ export interface WireSelfRestartDeps {
 }
 
 export interface WireSelfRestartResult {
+  /** 启动时加载的 git commit;打包版 / 非仓库为 null。health.version 用。 */
+  loadedHead: string | null
   check: () => Promise<void>
   marker: ReturnType<typeof makeActivityMarker>
 }
@@ -94,12 +97,16 @@ export async function wireSelfRestart(deps: WireSelfRestartDeps): Promise<WireSe
   // loadedHead is already null: the check returns before ever reading
   // it, so there's no reason to pay for a second git spawn at boot.
   const bootLockBlob = loadedHead === null ? null : await readLockBlob({ cwd })
+  // 打包版(loadedHead null)靠这个:记下启动时可执行文件的身份,更新器换入新 .app
+  // 后 stale-code 才有东西可比。源码模式下也记,但 wire.ts 只在没有 HEAD 时用它。
+  const bootExecIdentity = readExecIdentity(process.execPath)
   const marker = makeActivityMarker({ now })
   const requestRestart = deps.requestRestart
   const check = makeSelfRestartCheck({
     cwd,
     loadedHead,
     bootLockBlob,
+    bootExecIdentity,
     now,
     bootAtMs,
     anyInFlight: () => deps.anyInFlight(),
@@ -109,5 +116,5 @@ export async function wireSelfRestart(deps: WireSelfRestartDeps): Promise<WireSe
     busy: deps.busy,
     lastPollSuccessAgoMs: deps.lastPollSuccessAgoMs,
   })
-  return { check, marker }
+  return { check, marker, loadedHead }
 }

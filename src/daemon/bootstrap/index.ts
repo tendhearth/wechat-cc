@@ -1235,6 +1235,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     sdkOptionsForProject,
     buildInstructions,
     defaultProviderId,
+    codeHead: wiredSelfRestart?.loadedHead ?? null,
     providerNotes: () => {
       const out: Partial<Record<ProviderId, string>> = { ...baseProviderNotes() }
       for (const [id, note] of anomalyNotes) out[id] = out[id] ? `${out[id]} · ⚠️ ${note}` : `⚠️ ${note}`

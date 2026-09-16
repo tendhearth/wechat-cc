@@ -368,6 +368,13 @@ export interface InternalApiDeps {
    *  main.ts wires it to isHeartbeatFresh(server.heartbeat). */
   heartbeatFresh?: () => boolean
   /**
+   * 本进程在跑的到底是哪一版 —— backs `version` in GET /v1/health。桌面更新器换入
+   * 新 .app 后旧 daemon 不会被杀(2026-09-16 实测),app 若看不到后台版本就无从发现
+   * "后台还是旧的"。cli = package.json 版本;head = 启动时加载的 git commit(打包版为
+   * null);boot_at = 本进程启动时刻。
+   */
+  version?: () => { cli: string; head: string | null; boot_at: string }
+  /**
    * Optional session releaser — backs POST /v1/sessions/release (admin
    * remediation: force-release a wedged session so the next message spawns a
    * fresh subprocess). A thunk over bootRef.sessionManager. 503 when unwired.

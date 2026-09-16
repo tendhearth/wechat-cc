@@ -61,3 +61,18 @@ describe('GET /v1/health/incidents', () => {
     expect(r.body).toEqual({ incidents: [] })
   })
 })
+
+describe('GET /v1/health · version', () => {
+  it('接了 version 时报出来:桌面更新后 app 才看得出后台还是不是旧的', async () => {
+    const routes = makeRoutesUnderTest({ version: () => ({ cli: '1.6.7', head: 'abc1234', boot_at: '2026-09-16T07:00:00.000Z' }) })
+    const r = await routes['GET /v1/health']!(q(), undefined)
+    expect(r.status).toBe(200)
+    expect((r.body as { version?: unknown }).version).toEqual({ cli: '1.6.7', head: 'abc1234', boot_at: '2026-09-16T07:00:00.000Z' })
+  })
+  it('没接 version 的最小依赖路径照旧,不带这个字段', async () => {
+    const routes = makeRoutesUnderTest({})
+    const r = await routes['GET /v1/health']!(q(), undefined)
+    expect(r.status).toBe(200)
+    expect('version' in (r.body as object)).toBe(false)
+  })
+})

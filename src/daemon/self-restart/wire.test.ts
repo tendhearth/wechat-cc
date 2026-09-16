@@ -23,6 +23,8 @@ function setup(over: Partial<SelfRestartDeps> = {}) {
     // for every test that isn't specifically about it.
     bootLockBlob: 'lock000',
     readLockBlob: async () => 'lock000',
+    // 源码模式的基线:有 HEAD,可执行文件身份不参与判定(见 wire.ts)。
+    bootExecIdentity: null,
     readDirty: async () => 'clean' as const,
     busy: () => false,
     lastPollSuccessAgoMs: () => 0,
@@ -304,5 +306,55 @@ describe('makeSelfRestartCheck — stale-but-blocked diagnostic log (spec 2026-0
     await check()
     expect(logs).toHaveLength(2)
     expect(logs[1]).toContain('stale but blocked')
+  })
+})
+
+describe('makeSelfRestartCheck · 打包版(读不到 git HEAD)看可执行文件身份', () => {
+  const bootId = { ino: 1, size: 100, mtimeMs: 1_000 }
+  const moved = { ino: 2, size: 100, mtimeMs: 1_000 }
+  function bundled(over: Partial<SelfRestartDeps> = {}) {
+    return setup({ loadedHead: null, bootLockBlob: null, bootExecIdentity: bootId, readExecIdentity: () => moved, ...over })
+  }
+
+  it('盘上的可执行文件换了(新 inode)+ 空闲 ⇒ 重启', async () => {
+    const { restarts, check } = bundled()
+    await check()
+    expect(restarts).toHaveLength(1)
+  })
+
+  it('可执行文件没动 ⇒ 不重启', async () => {
+    const { restarts, check } = bundled({ readExecIdentity: () => bootId })
+    await check()
+    expect(restarts).toEqual([])
+  })
+
+  it('启动时就没记到身份(null)⇒ 永不重启', async () => {
+    const { restarts, check } = bundled({ bootExecIdentity: null })
+    await check()
+    expect(restarts).toEqual([])
+  })
+
+  it('启动宽限期内 ⇒ 不重启', async () => {
+    const { restarts, check, t } = bundled()
+    t.ms = BOOT + BOOT_GRACE_MS - 1
+    await check()
+    expect(restarts).toEqual([])
+  })
+
+  it('有工作在跑 / 不空闲 ⇒ 不重启', async () => {
+    expect((await (async () => { const s = bundled({ busy: () => true }); await s.check(); return s.restarts })())).toEqual([])
+    expect((await (async () => { const s = bundled({ anyInFlight: () => true }); await s.check(); return s.restarts })())).toEqual([])
+  })
+
+  it('只触发一次:同一进程第二次 check 不再请求', async () => {
+    const { restarts, check } = bundled()
+    await check(); await check()
+    expect(restarts).toHaveLength(1)
+  })
+
+  it('有 git HEAD 时不走这条路(源码模式照旧只看 HEAD)', async () => {
+    const { restarts, check } = setup({ readHead: async () => 'aaa111', bootExecIdentity: bootId, readExecIdentity: () => moved })
+    await check()
+    expect(restarts).toEqual([])
   })
 })

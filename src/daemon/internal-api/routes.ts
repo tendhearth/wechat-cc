@@ -115,6 +115,7 @@ const onlineStickerCursor = new Map<string, number>()
         turns_store_wired: !!deps.turns,
         sessions_live: deps.listSessions?.()?.length ?? 0,
         heartbeat_fresh: deps.heartbeatFresh?.() ?? null,
+        ...(deps.version ? { version: deps.version() } : {}),
         subsystems: deps.subsystems?.() ?? [],
         ...(deps.outbound ? { outbound: toWireOutbound(deps.outbound()) } : {}),
         // 在 daemon 进程里探(权限记在责任进程上,CLI 能读不代表 daemon 能读)。
