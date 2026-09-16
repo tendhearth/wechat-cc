@@ -66,3 +66,27 @@ it('registers a finished turn’s artifacts while the session is still retained'
   expect(service.detail(task.id).task.status).toBe('running')
   expect(service.detail(task.id).task.runtime).toMatchObject({retained:true,foreground:'idle'})
 })
+
+it('does not repeat the same collection warning on every later turn',async()=>{
+  // 评审(2026-09-16):每回合结束都重扫成果目录,一个不收集的文件会在每一轮各记一条
+  // 一模一样的「此文件类型不收集」—— 十轮之后任务记录里就是十条。同一条警告只记一次。
+  const owned=new TurnRuntime()
+  const registry=createProviderRegistry()
+  registry.register('claude',{async spawn(){return owned.session}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>null})
+  const task=service.create({path:project,providerId:'claude',text:'写一份报告'})
+  await expect.poll(()=>service.detail(task.id).events.some(event=>event.kind==='text')).toBe(true)
+  const output=join(project,'.cc-workbench',task.id)
+  mkdirSync(output,{recursive:true})
+  writeFileSync(join(output,'model.blob'),'binary-ish')
+  const warnings=()=>service.detail(task.id).events.filter(e=>e.kind==='system'&&e.text.includes('此文件类型不收集')).length
+  owned.queue.push({kind:'result',sessionId:'turn-session',numTurns:1,durationMs:1})
+  await expect.poll(warnings).toBe(1)
+  owned.queue.push({kind:'result',sessionId:'turn-session',numTurns:2,durationMs:1})
+  owned.queue.push({kind:'result',sessionId:'turn-session',numTurns:3,durationMs:1})
+  // 最后一轮结算(取消)也再收一次 —— 仍然只该有那一条。
+  await new Promise(r=>setTimeout(r,80))
+  await service.cancel(task.id)
+  await expect.poll(()=>service.detail(task.id).task.status).not.toMatch(/^(running|cancelling)$/)
+  expect(warnings()).toBe(1)
+})

@@ -50,6 +50,9 @@ interface Active extends PathReservation {
   handoffArtifacts?:ArtifactSelection[]
   nativeResume?:AcceptedNativeResume
   reviewBaseline?: GitBaseline
+  /** 已截取的代码变更快照数;第一份沿用旧名,之后带 -2/-3。 */
+  reviewSeq?: number
+  reviewCapture?: Promise<void>
   continuation: AcceptedContinuation
   task: StoredTask
   directoryIdentity: string
@@ -72,6 +75,8 @@ interface Active extends PathReservation {
   artifactsCollected: boolean
   collection?:Promise<void>
   turnCollection?:Promise<void>
+  /** 已记过的收集警告:每回合都重扫成果目录,同一条只记一次(评审 2026-09-16) */
+  warned?:Set<string>
   /** 停止请求到达时本轮已经答复 —— 那是收工,不是取消,终态记 completed。 */
   closedWhileReplied?: boolean
   credentialsMinted: boolean
@@ -341,30 +346,30 @@ export function makeWorkbenchService(opts: Options) {
   function collectTurnArtifacts(running:Active) {
     if (running.artifactsCollected || shutdownComplete || running.turnCollection) return
     const pending=(async()=>{
+      // 先让出事件流回调:目录扫描 + 哈希是同步的,别让它卡在 SDK 流的消费点上。
+      await new Promise<void>(resolve=>setImmediate(resolve))
+      if (shutdownComplete || running.artifactsCollected) return
       try {
         if (canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity) return
-        for (const warning of collectArtifacts(store,running.taskId,running.path,opts.stateDir)) store.addEvent(running.taskId,'system',warning)
+        noteWarnings(running,collectArtifacts(store,running.taskId,running.path,opts.stateDir))
       } catch { /* 结算时还会再收一次,这里不打断本轮 */ }
     })()
     running.turnCollection=pending;collections.add(pending)
     const clear=()=>{collections.delete(pending);if(running.turnCollection===pending)running.turnCollection=undefined}
     void pending.then(clear,clear)
   }
+  function noteWarnings(running:Active,warnings:string[]) {
+    const seen=(running.warned??=new Set())
+    for (const warning of warnings) { if (seen.has(warning)) continue; seen.add(warning); store.addEvent(running.taskId,'system',warning) }
+  }
   async function captureOutputs(running:Active) {
     if (running.artifactsCollected || shutdownComplete) return
     running.artifactsCollected=true
     try {
       if (canonicalProject(running.path) !== running.path || directoryIdentity(running.path) !== running.directoryIdentity) throw new Error('invalid_path')
-      if(running.reviewBaseline && running.session) {
-        try {
-          const report=await finishGitReview(running.reviewBaseline)
-          if(shutdownComplete)return
-          if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
-          if(report)saveArtifactSnapshot(store,running.taskId,{name:`代码变更-${running.identity.slice(0,8)}.json`,mime:GIT_REVIEW_MIME,bytes:serializeGitReview(report)},opts.stateDir)
-        } catch { store.addEvent(running.taskId,'system','代码对比未能保存；其他成果仍会单独收集。') }
-      }
+      await captureCodeChanges(running)
       if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
-      for (const warning of collectArtifacts(store,running.taskId,running.path,opts.stateDir)) store.addEvent(running.taskId,'system',warning)
+      noteWarnings(running,collectArtifacts(store,running.taskId,running.path,opts.stateDir))
     }
     catch { try { store.addEvent(running.taskId,'system','本轮成果目录无法读取，请检查文件夹权限或是否被移动。') } catch { /* storage is already unavailable */ } }
   }
@@ -379,16 +384,49 @@ export function makeWorkbenchService(opts: Options) {
    * 做成了的事来疏通(2026-09-15 真机)。答复即释放;续接时 acquireTurnLease 再申请。
    * 结算时的 releaseReservation 照旧,对已释放的 run 是幂等的。
    */
-  function releaseTurnLease(running:Active) {
+  /**
+   * 把当前基线以来的代码变更截成一份快照,然后丢掉基线。差异边界 = 租约边界(评审 #9):
+   * 答复释放租约前截一次,续接申请租约时重新取基线,结算时再截最后一轮 —— 同文件夹里
+   * 别的任务在 A 空闲期间改的文件,不会被记到 A 头上。
+   */
+  function captureCodeChanges(running:Active):Promise<void> {
+    if (running.reviewCapture) return running.reviewCapture
+    const pending=(async()=>{
+      const baseline=running.reviewBaseline
+      if (!baseline || !running.session) return
+      running.reviewBaseline=undefined
+      try {
+        const report=await finishGitReview(baseline)
+        if(shutdownComplete)return
+        if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
+        if(!report||!report.files.some(f=>f.kind!=='not_reviewed'))return
+        const seq=(running.reviewSeq??0)+1; running.reviewSeq=seq
+        saveArtifactSnapshot(store,running.taskId,{name:`代码变更-${running.identity.slice(0,8)}${seq>1?`-${seq}`:''}.json`,mime:GIT_REVIEW_MIME,bytes:serializeGitReview(report)},opts.stateDir)
+      } catch { try { store.addEvent(running.taskId,'system','代码对比未能保存；其他成果仍会单独收集。') } catch { /* storage unavailable */ } }
+    })()
+    running.reviewCapture=pending
+    void pending.then(()=>{if(running.reviewCapture===pending)running.reviewCapture=undefined},()=>{if(running.reviewCapture===pending)running.reviewCapture=undefined})
+    return pending
+  }
+  async function releaseTurnLease(running:Active):Promise<void> {
+    if (reservations.get(running.identity)!==running) return
+    // 先截快照再放租约:放开之后别人就能改这个文件夹了。
+    await captureCodeChanges(running)
     if (reservations.get(running.identity)!==running) return
     reservations.delete(running.identity)
     if (!stopping) pump()
   }
-  /** 续接一个已释放租约的 run:文件夹若正被别的任务占用,明确拒绝,不悄悄并写。 */
-  function acquireTurnLease(running:Active) {
-    if (reservations.has(running.identity)) return
-    if (findPathBlocker(running,[...reservations.values()])) throw Error('workbench_busy')
+  /** 续接一个已释放租约的 run:文件夹若正被别的任务占用,明确拒绝,不悄悄并写。返回是否新申请到。 */
+  async function acquireTurnLease(running:Active):Promise<boolean> {
+    if (reservations.has(running.identity)) return false
+    let blocker=findPathBlocker(running,[...reservations.values()])
+    // 挡路的如果是一件刚答复、正在截差异快照准备放租约的任务,等它放完再判 —— 否则主人
+    // 在 B 答复的下一秒续接 A 会吃到一个转瞬即逝的 workbench_busy。
+    const holder=blocker?runsByTask.get(blocker.taskId):undefined
+    if (holder&&holder!==running&&isReplied(holder)&&holder.reviewCapture) { await holder.reviewCapture.catch(()=>{}); await Promise.resolve(); blocker=findPathBlocker(running,[...reservations.values()]) }
+    if (blocker) throw Error('workbench_busy')
     reservations.set(running.identity,running)
+    return true
   }
   function releaseReservation(running:Active) {
     if (reservations.get(running.identity) === running) reservations.delete(running.identity)
@@ -522,7 +560,7 @@ export function makeWorkbenchService(opts: Options) {
           if (ev.kind==='result') {
             const snapshot=runtime?.snapshot()
             if (snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0) collectTurnArtifacts(running)
-            if (isReplied(running)) releaseTurnLease(running)
+            if (isReplied(running)) void releaseTurnLease(running).catch(()=>{})
           }
         },()=>{
           const snapshot=runtimeSnapshot(running)
@@ -855,11 +893,23 @@ export function makeWorkbenchService(opts: Options) {
       if(running.delivering)throw Error('input_delivery_busy')
       if(store.liveInputs.count(id)>=10)throw Error('input_limit')
       requireInput(running.task.providerId,attachments,running.execution)
-      if(running.session?.workbenchRuntime&&inputMode(running)!=='queue')acquireTurnLease(running)
-      const saved=store.atomic(()=>{
-        store.attachments.bind(attachments.map(a=>a.id),id,input.draftId)
-        return store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text,attachments,execution:running.execution})
-      })
+      let acquired=false
+      if(running.session?.workbenchRuntime&&inputMode(running)!=='queue'){
+        acquired=await acquireTurnLease(running)
+        // 续接 = 新一轮差异的起点:重新取基线,别人在空闲期间改的不算这一轮的。
+        if(!running.reviewBaseline){try{running.reviewBaseline=await captureGitBaseline(running.path,{})}catch{/* 没基线就没有这一轮的代码对比,其他成果照收 */}}
+      }
+      let saved:LiveInput
+      try{
+        saved=store.atomic(()=>{
+          store.attachments.bind(attachments.map(a=>a.id),id,input.draftId)
+          return store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text,attachments,execution:running.execution})
+        })
+      }catch(error){
+        // 这一句没存下来就没有人会去写文件夹:刚申请的租约放回去,别让同文件夹的下一个任务白等。
+        if(acquired&&isReplied(running))void releaseTurnLease(running).catch(()=>{})
+        throw error
+      }
       const runtime=running.session?.workbenchRuntime
       if(runtime){
         if(inputMode(running)==='queue')return saved
@@ -873,9 +923,9 @@ export function makeWorkbenchService(opts: Options) {
           // The HTTP receipt is already durable; never wait here or auto-resend.
           void runtime.submit(saved.id,text,material).then(
             ()=>settleRuntimeInput(running,saved),
-            error=>{settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));if(isReplied(running))releaseTurnLease(running)},
+            error=>{settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));if(isReplied(running))void releaseTurnLease(running).catch(()=>{})},
           )
-        }catch(error){settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));if(isReplied(running))releaseTurnLease(running)}
+        }catch(error){settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));if(isReplied(running))void releaseTurnLease(running).catch(()=>{})}
         return store.liveInputs.get(saved.id)!
       }
       if(!running.session?.steer)return saved

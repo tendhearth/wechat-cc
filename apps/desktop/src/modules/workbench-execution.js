@@ -42,6 +42,9 @@ export function executionErrorMessage(error){
   api_task_step_limit:'API 任务达到步骤上限。请缩小任务范围后继续。',
   api_task_tool_failed:'API 执行者未能完成文件操作。请查看任务记录后重试。',
   api_task_cancelled:'API 任务已停止，没有继续执行后续操作。',
+  provider_quota_exhausted:'这个执行者的额度已用完。可以交给另一位执行者继续，或等额度恢复后再试。',
+  provider_rate_limited:'这个执行者暂时被限流，请稍后再试；也可以交给另一位执行者继续。',
+  workbench_busy:'这个文件夹正有另一个任务在写，等它答复后再续接。',
  })
  return messages[code]??null
 }
