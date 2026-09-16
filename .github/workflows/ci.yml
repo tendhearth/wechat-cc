@@ -118,7 +118,9 @@ jobs:
           node-version: 24
       - run: bun install --frozen-lockfile
       - name: Unit tests under Node (whole src, minus the ws server)
-        run: node node_modules/.bin/vitest run -c vitest.node.config.ts --reporter=dot
+        # 走 npm script 而不是直接敲 node_modules/.bin/vitest:npm 会把 node_modules/.bin 加进 PATH,
+        # bootstrap 的 codex 探测(find-codex-binary)靠它找到 SDK 自带的 codex —— bun run 也是这么做的。
+        run: npm run test:node -- --reporter=dot
 
   e2e:
     # Heavy suite — skip on direct dev pushes; still runs on master pushes and
