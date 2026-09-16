@@ -27,6 +27,8 @@ export interface TaskCandidate {
   providerId: string
   phase: string
   updatedAt: number
+  /** 终态错误码(如 provider_quota_exhausted);管家据此认出"因额度失败的那件"。 */
+  error?: string | null
 }
 export interface FocusState { taskId: string; expiresAt: number }
 export type TaskJudge = (input: { text: string; candidates: TaskCandidate[] }) => Promise<{ taskId: string | null; confident: boolean }>

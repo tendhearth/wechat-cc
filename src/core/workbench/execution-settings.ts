@@ -26,6 +26,8 @@ export function executionFailureMessage(code:string):string {
     api_task_request_failed:'API 请求失败，任务没有被标记为完成。请检查端点和网络后重试。',
     api_task_close_unconfirmed:'API 请求尚未确认结束。请等待或重启服务后查看中断状态，不要重复提交。',
     api_task_private_scope:'所选文件夹与任务服务的私有状态目录重叠，无法安全开始。请选择具体的项目文件夹。',
+    provider_quota_exhausted:'这家执行者的额度已用完，这一轮没有开始或没有完成。等额度恢复，或把这件事交给另一位执行者继续。',
+    provider_rate_limited:'这家执行者暂时限流，这一轮没有完成。稍等几分钟再继续。',
     api_task_scope_invalid:'无法确认 API 任务的项目范围，任务没有开始。请重新打开项目后再试。',
     api_task_busy:'这个 API 会话正在处理另一轮，请等待当前轮结束。',
     api_task_closed:'这个 API 会话已经关闭，请从任务页面重新继续。',

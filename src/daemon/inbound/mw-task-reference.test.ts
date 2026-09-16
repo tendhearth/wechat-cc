@@ -134,3 +134,51 @@ describe('真机回归 2026-09-16', () => {
     expect(commands).toEqual(['任务 a85aec02 补充 整理 TODO 那件继续', '任务 a85aec02 补充 顺便把注释也删了'])
   })
 })
+
+describe('额度止损:执行者额度用完时,不再往它送,直接问"交给另一位继续?"', () => {
+  const T = NOW
+  const quotaOn = (over: Partial<TaskReferenceMwDeps> = {}) => {
+    const created: Array<{ path: string; providerId: string; text: string }> = []
+    const s = setup({
+      quotaExhausted: (id) => id === 'codex' ? { kind: 'quota', since: T - 60_000, resetAt: T + 25 * 60_000, message: "You've hit your usage limit" } : null,
+      fallbackExecutor: (id) => id === 'codex' ? 'claude' : 'codex',
+      createTask: async (input) => { created.push(input); return { id: 'c0ffee00' } },
+      ...over,
+    })
+    return { ...s, created }
+  }
+  it('落定到额度耗尽的 Codex 任务 ⇒ 不发补充,回"额度用完…交给 Claude 继续?回「是」"', async () => {
+    const { run, commands, sent } = quotaOn()
+    const r = await run('project-b 那个 codex 做的,再加一列百分比')
+    expect(r.consumed).toBe('workbench'); expect(commands).toEqual([])
+    expect(sent.at(-1)).toMatch(/Codex 的额度已用完/); expect(sent.at(-1)).toMatch(/约 2[0-9] 分钟/); expect(sent.at(-1)).toMatch(/交给 Claude 继续.*回「是」/)
+  })
+  it('回「是」⇒ 在同一文件夹给 Claude 新开一件,带上原标题和刚才的要求,回复新任务的管家头', async () => {
+    const { run, sent, created } = quotaOn()
+    await run('project-b 那个 codex 做的,再加一列百分比')
+    await run('是')
+    expect(created).toHaveLength(1)
+    expect(created[0]).toMatchObject({ path: '/s/project-b', providerId: 'claude' })
+    expect(created[0]!.text).toContain('读 DATA.md,哪三个模型在 1 秒以内'); expect(created[0]!.text).toContain('再加一列百分比'); expect(created[0]!.text).toMatch(/接替 Codex/)
+    expect(sent.at(-1)).toMatch(/已交给 Claude/); expect(sent.at(-1)).toMatch(/c0ffee00/)
+  })
+  it('回「不用」⇒ 作罢;之后的「是」不再算接管', async () => {
+    const { run, created, sent } = quotaOn()
+    await run('project-b 那个 codex 做的,再加一列百分比')
+    await run('不用')
+    expect(sent.at(-1)).toMatch(/好/)
+    const r = await run('是')
+    expect(created).toEqual([]); expect(r.nexted).toBe(true)
+  })
+  it('没有可接的执行者(两家都没额度)⇒ 说清楚,不新开', async () => {
+    const { run, sent, created } = quotaOn({ fallbackExecutor: () => null })
+    await run('project-b 那个 codex 做的,再加一列百分比')
+    expect(sent.at(-1)).toMatch(/没有可以接手的执行者/); expect(created).toEqual([])
+  })
+  it('通知里说过"回「是」":没有待确认接管、但只有一件近期因额度失败的任务 ⇒ 「是」就是它', async () => {
+    const failed = { ...latency, phase: 'failed', updatedAt: T - 60_000, error: 'provider_quota_exhausted' } as TaskCandidate
+    const { run, created } = quotaOn({ candidates: () => [todo, failed] })
+    await run('是')
+    expect(created).toHaveLength(1); expect(created[0]!.providerId).toBe('claude')
+  })
+})

@@ -11,6 +11,7 @@
 import type { Middleware } from './types'
 import { isWechatTaskCommand, type WechatMessageIdentity, type WechatWorkbenchReply } from '../../core/workbench/wechat-control'
 import { resolveTaskReference, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge, type FocusState } from '../../core/workbench/task-reference'
+import type { QuotaState } from '../../core/provider-quota'
 
 export interface TaskReferenceMwDeps {
   ownerChatId(): string | null
@@ -21,6 +22,12 @@ export interface TaskReferenceMwDeps {
   judge?: TaskJudge
   now?(): number
   log(tag: string, line: string): void
+  /** 额度止损(provider-quota.ts):这家现在还能用吗;缺席 ⇒ 不做止损。 */
+  quotaExhausted?(providerId: string): QuotaState | null
+  /** 额度用完时"交给谁继续";null = 没有可接的。 */
+  fallbackExecutor?(providerId: string): string | null
+  /** 在同一文件夹给另一位新开一件(接管)。 */
+  createTask?(input: { path: string; providerId: string; text: string }): Promise<{ id: string }>
 }
 
 const PROVIDER_NAME: Record<string, string> = { claude: 'Claude', codex: 'Codex', openai: 'API', cursor: 'Cursor', agy: 'agy' }
@@ -29,6 +36,10 @@ const STOP_VERB = /(停止|结束|取消|别做了|不用做了)\s*[。.!！]?$/
 const RESULT_VERB = /(结果|成果|文件|下载)/
 const STATUS_VERB = /(怎么样|怎样|进展|状态|做完了吗|好了吗|完成了吗|查看|看看|到哪了)/
 const BARE_CHOICE = /^\s*(\d{1,2})\s*[.。)]?\s*$/
+const YES = /^\s*(是|好|好的|可以|行|嗯|交给|换)/
+const NO = /^\s*(不用|不要|算了|不了|先不)/
+const QUOTA_CODES = new Set(['provider_quota_exhausted', 'provider_rate_limited'])
+const TAKEOVER_TTL_MS = 30 * 60_000
 /** "你说的是哪一件"的作答窗口。真机 2026-09-16:主人 8 分钟后才回「2」,5 分钟窗口已过,那个「2」被当成了补充。 */
 const CHOICE_TTL_MS = 30 * 60_000
 
@@ -49,6 +60,28 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): Middleware {
   const pending = new Map<string, { options: TaskCandidate[]; text: string; expiresAt: number }>()
   /** 主人从微信点过名的任务:第一次顺手开提醒(每进程每件一次),失败/完成才到得了手机。 */
   const watched = new Set<string>()
+  /** 已经问过"交给 X 继续?"、等主人一个字的接管。 */
+  const takeover = new Map<string, { task: TaskCandidate; to: string; request: string; expiresAt: number }>()
+
+  const minutesLeft = (q: QuotaState) => Math.max(1, Math.ceil((q.resetAt - now()) / 60_000))
+  const providerName = (id: string) => PROVIDER_NAME[id] ?? id
+  async function offerTakeover(chatId: string, task: TaskCandidate, q: QuotaState, request: string): Promise<void> {
+    const to = deps.fallbackExecutor?.(task.providerId) ?? null
+    const reason = q.kind === 'quota' ? `${providerName(task.providerId)} 的额度已用完（约 ${minutesLeft(q)} 分钟后恢复）` : `${providerName(task.providerId)} 暂时限流（约 ${minutesLeft(q)} 分钟）`
+    if (!to || !deps.createTask) {
+      takeover.delete(chatId)
+      await deps.sendMessage(chatId, `${header(task)}\n${reason}，这一轮没送出去。现在没有可以接手的执行者，等它恢复后再说一次就行。`)
+      return
+    }
+    takeover.set(chatId, { task, to, request, expiresAt: now() + TAKEOVER_TTL_MS })
+    await deps.sendMessage(chatId, `${header(task)}\n${reason}，这一轮没送出去。\n交给 ${providerName(to)} 继续？回「是」我就把这件事交给它；回「不用」就先放着。`)
+  }
+  async function doTakeover(chatId: string, t: { task: TaskCandidate; to: string; request: string }): Promise<void> {
+    const text = `接替 ${providerName(t.task.providerId)}（额度用完）继续这件事：${t.task.title}\n主人刚才的要求：${t.request}`
+    const created = await deps.createTask!({ path: t.task.path, providerId: t.to, text })
+    deps.log('WORKBENCH', `quota takeover ${t.task.id} → ${t.to} ${created.id}`)
+    await deps.sendMessage(chatId, `📁 ${t.task.project} · ${t.task.title} · ${providerName(t.to)} · 排队中\n已交给 ${providerName(t.to)}，新任务 ${created.id}。`)
+  }
 
   const currentFocus = (chatId: string): FocusState | null => {
     const f = focus.get(chatId)
@@ -72,6 +105,22 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): Middleware {
     const candidates = deps.candidates(msg.chatId)
     if (!candidates.length) { await next(); return }
     const identity: WechatMessageIdentity = { accountId: msg.accountId, userId: msg.userId, msgId: msg.msgId, createTimeMs: msg.createTimeMs }
+
+    // 上一句问了"交给 X 继续?",这句回了一个字。
+    const offer = takeover.get(msg.chatId)
+    if (offer && offer.expiresAt > now()) {
+      if (YES.test(text)) { takeover.delete(msg.chatId); ctx.consumedBy = 'workbench'; await doTakeover(msg.chatId, offer); return }
+      if (NO.test(text)) { takeover.delete(msg.chatId); ctx.consumedBy = 'workbench'; await deps.sendMessage(msg.chatId, '好，先放着。等额度恢复再说一声就行。'); return }
+    } else if (offer) takeover.delete(msg.chatId)
+    // 通知里说过"回「是」":没有待确认的接管,但恰好只有一件近期因额度失败的任务 ⇒ 「是」就是它。
+    if (!offer && YES.test(text) && text.length <= 6 && deps.createTask) {
+      const recent = candidates.filter(c => QUOTA_CODES.has(c.error ?? '') && c.updatedAt >= now() - TAKEOVER_TTL_MS)
+      const to = recent.length === 1 ? deps.fallbackExecutor?.(recent[0]!.providerId) ?? null : null
+      if (recent.length === 1 && to) { ctx.consumedBy = 'workbench'; await doTakeover(msg.chatId, { task: recent[0]!, to, request: '接着原来的要求做。' }); return }
+    }
+    // 一个孤零零的「是 / 不用」不是任何任务的要求:没有在等它的问题就当普通聊天,
+    // 不让焦点把它捡走(否则"不用"之后再回"是"会把刚作罢的接管又问一遍)。
+    if ((YES.test(text) || NO.test(text)) && text.length <= 4) { await next(); return }
 
     // 上一句问了"哪一件",这句回了个数字。
     const ask = pending.get(msg.chatId)
@@ -109,6 +158,8 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): Middleware {
     }
     ctx.consumedBy = 'workbench'
 
+    const q = deps.quotaExhausted?.(picked.providerId) ?? null
+    if (q) { setFocus(msg.chatId, picked.id); await offerTakeover(msg.chatId, picked, q, effectiveText); return }
     const cmd = command(picked.id, effectiveText)
     const fresh = setFocus(msg.chatId, picked.id)
     if (!watched.has(picked.id)) {

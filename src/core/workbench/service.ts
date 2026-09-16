@@ -23,6 +23,7 @@ import { restartPreview, type Continuation, type RestartPreview } from './contin
 import {canResumeWorkbenchExecutor,isWorkbenchExecutorCapabilities,isWorkbenchProviderId,requireWorkbenchInput,type WorkbenchExecutorCapabilities} from './executor-capabilities'
 import { makeRunPermissions, type PermissionDecision, type RunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
 import { findPathBlocker, type PathReservation, type WaitingFor } from './scheduler'
+import { makeQuotaRegistry, classifyProviderError, type QuotaState } from '../provider-quota'
 import { publicTask, TERMINAL_TASK_STATUSES, type WorkbenchListQuery, type StoredTask, type Task, type TaskStatus, type WorkbenchStore } from './store'
 
 interface Options {
@@ -172,6 +173,19 @@ export function makeWorkbenchService(opts: Options) {
   }
   const runsByTask=new Map<string,Active>()
   const reservations=new Map<string,Active>()
+  /** 各执行者的额度/限流状态(provider-quota.ts):从失败里认出来、记住、再避开。 */
+  const quota=makeQuotaRegistry()
+  const PROVIDER_LABEL:Record<string,string>={claude:'Claude',codex:'Codex',openai:'API'}
+  /** 除了 exhaustedId 之外、已准入且没耗尽的原生执行者 —— "交给谁继续"的候选。 */
+  function fallbackExecutor(exhaustedId:string):string|null {
+    for(const id of opts.registry.list()){
+      if(id===exhaustedId||!isWorkbenchProviderId(id))continue
+      const p=opts.registry.get(id);if(!p||!isWorkbenchExecutorCapabilities(p.opts.workbench)||p.opts.workbench.background!=='tracked')continue
+      if(quota.exhausted(id))continue
+      return id
+    }
+    return null
+  }
   const queue:Active[]=[]
   const runningText=new Map<string,string>()
   const collections=new Set<Promise<void>>()
@@ -201,12 +215,16 @@ export function makeWorkbenchService(opts: Options) {
   function requestNotice(task:StoredTask,runId:string,kind:'permission'|'question',id:string,label:string){
     enqueueNotice(task,runId,kind,`${task.title.replace(/[\r\n]+/g,' ')} · ${task.id}\n${task.providerId} · ${kind==='permission'?'需要你批准':'需要你回答'}\n\n${label.slice(0,600)}\n\n查看：任务 ${task.id} ${kind==='permission'?'权限':'问题'} ${id}`,id)
   }
-  function stageFinishedNotice(running:Active,status:TaskStatus){
+  function stageFinishedNotice(running:Active,status:TaskStatus,error:string|null=null){
     if(!TERMINAL_TASK_STATUSES.includes(status))return
     const watch=store.wechatNotifications.subscription(running.taskId)
     if(!watch?.enabled||watch.ownerChatId!==running.task.ownerChatId||watch.ownerChatId!==opts.ownerChatId())return
-    const reply=store.events(running.taskId).filter(e=>e.runId===running.identity&&e.kind==='text').at(-1)?.text
+    let reply=store.events(running.taskId).filter(e=>e.runId===running.identity&&e.kind==='text').at(-1)?.text
     const label={completed:'这一轮已完成',failed:'这一轮需要处理',interrupted:'这一轮已中断',cancelled:'这一轮已停止'}[status as 'completed'|'failed'|'interrupted'|'cancelled']
+    if(status==='failed'&&(error==='provider_quota_exhausted'||error==='provider_rate_limited')){
+      const code=error,other=fallbackExecutor(running.task.providerId)
+      reply=`${executionFailureMessage(code)}${other?`\n交给 ${PROVIDER_LABEL[other]??other} 继续？回「是」我就把这件事交给它。`:''}`
+    }
     const artifacts=store.artifacts(running.taskId).slice(0,5)
     const text=`${running.title.replace(/[\r\n]+/g,' ')} · ${running.taskId}\n${running.task.providerId} · ${label}\n\n${reply?reply.slice(0,1800)+'\n\n':''}${artifacts.length?'已保存成果：'+artifacts.map(a=>a.name).join('、').slice(0,500)+'\n\n':''}查看：任务 ${running.taskId}\n结果：任务 ${running.taskId} 结果`
     // Persist the frozen result in the same transaction as the terminal task status.
@@ -511,9 +529,15 @@ export function makeWorkbenchService(opts: Options) {
       if (running.cancelled) finalStatus='cancelled'
       else if (summary.error || !summary.result || runtime?.snapshot().retained) {
         // An old foreground result cannot turn an unexpected retained EOF into success.
-        const error=summary.error ?? (runtime?.snapshot().retained?'background_runtime_ended':'stream_ended_without_result')
-        finalStatus='failed'; finalError=error; store.addEvent(task.id,'error',error==='background_runtime_ended'?'后台执行会话意外结束；对话已保留，请检查后再继续。':executionFailureMessage(error))
-      } else finalStatus='completed'
+        const raw=summary.error ?? (runtime?.snapshot().retained?'background_runtime_ended':'stream_ended_without_result')
+        // 额度/限流(真机 2026-09-16:Codex 额度耗尽,原文当错误码存进 task.error,通知空白):
+        // 认出来就换成稳定错误码、登记这家耗尽,事件里说人话并附原文摘要。
+        const quotaKind=summary.error?classifyProviderError(summary.error):null
+        const error=quotaKind==='quota'?'provider_quota_exhausted':quotaKind==='rate_limit'?'provider_rate_limited':raw
+        if(quotaKind)quota.note(task.providerId,summary.error!)
+        finalStatus='failed'; finalError=error
+        store.addEvent(task.id,'error',error==='background_runtime_ended'?'后台执行会话意外结束；对话已保留，请检查后再继续。':quotaKind?`${executionFailureMessage(error)}\n原文：${summary.error!.trim().slice(0,200)}`:executionFailureMessage(error))
+      } else { finalStatus='completed'; quota.clear(task.providerId) }
     } catch (error) {
       const message=error instanceof Error ? error.message : 'task_failed'
       finalStatus=running.cancelled ? 'cancelled' : 'failed'; finalError=running.cancelled ? null : message
@@ -543,7 +567,7 @@ export function makeWorkbenchService(opts: Options) {
         store.atomic(()=>{
           store.finishRunActivities(task.id,running.identity,running.cancelled&&!running.uncertain?'cancelled':'interrupted')
           store.update(task.id,status,finalError)
-          stageFinishedNotice(running,status)
+          stageFinishedNotice(running,status,finalError)
         })
         terminalCommitted=true
         publishFinishedNotices()
@@ -739,6 +763,12 @@ export function makeWorkbenchService(opts: Options) {
     },
     notificationStore:store.wechatNotifications,
     setNotificationWake(wake:(context?:{ownerChatId:string;accountId:string})=>Promise<void>){noticeWake=wake},
+    /** 各执行者的额度/限流状态快照;没登记的不在里面。 */
+    providerQuota():Record<string,QuotaState>{return quota.snapshot()},
+    /** 这家现在还能用吗;null = 能。 */
+    quotaExhausted(providerId:string):QuotaState|null{return quota.exhausted(providerId)},
+    /** 额度耗尽时"交给谁继续"的默认人选;null = 没有可接的。 */
+    fallbackExecutor(exhaustedId:string):string|null{return fallbackExecutor(exhaustedId)},
     contextAvailable(ownerChatId:string,accountId:string){if(ownerChatId===opts.ownerChatId())wakeNotices({ownerChatId,accountId})},
     notificationEligible(notice:WechatNotificationNotice):boolean {
       const task=store.get(notice.taskId),watch=store.wechatNotifications.subscription(notice.taskId)
@@ -1027,7 +1057,7 @@ export function makeWorkbenchService(opts: Options) {
       return {...preview,...(managedTaskId?{managedTaskId}:{})}
     },
     list(query:WorkbenchListQuery={}) {
-      const providers=opts.registry.list().flatMap(id=>{const p=opts.registry.get(id);return isWorkbenchProviderId(id)&&p&&isWorkbenchExecutorCapabilities(p.opts.workbench)?[{id,displayName:p.opts.displayName,capabilities:structuredClone(p.opts.workbench)}]:[]})
+      const providers=opts.registry.list().flatMap(id=>{const p=opts.registry.get(id);return isWorkbenchProviderId(id)&&p&&isWorkbenchExecutorCapabilities(p.opts.workbench)?[{id,displayName:p.opts.displayName,capabilities:structuredClone(p.opts.workbench),quota:quota.exhausted(id)}]:[]})
       const result=store.listPage(query)
       const projectProviders=Object.fromEntries([...new Set(result.tasks.map(task=>task.path))].map(path=>[path,store.projectProvider(path)]))
       return {tasks:result.tasks.map(task => taskView(task,true)),page:result.page,projectProviders,providers,historyProviders:Object.keys(opts.nativeHistory??{}),defaultProvider:providers.find(p=>p.id===opts.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!opts.ownerChatId()}

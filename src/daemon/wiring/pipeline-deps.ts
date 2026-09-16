@@ -667,8 +667,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         return opts.workbench!.list({archived:'exclude',limit:50}).tasks
           .filter(t=>t.phase!=='cancelled'&&t.updatedAt>=since)
           .sort((a,b)=>b.updatedAt-a.updatedAt)
-          .map(t=>({id:t.id,title:t.title,project:pathBasename(t.path),path:t.path,providerId:t.providerId,phase:t.phase,updatedAt:t.updatedAt}))
+          .map(t=>({id:t.id,title:t.title,project:pathBasename(t.path),path:t.path,providerId:t.providerId,phase:t.phase,updatedAt:t.updatedAt,error:t.error}))
       },
+      // 额度止损:这家耗尽就不再往它送,问"交给另一位继续?";「是」就在同一文件夹给另一位新开一件。
+      quotaExhausted:(id:string)=>opts.workbench!.quotaExhausted(id),
+      fallbackExecutor:(id:string)=>opts.workbench!.fallbackExecutor(id),
+      createTask:async(input:{path:string;providerId:string;text:string})=>{const task=await opts.workbench!.create(input);return {id:task.id}},
       handleWechat:opts.workbench.handleWechat,
       sendMessage:(chatId:string,text:string)=>ilink.sendMessage(chatId,text,{source:'workbench'}),
       // 便宜模型只在名称命中多件 / 零命中且无焦点时被问,且只能选编号或说 0。没配就只走确定性各层。
