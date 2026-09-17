@@ -528,14 +528,52 @@ describe('Workbench internal HTTP API', () => {
       expect(svc.detail).toHaveBeenCalledWith('deadbeef', {})
     })
 
-    it('带 since 与 wait_ms ⇒ 先 wait(钳到 20000),再 detail({since})', async () => {
-      const svc = service()
+    it('带 since 与 wait_ms,但 detail 首次探测已经比 since 新 ⇒ 不必等,不调用 wait(顺带省掉一次冗余长轮询)', async () => {
+      const svc = service()   // 默认 mock:detail 恒返回 version:5
       const { request } = await start(svc)
       const response = await request('/v1/workbench/task?id=deadbeef&since=4&wait_ms=99999')
       expect(response.status).toBe(200)
-      expect(svc.changes.wait).toHaveBeenCalledWith('deadbeef', 4, 20000)
+      expect(svc.changes.wait).not.toHaveBeenCalled()
+      expect(svc.detail).toHaveBeenCalledTimes(1)
       expect(svc.detail).toHaveBeenCalledWith('deadbeef', { since: 4 })
       expect((await response.json()).version).toBe(5)
+    })
+
+    it('detail 首次探测还停在 since ⇒ 先 wait(钳到 20000),等它回来才第二次 detail({since})', async () => {
+      let detailCalls = 0
+      let resolveWait: (v: number) => void = () => {}
+      const waitDone = new Promise<number>(resolve => { resolveWait = resolve })
+      const detail = vi.fn((_id: string, opts?: { since?: number }) => {
+        detailCalls++
+        return { task: TASK, events: [], artifacts: [], version: detailCalls === 1 ? 4 : 6, ...(opts?.since !== undefined ? { since: opts.since } : {}) }
+      })
+      const wait = vi.fn(async () => waitDone)
+      const svc = service({ detail, changes: { wait } })
+      const { request } = await start(svc)
+      const responsePromise = request('/v1/workbench/task?id=deadbeef&since=4&wait_ms=99999')
+      await new Promise(r => setTimeout(r, 5))
+      // 卡在 wait 上:第一次 detail 已经发生(拿到 version:4,没超过 since),第二次还没有。
+      expect(detail).toHaveBeenCalledTimes(1)
+      expect(wait).toHaveBeenCalledWith('deadbeef', 4, 20000)
+      resolveWait(6)
+      const response = await responsePromise
+      expect(response.status).toBe(200)
+      expect(detail).toHaveBeenCalledTimes(2)
+      expect(detail).toHaveBeenNthCalledWith(1, 'deadbeef', { since: 4 })
+      expect(detail).toHaveBeenNthCalledWith(2, 'deadbeef', { since: 4 })
+      expect((await response.json()).version).toBe(6)
+    })
+
+    it('未知 id 带 since+wait_ms ⇒ 404,不等 20 秒(detail 探测就抛 not_found,wait 不被调用)', async () => {
+      const detail = vi.fn(() => { throw new Error('not_found') })
+      const wait = vi.fn(async () => 0)
+      const svc = service({ detail, changes: { wait } })
+      const { request } = await start(svc)
+      const response = await request('/v1/workbench/task?id=deadbeef&since=4&wait_ms=99999')
+      expect(response.status).toBe(404)
+      expect(await response.json()).toEqual({ error: 'not_found' })
+      expect(wait).not.toHaveBeenCalled()
+      expect(detail).toHaveBeenCalledTimes(1)
     })
 
     it('since 有、wait_ms 缺省 ⇒ 不等待,只做增量返回(桌面首帧用)', async () => {

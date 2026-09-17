@@ -196,7 +196,14 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       if (since === null || waitMs === null) return invalid()
       if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
       try {
-        if (since !== undefined && waitMs > 0) await deps.workbench.changes.wait(id, since, Math.min(waitMs, WAIT_MAX_MS))
+        if (since !== undefined && waitMs > 0) {
+          // 先探一次:数据已经比 since 新(或任务压根不存在,detail 直接抛 not_found)就地返回,
+          // 不然一个已下线的 id 会在 wait 里空耗满 20 秒才等到 detail 去报 404。
+          const first = await deps.workbench.detail(id, { since })
+          if (first.version > since) return { status: 200, body: first }
+          await deps.workbench.changes.wait(id, since, Math.min(waitMs, WAIT_MAX_MS))
+          return { status: 200, body: await deps.workbench.detail(id, { since }) }
+        }
         return { status: 200, body: await deps.workbench.detail(id, since === undefined ? {} : { since }) }
       } catch (err) {
         return mappedError(err)
