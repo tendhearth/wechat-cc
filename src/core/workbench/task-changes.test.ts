@@ -50,6 +50,20 @@ describe('TaskChangeHub', () => {
     const p = hub.wait('t1', 1, 5000); hub.dispose()
     await expect(p).resolves.toBe(1)
   })
+  it('publish 一个比缓存低的 seq ⇒ 只回落缓存、不唤醒;之后真正前进才唤醒(自愈幻影提前的 hub)', async () => {
+    const hub = makeTaskChangeHub()
+    hub.publish('t1', 3)
+    const stale = hub.wait('t1', 3, 5000)          // parks: cached(3) 不大于 since(3)
+    let staleSettled = false; void stale.then(() => { staleSettled = true })
+    hub.publish('t1', 2)                            // 比缓存低 ⇒ 缓存回落,不唤醒
+    expect(hub.seq('t1')).toBe(2)
+    await new Promise(r => setTimeout(r, 5))
+    expect(staleSettled).toBe(false)
+    const b = hub.wait('t1', 2, 5000)               // 缓存已回落到 2,这里也会挂起
+    hub.publish('t1', 3)                            // 真正前进(3>2)⇒ 唤醒所有挂起的 waiter
+    await expect(stale).resolves.toBe(3)
+    await expect(b).resolves.toBe(3)
+  })
   it('超时 waiter 被剪枝,不占用上限配额', async () => {
     vi.useFakeTimers()
     const hub = makeTaskChangeHub({ maxWaitersPerTask: 8 })

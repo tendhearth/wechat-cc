@@ -17,7 +17,13 @@ export function makeTaskChangeHub(opts: { maxWaitersPerTask?: number } = {}): Ta
   const wake = (taskId: string) => { const list = waiters.get(taskId); if (!list) return; waiters.delete(taskId); for (const w of list) w() }
   return {
     // 不前进的 publish 不许唤醒:两个 waiter 互相拿对方已知的旧 seq 发布,否则会 ping-pong 空转。
-    publish(taskId, seq) { if (seq > (seqs.get(taskId) ?? 0)) { seqs.set(taskId, seq); wake(taskId) } },
+    // 比缓存低的 publish 说明缓存曾经"幻影提前"(比如一笔写事务半路回滚,touched 已经发了但
+    // 落库没跟上):把缓存回落到这个更可信的值,但不唤醒——它不是新进展,只是纠偏。
+    publish(taskId, seq) {
+      const known = seqs.get(taskId) ?? 0
+      if (seq > known) { seqs.set(taskId, seq); wake(taskId) }
+      else if (seq < known) seqs.set(taskId, seq)
+    },
     seq: taskId => seqs.get(taskId) ?? 0,
     wait(taskId, since, maxMs) {
       const current = seqs.get(taskId) ?? 0

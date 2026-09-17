@@ -58,4 +58,38 @@ describe('DeltaCoalescer', () => {
     expect(out.filter(e => e.kind === 'text' && e.itemId === 'b')).toEqual([append('b', 'y')])
     vi.useRealTimers()
   })
+  it('sink 抛错(定时器驱动的 flush) ⇒ 不外冒、调 onError 一次、后续事件照常送达', () => {
+    vi.useFakeTimers()
+    const out: AgentEvent[] = []
+    let calls = 0
+    const sink = (e: AgentEvent) => { calls++; if (calls === 1) throw new Error('sqlite boom'); out.push(e) }
+    const onError = vi.fn()
+    const c = makeDeltaCoalescer(sink, { windowMs: 150, onError })
+    c.push(append('a', '你'))
+    expect(() => vi.advanceTimersByTime(150)).not.toThrow()
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(onError).toHaveBeenCalledWith(expect.any(Error))
+    c.push(append('b', '好'))
+    vi.advanceTimersByTime(150)
+    expect(out).toEqual([append('b', '好')])
+    vi.useRealTimers()
+  })
+  it('sink 抛错(push 的透传路径,非 append 事件) ⇒ 不外冒、调 onError', () => {
+    const out: AgentEvent[] = []
+    let calls = 0
+    const sink = (e: AgentEvent) => { calls++; if (calls === 1) throw new Error('boom'); out.push(e) }
+    const onError = vi.fn()
+    const c = makeDeltaCoalescer(sink, { windowMs: 10_000, onError })
+    expect(() => c.push({ kind: 'tool_call', tool: 'Bash', activity: { id: 'x', type: 'command', status: 'running', label: 'ls' } } as AgentEvent)).not.toThrow()
+    expect(onError).toHaveBeenCalledTimes(1)
+    c.push({ kind: 'error', message: 'm' } as AgentEvent)
+    expect(out).toEqual([{ kind: 'error', message: 'm' }])
+  })
+  it('sink 抛错但没给 onError ⇒ 也不外冒', () => {
+    vi.useFakeTimers()
+    const c = makeDeltaCoalescer(() => { throw new Error('boom') }, { windowMs: 150 })
+    c.push(append('a', 'x'))
+    expect(() => vi.advanceTimersByTime(150)).not.toThrow()
+    vi.useRealTimers()
+  })
 })

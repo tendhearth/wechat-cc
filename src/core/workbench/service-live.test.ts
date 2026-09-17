@@ -100,4 +100,25 @@ describe('service 实时流面 · shutdown 与并发 wait', () => {
     await expect(a).resolves.toBe(d.version)
     await expect(b).resolves.toBe(d.version)
   })
+  it('hub 幻影提前于持久化(比如一笔事务回滚前已经 touched 过)⇒ wait 只信 store.version,不会因为超前的缓存直接放行', async () => {
+    const { store, service, hub, id } = setup()
+    const persisted = store.version(id)
+    hub.publish(id, persisted + 5)   // 模拟 hub 缓存被幻影带到了比落库更靠前的 seq
+    const started = Date.now()
+    await expect(service.changes.wait(id, persisted, 50)).resolves.toBe(persisted)
+    expect(Date.now() - started).toBeGreaterThanOrEqual(45)   // 没有立刻放行,是真的等到了超时
+    expect(hub.seq(id)).toBe(persisted)   // 顺手把幻影缓存纠正回了持久化值
+  })
+  it('changes.wait 提前发现(persisted>since)的分支也要 publish,好让挂起的旧 waiter 一起醒', async () => {
+    const { store, service, id } = setup()
+    const v = store.version(id)
+    const parked = service.changes.wait(id, v, 5000)
+    let parkedSettled = false; void parked.then(() => { parkedSettled = true })
+    await new Promise(r => setTimeout(r, 5))
+    expect(parkedSettled).toBe(false)
+    store.addEvent(id, 'system', 'x')   // 绕过 service 直接写,hub 不知道
+    const second = await service.changes.wait(id, v, 1000)   // 这一次的 wait 立刻发现 persisted>since
+    expect(second).toBeGreaterThan(v)
+    await expect(parked).resolves.toBe(second)   // 之前挂起的那位也该醒了,不用耗到超时
+  })
 })

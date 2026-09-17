@@ -566,9 +566,16 @@ export function makeWorkbenchService(opts: Options) {
       const request=history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n本轮要求：\n${text}` : text
       const runtime=running.session.workbenchRuntime
       const stream=runtime?.events??running.session.dispatch(request,material)
+      let flushErrorNoted=false
       const coalescer=makeDeltaCoalescer(ev => {
         if (ev.kind==='text'||ev.kind==='tool_call'||ev.kind==='error') { store.recordAgentEvent(task.id,running.identity,ev); touched(task.id) }
-      })
+      },{onError:()=>{
+        // 定时器驱动的 flush 落库失败(比如 SQLite 一过性错误):别让它把进程带走,
+        // 本轮记一条提示就够,不用每次 flush 都刷屏。
+        if (flushErrorNoted) return
+        flushErrorNoted=true
+        try { store.addEvent(task.id,'system','有一段输出没能保存，后面的会照常。'); touched(task.id) } catch { /* best effort */ }
+      }})
       let summary
       try {
         summary=await collectWorkbenchTurn(stream,running.stop,opts.timeoutMs ?? 10*60_000,
@@ -723,6 +730,10 @@ export function makeWorkbenchService(opts: Options) {
     const dispatchAttachments=combinedAttachments(attachments,acceptedContinuation.mode==='restart'?acceptedContinuation.preview.attachments:[])
     requireInput(task.providerId,dispatchAttachments,execution,acceptedContinuation.mode==='resume')
     // addRunEvent 自己 touched:权限/提问审计在 atomic 块外单独发生,不能漏。
+    // 事务里面(下面 store.atomic 块内)绝不能用它——半路抛错时 bump 跟着回滚,但 touched 已经
+    // 把 hub 拱到了那个从没真正落库的 seq,之后 wait 会把这个"幻影 seq"当成已经发生过的事,
+    // 一路卡到超时才被 store.version 兜底纠正(纠正见下面 changes.wait);直接调 store.addEvent
+    // 就不会发布这个未提交的信号,提交后的 touched(task.id)(atomic 块外)会把真实 seq 发出去。
     const addRunEvent=(kind:'user'|'system',text:string)=>{const id=store.addEvent(task.id,kind,text,null,runId);touched(task.id);return id}
     const handoffPeer=store.atomic(()=>{
       store.execution.accept(task.id,runId,execution)
@@ -733,7 +744,7 @@ export function makeWorkbenchService(opts: Options) {
         store.liveInputs.add({id:queuedInputId,taskId:task.id,runId,text,attachments,execution})
         store.liveInputs.set(queuedInputId,'sending')
       }
-      if(nativeResume)addRunEvent('system',`用户声明原 ${task.providerId} 执行程序已关闭，选择${nativeResume.mode==='native_resume'?'恢复原会话':'带已确认的记录新开一轮'}。原会话：${nativeResume.nativeId}。`)
+      if(nativeResume)store.addEvent(task.id,'system',`用户声明原 ${task.providerId} 执行程序已关闭，选择${nativeResume.mode==='native_resume'?'恢复原会话':'带已确认的记录新开一轮'}。原会话：${nativeResume.nativeId}。`,null,runId)
       const requestEventId=store.addEvent(task.id,'user',text,null,runId,attachments)
       const peer=handoffId?store.recordHandoffEvent(handoffId,requestEventId):null
       store.update(task.id,'queued')
@@ -1293,11 +1304,13 @@ export function makeWorkbenchService(opts: Options) {
       return shutdownPromise
     },
     changes: {
-      /** hub 先看自己的缓存,再看持久化 seq 兜底(绕过 hub 的写终会被下一次 detail/wait 发现)。 */
+      /** store.version 才是权威:hub 缓存可能因为一笔回滚的事务而"幻影提前",落库的 seq 从不会。
+       * 提前发现(persisted>since)时也顺手 publish 一下,把挂在旧值上的 waiter 一并叫醒,
+       * 不用等它们各自超时。 */
       async wait(id: string, since: number, maxMs: number): Promise<number> {
-        const current = Math.max(changes.seq(id), store.version(id))
-        if (current > since) return current
-        changes.publish(id, current)
+        const persisted = store.version(id)
+        if (persisted > since) { changes.publish(id, persisted); return persisted }
+        changes.publish(id, persisted)
         return changes.wait(id, since, maxMs)
       },
     },
