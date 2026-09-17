@@ -27,11 +27,16 @@ export function mattersRoutes(deps:InternalApiDeps):RouteTable {
       }
       return {status:200,body:{matters:deps.matters.list(filter)}}
     },
+    'GET /v1/matter/owner-chat': async () => {
+      if(!deps.matters)return {status:503,body:{error:'matters_not_wired'}}
+      try{const d=await deps.matters.ownerChat('desktop');return d?{status:200,body:d}:{status:404,body:{error:'owner_chat_not_configured'}}}
+      catch(error){const message=error instanceof Error?error.message:'internal';return known(message)?{status:400,body:{error:message}}:{status:500,body:{error:'internal'}}}
+    },
     'GET /v1/matter': async query => {
       const id=query.get('id')
       if(query.getAll('id').length!==1||!id||!ID.test(id))return invalid()
       if(!deps.matters)return {status:503,body:{error:'matters_not_wired'}}
-      try{return {status:200,body:deps.matters.detail(id)}}
+      try{return {status:200,body:await deps.matters.detail(id)}}
       catch(error){const message=error instanceof Error?error.message:'internal';return message==='matter_not_found'?{status:404,body:{error:message}}:known(message)?{status:400,body:{error:message}}:{status:500,body:{error:'internal'}}}
     },
     'POST /v1/matter/say': async (_query,body) => {

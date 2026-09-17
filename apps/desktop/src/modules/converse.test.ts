@@ -82,3 +82,27 @@ it('cancelling discards audio, stops tracks and keeps the draft', async () => {
   expect(els['converse-recording']!.hidden).toBe(true)
   expect(vi.getTimerCount()).toBe(0)
 })
+
+it('loads the shared owner-chat stream on first open so WeChat / phone turns show on the desktop', async () => {
+  vi.resetModules()
+  els['converse-root'] = new El()
+  const invokeWorkbenchApi = vi.fn(async () => ({ events: [
+    { kind: 'user', text: '在吗', createdAt: 1 }, { kind: 'text', text: '在呢', createdAt: 2 }, { kind: 'system', text: '忽略', createdAt: 3 },
+  ] }))
+  const { initConversePage } = await import('./converse.js')
+  initConversePage({ invoke, invokeWorkbenchApi })
+  await settle()
+  expect(invokeWorkbenchApi).toHaveBeenCalledWith('GET', '/v1/matter/owner-chat')
+  const html = els['converse-scroll']!.innerHTML
+  expect(html).toContain('在吗'); expect(html).toContain('在呢'); expect(html).not.toContain('忽略')
+  expect(html.indexOf('在吗')).toBeLessThan(html.indexOf('在呢'))
+})
+
+it('keeps the empty state when the registry is unavailable', async () => {
+  vi.resetModules()
+  els['converse-root'] = new El()
+  const { initConversePage } = await import('./converse.js')
+  initConversePage({ invoke, invokeWorkbenchApi: vi.fn(async () => { throw new Error('offline') }) })
+  await settle()
+  expect(els['converse-scroll']!.innerHTML).toContain('canonical/lit/front.png')
+})

@@ -18,7 +18,7 @@ import { formatInvokeError } from "../ipc.js"
 
 /**
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
- * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps }} Deps
+ * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown> }} Deps
  * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean }} ConverseMsg
  */
 
@@ -319,6 +319,21 @@ function emptyStateHtml() {
   </div>`
 }
 
+// 「一件事」:微信 / 手机 / 桌面三处跟 CC 说的话是同一条流。首次打开时把主人那条对话
+// 最近的记录拉进来(GET /v1/matter/owner-chat),这样在微信或手机上聊过的,桌面也看得到。
+// 只在还没有任何本地消息时填充;拉不到就保持空白,不打断本地对话。
+/** @param {Deps} deps */
+async function loadSharedHistory(deps) {
+  if (!deps.invokeWorkbenchApi || messages.length) return
+  try {
+    const detail = /** @type {{events?:Array<{kind:string,text:string,createdAt:number}>}|null} */ (await deps.invokeWorkbenchApi("GET", "/v1/matter/owner-chat"))
+    const events = (detail?.events ?? []).filter(e => e.kind === "user" || e.kind === "text")
+    if (!events.length || messages.length) return
+    for (const e of events) messages.push({ id: nextId++, role: e.kind === "user" ? "user" : "cc", text: e.text })
+    renderMessages()
+  } catch { /* 没有登记处或读不到:桌面照旧从空白开始 */ }
+}
+
 function renderMessages() {
   const scroll = document.getElementById("converse-scroll")
   if (!scroll) return
@@ -476,6 +491,7 @@ export function initConversePage(deps, { focus = true } = {}) {
   wireEvents(root, deps)
   syncVoiceToggleUI()
   renderMessages()
+  void loadSharedHistory(deps)
   const input = document.getElementById("converse-input")
   if (focus && input instanceof HTMLElement) input.focus()
 }

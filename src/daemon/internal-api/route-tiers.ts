@@ -22,6 +22,7 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // 「一件事」(2026-09-16):任务指令、聊天都是主人的私事。
   'GET /v1/matters': 'admin',
   'GET /v1/matter': 'admin',
+  'GET /v1/matter/owner-chat': 'admin',
   'POST /v1/matter/say': 'admin',
   'GET /v1/workbench/models': 'admin',
   'POST /v1/workbench/attachment': 'admin',

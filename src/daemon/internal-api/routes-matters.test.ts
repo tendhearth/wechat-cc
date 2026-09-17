@@ -5,13 +5,13 @@ import type {InternalApiDeps} from './types'
 
 const MATTER={id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',status:'replied',ownerChatId:'owner',createdAt:1,updatedAt:2}
 function deps(overrides:Partial<NonNullable<InternalApiDeps['matters']>>={}):InternalApiDeps {
-  return {matters:{list:vi.fn(()=>[MATTER]),detail:vi.fn(()=>({matter:MATTER,bindings:[],sessions:[],task:null,events:[]})),say:vi.fn(async()=>({kind:'task' as const,task:{id:'deadbeef',title:'t',status:'running',providerId:'codex',path:'/work',error:null,updatedAt:3}})),...overrides}} as unknown as InternalApiDeps
+  return {matters:{ownerChat:vi.fn(async()=>({matter:MATTER,bindings:[],sessions:[],task:null,events:[]})),list:vi.fn(()=>[MATTER]),detail:vi.fn(()=>({matter:MATTER,bindings:[],sessions:[],task:null,events:[]})),say:vi.fn(async()=>({kind:'task' as const,task:{id:'deadbeef',title:'t',status:'running',providerId:'codex',path:'/work',error:null,updatedAt:3}})),...overrides}} as unknown as InternalApiDeps
 }
 const q=(s='')=>new URLSearchParams(s)
 
 describe('matters routes',()=>{
   it('are admin-only by tier',()=>{
-    for(const route of ['GET /v1/matters','GET /v1/matter','POST /v1/matter/say'])expect(minTierFor(route)).toBe('admin')
+    for(const route of ['GET /v1/matters','GET /v1/matter','GET /v1/matter/owner-chat','POST /v1/matter/say'])expect(minTierFor(route)).toBe('admin')
   })
   it('lists with validated filters',async()=>{
     const d=deps(),routes=mattersRoutes(d)
@@ -19,6 +19,12 @@ describe('matters routes',()=>{
     expect(d.matters!.list).toHaveBeenCalledWith({kind:'task',statuses:['open','replied'],since:5,limit:10,surface:'desktop'})
     for(const bad of ['kind=x','status=weird','since=-1','limit=0','limit=999','kind=task&kind=chat','surface=fax'])expect((await routes['GET /v1/matters']!(q(bad),undefined)).status).toBe(400)
     expect((await mattersRoutes({} as InternalApiDeps)['GET /v1/matters']!(q(),undefined)).status).toBe(503)
+  })
+  it('returns the owner chat matter (binding the desktop surface) or 404 when no owner is configured',async()=>{
+    const d=deps(),routes=mattersRoutes(d)
+    expect((await routes['GET /v1/matter/owner-chat']!(q(),undefined)).status).toBe(200)
+    expect(d.matters!.ownerChat).toHaveBeenCalledWith('desktop')
+    expect((await mattersRoutes(deps({ownerChat:async()=>null}))['GET /v1/matter/owner-chat']!(q(),undefined)).status).toBe(404)
   })
   it('details one matter and maps not-found / invalid ids',async()=>{
     const routes=mattersRoutes(deps())

@@ -178,7 +178,7 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           'POST /v1/workbench/discard-attachment',
           'GET /v1/workbench',
           // 「一件事」三条:桌面 / 手机都从这里读同一份列表(2026-09-16)。
-          'GET /v1/matters','GET /v1/matter','POST /v1/matter/say',
+          'GET /v1/matters','GET /v1/matter','GET /v1/matter/owner-chat','POST /v1/matter/say',
           'GET /v1/workbench/models',
           'GET /v1/workbench/sessions','GET /v1/workbench/session','GET /v1/workbench/task',
           'POST /v1/workbench/create',

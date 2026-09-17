@@ -91,7 +91,7 @@ export interface SettingsPanelDeps {
   /** 「一件事」(2026-09-16):手机看同一份 matter 列表 / 详情,并能往里说话。seenOnPhone 记「在手机露过面」。 */
   matters?: {
     list(filter: { kind?: 'chat' | 'task' | 'companion'; statuses?: Array<'open' | 'replied' | 'done' | 'archived'>; limit?: number }): unknown[]
-    detail(id: string): unknown
+    detail(id: string): Promise<unknown> | unknown
     say(id: string, text: string): Promise<unknown>
     seenOnPhone(id: string): void
   }
@@ -576,7 +576,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
             const id = url.searchParams.get('id')
             if (!id || !/^[a-f0-9]{8}$/.test(id)) return json({ ok: false, error: 'invalid' }, 400)
-            try { const detail = deps.matters.detail(id); try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } return json({ ok: true, ...(detail as object) }) }
+            try { const detail = await deps.matters.detail(id); try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } return json({ ok: true, ...(detail as object) }) }
             catch (e) { const msg = e instanceof Error ? e.message : 'internal'; return json({ ok: false, error: msg === 'matter_not_found' ? msg : 'unavailable' }, msg === 'matter_not_found' ? 404 : 500) }
           }
           if (url.pathname === '/m/api/matter/say' && req.method === 'POST') {

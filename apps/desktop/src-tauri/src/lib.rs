@@ -1011,6 +1011,7 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             // 「一件事」(2026-09-16):桌面的 matter 列表与会话面
             | ("GET", "/v1/matters")
             | ("GET", "/v1/matter")
+            | ("GET", "/v1/matter/owner-chat")
             | ("POST", "/v1/matter/say")
             | ("POST", "/v1/workbench/input")
             | ("POST", "/v1/workbench/answer")

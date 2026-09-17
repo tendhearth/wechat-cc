@@ -471,12 +471,16 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     store: opts.matters,
     ...(opts.workbench ? { workbench: opts.workbench } : {}),
     // companionConverse 在下面才定义;这里只是捕获引用,真正调用发生在请求到来时。
-    chat: { ownerChatId, say: (text: string) => companionConverse(text) },
+    chat: {
+      ownerChatId,
+      say: (text: string, surface?: 'desktop' | 'phone') => companionConverse(text, surface ?? 'desktop'),
+      recent: async (chatId: string, limit: number) => (await messagesStore.listRange(chatId, { limit })).map(r => ({ kind: r.direction === 'in' ? 'user' : 'text', text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
+    },
   }) : null
   const settingsPanel = makeSettingsPanel({
     stateDir,
     ownerChatId,
-    ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), say: (id, text) => mattersService.say(id, text), seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
+    ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), say: (id, text) => mattersService.say(id, text, 'phone'), seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
     // 「默认大脑」改完自己重启(与远程开关同一条路)。
     ...(opts.requestRestart ? { requestRestart: (reason: string) => opts.requestRestart!(reason) } : {}),
@@ -826,7 +830,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // poll-loop/inbound-pipeline middleware chain, since this isn't a WeChat
   // inbound. The agent's `reply` tool still posts to POST /v1/wechat/reply
   // as normal; the open sink captures it instead of ilink-sending.
-  const companionConverse = async (text: string): Promise<{ reply: string }> => {
+  const companionConverse = async (text: string, origin: 'desktop' | 'phone' = 'desktop'): Promise<{ reply: string }> => {
     // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code,
     // Task 3 review finding #1) — an App /converse turn is real owner
     // activity, but it dispatches straight through the coordinator and
@@ -898,7 +902,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     // 并且同样用 finally 配对 —— 两条进来的路,同一套 start/stop 语义。
     opts.petSignals?.noteTurnStart(ownerChatId)
     try {
-      return await boot.coordinator.submitTurn(synthetic, {
+      const result = await boot.coordinator.submitTurn(synthetic, {
         within: async (dispatch) => {
           const sink = replySinks.open(ownerChatId)
           try {
@@ -910,6 +914,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
           }
         },
       })
+      // 「一件事」:桌面 / 手机上跟 CC 说的话和微信里的进同一条消息流(source 记表面),
+      // 三个入口看到的是同一段对话。落库失败不影响这一轮。
+      const ts = new Date().toISOString()
+      void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:in`, chatId: ownerChatId, ts, direction: 'in', kind: 'text', text, source: origin }).catch(() => {})
+      if (result.reply) void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:out`, chatId: ownerChatId, ts: new Date(Date.now() + 1).toISOString(), direction: 'out', kind: 'text', text: result.reply, source: origin }).catch(() => {})
+      return result
     } finally {
       opts.petSignals?.noteTurnStop(ownerChatId)
     }
