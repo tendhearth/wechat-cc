@@ -13,7 +13,9 @@ import {executionFailureMessage,normalizeExecutionChoice,PROVIDER_EXECUTION_CHOI
 import type { ProviderRegistry } from '../provider-registry'
 import { TIER_PROFILES, sessionAuthEnv } from '../user-tier'
 import { canonicalProject, collectArtifacts, outputDirectory, readArtifactSnapshot, saveArtifactSnapshot } from './artifacts'
-import { captureGitBaseline, finishGitReview, serializeGitReview, GIT_REVIEW_MIME, type GitBaseline } from './git-review'
+import { captureGitBaseline, finishGitReview, serializeGitReview, GIT_REVIEW_MIME, type GitBaseline, type GitReview, type ReviewFile } from './git-review'
+import { composeReturnText, parseGitReviewSnapshot, type ReviewTurn } from './review'
+import type { ReviewMark } from './review-marks'
 import { decodeNativeHistoryKey, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryReader, type NativeHistoryProvider, type NativeHistoryListInput, type NativeHistoryReadInput } from './native-history'
 import {readNativeImport,nativeImportInput,publicSource,pageInput,nativeResumeToken,snapshotHash,type ImportPage,type NativeImportInput,type NativeResumeDecision,type AcceptedNativeResume} from './native-adoption'
 import {historyDeadline} from './native-history'
@@ -838,6 +840,33 @@ export function makeWorkbenchService(opts: Options) {
     }
   }
 
+  /** 一件成果 ⇒ 它装的变更快照;不是 review mime、读不出、解析不出都是 null(坏快照不抛,由调用方标 unavailable)。 */
+  function readReviewSnapshot(artifact:{mime:string;storagePath:string;sha256:string}):GitReview|null {
+    if(artifact.mime!==GIT_REVIEW_MIME)return null
+    try{return parseGitReviewSnapshot(readArtifactSnapshot(artifact.storagePath,opts.stateDir,artifact.sha256))}catch{return null}
+  }
+  /** 标记的落点:成果必须属于该任务(否则 store.artifact 抛 not_found)且真是一份读得出的快照。 */
+  function reviewTarget(id:string,artifactId:string) {
+    const artifact=store.artifact(id,artifactId)
+    const review=readReviewSnapshot(artifact)
+    if(!review)throw new Error('invalid_review_reference')
+    return {artifact,review}
+  }
+  function reviewComment(value:unknown,required:boolean):string {
+    if(value===undefined&&!required)return ''
+    if(typeof value!=='string'||value.length>2000)throw new Error('invalid_review_reference')
+    const comment=value.trim()
+    if(required&&!comment)throw new Error('invalid_review_reference')
+    return comment
+  }
+  /** 门控:路径要在这份快照里,且不是「没展开」的那种 —— 没看过的文件不能说接受或打回。 */
+  function markableFile(review:GitReview,path:string):ReviewFile {
+    const file=review.files.find(candidate=>candidate.path===path)
+    if(!file)throw new Error('invalid_review_reference')
+    if(file.kind==='not_reviewed')throw new Error('review_file_unmarkable')
+    return file
+  }
+
   const service={
     artifactDeliveryStore:store.artifactDeliveries,
     setArtifactDelivery(deliver:((id:string)=>Promise<ArtifactDeliveryReceipt>)|undefined){artifactDelivery=deliver},
@@ -1284,6 +1313,48 @@ export function makeWorkbenchService(opts: Options) {
       return {name:a.name,mime:a.mime,size:bytes.length,sha256:a.sha256,contentBase64:bytes.toString('base64')}
     },
     approve(id:string,artifactId:string,sha256:string) { service.artifact(id,artifactId); store.approve(id,artifactId,sha256); touched(id) },
+    /** 这个任务的所有变更快照,新→旧,每个文件附上当前标记。坏的那一轮单独 unavailable,不牵连别轮。 */
+    reviewList(id:string):ReviewTurn[] {
+      store.get(id)
+      const marks=new Map<string,ReviewMark>()
+      for(const mark of store.reviewMarks.list(id))marks.set(`${mark.artifactSha256}\0${mark.path}`,mark)
+      return store.artifacts(id).filter(a=>a.mime===GIT_REVIEW_MIME).map(a=>{
+        const head={artifactId:a.id,sha256:a.sha256,name:a.name,createdAt:a.createdAt}
+        const review=readReviewSnapshot(a)
+        if(!review)return {...head,status:'unavailable' as const,headBefore:null,headAfter:null,preexistingPaths:[],notes:['快照无法读取或已损坏'],files:[]}
+        return {...head,status:review.status,headBefore:review.headBefore,headAfter:review.headAfter,preexistingPaths:review.preexistingPaths,notes:review.notes,
+          files:review.files.map(file=>{
+            const mark=marks.get(`${a.sha256}\0${file.path}`)
+            return mark?{...file,mark:{mark:mark.mark,comment:mark.comment,createdAt:mark.createdAt}}:{...file}
+          })}
+      })
+    },
+    markReviewFile(id:string,input:{artifactId:string;path:string;mark:'accepted'|'returned';comment?:string}):ReviewMark {
+      if(input.mark!=='accepted'&&input.mark!=='returned')throw new Error('invalid_request')
+      const comment=reviewComment(input.comment,false)
+      const {artifact,review}=reviewTarget(id,input.artifactId)
+      const file=markableFile(review,input.path)
+      const mark=store.reviewMarks.set({taskId:id,artifactSha256:artifact.sha256,path:file.path,afterSha256:file.afterSha256??null,mark:input.mark,comment})
+      touched(id)
+      return mark
+    },
+    /**
+     * 打回 = 逐文件标 `returned` + 把「哪几处、为什么、当时长什么样」组成一段续接要求。
+     * 续接走 `continueTask` 那道门(忙 / 归档 / 免审未确认 / 要不要重开都由它判),错误码原样透传。
+     * 校验全部先做完再落标记 —— 半笔打回比不打回更难查。
+     */
+    returnReviewFiles(id:string,input:{artifactId:string;paths:string[];comment:string;inputRequestId?:string}):WorkbenchTaskView {
+      if(!Array.isArray(input.paths)||!input.paths.length||input.paths.length>20||input.paths.some(path=>typeof path!=='string'||!path))throw new Error('invalid_review_reference')
+      const comment=reviewComment(input.comment,true)
+      // 重发同一个 inputRequestId 要落到 continueTask 的幂等分支,所以文本必须可重现:
+      // 去重保序 + 同一句意见 ⇒ 同一段文本。请求 id 先验,免得为一个畸形请求留下标记。
+      const inputRequestId=input.inputRequestId===undefined?randomUUID():normalizeInputRequestId(input.inputRequestId)
+      const {artifact,review}=reviewTarget(id,input.artifactId)
+      const files=[...new Set(input.paths)].map(path=>markableFile(review,path))
+      for(const file of files)store.reviewMarks.set({taskId:id,artifactSha256:artifact.sha256,path:file.path,afterSha256:file.afterSha256??null,mark:'returned',comment})
+      touched(id)
+      return service.continueTask(id,composeReturnText(files.map(({path,diff})=>({path,diff})),comment),{inputRequestId})
+    },
     resolvePermission(id:string,requestId:string,decision:PermissionDecision):void {
       store.get(id)
       if (decision!=='allow' && decision!=='deny') throw new Error('invalid_decision')
