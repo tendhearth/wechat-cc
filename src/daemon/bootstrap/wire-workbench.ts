@@ -4,16 +4,16 @@ import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk'
 import type { Db } from '../../lib/db'
 import {join} from 'node:path'
 import {listProjects} from '../../lib/project-registry'
-import { loadAgentConfig, modelForProvider } from '../../lib/agent-config'
+import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../../lib/agent-config'
 import { findCodexBinary } from '../../lib/find-codex-binary'
-import { createProviderRegistry } from '../../core/provider-registry'
+import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
 import { createClaudeAgentProvider, tierProfileToClaudeSdkOpts, makeWorkbenchClaudeCanUseTool } from '../../core/claude-agent-provider'
 import { createWorkbenchCodexProvider } from '../../core/workbench/codex-app-server'
 import type { PermissionRelayDeps } from '../../core/permission-relay'
 import { TIER_PROFILES } from '../../core/user-tier'
 import { makeWorkbenchStore } from '../../core/workbench/store'
 import { makeWorkbenchService } from '../../core/workbench/service'
-import { MANAGED_NATIVE_CAPABILITIES } from '../../core/workbench/executor-capabilities'
+import { MANAGED_NATIVE_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../../core/workbench/executor-capabilities'
 import { readNativeClaudeTools, workbenchClaudeEnvironment, type NativeClaudeTools } from '../../core/workbench/claude-native-config'
 import { claudeNativeCapabilityNotice } from '../../core/workbench/native-capability-notice'
 import { loadCompanionConfig } from '../companion/config'
@@ -62,6 +62,36 @@ export function workbenchClaudeOptions(base: Options, instructions: string, perm
   }
 }
 
+/**
+ * 免审执行者:boot 时探测到就照原样搬进工作台 registry,只换能力对象
+ * (spec §4)—— 同一个 provider 实例,`opts` 沿用(displayName/canResume
+ * 不丢),`workbench` 换成 `UNATTENDED_CAPABILITIES`。boot registry 没有
+ * 就跳过,不占位。返回实际登记的 id 列表,供调用方/测试断言。
+ */
+export function registerUnattendedExecutors(target: ProviderRegistry, source: Pick<ProviderRegistry, 'get'>): string[] {
+  const registered: string[] = []
+  for (const id of ['agy', 'cursor'] as const) {
+    const entry = source.get(id)
+    if (entry) {
+      target.register(id, entry.provider, { ...entry.opts, workbench: UNATTENDED_CAPABILITIES })
+      registered.push(id)
+    }
+  }
+  return registered
+}
+
+/** 免审执行者一次性确认开关的落盘实现 —— 读写 agent-config.json 的
+ *  `workbench_unattended_ack_at`(其余字段原样保留)。 */
+export function makeUnattendedAckStore(stateDir: string): { get(): number | null; set(at: number): void } {
+  return {
+    get: () => loadAgentConfig(stateDir).workbench_unattended_ack_at ?? null,
+    set: at => {
+      const current = loadAgentConfig(stateDir)
+      saveAgentConfig(stateDir, { ...current, workbench_unattended_ack_at: at })
+    },
+  }
+}
+
 export function wireWorkbench(opts: {
   db: Db; stateDir: string; boot: Bootstrap; internalApi: Pick<InternalApi, 'mintSessionToken' | 'invalidateSession'>
   executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
@@ -104,6 +134,7 @@ export function wireWorkbench(opts: {
     // routes admitted tool calls through this task's approval requests.
   }),{...codex.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
   if(opts.boot.registry.has('openai'))registerWorkbenchApi(registry,opts.db,opts.stateDir,agentConfig,process.env)
+  registerUnattendedExecutors(registry,opts.boot.registry)
   return makeWorkbenchService({
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
@@ -115,5 +146,6 @@ export function wireWorkbench(opts: {
     // personal memory through the daemon, even if a CLI discovers old config.
     mintSessionToken:key => opts.internalApi.mintSessionToken('trusted',key,{routeAllow:new Set()}),
     revokeSessionToken:key => opts.internalApi.invalidateSession(key),
+    unattendedAck:makeUnattendedAckStore(opts.stateDir),
   })
 }

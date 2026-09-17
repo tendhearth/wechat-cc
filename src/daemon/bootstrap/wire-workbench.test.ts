@@ -1,5 +1,16 @@
-import { expect, it, vi } from 'vitest'
-import { workbenchClaudeOptions } from './wire-workbench'
+import { afterEach, expect, it, vi } from 'vitest'
+import { mkdtempSync, realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { registerUnattendedExecutors, makeUnattendedAckStore, wireWorkbench, workbenchClaudeOptions } from './wire-workbench'
+import { createProviderRegistry } from '../../core/provider-registry'
+import { UNATTENDED_CAPABILITIES } from '../../core/workbench/executor-capabilities'
+import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
+import { removeTempDir } from '../../lib/test-temp'
+import { makeFakeSession } from '../../core/test-helpers'
+import { openDb } from '../../lib/db'
+import type { AgentProvider } from '../../core/agent-provider'
+import type { Bootstrap } from './types'
 
 it('does not inherit companion memory, MCP servers or daemon permission bypass into office work', async () => {
   const permit = vi.fn(async () => ({ behavior: 'allow' as const }))
@@ -50,4 +61,81 @@ it('retains provider reasoning defaults for a fresh task while excluding unrelat
   expect(options.effort).toBe('low')
   expect(options.thinking).toEqual({type:'adaptive'})
   expect(options.fallbackModel).toBeUndefined()
+})
+
+const fakeProvider = (): AgentProvider => ({
+  spawn: async () => makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }] }),
+})
+
+it('registers boot-discovered agy/cursor into the target registry with unattended capabilities, same provider instance', () => {
+  const source = createProviderRegistry(), target = createProviderRegistry()
+  const agy = fakeProvider(), cursor = fakeProvider()
+  source.register('agy', agy, { displayName: 'Gemini (agy)', canResume: () => true })
+  source.register('cursor', cursor, { displayName: 'Cursor', canResume: () => false })
+  const registered = registerUnattendedExecutors(target, source)
+  expect(registered).toEqual(['agy', 'cursor'])
+  const agyEntry = target.get('agy')!
+  expect(agyEntry.provider).toBe(agy)
+  expect(agyEntry.opts.displayName).toBe('Gemini (agy)')
+  expect(agyEntry.opts.workbench).toBe(UNATTENDED_CAPABILITIES)
+  const cursorEntry = target.get('cursor')!
+  expect(cursorEntry.provider).toBe(cursor)
+  expect(cursorEntry.opts.displayName).toBe('Cursor')
+  expect(cursorEntry.opts.workbench).toBe(UNATTENDED_CAPABILITIES)
+})
+
+it('registers nothing when the source registry lacks agy/cursor', () => {
+  const source = createProviderRegistry(), target = createProviderRegistry()
+  source.register('claude', fakeProvider(), { displayName: 'Claude', canResume: () => true })
+  const registered = registerUnattendedExecutors(target, source)
+  expect(registered).toEqual([])
+  expect(target.has('agy')).toBe(false)
+  expect(target.has('cursor')).toBe(false)
+  expect(target.list()).toEqual([])
+})
+
+const acknowledgeDirs: string[] = []
+afterEach(() => { for (const dir of acknowledgeDirs.splice(0)) removeTempDir(dir) })
+
+it('round-trips the unattended-ack timestamp through agent-config.json, preserving other fields', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'unattended-ack-')); acknowledgeDirs.push(dir)
+  saveAgentConfig(dir, { provider: 'claude', bot_name: 'kept', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false })
+  const store = makeUnattendedAckStore(dir)
+  expect(store.get()).toBeNull()
+  store.set(123)
+  expect(store.get()).toBe(123)
+  const after = loadAgentConfig(dir)
+  expect(after.bot_name).toBe('kept')
+  expect(after.workbench_unattended_ack_at).toBe(123)
+})
+
+it('wires boot-discovered agy into the live workbench service with unattended permissions and the persisted ack', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'wire-workbench-'))); acknowledgeDirs.push(root)
+  const stateDir = join(root, 'state')
+  saveAgentConfig(stateDir, { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false, workbench_unattended_ack_at: 999 })
+  const db = openDb({ path: join(stateDir, 'state.db') })
+  const bootRegistry = createProviderRegistry()
+  bootRegistry.register('agy', fakeProvider(), { displayName: 'Gemini (agy)', canResume: () => true })
+  const boot = {
+    registry: bootRegistry,
+    sdkOptionsForProject: (() => ({})) as unknown as Bootstrap['sdkOptionsForProject'],
+    defaultProviderId: 'agy',
+    holdBusy: (_label: string) => () => {},
+  } as unknown as Bootstrap
+  try {
+    const service = wireWorkbench({
+      db, stateDir, boot,
+      internalApi: { mintSessionToken: () => 'token', invalidateSession: () => {} },
+      askUser: async () => 'allow',
+      log: () => {},
+    })
+    const list = service.list()
+    const agy = list.providers.find(p => p.id === 'agy')
+    expect(agy).toBeDefined()
+    expect(agy!.displayName).toBe('Gemini (agy)')
+    expect(agy!.capabilities.permissions).toBe('unattended')
+    expect(list.unattendedAcknowledgedAt).toBe(999)
+  } finally {
+    db.close()
+  }
 })
