@@ -1008,6 +1008,10 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("POST", "/v1/workbench/handoff")
             | ("GET", "/v1/workbench/handoff")
             | ("GET", "/v1/workbench/attention")
+            // 「一件事」(2026-09-16):桌面的 matter 列表与会话面
+            | ("GET", "/v1/matters")
+            | ("GET", "/v1/matter")
+            | ("POST", "/v1/matter/say")
             | ("POST", "/v1/workbench/input")
             | ("POST", "/v1/workbench/answer")
             | ("POST", "/v1/workbench/withdraw-input")

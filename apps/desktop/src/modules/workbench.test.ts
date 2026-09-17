@@ -1992,3 +1992,20 @@ it('imported tasks ask for explicit original-tool closure before native continua
  const confirmed=renderTaskControls('interrupted',{mode:'resume'},null,{requiresClose:true,decision})
  expect(confirmed).toContain('原程序已关闭，继续');expect(confirmed).toContain('data-native-token="'+decision.token+'"');expect(confirmed).not.toContain('已检测到退出')
 })
+
+describe('一件事:对话也在同一张列表里(2026-09-16)',()=>{
+  it('lists desktop-bound chat matters above the tasks and opens a session pane for the selected one',async()=>{
+    const {renderWorkbench}=await import('./workbench.js')
+    const task={id:'deadbeef',title:'Task',path:'/work',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
+    const chat={id:'0badcafe',kind:'chat',title:'跟 CC 说',status:'open',updatedAt:3}
+    const base={tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedArtifactId:null,error:'',preview:null,chats:[chat]}
+    const listed=renderWorkbench({...base,selectedId:null,detail:null,selectedMatterId:null})
+    expect(listed).toContain('class="wb-kicker">一件事<')
+    expect(listed).toMatch(/data-matter-id="0badcafe"[\s\S]*data-task-id="deadbeef"/)
+    expect(listed).not.toContain('id="wb-converse-host"')
+    const opened=renderWorkbench({...base,selectedId:null,detail:null,selectedMatterId:'0badcafe'})
+    expect(opened).toContain('id="wb-converse-host"')
+    expect(opened).toMatch(/class="wb-task is-selected" data-matter-id="0badcafe"/)
+    expect(opened).not.toContain('id="wb-create-form"')
+  })
+})

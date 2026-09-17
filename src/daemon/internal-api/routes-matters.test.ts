@@ -15,9 +15,9 @@ describe('matters routes',()=>{
   })
   it('lists with validated filters',async()=>{
     const d=deps(),routes=mattersRoutes(d)
-    expect(await routes['GET /v1/matters']!(q('kind=task&status=open,replied&since=5&limit=10'),undefined)).toEqual({status:200,body:{matters:[MATTER]}})
-    expect(d.matters!.list).toHaveBeenCalledWith({kind:'task',statuses:['open','replied'],since:5,limit:10})
-    for(const bad of ['kind=x','status=weird','since=-1','limit=0','limit=999','kind=task&kind=chat'])expect((await routes['GET /v1/matters']!(q(bad),undefined)).status).toBe(400)
+    expect(await routes['GET /v1/matters']!(q('kind=task&status=open,replied&since=5&limit=10&surface=desktop'),undefined)).toEqual({status:200,body:{matters:[MATTER]}})
+    expect(d.matters!.list).toHaveBeenCalledWith({kind:'task',statuses:['open','replied'],since:5,limit:10,surface:'desktop'})
+    for(const bad of ['kind=x','status=weird','since=-1','limit=0','limit=999','kind=task&kind=chat','surface=fax'])expect((await routes['GET /v1/matters']!(q(bad),undefined)).status).toBe(400)
     expect((await mattersRoutes({} as InternalApiDeps)['GET /v1/matters']!(q(),undefined)).status).toBe(503)
   })
   it('details one matter and maps not-found / invalid ids',async()=>{

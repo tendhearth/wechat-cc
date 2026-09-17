@@ -17,7 +17,7 @@ export interface Matter {id:string;kind:MatterKind;title:string;projectPath:stri
 export interface MatterBinding {matterId:string;surface:MatterSurface;surfaceKey:string;lastSeenAt:number}
 export interface MatterSession {matterId:string;providerId:string;sessionId:string;role:MatterSessionRole;createdAt:number}
 export interface CreateMatter {id?:string;kind:MatterKind;title:string;projectPath?:string|null;ownerChatId?:string|null;status?:MatterStatus}
-export interface ListMatters {kind?:MatterKind;statuses?:MatterStatus[];since?:number;limit?:number}
+export interface ListMatters {kind?:MatterKind;statuses?:MatterStatus[];since?:number;limit?:number;/** 只要在这个表面露过面的 */surface?:MatterSurface}
 
 const KINDS=new Set<string>(['chat','task','companion']),STATUSES=new Set<string>(['open','replied','done','archived']),SURFACES=new Set<string>(['wechat','desktop','phone','cli']),ROLES=new Set<string>(['main','review','handoff'])
 const ID=/^[a-f0-9]{8}$/
@@ -60,6 +60,7 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
     if(filter.kind){if(!KINDS.has(filter.kind))throw new Error('invalid_matter_kind');where.push('kind=?');params.push(filter.kind)}
     if(filter.statuses?.length){for(const s of filter.statuses)if(!STATUSES.has(s))throw new Error('invalid_matter_status');where.push(`status IN (${filter.statuses.map(()=>'?').join(',')})`);params.push(...filter.statuses)}
     if(filter.since!==undefined){where.push('updated_at>=?');params.push(filter.since)}
+    if(filter.surface){if(!SURFACES.has(filter.surface))throw new Error('invalid_matter_surface');where.push('id IN (SELECT matter_id FROM matter_bindings WHERE surface=?)');params.push(filter.surface)}
     const limit=Math.min(Math.max(1,filter.limit??100),500)
     return db.query<Row,(string|number)[]>(`${SELECT}${where.length?' WHERE '+where.join(' AND '):''} ORDER BY updated_at DESC, id LIMIT ${limit}`).all(...params).map(toMatter)
   }

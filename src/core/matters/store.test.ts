@@ -59,6 +59,9 @@ describe('matters',()=>{
     expect(store.list({statuses:['open','replied']}).map(m=>m.id)).toEqual(['00000003',chat.id])
     expect(store.list({since:2_500}).map(m=>m.id)).toEqual(['00000001','00000003'])
     expect(store.list({limit:1}).map(m=>m.id)).toEqual(['00000001'])
+    store.bind(t.id,'desktop','app')
+    expect(store.list({surface:'desktop'}).map(m=>m.id)).toEqual([t.id]);expect(store.list({surface:'wechat'}).map(m=>m.id)).toEqual([chat.id])
+    expect(()=>store.list({surface:'fax' as never})).toThrow()
     expect(store.get(t.id)?.status).toBe('open')
   })
 

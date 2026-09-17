@@ -40,9 +40,10 @@ function providerLabel(p) {
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],page?:TaskPage,projectProviders?:Record<string,string>}} ListResult */
 /** @typedef {{artifactId:string,html:string}|null} Preview */
-/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,preview:Preview,query?:TaskQuery,page?:TaskPage,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string}} WorkbenchState */
+/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,preview:Preview,query?:TaskQuery,page?:TaskPage,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,chats?:ChatMatter[],selectedMatterId?:string|null}} WorkbenchState */
 /** @typedef {import('./workbench-window-state.js').Draft} Draft */
-/** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number}} WorkbenchDeps */
+/** @typedef {{id:string,kind:string,title:string,status:string,updatedAt:number}} ChatMatter */
+/** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,mountConverse?:(host:HTMLElement)=>void,unmountConverse?:()=>void}} WorkbenchDeps */
 
 const windowStorage = workbenchWindowStorage()
 const savedView = loadWorkbenchView(windowStorage)
@@ -215,6 +216,9 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
     <header title="${escapeWorkbenchHtml(project.path)}"><h3 id="wb-project-${index}">${escapeWorkbenchHtml(project.label)}</h3><button type="button" class="wb-new wb-project-new" data-action="new-project-task" data-project-path="${escapeWorkbenchHtml(project.path)}" aria-label="在 ${escapeWorkbenchHtml(project.label)} 新建任务">＋</button></header>
     <div>${project.tasks.map(task => renderTask(task, state.providers, state.loadingId ?? state.selectedId)).join('')}</div>
   </section>`).join('') : `<p class="wb-empty-copy">${listEmptyCopy}</p>`
+  // 「一件事」:在桌面露过面的对话(主人跟 CC 说的那条)也在这张列表里,排在任务上面。
+  const chats = state.chats ?? []
+  const chatList = chats.length ? `<section class="wb-project wb-chats" aria-labelledby="wb-chats"><header><h3 id="wb-chats">对话</h3></header><div>${chats.map(chat => `<button type="button" class="wb-task ${chat.id === state.selectedMatterId ? 'is-selected' : ''}" data-matter-id="${escapeWorkbenchHtml(chat.id)}" aria-label="${escapeWorkbenchHtml(chat.title)}"><span class="wb-task-title">${escapeWorkbenchHtml(chat.title)}</span><span class="wb-task-meta"><span class="wb-task-provider">跟 CC 说</span></span></button>`).join('')}</div></section>` : ''
   const listControls = `<div class="wb-list-controls"><form id="wb-search-form" class="wb-search"><label class="wb-sr-only" for="wb-search">搜索任务名称、文件夹或任务编号</label><input id="wb-search" name="q" type="search" maxlength="200" placeholder="搜索任务或文件夹" value="${escapeWorkbenchHtml(query.q)}"><button class="wb-new" type="submit" aria-label="搜索任务">搜索</button></form><div class="wb-list-filters"><button class="wb-new" type="button" data-action="toggle-archived" aria-pressed="${query.archived === 'only'}">${query.archived === 'only' ? '返回任务' : '已归档'}</button>${state.historyProviders?.length?'<button class="wb-new" type="button" data-action="native-history">已有会话</button>':''}${query.q ? '<button class="wb-new" type="button" data-action="clear-search">清除搜索</button>' : ''}</div>${query.archived === 'only' ? '<p class="wb-archive-label">已归档的任务</p>' : ''}</div>`
   const pagination = state.page?.hasMore ? `<button type="button" class="wb-new wb-load-more" data-action="load-more"${state.loadingMore ? ' disabled' : ''}>${state.loadingMore ? '正在加载…' : '加载更早的任务'}</button>` : ''
   const helper = state.providers.find(p => p.id === detail?.task.providerId)?.displayName || detail?.task.providerId || '执行助手'
@@ -256,8 +260,11 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const execution=draft?.execution??detail?.execution??{defaults:/** @type {const} */('provider'),model:null,reasoningEffort:null}
   const executionDisabled=!!executionView.busy||!!(detail&&(detail.task.archivedAt!=null||['running','queued','cancelling'].includes(detail.task.status)))
   const executionControls=renderExecutionControls(execution,executionView.catalog,executionDisabled)
+  const chatHeader = !detail && state.selectedMatterId && chats.some(c => c.id === state.selectedMatterId) ? `<header class="wb-task-head"><div><p class="wb-task-context">对话 · 跟 CC 说</p><h2>${escapeWorkbenchHtml(chats.find(c => c.id === state.selectedMatterId)?.title ?? '')}</h2></div></header>` : ''
   const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${escapeWorkbenchHtml(pathParts(detail.task.path).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2></div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue({...detail.task,runtime:detail.runtime ?? detail.task.runtime}))}">${escapeWorkbenchHtml((detail.task.importedOnly?'尚未执行':statusLabel(detail.task.status, detail.runtime ?? detail.task.runtime)))}</span><details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div>${detail.source?`<div><dt>原会话</dt><dd>${escapeWorkbenchHtml(detail.source.providerId)} · <code>${escapeWorkbenchHtml(detail.source.nativeId)}</code></dd></div><div><dt>已保存的原记录</dt><dd>${detail.source.selectedMessageCount} 段${detail.source.truncated?' · 部分文字':''}</dd></div>`:''}</dl><section class="wb-task-execution"><h3>下一轮使用</h3>${executionControls}${renderExecutionObservation(detail.lastExecution)}</section>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button></div>' : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
-  const content = detail ? `
+  const selectedChat = !detail && state.selectedMatterId ? chats.find(c => c.id === state.selectedMatterId) : undefined
+  const content = selectedChat ? `
+    <div id="wb-converse-host" class="wb-converse-host" data-matter-id="${escapeWorkbenchHtml(selectedChat.id)}"></div>` : detail ? `
     ${related}
     <section class="wb-dialogue" aria-live="polite">${dialogueHtml}</section>
     ${queuedGuidance}
@@ -279,13 +286,13 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const chosenContinuation=executionView.restartPreview?(executionView.restartPreview.status==='ready'?executionView.restartPreview.continuation??undefined:{mode:'restart_required'}):detail?.continuation
   const previewError=executionView.restartPreview?.error?`<p class="wb-interaction-error" role="alert">${escapeWorkbenchHtml(executionView.restartPreview.error)} <button type="button" class="wb-new" data-action="retry-continuation-preview">重新读取恢复说明</button></p>`:''
   const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderWorkbenchQuestions(detail.task.id, detail.questions ?? [], interactions)}${previewError}${renderTaskControls(detail.task.status, chosenContinuation, detail.task.archivedAt,{requiresClose:!!detail.requiresExternalClose,decision:state.nativeResume?.taskId===detail.task.id?state.nativeResume:null},{taskId:detail.task.id,runId:detail.runId,inputMode:detail.inputMode,runtime:detail.runtime,...interactions?.inputState(detail.task.id)},draft,attachmentError)}</div></div>` : ''
-  return `<div class="workbench-shell"><aside class="wb-sidebar"><header><p class="wb-kicker">任务</p><button type="button" class="wb-new" data-action="new-task">＋ 新建</button></header>${listControls}<div class="wb-task-list">${taskList}</div>${pagination}</aside><main class="wb-main">${taskHeader}<div class="wb-content"><div class="wb-content-inner">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main></div>`
+  return `<div class="workbench-shell"><aside class="wb-sidebar"><header><p class="wb-kicker">一件事</p><button type="button" class="wb-new" data-action="new-task">＋ 新建</button></header>${listControls}<div class="wb-task-list">${chatList}${taskList}</div>${pagination}</aside><main class="wb-main">${taskHeader || chatHeader}<div class="wb-content"><div class="wb-content-inner">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main></div>`
 }
 
 /** @param {{invokeWorkbenchApi:WorkbenchDeps['invokeWorkbenchApi'],render:(state:WorkbenchState)=>void,initialScope?:string|null,initialQuery?:TaskQuery}} deps */
 export function createWorkbenchController(deps) {
   /** @type {WorkbenchState} */
-  const state = { tasks: [], providers: [], defaultProvider: '', canWechat: false, selectedId: null, loadingId: null, detail: null, selectedArtifactId: null, error: '', preview: null, query: { ...(deps.initialQuery ?? { q: '', archived: 'exclude' }) }, loadingMore: false, newScope: deps.initialScope?.startsWith('new:') ? deps.initialScope : 'new' }
+  const state = { chats: [], selectedMatterId: null, tasks: [], providers: [], defaultProvider: '', canWechat: false, selectedId: null, loadingId: null, detail: null, selectedArtifactId: null, error: '', preview: null, query: { ...(deps.initialQuery ?? { q: '', archived: 'exclude' }) }, loadingMore: false, newScope: deps.initialScope?.startsWith('new:') ? deps.initialScope : 'new' }
   let detailRequest = 0
   let listRequest = 0
   let loadedPages = 1
@@ -326,6 +333,12 @@ export function createWorkbenchController(deps) {
       /** @type {ListResult} */
       let result
       let pages = 1
+      // 对话那一栏来自「一件事」列表;读不到就没有这一栏,任务照旧。
+      void deps.invokeWorkbenchApi('GET', '/v1/matters?kind=chat&surface=desktop&status=open,replied&limit=3').then(r => {
+        if (!alive || request !== listRequest) return
+        const matters = /** @type {{matters?:ChatMatter[]}} */ (r)?.matters
+        if (Array.isArray(matters)) { state.chats = matters; paint() }
+      }).catch(() => {})
       try {
         result = /** @type {ListResult} */ (await deps.invokeWorkbenchApi('GET', listPath()))
         if (!alive || request !== listRequest) return
@@ -380,7 +393,11 @@ export function createWorkbenchController(deps) {
       await this.refresh()
     },
     /** @param {string} id */
+    // 选中一件对话:右边换成会话面(converse 控件由页面挂进 #wb-converse-host)。
+    selectMatter(/** @type {string} */ id) { detailRequest++; desiredId = null; composingNewTask = false; state.selectedMatterId = id; state.selectedId = null; state.loadingId = null; state.detail = null; state.selectedArtifactId = null; paint() },
+    /** @param {string} id */
     async selectTask(id) {
+      state.selectedMatterId = null
       desiredId = id
       composingNewTask = false
       const request = ++detailRequest
@@ -405,7 +422,7 @@ export function createWorkbenchController(deps) {
       paint()
     },
     /** @param {string} [path] */
-    newTask(path) { detailRequest++; desiredId = null; composingNewTask = true; state.newScope = path ? `new:${path}` : 'new'; state.selectedId = null; state.loadingId = null; state.detail = null; state.selectedArtifactId = null; paint() },
+    newTask(path) { detailRequest++; desiredId = null; composingNewTask = true; state.selectedMatterId = null; state.newScope = path ? `new:${path}` : 'new'; state.selectedId = null; state.loadingId = null; state.detail = null; state.selectedArtifactId = null; paint() },
     destroy() { alive = false; detailRequest++; listRequest++ },
     paint,
   }
@@ -555,6 +572,9 @@ export function initWorkbenchPage(deps) {
     root.innerHTML = renderWorkbench(state, interactions,nextDraft,attachments.error(nextScope),{catalog:catalogs.get(providerId||state.defaultProvider||'',path),...(restartPreviewContext()?{restartPreview:recoveryPreviews.get(/** @type {import('./workbench-execution.js').ContinuationContext} */(restartPreviewContext()))}:{}),busy:busy.has(state.detail?`task:${state.detail.task.id}`:'create')})
     const questionPanel = root.querySelector('.wb-questions')
     if (questionPanel && sameScope) questionPanel.scrollTop = questionPanelScroll
+    // 会话面:每次重画都把「跟 CC 说」的控件挂回新的宿主;没选对话就放回原处。
+    const converseHost = /** @type {HTMLElement|null} */ (root.querySelector('#wb-converse-host'))
+    if (converseHost) deps.mountConverse?.(converseHost); else deps.unmountConverse?.()
     hasPainted = true
     const search = input('wb-search'); if (search) search.value = searchDraft
     const sidebar = root.querySelector('.wb-sidebar'); if (sidebar) sidebar.scrollTop = sidebarScroll
@@ -658,6 +678,7 @@ export function initWorkbenchPage(deps) {
     const target = event.target instanceof Element ? event.target.closest('button') : null
     if (!target) return
     if (target.dataset.taskId) return openTask(target.dataset.taskId)
+    if (target.dataset.matterId) { captureDraft(); navigationGeneration++; artifactRequest++; controller.selectMatter(target.dataset.matterId); return }
     let action = target.dataset.action
     if(action==='choose-attachments'){
       captureDraft();const scope=renderedScope

@@ -1,4 +1,4 @@
-import type {ListMatters,MatterKind,MatterStatus} from '../../core/matters/store'
+import type {ListMatters,MatterKind,MatterStatus,MatterSurface} from '../../core/matters/store'
 import type {InternalApiDeps,RouteTable} from './types'
 
 /**
@@ -7,22 +7,23 @@ import type {InternalApiDeps,RouteTable} from './types'
  * operator 凭据放行(token-registry)。查询参数风格沿用 workbench:`?id=`,不走路径参数。
  */
 const ID=/^[a-f0-9]{8}$/
-const KINDS=new Set<string>(['chat','task','companion']),STATUSES=new Set<string>(['open','replied','done','archived'])
+const KINDS=new Set<string>(['chat','task','companion']),STATUSES=new Set<string>(['open','replied','done','archived']),SURFACES=new Set<string>(['wechat','desktop','phone','cli'])
 const invalid=()=>({status:400,body:{error:'invalid_request'}})
 const known=(message:string)=>/^(invalid_|matter_|workbench_|chat_)/.test(message)
 
 export function mattersRoutes(deps:InternalApiDeps):RouteTable {
   return {
     'GET /v1/matters': async query => {
-      for(const key of ['kind','status','since','limit'])if(query.getAll(key).length>1)return invalid()
-      const kind=query.get('kind'),status=query.get('status'),since=query.get('since'),limit=query.get('limit')
-      if((kind!==null&&!KINDS.has(kind))||(status!==null&&status.split(',').some(s=>!STATUSES.has(s)))||(since!==null&&!/^\d+$/.test(since))||(limit!==null&&(!/^\d+$/.test(limit)||Number(limit)<1||Number(limit)>200)))return invalid()
+      for(const key of ['kind','status','since','limit','surface'])if(query.getAll(key).length>1)return invalid()
+      const kind=query.get('kind'),status=query.get('status'),since=query.get('since'),limit=query.get('limit'),surface=query.get('surface')
+      if((surface!==null&&!SURFACES.has(surface))||(kind!==null&&!KINDS.has(kind))||(status!==null&&status.split(',').some(s=>!STATUSES.has(s)))||(since!==null&&!/^\d+$/.test(since))||(limit!==null&&(!/^\d+$/.test(limit)||Number(limit)<1||Number(limit)>200)))return invalid()
       if(!deps.matters)return {status:503,body:{error:'matters_not_wired'}}
       const filter:ListMatters={
         ...(kind!==null?{kind:kind as MatterKind}:{}),
         ...(status!==null?{statuses:status.split(',') as MatterStatus[]}:{}),
         ...(since!==null?{since:Number(since)}:{}),
         ...(limit!==null?{limit:Number(limit)}:{}),
+        ...(surface!==null?{surface:surface as MatterSurface}:{}),
       }
       return {status:200,body:{matters:deps.matters.list(filter)}}
     },

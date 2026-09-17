@@ -174,10 +174,30 @@ window.addEventListener('pageshow', event => { if (event.persisted) startWorkben
 // Bag passed to module functions instead of imported singletons. Keeps each
 // module testable in isolation (any conformant deps object → run the module
 // in a JSDOM/happy-dom harness).
+// 「一件事」:工作台里选中对话时,把「跟 CC 说」的控件整个搬进会话面(DOM 搬家,状态与监听都不丢);
+// 离开时搬回「此刻」页原位。控件只有一份,所以两个页面永远不会各画一个。
+let converseHome = /** @type {{parent:HTMLElement,next:Node|null}|null} */ (null)
+function mountConverse(/** @type {HTMLElement} */ host) {
+  const root = converseRootEl()
+  if (!root) return
+  if (!converseHome && root.parentElement) converseHome = { parent: root.parentElement, next: root.nextSibling }
+  if (root.parentElement !== host) host.appendChild(root)
+  initConversePage(deps, { focus: true })
+}
+function unmountConverse() {
+  const root = converseRootEl()
+  if (!root || !converseHome || root.parentElement === converseHome.parent) return
+  converseHome.parent.insertBefore(root, converseHome.next && converseHome.next.parentNode === converseHome.parent ? converseHome.next : null)
+}
+let converseRootRef = /** @type {HTMLElement|null} */ (null)
+function converseRootEl() { return (converseRootRef ??= document.getElementById("converse-root")) }
+
 const deps = {
   invoke,
   invokeApi,
   invokeWorkbenchApi,
+  mountConverse,
+  unmountConverse,
   formatInvokeError,
   doctorPoller,
   mock,
@@ -541,6 +561,7 @@ function switchPane(name) {
     initWorkbenchPage(deps)
   } else {
     stopWorkbenchPolling()
+    unmountConverse()
   }
   if (name === "sessions") {
     activateDialogueWorkspace()
