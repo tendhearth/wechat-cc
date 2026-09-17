@@ -85,6 +85,13 @@ it('keeps archive writes behind explicit host write access while passing literal
  expect((await readonly(req('/v1/workbench/unattended-ack','POST')))?.status).toBe(403)
  expect((await writable(req('/v1/workbench/unattended-ack','POST')))?.status).toBe(200)
  expect((await writable(req('/v1/workbench/unattended-ack')))?.status).toBe(405)
+ expect((await readonly(req('/v1/workbench/review?id=deadbeef')))?.status).toBe(200)
+ expect((await readonly(req('/v1/workbench/review-mark','POST')))?.status).toBe(403)
+ expect((await writable(req('/v1/workbench/review-mark','POST')))?.status).toBe(200)
+ expect((await writable(req('/v1/workbench/review-mark')))?.status).toBe(405)
+ expect((await readonly(req('/v1/workbench/review-return','POST')))?.status).toBe(403)
+ expect((await writable(req('/v1/workbench/review-return','POST')))?.status).toBe(200)
+ expect((await writable(req('/v1/workbench/review-return')))?.status).toBe(405)
 })
 
 const liveRoutes = [

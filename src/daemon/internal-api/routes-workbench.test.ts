@@ -17,6 +17,10 @@ const TASK = {
   id: 'deadbeef', title: 'Draft', path: '/tmp/project', providerId: 'codex',
   status: 'queued', createdAt: 1, updatedAt: 1, error: null,
 }
+const MARK = {
+  taskId: 'deadbeef', artifactSha256: 'a'.repeat(64), path: 'src/a.ts', afterSha256: null,
+  mark: 'accepted' as const, comment: '', createdAt: 1,
+}
 
 function service(overrides: Record<string, unknown> = {}) {
   return {
@@ -31,6 +35,9 @@ function service(overrides: Record<string, unknown> = {}) {
     approve: vi.fn(() => undefined),
     resolvePermission: vi.fn(() => undefined),
     acknowledgeUnattended: vi.fn(() => 1_700_000_000_000),
+    reviewList: vi.fn(() => []),
+    markReviewFile: vi.fn(() => MARK),
+    returnReviewFiles: vi.fn(() => TASK),
     ...overrides,
   }
 }
@@ -298,6 +305,7 @@ describe('Workbench internal HTTP API', () => {
       'POST /v1/workbench/continue', 'POST /v1/workbench/cancel',
       'GET /v1/workbench/artifact', 'POST /v1/workbench/approve',
       'POST /v1/workbench/permission', 'POST /v1/workbench/unattended-ack',
+      'GET /v1/workbench/review', 'POST /v1/workbench/review-mark', 'POST /v1/workbench/review-return',
     ]
     for (const key of keys) expect(minTierFor(key)).toBe('admin')
     const response = await request('/v1/workbench', {}, trustedToken)
@@ -663,6 +671,108 @@ describe('Workbench internal HTTP API', () => {
         expect(response.status).toBe(400)
       }
       expect(svc.cancel).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('逐文件 diff 审阅', () => {
+    const validArtifactId = '123e4567-e89b-42d3-a456-426614174000'
+
+    it('GET review 只在合法 id 下读出该任务的审阅轮次,缺省 / 非法 id ⇒ 400', async () => {
+      const reviewList = vi.fn(() => [{ artifactId: validArtifactId, status: 'complete' }])
+      const { request, trustedToken } = await start(service({ reviewList }))
+      const response = await request('/v1/workbench/review?id=deadbeef')
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({ reviews: [{ artifactId: validArtifactId, status: 'complete' }] })
+      expect(reviewList).toHaveBeenCalledWith('deadbeef')
+      for (const suffix of ['', 'id=bad', 'id=deadbeef&id=cafefeed']) {
+        expect((await request('/v1/workbench/review?' + suffix)).status).toBe(400)
+      }
+      expect((await request('/v1/workbench/review?id=deadbeef', {}, trustedToken)).status).toBe(403)
+    })
+
+    it('POST review-mark 校验字段并回传标记', async () => {
+      const markReviewFile = vi.fn(() => MARK)
+      const workbench = service({ markReviewFile })
+      const { request, trustedToken } = await start(workbench)
+      const body = { id: 'deadbeef', artifactId: validArtifactId, path: 'src/a.ts', mark: 'accepted', comment: '看起来行' }
+      const response = await request('/v1/workbench/review-mark', { method: 'POST', body: JSON.stringify(body) })
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({ mark: MARK })
+      expect(markReviewFile).toHaveBeenCalledWith('deadbeef', { artifactId: validArtifactId, path: 'src/a.ts', mark: 'accepted', comment: '看起来行' })
+      // comment 是可选的
+      markReviewFile.mockClear()
+      expect((await request('/v1/workbench/review-mark', { method: 'POST', body: JSON.stringify({ id: 'deadbeef', artifactId: validArtifactId, path: 'src/a.ts', mark: 'returned' }) })).status).toBe(200)
+      expect(markReviewFile).toHaveBeenCalledWith('deadbeef', { artifactId: validArtifactId, path: 'src/a.ts', mark: 'returned' })
+      for (const bad of [
+        { id: 'bad', artifactId: validArtifactId, path: 'src/a.ts', mark: 'accepted' },
+        { id: 'deadbeef', artifactId: 'x', path: 'src/a.ts', mark: 'accepted' },
+        { id: 'deadbeef', artifactId: validArtifactId, path: '', mark: 'accepted' },
+        { id: 'deadbeef', artifactId: validArtifactId, path: 'x'.repeat(4097), mark: 'accepted' },
+        { id: 'deadbeef', artifactId: validArtifactId, path: 'src/a.ts', mark: 'maybe' },
+        { id: 'deadbeef', artifactId: validArtifactId, path: 'src/a.ts', mark: 'accepted', comment: '长'.repeat(2001) },
+      ]) {
+        expect((await request('/v1/workbench/review-mark', { method: 'POST', body: JSON.stringify(bad) })).status).toBe(400)
+      }
+      expect((await request('/v1/workbench/review-mark', { method: 'POST', body: JSON.stringify({ id: 'deadbeef', artifactId: validArtifactId, path: 'src/a.ts', mark: 'accepted' }) }, trustedToken)).status).toBe(403)
+    })
+
+    it('POST review-return 校验字段、传入可选 inputRequestId 并回传续接后的任务', async () => {
+      const returnReviewFiles = vi.fn(() => TASK)
+      const { request, trustedToken } = await start(service({ returnReviewFiles }))
+      const body = { id: 'deadbeef', artifactId: validArtifactId, paths: ['src/a.ts', 'src/b.ts'], comment: '这两处判空漏了' }
+      const response = await request('/v1/workbench/review-return', { method: 'POST', body: JSON.stringify(body) })
+      expect(response.status).toBe(202)
+      expect(await response.json()).toEqual({ task: TASK })
+      expect(returnReviewFiles).toHaveBeenCalledWith('deadbeef', { artifactId: validArtifactId, paths: ['src/a.ts', 'src/b.ts'], comment: '这两处判空漏了' })
+      const requestId = '123e4567-e89b-42d3-a456-426614174001'
+      returnReviewFiles.mockClear()
+      expect((await request('/v1/workbench/review-return', { method: 'POST', body: JSON.stringify({ ...body, inputRequestId: requestId }) })).status).toBe(202)
+      expect(returnReviewFiles).toHaveBeenCalledWith('deadbeef', { artifactId: validArtifactId, paths: ['src/a.ts', 'src/b.ts'], comment: '这两处判空漏了', inputRequestId: requestId })
+      for (const bad of [
+        { id: 'bad', artifactId: validArtifactId, paths: ['src/a.ts'], comment: '改' },
+        { id: 'deadbeef', artifactId: 'x', paths: ['src/a.ts'], comment: '改' },
+        { id: 'deadbeef', artifactId: validArtifactId, paths: [], comment: '改' },
+        { id: 'deadbeef', artifactId: validArtifactId, paths: Array.from({ length: 21 }, () => 'src/a.ts'), comment: '改' },
+        { id: 'deadbeef', artifactId: validArtifactId, paths: ['src/a.ts', ''], comment: '改' },
+        { id: 'deadbeef', artifactId: validArtifactId, paths: ['src/a.ts'], comment: '' },
+        { id: 'deadbeef', artifactId: validArtifactId, paths: ['src/a.ts'], comment: '   ' },
+        { id: 'deadbeef', artifactId: validArtifactId, paths: ['src/a.ts'], comment: '长'.repeat(2001) },
+        { id: 'deadbeef', artifactId: validArtifactId, paths: ['src/a.ts'], comment: '改', inputRequestId: 'not-a-uuid' },
+      ]) {
+        expect((await request('/v1/workbench/review-return', { method: 'POST', body: JSON.stringify(bad) })).status).toBe(400)
+      }
+      expect((await request('/v1/workbench/review-return', { method: 'POST', body: JSON.stringify(body) }, trustedToken)).status).toBe(403)
+    })
+
+    it('service 抛出 review_file_unmarkable / invalid_review_reference ⇒ 400,workbench_busy ⇒ 409', async () => {
+      const unmarkable = vi.fn(() => { throw new Error('review_file_unmarkable') })
+      const invalidRef = vi.fn(() => { throw new Error('invalid_review_reference') })
+      const busy = vi.fn(() => { throw new Error('workbench_busy') })
+      const body = { id: 'deadbeef', artifactId: validArtifactId, path: 'src/a.ts', mark: 'accepted' }
+      {
+        const { request } = await start(service({ markReviewFile: unmarkable }))
+        const response = await request('/v1/workbench/review-mark', { method: 'POST', body: JSON.stringify(body) })
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({ error: 'review_file_unmarkable' })
+      }
+      {
+        const { request } = await start(service({ markReviewFile: invalidRef }))
+        const response = await request('/v1/workbench/review-mark', { method: 'POST', body: JSON.stringify(body) })
+        expect(response.status).toBe(400)
+        expect(await response.json()).toEqual({ error: 'invalid_review_reference' })
+      }
+      {
+        const { request } = await start(service({ returnReviewFiles: busy }))
+        const response = await request('/v1/workbench/review-return', { method: 'POST', body: JSON.stringify({ id: 'deadbeef', artifactId: validArtifactId, paths: ['src/a.ts'], comment: '改' }) })
+        expect(response.status).toBe(409)
+        expect(await response.json()).toEqual({ error: 'workbench_busy' })
+      }
+    })
+
+    it('三条都是 admin 档', () => {
+      expect(minTierFor('GET /v1/workbench/review')).toBe('admin')
+      expect(minTierFor('POST /v1/workbench/review-mark')).toBe('admin')
+      expect(minTierFor('POST /v1/workbench/review-return')).toBe('admin')
     })
   })
 

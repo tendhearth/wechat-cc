@@ -50,6 +50,7 @@ function mappedError(err: unknown): ReturnType<RouteHandler> {
   if(['workbench_attachments_unsupported','workbench_execution_unsupported','workbench_resume_unsupported'].includes(code))return{status:422,body:{error:code}}
   if (['input_stale','input_conflict','input_delivery_busy','question_stale','input_limit'].includes(code))return{status:409,body:{error:code}}
   if (code === 'invalid_question'||code === 'invalid_answer')return{status:400,body:{error:code}}
+  if (code === 'review_file_unmarkable'||code === 'invalid_review_reference')return{status:400,body:{error:code}}
   if (code === 'workbench_archived' || code === 'workbench_busy' || code === 'artifact_changed' || code === 'permission_stale' || code === 'restart_confirmation_required' || code === 'restart_confirmation_stale') return { status: 409, body: { error: code } }
   if (['handoff_changed','native_history_changed','native_session_already_managed','native_session_busy','native_session_identity_mismatch','external_close_confirmation_required','external_close_confirmation_stale'].includes(code))return{status:409,body:{error:code}}
   if(code==='handoff_artifact_unsupported')return{status:422,body:{error:code}}
@@ -321,6 +322,57 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       try {
         await deps.workbench.resolvePermission(id, requestId, decision)
         return { status: 200, body: { ok: true } }
+      } catch (err) {
+        return mappedError(err)
+      }
+    },
+
+    'GET /v1/workbench/review': async (query) => {
+      const id = query.get('id') ?? ''
+      if (query.getAll('id').length !== 1 || !TASK_ID.test(id)) return invalid()
+      if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
+      try {
+        return { status: 200, body: { reviews: await deps.workbench.reviewList(id) } }
+      } catch (err) {
+        return mappedError(err)
+      }
+    },
+
+    'POST /v1/workbench/review-mark': async (_query, body) => {
+      const value = objectBody(body)
+      const id = typeof value?.id === 'string' ? value.id : ''
+      const artifactId = typeof value?.artifactId === 'string' ? value.artifactId : ''
+      const path = value?.path
+      const mark = value?.mark
+      const comment = value?.comment
+      if (!TASK_ID.test(id) || !ARTIFACT_ID.test(artifactId) ||
+          typeof path !== 'string' || !path || path.length > 4096 ||
+          (mark !== 'accepted' && mark !== 'returned') ||
+          (comment !== undefined && (typeof comment !== 'string' || comment.length > 2000))) return invalid()
+      if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
+      try {
+        const result = await deps.workbench.markReviewFile(id, { artifactId, path, mark, ...(comment !== undefined ? { comment } : {}) })
+        return { status: 200, body: { mark: result } }
+      } catch (err) {
+        return mappedError(err)
+      }
+    },
+
+    'POST /v1/workbench/review-return': async (_query, body) => {
+      const value = objectBody(body)
+      const id = typeof value?.id === 'string' ? value.id : ''
+      const artifactId = typeof value?.artifactId === 'string' ? value.artifactId : ''
+      const paths = value?.paths
+      const comment = value?.comment
+      const inputRequestId = value?.inputRequestId
+      if (inputRequestId !== undefined && (typeof inputRequestId !== 'string' || !REQUEST_ID.test(inputRequestId))) return invalid()
+      if (!TASK_ID.test(id) || !ARTIFACT_ID.test(artifactId) ||
+          !Array.isArray(paths) || !paths.length || paths.length > 20 || paths.some(p => typeof p !== 'string' || !p) ||
+          typeof comment !== 'string' || !comment.trim() || comment.length > 2000) return invalid()
+      if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
+      try {
+        const task = await deps.workbench.returnReviewFiles(id, { artifactId, paths, comment, ...(inputRequestId !== undefined ? { inputRequestId } : {}) })
+        return { status: 202, body: { task } }
       } catch (err) {
         return mappedError(err)
       }
