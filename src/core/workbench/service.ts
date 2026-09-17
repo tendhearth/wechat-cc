@@ -21,7 +21,7 @@ import {handoffToken,handoffTokenHash,validateHandoffInput,handoffArtifactText,h
 import {makeDeltaCoalescer} from './delta-coalescer'
 import {pathsConflict} from './scheduler'
 import { restartPreview, type Continuation, type RestartPreview } from './continuation'
-import {canResumeWorkbenchExecutor,isWorkbenchExecutorCapabilities,isWorkbenchProviderId,requireWorkbenchInput,type WorkbenchExecutorCapabilities} from './executor-capabilities'
+import {canResumeWorkbenchExecutor,isUnattendedExecutor,isWorkbenchExecutorCapabilities,isWorkbenchProviderId,requireWorkbenchInput,type WorkbenchExecutorCapabilities} from './executor-capabilities'
 import { makeRunPermissions, type PermissionDecision, type RunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
 import { findPathBlocker, type PathReservation, type WaitingFor } from './scheduler'
 import { makeQuotaRegistry, classifyProviderError, type QuotaState } from '../provider-quota'
@@ -52,6 +52,8 @@ interface Options {
   permissionTimeoutMs?: number
   /** 变更信号中心(长轮询);不传就自建。 */
   changes?: TaskChangeHub
+  /** 免审执行者的一次性确认(daemon 侧持久化);不传 ⇒ 免审执行者永远要求确认。 */
+  unattendedAck?: { get(): number | null; set(at: number): void }
 }
 type AcceptedContinuation = { mode: 'new' } | { mode: 'resume'; sessionId: string } | { mode: 'restart'; preview: RestartPreview }
 interface Active extends PathReservation {
@@ -263,6 +265,7 @@ export function makeWorkbenchService(opts: Options) {
   }
   function requireInput(providerId:string,attachments:readonly unknown[],execution:AgentExecutionChoice,resume=false){
     const entry=provider(providerId)
+    if(isUnattendedExecutor(entry.opts.workbench)&&(opts.unattendedAck?.get()??null)===null)throw new Error('unattended_ack_required')
     requireWorkbenchInput(entry.opts.workbench,{attachments,execution,resume})
     return entry
   }
@@ -537,7 +540,7 @@ export function makeWorkbenchService(opts: Options) {
           const notice=message.trim().slice(0,2000)
           if(notice){store.addEvent(task.id,'system',notice,null,running.identity);touched(task.id)}
         },
-        tierProfile:TIER_PROFILES.trusted,permissionMode:'strict',chatId:task.ownerChatId ?? `workbench:${task.id}`,
+        tierProfile:TIER_PROFILES.trusted,permissionMode:isUnattendedExecutor(entry.opts.workbench)?'dangerously':'strict',chatId:task.ownerChatId ?? `workbench:${task.id}`,
         ...(resume ? {resumeSessionId:resume} : {}),mcpEnv:sessionAuthEnv('trusted',token),appendInstructions:instructions,
         requestPermission:(request,signal) => {running.interactionAt=Date.now();bumped(task.id);return running.permissions.request(request,signal).finally(()=>{running.interactionAt=Date.now();bumped(task.id)})},
         requestUserInput:(request,signal) => {running.interactionAt=Date.now();bumped(task.id);return running.questions.request(request,signal).finally(()=>{running.interactionAt=Date.now();bumped(task.id)})},
@@ -1173,7 +1176,7 @@ export function makeWorkbenchService(opts: Options) {
       const providers=opts.registry.list().flatMap(id=>{const p=opts.registry.get(id);return isWorkbenchProviderId(id)&&p&&isWorkbenchExecutorCapabilities(p.opts.workbench)?[{id,displayName:p.opts.displayName,capabilities:structuredClone(p.opts.workbench),quota:quota.exhausted(id),usage:opts.usage?.(id)??null}]:[]})
       const result=store.listPage(query)
       const projectProviders=Object.fromEntries([...new Set(result.tasks.map(task=>task.path))].map(path=>[path,store.projectProvider(path)]))
-      return {tasks:result.tasks.map(task => taskView(task,true)),page:result.page,projectProviders,providers,historyProviders:Object.keys(opts.nativeHistory??{}),defaultProvider:providers.find(p=>p.id===opts.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!opts.ownerChatId()}
+      return {tasks:result.tasks.map(task => taskView(task,true)),page:result.page,projectProviders,providers,historyProviders:Object.keys(opts.nativeHistory??{}),defaultProvider:providers.find(p=>p.id===opts.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!opts.ownerChatId(),unattendedAcknowledgedAt:opts.unattendedAck?.get()??null}
     },
     async modelCatalog(providerId:string,path:string):Promise<AgentModelCatalog>{
       const entry=provider(providerId),canonical=canonicalProject(path)
@@ -1209,6 +1212,14 @@ export function makeWorkbenchService(opts: Options) {
     },
     create(input:CreateTask):WorkbenchTaskView {
       return createTask(input)
+    },
+    /** 免审执行者的一次性确认;不接 `unattendedAck`(老接线)时永远拒绝 —— 免审执行者只能停在
+     *  「要求确认」,不能悄悄放行。 */
+    acknowledgeUnattended():number {
+      const at=Date.now()
+      if(!opts.unattendedAck)throw new Error('unattended_ack_unavailable')
+      opts.unattendedAck.set(at)
+      return at
     },
     continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials):WorkbenchTaskView {
       ensureAccepting()

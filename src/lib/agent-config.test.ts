@@ -786,6 +786,15 @@ describe('agent-config — forward budget (sub-project C)', () => {
     expect(parseAgentConfig({ self_agent_id: 'cc-deadbeef' }).self_agent_id).toBe('cc-deadbeef')
     expect(parseAgentConfig({}).self_agent_id).toBeUndefined()
   })
+
+  it('round-trips workbench_unattended_ack_at through save → load', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cfg-unattended-ack-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'),
+        JSON.stringify({ provider: 'claude', workbench_unattended_ack_at: 1700000000000 }))
+      expect(loadAgentConfig(dir).workbench_unattended_ack_at).toBe(1700000000000)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
 })
 
 describe('A2AAgentRecord url-optional-for-mailbox', () => {
