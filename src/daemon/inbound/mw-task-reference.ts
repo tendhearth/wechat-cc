@@ -72,6 +72,13 @@ function command(taskId: string, text: string): string {
   return `任务 ${taskId} 补充 ${t}`
 }
 
+/** 路由阶段带来的判定:是管家的 intent 就用它;别的意图 ⇒ 放行(null);chat 里只认自己塞的 choice-invalid。 */
+function routedDecision(intent: Intent): Decision | null {
+  const d = intent.data as Decision | undefined
+  if (intent.kind === 'task-reference') return d ?? null
+  return intent.kind === 'chat' && d?.kind === 'choice-invalid' ? d : null
+}
+
 /** 管家中间件 + 同一份状态上的只读探针(路由阶段用;null = 这句不是在说任务)。 */
 export type TaskReferenceMw = Middleware & { probe: (ctx: InboundCtx) => Promise<Intent | null> }
 
@@ -175,9 +182,9 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
   const mw: TaskReferenceMw = async (ctx, next) => {
     const msg = ctx.msg
     const text = (msg.text ?? '').trim()
-    // 路由阶段已经判过(同一条消息)就直接用,便宜模型不问第二遍。
-    const routed = ctx.intent?.kind === 'task-reference' ? (ctx.intent.data as Decision | undefined) : undefined
-    const d = routed ?? await decide(ctx)
+    // 路由阶段已经判过(同一条消息)就直接用 —— 判成别的意图也算判过(放行),便宜模型不问第二遍。
+    // 真机 09-17:没有这一句时每条闲聊都要等两次 judge 超时(3s × 2)才进对话。
+    const d = ctx.intent === undefined ? await decide(ctx) : routedDecision(ctx.intent)
     if (!d) { await next(); return }
     const identity: WechatMessageIdentity = { accountId: msg.accountId, userId: msg.userId, msgId: msg.msgId, createTimeMs: msg.createTimeMs }
     ctx.consumedBy = 'workbench'
@@ -220,7 +227,7 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
     const sent = await deps.sendMessage(msg.chatId, lines.join('\n'))
     if (sent && typeof sent === 'object' && 'error' in sent && (sent as { error?: unknown }).error) throw Error('workbench_reply_failed')
   }
-  // choice-invalid 是唯一"判定说是、执行却放行"的分支(数字越界),路由阶段把它算作 chat。
-  mw.probe = async ctx => { const d = await decide(ctx); return d && d.kind !== 'choice-invalid' ? { kind: 'task-reference', data: d } : null }
+  // choice-invalid 是唯一"判定说是、执行却放行"的分支(数字越界):路由阶段算作 chat,但判定照带,本体好把待选清掉。
+  mw.probe = async ctx => { const d = await decide(ctx); return d ? { kind: d.kind === 'choice-invalid' ? 'chat' : 'task-reference', data: d } : null }
   return mw
 }

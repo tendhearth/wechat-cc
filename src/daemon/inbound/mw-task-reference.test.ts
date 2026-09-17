@@ -265,10 +265,25 @@ describe('只读探针(意图路由第一步,2026-09-17)', () => {
     await mw(c, async () => { nexted = true })
     expect(nexted).toBe(false); expect(commands.length + 1).toBeGreaterThan(0); expect(judgeCalls.length).toBe(asked)
   })
-  it('数字越界这一种"探针说是、执行却放行"的分支,探针直接算作 chat', async () => {
-    const { mw, ctx, run } = probeSetup()
-    await run('DATA.md 那件怎么样了')  // 问了"哪一件"(两个选项)
-    expect(await mw.probe(ctx('9'))).toBeNull()
-    expect((await run('9')).nexted).toBe(true)
+  it('数字越界这一种"探针说是、执行却放行"的分支,探针算作 chat 但判定照带,本体据此清掉待选', async () => {
+    const { mw, ctx } = probeSetup()
+    const go = async (c: InboundCtx) => { let nexted = false; await mw(c, async () => { nexted = true }); return nexted }
+    await go(ctx('DATA.md 那件怎么样了'))  // 问了"哪一件"(两个选项);探针和本体是同一个实例
+    const intent = await mw.probe(ctx('9'))
+    expect(intent?.kind).toBe('chat'); expect((intent?.data as { kind: string }).kind).toBe('choice-invalid')
+    expect(await go(Object.assign(ctx('9'), { intent }))).toBe(true)
+    expect(await go(ctx('2'))).toBe(true)  // 待选已清:再回数字不再算选择
+  })
+  it('真机回归 09-17:路由判成别的意图(含 chat)⇒ 本体直接放行,judge 不问第二遍', async () => {
+    const { mw, ctx } = probeSetup()
+    judgeCalls.length = 0
+    const c = ctx('今天天气不错')
+    const intent = await mw.probe(c)
+    expect(intent).toBeNull(); const asked = judgeCalls.length
+    Object.assign(c, { intent: { kind: 'chat' } })
+    let nexted = false; await mw(c, async () => { nexted = true })
+    expect(nexted).toBe(true); expect(judgeCalls.length).toBe(asked)
+    const c2 = Object.assign(ctx('todo 那件进展怎么样'), { intent: { kind: 'admin' } })
+    nexted = false; await mw(c2, async () => { nexted = true }); expect(nexted).toBe(true); expect(judgeCalls.length).toBe(asked)
   })
 })
