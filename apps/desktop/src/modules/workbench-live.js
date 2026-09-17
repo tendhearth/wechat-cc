@@ -46,19 +46,39 @@ export function structuralSignature(detail) {
 /** @typedef {{patched:number,appended:number,missing:number}} PatchResult */
 
 const isMessage = (/** @type {WorkbenchEvent} */ event) => event.kind === 'user' || event.kind === 'text'
+/** 整页渲染会把这些行提到组外(workbench-timeline.js 的 visibleIssue):补丁塞不回正确的位置。 */
+const hoisted = (/** @type {WorkbenchEvent} */ event) => event.kind === 'error' || ['failed', 'cancelled', 'interrupted'].includes(event.activity?.status ?? '')
 
-/** 把变过的事件写回正在跑的那一组:能找到就整条换掉,找不到就追加。
- * 追加不下(没有 live 组 / 没有对话区)就记 missing,调用方退回整页重画。
+/** 正在跑的那一组的操作列表 —— 必须是对话区的最后一个孩子,否则追加会把新操作
+ * 塞到上面那一组里(渲染器每遇到一条消息就断开一组,同一轮可以有好几个 live 组)。
+ * @param {{querySelector:(selector:string)=>any}} root */
+function liveOperationList(root) {
+  const dialogue = root.querySelector('.wb-dialogue')
+  if (!dialogue) return null
+  const groups = Array.from(dialogue.querySelectorAll?.('[data-timeline-group]:not(details)') ?? [])
+  const group = groups.at(-1)
+  if (!group || dialogue.lastElementChild !== group) return null
+  return group.querySelector?.('.wb-operation-list') ?? null
+}
+
+/** 把变过的事件写回正在跑的那一组:能原位换掉就换,能安全追加就追加。
+ * 位置对不上、要提到组外、或者那一行里有展开着的详情(焦点救不回来)就记 missing,
+ * 调用方退回整页重画。
  * @param {{querySelector:(selector:string)=>any}} root @param {WorkbenchEvent[]} changed @param {PatchRenderers} render @returns {PatchResult} */
 export function patchLiveTimeline(root, changed, render) {
   let patched = 0, appended = 0, missing = 0
   for (const event of changed ?? []) {
+    if (hoisted(event)) { missing++; continue }
     const html = isMessage(event) ? render.message(event) : render.operation(event)
     const existing = root.querySelector(`#${render.eventId(event)}`)
-    if (existing) { existing.outerHTML = html; patched++; continue }
-    const host = isMessage(event)
-      ? root.querySelector('.wb-dialogue')
-      : root.querySelector('[data-timeline-group]:not(details) .wb-operation-list')
+    if (existing) {
+      if (existing.querySelector?.('[data-timeline-disclosure][open], details[open]')) { missing++; continue }
+      existing.outerHTML = html
+      patched++
+      continue
+    }
+    // 每条都重新找一次:上一条刚追加的消息会把 live 组从末尾挤走。
+    const host = isMessage(event) ? root.querySelector('.wb-dialogue') : liveOperationList(root)
     if (host) { host.insertAdjacentHTML('beforeend', html); appended++ } else missing++
   }
   return { patched, appended, missing }

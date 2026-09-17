@@ -2018,6 +2018,7 @@ describe('workbench live stream', () => {
   const harness = async (overrides: Record<string, unknown> = {}) => {
     const { createWorkbenchController } = await import('./workbench.js')
     const calls: string[] = []
+    const list = { tasks: [task] as Record<string, unknown>[] }
     let release!: (value: unknown) => void
     const invokeWorkbenchApi = vi.fn((_method: string, path: string) => {
       calls.push(path)
@@ -2026,13 +2027,13 @@ describe('workbench live stream', () => {
         if (path.includes('since=')) return new Promise(resolve => { release = resolve as (value: unknown) => void })
         return Promise.resolve({ ...detail, version: 5 })
       }
-      return Promise.resolve({ tasks: [task], providers: [], defaultProvider: 'codex', canWechat: false })
+      return Promise.resolve({ tasks: list.tasks, providers: [], defaultProvider: 'codex', canWechat: false })
     })
     const renders: unknown[] = []
     const patched: any[][] = []
     const controller = createWorkbenchController({ invokeWorkbenchApi, render: () => renders.push(1), patchLive: (changed: any[]) => { patched.push(changed); return true }, ...overrides } as any)
     await controller.selectTask('T')
-    return { controller, calls, renders, patched, release: (value: unknown) => release(value) }
+    return { controller, calls, renders, patched, list, release: (value: unknown) => release(value) }
   }
 
   it('选中任务后接上长轮询:since 用上一次的 version,增量事件走补丁不整页重画', async () => {
@@ -2091,7 +2092,10 @@ describe('workbench live stream', () => {
     expect(controller.liveActive()).toBe(false)
     controller.resumeLive()
     expect(controller.liveActive()).toBe(false)
+    await controller.selectTask('T')
+    expect(controller.liveActive()).toBe(true)
     controller.destroy()
+    expect(controller.liveActive()).toBe(false)
   })
 
   it('旧后台不带 version 就不开长轮询,详情退回 3 秒重拉', async () => {
@@ -2109,6 +2113,36 @@ describe('workbench live stream', () => {
     expect(calls.some(path => path.includes('since='))).toBe(false)
     await controller.refresh()
     expect(calls.filter(path => path.startsWith('/v1/workbench/task')).length).toBe(2)
+    controller.destroy()
+  })
+
+  it('列表只是把选中任务的 updatedAt 往前推,不该整页重画', async () => {
+    const { controller, renders, list, release } = await harness()
+    await controller.refresh()
+    await flush()
+    const painted = renders.length
+    list.tasks = [{ ...task, updatedAt: task.updatedAt + 5000 }]
+    await controller.refresh()
+    expect(renders.length).toBe(painted)
+    expect(controller.state.tasks[0]?.updatedAt).toBe(task.updatedAt + 5000)
+    list.tasks = [{ ...task, updatedAt: task.updatedAt + 9000, status: 'completed' }]
+    await controller.refresh()
+    expect(renders.length).toBe(painted + 1)
+    release({ ...detail, version: 9, events: [] })
+    controller.destroy()
+  })
+
+  it('长轮询中途拿到不带 version 的响应:停下来,并且真的换回 3 秒重拉', async () => {
+    const { controller, calls, release } = await harness()
+    const detailCalls = () => calls.filter(path => path.startsWith('/v1/workbench/task') && !path.includes('since=')).length
+    const before = detailCalls()
+    release({ ...detail, events: [] })
+    await flush()
+    expect(controller.liveActive()).toBe(false)
+    controller.resumeLive()
+    expect(controller.liveActive()).toBe(false)
+    await controller.refresh()
+    expect(detailCalls()).toBe(before + 1)
     controller.destroy()
   })
 })

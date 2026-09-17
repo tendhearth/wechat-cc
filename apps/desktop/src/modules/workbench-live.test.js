@@ -34,47 +34,93 @@ describe('structuralSignature', () => {
 })
 
 describe('patchLiveTimeline', () => {
-  // 假节点:补丁函数用 `el.outerHTML = html` 替换,setter 把结果记下来。
-  const node = (id) => ({ id, replaced: null, set outerHTML(value) { this.replaced = value } })
-  const fakeRoot = (ids, liveList, dialogue = liveList) => {
-    const found = []
-    return {
-      found,
-      querySelector(sel) {
-        if (sel.startsWith('#')) { const el = ids.includes(sel.slice(1)) ? node(sel.slice(1)) : null; if (el) found.push(el); return el }
-        if (sel === '[data-timeline-group]:not(details) .wb-operation-list') return liveList
-        if (sel === '.wb-dialogue') return dialogue
-        return null
-      },
-    }
+  // 假 DOM:对话区带有序的孩子,因为「追加到哪一组」取决于位置。
+  const operationList = () => ({ appended: [], insertAdjacentHTML(_pos, html) { this.appended.push(html) } })
+  const liveGroup = () => {
+    const list = operationList()
+    return { tagName: 'DIV', dataset: { timelineGroup: '' }, live: true, list, querySelector: sel => sel === '.wb-operation-list' ? list : null }
   }
-  const list = () => ({ appended: [], insertAdjacentHTML(_pos, html) { this.appended.push(html) } })
+  const closedGroup = () => ({ tagName: 'DETAILS', dataset: { timelineGroup: '' }, live: false, querySelector: () => null })
+  const messageNode = () => ({ tagName: 'ARTICLE', dataset: {}, live: false, querySelector: () => null })
+  const dialogue = (children = []) => ({
+    children, appended: [],
+    get lastElementChild() { return this.children.at(-1) ?? null },
+    querySelectorAll(sel) { return sel === '[data-timeline-group]:not(details)' ? this.children.filter(child => child.live) : [] },
+    insertAdjacentHTML(_pos, html) { this.appended.push(html); this.children.push(messageNode()) },
+  })
+  // 找得到的那一行:outerHTML 是 setter,好观察替换;open 表示里面有展开着的详情。
+  const row = (id, open = false) => ({ id, replaced: null, set outerHTML(value) { this.replaced = value }, querySelector: sel => open && sel.includes('[open]') ? { id: 'disclosure' } : null })
+  const fakeRoot = (rows, dialogueNode) => ({
+    rows: new Map(),
+    querySelector(sel) {
+      if (sel.startsWith('#')) {
+        const id = sel.slice(1)
+        if (!(id in rows)) return null
+        if (!this.rows.has(id)) this.rows.set(id, row(id, rows[id]))
+        return this.rows.get(id)
+      }
+      return sel === '.wb-dialogue' ? dialogueNode : null
+    },
+  })
   const render = { eventId: e => `wb-event-${e.id}`, message: e => `<m>${e.text}</m>`, operation: e => `<o>${e.text}</o>` }
-  const activity = (id, text) => ev(id, text, { kind: 'tool_call', activity: { id: 'a', type: 'command', status: 'running', label: 'ls' } })
+  const activity = (id, text, status = 'running') => ev(id, text, { kind: 'tool_call', activity: { id: `a${id}`, type: 'command', status, label: text } })
 
-  it('找得到的替换,找不到的追加到 live 组', () => {
-    const operations = list()
-    const root = fakeRoot(['wb-event-1'], operations)
-    const r = patchLiveTimeline(root, [ev(1, 'x'), activity(2, 'y')], render)
-    expect(r).toEqual({ patched: 1, appended: 1, missing: 0 })
-    expect(operations.appended).toEqual(['<o>y</o>'])
-    expect(root.found[0].replaced).toBe('<m>x</m>')
+  it('找得到的原位替换;找不到的追到末尾那个 live 组', () => {
+    const group = liveGroup()
+    const root = fakeRoot({ 'wb-event-1': false }, dialogue([messageNode(), group]))
+    const result = patchLiveTimeline(root, [ev(1, 'x'), activity(2, 'y')], render)
+    expect(result).toEqual({ patched: 1, appended: 1, missing: 0 })
+    expect(group.list.appended).toEqual(['<o>y</o>'])
+    expect(root.rows.get('wb-event-1').replaced).toBe('<m>x</m>')
   })
-  it('文字追加到对话区,操作追加到 live 组', () => {
-    const operations = list(), dialogue = list()
-    const root = fakeRoot([], operations, dialogue)
-    const r = patchLiveTimeline(root, [ev(5, 'hi', { kind: 'user' }), activity(6, 'ls')], render)
-    expect(r).toEqual({ patched: 0, appended: 2, missing: 0 })
-    expect(dialogue.appended).toEqual(['<m>hi</m>'])
-    expect(operations.appended).toEqual(['<o>ls</o>'])
+
+  it('live 组不是对话区最后一个孩子(后面还有消息)就不追加,记 missing', () => {
+    const group = liveGroup()
+    const root = fakeRoot({}, dialogue([group, messageNode()]))
+    expect(patchLiveTimeline(root, [activity(2, 'ls')], render)).toEqual({ patched: 0, appended: 0, missing: 1 })
+    expect(group.list.appended).toEqual([])
   })
+
+  it('有好几个 live 组时追到最后那个', () => {
+    const first = liveGroup(), last = liveGroup()
+    const root = fakeRoot({}, dialogue([first, messageNode(), last]))
+    expect(patchLiveTimeline(root, [activity(3, 'ls')], render)).toEqual({ patched: 0, appended: 1, missing: 0 })
+    expect(first.list.appended).toEqual([])
+    expect(last.list.appended).toEqual(['<o>ls</o>'])
+  })
+
+  it('整页渲染会提到组外的行(error / 失败 / 已停止 / 已中断)一律记 missing', () => {
+    const group = liveGroup()
+    const root = fakeRoot({ 'wb-event-4': false }, dialogue([group]))
+    const changed = [ev(4, '出错了', { kind: 'error' }), activity(5, 'ls', 'failed'), activity(6, 'ls', 'cancelled'), activity(7, 'ls', 'interrupted')]
+    expect(patchLiveTimeline(root, changed, render)).toEqual({ patched: 0, appended: 0, missing: 4 })
+    expect(group.list.appended).toEqual([])
+  })
+
+  it('那一行里有展开着的详情就不替换(展开状态和焦点交给整页重画)', () => {
+    const root = fakeRoot({ 'wb-event-8': true }, dialogue([liveGroup()]))
+    expect(patchLiveTimeline(root, [activity(8, 'ls')], render)).toEqual({ patched: 0, appended: 0, missing: 1 })
+    expect(root.rows.get('wb-event-8').replaced).toBe(null)
+  })
+
+  it('文字追到对话区末尾;它一旦追进去,后面的操作就没有安全位置了', () => {
+    const group = liveGroup()
+    const dialogueNode = dialogue([group])
+    const root = fakeRoot({}, dialogueNode)
+    const result = patchLiveTimeline(root, [ev(9, 'hi', { kind: 'user' }), activity(10, 'ls')], render)
+    expect(result).toEqual({ patched: 0, appended: 1, missing: 1 })
+    expect(dialogueNode.appended).toEqual(['<m>hi</m>'])
+    expect(group.list.appended).toEqual([])
+  })
+
   it('没有 live 组可追加时记成 missing(调用方整页重画)', () => {
-    const root = fakeRoot([], null, null)
-    expect(patchLiveTimeline(root, [activity(7, 'ls')], render)).toEqual({ patched: 0, appended: 0, missing: 1 })
+    const root = fakeRoot({}, dialogue([closedGroup()]))
+    expect(patchLiveTimeline(root, [activity(11, 'ls')], render)).toEqual({ patched: 0, appended: 0, missing: 1 })
   })
-  it('没有变化时不碰 DOM', () => {
-    const root = fakeRoot([], null, null)
-    expect(patchLiveTimeline(root, [], render)).toEqual({ patched: 0, appended: 0, missing: 0 })
+
+  it('没有对话区 / 没有变化时不碰 DOM', () => {
+    expect(patchLiveTimeline(fakeRoot({}, null), [activity(12, 'ls')], render)).toEqual({ patched: 0, appended: 0, missing: 1 })
+    expect(patchLiveTimeline(fakeRoot({}, dialogue([liveGroup()])), [], render)).toEqual({ patched: 0, appended: 0, missing: 0 })
   })
 })
 

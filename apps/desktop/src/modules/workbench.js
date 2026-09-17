@@ -321,15 +321,18 @@ export function createWorkbenchController(deps) {
   let preferredInitialId = deps.initialScope?.startsWith('task:') ? deps.initialScope.slice(5) : null
   let alive = true
   let lastPaint = ''
+  // 列表每 3 秒回来一次,而任务的 updated_at 每条事件都在动:那个时间戳不该把整页
+  // 重画拽起来(会打断流式补丁、输入和滚动)。列表上的时间标签因此可能晚一拍。
+  const paintKey = () => JSON.stringify({ ...state, tasks: (state.tasks ?? []).map(task => ({ ...task, updatedAt: 0 })) })
   const paint = (force = false) => {
-    const snapshot = JSON.stringify(state)
+    const snapshot = paintKey()
     if (!force && snapshot === lastPaint) return
     lastPaint = snapshot
     deps.render(state)
   }
   // 增量补丁已经把变过的行写进 DOM 了:把重画基准对齐,免得下一次 paint() 为同一批
   // 事件再整页重画一次(那会打断输入和滚动)。
-  const syncPaintSnapshot = () => { lastPaint = JSON.stringify(state) }
+  const syncPaintSnapshot = () => { lastPaint = paintKey() }
   let liveVersioned = false
   /** 长轮询回来的详情:结构没变就逐条补丁,补不上才整页重画。
    * @param {Detail} detail */
@@ -339,7 +342,9 @@ export function createWorkbenchController(deps) {
     const previousSignature = structuralSignature(previous)
     const changed = detail.events ?? []
     state.detail = { ...detail, events: mergeEvents(previous.events ?? [], changed) }
+    // 中途不带 version 的响应会让长轮询停下来:同时收掉这面旗,3 秒那条腿才会真的接手重拉。
     if (typeof detail.version === 'number') state.version = detail.version
+    else liveVersioned = false
     state.selectedArtifactId = chooseArtifactId(state.detail.artifacts ?? [], state.selectedArtifactId)
     if (state.preview && state.preview.artifactId !== state.selectedArtifactId) state.preview = null
     if (structuralSignature(state.detail) !== previousSignature) { paint(true); return }
