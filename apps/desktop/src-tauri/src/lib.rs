@@ -1064,7 +1064,7 @@ async fn workbench_api(method: String, path: String, body: Option<String>) -> Re
     let token = std::fs::read_to_string(token_path).map(|s| s.trim().to_string())
         .map_err(|e| format!("token read error: {e}"))?;
     let url = format!("{base_url}{path}");
-    let response = timeout(Duration::from_secs(30), async {
+    let response = timeout(Duration::from_secs(35), async {
         let client = reqwest::Client::new();
         let request = if method == "GET" { client.get(url) } else {
             client.post(url).header("Content-Type", "application/json").body(body.unwrap_or_else(|| "{}".into()))

@@ -3,7 +3,8 @@
 import { icon } from './icons.js'
 
 /** @typedef {import('./workbench.js').WorkbenchEvent} WorkbenchEvent */
-/** @typedef {{status:string,runId?:string,runtime?:import('./workbench-runtime.js').RuntimeSnapshot,renderMessage:(event:WorkbenchEvent)=>string,escapeHtml:(value:unknown)=>string,formatTime:(value:number)=>string}} TimelineOptions */
+/** @typedef {{escapeHtml:(value:unknown)=>string,formatTime:(value:number)=>string}} OperationOptions */
+/** @typedef {OperationOptions & {status:string,runId?:string,runtime?:import('./workbench-runtime.js').RuntimeSnapshot,renderMessage:(event:WorkbenchEvent)=>string}} TimelineOptions */
 
 const activityTypes = /** @type {const} */ (['command', 'read', 'edit', 'search', 'tool', 'agent', 'system'])
 const typeLabels = { command:'命令', read:'读取', edit:'修改', search:'搜索', tool:'工具', agent:'协作', system:'运行记录' }
@@ -79,8 +80,10 @@ function coalesceActivities(events) {
   return ordered
 }
 
-/** @param {WorkbenchEvent} event @param {TimelineOptions} options */
-function renderOperation(event, options) {
+/** One operation row. Exported because the live stream patches a single row
+ * back into the running group without re-rendering the whole timeline.
+ * @param {WorkbenchEvent} event @param {OperationOptions} options */
+export function renderWorkbenchOperation(event, options) {
   const { escapeHtml:escape, formatTime } = options
   const activity = event.activity
   const issue = visibleIssue(event)
@@ -105,7 +108,7 @@ function renderGroup(events, options) {
   const live = ['running', 'cancelling'].includes(options.status)
     && (options.runId ? first.runId === options.runId : !first.runId)
     && !(options.status === 'running' && options.runtime?.retained && options.runtime.foreground === 'idle' && !events.some(event => event.activity?.status === 'running'))
-  const rows = `<div class="wb-operation-list">${events.map(event => renderOperation(event, options)).join('')}</div>`
+  const rows = `<div class="wb-operation-list">${events.map(event => renderWorkbenchOperation(event, options)).join('')}</div>`
   // Live groups are not disclosures. Finishing a run therefore creates a new,
   // closed disclosure instead of preserving an automatically opened state.
   if (live) return `<div class="wb-operation-group" data-timeline-group data-run-id="${options.escapeHtml(first.runId)}">${rows}</div>`
@@ -127,7 +130,7 @@ export function renderWorkbenchTimeline(events, options) {
     if (event.kind === 'user' || event.kind === 'text') {
       flush(); html.push(options.renderMessage(event))
     } else if (visibleIssue(event)) {
-      flush(); html.push(renderOperation(event, options))
+      flush(); html.push(renderWorkbenchOperation(event, options))
     } else {
       if (group.length && group[0]?.runId !== event.runId) flush()
       group.push(event)

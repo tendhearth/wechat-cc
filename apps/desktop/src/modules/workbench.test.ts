@@ -2009,3 +2009,106 @@ describe('一件事:对话也在同一张列表里(2026-09-16)',()=>{
     expect(opened).not.toContain('id="wb-create-form"')
   })
 })
+
+describe('workbench live stream', () => {
+  const task = { id: 'T', title: 'Live', path: '/work', providerId: 'codex', status: 'running', createdAt: 1, updatedAt: 2, error: null, archivedAt: null }
+  const event = (id: number, text: string, extra: Record<string, unknown> = {}) => ({ id, taskId: 'T', kind: 'text', text, createdAt: id, ...extra })
+  const detail = { task, events: [event(1, 'a')], artifacts: [], runId: 'run-A' }
+  const flush = () => new Promise(resolve => setTimeout(resolve, 0))
+  const harness = async (overrides: Record<string, unknown> = {}) => {
+    const { createWorkbenchController } = await import('./workbench.js')
+    const calls: string[] = []
+    let release!: (value: unknown) => void
+    const invokeWorkbenchApi = vi.fn((_method: string, path: string) => {
+      calls.push(path)
+      if (path.startsWith('/v1/matters')) return Promise.resolve({ matters: [] })
+      if (path.startsWith('/v1/workbench/task')) {
+        if (path.includes('since=')) return new Promise(resolve => { release = resolve as (value: unknown) => void })
+        return Promise.resolve({ ...detail, version: 5 })
+      }
+      return Promise.resolve({ tasks: [task], providers: [], defaultProvider: 'codex', canWechat: false })
+    })
+    const renders: unknown[] = []
+    const patched: any[][] = []
+    const controller = createWorkbenchController({ invokeWorkbenchApi, render: () => renders.push(1), patchLive: (changed: any[]) => { patched.push(changed); return true }, ...overrides } as any)
+    await controller.selectTask('T')
+    return { controller, calls, renders, patched, release: (value: unknown) => release(value) }
+  }
+
+  it('选中任务后接上长轮询:since 用上一次的 version,增量事件走补丁不整页重画', async () => {
+    const { controller, calls, renders, patched, release } = await harness()
+    expect(calls).toContain('/v1/workbench/task?id=T')
+    expect(calls.at(-1)).toBe('/v1/workbench/task?id=T&since=5&wait_ms=20000')
+    const painted = renders.length
+    release({ ...detail, version: 6, events: [event(2, 'b')] })
+    await flush()
+    expect(patched.at(-1)?.map(e => e.id)).toEqual([2])
+    expect(controller.state.detail?.events.map(e => e.id)).toEqual([1, 2])
+    expect(controller.state.version).toBe(6)
+    expect(renders.length).toBe(painted)
+    await flush()
+    expect(calls.at(-1)).toBe('/v1/workbench/task?id=T&since=6&wait_ms=20000')
+    controller.destroy()
+  })
+
+  it('结构变了(状态/权限)整页重画,不走补丁', async () => {
+    const { controller, renders, patched, release } = await harness()
+    const painted = renders.length
+    release({ ...detail, version: 7, task: { ...task, status: 'completed' }, events: [event(1, 'aa')] })
+    await flush()
+    expect(patched).toHaveLength(0)
+    expect(renders.length).toBe(painted + 1)
+    expect(controller.state.detail?.events.map(e => e.text)).toEqual(['aa'])
+    controller.destroy()
+  })
+
+  it('补丁补不上就整页重画', async () => {
+    const { controller, renders, patched, release } = await harness({ patchLive: () => false })
+    const painted = renders.length
+    release({ ...detail, version: 8, events: [event(2, 'b')] })
+    await flush()
+    expect(patched).toHaveLength(0)
+    expect(renders.length).toBe(painted + 1)
+    controller.destroy()
+  })
+
+  it('长轮询在跑的时候,3 秒列表这条腿不再重拉详情;force 才拉', async () => {
+    const { controller, calls, release } = await harness()
+    const detailCalls = () => calls.filter(path => path.startsWith('/v1/workbench/task') && !path.includes('since=')).length
+    const before = detailCalls()
+    await controller.refresh()
+    expect(detailCalls()).toBe(before)
+    await controller.refresh({ force: true })
+    expect(detailCalls()).toBe(before + 1)
+    release({ ...detail, version: 9, events: [] })
+    controller.destroy()
+  })
+
+  it('换任务 / 新建 / 销毁都把长轮询停掉', async () => {
+    const { controller } = await harness()
+    expect(controller.liveActive()).toBe(true)
+    controller.newTask('/work')
+    expect(controller.liveActive()).toBe(false)
+    controller.resumeLive()
+    expect(controller.liveActive()).toBe(false)
+    controller.destroy()
+  })
+
+  it('旧后台不带 version 就不开长轮询,详情退回 3 秒重拉', async () => {
+    const { createWorkbenchController } = await import('./workbench.js')
+    const calls: string[] = []
+    const invokeWorkbenchApi = vi.fn((_method: string, path: string) => {
+      calls.push(path)
+      if (path.startsWith('/v1/matters')) return Promise.resolve({ matters: [] })
+      if (path.startsWith('/v1/workbench/task')) return Promise.resolve(detail)
+      return Promise.resolve({ tasks: [task], providers: [], defaultProvider: 'codex', canWechat: false })
+    })
+    const controller = createWorkbenchController({ invokeWorkbenchApi, render: vi.fn() } as any)
+    await controller.selectTask('T')
+    expect(controller.liveActive()).toBe(false)
+    expect(calls.some(path => path.includes('since='))).toBe(false)
+    await controller.refresh()
+    expect(calls.filter(path => path.startsWith('/v1/workbench/task')).length).toBe(2)
+    controller.destroy()
+  })
+})
