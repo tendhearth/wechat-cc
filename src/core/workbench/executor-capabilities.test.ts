@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canResumeWorkbenchExecutor, isWorkbenchExecutorCapabilities, isWorkbenchProviderId, MANAGED_API_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES, requireWorkbenchInput } from './executor-capabilities'
+import { canResumeWorkbenchExecutor, isWorkbenchExecutorCapabilities, isWorkbenchProviderId, MANAGED_API_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES, requireWorkbenchInput, UNATTENDED_CAPABILITIES, isUnattendedExecutor } from './executor-capabilities'
 
 const declared = () => ({version:1,permissions:'task',configuration:'task-policy',completion:'native',stop:'confirmed',background:'tracked',
   features:{nativeResume:true,attachments:true,executionSettings:true,modelCatalog:true}})
@@ -65,5 +65,20 @@ describe('workbench executor admission', () => {
     expect(Reflect.set(MANAGED_NATIVE_CAPABILITIES,'stop','best-effort')).toBe(false)
     expect(Reflect.set(MANAGED_NATIVE_CAPABILITIES.features,'attachments',false)).toBe(false)
     expect(()=>requireWorkbenchInput(MANAGED_NATIVE_CAPABILITIES,{attachments:[{}],execution:{defaults:'native',model:'selected',reasoningEffort:'high'},resume:true})).not.toThrow()
+  })
+})
+
+describe('免审执行者能力', () => {
+  it('permissions 认 task 与 unattended,拒绝别的值', () => {
+    expect(isWorkbenchExecutorCapabilities(UNATTENDED_CAPABILITIES)).toBe(true)
+    expect(isWorkbenchExecutorCapabilities(MANAGED_NATIVE_CAPABILITIES)).toBe(true)
+    expect(isWorkbenchExecutorCapabilities({ ...UNATTENDED_CAPABILITIES, permissions: 'none' })).toBe(false)
+    expect(isUnattendedExecutor(UNATTENDED_CAPABILITIES)).toBe(true); expect(isUnattendedExecutor(MANAGED_NATIVE_CAPABILITIES)).toBe(false)
+  })
+  it('免审执行者不收附件、不认执行设置,但能恢复原会话', () => {
+    const execution = { defaults: 'provider' as const, model: null, reasoningEffort: null }
+    expect(() => requireWorkbenchInput(UNATTENDED_CAPABILITIES, { attachments: [{}], execution })).toThrow('workbench_attachments_unsupported')
+    expect(() => requireWorkbenchInput(UNATTENDED_CAPABILITIES, { attachments: [], execution: { ...execution, model: 'x' } })).toThrow('workbench_execution_unsupported')
+    expect(() => requireWorkbenchInput(UNATTENDED_CAPABILITIES, { attachments: [], execution, resume: true })).not.toThrow()
   })
 })
