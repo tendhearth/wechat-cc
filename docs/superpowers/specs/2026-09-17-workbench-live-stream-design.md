@@ -76,7 +76,7 @@ GET /v1/workbench/task?id=&since=&wait_ms= ──── 长轮询 ────�
 
 - `GET /v1/workbench/task?id=<id>&since=<n>&wait_ms=<ms>`
   - `since` 缺省 ⇒ 现行为(全量,不等待)。
-  - `since` 给了:`await changes.wait(id, since, min(wait_ms, 20000))`;返回 `store.detail(id, {since})`,body 里带 `version`;没变化时也返回 200 但 `events: []`、`version` 不变(桌面据此空转)。
+  - `since` 给了:先 `detail(id,{since})` 探一次(不存在 ⇒ 立刻 404;`version > since` ⇒ 直接返回,不等);否则 `await changes.wait(id, since, min(wait_ms, 20000))` 再取一次 `detail(id,{since})`,body 里带 `version`;没变化时也返回 200 但 `events: []`、`version` 不变(桌面据此空转)。
   - 找不到任务 ⇒ 404 照旧;`since`/`wait_ms` 非数字 ⇒ 400。
 - tier 不变(admin,operator 放行)。
 - 长轮询上限 20 秒 < Rust 代理的请求超时(改为 35 秒)。
@@ -129,3 +129,4 @@ GET /v1/workbench/task?id=&since=&wait_ms= ──── 长轮询 ────�
 
 - 2026-09-17:初稿(与主人口头定案:不嵌终端,走"原生渲染事件流"一派;先流、再 diff、再评估 ACP)。
 - 2026-09-17:按实施计划落地(任务 1–8);实施中的偏离:store 的 detail 先读 version 再读 events;hub 只在 seq 前进时唤醒;liveInputs 也 bump;桌面"拿不准就整页重画"(错组 / 提升行 / 展开中的详情)。
+- 2026-09-17:终审修复:合并器 flush 抛错不再逃到进程级;`start()` 事务内不再发布;hub 以持久化 seq 为准可自愈(发布更小的值只降缓存不唤醒);路由先探 detail 再等(未知任务立刻 404,已有新数据不等)。
