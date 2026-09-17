@@ -25,6 +25,7 @@ import {makeMwWorkbench,type WorkbenchMwDeps} from './mw-workbench'
 import { makeMwTaskReference, type TaskReferenceMwDeps } from './mw-task-reference'
 import { makeMwMatter, type MatterMwDeps } from './mw-matter'
 import { makeMwRoute, type RouteMwDeps } from './mw-route'
+import { makeMwConsume, skipFor, skipWhen } from './mw-consume'
 import type { IntentKind } from './intent'
 import { isWechatTaskCommand } from '../../core/workbench/wechat-control'
 
@@ -75,6 +76,19 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     if (missing.length) throw new Error(`inbound route: probe missing for ${missing.join(', ')}`)
   }
   const route = d.route ? makeMwRoute({ ...d.route, probes }) : null
+  // 第三步(c):消费者收成一张表(mw-consume);原链里夹在消费者中间的副作用站按意图跳过,语义不变:
+  //   打字中 —— 原来在工作台命令之后,所以任务命令不发;
+  //   guard —— 原来在 admin / mode / onboarding 之后、权限回话之前(断网时先看到 🛑 而不是把 y/n 吞进去);
+  //   附件 / 语音转文字 —— 提到路由之前,探针才看得到转出来的文字(4b 曾让语音里的指称永远判成 chat)。
+  const consume = makeMwConsume({ handlers: {
+    ...(d.workbench ? { 'task-command': makeMwWorkbench(d.workbench) } : {}),
+    admin: makeMwAdmin(d.admin),
+    mode: makeMwMode(d.mode),
+    onboarding: makeMwOnboarding(d.onboarding),
+    'permission-reply': makeMwPermissionReply(d.permissionReply),
+    ...(d.cliReply ? { 'cli-reply': makeMwCliReply(d.cliReply) } : {}),
+    ...(taskReference ? { 'task-reference': taskReference } : {}),
+  } })
   return compose([
     makeMwTrace(d.trace),
     makeMwIdentity(d.identity),
@@ -93,29 +107,16 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     ...(d.matter?[makeMwMatter(d.matter)]:[]),
     makeMwMessages(d.messages),
     makeMwCaptureCtx(d.capture),
-    // Explicit local task controls need sender authorization and reply context,
-    // but must not enter companion memory, permission selection or LLM health.
-    ...(route?[route]:[]),
-    ...(d.workbench?[makeMwWorkbench(d.workbench)]:[]),
-    makeMwTyping(d.typing),
-    makeMwAdmin(d.admin),
-    makeMwMode(d.mode),
-    makeMwOnboarding(d.onboarding),
-    // Guard runs BEFORE permission-reply: when the network is down we want
-    // the "🛑 出口 IP" notice to surface, not a silent forwarding of a
-    // `y/n abc12` approval into an in-flight tool call that probably needs
-    // the network we just lost.
-    makeMwGuard(d.guard),
-    makeMwPermissionReply(d.permissionReply),
-    ...(d.cliReply ? [makeMwCliReply(d.cliReply)] : []),
+    skipWhen(ctx => isWechatTaskCommand(ctx.msg.text ?? ''), makeMwTyping(d.typing)),
     makeMwAttachments(d.attachments),
     makeMwTranscribeVoice(d.transcribeVoice),
+    ...(route?[route]:[]),
+    skipFor(['task-command', 'admin', 'mode', 'onboarding'], makeMwGuard(d.guard)),
+    // 三个都是 next() 之后才动、且只在没人消费时动的记账站;放在消费之前才包得住消费者。
     makeMwActivity(d.activity),
     makeMwMilestone(d.milestone),
     makeMwWelcome(d.welcome),
-    // 管家指称在 transcribe-voice 之后(语音先转文字)、recall 之前(被它消费的
-    // 消息不付嵌入成本);落不定就 next(),普通聊天照旧。
-    ...(taskReference ? [taskReference] : []),
+    consume,
     // Recall runs after every consuming middleware (only messages that will
     // reach dispatch pay the embed cost) and BEFORE llm-health/dispatch so
     // the <recall> element is on ctx.msg when dispatch formats the envelope.

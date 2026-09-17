@@ -15,3 +15,13 @@ describe('inbound pipeline order — transcribe-voice', () => {
     expect(iAct).toBeGreaterThan(iStt)
   })
 })
+
+// 意图路由第三步(c):链上只剩一站消费(mw-consume);副作用站的先后按原链保住。
+describe('inbound pipeline order — route / consume', () => {
+  it('typing → attachments → transcribe-voice → route → guard → activity → consume → recall', () => {
+    const src = readFileSync(join(__dirname, 'build.ts'), 'utf8')
+    const at = (s: string) => { const i = src.indexOf(s, src.indexOf('return compose([')); expect(i, s).toBeGreaterThan(-1); return i }
+    const order = ['makeMwTyping(', 'makeMwAttachments(', 'makeMwTranscribeVoice(', '...(route?[route]:[])', 'makeMwGuard(', 'makeMwActivity(', '    consume,', 'makeMwRecall(']
+    for (let i = 1; i < order.length; i++) expect(at(order[i]!), `${order[i - 1]} < ${order[i]}`).toBeGreaterThan(at(order[i - 1]!))
+  })
+})

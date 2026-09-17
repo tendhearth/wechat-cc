@@ -226,3 +226,45 @@ describe('意图路由(第二步:消费者按 intent 早退)', () => {
     expect(() => buildInboundPipeline(deps)).not.toThrow()
   })
 })
+
+describe('意图路由(第三步:一站消费 + 语音先转文字再路由)', () => {
+  it('语音消息:转出来的文字先到路由,再由对应的消费者吃掉(4b 曾让它永远判成 chat)', async () => {
+    const { deps, spy } = fakeDeps()
+    const modeHandle = vi.fn(async (msg: InboundCtx['msg']) => msg.text === '[语音] /帮助')
+    deps.mode = { modeHandler: { handle: modeHandle } }
+    deps.transcribeVoice = { transcribeVoice: async () => ({ text: '/帮助' }), readFile: async () => Buffer.from('amr'), log: () => {} }
+    deps.route = { probes: { admin: () => false, mode: ctx => ctx.msg.text === '[语音] /帮助', onboarding: () => false, 'permission-reply': () => false }, log: () => {} }
+    const ctx = mkCtx(); ctx.msg.text = '(non-text message)'; ctx.msg.attachments = [{ kind: 'voice', path: '/inbox/v.amr' } as never]
+    await buildInboundPipeline(deps)(ctx)
+    expect(ctx.msg.text).toBe('[语音] /帮助'); expect(ctx.intent?.kind).toBe('mode'); expect(ctx.consumedBy).toBe('mode'); expect(spy.dispatch).not.toHaveBeenCalled()
+  })
+  it('断网时:管理 / 模式命令照常执行(guard 在它们后面),权限回话与闲聊被 guard 拦下', async () => {
+    const adminHandle = vi.fn(async () => true)
+    const { deps: a } = fakeDeps({ guardEnabled: true, guardReachable: false })
+    a.admin = { adminHandler: { handle: adminHandle } }
+    a.route = { probes: { admin: () => true, mode: () => false, onboarding: () => false, 'permission-reply': () => false }, log: () => {} }
+    const ctx = mkCtx(); ctx.msg.text = '/health'
+    await buildInboundPipeline(a)(ctx)
+    expect(ctx.consumedBy).toBe('admin'); expect(adminHandle).toHaveBeenCalledOnce()
+    const perm = vi.fn(() => true)
+    const { deps: b } = fakeDeps({ guardEnabled: true, guardReachable: false })
+    b.permissionReply = { handlePermissionReply: perm, log: () => {} }
+    b.route = { probes: { admin: () => false, mode: () => false, onboarding: () => false, 'permission-reply': () => true }, log: () => {} }
+    const y = mkCtx(); y.msg.text = 'y'
+    await buildInboundPipeline(b)(y)
+    expect(y.consumedBy).toBe('guard'); expect(perm).not.toHaveBeenCalled()
+  })
+  it('任务命令不发"打字中",别的都发', async () => {
+    const typing = vi.fn(async () => {})
+    const { deps } = fakeDeps()
+    deps.typing = { sendTyping: typing }
+    deps.workbench = { handleWechat: async () => 'ok', sendMessage: async () => ({}) }
+    deps.route = { probes: { admin: () => false, mode: () => false, onboarding: () => false, 'permission-reply': () => false }, log: () => {} }
+    const cmd = mkCtx(); cmd.msg.text = '任务 列表'
+    await buildInboundPipeline(deps)(cmd)
+    expect(cmd.consumedBy).toBe('workbench'); expect(typing).not.toHaveBeenCalled()
+    const chat = mkCtx(); chat.msg.text = 'hi'
+    await buildInboundPipeline(deps)(chat)
+    expect(typing).toHaveBeenCalledOnce()
+  })
+})
