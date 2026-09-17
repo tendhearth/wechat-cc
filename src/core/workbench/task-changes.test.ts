@@ -39,4 +39,23 @@ describe('TaskChangeHub', () => {
     const p = hub.wait('t1', 1, 5000); hub.dispose()
     await expect(p).resolves.toBe(1)
   })
+  it('超时 waiter 被剪枝,不占用上限配额', async () => {
+    vi.useFakeTimers()
+    const hub = makeTaskChangeHub({ maxWaitersPerTask: 8 })
+    hub.publish('t1', 1)
+    // 连续 9 次 wait 各超时;不被剪枝的话第 8 个之后就回不去了
+    for (let i = 0; i < 9; i++) {
+      const p = hub.wait('t1', 1, 50)
+      vi.advanceTimersByTime(50)
+      await expect(p).resolves.toBe(1)
+    }
+    // 第 10 次 wait 必须仍然挂起(不是因为配额满而立即返回)
+    let settled = false
+    const p = hub.wait('t1', 1, 5000)
+    void p.then(() => { settled = true })
+    vi.advanceTimersByTime(10); expect(settled).toBe(false)
+    hub.publish('t1', 2)
+    await expect(p).resolves.toBe(2)
+    vi.useRealTimers()
+  })
 })

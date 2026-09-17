@@ -13,7 +13,7 @@ type Waiter = () => void
 export function makeTaskChangeHub(opts: { maxWaitersPerTask?: number } = {}): TaskChangeHub {
   const max = opts.maxWaitersPerTask ?? 8
   const seqs = new Map<string, number>()
-  const waiters = new Map<string, Waiter[]>()
+  const waiters = new Map<string, Set<Waiter>>()
   const wake = (taskId: string) => { const list = waiters.get(taskId); if (!list) return; waiters.delete(taskId); for (const w of list) w() }
   return {
     publish(taskId, seq) { if (seq > (seqs.get(taskId) ?? 0)) seqs.set(taskId, seq); wake(taskId) },
@@ -21,14 +21,20 @@ export function makeTaskChangeHub(opts: { maxWaitersPerTask?: number } = {}): Ta
     wait(taskId, since, maxMs) {
       const current = seqs.get(taskId) ?? 0
       if (current > since) return Promise.resolve(current)
-      const list = waiters.get(taskId) ?? []
-      if (list.length >= max) return Promise.resolve(current)
+      const list = waiters.get(taskId) ?? new Set<Waiter>()
+      if (list.size >= max) return Promise.resolve(current)
       return new Promise(resolve => {
         let done = false
-        const finish = () => { if (done) return; done = true; clearTimeout(t); resolve(seqs.get(taskId) ?? 0) }
+        const finish = () => {
+          if (done) return
+          done = true
+          clearTimeout(t)
+          list.delete(finish)
+          resolve(seqs.get(taskId) ?? 0)
+        }
         const t = setTimeout(finish, maxMs)
         ;(t as { unref?: () => void }).unref?.()
-        list.push(finish); waiters.set(taskId, list)
+        list.add(finish); waiters.set(taskId, list)
       })
     },
     dispose() { for (const id of [...waiters.keys()]) wake(id); seqs.clear() },
