@@ -1339,9 +1339,11 @@ export function makeWorkbenchService(opts: Options) {
       return mark
     },
     /**
-     * 打回 = 逐文件标 `returned` + 把「哪几处、为什么、当时长什么样」组成一段续接要求。
+     * 打回 = 把「哪几处、为什么、当时长什么样」组成一段续接要求 + 逐文件标 `returned`。
      * 续接走 `continueTask` 那道门(忙 / 归档 / 免审未确认 / 要不要重开都由它判),错误码原样透传。
-     * 校验全部先做完再落标记 —— 半笔打回比不打回更难查。
+     * 标记**在续接成功之后**才落:`restart_confirmation_required` 是设计内的首次回应(桌面要靠它拿
+     * 重开令牌),`workbench_busy` 是常见的抢跑 —— 先落标记会让主人常态化看到「已打回」却根本没发出去。
+     * 重发同一个 inputRequestId 时 continueTask 走幂等分支,再写一遍同样的标记无妨。
      */
     returnReviewFiles(id:string,input:{artifactId:string;paths:string[];comment:string;inputRequestId?:string}):WorkbenchTaskView {
       if(!Array.isArray(input.paths)||!input.paths.length||input.paths.length>20||input.paths.some(path=>typeof path!=='string'||!path))throw new Error('invalid_review_reference')
@@ -1351,9 +1353,10 @@ export function makeWorkbenchService(opts: Options) {
       const inputRequestId=input.inputRequestId===undefined?randomUUID():normalizeInputRequestId(input.inputRequestId)
       const {artifact,review}=reviewTarget(id,input.artifactId)
       const files=[...new Set(input.paths)].map(path=>markableFile(review,path))
+      const task=service.continueTask(id,composeReturnText(files.map(({path,diff})=>({path,diff})),comment),{inputRequestId})
       for(const file of files)store.reviewMarks.set({taskId:id,artifactSha256:artifact.sha256,path:file.path,afterSha256:file.afterSha256??null,mark:'returned',comment})
       touched(id)
-      return service.continueTask(id,composeReturnText(files.map(({path,diff})=>({path,diff})),comment),{inputRequestId})
+      return task
     },
     resolvePermission(id:string,requestId:string,decision:PermissionDecision):void {
       store.get(id)

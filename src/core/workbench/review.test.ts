@@ -70,4 +70,11 @@ describe('composeReturnText', () => {
     expect(text.length).toBeLessThanOrEqual(120)
     expect(text).toContain('(已截断)')
   })
+
+  it('预算比标注本身还小也不越界', () => {
+    for (const maxTotalChars of [0, 1, 3, 5]) {
+      const text = composeReturnText([{ path: 'a.ts', diff: '@@\n+一' }], '改', { maxTotalChars })
+      expect(text.length).toBeLessThanOrEqual(maxTotalChars)
+    }
+  })
 })

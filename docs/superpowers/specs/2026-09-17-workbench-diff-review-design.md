@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS workbench_review_marks (
 
 - `reviewList(id): ReviewTurn[]` —— 读该任务所有 mime 为 `GIT_REVIEW_MIME` 的成果(新→旧),`readArtifactSnapshot` 解析成 `GitReview`,每个文件附上当前标记;返回 `{artifactId, sha256, name, createdAt, status, headBefore, headAfter, preexistingPaths, notes, files:[{...ReviewFile, mark?: {mark, comment, createdAt}}]}`。解析失败的快照返回 `status:'unavailable'` 加一条 note,不抛。
 - `markReviewFile(id, {artifactId, path, mark:'accepted'|'returned', comment?})` —— 校验:成果属于该任务且 mime 正确;`path` 在快照里且 `kind !== 'not_reviewed'`(否则 `review_file_unmarkable`);写标记;`touched(id)`。
-- `returnReviewFiles(id, {artifactId, paths[], comment, inputRequestId?})` —— 对每个 path 写 `returned` 标记,然后组一段续接文本交给 `continueTask(id, text, {inputRequestId})`(同一道门:未确认的免审执行者、租约、状态都由它判):
+- `returnReviewFiles(id, {artifactId, paths[], comment, inputRequestId?})` —— 校验后组一段续接文本交给 `continueTask(id, text, {inputRequestId})`(同一道门:未确认的免审执行者、租约、状态都由它判),**续接成功之后**才给每个 path 写 `returned` 标记(`continueTask` 抛了就一条不写);重发同一个 `inputRequestId` 走 `continueTask` 的幂等分支,再写一遍同样的标记无妨:
   ```
   打回以下改动,请按意见修改:
   - <path>
@@ -78,3 +78,4 @@ CREATE TABLE IF NOT EXISTS workbench_review_marks (
 ## 修订记录
 
 - 2026-09-17:初稿。
+- 2026-09-17:打回改为续接成功后才写标记(评审:restart_confirmation_required 是设计内的首次回应,标记先落会常态化"已打回但没发出")。

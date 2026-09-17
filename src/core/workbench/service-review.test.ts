@@ -188,6 +188,20 @@ describe('returnReviewFiles', () => {
     expect(() => service.returnReviewFiles(id, { artifactId: alien, paths: ['src/other.ts'], comment: '改' })).toThrow('not_found')
   })
 
+  // 评审(2026-09-17):restart_confirmation_required 是设计内的首次回应,workbench_busy 是常见抢跑 ——
+  // 标记先落会让主人常态化看到「已打回」却根本没发出去。
+  it('续接被拒(已归档)⇒ 错误原样透传,一条 returned 标记都不留', async () => {
+    const { service, id, second } = await planted()
+    service.setArchived(id, true)
+    expect(() => service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts', 'src/b.ts'], comment: '这两处判空漏了' })).toThrow('workbench_archived')
+    expect(service.reviewList(id).find(t => t.artifactId === second)!.files.every(f => f.mark === undefined)).toBe(true)
+    // 解档后同一笔打回照旧成立,标记这才落下。
+    service.setArchived(id, false)
+    service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts', 'src/b.ts'], comment: '这两处判空漏了' })
+    expect(service.reviewList(id).find(t => t.artifactId === second)!.files.map(f => f.mark?.mark)).toEqual(['returned', 'returned'])
+    await vi.waitFor(() => expect(service.detail(id).task.status).toBe('completed'))
+  })
+
   it('同一个 inputRequestId 重发只跑一轮;畸形的 id 连标记都不留', async () => {
     const { service, id, second } = await planted()
     expect(() => service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts'], comment: '改', inputRequestId: '不是-uuid' })).toThrow('invalid_request')

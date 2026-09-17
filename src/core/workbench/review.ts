@@ -63,10 +63,12 @@ export function composeReturnText(
   limits: { maxLinesPerFile?: number; maxTotalChars?: number } = {},
 ): string {
   const maxLines = limits.maxLinesPerFile ?? 60, maxChars = limits.maxTotalChars ?? 6000
+  // 预算比标注本身还小是个荒唐配置,但也不能因此越界 —— 那时连标注都得截。
   const clamp = (value: string) => value.length <= maxChars ? value
-    : `${value.slice(0, Math.max(0, maxChars - MARKER.length))}${MARKER}`
+    : maxChars <= MARKER.length ? TRUNCATED.slice(0, Math.max(0, maxChars))
+      : `${value.slice(0, maxChars - MARKER.length)}${MARKER}`
   const sections = files.flatMap(file => {
-    const diff = (file.diff ?? '').replace(/\s+$/, '')
+    const diff = (file.diff ?? '').trimEnd()
     if (!diff) return []
     const lines = diff.split('\n'), kept = lines.slice(0, maxLines)
     return [`\n\n--- ${file.path} ---\n${kept.join('\n')}${lines.length > kept.length ? MARKER : ''}`]
