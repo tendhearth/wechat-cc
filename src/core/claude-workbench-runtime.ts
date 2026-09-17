@@ -44,6 +44,7 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
   const operations = new Map<string, ActivityEvent>()
   let streamMessageId: string | null = null // API message id currently streaming, from stream_event message_start
   const streamed = new Map<string, string>() // itemId → text streamed so far, for reconciliation against the final assistant block
+  const suppressedStream = new Set<string>() // itemIds whose accumulated text tripped the claude-sentinel auth-fail gate; cleared on message_stop
   const pending = new Map<string, { resolve: () => void; reject: (error: Error) => void }>()
   const requestIds = new Set<string>()
   let retained = false, foreground: AgentRuntimeSnapshot['foreground'] = 'unknown', started = false, ended = false, closing = false
@@ -125,13 +126,16 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
         const delta = object(ev.delta) ? ev.delta : null
         if (!delta || delta.type !== 'text_delta' || typeof delta.text !== 'string' || !delta.text) return
         const itemId = `claude:${streamMessageId}:text:${ev.index}`
+        if (suppressedStream.has(itemId)) return // sentinel already matched this block; stop echoing it into the timeline
         if (!streamed.has(itemId) && streamed.size >= 64) { const oldest = streamed.keys().next().value; if (oldest !== undefined) streamed.delete(oldest) }
-        streamed.set(itemId, (streamed.get(itemId) ?? '') + delta.text)
+        const combined = (streamed.get(itemId) ?? '') + delta.text
+        if (isAuthFail('claude-sentinel', combined)) { streamed.delete(itemId); suppressedStream.add(itemId); return }
+        streamed.set(itemId, combined)
         foreground = 'running'
         output.push({ kind: 'text', text: delta.text, itemId, textMode: 'append' })
         return
       }
-      if (ev.type === 'message_stop') streamMessageId = null
+      if (ev.type === 'message_stop') { streamMessageId = null; suppressedStream.clear() }
       return
     }
     if (message.type === 'system') {
@@ -239,6 +243,7 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
     }
     if (message.type === 'result') {
       foreground = 'idle'
+      streamMessageId = null; streamed.clear(); suppressedStream.clear() // a turn boundary bounds streamed-text lifetime explicitly
       output.push({ kind: 'result', sessionId: typeof message.session_id === 'string' ? message.session_id : sessionId ?? '', numTurns: typeof message.num_turns === 'number' ? message.num_turns : 0, durationMs: typeof message.duration_ms === 'number' ? message.duration_ms : 0 })
       if (message.subtype && message.subtype !== 'success') finish(new Error(`claude_runtime_result_${message.subtype}`))
       else if (!retained && registrationKnown) finish()

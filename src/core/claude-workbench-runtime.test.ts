@@ -290,11 +290,70 @@ describe('Claude workbench retained runtime', () => {
 
   it('ignores sub-agent stream_events and deltas missing text, without losing the final assistant replace', async () => {
     const run = await open(); run.runtime.start('start'); init()
+    native.emit({ type: 'stream_event', uuid: 'u0', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'message_start', message: { id: 'msg_2', role: 'assistant', content: [] } } })
     native.emit({ type: 'stream_event', uuid: 'u1', session_id: 'native-parent', parent_tool_use_id: 'tool-1', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '子' } } })
     native.emit({ type: 'stream_event', uuid: 'u2', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta' } } })
     native.emit({ type: 'assistant', uuid: 'a1', parent_tool_use_id: null, message: { id: 'msg_2', content: [{ type: 'text', text: '整条' }] } })
+    // Neither the sub-agent's delta (dropped for parent_tool_use_id) nor the malformed delta
+    // (missing text) ever accumulates into `streamed`, so reconciliation finds nothing for
+    // msg_2's block 0 and falls back to the uuid-keyed itemId — a single row, no leak.
     await expect.poll(() => run.events.filter(event => event.kind === 'text')).toEqual([
       { kind: 'text', text: '整条', itemId: 'claude:a1:text:0', textMode: 'replace' },
+    ])
+  })
+
+  it('suppresses a claude-sentinel auth-fail block before its streamed deltas ever reach the timeline', async () => {
+    const run = await open(); run.runtime.start('start'); init()
+    native.emit({ type: 'stream_event', uuid: 'u1', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'message_start', message: { id: 'msg_auth', role: 'assistant', content: [] } } })
+    // The first chunk alone already contains the claude-sentinel phrase (auth-fail.ts's
+    // AUTH_FAIL_CLAUDE_SENTINEL), so the accumulated-text check catches it before any push.
+    native.emit({ type: 'stream_event', uuid: 'u2', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Not logged in' } } })
+    // A later delta of the same block must stay suppressed too.
+    native.emit({ type: 'stream_event', uuid: 'u3', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: ' · Please run /login' } } })
+    native.emit({ type: 'stream_event', uuid: 'u4', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'message_stop' } })
+    // Sync barrier: since the SDK stream is consumed strictly in order, once this unrelated
+    // text arrives every earlier stream_event has already been fully processed.
+    assistant('sync barrier')
+    await expect.poll(() => textEvents(run.events)).toEqual(['sync barrier'])
+  })
+
+  it('falls back to a fresh uuid-keyed row when the final assistant text does not exactly match the streamed text (documents the accepted duplicate-row case)', async () => {
+    const run = await open(); run.runtime.start('start'); init()
+    native.emit({ type: 'stream_event', uuid: 'u1', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'message_start', message: { id: 'msg_3', role: 'assistant', content: [] } } })
+    native.emit({ type: 'stream_event', uuid: 'u2', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '你' } } })
+    native.emit({ type: 'stream_event', uuid: 'u3', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '好' } } })
+    native.emit({ type: 'assistant', uuid: 'a3', parent_tool_use_id: null, message: { id: 'msg_3', model: 'parent-model', content: [{ type: 'text', text: '你好 ' }] } })
+    await expect.poll(() => run.events.filter(event => event.kind === 'text')).toEqual([
+      { kind: 'text', text: '你', itemId: 'claude:msg_3:text:0', textMode: 'append' },
+      { kind: 'text', text: '好', itemId: 'claude:msg_3:text:0', textMode: 'append' },
+      { kind: 'text', text: '你好 ', itemId: 'claude:a3:text:0', textMode: 'replace' },
+    ])
+  })
+
+  it('clears streamed text at each result boundary so a later exact match still reconciles onto the same itemId (no leak across turns)', async () => {
+    const run = await open(); run.runtime.start('start'); init(); startChild('A')
+    native.emit({ type: 'stream_event', uuid: 'u1', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'message_start', message: { id: 'msg_4', role: 'assistant', content: [] } } })
+    native.emit({ type: 'stream_event', uuid: 'u2', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '你' } } })
+    native.emit({ type: 'stream_event', uuid: 'u3', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '好' } } })
+    // Trailing-space mismatch: reconciliation falls back to a new row and leaves a stale
+    // 'claude:msg_4:text:0' entry behind unless `result` clears it.
+    native.emit({ type: 'assistant', uuid: 'a4', parent_tool_use_id: null, message: { id: 'msg_4', model: 'parent-model', content: [{ type: 'text', text: '你好 ' }] } })
+    result('你好 ')
+    await expect.poll(() => textEvents(run.events).length).toBe(3)
+
+    // Same API message id and block index next turn, this time an exact match. Without
+    // clearing `streamed` at the prior `result`, the stale '你好' would pollute this turn's
+    // accumulation and the exact-match reconciliation below would wrongly fall back to a new
+    // uuid-keyed row instead of reusing 'claude:msg_4:text:0'.
+    native.emit({ type: 'stream_event', uuid: 'u4', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'message_start', message: { id: 'msg_4', role: 'assistant', content: [] } } })
+    native.emit({ type: 'stream_event', uuid: 'u5', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '你' } } })
+    native.emit({ type: 'stream_event', uuid: 'u6', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '好' } } })
+    native.emit({ type: 'assistant', uuid: 'a4b', parent_tool_use_id: null, message: { id: 'msg_4', model: 'parent-model', content: [{ type: 'text', text: '你好' }] } })
+    await expect.poll(() => textEvents(run.events).length).toBe(6)
+    expect(run.events.filter(event => event.kind === 'text').slice(3)).toEqual([
+      { kind: 'text', text: '你', itemId: 'claude:msg_4:text:0', textMode: 'append' },
+      { kind: 'text', text: '好', itemId: 'claude:msg_4:text:0', textMode: 'append' },
+      { kind: 'text', text: '你好', itemId: 'claude:msg_4:text:0', textMode: 'replace' },
     ])
   })
 
