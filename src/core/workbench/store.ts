@@ -68,7 +68,16 @@ export function makeWorkbenchStore(db: Db) {
     return task
   }
   const artifacts = (id: string) => db.query<StoredArtifact, [string]>(`${ART_SELECT} WHERE task_id=? ORDER BY created_at DESC,rowid DESC`).all(id)
-  const {events,addEvent,recordAgentEvent,finishRunActivities}=makeTimelineEvents(db)
+  const {events,addEvent:insertEvent,recordAgentEvent:upsertAgentEvent,finishRunActivities:finishActivities}=makeTimelineEvents(db)
+  const bump=(id:string):number=>{
+    const row=db.query<{seq:number},[number,string]>('UPDATE workbench_tasks SET seq=seq+1,updated_at=? WHERE id=? RETURNING seq').get(Date.now(),id)
+    if(!row)throw new Error('not_found')
+    return row.seq
+  }
+  const version=(id:string)=>db.query<{seq:number},[string]>('SELECT seq FROM workbench_tasks WHERE id=?').get(id)?.seq??0
+  const addEvent=(id:Parameters<typeof insertEvent>[0],kind:Parameters<typeof insertEvent>[1],text:Parameters<typeof insertEvent>[2],sourceId:Parameters<typeof insertEvent>[3]=null,runId:Parameters<typeof insertEvent>[4]=null,attachments:Parameters<typeof insertEvent>[5]=[])=>db.transaction(()=>insertEvent(id,kind,text,sourceId,runId,attachments,bump(id)))()
+  const recordAgentEvent=(taskId:Parameters<typeof upsertAgentEvent>[0],runId:Parameters<typeof upsertAgentEvent>[1],event:Parameters<typeof upsertAgentEvent>[2])=>db.transaction(()=>upsertAgentEvent(taskId,runId,event,bump(taskId)))()
+  const finishRunActivities=(taskId:Parameters<typeof finishActivities>[0],runId:Parameters<typeof finishActivities>[1],status:Parameters<typeof finishActivities>[2])=>db.transaction(()=>{finishActivities(taskId,runId,status,bump(taskId))})()
   const sourceRow=(row:StoredNativeSource|null)=>row?{...row,truncated:!!row.truncated}:null
   const source=(id:string)=>sourceRow(db.query<StoredNativeSource,[string]>(SOURCE_SELECT+' WHERE task_id=?').get(id))
   const sourceByIdentity=(providerId:string,nativeId:string)=>sourceRow(db.query<StoredNativeSource,[string,string]>(SOURCE_SELECT+' WHERE provider_id=? AND native_id=?').get(providerId,nativeId))
@@ -85,9 +94,15 @@ export function makeWorkbenchStore(db: Db) {
     creationReceipts:makeCreationReceiptStore(db),
     wechatNotifications:makeWechatNotificationStore(db),
     artifactDeliveries:makeArtifactDeliveryStore(db),
-    get, artifacts, events, addEvent,recordAgentEvent,finishRunActivities,source,sourceByIdentity,handoffs,
-    recordHandoffNative:(id:string,nativeId:string)=>db.query('UPDATE workbench_handoffs SET target_native_id=? WHERE id=? AND target_native_id IS NULL').run(nativeId,id),
-    recordHandoffEvent:(id:string,eventId:number)=>db.query('UPDATE workbench_handoffs SET request_event_id=? WHERE id=?').run(eventId,id),
+    get, artifacts, events, addEvent,recordAgentEvent,finishRunActivities,source,sourceByIdentity,handoffs,bump,version,
+    recordHandoffNative:(id:string,nativeId:string)=>db.transaction(()=>{
+      const row=db.query<{targetTaskId:string},[string,string]>('UPDATE workbench_handoffs SET target_native_id=? WHERE id=? AND target_native_id IS NULL RETURNING target_task_id AS targetTaskId').get(nativeId,id)
+      if(row)bump(row.targetTaskId)
+    })(),
+    recordHandoffEvent:(id:string,eventId:number)=>db.transaction(()=>{
+      const row=db.query<{targetTaskId:string},[number,string]>('UPDATE workbench_handoffs SET request_event_id=? WHERE id=? RETURNING target_task_id AS targetTaskId').get(eventId,id)
+      if(row)bump(row.targetTaskId)
+    })(),
     handoffByToken:(hash:string)=>db.query<StoredHandoff,[string]>(HANDOFF_SELECT+' WHERE token_hash=?').get(hash),
     handoffRecord(taskId:string,id:string){
       const record=db.query<StoredHandoff,[string,string,string]>(HANDOFF_SELECT+' WHERE id=? AND (source_task_id=? OR target_task_id=?)').get(id,taskId,taskId)
@@ -174,9 +189,12 @@ export function makeWorkbenchStore(db: Db) {
       return get(id)
     },
     update(id: string, status: TaskStatus, error: string | null = null) {
-      db.query('UPDATE workbench_tasks SET status=?,error=?,updated_at=? WHERE id=?').run(status,error,Date.now(),id)
+      db.transaction(()=>{
+        db.query('UPDATE workbench_tasks SET status=?,error=?,updated_at=? WHERE id=?').run(status,error,Date.now(),id)
+        bump(id)
+      })()
     },
-    session(id: string, sessionId: string | null) { db.query('UPDATE workbench_tasks SET session_id=? WHERE id=?').run(sessionId,id) },
+    session(id: string, sessionId: string | null) { db.transaction(()=>{db.query('UPDATE workbench_tasks SET session_id=? WHERE id=?').run(sessionId,id);bump(id)})() },
     recover() {
       const rows = db.query<{ id: string; path: string; status: TaskStatus }, []>("SELECT id,path,status FROM workbench_tasks WHERE status IN ('queued','running','cancelling')").all()
       db.transaction(() => {
@@ -190,7 +208,10 @@ export function makeWorkbenchStore(db: Db) {
       })()
     },
     addArtifact(input: Omit<StoredArtifact, 'id' | 'createdAt' | 'approvedAt'>) {
-      db.query('INSERT OR IGNORE INTO workbench_artifacts(id,task_id,name,mime,size,sha256,storage_path,created_at) VALUES(?,?,?,?,?,?,?,?)').run(randomUUID(),input.taskId,input.name,input.mime,input.size,input.sha256,input.storagePath,Date.now())
+      db.transaction(()=>{
+        db.query('INSERT OR IGNORE INTO workbench_artifacts(id,task_id,name,mime,size,sha256,storage_path,created_at) VALUES(?,?,?,?,?,?,?,?)').run(randomUUID(),input.taskId,input.name,input.mime,input.size,input.sha256,input.storagePath,Date.now())
+        bump(input.taskId)
+      })()
     },
     artifact(taskId: string, id: string): StoredArtifact {
       const artifact = db.query<StoredArtifact, [string,string]>(`${ART_SELECT} WHERE task_id=? AND id=?`).get(taskId,id)
@@ -200,9 +221,12 @@ export function makeWorkbenchStore(db: Db) {
     approve(taskId: string, id: string, sha256: string) {
       const a = this.artifact(taskId,id)
       if (a.sha256 !== sha256) throw new Error('artifact_changed')
-      db.query('UPDATE workbench_artifacts SET approved_at=? WHERE task_id=? AND id=? AND sha256=?').run(Date.now(),taskId,id,sha256)
+      db.transaction(()=>{
+        db.query('UPDATE workbench_artifacts SET approved_at=? WHERE task_id=? AND id=? AND sha256=?').run(Date.now(),taskId,id,sha256)
+        bump(taskId)
+      })()
     },
-    detail(id: string) { const origin=source(id);return {handoffs:handoffs(id),...(origin?{source:publicSource(origin)}:{}), task: publicTask(get(id)), events: events(id), artifacts: artifacts(id).map(publicArtifact) } },
+    detail(id: string, opts: { since?: number } = {}) { const origin=source(id);return {handoffs:handoffs(id),...(origin?{source:publicSource(origin)}:{}), task: publicTask(get(id)), events: events(id,opts.since), artifacts: artifacts(id).map(publicArtifact), version: version(id) } },
   }
 }
 export type WorkbenchStore = ReturnType<typeof makeWorkbenchStore>

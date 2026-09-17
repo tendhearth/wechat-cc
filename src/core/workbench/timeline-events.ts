@@ -22,11 +22,13 @@ function publicEvent({runId,activityJson,attachmentsJson,...row}:EventRow):TaskE
 }
 
 export function makeTimelineEvents(db:Db) {
-  const events=(id:string)=>db.query<EventRow,[string]>(SELECT+' WHERE task_id=? ORDER BY id').all(id).map(publicEvent)
-  const addEvent=(id:string,kind:TaskEvent['kind'],text:string,sourceId:string|null=null,runId:string|null=null,attachments:readonly Attachment[]=[])=>Number(
-    db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,source_id,run_id,attachments_json) VALUES(?,?,?,?,?,?,?)')
-      .run(id,kind,text.slice(0,40_000),Date.now(),sourceId,runId,JSON.stringify(attachments)).lastInsertRowid)
-  const recordAgentEvent=(taskId:string,runId:string,event:VisibleEvent)=>db.transaction(()=>{
+  const events=(id:string,since?:number)=>(since===undefined
+    ?db.query<EventRow,[string]>(SELECT+' WHERE task_id=? ORDER BY id').all(id)
+    :db.query<EventRow,[string,number]>(SELECT+' WHERE task_id=? AND seq>? ORDER BY id').all(id,since)).map(publicEvent)
+  const addEvent=(id:string,kind:TaskEvent['kind'],text:string,sourceId:string|null=null,runId:string|null=null,attachments:readonly Attachment[]=[],seq:number)=>Number(
+    db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,source_id,run_id,attachments_json,seq) VALUES(?,?,?,?,?,?,?,?)')
+      .run(id,kind,text.slice(0,40_000),Date.now(),sourceId,runId,JSON.stringify(attachments),seq).lastInsertRowid)
+  const recordAgentEvent=(taskId:string,runId:string,event:VisibleEvent,seq:number)=>db.transaction(()=>{
     const activity=event.kind==='tool_call'&&event.activity?publicActivity(event.activity):undefined
     const nativeId=event.kind==='text'?event.itemId:activity?.id
     const key=nativeId?JSON.stringify([event.kind,nativeId]):null
@@ -36,19 +38,19 @@ export function makeTimelineEvents(db:Db) {
     if(previous) {
       // Duplicate starts may arrive after completion; never turn a finished call back into a spinner.
       if(activity?.status==='running'&&previous.activityJson&&JSON.parse(previous.activityJson).status!=='running')return previous.id
-      db.query('UPDATE workbench_events SET text=?,activity_json=? WHERE id=?').run(text,activity?JSON.stringify(activity):null,previous.id)
+      db.query('UPDATE workbench_events SET text=?,activity_json=?,seq=? WHERE id=?').run(text,activity?JSON.stringify(activity):null,seq,previous.id)
       return previous.id
     }
-    return Number(db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,run_id,event_key,activity_json) VALUES(?,?,?,?,?,?,?)')
-      .run(taskId,event.kind,text,Date.now(),runId,key,activity?JSON.stringify(activity):null).lastInsertRowid)
+    return Number(db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,run_id,event_key,activity_json,seq) VALUES(?,?,?,?,?,?,?,?)')
+      .run(taskId,event.kind,text,Date.now(),runId,key,activity?JSON.stringify(activity):null,seq).lastInsertRowid)
   })()
-  const finishRunActivities=(taskId:string,runId:string|null,status:'cancelled'|'interrupted')=>db.transaction(()=>{
+  const finishRunActivities=(taskId:string,runId:string|null,status:'cancelled'|'interrupted',seq:number)=>db.transaction(()=>{
     const rows=runId===null
       ?db.query<EventRow,[string]>(SELECT+' WHERE task_id=? AND activity_json IS NOT NULL').all(taskId)
       :db.query<EventRow,[string,string]>(SELECT+' WHERE task_id=? AND run_id=? AND activity_json IS NOT NULL').all(taskId,runId)
     for(const row of rows) {
       const activity=JSON.parse(row.activityJson!) as AgentActivity
-      if(activity.status==='running')db.query('UPDATE workbench_events SET activity_json=? WHERE id=?').run(JSON.stringify({...activity,status}),row.id)
+      if(activity.status==='running')db.query('UPDATE workbench_events SET activity_json=?,seq=? WHERE id=?').run(JSON.stringify({...activity,status}),seq,row.id)
     }
   })()
   return {events,addEvent,recordAgentEvent,finishRunActivities}
