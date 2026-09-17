@@ -127,6 +127,7 @@ export interface WiredDeps {
   /** Mint a fresh graphical-settings-panel URL (10-min token). Null when no
    *  LAN/owner. Wired to GET /v1/settings/link for the desktop QR entry. */
   settingsPanelLink: () => Promise<string | null>
+  mattersService: import('../../core/matters/service').MattersService | null
   companionPushDeps: CompanionPushDeps
   companionIntrospectDeps: CompanionIntrospectDeps
   companionIngestDeps: CompanionIngestDeps
@@ -230,13 +231,14 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     health: opts.boot.health.health,
     runAtelierTick,
   })
-  const { pipelineDeps, companionConverse, petTurn, settingsPanelLink } = buildPipelineDeps(opts, refs)
+  const { pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService } = buildPipelineDeps(opts, refs)
   const lifecycleDeps = buildLifecycleDeps(opts, ticks)
   return {
     pipelineDeps,
     companionConverse,
     petTurn,
     settingsPanelLink,
+    mattersService,
     ...lifecycleDeps,
     ticks,
     refs,

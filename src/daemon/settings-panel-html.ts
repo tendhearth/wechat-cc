@@ -520,9 +520,20 @@ export function phoneHtml(token: string, remote: { relay: string; id: string } |
   <div class="sec"><div class="grp">CC 画的你</div><div class="portrait" id="portrait"></div></div>
   <div class="sec"><div class="grp">表情</div><div class="stgrid" id="stickers"></div></div>
 </div>
+<div class="pane" id="p-matters">
+  <div id="m-list"><div class="empty">正在读…</div></div>
+  <div id="m-detail" hidden>
+    <button id="m-back" class="more" type="button">← 全部</button>
+    <div class="grp" id="m-title"></div>
+    <div id="m-events"></div>
+    <div class="card" id="m-say-box"><textarea id="m-say" rows="2" placeholder="接着说…" style="width:100%;font:inherit;border:1px solid var(--line);border-radius:8px;padding:8px;box-sizing:border-box"></textarea>
+      <button id="m-send" class="done-btn" type="button" style="margin-top:6px">发送</button></div>
+  </div>
+</div>
 <nav>
   <button data-p="today" class="on"><span class="i">🌤</span>今天</button>
   <button data-p="pocket"><span class="i">🎒</span>口袋</button>
+  <button data-p="matters"><span class="i">📁</span>一件事</button>
   <button id="nav-set"><span class="i">⚙️</span>设置</button>
 </nav>
 <div id="toast"></div>
@@ -558,6 +569,59 @@ document.querySelectorAll("nav button[data-p]").forEach(function(b) {
   })
 })
 document.getElementById("nav-set").addEventListener("click", function(){ ccNav("/set") })
+// ── 「一件事」:与桌面同一份列表、同一套语义(GET /m/api/matters|matter, POST /m/api/matter/say)
+var M_STATUS = { open: "进行中", replied: "已答复", done: "已了结", archived: "已归档" }
+var M_KIND = { task: "任务", chat: "对话", companion: "陪伴" }
+var mCurrent = null, mPoll = null
+function loadMatters() {
+  api("/m/api/matters?status=open,replied,done").then(function(r){ return r.json() }).then(function(r) {
+    var el = document.getElementById("m-list")
+    if (!r.ok) { el.innerHTML = '<div class="empty">' + (r.error === "matters_not_wired" ? "这台还没开「一件事」" : "读不到") + '</div>'; return }
+    if (!r.matters.length) { el.innerHTML = '<div class="empty">还没有事——微信或桌面上交代一件就会出现在这里</div>'; return }
+    var h = ""
+    r.matters.forEach(function(m) {
+      if (m.kind === "companion") return
+      h += '<div class="card todo" data-mid="' + esc(m.id) + '"><div class="tx"><b>' + esc(m.title) + '</b><small>' + esc(M_KIND[m.kind] || m.kind) + ' · ' + esc(M_STATUS[m.status] || m.status) + (m.projectPath ? ' · ' + esc(m.projectPath.split("/").pop()) : '') + '</small></div></div>'
+    })
+    el.innerHTML = h || '<div class="empty">还没有事</div>'
+  }).catch(function(){ document.getElementById("m-list").innerHTML = '<div class="empty">网络不通</div>' })
+}
+function renderMatter(d) {
+  document.getElementById("m-title").textContent = d.matter.title + " · " + (M_STATUS[d.matter.status] || d.matter.status)
+  var h = ""
+  ;(d.events || []).forEach(function(e) {
+    if (e.kind !== "user" && e.kind !== "text" && e.kind !== "error" && e.kind !== "system") return
+    h += '<div class="card ev"><div class="k">' + (e.kind === "user" ? "你" : e.kind === "text" ? "CC" : "·") + '</div><div class="tx"><p>' + esc(e.text) + '</p><small>' + esc(ago(new Date(e.createdAt).toISOString())) + '</small></div></div>'
+  })
+  if (!h) h = '<div class="empty">' + (d.matter.kind === "chat" ? "对话的内容在微信 / 桌面里;在这里说的话会直接送给 CC" : "还没有对话记录") + '</div>'
+  document.getElementById("m-events").innerHTML = h
+  document.getElementById("m-say-box").hidden = d.matter.kind === "companion" || d.matter.status === "archived"
+}
+function openMatter(id) {
+  mCurrent = id
+  document.getElementById("m-list").hidden = true; document.getElementById("m-detail").hidden = false
+  api("/m/api/matter?id=" + encodeURIComponent(id)).then(function(r){ return r.json() }).then(function(d) {
+    if (!d.ok) { toast(d.error === "matter_not_found" ? "这件事不在了" : "读不到"); return }
+    renderMatter(d)
+  }).catch(function(){ toast("网络不通") })
+}
+function pollMatter(times) {
+  clearTimeout(mPoll)
+  if (!mCurrent || times <= 0) return
+  mPoll = setTimeout(function() { if (!mCurrent) return; openMatter(mCurrent); pollMatter(times - 1) }, 3000)
+}
+document.getElementById("m-list").addEventListener("click", function(ev) { var c = ev.target.closest("[data-mid]"); if (c) openMatter(c.dataset.mid) })
+document.getElementById("m-back").addEventListener("click", function() { mCurrent = null; clearTimeout(mPoll); document.getElementById("m-detail").hidden = true; document.getElementById("m-list").hidden = false; loadMatters() })
+document.getElementById("m-send").addEventListener("click", function() {
+  var ta = document.getElementById("m-say"), text = ta.value.trim()
+  if (!mCurrent || !text) return
+  api("/m/api/matter/say", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: mCurrent, text: text }) })
+    .then(function(r){ return r.json() }).then(function(r) {
+      if (r.ok) { ta.value = ""; toast(r.result && r.result.kind === "chat" ? "CC 回了" : "交代了,等它回"); if (r.result && r.result.kind === "chat" && r.result.reply) { var ev = document.createElement("div"); ev.className = "card ev"; ev.innerHTML = '<div class="k">CC</div><div class="tx"><p>' + esc(r.result.reply) + '</p></div>'; document.getElementById("m-events").appendChild(ev) } else pollMatter(5) }
+      else toast(r.error === "workbench_busy" ? "那个文件夹正有别的事在做" : r.error === "matter_say_unsupported" ? "这件事不能在这里接着说" : "没送出去")
+    }).catch(function(){ toast("网络不通") })
+})
+document.querySelector('nav button[data-p="matters"]').addEventListener("click", function(){ if (!mCurrent) loadMatters() })
 function render(s) {
   var t = document.getElementById("todos")
   var groups = {}

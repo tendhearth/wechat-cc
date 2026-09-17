@@ -22,6 +22,8 @@ describe('settings panel', () => {
   const prefs: Record<string, Record<string, unknown>> = {}
   const setUserName = vi.fn(async () => {})
   const audit = vi.fn()
+  const MATTER = { id: 'deadbeef', kind: 'task', title: '整理周报', projectPath: '/work/report', status: 'replied', ownerChatId: OWNER, createdAt: 1, updatedAt: 2 }
+  const matters = { list: vi.fn(() => [MATTER]), detail: vi.fn(() => ({ matter: MATTER, bindings: [], sessions: [], task: null, events: [{ kind: 'text', text: '做好了', createdAt: 3 }] })), say: vi.fn(async () => ({ kind: 'task', task: { id: 'deadbeef' } })), seenOnPhone: vi.fn() }
 
   beforeEach(() => {
     stateDir = seedStateDir()
@@ -47,6 +49,7 @@ describe('settings panel', () => {
       getUserName: () => '大人',
       setUserName,
       audit,
+      matters,
       remote: {
         isEnabled: () => { try { return JSON.parse(readFileSync(join(stateDir, 'agent-config.json'), 'utf8')).remote_tunnel === true } catch { return false } },
         setEnabled: (on) => {
@@ -536,5 +539,46 @@ describe('settings panel — 默认大脑', () => {
       const noRestart = makeSettingsPanel({ stateDir, ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: (_c, p) => p }, getUserName: () => null, setUserName: async () => {}, log: () => {} })
       expect(await noRestart.apply({ op: 'set_config', key: 'provider', value: 'claude' })).toEqual({ ok: true, restart: 'required' })
     } finally { rmSync(stateDir, { recursive: true, force: true }) }
+  })
+})
+
+describe('「一件事」手机路由(2026-09-16)', () => {
+  let stateDir: string, panel: SettingsPanel
+  const MATTER = { id: 'deadbeef', kind: 'task', title: '整理周报', projectPath: '/work/report', status: 'replied', ownerChatId: OWNER, createdAt: 1, updatedAt: 2 }
+  const matters = { list: vi.fn(() => [MATTER]), detail: vi.fn(() => ({ matter: MATTER, bindings: [], sessions: [], task: null, events: [{ kind: 'text', text: '做好了', createdAt: 3 }] })), say: vi.fn(async () => ({ kind: 'task', task: { id: 'deadbeef' } })), seenOnPhone: vi.fn() }
+  const make = (withMatters: boolean) => makeSettingsPanel({
+    stateDir, ownerChatId: () => OWNER, ...(withMatters ? { matters } : {}),
+    chatPrefs: { get: () => ({}), set: (_c: string, patch: Record<string, unknown>) => patch }, getUserName: () => '大人', setUserName: async () => {}, log: () => {},
+  } as never)
+  beforeEach(() => { stateDir = seedStateDir(); vi.clearAllMocks() })
+  afterEach(async () => { await panel.stop(); rmSync(stateDir, { recursive: true, force: true }) })
+
+  it('lists, details and says — same data as the desktop, and every look marks the phone surface', async () => {
+    panel = make(true)
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    const list = await (await fetch(`${base}/m/api/matters?status=open,replied&t=${t}`)).json() as { ok: boolean; matters: unknown[] }
+    expect(list).toEqual({ ok: true, matters: [MATTER] })
+    expect(matters.list).toHaveBeenCalledWith({ statuses: ['open', 'replied'], limit: 50 })
+    expect(matters.seenOnPhone).toHaveBeenCalledWith('deadbeef')
+    const detail = await (await fetch(`${base}/m/api/matter?id=deadbeef&t=${t}`)).json() as { ok: boolean; matter: { id: string }; events: unknown[] }
+    expect(detail.ok).toBe(true); expect(detail.matter.id).toBe('deadbeef'); expect(detail.events).toHaveLength(1)
+    const said = await (await fetch(`${base}/m/api/matter/say?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: '再改一版' }) })).json() as { ok: boolean }
+    expect(said.ok).toBe(true); expect(matters.say).toHaveBeenCalledWith('deadbeef', '再改一版')
+    expect((await fetch(`${base}/m/api/matters?status=weird&t=${t}`)).status).toBe(400)
+    expect((await fetch(`${base}/m/api/matter?id=nope&t=${t}`)).status).toBe(400)
+    expect((await fetch(`${base}/m/api/matter/say?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: ' ' }) })).status).toBe(400)
+    expect((await fetch(`${base}/m/api/matters`)).status).toBe(401)
+  })
+  it('is 503 when the matter registry is not wired, and maps not-found / busy', async () => {
+    panel = make(false)
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    expect((await fetch(`${base}/m/api/matters?t=${t}`)).status).toBe(503)
+    await panel.stop()
+    panel = make(true)
+    const again = await panel.start(0), b2 = `http://127.0.0.1:${again.port}`, t2 = panel.issueToken()
+    matters.detail.mockImplementationOnce(() => { throw new Error('matter_not_found') })
+    expect((await fetch(`${b2}/m/api/matter?id=00000000&t=${t2}`)).status).toBe(404)
+    matters.say.mockImplementationOnce(async () => { throw new Error('workbench_busy') })
+    expect((await fetch(`${b2}/m/api/matter/say?t=${t2}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: 'x' }) })).status).toBe(409)
   })
 })

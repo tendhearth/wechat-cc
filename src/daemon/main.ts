@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 import { makeMatterStore } from '../core/matters/store'
-import { makeMattersService } from '../core/matters/service'
 if (!process.env.CLAUDE_CODE_ENTRYPOINT) { process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts' }
 // 回环守卫(spec 2026-09-09-cli-hook-push §3):daemon 经 SDK 拉起的 claude / codex
 // 继承这个环境,主人装的 hooks 在它们身上也会触发;`wechat-cc hook` 看到这个变量
@@ -685,10 +684,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // the pipeline wiring are available. Routes access deps.companionConverse
     // at request time, so this late assignment is safe (mirrors setConversation).
     internalApi.setCompanionConverse(wired.companionConverse)
-    internalApi.setMatters(makeMattersService({
-      store: matters, workbench,
-      chat: { ownerChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null), say: wired.companionConverse },
-    }))
+    // 与手机页共用同一个「一件事」读写面(pipeline-deps 里建的那一个)。
+    if (wired.mattersService) internalApi.setMatters(wired.mattersService)
     // 同上,桌宠的「在做什么」—— 组装闭包在 pipeline-deps(那里才有 boot)。
     internalApi.setPetTurn(wired.petTurn)
     ticksRef = wired.ticks

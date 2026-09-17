@@ -58,6 +58,7 @@ import type { YiHub, YiDispatch } from '../../core/yi-hub'
 import type { ExecResult } from '../../core/a2a-server'
 import type { Mode, ProviderId } from '../../core/conversation'
 import { readJsonFile } from '../../lib/read-json-file'
+import { makeMattersService } from '../../core/matters/service'
 
 export interface DelegateDeps {
   listHands: () => readonly A2AAgentRecord[]
@@ -188,6 +189,8 @@ export interface BuildPipelineDepsResult {
   /** Mint a fresh settings-panel URL (10-min single-active token) — the
    *  desktop 「手机上改设置」 QR entry (GET /v1/settings/link). */
   settingsPanelLink: () => Promise<string | null>
+  /** 「一件事」读写面(有 matters store 才有)。 */
+  mattersService: import('../../core/matters/service').MattersService | null
   /**
    * App-conversation-channel converse closure (voice arc Stage 0, Task 2).
    * Late-bound onto internal-api by main.ts via setCompanionConverse()
@@ -463,9 +466,17 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
 
   // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
   const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+  // 「一件事」读写面:工作台续接 + 对主人 chat 的 app 通道;手机页与内部 API 共用这一个实例。
+  const mattersService = opts.matters ? makeMattersService({
+    store: opts.matters,
+    ...(opts.workbench ? { workbench: opts.workbench } : {}),
+    // companionConverse 在下面才定义;这里只是捕获引用,真正调用发生在请求到来时。
+    chat: { ownerChatId, say: (text: string) => companionConverse(text) },
+  }) : null
   const settingsPanel = makeSettingsPanel({
     stateDir,
     ownerChatId,
+    ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), say: (id, text) => mattersService.say(id, text), seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
     // 「默认大脑」改完自己重启(与远程开关同一条路)。
     ...(opts.requestRestart ? { requestRestart: (reason: string) => opts.requestRestart!(reason) } : {}),
@@ -955,5 +966,5 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     })
   }
 
-  return { pipelineDeps, companionConverse, petTurn, settingsPanelLink: () => settingsPanel.linkUrl() }
+  return { pipelineDeps, companionConverse, petTurn, mattersService, settingsPanelLink: () => settingsPanel.linkUrl() }
 }
