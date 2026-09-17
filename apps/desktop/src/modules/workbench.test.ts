@@ -2,11 +2,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const root = globalThis as unknown as { window?: unknown; document?: unknown }
 
+const { handoffDialogCalls } = vi.hoisted(() => ({ handoffDialogCalls: [] as any[] }))
+vi.mock('./workbench-handoff.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./workbench-handoff.js')>()
+  return { ...actual, mountHandoffDialog: (...args: any[]) => { handoffDialogCalls.push(args); return () => {} } }
+})
+
 afterEach(() => {
   delete root.window
   delete root.document
   vi.useRealTimers()
   vi.resetModules()
+  handoffDialogCalls.length = 0
 })
 
 describe('workbench rendering', () => {
@@ -2018,6 +2025,33 @@ describe('workbench mutations', () => {
     await [...page.listeners.get('submit')!][0]!({target:form,preventDefault(){}})
     expect(confirmUnattended).not.toHaveBeenCalled()
     expect(controller.state.error).toContain('文件夹')
+    module.stopWorkbenchPolling()
+  })
+
+  it('does not auto-pick an unattended executor as a review handoff target, but still picks an ordinary peer',async()=>{
+    const task={id:'deadbeef',title:'Done',path:'/work',providerId:'claude',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const api=async(method:string,path:string)=>{
+      if(path.startsWith('/v1/workbench/task'))return{task,events:[{id:'e1',taskId:task.id,kind:'text',text:'完成',createdAt:1}],artifacts:[]}
+      return{tasks:[task],providers:[{id:'claude',displayName:'Claude'},{id:'agy',displayName:'agy',capabilities:{permissions:'unattended'}}],defaultProvider:'claude',canWechat:false}
+    }
+    const page=installFakePage();root.window={getSelection:()=>null}
+    const module=await import('./workbench.js'),controller=module.initWorkbenchPage({invokeWorkbenchApi:api,pollMs:60_000})!
+    await vi.waitFor(()=>expect(controller.state.selectedId).toBe(task.id))
+    const button=new FakeElement();button.dataset.action='handoff-review'
+    await [...page.listeners.get('click')!][0]!({target:button})
+    expect(handoffDialogCalls).toHaveLength(0)
+    module.stopWorkbenchPolling()
+
+    const api2=async(method:string,path:string)=>{
+      if(path.startsWith('/v1/workbench/task'))return{task,events:[{id:'e1',taskId:task.id,kind:'text',text:'完成',createdAt:1}],artifacts:[]}
+      return{tasks:[task],providers:[{id:'claude',displayName:'Claude'},{id:'codex',displayName:'Codex'}],defaultProvider:'claude',canWechat:false}
+    }
+    const page2=installFakePage();root.window={getSelection:()=>null}
+    const controller2=module.initWorkbenchPage({invokeWorkbenchApi:api2,pollMs:60_000})!
+    await vi.waitFor(()=>expect(controller2.state.selectedId).toBe(task.id))
+    await [...page2.listeners.get('click')!][0]!({target:button})
+    expect(handoffDialogCalls).toHaveLength(1)
+    expect(handoffDialogCalls[0]![1]).toMatchObject({targetProviderId:'codex'})
     module.stopWorkbenchPolling()
   })
 })

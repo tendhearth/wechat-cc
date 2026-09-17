@@ -78,5 +78,7 @@ it('explains execution choice failures without exposing machine codes or changin
  expect(executionErrorMessage('api_task_incomplete')).toContain('未完整结束')
  expect(executionErrorMessage('api_task_private_scope')).toContain('项目文件夹')
  expect(executionErrorMessage('api_task_request_failed')).toContain('端点')
+ expect(executionErrorMessage('unattended_ack_required')).toContain('免审执行者')
+ expect(executionErrorMessage('unattended_ack_required')).toContain('没有开始')
  expect(executionErrorMessage('existing_other_error')).toBeNull()
 })

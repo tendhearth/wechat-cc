@@ -873,7 +873,7 @@ export function initWorkbenchPage(deps) {
       const detail=controller.state.detail;if(!detail)return
       const origin=detail.handoffs?.find(h=>h.purpose==='review'&&h.targetTaskId===detail.task.id)
       const revision=action==='handoff-revision',event=detail.events.find(e=>Number(e.id)===Number(target.dataset.eventId)&&e.kind==='text')
-      const providerId=revision?origin?.sourceProviderId:controller.state.providers.find(p=>p.id!==detail.task.providerId)?.id
+      const providerId=revision?origin?.sourceProviderId:controller.state.providers.find(p=>p.id!==detail.task.providerId&&!isUnattendedProvider(p))?.id
       if(!providerId||(revision&&(!origin||!event)))return
       const selection=window.getSelection()?.toString()??''
       const quote=event&&(selection&&event.text.includes(selection)?selection:event.text)

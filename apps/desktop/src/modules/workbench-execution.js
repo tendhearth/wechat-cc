@@ -30,6 +30,7 @@ export function executionErrorMessage(error){
   workbench_execution_unsupported:'这个执行者暂不支持所选执行设置。请改用自动设置，或选择其他执行者。',
   workbench_resume_unsupported:'这个执行者无法安全恢复原会话。请在桌面查看恢复说明，并决定是否带记录重新开始。',
   unavailable_provider:'暂时没有可用的工作执行者。请连接或管理一个支持工作任务的执行者。',
+  unattended_ack_required:'这是免审执行者，需要先在工作台确认一次；任务没有开始。',
   api_task_attachment_unsupported:'这个 API 执行者暂不支持 PDF 或其他二进制附件。请改用文字、CSV、JSON 或图片。',
   api_task_attachment_invalid:'附件内容已变化或无法安全读取，请重新添加后再试。',
   api_task_input_invalid:'任务内容或附件超出 API 执行者的处理范围，请缩短内容或减少附件。',

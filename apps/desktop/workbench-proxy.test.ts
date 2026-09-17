@@ -82,6 +82,9 @@ it('keeps archive writes behind explicit host write access while passing literal
  expect((await readonly(req('/v1/workbench?q=..&archived=all&limit=10')))?.status).toBe(200)
  expect(upstream.mock.calls.at(-1)?.[0]).toBe('http://127.0.0.1:9001/v1/workbench?q=..&archived=all&limit=10')
  expect((await writable(req('/v1/workbench/archive/extra','POST')))?.status).toBe(405)
+ expect((await readonly(req('/v1/workbench/unattended-ack','POST')))?.status).toBe(403)
+ expect((await writable(req('/v1/workbench/unattended-ack','POST')))?.status).toBe(200)
+ expect((await writable(req('/v1/workbench/unattended-ack')))?.status).toBe(405)
 })
 
 const liveRoutes = [
