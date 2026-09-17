@@ -71,6 +71,8 @@ it('explains execution choice failures without exposing machine codes or changin
  expect(executionErrorMessage('provider_quota_exhausted')).toContain('额度')
  expect(executionErrorMessage('provider_rate_limited')).toContain('稍后')
  expect(executionErrorMessage('workbench_busy')).toContain('文件夹')
+ expect(executionErrorMessage('review_file_unmarkable')).toContain('不能标记')
+ expect(executionErrorMessage('invalid_review_reference')).toContain('刷新')
  expect(executionErrorMessage('unavailable_provider')).toContain('连接或管理')
  expect(executionErrorMessage('unavailable_provider')).not.toContain('安装')
  expect(executionErrorMessage('unavailable_provider')).not.toContain('Codex')

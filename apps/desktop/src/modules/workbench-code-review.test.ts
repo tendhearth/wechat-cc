@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { renderWorkbenchArtifactText } from './workbench.js'
+import { renderReviewFileDiff } from './workbench-code-review.js'
 
 const mime = 'application/vnd.cc.workbench-review+json'
 const report = (overrides = {}) => ({ version: 1, scope: 'working-tree-before-after', startedAt: 1_780_000_000_000, finishedAt: 1_780_000_060_000, headBefore: 'a'.repeat(40), headAfter: 'b'.repeat(40), status: 'complete', preexistingPaths: [], notes: [], files: [], ...overrides })
@@ -58,6 +59,19 @@ describe('saved code review artifact preview', () => {
     expect(html).toContain('暂时无法解读这份文件对比')
     expect(html).toContain('原始 JSON')
     expect(html).not.toContain('data-review-file=')
+  })
+
+  it('renders one file\u0027s diff on its own budget for the review panel, still as text only', () => {
+    const escape = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c)
+    const html = renderReviewFileDiff({ path: 'a.ts', preexisting: false, kind: 'added', diff: '@@ -0,0 +1 @@\n+<script>bad()</script>' } as never, escape)
+    expect(html).toContain('class="wb-review-diff"')
+    expect(html).toContain('&lt;script&gt;bad()&lt;/script&gt;')
+    expect(html).not.toContain('<script>')
+    expect(renderReviewFileDiff({ path: 'big.bin', preexisting: false, kind: 'not_reviewed', reason: '二进制' } as never, escape)).toBe('')
+    expect(renderReviewFileDiff({ path: 'empty.ts', preexisting: false, kind: 'modified' } as never, escape)).toContain('没有可展开的文本差异')
+    // 每次调用自带额度:同一个大文件连渲两次,第二次不会因为第一次用光了而空掉。
+    const big = { path: 'big.ts', preexisting: false, kind: 'added', diff: '@@ -0,0 +5000 @@\n' + '+x\n'.repeat(5000) } as never
+    expect(renderReviewFileDiff(big, escape)).toBe(renderReviewFileDiff(big, escape))
   })
 
   it('requires the custom MIME so an ordinary JSON artifact cannot impersonate a generated review', () => {

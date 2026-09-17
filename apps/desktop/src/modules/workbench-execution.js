@@ -46,6 +46,8 @@ export function executionErrorMessage(error){
   provider_quota_exhausted:'这个执行者的额度已用完。可以交给另一位执行者继续，或等额度恢复后再试。',
   provider_rate_limited:'这个执行者暂时被限流，请稍后再试；也可以交给另一位执行者继续。',
   workbench_busy:'这个文件夹正有另一个任务在写，等它答复后再续接。',
+  review_file_unmarkable:'这个文件没有展开差异，不能标记。',
+  invalid_review_reference:'改动记录已经变了，请刷新后再试。',
  })
  return messages[code]??null
 }

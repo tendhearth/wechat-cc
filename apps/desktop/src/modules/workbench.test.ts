@@ -76,6 +76,19 @@ describe('workbench rendering', () => {
     expect(html).toContain('2 项问题等你回答'); expect(html).toContain('Own question'); expect(html).not.toContain('Wrong question')
     expect(html.indexOf('class="wb-questions"')).toBeLessThan(html.indexOf('id="wb-followup-text"'))
   })
+  it('把「改动」摆在「成果」之前,没有改动记录时不占地方', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const task = { id: 'A', title: 'Review', path: '/work', providerId: 'codex', status: 'completed', createdAt: 1, updatedAt: 2, error: null }
+    const artifact = { id: 'DIFF', taskId: 'A', name: '对比.json', mime: 'application/json', size: 100, sha256: 'b'.repeat(64), createdAt: 3, approvedAt: null }
+    const reviews = [{ artifactId: 'DIFF', sha256: 'a'.repeat(64), name: '对比.json', createdAt: 100, status: 'complete', headBefore: null, headAfter: null, preexistingPaths: [], notes: [], files: [{ path: 'src/app.ts', preexisting: false, kind: 'modified', diff: '@@ -1 +1 @@\n-a\n+b' }] }]
+    const state = { tasks: [task], providers: [], defaultProvider: 'codex', canWechat: false, selectedId: 'A', selectedArtifactId: null, error: '', preview: null, detail: { task, events: [], artifacts: [artifact] } }
+    const html = renderWorkbench({ ...state, reviews } as never)
+    expect(html.indexOf('id="wb-review"')).toBeGreaterThan(-1)
+    expect(html.indexOf('id="wb-review"')).toBeLessThan(html.indexOf('id="wb-artifacts"'))
+    expect(html).toContain('@@ -1 +1 @@')
+    expect(renderWorkbench(state as never)).not.toContain('id="wb-review"')
+  })
+
   it('escapes task and event content before putting it in the page', async () => {
     const { renderWorkbench } = await import('./workbench.js')
     const html = renderWorkbench({
@@ -1704,7 +1717,7 @@ describe('workbench mutations', () => {
     const secondButton=new FakeElement();secondButton.dataset.taskId='SECOND';await click({target:secondButton})
     const firstButton=new FakeElement();firstButton.dataset.taskId='FIRST';await click({target:firstButton})
     finishMutation({task:first});await mutation
-    expect(invokeWorkbenchApi.mock.calls.filter(([method,path])=>method==='GET'&&String(path).includes('id=FIRST'))).toHaveLength(3)
+    expect(invokeWorkbenchApi.mock.calls.filter(([method,path])=>method==='GET'&&String(path).startsWith('/v1/workbench/task?id=FIRST'))).toHaveLength(3)
     stopWorkbenchPolling()
   })
 
@@ -2054,6 +2067,85 @@ describe('workbench mutations', () => {
     expect(handoffDialogCalls[0]![1]).toMatchObject({targetProviderId:'codex'})
     module.stopWorkbenchPolling()
   })
+
+  const reviewTask = { id: 'REVIEW', title: '改动', path: '/work', providerId: 'codex', status: 'completed', createdAt: 1, updatedAt: 2, error: null }
+  const reviewFile = (overrides: Record<string, unknown> = {}) => ({ path: 'src/app.ts', preexisting: false, kind: 'modified', diff: '@@ -1 +1 @@\n-old\n+new', ...overrides })
+  const reviewTurn = (overrides: Record<string, unknown> = {}) => ({ artifactId: 'ART-1', sha256: 'a'.repeat(64), name: '本轮文件对比.json', createdAt: 100, status: 'complete', headBefore: null, headAfter: null, preexistingPaths: [], notes: [], files: [reviewFile()], ...overrides })
+  const reviewPage = (reviews: unknown, extra: (method: string, path: string) => unknown = () => null) => {
+    const calls: Array<[string, string, unknown]> = []
+    const api = vi.fn(async (method: string, path: string, body?: unknown) => {
+      calls.push([method, path, body])
+      const custom = extra(method, path)
+      if (custom) return custom
+      if (path.startsWith('/v1/matters')) return { matters: [] }
+      if (path.startsWith('/v1/workbench/review')) { if (reviews instanceof Error) throw reviews; return { reviews } }
+      if (method === 'POST') return { task: reviewTask }
+      if (path.startsWith('/v1/workbench/task')) return { task: reviewTask, events: [{ id: 'e1', taskId: 'REVIEW', kind: 'text', text: '做完了', createdAt: 1 }], artifacts: [] }
+      return { tasks: [reviewTask], providers: [{ id: 'codex', displayName: 'Codex' }], defaultProvider: 'codex', canWechat: false }
+    })
+    return { api, calls }
+  }
+
+  it('选中任务就去拉改动,逐文件接受写回标记', async () => {
+    const page = installFakePage()
+    const { api } = reviewPage([reviewTurn()])
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    expect(api).toHaveBeenCalledWith('GET', '/v1/workbench/review?id=REVIEW')
+    await vi.waitFor(() => expect(page.innerHTML).toContain('id="wb-review"'))
+    expect(page.innerHTML).toContain('1 轮 · 1 个文件 · 已接受 0 · 已打回 0')
+    expect(page.innerHTML).toContain('data-action="review-accept"')
+    const accept = new FakeElement(); accept.dataset = { action: 'review-accept', artifactId: 'ART-1', path: 'src/app.ts' }
+    await [...page.listeners.get('click')!][0]!({ target: accept })
+    expect(api).toHaveBeenCalledWith('POST', '/v1/workbench/review-mark', { id: 'REVIEW', artifactId: 'ART-1', path: 'src/app.ts', mark: 'accepted' })
+    module.stopWorkbenchPolling()
+  })
+
+  it('打回:点开表单、勾选的路径和意见一起发回,成功后收起表单', async () => {
+    const page = installFakePage()
+    const { api } = reviewPage([reviewTurn()])
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    const click = [...page.listeners.get('click')!][0]!
+    const open = new FakeElement(); open.dataset = { action: 'review-return', artifactId: 'ART-1', path: 'src/app.ts' }
+    await click({ target: open })
+    expect(controller.state.reviewReturnOpen).toEqual({ artifactId: 'ART-1', paths: ['src/app.ts'], comment: '' })
+    expect(page.innerHTML).toContain('data-action="review-return-submit"')
+    const box = new FakeElement(); box.value = 'src/app.ts'; (box as any).checked = true
+    const comment = new FakeElement(); comment.value = '  把命名改回来  '
+    const form = new FakeElement(); form.tagName = 'FORM'; form.dataset = { action: 'review-return-submit', artifactId: 'ART-1' }
+    form.querySelector = (selector: string) => selector.includes('textarea') ? comment : null
+    ;(form as any).querySelectorAll = () => [box]
+    const submit = [...page.listeners.get('submit')!][0]!
+    comment.value = '   '
+    await submit({ preventDefault() {}, target: form })
+    expect(api).not.toHaveBeenCalledWith('POST', '/v1/workbench/review-return', expect.anything())
+    expect(controller.state.error).toContain('要怎么改')
+    comment.value = '  把命名改回来  '
+    await submit({ preventDefault() {}, target: form })
+    expect(api).toHaveBeenCalledWith('POST', '/v1/workbench/review-return', { id: 'REVIEW', artifactId: 'ART-1', paths: ['src/app.ts'], comment: '把命名改回来' })
+    expect(controller.state.reviewReturnOpen).toBe(null)
+    const cancelOpen = new FakeElement(); cancelOpen.dataset = { action: 'review-return', artifactId: 'ART-1', path: 'src/app.ts' }
+    await click({ target: cancelOpen })
+    const cancel = new FakeElement(); cancel.dataset = { action: 'review-return-cancel' }
+    await click({ target: cancel })
+    expect(controller.state.reviewReturnOpen).toBe(null)
+    module.stopWorkbenchPolling()
+  })
+
+  it('改动记录读不到时照实说,详情照常显示', async () => {
+    const page = installFakePage()
+    const { api } = reviewPage(new Error('workbench_connection_unavailable'))
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviewsError).toBe(true))
+    await vi.waitFor(() => expect(page.innerHTML).toContain('改动记录暂时读不到'))
+    expect(page.innerHTML).toContain('做完了')
+    expect(controller.state.error).toBe('')
+    module.stopWorkbenchPolling()
+  })
 })
 
 describe('workbench lifecycle', () => {
@@ -2271,6 +2363,45 @@ describe('workbench live stream', () => {
     expect(controller.liveActive()).toBe(false)
     await controller.refresh()
     expect(detailCalls()).toBe(before + 1)
+    controller.destroy()
+  })
+})
+
+describe('工作台「改动」的拉取与重画', () => {
+  const task = { id: 'T', title: 'Live', path: '/work', providerId: 'codex', status: 'running', createdAt: 1, updatedAt: 2, error: null, archivedAt: null }
+  const detail = { task, events: [{ id: 1, taskId: 'T', kind: 'text', text: 'a', createdAt: 1 }], artifacts: [], runId: 'run-A' }
+  const file = (mark?: string) => ({ path: 'src/app.ts', preexisting: false, kind: 'modified', diff: '@@ -1 +1 @@\n-a\n+b', ...(mark ? { mark: { mark, comment: '', createdAt: 9 } } : {}) })
+  const turn = (files: unknown[]) => ({ artifactId: 'ART-1', sha256: 'a'.repeat(64), name: '对比.json', createdAt: 100, status: 'complete', headBefore: null, headAfter: null, preexistingPaths: [], notes: [], files })
+
+  it('选中任务并行拉改动;标记变了才整页重画;换任务先清空', async () => {
+    const { createWorkbenchController } = await import('./workbench.js')
+    let reviews: unknown[] = [turn([file()])]
+    let release!: (value: unknown) => void
+    const calls: string[] = []
+    const invokeWorkbenchApi = vi.fn((_method: string, path: string) => {
+      calls.push(path)
+      if (path.startsWith('/v1/matters')) return Promise.resolve({ matters: [] })
+      if (path.startsWith('/v1/workbench/review')) return Promise.resolve({ reviews })
+      if (path.startsWith('/v1/workbench/task')) {
+        if (path.includes('since=')) return new Promise(resolve => { release = resolve as (value: unknown) => void })
+        return Promise.resolve({ ...detail, version: 5 })
+      }
+      return Promise.resolve({ tasks: [task], providers: [], defaultProvider: 'codex', canWechat: false })
+    })
+    const renders: unknown[] = []
+    const controller = createWorkbenchController({ invokeWorkbenchApi, render: () => renders.push(1), patchLive: () => true } as any)
+    await controller.selectTask('T')
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    expect(calls).toContain('/v1/workbench/review?id=T')
+    const painted = renders.length
+    reviews = [turn([file('accepted')])]
+    release({ ...detail, version: 6, task: { ...task, status: 'completed' } })
+    await vi.waitFor(() => expect(controller.state.reviews?.[0]?.files?.[0]?.mark?.mark).toBe('accepted'))
+    expect(calls.filter(path => path.startsWith('/v1/workbench/review')).length).toBe(2)
+    expect(renders.length).toBeGreaterThan(painted + 1)
+    controller.newTask('/work')
+    expect(controller.state.reviews).toEqual([])
+    expect(controller.state.reviewsSignature).toBe('[]')
     controller.destroy()
   })
 })
