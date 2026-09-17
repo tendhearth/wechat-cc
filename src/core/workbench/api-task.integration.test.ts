@@ -33,8 +33,7 @@ async function endpoint(reply:(request:Request,count:number)=>{text?:string;tool
   return{requests,store,sessions,registry}
 }
 // 结算要等 API 执行者关闭(closeTimeoutMs 默认 4s),Windows 慢机上 1s 的默认轮询会假红。
-const settle=async(id:string)=>{await expect.poll(()=>service.detail(id).task.status,{timeout:15_000}).not.toMatch(/^(running|queued|cancelling)
-)}|queued|cancelling)$/)}
+const settle=async(id:string)=>{await expect.poll(()=>service.detail(id).task.status,{timeout:15_000}).not.toMatch(/^(running|queued|cancelling)$/)}
 
 it('completes an API task through the real service, collects an artifact and continues with the actual protocol history',async()=>{
   const fixture=await endpoint((_request,count)=>count===1?{tool:{name:'SaveArtifact',input:{name:'report.md',content:'# Actual artifact\n42'}}}:count===2?{text:'Saved report.md with 42.'}:{text:'The saved report contains 42.'})
