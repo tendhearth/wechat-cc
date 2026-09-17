@@ -30,6 +30,7 @@ describe('WeChat task control through the shared service',()=>{
     ['workbench_attachments_unsupported','移除附件'],
     ['workbench_execution_unsupported','自动设置'],
     ['workbench_resume_unsupported','桌面'],
+    ['unattended_ack_required','免审'],
     ['unavailable_provider','连接或管理'],
   ])('translates executor admission failure %s into an actionable reply',async(code,hint)=>{
     setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
@@ -38,7 +39,14 @@ describe('WeChat task control through the shared service',()=>{
     const reply=await control('owner',`任务 新建 ${projectId} 整理周报`,identity)
     expect(reply).toContain(hint)
     expect(reply).not.toContain(code)
-    if(code==='unavailable_provider')expect(reply).not.toContain('安装')
+    if(code==='unattended_ack_required'){
+      expect(reply).toContain('桌面')
+      expect(reply).toContain('只能停止')
+    }
+    if(code==='unavailable_provider'){
+      expect(reply).not.toContain('Claude Code')
+      expect(reply).not.toContain('安装')
+    }
   })
   it('shows retained runtime observations in list/detail while keeping child output out of the main reply',async()=>{
     setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
