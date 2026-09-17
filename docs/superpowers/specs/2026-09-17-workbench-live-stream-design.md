@@ -128,3 +128,4 @@ GET /v1/workbench/task?id=&since=&wait_ms= ──── 长轮询 ────�
 ## 修订记录
 
 - 2026-09-17:初稿(与主人口头定案:不嵌终端,走"原生渲染事件流"一派;先流、再 diff、再评估 ACP)。
+- 2026-09-17:按实施计划落地(任务 1–8);实施中的偏离:store 的 detail 先读 version 再读 events;hub 只在 seq 前进时唤醒;liveInputs 也 bump;桌面"拿不准就整页重画"(错组 / 提升行 / 展开中的详情)。
