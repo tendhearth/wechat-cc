@@ -34,6 +34,17 @@ describe('TaskChangeHub', () => {
     await expect(hub.wait('t1', 1, 5000)).resolves.toBe(1)
     hub.publish('t1', 2); await a; await b
   })
+  it('publish 不前进(seq 未超过已知值)不唤醒;真正前进才唤醒所有 waiter', async () => {
+    const hub = makeTaskChangeHub(); hub.publish('t1', 1)
+    const a = hub.wait('t1', 1, 5000), b = hub.wait('t1', 1, 5000)
+    let aSettled = false, bSettled = false
+    void a.then(() => { aSettled = true }); void b.then(() => { bSettled = true })
+    hub.publish('t1', 1)
+    await new Promise(r => setTimeout(r, 5))
+    expect(aSettled).toBe(false); expect(bSettled).toBe(false)
+    hub.publish('t1', 2)
+    await expect(a).resolves.toBe(2); await expect(b).resolves.toBe(2)
+  })
   it('dispose 唤醒所有 waiter', async () => {
     const hub = makeTaskChangeHub(); hub.publish('t1', 1)
     const p = hub.wait('t1', 1, 5000); hub.dispose()

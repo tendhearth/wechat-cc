@@ -16,7 +16,8 @@ export function makeTaskChangeHub(opts: { maxWaitersPerTask?: number } = {}): Ta
   const waiters = new Map<string, Set<Waiter>>()
   const wake = (taskId: string) => { const list = waiters.get(taskId); if (!list) return; waiters.delete(taskId); for (const w of list) w() }
   return {
-    publish(taskId, seq) { if (seq > (seqs.get(taskId) ?? 0)) seqs.set(taskId, seq); wake(taskId) },
+    // 不前进的 publish 不许唤醒:两个 waiter 互相拿对方已知的旧 seq 发布,否则会 ping-pong 空转。
+    publish(taskId, seq) { if (seq > (seqs.get(taskId) ?? 0)) { seqs.set(taskId, seq); wake(taskId) } },
     seq: taskId => seqs.get(taskId) ?? 0,
     wait(taskId, since, maxMs) {
       const current = seqs.get(taskId) ?? 0

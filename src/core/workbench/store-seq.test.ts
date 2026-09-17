@@ -43,6 +43,17 @@ describe('store seq(每个写点都让 version 递增)', () => {
     const event = store.detail(id).events.find(e => e.activity?.id === 'call1')!
     expect(event.activity!.status).toBe('completed')
   })
+  it('detail() 先读 version 后读 events：version 不会跑到已读到的行前面', () => {
+    const { db, store, id } = mk()
+    store.addEvent(id, 'system', 'a')
+    store.recordAgentEvent(id, 'run1', { kind: 'text', text: 'b', itemId: 'i1', textMode: 'append' })
+    const d = store.detail(id)
+    expect(d.events.length).toBeGreaterThan(0)
+    // events 本身不对外报 seq(公开字段里没有它),直接查库核对——这条钉的是「读的先后顺序」这个
+    // 不变量:哪怕并发写夹在两次读之间,version 也绝不能抢先报出比已读到的行更新的进度。
+    const maxEventSeq = db.query<{ maxSeq: number }, [string]>('SELECT MAX(seq) AS maxSeq FROM workbench_events WHERE task_id=?').get(id)!.maxSeq
+    expect(d.version).toBeLessThanOrEqual(maxEventSeq)
+  })
   it('recordHandoffNative/recordHandoffEvent 同时唤醒 source 与 target 两边的实时视图（handoffs() 在两边 detail() 里都会出现）', () => {
     const { store } = mk()
     const source = store.get(store.create({ title: 'source', path: '/p', providerId: 'codex', ownerChatId: 'o' }).id)

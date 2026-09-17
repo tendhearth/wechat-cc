@@ -158,6 +158,8 @@ export function makeWorkbenchService(opts: Options) {
   const changes = opts.changes ?? makeTaskChangeHub()
   /** store 的写方法把 seq 落库,但不知道 hub —— 这里把持久化 seq 送进去唤醒长轮询。 */
   const touched = (id: string, seq?: number) => { try { changes.publish(id, seq ?? store.version(id)) } catch { /* 信号丢了只是多等一轮 */ } }
+  /** 非 store 状态变化:先落库拿新 seq 再唤醒。bump 本身可能抛(任务不存在),别让它冒进调用方的 finally/catch。 */
+  const bumped = (id: string) => { try { touched(id, store.bump(id)) } catch { /* 信号丢了只是多等一轮 */ } }
   const selectAttachments=(input:InputMaterials={},taskId?:string)=>store.attachments.select(input.attachmentIds??[],taskId,input.draftId)
   function combinedAttachments(current:readonly Attachment[],previous:readonly Attachment[]=[]){
     const unique=new Map<string,Attachment>()
@@ -186,6 +188,7 @@ export function makeWorkbenchService(opts: Options) {
         }
         store.liveInputs.hold(id,error)
       })
+      bumped(id)
       autoContinueBlocked.delete(id)
     }catch{/* Stop must not depend on a successful disk write. */}
   }
@@ -364,6 +367,7 @@ export function makeWorkbenchService(opts: Options) {
       try {
         if (canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity) return
         noteWarnings(running,collectArtifacts(store,running.taskId,running.path,opts.stateDir))
+        touched(running.taskId)
       } catch { /* 结算时还会再收一次,这里不打断本轮 */ }
     })()
     running.turnCollection=pending;collections.add(pending)
@@ -382,6 +386,7 @@ export function makeWorkbenchService(opts: Options) {
       await captureCodeChanges(running)
       if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
       noteWarnings(running,collectArtifacts(store,running.taskId,running.path,opts.stateDir))
+      touched(running.taskId)
     }
     catch { try { store.addEvent(running.taskId,'system','本轮成果目录无法读取，请检查文件夹权限或是否被移动。');touched(running.taskId) } catch { /* storage is already unavailable */ } }
   }
@@ -414,6 +419,7 @@ export function makeWorkbenchService(opts: Options) {
         if(!report||!report.files.some(f=>f.kind!=='not_reviewed'))return
         const seq=(running.reviewSeq??0)+1; running.reviewSeq=seq
         saveArtifactSnapshot(store,running.taskId,{name:`代码变更-${running.identity.slice(0,8)}${seq>1?`-${seq}`:''}.json`,mime:GIT_REVIEW_MIME,bytes:serializeGitReview(report)},opts.stateDir)
+        touched(running.taskId)
       } catch { try { store.addEvent(running.taskId,'system','代码对比未能保存；其他成果仍会单独收集。');touched(running.taskId) } catch { /* storage unavailable */ } }
     })()
     running.reviewCapture=pending
@@ -523,7 +529,7 @@ export function makeWorkbenchService(opts: Options) {
           if(runsByTask.get(task.id)!==running||running.cancelled||running.finishing)return
           if(resume&&value.sessionId&&value.sessionId!==resume)throw Error('native_session_identity_mismatch')
           store.execution.observe(task.id,running.identity,value)
-          touched(task.id,store.bump(task.id))
+          bumped(task.id)
         },
         reportNotice:message=>{
           if(runsByTask.get(task.id)!==running||running.cancelled||running.finishing)return
@@ -532,8 +538,8 @@ export function makeWorkbenchService(opts: Options) {
         },
         tierProfile:TIER_PROFILES.trusted,permissionMode:'strict',chatId:task.ownerChatId ?? `workbench:${task.id}`,
         ...(resume ? {resumeSessionId:resume} : {}),mcpEnv:sessionAuthEnv('trusted',token),appendInstructions:instructions,
-        requestPermission:(request,signal) => {running.interactionAt=Date.now();touched(task.id,store.bump(task.id));return running.permissions.request(request,signal).finally(()=>{running.interactionAt=Date.now();touched(task.id,store.bump(task.id))})},
-        requestUserInput:(request,signal) => {running.interactionAt=Date.now();touched(task.id,store.bump(task.id));return running.questions.request(request,signal).finally(()=>{running.interactionAt=Date.now();touched(task.id,store.bump(task.id))})},
+        requestPermission:(request,signal) => {running.interactionAt=Date.now();bumped(task.id);return running.permissions.request(request,signal).finally(()=>{running.interactionAt=Date.now();bumped(task.id)})},
+        requestUserInput:(request,signal) => {running.interactionAt=Date.now();bumped(task.id);return running.questions.request(request,signal).finally(()=>{running.interactionAt=Date.now();bumped(task.id)})},
       }).catch(error => { spawnRejected=true; throw error })
       let spawnTimer:ReturnType<typeof setTimeout>|undefined
       try {
@@ -562,8 +568,8 @@ export function makeWorkbenchService(opts: Options) {
       const summary=await collectWorkbenchTurn(stream,running.stop,opts.timeoutMs ?? 10*60_000,
         ev => {
           if (running.cancelled) return
-          if(running.queuedInputId&&['text','tool_call','result'].includes(ev.kind))store.liveInputs.set(running.queuedInputId,'delivered')
-          if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {matterSync(m=>m.addSession(task.id,task.providerId,ev.sessionId!,'main'));if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId);touched(task.id)}
+          if(running.queuedInputId&&['text','tool_call','result'].includes(ev.kind)){store.liveInputs.set(running.queuedInputId,'delivered');bumped(task.id)}
+          if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {matterSync(m=>m.addSession(task.id,task.providerId,ev.sessionId!,'main'));if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId){const peer=store.recordHandoffNative(running.handoffId,ev.sessionId);if(peer)touched(peer.sourceTaskId)}touched(task.id)}
           if (ev.kind==='text'||ev.kind==='tool_call'||ev.kind==='error') { store.recordAgentEvent(task.id,running.identity,ev); touched(task.id) }
           // 额度/限流在错误到达时就登记(评审 #5:只在结算时看,保留会话永远等不到结算);
           // 任何一个成功回合(result)即视为这家恢复。
@@ -581,7 +587,7 @@ export function makeWorkbenchService(opts: Options) {
           return running.questions.pending().length>0||running.permissions.pending().length>0||!!(snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0)
         },()=>running.interactionAt,runtime?()=>runtime.start(request,material):undefined)
       if (!summary) { finalStatus='cancelled'; return }
-      if (summary.result?.sessionId) {if(resume&&summary.result.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,summary.result.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,summary.result.sessionId);touched(task.id)}
+      if (summary.result?.sessionId) {if(resume&&summary.result.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,summary.result.sessionId);if(running.handoffId){const peer=store.recordHandoffNative(running.handoffId,summary.result.sessionId);if(peer)touched(peer.sourceTaskId)}touched(task.id)}
       if (running.cancelled) finalStatus='cancelled'
       else if (summary.error || !summary.result || runtime?.snapshot().retained) {
         // An old foreground result cannot turn an unexpected retained EOF into success.
@@ -600,9 +606,9 @@ export function makeWorkbenchService(opts: Options) {
       finalStatus=running.cancelled ? 'cancelled' : 'failed'; finalError=running.cancelled ? null : message
       if (!running.cancelled) { store.addEvent(task.id,'error',message==='restart_confirmation_required' ? RECOVERY_MESSAGE : executionFailureMessage(message)); touched(task.id) }
     } finally {
-      running.finishing=true;running.questions.close();touched(task.id,store.bump(task.id))
+      running.finishing=true;running.questions.close();bumped(task.id)
       for(const input of running.runtimeInputs?.values()??[])settleRuntimeInput(running,input,new Error('runtime_closed_before_input_acknowledgement'))
-      running.permissions.rejectAll(running.cancelled ? 'cancelled' : 'ended');touched(task.id,store.bump(task.id))
+      running.permissions.rejectAll(running.cancelled ? 'cancelled' : 'ended');bumped(task.id)
       let closePromise:Promise<void>|undefined
       let closeTimer:ReturnType<typeof setTimeout>|undefined
       if (running.session) {
@@ -645,7 +651,7 @@ export function makeWorkbenchService(opts: Options) {
       const task=store.get(id),decision=continuation(task)
       if(decision.mode!=='resume')throw Error('原会话需要你确认恢复方式，补充尚未发送。')
       const path=canonicalProject(task.path);if(path!==task.path||directoryIdentity(path)!==expectedDirectoryIdentity)throw Error('invalid_path')
-      store.liveInputs.set(next.id,'sending')
+      store.liveInputs.set(next.id,'sending');bumped(id)
       const execution=next.execution??store.execution.run(id,next.runId)?.choice??store.execution.choice(id)
       requireInput(task.providerId,next.attachments??[],execution,true)
       start(task,next.text,expectedDirectoryIdentity,{mode:'resume',sessionId:task.sessionId!},undefined,undefined,undefined,next.id,next.attachments,undefined,execution)
@@ -655,20 +661,24 @@ export function makeWorkbenchService(opts: Options) {
   function settleRuntimeInput(running:Active,saved:LiveInput,error?:unknown) {
     if(shutdownComplete){running.runtimeInputs?.delete(saved.id);return}
     try {
+      // held-only 落库不会自己 bump(store.addEvent 才会);两条分支分别记账,没写就不吵。
+      let changed:'held'|'delivered'|null=null
       store.atomic(()=>{
         const current=store.liveInputs.get(saved.id)
         if(!current||current.taskId!==saved.taskId||current.runId!==saved.runId||current.text!==saved.text||!sameAttachments(current.attachments,saved.attachments))return
         if(error!==undefined){
           // Stop/recovery may already have held it. Never revive an old send.
-          if(current.status==='sending')store.liveInputs.set(saved.id,'held',`${INPUT_UNCONFIRMED}${error instanceof Error?' '+error.message:''}`)
+          if(current.status==='sending'){store.liveInputs.set(saved.id,'held',`${INPUT_UNCONFIRMED}${error instanceof Error?' '+error.message:''}`);changed='held'}
           return
         }
         if(current.status!=='sending'&&current.status!=='held')return
         // A late positive native acknowledgement is truthful only for this receipt.
         store.liveInputs.set(saved.id,'delivered')
         store.addEvent(saved.taskId,'user',saved.text,null,saved.runId,saved.attachments)
+        changed='delivered'
       })
-      touched(saved.taskId)
+      if(changed==='held')bumped(saved.taskId)
+      else if(changed==='delivered')touched(saved.taskId)
       // Keep delivery uncertainty tracked if the durable transition failed.
       running.runtimeInputs?.delete(saved.id)
       if(runsByTask.get(saved.taskId)===running&&!running.cancelled&&!running.finishing)running.interactionAt=Date.now()
@@ -688,7 +698,7 @@ export function makeWorkbenchService(opts: Options) {
     for (const running of launch) {
       void Promise.resolve().then(() => execute(running.task,runningText.get(running.identity)!,running)).catch(() => {
         if (running.publicFinished) return
-        try { running.questions.close(); running.permissions.rejectAll(running.cancelled ? 'cancelled' : 'ended'); touched(running.taskId,store.bump(running.taskId)) } catch { /* fail closed */ }
+        try { running.questions.close(); running.permissions.rejectAll(running.cancelled ? 'cancelled' : 'ended'); bumped(running.taskId) } catch { /* fail closed */ }
         revokeCredentials(running)
         if (running.session) markUncertain(running)
         running.publicFinished=true; running.resolveDone()
@@ -707,7 +717,7 @@ export function makeWorkbenchService(opts: Options) {
     requireInput(task.providerId,dispatchAttachments,execution,acceptedContinuation.mode==='resume')
     // addRunEvent 自己 touched:权限/提问审计在 atomic 块外单独发生,不能漏。
     const addRunEvent=(kind:'user'|'system',text:string)=>{const id=store.addEvent(task.id,kind,text,null,runId);touched(task.id);return id}
-    store.atomic(()=>{
+    const handoffPeer=store.atomic(()=>{
       store.execution.accept(task.id,runId,execution)
       const bound=store.attachments.bind(attachments.map(a=>a.id),task.id,draftId)
       if(!sameAttachments(bound,attachments))throw Error('invalid_attachment_changed')
@@ -718,10 +728,13 @@ export function makeWorkbenchService(opts: Options) {
       }
       if(nativeResume)addRunEvent('system',`用户声明原 ${task.providerId} 执行程序已关闭，选择${nativeResume.mode==='native_resume'?'恢复原会话':'带已确认的记录新开一轮'}。原会话：${nativeResume.nativeId}。`)
       const requestEventId=store.addEvent(task.id,'user',text,null,runId,attachments)
-      if(handoffId)store.recordHandoffEvent(handoffId,requestEventId)
+      const peer=handoffId?store.recordHandoffEvent(handoffId,requestEventId):null
       store.update(task.id,'queued')
       acceptance?.persist(runId)
+      return peer
     })
+    // recordHandoffEvent 同时 bump 了交接的另一头(source 任务),不发它那边就看不到这条请求已挂上。
+    if(handoffPeer)touched(handoffPeer.sourceTaskId)
     touched(task.id)
     let signalStop!:()=>void,resolveDone!:()=>void
     const stop=new Promise<null>(resolve => { signalStop=() => resolve(null) })
@@ -778,9 +791,9 @@ export function makeWorkbenchService(opts: Options) {
   }
 
   function cancelRun(running:Active):void {
-    running.questions.close();touched(running.taskId,store.bump(running.taskId));holdInputs(running.taskId,'任务已停止，补充尚未发送。')
+    running.questions.close();bumped(running.taskId);holdInputs(running.taskId,'任务已停止，补充尚未发送。')
     if (running.state==='queued') {
-      running.cancelled=true; running.permissions.rejectAll('cancelled'); touched(running.taskId,store.bump(running.taskId)); running.signalStop()
+      running.cancelled=true; running.permissions.rejectAll('cancelled'); bumped(running.taskId); running.signalStop()
       const index=queue.indexOf(running); if (index>=0) queue.splice(index,1)
       runningText.delete(running.identity)
       try {
@@ -797,7 +810,7 @@ export function makeWorkbenchService(opts: Options) {
     if (running.state==='uncertain') return
     if (!running.cancelled) {
       if (isReplied(running)) running.closedWhileReplied=true
-      running.cancelled=true; running.permissions.rejectAll('cancelled'); touched(running.taskId,store.bump(running.taskId)); revokeCredentials(running); running.signalStop()
+      running.cancelled=true; running.permissions.rejectAll('cancelled'); bumped(running.taskId); revokeCredentials(running); running.signalStop()
       try { store.update(running.taskId,'cancelling'); touched(running.taskId) } catch { /* stop the writer even when persistence is unavailable */ }
       try { if (running.session?.cancel) void running.session.cancel().catch(() => {}) }
       catch { try { store.addEvent(running.taskId,'system','已请求停止，正在等待执行程序退出。');touched(running.taskId) } catch { /* cancellation remains active */ } }
@@ -899,12 +912,13 @@ export function makeWorkbenchService(opts: Options) {
     resolveAnswer(id:string,requestId:string,answers:unknown){
       const running=runsByTask.get(id)
       if(!running||running.cancelled||running.finishing||!running.questions.resolve(requestId,answers))throw Error('question_stale')
-      touched(id,store.bump(id))
+      bumped(id)
     },
     withdrawInput(id:string,requestId:string){
       const input=store.liveInputs.get(requestId)
       if(!input||input.taskId!==id||input.status!=='pending')throw Error('input_stale')
       store.liveInputs.set(requestId,'withdrawn')
+      bumped(id)
     },
     async submitInput(id:string,input:{runId:string;requestId:string;text:string}&InputMaterials){
       ensureAccepting()
@@ -939,7 +953,7 @@ export function makeWorkbenchService(opts: Options) {
       const runtime=running.session?.workbenchRuntime
       if(runtime){
         if(inputMode(running)==='queue')return saved
-        store.liveInputs.set(saved.id,'sending')
+        store.liveInputs.set(saved.id,'sending');bumped(id)
         ;(running.runtimeInputs??=new Map()).set(saved.id,saved)
         try{
           if(canonicalProject(running.path)!==running.path||directoryIdentity(running.path)!==running.directoryIdentity)throw Error('invalid_path')
@@ -955,15 +969,15 @@ export function makeWorkbenchService(opts: Options) {
         return store.liveInputs.get(saved.id)!
       }
       if(!running.session?.steer)return saved
-      running.delivering=true;store.liveInputs.set(saved.id,'sending')
+      running.delivering=true;store.liveInputs.set(saved.id,'sending');bumped(id)
       try{
         if(canonicalProject(running.path)!==running.path||directoryIdentity(running.path)!==running.directoryIdentity)throw Error('invalid_path')
         const material=store.attachments.prepare(id,attachments,running.path,opts.stateDir)
         await running.session.steer(text,material)
         running.interactionAt=Date.now()
-        store.liveInputs.set(saved.id,'delivered')
-        store.addEvent(id,'user',text,null,running.identity,attachments)
-      }catch(error){store.liveInputs.set(saved.id,'held',`未确认执行者收到，请检查当前对话后再决定是否重发。${error instanceof Error?' '+error.message:''}`)}
+        store.liveInputs.set(saved.id,'delivered');bumped(id)
+        store.addEvent(id,'user',text,null,running.identity,attachments);touched(id)
+      }catch(error){store.liveInputs.set(saved.id,'held',`未确认执行者收到，请检查当前对话后再决定是否重发。${error instanceof Error?' '+error.message:''}`);bumped(id)}
       finally{running.delivering=false}
       return store.liveInputs.get(saved.id)!
     },
@@ -1056,6 +1070,7 @@ export function makeWorkbenchService(opts: Options) {
       catch(error){
         if(!target){store.update(record.targetTaskId,'failed',error instanceof Error?error.message:'task_failed');matterSync(m=>m.setStatus(record.targetTaskId,'done'))}
         store.addEvent(record.targetTaskId,'system','交接已记录，但本轮未启动。请查看任务状态，手动决定是否继续。')
+        touched(record.targetTaskId)
         throw error
       }
       return{task,handoffId:record.id,sourceTaskId:source.id}
@@ -1209,7 +1224,7 @@ export function makeWorkbenchService(opts: Options) {
         : decision.mode==='resume' ? {mode:'resume',sessionId:task.sessionId!} : {mode:'new'}
       try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId,attachments,options?.draftId,execution)}
       catch(error){
-        if(inputRequestId&&store.liveInputs.get(inputRequestId))try{store.liveInputs.set(inputRequestId,'held','本轮未确认开始，补充内容已保留。')}catch{autoContinueBlocked.add(id)}
+        if(inputRequestId&&store.liveInputs.get(inputRequestId))try{store.liveInputs.set(inputRequestId,'held','本轮未确认开始，补充内容已保留。');bumped(id)}catch{autoContinueBlocked.add(id)}
         throw error
       }
     },
@@ -1221,6 +1236,8 @@ export function makeWorkbenchService(opts: Options) {
       const task=store.get(id)
       if(archived && !taskView(publicTask(task)).canArchive)throw new Error('workbench_busy')
       const view=taskView(publicTask(store.setArchived(id,archived)))
+      // store.setArchived 是裸 UPDATE,不像别的写点那样自带 bump —— archivedAt 在 detail 里能看见,补一下。
+      bumped(id)
       matterSync(m=>m.setStatus(id,archived?'archived':view.status==='interrupted'?'open':TERMINAL_TASK_STATUSES.includes(view.status)?'done':view.phase==='replied'?'replied':'open'))
       return view
     },
@@ -1230,7 +1247,7 @@ export function makeWorkbenchService(opts: Options) {
       // cancelRun 落库时自己 touched;没有 running(任务不在跑)时这里兜底一下,
       // 停止请求本身也算一次「详情可能变了」。
       if (running) cancelRun(running)
-      else touched(id,store.bump(id))
+      else bumped(id)
       return taskView(publicTask(store.get(id)))
     },
     artifact(id:string,artifactId:string) {
@@ -1243,7 +1260,7 @@ export function makeWorkbenchService(opts: Options) {
       if (decision!=='allow' && decision!=='deny') throw new Error('invalid_decision')
       const running=runsByTask.get(id)
       if (!running || !running.permissions.resolve(requestId,decision)) throw new Error('permission_stale')
-      touched(id,store.bump(id))
+      bumped(id)
     },
     async handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>{return wechatControl(chatId,text,identity)},
     shutdown():Promise<void> {
@@ -1255,7 +1272,7 @@ export function makeWorkbenchService(opts: Options) {
           try { cancelRun(running) }
           catch {
             running.cancelled=true
-            try { running.permissions.rejectAll('cancelled'); touched(running.taskId,store.bump(running.taskId)) } catch { /* fail closed */ }
+            try { running.permissions.rejectAll('cancelled'); bumped(running.taskId) } catch { /* fail closed */ }
             revokeCredentials(running); running.signalStop()
             try { if (running.session?.cancel) void running.session.cancel().catch(() => {}) } catch { /* close still follows */ }
           }

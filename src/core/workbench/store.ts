@@ -95,13 +95,15 @@ export function makeWorkbenchStore(db: Db) {
     wechatNotifications:makeWechatNotificationStore(db),
     artifactDeliveries:makeArtifactDeliveryStore(db),
     get, artifacts, events, addEvent,recordAgentEvent,finishRunActivities,source,sourceByIdentity,handoffs,bump,version,
-    recordHandoffNative:(id:string,nativeId:string)=>db.transaction(()=>{
+    recordHandoffNative:(id:string,nativeId:string):{sourceTaskId:string;targetTaskId:string}|null=>db.transaction(()=>{
       const row=db.query<{sourceTaskId:string;targetTaskId:string},[string,string]>('UPDATE workbench_handoffs SET target_native_id=? WHERE id=? AND target_native_id IS NULL RETURNING source_task_id AS sourceTaskId,target_task_id AS targetTaskId').get(nativeId,id)
       if(row){bump(row.sourceTaskId);bump(row.targetTaskId)}
+      return row??null
     })(),
-    recordHandoffEvent:(id:string,eventId:number)=>db.transaction(()=>{
+    recordHandoffEvent:(id:string,eventId:number):{sourceTaskId:string;targetTaskId:string}|null=>db.transaction(()=>{
       const row=db.query<{sourceTaskId:string;targetTaskId:string},[number,string]>('UPDATE workbench_handoffs SET request_event_id=? WHERE id=? RETURNING source_task_id AS sourceTaskId,target_task_id AS targetTaskId').get(eventId,id)
       if(row){bump(row.sourceTaskId);bump(row.targetTaskId)}
+      return row??null
     })(),
     handoffByToken:(hash:string)=>db.query<StoredHandoff,[string]>(HANDOFF_SELECT+' WHERE token_hash=?').get(hash),
     handoffRecord(taskId:string,id:string){
@@ -226,7 +228,13 @@ export function makeWorkbenchStore(db: Db) {
         bump(taskId)
       })()
     },
-    detail(id: string, opts: { since?: number } = {}) { const origin=source(id);return {handoffs:handoffs(id),...(origin?{source:publicSource(origin)}:{}), task: publicTask(get(id)), events: events(id,opts.since), artifacts: artifacts(id).map(publicArtifact), version: version(id) } },
+    detail(id: string, opts: { since?: number } = {}) {
+      // version 必须先读、events 后读:并发写夹在两次读之间时,宁可让这次的 version 落后于
+      // 已经读到的 events(下一轮轮询用同一个 since 会重复看到那几行,按 id 去重即可),
+      // 也不要反过来让 version 抢先报出「已追上」而漏掉刚落库、还没读到的那几行。
+      const v=version(id),origin=source(id)
+      return {handoffs:handoffs(id),...(origin?{source:publicSource(origin)}:{}), task: publicTask(get(id)), events: events(id,opts.since), artifacts: artifacts(id).map(publicArtifact), version: v }
+    },
   }
 }
 export type WorkbenchStore = ReturnType<typeof makeWorkbenchStore>
