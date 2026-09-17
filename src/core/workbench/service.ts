@@ -1343,9 +1343,11 @@ export function makeWorkbenchService(opts: Options) {
      * 续接走 `continueTask` 那道门(忙 / 归档 / 免审未确认 / 要不要重开都由它判),错误码原样透传。
      * 标记**在续接成功之后**才落:`restart_confirmation_required` 是设计内的首次回应(桌面要靠它拿
      * 重开令牌),`workbench_busy` 是常见的抢跑 —— 先落标记会让主人常态化看到「已打回」却根本没发出去。
+     * 原会话不能恢复时,主人确认后带上 `restartToken` 再发一次(校验交给 continueTask,和「继续」同一道门),
+     * 打回就不再是死胡同。
      * 重发同一个 inputRequestId 时 continueTask 走幂等分支,再写一遍同样的标记无妨。
      */
-    returnReviewFiles(id:string,input:{artifactId:string;paths:string[];comment:string;inputRequestId?:string}):WorkbenchTaskView {
+    returnReviewFiles(id:string,input:{artifactId:string;paths:string[];comment:string;inputRequestId?:string;restartToken?:string}):WorkbenchTaskView {
       if(!Array.isArray(input.paths)||!input.paths.length||input.paths.length>20||input.paths.some(path=>typeof path!=='string'||!path))throw new Error('invalid_review_reference')
       const comment=reviewComment(input.comment,true)
       // 重发同一个 inputRequestId 要落到 continueTask 的幂等分支,所以文本必须可重现:
@@ -1353,7 +1355,7 @@ export function makeWorkbenchService(opts: Options) {
       const inputRequestId=input.inputRequestId===undefined?randomUUID():normalizeInputRequestId(input.inputRequestId)
       const {artifact,review}=reviewTarget(id,input.artifactId)
       const files=[...new Set(input.paths)].map(path=>markableFile(review,path))
-      const task=service.continueTask(id,composeReturnText(files.map(({path,diff})=>({path,diff})),comment),{inputRequestId})
+      const task=service.continueTask(id,composeReturnText(files.map(({path,diff})=>({path,diff})),comment),{inputRequestId,...(input.restartToken!==undefined?{restartToken:input.restartToken}:{})})
       for(const file of files)store.reviewMarks.set({taskId:id,artifactSha256:artifact.sha256,path:file.path,afterSha256:file.afterSha256??null,mark:'returned',comment})
       touched(id)
       return task

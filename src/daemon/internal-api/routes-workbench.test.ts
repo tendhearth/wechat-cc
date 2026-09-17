@@ -744,6 +744,28 @@ describe('Workbench internal HTTP API', () => {
       expect((await request('/v1/workbench/review-return', { method: 'POST', body: JSON.stringify(body) }, trustedToken)).status).toBe(403)
     })
 
+    // 终审(2026-09-17):原会话不能恢复时,打回也要能带着重开令牌再来一次 —— 校验跟 continue 那道门一模一样。
+    it('POST review-return 透传 restartToken;不是 64 位十六进制就 400', async () => {
+      const returnReviewFiles = vi.fn(() => TASK)
+      const { request } = await start(service({ returnReviewFiles }))
+      const body = { id: 'deadbeef', artifactId: validArtifactId, paths: ['src/a.ts'], comment: '改' }
+      const restartToken = 'a'.repeat(64)
+      expect((await request('/v1/workbench/review-return', { method: 'POST', body: JSON.stringify({ ...body, restartToken }) })).status).toBe(202)
+      expect(returnReviewFiles).toHaveBeenCalledWith('deadbeef', { artifactId: validArtifactId, paths: ['src/a.ts'], comment: '改', restartToken })
+      for (const bad of ['', 'A'.repeat(64), 'a'.repeat(63), 'a'.repeat(65), 'z'.repeat(64), 123]) {
+        expect((await request('/v1/workbench/review-return', { method: 'POST', body: JSON.stringify({ ...body, restartToken: bad }) })).status).toBe(400)
+      }
+    })
+
+    it('service 抛出 restart_confirmation_required / stale ⇒ 409', async () => {
+      for (const code of ['restart_confirmation_required', 'restart_confirmation_stale']) {
+        const { request } = await start(service({ returnReviewFiles: vi.fn(() => { throw new Error(code) }) }))
+        const response = await request('/v1/workbench/review-return', { method: 'POST', body: JSON.stringify({ id: 'deadbeef', artifactId: validArtifactId, paths: ['src/a.ts'], comment: '改' }) })
+        expect(response.status).toBe(409)
+        expect(await response.json()).toEqual({ error: code })
+      }
+    })
+
     it('service 抛出 review_file_unmarkable / invalid_review_reference ⇒ 400,workbench_busy ⇒ 409', async () => {
       const unmarkable = vi.fn(() => { throw new Error('review_file_unmarkable') })
       const invalidRef = vi.fn(() => { throw new Error('invalid_review_reference') })

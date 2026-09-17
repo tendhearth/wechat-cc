@@ -6,7 +6,7 @@
 
 /** @typedef {import('../../../../src/core/workbench/review').ReviewTurn} ReviewTurn */
 /** @typedef {import('../../../../src/core/workbench/review').ReviewTurnFile} ReviewTurnFile */
-/** @typedef {{artifactId:string,paths:string[],comment?:string}} ReviewReturnOpen */
+/** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string}} ReviewReturnOpen */
 /** @typedef {{escapeHtml:(value:unknown)=>string,formatTime:(value:number)=>string,renderDiff:(file:ReviewTurnFile)=>string,returnOpen?:ReviewReturnOpen|null,error?:boolean,budget?:{limited:boolean}}} ReviewPanelOptions */
 
 const KIND_LABEL = /** @type {Record<string,string>} */ ({ added: '新增', deleted: '删除', modified: '修改', not_reviewed: '未展开' })
@@ -69,7 +69,7 @@ function renderTurn(turn, round, index, options) {
   const checked = new Set(open?.paths ?? [])
   const choices = (turn.files ?? []).filter(markable)
   const form = open && choices.length
-    ? `<form class="wb-review-return-form" data-action="review-return-submit" data-artifact-id="${esc(turn.artifactId)}"><p>选择要打回的文件，并写一句要怎么改。</p><ul class="wb-review-return-paths">${choices.map(file => `<li><label><input type="checkbox" name="paths" value="${esc(file.path)}"${checked.has(file.path) ? ' checked' : ''}><span>${esc(file.path)}</span></label></li>`).join('')}</ul><label class="wb-sr-only" for="wb-review-comment">修改意见</label><textarea id="wb-review-comment" name="comment" rows="3" maxlength="${MAX_TEXT}" placeholder="说明要怎么改…">${esc(open.comment ?? '')}</textarea><div class="wb-control-actions"><button type="button" class="wb-new" data-action="review-return-cancel">取消</button><button type="submit" class="wb-btn wb-btn-primary">发回</button></div></form>`
+    ? `<form class="wb-review-return-form" data-action="review-return-submit" data-artifact-id="${esc(turn.artifactId)}"><p>选择要打回的文件，并写一句要怎么改。</p>${open.notice ? `<p class="wb-review-note" role="status">${cut(open.notice)}</p>` : ''}<ul class="wb-review-return-paths">${choices.map(file => `<li><label><input type="checkbox" name="paths" value="${esc(file.path)}"${checked.has(file.path) ? ' checked' : ''}><span>${esc(file.path)}</span></label></li>`).join('')}</ul><label class="wb-sr-only" for="wb-review-comment">修改意见</label><textarea id="wb-review-comment" name="comment" rows="3" maxlength="${MAX_TEXT}" placeholder="说明要怎么改…">${esc(open.comment ?? '')}</textarea><div class="wb-control-actions"><button type="button" class="wb-new" data-action="review-return-cancel">取消</button><button type="submit" class="wb-btn wb-btn-primary">${open.restartToken ? '带记录重新开始并发回' : '发回'}</button></div></form>`
     : ''
   const status = STATUS_LABEL[turn.status] ?? esc(String(turn.status ?? ''))
   const empty = files ? '' : '<p class="wb-review-note">这一轮没有列出可展开的文件。</p>'

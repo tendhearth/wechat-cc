@@ -365,13 +365,16 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       const paths = value?.paths
       const comment = value?.comment
       const inputRequestId = value?.inputRequestId
+      // 重开令牌照 POST /v1/workbench/continue 那道门验(同一个 SHA256):原会话不能恢复时,打回也要能带着它再来一次。
+      const restartToken = value?.restartToken
       if (inputRequestId !== undefined && (typeof inputRequestId !== 'string' || !REQUEST_ID.test(inputRequestId))) return invalid()
+      if (restartToken !== undefined && (typeof restartToken !== 'string' || !SHA256.test(restartToken))) return invalid()
       if (!TASK_ID.test(id) || !ARTIFACT_ID.test(artifactId) ||
           !Array.isArray(paths) || !paths.length || paths.length > 20 || paths.some(p => typeof p !== 'string' || !p) ||
           typeof comment !== 'string' || !comment.trim() || comment.length > 2000) return invalid()
       if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
       try {
-        const task = await deps.workbench.returnReviewFiles(id, { artifactId, paths, comment, ...(inputRequestId !== undefined ? { inputRequestId } : {}) })
+        const task = await deps.workbench.returnReviewFiles(id, { artifactId, paths, comment, ...(inputRequestId !== undefined ? { inputRequestId } : {}), ...(restartToken !== undefined ? { restartToken: restartToken as string } : {}) })
         return { status: 202, body: { task } }
       } catch (err) {
         return mappedError(err)

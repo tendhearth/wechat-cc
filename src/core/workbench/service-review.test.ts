@@ -53,12 +53,12 @@ function tempRoot(prefix: string) {
 const file = (path: string, over: Partial<ReviewFile> = {}): ReviewFile => ({ path, preexisting: false, kind: 'modified', beforeSha256: 'a'.repeat(64), afterSha256: 'b'.repeat(64), diff: `@@ -1 +1 @@\n-老 ${path}\n+新 ${path}`, ...over })
 const review = (files: ReviewFile[], over: Partial<GitReview> = {}): GitReview => ({ version: 1, scope: 'working-tree-before-after', startedAt: 1, finishedAt: 2, headBefore: 'h1', headAfter: 'h2', status: 'complete', preexistingPaths: [], notes: [], files, ...over })
 
-function setup() {
+function setup(canResume = true) {
   const { stateDir, project } = tempRoot('wb-review-')
   const db = openTestDb(); dbs.push(db)
   const store = makeWorkbenchStore(db)
   const registry = createProviderRegistry()
-  registry.register('claude', fakeProvider(), { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
+  registry.register('claude', fakeProvider(), { displayName: 'Claude', canResume: () => canResume, workbench: MANAGED_NATIVE_CAPABILITIES })
   const service = makeWorkbenchService({ store, registry, stateDir, ownerChatId: () => 'owner' })
   services.push(service)
   return { service, store, stateDir, project }
@@ -76,8 +76,8 @@ function plant(store: WorkbenchStore, taskId: string, stateDir: string, name: st
 }
 
 /** 三轮:两份合法快照 + 一份坏 JSON(mime 对、内容坏)。 */
-async function planted() {
-  const fixture = setup()
+async function planted(canResume = true) {
+  const fixture = setup(canResume)
   const task = await completedTask(fixture.service, fixture.project)
   const first = plant(fixture.store, task.id, fixture.stateDir, '代码变更-run1.json', serializeGitReview(review([file('src/a.ts'), file('src/big.bin', { kind: 'not_reviewed', reason: '二进制文件未展开', beforeSha256: undefined, afterSha256: undefined, diff: undefined })])))
   const second = plant(fixture.store, task.id, fixture.stateDir, '代码变更-run2.json', serializeGitReview(review([file('src/a.ts'), file('src/b.ts')], { status: 'partial', notes: ['读取超时，其余文件尚未检查。'] })))
@@ -199,6 +199,28 @@ describe('returnReviewFiles', () => {
     service.setArchived(id, false)
     service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts', 'src/b.ts'], comment: '这两处判空漏了' })
     expect(service.reviewList(id).find(t => t.artifactId === second)!.files.map(f => f.mark?.mark)).toEqual(['returned', 'returned'])
+    await vi.waitFor(() => expect(service.detail(id).task.status).toBe('completed'))
+  })
+
+  // 终审(2026-09-17):原会话不能恢复时,打回不能变成死胡同 —— 第一次如实说「要重开」且一条标记都不留,
+  // 主人拿着同一张预览里的令牌再发一次就该成立。
+  it('原会话不可恢复 ⇒ 先要 restart_confirmation_required 且不留标记;带上令牌再发就成立', async () => {
+    const { service, id, second } = await planted(false)
+    const attempt = () => service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts', 'src/b.ts'], comment: '这两处判空漏了' })
+    expect(attempt).toThrow('restart_confirmation_required')
+    expect(service.reviewList(id).find(t => t.artifactId === second)!.files.every(f => f.mark === undefined)).toBe(true)
+    const continuation = service.prepareContinuation(id)
+    expect(continuation.mode).toBe('restart_required')
+    expect(service.detail(id).continuation?.restart?.token).toBe(continuation.restart!.token)
+    // 令牌不对 ⇒ 还是不发、也不留标记。
+    expect(() => service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts'], comment: '改', restartToken: 'f'.repeat(64) })).toThrow('restart_confirmation_stale')
+    expect(service.reviewList(id).find(t => t.artifactId === second)!.files.every(f => f.mark === undefined)).toBe(true)
+    const view = service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts', 'src/b.ts'], comment: '这两处判空漏了', restartToken: continuation.restart!.token })
+    expect(view.id).toBe(id)
+    expect(service.reviewList(id).find(t => t.artifactId === second)!.files.map(f => f.mark?.mark)).toEqual(['returned', 'returned'])
+    const text = service.detail(id).events.filter(e => e.kind === 'user').at(-1)!.text
+    expect(text).toContain('src/a.ts')
+    expect(text).toContain('这两处判空漏了')
     await vi.waitFor(() => expect(service.detail(id).task.status).toBe('completed'))
   })
 

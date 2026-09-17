@@ -46,7 +46,7 @@ function providerLabel(p) {
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],page?:TaskPage,projectProviders?:Record<string,string>}} ListResult */
 /** @typedef {{artifactId:string,html:string}|null} Preview */
-/** @typedef {{artifactId:string,paths:string[],comment?:string}} ReviewReturnOpen */
+/** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string}} ReviewReturnOpen */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,preview:Preview,query?:TaskQuery,page?:TaskPage,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,chats?:ChatMatter[],selectedMatterId?:string|null,version?:number,reviews?:ReviewTurn[],reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null}} WorkbenchState */
 /** @typedef {import('./workbench-window-state.js').Draft} Draft */
 /** @typedef {{id:string,kind:string,title:string,status:string,updatedAt:number}} ChatMatter */
@@ -54,6 +54,9 @@ function providerLabel(p) {
 
 // 一件事都没改过的任务:签名从一开始就是「空」,免得第一次拉回来白重画一整页。
 const EMPTY_REVIEWS = reviewsSignature([])
+/** 改动记录只跟着成果走:哪几件、各是什么内容。
+ * @param {Detail|null|undefined} detail */
+const artifactsSignature = detail => JSON.stringify((detail?.artifacts ?? []).map(a => [a.id, a.sha256]))
 
 const windowStorage = workbenchWindowStorage()
 const savedView = loadWorkbenchView(windowStorage)
@@ -380,6 +383,7 @@ export function createWorkbenchController(deps) {
     const previousVersion = state.version
     const previous = state.detail
     const previousSignature = structuralSignature(previous)
+    const previousArtifacts = artifactsSignature(previous)
     const changed = detail.events ?? []
     state.detail = { ...detail, events: mergeEvents(previous.events ?? [], changed) }
     // 中途不带 version 的响应会让长轮询停下来:同时收掉这面旗,3 秒那条腿才会真的接手重拉。
@@ -387,12 +391,13 @@ export function createWorkbenchController(deps) {
     else liveVersioned = false
     state.selectedArtifactId = chooseArtifactId(state.detail.artifacts ?? [], state.selectedArtifactId)
     if (state.preview && state.preview.artifactId !== state.selectedArtifactId) state.preview = null
-    // 新的一轮快照会先把结构签名(artifacts)顶一下;version 往前走了却没有新事件的那一次,
-    // 多半是别的面(微信)改了标记 —— 这两种才去重拉。逐字流的每一小段不必问,
-    // 长轮询等到超时空手回来(version 原地不动)更不必问。
+    // 新的一轮快照会换掉成果清单;version 往前走了却没有新事件的那一次,多半是别的面(微信)改了
+    // 标记 —— 这两种才去重拉。结构签名里还有 runtime、权限、输入回执这些跟改动记录无关的东西,
+    // 拿它当重拉的理由等于每次前后台切换都白问一趟,所以这里只认成果自己的签名。
+    // 逐字流的每一小段不必问,长轮询等到超时空手回来(version 原地不动)更不必问。
     const advanced = typeof detail.version === 'number' ? detail.version !== previousVersion : true
     const restructured = structuralSignature(state.detail) !== previousSignature
-    if (restructured || (advanced && !changed.length)) loadReviews(detail.task.id)
+    if (artifactsSignature(state.detail) !== previousArtifacts || (advanced && !changed.length)) loadReviews(detail.task.id)
     if (restructured) { paint(true); return }
     if (!changed.length) { syncPaintSnapshot(); return }
     // 第一条事件要顶掉「还没有对话记录」那句:那不是补丁干得了的事。
@@ -790,8 +795,11 @@ export function initWorkbenchPage(deps) {
       return /** @type {{task?:Task}} */ (await deps.invokeWorkbenchApi(method, path, body))
     }
   }
-  /** @param {'GET'|'POST'} method @param {string} path @param {Record<string,unknown>} body */
-  const mutate = async (method, path, body) => {
+  /** onError 让调用方自己接住一类错误(打回遇上「要重开」就是这样):回 true 表示这一笔已经
+   * 当场交代清楚了,别再往全局那条错误里塞一句看不懂的话。
+   * @param {'GET'|'POST'} method @param {string} path @param {Record<string,unknown>} body
+   * @param {(error:unknown)=>boolean|Promise<boolean>} [onError] */
+  const mutate = async (method, path, body, onError) => {
     const key = path === '/v1/workbench/create' ? 'create' : `task:${String(body.id ?? '')}`
     if (busy.has(key) || !alive) return false
     busy.add(key);controller.paint(true)
@@ -808,7 +816,9 @@ export function initWorkbenchPage(deps) {
         if (recoveryCode(e)) {
           try { await controller.refresh() } catch { /* Preserve the actionable recovery error and the draft. */ }
         }
-        if (alive && navigation === navigationGeneration) fail(e)
+        let handled = false
+        if (alive && navigation === navigationGeneration && onError) handled = (await onError(e)) === true
+        if (alive && navigation === navigationGeneration && !handled) fail(e)
       }
       return false
     } finally { busy.delete(key);if(alive)controller.paint(true) }
@@ -1034,7 +1044,33 @@ export function initWorkbenchPage(deps) {
       const comment = (/** @type {HTMLTextAreaElement|null} */ (form.querySelector?.('textarea[name="comment"]'))?.value ?? '').trim()
       if (!paths.length) return fail(new Error('请先勾选要打回的文件。'))
       if (!comment) return fail(new Error('请写一句要怎么改，再发回。'))
-      if (await mutate('POST', '/v1/workbench/review-return', { id: taskId, artifactId, paths, comment })) {
+      // 这一笔没发出去的话,勾选、意见和「为什么没发出去」都得留在 state 里 —— 表单本体活在会被重画冲掉的 DOM。
+      const keep = (/** @type {string} */ notice, /** @type {string|undefined} */ token) => {
+        const current = controller.state.reviewReturnOpen
+        if (!current || current.artifactId !== artifactId) return
+        current.paths = paths; current.comment = comment; current.notice = notice
+        if (token === undefined) delete current.restartToken
+        else current.restartToken = token
+        controller.paint(true)
+      }
+      const opened = controller.state.reviewReturnOpen
+      const restartToken = opened?.artifactId === artifactId ? opened.restartToken : undefined
+      if (opened?.artifactId === artifactId) opened.notice = ''
+      // 任务自己在跑的时候后台回的是 workbench_busy,那句「另一个任务正在写」在这儿是误报。
+      if (['running', 'queued', 'cancelling'].includes(controller.state.detail?.task.status ?? '')) return keep('这项任务正在跑，等它答复后再打回。', restartToken)
+      const done = await mutate('POST', '/v1/workbench/review-return', { id: taskId, artifactId, paths, comment, ...(restartToken ? { restartToken } : {}) }, async error => {
+        const recovery = recoveryCode(error)
+        if (!recovery) return false
+        // 令牌过期:丢掉它,重新走一遍「先确认再发」。fail() 那句「记录已更新」照常说。
+        if (recovery === 'stale') { keep('', undefined); return false }
+        // 原会话不可恢复。拿到这一份恢复预览的令牌,当面确认一次再发 —— 打回就不是死胡同了。
+        let token = controller.state.detail?.continuation?.restart?.token
+        if (typeof token !== 'string') { try { await controller.refresh({ force: true }) } catch { /* 让 fail() 照实报 */ } token = controller.state.detail?.continuation?.restart?.token }
+        if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) return false
+        keep('原会话无法恢复。点「带记录重新开始并发回」，CC 会带上这段记录重新开始，再把这几处交回去。', token)
+        return true
+      })
+      if (done) {
         controller.state.reviewReturnOpen = null
         controller.paint(true)
       }

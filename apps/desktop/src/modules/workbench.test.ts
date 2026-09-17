@@ -2163,6 +2163,68 @@ describe('workbench mutations', () => {
     module.stopWorkbenchPolling()
   })
 
+  // 终审(2026-09-17):原会话不可恢复时,打回过去是死胡同 —— 现在当面确认一次,带上重开令牌再发。
+  it('打回遇上原会话不可恢复:草稿留住、表单里说明,确认后带重开令牌再发一次', async () => {
+    const page = installFakePage()
+    const restartToken = 'c'.repeat(64)
+    const sent: unknown[] = []
+    const { api } = reviewPage([reviewTurn()], (method, path) => {
+      if (method === 'POST' && path === '/v1/workbench/review-return') {
+        if (!sent.length) { sent.push('first'); throw new Error('HTTP 409: {"error":"restart_confirmation_required"}') }
+        sent.push('second')
+        return { task: reviewTask }
+      }
+      if (path.startsWith('/v1/workbench/task')) return { task: reviewTask, events: [{ id: 'e1', taskId: 'REVIEW', kind: 'text', text: '做完了', createdAt: 1 }], artifacts: [], continuation: { mode: 'restart_required', restart: { token: restartToken, context: '记录', eventCount: 1, includedEventCount: 1, truncated: false } } }
+      return null
+    })
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    const box = new FakeElement(); box.value = 'src/app.ts'; (box as any).checked = true
+    const comment = new FakeElement(); comment.value = '把命名改回来'
+    const form = new FakeElement(); form.tagName = 'FORM'; form.dataset = { action: 'review-return-submit', artifactId: 'ART-1' }
+    form.querySelector = (selector: string) => selector.includes('textarea') ? comment : null
+    ;(form as any).querySelectorAll = () => [box]
+    const open = new FakeElement(); open.dataset = { action: 'review-return', artifactId: 'ART-1', path: 'src/app.ts' }
+    await [...page.listeners.get('click')!][0]!({ target: open })
+    const submit = [...page.listeners.get('submit')!][0]!
+    await submit({ preventDefault() {}, target: form })
+    expect(api).toHaveBeenCalledWith('POST', '/v1/workbench/review-return', { id: 'REVIEW', artifactId: 'ART-1', paths: ['src/app.ts'], comment: '把命名改回来' })
+    // 表单还在,勾选和意见都没丢,里面说清楚了为什么没发出去。
+    expect(controller.state.reviewReturnOpen).toMatchObject({ artifactId: 'ART-1', paths: ['src/app.ts'], comment: '把命名改回来', restartToken })
+    expect(page.innerHTML).toContain('原会话无法恢复')
+    expect(page.innerHTML).toContain('把命名改回来')
+    await submit({ preventDefault() {}, target: form })
+    expect(api).toHaveBeenCalledWith('POST', '/v1/workbench/review-return', { id: 'REVIEW', artifactId: 'ART-1', paths: ['src/app.ts'], comment: '把命名改回来', restartToken })
+    expect(sent).toEqual(['first', 'second'])
+    expect(controller.state.reviewReturnOpen).toBe(null)
+    module.stopWorkbenchPolling()
+  })
+
+  // 终审(2026-09-17):任务自己在跑的时候 workbench_busy 那句「另一个任务在写」是误报。
+  it('任务正在跑时不发回,表单里如实说明并留住草稿', async () => {
+    const page = installFakePage()
+    const running = { ...reviewTask, status: 'running' }
+    const { api } = reviewPage([reviewTurn()], (_method, path) =>
+      path.startsWith('/v1/workbench/task') ? { task: running, events: [{ id: 'e1', taskId: 'REVIEW', kind: 'text', text: '在写', createdAt: 1 }], artifacts: [] } : null)
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    await vi.waitFor(() => expect(controller.state.detail?.task.status).toBe('running'))
+    const box = new FakeElement(); box.value = 'src/app.ts'; (box as any).checked = true
+    const comment = new FakeElement(); comment.value = '把命名改回来'
+    const form = new FakeElement(); form.tagName = 'FORM'; form.dataset = { action: 'review-return-submit', artifactId: 'ART-1' }
+    form.querySelector = (selector: string) => selector.includes('textarea') ? comment : null
+    ;(form as any).querySelectorAll = () => [box]
+    const open = new FakeElement(); open.dataset = { action: 'review-return', artifactId: 'ART-1', path: 'src/app.ts' }
+    await [...page.listeners.get('click')!][0]!({ target: open })
+    await [...page.listeners.get('submit')!][0]!({ preventDefault() {}, target: form })
+    expect(api).not.toHaveBeenCalledWith('POST', '/v1/workbench/review-return', expect.anything())
+    expect(page.innerHTML).toContain('这项任务正在跑，等它答复后再打回。')
+    expect(controller.state.reviewReturnOpen).toMatchObject({ artifactId: 'ART-1', paths: ['src/app.ts'], comment: '把命名改回来' })
+    module.stopWorkbenchPolling()
+  })
+
   it('改动记录读不到时照实说,详情照常显示', async () => {
     const page = installFakePage()
     const { api } = reviewPage(new Error('workbench_connection_unavailable'))
@@ -2423,13 +2485,45 @@ describe('工作台「改动」的拉取与重画', () => {
     expect(calls).toContain('/v1/workbench/review?id=T')
     const painted = renders.length
     reviews = [turn([file('accepted')])]
-    release({ ...detail, version: 6, task: { ...task, status: 'completed' } })
+    // 微信那边改了标记:version 往前走了、没有新事件(标记不写事件),任务同时跑完了 —— 重拉 + 整页重画。
+    release({ ...detail, version: 6, events: [], task: { ...task, status: 'completed' } })
     await vi.waitFor(() => expect(controller.state.reviews?.[0]?.files?.[0]?.mark?.mark).toBe('accepted'))
     expect(calls.filter(path => path.startsWith('/v1/workbench/review')).length).toBe(2)
     expect(renders.length).toBeGreaterThan(painted + 1)
     controller.newTask('/work')
     expect(controller.state.reviews).toEqual([])
     expect(controller.state.reviewsSignature).toBe('[]')
+    controller.destroy()
+  })
+
+  // 终审(2026-09-17):结构签名里还有 runtime / 权限 / 输入回执,它们动一下跟改动记录毫无关系。
+  it('只有 runtime 变了不重拉改动;成果变了才拉', async () => {
+    const { createWorkbenchController } = await import('./workbench.js')
+    let release!: (value: unknown) => void
+    const calls: string[] = []
+    const invokeWorkbenchApi = vi.fn((_method: string, path: string) => {
+      calls.push(path)
+      if (path.startsWith('/v1/matters')) return Promise.resolve({ matters: [] })
+      if (path.startsWith('/v1/workbench/review')) return Promise.resolve({ reviews: [turn([file()])] })
+      if (path.startsWith('/v1/workbench/task')) {
+        if (path.includes('since=')) return new Promise(resolve => { release = resolve as (value: unknown) => void })
+        return Promise.resolve({ ...detail, version: 5 })
+      }
+      return Promise.resolve({ tasks: [task], providers: [], defaultProvider: 'codex', canWechat: false })
+    })
+    const controller = createWorkbenchController({ invokeWorkbenchApi, render: () => {}, patchLive: () => true } as any)
+    await controller.selectTask('T')
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    const reviewCalls = () => calls.filter(path => path.startsWith('/v1/workbench/review')).length
+    const pollCalls = () => calls.filter(path => path.includes('since=')).length
+    expect(reviewCalls()).toBe(1)
+    // 只是前台/后台这类运行时信号变了(带着新事件,免得落到「空转」那条腿上)——改动记录没动过。
+    release({ ...detail, version: 6, events: [{ id: 2, taskId: 'T', kind: 'text', text: 'b', createdAt: 2 }], runtime: { foreground: true } })
+    await vi.waitFor(() => expect(pollCalls()).toBe(2))
+    expect(reviewCalls()).toBe(1)
+    // 成果变了(新的一轮快照)⇒ 必须重拉。
+    release({ ...detail, version: 7, events: [{ id: 3, taskId: 'T', kind: 'text', text: 'c', createdAt: 3 }], runtime: { foreground: true }, artifacts: [{ id: 'ART-1', taskId: 'T', name: '对比.json', mime: 'application/vnd.wechat-cc.git-review+json', size: 1, sha256: 'a'.repeat(64), createdAt: 9, approvedAt: null }] })
+    await vi.waitFor(() => expect(reviewCalls()).toBe(2))
     controller.destroy()
   })
 

@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS workbench_review_marks (
 
 - `GET /v1/workbench/review?id=` ⇒ `{reviews: ReviewTurn[]}`。
 - `POST /v1/workbench/review-mark {id, artifactId, path, mark, comment?}` ⇒ `{mark}`。
-- `POST /v1/workbench/review-return {id, artifactId, paths, comment, inputRequestId?}` ⇒ 202 `{task}`。
+- `POST /v1/workbench/review-return {id, artifactId, paths, comment, inputRequestId?, restartToken?}` ⇒ 202 `{task}`。`restartToken` 与 `POST /v1/workbench/continue` 同一道校验(64 位小写十六进制),原样交给 `continueTask`。
 - 全部 admin 档;新路由登记**五处**(route-tiers、token-registry + 精确集合测试、lib.rs 两处、`apps/desktop/workbench-proxy.ts`)。错误:`review_file_unmarkable` / `invalid_review_reference` ⇒ 400;其余沿用 `mappedError`。
 
 ### 4. 桌面
@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS workbench_review_marks (
 
 - 快照缺失 / 损坏 ⇒ 该轮 `unavailable` + note,不影响其它轮。
 - 打回时任务忙(`workbench_busy`)/ 已归档 / 免审未确认 ⇒ 原错误码透传,桌面用现有的 `executionErrorMessage` 展示(补两条文案)。
+- 原会话不可恢复 ⇒ 第一次发回如实返回 `restart_confirmation_required` 且**一条标记都不落**;桌面拿着刚刷新出来的 `detail.continuation.restart.token` 在打回表单里当面确认一次(按钮改成「带记录重新开始并发回」),带 `restartToken` 重发。令牌过期(`restart_confirmation_stale`)⇒ 丢掉令牌,退回「先确认再发」。发回表单的勾选与意见在这一整趟往返里都留着。
+- 任务自己正在跑(`running` / `queued` / `cancelling`)⇒ 桌面**根本不发**,在打回表单里说「这项任务正在跑，等它答复后再打回。」并留住草稿 —— 后台此时回的是 `workbench_busy`,那句「另一个任务正在写」在这儿是误报。
 - 标记的 `after_sha256` 与快照不符(重放旧 artifactId)⇒ 以快照为准写入;不做二次校验。
 
 ## 测试
@@ -80,3 +82,4 @@ CREATE TABLE IF NOT EXISTS workbench_review_marks (
 - 2026-09-17:初稿。
 - 2026-09-17:打回改为续接成功后才写标记(评审:restart_confirmation_required 是设计内的首次回应,标记先落会常态化"已打回但没发出")。
 - 2026-09-17:按计划落地(任务 1–4);偏离:面板只就地展开最近三轮、共用一份预览额度;长轮询空转不重拉改动记录;打回表单的勾选与意见都在重画间保留。
+- 2026-09-17:终审修复:打回支持 restartToken(原会话不可恢复时不再死胡同);改动记录只在成果变化或标记推进时重拉;任务运行中禁止发回并如实说明。
