@@ -714,3 +714,11 @@ it('v61: workbench_tasks / workbench_events 都有 seq 列,事件表有 (task_id
   expect(idx).toContain('workbench_events_task_seq')
   db.close()
 })
+
+it('v62: workbench_review_marks 表存在,主键为 (task_id, artifact_sha256, path)', () => {
+  const db = openTestDb()
+  const cols = db.query<{ name: string; pk: number }, []>("PRAGMA table_info(workbench_review_marks)").all()
+  expect(cols.map(c => c.name)).toEqual(['task_id', 'artifact_sha256', 'path', 'after_sha256', 'mark', 'comment', 'created_at'])
+  expect(cols.filter(c => c.pk > 0).map(c => c.name)).toEqual(['task_id', 'artifact_sha256', 'path'])
+  db.close()
+})

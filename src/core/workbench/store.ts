@@ -12,6 +12,7 @@ import {makeCreationReceiptStore} from './creation-receipts'
 import {makeWechatNotificationStore} from './wechat-notifications'
 import {makeArtifactDeliveryStore} from './artifact-deliveries'
 import {makeTimelineEvents} from './timeline-events'
+import {makeReviewMarkStore} from './review-marks'
 import type {AgentActivity} from '../agent-provider'
 
 export type TaskStatus = 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
@@ -75,6 +76,7 @@ export function makeWorkbenchStore(db: Db) {
     return row.seq
   }
   const version=(id:string)=>db.query<{seq:number},[string]>('SELECT seq FROM workbench_tasks WHERE id=?').get(id)?.seq??0
+  const marks=makeReviewMarkStore(db)
   const addEvent=(id:Parameters<typeof insertEvent>[0],kind:Parameters<typeof insertEvent>[1],text:Parameters<typeof insertEvent>[2],sourceId:Parameters<typeof insertEvent>[3]=null,runId:Parameters<typeof insertEvent>[4]=null,attachments:Parameters<typeof insertEvent>[5]=[])=>db.transaction(()=>insertEvent(id,kind,text,sourceId,runId,attachments,bump(id)))()
   const recordAgentEvent=(taskId:Parameters<typeof upsertAgentEvent>[0],runId:Parameters<typeof upsertAgentEvent>[1],event:Parameters<typeof upsertAgentEvent>[2])=>db.transaction(()=>upsertAgentEvent(taskId,runId,event,bump(taskId)))()
   const finishRunActivities=(taskId:Parameters<typeof finishActivities>[0],runId:Parameters<typeof finishActivities>[1],status:Parameters<typeof finishActivities>[2])=>db.transaction(()=>{finishActivities(taskId,runId,status,bump(taskId))})()
@@ -94,6 +96,14 @@ export function makeWorkbenchStore(db: Db) {
     creationReceipts:makeCreationReceiptStore(db),
     wechatNotifications:makeWechatNotificationStore(db),
     artifactDeliveries:makeArtifactDeliveryStore(db),
+    reviewMarks:{
+      list:marks.list,
+      set:(input:Parameters<typeof marks.set>[0])=>db.transaction(()=>{
+        const row=marks.set(input)
+        bump(input.taskId)
+        return row
+      })(),
+    },
     get, artifacts, events, addEvent,recordAgentEvent,finishRunActivities,source,sourceByIdentity,handoffs,bump,version,
     recordHandoffNative:(id:string,nativeId:string):{sourceTaskId:string;targetTaskId:string}|null=>db.transaction(()=>{
       const row=db.query<{sourceTaskId:string;targetTaskId:string},[string,string]>('UPDATE workbench_handoffs SET target_native_id=? WHERE id=? AND target_native_id IS NULL RETURNING source_task_id AS sourceTaskId,target_task_id AS targetTaskId').get(nativeId,id)
