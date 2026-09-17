@@ -612,7 +612,7 @@ it('upgrades a real v46 database retaining task history, native identity and app
     for(let i=0;i<2;i++) {
       const upgraded=openDb({path})
       try {
-        expect(upgraded.query('SELECT * FROM workbench_tasks').get()).toEqual({...oldTask as object,archived_at:null,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}'})
+        expect(upgraded.query('SELECT * FROM workbench_tasks').get()).toEqual({...oldTask as object,archived_at:null,matter_id:(oldTask as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}'})
         expect(upgraded.query('SELECT * FROM workbench_events').all()).toEqual(oldEvents.map(row=>({...row as object,source_id:null,run_id:null,event_key:null,activity_json:null,attachments_json:'[]'})))
         expect(upgraded.query('SELECT * FROM workbench_artifacts').all()).toEqual(oldArtifacts)
       } finally {upgraded.close()}
@@ -633,7 +633,7 @@ it('upgrades v51 with separate durable control receipts while preserving task hi
     runMigrations(db)
     db.query('INSERT INTO workbench_control_receipts(id,task_id,run_id,action,text_hash,created_at) VALUES(?,?,?,?,?,?)').run('stop-one','deadbeef','run-original','stop','hash',5)
     runMigrations(db)
-    expect(db.query('SELECT * FROM workbench_tasks').all()).toEqual(tasks.map(row=>({...row as object,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}'})))
+    expect(db.query('SELECT * FROM workbench_tasks').all()).toEqual(tasks.map(row=>({...row as object,matter_id:(row as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}'})))
     expect(db.query('SELECT * FROM workbench_events').all()).toEqual(events.map(row=>({...row as object,attachments_json:'[]'})))
     expect(db.query('SELECT * FROM workbench_live_inputs').all()).toEqual(inputs.map(row=>({...row as object,attachments_json:'[]',execution_json:null})))
     expect(db.query('SELECT * FROM workbench_control_receipts').all()).toHaveLength(1)
@@ -695,7 +695,7 @@ it('upgrades v53 with provider defaults, native import defaults and nullable que
     const oldTasks=db.query<Record<string,unknown>,[]>('SELECT * FROM workbench_tasks ORDER BY id').all()
     runMigrations(db);runMigrations(db)
     const tasks=db.query<Record<string,unknown>,[]>('SELECT * FROM workbench_tasks ORDER BY id').all()
-    expect(tasks).toEqual(oldTasks.map(row=>({...row,execution_choice_json:JSON.stringify({defaults:row.id==='feedbeef'?'native':'provider',model:null,reasoningEffort:null})})))
+    expect(tasks).toEqual(oldTasks.map(row=>({...row,matter_id:row.id,execution_choice_json:JSON.stringify({defaults:row.id==='feedbeef'?'native':'provider',model:null,reasoningEffort:null})})))
     expect(db.query('SELECT execution_json FROM workbench_live_inputs').get()).toEqual({execution_json:null})
     expect(db.query("SELECT name FROM sqlite_master WHERE name='workbench_run_execution'").get()).toEqual({name:'workbench_run_execution'})
     // Repair replay must not overwrite an accepted native task choice.

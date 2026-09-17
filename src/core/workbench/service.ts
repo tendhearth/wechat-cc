@@ -25,6 +25,7 @@ import { makeRunPermissions, type PermissionDecision, type RunPermissions, WORKB
 import { findPathBlocker, type PathReservation, type WaitingFor } from './scheduler'
 import { makeQuotaRegistry, classifyProviderError, type QuotaState } from '../provider-quota'
 import { providerDisplayName } from '../provider-display-names'
+import type { MatterStore } from '../matters/store'
 import { publicTask, TERMINAL_TASK_STATUSES, type WorkbenchListQuery, type StoredTask, type Task, type TaskStatus, type WorkbenchStore } from './store'
 
 interface Options {
@@ -32,6 +33,8 @@ interface Options {
   registry: ProviderRegistry
   stateDir: string
   ownerChatId: () => string | null
+  /** 「一件事」登记处:任务与 matter 一对一同 id,生命周期同步(docs/cc-workbench.md「一件事」)。可选,老接线不传。 */
+  matters?: MatterStore
   defaultProvider?: string
   registeredProjects?:()=>Array<{alias:string;path:string}>
   executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
@@ -549,7 +552,7 @@ export function makeWorkbenchService(opts: Options) {
         ev => {
           if (running.cancelled) return
           if(running.queuedInputId&&['text','tool_call','result'].includes(ev.kind))store.liveInputs.set(running.queuedInputId,'delivered')
-          if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId)}
+          if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {matterSync(m=>m.addSession(task.id,task.providerId,ev.sessionId!,'main'));if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId)store.recordHandoffNative(running.handoffId,ev.sessionId)}
           if (ev.kind==='text'||ev.kind==='tool_call'||ev.kind==='error') store.recordAgentEvent(task.id,running.identity,ev)
           // 额度/限流在错误到达时就登记(评审 #5:只在结算时看,保留会话永远等不到结算);
           // 任何一个成功回合(result)即视为这家恢复。
@@ -560,7 +563,7 @@ export function makeWorkbenchService(opts: Options) {
           if (ev.kind==='result') {
             const snapshot=runtime?.snapshot()
             if (snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0) collectTurnArtifacts(running)
-            if (isReplied(running)) void releaseTurnLease(running).catch(()=>{})
+            if (isReplied(running)) { matterSync(m=>m.setStatus(task.id,'replied')); void releaseTurnLease(running).catch(()=>{}) }
           }
         },()=>{
           const snapshot=runtimeSnapshot(running)
@@ -612,6 +615,7 @@ export function makeWorkbenchService(opts: Options) {
           stageFinishedNotice(running,status,finalError)
         })
         terminalCommitted=true
+        matterSync(m=>m.setStatus(task.id,status==='interrupted'?'open':'done'))
         publishFinishedNotices()
       } catch { /* never unlock an uncertain writer for a status failure */ }
       running.publicFinished=true; running.resolveDone()
@@ -734,6 +738,8 @@ export function makeWorkbenchService(opts: Options) {
     return taskView(publicTask({...task,status:'queued',error:null}))
   }
 
+  /** matter 同步永不打断任务本身:登记失败只是少一条索引,任务照跑。 */
+  function matterSync(fn:(m:MatterStore)=>void):void { if(!opts.matters)return; try{fn(opts.matters)}catch{/* 见上 */} }
   function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void):WorkbenchTaskView {
     ensureAccepting()
     const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
@@ -745,6 +751,7 @@ export function makeWorkbenchService(opts: Options) {
     let activate:()=>void=()=>{}
     const accepted=store.atomic(()=>{
       const task=store.create({title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:opts.ownerChatId()})
+      matterSync(m=>{m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:task.ownerChatId??null});m.linkTask(task.id);if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)})
       return start(task,text,acceptedDirectoryIdentity,undefined,undefined,undefined,undefined,undefined,attachments,input.draftId,execution,{
         persist:runId=>onAccepted?.(task,runId),activate:fn=>{activate=fn},
       })
@@ -762,6 +769,7 @@ export function makeWorkbenchService(opts: Options) {
       runningText.delete(running.identity)
       try {
         store.atomic(()=>{store.update(running.taskId,'cancelled');stageFinishedNotice(running,'cancelled')})
+        matterSync(m=>m.setStatus(running.taskId,'done'))
         publishFinishedNotices()
       } catch { /* in-memory cancellation still must settle */ }
       running.publicFinished=true; running.resolveDone()
@@ -1028,7 +1036,7 @@ export function makeWorkbenchService(opts: Options) {
         task=start(store.get(record.targetTaskId),p.context,decision.directoryIdentity,accepted,native,p.artifacts,record.id,undefined,materials,undefined,p.targetExecution)
       }
       catch(error){
-        if(!target)store.update(record.targetTaskId,'failed',error instanceof Error?error.message:'task_failed')
+        if(!target){store.update(record.targetTaskId,'failed',error instanceof Error?error.message:'task_failed');matterSync(m=>m.setStatus(record.targetTaskId,'done'))}
         store.addEvent(record.targetTaskId,'system','交接已记录，但本轮未启动。请查看任务状态，手动决定是否继续。')
         throw error
       }
@@ -1190,7 +1198,9 @@ export function makeWorkbenchService(opts: Options) {
       if(typeof archived!=='boolean')throw new Error('invalid_request')
       const task=store.get(id)
       if(archived && !taskView(publicTask(task)).canArchive)throw new Error('workbench_busy')
-      return taskView(publicTask(store.setArchived(id,archived)))
+      const view=taskView(publicTask(store.setArchived(id,archived)))
+      matterSync(m=>m.setStatus(id,archived?'archived':view.status==='interrupted'?'open':TERMINAL_TASK_STATUSES.includes(view.status)?'done':view.phase==='replied'?'replied':'open'))
+      return view
     },
     async cancel(id:string,expectedRunId?:string):Promise<WorkbenchTaskView> {
       const running=runsByTask.get(id)

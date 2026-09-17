@@ -1,3 +1,4 @@
+import { mattersRoutes } from './routes-matters'
 /**
  * Route table for internal-api. Returns the full Record<"METHOD /path", handler>
  * given a deps closure + a `getDelegate` accessor (for late-binding via
@@ -104,6 +105,7 @@ const onlineStickerCooldown = makeCooldown(5 * 60_000)
 const onlineStickerCursor = new Map<string, number>()
   return {
     ...workbenchRoutes(deps),
+    ...mattersRoutes(deps),
     'GET /v1/health': () => ({
       status: 200,
       body: {

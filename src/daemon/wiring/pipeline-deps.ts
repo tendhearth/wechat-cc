@@ -121,6 +121,7 @@ export function makeDelegateToHand(deps: DelegateDeps) {
 
 export interface PipelineDepsOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
+  matters?: import('../../core/matters/store').MatterStore
   stateDir: string
   db: import('../../lib/db').Db
   ilink: IlinkAdapter
@@ -659,6 +660,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       onContextAvailable:(c,a)=>opts.workbench?.contextAvailable(c,a),
     },
     typing: { sendTyping: (c, a) => ilink.sendTyping(c, a) },
+    ...(opts.matters?{matter:{ensureChat:(c:string)=>opts.matters!.ensureChat(c),log:(t:string,l:string)=>log(t,l)}}:{}),
     ...(opts.workbench?{taskReference:{
       ownerChatId,
       // 可指称的候选:七天内动过、未归档的任务,包括失败 / 中断的 —— 主人问"那件怎么了"
@@ -666,10 +668,14 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       // 把任务打成 failed,焦点随之静默失效,后面两句掉进了普通聊天)。项目显示名用目录名。
       candidates:():TaskCandidate[]=>{
         const since=Date.now()-7*24*60*60_000
-        return opts.workbench!.list({archived:'exclude',limit:50}).tasks
+        const tasks=opts.workbench!.list({archived:'exclude',limit:50}).tasks
           .filter(t=>t.phase!=='cancelled'&&t.updatedAt>=since)
           .sort((a,b)=>b.updatedAt-a.updatedAt)
-          .map(t=>({id:t.id,title:t.title,project:pathBasename(t.path),path:t.path,providerId:t.providerId,phase:t.phase,updatedAt:t.updatedAt,error:t.error}))
+        // 有「一件事」登记处时以它为准:候选就是"最近动过的事",顺序也是它的顺序;任务详情仍从工作台取。
+        const ordered=opts.matters
+          ?(()=>{const byId=new Map(tasks.map(t=>[t.id,t]));return opts.matters!.list({kind:'task',statuses:['open','replied','done'],since,limit:50}).flatMap(m=>{const t=byId.get(m.id);return t?[t]:[]})})()
+          :tasks
+        return ordered.map(t=>({id:t.id,title:t.title,project:pathBasename(t.path),path:t.path,providerId:t.providerId,phase:t.phase,updatedAt:t.updatedAt,error:t.error}))
       },
       // 额度止损:这家耗尽就不再往它送,问"交给另一位继续?";「是」就在同一文件夹给另一位新开一件。
       quotaExhausted:(id:string)=>opts.workbench!.quotaExhausted(id),
@@ -825,6 +831,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     opts.petSignals?.noteContact()
     const ownerChatId = loadCompanionConfig(stateDir).default_chat_id
     if (!ownerChatId) throw new Error('companion_owner_chat_not_configured')
+    // 「一件事」:app 里对 CC 说的话属于主人那条 chat matter,并且它现在在桌面表面露过面。
+    try { const m = opts.matters?.ensureChat(ownerChatId); if (m) opts.matters!.bind(m.id, 'desktop', 'app') } catch { /* 登记失败不打断轮次 */ }
     // D3 review follow-up: app-converse captures the reply through a sink, but a
     // chatroom-mode chat is preempt-policy (submitTurn runs the turn BARE, no
     // per-chat lock) AND chatroom forbids the `reply` tool — so an app turn on a

@@ -375,6 +375,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     setWorkbench(service) {
       deps.workbench = service
     },
+    setMatters(service) {
+      deps.matters = service
+    },
 
     setConversation(c) {
       deps.conversation = c

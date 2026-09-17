@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { makeMatterStore } from '../core/matters/store'
+import { makeMattersService } from '../core/matters/service'
 if (!process.env.CLAUDE_CODE_ENTRYPOINT) { process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts' }
 // 回环守卫(spec 2026-09-09-cli-hook-push §3):daemon 经 SDK 拉起的 claude / codex
 // 继承这个环境,主人装的 hooks 在它们身上也会触发;`wechat-cc hook` 看到这个变量
@@ -650,7 +652,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       localMachine: osHostname(),
       ...(a2a ? { remote: makeRemoteReply({ registry: a2a.registry, client: a2a.client, selfId: boot.selfId }) } : {}),
     })
-    const workbench = wireWorkbench({ db, stateDir, boot, internalApi,
+    // 「一件事」登记处:一份 store,工作台、微信入站、app 对话、内部 API 都用它(2026-09-16)。
+    const matters = makeMatterStore(db)
+    const workbench = wireWorkbench({ db, stateDir, boot, internalApi, matters,
       executionConflict:(path,providerId,nativeId)=>boot.sessionManager.hasProjectConflict(path)||
         (!!nativeId&&Object.values(boot.sessionStore.all()).some(s=>s.provider===providerId&&s.session_id===nativeId))||
         legacyClaims.conflicts({owner:'workbench',path,providerId,nativeId})||
@@ -659,7 +663,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setWorkbench(workbench)
     lc.register({ name: 'workbench', stop: () => workbench.shutdown() })
     const wired = wireMain({
-      workbench,
+      workbench, matters,
       cliReply: cliReplyHandler,
       stickers: stickerLib,
       requestRestart: (reason) => requestRestart(reason),
@@ -681,6 +685,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // the pipeline wiring are available. Routes access deps.companionConverse
     // at request time, so this late assignment is safe (mirrors setConversation).
     internalApi.setCompanionConverse(wired.companionConverse)
+    internalApi.setMatters(makeMattersService({
+      store: matters, workbench,
+      chat: { ownerChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null), say: wired.companionConverse },
+    }))
     // 同上,桌宠的「在做什么」—— 组装闭包在 pipeline-deps(那里才有 boot)。
     internalApi.setPetTurn(wired.petTurn)
     ticksRef = wired.ticks

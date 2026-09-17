@@ -99,6 +99,16 @@ CC 在微信里是管家：你说某件事，它找到是哪个任务、让原�
 
 日期化的设计稿和验证记录保留历史上下文；本页负责当前能力概览。设计板仍保存在私有目录，公开仓库只保留约定的运行/源资产与来源摘要，资产授权见 [ASSETS-LICENSE.md](../ASSETS-LICENSE.md)。
 
+## 一件事（matter）
+
+主人心里的"一件事"，跨表面（微信 / 桌面 / 手机 / 终端）、跨供应商会话都是它。它是统一入口的实体：手机端、桌面、微信管家最终只认它。
+
+- **表**（v60）：`matters(id 8 位十六进制, kind chat|task|companion, title, project_path, status open|replied|done|archived, owner_chat_id)`；`matter_bindings(matter_id, surface wechat|desktop|phone|cli, surface_key, last_seen_at)`：一件事在哪些表面露过面；`matter_sessions(matter_id, provider_id, session_id, role main|review|handoff)`：挂着哪些执行者会话。事件不复制：仍在 `workbench_events` / `messages` 里，按 matter 归属。
+- **怎么落**（全部加法，旧表语义不动）：工作台任务 ↔ `kind='task'` 一对一、同 id；一个微信 chat ↔ 一条 `kind='chat'`（先不按话题拆；知识层的 `threads` 表是另一回事——那是从聊天里抽出来的话题）；App「跟 CC 说」= 同一条 chat matter 多一个 `desktop` 绑定；陪伴事件 `kind='companion'` 先只登记。
+- **API**：`GET /v1/matters?kind=&status=a,b&since=&limit=`；`GET /v1/matter?id=` = matter + bindings + sessions + 任务视图 + 最近事件；`POST /v1/matter/say {id,text}` 按 kind 路由——task 走工作台续接，chat 走 app 对话通道（只对主人那条）。
+- **代码**：`src/core/matters/store.ts`（存储）、`service.ts`（列表 / 详情 / say）、`src/daemon/internal-api/routes-matters.ts`、`src/daemon/inbound/mw-matter.ts`（入站登记）；工作台同步在 `service.ts` 的 `matterSync`（登记失败绝不打断任务）。
+- **下一步**：桌面把对话视图 + 工作台视图收成"一个 matter 列表 + 一个会话面"；手机端走隧道调同一份 API；微信降级成渠道适配器。
+
 ## 修订记录
 
 - **2026-09-16**：成果改为每一回合答复后即登记，不再等任务结束（此前文件已写入却要先取消任务才出现在成果列表）。补一条迁移，修复从早期开发构建升级的库缺少 `workbench_handoffs.request_event_id` 而导致任务详情打不开的问题；已发布安装包的库不受影响。新增「回合与会话是两件事」一节。
@@ -116,3 +126,4 @@ CC 在微信里是管家：你说某件事，它找到是哪个任务、让原�
 - **2026-09-16**：运行时适配层落地第一块：`src/lib/runtime/sqlite.ts`（`openSqlite` + `SqlDatabase`/`SqlStatement`，接口按 `bun:sqlite` 照抄，Bun 上返回 Bun 的 Database 本体零开销；Node 上走 `node:sqlite`，事务用 BEGIN/COMMIT + SAVEPOINT 嵌套）。业务代码不再直接 import `bun:sqlite`（depcruise 规则 `bun-builtins-only-in-runtime` 把门）。实测 Node 24 直接跑 `src/lib` + `src/core` 单元套件：2765 过 / 38 红，红的全是测试自己 import `bun:sqlite`、`Bun.serve`/`Bun.spawn` 三处——"换运行时的出口"从此是可以量的。
 - **2026-09-16**：运行时适配层补齐子进程／HTTP／文件：`src/lib/runtime/process.ts`（`spawn`／`spawnSync`，接口按 Bun 的 Subprocess 子集，Node 走 node:child_process + `Readable.toWeb`）、`runtime/http.ts`（`serve`，Node 走 node:http + Fetch Request/Response；读端口前 `await ready`）；`Bun.file` 改 `readFile`。业务代码里不再直接出现 `Bun.*`（`no-bun-globals.test.ts` 把门，唯一白名单是 `yi-ws-server.ts` 的 WebSocket 服务端——Node 没有原生实现）。Node 24 跑 `src/lib` + `src/core`：**2989 过 / 0 红**。
 - **2026-09-16**：Node 出口打通到整个 `src/`：`vitest.node.config.ts`（只排除仍在 `Bun.serve` 上的 WebSocket 服务端三个测试；桌面前端测试是给 webview 写的，只在 Bun 上跑），CI 的 `node · core suite` 改跑它。本地 Node 24：**6391 过 / 0 红**。唯一的运行时语义差异记在 `routes-workbench.test.ts`：服务端按 content-length 提前回 413 并关连接时，Bun 的客户端能读到 413，Node 的 http 客户端写失败即销毁请求——两种都算"解码前被拒"。
+- **2026-09-16**：新增「一件事」（matter）原语，第一步落地（对用户零可见变化）：迁移 v60 建 `matters` / `matter_bindings` / `matter_sessions`，`workbench_tasks` 加可空 `matter_id`（存量任务回填，id 与任务相同）；工作台任务全生命周期同步到 matter（建→open、拿到会话→记会话、答复→replied、结算→done、归档→archived）；微信每个进门的 chat 登记为一条 chat matter；App「跟 CC 说」把主人那条 chat matter 绑上桌面表面；管家的候选集改从 matter 取；三条路由 `GET /v1/matters`、`GET /v1/matter?id=`、`POST /v1/matter/say`（admin 档，operator 凭据放行）。见下面「一件事」一节。

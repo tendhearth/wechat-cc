@@ -23,6 +23,7 @@ import { makeMwLlmHealth, type MwLlmHealthDeps } from './mw-llm-health'
 import { makeMwDispatch, type DispatchMwDeps } from './mw-dispatch'
 import {makeMwWorkbench,type WorkbenchMwDeps} from './mw-workbench'
 import { makeMwTaskReference, type TaskReferenceMwDeps } from './mw-task-reference'
+import { makeMwMatter, type MatterMwDeps } from './mw-matter'
 
 export interface InboundPipelineDeps {
   trace: TraceMwDeps
@@ -33,6 +34,8 @@ export interface InboundPipelineDeps {
   workbench?:WorkbenchMwDeps
   /** 管家式指称:主人用自然语言说某件事 ⇒ 落定到活跃任务再走 workbench 命令;缺席 ⇒ 不挂。 */
   taskReference?: TaskReferenceMwDeps
+  /** 每个进门的 chat 登记成一条「一件事」;只登记不改逻辑。 */
+  matter?: MatterMwDeps
   typing: TypingMwDeps
   admin: AdminMwDeps
   mode: ModeMwDeps
@@ -68,6 +71,7 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     // crashed is left unmarked and reprocessed. See mw-dedup for the macOS
     // sleep/wake re-reply bug this guards against.
     makeMwDedup(d.dedup),
+    ...(d.matter?[makeMwMatter(d.matter)]:[]),
     makeMwMessages(d.messages),
     makeMwCaptureCtx(d.capture),
     // Explicit local task controls need sender authorization and reply context,

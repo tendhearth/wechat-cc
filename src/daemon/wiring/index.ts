@@ -35,6 +35,8 @@ import { existsSync, readFileSync } from 'node:fs'
 
 export interface WireMainOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
+  /** 「一件事」登记处(matters store);微信入站登记 chat、app 对话绑桌面表面、管家候选集都从这里来。 */
+  matters?: import('../../core/matters/store').MatterStore
   stateDir: string
   db: Db
   ilink: IlinkAdapter

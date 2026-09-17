@@ -108,11 +108,12 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // v54: accepted per-run execution choices and native observations.
     // v55–58: creation receipts, WeChat notices, artifact deliveries and API transcripts.
     // v59: backfills the request_event_id column v49 never added to existing databases.
-    expect(v).toBe(59)
+    // v60: matters(一件事)+ bindings + sessions,workbench_tasks.matter_id 回填。
+    expect(v).toBe(60)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',
-      'customer_review_feedback', 'customer_review_items', 'customer_reviews', 'events', 'handled_messages', 'journal', 'message_attempts', 'messages',
+      'customer_review_feedback', 'customer_review_items', 'customer_reviews', 'events', 'handled_messages', 'journal', 'matter_bindings', 'matter_sessions', 'matters', 'message_attempts', 'messages',
       'milestones', 'observations', 'penpal_channel', 'penpal_letter', 'reminders', 'session_fts_state', 'session_state',
       'session_turns_fts', 'session_turns_fts_config', 'session_turns_fts_content', 'session_turns_fts_data',
       'session_turns_fts_docsize', 'session_turns_fts_idx',

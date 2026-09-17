@@ -97,6 +97,8 @@ export interface InternalApiDeps {
   daemonPid: number
   /** Owner-only Workbench service; late-bound after provider bootstrap. */
   workbench?: WorkbenchService
+  /** 「一件事」读写面(routes-matters);与 workbench 一样晚绑定。 */
+  matters?: import('../../core/matters/service').MattersService
   /**
    * Sandbox FS for memory_read / memory_write / memory_list (RFC 03 P1.B
    * B2). The same MemoryFS instance is shared with the legacy in-process
@@ -530,6 +532,7 @@ export interface InternalApi {
   tokenFilePath(): string
   /** Late-bind the owner-only Workbench after provider bootstrap. */
   setWorkbench(service: WorkbenchService): void
+  setMatters(service: import('../../core/matters/service').MattersService): void
   /**
    * RFC 03 P4 — late-bind the delegate dispatcher after bootstrap has
    * constructed the bare delegate providers. /v1/delegate route returns

@@ -10,6 +10,7 @@ export interface InternalApiLifecycle extends Lifecycle {
   setConversation(c: NonNullable<InternalApiDeps['conversation']>): void
   setCompanionConverse(fn: NonNullable<InternalApiDeps['companionConverse']>): void
   setWorkbench(service: NonNullable<InternalApiDeps['workbench']>): void
+  setMatters(service: NonNullable<InternalApiDeps['matters']>): void
   setPetTurn(fn: NonNullable<InternalApiDeps['petTurn']>): void
   setCliEvents(hub: NonNullable<InternalApiDeps['cliEvents']>): void
   setCliPermissions(relay: NonNullable<InternalApiDeps['cliPermissions']>): void
@@ -57,6 +58,7 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     setConversation: (c) => api.setConversation(c),
     setCompanionConverse: (fn) => api.setCompanionConverse(fn),
     setWorkbench: (service) => api.setWorkbench(service),
+    setMatters: (service) => api.setMatters(service),
     setPetTurn: (fn) => api.setPetTurn(fn),
     setCliEvents: (hub) => api.setCliEvents(hub),
     setCliPermissions: (relay) => api.setCliPermissions(relay),

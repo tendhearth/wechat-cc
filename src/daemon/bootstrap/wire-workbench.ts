@@ -61,6 +61,8 @@ export function wireWorkbench(opts: {
   db: Db; stateDir: string; boot: Bootstrap; internalApi: Pick<InternalApi, 'mintSessionToken' | 'invalidateSession'>
   executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
   askUser: PermissionRelayDeps['askUser']; log: PermissionRelayDeps['log']
+  /** 「一件事」登记处:任务与 matter 一对一同步(可选,老接线不传)。 */
+  matters?: import('../../core/matters/store').MatterStore
 }) {
   const ownerChatId=() => loadCompanionConfig(opts.stateDir).default_chat_id ?? null
   const registry=createProviderRegistry()
@@ -88,7 +90,7 @@ export function wireWorkbench(opts: {
   return makeWorkbenchService({
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
-    store:makeWorkbenchStore(opts.db),registry,stateDir:opts.stateDir,ownerChatId,
+    store:makeWorkbenchStore(opts.db),registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,
     registeredProjects:()=>listProjects(join(opts.stateDir,'projects.json')),
     defaultProvider:opts.boot.defaultProviderId,holdBusy:opts.boot.holdBusy,
     // Empty allowlist is deliberate: office tasks never send messages or read
