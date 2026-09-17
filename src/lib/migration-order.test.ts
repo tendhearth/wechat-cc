@@ -113,6 +113,7 @@ const RELEASED: Record<number, string> = {
   // 所以指纹也相同 —— 这类修复本守卫结构上抓不到,靠 db.test.ts 的升级路径用例。
   59: '6c6a79e410ef7c78',
   60: '21ffa1ddd4707c6c',
+  61: '52b5edeba1bb4c6b',
 }
 
 it('every released migration still produces the schema it was published with', () => {

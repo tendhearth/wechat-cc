@@ -109,7 +109,8 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // v55–58: creation receipts, WeChat notices, artifact deliveries and API transcripts.
     // v59: backfills the request_event_id column v49 never added to existing databases.
     // v60: matters(一件事)+ bindings + sessions,workbench_tasks.matter_id 回填。
-    expect(v).toBe(60)
+    // v61: seq 列(实时事件流)
+    expect(v).toBe(61)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',
