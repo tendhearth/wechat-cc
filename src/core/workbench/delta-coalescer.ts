@@ -8,7 +8,16 @@ export function makeDeltaCoalescer(sink: (event: AgentEvent) => void, opts: { wi
   const clearTimer = opts.clearTimer ?? clearTimeout
   const buffers = new Map<string, string>()      // 插入顺序 = 先后
   let timer: ReturnType<typeof setTimeout> | null = null
-  const flushOne = (itemId: string) => { const text = buffers.get(itemId); if (text === undefined) return; buffers.delete(itemId); sink({ kind: 'text', text, itemId, textMode: 'append' }) }
+  const flushOne = (itemId: string) => {
+    const text = buffers.get(itemId)
+    if (text === undefined) return
+    buffers.delete(itemId)
+    // 若这一刀把缓冲清空了,别留一个孤儿计时器——它会在下一条不相干 itemId 的
+    // append 上顶班,偷走它本该有的完整 windowMs(见评审:replace 触发的局部 flush
+    // 曾让旧倒计时"续命",下一个 itemId 提前拿到不完整的窗口)。
+    if (buffers.size === 0 && timer) { clearTimer(timer); timer = null }
+    sink({ kind: 'text', text, itemId, textMode: 'append' })
+  }
   const flush = () => { if (timer) { clearTimer(timer); timer = null } for (const id of [...buffers.keys()]) flushOne(id) }
   const isAppend = (e: AgentEvent): e is Append => e.kind === 'text' && e.textMode === 'append' && typeof e.itemId === 'string'
   return {
