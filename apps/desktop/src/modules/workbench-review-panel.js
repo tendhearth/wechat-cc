@@ -7,12 +7,16 @@
 /** @typedef {import('../../../../src/core/workbench/review').ReviewTurn} ReviewTurn */
 /** @typedef {import('../../../../src/core/workbench/review').ReviewTurnFile} ReviewTurnFile */
 /** @typedef {{artifactId:string,paths:string[],comment?:string}} ReviewReturnOpen */
-/** @typedef {{escapeHtml:(value:unknown)=>string,formatTime:(value:number)=>string,renderDiff:(file:ReviewTurnFile)=>string,returnOpen?:ReviewReturnOpen|null,error?:boolean}} ReviewPanelOptions */
+/** @typedef {{escapeHtml:(value:unknown)=>string,formatTime:(value:number)=>string,renderDiff:(file:ReviewTurnFile)=>string,returnOpen?:ReviewReturnOpen|null,error?:boolean,budget?:{limited:boolean}}} ReviewPanelOptions */
 
 const KIND_LABEL = /** @type {Record<string,string>} */ ({ added: '新增', deleted: '删除', modified: '修改', not_reviewed: '未展开' })
 const STATUS_LABEL = /** @type {Record<string,string>} */ ({ complete: '完整', partial: '部分', unavailable: '不可用' })
 const MAX_NOTES = 40
 const MAX_TEXT = 2000
+// 就地展开差异的回合数。再往前的回合照样能接受 / 打回,只是不把 diff 铺进这一页 ——
+// 一个跑了十几轮的任务,把每一轮的每个文件都渲出来会把整页压垮。
+const INLINE_TURNS = 3
+const OLDER_TURN = '<p class="wb-review-note">较早的一轮：请在「成果」里打开这份变更记录查看差异。</p>'
 
 /** 未展开的文件没有可判断的差异,接受 / 打回都无从谈起(后台也会拒:review_file_unmarkable)。
  * @param {ReviewTurnFile} file */
@@ -45,6 +49,7 @@ const turnKey = (turn, index) => (String(turn.sha256 ?? '').match(/[a-f0-9]+/i)?
 
 /** @param {ReviewTurn} turn @param {number} round @param {number} index @param {ReviewPanelOptions} options */
 function renderTurn(turn, round, index, options) {
+  const inline = index < INLINE_TURNS
   const esc = options.escapeHtml
   const key = turnKey(turn, index)
   const cut = (/** @type {string} */ text) => esc(String(text ?? '').slice(0, MAX_TEXT))
@@ -58,7 +63,7 @@ function renderTurn(turn, round, index, options) {
     const actions = markable(file)
       ? `<div class="wb-review-file-actions"><button type="button" class="wb-new" data-action="review-accept" data-artifact-id="${esc(turn.artifactId)}" data-path="${esc(file.path)}">${mark?.mark === 'accepted' ? '已接受' : '接受'}</button><button type="button" class="wb-new" data-action="review-return" data-artifact-id="${esc(turn.artifactId)}" data-path="${esc(file.path)}">打回</button></div>`
       : ''
-    return `<div class="wb-review-file-row"><details id="wb-review-${key}-${fileIndex}" class="wb-review-file" data-review-disclosure data-review-file-path="${esc(file.path)}"><summary><span class="wb-review-kind" data-kind="${esc(file.kind)}">${KIND_LABEL[file.kind] ?? esc(file.kind)}</span><span class="wb-review-path">${esc(file.path)}</span>${file.preexisting ? '<small>开始时已有修改</small>' : ''}${badge}</summary>${reason}${options.renderDiff(file)}</details>${comment}${actions}</div>`
+    return `<div class="wb-review-file-row"><details id="wb-review-${key}-${fileIndex}" class="wb-review-file" data-review-disclosure data-review-file-path="${esc(file.path)}"><summary><span class="wb-review-kind" data-kind="${esc(file.kind)}">${KIND_LABEL[file.kind] ?? esc(file.kind)}</span><span class="wb-review-path">${esc(file.path)}</span>${file.preexisting ? '<small>开始时已有修改</small>' : ''}${badge}</summary>${reason}${!inline && file.diff ? OLDER_TURN : options.renderDiff(file)}</details>${comment}${actions}</div>`
   }).join('')
   const open = options.returnOpen && options.returnOpen.artifactId === turn.artifactId ? options.returnOpen : null
   const checked = new Set(open?.paths ?? [])
@@ -79,5 +84,7 @@ export function renderReviewPanel(reviews, options) {
   const counts = reviewSummary(list)
   const unavailable = options.error ? '<p class="wb-review-note" role="status">改动记录暂时读不到，稍后再看。已有的改动不受影响。</p>' : ''
   const turns = list.map((turn, index) => renderTurn(turn, list.length - index, index, options)).join('')
-  return `<details id="wb-review" class="wb-disclosure wb-review" data-review-disclosure><summary><span>改动</span><small>${counts.turns} 轮 · ${counts.files} 个文件 · 已接受 ${counts.accepted} · 已打回 ${counts.returned}</small></summary>${unavailable}${turns}</details>`
+  // 额度是渲染时才知道有没有用完的,所以这句只能在所有回合都渲完之后问,而且只说一次。
+  const limited = options.budget?.limited ? '<p class="wb-review-limit">预览已限量显示，请在「成果」里打开这份变更记录看完整差异。</p>' : ''
+  return `<details id="wb-review" class="wb-disclosure wb-review" data-review-disclosure><summary><span>改动</span><small>${counts.turns} 轮 · ${counts.files} 个文件 · 已接受 ${counts.accepted} · 已打回 ${counts.returned}</small></summary>${unavailable}${turns}${limited}</details>`
 }

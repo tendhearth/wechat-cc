@@ -47,6 +47,11 @@ function fallback(message, source) {
 
 /** @typedef {{charsLeft:number,linesLeft:number,limited:boolean}} DiffBudget */
 
+/** 一份新的预览额度。整份快照(或整块「改动」面板)共用一份,谁先渲染谁先用,
+ * 用光了后面的文件就只剩一句照实的说明 —— 预览永远不假装自己是完整的。
+ * @returns {DiffBudget} */
+export function createReviewDiffBudget() { return { charsLeft: MAX_DIFF_CHARS, linesLeft: MAX_LINES, limited: false } }
+
 /** 一个文件的差异正文:整份快照共用一份预览额度(`budget`),单独渲染一个文件时自己开一份。
  * 输出只有 `<pre class="wb-review-diff">` 或一句照实的说明 —— diff 内容永远只当文本。
  * @param {ReviewFile} file @param {(value:string)=>string} [escapeHtml] @param {DiffBudget} [budget] */
@@ -83,8 +88,8 @@ export function renderWorkbenchCodeReview(source) {
   try { value = JSON.parse(source) } catch { return fallback('文件格式无法读取。', source) }
   if (!review(value)) return fallback('记录格式不完整，或来自暂不支持的版本。', source)
   const report = value
-  /** @type {DiffBudget} */
-  const budget = { charsLeft: MAX_DIFF_CHARS, linesLeft: MAX_LINES, limited: report.files.length > MAX_FILES || report.notes.length > 40 || report.preexistingPaths.length > MAX_FILES }
+  const budget = createReviewDiffBudget()
+  budget.limited = report.files.length > MAX_FILES || report.notes.length > 40 || report.preexistingPaths.length > MAX_FILES
   /** @param {string} text @param {number} [limit] */
   const label = (text, limit = 1000) => {
     if (text.length > limit) budget.limited = true

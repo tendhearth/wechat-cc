@@ -13,7 +13,7 @@ import { mountHandoffDialog, mountHandoffRecord, defaultReviewArtifacts } from '
 import { mountHistoryDialog } from './workbench-history.js'
 import { isAckRequiredError, isUnattendedProvider, mountUnattendedDialog, unattendedLabelSuffix } from './workbench-unattended.js'
 import { Marked } from '../vendor/marked.js'
-import { WORKBENCH_CODE_REVIEW_MIME, renderReviewFileDiff, renderWorkbenchCodeReview } from './workbench-code-review.js'
+import { WORKBENCH_CODE_REVIEW_MIME, createReviewDiffBudget, renderReviewFileDiff, renderWorkbenchCodeReview } from './workbench-code-review.js'
 import { renderReviewPanel, reviewsSignature } from './workbench-review-panel.js'
 /** @typedef {import('../../../../src/core/workbench/review').ReviewTurn} ReviewTurn */
 import { createWorkbenchInteractions, captureWorkbenchQuestionDrafts, syncWorkbenchQuestionChoice, renderWorkbenchQuestions, renderWorkbenchInputs } from './workbench-interaction.js'
@@ -285,7 +285,10 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const artifacts = detail?.artifacts?.length ? detail.artifacts.map(artifact => `<button type="button" class="wb-artifact ${artifact.id === state.selectedArtifactId ? 'is-selected' : ''}" data-artifact-id="${escapeWorkbenchHtml(artifact.id)}"><span>${escapeWorkbenchHtml(artifact.name)}</span><small>${escapeWorkbenchHtml((artifact.size / 1024).toFixed(1))} KB · ${artifact.approvedAt ? '已确认' : '待确认'}</small></button>`).join('') : ''
   const previewContent = selectedArtifact && state.preview?.artifactId === selectedArtifact.id ? state.preview.html : '<p class="wb-preview-hint">选择文件，查看保存的成果版本。</p>'
   // 「改动」在「成果」之前:主人先看这一轮改了什么,再去翻保存下来的成果。
-  const reviewHtml = detail ? renderReviewPanel(state.reviews ?? [], { escapeHtml: escapeWorkbenchHtml, formatTime: time, renderDiff: file => renderReviewFileDiff(file, escapeWorkbenchHtml), returnOpen: state.reviewReturnOpen ?? null, error: !!state.reviewsError }) : ''
+  // 整块面板共用一份预览额度(和「成果」里那份报告同样的 256KiB / 4000 行):
+  // 十几轮 × 几十个文件不能各渲各的,不然这一页会被 diff 压垮。
+  const reviewBudget = createReviewDiffBudget()
+  const reviewHtml = detail ? renderReviewPanel(state.reviews ?? [], { escapeHtml: escapeWorkbenchHtml, formatTime: time, renderDiff: file => renderReviewFileDiff(file, escapeWorkbenchHtml, reviewBudget), budget: reviewBudget, returnOpen: state.reviewReturnOpen ?? null, error: !!state.reviewsError }) : ''
   const artifactHtml = detail?.artifacts?.length ? `<details id="wb-artifacts" class="wb-disclosure wb-artifacts"><summary><span>成果</span><small>${detail.artifacts.length} 件</small></summary><button type="button" class="wb-new wb-back-dialogue" data-action="back-to-dialogue">返回对话</button><div class="wb-artifact-list">${artifacts}</div><div id="wb-preview" class="wb-preview">${selectedArtifact ? `<p class="wb-preview-name">${escapeWorkbenchHtml(selectedArtifact.name)}</p><div class="wb-preview-content">${previewContent}</div><button type="button" class="wb-btn" data-action="download-artifact">下载</button>${selectedArtifact.approvedAt ? '<p class="wb-approved">已确认此版本</p>' : '<button type="button" class="wb-btn wb-btn-primary" data-action="approve-artifact">确认这份成果</button>'}` : ''}</div></details>` : ''
   const execution=draft?.execution??detail?.execution??{defaults:/** @type {const} */('provider'),model:null,reasoningEffort:null}
   const executionDisabled=!!executionView.busy||!!(detail&&(detail.task.archivedAt!=null||['running','queued','cancelling'].includes(detail.task.status)))
@@ -374,6 +377,7 @@ export function createWorkbenchController(deps) {
    * @param {Detail} detail */
   const applyLiveDetail = detail => {
     if (!alive || !state.detail || !detail?.task || detail.task.id !== state.selectedId || desiredId) return
+    const previousVersion = state.version
     const previous = state.detail
     const previousSignature = structuralSignature(previous)
     const changed = detail.events ?? []
@@ -383,10 +387,12 @@ export function createWorkbenchController(deps) {
     else liveVersioned = false
     state.selectedArtifactId = chooseArtifactId(state.detail.artifacts ?? [], state.selectedArtifactId)
     if (state.preview && state.preview.artifactId !== state.selectedArtifactId) state.preview = null
-    // 新的一轮快照会先把结构签名(artifacts)顶一下;只 bump 了 seq 却没有新事件的那一次,
-    // 多半是别的面(微信)改了标记 —— 这两种才去重拉。逐字流的每一小段不必问。
+    // 新的一轮快照会先把结构签名(artifacts)顶一下;version 往前走了却没有新事件的那一次,
+    // 多半是别的面(微信)改了标记 —— 这两种才去重拉。逐字流的每一小段不必问,
+    // 长轮询等到超时空手回来(version 原地不动)更不必问。
+    const advanced = typeof detail.version === 'number' ? detail.version !== previousVersion : true
     const restructured = structuralSignature(state.detail) !== previousSignature
-    if (restructured || !changed.length) loadReviews(detail.task.id)
+    if (restructured || (advanced && !changed.length)) loadReviews(detail.task.id)
     if (restructured) { paint(true); return }
     if (!changed.length) { syncPaintSnapshot(); return }
     // 第一条事件要顶掉「还没有对话记录」那句:那不是补丁干得了的事。
@@ -596,9 +602,16 @@ export function initWorkbenchPage(deps) {
   const permissionSignatureFor = (/** @type {WorkbenchState} */ state) => JSON.stringify((state.detail?.permissions ?? []).filter(permission => permission.taskId === state.detail?.task.id).map(permission => permission.id).sort())
   const captureDraft = () => {
     captureWorkbenchQuestionDrafts(root, interactions)
-    // 打回意见写在重画会被冲掉的 textarea 里:每次重画前把它收回 state,渲染时再填回去。
+    // 打回表单(勾选 + 意见)整个活在重画会被冲掉的 DOM 里:重画前先收回 state,渲染时再填回去。
     const open = controller.state.reviewReturnOpen
-    if (open) { const field = input('wb-review-comment'); if (field) open.comment = field.value }
+    const returnForm = open ? root.querySelector('.wb-review-return-form') : null
+    if (open && returnForm) {
+      // 跟发回时读的是同一处(表单自己),免得两边各读各的、对不上。
+      const field = /** @type {HTMLTextAreaElement|null} */ (returnForm.querySelector?.('textarea[name="comment"]'))
+      if (field) open.comment = field.value
+      const boxes = /** @type {HTMLInputElement[]} */ (Array.from(returnForm.querySelectorAll?.('input[name="paths"]') ?? []))
+      if (boxes.length) open.paths = [...new Set(boxes.filter(box => box.checked).map(box => box.value))]
+    }
     if (!document.getElementById('wb-create-form') && !input('wb-followup-text')) return
     const model=input('wb-model'),effort=input('wb-reasoning-effort'),draft=pageDrafts.get(renderedScope)
     const execution=model&&effort?{defaults:/** @type {'provider'|'native'} */(model.dataset.executionDefaults??draft.execution?.defaults??controller.state.detail?.execution?.defaults??'provider'),model:model.value||null,reasoningEffort:effort.value||null}:undefined

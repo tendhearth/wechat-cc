@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { renderReviewPanel, reviewSummary, reviewsSignature } from './workbench-review-panel.js'
+import { createReviewDiffBudget, renderReviewFileDiff } from './workbench-code-review.js'
 
 /** @param {string} value */
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c)
@@ -90,6 +91,41 @@ describe('改动面板', () => {
     expect(html).not.toContain('<script>')
     expect(html).not.toContain('<img ')
     expect(html).not.toContain('<iframe ')
+  })
+
+  it('只有最近三轮就地展开 diff,更早的一轮指回「成果」', () => {
+    const reviews = Array.from({ length: 5 }, (_, index) => turn({ artifactId: `ART-${index}`, sha256: String(index).repeat(8) + 'a'.repeat(56) }))
+    const html = renderReviewPanel(reviews, options())
+    expect(new Set(html.match(/id="wb-review-[^"]+"/g)).size).toBe(5)
+    const sections = html.split('<section class="wb-review-turn"').slice(1)
+    expect(sections).toHaveLength(5)
+    for (const inline of sections.slice(0, 3)) {
+      expect(inline).toContain('<pre class="wb-review-diff">')
+      expect(inline).not.toContain('较早的一轮')
+    }
+    for (const older of sections.slice(3)) {
+      expect(older).not.toContain('<pre class="wb-review-diff">')
+      expect(older).toContain('较早的一轮')
+      // 更早的一轮照样能接受 / 打回:只是差异不就地展开。
+      expect(older).toContain('data-action="review-accept"')
+    }
+  })
+
+  it('整块面板共用一份预览额度,用完了只在底下说一次', () => {
+    const budget = createReviewDiffBudget()
+    const big = (/** @type {string} */ path) => file({ path, diff: '@@ -0,0 +9000 @@\n' + '+x\n'.repeat(9000) })
+    const reviews = [
+      turn({ artifactId: 'ART-1', sha256: 'a'.repeat(64), files: [big('one.ts'), big('two.ts')] }),
+      turn({ artifactId: 'ART-2', sha256: 'b'.repeat(64), files: [big('three.ts')] }),
+    ]
+    const html = renderReviewPanel(reviews, options({ budget, renderDiff: (/** @type {any} */ f) => renderReviewFileDiff(f, escapeHtml, budget) }))
+    expect(budget.limited).toBe(true)
+    expect(html.match(/预览已限量显示/g)).toHaveLength(1)
+    expect(html.lastIndexOf('预览已限量显示')).toBeGreaterThan(html.lastIndexOf('<section class="wb-review-turn"'))
+    // 额度是整块面板共享的:后面的文件拿不到行数了,也不会假装自己完整。
+    expect((html.match(/data-line=/g) ?? []).length).toBeLessThanOrEqual(4000)
+    const roomy = renderReviewPanel([turn()], options({ budget: createReviewDiffBudget() }))
+    expect(roomy).not.toContain('预览已限量显示')
   })
 
   it('签名跟着标记与快照内容走', () => {

@@ -2135,6 +2135,34 @@ describe('workbench mutations', () => {
     module.stopWorkbenchPolling()
   })
 
+  it('重画不会把勾上的文件弄丢:勾选与草稿一起发回', async () => {
+    const page = installFakePage()
+    const { api } = reviewPage([reviewTurn({ files: [reviewFile(), reviewFile({ path: 'src/b.ts' })] })])
+    const boxes = [{ value: 'src/app.ts', checked: true }, { value: 'src/b.ts', checked: false }]
+    const comment = new FakeElement(); comment.value = ''
+    const form = new FakeElement(); form.tagName = 'FORM'; form.dataset = { action: 'review-return-submit', artifactId: 'ART-1' }
+    form.querySelector = (selector: string) => selector.includes('textarea') ? comment : null
+    ;(form as any).querySelectorAll = () => boxes
+    page.querySelector = (selector: string) => selector === '.wb-review-return-form' ? form : null
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    const open = new FakeElement(); open.dataset = { action: 'review-return', artifactId: 'ART-1', path: 'src/app.ts' }
+    await [...page.listeners.get('click')!][0]!({ target: open })
+    expect(controller.state.reviewReturnOpen?.paths).toEqual(['src/app.ts'])
+    // 主人在表单里又勾了第二个文件,然后长轮询 / 任何别的原因触发了一次整页重画。
+    boxes[1]!.checked = true
+    comment.value = '两个文件一起改'
+    controller.paint(true)
+    expect(controller.state.reviewReturnOpen?.paths).toEqual(['src/app.ts', 'src/b.ts'])
+    expect(controller.state.reviewReturnOpen?.comment).toBe('两个文件一起改')
+    expect(page.innerHTML).toContain('value="src/b.ts" checked')
+    expect(page.innerHTML).toContain('两个文件一起改')
+    await [...page.listeners.get('submit')!][0]!({ preventDefault() {}, target: form })
+    expect(api).toHaveBeenCalledWith('POST', '/v1/workbench/review-return', { id: 'REVIEW', artifactId: 'ART-1', paths: ['src/app.ts', 'src/b.ts'], comment: '两个文件一起改' })
+    module.stopWorkbenchPolling()
+  })
+
   it('改动记录读不到时照实说,详情照常显示', async () => {
     const page = installFakePage()
     const { api } = reviewPage(new Error('workbench_connection_unavailable'))
@@ -2402,6 +2430,36 @@ describe('工作台「改动」的拉取与重画', () => {
     controller.newTask('/work')
     expect(controller.state.reviews).toEqual([])
     expect(controller.state.reviewsSignature).toBe('[]')
+    controller.destroy()
+  })
+
+  it('长轮询空转(version 没往前走)不重拉改动;版本动了才拉', async () => {
+    const { createWorkbenchController } = await import('./workbench.js')
+    let release!: (value: unknown) => void
+    const calls: string[] = []
+    const invokeWorkbenchApi = vi.fn((_method: string, path: string) => {
+      calls.push(path)
+      if (path.startsWith('/v1/matters')) return Promise.resolve({ matters: [] })
+      if (path.startsWith('/v1/workbench/review')) return Promise.resolve({ reviews: [turn([file()])] })
+      if (path.startsWith('/v1/workbench/task')) {
+        if (path.includes('since=')) return new Promise(resolve => { release = resolve as (value: unknown) => void })
+        return Promise.resolve({ ...detail, version: 5 })
+      }
+      return Promise.resolve({ tasks: [task], providers: [], defaultProvider: 'codex', canWechat: false })
+    })
+    const controller = createWorkbenchController({ invokeWorkbenchApi, render: () => {}, patchLive: () => true } as any)
+    await controller.selectTask('T')
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    const reviewCalls = () => calls.filter(path => path.startsWith('/v1/workbench/review')).length
+    const pollCalls = () => calls.filter(path => path.includes('since=')).length
+    expect(reviewCalls()).toBe(1)
+    // 长轮询等超时回来:同一个 version、没有新事件 —— 什么都没发生,别再问一次。
+    release({ ...detail, version: 5, events: [] })
+    await vi.waitFor(() => expect(pollCalls()).toBe(2))
+    expect(reviewCalls()).toBe(1)
+    // 版本往前走了(标记可能是微信那边改的),这一次要重拉。
+    release({ ...detail, version: 6, events: [] })
+    await vi.waitFor(() => expect(reviewCalls()).toBe(2))
     controller.destroy()
   })
 })
