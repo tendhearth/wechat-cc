@@ -8,6 +8,9 @@ import {isWorkbenchProviderId} from '../../core/workbench/executor-capabilities'
 import type { InternalApiDeps, RouteHandler, RouteTable } from './types'
 
 const TASK_ID = /^[a-f0-9]{8}$/
+const EXPECTED_RUN_ID = /^[A-Za-z0-9_.:-]{1,128}$/
+const WAIT_MAX_MS = 20_000
+const nonNegInt = (v: string | null): number | null => v !== null && /^\d{1,12}$/.test(v) ? Number(v) : null
 const ARTIFACT_ID = /^[a-f0-9-]{8,64}$/
 const SHA256 = /^[a-f0-9]{64}$/
 const REQUEST_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
@@ -186,9 +189,15 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
     'GET /v1/workbench/task': async (query) => {
       const id = query.get('id')
       if (!id || !TASK_ID.test(id)) return invalid()
+      if (query.getAll('since').length > 1 || query.getAll('wait_ms').length > 1) return invalid()
+      const sinceRaw = query.get('since'), waitRaw = query.get('wait_ms')
+      const since = sinceRaw === null ? undefined : nonNegInt(sinceRaw)
+      const waitMs = waitRaw === null ? 0 : nonNegInt(waitRaw)
+      if (since === null || waitMs === null) return invalid()
       if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
       try {
-        return { status: 200, body: await deps.workbench.detail(id) }
+        if (since !== undefined && waitMs > 0) await deps.workbench.changes.wait(id, since, Math.min(waitMs, WAIT_MAX_MS))
+        return { status: 200, body: await deps.workbench.detail(id, since === undefined ? {} : { since }) }
       } catch (err) {
         return mappedError(err)
       }
@@ -249,9 +258,12 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       const value = objectBody(body)
       const id = typeof value?.id === 'string' ? value.id : ''
       if (!TASK_ID.test(id)) return invalid()
+      const expectedRunIdRaw = value?.expectedRunId
+      if (typeof expectedRunIdRaw === 'string' && !EXPECTED_RUN_ID.test(expectedRunIdRaw)) return invalid()
+      const expectedRunId = typeof expectedRunIdRaw === 'string' ? expectedRunIdRaw : undefined
       if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
       try {
-        return { status: 202, body: { task: await deps.workbench.cancel(id) } }
+        return { status: 202, body: { task: await deps.workbench.cancel(id, expectedRunId) } }
       } catch (err) {
         return mappedError(err)
       }

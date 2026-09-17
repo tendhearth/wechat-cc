@@ -21,7 +21,8 @@ const TASK = {
 function service(overrides: Record<string, unknown> = {}) {
   return {
     list: vi.fn(() => ({ tasks: [TASK], providers: [{ id: 'codex', displayName: 'Codex' }], defaultProvider: 'codex', canWechat: true })),
-    detail: vi.fn(() => ({ task: TASK, events: [], artifacts: [] })),
+    detail: vi.fn((_id: string, opts?: { since?: number }) => ({ task: TASK, events: [], artifacts: [], version: 5, ...(opts?.since !== undefined ? { since: opts.since } : {}) })),
+    changes: { wait: vi.fn(async () => 5) },
     create: vi.fn(() => TASK),
     continueTask: vi.fn(() => TASK),
     setArchived: vi.fn(() => ({ ...TASK, archivedAt: 123, canArchive: true })),
@@ -398,7 +399,7 @@ describe('Workbench internal HTTP API', () => {
     const { request } = await start(workbench)
     expect(await (await request('/v1/workbench')).json()).toMatchObject({ tasks: [running, queued] })
     expect(await (await request(`/v1/workbench/task?id=${queued.id}`)).json()).toMatchObject({ task: queued, permissions: [] })
-    expect(workbench.detail).toHaveBeenCalledWith(queued.id)
+    expect(workbench.detail).toHaveBeenCalledWith(queued.id, {})
     queued.waitingFor.reason = 'writer_not_closed'
     expect(await (await request(`/v1/workbench/task?id=${queued.id}`)).json()).toMatchObject({
       task: { waitingFor: { taskId: TASK.id, reason: 'writer_not_closed' } },
@@ -515,6 +516,88 @@ describe('Workbench internal HTTP API', () => {
     expect(response.status).toBe(202);expect(continueNativeTask).toHaveBeenCalledWith(TASK.id,'next','a'.repeat(64),undefined);expect(workbench.continueTask).not.toHaveBeenCalled()
     expect((await request('/v1/workbench/import',{method:'POST',body:JSON.stringify({...input,pages:[]})},operatorToken)).status).toBe(400)
     expect((await request('/v1/workbench/continue',{method:'POST',body:JSON.stringify({id:TASK.id,text:'next',sourceClosedToken:'bad'})},operatorToken)).status).toBe(400)
+  })
+
+  describe('GET /v1/workbench/task 长轮询', () => {
+    it('不带 since ⇒ 不等待,detail 不带 since', async () => {
+      const svc = service()
+      const { request } = await start(svc)
+      const response = await request('/v1/workbench/task?id=deadbeef')
+      expect(response.status).toBe(200)
+      expect(svc.changes.wait).not.toHaveBeenCalled()
+      expect(svc.detail).toHaveBeenCalledWith('deadbeef', {})
+    })
+
+    it('带 since 与 wait_ms ⇒ 先 wait(钳到 20000),再 detail({since})', async () => {
+      const svc = service()
+      const { request } = await start(svc)
+      const response = await request('/v1/workbench/task?id=deadbeef&since=4&wait_ms=99999')
+      expect(response.status).toBe(200)
+      expect(svc.changes.wait).toHaveBeenCalledWith('deadbeef', 4, 20000)
+      expect(svc.detail).toHaveBeenCalledWith('deadbeef', { since: 4 })
+      expect((await response.json()).version).toBe(5)
+    })
+
+    it('since 有、wait_ms 缺省 ⇒ 不等待,只做增量返回(桌面首帧用)', async () => {
+      const svc = service()
+      const { request } = await start(svc)
+      const response = await request('/v1/workbench/task?id=deadbeef&since=4')
+      expect(response.status).toBe(200)
+      expect(svc.changes.wait).not.toHaveBeenCalled()
+      expect(svc.detail).toHaveBeenCalledWith('deadbeef', { since: 4 })
+    })
+
+    it('wait_ms=0 与 since 都给出 ⇒ 不等待,只做增量返回', async () => {
+      const svc = service()
+      const { request } = await start(svc)
+      const response = await request('/v1/workbench/task?id=deadbeef&since=4&wait_ms=0')
+      expect(response.status).toBe(200)
+      expect(svc.changes.wait).not.toHaveBeenCalled()
+      expect(svc.detail).toHaveBeenCalledWith('deadbeef', { since: 4 })
+    })
+
+    it('since / wait_ms 非法或重复 ⇒ 400', async () => {
+      const { request } = await start(service())
+      const queries = ['since=-1', 'since=abc', 'since=1&wait_ms=x', 'since=1&since=2', 'wait_ms=1&wait_ms=2', 'wait_ms=-1', 'since=1.5', 'since=' + '1'.repeat(13)]
+      for (const q of queries) {
+        expect((await request(`/v1/workbench/task?id=deadbeef&${q}`)).status).toBe(400)
+      }
+    })
+  })
+
+  describe('POST /v1/workbench/cancel expectedRunId', () => {
+    it('透传合法 expectedRunId', async () => {
+      const svc = service()
+      const { request } = await start(svc)
+      const response = await request('/v1/workbench/cancel', { method: 'POST', body: JSON.stringify({ id: 'deadbeef', expectedRunId: 'run-1' }) })
+      expect(response.status).toBe(202)
+      expect(svc.cancel).toHaveBeenCalledWith('deadbeef', 'run-1')
+    })
+
+    it('缺省 expectedRunId ⇒ cancel(id, undefined)', async () => {
+      const svc = service()
+      const { request } = await start(svc)
+      expect((await request('/v1/workbench/cancel', { method: 'POST', body: JSON.stringify({ id: 'deadbeef' }) })).status).toBe(202)
+      expect(svc.cancel).toHaveBeenCalledWith('deadbeef', undefined)
+    })
+
+    it('非字符串类型 ⇒ 视为缺省,cancel(id, undefined)', async () => {
+      const svc = service()
+      const { request } = await start(svc)
+      const response = await request('/v1/workbench/cancel', { method: 'POST', body: JSON.stringify({ id: 'deadbeef', expectedRunId: 7 }) })
+      expect(response.status).toBe(202)
+      expect(svc.cancel).toHaveBeenCalledWith('deadbeef', undefined)
+    })
+
+    it('非法非空字符串 ⇒ 400,不调用 cancel', async () => {
+      const svc = service()
+      const { request } = await start(svc)
+      for (const expectedRunId of ['', 'bad run id!', 'x'.repeat(129)]) {
+        const response = await request('/v1/workbench/cancel', { method: 'POST', body: JSON.stringify({ id: 'deadbeef', expectedRunId }) })
+        expect(response.status).toBe(400)
+      }
+      expect(svc.cancel).not.toHaveBeenCalled()
+    })
   })
 
 })
