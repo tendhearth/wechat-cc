@@ -1,5 +1,6 @@
 import type {Middleware} from './types'
 import {isWechatTaskCommand,type WechatMessageIdentity,type WechatWorkbenchReply} from '../../core/workbench/wechat-control'
+import {routedAway} from './intent'
 
 export interface WorkbenchMwDeps {
   handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>
@@ -7,7 +8,7 @@ export interface WorkbenchMwDeps {
 }
 export function makeMwWorkbench(deps:WorkbenchMwDeps):Middleware{
   return async(ctx,next)=>{
-    if(!isWechatTaskCommand(ctx.msg.text)){await next();return}
+    if(routedAway(ctx,'task-command')||!isWechatTaskCommand(ctx.msg.text)){await next();return}
     const reply=await deps.handleWechat(ctx.msg.chatId,ctx.msg.text,ctx.msg)
     ctx.consumedBy='workbench'
     if(reply!==null&&typeof reply==='object')return

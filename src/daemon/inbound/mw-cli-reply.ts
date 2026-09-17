@@ -1,4 +1,5 @@
 import type { Middleware } from './types'
+import { routedAway } from './intent'
 
 /**
  * 「看 码」「@码 文本」—— 主人对某条终端会话说话(spec 2026-09-09-cli-hook-push §6.4)。
@@ -11,6 +12,7 @@ export interface CliReplyMwDeps {
 
 export function makeMwCliReply(deps: CliReplyMwDeps): Middleware {
   return async (ctx, next) => {
+    if (routedAway(ctx, 'cli-reply')) { await next(); return }
     if (await deps.handle(ctx.msg.text ?? '', ctx.msg.chatId)) {
       deps.log('CLI_REPLY', `consumed from chat=${ctx.msg.chatId}`)
       ctx.consumedBy = 'cli-reply'

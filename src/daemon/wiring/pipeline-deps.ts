@@ -32,7 +32,6 @@ import { readPlanLogDays } from '../companion/plan-memory'
 import { readJournalSeen, writeJournalSeen } from '../../core/journal-seen'
 import { resolveAdminChatId } from '../companion/resolve-admin'
 import { makeCheapJudge, type TaskCandidate } from '../../core/workbench/task-reference'
-import { isWechatTaskCommand } from '../../core/workbench/wechat-control'
 import { basename as pathBasename } from 'node:path'
 import { makeSettingsPanel } from '../settings-panel'
 import { makeCommandRouter } from './command-router'
@@ -169,7 +168,7 @@ export interface PipelineDepsOpts {
   /** 三轴 presence 共用入口(internal-api lifecycle.getPresence)。main.ts 传入。 */
   presence?: () => Promise<import('../../core/companion-presence').Presence | null>
   /** 「看 码」「@码 文本」的执行者(daemon/cli-reply-handler)。main.ts 传入。 */
-  cliReply?: { handle(text: string, chatId: string): Promise<boolean>; probe?(text: string, chatId: string): boolean }
+  cliReply?: { handle(text: string, chatId: string): Promise<boolean>; probe(text: string, chatId: string): boolean }
 }
 
 export interface PipelineDepsRefs {
@@ -708,12 +707,11 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     // 意图路由(第一步只记 trace 不改决策):探针全是各消费者自己交出来的只读判定。
     route: {
       probes: {
-        ...(opts.workbench ? { 'task-command': (ctx) => isWechatTaskCommand(ctx.msg.text ?? '') } : {}),
         admin: (ctx) => adminCommandsHandler.probe(ctx.msg),
         mode: (ctx) => modeHandler.probe(ctx.msg),
         onboarding: (ctx) => onboardingHandler.probe(ctx.msg),
         'permission-reply': (ctx) => ilink.probePermissionReply(ctx.msg.text ?? '', ctx.msg.chatId, ctx.msg.quote?.text),
-        ...(opts.cliReply?.probe ? { 'cli-reply': (ctx) => opts.cliReply!.probe!(ctx.msg.text ?? '', ctx.msg.chatId) } : {}),
+        ...(opts.cliReply ? { 'cli-reply': (ctx) => opts.cliReply!.probe(ctx.msg.text ?? '', ctx.msg.chatId) } : {}),
       },
       ...(opts.matters ? { matterFor: (chatId: string) => opts.matters!.findBySurface('wechat', chatId)?.id ?? null } : {}),
       log,

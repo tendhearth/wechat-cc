@@ -1,4 +1,5 @@
 import type { Middleware } from './types'
+import { routedAway } from './intent'
 
 export interface PermissionReplyMwDeps {
   /** 第二个参数是发这句话的 chat —— 拍板权归当初被问的那个 chat(见 ilink-glue)。 */
@@ -9,6 +10,7 @@ export interface PermissionReplyMwDeps {
 
 export function makeMwPermissionReply(deps: PermissionReplyMwDeps): Middleware {
   return async (ctx, next) => {
+    if (routedAway(ctx, 'permission-reply')) { await next(); return }
     if (deps.handlePermissionReply(ctx.msg.text ?? '', ctx.msg.chatId, ctx.msg.quote?.text)) {
       deps.log('PERMISSION', `consumed reply from chat=${ctx.msg.chatId}`)
       ctx.consumedBy = 'permission-reply'

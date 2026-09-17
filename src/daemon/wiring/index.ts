@@ -45,7 +45,7 @@ export interface WireMainOpts {
   /** 远程访问开关的重启触发(settings-panel set_remote)。 */
   requestRestart?: (reason: string) => void
   /** 「看 码」「@码 文本」的执行者。 */
-  cliReply?: { handle(text: string, chatId: string): Promise<boolean>; probe?(text: string, chatId: string): boolean }
+  cliReply?: { handle(text: string, chatId: string): Promise<boolean>; probe(text: string, chatId: string): boolean }
   /** LLM 体检的只读缓存(settings-panel「模型与后端」表格;面板绝不主动外呼)。 */
   llmHealth?: { cached(): import('../llm-health').LlmHealthReport | null }
   /** Loaded before makeIlinkAdapter — passed separately because IlinkAdapter doesn't expose accounts. */

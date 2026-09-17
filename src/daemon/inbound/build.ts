@@ -25,6 +25,8 @@ import {makeMwWorkbench,type WorkbenchMwDeps} from './mw-workbench'
 import { makeMwTaskReference, type TaskReferenceMwDeps } from './mw-task-reference'
 import { makeMwMatter, type MatterMwDeps } from './mw-matter'
 import { makeMwRoute, type RouteMwDeps } from './mw-route'
+import type { IntentKind } from './intent'
+import { isWechatTaskCommand } from '../../core/workbench/wechat-control'
 
 export interface InboundPipelineDeps {
   trace: TraceMwDeps
@@ -61,7 +63,18 @@ export interface InboundPipelineDeps {
 export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
   // 管家的探针要和它的中间件共用同一份状态(焦点 / 待选 / 接管),所以在这里建一次、两头用。
   const taskReference = d.taskReference ? makeMwTaskReference(d.taskReference) : null
-  const route = d.route ? makeMwRoute({ ...d.route, probes: { ...d.route.probes, ...(taskReference ? { 'task-reference': taskReference.probe } : {}) } }) : null
+  const probes: RouteMwDeps['probes'] = {
+    ...(d.route?.probes ?? {}),
+    ...(d.workbench ? { 'task-command': (ctx) => isWechatTaskCommand(ctx.msg.text ?? '') } : {}),
+    ...(taskReference ? { 'task-reference': taskReference.probe } : {}),
+  }
+  // 消费者按 intent 早退(第二步):在场的消费者必须有探针,否则它永远轮不到 —— 启动时就报,别等真机。
+  if (d.route) {
+    const present: Array<[IntentKind, boolean]> = [['task-command', !!d.workbench], ['admin', true], ['mode', true], ['onboarding', true], ['permission-reply', true], ['cli-reply', !!d.cliReply], ['task-reference', !!taskReference]]
+    const missing = present.filter(([kind, on]) => on && !(kind in probes)).map(([kind]) => kind)
+    if (missing.length) throw new Error(`inbound route: probe missing for ${missing.join(', ')}`)
+  }
+  const route = d.route ? makeMwRoute({ ...d.route, probes }) : null
   return compose([
     makeMwTrace(d.trace),
     makeMwIdentity(d.identity),

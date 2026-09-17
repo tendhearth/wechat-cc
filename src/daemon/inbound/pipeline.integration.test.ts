@@ -197,3 +197,32 @@ describe('inbound pipeline (integration)', () => {
     await expect(buildInboundPipeline(deps)(mkCtx())).resolves.toBeUndefined()
   })
 })
+
+describe('意图路由(第二步:消费者按 intent 早退)', () => {
+  it('路由判成 mode 后,admin 的 handle 再想吃也轮不到;判成 chat 时所有消费者都不碰,直接进对话', async () => {
+    const { deps, spy } = fakeDeps({ adminConsumes: true, modeConsumes: true })
+    const adminHandle = vi.fn(async () => true)
+    deps.admin = { adminHandler: { handle: adminHandle } }
+    deps.route = { probes: { admin: () => false, mode: () => true, onboarding: () => false, 'permission-reply': () => false }, log: () => {} }
+    const ctx = mkCtx(); ctx.msg.text = '/cc'
+    await buildInboundPipeline(deps)(ctx)
+    expect(ctx.intent?.kind).toBe('mode'); expect(ctx.consumedBy).toBe('mode'); expect(adminHandle).not.toHaveBeenCalled()
+    deps.route = { probes: { admin: () => false, mode: () => false, onboarding: () => false, 'permission-reply': () => false }, log: () => {} }
+    const chat = mkCtx(); chat.msg.text = 'hi'; chat.msg.msgId = 'm2' as never
+    await buildInboundPipeline(deps)(chat)
+    // 进了对话:没有消费者标记 consumedBy,coordinator.dispatch 被调(trace 行里显示为 consumed=dispatched)
+    expect(chat.intent?.kind).toBe('chat'); expect(chat.consumedBy).toBeUndefined(); expect(adminHandle).not.toHaveBeenCalled(); expect(spy.dispatch).toHaveBeenCalledOnce()
+  })
+  it('开了路由却漏了某个在场消费者的探针 ⇒ 组装时就报错,不让它上线后永远轮不到', () => {
+    const { deps } = fakeDeps()
+    deps.route = { probes: { admin: () => false, mode: () => false, onboarding: () => false }, log: () => {} }
+    expect(() => buildInboundPipeline(deps)).toThrow('probe missing for permission-reply')
+    deps.cliReply = { handle: async () => false, log: () => {} }
+    deps.route = { probes: { admin: () => false, mode: () => false, onboarding: () => false, 'permission-reply': () => false }, log: () => {} }
+    expect(() => buildInboundPipeline(deps)).toThrow('probe missing for cli-reply')
+    // 工作台和管家的探针由 build 自己接,不用外面给
+    deps.cliReply = undefined
+    deps.workbench = { handleWechat: async () => null, sendMessage: async () => ({}) }
+    expect(() => buildInboundPipeline(deps)).not.toThrow()
+  })
+})
