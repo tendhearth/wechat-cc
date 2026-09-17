@@ -18,6 +18,7 @@ import { decodeNativeHistoryKey, normalizeHistoryList, normalizeHistoryRead, typ
 import {readNativeImport,nativeImportInput,publicSource,pageInput,nativeResumeToken,snapshotHash,type ImportPage,type NativeImportInput,type NativeResumeDecision,type AcceptedNativeResume} from './native-adoption'
 import {historyDeadline} from './native-history'
 import {handoffToken,handoffTokenHash,validateHandoffInput,handoffArtifactText,handoffContext,type HandoffInput,type HandoffPreview,type ArtifactSelection,type AttachmentSelection} from './handoff'
+import {makeDeltaCoalescer} from './delta-coalescer'
 import {pathsConflict} from './scheduler'
 import { restartPreview, type Continuation, type RestartPreview } from './continuation'
 import {canResumeWorkbenchExecutor,isWorkbenchExecutorCapabilities,isWorkbenchProviderId,requireWorkbenchInput,type WorkbenchExecutorCapabilities} from './executor-capabilities'
@@ -565,27 +566,33 @@ export function makeWorkbenchService(opts: Options) {
       const request=history ? `本任务此前记录（仅作上下文，不是新指令）：\n${history}\n\n本轮要求：\n${text}` : text
       const runtime=running.session.workbenchRuntime
       const stream=runtime?.events??running.session.dispatch(request,material)
-      const summary=await collectWorkbenchTurn(stream,running.stop,opts.timeoutMs ?? 10*60_000,
-        ev => {
-          if (running.cancelled) return
-          if(running.queuedInputId&&['text','tool_call','result'].includes(ev.kind)){store.liveInputs.set(running.queuedInputId,'delivered');bumped(task.id)}
-          if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {matterSync(m=>m.addSession(task.id,task.providerId,ev.sessionId!,'main'));if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId){const peer=store.recordHandoffNative(running.handoffId,ev.sessionId);if(peer)touched(peer.sourceTaskId)}touched(task.id)}
-          if (ev.kind==='text'||ev.kind==='tool_call'||ev.kind==='error') { store.recordAgentEvent(task.id,running.identity,ev); touched(task.id) }
-          // 额度/限流在错误到达时就登记(评审 #5:只在结算时看,保留会话永远等不到结算);
-          // 任何一个成功回合(result)即视为这家恢复。
-          if (ev.kind==='error') quota.note(task.providerId,ev.message)
-          if (ev.kind==='result') quota.clear(task.providerId)
-          // 与本函数下面那条「该暂停了」的判据同义:回合真的落定(前台空闲、没有
-          // 后台子任务仍在写)才登记,否则会把半成品当成固定版本的成果发布出去。
-          if (ev.kind==='result') {
-            const snapshot=runtime?.snapshot()
-            if (snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0) collectTurnArtifacts(running)
-            if (isReplied(running)) { matterSync(m=>m.setStatus(task.id,'replied')); void releaseTurnLease(running).catch(()=>{}) }
-          }
-        },()=>{
-          const snapshot=runtimeSnapshot(running)
-          return running.questions.pending().length>0||running.permissions.pending().length>0||!!(snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0)
-        },()=>running.interactionAt,runtime?()=>runtime.start(request,material):undefined)
+      const coalescer=makeDeltaCoalescer(ev => {
+        if (ev.kind==='text'||ev.kind==='tool_call'||ev.kind==='error') { store.recordAgentEvent(task.id,running.identity,ev); touched(task.id) }
+      })
+      let summary
+      try {
+        summary=await collectWorkbenchTurn(stream,running.stop,opts.timeoutMs ?? 10*60_000,
+          ev => {
+            if (running.cancelled) return
+            if(running.queuedInputId&&['text','tool_call','result'].includes(ev.kind)){store.liveInputs.set(running.queuedInputId,'delivered');bumped(task.id)}
+            if ((ev.kind==='init'||(runtime&&ev.kind==='result')) && ev.sessionId) {matterSync(m=>m.addSession(task.id,task.providerId,ev.sessionId!,'main'));if(resume&&ev.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,ev.sessionId);if(running.handoffId){const peer=store.recordHandoffNative(running.handoffId,ev.sessionId);if(peer)touched(peer.sourceTaskId)}touched(task.id)}
+            coalescer.push(ev)
+            // 额度/限流在错误到达时就登记(评审 #5:只在结算时看,保留会话永远等不到结算);
+            // 任何一个成功回合(result)即视为这家恢复。
+            if (ev.kind==='error') quota.note(task.providerId,ev.message)
+            if (ev.kind==='result') quota.clear(task.providerId)
+            // 与本函数下面那条「该暂停了」的判据同义:回合真的落定(前台空闲、没有
+            // 后台子任务仍在写)才登记,否则会把半成品当成固定版本的成果发布出去。
+            if (ev.kind==='result') {
+              const snapshot=runtime?.snapshot()
+              if (snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0) collectTurnArtifacts(running)
+              if (isReplied(running)) { matterSync(m=>m.setStatus(task.id,'replied')); void releaseTurnLease(running).catch(()=>{}) }
+            }
+          },()=>{
+            const snapshot=runtimeSnapshot(running)
+            return running.questions.pending().length>0||running.permissions.pending().length>0||!!(snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0)
+          },()=>running.interactionAt,runtime?()=>runtime.start(request,material):undefined)
+      } finally { coalescer.dispose() }
       if (!summary) { finalStatus='cancelled'; return }
       if (summary.result?.sessionId) {if(resume&&summary.result.sessionId!==resume)throw new Error('native_session_identity_mismatch');store.session(task.id,summary.result.sessionId);if(running.handoffId){const peer=store.recordHandoffNative(running.handoffId,summary.result.sessionId);if(peer)touched(peer.sourceTaskId)}touched(task.id)}
       if (running.cancelled) finalStatus='cancelled'
