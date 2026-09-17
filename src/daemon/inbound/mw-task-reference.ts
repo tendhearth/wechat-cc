@@ -8,7 +8,8 @@
  *
  * 位置:在 transcribe-voice 之后(语音先转文字)、recall 之前(被消费的消息不付嵌入成本)。
  */
-import type { Middleware } from './types'
+import type { InboundCtx, Middleware } from './types'
+import type { Intent } from './intent'
 import { isWechatTaskCommand, type WechatMessageIdentity, type WechatWorkbenchReply } from '../../core/workbench/wechat-control'
 import { resolveTaskReference, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge, type FocusState } from '../../core/workbench/task-reference'
 import type { QuotaState } from '../../core/provider-quota'
@@ -46,6 +47,14 @@ const YES = /^\s*(是|是的|好|好的|可以|行|嗯|交给\s*\S{1,12}|换\s*\
 const NO = /^\s*(不用|不要|算了|不了|先不|先放着)\s*[。.!！]?\s*$/
 const BARE_ACK = /^\s*(是|是的|好|好的|可以|行|嗯)\s*[。.!！]?\s*$/
 const QUOTA_CODES = new Set(['provider_quota_exhausted', 'provider_rate_limited'])
+type Offer = { task: TaskCandidate; to: string; request: string; expiresAt: number }
+/** 管家的只读判定结果(decide 算,mw 执行;路由阶段可以提前算好随 intent.data 带过来)。 */
+export type Decision =
+  | { kind: 'takeover-yes' | 'takeover-no' | 'takeover-bare'; candidates: TaskCandidate[]; offer: Offer }
+  | { kind: 'choice-invalid' | 'choice-expired'; candidates: TaskCandidate[] }
+  | { kind: 'ambiguous'; candidates: TaskCandidate[]; options: TaskCandidate[]; text: string }
+  | { kind: 'set_focus'; candidates: TaskCandidate[]; taskId: string }
+  | { kind: 'command'; candidates: TaskCandidate[]; picked: TaskCandidate; effectiveText: string; clearChoice: boolean }
 const TAKEOVER_TTL_MS = 30 * 60_000
 /** "你说的是哪一件"的作答窗口。真机 2026-09-16:主人 8 分钟后才回「2」,5 分钟窗口已过,那个「2」被当成了补充。 */
 const CHOICE_TTL_MS = 30 * 60_000
@@ -63,7 +72,10 @@ function command(taskId: string, text: string): string {
   return `任务 ${taskId} 补充 ${t}`
 }
 
-export function makeMwTaskReference(deps: TaskReferenceMwDeps): Middleware {
+/** 管家中间件 + 同一份状态上的只读探针(路由阶段用;null = 这句不是在说任务)。 */
+export type TaskReferenceMw = Middleware & { probe: (ctx: InboundCtx) => Promise<Intent | null> }
+
+export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw {
   const now = deps.now ?? Date.now
   const focus = new Map<string, FocusState>()
   const pending = new Map<string, { options: TaskCandidate[]; text: string; expiresAt: number }>()
@@ -116,72 +128,80 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): Middleware {
     return !prev || prev.taskId !== taskId
   }
 
-  return async (ctx, next) => {
+  /**
+   * 只读判定:这条消息会被管家怎么处理。不改 takeover / pending / focus 三张表,不发消息,
+   * 便宜模型最多问一次(结果随 intent.data 带给中间件本体复用)。null = 不是在说任务,放行。
+   */
+  const decide = async (ctx: InboundCtx): Promise<Decision | null> => {
     const msg = ctx.msg
     const text = (msg.text ?? '').trim()
     const owner = deps.ownerChatId()
-    if (!owner || msg.chatId !== owner || !text || isWechatTaskCommand(text)) { await next(); return }
-
+    if (!owner || msg.chatId !== owner || !text || isWechatTaskCommand(text)) return null
     // 刚接管出来的新任务在服务列表刷新前也得能被指到。
     const listed = deps.candidates(msg.chatId)
     const candidates = [...listed, ...[...takenOver.values()].filter(c => !listed.some(x => x.id === c.id))]
-    if (!candidates.length) { await next(); return }
-    const identity: WechatMessageIdentity = { accountId: msg.accountId, userId: msg.userId, msgId: msg.msgId, createTimeMs: msg.createTimeMs }
-
+    if (!candidates.length) return null
     // 上一句问了"交给 X 继续?",这句回了一个字。
     const offer = takeover.get(msg.chatId)
-    if (offer && offer.expiresAt > now()) {
-      if (YES.test(text)) { takeover.delete(msg.chatId); ctx.consumedBy = 'workbench'; await doTakeover(msg.chatId, offer); return }
-      if (NO.test(text)) { takeover.delete(msg.chatId); ctx.consumedBy = 'workbench'; await deps.sendMessage(msg.chatId, '好，先放着。等额度恢复再说一声就行。'); return }
-    } else if (offer) takeover.delete(msg.chatId)
+    const offerLive = !!offer && offer.expiresAt > now()
+    if (offerLive) {
+      if (YES.test(text)) return { kind: 'takeover-yes', candidates, offer: offer! }
+      if (NO.test(text)) return { kind: 'takeover-no', candidates, offer: offer! }
+    }
     // 通知里说过"回「是」":没有待确认的接管,但恰好只有一件近期因额度失败的任务 ⇒ 「是」就是它。
-    if (!offer && BARE_ACK.test(text) && deps.createTask) {
+    if (!offerLive && BARE_ACK.test(text) && deps.createTask) {
       const recent = candidates.filter(c => QUOTA_CODES.has(c.error ?? '') && c.updatedAt >= now() - TAKEOVER_TTL_MS && !takenOver.has(c.id))
       const to = recent.length === 1 ? deps.fallbackExecutor?.(recent[0]!.providerId) ?? null : null
-      if (recent.length === 1 && to) { ctx.consumedBy = 'workbench'; await doTakeover(msg.chatId, { task: recent[0]!, to, request: '接着原来的要求做。' }); return }
+      if (recent.length === 1 && to) return { kind: 'takeover-bare', candidates, offer: { task: recent[0]!, to, request: '接着原来的要求做。', expiresAt: now() } }
     }
-    // 一个孤零零的「是 / 不用」不是任何任务的要求:没有在等它的问题就当普通聊天,
-    // 不让焦点把它捡走(否则"不用"之后再回"是"会把刚作罢的接管又问一遍)。
-    if (BARE_ACK.test(text) || NO.test(text)) { await next(); return }
-
+    // 一个孤零零的「是 / 不用」不是任何任务的要求:没有在等它的问题就当普通聊天。
+    if (BARE_ACK.test(text) || NO.test(text)) return null
     // 上一句问了"哪一件",这句回了个数字。
     const ask = pending.get(msg.chatId)
     const choice = ask && ask.expiresAt > now() ? BARE_CHOICE.exec(text) : null
-    let picked: TaskCandidate | null = null, effectiveText = text
     if (ask && choice) {
       const idx = Number(choice[1]) - 1
-      pending.delete(msg.chatId)
-      if (idx >= 0 && idx < ask.options.length) { picked = ask.options[idx]!; effectiveText = ask.text }
-    } else if (BARE_CHOICE.test(text)) {
-      // 一个裸数字不是任何任务的要求,绝不变成"补充 2"送给执行者(真机 2026-09-16)。
-      // 有过期的待选就提醒一句;从没问过就放行 —— 那可能是在回陪伴的"几点提醒你?"(评审 #6)。
-      if (ask) {
-        pending.delete(msg.chatId)
-        ctx.consumedBy = 'workbench'
-        await deps.sendMessage(msg.chatId, '刚才那个选择已经过期了。你指的是哪件事？说项目名或标题就行。')
-        return
-      }
-      await next(); return
+      const picked = idx >= 0 && idx < ask.options.length ? ask.options[idx]! : null
+      return picked ? { kind: 'command', candidates, picked, effectiveText: ask.text, clearChoice: true } : { kind: 'choice-invalid', candidates }
     }
+    if (BARE_CHOICE.test(text)) return ask ? { kind: 'choice-expired', candidates } : null
+    const r = await resolveTaskReference({ text, quotedText: msg.quote?.text ?? null, focus: currentFocus(msg.chatId), nowMs: now(), candidates, judge: deps.judge })
+    if (r.kind === 'none') return null
+    if (r.kind === 'ambiguous') return { kind: 'ambiguous', candidates, options: r.options, text }
+    if (r.kind === 'set_focus') return { kind: 'set_focus', candidates, taskId: r.taskId }
+    return { kind: 'command', candidates, picked: candidates.find(x => x.id === r.taskId)!, effectiveText: text, clearChoice: false }
+  }
 
-    if (!picked) {
-      const r = await resolveTaskReference({ text, quotedText: msg.quote?.text ?? null, focus: currentFocus(msg.chatId), nowMs: now(), candidates, judge: deps.judge })
-      if (r.kind === 'none') { await next(); return }
-      ctx.consumedBy = 'workbench'
-      if (r.kind === 'ambiguous') {
-        pending.set(msg.chatId, { options: r.options, text, expiresAt: now() + CHOICE_TTL_MS })
-        await deps.sendMessage(msg.chatId, '你说的是哪一件？\n' + r.options.map((c, i) => `${i + 1}. ${option(c)}`).join('\n') + '\n回数字选择。')
-        return
-      }
-      if (r.kind === 'set_focus') {
-        const c = candidates.find(x => x.id === r.taskId)!
-        setFocus(msg.chatId, c.id)
-        await deps.sendMessage(msg.chatId, `好，接下来默认说「📁 ${c.project} · ${c.title}」（20 分钟内）。`)
-        return
-      }
-      picked = candidates.find(x => x.id === r.taskId)!
-    }
+  const mw: TaskReferenceMw = async (ctx, next) => {
+    const msg = ctx.msg
+    const text = (msg.text ?? '').trim()
+    // 路由阶段已经判过(同一条消息)就直接用,便宜模型不问第二遍。
+    const routed = ctx.intent?.kind === 'task-reference' ? (ctx.intent.data as Decision | undefined) : undefined
+    const d = routed ?? await decide(ctx)
+    if (!d) { await next(); return }
+    const identity: WechatMessageIdentity = { accountId: msg.accountId, userId: msg.userId, msgId: msg.msgId, createTimeMs: msg.createTimeMs }
     ctx.consumedBy = 'workbench'
+    if (d.kind === 'takeover-yes') { takeover.delete(msg.chatId); await doTakeover(msg.chatId, d.offer); return }
+    if (d.kind === 'takeover-no') { takeover.delete(msg.chatId); await deps.sendMessage(msg.chatId, '好，先放着。等额度恢复再说一声就行。'); return }
+    if (d.kind === 'takeover-bare') { await doTakeover(msg.chatId, d.offer); return }
+    if (d.kind === 'choice-invalid') { pending.delete(msg.chatId); ctx.consumedBy = undefined; await next(); return }
+    if (d.kind === 'choice-expired') { pending.delete(msg.chatId); await deps.sendMessage(msg.chatId, '刚才那个选择已经过期了。你指的是哪件事？说项目名或标题就行。'); return }
+    if (d.kind === 'ambiguous') {
+      pending.set(msg.chatId, { options: d.options, text: d.text, expiresAt: now() + CHOICE_TTL_MS })
+      await deps.sendMessage(msg.chatId, '你说的是哪一件？\n' + d.options.map((c, i) => `${i + 1}. ${option(c)}`).join('\n') + '\n回数字选择。')
+      return
+    }
+    if (d.kind === 'set_focus') {
+      const c = d.candidates.find(x => x.id === d.taskId)!
+      setFocus(msg.chatId, c.id)
+      await deps.sendMessage(msg.chatId, `好，接下来默认说「📁 ${c.project} · ${c.title}」（20 分钟内）。`)
+      return
+    }
+    if (d.kind !== 'command') return
+    const picked = d.picked, effectiveText = d.effectiveText
+    if (d.clearChoice) pending.delete(msg.chatId)
+    // 过期的 takeover 邀请顺手清掉(原逻辑在判定时清,现在判定是只读的,挪到这里)。
+    const stale = takeover.get(msg.chatId); if (stale && stale.expiresAt <= now()) takeover.delete(msg.chatId)
 
     const q = deps.quotaExhausted?.(picked.providerId) ?? null
     if (q) { setFocus(msg.chatId, picked.id); await offerTakeover(msg.chatId, picked, q, effectiveText); return }
@@ -200,4 +220,7 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): Middleware {
     const sent = await deps.sendMessage(msg.chatId, lines.join('\n'))
     if (sent && typeof sent === 'object' && 'error' in sent && (sent as { error?: unknown }).error) throw Error('workbench_reply_failed')
   }
+  // choice-invalid 是唯一"判定说是、执行却放行"的分支(数字越界),路由阶段把它算作 chat。
+  mw.probe = async ctx => { const d = await decide(ctx); return d && d.kind !== 'choice-invalid' ? { kind: 'task-reference', data: d } : null }
+  return mw
 }

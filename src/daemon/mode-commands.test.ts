@@ -1340,3 +1340,11 @@ describe('/set provider — 全局默认大脑(管理员)', () => {
     expect(g.sentMessages[0]![1]).toContain('仅管理员')
   })
 })
+
+describe('probe(路由探针:只读)', () => {
+  it('认得 /帮助 与模式命令,不认普通聊天', () => {
+    const h = makeModeCommands({ getMode: () => ({ kind: 'solo', provider: 'claude' } as unknown as Mode), setMode: async () => {}, providers: () => ['claude' as ProviderId], tierOf: () => 'admin' as UserTier, sendMessage: async () => ({}) } as unknown as Parameters<typeof makeModeCommands>[0])
+    for (const t of ['/帮助', '/both', '/chat', '/solo claude']) expect(h.probe(inbound(t)), t).toBe(true)
+    for (const t of ['今天天气不错', '帮助', '任务 列表']) expect(h.probe(inbound(t)), t).toBe(false)
+  })
+})

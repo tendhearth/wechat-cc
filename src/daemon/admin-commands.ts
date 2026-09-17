@@ -106,6 +106,8 @@ export interface AdminCommandsDeps {
 }
 
 export interface AdminCommands {
+  /** 只读:这条会不会被管理员命令吃掉(非管理员发命令也算 —— 会被丢掉,不再往下走)。 */
+  probe(msg: InboundMsg): boolean
   /** Returns true iff the message was consumed (admin command handled or silently dropped). */
   handle(msg: InboundMsg): Promise<boolean>
 }
@@ -132,6 +134,11 @@ const HANDS_LIST_RE = /^\s*(?:\/hands|有哪些手|手列表|看看有哪些手)
 const BAG_RE = /^\s*(?:\/(?:bag|背包)|背包|打猎背包|猎物|战利品|打到了什么|打到什么了)\s*[?？]?\s*$/
 
 /** 认出一串配对码(裸码或 /hand <码>)。返回去掉空白的码,或 null。 */
+/** 管理员命令的识别面(纯函数)—— handle 与 probe 共用这一份,别再各写一遍。 */
+export function isAdminCommandText(text: string, handNames: readonly string[]): boolean {
+  return !!matchHandJoin(text) || HANDS_LIST_RE.test(text) || BAG_RE.test(text) || text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || SHOW_OVERVIEW_RE.test(text) || !!matchDelegate(text, handNames) || RESET_RE.test(text) || UPDATE_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text)
+}
+
 export function matchHandJoin(text: string): string | null {
   const m = HAND_JOIN_RE.exec(text)
   if (!m) return null
@@ -255,7 +262,9 @@ async function sendHuntBag(deps: AdminCommandsDeps, chatId: string): Promise<voi
 }
 
 export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
+  const knownHands = (): readonly string[] => { try { return deps.knownHandNames?.() ?? [] } catch { return [] } }
   return {
+    probe(msg) { return isAdminCommandText(msg.text.trim(), knownHands()) },
     async handle(msg) {
       const text = msg.text.trim()
       // 认一次派活指令。按**已注册的手名**认(不是按动词)—— 名字没命中就
@@ -266,7 +275,7 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
       const delegateMatch = matchDelegate(text, handNames)
       const isDelegate = !!delegateMatch
       const handCode = matchHandJoin(text)
-      const isCmd = !!handCode || HANDS_LIST_RE.test(text) || BAG_RE.test(text) || text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || SHOW_OVERVIEW_RE.test(text) || isDelegate || RESET_RE.test(text) || UPDATE_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text)
+      const isCmd = isAdminCommandText(text, handNames)
       if (!isCmd) return false
 
       if (!deps.isAdmin(msg.chatId)) {

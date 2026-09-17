@@ -115,6 +115,8 @@ export interface IlinkAdapter {
    * 老条目(无 meta)保持原行为。
    */
   handlePermissionReply(text: string, fromChatId?: string, quoted?: string): boolean
+  /** 只读版 handlePermissionReply:同样的判定,不 consume、不发消息。 */
+  probePermissionReply(text: string, fromChatId?: string, quoted?: string): boolean
   /** Desktop pet permission queue (CC 桌宠 Phase B) — same registry as WeChat. */
   listPendingPermissions(): PendingPermissionView[]
   /** Resolve a pending permission from the desktop. = pending.consume(hash, decision). */
@@ -483,6 +485,17 @@ export function makeIlinkAdapter(opts: {
 
     sessionState,
 
+    probePermissionReply(text, fromChatId, quoted) {
+      const parsed = parsePermissionReply(text)
+      if (!parsed) return false
+      const owned = (hash: string) => { const approver = pending.approverOf(hash); return approver === null || approver === fromChatId }
+      if (!parsed.ref) {
+        if (quoted) { const hash = pending.hashOfQuote(quoted); if (hash) return owned(hash) && pending.list().some(p => p.hash === hash) }
+        return pending.list().some(p => p.chatId === fromChatId)
+      }
+      const hash = parsed.ref.kind === 'code' ? pending.hashOfCode(parsed.ref.value) : parsed.ref.value
+      return !!hash && owned(hash) && pending.list().some(p => p.hash === hash)
+    },
     handlePermissionReply(text, fromChatId, quoted) {
       const parsed = parsePermissionReply(text)
       if (!parsed) return false

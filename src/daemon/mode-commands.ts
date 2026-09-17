@@ -85,6 +85,8 @@ export interface ModeCommandsDeps {
 }
 
 export interface ModeCommands {
+  /** 只读:是不是斜杠命令(含 /帮助)。handle 对任何斜杠词都会消费(认识的执行,不认识的回一句)。 */
+  probe(msg: InboundMsg): boolean
   /** Returns true iff the message was a slash command and was consumed. */
   handle(msg: InboundMsg): Promise<boolean>
 }
@@ -354,6 +356,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
   }
 
   return {
+    probe(msg) { return msg.text.trim() === '/帮助' || COMMAND_REGEX.test(msg.text) },
     async handle(msg) {
       // /帮助 — Chinese alias for /help. Must be checked before COMMAND_REGEX
       // since the regex only matches ASCII slash-words.

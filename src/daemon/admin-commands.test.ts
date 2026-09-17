@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { makeAdminCommands, matchDelegate, matchHandJoin, friendlyDelegateReason, formatOverviewForDisplay, isDelegateName, type AdminCommandsDeps } from './admin-commands'
+import { makeAdminCommands, isAdminCommandText, matchDelegate, matchHandJoin, friendlyDelegateReason, formatOverviewForDisplay, isDelegateName, type AdminCommandsDeps } from './admin-commands'
 import { makeSessionStateStore } from '../core/session-state'
 import { openTestDb, type Db } from '../lib/db'
 import type { InboundMsg } from '../core/prompt-format'
@@ -1110,5 +1110,12 @@ describe('🎒 背包(微信侧只读入口)', () => {
     const { deps, sent } = bag([row({ status: 'dropped' })])
     await ask(deps, '背包')
     expect(sent[0]).toContain('都处理完了')
+  })
+})
+
+describe('isAdminCommandText(路由探针用的纯判定)', () => {
+  it('认得全部管理命令,不认普通聊天', () => {
+    for (const t of ['/health', '/health ai', '/hands', '有哪些手', '背包', '整理记忆']) expect(isAdminCommandText(t, ['a']), t).toBe(true)
+    for (const t of ['今天天气不错', '/帮助', '任务 列表', 'health']) expect(isAdminCommandText(t, ['a']), t).toBe(false)
   })
 })

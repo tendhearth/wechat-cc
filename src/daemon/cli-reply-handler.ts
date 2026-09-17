@@ -151,6 +151,8 @@ export function readTail(path: string, max = TRANSCRIPT_READ_MAX): string {
 }
 
 export interface CliReplyHandler {
+  /** 只读:主人发的「看 码」「@码 文本」。 */
+  probe(text: string, chatId: string): boolean
   /** true = 这句话是给终端会话的,已处理(或已回绝);false = 不是,交给后面的中间件。 */
   handle(text: string, chatId: string): Promise<boolean>
 }
@@ -217,6 +219,7 @@ export function makeCliReplyHandler(deps: CliReplyHandlerDeps): CliReplyHandler 
   }
 
   return {
+    probe(text, chatId) { return !!parseCliReply(text) && deps.isOwner(chatId) },
     async handle(text, chatId) {
       const parsed = parseCliReply(text)
       if (!parsed) return false

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { makeMwTaskReference, type TaskReferenceMwDeps } from './mw-task-reference'
 import type { TaskCandidate } from '../../core/workbench/task-reference'
+import type { InboundCtx } from './types'
 
 /**
  * 管家中间件:主人用自然语言说某件事,落定后翻译成已有的规范命令走 handleWechat
@@ -226,5 +227,48 @@ describe('评审回归(2026-09-16 独立评审)', () => {
     expect(sent.at(-1)).toMatch(/已经交给 Claude|c0ffee00/)
     await run('再加一列百分比')
     expect(commands.at(-1)).toBe('任务 c0ffee00 补充 再加一列百分比')
+  })
+})
+
+describe('只读探针(意图路由第一步,2026-09-17)', () => {
+  const judgeCalls: string[] = []
+  const judge = async ({ text }: { text: string }) => { judgeCalls.push(text); return { taskId: null, confident: false } }
+  const probeSetup = () => {
+    const s = setup({ judge })
+    const mw = makeMwTaskReference({ ownerChatId: () => OWNER, candidates: () => [todo, latency, review], handleWechat: async () => '好的。', sendMessage: async () => ({}), now: () => NOW, log: () => {}, judge })
+    const ctx = (text: string, chatId = OWNER): InboundCtx => ({ msg: { chatId, userId: 'u', text, msgType: 'text', createTimeMs: NOW, accountId: 'acct' }, receivedAtMs: NOW, requestId: 'r' })
+    return { ...s, mw, ctx }
+  }
+  it('探针的"是 / 不是"和中间件是否放行一一对应(同一份 fixture)', async () => {
+    const cases: Array<[string, string]> = [['todo 那件进展怎么样', OWNER], ['今天天气不错', OWNER], ['3', OWNER], ['是', OWNER], ['任务 列表', OWNER], ['todo 那件进展怎么样', 'stranger@im.wechat']]
+    for (const [text, chatId] of cases) {
+      const { mw, ctx, run } = probeSetup()
+      const probed = await mw.probe(ctx(text, chatId))
+      const { nexted } = await run(text, { chatId })
+      expect(!!probed, `${chatId}: ${text}`).toBe(!nexted)
+    }
+  })
+  it('探针不改状态:问两遍结果一样,之后中间件照常执行;多件命中时探针也不发"哪一件"', async () => {
+    const { mw, ctx, sent } = probeSetup()
+    const a = await mw.probe(ctx('DATA.md 那件怎么样了')), b = await mw.probe(ctx('DATA.md 那件怎么样了'))
+    expect(a?.kind).toBe('task-reference'); expect((a?.data as { kind: string }).kind).toBe('ambiguous'); expect(b).toEqual(a)
+    expect(sent).toEqual([])
+  })
+  it('路由阶段算过的判定随 intent.data 带进来 ⇒ 中间件直接用,便宜模型不问第二遍', async () => {
+    const { mw, ctx, commands } = probeSetup()
+    judgeCalls.length = 0
+    const c = ctx('todo 那件进展怎么样')
+    const intent = await mw.probe(c)
+    const asked = judgeCalls.length
+    Object.assign(c, { intent })
+    let nexted = false
+    await mw(c, async () => { nexted = true })
+    expect(nexted).toBe(false); expect(commands.length + 1).toBeGreaterThan(0); expect(judgeCalls.length).toBe(asked)
+  })
+  it('数字越界这一种"探针说是、执行却放行"的分支,探针直接算作 chat', async () => {
+    const { mw, ctx, run } = probeSetup()
+    await run('DATA.md 那件怎么样了')  // 问了"哪一件"(两个选项)
+    expect(await mw.probe(ctx('9'))).toBeNull()
+    expect((await run('9')).nexted).toBe(true)
   })
 })

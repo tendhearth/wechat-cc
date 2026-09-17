@@ -24,6 +24,7 @@ import { makeMwDispatch, type DispatchMwDeps } from './mw-dispatch'
 import {makeMwWorkbench,type WorkbenchMwDeps} from './mw-workbench'
 import { makeMwTaskReference, type TaskReferenceMwDeps } from './mw-task-reference'
 import { makeMwMatter, type MatterMwDeps } from './mw-matter'
+import { makeMwRoute, type RouteMwDeps } from './mw-route'
 
 export interface InboundPipelineDeps {
   trace: TraceMwDeps
@@ -36,6 +37,8 @@ export interface InboundPipelineDeps {
   taskReference?: TaskReferenceMwDeps
   /** 每个进门的 chat 登记成一条「一件事」;只登记不改逻辑。 */
   matter?: MatterMwDeps
+  /** 意图路由(intent.ts):闸门之后、消费者之前算一次;第一步只记不改。 */
+  route?: RouteMwDeps
   typing: TypingMwDeps
   admin: AdminMwDeps
   mode: ModeMwDeps
@@ -56,6 +59,9 @@ export interface InboundPipelineDeps {
 }
 
 export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
+  // 管家的探针要和它的中间件共用同一份状态(焦点 / 待选 / 接管),所以在这里建一次、两头用。
+  const taskReference = d.taskReference ? makeMwTaskReference(d.taskReference) : null
+  const route = d.route ? makeMwRoute({ ...d.route, probes: { ...d.route.probes, ...(taskReference ? { 'task-reference': taskReference.probe } : {}) } }) : null
   return compose([
     makeMwTrace(d.trace),
     makeMwIdentity(d.identity),
@@ -76,6 +82,7 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     makeMwCaptureCtx(d.capture),
     // Explicit local task controls need sender authorization and reply context,
     // but must not enter companion memory, permission selection or LLM health.
+    ...(route?[route]:[]),
     ...(d.workbench?[makeMwWorkbench(d.workbench)]:[]),
     makeMwTyping(d.typing),
     makeMwAdmin(d.admin),
@@ -95,7 +102,7 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     makeMwWelcome(d.welcome),
     // 管家指称在 transcribe-voice 之后(语音先转文字)、recall 之前(被它消费的
     // 消息不付嵌入成本);落不定就 next(),普通聊天照旧。
-    ...(d.taskReference ? [makeMwTaskReference(d.taskReference)] : []),
+    ...(taskReference ? [taskReference] : []),
     // Recall runs after every consuming middleware (only messages that will
     // reach dispatch pay the embed cost) and BEFORE llm-health/dispatch so
     // the <recall> element is on ctx.msg when dispatch formats the envelope.
