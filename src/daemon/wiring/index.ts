@@ -11,6 +11,7 @@ import type { GuardLifecycle } from '../guard/lifecycle'
 import type { PollingLifecycle } from '../polling-lifecycle'
 import type { InboundPipelineDeps } from '../inbound/build'
 import type { PipelineRun } from '../inbound/types'
+import type { AppTurn } from '../inbound/build'
 import type { CompanionPushDeps, CompanionIntrospectDeps, CompanionIngestDeps } from '../companion/lifecycle'
 import type { SchedulerDeps } from '../guard/scheduler'
 import type { SessionsLifecycleDeps } from '../sessions-lifecycle'
@@ -118,7 +119,7 @@ export interface WiredDeps {
    * main.ts late-binds this onto internal-api via setCompanionConverse()
    * once wireMain returns (bootstrap must be ready first).
    */
-  companionConverse: (text: string) => Promise<{ reply: string }>
+  companionConverse: (text: string, origin?: 'desktop' | 'phone') => Promise<{ reply: string }>
   /**
    * 桌宠 turn 闭包(CC 桌宠 Phase B)。main.ts 在 setCompanionConverse 旁边
    * setPetTurn 到 internal-api —— 同样要等 bootstrap 就绪。
@@ -151,6 +152,8 @@ export interface WiredDeps {
     polling: Ref<PollingLifecycle>
     guard: Ref<GuardLifecycle>
     pipeline: Ref<PipelineRun>
+    /** App 一轮的 route + consume(build.ts 的 appTurn);main.ts 建完管道后接上。 */
+    appTurn: Ref<AppTurn>
     ingestNudge: Ref<() => void>
   }
 }
@@ -160,6 +163,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     polling: new Ref<PollingLifecycle>('polling'),
     guard: new Ref<GuardLifecycle>('guard'),
     pipeline: new Ref<PipelineRun>('pipeline'),
+    appTurn: new Ref<AppTurn>('appTurn'),
     ingestNudge: new Ref<() => void>('ingestNudge'),
   }
   // CC 画的你 —— 小像自动刷新用的 generatePortrait(portrait-artist tick)。

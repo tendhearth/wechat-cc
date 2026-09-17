@@ -268,3 +268,19 @@ describe('意图路由(第三步:一站消费 + 语音先转文字再路由)', (
     expect(typing).toHaveBeenCalledOnce()
   })
 })
+
+describe('意图路由(第四步:App 一轮走同一张表)', () => {
+  it('appTurn 只过 route + consume:命中消费者 ⇒ consumed=true 且不进对话;闲聊 ⇒ consumed=false,由调用方自己进对话', async () => {
+    const { deps, spy } = fakeDeps()
+    const modeHandle = vi.fn(async (msg: InboundCtx['msg']) => msg.text === '/帮助')
+    deps.mode = { modeHandler: { handle: modeHandle } }
+    deps.route = { probes: { admin: () => false, mode: ctx => ctx.msg.text === '/帮助', onboarding: () => false, 'permission-reply': () => false }, log: () => {} }
+    const pipeline = buildInboundPipeline(deps)
+    const help = mkCtx(); help.msg.text = '/帮助'
+    expect(await pipeline.appTurn(help)).toEqual({ consumed: true })
+    expect(help.intent?.kind).toBe('mode'); expect(help.consumedBy).toBe('mode'); expect(modeHandle).toHaveBeenCalledOnce()
+    const chat = mkCtx(); chat.msg.text = 'hi'
+    expect(await pipeline.appTurn(chat)).toEqual({ consumed: false })
+    expect(chat.intent?.kind).toBe('chat'); expect(spy.dispatch).not.toHaveBeenCalled()
+  })
+})

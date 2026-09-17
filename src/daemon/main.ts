@@ -51,6 +51,7 @@ import { loadCompanionConfig } from './companion/config'
 import { makeCliEventHub, makeProjectNamer } from '../core/cli-events'
 import { makeCliPermissionRelay } from '../core/cli-permission-relay'
 import { makeCliReplyHandler, makeCliReplyCore, makeHandReplyExecutor } from './cli-reply-handler'
+import { scopedSend } from './inbound/reply-scope'
 import { makeBrainForwarder } from './cli-brain-forward'
 import { makeRemoteReply } from './cli-remote-reply'
 import { CliEventRequest, CliPermissionRequest } from './internal-api/schema'
@@ -643,7 +644,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       executionConflict,reserveExecution,
       hub: cliEvents,
       isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
-      sendMessage: (c, t) => ilink.sendMessage(c, t),
+      sendMessage: scopedSend((c: string, t: string) => ilink.sendMessage(c, t)),
       sharePage: async (title, md, chatId) => (await ilink.sharePage(title, md, { chat_id: chatId })).url,
       holdBusy: (l) => boot.holdBusy(l),
       log: (t, l) => log(t, l),
@@ -692,6 +693,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setSettingsLink(wired.settingsPanelLink)
     const pipeline = buildInboundPipeline(wired.pipelineDeps)
     wireRef(wired.refs.pipeline, pipeline)
+    wireRef(wired.refs.appTurn, pipeline.appTurn)
     // 4. register lifecycles (LIFO stop = startup order reversed)
     const pushLc = await sup.start('companion.push', () => registerCompanionPush(wired.companionPushDeps))
     if (pushLc) lc.register(pushLc)

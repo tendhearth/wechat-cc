@@ -17,6 +17,8 @@ import { makeWorkbenchStore } from '../../core/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from '../../core/workbench/service'
 import { createProviderRegistry } from '../../core/provider-registry'
 import {makeMwWorkbench} from '../inbound/mw-workbench'
+import type { AppTurn } from '../inbound/build'
+import { scopedReply } from '../inbound/reply-scope'
 
 // Task 2 HIGH-severity fix (app-conversation-channel spec §3): companionConverse
 // must refuse to start an app turn while a WeChat turn is already in flight on
@@ -82,7 +84,7 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  function setup(opts: { inFlight: boolean; mode?: Mode; withMarkInboundActivity?: boolean; workbench?: WorkbenchService }) {
+  function setup(opts: { inFlight: boolean; mode?: Mode; withMarkInboundActivity?: boolean; workbench?: WorkbenchService; appTurn?: Ref<AppTurn> }) {
     // `dispatch` (the LOCKING entry point) must never be called by
     // companionConverse — calling it from inside runExclusive would
     // self-deadlock (see pipeline-deps.ts). Failing loudly here catches a
@@ -180,6 +182,7 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
         guard: new Ref('guard'),
         pipeline: new Ref('pipeline'),
         ingestNudge: new Ref('ingestNudge'),
+        ...(opts.appTurn ? { appTurn: opts.appTurn } : {}),
       },
     )
 
@@ -198,6 +201,18 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     expect(dispatch).not.toHaveBeenCalled()
     expect(dispatchInner).not.toHaveBeenCalled()
     await workbench.shutdown()
+  })
+
+  it('第四步(d):App 说的话先过消费表 —— 消费者吃了就把截住的回话交还 App,不进会话、不开 sink', async () => {
+    const appTurn = new Ref<AppTurn>('appTurn')
+    const seen: string[] = []
+    appTurn.set(async (ctx) => { seen.push(ctx.msg.text); if (ctx.msg.text === '/帮助') { scopedReply()!.push('这里是帮助'); scopedReply()!.push('第二段'); ctx.consumedBy = 'mode'; return { consumed: true } } return { consumed: false } })
+    const { companionConverse, dispatchInner, replySinksOpen, ilink } = setup({ inFlight: false, appTurn })
+    await expect(companionConverse('/帮助', 'phone')).resolves.toEqual({ reply: '这里是帮助\n第二段' })
+    expect(dispatchInner).not.toHaveBeenCalled(); expect(replySinksOpen).not.toHaveBeenCalled(); expect(ilink.sendMessage).not.toHaveBeenCalled()
+    // 没人吃 ⇒ 照常进会话
+    await expect(companionConverse('how are you')).resolves.toEqual({ reply: 'reply text' })
+    expect(dispatchInner).toHaveBeenCalledTimes(1); expect(seen).toEqual(['/帮助', 'how are you'])
   })
 
   it('refuses the app turn (reply_sink_busy) when the owner session is already in flight (e.g. a WeChat turn), WITHOUT dispatching, locking, or opening a reply sink', async () => {

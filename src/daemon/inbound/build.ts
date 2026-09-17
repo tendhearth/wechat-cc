@@ -1,4 +1,4 @@
-import type { PipelineRun } from './types'
+import type { InboundCtx, Middleware, PipelineRun } from './types'
 import { compose } from './compose'
 import { makeMwTrace, type TraceMwDeps } from './mw-trace'
 import { makeMwIdentity, type IdentityMwDeps } from './mw-identity'
@@ -61,7 +61,11 @@ export interface InboundPipelineDeps {
   dispatch: DispatchMwDeps
 }
 
-export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
+/** App(桌面 / 手机)发起的一轮:只过 route + consume 这两站(同一份消费者实例);consumed=false ⇒ 调用方照常进对话。 */
+export type AppTurn = (ctx: InboundCtx) => Promise<{ consumed: boolean }>
+export type InboundPipeline = PipelineRun & { appTurn: AppTurn }
+
+export function buildInboundPipeline(d: InboundPipelineDeps): InboundPipeline {
   // 管家的探针要和它的中间件共用同一份状态(焦点 / 待选 / 接管),所以在这里建一次、两头用。
   const taskReference = d.taskReference ? makeMwTaskReference(d.taskReference) : null
   const probes: RouteMwDeps['probes'] = {
@@ -89,7 +93,14 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     ...(d.cliReply ? { 'cli-reply': makeMwCliReply(d.cliReply) } : {}),
     ...(taskReference ? { 'task-reference': taskReference } : {}),
   } })
-  return compose([
+  // 第四步(d):App 一轮走同一张表。链尾那一站只负责记"没人吃"。
+  const appTurn: AppTurn = async (ctx) => {
+    let consumed = true
+    const fell: Middleware = async () => { consumed = false }
+    await compose([...(route ? [route] : []), consume, fell])(ctx)
+    return { consumed }
+  }
+  const run = compose([
     makeMwTrace(d.trace),
     makeMwIdentity(d.identity),
     // Access gate runs immediately after identity (so chatId is normalized
@@ -129,4 +140,5 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     makeMwLlmHealth(d.llmHealth),
     makeMwDispatch(d.dispatch),
   ])
+  return Object.assign(run, { appTurn })
 }
