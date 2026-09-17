@@ -11,6 +11,7 @@ export { createWorkbenchDraftStore } from './workbench-window-state.js'
 
 import { mountHandoffDialog, mountHandoffRecord, defaultReviewArtifacts } from './workbench-handoff.js'
 import { mountHistoryDialog } from './workbench-history.js'
+import { isAckRequiredError, isUnattendedProvider, mountUnattendedDialog, unattendedLabelSuffix } from './workbench-unattended.js'
 import { Marked } from '../vendor/marked.js'
 import { WORKBENCH_CODE_REVIEW_MIME, renderWorkbenchCodeReview } from './workbench-code-review.js'
 import { createWorkbenchInteractions, captureWorkbenchQuestionDrafts, syncWorkbenchQuestionChoice, renderWorkbenchQuestions, renderWorkbenchInputs } from './workbench-interaction.js'
@@ -23,13 +24,15 @@ import { mergeEvents, structuralSignature, patchLiveTimeline, createLongPoll } f
 /** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,activity?:WorkbenchActivity}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
 /** @typedef {{id:string,taskId:string,tool:string,description:string,createdAt:number}} Permission */
-/** @typedef {{id:string,displayName:string,capabilities?:{attachments?:boolean,execution?:boolean,resume?:boolean},quota?:{kind:'quota'|'rate_limit',resetAt?:number}|null,usage?:{windows:Array<{name:string,usedPercent:number}>}|null}} Provider */
+/** @typedef {{id:string,displayName:string,capabilities?:{attachments?:boolean,execution?:boolean,resume?:boolean,permissions?:string},quota?:{kind:'quota'|'rate_limit',resetAt?:number}|null,usage?:{windows:Array<{name:string,usedPercent:number}>}|null}} Provider */
 /** 执行者名 + 额度状态:用完 / 限流一眼看得出来;订阅执行者带上真实窗口(5h / 周)—— 那不是估算,是厂商自己回的。 @param {Provider} p */
 function providerLabel(p) {
-  if (p.quota?.kind === 'quota') return `${p.displayName}（额度已用完）`
-  if (p.quota?.kind === 'rate_limit') return `${p.displayName}（限流中）`
+  // 免审记号跟在最后:额度 / 限流是一时的,免审是这位执行者的性子。
+  const unattended = unattendedLabelSuffix(p)
+  if (p.quota?.kind === 'quota') return `${p.displayName}（额度已用完）${unattended}`
+  if (p.quota?.kind === 'rate_limit') return `${p.displayName}（限流中）${unattended}`
   const windows = (p.usage?.windows ?? []).map(w => `${w.name === 'weekly' ? '周' : w.name} ${Math.round(w.usedPercent)}%`)
-  return windows.length ? `${p.displayName} · ${windows.join(' · ')}` : p.displayName
+  return `${windows.length ? `${p.displayName} · ${windows.join(' · ')}` : p.displayName}${unattended}`
 }
 /** @typedef {{token:string,context:string,eventCount:number,includedEventCount:number,truncated:boolean}} RestartPreview */
 /** @typedef {{mode:string,restart?:RestartPreview}} Continuation */
@@ -44,7 +47,7 @@ function providerLabel(p) {
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,preview:Preview,query?:TaskQuery,page?:TaskPage,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,chats?:ChatMatter[],selectedMatterId?:string|null,version?:number}} WorkbenchState */
 /** @typedef {import('./workbench-window-state.js').Draft} Draft */
 /** @typedef {{id:string,kind:string,title:string,status:string,updatedAt:number}} ChatMatter */
-/** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,mountConverse?:(host:HTMLElement)=>void,unmountConverse?:()=>void}} WorkbenchDeps */
+/** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,mountConverse?:(host:HTMLElement)=>void,unmountConverse?:()=>void,confirmUnattended?:()=>Promise<boolean>}} WorkbenchDeps */
 
 const windowStorage = workbenchWindowStorage()
 const savedView = loadWorkbenchView(windowStorage)
@@ -280,7 +283,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const executionDisabled=!!executionView.busy||!!(detail&&(detail.task.archivedAt!=null||['running','queued','cancelling'].includes(detail.task.status)))
   const executionControls=renderExecutionControls(execution,executionView.catalog,executionDisabled)
   const chatHeader = !detail && state.selectedMatterId && chats.some(c => c.id === state.selectedMatterId) ? `<header class="wb-task-head"><div><p class="wb-task-context">对话 · 跟 CC 说</p><h2>${escapeWorkbenchHtml(chats.find(c => c.id === state.selectedMatterId)?.title ?? '')}</h2></div></header>` : ''
-  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${escapeWorkbenchHtml(pathParts(detail.task.path).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2></div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue({...detail.task,runtime:detail.runtime ?? detail.task.runtime}))}">${escapeWorkbenchHtml((detail.task.importedOnly?'尚未执行':statusLabel(detail.task.status, detail.runtime ?? detail.task.runtime)))}</span><details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div>${detail.source?`<div><dt>原会话</dt><dd>${escapeWorkbenchHtml(detail.source.providerId)} · <code>${escapeWorkbenchHtml(detail.source.nativeId)}</code></dd></div><div><dt>已保存的原记录</dt><dd>${detail.source.selectedMessageCount} 段${detail.source.truncated?' · 部分文字':''}</dd></div>`:''}</dl><section class="wb-task-execution"><h3>下一轮使用</h3>${executionControls}${renderExecutionObservation(detail.lastExecution)}</section>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button></div>' : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
+  const taskHeader = detail ? `<header class="wb-task-head"><div><p class="wb-task-context">${escapeWorkbenchHtml(pathParts(detail.task.path).name)} · ${escapeWorkbenchHtml(helper)}</p><h2 title="${escapeWorkbenchHtml(detail.task.title || '未命名任务')}">${escapeWorkbenchHtml(detail.task.title || '未命名任务')}</h2>${isUnattendedProvider(state.providers.find(p => p.id === detail.task.providerId)) ? '<p class="wb-task-unattended">免审执行者 · 看不到单步,只能停止</p>' : ''}</div><div class="wb-task-head-actions">${detail.artifacts.length ? `<button type="button" class="wb-new" data-action="show-artifacts">成果 · ${detail.artifacts.length}</button>` : ''}<span class="wb-status" data-status="${escapeWorkbenchHtml(statusValue({...detail.task,runtime:detail.runtime ?? detail.task.runtime}))}">${escapeWorkbenchHtml((detail.task.importedOnly?'尚未执行':statusLabel(detail.task.status, detail.runtime ?? detail.task.runtime)))}</span><details id="wb-task-info" class="wb-task-info"><summary>任务详情</summary><div class="wb-task-info-body"><dl><div><dt>完整路径</dt><dd class="wb-path">${escapeWorkbenchHtml(detail.task.path)}</dd></div><div><dt>任务编号</dt><dd><code>${escapeWorkbenchHtml(detail.task.id)}</code></dd></div><div><dt>执行者</dt><dd>${escapeWorkbenchHtml(helper)}</dd></div><div><dt>更新时间</dt><dd>${escapeWorkbenchHtml(time(detail.task.updatedAt))}</dd></div>${detail.source?`<div><dt>原会话</dt><dd>${escapeWorkbenchHtml(detail.source.providerId)} · <code>${escapeWorkbenchHtml(detail.source.nativeId)}</code></dd></div><div><dt>已保存的原记录</dt><dd>${detail.source.selectedMessageCount} 段${detail.source.truncated?' · 部分文字':''}</dd></div>`:''}</dl><section class="wb-task-execution"><h3>下一轮使用</h3>${executionControls}${renderExecutionObservation(detail.lastExecution)}</section>${detail.task.archivedAt != null ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="restore-task">恢复任务</button></div>' : detail.task.canArchive === true ? '<div class="wb-task-organization"><button type="button" class="wb-btn" data-action="archive-task">归档任务</button></div>' : ''}${state.canWechat && detail.task.archivedAt == null ? `<div class="wb-wechat"><span>在微信继续</span><code>任务 ${escapeWorkbenchHtml(detail.task.id)}</code><button type="button" class="wb-btn" data-action="copy-wechat-command">复制</button></div>` : ''}</div></details></div></header>` : ''
   const selectedChat = !detail && state.selectedMatterId ? chats.find(c => c.id === state.selectedMatterId) : undefined
   const content = selectedChat ? `
     <div id="wb-converse-host" class="wb-converse-host" data-matter-id="${escapeWorkbenchHtml(selectedChat.id)}"></div>` : detail ? `
@@ -297,7 +300,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
         <label>文件夹<div class="wb-folder-row"><input id="wb-path" name="path" required aria-describedby="wb-folder-help" placeholder="选择或粘贴一个本机文件夹"><button type="button" class="wb-btn" data-action="choose-folder">选择…</button></div><small id="wb-folder-help" class="wb-field-help">也可以直接粘贴完整路径；原生选择目前只在 macOS 提供。</small></label>
         <label>要做什么<textarea id="wb-create-text" name="text" rows="4" maxlength="20000" placeholder="例如：整理这些访谈记录，做一份主题摘要和引用表"></textarea></label>
         ${renderAttachmentComposer(draft,attachmentError)}
-        ${state.providers.length ? '' : '<p class="wb-provider-missing" role="alert">暂时没有可用的工作执行者。请连接或管理支持工作任务的 Claude Code／Codex 执行者后再开始任务。</p>'}
+        ${state.providers.length ? '' : '<p class="wb-provider-missing" role="alert">暂时没有可用的工作执行者。请连接或管理一个支持工作任务的执行者后再开始任务。</p>'}
         <details id="wb-options" class="wb-options"><summary>执行者与命名 <span>当前使用 ${escapeWorkbenchHtml((p => p ? providerLabel(p) : '尚未选择执行者')(state.providers.find(p => p.id === state.defaultProvider)))}</span></summary><label>执行者<select id="wb-provider" name="providerId"${executionView.busy?' disabled':''}>${(state.providers ?? []).map((p) => `<option value="${escapeWorkbenchHtml(p.id)}" ${p.id === state.defaultProvider ? 'selected' : ''}>${escapeWorkbenchHtml(providerLabel(p))}</option>`).join('')}</select></label>
         ${executionControls}<label>任务名称 <span class="wb-optional">可选</span><input id="wb-title" name="title" placeholder="留空时使用任务要求的前 40 个字"></label></details>
         <button class="wb-btn wb-btn-primary" type="submit"${state.providers.length&&!draft?.attachments?.some(a=>a.status!=='ready') ? '' : ' disabled'}>开始任务</button>
@@ -718,6 +721,19 @@ export function initWorkbenchPage(deps) {
           : ['HTTP 404','workbench_endpoint_missing'].includes(message) ? '当前运行的后台还没有提供这个接口，请更新后台后重试。' : message === 'workbench_read_only_preview' ? '当前预览只允许查看任务，请使用已启用执行的桌面端。' : message === 'workbench_connection_unavailable' ? '暂时连不上任务服务，请检查后台是否运行。' : message
     controller.paint()
   }
+  const confirmUnattended = deps.confirmUnattended ?? (() => mountUnattendedDialog())
+  /** 第一次把事交给免审执行者时后台回 428。当面确认一次,登记下来,再把同一份请求
+   * 原样重发;主人说「先不用」就到此为止,不当成出错。
+   * @param {'GET'|'POST'} method @param {string} path @param {Record<string,unknown>} body */
+  const sendMutation = async (method, path, body) => {
+    try { return /** @type {{task?:Task}} */ (await deps.invokeWorkbenchApi(method, path, body)) }
+    catch (error) {
+      if (!isAckRequiredError(error)) throw error
+      if (!(await confirmUnattended()) || !alive) return null
+      await deps.invokeWorkbenchApi('POST', '/v1/workbench/unattended-ack')
+      return /** @type {{task?:Task}} */ (await deps.invokeWorkbenchApi(method, path, body))
+    }
+  }
   /** @param {'GET'|'POST'} method @param {string} path @param {Record<string,unknown>} body */
   const mutate = async (method, path, body) => {
     const key = path === '/v1/workbench/create' ? 'create' : `task:${String(body.id ?? '')}`
@@ -725,8 +741,8 @@ export function initWorkbenchPage(deps) {
     busy.add(key);controller.paint(true)
     const navigation = navigationGeneration
     try {
-      const result = /** @type {{task?:Task}} */ (await deps.invokeWorkbenchApi(method, path, body))
-      if (!alive) return false
+      const result = await sendMutation(method, path, body)
+      if (!alive || !result) return false
       const id = result.task?.id ?? controller.state.selectedId
       await controller.refresh({ force: true })
       if (alive && path === '/v1/workbench/create' && navigation === navigationGeneration && id && controller.state.selectedId !== id) await controller.selectTask(id)

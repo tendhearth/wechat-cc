@@ -73,6 +73,7 @@ it('explains execution choice failures without exposing machine codes or changin
  expect(executionErrorMessage('workbench_busy')).toContain('文件夹')
  expect(executionErrorMessage('unavailable_provider')).toContain('连接或管理')
  expect(executionErrorMessage('unavailable_provider')).not.toContain('安装')
+ expect(executionErrorMessage('unavailable_provider')).not.toContain('Codex')
  expect(executionErrorMessage('api_task_attachment_unsupported')).toContain('PDF')
  expect(executionErrorMessage('api_task_incomplete')).toContain('未完整结束')
  expect(executionErrorMessage('api_task_private_scope')).toContain('项目文件夹')

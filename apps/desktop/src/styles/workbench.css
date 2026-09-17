@@ -55,6 +55,7 @@
 .wb-task-head>div { min-width:0; }
 .wb-task-head h2 { display:-webkit-box; overflow:hidden; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2; margin:4px 0 0; color:var(--wb-text); font-size:17px; line-height:1.5; font-weight:600; letter-spacing:-.015em; }
 .wb-task-context { overflow:hidden; margin:0; color:var(--wb-muted); font-size:11px; line-height:1.5; text-overflow:ellipsis; white-space:nowrap; }
+.wb-task-unattended { margin:5px 0 0; color:#8a6236; font-size:11px; line-height:1.5; }
 .wb-task-head-actions { display:flex; flex:none; align-items:center; gap:18px; }
 .wb-task-info>summary { cursor:pointer; color:var(--wb-muted); font-size:11px; list-style:none; white-space:nowrap; }
 .wb-task-info>summary::after { content:'⌄'; margin-left:5px; }
@@ -337,6 +338,9 @@
 .wb-handoff-footer>span { font-size:11px; color:#77746b; }
 .wb-handoff-footer button { flex:none; }
 @media(max-width:560px){ .wb-handoff-body{padding:16px}.wb-handoff-footer{padding:16px;flex-wrap:wrap}.wb-handoff-footer>span{flex:1 1 100%} }
+.wb-unattended-dialog { height:auto; max-height:min(560px,calc(100vh - 48px)); }
+.wb-unattended-notes { margin:0; padding-left:20px; color:#57554d; font-size:13px; line-height:1.9; }
+.wb-unattended-actions { display:flex; flex:none; gap:10px; }
 
 /* Latest updates stay optional while the user reads earlier work. */
 .wb-reading-bar { position:relative; height:0; flex:none; z-index:2; }

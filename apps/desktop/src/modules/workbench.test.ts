@@ -30,6 +30,22 @@ describe('workbench rendering', () => {
     expect(html).toContain('不接收图片');expect(html).not.toContain('execution_image_unsupported');expect(task.error).toBe('execution_image_unsupported')
   })
 
+  it('标出免审执行者:选单上带（免审）,打开它的任务时头部说清只能停止',async()=>{
+    const {renderWorkbench}=await import('./workbench.js')
+    const task={id:'deadbeef',title:'Task',path:'/work',providerId:'agy',status:'running',createdAt:1,updatedAt:2,error:null}
+    const providers=[{id:'agy',displayName:'agy',capabilities:{permissions:'unattended' as const}},{id:'codex',displayName:'Codex',capabilities:{permissions:'ask'}}]
+    const state={tasks:[task],providers,defaultProvider:'agy',canWechat:false,selectedId:task.id,detail:{task,events:[],artifacts:[]},selectedArtifactId:null,error:'',preview:null}
+    const html=renderWorkbench(state)
+    expect(html).toContain('<p class="wb-task-unattended">免审执行者 · 看不到单步,只能停止</p>')
+    const managed=renderWorkbench({...state,detail:{...state.detail,task:{...task,providerId:'codex'}}})
+    expect(managed).not.toContain('wb-task-unattended')
+    const create=renderWorkbench({...state,selectedId:null,detail:null})
+    expect(create).toContain('agy（免审）');expect(create).not.toContain('Codex（免审）')
+    const limited=renderWorkbench({...state,selectedId:null,detail:null,providers:[{...providers[0]!,quota:{kind:'rate_limit' as const}}]})
+    expect(limited).toContain('agy（限流中）（免审）')
+    expect(renderWorkbench({...state,selectedId:null,detail:null,providers:[]})).not.toContain('Codex 执行者')
+  })
+
   it('offers running supplements only with an active run and explains native versus next-round delivery', async () => {
     const { renderWorkbench } = await import('./workbench.js')
     const task = { id: 'A', title: 'Working', path: '/work', providerId: 'codex', status: 'running', createdAt: 1, updatedAt: 2, error: null }
@@ -1925,6 +1941,84 @@ describe('workbench mutations', () => {
     expect(pathField.value).toBe('/new/project')
     expect(textField.value).toBe('New task draft')
     stopWorkbenchPolling()
+  })
+
+  it.each([true,false])('免审执行者:create 撞到 428 时先当面确认一次,确认=%s 才原样重发',async confirmed=>{
+    const fields=Object.fromEntries(['wb-create-form','wb-path','wb-create-text','wb-title','wb-provider'].map(id=>{const f=new FakeElement();f.id=id;f.tagName=id==='wb-create-form'?'FORM':'';return[id,f]}))
+    const page=installFakePage(fields)
+    const originalFormData=globalThis.FormData
+    vi.stubGlobal('FormData',class{get(name:string){return fields[{'path':'wb-path','text':'wb-create-text','title':'wb-title','providerId':'wb-provider'}[name]??'']?.value??''}})
+    const task={id:'deadbeef',title:'A',path:'/work',providerId:'agy',status:'completed',createdAt:1,updatedAt:2,error:null}
+    let acknowledged=false
+    const calls:{method:string,path:string,body?:any}[]=[]
+    const api=vi.fn(async(method:string,path:string,body?:any)=>{
+      calls.push({method,path,body})
+      if(path==='/v1/workbench/unattended-ack'){acknowledged=true;return{acknowledgedAt:111}}
+      if(path==='/v1/workbench/create'){if(!acknowledged)throw Error('unattended_ack_required');return{task}}
+      if(path.startsWith('/v1/workbench/task'))return{task,events:[],artifacts:[]}
+      return{tasks:[],providers:[{id:'agy',displayName:'agy',capabilities:{permissions:'unattended'}}],defaultProvider:'agy',canWechat:false}
+    })
+    const confirmUnattended=vi.fn(async()=>confirmed)
+    const module=await import('./workbench.js'),controller=module.initWorkbenchPage({invokeWorkbenchApi:api,confirmUnattended,pollMs:60_000})!
+    await vi.waitFor(()=>expect(controller.state.providers).toHaveLength(1))
+    fields['wb-path']!.value='/work';fields['wb-create-text']!.value='请把这些整理一下';fields['wb-provider']!.value='agy'
+    await [...page.listeners.get('submit')!][0]!({target:fields['wb-create-form'],preventDefault(){}})
+    expect(confirmUnattended).toHaveBeenCalledTimes(1)
+    const creates=calls.filter(c=>c.path==='/v1/workbench/create')
+    expect(calls.some(c=>c.method==='POST'&&c.path==='/v1/workbench/unattended-ack')).toBe(confirmed)
+    expect(creates).toHaveLength(confirmed?2:1)
+    if(confirmed)expect(creates[1]!.body).toEqual(creates[0]!.body)
+    expect(controller.state.error).toBe('')
+    module.stopWorkbenchPolling();vi.stubGlobal('FormData',originalFormData)
+  })
+
+  it.each([true,false])('免审执行者:continue 撞到 428 也只问一次,确认=%s',async confirmed=>{
+    const field=new FakeElement();field.id='wb-followup-text'
+    const page=installFakePage({'wb-followup-text':field})
+    const task={id:'deadbeef',title:'A',path:'/work',providerId:'agy',status:'completed',createdAt:1,updatedAt:2,error:null}
+    let acknowledged=false
+    const calls:{method:string,path:string,body?:any}[]=[]
+    const api=vi.fn(async(method:string,path:string,body?:any)=>{
+      calls.push({method,path,body})
+      if(path==='/v1/workbench/unattended-ack'){acknowledged=true;return{acknowledgedAt:111}}
+      if(path==='/v1/workbench/continue'){if(!acknowledged)throw Error('unattended_ack_required');return{task}}
+      if(path.startsWith('/v1/workbench/task'))return{task,events:[],artifacts:[]}
+      return{tasks:[task],providers:[{id:'agy',displayName:'agy',capabilities:{permissions:'unattended'}}],defaultProvider:'agy',canWechat:false}
+    })
+    const confirmUnattended=vi.fn(async()=>confirmed)
+    const module=await import('./workbench.js'),controller=module.initWorkbenchPage({invokeWorkbenchApi:api,confirmUnattended,pollMs:60_000})!
+    await vi.waitFor(()=>expect(controller.state.selectedId).toBe(task.id))
+    field.value='接着做'
+    const form=new FakeElement();form.tagName='FORM';form.dataset.action='continue'
+    await [...page.listeners.get('submit')!][0]!({target:form,preventDefault(){}})
+    expect(confirmUnattended).toHaveBeenCalledTimes(1)
+    const continues=calls.filter(c=>c.path==='/v1/workbench/continue')
+    expect(calls.some(c=>c.method==='POST'&&c.path==='/v1/workbench/unattended-ack')).toBe(confirmed)
+    expect(continues).toHaveLength(confirmed?2:1)
+    if(confirmed)expect(continues[1]!.body).toEqual(continues[0]!.body)
+    expect(controller.state.error).toBe('')
+    expect(field.value).toBe(confirmed?'':'接着做')
+    module.stopWorkbenchPolling()
+  })
+
+  it('免审执行者:别的错误不弹确认,照旧报出来',async()=>{
+    const field=new FakeElement();field.id='wb-followup-text'
+    const page=installFakePage({'wb-followup-text':field})
+    const task={id:'deadbeef',title:'A',path:'/work',providerId:'agy',status:'completed',createdAt:1,updatedAt:2,error:null}
+    const api=async(method:string,path:string)=>{
+      if(method==='POST')throw Error('workbench_busy')
+      if(path.startsWith('/v1/workbench/task'))return{task,events:[],artifacts:[]}
+      return{tasks:[task],providers:[{id:'agy',displayName:'agy',capabilities:{permissions:'unattended'}}],defaultProvider:'agy',canWechat:false}
+    }
+    const confirmUnattended=vi.fn(async()=>true)
+    const module=await import('./workbench.js'),controller=module.initWorkbenchPage({invokeWorkbenchApi:api,confirmUnattended,pollMs:60_000})!
+    await vi.waitFor(()=>expect(controller.state.selectedId).toBe(task.id))
+    field.value='接着做'
+    const form=new FakeElement();form.tagName='FORM';form.dataset.action='continue'
+    await [...page.listeners.get('submit')!][0]!({target:form,preventDefault(){}})
+    expect(confirmUnattended).not.toHaveBeenCalled()
+    expect(controller.state.error).toContain('文件夹')
+    module.stopWorkbenchPolling()
   })
 })
 
