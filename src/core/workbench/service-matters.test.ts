@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,it} from 'vitest'
-import {mkdirSync,mkdtempSync,realpathSync,rmSync} from 'node:fs'
+import {mkdirSync,mkdtempSync,realpathSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
@@ -38,7 +38,7 @@ beforeEach(()=>{
   registry.register('claude',{async spawn(){return runtime.session}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>'owner-chat',matters})
 })
-afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area);rmSync(area,{recursive:true,force:true})})
+afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
 
 it('mirrors a task into a matter with the same id, then follows it through replied, done and archived',async()=>{
   const task=service.create({path:project,providerId:'claude',text:'整理周报'})
