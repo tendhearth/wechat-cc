@@ -269,4 +269,33 @@ describe('Claude workbench retained runtime', () => {
     expect(run.ended()).toBe(false)
   })
 
+  it('opens with includePartialMessages so the SDK emits text deltas', async () => {
+    await open()
+    expect(native.options.includePartialMessages).toBe(true)
+  })
+
+  it('streams text_delta as append events under one itemId, then replaces with the whole block on the assistant message', async () => {
+    const run = await open(); run.runtime.start('start'); init()
+    native.emit({ type: 'stream_event', uuid: 'u1', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'message_start', message: { id: 'msg_1', role: 'assistant', content: [] } } })
+    native.emit({ type: 'stream_event', uuid: 'u2', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } } })
+    native.emit({ type: 'stream_event', uuid: 'u3', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '你' } } })
+    native.emit({ type: 'stream_event', uuid: 'u4', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '好' } } })
+    native.emit({ type: 'assistant', uuid: 'a1', parent_tool_use_id: null, message: { id: 'msg_1', model: 'parent-model', content: [{ type: 'text', text: '你好' }] } })
+    await expect.poll(() => run.events.filter(event => event.kind === 'text')).toEqual([
+      { kind: 'text', text: '你', itemId: 'claude:msg_1:text:0', textMode: 'append' },
+      { kind: 'text', text: '好', itemId: 'claude:msg_1:text:0', textMode: 'append' },
+      { kind: 'text', text: '你好', itemId: 'claude:msg_1:text:0', textMode: 'replace' },
+    ])
+  })
+
+  it('ignores sub-agent stream_events and deltas missing text, without losing the final assistant replace', async () => {
+    const run = await open(); run.runtime.start('start'); init()
+    native.emit({ type: 'stream_event', uuid: 'u1', session_id: 'native-parent', parent_tool_use_id: 'tool-1', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '子' } } })
+    native.emit({ type: 'stream_event', uuid: 'u2', session_id: 'native-parent', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta' } } })
+    native.emit({ type: 'assistant', uuid: 'a1', parent_tool_use_id: null, message: { id: 'msg_2', content: [{ type: 'text', text: '整条' }] } })
+    await expect.poll(() => run.events.filter(event => event.kind === 'text')).toEqual([
+      { kind: 'text', text: '整条', itemId: 'claude:a1:text:0', textMode: 'replace' },
+    ])
+  })
+
 })

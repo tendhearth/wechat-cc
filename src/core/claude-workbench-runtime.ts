@@ -38,10 +38,12 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
   const processOwner = ownClaudeWorkbenchProcess(baseOptions.stderr)
   const abort = baseOptions.abortController ?? new AbortController()
   const input = new AsyncQueue<SDKUserMessage>(), output = new ClaudeWorkbenchEvents()
-  const options: Options = { ...baseOptions, abortController: abort, spawnClaudeCodeProcess: processOwner.spawn,
+  const options: Options = { ...baseOptions, abortController: abort, spawnClaudeCodeProcess: processOwner.spawn, includePartialMessages: true,
     extraArgs: { ...baseOptions.extraArgs, 'replay-user-messages': null } }
   const tasks = new Map<string, Task>(), taskByTool = new Map<string, Task>(), live = new Set<string>()
   const operations = new Map<string, ActivityEvent>()
+  let streamMessageId: string | null = null // API message id currently streaming, from stream_event message_start
+  const streamed = new Map<string, string>() // itemId → text streamed so far, for reconciliation against the final assistant block
   const pending = new Map<string, { resolve: () => void; reject: (error: Error) => void }>()
   const requestIds = new Set<string>()
   let retained = false, foreground: AgentRuntimeSnapshot['foreground'] = 'unknown', started = false, ended = false, closing = false
@@ -114,6 +116,24 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
   }
   const receive = (message: Value) => {
     if (closing || ended) return
+    if (message.type === 'stream_event') {
+      if (id(message.parent_tool_use_id)) return // a sub-agent's own stream never joins the parent timeline
+      const ev = object(message.event) ? message.event : null
+      if (!ev) return
+      if (ev.type === 'message_start') { streamMessageId = id(object(ev.message) ? ev.message.id : undefined) ?? null; return }
+      if (ev.type === 'content_block_delta' && streamMessageId !== null && typeof ev.index === 'number') {
+        const delta = object(ev.delta) ? ev.delta : null
+        if (!delta || delta.type !== 'text_delta' || typeof delta.text !== 'string' || !delta.text) return
+        const itemId = `claude:${streamMessageId}:text:${ev.index}`
+        if (!streamed.has(itemId) && streamed.size >= 64) { const oldest = streamed.keys().next().value; if (oldest !== undefined) streamed.delete(oldest) }
+        streamed.set(itemId, (streamed.get(itemId) ?? '') + delta.text)
+        foreground = 'running'
+        output.push({ kind: 'text', text: delta.text, itemId, textMode: 'append' })
+        return
+      }
+      if (ev.type === 'message_stop') streamMessageId = null
+      return
+    }
     if (message.type === 'system') {
       if (message.subtype === 'init' && !message.parent_tool_use_id) {
         foreground = 'running'
@@ -188,7 +208,13 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
         if (!object(block)) continue
         if (block.type === 'text' && typeof block.text === 'string' && block.text) {
           const key = `${messageKey}:text:${index}`
-          if (!owner) output.push({ kind: 'text', text: block.text, itemId: `claude:${key}`, textMode: 'replace' })
+          if (!owner) {
+            const apiId = id(message.message?.id)
+            const streamedKey = apiId ? [...streamed.keys()].find(candidate => candidate.startsWith(`claude:${apiId}:text:`) && streamed.get(candidate) === block.text) : undefined
+            const itemId = streamedKey ?? `claude:${key}`
+            if (streamedKey) streamed.delete(streamedKey)
+            output.push({ kind: 'text', text: block.text, itemId, textMode: 'replace' })
+          }
           else {
             const old = owner.parts.get(key) ?? '', value = block.text.slice(0, MAX_CHILD_OUTPUT - owner.outputLength + old.length)
             if (value !== old) {
