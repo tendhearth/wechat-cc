@@ -96,12 +96,12 @@ export function makeWorkbenchStore(db: Db) {
     artifactDeliveries:makeArtifactDeliveryStore(db),
     get, artifacts, events, addEvent,recordAgentEvent,finishRunActivities,source,sourceByIdentity,handoffs,bump,version,
     recordHandoffNative:(id:string,nativeId:string)=>db.transaction(()=>{
-      const row=db.query<{targetTaskId:string},[string,string]>('UPDATE workbench_handoffs SET target_native_id=? WHERE id=? AND target_native_id IS NULL RETURNING target_task_id AS targetTaskId').get(nativeId,id)
-      if(row)bump(row.targetTaskId)
+      const row=db.query<{sourceTaskId:string;targetTaskId:string},[string,string]>('UPDATE workbench_handoffs SET target_native_id=? WHERE id=? AND target_native_id IS NULL RETURNING source_task_id AS sourceTaskId,target_task_id AS targetTaskId').get(nativeId,id)
+      if(row){bump(row.sourceTaskId);bump(row.targetTaskId)}
     })(),
     recordHandoffEvent:(id:string,eventId:number)=>db.transaction(()=>{
-      const row=db.query<{targetTaskId:string},[number,string]>('UPDATE workbench_handoffs SET request_event_id=? WHERE id=? RETURNING target_task_id AS targetTaskId').get(eventId,id)
-      if(row)bump(row.targetTaskId)
+      const row=db.query<{sourceTaskId:string;targetTaskId:string},[number,string]>('UPDATE workbench_handoffs SET request_event_id=? WHERE id=? RETURNING source_task_id AS sourceTaskId,target_task_id AS targetTaskId').get(eventId,id)
+      if(row){bump(row.sourceTaskId);bump(row.targetTaskId)}
     })(),
     handoffByToken:(hash:string)=>db.query<StoredHandoff,[string]>(HANDOFF_SELECT+' WHERE token_hash=?').get(hash),
     handoffRecord(taskId:string,id:string){

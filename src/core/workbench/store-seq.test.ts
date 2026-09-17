@@ -32,4 +32,33 @@ describe('store seq(每个写点都让 version 递增)', () => {
   it('bump 不存在的任务 ⇒ not_found', () => {
     const { store } = mk(); expect(() => store.bump('nope0000')).toThrow('not_found')
   })
+  it('设计上容忍多算：迟到的 running 撞见已完成的同一调用，行不回退成转圈，但 version 仍照样 +1（bump 在早退前已求值，代价只是一次空轮询）', () => {
+    const { store, id } = mk()
+    const activity = (status: 'running' | 'completed') => ({ kind: 'tool_call' as const, tool: 't', activity: { id: 'call1', type: 'tool' as const, status, label: 'l' } })
+    store.recordAgentEvent(id, 'run1', activity('running'))
+    store.recordAgentEvent(id, 'run1', activity('completed'))
+    const v = store.version(id)
+    store.recordAgentEvent(id, 'run1', activity('running')) // 过期的 running：应被早退忽略（不回退状态），但 seq 仍然 +1
+    expect(store.version(id)).toBe(v + 1)
+    const event = store.detail(id).events.find(e => e.activity?.id === 'call1')!
+    expect(event.activity!.status).toBe('completed')
+  })
+  it('recordHandoffNative/recordHandoffEvent 同时唤醒 source 与 target 两边的实时视图（handoffs() 在两边 detail() 里都会出现）', () => {
+    const { store } = mk()
+    const source = store.get(store.create({ title: 'source', path: '/p', providerId: 'codex', ownerChatId: 'o' }).id)
+    const target = store.get(store.create({ title: 'target', path: '/p', providerId: 'claude', ownerChatId: 'o' }).id)
+    const handoff = store.createHandoff({
+      id: 'h1', sourceTaskId: source.id, targetTaskId: target.id, targetProviderId: 'claude',
+      path: '/p', title: 'target', ownerChatId: 'o', purpose: 'review', request: 'req',
+      packetSha256: 'a'.repeat(64), artifactRefsJson: '[]', quoteJson: null,
+      sourceNativeId: null, packetJson: '{}', tokenHash: 'b'.repeat(64),
+    })
+    let vs = store.version(source.id), vt = store.version(target.id)
+    store.recordHandoffNative(handoff.id, 'native-1')
+    expect(store.version(source.id)).toBe(vs + 1); expect(store.version(target.id)).toBe(vt + 1)
+    const eventId = store.addEvent(target.id, 'user', '要求')
+    vs = store.version(source.id); vt = store.version(target.id)
+    store.recordHandoffEvent(handoff.id, eventId)
+    expect(store.version(source.id)).toBe(vs + 1); expect(store.version(target.id)).toBe(vt + 1)
+  })
 })
