@@ -39,13 +39,26 @@ export function parseResetAt(text: string): number | null {
   return n < 1e12 ? n * 1000 : n
 }
 
-export function makeQuotaRegistry(now: () => number = Date.now) {
+/**
+ * 真实额度快照(subscription-usage.ts)接进来:窗口到 100% 就等于"耗尽",不用等任务失败。
+ * 同步接口,给的是缓存(监视器自己在后台刷新)。
+ */
+export type UsageLookup = (providerId: string) => { exhausted: boolean; windows: Array<{ name: string; usedPercent: number; resetsAt: number | null }> } | null
+
+export function makeQuotaRegistry(now: () => number = Date.now, usage?: UsageLookup) {
   const states = new Map<string, QuotaState>()
+  const fromUsage = (id: string): QuotaState | null => {
+    const s = usage?.(id)
+    if (!s?.exhausted) return null
+    const w = s.windows.find(w => w.usedPercent >= 100) ?? s.windows[0]
+    const resetAt = w?.resetsAt ?? now() + QUOTA_TTL_MS
+    if (resetAt <= now()) return null
+    return { kind: 'quota', since: now(), resetAt, message: w ? `${w.name} 窗口已用 ${Math.round(w.usedPercent)}%` : '额度已用完' }
+  }
   const live = (id: string): QuotaState | null => {
     const s = states.get(id)
-    if (!s) return null
-    if (s.resetAt <= now()) { states.delete(id); return null }
-    return s
+    if (s && s.resetAt <= now()) states.delete(id)
+    return (s && s.resetAt > now() ? s : null) ?? fromUsage(id)
   }
   return {
     /** 认出额度/限流就登记并返回类别;不是就返回 null、不登记。 */
@@ -58,11 +71,11 @@ export function makeQuotaRegistry(now: () => number = Date.now) {
       return kind
     },
     exhausted: (providerId: string): QuotaState | null => live(providerId),
-    /** 一次成功回合 ⇒ 这家恢复了。 */
+    /** 一次成功回合 ⇒ 这家(从错误里认出的那份)恢复了;真实快照说耗尽的照旧耗尽。 */
     clear(providerId: string) { states.delete(providerId) },
     snapshot(): Record<string, QuotaState> {
       const out: Record<string, QuotaState> = {}
-      for (const id of [...states.keys()]) { const s = live(id); if (s) out[id] = s }
+      for (const id of new Set([...states.keys(), 'claude', 'codex'])) { const s = live(id); if (s) out[id] = s }
       return out
     },
   }

@@ -26,6 +26,7 @@ import { findPathBlocker, type PathReservation, type WaitingFor } from './schedu
 import { makeQuotaRegistry, classifyProviderError, type QuotaState } from '../provider-quota'
 import { providerDisplayName } from '../provider-display-names'
 import type { MatterStore } from '../matters/store'
+import type { UsageSnapshot } from '../subscription-usage'
 import { publicTask, TERMINAL_TASK_STATUSES, type WorkbenchListQuery, type StoredTask, type Task, type TaskStatus, type WorkbenchStore } from './store'
 
 interface Options {
@@ -35,6 +36,8 @@ interface Options {
   ownerChatId: () => string | null
   /** 「一件事」登记处:任务与 matter 一对一同 id,生命周期同步(docs/cc-workbench.md「一件事」)。可选,老接线不传。 */
   matters?: MatterStore
+  /** 订阅执行者的真实额度快照(subscription-usage.ts 的监视器缓存);登记处据此提前判耗尽,列表把它带给桌面。 */
+  usage?: (providerId: string) => UsageSnapshot | null
   defaultProvider?: string
   registeredProjects?:()=>Array<{alias:string;path:string}>
   executionConflict?:(path:string,providerId:string,nativeId:string|null)=>boolean
@@ -183,7 +186,7 @@ export function makeWorkbenchService(opts: Options) {
   const runsByTask=new Map<string,Active>()
   const reservations=new Map<string,Active>()
   /** 各执行者的额度/限流状态(provider-quota.ts):从失败里认出来、记住、再避开。 */
-  const quota=makeQuotaRegistry()
+  const quota=makeQuotaRegistry(Date.now,opts.usage)
   /** 除了 exhaustedId 之外、已准入且没耗尽的原生执行者 —— "交给谁继续"的候选。 */
   function fallbackExecutor(exhaustedId:string):string|null {
     for(const id of opts.registry.list()){
@@ -1119,7 +1122,7 @@ export function makeWorkbenchService(opts: Options) {
       return {...preview,...(managedTaskId?{managedTaskId}:{})}
     },
     list(query:WorkbenchListQuery={}) {
-      const providers=opts.registry.list().flatMap(id=>{const p=opts.registry.get(id);return isWorkbenchProviderId(id)&&p&&isWorkbenchExecutorCapabilities(p.opts.workbench)?[{id,displayName:p.opts.displayName,capabilities:structuredClone(p.opts.workbench),quota:quota.exhausted(id)}]:[]})
+      const providers=opts.registry.list().flatMap(id=>{const p=opts.registry.get(id);return isWorkbenchProviderId(id)&&p&&isWorkbenchExecutorCapabilities(p.opts.workbench)?[{id,displayName:p.opts.displayName,capabilities:structuredClone(p.opts.workbench),quota:quota.exhausted(id),usage:opts.usage?.(id)??null}]:[]})
       const result=store.listPage(query)
       const projectProviders=Object.fromEntries([...new Set(result.tasks.map(task=>task.path))].map(path=>[path,store.projectProvider(path)]))
       return {tasks:result.tasks.map(task => taskView(task,true)),page:result.page,projectProviders,providers,historyProviders:Object.keys(opts.nativeHistory??{}),defaultProvider:providers.find(p=>p.id===opts.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!opts.ownerChatId()}

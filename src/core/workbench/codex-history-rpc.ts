@@ -3,14 +3,15 @@ import { StringDecoder } from 'node:string_decoder'
 import { workbenchCodexArgs, workbenchCodexEnv, workbenchFeatureConfig } from './codex-config'
 import { historyObject, nativeHistoryFailure, NATIVE_HISTORY_MAX_BYTES, NATIVE_HISTORY_TIMEOUT_MS } from './native-history'
 
-export type CodexHistoryMethod='thread/list'|'thread/read'|'thread/items/list'
+export type CodexHistoryMethod='thread/list'|'thread/read'|'thread/items/list'|'account/rateLimits/read'
 export interface CodexHistoryRpc {request(method:CodexHistoryMethod,params:Record<string,unknown>):Promise<unknown>;close():Promise<void>}
 export type HistoryProcess=Pick<ChildProcessWithoutNullStreams,'stdin'|'stdout'|'stderr'|'on'|'once'|'kill'|'pid'>
 export interface CodexHistoryRpcOptions {
   codexPathOverride:string;cwd?:string;timeoutMs?:number;closeTimeoutMs?:number
   spawnProcess?:(binary:string,args:string[],options:SpawnOptionsWithoutStdio)=>HistoryProcess
 }
-const METHODS=new Set(['initialize','thread/list','thread/read','thread/items/list'])
+// account/rateLimits/read 是只读的账户额度窗口(2026-09-16,subscription-usage.ts);仍没有任何执行 / 写配置的方法。
+const METHODS=new Set(['initialize','thread/list','thread/read','thread/items/list','account/rateLimits/read'])
 const validId=(value:unknown):value is string|number=>typeof value==='string'||typeof value==='number'&&Number.isSafeInteger(value)
 
 /** A short-lived catalog process. It has no thread/turn execution or config-write methods. */
@@ -105,4 +106,12 @@ export async function openCodexHistoryRpc(options:CodexHistoryRpcOptions):Promis
     send({method:'initialized'})
     return {request:(method,params)=>request(method,params),close}
   }catch(error){await close().catch(()=>{});throw nativeHistoryFailure(error)}
+}
+
+/** 开一个短命的 app-server,只问一句 `account/rateLimits/read`,问完就关。失败 → null,不抛。 */
+export async function readCodexRateLimits(options:CodexHistoryRpcOptions):Promise<unknown|null> {
+  let rpc:CodexHistoryRpc|undefined
+  try{rpc=await openCodexHistoryRpc(options);return await rpc.request('account/rateLimits/read',{})}
+  catch{return null}
+  finally{await rpc?.close().catch(()=>{})}
 }

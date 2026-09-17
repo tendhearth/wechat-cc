@@ -64,3 +64,23 @@ describe('makeQuotaRegistry', () => {
     expect(reg.snapshot()).toEqual({ codex: { kind: 'quota', since: T0, resetAt: T0 + QUOTA_TTL_MS, message: "You've hit your usage limit" } })
   })
 })
+
+describe('quota registry with live subscription usage (2026-09-16)', () => {
+  it('treats a 100% window as exhausted before any task fails, and keeps it after a successful turn', () => {
+    let t = 1_000
+    const usage = (id: string) => id === 'codex' ? { exhausted: true, windows: [{ name: 'weekly', usedPercent: 100, resetsAt: 50_000 }] } : null
+    const r = makeQuotaRegistry(() => t, usage)
+    expect(r.exhausted('codex')).toEqual({ kind: 'quota', since: 1_000, resetAt: 50_000, message: 'weekly 窗口已用 100%' })
+    expect(r.exhausted('claude')).toBeNull()
+    r.clear('codex')
+    expect(r.exhausted('codex')?.kind).toBe('quota')
+    expect(Object.keys(r.snapshot())).toEqual(['codex'])
+    t = 60_000
+    expect(r.exhausted('codex')).toBeNull()   // 窗口已重置
+  })
+  it('error-derived state still wins when usage is unavailable',()=>{
+    const r = makeQuotaRegistry(() => 5, () => null)
+    r.note('claude', 'Claude AI usage limit reached|1700000000')
+    expect(r.exhausted('claude')?.resetAt).toBe(1_700_000_000_000)
+  })
+})

@@ -64,3 +64,19 @@ describe('read-only Codex JSONL transport',()=>{
     child.emit('close',0)
   })
 })
+
+describe('readCodexRateLimits (2026-09-16 订阅额度)',()=>{
+  it('asks only account/rateLimits/read on a short-lived process and closes it; failures are null',async()=>{
+    const {readCodexRateLimits}=await import('./codex-history-rpc')
+    const child=new FakeChild(),spawnProcess=vi.fn(()=>child as unknown as HistoryProcess)
+    const call=readCodexRateLimits({codexPathOverride:'/synthetic/codex',spawnProcess,timeoutMs:200,closeTimeoutMs:50})
+    await vi.waitFor(()=>{if(!child.sent.some(x=>x.method==='account/rateLimits/read'))throw new Error('not yet')})
+    const request=child.sent.find(x=>x.method==='account/rateLimits/read')!
+    child.send({id:request.id,result:{rateLimits:{primary:{usedPercent:100,windowDurationMins:10080,resetsAt:1789912347},planType:'prolite'}}})
+    expect(await call).toMatchObject({rateLimits:{planType:'prolite'}})
+    expect(child.sent.map(x=>x.method).filter(Boolean)).toEqual(['initialize','initialized','account/rateLimits/read'])
+    expect(child.kill).toHaveBeenCalled()
+    const broken=new FakeChild();broken.autoInitialize=false
+    await expect(readCodexRateLimits({codexPathOverride:'/synthetic/codex',spawnProcess:vi.fn(()=>broken as unknown as HistoryProcess),timeoutMs:30,closeTimeoutMs:50})).resolves.toBeNull()
+  })
+})

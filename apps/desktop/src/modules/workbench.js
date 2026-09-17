@@ -22,9 +22,14 @@ import { renderWorkbenchTimeline, workbenchTimelineEventId, captureWorkbenchTime
 /** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,activity?:WorkbenchActivity}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
 /** @typedef {{id:string,taskId:string,tool:string,description:string,createdAt:number}} Permission */
-/** @typedef {{id:string,displayName:string,capabilities?:{attachments?:boolean,execution?:boolean,resume?:boolean},quota?:{kind:'quota'|'rate_limit',resetAt?:number}|null}} Provider */
-/** 执行者名 + 额度状态:额度用完 / 限流中的执行者在选择器里一眼看得出来,不用等任务失败才知道。 @param {Provider} p */
-function providerLabel(p) { return p.quota?.kind === 'quota' ? `${p.displayName}（额度已用完）` : p.quota?.kind === 'rate_limit' ? `${p.displayName}（限流中）` : p.displayName }
+/** @typedef {{id:string,displayName:string,capabilities?:{attachments?:boolean,execution?:boolean,resume?:boolean},quota?:{kind:'quota'|'rate_limit',resetAt?:number}|null,usage?:{windows:Array<{name:string,usedPercent:number}>}|null}} Provider */
+/** 执行者名 + 额度状态:用完 / 限流一眼看得出来;订阅执行者带上真实窗口(5h / 周)—— 那不是估算,是厂商自己回的。 @param {Provider} p */
+function providerLabel(p) {
+  if (p.quota?.kind === 'quota') return `${p.displayName}（额度已用完）`
+  if (p.quota?.kind === 'rate_limit') return `${p.displayName}（限流中）`
+  const windows = (p.usage?.windows ?? []).map(w => `${w.name === 'weekly' ? '周' : w.name} ${Math.round(w.usedPercent)}%`)
+  return windows.length ? `${p.displayName} · ${windows.join(' · ')}` : p.displayName
+}
 /** @typedef {{token:string,context:string,eventCount:number,includedEventCount:number,truncated:boolean}} RestartPreview */
 /** @typedef {{mode:string,restart?:RestartPreview}} Continuation */
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeSource} NativeSource */

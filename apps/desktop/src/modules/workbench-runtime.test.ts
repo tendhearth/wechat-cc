@@ -75,3 +75,15 @@ describe('executor quota (评审 2026-09-16)', () => {
     expect(html).toContain('Codex（额度已用完）');expect(html).toContain('Claude（限流中）');expect(html).toContain('>API<')
   })
 })
+
+describe('executor usage windows (2026-09-16)', () => {
+  it('shows real subscription windows next to the executor name, and 额度已用完 when a window is full', () => {
+    const task={id:'A',title:'T',path:'/project',providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null}
+    const providers=[
+      {id:'claude',displayName:'Claude',quota:null,usage:{providerId:'claude',plan:'max',exhausted:false,fetchedAt:1,windows:[{name:'5h',usedPercent:12,resetsAt:null,durationMins:300},{name:'weekly',usedPercent:18,resetsAt:null,durationMins:10080}]}},
+      {id:'codex',displayName:'Codex',quota:{kind:'quota' as const,since:1,resetAt:2,message:'x'},usage:{providerId:'codex',plan:'prolite',exhausted:true,fetchedAt:1,windows:[{name:'weekly',usedPercent:100,resetsAt:null,durationMins:10080}]}},
+    ]
+    const html=renderWorkbench({tasks:[task],providers,defaultProvider:'codex',canWechat:false,selectedId:null,selectedArtifactId:null,error:'',preview:null,detail:null})
+    expect(html).toContain('Claude · 5h 12% · 周 18%');expect(html).toContain('Codex（额度已用完）')
+  })
+})

@@ -20,6 +20,11 @@ import { loadCompanionConfig } from '../companion/config'
 import type { Bootstrap } from './types'
 import type { InternalApi } from '../internal-api/types'
 import {registerWorkbenchApi} from './workbench-api'
+import { makeUsageMonitor, parseClaudeUsage, parseCodexRateLimits, readClaudeOAuthToken } from '../../core/subscription-usage'
+import { readCodexRateLimits } from '../../core/workbench/codex-history-rpc'
+import { spawnSync } from '../../lib/runtime/process'
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 
 /** Reuse transport/model setup, never the companion's prompt or bypass. */
 export function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}): Options {
@@ -64,6 +69,18 @@ export function wireWorkbench(opts: {
   /** 「一件事」登记处:任务与 matter 一对一同步(可选,老接线不传)。 */
   matters?: import('../../core/matters/store').MatterStore
 }) {
+  // 订阅额度监视器:Codex 问 app-server,Claude 用 Claude Code 自己的 OAuth 凭据问 usage 接口(subscription-usage.ts)。
+  const usageMonitor=makeUsageMonitor({sources:{
+    ...(opts.boot.registry.has('codex')&&findCodexBinary()?{codex:async()=>{const r=await readCodexRateLimits({codexPathOverride:findCodexBinary()!});return r?parseCodexRateLimits(r,Date.now()):null}}:{}),
+    ...(opts.boot.registry.has('claude')?{claude:async()=>{
+      const cred=readClaudeOAuthToken({platform:process.platform,keychain:()=>spawnSync(['security','find-generic-password','-s','Claude Code-credentials','-w']).stdout.toString(),readFile:()=>readFileSync(join(homedir(),'.claude','.credentials.json'),'utf8'),now:Date.now})
+      if(!cred)return null
+      const r=await fetch('https://api.anthropic.com/api/oauth/usage',{headers:{authorization:`Bearer ${cred.token}`,'anthropic-beta':'oauth-2025-04-20'},signal:AbortSignal.timeout(8_000)})
+      if(!r.ok)return null
+      return parseClaudeUsage(await r.json().catch(()=>null),Date.now(),cred.plan)
+    }}:{}),
+  },ttlMs:5*60_000})
+
   const ownerChatId=() => loadCompanionConfig(opts.stateDir).default_chat_id ?? null
   const registry=createProviderRegistry()
   const agentConfig=loadAgentConfig(opts.stateDir)
@@ -91,6 +108,7 @@ export function wireWorkbench(opts: {
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
     store:makeWorkbenchStore(opts.db),registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,
+    usage:(id)=>id==='claude'||id==='codex'?usageMonitor.cached(id):null,
     registeredProjects:()=>listProjects(join(opts.stateDir,'projects.json')),
     defaultProvider:opts.boot.defaultProviderId,holdBusy:opts.boot.holdBusy,
     // Empty allowlist is deliberate: office tasks never send messages or read
