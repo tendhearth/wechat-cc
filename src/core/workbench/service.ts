@@ -1216,8 +1216,8 @@ export function makeWorkbenchService(opts: Options) {
     /** 免审执行者的一次性确认;不接 `unattendedAck`(老接线)时永远拒绝 —— 免审执行者只能停在
      *  「要求确认」,不能悄悄放行。 */
     acknowledgeUnattended():number {
-      const at=Date.now()
       if(!opts.unattendedAck)throw new Error('unattended_ack_unavailable')
+      const at=Date.now()
       opts.unattendedAck.set(at)
       return at
     },

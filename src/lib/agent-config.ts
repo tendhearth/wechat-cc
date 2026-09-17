@@ -284,7 +284,7 @@ const AgentConfigSchema = z.object({
   knowledge_embed_runtime: z.enum(['python', 'js']).optional(),
   knowledge_owner: z.string().optional(),
   day_tz_offset_minutes: z.number().int().min(-720).max(840).nullable().optional(),
-  workbench_unattended_ack_at: z.number().int().nonnegative().optional(),
+  workbench_unattended_ack_at: z.number().int().positive().optional(),
 })
 
 /**
