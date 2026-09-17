@@ -30,6 +30,7 @@ function service(overrides: Record<string, unknown> = {}) {
     artifact: vi.fn(() => ({ name: 'draft.md', mime: 'text/markdown', size: 5, sha256: 'a'.repeat(64), contentBase64: 'aGVsbG8=' })),
     approve: vi.fn(() => undefined),
     resolvePermission: vi.fn(() => undefined),
+    acknowledgeUnattended: vi.fn(() => 1_700_000_000_000),
     ...overrides,
   }
 }
@@ -296,7 +297,7 @@ describe('Workbench internal HTTP API', () => {
       'GET /v1/workbench', 'GET /v1/workbench/task', 'POST /v1/workbench/create',
       'POST /v1/workbench/continue', 'POST /v1/workbench/cancel',
       'GET /v1/workbench/artifact', 'POST /v1/workbench/approve',
-      'POST /v1/workbench/permission',
+      'POST /v1/workbench/permission', 'POST /v1/workbench/unattended-ack',
     ]
     for (const key of keys) expect(minTierFor(key)).toBe('admin')
     const response = await request('/v1/workbench', {}, trustedToken)
@@ -465,6 +466,33 @@ describe('Workbench internal HTTP API', () => {
       expect(workbench.setArchived).toHaveBeenCalledWith('deadbeef',archived)
     }
     for(const body of [{id:'deadbeef'},{id:'bad',archived:true},{id:'deadbeef',archived:'true'}])expect((await request('/v1/workbench/archive',{method:'POST',body:JSON.stringify(body)})).status).toBe(400)
+  })
+
+  it('acknowledges an unattended executor only for the desktop operator credential',async()=>{
+    const workbench=service(),{request,operatorToken,trustedToken}=await start(workbench)
+    expect(minTierFor('POST /v1/workbench/unattended-ack')).toBe('admin')
+    expect((await request('/v1/workbench/unattended-ack',{method:'POST'},trustedToken)).status).toBe(403)
+    expect(workbench.acknowledgeUnattended).not.toHaveBeenCalled()
+    const response=await request('/v1/workbench/unattended-ack',{method:'POST'},operatorToken)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({acknowledgedAt:1_700_000_000_000})
+    expect(workbench.acknowledgeUnattended).toHaveBeenCalledOnce()
+  })
+
+  it('maps unattended_ack_unavailable from the service to 503',async()=>{
+    const acknowledgeUnattended=vi.fn(()=>{throw new Error('unattended_ack_unavailable')})
+    const {request,operatorToken}=await start(service({acknowledgeUnattended}))
+    const response=await request('/v1/workbench/unattended-ack',{method:'POST'},operatorToken)
+    expect(response.status).toBe(503)
+    expect(await response.json()).toEqual({error:'unattended_ack_unavailable'})
+  })
+
+  it('maps unattended_ack_required from create to 428',async()=>{
+    const create=vi.fn(()=>{throw new Error('unattended_ack_required')})
+    const {request,operatorToken}=await start(service({create}))
+    const response=await request('/v1/workbench/create',{method:'POST',body:JSON.stringify({path:'/tmp/project',providerId:'codex',text:'new'})},operatorToken)
+    expect(response.status).toBe(428)
+    expect(await response.json()).toEqual({error:'unattended_ack_required'})
   })
 
   it.each([['invalid_cursor',400],['workbench_archived',409]])('maps list/archive errors %s to %i',async(code,status)=>{

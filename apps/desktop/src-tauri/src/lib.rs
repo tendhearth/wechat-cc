@@ -1001,6 +1001,7 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("POST", "/v1/workbench/approve")
             | ("POST", "/v1/workbench/permission")
             | ("POST", "/v1/workbench/archive")
+            | ("POST", "/v1/workbench/unattended-ack")
             | ("POST", "/v1/workbench/import")
             | ("POST", "/v1/workbench/prepare-resume")
             | ("POST", "/v1/workbench/prepare-continuation")
@@ -1385,6 +1386,7 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/approve"),
             ("POST", "/v1/workbench/permission"),
             ("POST", "/v1/workbench/archive"),
+            ("POST", "/v1/workbench/unattended-ack"),
             ("POST", "/v1/workbench/import"),
             ("POST", "/v1/workbench/prepare-resume"),
             ("POST", "/v1/workbench/prepare-continuation"),

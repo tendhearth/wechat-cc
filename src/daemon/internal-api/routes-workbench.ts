@@ -58,6 +58,8 @@ function mappedError(err: unknown): ReturnType<RouteHandler> {
   if (code === 'native_history_unavailable') return {status:503,body:{error:code}}
   if (code === 'not_found') return { status: 404, body: { error: code } }
   if (code === 'unavailable_provider') return { status: 422, body: { error: code } }
+  if (code === 'unattended_ack_required') return { status: 428, body: { error: code } }
+  if (code === 'unattended_ack_unavailable') return { status: 503, body: { error: code } }
   if (code.startsWith('invalid_')) return { status: 400, body: { error: code } }
   return { status: 500, body: { error: 'internal' } }
 }
@@ -259,6 +261,12 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       if(!deps.workbench)return {status:503,body:{error:'workbench_not_wired'}}
       try {return {status:200,body:{task:await deps.workbench.setArchived(id,archived)}}}
       catch(err){return mappedError(err)}
+    },
+
+    'POST /v1/workbench/unattended-ack': async () => {
+      if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
+      try { return { status: 200, body: { acknowledgedAt: deps.workbench.acknowledgeUnattended() } } }
+      catch (err) { return mappedError(err) }
     },
 
     'POST /v1/workbench/cancel': async (_query, body) => {
