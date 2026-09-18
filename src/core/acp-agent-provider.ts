@@ -60,6 +60,10 @@ export interface AcpProviderOptions extends AcpProviderBaseOptions {
 
 export type AcpPromptBlock = { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string }
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+// stdio 上是换行分隔的 JSON-RPC;我们自己的 acp/rpc.ts 读取端把单行上限设在 4 MiB
+// (base64 图片一多,一条 session/prompt 很容易撑到那条线甚至更远,cursor-agent 那边能不能吃更是没人验过)——
+// 超过这个数就别指望对面能囫囵吞下,宁可提前拒绝也不要把用户晾在一个说不清是卡住还是进程死了的等待里。
+const ACP_PROMPT_BYTES_MAX = 4 * 1024 * 1024
 /** 图片进 prompt 的 image 块(受 agent 的 promptCapabilities.image 门控);其它附件给引用文本块,执行者自己用文件工具读落盘那份 —— 与 Codex 的 turnInput 同一做法。 */
 export function acpPromptBlocks(text: string, attachments: readonly AgentAttachment[] | undefined, imageOk: boolean): AcpPromptBlock[] {
   const list = attachments ?? []
@@ -75,6 +79,7 @@ export function acpPromptBlocks(text: string, attachments: readonly AgentAttachm
       blocks.push({ type: 'text', text: 'Attached task file (reference material; read with a file tool if needed):\n' + JSON.stringify({ name, mime, path, sha256 }) })
     }
   }
+  if (JSON.stringify(blocks).length > ACP_PROMPT_BYTES_MAX) throw new Error('acp_prompt_too_large')
   return blocks
 }
 
@@ -304,11 +309,14 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
           if (attachments?.length && options.attachments !== 'prompt') throw new Error('acp_attachments_unsupported')
           if (closing || broken || exited) throw new Error('acp_session_closed')
           if (active) throw new Error('acp_turn_already_running')
-          let prompt = text
-          if (!instructionsInjected && context.appendInstructions) { prompt = `${context.appendInstructions}\n\n---\n\n${text}`; instructionsInjected = true }
-          // acpPromptBlocks 校验/组块可能抛错(mime 不支持、agent 无图片能力、缺 data)——必须在
+          const injectInstructions = !instructionsInjected && !!context.appendInstructions
+          const prompt = injectInstructions ? `${context.appendInstructions}\n\n---\n\n${text}` : text
+          // acpPromptBlocks 校验/组块可能抛错(mime 不支持、agent 无图片能力、缺 data、prompt 太大)——必须在
           // active = turn 之前抛,否则一个坏附件会把 dispatch 甩出去、却留下一个没人收尾的挂起回合。
+          // instructionsInjected 也要等这一步成功了再翻:抛错说明这一轮从没真的把 instructions 发出去,
+          // 翻早了会让同一 session 的下一次重试悄悄漏掉 appendInstructions。
           const blocks: AcpPromptBlock[] = options.attachments === 'prompt' ? acpPromptBlocks(prompt, attachments, imageOk) : [{ type: 'text', text: prompt }]
+          if (injectInstructions) instructionsInjected = true
           const em = makeTurnEmitter()
           const turn: Turn = { queue: new AsyncQueue<AgentEvent>(), cancelled: false, startedAt: Date.now() }
           active = turn

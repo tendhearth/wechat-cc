@@ -284,6 +284,11 @@ describe('attachments into the prompt', () => {
     expect(() => acpPromptBlocks('x', [png], false)).toThrow('acp_attachment_image_unsupported')
     expect(() => acpPromptBlocks('x', [{ ...png, data: undefined }], true)).toThrow('attachment_data_missing')
   })
+  it('acpPromptBlocks: refuses a prompt over the transport line-cap budget, passes a small one', () => {
+    const big = { ...png, data: 'A'.repeat(Math.ceil(4.1 * 1024 * 1024)) }
+    expect(() => acpPromptBlocks('x', [big], true)).toThrow('acp_prompt_too_large')
+    expect(() => acpPromptBlocks('x', [png], true)).not.toThrow()
+  })
   it('prompt mode sends image blocks in session/prompt; refuse mode (default) still throws', async () => {
     const { session, child } = await start({}, c => { c.initializeResult = { protocolVersion: 1, agentCapabilities: { loadSession: true }, promptCapabilities: { image: true } } }, { attachments: 'prompt', text: 'append', permissions: 'bridge' })
     const { done } = collect(session, '看图')

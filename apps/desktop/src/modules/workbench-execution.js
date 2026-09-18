@@ -66,6 +66,7 @@ export function executionErrorMessage(error){
   ['acp_turn_already_running','Cursor 正在处理上一轮，请等它答复后再发。'],
   ['acp_attachments_unsupported','Cursor 执行者暂不支持附件，请移除附件后再试。'],
   ['acp_attachment_image_unsupported','这个版本的 Cursor 不接收图片附件，请移除图片，或改用 Claude / Codex。'],
+  ['acp_prompt_too_large','附件太大，Cursor 一次接不下（上限约 4 MB），请压缩图片或分批发送。'],
  ])
  for(const [prefix,text] of acp) if(code===prefix||code.startsWith(`${prefix}:`)) return text
  return messages[code]??null

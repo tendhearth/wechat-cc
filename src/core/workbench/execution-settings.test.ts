@@ -147,4 +147,7 @@ describe('ACP failure copy', () => {
     expect(executionFailureMessage('attachment_image_unsupported')).toContain('PNG')
     expect(executionFailureMessage('attachment_data_missing')).toContain('重新添加')
   })
+  it('adds copy for the prompt-size pre-flight code', () => {
+    expect(executionFailureMessage('acp_prompt_too_large')).toContain('4 MB')
+  })
 })
