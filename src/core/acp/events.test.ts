@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { isReplyToolCall } from '../agent-provider'
 import { acpActivityId, acpPermissionDescription, acpPermissionOption, createAcpTranslator } from './events'
 
 const chunk = (text: string, messageId?: string) => ({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text }, ...(messageId ? { messageId } : {}) })
@@ -80,5 +81,53 @@ describe('ACP session/update → AgentEvent', () => {
     expect(acpPermissionOption(params.options, false)).toBe('reject-once')
     expect(acpPermissionOption([{ optionId: 'a', kind: 'allow_always' }], true)).toBeNull()
     expect(acpPermissionOption('nope', false)).toBeNull()
+  })
+})
+
+describe('messages mode (chat side)', () => {
+  it('buffers chunks and emits one text per assistant message: before a tool_call and at endTurn', () => {
+    const t = createAcpTranslator({ text: 'messages' }); t.beginTurn()
+    expect(t.update(chunk('这'))).toEqual([])
+    expect(t.update(chunk('边'))).toEqual([])
+    const events = t.update(call({ toolCallId: 'c1', kind: 'read', locations: [{ path: '/p/a' }] }))
+    expect(events).toEqual([
+      { kind: 'text', text: '这边' },
+      { kind: 'tool_call', tool: 'read', activity: { id: 'c1', type: 'read', status: 'running', label: '读取文件', detail: '/p/a' } },
+    ])
+    expect(t.update({ sessionUpdate: 'tool_call_update', toolCallId: 'c1', status: 'completed' })).toHaveLength(1)
+    t.update(chunk('好')); t.update(chunk('的'))
+    expect(t.endTurn()).toEqual([{ kind: 'text', text: '好的' }])
+    expect(t.endTurn()).toEqual([])
+  })
+  it('does not emit whitespace-only buffers and append mode endTurn is always empty', () => {
+    const t = createAcpTranslator({ text: 'messages' }); t.beginTurn()
+    t.update(chunk(' \n'))
+    expect(t.endTurn()).toEqual([])
+    const a = createAcpTranslator(); a.beginTurn(); a.update(chunk('x'))
+    expect(a.endTurn()).toEqual([])
+  })
+  it('beginTurn drops a stale buffer from a previous turn', () => {
+    const t = createAcpTranslator({ text: 'messages' }); t.beginTurn(); t.update(chunk('old')); t.beginTurn()
+    expect(t.endTurn()).toEqual([])
+  })
+})
+
+describe('MCP identity on tool calls', () => {
+  it('reads providerIdentifier/toolName as server/tool, normalizes the wechat server name, never reads args', () => {
+    const t = createAcpTranslator(); t.beginTurn()
+    const first = t.update({ sessionUpdate: 'tool_call', toolCallId: 'm1', title: 'MCP: tool', kind: 'other', status: 'pending', rawInput: {} })
+    expect(first[0]).toMatchObject({ kind: 'tool_call', tool: 'other' }); expect(first[0]).not.toHaveProperty('server')
+    const [ev] = t.update({ sessionUpdate: 'tool_call_update', toolCallId: 'm1', title: 'wechat: reply', rawInput: { providerIdentifier: 'wechat', toolName: 'reply', args: { text: 'SECRET' } } })
+    expect(ev).toMatchObject({ kind: 'tool_call', server: 'wechat', tool: 'reply', activity: { id: 'm1', type: 'tool', label: '调用工具', detail: 'wechat: reply' } })
+    expect(JSON.stringify(ev)).not.toContain('SECRET')
+    const [done] = t.update({ sessionUpdate: 'tool_call_update', toolCallId: 'm1', status: 'completed', rawOutput: { success: true } })
+    expect(done).toMatchObject({ server: 'wechat', tool: 'reply', activity: { status: 'completed' } })
+    const [legacy] = t.update({ sessionUpdate: 'tool_call', toolCallId: 'm2', kind: 'other', rawInput: { providerIdentifier: 'wechat-cc-wechat', toolName: 'ping' } })
+    expect(legacy).toMatchObject({ server: 'wechat', tool: 'ping' })
+  })
+  it('isReplyToolCall recognizes an ACP wechat reply', () => {
+    const t = createAcpTranslator({ text: 'messages' }); t.beginTurn()
+    const [ev] = t.update({ sessionUpdate: 'tool_call', toolCallId: 'r', kind: 'other', rawInput: { providerIdentifier: 'wechat', toolName: 'reply' } })
+    expect(isReplyToolCall(ev!)).toBe(true)
   })
 })

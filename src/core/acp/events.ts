@@ -1,4 +1,5 @@
 import type { AgentActivity, AgentEvent } from '../agent-provider'
+import { normalizeWechatMcpServer } from '../agent-provider'
 
 /**
  * ACP `session/update` → `AgentEvent` 的纯翻译。不碰进程、不碰 RPC。
@@ -9,7 +10,17 @@ import type { AgentActivity, AgentEvent } from '../agent-provider'
  *  - `toolCallId` 里嵌着字面换行 ⇒ 当活动 id(event_key / DOM id)前先清洗;
  *  - `rawOutput` 只有 `{success:true}`,真正载荷不在协议里 ⇒ 活动行只放路径与工具身份(与 codex-activity 同一条隐私规矩)。
  */
-export interface AcpTranslator { update(update: unknown): AgentEvent[]; beginTurn(): void }
+export interface AcpTranslatorOptions {
+  /** 'append'(缺省):token 级 chunk 带 itemId(工作台逐字流);'messages':每条助理消息一条 text 事件 ——
+   *  对话侧的 solo 协调器给每条 text 事件发一条微信,token 级会发成几十条。 */
+  text?: 'append' | 'messages'
+}
+export interface AcpTranslator {
+  update(update: unknown): AgentEvent[]
+  beginTurn(): void
+  /** messages 模式:把攒着的助理文本吐成一条 text 事件(空白不吐);append 模式恒空。 */
+  endTurn(): AgentEvent[]
+}
 
 type Obj = Record<string, unknown>
 const object = (value: unknown): value is Obj => !!value && typeof value === 'object' && !Array.isArray(value)
@@ -32,11 +43,16 @@ const IDENTITY_KINDS = new Set(['other', 'switch_mode'])
 const status = (value: unknown, previous: AgentActivity['status']): AgentActivity['status'] =>
   value === 'completed' ? 'completed' : value === 'failed' ? 'failed' : (value === 'pending' || value === 'in_progress') ? 'running' : previous
 
-interface Remembered { kind: string; title: string; name: string; status: AgentActivity['status']; paths: string[] }
+interface Remembered { kind: string; title: string; name: string; status: AgentActivity['status']; paths: string[]; server?: string; tool?: string }
 
-export function createAcpTranslator(): AcpTranslator {
-  let turn = 0, message = 0, textSeen = false
+export function createAcpTranslator(options: AcpTranslatorOptions = {}): AcpTranslator {
+  const messages = options.text === 'messages'
+  let turn = 0, message = 0, textSeen = false, buffer = ''
   const calls = new Map<string, Remembered>()
+  const flushBuffer = (): AgentEvent[] => {
+    const text = buffer; buffer = ''
+    return text.trim() ? [{ kind: 'text', text }] : []
+  }
   const activityEvent = (id: string, call: Remembered): AgentEvent | null => {
     if (call.kind === 'think') return null
     // hasOwn,不是 KINDS[kind]:kind 由 agent 说了算,`constructor` / `__proto__` 会从原型链上
@@ -47,33 +63,42 @@ export function createAcpTranslator(): AcpTranslator {
     const activity: AgentActivity = { id, type: resolved.type, status: call.status, label: resolved.label }
     const detail = includeIdentity ? [...call.paths, display(call.title, 120)].filter(Boolean).join('\n') : call.paths.join('\n')
     if (detail) activity.detail = detail.slice(0, 2000)
+    // MCP 身份(providerIdentifier / toolName)是身份不是参数:reply 判定与 TURN 日志靠它。args 永远不看。
+    if (call.server !== undefined && call.tool !== undefined) return { kind: 'tool_call', server: call.server, tool: call.tool, activity }
     return { kind: 'tool_call', tool: call.name || call.kind || 'tool', activity }
   }
   return {
-    beginTurn() { turn++; message = 0; textSeen = false; calls.clear() },
+    beginTurn() { turn++; message = 0; textSeen = false; buffer = ''; calls.clear() },
+    endTurn() { return messages ? flushBuffer() : [] },
     update(update) {
       if (!object(update) || typeof update.sessionUpdate !== 'string') return []
       if (update.sessionUpdate === 'agent_message_chunk') {
         if (!object(update.content) || update.content.type !== 'text' || typeof update.content.text !== 'string') return []
         textSeen = true
+        if (messages) { buffer += update.content.text; return [] }
         const itemId = typeof update.messageId === 'string' && update.messageId ? `acp:msg:${acpActivityId(update.messageId)}` : `acp:turn:${turn}:${message}`
         return [{ kind: 'text', text: update.content.text, itemId, textMode: 'append' }]
       }
       if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') return []
       if (typeof update.toolCallId !== 'string' || !update.toolCallId) return []
       const id = acpActivityId(update.toolCallId)
+      const flushed = update.sessionUpdate === 'tool_call' && messages ? flushBuffer() : []
       if (update.sessionUpdate === 'tool_call' && textSeen) { message++; textSeen = false }
       const previous = calls.get(id) ?? { kind: '', title: '', name: '', status: 'running' as const, paths: [] }
+      const raw = object(update.rawInput) ? update.rawInput : undefined
+      const identity = raw && typeof raw.providerIdentifier === 'string' && typeof raw.toolName === 'string'
+        ? { server: normalizeWechatMcpServer(display(raw.providerIdentifier, 120)), tool: display(raw.toolName, 120) } : undefined
       const call: Remembered = {
         kind: typeof update.kind === 'string' ? update.kind : previous.kind,
         title: typeof update.title === 'string' ? update.title : previous.title,
         name: typeof update.name === 'string' ? display(update.name, 120) : previous.name,
         status: status(update.status, previous.status),
         paths: update.locations === undefined ? previous.paths : paths(update.locations),
+        server: identity?.server ?? previous.server, tool: identity?.tool ?? previous.tool,
       }
       calls.set(id, call)
       const event = activityEvent(id, call)
-      return event ? [event] : []
+      return event ? [...flushed, event] : flushed
     },
   }
 }
