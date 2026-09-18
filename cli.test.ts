@@ -88,6 +88,8 @@ describe('citty migrated commands', () => {
       'provider',
       'reply',
       'run',
+      'self',
+      'selftest',
       'service',
       'sessions',
       'setup',

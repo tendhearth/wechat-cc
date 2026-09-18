@@ -192,7 +192,7 @@ function isMacosDir(dir: string): boolean {
 // ── execute ──────────────────────────────────────────────────────────
 
 export interface SelfDeployDeps {
-  spawnSync: (cmd: string, args: string[], opts?: { timeoutMs?: number }) => { status: number | null; stdout: string; stderr: string }
+  spawnSync: (cmd: string, args: string[], opts?: { timeoutMs?: number; windowsHide?: boolean }) => { status: number | null; stdout: string; stderr: string }
   fs: {
     exists(p: string): boolean
     copyFile(a: string, b: string): void
@@ -236,7 +236,7 @@ export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDe
     steps.push({ name: 'preflight', ok: false, detail: `binary not found: ${plan.newBinaryPath}` })
     return { ok: false, exitCode: 1, steps }
   }
-  const preflight = deps.spawnSync(plan.newBinaryPath, ['--version'], { timeoutMs: 5000 })
+  const preflight = deps.spawnSync(plan.newBinaryPath, ['--version'], { timeoutMs: 5000, windowsHide: true })
   if (preflight.status !== 0) {
     steps.push({ name: 'preflight', ok: false, detail: `--version exited ${preflight.status ?? 'null'}: ${(preflight.stderr || preflight.stdout).trim()}` })
     return { ok: false, exitCode: 1, steps }
@@ -316,7 +316,7 @@ function swapBinary(deps: SelfDeployDeps, source: string, tmpPath: string, targe
 }
 
 function kickstart(deps: SelfDeployDeps, serviceTarget: string): SelfDeployStep {
-  const r = deps.spawnSync('launchctl', ['kickstart', '-k', serviceTarget])
+  const r = deps.spawnSync('launchctl', ['kickstart', '-k', serviceTarget], { windowsHide: true })
   if (r.status !== 0) return { name: 'restart', ok: false, detail: `launchctl kickstart exited ${r.status ?? 'null'}: ${r.stderr.trim()}` }
   return { name: 'restart', ok: true }
 }
@@ -384,7 +384,7 @@ async function performRollback(plan: SelfDeployPlan, deps: SelfDeployDeps, expec
 }
 
 function collectDiagnostics(deps: SelfDeployDeps, plan: SelfDeployPlan): string {
-  const printed = deps.spawnSync('launchctl', ['print', plan.serviceTarget])
+  const printed = deps.spawnSync('launchctl', ['print', plan.serviceTarget], { windowsHide: true })
   const relevant = (printed.stdout || '')
     .split('\n')
     .filter((l) => /state|runs|last exit/i.test(l))

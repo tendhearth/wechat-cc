@@ -501,7 +501,7 @@ export function defaultSelftestDeps(stateDir: string): SelftestDeps {
       rm: (p) => { try { rmSync(p, { recursive: true, force: true }) } catch { /* best-effort */ } },
     },
     git: (args, cwd) => {
-      try { return spawnSync('git', args, { cwd, stdio: 'ignore' }).status === 0 } catch { return false }
+      try { return spawnSync('git', args, { cwd, stdio: 'ignore', windowsHide: true }).status === 0 } catch { return false }
     },
     log: (line) => console.error(`[selftest] ${line}`),
   }
