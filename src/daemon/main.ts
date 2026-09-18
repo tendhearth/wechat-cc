@@ -23,6 +23,7 @@ import { makeTurnRecordStore } from '../core/turn-record-store'
 import { providerDisplayName } from './provider-display-names'
 import { loadAllAccounts, makeIlinkAdapter } from './ilink-glue'
 import { registerInternalApi } from './internal-api/lifecycle'
+import { runSelftestConverse } from './selftest'
 import { makeMessagesStore } from '../lib/messages-store'
 import { registerCompanionPush, registerCompanionIntrospect, registerIngest } from './companion/lifecycle'
 import { registerGuard } from './guard/lifecycle'
@@ -332,6 +333,26 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // 换模型时把该 provider 的会话存档行删掉(同一条 thunk-over-bootRef 姿势):
       // 不删的话下一次 spawn 会 resume 回旧会话,新模型钉不上。
       forgetProviderSessions: (providerId) => bootRef?.sessionStore?.deleteProvider(providerId) ?? 0,
+      // Self-maintenance (spec 2026-09-18-self-maintenance §1) — backs
+      // POST /v1/selftest/converse. registry is thunk-over-bootRef (same
+      // reason as listSessions above: bootstrap constructs it AFTER this
+      // registerInternalApi call — `registry.get` just reports
+      // unavailable_provider until then, same posture as every other
+      // thunk-over-bootRef field here). mintSessionToken/invalidateSession
+      // close over the `internalApi` binding below instead: those two are
+      // this SAME internal-api instance's own methods, not bootstrap's, so
+      // there's no ordering problem — by the time any HTTP request can
+      // reach this handler, `internalApi` has long since been assigned.
+      selftestConverse: (input) => runSelftestConverse(
+        {
+          registry: { get: (id) => bootRef?.registry.get(id) ?? null },
+          mintSessionToken: (tier, key, opts) => internalApi.mintSessionToken(tier, key, opts),
+          invalidateSession: (key) => internalApi.invalidateSession(key),
+          stateDir,
+          log: (t, l) => log(t, l),
+        },
+        input,
+      ),
       requestRestart: () => requestRestart('internal-api'),
       // self-restart idle signal — thunk over bootRef for the same reason
       // listSessions above is one: internal-api is constructed BEFORE

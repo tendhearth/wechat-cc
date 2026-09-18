@@ -144,3 +144,55 @@ describe('POST /v1/conversation/set-mode — provider_switch path', () => {
     expect(res.status).toBe(400)
   })
 })
+
+describe('POST /v1/selftest/converse', () => {
+  it('503s until bootstrap wires selftestConverse', async () => {
+    const r = routesWith({})
+    const res = await r['POST /v1/selftest/converse']!(new URLSearchParams(), { providerId: 'claude', text: 'ping' })
+    expect(res.status).toBe(503)
+    expect(res.body).toEqual({ error: 'selftest_not_wired' })
+  })
+
+  it('400s on a malformed providerId', async () => {
+    const r = routesWith({ selftestConverse: vi.fn() })
+    const res = await r['POST /v1/selftest/converse']!(new URLSearchParams(), { providerId: 'Claude!', text: 'ping' })
+    expect(res.status).toBe(400)
+    expect(res.body).toEqual({ error: 'invalid_request' })
+  })
+
+  it('400s on empty text', async () => {
+    const r = routesWith({ selftestConverse: vi.fn() })
+    const res = await r['POST /v1/selftest/converse']!(new URLSearchParams(), { providerId: 'claude', text: '' })
+    expect(res.status).toBe(400)
+  })
+
+  it('400s on text over 4000 chars', async () => {
+    const r = routesWith({ selftestConverse: vi.fn() })
+    const res = await r['POST /v1/selftest/converse']!(new URLSearchParams(), { providerId: 'claude', text: 'x'.repeat(4001) })
+    expect(res.status).toBe(400)
+  })
+
+  it('400s on a resumeSessionId over 500 chars', async () => {
+    const r = routesWith({ selftestConverse: vi.fn() })
+    const res = await r['POST /v1/selftest/converse']!(new URLSearchParams(), { providerId: 'claude', text: 'ping', resumeSessionId: 'x'.repeat(501) })
+    expect(res.status).toBe(400)
+  })
+
+  it('passes through a 200 result verbatim, forwarding providerId/text/resumeSessionId', async () => {
+    const fakeResult = { ok: true, providerId: 'claude', sessionId: 's1', texts: ['pong 42'], toolCalls: ['wechat/ping'], durationMs: 12 }
+    const selftestConverse = vi.fn(async () => fakeResult)
+    const r = routesWith({ selftestConverse })
+    const res = await r['POST /v1/selftest/converse']!(new URLSearchParams(), { providerId: 'claude', text: 'ping', resumeSessionId: 'old' })
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual(fakeResult)
+    expect(selftestConverse).toHaveBeenCalledWith({ providerId: 'claude', text: 'ping', resumeSessionId: 'old' })
+  })
+
+  it('passes through an ok:false result as a normal 200 (the failure lives in the body)', async () => {
+    const fakeResult = { ok: false, providerId: 'claude', sessionId: null, texts: [], toolCalls: [], error: 'unavailable_provider', durationMs: 1 }
+    const r = routesWith({ selftestConverse: vi.fn(async () => fakeResult) })
+    const res = await r['POST /v1/selftest/converse']!(new URLSearchParams(), { providerId: 'claude', text: 'ping' })
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual(fakeResult)
+  })
+})

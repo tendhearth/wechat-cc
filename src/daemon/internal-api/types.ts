@@ -530,6 +530,21 @@ export interface InternalApiDeps {
     sessionKey: string,
     opts?: import('./token-registry').MintTokenOpts,
   ) => string
+  /**
+   * Optional test-conversation runner — backs POST /v1/selftest/converse
+   * (spec 2026-09-18-self-maintenance §1). A thunk-over-bootRef wired in
+   * main.ts (same posture as forgetProviderSessions above): it closes over
+   * bootRef?.registry plus this same internalApi's mintSessionToken /
+   * invalidateSession, so it can't exist before bootstrap constructs the
+   * provider registry. 503 when unwired. Never called by the desktop app —
+   * only the `wechat-cc selftest chat` CLI (separate task), driven with the
+   * operator token.
+   */
+  selftestConverse?: (input: {
+    providerId: string
+    text: string
+    resumeSessionId?: string
+  }) => Promise<import('../selftest').SelftestConverseResult>
 }
 
 export interface InternalApi {

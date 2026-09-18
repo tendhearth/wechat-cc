@@ -20,6 +20,10 @@ describe('route-tiers', () => {
     expect(minTierFor('GET /v1/model')).toBe('admin')
   })
 
+  it('selftest converse requires admin (2026-09-18-self-maintenance §1)', () => {
+    expect(minTierFor('POST /v1/selftest/converse')).toBe('admin')
+  })
+
   it('task permission decisions require admin', () => {
     expect(minTierFor('POST /v1/workbench/permission')).toBe('admin')
     expect(ROUTE_MIN_TIER['POST /v1/workbench/archive']).toBe('admin')

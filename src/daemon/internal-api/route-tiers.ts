@@ -169,6 +169,11 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/sessions/release': 'admin',
   'POST /v1/model': 'admin',
   'POST /v1/daemon/restart': 'admin',
+  // 自维护三件套(spec 2026-09-18-self-maintenance §1)——同上一类:一次真实
+  // spawn,只是权限比 companion/converse 还窄(session token 只放行
+  // GET /v1/health)。admin 而非 trusted:允许任何持 file token 的会话
+  // 白嫖 daemon 去开一整条真会话,不该比 daemon-control 的其它成员松。
+  'POST /v1/selftest/converse': 'admin',
   // admin — on-demand file locate over the owner's computer (file_locate)
   'GET /v1/locate': 'admin',
   // trusted — 觅食台 inbound toggle. DEMOTED admin→trusted 2026-07-22: the

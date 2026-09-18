@@ -15,6 +15,12 @@ import { PROVIDER_IDS } from '../../lib/provider-ids'
  *  confirming read-back, which is exactly the lie this guard exists to stop. */
 const KNOWN_PROVIDERS: ReadonlySet<string> = new Set(PROVIDER_IDS)
 
+/** POST /v1/selftest/converse's providerId — deliberately looser than
+ *  KNOWN_PROVIDERS above (that list is /v1/model's closed provider-ids
+ *  vocabulary; selftest just needs a syntactically sane registry key so a
+ *  future provider doesn't need this file touched). */
+const SELFTEST_PROVIDER_ID_RE = /^[a-z][a-z0-9._-]{0,63}$/
+
 export function daemonControlRoutes(deps: InternalApiDeps): RouteTable {
   return {
     // Live sessions for diagnosis — which (alias, provider, chat) sessions are
@@ -130,6 +136,34 @@ export function daemonControlRoutes(deps: InternalApiDeps): RouteTable {
       if (!deps.requestRestart) return { status: 503, body: { error: 'restart_not_wired' } }
       deps.requestRestart()
       return { status: 200, body: { ok: true, restarting: true } }
+    },
+
+    // Self-maintenance (spec 2026-09-18-self-maintenance §1) — spawn ONE
+    // test conversation against a registered provider in a scratch
+    // project, scoped so its wechat MCP can only ping (never send/broadcast
+    // to the owner's real contacts). 503 until bootstrap wires the runner
+    // (registry + mintSessionToken/invalidateSession all come from
+    // bootstrap). ok:false is a normal 200 — the failure lives in the body
+    // so a maintainer/CLI can branch on it without special-casing transport
+    // errors vs turn errors.
+    'POST /v1/selftest/converse': async (_q, body) => {
+      if (!deps.selftestConverse) return { status: 503, body: { error: 'selftest_not_wired' } }
+      const b = (body ?? {}) as { providerId?: unknown; text?: unknown; resumeSessionId?: unknown }
+      if (typeof b.providerId !== 'string' || !SELFTEST_PROVIDER_ID_RE.test(b.providerId)) {
+        return { status: 400, body: { error: 'invalid_request' } }
+      }
+      if (typeof b.text !== 'string' || b.text.length === 0 || b.text.length > 4000) {
+        return { status: 400, body: { error: 'invalid_request' } }
+      }
+      if (b.resumeSessionId !== undefined && (typeof b.resumeSessionId !== 'string' || b.resumeSessionId.length > 500)) {
+        return { status: 400, body: { error: 'invalid_request' } }
+      }
+      const result = await deps.selftestConverse({
+        providerId: b.providerId,
+        text: b.text,
+        ...(typeof b.resumeSessionId === 'string' ? { resumeSessionId: b.resumeSessionId } : {}),
+      })
+      return { status: 200, body: result }
     },
 
     // Per-turn outcome feed for diagnosis. With chatId → that chat's turns

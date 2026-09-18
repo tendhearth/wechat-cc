@@ -202,6 +202,12 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           'POST /v1/workbench/input',
           'POST /v1/workbench/answer',
           'POST /v1/workbench/withdraw-input',
+          // 自维护三件套(spec 2026-09-18-self-maintenance §1/§2) — the
+          // `wechat-cc selftest chat` CLI drives this route with the SAME
+          // operator token it uses for Workbench above (own credential
+          // read from internal-api-info.json, never the shared trusted
+          // file token). The desktop app itself never calls this route.
+          'POST /v1/selftest/converse',
         ]),
       })
     },
