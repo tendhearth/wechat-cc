@@ -117,13 +117,31 @@ export function planSelfDeploy(input: PlanSelfDeployInput): SelfDeployPlan {
   let stderrPathFromPlist: string | null = null
 
   if (input.app) {
-    // --app points at the .app bundle itself (e.g. /Applications/wechat-cc.app).
-    macosDir = posixJoin(input.app, 'Contents', 'MacOS')
+    // --app accepts either the .app bundle root (e.g.
+    // /Applications/wechat-cc.app) or an already-fully-qualified
+    // .../Contents/MacOS path — don't double-nest the latter.
+    macosDir = isMacosDir(input.app) ? stripTrailingSlash(input.app) : posixJoin(input.app, 'Contents', 'MacOS')
   } else if (input.plistXml) {
     const parsed = parseLaunchAgentPlist(input.plistXml)
     const mainBinary = parsed?.programArguments[0]
     if (mainBinary) {
-      macosDir = posixDirname(mainBinary)
+      const dir = posixDirname(mainBinary)
+      // Guard against a dev-mode plist (`[bunPath, <repoRoot>/cli.ts, run,
+      // ...]`, e.g. before `wechat-cc service install --binary` ever ran).
+      // Its ProgramArguments[0] is `bun` on PATH (commonly
+      // /opt/homebrew/bin/bun) — dirname of THAT is not an app bundle's
+      // MacOS/ dir at all. Silently "succeeding" here would either ENOENT
+      // on backup, or worse, overwrite an unrelated binary next to bun,
+      // kickstart a source-mode daemon that was never touched, have it
+      // pass health trivially, and report exit 0 having deployed nothing.
+      // Real app-bundle plists always look like
+      // `.../wechat-cc.app/Contents/MacOS/<main-binary>` with argv[1] being
+      // a CLI flag (e.g. `--daemon`), never a `.ts` source file.
+      const secondArg = parsed!.programArguments[1]
+      if (!isMacosDir(dir) || (secondArg !== undefined && secondArg.endsWith('.ts'))) {
+        throw new Error('launchagent_not_app_bundle')
+      }
+      macosDir = dir
       stderrPathFromPlist = parsed!.stderrPath
     }
   }
@@ -161,6 +179,14 @@ function posixJoin(...parts: string[]): string {
 function posixDirname(p: string): string {
   const idx = p.lastIndexOf('/')
   return idx <= 0 ? '/' : p.slice(0, idx)
+}
+function stripTrailingSlash(p: string): string {
+  return p.replace(/\/+$/, '')
+}
+/** True when `dir`'s basename is exactly `MacOS` (an app bundle's Contents/MacOS/). */
+function isMacosDir(dir: string): boolean {
+  const parts = stripTrailingSlash(dir).split('/').filter(Boolean)
+  return parts[parts.length - 1] === 'MacOS'
 }
 
 // ── execute ──────────────────────────────────────────────────────────
@@ -276,10 +302,17 @@ export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDe
   }
 }
 
+// chmod BEFORE rename, deliberately: rename() is the only step that makes
+// the new binary live. If chmod fails (permissions, disk full elsewhere,
+// whatever), it fails on the still-inert tmp file — the sidecar the daemon
+// actually runs is untouched, so the caller can report a clean `swap`
+// failure with nothing live to roll back. Chmod-after-rename would instead
+// leave an unvalidated (wrong-permission) binary already serving as the
+// sidecar with no restart/health/rollback having run against it.
 function swapBinary(deps: SelfDeployDeps, source: string, tmpPath: string, target: string): void {
   deps.fs.copyFile(source, tmpPath)
+  deps.fs.chmod(tmpPath, 0o755)
   deps.fs.rename(tmpPath, target)
-  deps.fs.chmod(target, 0o755)
 }
 
 function kickstart(deps: SelfDeployDeps, serviceTarget: string): SelfDeployStep {
@@ -306,7 +339,15 @@ async function waitForHealth(plan: SelfDeployPlan, deps: SelfDeployDeps, sinceMs
       const token = deps.readFileToken(plan.infoPath)
       if (token) {
         try {
-          const res = await deps.fetch(`${token.baseUrl}/v1/health`, { headers: { authorization: `Bearer ${token.token}` } })
+          // Cap each probe at whatever's left of the overall health-gate
+          // budget (floor 1s) — otherwise a single hung request can eat the
+          // entire timeout window without the poll loop ever getting to
+          // retry or to report a clean timeout.
+          const remaining = Math.max(1000, deadline - deps.now())
+          const res = await deps.fetch(`${token.baseUrl}/v1/health`, {
+            headers: { authorization: `Bearer ${token.token}` },
+            signal: AbortSignal.timeout(remaining),
+          })
           if (res.ok) {
             let cliVersion: string | undefined
             try { cliVersion = ((await res.json()) as { version?: { cli?: string } }).version?.cli } catch { /* body optional */ }
@@ -327,6 +368,7 @@ async function performRollback(plan: SelfDeployPlan, deps: SelfDeployDeps, expec
     swapBinary(deps, plan.prevPath, plan.tmpPath, plan.sidecarPath)
     steps.push({ name: 'rollback_swap', ok: true })
   } catch (err) {
+    try { deps.fs.unlink(plan.tmpPath) } catch { /* best-effort tmp cleanup */ }
     steps.push({ name: 'rollback_swap', ok: false, detail: errMsg(err) })
     return { steps, rolledBack: false, healthy: false }
   }

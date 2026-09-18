@@ -154,6 +154,14 @@ Usage:
                         Pull latest + reinstall deps + restart service.
                         --check probes only (no side effects); GUI calls
                         this on a timer to surface the Update button.
+  wechat-cc self deploy [--binary <path>] [--app <path>] [--no-rollback]
+                        [--health-timeout-ms N] [--json]
+                        自维护:原子换 sidecar 进 .app、launchd 重启、健康门,
+                        失败自动回滚(仅 macOS)。见 docs/maintainer/deploy.md。
+  wechat-cc selftest workbench --executor <id> [--image] [--resume] [--json]
+  wechat-cc selftest chat --provider <id> [--text "…"] [--resume] [--json]
+                        自维护:daemon 在跑的前提下做一次真机闭环自检并给出
+                        机器可读的结论。见 docs/maintainer/verify.md。
   wechat-cc agent inspect <url>       Fetch Agent Card, print metadata
   wechat-cc agent add <url> [--id ID] [--name-override N] [--outbound-key K]
                         Register an external A2A agent; generates inbound API key.
@@ -2537,10 +2545,17 @@ const selfDeployCmd = defineCommand({
         rollback: !args['no-rollback'],
       })
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      if (json) console.log(JSON.stringify({ ok: false, exitCode: 1, error: message }, null, 2))
+      const error = err instanceof Error ? err.message : String(err)
+      // planSelfDeploy() can itself throw self_deploy_unsupported_platform
+      // (defense in depth — the process.platform check above already
+      // short-circuits the normal path) — keep both paths agreeing on exit 2.
+      const exitCode = error === 'self_deploy_unsupported_platform' ? 2 : 1
+      const message = error === 'launchagent_not_app_bundle'
+        ? 'installed LaunchAgent does not point at an app bundle (looks like a dev-mode/source-checkout plist) — pass --app <path-to-wechat-cc.app> to target it explicitly'
+        : error
+      if (json) console.log(JSON.stringify({ ok: false, exitCode, error, message }, null, 2))
       else console.error(`self deploy: ${message}`)
-      process.exit(1)
+      process.exit(exitCode)
       return
     }
 

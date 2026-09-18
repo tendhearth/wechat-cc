@@ -119,6 +119,44 @@ describe('planSelfDeploy', () => {
     expect(plan.sidecarPath).toBe('/Users/nate/Downloads/wechat-cc.app/Contents/MacOS/wechat-cc-cli')
   })
 
+  it('--app given as the .app root joins Contents/MacOS', () => {
+    const plan = planSelfDeploy({ ...baseInput, arch: 'arm64', plistXml: null, app: '/Users/nate/Downloads/wechat-cc.app' })
+    expect(plan.sidecarPath).toBe('/Users/nate/Downloads/wechat-cc.app/Contents/MacOS/wechat-cc-cli')
+  })
+
+  it('--app given as an already-fully-qualified Contents/MacOS path does not double-nest', () => {
+    const plan = planSelfDeploy({ ...baseInput, arch: 'arm64', plistXml: null, app: '/Users/nate/Downloads/wechat-cc.app/Contents/MacOS' })
+    expect(plan.sidecarPath).toBe('/Users/nate/Downloads/wechat-cc.app/Contents/MacOS/wechat-cc-cli')
+  })
+
+  it('--app tolerates a trailing slash on a Contents/MacOS path', () => {
+    const plan = planSelfDeploy({ ...baseInput, arch: 'arm64', plistXml: null, app: '/Users/nate/Downloads/wechat-cc.app/Contents/MacOS/' })
+    expect(plan.sidecarPath).toBe('/Users/nate/Downloads/wechat-cc.app/Contents/MacOS/wechat-cc-cli')
+  })
+
+  it('throws launchagent_not_app_bundle for a dev-mode plist (bun + cli.ts, not an app bundle)', () => {
+    // Shape buildServicePlan() emits for a source checkout before
+    // `service install --binary` ever ran: ProgramArguments[0] is `bun` on
+    // PATH (e.g. /opt/homebrew/bin/bun), argv[1] is the repo's cli.ts.
+    const xml = plistWith(['/opt/homebrew/bin/bun', '/Users/nate/wechat-cc-cc-kit/cli.ts', 'run', '--dangerously'])
+    expect(() => planSelfDeploy({ ...baseInput, arch: 'arm64', plistXml: xml }))
+      .toThrow('launchagent_not_app_bundle')
+  })
+
+  it('throws launchagent_not_app_bundle when dirname is MacOS but argv[1] is still a .ts source file', () => {
+    // Contrived, but pins the second half of the guard independently of the
+    // first: a MacOS/-shaped dirname is not sufficient on its own.
+    const xml = plistWith(['/Applications/wechat-cc.app/Contents/MacOS/bun', '/Users/nate/wechat-cc-cc-kit/cli.ts', 'run'])
+    expect(() => planSelfDeploy({ ...baseInput, arch: 'arm64', plistXml: xml }))
+      .toThrow('launchagent_not_app_bundle')
+  })
+
+  it('a real app-bundle plist with a leading flag (not a .ts path) as argv[1] is accepted', () => {
+    const xml = plistWith(['/Applications/wechat-cc.app/Contents/MacOS/wechat_cc_desktop', '--daemon', 'run', '--dangerously'])
+    const plan = planSelfDeploy({ ...baseInput, arch: 'arm64', plistXml: xml })
+    expect(plan.sidecarPath).toBe('/Applications/wechat-cc.app/Contents/MacOS/wechat-cc-cli')
+  })
+
   it('throws self_deploy_unsupported_platform on non-darwin', () => {
     expect(() => planSelfDeploy({ ...baseInput, platform: 'win32', arch: 'x64', plistXml: null, app: '/x' }))
       .toThrow('self_deploy_unsupported_platform')
@@ -266,7 +304,10 @@ function harness(): Harness {
 describe('executeSelfDeploy', () => {
   it('succeeds: backs up, swaps to a new inode, kickstarts once, passes health', async () => {
     const h = harness()
-    const originalIno = statSync(h.plan.sidecarPath).ino
+    // inode isn't a meaningful concept on Windows (no real self-deploy
+    // target there anyway — darwin/launchd only); guard just those two
+    // assertions so the rest of this test still runs on every platform.
+    const originalIno = process.platform !== 'win32' ? statSync(h.plan.sidecarPath).ino : null
 
     const result = await executeSelfDeploy(h.plan, h.deps)
 
@@ -276,7 +317,7 @@ describe('executeSelfDeploy', () => {
     expect(h.kickstartCalls).toBe(1)
     expect(readFileSync(h.plan.prevPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
     expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('NEW_BINARY_CONTENT')
-    expect(statSync(h.plan.sidecarPath).ino).not.toBe(originalIno)
+    if (process.platform !== 'win32') expect(statSync(h.plan.sidecarPath).ino).not.toBe(originalIno)
     expect(result.steps.map((s) => s.name)).toEqual(['preflight', 'backup', 'swap', 'restart', 'health'])
     expect(result.steps.every((s) => s.ok)).toBe(true)
   })
