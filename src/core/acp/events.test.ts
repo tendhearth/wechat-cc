@@ -30,6 +30,12 @@ describe('ACP session/update → AgentEvent', () => {
     for (const [kind, type, label] of cases) expect(t.update(call({ toolCallId: `c-${kind}`, kind, locations: [] }))[0]).toMatchObject({ activity: { type, label } })
     expect(t.update(call({ toolCallId: 'think-1', kind: 'think' }))).toEqual([])
   })
+  it('never puts the title into detail for an unseen or expired toolCallId, even if it looks like a command', () => {
+    const t = createAcpTranslator(); t.beginTurn()
+    const [ev] = t.update({ sessionUpdate: 'tool_call_update', toolCallId: 'ghost', title: '`rm -rf /`' })
+    expect(ev).toMatchObject({ activity: { id: 'ghost', type: 'tool', label: '调用工具' } })
+    expect(JSON.stringify(ev)).not.toContain('rm')
+  })
   it('merges tool_call_update into the remembered call and keeps title only as tool identity for other kinds', () => {
     const t = createAcpTranslator(); t.beginTurn()
     t.update(call({ kind: 'other', title: 'MCP: tool', locations: undefined }))

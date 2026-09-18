@@ -52,7 +52,11 @@ export function createAcpConnection(stdin: NodeJS.WritableStream, stdout: NodeJS
       return
     }
     if (typeof message.method !== 'string') return
-    if (!hasId) { options.onNotification(message.method, message.params); return }
+    if (!hasId) {
+      if (disposed) return // 已关闭的连接不再往消费者投递通知。
+      try { options.onNotification(message.method, message.params) } catch { /* 消费者抛错不能打断传输层。 */ }
+      return
+    }
     if (disposed) { respond(id as string | number, { error: { code: -32603, message: disposed.message } }); return }
     void options.onRequest(message.method, message.params, id as string | number).then(
       result => respond(id as string | number, { result: result === undefined ? null : result }),
@@ -62,6 +66,8 @@ export function createAcpConnection(stdin: NodeJS.WritableStream, stdout: NodeJS
       },
     )
   }
+  // utf8 解码器按码点缓冲跨 chunk 的多字节字符;不设置会把切在字符中间的 chunk 各自转字符串,拼出乱码。
+  stdout.setEncoding('utf8')
   stdout.on('data', chunk => {
     if (fatal) return
     buffer += String(chunk)
@@ -74,7 +80,7 @@ export function createAcpConnection(stdin: NodeJS.WritableStream, stdout: NodeJS
       let message: unknown
       try { message = JSON.parse(line) } catch { fail('acp_invalid_protocol_message'); return }
       if (!object(message)) { fail('acp_invalid_protocol_message'); return }
-      handle(message)
+      try { handle(message) } catch { /* 消费者抛错不能打断传输层。 */ }
     }
   })
   return {

@@ -73,4 +73,31 @@ describe('ACP JSON-RPC over stdio', () => {
     await expect.poll(() => h.onFatal.mock.calls.length).toBeGreaterThan(0)
     expect(h.onFatal).toHaveBeenCalledWith(expect.objectContaining({ message: 'acp_protocol_write_failed' }))
   })
+  it('reassembles a CJK character split across a chunk boundary instead of corrupting it', async () => {
+    const h = harness()
+    const line = `${JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { text: '这边' } })}\n`
+    const bytes = Buffer.from(line, 'utf8')
+    const charByteOffset = Buffer.byteLength(line.slice(0, line.indexOf('这')), 'utf8')
+    const splitAt = charByteOffset + 1 // 切进「这」的三字节 UTF-8 编码内部
+    h.stdout.write(bytes.subarray(0, splitAt))
+    h.stdout.write(bytes.subarray(splitAt))
+    await h.flushed()
+    expect(h.onNotification).toHaveBeenCalledWith('session/update', { text: '这边' })
+  })
+  it('does not crash on a throwing onNotification and keeps delivering later messages', async () => {
+    const onNotification = vi.fn(() => { throw new Error('boom') })
+    const h = harness({ onNotification })
+    h.agent({ jsonrpc: '2.0', method: 'session/update', params: { a: 1 } })
+    h.agent({ jsonrpc: '2.0', method: 'session/update', params: { a: 2 } })
+    await h.flushed()
+    expect(onNotification).toHaveBeenCalledTimes(2)
+    expect(onNotification).toHaveBeenNthCalledWith(2, 'session/update', { a: 2 })
+  })
+  it('drops notifications once disposed', async () => {
+    const h = harness()
+    h.conn.dispose(new Error('acp_session_closed'))
+    h.agent({ jsonrpc: '2.0', method: 'session/update', params: { a: 1 } })
+    await h.flushed()
+    expect(h.onNotification).not.toHaveBeenCalled()
+  })
 })

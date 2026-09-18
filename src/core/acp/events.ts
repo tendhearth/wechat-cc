@@ -24,6 +24,9 @@ const KINDS: Record<string, { type: AgentActivity['type']; label: string }> = {
   search: { type: 'search', label: '检索文件' }, execute: { type: 'command', label: '运行命令' }, fetch: { type: 'search', label: '获取网页' },
 }
 const OTHER = { type: 'tool' as const, label: '调用工具' }
+/** 只有这两种「已知的兜底」kind 才把 title 当工具身份放进 detail;没见过 / 已过期的 toolCallId(kind 落回空字符串)
+ *  不认识具体是什么调用,detail 只能放路径 —— title 对 execute 就是命令本身,放出去违反隐私规矩。 */
+const IDENTITY_KINDS = new Set(['other', 'switch_mode'])
 const status = (value: unknown): AgentActivity['status'] => value === 'completed' ? 'completed' : value === 'failed' ? 'failed' : 'running'
 
 interface Remembered { kind: string; title: string; name: string; status: AgentActivity['status']; paths: string[] }
@@ -33,9 +36,11 @@ export function createAcpTranslator(): AcpTranslator {
   const calls = new Map<string, Remembered>()
   const activityEvent = (id: string, call: Remembered): AgentEvent | null => {
     if (call.kind === 'think') return null
-    const spec = KINDS[call.kind] ?? OTHER
-    const activity: AgentActivity = { id, type: spec.type, status: call.status, label: spec.label }
-    const detail = spec === OTHER ? [...call.paths, display(call.title, 120)].filter(Boolean).join('\n') : call.paths.join('\n')
+    const spec = KINDS[call.kind]
+    const includeIdentity = spec === undefined && IDENTITY_KINDS.has(call.kind)
+    const resolved = spec ?? OTHER
+    const activity: AgentActivity = { id, type: resolved.type, status: call.status, label: resolved.label }
+    const detail = includeIdentity ? [...call.paths, display(call.title, 120)].filter(Boolean).join('\n') : call.paths.join('\n')
     if (detail) activity.detail = detail.slice(0, 2000)
     return { kind: 'tool_call', tool: call.name || call.kind || 'tool', activity }
   }
