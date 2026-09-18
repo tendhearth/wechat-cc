@@ -14,10 +14,10 @@ describe('authFailNotice', () => {
   it('returns the provider-specific hint from ProviderCapabilities (incl. cursor)', () => {
     expect(authFailNotice('claude')).toContain('claude login')
     expect(authFailNotice('codex')).toContain('codex login')
-    // cursor uses an API key, not a login command — the old ternary wrongly
-    // fell through to the Claude string. Now sourced from capabilities.
+    // cursor's chat provider is ACP now (acp-cursor-chat.ts) — subscription
+    // auth via `cursor-agent login`, not an API key or Claude's login flow.
     const cur = authFailNotice('cursor')
-    expect(cur).toContain('Cursor')
+    expect(cur).toContain('cursor-agent login')
     expect(cur).not.toContain('claude login')
   })
 })
@@ -2752,12 +2752,19 @@ describe('dispatch-time provider policy + cold-start block', () => {
   const guest = (): Access => ({ dmPolicy: 'allowlist', allowFrom: [], admins: [], trusted: [] })
   const trusted = (): Access => ({ dmPolicy: 'allowlist', allowFrom: [], admins: [], trusted: ['chat-1'] })
 
-  it('persisted solo+cursor + guest chat: refused at dispatch (cursor had no gate; same shared-token hazard as agy)', async () => {
+  it('persisted solo+agy + guest chat: refused at dispatch (shared-token hazard — one static trusted MCP token for every session)', async () => {
+    const { c, store, acquire, sendAssistantText } = setupWith(guest)
+    store.set('chat-1', { kind: 'solo', provider: 'agy' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledWith('chat-1', expect.stringContaining('/agy 目前仅管理员/信任聊天可用'))
+  })
+  it('persisted solo+cursor + guest chat: dispatches normally — 2026-09-18 chat-side Cursor moved to ACP (per-session MCP tier, acp-cursor-chat.ts), no longer a shared-token hazard like agy', async () => {
     const { c, store, acquire, sendAssistantText } = setupWith(guest)
     store.set('chat-1', { kind: 'solo', provider: 'cursor' })
     await c.dispatch(inbound('chat-1', 'hi'))
-    expect(acquire).not.toHaveBeenCalled()
-    expect(sendAssistantText).toHaveBeenCalledWith('chat-1', expect.stringContaining('/cursor 目前仅管理员/信任聊天可用'))
+    expect(acquire).toHaveBeenCalledTimes(1)
+    expect(sendAssistantText).not.toHaveBeenCalledWith('chat-1', expect.stringContaining('目前仅管理员/信任聊天可用'))
   })
   it('trusted chat on a provider outside the admin allowlist is refused; inside dispatches', async () => {
     const { c, store, acquire, sendAssistantText } = setupWith(trusted, { trustedProviders: () => ['claude'] })

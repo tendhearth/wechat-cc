@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { tmpdir } from 'node:os'
-import { cursorBaseArgs, cursorOneShotEval, type CursorSpawnFn } from './cursor-eval'
+import { cursorBaseArgs, cursorOneShotEval, defaultCursorSpawnFn, type CursorSpawnFn } from './cursor-eval'
 
 function fakeCursor(lines: string[], opts?: { exitCode?: number; stderr?: string }) {
   const calls: Array<{ args: string[]; cwd: string }> = []
@@ -20,5 +20,18 @@ describe('cursor one-shot eval (print mode)', () => {
   it('surfaces a non-zero exit with stderr and a result error', async () => {
     await expect(cursorOneShotEval(fakeCursor([], { exitCode: 2, stderr: 'boom' }).spawnFn, 'auto', 'x')).rejects.toThrow('cursor-agent exited 2: boom')
     await expect(cursorOneShotEval(fakeCursor(['{"type":"result","subtype":"error","is_error":true,"result":"bad"}']).spawnFn, 'auto', 'x')).rejects.toThrow('cursor-agent result error: bad')
+  })
+
+  // injectable-default-seams.test.ts requires every `?? defaultX` boundary
+  // seam to be driven by a real test, not just injected past. No `evalSpawn`
+  // here on purpose (acp-cursor-chat.ts's `options.evalSpawn ?? defaultCursorSpawnFn(...)`)
+  // — this exercises the module's actual `defaultCursorSpawnFn`, i.e. a real
+  // `Bun.spawn`. `/usr/bin/true` stands in for `cursor-agent`: it exits 0
+  // immediately with no stdout, so the parser sees no NDJSON lines (no
+  // result/error) — the point isn't a realistic transcript, it's proving the
+  // real spawn→read→exit wiring runs without throwing.
+  it('defaultCursorSpawnFn (no injected spawnFn): real Bun.spawn boundary runs cleanly', async () => {
+    const text = await cursorOneShotEval(defaultCursorSpawnFn('true'), 'auto', 'x')
+    expect(text).toBe('') // no NDJSON emitted by `true` → no text, no throw
   })
 })

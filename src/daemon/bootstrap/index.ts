@@ -52,7 +52,7 @@ import { homedir } from 'node:os'
 import { loadAgentConfig, makeMtimeCachedConfigReader, modelForProvider } from '../../lib/agent-config'
 import { DEFAULT_CLAUDE_MODEL } from '../../core/claude-agent-provider'
 import { DEFAULT_AGY_MODEL } from '../../core/agy-agent-provider'
-import { DEFAULT_CURSOR_MODEL } from '../../core/cursor-cli-provider'
+import { DEFAULT_CURSOR_MODEL } from '../../core/acp-cursor-chat'
 import { loadAccess, setSessionInvalidator } from '../../lib/access'
 import { loadCompanionConfig } from '../companion/config'
 import { resolveAdminChatId } from '../companion/resolve-admin'
@@ -769,11 +769,13 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // `social_act` is ADMIN_ONLY (user-tier.ts), matching wechat-mcp/main.ts's
       // SESSION_IS_ADMIN gate on registerSocialTools; `socialToolsWired` says
       // the daemon's social layer actually came up (otherwise every tool 503s).
-      // `adminMcpTools` (ProviderCapabilities) additionally gates out agy/cursor:
-      // their MCP child's WECHAT_SESSION_TIER is pinned to 'trusted' in a static
-      // config (agy-mcp-config.ts / cursor-mcp-config.ts), so SESSION_IS_ADMIN
-      // is never true there and registerSocialTools never runs — advertising the
-      // section anyway would send the model to call tools that don't exist.
+      // `adminMcpTools` (ProviderCapabilities) additionally gates out agy: its
+      // MCP child's WECHAT_SESSION_TIER is pinned to 'trusted' in a static
+      // config (agy-mcp-config.ts), so SESSION_IS_ADMIN is never true there and
+      // registerSocialTools never runs — advertising the section anyway would
+      // send the model to call tools that don't exist. cursor is per-session now
+      // (acp-cursor-chat.ts threads WECHAT_SESSION_TIER through session/new
+      // each call), so its adminMcpTools tracks the real tier like claude/codex.
       socialAvailable: socialToolsWired && tierProfile.allow.has('social_act') && capabilitiesFor(providerId).adminMcpTools,
       careEnabled: (deps.careLevelFor?.(chatId) ?? 'off') !== 'off' && tierProfile.allow.has('memory_write'),
       // Tri-state (owner-onboarding design §C2) — absent thunk defaults to

@@ -1265,11 +1265,16 @@ describe('/set cheap', () => {
 
 // ── provider policy(core/provider-policy.ts)——共享钥匙拒 guest;管理员限定非管理员 ──
 describe('provider policy in slash commands', () => {
-  it('/cursor is rejected for a guest chat — same shared-token shape as /agy (this gate did not exist before)', async () => {
-    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'cursor'], tier: 'guest' })
-    await cmds.handle(inbound('/cursor'))
+  it('/agy is rejected for a guest chat — shared-token gate (its MCP config is one static trusted token for every session)', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'agy'], tier: 'guest' })
+    await cmds.handle(inbound('/agy'))
     expect(set).not.toHaveBeenCalled()
-    expect(sentMessages[0]![1]).toBe('❌ /cursor 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+    expect(sentMessages[0]![1]).toBe('❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+  })
+  it('/cursor is now ALLOWED for a guest chat — 2026-09-18 chat-side Cursor moved to ACP (per-session MCP tier, acp-cursor-chat.ts), no longer a shared token like /agy', async () => {
+    const { cmds, set } = setup({ registered: ['claude', 'cursor'], tier: 'guest' })
+    await cmds.handle(inbound('/cursor'))
+    expect(set).toHaveBeenLastCalledWith('chat-1', { kind: 'solo', provider: 'cursor' })
   })
   it('trusted chat: providers outside the admin allowlist are refused with the allowed list; inside is fine', async () => {
     const { cmds, set, sentMessages } = setup({ registered: ['claude', 'agy', 'openai'], tier: 'trusted', config: { trusted_providers: ['claude', 'openai'] } })

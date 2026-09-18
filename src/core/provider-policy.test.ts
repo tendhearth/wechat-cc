@@ -6,9 +6,9 @@ describe('providerDenialFor', () => {
     expect(providerDenialFor('agy', 'admin', ['claude'])).toBeNull()
     expect(providerDenialFor('cursor', 'admin', undefined)).toBeNull()
   })
-  it('guest is denied every shared-token provider (agy AND cursor — cursor had no gate before)', () => {
+  it('guest is denied the one remaining shared-token provider (agy) — cursor moved to ACP 2026-09-18 (per-session MCP tier, acp-cursor-chat.ts) so it is no longer gated here', () => {
     expect(providerDenialFor('agy', 'guest', undefined)).toEqual({ kind: 'shared_token_guest' })
-    expect(providerDenialFor('cursor', 'guest', undefined)).toEqual({ kind: 'shared_token_guest' })
+    expect(providerDenialFor('cursor', 'guest', undefined)).toBeNull()
     expect(providerDenialFor('claude', 'guest', undefined)).toBeNull()
     expect(providerDenialFor('openai', 'guest', undefined)).toBeNull()
   })

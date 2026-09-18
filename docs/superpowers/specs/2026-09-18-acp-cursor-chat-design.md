@@ -142,3 +142,4 @@ export function createAcpCursorChatProvider(o: AcpCursorChatOptions): AgentProvi
 ## 修订记录
 
 - 2026-09-18:初稿。
+- 2026-09-18:按计划落地(任务 1–4)。

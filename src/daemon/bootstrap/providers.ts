@@ -5,7 +5,6 @@ import { withFirstUseProbe } from '../../core/first-use-probe'
 import { readJsonFile } from '../../lib/read-json-file'
 import { DEFAULT_CLAUDE_MODEL } from '../../core/claude-agent-provider'
 import { DEFAULT_AGY_MODEL } from '../../core/agy-agent-provider'
-import { DEFAULT_CURSOR_MODEL } from '../../core/cursor-cli-provider'
 import { createClaudeAgentProvider } from '../../core/claude-agent-provider'
 import { createCodexAgentProvider } from '../../core/codex-agent-provider'
 import { buildSystemPrompt } from '../../core/prompt-builder'
@@ -28,7 +27,6 @@ import { dirname, join } from 'node:path'
 import { buildOpenaiMcpSpecs, type McpStdioSpec } from './mcp-specs'
 import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
 import { setupAgyGlobalMcp } from './agy-mcp-config'
-import { setupCursorGlobalMcp } from './cursor-mcp-config'
 import { agyVersionOk } from './agy-version-check'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
 import { makeCheapEvalPreflight } from './cheap-eval-preflight'
@@ -397,31 +395,23 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   let cursorCliRegistered = false
   if (cursorAgentBin && probeBinaryVersion(cursorAgentBin) !== null) {
     try {
-      const { createCursorCliProvider } = await import('../../core/cursor-cli-provider')
-      // Tier C global MCP upsert into ~/.cursor/mcp.json — cursor-agent's
-      // only global MCP surface, same one-trusted-token contract as agy
-      // (see cursor-mcp-config.ts). Missing internalApi/mint ⇒ provider
-      // still registers, loudly without tools.
-      if (wechatStdioForCursor && mintSessionToken) {
-        setupCursorGlobalMcp({
-          wechatSpec: wechatStdioForCursor,
-          mintToken: () => mintSessionToken('trusted', 'cursor-static'),
-          log: deps.log,
-        })
-      } else {
-        deps.log('BOOT', 'cursor: internalApi/mintSessionToken unavailable — wechat MCP not wired (cursor will have no tools)')
-      }
+      const { createAcpCursorChatProvider, DEFAULT_CURSOR_MODEL } = await import('../../core/acp-cursor-chat')
+      // 上一版往 ~/.cursor/mcp.json 塞过一把静态 trusted 钥匙(tier C);对话侧走 ACP 后 MCP 按会话注入,
+      // 那条目只剩风险 —— boot 时清掉(测试 runner 下 remove 自己会跳过)。
+      const { removeCursorGlobalMcp } = await import('./cursor-mcp-config')
+      removeCursorGlobalMcp({ log: deps.log })
       registry.register(
         'cursor',
-        createCursorCliProvider({
+        createAcpCursorChatProvider({
           bin: cursorAgentBin,
           model: configuredAgent.cursorModel ?? DEFAULT_CURSOR_MODEL,
+          mcpSpecs: { wechat: wechatStdioForCursor, delegate: delegateStdioForCursor },
           log: deps.log,
         }),
         { displayName: 'Cursor', canResume: () => true },
       )
       cursorCliRegistered = true
-      deps.log('BOOT', 'cursor: cursor-agent CLI present (subscription auth) — provider registered')
+      deps.log('BOOT', 'cursor: cursor-agent CLI present (subscription auth) — provider registered (ACP, per-session MCP)')
     } catch (err) {
       deps.log('BOOT', `cursor: CLI registration failed — ${err instanceof Error ? err.message : String(err)}`)
     }

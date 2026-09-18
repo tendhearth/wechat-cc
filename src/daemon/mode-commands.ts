@@ -312,7 +312,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           '**模式切换**',
           // Provider checklist: keep this list in sync with /mode's list below (~:434).
           `/cc /codex /cursor /api /gemini /agy — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)。当前可用: ${availableSlashes()}`,
-          '/agy /cursor 是订阅 CLI:所有对话共用一把钥匙,不能按对话分权限(guest 不可用)',
+          '/agy 是订阅 CLI:所有对话共用一把钥匙,不能按对话分权限(guest 不可用)。/cursor 走 ACP,按对话分权限,guest 也能用',
           '/api list — 看网关上有哪些模型;/api <别名|模型> 切换(只对本对话);/api alias ds=DeepSeek 起短名',
           '/cc + codex — Claude 主答，Codex 当工具 (primary_tool)',
           '/both [p1 p2 …] — 并行回复（裸=全部 provider）',
@@ -377,7 +377,8 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
         // over-privileged tool access, not a specific sub-command. See
         // ModeCommandsDeps.resolveTier's doc comment.
         {
-          // core/provider-policy.ts:共享钥匙的 provider(agy/cursor)拒 guest;
+          // core/provider-policy.ts:共享钥匙的 provider(目前只剩 agy —— cursor
+          // 2026-09-18 改走 ACP 后按对话分权限,不再共享钥匙)拒 guest;
           // 管理员的 trusted_providers 允许表拒非管理员。coordinator 分发时再
           // 判一次(防 set-mode 绕过 / 事后降级)。
           const denial = providerDenialFor(providerId, deps.resolveTier(msg.chatId), deps.readConfig?.().trusted_providers)
@@ -593,8 +594,8 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           if (!r.ok) { await reply(msg.chatId, `❌ 没改成:${r.detail ?? r.error}`); return true }
           const now = deps.readConfig?.().trusted_providers
           await reply(msg.chatId, now
-            ? `✅ 非管理员对话现在只能用: ${now.join(', ') || '(无)'}。立即生效;guest 对 agy/cursor 无论如何不开放。`
-            : '✅ 非管理员对话可用全部已注册 provider(guest 对 agy/cursor 仍不开放)。')
+            ? `✅ 非管理员对话现在只能用: ${now.join(', ') || '(无)'}。立即生效;guest 对 agy 无论如何不开放。`
+            : '✅ 非管理员对话可用全部已注册 provider(guest 对 agy 仍不开放)。')
           deps.log('MODE_CMD', `chat=${msg.chatId} /set providers=${rawValue}`)
           return true
         }
@@ -709,8 +710,8 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           `📍 当前对话模式: ${describeMode(cur)}`,
           `已注册 provider: ${deps.registry.list().join(', ')}`,
           `默认: ${deps.defaultProviderId}`,
-          ...(deps.registry.list().some(id => id === 'agy' || id === 'cursor')
-            ? ['订阅 CLI(agy/cursor):所有对话共用一把 trusted 钥匙,不能按对话分权限;guest 不可用'] : []),
+          ...(deps.registry.list().some(id => id === 'agy')
+            ? ['订阅 CLI(agy):所有对话共用一把 trusted 钥匙,不能按对话分权限;guest 不可用'] : []),
           ...(deps.readConfig?.().trusted_providers
             ? [`非管理员可用(管理员设定): ${deps.readConfig().trusted_providers!.join(', ') || '(无)'}`] : []),
           ...Object.entries(deps.providerNotes?.() ?? {}).map(([id, note]) => `${id}: ${note}`),

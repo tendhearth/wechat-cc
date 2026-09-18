@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { buildBootstrap, resolveAdminChatId } from './bootstrap'
@@ -275,6 +275,51 @@ describe('bootstrap', () => {
     expect(b.registry.list().sort()).toEqual(['claude', 'codex'])
     expect(b.registry.has('claude')).toBe(true)
     expect(b.registry.has('codex')).toBe(true)
+  })
+
+  // cursor-agent CLI branch (2026-09-18: chat-side Cursor moved to ACP,
+  // acp-cursor-chat.ts) — cursorAgentBin opt-in + a binary that answers
+  // `--version` wins outright and registers an ACP provider; this pre-empts
+  // the CURSOR_API_KEY/@cursor/sdk fallback tested below entirely.
+  // Win-only note (same macOS-only-green-blind-spot class as
+  // providers.test.ts's makeFakeAgyBin): the fixture below is a POSIX
+  // `#!/bin/sh` script — gate to non-Windows like that file does.
+  describe.runIf(process.platform !== 'win32')('cursor-agent CLI branch (ACP)', () => {
+    it('cursorAgentBin pointing at a present binary ⇒ registers an ACP cursor provider (cheapEvalBudgetMs 20s, BOOT log names ACP)', async () => {
+      const binDir = mkdtempSync(join(tmpdir(), 'bootstrap-cursor-acp-bin-'))
+      const cursorAgentBin = join(binDir, 'fake-cursor-agent')
+      writeFileSync(cursorAgentBin, '#!/bin/sh\necho "1.0.0-fake"\nexit 0\n')
+      chmodSync(cursorAgentBin, 0o755)
+
+      const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-cursor-acp-'))
+      saveAgentConfig(stateDir, {
+        provider: 'cursor',
+        cursorAgentBin,
+        dangerouslySkipPermissions: false,
+        autoStart: false,
+        closeStopsDaemon: false,
+      })
+      const logEntries: Array<{ tag: string; line: string }> = []
+      let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+      try {
+        boot = await buildBootstrap({
+          supervisor: new SubsystemSupervisor(() => {}),
+          db: openTestDb(),
+          stateDir,
+          ilink: makeIlinkStub() as any,
+          loadProjects: () => ({ projects: {}, current: null }),
+          lastActiveChatId: () => null,
+          log: (tag, line) => { logEntries.push({ tag, line }) },
+        })
+        expect(boot.registry.has('cursor')).toBe(true)
+        expect(boot.registry.get('cursor')?.provider.cheapEvalBudgetMs).toBe(20_000)
+        const bootLines = logEntries.filter(e => e.tag === 'BOOT' && e.line.includes('cursor'))
+        expect(bootLines.some(e => e.line.includes('cursor-agent CLI present') && e.line.includes('ACP'))).toBe(true)
+      } finally {
+        await boot?.a2aServer?.stop()
+        rmSync(stateDir, { recursive: true, force: true })
+      }
+    })
   })
 
   // Cursor registration is gated on CURSOR_API_KEY + the @cursor/sdk
@@ -1639,13 +1684,15 @@ describe('bootstrap 社交接线', () => {
 // ── social-tools socialAvailable gate (final-review Findings #2 + #5) ────
 // registerSocialTools only ever runs where the provider's MCP child threads
 // WECHAT_SESSION_TIER per session (ProviderCapabilities.adminMcpTools) —
-// agy/cursor pin it to a static 'trusted' token in their MCP config
-// (agy-mcp-config.ts / cursor-mcp-config.ts), so SESSION_IS_ADMIN never
-// fires there and the social tools never register, even for the owner.
+// agy still pins it to a static 'trusted' token in its MCP config
+// (agy-mcp-config.ts), so SESSION_IS_ADMIN never fires there and the social
+// tools never register, even for the owner. cursor's chat provider moved to
+// ACP (2026-09-18, acp-cursor-chat.ts) — wechat/delegate MCP are injected
+// per session/new with the real tier, so cursor now tracks claude/codex here.
 // The prompt's 「替主人交朋友」 section (socialAvailable) must track that,
 // on top of the pre-existing socialToolsWired / tier gates.
 describe('bootstrap socialAvailable gate', () => {
-  it('替主人交朋友 appears for claude admin when social is wired, not for agy/cursor (adminMcpTools=false), and not for trusted tier', async () => {
+  it('替主人交朋友 appears for claude/cursor admin when social is wired, not for agy (adminMcpTools=false), and not for trusted tier', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-social-available-'))
     const port = 19920
     writeFileSync(
@@ -1674,10 +1721,12 @@ describe('bootstrap socialAvailable gate', () => {
       expect(boot.social).toBeDefined() // sanity: social actually wired
 
       expect(boot.buildInstructions('claude', TIER_PROFILES.admin, '_test')).toContain('替主人交朋友')
-      // agy/cursor pin WECHAT_SESSION_TIER to 'trusted' in their MCP config —
+      // cursor's ACP chat provider threads WECHAT_SESSION_TIER per session/new
+      // now (adminMcpTools=true, acp-cursor-chat.ts) — same posture as claude.
+      expect(boot.buildInstructions('cursor', TIER_PROFILES.admin, '_test')).toContain('替主人交朋友')
+      // agy still pins WECHAT_SESSION_TIER to 'trusted' in its static MCP config —
       // registerSocialTools never runs there, so the prompt must not promise it.
       expect(boot.buildInstructions('agy', TIER_PROFILES.admin, '_test')).not.toContain('替主人交朋友')
-      expect(boot.buildInstructions('cursor', TIER_PROFILES.admin, '_test')).not.toContain('替主人交朋友')
       // trusted tier can't reach social_act (ADMIN_ONLY) regardless of provider.
       expect(boot.buildInstructions('claude', TIER_PROFILES.trusted, '_test')).not.toContain('替主人交朋友')
     } finally {

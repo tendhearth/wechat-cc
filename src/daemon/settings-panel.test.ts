@@ -494,7 +494,10 @@ describe('settings panel — 模型与后端', () => {
     try {
       const m = (panel.state() as { models: any }).models
       expect(m.trusted_providers).toEqual(['claude', 'openai'])
-      expect([...m.shared_token].sort()).toEqual(['agy', 'cursor'])
+      // cursor moved to ACP (2026-09-18, acp-cursor-chat.ts) — its MCP child
+      // is injected per session/new with the real tier now, so it's no
+      // longer a shared-token provider like agy.
+      expect([...m.shared_token].sort()).toEqual(['agy'])
     } finally { cleanup() }
   })
 

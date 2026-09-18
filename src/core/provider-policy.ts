@@ -4,10 +4,13 @@
  * 两条规则,一处判定,mode-commands(斜杠命令)和 coordinator(分发时,防
  * set-mode 绕过 / 事后降级)都调它:
  *
- * 1. **共享钥匙的 provider 拒 guest。** agy / cursor-CLI 只读自己的全局
- *    MCP 配置,一把长期 trusted token 被它跑的所有对话共用,按对话隔离不了
- *    权限(ProviderCapabilities.adminMcpTools === false 就是这个意思)。guest
- *    切过去等于白拿 trusted 权限 —— 拒。以前只有 /agy 有这道门,cursor 没有。
+ * 1. **共享钥匙的 provider 拒 guest。** agy 只读自己的全局 MCP 配置,一把长期
+ *    trusted token 被它跑的所有对话共用,按对话隔离不了权限
+ *    (ProviderCapabilities.adminMcpTools === false 就是这个意思)。guest 切
+ *    过去等于白拿 trusted 权限 —— 拒。cursor 以前也走这条(退休的 print-mode
+ *    对话 provider 往全局 mcp.json 塞一把静态钥匙),2026-09-18 对话侧改走
+ *    ACP 后 MCP 按会话注入、带逐会话 token 与 tier(acp-cursor-chat.ts),
+ *    不再共享钥匙,这道门也就不再挡它。
  * 2. **管理员可以限定非管理员能用哪些。** agent-config `trusted_providers`
  *    (缺省 = 全部已注册)。admin 不受限。
  */
