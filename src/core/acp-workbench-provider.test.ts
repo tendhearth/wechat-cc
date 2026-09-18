@@ -342,7 +342,8 @@ describe('ACP workbench provider', () => {
     stubborn.child.exit(0)
   })
   it('accepts image and reference attachments, refuses overlapping turns and win32', async () => {
-    const { session, child } = await start({}, c => { c.initializeResult = { protocolVersion: 1, agentCapabilities: { loadSession: true }, promptCapabilities: { image: true } } })
+    // 真机 spike 抓到的形状:promptCapabilities 嵌在 agentCapabilities 里,不是顶层。
+    const { session, child } = await start({}, c => { c.initializeResult = { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: { image: true } } } })
     const png = { name: 'a.png', mime: 'image/png', path: '/store/a.png', sha256: 'f'.repeat(64), data: 'iVBORw0KGgo=' }
     const pdf = { name: 'b.pdf', mime: 'application/pdf', path: '/store/b.pdf', sha256: 'e'.repeat(64), data: 'JVBERi0=' }
     const attached = (async () => { for await (const _ of session.dispatch('x', [png, pdf])) { /* noop */ } })()

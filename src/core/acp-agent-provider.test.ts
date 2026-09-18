@@ -290,7 +290,8 @@ describe('attachments into the prompt', () => {
     expect(() => acpPromptBlocks('x', [png], true)).not.toThrow()
   })
   it('prompt mode sends image blocks in session/prompt; refuse mode (default) still throws', async () => {
-    const { session, child } = await start({}, c => { c.initializeResult = { protocolVersion: 1, agentCapabilities: { loadSession: true }, promptCapabilities: { image: true } } }, { attachments: 'prompt', text: 'append', permissions: 'bridge' })
+    // 真机 spike 抓到的形状:promptCapabilities 嵌在 agentCapabilities 里,不是顶层。
+    const { session, child } = await start({}, c => { c.initializeResult = { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: { image: true } } } }, { attachments: 'prompt', text: 'append', permissions: 'bridge' })
     const { done } = collect(session, '看图')
     await prompted(child)
     expect(child.sent.findLast(m => m.method === 'session/prompt')!.params.prompt).toEqual([{ type: 'text', text: 'task instructions\n\n---\n\n看图' }])
@@ -299,9 +300,16 @@ describe('attachments into the prompt', () => {
     await prompted(child, 2)
     expect(child.sent.findLast(m => m.method === 'session/prompt')!.params.prompt).toEqual([{ type: 'text', text: '再看' }, { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=' }])
     child.finishPrompt(); await second
-    const noImage = await start({}, c => { c.initializeResult = { protocolVersion: 1, agentCapabilities: { loadSession: true }, promptCapabilities: { image: false } } }, { attachments: 'prompt', text: 'append', permissions: 'bridge' })
+    const noImage = await start({}, c => { c.initializeResult = { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: { image: false } } } }, { attachments: 'prompt', text: 'append', permissions: 'bridge' })
     await expect(async () => { for await (const _ of noImage.session.dispatch('x', [png])) { /* noop */ } }).rejects.toThrow('acp_attachment_image_unsupported')
     const refuse = await start()
     await expect(async () => { for await (const _ of refuse.session.dispatch('x', [png])) { /* noop */ } }).rejects.toThrow('acp_attachments_unsupported')
+  })
+  it('falls back to a top-level promptCapabilities.image if an agent flattens it', async () => {
+    const { session, child } = await start({}, c => { c.initializeResult = { protocolVersion: 1, agentCapabilities: { loadSession: true }, promptCapabilities: { image: true } } }, { attachments: 'prompt', text: 'append', permissions: 'bridge' })
+    const attached = (async () => { for await (const _ of session.dispatch('x', [png])) { /* noop */ } })()
+    await prompted(child)
+    expect(child.sent.findLast(m => m.method === 'session/prompt')!.params.prompt[1]).toEqual({ type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=' })
+    child.finishPrompt(); await attached
   })
 })

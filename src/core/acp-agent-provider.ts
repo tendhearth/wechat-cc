@@ -257,7 +257,12 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         const initialized = await connection.request('initialize', { protocolVersion: 1, clientCapabilities: CLIENT_CAPABILITIES, clientInfo: CLIENT_INFO })
         if (!object(initialized) || initialized.protocolVersion !== 1) throw new Error('acp_protocol_version_unsupported')
         const loadSession = object(initialized.agentCapabilities) && initialized.agentCapabilities.loadSession === true
-        imageOk = object(initialized.promptCapabilities) && initialized.promptCapabilities.image === true
+        // 真机 spike 抓到的 initialize 回复把 promptCapabilities 嵌在 agentCapabilities 里
+        // ({agentCapabilities:{loadSession,mcpCapabilities,promptCapabilities:{image,...}}}),
+        // 顶层 promptCapabilities 从没出现过;顶层判也留着当兜底,防着哪家 agent 把它拍平。
+        const nestedPromptCapabilities = object(initialized.agentCapabilities) ? initialized.agentCapabilities.promptCapabilities : undefined
+        imageOk = (object(nestedPromptCapabilities) && nestedPromptCapabilities.image === true) ||
+          (object(initialized.promptCapabilities) && initialized.promptCapabilities.image === true)
         const mcpServers = options.mcpServers?.(context) ?? []
         const openNew = async () => {
           const created = await connection.request('session/new', { cwd: project.path, mcpServers })
