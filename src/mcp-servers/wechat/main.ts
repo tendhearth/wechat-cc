@@ -83,9 +83,12 @@ server.registerTool(
   async () => {
     try {
       const resp = await client.request<{ ok: boolean; daemon_pid: number }>('GET', '/v1/health')
+      // /v1/health 后来多了 version / subsystems 等字段;structuredContent 必须只含 outputSchema
+      // 声明的两项 —— 严格校验的 MCP 客户端(cursor-agent acp 真机抓到)对多出来的字段回 -32602。
+      const structured = { ok: resp.ok, daemon_pid: resp.daemon_pid }
       return {
-        content: [{ type: 'text', text: JSON.stringify(resp) }],
-        structuredContent: resp,
+        content: [{ type: 'text', text: JSON.stringify(structured) }],
+        structuredContent: structured,
       }
     } catch (err) {
       logErr(`ping failed: ${formatError(err)}`)

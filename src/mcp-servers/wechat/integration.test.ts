@@ -130,12 +130,12 @@ describe('wechat-mcp stdio integration', () => {
     const result = await client.callTool({ name: 'ping', arguments: {} })
     expect(result.isError).toBeFalsy()
 
-    // The ping handler returns the /v1/health body — {ok, daemon_pid} plus the
-    // ops fields added with the admin self-diagnosis tools. toMatchObject so
-    // the core liveness contract holds without pinning the optional ops fields.
+    // structuredContent 必须只含 outputSchema 声明的两项:严格校验的 MCP 客户端
+    // (cursor-agent acp,2026-09-17 真机)对多出来的 /v1/health 字段回 -32602。
     const sc = result.structuredContent as { ok: boolean; daemon_pid: number } | undefined
     if (sc) {
-      expect(sc).toMatchObject({ ok: true, daemon_pid: 7777 })
+      expect(sc).toEqual({ ok: true, daemon_pid: 7777 })
+      expect(Object.keys(sc).sort()).toEqual(['daemon_pid', 'ok'])
       return
     }
     const content = result.content as Array<{ type: string; text?: string }>
