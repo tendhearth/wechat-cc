@@ -32,6 +32,14 @@ export function executionFailureMessage(code:string):string {
     api_task_busy:'这个 API 会话正在处理另一轮，请等待当前轮结束。',
     api_task_closed:'这个 API 会话已经关闭，请从任务页面重新继续。',
   }
+  const ACP_SESSION = 'Cursor 的 ACP 会话无法建立或中断，请确认 cursor-agent 是支持 acp 子命令的版本后重试。'
+  const acp: Array<[string, string]> = [
+    ['acp_auth_required', 'Cursor 登录态失效，请在电脑上跑一次 cursor-agent login 后再试。'],
+    ['acp_resume_unsupported', '这个版本的 Cursor 不支持接着原会话，请带记录重新开始。'],
+    ['acp_protocol_version_unsupported', ACP_SESSION], ['acp_session_failed', ACP_SESSION], ['acp_process_exited', ACP_SESSION],
+    ['acp_process_start_failed', ACP_SESSION], ['acp_invalid_protocol_message', ACP_SESSION], ['acp_line_too_long', ACP_SESSION], ['acp_protocol_write_failed', ACP_SESSION],
+  ]
+  for (const [prefix, text] of acp) if (code === prefix || code.startsWith(`${prefix}:`)) return text
   return messages[code]??code
 }
 

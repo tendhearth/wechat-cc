@@ -1,5 +1,5 @@
 // @ts-check
-// 免审执行者(agy / Cursor):它们不报单步操作,主人拦不下来。工作台第一次把任务
+// 免审执行者(agy):它们不报单步操作,主人拦不下来。工作台第一次把任务
 // 交给这类执行者前,当面把四条限制说清,确认过一次就不再问。
 /** @typedef {{id?:string,displayName?:string,capabilities?:{permissions?:string}}} UnattendedProvider */
 

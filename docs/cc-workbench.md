@@ -29,7 +29,8 @@ CC 的目标是：日常管理 Claude/Codex 工作时，只打开 CC 就够。�
 | Claude Code | 原生执行、项目规则及已支持的技能/直接 MCP 配置、任务权限和提问、材料、模型设置、历史恢复、已验证的后台子助手与后续回复 | 通用插件市场、完整 MCP OAuth/配置 UI、任意全局配置继承、所有系统上的后台资源回收 |
 | Codex | app-server 会话、原生工具/已支持 MCP 与搜索、任务权限和提问、材料、模型设置、历史恢复、子助手和已追踪后台终端 | Codex App 的全部专有功能、所有版本的工具/插件、跨主机活跃进程接管 |
 | 已配置的 API 模型 | 文字/图片材料、读取/列出项目文件、新建文本成果、任务权限、完整工具会话在 CC 中继续 | 命令、项目原文件修改、网页工具、MCP、后台任务、PDF/Office 输入、供应商原生历史、逐任务模型/思考强度选择 |
-| Cursor / agy | 原有陪伴聊天接入继续保留 | 尚未接入受管工作台；已有 CLI 或实验调用成功不能代替权限、配置隔离和停止语义验证 |
+| Cursor（ACP） | `cursor-agent acp` 会话、命令逐次进权限卡（桌面 / 微信 y/n）、逐条活动行与逐字流、按 `session/load` 接着原会话、成果 / diff 快照 / 停止与其它执行者一致 | **工作区内的文件编辑由 Cursor 直接执行，不经过权限卡**（Cursor 自己的 allowlist 模式，ACP 面上没有开关）；附件、模型 / 思考强度选择、提问（elicitation）；Cursor 全局 MCP 配置里的服务器在任务里仍可见（任务提示词禁止调用，未按任务隔离） |
+| agy | 原有陪伴聊天接入继续保留；工作台按「免审」接入（见 2026-09-17 修订记录） | 逐步权限、提问、附件与模型选择 |
 
 “支持 API 协议”不是“所有模型的工具能力一样”。无工具调用或不兼容流式响应的端点仍可能无法完成任务；CC 会报告失败，不自动换用另一个付费模型。
 
@@ -141,3 +142,4 @@ CC 在微信里是管家：你说某件事，它找到是哪个任务、让原�
 - **2026-09-17**：免审执行者终审修复：浏览器预览代理放行 ack 路由；交接对象不再自动挑到免审执行者；`unattended_ack_required` 有了面向用户的文案。注意：旧版 daemon 重写 agent-config 时会丢掉确认标记，降级再升级后需再确认一次；免审任务的时间线其实会显示工具名，只是没有逐条活动行。
 - **2026-09-17**：逐文件 diff 审阅。任务详情新增「改动」面板：按回合列出租约边界的变更快照（采集逻辑不变），逐文件展开 diff，每个文件可「接受」或「打回」；打回 = 一句意见 + 该文件 diff 节选组成一条续接要求（`POST /v1/workbench/review-return` ⇒ `continueTask`，同一道门）。标记持久化在 `workbench_review_marks`（v62），跨表面经长轮询同步。`GET /v1/workbench/review?id=`、`POST /v1/workbench/review-mark`。设计：`docs/superpowers/specs/2026-09-17-workbench-diff-review-design.md`。
 - **2026-09-17**：逐文件审阅终审修复：`review-return` 接受 `restartToken`；改动记录只在成果或标记变化时重拉；任务运行中的「发回」按钮改为说明而不是误报"另一个任务在写"。
+- **2026-09-17**：Cursor 改由 ACP（Agent Client Protocol v1，`cursor-agent acp`，stdio JSON-RPC）进工作台，不再是免审执行者：命令逐次进权限卡，时间线有逐条活动行（读 / 改 / 检索 / 命令 / 工具），逐字流照旧；按 `session/load` 接着原会话；`close()` 确认进程组退出。每个任务开跑时记一条提示：工作区内的文件编辑由 Cursor 直接执行，不经过权限卡（真机 spike 所见，ACP 面上没有开关）。不注入 MCP、不声明 fs / terminal 客户端能力、不做 elicitation 与附件；权限只回 allow-once / reject-once。agy 与对话侧的 Cursor 不变。设计：`docs/superpowers/specs/2026-09-17-acp-cursor-executor-design.md`；评估与 spike：`docs/superpowers/specs/2026-09-17-acp-evaluation.md`。

@@ -1,4 +1,4 @@
-import {afterEach,beforeEach,expect,it} from 'vitest'
+import {afterEach,beforeEach,describe,expect,it} from 'vitest'
 import {mkdtempSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
@@ -123,4 +123,13 @@ it('rejects non-native or unbounded observations and preserves the original unkn
   expect(execution().last(row.id)?.effective).toBeNull()
   expect(()=>execution().accept(row.id,'bad\nrun',selected)).toThrow('invalid_execution')
   expect(()=>execution().accept('missing','valid-run',selected)).toThrow('not_found')
+})
+
+describe('ACP failure copy', () => {
+  it('maps acp codes, including prefixed session failures', () => {
+    expect(executionFailureMessage('acp_auth_required')).toContain('cursor-agent login')
+    expect(executionFailureMessage('acp_session_failed: bad cwd')).toContain('acp')
+    expect(executionFailureMessage('acp_process_exited: 1')).toContain('acp')
+    expect(executionFailureMessage('acp_resume_unsupported')).toContain('重新开始')
+  })
 })

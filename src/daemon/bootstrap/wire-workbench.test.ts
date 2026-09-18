@@ -2,9 +2,9 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { registerUnattendedExecutors, makeUnattendedAckStore, wireWorkbench, workbenchClaudeOptions } from './wire-workbench'
+import { registerUnattendedExecutors, registerAcpExecutors, makeUnattendedAckStore, wireWorkbench, workbenchClaudeOptions } from './wire-workbench'
 import { createProviderRegistry } from '../../core/provider-registry'
-import { UNATTENDED_CAPABILITIES } from '../../core/workbench/executor-capabilities'
+import { ACP_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../../core/workbench/executor-capabilities'
 import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
 import { removeTempDir } from '../../lib/test-temp'
 import { makeFakeSession } from '../../core/test-helpers'
@@ -67,21 +67,38 @@ const fakeProvider = (): AgentProvider => ({
   spawn: async () => makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }] }),
 })
 
-it('registers boot-discovered agy/cursor into the target registry with unattended capabilities, same provider instance', () => {
+it('registers only agy as unattended; cursor is no longer an unattended executor', () => {
   const source = createProviderRegistry(), target = createProviderRegistry()
   const agy = fakeProvider(), cursor = fakeProvider()
   source.register('agy', agy, { displayName: 'Gemini (agy)', canResume: () => true })
   source.register('cursor', cursor, { displayName: 'Cursor', canResume: () => false })
   const registered = registerUnattendedExecutors(target, source)
-  expect(registered).toEqual(['agy', 'cursor'])
-  const agyEntry = target.get('agy')!
-  expect(agyEntry.provider).toBe(agy)
-  expect(agyEntry.opts.displayName).toBe('Gemini (agy)')
-  expect(agyEntry.opts.workbench).toBe(UNATTENDED_CAPABILITIES)
-  const cursorEntry = target.get('cursor')!
-  expect(cursorEntry.provider).toBe(cursor)
-  expect(cursorEntry.opts.displayName).toBe('Cursor')
-  expect(cursorEntry.opts.workbench).toBe(UNATTENDED_CAPABILITIES)
+  expect(registered).toEqual(['agy'])
+  expect(target.get('agy')!.provider).toBe(agy)
+  expect(target.get('agy')!.opts.workbench).toBe(UNATTENDED_CAPABILITIES)
+  expect(target.has('cursor')).toBe(false)
+})
+
+it('registers cursor through the ACP provider with ACP capabilities when the binary resolves', () => {
+  const source = createProviderRegistry(), target = createProviderRegistry()
+  source.register('cursor', fakeProvider(), { displayName: 'Cursor', canResume: () => true })
+  const acp = fakeProvider(), create = vi.fn(() => acp)
+  const registered = registerAcpExecutors(target, source, { cursorAgentBin: '/opt/cursor-agent' }, { create, findOnPath: () => null })
+  expect(registered).toEqual(['cursor'])
+  expect(create).toHaveBeenCalledWith({ command: '/opt/cursor-agent', args: ['acp'], displayName: 'Cursor' })
+  expect(target.get('cursor')!.provider).toBe(acp)
+  expect(target.get('cursor')!.opts.displayName).toBe('Cursor')
+  expect(target.get('cursor')!.opts.workbench).toBe(ACP_CAPABILITIES)
+})
+
+it('registers nothing for ACP when boot lacks cursor or the binary cannot be resolved', () => {
+  const source = createProviderRegistry(), target = createProviderRegistry()
+  expect(registerAcpExecutors(target, source, {}, { findOnPath: () => '/usr/bin/cursor-agent', create: vi.fn() })).toEqual([])
+  source.register('cursor', fakeProvider(), { displayName: 'Cursor', canResume: () => true })
+  const log = vi.fn()
+  expect(registerAcpExecutors(target, source, {}, { findOnPath: () => null, create: vi.fn(), log })).toEqual([])
+  expect(target.has('cursor')).toBe(false)
+  expect(log).toHaveBeenCalledWith('WORKBENCH', expect.stringContaining('cursor'))
 })
 
 it('registers nothing when the source registry lacks agy/cursor', () => {

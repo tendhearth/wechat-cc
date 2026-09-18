@@ -13,7 +13,7 @@ import type { PermissionRelayDeps } from '../../core/permission-relay'
 import { TIER_PROFILES } from '../../core/user-tier'
 import { makeWorkbenchStore } from '../../core/workbench/store'
 import { makeWorkbenchService } from '../../core/workbench/service'
-import { MANAGED_NATIVE_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../../core/workbench/executor-capabilities'
+import { ACP_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../../core/workbench/executor-capabilities'
 import { readNativeClaudeTools, workbenchClaudeEnvironment, type NativeClaudeTools } from '../../core/workbench/claude-native-config'
 import { claudeNativeCapabilityNotice } from '../../core/workbench/native-capability-notice'
 import { loadCompanionConfig } from '../companion/config'
@@ -25,6 +25,9 @@ import { readCodexRateLimits } from '../../core/workbench/codex-history-rpc'
 import { spawnSync } from '../../lib/runtime/process'
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { createAcpWorkbenchProvider } from '../../core/acp-workbench-provider'
+import { resolveAcpAgent } from '../../core/acp/agents'
+import { findOnPath } from '../../lib/util'
 
 /** Reuse transport/model setup, never the companion's prompt or bypass. */
 export function workbenchClaudeOptions(base: Options, instructions: string, permit: CanUseTool, native: NativeClaudeTools = {servers:{},omitted:[]}): Options {
@@ -62,15 +65,10 @@ export function workbenchClaudeOptions(base: Options, instructions: string, perm
   }
 }
 
-/**
- * 免审执行者:boot 时探测到就照原样搬进工作台 registry,只换能力对象
- * (spec §4)—— 同一个 provider 实例,`opts` 沿用(displayName/canResume
- * 不丢),`workbench` 换成 `UNATTENDED_CAPABILITIES`。boot registry 没有
- * 就跳过,不占位。返回实际登记的 id 列表,供调用方/测试断言。
- */
+/** 免审执行者:只剩 agy(cursor 自 2026-09-17 起走 ACP,见 registerAcpExecutors)。 */
 export function registerUnattendedExecutors(target: ProviderRegistry, source: Pick<ProviderRegistry, 'get'>): string[] {
   const registered: string[] = []
-  for (const id of ['agy', 'cursor'] as const) {
+  for (const id of ['agy'] as const) {
     const entry = source.get(id)
     if (entry) {
       target.register(id, entry.provider, { ...entry.opts, workbench: UNATTENDED_CAPABILITIES })
@@ -78,6 +76,22 @@ export function registerUnattendedExecutors(target: ProviderRegistry, source: Pi
     }
   }
   return registered
+}
+
+/**
+ * 走 ACP 的执行者:boot registry 有 cursor(对话侧的 print 模式 provider,证明用户装了 cursor-agent)
+ * 且二进制能解析 ⇒ 工作台登记一个**新的** ACP provider(不是同一个实例;对话侧那个不动),
+ * displayName/canResume 沿用 boot 的登记项。解析不到 ⇒ 不登记、不退回免审,记一行日志。
+ */
+export function registerAcpExecutors(target: ProviderRegistry, source: Pick<ProviderRegistry, 'get'>, config: { cursorAgentBin?: string },
+  deps: { findOnPath?: (cmd: string) => string | null; create?: typeof createAcpWorkbenchProvider; log?: (tag: string, line: string) => void } = {}): string[] {
+  const entry = source.get('cursor')
+  if (!entry) return []
+  const launch = resolveAcpAgent('cursor', config, deps.findOnPath ?? findOnPath)
+  if (!launch) { deps.log?.('WORKBENCH', 'cursor: cursor-agent binary not resolvable — ACP executor not registered'); return [] }
+  const provider = (deps.create ?? createAcpWorkbenchProvider)({ command: launch.command, args: launch.args, displayName: launch.displayName })
+  target.register('cursor', provider, { ...entry.opts, workbench: ACP_CAPABILITIES })
+  return ['cursor']
 }
 
 /** 免审执行者一次性确认开关的落盘实现 —— 读写 agent-config.json 的
@@ -134,6 +148,7 @@ export function wireWorkbench(opts: {
     // routes admitted tool calls through this task's approval requests.
   }),{...codex.opts,workbench:MANAGED_NATIVE_CAPABILITIES})
   if(opts.boot.registry.has('openai'))registerWorkbenchApi(registry,opts.db,opts.stateDir,agentConfig,process.env)
+  registerAcpExecutors(registry,opts.boot.registry,agentConfig,{log:opts.log})
   registerUnattendedExecutors(registry,opts.boot.registry)
   return makeWorkbenchService({
     executionConflict:opts.executionConflict,
