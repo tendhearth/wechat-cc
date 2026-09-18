@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canResumeWorkbenchExecutor, isWorkbenchExecutorCapabilities, isWorkbenchProviderId, MANAGED_API_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES, requireWorkbenchInput, UNATTENDED_CAPABILITIES, isUnattendedExecutor } from './executor-capabilities'
+import { ACP_CAPABILITIES, canResumeWorkbenchExecutor, isWorkbenchExecutorCapabilities, isWorkbenchProviderId, MANAGED_API_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES, requireWorkbenchInput, UNATTENDED_CAPABILITIES, isUnattendedExecutor } from './executor-capabilities'
 
 const declared = () => ({version:1,permissions:'task',configuration:'task-policy',completion:'native',stop:'confirmed',background:'tracked',
   features:{nativeResume:true,attachments:true,executionSettings:true,modelCatalog:true}})
@@ -80,5 +80,16 @@ describe('免审执行者能力', () => {
     expect(() => requireWorkbenchInput(UNATTENDED_CAPABILITIES, { attachments: [{}], execution })).toThrow('workbench_attachments_unsupported')
     expect(() => requireWorkbenchInput(UNATTENDED_CAPABILITIES, { attachments: [], execution: { ...execution, model: 'x' } })).toThrow('workbench_execution_unsupported')
     expect(() => requireWorkbenchInput(UNATTENDED_CAPABILITIES, { attachments: [], execution, resume: true })).not.toThrow()
+  })
+})
+
+describe('ACP executor capabilities', () => {
+  it('is a task-permission executor without attachments, execution settings or model catalog, resumable natively', () => {
+    expect(isWorkbenchExecutorCapabilities(ACP_CAPABILITIES)).toBe(true)
+    expect(isUnattendedExecutor(ACP_CAPABILITIES)).toBe(false)
+    expect(canResumeWorkbenchExecutor(ACP_CAPABILITIES)).toBe(true)
+    expect(() => requireWorkbenchInput(ACP_CAPABILITIES, { ...input, attachments: [{}] })).toThrow('workbench_attachments_unsupported')
+    expect(() => requireWorkbenchInput(ACP_CAPABILITIES, { attachments: [], execution: { defaults: 'native', model: null, reasoningEffort: null } })).toThrow('workbench_execution_unsupported')
+    expect(() => requireWorkbenchInput(ACP_CAPABILITIES, { ...input, resume: true })).not.toThrow()
   })
 })
