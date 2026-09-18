@@ -353,9 +353,17 @@ export class SessionManager {
   }
 
   /**
-   * Release every cached session for (providerId, chatId) across aliases.
-   * Used when a chat's pinned model changes: the cache key has no model in
-   * it, so without this the old session keeps answering on the old model.
+   * Release every cached session for (providerId, chatId) across aliases,
+   * AND forget the store's stored resume points for that pair. Used when a
+   * chat's pinned model changes: the cache key has no model in it, so
+   * releasing the live sessions alone isn't enough — the next spawn would
+   * otherwise resume from a stored session id, and a resumed session keeps
+   * the model it was opened with (ACP `session/load` carries no model,
+   * Claude/Codex resume the same thread) — "改了但没生效" again. Per-chat
+   * twin of the provider-wide `deleteProvider` fix. Returns the count of
+   * LIVE sessions released (unchanged contract) — the store's own row count
+   * isn't folded in since callers only ever used this number for the live
+   * side.
    */
   async releaseFor(providerId: ProviderId, chatId: string): Promise<number> {
     let n = 0
@@ -363,6 +371,9 @@ export class SessionManager {
       if (s.handle.providerId !== providerId || s.chatId !== chatId) continue
       await this.release({ alias: s.handle.alias, providerId, chatId })
       n++
+    }
+    if (typeof this.opts.sessionStore?.deleteProviderChat === 'function') {
+      this.opts.sessionStore.deleteProviderChat(providerId, chatId)
     }
     return n
   }

@@ -787,6 +787,11 @@ describe('SessionManager', () => {
           for (const [mapKey, rec] of data) if (rec.provider === provider) { data.delete(mapKey); n++ }
           return n
         }),
+        deleteProviderChat: vi.fn((provider: string, chatId: string) => {
+          let n = 0
+          for (const [mapKey, rec] of data) if (rec.provider === provider && rec.chat_id === chatId) { data.delete(mapKey); n++ }
+          return n
+        }),
         all: () => Object.fromEntries(data),
         flush: async () => {},
       }
@@ -915,6 +920,39 @@ describe('SessionManager', () => {
       await mgr.acquire({ alias: 'proj', path: '/p', providerId: 'claude', chatId: '_legacy', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' })
       const args = firstQueryArgs()
       expect(args.options.resume).toBeUndefined()
+      await mgr.shutdown()
+    })
+
+    it('releaseFor also forgets the stored resume points for that (provider, chat) pair', async () => {
+      const store = makeMockStore({
+        a: { session_id: 'sid-1', last_used_at: new Date().toISOString(), provider: 'claude', chatId: 'c1' },
+      })
+      const mgr = new SessionManager({
+        maxConcurrent: 4,
+        idleEvictMs: 60_000,
+        registry: singleClaudeRegistry((_alias, path) => ({ cwd: path } as Options)),
+        sessionStore: store,
+      })
+      await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'c1', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' })
+      await mgr.releaseFor('claude', 'c1')
+      expect(store.deleteProviderChat).toHaveBeenCalledTimes(1)
+      expect(store.deleteProviderChat).toHaveBeenCalledWith('claude', 'c1')
+      await mgr.shutdown()
+    })
+
+    it('releaseFor still works when the store lacks deleteProviderChat (older fake store)', async () => {
+      const store = makeMockStore({
+        a: { session_id: 'sid-1', last_used_at: new Date().toISOString(), provider: 'claude', chatId: 'c1' },
+      }) as any
+      delete store.deleteProviderChat
+      const mgr = new SessionManager({
+        maxConcurrent: 4,
+        idleEvictMs: 60_000,
+        registry: singleClaudeRegistry((_alias, path) => ({ cwd: path } as Options)),
+        sessionStore: store,
+      })
+      await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'c1', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' })
+      await expect(mgr.releaseFor('claude', 'c1')).resolves.toBe(1)
       await mgr.shutdown()
     })
   })

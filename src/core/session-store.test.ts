@@ -218,6 +218,23 @@ describe('SessionStore', () => {
       // 没有行时报 0,不是撒谎的"删了"。
       expect(s.deleteProvider('cursor')).toBe(0)
     })
+
+    it('deleteProviderChat drops every row of that (provider, chat) across aliases, counts them, and leaves other chats/providers/aliases alone', () => {
+      // 按对话换钉模型走这条路:只忘掉这一个对话在这家执行者上的存档,
+      // 别的对话、别的 provider、同 provider 的别的对话都不能受影响。
+      const s = makeSessionStore(db)
+      s.set({ alias: 'compass', provider: 'cursor', chatId: 'chat-a', sessionId: 'sid-1' })
+      s.set({ alias: 'mobile', provider: 'cursor', chatId: 'chat-a', sessionId: 'sid-2' })
+      s.set({ alias: 'compass', provider: 'cursor', chatId: 'chat-b', sessionId: 'sid-other-chat' })
+      s.set({ alias: 'compass', provider: 'claude', chatId: 'chat-a', sessionId: 'sid-other-provider' })
+      expect(s.deleteProviderChat('cursor', 'chat-a')).toBe(2)
+      expect(s.get({ alias: 'compass', provider: 'cursor', chatId: 'chat-a' })).toBeNull()
+      expect(s.get({ alias: 'mobile', provider: 'cursor', chatId: 'chat-a' })).toBeNull()
+      expect(s.get({ alias: 'compass', provider: 'cursor', chatId: 'chat-b' })?.session_id).toBe('sid-other-chat')
+      expect(s.get({ alias: 'compass', provider: 'claude', chatId: 'chat-a' })?.session_id).toBe('sid-other-provider')
+      // 没有行时报 0,不是撒谎的"删了"。
+      expect(s.deleteProviderChat('cursor', 'chat-a')).toBe(0)
+    })
   })
 
   describe('legacy file migration', () => {
