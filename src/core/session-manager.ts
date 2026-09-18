@@ -363,7 +363,15 @@ export class SessionManager {
    * twin of the provider-wide `deleteProvider` fix. Returns the count of
    * LIVE sessions released (unchanged contract) — the store's own row count
    * isn't folded in since callers only ever used this number for the live
-   * side.
+   * side. Also fires when there's no live session at all (idle-evicted then
+   * re-pinned) — the store delete still has to happen since the stale
+   * resume row can outlive the cache entry.
+   *
+   * 已知竞态(暂不修,controller ruling):微信 `/cursor <model>` 走 per-chat
+   * 轮次互斥锁里的 setMode,上一轮的 result 事件落存档已经排完队;但桌面
+   * 「模型与后端」面板的 `POST /v1/conversation/set-mode` 不经过那把锁,若
+   * 调用这一刻恰好有一轮在途,它的 result 事件可能在这次 delete 之后才把
+   * 旧 session_id 写回存档,下一次 spawn 又会续到旧模型上。
    */
   async releaseFor(providerId: ProviderId, chatId: string): Promise<number> {
     let n = 0
@@ -372,9 +380,7 @@ export class SessionManager {
       await this.release({ alias: s.handle.alias, providerId, chatId })
       n++
     }
-    if (typeof this.opts.sessionStore?.deleteProviderChat === 'function') {
-      this.opts.sessionStore.deleteProviderChat(providerId, chatId)
-    }
+    this.opts.sessionStore?.deleteProviderChat?.(providerId, chatId)
     return n
   }
 

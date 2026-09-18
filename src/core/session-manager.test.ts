@@ -940,6 +940,24 @@ describe('SessionManager', () => {
       await mgr.shutdown()
     })
 
+    it('releaseFor with no live session for (provider, chat) still calls deleteProviderChat — the idle-evicted-then-repinned case', async () => {
+      const store = makeMockStore({
+        a: { session_id: 'sid-stale', last_used_at: new Date().toISOString(), provider: 'claude', chatId: 'c1' },
+      })
+      const mgr = new SessionManager({
+        maxConcurrent: 4,
+        idleEvictMs: 60_000,
+        registry: singleClaudeRegistry((_alias, path) => ({ cwd: path } as Options)),
+        sessionStore: store,
+      })
+      // No acquire() — the cache has nothing for (claude, c1), only the
+      // store's stale row survives (session was idle-evicted earlier).
+      await expect(mgr.releaseFor('claude', 'c1')).resolves.toBe(0)
+      expect(store.deleteProviderChat).toHaveBeenCalledTimes(1)
+      expect(store.deleteProviderChat).toHaveBeenCalledWith('claude', 'c1')
+      await mgr.shutdown()
+    })
+
     it('releaseFor still works when the store lacks deleteProviderChat (older fake store)', async () => {
       const store = makeMockStore({
         a: { session_id: 'sid-1', last_used_at: new Date().toISOString(), provider: 'claude', chatId: 'c1' },
