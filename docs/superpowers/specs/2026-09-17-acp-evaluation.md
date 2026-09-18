@@ -150,3 +150,78 @@
 - https://github.com/agentclientprotocol/claude-agent-acp —— README、`package.json`(sdk 0.3.274 / acp-sdk 1.4.0 / node≥22)、`CHANGELOG.md`、`docs/permission-extension.md`、`src/` 目录(2026-09-17 经 `gh api` 取;release v0.79.0 2026-09-17,v0.75.0 2026-09-05)
 - https://github.com/agentclientprotocol/codex-acp —— `LICENSE`(JetBrains,Apache-2.0)、`package.json`(`@openai/codex ^0.154.0`)、`src/CodexAppServerClient.ts`、`src/RateLimitsMap.ts`(2026-09-17 取;release v1.12.0 2026-09-15)
 - 本仓库:`src/core/agent-provider.ts`、`src/core/claude-workbench-runtime.ts`、`src/core/workbench/{codex-app-server,service,executor-capabilities,permissions,git-review,artifacts}.ts`、`src/core/{agy-agent-provider,cursor-cli-provider}.ts`、`src/core/subscription-usage.ts`、`src/daemon/bootstrap/wire-workbench.ts`、`docs/rfc/03-multi-agent-architecture.md`、`docs/superpowers/specs/2026-09-17-{unattended-executors,workbench-live-stream}-design.md`
+
+## Spike 结果(2026-09-17 真机)
+
+**环境**:macOS 15(Darwin 25.6.0,arm64);`cursor-agent` **2026.09.02-c22c1a3**(注册表里写的是 2026.09.15,本机比它旧);`cursor-agent acp` 起在临时 git 项目里(`scratchpad/acp-spike/project`,一个 README 的提交);客户端 ~330 行 Bun TS,**换行分隔 JSON-RPC 一次就通**(没有 `Content-Length` 头);`initialize` 发 `protocolVersion: 1`,agent 回 **1**;`clientCapabilities` 故意只给 `{fs:{readTextFile:false,writeTextFile:false},terminal:false}`。全程 687 条报文存在 `transcript.jsonl`。全局 `~/.cursor/mcp.json` **一个字节没动**(用不同 server 名 `spike-wechat` 证明归属),没发任何微信消息。
+
+| # | 检查 | 判定 | 证据(一行) |
+|---|---|---|---|
+| 1 | 不声明 `fs`/`terminal` 也能改文件 | **PASS** | `hello.txt` 落盘、内容 `hello`;整份 transcript 里 agent→client 只有 `session/update`(601)与 `session/request_permission`(8),**零 `fs/*`、零 `terminal/*`** |
+| 2 | 逐工具权限 | **PARTIAL** | shell(`kind:"execute"`)每次弹卡;`reject-once` 后命令**真的没跑**(`rawOutput` 无 stdout),模型自己说"被拒绝了";**但 cwd 内的文件编辑从不弹卡**(`Edit File` 工具直接 completed),写 cwd 外时它改走 shell 才弹卡 |
+| 3 | `messageId` 稳定 | **FAIL** | `agent_message_chunk` **根本没有 `messageId` 字段**(48/48 缺失);chunk 是 **token 级**(48 chunk / 约 40 字),拼接与最终文本一致 |
+| 4 | `session/new.mcpServers` 真到模型手里 | **PASS** | 模型调到 `providerIdentifier:"spike-wechat"` 的工具;**同一会话里并排挂一份改坏 token 的 `spike-wechat-bad`,它返回 daemon 内部 API 原样的 `401 {"error":"unauthorized"}`,好 token 那份不报 401** ⇒ 逐会话 env/token 确实进了子进程、确实打到 daemon |
+| 5 | 取消与收工 | **PASS** | 首个 chunk 后发 `session/cancel`,4.1s 拿到 `stopReason:"cancelled"`;新进程 `session/load` 重放 7 条历史并答对"刚才建的文件叫什么"(`hello.txt`);杀掉父进程后 `pgrep -f cursor` 干净无孤儿 |
+
+### 关键报文原样
+
+`initialize` 结果(删掉 38 个 model 条目):
+```json
+{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"mcpCapabilities":{"http":true,"sse":true},
+ "promptCapabilities":{"audio":false,"embeddedContext":false,"image":true},"sessionCapabilities":{"list":{}}},
+ "authMethods":[{"id":"cursor_login","name":"Cursor Login","description":"..."}]}
+```
+—— **没有 `resume`、没有 `session/close`**;`promptCapabilities.image:true` 但 `embeddedContext:false`。
+
+`session/new` 参数与结果(结果删模型表):
+```json
+// params
+{"cwd":"<project>","mcpServers":[{"name":"spike-wechat","command":"<…>/wechat-cc-cli","args":["mcp-server","wechat"],
+  "env":[{"name":"WECHAT_INTERNAL_API","value":"http://127.0.0.1:54342"},{"name":"WECHAT_INTERNAL_TOKEN_FILE","value":"…"},
+         {"name":"WECHAT_PARTICIPANT_TAG","value":"cursor"},{"name":"WECHAT_SESSION_TOKEN","value":"<64 字符,sha256 前 12 位 e8ccdb28beee>"},
+         {"name":"WECHAT_SESSION_TIER","value":"trusted"}]}]}
+// result
+{"sessionId":"4d483092-…","modes":{"currentModeId":"agent","availableModes":[agent|plan|ask]},
+ "models":{"currentModelId":"default[]","availableModels":[38 项]},
+ "configOptions":[{"id":"mode","category":"mode","type":"select",…},{"id":"model","category":"model","type":"select",…}]}
+```
+—— `env` 用的正是协议的 `[{name,value}]` 形状,`mcpEnv` 一对一能落地。
+
+一次 `session/request_permission` 与我们的回复:
+```json
+// agent -> client
+{"sessionId":"69cae3c3-…","toolCall":{"toolCallId":"call-bf73…-0\nfc_2190…_0","title":"`uname -a`","kind":"execute","status":"pending",
+  "content":[{"type":"content","content":{"type":"text","text":"Not in allowlist: uname"}}]},
+ "options":[{"optionId":"allow-once","name":"Allow once","kind":"allow_once"},
+            {"optionId":"allow-always","name":"Allow always","kind":"allow_always"},
+            {"optionId":"reject-once","name":"Reject","kind":"reject_once"}]}
+// client -> agent
+{"jsonrpc":"2.0","id":3,"result":{"outcome":{"outcome":"selected","optionId":"reject-once"}}}
+```
+—— **只有 3 档,没有 `reject_always`**;`toolCall` 里**没有 `name` 字段**(09-17 刚稳定的那个),拒绝理由在 `content` 的文本里(`Not in allowlist: uname`),`rawInput` 里有 `{"command":"uname -a"}` ⇒ 卡片文案能拼得出来。
+
+一条 `agent_message_chunk`(原样,注意字段缺失):
+```json
+{"sessionId":"…","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"这边"}}}
+```
+
+check 4 的 `tool_call`(两拍:先占位,再补标题与入参):
+```json
+{"sessionUpdate":"tool_call","toolCallId":"call-ff4b…-0\nfc_8680…_0","title":"MCP: tool","kind":"other","status":"pending","rawInput":{}}
+{"sessionUpdate":"tool_call_update","toolCallId":"…","title":"spike-wechat: ping",
+ "rawInput":{"providerIdentifier":"spike-wechat","toolName":"ping","args":{}}}
+{"sessionUpdate":"tool_call_update","toolCallId":"…","status":"completed","rawOutput":{"success":true}}
+```
+
+### 意外
+
+1. **`messageId` 压根没有**(风险表里没这条)。ACP 的"同 id 追加"在 cursor 这儿不可用。一个 turn 里工具调用前后是**两条**助理消息,只能靠中间夹着的 `tool_call` 推边界(c1 实测:`chunk×7 → tool_call → tool_call_update×3 → chunk×14`)。我们要自己合成 itemId(按 turn + 遇到 tool_call 就翻一条),这正是今天 cursor print 模式在做的事 ⇒ **DeltaCoalescer 不用改,但 ACP 在这点上没带来任何红利**。
+2. **cwd 内的文件编辑不弹权限卡**。本机 `~/.cursor/cli-config.json` 是 `approvalMode:"allowlist"`,`Edit File` 工具在工作区内直接执行。ACP 面上没有调这个的开关(`configOptions` 只有 `mode` 与 `model`),唯一的粗杠杆是把 mode 切成 `plan`/`ask`(整体只读)。**所以 §6 "cursor 从免审升到 `permissions:'task'`" 要打折:能升的是 execute 这一类,edit 仍是免审。**
+3. **`rawOutput` 不带载荷**。MCP 工具调完 ACP 只给 `{"success":true}` 或 `{"error":"Tool execution error"}`,真正的返回体只出现在模型的自然语言里 ⇒ 工作台想原样渲染工具结果,拿不到。
+4. **假 MCP server 完全静默**。同时挂一个 `command:"/nonexistent/…"` 的 `spike-bogus`,`session/new` 照常成功,transcript 里**一个字节的错误都没有**——#883 说的"没有已连上的确认",在 cursor 这儿实测为真。**我们必须自己做探活(比如开局强制调一次 ping)。**
+5. **顺手抓到我们自己的一个真 bug**:cursor 的 MCP 客户端**严格校验 `outputSchema`**,我们 `ping` 的 schema 写了 `additionalProperties:false`,实际返回多了 `turns_store_wired/sessions_live/heartbeat_fresh/version/subsystems` ⇒ `MCP error -32602: Structured content does not match the tool's output schema`,模型还因此原地打转直到 `NonRetriableError: Agent Looping Detected`。Claude 那边宽松所以一直没暴露。**这条与 ACP 无关,该修 schema。**
+6. **关 stdin 不会让 `cursor-agent acp` 退出**(6 秒后仍活着,还带一个子进程);SIGKILL 父进程后子进程才跟着没。进程树清理还是我们自己的活,ACP 不帮忙(与风险 3/7 一致)。
+7. `toolCallId` 里**嵌了一个字面换行符**(`call-…-0\nfc_…_0`)——当 key 没问题,但凡是拿它拼日志/文件名/DOM id 的地方都要先转义。
+8. daemon 日志这条取证路走不通:`launchd.err.log` 在整段实验窗口里**一条 `[INTERNAL_API]` 都没有**(历史上有 1086 条,说明不是没这个日志,是这类请求不落日志)。改用"坏 token ⇒ 401"的对照实验取证,结论更硬。
+
+**判定**: 继续做 ACP 客户端(计 1 条 FAIL(#3)+ 1 条打折(#2),未达"挂 2 条就停";唯一的硬阻断项 #4 干净通过。但 §6 的卖点要改写:cursor 走 ACP 后是 execute 有卡片、edit 仍免审的**中间档**,不是与 Claude/Codex 同档)
