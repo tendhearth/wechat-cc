@@ -52,6 +52,8 @@ function makeWorkbenchFakeApi(opts: { taskId?: string; taskResponses: unknown[];
     calls.push({ method, path: u.pathname, body })
     const key = `${method} ${u.pathname}`
     switch (key) {
+      case 'GET /v1/health':
+        return jsonResponse(200, { ok: true })
       case 'POST /v1/workbench/attachment':
         return jsonResponse(200, { attachment: { id: body.id } })
       case 'POST /v1/workbench/create':
@@ -65,6 +67,8 @@ function makeWorkbenchFakeApi(opts: { taskId?: string; taskResponses: unknown[];
         return jsonResponse(200, { ok: true })
       case 'POST /v1/workbench/continue':
         return jsonResponse(202, { task: { id: taskId, status: 'running', phase: 'working', error: null } })
+      case 'POST /v1/workbench/cancel':
+        return jsonResponse(202, { task: { id: taskId, status: 'cancelling', phase: 'working', error: null } })
       case 'POST /v1/workbench/archive':
         return jsonResponse(200, { task: { id: taskId, archivedAt: 1 } })
       default:
@@ -282,6 +286,125 @@ describe('runWorkbenchSelftest', () => {
     expect(replied.detail).toBe('timeout')
     expect(report.ok).toBe(false)
   })
+
+  it('retained-session executor (status stays running while phase is replied): cancel is called before archive, archived check added, scratch deleted after', async () => {
+    const api = makeWorkbenchFakeApi({
+      taskId: 'ee55ff66',
+      taskResponses: [
+        // phase1 stops here: phase==='replied' even though status is still 'running' (retained session).
+        {
+          task: { id: 'ee55ff66', status: 'running', phase: 'replied', error: null },
+          events: [
+            { id: 1, kind: 'tool_call', text: 'shell: uname -a', activity: { tool: 'shell' } },
+            { id: 2, kind: 'text', text: 'done, wrote hello.txt' },
+          ],
+          permissions: [{ id: 'perm-1', tool: 'shell', description: 'run uname -a' }],
+          version: 2,
+        },
+        // post-cancel wait: status finally goes terminal.
+        { task: { id: 'ee55ff66', status: 'cancelled', phase: 'cancelled', error: null }, events: [], permissions: [], version: 3 },
+      ],
+    })
+    const rmCalls: string[] = []
+    const deps = baseDeps({
+      fetch: api.fetchImpl,
+      fs: { mkdir: () => {}, write: () => {}, read: (p) => (p.endsWith('/hello.txt') ? 'hello' : null), rm: (p) => { rmCalls.push(p) } },
+    })
+
+    const report = await runWorkbenchSelftest(deps, { executor: 'claude' })
+
+    expect(report.checks.find((c) => c.name === 'replied')?.ok).toBe(true)
+    expect(report.checks.find((c) => c.name === 'archived')).toEqual({ name: 'archived', ok: true, detail: undefined })
+    expect(report.ok).toBe(true)
+
+    const cancelIdx = api.calls.findIndex((c) => c.method === 'POST' && c.path === '/v1/workbench/cancel')
+    const archiveIdx = api.calls.findIndex((c) => c.method === 'POST' && c.path === '/v1/workbench/archive')
+    expect(cancelIdx).toBeGreaterThanOrEqual(0)
+    expect(archiveIdx).toBeGreaterThan(cancelIdx)
+    expect(api.calls[cancelIdx]!.body).toEqual({ id: 'ee55ff66' })
+
+    expect(rmCalls.some((p) => p.startsWith('/state/selftest/wb-'))).toBe(true)
+  })
+
+  it('create fails (428 unattended_ack_required): created check surfaces the server error, no polling happens', async () => {
+    const api = makeWorkbenchFakeApi({
+      createStatus: 428,
+      createBody: { error: 'unattended_ack_required' },
+      taskResponses: [],
+    })
+    const deps = baseDeps({ fetch: api.fetchImpl })
+
+    const report = await runWorkbenchSelftest(deps, { executor: 'claude' })
+
+    expect(report.checks.find((c) => c.name === 'created')).toEqual({ name: 'created', ok: false, detail: 'http_428 unattended_ack_required' })
+    expect(report.ok).toBe(false)
+    expect(api.calls.some((c) => c.path === '/v1/workbench/task')).toBe(false)
+  })
+
+  it('git_init is not in the checks list (logged as a warning instead)', async () => {
+    const api = makeWorkbenchFakeApi({
+      taskId: 'a1b2c3d4',
+      taskResponses: [
+        { task: { id: 'a1b2c3d4', status: 'completed', phase: 'replied', error: null }, events: [{ id: 1, kind: 'text', text: 'done' }], permissions: [], version: 1 },
+      ],
+    })
+    const logLines: string[] = []
+    const deps = baseDeps({ fetch: api.fetchImpl, git: undefined, log: (line) => logLines.push(line) })
+
+    const report = await runWorkbenchSelftest(deps, { executor: 'claude' })
+
+    expect(report.checks.some((c) => c.name === 'git_init')).toBe(false)
+    expect(logLines.some((l) => l.includes('git_init'))).toBe(true)
+  })
+})
+
+// ── health precheck ──────────────────────────────────────────────────
+
+describe('health precheck', () => {
+  it('unreachable daemon (stale internal-api-info.json) ⇒ throws daemon_not_running before touching anything else', async () => {
+    const fetchImpl = (async (url: string | URL) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/v1/health') throw new Error('ECONNREFUSED')
+      throw new Error(`unexpected fetch: ${u.pathname}`)
+    }) as unknown as typeof fetch
+    const deps = baseDeps({ fetch: fetchImpl })
+
+    await expect(runWorkbenchSelftest(deps, { executor: 'claude' })).rejects.toThrow('daemon_not_running')
+    await expect(runChatSelftest(deps, { provider: 'claude' })).rejects.toThrow('daemon_not_running')
+  })
+
+  it('non-2xx /v1/health ⇒ throws daemon_not_running', async () => {
+    const fetchImpl = (async (url: string | URL) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/v1/health') return jsonResponse(503, { error: 'starting' })
+      throw new Error(`unexpected fetch: ${u.pathname}`)
+    }) as unknown as typeof fetch
+    const deps = baseDeps({ fetch: fetchImpl })
+
+    await expect(runWorkbenchSelftest(deps, { executor: 'claude' })).rejects.toThrow('daemon_not_running')
+  })
+
+  it('healthy daemon: precheck uses the FILE token (not the operator token), then the run proceeds', async () => {
+    const api = makeWorkbenchFakeApi({
+      taskId: 'aa11bb22',
+      taskResponses: [{ task: { id: 'aa11bb22', status: 'completed', phase: 'replied', error: null }, events: [{ id: 1, kind: 'text', text: 'ok' }], permissions: [], version: 1 }],
+    })
+    let healthAuth: string | undefined
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/v1/health') {
+        healthAuth = (init?.headers as Record<string, string> | undefined)?.authorization
+        return jsonResponse(200, { ok: true })
+      }
+      return api.fetchImpl(url as unknown as string, init)
+    }) as unknown as typeof fetch
+    const deps = baseDeps({ fetch: fetchImpl, fs: { mkdir: () => {}, write: () => {}, read: () => 'hello', rm: () => {} } })
+
+    const report = await runWorkbenchSelftest(deps, { executor: 'claude' })
+
+    expect(healthAuth).toBe('Bearer file-token')
+    expect(report.checks.find((c) => c.name === 'created')?.ok).toBe(true)
+  })
 })
 
 // ── runChatSelftest ──────────────────────────────────────────────────
@@ -292,6 +415,7 @@ describe('runChatSelftest', () => {
     let n = 0
     const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
       const u = new URL(String(url))
+      if (u.pathname === '/v1/health') return jsonResponse(200, { ok: true })
       const body = init?.body ? JSON.parse(init.body as string) : undefined
       calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: u.pathname, body })
       n++
@@ -316,13 +440,49 @@ describe('runChatSelftest', () => {
   })
 
   it('custom --text skips the tool_seen check', async () => {
-    const fetchImpl = (async () => jsonResponse(200, { ok: true, providerId: 'claude', sessionId: 's', texts: ['hi'], toolCalls: [], durationMs: 1 })) as unknown as typeof fetch
+    const fetchImpl = (async (url: string | URL) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/v1/health') return jsonResponse(200, { ok: true })
+      return jsonResponse(200, { ok: true, providerId: 'claude', sessionId: 's', texts: ['hi'], toolCalls: [], durationMs: 1 })
+    }) as unknown as typeof fetch
     const deps = baseDeps({ fetch: fetchImpl })
 
     const report = await runChatSelftest(deps, { provider: 'claude', text: '你好' })
 
     expect(report.checks.some((c) => c.name === 'tool_seen')).toBe(false)
     expect(report.ok).toBe(true)
+  })
+
+  it('--resume with no sessionId from the first turn: resume_replied is ✗ and the route is not called a second time', async () => {
+    const calls: RecordedCall[] = []
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/v1/health') return jsonResponse(200, { ok: true })
+      calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: u.pathname, body: init?.body ? JSON.parse(init.body as string) : undefined })
+      return jsonResponse(200, { ok: true, providerId: 'claude', sessionId: null, texts: ['hi'], toolCalls: ['wechat/ping'], durationMs: 1 })
+    }) as unknown as typeof fetch
+    const deps = baseDeps({ fetch: fetchImpl })
+
+    const report = await runChatSelftest(deps, { provider: 'claude', resume: true })
+
+    expect(report.checks.find((c) => c.name === 'resume_replied')).toEqual({ name: 'resume_replied', ok: false, detail: 'no session id from first turn' })
+    expect(calls.filter((c) => c.path === '/v1/selftest/converse')).toHaveLength(1)
+    expect(report.ok).toBe(false)
+  })
+
+  it('HTTP failure on converse (e.g. 503 selftest_not_wired): no_error and replied are both ✗ with the server error in detail', async () => {
+    const fetchImpl = (async (url: string | URL) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/v1/health') return jsonResponse(200, { ok: true })
+      return jsonResponse(503, { error: 'selftest_not_wired' })
+    }) as unknown as typeof fetch
+    const deps = baseDeps({ fetch: fetchImpl })
+
+    const report = await runChatSelftest(deps, { provider: 'claude' })
+
+    expect(report.checks.find((c) => c.name === 'replied')).toEqual({ name: 'replied', ok: false, detail: 'http_503 selftest_not_wired' })
+    expect(report.checks.find((c) => c.name === 'no_error')).toEqual({ name: 'no_error', ok: false, detail: 'http_503 selftest_not_wired' })
+    expect(report.ok).toBe(false)
   })
 
   it('daemon not running (readApiInfo → null) throws daemon_not_running', async () => {

@@ -52,6 +52,18 @@ const DEFAULT_IMAGE_TEXT = '附带的图片里画的是什么颜色的方块？�
 const DEFAULT_CHAT_TEXT = '调用 wechat 这个 MCP 服务器上的 ping 工具，把它返回的 daemon_pid 数字告诉我，不要做别的。'
 const RESUME_WORKBENCH_TEXT = '我上一句让你做的第一件事是什么？只回答一句。'
 const RESUME_CHAT_TEXT = '我上一句让你调用的工具叫什么？只回答工具名。'
+/** Applied to every daemon call so a hung connection can never sit outside
+ *  --timeout-ms's budget (review fix: a stuck socket used to be able to
+ *  block the whole run indefinitely). */
+const FETCH_TIMEOUT_MS = 30_000
+/** If a `GET /v1/workbench/task` long-poll returns near-instantly (the
+ *  server had nothing to wait on), pause briefly before the next poll so a
+ *  quiet task can't turn into a tight loop. */
+const POLL_MIN_INTERVAL_MS = 250
+const POLL_IDLE_SLEEP_MS = 1_000
+/** Once we decide to cancel a still-running task (see `runWorkbenchSelftest`
+ *  finalize step), don't wait longer than this for it to actually stop. */
+const CANCEL_WAIT_MS = 20_000
 
 // ── red square PNG (spec §2 step 2: 120×120, RGB, no external image lib) ──
 
@@ -128,6 +140,7 @@ async function apiCall(deps: SelftestDeps, api: ApiCtx, method: string, path: st
     const res = await deps.fetch(`${api.baseUrl}${path}`, {
       method,
       headers: { authorization: `Bearer ${api.operatorToken}`, 'content-type': 'application/json' },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     })
     let json: any = null
@@ -135,6 +148,39 @@ async function apiCall(deps: SelftestDeps, api: ApiCtx, method: string, path: st
     return { ok: res.ok, status: res.status, json }
   } catch (err) {
     return { ok: false, status: 0, json: { error: err instanceof Error ? err.message : String(err) } }
+  }
+}
+
+/** `http_<status> <server error>[ <message>]` — surfaces whatever the route
+ *  actually said (e.g. `http_428 unattended_ack_required`) instead of just
+ *  the bare status code. */
+function apiErrorDetail(res: ApiResult): string {
+  const parts = [`http_${res.status}`]
+  const err = res.json?.error
+  if (typeof err === 'string' && err) parts.push(err)
+  const msg = res.json?.message
+  if (typeof msg === 'string' && msg && msg !== err) parts.push(msg)
+  return parts.join(' ')
+}
+
+/** Health precheck (spec resolution): before anything else, confirm the
+ *  daemon behind `internal-api-info.json` is actually alive by hitting
+ *  `GET /v1/health` with the FILE token (never the operator token — this
+ *  probe deliberately uses the narrowest credential). A stale info file
+ *  left behind by a crash loop otherwise looks identical to "daemon is
+ *  fine but this one call failed", which used to surface as a confusing
+ *  exit 1 (`http_0 ...`) instead of the honest "daemon isn't running"
+ *  (exit 2). */
+async function healthPrecheck(deps: SelftestDeps, api: { baseUrl: string; token: string }): Promise<void> {
+  try {
+    const res = await deps.fetch(`${api.baseUrl}/v1/health`, {
+      headers: { authorization: `Bearer ${api.token}` },
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) throw new Error('daemon_not_running')
+  } catch (err) {
+    if (err instanceof Error && err.message === 'daemon_not_running') throw err
+    throw new Error('daemon_not_running')
   }
 }
 
@@ -149,48 +195,94 @@ interface PollResult {
   finalTask: WorkbenchTaskLite
   timedOut: boolean
   allowedAny: boolean
+  /** Set when at least one permission POST came back non-2xx — surfaced in
+   *  the `permission_roundtrip` check's detail instead of silently
+   *  swallowed (review fix). */
+  permissionFailureDetail?: string
   lastVersion: number
 }
 
+/** Long-polls `GET /v1/workbench/task`, auto-allowing every pending
+ *  permission card, until the task reaches a terminal `status` OR
+ *  `phase==='replied'` (retained-session executors like claude/codex can
+ *  sit at `status:'running', phase:'replied'` for a while after answering
+ *  — that's still "done talking" for our purposes, see the finalize step
+ *  in `runWorkbenchSelftest` for what happens to the still-live session
+ *  afterwards) — or until `deadline`. */
 async function pollWorkbenchTask(deps: SelftestDeps, api: ApiCtx, taskId: string, sinceVersion: number, deadline: number): Promise<PollResult> {
   let since = sinceVersion
   const events: WorkbenchEventLite[] = []
+  const seenEventIds = new Set<string | number>()
   let allowedAny = false
+  let permissionFailureDetail: string | undefined
   const answered = new Set<string>()
   for (;;) {
+    if (deps.now() >= deadline) return { events, finalTask: {}, timedOut: true, allowedAny, permissionFailureDetail, lastVersion: since }
+    const before = deps.now()
     const res = await apiCall(deps, api, 'GET', `/v1/workbench/task?id=${taskId}&since=${since}&wait_ms=20000`)
     if (!res.ok || !res.json) {
-      return { events, finalTask: { status: 'failed', phase: 'failed', error: `http_${res.status}` }, timedOut: false, allowedAny, lastVersion: since }
+      return { events, finalTask: { status: 'failed', phase: 'failed', error: apiErrorDetail(res) }, timedOut: false, allowedAny, permissionFailureDetail, lastVersion: since }
     }
     const detail = res.json as { task?: WorkbenchTaskLite; events?: WorkbenchEventLite[]; permissions?: WorkbenchPermissionLite[]; version?: number }
-    events.push(...(detail.events ?? []))
+    // Rows can repeat across polls when `since` hasn't advanced (e.g. a
+    // wait that timed out with nothing new) — dedupe by id.
+    for (const e of detail.events ?? []) {
+      if (seenEventIds.has(e.id)) continue
+      seenEventIds.add(e.id)
+      events.push(e)
+    }
     if (typeof detail.version === 'number') since = detail.version
     for (const perm of detail.permissions ?? []) {
       if (answered.has(perm.id)) continue
       answered.add(perm.id)
-      await apiCall(deps, api, 'POST', '/v1/workbench/permission', { id: taskId, requestId: perm.id, decision: 'allow' })
-      allowedAny = true
+      const permRes = await apiCall(deps, api, 'POST', '/v1/workbench/permission', { id: taskId, requestId: perm.id, decision: 'allow' })
+      if (permRes.ok) allowedAny = true
+      else permissionFailureDetail = apiErrorDetail(permRes)
     }
     const status = detail.task?.status
     const phase = detail.task?.phase
     const terminal = (!!status && TERMINAL_STATUSES.has(status)) || phase === 'replied'
-    if (terminal) return { events, finalTask: detail.task ?? {}, timedOut: false, allowedAny, lastVersion: since }
-    if (deps.now() >= deadline) return { events, finalTask: detail.task ?? {}, timedOut: true, allowedAny, lastVersion: since }
+    if (terminal) return { events, finalTask: detail.task ?? {}, timedOut: false, allowedAny, permissionFailureDetail, lastVersion: since }
+    if (deps.now() >= deadline) return { events, finalTask: detail.task ?? {}, timedOut: true, allowedAny, permissionFailureDetail, lastVersion: since }
+    if (deps.now() - before < POLL_MIN_INTERVAL_MS) await deps.sleep(POLL_IDLE_SLEEP_MS)
   }
 }
 
-function gitInitCheck(deps: SelftestDeps, scratchPath: string): SelftestCheck {
-  // git is a nicety (a maintainer poking around the scratch project gets a
-  // real repo to diff against) — its absence or failure is a warning, never
-  // a reason to fail the whole selftest run.
-  if (!deps.git) return { name: 'git_init', ok: true, detail: 'skipped' }
+/** Narrower poll used only after we've asked a still-running task to
+ *  cancel: waits for `task.status` itself to reach a terminal value
+ *  (ignores `phase` — it's already `'replied'`, that's *why* we're here). */
+async function waitForTerminalStatus(deps: SelftestDeps, api: ApiCtx, taskId: string, sinceVersion: number, deadline: number): Promise<{ status?: string; timedOut: boolean }> {
+  let since = sinceVersion
+  for (;;) {
+    if (deps.now() >= deadline) return { timedOut: true }
+    const before = deps.now()
+    const res = await apiCall(deps, api, 'GET', `/v1/workbench/task?id=${taskId}&since=${since}&wait_ms=20000`)
+    if (!res.ok || !res.json) return { timedOut: false }
+    const detail = res.json as { task?: WorkbenchTaskLite; permissions?: WorkbenchPermissionLite[]; version?: number }
+    if (typeof detail.version === 'number') since = detail.version
+    for (const perm of detail.permissions ?? []) {
+      await apiCall(deps, api, 'POST', '/v1/workbench/permission', { id: taskId, requestId: perm.id, decision: 'allow' })
+    }
+    const status = detail.task?.status
+    if (status && TERMINAL_STATUSES.has(status)) return { status, timedOut: false }
+    if (deps.now() >= deadline) return { status, timedOut: true }
+    if (deps.now() - before < POLL_MIN_INTERVAL_MS) await deps.sleep(POLL_IDLE_SLEEP_MS)
+  }
+}
+
+/** git is a nicety (a maintainer poking around the scratch project gets a
+ *  real repo to diff against), not a signal the run's PASS/FAIL should
+ *  depend on — its absence or failure is logged as a warning, not a check
+ *  (review fix: the checks list should be exactly the spec's). */
+function gitInit(deps: SelftestDeps, scratchPath: string): void {
+  if (!deps.git) { deps.log('selftest: git_init skipped (no git in deps)'); return }
   try {
-    if (!deps.git(['init'], scratchPath)) return { name: 'git_init', ok: true, detail: 'skipped' }
+    if (!deps.git(['init'], scratchPath)) { deps.log('selftest: git_init skipped (git init failed)'); return }
     deps.git(['add', '-A'], scratchPath)
     const committed = deps.git(['-c', 'user.email=selftest@wechat-cc.local', '-c', 'user.name=wechat-cc selftest', 'commit', '-m', 'selftest init'], scratchPath)
-    return { name: 'git_init', ok: true, detail: committed ? 'committed' : 'init only' }
-  } catch {
-    return { name: 'git_init', ok: true, detail: 'skipped' }
+    deps.log(`selftest: git_init ${committed ? 'committed' : 'init only (commit failed)'}`)
+  } catch (err) {
+    deps.log(`selftest: git_init skipped (${err instanceof Error ? err.message : String(err)})`)
   }
 }
 
@@ -206,23 +298,29 @@ export async function runWorkbenchSelftest(
   const start = deps.now()
   const api = deps.readApiInfo()
   if (!api) throw new Error('daemon_not_running')
+  await healthPrecheck(deps, api)
 
   const checks: SelftestCheck[] = []
   const scratchPath = `${deps.stateDir}/selftest/wb-${deps.now()}`
   deps.fs.mkdir(scratchPath)
   deps.fs.write(`${scratchPath}/README.md`, 'wechat-cc selftest workbench scratch project\n')
-  checks.push(gitInitCheck(deps, scratchPath))
+  gitInit(deps, scratchPath)
 
   let draftId: string | undefined
   let attachmentIds: string[] | undefined
   if (opts.image) {
     const png = redSquarePng()
     const id = randomUUID()
-    draftId = randomUUID()
-    await apiCall(deps, api, 'POST', '/v1/workbench/attachment', {
-      id, draftId, name: 'square.png', mime: 'image/png', base64: Buffer.from(png).toString('base64'),
+    const candidateDraftId = randomUUID()
+    const uploadRes = await apiCall(deps, api, 'POST', '/v1/workbench/attachment', {
+      id, draftId: candidateDraftId, name: 'square.png', mime: 'image/png', base64: Buffer.from(png).toString('base64'),
     })
-    attachmentIds = [id]
+    if (uploadRes.ok) {
+      draftId = candidateDraftId
+      attachmentIds = [id]
+    } else {
+      deps.log(`selftest: image attachment upload failed: ${apiErrorDetail(uploadRes)}`)
+    }
   }
 
   const text = opts.image ? DEFAULT_IMAGE_TEXT : DEFAULT_CREATE_TEXT
@@ -235,7 +333,7 @@ export async function runWorkbenchSelftest(
     ...(attachmentIds ? { attachmentIds } : {}),
   })
   const taskId = createRes.ok && createRes.json?.task?.id ? String(createRes.json.task.id) : undefined
-  checks.push({ name: 'created', ok: !!taskId, detail: taskId ?? `http_${createRes.status}` })
+  checks.push({ name: 'created', ok: !!taskId, detail: taskId ?? apiErrorDetail(createRes) })
 
   const report: SelftestReport = { ok: false, kind: 'workbench', target: opts.executor, checks, scratchPath, durationMs: 0 }
 
@@ -261,7 +359,7 @@ export async function runWorkbenchSelftest(
   if (!opts.image) {
     const activityEvents = phase1.events.filter((e) => e.kind === 'tool_call' && e.activity)
     checks.push({ name: 'activity_seen', ok: activityEvents.length > 0, detail: `${activityEvents.length} activity event(s)` })
-    checks.push({ name: 'permission_roundtrip', ok: phase1.allowedAny, detail: phase1.allowedAny ? 'allowed' : 'no permission card seen' })
+    checks.push({ name: 'permission_roundtrip', ok: phase1.allowedAny, detail: phase1.allowedAny ? 'allowed' : (phase1.permissionFailureDetail ?? 'no permission card seen') })
     const helloContent = deps.fs.read(`${scratchPath}/hello.txt`)
     checks.push({ name: 'file_written', ok: helloContent !== null && helloContent.trim() === 'hello', detail: helloContent === null ? 'hello.txt missing' : helloContent.trim() })
   } else {
@@ -270,18 +368,41 @@ export async function runWorkbenchSelftest(
   }
 
   let allEvents = phase1.events
+  let latestStatus = phase1.finalTask.status
+  let latestVersion = phase1.lastVersion
+
   if (opts.resume) {
-    await apiCall(deps, api, 'POST', '/v1/workbench/continue', { id: taskId, text: RESUME_WORKBENCH_TEXT })
-    const phase2 = await pollWorkbenchTask(deps, api, taskId, phase1.lastVersion, deadline)
-    const resumeTextSeen = phase2.events.some((e) => e.kind === 'text')
-    checks.push({ name: 'resume_replied', ok: resumeTextSeen && !phase2.timedOut, detail: phase2.timedOut ? 'timeout' : `${phase2.events.length} event(s)` })
-    allEvents = allEvents.concat(phase2.events)
+    const continueRes = await apiCall(deps, api, 'POST', '/v1/workbench/continue', { id: taskId, text: RESUME_WORKBENCH_TEXT })
+    if (!continueRes.ok) {
+      checks.push({ name: 'resume_replied', ok: false, detail: apiErrorDetail(continueRes) })
+    } else {
+      const phase2 = await pollWorkbenchTask(deps, api, taskId, latestVersion, deadline)
+      const resumeTextSeen = phase2.events.some((e) => e.kind === 'text')
+      checks.push({ name: 'resume_replied', ok: resumeTextSeen && !phase2.timedOut, detail: phase2.timedOut ? 'timeout' : `${phase2.events.length} event(s)` })
+      allEvents = allEvents.concat(phase2.events)
+      latestStatus = phase2.finalTask.status
+      latestVersion = phase2.lastVersion
+    }
   }
 
   const errorEvents = allEvents.filter((e) => e.kind === 'error')
   checks.push({ name: 'no_error_event', ok: errorEvents.length === 0, detail: errorEvents.length ? errorEvents[0]!.text : undefined })
 
-  await apiCall(deps, api, 'POST', '/v1/workbench/archive', { id: taskId, archived: true })
+  // Finalize: a retained-session executor (claude/codex) can still be
+  // sitting on a live subprocess even though it already "replied" (that's
+  // what `phase==='replied'` with `status:'running'` means) — archiving or
+  // deleting the scratch dir out from under it 409s (workbench_busy,
+  // swallowed) and can corrupt a live session's working tree. So: if the
+  // last status we actually saw isn't terminal, ask it to cancel and wait
+  // briefly (capped, never past the overall deadline) before archiving.
+  if (latestStatus && !TERMINAL_STATUSES.has(latestStatus)) {
+    await apiCall(deps, api, 'POST', '/v1/workbench/cancel', { id: taskId })
+    const cancelDeadline = Math.min(deadline, deps.now() + CANCEL_WAIT_MS)
+    await waitForTerminalStatus(deps, api, taskId, latestVersion, cancelDeadline)
+  }
+
+  const archiveRes = await apiCall(deps, api, 'POST', '/v1/workbench/archive', { id: taskId, archived: true })
+  checks.push({ name: 'archived', ok: archiveRes.ok, detail: archiveRes.ok ? undefined : apiErrorDetail(archiveRes) })
   cleanupScratch(deps, scratchPath, opts.keep)
 
   report.ok = checks.every((c) => c.ok)
@@ -299,6 +420,15 @@ interface SelftestConverseResultLite {
   error?: string
 }
 
+/** Detail string for a converse check: prefer the HTTP-level error (route
+ *  itself rejected the request) over the turn-level one (route accepted it
+ *  but the conversation failed), and fall back to a short summary. */
+function converseDetail(res: ApiResult, r: SelftestConverseResultLite | undefined): string {
+  if (!res.ok) return apiErrorDetail(res)
+  if (r?.error) return r.error
+  return `${r?.texts.length ?? 0} text(s)`
+}
+
 export async function runChatSelftest(
   deps: SelftestDeps,
   opts: { provider: string; text?: string; resume?: boolean; timeoutMs?: number },
@@ -306,6 +436,7 @@ export async function runChatSelftest(
   const start = deps.now()
   const api = deps.readApiInfo()
   if (!api) throw new Error('daemon_not_running')
+  await healthPrecheck(deps, api)
 
   const checks: SelftestCheck[] = []
   const usingDefaultText = opts.text === undefined
@@ -314,24 +445,31 @@ export async function runChatSelftest(
   const res1 = await apiCall(deps, api, 'POST', '/v1/selftest/converse', { providerId: opts.provider, text })
   const r1: SelftestConverseResultLite | undefined = res1.ok ? res1.json : undefined
 
-  checks.push({ name: 'replied', ok: !!r1?.ok && (r1?.texts.length ?? 0) > 0, detail: r1 ? (r1.error ?? `${r1.texts.length} text(s)`) : `http_${res1.status}` })
+  checks.push({ name: 'replied', ok: !!r1?.ok && (r1?.texts.length ?? 0) > 0, detail: converseDetail(res1, r1) })
   if (usingDefaultText) {
-    checks.push({ name: 'tool_seen', ok: !!r1?.toolCalls.includes('wechat/ping'), detail: r1 ? r1.toolCalls.join(',') || '(none)' : 'no result' })
+    checks.push({ name: 'tool_seen', ok: !!r1?.toolCalls.includes('wechat/ping'), detail: r1 ? (r1.toolCalls.join(',') || '(none)') : apiErrorDetail(res1) })
   }
-  checks.push({ name: 'no_error', ok: !r1?.error, detail: r1?.error })
+  checks.push({ name: 'no_error', ok: !!r1 && !r1.error, detail: r1 ? r1.error : apiErrorDetail(res1) })
 
   const report: SelftestReport = { ok: false, kind: 'chat', target: opts.provider, checks, durationMs: 0 }
   if (r1?.sessionId) report.sessionId = r1.sessionId
 
   if (opts.resume) {
-    const res2 = await apiCall(deps, api, 'POST', '/v1/selftest/converse', {
-      providerId: opts.provider,
-      text: RESUME_CHAT_TEXT,
-      resumeSessionId: r1?.sessionId ?? '',
-    })
-    const r2: SelftestConverseResultLite | undefined = res2.ok ? res2.json : undefined
-    checks.push({ name: 'resume_replied', ok: !!r2?.ok && (r2?.texts.length ?? 0) > 0, detail: r2 ? (r2.error ?? `${r2.texts.length} text(s)`) : `http_${res2.status}` })
-    if (r2?.sessionId) report.sessionId = r2.sessionId
+    if (!r1?.sessionId) {
+      // Sending resumeSessionId:'' is worse than not resuming at all — the
+      // daemon just drops the empty string and runs turn 2 fresh, which
+      // would make this check pass for the wrong reason.
+      checks.push({ name: 'resume_replied', ok: false, detail: 'no session id from first turn' })
+    } else {
+      const res2 = await apiCall(deps, api, 'POST', '/v1/selftest/converse', {
+        providerId: opts.provider,
+        text: RESUME_CHAT_TEXT,
+        resumeSessionId: r1.sessionId,
+      })
+      const r2: SelftestConverseResultLite | undefined = res2.ok ? res2.json : undefined
+      checks.push({ name: 'resume_replied', ok: !!r2?.ok && (r2?.texts.length ?? 0) > 0, detail: converseDetail(res2, r2) })
+      if (r2?.sessionId) report.sessionId = r2.sessionId
+    }
   }
 
   report.ok = checks.every((c) => c.ok)
