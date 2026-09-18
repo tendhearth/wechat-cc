@@ -19,11 +19,18 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { findOnPath } from '../lib/util'
 import { readJsonFile } from '../lib/read-json-file'
-import { AGY_WECHAT_MCP_NAMESPACE_ID, CURSOR_WECHAT_MCP_NAMESPACE_ID, normalizeWechatMcpServer } from './agent-provider'
+import { AGY_WECHAT_MCP_NAMESPACE_ID, normalizeWechatMcpServer } from './agent-provider'
 import { makeAgyStreamParser } from './agy-stream'
 import { makeCursorStreamParser } from './cursor-cli-stream'
 import { agyBaseArgs, DEFAULT_AGY_MODEL } from './agy-agent-provider'
-import { cursorBaseArgs, DEFAULT_CURSOR_MODEL } from './cursor-cli-provider'
+import { cursorBaseArgs } from './cursor-eval'
+import { DEFAULT_CURSOR_MODEL } from './acp-cursor-chat'
+
+// cursor 全局 mcp_config 里我们的键 —— 只有一次性评估(cursor-eval.ts,print
+// 模式,读 cursor-agent 自己的全局配置)还会撞见它;对话侧已经走 ACP 逐会话
+// 注入,不再靠这把全局命名空间钥匙。这个常量本体已随 print-mode 对话
+// provider 一起从 agent-provider.ts 退休,这里内联同一个字面量。
+const CURSOR_MCP_NAMESPACE_KEY = 'wechat-cc:wechat'
 
 const LIVE = process.env.WECHAT_CC_LIVE_CLI ?? ''
 const wants = (cli: string) => LIVE === '1' || LIVE.split(',').map(s => s.trim()).includes(cli)
@@ -95,10 +102,10 @@ describe.skipIf(!LIVE)('external CLI stream contract (live, opt-in)', () => {
 
   const cursorBin = findOnPath('cursor-agent')
   const cursorCfg = join(homedir(), '.cursor', 'mcp.json')
-  const cursorWired = existsSync(cursorCfg) && CURSOR_WECHAT_MCP_NAMESPACE_ID in ((readJsonFile<{ mcpServers?: Record<string, unknown> }>(cursorCfg).mcpServers) ?? {})
+  const cursorWired = existsSync(cursorCfg) && CURSOR_MCP_NAMESPACE_KEY in ((readJsonFile<{ mcpServers?: Record<string, unknown> }>(cursorCfg).mcpServers) ?? {})
 
   it.skipIf(!wants('cursor') || !cursorBin || !cursorWired)(
-    `cursor-agent: text + tool_call.mcpToolCall(serverIdentifier=${CURSOR_WECHAT_MCP_NAMESPACE_ID}, toolName=ping) + result`,
+    `cursor-agent: text + tool_call.mcpToolCall(serverIdentifier=${CURSOR_MCP_NAMESPACE_KEY}, toolName=ping) + result`,
     async () => {
       const cwd = mkdtempSync(join(tmpdir(), 'live-cursor-'))
       // --yolo:生产在 --dangerously 下就是这么跑的;不带它 MCP 调用会被 cursor 自己拒掉(2026-09-08 探针)。
@@ -112,7 +119,7 @@ describe.skipIf(!LIVE)('external CLI stream contract (live, opt-in)', () => {
         else if (ev.kind === 'result') shape.results++
         else if (ev.kind === 'error') shape.errors.push(ev.message)
       }
-      assertContract('cursor', shape, raw, CURSOR_WECHAT_MCP_NAMESPACE_ID)
+      assertContract('cursor', shape, raw, CURSOR_MCP_NAMESPACE_KEY)
     },
     TIMEOUT_MS + 10_000,
   )

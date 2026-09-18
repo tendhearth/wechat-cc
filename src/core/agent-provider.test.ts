@@ -77,16 +77,14 @@ describe('isReplyToolCall', () => {
   // mcp_config,我们的条目必须带命名空间前缀,于是它们回报的 server 名
   // 是那个 key 而不是 `wechat` —— 每个 agy 回合都 replyToolCalled=false,
   // FALLBACK_REPLY 在 agent 已经发过 reply 之后又把旁白发了一遍。
-  it('accepts the external-CLI namespace aliases of our wechat server', () => {
+  it('accepts the external-CLI namespace alias of our wechat server', () => {
     expect(isReplyToolCall({ kind: 'tool_call', server: 'wechat-cc-wechat', tool: 'reply' })).toBe(true)
-    expect(isReplyToolCall({ kind: 'tool_call', server: 'wechat-cc:wechat', tool: 'reply' })).toBe(true)
     // 别名只放宽 server,工具白名单照旧
     expect(isReplyToolCall({ kind: 'tool_call', server: 'wechat-cc-wechat', tool: 'memory_read' })).toBe(false)
   })
 
   it('normalizeWechatMcpServer folds aliases and leaves everything else alone', () => {
     expect(normalizeWechatMcpServer('wechat-cc-wechat')).toBe('wechat')
-    expect(normalizeWechatMcpServer('wechat-cc:wechat')).toBe('wechat')
     expect(normalizeWechatMcpServer('wechat')).toBe('wechat')
     expect(normalizeWechatMcpServer('wxvault')).toBe('wxvault')
     expect(normalizeWechatMcpServer(undefined)).toBeUndefined()
