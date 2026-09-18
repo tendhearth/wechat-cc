@@ -10,15 +10,21 @@ vi.mock('node:child_process', () => ({ spawn: mocks.spawn }))
 
 type Rpc = { id?: string | number; method?: string; params?: any; result?: any; error?: any }
 class FakeProcess extends EventEmitter {
+  // Overwritten per-instance by the mocks.spawn implementation (a beforeEach-reset counter) —
+  // every fake process in a single-pid world would make mocks.kill's `-pid` lookup resolve to
+  // whichever child happened to be first, silently mis-targeting every close() but the first.
   pid = 4242
   stdin = new PassThrough(); stdout = new PassThrough(); stderr = new PassThrough()
   exitCode: number | null = null
+  // The "did this process actually terminate" flag. Kept separate from exitCode because a real
+  // signal-killed process reports exitCode:null (Node convention) — overloading exitCode as a
+  // liveness proxy made the fake unable to model that case (see exit() below).
+  hasExited = false
   sent: Rpc[] = []
   initializeResult: Record<string, unknown> = { protocolVersion: 1, agentCapabilities: { loadSession: true } }
   newResult: Record<string, unknown> | { error: Rpc['error'] } = { sessionId: 'sess-1' }
   loadResult: Record<string, unknown> | { error: Rpc['error'] } = {}
   promptAuto = true
-  groupAlive = true
   constructor() {
     super()
     let lines = ''
@@ -45,9 +51,10 @@ class FakeProcess extends EventEmitter {
   notify(method: string, params: unknown) { this.send({ method, params }) }
   update(update: unknown, sessionId = 'sess-1') { this.notify('session/update', { sessionId, update }) }
   finishPrompt(stopReason = 'end_turn') { const prompt = this.sent.findLast(m => m.method === 'session/prompt')!; this.send({ id: prompt.id, result: { stopReason } }) }
-  exit(code: number | null = 0, signal: string | null = null) { if (this.exitCode !== null) return; this.exitCode = code; this.groupAlive = false; this.stdout.end(); this.emit('exit', code, signal) }
+  rejectPrompt(error: Rpc['error']) { const prompt = this.sent.findLast(m => m.method === 'session/prompt')!; this.send({ id: prompt.id, error }) }
+  exit(code: number | null = 0, signal: string | null = null) { if (this.hasExited) return; this.hasExited = true; this.exitCode = code; this.stdout.end(); this.emit('exit', code, signal) }
 }
-let children: FakeProcess[], sessions: AgentSession[], platform: PropertyDescriptor
+let children: FakeProcess[], sessions: AgentSession[], platform: PropertyDescriptor, nextPid: number
 const context = (extra: Partial<SpawnContext> = {}): SpawnContext => ({ tierProfile: TIER_PROFILES.trusted, permissionMode: 'strict', chatId: 'workbench:task', appendInstructions: 'task instructions', workbenchTimeline: true, ...extra })
 async function start(extra: Partial<SpawnContext> = {}, setup?: (child: FakeProcess) => void) {
   const spawnedBefore = children.length
@@ -68,17 +75,18 @@ function permission(child: FakeProcess, id: string | number = 'perm-1', extra: R
   child.send({ id, method: 'session/request_permission', params: { sessionId: 'sess-1', toolCall: { toolCallId: 'c1', title: '`uname -a`', kind: 'execute', status: 'pending', rawInput: { command: 'uname -a' } }, options: [{ optionId: 'allow-always', name: 'Always', kind: 'allow_always' }, { optionId: 'allow-once', name: 'Allow', kind: 'allow_once' }, { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }], ...extra } })
 }
 beforeEach(() => {
-  children = []; sessions = []
+  children = []; sessions = []; nextPid = 4242
   platform = Object.getOwnPropertyDescriptor(process, 'platform')!
-  mocks.spawn.mockReset().mockImplementation(() => { const child = new FakeProcess(); children.push(child); return child })
+  // Unique pid per fake (reset to 4242 each test, so the single-child tests' `-4242` assertions
+  // still hold) — otherwise mocks.kill's `-pid` lookup below always resolves to children[0],
+  // and every close() but the first silently signals/probes the wrong process.
+  mocks.spawn.mockReset().mockImplementation(() => { const child = new FakeProcess(); child.pid = nextPid++; children.push(child); return child })
   mocks.kill.mockReset().mockImplementation((pid: number, signal?: string | number) => {
     const child = children.find(c => -c.pid === pid || c.pid === pid)
-    if (!child || (!child.groupAlive && child.exitCode !== null)) { throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' }) }
-    // Real Node reports a signal-killed process via exitCode:null + signalCode. This mock uses a
-    // non-null code instead (0, not null) so this same field also serves as this fake's "has the
-    // process actually exited" flag: the ESRCH throw below (and the close-test's `.not.toBeNull()`
-    // exit-code assertion) both key off `exitCode !== null`, not just `groupAlive`.
-    if (signal === 'SIGTERM' || signal === 'SIGKILL') queueMicrotask(() => child.exit(0, String(signal)))
+    if (!child || child.hasExited) { throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' }) }
+    // code:null mirrors real Node's signal-kill convention; hasExited (not exitCode) is what the
+    // ESRCH check above and the provider's own groupAlive() liveness probe key off.
+    if (signal === 'SIGTERM' || signal === 'SIGKILL') queueMicrotask(() => child.exit(null, String(signal)))
     return true
   })
   vi.spyOn(process, 'kill').mockImplementation(mocks.kill as never)
@@ -100,19 +108,24 @@ describe('ACP workbench provider', () => {
     const p1 = bad.spawn({ alias: 'a', path: '/project' }, context())
     await expect.poll(() => children.length).toBe(1); children[0]!.initializeResult = { protocolVersion: 2 }
     await expect(p1).rejects.toThrow('acp_protocol_version_unsupported')
-    await expect.poll(() => children[0]!.exitCode !== null).toBe(true)
+    await expect.poll(() => children[0]!.hasExited).toBe(true)
     const p2 = bad.spawn({ alias: 'a', path: '/project' }, context())
     await expect.poll(() => children.length).toBe(2); children[1]!.newResult = { sessionId: 'bad\nid' }
     await expect(p2).rejects.toThrow('acp_missing_session_id')
+    // Second child's cleanup must target ITS OWN pid, not silently re-signal children[0].
+    await expect.poll(() => children[1]!.hasExited).toBe(true)
   })
   it('maps -32000 on session setup to acp_auth_required and other errors to acp_session_failed', async () => {
     const provider = createAcpWorkbenchProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor', rpcTimeoutMs: 200, closeTimeoutMs: 250 })
     const p1 = provider.spawn({ alias: 'a', path: '/project' }, context())
     await expect.poll(() => children.length).toBe(1); children[0]!.newResult = { error: { code: -32000, message: 'Authentication required' } }
     await expect(p1).rejects.toThrow('acp_auth_required')
+    await expect.poll(() => children[0]!.hasExited).toBe(true)
     const p2 = provider.spawn({ alias: 'a', path: '/project' }, context())
     await expect.poll(() => children.length).toBe(2); children[1]!.newResult = { error: { code: -32602, message: 'bad cwd' } }
     await expect(p2).rejects.toThrow('acp_session_failed: bad cwd')
+    // Second child's cleanup must target ITS OWN pid, not silently re-signal children[0].
+    await expect.poll(() => children[1]!.hasExited).toBe(true)
   })
   it('resumes through session/load, discards the replayed history, and refuses when loadSession is absent', async () => {
     const { session, child } = await start({ resumeSessionId: 'sess-old' })
@@ -128,6 +141,9 @@ describe('ACP workbench provider', () => {
     const p = provider.spawn({ alias: 'a', path: '/project' }, context({ resumeSessionId: 'sess-old' }))
     await expect.poll(() => children.length).toBe(2); children[1]!.initializeResult = { protocolVersion: 1, agentCapabilities: {} }
     await expect(p).rejects.toThrow('acp_resume_unsupported')
+    // Second child's cleanup must target ITS OWN pid, not silently re-signal children[0] (which
+    // is still alive and owned by `session` above).
+    await expect.poll(() => children[1]!.hasExited).toBe(true)
   })
   it('prefixes instructions on the first prompt only and streams init, text, activities and result', async () => {
     const { session, child } = await start()
@@ -210,6 +226,27 @@ describe('ACP workbench provider', () => {
     const c = collect(session); await prompted(child, 3); child.finishPrompt('refusal'); await c.done
     expect(c.events.at(-1)).toEqual({ kind: 'error', message: 'acp_stop_refusal' })
   })
+  it('surfaces a session/prompt JSON-RPC error as a turn error event', async () => {
+    const { session, child } = await start()
+    const { events, done } = collect(session)
+    await prompted(child)
+    child.rejectPrompt({ code: -32603, message: 'model unavailable' })
+    await done
+    expect(events.at(-1)).toEqual({ kind: 'error', message: 'model unavailable' })
+  })
+  it('appends a captured stderr tail to acp_session_failed, but leaves acp_auth_required a bare code', async () => {
+    const provider = createAcpWorkbenchProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor', rpcTimeoutMs: 200, closeTimeoutMs: 250 })
+    const p1 = provider.spawn({ alias: 'a', path: '/project' }, context())
+    await expect.poll(() => children.length).toBe(1)
+    children[0]!.newResult = { error: { code: -32000, message: 'Authentication required' } }
+    children[0]!.stderr.write('please run: cursor-agent login\n')
+    await expect(p1).rejects.toThrow(/^acp_auth_required$/)
+    const p2 = provider.spawn({ alias: 'a', path: '/project' }, context())
+    await expect.poll(() => children.length).toBe(2)
+    children[1]!.newResult = { error: { code: -32602, message: 'bad cwd' } }
+    children[1]!.stderr.write('fatal: workspace is locked by another process\n')
+    await expect(p2).rejects.toThrow(/acp_session_failed: bad cwd[\s\S]*fatal: workspace is locked by another process/)
+  })
   it('surfaces an unexpected process exit as an error event and refuses further dispatch', async () => {
     const { session, child } = await start()
     const { events, done } = collect(session)
@@ -224,7 +261,7 @@ describe('ACP workbench provider', () => {
     await session.close()
     expect(child.stdin.writableEnded).toBe(true)
     expect(mocks.kill).toHaveBeenCalledWith(-4242, 'SIGTERM')
-    expect(child.exitCode).not.toBeNull()
+    expect(child.hasExited).toBe(true)
     const stubborn = await start()
     mocks.kill.mockImplementation((pid: number, signal?: string | number) => { if (signal === 0) return true; return true })
     await expect(stubborn.session.close()).rejects.toThrow('acp_process_not_exited')

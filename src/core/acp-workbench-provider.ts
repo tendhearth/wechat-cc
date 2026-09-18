@@ -20,7 +20,8 @@ export interface AcpWorkbenchProviderOptions {
   command: string; args: string[]; displayName: string
   /** initialize / session/new / session/load 的上限;缺省 60s。 */
   rpcTimeoutMs?: number
-  /** close() 确认进程组退出的上限;缺省 3s。 */
+  /** close() 确认进程组退出的上限;缺省 2.5s(留出余量给服务层自己的 3s close 竞速 —
+   *  等于 3s 会让 acp_process_not_exited 永远赶不上服务层自己先超时返回,调用方看不到它)。 */
   closeTimeoutMs?: number
   spawn?: typeof nodeSpawn
 }
@@ -37,7 +38,7 @@ interface PendingPermission { controller: AbortController; respond: (outcome: un
 
 export function createAcpWorkbenchProvider(options: AcpWorkbenchProviderOptions): AgentProvider {
   const spawn = options.spawn ?? nodeSpawn
-  const rpcTimeoutMs = options.rpcTimeoutMs ?? 60_000, closeTimeoutMs = options.closeTimeoutMs ?? 3_000
+  const rpcTimeoutMs = options.rpcTimeoutMs ?? 60_000, closeTimeoutMs = options.closeTimeoutMs ?? 2_500
   return {
     async spawn(project, context: SpawnContext): Promise<AgentSession> {
       if (process.platform === 'win32') throw new Error('Cursor 工作台暂不支持 Windows：尚未验证任务进程树清理。')
@@ -101,7 +102,12 @@ export function createAcpWorkbenchProvider(options: AcpWorkbenchProviderOptions)
         },
         onFatal(error) { fatal(error.message) },
       })
-      child.stderr?.resume()
+      // Bounded tail, not raw retention: enough to fold cursor-agent's own fatal line into a
+      // session-setup rejection (real diagnostics live on stderr, not in the JSON-RPC error
+      // shape), without letting a chatty child grow this unboundedly.
+      let stderrTail = ''
+      child.stderr?.setEncoding('utf8')
+      child.stderr?.on('data', chunk => { stderrTail = (stderrTail + String(chunk)).slice(-8192) })
       child.on('error', () => { exited = true; resolveExit(); fatal('acp_process_start_failed') })
       child.on('exit', (code, signal) => { exited = true; resolveExit(); if (!closing) fatal(`acp_process_exited: ${signal ?? code ?? 'unknown'}`) })
 
@@ -127,7 +133,10 @@ export function createAcpWorkbenchProvider(options: AcpWorkbenchProviderOptions)
           signalGroup('SIGTERM')
           let killed = false
           while (!exited || groupAlive()) {
-            if (Date.now() >= deadline) { signalGroup('SIGKILL'); throw new Error('acp_process_not_exited') }
+            // Best-effort: a non-ESRCH errno here (e.g. EPERM) must not replace the deterministic
+            // acp_process_not_exited below with a raw errno error — the caller needs a stable
+            // error to match on regardless of what this last kill attempt itself did.
+            if (Date.now() >= deadline) { try { signalGroup('SIGKILL') } catch { /* reported via acp_process_not_exited below */ } throw new Error('acp_process_not_exited') }
             if (!killed && Date.now() >= deadline - Math.max(50, closeTimeoutMs / 4)) { signalGroup('SIGKILL'); killed = true }
             const pause = new Promise<void>(resolve => setTimeout(resolve, 15))
             await (exited ? pause : Promise.race([exit, pause]))
@@ -136,8 +145,13 @@ export function createAcpWorkbenchProvider(options: AcpWorkbenchProviderOptions)
         return closePromise
       }
       const setupError = (error: unknown): Error => {
+        // acp_auth_required stays a bare code — the login-hint copy upstream is keyed on this
+        // exact string, and stderr for an auth failure is rarely more informative than the code.
         if (error instanceof AcpRequestError && (error.code === -32000 || isAuthFail('sdk-error', error.message))) return new Error('acp_auth_required')
-        if (error instanceof AcpRequestError) return new Error(`acp_session_failed: ${error.message}`)
+        if (error instanceof AcpRequestError) {
+          const tail = stderrTail.trim().slice(-300)
+          return new Error(tail ? `acp_session_failed: ${error.message}\n${tail}` : `acp_session_failed: ${error.message}`)
+        }
         return error instanceof Error ? error : new Error(String(error))
       }
       try {
