@@ -143,8 +143,13 @@ export function daemonControlRoutes(deps: InternalApiDeps): RouteTable {
     // project, scoped so its wechat MCP can only ping (never send/broadcast
     // to the owner's real contacts). 503 until bootstrap wires the runner
     // (registry + mintSessionToken/invalidateSession all come from
-    // bootstrap). ok:false is a normal 200 — the failure lives in the body
-    // so a maintainer/CLI can branch on it without special-casing transport
+    // bootstrap) — the deps.selftestConverse FIELD is wired unconditionally
+    // in main.ts (same as every other thunk-over-bootRef field: the HTTP
+    // port opens before bootRef exists), so "field absent" alone doesn't
+    // catch the pre-bootstrap window; the thunk returns `null` there
+    // instead, and that maps to 503 too, same as the field being absent.
+    // ok:false is a normal 200 — the failure lives in the body so a
+    // maintainer/CLI can branch on it without special-casing transport
     // errors vs turn errors.
     'POST /v1/selftest/converse': async (_q, body) => {
       if (!deps.selftestConverse) return { status: 503, body: { error: 'selftest_not_wired' } }
@@ -163,6 +168,7 @@ export function daemonControlRoutes(deps: InternalApiDeps): RouteTable {
         text: b.text,
         ...(typeof b.resumeSessionId === 'string' ? { resumeSessionId: b.resumeSessionId } : {}),
       })
+      if (result === null) return { status: 503, body: { error: 'selftest_not_wired' } }
       return { status: 200, body: result }
     },
 

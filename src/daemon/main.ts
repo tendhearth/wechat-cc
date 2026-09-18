@@ -334,25 +334,34 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // 不删的话下一次 spawn 会 resume 回旧会话,新模型钉不上。
       forgetProviderSessions: (providerId) => bootRef?.sessionStore?.deleteProvider(providerId) ?? 0,
       // Self-maintenance (spec 2026-09-18-self-maintenance §1) — backs
-      // POST /v1/selftest/converse. registry is thunk-over-bootRef (same
-      // reason as listSessions above: bootstrap constructs it AFTER this
-      // registerInternalApi call — `registry.get` just reports
-      // unavailable_provider until then, same posture as every other
-      // thunk-over-bootRef field here). mintSessionToken/invalidateSession
-      // close over the `internalApi` binding below instead: those two are
-      // this SAME internal-api instance's own methods, not bootstrap's, so
-      // there's no ordering problem — by the time any HTTP request can
-      // reach this handler, `internalApi` has long since been assigned.
-      selftestConverse: (input) => runSelftestConverse(
-        {
-          registry: { get: (id) => bootRef?.registry.get(id) ?? null },
-          mintSessionToken: (tier, key, opts) => internalApi.mintSessionToken(tier, key, opts),
-          invalidateSession: (key) => internalApi.invalidateSession(key),
-          stateDir,
-          log: (t, l) => log(t, l),
-        },
-        input,
-      ),
+      // POST /v1/selftest/converse. Unlike forgetProviderSessions/
+      // listSessions above (which degrade to a harmless no-op/null when
+      // bootRef isn't ready yet), a spawn is NOT safe/meaningful before
+      // bootstrap builds the provider registry — so this thunk returns
+      // `null` in that window instead of calling runSelftestConverse with
+      // an empty registry stub, and the route maps `null` to 503
+      // selftest_not_wired (same as the field being absent entirely) —
+      // see the 未接线 503 contract in the spec and InternalApiDeps's
+      // doc comment. Once bootRef exists, mintSessionToken/
+      // invalidateSession close over the `internalApi` binding below:
+      // those two are this SAME internal-api instance's own methods, not
+      // bootstrap's, so there's no ordering problem there — by the time
+      // any HTTP request can reach this handler, `internalApi` has long
+      // since been assigned.
+      selftestConverse: (input) => {
+        if (!bootRef) return Promise.resolve(null)
+        const registry = bootRef.registry
+        return runSelftestConverse(
+          {
+            registry,
+            mintSessionToken: (tier, key, opts) => internalApi.mintSessionToken(tier, key, opts),
+            invalidateSession: (key) => internalApi.invalidateSession(key),
+            stateDir,
+            log: (t, l) => log(t, l),
+          },
+          input,
+        )
+      },
       requestRestart: () => requestRestart('internal-api'),
       // self-restart idle signal — thunk over bootRef for the same reason
       // listSessions above is one: internal-api is constructed BEFORE

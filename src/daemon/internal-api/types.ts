@@ -536,15 +536,23 @@ export interface InternalApiDeps {
    * main.ts (same posture as forgetProviderSessions above): it closes over
    * bootRef?.registry plus this same internalApi's mintSessionToken /
    * invalidateSession, so it can't exist before bootstrap constructs the
-   * provider registry. 503 when unwired. Never called by the desktop app —
-   * only the `wechat-cc selftest chat` CLI (separate task), driven with the
-   * operator token.
+   * provider registry.
+   *
+   * This field itself is wired UNCONDITIONALLY in main.ts (the HTTP port
+   * opens before `bootRef` is assigned, same as every other
+   * thunk-over-bootRef field) — so "the field is present but bootRef isn't
+   * ready yet" is a real, reachable window, not just a test-only shape.
+   * Returns `null` in exactly that window; the route treats BOTH "field
+   * absent" and "field present but returned null" as 503
+   * `selftest_not_wired`, matching the spec's "未接线 503". Never called by
+   * the desktop app — only the `wechat-cc selftest chat` CLI (separate
+   * task), driven with the operator token.
    */
   selftestConverse?: (input: {
     providerId: string
     text: string
     resumeSessionId?: string
-  }) => Promise<import('../selftest').SelftestConverseResult>
+  }) => Promise<import('../selftest').SelftestConverseResult | null>
 }
 
 export interface InternalApi {

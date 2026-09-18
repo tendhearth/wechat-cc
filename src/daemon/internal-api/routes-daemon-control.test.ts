@@ -195,4 +195,19 @@ describe('POST /v1/selftest/converse', () => {
     expect(res.status).toBe(200)
     expect(res.body).toEqual(fakeResult)
   })
+
+  // main.ts wires the `selftestConverse` FIELD unconditionally (same
+  // thunk-over-bootRef posture as every other field in this file) — the
+  // HTTP port opens before bootRef is assigned, so the thunk itself
+  // resolves `null` in that pre-bootstrap window rather than being absent.
+  // The route must still 503 there, not silently 200 an empty/misleading
+  // result.
+  it('503s when selftestConverse resolves null (pre-bootstrap window, field present but not ready)', async () => {
+    const selftestConverse = vi.fn(async () => null)
+    const r = routesWith({ selftestConverse })
+    const res = await r['POST /v1/selftest/converse']!(new URLSearchParams(), { providerId: 'claude', text: 'ping' })
+    expect(res.status).toBe(503)
+    expect(res.body).toEqual({ error: 'selftest_not_wired' })
+    expect(selftestConverse).toHaveBeenCalledTimes(1)
+  })
 })
