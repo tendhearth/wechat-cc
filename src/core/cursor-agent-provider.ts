@@ -26,12 +26,22 @@ import { log } from '../lib/log'
  * surface (so it can't be a delegate peer in v1 — see RFC 05 §7 #3).
  * Flip `supportsDelegation` when Cursor ships sub-agent support.
  */
+// NOTE (2026-09-18): the capability-matrix row the daemon actually runs
+// under for the `cursor` provider id is `ACP_CURSOR_CAPABILITIES`
+// (core/acp-cursor-chat.ts, capability-matrix.ts:113) — chat-side Cursor
+// moved to ACP that day and its MCP child is injected per session/new with
+// the real tier, so `adminMcpTools` is true there, not false. This constant
+// (the `@cursor/sdk` / CURSOR_API_KEY fallback path's own capabilities) is
+// no longer what production wires up; it's kept because
+// createCursorAgentProvider (the SDK provider below) and this file's own
+// tests still reference it.
 export const CURSOR_CAPABILITIES: ProviderCapabilities = {
   perToolCallback: false,
-  // cursor-mcp-config.ts pins WECHAT_SESSION_TIER to 'trusted' for the
-  // global MCP upsert (one static token, not per-session) — SESSION_IS_ADMIN
-  // is always false, so admin-only tools (incl. the social-tools family)
-  // never register for cursor even when the owner is chatting.
+  // The SDK provider (createCursorAgentProvider below) has no per-session
+  // MCP tier threading of its own — its mcpServers are a flat, boot-time
+  // object (see registerProviders' `cursorKey` branch in providers.ts), so
+  // SESSION_IS_ADMIN is always false there and admin-only tools (incl. the
+  // social-tools family) never register even when the owner is chatting.
   adminMcpTools: false,
   sandboxLevels: new Set(['workspace-write', 'full']),
   supportsDelegation: false,

@@ -26,11 +26,16 @@ describe('cursor one-shot eval (print mode)', () => {
   // seam to be driven by a real test, not just injected past. No `evalSpawn`
   // here on purpose (acp-cursor-chat.ts's `options.evalSpawn ?? defaultCursorSpawnFn(...)`)
   // — this exercises the module's actual `defaultCursorSpawnFn`, i.e. a real
-  // `Bun.spawn`. `/usr/bin/true` stands in for `cursor-agent`: it exits 0
-  // immediately with no stdout, so the parser sees no NDJSON lines (no
-  // result/error) — the point isn't a realistic transcript, it's proving the
-  // real spawn→read→exit wiring runs without throwing.
-  it('defaultCursorSpawnFn (no injected spawnFn): real Bun.spawn boundary runs cleanly', async () => {
+  // subprocess spawn (`src/lib/runtime/process.ts`'s `spawn`, Bun's own
+  // Subprocess API on Bun / node:child_process on Node — see that module's
+  // header). `true` stands in for `cursor-agent`, resolved off PATH: it
+  // exits 0 immediately with no stdout, so the parser sees no NDJSON lines
+  // (no result/error) — the point isn't a realistic transcript, it's
+  // proving the real spawn→read→exit wiring runs without throwing.
+  // Windows has no `true` on PATH by default — gate to non-Windows, same
+  // class as providers.test.ts's makeFakeAgyBin / bootstrap.test.ts's
+  // cursor-agent-CLI-branch test.
+  it.runIf(process.platform !== 'win32')('defaultCursorSpawnFn (no injected spawnFn): real spawn boundary runs cleanly', async () => {
     const text = await cursorOneShotEval(defaultCursorSpawnFn('true'), 'auto', 'x')
     expect(text).toBe('') // no NDJSON emitted by `true` → no text, no throw
   })

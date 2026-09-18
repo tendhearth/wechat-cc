@@ -13,6 +13,7 @@ import type { Access } from '../lib/access'
 import type { CompanionConfig } from './companion/config'
 import { createInternalApi } from './internal-api'
 import { wireSelfRestart } from './bootstrap/wire-self-restart'
+import { createAcpCursorChatProvider } from '../core/acp-cursor-chat'
 import { SubsystemSupervisor } from './subsystems'
 import { NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
 
@@ -29,6 +30,19 @@ import { NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
 vi.mock('./bootstrap/wire-self-restart', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./bootstrap/wire-self-restart')>()
   return { ...actual, wireSelfRestart: vi.fn(actual.wireSelfRestart) }
+})
+
+// Same wrap-the-real-thing pattern as wireSelfRestart above — needed to
+// assert providers.ts's cursor branch actually calls
+// createAcpCursorChatProvider with `mcpSpecs.delegate: null` (2026-09-18
+// review fix: ACP_CURSOR_CAPABILITIES.supportsDelegation is false, so a
+// live delegateStdioForCursor spec must never reach the constructor,
+// however the daemon normally builds one whenever internalApi is wired).
+// createAcpCursorChatProvider itself is not mocked away — this only adds
+// an observation point around the real implementation.
+vi.mock('../core/acp-cursor-chat', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../core/acp-cursor-chat')>()
+  return { ...actual, createAcpCursorChatProvider: vi.fn(actual.createAcpCursorChatProvider) }
 })
 
 async function pollFor<T>(fn: () => T | null, tries = 50, gapMs = 10): Promise<T | null> {
@@ -301,6 +315,7 @@ describe('bootstrap', () => {
       })
       const logEntries: Array<{ tag: string; line: string }> = []
       let boot: Awaited<ReturnType<typeof buildBootstrap>> | null = null
+      vi.mocked(createAcpCursorChatProvider).mockClear()
       try {
         boot = await buildBootstrap({
           supervisor: new SubsystemSupervisor(() => {}),
@@ -310,14 +325,29 @@ describe('bootstrap', () => {
           loadProjects: () => ({ projects: {}, current: null }),
           lastActiveChatId: () => null,
           log: (tag, line) => { logEntries.push({ tag, line }) },
+          // Wired so wechatStdioForCursor AND delegateStdioForCursor both end
+          // up non-null (index.ts builds a delegate spec for every provider
+          // with a defaultPeer whenever internalApi is present) — this is
+          // exactly the scenario the mcpSpecs.delegate assertion below guards.
+          internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: '/tmp/token' },
         })
         expect(boot.registry.has('cursor')).toBe(true)
         expect(boot.registry.get('cursor')?.provider.cheapEvalBudgetMs).toBe(20_000)
         const bootLines = logEntries.filter(e => e.tag === 'BOOT' && e.line.includes('cursor'))
         expect(bootLines.some(e => e.line.includes('cursor-agent CLI present') && e.line.includes('ACP'))).toBe(true)
+        // The capability matrix says cursor has no delegate channel
+        // (ACP_CURSOR_CAPABILITIES.supportsDelegation === false) — providers.ts
+        // must hard-pin mcpSpecs.delegate to null regardless of whether a live
+        // delegateStdioForCursor spec was built, while still wiring the real
+        // wechat spec through.
+        expect(createAcpCursorChatProvider).toHaveBeenCalledTimes(1)
+        const opts = vi.mocked(createAcpCursorChatProvider).mock.calls[0]![0]
+        expect(opts.mcpSpecs.delegate).toBeNull()
+        expect(opts.mcpSpecs.wechat).not.toBeNull()
       } finally {
         await boot?.a2aServer?.stop()
         rmSync(stateDir, { recursive: true, force: true })
+        rmSync(binDir, { recursive: true, force: true })
       }
     })
   })

@@ -71,7 +71,7 @@ export const CONFIG_SURFACE: readonly ConfigKeySpec[] = [
   // 后台一次性评估(记忆整理 / 辩论主持 / introspect)走哪家。留空 = 偏好序
   // (openai 注册即第一 —— 端点若是慢模型/特化服务,这里指定别家)。
   // 非管理员对话可切到哪些 provider(逗号分隔;空 = 全部已注册)。guest 对
-  // agy/cursor 这类共享钥匙的 provider 无论如何都拒 —— 见 core/provider-policy.ts。
+  // agy 这类共享钥匙的 provider 无论如何都拒 —— 见 core/provider-policy.ts。
   { key: 'trusted_providers', store: 'agent', field: 'trusted_providers', type: 'string', writable: true, effect: 'immediate',
     description: '非管理员对话可用的 provider(逗号分隔,如 claude,openai;留空 = 全部;all 也表示全部)',
     validate: (v) => parseProviderList(v).every(id => (PROVIDER_IDS as readonly string[]).includes(id)),

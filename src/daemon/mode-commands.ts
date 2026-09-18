@@ -312,7 +312,7 @@ export function makeModeCommands(deps: ModeCommandsDeps): ModeCommands {
           '**模式切换**',
           // Provider checklist: keep this list in sync with /mode's list below (~:434).
           `/cc /codex /cursor /api /gemini /agy — 单 provider (solo)。/api = 你配置的 OpenAI 兼容后端 (DeepSeek/Kimi/…)。当前可用: ${availableSlashes()}`,
-          '/agy 是订阅 CLI:所有对话共用一把钥匙,不能按对话分权限(guest 不可用)。/cursor 走 ACP,按对话分权限,guest 也能用',
+          '/agy 是订阅 CLI:所有对话共用一把钥匙,guest 不可用。/cursor 同为订阅 CLI,但按对话分权限,guest 也可用(仍受「非管理员可用」名单约束)',
           '/api list — 看网关上有哪些模型;/api <别名|模型> 切换(只对本对话);/api alias ds=DeepSeek 起短名',
           '/cc + codex — Claude 主答，Codex 当工具 (primary_tool)',
           '/both [p1 p2 …] — 并行回复（裸=全部 provider）',

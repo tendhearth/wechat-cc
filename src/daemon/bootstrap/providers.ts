@@ -397,15 +397,29 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     try {
       const { createAcpCursorChatProvider, DEFAULT_CURSOR_MODEL } = await import('../../core/acp-cursor-chat')
       // 上一版往 ~/.cursor/mcp.json 塞过一把静态 trusted 钥匙(tier C);对话侧走 ACP 后 MCP 按会话注入,
-      // 那条目只剩风险 —— boot 时清掉(测试 runner 下 remove 自己会跳过)。
-      const { removeCursorGlobalMcp } = await import('./cursor-mcp-config')
-      removeCursorGlobalMcp({ log: deps.log })
+      // 那条目只剩风险 —— boot 时清掉(测试 runner 下 remove 自己会跳过)。独立 try/catch:
+      // 清理失败(比如 ~/.cursor 只读或磁盘满)不该拖累注册本身 —— 那样一个坏权限的
+      // 目录就能让 cursor provider 整个消失,比留着一把死钥匙的后果更糟。
+      try {
+        const { removeCursorGlobalMcp } = await import('./cursor-mcp-config')
+        removeCursorGlobalMcp({ log: deps.log })
+      } catch (err) {
+        deps.log('BOOT', `cursor: legacy mcp.json cleanup failed — ${err instanceof Error ? err.message : String(err)}`)
+      }
+      if (!wechatStdioForCursor) {
+        deps.log('BOOT', 'cursor: internalApi unavailable — wechat MCP not wired (cursor will have no tools)')
+      }
       registry.register(
         'cursor',
         createAcpCursorChatProvider({
           bin: cursorAgentBin,
           model: configuredAgent.cursorModel ?? DEFAULT_CURSOR_MODEL,
-          mcpSpecs: { wechat: wechatStdioForCursor, delegate: delegateStdioForCursor },
+          // delegate 固定传 null:ACP_CURSOR_CAPABILITIES.supportsDelegation === false,
+          // capability matrix 上 cursor 没有 delegate 通道 —— delegateStdioForCursor
+          // 只要 internalApi 存在就会是个真 spec(index.ts 给每个有 defaultPeer 的
+          // provider 都建一份),传给它会让每个 cursor 会话偷偷拿到一个矩阵说不存在
+          // 的 delegate_claude MCP 子进程。
+          mcpSpecs: { wechat: wechatStdioForCursor, delegate: null },
           log: deps.log,
         }),
         { displayName: 'Cursor', canResume: () => true },
@@ -665,7 +679,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // would silently slip past and only throw at first use in production.
   assertMatrixComplete(registry.list())
 
-  // 默认 provider 是共享钥匙的那种(agy/cursor):允许,但说清后果。
+  // 默认 provider 是共享钥匙的那种(目前只剩 agy):允许,但说清后果。
   { let shared = false; try { shared = !capabilitiesFor(defaultProviderId).adminMcpTools } catch { /* unknown id → registry will complain */ }
     if (shared) deps.log('BOOT', `默认 provider 是 ${defaultProviderId}(订阅 CLI,所有对话共用一把 trusted 钥匙):guest 对话会被拒,管理员/信任对话正常;主动关心等走主人会话不受影响`) }
   return {

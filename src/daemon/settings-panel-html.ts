@@ -111,7 +111,7 @@ export function pageHtml(token: string): string {
   </div>
   <label class="row"><span><b>后台评估用</b><small>记忆整理 / 辩论主持 / introspect 这些幕后活儿走哪家;auto = 偏好序</small></span><select id="f-cheap"></select></label>
   <div class="row" style="display:block;border-top:1px dashed var(--line);padding-top:10px">
-    <b>非管理员能用哪些</b><small style="color:var(--soft);display:block">信任/访客对话只能切到勾选的;🔑共享钥匙的(agy/cursor)对访客永远不开放</small>
+    <b>非管理员能用哪些</b><small style="color:var(--soft);display:block">信任/访客对话只能切到勾选的;🔑共享钥匙的(agy)对访客永远不开放</small>
     <div id="tp-list" style="margin-top:6px"></div>
   </div>
   <div class="say">💬 也可以直接跟 CC 说:「换成 DeepSeek」「用 opus 5」「你现在是哪个模型」</div>
