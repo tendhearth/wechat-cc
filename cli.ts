@@ -2474,6 +2474,98 @@ const updateCmd = defineCommand({
   },
 })
 
+// ── self deploy — atomic sidecar swap + launchd restart + health gate ──
+//
+// spec: docs/superpowers/specs/2026-09-18-self-maintenance-design.md §3.
+// macOS/launchd only (Windows/Linux self deploy is explicitly out of scope —
+// exit 2). repoRoot in source mode is this file's own directory (cli.ts
+// lives at the repo root); compiled bundles have no repo checkout nearby,
+// so --binary is required there.
+
+const selfDeployCmd = defineCommand({
+  meta: { name: 'deploy', description: '原子换 sidecar 进 .app、重启 daemon(launchd)、健康门,失败自动回滚(仅 macOS)' },
+  args: {
+    binary: { type: 'string', description: '新 sidecar 二进制路径(源码模式缺省按 repoRoot + 架构推导;打包模式下必填)' },
+    app: { type: 'string', description: '.app 包路径,覆盖从 LaunchAgent plist 推导的部署目标' },
+    'no-rollback': { type: 'boolean', description: '健康门失败时不自动回滚（默认会回滚）' },
+    'health-timeout-ms': { type: 'string', description: '健康门超时,毫秒(缺省 60000)' },
+    json: { type: 'boolean', description: 'JSON 输出（SelfDeployResult）' },
+  },
+  async run({ args }) {
+    const json = Boolean(args.json)
+    if (process.platform !== 'darwin') {
+      const message = 'self deploy only supports macOS (launchd) — see spec §3'
+      if (json) console.log(JSON.stringify({ ok: false, exitCode: 2, error: 'self_deploy_unsupported_platform', message }, null, 2))
+      else console.error(message)
+      process.exit(2)
+      return
+    }
+
+    const { planSelfDeploy, executeSelfDeploy, defaultSelfDeployDeps } = await import('./src/cli/self-deploy.ts')
+    const { homedir } = await import('node:os')
+    const { existsSync, readFileSync } = await import('node:fs')
+
+    const compiled = isCompiledBundle()
+    if (compiled && !args.binary) {
+      const message = 'compiled bundle: --binary is required (no repo checkout nearby to derive the sidecar path from)'
+      if (json) console.log(JSON.stringify({ ok: false, exitCode: 1, error: 'binary_required', message }, null, 2))
+      else console.error(message)
+      process.exit(1)
+      return
+    }
+
+    const repoRoot = compiledRepoRoot() ?? dirname(fileURLToPath(import.meta.url))
+    const homeDir = homedir()
+    const plistPath = join(homeDir, 'Library', 'LaunchAgents', 'com.wechat-cc.daemon.plist')
+    const plistXml = existsSync(plistPath) ? readFileSync(plistPath, 'utf8') : null
+    const uid = typeof process.getuid === 'function' ? process.getuid() : 501
+    const healthTimeoutMs = args['health-timeout-ms'] ? Number(args['health-timeout-ms']) : undefined
+
+    let plan
+    try {
+      plan = planSelfDeploy({
+        platform: process.platform,
+        arch: process.arch,
+        homeDir,
+        uid,
+        repoRoot,
+        stateDir: STATE_DIR,
+        plistXml,
+        binary: args.binary,
+        app: args.app,
+        healthTimeoutMs: Number.isFinite(healthTimeoutMs) ? healthTimeoutMs : undefined,
+        rollback: !args['no-rollback'],
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (json) console.log(JSON.stringify({ ok: false, exitCode: 1, error: message }, null, 2))
+      else console.error(`self deploy: ${message}`)
+      process.exit(1)
+      return
+    }
+
+    const result = await executeSelfDeploy(plan, defaultSelfDeployDeps())
+    if (json) {
+      console.log(JSON.stringify(result, null, 2))
+    } else {
+      for (const step of result.steps) {
+        console.log(`${step.ok ? '✓' : '✗'} ${step.name}${step.detail ? ` — ${step.detail}` : ''}`)
+      }
+      if (result.ok) console.log(`✓ deployed${result.version ? ` (${result.version})` : ''}`)
+      else {
+        console.error(`✗ self deploy failed${result.rolledBack ? ' — rolled back to previous binary' : ''}`)
+        if (result.diagnostics) console.error(result.diagnostics)
+      }
+    }
+    process.exit(result.exitCode)
+  },
+})
+
+const selfCmd = defineCommand({
+  meta: { name: 'self', description: '自维护:部署自身（仅 macOS launchd；见 docs/maintainer/deploy.md）' },
+  subCommands: { deploy: selfDeployCmd },
+})
+
 // ── mode set — programmatic mode switch via running daemon's internal-api ──
 //
 // Reads STATE_DIR/internal-api-info.json (written by daemon on start) to
@@ -3720,6 +3812,8 @@ const SUBCOMMANDS = {
   service: serviceCmd,
   reply: replyCmd,
   update: updateCmd,
+  // 自维护三件套 Task 3 — `self deploy` (spec 2026-09-18-self-maintenance §3).
+  self: selfCmd,
   'install-progress': installProgressCmd,
   mode: modeCmd,
   'mcp-server': mcpServerCmd,
