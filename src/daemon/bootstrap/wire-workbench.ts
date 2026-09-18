@@ -89,7 +89,7 @@ export function registerAcpExecutors(target: ProviderRegistry, source: Pick<Prov
   if (!entry) return []
   const launch = resolveAcpAgent('cursor', config, deps.findOnPath ?? findOnPath)
   if (!launch) { deps.log?.('WORKBENCH', 'cursor: cursor-agent binary not resolvable — ACP executor not registered'); return [] }
-  const provider = (deps.create ?? createAcpWorkbenchProvider)({ command: launch.command, args: launch.args, displayName: launch.displayName })
+  const provider = (deps.create ?? createAcpWorkbenchProvider)({ command: launch.command, args: launch.args, displayName: launch.displayName, log: deps.log })
   target.register('cursor', provider, { ...entry.opts, workbench: ACP_CAPABILITIES })
   return ['cursor']
 }

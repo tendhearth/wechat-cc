@@ -3,7 +3,7 @@
  * stdio 上换行分隔 JSON-RPC。每个 spawn 一个进程、一个 session;dispatch = 一次 session/prompt。
  *
  * 真机边界(2026-09-17 spike,见 docs/superpowers/specs/2026-09-17-acp-evaluation.md 末节):
- *  - 命令(kind execute)逐次 session/request_permission;工作区内文件编辑不弹卡 ⇒ spawn 时报 ACP_NOTICE;
+ *  - 命令(kind execute)逐次 session/request_permission;工作区内文件编辑不弹卡 ⇒ spawn 时报 acpNotice();
  *  - 关 stdin 不会让 cursor-agent 退出 ⇒ close() 必须 SIGTERM/SIGKILL 进程组并确认退出;
  *  - 不注入 MCP(工作台任务本来就不给执行者 wechat MCP);不声明 fs/terminal,agent 自己落盘。
  * 对话侧的 Cursor(print 模式,cursor-cli-provider.ts)与本文件无关。
@@ -15,18 +15,27 @@ import { makeTurnEmitter } from './turn-emitter'
 import { isAuthFail } from './auth-fail'
 import { AcpRequestError, createAcpConnection, type AcpConnection } from './acp/rpc'
 import { acpPermissionDescription, acpPermissionOption, createAcpTranslator } from './acp/events'
+import { workbenchSubprocessEnv } from './workbench/subprocess-env'
 
 export interface AcpWorkbenchProviderOptions {
   command: string; args: string[]; displayName: string
-  /** initialize / session/new / session/load 的上限;缺省 60s。 */
+  /** initialize / session/new / session/load 的上限;缺省 45s(留出余量给服务层自己的 60s
+   *  session_start_timeout 竞速 —— 等于 60s 会让这里的 acp_rpc_timeout 永远赶不上服务层先超时,
+   *  调用方看不到"是哪一步卡住了"。与下面 closeTimeoutMs 让路 3s close 同一条道理)。 */
   rpcTimeoutMs?: number
   /** close() 确认进程组退出的上限;缺省 2.5s(留出余量给服务层自己的 3s close 竞速 —
    *  等于 3s 会让 acp_process_not_exited 永远赶不上服务层自己先超时返回,调用方看不到它)。 */
   closeTimeoutMs?: number
+  /** 同时挂起的权限请求上限;缺省 100。越过 ⇒ acp_request_limit 停任务。 */
+  permissionLimit?: number
   spawn?: typeof nodeSpawn
+  /** daemon 日志口(tag, line)。每个 session 每类最多一行,只记"悄悄丢掉了什么"。 */
+  log?: (tag: string, line: string) => void
 }
 
-export const ACP_NOTICE = 'Cursor 通过 ACP 执行：命令会逐次请求批准；工作区内的文件编辑由 Cursor 直接执行，不经过权限卡。'
+/** 每个任务开跑时报给主人的一句话。真机 spike:ACP 面上没有"编辑也要批准"的开关。 */
+export const acpNotice = (displayName: string): string =>
+  `${displayName} 通过 ACP 执行：命令会逐次请求批准；工作区内的文件编辑由 ${displayName} 直接执行，不经过权限卡。`
 const CLIENT_CAPABILITIES = { fs: { readTextFile: false, writeTextFile: false }, terminal: false }
 const CLIENT_INFO = { name: 'cc_workbench', title: 'CC Workbench', version: '0.6.4' }
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
@@ -35,15 +44,23 @@ const sessionIdOk = (value: unknown): value is string => typeof value === 'strin
 
 interface Turn { queue: AsyncQueue<AgentEvent>; cancelled: boolean; startedAt: number }
 interface PendingPermission { controller: AbortController; respond: (outcome: unknown) => void }
+const CONTROL_CHARS = /[\x00-\x1f\x7f]/g
+/** agent 给的 sessionId 直接进日志行会把控制字符/超长串带进 daemon 日志,先收敛。 */
+const forLog = (value: unknown): string => typeof value === 'string' ? value.replace(CONTROL_CHARS, ' ').slice(0, 80) : typeof value === 'undefined' ? '(none)' : String(value).slice(0, 80)
 
 export function createAcpWorkbenchProvider(options: AcpWorkbenchProviderOptions): AgentProvider {
   const spawn = options.spawn ?? nodeSpawn
-  const rpcTimeoutMs = options.rpcTimeoutMs ?? 60_000, closeTimeoutMs = options.closeTimeoutMs ?? 2_500
+  const rpcTimeoutMs = options.rpcTimeoutMs ?? 45_000, closeTimeoutMs = options.closeTimeoutMs ?? 2_500
+  const permissionLimit = options.permissionLimit ?? 100
   return {
     async spawn(project, context: SpawnContext): Promise<AgentSession> {
-      if (process.platform === 'win32') throw new Error('Cursor 工作台暂不支持 Windows：尚未验证任务进程树清理。')
-      const child = spawn(options.command, options.args, { cwd: project.path, env: process.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true, windowsHide: true })
-      const permissions = new Map<string, PendingPermission>()
+      if (process.platform === 'win32') throw new Error(`${options.displayName} 工作台暂不支持 Windows：尚未验证任务进程树清理。`)
+      // daemon 自己的凭据不进外部 CLI —— cursor-agent 还会再 spawn 它自己的 MCP 子进程,env 是会传染的。
+      const child = spawn(options.command, options.args, { cwd: project.path, env: workbenchSubprocessEnv(), stdio: ['pipe', 'pipe', 'pipe'], detached: true, windowsHide: true })
+      // 按 JSON-RPC 请求 id 记账:id 是 agent 唯一能用来对上回复的东西,撞 id ⇒ 协议已经不可信。
+      const permissions = new Map<string | number, PendingPermission>()
+      const logged = new Set<string>()
+      const logOnce = (kind: string, line: string) => { if (!options.log || logged.has(kind)) return; logged.add(kind); options.log('ACP', line) }
       const translator = createAcpTranslator()
       let sessionId = '', active: Turn | undefined, loading = true
       let closing = false, exited = false, broken: Error | undefined, closePromise: Promise<void> | undefined
@@ -65,28 +82,37 @@ export function createAcpWorkbenchProvider(options: AcpWorkbenchProviderOptions)
       const fatal = (message: string) => {
         if (broken || closing) return
         broken = new Error(message)
+        logOnce('fatal', `session stopped: ${message.replace(CONTROL_CHARS, ' ').slice(0, 300)}`)
         if (active) finish(active, { kind: 'error', message })
-        connection.dispose(new Error('acp_session_closed'))
+        // dispose 的理由就是真因:setup 阶段挂起的 initialize / session.* 会拿着它 reject,
+        // 换成 acp_session_closed 会把"老版本没有 acp 子命令"这类唯一的线索盖掉。
+        connection.dispose(broken)
       }
       const connection: AcpConnection = createAcpConnection(child.stdin!, child.stdout!, {
         rpcTimeoutMs,
         onNotification(method, params) {
-          if (method !== 'session/update' || loading || !object(params) || params.sessionId !== sessionId) return
+          if (method !== 'session/update' || !object(params)) return
+          if (params.sessionId !== sessionId) { logOnce('update', `session/update dropped: foreign sessionId ${forLog(params.sessionId)}`); return }
+          if (loading) return
           const turn = active
           if (!turn || turn.cancelled) return
           for (const event of translator.update(params.update)) turn.queue.push(event)
         },
-        async onRequest(method, params) {
+        async onRequest(method, params, id) {
           if (method !== 'session/request_permission') throw Object.assign(new Error(`client capability not declared: ${method}`), { code: -32601 })
           const turn = active
+          if (object(params) && params.sessionId !== sessionId) logOnce('permission', `session/request_permission cancelled: foreign sessionId ${forLog(params.sessionId)}`)
           if (!turn || turn.cancelled || closing || !object(params) || params.sessionId !== sessionId) return { outcome: { outcome: 'cancelled' } }
+          // 撞 id:两张权限卡共用一条回复通道,主人对哪一张点的"允许"就再也说不清了。
+          if (permissions.has(id)) { queueMicrotask(() => fatal('acp_duplicate_permission_request')); return { outcome: { outcome: 'cancelled' } } }
+          if (permissions.size >= permissionLimit) { queueMicrotask(() => fatal('acp_request_limit')); return { outcome: { outcome: 'cancelled' } } }
           const description = acpPermissionDescription(params)
-          if (description === null) { queueMicrotask(() => fatal('无法核实或完整显示本次 Cursor 权限请求，工作台已停止任务。')); return { outcome: { outcome: 'cancelled' } } }
+          if (description === null) { queueMicrotask(() => fatal(`无法核实或完整显示本次 ${options.displayName} 权限请求，工作台已停止任务。`)); return { outcome: { outcome: 'cancelled' } } }
           const toolCall = params.toolCall as Record<string, unknown>
           const tool = typeof toolCall.kind === 'string' && toolCall.kind ? toolCall.kind : 'tool'
           return new Promise<unknown>(resolve => {
             const controller = new AbortController()
-            const key = `${Date.now()}:${Math.random()}`
+            const key = id
             const entry: PendingPermission = { controller, respond: resolve }
             permissions.set(key, entry)
             void Promise.resolve().then(() => context.requestPermission ? context.requestPermission({ tool, description }, controller.signal) : false)
@@ -144,14 +170,18 @@ export function createAcpWorkbenchProvider(options: AcpWorkbenchProviderOptions)
         })()
         return closePromise
       }
+      const withTail = (message: string): Error => {
+        const tail = stderrTail.trim().slice(-300)
+        return new Error(tail ? `${message}\n${tail}` : message)
+      }
       const setupError = (error: unknown): Error => {
         // acp_auth_required stays a bare code — the login-hint copy upstream is keyed on this
         // exact string, and stderr for an auth failure is rarely more informative than the code.
         if (error instanceof AcpRequestError && (error.code === -32000 || isAuthFail('sdk-error', error.message))) return new Error('acp_auth_required')
-        if (error instanceof AcpRequestError) {
-          const tail = stderrTail.trim().slice(-300)
-          return new Error(tail ? `acp_session_failed: ${error.message}\n${tail}` : `acp_session_failed: ${error.message}`)
-        }
+        if (error instanceof AcpRequestError) return withTail(`acp_session_failed: ${error.message}`)
+        // 进程在 setup 途中死掉(老版本没有 acp 子命令、spawn 失败)⇒ 挂起的 RPC 被 fatal 的 dispose
+        // 掀掉。真因在 broken 里,stderr 尾巴才是主人能看懂的那一行,按 acp_session_failed 同样的规矩带上。
+        if (broken && (error === broken || (error instanceof Error && error.message === 'acp_session_closed'))) return withTail(broken.message)
         return error instanceof Error ? error : new Error(String(error))
       }
       try {
@@ -174,7 +204,7 @@ export function createAcpWorkbenchProvider(options: AcpWorkbenchProviderOptions)
         throw mapped
       }
       loading = false
-      context.reportNotice?.(ACP_NOTICE)
+      context.reportNotice?.(acpNotice(options.displayName))
 
       return {
         dispatch(text, attachments) {

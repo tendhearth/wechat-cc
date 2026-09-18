@@ -27,7 +27,10 @@ const OTHER = { type: 'tool' as const, label: '调用工具' }
 /** 只有这两种「已知的兜底」kind 才把 title 当工具身份放进 detail;没见过 / 已过期的 toolCallId(kind 落回空字符串)
  *  不认识具体是什么调用,detail 只能放路径 —— title 对 execute 就是命令本身,放出去违反隐私规矩。 */
 const IDENTITY_KINDS = new Set(['other', 'switch_mode'])
-const status = (value: unknown): AgentActivity['status'] => value === 'completed' ? 'completed' : value === 'failed' ? 'failed' : 'running'
+/** 没见过的 status 保留上一次的判定 —— 一条 tool_call_update 只带 `status:'queued'` 这类新值时,
+ *  把已经 completed 的调用打回 running 会让活动行永远转圈。首次露面(previous 缺省 running)照旧 running。 */
+const status = (value: unknown, previous: AgentActivity['status']): AgentActivity['status'] =>
+  value === 'completed' ? 'completed' : value === 'failed' ? 'failed' : (value === 'pending' || value === 'in_progress') ? 'running' : previous
 
 interface Remembered { kind: string; title: string; name: string; status: AgentActivity['status']; paths: string[] }
 
@@ -36,8 +39,10 @@ export function createAcpTranslator(): AcpTranslator {
   const calls = new Map<string, Remembered>()
   const activityEvent = (id: string, call: Remembered): AgentEvent | null => {
     if (call.kind === 'think') return null
-    const spec = KINDS[call.kind]
-    const includeIdentity = spec === undefined && IDENTITY_KINDS.has(call.kind)
+    // hasOwn,不是 KINDS[kind]:kind 由 agent 说了算,`constructor` / `__proto__` 会从原型链上
+    // 捞回一个函数当"活动规格",拼出一条形状不对的活动行。
+    const spec = Object.hasOwn(KINDS, call.kind) ? KINDS[call.kind] : undefined
+    const includeIdentity = IDENTITY_KINDS.has(call.kind)
     const resolved = spec ?? OTHER
     const activity: AgentActivity = { id, type: resolved.type, status: call.status, label: resolved.label }
     const detail = includeIdentity ? [...call.paths, display(call.title, 120)].filter(Boolean).join('\n') : call.paths.join('\n')
@@ -63,7 +68,7 @@ export function createAcpTranslator(): AcpTranslator {
         kind: typeof update.kind === 'string' ? update.kind : previous.kind,
         title: typeof update.title === 'string' ? update.title : previous.title,
         name: typeof update.name === 'string' ? display(update.name, 120) : previous.name,
-        status: update.status === undefined ? previous.status : status(update.status),
+        status: status(update.status, previous.status),
         paths: update.locations === undefined ? previous.paths : paths(update.locations),
       }
       calls.set(id, call)

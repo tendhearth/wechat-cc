@@ -30,6 +30,23 @@ describe('ACP session/update → AgentEvent', () => {
     for (const [kind, type, label] of cases) expect(t.update(call({ toolCallId: `c-${kind}`, kind, locations: [] }))[0]).toMatchObject({ activity: { type, label } })
     expect(t.update(call({ toolCallId: 'think-1', kind: 'think' }))).toEqual([])
   })
+  it('treats Object.prototype keys as unknown kinds instead of reading a function off the prototype chain', () => {
+    const t = createAcpTranslator(); t.beginTurn()
+    for (const kind of ['constructor', '__proto__', 'toString']) {
+      const [ev] = t.update(call({ toolCallId: `c-${kind}`, kind, title: '`rm -rf /`', locations: [] }))
+      expect(ev).toEqual({ kind: 'tool_call', tool: kind, activity: { id: `c-${kind}`, type: 'tool', status: 'running', label: '调用工具' } })
+      expect(JSON.stringify(ev)).not.toContain('rm')
+    }
+  })
+  it('keeps the previous status when an update carries an unknown status value', () => {
+    const t = createAcpTranslator(); t.beginTurn()
+    t.update(call({ toolCallId: 'c-s', kind: 'execute', locations: [] }))
+    expect(t.update({ sessionUpdate: 'tool_call_update', toolCallId: 'c-s', status: 'completed' })[0]).toMatchObject({ activity: { status: 'completed' } })
+    expect(t.update({ sessionUpdate: 'tool_call_update', toolCallId: 'c-s', status: 'queued' })[0]).toMatchObject({ activity: { status: 'completed' } })
+    expect(t.update({ sessionUpdate: 'tool_call_update', toolCallId: 'c-s' })[0]).toMatchObject({ activity: { status: 'completed' } })
+    // 首次露面就带未知 status ⇒ 仍然是 running(缺省判定),不是"没有状态"。
+    expect(t.update({ sessionUpdate: 'tool_call_update', toolCallId: 'c-new', status: 'queued' })[0]).toMatchObject({ activity: { status: 'running' } })
+  })
   it('never puts the title into detail for an unseen or expired toolCallId, even if it looks like a command', () => {
     const t = createAcpTranslator(); t.beginTurn()
     const [ev] = t.update({ sessionUpdate: 'tool_call_update', toolCallId: 'ghost', title: '`rm -rf /`' })

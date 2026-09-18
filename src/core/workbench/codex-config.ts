@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { isCompanionMcp } from './native-tools'
+import { workbenchSubprocessEnv } from './subprocess-env'
 
 export const workbenchFeatureConfig = { features: { plugins: false, apps: false, hooks: false } }
 const shellEnvironmentKeys = ['PATH', 'SHELL', 'TMPDIR', 'TEMP', 'TMP', 'HOME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'LOGNAME', 'USER']
@@ -63,12 +64,10 @@ export function workbenchCodexArgs(config: Record<string, unknown>): string[] {
   return args
 }
 
+/** Provider auth and proxies remain available to the Codex server itself.
+ *  Daemon credentials/pointers have no role in a workbench subprocess (shared with the ACP executor). */
 export function workbenchCodexEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const env = { ...source }
-  // Provider auth and proxies remain available to the Codex server itself.
-  // Daemon credentials/pointers have no role in a workbench subprocess.
-  for (const name of Object.keys(env)) if (/^(WECHAT_|HEARTH_|WXVAULT_|WXGRAPH_)/i.test(name)) delete env[name]
-  return env
+  return workbenchSubprocessEnv(source)
 }
 
 /** Read configuration names only, in the selected project; never launch MCPs. */

@@ -7,6 +7,7 @@ export interface AcpAgentLaunch { id: 'cursor'; displayName: string; command: st
 
 export function resolveAcpAgent(id: 'cursor', config: { cursorAgentBin?: string }, findOnPath: (cmd: string) => string | null): AcpAgentLaunch | null {
   if (id !== 'cursor') return null
-  const command = config.cursorAgentBin ?? findOnPath('cursor-agent')
+  // `||` 而不是 `??`:配成空串等于没配(面板清空一格就是空串),该回落到 PATH 上找。
+  const command = config.cursorAgentBin || findOnPath('cursor-agent')
   return command ? { id: 'cursor', displayName: 'Cursor', command, args: ['acp'] } : null
 }

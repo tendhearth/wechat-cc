@@ -3,7 +3,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentEvent, AgentSession, SpawnContext } from './agent-provider'
 import { TIER_PROFILES } from './user-tier'
-import { ACP_NOTICE, createAcpWorkbenchProvider } from './acp-workbench-provider'
+import { acpNotice, createAcpWorkbenchProvider, type AcpWorkbenchProviderOptions } from './acp-workbench-provider'
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn(), kill: vi.fn() }))
 vi.mock('node:child_process', () => ({ spawn: mocks.spawn }))
@@ -25,6 +25,9 @@ class FakeProcess extends EventEmitter {
   newResult: Record<string, unknown> | { error: Rpc['error'] } = { sessionId: 'sess-1' }
   loadResult: Record<string, unknown> | { error: Rpc['error'] } = {}
   promptAuto = true
+  // 死掉 / 哑掉的进程不再往 stdout 写:setup 阶段的测试要让 initialize 一直挂着,
+  // 也要保证 exit() 之后那些已排好队的 setTimeout 回复不会往已 end 的流里写(write-after-end 会抛)。
+  silent = false
   constructor() {
     super()
     let lines = ''
@@ -47,7 +50,7 @@ class FakeProcess extends EventEmitter {
       }
     })
   }
-  send(message: Rpc) { this.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n') }
+  send(message: Rpc) { if (this.hasExited || this.silent) return; this.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n') }
   notify(method: string, params: unknown) { this.send({ method, params }) }
   update(update: unknown, sessionId = 'sess-1') { this.notify('session/update', { sessionId, update }) }
   finishPrompt(stopReason = 'end_turn') { const prompt = this.sent.findLast(m => m.method === 'session/prompt')!; this.send({ id: prompt.id, result: { stopReason } }) }
@@ -56,9 +59,9 @@ class FakeProcess extends EventEmitter {
 }
 let children: FakeProcess[], sessions: AgentSession[], platform: PropertyDescriptor, nextPid: number
 const context = (extra: Partial<SpawnContext> = {}): SpawnContext => ({ tierProfile: TIER_PROFILES.trusted, permissionMode: 'strict', chatId: 'workbench:task', appendInstructions: 'task instructions', workbenchTimeline: true, ...extra })
-async function start(extra: Partial<SpawnContext> = {}, setup?: (child: FakeProcess) => void) {
+async function start(extra: Partial<SpawnContext> = {}, setup?: (child: FakeProcess) => void, providerExtra: Partial<AcpWorkbenchProviderOptions> = {}) {
   const spawnedBefore = children.length
-  const spawning = createAcpWorkbenchProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor', rpcTimeoutMs: 200, closeTimeoutMs: 250 }).spawn({ alias: 'workbench:task', path: '/project' }, context(extra))
+  const spawning = createAcpWorkbenchProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor', rpcTimeoutMs: 200, closeTimeoutMs: 250, ...providerExtra }).spawn({ alias: 'workbench:task', path: '/project' }, context(extra))
   await expect.poll(() => children.length).toBe(spawnedBefore + 1)
   setup?.(children.at(-1)!)
   const session = await spawning
@@ -101,7 +104,42 @@ describe('ACP workbench provider', () => {
     const init = child.sent.find(m => m.method === 'initialize')!
     expect(init.params).toEqual({ protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: 'cc_workbench', title: 'CC Workbench', version: '0.6.4' } })
     expect(child.sent.find(m => m.method === 'session/new')!.params).toEqual({ cwd: '/project', mcpServers: [] })
-    expect(reportNotice).toHaveBeenCalledWith(ACP_NOTICE)
+    expect(reportNotice).toHaveBeenCalledWith(acpNotice('Cursor'))
+    // 三句对外文案都由 displayName 拼出来,换一个 ACP 执行者不用再改一遍字。
+    expect(acpNotice('Gemini')).toContain('Gemini 通过 ACP 执行')
+  })
+  it('does not hand daemon credentials to the ACP subprocess', async () => {
+    const previous = process.env.WECHAT_INTERNAL_TOKEN_FILE
+    process.env.WECHAT_INTERNAL_TOKEN_FILE = '/state/internal-token'
+    try {
+      await start()
+      const env = mocks.spawn.mock.calls.at(-1)![2].env as NodeJS.ProcessEnv
+      expect(Object.keys(env).some(name => /^WECHAT_/i.test(name))).toBe(false)
+      expect(env.PATH).toBe(process.env.PATH)
+    } finally {
+      if (previous === undefined) delete process.env.WECHAT_INTERNAL_TOKEN_FILE
+      else process.env.WECHAT_INTERNAL_TOKEN_FILE = previous
+    }
+  })
+  it('surfaces the real cause and the stderr tail when the process dies during initialize', async () => {
+    const provider = createAcpWorkbenchProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor', rpcTimeoutMs: 2_000, closeTimeoutMs: 250 })
+    const spawning = provider.spawn({ alias: 'a', path: '/project' }, context())
+    await expect.poll(() => children.length).toBe(1)
+    const child = children[0]!
+    child.silent = true
+    child.stderr.write("error: unrecognized subcommand 'acp'\n")
+    await new Promise(resolve => setImmediate(resolve))
+    child.exit(1)
+    // 老版本 cursor-agent 没有 acp 子命令:真因必须活下来(以前被 dispose 的 acp_session_closed 盖掉)。
+    await expect(spawning).rejects.toThrow(/^acp_process_exited: 1[\s\S]*unrecognized subcommand/)
+  })
+  it('maps a failed spawn (ENOENT) to acp_process_start_failed', async () => {
+    const provider = createAcpWorkbenchProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor', rpcTimeoutMs: 2_000, closeTimeoutMs: 250 })
+    const spawning = provider.spawn({ alias: 'a', path: '/project' }, context())
+    await expect.poll(() => children.length).toBe(1)
+    children[0]!.silent = true
+    children[0]!.emit('error', Object.assign(new Error('spawn /cursor-agent ENOENT'), { code: 'ENOENT' }))
+    await expect(spawning).rejects.toThrow('acp_process_start_failed')
   })
   it('rejects unsupported protocol versions and missing session ids, closing the process', async () => {
     const bad = createAcpWorkbenchProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor', rpcTimeoutMs: 200, closeTimeoutMs: 250 })
@@ -204,6 +242,41 @@ describe('ACP workbench provider', () => {
     expect(events.at(-1)).toEqual({ kind: 'error', message: '无法核实或完整显示本次 Cursor 权限请求，工作台已停止任务。' })
     await expect(async () => { for await (const _ of session.dispatch('again')) { /* noop */ } }).rejects.toThrow('acp_session_closed')
   })
+  it('stops the task when the agent reuses a pending permission request id', async () => {
+    const requestPermission = vi.fn(() => new Promise<boolean>(() => { /* never answered */ }))
+    const { session, child } = await start({ requestPermission })
+    const { events, done } = collect(session)
+    await prompted(child)
+    permission(child, 'perm-dup')
+    await expect.poll(() => requestPermission.mock.calls.length).toBe(1)
+    permission(child, 'perm-dup')
+    await done
+    expect(events.at(-1)).toEqual({ kind: 'error', message: 'acp_duplicate_permission_request' })
+    expect(child.sent.filter(m => m.id === 'perm-dup').every(m => m.result?.outcome?.outcome === 'cancelled')).toBe(true)
+  })
+  it('stops the task when pending permission requests pile past the limit', async () => {
+    const requestPermission = vi.fn(() => new Promise<boolean>(() => { /* never answered */ }))
+    const { session, child } = await start({ requestPermission }, undefined, { permissionLimit: 3 })
+    const { events, done } = collect(session)
+    await prompted(child)
+    for (let index = 0; index < 4; index++) permission(child, `perm-${index}`)
+    await done
+    expect(events.at(-1)).toEqual({ kind: 'error', message: 'acp_request_limit' })
+    expect(requestPermission).toHaveBeenCalledTimes(3)
+  })
+  it('logs a foreign-session update once per session instead of dropping it in silence', async () => {
+    const log = vi.fn()
+    const { session, child } = await start({}, undefined, { log })
+    const { done } = collect(session)
+    await prompted(child)
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'x' } }, 'other-session')
+    await expect.poll(() => log.mock.calls.length).toBe(1)
+    expect(log.mock.calls[0]).toEqual(['ACP', expect.stringContaining('sessionId')])
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'y' } }, 'another-session')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(log).toHaveBeenCalledTimes(1)
+    child.finishPrompt(); await done
+  })
   it('cancel sends session/cancel, aborts pending permissions and ends the turn with an error event', async () => {
     const requestPermission = vi.fn((_request: unknown, signal?: AbortSignal) => new Promise<boolean>((_resolve, reject) => signal?.addEventListener('abort', () => reject(new Error('aborted')))))
     const { session, child } = await start({ requestPermission })
@@ -275,6 +348,6 @@ describe('ACP workbench provider', () => {
     await expect(async () => { for await (const _ of session.dispatch('overlap')) { /* noop */ } }).rejects.toThrow('acp_turn_already_running')
     child.finishPrompt(); await first.done
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
-    await expect(createAcpWorkbenchProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor' }).spawn({ alias: 'a', path: '/project' }, context())).rejects.toThrow('Windows')
+    await expect(createAcpWorkbenchProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor' }).spawn({ alias: 'a', path: '/project' }, context())).rejects.toThrow('Cursor 工作台暂不支持 Windows')
   })
 })
