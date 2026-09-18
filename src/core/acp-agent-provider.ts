@@ -13,7 +13,7 @@
  *  - 不声明 fs/terminal,agent 自己落盘。
  */
 import { spawn as nodeSpawn } from 'node:child_process'
-import type { AgentEvent, AgentProvider, AgentSession, SpawnContext } from './agent-provider'
+import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession, SpawnContext } from './agent-provider'
 import { AsyncQueue } from './async-queue'
 import { makeTurnEmitter } from './turn-emitter'
 import { isAuthFail } from './auth-fail'
@@ -53,6 +53,29 @@ export interface AcpProviderOptions extends AcpProviderBaseOptions {
   resume?: 'strict' | 'fallback'
   /** spawn 时报给主人的提示;缺省 acpNotice(displayName);null ⇒ 不报(对话侧不需要"编辑不经过权限卡"这句)。 */
   notice?: string | null
+  /** 'refuse'(缺省):带附件即拒;'prompt':图片进 image 块(受 promptCapabilities.image 门控),
+   *  其它附件给引用文本块(工作台语义,与 codex-app-server.ts 的 turnInput 同一做法)。 */
+  attachments?: 'refuse' | 'prompt'
+}
+
+export type AcpPromptBlock = { type: 'text'; text: string } | { type: 'image'; mimeType: string; data: string }
+const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+/** 图片进 prompt 的 image 块(受 agent 的 promptCapabilities.image 门控);其它附件给引用文本块,执行者自己用文件工具读落盘那份 —— 与 Codex 的 turnInput 同一做法。 */
+export function acpPromptBlocks(text: string, attachments: readonly AgentAttachment[] | undefined, imageOk: boolean): AcpPromptBlock[] {
+  const list = attachments ?? []
+  const blocks: AcpPromptBlock[] = text || !list.length ? [{ type: 'text', text }] : []
+  for (const attachment of list) {
+    if (attachment.mime.startsWith('image/')) {
+      if (!IMAGE_MIMES.has(attachment.mime)) throw new Error('attachment_image_unsupported')
+      if (!imageOk) throw new Error('acp_attachment_image_unsupported')
+      if (!attachment.data) throw new Error('attachment_data_missing')
+      blocks.push({ type: 'image', mimeType: attachment.mime, data: attachment.data })
+    } else {
+      const { name, mime, path, sha256 } = attachment
+      blocks.push({ type: 'text', text: 'Attached task file (reference material; read with a file tool if needed):\n' + JSON.stringify({ name, mime, path, sha256 }) })
+    }
+  }
+  return blocks
 }
 
 /** 每个任务开跑时报给主人的一句话。真机 spike:ACP 面上没有"编辑也要批准"的开关。 */
@@ -89,7 +112,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       const logged = new Set<string>()
       const logOnce = (kind: string, line: string) => { if (!options.log || logged.has(kind)) return; logged.add(kind); options.log('ACP', line) }
       const translator = createAcpTranslator({ text: options.text })
-      let sessionId = '', active: Turn | undefined, loading = true
+      let sessionId = '', active: Turn | undefined, loading = true, imageOk = false
       let closing = false, exited = false, broken: Error | undefined, closePromise: Promise<void> | undefined
       let resolveExit!: () => void
       const exit = new Promise<void>(resolve => { resolveExit = resolve })
@@ -229,6 +252,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         const initialized = await connection.request('initialize', { protocolVersion: 1, clientCapabilities: CLIENT_CAPABILITIES, clientInfo: CLIENT_INFO })
         if (!object(initialized) || initialized.protocolVersion !== 1) throw new Error('acp_protocol_version_unsupported')
         const loadSession = object(initialized.agentCapabilities) && initialized.agentCapabilities.loadSession === true
+        imageOk = object(initialized.promptCapabilities) && initialized.promptCapabilities.image === true
         const mcpServers = options.mcpServers?.(context) ?? []
         const openNew = async () => {
           const created = await connection.request('session/new', { cwd: project.path, mcpServers })
@@ -277,9 +301,14 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
 
       return {
         dispatch(text, attachments) {
-          if (attachments?.length) throw new Error('acp_attachments_unsupported')
+          if (attachments?.length && options.attachments !== 'prompt') throw new Error('acp_attachments_unsupported')
           if (closing || broken || exited) throw new Error('acp_session_closed')
           if (active) throw new Error('acp_turn_already_running')
+          let prompt = text
+          if (!instructionsInjected && context.appendInstructions) { prompt = `${context.appendInstructions}\n\n---\n\n${text}`; instructionsInjected = true }
+          // acpPromptBlocks 校验/组块可能抛错(mime 不支持、agent 无图片能力、缺 data)——必须在
+          // active = turn 之前抛,否则一个坏附件会把 dispatch 甩出去、却留下一个没人收尾的挂起回合。
+          const blocks: AcpPromptBlock[] = options.attachments === 'prompt' ? acpPromptBlocks(prompt, attachments, imageOk) : [{ type: 'text', text: prompt }]
           const em = makeTurnEmitter()
           const turn: Turn = { queue: new AsyncQueue<AgentEvent>(), cancelled: false, startedAt: Date.now() }
           active = turn
@@ -289,9 +318,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
           // messages 模式攒着的助理文本吐出来 —— 取消路径(下面的 acp_turn_cancelled)故意绕过它:
           // 半截话不该在"用户主动打断"时还发出去。
           const settle = (event: AgentEvent) => { if (active !== turn) return; for (const e of translator.endTurn()) turn.queue.push(e); finish(turn, event) }
-          let prompt = text
-          if (!instructionsInjected && context.appendInstructions) { prompt = `${context.appendInstructions}\n\n---\n\n${text}`; instructionsInjected = true }
-          void connection.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] }, 0).then(
+          void connection.request('session/prompt', { sessionId, prompt: blocks }, 0).then(
             result => {
               const reason = object(result) && typeof result.stopReason === 'string' ? result.stopReason : 'end_turn'
               // turn.cancelled(我们自己叫停的)优先于 reason 本身怎么说:agent 的回复完全可能在

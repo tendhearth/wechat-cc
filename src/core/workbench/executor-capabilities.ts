@@ -35,10 +35,11 @@ export const UNATTENDED_CAPABILITIES: WorkbenchExecutorCapabilities = Object.fre
 })
 
 /** 走 ACP 的执行者(cursor-agent acp):命令逐次进权限卡,但工作区内的文件编辑由 CLI 直接执行(spike 2026-09-17);
- *  按 session/load 恢复;不收附件、不认执行设置、无模型目录。 */
+ *  按 session/load 恢复;收附件(图片进 prompt,其余给路径,见 acp-agent-provider.ts 的 acpPromptBlocks);
+ *  不认执行设置、无模型目录。 */
 export const ACP_CAPABILITIES: WorkbenchExecutorCapabilities = Object.freeze({
   version:1,permissions:'task',configuration:'task-policy',completion:'native',stop:'confirmed',background:'disabled',
-  features:Object.freeze({nativeResume:true,attachments:false,executionSettings:false,modelCatalog:false}),
+  features:Object.freeze({nativeResume:true,attachments:true,executionSettings:false,modelCatalog:false}),
 })
 
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value)

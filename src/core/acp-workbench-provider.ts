@@ -5,5 +5,5 @@ import { createAcpProvider, type AcpProviderBaseOptions } from './acp-agent-prov
 export type AcpWorkbenchProviderOptions = AcpProviderBaseOptions
 export { acpNotice } from './acp-agent-provider'
 export function createAcpWorkbenchProvider(options: AcpWorkbenchProviderOptions): AgentProvider {
-  return createAcpProvider({ ...options, permissions: 'bridge', text: 'append' })
+  return createAcpProvider({ ...options, permissions: 'bridge', text: 'append', attachments: 'prompt' })
 }

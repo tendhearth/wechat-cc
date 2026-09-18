@@ -3,7 +3,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentEvent, AgentSession, SpawnContext } from './agent-provider'
 import { TIER_PROFILES } from './user-tier'
-import { createAcpProvider, type AcpProviderOptions } from './acp-agent-provider'
+import { acpPromptBlocks, createAcpProvider, type AcpProviderOptions } from './acp-agent-provider'
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn(), kill: vi.fn() }))
 vi.mock('node:child_process', () => ({ spawn: mocks.spawn }))
@@ -263,5 +263,40 @@ describe('ACP provider — review fixes', () => {
     await done
     expect(events.some(e => e.kind === 'text')).toBe(false)
     expect(events.at(-1)).toEqual({ kind: 'error', message: 'acp_turn_cancelled' })
+  })
+})
+
+describe('attachments into the prompt', () => {
+  const png = { name: 'a.png', mime: 'image/png', path: '/store/a.png', sha256: 'f'.repeat(64), data: 'iVBORw0KGgo=' }
+  const pdf = { name: 'b.pdf', mime: 'application/pdf', path: '/store/b.pdf', sha256: 'e'.repeat(64), data: 'JVBERi0=' }
+  it('acpPromptBlocks: text first, images as image blocks, others as reference text blocks; no empty text block', () => {
+    expect(acpPromptBlocks('看图', [png, pdf], true)).toEqual([
+      { type: 'text', text: '看图' },
+      { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=' },
+      { type: 'text', text: 'Attached task file (reference material; read with a file tool if needed):\n' + JSON.stringify({ name: 'b.pdf', mime: 'application/pdf', path: '/store/b.pdf', sha256: 'e'.repeat(64) }) },
+    ])
+    expect(acpPromptBlocks('', [png], true)).toEqual([{ type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=' }])
+    expect(acpPromptBlocks('只有字', undefined, false)).toEqual([{ type: 'text', text: '只有字' }])
+    expect(JSON.stringify(acpPromptBlocks('x', [pdf], true))).not.toContain('JVBERi0=')
+  })
+  it('acpPromptBlocks: refuses unsupported image mimes, agents without image capability, and images without bytes', () => {
+    expect(() => acpPromptBlocks('x', [{ ...png, mime: 'image/bmp' }], true)).toThrow('attachment_image_unsupported')
+    expect(() => acpPromptBlocks('x', [png], false)).toThrow('acp_attachment_image_unsupported')
+    expect(() => acpPromptBlocks('x', [{ ...png, data: undefined }], true)).toThrow('attachment_data_missing')
+  })
+  it('prompt mode sends image blocks in session/prompt; refuse mode (default) still throws', async () => {
+    const { session, child } = await start({}, c => { c.initializeResult = { protocolVersion: 1, agentCapabilities: { loadSession: true }, promptCapabilities: { image: true } } }, { attachments: 'prompt', text: 'append', permissions: 'bridge' })
+    const { done } = collect(session, '看图')
+    await prompted(child)
+    expect(child.sent.findLast(m => m.method === 'session/prompt')!.params.prompt).toEqual([{ type: 'text', text: 'task instructions\n\n---\n\n看图' }])
+    child.finishPrompt(); await done
+    const second = (async () => { for await (const _ of session.dispatch('再看', [png])) { /* noop */ } })()
+    await prompted(child, 2)
+    expect(child.sent.findLast(m => m.method === 'session/prompt')!.params.prompt).toEqual([{ type: 'text', text: '再看' }, { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=' }])
+    child.finishPrompt(); await second
+    const noImage = await start({}, c => { c.initializeResult = { protocolVersion: 1, agentCapabilities: { loadSession: true }, promptCapabilities: { image: false } } }, { attachments: 'prompt', text: 'append', permissions: 'bridge' })
+    await expect(async () => { for await (const _ of noImage.session.dispatch('x', [png])) { /* noop */ } }).rejects.toThrow('acp_attachment_image_unsupported')
+    const refuse = await start()
+    await expect(async () => { for await (const _ of refuse.session.dispatch('x', [png])) { /* noop */ } }).rejects.toThrow('acp_attachments_unsupported')
   })
 })

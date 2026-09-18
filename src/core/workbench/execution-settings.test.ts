@@ -142,4 +142,9 @@ describe('ACP failure copy', () => {
     // 没登记过的 acp_* 仍原样露出机器码 —— 说明这张表漏了一条,不假装有文案。
     expect(executionFailureMessage('acp_unknown_code')).toBe('acp_unknown_code')
   })
+  it('adds copy for the three attachment-into-prompt failure codes', () => {
+    expect(executionFailureMessage('acp_attachment_image_unsupported')).toContain('这个版本的 Cursor')
+    expect(executionFailureMessage('attachment_image_unsupported')).toContain('PNG')
+    expect(executionFailureMessage('attachment_data_missing')).toContain('重新添加')
+  })
 })

@@ -341,10 +341,14 @@ describe('ACP workbench provider', () => {
     expect(mocks.kill).toHaveBeenCalledWith(-stubborn.child.pid, 'SIGKILL')
     stubborn.child.exit(0)
   })
-  it('refuses attachments, overlapping turns and win32', async () => {
-    const { session, child } = await start()
-    await expect(async () => { for await (const _ of session.dispatch('x', [{ name: 'a', mime: 'text/plain', path: '/a', sha256: 'f' }])) { /* noop */ } }).rejects.toThrow('acp_attachments_unsupported')
-    const first = collect(session); await prompted(child)
+  it('accepts an image attachment, refuses overlapping turns and win32', async () => {
+    const { session, child } = await start({}, c => { c.initializeResult = { protocolVersion: 1, agentCapabilities: { loadSession: true }, promptCapabilities: { image: true } } })
+    const png = { name: 'a.png', mime: 'image/png', path: '/store/a.png', sha256: 'f'.repeat(64), data: 'iVBORw0KGgo=' }
+    const attached = (async () => { for await (const _ of session.dispatch('x', [png])) { /* noop */ } })()
+    await prompted(child)
+    expect(child.sent.findLast(m => m.method === 'session/prompt')!.params.prompt[1]).toEqual({ type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=' })
+    child.finishPrompt(); await attached
+    const first = collect(session); await prompted(child, 2)
     await expect(async () => { for await (const _ of session.dispatch('overlap')) { /* noop */ } }).rejects.toThrow('acp_turn_already_running')
     child.finishPrompt(); await first.done
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })

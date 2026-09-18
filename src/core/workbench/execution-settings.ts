@@ -13,6 +13,8 @@ export function executionFailureMessage(code:string):string {
     execution_image_unsupported:'所选模型不接收图片，请更换支持图片的模型，或移除图片。',
     model_catalog_invalid:'暂时无法读取模型，请重新读取后再选择；也可以使用自动。',
     model_catalog_unavailable:'暂时无法读取模型，请重新读取后再选择；也可以使用自动。',
+    attachment_image_unsupported:'附件图片格式不受支持（只收 PNG / JPEG / GIF / WebP）。',
+    attachment_data_missing:'附件内容已变化或无法安全读取，请重新添加后再试。',
     api_task_attachment_unsupported:'这个 API 执行者暂不支持 PDF 或其他二进制附件。请改用文字、CSV、JSON 或图片。',
     api_task_attachment_invalid:'附件内容已变化或无法安全读取，请重新添加后再试。',
     api_task_input_invalid:'任务内容或附件超出 API 执行者的处理范围，请缩短内容或减少附件。',
@@ -46,6 +48,7 @@ export function executionFailureMessage(code:string):string {
     ['acp_rpc_timeout', 'Cursor 长时间没有响应，任务已停止；请检查 cursor-agent 是否正常后重试。'],
     ['acp_turn_already_running', 'Cursor 正在处理上一轮，请等它答复后再发。'],
     ['acp_attachments_unsupported', 'Cursor 执行者暂不支持附件，请移除附件后再试。'],
+    ['acp_attachment_image_unsupported', '这个版本的 Cursor 不接收图片附件，请移除图片，或改用 Claude / Codex。'],
   ]
   for (const [prefix, text] of acp) if (code === prefix || code.startsWith(`${prefix}:`)) return text
   return messages[code]??code

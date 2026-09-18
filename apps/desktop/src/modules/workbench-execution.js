@@ -26,6 +26,8 @@ export function executionErrorMessage(error){
   execution_image_unsupported:'所选模型不接收图片，请更换支持图片的模型，或移除图片。',
   model_catalog_invalid:'暂时无法读取模型，请重新读取后再选择；也可以使用自动。',
   model_catalog_unavailable:'暂时无法读取模型，请重新读取后再选择；也可以使用自动。',
+  attachment_image_unsupported:'附件图片格式不受支持（只收 PNG / JPEG / GIF / WebP）。',
+  attachment_data_missing:'附件内容已变化或无法安全读取，请重新添加后再试。',
   workbench_attachments_unsupported:'这个执行者暂不支持工作任务附件。请移除附件，或改用支持附件的执行者。',
   workbench_execution_unsupported:'这个执行者暂不支持所选执行设置。请改用自动设置，或选择其他执行者。',
   workbench_resume_unsupported:'这个执行者无法安全恢复原会话。请在桌面查看恢复说明，并决定是否带记录重新开始。',
@@ -63,6 +65,7 @@ export function executionErrorMessage(error){
   ['acp_rpc_timeout','Cursor 长时间没有响应，任务已停止；请检查 cursor-agent 是否正常后重试。'],
   ['acp_turn_already_running','Cursor 正在处理上一轮，请等它答复后再发。'],
   ['acp_attachments_unsupported','Cursor 执行者暂不支持附件，请移除附件后再试。'],
+  ['acp_attachment_image_unsupported','这个版本的 Cursor 不接收图片附件，请移除图片，或改用 Claude / Codex。'],
  ])
  for(const [prefix,text] of acp) if(code===prefix||code.startsWith(`${prefix}:`)) return text
  return messages[code]??null

@@ -84,11 +84,11 @@ describe('免审执行者能力', () => {
 })
 
 describe('ACP executor capabilities', () => {
-  it('is a task-permission executor without attachments, execution settings or model catalog, resumable natively', () => {
+  it('is a task-permission executor with attachments but without execution settings or model catalog, resumable natively', () => {
     expect(isWorkbenchExecutorCapabilities(ACP_CAPABILITIES)).toBe(true)
     expect(isUnattendedExecutor(ACP_CAPABILITIES)).toBe(false)
     expect(canResumeWorkbenchExecutor(ACP_CAPABILITIES)).toBe(true)
-    expect(() => requireWorkbenchInput(ACP_CAPABILITIES, { ...input, attachments: [{}] })).toThrow('workbench_attachments_unsupported')
+    expect(() => requireWorkbenchInput(ACP_CAPABILITIES, { ...input, attachments: [{}] })).not.toThrow()
     expect(() => requireWorkbenchInput(ACP_CAPABILITIES, { attachments: [], execution: { defaults: 'native', model: null, reasoningEffort: null } })).toThrow('workbench_execution_unsupported')
     expect(() => requireWorkbenchInput(ACP_CAPABILITIES, { ...input, resume: true })).not.toThrow()
   })
