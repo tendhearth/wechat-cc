@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import {
   formatSelftestReport,
   redSquarePng,
@@ -150,7 +150,7 @@ describe('runWorkbenchSelftest', () => {
       fs: {
         mkdir: () => {},
         write: () => {},
-        read: (p) => (p.endsWith('/hello.txt') ? 'hello' : null),
+        read: (p) => (basename(p) === 'hello.txt' ? 'hello' : null),
         rm: (p) => { rmCalls.push(p) },
       },
     })
@@ -234,7 +234,7 @@ describe('runWorkbenchSelftest', () => {
     const deps = baseDeps({
       fetch: api.fetchImpl,
       now: () => 7000,
-      fs: { mkdir: () => {}, write: () => {}, read: (p) => (p.endsWith('/hello.txt') ? 'hello' : null), rm: () => {} },
+      fs: { mkdir: () => {}, write: () => {}, read: (p) => (basename(p) === 'hello.txt' ? 'hello' : null), rm: () => {} },
     })
 
     const report = await runWorkbenchSelftest(deps, { executor: 'claude', resume: true })
@@ -321,7 +321,7 @@ describe('runWorkbenchSelftest', () => {
     const rmCalls: string[] = []
     const deps = baseDeps({
       fetch: api.fetchImpl,
-      fs: { mkdir: () => {}, write: () => {}, read: (p) => (p.endsWith('/hello.txt') ? 'hello' : null), rm: (p) => { rmCalls.push(p) } },
+      fs: { mkdir: () => {}, write: () => {}, read: (p) => (basename(p) === 'hello.txt' ? 'hello' : null), rm: (p) => { rmCalls.push(p) } },
     })
 
     const report = await runWorkbenchSelftest(deps, { executor: 'claude' })
