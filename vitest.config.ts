@@ -16,6 +16,7 @@ export default defineConfig({
         'src/core/workbench/codex-app-server.test.ts',
         // ACP 执行者(cursor-agent acp)同样在 win32 第一行就拒绝,套件在 Windows 上只会等 spawn 超时。
         'src/core/acp-workbench-provider.test.ts',
+        'src/core/acp-agent-provider.test.ts',
         'src/core/workbench/codex-history-rpc.test.ts',
         'src/core/claude-workbench-runtime.test.ts',
         'src/core/workbench/artifacts.test.ts',
