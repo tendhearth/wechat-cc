@@ -106,6 +106,20 @@ describe('messages mode (chat side)', () => {
     const a = createAcpTranslator(); a.beginTurn(); a.update(chunk('x'))
     expect(a.endTurn()).toEqual([])
   })
+  it('an invisible think tool_call does not flush the buffer — the assistant message stays one message', () => {
+    const t = createAcpTranslator({ text: 'messages' }); t.beginTurn()
+    t.update(chunk('先')); t.update(chunk('想'))
+    expect(t.update(call({ toolCallId: 'think-1', kind: 'think' }))).toEqual([])
+    t.update(chunk('完了'))
+    // 一条完整的话,不是被 think 斩成的两条。
+    expect(t.endTurn()).toEqual([{ kind: 'text', text: '先想完了' }])
+  })
+  it('append mode: a think tool_call does not roll the synthesized itemId either (no visible event ⇒ no split)', () => {
+    const t = createAcpTranslator(); t.beginTurn()
+    expect(t.update(chunk('a'))[0]).toMatchObject({ itemId: 'acp:turn:1:0' })
+    expect(t.update(call({ toolCallId: 'think-1', kind: 'think' }))).toEqual([])
+    expect(t.update(chunk('b'))[0]).toMatchObject({ itemId: 'acp:turn:1:0' })
+  })
   it('beginTurn drops a stale buffer from a previous turn', () => {
     const t = createAcpTranslator({ text: 'messages' }); t.beginTurn(); t.update(chunk('old')); t.beginTurn()
     expect(t.endTurn()).toEqual([])

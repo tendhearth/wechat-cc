@@ -37,11 +37,16 @@ import { log } from '../lib/log'
 // tests still reference it.
 export const CURSOR_CAPABILITIES: ProviderCapabilities = {
   perToolCallback: false,
-  // The SDK provider (createCursorAgentProvider below) has no per-session
-  // MCP tier threading of its own — its mcpServers are a flat, boot-time
-  // object (see registerProviders' `cursorKey` branch in providers.ts), so
-  // SESSION_IS_ADMIN is always false there and admin-only tools (incl. the
-  // social-tools family) never register even when the owner is chatting.
+  // What the code below actually does: createCursorAgentProvider merges the
+  // spawn's `mcpEnv` (session token + tier) into the CORE MCP children per
+  // session — `mergeEnvIntoMcpServers(opts.mcpServers, sessionEnv,
+  // CORE_MCP_SERVER_NAMES)`, the same seam claude/codex use. The boot-time
+  // `opts.mcpServers` object is only the template; the env is per-session.
+  // So there is no privilege hole in leaving this `false` — it is simply not
+  // the row production reads. `capability-matrix.ts` maps the `cursor`
+  // provider id to ACP_CURSOR_CAPABILITIES (noted above), and that row is
+  // `adminMcpTools: true` for the same reason. Kept conservative here
+  // because this constant is only referenced by this file's own tests.
   adminMcpTools: false,
   sandboxLevels: new Set(['workspace-write', 'full']),
   supportsDelegation: false,

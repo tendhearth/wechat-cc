@@ -78,6 +78,30 @@ describe('/v1/model — per-provider', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 
+  // 光放掉活 session 不够:下一次 spawn 会 resume 回存档里的会话,而续接的会话
+  // 沿用它开张时的模型(ACP session/load 不带模型)⇒ 换模型在续接的对话上是空操作。
+  it('POST also drops that provider\'s resume rows so the next spawn cold-starts and pins the new model', async () => {
+    const dir = stateDirWith({ provider: 'cursor', cursorModel: 'composer-1' })
+    try {
+      const forgetProviderSessions = vi.fn(() => 3)
+      const r = routesWith({ stateDir: dir, listSessions: () => [], releaseSession: vi.fn(async () => {}), forgetProviderSessions })
+      const res = await r['POST /v1/model']!(new URLSearchParams(), { model: 'composer-2', provider: 'cursor' })
+      expect(forgetProviderSessions).toHaveBeenCalledWith('cursor')
+      expect(res.body).toMatchObject({ ok: true, provider: 'cursor', forgotten: 3 })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('a throwing / unwired resume-archive dropper never fails the model switch', async () => {
+    const dir = stateDirWith({ provider: 'claude', model: 'claude-opus-4-8' })
+    try {
+      const r = routesWith({ stateDir: dir, forgetProviderSessions: () => { throw new Error('db gone') } })
+      const res = await r['POST /v1/model']!(new URLSearchParams(), { model: 'claude-opus-5', provider: 'claude' })
+      expect(res.body).toMatchObject({ ok: true, forgotten: 0 })
+      const unwired = routesWith({ stateDir: dir })
+      expect((await unwired['POST /v1/model']!(new URLSearchParams(), { model: 'claude-opus-5', provider: 'claude' })).body).toMatchObject({ ok: true, forgotten: 0 })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
   it('still rejects bare family aliases (no digit) — `opus` would 404 every turn', async () => {
     const dir = stateDirWith({ provider: 'claude', model: 'claude-opus-4-8' })
     try {

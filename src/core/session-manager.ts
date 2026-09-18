@@ -316,7 +316,12 @@ export class SessionManager {
     // internal LRU/idle/shutdown eviction). The token key matches what the
     // coordinator minted: provider/alias/chatId (NOT the cache `sessionKey`).
     this.opts.invalidateSessionToken?.(`${k.providerId}/${k.alias}/${k.chatId}`)
-    await s.handle.close()
+    // close() 会抛(ACP provider 等不到进程组退出就抛 acp_process_not_exited)。release 的调用方
+    // 里有三个是没人接的内部清扫:sweepIdle / enforceCapacity / shutdown —— 一个杀不干净的子进程
+    // 就能把整轮清扫掀掉(后面的会话不再释放、容量上限失守、关机卡住)。会话已经从表里摘掉了,
+    // 记一行继续走:泄漏一个进程,好过泄漏其余所有会话。
+    try { await s.handle.close() }
+    catch (err) { log('SESSION_CLOSE_FAILED', `alias=${k.alias} provider=${k.providerId} chat=${k.chatId} — ${err instanceof Error ? err.message : String(err)}`) }
     this.closingPaths.delete(key)
   }
 

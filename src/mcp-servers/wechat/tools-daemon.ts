@@ -102,7 +102,7 @@ export function registerDaemonTools(server: McpServer, client: InternalApiClient
     'model_set',
     {
       title: 'Switch model',
-      description: '【管理员】切换固定的 agent 模型（写入 agent-config.json）。默认改你自己这个 provider 的模型;传 provider 可改别家。写完会释放该 provider 的活会话,主人下一句就跑在新模型上(claude/agy/openai 不用重启;codex/cursor 要重启 daemon)。返回写入后的 model + 释放数作为核对。传完整带版本号的 id（如 claude-opus-5 / claude-opus-4-8），不要传裸别名（opus/sonnet）。',
+      description: '【管理员】切换固定的 agent 模型（写入 agent-config.json）。默认改你自己这个 provider 的模型;传 provider 可改别家。写完会释放该 provider 的活会话、并清掉它的会话存档,主人下一句就跑在新模型上(claude/agy/openai 不用重启;cursor 下一段对话就生效(原会话上下文不再续接);codex 要重启 daemon)。返回写入后的 model + 释放数作为核对。传完整带版本号的 id（如 claude-opus-5 / claude-opus-4-8），不要传裸别名（opus/sonnet）。',
       inputSchema: {
         model: z.string().min(1).describe('完整模型 id，如 claude-opus-5 / claude-sonnet-4-6 / DeepSeek'),
         provider: z.string().optional().describe('claude / codex / cursor / openai / gemini / agy;省略 = 你自己'),

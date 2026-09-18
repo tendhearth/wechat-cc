@@ -21,6 +21,10 @@ export const ACP_CURSOR_CAPABILITIES: ProviderCapabilities = {
   sandboxLevels: new Set(),
   supportsDelegation: false,
   supportsResume: true,
+  // Cursor 自己的工具面按 permissionMode 就地判(acp-agent-provider 的 permissions:'mode'),
+  // tierProfile 根本到不了它;更要命的是工作区内的文件编辑压根不发 session/request_permission
+  // (2026-09-17 真机 spike 第 2 条)—— 访客的权限约束不到它,所以 guest 一律拒。
+  guestSafe: false,
   defaultPeer: 'claude',
   authFailHint: 'cursor 登录态失效,请在电脑上跑一次 `cursor-agent login` 重新登录后再发消息。',
 }

@@ -210,9 +210,14 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       },
       gemini: { has_key: deps.llm?.hasKey('gemini') ?? false },
       cheap: cfg.cheapEvalProvider ?? 'auto',
-      // 非管理员可用哪些(null = 全部);shared_token = 共享钥匙、guest 永不开放
+      // 非管理员可用哪些(null = 全部)。两张单子不是一回事:
+      //  - shared_token:共享一把 trusted 钥匙(adminMcpTools=false)⇒ 面板上的 🔑 徽章;
+      //  - guest_blocked:guest 一律拒的(共享钥匙的 + 约束不住自己工具面的 guestSafe:false,
+      //    如走 ACP 的 cursor)⇒ 面板上"访客不可用"那句。cursor 不是共享钥匙,所以没有 🔑,
+      //    但访客照样用不了 —— 两条规矩(core/provider-policy.ts)对得上。
       trusted_providers: cfg.trusted_providers ?? null,
       shared_token: PANEL_PROVIDERS.filter(id => { try { return !capabilitiesFor(id).adminMcpTools } catch { return false } }),
+      guest_blocked: PANEL_PROVIDERS.filter(id => { try { const c = capabilitiesFor(id); return c.guestSafe === false || !c.adminMcpTools } catch { return false } }),
     }
   }
 

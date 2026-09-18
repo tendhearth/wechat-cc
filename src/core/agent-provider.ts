@@ -331,6 +331,11 @@ export interface ProviderCapabilities {
   supportsDelegation: boolean
   /** Can resume an existing session id across daemon restarts. */
   supportsResume: boolean
+  /** false ⇒ 该 provider 无法按 tier 约束自己的工具(如 ACP 的工作区编辑不经权限卡),guest 一律拒。
+   *  与 `adminMcpTools` 是两件事:那条说的是"MCP 子进程拿到的是不是本会话的 tier",
+   *  这条说的是"provider 自带的工具(Cursor 自己的读写/执行)有没有一道按 tier 收紧的门"。
+   *  缺省(未声明)= true:老 provider 的工具面要么走 daemon 的权限桥,要么由 SDK 的 sandbox 收着。 */
+  guestSafe?: boolean
 }
 
 export interface AgentProvider {

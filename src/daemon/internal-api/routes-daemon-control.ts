@@ -61,10 +61,12 @@ export function daemonControlRoutes(deps: InternalApiDeps): RouteTable {
       return { status: 200, body: { provider: cfg.provider, model: activeModel(cfg) ?? null } }
     },
 
-    // Admin remediation — switch the pinned model. For claude this takes effect
-    // on the next session spawn per chat (mtime-cached reader); for codex/cursor
-    // it persists but is applied at provider construction, so it needs a daemon
-    // restart to take effect. Returns the persisted model as a read-back.
+    // Admin remediation — switch the pinned model. Takes effect on the next
+    // session spawn per chat: the live sessions of that provider are released
+    // AND their resume rows dropped, so the next spawn is a cold start that
+    // pins the new model (codex still applies its own model at provider
+    // construction, so it keeps needing a daemon restart). Returns the
+    // persisted model plus `released` / `forgotten` counts as a read-back.
     'POST /v1/model': async (_q, body) => {
       const b = (body ?? {}) as { model?: unknown; provider?: unknown }
       if (typeof b.model !== 'string' || b.model.trim() === '') {
@@ -109,9 +111,17 @@ export function daemonControlRoutes(deps: InternalApiDeps): RouteTable {
           try { await deps.releaseSession({ alias: s.alias, providerId: s.providerId, chatId: s.chatId }); released++ } catch { /* best effort */ }
         }
       }
+      // 放掉活 session 还不够:会话存档(sessions 表,7 天)会让下一次 spawn 走 resume,
+      // 而 resume 出来的会话沿用它开张时的模型(ACP session/load 不带模型,claude/codex
+      // 接的是同一条线)—— 于是"换了模型"在续接的对话上是个空操作。把该 provider 的存档
+      // 行删掉,下一次 spawn 冷启动,模型才真的钉得上。代价是那些对话的上下文不再续接。
+      let forgotten = 0
+      if (deps.forgetProviderSessions) {
+        try { forgotten = deps.forgetProviderSessions(effectiveProvider) } catch { /* best effort */ }
+      }
       // Read back from the just-persisted value (saveAgentConfig throws on write
       // failure, so reaching here means it landed) — no second disk round-trip.
-      return { status: 200, body: { ok: true, provider: effectiveProvider, model: (provider !== undefined ? modelForProvider(updated, provider) : activeModel(updated)) ?? null, released } }
+      return { status: 200, body: { ok: true, provider: effectiveProvider, model: (provider !== undefined ? modelForProvider(updated, provider) : activeModel(updated)) ?? null, released, forgotten } }
     },
 
     // Admin remediation — graceful daemon restart. The trigger schedules the

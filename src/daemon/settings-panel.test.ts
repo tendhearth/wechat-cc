@@ -496,8 +496,11 @@ describe('settings panel — 模型与后端', () => {
       expect(m.trusted_providers).toEqual(['claude', 'openai'])
       // cursor moved to ACP (2026-09-18, acp-cursor-chat.ts) — its MCP child
       // is injected per session/new with the real tier now, so it's no
-      // longer a shared-token provider like agy.
+      // longer a shared-token provider like agy: no 🔑 badge.
       expect([...m.shared_token].sort()).toEqual(['agy'])
+      // …but a guest still can't use it: ACP Cursor edits the workspace without
+      // a permission card (guestSafe:false), so it joins the "访客不可用" list.
+      expect([...m.guest_blocked].sort()).toEqual(['agy', 'cursor'])
     } finally { cleanup() }
   })
 

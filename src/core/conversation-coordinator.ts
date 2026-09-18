@@ -545,16 +545,17 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     // access.json with no re-validation. Both land here — refuse to spawn
     // rather than trust the mode row's vintage. Raw resolveTier (NOT
     // resolveEffectiveTier) on purpose: --dangerously⇒admin must not unlock
-    // a shared-token provider for a guest (agy/cursor: one long-lived
-    // 'trusted' token for every conversation — agy-mcp-config.ts /
-    // cursor-mcp-config.ts). Originally agy-only ("agy final-review Important
-    // 2"); cursor-CLI has the exact same shape and had no gate.
+    // a provider a guest may not use: agy (one long-lived 'trusted' token for
+    // every conversation — agy-mcp-config.ts) or cursor (ACP: its own file
+    // edits inside the workspace never surface a permission card, so a guest's
+    // tier cannot confine it — ProviderCapabilities.guestSafe === false).
+    // Originally agy-only ("agy final-review Important 2").
     {
       const rawTier = resolveTier(msg.chatId, deps.loadAccess())
       const denial = providerDenialFor(providerId, rawTier, deps.trustedProviders?.())
       if (denial) {
         deps.log('COORDINATOR', `chat=${msg.chatId} refuse solo+${providerId} dispatch: ${denial.kind} tier=${rawTier} (dispatch-time gate)`, {
-          event: denial.kind === 'shared_token_guest' ? 'shared_token_guest_refused' : 'provider_not_allowed_refused',
+          event: denial.kind === 'shared_token_guest' ? 'shared_token_guest_refused' : denial.kind === 'unconfined_guest' ? 'unconfined_guest_refused' : 'provider_not_allowed_refused',
           chat_id: msg.chatId,
           provider: providerId,
         })

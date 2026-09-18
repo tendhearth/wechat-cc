@@ -227,6 +227,26 @@ describe('SessionManager', () => {
     await mgr.shutdown()
   })
 
+  it('a session whose close() throws does not break release — the entry is gone and the sweep keeps going', async () => {
+    // ACP provider 的 close() 等不到进程组退出就抛 acp_process_not_exited;sweepIdle /
+    // enforceCapacity / shutdown 都是 bare await,一个杀不干净的进程会掀掉整轮清扫。
+    const angry = () => ({
+      dispatch: () => ({ async *[Symbol.asyncIterator]() {} }),
+      async cancel() {},
+      async close() { throw new Error('acp_process_not_exited') },
+    })
+    const spawn = vi.fn(async () => angry() as unknown as Awaited<ReturnType<AgentProvider['spawn']>>)
+    const mgr = new SessionManager({ maxConcurrent: 8, idleEvictMs: 60_000, registry: registryWithProvider({ spawn } as unknown as AgentProvider) })
+    const base = { path: '/p', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' as const }
+    await mgr.acquire({ alias: 'a', providerId: 'claude', chatId: 'c1', ...base })
+    await mgr.acquire({ alias: 'b', providerId: 'claude', chatId: 'c1', ...base })
+    await expect(mgr.release({ alias: 'a', providerId: 'claude', chatId: 'c1' })).resolves.toBeUndefined()
+    expect(mgr.has({ alias: 'a', providerId: 'claude', chatId: 'c1' })).toBe(false)
+    // 整轮清扫不被一个抛错的 close 掀掉:第二个会话照样释放。
+    await expect(mgr.shutdown()).resolves.toBeUndefined()
+    expect(mgr.list()).toEqual([])
+  })
+
   it('has(key) reflects the live cache (false before acquire, true after, false after release)', async () => {
     const spawn = vi.fn(async () => makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }] }))
     const mgr = new SessionManager({ maxConcurrent: 4, idleEvictMs: 60_000, registry: registryWithProvider({ spawn } as unknown as AgentProvider) })
@@ -761,6 +781,11 @@ describe('SessionManager', () => {
         }),
         deleteOne: vi.fn(({ alias, provider, chatId }: { alias: string; provider: string; chatId: string }) => {
           data.delete(k(alias, provider, chatId))
+        }),
+        deleteProvider: vi.fn((provider: string) => {
+          let n = 0
+          for (const [mapKey, rec] of data) if (rec.provider === provider) { data.delete(mapKey); n++ }
+          return n
         }),
         all: () => Object.fromEntries(data),
         flush: async () => {},

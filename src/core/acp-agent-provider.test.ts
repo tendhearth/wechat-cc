@@ -220,6 +220,40 @@ describe('ACP provider — review fixes', () => {
     expect(log).toHaveBeenCalledWith('ACP', expect.stringContaining('undisplayable'))
     child.finishPrompt(); await done
   })
+  it('identifies itself as wechat-cc/CC, not as the workbench (对话侧也走这条路)', async () => {
+    const { child } = await start()
+    expect(child.sent.find(m => m.method === 'initialize')!.params.clientInfo).toEqual({ name: 'wechat-cc', title: 'CC', version: '0.6.4' })
+  })
+  it('a process death mid-turn still delivers the assistant text buffered in messages mode, then the error', async () => {
+    const { session, child } = await start()
+    const { events, done } = collect(session); await prompted(child)
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '说完了' } })
+    await expect.poll(() => events.length).toBe(1)   // init only — messages 模式还攒着
+    child.exit(1)
+    await done
+    // 进程死了不等于这句话没说过:先吐攒着的,再报错。
+    expect(events.map(e => e.kind)).toEqual(['init', 'text', 'error'])
+    expect(events[1]).toEqual({ kind: 'text', text: '说完了' })
+    expect(events[2]).toEqual({ kind: 'error', message: 'acp_process_exited: 1' })
+  })
+  it('a foreign-session update replayed during session/load does not spend the one-line log budget', async () => {
+    const log = vi.fn()
+    let restore: (() => void) | undefined
+    const { child } = await start({ resumeSessionId: 'gone' }, c => {
+      c.loadResult = { error: { code: -32602, message: 'unknown session' } }
+      c.newResult = { sessionId: 'sess-fresh' }
+      // session/load 的历史重播:真机上它带的是被加载会话的 id,这里改成别的 id,
+      // 就是"载入期间来了一条不属于当前会话的 update"——预期之中,不该记日志。
+      const original = c.notify.bind(c)
+      c.notify = (method: string, params: unknown) => original(method, method === 'session/update' ? { ...(params as Record<string, unknown>), sessionId: 'someone-else' } : params)
+      restore = () => { c.notify = original }
+    }, { resume: 'fallback', log })
+    restore?.()
+    expect(log.mock.calls.filter(([, line]) => String(line).includes('foreign sessionId'))).toEqual([])
+    // 额度没被花掉:会话跑起来之后真的来一条外来 update,还记得下。
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'x' } }, 'someone-else')
+    await expect.poll(() => log.mock.calls.some(([, line]) => String(line).includes('foreign sessionId'))).toBe(true)
+  })
   it('a locally cancelled turn never flushes the buffered messages-mode text, even if the reply says end_turn', async () => {
     const { session, child } = await start()
     const { events, done } = collect(session); await prompted(child)

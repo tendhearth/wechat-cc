@@ -383,6 +383,17 @@ export interface InternalApiDeps {
    */
   releaseSession?: (k: { alias: string; providerId: string; chatId: string }) => Promise<void>
   /**
+   * Optional resume-archive dropper — backs the model-switch path in
+   * POST /v1/model (and therefore the `model_set` MCP tool). Releasing the
+   * live sessions only drops the running subprocess; the next spawn would
+   * resume from a stored session id and keep the OLD model (a resumed
+   * session carries no model — ACP `session/load`, Claude/Codex thread
+   * resume). Deleting this provider's rows makes that next spawn a cold
+   * start, which is the only place the model actually gets pinned.
+   * Returns how many rows were dropped. A thunk over bootRef.sessionStore.
+   */
+  forgetProviderSessions?: (providerId: string) => number
+  /**
    * Optional restart trigger — backs POST /v1/daemon/restart. main.ts schedules
    * a graceful shutdown + process.exit shortly after (so the HTTP response
    * flushes first); launchd/systemd KeepAlive respawns. 503 when unwired.

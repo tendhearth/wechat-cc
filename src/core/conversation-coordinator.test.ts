@@ -2759,12 +2759,19 @@ describe('dispatch-time provider policy + cold-start block', () => {
     expect(acquire).not.toHaveBeenCalled()
     expect(sendAssistantText).toHaveBeenCalledWith('chat-1', expect.stringContaining('/agy 目前仅管理员/信任聊天可用'))
   })
-  it('persisted solo+cursor + guest chat: dispatches normally — 2026-09-18 chat-side Cursor moved to ACP (per-session MCP tier, acp-cursor-chat.ts), no longer a shared-token hazard like agy', async () => {
+  it('persisted solo+cursor + guest chat: refused at dispatch — ACP Cursor edits the workspace without a permission card, so a guest tier cannot confine it (guestSafe:false)', async () => {
     const { c, store, acquire, sendAssistantText } = setupWith(guest)
     store.set('chat-1', { kind: 'solo', provider: 'cursor' })
     await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledWith('chat-1', expect.stringContaining('Cursor 对访客不开放'))
+  })
+  it('persisted solo+cursor + trusted chat: dispatches normally (only guest is gated)', async () => {
+    const { c, store, acquire, sendAssistantText } = setupWith(trusted)
+    store.set('chat-1', { kind: 'solo', provider: 'cursor' })
+    await c.dispatch(inbound('chat-1', 'hi'))
     expect(acquire).toHaveBeenCalledTimes(1)
-    expect(sendAssistantText).not.toHaveBeenCalledWith('chat-1', expect.stringContaining('目前仅管理员/信任聊天可用'))
+    expect(sendAssistantText).not.toHaveBeenCalledWith('chat-1', expect.stringContaining('对访客不开放'))
   })
   it('trusted chat on a provider outside the admin allowlist is refused; inside dispatches', async () => {
     const { c, store, acquire, sendAssistantText } = setupWith(trusted, { trustedProviders: () => ['claude'] })

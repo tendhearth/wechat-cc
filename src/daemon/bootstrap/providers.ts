@@ -393,7 +393,12 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // bootstrap — tests opt in via `cursorAgentBin` in seeded agent-config.
   const cursorAgentBin = configuredAgent.cursorAgentBin ?? (UNDER_TEST_RUNNER ? null : findOnPath('cursor-agent'))
   let cursorCliRegistered = false
-  if (cursorAgentBin && probeBinaryVersion(cursorAgentBin) !== null) {
+  // ACP provider 的 close() 靠杀进程组收尾,Windows 上那条路没验过(acp-agent-provider.ts
+  // spawn 时会直接抛)。注册了等于每一轮对话都撞一次那句抛错 —— 不如干脆不注册,
+  // 让下面的 SDK 兜底照旧判断(有 CURSOR_API_KEY 就走 SDK,没有就是"未注册")。
+  if (cursorAgentBin && process.platform === 'win32') {
+    deps.log('BOOT', 'cursor: ACP 对话 provider 暂不支持 Windows(进程组清理未验证),未注册')
+  } else if (cursorAgentBin && probeBinaryVersion(cursorAgentBin) !== null) {
     try {
       const { createAcpCursorChatProvider, DEFAULT_CURSOR_MODEL } = await import('../../core/acp-cursor-chat')
       // 上一版往 ~/.cursor/mcp.json 塞过一把静态 trusted 钥匙(tier C);对话侧走 ACP 后 MCP 按会话注入,

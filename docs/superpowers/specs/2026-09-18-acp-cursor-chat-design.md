@@ -143,3 +143,7 @@ export function createAcpCursorChatProvider(o: AcpCursorChatOptions): AgentProvi
 
 - 2026-09-18:初稿。
 - 2026-09-18:按计划落地(任务 1–4)。
+- 2026-09-18:评审后:换模型时删掉该 provider 的会话存档行,下一次 spawn 冷启动并钉模型(session/load 不改模型)。
+- 2026-09-18:评审后:本地取消的回合无论 agent 回什么 stopReason 都以 acp_turn_cancelled 收尾(工作台同样适用,比原先"取消却报成功"更准)。
+- 2026-09-18:评审后:cursor 对 guest 关门(ProviderCapabilities.guestSafe:false)—— 它在工作区内的文件编辑不经过权限卡,访客的 tier 约束不到它;共享钥匙那条门(adminMcpTools)确实不再挡它,但换成了这条。
+- 2026-09-18:评审后:Windows 上不注册 ACP 对话 provider(进程组清理未验证),BOOT 记一行并照旧落到 SDK 兜底。

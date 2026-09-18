@@ -162,3 +162,32 @@ describe('registerProviders — agy (fix round 1: test-runner guard)', () => {
     })
   })
 })
+
+
+// ── cursor: ACP 对话 provider 的 Windows 门(2026-09-18 评审 C1)────────────────
+// acp-agent-provider 的 close() 靠杀进程组收尾,win32 上没验过、spawn 直接抛。
+// 以前 providers.ts 照样注册,于是 Windows 上每一轮对话都撞那句抛错。
+describe('registerProviders — cursor ACP chat provider on Windows', () => {
+  it('win32 ⇒ 不注册 ACP 对话 provider、记一行 BOOT,并照旧落到 SDK 兜底的判断(这里没有 CURSOR_API_KEY ⇒ 未注册)', async () => {
+    // codex-app-server.test.ts 的姿势:直接换 process.platform 的 getter。
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    const prevKey = process.env.CURSOR_API_KEY
+    delete process.env.CURSOR_API_KEY
+    try {
+      // 二进制路径随便给一个:win32 分支在 probeBinaryVersion 之前就短路了,
+      // 所以这条测试不起任何子进程,三个平台跑出来是同一条路径。
+      const { deps, logs } = baseDepsWithLogs({
+        configuredAgent: baseConfig({ cursorAgentBin: join(tmpdir(), 'cursor-agent-that-is-never-spawned') }),
+      })
+      const { registry } = await registerProviders(deps)
+
+      expect(registry.has('cursor')).toBe(false)
+      expect(logs.some(([tag, line]) => tag === 'BOOT' && line === 'cursor: ACP 对话 provider 暂不支持 Windows(进程组清理未验证),未注册')).toBe(true)
+      // 兜底逻辑没被跳过:它自己判断出"没有 API key ⇒ 不注册"。
+      expect(logs.some(([tag, line]) => tag === 'BOOT' && line.includes('CURSOR_API_KEY not set'))).toBe(true)
+    } finally {
+      if (prevKey === undefined) delete process.env.CURSOR_API_KEY; else process.env.CURSOR_API_KEY = prevKey
+      vi.restoreAllMocks()
+    }
+  })
+})

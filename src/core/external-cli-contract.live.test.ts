@@ -101,10 +101,12 @@ describe.skipIf(!LIVE)('external CLI stream contract (live, opt-in)', () => {
   )
 
   const cursorBin = findOnPath('cursor-agent')
-  const cursorCfg = join(homedir(), '.cursor', 'mcp.json')
-  const cursorWired = existsSync(cursorCfg) && CURSOR_MCP_NAMESPACE_KEY in ((readJsonFile<{ mcpServers?: Record<string, unknown> }>(cursorCfg).mcpServers) ?? {})
-
-  it.skipIf(!wants('cursor') || !cursorBin || !cursorWired)(
+  // 前提只剩"PATH 上有 cursor-agent":2026-09-18 起 daemon 开机就**删掉** ~/.cursor/mcp.json
+  // 里我们那条 `wechat-cc:wechat`(对话侧改走 ACP,MCP 按会话注入),所以再拿它当前提
+  // 等于这半条测试永远跳过。评估路(print,cursor-eval.ts)本身不需要我们接任何 MCP 接线 ——
+  // 它验的是流格式;下面那条 ping 断言要的 wechat MCP,得主人自己在 cursor 里配一个
+  // 同名条目(CURSOR_MCP_NAMESPACE_KEY)才跑得出来。
+  it.skipIf(!wants('cursor') || !cursorBin)(
     `cursor-agent: text + tool_call.mcpToolCall(serverIdentifier=${CURSOR_MCP_NAMESPACE_KEY}, toolName=ping) + result`,
     async () => {
       const cwd = mkdtempSync(join(tmpdir(), 'live-cursor-'))

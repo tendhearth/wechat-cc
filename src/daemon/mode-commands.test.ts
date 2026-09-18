@@ -1271,8 +1271,14 @@ describe('provider policy in slash commands', () => {
     expect(set).not.toHaveBeenCalled()
     expect(sentMessages[0]![1]).toBe('❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
   })
-  it('/cursor is now ALLOWED for a guest chat — 2026-09-18 chat-side Cursor moved to ACP (per-session MCP tier, acp-cursor-chat.ts), no longer a shared token like /agy', async () => {
-    const { cmds, set } = setup({ registered: ['claude', 'cursor'], tier: 'guest' })
+  it('/cursor is refused for a guest chat — ACP Cursor edits the workspace without a permission card, so a guest tier cannot confine it (guestSafe:false)', async () => {
+    const { cmds, set, sentMessages } = setup({ registered: ['claude', 'cursor'], tier: 'guest' })
+    await cmds.handle(inbound('/cursor'))
+    expect(set).not.toHaveBeenCalled()
+    expect(sentMessages[0]![1]).toBe('❌ Cursor 对访客不开放：它在工作区内的文件编辑不经过权限卡，访客的权限约束不到它。')
+  })
+  it('/cursor stays available to a trusted chat', async () => {
+    const { cmds, set } = setup({ registered: ['claude', 'cursor'], tier: 'trusted' })
     await cmds.handle(inbound('/cursor'))
     expect(set).toHaveBeenLastCalledWith('chat-1', { kind: 'solo', provider: 'cursor' })
   })

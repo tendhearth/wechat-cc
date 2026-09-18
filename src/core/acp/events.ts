@@ -82,8 +82,6 @@ export function createAcpTranslator(options: AcpTranslatorOptions = {}): AcpTran
       if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') return []
       if (typeof update.toolCallId !== 'string' || !update.toolCallId) return []
       const id = acpActivityId(update.toolCallId)
-      const flushed = update.sessionUpdate === 'tool_call' && messages ? flushBuffer() : []
-      if (update.sessionUpdate === 'tool_call' && textSeen) { message++; textSeen = false }
       const previous = calls.get(id) ?? { kind: '', title: '', name: '', status: 'running' as const, paths: [] }
       const raw = object(update.rawInput) ? update.rawInput : undefined
       const identity = raw && typeof raw.providerIdentifier === 'string' && typeof raw.toolName === 'string'
@@ -98,7 +96,13 @@ export function createAcpTranslator(options: AcpTranslatorOptions = {}): AcpTran
       }
       calls.set(id, call)
       const event = activityEvent(id, call)
-      return event ? [...flushed, event] : flushed
+      // 不可见的调用(kind 'think')不切分助理消息:用户那边什么都不会出现,
+      // 却把攒着的半句话先发出去 ⇒ 一条回复被 think 拦腰斩成两条微信。
+      // 同理也不推 message 计数(append 模式的 itemId 靠它换行)。
+      if (!event) return []
+      const flushed = update.sessionUpdate === 'tool_call' && messages ? flushBuffer() : []
+      if (update.sessionUpdate === 'tool_call' && textSeen) { message++; textSeen = false }
+      return [...flushed, event]
     },
   }
 }

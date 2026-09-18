@@ -329,6 +329,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       outbound: () => ilink.outboundHealth(),
       // Admin remediation hooks (POST /v1/sessions/release, /v1/daemon/restart).
       releaseSession: (k) => bootRef?.sessionManager?.release(k) ?? Promise.resolve(),
+      // 换模型时把该 provider 的会话存档行删掉(同一条 thunk-over-bootRef 姿势):
+      // 不删的话下一次 spawn 会 resume 回旧会话,新模型钉不上。
+      forgetProviderSessions: (providerId) => bootRef?.sessionStore?.deleteProvider(providerId) ?? 0,
       requestRestart: () => requestRestart('internal-api'),
       // self-restart idle signal — thunk over bootRef for the same reason
       // listSessions above is one: internal-api is constructed BEFORE

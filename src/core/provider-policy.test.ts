@@ -6,11 +6,15 @@ describe('providerDenialFor', () => {
     expect(providerDenialFor('agy', 'admin', ['claude'])).toBeNull()
     expect(providerDenialFor('cursor', 'admin', undefined)).toBeNull()
   })
-  it('guest is denied the one remaining shared-token provider (agy) — cursor moved to ACP 2026-09-18 (per-session MCP tier, acp-cursor-chat.ts) so it is no longer gated here', () => {
+  it('guest is denied the one shared-token provider (agy) and the one unconfined provider (cursor: ACP workspace edits never surface a permission card)', () => {
     expect(providerDenialFor('agy', 'guest', undefined)).toEqual({ kind: 'shared_token_guest' })
-    expect(providerDenialFor('cursor', 'guest', undefined)).toBeNull()
+    expect(providerDenialFor('cursor', 'guest', undefined)).toEqual({ kind: 'unconfined_guest' })
     expect(providerDenialFor('claude', 'guest', undefined)).toBeNull()
     expect(providerDenialFor('openai', 'guest', undefined)).toBeNull()
+  })
+  it('cursor stays open to trusted and admin — only guest is refused', () => {
+    expect(providerDenialFor('cursor', 'trusted', undefined)).toBeNull()
+    expect(providerDenialFor('cursor', 'admin', undefined)).toBeNull()
   })
   it('trusted honors the admin allowlist; undefined = everything', () => {
     expect(providerDenialFor('agy', 'trusted', undefined)).toBeNull()
@@ -24,6 +28,7 @@ describe('providerDenialFor', () => {
   })
   it('messages + slash words', () => {
     expect(describeProviderDenial({ kind: 'shared_token_guest' }, 'agy')).toBe('❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
+    expect(describeProviderDenial({ kind: 'unconfined_guest' }, 'cursor')).toBe('❌ Cursor 对访客不开放：它在工作区内的文件编辑不经过权限卡，访客的权限约束不到它。')
     expect(describeProviderDenial({ kind: 'not_in_trusted_list', allowed: [] }, 'cursor')).toContain('(无)')
     expect(slashFor('claude')).toBe('cc'); expect(slashFor('agy')).toBe('agy')
   })

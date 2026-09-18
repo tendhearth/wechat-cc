@@ -204,6 +204,20 @@ describe('SessionStore', () => {
       s.deleteOne({ alias: 'compass', provider: 'claude', chatId: CHAT })  // no claude row exists
       expect(s.get({ alias: 'compass', provider: 'codex', chatId: CHAT })?.session_id).toBe('sid-codex')
     })
+
+    it('deleteProvider drops every row of that provider across aliases and chats, counts them, and leaves the others alone', () => {
+      // 换模型走这条路:续接的会话会沿用旧模型,所以存档行必须一起清掉。
+      const s = makeSessionStore(db)
+      s.set({ alias: 'compass', provider: 'cursor', chatId: 'chat-a', sessionId: 'sid-1' })
+      s.set({ alias: 'mobile', provider: 'cursor', chatId: 'chat-b', sessionId: 'sid-2' })
+      s.set({ alias: 'compass', provider: 'claude', chatId: 'chat-a', sessionId: 'sid-claude' })
+      expect(s.deleteProvider('cursor')).toBe(2)
+      expect(s.get({ alias: 'compass', provider: 'cursor', chatId: 'chat-a' })).toBeNull()
+      expect(s.get({ alias: 'mobile', provider: 'cursor', chatId: 'chat-b' })).toBeNull()
+      expect(s.get({ alias: 'compass', provider: 'claude', chatId: 'chat-a' })?.session_id).toBe('sid-claude')
+      // 没有行时报 0,不是撒谎的"删了"。
+      expect(s.deleteProvider('cursor')).toBe(0)
+    })
   })
 
   describe('legacy file migration', () => {

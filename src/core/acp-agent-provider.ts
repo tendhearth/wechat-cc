@@ -59,7 +59,10 @@ export interface AcpProviderOptions extends AcpProviderBaseOptions {
 export const acpNotice = (displayName: string): string =>
   `${displayName} 通过 ACP 执行：命令会逐次请求批准；工作区内的文件编辑由 ${displayName} 直接执行，不经过权限卡。`
 const CLIENT_CAPABILITIES = { fs: { readTextFile: false, writeTextFile: false }, terminal: false }
-const CLIENT_INFO = { name: 'cc_workbench', title: 'CC Workbench', version: '0.6.4' }
+// 客户端身份(initialize.clientInfo):对面看到的是"谁在连我" —— 现在对话侧也走这条路,
+// 名字不能再说自己是工作台。version 写死成 package.json 当时的版本:core/ 里没有读 package.json
+// 的 helper,直接 import 一份 JSON 只为一行字符串不值当;发版改 package.json 时顺手同步这里。
+const CLIENT_INFO = { name: 'wechat-cc', title: 'CC', version: '0.6.4' }
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
 // 换行会破坏 stdio 上的换行分隔协议(把一个 session id 拆成两条消息),因此当作"缺失"处理。
 const sessionIdOk = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 500 && !/[\r\n]/.test(value)
@@ -76,7 +79,9 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
   const permissionLimit = options.permissionLimit ?? 100
   return {
     async spawn(project, context: SpawnContext): Promise<AgentSession> {
-      if (process.platform === 'win32') throw new Error(`${options.displayName} 工作台暂不支持 Windows：尚未验证任务进程树清理。`)
+      // 对话侧与工作台共用这一句:两边都靠 close() 杀进程组收尾,Windows 上那条路没验过。
+      // 文案不提"工作台" —— 对话侧也会撞到它(bootstrap 那边另有一道门:win32 不注册 ACP 对话 provider)。
+      if (process.platform === 'win32') throw new Error(`${options.displayName} 暂不支持 Windows：尚未验证进程树清理。`)
       // daemon 自己的凭据不进外部 CLI —— cursor-agent 还会再 spawn 它自己的 MCP 子进程,env 是会传染的。
       const child = spawn(options.command, options.args, { cwd: project.path, env: workbenchSubprocessEnv(), stdio: ['pipe', 'pipe', 'pipe'], detached: true, windowsHide: true })
       // 按 JSON-RPC 请求 id 记账:id 是 agent 唯一能用来对上回复的东西,撞 id ⇒ 协议已经不可信。
@@ -105,7 +110,11 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         if (broken || closing) return
         broken = new Error(message)
         logOnce('fatal', `session stopped: ${message.replace(CONTROL_CHARS, ' ').slice(0, 300)}`)
-        if (active) finish(active, { kind: 'error', message })
+        // 进程死了不等于这一轮什么都没说:messages 模式把整条助理消息攒在 translator 里,
+        // 直接 finish 会把一条已经说完的话连同进程一起丢掉(用户只看到一个错误码)。
+        // 先把攒着的吐出来,再推错误事件。append 模式(工作台)本来就逐字发过了,恒空。
+        // (本地已取消的回合除外 —— 那条路的规矩是半截话不发,见 dispatch 里的 settle 注释。)
+        if (active) { if (!active.cancelled) for (const e of translator.endTurn()) active.queue.push(e); finish(active, { kind: 'error', message }) }
         // dispose 的理由就是真因:setup 阶段挂起的 initialize / session.* 会拿着它 reject,
         // 换成 acp_session_closed 会把"老版本没有 acp 子命令"这类唯一的线索盖掉。
         connection.dispose(broken)
@@ -114,7 +123,10 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         rpcTimeoutMs,
         onNotification(method, params) {
           if (method !== 'session/update' || !object(params)) return
-          if (params.sessionId !== sessionId) { logOnce('update', `session/update dropped: foreign sessionId ${forLog(params.sessionId)}`); return }
+          // loading 期间的外来 sessionId 是意料之中的:resume 回退时 session/load 会把旧会话的历史
+          // 重播一遍,那些 update 本来就该丢。记一行只会把每会话一次的日志额度花在噪音上,
+          // 真正该看见的"跑起来之后还有外来 update"反而挤不进来。
+          if (params.sessionId !== sessionId) { if (!loading) logOnce('update', `session/update dropped: foreign sessionId ${forLog(params.sessionId)}`); return }
           if (loading) return
           const turn = active
           if (!turn || turn.cancelled) return

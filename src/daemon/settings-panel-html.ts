@@ -234,8 +234,10 @@ function renderModels(m) {
   var dsel = $("f-default-provider"), dopts = ""
   for (var y = 0; y < m.providers.length; y++) {
     var dp = m.providers[y]; if (!dp.registered && dp.id !== m.default_provider) continue
+    // 访客不可用 = 共享钥匙的 + 约束不住自己工具面的(ACP 的 cursor);🔑 徽章只跟前者。
     var dshared = (m.shared_token || []).indexOf(dp.id) >= 0
-    dopts += '<option value="' + esc(dp.id) + '"' + (dp.id === m.default_provider ? " selected" : "") + '>' + esc(PROVIDER_NAME[dp.id] || dp.id) + (dshared ? "(共享钥匙,访客不可用)" : "") + (dp.registered ? "" : "(未接入)") + '</option>'
+    var dblocked = (m.guest_blocked || []).indexOf(dp.id) >= 0
+    dopts += '<option value="' + esc(dp.id) + '"' + (dp.id === m.default_provider ? " selected" : "") + '>' + esc(PROVIDER_NAME[dp.id] || dp.id) + (dshared ? "(共享钥匙,访客不可用)" : dblocked ? "(访客不可用)" : "") + (dp.registered ? "" : "(未接入)") + '</option>'
   }
   dsel.innerHTML = dopts
   var sel = $("f-cheap"), opts = ["auto"]

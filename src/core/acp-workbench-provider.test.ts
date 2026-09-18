@@ -102,7 +102,7 @@ describe('ACP workbench provider', () => {
     const { child } = await start({ reportNotice })
     expect(mocks.spawn).toHaveBeenCalledWith('/cursor-agent', ['acp'], expect.objectContaining({ cwd: '/project', detached: true, stdio: ['pipe', 'pipe', 'pipe'] }))
     const init = child.sent.find(m => m.method === 'initialize')!
-    expect(init.params).toEqual({ protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: 'cc_workbench', title: 'CC Workbench', version: '0.6.4' } })
+    expect(init.params).toEqual({ protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: 'wechat-cc', title: 'CC', version: '0.6.4' } })
     expect(child.sent.find(m => m.method === 'session/new')!.params).toEqual({ cwd: '/project', mcpServers: [] })
     expect(reportNotice).toHaveBeenCalledWith(acpNotice('Cursor'))
     // 三句对外文案都由 displayName 拼出来,换一个 ACP 执行者不用再改一遍字。
@@ -348,6 +348,6 @@ describe('ACP workbench provider', () => {
     await expect(async () => { for await (const _ of session.dispatch('overlap')) { /* noop */ } }).rejects.toThrow('acp_turn_already_running')
     child.finishPrompt(); await first.done
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
-    await expect(createAcpWorkbenchProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor' }).spawn({ alias: 'a', path: '/project' }, context())).rejects.toThrow('Cursor 工作台暂不支持 Windows')
+    await expect(createAcpWorkbenchProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor' }).spawn({ alias: 'a', path: '/project' }, context())).rejects.toThrow('Cursor 暂不支持 Windows')
   })
 })

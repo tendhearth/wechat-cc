@@ -175,7 +175,7 @@ remembers its choice across daemon restarts (`conversations.json`).
 |---|---|---|---|
 | `/cc`            | **Solo · Claude** | Claude only | Single reply |
 | `/codex`         | **Solo · Codex**  | Codex only  | Single reply |
-| `/cursor`        | **Solo · Cursor** | Cursor only (if `@cursor/sdk` + `CURSOR_API_KEY` are present) | Single reply |
+| `/cursor`        | **Solo · Cursor** | Cursor only — cursor-agent CLI（订阅登录）是首选路径，对话与工作台都走 ACP；`CURSOR_API_KEY` + `@cursor/sdk` 仍是兜底 | Single reply |
 | `/both`          | **Parallel** | All registered providers (or explicit list) independently | `[Claude] ...` + `[Codex] ...` + `[Cursor] ...`, then a 🎯 synthesis |
 | `/cc + codex`    | **Primary + Tool** | Claude main, Codex on call | Single reply; Claude self-decides when to invoke `delegate_codex` |
 | `/codex + cc`    | **Primary + Tool** | Codex main, Claude on call | Same shape, roles swapped |
