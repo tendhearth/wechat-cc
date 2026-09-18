@@ -24,6 +24,8 @@ class FakeProcess extends EventEmitter {
   initializeResult: Record<string, unknown> = { protocolVersion: 1, agentCapabilities: { loadSession: true } }
   newResult: Record<string, unknown> | { error: Rpc['error'] } = { sessionId: 'sess-1' }
   loadResult: Record<string, unknown> | { error: Rpc['error'] } = {}
+  // null ⇒ never auto-reply (used to model "the request is still in flight when the process dies").
+  configResult: Record<string, unknown> | { error: Rpc['error'] } | null = { configOptions: [] }
   promptAuto = true
   // 死掉 / 哑掉的进程不再往 stdout 写:setup 阶段的测试要让 initialize 一直挂着,
   // 也要保证 exit() 之后那些已排好队的 setTimeout 回复不会往已 end 的流里写(write-after-end 会抛)。
@@ -46,7 +48,7 @@ class FakeProcess extends EventEmitter {
         if (message.method === 'initialize') setTimeout(() => this.send({ id: message.id, result: this.initializeResult }), 0)
         if (message.method === 'session/new') setTimeout(() => this.send('error' in this.newResult ? { id: message.id, error: this.newResult.error } : { id: message.id, result: this.newResult }), 0)
         if (message.method === 'session/load') setTimeout(() => { this.notify('session/update', { sessionId: message.params.sessionId, update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'old' } } }); this.notify('session/update', { sessionId: message.params.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'replayed' } } }); this.send('error' in this.loadResult ? { id: message.id, error: this.loadResult.error } : { id: message.id, result: this.loadResult }) }, 0)
-        if (message.method === 'session/set_config_option') setTimeout(() => this.send({ id: message.id, result: { configOptions: [] } }), 0)
+        if (message.method === 'session/set_config_option' && this.configResult !== null) setTimeout(() => this.send('error' in this.configResult! ? { id: message.id, error: this.configResult.error } : { id: message.id, result: this.configResult }), 0)
         if (message.method === 'session/cancel') queueMicrotask(() => { const prompt = this.sent.findLast(m => m.method === 'session/prompt'); if (prompt) this.send({ id: prompt.id, result: { stopReason: 'cancelled' } }) })
       }
     })
@@ -165,5 +167,67 @@ describe('ACP provider — chat-side options', () => {
     const p = provider.spawn({ alias: 'a', path: '/project' }, context({ resumeSessionId: 'gone' }))
     await expect.poll(() => children.length).toBe(1); children[0]!.loadResult = { error: { code: -32602, message: 'unknown session' } }
     await expect(p).rejects.toThrow('acp_session_failed: unknown session')
+  })
+})
+
+describe('ACP provider — review fixes', () => {
+  it('a connection death while pinning the model is not swallowed: spawn() rejects with the real cause and the process is closed', async () => {
+    const provider = createAcpProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor', rpcTimeoutMs: 2_000, closeTimeoutMs: 250, permissions: 'mode', text: 'messages', model: () => 'gpt-5' })
+    const spawning = provider.spawn({ alias: 'a', path: '/project' }, context())
+    await expect.poll(() => children.length).toBe(1)
+    const child = children[0]!
+    // Never auto-reply to session/set_config_option — models the request being in flight when
+    // the process dies, which is exactly the race the fix guards against.
+    child.configResult = null
+    child.newResult = { sessionId: 'sess-1', configOptions: [{ id: 'model', category: 'model', options: [{ value: 'gpt-5', name: 'GPT-5' }] }] }
+    await expect.poll(() => child.sent.some(m => m.method === 'session/set_config_option')).toBe(true)
+    child.stderr.write('boom\n')
+    child.exit(1)
+    // The real cause (the process dying) must survive, not the generic acp_session_closed the
+    // dispose() rejection would otherwise be mistaken for by a too-broad .catch.
+    await expect(spawning).rejects.toThrow(/^acp_process_exited: 1[\s\S]*boom/)
+    expect(child.hasExited).toBe(true)
+  })
+  it('a session/set_config_option JSON-RPC error still lets spawn() resolve and logs once', async () => {
+    const log = vi.fn()
+    const { child } = await start({ model: 'gpt-5' }, c => {
+      c.newResult = { sessionId: 'sess-1', configOptions: [{ id: 'model', category: 'model', options: [{ value: 'gpt-5', name: 'GPT-5' }] }] }
+      c.configResult = { error: { code: -32602, message: 'bad option' } }
+    }, { model: ctx => ctx.model, log })
+    await expect.poll(() => log.mock.calls.length).toBe(1)
+    expect(log).toHaveBeenCalledWith('ACP', expect.stringContaining('bad option'))
+    expect(child.hasExited).toBe(false)
+  })
+  it('model returning "auto" sends no session/set_config_option', async () => {
+    const { child } = await start({}, c => { c.newResult = { sessionId: 'sess-1', configOptions: [{ id: 'model', category: 'model', options: [{ value: 'auto', name: 'Auto' }] }] } }, { model: () => 'auto' })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(child.sent.some(m => m.method === 'session/set_config_option')).toBe(false)
+  })
+  it('a matched config option without a usable string id is skipped instead of sending configId:"undefined"', async () => {
+    const log = vi.fn()
+    const { child } = await start({}, c => { c.newResult = { sessionId: 'sess-1', configOptions: [{ category: 'model', options: [{ value: 'gpt-5', name: 'GPT-5' }] }] } }, { model: () => 'gpt-5', log })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(child.sent.some(m => m.method === 'session/set_config_option')).toBe(false)
+    expect(log).toHaveBeenCalledWith('ACP', expect.stringContaining('gpt-5'))
+  })
+  it('mode permissions: an undisplayable request logs exactly one ACP line and does not stop the task', async () => {
+    const log = vi.fn()
+    const { session, child } = await start({}, undefined, { log })
+    const { done } = collect(session); await prompted(child)
+    permission(child, 'p1', { toolCall: { toolCallId: 'c9', kind: 'execute', rawInput: { command: 'x'.repeat(20_001) } } })
+    await expect.poll(() => child.sent.some(m => m.id === 'p1')).toBe(true)
+    expect(log).toHaveBeenCalledTimes(1)
+    expect(log).toHaveBeenCalledWith('ACP', expect.stringContaining('undisplayable'))
+    child.finishPrompt(); await done
+  })
+  it('a locally cancelled turn never flushes the buffered messages-mode text, even if the reply says end_turn', async () => {
+    const { session, child } = await start()
+    const { events, done } = collect(session); await prompted(child)
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'half' } })
+    void session.cancel!()
+    child.finishPrompt('end_turn')
+    await done
+    expect(events.some(e => e.kind === 'text')).toBe(false)
+    expect(events.at(-1)).toEqual({ kind: 'error', message: 'acp_turn_cancelled' })
   })
 })

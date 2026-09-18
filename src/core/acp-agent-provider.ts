@@ -238,12 +238,21 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
             created = await openNew()
           }
         } else created = await openNew()
-        // 只在新会话上钉模型:session/load 沿用会话原状。失败只记日志,模型选错不该让整段对话起不来。
+        // 只在新会话上钉模型:session/load 沿用会话原状。失败只记日志,模型选错不该让整段对话起不来 ——
+        // 但只吞 AcpRequestError(agent 明确拒绝了这个选项):任何别的拒绝(尤其是进程死掉时
+        // connection.dispose() 甩出的那个)都必须原样上抛,让外层 catch 走 setupError + close(),
+        // 不然一个已经断线的 session 会被这里的 .catch 悄悄咽掉,spawn() 却当成功返回。
         const wanted = created ? options.model?.(context) : undefined
         if (wanted && wanted !== 'auto') {
           const option = Array.isArray(created!.configOptions) ? created!.configOptions.find((item: unknown) => object(item) && (item.id === 'model' || item.category === 'model')) : undefined
           const offered = object(option) && Array.isArray(option.options) && option.options.some((item: unknown) => object(item) && item.value === wanted)
-          if (offered) await connection.request('session/set_config_option', { sessionId, configId: String((option as Record<string, unknown>).id), value: wanted }, 60_000).catch((error: unknown) => logOnce('model', `session/set_config_option ${forLog(wanted)} failed: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}`))
+          const configId = offered && typeof (option as Record<string, unknown>).id === 'string' ? (option as Record<string, unknown>).id as string : undefined
+          if (configId) {
+            await connection.request('session/set_config_option', { sessionId, configId, value: wanted }, rpcTimeoutMs).catch((error: unknown) => {
+              if (!(error instanceof AcpRequestError)) throw error
+              logOnce('model', `session/set_config_option ${forLog(wanted)} failed: ${error.message.slice(0, 120)}`)
+            })
+          } else if (offered) logOnce('model', `model ${forLog(wanted)} offered without a usable config id; using its default`)
           else logOnce('model', `model ${forLog(wanted)} not offered by ${options.displayName}; using its default`)
         }
       } catch (error) {
@@ -273,7 +282,9 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
           void connection.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] }, 0).then(
             result => {
               const reason = object(result) && typeof result.stopReason === 'string' ? result.stopReason : 'end_turn'
-              if (reason === 'cancelled' && turn.cancelled) finish(turn, { kind: 'error', message: 'acp_turn_cancelled' })
+              // turn.cancelled(我们自己叫停的)优先于 reason 本身怎么说:agent 的回复完全可能在
+              // session/cancel 生效前就已经在路上、报的是 end_turn —— 半截话不能因为这条race而漏发。
+              if (turn.cancelled) finish(turn, { kind: 'error', message: 'acp_turn_cancelled' })
               else if (reason === 'end_turn' || reason === 'cancelled') settle(em.finish({ sessionId, numTurns: 1, durationMs: Date.now() - turn.startedAt }))
               else settle({ kind: 'error', message: `acp_stop_${reason}` })
             },
