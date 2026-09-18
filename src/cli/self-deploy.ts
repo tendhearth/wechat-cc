@@ -17,7 +17,8 @@
  */
 import { spawnSync as nodeSpawnSync } from 'node:child_process'
 import { chmodSync, copyFileSync, existsSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs'
-import { readJsonFile } from '../lib/read-json-file'
+import { dirname, resolve } from 'node:path'
+import { readApiInfo } from '../lib/api-info'
 
 export interface LaunchAgentInfo {
   programArguments: string[]
@@ -244,20 +245,62 @@ export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDe
   const version = (preflight.stdout || preflight.stderr).trim()
   steps.push({ name: 'preflight', ok: true, detail: version })
 
-  // 2. backup — <sidecar> → <sidecar>.prev, overwriting whatever backup was
-  // already there. Exactly one generation of rollback is kept on purpose.
+  // 2. stage — copy the new binary to <sidecar>.new + chmod, BEFORE the
+  // backup step touches anything.
+  //
+  // WHY before backup (2026-09-18 review, C1): the rollback recipe is
+  // `self deploy --binary <sidecar>.prev`. With backup running first, that
+  // command copied the CURRENT (broken) sidecar over `.prev` — destroying
+  // the very binary it was about to install — and then "swapped" the
+  // now-broken `.prev` back onto the sidecar. Staging first means the good
+  // bytes are already on a fresh inode by the time anything else moves.
   try {
-    deps.fs.copyFile(plan.sidecarPath, plan.prevPath)
-    steps.push({ name: 'backup', ok: true })
+    stageBinary(deps, plan.newBinaryPath, plan.tmpPath)
   } catch (err) {
-    steps.push({ name: 'backup', ok: false, detail: errMsg(err) })
+    try { deps.fs.unlink(plan.tmpPath) } catch { /* best-effort tmp cleanup */ }
+    steps.push({ name: 'stage', ok: false, detail: errMsg(err) })
     return { ok: false, exitCode: 1, steps, version }
   }
+  steps.push({ name: 'stage', ok: true })
 
-  // 3. swap — see file header for why this is copy-to-fresh-path + rename
-  // rather than an in-place overwrite.
+  // 3. backup — <sidecar> → <sidecar>.prev, overwriting whatever backup was
+  // already there. Exactly one generation of rollback is kept on purpose.
+  //
+  // Two cases deliberately DON'T overwrite `.prev` (both keep the existing
+  // backup, both count as a successful step — refusing to destroy a good
+  // backup is the desired outcome, not a failure):
+  //   a) we're deploying FROM `.prev` (the rollback recipe);
+  //   b) the sidecar currently on disk fails `--version` (crash-looping /
+  //      SIGKILLed build) — backing THAT up would overwrite the last known
+  //      good binary with a broken one.
+  // `previousVersion` (from that same probe) is what the rollback health
+  // gate expects to see, so a successful rollback doesn't print a spurious
+  // version mismatch against the NEW binary's version string.
+  const deployingFromBackup = samePath(plan.newBinaryPath, plan.prevPath)
+  const currentProbe = deps.spawnSync(plan.sidecarPath, ['--version'], { timeoutMs: 5000, windowsHide: true })
+  const currentOk = currentProbe.status === 0
+  const previousVersion = currentOk ? (currentProbe.stdout || currentProbe.stderr).trim() : ''
+  if (deployingFromBackup) {
+    steps.push({ name: 'backup', ok: true, detail: 'skipped: deploying from the backup itself' })
+  } else if (!currentOk) {
+    steps.push({ name: 'backup', ok: true, detail: 'kept previous backup: current sidecar is broken' })
+    deps.log('kept previous backup: current sidecar is broken')
+  } else {
+    try {
+      deps.fs.copyFile(plan.sidecarPath, plan.prevPath)
+      steps.push({ name: 'backup', ok: true })
+    } catch (err) {
+      try { deps.fs.unlink(plan.tmpPath) } catch { /* best-effort tmp cleanup */ }
+      steps.push({ name: 'backup', ok: false, detail: errMsg(err) })
+      return { ok: false, exitCode: 1, steps, version }
+    }
+  }
+
+  // 4. swap — rename the already-staged copy over the sidecar. See the file
+  // header for why this is copy-to-fresh-path + rename rather than an
+  // in-place overwrite.
   try {
-    swapBinary(deps, plan.newBinaryPath, plan.tmpPath, plan.sidecarPath)
+    deps.fs.rename(plan.tmpPath, plan.sidecarPath)
     steps.push({ name: 'swap', ok: true })
   } catch (err) {
     try { deps.fs.unlink(plan.tmpPath) } catch { /* best-effort tmp cleanup */ }
@@ -289,7 +332,11 @@ export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDe
   }
 
   deps.log('rolling back to previous binary...')
-  const rollbackOutcome = await performRollback(plan, deps, version)
+  // The rollback health gate expects the OLD version (what the sidecar
+  // reported before we replaced it), not the new one — otherwise a
+  // perfectly successful rollback prints "version mismatch" (#7).
+  // Empty string ⇒ no expectation at all (we never got a usable probe).
+  const rollbackOutcome = await performRollback(plan, deps, previousVersion)
   steps.push(...rollbackOutcome.steps)
 
   return {
@@ -309,10 +356,21 @@ export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDe
 // failure with nothing live to roll back. Chmod-after-rename would instead
 // leave an unvalidated (wrong-permission) binary already serving as the
 // sidecar with no restart/health/rollback having run against it.
-function swapBinary(deps: SelfDeployDeps, source: string, tmpPath: string, target: string): void {
+function stageBinary(deps: SelfDeployDeps, source: string, tmpPath: string): void {
   deps.fs.copyFile(source, tmpPath)
   deps.fs.chmod(tmpPath, 0o755)
+}
+
+function swapBinary(deps: SelfDeployDeps, source: string, tmpPath: string, target: string): void {
+  stageBinary(deps, source, tmpPath)
   deps.fs.rename(tmpPath, target)
+}
+
+/** Same file on disk? Pure string compare after `resolve()` — enough to
+ *  recognise `--binary <sidecar>.prev` (the rollback recipe) without
+ *  stat-ing anything. */
+function samePath(a: string, b: string): boolean {
+  return resolve(a) === resolve(b)
 }
 
 function kickstart(deps: SelfDeployDeps, serviceTarget: string): SelfDeployStep {
@@ -421,12 +479,12 @@ export function defaultSelfDeployDeps(): SelfDeployDeps {
       unlink: (p) => { try { unlinkSync(p) } catch { /* best-effort */ } },
     },
     fetch,
+    // Shared reader (src/lib/api-info.ts) — same one `selftest` uses. The
+    // health gate deliberately probes with the FILE token (narrowest
+    // credential; the operator token can't reach GET /v1/health at all).
     readFileToken: (infoPath) => {
-      try {
-        const info = readJsonFile<{ baseUrl?: string; tokenFilePath?: string }>(infoPath)
-        if (!info.baseUrl || !info.tokenFilePath) return null
-        return { baseUrl: info.baseUrl, token: readFileSync(info.tokenFilePath, 'utf8').trim() }
-      } catch { return null }
+      const info = readApiInfo(dirname(infoPath))
+      return info ? { baseUrl: info.baseUrl, token: info.token } : null
     },
     now: () => Date.now(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),

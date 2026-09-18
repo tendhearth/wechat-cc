@@ -64,6 +64,26 @@ const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp
 // (base64 图片一多,一条 session/prompt 很容易撑到那条线甚至更远,cursor-agent 那边能不能吃更是没人验过)——
 // 超过这个数就别指望对面能囫囵吞下,宁可提前拒绝也不要把用户晾在一个说不清是卡住还是进程死了的等待里。
 const ACP_PROMPT_BYTES_MAX = 4 * 1024 * 1024
+/**
+ * initialize 的应答里,这个 agent 收不收图片。
+ *
+ * 真机 spike 抓到的 cursor-agent 回复把 promptCapabilities **嵌在**
+ * agentCapabilities 里({agentCapabilities:{loadSession,mcpCapabilities,
+ * promptCapabilities:{image,...}}}),顶层 promptCapabilities 从没出现过 ——
+ * 照 ACP 文档的字面形状写就会判成「不收图」。顶层判也留着当兜底,防着哪家
+ * agent 把它拍平。
+ *
+ * 单独抽出来是为了让 `src/core/acp/fixtures.test.ts` 的回放能直接拿录到的
+ * initialize 结果喂**生产代码本身**:那条断言只钉 fixture 的形状时,改坏了
+ * 探测逻辑它照样绿。
+ */
+export function acpImageCapable(initialized: unknown): boolean {
+  if (!object(initialized)) return false
+  const nested = object(initialized.agentCapabilities) ? initialized.agentCapabilities.promptCapabilities : undefined
+  return (object(nested) && nested.image === true) ||
+    (object(initialized.promptCapabilities) && initialized.promptCapabilities.image === true)
+}
+
 /** 图片进 prompt 的 image 块(受 agent 的 promptCapabilities.image 门控);其它附件给引用文本块,执行者自己用文件工具读落盘那份 —— 与 Codex 的 turnInput 同一做法。 */
 export function acpPromptBlocks(text: string, attachments: readonly AgentAttachment[] | undefined, imageOk: boolean): AcpPromptBlock[] {
   const list = attachments ?? []
@@ -257,12 +277,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         const initialized = await connection.request('initialize', { protocolVersion: 1, clientCapabilities: CLIENT_CAPABILITIES, clientInfo: CLIENT_INFO })
         if (!object(initialized) || initialized.protocolVersion !== 1) throw new Error('acp_protocol_version_unsupported')
         const loadSession = object(initialized.agentCapabilities) && initialized.agentCapabilities.loadSession === true
-        // 真机 spike 抓到的 initialize 回复把 promptCapabilities 嵌在 agentCapabilities 里
-        // ({agentCapabilities:{loadSession,mcpCapabilities,promptCapabilities:{image,...}}}),
-        // 顶层 promptCapabilities 从没出现过;顶层判也留着当兜底,防着哪家 agent 把它拍平。
-        const nestedPromptCapabilities = object(initialized.agentCapabilities) ? initialized.agentCapabilities.promptCapabilities : undefined
-        imageOk = (object(nestedPromptCapabilities) && nestedPromptCapabilities.image === true) ||
-          (object(initialized.promptCapabilities) && initialized.promptCapabilities.image === true)
+        imageOk = acpImageCapable(initialized)
         const mcpServers = options.mcpServers?.(context) ?? []
         const openNew = async () => {
           const created = await connection.request('session/new', { cwd: project.path, mcpServers })

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { join } from 'node:path'
 import {
   formatSelftestReport,
   redSquarePng,
@@ -22,7 +23,7 @@ function baseDeps(overrides: Partial<SelftestDeps> = {}): SelftestDeps {
   return {
     fetch: (async () => { throw new Error('fetch not stubbed for this test') }) as unknown as typeof fetch,
     readApiInfo: () => ({ baseUrl: 'http://127.0.0.1:9', token: 'file-token', operatorToken: 'op-token' }),
-    stateDir: '/state',
+    scratchRoot: '/scratch',
     now: () => 1000,
     sleep: async () => {},
     fs: {
@@ -168,13 +169,13 @@ describe('runWorkbenchSelftest', () => {
 
     const createCall = api.calls.find((c) => c.method === 'POST' && c.path === '/v1/workbench/create')!
     expect(createCall.body.providerId).toBe('claude')
-    expect(createCall.body.path).toBe('/state/selftest/wb-5000')
+    expect(createCall.body.path).toBe(join('/scratch', 'wb-5000'))
 
     const permCall = api.calls.find((c) => c.method === 'POST' && c.path === '/v1/workbench/permission')!
     expect(permCall.body).toEqual({ id: 'ab12cd34', requestId: 'perm-1', decision: 'allow' })
 
     expect(api.calls.some((c) => c.method === 'POST' && c.path === '/v1/workbench/archive' && c.body.id === 'ab12cd34' && c.body.archived === true)).toBe(true)
-    expect(rmCalls).toContain('/state/selftest/wb-5000')
+    expect(rmCalls).toContain(join('/scratch', 'wb-5000'))
   })
 
   it('--image: uploads a PNG attachment, create carries draftId/attachmentIds, answer_mentions_red check', async () => {
@@ -269,15 +270,18 @@ describe('runWorkbenchSelftest', () => {
     await expect(runWorkbenchSelftest(deps, { executor: 'claude' })).rejects.toThrow('daemon_not_running')
   })
 
-  it('timeout: no terminal status reached before the deadline ⇒ replied ✗ with detail timeout', async () => {
+  it('timeout: no terminal status reached before the deadline ⇒ replied ✗ with detail timeout, and the task is cancelled before archiving (I5)', async () => {
     const api = makeWorkbenchFakeApi({
       taskId: 'dd44ee55',
       taskResponses: [
         { task: { id: 'dd44ee55', status: 'running', phase: 'working', error: null }, events: [], permissions: [], version: 1 },
       ],
     })
-    let calls = 0
-    const deps = baseDeps({ fetch: api.fetchImpl, now: () => { calls++; return calls === 1 ? 0 : 100_000 } })
+    // Clock advances 10s per read: the poll deadline passes, and so does
+    // the post-cancel wait — an executor that never goes terminal must not
+    // wedge the run.
+    let clock = 0
+    const deps = baseDeps({ fetch: api.fetchImpl, now: () => { clock += 10_000; return clock } })
 
     const report = await runWorkbenchSelftest(deps, { executor: 'claude', timeoutMs: 1000 })
 
@@ -285,6 +289,15 @@ describe('runWorkbenchSelftest', () => {
     expect(replied.ok).toBe(false)
     expect(replied.detail).toBe('timeout')
     expect(report.ok).toBe(false)
+
+    // The timeout path is exactly where the executor is still running, so
+    // it's the path that most needs the cancel — it used to archive (and
+    // delete the scratch dir) out from under a live subprocess.
+    const cancelIdx = api.calls.findIndex((c) => c.method === 'POST' && c.path === '/v1/workbench/cancel')
+    const archiveIdx = api.calls.findIndex((c) => c.method === 'POST' && c.path === '/v1/workbench/archive')
+    expect(cancelIdx).toBeGreaterThanOrEqual(0)
+    expect(api.calls[cancelIdx]!.body).toEqual({ id: 'dd44ee55' })
+    expect(archiveIdx).toBeGreaterThan(cancelIdx)
   })
 
   it('retained-session executor (status stays running while phase is replied): cancel is called before archive, archived check added, scratch deleted after', async () => {
@@ -323,7 +336,7 @@ describe('runWorkbenchSelftest', () => {
     expect(archiveIdx).toBeGreaterThan(cancelIdx)
     expect(api.calls[cancelIdx]!.body).toEqual({ id: 'ee55ff66' })
 
-    expect(rmCalls.some((p) => p.startsWith('/state/selftest/wb-'))).toBe(true)
+    expect(rmCalls.some((p) => p.startsWith(join('/scratch', 'wb-')))).toBe(true)
   })
 
   it('create fails (428 unattended_ack_required): created check surfaces the server error, no polling happens', async () => {
@@ -339,6 +352,28 @@ describe('runWorkbenchSelftest', () => {
     expect(report.checks.find((c) => c.name === 'created')).toEqual({ name: 'created', ok: false, detail: 'http_428 unattended_ack_required' })
     expect(report.ok).toBe(false)
     expect(api.calls.some((c) => c.path === '/v1/workbench/task')).toBe(false)
+  })
+
+  it('workbench calls keep the 30s per-call budget (long-poll wait_ms + slack)', async () => {
+    const api = makeWorkbenchFakeApi({
+      taskId: 'a1b2c3d4',
+      taskResponses: [
+        { task: { id: 'a1b2c3d4', status: 'completed', phase: 'replied', error: null }, events: [{ id: 1, kind: 'text', text: 'done' }], permissions: [], version: 1 },
+      ],
+    })
+    const budgets: number[] = []
+    const deps = baseDeps({
+      fetch: api.fetchImpl,
+      timeoutSignal: (ms) => { budgets.push(ms); return AbortSignal.timeout(ms) },
+      fs: { mkdir: () => {}, write: () => {}, read: () => 'hello', rm: () => {} },
+    })
+
+    await runWorkbenchSelftest(deps, { executor: 'claude' })
+
+    expect(budgets.length).toBeGreaterThan(0)
+    expect([...new Set(budgets)]).toEqual([30_000])
+    const pollCall = api.calls.find((c) => c.path === '/v1/workbench/task')
+    expect(pollCall).toBeDefined()
   })
 
   it('git_init is not in the checks list (logged as a warning instead)', async () => {
@@ -470,19 +505,98 @@ describe('runChatSelftest', () => {
     expect(report.ok).toBe(false)
   })
 
-  it('HTTP failure on converse (e.g. 503 selftest_not_wired): no_error and replied are both ✗ with the server error in detail', async () => {
+  it('HTTP failure on converse (non-503): no_error and replied are both ✗ with the server error in detail', async () => {
     const fetchImpl = (async (url: string | URL) => {
       const u = new URL(String(url))
       if (u.pathname === '/v1/health') return jsonResponse(200, { ok: true })
-      return jsonResponse(503, { error: 'selftest_not_wired' })
+      return jsonResponse(500, { error: 'boom' })
     }) as unknown as typeof fetch
     const deps = baseDeps({ fetch: fetchImpl })
 
     const report = await runChatSelftest(deps, { provider: 'claude' })
 
-    expect(report.checks.find((c) => c.name === 'replied')).toEqual({ name: 'replied', ok: false, detail: 'http_503 selftest_not_wired' })
-    expect(report.checks.find((c) => c.name === 'no_error')).toEqual({ name: 'no_error', ok: false, detail: 'http_503 selftest_not_wired' })
+    expect(report.checks.find((c) => c.name === 'replied')).toEqual({ name: 'replied', ok: false, detail: 'http_500 boom' })
+    expect(report.checks.find((c) => c.name === 'no_error')).toEqual({ name: 'no_error', ok: false, detail: 'http_500 boom' })
     expect(report.ok).toBe(false)
+  })
+
+  // I3 — right after `self deploy` returns ok, the port + info file are
+  // already there but bootstrap may not have wired selftestConverse yet.
+  it('503 selftest_not_wired twice, then 200 ⇒ PASS, and the wait shows up in the replied detail', async () => {
+    let attempts = 0
+    const sleeps: number[] = []
+    const fetchImpl = (async (url: string | URL) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/v1/health') return jsonResponse(200, { ok: true })
+      attempts++
+      if (attempts <= 2) return jsonResponse(503, { error: 'selftest_not_wired' })
+      return jsonResponse(200, { ok: true, providerId: 'claude', sessionId: 's1', texts: ['pong'], toolCalls: ['wechat/ping'], durationMs: 3 })
+    }) as unknown as typeof fetch
+    let clock = 0
+    const deps = baseDeps({ fetch: fetchImpl, now: () => (clock += 2_000), sleep: async (ms) => { sleeps.push(ms) } })
+
+    const report = await runChatSelftest(deps, { provider: 'claude' })
+
+    expect(attempts).toBe(3)
+    expect(sleeps).toEqual([2_000, 2_000])
+    expect(report.ok).toBe(true)
+    expect(report.checks.find((c) => c.name === 'replied')?.detail).toContain('waited')
+  })
+
+  it('a 503 that never clears still fails, bounded by the retry budget', async () => {
+    let attempts = 0
+    const fetchImpl = (async (url: string | URL) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/v1/health') return jsonResponse(200, { ok: true })
+      attempts++
+      return jsonResponse(503, { error: 'selftest_not_wired' })
+    }) as unknown as typeof fetch
+    // 20s per read blows through the 60s budget quickly.
+    let clock = 0
+    const deps = baseDeps({ fetch: fetchImpl, now: () => (clock += 20_000) })
+
+    const report = await runChatSelftest(deps, { provider: 'claude' })
+
+    expect(report.ok).toBe(false)
+    expect(attempts).toBeGreaterThan(1)
+    expect(attempts).toBeLessThan(10)
+    expect(report.checks.find((c) => c.name === 'replied')?.detail).toContain('http_503 selftest_not_wired')
+  })
+
+  // I2 — the converse call runs a whole model turn behind it; the 30s
+  // budget that fits every workbench call used to abort it at 30s.
+  it('the converse call gets the chat budget (+margin), not the 30s default', async () => {
+    const budgets: number[] = []
+    const fetchImpl = (async (url: string | URL) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/v1/health') return jsonResponse(200, { ok: true })
+      return jsonResponse(200, { ok: true, providerId: 'claude', sessionId: 's1', texts: ['pong'], toolCalls: ['wechat/ping'], durationMs: 3 })
+    }) as unknown as typeof fetch
+    const deps = baseDeps({ fetch: fetchImpl, timeoutSignal: (ms) => { budgets.push(ms); return AbortSignal.timeout(ms) } })
+
+    const byDefault = await runChatSelftest(deps, { provider: 'claude' })
+    expect(byDefault.ok).toBe(true)
+    expect(budgets).toEqual([190_000]) // 180s default + 10s margin
+
+    budgets.length = 0
+    await runChatSelftest(deps, { provider: 'claude', timeoutMs: 45_000 })
+    expect(budgets).toEqual([55_000])
+  })
+
+  it('every call is given an abort signal', async () => {
+    let sawSignal = false
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/v1/health') return jsonResponse(200, { ok: true })
+      sawSignal = init?.signal instanceof AbortSignal
+      return jsonResponse(200, { ok: true, providerId: 'claude', sessionId: 's1', texts: ['pong'], toolCalls: ['wechat/ping'], durationMs: 3 })
+    }) as unknown as typeof fetch
+
+    const report = await runChatSelftest(baseDeps({ fetch: fetchImpl }), { provider: 'claude' })
+
+    expect(sawSignal).toBe(true)
+    // …and the report's own duration is not capped by any per-call budget.
+    expect(report.durationMs).toBe(0)
   })
 
   it('daemon not running (readApiInfo → null) throws daemon_not_running', async () => {

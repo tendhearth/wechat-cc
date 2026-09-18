@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { runCommand } from 'citty'
-import { cittyRoot, computeProviderSetOutcome } from './cli'
+import { cittyRoot, computeProviderSetOutcome, parseTimeoutMsFlag } from './cli'
 import { activeModel, type AgentConfig } from './src/lib/agent-config'
 
 // PR4 batch 3c removed parseCliArgs — every subcommand now flows through
@@ -99,6 +99,53 @@ describe('citty migrated commands', () => {
       'status',
       'update',
     ])
+  })
+
+  // 自维护三件套(spec 2026-09-18-self-maintenance)——子命令面也要钉住:
+  // `self deploy` / `selftest workbench|chat` 是手册里写死的入口,改名/漏挂
+  // 会让 docs/maintainer/*.md 里的每条命令一起失效。
+  it('exposes the self / selftest subcommand surface', () => {
+    const subs = cittyRoot.subCommands as Record<string, { subCommands?: Record<string, unknown> }>
+    expect(Object.keys(subs.self?.subCommands ?? {}).sort()).toEqual(['deploy'])
+    expect(Object.keys(subs.selftest?.subCommands ?? {}).sort()).toEqual(['chat', 'workbench'])
+  })
+
+  it('self deploy parses its documented flags', async () => {
+    const r = await runWithNestedStub(
+      ['self', 'deploy', '--binary', '/tmp/x', '--app', '/Applications/wechat-cc.app', '--no-rollback', '--health-timeout-ms', '90000', '--json'],
+      ['self', 'deploy'],
+    )
+    expect(r?.args.binary).toBe('/tmp/x')
+    expect(r?.args.app).toBe('/Applications/wechat-cc.app')
+    // citty/mri parses `--no-rollback` as the negation of a boolean
+    // `rollback`, NOT as a flag literally named `no-rollback` — the handler
+    // has to read both spellings or the flag is a no-op.
+    expect(r?.args.rollback).toBe(false)
+    expect(r?.args['health-timeout-ms']).toBe('90000')
+    expect(r?.args.json).toBe(true)
+  })
+
+  it('selftest workbench / chat parse their documented flags', async () => {
+    const wb = await runWithNestedStub(
+      ['selftest', 'workbench', '--executor', 'cursor', '--image', '--resume', '--json', '--timeout-ms', '300000', '--keep'],
+      ['selftest', 'workbench'],
+    )
+    expect(wb?.args.executor).toBe('cursor')
+    expect(wb?.args.image).toBe(true)
+    expect(wb?.args.resume).toBe(true)
+    expect(wb?.args.json).toBe(true)
+    expect(wb?.args['timeout-ms']).toBe('300000')
+    expect(wb?.args.keep).toBe(true)
+
+    const chat = await runWithNestedStub(
+      ['selftest', 'chat', '--provider', 'cursor', '--text', '你好', '--resume', '--json', '--timeout-ms', '200000'],
+      ['selftest', 'chat'],
+    )
+    expect(chat?.args.provider).toBe('cursor')
+    expect(chat?.args.text).toBe('你好')
+    expect(chat?.args.resume).toBe(true)
+    expect(chat?.args.json).toBe(true)
+    expect(chat?.args['timeout-ms']).toBe('200000')
   })
 
   it('doctor accepts --json', async () => {
@@ -609,5 +656,25 @@ describe('computeProviderSetOutcome — 名单跟 lib/provider-ids 走', () => {
     const bad = computeProviderSetOutcome({ provider: 'bogus' }, existing as never)
     expect(bad.ok).toBe(false)
     if (!bad.ok) expect(bad.error).toContain('agy')
+  })
+})
+
+describe('parseTimeoutMsFlag — 数值开关写错了当场报错,别替用户猜', () => {
+  it('omitted ⇒ ok with no value (caller falls back to its default)', () => {
+    expect(parseTimeoutMsFlag(undefined)).toEqual({ ok: true })
+    expect(parseTimeoutMsFlag('')).toEqual({ ok: true })
+  })
+
+  it('a positive number parses', () => {
+    expect(parseTimeoutMsFlag('90000')).toEqual({ ok: true, value: 90_000 })
+    expect(parseTimeoutMsFlag(1500)).toEqual({ ok: true, value: 1500 })
+  })
+
+  it('non-numeric / zero / negative are errors (they used to silently become the default)', () => {
+    for (const bad of ['abc', '30s', '0', '-1', 'NaN', 'Infinity']) {
+      const r = parseTimeoutMsFlag(bad)
+      expect(r.ok, bad).toBe(false)
+      if (!r.ok) expect(r.error).toContain(bad)
+    }
   })
 })

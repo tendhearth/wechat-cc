@@ -183,6 +183,9 @@ interface Harness {
   printCalls: number
   setDaemonHealthyAfterKickstart(n: number): void
   neverHealthy(): void
+  /** Make the sidecar currently on disk fail `--version` (the crash-loop
+   *  machine state `self deploy` is usually run to get out of). */
+  breakCurrentSidecar(): void
 }
 
 // Real tmp dir + real fs (via defaultSelfDeployDeps().fs / .readFileToken /
@@ -205,7 +208,9 @@ function makeHarness(): Harness {
 
   const infoPath = join(stateDir, 'internal-api-info.json')
   const tokenFilePath = join(stateDir, 'internal-token')
+  const operatorTokenFilePath = join(stateDir, 'operator-token')
   writeFileSync(tokenFilePath, 'test-token-123')
+  writeFileSync(operatorTokenFilePath, 'operator-token-456')
 
   const stderrLogPath = join(dir, 'launchd.err.log')
   writeFileSync(stderrLogPath, Array.from({ length: 60 }, (_, i) => `log line ${i}`).join('\n'))
@@ -227,6 +232,7 @@ function makeHarness(): Harness {
   let printCalls = 0
   let healthyAfterKickstart = 1 // by default the very first kickstart brings up a healthy daemon
   let alwaysUnhealthy = false
+  let brokenCurrentSidecar = false
 
   const real = defaultSelfDeployDeps()
 
@@ -238,13 +244,23 @@ function makeHarness(): Harness {
       if (cmd === newBinaryPath && args[0] === '--version') {
         return { status: 0, stdout: 'wechat-cc-cli 9.9.9-test\n', stderr: '' }
       }
+      // The sidecar currently installed — probed before the backup step so
+      // a broken (crash-looping) sidecar never overwrites a good `.prev`.
+      // `brokenCurrentSidecar` simulates exactly that machine state.
+      if (cmd === sidecarPath && args[0] === '--version') {
+        if (brokenCurrentSidecar) return { status: null, stdout: '', stderr: 'Killed: 9' }
+        return { status: 0, stdout: 'wechat-cc-cli 9.9.8-old\n', stderr: '' }
+      }
+      if (cmd === `${sidecarPath}.prev` && args[0] === '--version') {
+        return { status: 0, stdout: 'wechat-cc-cli 9.9.8-old\n', stderr: '' }
+      }
       if (cmd === 'launchctl' && args[0] === 'kickstart') {
         kickstartCalls++
         // Simulate the newly (re)started daemon rewriting internal-api-info.json
         // shortly after launchd brings it up — mtime deliberately bumped into
         // the future so it's unambiguously later than the `since` capture,
         // regardless of filesystem mtime resolution.
-        writeFileSync(infoPath, JSON.stringify({ baseUrl: 'http://127.0.0.1:9', tokenFilePath }))
+        writeFileSync(infoPath, JSON.stringify({ baseUrl: 'http://127.0.0.1:9', tokenFilePath, operatorTokenFilePath }))
         const bumped = new Date(Date.now() + 50 * kickstartCalls)
         utimesSync(infoPath, bumped, bumped)
         return { status: 0, stdout: '', stderr: '' }
@@ -287,6 +303,7 @@ function makeHarness(): Harness {
     get printCalls() { return printCalls },
     setDaemonHealthyAfterKickstart(n: number) { healthyAfterKickstart = n },
     neverHealthy() { alwaysUnhealthy = true },
+    breakCurrentSidecar() { brokenCurrentSidecar = true },
   } as Harness
 }
 
@@ -318,7 +335,7 @@ describe('executeSelfDeploy', () => {
     expect(readFileSync(h.plan.prevPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
     expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('NEW_BINARY_CONTENT')
     if (process.platform !== 'win32') expect(statSync(h.plan.sidecarPath).ino).not.toBe(originalIno)
-    expect(result.steps.map((s) => s.name)).toEqual(['preflight', 'backup', 'swap', 'restart', 'health'])
+    expect(result.steps.map((s) => s.name)).toEqual(['preflight', 'stage', 'backup', 'swap', 'restart', 'health'])
     expect(result.steps.every((s) => s.ok)).toBe(true)
   })
 
@@ -371,6 +388,67 @@ describe('executeSelfDeploy', () => {
     expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
     const { existsSync } = await import('node:fs')
     expect(existsSync(h.plan.prevPath)).toBe(false)
+  })
+
+  // ── C1 (2026-09-18 review): the rollback recipe must not eat its own
+  // backup. `self deploy --binary <sidecar>.prev` used to (1) copy the
+  // CURRENT broken sidecar over `.prev`, destroying the good bytes, then
+  // (2) "install" that now-broken `.prev`. Both of these pin the fix.
+  it('--binary <sidecar>.prev installs the backup and leaves .prev untouched', async () => {
+    const h = harness()
+    // A real machine gets here after a bad deploy: `.prev` holds the last
+    // known good binary, the live sidecar is the broken one.
+    writeFileSync(h.plan.prevPath, 'GOOD_OLD_BINARY')
+    writeFileSync(h.plan.sidecarPath, 'BROKEN_BINARY')
+    h.plan.newBinaryPath = h.plan.prevPath
+    h.breakCurrentSidecar()
+
+    const result = await executeSelfDeploy(h.plan, h.deps)
+
+    expect(result.ok).toBe(true)
+    // The good binary is live...
+    expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('GOOD_OLD_BINARY')
+    // ...and the backup still holds it (not the broken sidecar we replaced).
+    expect(readFileSync(h.plan.prevPath, 'utf8')).toBe('GOOD_OLD_BINARY')
+    const backup = result.steps.find((s) => s.name === 'backup')!
+    expect(backup.ok).toBe(true)
+    expect(backup.detail).toContain('skipped')
+  })
+
+  it('a broken current sidecar never overwrites the backup', async () => {
+    const h = harness()
+    writeFileSync(h.plan.prevPath, 'GOOD_OLD_BINARY')
+    writeFileSync(h.plan.sidecarPath, 'BROKEN_BINARY')
+    h.breakCurrentSidecar()
+
+    const result = await executeSelfDeploy(h.plan, h.deps)
+
+    expect(result.ok).toBe(true)
+    expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('NEW_BINARY_CONTENT')
+    expect(readFileSync(h.plan.prevPath, 'utf8')).toBe('GOOD_OLD_BINARY')
+    expect(result.steps.find((s) => s.name === 'backup')).toEqual({
+      name: 'backup', ok: true, detail: 'kept previous backup: current sidecar is broken',
+    })
+  })
+
+  it('rollback health expects the OLD version, so a good rollback prints no version mismatch', async () => {
+    const h = harness()
+    h.setDaemonHealthyAfterKickstart(2)
+    // Health reports the version the OLD binary announces (9.9.8-old) once
+    // the rollback is live — preflight's 9.9.9-test must not be what the
+    // rollback gate compares against.
+    h.deps.fetch = (async () => ({
+      ok: h.kickstartCalls >= 2,
+      status: h.kickstartCalls >= 2 ? 200 : 503,
+      json: async () => ({ ok: true, version: { cli: 'wechat-cc-cli 9.9.8-old' } }),
+    })) as unknown as typeof fetch
+
+    const result = await executeSelfDeploy(h.plan, h.deps)
+
+    expect(result.rolledBack).toBe(true)
+    const rollbackHealth = result.steps.find((s) => s.name === 'rollback_health')!
+    expect(rollbackHealth.ok).toBe(true)
+    expect(rollbackHealth.detail ?? '').not.toContain('mismatch')
   })
 
   it('exits 3 when rollback itself cannot confirm health', async () => {

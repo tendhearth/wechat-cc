@@ -356,7 +356,6 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
             registry,
             mintSessionToken: (tier, key, opts) => internalApi.mintSessionToken(tier, key, opts),
             invalidateSession: (key) => internalApi.invalidateSession(key),
-            stateDir,
             log: (t, l) => log(t, l),
           },
           input,

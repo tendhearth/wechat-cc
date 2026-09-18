@@ -17,8 +17,9 @@ import { randomUUID } from 'node:crypto'
 import { deflateSync } from 'node:zlib'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readJsonFile } from '../lib/read-json-file'
+import { readApiInfo } from '../lib/api-info'
 
 export interface SelftestCheck { name: string; ok: boolean; detail?: string }
 export interface SelftestReport {
@@ -34,11 +35,18 @@ export interface SelftestReport {
 export interface SelftestDeps {
   fetch: typeof globalThis.fetch
   readApiInfo: () => { baseUrl: string; token: string; operatorToken: string } | null
-  stateDir: string
+  /** Where scratch projects are created. Deliberately NOT STATE_DIR: that
+   *  directory holds the daemon's tokens/account files, and an executor
+   *  turned loose inside a scratch project under it sits one `..` away
+   *  from the secrets. Real runs use `<os.tmpdir()>/wechat-cc-selftest`. */
+  scratchRoot: string
   now: () => number
   sleep: (ms: number) => Promise<void>
   fs: { mkdir(p: string): void; write(p: string, text: string | Uint8Array): void; read(p: string): string | null; rm(p: string): void }
   git?: (args: string[], cwd: string) => boolean
+  /** Seam for the per-call abort budget (tests assert the ms actually
+   *  handed to each call). Absent ⇒ `AbortSignal.timeout`. */
+  timeoutSignal?: (ms: number) => AbortSignal
   log: (line: string) => void
 }
 
@@ -46,16 +54,42 @@ export const SELFTEST_EXIT = { ok: 0, failed: 1, noDaemon: 2 } as const
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'interrupted'])
 const DEFAULT_WORKBENCH_TIMEOUT_MS = 240_000
-const DEFAULT_CHAT_TIMEOUT_MS = 120_000
+/** `selftest chat`'s overall budget for ONE converse turn. The daemon-side
+ *  turn watchdog defaults to 120s, so anything shorter than that on this
+ *  side reports a client timeout for a turn the daemon is still happily
+ *  running — 180s leaves real headroom above it. */
+const DEFAULT_CHAT_TIMEOUT_MS = 180_000
 const DEFAULT_CREATE_TEXT = '先运行 shell 命令 `uname -a` 并把输出原样告诉我，然后在项目里新建 hello.txt，内容一行 hello，然后结束。'
 const DEFAULT_IMAGE_TEXT = '附带的图片里画的是什么颜色的方块？只回答颜色，不要做别的。'
 const DEFAULT_CHAT_TEXT = '调用 wechat 这个 MCP 服务器上的 ping 工具，把它返回的 daemon_pid 数字告诉我，不要做别的。'
 const RESUME_WORKBENCH_TEXT = '我上一句让你做的第一件事是什么？只回答一句。'
 const RESUME_CHAT_TEXT = '我上一句让你调用的工具叫什么？只回答工具名。'
-/** Applied to every daemon call so a hung connection can never sit outside
- *  --timeout-ms's budget (review fix: a stuck socket used to be able to
- *  block the whole run indefinitely). */
+/** Default per-call abort budget, so a hung connection can never sit
+ *  outside --timeout-ms's budget (review fix: a stuck socket used to be
+ *  able to block the whole run indefinitely).
+ *
+ *  It is a PER-CALL default, never a global one: `POST
+ *  /v1/selftest/converse` runs a whole model turn (server-side default
+ *  120s) and used to be aborted at 30s by this very constant — the chat
+ *  selftest could not pass on any real provider. Long calls pass their own
+ *  budget to `apiCall` instead. */
 const FETCH_TIMEOUT_MS = 30_000
+/** Long-poll budget: the server holds `GET /v1/workbench/task` for
+ *  `wait_ms`, so the client must allow that plus slack for the response
+ *  itself. */
+const WORKBENCH_WAIT_MS = 20_000
+const WORKBENCH_POLL_TIMEOUT_MS = WORKBENCH_WAIT_MS + 10_000
+/** Slack added on top of the chat budget: the client's abort must fire
+ *  AFTER the daemon's own turn watchdog, so a turn that times out
+ *  server-side comes back as a readable body instead of a bare socket
+ *  abort. */
+const CHAT_FETCH_MARGIN_MS = 10_000
+/** Post-deploy race (I3): the HTTP port + info file exist before bootstrap
+ *  wires `selftestConverse`, so the route answers 503 `selftest_not_wired`
+ *  for a moment right after `self deploy` returns ok. Retry rather than
+ *  calling that a failed selftest. */
+const NOT_WIRED_RETRY_INTERVAL_MS = 2_000
+const NOT_WIRED_RETRY_BUDGET_MS = 60_000
 /** If a `GET /v1/workbench/task` long-poll returns near-instantly (the
  *  server had nothing to wait on), pause briefly before the next poll so a
  *  quiet task can't turn into a tight loop. */
@@ -135,12 +169,13 @@ interface ApiCtx { baseUrl: string; operatorToken: string }
 
 interface ApiResult { ok: boolean; status: number; json: any }
 
-async function apiCall(deps: SelftestDeps, api: ApiCtx, method: string, path: string, body?: unknown): Promise<ApiResult> {
+async function apiCall(deps: SelftestDeps, api: ApiCtx, method: string, path: string, body?: unknown, opts?: { timeoutMs?: number }): Promise<ApiResult> {
+  const timeoutMs = opts?.timeoutMs ?? FETCH_TIMEOUT_MS
   try {
     const res = await deps.fetch(`${api.baseUrl}${path}`, {
       method,
       headers: { authorization: `Bearer ${api.operatorToken}`, 'content-type': 'application/json' },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: deps.timeoutSignal ? deps.timeoutSignal(timeoutMs) : AbortSignal.timeout(timeoutMs),
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     })
     let json: any = null
@@ -219,7 +254,7 @@ async function pollWorkbenchTask(deps: SelftestDeps, api: ApiCtx, taskId: string
   for (;;) {
     if (deps.now() >= deadline) return { events, finalTask: {}, timedOut: true, allowedAny, permissionFailureDetail, lastVersion: since }
     const before = deps.now()
-    const res = await apiCall(deps, api, 'GET', `/v1/workbench/task?id=${taskId}&since=${since}&wait_ms=20000`)
+    const res = await apiCall(deps, api, 'GET', `/v1/workbench/task?id=${taskId}&since=${since}&wait_ms=${WORKBENCH_WAIT_MS}`, undefined, { timeoutMs: WORKBENCH_POLL_TIMEOUT_MS })
     if (!res.ok || !res.json) {
       return { events, finalTask: { status: 'failed', phase: 'failed', error: apiErrorDetail(res) }, timedOut: false, allowedAny, permissionFailureDetail, lastVersion: since }
     }
@@ -256,7 +291,7 @@ async function waitForTerminalStatus(deps: SelftestDeps, api: ApiCtx, taskId: st
   for (;;) {
     if (deps.now() >= deadline) return { timedOut: true }
     const before = deps.now()
-    const res = await apiCall(deps, api, 'GET', `/v1/workbench/task?id=${taskId}&since=${since}&wait_ms=20000`)
+    const res = await apiCall(deps, api, 'GET', `/v1/workbench/task?id=${taskId}&since=${since}&wait_ms=${WORKBENCH_WAIT_MS}`, undefined, { timeoutMs: WORKBENCH_POLL_TIMEOUT_MS })
     if (!res.ok || !res.json) return { timedOut: false }
     const detail = res.json as { task?: WorkbenchTaskLite; permissions?: WorkbenchPermissionLite[]; version?: number }
     if (typeof detail.version === 'number') since = detail.version
@@ -301,9 +336,9 @@ export async function runWorkbenchSelftest(
   await healthPrecheck(deps, api)
 
   const checks: SelftestCheck[] = []
-  const scratchPath = `${deps.stateDir}/selftest/wb-${deps.now()}`
+  const scratchPath = join(deps.scratchRoot, `wb-${deps.now()}`)
   deps.fs.mkdir(scratchPath)
-  deps.fs.write(`${scratchPath}/README.md`, 'wechat-cc selftest workbench scratch project\n')
+  deps.fs.write(join(scratchPath, 'README.md'), 'wechat-cc selftest workbench scratch project\n')
   gitInit(deps, scratchPath)
 
   let draftId: string | undefined
@@ -360,7 +395,7 @@ export async function runWorkbenchSelftest(
     const activityEvents = phase1.events.filter((e) => e.kind === 'tool_call' && e.activity)
     checks.push({ name: 'activity_seen', ok: activityEvents.length > 0, detail: `${activityEvents.length} activity event(s)` })
     checks.push({ name: 'permission_roundtrip', ok: phase1.allowedAny, detail: phase1.allowedAny ? 'allowed' : (phase1.permissionFailureDetail ?? 'no permission card seen') })
-    const helloContent = deps.fs.read(`${scratchPath}/hello.txt`)
+    const helloContent = deps.fs.read(join(scratchPath, 'hello.txt'))
     checks.push({ name: 'file_written', ok: helloContent !== null && helloContent.trim() === 'hello', detail: helloContent === null ? 'hello.txt missing' : helloContent.trim() })
   } else {
     const mentionsRed = textEvents1.some((e) => e.text.includes('红'))
@@ -370,6 +405,7 @@ export async function runWorkbenchSelftest(
   let allEvents = phase1.events
   let latestStatus = phase1.finalTask.status
   let latestVersion = phase1.lastVersion
+  let latestTimedOut = phase1.timedOut
 
   if (opts.resume) {
     const continueRes = await apiCall(deps, api, 'POST', '/v1/workbench/continue', { id: taskId, text: RESUME_WORKBENCH_TEXT })
@@ -382,6 +418,7 @@ export async function runWorkbenchSelftest(
       allEvents = allEvents.concat(phase2.events)
       latestStatus = phase2.finalTask.status
       latestVersion = phase2.lastVersion
+      latestTimedOut = phase2.timedOut
     }
   }
 
@@ -394,11 +431,19 @@ export async function runWorkbenchSelftest(
   // deleting the scratch dir out from under it 409s (workbench_busy,
   // swallowed) and can corrupt a live session's working tree. So: if the
   // last status we actually saw isn't terminal, ask it to cancel and wait
-  // briefly (capped, never past the overall deadline) before archiving.
-  if (latestStatus && !TERMINAL_STATUSES.has(latestStatus)) {
+  // briefly for it to actually stop before archiving.
+  //
+  // The TIMEOUT path needs this most (I5) and used to skip it entirely: on
+  // timeout we never saw a task row at all (`finalTask` is `{}`, so
+  // `latestStatus` is undefined) — meaning the one case where the executor
+  // is definitely still running was the one case that archived + deleted
+  // the scratch dir out from under a live subprocess. The cancel wait is
+  // capped at CANCEL_WAIT_MS from NOW rather than clamped to the overall
+  // deadline, precisely because on this path the deadline is already in the
+  // past; cleanup is allowed to outlive the budget by those 20s.
+  if (latestTimedOut || (latestStatus && !TERMINAL_STATUSES.has(latestStatus))) {
     await apiCall(deps, api, 'POST', '/v1/workbench/cancel', { id: taskId })
-    const cancelDeadline = Math.min(deadline, deps.now() + CANCEL_WAIT_MS)
-    await waitForTerminalStatus(deps, api, taskId, latestVersion, cancelDeadline)
+    await waitForTerminalStatus(deps, api, taskId, latestVersion, deps.now() + CANCEL_WAIT_MS)
   }
 
   const archiveRes = await apiCall(deps, api, 'POST', '/v1/workbench/archive', { id: taskId, archived: true })
@@ -429,6 +474,43 @@ function converseDetail(res: ApiResult, r: SelftestConverseResultLite | undefine
   return `${r?.texts.length ?? 0} text(s)`
 }
 
+/**
+ * One `POST /v1/selftest/converse`, with the post-deploy 503 race absorbed
+ * (I3): right after `self deploy` returns ok the daemon is listening and
+ * `internal-api-info.json` is already rewritten, but bootstrap may not have
+ * wired `selftestConverse` yet — the route answers 503 `selftest_not_wired`
+ * for a moment. Treating that as a failed selftest made the documented
+ * 「部署完马上自检」 loop flaky for reasons that had nothing to do with the
+ * build under test, so we wait it out instead.
+ *
+ * Only that exact shape is retried: any other 503 (or any other status) is
+ * a real answer and comes straight back. The attempt counter is a belt on
+ * top of the wall-clock budget so a stopped/frozen clock can't spin here.
+ */
+async function converseCall(
+  deps: SelftestDeps,
+  api: ApiCtx,
+  body: unknown,
+  timeoutMs: number,
+): Promise<{ res: ApiResult; waitedMs: number }> {
+  const started = deps.now()
+  const deadline = started + NOT_WIRED_RETRY_BUDGET_MS
+  const maxAttempts = Math.ceil(NOT_WIRED_RETRY_BUDGET_MS / NOT_WIRED_RETRY_INTERVAL_MS) + 1
+  for (let attempt = 1; ; attempt++) {
+    const res = await apiCall(deps, api, 'POST', '/v1/selftest/converse', body, { timeoutMs })
+    const notWired = res.status === 503 && res.json?.error === 'selftest_not_wired'
+    if (!notWired || attempt >= maxAttempts || deps.now() >= deadline) return { res, waitedMs: Math.max(0, deps.now() - started) }
+    deps.log(`selftest: daemon answered 503 selftest_not_wired — 等 ${NOT_WIRED_RETRY_INTERVAL_MS}ms 再试(部署刚完成时的接线窗口）`)
+    await deps.sleep(NOT_WIRED_RETRY_INTERVAL_MS)
+  }
+}
+
+/** `replied` 的 detail 上带一句「等了多久接线」——否则一次慢启动看上去就是
+ *  一次莫名其妙变慢的自检。 */
+function withWaitNote(detail: string, waitedMs: number): string {
+  return waitedMs > 0 ? `${detail} (waited ${waitedMs}ms for selftest wiring)` : detail
+}
+
 export async function runChatSelftest(
   deps: SelftestDeps,
   opts: { provider: string; text?: string; resume?: boolean; timeoutMs?: number },
@@ -441,11 +523,15 @@ export async function runChatSelftest(
   const checks: SelftestCheck[] = []
   const usingDefaultText = opts.text === undefined
   const text = opts.text ?? DEFAULT_CHAT_TEXT
+  // Per-call budget for the converse route only — a whole model turn runs
+  // behind it, so the 30s default that fits every workbench call would abort
+  // every real chat selftest at 30s (I2).
+  const chatTimeoutMs = (opts.timeoutMs ?? DEFAULT_CHAT_TIMEOUT_MS) + CHAT_FETCH_MARGIN_MS
 
-  const res1 = await apiCall(deps, api, 'POST', '/v1/selftest/converse', { providerId: opts.provider, text })
+  const { res: res1, waitedMs } = await converseCall(deps, api, { providerId: opts.provider, text }, chatTimeoutMs)
   const r1: SelftestConverseResultLite | undefined = res1.ok ? res1.json : undefined
 
-  checks.push({ name: 'replied', ok: !!r1?.ok && (r1?.texts.length ?? 0) > 0, detail: converseDetail(res1, r1) })
+  checks.push({ name: 'replied', ok: !!r1?.ok && (r1?.texts.length ?? 0) > 0, detail: withWaitNote(converseDetail(res1, r1), waitedMs) })
   if (usingDefaultText) {
     checks.push({ name: 'tool_seen', ok: !!r1?.toolCalls.includes('wechat/ping'), detail: r1 ? (r1.toolCalls.join(',') || '(none)') : apiErrorDetail(res1) })
   }
@@ -461,11 +547,11 @@ export async function runChatSelftest(
       // would make this check pass for the wrong reason.
       checks.push({ name: 'resume_replied', ok: false, detail: 'no session id from first turn' })
     } else {
-      const res2 = await apiCall(deps, api, 'POST', '/v1/selftest/converse', {
+      const { res: res2 } = await converseCall(deps, api, {
         providerId: opts.provider,
         text: RESUME_CHAT_TEXT,
         resumeSessionId: r1.sessionId,
-      })
+      }, chatTimeoutMs)
       const r2: SelftestConverseResultLite | undefined = res2.ok ? res2.json : undefined
       checks.push({ name: 'resume_replied', ok: !!r2?.ok && (r2?.texts.length ?? 0) > 0, detail: converseDetail(res2, r2) })
       if (r2?.sessionId) report.sessionId = r2.sessionId
@@ -490,8 +576,13 @@ export function formatSelftestReport(r: SelftestReport): string {
 export function defaultSelftestDeps(stateDir: string): SelftestDeps {
   return {
     fetch,
-    readApiInfo: () => readApiInfoReal(stateDir),
-    stateDir,
+    readApiInfo: () => readApiInfo(stateDir),
+    // NOT under STATE_DIR: the scratch project is handed to a real
+    // executor with permissions auto-allowed, and STATE_DIR holds the
+    // daemon's tokens + account files (one `..` away). tmpdir also means a
+    // `--keep`-ed leftover gets reaped by the OS instead of piling up next
+    // to the secrets.
+    scratchRoot: join(tmpdir(), 'wechat-cc-selftest'),
     now: () => Date.now(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     fs: {
@@ -504,20 +595,5 @@ export function defaultSelftestDeps(stateDir: string): SelftestDeps {
       try { return spawnSync('git', args, { cwd, stdio: 'ignore', windowsHide: true }).status === 0 } catch { return false }
     },
     log: (line) => console.error(`[selftest] ${line}`),
-  }
-}
-
-function readApiInfoReal(stateDir: string): { baseUrl: string; token: string; operatorToken: string } | null {
-  try {
-    const infoPath = join(stateDir, 'internal-api-info.json')
-    const info = readJsonFile<{ baseUrl?: string; tokenFilePath?: string; operatorTokenFilePath?: string }>(infoPath)
-    if (!info.baseUrl || !info.tokenFilePath || !info.operatorTokenFilePath) return null
-    return {
-      baseUrl: info.baseUrl,
-      token: readFileSync(info.tokenFilePath, 'utf8').trim(),
-      operatorToken: readFileSync(info.operatorTokenFilePath, 'utf8').trim(),
-    }
-  } catch {
-    return null
   }
 }

@@ -159,9 +159,12 @@ Usage:
                         自维护:原子换 sidecar 进 .app、launchd 重启、健康门,
                         失败自动回滚(仅 macOS)。见 docs/maintainer/deploy.md。
   wechat-cc selftest workbench --executor <id> [--image] [--resume] [--json]
+                        [--timeout-ms N] [--keep]
   wechat-cc selftest chat --provider <id> [--text "…"] [--resume] [--json]
+                        [--timeout-ms N]
                         自维护:daemon 在跑的前提下做一次真机闭环自检并给出
-                        机器可读的结论。见 docs/maintainer/verify.md。
+                        机器可读的结论。--keep 保留 scratch 项目目录。
+                        见 docs/maintainer/verify.md。
   wechat-cc agent inspect <url>       Fetch Agent Card, print metadata
   wechat-cc agent add <url> [--id ID] [--name-override N] [--outbound-key K]
                         Register an external A2A agent; generates inbound API key.
@@ -2482,6 +2485,23 @@ const updateCmd = defineCommand({
   },
 })
 
+/**
+ * `--timeout-ms` / `--health-timeout-ms` 的解析(自维护三件套共用)。
+ *
+ * WHY 不再用 `Number(x)` + `Number.isFinite` 悄悄兜底:`--timeout-ms abc`
+ * 以前是 NaN ⇒ 当成「没传」⇒ 按缺省值跑完一整轮真机自检,人以为自己设了
+ * 30 秒上限,其实等了四分钟。`--timeout-ms 0` / 负数同理(缺省顶上)。
+ * 数值开关写错了就当场报错退 1,别替用户猜。
+ */
+export function parseTimeoutMsFlag(raw: unknown): { ok: true; value?: number } | { ok: false; error: string } {
+  if (raw === undefined || raw === null || raw === '') return { ok: true }
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value <= 0) {
+    return { ok: false, error: `invalid value: ${String(raw)} (expected a positive number of milliseconds)` }
+  }
+  return { ok: true, value }
+}
+
 // ── self deploy — atomic sidecar swap + launchd restart + health gate ──
 //
 // spec: docs/superpowers/specs/2026-09-18-self-maintenance-design.md §3.
@@ -2527,7 +2547,14 @@ const selfDeployCmd = defineCommand({
     const plistPath = join(homeDir, 'Library', 'LaunchAgents', 'com.wechat-cc.daemon.plist')
     const plistXml = existsSync(plistPath) ? readFileSync(plistPath, 'utf8') : null
     const uid = typeof process.getuid === 'function' ? process.getuid() : 501
-    const healthTimeoutMs = args['health-timeout-ms'] ? Number(args['health-timeout-ms']) : undefined
+    const healthTimeout = parseTimeoutMsFlag(args['health-timeout-ms'])
+    if (!healthTimeout.ok) {
+      const message = `--health-timeout-ms ${healthTimeout.error}`
+      if (json) console.log(JSON.stringify({ ok: false, exitCode: 1, error: 'invalid_health_timeout_ms', message }, null, 2))
+      else console.error(`self deploy: ${message}`)
+      process.exit(1)
+      return
+    }
 
     let plan
     try {
@@ -2541,8 +2568,12 @@ const selfDeployCmd = defineCommand({
         plistXml,
         binary: args.binary,
         app: args.app,
-        healthTimeoutMs: Number.isFinite(healthTimeoutMs) ? healthTimeoutMs : undefined,
-        rollback: !args['no-rollback'],
+        healthTimeoutMs: healthTimeout.value,
+        // citty/mri turns `--no-rollback` into `rollback:false` (boolean
+        // negation) — the declared `'no-rollback'` key stays undefined, so
+        // reading only that key silently ignored the flag and deployed with
+        // rollback still armed. Accept both spellings.
+        rollback: !((args as Record<string, unknown>)['no-rollback'] === true || (args as Record<string, unknown>).rollback === false),
       })
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err)
@@ -2602,14 +2633,21 @@ const selftestWorkbenchCmd = defineCommand({
   async run({ args }) {
     const json = Boolean(args.json)
     const { runWorkbenchSelftest, formatSelftestReport, defaultSelftestDeps, SELFTEST_EXIT } = await import('./src/cli/selftest.ts')
-    const timeoutMsRaw = args['timeout-ms'] ? Number(args['timeout-ms']) : undefined
+    const timeout = parseTimeoutMsFlag(args['timeout-ms'])
+    if (!timeout.ok) {
+      const message = `--timeout-ms ${timeout.error}`
+      if (json) console.log(JSON.stringify({ ok: false, error: 'invalid_timeout_ms', message }, null, 2))
+      else console.error(`selftest workbench: ${message}`)
+      process.exit(SELFTEST_EXIT.failed)
+      return
+    }
     try {
       const report = await runWorkbenchSelftest(defaultSelftestDeps(STATE_DIR), {
         executor: args.executor,
         image: Boolean(args.image),
         resume: Boolean(args.resume),
         keep: Boolean(args.keep),
-        ...(timeoutMsRaw !== undefined && Number.isFinite(timeoutMsRaw) ? { timeoutMs: timeoutMsRaw } : {}),
+        ...(timeout.value !== undefined ? { timeoutMs: timeout.value } : {}),
       })
       if (json) console.log(JSON.stringify(report, null, 2))
       else {
@@ -2634,15 +2672,25 @@ const selftestChatCmd = defineCommand({
     text: { type: 'string', description: '自定义测试话术(缺省会额外核对 wechat/ping 被调用)' },
     resume: { type: 'boolean', description: '用第一轮的 sessionId 再问一轮,核对续接(resume_replied)' },
     json: { type: 'boolean', description: 'JSON 输出(SelftestReport),不输出人读版' },
+    'timeout-ms': { type: 'string', description: '单轮对话上限,毫秒(缺省 180000;daemon 侧轮次看门狗缺省 120000)' },
   },
   async run({ args }) {
     const json = Boolean(args.json)
     const { runChatSelftest, formatSelftestReport, defaultSelftestDeps, SELFTEST_EXIT } = await import('./src/cli/selftest.ts')
+    const timeout = parseTimeoutMsFlag(args['timeout-ms'])
+    if (!timeout.ok) {
+      const message = `--timeout-ms ${timeout.error}`
+      if (json) console.log(JSON.stringify({ ok: false, error: 'invalid_timeout_ms', message }, null, 2))
+      else console.error(`selftest chat: ${message}`)
+      process.exit(SELFTEST_EXIT.failed)
+      return
+    }
     try {
       const report = await runChatSelftest(defaultSelftestDeps(STATE_DIR), {
         provider: args.provider,
         ...(args.text !== undefined ? { text: args.text } : {}),
         resume: Boolean(args.resume),
+        ...(timeout.value !== undefined ? { timeoutMs: timeout.value } : {}),
       })
       if (json) console.log(JSON.stringify(report, null, 2))
       else console.log(formatSelftestReport(report))

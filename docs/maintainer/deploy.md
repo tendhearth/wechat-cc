@@ -12,15 +12,24 @@ wechat-cc self deploy --json     # 机器可读
 
 可用开关(spec §3):`--binary <path>`(缺省 `apps/desktop/src-tauri/binaries/wechat-cc-cli-<arch>-apple-darwin`,`arm64→aarch64`、`x64→x86_64`)、`--app <path>`(缺省从 LaunchAgent plist 的 `ProgramArguments[0]` 推)、`--no-rollback`、`--health-timeout-ms N`(缺省 60000)、`--json`。
 
-它按顺序做五件事:
+它按顺序做六件事:
 
 1. **preflight** —— 新二进制存在、可执行、`--version` 退出 0(5s 上限)。不过就一个文件都不动。
-2. **backup** —— `<sidecar>` → `<sidecar>.prev`。
-3. **swap** —— `copyFile(new, <sidecar>.new)` + `rename(.new → sidecar)`,`chmod 755`。**必须换 inode**,见下。
-4. **restart** —— `launchctl kickstart -k gui/$(id -u)/com.wechat-cc.daemon`。
-5. **health** —— 等 `~/.claude/channels/wechat/internal-api-info.json` 的 mtime 晚于 kickstart 时刻,再用 **file token** `GET /v1/health` 拿 200,且 `version.cli` 等于 preflight 那个版本串。
+2. **stage** —— `copyFile(new, <sidecar>.new)` + `chmod 755`。**在 backup 之前**,理由见下面「回滚别把备份吃了」。
+3. **backup** —— `<sidecar>` → `<sidecar>.prev`。两种情况**故意不覆盖** `.prev`(都算这一步成功):
+   - 这次装的就是 `.prev` 自己(`--binary <sidecar>.prev`);
+   - 当前 sidecar 自己 `--version` 都过不了(崩溃循环 / 被 SIGKILL)—— 拿一个坏的去盖掉最后一个好的备份,等于把唯一的退路删了。这时步骤详情写 `kept previous backup: current sidecar is broken`。
+4. **swap** —— `rename(<sidecar>.new → sidecar)`。**必须换 inode**,见下。
+5. **restart** —— `launchctl kickstart -k gui/$(id -u)/com.wechat-cc.daemon`。
+6. **health** —— 等 `~/.claude/channels/wechat/internal-api-info.json` 的 mtime 晚于 kickstart 时刻,再用 **file token** `GET /v1/health` 拿 200。`version.cli` 跟 preflight 那个版本串**对不上只记一条 detail 警告,不判失败**(daemon 报的构建元信息跟 sidecar 的 `--version` 串本来就可能不同形)。回滚那一次的健康门比对的是**旧版本**(backup 那步顺手探到的 `<sidecar> --version`),所以回滚成功不会冒出一条假的 version mismatch。
 
 健康门不过 ⇒ 自动回滚(同样 copy+rename 换 inode)+ 再 kickstart + 再等健康;无论回滚成不成,都会打印 `launchctl print` 里的 `last exit reason` / `runs` 和 `launchd.err.log` 尾 40 行。退出码:成功 0,失败(已回滚)1,回滚也失败 3,平台不对 2。
+
+## 回滚别把备份吃了(2026-09-18 复审)
+
+`wechat-cc self deploy --binary <sidecar>.prev` 现在是**安全**的,以前不是:那时 backup 跑在 swap 前面,于是这条命令先把**当前那个坏的** sidecar 拷成 `.prev`(好的字节当场没了),再把「新二进制」= 已经变坏的 `.prev` 装回去 —— 一条命令同时毁掉备份和现场。
+
+现在 stage 先把要装的字节拷到 `<sidecar>.new`(新 inode)再动别的,并且上面 backup 那两条豁免保证 `.prev` 不会被坏二进制盖掉。
 
 ## inode 陷阱(2026-09-17 真机,一整夜)
 
@@ -49,7 +58,13 @@ tail -40 "$(plutil -extract StandardErrorPath raw ~/Library/LaunchAgents/com.wec
 ls -l ~/.claude/channels/wechat/internal-api-info.json    # mtime 没更新 = 这次没起来
 ```
 
-`runs` 每隔几秒 +1 就是崩溃循环;先看 `last exit reason`(`OS_REASON_CODESIGNING` ⇒ 十有八九是上面的 inode)。回滚:`wechat-cc self deploy --binary <sidecar>.prev`,或手工把 `.prev` 按上面的 copy+rename 换回去。
+`runs` 每隔几秒 +1 就是崩溃循环;先看 `last exit reason`(`OS_REASON_CODESIGNING` ⇒ 十有八九是上面的 inode)。回滚就一条:
+
+```bash
+wechat-cc self deploy --binary /path/to/wechat-cc.app/Contents/MacOS/wechat-cc-cli.prev
+```
+
+这条命令会跳过 backup(见上一节),`.prev` 原封不动 —— 可以放心重复跑。手工兜底就按上面的 copy+rename 换回去。
 
 ## plist 为什么指主二进制而不是 sidecar
 

@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { AgentEvent } from '../agent-provider'
+import { acpImageCapable } from '../acp-agent-provider'
 import { acpActivityId, createAcpTranslator } from './events'
 
 type Obj = Record<string, unknown>
@@ -60,6 +61,9 @@ describe('ACP 真机报文回放(cursor-agent 2026-09-17)', () => {
     }
   })
 
+  // 这条断言必须**替生产代码把关**,而不是只描述 fixture 的形状:录到的
+  // initialize 结果直接喂 provider 自己的能力探测(acpImageCapable)。谁哪天
+  // 照 ACP 文档把它改成只看顶层 promptCapabilities,这里立刻红。
   it('initialize 的能力字段:promptCapabilities 嵌在 agentCapabilities 下(照文档写会写错)', () => {
     let checked = 0
     for (const scenario of scenarios) {
@@ -68,9 +72,20 @@ describe('ACP 真机报文回放(cursor-agent 2026-09-17)', () => {
       expect(request, scenario).toBeDefined()
       const id = payloadOf(request as Obj).id
       const response = rows.find(row => row.dir === 'in' && payloadOf(row).method === undefined && payloadOf(row).id === id)
-      const capabilities = obj(obj(payloadOf(response as Obj).result).agentCapabilities)
+      const result = obj(payloadOf(response as Obj).result)
+      const capabilities = obj(result.agentCapabilities)
       expect(capabilities.loadSession, scenario).toBe(true)
-      expect(obj(capabilities.promptCapabilities).image, scenario).toBe(true)
+
+      // 真机报文原样进探测 ⇒ true。
+      expect(acpImageCapable(result), scenario).toBe(true)
+
+      // 同一个对象,把嵌着的 promptCapabilities 摘掉 ⇒ false。
+      // (探测真在读那个嵌套字段,而不是碰巧到处都返回 true。)
+      const { promptCapabilities, ...withoutNested } = capabilities
+      expect(acpImageCapable({ ...result, agentCapabilities: withoutNested }), scenario).toBe(false)
+
+      // 拍平到顶层的兜底仍然认(将来哪家 agent 照文档写)。
+      expect(acpImageCapable({ ...result, agentCapabilities: withoutNested, promptCapabilities }), scenario).toBe(true)
       checked++
     }
     expect(checked).toBe(scenarios.length)

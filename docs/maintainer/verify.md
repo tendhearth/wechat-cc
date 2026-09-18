@@ -5,15 +5,21 @@
 ## 两种用法
 
 ```bash
-wechat-cc selftest workbench --executor cursor [--image] [--resume] [--json] [--timeout-ms N]
-wechat-cc selftest chat --provider cursor [--text "…"] [--resume] [--json]
+wechat-cc selftest workbench --executor cursor [--image] [--resume] [--json] [--timeout-ms N] [--keep]
+wechat-cc selftest chat --provider cursor [--text "…"] [--resume] [--json] [--timeout-ms N]
 ```
 
-**workbench**:在 `STATE_DIR/selftest/wb-<ts>` 建一个 scratch 项目(mkdir + README + `git init` 一次提交),`POST /v1/workbench/create`,长轮询 `GET /v1/workbench/task`,碰到权限卡就 `POST /v1/workbench/permission` 放行,最后 `POST /v1/workbench/archive`。检查项:`created`、`replied`、`text_seen`、`activity_seen`、`permission_roundtrip`、`file_written`(`--image` 时换成 `answer_mentions_red`)、`resume_replied`(带 `--resume` 时)、`no_error_event`。
+**workbench**:在 `<tmpdir>/wechat-cc-selftest/wb-<ts>` 建一个 scratch 项目(mkdir + README + `git init` 一次提交),`POST /v1/workbench/create`,长轮询 `GET /v1/workbench/task`,碰到权限卡就 `POST /v1/workbench/permission` 放行;跑完(或超时)时任务状态还没到终态就先 `POST /v1/workbench/cancel` 并最多等 20s,再 `POST /v1/workbench/archive`。检查项:`created`、`replied`、`text_seen`、`activity_seen`、`permission_roundtrip`、`file_written`(`--image` 时换成 `answer_mentions_red`)、`resume_replied`(带 `--resume` 时)、`no_error_event`、`archived`(归档那一下的 HTTP 结果本身也是一项)。
 
-**chat**:`POST /v1/selftest/converse { providerId, text }`,daemon 内部代 spawn 一次自检对话。检查项:`replied`、`tool_seen`(缺省 text 让它调 wechat MCP 的 `ping`)、`no_error`、`resume_replied`。那次对话的会话 token 只被授予 `GET /v1/health` —— 自检对话里的 wechat MCP 只能 ping,发不出消息。
+scratch 项目**不在 STATE_DIR 底下**(它跟 token / account.json 同级,而 scratch 里跑的是权限全放行的真执行者);跑完默认删掉,`--keep` 保留它、把路径打在 `scratch: …` 那行上给人去翻现场。daemon 侧 `selftest chat` 用的 scratch 项目同理,固定在 `<tmpdir>/wechat-cc-selftest/project`。
 
-输出:逐行 `✓ / ✗ name — detail`,末行 `PASS` / `FAIL`;`--json` 给 `{ ok, kind, target, checks, taskId?, sessionId?, durationMs }`。退出码 0 通过 / 1 有检查项失败 / 2 daemon 没在跑。
+`--timeout-ms` 是**整轮**上限(workbench 缺省 240000;chat 缺省 180000,daemon 侧轮次看门狗缺省 120000)。非数字 / ≤0 当场报错退 1,不会悄悄按缺省值跑。
+
+**chat**:`POST /v1/selftest/converse { providerId, text }`,daemon 内部代 spawn 一次自检对话。检查项:`replied`、`tool_seen`(缺省 text 让它调 wechat MCP 的 `ping`)、`no_error`、`resume_replied`。那次对话的会话 token 只被授予 `GET /v1/health`、并且带 10 分钟 TTL —— 自检对话里的 wechat MCP 只能 ping,发不出消息。
+
+刚 `self deploy` 完就跑 `selftest chat` 是**正常用法**:端口和 info 文件比 bootstrap 接线早,那个窗口里路由会答 503 `selftest_not_wired`,CLI 每 2s 重试、最多等 60s,等到了就在 `replied` 的 detail 里写一句 `waited …ms for selftest wiring`。
+
+输出:逐行 `✓ / ✗ name — detail`,末行 `PASS` / `FAIL`;`--json` 给 `{ ok, kind, target, checks, taskId?, sessionId?, durationMs, scratchPath? }`。退出码 0 通过 / 1 有检查项失败 / 2 daemon 没在跑。
 
 ## 两种 token 分别够得着什么
 
@@ -44,6 +50,7 @@ POST /v1/workbench/create        { path, providerId, title, text, draftId?, atta
 GET  /v1/workbench/task?id=&since=&wait_ms=20000      长轮询,返回 events + permissions
 POST /v1/workbench/permission    { id, requestId, decision: 'allow' | 'deny' }
 POST /v1/workbench/continue      { id, text }
+POST /v1/workbench/cancel        { id }
 POST /v1/workbench/archive       { id, archived: true }
 POST /v1/workbench/attachment    { id, draftId, name, mime, base64 }
 ```

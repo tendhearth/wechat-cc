@@ -22,7 +22,7 @@ cd apps/desktop && bun run build-sidecar && cd -
 wechat-cc self deploy                # 换 inode + kickstart + 健康门,不过自动回滚
 
 # 3. 真机自检(daemon 在跑的前提下)
-wechat-cc selftest workbench --executor cursor --image --resume
+wechat-cc selftest workbench --executor cursor --image --resume   # 加 --keep 保留 scratch 项目
 wechat-cc selftest chat --provider cursor --resume
 
 # 4. 推 dev,看 CI
@@ -30,7 +30,15 @@ git push origin dev
 gh run list --branch dev --limit 3
 ```
 
-任何一步失败都有机器可读的输出:`selftest --json` 给 `{ ok, checks: [{ name, ok, detail }] }`,`self deploy` 失败会自己回滚并把 launchd 的退出原因打出来。
+任何一步失败都有机器可读的输出:`selftest --json` 给 `{ ok, checks: [{ name, ok, detail }] }`(`archived` 也是其中一项 —— 自检自己收尾没收干净同样算 FAIL),`self deploy` 失败会自己回滚并把 launchd 的退出原因打出来。部署完立刻自检是设计内的用法:接线窗口里的 503 由 CLI 自己等。
+
+开关一览(手册里提到的每一个都真的存在):
+
+| 命令 | 开关 |
+| --- | --- |
+| `self deploy` | `--binary` `--app` `--no-rollback` `--health-timeout-ms` `--json` |
+| `selftest workbench` | `--executor`(必填) `--image` `--resume` `--json` `--timeout-ms` `--keep` |
+| `selftest chat` | `--provider`(必填) `--text` `--resume` `--json` `--timeout-ms` |
 
 ## 索引
 
