@@ -23,6 +23,7 @@ import { resolveTier } from '../../core/user-tier'
 import { derivePetTurn } from '../../core/pet-turn'
 import type { PetTurnDep } from '../internal-api/types'
 import { makeAdminCommands } from '../admin-commands'
+import { makeSelfChangeSpawner, resolveSelfCli } from '../self-change-spawn'
 import { makeModeCommands } from '../mode-commands'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../companion/care-ledger'
@@ -49,6 +50,7 @@ import { writeConfigKey } from '../config-surface'
 import { makeOpenaiModels } from '../openai-models'
 import { hasLlmKey } from '../llm-keys'
 import { findOnPath } from '../../lib/util'
+import { isCompiledBundle } from '../../lib/runtime-info'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 import { materializeAttachments } from '../media'
 import { loadGuardConfig } from '../guard/store'
@@ -440,6 +442,22 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         timeoutMs,
       })(handName, task)
     },
+    // 微信「自改 <需求>」的执行端(spec 2026-09-18)。流水线最后要部署 + 重启
+    // 这个 daemon,所以只能 detached 起独立进程 —— 同 updateSelf 的理由。
+    selfChange: makeSelfChangeSpawner({
+      resolve: () => resolveSelfCli({
+        compiled: isCompiledBundle(),
+        execPath: process.execPath,
+        repoRoot: REPO_ROOT,
+        bunPath: findOnPath('bun'),
+        exists: existsSync,
+      }),
+      spawn,
+      env: process.env,
+      stateDir,
+      cwd: REPO_ROOT,
+      log: (line) => log('SELF_CHANGE', line),
+    }),
     updateSelf: async () => {
       if (!existsSync(CLI_ENTRY)) return { ok: false as const, reason: 'source_cli_not_found' }
       const bun = findOnPath('bun')

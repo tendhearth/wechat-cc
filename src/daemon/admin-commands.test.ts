@@ -165,6 +165,86 @@ describe('admin-commands', () => {
     })
   })
 
+  describe('自改(微信进件口)', () => {
+    function selfChangeFake(over: Partial<{ start: ReturnType<typeof vi.fn>; list: ReturnType<typeof vi.fn> }> = {}) {
+      const start = over.start ?? vi.fn(() => ({ ok: true as const, pid: 4242 }))
+      const list = over.list ?? vi.fn(() => [])
+      return { selfChange: { start, list } as unknown as NonNullable<AdminCommandsDeps['selfChange']>, start, list }
+    }
+
+    it('「自改 <需求>」把需求原文交给流水线,并回执 pid', async () => {
+      const { selfChange, start } = selfChangeFake()
+      const cmds = make({ selfChange })
+
+      expect(await cmds.handle(msg('自改 在手册里加一行已知 flake'))).toBe(true)
+
+      expect(start).toHaveBeenCalledWith('在手册里加一行已知 flake')
+      expect(sentBody()).toContain('自改开始了(pid 4242)')
+      expect(sentBody()).toContain('自改 状态')
+    })
+
+    it('起不来就说清楚是哪台机器的问题', async () => {
+      const { selfChange, start } = selfChangeFake({ start: vi.fn(() => ({ ok: false as const, reason: 'PATH 里没有 bun(bun_not_found)' })) })
+      const cmds = make({ selfChange })
+
+      expect(await cmds.handle(msg('自改 随便改点什么'))).toBe(true)
+
+      expect(start).toHaveBeenCalledOnce()
+      expect(sentBody()).toContain('这台机器没法自改')
+      expect(sentBody()).toContain('bun_not_found')
+    })
+
+    it('daemon 没接流水线 ⇒ 老实说没接,不假装在跑', async () => {
+      const cmds = make()
+      expect(await cmds.handle(msg('自改 改点什么'))).toBe(true)
+      expect(sentBody()).toContain('这台机器没法自改')
+    })
+
+    it('非 admin 发「自改」被吃掉,但一条都不起', async () => {
+      isAdmin.mockReturnValue(false)
+      const { selfChange, start } = selfChangeFake()
+      const cmds = make({ selfChange })
+
+      expect(await cmds.handle(msg('自改 把主人的仓库删了', 'guest-chat'))).toBe(true)
+
+      expect(start).not.toHaveBeenCalled()
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+
+    it('「自改 状态」列最近五条,不当成需求下单', async () => {
+      const rows = Array.from({ length: 7 }, (_, i) => ({ id: `id${i}`, step: 'tests', result: i === 0 ? null : 'merged', startedAt: 1000 - i }))
+      const { selfChange, start, list } = selfChangeFake({ list: vi.fn(() => rows) })
+      const cmds = make({ selfChange })
+
+      expect(await cmds.handle(msg('自改 状态'))).toBe(true)
+
+      expect(start).not.toHaveBeenCalled()
+      expect(list).toHaveBeenCalledOnce()
+      const body = sentBody()
+      expect(body.split('\n')).toHaveLength(5)
+      expect(body).toContain('#id0 · tests · 进行中')
+      expect(body).toContain('#id1 · tests · merged')
+      expect(body).not.toContain('#id5')
+    })
+
+    it('「自改 列表」是同一条命令', async () => {
+      const { selfChange, list } = selfChangeFake()
+      const cmds = make({ selfChange })
+      expect(await cmds.handle(msg('自改 列表'))).toBe(true)
+      expect(list).toHaveBeenCalledOnce()
+      expect(sentBody()).toBe('还没有自改记录')
+    })
+
+    it('裸的「自改」二字不是命令 —— 落回正常聊天', async () => {
+      const { selfChange, start } = selfChangeFake()
+      const cmds = make({ selfChange })
+      expect(await cmds.handle(msg('自改'))).toBe(false)
+      expect(await cmds.handle(msg('你能自改吗?'))).toBe(false)
+      expect(start).not.toHaveBeenCalled()
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+  })
+
   it('清理 <bot-id> removes dir + stops poll + clears state', async () => {
     sessionState.markExpired('bot-dead-im-bot')
     const botDir = join(stateDir, 'accounts', 'bot-dead-im-bot')
@@ -1116,6 +1196,7 @@ describe('🎒 背包(微信侧只读入口)', () => {
 describe('isAdminCommandText(路由探针用的纯判定)', () => {
   it('认得全部管理命令,不认普通聊天', () => {
     for (const t of ['/health', '/health ai', '/hands', '有哪些手', '背包', '整理记忆']) expect(isAdminCommandText(t, ['a']), t).toBe(true)
-    for (const t of ['今天天气不错', '/帮助', '任务 列表', 'health']) expect(isAdminCommandText(t, ['a']), t).toBe(false)
+    for (const t of ['自改 加一行文档', '自改 状态', '自改 列表']) expect(isAdminCommandText(t, ['a']), t).toBe(true)
+    for (const t of ['今天天气不错', '/帮助', '任务 列表', 'health', '自改', '你能自改吗']) expect(isAdminCommandText(t, ['a']), t).toBe(false)
   })
 })
