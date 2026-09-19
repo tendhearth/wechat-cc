@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, chmodSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { buildBootstrap, resolveAdminChatId } from './bootstrap'
+import { writeWarmExecFixture } from '../lib/test-temp'
 import { saveAgentConfig } from '../lib/agent-config'
 import { openTestDb } from '../lib/db'
 import { makeChannelStore } from '../core/penpal-channel-store'
@@ -302,8 +303,11 @@ describe('bootstrap', () => {
     it('cursorAgentBin pointing at a present binary ⇒ registers an ACP cursor provider (cheapEvalBudgetMs 20s, BOOT log names ACP)', async () => {
       const binDir = mkdtempSync(join(tmpdir(), 'bootstrap-cursor-acp-bin-'))
       const cursorAgentBin = join(binDir, 'fake-cursor-agent')
-      writeFileSync(cursorAgentBin, '#!/bin/sh\necho "1.0.0-fake"\nexit 0\n')
-      chmodSync(cursorAgentBin, 0o755)
+      // 热身过的夹具:刚写出来的可执行文件首次 exec 的一次性校验开销在满载套件里
+      // 实测到 3002ms,会把 `probeBinaryVersion` 硬顶的 3s 吃穿 ⇒ 下面那条
+      // `registry.has('cursor')` 随机红成 `expected false to be true`。量和推理见
+      // test-temp.ts 里 writeWarmExecFixture 的注释。
+      writeWarmExecFixture(cursorAgentBin, '#!/bin/sh\necho "1.0.0-fake"\nexit 0\n')
 
       const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-cursor-acp-'))
       saveAgentConfig(stateDir, {

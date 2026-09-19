@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, writeFileSync, chmodSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { writeWarmExecFixture } from '../../lib/test-temp'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { registerProviders, type ProviderDeps } from './providers'
@@ -16,11 +17,15 @@ import { AGY_WECHAT_MCP_NAMESPACE_ID } from './agy-mcp-config'
  * have one installed. `agyVersionOk` (agy-version-check.ts) just spawns
  * `[bin, '--version']` and checks the exit code, so a one-line shell script
  * satisfies it exactly like a real CLI would.
+ *
+ * 用 writeWarmExecFixture 而不是自己 writeFileSync + chmodSync:刚写出来的可执行
+ * 文件第一次 exec 要付一笔一次性校验开销,满载套件里能涨到 4886ms,把
+ * `agyVersionOk` 缺省的 5s 探测窗口吃穿 ⇒ 下面三条 opt-in 用例随机红成
+ * `expected false to be true`。完整的量和推理在 test-temp.ts 那个函数的注释里。
  */
 function makeFakeAgyBin(dir: string): string {
   const path = join(dir, 'fake-agy')
-  writeFileSync(path, '#!/bin/sh\necho "1.0.0-fake"\nexit 0\n')
-  chmodSync(path, 0o755)
+  writeWarmExecFixture(path, '#!/bin/sh\necho "1.0.0-fake"\nexit 0\n')
   return path
 }
 
