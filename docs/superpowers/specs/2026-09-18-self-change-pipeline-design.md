@@ -131,3 +131,14 @@ wechat-cc ci triage [...]        # 见 ci-triage 设计;流水线在进程内调
 
 - `docs/maintainer/self-change.md`(新):怎么用、闸门、退出码、停机与 `--unhalt`、禁改清单、费用。README / AGENTS.md 加一行入口。
 - `docs/superpowers/specs/2026-09-18-ci-triage-design.md`:triage 改为 `wechat-cc ci triage` 子命令(纯逻辑 `src/cli/ci-triage.ts`,登记表 `src/cli/ci-flakes.json`),不再是 `scripts/ci/`;`ci.yml` 的 push 分支加 `self/**`。
+
+## 修订记录
+
+- **2026-09-19 实现偏差与 v1.1a / v1.1b(真机两跑之后)**
+  - CLI:`self change --list` 是开关不是子命令;新增 `--approve <id>` / `--deny <id>`(读存盘里的 hash,走 `POST /v1/permissions/resolve`)。
+  - 拍板:daemon 侧不再用 `askUser` 的失败即删 —— glue 自己 register + 发卡,微信发不出去(`errcode=-2`)登记项也保留,`ask` 多返回 `delivered`;approval 步一拿到 hash 就落盘(不然 `--approve` 看不到);`--resume` 先清掉上次的 result。
+  - 修复轮范围纪律:tests 闸门失败文件与本次改动无关就先重跑一次(只对两条 vitest 命令);修复轮提示词禁止改无关测试 / 超时 / 配置;评审把越界记 `scope:<file>`(important),修复轮对这些文件是**还原**不是修,文件名要与本次 diff 相交才算数;为本次改动新增的测试与夹具不算越界。
+  - CI 闸门:`ci triage` 退 2 ⇒ `ci_unavailable`,不算修复轮;`--wait` 期间 gh 连错 3 次才放弃。
+  - 部署 / 自检的异常也算失败(bump `fail_streak`);拍板超时钳在 [1h, 48h];禁改清单扩到 `.github/workflows/**`(例外 `ci.yml`)与 `package.json`。
+  - selftest:保留会话的执行者(claude)续接走 `POST /v1/workbench/input`,且要等到新的 text 事件;收了工的(cursor)才走 `continue`(409 重试)。
+  - 未做:deny 后分支 24h 自动清理;通知发送失败只 log;拍板临近超时时重问会 400;`apps/desktop/package.json` 在 build-sidecar 期间可被改。
