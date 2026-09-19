@@ -587,7 +587,11 @@ describe('Workbench internal HTTP API', () => {
       const svc = service({ detail, changes: { wait } })
       const { request } = await start(svc)
       const responsePromise = request('/v1/workbench/task?id=deadbeef&since=4&wait_ms=99999')
-      await new Promise(r => setTimeout(r, 5))
+      // 等**条件**,不是赌时钟:`wait` 被调用本身就证明第一次 detail 已经发生、
+      // handler 正停在长轮询上。这里原来是 `setTimeout(r, 5)` —— 满载套件里
+      // (614 个文件 / 18 worker)5ms 真时钟不够让这条异步链推进到 wait,
+      // 2026-09-19 就这么假红过一次(detail 0 次)。断言一个字没动。
+      await vi.waitFor(() => expect(wait).toHaveBeenCalled(), { timeout: 5_000 })
       // 卡在 wait 上:第一次 detail 已经发生(拿到 version:4,没超过 since),第二次还没有。
       expect(detail).toHaveBeenCalledTimes(1)
       expect(wait).toHaveBeenCalledWith('deadbeef', 4, 20000)

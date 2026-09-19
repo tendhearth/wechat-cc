@@ -122,7 +122,12 @@ describe('workbench owned background runtime',()=>{
   it('returns a durable sending receipt without waiting for native acknowledgement and records only its original run',async()=>{
     const owned=new OwnedRuntime();setup(owned);const task=create();await started(owned)
     const runId=service.detail(task.id).runId!,requestId=randomUUID()
-    const receipt=await Promise.race([service.submitInput(task.id,{runId,requestId,text:'Continue in this epoch'}),pause(100).then(()=>null)])
+    // 不拿 100ms 的时钟赌「没等 native ack」:满载套件里 submitInput 自己就可能超过
+    // 100ms,race 于是给出 null,红成 `expected null to match object`(2026-09-19 node
+    // 作业实测)。证明力本来也不在那 100ms —— ack 要到下面 `ack.resolve()` 才兑现,
+    // 所以 submitInput 真去等 ack 的话这个 await 永远不会回来,测试以超时告终,同样
+    // 是真失败信号,而且不看机器忙不忙。
+    const receipt=await service.submitInput(task.id,{runId,requestId,text:'Continue in this epoch'})
     expect(receipt).toMatchObject({id:requestId,taskId:task.id,runId,status:'sending',execution:{model:'owned-model',reasoningEffort:'high'}})
     expect(owned.submitted).toHaveLength(1);expect(owned.submitted[0]?.persistedStatus).toBe('sending')
     await service.submitInput(task.id,{runId,requestId,text:'Continue in this epoch'})

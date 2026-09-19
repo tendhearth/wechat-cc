@@ -15,7 +15,10 @@ describe.skipIf(process.platform === 'win32')('Claude owned process teardown', (
     const processChild = owner.spawn({ command: process.execPath, args: ['-e', parent], cwd: area, env: { PATH: '/usr/bin:/bin' }, signal: new AbortController().signal })
     let descendantPid: number | undefined
     try {
-      await expect.poll(() => existsSync(sentinel)).toBe(true)
+      // expect.poll 的缺省预算是 1s,而这里等的是三层 spawn(owner → parent →
+      // descendant)之后才写出的 sentinel:满载套件里实测 1124ms 就超了,红成
+      // `expected false to be true`(2026-09-19)。等的条件没变,只是把预算给够。
+      await expect.poll(() => existsSync(sentinel), { timeout: 15_000 }).toBe(true)
       descendantPid = Number(readFileSync(sentinel, 'utf8'))
       expect(exists(descendantPid)).toBe(true)
       const deadline = Date.now() + 2500
@@ -28,5 +31,6 @@ describe.skipIf(process.platform === 'win32')('Claude owned process teardown', (
       for (const pid of [descendantPid, processChild.pid, ...(existsSync(lateFile) ? [Number(readFileSync(lateFile, 'utf8'))] : [])]) if (pid) { try { process.kill(-pid, 'SIGKILL') } catch {} }
       rmSync(area, { recursive: true, force: true })
     }
-  }, 5000)
+    // 三层 spawn 加上 close 那 2500ms 的 deadline,在满载机器上塞不进 5s。
+  }, 30_000)
 })
