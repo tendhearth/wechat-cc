@@ -13,6 +13,7 @@ function fakeToggle(id: string) {
     dataset: {} as Record<string, string>,
     getAttribute: (k: string) => attrs[k] ?? null,
     setAttribute: (k: string, v: string) => { attrs[k] = v },
+    removeAttribute: (k: string) => { delete attrs[k] },
     classList: { toggle: (_c: string, force?: boolean) => { on = force ?? !on } },
     addEventListener: (ev: string, fn: () => unknown) => { if (ev === 'click') clickHandler = fn },
     // test accessors
@@ -21,9 +22,10 @@ function fakeToggle(id: string) {
   }
 }
 
+const feedback = { textContent: '', dataset: {} as Record<string, string> }
 function installDom(toggles: ReturnType<typeof fakeToggle>[]) {
   globalThis.document = {
-    getElementById: () => null,
+    getElementById: (id: string) => id.endsWith('-feedback') ? feedback : null,
     addEventListener: () => {},
     querySelectorAll: (sel: string) => (sel.includes('[data-toggle]') ? toggles : []),
   } as unknown as Document
@@ -43,10 +45,29 @@ describe('settings-drawer toggle — 持久化失败回滚', () => {
     await t._click()
     expect(onToggleChange).toHaveBeenCalledWith('guard-toggle', true)
     expect(t._state()).toEqual({ pressed: 'false', on: false })   // 回滚了
+    expect(feedback.textContent).toContain('未保存')
 
     // 成功:再点 → 翻到 on → 持久化成功 → 保持
     succeed = true
     await t._click()
     expect(t._state()).toEqual({ pressed: 'true', on: true })
+    expect(feedback.textContent).toBe('已保存')
   })
 })
+
+ it('ignores repeated clicks while a setting is saving', async () => {
+    vi.resetModules()
+    const t = fakeToggle('guard-toggle')
+    installDom([t])
+    let finish!: (value: boolean) => void
+    const save = vi.fn(() => new Promise<boolean>(resolve => { finish = resolve }))
+    const { wireSettingsDrawer } = await import('./settings-drawer.js')
+    wireSettingsDrawer({ onToggleChange: save })
+    const pending = t._click()
+    await t._click()
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(feedback.textContent).toBe('保存中…')
+    finish(true)
+    await pending
+    expect(t.getAttribute('disabled')).toBeNull()
+  })

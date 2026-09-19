@@ -170,6 +170,11 @@ export function wireSettingsDrawer(opts) {
   // 返回 false / 抛错)就回滚开关,别让 UI 撒谎——和手机设置页同一姿态。
   document.querySelectorAll("#settings-drawer [data-toggle]").forEach((el) => {
     el.addEventListener("click", async () => {
+      if (el.getAttribute("aria-busy") === "true") return
+      el.setAttribute("aria-busy", "true")
+      el.setAttribute("disabled", "")
+      const feedback = document.getElementById(`${el.id}-feedback`)
+      if (feedback) { feedback.textContent = "保存中…"; feedback.dataset.state = "saving" }
       const pressed = el.getAttribute("aria-pressed") === "true"
       const next = !pressed
       el.setAttribute("aria-pressed", String(next))
@@ -177,9 +182,14 @@ export function wireSettingsDrawer(opts) {
       try {
         const ok = await opts.onToggleChange(el.id, next)
         if (ok === false) throw new Error("persist_failed")
+        if (feedback) { feedback.textContent = "已保存"; feedback.dataset.state = "saved" }
       } catch {
         el.setAttribute("aria-pressed", String(pressed))
         el.classList.toggle("on", pressed)
+        if (feedback) { feedback.textContent = "未保存，已恢复原设置。请重试。"; feedback.dataset.state = "error" }
+      } finally {
+        el.removeAttribute("disabled")
+        el.removeAttribute("aria-busy")
       }
     })
   })

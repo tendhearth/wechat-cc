@@ -78,3 +78,20 @@
 .cc-portrait-placeholder svg { width: 32px; height: 32px; color: var(--cc-muted); }
 .profile-panel h2 { border: 0; padding: 8px 12px; min-height: 40px; top: -22px; background: var(--cc-surface); border-radius: 8px; }
 .memory-profile-tags span { border-image: none; border: 1px solid var(--cc-line); border-radius: 12px; padding: 6px 16px; background: var(--cc-surface-soft); }
+
+/* Memory sources are maintenance tools, separate from the personal overview. */
+.memory-library-trigger { border-color: var(--cc-line); color: var(--ink); background: var(--cc-surface); box-shadow: none; }
+.memory-sources-head { color: var(--ink); }
+.memory-sources-head h2 { margin: 0 0 8px; font-size: 20px; }
+.memory-sources-head p, .memory-maintenance-item p { font-size: 13px; line-height: 1.6; font-weight: 400; color: var(--cc-muted); margin: 8px 0; }
+.memory-maintenance { display: grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap: 12px; margin: 16px 0 24px; }
+.memory-maintenance-item { padding: 16px; border: 1px solid var(--cc-line); border-radius: 12px; background: var(--cc-surface); }
+.drawer-intro { color: var(--cc-muted); font-size: 13px; line-height: 1.6; margin: 0 0 20px; }
+.drawer-fold > summary { cursor: pointer; font-weight: 650; color: var(--ink); padding: 8px 0; }
+.drawer-fold > summary:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 3px; }
+.drawer-fold-body { padding-top: 16px; }
+.settings-drawer .toggle-row { flex-wrap: wrap; }
+.setting-feedback { flex-basis: 100%; font-size: 12px; color: var(--cc-muted); line-height: 1.5; }
+.setting-feedback:empty { display: none; }
+.setting-feedback[data-state="error"] { color: #a04430; }
+.settings-drawer .toggle:disabled { cursor: wait; opacity: .6; }
