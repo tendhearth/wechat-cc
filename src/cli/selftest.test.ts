@@ -231,6 +231,15 @@ describe('runWorkbenchSelftest', () => {
           permissions: [{ id: 'perm-1', tool: 'shell', description: 'run uname -a' }],
           version: 5,
         },
+        // 交出 input 之后的第一次 poll:phase 仍是 replied(它本来就是),但还没有新事件 ——
+        // 续接的等待不能在这里就收工(2026-09-19 真机:8 秒「0 event(s) via input」假红)。
+        {
+          task: { id: 'aa11bb22', status: 'running', phase: 'replied', error: null },
+          runId: '11111111-2222-4333-8444-555555555555',
+          events: [],
+          permissions: [],
+          version: 6,
+        },
         {
           task: { id: 'aa11bb22', status: 'running', phase: 'replied', error: null },
           runId: '11111111-2222-4333-8444-555555555555',

@@ -262,7 +262,10 @@ interface PollResult {
  *  — that's still "done talking" for our purposes, see the finalize step
  *  in `runWorkbenchSelftest` for what happens to the still-live session
  *  afterwards) — or until `deadline`. */
-async function pollWorkbenchTask(deps: SelftestDeps, api: ApiCtx, taskId: string, sinceVersion: number, deadline: number): Promise<PollResult> {
+/** `untilText`:续接一个**保留着会话**的任务时用 —— 它的 phase 早就是 `replied`
+ *  (那正是能续接的前提),所以「phase 到 replied」不能当终点,得等到这一轮真的
+ *  吐出新的 text 事件(2026-09-19 真机:不等的话 8 秒就以「0 event(s)」假红)。 */
+async function pollWorkbenchTask(deps: SelftestDeps, api: ApiCtx, taskId: string, sinceVersion: number, deadline: number, opts: { untilText?: boolean } = {}): Promise<PollResult> {
   let since = sinceVersion
   const events: WorkbenchEventLite[] = []
   const seenEventIds = new Set<string | number>()
@@ -296,7 +299,8 @@ async function pollWorkbenchTask(deps: SelftestDeps, api: ApiCtx, taskId: string
     }
     const status = detail.task?.status
     const phase = detail.task?.phase
-    const terminal = (!!status && TERMINAL_STATUSES.has(status)) || phase === 'replied'
+    const repliedDone = phase === 'replied' && (!opts.untilText || events.some((e) => e.kind === 'text'))
+    const terminal = (!!status && TERMINAL_STATUSES.has(status)) || repliedDone
     if (terminal) return { events, finalTask: detail.task ?? {}, timedOut: false, allowedAny, permissionFailureDetail, lastVersion: since, runId }
     if (deps.now() >= deadline) return { events, finalTask: detail.task ?? {}, timedOut: true, allowedAny, permissionFailureDetail, lastVersion: since, runId }
     if (deps.now() - before < POLL_MIN_INTERVAL_MS) await deps.sleep(POLL_IDLE_SLEEP_MS)
@@ -469,7 +473,7 @@ export async function runWorkbenchSelftest(
     if (!res.ok) {
       checks.push({ name: 'resume_replied', ok: false, detail: `${apiErrorDetail(res)} (${via})` })
     } else {
-      const phase2 = await pollWorkbenchTask(deps, api, taskId, latestVersion, deadline)
+      const phase2 = await pollWorkbenchTask(deps, api, taskId, latestVersion, deadline, { untilText: retained })
       const resumeTextSeen = phase2.events.some((e) => e.kind === 'text')
       checks.push({ name: 'resume_replied', ok: resumeTextSeen && !phase2.timedOut, detail: phase2.timedOut ? `timeout (${via})` : `${phase2.events.length} event(s) ${via}` })
       allEvents = allEvents.concat(phase2.events)
