@@ -255,3 +255,32 @@ describe('formatTriage', () => {
     expect(lines).toContain('    line2')
   })
 })
+
+describe('parseJobLog edge cases (review follow-up)', () => {
+  it('a FAIL line with no `>` suffix yields test === "" and still forms a block', () => {
+    const log = ['job\tRun tests\t2026-09-18T17:06:20.000Z  FAIL  src/a.test.ts', 'job\tRun tests\t2026-09-18T17:06:20.000Z Error: boom', 'job\tRun tests\t2026-09-18T17:06:20.000Z  Test Files  1 failed (1)'].join('\n')
+    const parsed = parseJobLog(log, 'job')
+    expect(parsed.failures).toHaveLength(1)
+    expect(parsed.failures[0]!.file).toBe('src/a.test.ts')
+    expect(parsed.failures[0]!.test).toBe('')
+    expect(parsed.failures[0]!.excerpt).toContain('Error: boom')
+    expect(parsed.hasSummary).toBe(true)
+  })
+  it('caps the excerpt at 60 lines', () => {
+    const body = Array.from({ length: 90 }, (_, i) => `job\tRun tests\t2026-09-18T17:06:20.000Z line-${i}`)
+    const log = ['job\tRun tests\t2026-09-18T17:06:20.000Z  FAIL  src/a.test.ts > s > t', ...body].join('\n')
+    const parsed = parseJobLog(log, 'job')
+    const lines = parsed.failures[0]!.excerpt.split('\n')
+    expect(lines.length).toBeLessThanOrEqual(60)
+    expect(parsed.failures[0]!.excerpt).toContain('line-0')
+    expect(parsed.failures[0]!.excerpt).not.toContain('line-80')
+  })
+})
+
+describe('globToRegExp escapes ? literally', () => {
+  it('a literal ? in the glob matches only ?', () => {
+    const re = globToRegExp('src/a?.test.ts')
+    expect(re.test('src/a?.test.ts')).toBe(true)
+    expect(re.test('src/ab.test.ts')).toBe(false)
+  })
+})
