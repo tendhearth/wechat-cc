@@ -47,6 +47,10 @@ export interface SelftestDeps {
   /** Seam for the per-call abort budget (tests assert the ms actually
    *  handed to each call). Absent ⇒ `AbortSignal.timeout`. */
   timeoutSignal?: (ms: number) => AbortSignal
+  /** Idempotency key generator for `POST /v1/workbench/input` (the route
+   *  requires a UUID v4). Injected so tests can pin it. Absent ⇒
+   *  `node:crypto`'s `randomUUID`. */
+  uuid?: () => string
   log: (line: string) => void
 }
 
@@ -244,6 +248,11 @@ interface PollResult {
    *  swallowed (review fix). */
   permissionFailureDetail?: string
   lastVersion: number
+  /** The live run's identity, straight off the task detail (`runId` is
+   *  only present while a run is actually running). `POST
+   *  /v1/workbench/input` needs it, and it is the ONLY way to talk to a
+   *  retained session — see the resume step in `runWorkbenchSelftest`. */
+  runId?: string
 }
 
 /** Long-polls `GET /v1/workbench/task`, auto-allowing every pending
@@ -259,15 +268,17 @@ async function pollWorkbenchTask(deps: SelftestDeps, api: ApiCtx, taskId: string
   const seenEventIds = new Set<string | number>()
   let allowedAny = false
   let permissionFailureDetail: string | undefined
+  let runId: string | undefined
   const answered = new Set<string>()
   for (;;) {
-    if (deps.now() >= deadline) return { events, finalTask: {}, timedOut: true, allowedAny, permissionFailureDetail, lastVersion: since }
+    if (deps.now() >= deadline) return { events, finalTask: {}, timedOut: true, allowedAny, permissionFailureDetail, lastVersion: since, runId }
     const before = deps.now()
     const res = await apiCall(deps, api, 'GET', `/v1/workbench/task?id=${taskId}&since=${since}&wait_ms=${WORKBENCH_WAIT_MS}`, undefined, { timeoutMs: WORKBENCH_POLL_TIMEOUT_MS })
     if (!res.ok || !res.json) {
-      return { events, finalTask: { status: 'failed', phase: 'failed', error: apiErrorDetail(res) }, timedOut: false, allowedAny, permissionFailureDetail, lastVersion: since }
+      return { events, finalTask: { status: 'failed', phase: 'failed', error: apiErrorDetail(res) }, timedOut: false, allowedAny, permissionFailureDetail, lastVersion: since, runId }
     }
-    const detail = res.json as { task?: WorkbenchTaskLite; events?: WorkbenchEventLite[]; permissions?: WorkbenchPermissionLite[]; version?: number }
+    const detail = res.json as { task?: WorkbenchTaskLite; events?: WorkbenchEventLite[]; permissions?: WorkbenchPermissionLite[]; version?: number; runId?: string }
+    if (typeof detail.runId === 'string' && detail.runId) runId = detail.runId
     // Rows can repeat across polls when `since` hasn't advanced (e.g. a
     // wait that timed out with nothing new) — dedupe by id.
     for (const e of detail.events ?? []) {
@@ -286,8 +297,8 @@ async function pollWorkbenchTask(deps: SelftestDeps, api: ApiCtx, taskId: string
     const status = detail.task?.status
     const phase = detail.task?.phase
     const terminal = (!!status && TERMINAL_STATUSES.has(status)) || phase === 'replied'
-    if (terminal) return { events, finalTask: detail.task ?? {}, timedOut: false, allowedAny, permissionFailureDetail, lastVersion: since }
-    if (deps.now() >= deadline) return { events, finalTask: detail.task ?? {}, timedOut: true, allowedAny, permissionFailureDetail, lastVersion: since }
+    if (terminal) return { events, finalTask: detail.task ?? {}, timedOut: false, allowedAny, permissionFailureDetail, lastVersion: since, runId }
+    if (deps.now() >= deadline) return { events, finalTask: detail.task ?? {}, timedOut: true, allowedAny, permissionFailureDetail, lastVersion: since, runId }
     if (deps.now() - before < POLL_MIN_INTERVAL_MS) await deps.sleep(POLL_IDLE_SLEEP_MS)
   }
 }
@@ -432,13 +443,35 @@ export async function runWorkbenchSelftest(
   let latestTimedOut = phase1.timedOut
 
   if (opts.resume) {
-    const continueRes = await continueCall(deps, api, { id: taskId, text: RESUME_WORKBENCH_TEXT })
-    if (!continueRes.ok) {
-      checks.push({ name: 'resume_replied', ok: false, detail: apiErrorDetail(continueRes) })
+    // Two routes carry a follow-up, and which one applies depends on
+    // whether the executor's run is still alive — 2026-09-18 real machine,
+    // second finding: `--executor claude --resume` kept failing
+    // `resume_replied http_409 workbench_busy` even WITH the retry in
+    // `continueCall`, because retrying was never going to work.
+    //
+    //  · retained session (claude/codex): after it answers, the task sits
+    //    at `status:'running', phase:'replied'` with the subprocess alive.
+    //    `continueTask()` throws `workbench_busy` outright while
+    //    `runsByTask.has(id)` (service.ts ~1267) — every retry hits the
+    //    same wall. The desktop sends the follow-up through
+    //    `POST /v1/workbench/input` instead: `runId` is the live run's
+    //    identity off the task detail, `requestId` a fresh UUID v4 for
+    //    idempotency (at most 10 live inputs per task).
+    //  · settled run (cursor and friends): `status:'completed'`, no live
+    //    run ⇒ `POST /v1/workbench/continue`, which starts a new run. The
+    //    409 retry stays for exactly this path.
+    const retained = phase1.finalTask.status === 'running' && !!phase1.runId
+    const via = retained ? 'via input' : 'via continue'
+    const res = retained
+      ? await apiCall(deps, api, 'POST', '/v1/workbench/input', { id: taskId, runId: phase1.runId, requestId: (deps.uuid ?? randomUUID)(), text: RESUME_WORKBENCH_TEXT })
+      : await continueCall(deps, api, { id: taskId, text: RESUME_WORKBENCH_TEXT })
+    deps.log(`selftest: resume ${via} (status=${phase1.finalTask.status ?? '?'}${phase1.runId ? `, runId=${phase1.runId}` : ''})`)
+    if (!res.ok) {
+      checks.push({ name: 'resume_replied', ok: false, detail: `${apiErrorDetail(res)} (${via})` })
     } else {
       const phase2 = await pollWorkbenchTask(deps, api, taskId, latestVersion, deadline)
       const resumeTextSeen = phase2.events.some((e) => e.kind === 'text')
-      checks.push({ name: 'resume_replied', ok: resumeTextSeen && !phase2.timedOut, detail: phase2.timedOut ? 'timeout' : `${phase2.events.length} event(s)` })
+      checks.push({ name: 'resume_replied', ok: resumeTextSeen && !phase2.timedOut, detail: phase2.timedOut ? `timeout (${via})` : `${phase2.events.length} event(s) ${via}` })
       allEvents = allEvents.concat(phase2.events)
       latestStatus = phase2.finalTask.status
       latestVersion = phase2.lastVersion
@@ -618,6 +651,7 @@ export function defaultSelftestDeps(stateDir: string): SelftestDeps {
     git: (args, cwd) => {
       try { return spawnSync('git', args, { cwd, stdio: 'ignore', windowsHide: true }).status === 0 } catch { return false }
     },
+    uuid: () => randomUUID(),
     log: (line) => console.error(`[selftest] ${line}`),
   }
 }

@@ -19,6 +19,8 @@ wechat-cc selftest chat --provider cursor [--text "…"] [--resume] [--json] [--
 
 **workbench**:在 `<tmpdir>/wechat-cc-selftest/wb-<ts>` 建一个 scratch 项目(mkdir + README + `git init` 一次提交),`POST /v1/workbench/create`,长轮询 `GET /v1/workbench/task`,碰到权限卡就 `POST /v1/workbench/permission` 放行;跑完(或超时)时任务状态还没到终态就先 `POST /v1/workbench/cancel` 并最多等 20s,再 `POST /v1/workbench/archive`。检查项:`created`、`replied`、`text_seen`、`activity_seen`、`permission_roundtrip`、`file_written`(`--image` 时换成 `answer_mentions_red`)、`resume_replied`(带 `--resume` 时)、`no_error_event`、`archived`(归档那一下的 HTTP 结果本身也是一项)。
 
+`--resume` 那一步走哪条路**看执行者的那次 run 还活着没有**:claude / codex 这种答完还留着会话的(`status: running` + `phase: replied`),续接走 `POST /v1/workbench/input`(带任务详情里的 `runId` 和一个新生成的 UUID v4 `requestId`)—— 这种任务上 `POST /v1/workbench/continue` 只会一直回 409 `workbench_busy`(2026-09-18 真机就是被这条假红回滚了一次好部署);run 已经收了的(cursor,`status: completed`)才走 `continue`(那条路上偶发的 409 会每秒重试、最多 10 次)。`resume_replied` 的 detail 里写着这次走的是 `via input` 还是 `via continue`。
+
 scratch 项目**不在 STATE_DIR 底下**(它跟 token / account.json 同级,而 scratch 里跑的是权限全放行的真执行者);跑完默认删掉,`--keep` 保留它、把路径打在 `scratch: …` 那行上给人去翻现场。daemon 侧 `selftest chat` 用的 scratch 项目同理,固定在 `<tmpdir>/wechat-cc-selftest/project`。
 
 `--timeout-ms` 是**整轮**上限(workbench 缺省 240000;chat 缺省 180000,daemon 侧轮次看门狗缺省 120000)。非数字 / ≤0 当场报错退 1,不会悄悄按缺省值跑。

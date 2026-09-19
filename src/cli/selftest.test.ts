@@ -42,7 +42,7 @@ function baseDeps(overrides: Partial<SelftestDeps> = {}): SelftestDeps {
  *  call's body, and returns `taskResponses[i]` for the i-th (clamped)
  *  `GET /v1/workbench/task` call — the "任务详情按调用次数返回递进状态"
  *  shape the brief asks for. */
-function makeWorkbenchFakeApi(opts: { taskId?: string; taskResponses: unknown[]; createStatus?: number; createBody?: unknown }) {
+function makeWorkbenchFakeApi(opts: { taskId?: string; taskResponses: unknown[]; createStatus?: number; createBody?: unknown; inputStatus?: number }) {
   const calls: RecordedCall[] = []
   const taskId = opts.taskId ?? 'ab12cd34'
   let taskCallIdx = 0
@@ -68,6 +68,8 @@ function makeWorkbenchFakeApi(opts: { taskId?: string; taskResponses: unknown[];
         return jsonResponse(200, { ok: true })
       case 'POST /v1/workbench/continue':
         return jsonResponse(202, { task: { id: taskId, status: 'running', phase: 'working', error: null } })
+      case 'POST /v1/workbench/input':
+        return jsonResponse(opts.inputStatus ?? 200, opts.inputStatus && opts.inputStatus >= 300 ? { error: 'input_stale' } : { input: { id: body.requestId, runId: body.runId } })
       case 'POST /v1/workbench/cancel':
         return jsonResponse(202, { task: { id: taskId, status: 'cancelling', phase: 'working', error: null } })
       case 'POST /v1/workbench/archive':
@@ -210,7 +212,90 @@ describe('runWorkbenchSelftest', () => {
     expect(report.checks.some((c) => c.name === 'file_written')).toBe(false)
   })
 
-  it('--resume: continue is called and resume_replied passes on new text', async () => {
+  // 2026-09-18 real machine, second finding: with the claude executor the
+  // session is RETAINED after it replies (status stays `running`, phase
+  // `replied`), and `continueTask()` throws `workbench_busy` for as long as
+  // the run is alive — no amount of retrying gets through. The live route
+  // is `POST /v1/workbench/input` with the run's `runId`.
+  it('--resume on a retained session (status running + runId): goes through /input, not /continue', async () => {
+    const api = makeWorkbenchFakeApi({
+      taskId: 'aa11bb22',
+      taskResponses: [
+        {
+          task: { id: 'aa11bb22', status: 'running', phase: 'replied', error: null },
+          runId: '11111111-2222-4333-8444-555555555555',
+          events: [
+            { id: 1, kind: 'tool_call', text: 'shell: uname -a', activity: { tool: 'shell' } },
+            { id: 2, kind: 'text', text: 'done, wrote hello.txt' },
+          ],
+          permissions: [{ id: 'perm-1', tool: 'shell', description: 'run uname -a' }],
+          version: 5,
+        },
+        {
+          task: { id: 'aa11bb22', status: 'running', phase: 'replied', error: null },
+          runId: '11111111-2222-4333-8444-555555555555',
+          events: [{ id: 3, kind: 'text', text: '第一件事是运行 uname -a' }],
+          permissions: [],
+          version: 7,
+        },
+        // finalize: the session is still live, so it gets cancelled — this is
+        // the post-cancel wait going terminal.
+        { task: { id: 'aa11bb22', status: 'cancelled', phase: 'cancelled', error: null }, events: [], permissions: [], version: 8 },
+      ],
+    })
+    const deps = baseDeps({
+      fetch: api.fetchImpl,
+      now: () => 7000,
+      uuid: () => 'abcdefab-1234-4567-89ab-cdef01234567',
+      fs: { mkdir: () => {}, write: () => {}, read: (p) => (basename(p) === 'hello.txt' ? 'hello' : null), rm: () => {} },
+    })
+
+    const report = await runWorkbenchSelftest(deps, { executor: 'claude', resume: true })
+
+    expect(api.calls.some((c) => c.path === '/v1/workbench/continue')).toBe(false)
+    const input = api.calls.find((c) => c.method === 'POST' && c.path === '/v1/workbench/input')
+    expect(input?.body).toEqual({
+      id: 'aa11bb22',
+      runId: '11111111-2222-4333-8444-555555555555',
+      requestId: 'abcdefab-1234-4567-89ab-cdef01234567',
+      text: expect.any(String),
+    })
+    const check = report.checks.find((c) => c.name === 'resume_replied')
+    expect(check?.ok).toBe(true)
+    expect(check?.detail).toContain('via input')
+  })
+
+  it('--resume: /input answers non-2xx ⇒ resume_replied ✗ with the server error', async () => {
+    const api = makeWorkbenchFakeApi({
+      taskId: 'aa11bb22',
+      inputStatus: 409,
+      taskResponses: [
+        {
+          task: { id: 'aa11bb22', status: 'running', phase: 'replied', error: null },
+          runId: '11111111-2222-4333-8444-555555555555',
+          events: [{ id: 1, kind: 'text', text: 'done, wrote hello.txt' }],
+          permissions: [],
+          version: 5,
+        },
+        { task: { id: 'aa11bb22', status: 'cancelled', phase: 'cancelled', error: null }, events: [], permissions: [], version: 6 },
+      ],
+    })
+    const deps = baseDeps({
+      fetch: api.fetchImpl,
+      now: () => 7000,
+      fs: { mkdir: () => {}, write: () => {}, read: (p) => (basename(p) === 'hello.txt' ? 'hello' : null), rm: () => {} },
+    })
+
+    const report = await runWorkbenchSelftest(deps, { executor: 'claude', resume: true })
+
+    const check = report.checks.find((c) => c.name === 'resume_replied')
+    expect(check?.ok).toBe(false)
+    expect(check?.detail).toContain('http_409 input_stale')
+    expect(check?.detail).toContain('via input')
+    expect(report.ok).toBe(false)
+  })
+
+  it('--resume on a settled run (status completed): continue is called and resume_replied passes on new text', async () => {
     const api = makeWorkbenchFakeApi({
       taskId: 'cc33dd44',
       taskResponses: [
@@ -240,7 +325,10 @@ describe('runWorkbenchSelftest', () => {
     const report = await runWorkbenchSelftest(deps, { executor: 'claude', resume: true })
 
     expect(api.calls.some((c) => c.method === 'POST' && c.path === '/v1/workbench/continue' && c.body.id === 'cc33dd44')).toBe(true)
-    expect(report.checks.find((c) => c.name === 'resume_replied')?.ok).toBe(true)
+    expect(api.calls.some((c) => c.path === '/v1/workbench/input')).toBe(false)
+    const check = report.checks.find((c) => c.name === 'resume_replied')
+    expect(check?.ok).toBe(true)
+    expect(check?.detail).toContain('via continue')
     expect(report.ok).toBe(true)
   })
 
