@@ -55,6 +55,8 @@ const WORKFLOW = 'CI'
 const RUN_APPEAR_POLL_MS = 15_000
 const RUN_APPEAR_BUDGET_MS = 2 * 60_000
 const RUN_POLL_MS = 30_000
+/** 等 CI 期间 gh 连续出错几次才放弃(单次抖动不该让 triage 给不出结论)。 */
+const WAIT_TRANSIENT_RETRIES = 3
 const DEFAULT_TIMEOUT_MIN = 30
 const DEFAULT_MAX_RERUNS = 1
 const EXEC_TIMEOUT_MS = 120_000
@@ -131,10 +133,22 @@ async function waitForCompletion(
   timeoutMin: number,
 ): Promise<{ status: string; conclusion: string | null }> {
   const deadline = deps.now() + timeoutMin * 60_000
+  // 等 CI 的几分钟里 gh 偶尔会抽一下(2026-09-18 真机:一次 TLS handshake timeout
+  // 就让整条 triage 报 unknown)。连着错满 WAIT_TRANSIENT_RETRIES 次才算真出错。
+  let transientErrors = 0
   for (;;) {
-    const s = runJson<{ status: string; conclusion: string | null }>(deps, 'gh', [
-      'run', 'view', String(runId), '--json', 'status,conclusion',
-    ])
+    let s: { status: string; conclusion: string | null }
+    try {
+      s = runJson<{ status: string; conclusion: string | null }>(deps, 'gh', [
+        'run', 'view', String(runId), '--json', 'status,conclusion',
+      ])
+      transientErrors = 0
+    } catch (err) {
+      if (!(err instanceof ExecFailure) || ++transientErrors > WAIT_TRANSIENT_RETRIES) throw err
+      deps.log(`gh 暂时不通(${transientErrors}/${WAIT_TRANSIENT_RETRIES}),${RUN_POLL_MS / 1000}s 后再问一次:${err.message.split('\n')[0]?.slice(0, 160)}`)
+      await deps.sleep(RUN_POLL_MS)
+      continue
+    }
     if (s.status === 'completed') return s
     if (deps.now() >= deadline) {
       deps.log(`等了 ${timeoutMin} 分钟运行还没结束(status=${s.status})——先不给结论。`)

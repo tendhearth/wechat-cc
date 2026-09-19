@@ -225,6 +225,40 @@ describe('runCiTriage', () => {
     expect(exitCode).toBe(CI_TRIAGE_EXIT.green)
   })
 
+  it('--wait:gh 抖一次(TLS 超时)不放弃,下一次问到 completed 照样给结论', async () => {
+    let views = 0
+    const h = harness((line) => {
+      if (line === `git rev-parse ${SHA}`) return `${SHA}\n`
+      if (line.startsWith('gh run list --commit')) return runListRow({ status: 'in_progress', conclusion: null })
+      if (line.startsWith('gh run view') && line.includes('--json status,conclusion')) {
+        views++
+        if (views === 1) return { code: 1, stdout: '', stderr: 'failed to get run: net/http: TLS handshake timeout' }
+        return JSON.stringify({ status: 'completed', conclusion: 'success' })
+      }
+      return undefined
+    })
+    const { report, exitCode } = await runCiTriage(h.deps, { sha: SHA, wait: true })
+    expect(views).toBe(2)
+    expect(report.verdict).toBe('green')
+    expect(exitCode).toBe(CI_TRIAGE_EXIT.green)
+  })
+
+  it('--wait:gh 连错 4 次才算真出错(退出 2)', async () => {
+    let views = 0
+    const h = harness((line) => {
+      if (line === `git rev-parse ${SHA}`) return `${SHA}\n`
+      if (line.startsWith('gh run list --commit')) return runListRow({ status: 'in_progress', conclusion: null })
+      if (line.startsWith('gh run view') && line.includes('--json status,conclusion')) {
+        views++
+        return { code: 1, stdout: '', stderr: 'TLS handshake timeout' }
+      }
+      return undefined
+    })
+    const { exitCode } = await runCiTriage(h.deps, { sha: SHA, wait: true })
+    expect(views).toBe(4)
+    expect(exitCode).toBe(CI_TRIAGE_EXIT.noRun)
+  })
+
   it('这个 SHA 上还没有任何运行 ⇒ noRun(退出 2)', async () => {
     const h = harness((line) => {
       if (line === `git rev-parse ${SHA}`) return `${SHA}\n`
