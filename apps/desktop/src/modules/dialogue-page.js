@@ -19,6 +19,7 @@
 // keeps a little module-scoped state (selected chat, current view, whether
 // the user has unlocked private threads this session).
 
+import { pageStatusHtml, showPageStatus } from "./page-status.js"
 import { escapeHtml } from "../view.js"
 import { formatRelativeTimeShort } from "./observations.js"
 import { icon } from "./icons.js"
@@ -173,6 +174,7 @@ async function loadChats(deps) {
     chats = (resp && resp.chats) || []
   } catch (err) {
     console.error("dialogue list-chats failed", err)
+    throw err
   }
 
   chatNames = {}
@@ -260,11 +262,11 @@ async function loadTimeline(deps, opts = {}) {
   showTimelineView()
   if (!selectedChatId) {
     if (seq !== loadSeq) return
-    stage.innerHTML = `<p class="empty-state">还没有对话。</p>`
+    stage.innerHTML = pageStatusHtml({ title: "还没有对话", detail: "与 CC 聊几句，消息会出现在这里。" })
     return
   }
   if (seq !== loadSeq) return
-  stage.innerHTML = `<p class="empty-state">加载中…</p>`
+  stage.innerHTML = pageStatusHtml({ title: "正在读取会话", detail: "请稍等片刻。" })
 
   const args = ["dialogue", "timeline", "--chat-id", selectedChatId, "--limit", String(TIMELINE_PAGE), "--json"]
   if (opts.beforeTs) args.push("--before", opts.beforeTs)
@@ -278,7 +280,7 @@ async function loadTimeline(deps, opts = {}) {
     hasMore = !!(resp && resp.hasMore)
   } catch (err) {
     if (seq !== loadSeq) return
-    stage.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`
+    showPageStatus(stage, { title: "暂时无法读取会话", detail: "请检查连接后重试。", actionLabel: "重新加载" }, () => loadTimeline(deps, opts))
     return
   }
 
@@ -287,7 +289,7 @@ async function loadTimeline(deps, opts = {}) {
   timelineHasMore = hasMore
 
   if (messages.length === 0) {
-    stage.innerHTML = `<p class="empty-state">这个对话还没有消息。</p>`
+    stage.innerHTML = pageStatusHtml({ title: "这个对话还没有消息", detail: "与 CC 聊几句，消息会出现在这里。" })
     return
   }
 
@@ -515,11 +517,11 @@ async function loadThreads(deps, facet) {
 
   if (!selectedChatId) {
     if (seq !== loadSeq) return
-    groups.innerHTML = `<p class="empty-state">还没有对话。</p>`
+    groups.innerHTML = pageStatusHtml({ title: "还没有对话", detail: "与 CC 聊几句，消息会出现在这里。" })
     return
   }
   if (seq !== loadSeq) return
-  groups.innerHTML = `<p class="empty-state">加载中…</p>`
+  groups.innerHTML = pageStatusHtml({ title: "正在读取会话", detail: "请稍等片刻。" })
 
   const args = ["dialogue", "threads", "--chat-id", selectedChatId, "--facet", facet, "--json"]
   if (unlocked) args.push("--include-private")
@@ -532,7 +534,7 @@ async function loadThreads(deps, facet) {
     threads = (resp && resp.threads) || []
   } catch (err) {
     if (seq !== loadSeq) return
-    groups.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`
+    showPageStatus(groups, { title: "暂时无法读取会话", detail: "请检查连接后重试。", actionLabel: "重新加载" }, () => loadThreads(deps, facet))
     return
   }
 
@@ -595,7 +597,7 @@ async function openThreadDetail(deps, threadId) {
   if (!detail) return
   showThreadDetailView()
   if (seq !== loadSeq) return
-  detail.innerHTML = `<p class="empty-state">加载中…</p>`
+  detail.innerHTML = pageStatusHtml({ title: "正在读取会话", detail: "请稍等片刻。" })
 
   /** @type {{ thread: Thread, episodes: Episode[] }|null} */
   let data = null
@@ -606,11 +608,11 @@ async function openThreadDetail(deps, threadId) {
     else data = resp
   } catch (err) {
     if (seq !== loadSeq) return
-    detail.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`
+    showPageStatus(detail, { title: "暂时无法读取会话", detail: "请检查连接后重试。", actionLabel: "重新加载" }, () => openThreadDetail(deps, threadId))
     return
   }
   if (!data || !data.thread) {
-    detail.innerHTML = `<p class="empty-state">话题不存在或已删除。</p>`
+    detail.innerHTML = pageStatusHtml({ title: "这个话题已不在这里", detail: "可以返回话题列表查看其他内容。" })
     return
   }
 
@@ -1008,19 +1010,24 @@ export function initDialoguePage(deps) {
   if (root.dataset.ready === "true") {
     // Already mounted — just refresh the current view so re-entering the
     // pane picks up new messages.
-    loadChats(deps)
+    return loadChats(deps)
       .then(() => switchView(deps, currentView))
-      .catch(err => console.error("dialogue refresh failed", err))
-    return
+      .catch(err => showDialogueLoadError(deps, err))
   }
   root.dataset.ready = "true"
   renderSkeleton(root)
   wireEvents(root, deps)
-  loadChats(deps)
+  return loadChats(deps)
     .then(() => loadTimeline(deps))
     .catch(err => {
-      console.error("dialogue init failed", err)
-      const stage = document.getElementById("dialogue-timeline")
-      if (stage) stage.innerHTML = `<p class="empty-state">加载失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`
+      showDialogueLoadError(deps, err)
     })
+}
+
+/** @param {Deps} deps @param {unknown} err */
+function showDialogueLoadError(deps, err) {
+  console.error("dialogue load failed", err)
+  stopDialogueAutoRefresh()
+  showTimelineView()
+  showPageStatus(document.getElementById("dialogue-timeline"), { title: "暂时无法读取会话", detail: "请检查连接后重试。", actionLabel: "重新加载" }, () => initDialoguePage(deps))
 }
