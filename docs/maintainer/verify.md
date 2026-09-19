@@ -2,6 +2,14 @@
 
 改完 + 部署完,用 `wechat-cc selftest` 做真机闭环。它不发微信、不碰主人的聊天记忆、不改主人的默认 provider。
 
+推上去之后还有最后一步 —— **看 CI**,也是一条命令:
+
+```bash
+wechat-cc ci triage --wait --rerun
+```
+
+退出码 0 绿 / 1 真红(`unknown` 也算)/ 2 这个 SHA 上没有运行或 `gh` 出错 / 3 是 `src/cli/ci-flakes.json` 里登记过的 flake。给了 `--rerun` 的话已知 flake 会自动重跑一次,**第二次仍红一律改判真红**。细则、退出码全表、怎么往登记表里加一条,见 [ci-and-flakes.md](ci-and-flakes.md)。
+
 ## 两种用法
 
 ```bash

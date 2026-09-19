@@ -6,13 +6,38 @@ on:
     # runs on the integration branch too — it sat uncovered while 91 commits
     # piled up, which is how type errors accumulated unnoticed. The heavy e2e
     # jobs below stay master/PR-only to keep routine dev pushes fast.
-    branches: [master, dev]
+    #
+    # `self/**` 是自改流水线(spec 2026-09-18-self-change-pipeline)推的分支:
+    # CC 自己给自己改一版,先推 self/<题目>,CI 绿才是它进 dev 的闸门。漏了这一
+    # 行,那道闸门就根本不存在 —— 而且是**安静地**不存在(推上去一条运行都没有,
+    # 看上去和「跑完了还没红」一模一样)。
+    branches: [master, dev, 'self/**']
   pull_request:
     # dev 也在内:CI 只在 push 后跑等于永远事后 —— 2026-09-11~14 有 69 条提交
     # 在本地攒了三天才到 dev,期间一次没验。重型 e2e 仍按 base_ref 限定在 master。
     branches: [master, dev]
 
 jobs:
+  # 只为算一件事:这一推里 apps/desktop/** 动没动过。
+  #
+  # 为什么要有它:desktop-e2e 一次约 3 分钟,以前只在 master / PR 上跑,于是在
+  # dev 上改了桌面要等到合并前才知道红,而「合并前本地跑一遍 Playwright」的规矩
+  # 靠自觉。有了这个输出,改了桌面的 dev 推送也跑 desktop-e2e,没改的照旧跳过 ——
+  # 多付的那 3 分钟只落在真的动过桌面的那些推送上。
+  changes:
+    name: changes · paths
+    runs-on: ubuntu-latest
+    outputs:
+      desktop: ${{ steps.filter.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            desktop:
+              - 'apps/desktop/**'
+
   build:
     name: build · ${{ matrix.os }}
     strategy:
@@ -139,8 +164,10 @@ jobs:
     # CSP, attachment path-guard. The spec fixture spawns its own DRY_RUN
     # test-shim on :4174, and playwright.config.ts defaults CSP injection on,
     # so this runs headless with no extra wiring beyond a chromium install.
-    # Heavy suite — master/PR only (skipped on direct dev pushes).
-    if: github.base_ref == 'master' || github.ref == 'refs/heads/master'
+    # Heavy suite — master/PR always, plus any push that actually touched
+    # apps/desktop/** (see the `changes` job above).
+    needs: changes
+    if: github.base_ref == 'master' || github.ref == 'refs/heads/master' || needs.changes.outputs.desktop == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

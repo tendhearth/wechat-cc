@@ -60,6 +60,7 @@ describe('citty migrated commands', () => {
       'agent',
       'avatar',
       'backup',
+      'ci',
       'companion',
       'connection',
       'conversations',
@@ -108,6 +109,27 @@ describe('citty migrated commands', () => {
     const subs = cittyRoot.subCommands as Record<string, { subCommands?: Record<string, unknown> }>
     expect(Object.keys(subs.self?.subCommands ?? {}).sort()).toEqual(['deploy'])
     expect(Object.keys(subs.selftest?.subCommands ?? {}).sort()).toEqual(['chat', 'workbench'])
+  })
+
+  // CI 信号面(spec 2026-09-18-ci-triage)——`ci triage` 是手册与 AGENTS.md 里
+  // 写死的「看 CI」那一步,改名/漏挂会让那几行一起失效。
+  it('exposes the ci subcommand surface', () => {
+    const subs = cittyRoot.subCommands as Record<string, { subCommands?: Record<string, unknown> }>
+    expect(Object.keys(subs.ci?.subCommands ?? {}).sort()).toEqual(['triage'])
+  })
+
+  it('ci triage parses its documented flags', async () => {
+    const r = await runWithNestedStub(
+      ['ci', 'triage', '--sha', '25113589', '--branch', 'dev', '--wait', '--rerun', '--max-reruns', '2', '--timeout-min', '45', '--json'],
+      ['ci', 'triage'],
+    )
+    expect(r?.args.sha).toBe('25113589')
+    expect(r?.args.branch).toBe('dev')
+    expect(r?.args.wait).toBe(true)
+    expect(r?.args.rerun).toBe(true)
+    expect(r?.args['max-reruns']).toBe('2')
+    expect(r?.args['timeout-min']).toBe('45')
+    expect(r?.args.json).toBe(true)
   })
 
   it('self deploy parses its documented flags', async () => {

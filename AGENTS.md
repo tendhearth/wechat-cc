@@ -23,7 +23,7 @@ wechat-cc self deploy                                          # 原子换 sidec
 wechat-cc selftest workbench --executor cursor --image --resume
 wechat-cc selftest chat --provider cursor --resume
 
-git push origin dev && gh run list --branch dev --limit 3      # 看 CI
+git push origin dev && wechat-cc ci triage --wait --rerun      # 看 CI(0 绿 / 1 真红 / 2 没运行 / 3 flake)
 ```
 
 细节:部署见 `docs/maintainer/deploy.md`,验证见 `verify.md`,CI 与 flake 见 `ci-and-flakes.md`,迁移见 `migrations.md`,真机规矩见 `rules-from-real-machines.md`。
