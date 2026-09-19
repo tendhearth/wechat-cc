@@ -39,6 +39,12 @@ export interface SelfChangeState {
     rounds: { tests: number; review: number; ci: number }
   }
   review: { sessionId: string | null; costUsd: number; verdict: 'approve' | 'changes' | null; findings: ReviewFinding[] }
+  /**
+   * 测试闸门的抖动账:`flakes` 里每一条是「第一次红、失败文件与本次改动无关、
+   * 重跑就绿了」的那条命令。记下来是为了两件事 —— 事后能看出这条自改到底
+   * 是被什么拖慢的,以及同一条命令老在这儿抖就该去修 CI 而不是继续重跑。
+   */
+  tests: { flakes: string[] }
   ci: { runId: number | null; url: string | null; verdict: string | null; sha: string | null }
   /** `delivered=false`:拍板卡没进微信(外发不通),但条目还在 daemon 的登记处 ——
    *  桌面权限卡和 `self change --approve <id>` 照样能拍。null = 还没问过。 */
@@ -67,6 +73,7 @@ export function newState(input: {
     noDeploy: input.noDeploy,
     implement: { sessionId: null, costUsd: 0, turns: 0, summary: '', rounds: { tests: 0, review: 0, ci: 0 } },
     review: { sessionId: null, costUsd: 0, verdict: null, findings: [] },
+    tests: { flakes: [] },
     ci: { runId: null, url: null, verdict: null, sha: null },
     approval: { hash: null, code: null, decision: null, askedAt: null, delivered: null },
     merge: { sha: null, rebased: false },

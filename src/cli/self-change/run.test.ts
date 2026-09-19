@@ -8,7 +8,9 @@ import type { SelfChangeState, SelfChangeStep, StateStore } from './state'
 const HAPPY_GIT = gitReply({
   'rev-parse origin/dev': 'b'.repeat(40),
   'rev-list --count': '1\n',
-  'diff --name-only': 'docs/x.md\n',
+  // src/a.ts 在场是为了让「FAIL src/a.test.ts」算**跟这次改动有关**的红:
+  // 无关的红会先被 tests 闸门原样重跑一次(v1.1b 的抖动过滤),那是另一组用例在测。
+  'diff --name-only': 'docs/x.md\nsrc/a.ts\n',
   'rev-parse HEAD': 'a'.repeat(40),
   'diff --stat': ' docs/x.md | 1 +\n',
 })

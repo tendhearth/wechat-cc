@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { fixPrompt, implementBrief, parseReviewVerdict, reviewPrompt } from './brief'
+import { fixPrompt, implementBrief, parseReviewVerdict, reviewPrompt, revertPrompt } from './brief'
 import { FORBIDDEN_GLOBS } from './policy'
 
 describe('implementBrief', () => {
@@ -43,6 +43,13 @@ describe('implementBrief', () => {
     expect(text).toContain('一段话')
     expect(text).toContain('怎么验')
   })
+
+  // 真机 f65f4c09:一句「只改这一个文件」的需求,执行者在修复轮里动了 10 个文件。
+  it('说清改动范围:需求要的文件为限,顺手修别的要单独说明', () => {
+    expect(text).toContain('改动范围')
+    expect(text).toContain('单独说明')
+    expect(text).toContain('不要做')
+  })
 })
 
 describe('reviewPrompt', () => {
@@ -72,6 +79,13 @@ describe('reviewPrompt', () => {
   it('自己举的例子就能被 parseReviewVerdict 解出来', () => {
     expect(parseReviewVerdict(text).parsed).toBe(true)
   })
+
+  // 真机 f65f4c09:评审看见了越界(改了 10 个文件),却只记成一条 minor ⇒ 合进了 dev。
+  it('范围也要评:越界的文件报 important,summary 以 scope: 开头', () => {
+    expect(text).toContain('范围')
+    expect(text).toContain('scope:')
+    expect(text).toContain('越界不是 `minor`')
+  })
 })
 
 describe('fixPrompt', () => {
@@ -89,6 +103,36 @@ describe('fixPrompt', () => {
       expect(t).toContain('不要 `git push`')
       expect(t).toContain('真因')
     }
+  })
+
+  // 真机 f65f4c09 的 $10 修复轮:整套测试被机器负载拖超时,执行者把 vitest 的
+  // 超时从 5s 放宽到 20s 又顺手改了夹具和三个测试 —— 这几句就是拦这件事的。
+  it('测试那一种额外写明范围纪律:无关的红不许改测试 / 超时 / 配置,要说「与本次改动无关」并停下', () => {
+    const t = fixPrompt('tests', 'detail')
+    expect(t).toContain('只准改与这次需求直接相关的文件')
+    expect(t).toContain('与本次改动无关')
+    expect(t).toContain('不要调超时')
+    expect(t).toContain('放宽阈值')
+    // 另外两种不带这一段(评审 / CI 的红本来就是冲着这次改动来的)。
+    expect(fixPrompt('review', 'detail')).not.toContain('放宽阈值')
+    expect(fixPrompt('ci', 'detail')).not.toContain('放宽阈值')
+  })
+})
+
+describe('revertPrompt', () => {
+  const text = revertPrompt({ baseRef: 'origin/dev', files: ['vitest.config.ts', 'src/f.fixture.ts'], detail: '- [important] scope:vitest.config.ts 与需求无关' })
+
+  it('要的是还原,不是接着改:文件清单 + 一条能照抄的 checkout', () => {
+    expect(text).toContain('还原')
+    expect(text).toContain('vitest.config.ts')
+    expect(text).toContain('src/f.fixture.ts')
+    expect(text).toContain('git checkout origin/dev -- vitest.config.ts src/f.fixture.ts')
+  })
+
+  it('评审原话原样带上,需求本身那部分改动保持原样,仍然不许 push', () => {
+    expect(text).toContain('scope:vitest.config.ts 与需求无关')
+    expect(text).toContain('保持原样')
+    expect(text).toContain('不要 `git push`')
   })
 })
 

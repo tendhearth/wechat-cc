@@ -244,6 +244,89 @@ describe('runWorkbenchSelftest', () => {
     expect(report.ok).toBe(true)
   })
 
+  // Real machine 2026-09-18 (f65f4c09): `resume_replied` was the ONLY red
+  // check of the whole post-deploy selftest — `http_409 workbench_busy`,
+  // the transient window where the just-replied run's review snapshot is
+  // still being captured. That false negative rolled back a good deploy.
+  it('--resume: a transient 409 workbench_busy on continue is retried until it clears', async () => {
+    let continueCalls = 0
+    const sleeps: number[] = []
+    const taskDetail = (id: number, text: string, version: number) => ({
+      task: { id: 'ee55ff66', status: 'completed', phase: 'replied', error: null },
+      events: [{ id, kind: 'text', text }],
+      permissions: [],
+      version,
+    })
+    let taskCalls = 0
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      const u = new URL(String(url))
+      const method = (init?.method ?? 'GET').toUpperCase()
+      const key = `${method} ${u.pathname}`
+      switch (key) {
+        case 'GET /v1/health': return jsonResponse(200, { ok: true })
+        case 'POST /v1/workbench/create':
+          return jsonResponse(202, { task: { id: 'ee55ff66', status: 'queued', phase: 'queued', error: null } })
+        case 'GET /v1/workbench/task':
+          return jsonResponse(200, taskCalls++ === 0 ? taskDetail(1, 'done, wrote hello.txt', 5) : taskDetail(2, '第一件事是运行 uname -a', 7))
+        case 'POST /v1/workbench/continue':
+          // 409 twice, then it goes through.
+          return continueCalls++ < 2
+            ? jsonResponse(409, { error: 'workbench_busy' })
+            : jsonResponse(202, { task: { id: 'ee55ff66', status: 'running', phase: 'working', error: null } })
+        case 'POST /v1/workbench/archive': return jsonResponse(200, { task: { id: 'ee55ff66', archivedAt: 1 } })
+        default: throw new Error(`unexpected fetch: ${key}`)
+      }
+    }) as unknown as typeof fetch
+    const deps = baseDeps({
+      fetch: fetchImpl,
+      now: () => 7000,
+      sleep: async (ms) => { sleeps.push(ms) },
+      fs: { mkdir: () => {}, write: () => {}, read: (p) => (basename(p) === 'hello.txt' ? 'hello' : null), rm: () => {} },
+    })
+
+    const report = await runWorkbenchSelftest(deps, { executor: 'claude', resume: true })
+
+    expect(continueCalls).toBe(3)
+    expect(sleeps).toEqual([1_000, 1_000])
+    expect(report.checks.find((c) => c.name === 'resume_replied')?.ok).toBe(true)
+  })
+
+  it('--resume: a 409 that never clears still fails, bounded by the retry budget', async () => {
+    let continueCalls = 0
+    const api = makeWorkbenchFakeApi({
+      taskId: 'ee55ff66',
+      taskResponses: [{
+        task: { id: 'ee55ff66', status: 'completed', phase: 'replied', error: null },
+        events: [{ id: 1, kind: 'text', text: 'done, wrote hello.txt' }],
+        permissions: [],
+        version: 5,
+      }],
+    })
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      const u = new URL(String(url))
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (method === 'POST' && u.pathname === '/v1/workbench/continue') {
+        continueCalls++
+        return jsonResponse(409, { error: 'workbench_busy' })
+      }
+      return api.fetchImpl(url as string, init)
+    }) as unknown as typeof fetch
+    const deps = baseDeps({
+      fetch: fetchImpl,
+      now: () => 7000,
+      fs: { mkdir: () => {}, write: () => {}, read: (p) => (basename(p) === 'hello.txt' ? 'hello' : null), rm: () => {} },
+    })
+
+    const report = await runWorkbenchSelftest(deps, { executor: 'claude', resume: true })
+
+    // 1 first call + 10 retries, then the honest failure.
+    expect(continueCalls).toBe(11)
+    const check = report.checks.find((c) => c.name === 'resume_replied')
+    expect(check?.ok).toBe(false)
+    expect(check?.detail).toContain('http_409 workbench_busy')
+    expect(report.ok).toBe(false)
+  })
+
   it('failed task: replied is ✗, overall ok is false, archive still runs', async () => {
     const api = makeWorkbenchFakeApi({
       taskId: 'ff112233',

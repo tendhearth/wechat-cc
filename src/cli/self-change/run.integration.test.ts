@@ -105,8 +105,10 @@ describe.skipIf(skipOnWindows)('self change 整条(真 git)', () => {
     let testRuns = 0
     const made = makeFakeDeps({
       config: { repoUrl: remote, workdir, branch: 'dev' },
-      // `bun run test` 第一次红,之后绿。
-      exec: (cmd, args) => (cmd === 'bun' && args[1] === 'test' && testRuns++ === 0
+      // `bun run test` 头两次红,之后绿。两次是因为红的文件(src/a.test.ts)跟这次
+      // 改的文件(docs/x.md)不沾边 —— tests 闸门会先原样重跑一次确认不是抖动,
+      // 第二次还红才算真红、才进修复轮(v1.1b)。
+      exec: (cmd, args) => (cmd === 'bun' && args[1] === 'test' && testRuns++ < 2
         ? { code: 1, stdout: 'FAIL src/a.test.ts > 一条新用例\nAssertionError: expected 1 to be 2' }
         : undefined),
       ...over,

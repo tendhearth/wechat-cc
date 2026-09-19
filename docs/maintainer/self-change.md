@@ -45,6 +45,8 @@ intake ─► repo ─► implement ─► guard ─► tests ─► review ─�
 
 过了五道才 `git rebase` + `--ff-only` 合进 `dev` 并推上去,然后构 sidecar、`self deploy`、`selftest workbench` + `selftest chat`。自检红 ⇒ 二进制回滚到 `.prev`,**但代码已经在 `dev` 上了** —— 报告里会明说这件事,需要人去改好或 revert。
 
+自检的 `--resume` 那一步(`POST /v1/workbench/continue`)会**吞掉那个转瞬即逝的 409 `workbench_busy`**:每秒重试一次、最多 10 次,还不通才算真红。那个 409 是任务刚答复、租约已放但差异快照还在截的那一瞬(`src/core/workbench/service.ts` 的 `acquireTurnLease`),而自检恰恰是 phase 一变 `replied` 就立刻续接。2026-09-18 真机(`f65f4c09`):`resume_replied` 是整场自检**唯一**一条红,就这么把一次本来好好的部署回滚掉了。
+
 ## 微信不通时怎么拍板
 
 微信外发是会整个不通的(2026-09-18 真机:`ilink/sendmessage errcode=-2: prepare failed`,一条实现 / 测试 / 评审 / CI 全绿的自改就这么白等到 `approval_timeout`)。所以拍板卡**送不出去也不会把待批条目撤掉** —— 同一条 hash 还有两个面能拍,从哪边拍都算数(都是同一个 `PendingPermissions.consume`):
@@ -67,6 +69,14 @@ intake ─► repo ─► implement ─► guard ─► tests ─► review ─�
 `tests` / `review` / `ci` 三处**各自独立**计数,各最多 **2 轮**。失败原文(去 ANSI、尾巴 200 行)`--resume` 交回同一个实现会话,修完**一律跳回 guard** 重走四道闸门 —— 执行者修的时候可能顺手碰了禁改清单,不重过 guard 等于护栏有个后门。
 
 超了就是 `tests_exhausted` / `review_exhausted` / `ci_exhausted`,分支保留供人看。
+
+## 修复轮的范围纪律
+
+2026-09-18 真机(`f65f4c09`)那条自改的需求是一句「只改这一个文件」的文档改动。整套测试在满载的机器上超时红了一次(跟这次改动毫无关系),修复轮里执行者顺手改了 **10 个文件** —— 把 vitest 的超时从 5s 放宽到 20s,再加夹具和三个测试;评审看见了却只记成一条 `minor`,于是这份 **$10** 的「修复」合进了 `dev`。两条规矩从此写死在流水线里:
+
+* **抖动先重跑,不交给执行者修。** tests 闸门里某条命令红了,先算两件事:输出里 `FAIL <某个>.test.ts` 的那些文件,和这一轮改过的文件(`git diff --name-only origin/<branch>...HEAD`,`x.test.ts` 也算 `x.ts` 的红)。一个都不沾边 —— 或者压根解析不出 FAIL 行(整套被超时杀掉就是这个样子)—— 就**原样重跑一次**:绿了记一笔 `tests.flakes`(存盘里看得见)接着往下走,还红才进修复轮。红的文件本来就跟改动有关的,一次都不重跑,立刻进修复轮。`git diff` 问不出来时当「有关」,宁可白走一轮也不把真红当抖动。
+* **越界的文件是还原,不是修。** 评审的提示词里明说:改动里有需求用不到的文件(尤其是与需求无关的测试超时、配置、夹具)要报 `important`,`summary` 以 `scope:` 开头。流水线看到带 `scope:` 的 `important`,交回执行者的就不是普通的修复说明,而是一条「把这几个文件 `git checkout origin/<branch> -- …` 还原掉再提交」的指令 —— 让它去「修」那些文件等于让它接着改。
+* 实现那份交代和 tests 的修复说明里也各有一段范围纪律:改动范围 = 需求需要的文件;顺手修别的要单独说明;**绝不**为了让测试变绿而放宽阈值。
 
 ## 退出码
 

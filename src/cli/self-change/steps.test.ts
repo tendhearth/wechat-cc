@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import { fakeState, gitReply, greenTriage, makeFakeDeps, memoryStore } from './pipeline.fixture'
 import type { SelfChangeState } from './state'
-import { SUMMARY_MAX_CHARS, steps } from './steps'
+import { failingTestFiles, SUMMARY_MAX_CHARS, steps } from './steps'
 
 const HEAD_SHA = 'a'.repeat(40)
 const BASE_SHA = 'b'.repeat(40)
@@ -162,6 +162,19 @@ describe('guard', () => {
   })
 })
 
+describe('failingTestFiles', () => {
+  it('认 FAIL 行、去 ANSI、去重;认不出来的给空表', () => {
+    const out = failingTestFiles([
+      ' \u001b[31mFAIL\u001b[0m  src/a.test.ts > 第一条',
+      ' FAIL  src/a.test.ts > 第二条',
+      ' FAIL  src/b/c.test.ts',
+      'AssertionError: expected 1 to be 2',
+    ].join('\n'))
+    expect(out).toEqual(['src/a.test.ts', 'src/b/c.test.ts'])
+    expect(failingTestFiles('timed out after 1800000ms')).toEqual([])
+  })
+})
+
 describe('tests', () => {
   it('四条依次跑,全绿 ⇒ 去评审', async () => {
     const { deps, rec } = makeFakeDeps()
@@ -174,13 +187,78 @@ describe('tests', () => {
   it('第一条红就停,失败尾巴(去 ANSI)进修复轮', async () => {
     const { deps, rec } = makeFakeDeps({
       exec: (_cmd, args) => args.includes('depcheck') ? { code: 1, stdout: '[31mFAIL src/a.test.ts[0m' } : undefined,
+      git: gitReply({ 'diff --name-only': 'src/a.ts\n' }),
     })
     const out = await steps.tests(fakeState(), deps)
     expect(out.fixRound).toBe('tests')
     expect(out.detail).toContain('FAIL src/a.test.ts')
     expect(out.detail).not.toContain('[31m')
     expect(out.fixPrompt).toContain('本地测试没过')
+    // src/a.test.ts ↔ src/a.ts:红的正是这轮改的东西,不重跑,直接交回。
     expect(rec.exec.length).toBe(2)
+  })
+
+  // 真机 f65f4c09:满载机器把整套测试拖超时,红的跟这次改动毫无关系,
+  // 修复轮却花了 $10 让执行者改了 10 个无关文件。抖动不该由执行者来「修」。
+  it('红的测试文件与本次改动无关 ⇒ 原样重跑一次,绿了就接着走并记一笔抖动', async () => {
+    let testCalls = 0
+    const s = fakeState()
+    const { deps, rec } = makeFakeDeps({
+      exec: (cmd, args) => cmd === 'bun' && args.includes('test')
+        ? (testCalls++ === 0 ? { code: 1, stdout: ' FAIL  src/unrelated.test.ts > 某个断言\n' } : undefined)
+        : undefined,
+      git: gitReply({ 'diff --name-only': 'docs/maintainer/ci-and-flakes.md\n' }),
+    })
+    expect(await steps.tests(s, deps)).toEqual({ ok: true, next: 'review' })
+    expect(s.tests.flakes).toEqual(['bun run test'])
+    expect(rec.exec.map(c => c.join(' '))).toEqual([
+      'bun run typecheck', 'bun run depcheck', 'bun run test', 'bun run test', 'npm run test:node -- --reporter=dot',
+    ])
+  })
+
+  it('一条 FAIL 都解析不出来(整套被超时杀掉)也当抖动重跑', async () => {
+    let calls = 0
+    const s = fakeState()
+    const { deps, rec } = makeFakeDeps({
+      exec: (cmd) => cmd === 'bun' && calls++ === 2 ? { code: 1, stderr: 'timed out after 1800000ms\n' } : undefined,
+      git: gitReply({ 'diff --name-only': 'docs/x.md\n' }),
+    })
+    expect(await steps.tests(s, deps)).toEqual({ ok: true, next: 'review' })
+    expect(s.tests.flakes).toEqual(['bun run test'])
+    expect(rec.exec.length).toBe(5)
+  })
+
+  it('无关的红重跑还是红 ⇒ 照旧进修复轮(带第二次的输出)', async () => {
+    const { deps, rec } = makeFakeDeps({
+      exec: (_cmd, args) => args.includes('depcheck')
+        ? { code: 1, stdout: ' FAIL  src/unrelated.test.ts\n' }
+        : undefined,
+      git: gitReply({ 'diff --name-only': 'docs/x.md\n' }),
+    })
+    const out = await steps.tests(fakeState(), deps)
+    expect(out.fixRound).toBe('tests')
+    expect(out.detail).toContain('src/unrelated.test.ts')
+    // typecheck + depcheck + depcheck(重跑)
+    expect(rec.exec.length).toBe(3)
+  })
+
+  it('改动文件列表问不出来时不敢判抖动:不重跑,直接进修复轮', async () => {
+    const { deps, rec } = makeFakeDeps({
+      exec: (_cmd, args) => args.includes('depcheck') ? { code: 1, stdout: 'boom' } : undefined,
+      git: gitReply({ 'diff --name-only': { code: 128, stderr: 'fatal: bad revision' } }),
+    })
+    expect((await steps.tests(fakeState(), deps)).fixRound).toBe('tests')
+    expect(rec.exec.length).toBe(2)
+  })
+
+  it('修复轮的提示词里写着范围纪律(不准为了变绿放宽阈值)', async () => {
+    const { deps } = makeFakeDeps({
+      exec: (_cmd, args) => args.includes('depcheck') ? { code: 1, stdout: ' FAIL  src/a.test.ts\n' } : undefined,
+      git: gitReply({ 'diff --name-only': 'src/a.ts\n' }),
+    })
+    const out = await steps.tests(fakeState(), deps)
+    expect(out.fixPrompt).toContain('与本次改动无关')
+    expect(out.fixPrompt).toContain('不要调超时')
   })
 })
 
@@ -268,6 +346,33 @@ describe('review', () => {
       git: gitReply({ 'rev-parse HEAD': HEAD_SHA }),
     })
     expect(await steps.review(fakeState(), deps)).toEqual({ ok: true, next: 'ci' })
+  })
+
+  // 真机 f65f4c09:越界改动只被记了一条 minor 就合进了 dev。现在它是 important,
+  // 而且修复轮要的是「还原」不是「修」—— 让执行者去「修」那些文件等于让它接着改。
+  it('scope: 的 important ⇒ 修复轮的提示词是还原,带文件清单和 checkout 命令', async () => {
+    const { deps } = makeFakeDeps({
+      runner: () => ({ text: '```json\n{"verdict":"changes","findings":[{"severity":"important","file":"vitest.config.ts","summary":"scope:vitest.config.ts 把超时从 5s 放到 20s,与需求无关"},{"severity":"important","summary":"scope:src/fixture.ts 顺手改了夹具"}]}\n```' }),
+      git: gitReply({ 'rev-parse HEAD': HEAD_SHA }),
+    })
+    const out = await steps.review(fakeState(), deps)
+    expect(out.fixRound).toBe('review')
+    expect(out.fixPrompt).toContain('还原')
+    expect(out.fixPrompt).toContain('vitest.config.ts')
+    expect(out.fixPrompt).toContain('src/fixture.ts')
+    expect(out.fixPrompt).toContain('git checkout origin/dev -- vitest.config.ts src/fixture.ts')
+    // 越界的那条仍然原样进 detail(拍板卡和存盘里看得见)。
+    expect(out.detail).toContain('scope:vitest.config.ts')
+  })
+
+  it('没有 scope: 的 important 还是走原来那份修复提示词', async () => {
+    const { deps } = makeFakeDeps({
+      runner: () => ({ text: '```json\n{"verdict":"changes","findings":[{"severity":"important","file":"src/a.ts","summary":"错误吞了"}]}\n```' }),
+      git: gitReply({ 'rev-parse HEAD': HEAD_SHA }),
+    })
+    const out = await steps.review(fakeState(), deps)
+    expect(out.fixPrompt).toContain('被独立评审判了要改')
+    expect(out.fixPrompt).not.toContain('git checkout')
   })
 
   it('评审会话本身失败 ⇒ review_failed', async () => {

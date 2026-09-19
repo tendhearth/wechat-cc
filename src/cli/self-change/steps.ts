@@ -15,11 +15,11 @@
 import { join } from 'node:path'
 
 import type { SelfChangeSettings } from '../../lib/agent-config'
-import { formatTriage, stripAnsi, type TriageReport } from '../ci-triage'
+import { formatTriage, relatedSources, stripAnsi, type TriageReport } from '../ci-triage'
 import { CI_TRIAGE_EXIT } from '../ci-triage-run'
 import type { SelfDeployResult } from '../self-deploy'
 import type { SelftestReport } from '../selftest'
-import { fixPrompt, implementBrief, parseReviewVerdict, reviewPrompt } from './brief'
+import { fixPrompt, implementBrief, parseReviewVerdict, reviewPrompt, revertPrompt } from './brief'
 import type { SelfChangeConfig } from './config'
 import { writeSelfChangeConfigPatch } from './config'
 import type { Git } from './git'
@@ -299,17 +299,85 @@ const TEST_COMMANDS: ReadonlyArray<{ cmd: string; args: string[] }> = [
   { cmd: 'npm', args: ['run', 'test:node', '--', '--reporter=dot'] },
 ]
 
-/** 四条依次跑,第一条红就停(后面那几条在同一个坏状态上跑没有信息量)。 */
-async function tests(_s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
+/** 失败输出里认得出的 `FAIL <某个>.test.ts`(先去 ANSI)。 */
+const FAIL_FILE_RE = /^\s*FAIL\s+(\S+\.test\.ts)\b/
+
+/** 一段测试输出里红了哪几个测试文件(去重,保持出现顺序)。 */
+export function failingTestFiles(output: string): string[] {
+  const seen = new Set<string>()
+  for (const line of stripAnsi(output).split('\n')) {
+    const m = FAIL_FILE_RE.exec(line)
+    if (m) seen.add(m[1]!)
+  }
+  return [...seen]
+}
+
+/** 这一轮执行者改了哪些文件。git 问不出来就是 `null`(当「不知道」,不敢判抖动)。 */
+function changedFiles(d: PipelineDeps): string[] | null {
+  try {
+    return git(d, ['diff', '--name-only', `origin/${d.config.branch}...HEAD`])
+      .split('\n').map(x => x.trim()).filter(Boolean)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 这次红,是不是这轮改动自己造成的。
+ *
+ * 判「无关」要两个条件都成立:解析得出失败文件,且没有一个文件与这轮改动沾边
+ * (`relatedSources`:`x.test.ts` 也算 `x.ts` 的红)。解析不出 FAIL 行(整套被
+ * 超时杀掉、进程被 OOM 掉)一样当「无关」—— 那种输出里没有任何指向这次改动的证据。
+ *
+ * 改动文件列表问不出来 ⇒ 当有关(宁可白走一轮修复轮,也不要把真红当抖动重跑)。
+ */
+function redLooksRelated(changed: string[] | null, output: string): boolean {
+  if (changed === null) return true
+  const failing = failingTestFiles(output)
+  if (!failing.length) return false
+  const changedSet = new Set(changed)
+  return failing.some(f => relatedSources(f).some(src => changedSet.has(src)))
+}
+
+/**
+ * 四条依次跑,第一条红就停(后面那几条在同一个坏状态上跑没有信息量)。
+ *
+ * 红了不立刻进修复轮:先看红的是哪几个测试文件。一个都跟这轮改动不沾边
+ * (或者压根没有 FAIL 行 —— 满载机器上整套超时就是这个样子)⇒ **原样重跑一次**。
+ * 重跑绿了就是抖动,记一笔接着往下走;重跑还红,或者红的文件本来就跟改动有关,
+ * 才照旧交回执行者。
+ *
+ * 2026-09-18 真机(f65f4c09):一条「只改这一个文件」的文档改动,整套测试被机器
+ * 负载拖超时红了一次,修复轮花 $10 让执行者改了 10 个无关文件(还把 vitest 超时
+ * 从 5s 放宽到 20s)。抖动不该由执行者来「修」。
+ */
+async function tests(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
   const dir = repoPath(d.config)
+  const opts = { cwd: dir, timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms }
+  let changed: string[] | null | undefined
   for (const { cmd, args } of TEST_COMMANDS) {
     const line = `${cmd} ${args.join(' ')}`
     d.log(`[self-change] ${line}`)
-    const out = await d.exec(cmd, args, { cwd: dir, timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms })
-    if (out.code !== 0) {
-      const detail = `$ ${line}\n退出码 ${out.code}\n${tail(`${out.stdout}\n${out.stderr}`, TAIL_LINES)}`
-      return { ok: false, fixRound: 'tests', fixPrompt: fixPrompt('tests', detail), detail }
+    let out = await d.exec(cmd, args, opts)
+    if (out.code === 0) continue
+
+    // 只问一次 git:四条命令共用同一份改动文件列表。
+    if (changed === undefined) changed = changedFiles(d)
+    if (!redLooksRelated(changed, `${out.stdout}\n${out.stderr}`)) {
+      d.log(`[self-change] ${line} 红了,但失败文件与本次改动无关 —— 原样重跑一次`)
+      const again = await d.exec(cmd, args, opts)
+      if (again.code === 0) {
+        // state 上有 tests 这一格是 v1.1b 才加的:`--resume` 一条老存盘时它是 undefined。
+        if (!s.tests) s.tests = { flakes: [] }
+        s.tests.flakes.push(line)
+        d.log(`tests: ${line} 第一次红是抖动(失败文件与本次改动无关),重跑绿了`)
+        continue
+      }
+      out = again
     }
+
+    const detail = `$ ${line}\n退出码 ${out.code}\n${tail(`${out.stdout}\n${out.stderr}`, TAIL_LINES)}`
+    return { ok: false, fixRound: 'tests', fixPrompt: fixPrompt('tests', detail), detail }
   }
   return { ok: true, next: 'review' }
 }
@@ -321,6 +389,26 @@ function formatFindings(findings: readonly ReviewFinding[]): string {
     const where = f.file ? ` ${f.file}${f.line ? `:${f.line}` : ''}` : ''
     return `- [${f.severity}]${where} ${f.summary}`
   }).join('\n')
+}
+
+const SCOPE_PREFIX = 'scope:'
+
+/**
+ * 评审判的「越界」意见指的是哪几个文件。
+ *
+ * `file` 优先(评审的输出契约要求带上);没带就从 `scope:<file> …` 的 summary 里
+ * 取第一个词。取不出文件名的 `scope:` 意见当普通意见走 —— 没有文件列表的
+ * `git checkout -- ` 是个会把整棵树还原掉的危险命令。
+ */
+function scopedFiles(findings: readonly ReviewFinding[]): string[] {
+  const out = new Set<string>()
+  for (const f of findings) {
+    const summary = f.summary.trim()
+    if (!summary.startsWith(SCOPE_PREFIX)) continue
+    const file = f.file?.trim() || summary.slice(SCOPE_PREFIX.length).trim().split(/\s/)[0] || ''
+    if (file) out.add(file)
+  }
+  return [...out]
 }
 
 /**
@@ -372,7 +460,12 @@ async function review(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
     const blocking = findings.filter(f => f.severity === 'critical' || f.severity === 'important')
     if (blocking.length) {
       const detail = formatFindings(blocking)
-      return { ok: false, fixRound: 'review', fixPrompt: fixPrompt('review', detail), detail }
+      // 越界(`scope:`)的那几条要的是**还原**,不是接着在那些文件上改。
+      const scopeFiles = scopedFiles(blocking)
+      const prompt = scopeFiles.length
+        ? revertPrompt({ baseRef, files: scopeFiles, detail })
+        : fixPrompt('review', detail)
+      return { ok: false, fixRound: 'review', fixPrompt: prompt, detail }
     }
     // 判了 `changes` 却一条 critical / important 都列不出来:这不是「只剩 minor 可以放行」,
     // 是评审自己没说清楚。回一轮修复(计数照算,所以最多两轮就到头),

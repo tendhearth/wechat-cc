@@ -98,6 +98,15 @@ const POLL_IDLE_SLEEP_MS = 1_000
 /** Once we decide to cancel a still-running task (see `runWorkbenchSelftest`
  *  finalize step), don't wait longer than this for it to actually stop. */
 const CANCEL_WAIT_MS = 20_000
+/** Continuing a task in the same second it replied hits a transient 409
+ *  `workbench_busy`: the run has released its turn lease but the review
+ *  snapshot is still being captured (`src/core/workbench/service.ts`
+ *  `acquireTurnLease`). The selftest posts `/continue` the instant phase
+ *  goes `replied`, so it lands in exactly that window — 2026-09-18 real
+ *  machine (f65f4c09): `resume_replied` was the ONLY red check and it
+ *  rolled back a perfectly good deploy. Wait it out instead. */
+const BUSY_RETRY_MAX = 10
+const BUSY_RETRY_INTERVAL_MS = 1_000
 
 // ── red square PNG (spec §2 step 2: 120×120, RGB, no external image lib) ──
 
@@ -321,6 +330,21 @@ function gitInit(deps: SelftestDeps, scratchPath: string): void {
   }
 }
 
+/** `POST /v1/workbench/continue`, with the transient `workbench_busy`
+ *  absorbed (see BUSY_RETRY_MAX). Only that exact shape is retried: any
+ *  other 409 (archived task, stale permission) is a real answer and comes
+ *  straight back. */
+async function continueCall(deps: SelftestDeps, api: ApiCtx, body: unknown): Promise<ApiResult> {
+  let res = await apiCall(deps, api, 'POST', '/v1/workbench/continue', body)
+  for (let retry = 1; retry <= BUSY_RETRY_MAX; retry++) {
+    if (!(res.status === 409 && res.json?.error === 'workbench_busy')) return res
+    deps.log(`selftest: continue answered 409 workbench_busy — 等 ${BUSY_RETRY_INTERVAL_MS}ms 再试(${retry}/${BUSY_RETRY_MAX};刚答复的那一秒在截差异快照)`)
+    await deps.sleep(BUSY_RETRY_INTERVAL_MS)
+    res = await apiCall(deps, api, 'POST', '/v1/workbench/continue', body)
+  }
+  return res
+}
+
 function cleanupScratch(deps: SelftestDeps, scratchPath: string, keep: boolean | undefined): void {
   if (keep) return
   try { deps.fs.rm(scratchPath) } catch { /* best-effort */ }
@@ -408,7 +432,7 @@ export async function runWorkbenchSelftest(
   let latestTimedOut = phase1.timedOut
 
   if (opts.resume) {
-    const continueRes = await apiCall(deps, api, 'POST', '/v1/workbench/continue', { id: taskId, text: RESUME_WORKBENCH_TEXT })
+    const continueRes = await continueCall(deps, api, { id: taskId, text: RESUME_WORKBENCH_TEXT })
     if (!continueRes.ok) {
       checks.push({ name: 'resume_replied', ok: false, detail: apiErrorDetail(continueRes) })
     } else {
