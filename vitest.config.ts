@@ -42,14 +42,27 @@ export default defineConfig({
     // social CLI) blow the 5s default purely on runner slowness — observed
     // 2026-08-29 across three runs, a different victim each time, all
     // "Test timed out in 5000ms". Per-test timeout bumps are whack-a-mole;
-    // raise the platform default instead. macOS/Linux keep the strict 5s so
-    // a genuine hang still fails fast where the signal is trustworthy.
-    testTimeout: process.platform === 'win32' ? 20_000 : 5_000,
+    // raise the platform default instead.
+    //
+    // 2026-09-19:同一个病在 macOS 上也犯了,而病因不是 runner 慢 —— 是这套
+    // 614 个文件的套件自己把机器吃满(18 worker / 18 核,`tests` 累计 770s
+    // 挤在 113s 墙钟里),再叠上「跑套件的机器本来就在干别的活」。自改流水线
+    // 的 tests 闸门恰恰跑在主人那台真机上(实测当时前台还有个程序吃掉三分之
+    // 一的 CPU,load 16),同一条测试单跑和整套跑差 5~10 倍:两次连跑,受害者
+    // 各不相同 —— native-qa-packaging(单跑 1.0s)5112ms、migration-order
+    // (单跑 1.0s)5627ms、reminders e2e(单跑 2~4s)20511ms,全是
+    // "Test timed out"。也就是说 5s 那个「信号可信」的前提只在空闲机器上成立,
+    // 而这套件从来不在空闲机器上跑。按上面那条一样的理由,平台默认统一抬到
+    // 20s:真挂死仍然会红,只是晚 15s;一次假红的代价却是整条流水线重跑,还
+    // 教人别看红(见下面 desktop-e2e 那笔账)。
+    testTimeout: 20_000,
     // ...and the same for HOOKS, which the line above did not cover. 2026-09-01:
     // knowledge/graph-store 的 `beforeEach`(mkdtempSync + openKnowledge)在
     // windows-latest 上撞了 vitest 默认的 10s hookTimeout,红了一次、重跑就绿。
     // 那种红最贵的地方不是它本身,是它教人别看 CI —— 见 desktop-e2e 那笔账。
     // 建库这类重活恰恰都在 hook 里,所以这条比 testTimeout 更该抬。
-    hookTimeout: process.platform === 'win32' ? 20_000 : 10_000,
+    // 2026-09-19 一并跟着 testTimeout 去掉平台分叉:满载套件里 hook 同样被
+    // 放大 5~10 倍,10s 对 mkdtemp + 建库这种活一样没有余量。
+    hookTimeout: 20_000,
   },
 })

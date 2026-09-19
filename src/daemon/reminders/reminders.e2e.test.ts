@@ -157,5 +157,14 @@ describe('e2e: reminders — schedule → sweep → deliver, then no double deli
       else process.env.WECHAT_CC_STATE_DIR = priorCcStateDir
       removeTempDir(stateDir)
     }
-  }, 20_000)
+    // 比抬高后的平台默认(20s)还要再宽一档,因为这是**唯一一条跑在并行套件里**
+    // 的 startTestDaemon e2e:兄弟们都在 src/daemon/__e2e__/ 下,由
+    // vitest.e2e.config.ts 以 fileParallelism:false 串行跑,天然没有争抢。这条
+    // 留在模块旁边是有意的(它要跟着 `bun run test` 和 `npm run test:node` 一起
+    // 跑 —— reminders 落的是 sqlite,换运行时那份覆盖不能丢),代价就是它要跟另外
+    // 613 个文件抢 CPU:真启一遍 daemon(假 ilink + internal-api + 一次 dispatch
+    // 往返 + 两次 sweep)单跑 2~4s,2026-09-19 满载实测撞到 20511ms 超时。60s 是
+    // 按 ~10 倍放大留的余量;这里面每一个等待本身都是有界的(harness 的
+    // waitForReplyTo 等 5s 就抛),所以真卡死不会被这个数字藏住。
+  }, 60_000)
 })
