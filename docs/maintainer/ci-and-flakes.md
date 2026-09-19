@@ -45,6 +45,7 @@ wechat-cc ci triage --sha <sha> --json      # 给机器看的一份
 - 没动过、且症状对上登记表 ⇒ `flake`。给了 `--rerun` 就 `gh run rerun <id> --failed`,`--wait` 时等它跑完再判一次。
 - **第二次仍红一律改判 `real`** —— 哪怕症状还对得上。连着两次红的 flake 就当真的看。
 - 判不出来的是 `unknown`:打印证据片段,**不会自动重跑**。要么是新 bug,要么该往登记表里加一条(人/LLM 开 PR 的事,triage 自己不写)。
+- **日志取不回来**(gh 抖一下、超时)也一律记 `unknown`,不会当成「作业红了但没有汇总行」那条 flake。空日志跟 `__NO_SUMMARY__` 长得一模一样,认错了就会把一条真红自动重跑掉。
 
 退出码:
 
@@ -52,10 +53,10 @@ wechat-cc ci triage --sha <sha> --json      # 给机器看的一份
 | --- | --- |
 | 0 | 绿 |
 | 1 | 真红(`unknown` 也算 —— 没判明白就别放行) |
-| 2 | 这个 SHA 上没有运行 / 还没跑完又没给 `--wait` / `gh` 出错(没登录、网络断) |
+| 2 | 这个 SHA 上没有运行 / 还没跑完又没给 `--wait` / `gh` 出错(没登录、网络断)/ 开关写错了(没能去判,不是判出来真红) |
 | 3 | 是已知 flake(可重跑但没重跑,或没给 `--rerun`) |
 
-开关:`--sha`(缺省 HEAD)`--branch`(找「上一次绿」的分支,缺省当前分支)`--wait`(等运行出现,最多 2 分钟;再等它跑完,上限 `--timeout-min`,缺省 30)`--rerun` `--max-reruns N`(缺省 1)`--timeout-min N` `--json`。进度和诊断走 stderr,`--json` 的 stdout 是干净的一份 `TriageReport`。
+开关:`--sha`(缺省 HEAD)`--branch`(找「上一次绿」的分支,缺省当前分支)`--wait`(等运行出现,最多 2 分钟;再等它跑完,上限 `--timeout-min`,缺省 30)`--rerun` `--max-reruns N`(缺省 1;设 >1 只对 `__NO_SUMMARY__` 那类作业级 flake 有意义 —— 具体测试的失败第二轮一律判真红,再重跑也翻不过来)`--timeout-min N` `--json`。进度和诊断走 stderr,`--json` 的 stdout 是干净的一份 `TriageReport`。
 
 要自己动手时,记住:`gh run list --commit <sha>` **要全 40 位 SHA**,短 sha 查不到任何东西 —— 而且是**安静地**返回空数组,看上去和「这次推送没有 CI」一模一样。(`ci triage` 自己先 `git rev-parse` 过,所以 `--sha 25113589` 是可以的。)
 

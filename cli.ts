@@ -2740,7 +2740,7 @@ const ciTriageCmd = defineCommand({
     branch: { type: 'string', description: '去哪条分支上找「上一次绿」当 diff 基线(缺省当前分支)' },
     wait: { type: 'boolean', description: '等运行出现(最多 2 分钟)并等它跑完' },
     rerun: { type: 'boolean', description: '判成 flake 时重跑失败作业;--wait 时等完重判,第二次仍红一律算真红' },
-    'max-reruns': { type: 'string', description: '最多重跑几次(缺省 1;0 = 从不重跑)' },
+    'max-reruns': { type: 'string', description: '最多重跑几次(缺省 1;0 = 从不重跑)。>1 只对 __NO_SUMMARY__ 那类作业级 flake 有意义 —— 具体测试的失败第二轮一律判真红,再重跑也翻不过来' },
     'timeout-min': { type: 'string', description: '等运行跑完的总上限,分钟(缺省 30)' },
     json: { type: 'boolean', description: 'JSON 输出(TriageReport),不输出人读版' },
   },
@@ -2754,7 +2754,8 @@ const ciTriageCmd = defineCommand({
       const message = `--max-reruns ${maxReruns.error}`
       if (json) console.log(JSON.stringify({ ok: false, error: 'invalid_max_reruns', message }, null, 2))
       else console.error(`ci triage: ${message}`)
-      process.exit(CI_TRIAGE_EXIT.real)
+      // 2 而不是 1:开关写错了是「没能去判」,不是「判出来是真红」。
+      process.exit(CI_TRIAGE_EXIT.noRun)
       return
     }
     const timeoutMin = parseCountFlag(args['timeout-min'], 1)
@@ -2762,7 +2763,7 @@ const ciTriageCmd = defineCommand({
       const message = `--timeout-min ${timeoutMin.error}`
       if (json) console.log(JSON.stringify({ ok: false, error: 'invalid_timeout_min', message }, null, 2))
       else console.error(`ci triage: ${message}`)
-      process.exit(CI_TRIAGE_EXIT.real)
+      process.exit(CI_TRIAGE_EXIT.noRun)
       return
     }
 

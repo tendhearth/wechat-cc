@@ -250,6 +250,46 @@ describe('runCiTriage', () => {
     expect(h.sleeps.reduce((a, b) => a + b, 0)).toBe(120_000)
   })
 
+  it('取不到失败日志 ⇒ 该作业记 unknown,绝不当 __NO_SUMMARY__ 的 flake 重跑', async () => {
+    // 这是最阴的一条:空日志解析出来正好是「没有 FAIL 块、也没有 Test Files
+    // 汇总行」—— 即 __NO_SUMMARY__ 的形状。登记表里 node · core suite 正好有
+    // 这么一条 flake,于是一次取日志失败会把一条真红判成 flake,--rerun 还会
+    // 顺手把它重跑掉,最后没有任何人知道发生过什么。
+    const nodeRegistry: FlakeRegistry = {
+      entries: [
+        {
+          id: 'node-no-summary',
+          jobs: ['node · core suite'],
+          symptom: '__NO_SUMMARY__',
+          note: 'node 作业跑完没有 Test Files 汇总行',
+          since: '2026-09-16',
+        },
+      ],
+    }
+    const nodeJobs = JSON.stringify({
+      jobs: [{
+        name: 'node · core suite',
+        databaseId: 4242,
+        conclusion: 'failure',
+        steps: [{ name: 'Unit tests under Node (whole src, minus the ws server)', conclusion: 'failure' }],
+      }],
+    })
+    const h = harness((line) => {
+      if (line.includes('--log-failed')) return { code: 1, stdout: '', stderr: 'log not found\nmore detail' }
+      if (line.startsWith('gh run view') && line.includes('--json jobs')) return nodeJobs
+      return failedRunHandler('', 'docs/x.md\n')(line)
+    }, { registry: nodeRegistry })
+
+    const { report, exitCode } = await runCiTriage(h.deps, { sha: SHA, rerun: true })
+    expect(report.verdict).toBe('unknown')
+    expect(exitCode).toBe(CI_TRIAGE_EXIT.real)
+    expect(report.reruns).toBe(0)
+    expect(h.calls.some(c => c.startsWith('gh run rerun'))).toBe(false)
+    const only = report.jobs[0]!.classified[0]!
+    expect(only.kind).toBe('unknown')
+    if (only.kind === 'unknown') expect(only.excerpt).toBe('could not fetch log: log not found')
+  })
+
   it('gh 出错(没登录 / 网络断)⇒ 退出 2,而不是假装绿', async () => {
     const h = harness((line) => {
       if (line === `git rev-parse ${SHA}`) return `${SHA}\n`
@@ -260,6 +300,22 @@ describe('runCiTriage', () => {
     expect(exitCode).toBe(CI_TRIAGE_EXIT.noRun)
     expect(report.verdict).toBe('unknown')
     expect(h.logs.join('\n')).toContain('not authenticated')
+  })
+
+  it('找到运行之后 gh 才出错 ⇒ 报告里仍带着这次运行的 id 和地址', async () => {
+    const h = harness((line) => {
+      if (line === `git rev-parse ${SHA}`) return `${SHA}\n`
+      if (line.startsWith('gh run list --commit')) return runListRow()
+      if (line.startsWith('gh run view') && line.includes('--json jobs')) {
+        return { code: 4, stdout: '', stderr: 'gh: API rate limit exceeded' }
+      }
+      return undefined
+    })
+    const { report, exitCode } = await runCiTriage(h.deps, { sha: SHA })
+    expect(exitCode).toBe(CI_TRIAGE_EXIT.noRun)
+    // 退 2 的那一行如果连 URL 都没有,人得自己回去翻是哪一次运行。
+    expect(report.runId).toBe(RUN_ID)
+    expect(report.url).toBe(URL)
   })
 
   it('--branch 缺省用当前分支来找「上一次绿」', async () => {

@@ -186,9 +186,20 @@ function triageFailedRun(
       timeoutMs: EXEC_TIMEOUT_MS,
     })
     if (logRes.code !== 0) {
-      deps.log(`取不到「${job.name}」的失败日志(${(logRes.stderr || '').trim().slice(0, 200)})`)
+      // **不要**拿空串去 parseJobLog。空日志解析出来正好是
+      // 「没有 FAIL 块、也没有 Test Files 汇总行」——即 __NO_SUMMARY__ 的形状,
+      // 于是一次取日志失败(gh 抖一下、超时、ENOBUFS)会被判成
+      // flake:node-no-summary,还可能被 --rerun 自动重跑掉一条真红。
+      // 取不到日志就是「判不出来」:unknown,verdict 最多到 unknown(退 1)。
+      const why = (logRes.stderr || '').trim().split('\n')[0]?.slice(0, 200) || `exit ${logRes.code}`
+      deps.log(`取不到「${job.name}」的失败日志(${why})—— 这条按 unknown 记,不会当 flake 重跑。`)
+      return {
+        name: job.name,
+        step: failedStep,
+        classified: [{ kind: 'unknown', failure: null, excerpt: `could not fetch log: ${why}` }] as Classified[],
+      }
     }
-    const parsed = parseJobLog(logRes.code === 0 ? logRes.stdout : '', job.name)
+    const parsed = parseJobLog(logRes.stdout, job.name)
     return {
       name: job.name,
       step: failedStep,
@@ -208,6 +219,10 @@ export async function runCiTriage(
   const wait = Boolean(opts.wait)
   let sha = opts.sha ?? 'HEAD'
   let reruns = 0
+  // 已经找到过的那次运行。放在 try 外面,是为了半路 gh 出错时报告里仍然带着
+  // 运行地址 —— 退 2 的那一行如果连 URL 都没有,人得自己回去翻是哪一次。
+  let foundRunId: number | null = null
+  let foundUrl: string | null = null
 
   try {
     // 40 位。`gh run list --commit` 拿短 sha 会**安静地**返回空数组,看上去
@@ -225,6 +240,8 @@ export async function runCiTriage(
       deps.log(`${sha.slice(0, 8)} 上没有 CI 运行${wait ? '(等满 2 分钟也没出现)' : ''}。`)
       return { report: emptyReport(sha, null, null, reruns), exitCode: CI_TRIAGE_EXIT.noRun }
     }
+    foundRunId = runRow.databaseId
+    foundUrl = runRow.url
 
     for (;;) {
       if (runRow.status !== 'completed' && wait) {
@@ -272,7 +289,7 @@ export async function runCiTriage(
   } catch (err) {
     if (err instanceof ExecFailure) {
       deps.log(`ci triage: ${err.message}`)
-      return { report: emptyReport(sha, null, null, reruns), exitCode: CI_TRIAGE_EXIT.noRun }
+      return { report: emptyReport(sha, foundRunId, foundUrl, reruns), exitCode: CI_TRIAGE_EXIT.noRun }
     }
     throw err
   }
