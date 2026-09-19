@@ -38,6 +38,7 @@
 - **`bun:sqlite` 的 URI 打开方式、`bun:test` 的 import**:在 Mac 上看着好好的,在 node / Windows 上要么炸要么根本没跑过。本地复现:`npm run test:node`。运行时相关的东西一律走 `src/lib/runtime/*` 适配层。
 - Windows 真机抓到过两个真 bug:`STATE_DIR` 环境变量名在两处写法分裂;`account.json` 不容忍 BOM。读配置文件时把 BOM 剥掉。
 - Windows / 微信侧目前**没有免审确认入口** —— 需要主人确认的流程在那两个面上是断的,设计时要知道。
+- **测试里的假文件系统和期望值,别写死 `/a/b` 这类 POSIX 路径,也别用 `endsWith('/x')` 认文件。** Windows 上 `path.join()` 拼出来的是反斜杠(`C:\w\repo\x`),这种用例在 Mac 上全绿、到 CI 的 `build · windows-latest` 上假红一片 —— 2026-09-18 一天踩了两次(相关 flake 与处置见 [ci-and-flakes.md](ci-and-flakes.md))。判文件名用 `basename(p) === 'x'`,写期望值用 `join(...)` 跟被测代码同样拼一遍;假 fs 的键也用 `join(...)` 造,别手写字面量。
 
 ## 报告与日志
 
