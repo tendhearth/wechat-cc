@@ -46,7 +46,12 @@ export interface PipelineDeps {
   git: Git
   runner: ImplementRunner
   daemon: DaemonClient
-  /** bun / npm。git 不走这里(有 git.ts)。 */
+  /**
+   * bun / npm。git 不走这里(有 git.ts)。
+   *
+   * 接线方(Task 7)**必须**用 `workbenchSubprocessEnv(process.env)` 造 env
+   * (daemon 的凭据不能进测试 / 构建子进程),并且带 `windowsHide: true`。
+   */
   exec: (cmd: string, args: string[], opts: { cwd: string; timeoutMs: number }) => Promise<{ code: number | null; stdout: string; stderr: string }>
   ciTriage: (opts: { sha: string; branch: string }) => Promise<{ report: TriageReport; exitCode: number }>
   deploy: (repoRoot: string) => Promise<SelfDeployResult>
@@ -126,11 +131,25 @@ export function isDirty(d: PipelineDeps): boolean {
  */
 export function commitAll(d: PipelineDeps, message: string): void {
   git(d, ['add', '-A'])
-  const who = d.git.run(['config', '--get', 'user.email'], { cwd: repoPath(d.config) })
-  const identity = who.code === 0 && who.stdout.trim()
+  // 两个都要有:只配了 user.email(或只配了 name)的机器上,git 照样拒绝提交。
+  const has = (key: string): boolean => {
+    const r = d.git.run(['config', '--get', key], { cwd: repoPath(d.config) })
+    return r.code === 0 && r.stdout.trim().length > 0
+  }
+  const identity = has('user.email') && has('user.name')
     ? []
     : ['-c', 'user.name=wechat-cc self-change', '-c', 'user.email=self-change@wechat-cc.local']
   git(d, [...identity, 'commit', '-m', message])
+}
+
+/**
+ * 报一句进展,并把原话记进 state 的 `notices`。
+ * 事后追一条自改为什么这样收场时,人手里得有「当时到底告诉了主人什么」——
+ * daemon 那边只有微信记录,state 文件才是这条流水线自己的账。
+ */
+export async function notify(s: SelfChangeState, d: PipelineDeps, text: string): Promise<void> {
+  s.notices.push(text)
+  await d.daemon.notice(text)
 }
 
 function tail(text: string, lines: number): string {
@@ -162,7 +181,7 @@ async function intake(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
   if (!(await d.daemon.health())) {
     return { ok: false, fail: 'daemon_not_running', detail: 'daemon 没起(或 api-info 读不到):没法把进展和拍板卡发给主人' }
   }
-  await d.daemon.notice(`自改 #${s.id} 开始:${s.request.slice(0, 80)}`)
+  await notify(s, d, `自改 #${s.id} 开始:${s.request.slice(0, 80)}`)
   return { ok: true, next: 'repo' }
 }
 
@@ -306,10 +325,11 @@ async function review(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
   return await guardGit('review_failed', async () => {
     const tampered = isDirty(d) || git(d, ['rev-parse', 'HEAD']).trim() !== headBefore
     if (tampered) {
-      const headNow = git(d, ['rev-parse', 'HEAD']).trim()
-      git(d, ['checkout', '--', '.'])
+      // 必须是 `reset --hard`:`checkout -- .` 只把**索引**刷回工作树,评审要是
+      // `git add` 过(改了又暂存、没提交),这一手会把它的改动原封不动留下,
+      // 接着强制的 review 修复轮里 commitAll 就把评审的手笔提交进去了。
+      git(d, ['reset', '--hard', headBefore])
       git(d, ['clean', '-fd'])
-      if (headNow !== headBefore) git(d, ['reset', '--hard', headBefore])
     }
 
     const parsed = parseReviewVerdict(res.text)
@@ -391,6 +411,7 @@ async function approval(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcom
   s.approval.askedAt = d.now()
 
   const deadline = d.now() + d.config.approvalTimeoutMs + APPROVAL_GRACE_MS
+  let polledAgain = false
   let reAsked = false
   for (;;) {
     const decision = await d.daemon.decision(s.approval.hash)
@@ -401,14 +422,21 @@ async function approval(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcom
       return { ok: false, fail: 'approval_timeout', detail: `daemon 侧报 ${decision}` }
     }
     if (decision === 'unknown') {
-      // daemon 重启会把 PendingPermissions 丢光,这时候的 unknown 不是「主人没理」
-      // 而是「卡没了」。重发一次;再丢就别缠着他了。
-      if (reAsked) return { ok: false, fail: 'approval_timeout', detail: '拍板卡两次都丢了(daemon 在重启?)' }
-      reAsked = true
-      const again = await d.daemon.ask(prompt, Math.max(0, deadline - d.now()))
-      if (!again) return { ok: false, fail: 'approval_timeout', detail: '拍板卡丢了,重发也没发出去' }
-      s.approval.hash = again.hash
-      s.approval.code = again.code
+      // unknown 有两种:daemon 正在重启(这一次够不着,下一轮就好了)和
+      // daemon 真把 PendingPermissions 丢了(卡没了)。先多等一轮问第二次 ——
+      // 部署那一步本来就会把 daemon 换掉,一次 unknown 就重发卡等于主人平白多收一张。
+      // 第二次还 unknown 才当卡丢了,重发一次;再丢就别缠着他了。
+      if (!polledAgain) {
+        polledAgain = true
+      } else if (!reAsked) {
+        reAsked = true
+        const again = await d.daemon.ask(prompt, Math.max(0, deadline - d.now()))
+        if (!again) return { ok: false, fail: 'approval_timeout', detail: '拍板卡丢了,重发也没发出去' }
+        s.approval.hash = again.hash
+        s.approval.code = again.code
+      } else {
+        return { ok: false, fail: 'approval_timeout', detail: '拍板卡两次都丢了(daemon 在重启?)' }
+      }
     }
     if (d.now() >= deadline) return { ok: false, fail: 'approval_timeout', detail: `等了 ${Math.round((d.now() - (s.approval.askedAt ?? d.now())) / 60000)} 分钟没等到拍板` }
     await d.sleep(APPROVAL_POLL_MS)
@@ -444,7 +472,7 @@ async function merge(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> 
     const del = d.git.run(['push', 'origin', '--delete', s.branch], { cwd: repoPath(d.config), timeoutMs: NETWORK_TIMEOUT_MS })
     if (del.code !== 0) d.log(`[self-change] 删远端分支 ${s.branch} 失败(不影响结果):${del.stderr.trim()}`)
 
-    await d.daemon.notice(`自改 #${s.id} 已合入 ${d.config.branch}(${s.merge.sha.slice(0, 8)})${s.noDeploy ? ',按 --no-deploy 不部署' : ',开始部署'}`)
+    await notify(s, d, `自改 #${s.id} 已合入 ${d.config.branch}(${s.merge.sha.slice(0, 8)})${s.noDeploy ? ',按 --no-deploy 不部署' : ',开始部署'}`)
     return { ok: true, next: s.noDeploy ? 'report' : 'deploy' }
   })
 }
@@ -521,7 +549,7 @@ async function report(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
   if (s.ci.sha && s.merge.sha && s.ci.sha !== s.merge.sha) {
     lines.push(`注意:CI 跑的是 ${s.ci.sha.slice(0, 8)},合入的是 ${s.merge.sha.slice(0, 8)}(rebase 过,没有重跑 CI)`)
   }
-  await d.daemon.notice(lines.join('\n'))
+  await notify(s, d, lines.join('\n'))
   return { ok: true, next: 'done' }
 }
 

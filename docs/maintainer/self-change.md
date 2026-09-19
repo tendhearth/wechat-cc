@@ -88,7 +88,7 @@ wechat-cc self change --unhalt     # 清 halted_at / halt_reason,fail_streak 归
 
 | 配置 | 缺省 | 说明 |
 | --- | --- | --- |
-| `implement_budget_usd` | 20 | 实现会话的 `--max-budget-usd`。注意这是**每次调用**的封顶,不是整条的总额:修复轮虽然 `--resume` 回同一个会话,但每一轮各自按这个数封顶(最坏情况 = 实现 1 轮 + 三处各 2 轮修复) |
+| `implement_budget_usd` | 20 | 实现侧的**总额**:实现那一轮加上后面所有修复轮合起来最多花这么多。每一轮 `--resume` 拿到的 `--max-budget-usd` 是「总额减去已经花掉的」(花超了仍留 1 刀,好让那一轮把话说完)。评审另算,见 `review_budget_usd` |
 | `review_budget_usd` | 5 | 评审会话(新会话、只读) |
 | `max_turns` | 300 | 兜底,真正管钱的是预算 |
 | `max_per_day` | 5 | 每天最多几条(按存盘目录里当天的记录数),超了 `self_change_quota` 退 2 |

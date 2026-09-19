@@ -19,6 +19,8 @@ import type { SelfChangeSettings } from '../../lib/agent-config'
 export interface Recorded {
   git: string[][]
   exec: string[][]
+  /** 同一批 exec,连着 cwd / 超时一起记(`build-sidecar` 必须在 apps/desktop 里跑)。 */
+  execOpts: Array<{ cmd: string; args: string[]; cwd: string; timeoutMs: number }>
   runner: RunnerInput[]
   notices: string[]
   asks: string[]
@@ -96,7 +98,7 @@ export interface FakeOpts {
 }
 
 export function makeFakeDeps(opts: FakeOpts = {}): { deps: PipelineDeps; rec: Recorded; files: Map<string, string> } {
-  const rec: Recorded = { git: [], exec: [], runner: [], notices: [], asks: [], patches: [], sleeps: [], deployed: [], rolledBack: [] }
+  const rec: Recorded = { git: [], exec: [], execOpts: [], runner: [], notices: [], asks: [], patches: [], sleeps: [], deployed: [], rolledBack: [] }
   const files = new Map<string, string>()
   let gitCalls = 0
   let execCalls = 0
@@ -136,8 +138,9 @@ export function makeFakeDeps(opts: FakeOpts = {}): { deps: PipelineDeps; rec: Re
       },
     },
     daemon,
-    exec: async (cmd, args) => {
+    exec: async (cmd, args, execOpts) => {
       rec.exec.push([cmd, ...args])
+      rec.execOpts.push({ cmd, args, cwd: execOpts.cwd, timeoutMs: execOpts.timeoutMs })
       const r = opts.exec?.(cmd, args, execCalls++)
       return { code: r?.code ?? 0, stdout: r?.stdout ?? '', stderr: r?.stderr ?? '' }
     },

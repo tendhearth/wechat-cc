@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import { fakeState, gitReply, greenTriage, makeFakeDeps } from './pipeline.fixture'
@@ -34,8 +36,11 @@ describe('intake', () => {
 
   it('三道门都过 ⇒ 报一句开始', async () => {
     const { deps, rec } = makeFakeDeps()
-    expect(await steps.intake(fakeState(), deps)).toEqual({ ok: true, next: 'repo' })
+    const s = fakeState()
+    expect(await steps.intake(s, deps)).toEqual({ ok: true, next: 'repo' })
     expect(rec.notices[0]).toContain('自改 #ab12cd34 开始:给 flake 表加一行')
+    // 报出去的原话也要留在 state 里,事后追账不用去翻微信。
+    expect(s.notices).toEqual(rec.notices)
   })
 })
 
@@ -86,8 +91,31 @@ describe('implement', () => {
     expect(await steps.implement(s, deps)).toEqual({ ok: true, next: 'guard' })
     const commit = rec.git.find(a => a.includes('commit'))
     expect(commit?.at(-1)).toBe('自改 #ab12cd34:执行者未提交的改动')
+    // 全局没身份 ⇒ 临时补一个,不然 git commit 会以「你是谁」整条失败。
+    expect(commit?.slice(0, 4)).toEqual(['-c', 'user.name=wechat-cc self-change', '-c', 'user.email=self-change@wechat-cc.local'])
     expect(s.implement.sessionId).toBe('sess-1')
     expect(s.implement.costUsd).toBe(1)
+  })
+
+  it('只配了 user.email 没配 user.name 的机器,也要走临时身份', async () => {
+    const { deps, rec } = makeFakeDeps({
+      git: gitReply({
+        'config --get user.email': 'owner@example.com\n',
+        'config --get user.name': { code: 1 },
+        'status --porcelain': ' M src/a.ts\n',
+        'rev-list --count': '1\n',
+      }),
+    })
+    expect(await steps.implement(fakeState(), deps)).toEqual({ ok: true, next: 'guard' })
+    expect(rec.git.find(a => a.includes('commit'))?.[1]).toBe('user.name=wechat-cc self-change')
+  })
+
+  it('主人自己的身份齐全时就用他的,不加 -c', async () => {
+    const { deps, rec } = makeFakeDeps({
+      git: gitReply({ 'config --get': 'owner\n', 'status --porcelain': ' M src/a.ts\n', 'rev-list --count': '1\n' }),
+    })
+    await steps.implement(fakeState(), deps)
+    expect(rec.git.find(a => a.includes('commit'))?.[0]).toBe('commit')
   })
 
   it('一个提交都没有 ⇒ no_changes(不进修复轮)', async () => {
@@ -111,7 +139,7 @@ describe('guard', () => {
     const out = await steps.guard(fakeState(), deps)
     expect(out).toMatchObject({ ok: false, fail: 'forbidden_paths' })
     expect(out.detail).toContain('src/cli/self-deploy.ts')
-    expect(out.detail).not.toContain('src/a.ts\n- ')
+    expect(out.detail).not.toContain('- src/a.ts')
   })
 
   it('没碰 ⇒ 去跑测试', async () => {
@@ -165,18 +193,21 @@ describe('review', () => {
     expect(out.fixPrompt).toContain('src/a.ts:3 错误吞了')
   })
 
-  it('评审改了工作树 ⇒ 还原 + 强判 changes + 加一条 important', async () => {
+  it('评审只是改脏了工作树(HEAD 没动)⇒ 也要 reset --hard,不能只 checkout 索引', async () => {
     const s = fakeState()
     const { deps, rec } = makeFakeDeps({
       runner: () => ({ text: '```json\n{"verdict":"approve","findings":[]}\n```' }),
-      git: gitReply({ 'status --porcelain': ' M src/a.ts\n', 'rev-parse HEAD': HEAD_SHA }),
+      git: gitReply({ 'status --porcelain': 'M  src/a.ts\n', 'rev-parse HEAD': HEAD_SHA }),
     })
     const out = await steps.review(s, deps)
     expect(out.fixRound).toBe('review')
     expect(s.review.verdict).toBe('changes')
     expect(s.review.findings[0]).toEqual({ severity: 'important', summary: '评审会话改了工作树,已还原' })
-    expect(rec.git.some(a => a.join(' ') === 'checkout -- .')).toBe(true)
+    // `M ` 是**已暂存**的改动:`checkout -- .` 会把索引刷回工作树,等于原样留着,
+    // 接着的 review 修复轮就会把评审的手笔提交进去。必须硬还原。
+    expect(rec.git.some(a => a.join(' ') === `reset --hard ${HEAD_SHA}`)).toBe(true)
     expect(rec.git.some(a => a.join(' ') === 'clean -fd')).toBe(true)
+    expect(rec.git.some(a => a.join(' ') === 'checkout -- .')).toBe(false)
   })
 
   it('评审动了 HEAD ⇒ 硬还原到评审前那个 HEAD', async () => {
@@ -253,14 +284,21 @@ describe('approval', () => {
     }
   })
 
-  it('unknown(daemon 重启丢了卡)⇒ 重发一次;再丢就算超时', async () => {
-    const once = makeFakeDeps({ decisions: ['unknown', 'allow'] })
+  it('unknown 先多问一轮(daemon 可能只是在重启),不急着重发卡', async () => {
+    const { deps, rec } = makeFakeDeps({ decisions: ['unknown', 'allow'] })
+    expect(await steps.approval(fakeState(), deps)).toEqual({ ok: true, next: 'merge' })
+    expect(rec.asks.length).toBe(1)
+    expect(rec.sleeps).toEqual([20_000])
+  })
+
+  it('连着两次 unknown(卡真丢了)⇒ 重发一次;之后还 unknown 才算超时', async () => {
+    const once = makeFakeDeps({ decisions: ['unknown', 'unknown', 'allow'] })
     expect(await steps.approval(fakeState(), once.deps)).toEqual({ ok: true, next: 'merge' })
     expect(once.rec.asks.length).toBe(2)
 
-    const twice = makeFakeDeps({ decisions: ['unknown', 'unknown'] })
-    expect(await steps.approval(fakeState(), twice.deps)).toMatchObject({ ok: false, fail: 'approval_timeout' })
-    expect(twice.rec.asks.length).toBe(2)
+    const never = makeFakeDeps({ decisions: ['unknown'] })
+    expect(await steps.approval(fakeState(), never.deps)).toMatchObject({ ok: false, fail: 'approval_timeout' })
+    expect(never.rec.asks.length).toBe(2)
   })
 
   it('卡根本发不出去 ⇒ owner_chat_unknown(blocked)', async () => {
@@ -335,6 +373,9 @@ describe('deploy', () => {
     const { deps, rec } = makeFakeDeps()
     expect(await steps.deploy(s, deps)).toEqual({ ok: true, next: 'selftest' })
     expect(rec.exec[0]).toEqual(['bun', 'run', 'build-sidecar'])
+    // 在克隆的 apps/desktop 里跑,不是仓库根。
+    expect(rec.execOpts[0]?.cwd).toBe(join('/w', 'repo', 'apps', 'desktop'))
+    expect(rec.execOpts[0]?.timeoutMs).toBeGreaterThan(0)
     expect(s.deploy).toEqual({ ok: true, version: '1.2.3' })
   })
 })

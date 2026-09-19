@@ -37,7 +37,11 @@ describe('exitCodeFor', () => {
     expect(exitCodeFor('done')).toBe(SELF_CHANGE_EXIT.done)
     expect(exitCodeFor('declined')).toBe(SELF_CHANGE_EXIT.declined)
     expect(exitCodeFor('approval_timeout')).toBe(SELF_CHANGE_EXIT.approvalTimeout)
-    for (const blocked of ['self_change_halted', 'self_change_quota', 'daemon_not_running', 'owner_chat_unknown']) {
+    // CLI 层在流水线起步前挡下的那几种也归这里:退出码只有这一处说了算。
+    for (const blocked of [
+      'self_change_halted', 'self_change_quota', 'daemon_not_running', 'owner_chat_unknown',
+      'self_change_busy', 'self_change_unsupported_platform', 'repo_url_unknown',
+    ]) {
       expect(exitCodeFor(blocked)).toBe(SELF_CHANGE_EXIT.blocked)
     }
     for (const failed of ['forbidden_paths', 'no_changes', 'tests_exhausted', 'merge_conflict', 'crashed', null]) {
@@ -59,6 +63,8 @@ describe('runSelfChange 一条跑通', () => {
     ])
     expect(rec.notices[0]).toContain('开始')
     expect(rec.notices.at(-1)).toContain('完成')
+    // state 里留一份原话(开始 / 已合入 / 完成)。
+    expect(state.notices).toEqual(rec.notices)
     expect(state.implement.rounds).toEqual({ tests: 0, review: 0, ci: 0 })
   })
 
@@ -95,6 +101,9 @@ describe('修复轮', () => {
     const fix = rec.runner[1]
     expect(fix?.resume).toBe('sess-1')
     expect(fix?.prompt).toContain('本地测试没过')
+    // 预算是实现侧总额:这一轮只剩「总额 - 第一轮花掉的」。
+    expect(rec.runner[0]?.budgetUsd).toBe(deps.config.implementBudgetUsd)
+    expect(fix?.budgetUsd).toBe(deps.config.implementBudgetUsd - 1)
     expect(fix?.readOnly).toBeUndefined()
     expect(rec.git.some(a => a.at(-1) === '自改 #ab12cd34:修复轮(tests)未提交的改动')).toBe(true)
   })
@@ -120,6 +129,8 @@ describe('修复轮', () => {
     expect(state.implement.rounds.tests).toBe(3)
     expect(state.error).toContain('FAIL src/a.test.ts')
     expect(rec.notices.at(-1)).toContain('自改 #ab12cd34 失败:tests_exhausted')
+    // 每多修一轮,剩下的预算就少一点(执行者每轮花 1 刀)。
+    expect(rec.runner.filter(r => r.resume).map(r => r.budgetUsd)).toEqual([19, 18])
     // 三轮 tests:一次实现 + 两次修复。
     expect(rec.runner.filter(r => r.resume).length).toBe(2)
   })
@@ -199,6 +210,15 @@ describe('停机', () => {
     expect(exitCode).toBe(1)
     expect(rec.patches).toEqual([{ fail_streak: 2 }, { halted_at: expect.any(Number), halt_reason: expect.stringContaining('selftest_failed_rolled_back') }])
     expect(rec.notices.at(-1)).toContain('--unhalt')
+  })
+
+  it('主人回 n 时哪怕 fail_streak 已经到线,也不能停机', async () => {
+    const { deps, rec } = happy({ config: { failStreak: 2 }, decisions: ['deny'] })
+    const { state } = await runSelfChange(fakeState(), deps)
+    expect(state.result).toBe('declined')
+    expect(rec.patches).toEqual([])
+    expect(rec.notices.some(n => n.includes('停机'))).toBe(false)
+    expect(rec.notices.at(-1)).toContain('留在远端给人看')
   })
 
   it('第一次红只加 fail_streak,不停机', async () => {
