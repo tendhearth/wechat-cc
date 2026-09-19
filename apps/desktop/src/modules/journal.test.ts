@@ -10,7 +10,7 @@ const mkEl = () => ({ innerHTML: '', textContent: '', addEventListener: () => {}
 // @ts-expect-error minimal DOM stub before import (same shape as todos.test.ts)
 globalThis.document = { getElementById: (id: string) => els.get(id) ?? null }
 
-const { renderHuntBag, splitByStatus, dayLabel, statusLabel, onHuntBagClick, countLabel, markJournalSeen } = await import('./journal.js')
+const { renderHuntBag, groupRecommendations, readableText, splitByStatus, dayLabel, statusLabel, onHuntBagClick, countLabel, markJournalSeen } = await import('./journal.js')
 
 const item = (o: Partial<Record<string, unknown>> = {}) => ({
   id: 'i1', ts: new Date().toISOString(), chat_id: 'c', title: 'Continue.dev',
@@ -140,7 +140,7 @@ describe('onHuntBagClick', () => {
   it('**ok:false 要说出来** —— 否则界面显示一个改不动的状态,主人只觉得点了没反应', async () => {
     invokeApi.mockResolvedValueOnce({ ok: false }).mockResolvedValueOnce({ items: [] })
     await onHuntBagClick(ev({ 'data-hb-action': 'status', 'data-hb-id': 'gone', 'data-hb-status': 'using' }))
-    expect(showToast).toHaveBeenCalledWith('这条已经不在背包里了')
+    expect(showToast).toHaveBeenCalledWith('未能完成操作，请刷新后检查记录')
   })
 
   it('删除走 remove 路由', async () => {
@@ -182,10 +182,43 @@ describe('明信片卡(kind=postcard)', () => {
     ] })
     const html = els.get('fd-catch')!.innerHTML
     expect(html).toContain('hb-postcard-card')
-    expect(html).toContain('📮 阿一 回了你的心愿')
+    expect(html).toContain('阿一 回了你的心愿')
     // 只看明信片自己那张卡有没有状态档 —— 混进来的 hunt 卡本来就该有四个状态按钮(含 tried),不算这里的事。
     const postcardArticle = html.slice(0, html.indexOf('data-hb-id="h1"'))
     expect(postcardArticle).not.toContain('data-hb-status="tried"')
     expect(countLabel([{ kind: 'postcard' } as never, { kind: 'hunt' } as never, { kind: 'visit' } as never])).toBe('1 件 · 1 段见闻 · 1 张明信片')
   })
+})
+
+describe('recommendation readability', () => {
+  it('groups only consecutive matching source records and preserves source identities', () => {
+    const ts = '2026-09-10T10:00:00Z'
+    const parent = item({id: `${ts}:0:a`, ts})
+    const child = item({id: `${ts}:1:b`, ts, url: null, note: '为什么你会感兴趣：与你有关'})
+    const result = groupRecommendations([child, parent])
+    expect(result).toHaveLength(1)
+    expect(result[0].sourceIds).toEqual([parent.id, child.id])
+    expect(result[0].note).toContain('与你有关')
+    expect(parent.note).toBe('能改多文件')
+    expect(groupRecommendations([parent, {...child, chat_id: 'other'}])).toHaveLength(2)
+    expect(groupRecommendations([parent, {...child, status: 'tried'}])).toHaveLength(2)
+  })
+  it('removes formatting debris and duplicate URL prose without interpreting HTML', () => {
+    expect(readableText('**2. AgentPet**')).toBe('AgentPet')
+    renderHuntBag({items: [item({title:'github.com',note:'https://github.com/continuedev/continue'})]})
+    expect(host().innerHTML).toContain('continuedev / continue')
+    expect(host().innerHTML).not.toContain('<p class="hb-note">https://')
+    renderHuntBag({items:[item({url:'javascript:alert(1)'})]})
+    expect(host().innerHTML).not.toContain('href="javascript:')
+  })
+})
+
+it('updates every grouped source and reports partial failure honestly', async () => {
+  invokeApi.mockResolvedValueOnce({ok:true}).mockResolvedValueOnce({ok:false}).mockResolvedValueOnce({items:[]})
+  const attrs: Record<string,string> = {'data-hb-action':'status','data-hb-id':'one','data-hb-status':'tried'}
+  const btn = {getAttribute:(key:string)=>attrs[key],closest:()=>({getAttribute:()=>JSON.stringify(['one','two'])})}
+  await onHuntBagClick({target:{closest:()=>btn}})
+  expect(invokeApi).toHaveBeenCalledWith('POST','/v1/journal/status',{id:'one',status:'tried'})
+  expect(invokeApi).toHaveBeenCalledWith('POST','/v1/journal/status',{id:'two',status:'tried'})
+  expect(showToast).toHaveBeenCalledWith('未能完成操作，请刷新后检查记录')
 })

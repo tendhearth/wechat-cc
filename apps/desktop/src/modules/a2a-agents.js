@@ -247,12 +247,6 @@ export function renderForageDesk(data) {
   if (status) {
     const n = agents.length
     status.innerHTML =
-      `<svg class="fd-frog" viewBox="0 0 30 30" fill="none" aria-hidden="true">` +
-      `<ellipse cx="15" cy="19" rx="10" ry="8" fill="#8AA36F"/>` +
-      `<circle cx="10" cy="10" r="4.2" fill="#8AA36F"/><circle cx="20" cy="10" r="4.2" fill="#8AA36F"/>` +
-      `<circle cx="10" cy="10" r="2" fill="#fff"/><circle cx="20" cy="10" r="2" fill="#fff"/>` +
-      `<circle cx="10.6" cy="10.4" r="1" fill="#3B3125"/><circle cx="20.6" cy="10.4" r="1" fill="#3B3125"/>` +
-      `<path d="M11 20 q4 3 8 0" stroke="#3B3125" stroke-width="1.3" stroke-linecap="round"/></svg>` +
       `<span class="fd-status-line"><span>连着 <b>${n} 位</b>朋友的 bot</span></span>`
   }
   const note = document.getElementById('fd-social-note')

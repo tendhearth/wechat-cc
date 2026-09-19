@@ -14,6 +14,52 @@
 import { invokeApi } from '../api.js'
 import { escapeHtml, showToast } from '../view.js'
 
+/** Plain readable text, never interpret untrusted HTML. */
+/** @param {unknown} value */
+export function readableText(value) {
+  return String(value || '').replace(/!?(?:\[([^\]]+)\])\(https?:\/\/[^)]+\)/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '').replace(/\*\*|__|`/g, '').replace(/^\s*\d+[.)、]\s*/gm, '').trim()
+}
+
+/** @param {Array<any>} items */
+export function groupRecommendations(items) {
+  const copies = items.map(it => ({ ...it, sourceIds: [it.id] }))
+  const removed = new Set()
+  for (const child of copies) {
+    if (child.kind !== 'hunt' || child.url || !/^(为什么你会感兴趣|推荐理由|为什么推荐|对你有什么用|适合你|怎么用)[：:\s]/.test(readableText(child.note))) continue
+    const suffix = String(child.id).slice(String(child.ts).length + 1)
+    const match = /^(\d+):/.exec(suffix)
+    if (!match) continue
+    const predecessor = copies.find(it => it.kind === 'hunt' && it.url && it.ts === child.ts && it.chat_id === child.chat_id && it.status === child.status && String(it.id).startsWith(`${child.ts}:${Number(match[1]) - 1}:`))
+    if (!predecessor) continue
+    predecessor.note += `\n\n${child.note}`
+    predecessor.sourceIds.push(child.id)
+    removed.add(child.id)
+  }
+  return copies.filter(it => !removed.has(it.id))
+}
+
+/** @param {any} it @param {string} url */
+function cardTitle(it, url) {
+  let title = readableText(it.title).replace(/\*+$/g, '').trim()
+  if (url && (!title || title === new URL(url).hostname)) {
+    const path = new URL(url).pathname.split('/').filter(Boolean)
+    title = path.length ? path.slice(-2).join(' / ') : new URL(url).hostname
+  }
+  return title || '一条发现'
+}
+
+/** @param {unknown} note @param {string} title @param {string} url */
+function noteHtml(note, title, url) {
+  let text = readableText(note)
+  if (url) text = text.split(url).join('').trim()
+  if (text === title) return ''
+  if (text.startsWith(title + '\n')) text = text.slice(title.length).trim()
+  if (!text) return ''
+  if (text.length <= 180) return `<p class="hb-note">${escapeHtml(text)}</p>`
+  return `<details class="hb-description"><summary><span class="hb-excerpt">${escapeHtml(text.slice(0, 150))}… </span><span class="hb-expand-label">展开全文</span><span class="hb-collapse-label">收起全文</span></summary><p class="hb-note">${escapeHtml(text)}</p></details>`
+}
+
 /** 状态机:主人手点,不由系统推断。 */
 export const STATUSES = [
   { key: 'new',     label: '没试' },
@@ -80,9 +126,9 @@ export function splitByStatus(items) {
  * @param {any} it
  */
 function renderVisitCard(it) {
-  return `<article class="hb-card hb-visit" data-hb-id="${escapeHtml(it.id)}">
+  return `<article class="hb-card hb-visit" data-hb-id="${escapeHtml(it.id)}" data-hb-ids="${escapeHtml(JSON.stringify(it.sourceIds || [it.id]))}">
     <div class="hb-head">
-      <h3 class="hb-title">🚶 ${escapeHtml(it.title || '串门')}</h3>
+      <h3 class="hb-title">${escapeHtml(it.title || '串门')}</h3>
       <span class="hb-day">${escapeHtml(dayLabel(it.ts))}</span>
     </div>
     ${it.image_svg ? `<div class="hb-postcard">${it.image_svg}</div>` : ''}
@@ -98,9 +144,9 @@ function renderVisitCard(it) {
  * @param {any} it
  */
 function renderPostcardCard(it) {
-  return `<article class="hb-card hb-postcard-card" data-hb-id="${escapeHtml(it.id)}">
+  return `<article class="hb-card hb-postcard-card" data-hb-id="${escapeHtml(it.id)}" data-hb-ids="${escapeHtml(JSON.stringify(it.sourceIds || [it.id]))}">
     <div class="hb-head">
-      <h3 class="hb-title">📮 ${escapeHtml(it.title || '明信片')}</h3>
+      <h3 class="hb-title">${escapeHtml(it.title || '明信片')}</h3>
       <span class="hb-day">${escapeHtml(dayLabel(it.ts))}</span>
     </div>
     <p class="hb-note">${escapeHtml(it.note || '')}</p>
@@ -114,23 +160,26 @@ function renderPostcardCard(it) {
 function renderCard(it) {
   if (it.kind === 'visit') return renderVisitCard(it)
   if (it.kind === 'postcard') return renderPostcardCard(it)
-  const url = it.url ? String(it.url) : ''
+  const rawUrl = it.url ? String(it.url) : ''
+  let url = ''
+  try { const parsed = new URL(rawUrl); if (['http:', 'https:'].includes(parsed.protocol)) url = rawUrl } catch { /* not a navigable link */ }
+  const title = cardTitle(it, url)
   const chips = STATUSES.map(s =>
     `<button class="hb-chip${it.status === s.key ? ' on' : ''}" data-hb-action="status"`
     + ` data-hb-id="${escapeHtml(it.id)}" data-hb-status="${s.key}" type="button">${s.label}</button>`).join('')
-  // note 里已经包含链接原文;单独再列一次链接是为了能点、能复制。
-  return `<article class="hb-card" data-hb-id="${escapeHtml(it.id)}">
+  // 正文去重后，来源链接只在此处显示，供打开或复制。
+  return `<article class="hb-card" data-hb-id="${escapeHtml(it.id)}" data-hb-ids="${escapeHtml(JSON.stringify(it.sourceIds || [it.id]))}">
     <div class="hb-head">
-      <h3 class="hb-title">${escapeHtml(it.title || '(无标题)')}</h3>
+      <h3 class="hb-title">${escapeHtml(title)}</h3>
       <span class="hb-day">${escapeHtml(dayLabel(it.ts))}</span>
     </div>
-    <p class="hb-note">${escapeHtml(it.note || '')}</p>
+    ${noteHtml(it.note, title, url)}
     ${url ? `<div class="hb-link">
       <a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(url)}</a>
       <button class="hb-copy" data-hb-action="copy" data-hb-url="${escapeHtml(url)}" type="button">复制</button>
     </div>` : ''}
     <div class="hb-foot">
-      <div class="hb-chips">${chips}</div>
+      <details class="hb-status-menu"><summary>使用状态：${escapeHtml(statusLabel(it.status))}</summary><div class="hb-chips">${chips}</div></details>
       <button class="hb-del" data-hb-action="remove" data-hb-id="${escapeHtml(it.id)}" type="button" title="从背包里删掉">×</button>
     </div>
   </article>`
@@ -151,7 +200,7 @@ export function renderHuntBag(data) {
     host.innerHTML = '<div class="fd-empty">暂时无法读取带回来的内容，请到首页检查连接后重试。</div>'
     return
   }
-  const { kept, dropped } = splitByStatus(data.items)
+  const { kept, dropped } = splitByStatus(groupRecommendations(data.items))
   if (count) count.textContent = countLabel(kept)
 
   if (kept.length === 0 && dropped.length === 0) {
@@ -202,21 +251,24 @@ export async function onHuntBagClick(ev) {
   const id = btn.getAttribute('data-hb-id')
   if (!id) return
 
+  let ids = [id]
+  try { const grouped = JSON.parse(btn.closest?.('[data-hb-ids]')?.getAttribute('data-hb-ids') || 'null'); if (Array.isArray(grouped) && grouped.every(x => typeof x === 'string') && grouped.length) ids = grouped } catch { /* single record */ }
+
   if (action === 'status') {
     const status = btn.getAttribute('data-hb-status')
     const r = /** @type {{ok?:boolean}|null} */ (
-      await invokeApi('POST', '/v1/journal/status', { id, status }).catch(() => null))
+      await Promise.all(ids.map(id => invokeApi('POST', '/v1/journal/status', { id, status }).catch(() => null))).then(results => ({ok: results.every(r => /** @type {{ok?:boolean}|null} */ (r)?.ok)})))
     // ok:false = 这条已经不在了(另一个窗口删过)。**不能装作成功** ——
     // 界面会显示一个改不动的状态,主人只会觉得点了没反应。
-    if (!r?.ok) showToast('这条已经不在背包里了')
+    if (!r?.ok) showToast('未能完成操作，请刷新后检查记录')
     await refreshHuntBag()
     return
   }
 
   if (action === 'remove') {
     const r = /** @type {{ok?:boolean}|null} */ (
-      await invokeApi('POST', '/v1/journal/remove', { id }).catch(() => null))
-    if (!r?.ok) showToast('这条已经不在背包里了')
+      await Promise.all(ids.map(id => invokeApi('POST', '/v1/journal/remove', { id }).catch(() => null))).then(results => ({ok: results.every(r => /** @type {{ok?:boolean}|null} */ (r)?.ok)})))
+    if (!r?.ok) showToast('未能完成操作，请刷新后检查记录')
     await refreshHuntBag()
   }
 }
