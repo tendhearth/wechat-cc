@@ -131,7 +131,7 @@ describe('makeClaudeRunner', () => {
 
   it('成功路径:字段逐个映射,cwd / env / 二进制都传下去', async () => {
     const { calls, spawn } = fakeSpawn({ code: 0, stdout: `noise\n${ok}`, stderr: '' })
-    const runner = makeClaudeRunner({ spawn, env: { PATH: '/usr/bin', CLAUDECODE: '1' }, claudeBin: '/opt/claude' })
+    const runner = makeClaudeRunner({ launch: spawn, env: { PATH: '/usr/bin', CLAUDECODE: '1' }, claudeBin: '/opt/claude' })
     const r = await runner.run({ ...base, timeoutMs: 1000 })
     expect(r).toEqual({ ok: true, sessionId: 's9', text: '做完了', costUsd: 2.25, turns: 11, stderrTail: [], timedOut: false })
     expect(calls[0]!.cmd).toBe('/opt/claude')
@@ -142,14 +142,14 @@ describe('makeClaudeRunner', () => {
 
   it('缺省二进制是 claude', async () => {
     const { calls, spawn } = fakeSpawn({ code: 0, stdout: ok, stderr: '' })
-    await makeClaudeRunner({ spawn, env: {} }).run(base)
+    await makeClaudeRunner({ launch: spawn, env: {} }).run(base)
     expect(calls[0]!.cmd).toBe('claude')
   })
 
   it('非零退出 ⇒ ok:false,error 带上退出码,stderr 尾巴只留 200 行', async () => {
     const stderr = Array.from({ length: 250 }, (_, i) => `line ${i}`).join('\n')
     const { spawn } = fakeSpawn({ code: 1, stdout: 'boom', stderr })
-    const r = await makeClaudeRunner({ spawn, env: {} }).run(base)
+    const r = await makeClaudeRunner({ launch: spawn, env: {} }).run(base)
     expect(r.ok).toBe(false)
     expect(r.error).toBe('claude_exit_1')
     expect(r.stderrTail).toHaveLength(200)
@@ -160,13 +160,13 @@ describe('makeClaudeRunner', () => {
   it('claude 自己报错(is_error / subtype)⇒ ok:false,error 用 subtype,正文照带', async () => {
     const stdout = JSON.stringify({ session_id: 's3', result: '超预算了', total_cost_usd: 20, num_turns: 99, is_error: true, subtype: 'error_max_budget' })
     const { spawn } = fakeSpawn({ code: 0, stdout, stderr: '' })
-    const r = await makeClaudeRunner({ spawn, env: {} }).run(base)
+    const r = await makeClaudeRunner({ launch: spawn, env: {} }).run(base)
     expect(r).toMatchObject({ ok: false, error: 'error_max_budget', sessionId: 's3', text: '超预算了', costUsd: 20 })
   })
 
   it('超时被杀 ⇒ ok:false 且 timedOut:true(调用方不用去认 error 串)', async () => {
     const { spawn } = fakeSpawn({ code: null, stdout: '', stderr: 'killed', timedOut: true })
-    const r = await makeClaudeRunner({ spawn, env: {} }).run(base)
+    const r = await makeClaudeRunner({ launch: spawn, env: {} }).run(base)
     expect(r.ok).toBe(false)
     expect(r.timedOut).toBe(true)
     expect(r.error).toBe('claude_exit_null')
@@ -174,18 +174,18 @@ describe('makeClaudeRunner', () => {
 
   it('正常失败时 timedOut 是 false', async () => {
     const { spawn } = fakeSpawn({ code: 1, stdout: '', stderr: '' })
-    expect((await makeClaudeRunner({ spawn, env: {} }).run(base)).timedOut).toBe(false)
+    expect((await makeClaudeRunner({ launch: spawn, env: {} }).run(base)).timedOut).toBe(false)
   })
 
   it('result 是空串时正文就是空串 —— 不把整份 JSON 信封倒进去', async () => {
     const stdout = JSON.stringify({ session_id: 's4', result: '', total_cost_usd: 0.1, num_turns: 1, is_error: false, subtype: 'success' })
-    const r = await makeClaudeRunner({ spawn: fakeSpawn({ code: 0, stdout, stderr: '' }).spawn, env: {} }).run(base)
+    const r = await makeClaudeRunner({ launch: fakeSpawn({ code: 0, stdout, stderr: '' }).spawn, env: {} }).run(base)
     expect(r.text).toBe('')
   })
 
   it('spawn 自己抛(claude 不在 PATH 上)⇒ ok:false,原因进 stderrTail', async () => {
     const { spawn } = fakeSpawn(new Error('ENOENT claude'))
-    const r = await makeClaudeRunner({ spawn, env: {} }).run(base)
+    const r = await makeClaudeRunner({ launch: spawn, env: {} }).run(base)
     expect(r).toMatchObject({ ok: false, error: 'claude_spawn_failed', sessionId: null, timedOut: false })
     expect(r.stderrTail.join('\n')).toContain('ENOENT claude')
   })

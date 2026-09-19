@@ -51,7 +51,8 @@ export interface ImplementRunner {
 }
 
 export interface ClaudeRunnerDeps {
-  spawn: (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }) => Promise<{ code: number | null; stdout: string; stderr: string; timedOut?: boolean }>
+  /** 注入的进程启动口(生产用 spawnCollect)。不叫 spawn:spawn-windowshide 的 lint 会把注入口当真 spawn 点。 */
+  launch: (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }) => Promise<{ code: number | null; stdout: string; stderr: string; timedOut?: boolean }>
   env: NodeJS.ProcessEnv
   /** 缺省 `claude`(走 PATH)。 */
   claudeBin?: string
@@ -157,7 +158,7 @@ export function makeClaudeRunner(deps: ClaudeRunnerDeps): ImplementRunner {
       const cmd = deps.claudeBin ?? 'claude'
       let out: { code: number | null; stdout: string; stderr: string; timedOut?: boolean }
       try {
-        out = await deps.spawn(cmd, claudeArgs(input), {
+        out = await deps.launch(cmd, claudeArgs(input), {
           cwd: input.cwd,
           env: runnerEnv(deps.env),
           timeoutMs: input.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
