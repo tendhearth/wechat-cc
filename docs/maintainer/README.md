@@ -45,7 +45,7 @@ wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resum
 | `selftest workbench` | `--executor`(必填) `--image` `--resume` `--json` `--timeout-ms` `--keep` |
 | `selftest chat` | `--provider`(必填) `--text` `--resume` `--json` `--timeout-ms` |
 | `ci triage` | `--sha` `--branch` `--wait` `--rerun` `--max-reruns` `--timeout-min` `--json` |
-| `self change` | `<需求>` `--resume` `--list` `--unhalt` `--from` `--budget-usd` `--no-deploy` `--json` |
+| `self change` | `<需求>` `--resume` `--list` `--unhalt` `--approve <id>` `--deny <id>` `--from` `--budget-usd` `--no-deploy` `--json` |
 
 ## 索引
 
@@ -54,7 +54,7 @@ wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resum
 | [deploy.md](deploy.md) | sidecar 构建、`self deploy`、inode 陷阱、launchd 崩溃循环怎么看、plist 为什么指主二进制 |
 | [verify.md](verify.md) | `selftest` 两种用法、两种 token 分别够得着什么、必须主人在场的检查清单 |
 | [ci-and-flakes.md](ci-and-flakes.md) | 三平台作业、Windows 排除清单的规矩、`ci triage` 与 flake 登记表、PR 与合并纪律 |
-| [self-change.md](self-change.md) | 让 CC 自己改自己:五道闸门、修复轮上限、退出码、停机与 `--unhalt`、禁改清单、费用、微信「自改」 |
+| [self-change.md](self-change.md) | 让 CC 自己改自己:五道闸门、修复轮上限、退出码、停机与 `--unhalt`、微信不通时怎么拍板(`--approve` / 桌面卡)、禁改清单、费用、微信「自改」 |
 | [migrations.md](migrations.md) | `user_version` 是计数、新迁移要改的三处测试、指纹与 `foreign_keys` 坑 |
 | [rules-from-real-machines.md](rules-from-real-machines.md) | 真机(而不是单测)抓到的规矩清单 —— 写代码前先扫一眼 |
 

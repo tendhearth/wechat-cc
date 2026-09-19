@@ -32,7 +32,7 @@ describe('newState', () => {
     expect(s.implement).toEqual({ sessionId: null, costUsd: 0, turns: 0, summary: '', rounds: { tests: 0, review: 0, ci: 0 } })
     expect(s.review).toEqual({ sessionId: null, costUsd: 0, verdict: null, findings: [] })
     expect(s.ci).toEqual({ runId: null, url: null, verdict: null, sha: null })
-    expect(s.approval).toEqual({ hash: null, code: null, decision: null, askedAt: null })
+    expect(s.approval).toEqual({ hash: null, code: null, decision: null, askedAt: null, delivered: null })
     expect(s.merge).toEqual({ sha: null, rebased: false })
     expect(s.deploy).toEqual({ ok: null, version: null })
     expect(s.selftest).toEqual({ workbench: null, chat: null })

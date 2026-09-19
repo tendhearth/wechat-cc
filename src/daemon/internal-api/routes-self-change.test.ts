@@ -8,7 +8,7 @@ const qs = (s = '') => new URLSearchParams(s)
 function depsWith(over: Partial<NonNullable<InternalApiDeps['selfChange']>> = {}) {
   const selfChange = {
     notice: vi.fn(async () => ({ ok: true as const })),
-    ask: vi.fn(async () => ({ ok: true as const, hash: 'abc123', code: '07' })),
+    ask: vi.fn(async () => ({ ok: true as const, hash: 'abc123', code: '07', delivered: true })),
     decision: vi.fn(() => 'pending' as const),
     ...over,
   }
@@ -56,8 +56,16 @@ describe('/v1/self-change/*', () => {
     expect((await route(qs(), { prompt: 'p', timeoutMs: 60_000.5 })).status).toBe(400)
     expect((await route(qs(), { prompt: 'p', timeoutMs: '60000' })).status).toBe(400)
     expect(selfChange.ask).not.toHaveBeenCalled()
-    expect(await route(qs(), { prompt: '合进 dev?', timeoutMs: 172_800_000 })).toEqual({ status: 200, body: { hash: 'abc123', code: '07' } })
+    expect(await route(qs(), { prompt: '合进 dev?', timeoutMs: 172_800_000 })).toEqual({ status: 200, body: { hash: 'abc123', code: '07', delivered: true } })
     expect(selfChange.ask).toHaveBeenCalledWith('合进 dev?', 172_800_000)
+  })
+
+  // 卡片没进微信不是 502:条目还在登记处,桌面权限卡 / `self change --approve`
+  // 照样能拍(2026-09-18 真机 errcode=-2)。CLI 要拿 delivered 去提醒人换个面拍。
+  it('ask:卡片没送到 ⇒ 仍是 200,只是 delivered:false', async () => {
+    const { deps } = depsWith({ ask: vi.fn(async () => ({ ok: true as const, hash: 'abc123', code: '07', delivered: false })) })
+    expect(await selfChangeRoutes(deps)['POST /v1/self-change/ask']!(qs(), { prompt: 'p', timeoutMs: 60_000 }))
+      .toEqual({ status: 200, body: { hash: 'abc123', code: '07', delivered: false } })
   })
 
   it('ask:没有主人 chat ⇒ 409', async () => {

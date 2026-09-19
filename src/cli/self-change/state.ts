@@ -40,7 +40,9 @@ export interface SelfChangeState {
   }
   review: { sessionId: string | null; costUsd: number; verdict: 'approve' | 'changes' | null; findings: ReviewFinding[] }
   ci: { runId: number | null; url: string | null; verdict: string | null; sha: string | null }
-  approval: { hash: string | null; code: string | null; decision: string | null; askedAt: number | null }
+  /** `delivered=false`:拍板卡没进微信(外发不通),但条目还在 daemon 的登记处 ——
+   *  桌面权限卡和 `self change --approve <id>` 照样能拍。null = 还没问过。 */
+  approval: { hash: string | null; code: string | null; decision: string | null; askedAt: number | null; delivered: boolean | null }
   merge: { sha: string | null; rebased: boolean }
   deploy: { ok: boolean | null; version: string | null }
   selftest: { workbench: boolean | null; chat: boolean | null }
@@ -66,7 +68,7 @@ export function newState(input: {
     implement: { sessionId: null, costUsd: 0, turns: 0, summary: '', rounds: { tests: 0, review: 0, ci: 0 } },
     review: { sessionId: null, costUsd: 0, verdict: null, findings: [] },
     ci: { runId: null, url: null, verdict: null, sha: null },
-    approval: { hash: null, code: null, decision: null, askedAt: null },
+    approval: { hash: null, code: null, decision: null, askedAt: null, delivered: null },
     merge: { sha: null, rebased: false },
     deploy: { ok: null, version: null },
     selftest: { workbench: null, chat: null },

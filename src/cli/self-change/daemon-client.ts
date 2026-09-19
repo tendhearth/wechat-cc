@@ -23,9 +23,21 @@ const DECISIONS: readonly string[] = ['pending', 'allow', 'deny', 'timeout', 'un
 export interface DaemonClient {
   /** 报一句进展。false = 主人没收到(没配 chat / 推送窗口关着 / daemon 没起)。 */
   notice(text: string): Promise<boolean>
-  /** 发拍板卡。null = 没发出去,调用方别去轮询一个不存在的 hash。 */
-  ask(prompt: string, timeoutMs: number): Promise<{ hash: string; code: string | null } | null>
+  /**
+   * 开一张拍板卡。null = daemon 那边压根没登记(没配主人 / daemon 没起),
+   * 调用方别去轮询一个不存在的 hash。
+   *
+   * `delivered=false` **不是**失败:条目在登记处等着,只是微信那条路不通
+   * (真机 errcode=-2),主人可以从桌面权限卡或 `self change --approve <id>`
+   * 拍板。老 daemon 不回这个字段 ⇒ 按 true 算(它的行为就是送不到即失败)。
+   */
+  ask(prompt: string, timeoutMs: number): Promise<{ hash: string; code: string | null; delivered: boolean } | null>
   decision(hash: string): Promise<SelfChangeDecision>
+  /**
+   * 替主人拍一条待批(桌面权限卡走的是同一条路由、同一个 consume)。
+   * false = hash 过期 / 已经被别的面拍过了 / daemon 够不着。
+   */
+  resolve(hash: string, decision: 'allow' | 'deny'): Promise<boolean>
   /** daemon 还在不在(部署后的健康门)。用窄的那把 file token。 */
   health(): Promise<boolean>
 }
@@ -67,12 +79,20 @@ export function makeDaemonClient(deps: { readApiInfo: () => ApiInfo | null; fetc
       return !!r?.ok
     },
 
-    async ask(prompt: string, askTimeoutMs: number): Promise<{ hash: string; code: string | null } | null> {
+    async ask(prompt: string, askTimeoutMs: number): Promise<{ hash: string; code: string | null; delivered: boolean } | null> {
       const r = await call('/v1/self-change/ask', { method: 'POST', token: 'operator', body: { prompt, timeoutMs: askTimeoutMs } })
       if (!r?.ok) return null
-      const b = (r.body ?? {}) as { hash?: unknown; code?: unknown }
+      const b = (r.body ?? {}) as { hash?: unknown; code?: unknown; delivered?: unknown }
       if (typeof b.hash !== 'string' || !b.hash) return null
-      return { hash: b.hash, code: typeof b.code === 'string' ? b.code : null }
+      // 老 daemon 没有 delivered:它送不到就当失败了,所以有 hash 就等于送到了。
+      return { hash: b.hash, code: typeof b.code === 'string' ? b.code : null, delivered: typeof b.delivered === 'boolean' ? b.delivered : true }
+    },
+
+    async resolve(hash: string, decision: 'allow' | 'deny'): Promise<boolean> {
+      // 和桌面那张权限卡同一条路由(operator token 的 routeAllow 里本来就有它)。
+      const r = await call('/v1/permissions/resolve', { method: 'POST', token: 'operator', body: { hash, decision } })
+      if (!r?.ok) return false
+      return (r.body as { ok?: unknown } | undefined)?.ok === true
     },
 
     async decision(hash: string): Promise<SelfChangeDecision> {

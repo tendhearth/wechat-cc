@@ -24,6 +24,7 @@ export interface Recorded {
   runner: RunnerInput[]
   notices: string[]
   asks: string[]
+  resolves: Array<[string, 'allow' | 'deny']>
   patches: Partial<SelfChangeSettings>[]
   sleeps: number[]
   deployed: string[]
@@ -86,8 +87,9 @@ export interface FakeOpts {
   exec?: (cmd: string, args: string[], call: number) => Partial<{ code: number | null; stdout: string; stderr: string }> | undefined
   runner?: (input: RunnerInput, call: number) => Partial<RunnerResult> | undefined
   decisions?: SelfChangeDecision[]
-  ask?: () => { hash: string; code: string | null } | null
+  ask?: () => { hash: string; code: string | null; delivered?: boolean } | null
   health?: boolean
+  resolve?: boolean
   ciTriage?: (opts: { sha: string; branch: string }) => TriageReport
   deploy?: SelfDeployResult
   rollback?: SelfDeployResult
@@ -98,7 +100,7 @@ export interface FakeOpts {
 }
 
 export function makeFakeDeps(opts: FakeOpts = {}): { deps: PipelineDeps; rec: Recorded; files: Map<string, string> } {
-  const rec: Recorded = { git: [], exec: [], execOpts: [], runner: [], notices: [], asks: [], patches: [], sleeps: [], deployed: [], rolledBack: [] }
+  const rec: Recorded = { git: [], exec: [], execOpts: [], runner: [], notices: [], asks: [], resolves: [], patches: [], sleeps: [], deployed: [], rolledBack: [] }
   const files = new Map<string, string>()
   let gitCalls = 0
   let execCalls = 0
@@ -117,7 +119,8 @@ export function makeFakeDeps(opts: FakeOpts = {}): { deps: PipelineDeps; rec: Re
     notice: async text => { rec.notices.push(text); return true },
     ask: async prompt => {
       rec.asks.push(prompt)
-      return opts.ask ? opts.ask() : { hash: `h${rec.asks.length}`, code: 'AB12' }
+      const r = opts.ask ? opts.ask() : { hash: `h${rec.asks.length}`, code: 'AB12' }
+      return r === null ? null : { ...r, delivered: r.delivered ?? true }
     },
     decision: async () => {
       const list = opts.decisions ?? ['allow']
@@ -125,6 +128,7 @@ export function makeFakeDeps(opts: FakeOpts = {}): { deps: PipelineDeps; rec: Re
       return d
     },
     health: async () => opts.health ?? true,
+    resolve: async (hash, decision) => { rec.resolves.push([hash, decision]); return opts.resolve ?? true },
   }
 
   const deps: PipelineDeps = {

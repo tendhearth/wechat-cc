@@ -45,7 +45,9 @@ export function selfChangeRoutes(deps: InternalApiDeps): RouteTable {
       const r = await deps.selfChange.ask(b.prompt, t)
       if (!r.ok) return { status: 409, body: { error: r.error } }
       // code 是主人在微信里回的两位数(「y 07」);同时只有一条待批时回「y」也行。
-      return { status: 200, body: { hash: r.hash, code: r.code } }
+      // delivered=false:卡片没进微信(外发不通),但条目**还在**登记处 ——
+      // 桌面权限卡和 `self change --approve <id>` 照样能拍,所以这里是 200 不是 502。
+      return { status: 200, body: { hash: r.hash, code: r.code, delivered: r.delivered } }
     },
 
     'GET /v1/self-change/decision': async (query) => {

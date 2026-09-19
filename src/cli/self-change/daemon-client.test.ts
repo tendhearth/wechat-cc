@@ -65,8 +65,8 @@ describe('notice', () => {
 
 describe('ask', () => {
   it('POST prompt + timeoutMs,回 { hash, code }', async () => {
-    const h = harness([{ ok: true, status: 200, body: { hash: 'h1', code: '07' } }])
-    expect(await h.client.ask('拍板卡', 3600_000)).toEqual({ hash: 'h1', code: '07' })
+    const h = harness([{ ok: true, status: 200, body: { hash: 'h1', code: '07', delivered: true } }])
+    expect(await h.client.ask('拍板卡', 3600_000)).toEqual({ hash: 'h1', code: '07', delivered: true })
     expect(h.calls[0]).toMatchObject({
       url: 'http://127.0.0.1:41234/v1/self-change/ask',
       method: 'POST',
@@ -76,8 +76,19 @@ describe('ask', () => {
   })
 
   it('code 可以是 null(只有一条待批时主人直接回 y)', async () => {
-    const h = harness([{ ok: true, status: 200, body: { hash: 'h1', code: null } }])
-    expect(await h.client.ask('x', 60_000)).toEqual({ hash: 'h1', code: null })
+    const h = harness([{ ok: true, status: 200, body: { hash: 'h1', code: null, delivered: true } }])
+    expect(await h.client.ask('x', 60_000)).toEqual({ hash: 'h1', code: null, delivered: true })
+  })
+
+  it('delivered:false 不是失败 —— hash 照样给出来,人从桌面 / 终端拍板', async () => {
+    const h = harness([{ ok: true, status: 200, body: { hash: 'h1', code: '07', delivered: false } }])
+    expect(await h.client.ask('x', 60_000)).toEqual({ hash: 'h1', code: '07', delivered: false })
+  })
+
+  // 老 daemon 根本没有这个字段:它送不到就 fail 掉条目了,所以「有 hash」就等于送到了。
+  it('老 daemon 不回 delivered ⇒ 按 true 算', async () => {
+    const h = harness([{ ok: true, status: 200, body: { hash: 'h1', code: '07' } }])
+    expect(await h.client.ask('x', 60_000)).toEqual({ hash: 'h1', code: '07', delivered: true })
   })
 
   it('非 2xx ⇒ null', async () => {
@@ -88,6 +99,31 @@ describe('ask', () => {
   it('200 但没有 hash ⇒ null(不能拿一个假 hash 去轮询)', async () => {
     const h = harness([{ ok: true, status: 200, body: { code: '07' } }])
     expect(await h.client.ask('x', 60_000)).toBeNull()
+  })
+})
+
+describe('resolve', () => {
+  it('POST 到桌面那张权限卡同一条路由,带 operator token', async () => {
+    const h = harness([{ ok: true, status: 200, body: { ok: true } }])
+    expect(await h.client.resolve('h1', 'allow')).toBe(true)
+    expect(h.calls[0]).toMatchObject({
+      url: 'http://127.0.0.1:41234/v1/permissions/resolve',
+      method: 'POST',
+      auth: 'Bearer operator-token',
+      body: { hash: 'h1', decision: 'allow' },
+    })
+  })
+
+  it('hash 过期 / 已经被微信那边拍过 ⇒ 200 但 ok:false', async () => {
+    const h = harness([{ ok: true, status: 200, body: { ok: false } }])
+    expect(await h.client.resolve('h1', 'deny')).toBe(false)
+  })
+
+  it('503 / 读不到 api-info / fetch 抛 ⇒ false,不抛', async () => {
+    expect(await harness([{ ok: false, status: 503, body: { error: 'permissions_not_wired' } }]).client.resolve('h1', 'allow')).toBe(false)
+    const none = harness([], () => null)
+    expect(await none.client.resolve('h1', 'allow')).toBe(false)
+    expect(none.calls).toHaveLength(0)
   })
 })
 

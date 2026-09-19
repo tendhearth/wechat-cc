@@ -13,6 +13,8 @@ wechat-cc self change "…" --budget-usd 8 --json                     # 压预�
 wechat-cc self change --list                                        # 最近 10 条
 wechat-cc self change --resume 3f2a91bc                             # 接着跑(拍板超时之后会重发卡)
 wechat-cc self change --unhalt                                      # 解除停机
+wechat-cc self change --approve 3f2a91bc                            # 在终端替它拍「放行」(微信卡没送到时)
+wechat-cc self change --deny 3f2a91bc                               # 在终端拍「拒绝」
 ```
 
 | 开关 | 作用 |
@@ -21,6 +23,7 @@ wechat-cc self change --unhalt                                      # 解除停�
 | `--resume <id>` | 从存盘的 `step` 接着跑。id 来自 `--list`。没有这条 ⇒ 退 1 |
 | `--list` | 列最近 10 条:`id · 步骤 · 结果 · 起始时间`。`--json` 给数组 |
 | `--unhalt` | 清 `halted_at` / `halt_reason`,`fail_streak` 归零(见「停机」) |
+| `--approve <id>` / `--deny <id>` | 替停在 `approval` 的那条拍板(和微信「y / n」、桌面权限卡是同一个 consume)。和 `<需求>` / `--resume` / `--list` / `--unhalt` 互斥。拍成了退 0,hash 过期或已被拍过退 1。见「微信不通时怎么拍板」 |
 | `--from cli\|wechat` | 进件口,缺省 `cli`。daemon 从微信接单时传 `wechat`,只进存盘、不改行为 |
 | `--budget-usd N` | 这一条的**实现**预算上限,美元。覆盖 `self_change.implement_budget_usd` |
 | `--no-deploy` | 合完 `dev` 就收工:不构 sidecar、不换 inode、不自检 |
@@ -38,9 +41,26 @@ intake ─► repo ─► implement ─► guard ─► tests ─► review ─�
 2. **tests** —— 在克隆里依次 `bun run typecheck` → `bun run depcheck` → `bun run test` → `npm run test:node -- --reporter=dot`,第一条红就停(后面几条在同一个坏状态上跑没有信息量)。
 3. **review** —— **新会话**的只读 `claude -p`(`--disallowedTools Edit,Write,MultiEdit,NotebookEdit`),要一份 `{ verdict, findings }` 的 JSON。`critical` / `important` ⇒ 修复轮;`approve` 且只剩 `minor` ⇒ 过,minor 带进拍板卡。判了 `changes` 却一条 `critical` / `important` 都列不出来的,**照样算一轮修复轮**(说要改又说不出哪里要改,不该当成放行)。评审会话要是动了工作树,流水线会还原,并**直接按 `changes` 算**。
 4. **ci** —— 推 `self/<id>`,进程内调 `ci triage --wait --rerun`。绿才过;已知 flake 由 triage 重跑,第二次仍红一律真红。triage 退 2(压根没有运行 / 等超时 / `gh` 没登录)⇒ `ci_unavailable`,**不进修复轮** —— 交给执行者修一个它看不见的 CI 是白烧预算,这条要人去看。
-5. **approval** —— 拍板卡发到主人微信(需求、分支、**执行者最后那段交代**、diffstat、测试摘要、评审 verdict、CI 链接、费用),回「y <码>」才合。`n` ⇒ 退 3;超时(缺省 24 小时)⇒ 退 4,`--resume` 会重发卡。
+5. **approval** —— 拍板卡发到主人微信(需求、分支、**执行者最后那段交代**、diffstat、测试摘要、评审 verdict、CI 链接、费用),回「y <码>」才合。`n` ⇒ 退 3;超时(缺省 24 小时)⇒ 退 4,`--resume` 会重发卡。daemon 回的 `delivered` 说的是**卡片有没有进微信**:`false` 时条目照样在登记处等着(存盘里记成 `approval.delivered: false`),流水线照常轮询,只是会在终端和微信各说一句「换个面拍」—— 见下一节。
 
 过了五道才 `git rebase` + `--ff-only` 合进 `dev` 并推上去,然后构 sidecar、`self deploy`、`selftest workbench` + `selftest chat`。自检红 ⇒ 二进制回滚到 `.prev`,**但代码已经在 `dev` 上了** —— 报告里会明说这件事,需要人去改好或 revert。
+
+## 微信不通时怎么拍板
+
+微信外发是会整个不通的(2026-09-18 真机:`ilink/sendmessage errcode=-2: prepare failed`,一条实现 / 测试 / 评审 / CI 全绿的自改就这么白等到 `approval_timeout`)。所以拍板卡**送不出去也不会把待批条目撤掉** —— 同一条 hash 还有两个面能拍,从哪边拍都算数(都是同一个 `PendingPermissions.consume`):
+
+* **桌面权限卡** —— 桌宠那张卡照常弹,点就行(`POST /v1/permissions/resolve`)。
+* **终端** —— `wechat-cc self change --approve <id>`(或 `--deny <id>`)。id 用 `wechat-cc self change --list` 看,停在这一步的那条会显示 `等拍板 <hash 前 8 位>`。
+
+发不出去时流水线会在终端 `log` 并且试着往微信发一句:
+
+```
+微信卡没送到(外发不通);桌面权限卡或终端 wechat-cc self change --approve <id> 都能拍板
+```
+
+这句话本身多半也送不到(同一条外发链路)—— 但跑流水线的那个终端看得见,而终端正是另一个拍板口。
+
+`--approve` / `--deny` 只在这条停在 `approval` 且还没收场时管用;别的步骤会直接告诉你它停在哪儿并退 1。
 
 ## 修复轮上限
 

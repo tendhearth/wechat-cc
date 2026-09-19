@@ -431,6 +431,22 @@ function approvalCard(s: SelfChangeState, d: PipelineDeps, diffstat: string): st
 }
 
 /**
+ * 卡片没进微信时把别的拍板口说给人听。
+ *
+ * 2026-09-18 真机:实现 / 测试 / 评审 / CI 全绿之后,拍板卡撞上
+ * `ilink/sendmessage errcode=-2: prepare failed`,整条流水线白等到
+ * approval_timeout。daemon 现在**不会**因为发不出去就把条目删掉,所以人还有
+ * 两条路;问题只剩「他不知道」。notify 自己多半也送不出去(同一条外发链路),
+ * 那就让它失败 —— `log` 这一条在终端里是看得见的,而终端正是另一个拍板口。
+ */
+async function announceUndelivered(s: SelfChangeState, d: PipelineDeps, delivered: boolean): Promise<void> {
+  if (delivered) return
+  const line = `微信卡没送到(外发不通);桌面权限卡或终端 wechat-cc self change --approve ${s.id} 都能拍板`
+  d.log(line)
+  await notify(s, d, line)
+}
+
+/**
  * 发拍板卡,然后在进程里等。
  *
  * 为什么是轮询而不是一条长连接吊着:中间可能 `self deploy` 换掉 daemon,
@@ -451,7 +467,9 @@ async function approval(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcom
   if (!asked) return { ok: false, fail: 'owner_chat_unknown', detail: '拍板卡没发出去(daemon 不知道主人是谁,或者没起)' }
   s.approval.hash = asked.hash
   s.approval.code = asked.code
+  s.approval.delivered = asked.delivered
   s.approval.askedAt = d.now()
+  await announceUndelivered(s, d, asked.delivered)
 
   const deadline = d.now() + d.config.approvalTimeoutMs + APPROVAL_GRACE_MS
   let polledAgain = false
@@ -477,6 +495,8 @@ async function approval(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcom
         if (!again) return { ok: false, fail: 'approval_timeout', detail: '拍板卡丢了,重发也没发出去' }
         s.approval.hash = again.hash
         s.approval.code = again.code
+        s.approval.delivered = again.delivered
+        await announceUndelivered(s, d, again.delivered)
       } else {
         return { ok: false, fail: 'approval_timeout', detail: '拍板卡两次都丢了(daemon 在重启?)' }
       }

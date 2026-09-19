@@ -166,3 +166,18 @@ export function parsePermissionReply(text: string): { decision: 'allow' | 'deny'
   if (/^[0-9]{1,2}$/.test(raw)) return { decision, ref: { kind: 'code', value: raw.padStart(2, '0') } }
   return { decision, ref: { kind: 'hash', value: raw } }
 }
+
+/**
+ * 卡片末尾那一行「怎么回」。
+ *
+ * 为什么是个独立的纯函数:开这张卡的地方现在有两处 —— ilink-glue 的
+ * `askUser`(工具权限 / 终端 hook / gemini)和 self-change-glue 的 `ask`
+ * (自改拍板,它要自己发卡,好在外发不通时把条目**留在登记处**让桌面拍板)。
+ * 两处各写一遍,措辞迟早会分叉,而主人认的就是这一行的措辞。
+ */
+export function howToReplyLine(code: string | null, hash: string, timeoutMs: number): string {
+  const seconds = Math.round(timeoutMs / 1000)
+  return code
+    ? `回「y」放行、「n」拒绝;同时有几条待批时带码:「y ${code}」。${seconds} 秒内有效。`
+    : `回「y ${hash}」放行、「n ${hash}」拒绝;${seconds} 秒内有效。`
+}

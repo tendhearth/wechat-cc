@@ -11,7 +11,7 @@
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from './wechat-tool-deps'
-import { parsePermissionReply, type PendingPermissionView } from './pending-permissions'
+import { howToReplyLine, parsePermissionReply, type PendingPermissionMeta, type PendingPermissionView, type PermissionDecision } from './pending-permissions'
 import { buildMediaItemFromArtifact,buildMediaItemFromFile, assertSendable } from './media'
 import { ilinkSendMessage, botTextMessage } from '../lib/ilink'
 import { sendIlinkWorkbenchItem,sendIlinkWorkbenchText, type ArtifactTransportOutcome,type WorkbenchMediaItem,type WorkbenchNoticeOutcome } from '../lib/ilink-workbench'
@@ -123,6 +123,18 @@ export interface IlinkAdapter {
   resolvePermission(hash: string, decision: 'allow' | 'deny'): boolean
   /** 这条待批在微信里的两位数码(自改流水线要把它一起回给 CLI)。= pending.codeOf. */
   pendingPermissionCodeOf(hash: string): string | null
+  /**
+   * 只登记一条待批,**不发卡**。= pending.register.
+   *
+   * 自改流水线要的就是这个口子:`askUser` 在外发失败时会 `pending.fail(hash)`
+   * 把条目从登记处删掉(对一轮工具调用是对的 —— 没人能回,别死等),可自改的
+   * 拍板还有桌面权限卡和 `self change --approve <id>` 两条路。外发不通时把条目
+   * 留着,主人换个面拍板就行(2026-09-18 真机:errcode=-2 让整条流水线白跑到
+   * approval_timeout)。发卡由调用方自己做。
+   */
+  registerPendingPermission(hash: string, timeoutMs: number, meta: PendingPermissionMeta): Promise<PermissionDecision>
+  /** 到点扫一遍待批(把过期的 resolve 成 timeout)。= pending.sweep. */
+  sweepPendingPermissions(): void
   /** Session state accessor for admin commands (/health, cleanup). */
   sessionState: SessionStateStore
   flush(): Promise<void>
@@ -422,11 +434,8 @@ export function makeIlinkAdapter(opts: {
       // 怎么回的那一行在这里统一加,调用方(工具权限 / 终端 hook / gemini)只描述「要批什么」。
       // 两位数码由登记处分配;手机上回「y」即可,同时几条待批才要带码。
       const code = pending.codeOf(hash)
-      const seconds = Math.round(timeoutMs / 1000)
-      const howToReply = code
-        ? `回「y」放行、「n」拒绝;同时有几条待批时带码:「y ${code}」。${seconds} 秒内有效。`
-        : `回「y ${hash}」放行、「n ${hash}」拒绝;${seconds} 秒内有效。`
-      const card = `${prompt}\n${howToReply}`
+      // 措辞和自改的拍板卡共用一个纯函数(见 pending-permissions.howToReplyLine)。
+      const card = `${prompt}\n${howToReplyLine(code, hash, timeoutMs)}`
       // Schedule a sweep at the timeout boundary so the promise resolves
       // with 'timeout' even when the global 30s sweep interval hasn't fired.
       // Using setTimeout so fake-timer tests can advance past the timeout.
@@ -534,6 +543,8 @@ export function makeIlinkAdapter(opts: {
     listPendingPermissions() { return pending.list() },
     resolvePermission(hash, decision) { return pending.consume(hash, decision) },
     pendingPermissionCodeOf(hash) { return pending.codeOf(hash) },
+    registerPendingPermission(hash, timeoutMs, meta) { return pending.register(hash, timeoutMs, meta) },
+    sweepPendingPermissions() { pending.sweep() },
 
     async flush() {
       clearInterval(sweepTimer)

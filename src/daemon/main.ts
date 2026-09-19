@@ -309,10 +309,14 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       selfChange: makeSelfChangeGlue({
         ownerChatId: () => loadCompanionConfig(stateDir).default_chat_id ?? null,
         sendMessage: (c, t) => ilink.sendMessage(c, t),
-        askUser: (c, p, h, t) => ilink.askUser(c, p, h, t),
+        // 只登记、自己发卡:卡片发不出去时条目要留在登记处,好让主人从桌面
+        // 权限卡或 `self change --approve <id>` 拍板(见 self-change-glue 顶注)。
+        registerPending: (h, t, meta) => ilink.registerPendingPermission(h, t, meta),
+        sweepPending: () => { ilink.sweepPendingPermissions() },
         codeOf: (h) => ilink.pendingPermissionCodeOf(h),
         newHash: () => randomBytes(8).toString('hex'),
         now: () => Date.now(),
+        log: (line) => { log('SELF-CHANGE', line) },
       }),
       // chat_history 工具后端(provider-handoff 的逃生口)
       messages: { listRange: (c: string, o: { limit: number; beforeTs?: string }) => messagesStore.listRange(c, o), search: (c: string, q: string, l: number) => messagesStore.search(c, q, l) },

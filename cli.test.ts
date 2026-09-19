@@ -169,6 +169,14 @@ describe('citty migrated commands', () => {
     const resumed = await runWithNestedStub(['self', 'change', '--resume', 'a1b2c3d4', '--unhalt'], ['self', 'change'])
     expect(resumed?.args.resume).toBe('a1b2c3d4')
     expect(resumed?.args.unhalt).toBe(true)
+
+    // 微信外发不通时的第二条拍板口(2026-09-18 真机 errcode=-2)。两个都是
+    // 带值的开关 —— 声明成 boolean 的话 `--approve a1b2c3d4` 会把 id 当需求。
+    const approved = await runWithNestedStub(['self', 'change', '--approve', 'a1b2c3d4'], ['self', 'change'])
+    expect(approved?.args.approve).toBe('a1b2c3d4')
+    expect(approved?.args.request).toBeUndefined()
+    const denied = await runWithNestedStub(['self', 'change', '--deny', 'a1b2c3d4'], ['self', 'change'])
+    expect(denied?.args.deny).toBe('a1b2c3d4')
   })
 
   // 微信进件口(src/daemon/self-change-spawn.ts)把需求放在 `--` 之后。这条钉住

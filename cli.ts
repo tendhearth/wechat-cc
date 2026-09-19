@@ -161,11 +161,13 @@ Usage:
   wechat-cc self change "<需求>" [--from cli|wechat] [--budget-usd N]
                         [--no-deploy] [--json]
   wechat-cc self change --resume <id> | --list | --unhalt
+  wechat-cc self change --approve <id> | --deny <id>
                         自改:执行者在专用克隆里实现,依次过测试 / 评审 / CI /
                         主人微信拍板 / 合 dev 五道闸门,再部署 + 自检,不过就
                         回滚(仅 macOS)。退出码 0 完成 / 1 失败 / 2 停机·配额·
                         平台·daemon 没起 / 3 主人回了 n / 4 没等到拍板(可
-                        --resume)。见 docs/maintainer/self-change.md。
+                        --resume)。微信外发不通时用 --approve / --deny 在终端
+                        拍板(桌面权限卡也行)。见 docs/maintainer/self-change.md。
   wechat-cc selftest workbench --executor <id> [--image] [--resume] [--json]
                         [--timeout-ms N] [--keep]
   wechat-cc selftest chat --provider <id> [--text "…"] [--resume] [--json]
@@ -2648,6 +2650,8 @@ const selfChangeCmd = defineCommand({
     resume: { type: 'string', description: '接着跑某条(`--list` 里的 id);拍板超时之后会重新发卡' },
     list: { type: 'boolean', description: '列最近 10 条自改的 id · 步骤 · 结果 · 起始时间' },
     unhalt: { type: 'boolean', description: '解除停机(清 halted_at / halt_reason,fail_streak 归零)' },
+    approve: { type: 'string', description: '替某条(`--list` 里的 id)拍「放行」—— 微信外发不通时的第二条拍板口', valueHint: 'id' },
+    deny: { type: 'string', description: '替某条拍「拒绝」', valueHint: 'id' },
     from: { type: 'string', default: 'cli', description: '进件口:cli | wechat(daemon 从微信接单时传 wechat)' },
     'budget-usd': { type: 'string', description: '这一条的实现预算上限,美元(覆盖 self_change.implement_budget_usd)' },
     deploy: { type: 'boolean', default: true, description: '合完 dev 之后部署 + 自检;`--no-deploy` 只合不部署' },
@@ -2678,6 +2682,50 @@ const selfChangeCmd = defineCommand({
 
     const store = makeStateStore(STATE_DIR)
 
+    // `--approve <id>` / `--deny <id>`:微信外发不通时的第二条拍板口
+    // (2026-09-18 真机:errcode=-2 让一条全绿的自改白等到 approval_timeout)。
+    // daemon 侧现在发不出卡也**不删**待批条目,所以这里走的就是桌面那张权限卡
+    // 同一条路由、同一个 consume —— 从哪边拍都算数。
+    const verdictId = args.approve !== undefined ? String(args.approve) : args.deny !== undefined ? String(args.deny) : null
+    if (verdictId !== null) {
+      // 和别的口互斥:`--approve x --list` 到底是哪个意思,猜不得。
+      if (args.approve !== undefined && args.deny !== undefined) {
+        bail(1, 'invalid_flags', '--approve 和 --deny 只能给一个')
+        return
+      }
+      if (args.list || args.unhalt || args.resume !== undefined || (typeof args.request === 'string' && args.request.trim() !== '')) {
+        bail(1, 'invalid_flags', '--approve / --deny 不能和 <需求> / --resume / --list / --unhalt 一起用')
+        return
+      }
+      const decision = args.approve !== undefined ? 'allow' as const : 'deny' as const
+      const target = store.load(verdictId)
+      if (!target) {
+        bail(1, 'self_change_not_found', `没有这条自改:${verdictId}(wechat-cc self change --list 看有哪些)`)
+        return
+      }
+      if (target.result !== null) {
+        bail(1, 'self_change_settled', `这条已经收场了(${target.result}),没什么可拍的`)
+        return
+      }
+      if (target.step !== 'approval' || !target.approval.hash) {
+        bail(1, 'self_change_not_awaiting', `这条停在 ${target.step},不是在等拍板`)
+        return
+      }
+      const { makeDaemonClient } = await import('./src/cli/self-change/daemon-client.ts')
+      const { readApiInfo } = await import('./src/lib/api-info.ts')
+      const daemon = makeDaemonClient({ readApiInfo: () => readApiInfo(STATE_DIR), fetch })
+      const ok = await daemon.resolve(target.approval.hash, decision)
+      if (!ok) {
+        bail(1, 'self_change_resolve_failed', '拍板没成功:hash 过期或已被拍过')
+        return
+      }
+      const msg = `已拍板:${decision}(hash ${target.approval.hash.slice(0, 8)})`
+      if (json) console.log(JSON.stringify({ ok: true, id: target.id, decision, hash: target.approval.hash }, null, 2))
+      else console.log(msg)
+      process.exit(0)
+      return
+    }
+
     // `--unhalt`:给 undefined 等于把键删掉(JSON.stringify 不序列化 undefined)。
     if (args.unhalt) {
       writeSelfChangeConfigPatch(STATE_DIR, { halted_at: undefined, halt_reason: undefined, fail_streak: 0 })
@@ -2695,7 +2743,10 @@ const selfChangeCmd = defineCommand({
         console.log('还没有跑过自改。')
       } else {
         for (const s of rows) {
-          console.log(`${s.id} · ${s.step} · ${s.result ?? '进行中'} · ${new Date(s.startedAt).toISOString()}`)
+          // 停在 approval 的那条要一眼看得出来:它在等人,而不是在跑
+          // (微信卡可能根本没送到 —— 见 `--approve`)。
+          const status = s.result ?? (s.step === 'approval' ? '等拍板 ' + String(s.approval?.hash ?? '').slice(0, 8) : '进行中')
+          console.log(`${s.id} · ${s.step} · ${status} · ${new Date(s.startedAt).toISOString()}`)
         }
       }
       process.exit(0)

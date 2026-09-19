@@ -360,6 +360,33 @@ describe('approval', () => {
     expect(never.rec.asks.length).toBe(2)
   })
 
+  // 2026-09-18 真机:CI 全绿之后拍板卡撞上 errcode=-2,整条白等到 approval_timeout。
+  // 现在条目留在 daemon 的登记处,只是人不知道 —— 所以要在终端和微信各说一句
+  // 还有哪两条路能拍,然后照常轮询(决定仍旧是 pending,不提前收工)。
+  it('delivered:false ⇒ 记进 state、说一句别的拍板口,照常等主人', async () => {
+    const s = fakeState()
+    const { deps, rec } = makeFakeDeps({
+      ask: () => ({ hash: 'h1', code: 'AB12', delivered: false }),
+      decisions: ['pending', 'allow'],
+    })
+    const logs: string[] = []
+    deps.log = l => { logs.push(l) }
+    expect(await steps.approval(s, deps)).toEqual({ ok: true, next: 'merge' })
+    expect(s.approval.delivered).toBe(false)
+    const line = `微信卡没送到(外发不通);桌面权限卡或终端 wechat-cc self change --approve ${s.id} 都能拍板`
+    expect(logs).toContain(line)
+    expect(rec.notices).toContain(line)
+    expect(s.notices).toContain(line)
+    // 照常轮询,没有提前收工。
+    expect(rec.sleeps).toEqual([20_000])
+  })
+
+  it('delivered:true ⇒ 一句多余的话都不说', async () => {
+    const { deps, rec } = makeFakeDeps({ decisions: ['allow'] })
+    await steps.approval(fakeState(), deps)
+    expect(rec.notices).toEqual([])
+  })
+
   it('卡根本发不出去 ⇒ owner_chat_unknown(blocked)', async () => {
     const { deps } = makeFakeDeps({ ask: () => null })
     expect(await steps.approval(fakeState(), deps)).toMatchObject({ ok: false, fail: 'owner_chat_unknown' })

@@ -394,6 +394,31 @@ describe('makeIlinkAdapter (composed)', () => {
       expect(adapter.listPendingPermissions()).toEqual([])
       expect(adapter.resolvePermission('abcde', 'allow')).toBe(false)   // 已经没了
     })
+
+    // 自改流水线要的口子:只登记、不发卡。askUser 外发失败时会 pending.fail
+    // 把条目删掉(一轮工具调用该这样),但自改还有桌面卡和 `--approve` 两条路,
+    // 所以它自己登记、自己发卡、发不出去也不动条目(2026-09-18 真机 errcode=-2)。
+    it('registerPendingPermission 只登记不发卡;条目和 askUser 的进同一个登记处', async () => {
+      const adapter = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+      const sent: string[] = []
+      const spy = vi.spyOn(adapter, 'sendMessage').mockImplementation(async (_c, t) => { sent.push(t); return { msgId: 'm' } })
+      const p = adapter.registerPendingPermission('sc001', 60_000, { chatId: 'owner', prompt: '自改 #ab 请拍板' })
+      expect(sent).toEqual([])   // 一张卡都没发
+      expect(adapter.listPendingPermissions()).toMatchObject([{ hash: 'sc001', chatId: 'owner', prompt: '自改 #ab 请拍板' }])
+      expect(adapter.pendingPermissionCodeOf('sc001')).toMatch(/^0[1-9]$/)
+      expect(adapter.resolvePermission('sc001', 'allow')).toBe(true)
+      expect(await p).toBe('allow')
+      spy.mockRestore(); await adapter.flush()
+    })
+
+    it('sweepPendingPermissions 把过期的落成 timeout', async () => {
+      const adapter = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+      const p = adapter.registerPendingPermission('sc002', 0, { chatId: 'owner', prompt: 'p' })
+      adapter.sweepPendingPermissions()
+      expect(await p).toBe('timeout')
+      expect(adapter.listPendingPermissions()).toEqual([])
+      await adapter.flush()
+    })
   })
 })
 
