@@ -856,6 +856,93 @@ describe('resolveForwardBudget', () => {
   })
 })
 
+describe('self_change', () => {
+  it('合法的整块原样透传', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-self-change-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+        provider: 'claude',
+        self_change: {
+          repo_url: 'git@github.com:x/y.git', branch: 'dev', workdir: '/w',
+          implement_budget_usd: 12.5, review_budget_usd: 2.5, max_turns: 300, max_per_day: 5,
+          approval_timeout_h: 24, selftest_executor: 'claude', selftest_provider: 'claude',
+          halted_at: 1700000000000, halt_reason: '连红两次', fail_streak: 0,
+        },
+      }))
+      expect(loadAgentConfig(dir).self_change).toEqual({
+        repo_url: 'git@github.com:x/y.git', branch: 'dev', workdir: '/w',
+        implement_budget_usd: 12.5, review_budget_usd: 2.5, max_turns: 300, max_per_day: 5,
+        approval_timeout_h: 24, selftest_executor: 'claude', selftest_provider: 'claude',
+        halted_at: 1700000000000, halt_reason: '连红两次', fail_streak: 0,
+      })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('一个字段错(max_turns: "x")就丢掉整块,其他字段照常', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-self-change-bad-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+        provider: 'codex', model: 'gpt-5',
+        self_change: { repo_url: 'git@github.com:x/y.git', max_turns: 'x' },
+      }))
+      const cfg = loadAgentConfig(dir)
+      expect(cfg.self_change).toBeUndefined()
+      expect(cfg.provider).toBe('codex')
+      expect(cfg.model).toBe('gpt-5')
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('不认识的键也丢整块(.strict —— 打错的配置要被看见,不是被忽略)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-self-change-strict-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+        provider: 'claude', self_change: { branch: 'dev', implement_budget: 20 },
+      }))
+      expect(loadAgentConfig(dir).self_change).toBeUndefined()
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('self_change 不是对象(字符串 / null)⇒ 当没配', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-self-change-type-'))
+    try {
+      for (const bad of ['x', null, 3]) {
+        writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ provider: 'claude', self_change: bad }))
+        expect(loadAgentConfig(dir).self_change).toBeUndefined()
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('fail_streak 归零要存得住(0 不是「没配」)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-self-change-zero-'))
+    try {
+      saveAgentConfig(dir, {
+        provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false,
+        self_change: { fail_streak: 0 },
+      })
+      expect(loadAgentConfig(dir).self_change).toEqual({ fail_streak: 0 })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('负数 / 非整数的轮次一样丢整块', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-self-change-neg-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+        provider: 'claude', self_change: { max_per_day: 0 },
+      }))
+      expect(loadAgentConfig(dir).self_change).toBeUndefined()
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({
+        provider: 'claude', self_change: { implement_budget_usd: -1 },
+      }))
+      expect(loadAgentConfig(dir).self_change).toBeUndefined()
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('parseAgentConfig 对坏的 self_change 直接抛(严格入口)', () => {
+    expect(() => parseAgentConfig({ provider: 'claude', self_change: { max_turns: 'x' } })).toThrow()
+    expect(parseAgentConfig({ provider: 'claude', self_change: { branch: 'dev' } }).self_change).toEqual({ branch: 'dev' })
+  })
+})
+
 describe('provider enum follows lib/provider-ids', () => {
   it('accepts provider:"agy" (was silently mapped to claude — 主人机器上跑了半个月)', async () => {
     const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs')

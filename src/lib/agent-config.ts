@@ -170,6 +170,11 @@ export interface AgentConfig {
    *  旁路)的一次性确认时间戳(ms)。缺省 ⇒ 未确认,工作台 service 拒绝派给免审执行者的
    *  create(见 core/workbench/service.ts requireInput 的 unattended_ack_required)。 */
   workbench_unattended_ack_at?: number
+  /** 自改流水线(`wechat-cc self change`,src/cli/self-change/)的配置。全部可选:
+   *  没写就吃 policy.ts 的缺省值。`halted_at` / `halt_reason` / `fail_streak` 是流水线
+   *  自己回写的停机状态(连红两次就停,直到 `--unhalt`),不是主人手填的。
+   *  见 docs/superpowers/specs/2026-09-18-self-change-pipeline-design.md §配置。 */
+  self_change?: SelfChangeSettings
 }
 
 // ── A2A sub-schemas ──────────────────────────────────────────────────────────
@@ -234,6 +239,33 @@ export const ForwardBudgetConfig = z.object({
   window_ms: z.number().int().positive(),
 })
 
+/**
+ * `self_change` 整块的 schema。`.strict()` 是有意的:这一块里每个键都直接决定
+ * 流水线花多少钱、跑多久、什么时候停机,**打错一个键名要被看见,而不是被静默
+ * 忽略然后按缺省值烧 20 刀**。任何一处不合格(错类型、错键名)⇒ loadAgentConfig
+ * 丢掉整块 + 日志一行,其余字段不受影响。
+ */
+export const SelfChangeSettings = z.object({
+  repo_url: z.string().optional(),
+  branch: z.string().optional(),
+  workdir: z.string().optional(),
+  // 预算是钱,允许小数(0.5 刀也是个有效的封顶)。
+  implement_budget_usd: z.number().positive().optional(),
+  review_budget_usd: z.number().positive().optional(),
+  max_turns: z.number().int().positive().optional(),
+  max_per_day: z.number().int().positive().optional(),
+  approval_timeout_h: z.number().positive().optional(),
+  selftest_executor: z.string().optional(),
+  selftest_provider: z.string().optional(),
+  halted_at: z.number().int().positive().optional(),
+  halt_reason: z.string().optional(),
+  // 归零是正常写法(report 步成功后清零),所以 nonnegative 不是 positive ——
+  // 写 positive 的话 `fail_streak: 0` 会让整块在下次 load 时被丢掉。
+  fail_streak: z.number().int().nonnegative().optional(),
+}).strict()
+
+export type SelfChangeSettings = z.infer<typeof SelfChangeSettings>
+
 export type A2AAgentRecord = z.infer<typeof A2AAgentRecord>
 export type A2AListen = z.infer<typeof A2AListen>
 export type YiHubListen = z.infer<typeof YiHubListen>
@@ -285,6 +317,7 @@ const AgentConfigSchema = z.object({
   knowledge_owner: z.string().optional(),
   day_tz_offset_minutes: z.number().int().min(-720).max(840).nullable().optional(),
   workbench_unattended_ack_at: z.number().int().positive().optional(),
+  self_change: SelfChangeSettings.optional(),
 })
 
 /**
@@ -330,6 +363,14 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
           return result.success ? [result.data] : []
         })
       : undefined
+    // self_change:整块要么全对要么不要(见 SelfChangeSettings 的 .strict())。
+    // 这里比别处吵一句 —— 静默丢掉预算/停机配置,主人只会在账单上发现。
+    let selfChange: SelfChangeSettings | undefined
+    if (typeof parsed.self_change === 'object' && parsed.self_change !== null) {
+      const result = SelfChangeSettings.safeParse(parsed.self_change)
+      if (result.success) selfChange = result.data
+      else console.warn(`[agent-config] self_change 配置不合格,整块忽略:${result.error.issues.map(i => `${i.path.join('.') || '(根)'}: ${i.message}`).join('; ')}`)
+    }
     const forwardBudget = parsed.forward_budget != null
       ? ForwardBudgetConfig.safeParse(parsed.forward_budget).data
       : undefined
@@ -373,6 +414,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.knowledge_owner === 'string' ? { knowledge_owner: parsed.knowledge_owner } : {}),
       ...(typeof parsed.day_tz_offset_minutes === 'number' ? { day_tz_offset_minutes: parsed.day_tz_offset_minutes } : {}),
       ...(typeof parsed.workbench_unattended_ack_at === 'number' ? { workbench_unattended_ack_at: parsed.workbench_unattended_ack_at } : {}),
+      ...(selfChange ? { self_change: selfChange } : {}),
     }
   } catch {
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }
