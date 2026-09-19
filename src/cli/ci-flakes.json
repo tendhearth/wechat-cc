@@ -1,0 +1,10 @@
+{
+  "$comment": "已知 flake 类别。triage 只在失败测试的文件本轮没动过、且症状匹配时才判 flake。加条目要写清 note 和 since。",
+  "entries": [
+    { "id": "win-hook-timeout", "jobs": ["build · windows-latest"], "symptom": "Hook timed out in \\d+ms", "note": "windows runner 磁盘 I/O 慢,未动的工作台服务测试 beforeEach 超时", "since": "2026-09-16" },
+    { "id": "win-test-timeout", "jobs": ["build · windows-latest"], "symptom": "Test timed out in \\d+ms", "note": "同上,单条测试超时", "since": "2026-09-16" },
+    { "id": "probe-binary-version", "symptom": "probeBinaryVersion", "note": "探测外部 CLI 版本有 3s 上限,runner 负载高时探不完", "since": "2026-09-10" },
+    { "id": "econnreset-chunked", "files": ["src/daemon/internal-api/routes-workbench*.test.ts"], "symptom": "ECONNRESET", "note": "分块上传那条 socket 测试偶发", "since": "2026-09-10" },
+    { "id": "node-no-summary", "jobs": ["node · core suite"], "symptom": "__NO_SUMMARY__", "note": "node 作业跑完没有 Test Files 汇总行,进程收尾丢了汇总", "since": "2026-09-16" }
+  ]
+}
