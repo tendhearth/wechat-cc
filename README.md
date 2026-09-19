@@ -1022,6 +1022,13 @@ bun --bun vitest run    # full test suite
 bun run typecheck      # type check
 ```
 
+Maintainer commands (macOS, launchd) live in
+[`docs/maintainer/`](docs/maintainer/README.md) — including `wechat-cc self
+change "<request>"`, which lets CC change its own source: a dedicated clone,
+tests + an independent review + CI, your approval on WeChat, then merge,
+deploy and self-test (rollback if the self-test goes red). See
+[`docs/maintainer/self-change.md`](docs/maintainer/self-change.md) (Chinese).
+
 The `apps/desktop/` directory has a Tauri 2 GUI. One dev server backs every
 mode ([`apps/desktop/test-shim.ts`](./apps/desktop/test-shim.ts)), all with
 live reload:

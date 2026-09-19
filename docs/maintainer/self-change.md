@@ -36,9 +36,9 @@ intake ─► repo ─► implement ─► guard ─► tests ─► review ─�
 
 1. **guard(禁改清单)** —— 改动碰了下面那张表里的文件,整条**立刻失败**,不给修复轮。这是护栏,不是意见。
 2. **tests** —— 在克隆里依次 `bun run typecheck` → `bun run depcheck` → `bun run test` → `npm run test:node -- --reporter=dot`,第一条红就停(后面几条在同一个坏状态上跑没有信息量)。
-3. **review** —— **新会话**的只读 `claude -p`(`--disallowedTools Edit,Write,MultiEdit,NotebookEdit`),要一份 `{ verdict, findings }` 的 JSON。`critical` / `important` ⇒ 修复轮;只剩 `minor` 或 `approve` ⇒ 过,minor 带进拍板卡。评审会话要是动了工作树,流水线会还原,并**直接按 `changes` 算**。
-4. **ci** —— 推 `self/<id>`,进程内调 `ci triage --wait --rerun`。绿才过;已知 flake 由 triage 重跑,第二次仍红一律真红。
-5. **approval** —— 拍板卡发到主人微信(需求、分支、diffstat、测试摘要、评审 verdict、CI 链接、费用),回「y <码>」才合。`n` ⇒ 退 3;超时(缺省 24 小时)⇒ 退 4,`--resume` 会重发卡。
+3. **review** —— **新会话**的只读 `claude -p`(`--disallowedTools Edit,Write,MultiEdit,NotebookEdit`),要一份 `{ verdict, findings }` 的 JSON。`critical` / `important` ⇒ 修复轮;`approve` 且只剩 `minor` ⇒ 过,minor 带进拍板卡。判了 `changes` 却一条 `critical` / `important` 都列不出来的,**照样算一轮修复轮**(说要改又说不出哪里要改,不该当成放行)。评审会话要是动了工作树,流水线会还原,并**直接按 `changes` 算**。
+4. **ci** —— 推 `self/<id>`,进程内调 `ci triage --wait --rerun`。绿才过;已知 flake 由 triage 重跑,第二次仍红一律真红。triage 退 2(压根没有运行 / 等超时 / `gh` 没登录)⇒ `ci_unavailable`,**不进修复轮** —— 交给执行者修一个它看不见的 CI 是白烧预算,这条要人去看。
+5. **approval** —— 拍板卡发到主人微信(需求、分支、**执行者最后那段交代**、diffstat、测试摘要、评审 verdict、CI 链接、费用),回「y <码>」才合。`n` ⇒ 退 3;超时(缺省 24 小时)⇒ 退 4,`--resume` 会重发卡。
 
 过了五道才 `git rebase` + `--ff-only` 合进 `dev` 并推上去,然后构 sidecar、`self deploy`、`selftest workbench` + `selftest chat`。自检红 ⇒ 二进制回滚到 `.prev`,**但代码已经在 `dev` 上了** —— 报告里会明说这件事,需要人去改好或 revert。
 
@@ -53,7 +53,7 @@ intake ─► repo ─► implement ─► guard ─► tests ─► review ─�
 | 码 | 含义 | 典型 result |
 | --- | --- | --- |
 | 0 | 完成 | `done` |
-| 1 | 这次改动没做成 | `implement_failed` `no_changes` `forbidden_paths` `tests_exhausted` `review_exhausted` `ci_exhausted` `merge_conflict` `deploy_failed` `selftest_failed_rolled_back` `crashed` |
+| 1 | 这次改动没做成 | `implement_failed` `no_changes` `forbidden_paths` `tests_exhausted` `review_exhausted` `ci_exhausted` `ci_unavailable` `merge_conflict` `deploy_failed` `selftest_failed_rolled_back` `crashed` |
 | 2 | **不是这次改动的错**,重试同样的需求没意义 | 非 macOS、`self_change_halted`、`self_change_quota`、`daemon_not_running`、`owner_chat_unknown`、`self_change_busy`、`repo_url_unknown` |
 | 3 | 主人回了 `n` | `declined`(分支保留) |
 | 4 | 没等到拍板 | `approval_timeout`(`--resume <id>` 重发卡) |
@@ -76,13 +76,20 @@ wechat-cc self change --unhalt     # 清 halted_at / halt_reason,fail_streak 归
 
 | 文件 | 为什么 |
 | --- | --- |
-| `.github/workflows/publish-update.yml` `mirror-desktop-tag.yml` `desktop.yml` | 能把二进制发到所有用户机器上 |
-| `scripts/publish-update*.ts` `scripts/update-hosting.json` | 同上(发版脚本与更新源) |
+| `.github/workflows/**`(整个目录) | 发版通道就在里面(`publish-update.yml` `mirror-desktop-tag.yml` `desktop.yml`),能把二进制发到所有用户机器上;按确切路径列会漏掉新加的那个 |
+| `package.json` | `scripts` 里的 `typecheck` / `depcheck` / `test` 就是 tests 那道闸门的定义 —— 一条 `"test": "true"` 能让它变成橡皮图章 |
+| `scripts/publish-update*.ts` `scripts/update-hosting.json` | 发版脚本与更新源 |
 | `apps/desktop/src-tauri/tauri.conf.json` | 签名与更新源配置 |
 | `src/cli/self-change/policy.ts` | 护栏本身(清单和缺省值) |
 | `src/cli/self-deploy.ts` | 出事之后把机器救回来的那条路(回滚配方) |
 
-需求确实需要动这几个文件时,只能人来改。
+**唯一的例外**(`FORBIDDEN_EXCEPTIONS`,确切路径的白名单):
+
+| 文件 | 为什么放行 |
+| --- | --- |
+| `.github/workflows/ci.yml` | 它只决定**这次改动自己**要过哪些检查,不是发版通道;改坏了下一次 CI 立刻红给人看。整个目录关死等于自改永远碰不了自己的测试矩阵 |
+
+需求确实需要动别的文件时,只能人来改。
 
 ## 费用
 
@@ -113,7 +120,7 @@ wechat-cc self change --unhalt     # 清 halted_at / halt_reason,fail_streak 归
     "review_budget_usd": 5,
     "max_turns": 300,
     "max_per_day": 5,
-    "approval_timeout_h": 24,
+    "approval_timeout_h": 24,             // 掐在 [1, 48] 小时:daemon 的拍板卡只认这个范围,写 72 会被按 48 算并提示一句
     "selftest_executor": "claude",   // 部署后自检用哪个执行者 / provider
     "selftest_provider": "claude"
   }
@@ -142,7 +149,7 @@ wechat-cc self change --unhalt     # 清 halted_at / halt_reason,fail_streak 归
 自改 状态
 ```
 
-daemon 收到之后 spawn 一个 detached 的 `wechat-cc self change --from wechat --json "<需求>"`,回一句「自改开始了」,之后每一步的进展、拍板卡、收尾报告都发到同一个会话。拍板就是回「y <码>」/「n <码>」,和权限卡是同一套。
+daemon 收到之后 spawn 一个 detached 的 `wechat-cc self change --from wechat --json -- "<需求>"`(`--` 不能省:需求以 `-` 开头会被当成开关,「自改 --unhalt」曾能静默解除停机),回一句「自改开始了」,之后每一步的进展、拍板卡、收尾报告都发到同一个会话。拍板就是回「y <码>」/「n <码>」,和权限卡是同一套。
 
 `自改 状态` 列最近 5 条的 `#id · 步骤 · 结果`。要更细的(费用、CI 链接、失败原文)去终端 `wechat-cc self change --list` 或直接读存盘。
 
