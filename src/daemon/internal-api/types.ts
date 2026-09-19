@@ -221,6 +221,14 @@ export interface InternalApiDeps {
     resolve(hash: string, decision: 'allow' | 'deny'): boolean
   }
   /**
+   * 自改流水线跟主人打交道的三件事(spec 2026-09-18-self-change-pipeline)。
+   * 流水线本身是 daemon 外面的一个 CLI 进程,没有 ilink 连接也不知道主人是谁,
+   * 所以「报进展 / 问 y-n / 查拍板」都得回到 daemon 来。main.ts 直接接线
+   * (和 permissions 一样不需要 late-bind:两者都只依赖 ilink adapter)。
+   * 没接线时三条路由 503 self_change_not_wired。
+   */
+  selfChange?: import('../self-change-glue').SelfChangeDep
+  /**
    * 终端 claude / codex 会话的 hook 事件入口(spec 2026-09-09-cli-hook-push)。
    * main.ts 在 bootstrap 之后 setCliEvents —— hub 要 boot.sendAssistantText。
    * 没设之前 POST /v1/cli/event 503。

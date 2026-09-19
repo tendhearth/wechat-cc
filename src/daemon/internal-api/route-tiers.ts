@@ -156,6 +156,12 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // 任何 trusted 联系人的事。微信侧的对应面是「y/n <hash>」,只认 admin 主人。
   'GET /v1/permissions/pending': 'admin',
   'POST /v1/permissions/resolve': 'admin',
+  // admin — 自改流水线的三个抓手(spec 2026-09-18-self-change-pipeline)。
+  // notice 往主人微信里发字,ask 替主人开一张 y/n 卡片,decision 读主人拍了什么:
+  // 三条都是「代表主人」,和上面两条权限面同一档。调用方是 operator 凭据。
+  'POST /v1/self-change/notice': 'admin',
+  'POST /v1/self-change/ask': 'admin',
+  'GET /v1/self-change/decision': 'admin',
   'POST /v1/companion/converse': 'admin',
   // admin — same trust class as converse above (voice arc Stage 1): synths
   // reply audio for the owner's app-conversation-channel session.

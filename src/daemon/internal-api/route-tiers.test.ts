@@ -104,6 +104,12 @@ describe('route-tiers', () => {
     expect(minTierFor('POST /v1/permissions/resolve')).toBe('admin')
   })
 
+  it('自改三条是 admin(代表主人发话 / 替主人开卡片 / 读主人的拍板)', () => {
+    expect(minTierFor('POST /v1/self-change/notice')).toBe('admin')
+    expect(minTierFor('POST /v1/self-change/ask')).toBe('admin')
+    expect(minTierFor('GET /v1/self-change/decision')).toBe('admin')
+  })
+
   it('every registered route has an explicit min tier (no accidental default-deny)', () => {
     const deps = { stateDir: '/tmp', daemonPid: 1 } as unknown as InternalApiDeps
     const routes = makeRoutes({ deps, getDelegate: () => null, maybePrefix: (_c, t) => t })

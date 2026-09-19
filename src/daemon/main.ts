@@ -49,6 +49,7 @@ import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
+import { makeSelfChangeGlue } from './self-change-glue'
 import { makeCliEventHub, makeProjectNamer } from '../core/cli-events'
 import { makeCliPermissionRelay } from '../core/cli-permission-relay'
 import { makeCliReplyHandler, makeCliReplyCore, makeHandReplyExecutor } from './cli-reply-handler'
@@ -69,7 +70,7 @@ import { SUPERVISED_ENV } from '../core/supervised-env'
 import { SubsystemSupervisor } from './subsystems'
 import { removeAgyGlobalMcp } from './bootstrap/agy-mcp-config'
 import {makeExecutionClaims} from '../core/workbench/execution-claims'
-import {randomUUID as claimUuid} from 'node:crypto'
+import {randomUUID as claimUuid, randomBytes} from 'node:crypto'
 import { wireWorkbench } from './bootstrap/wire-workbench'
 import {wireWorkbenchNotifications} from './bootstrap/wire-workbench-notifications'
 import {wireWorkbenchArtifacts} from './bootstrap/wire-workbench-artifacts'
@@ -301,6 +302,18 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         list: () => ilink.listPendingPermissions(),
         resolve: (h, d) => { const ok = ilink.resolvePermission(h, d); if (ok) petSignals.noteContact(); return ok },
       },
+      // 自改流水线的三个抓手(spec 2026-09-18-self-change-pipeline §daemon 侧)。
+      // 流水线自己是 daemon 外面的一个 CLI 进程:它既没有 ilink 连接,也不知道
+      // 主人是谁,所以「报进展 / 问 y-n / 查拍板」都经这三条回来。问出去的卡片
+      // 和微信、桌面共用同一份 PendingPermissions —— 主人从哪边拍都算数。
+      selfChange: makeSelfChangeGlue({
+        ownerChatId: () => loadCompanionConfig(stateDir).default_chat_id ?? null,
+        sendMessage: (c, t) => ilink.sendMessage(c, t),
+        askUser: (c, p, h, t) => ilink.askUser(c, p, h, t),
+        codeOf: (h) => ilink.pendingPermissionCodeOf(h),
+        newHash: () => randomBytes(8).toString('hex'),
+        now: () => Date.now(),
+      }),
       // chat_history 工具后端(provider-handoff 的逃生口)
       messages: { listRange: (c: string, o: { limit: number; beforeTs?: string }) => messagesStore.listRange(c, o), search: (c: string, q: string, l: number) => messagesStore.search(c, q, l) },
       // 桌宠状态的「主人真在跟我说话吗」证据(spec 2026-09-03 §2.1/§2.2)——

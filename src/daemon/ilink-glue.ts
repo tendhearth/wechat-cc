@@ -121,6 +121,8 @@ export interface IlinkAdapter {
   listPendingPermissions(): PendingPermissionView[]
   /** Resolve a pending permission from the desktop. = pending.consume(hash, decision). */
   resolvePermission(hash: string, decision: 'allow' | 'deny'): boolean
+  /** 这条待批在微信里的两位数码(自改流水线要把它一起回给 CLI)。= pending.codeOf. */
+  pendingPermissionCodeOf(hash: string): string | null
   /** Session state accessor for admin commands (/health, cleanup). */
   sessionState: SessionStateStore
   flush(): Promise<void>
@@ -531,6 +533,7 @@ export function makeIlinkAdapter(opts: {
 
     listPendingPermissions() { return pending.list() },
     resolvePermission(hash, decision) { return pending.consume(hash, decision) },
+    pendingPermissionCodeOf(hash) { return pending.codeOf(hash) },
 
     async flush() {
       clearInterval(sweepTimer)

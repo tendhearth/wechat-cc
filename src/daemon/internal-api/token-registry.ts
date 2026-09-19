@@ -208,6 +208,14 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           // read from internal-api-info.json, never the shared trusted
           // file token). The desktop app itself never calls this route.
           'POST /v1/selftest/converse',
+          // 自改流水线(spec 2026-09-18-self-change-pipeline §daemon 侧)——
+          // `wechat-cc self change` 跑在 daemon 外面,用的是和 Workbench /
+          // selftest 同一份 operator 凭据(从 internal-api-info.json 读,不是
+          // 共享的 trusted 文件 token)。三条路由都是 admin 档,少了这三行
+          // 自改一开口就 403 route_not_allowed。
+          'POST /v1/self-change/notice',
+          'POST /v1/self-change/ask',
+          'GET /v1/self-change/decision',
         ]),
       })
     },

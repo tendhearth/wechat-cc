@@ -80,6 +80,9 @@ describe('token-registry', () => {
       'POST /v1/workbench/answer',
       'POST /v1/workbench/withdraw-input',
       'POST /v1/selftest/converse',
+      'POST /v1/self-change/notice',
+      'POST /v1/self-change/ask',
+      'GET /v1/self-change/decision',
     ]))
     expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })
