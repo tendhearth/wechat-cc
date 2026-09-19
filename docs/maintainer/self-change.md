@@ -181,3 +181,4 @@ daemon 收到之后 spawn 一个 detached 的 `wechat-cc self change --from wech
 - **打包版必须配 `self_change.repo_url`。** 打包版身边没有 checkout 可问 `git remote get-url origin`,配不上就 `repo_url_unknown` 退 2。
 - **执行者只有 `claude`。** Codex / Cursor / agy 的口子留着(`ImplementRunner`),v1 没接。
 - **桌面工作台面板看不到这个会话**(`claude -p` 是流水线自己起的进程)。补偿是 `~/.claude/settings.json` 里装的 `wechat-cc hook` 照常把会话完成推到微信,`看 <码>` 也能用。
+- **微信外发不通时拍板卡送不到**(`ilink/sendmessage errcode=-2`)。登记项不会被撤掉,用桌面权限卡或终端 `wechat-cc self change --approve <id>` 都能拍板 —— 2026-09-19 真机验证过。详见「微信不通时怎么拍板」。
