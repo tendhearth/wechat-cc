@@ -2698,30 +2698,17 @@ const selfChangeCmd = defineCommand({
         return
       }
       const decision = args.approve !== undefined ? 'allow' as const : 'deny' as const
-      const target = store.load(verdictId)
-      if (!target) {
-        bail(1, 'self_change_not_found', `没有这条自改:${verdictId}(wechat-cc self change --list 看有哪些)`)
-        return
-      }
-      if (target.result !== null) {
-        bail(1, 'self_change_settled', `这条已经收场了(${target.result}),没什么可拍的`)
-        return
-      }
-      if (target.step !== 'approval' || !target.approval.hash) {
-        bail(1, 'self_change_not_awaiting', `这条停在 ${target.step},不是在等拍板`)
-        return
-      }
+      const { runApprove } = await import('./src/cli/self-change/approve.ts')
       const { makeDaemonClient } = await import('./src/cli/self-change/daemon-client.ts')
       const { readApiInfo } = await import('./src/lib/api-info.ts')
       const daemon = makeDaemonClient({ readApiInfo: () => readApiInfo(STATE_DIR), fetch })
-      const ok = await daemon.resolve(target.approval.hash, decision)
-      if (!ok) {
-        bail(1, 'self_change_resolve_failed', '拍板没成功:hash 过期或已被拍过')
+      const verdict = await runApprove(store, daemon, verdictId, decision)
+      if (!verdict.ok) {
+        bail(1, verdict.code, verdict.message)
         return
       }
-      const msg = `已拍板:${decision}(hash ${target.approval.hash.slice(0, 8)})`
-      if (json) console.log(JSON.stringify({ ok: true, id: target.id, decision, hash: target.approval.hash }, null, 2))
-      else console.log(msg)
+      if (json) console.log(JSON.stringify({ ok: true, id: verdictId, decision, message: verdict.message }, null, 2))
+      else console.log(verdict.message)
       process.exit(0)
       return
     }

@@ -153,6 +153,17 @@ export async function notify(s: SelfChangeState, d: PipelineDeps, text: string):
   await d.daemon.notice(text)
 }
 
+/**
+ * 半步之内把 state 写回盘。
+ *
+ * run.ts 的存盘口径是「每一步前后各一次」,对跑得完的步骤够用;approval 这一步
+ * **中间要停几小时等人**,而等的人恰恰要从盘上读 hash(`--approve` / `--list`)。
+ */
+export function saveNow(s: SelfChangeState, d: PipelineDeps): void {
+  s.updatedAt = d.now()
+  d.state.save(s)
+}
+
 function tail(text: string, lines: number): string {
   const all = stripAnsi(text).split('\n')
   return all.slice(Math.max(0, all.length - lines)).join('\n')
@@ -469,6 +480,11 @@ async function approval(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcom
   s.approval.code = asked.code
   s.approval.delivered = asked.delivered
   s.approval.askedAt = d.now()
+  // **立刻落盘**:run.ts 的存盘是「每一步前后各一次」,而这一步一等就是几小时。
+  // 2026-09-18 真机:hash 只在内存里,盘上还是上一轮的 approval_timeout 和旧
+  // hash,`--approve` 的三道门(result===null / step==='approval' / hash 在)
+  // 一道都过不了 —— 等于第二条拍板口是个哑弹。
+  saveNow(s, d)
   await announceUndelivered(s, d, asked.delivered)
 
   const deadline = d.now() + d.config.approvalTimeoutMs + APPROVAL_GRACE_MS
@@ -496,6 +512,9 @@ async function approval(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcom
         s.approval.hash = again.hash
         s.approval.code = again.code
         s.approval.delivered = again.delivered
+        s.approval.askedAt = d.now()
+        // 重发卡换了 hash:盘上那个旧的已经没人认了,`--approve` 会拍空。
+        saveNow(s, d)
         await announceUndelivered(s, d, again.delivered)
       } else {
         return { ok: false, fail: 'approval_timeout', detail: '拍板卡两次都丢了(daemon 在重启?)' }

@@ -245,3 +245,29 @@ describe('停机', () => {
     expect(rec.notices.some(n => n.includes('停机'))).toBe(false)
   })
 })
+
+// 2026-09-18 真机:`--resume` 一条 approval_timeout 的自改,内存里接着跑得好好的,
+// 盘上却还写着上一次的结局 —— 于是 `--approve` 的第一道门(result === null)把人
+// 挡在外面,拍不了板,只能再等一次超时。重新开跑就得先在盘上变回「活的」。
+describe('--resume:重新开跑先把上一次的结局清掉', () => {
+  it('approval_timeout 接着跑到 done;第一条存盘的 result 就是 null', async () => {
+    const { store, rows } = recordingStore()
+    const { deps } = happy({ state: store, decisions: ['allow'] })
+    const s = fakeState({ step: 'approval', result: 'approval_timeout', error: '等了 1440 分钟没等到拍板' })
+    s.approval.decision = 'timeout'
+    const out = await runSelfChange(s, deps)
+    expect(out.state.result).toBe('done')
+    expect(out.exitCode).toBe(SELF_CHANGE_EXIT.done)
+    // 盘上从第一笔起就是「活的」—— 否则 `--approve` 永远过不了那道门。
+    expect(rows[0]!.result).toBeNull()
+    expect(rows[0]!.error).toBeNull()
+    expect(rows[0]!.approval.decision).toBeNull()
+  })
+
+  it('新起的一条不受影响(本来就是 null)', async () => {
+    const { store, rows } = recordingStore()
+    const { deps } = happy({ state: store })
+    await runSelfChange(fakeState(), deps)
+    expect(rows[0]!.result).toBeNull()
+  })
+})

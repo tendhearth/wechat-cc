@@ -2,7 +2,8 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { fakeState, gitReply, greenTriage, makeFakeDeps } from './pipeline.fixture'
+import { fakeState, gitReply, greenTriage, makeFakeDeps, memoryStore } from './pipeline.fixture'
+import type { SelfChangeState } from './state'
 import { SUMMARY_MAX_CHARS, steps } from './steps'
 
 const HEAD_SHA = 'a'.repeat(40)
@@ -358,6 +359,32 @@ describe('approval', () => {
     const never = makeFakeDeps({ decisions: ['unknown'] })
     expect(await steps.approval(fakeState(), never.deps)).toMatchObject({ ok: false, fail: 'approval_timeout' })
     expect(never.rec.asks.length).toBe(2)
+  })
+
+  // 2026-09-18 真机:hash 只在内存里,盘上还是上一轮的结局和旧 hash ——
+  // `--approve` 的三道门一道都过不了,第二条拍板口成了哑弹。开卡之后**立刻**落盘。
+  it('开卡之后立刻落盘:等人的这段时间里,盘上就能查到 hash', async () => {
+    const store = memoryStore()
+    const { deps } = makeFakeDeps({ state: store, decisions: ['pending', 'allow'] })
+    const s = fakeState({ step: 'approval' })
+    // 轮询到 allow 之前,盘上必须已经是一条「活的、停在 approval、hash 在」的记录。
+    let seen: SelfChangeState | null = null
+    const orig = deps.sleep
+    deps.sleep = async ms => { seen ??= store.load(s.id); await orig(ms) }
+    expect(await steps.approval(s, deps)).toEqual({ ok: true, next: 'merge' })
+    expect(seen).toMatchObject({ step: 'approval', result: null, approval: { hash: 'h1', code: 'AB12', delivered: true } })
+    expect(seen!.approval.askedAt).not.toBeNull()
+  })
+
+  it('重发卡换了 hash ⇒ 新 hash 也立刻落盘(旧的已经没人认了)', async () => {
+    const store = memoryStore()
+    const { deps } = makeFakeDeps({ state: store, decisions: ['unknown', 'unknown', 'allow'] })
+    const s = fakeState({ step: 'approval' })
+    const saved: Array<string | null> = []
+    const orig = deps.sleep
+    deps.sleep = async ms => { saved.push(store.load(s.id)?.approval.hash ?? null); await orig(ms) }
+    expect(await steps.approval(s, deps)).toEqual({ ok: true, next: 'merge' })
+    expect(saved).toEqual(['h1', 'h2'])
   })
 
   // 2026-09-18 真机:CI 全绿之后拍板卡撞上 errcode=-2,整条白等到 approval_timeout。

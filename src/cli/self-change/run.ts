@@ -63,6 +63,20 @@ export async function runSelfChange(
 
   const save = (): void => { s.updatedAt = deps.now(); deps.state.save(s) }
 
+  // 重新开跑 ⇒ 盘上先变回「活的」。
+  //
+  // 2026-09-18 真机:`--resume` 一条 approval_timeout 的自改,内存里接着跑得好好的,
+  // 盘上却还写着 `result: approval_timeout` 和上一轮的 hash —— 于是 `--approve` 的
+  // 第一道门(`result === null`)直接把人挡在外面,拍不了板,又只能等超时。
+  // result / error 是**上一次的结局**,这一次还没有结局;approval.decision 同理
+  // (拿上一轮的 timeout 当这一轮的答案,会让轮询以为已经落定了)。
+  if (s.result !== null || s.error !== null) {
+    deps.log(`[self-change] #${s.id} 从 ${s.step} 接着跑(上次收在 ${s.result ?? '(没记结局)'})`)
+    s.result = null
+    s.error = null
+    s.approval.decision = null
+  }
+
   /** 走到结局:记 result、存盘、告诉主人、必要时停机。 */
   const finish = async (result: string, detail: string): Promise<{ state: SelfChangeState; exitCode: SelfChangeExitCode }> => {
     s.result = result
