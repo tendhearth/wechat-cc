@@ -292,11 +292,16 @@ async function guard(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> 
 
 // ── tests ────────────────────────────────────────────────────────────────────
 
-const TEST_COMMANDS: ReadonlyArray<{ cmd: string; args: string[] }> = [
+/**
+ * `vitest` 为真:这条命令红了而一条 FAIL 行都没有,才可能是「整套被超时 / OOM
+ * 杀掉」那种抖动。`typecheck` / `depcheck` 的红永远是确定性的 —— 它们没有 FAIL
+ * 行不是因为抖动,是因为它们压根不长那个样子,重跑一次只是白等。
+ */
+const TEST_COMMANDS: ReadonlyArray<{ cmd: string; args: string[]; vitest?: true }> = [
   { cmd: 'bun', args: ['run', 'typecheck'] },
   { cmd: 'bun', args: ['run', 'depcheck'] },
-  { cmd: 'bun', args: ['run', 'test'] },
-  { cmd: 'npm', args: ['run', 'test:node', '--', '--reporter=dot'] },
+  { cmd: 'bun', args: ['run', 'test'], vitest: true },
+  { cmd: 'npm', args: ['run', 'test:node', '--', '--reporter=dot'], vitest: true },
 ]
 
 /** 失败输出里认得出的 `FAIL <某个>.test.ts`(先去 ANSI)。 */
@@ -326,15 +331,18 @@ function changedFiles(d: PipelineDeps): string[] | null {
  * 这次红,是不是这轮改动自己造成的。
  *
  * 判「无关」要两个条件都成立:解析得出失败文件,且没有一个文件与这轮改动沾边
- * (`relatedSources`:`x.test.ts` 也算 `x.ts` 的红)。解析不出 FAIL 行(整套被
- * 超时杀掉、进程被 OOM 掉)一样当「无关」—— 那种输出里没有任何指向这次改动的证据。
+ * (`relatedSources`:`x.test.ts` 也算 `x.ts` 的红)。
+ *
+ * 一条 FAIL 都解析不出来时分两种:**vitest 那两条**当「无关」(整套被超时 / OOM
+ * 杀掉就是这个样子,输出里没有任何指向这次改动的证据);`typecheck` / `depcheck`
+ * 当「有关」—— 它们的红是确定性的,没有 FAIL 行只是因为它们不长那个样子。
  *
  * 改动文件列表问不出来 ⇒ 当有关(宁可白走一轮修复轮,也不要把真红当抖动重跑)。
  */
-function redLooksRelated(changed: string[] | null, output: string): boolean {
+function redLooksRelated(changed: string[] | null, output: string, isVitest: boolean): boolean {
   if (changed === null) return true
   const failing = failingTestFiles(output)
-  if (!failing.length) return false
+  if (!failing.length) return !isVitest
   const changedSet = new Set(changed)
   return failing.some(f => relatedSources(f).some(src => changedSet.has(src)))
 }
@@ -355,7 +363,7 @@ async function tests(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> 
   const dir = repoPath(d.config)
   const opts = { cwd: dir, timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms }
   let changed: string[] | null | undefined
-  for (const { cmd, args } of TEST_COMMANDS) {
+  for (const { cmd, args, vitest } of TEST_COMMANDS) {
     const line = `${cmd} ${args.join(' ')}`
     d.log(`[self-change] ${line}`)
     let out = await d.exec(cmd, args, opts)
@@ -363,14 +371,14 @@ async function tests(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> 
 
     // 只问一次 git:四条命令共用同一份改动文件列表。
     if (changed === undefined) changed = changedFiles(d)
-    if (!redLooksRelated(changed, `${out.stdout}\n${out.stderr}`)) {
+    if (!redLooksRelated(changed, `${out.stdout}\n${out.stderr}`, vitest === true)) {
       d.log(`[self-change] ${line} 红了,但失败文件与本次改动无关 —— 原样重跑一次`)
       const again = await d.exec(cmd, args, opts)
       if (again.code === 0) {
         // state 上有 tests 这一格是 v1.1b 才加的:`--resume` 一条老存盘时它是 undefined。
         if (!s.tests) s.tests = { flakes: [] }
         s.tests.flakes.push(line)
-        d.log(`tests: ${line} 第一次红是抖动(失败文件与本次改动无关),重跑绿了`)
+        d.log(`[self-change] tests: ${line} 第一次红是抖动(失败文件与本次改动无关),重跑绿了`)
         continue
       }
       out = again
@@ -393,20 +401,33 @@ function formatFindings(findings: readonly ReviewFinding[]): string {
 
 const SCOPE_PREFIX = 'scope:'
 
+function isScopeFinding(f: ReviewFinding): boolean {
+  return f.summary.trim().startsWith(SCOPE_PREFIX)
+}
+
 /**
  * 评审判的「越界」意见指的是哪几个文件。
  *
  * `file` 优先(评审的输出契约要求带上);没带就从 `scope:<file> …` 的 summary 里
- * 取第一个词。取不出文件名的 `scope:` 意见当普通意见走 —— 没有文件列表的
- * `git checkout -- ` 是个会把整棵树还原掉的危险命令。
+ * 取第一个词 —— 那一格常常是「scope:与需求无关」这样一句话,取出来的「文件名」
+ * 压根不是文件。所以最后一定要和**执行者真的改过的文件**求交集:
+ *
+ *  · 评审瞎编一个路径(或者那句话的第一个词),`git checkout <base> -- <它>`
+ *    会直接失败,一轮预算白烧在一条跑不通的命令上;
+ *  · 交集空了就当没有越界意见,退回普通的修复提示词。没有文件列表的
+ *    `git checkout -- ` 会把整棵树还原掉。
+ *
+ * `changed === null`(git 问不出来)⇒ 一个都不敢还原,同样退回普通修复轮。
  */
-function scopedFiles(findings: readonly ReviewFinding[]): string[] {
+function scopedFiles(findings: readonly ReviewFinding[], changed: string[] | null): string[] {
+  if (changed === null) return []
+  const changedSet = new Set(changed)
   const out = new Set<string>()
   for (const f of findings) {
+    if (!isScopeFinding(f)) continue
     const summary = f.summary.trim()
-    if (!summary.startsWith(SCOPE_PREFIX)) continue
     const file = f.file?.trim() || summary.slice(SCOPE_PREFIX.length).trim().split(/\s/)[0] || ''
-    if (file) out.add(file)
+    if (file && changedSet.has(file)) out.add(file)
   }
   return [...out]
 }
@@ -460,10 +481,17 @@ async function review(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
     const blocking = findings.filter(f => f.severity === 'critical' || f.severity === 'important')
     if (blocking.length) {
       const detail = formatFindings(blocking)
-      // 越界(`scope:`)的那几条要的是**还原**,不是接着在那些文件上改。
-      const scopeFiles = scopedFiles(blocking)
+      // 越界(`scope:`)的那几条要的是**还原**,不是接着在那些文件上改。但一条越界
+      // 意见不能把同一轮里别的 critical / important 吞掉 —— 那些仍然要修,
+      // 所以 revertPrompt 里还原和修各占一节。
+      const scopeFiles = scopedFiles(blocking, changedFiles(d))
       const prompt = scopeFiles.length
-        ? revertPrompt({ baseRef, files: scopeFiles, detail })
+        ? revertPrompt({
+            baseRef,
+            files: scopeFiles,
+            scopeDetail: formatFindings(blocking.filter(isScopeFinding)),
+            restDetail: formatFindings(blocking.filter(f => !isScopeFinding(f))),
+          })
         : fixPrompt('review', detail)
       return { ok: false, fixRound: 'review', fixPrompt: prompt, detail }
     }
@@ -510,6 +538,12 @@ async function ci(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
 
 // ── approval ─────────────────────────────────────────────────────────────────
 
+/** 抖动重跑过的命令,拍板卡 / 收尾报告里一行。没抖过就没这一行。 */
+function flakeLine(s: SelfChangeState): string[] {
+  const flakes = s.tests?.flakes ?? []
+  return flakes.length ? [`测试抖动重跑:${flakes.join('、')}`] : []
+}
+
 function approvalCard(s: SelfChangeState, d: PipelineDeps, diffstat: string): string {
   const minors = s.review.findings.filter(f => f.severity === 'minor')
   const cost = s.implement.costUsd + s.review.costUsd
@@ -528,6 +562,8 @@ function approvalCard(s: SelfChangeState, d: PipelineDeps, diffstat: string): st
     diffstat,
     '',
     '测试:typecheck / depcheck / bun test / node test 四条全绿',
+    // 「全绿」是最后的口径,但中间抖过一次的话,主人有权在拍板前知道。
+    ...flakeLine(s),
     `评审:${s.review.verdict ?? 'unknown'}${minors.length ? `,残余 minor:\n${formatFindings(minors)}` : '(没有残余意见)'}`,
     `CI:${s.ci.url ?? '(没有链接)'}`,
     `费用:$${cost.toFixed(2)}(实现 $${s.implement.costUsd.toFixed(2)} + 评审 $${s.review.costUsd.toFixed(2)})`,
@@ -759,6 +795,7 @@ async function report(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
     `费用:$${cost.toFixed(2)};修复轮 tests ${s.implement.rounds.tests} / review ${s.implement.rounds.review} / ci ${s.implement.rounds.ci}`,
     s.noDeploy ? '部署:按 --no-deploy 未部署' : `部署:${mark(s.deploy.ok)}${s.deploy.version ? `(${s.deploy.version})` : ''}`,
     `自检:工作台 ${mark(s.selftest.workbench)} · 对话 ${mark(s.selftest.chat)}`,
+    ...flakeLine(s),
   ]
   if (s.ci.sha && s.merge.sha && s.ci.sha !== s.merge.sha) {
     lines.push(`注意:CI 跑的是 ${s.ci.sha.slice(0, 8)},合入的是 ${s.merge.sha.slice(0, 8)}(rebase 过,没有重跑 CI)`)

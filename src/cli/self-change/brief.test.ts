@@ -46,9 +46,9 @@ describe('implementBrief', () => {
 
   // 真机 f65f4c09:一句「只改这一个文件」的需求,执行者在修复轮里动了 10 个文件。
   it('说清改动范围:需求要的文件为限,顺手修别的要单独说明', () => {
-    expect(text).toContain('改动范围')
+    expect(text).toContain('**改动范围 = 这次需求真正需要的文件。**')
+    expect(text).toContain('顺手看不顺眼的别的东西')
     expect(text).toContain('单独说明')
-    expect(text).toContain('不要做')
   })
 })
 
@@ -86,6 +86,11 @@ describe('reviewPrompt', () => {
     expect(text).toContain('scope:')
     expect(text).toContain('越界不是 `minor`')
   })
+
+  // 反过来也要说清楚,否则「范围」这一条会把「改了行为就补测试」逼没了。
+  it('为这次改动补的测试与夹具不算越界', () => {
+    expect(text).toContain('为这次改动新增 / 调整的测试与夹具属于需求范围,不算越界')
+  })
 })
 
 describe('fixPrompt', () => {
@@ -120,7 +125,12 @@ describe('fixPrompt', () => {
 })
 
 describe('revertPrompt', () => {
-  const text = revertPrompt({ baseRef: 'origin/dev', files: ['vitest.config.ts', 'src/f.fixture.ts'], detail: '- [important] scope:vitest.config.ts 与需求无关' })
+  const text = revertPrompt({
+    baseRef: 'origin/dev',
+    files: ['vitest.config.ts', 'src/f.fixture.ts'],
+    scopeDetail: '- [important] scope:vitest.config.ts 与需求无关',
+    restDetail: '- [critical] src/a.ts:3 错误吞了',
+  })
 
   it('要的是还原,不是接着改:文件清单 + 一条能照抄的 checkout', () => {
     expect(text).toContain('还原')
@@ -133,6 +143,18 @@ describe('revertPrompt', () => {
     expect(text).toContain('scope:vitest.config.ts 与需求无关')
     expect(text).toContain('保持原样')
     expect(text).toContain('不要 `git push`')
+  })
+
+  // 一条越界意见不能把同轮的别的问题吞掉:只还原不修,下一轮评审照样把它打回来。
+  it('同一轮里别的 critical / important 单起一节照常要修', () => {
+    expect(text).toContain('src/a.ts:3 错误吞了')
+    expect(text).toContain('真因')
+  })
+
+  it('没有别的问题时就没有那一节', () => {
+    const only = revertPrompt({ baseRef: 'origin/dev', files: ['vitest.config.ts'], scopeDetail: '- [important] scope:vitest.config.ts', restDetail: '' })
+    expect(only).toContain('git checkout origin/dev -- vitest.config.ts')
+    expect(only).not.toContain('这几条要**修**')
   })
 })
 

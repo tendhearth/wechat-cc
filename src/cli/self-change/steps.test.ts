@@ -242,6 +242,20 @@ describe('tests', () => {
     expect(rec.exec.length).toBe(3)
   })
 
+  // typecheck / depcheck 的红是确定性的:它们没有 FAIL 行不是因为抖动,
+  // 是因为它们压根不长那个样子。重跑一次只是白等。
+  it('typecheck / depcheck 红了一律直接进修复轮,不重跑', async () => {
+    for (const which of ['typecheck', 'depcheck']) {
+      const { deps, rec } = makeFakeDeps({
+        exec: (_cmd, args) => args.includes(which) ? { code: 1, stdout: 'error TS2353: …' } : undefined,
+        git: gitReply({ 'diff --name-only': 'docs/x.md\n' }),
+      })
+      const out = await steps.tests(fakeState(), deps)
+      expect(out.fixRound).toBe('tests')
+      expect(rec.exec.length).toBe(which === 'typecheck' ? 1 : 2)
+    }
+  })
+
   it('改动文件列表问不出来时不敢判抖动:不重跑,直接进修复轮', async () => {
     const { deps, rec } = makeFakeDeps({
       exec: (_cmd, args) => args.includes('depcheck') ? { code: 1, stdout: 'boom' } : undefined,
@@ -353,7 +367,7 @@ describe('review', () => {
   it('scope: 的 important ⇒ 修复轮的提示词是还原,带文件清单和 checkout 命令', async () => {
     const { deps } = makeFakeDeps({
       runner: () => ({ text: '```json\n{"verdict":"changes","findings":[{"severity":"important","file":"vitest.config.ts","summary":"scope:vitest.config.ts 把超时从 5s 放到 20s,与需求无关"},{"severity":"important","summary":"scope:src/fixture.ts 顺手改了夹具"}]}\n```' }),
-      git: gitReply({ 'rev-parse HEAD': HEAD_SHA }),
+      git: gitReply({ 'rev-parse HEAD': HEAD_SHA, 'diff --name-only': 'docs/x.md\nvitest.config.ts\nsrc/fixture.ts\n' }),
     })
     const out = await steps.review(fakeState(), deps)
     expect(out.fixRound).toBe('review')
@@ -363,6 +377,32 @@ describe('review', () => {
     expect(out.fixPrompt).toContain('git checkout origin/dev -- vitest.config.ts src/fixture.ts')
     // 越界的那条仍然原样进 detail(拍板卡和存盘里看得见)。
     expect(out.detail).toContain('scope:vitest.config.ts')
+  })
+
+  // 越界那条不能把同一轮里别的问题吞掉:只还原不修,下一轮评审照样把它打回来。
+  it('一条 scope: + 一条 critical ⇒ 还原清单和那条 critical 都在提示词里', async () => {
+    const { deps } = makeFakeDeps({
+      runner: () => ({ text: '```json\n{"verdict":"changes","findings":[{"severity":"important","file":"vitest.config.ts","summary":"scope:vitest.config.ts 与需求无关"},{"severity":"critical","file":"src/a.ts","line":3,"summary":"新加的那段把错误吞了"}]}\n```' }),
+      git: gitReply({ 'rev-parse HEAD': HEAD_SHA, 'diff --name-only': 'src/a.ts\nvitest.config.ts\n' }),
+    })
+    const out = await steps.review(fakeState(), deps)
+    expect(out.fixPrompt).toContain('git checkout origin/dev -- vitest.config.ts')
+    expect(out.fixPrompt).toContain('新加的那段把错误吞了')
+    expect(out.detail).toContain('新加的那段把错误吞了')
+  })
+
+  // 评审给的「文件名」常常根本不是文件(「scope:与需求无关」的第一个词),
+  // 或者是它自己想出来的路径。拿这种东西去 git checkout 只会白烧一轮预算。
+  it('scope: 取不到真改过的文件(没写 file / 文件不在 diff 里)⇒ 退回普通修复提示词', async () => {
+    const { deps } = makeFakeDeps({
+      runner: () => ({ text: '```json\n{"verdict":"changes","findings":[{"severity":"important","summary":"scope:与需求无关"},{"severity":"important","file":"bogus.ts","summary":"scope:bogus.ts 顺手改的"}]}\n```' }),
+      git: gitReply({ 'rev-parse HEAD': HEAD_SHA, 'diff --name-only': 'docs/x.md\n' }),
+    })
+    const out = await steps.review(fakeState(), deps)
+    expect(out.fixRound).toBe('review')
+    expect(out.fixPrompt).toContain('被独立评审判了要改')
+    expect(out.fixPrompt).not.toContain('git checkout')
+    expect(out.fixPrompt).toContain('scope:与需求无关')
   })
 
   it('没有 scope: 的 important 还是走原来那份修复提示词', async () => {
@@ -429,6 +469,19 @@ describe('approval', () => {
     expect(rec.asks[0]).toContain('执行者说')
     expect(rec.asks[0]).toContain('把 flake 表补了一行,跑了四条验证全绿')
     expect(s.approval).toMatchObject({ hash: 'h1', code: 'AB12', decision: 'allow' })
+  })
+
+  // 「四条全绿」是最后的口径,但中间抖过一次的话主人有权在拍板前知道。
+  it('抖动重跑过的命令在拍板卡上占一行;没抖过就没有这一行', async () => {
+    const s = fakeState()
+    s.tests.flakes = ['bun run test', 'npm run test:node -- --reporter=dot']
+    const { deps, rec } = makeFakeDeps()
+    await steps.approval(s, deps)
+    expect(rec.asks[0]).toContain('测试抖动重跑:bun run test、npm run test:node -- --reporter=dot')
+
+    const clean = makeFakeDeps()
+    await steps.approval(fakeState(), clean.deps)
+    expect(clean.rec.asks[0]).not.toContain('测试抖动重跑')
   })
 
   it('每 20 秒问一次,pending 期间不动', async () => {
@@ -671,6 +724,14 @@ describe('report', () => {
     expect(rec.notices[0]).toContain('自改 #ab12cd34 完成')
     expect(rec.notices[0]).toContain('$3.00')
     expect(rec.notices[0]).toContain('工作台 绿 · 对话 绿')
+  })
+
+  it('抖动重跑过的命令在收尾报告里也占一行', async () => {
+    const s = fakeState({ merge: { sha: HEAD_SHA, rebased: false } })
+    s.tests.flakes = ['bun run test']
+    const { deps, rec } = makeFakeDeps()
+    await steps.report(s, deps)
+    expect(rec.notices[0]).toContain('测试抖动重跑:bun run test')
   })
 
   it('CI 跑的 sha 和合入的不一样时要说出来', async () => {

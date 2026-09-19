@@ -106,18 +106,34 @@ ${kind === 'tests' ? TESTS_SCOPE_RULE : ''}
 }
 
 /**
- * 评审揪出越界改动(`scope:` 意见)时的修复轮:要的不是「修」,是**还原**。
+ * 评审揪出越界改动(`scope:` 意见)时的修复轮:那几个文件要的不是「修」,是**还原**。
  *
  * 分开一个提示词是因为普通的 fixPrompt 会让执行者接着在那些文件上动手 ——
  * 而那些文件本来就不该被它碰过。
+ *
+ * 同一轮里别的 critical / important **不会**被越界那几条吞掉:`restDetail` 单起一节
+ * 照常要它修。只还原不修,下一轮 guard→tests→review 还会把它们原样打回来。
  */
-export function revertPrompt(input: { baseRef: string; files: readonly string[]; detail: string }): string {
+export function revertPrompt(input: { baseRef: string; files: readonly string[]; scopeDetail: string; restDetail: string }): string {
   const list = input.files.map(f => `- \`${f}\``).join('\n')
-  return `独立评审认为你这轮**改了这次需求用不到的文件**(范围越界)。评审的原话:
+  const rest = input.restDetail.trim()
+    ? `
+## 二、这几条要**修**(和上面那几个文件无关,照常定位真因再动手)
 
-${input.detail}
+${input.restDetail}
 
-这几个文件要**还原**成基线 \`${input.baseRef}\` 的样子,不要在它们上面接着"修":
+修完自己 \`git commit\`,用一段话说明真因。
+`
+    : ''
+  return `独立评审认为你这轮**改了这次需求用不到的文件**(范围越界),同时还有别的问题。
+
+## 一、这几个文件要**还原**,不要在它们上面接着"修"
+
+评审的原话:
+
+${input.scopeDetail}
+
+要还原成基线 \`${input.baseRef}\` 的样子的是:
 
 ${list}
 
@@ -129,8 +145,9 @@ git commit -m "还原与本次需求无关的改动"
 \`\`\`
 
 需求本身要的那部分改动**保持原样**,只还原上面列出来的文件。
+${rest}
 仍然**不要 \`git push\`**、不要切分支。
-收工用一段话说明:还原了哪几个文件、为什么它们与这次需求无关。
+收工用一段话说明:还原了哪几个文件、为什么它们与这次需求无关;另外修了什么、真因是什么。
 `
 }
 
@@ -150,7 +167,9 @@ ${input.request}
 测试是不是在测行为而不是在测实现;有没有把失败悄悄咽掉。
 
 **范围也要看**:改动里有没有这次需求**用不到**的文件 —— 尤其是与需求无关的
-测试超时、配置、夹具(典型的「为了让红的测试变绿顺手放宽」)。有的话,
+测试超时、\`vitest\` 配置、别处的夹具(典型的「为了让红的测试变绿顺手放宽」)。
+**为这次改动新增 / 调整的测试与夹具属于需求范围,不算越界**(这个仓库要求
+改了行为就补测试);越界指的是与需求无关的文件。真越界了的话,
 每个这样的文件报一条 \`important\`,\`file\` 写那个文件,\`summary\` **必须以
 \`scope:\` 开头**(例如 \`"summary":"scope:vitest.config.ts 把超时从 5s 调到 20s,
 与需求无关"\`)。流水线看到 \`scope:\` 会让执行者把那些文件**还原**,而不是接着改。
