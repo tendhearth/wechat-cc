@@ -13,7 +13,7 @@
 
 ## 目标
 
-- `bun scripts/ci/triage.ts` 一条命令回答「我刚推的这个 SHA,CI 绿了吗?红的是我的锅还是 flake?要不要重跑?」,输出人读 + `--json`,退出码可编排。
+- `wechat-cc ci triage` 一条命令回答「我刚推的这个 SHA,CI 绿了吗?红的是我的锅还是 flake?要不要重跑?」,输出人读 + `--json`,退出码可编排。
 - flake 类别变成仓库里的 JSON 登记表,有契约测试。
 - `apps/desktop/**` 有改动的 dev 推送也跑 `desktop-e2e`。
 - 维护者手册的「看 CI」一步改成调这条命令。
@@ -23,11 +23,11 @@
 - 不做 Windows 真机 lane(理由见上)。
 - 不自动新增 flake 条目:`unknown` 类别只打印证据,加条目是人(或 LLM)开 PR 的事。
 - 不动 `e2e`(vitest e2e 配置)那条作业的触发条件。
-- 不把 triage 做成 `wechat-cc` 子命令:它只在开发机上有意义(依赖 `gh` 登录态和 git 仓库),和 `self deploy` 不同。放 `scripts/ci/`。
+- **2026-09-18 修订**:做成 `wechat-cc ci triage` 子命令(纯逻辑 `src/cli/ci-triage.ts`,外壳 `src/cli/ci-triage-run.ts`,登记表 `src/cli/ci-flakes.json`),因为自改流水线(`2026-09-18-self-change-pipeline-design.md`)要在进程内调 `runCiTriage`;它和 `self deploy` 一样只在开发机上有意义(依赖 `gh` 登录态)。
 
 ## 设计
 
-### 1. 登记表 `scripts/ci/flakes.json`
+### 1. 登记表 `src/cli/ci-flakes.json`
 
 ```json
 {
@@ -42,9 +42,9 @@
 }
 ```
 
-字段:`id`(唯一)、`symptom`(正则,对失败块的文本匹配;特殊值 `__NO_SUMMARY__` 表示「作业失败但日志里没有 `Test Files` 汇总行且没有任何 FAIL 块」)、可选 `jobs`(限定作业名)、可选 `files`(glob,限定失败测试文件)、`note`、`since`。契约测试(`scripts/ci/flakes.test.ts`):id 唯一、正则可编译、每条有 note 和 since、glob 用的是 `picomatch`/`minimatch` 已有依赖之一(实现时查 `package.json`,没有就用简单的 `*` → `.*` 转换,不新增依赖)。
+字段:`id`(唯一)、`symptom`(正则,对失败块的文本匹配;特殊值 `__NO_SUMMARY__` 表示「作业失败但日志里没有 `Test Files` 汇总行且没有任何 FAIL 块」)、可选 `jobs`(限定作业名)、可选 `files`(glob,限定失败测试文件)、`note`、`since`。契约测试(`src/cli/ci-flakes.test.ts`):id 唯一、正则可编译、每条有 note 和 since、glob 用的是 `picomatch`/`minimatch` 已有依赖之一(实现时查 `package.json`,没有就用简单的 `*` → `.*` 转换,不新增依赖)。
 
-### 2. 纯逻辑 `scripts/ci/triage-core.ts`
+### 2. 纯逻辑 `src/cli/ci-triage.ts`
 
 不碰网络和进程,全部可单测:
 
@@ -60,10 +60,10 @@
 - `verdict(classifiedAll) → 'green' | 'flake' | 'real' | 'unknown'`:没有失败 ⇒ green;全部 flake ⇒ flake;有任何 real ⇒ real;否则 unknown。
 - `pickBaseSha(runs, sha, isAncestor)`:`runs` 是该分支最近的 CI 运行(新到旧),取第一个 `conclusion === 'success'` 且 `headSha !== sha` 且 `isAncestor(headSha, sha)` 的 headSha;找不到返回 `null`(shell 层退化成 `sha~1`)。
 
-### 3. 外壳 `scripts/ci/triage.ts`
+### 3. 外壳 `src/cli/ci-triage-run.ts`(`runCiTriage(deps, opts)`)+ `cli.ts` 的 `ci triage`
 
 ```
-bun scripts/ci/triage.ts [--sha <sha|HEAD>] [--branch dev] [--wait] [--rerun] [--max-reruns 1] [--timeout-min 30] [--json]
+wechat-cc ci triage [--sha <sha|HEAD>] [--branch dev] [--wait] [--rerun] [--max-reruns 1] [--timeout-min 30] [--json]
 ```
 
 - 解析 SHA 为 40 位(`git rev-parse`)。`gh run list --commit <sha> --workflow CI --json databaseId,status,conclusion,headSha,event,createdAt` 取最新一条;没有 ⇒ 退出码 2 `no_run`(`--wait` 时先等最多 2 分钟让 Actions 建出运行)。
@@ -75,7 +75,9 @@ bun scripts/ci/triage.ts [--sha <sha|HEAD>] [--branch dev] [--wait] [--rerun] [-
 - 输出:人读版一行 verdict + 每条失败 `job · file · test → kind[:id]`,unknown 的附 excerpt 前 12 行;`--json` 给 `{ sha, runId, url, verdict, base, changedFiles, jobs: [{ name, step, classified: [...] }], reruns }`。
 - `gh` / `git` 通过 `deps.exec(cmd, args) → { code, stdout, stderr }` 注入;`spawnSync` 带 `windowsHide: true`。`--wait` 的 sleep 也注入。
 
-### 4. `ci.yml`:desktop-e2e 按路径在 dev 上跑
+### 4. `ci.yml`:desktop-e2e 按路径在 dev 上跑;push 分支加 `self/**`
+
+`push.branches: [master, dev, 'self/**']` —— 自改流水线推的分支要有 CI 才有闸门二。
 
 新作业 `changes`(ubuntu,`dorny/paths-filter@v3`,过滤器 `desktop: ['apps/desktop/**']`),输出 `desktop`。`desktop-e2e` 加 `needs: changes`,条件改为:
 
@@ -85,15 +87,15 @@ if: github.base_ref == 'master' || github.ref == 'refs/heads/master' || needs.ch
 
 `e2e` 作业不动。桌面 e2e 一次约 3 分钟,只在桌面目录有改动时多付这一次。
 
-守卫测试 `scripts/ci/workflow.guard.test.ts`:读 `ci.yml`,断言 `changes` 作业存在且过滤器含 `apps/desktop/**`;`desktop-e2e` 的 `needs` 含 `changes`,`if` 含 `needs.changes.outputs.desktop == 'true'`;三处 `setup-bun` 仍钉 `1.3.14`(把这条已有规矩也钉进测试)。
+守卫测试 `scripts/ci-workflow.guard.test.ts`:读 `ci.yml`,断言 push 分支含 `self/**`; `changes` 作业存在且过滤器含 `apps/desktop/**`;`desktop-e2e` 的 `needs` 含 `changes`,`if` 含 `needs.changes.outputs.desktop == 'true'`;三处 `setup-bun` 仍钉 `1.3.14`(把这条已有规矩也钉进测试)。
 
 ### 5. 文档
 
-- `docs/maintainer/ci-and-flakes.md`:「已知 flake 类别」表格改为指向 `scripts/ci/flakes.json`(表格留一份人读摘要,注明以 JSON 为准);「处置」改为 `bun scripts/ci/triage.ts --wait --rerun`,写清退出码与「两次红就是真红」;加「怎么加一条 flake」。
+- `docs/maintainer/ci-and-flakes.md`:「已知 flake 类别」表格改为指向 `src/cli/ci-flakes.json`(表格留一份人读摘要,注明以 JSON 为准);「处置」改为 `wechat-cc ci triage --wait --rerun`,写清退出码与「两次红就是真红」;加「怎么加一条 flake」。
 - `docs/maintainer/README.md`、`AGENTS.md`、`verify.md` 的「看 CI」一步改成这条命令。
 
 ## 验证
 
-- 单测:`triage-core.test.ts`(用本轮真实红日志的脱敏片段做夹具:Windows hook 超时、selftest 的 basename 真红、node 无汇总)、`flakes.test.ts`、`workflow.guard.test.ts`。
+- 单测:`src/cli/ci-triage.test.ts`(用本轮真实红日志的脱敏片段做夹具:Windows hook 超时、selftest 的 basename 真红、node 无汇总)、`ci-flakes.test.ts`、`ci-workflow.guard.test.ts`。
 - 真机:对 `25113589`(Windows 真红)跑 triage ⇒ `real`,指到 `src/cli/selftest.test.ts`;对 `35173091848`(hook 超时)⇒ `flake:win-hook-timeout`;对 `15cb7c37` ⇒ `green`。
 - 推 dev 一次含 `apps/desktop/**` 的改动(文档级即可),确认 `desktop-e2e` 在 dev push 上跑了;推一次不含的,确认跳过。
