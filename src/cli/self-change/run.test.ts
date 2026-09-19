@@ -1,0 +1,210 @@
+import { describe, expect, it } from 'vitest'
+
+import { fakeState, gitReply, greenTriage, makeFakeDeps, type FakeOpts } from './pipeline.fixture'
+import { SELF_CHANGE_EXIT, exitCodeFor, runSelfChange } from './run'
+import type { SelfChangeState, SelfChangeStep, StateStore } from './state'
+
+/** 一整条能跑通的假机器:git 该回什么就回什么。 */
+const HAPPY_GIT = gitReply({
+  'rev-parse origin/dev': 'b'.repeat(40),
+  'rev-list --count': '1\n',
+  'diff --name-only': 'docs/x.md\n',
+  'rev-parse HEAD': 'a'.repeat(40),
+  'diff --stat': ' docs/x.md | 1 +\n',
+})
+
+function recordingStore(): { store: StateStore; steps: SelfChangeStep[]; rows: SelfChangeState[] } {
+  const steps: SelfChangeStep[] = []
+  const rows: SelfChangeState[] = []
+  return {
+    steps,
+    rows,
+    store: {
+      load: () => null,
+      save: s => { steps.push(s.step); rows.push(JSON.parse(JSON.stringify(s)) as SelfChangeState) },
+      list: () => [],
+      countSince: () => 0,
+    },
+  }
+}
+
+function happy(over: FakeOpts = {}): ReturnType<typeof makeFakeDeps> {
+  return makeFakeDeps({ git: HAPPY_GIT, exists: () => true, ...over })
+}
+
+describe('exitCodeFor', () => {
+  it('五个出口各归各位', () => {
+    expect(exitCodeFor('done')).toBe(SELF_CHANGE_EXIT.done)
+    expect(exitCodeFor('declined')).toBe(SELF_CHANGE_EXIT.declined)
+    expect(exitCodeFor('approval_timeout')).toBe(SELF_CHANGE_EXIT.approvalTimeout)
+    for (const blocked of ['self_change_halted', 'self_change_quota', 'daemon_not_running', 'owner_chat_unknown']) {
+      expect(exitCodeFor(blocked)).toBe(SELF_CHANGE_EXIT.blocked)
+    }
+    for (const failed of ['forbidden_paths', 'no_changes', 'tests_exhausted', 'merge_conflict', 'crashed', null]) {
+      expect(exitCodeFor(failed)).toBe(SELF_CHANGE_EXIT.failed)
+    }
+  })
+})
+
+describe('runSelfChange 一条跑通', () => {
+  it('十二步走完 ⇒ done / 退出码 0,每步前后都存过盘', async () => {
+    const { store, steps } = recordingStore()
+    const { deps, rec } = happy({ state: store })
+    const { state, exitCode } = await runSelfChange(fakeState(), deps)
+
+    expect(state.result).toBe('done')
+    expect(exitCode).toBe(0)
+    expect([...new Set(steps)]).toEqual([
+      'intake', 'repo', 'implement', 'guard', 'tests', 'review', 'ci', 'approval', 'merge', 'deploy', 'selftest', 'report', 'done',
+    ])
+    expect(rec.notices[0]).toContain('开始')
+    expect(rec.notices.at(-1)).toContain('完成')
+    expect(state.implement.rounds).toEqual({ tests: 0, review: 0, ci: 0 })
+  })
+
+  it('--no-deploy ⇒ 合完就写报告,不碰部署与自检', async () => {
+    const { deps, rec } = happy()
+    const { state, exitCode } = await runSelfChange(fakeState({ noDeploy: true }), deps)
+    expect(exitCode).toBe(0)
+    expect(state.deploy.ok).toBeNull()
+    expect(rec.deployed).toEqual([])
+    expect(rec.exec.some(c => c.includes('build-sidecar'))).toBe(false)
+  })
+})
+
+describe('修复轮', () => {
+  it('测试红一次:计一轮、接回同一个会话、脏了替它提交、回 guard 重走', async () => {
+    let testRuns = 0
+    // 执行者修完没提交:status 脏,直到流水线替它 commit。
+    let dirty = false
+    const { deps, rec } = happy({
+      exec: (cmd, args) => {
+        if (cmd === 'bun' && args[1] === 'test' && testRuns++ === 0) { dirty = true; return { code: 1, stdout: 'FAIL src/a.test.ts' } }
+        return undefined
+      },
+      git: args => {
+        if (args[0] === 'status') return { stdout: dirty ? ' M docs/x.md\n' : '' }
+        if (args.includes('commit')) { dirty = false; return undefined }
+        return HAPPY_GIT(args)
+      },
+    })
+    const { state, exitCode } = await runSelfChange(fakeState(), deps)
+
+    expect(exitCode).toBe(0)
+    expect(state.implement.rounds).toEqual({ tests: 1, review: 0, ci: 0 })
+    const fix = rec.runner[1]
+    expect(fix?.resume).toBe('sess-1')
+    expect(fix?.prompt).toContain('本地测试没过')
+    expect(fix?.readOnly).toBeUndefined()
+    expect(rec.git.some(a => a.at(-1) === '自改 #ab12cd34:修复轮(tests)未提交的改动')).toBe(true)
+  })
+
+  it('三处各自计数,评审两轮之后还能过', async () => {
+    let reviews = 0
+    const { deps } = happy({
+      runner: input => (input.readOnly
+        ? { text: reviews++ === 0 ? '```json\n{"verdict":"changes","findings":[{"severity":"critical","summary":"错了"}]}\n```' : undefined }
+        : undefined),
+    })
+    const { state, exitCode } = await runSelfChange(fakeState(), deps)
+    expect(exitCode).toBe(0)
+    expect(state.implement.rounds).toEqual({ tests: 0, review: 1, ci: 0 })
+  })
+
+  it('修满两轮还红 ⇒ tests_exhausted(退出码 1),失败通知带原文', async () => {
+    const { deps, rec } = happy({ exec: (cmd, args) => (cmd === 'bun' && args[1] === 'test' ? { code: 1, stdout: 'FAIL src/a.test.ts' } : undefined) })
+    const { state, exitCode } = await runSelfChange(fakeState(), deps)
+
+    expect(state.result).toBe('tests_exhausted')
+    expect(exitCode).toBe(1)
+    expect(state.implement.rounds.tests).toBe(3)
+    expect(state.error).toContain('FAIL src/a.test.ts')
+    expect(rec.notices.at(-1)).toContain('自改 #ab12cd34 失败:tests_exhausted')
+    // 三轮 tests:一次实现 + 两次修复。
+    expect(rec.runner.filter(r => r.resume).length).toBe(2)
+  })
+
+  it('CI 不绿也走同一套计数', async () => {
+    const { deps } = happy({ ciTriage: o => greenTriage(o.sha, 'real') })
+    const { state, exitCode } = await runSelfChange(fakeState(), deps)
+    expect(state.result).toBe('ci_exhausted')
+    expect(state.implement.rounds).toEqual({ tests: 0, review: 0, ci: 3 })
+    expect(exitCode).toBe(1)
+  })
+
+  it('修复轮里执行者自己挂了 ⇒ implement_failed', async () => {
+    const { deps } = happy({
+      exec: (cmd, args) => (cmd === 'bun' && args[1] === 'test' ? { code: 1 } : undefined),
+      runner: (_input, call) => (call === 1 ? { ok: false, error: 'claude_exit_null', timedOut: true } : undefined),
+    })
+    const { state, exitCode } = await runSelfChange(fakeState(), deps)
+    expect(state.result).toBe('implement_failed')
+    expect(state.error).toContain('claude_exit_null')
+    expect(exitCode).toBe(1)
+  })
+})
+
+describe('结局', () => {
+  it('主人回 n ⇒ declined(退出码 3),不合不部署', async () => {
+    const { deps, rec } = happy({ decisions: ['deny'] })
+    const { state, exitCode } = await runSelfChange(fakeState(), deps)
+    expect(state.result).toBe('declined')
+    expect(exitCode).toBe(3)
+    expect(rec.git.some(a => a.includes('--ff-only'))).toBe(false)
+    expect(rec.notices.at(-1)).toContain('你回了 n')
+  })
+
+  it('等不到拍板 ⇒ approval_timeout(退出码 4),step 停在 approval 好 --resume', async () => {
+    const { deps, rec } = happy({ decisions: ['timeout'] })
+    const { state, exitCode } = await runSelfChange(fakeState(), deps)
+    expect(state.result).toBe('approval_timeout')
+    expect(state.step).toBe('approval')
+    expect(exitCode).toBe(4)
+    expect(rec.notices.at(-1)).toContain('--resume ab12cd34')
+  })
+
+  it('停机 / 配额 / daemon 没起 ⇒ 退出码 2', async () => {
+    const halted = happy({ config: { haltedAt: 1 } })
+    expect((await runSelfChange(fakeState(), halted.deps)).exitCode).toBe(2)
+    const noDaemon = happy({ health: false })
+    expect((await runSelfChange(fakeState(), noDaemon.deps)).exitCode).toBe(2)
+  })
+
+  it('步骤抛异常 ⇒ crashed,原文进 state,退出码 1', async () => {
+    const { deps } = happy()
+    deps.selftest = async () => { throw new Error('自检客户端炸了') }
+    const { state, exitCode } = await runSelfChange(fakeState(), deps)
+    expect(state.result).toBe('crashed')
+    expect(state.error).toContain('自检客户端炸了')
+    expect(exitCode).toBe(1)
+  })
+
+  it('--resume:从 state 里的那一步接着跑,不重做前面的', async () => {
+    const { deps, rec } = happy()
+    const s = fakeState({ step: 'merge', ci: { runId: 1, url: null, verdict: 'green', sha: 'a'.repeat(40) } })
+    const { state, exitCode } = await runSelfChange(s, deps)
+    expect(exitCode).toBe(0)
+    expect(state.result).toBe('done')
+    expect(rec.runner).toEqual([])
+    expect(rec.asks).toEqual([])
+  })
+})
+
+describe('停机', () => {
+  it('自检连着第二次红 ⇒ 写 halted_at,并告诉主人怎么解除', async () => {
+    const { deps, rec } = happy({ config: { failStreak: 1 }, selftest: { workbench: false, chat: true } })
+    const { state, exitCode } = await runSelfChange(fakeState({ step: 'selftest' }), deps)
+
+    expect(state.result).toBe('selftest_failed_rolled_back')
+    expect(exitCode).toBe(1)
+    expect(rec.patches).toEqual([{ fail_streak: 2 }, { halted_at: expect.any(Number), halt_reason: expect.stringContaining('selftest_failed_rolled_back') }])
+    expect(rec.notices.at(-1)).toContain('--unhalt')
+  })
+
+  it('第一次红只加 fail_streak,不停机', async () => {
+    const { deps, rec } = happy({ selftest: { workbench: false, chat: true } })
+    await runSelfChange(fakeState({ step: 'selftest' }), deps)
+    expect(rec.patches).toEqual([{ fail_streak: 1 }])
+    expect(rec.notices.some(n => n.includes('停机'))).toBe(false)
+  })
+})
