@@ -158,6 +158,14 @@ Usage:
                         [--health-timeout-ms N] [--json]
                         自维护:原子换 sidecar 进 .app、launchd 重启、健康门,
                         失败自动回滚(仅 macOS)。见 docs/maintainer/deploy.md。
+  wechat-cc self change "<需求>" [--from cli|wechat] [--budget-usd N]
+                        [--no-deploy] [--json]
+  wechat-cc self change --resume <id> | --list | --unhalt
+                        自改:执行者在专用克隆里实现,依次过测试 / 评审 / CI /
+                        主人微信拍板 / 合 dev 五道闸门,再部署 + 自检,不过就
+                        回滚(仅 macOS)。退出码 0 完成 / 1 失败 / 2 停机·配额·
+                        平台·daemon 没起 / 3 主人回了 n / 4 没等到拍板(可
+                        --resume)。见 docs/maintainer/self-change.md。
   wechat-cc selftest workbench --executor <id> [--image] [--resume] [--json]
                         [--timeout-ms N] [--keep]
   wechat-cc selftest chat --provider <id> [--text "…"] [--resume] [--json]
@@ -2613,9 +2621,170 @@ const selfDeployCmd = defineCommand({
   },
 })
 
+
+// ── self change — 自改流水线:CC 自己给自己做一次改动 ──────────────────
+//
+// spec: docs/superpowers/specs/2026-09-18-self-change-pipeline-design.md。
+// 手册:docs/maintainer/self-change.md。这里只做四件事:解析开关、把配置合出来、
+// 拿锁、把真件接上跑 run.ts —— 流水线本身一行都不在 cli.ts 里(它要能在没有
+// citty、没有 process.argv 的测试里跑完整条)。
+//
+// 和 `self deploy` 一样是 darwin-only:最后两步(部署 + 自检)踩的是 launchd。
+
+/** `--budget-usd`:钱的开关写错了当场报错,不替用户猜(同 parseTimeoutMsFlag 的理由)。 */
+function parseBudgetUsdFlag(raw: unknown): { ok: true; value?: number } | { ok: false; error: string } {
+  if (raw === undefined || raw === null || raw === '') return { ok: true }
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value <= 0) {
+    return { ok: false, error: `invalid value: ${String(raw)} (expected a positive number of dollars)` }
+  }
+  return { ok: true, value }
+}
+
+const selfChangeCmd = defineCommand({
+  meta: { name: 'change', description: '自改流水线:执行者在专用克隆里实现 → 测试/评审/CI/主人拍板/合 dev → 部署 + 自检,不过就回滚(仅 macOS)' },
+  args: {
+    request: { type: 'positional', required: false, description: '需求原文(一句话说清要改什么)', valueHint: 'request' },
+    resume: { type: 'string', description: '接着跑某条(`--list` 里的 id);拍板超时之后会重新发卡' },
+    list: { type: 'boolean', description: '列最近 10 条自改的 id · 步骤 · 结果 · 起始时间' },
+    unhalt: { type: 'boolean', description: '解除停机(清 halted_at / halt_reason,fail_streak 归零)' },
+    from: { type: 'string', default: 'cli', description: '进件口:cli | wechat(daemon 从微信接单时传 wechat)' },
+    'budget-usd': { type: 'string', description: '这一条的实现预算上限,美元(覆盖 self_change.implement_budget_usd)' },
+    deploy: { type: 'boolean', default: true, description: '合完 dev 之后部署 + 自检;`--no-deploy` 只合不部署' },
+    json: { type: 'boolean', description: 'JSON 输出(整份 state),不输出人读版' },
+  },
+  async run({ args }) {
+    const json = Boolean(args.json)
+    const bail = (exitCode: number, error: string, message: string): void => {
+      if (json) console.log(JSON.stringify({ ok: false, exitCode, error, message }, null, 2))
+      else console.error(`self change: ${message}`)
+      process.exit(exitCode)
+    }
+
+    // 平台在最前面:流水线最后两步是 `self deploy` + 真机自检,两者都是 launchd 专属。
+    if (process.platform !== 'darwin') {
+      bail(2, 'self_change_unsupported_platform', '自改流水线只支持 macOS(部署那一步是 launchd 专属)')
+      return
+    }
+
+    const { resolveSelfChangeConfig, writeSelfChangeConfigPatch } = await import('./src/cli/self-change/config.ts')
+    const { acquireLock, makeStateStore, newSelfChangeId, newState } = await import('./src/cli/self-change/state.ts')
+    const { defaultPipelineDeps, formatSelfChangeSummary } = await import('./src/cli/self-change/index.ts')
+    const { runSelfChange } = await import('./src/cli/self-change/run.ts')
+
+    const store = makeStateStore(STATE_DIR)
+
+    // `--unhalt`:给 undefined 等于把键删掉(JSON.stringify 不序列化 undefined)。
+    if (args.unhalt) {
+      writeSelfChangeConfigPatch(STATE_DIR, { halted_at: undefined, halt_reason: undefined, fail_streak: 0 })
+      if (json) console.log(JSON.stringify({ ok: true, unhalted: true }, null, 2))
+      else console.log('自改停机已解除:halted_at / halt_reason 清掉,fail_streak 归零。')
+      process.exit(0)
+      return
+    }
+
+    if (args.list) {
+      const rows = store.list().slice(0, 10)
+      if (json) {
+        console.log(JSON.stringify(rows.map(s => ({ id: s.id, step: s.step, result: s.result, startedAt: s.startedAt })), null, 2))
+      } else if (rows.length === 0) {
+        console.log('还没有跑过自改。')
+      } else {
+        for (const s of rows) {
+          console.log(`${s.id} · ${s.step} · ${s.result ?? '进行中'} · ${new Date(s.startedAt).toISOString()}`)
+        }
+      }
+      process.exit(0)
+      return
+    }
+
+    const budget = parseBudgetUsdFlag(args['budget-usd'])
+    if (!budget.ok) {
+      bail(1, 'invalid_budget_usd', `--budget-usd ${budget.error}`)
+      return
+    }
+    const from = args.from === undefined ? 'cli' : String(args.from)
+    if (from !== 'cli' && from !== 'wechat') {
+      bail(1, 'invalid_from', `--from ${from}(只认 cli 或 wechat)`)
+      return
+    }
+
+    // `--resume` 接着跑的是**存盘里的那一条**:需求、分支、已经花掉的钱、
+    // 修复轮次数都在里面,这里不能拿命令行再覆盖一遍。
+    const resumed = args.resume === undefined ? null : store.load(String(args.resume))
+    if (args.resume !== undefined && !resumed) {
+      bail(1, 'self_change_not_found', `没有这条自改:${String(args.resume)}(wechat-cc self change --list 看有哪些)`)
+      return
+    }
+    const request = typeof args.request === 'string' ? args.request.trim() : ''
+    if (!resumed && !request) {
+      bail(1, 'request_required', '要改什么?例:wechat-cc self change "在 ci-and-flakes.md 的 flake 表里加一行"')
+      return
+    }
+
+    // 克隆哪个仓库:源码模式问自己的 origin;打包版没有 checkout 可问,
+    // 只能要求主人在 agent-config.json 里写 self_change.repo_url。
+    const repoRoot = isCompiledBundle() ? null : dirname(fileURLToPath(import.meta.url))
+    let originUrl: string | null = null
+    if (repoRoot) {
+      const { makeGit, nodeGitSpawnSync } = await import('./src/cli/self-change/git.ts')
+      const r = makeGit(nodeGitSpawnSync, repoRoot).run(['remote', 'get-url', 'origin'])
+      originUrl = r.code === 0 && r.stdout.trim() ? r.stdout.trim() : null
+    }
+
+    const { homedir } = await import('node:os')
+    const resolved = resolveSelfChangeConfig({
+      agent: loadAgentConfig(STATE_DIR).self_change,
+      homeDir: homedir(),
+      platform: process.platform,
+      originUrl,
+      ...(budget.value === undefined ? {} : { overrides: { implementBudgetUsd: budget.value } }),
+    })
+    if (!resolved.ok) {
+      // 2 而不是 1:不是这次改动的错,重跑同样的需求没有意义 —— 得先有人去配。
+      bail(2, resolved.error, '不知道该克隆哪个仓库:打包版请在 agent-config.json 里写 self_change.repo_url(源码模式会问 git remote get-url origin)')
+      return
+    }
+
+    // 一次只跑一条。锁文件里写着 pid,持有者死了会被抢过来(见 state.ts)。
+    const lock = acquireLock(STATE_DIR, process.pid)
+    if (!lock.ok) {
+      bail(2, 'self_change_busy', `已经有一条自改在跑(pid ${lock.holder});等它结束,或者先 wechat-cc self change --list 看看`)
+      return
+    }
+
+    const state = resumed ?? newState({
+      id: newSelfChangeId(),
+      request,
+      from,
+      noDeploy: args.deploy === false,
+      now: Date.now(),
+    })
+
+    let outcome: Awaited<ReturnType<typeof runSelfChange>> | null = null
+    let crashed: unknown = null
+    try {
+      outcome = await runSelfChange(state, defaultPipelineDeps(STATE_DIR, resolved.config, { repoRoot }))
+    } catch (err) {
+      crashed = err
+    } finally {
+      // process.exit 之后 finally 不会跑,所以锁必须在这儿先还回去。
+      lock.release()
+    }
+    if (!outcome) {
+      bail(1, 'self_change_crashed', crashed instanceof Error ? `${crashed.message}\n${crashed.stack ?? ''}`.trim() : String(crashed))
+      return
+    }
+
+    if (json) console.log(JSON.stringify(outcome.state, null, 2))
+    else console.log(formatSelfChangeSummary(outcome.state))
+    process.exit(outcome.exitCode)
+  },
+})
+
 const selfCmd = defineCommand({
-  meta: { name: 'self', description: '自维护:部署自身（仅 macOS launchd；见 docs/maintainer/deploy.md）' },
-  subCommands: { deploy: selfDeployCmd },
+  meta: { name: 'self', description: '自维护:部署自身、让 CC 自己改自己（仅 macOS launchd；见 docs/maintainer/deploy.md 与 self-change.md）' },
+  subCommands: { change: selfChangeCmd, deploy: selfDeployCmd },
 })
 
 // ── selftest — real-machine closed loop against a running daemon ───────

@@ -24,6 +24,8 @@ wechat-cc selftest workbench --executor cursor --image --resume
 wechat-cc selftest chat --provider cursor --resume
 
 git push origin dev && wechat-cc ci triage --wait --rerun      # 看 CI(0 绿 / 1 真红 / 2 没运行 / 3 flake)
+
+wechat-cc self change "<需求>"                                  # 让 CC 自己走完上面整套(五道闸门 + 主人微信拍板)
 ```
 
-细节:部署见 `docs/maintainer/deploy.md`,验证见 `verify.md`,CI 与 flake 见 `ci-and-flakes.md`,迁移见 `migrations.md`,真机规矩见 `rules-from-real-machines.md`。
+细节:部署见 `docs/maintainer/deploy.md`,验证见 `verify.md`,CI 与 flake 见 `ci-and-flakes.md`,迁移见 `migrations.md`,自改见 `self-change.md`,真机规矩见 `rules-from-real-machines.md`。

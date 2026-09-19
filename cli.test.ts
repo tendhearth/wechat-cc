@@ -107,7 +107,7 @@ describe('citty migrated commands', () => {
   // 会让 docs/maintainer/*.md 里的每条命令一起失效。
   it('exposes the self / selftest subcommand surface', () => {
     const subs = cittyRoot.subCommands as Record<string, { subCommands?: Record<string, unknown> }>
-    expect(Object.keys(subs.self?.subCommands ?? {}).sort()).toEqual(['deploy'])
+    expect(Object.keys(subs.self?.subCommands ?? {}).sort()).toEqual(['change', 'deploy'])
     expect(Object.keys(subs.selftest?.subCommands ?? {}).sort()).toEqual(['chat', 'workbench'])
   })
 
@@ -145,6 +145,30 @@ describe('citty migrated commands', () => {
     expect(r?.args.rollback).toBe(false)
     expect(r?.args['health-timeout-ms']).toBe('90000')
     expect(r?.args.json).toBe(true)
+  })
+
+  it('self change parses its documented flags', async () => {
+    const r = await runWithNestedStub(
+      ['self', 'change', '在 flake 表里加一行', '--from', 'wechat', '--budget-usd', '8', '--no-deploy', '--json'],
+      ['self', 'change'],
+    )
+    expect(r?.args.request).toBe('在 flake 表里加一行')
+    expect(r?.args.from).toBe('wechat')
+    expect(r?.args['budget-usd']).toBe('8')
+    // 同 `self deploy --no-rollback`:citty/mri 把 `--no-deploy` 解析成布尔
+    // `deploy` 的否定,所以开关必须声明成 `deploy: { default: true }` ——
+    // 声明成 `'no-deploy'` 的话这个标志是个哑弹,会照样部署。
+    expect(r?.args.deploy).toBe(false)
+    expect(r?.args.json).toBe(true)
+
+    const listing = await runWithNestedStub(['self', 'change', '--list'], ['self', 'change'])
+    expect(listing?.args.list).toBe(true)
+    // 没写 `--no-deploy` 时 deploy 是 true(默认部署),不是 undefined。
+    expect(listing?.args.deploy).toBe(true)
+
+    const resumed = await runWithNestedStub(['self', 'change', '--resume', 'a1b2c3d4', '--unhalt'], ['self', 'change'])
+    expect(resumed?.args.resume).toBe('a1b2c3d4')
+    expect(resumed?.args.unhalt).toBe(true)
   })
 
   it('selftest workbench / chat parse their documented flags', async () => {
