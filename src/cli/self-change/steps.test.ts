@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { fakeState, gitReply, greenTriage, makeFakeDeps } from './pipeline.fixture'
-import { steps } from './steps'
+import { SUMMARY_MAX_CHARS, steps } from './steps'
 
 const HEAD_SHA = 'a'.repeat(40)
 const BASE_SHA = 'b'.repeat(40)
@@ -118,6 +118,19 @@ describe('implement', () => {
     expect(rec.git.find(a => a.includes('commit'))?.[0]).toBe('commit')
   })
 
+  it('执行者最后那段话留进 state(拍板卡要用)', async () => {
+    const s = fakeState()
+    const long = 'x'.repeat(2000) + '\n收尾:改了 a.ts,跑了四条验证。'
+    const { deps } = makeFakeDeps({
+      runner: () => ({ text: long }),
+      git: gitReply({ 'rev-list --count': '1\n' }),
+    })
+    await steps.implement(s, deps)
+    expect(s.implement.summary).toContain('收尾:改了 a.ts')
+    // 微信里一条几千字的卡片没人读 —— 留尾巴 1500 字。
+    expect(s.implement.summary.length).toBe(SUMMARY_MAX_CHARS)
+  })
+
   it('一个提交都没有 ⇒ no_changes(不进修复轮)', async () => {
     const { deps } = makeFakeDeps({ git: gitReply({ 'rev-list --count': '0\n' }) })
     const out = await steps.implement(fakeState(), deps)
@@ -224,6 +237,38 @@ describe('review', () => {
     expect(rec.git.some(a => a.join(' ') === `reset --hard ${HEAD_SHA}`)).toBe(true)
   })
 
+  it('判了 changes 却一条 critical / important 都没列 ⇒ 照样回一轮修复轮', async () => {
+    const s = fakeState()
+    const { deps } = makeFakeDeps({
+      runner: () => ({ text: '```json\n{"verdict":"changes","findings":[{"severity":"minor","summary":"命名可以再好点"}]}\n```' }),
+      git: gitReply({ 'rev-parse HEAD': HEAD_SHA }),
+    })
+    const out = await steps.review(s, deps)
+    // 「说要改却说不出哪里要改」不该当成放行 —— spec 的「只剩 minor ⇒ 通过」
+    // 说的是 approve 那一边。
+    expect(out.fixRound).toBe('review')
+    expect(out.fixPrompt).toContain('命名可以再好点')
+    expect(s.review.verdict).toBe('changes')
+  })
+
+  it('judge 一条意见都没给的 changes 也回修复轮', async () => {
+    const { deps } = makeFakeDeps({
+      runner: () => ({ text: '```json\n{"verdict":"changes","findings":[]}\n```' }),
+      git: gitReply({ 'rev-parse HEAD': HEAD_SHA }),
+    })
+    const out = await steps.review(fakeState(), deps)
+    expect(out.fixRound).toBe('review')
+    expect(out.detail).toContain('一条意见都没列出来')
+  })
+
+  it('approve + 只剩 minor ⇒ 照旧放行(这条没变)', async () => {
+    const { deps } = makeFakeDeps({
+      runner: () => ({ text: '```json\n{"verdict":"approve","findings":[{"severity":"minor","summary":"小事"}]}\n```' }),
+      git: gitReply({ 'rev-parse HEAD': HEAD_SHA }),
+    })
+    expect(await steps.review(fakeState(), deps)).toEqual({ ok: true, next: 'ci' })
+  })
+
   it('评审会话本身失败 ⇒ review_failed', async () => {
     const { deps } = makeFakeDeps({ runner: () => ({ ok: false, error: 'claude_exit_null' }) })
     expect(await steps.review(fakeState(), deps)).toMatchObject({ ok: false, fail: 'review_failed' })
@@ -246,6 +291,15 @@ describe('ci', () => {
     expect(out.fixPrompt).toContain('verdict=real')
   })
 
+  it('triage 退 2(没有运行 / 等超时 / gh 出错)⇒ ci_unavailable,不烧修复轮', async () => {
+    const { deps } = makeFakeDeps({ git: gitReply({ 'rev-parse HEAD': HEAD_SHA }) })
+    deps.ciTriage = async o => ({ report: { ...greenTriage(o.sha, 'unknown'), runId: null, url: null }, exitCode: 2 })
+    const out = await steps.ci(fakeState(), deps)
+    expect(out).toMatchObject({ ok: false, fail: 'ci_unavailable' })
+    expect(out.fixRound).toBeUndefined()
+    expect(out.detail).toContain('看不到 CI 结果')
+  })
+
   it('推不上去 ⇒ push_failed', async () => {
     const { deps } = makeFakeDeps({ git: gitReply({ push: { code: 1, stderr: 'permission denied' } }) })
     expect(await steps.ci(fakeState(), deps)).toMatchObject({ ok: false, fail: 'push_failed' })
@@ -255,6 +309,7 @@ describe('ci', () => {
 describe('approval', () => {
   it('allow ⇒ 去合并;卡片里有需求 / 分支 / CI / 费用', async () => {
     const s = fakeState({ ci: { runId: 1, url: 'https://ci/1', verdict: 'green', sha: HEAD_SHA } })
+    s.implement.summary = '把 flake 表补了一行,跑了四条验证全绿'
     s.implement.costUsd = 3.5
     s.review.costUsd = 0.5
     const { deps, rec } = makeFakeDeps({ git: gitReply({ 'diff --stat': ' src/a.ts | 2 +-\n' }) })
@@ -263,6 +318,10 @@ describe('approval', () => {
     expect(rec.asks[0]).toContain('self/ab12cd34 → dev')
     expect(rec.asks[0]).toContain('https://ci/1')
     expect(rec.asks[0]).toContain('$4.00')
+    // brief 里向执行者承诺过「最后那段话原样进拍板卡」—— 主人看 diffstat
+    // 看不出为什么这么改。
+    expect(rec.asks[0]).toContain('执行者说')
+    expect(rec.asks[0]).toContain('把 flake 表补了一行,跑了四条验证全绿')
     expect(s.approval).toMatchObject({ hash: 'h1', code: 'AB12', decision: 'allow' })
   })
 
@@ -368,6 +427,20 @@ describe('deploy', () => {
     expect(rec.patches).toEqual([{ fail_streak: 1 }])
   })
 
+  it('部署注入件**抛异常**(launchagent 不对 / 非 darwin)⇒ 也是 deploy_failed + fail_streak+1', async () => {
+    // 不接住的话异常跑到 run.ts 的兜底记成 crashed,而 crashed 既不加
+    // fail_streak 也不停机 —— 停机护栏会在最该生效的那天整条失效。
+    const s = fakeState()
+    const { deps, rec } = makeFakeDeps()
+    deps.deploy = async () => { throw new Error('launchagent_not_found') }
+    const out = await steps.deploy(s, deps)
+    expect(out).toMatchObject({ ok: false, fail: 'deploy_failed' })
+    expect(out.detail).toContain('launchagent_not_found')
+    expect(rec.patches).toEqual([{ fail_streak: 1 }])
+    expect(deps.config.failStreak).toBe(1)
+    expect(s.deploy.ok).toBe(false)
+  })
+
   it('成功 ⇒ 去自检,版本记进 state', async () => {
     const s = fakeState()
     const { deps, rec } = makeFakeDeps()
@@ -390,6 +463,30 @@ describe('selftest', () => {
     expect(rec.rolledBack).toEqual(['/w/repo'])
     expect(rec.patches).toEqual([{ fail_streak: 1 }])
     expect(s.selftest).toEqual({ workbench: true, chat: false })
+  })
+
+  it('自检注入件**抛异常** ⇒ 照样回滚 + fail_streak+1(跑不出结果 = 新二进制不可信)', async () => {
+    const s = fakeState({ merge: { sha: HEAD_SHA, rebased: false } })
+    const { deps, rec } = makeFakeDeps()
+    deps.selftest = async () => { throw new Error('workbench 起不来') }
+    const out = await steps.selftest(s, deps)
+    expect(out).toMatchObject({ ok: false, fail: 'selftest_failed_rolled_back' })
+    expect(out.detail).toContain('workbench 起不来')
+    expect(out.detail).toContain('dev 上的提交 aaaaaaaa 还在,需要人处理')
+    expect(rec.rolledBack).toEqual(['/w/repo'])
+    expect(rec.patches).toEqual([{ fail_streak: 1 }])
+  })
+
+  it('回滚自己也抛 ⇒ deploy_failed + fail_streak+1,话说到「要人手工换回 .prev」', async () => {
+    const s = fakeState({ merge: { sha: HEAD_SHA, rebased: false } })
+    const { deps, rec } = makeFakeDeps({ selftest: { workbench: false, chat: true } })
+    deps.rollback = async () => { throw new Error('launchagent_not_app_bundle') }
+    const out = await steps.selftest(s, deps)
+    expect(out).toMatchObject({ ok: false, fail: 'deploy_failed' })
+    expect(out.detail).toContain('launchagent_not_app_bundle')
+    expect(out.detail).toContain('.prev')
+    expect(out.detail).toContain('dev 上的提交 aaaaaaaa 还在,需要人处理')
+    expect(rec.patches).toEqual([{ fail_streak: 1 }])
   })
 
   it('全绿 ⇒ fail_streak 清零', async () => {

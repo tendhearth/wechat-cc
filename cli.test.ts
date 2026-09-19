@@ -171,6 +171,32 @@ describe('citty migrated commands', () => {
     expect(resumed?.args.unhalt).toBe(true)
   })
 
+  // 微信进件口(src/daemon/self-change-spawn.ts)把需求放在 `--` 之后。这条钉住
+  // 的是**另一端**:citty 确实把 `--` 之后的东西原样当位置参数,而不是开关。
+  // 不这样的话「自改 --unhalt」会静默解除停机 —— 主人以为在提需求。
+  it('self change 把 `--` 之后的需求当位置参数,哪怕它长得像开关', async () => {
+    const r = await runWithNestedStub(
+      ['self', 'change', '--from', 'wechat', '--json', '--', '--unhalt'],
+      ['self', 'change'],
+    )
+    expect(r?.args.request).toBe('--unhalt')
+    expect(Boolean(r?.args.unhalt)).toBe(false)
+    expect(r?.args.from).toBe('wechat')
+    expect(r?.args.json).toBe(true)
+
+    const dashed = await runWithNestedStub(
+      ['self', 'change', '--from', 'wechat', '--json', '--', '-x 把这个删了'],
+      ['self', 'change'],
+    )
+    expect(dashed?.args.request).toBe('-x 把这个删了')
+
+    const plain = await runWithNestedStub(
+      ['self', 'change', '--from', 'wechat', '--json', '--', '给 flake 表加一行'],
+      ['self', 'change'],
+    )
+    expect(plain?.args.request).toBe('给 flake 表加一行')
+  })
+
   it('selftest workbench / chat parse their documented flags', async () => {
     const wb = await runWithNestedStub(
       ['selftest', 'workbench', '--executor', 'cursor', '--image', '--resume', '--json', '--timeout-ms', '300000', '--keep'],

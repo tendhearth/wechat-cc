@@ -19,6 +19,8 @@
  */
 import { spawnSync } from 'node:child_process'
 
+import { workbenchSubprocessEnv } from '../../core/workbench/subprocess-env'
+
 export interface GitResult {
   code: number | null
   stdout: string
@@ -59,7 +61,13 @@ const SAFE_ARGS: readonly string[] = [
 ]
 
 export function gitEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...base }
+  // daemon 的凭据(WECHAT_ / HEARTH_ / WXVAULT_ / WXGRAPH_)一并摘掉,和 runner
+  // (runnerEnv)、测试子进程(exec)同一条规矩 —— 这些 git 跑在一个**执行者刚
+  // 动过的克隆**里,而 `.git/config` 不在 guard 的管辖内(guard 只看 tracked 的
+  // 三点 diff):`credential.helper` / `core.sshCommand` / `url.*.insteadOf` 都能
+  // 把一条 `git push` 变成一条命令,而且是在主人看到拍板卡**之前**。
+  // hooks 已经用 `core.hooksPath=<空设备>` 挡掉了,这是同一族里漏掉的那个。
+  const env: NodeJS.ProcessEnv = workbenchSubprocessEnv(base)
   for (const key of Object.keys(env)) if (key.startsWith('GIT_')) delete env[key]
   return { ...env, LC_ALL: 'C', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat' }
 }

@@ -31,6 +31,21 @@ describe('gitEnv', () => {
     expect(env.LC_ALL).toBe('C')
   })
 
+  // 这些 git 跑在一个执行者刚动过的克隆里,而 .git/config 不在 guard 的管辖内:
+  // credential.helper / core.sshCommand / url.*.insteadOf 都能把一条 git push
+  // 变成一条命令 —— 而且是在主人看到拍板卡之前。
+  it('daemon 的凭据一个不进 git(和 runner / exec 同一条规矩)', () => {
+    const env = gitEnv({
+      PATH: '/usr/bin',
+      WECHAT_TOKEN: 'secret', WECHAT_IPC_KEY: 'k2', HEARTH_KEY: 'k', WXVAULT_TOKEN: 't', WXGRAPH_URL: 'u',
+      ANTHROPIC_API_KEY: 'keep', HTTPS_PROXY: 'keep-too',
+    })
+    expect(Object.keys(env).filter(k => /^(WECHAT_|HEARTH_|WXVAULT_|WXGRAPH_)/i.test(k))).toEqual([])
+    // 供应商鉴权和代理照留 —— push 要走网,credential.helper 也要跑起来。
+    expect(env.ANTHROPIC_API_KEY).toBe('keep')
+    expect(env.HTTPS_PROXY).toBe('keep-too')
+  })
+
   it('全局配置**不能**屏蔽:push 要 credential.helper,commit 要身份', () => {
     const env = gitEnv({})
     expect(env.GIT_CONFIG_GLOBAL).toBeUndefined()
@@ -55,6 +70,15 @@ describe('makeGit', () => {
 
     git.run(['clone', 'x', 'repo'], { cwd: '/w', timeoutMs: 1000 })
     expect(calls[1]!.opts).toMatchObject({ cwd: '/w', timeout: 1000 })
+  })
+
+  it('真正交给 spawnSync 的那份 env 里没有 daemon 凭据', () => {
+    const { spawn, calls } = spy()
+    makeGit(spawn, '/w/repo', { PATH: '/usr/bin', WECHAT_TOKEN: 'secret', HEARTH_KEY: 'k' }).run(['status'])
+    const env = calls[0]!.opts.env
+    expect(Object.keys(env).filter(k => k.startsWith('WECHAT_'))).toEqual([])
+    expect(env.HEARTH_KEY).toBeUndefined()
+    expect(env.PATH).toBe('/usr/bin')
   })
 
   it('起不来 / 超时(status 为 null)时把原因搬到 stderr 上,不然失败报告是空的', () => {

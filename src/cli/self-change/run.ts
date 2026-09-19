@@ -12,7 +12,7 @@
  * 设计:docs/superpowers/specs/2026-09-18-self-change-pipeline-design.md §流程与闸门。
  */
 import { SELF_CHANGE_DEFAULTS } from './policy'
-import { commitAll, isDirty, notify, repoPath, steps, writePatch, type FixKind, type PipelineDeps } from './steps'
+import { commitAll, isDirty, notify, repoPath, steps, summaryOf, writePatch, type FixKind, type PipelineDeps } from './steps'
 import type { SelfChangeState } from './state'
 
 /** 退出码的唯一出处(CLI 和微信侧都读这张表)。 */
@@ -105,6 +105,10 @@ export async function runSelfChange(
     if (res.sessionId) s.implement.sessionId = res.sessionId
     s.implement.costUsd += res.costUsd
     s.implement.turns += res.turns
+    // 拍板卡要的是**最近一轮**说的话:修了两轮之后再给主人看第一轮的交代,
+    // 等于让他照着一份过期的说明拍板。空话不覆盖(宁可留着上一轮那段)。
+    const summary = summaryOf(res.text)
+    if (summary) s.implement.summary = summary
     if (res.stderrTail.length) s.stderrTail = res.stderrTail
     if (!res.ok) return await finish('implement_failed', `修复轮(${kind}):${res.error ?? 'unknown'}${res.timedOut ? '(被超时杀掉)' : ''}\n${res.text.slice(-1000)}`)
     try {

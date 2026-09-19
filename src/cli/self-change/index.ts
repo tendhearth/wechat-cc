@@ -141,7 +141,9 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
     config,
     state: makeStateStore(stateDir),
     // 缺省 cwd 是专用克隆;clone 那一步会显式传 workdir(那时候克隆还不存在)。
-    git: makeGit(nodeGitSpawnSync, repoPath(config)),
+    // env 显式过一遍 workbenchSubprocessEnv:和 exec / runner 同一条规矩,
+    // 而且写在这儿看得见(gitEnv 里还会再过一次,这是有意的双保险)。
+    git: makeGit(nodeGitSpawnSync, repoPath(config), workbenchSubprocessEnv(process.env)),
     runner: makeClaudeRunner({ launch: spawnCollect, env: process.env }),
     daemon: makeDaemonClient({ readApiInfo: () => readApiInfo(stateDir), fetch }),
 

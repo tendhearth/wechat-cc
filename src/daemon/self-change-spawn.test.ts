@@ -65,13 +65,28 @@ describe('makeSelfChangeSpawner', () => {
     })
   }
 
-  it('start 把需求作为最后一个位置参数交给 `self change --from wechat --json`', () => {
+  it('start 把需求放在 `--` 之后交给 `self change --from wechat --json`', () => {
     const r = make().start('  在手册里加一行  ')
     expect(r).toEqual({ ok: true, pid: 4242 })
     expect(spawn).toHaveBeenCalledOnce()
     const [cmd, args] = spawn.mock.calls[0]!
     expect(cmd).toBe('/usr/local/bin/bun')
-    expect(args).toEqual(['/repo/cli.ts', 'self', 'change', '--from', 'wechat', '--json', '在手册里加一行'])
+    expect(args).toEqual(['/repo/cli.ts', 'self', 'change', '--from', 'wechat', '--json', '--', '在手册里加一行'])
+  })
+
+  // `--` 不是装饰:需求是主人在微信里随口说的一句话。少了它,「自改 --unhalt」
+  // 会被 citty 解析成开关,**静默解除停机**(退 0、stdio 丢弃,daemon 还回一句
+  //「自改开始了」);「自改 -x …」则整句需求丢失,进程以 request_required 退 1。
+  it('以 `-` 开头的需求仍然是位置参数,不会变成开关', () => {
+    for (const text of ['--unhalt', '-x 把这个删了', '--list']) {
+      spawn.mockClear()
+      expect(make().start(text).ok).toBe(true)
+      const args = spawn.mock.calls[0]![1] as string[]
+      expect(args.at(-1)).toBe(text)
+      expect(args.at(-2)).toBe('--')
+      // 开关只能出现在 `--` 前面那一段。
+      expect(args.slice(0, args.indexOf('--'))).not.toContain(text)
+    }
   })
 
   it('start 是 detached / stdio ignore / windowsHide,并且 unref 了', () => {

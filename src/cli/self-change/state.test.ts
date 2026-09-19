@@ -29,7 +29,7 @@ describe('newState', () => {
     expect(s.startedAt).toBe(1000)
     expect(s.updatedAt).toBe(1000)
     expect(s.baseSha).toBeNull()
-    expect(s.implement).toEqual({ sessionId: null, costUsd: 0, turns: 0, rounds: { tests: 0, review: 0, ci: 0 } })
+    expect(s.implement).toEqual({ sessionId: null, costUsd: 0, turns: 0, summary: '', rounds: { tests: 0, review: 0, ci: 0 } })
     expect(s.review).toEqual({ sessionId: null, costUsd: 0, verdict: null, findings: [] })
     expect(s.ci).toEqual({ runId: null, url: null, verdict: null, sha: null })
     expect(s.approval).toEqual({ hash: null, code: null, decision: null, askedAt: null })

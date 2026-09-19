@@ -23,6 +23,30 @@ export interface SelfChangeConfig {
 }
 
 /**
+ * 拍板超时的上下界。**下界不是拍脑袋的**:daemon 那侧的
+ * `POST /v1/permissions/ask` 把 timeout 卡在 [60s, 48h],超出就 400 ——
+ * 而 400 在这条流水线里看起来是「daemon 不知道主人是谁」(owner_chat_unknown),
+ * 和真因(`approval_timeout_h` 写了个 72)毫无关系。与其让主人去追一个假症状,
+ * 不如在这里就掐到两边都认的范围里,并说一声。
+ */
+const APPROVAL_TIMEOUT_MIN_MS = 3_600_000
+const APPROVAL_TIMEOUT_MAX_MS = 48 * 3_600_000
+
+/** 掐过一次就别再刷屏了(一个进程里只跑一条自改)。 */
+let clampWarned = false
+
+export function clampApprovalTimeoutMs(hours: number): number {
+  const wanted = hours * 3_600_000
+  if (!Number.isFinite(wanted)) return SELF_CHANGE_DEFAULTS.approval_timeout_h * 3_600_000
+  const clamped = Math.min(Math.max(wanted, APPROVAL_TIMEOUT_MIN_MS), APPROVAL_TIMEOUT_MAX_MS)
+  if (clamped !== wanted && !clampWarned) {
+    clampWarned = true
+    console.error(`self change: approval_timeout_h=${hours} 超出 [1, 48] 小时(daemon 的拍板卡只认这个范围),按 ${clamped / 3_600_000} 小时算`)
+  }
+  return clamped
+}
+
+/**
  * 合成配置。唯一会失败的一件事是**不知道该克隆哪个仓库**:源码模式下
  * `git remote get-url origin` 能拿到(调用方传 originUrl),打包版拿不到,
  * 就只能要求主人在 agent-config 里写 `self_change.repo_url`。
@@ -49,7 +73,7 @@ export function resolveSelfChangeConfig(input: {
       reviewBudgetUsd: agent?.review_budget_usd ?? SELF_CHANGE_DEFAULTS.review_budget_usd,
       maxTurns: agent?.max_turns ?? SELF_CHANGE_DEFAULTS.max_turns,
       maxPerDay: agent?.max_per_day ?? SELF_CHANGE_DEFAULTS.max_per_day,
-      approvalTimeoutMs: approvalTimeoutH * 3_600_000,
+      approvalTimeoutMs: clampApprovalTimeoutMs(approvalTimeoutH),
       selftestExecutor: agent?.selftest_executor ?? SELF_CHANGE_DEFAULTS.selftest_executor,
       selftestProvider: agent?.selftest_provider ?? SELF_CHANGE_DEFAULTS.selftest_provider,
       haltedAt: agent?.halted_at ?? null,

@@ -75,6 +75,32 @@ describe('resolveSelfChangeConfig', () => {
     expect(r.config.failStreak).toBe(2)
   })
 
+  // daemon 的 POST /v1/permissions/ask 把 timeout 卡在 [60s, 48h],超出就 400 ——
+  // 而 400 在流水线里长得像「daemon 不知道主人是谁」(owner_chat_unknown),
+  // 和真因(approval_timeout_h 写了个 72)毫无关系。所以在这里就掐住。
+  it('approval_timeout_h 掐在 [1, 48] 小时', () => {
+    const at = (h: number): number => {
+      const r = resolveSelfChangeConfig({ ...base, agent: { approval_timeout_h: h }, originUrl: 'o' })
+      if (!r.ok) throw new Error('expected ok')
+      return r.config.approvalTimeoutMs
+    }
+    expect(at(72)).toBe(48 * 3_600_000)      // 上界
+    expect(at(0.25)).toBe(3_600_000)          // 下界
+    expect(at(0)).toBe(3_600_000)
+    expect(at(-5)).toBe(3_600_000)
+    // 范围内的原样换算。
+    expect(at(1)).toBe(3_600_000)
+    expect(at(24)).toBe(24 * 3_600_000)
+    expect(at(48)).toBe(48 * 3_600_000)
+  })
+
+  it('approval_timeout_h 是个 NaN ⇒ 回到缺省 24 小时,而不是算出 NaN', () => {
+    const r = resolveSelfChangeConfig({ ...base, agent: { approval_timeout_h: Number.NaN }, originUrl: 'o' })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.config.approvalTimeoutMs).toBe(24 * 3_600_000)
+  })
+
   it('--budget-usd 覆盖压过配置', () => {
     const r = resolveSelfChangeConfig({
       ...base, agent: { implement_budget_usd: 20 }, originUrl: 'o', overrides: { implementBudgetUsd: 2 },

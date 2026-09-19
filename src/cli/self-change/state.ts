@@ -30,6 +30,11 @@ export interface SelfChangeState {
     sessionId: string | null
     costUsd: number
     turns: number
+    /**
+     * 执行者最后那段话(最近一轮的尾巴,≤ SUMMARY_MAX_CHARS 字)。
+     * brief 里向它承诺过「这段话会原样进主人的拍板卡」—— 卡片就从这儿取。
+     */
+    summary: string
     /** 三处修复轮各自独立计数,各最多 SELF_CHANGE_DEFAULTS.max_fix_rounds 轮。 */
     rounds: { tests: number; review: number; ci: number }
   }
@@ -58,7 +63,7 @@ export function newState(input: {
     startedAt: input.now,
     updatedAt: input.now,
     noDeploy: input.noDeploy,
-    implement: { sessionId: null, costUsd: 0, turns: 0, rounds: { tests: 0, review: 0, ci: 0 } },
+    implement: { sessionId: null, costUsd: 0, turns: 0, summary: '', rounds: { tests: 0, review: 0, ci: 0 } },
     review: { sessionId: null, costUsd: 0, verdict: null, findings: [] },
     ci: { runId: null, url: null, verdict: null, sha: null },
     approval: { hash: null, code: null, decision: null, askedAt: null },

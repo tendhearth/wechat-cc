@@ -16,8 +16,13 @@ import type { ReviewFinding } from './state'
  * `--append-system-prompt-file` 的正文(流水线写到 `<workdir>/briefs/<id>.md`)。
  * `branch` 是执行者当前所在的分支(`self/<id>`),`forbidden` 是 policy.ts 的禁改清单。
  */
-export function implementBrief(input: { id: string; branch: string; forbidden: readonly string[] }): string {
+export function implementBrief(input: { id: string; branch: string; forbidden: readonly string[]; exceptions?: readonly string[] }): string {
   const list = input.forbidden.map(p => `- \`${p}\``).join('\n')
+  // 例外要说出来:清单里写着 `.github/workflows/**`,不说一句的话执行者会
+  // 连自己这次改动的 CI 作业都不敢动(而那正是白名单放它改的)。
+  const except = input.exceptions?.length
+    ? `\n- 这几个是上面那几条里**挖掉的洞**,可以改:\n${input.exceptions.map(p => `  - \`${p}\``).join('\n')}`
+    : ''
   return `# 自改 #${input.id}
 
 你在 wechat-cc 的一个**专用克隆**里(当前工作目录就是仓库根),当前分支 \`${input.branch}\`。
@@ -33,7 +38,7 @@ export function implementBrief(input: { id: string; branch: string; forbidden: r
   STATE_DIR 这些真实状态目录 —— 一律不许碰。
 - 下面这些文件**禁止改动**(发版通道、签名与更新源、护栏本身、出事后的回滚配方)。
   动了其中任何一个,guard 闸门会直接判整条流水线失败:
-${list}
+${list}${except}
 
 ## 自己提交
 - 改完**自己 \`git commit\`**,提交信息用中文写清楚为什么这么改;可以分多次提交。

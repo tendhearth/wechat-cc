@@ -103,7 +103,11 @@ export function makeSelfChangeSpawner(deps: {
       try {
         const child = deps.spawn(
           resolved.cmd,
-          [...resolved.args, 'self', 'change', '--from', 'wechat', '--json', text],
+          // `--` 不能省:需求是主人在微信里随口说的一句话,以 `-` 开头就会被
+          // 当成开关 ——「自改 --unhalt」会**静默解除停机**(退 0、stdio 丢弃,
+          // daemon 还回一句「自改开始了」),「自改 -x …」则整句需求丢失、
+          // 进程以 request_required 退 1,而主人以为它在跑。
+          [...resolved.args, 'self', 'change', '--from', 'wechat', '--json', '--', text],
           {
             ...(deps.cwd ? { cwd: deps.cwd } : {}),
             detached: true,

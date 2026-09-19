@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { join } from 'node:path'
 
-import { FORBIDDEN_GLOBS, SELF_CHANGE_DEFAULTS, defaultWorkdir, forbiddenPaths } from './policy'
+import { FORBIDDEN_EXCEPTIONS, FORBIDDEN_GLOBS, SELF_CHANGE_DEFAULTS, defaultWorkdir, forbiddenPaths } from './policy'
 
 describe('forbiddenPaths', () => {
   it('只挑出禁改文件,别的原样放行', () => {
@@ -32,6 +32,33 @@ describe('forbiddenPaths', () => {
       'apps/desktop/src-tauri/tauri.conf.json',
       'src/cli/self-deploy.ts',
     ])).toHaveLength(6)
+  })
+
+  // 按确切路径列工作流,新加一个 publish-update-2.yml 就在网外面 —— 所以是整个目录。
+  it('整个 .github/workflows 都在网里(新加的工作流不用再补清单)', () => {
+    expect(forbiddenPaths([
+      '.github/workflows/publish-update.yml',
+      '.github/workflows/publish-update-2.yml',
+      '.github/workflows/desktop.yml',
+      '.github/workflows/nested/x.yml',
+    ])).toHaveLength(4)
+  })
+
+  // tests 那道闸门跑的就是 package.json scripts 里的四条 —— 改得动它等于
+  // 能把闸门换成橡皮图章。
+  it('package.json 在网里(它是 tests 闸门自己的定义)', () => {
+    expect(forbiddenPaths(['package.json'])).toEqual(['package.json'])
+    // 只认仓库根那一份:子包的 package.json 不在发版 / 闸门链路上。
+    expect(forbiddenPaths(['apps/desktop/package.json'])).toEqual([])
+  })
+
+  it('ci.yml 是白名单里挖掉的那个洞(自改要改得了自己的测试矩阵)', () => {
+    expect(FORBIDDEN_EXCEPTIONS).toEqual(['.github/workflows/ci.yml'])
+    expect(forbiddenPaths(['.github/workflows/ci.yml'])).toEqual([])
+    expect(forbiddenPaths(['./.github/workflows/ci.yml'])).toEqual([])
+    // 例外是**确切路径**:蹭名字的不算。
+    expect(forbiddenPaths(['.github/workflows/ci.yml.bak'])).toEqual(['.github/workflows/ci.yml.bak'])
+    expect(forbiddenPaths(['.github/workflows/ci2.yml'])).toEqual(['.github/workflows/ci2.yml'])
   })
 
   it('不受 ./ 前缀与反斜杠影响(Windows 上的 git 输出)', () => {

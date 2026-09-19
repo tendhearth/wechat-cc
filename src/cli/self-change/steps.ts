@@ -16,13 +16,14 @@ import { join } from 'node:path'
 
 import type { SelfChangeSettings } from '../../lib/agent-config'
 import { formatTriage, stripAnsi, type TriageReport } from '../ci-triage'
+import { CI_TRIAGE_EXIT } from '../ci-triage-run'
 import type { SelfDeployResult } from '../self-deploy'
 import type { SelftestReport } from '../selftest'
 import { fixPrompt, implementBrief, parseReviewVerdict, reviewPrompt } from './brief'
 import type { SelfChangeConfig } from './config'
 import { writeSelfChangeConfigPatch } from './config'
 import type { Git } from './git'
-import { FORBIDDEN_GLOBS, SELF_CHANGE_DEFAULTS, forbiddenPaths } from './policy'
+import { FORBIDDEN_EXCEPTIONS, FORBIDDEN_GLOBS, SELF_CHANGE_DEFAULTS, forbiddenPaths } from './policy'
 import type { ImplementRunner } from './runner'
 import type { DaemonClient } from './daemon-client'
 import type { ReviewFinding, SelfChangeState, SelfChangeStep, StateStore } from './state'
@@ -157,6 +158,11 @@ function tail(text: string, lines: number): string {
   return all.slice(Math.max(0, all.length - lines)).join('\n')
 }
 
+/** 注入件抛出来的东西(假件说谎、launchd 环境不对、磁盘满)翻成一行人话。 */
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
 function startOfDay(now: number): number {
   const d = new Date(now)
   d.setHours(0, 0, 0, 0)
@@ -212,12 +218,21 @@ async function repo(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
     }
 
     d.fs.mkdirp(join(workdir, 'briefs'))
-    d.fs.writeFile(briefPath(d.config, s.id), implementBrief({ id: s.id, branch: s.branch, forbidden: FORBIDDEN_GLOBS }))
+    d.fs.writeFile(briefPath(d.config, s.id), implementBrief({ id: s.id, branch: s.branch, forbidden: FORBIDDEN_GLOBS, exceptions: FORBIDDEN_EXCEPTIONS }))
     return { ok: true, next: 'implement' }
   })
 }
 
 // ── implement ────────────────────────────────────────────────────────────────
+
+/** 拍板卡里「执行者说」那一节最多留多少字(留尾巴 —— 收尾那段话在最后)。 */
+export const SUMMARY_MAX_CHARS = 1500
+
+/** 执行者(或修复轮)最后那段话,截尾巴。空话不覆盖上一轮的。 */
+export function summaryOf(text: string): string {
+  const trimmed = text.trim()
+  return trimmed.slice(-SUMMARY_MAX_CHARS)
+}
 
 async function implement(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
   const dir = repoPath(d.config)
@@ -231,6 +246,10 @@ async function implement(s: SelfChangeState, d: PipelineDeps): Promise<StepOutco
   if (res.sessionId) s.implement.sessionId = res.sessionId
   s.implement.costUsd += res.costUsd
   s.implement.turns += res.turns
+  // 执行者最后那段话要原样进拍板卡 —— brief 里就是这么向它承诺的,
+  // 主人拿着一份 diffstat 是拍不了板的。
+  const summary = summaryOf(res.text)
+  if (summary) s.implement.summary = summary
   if (res.stderrTail.length) s.stderrTail = res.stderrTail
   if (!res.ok) return { ok: false, fail: 'implement_failed', detail: `${res.error ?? 'unknown'}${res.timedOut ? '(被超时杀掉)' : ''}\n${res.text.slice(-1000)}` }
 
@@ -344,6 +363,16 @@ async function review(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
       const detail = formatFindings(blocking)
       return { ok: false, fixRound: 'review', fixPrompt: fixPrompt('review', detail), detail }
     }
+    // 判了 `changes` 却一条 critical / important 都列不出来:这不是「只剩 minor 可以放行」,
+    // 是评审自己没说清楚。回一轮修复(计数照算,所以最多两轮就到头),
+    // 比拿着一句「要改」直接合进 dev 强。
+    if (s.review.verdict === 'changes') {
+      const minors = findings.filter(f => f.severity === 'minor')
+      const detail = minors.length
+        ? `评审判了 changes,但没有列出 critical / important。它列出来的是:\n${formatFindings(minors)}`
+        : '评审判了 changes,但一条意见都没列出来。请自己复查一遍改动:哪里可能让它这么判?'
+      return { ok: false, fixRound: 'review', fixPrompt: fixPrompt('review', detail), detail }
+    }
     return { ok: true, next: 'ci' }
   })
 }
@@ -358,9 +387,18 @@ async function ci(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
   return await guardGit('push_failed', async () => {
     git(d, ['push', '-u', '--force', 'origin', s.branch], { timeoutMs: NETWORK_TIMEOUT_MS })
     const sha = git(d, ['rev-parse', 'HEAD']).trim()
-    const { report } = await d.ciTriage({ sha, branch: s.branch })
+    const { report, exitCode } = await d.ciTriage({ sha, branch: s.branch })
     s.ci = { runId: report.runId, url: report.url, verdict: report.verdict, sha }
     if (report.verdict === 'green') return { ok: true, next: 'approval' }
+    // 退 2 是「没看到 CI 结果」(压根没有运行、等超时、gh 没登录 / 出错),
+    // 不是「改动有问题」。交给执行者修等于白烧一轮预算 —— 这条得人去看。
+    if (exitCode === CI_TRIAGE_EXIT.noRun) {
+      return {
+        ok: false,
+        fail: 'ci_unavailable',
+        detail: `看不到 CI 结果(ci triage 退 ${exitCode}:没有运行 / 等超时 / gh 出错)。分支 ${s.branch} 已经推上去了,人可以自己去看:\n${formatTriage(report)}`,
+      }
+    }
     const detail = formatTriage(report)
     return { ok: false, fixRound: 'ci', fixPrompt: fixPrompt('ci', detail), detail }
   })
@@ -376,6 +414,11 @@ function approvalCard(s: SelfChangeState, d: PipelineDeps, diffstat: string): st
     '',
     `需求:${s.request}`,
     `分支:${s.branch} → ${d.config.branch}`,
+    '',
+    // brief 里向执行者承诺过「最后那段话会原样进主人的拍板卡」——
+    // 主人看 diffstat 看不出为什么这么改,这一节才是他拍板的依据。
+    '执行者说:',
+    s.implement.summary || '(它什么都没说)',
     '',
     '改动:',
     diffstat,
@@ -493,7 +536,18 @@ async function deploy(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
     return { ok: false, fail: 'deploy_failed', detail: `bun run build-sidecar → ${build.code}\n${tail(build.stderr || build.stdout, 40)}` }
   }
 
-  const result = await d.deploy(dir)
+  // `planSelfDeploy` 在 launchagent 找不到 / 不是 app bundle / 非 darwin 上**抛**
+  // 而不是返回。不接住的话异常一路跑到 run.ts 的兜底,记成 `crashed` ——
+  // 而 `crashed` 既不加 fail_streak 也不停机,于是「连红两次就停机」这条护栏
+  // 在最该生效的那一天整条失效。
+  let result: SelfDeployResult
+  try {
+    result = await d.deploy(dir)
+  } catch (err) {
+    s.deploy.ok = false
+    bumpFailStreak(d)
+    return { ok: false, fail: 'deploy_failed', detail: `部署没跑起来:${errText(err)}` }
+  }
   s.deploy.ok = result.ok
   s.deploy.version = result.version ?? null
   if (!result.ok) {
@@ -506,23 +560,51 @@ async function deploy(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
 // ── selftest ─────────────────────────────────────────────────────────────────
 
 /**
- * 自检红 ⇒ 回滚二进制。**代码已经在 dev 上了**,回滚回不去 —— 所以 detail 里
- * 必须写明这件事,不然主人看到「已回滚」会以为什么都没发生。
+ * 回滚二进制 + 记一次失败。
+ *
+ * **代码已经在 dev 上了**,回滚回不去 —— 所以 detail 里必须写明这件事,
+ * 不然主人看到「已回滚」会以为什么都没发生。
+ *
+ * 回滚本身也会抛(`planSelfDeploy` 在 launchagent 不对时抛):那比自检红一级
+ * 更糟 —— 机器上跑着的还是那个新二进制。归 `deploy_failed`(同样是 HALTABLE,
+ * 连着两次就停机),话要说到「需要人」为止。
  */
+async function rollBack(s: SelfChangeState, d: PipelineDeps, why: string): Promise<StepOutcome> {
+  const stillOnDev = `但 dev 上的提交 ${s.merge.sha?.slice(0, 8) ?? '(未知)'} 还在,需要人处理(改好或 revert)。`
+  let rolled: SelfDeployResult
+  try {
+    rolled = await d.rollback(repoPath(d.config))
+  } catch (err) {
+    bumpFailStreak(d)
+    return {
+      ok: false,
+      fail: 'deploy_failed',
+      detail: `${why};回滚也没跑起来:${errText(err)} —— 机器上跑的还是新二进制,要人手工换回 .prev。${stillOnDev}`,
+    }
+  }
+  bumpFailStreak(d)
+  return {
+    ok: false,
+    fail: 'selftest_failed_rolled_back',
+    detail: `${why};二进制已${rolled.ok ? '回滚到上一版' : '回滚失败'}。${stillOnDev}`,
+  }
+}
+
+/** 自检红 ⇒ 回滚二进制(见 rollBack);全绿 ⇒ fail_streak 归零。 */
 async function selftest(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
-  const r = await d.selftest()
+  let r: { workbench: SelftestReport; chat: SelftestReport }
+  try {
+    r = await d.selftest()
+  } catch (err) {
+    // 自检自己抛了(执行者起不来、daemon 换上去之后接不上):按红了处理。
+    // 「跑不出结果」和「跑出来是红的」对这台机器的意思是一样的 —— 新二进制不可信。
+    return await rollBack(s, d, `自检没跑完:${errText(err)}`)
+  }
   s.selftest.workbench = r.workbench.ok
   s.selftest.chat = r.chat.ok
   if (!r.workbench.ok || !r.chat.ok) {
-    const rolled = await d.rollback(repoPath(d.config))
-    bumpFailStreak(d)
     const which = [r.workbench.ok ? null : '工作台', r.chat.ok ? null : '对话'].filter(Boolean).join(' / ')
-    return {
-      ok: false,
-      fail: 'selftest_failed_rolled_back',
-      detail: `自检红了(${which});二进制已${rolled.ok ? '回滚到上一版' : '回滚失败'}。` +
-        `但 dev 上的提交 ${s.merge.sha?.slice(0, 8) ?? '(未知)'} 还在,需要人处理(改好或 revert)。`,
-    }
+    return await rollBack(s, d, `自检红了(${which})`)
   }
   if (d.config.failStreak !== 0) {
     d.config.failStreak = 0

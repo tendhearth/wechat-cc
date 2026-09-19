@@ -181,13 +181,30 @@ describe('结局', () => {
     expect((await runSelfChange(fakeState(), noDaemon.deps)).exitCode).toBe(2)
   })
 
-  it('步骤抛异常 ⇒ crashed,原文进 state,退出码 1', async () => {
+  it('步骤没接住的异常 ⇒ crashed,原文进 state,退出码 1', async () => {
     const { deps } = happy()
-    deps.selftest = async () => { throw new Error('自检客户端炸了') }
+    deps.exec = async () => { throw new Error('bun 不见了') }
     const { state, exitCode } = await runSelfChange(fakeState(), deps)
     expect(state.result).toBe('crashed')
-    expect(state.error).toContain('自检客户端炸了')
+    expect(state.error).toContain('bun 不见了')
     expect(exitCode).toBe(1)
+  })
+
+  // deploy / selftest 两处**故意不**落到 crashed:crashed 既不加 fail_streak
+  // 也不停机,而这两步抛异常(launchd 环境不对)恰恰是最该停机的那种失败。
+  it('部署 / 自检抛异常不走 crashed,而是记进 fail_streak 的那两种结局', async () => {
+    const deployThrew = happy()
+    deployThrew.deps.deploy = async () => { throw new Error('launchagent_not_found') }
+    const a = await runSelfChange(fakeState(), deployThrew.deps)
+    expect(a.state.result).toBe('deploy_failed')
+    expect(deployThrew.deps.config.failStreak).toBe(1)
+
+    const selftestThrew = happy()
+    selftestThrew.deps.selftest = async () => { throw new Error('自检客户端炸了') }
+    const b = await runSelfChange(fakeState(), selftestThrew.deps)
+    expect(b.state.result).toBe('selftest_failed_rolled_back')
+    expect(selftestThrew.rec.rolledBack.length).toBe(1)
+    expect(selftestThrew.deps.config.failStreak).toBe(1)
   })
 
   it('--resume:从 state 里的那一步接着跑,不重做前面的', async () => {
