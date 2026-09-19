@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { claudeArgs, makeClaudeRunner, parseClaudeJson, runnerEnv, type RunnerInput } from './runner'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { claudeArgs, makeClaudeRunner, parseClaudeJson, runnerEnv, spawnCollect, type RunnerInput } from './runner'
 
 const base: RunnerInput = { cwd: '/tmp/repo', prompt: '做点事', budgetUsd: 20, maxTurns: 300 }
 
@@ -9,7 +13,7 @@ describe('claudeArgs', () => {
     expect(claudeArgs(base)).toEqual([
       '-p', '--output-format', 'json', '--dangerously-skip-permissions',
       '--max-budget-usd', '20', '--max-turns', '300',
-      '做点事',
+      '--', '做点事',
     ])
   })
 
@@ -31,6 +35,12 @@ describe('claudeArgs', () => {
     expect(args[args.indexOf('--disallowedTools') + 1]).toBe('Edit,Write,MultiEdit,NotebookEdit')
   })
 
+  it('需求正文前面必须有 --(--disallowedTools 是变长选项,不然会把正文当成又一个工具名吃掉)', () => {
+    const args = claudeArgs({ ...base, readOnly: true })
+    expect(args.at(-2)).toBe('--')
+    expect(args.at(-1)).toBe('做点事')
+  })
+
   it('四样都给时顺序稳定', () => {
     expect(claudeArgs({ ...base, resume: 's', systemPromptFile: '/b.md', readOnly: true })).toEqual([
       '-p', '--output-format', 'json', '--dangerously-skip-permissions',
@@ -38,7 +48,7 @@ describe('claudeArgs', () => {
       '--resume', 's',
       '--append-system-prompt-file', '/b.md',
       '--disallowedTools', 'Edit,Write,MultiEdit,NotebookEdit',
-      '做点事',
+      '--', '做点事',
     ])
   })
 })
@@ -85,6 +95,20 @@ describe('parseClaudeJson', () => {
     expect(parseClaudeJson('42\n"hello"\n')).toBeNull()
   })
 
+  it('结果信封优先:后面跟着别的 JSON 行时,认带 session_id 的那一行', () => {
+    const out = `${JSON.stringify(payload)}\n{"note":"某个工具自己打的一行"}\n`
+    expect(parseClaudeJson(out)?.sessionId).toBe('s1')
+  })
+
+  it('没有 session_id 但有 type:"result" 也算结果信封', () => {
+    const out = '{"note":"x"}\n{"type":"result","result":"完事","num_turns":2}\n{"trailing":true}\n'
+    expect(parseClaudeJson(out)?.text).toBe('完事')
+  })
+
+  it('都不是结果信封时退回最后一个对象行', () => {
+    expect(parseClaudeJson('{"a":1}\n{"b":2}\n')).not.toBeNull()
+  })
+
   it('字段缺失时给出安全缺省', () => {
     expect(parseClaudeJson('{}')).toEqual({ sessionId: null, text: '', costUsd: 0, turns: 0, isError: false, subtype: null })
   })
@@ -92,7 +116,7 @@ describe('parseClaudeJson', () => {
 
 interface SpawnCall { cmd: string; args: string[]; opts: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number } }
 
-function fakeSpawn(result: { code: number | null; stdout: string; stderr: string } | Error) {
+function fakeSpawn(result: { code: number | null; stdout: string; stderr: string; timedOut?: boolean } | Error) {
   const calls: SpawnCall[] = []
   const spawn = async (cmd: string, args: string[], opts: SpawnCall['opts']) => {
     calls.push({ cmd, args, opts })
@@ -109,7 +133,7 @@ describe('makeClaudeRunner', () => {
     const { calls, spawn } = fakeSpawn({ code: 0, stdout: `noise\n${ok}`, stderr: '' })
     const runner = makeClaudeRunner({ spawn, env: { PATH: '/usr/bin', CLAUDECODE: '1' }, claudeBin: '/opt/claude' })
     const r = await runner.run({ ...base, timeoutMs: 1000 })
-    expect(r).toEqual({ ok: true, sessionId: 's9', text: '做完了', costUsd: 2.25, turns: 11, stderrTail: [] })
+    expect(r).toEqual({ ok: true, sessionId: 's9', text: '做完了', costUsd: 2.25, turns: 11, stderrTail: [], timedOut: false })
     expect(calls[0]!.cmd).toBe('/opt/claude')
     expect(calls[0]!.opts.cwd).toBe('/tmp/repo')
     expect(calls[0]!.opts.timeoutMs).toBe(1000)
@@ -140,17 +164,67 @@ describe('makeClaudeRunner', () => {
     expect(r).toMatchObject({ ok: false, error: 'error_max_budget', sessionId: 's3', text: '超预算了', costUsd: 20 })
   })
 
-  it('超时被杀(code 为 null)⇒ ok:false', async () => {
-    const { spawn } = fakeSpawn({ code: null, stdout: '', stderr: 'killed' })
+  it('超时被杀 ⇒ ok:false 且 timedOut:true(调用方不用去认 error 串)', async () => {
+    const { spawn } = fakeSpawn({ code: null, stdout: '', stderr: 'killed', timedOut: true })
     const r = await makeClaudeRunner({ spawn, env: {} }).run(base)
     expect(r.ok).toBe(false)
+    expect(r.timedOut).toBe(true)
     expect(r.error).toBe('claude_exit_null')
+  })
+
+  it('正常失败时 timedOut 是 false', async () => {
+    const { spawn } = fakeSpawn({ code: 1, stdout: '', stderr: '' })
+    expect((await makeClaudeRunner({ spawn, env: {} }).run(base)).timedOut).toBe(false)
+  })
+
+  it('result 是空串时正文就是空串 —— 不把整份 JSON 信封倒进去', async () => {
+    const stdout = JSON.stringify({ session_id: 's4', result: '', total_cost_usd: 0.1, num_turns: 1, is_error: false, subtype: 'success' })
+    const r = await makeClaudeRunner({ spawn: fakeSpawn({ code: 0, stdout, stderr: '' }).spawn, env: {} }).run(base)
+    expect(r.text).toBe('')
   })
 
   it('spawn 自己抛(claude 不在 PATH 上)⇒ ok:false,原因进 stderrTail', async () => {
     const { spawn } = fakeSpawn(new Error('ENOENT claude'))
     const r = await makeClaudeRunner({ spawn, env: {} }).run(base)
-    expect(r).toMatchObject({ ok: false, error: 'claude_spawn_failed', sessionId: null })
+    expect(r).toMatchObject({ ok: false, error: 'claude_spawn_failed', sessionId: null, timedOut: false })
     expect(r.stderrTail.join('\n')).toContain('ENOENT claude')
   })
+})
+
+const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true } catch { return false } }
+
+/**
+ * 真进程:`claude -p` 自己会起 MCP 服务端和 Task 子代理,超时只杀 child.pid 的话
+ * 它们会变成孤儿接着烧预算。这里用 sh 起一个 `sleep 30` 的孙子进程,确认整组都死了。
+ */
+describe.skipIf(process.platform === 'win32')('spawnCollect 的超时', () => {
+  it('把整个进程组带走 —— 孙子进程不许活下来', async () => {
+    const area = mkdtempSync(join(tmpdir(), 'cc-self-change-runner-'))
+    const pidFile = join(area, 'grandchild.pid')
+    let grandchild: number | undefined
+    try {
+      const script = `sleep 30 & echo $! > ${JSON.stringify(pidFile)}; wait`
+      const r = await spawnCollect('/bin/sh', ['-c', script], { cwd: area, env: { PATH: '/usr/bin:/bin' }, timeoutMs: 400 })
+      expect(r.timedOut).toBe(true)
+      expect(existsSync(pidFile)).toBe(true)
+      grandchild = Number(readFileSync(pidFile, 'utf8').trim())
+      expect(Number.isInteger(grandchild)).toBe(true)
+      await expect.poll(() => alive(grandchild!), { timeout: 6000, interval: 100 }).toBe(false)
+    } finally {
+      if (grandchild) { try { process.kill(grandchild, 'SIGKILL') } catch { /* 已经没了 */ } }
+      rmSync(area, { recursive: true, force: true })
+    }
+  }, 15_000)
+
+  it('没超时的话 timedOut 是 false,stdout 全收', async () => {
+    const area = mkdtempSync(join(tmpdir(), 'cc-self-change-runner-'))
+    try {
+      const r = await spawnCollect('/bin/sh', ['-c', 'echo hi; echo oops >&2'], { cwd: area, env: { PATH: '/usr/bin:/bin' }, timeoutMs: 10_000 })
+      expect(r).toMatchObject({ code: 0, timedOut: false })
+      expect(r.stdout.trim()).toBe('hi')
+      expect(r.stderr.trim()).toBe('oops')
+    } finally {
+      rmSync(area, { recursive: true, force: true })
+    }
+  }, 15_000)
 })

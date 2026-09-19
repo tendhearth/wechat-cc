@@ -132,3 +132,17 @@ describe('api-info 的重读', () => {
     expect(h.reads()).toBe(3)
   })
 })
+
+describe('ask 的其他失败码', () => {
+  it('502(发是发了微信没收下)⇒ null', async () => {
+    expect(await harness([{ ok: false, status: 502, body: { error: 'send_failed' } }]).client.ask('x', 60_000)).toBeNull()
+  })
+
+  it('503(daemon 没接上自改那套)⇒ null', async () => {
+    expect(await harness([{ ok: false, status: 503, body: { error: 'self_change_not_wired' } }]).client.ask('x', 60_000)).toBeNull()
+  })
+
+  it('notice 同样吞掉 503', async () => {
+    expect(await harness([{ ok: false, status: 503, body: { error: 'self_change_not_wired' } }]).client.notice('x')).toBe(false)
+  })
+})

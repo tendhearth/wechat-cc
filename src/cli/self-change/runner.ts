@@ -9,7 +9,7 @@
  * `--resume` 能把修复轮接回同一个会话。
  *
  * 进程本身的细节都收在这里:env 过滤(daemon 凭据不给执行者 + 摘掉嵌套守卫
- * 的两个变量)、超时(SIGTERM 再 5 s SIGKILL)、stdout 里的 JSON 怎么捞。
+ * 的两个变量)、超时(整组 SIGTERM 再 5 s SIGKILL)、stdout 里的 JSON 怎么捞。
  * 步骤代码只看 `RunnerResult`。
  *
  * 设计:docs/superpowers/specs/2026-09-18-self-change-pipeline-design.md §执行者调用。
@@ -35,11 +35,13 @@ export interface RunnerInput {
 export interface RunnerResult {
   ok: boolean
   sessionId: string | null
-  /** 执行者最后那段话(失败时尽量带上原始 stdout,人要看的就是这个)。 */
+  /** 执行者最后那段话(解析不出 JSON 时退回 stdout 尾巴,人要看的就是这个)。 */
   text: string
   costUsd: number
   turns: number
   stderrTail: string[]
+  /** 这一轮是被超时杀掉的。调用方据此区分「跑挂了」与「跑完但失败」,不用去认 error 串。 */
+  timedOut: boolean
   error?: string
 }
 
@@ -49,7 +51,7 @@ export interface ImplementRunner {
 }
 
 export interface ClaudeRunnerDeps {
-  spawn: (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }) => Promise<{ code: number | null; stdout: string; stderr: string }>
+  spawn: (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }) => Promise<{ code: number | null; stdout: string; stderr: string; timedOut?: boolean }>
   env: NodeJS.ProcessEnv
   /** 缺省 `claude`(走 PATH)。 */
   claudeBin?: string
@@ -61,6 +63,13 @@ const STDERR_TAIL_LINES = 200
 /** 解析不出 JSON 时往 `text` 里塞多少原文 —— 够人看出「claude 说了什么」,又不会把 state 撑爆。 */
 const RAW_TEXT_CAP = 4000
 
+/**
+ * 末尾那个 `--` 不是装饰:`claude --help` 里 `--disallowedTools <tools...>` 是**变长**选项,
+ * 不加 `--` 的话紧跟其后的需求正文会被当成又一个工具名吃掉(评审轮就会没有 prompt)。
+ * 2026-09-18 在本机 claude 上验过:`claude mcp list --bogus` 报 unknown option,
+ * `claude mcp list -- --bogus` 不报 —— 解析器认 `--`。
+ * 同一次探测还确认了 `--max-turns` 与 `--append-system-prompt-file` 虽然没印在 --help 里,但都接受。
+ */
 export function claudeArgs(input: RunnerInput): string[] {
   return [
     '-p', '--output-format', 'json', '--dangerously-skip-permissions',
@@ -69,7 +78,7 @@ export function claudeArgs(input: RunnerInput): string[] {
     ...(input.resume ? ['--resume', input.resume] : []),
     ...(input.systemPromptFile ? ['--append-system-prompt-file', input.systemPromptFile] : []),
     ...(input.readOnly ? ['--disallowedTools', 'Edit,Write,MultiEdit,NotebookEdit'] : []),
-    input.prompt,
+    '--', input.prompt,
   ]
 }
 
@@ -95,16 +104,21 @@ export interface ClaudeJson {
 }
 
 /**
- * `--output-format json` 打的是一份 JSON,但 stdout 上可能先有插件 / 告警的噪声行。
- * 所以从后往前找第一个能解析成**对象**的行;都不行再试整份 stdout(pretty-print
- * 的多行 JSON 就是这种)。
+ * `--output-format json` 打的是一份 JSON,但 stdout 上可能先有插件 / 告警的噪声行,
+ * 后面也可能跟着别的 JSON(比如某个工具自己打的一行对象)。所以从后往前找,
+ * **优先**认带 `session_id` 或 `type: "result"` 的那一行(那才是结果信封);
+ * 没有就退回最后一个对象形状的行;再不行试整份 stdout(pretty-print 的多行 JSON)。
  */
 export function parseClaudeJson(stdout: string): ClaudeJson | null {
   const lines = stdout.split('\n')
+  let fallback: Record<string, unknown> | null = null
   for (let i = lines.length - 1; i >= 0; i--) {
     const obj = asObject(lines[i]!)
-    if (obj) return shape(obj)
+    if (!obj) continue
+    if (typeof obj.session_id === 'string' || obj.type === 'result') return shape(obj)
+    fallback ??= obj
   }
+  if (fallback) return shape(fallback)
   const whole = asObject(stdout)
   return whole ? shape(whole) : null
 }
@@ -141,7 +155,7 @@ export function makeClaudeRunner(deps: ClaudeRunnerDeps): ImplementRunner {
   return {
     async run(input: RunnerInput): Promise<RunnerResult> {
       const cmd = deps.claudeBin ?? 'claude'
-      let out: { code: number | null; stdout: string; stderr: string }
+      let out: { code: number | null; stdout: string; stderr: string; timedOut?: boolean }
       try {
         out = await deps.spawn(cmd, claudeArgs(input), {
           cwd: input.cwd,
@@ -151,19 +165,20 @@ export function makeClaudeRunner(deps: ClaudeRunnerDeps): ImplementRunner {
       } catch (err) {
         // 起不来(claude 不在 PATH 上 / 权限不对)和「跑了但失败」要分得开:
         // 前者重试多少次都一样,步骤代码据此不进修复轮。
-        return { ok: false, sessionId: null, text: '', costUsd: 0, turns: 0, stderrTail: [String(err instanceof Error ? err.message : err)], error: 'claude_spawn_failed' }
+        return { ok: false, sessionId: null, text: '', costUsd: 0, turns: 0, stderrTail: [String(err instanceof Error ? err.message : err)], timedOut: false, error: 'claude_spawn_failed' }
       }
       const parsed = parseClaudeJson(out.stdout)
-      const stderrTail = tail(out.stderr, STDERR_TAIL_LINES)
       // subtype 缺省是 'success';不是 success(或 is_error)都算这一轮没成。
       const ok = out.code === 0 && !!parsed && !parsed.isError && (parsed.subtype === null || parsed.subtype === 'success')
       const result: RunnerResult = {
         ok,
         sessionId: parsed?.sessionId ?? null,
-        text: parsed?.text || out.stdout.trim().slice(-RAW_TEXT_CAP),
+        // 解析出来了就用 result 字段(哪怕是空串)—— 否则空 result 会把整份 JSON 信封倒进正文。
+        text: parsed ? parsed.text : out.stdout.trim().slice(-RAW_TEXT_CAP),
         costUsd: parsed?.costUsd ?? 0,
         turns: parsed?.turns ?? 0,
-        stderrTail,
+        stderrTail: tail(out.stderr, STDERR_TAIL_LINES),
+        timedOut: out.timedOut === true,
       }
       if (!ok) result.error = parsed?.subtype && parsed.subtype !== 'success' ? parsed.subtype : `claude_exit_${out.code}`
       return result
@@ -171,34 +186,57 @@ export function makeClaudeRunner(deps: ClaudeRunnerDeps): ImplementRunner {
   }
 }
 
-/**
- * 生产用的 spawn:`windowsHide`、全量收 stdout/stderr、到点先 SIGTERM 再等 5 s
- * SIGKILL(claude 收到 SIGTERM 会尽量把 JSON 打完,硬杀就什么都没有了)。
- * 单测注入假件,不碰真进程。
- */
+/** SIGTERM 之后留给执行者把 JSON 打完的时间,过了就硬杀。 */
 export const KILL_GRACE_MS = 5_000
 
+/**
+ * 生产用的 spawn:`windowsHide`、全量收 stdout/stderr、到点先 SIGTERM 再 5 s SIGKILL。
+ *
+ * `detached: true` + 杀**进程组**(`process.kill(-pid, sig)`)是必须的:`claude -p`
+ * 自己会起 MCP 服务端和 Task 子代理,只杀 `child.pid` 的话它们会变成孤儿继续跑、
+ * 继续烧预算 —— 工作台那两处(claude-workbench-process.ts / acp-agent-provider.ts)
+ * 早就是这个写法,这里照抄。SIGTERM 先发是因为 claude 收到 SIGTERM 还会把那份 JSON
+ * 打完,一上来就 SIGKILL 就什么都拿不到。
+ *
+ * 单测注入假件;这一条另有一个真进程的测试钉住「孙子进程也死了」。
+ */
 export async function spawnCollect(
   cmd: string,
   args: string[],
   opts: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number },
-): Promise<{ code: number | null; stdout: string; stderr: string }> {
+): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
   return await new Promise((resolve, reject) => {
-    const child = nodeSpawn(cmd, args, { cwd: opts.cwd, env: opts.env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = nodeSpawn(cmd, args, {
+      cwd: opts.cwd,
+      env: opts.env,
+      windowsHide: true,
+      // 自成一个进程组,这样 -pid 能把 claude 起的 MCP / 子代理一起带走。
+      detached: process.platform !== 'win32',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
     let stdout = ''
     let stderr = ''
+    let timedOut = false
     let hardTimer: ReturnType<typeof setTimeout> | null = null
     child.stdout?.on('data', (c: Buffer) => { stdout += c.toString() })
     child.stderr?.on('data', (c: Buffer) => { stderr += c.toString() })
+    const killGroup = (sig: NodeJS.Signals): void => {
+      // 已经退干净了就是 ESRCH,吞掉:这条路上「没这个进程了」正是我们要的结果。
+      try {
+        if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, sig)
+        else child.kill(sig)
+      } catch { /* ESRCH / 组已空 */ }
+    }
     const softTimer = setTimeout(() => {
-      try { child.kill('SIGTERM') } catch { /* 已经退了 */ }
-      hardTimer = setTimeout(() => { try { child.kill('SIGKILL') } catch { /* 已经退了 */ } }, KILL_GRACE_MS)
+      timedOut = true
+      killGroup('SIGTERM')
+      hardTimer = setTimeout(() => killGroup('SIGKILL'), KILL_GRACE_MS)
     }, opts.timeoutMs)
     const done = (): void => {
       clearTimeout(softTimer)
       if (hardTimer) clearTimeout(hardTimer)
     }
     child.on('error', (err) => { done(); reject(err) })
-    child.on('close', (code) => { done(); resolve({ code, stdout, stderr }) })
+    child.on('close', (code) => { done(); resolve({ code, stdout, stderr, timedOut }) })
   })
 }
