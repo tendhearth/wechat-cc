@@ -64,6 +64,7 @@ const PURE: Record<string, string> = {
   defaultOpenaiModel: 'a model-name string',
   defaultModel: 'a model-name string',
   defaultProviderId: 'a provider-name string',
+  defaultWorkdir: 'a path computed from homeDir + platform, no fs access (src/cli/self-change/policy.ts; config.ts uses it as the workdir fallback)',
   defaultClaudeProjectsRoot: 'joins a path; no IO at the seam itself',
   defaultSleep: 'setTimeout wrapper',
   defaultModelRepo: 'maps a model id to a HF repo string; no IO',
