@@ -61,7 +61,7 @@ describe('repo', () => {
     expect(fresh.rec.git[0]).toEqual(['clone', 'file:///tmp/remote.git', 'repo'])
     expect(fresh.rec.git.some(a => a.join(' ') === 'checkout -B self/ab12cd34 origin/dev')).toBe(true)
     expect(s.baseSha).toBe(BASE_SHA)
-    expect(fresh.files.get('/w/briefs/ab12cd34.md')).toContain('自改 #ab12cd34')
+    expect(fresh.files.get(join('/w', 'briefs', 'ab12cd34.md'))).toContain('自改 #ab12cd34')
     expect(fresh.rec.exec[0]).toEqual(['bun', 'install', '--frozen-lockfile'])
 
     const reused = makeFakeDeps({ exists: () => true, git: gitReply({ 'rev-parse origin/dev': BASE_SHA }) })
@@ -460,7 +460,7 @@ describe('selftest', () => {
     const out = await steps.selftest(s, deps)
     expect(out).toMatchObject({ ok: false, fail: 'selftest_failed_rolled_back' })
     expect(out.detail).toContain('dev 上的提交 aaaaaaaa 还在,需要人处理')
-    expect(rec.rolledBack).toEqual(['/w/repo'])
+    expect(rec.rolledBack).toEqual([join('/w', 'repo')])
     expect(rec.patches).toEqual([{ fail_streak: 1 }])
     expect(s.selftest).toEqual({ workbench: true, chat: false })
   })
@@ -473,7 +473,7 @@ describe('selftest', () => {
     expect(out).toMatchObject({ ok: false, fail: 'selftest_failed_rolled_back' })
     expect(out.detail).toContain('workbench 起不来')
     expect(out.detail).toContain('dev 上的提交 aaaaaaaa 还在,需要人处理')
-    expect(rec.rolledBack).toEqual(['/w/repo'])
+    expect(rec.rolledBack).toEqual([join('/w', 'repo')])
     expect(rec.patches).toEqual([{ fail_streak: 1 }])
   })
 

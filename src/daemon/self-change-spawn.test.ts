@@ -11,9 +11,9 @@ describe('resolveSelfCli', () => {
       execPath: '/usr/local/bin/bun',
       repoRoot: '/repo',
       bunPath: '/usr/local/bin/bun',
-      exists: (p) => p === '/repo/cli.ts',
+      exists: (p) => p === join('/repo', 'cli.ts'),
     })
-    expect(r).toEqual({ cmd: '/usr/local/bin/bun', args: ['/repo/cli.ts'] })
+    expect(r).toEqual({ cmd: '/usr/local/bin/bun', args: [join('/repo', 'cli.ts')] })
   })
 
   it('打包模式:和 execPath 并排的 wechat-cc-cli,不带参数', () => {
@@ -24,7 +24,7 @@ describe('resolveSelfCli', () => {
       bunPath: null,
       exists: () => true,
     })
-    expect(r).toEqual({ cmd: '/Applications/wechat-cc.app/Contents/MacOS/wechat-cc-cli', args: [] })
+    expect(r).toEqual({ cmd: join('/Applications/wechat-cc.app/Contents/MacOS', 'wechat-cc-cli'), args: [] })
   })
 
   it('源码模式但 cli.ts 不在 ⇒ self_cli_not_found', () => {
