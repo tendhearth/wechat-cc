@@ -2632,7 +2632,7 @@ const selfDeployCmd = defineCommand({
 // 和 `self deploy` 一样是 darwin-only:最后两步(部署 + 自检)踩的是 launchd。
 
 /** `--budget-usd`:钱的开关写错了当场报错,不替用户猜(同 parseTimeoutMsFlag 的理由)。 */
-function parseBudgetUsdFlag(raw: unknown): { ok: true; value?: number } | { ok: false; error: string } {
+export function parseBudgetUsdFlag(raw: unknown): { ok: true; value?: number } | { ok: false; error: string } {
   if (raw === undefined || raw === null || raw === '') return { ok: true }
   const value = Number(raw)
   if (!Number.isFinite(value) || value <= 0) {
@@ -2661,16 +2661,20 @@ const selfChangeCmd = defineCommand({
       process.exit(exitCode)
     }
 
+    // run.ts 先进来:平台那一关也要用它的 exitCodeFor。退出码只有那张表说了算,
+    // CLI 这边再写一遍 `2` 迟早和它对不上(哪天某个码从 blocked 挪走就穿帮)。
+    const { exitCodeFor, runSelfChange } = await import('./src/cli/self-change/run.ts')
+
     // 平台在最前面:流水线最后两步是 `self deploy` + 真机自检,两者都是 launchd 专属。
     if (process.platform !== 'darwin') {
-      bail(2, 'self_change_unsupported_platform', '自改流水线只支持 macOS(部署那一步是 launchd 专属)')
+      const error = 'self_change_unsupported_platform'
+      bail(exitCodeFor(error), error, '自改流水线只支持 macOS(部署那一步是 launchd 专属)')
       return
     }
 
     const { resolveSelfChangeConfig, writeSelfChangeConfigPatch } = await import('./src/cli/self-change/config.ts')
     const { acquireLock, makeStateStore, newSelfChangeId, newState } = await import('./src/cli/self-change/state.ts')
     const { defaultPipelineDeps, formatSelfChangeSummary } = await import('./src/cli/self-change/index.ts')
-    const { runSelfChange } = await import('./src/cli/self-change/run.ts')
 
     const store = makeStateStore(STATE_DIR)
 
@@ -2717,6 +2721,11 @@ const selfChangeCmd = defineCommand({
       return
     }
     const request = typeof args.request === 'string' ? args.request.trim() : ''
+    // `--resume` 又带了需求正文:照存盘里的跑,但得说一声 —— 人多半以为自己
+    // 是在「接着跑并且顺手改一下要求」,闷着不响他会等一个永远不会发生的行为。
+    if (resumed && request) {
+      console.error(`self change: --resume 用存盘里的需求,命令行上这句忽略了(存盘:${resumed.request.slice(0, 60)})`)
+    }
     if (!resumed && !request) {
       bail(1, 'request_required', '要改什么?例:wechat-cc self change "在 ci-and-flakes.md 的 flake 表里加一行"')
       return
@@ -2741,15 +2750,17 @@ const selfChangeCmd = defineCommand({
       ...(budget.value === undefined ? {} : { overrides: { implementBudgetUsd: budget.value } }),
     })
     if (!resolved.ok) {
-      // 2 而不是 1:不是这次改动的错,重跑同样的需求没有意义 —— 得先有人去配。
-      bail(2, resolved.error, '不知道该克隆哪个仓库:打包版请在 agent-config.json 里写 self_change.repo_url(源码模式会问 git remote get-url origin)')
+      // blocked(2)而不是 failed(1):不是这次改动的错,重跑同样的需求没有
+      // 意义 —— 得先有人去配。码归哪一档由 exitCodeFor 那张表说了算。
+      bail(exitCodeFor(resolved.error), resolved.error, '不知道该克隆哪个仓库:打包版请在 agent-config.json 里写 self_change.repo_url(源码模式会问 git remote get-url origin)')
       return
     }
 
     // 一次只跑一条。锁文件里写着 pid,持有者死了会被抢过来(见 state.ts)。
     const lock = acquireLock(STATE_DIR, process.pid)
     if (!lock.ok) {
-      bail(2, 'self_change_busy', `已经有一条自改在跑(pid ${lock.holder});等它结束,或者先 wechat-cc self change --list 看看`)
+      const error = 'self_change_busy'
+      bail(exitCodeFor(error), error, `已经有一条自改在跑(pid ${lock.holder});等它结束,或者先 wechat-cc self change --list 看看`)
       return
     }
 

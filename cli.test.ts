@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { runCommand } from 'citty'
-import { cittyRoot, computeProviderSetOutcome, parseTimeoutMsFlag } from './cli'
+import { cittyRoot, computeProviderSetOutcome, parseBudgetUsdFlag, parseTimeoutMsFlag } from './cli'
 import { activeModel, type AgentConfig } from './src/lib/agent-config'
 
 // PR4 batch 3c removed parseCliArgs — every subcommand now flows through
@@ -719,6 +719,30 @@ describe('parseTimeoutMsFlag — 数值开关写错了当场报错,别替用户�
   it('non-numeric / zero / negative are errors (they used to silently become the default)', () => {
     for (const bad of ['abc', '30s', '0', '-1', 'NaN', 'Infinity']) {
       const r = parseTimeoutMsFlag(bad)
+      expect(r.ok, bad).toBe(false)
+      if (!r.ok) expect(r.error).toContain(bad)
+    }
+  })
+})
+
+// `self change --budget-usd` 走的是同一条规矩(钱比毫秒更不能替用户猜:
+// 写错了悄悄退回缺省值,就是按 $20 而不是他以为的 $8 跑一整轮实现会话)。
+describe('parseBudgetUsdFlag — 钱的开关写错了当场报错', () => {
+  it('omitted ⇒ ok with no value (caller falls back to implement_budget_usd)', () => {
+    expect(parseBudgetUsdFlag(undefined)).toEqual({ ok: true })
+    expect(parseBudgetUsdFlag(null)).toEqual({ ok: true })
+    expect(parseBudgetUsdFlag('')).toEqual({ ok: true })
+  })
+
+  it('a positive number parses (整数和小数都要认 —— 预算不是毫秒)', () => {
+    expect(parseBudgetUsdFlag('8')).toEqual({ ok: true, value: 8 })
+    expect(parseBudgetUsdFlag('2.5')).toEqual({ ok: true, value: 2.5 })
+    expect(parseBudgetUsdFlag(20)).toEqual({ ok: true, value: 20 })
+  })
+
+  it('non-numeric / zero / negative are errors', () => {
+    for (const bad of ['abc', '$8', '0', '-1', 'NaN', 'Infinity']) {
+      const r = parseBudgetUsdFlag(bad)
       expect(r.ok, bad).toBe(false)
       if (!r.ok) expect(r.error).toContain(bad)
     }
