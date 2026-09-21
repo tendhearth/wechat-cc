@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { fakeState, gitReply, greenTriage, makeFakeDeps, memoryStore, type FakeOpts } from './pipeline.fixture'
@@ -398,7 +399,7 @@ describe('回滚之后恢复要重新部署', () => {
 
     expect(exitCode).toBe(0)
     expect(state.result).toBe('done')
-    expect(retry.rec.deployed).toEqual(['/w/repo'])
+    expect(retry.rec.deployed).toEqual([join('/w', 'repo')])
     expect(retry.rec.exec.some(c => c.includes('build-sidecar'))).toBe(true)
     expect(state.deploy).toEqual({ ok: true, version: '1.2.3', sha: SHA, rolledBack: false })
     // 这一次「部署:绿」是真部署换来的。
