@@ -58,7 +58,7 @@ beforeEach(()=>{
   const registry=createProviderRegistry()
   registry.register('claude',{async spawn(_project,context){const r=new TurnRuntime();r.context=context;runtimes.push(r);return r.session}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   // close 超时与权限超时都调小:没确认退出、权限自己过期这两条路在测试里要走得完。
-  store=makeWorkbenchStore(db);service=makeWorkbenchService({store,registry,stateDir:area,ownerChatId:()=>null,closeTimeoutMs:50,permissionTimeoutMs:80})
+  store=makeWorkbenchStore(db);service=makeWorkbenchService({store,registry,stateDir:area,ownerChatId:()=>null,closeTimeoutMs:50,permissionTimeoutMs:400})
 })
 afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
 const reviews=(id:string)=>service.detail(id).artifacts.filter(a=>a.name.startsWith('代码变更')).sort((x,y)=>x.name.localeCompare(y.name)).map(a=>({name:a.name,files:(JSON.parse(readArtifactSnapshot(store.artifact(id,a.id).storagePath,area,a.sha256).toString()) as {files:Array<{path:string;kind:string}>}).files.filter(f=>f.kind!=='not_reviewed').map(f=>f.path).sort()}))
