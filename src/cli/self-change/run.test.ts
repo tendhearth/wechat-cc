@@ -250,6 +250,68 @@ describe('停机', () => {
   })
 })
 
+// 2026-09-21 审查 #8:自检红了会把二进制回滚回上一版,但老代码把步留在
+// `selftest`、`deploy.ok` 还留着 true —— `--resume` 于是对着那个已经被换回去的
+// **旧**二进制再跑一遍自检。旧的当然绿,流水线就报「部署:绿」、把 fail_streak
+// 清零、结局记成 done,而机器上根本没有这条改动。
+describe('回滚之后恢复要重新部署', () => {
+  const SHA = 'a'.repeat(40)
+  const merged = (over: Partial<SelfChangeState> = {}): SelfChangeState =>
+    fakeState({ step: 'selftest', merge: { sha: SHA, rebased: false }, deploy: { ok: true, version: 'A', sha: SHA, rolledBack: false }, ...over })
+
+  it('自检红 ⇒ 回滚,盘上记成「没部署成、已回滚」,步退回 deploy', async () => {
+    const { deps, rec } = happy({ selftest: { workbench: false, chat: true } })
+    const s = merged()
+    const { state, exitCode } = await runSelfChange(s, deps)
+
+    expect(state.result).toBe('selftest_failed_rolled_back')
+    expect(exitCode).toBe(1)
+    expect(rec.rolledBack).toHaveLength(1)
+    expect(state.step).toBe('deploy')
+    expect(state.deploy).toEqual({ ok: false, version: null, sha: SHA, rolledBack: true })
+    // 没部署成就一个字都别提「部署:绿」。
+    expect(rec.notices.some(n => n.includes('部署:绿'))).toBe(false)
+    expect(rec.notices.some(n => n.includes('完成'))).toBe(false)
+  })
+
+  it('--resume 一条回滚过的 ⇒ 重新构建、重新部署,再自检', async () => {
+    const first = happy({ selftest: { workbench: false, chat: true } })
+    const s = merged()
+    await runSelfChange(s, first.deps)
+
+    const retry = happy({ config: { failStreak: 1 } })
+    const { state, exitCode } = await runSelfChange(s, retry.deps)
+
+    expect(exitCode).toBe(0)
+    expect(state.result).toBe('done')
+    expect(retry.rec.deployed).toEqual(['/w/repo'])
+    expect(retry.rec.exec.some(c => c.includes('build-sidecar'))).toBe(true)
+    expect(state.deploy).toEqual({ ok: true, version: '1.2.3', sha: SHA, rolledBack: false })
+    // 这一次「部署:绿」是真部署换来的。
+    expect(retry.rec.notices.at(-1)).toContain('部署:绿')
+  })
+
+  it('盘上是老代码留下的状态(停在 selftest、deploy.ok 还是 true)⇒ 照样从 deploy 重来', async () => {
+    const { deps, rec } = happy()
+    const stale = merged({ result: 'selftest_failed_rolled_back', error: '自检红了(对话)' })
+    const { state } = await runSelfChange(stale, deps)
+
+    expect(state.result).toBe('done')
+    expect(rec.deployed).toHaveLength(1)
+    expect(rec.exec.some(c => c.includes('build-sidecar'))).toBe(true)
+  })
+
+  it('部署自己失败过的那条,恢复时也从 deploy 重来', async () => {
+    const { deps, rec } = happy()
+    const stale = merged({ step: 'selftest', result: 'deploy_failed', deploy: { ok: false, version: null, sha: null, rolledBack: false } })
+    const { state } = await runSelfChange(stale, deps)
+
+    expect(state.result).toBe('done')
+    expect(rec.deployed).toHaveLength(1)
+    expect(state.deploy.sha).toBe(SHA)
+  })
+})
+
 // 2026-09-18 真机:`--resume` 一条 approval_timeout 的自改,内存里接着跑得好好的,
 // 盘上却还写着上一次的结局 —— 于是 `--approve` 的第一道门(result === null)把人
 // 挡在外面,拍不了板,只能再等一次超时。重新开跑就得先在盘上变回「活的」。

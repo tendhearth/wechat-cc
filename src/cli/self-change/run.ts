@@ -43,6 +43,12 @@ export function exitCodeFor(result: string | null): SelfChangeExitCode {
 /** 只有这两种结局会把 `fail_streak` 推到停机:机器本身出了问题,不是这次改动被否了。 */
 const HALTABLE: readonly string[] = ['deploy_failed', 'selftest_failed_rolled_back']
 
+/**
+ * 上次收在这两种结局 ⇒ 机器上跑的**不是**这条改动(部署没成 / 已经回滚)。
+ * `--resume` 必须从 deploy 重来:重新构建、重新部署,再自检(审查 #8)。
+ */
+const RESTART_AT_DEPLOY: readonly string[] = ['deploy_failed', 'selftest_failed_rolled_back']
+
 /** 失败通知里带多少 detail —— 微信里一条太长的消息没人读,原文在 state 里。 */
 const DETAIL_IN_NOTICE = 200
 
@@ -72,6 +78,14 @@ export async function runSelfChange(
   // (拿上一轮的 timeout 当这一轮的答案,会让轮询以为已经落定了)。
   if (s.result !== null || s.error !== null) {
     deps.log(`[self-change] #${s.id} 从 ${s.step} 接着跑(上次收在 ${s.result ?? '(没记结局)'})`)
+    // 上次收在「机器上跑的不是这条改动」⇒ 这一次必须从 deploy 重来。
+    //
+    // 2026-09-21 审查 #8:自检红了会回滚二进制,但老代码把步留在 selftest ——
+    // `--resume` 于是对着那个被换回去的**旧**二进制再跑一遍自检,旧的当然绿,
+    // 流水线就报「部署:绿」并把 fail_streak 清零。步退回 deploy 才是重新构建、
+    // 重新部署、再自检。(rollBack 已经就地退过一次;这里兜住「盘上是旧状态」
+    // 和 deploy 自己失败后停在别处的情况。)
+    if (RESTART_AT_DEPLOY.includes(s.result ?? '')) s.step = 'deploy'
     s.result = null
     s.error = null
     s.approval.decision = null

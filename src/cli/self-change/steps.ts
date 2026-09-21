@@ -786,6 +786,9 @@ async function deploy(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
   }
   s.deploy.ok = result.ok
   s.deploy.version = result.version ?? null
+  // 换上去了 ⇒ 机器上跑的不再是回滚回去的那一版。没换成就别动这笔:
+  // 跑着的还是上一次回滚留下的旧二进制。
+  if (result.ok) s.deploy.rolledBack = false
   if (!result.ok) {
     bumpFailStreak(d)
     return { ok: false, fail: 'deploy_failed', detail: `${result.diagnostics ?? ''}\n${result.steps.filter(x => !x.ok).map(x => `- ${x.name}: ${x.detail ?? ''}`).join('\n')}`.trim() }
@@ -804,14 +807,30 @@ async function deploy(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
  * 回滚本身也会抛(`planSelfDeploy` 在 launchagent 不对时抛):那比自检红一级
  * 更糟 —— 机器上跑着的还是那个新二进制。归 `deploy_failed`(同样是 HALTABLE,
  * 连着两次就停机),话要说到「需要人」为止。
+ *
+ * **盘上要写现在跑着的是什么**(2026-09-21 审查 #8):老代码回滚完 `deploy.ok`
+ * 还留着 true、步还停在 `selftest`,于是 `--resume` 直接又跑一遍自检 —— 对着
+ * 那个已经被换回去的**旧**二进制。旧的当然是绿的,流水线就报「部署:绿」、
+ * 把 fail_streak 清零,机器上其实根本没有这条改动。所以回滚之后:部署记成
+ * 没成、版本清掉、记一笔 rolledBack,并把步退回 `deploy` —— 恢复要重新构建
+ * 重新部署,而不是重新自检。
  */
 async function rollBack(s: SelfChangeState, d: PipelineDeps, why: string): Promise<StepOutcome> {
   const stillOnDev = `但 dev 上的提交 ${s.merge.sha?.slice(0, 8) ?? '(未知)'} 还在,需要人处理(改好或 revert)。`
+  /** 记下「现在机器上跑的不是这条改动」,并让 `--resume` 从 deploy 重来。 */
+  const persist = (rolledBack: boolean): void => {
+    s.deploy.ok = false
+    s.deploy.version = null
+    s.deploy.rolledBack = rolledBack
+    s.step = 'deploy'
+  }
   let rolled: SelfDeployResult
   try {
     rolled = await d.rollback(repoPath(d.config))
   } catch (err) {
     bumpFailStreak(d)
+    // 回滚没跑起来:跑着的还是新二进制,`rolledBack` 不能记成 true。
+    persist(false)
     return {
       ok: false,
       fail: 'deploy_failed',
@@ -819,6 +838,7 @@ async function rollBack(s: SelfChangeState, d: PipelineDeps, why: string): Promi
     }
   }
   bumpFailStreak(d)
+  persist(rolled.ok)
   return {
     ok: false,
     fail: 'selftest_failed_rolled_back',
