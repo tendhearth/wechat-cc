@@ -6,7 +6,7 @@ import {execFileSync} from 'node:child_process'
 import {openDb,type Db} from '../../lib/db'
 import {AsyncQueue} from '../async-queue'
 import {createProviderRegistry} from '../provider-registry'
-import type {AgentEvent,AgentRuntimeSnapshot,AgentSession,AgentWorkbenchRuntime} from '../agent-provider'
+import type {AgentEvent,AgentRuntimeSnapshot,AgentSession,AgentWorkbenchRuntime,SpawnContext} from '../agent-provider'
 import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
@@ -23,6 +23,8 @@ import {removeTempDir} from '../../lib/test-temp'
  */
 const result:AgentEvent={kind:'result',sessionId:'turns-session',numTurns:1,durationMs:1}
 class TurnRuntime {
+  /** spawn 时的上下文:测试要用它替「后台子任务」问主人一个问题。 */
+  context?:SpawnContext
   queue=new AsyncQueue<AgentEvent>()
   state:AgentRuntimeSnapshot={retained:true,foreground:'running',backgroundCount:0,input:'send'}
   subscribed=false; submitted=0
@@ -48,7 +50,7 @@ beforeEach(()=>{
   git('init','-q');writeFileSync(join(project,'README.md'),'base\n');git('add','.');git('commit','-q','-m','base')
   db=openDb({path:join(area,'state.db')});runtimes=[]
   const registry=createProviderRegistry()
-  registry.register('claude',{async spawn(){const r=new TurnRuntime();runtimes.push(r);return r.session}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  registry.register('claude',{async spawn(_project,context){const r=new TurnRuntime();r.context=context;runtimes.push(r);return r.session}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   store=makeWorkbenchStore(db);service=makeWorkbenchService({store,registry,stateDir:area,ownerChatId:()=>null})
 })
 afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
@@ -170,4 +172,57 @@ it('没人占着目录时的自动续作:重新拿到租约、开新回合(评�
   expect(service.detail(b.id).task.status).toBe('queued')
   expect(service.detail(b.id).task.waitingFor?.taskId).toBe(a.id)
   expect(runtimes).toHaveLength(1)
+})
+
+/**
+ * 释放是异步的:`settleTurn` 放手之前要先把差异快照截完,期间 `reservations` 里那一份还在。
+ * 保留会话若正好在这个窗口里自己又动手(评审 #2 的老场景,只是早了几百毫秒),「手里还有租约」
+ * 让它看起来像一个正常回合 —— 没人补回合,代数不变,于是那条过期的释放认得出自己、把租约删掉,
+ * 同目录的 B 被放进一个正在被写的文件夹。落定过的回合要当成「没有租约」看(Task 2 复审 #1)。
+ */
+it('释放还在截快照时保留会话自己又开始写:补新回合,过期的释放抽不走租约(Task 2 复审 #1)',async()=>{
+  const a=service.create({path:project,providerId:'claude',text:'A'})
+  await expect.poll(()=>service.detail(a.id).events.some(e=>e.kind==='text')).toBe(true)
+  for(let n=0;n<60;n++)writeFileSync(join(project,`a${n}.txt`),`A ${n}\n`)
+  writeFileSync(join(project,'.cc-workbench',a.id,'ready.txt'),'ready\n')
+  const r=runtimes[0]!
+  r.finishTurn()
+  // 成果登记完 ⇒ 那条释放已经在等快照了(比睡固定毫秒稳)。
+  await expect.poll(()=>service.detail(a.id).artifacts.some(x=>x.name==='ready.txt'),{interval:1,timeout:10_000}).toBe(true)
+  const b=service.create({path:project,providerId:'claude',text:'B'})
+  r.autonomousWrite()
+  await expect.poll(()=>service.detail(a.id).turn,{timeout:10_000}).toBe(2)
+  await expect.poll(()=>reviews(a.id).length,{timeout:10_000}).toBe(1)
+  expect(service.detail(a.id).task.status).toBe('running')
+  expect(service.detail(b.id).task.status).toBe('queued')
+  expect(service.detail(b.id).task.waitingFor?.taskId).toBe(a.id)
+  expect(runtimes).toHaveLength(1)
+})
+
+/**
+ * 后台子任务问的问题活过了父回合的答复:最后一个子任务结束时会话静下来,但还有一个待决请求。
+ * 旧判据在「有待决请求」时直接跳过这次转移,而 `wasQuiet` 已经变成 true —— 再没有人回来收尾,
+ * 成果不登记、租约不放(#6 从另一个门又回来了)。落定要照常叫,由 `settleTurn` 自己因为
+ * 「还在等主人拍板」而只收成果、不放租约;拍完板那一下补上落定(Task 2 复审 #2)。
+ */
+it('静下来时还有一个待决问题:成果先收、租约不放;拍完板才放行(Task 2 复审 #2)',async()=>{
+  const a=service.create({path:project,providerId:'claude',text:'A'})
+  await expect.poll(()=>service.detail(a.id).events.some(e=>e.kind==='text')).toBe(true)
+  const r=runtimes[0]!
+  const answered=r.context!.requestUserInput!({questions:[{id:'q',header:'格式',question:'要哪一种?',options:[],allowOther:true}]})
+  await expect.poll(()=>service.detail(a.id).questions.length).toBe(1)
+  // 父回合结束时子任务还在写;子任务结束只推一条 tool_call(#6 的形状)。
+  r.finishTurn(1)
+  writeFileSync(join(project,'.cc-workbench',a.id,'late.txt'),'子任务最后写的东西\n')
+  const b=service.create({path:project,providerId:'claude',text:'B'})
+  r.endChild()
+  // 成果照收,但还在等主人 ⇒ 租约不放,B 不能起来。
+  await expect.poll(()=>service.detail(a.id).artifacts.map(x=>x.name),{timeout:10_000}).toContain('late.txt')
+  expect(service.detail(a.id).task.phase).toBe('working')
+  expect(service.detail(b.id).task.status).toBe('queued')
+  // 拍板:这一下没有任何事件,落定得由它自己补上。
+  service.resolveAnswer(a.id,service.detail(a.id).questions[0]!.id,{q:['PDF']})
+  await expect(answered).resolves.toEqual({q:['PDF']})
+  await expect.poll(()=>service.detail(b.id).task.status,{timeout:10_000}).toBe('running')
+  expect(service.detail(a.id).task.phase).toBe('replied')
 })

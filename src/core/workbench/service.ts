@@ -74,6 +74,8 @@ interface Active extends PathReservation {
   /** 已截取的代码变更快照数;第一份沿用旧名,之后带 -2/-3。 */
   reviewSeq?: number
   reviewCapture?: Promise<void>
+  /** 自动续作补回合的那次 beginTurn:在途时别再补第二个(评审 2026-09-21 #2 续)。 */
+  autonomousTurn?: Promise<unknown>
   continuation: AcceptedContinuation
   task: StoredTask
   directoryIdentity: string
@@ -522,13 +524,22 @@ export function makeWorkbenchService(opts: Options) {
    * 是窗口最多一个事件。答复早已交付,所以终态记 completed(等同主人点「结束后台会话」)。
    */
   function onAutonomousStart(running:Active):void {
-    void beginTurn(running).catch(()=>{
+    // 一次唤醒只补一个回合:同一段自动续作会连着推好几个事件,每个都调进来的话代数会被连推几格
+    // (每格都得重取一次基线),而它们说的是同一件事。
+    if (running.autonomousTurn) return
+    const pending=beginTurn(running).catch(()=>{
       if (running.cancelled||running.finishing||running.uncertain) return
-      const blocker=findPathBlocker(running,held())
-      try { store.addEvent(running.taskId,'system',`保留会话在「${blocker?.title??'另一件事'}」占用目录时自己又开始干活，已结束会话；答复已交付，这段自动续作没有落地。`);touched(running.taskId) } catch { /* 结束动作照走 */ }
-      running.closedWhileReplied=true
-      cancelRun(running)
+      // 这里是 catch 体:自己再抛就变成没人接的 rejection,结束动作也走不完。
+      try {
+        const blocker=findPathBlocker(running,held())
+        try { store.addEvent(running.taskId,'system',`保留会话在「${blocker?.title??'另一件事'}」占用目录时自己又开始干活，已结束会话；答复已交付，这段自动续作没有落地。`);touched(running.taskId) } catch { /* 结束动作照走 */ }
+        running.closedWhileReplied=true
+        cancelRun(running)
+      } catch { /* 已经在收尾的路上,留给 execute 的 finally */ }
     })
+    running.autonomousTurn=pending
+    const clear=()=>{if(running.autonomousTurn===pending)running.autonomousTurn=undefined}
+    void pending.then(clear,clear)
   }
   function releaseReservation(running:Active) {
     // 结算不看回合:这条 run 走到头了,它的租约无论哪一代都该还回去。
@@ -673,10 +684,16 @@ export function makeWorkbenchService(opts: Options) {
         if (running.cancelled||running.finishing||running.uncertain) return
         const quiet=after.foreground==='idle'&&after.backgroundCount===0
         const wasQuiet=before.foreground==='idle'&&before.backgroundCount===0
-        if (quiet&&!wasQuiet&&running.permissions.pending().length===0&&running.questions.pending().length===0) { settleTurn(running); return }
+        // 静下来就交给 settleTurn 判:它自己会因为「还在等主人拍板」而只收成果、不放租约。
+        // 这里若因为有待决请求而跳过,这一次转移就被吃掉了 —— 之后 wasQuiet 一直是 true,
+        // 再没有人回来收尾(评审 2026-09-21 #6 续:后台问题活过了父回合的答复)。
+        if (quiet&&!wasQuiet) { settleTurn(running); return }
         const woke=(before.foreground==='idle'&&after.foreground==='running')||(before.backgroundCount===0&&after.backgroundCount>0)
         // 手里还有租约的都是正常回合(主人续接走的是 beginTurn);没有租约才是自己又动了手。
-        if (woke&&!reservations.has(running.identity)) onAutonomousStart(running)
+        // 「已落定但释放还在截快照」也算没有租约:此刻 reservations 里那一份正等着被删掉,
+        // 当成正常回合的话,释放醒来就会把租约从一条正在写的会话手里抽走,把 B 放进来
+        // (评审 2026-09-21 #2 续)。
+        if (woke&&(!reservations.has(running.identity)||running.settledTurn===running.turn)) onAutonomousStart(running)
       }
       let summary
       try {
@@ -1056,6 +1073,8 @@ export function makeWorkbenchService(opts: Options) {
       const running=runsByTask.get(id)
       if(!running||running.cancelled||running.finishing||!running.questions.resolve(requestId,answers))throw Error('question_stale')
       bumped(id)
+      // 回合早就静下来、只差这一个待决请求时,不会再有事件把落定叫起来 —— 拍完板自己补一次。
+      settleTurn(running)
     },
     withdrawInput(id:string,requestId:string){
       const input=store.liveInputs.get(requestId)
@@ -1460,6 +1479,8 @@ export function makeWorkbenchService(opts: Options) {
       const running=runsByTask.get(id)
       if (!running || !running.permissions.resolve(requestId,decision)) throw new Error('permission_stale')
       bumped(id)
+      // 同 resolveAnswer:静默期里拍的板,得由拍板这一下把落定补上。
+      settleTurn(running)
     },
     async handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>{return wechatControl(chatId,text,identity)},
     shutdown():Promise<void> {
