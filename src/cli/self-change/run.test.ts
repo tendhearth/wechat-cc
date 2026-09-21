@@ -248,6 +248,59 @@ describe('停机', () => {
     expect(rec.patches).toEqual([{ fail_streak: 1 }])
     expect(rec.notices.some(n => n.includes('停机'))).toBe(false)
   })
+
+  // 2026-09-21 审查 #9:`haltedAt` 只在 intake 看一眼,而 `--resume` 是从
+  // `state.step` 起步的 —— 停机之后恢复一条停在 deploy 的自改,机器照样构建、
+  // 照样部署。停机的意思是「先别自动动这台机器」,不是「先别开新的」。
+  describe('停机之后连恢复也不放行', () => {
+    const halted = (over: FakeOpts = {}): ReturnType<typeof makeFakeDeps> =>
+      happy({ config: { haltedAt: 1_699_000_000_000, haltReason: 'deploy_failed(连续 2 次)', failStreak: 2 }, ...over })
+
+    it('停在 deploy 的那条 ⇒ self_change_halted(退出码 2),不构建不部署', async () => {
+      const { deps, rec } = halted()
+      const s = fakeState({ step: 'deploy', result: 'deploy_failed', merge: { sha: 'a'.repeat(40), rebased: false } })
+      const { state, exitCode } = await runSelfChange(s, deps)
+
+      expect(state.result).toBe('self_change_halted')
+      expect(exitCode).toBe(2)
+      expect(rec.exec).toEqual([])
+      expect(rec.git).toEqual([])
+      expect(rec.deployed).toEqual([])
+      expect(rec.asks).toEqual([])
+      expect(rec.notices.some(n => n.includes('完成'))).toBe(false)
+      expect(rec.notices.at(-1)).toContain('--unhalt')
+      // 停机时恢复不是「又红了一次」:别拿它去推 fail_streak。
+      expect(rec.patches).toEqual([])
+    })
+
+    it('中间那些步也一样(不是只挡部署)', async () => {
+      for (const step of ['implement', 'approval', 'merge', 'selftest', 'report'] as const) {
+        const { deps, rec } = halted()
+        const { state } = await runSelfChange(fakeState({ step }), deps)
+        expect(state.result).toBe('self_change_halted')
+        expect(rec.runner).toEqual([])
+        expect(rec.deployed).toEqual([])
+      }
+    })
+
+    it('--unhalt 之后(haltedAt 清了)才接着跑', async () => {
+      const { deps, rec } = happy({ config: { haltedAt: null, failStreak: 2 } })
+      const s = fakeState({ step: 'deploy', result: 'deploy_failed', merge: { sha: 'a'.repeat(40), rebased: false } })
+      const { state, exitCode } = await runSelfChange(s, deps)
+      expect(state.result).toBe('done')
+      expect(exitCode).toBe(0)
+      expect(rec.deployed).toHaveLength(1)
+    })
+
+    it('新起的一条照旧由 intake 那道门挡(话说得更细)', async () => {
+      const { deps, rec } = halted()
+      const { state, exitCode } = await runSelfChange(fakeState(), deps)
+      expect(state.result).toBe('self_change_halted')
+      expect(exitCode).toBe(2)
+      expect(state.error).toContain('deploy_failed')
+      expect(rec.runner).toEqual([])
+    })
+  })
 })
 
 // 2026-09-21 审查 #8:自检红了会把二进制回滚回上一版,但老代码把步留在

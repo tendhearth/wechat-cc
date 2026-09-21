@@ -45,6 +45,10 @@ intake ─► repo ─► implement ─► guard ─► tests ─► review ─�
 
 过了五道才 `git rebase` + `--ff-only` 合进 `dev` 并推上去,然后构 sidecar、`self deploy`、`selftest workbench` + `selftest chat`。自检红 ⇒ 二进制回滚到 `.prev`,**但代码已经在 `dev` 上了** —— 报告里会明说这件事,需要人去改好或 revert。
 
+**构建之前先确认克隆站在批准的那条提交上。** 专用克隆是所有自改共用的:A 批准合入了但部署失败,之后 B 在同一个目录里被闸门拦下、HEAD 就停在 B 上 —— `--resume A` 从 `deploy` 起步,老代码构建的是「目录里当时的东西」(2026-09-21 审查 #4)。现在 `deploy` 先问三句话:`HEAD == merge.sha`、工作树干净、站在 `<branch>` 上;对不上就只在「`merge.sha` 仍是 `origin/<branch>` 的祖先」时硬拉回去(`fetch` + `merge-base --is-ancestor` + `checkout`/`reset --hard`/`clean -fd`),拉回去再验一遍。还对不上(或者存盘里压根没记 `merge.sha`)⇒ `deploy_tree_mismatch`,退 1,不构建不部署;这不算「机器坏了」,所以不推 `fail_streak`、不停机。实际装上去的那条记在 `deploy.sha` 里。
+
+**回滚之后盘上写的是「现在跑的是什么」。** 自检红、二进制换回 `.prev` ⇒ `deploy.ok=false`、`deploy.version=null`、`deploy.rolledBack=true`,并且**步退回 `deploy`**。老代码把步留在 `selftest`、`deploy.ok` 还留着 `true`,`--resume` 于是对着那个已经被换回去的旧二进制再跑一遍自检 —— 旧的当然绿,报告就写「部署:绿」、`fail_streak` 清零,而机器上根本没有这条改动(审查 #8)。恢复一条收在 `deploy_failed` / `selftest_failed_rolled_back` 的,一律重新构建、重新部署、再自检。
+
 自检的 `--resume` 那一步(`POST /v1/workbench/continue`)会**吞掉那个转瞬即逝的 409 `workbench_busy`**:每秒重试一次、最多 10 次,还不通才算真红。那个 409 是任务刚答复、租约已放但差异快照还在截的那一瞬(`src/core/workbench/service.ts` 的 `acquireTurnLease`),而自检恰恰是 phase 一变 `replied` 就立刻续接。2026-09-18 真机(`f65f4c09`):`resume_replied` 是整场自检**唯一**一条红,就这么把一次本来好好的部署回滚掉了。
 
 ## 微信不通时怎么拍板
@@ -85,7 +89,7 @@ intake ─► repo ─► implement ─► guard ─► tests ─► review ─�
 | 码 | 含义 | 典型 result |
 | --- | --- | --- |
 | 0 | 完成 | `done` |
-| 1 | 这次改动没做成 | `implement_failed` `no_changes` `forbidden_paths` `tests_exhausted` `review_exhausted` `ci_exhausted` `ci_unavailable` `merge_conflict` `deploy_failed` `selftest_failed_rolled_back` `crashed` |
+| 1 | 这次改动没做成 | `implement_failed` `no_changes` `forbidden_paths` `tests_exhausted` `review_exhausted` `ci_exhausted` `ci_unavailable` `merge_conflict` `deploy_failed` `deploy_tree_mismatch` `selftest_failed_rolled_back` `crashed` |
 | 2 | **不是这次改动的错**,重试同样的需求没意义 | 非 macOS、`self_change_halted`、`self_change_quota`、`daemon_not_running`、`owner_chat_unknown`、`self_change_busy`、`repo_url_unknown` |
 | 3 | 主人回了 `n` | `declined`(分支保留) |
 | 4 | 没等到拍板 | `approval_timeout`(`--resume <id>` 重发卡) |
@@ -93,6 +97,8 @@ intake ─► repo ─► implement ─► guard ─► tests ─► review ─�
 ## 停机与 `--unhalt`
 
 部署或自检**连续失败两次** ⇒ 往 `agent-config.json` 的 `self_change.halted_at` / `halt_reason` 写一笔,并在微信里说一声。之后每条自改在 intake 就被拒(`self_change_halted`,退 2)。
+
+**恢复也过这道门。** `--resume <id>` 是从存盘的 `step` 起步的,停机期间恢复一条停在 `deploy` 的自改,老代码会照样构建、照样部署(2026-09-21 审查 #9)。现在只要 `halted_at` 还在,不管存盘停在哪一步,`--resume` 一律当场收在 `self_change_halted`(退 2):不跑步骤、不碰 git、不构建、不部署,也不推 `fail_streak`。停机的意思是「先别自动动这台机器」,不是「先别开新的」——**`--unhalt` 是唯一的出口**。
 
 再自动跑下去只会把机器越推越坏 —— 所以解除必须是人做的:
 

@@ -110,6 +110,23 @@ export async function runSelfChange(
   }
 
   /**
+   * 停机这道门,恢复也得过(2026-09-21 审查 #9)。
+   *
+   * `haltedAt` 本来只在 intake 里看一眼,而 `--resume` 是从 `state.step` 起步的 ——
+   * 停机之后恢复一条停在 deploy 的自改,机器照样构建、照样部署。停机的意思
+   * 是「先别自动动这台机器」,不是「先别开新的」:唯一的出口是 `--unhalt`。
+   *
+   * 新起的一条停在 intake,由 intake 自己那道门挡(话说得更细,还带解除办法)。
+   */
+  const haltedAt = deps.config.haltedAt
+  if (haltedAt && s.step !== 'intake') {
+    return await finish(
+      'self_change_halted',
+      `${new Date(haltedAt).toISOString()} 起停机:${deps.config.haltReason ?? '未记原因'} —— 停在 ${s.step} 的这条也不恢复(wechat-cc self change --unhalt 解除)`,
+    )
+  }
+
+  /**
    * 一轮修复。计数超了就到此为止,否则交回同一个实现会话,
    * 工作树脏了替它提交,然后回 guard 重走一遍四道闸门。
    */
