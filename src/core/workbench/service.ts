@@ -421,6 +421,7 @@ export function makeWorkbenchService(opts: Options) {
    * 别的任务在 A 空闲期间改的文件,不会被记到 A 头上。
    */
   function captureCodeChanges(running:Active,turn:number):Promise<void> {
+    // 正在截的那份就是答案:`beginTurn` 会先 await 它再开新回合,所以这里复用不会把新回合的改动截进来。
     if (running.reviewCapture) return running.reviewCapture
     const pending=(async()=>{
       const baseline=running.reviewBaseline
@@ -486,7 +487,10 @@ export function makeWorkbenchService(opts: Options) {
     if (capture) await capture.catch(()=>{})
     const acquired=await acquireTurnLease(running)
     // 续接 = 新一轮差异的起点:重新取基线,别人在空闲期间改的不算这一轮的。
-    if (!running.reviewBaseline) { try { running.reviewBaseline={...await captureGitBaseline(running.path,{}),turn:running.turn} } catch { /* 没基线就没有这一轮的代码对比,其他成果照收 */ } }
+    // 但回合中间补一句话时上一轮还没截过快照(基线还没被消费)—— 那一份要跟着进新回合,
+    // 起点提交不动:否则代数从此对不上,这条 run 的代码变更永远生不出来(评审 2026-09-21 #1 续)。
+    if (running.reviewBaseline) running.reviewBaseline={...running.reviewBaseline,turn:running.turn}
+    else { try { running.reviewBaseline={...await captureGitBaseline(running.path,{}),turn:running.turn} } catch { /* 没基线就没有这一轮的代码对比,其他成果照收 */ } }
     return acquired
   }
   function releaseReservation(running:Active) {

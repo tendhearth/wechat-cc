@@ -62,7 +62,6 @@ it('快照还在截时续接:旧回合的释放不能把新回合的租约删掉
   // 快照截取中续接 A:此时 A 还握着租约,这一句开的是新回合。
   await service.submitInput(a.id,{runId:service.detail(a.id).runId!,requestId:'33333333-3333-4333-8333-333333333333',text:'resume immediately'})
   expect(r.submitted).toBe(1)
-  expect(service.detail(a.id).turn).toBe(2)
   // 新回合写的文件:不能被记进上一轮的快照里。
   writeFileSync(join(project,'after-resume.txt'),'new turn\n')
   const b=service.create({path:project,providerId:'claude',text:'B'})
@@ -74,6 +73,7 @@ it('快照还在截时续接:旧回合的释放不能把新回合的租约删掉
   expect(service.detail(b.id).task.status).toBe('queued')
   expect(runtimes).toHaveLength(1)
   expect(r.submitted).toBe(1)
+  expect(service.detail(a.id).turn).toBe(2)
   // 新回合落定后照常放租约:B 起得来,租约没有被卡死。
   r.finishTurn()
   await expect.poll(()=>service.detail(b.id).task.status).toBe('running')
@@ -82,4 +82,22 @@ it('快照还在截时续接:旧回合的释放不能把新回合的租约删掉
   const files=reviews(a.id).map(r=>r.files)
   expect(files.some(f=>f.length===1&&f[0]==='after-resume.txt')).toBe(true)
   expect(files.some(f=>f.includes('a0.txt')&&!f.includes('after-resume.txt'))).toBe(true)
+})
+
+/**
+ * 回合中间补一句话(Claude 的 runtime 在干活时也报 `input:'send'`,`submitInput` 不看 isReplied):
+ * `beginTurn` 把代数推到下一格,而这一轮的基线还挂在上一格上 —— 之后每一次 `captureCodeChanges`
+ * 都因为代数对不上而放弃,这条 run 的「代码变更」永远生不出来。基线要跟着进新回合(仍用原来的
+ * 起点提交,前半段的改动才不会丢)。
+ */
+it('回合中间补一句话:基线跟着进新回合,这一轮的代码变更不会丢(评审 2026-09-21 #1 续)',async()=>{
+  const a=service.create({path:project,providerId:'claude',text:'A'})
+  await expect.poll(()=>service.detail(a.id).events.some(e=>e.kind==='text')).toBe(true)
+  writeFileSync(join(project,'before-steer.txt'),'1\n')
+  // 还在干活(前台 running、没有 result)时补一句:这是同一段工作的中途插话。
+  await service.submitInput(a.id,{runId:service.detail(a.id).runId!,requestId:'44444444-4444-4444-8444-444444444444',text:'再加一条'})
+  writeFileSync(join(project,'after-steer.txt'),'2\n')
+  runtimes[0]!.finishTurn()
+  await expect.poll(()=>reviews(a.id).length,{timeout:10_000}).toBe(1)
+  expect(reviews(a.id)[0]!.files).toEqual(['after-steer.txt','before-steer.txt'])
 })
