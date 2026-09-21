@@ -13,6 +13,8 @@ const HAPPY_GIT = gitReply({
   'diff --name-only': 'docs/x.md\nsrc/a.ts\n',
   'rev-parse HEAD': 'a'.repeat(40),
   'diff --stat': ' docs/x.md | 1 +\n',
+  // 部署前那道树检查(审查 #4)要问的:克隆站在哪个分支上。
+  'rev-parse --abbrev-ref HEAD': 'dev\n',
 })
 
 function recordingStore(): { store: StateStore; steps: SelfChangeStep[]; rows: SelfChangeState[] } {

@@ -177,6 +177,60 @@ describe.skipIf(skipOnWindows)('self change 整条(真 git)', () => {
     expect(rec.exec.some(c => c.join(' ').includes('run test'))).toBe(false)
   })
 
+  // 2026-09-21 审查 #4:专用克隆是所有自改共用的。A 批准合入了,部署那一步失败;
+  // 之后 B 在同一个目录里被闸门拦下,HEAD 就停在 B 上。`--resume A` 从 deploy
+  // 起步 —— 老代码构建的是「目录里当时的东西」,也就是 B:主人批的是 A,
+  // 机器上装的是一条谁都没看过的改动。
+  it('恢复时克隆停在另一条提交上 ⇒ 先钉回批准的那条再构建', async () => {
+    const first = pipeline({ decisions: ['allow'] })
+    const done = await runSelfChange(fakeState(), first.deps)
+    expect(done.state.result).toBe('done')
+    const approved = done.state.merge.sha
+    expect(approved).toBeTruthy()
+
+    // 另一条自改把克隆带到了别的地方。
+    git(repo, ['checkout', '-B', 'self/b', 'HEAD~1'])
+    writeFileSync(join(repo, 'docs', 'b.md'), '另一条自改,没人批过\n')
+    git(repo, ['add', '-A'])
+    git(repo, ['commit', '-m', 'B:被闸门拦下的那条'])
+    const other = git(repo, ['rev-parse', 'HEAD']).trim()
+    expect(other).not.toBe(approved)
+
+    const second = pipeline()
+    let builtAt = ''
+    const exec = second.deps.exec
+    second.deps.exec = async (cmd, args, o) => {
+      if (args.includes('build-sidecar')) builtAt = git(repo, ['rev-parse', 'HEAD']).trim()
+      return await exec(cmd, args, o)
+    }
+    const resumed = fakeState({ id: 'bb11bb11', step: 'deploy', result: 'deploy_failed', merge: { sha: approved, rebased: false } })
+    const { state, exitCode } = await runSelfChange(resumed, second.deps)
+
+    expect(exitCode).toBe(0)
+    expect(state.result).toBe('done')
+    // 构建的是批准的那条,不是目录里当时躺着的那条。
+    expect(builtAt).toBe(approved)
+    expect(state.deploy.sha).toBe(approved)
+    expect(git(repo, ['rev-parse', 'HEAD']).trim()).toBe(approved)
+    expect(second.rec.deployed).toEqual([repo])
+  })
+
+  it('恢复时批准的那条已经不在 dev 上(被 force-push 抹掉)⇒ 不构建不部署', async () => {
+    const first = pipeline({ decisions: ['allow'] })
+    expect((await runSelfChange(fakeState(), first.deps)).state.result).toBe('done')
+    const gone = 'd'.repeat(40)
+
+    const second = pipeline()
+    const resumed = fakeState({ id: 'cc22cc22', step: 'deploy', result: 'deploy_failed', merge: { sha: gone, rebased: false } })
+    const { state, exitCode } = await runSelfChange(resumed, second.deps)
+
+    expect(state.result).toBe('deploy_tree_mismatch')
+    expect(exitCode).toBe(1)
+    expect(state.error).toContain(gone)
+    expect(second.rec.exec.some(c => c.includes('build-sidecar'))).toBe(false)
+    expect(second.rec.deployed).toEqual([])
+  })
+
   it('克隆已经在了(上一条留下的脏工作树)⇒ 照样 fetch + 洗干净再开工', async () => {
     // 先跑一条,留下克隆;再在克隆里丢一个没人要的文件。
     const first = pipeline({ decisions: ['allow'] })

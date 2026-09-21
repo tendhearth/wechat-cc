@@ -695,8 +695,76 @@ function bumpFailStreak(d: PipelineDeps): void {
   writePatch(d, { fail_streak: d.config.failStreak })
 }
 
+/** 克隆此刻的样子:HEAD 是哪条、干不干净、站在哪个分支上。 */
+function treeNow(d: PipelineDeps): { head: string; dirty: string; branch: string } {
+  return {
+    head: git(d, ['rev-parse', 'HEAD']).trim(),
+    dirty: git(d, ['status', '--porcelain']).trim(),
+    branch: git(d, ['rev-parse', '--abbrev-ref', 'HEAD']).trim(),
+  }
+}
+
+/**
+ * 部署之前先确认:克隆里躺着的**正是被批准并合入的那条提交**。
+ *
+ * 2026-09-21 审查 #4:专用克隆是所有自改共用的。A 批准合入了但部署失败,
+ * 之后 B 在这个目录里被闸门拦下(HEAD 停在 B 的分支上);这时候
+ * `--resume A` 直接从 deploy 起步,构建的是**目录里当时的东西**,也就是 B ——
+ * 主人批的是 A,机器上装的是一条谁都没看过的改动。
+ *
+ * 规矩:
+ *  · HEAD == `merge.sha`、工作树干净、站在 `config.branch` 上 ⇒ 照常构建。
+ *  · 对不上 ⇒ 只有在「`merge.sha` 仍然是共享分支上的一条提交」时才敢硬拉回去
+ *    (先 fetch 再 `merge-base --is-ancestor`):那说明它还是那条批准过的提交,
+ *    没有被 force-push 抹掉。拉回去之后**再验一遍**,还对不上就不构建。
+ *  · 其它一律 `deploy_tree_mismatch`(退出码 1),detail 里两个 sha 都写出来,
+ *    人一眼看得出机器差点装的是什么。
+ *
+ * 记不得批准的是哪条(`merge.sha` 为空)也算对不上:宁可要人来看一眼,
+ * 也不能闭着眼睛把目录里的东西装上去。
+ */
+function ensureApprovedTree(s: SelfChangeState, d: PipelineDeps): StepOutcome | null {
+  const approved = s.merge.sha
+  const mismatch = (why: string): StepOutcome => ({ ok: false, fail: 'deploy_tree_mismatch', detail: why })
+  if (!approved) {
+    return mismatch(`克隆 ${repoPath(d.config)} 里要装哪条说不清:state 里没有记下合入的提交(merge.sha 为空),不构建。`)
+  }
+
+  const nameIt = (t: { head: string; dirty: string; branch: string }): string =>
+    `批准合入的是 ${approved},克隆现在是 ${t.head || '(读不出 HEAD)'}(分支 ${t.branch || '?'}${t.dirty ? '、工作树脏' : ''})`
+
+  try {
+    const before = treeNow(d)
+    if (before.head === approved && before.dirty === '' && before.branch === d.config.branch) return null
+
+    // 硬拉回去之前先确认它还在共享分支上 —— 不在就不是「那条批准过的提交」了。
+    git(d, ['fetch', 'origin'], { timeoutMs: NETWORK_TIMEOUT_MS })
+    const onBranch = d.git.run(['merge-base', '--is-ancestor', approved, `origin/${d.config.branch}`], { cwd: repoPath(d.config) })
+    if (onBranch.code !== 0) {
+      return mismatch(`${nameIt(before)};而 ${approved} 已经不在 origin/${d.config.branch} 上(被 force-push 抹掉?),不构建。`)
+    }
+    d.log(`[self-change] 部署前把克隆钉回 ${approved.slice(0, 8)}(现在是 ${before.head.slice(0, 8) || '?'})`)
+    git(d, ['checkout', d.config.branch])
+    git(d, ['reset', '--hard', approved])
+    git(d, ['clean', '-fd'])
+
+    const after = treeNow(d)
+    if (after.head === approved && after.dirty === '' && after.branch === d.config.branch) return null
+    return mismatch(`拉回去了还是对不上:${nameIt(after)},不构建。`)
+  } catch (err) {
+    if (err instanceof GitFailed) return mismatch(`确认克隆站在 ${approved} 上时 git 失败了,不构建:\n${err.message}`)
+    throw err
+  }
+}
+
 async function deploy(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
   const dir = repoPath(d.config)
+  const mismatch = ensureApprovedTree(s, d)
+  // 装错东西不算「机器坏了」,是「不知道该装什么」—— 不加 fail_streak、不停机,
+  // 要的是人来看一眼(`--resume` 在克隆回到那条提交之后照样能接着跑)。
+  if (mismatch) return mismatch
+  s.deploy.sha = s.merge.sha
+
   const build = await d.exec('bun', ['run', 'build-sidecar'], { cwd: join(dir, 'apps', 'desktop'), timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms })
   if (build.code !== 0) {
     s.deploy.ok = false

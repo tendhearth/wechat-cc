@@ -34,7 +34,7 @@ describe('newState', () => {
     expect(s.ci).toEqual({ runId: null, url: null, verdict: null, sha: null })
     expect(s.approval).toEqual({ hash: null, code: null, decision: null, askedAt: null, delivered: null })
     expect(s.merge).toEqual({ sha: null, rebased: false })
-    expect(s.deploy).toEqual({ ok: null, version: null })
+    expect(s.deploy).toEqual({ ok: null, version: null, sha: null, rolledBack: false })
     expect(s.selftest).toEqual({ workbench: null, chat: null })
     expect(s.result).toBeNull()
     expect(s.error).toBeNull()

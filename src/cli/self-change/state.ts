@@ -50,7 +50,15 @@ export interface SelfChangeState {
    *  桌面权限卡和 `self change --approve <id>` 照样能拍。null = 还没问过。 */
   approval: { hash: string | null; code: string | null; decision: string | null; askedAt: number | null; delivered: boolean | null }
   merge: { sha: string | null; rebased: boolean }
-  deploy: { ok: boolean | null; version: string | null }
+  /**
+   * `sha`:**实际构建并部署的那条提交**。部署前会把专用克隆钉回 `merge.sha`
+   * 再记下来 —— 没有这一笔,`--resume` 从 deploy 接着跑时没人说得清机器上
+   * 到底装的是哪条改动(2026-09-21 审查 #4)。
+   * `rolledBack`:自检红之后二进制已经换回上一版。`ok` 这时是 false、
+   * `version` 是 null —— 盘上要写**现在跑着的是什么**,不是「曾经部署成功过」
+   * (审查 #8)。
+   */
+  deploy: { ok: boolean | null; version: string | null; sha: string | null; rolledBack: boolean }
   selftest: { workbench: boolean | null; chat: boolean | null }
   result: string | null
   error: string | null
@@ -77,7 +85,7 @@ export function newState(input: {
     ci: { runId: null, url: null, verdict: null, sha: null },
     approval: { hash: null, code: null, decision: null, askedAt: null, delivered: null },
     merge: { sha: null, rebased: false },
-    deploy: { ok: null, version: null },
+    deploy: { ok: null, version: null, sha: null, rolledBack: false },
     selftest: { workbench: null, chat: null },
     result: null,
     error: null,

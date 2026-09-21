@@ -626,24 +626,29 @@ describe('merge', () => {
 })
 
 describe('deploy', () => {
+  /** 部署前那道树检查要问的三句话:克隆已经站在批准的那条提交上、干净、在 dev 上。 */
+  const ON_APPROVED = { 'rev-parse --abbrev-ref HEAD': 'dev\n', 'rev-parse HEAD': `${HEAD_SHA}\n`, 'status --porcelain': '' }
+  /** 合入过的一条(deploy 只从 merge 来,merge.sha 一定有)。 */
+  const merged = (): SelfChangeState => fakeState({ merge: { sha: HEAD_SHA, rebased: false } })
+
   it('build-sidecar 红 ⇒ deploy_failed + fail_streak+1', async () => {
-    const { deps, rec } = makeFakeDeps({ exec: () => ({ code: 1, stderr: '编译错误' }) })
-    expect(await steps.deploy(fakeState(), deps)).toMatchObject({ ok: false, fail: 'deploy_failed' })
+    const { deps, rec } = makeFakeDeps({ git: gitReply(ON_APPROVED), exec: () => ({ code: 1, stderr: '编译错误' }) })
+    expect(await steps.deploy(merged(), deps)).toMatchObject({ ok: false, fail: 'deploy_failed' })
     expect(rec.patches).toEqual([{ fail_streak: 1 }])
     expect(deps.config.failStreak).toBe(1)
   })
 
   it('部署失败 ⇒ deploy_failed + fail_streak+1', async () => {
-    const { deps, rec } = makeFakeDeps({ deploy: { ok: false, exitCode: 1, steps: [{ name: '健康门', ok: false, detail: '起不来' }], diagnostics: 'x' } })
-    expect(await steps.deploy(fakeState(), deps)).toMatchObject({ ok: false, fail: 'deploy_failed' })
+    const { deps, rec } = makeFakeDeps({ git: gitReply(ON_APPROVED), deploy: { ok: false, exitCode: 1, steps: [{ name: '健康门', ok: false, detail: '起不来' }], diagnostics: 'x' } })
+    expect(await steps.deploy(merged(), deps)).toMatchObject({ ok: false, fail: 'deploy_failed' })
     expect(rec.patches).toEqual([{ fail_streak: 1 }])
   })
 
   it('部署注入件**抛异常**(launchagent 不对 / 非 darwin)⇒ 也是 deploy_failed + fail_streak+1', async () => {
     // 不接住的话异常跑到 run.ts 的兜底记成 crashed,而 crashed 既不加
     // fail_streak 也不停机 —— 停机护栏会在最该生效的那天整条失效。
-    const s = fakeState()
-    const { deps, rec } = makeFakeDeps()
+    const s = merged()
+    const { deps, rec } = makeFakeDeps({ git: gitReply(ON_APPROVED) })
     deps.deploy = async () => { throw new Error('launchagent_not_found') }
     const out = await steps.deploy(s, deps)
     expect(out).toMatchObject({ ok: false, fail: 'deploy_failed' })
@@ -654,14 +659,96 @@ describe('deploy', () => {
   })
 
   it('成功 ⇒ 去自检,版本记进 state', async () => {
-    const s = fakeState()
-    const { deps, rec } = makeFakeDeps()
+    const s = merged()
+    const { deps, rec } = makeFakeDeps({ git: gitReply(ON_APPROVED) })
     expect(await steps.deploy(s, deps)).toEqual({ ok: true, next: 'selftest' })
     expect(rec.exec[0]).toEqual(['bun', 'run', 'build-sidecar'])
     // 在克隆的 apps/desktop 里跑,不是仓库根。
     expect(rec.execOpts[0]?.cwd).toBe(join('/w', 'repo', 'apps', 'desktop'))
     expect(rec.execOpts[0]?.timeoutMs).toBeGreaterThan(0)
-    expect(s.deploy).toEqual({ ok: true, version: '1.2.3' })
+    // 装的是哪条要写在盘上:`--resume` 时没有这一笔就没人说得清机器上是什么。
+    expect(s.deploy).toEqual({ ok: true, version: '1.2.3', sha: HEAD_SHA, rolledBack: false })
+  })
+
+  // 2026-09-21 审查 #4:专用克隆是所有自改共用的。A 批准合入、部署失败;
+  // 之后 B 在同一个目录里被闸门拦下,HEAD 停在 B 上。`--resume A` 从 deploy
+  // 起步,老代码构建的是「目录里当时的东西」—— 主人批的是 A,机器上装的是 B。
+  describe('部署前把克隆钉回批准的那条提交', () => {
+    const OTHER_SHA = 'c'.repeat(40)
+
+    it('HEAD 是另一条、但批准的那条还在 origin/dev 上 ⇒ 硬拉回去再构建', async () => {
+      let head = OTHER_SHA
+      const s = merged()
+      const { deps, rec } = makeFakeDeps({
+        git: args => {
+          const key = args.join(' ')
+          if (key === 'rev-parse HEAD') return { stdout: `${head}\n` }
+          if (key === 'rev-parse --abbrev-ref HEAD') return { stdout: head === HEAD_SHA ? 'dev\n' : 'self/b\n' }
+          if (key.startsWith('reset --hard')) { head = args[2] ?? head; return undefined }
+          return undefined
+        },
+      })
+      expect(await steps.deploy(s, deps)).toEqual({ ok: true, next: 'selftest' })
+      const lines = rec.git.map(a => a.join(' '))
+      expect(lines).toContain('fetch origin')
+      expect(lines).toContain(`merge-base --is-ancestor ${HEAD_SHA} origin/dev`)
+      expect(lines).toContain(`reset --hard ${HEAD_SHA}`)
+      // 拉回去**之后**才构建,而且构建的是批准的那条。
+      expect(rec.exec).toEqual([['bun', 'run', 'build-sidecar']])
+      expect(s.deploy.sha).toBe(HEAD_SHA)
+      expect(rec.deployed).toEqual([join('/w', 'repo')])
+    })
+
+    it('批准的那条已经不在 origin/dev 上 ⇒ deploy_tree_mismatch,两个 sha 都写出来,不构建不部署', async () => {
+      const s = merged()
+      const { deps, rec } = makeFakeDeps({
+        git: args => {
+          const key = args.join(' ')
+          if (key === 'rev-parse HEAD') return { stdout: `${OTHER_SHA}\n` }
+          if (key === 'rev-parse --abbrev-ref HEAD') return { stdout: 'self/b\n' }
+          if (key.includes('--is-ancestor')) return { code: 1 }
+          return undefined
+        },
+      })
+      const out = await steps.deploy(s, deps)
+      expect(out).toMatchObject({ ok: false, fail: 'deploy_tree_mismatch' })
+      expect(out.detail).toContain(HEAD_SHA)
+      expect(out.detail).toContain(OTHER_SHA)
+      expect(rec.exec).toEqual([])
+      expect(rec.deployed).toEqual([])
+      expect(s.deploy.sha).toBeNull()
+      // 装错东西不算「机器坏了」:不加 fail_streak、不停机。
+      expect(rec.patches).toEqual([])
+    })
+
+    it('工作树脏 ⇒ 洗干净;洗不掉(还是对不上)⇒ 不构建', async () => {
+      const s = merged()
+      const { deps, rec } = makeFakeDeps({
+        git: gitReply({ 'rev-parse --abbrev-ref HEAD': 'dev\n', 'rev-parse HEAD': `${HEAD_SHA}\n`, 'status --porcelain': ' M src/a.ts\n' }),
+      })
+      const out = await steps.deploy(s, deps)
+      expect(out).toMatchObject({ ok: false, fail: 'deploy_tree_mismatch' })
+      expect(out.detail).toContain('工作树脏')
+      expect(rec.git.map(a => a.join(' '))).toContain('clean -fd')
+      expect(rec.exec).toEqual([])
+    })
+
+    it('state 里压根没记合入的提交 ⇒ 也不构建(宁可要人来看一眼)', async () => {
+      const { deps, rec } = makeFakeDeps({ git: gitReply(ON_APPROVED) })
+      const out = await steps.deploy(fakeState(), deps)
+      expect(out).toMatchObject({ ok: false, fail: 'deploy_tree_mismatch' })
+      expect(out.detail).toContain('merge.sha 为空')
+      expect(rec.exec).toEqual([])
+      expect(rec.git).toEqual([])
+    })
+
+    it('git 自己失败 ⇒ 当对不上处理,不会一路抛成 crashed', async () => {
+      const { deps, rec } = makeFakeDeps({ git: args => (args[0] === 'rev-parse' ? { code: 128, stderr: 'not a git repository' } : undefined) })
+      const out = await steps.deploy(merged(), deps)
+      expect(out).toMatchObject({ ok: false, fail: 'deploy_tree_mismatch' })
+      expect(out.detail).toContain('not a git repository')
+      expect(rec.exec).toEqual([])
+    })
   })
 })
 
