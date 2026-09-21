@@ -804,6 +804,17 @@ describe('Workbench internal HTTP API', () => {
       }
     })
 
+    // 终审 M7:打回改走 submitInput 之后,这条路由也能吐 submitInput 的整套错误码 ——
+    // 存不下补充是「这会儿没法办」,不是 internal。
+    it('service 抛出 input_storage_unavailable ⇒ 503;input_stale ⇒ 409', async () => {
+      for (const [code, status] of [['input_storage_unavailable', 503], ['input_stale', 409]] as const) {
+        const { request } = await start(service({ returnReviewFiles: vi.fn(async () => { throw new Error(code) }) }))
+        const response = await request('/v1/workbench/review-return', { method: 'POST', body: JSON.stringify({ id: 'deadbeef', artifactId: validArtifactId, paths: ['src/a.ts'], comment: '改' }) })
+        expect(response.status).toBe(status)
+        expect(await response.json()).toEqual({ error: code })
+      }
+    })
+
     it('三条都是 admin 档', () => {
       expect(minTierFor('GET /v1/workbench/review')).toBe('admin')
       expect(minTierFor('POST /v1/workbench/review-mark')).toBe('admin')

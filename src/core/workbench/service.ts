@@ -329,6 +329,9 @@ export function makeWorkbenchService(opts: Options) {
     if (!blocker) return null
     // 挡路的是一条保留会话、而且已经开过第二个回合 ⇒ 主人续接了它。说「同一个文件夹」没错,
     // 但主人看到的应该是「它正在续接」,否则会以为队伍卡住了(spec §D)。
+    // 但 writer_not_closed 是要人介入的告警(执行程序没确认退出),绝不能被这句安抚盖掉 ——
+    // uncertain 的 run 不会从 runsByTask 里摘掉,它的 runtime 照样报 retained(终审 I3)。
+    if (blocker.reason==='writer_not_closed') return blocker
     const holder=runsByTask.get(blocker.taskId)
     const retained=holder?runtimeSnapshot(holder)?.retained===true:false
     return holder&&retained&&holder.turn>1?{...blocker,reason:'retained_turn'}:blocker
@@ -480,8 +483,17 @@ export function makeWorkbenchService(opts: Options) {
     const holder=blocker?runsByTask.get(blocker.taskId):undefined
     if (holder&&holder!==running&&isReplied(holder)&&holder.reviewCapture) { await holder.reviewCapture.catch(()=>{}); await Promise.resolve(); blocker=findPathBlocker(running,held()) }
     if (blocker) throw Error('workbench_busy')
+    // 等快照的这段时间里这条 run 可能已经走完了(`execute` 的 finally 里 `releaseReservation`
+    // 既删租约也把它从 `runsByTask` 里摘掉)。此刻再装一份租约就**再没有人会删它**:
+    // `releaseReservation` 跑过了、`releaseTurnLease` 没人会调、`cancel` 与 `shutdown` 都只遍历
+    // `runsByTask` —— 文件夹锁到 daemon 重启为止(终审 C1)。所以落笔前重新确认它还活着。
+    if (!alive(running)) throw Error('input_stale')
     reservations.set(running.identity,{running,turn:running.turn})
     return true
+  }
+  /** 这条 run 还是这件事当前那条、而且还没走到头吗(落租约之前要重新确认)。 */
+  function alive(running:Active):boolean {
+    return runsByTask.get(running.taskId)===running&&!running.finishing&&!running.cancelled&&!running.publicFinished
   }
   /**
    * 开一个新回合(续接)。顺序是有讲究的:**先把代数推到下一格**,再等旧回合的快照截完 ——
@@ -543,7 +555,8 @@ export function makeWorkbenchService(opts: Options) {
     // (每格都得重取一次基线),而它们说的是同一件事。
     if (running.autonomousTurn) return
     const pending=beginTurn(running).catch(()=>{
-      if (running.cancelled||running.finishing||running.uncertain) return
+      // 已经在收尾/已经结束的,不用再结束一次(申请不到租约是因为它走到头了,不是因为被占)。
+      if (running.cancelled||running.finishing||running.uncertain||runsByTask.get(running.taskId)!==running) return
       // 这里是 catch 体:自己再抛就变成没人接的 rejection,结束动作也走不完。
       try {
         const blocker=findPathBlocker(running,held())
@@ -579,6 +592,12 @@ export function makeWorkbenchService(opts: Options) {
     // 答复时已把租约放掉;现在没能确认它退出,重新挂回去 —— 之后到来的同文件夹任务
     // 按 writer_not_closed 等待,直到 confirmLateClose。空闲窗口里已被放行的任务照常跑:
     // 一个前台空闲、没有后台工作的会话不会自己写文件,而主人要续接它会被 acquireTurnLease 拦住。
+    // 挂回去要换一代:上一轮答复排下的那次释放可能还在截快照(十几秒),代数不变的话它醒来就会
+    // 把这份隔离租约当成自己那份删掉,B 会在一个没确认退出的写进程还在的目录里起跑(终审 I2)。
+    running.turn+=1
+    // 还没截过的基线要跟着进新一代,否则 confirmLateClose 那次收集会因为代数对不上而白跑
+    // ——「没确认退出」的那一轮照样欠主人一份代码变更(同 beginTurn 的道理)。
+    if (running.reviewBaseline) running.reviewBaseline={...running.reviewBaseline,turn:running.turn}
     reservations.set(running.identity,{running,turn:running.turn})
   }
 
@@ -649,8 +668,11 @@ export function makeWorkbenchService(opts: Options) {
         },
         tierProfile:TIER_PROFILES.trusted,permissionMode:isUnattendedExecutor(entry.opts.workbench)?'dangerously':'strict',chatId:task.ownerChatId ?? `workbench:${task.id}`,
         ...(resume ? {resumeSessionId:resume} : {}),mcpEnv:sessionAuthEnv('trusted',token),appendInstructions:instructions,
-        requestPermission:(request,signal) => {running.interactionAt=Date.now();bumped(task.id);return running.permissions.request(request,signal).finally(()=>{running.interactionAt=Date.now();bumped(task.id)})},
-        requestUserInput:(request,signal) => {running.interactionAt=Date.now();bumped(task.id);return running.questions.request(request,signal).finally(()=>{running.interactionAt=Date.now();bumped(task.id)})},
+        // 结束在这里补一次落定:请求**自己超时**(权限 5 分钟)那一下既没有事件、也不走
+        // resolvePermission —— 会话早就静下来的话,它会停在「已答复却不放租约」,同目录的人白等
+        // (终审 I4)。settleAfterDecision 延到下一拍且幂等,正常拍板多走一次无妨。
+        requestPermission:(request,signal) => {running.interactionAt=Date.now();bumped(task.id);return running.permissions.request(request,signal).finally(()=>{running.interactionAt=Date.now();bumped(task.id);settleAfterDecision(running)})},
+        requestUserInput:(request,signal) => {running.interactionAt=Date.now();bumped(task.id);return running.questions.request(request,signal).finally(()=>{running.interactionAt=Date.now();bumped(task.id);settleAfterDecision(running)})},
       }).catch(error => { spawnRejected=true; throw error })
       let spawnTimer:ReturnType<typeof setTimeout>|undefined
       try {
@@ -692,6 +714,7 @@ export function makeWorkbenchService(opts: Options) {
        * 说「新回合开始了」(#2)—— 两处都只认得出 foreground / backgroundCount 的跳变。
        */
       let previous=runtimeSnapshot(running)
+      let transitionErrorNoted=false
       const noteTransition=()=>{
         const before=previous,after=runtimeSnapshot(running)
         previous=after
@@ -723,7 +746,14 @@ export function makeWorkbenchService(opts: Options) {
             if (ev.kind==='error') quota.note(task.providerId,ev.message)
             if (ev.kind==='result') quota.clear(task.providerId)
             if (ev.kind==='result') settleTurn(running)
-            noteTransition()
+            // observe 是**故意**会往外抛的(身份不符那条),所以探测器自己抛出会把整轮带走。
+            // 落定漏一次会被下一个事件补上,抛出去却不可逆 —— 吞掉,只记一次(终审 M5)。
+            try { noteTransition() } catch {
+              if (!transitionErrorNoted) {
+                transitionErrorNoted=true
+                try { store.addEvent(task.id,'system','本轮的状态跟踪出过一次错；收尾会在后面的事件里补上。');touched(task.id) } catch { /* best effort */ }
+              }
+            }
           },()=>{
             const snapshot=runtimeSnapshot(running)
             return running.questions.pending().length>0||running.permissions.pending().length>0||!!(snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0)

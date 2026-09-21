@@ -28,13 +28,19 @@ class TurnRuntime {
   queue=new AsyncQueue<AgentEvent>()
   state:AgentRuntimeSnapshot={retained:true,foreground:'running',backgroundCount:0,input:'send'}
   subscribed=false; submitted=0
+  /** close 挂住不返回:`execute` 那道 3 秒(测试里 50ms)超时会把这条 run 标成 writer_not_closed。 */
+  hangClose=false
+  /** 下一次 snapshot 抛一次:探测器自己炸了不该把整轮带走(终审 M5)。 */
+  throwNext=false
   runtime:AgentWorkbenchRuntime={
     events:{[Symbol.asyncIterator]:()=>{this.subscribed=true;return this.queue.iterable()[Symbol.asyncIterator]()}},
     start:()=>{if(!this.subscribed)throw Error('runtime_start_without_consumer');this.queue.push({kind:'init',sessionId:'turns-session'});this.queue.push({kind:'text',itemId:'t0',text:'做。'})},
     submit:async()=>{this.submitted++;this.state={...this.state,foreground:'running'};this.queue.push({kind:'text',itemId:`t${this.submitted}`,text:'接着做。'})},
-    snapshot:()=>this.state,
+    snapshot:()=>{if(this.throwNext){this.throwNext=false;throw Error('snapshot_exploded')}return this.state},
   }
-  session:AgentSession={workbenchRuntime:this.runtime,async *dispatch(){},close:async()=>{this.queue.end()}}
+  session:AgentSession={workbenchRuntime:this.runtime,async *dispatch(){},close:()=>{if(this.hangClose)return new Promise<void>(()=>{});this.queue.end();return Promise.resolve()}}
+  /** 事件流自己结束(会话走完了),不经过 close。 */
+  end(){this.queue.end()}
   said=0
   finishTurn(background=0){this.state={...this.state,foreground:'idle',backgroundCount:background};this.queue.push(result)}
   say(text:string){this.queue.push({kind:'text',itemId:`s${++this.said}`,text})}
@@ -51,7 +57,8 @@ beforeEach(()=>{
   db=openDb({path:join(area,'state.db')});runtimes=[]
   const registry=createProviderRegistry()
   registry.register('claude',{async spawn(_project,context){const r=new TurnRuntime();r.context=context;runtimes.push(r);return r.session}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
-  store=makeWorkbenchStore(db);service=makeWorkbenchService({store,registry,stateDir:area,ownerChatId:()=>null})
+  // close 超时与权限超时都调小:没确认退出、权限自己过期这两条路在测试里要走得完。
+  store=makeWorkbenchStore(db);service=makeWorkbenchService({store,registry,stateDir:area,ownerChatId:()=>null,closeTimeoutMs:50,permissionTimeoutMs:80})
 })
 afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
 const reviews=(id:string)=>service.detail(id).artifacts.filter(a=>a.name.startsWith('代码变更')).sort((x,y)=>x.name.localeCompare(y.name)).map(a=>({name:a.name,files:(JSON.parse(readArtifactSnapshot(store.artifact(id,a.id).storagePath,area,a.sha256).toString()) as {files:Array<{path:string;kind:string}>}).files.filter(f=>f.kind!=='not_reviewed').map(f=>f.path).sort()}))
@@ -286,5 +293,116 @@ it('放行之后会话真的闲着:落定照常补上,同目录的 B 起得来(T
   service.resolvePermission(a.id,service.detail(a.id).permissions[0]!.id,'deny')
   await expect(allowed).resolves.toBe(false)
   await expect.poll(()=>service.detail(a.id).task.phase,{timeout:10_000}).toBe('replied')
+  await expect.poll(()=>service.detail(b.id).task.status,{timeout:10_000}).toBe('running')
+})
+
+const slow=(id:string)=>{for(let n=0;n<60;n++)writeFileSync(join(project,`w${n}.txt`),`w ${n}\n`);writeFileSync(join(project,'.cc-workbench',id,'ready.txt'),'ready\n')}
+
+/**
+ * 续接要等挡路者把快照截完(`acquireTurnLease` 里那次 await)。等的这会儿自己这条 run 走完了
+ * —— `execute` 的 finally 已经 `releaseReservation`(租约和 `runsByTask` 都摘了)。此刻再落一份
+ * 租约就**再没有人会删它**:`cancel` / `shutdown` 都只遍历 `runsByTask`,同文件夹的每件事从此
+ * 排在一条终态任务后面,只能重启 daemon(终审 C1)。
+ */
+it('等别人快照时自己先走完了:不再落一份没人删得掉的租约(终审 C1)',async()=>{
+  const a=service.create({path:project,providerId:'claude',text:'A'})
+  await expect.poll(()=>service.detail(a.id).events.some(e=>e.kind==='text')).toBe(true)
+  const ra=runtimes[0]!
+  ra.finishTurn()
+  await expect.poll(()=>service.detail(a.id).task.phase,{timeout:10_000}).toBe('replied')
+  const b=service.create({path:project,providerId:'claude',text:'B'})
+  await expect.poll(()=>service.detail(b.id).task.status,{timeout:10_000}).toBe('running')
+  const rb=runtimes[1]!
+  slow(b.id)
+  rb.finishTurn()
+  // B 的释放确实挂在快照上了。
+  await expect.poll(()=>service.detail(b.id).artifacts.some(x=>x.name==='ready.txt'),{interval:1,timeout:10_000}).toBe(true)
+  // 主人续接 A:租约在 B 手里,acquireTurnLease 挂在 B 的快照上等。
+  const resume=service.submitInput(a.id,{runId:service.detail(a.id).runId!,requestId:'66666666-6666-4666-8666-666666666666',text:'接着改'})
+  // 等的这会儿 A 自己走完了。
+  ra.end()
+  await expect.poll(()=>service.detail(a.id).runId,{timeout:10_000}).toBeUndefined()
+  await expect(resume).rejects.toThrow('input_stale')
+  // 没有死租约:同文件夹的 C 起得来。
+  const c=service.create({path:project,providerId:'claude',text:'C'})
+  await expect.poll(()=>service.detail(c.id).task.status,{timeout:10_000}).toBe('running')
+})
+
+/**
+ * 答复排下的那次释放还在截快照,这期间执行程序没确认退出 ⇒ `markUncertain` 把隔离租约挂回去。
+ * 代数不变的话,那次过期的释放醒来会把**隔离租约**当成自己那份删掉,B 就在一个没确认退出的
+ * 写进程还在的目录里起跑 —— writer_not_closed 这道隔离形同虚设(终审 I2)。
+ */
+it('隔离租约不会被在途的那次释放删掉(终审 I2)',async()=>{
+  const a=service.create({path:project,providerId:'claude',text:'A'})
+  await expect.poll(()=>service.detail(a.id).events.some(e=>e.kind==='text')).toBe(true)
+  const r=runtimes[0]!
+  slow(a.id)
+  r.finishTurn()
+  await expect.poll(()=>service.detail(a.id).artifacts.some(x=>x.name==='ready.txt'),{interval:1,timeout:10_000}).toBe(true)
+  // 流结束 ⇒ 收尾时 close 挂住 ⇒ 超时 ⇒ markUncertain。
+  r.hangClose=true
+  r.end()
+  await expect.poll(()=>service.detail(a.id).task.error,{timeout:10_000}).toBe('writer_not_closed')
+  const b=service.create({path:project,providerId:'claude',text:'B'})
+  // 快照截完、那次释放醒来 —— 隔离租约还在。
+  await expect.poll(()=>reviews(a.id).length,{timeout:10_000}).toBe(1)
+  await new Promise(resolve=>setTimeout(resolve,150))
+  expect(service.detail(b.id).task.status).toBe('queued')
+  expect(service.detail(b.id).task.waitingFor).toMatchObject({taskId:a.id,reason:'writer_not_closed'})
+})
+
+/** 「执行程序没确认退出」是要人介入的告警,不能被「它正在继续写」这句安抚盖掉(终审 I3)。 */
+it('writer_not_closed 不会被 retained_turn 覆盖(终审 I3)',async()=>{
+  const a=service.create({path:project,providerId:'claude',text:'A'})
+  await expect.poll(()=>service.detail(a.id).events.some(e=>e.kind==='text')).toBe(true)
+  const r=runtimes[0]!
+  // 回合中间补一句 ⇒ 代数到 2,挡路者满足「保留会话 + turn>1」。
+  await service.submitInput(a.id,{runId:service.detail(a.id).runId!,requestId:'77777777-7777-4777-8777-777777777777',text:'再加一条'})
+  expect(service.detail(a.id).turn).toBe(2)
+  r.hangClose=true
+  r.end()
+  await expect.poll(()=>service.detail(a.id).task.error,{timeout:10_000}).toBe('writer_not_closed')
+  const b=service.create({path:project,providerId:'claude',text:'B'})
+  expect(service.detail(b.id).task.status).toBe('queued')
+  expect(service.detail(b.id).task.waitingFor).toMatchObject({taskId:a.id,reason:'writer_not_closed'})
+})
+
+/**
+ * 权限请求**自己超时**那一下既没有事件、也不走 resolvePermission:会话早就静下来的话,它会停在
+ * 「已答复却不放租约」,同目录的人白等(终审 I4)。超时的 finally 里补一次落定。
+ */
+it('权限请求自己过期:落定照样补上,同目录的 B 起得来(终审 I4)',async()=>{
+  const a=service.create({path:project,providerId:'claude',text:'A'})
+  await expect.poll(()=>service.detail(a.id).events.some(e=>e.kind==='text')).toBe(true)
+  const r=runtimes[0]!
+  const allowed=r.context!.requestPermission!({tool:'Write',description:'写一个文件'})
+  await expect.poll(()=>service.detail(a.id).permissions.length).toBe(1)
+  r.finishTurn()
+  const b=service.create({path:project,providerId:'claude',text:'B'})
+  await expect.poll(()=>service.detail(b.id).task.status).toBe('queued')
+  // 主人不管它,权限自己过期(测试里 80ms)—— 没有任何事件会再来。
+  await expect(allowed).resolves.toBe(false)
+  await expect.poll(()=>service.detail(a.id).task.phase,{timeout:10_000}).toBe('replied')
+  await expect.poll(()=>service.detail(b.id).task.status,{timeout:10_000}).toBe('running')
+})
+
+/** 探测器每个事件都跑,而 observe 是故意会往外抛的:它自己炸了不能把整轮带走(终审 M5)。 */
+it('状态探测器抛出不会把这一轮带走(终审 M5)',async()=>{
+  const a=service.create({path:project,providerId:'claude',text:'A'})
+  await expect.poll(()=>service.detail(a.id).events.some(e=>e.kind==='text')).toBe(true)
+  const r=runtimes[0]!
+  r.throwNext=true
+  r.say('探测器要在这一条上炸一次')
+  // 这一拍不能碰 service.detail —— 它自己也读 runtime.snapshot(),会把这一抛接走。
+  await expect.poll(()=>r.throwNext,{interval:1}).toBe(false)
+  await expect.poll(()=>service.detail(a.id).events.some(e=>e.text==='探测器要在这一条上炸一次')).toBe(true)
+  // 吞掉之后如实记一句(只记一次),而不是把这一轮判成失败。
+  expect(service.detail(a.id).events.some(e=>e.kind==='system'&&e.text.includes('状态跟踪出过一次错'))).toBe(true)
+  // 这一轮照常走完:该答复答复,该放租约放租约。
+  r.finishTurn()
+  await expect.poll(()=>service.detail(a.id).task.phase,{timeout:10_000}).toBe('replied')
+  expect(service.detail(a.id).task.status).toBe('running')
+  const b=service.create({path:project,providerId:'claude',text:'B'})
   await expect.poll(()=>service.detail(b.id).task.status,{timeout:10_000}).toBe('running')
 })

@@ -57,6 +57,8 @@ function mappedError(err: unknown): ReturnType<RouteHandler> {
   if(code==='native_import_too_large')return{status:400,body:{error:code}}
   if (code === 'native_history_unsupported') return {status:422,body:{error:code}}
   if (code === 'native_history_unavailable') return {status:503,body:{error:code}}
+  // 打回改走 submitInput 之后这条路由也能吐它:存不下补充是「这会儿没法办」,不是 500(终审 M7)。
+  if (code === 'input_storage_unavailable') return {status:503,body:{error:code}}
   if (code === 'not_found') return { status: 404, body: { error: code } }
   if (code === 'unavailable_provider') return { status: 422, body: { error: code } }
   if (code === 'unattended_ack_required') return { status: 428, body: { error: code } }
