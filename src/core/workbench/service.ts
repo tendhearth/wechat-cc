@@ -524,6 +524,15 @@ export function makeWorkbenchService(opts: Options) {
     void releaseTurnLease(running,turn).catch(()=>{})
   }
   /**
+   * 拍完板补一次落定。**延到下一拍**:主人一放行,SDK 常常在同一拍里就接着跑起来 —— 那时立刻
+   * 落定会把租约放给同目录的下一个任务,而这条会话正要动手写(接着只能靠 #2 的 fail-closed 把
+   * 它结束掉,等于因为一次正常的放行杀了会话)。下一拍再看:已经 running 就什么都不做,真闲着
+   * 的会话照常落定。
+   */
+  function settleAfterDecision(running:Active):void {
+    setImmediate(()=>{ if(!running.cancelled&&!running.finishing)settleTurn(running) })
+  }
+  /**
    * 保留下来的原生会话被后台通知唤醒、自己又开始干活,而它的租约在上一轮答复时已经放掉了
    * (评审 2026-09-21 #2)。立刻补一个新回合:文件夹还空着就重新持有,已经被别人占住就
    * fail-closed —— 结束这条会话,而不是让两条任务并写同一个目录。拦不到它动手之前,能保证的
@@ -1080,7 +1089,7 @@ export function makeWorkbenchService(opts: Options) {
       if(!running||running.cancelled||running.finishing||!running.questions.resolve(requestId,answers))throw Error('question_stale')
       bumped(id)
       // 回合早就静下来、只差这一个待决请求时,不会再有事件把落定叫起来 —— 拍完板自己补一次。
-      settleTurn(running)
+      settleAfterDecision(running)
     },
     withdrawInput(id:string,requestId:string){
       const input=store.liveInputs.get(requestId)
@@ -1476,8 +1485,9 @@ export function makeWorkbenchService(opts: Options) {
       // 请求 id 先验,免得为一个畸形请求留下标记。
       const given=input.inputRequestId===undefined?undefined:normalizeInputRequestId(input.inputRequestId)
       const {artifact,review}=reviewTarget(id,input.artifactId)
-      // 重发同一笔打回要落到幂等分支,所以文本必须可重现:去重保序 + 同一句意见 ⇒ 同一段文本。
-      const files=[...new Set(input.paths)].map(path=>markableFile(review,path))
+      // 重发同一笔打回要落到幂等分支,所以文本必须可重现:去重**排序** + 同一句意见 ⇒ 同一段文本。
+      // 排序是为了跟派生 id 对齐 —— id 不看顺序,文本要是看,换个勾选顺序重发就会撞 `input_conflict`。
+      const files=[...new Set(input.paths)].sort().map(path=>markableFile(review,path))
       const text=composeReturnText(files.map(({path,diff})=>({path,diff})),comment)
       const marks=()=>{
         for(const file of files)store.reviewMarks.set({taskId:id,artifactSha256:artifact.sha256,path:file.path,afterSha256:file.afterSha256??null,mark:'returned',comment})
@@ -1488,7 +1498,8 @@ export function makeWorkbenchService(opts: Options) {
         // 回合中间打回 = 抢跑:这一轮还在写,等它答复(桌面/微信都会把这句话如实转给主人)。
         if(!isReplied(running))throw new Error('workbench_busy')
         // 请求 id 没给就从这笔打回本身派生:重发落 liveInputs 的幂等分支,不会投第二遍。
-        const requestId=given??derivedReturnRequestId(artifact.sha256,files.map(file=>file.path),comment)
+        // 把 run 的 identity 也算进去:会话重开之后这是另一次投递,不然会撞上一条 run 那笔 liveInput。
+        const requestId=given??derivedReturnRequestId(artifact.sha256,files.map(file=>file.path),comment,running.identity)
         // 标记仍在拿到回执之后才落:投不出去就不该让主人看到「已打回」。
         return service.submitInput(id,{runId:running.identity,requestId,text}).then(receipt=>{marks();return receipt})
       }
@@ -1503,7 +1514,7 @@ export function makeWorkbenchService(opts: Options) {
       if (!running || !running.permissions.resolve(requestId,decision)) throw new Error('permission_stale')
       bumped(id)
       // 同 resolveAnswer:静默期里拍的板,得由拍板这一下把落定补上。
-      settleTurn(running)
+      settleAfterDecision(running)
     },
     async handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>{return wechatControl(chatId,text,identity)},
     shutdown():Promise<void> {

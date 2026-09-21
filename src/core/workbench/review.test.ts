@@ -92,5 +92,11 @@ describe('derivedReturnRequestId', () => {
     expect(derivedReturnRequestId(sha, ['src/a.ts'], '这两处判空漏了')).not.toBe(id)
     expect(derivedReturnRequestId(sha, ['src/a.ts', 'src/b.ts'], '再改改')).not.toBe(id)
     expect(derivedReturnRequestId('b'.repeat(64), ['src/a.ts', 'src/b.ts'], '这两处判空漏了')).not.toBe(id)
+    // scope(服务端传 run 的 identity):会话重开之后同一份打回是另一次投递,不能跟上一条 run 撞 id。
+    const scoped = derivedReturnRequestId(sha, ['src/a.ts', 'src/b.ts'], '这两处判空漏了', 'run-1')
+    expect(scoped).not.toBe(id)
+    expect(derivedReturnRequestId(sha, ['src/b.ts', 'src/a.ts'], '这两处判空漏了', 'run-1')).toBe(scoped)
+    expect(derivedReturnRequestId(sha, ['src/a.ts', 'src/b.ts'], '这两处判空漏了', 'run-2')).not.toBe(scoped)
+    expect(normalizeInputRequestId(scoped)).toBe(scoped)
   })
 })

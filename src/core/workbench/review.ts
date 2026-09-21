@@ -95,9 +95,11 @@ export function composeReturnText(
  * 路径顺序不算数(勾选顺序不该改变身份),意见或快照一变就是另一笔。
  * 取前 16 字节套成 UUID 形状(版本位 '4'、变体位 '8'),好让它过路由的 REQUEST_ID 与
  * `normalizeInputRequestId` 那道正则 —— 这不是随机 UUID,形状一致只是为了共用同一条管道。
+ * `scope` 给调用方把「投给谁」也算进去(服务端传的是 run 的 identity):会话重开之后同一份打回
+ * 是**另一次**投递,不带 scope 的话它会撞上上一条 run 留下的那笔 liveInput,回一个 `input_conflict`。
  */
-export function derivedReturnRequestId(artifactSha256: string, paths: readonly string[], comment: string): string {
-  const digest = createHash('sha256').update(`${artifactSha256}\0${[...paths].sort().join('\n')}\0${comment}`, 'utf8').digest('hex').slice(0, 32)
+export function derivedReturnRequestId(artifactSha256: string, paths: readonly string[], comment: string, scope = ''): string {
+  const digest = createHash('sha256').update(`${scope}\0${artifactSha256}\0${[...paths].sort().join('\n')}\0${comment}`, 'utf8').digest('hex').slice(0, 32)
   const shaped = `${digest.slice(0, 12)}4${digest.slice(13, 16)}8${digest.slice(17, 32)}`
   return `${shaped.slice(0, 8)}-${shaped.slice(8, 12)}-${shaped.slice(12, 16)}-${shaped.slice(16, 20)}-${shaped.slice(20, 32)}`
 }

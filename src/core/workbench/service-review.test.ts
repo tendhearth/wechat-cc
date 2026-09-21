@@ -273,7 +273,7 @@ async function retained() {
   const task = service.create({ path: project, providerId: 'claude', text: '做点事' })
   await vi.waitFor(() => expect(service.detail(task.id).events.some(e => e.kind === 'text')).toBe(true))
   const artifactId = plant(store, task.id, stateDir, '代码变更-run1.json', serializeGitReview(review([file('src/a.ts'), file('src/b.ts')])))
-  return { service, store, id: task.id, artifactId, runtime: runtimes[0]! }
+  return { service, store, id: task.id, artifactId, runtime: runtimes[0]!, runtimes }
 }
 const marksOf = (service: WorkbenchService, id: string, artifactId: string) =>
   service.reviewList(id).find(t => t.artifactId === artifactId)!.files.map(f => f.mark?.mark)
@@ -306,6 +306,41 @@ describe('returnReviewFiles · 保留会话(评审 2026-09-21 #7)', () => {
     expect(runtime.submitted).toBe(1)
     expect(service.detail(id).inputs.filter(i => i.text.startsWith('打回以下改动'))).toHaveLength(1)
     expect(marksOf(service, id, artifactId)).toEqual(['returned', 'returned'])
+  })
+
+  // 终审(2026-09-21 #7):打回的请求 id 里要带上投给哪条 run —— 会话重开之后同一份打回是另一次
+  // 投递,id 不分代的话它会撞上上一条 run 留下的那笔 liveInput,回一个莫名其妙的 input_conflict。
+  it('会话重开之后同一份打回照样送得出去,不会撞上一条 run 的那笔投递', async () => {
+    const { service, id, artifactId, runtimes } = await retained()
+    runtimes[0]!.finishTurn()
+    await vi.waitFor(() => expect(service.detail(id).task.phase).toBe('replied'))
+    const back = { artifactId, paths: ['src/a.ts'], comment: '这里判空漏了' }
+    const first = await service.returnReviewFiles(id, back) as LiveInput
+    // 结束这条会话,再从记录里接着开一条新的。
+    await service.cancel(id)
+    await vi.waitFor(() => expect(service.detail(id).runId).toBeUndefined())
+    service.continueTask(id, '接着做')
+    await vi.waitFor(() => expect(runtimes).toHaveLength(2))
+    await vi.waitFor(() => expect(service.detail(id).runId).toBeDefined())
+    runtimes[1]!.finishTurn()
+    await vi.waitFor(() => expect(service.detail(id).task.phase).toBe('replied'))
+    const second = await service.returnReviewFiles(id, back) as LiveInput
+    expect(second.id).not.toBe(first.id)
+    expect(second.runId).not.toBe(first.runId)
+    expect(second.status).toBe('sending')
+    expect(runtimes[1]!.submitted).toBe(1)
+  })
+
+  it('勾选顺序不影响投出去的那段文本(文本要跟派生 id 一样不看顺序)', async () => {
+    const { service, id, artifactId, runtime } = await retained()
+    runtime.finishTurn()
+    await vi.waitFor(() => expect(service.detail(id).task.phase).toBe('replied'))
+    const receipt = await service.returnReviewFiles(id, { artifactId, paths: ['src/b.ts', 'src/a.ts'], comment: '两处都改' }) as LiveInput
+    expect(receipt.text.indexOf('- src/a.ts')).toBeLessThan(receipt.text.indexOf('- src/b.ts'))
+    // 换个勾选顺序重发 ⇒ 同一个 id、同一段文本 ⇒ 幂等,不是 input_conflict。
+    const again = await service.returnReviewFiles(id, { artifactId, paths: ['src/a.ts', 'src/b.ts'], comment: '两处都改' }) as LiveInput
+    expect(again.id).toBe(receipt.id)
+    expect(runtime.submitted).toBe(1)
   })
 
   it('会话还在写时打回 ⇒ workbench_busy,一条标记都不留', async () => {

@@ -243,3 +243,48 @@ it('挡路的是一条正在续接的保留会话:排队原因是 retained_turn(
   expect(service.detail(b.id).task.status).toBe('queued')
   expect(service.detail(b.id).task.waitingFor).toMatchObject({taskId:a.id,title:service.detail(a.id).task.title,reason:'retained_turn'})
 })
+
+/**
+ * 拍板补落定这一下不能在同一拍里做:主人一放行,SDK 常常立刻就接着跑 —— 那时落定会把租约
+ * 交给同目录的下一个任务,而这条会话正要动手写,接着只能靠 #2 的 fail-closed 把它结束掉。
+ * 等于「批准一次权限」把会话杀了。延到下一拍再看:已经在写就什么都不做(Task 3 复审 #1)。
+ */
+const permission=()=>({tool:'Write',description:'写一个文件'})
+it('放行之后会话立刻接着跑:租约留着,会话不会被结束(Task 3 复审 #1)',async()=>{
+  const a=service.create({path:project,providerId:'claude',text:'A'})
+  await expect.poll(()=>service.detail(a.id).events.some(e=>e.kind==='text')).toBe(true)
+  const r=runtimes[0]!
+  const allowed=r.context!.requestPermission!(permission())
+  await expect.poll(()=>service.detail(a.id).permissions.length).toBe(1)
+  r.finishTurn()
+  const b=service.create({path:project,providerId:'claude',text:'B'})
+  await expect.poll(()=>service.detail(b.id).task.status).toBe('queued')
+  // 放行,同一拍里会话就接着跑起来。
+  service.resolvePermission(a.id,service.detail(a.id).permissions[0]!.id,'allow')
+  r.autonomousWrite()
+  await expect(allowed).resolves.toBe(true)
+  await new Promise(resolve=>setTimeout(resolve,400))
+  expect(service.detail(a.id).task.status).toBe('running')
+  expect(service.detail(a.id).events.some(e=>e.kind==='system'&&e.text.includes('自己又开始干活'))).toBe(false)
+  expect(service.detail(b.id).task.status).toBe('queued')
+  expect(service.detail(b.id).task.waitingFor?.taskId).toBe(a.id)
+  // 这一下根本不该落定:回合没断代(还是第 1 回合),这一轮的差异也不该在中途被截成一份快照
+  // —— 差异边界 = 租约边界,批准一次权限不是租约边界。
+  expect(service.detail(a.id).turn).toBe(1)
+  expect(reviews(a.id)).toHaveLength(0)
+})
+
+it('放行之后会话真的闲着:落定照常补上,同目录的 B 起得来(Task 3 复审 #1)',async()=>{
+  const a=service.create({path:project,providerId:'claude',text:'A'})
+  await expect.poll(()=>service.detail(a.id).events.some(e=>e.kind==='text')).toBe(true)
+  const r=runtimes[0]!
+  const allowed=r.context!.requestPermission!(permission())
+  await expect.poll(()=>service.detail(a.id).permissions.length).toBe(1)
+  r.finishTurn()
+  const b=service.create({path:project,providerId:'claude',text:'B'})
+  await expect.poll(()=>service.detail(b.id).task.status).toBe('queued')
+  service.resolvePermission(a.id,service.detail(a.id).permissions[0]!.id,'deny')
+  await expect(allowed).resolves.toBe(false)
+  await expect.poll(()=>service.detail(a.id).task.phase,{timeout:10_000}).toBe('replied')
+  await expect.poll(()=>service.detail(b.id).task.status,{timeout:10_000}).toBe('running')
+})
