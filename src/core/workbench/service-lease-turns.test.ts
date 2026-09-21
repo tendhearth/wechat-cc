@@ -33,7 +33,13 @@ class TurnRuntime {
     snapshot:()=>this.state,
   }
   session:AgentSession={workbenchRuntime:this.runtime,async *dispatch(){},close:async()=>{this.queue.end()}}
-  finishTurn(){this.state={...this.state,foreground:'idle'};this.queue.push(result)}
+  said=0
+  finishTurn(background=0){this.state={...this.state,foreground:'idle',backgroundCount:background};this.queue.push(result)}
+  say(text:string){this.queue.push({kind:'text',itemId:`s${++this.said}`,text})}
+  /** 最后一个后台子任务结束:runtime 只推一条 tool_call,backgroundCount 归零,再没有新的 result。 */
+  endChild(){this.state={...this.state,backgroundCount:0};this.queue.push({kind:'tool_call',tool:'Agent',activity:{id:'child',type:'agent',label:'子任务',status:'completed'}})}
+  /** 保留会话被后台通知唤醒,自己又动手写。 */
+  autonomousWrite(){this.state={...this.state,foreground:'running'};this.queue.push({kind:'tool_call',tool:'Write',activity:{id:'late',type:'tool',label:'自动续作',status:'running'}})}
 }
 let area:string,project:string,db:Db,service:WorkbenchService,store:ReturnType<typeof makeWorkbenchStore>,runtimes:TurnRuntime[]
 const git=(...args:string[])=>execFileSync('git',args,{cwd:project,stdio:'pipe',env:{...process.env,GIT_AUTHOR_NAME:'t',GIT_AUTHOR_EMAIL:'t@t',GIT_COMMITTER_NAME:'t',GIT_COMMITTER_EMAIL:'t@t'}})
@@ -100,4 +106,68 @@ it('回合中间补一句话:基线跟着进新回合,这一轮的代码变更�
   runtimes[0]!.finishTurn()
   await expect.poll(()=>reviews(a.id).length,{timeout:10_000}).toBe(1)
   expect(reviews(a.id)[0]!.files).toEqual(['after-steer.txt','before-steer.txt'])
+})
+
+/**
+ * 最后一个后台子任务结束时,`claude-workbench-runtime` 只推一条 `tool_call`(terminalTask):
+ * `backgroundCount` 归零,却没有新的 `result`。收尾的动作全挂在 `result` 上 ⇒ A 显示「已答复」
+ * 却一件成果都没有,同文件夹的 B 永远排队(评审 2026-09-21 #6)。落定要按状态转移判,不是按事件种类。
+ */
+const CHILD_STILL_WRITING='父回合结束了，子任务还在写。'
+it('最后一个后台子任务只推 tool_call:回合照样落定,成果登记、同目录的 B 起得来(评审 2026-09-21 #6)',async()=>{
+  const a=service.create({path:project,providerId:'claude',text:'A'})
+  await expect.poll(()=>service.detail(a.id).events.some(e=>e.kind==='text')).toBe(true)
+  const r=runtimes[0]!
+  // 父回合结束时还有一个子任务在写:此刻不能落定。后面这句话排在 result 之后,它出现就说明 result 已被消费。
+  r.finishTurn(1)
+  r.say(CHILD_STILL_WRITING)
+  await expect.poll(()=>service.detail(a.id).events.some(e=>e.text===CHILD_STILL_WRITING)).toBe(true)
+  writeFileSync(join(project,'.cc-workbench',a.id,'late.txt'),'子任务最后写的东西\n')
+  const b=service.create({path:project,providerId:'claude',text:'B'})
+  expect(service.detail(a.id).artifacts.map(x=>x.name)).not.toContain('late.txt')
+  expect(service.detail(b.id).task.status).toBe('queued')
+  expect(service.detail(b.id).task.waitingFor?.taskId).toBe(a.id)
+  // 子任务结束:只有一条 tool_call,没有新的 result。
+  r.endChild()
+  await expect.poll(()=>service.detail(a.id).artifacts.map(x=>x.name),{timeout:10_000}).toContain('late.txt')
+  expect(service.detail(a.id).task.phase).toBe('replied')
+  await expect.poll(()=>service.detail(b.id).task.status,{timeout:10_000}).toBe('running')
+})
+
+/**
+ * 答复即释放租约之后,保留下来的原生会话可能被后台通知唤醒、自己又开始写 —— 服务端今天只在
+ * `result` 上看状态,`foreground` 从 idle 变回 running 没有任何钩子(评审 2026-09-21 #2)。
+ * 拦不到它动手之前,但窗口最多一个事件:目录被别人占着就结束这条会话,而不是两条任务并写。
+ */
+it('保留会话在 B 占了目录之后自己又开始干活:结束会话并说清楚(评审 2026-09-21 #2)',async()=>{
+  const a=service.create({path:project,providerId:'claude',text:'A'})
+  await expect.poll(()=>service.detail(a.id).events.some(e=>e.kind==='text')).toBe(true)
+  runtimes[0]!.finishTurn()
+  // A 答复即释放租约,同目录的 B 拿到文件夹开始干活。
+  const b=service.create({path:project,providerId:'claude',text:'B'})
+  await expect.poll(()=>service.detail(b.id).task.status,{timeout:10_000}).toBe('running')
+  runtimes[0]!.autonomousWrite()
+  // A 申请不到租约 ⇒ fail-closed:结束会话。答复早已交付,终态是「做完了」而不是「取消」。
+  await expect.poll(()=>service.detail(a.id).task.status,{timeout:10_000}).toBe('completed')
+  const title=service.detail(b.id).task.title
+  expect(service.detail(a.id).events.some(e=>e.kind==='system'&&e.text.includes('自己又开始干活')&&e.text.includes(title))).toBe(true)
+  expect(service.detail(b.id).task.phase).toBe('working')
+})
+
+it('没人占着目录时的自动续作:重新拿到租约、开新回合(评审 2026-09-21 #2)',async()=>{
+  const a=service.create({path:project,providerId:'claude',text:'A'})
+  await expect.poll(()=>service.detail(a.id).events.some(e=>e.kind==='text')).toBe(true)
+  writeFileSync(join(project,'a0.txt'),'A\n')
+  runtimes[0]!.finishTurn()
+  // 这一轮的快照落库 ⇒ 释放已经走到底,租约确实不在 A 手里了。
+  await expect.poll(()=>reviews(a.id).length,{timeout:10_000}).toBe(1)
+  await new Promise(resolve=>setTimeout(resolve,20))
+  runtimes[0]!.autonomousWrite()
+  await expect.poll(()=>service.detail(a.id).turn,{timeout:10_000}).toBe(2)
+  expect(service.detail(a.id).task.status).toBe('running')
+  // 租约真的回到了 A 手里:此刻进来的 B 得排在它后面。
+  const b=service.create({path:project,providerId:'claude',text:'B'})
+  expect(service.detail(b.id).task.status).toBe('queued')
+  expect(service.detail(b.id).task.waitingFor?.taskId).toBe(a.id)
+  expect(runtimes).toHaveLength(1)
 })

@@ -98,6 +98,8 @@ interface Active extends PathReservation {
   turnCollection?:Promise<void>
   /** 已记过的收集警告:每回合都重扫成果目录,同一条只记一次(评审 2026-09-16) */
   warned?:Set<string>
+  /** 已经落定过的回合号:同一回合只收一次成果、只放一次租约(评审 2026-09-21 #6)。 */
+  settledTurn?:number
   /** 停止请求到达时本轮已经答复 —— 那是收工,不是取消,终态记 completed。 */
   closedWhileReplied?: boolean
   credentialsMinted: boolean
@@ -493,6 +495,41 @@ export function makeWorkbenchService(opts: Options) {
     else { try { running.reviewBaseline={...await captureGitBaseline(running.path,{}),turn:running.turn} } catch { /* 没基线就没有这一轮的代码对比,其他成果照收 */ } }
     return acquired
   }
+  /**
+   * 本回合落定:登记成果、把 matter 标成已答复、放掉租约。这些动作今天只挂在 `result` 事件上,
+   * 而最后一个后台子任务结束时 runtime 只推一条 `tool_call`(terminalTask)—— `backgroundCount`
+   * 归零却没有新的 `result`,于是 A 显示「已答复」却一件成果都没有,同文件夹的 B 永远排队
+   * (评审 2026-09-21 #6)。状态转移探测器和 `result` 分支都调这里,同一回合只落定一次。
+   */
+  function settleTurn(running:Active):void {
+    if (running.settledTurn===running.turn) return
+    const snapshot=runtimeSnapshot(running)
+    // 与「该暂停了」的判据同义:回合真的落定才登记,否则会把半成品当成固定版本的成果发布出去。
+    if (!snapshot?.retained||snapshot.foreground!=='idle'||snapshot.backgroundCount!==0) return
+    collectTurnArtifacts(running)
+    // 还在等主人拍板就不算答复:成果先收着,租约等真闲下来再放。
+    if (!isReplied(running)) return
+    running.settledTurn=running.turn
+    const turn=running.turn
+    matterSync(m=>m.setStatus(running.taskId,'replied'))
+    // 释放是异步的(要先截快照),带上此刻的回合号:等它醒来时主人可能已经续接了。
+    void releaseTurnLease(running,turn).catch(()=>{})
+  }
+  /**
+   * 保留下来的原生会话被后台通知唤醒、自己又开始干活,而它的租约在上一轮答复时已经放掉了
+   * (评审 2026-09-21 #2)。立刻补一个新回合:文件夹还空着就重新持有,已经被别人占住就
+   * fail-closed —— 结束这条会话,而不是让两条任务并写同一个目录。拦不到它动手之前,能保证的
+   * 是窗口最多一个事件。答复早已交付,所以终态记 completed(等同主人点「结束后台会话」)。
+   */
+  function onAutonomousStart(running:Active):void {
+    void beginTurn(running).catch(()=>{
+      if (running.cancelled||running.finishing||running.uncertain) return
+      const blocker=findPathBlocker(running,held())
+      try { store.addEvent(running.taskId,'system',`保留会话在「${blocker?.title??'另一件事'}」占用目录时自己又开始干活，已结束会话；答复已交付，这段自动续作没有落地。`);touched(running.taskId) } catch { /* 结束动作照走 */ }
+      running.closedWhileReplied=true
+      cancelRun(running)
+    })
+  }
   function releaseReservation(running:Active) {
     // 结算不看回合:这条 run 走到头了,它的租约无论哪一代都该还回去。
     if (reservations.get(running.identity)?.running === running) reservations.delete(running.identity)
@@ -623,6 +660,24 @@ export function makeWorkbenchService(opts: Options) {
         flushErrorNoted=true
         try { store.addEvent(task.id,'system','有一段输出没能保存，后面的会照常。'); touched(task.id) } catch { /* best effort */ }
       }})
+      /**
+       * 状态转移探测器(评审 2026-09-21 #6 #2):每个事件之后比一次快照,而不是只看 `result`。
+       * 最后一个后台子任务结束只推一条 `tool_call`(#6);保留会话被后台通知唤醒也没有任何事件
+       * 说「新回合开始了」(#2)—— 两处都只认得出 foreground / backgroundCount 的跳变。
+       */
+      let previous=runtimeSnapshot(running)
+      const noteTransition=()=>{
+        const before=previous,after=runtimeSnapshot(running)
+        previous=after
+        if (!before||!after) return
+        if (running.cancelled||running.finishing||running.uncertain) return
+        const quiet=after.foreground==='idle'&&after.backgroundCount===0
+        const wasQuiet=before.foreground==='idle'&&before.backgroundCount===0
+        if (quiet&&!wasQuiet&&running.permissions.pending().length===0&&running.questions.pending().length===0) { settleTurn(running); return }
+        const woke=(before.foreground==='idle'&&after.foreground==='running')||(before.backgroundCount===0&&after.backgroundCount>0)
+        // 手里还有租约的都是正常回合(主人续接走的是 beginTurn);没有租约才是自己又动了手。
+        if (woke&&!reservations.has(running.identity)) onAutonomousStart(running)
+      }
       let summary
       try {
         summary=await collectWorkbenchTurn(stream,running.stop,opts.timeoutMs ?? 10*60_000,
@@ -635,14 +690,8 @@ export function makeWorkbenchService(opts: Options) {
             // 任何一个成功回合(result)即视为这家恢复。
             if (ev.kind==='error') quota.note(task.providerId,ev.message)
             if (ev.kind==='result') quota.clear(task.providerId)
-            // 与本函数下面那条「该暂停了」的判据同义:回合真的落定(前台空闲、没有
-            // 后台子任务仍在写)才登记,否则会把半成品当成固定版本的成果发布出去。
-            if (ev.kind==='result') {
-              const snapshot=runtime?.snapshot()
-              if (snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0) collectTurnArtifacts(running)
-              // 释放是异步的(要先截快照),带上此刻的回合号:等它醒来时主人可能已经续接了。
-              if (isReplied(running)) { const turn=running.turn; matterSync(m=>m.setStatus(task.id,'replied')); void releaseTurnLease(running,turn).catch(()=>{}) }
-            }
+            if (ev.kind==='result') settleTurn(running)
+            noteTransition()
           },()=>{
             const snapshot=runtimeSnapshot(running)
             return running.questions.pending().length>0||running.permissions.pending().length>0||!!(snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0)
