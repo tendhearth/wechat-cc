@@ -164,12 +164,32 @@ function defaultIsAlive(pid: number): boolean {
 }
 
 /**
+ * 建锁:`O_CREAT|O_EXCL` 一次写成,已经有人就抛(EEXIST)。
+ *
+ * 为什么不是「openSync('wx') 拿 fd,再写 pid」:那两步之间锁文件是**空的**,
+ * 第二个进程这时候读到一个读不懂的锁,按下面「读不懂 ⇒ 抢过来」的规矩就把
+ * 刚建好的锁删了 —— 两边都以为自己拿到了。一次 writeFileSync 带 flag 是同一组
+ * 系统标志,但建文件和写 pid 在同一个调用里,没有那个空窗。
+ */
+function createLockExclusive(fs: StateFs, file: string, pid: number): void {
+  fs.writeFileSync(file, JSON.stringify({ pid, at: Date.now() }) + '\n', { flag: 'wx', mode: 0o600 })
+}
+
+/**
  * 「一次只跑一条」的锁。文件里写着持有者的 pid:
  *  · 没人持有 ⇒ 拿到
  *  · 持有者还活着 ⇒ 拒绝,把 pid 报给调用方(`self_change_busy`)
  *  · 持有者已经死了(上一条被 kill -9 / 断电)⇒ 抢过来。否则一次崩溃就要
  *    主人手工删文件才能再自改。
  *  · 文件读不懂 ⇒ 也当没人持有,理由同上。
+ *
+ * **拿锁本身必须是排他的**(2026-09-21 审查 #5):老写法是「先读一眼没人持有,
+ * 再写 .tmp + rename」—— 原子替换只保证别人读不到半截文件,拦不住两个进程
+ * 都先读到空、然后都写。现在改成 `O_CREAT|O_EXCL` 建文件:同一时刻只有一个
+ * 能建成,输的那个才去看持有者是谁。
+ *
+ * 抢占(死掉的 / 读不懂的持有者)是「删掉再建一次」,而那一次同样是排他的:
+ * 两个进程同时来抢一把死锁,也只有一个能建成,另一个照样被挡。
  *
  * `isAlive` 注入是为了测试能演「死 pid」而不用真去 kill 谁。
  */
@@ -183,20 +203,34 @@ export function acquireLock(
   const file = join(dir, LOCK_FILE)
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
 
-  const holder = readHolder(fs, file)
-  if (holder !== null && holder !== pid && isAlive(holder)) return { ok: false, holder }
-
-  // 原子替换:先写 .tmp 再 rename,免得抢占过程中被第三个进程读到半截。
-  const tmp = `${file}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify({ pid, at: Date.now() }) + '\n', { mode: 0o600 })
-  fs.renameSync(tmp, file)
-
-  return {
-    ok: true,
-    release: () => {
+  const mine = {
+    ok: true as const,
+    release: (): void => {
       // 只删自己的:被别人抢占之后再 release,不能把人家的锁带走。
       try { if (readHolder(fs, file) === pid) fs.unlinkSync(file) } catch { /* 已经没了 */ }
     },
+  }
+
+  try {
+    createLockExclusive(fs, file, pid)
+    return mine
+  } catch { /* 已经有人建过了,下面看看是谁 */ }
+
+  const holder = readHolder(fs, file)
+  // 自己上一次留下的(同一个进程再进来一次):当成还持着。
+  if (holder === pid) return mine
+  if (holder !== null && isAlive(holder)) return { ok: false, holder }
+
+  // 持有者死了 / 文件读不懂 ⇒ 删掉重建一次。重建仍然是排他的:
+  // 另一个进程要是在这一瞬抢先建成了,这次就该轮到我们busy。
+  try {
+    fs.unlinkSync(file)
+    createLockExclusive(fs, file, pid)
+    return mine
+  } catch {
+    // 输给了同时来抢的那个。报出**现在**的持有者,报不出来就报 0
+    //(调用方只拿它来告诉主人「被谁占着」,不该因为读不到 pid 就当成没人占)。
+    return { ok: false, holder: readHolder(fs, file) ?? 0 }
   }
 }
 

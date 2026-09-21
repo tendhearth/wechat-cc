@@ -178,6 +178,62 @@ describe('acquireLock', () => {
     const r = acquireLock(dir, 7, fs, () => false)
     expect(r.ok).toBe(true)
   })
+
+  // 2026-09-21 审查 #5:老写法是「先读一眼没人持有,再写 .tmp + rename」——
+  // 两个进程都先读到空,于是都拿到了锁。下面这三条把交错演出来:建锁必须排他。
+  describe('排他(两个人同时来抢)', () => {
+    /** 在第一个人「建锁」这一刻插进第二个人的整次 acquireLock。 */
+    function interleaved(dir: string, outer: number, inner: number, alive: (pid: number) => boolean): {
+      first: ReturnType<typeof acquireLock>
+      second: ReturnType<typeof acquireLock> | null
+    } {
+      let second: ReturnType<typeof acquireLock> | null = null
+      const hooked = {
+        ...fs,
+        writeFileSync: ((...args: Parameters<typeof writeFileSync>) => {
+          if (second === null) second = acquireLock(dir, inner, undefined, alive)
+          return writeFileSync(...args)
+        }) as typeof writeFileSync,
+      }
+      const first = acquireLock(dir, outer, hooked, alive)
+      return { first, second }
+    }
+
+    it('空场上两个人交错来 ⇒ 只有一个 ok,锁文件记的就是那个人', () => {
+      const dir = tempDir()
+      const { first, second } = interleaved(dir, 1111, 2222, () => true)
+      expect([first.ok, second?.ok].filter(Boolean)).toHaveLength(1)
+      // 插进来的那个先建成了文件,外面这个撞上 EEXIST ⇒ 报出真正的持有者。
+      expect(second?.ok).toBe(true)
+      expect(first).toEqual({ ok: false, holder: 2222 })
+      expect(JSON.parse(readFileSync(join(dir, 'self-change', 'lock'), 'utf8')).pid).toBe(2222)
+    })
+
+    it('抢一把死锁时两个人交错来 ⇒ 还是只有一个 ok', () => {
+      const dir = tempDir()
+      const dead = acquireLock(dir, 999, undefined, () => true)
+      expect(dead.ok).toBe(true)
+      // 999 已经死了:两个人都想抢。isAlive 只对活着的 1111/2222 说真话。
+      const { first, second } = interleaved(dir, 1111, 2222, pid => pid !== 999)
+      expect([first.ok, second?.ok].filter(Boolean)).toHaveLength(1)
+      expect(second?.ok).toBe(true)
+      expect(first.ok).toBe(false)
+      expect(JSON.parse(readFileSync(join(dir, 'self-change', 'lock'), 'utf8')).pid).toBe(2222)
+    })
+
+    it('输掉的那个拿不到 release;赢家放手之后下一个人才拿得到', () => {
+      const dir = tempDir()
+      const { first, second } = interleaved(dir, 1111, 2222, () => true)
+      expect('release' in first).toBe(false)
+      expect(existsSync(join(dir, 'self-change', 'lock'))).toBe(true)
+
+      // 赢家还没放手 ⇒ 第三个人照样被挡。
+      expect(acquireLock(dir, 3333, undefined, () => true)).toEqual({ ok: false, holder: 2222 })
+      if (second?.ok) second.release()
+      expect(existsSync(join(dir, 'self-change', 'lock'))).toBe(false)
+      expect(acquireLock(dir, 3333, undefined, () => true).ok).toBe(true)
+    })
+  })
 })
 
 describe('newSelfChangeId', () => {
