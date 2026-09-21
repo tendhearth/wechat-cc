@@ -1,6 +1,8 @@
 import { isAbsolute, relative, sep } from 'node:path'
 
-export type WaitingReason = 'same_path' | 'nested_path' | 'writer_not_closed'
+/** 前三种由路径关系判定(见 findPathBlocker);'retained_turn' 由 service 判定:挡路的是一条
+ *  保留会话、而且已经开了新回合 —— 主人续接了它,队伍没卡住(spec §D)。 */
+export type WaitingReason = 'same_path' | 'nested_path' | 'writer_not_closed' | 'retained_turn'
 export interface WaitingFor { taskId: string; title: string; reason: WaitingReason }
 export interface PathReservation {
   identity: string

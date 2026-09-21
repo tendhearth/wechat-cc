@@ -274,7 +274,10 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
       ? `正在等待「${escapeWorkbenchHtml(detail.task.waitingFor.title)}」结束；这些任务使用同一个文件夹。`
       : detail?.task.waitingFor?.reason === 'nested_path'
         ? `正在等待「${escapeWorkbenchHtml(detail.task.waitingFor.title)}」结束；任务文件夹彼此包含。`
-        : '任务已记下，正在等待执行。'
+        // 挡路的那件事正在续接(主人刚给它补了一句):队伍没卡住,说清楚在等什么。
+        : detail?.task.waitingFor?.reason === 'retained_turn'
+          ? `「${escapeWorkbenchHtml(detail.task.waitingFor.title)}」正在续接；这些任务使用同一个文件夹，等它这一轮结束就轮到这件事。`
+          : '任务已记下，正在等待执行。'
   const queuedGuidance = detail?.task.status === 'queued' && detail.task.waitingFor
     ? `<p class="wb-queue-guidance" role="status">${queuedCopy}</p>`
     : ''
@@ -1057,7 +1060,9 @@ export function initWorkbenchPage(deps) {
       const restartToken = opened?.artifactId === artifactId ? opened.restartToken : undefined
       if (opened?.artifactId === artifactId) opened.notice = ''
       // 任务自己在跑的时候后台回的是 workbench_busy,那句「另一个任务正在写」在这儿是误报。
-      if (['running', 'queued', 'cancelling'].includes(controller.state.detail?.task.status ?? '')) return keep('这项任务正在跑，等它答复后再打回。', restartToken)
+      // 但「已答复」的保留会话状态也是 running(会话留着等续接):这时打回是送得出去的,
+      // 后台会把它当作续接投给同一条会话(评审 2026-09-21 #7),别在这儿先把它挡了。
+      if (controller.state.detail?.task.phase !== 'replied' && ['running', 'queued', 'cancelling'].includes(controller.state.detail?.task.status ?? '')) return keep('这项任务正在跑，等它答复后再打回。', restartToken)
       const done = await mutate('POST', '/v1/workbench/review-return', { id: taskId, artifactId, paths, comment, ...(restartToken ? { restartToken } : {}) }, async error => {
         const recovery = recoveryCode(error)
         if (!recovery) return false

@@ -2225,6 +2225,32 @@ describe('workbench mutations', () => {
     module.stopWorkbenchPolling()
   })
 
+  // 评审 2026-09-21 #7:保留会话答复后 status 还是 running,但打回送得出去 —— 别在桌面这边先挡了。
+  it('已答复的保留会话(status 仍是 running)照样能发回', async () => {
+    const page = installFakePage()
+    const replied = { ...reviewTask, status: 'running', phase: 'replied' }
+    const { api } = reviewPage([reviewTurn()], (method, path) =>
+      method === 'POST' && path === '/v1/workbench/review-return'
+        ? { input: { id: '123e4567-e89b-42d3-a456-426614174001', taskId: 'REVIEW', runId: 'run-1', text: '打回以下改动，请按意见修改：', status: 'sending', createdAt: 1, error: null } }
+        : path.startsWith('/v1/workbench/task') ? { task: replied, events: [], artifacts: [] } : null)
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    await vi.waitFor(() => expect(controller.state.reviews).toHaveLength(1))
+    await vi.waitFor(() => expect(controller.state.detail?.task.phase).toBe('replied'))
+    const box = new FakeElement(); box.value = 'src/app.ts'; (box as any).checked = true
+    const comment = new FakeElement(); comment.value = '把命名改回来'
+    const form = new FakeElement(); form.tagName = 'FORM'; form.dataset = { action: 'review-return-submit', artifactId: 'ART-1' }
+    form.querySelector = (selector: string) => selector.includes('textarea') ? comment : null
+    ;(form as any).querySelectorAll = () => [box]
+    const open = new FakeElement(); open.dataset = { action: 'review-return', artifactId: 'ART-1', path: 'src/app.ts' }
+    await [...page.listeners.get('click')!][0]!({ target: open })
+    await [...page.listeners.get('submit')!][0]!({ preventDefault() {}, target: form })
+    expect(api).toHaveBeenCalledWith('POST', '/v1/workbench/review-return', { id: 'REVIEW', artifactId: 'ART-1', paths: ['src/app.ts'], comment: '把命名改回来' })
+    // 回的是回执不是任务视图,面板照样收工(表单关掉、详情刷新过)。
+    expect(controller.state.reviewReturnOpen).toBeNull()
+    module.stopWorkbenchPolling()
+  })
+
   it('改动记录读不到时照实说,详情照常显示', async () => {
     const page = installFakePage()
     const { api } = reviewPage(new Error('workbench_connection_unavailable'))

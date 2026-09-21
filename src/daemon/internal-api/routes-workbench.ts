@@ -374,8 +374,11 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
           typeof comment !== 'string' || !comment.trim() || comment.length > 2000) return invalid()
       if (!deps.workbench) return { status: 503, body: { error: 'workbench_not_wired' } }
       try {
-        const task = await deps.workbench.returnReviewFiles(id, { artifactId, paths, comment, ...(inputRequestId !== undefined ? { inputRequestId } : {}), ...(restartToken !== undefined ? { restartToken: restartToken as string } : {}) })
-        return { status: 202, body: { task } }
+        const result = await deps.workbench.returnReviewFiles(id, { artifactId, paths, comment, ...(inputRequestId !== undefined ? { inputRequestId } : {}), ...(restartToken !== undefined ? { restartToken: restartToken as string } : {}) })
+        // 保留会话还活着时打回走的是续接投递,回的是一张回执;已经结算的任务才回任务视图
+        // (评审 2026-09-21 #7)。两种都够桌面拿去刷新详情。
+        // 回执认 `taskId`(任务视图上只有 `id`),比认 `phase` 稳:少一个字段不会把回执当成任务发出去。
+        return { status: 202, body: 'taskId' in result ? { input: result } : { task: result } }
       } catch (err) {
         return mappedError(err)
       }

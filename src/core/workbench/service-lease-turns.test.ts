@@ -84,8 +84,9 @@ it('快照还在截时续接:旧回合的释放不能把新回合的租约删掉
   expect(service.detail(a.id).turn).toBe(2)
   // 新回合落定后照常放租约:B 起得来,租约没有被卡死。
   r.finishTurn()
-  await expect.poll(()=>service.detail(b.id).task.status).toBe('running')
-  await expect.poll(()=>reviews(a.id).length).toBe(2)
+  // 这一等要跨过 60 个文件的第二份快照:机器忙的时候默认 1 秒不够(node runner 整目录并行时会红)。
+  await expect.poll(()=>service.detail(b.id).task.status,{timeout:10_000}).toBe('running')
+  await expect.poll(()=>reviews(a.id).length,{timeout:10_000}).toBe(2)
   // 两份快照各只含自己那一轮的文件(快照名的排序不是回合顺序,所以不按下标断言)。
   const files=reviews(a.id).map(r=>r.files)
   expect(files.some(f=>f.length===1&&f[0]==='after-resume.txt')).toBe(true)
@@ -128,7 +129,7 @@ it('最后一个后台子任务只推 tool_call:回合照样落定,成果登记�
   const b=service.create({path:project,providerId:'claude',text:'B'})
   expect(service.detail(a.id).artifacts.map(x=>x.name)).not.toContain('late.txt')
   expect(service.detail(b.id).task.status).toBe('queued')
-  expect(service.detail(b.id).task.waitingFor?.taskId).toBe(a.id)
+  expect(service.detail(b.id).task.waitingFor).toMatchObject({taskId:a.id,reason:'same_path'})
   // 子任务结束:只有一条 tool_call,没有新的 result。
   r.endChild()
   await expect.poll(()=>service.detail(a.id).artifacts.map(x=>x.name),{timeout:10_000}).toContain('late.txt')
@@ -225,4 +226,20 @@ it('静下来时还有一个待决问题:成果先收、租约不放;拍完板�
   await expect(answered).resolves.toEqual({q:['PDF']})
   await expect.poll(()=>service.detail(b.id).task.status,{timeout:10_000}).toBe('running')
   expect(service.detail(a.id).task.phase).toBe('replied')
+})
+
+/**
+ * 排队原因要说人话(spec §D)。挡路的是一条**保留会话**、而且已经开了新回合 —— 主人续接了它 ——
+ * 这时说「同一个文件夹」是对的但不够:主人看到的应该是「A 正在续接」,否则会以为队伍卡住了。
+ */
+it('挡路的是一条正在续接的保留会话:排队原因是 retained_turn(spec §D)',async()=>{
+  const a=service.create({path:project,providerId:'claude',text:'A'})
+  await expect.poll(()=>service.detail(a.id).events.some(e=>e.kind==='text')).toBe(true)
+  runtimes[0]!.finishTurn()
+  await expect.poll(()=>service.detail(a.id).task.phase,{timeout:10_000}).toBe('replied')
+  await service.submitInput(a.id,{runId:service.detail(a.id).runId!,requestId:'55555555-5555-4555-8555-555555555555',text:'接着改'})
+  expect(service.detail(a.id).turn).toBe(2)
+  const b=service.create({path:project,providerId:'claude',text:'B'})
+  expect(service.detail(b.id).task.status).toBe('queued')
+  expect(service.detail(b.id).task.waitingFor).toMatchObject({taskId:a.id,title:service.detail(a.id).task.title,reason:'retained_turn'})
 })

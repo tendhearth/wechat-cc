@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { composeReturnText, parseGitReviewSnapshot } from './review'
+import { composeReturnText, derivedReturnRequestId, parseGitReviewSnapshot } from './review'
+import { normalizeInputRequestId } from './live-inputs'
 import { serializeGitReview, type GitReview, type ReviewFile } from './git-review'
 
 const file = (path: string, over: Partial<ReviewFile> = {}): ReviewFile => ({ path, preexisting: false, kind: 'modified', beforeSha256: 'a'.repeat(64), afterSha256: 'b'.repeat(64), diff: `@@ -1 +1 @@\n-老 ${path}\n+新 ${path}`, ...over })
@@ -76,5 +77,20 @@ describe('composeReturnText', () => {
       const text = composeReturnText([{ path: 'a.ts', diff: '@@\n+一' }], '改', { maxTotalChars })
       expect(text.length).toBeLessThanOrEqual(maxTotalChars)
     }
+  })
+})
+
+// 打回的请求 id 要能从这一笔打回本身算出来:主人重发同一份打回(桌面重试、微信再点一次)
+// 必须落到 liveInputs 的幂等分支,而不是每次一个新的 randomUUID 各投递一遍(评审 2026-09-21 #7)。
+describe('derivedReturnRequestId', () => {
+  it('同一笔打回算出同一个 id:顺序无关、UUID 形状(过 normalizeInputRequestId)、内容一变就换一个', () => {
+    const sha = 'a'.repeat(64)
+    const id = derivedReturnRequestId(sha, ['src/b.ts', 'src/a.ts'], '这两处判空漏了')
+    expect(derivedReturnRequestId(sha, ['src/a.ts', 'src/b.ts'], '这两处判空漏了')).toBe(id)
+    expect(id).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-8[a-f0-9]{3}-[a-f0-9]{12}$/)
+    expect(normalizeInputRequestId(id)).toBe(id)
+    expect(derivedReturnRequestId(sha, ['src/a.ts'], '这两处判空漏了')).not.toBe(id)
+    expect(derivedReturnRequestId(sha, ['src/a.ts', 'src/b.ts'], '再改改')).not.toBe(id)
+    expect(derivedReturnRequestId('b'.repeat(64), ['src/a.ts', 'src/b.ts'], '这两处判空漏了')).not.toBe(id)
   })
 })

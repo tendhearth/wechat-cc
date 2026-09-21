@@ -14,7 +14,7 @@ import type { ProviderRegistry } from '../provider-registry'
 import { TIER_PROFILES, sessionAuthEnv } from '../user-tier'
 import { canonicalProject, collectArtifacts, outputDirectory, readArtifactSnapshot, saveArtifactSnapshot } from './artifacts'
 import { captureGitBaseline, finishGitReview, serializeGitReview, GIT_REVIEW_MIME, type GitBaseline, type GitReview, type ReviewFile } from './git-review'
-import { composeReturnText, parseGitReviewSnapshot, type ReviewTurn } from './review'
+import { composeReturnText, derivedReturnRequestId, parseGitReviewSnapshot, type ReviewTurn } from './review'
 import type { ReviewMark } from './review-marks'
 import { decodeNativeHistoryKey, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryReader, type NativeHistoryProvider, type NativeHistoryListInput, type NativeHistoryReadInput } from './native-history'
 import {readNativeImport,nativeImportInput,publicSource,pageInput,nativeResumeToken,snapshotHash,type ImportPage,type NativeImportInput,type NativeResumeDecision,type AcceptedNativeResume} from './native-adoption'
@@ -325,7 +325,13 @@ export function makeWorkbenchService(opts: Options) {
   function waitingFor(running:Active):WaitingFor|null {
     if (running.state !== 'queued') return null
     const earlier=queue.filter(item => item.order < running.order && item.state === 'queued')
-    return findPathBlocker(running,[...held(),...earlier])
+    const blocker=findPathBlocker(running,[...held(),...earlier])
+    if (!blocker) return null
+    // 挡路的是一条保留会话、而且已经开过第二个回合 ⇒ 主人续接了它。说「同一个文件夹」没错,
+    // 但主人看到的应该是「它正在续接」,否则会以为队伍卡住了(spec §D)。
+    const holder=runsByTask.get(blocker.taskId)
+    const retained=holder?runtimeSnapshot(holder)?.retained===true:false
+    return holder&&retained&&holder.turn>1?{...blocker,reason:'retained_turn'}:blocker
   }
   function runtimeSnapshot(running:Active|undefined):AgentRuntimeSnapshot|undefined {
     const runtime=running?.session?.workbenchRuntime
@@ -1453,24 +1459,41 @@ export function makeWorkbenchService(opts: Options) {
     },
     /**
      * 打回 = 把「哪几处、为什么、当时长什么样」组成一段续接要求 + 逐文件标 `returned`。
-     * 续接走 `continueTask` 那道门(忙 / 归档 / 免审未确认 / 要不要重开都由它判),错误码原样透传。
+     * 按会话状态分路(评审 2026-09-21 #7):**会话还留着且已答复** ⇒ 走 `submitInput` 投给同一条
+     * 会话(和主人自己在输入框里补一句话同一条路),回的是一张投递回执;`continueTask` 对任何还在
+     * `runsByTask` 的任务一律 `workbench_busy`,照旧走它的话保留会话(Claude)答复后永远送不到。
+     * **还在写** ⇒ `workbench_busy`(回合中间不能打回)。**已经结算** ⇒ `continueTask` 照旧:
+     * 那道门(忙 / 归档 / 免审未确认 / 要不要重开都由它判)错误码原样透传。
      * 标记**在续接成功之后**才落:`restart_confirmation_required` 是设计内的首次回应(桌面要靠它拿
      * 重开令牌),`workbench_busy` 是常见的抢跑 —— 先落标记会让主人常态化看到「已打回」却根本没发出去。
      * 原会话不能恢复时,主人确认后带上 `restartToken` 再发一次(校验交给 continueTask,和「继续」同一道门),
      * 打回就不再是死胡同。
      * 重发同一个 inputRequestId 时 continueTask 走幂等分支,再写一遍同样的标记无妨。
      */
-    returnReviewFiles(id:string,input:{artifactId:string;paths:string[];comment:string;inputRequestId?:string;restartToken?:string}):WorkbenchTaskView {
+    returnReviewFiles(id:string,input:{artifactId:string;paths:string[];comment:string;inputRequestId?:string;restartToken?:string}):WorkbenchTaskView|Promise<LiveInput> {
       if(!Array.isArray(input.paths)||!input.paths.length||input.paths.length>20||input.paths.some(path=>typeof path!=='string'||!path))throw new Error('invalid_review_reference')
       const comment=reviewComment(input.comment,true)
-      // 重发同一个 inputRequestId 要落到 continueTask 的幂等分支,所以文本必须可重现:
-      // 去重保序 + 同一句意见 ⇒ 同一段文本。请求 id 先验,免得为一个畸形请求留下标记。
-      const inputRequestId=input.inputRequestId===undefined?randomUUID():normalizeInputRequestId(input.inputRequestId)
+      // 请求 id 先验,免得为一个畸形请求留下标记。
+      const given=input.inputRequestId===undefined?undefined:normalizeInputRequestId(input.inputRequestId)
       const {artifact,review}=reviewTarget(id,input.artifactId)
+      // 重发同一笔打回要落到幂等分支,所以文本必须可重现:去重保序 + 同一句意见 ⇒ 同一段文本。
       const files=[...new Set(input.paths)].map(path=>markableFile(review,path))
-      const task=service.continueTask(id,composeReturnText(files.map(({path,diff})=>({path,diff})),comment),{inputRequestId,...(input.restartToken!==undefined?{restartToken:input.restartToken}:{})})
-      for(const file of files)store.reviewMarks.set({taskId:id,artifactSha256:artifact.sha256,path:file.path,afterSha256:file.afterSha256??null,mark:'returned',comment})
-      touched(id)
+      const text=composeReturnText(files.map(({path,diff})=>({path,diff})),comment)
+      const marks=()=>{
+        for(const file of files)store.reviewMarks.set({taskId:id,artifactSha256:artifact.sha256,path:file.path,afterSha256:file.afterSha256??null,mark:'returned',comment})
+        touched(id)
+      }
+      const running=runsByTask.get(id)
+      if(running){
+        // 回合中间打回 = 抢跑:这一轮还在写,等它答复(桌面/微信都会把这句话如实转给主人)。
+        if(!isReplied(running))throw new Error('workbench_busy')
+        // 请求 id 没给就从这笔打回本身派生:重发落 liveInputs 的幂等分支,不会投第二遍。
+        const requestId=given??derivedReturnRequestId(artifact.sha256,files.map(file=>file.path),comment)
+        // 标记仍在拿到回执之后才落:投不出去就不该让主人看到「已打回」。
+        return service.submitInput(id,{runId:running.identity,requestId,text}).then(receipt=>{marks();return receipt})
+      }
+      const task=service.continueTask(id,text,{inputRequestId:given??randomUUID(),...(input.restartToken!==undefined?{restartToken:input.restartToken}:{})})
+      marks()
       return task
     },
     resolvePermission(id:string,requestId:string,decision:PermissionDecision):void {

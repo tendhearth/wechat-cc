@@ -8,7 +8,9 @@ import { makeWorkbenchStore, type WorkbenchStore } from './store'
 import { makeWorkbenchService, type WorkbenchService } from './service'
 import { createProviderRegistry } from '../provider-registry'
 import { MANAGED_NATIVE_CAPABILITIES } from './executor-capabilities'
-import type { AgentProvider } from '../agent-provider'
+import type { AgentEvent, AgentProvider, AgentRuntimeSnapshot, AgentSession, AgentWorkbenchRuntime } from '../agent-provider'
+import { AsyncQueue } from '../async-queue'
+import type { LiveInput } from './live-inputs'
 import { saveArtifactSnapshot } from './artifacts'
 import { GIT_REVIEW_MIME, serializeGitReview, type GitReview, type ReviewFile } from './git-review'
 import { removeTempDir } from '../../lib/test-temp'
@@ -150,7 +152,7 @@ describe('markReviewFile', () => {
 describe('returnReviewFiles', () => {
   it('写 returned 标记、把路径/意见/diff 节选交给 continueTask,任务重新跑完', async () => {
     const { service, id, second } = await planted()
-    const view = service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts', 'src/b.ts'], comment: '这两处判空漏了' })
+    const view = await service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts', 'src/b.ts'], comment: '这两处判空漏了' })
     expect(view.id).toBe(id)
     const turn = service.reviewList(id).find(t => t.artifactId === second)!
     expect(turn.files.map(f => f.mark?.mark)).toEqual(['returned', 'returned'])
@@ -215,7 +217,7 @@ describe('returnReviewFiles', () => {
     // 令牌不对 ⇒ 还是不发、也不留标记。
     expect(() => service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts'], comment: '改', restartToken: 'f'.repeat(64) })).toThrow('restart_confirmation_stale')
     expect(service.reviewList(id).find(t => t.artifactId === second)!.files.every(f => f.mark === undefined)).toBe(true)
-    const view = service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts', 'src/b.ts'], comment: '这两处判空漏了', restartToken: continuation.restart!.token })
+    const view = await service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts', 'src/b.ts'], comment: '这两处判空漏了', restartToken: continuation.restart!.token })
     expect(view.id).toBe(id)
     expect(service.reviewList(id).find(t => t.artifactId === second)!.files.map(f => f.mark?.mark)).toEqual(['returned', 'returned'])
     const text = service.detail(id).events.filter(e => e.kind === 'user').at(-1)!.text
@@ -233,5 +235,92 @@ describe('returnReviewFiles', () => {
     await vi.waitFor(() => expect(service.detail(id).task.status).toBe('completed'))
     service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts'], comment: '再改', inputRequestId })
     expect(service.detail(id).events.filter(e => e.kind === 'user' && e.text.startsWith('打回以下改动'))).toHaveLength(1)
+  })
+})
+
+/**
+ * 保留会话(Claude)答复之后 `status` 一直是 running:打回若照旧走 `continueTask`,那道
+ * `runsByTask.has(id) ⇒ workbench_busy` 的门会让「打回」永远送不到(评审 2026-09-21 #7)。
+ * 会话还留着就该按续接投递 —— 和主人自己在输入框里补一句话是同一条路。
+ */
+const RETAINED_RESULT: AgentEvent = { kind: 'result', sessionId: 'retained-session', numTurns: 1, durationMs: 1 }
+class RetainedRuntime {
+  queue = new AsyncQueue<AgentEvent>()
+  state: AgentRuntimeSnapshot = { retained: true, foreground: 'running', backgroundCount: 0, input: 'send' }
+  subscribed = false; submitted = 0; texts: string[] = []
+  runtime: AgentWorkbenchRuntime = {
+    events: { [Symbol.asyncIterator]: () => { this.subscribed = true; return this.queue.iterable()[Symbol.asyncIterator]() } },
+    start: () => { this.queue.push({ kind: 'init', sessionId: 'retained-session' }); this.queue.push({ kind: 'text', itemId: 't0', text: '做。' }) },
+    // 投递成功不等于新回合已经开始:原生会话要到真动起来才报 running。主人的重发(桌面重试、
+    // 长轮询回来又点一次)正落在这个窗口里 —— 幂等要在这里成立。
+    submit: async (_id, text) => { this.submitted++; this.texts.push(text) },
+    snapshot: () => this.state,
+  }
+  session: AgentSession = { workbenchRuntime: this.runtime, async *dispatch() {}, close: async () => { this.queue.end() } }
+  finishTurn() { this.state = { ...this.state, foreground: 'idle', backgroundCount: 0 }; this.queue.push(RETAINED_RESULT) }
+}
+
+/** 一条还活着的保留会话 + 一份可打回的变更快照。 */
+async function retained() {
+  const { stateDir, project } = tempRoot('wb-review-live-')
+  const db = openTestDb(); dbs.push(db)
+  const store = makeWorkbenchStore(db)
+  const registry = createProviderRegistry()
+  const runtimes: RetainedRuntime[] = []
+  registry.register('claude', { async spawn() { const r = new RetainedRuntime(); runtimes.push(r); return r.session } }, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
+  const service = makeWorkbenchService({ store, registry, stateDir, ownerChatId: () => 'owner' })
+  services.push(service)
+  const task = service.create({ path: project, providerId: 'claude', text: '做点事' })
+  await vi.waitFor(() => expect(service.detail(task.id).events.some(e => e.kind === 'text')).toBe(true))
+  const artifactId = plant(store, task.id, stateDir, '代码变更-run1.json', serializeGitReview(review([file('src/a.ts'), file('src/b.ts')])))
+  return { service, store, id: task.id, artifactId, runtime: runtimes[0]! }
+}
+const marksOf = (service: WorkbenchService, id: string, artifactId: string) =>
+  service.reviewList(id).find(t => t.artifactId === artifactId)!.files.map(f => f.mark?.mark)
+
+describe('returnReviewFiles · 保留会话(评审 2026-09-21 #7)', () => {
+  it('答复之后打回:走 submitInput 投给同一条会话,回执 sending,标记在回执之后才落', async () => {
+    const { service, id, artifactId, runtime } = await retained()
+    runtime.finishTurn()
+    await vi.waitFor(() => expect(service.detail(id).task.phase).toBe('replied'))
+    const receipt = await service.returnReviewFiles(id, { artifactId, paths: ['src/a.ts', 'src/b.ts'], comment: '这两处判空漏了' }) as LiveInput
+    expect(receipt).toMatchObject({ taskId: id, runId: service.detail(id).runId, status: 'sending' })
+    expect(receipt.text).toContain('src/a.ts')
+    expect(receipt.text).toContain('这两处判空漏了')
+    expect(receipt.text).toContain('+新 src/b.ts')
+    expect(runtime.submitted).toBe(1)
+    expect(runtime.texts[0]).toBe(receipt.text)
+    expect(marksOf(service, id, artifactId)).toEqual(['returned', 'returned'])
+    // 会话没有被重开:还是原来那条 run。
+    expect(service.detail(id).task.status).toBe('running')
+  })
+
+  it('同一笔打回重发 ⇒ 落幂等分支,不会投第二遍', async () => {
+    const { service, id, artifactId, runtime } = await retained()
+    runtime.finishTurn()
+    await vi.waitFor(() => expect(service.detail(id).task.phase).toBe('replied'))
+    const input = { artifactId, paths: ['src/a.ts', 'src/b.ts'], comment: '这两处判空漏了' }
+    const first = await service.returnReviewFiles(id, input) as LiveInput
+    const again = await service.returnReviewFiles(id, input) as LiveInput
+    expect(again.id).toBe(first.id)
+    expect(runtime.submitted).toBe(1)
+    expect(service.detail(id).inputs.filter(i => i.text.startsWith('打回以下改动'))).toHaveLength(1)
+    expect(marksOf(service, id, artifactId)).toEqual(['returned', 'returned'])
+  })
+
+  it('会话还在写时打回 ⇒ workbench_busy,一条标记都不留', async () => {
+    const { service, id, artifactId } = await retained()
+    expect(service.detail(id).task.phase).toBe('working')
+    expect(() => service.returnReviewFiles(id, { artifactId, paths: ['src/a.ts'], comment: '改' })).toThrow('workbench_busy')
+    expect(marksOf(service, id, artifactId)).toEqual([undefined, undefined])
+  })
+
+  it('已经结算的任务照旧走 continueTask:回的是任务视图,不是回执', async () => {
+    const { service, id, second } = await planted()
+    const view = await service.returnReviewFiles(id, { artifactId: second, paths: ['src/a.ts'], comment: '改' })
+    expect('phase' in view).toBe(true)
+    expect('runId' in view).toBe(false)
+    expect(view.id).toBe(id)
+    await vi.waitFor(() => expect(service.detail(id).task.status).toBe('completed'))
   })
 })

@@ -748,6 +748,15 @@ describe('Workbench internal HTTP API', () => {
       expect((await request('/v1/workbench/review-return', { method: 'POST', body: JSON.stringify(body) }, trustedToken)).status).toBe(403)
     })
 
+    // 评审 2026-09-21 #7:保留会话还活着时,打回走的是 submitInput,回的是一张投递回执而不是任务视图。
+    it('POST review-return 回的是回执时,响应体是 {input} 而不是 {task}', async () => {
+      const receipt = { id: '123e4567-e89b-42d3-a456-426614174001', taskId: 'deadbeef', runId: 'run-1', text: '打回以下改动，请按意见修改：', status: 'sending', createdAt: 1, error: null }
+      const { request } = await start(service({ returnReviewFiles: vi.fn(async () => receipt) }))
+      const response = await request('/v1/workbench/review-return', { method: 'POST', body: JSON.stringify({ id: 'deadbeef', artifactId: validArtifactId, paths: ['src/a.ts'], comment: '改' }) })
+      expect(response.status).toBe(202)
+      expect(await response.json()).toEqual({ input: receipt })
+    })
+
     // 终审(2026-09-17):原会话不能恢复时,打回也要能带着重开令牌再来一次 —— 校验跟 continue 那道门一模一样。
     it('POST review-return 透传 restartToken;不是 64 位十六进制就 400', async () => {
       const returnReviewFiles = vi.fn(() => TASK)

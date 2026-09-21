@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { GitReview, ReviewFile } from './git-review'
 
 /** 一个文件加上它在这一轮里的当前标记(`store.reviewMarks`,按 快照 sha + 路径 键)。 */
@@ -85,4 +86,18 @@ export function composeReturnText(
     break
   }
   return cut ? clamp(`${out}${MARKER}`) : out
+}
+
+/**
+ * 一笔打回的请求 id,从这笔打回本身算出来(spec §C)。
+ * 保留会话的打回走 `submitInput`,而幂等只认请求 id —— 每次 `randomUUID()` 的话,主人重发同一份
+ * 打回(桌面重试、长轮询回来又点一次)就会当成两句新话各投一遍。同一份打回 = 同一个 id:
+ * 路径顺序不算数(勾选顺序不该改变身份),意见或快照一变就是另一笔。
+ * 取前 16 字节套成 UUID 形状(版本位 '4'、变体位 '8'),好让它过路由的 REQUEST_ID 与
+ * `normalizeInputRequestId` 那道正则 —— 这不是随机 UUID,形状一致只是为了共用同一条管道。
+ */
+export function derivedReturnRequestId(artifactSha256: string, paths: readonly string[], comment: string): string {
+  const digest = createHash('sha256').update(`${artifactSha256}\0${[...paths].sort().join('\n')}\0${comment}`, 'utf8').digest('hex').slice(0, 32)
+  const shaped = `${digest.slice(0, 12)}4${digest.slice(13, 16)}8${digest.slice(17, 32)}`
+  return `${shaped.slice(0, 8)}-${shaped.slice(8, 12)}-${shaped.slice(12, 16)}-${shaped.slice(16, 20)}-${shaped.slice(20, 32)}`
 }
