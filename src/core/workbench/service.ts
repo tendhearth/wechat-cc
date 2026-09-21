@@ -58,13 +58,19 @@ interface Options {
   unattendedAck?: { get(): number | null; set(at: number): void }
 }
 type AcceptedContinuation = { mode: 'new' } | { mode: 'resume'; sessionId: string } | { mode: 'restart'; preview: RestartPreview }
+/** 基线属于某一个回合:旧回合的快照只截自己那份,别把续接之后的改动算进来。 */
+type GitBaselineWithTurn = GitBaseline & { turn:number }
+/** 租约是某个 run 在某一回合里持有的;释放时代数对不上就说明它已经过期了。 */
+type Reservation = { running:Active; turn:number }
 interface Active extends PathReservation {
   execution:AgentExecutionChoice
   attachments:Attachment[]
   handoffId?:string
   handoffArtifacts?:ArtifactSelection[]
   nativeResume?:AcceptedNativeResume
-  reviewBaseline?: GitBaseline
+  /** 回合代数,1 起;每次续接开新回合 +1(评审 2026-09-21 #1)。 */
+  turn:number
+  reviewBaseline?: GitBaselineWithTurn
   /** 已截取的代码变更快照数;第一份沿用旧名,之后带 -2/-3。 */
   reviewSeq?: number
   reviewCapture?: Promise<void>
@@ -198,7 +204,7 @@ export function makeWorkbenchService(opts: Options) {
     }catch{/* Stop must not depend on a successful disk write. */}
   }
   const runsByTask=new Map<string,Active>()
-  const reservations=new Map<string,Active>()
+  const reservations=new Map<string,Reservation>()
   /** 各执行者的额度/限流状态(provider-quota.ts):从失败里认出来、记住、再避开。 */
   const quota=makeQuotaRegistry(Date.now,opts.usage)
   /** 除了 exhaustedId 之外、已准入且没耗尽的原生执行者 —— "交给谁继续"的候选。 */
@@ -310,10 +316,12 @@ export function makeWorkbenchService(opts: Options) {
   function ensureAccepting() {
     if (stopping) throw new Error('workbench_stopping')
   }
+  /** 当前持有租约的 run(排队判定只看 run,不看回合)。 */
+  const held=()=>[...reservations.values()].map(r=>r.running)
   function waitingFor(running:Active):WaitingFor|null {
     if (running.state !== 'queued') return null
     const earlier=queue.filter(item => item.order < running.order && item.state === 'queued')
-    return findPathBlocker(running,[...reservations.values(),...earlier])
+    return findPathBlocker(running,[...held(),...earlier])
   }
   function runtimeSnapshot(running:Active|undefined):AgentRuntimeSnapshot|undefined {
     const runtime=running?.session?.workbenchRuntime
@@ -389,7 +397,7 @@ export function makeWorkbenchService(opts: Options) {
     running.artifactsCollected=true
     try {
       if (canonicalProject(running.path) !== running.path || directoryIdentity(running.path) !== running.directoryIdentity) throw new Error('invalid_path')
-      await captureCodeChanges(running)
+      await captureCodeChanges(running,running.turn)
       if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
       noteWarnings(running,collectArtifacts(store,running.taskId,running.path,opts.stateDir))
       touched(running.taskId)
@@ -412,11 +420,12 @@ export function makeWorkbenchService(opts: Options) {
    * 答复释放租约前截一次,续接申请租约时重新取基线,结算时再截最后一轮 —— 同文件夹里
    * 别的任务在 A 空闲期间改的文件,不会被记到 A 头上。
    */
-  function captureCodeChanges(running:Active):Promise<void> {
+  function captureCodeChanges(running:Active,turn:number):Promise<void> {
     if (running.reviewCapture) return running.reviewCapture
     const pending=(async()=>{
       const baseline=running.reviewBaseline
-      if (!baseline || !running.session) return
+      // 基线属于哪个回合就由哪个回合来截;续接已经换过基线的话,旧回合这次什么也不做。
+      if (!baseline || baseline.turn!==turn || !running.session) return
       running.reviewBaseline=undefined
       try {
         const report=await finishGitReview(baseline)
@@ -432,28 +441,57 @@ export function makeWorkbenchService(opts: Options) {
     void pending.then(()=>{if(running.reviewCapture===pending)running.reviewCapture=undefined},()=>{if(running.reviewCapture===pending)running.reviewCapture=undefined})
     return pending
   }
-  async function releaseTurnLease(running:Active):Promise<void> {
-    if (reservations.get(running.identity)!==running) return
+  /**
+   * 放租约要带上是哪一回合放的。截快照可能要十几秒,期间主人续接了这条任务 —— 那是新回合,
+   * 新回合接着用同一份租约(beginTurn 把代数推到下一格)。这里醒来发现代数对不上,就是
+   * 一次过期的释放:什么都不做。否则它会把新回合正在用的租约删掉,放同文件夹的下一个任务
+   * 进来并写(评审 2026-09-21 #1)。
+   */
+  async function releaseTurnLease(running:Active,turn:number):Promise<void> {
+    if (!current(running,turn)) return
     // 先截快照再放租约:放开之后别人就能改这个文件夹了。
-    await captureCodeChanges(running)
-    if (reservations.get(running.identity)!==running) return
+    await captureCodeChanges(running,turn)
+    if (!current(running,turn)) return
     reservations.delete(running.identity)
     if (!stopping) pump()
+  }
+  /** 这份租约还是这条 run 这一回合的吗。 */
+  function current(running:Active,turn:number):boolean {
+    const reservation=reservations.get(running.identity)
+    return !!reservation&&reservation.running===running&&reservation.turn===turn
   }
   /** 续接一个已释放租约的 run:文件夹若正被别的任务占用,明确拒绝,不悄悄并写。返回是否新申请到。 */
   async function acquireTurnLease(running:Active):Promise<boolean> {
     if (reservations.has(running.identity)) return false
-    let blocker=findPathBlocker(running,[...reservations.values()])
+    let blocker=findPathBlocker(running,held())
     // 挡路的如果是一件刚答复、正在截差异快照准备放租约的任务,等它放完再判 —— 否则主人
     // 在 B 答复的下一秒续接 A 会吃到一个转瞬即逝的 workbench_busy。
     const holder=blocker?runsByTask.get(blocker.taskId):undefined
-    if (holder&&holder!==running&&isReplied(holder)&&holder.reviewCapture) { await holder.reviewCapture.catch(()=>{}); await Promise.resolve(); blocker=findPathBlocker(running,[...reservations.values()]) }
+    if (holder&&holder!==running&&isReplied(holder)&&holder.reviewCapture) { await holder.reviewCapture.catch(()=>{}); await Promise.resolve(); blocker=findPathBlocker(running,held()) }
     if (blocker) throw Error('workbench_busy')
-    reservations.set(running.identity,running)
+    reservations.set(running.identity,{running,turn:running.turn})
     return true
   }
+  /**
+   * 开一个新回合(续接)。顺序是有讲究的:**先把代数推到下一格**,再等旧回合的快照截完 ——
+   * 旧回合的释放正挂在同一个 promise 上,而且比我们先挂上去,它一定先醒;代数已经变了,它
+   * 就认得出自己过期(评审 2026-09-21 #1)。等快照截完才取新基线:这一轮的差异从这里起算,
+   * 上一轮的改动不会被重复记一遍。自己仍持有租约就留着,已经放掉了才重新申请(占着就 busy)。
+   */
+  async function beginTurn(running:Active):Promise<boolean> {
+    const capture=running.reviewCapture
+    running.turn+=1
+    const reservation=reservations.get(running.identity)
+    if (reservation?.running===running) reservations.set(running.identity,{running,turn:running.turn})
+    if (capture) await capture.catch(()=>{})
+    const acquired=await acquireTurnLease(running)
+    // 续接 = 新一轮差异的起点:重新取基线,别人在空闲期间改的不算这一轮的。
+    if (!running.reviewBaseline) { try { running.reviewBaseline={...await captureGitBaseline(running.path,{}),turn:running.turn} } catch { /* 没基线就没有这一轮的代码对比,其他成果照收 */ } }
+    return acquired
+  }
   function releaseReservation(running:Active) {
-    if (reservations.get(running.identity) === running) reservations.delete(running.identity)
+    // 结算不看回合:这条 run 走到头了,它的租约无论哪一代都该还回去。
+    if (reservations.get(running.identity)?.running === running) reservations.delete(running.identity)
     if (runsByTask.get(running.taskId) === running) runsByTask.delete(running.taskId)
     runningText.delete(running.identity)
     const release=running.releaseBusy; running.releaseBusy=undefined
@@ -474,7 +512,7 @@ export function makeWorkbenchService(opts: Options) {
     // 答复时已把租约放掉;现在没能确认它退出,重新挂回去 —— 之后到来的同文件夹任务
     // 按 writer_not_closed 等待,直到 confirmLateClose。空闲窗口里已被放行的任务照常跑:
     // 一个前台空闲、没有后台工作的会话不会自己写文件,而主人要续接它会被 acquireTurnLease 拦住。
-    reservations.set(running.identity,running)
+    reservations.set(running.identity,{running,turn:running.turn})
   }
 
   async function execute(task:StoredTask,text:string,running:Active) {
@@ -514,7 +552,7 @@ export function makeWorkbenchService(opts: Options) {
       const reviewStop=new AbortController()
       void running.stop.then(()=>reviewStop.abort())
       if(running.cancelled){finalStatus='cancelled';return}
-      running.reviewBaseline=await captureGitBaseline(running.path,{},reviewStop.signal)
+      running.reviewBaseline={...await captureGitBaseline(running.path,{},reviewStop.signal),turn:running.turn}
       if(running.cancelled){finalStatus='cancelled';return}
       if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
       if(running.nativeResume)await validateNativeDecision(store.get(task.id),running.nativeResume,true)
@@ -598,7 +636,8 @@ export function makeWorkbenchService(opts: Options) {
             if (ev.kind==='result') {
               const snapshot=runtime?.snapshot()
               if (snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0) collectTurnArtifacts(running)
-              if (isReplied(running)) { matterSync(m=>m.setStatus(task.id,'replied')); void releaseTurnLease(running).catch(()=>{}) }
+              // 释放是异步的(要先截快照),带上此刻的回合号:等它醒来时主人可能已经续接了。
+              if (isReplied(running)) { const turn=running.turn; matterSync(m=>m.setStatus(task.id,'replied')); void releaseTurnLease(running,turn).catch(()=>{}) }
             }
           },()=>{
             const snapshot=runtimeSnapshot(running)
@@ -710,8 +749,8 @@ export function makeWorkbenchService(opts: Options) {
     for (const running of queue) {
       if (running.state !== 'queued') continue
       const earlier=queue.filter(item => item.order < running.order && item.state === 'queued')
-      if (findPathBlocker(running,[...reservations.values(),...earlier])) continue
-      running.state='active'; reservations.set(running.identity,running); launch.push(running)
+      if (findPathBlocker(running,[...held(),...earlier])) continue
+      running.state='active'; reservations.set(running.identity,{running,turn:running.turn}); launch.push(running)
     }
     for (const running of launch) queue.splice(queue.indexOf(running),1)
     for (const running of launch) {
@@ -782,6 +821,7 @@ export function makeWorkbenchService(opts: Options) {
     const running:Active={
       execution,
       attachments:dispatchAttachments,
+      turn:1,
       interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
       cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,credentialsMinted:false,credentialsRevoked:false,
     }
@@ -983,12 +1023,12 @@ export function makeWorkbenchService(opts: Options) {
       if(running.delivering)throw Error('input_delivery_busy')
       if(store.liveInputs.count(id)>=10)throw Error('input_limit')
       requireInput(running.task.providerId,attachments,running.execution)
-      let acquired=false
+      let began=false
       if(running.session?.workbenchRuntime&&inputMode(running)!=='queue'){
-        acquired=await acquireTurnLease(running)
-        // 续接 = 新一轮差异的起点:重新取基线,别人在空闲期间改的不算这一轮的。
-        if(!running.reviewBaseline){try{running.reviewBaseline=await captureGitBaseline(running.path,{})}catch{/* 没基线就没有这一轮的代码对比,其他成果照收 */}}
+        await beginTurn(running)
+        began=true
       }
+      const turn=running.turn
       let saved:LiveInput
       try{
         saved=store.atomic(()=>{
@@ -996,8 +1036,9 @@ export function makeWorkbenchService(opts: Options) {
           return store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text,attachments,execution:running.execution})
         })
       }catch(error){
-        // 这一句没存下来就没有人会去写文件夹:刚申请的租约放回去,别让同文件夹的下一个任务白等。
-        if(acquired&&isReplied(running))void releaseTurnLease(running).catch(()=>{})
+        // 这一句没存下来就没有人会去写文件夹:这一回合的租约放回去,别让同文件夹的下一个任务白等
+        // (旧回合那次释放已经因为代数对不上而作废了,不放就没人放)。
+        if(began&&isReplied(running))void releaseTurnLease(running,turn).catch(()=>{})
         throw error
       }
       const runtime=running.session?.workbenchRuntime
@@ -1013,9 +1054,9 @@ export function makeWorkbenchService(opts: Options) {
           // The HTTP receipt is already durable; never wait here or auto-resend.
           void runtime.submit(saved.id,text,material).then(
             ()=>settleRuntimeInput(running,saved),
-            error=>{settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));if(isReplied(running))void releaseTurnLease(running).catch(()=>{})},
+            error=>{settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));if(isReplied(running))void releaseTurnLease(running,turn).catch(()=>{})},
           )
-        }catch(error){settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));if(isReplied(running))void releaseTurnLease(running).catch(()=>{})}
+        }catch(error){settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));if(isReplied(running))void releaseTurnLease(running,turn).catch(()=>{})}
         return store.liveInputs.get(saved.id)!
       }
       if(!running.session?.steer)return saved
@@ -1233,7 +1274,7 @@ export function makeWorkbenchService(opts: Options) {
       const result={...detail,wechatNotifications,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
         // The timeline stays live through cancellation and process cleanup;
         // accepting supplemental input is a separate, narrower capability.
-        ...(running?{runId:running.identity}:{}),
+        ...(running?{runId:running.identity,turn:running.turn}:{}),
         ...(running&&!running.cancelled&&!running.finishing&&!running.uncertain?{inputMode:inputMode(running)}:{}),
         permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:continuation(store.get(id)),...(store.source(id)?.firstDispatchedAt===null?{requiresExternalClose:true}:{})} : {})}
       touched(id,detail.version)
