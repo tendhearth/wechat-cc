@@ -58,6 +58,15 @@ function noticeFor(s: SelfChangeState, result: string, detail: string): string {
   // 所以话要说清楚 —— 远端多出来的这条分支是留给人看的,不是漏删的。
   if (result === 'declined') return `${head} 你回了 n,已放弃。分支 ${s.branch} 留在远端给人看(要清理得手工删)。`
   if (result === 'approval_timeout') return `${head} 没等到拍板,先停在这儿了(wechat-cc self change --resume ${s.id} 可以重发卡)`
+  // 这一种**既不停机也不会自动重来**(装错东西不是机器坏了),所以话里必须带上
+  // 「人要做什么」—— 不然主人看到一条失败通知,不知道它会一直停在这儿。
+  if (result === 'deploy_tree_mismatch') {
+    return [
+      `${head} 没装:专用克隆里躺着的不是批准的那条改动,已经停手(不会自动重来,也不算机器故障)。`,
+      detail.slice(0, DETAIL_IN_NOTICE),
+      `要接着装:把克隆弄回干净(或者整个删掉 self_change.workdir 下的 repo 目录让它重新克隆),然后 wechat-cc self change --resume ${s.id}`,
+    ].join('\n')
+  }
   return `${head} 失败:${result}\n${detail.slice(0, DETAIL_IN_NOTICE)}`
 }
 
@@ -68,28 +77,6 @@ export async function runSelfChange(
   const s = state
 
   const save = (): void => { s.updatedAt = deps.now(); deps.state.save(s) }
-
-  // 重新开跑 ⇒ 盘上先变回「活的」。
-  //
-  // 2026-09-18 真机:`--resume` 一条 approval_timeout 的自改,内存里接着跑得好好的,
-  // 盘上却还写着 `result: approval_timeout` 和上一轮的 hash —— 于是 `--approve` 的
-  // 第一道门(`result === null`)直接把人挡在外面,拍不了板,又只能等超时。
-  // result / error 是**上一次的结局**,这一次还没有结局;approval.decision 同理
-  // (拿上一轮的 timeout 当这一轮的答案,会让轮询以为已经落定了)。
-  if (s.result !== null || s.error !== null) {
-    deps.log(`[self-change] #${s.id} 从 ${s.step} 接着跑(上次收在 ${s.result ?? '(没记结局)'})`)
-    // 上次收在「机器上跑的不是这条改动」⇒ 这一次必须从 deploy 重来。
-    //
-    // 2026-09-21 审查 #8:自检红了会回滚二进制,但老代码把步留在 selftest ——
-    // `--resume` 于是对着那个被换回去的**旧**二进制再跑一遍自检,旧的当然绿,
-    // 流水线就报「部署:绿」并把 fail_streak 清零。步退回 deploy 才是重新构建、
-    // 重新部署、再自检。(rollBack 已经就地退过一次;这里兜住「盘上是旧状态」
-    // 和 deploy 自己失败后停在别处的情况。)
-    if (RESTART_AT_DEPLOY.includes(s.result ?? '')) s.step = 'deploy'
-    s.result = null
-    s.error = null
-    s.approval.decision = null
-  }
 
   /** 走到结局:记 result、存盘、告诉主人、必要时停机。 */
   const finish = async (result: string, detail: string): Promise<{ state: SelfChangeState; exitCode: SelfChangeExitCode }> => {
@@ -116,15 +103,46 @@ export async function runSelfChange(
    * 停机之后恢复一条停在 deploy 的自改,机器照样构建、照样部署。停机的意思
    * 是「先别自动动这台机器」,不是「先别开新的」:唯一的出口是 `--unhalt`。
    *
+   * 这道门**在「把上一次的结局清掉」之前,而且不存盘**:被挡下的这一次等于
+   * 没跑过,盘上的 result / step / approval 要原样留着。`--unhalt` 之后
+   * `--resume` 是从盘上读回来的,下面那段清理(含「上次收在 deploy_failed /
+   * selftest_failed_rolled_back ⇒ 退回 deploy」)认的就是盘上那个 result ——
+   * 这里要是把它改写成 self_change_halted,解除停机之后就再也退不回 deploy 了。
+   *
    * 新起的一条停在 intake,由 intake 自己那道门挡(话说得更细,还带解除办法)。
    */
   const haltedAt = deps.config.haltedAt
   if (haltedAt && s.step !== 'intake') {
-    return await finish(
-      'self_change_halted',
-      `${new Date(haltedAt).toISOString()} 起停机:${deps.config.haltReason ?? '未记原因'} —— 停在 ${s.step} 的这条也不恢复(wechat-cc self change --unhalt 解除)`,
-    )
+    const detail = `${new Date(haltedAt).toISOString()} 起停机:${deps.config.haltReason ?? '未记原因'} —— 停在 ${s.step} 的这条也不恢复(wechat-cc self change --unhalt 解除)`
+    // 只改内存里这一份(调用方要拿它报退出码和摘要),不写盘。
+    s.result = 'self_change_halted'
+    s.error = detail
+    await notify(s, deps, noticeFor(s, 'self_change_halted', detail))
+    return { state: s, exitCode: exitCodeFor('self_change_halted') }
   }
+
+  // 重新开跑 ⇒ 盘上先变回「活的」。
+  //
+  // 2026-09-18 真机:`--resume` 一条 approval_timeout 的自改,内存里接着跑得好好的,
+  // 盘上却还写着 `result: approval_timeout` 和上一轮的 hash —— 于是 `--approve` 的
+  // 第一道门(`result === null`)直接把人挡在外面,拍不了板,又只能等超时。
+  // result / error 是**上一次的结局**,这一次还没有结局;approval.decision 同理
+  // (拿上一轮的 timeout 当这一轮的答案,会让轮询以为已经落定了)。
+  if (s.result !== null || s.error !== null) {
+    deps.log(`[self-change] #${s.id} 从 ${s.step} 接着跑(上次收在 ${s.result ?? '(没记结局)'})`)
+    // 上次收在「机器上跑的不是这条改动」⇒ 这一次必须从 deploy 重来。
+    //
+    // 2026-09-21 审查 #8:自检红了会回滚二进制,但老代码把步留在 selftest ——
+    // `--resume` 于是对着那个被换回去的**旧**二进制再跑一遍自检,旧的当然绿,
+    // 流水线就报「部署:绿」并把 fail_streak 清零。步退回 deploy 才是重新构建、
+    // 重新部署、再自检。(rollBack 已经就地退过一次;这里兜住「盘上是旧状态」
+    // 和 deploy 自己失败后停在别处的情况。)
+    if (RESTART_AT_DEPLOY.includes(s.result ?? '')) s.step = 'deploy'
+    s.result = null
+    s.error = null
+    s.approval.decision = null
+  }
+
 
   /**
    * 一轮修复。计数超了就到此为止,否则交回同一个实现会话,

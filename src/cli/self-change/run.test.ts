@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { fakeState, gitReply, greenTriage, makeFakeDeps, type FakeOpts } from './pipeline.fixture'
+import { fakeState, gitReply, greenTriage, makeFakeDeps, memoryStore, type FakeOpts } from './pipeline.fixture'
 import { SELF_CHANGE_EXIT, exitCodeFor, runSelfChange } from './run'
 import type { SelfChangeState, SelfChangeStep, StateStore } from './state'
 
@@ -211,6 +211,24 @@ describe('结局', () => {
     expect(selftestThrew.deps.config.failStreak).toBe(1)
   })
 
+  // deploy_tree_mismatch 既不停机也不会自动重来 —— 通知里不写「人该做什么」
+  // 的话,主人只看到一条失败,不知道这条会一直停在这儿。
+  it('克隆里不是批准的那条 ⇒ 通知要带上怎么接着装', async () => {
+    const { deps, rec } = happy({ git: args => (args.includes('--is-ancestor') ? { code: 1 } : HAPPY_GIT(args)) })
+    const s = fakeState({ step: 'deploy', merge: { sha: 'e'.repeat(40), rebased: false } })
+    const { state, exitCode } = await runSelfChange(s, deps)
+
+    expect(state.result).toBe('deploy_tree_mismatch')
+    expect(exitCode).toBe(1)
+    const notice = rec.notices.at(-1) ?? ''
+    expect(notice).toContain('wechat-cc self change --resume ab12cd34')
+    expect(notice).toContain('repo')
+    expect(notice).toContain('不会自动重来')
+    expect(rec.deployed).toEqual([])
+    // 不是机器坏了:不推 fail_streak、不停机。
+    expect(rec.patches).toEqual([])
+  })
+
   it('--resume:从 state 里的那一步接着跑,不重做前面的', async () => {
     const { deps, rec } = happy()
     const s = fakeState({ step: 'merge', ci: { runId: 1, url: null, verdict: 'green', sha: 'a'.repeat(40) } })
@@ -271,6 +289,49 @@ describe('停机', () => {
       expect(rec.notices.at(-1)).toContain('--unhalt')
       // 停机时恢复不是「又红了一次」:别拿它去推 fail_streak。
       expect(rec.patches).toEqual([])
+    })
+
+    // 被停机挡下的这一次等于没跑过:不该顺手把盘上的 step / approval.decision
+    // 改掉(那道门要是排在「清掉上一次结局」后面,恢复一条等拍板的自改会把
+    // 它的 decision 抹了,--unhalt 之后再拍就对不上了)。
+    it('挡下来的这一次不动盘上的 step / approval.decision', async () => {
+      const { store, rows } = recordingStore()
+      const { deps } = halted({ state: store })
+      const s = fakeState({ step: 'approval', result: 'approval_timeout', error: '等了 1440 分钟没等到拍板' })
+      s.approval.hash = 'h1'
+      s.approval.decision = 'timeout'
+      const { state, exitCode } = await runSelfChange(s, deps)
+
+      expect(state.result).toBe('self_change_halted')
+      expect(exitCode).toBe(2)
+      expect(state.step).toBe('approval')
+      expect(state.approval.decision).toBe('timeout')
+      expect(state.approval.hash).toBe('h1')
+      // 盘上一笔都别写:这一次压根没开跑。
+      expect(rows).toEqual([])
+    })
+
+    it('--unhalt 之后,「退回 deploy」那条照样生效(盘上那个 result 还在)', async () => {
+      const store = memoryStore()
+      store.save(fakeState({ step: 'selftest', result: 'selftest_failed_rolled_back', merge: { sha: 'a'.repeat(40), rebased: false } }))
+
+      const blocked = halted({ state: store })
+      // 真 store 每次 load 都是从文件重新 parse 一份 —— 内存里改了没存盘的
+      // 东西下一次读不回来。内存假件要复刻这一点,不然测不出「没存盘」。
+      const load = (): SelfChangeState => {
+        const row = store.load('ab12cd34')
+        expect(row).not.toBeNull()
+        return JSON.parse(JSON.stringify(row)) as SelfChangeState
+      }
+      expect((await runSelfChange(load(), blocked.deps)).state.result).toBe('self_change_halted')
+      // 被挡下的这一次没动盘上任何东西 —— 下一次恢复认的就是这两个字段。
+      expect(load().result).toBe('selftest_failed_rolled_back')
+      expect(load().step).toBe('selftest')
+
+      const { deps, rec } = happy({ config: { haltedAt: null, failStreak: 2 }, state: store })
+      const { state } = await runSelfChange(load(), deps)
+      expect(state.result).toBe('done')
+      expect(rec.deployed).toHaveLength(1)
     })
 
     it('中间那些步也一样(不是只挡部署)', async () => {

@@ -763,7 +763,6 @@ async function deploy(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
   // 装错东西不算「机器坏了」,是「不知道该装什么」—— 不加 fail_streak、不停机,
   // 要的是人来看一眼(`--resume` 在克隆回到那条提交之后照样能接着跑)。
   if (mismatch) return mismatch
-  s.deploy.sha = s.merge.sha
 
   const build = await d.exec('bun', ['run', 'build-sidecar'], { cwd: join(dir, 'apps', 'desktop'), timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms })
   if (build.code !== 0) {
@@ -786,9 +785,13 @@ async function deploy(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
   }
   s.deploy.ok = result.ok
   s.deploy.version = result.version ?? null
-  // 换上去了 ⇒ 机器上跑的不再是回滚回去的那一版。没换成就别动这笔:
-  // 跑着的还是上一次回滚留下的旧二进制。
-  if (result.ok) s.deploy.rolledBack = false
+  if (result.ok) {
+    // 真换上去了才记「机器上装的是这条」—— 构建出来但没装上去的不算数。
+    s.deploy.sha = s.merge.sha
+    // 换上去了 ⇒ 跑的不再是回滚回去的那一版。没换成就别动这笔:
+    // 跑着的还是上一次回滚留下的旧二进制。
+    s.deploy.rolledBack = false
+  }
   if (!result.ok) {
     bumpFailStreak(d)
     return { ok: false, fail: 'deploy_failed', detail: `${result.diagnostics ?? ''}\n${result.steps.filter(x => !x.ok).map(x => `- ${x.name}: ${x.detail ?? ''}`).join('\n')}`.trim() }

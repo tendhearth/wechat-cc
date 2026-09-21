@@ -51,9 +51,9 @@ export interface SelfChangeState {
   approval: { hash: string | null; code: string | null; decision: string | null; askedAt: number | null; delivered: boolean | null }
   merge: { sha: string | null; rebased: boolean }
   /**
-   * `sha`:**实际构建并部署的那条提交**。部署前会把专用克隆钉回 `merge.sha`
-   * 再记下来 —— 没有这一笔,`--resume` 从 deploy 接着跑时没人说得清机器上
-   * 到底装的是哪条改动(2026-09-21 审查 #4)。
+   * `sha`:**真换上去的那条提交**。部署前会把专用克隆钉回 `merge.sha`,部署
+   * 真成了才记这一笔(构建出来没装上去的不算)—— 没有它,`--resume` 从 deploy
+   * 接着跑时没人说得清机器上到底装的是哪条改动(2026-09-21 审查 #4)。
    * `rolledBack`:自检红之后二进制已经换回上一版。`ok` 这时是 false、
    * `version` 是 null —— 盘上要写**现在跑着的是什么**,不是「曾经部署成功过」
    * (审查 #8)。
@@ -166,6 +166,13 @@ export function makeStateStore(stateDir: string, fs: StateFs = NODE_FS): StateSt
 }
 
 const LOCK_FILE = 'lock'
+/**
+ * 抢占死锁时的独木桥(`lock.steal`)。进程被 SIGKILL 在这三个系统调用之间的话,
+ * 标记会留下来,之后**只有抢占这条路**会一直报 busy(正常拿锁不受影响)——
+ * 手工删掉 `STATE_DIR/self-change/lock.steal` 即可。宁可这样也不能在这里再演
+ * 一次「删掉别人的标记」:那正是要挡的那个竞态。
+ */
+const STEAL_SUFFIX = '.steal'
 
 function defaultIsAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true } catch { return false }
@@ -196,8 +203,12 @@ function createLockExclusive(fs: StateFs, file: string, pid: number): void {
  * 都先读到空、然后都写。现在改成 `O_CREAT|O_EXCL` 建文件:同一时刻只有一个
  * 能建成,输的那个才去看持有者是谁。
  *
- * 抢占(死掉的 / 读不懂的持有者)是「删掉再建一次」,而那一次同样是排他的:
- * 两个进程同时来抢一把死锁,也只有一个能建成,另一个照样被挡。
+ * 抢占(死掉的 / 读不懂的持有者)光靠「删掉再建一次」还不够:A 删掉死锁、
+ * 建好自己的锁之后,**已经走过 readHolder 那一步**的 B 会接着把 A 刚建的锁
+ * unlink 掉再建自己的 —— 两个人又都拿到了。所以抢占要先过一座独木桥:
+ * 排他地建一个 `lock.steal` 抢占标记,建不成就是别人正在抢(busy);建成了
+ * 再回头看一眼持有者(这一瞬可能已经换成一个活着的了),然后才 unlink + 建锁,
+ * 最后在 finally 里把标记撤掉。
  *
  * `isAlive` 注入是为了测试能演「死 pid」而不用真去 kill 谁。
  */
@@ -229,16 +240,36 @@ export function acquireLock(
   if (holder === pid) return mine
   if (holder !== null && isAlive(holder)) return { ok: false, holder }
 
-  // 持有者死了 / 文件读不懂 ⇒ 删掉重建一次。重建仍然是排他的:
-  // 另一个进程要是在这一瞬抢先建成了,这次就该轮到我们busy。
+  // 持有者死了 / 文件读不懂 ⇒ 抢过来。抢占这段必须自己也是排他的,
+  // 否则「unlink 死锁 → 建新锁」这两步之间会被另一个抢占者插进来。
+  const steal = `${file}${STEAL_SUFFIX}`
+  /** 报 busy 时尽量报出**现在**的持有者;读不出来就报 0(不能因为读不到就当没人占)。 */
+  const busy = (): { ok: false; holder: number } => ({ ok: false, holder: readHolder(fs, file) ?? holder ?? 0 })
+
   try {
-    fs.unlinkSync(file)
-    createLockExclusive(fs, file, pid)
-    return mine
+    createLockExclusive(fs, steal, pid)
   } catch {
-    // 输给了同时来抢的那个。报出**现在**的持有者,报不出来就报 0
-    //(调用方只拿它来告诉主人「被谁占着」,不该因为读不到 pid 就当成没人占)。
-    return { ok: false, holder: readHolder(fs, file) ?? 0 }
+    // 别人正在抢这把死锁。等他抢完,锁就是他的了。
+    return busy()
+  }
+
+  try {
+    // 上了桥再看一眼:这一瞬持有者可能已经换成一个活着的了(别人刚抢完)。
+    const nowHolder = readHolder(fs, file)
+    if (nowHolder === pid) return mine
+    if (nowHolder !== null && isAlive(nowHolder)) return { ok: false, holder: nowHolder }
+
+    // 锁文件可能已经被上一个抢占者删掉了(ENOENT)—— 那更省事,照样去建。
+    try { fs.unlinkSync(file) } catch { /* 本来就没了 */ }
+    try {
+      createLockExclusive(fs, file, pid)
+      return mine
+    } catch {
+      return busy()
+    }
+  } finally {
+    // 桥要还:不还的话下一次抢占会一直以为有人在抢。
+    try { fs.unlinkSync(steal) } catch { /* 已经没了 */ }
   }
 }
 

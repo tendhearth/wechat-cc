@@ -180,7 +180,8 @@ describe('acquireLock', () => {
   })
 
   // 2026-09-21 审查 #5:老写法是「先读一眼没人持有,再写 .tmp + rename」——
-  // 两个进程都先读到空,于是都拿到了锁。下面这三条把交错演出来:建锁必须排他。
+  // 两个进程都先读到空,于是都拿到了锁。下面几条把交错演出来:建锁必须排他,
+  // 抢死锁的那段(unlink + 建锁)也必须排他。
   describe('排他(两个人同时来抢)', () => {
     /** 在第一个人「建锁」这一刻插进第二个人的整次 acquireLock。 */
     function interleaved(dir: string, outer: number, inner: number, alive: (pid: number) => boolean): {
@@ -194,6 +195,23 @@ describe('acquireLock', () => {
           if (second === null) second = acquireLock(dir, inner, undefined, alive)
           return writeFileSync(...args)
         }) as typeof writeFileSync,
+      }
+      const first = acquireLock(dir, outer, hooked, alive)
+      return { first, second }
+    }
+
+    /** 同上,但插在第一个人**删掉死锁**那一刻(抢占的那半段)。 */
+    function onUnlink(dir: string, outer: number, inner: number, alive: (pid: number) => boolean): {
+      first: ReturnType<typeof acquireLock>
+      second: ReturnType<typeof acquireLock> | null
+    } {
+      let second: ReturnType<typeof acquireLock> | null = null
+      const hooked = {
+        ...fs,
+        unlinkSync: ((...args: Parameters<typeof unlinkSync>) => {
+          if (second === null) second = acquireLock(dir, inner, undefined, alive)
+          return unlinkSync(...args)
+        }) as typeof unlinkSync,
       }
       const first = acquireLock(dir, outer, hooked, alive)
       return { first, second }
@@ -219,6 +237,33 @@ describe('acquireLock', () => {
       expect(second?.ok).toBe(true)
       expect(first.ok).toBe(false)
       expect(JSON.parse(readFileSync(join(dir, 'self-change', 'lock'), 'utf8')).pid).toBe(2222)
+    })
+
+    // 复审抓到的那一路:建锁排他了,**抢死锁**那段还不是 —— A 删掉死锁、建好
+    // 自己的锁之后,已经走过 readHolder 的 B 会接着把 A 刚建的锁 unlink 掉再建
+    // 自己的,两个人又都拿到了。抢占前先排他地占住 lock.steal 这座独木桥才挡得住。
+    it('抢死锁时在「删掉」和「建锁」之间插进第二个人 ⇒ 还是只有一个 ok', () => {
+      const dir = tempDir()
+      const lock = join(dir, 'self-change', 'lock')
+      expect(acquireLock(dir, 999, undefined, () => true).ok).toBe(true)  // 999 之后会死掉
+
+      const alive = (pid: number): boolean => pid !== 999
+      const { first, second } = onUnlink(dir, 1111, 2222, alive)
+
+      expect(second).not.toBeNull()
+      expect([first.ok, second?.ok].filter(Boolean)).toHaveLength(1)
+      expect(first.ok).toBe(true)
+      expect(second?.ok).toBe(false)
+      expect(JSON.parse(readFileSync(lock, 'utf8')).pid).toBe(1111)
+      // 独木桥要还,不然下一次抢占会一直以为有人在抢。
+      expect(existsSync(`${lock}.steal`)).toBe(false)
+    })
+
+    it('抢完死锁之后 lock.steal 不留痕', () => {
+      const dir = tempDir()
+      expect(acquireLock(dir, 999, undefined, () => true).ok).toBe(true)
+      expect(acquireLock(dir, 111, undefined, () => false).ok).toBe(true)
+      expect(readdirSync(join(dir, 'self-change'))).toEqual(['lock'])
     })
 
     it('输掉的那个拿不到 release;赢家放手之后下一个人才拿得到', () => {
