@@ -19,8 +19,9 @@ export default defineConfig({
         'src/core/acp-agent-provider.test.ts',
         'src/core/workbench/codex-history-rpc.test.ts',
         'src/core/claude-workbench-runtime.test.ts',
-        // 回合租约的交错场景用的是 Claude 保留会话那套夹具(同上),win32 上不跑。
-        'src/core/workbench/service-lease-turns.test.ts',
+        // 「一个文件夹一个活会话」的不变式测试:用 Claude 保留会话那套夹具(同上),
+        // 而且用真 git 临时仓库截差异快照(同 git-review.test.ts 的路径 / CRLF 理由),win32 上不跑。
+        'src/core/workbench/service-one-session.test.ts',
         'src/core/workbench/artifacts.test.ts',
         'src/core/workbench/api-files.test.ts',
         'src/core/workbench/git-review.test.ts',

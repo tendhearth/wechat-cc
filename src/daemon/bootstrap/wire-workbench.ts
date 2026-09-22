@@ -162,5 +162,9 @@ export function wireWorkbench(opts: {
     mintSessionToken:key => opts.internalApi.mintSessionToken('trusted',key,{routeAllow:new Set()}),
     revokeSessionToken:key => opts.internalApi.invalidateSession(key),
     unattendedAck:makeUnattendedAckStore(opts.stateDir),
+    // 空闲自动收工的两档时长:用闭包读(同 ownerChatId),主人改了 agent-config.json 立刻生效;
+    // 负数或非数由 service 侧当缺省处理。
+    retainedIdleCloseMs:()=>loadAgentConfig(opts.stateDir).workbench_retained_idle_close_ms ?? 600_000,
+    handoffGraceMs:()=>loadAgentConfig(opts.stateDir).workbench_handoff_grace_ms ?? 15_000,
   })
 }

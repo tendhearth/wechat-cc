@@ -315,8 +315,11 @@ describe('workbench owned background runtime',()=>{
     const owned=new OwnedRuntime();owned.closeGate=gate()
     setup(owned,{closeTimeoutMs:25}, {async spawn(){return{async *dispatch(){yield result},async close(){}}}})
     const task=create();await started(owned)
-    // 父回合已答复、租约已释放:同文件夹的任务此时可以进来(会话空闲,不会自己写)。
-    const during=service.create({path:project,providerId:'codex',text:'Admitted while idle'});await settled(during.id)
+    // 父回合已答复但**会话还开着**:一条保留会话随时会自己又动手,所以文件夹仍然是它的 ——
+    // 同文件夹的任务只能排队(占用从派发到会话关闭为止)。
+    const during=service.create({path:project,providerId:'codex',text:'Queued while the session is open'})
+    await expect.poll(()=>service.detail(during.id).task.waitingFor?.taskId).toBe(task.id)
+    expect(service.detail(during.id).task.status).toBe('queued')
     // 文件要在父回合的回合末登记**之后**才出现(CI 慢机上 result 事件可能晚于这里被消费,
     // 先写会被回合末登记收走,那不是这条测试要验的事):此后父任务没有新事件,只剩结算能看见它。
     writeFileSync(join(project,'.cc-workbench',task.id,'after-close.txt'),'owned output')
@@ -327,7 +330,7 @@ describe('workbench owned background runtime',()=>{
     expect(service.detail(next.id).task.waitingFor?.reason).toBe('writer_not_closed')
     expect(service.detail(task.id).artifacts).toEqual([])
     await expect(service.submitInput(task.id,{runId:service.detail(task.id).runId!,requestId:randomUUID(),text:'Too late'})).rejects.toThrow('input_stale')
-    owned.closeGate.resolve();await settled(next.id)
+    owned.closeGate.resolve();await settled(during.id);await settled(next.id)
     await expect.poll(()=>service.detail(task.id).artifacts.some(a=>a.name==='after-close.txt')).toBe(true)
   })
 

@@ -274,10 +274,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
       ? `正在等待「${escapeWorkbenchHtml(detail.task.waitingFor.title)}」结束；这些任务使用同一个文件夹。`
       : detail?.task.waitingFor?.reason === 'nested_path'
         ? `正在等待「${escapeWorkbenchHtml(detail.task.waitingFor.title)}」结束；任务文件夹彼此包含。`
-        // 挡路的那件事正在续接(主人刚给它补了一句):队伍没卡住,说清楚在等什么。
-        : detail?.task.waitingFor?.reason === 'retained_turn'
-          ? `「${escapeWorkbenchHtml(detail.task.waitingFor.title)}」正在继续写；这些任务使用同一个文件夹，等它这一轮结束就轮到这件事。`
-          : '任务已记下，正在等待执行。'
+        : '任务已记下，正在等待执行。'
   const queuedGuidance = detail?.task.status === 'queued' && detail.task.waitingFor
     ? `<p class="wb-queue-guidance" role="status">${queuedCopy}</p>`
     : ''

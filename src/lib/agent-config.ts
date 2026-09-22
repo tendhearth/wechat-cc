@@ -170,6 +170,11 @@ export interface AgentConfig {
    *  旁路)的一次性确认时间戳(ms)。缺省 ⇒ 未确认,工作台 service 拒绝派给免审执行者的
    *  create(见 core/workbench/service.ts requireInput 的 unattended_ack_required)。 */
   workbench_unattended_ack_at?: number
+  /** 工作台的保留会话空闲自动收工:安静下来而**没人等这个文件夹**时等多久关掉会话、让出文件夹
+   *  (ms;缺省 600000 = 10 分钟)。0 = 立刻关;很大的数 = 几乎不自动关。 */
+  workbench_retained_idle_close_ms?: number
+  /** 同上,但**有人在等这个文件夹**时的短让位时长(ms;缺省 15000)。 */
+  workbench_handoff_grace_ms?: number
   /** 自改流水线(`wechat-cc self change`,src/cli/self-change/)的配置。全部可选:
    *  没写就吃 policy.ts 的缺省值。`halted_at` / `halt_reason` / `fail_streak` 是流水线
    *  自己回写的停机状态(连红两次就停,直到 `--unhalt`),不是主人手填的。
@@ -317,6 +322,9 @@ const AgentConfigSchema = z.object({
   knowledge_owner: z.string().optional(),
   day_tz_offset_minutes: z.number().int().min(-720).max(840).nullable().optional(),
   workbench_unattended_ack_at: z.number().int().positive().optional(),
+  // 两档都允许 0(=立刻关);负数由 service 侧当缺省处理。
+  workbench_retained_idle_close_ms: z.number().int().nonnegative().optional(),
+  workbench_handoff_grace_ms: z.number().int().nonnegative().optional(),
   self_change: SelfChangeSettings.optional(),
 })
 
@@ -414,6 +422,8 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.knowledge_owner === 'string' ? { knowledge_owner: parsed.knowledge_owner } : {}),
       ...(typeof parsed.day_tz_offset_minutes === 'number' ? { day_tz_offset_minutes: parsed.day_tz_offset_minutes } : {}),
       ...(typeof parsed.workbench_unattended_ack_at === 'number' ? { workbench_unattended_ack_at: parsed.workbench_unattended_ack_at } : {}),
+      ...(typeof parsed.workbench_retained_idle_close_ms === 'number' ? { workbench_retained_idle_close_ms: parsed.workbench_retained_idle_close_ms } : {}),
+      ...(typeof parsed.workbench_handoff_grace_ms === 'number' ? { workbench_handoff_grace_ms: parsed.workbench_handoff_grace_ms } : {}),
       ...(selfChange ? { self_change: selfChange } : {}),
     }
   } catch {

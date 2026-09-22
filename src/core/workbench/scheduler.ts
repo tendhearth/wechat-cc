@@ -1,8 +1,9 @@
 import { isAbsolute, relative, sep } from 'node:path'
 
-/** 前三种由路径关系判定(见 findPathBlocker);'retained_turn' 由 service 判定:挡路的是一条
- *  保留会话、而且已经开了新回合 —— 主人续接了它,队伍没卡住(spec §D)。 */
-export type WaitingReason = 'same_path' | 'nested_path' | 'writer_not_closed' | 'retained_turn'
+/** 三种都由路径关系判定(见 findPathBlocker)。占用从派发到会话关闭为止,所以「挡路的那条
+ *  会话已经答复」不是另一种原因 —— 它仍然占着文件夹
+ *  (docs/superpowers/specs/2026-09-21-one-folder-one-session-design.md)。 */
+export type WaitingReason = 'same_path' | 'nested_path' | 'writer_not_closed'
 export interface WaitingFor { taskId: string; title: string; reason: WaitingReason }
 export interface PathReservation {
   identity: string
