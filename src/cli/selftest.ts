@@ -104,18 +104,12 @@ const POLL_IDLE_SLEEP_MS = 1_000
 const CANCEL_WAIT_MS = 20_000
 /** 2026-09-18 real machine (f65f4c09): continuing a task the instant it
  *  replied hit a transient 409 `workbench_busy` and rolled back a perfectly
- *  good deploy — `resume_replied` was the ONLY red check. That race lived
- *  in the now-deleted turn-lease model (`acquireTurnLease` released the
- *  lease before the review snapshot finished capturing); the 2026-09-21
- *  "one folder one session" rewrite removed that model outright, so this
- *  exact window can no longer occur. This retry only ever fires on the
- *  *settled*-run path (`continueCall` below, used when the prior run has no
- *  live session left — e.g. cursor); on that path `continueTask` still
- *  throws `workbench_busy` if `runsByTask.has(id)`, which stays true for a
- *  moment if a concurrently-queued external follow-up made `drainInputs`
- *  restart the run the instant it settled. Kept as cheap defensive
- *  insurance against that unrelated overlap, not because the original
- *  race still exists. */
+ *  good deploy — `resume_replied` was the ONLY red check. That was the
+ *  now-deleted turn-lease model (`acquireTurnLease`); the 2026-09-21 "one
+ *  folder one session" rewrite removed that model outright, so this exact
+ *  409 window no longer exists. This retry is historical residue — cheap
+ *  insurance to keep around. Removing it would need its own selftest run
+ *  to verify, not worth doing as part of this fix. */
 const BUSY_RETRY_MAX = 10
 const BUSY_RETRY_INTERVAL_MS = 1_000
 
@@ -360,7 +354,7 @@ async function continueCall(deps: SelftestDeps, api: ApiCtx, body: unknown): Pro
   let res = await apiCall(deps, api, 'POST', '/v1/workbench/continue', body)
   for (let retry = 1; retry <= BUSY_RETRY_MAX; retry++) {
     if (!(res.status === 409 && res.json?.error === 'workbench_busy')) return res
-    deps.log(`selftest: continue answered 409 workbench_busy — 等 ${BUSY_RETRY_INTERVAL_MS}ms 再试(${retry}/${BUSY_RETRY_MAX};防的是并发排队的补充把这条任务重新拉回 runsByTask 的窄窗)`)
+    deps.log(`selftest: continue answered 409 workbench_busy — 等 ${BUSY_RETRY_INTERVAL_MS}ms 再试(${retry}/${BUSY_RETRY_MAX};旧租约模型下的那个 409 窗口已随这一轮删掉，这段重试是历史残留，留着当便宜的保险)`)
     await deps.sleep(BUSY_RETRY_INTERVAL_MS)
     res = await apiCall(deps, api, 'POST', '/v1/workbench/continue', body)
   }
