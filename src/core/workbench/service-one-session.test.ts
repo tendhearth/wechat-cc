@@ -292,6 +292,8 @@ it('上一轮快照还在截时补一句:这一轮的改动不会被记到上一
   // 就说明 result 已经消费过、这一轮的快照已经起跑了。
   r.say('这一轮到此')
   await expect.poll(()=>service.detail(a.id).events.some(e=>e.text==='这一轮到此'),POLL).toBe(true)
+  // 钉住前提:快照还在途中(已经落库就没什么可等的了,这条测试会变成空转)。
+  expect(reviews(a.id).length).toBe(0)
   const c=create('C')
   await service.submitInput(a.id,{runId:service.detail(a.id).runId!,requestId:'44444444-4444-4444-8444-444444444444',text:'再来'})
   // 改一个**上一轮就在名单里**的文件,而且是名单最后才被读到的那个(按字符串排序 f99 在最后)。
@@ -311,4 +313,91 @@ it('上一轮快照还在截时补一句:这一轮的改动不会被记到上一
   expect(status(c.id)).toBe('queued')
   expect(service.detail(c.id).task.waitingFor).toMatchObject({taskId:a.id,reason:'same_path'})
   expect(runtimes).toHaveLength(1)
+})
+
+/**
+ * 修复轮 #2:`submitInput` 那两处 await(等在途快照、取新基线)可能等十几秒,而它刚在入口
+ * 取消掉的计时会在它脚下被重新武装 —— 期间一轮自动续作正常收尾,`settleQuiet` 就又排下一个
+ * 让位计时,到点把会话收工、文件夹交给 B。醒过来不复查过期,这句话就投给一条已经关掉的会话:
+ * 坏的那头是原生进程还没死,于是在一个正在移交的文件夹里开始写。
+ */
+it('续接等在途快照时会话被自动收工:这一句认出自己过期,不投给已关掉的会话',async()=>{
+  setup({handoffGraceMs:()=>50,retainedIdleCloseMs:()=>60_000})
+  const a=create('A');await said(a.id)
+  const r=runtimes[0]!
+  // 让上一轮的快照够慢(见场景 8 的注释:文件数别再往上加)。
+  for(let i=0;i<100;i++)writeFileSync(join(project,`f${i}.txt`),`第 ${i} 份\n`.repeat(200))
+  r.finish()
+  r.say('这一轮到此')
+  await expect.poll(()=>service.detail(a.id).events.some(e=>e.text==='这一轮到此'),POLL).toBe(true)
+  expect(reviews(a.id).length).toBe(0)
+  const b=create('B')
+  const pending=service.submitInput(a.id,{runId:service.detail(a.id).runId!,requestId:'55555555-5555-4555-8555-555555555555',text:'再来'})
+  // 入口那一下已经把计时取消了;紧接着 A 自己收了一个回合 ⇒ 重新武装 50ms 的让位,而上面那份
+  // 快照要几百毫秒 —— 会话会在 `submitInput` 还挂着的时候被收工。
+  r.finish()
+  await expect(pending).rejects.toThrow('input_stale')
+  expect(r.submitted).toBe(0)
+  expect(service.detail(a.id).inputs.some(i=>i.text==='再来')).toBe(false)
+  await expect.poll(()=>status(a.id),POLL).toBe('completed')
+  await expect.poll(()=>status(b.id),POLL).toBe('running')
+})
+
+/**
+ * 修复轮 #3:自己醒来干的那一轮也欠主人一份代码变更。上一轮安静时基线已经被消费,而取基线
+ * 只有两个入口(起步、主人续接)—— 醒来这条路 BASE 靠 `onAutonomousStart → beginTurn` 重取,
+ * 那两个函数这一轮删了。新不变式下「自己醒来干活」是合法工作,它的差异比以前更重要。
+ */
+it('自己醒来干的那一轮也有代码变更:醒来时重取基线',async()=>{
+  setup({handoffGraceMs:()=>60_000,retainedIdleCloseMs:()=>60_000})
+  const a=create('A');await said(a.id)
+  const r=runtimes[0]!
+  writeFileSync(join(project,'a1.txt'),'第一轮\n')
+  r.finish()
+  await expect.poll(()=>reviews(a.id).length,POLL).toBe(1)
+  expect(reviews(a.id)[0]!.files).toEqual(['a1.txt'])
+  // 基线是醒来那一下**异步**重取的(实测一次约 100ms),从外面看不见它什么时候落位。所以按
+  // 「醒来 → 写一个新文件 → 静下来」一轮一轮试:只要基线在某一轮的写之前到位,那一轮就会生出
+  // 一份快照。完全不重取的话这里永远等不到第二份 —— 这就是这条测试钉住的东西。
+  // 每轮里「醒来」和「静下来」之间必须真的隔开:两件事挤在同一拍里的话,tool_call 被消费时
+  // 快照已经翻回 idle,探测器一次转移都看不到(前后都算安静)。用一条排在 tool_call 后面的
+  // 文本当路标,等它落库就说明这一下「不再安静」已经被看见了。
+  for(let round=1;round<=10&&reviews(a.id).length<2;round++){
+    r.write()
+    r.say(`醒来 ${round}`)
+    await expect.poll(()=>service.detail(a.id).events.some(e=>e.text===`醒来 ${round}`),POLL).toBe(true)
+    writeFileSync(join(project,`w${round}.txt`),`第 ${round} 次醒来\n`)
+    r.finish()
+    await pause(200)
+  }
+  expect(reviews(a.id).length).toBe(2)
+  const second=reviews(a.id).find(shot=>shot.name.endsWith('-2.json'))!
+  expect(second.files.some(path=>/^w\d+\.txt$/.test(path))).toBe(true)
+  // 第一轮那份没有被重写:醒来的差异是独立的一份。
+  expect(reviews(a.id).find(shot=>!shot.name.endsWith('-2.json'))!.files).toEqual(['a1.txt'])
+})
+
+/**
+ * 修复轮 #1:取消计时这一下必须在 `submitInput` 的**入口**,不能放进「能实时投递」那个分支里。
+ * `isReplied` 不看 `inputMode` —— 一条安静的运行若 runtime 只肯把补充排进队列,分支里的取消
+ * 根本走不到,而计时还武装着:让位到点会话被收工,`cancelRun → holdInputs` 把这句话记成
+ * 「任务已停止,补充尚未发送」,正是主人刚刚交上来的东西。
+ */
+it('runtime 只收排队的补充:计时照样取消,补充不会被收工冲掉',async()=>{
+  setup({handoffGraceMs:()=>60,retainedIdleCloseMs:()=>60_000})
+  const a=create('A');await said(a.id)
+  const r=runtimes[0]!
+  r.finish()
+  await expect.poll(()=>phase(a.id),POLL).toBe('replied')
+  // 原生会话此刻不接收实时补充:只能排队。
+  r.state={...r.state,input:'queue'}
+  const b=create('B')
+  const saved=await service.submitInput(a.id,{runId:service.detail(a.id).runId!,requestId:'66666666-6666-4666-8666-666666666666',text:'排着'})
+  expect(saved.status).toBe('pending')
+  expect(r.submitted).toBe(0)
+  await pause(300)
+  expect(status(a.id)).toBe('running')
+  expect(closedEvent(a.id)).toBe(false)
+  expect(service.detail(a.id).inputs.find(i=>i.id===saved.id)?.status).toBe('pending')
+  expect(status(b.id)).toBe('queued')
 })

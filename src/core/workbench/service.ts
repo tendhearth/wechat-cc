@@ -451,6 +451,15 @@ export function makeWorkbenchService(opts: Options) {
     void pending.then(()=>{if(running.reviewCapture===pending)running.reviewCapture=undefined},()=>{if(running.reviewCapture===pending)running.reviewCapture=undefined})
     return pending
   }
+  /** 给「自己醒来的那一轮」重取一份差异基线。异步且吞异常(同 `submitInput` 里那一格);
+   *  期间要是别人已经放了一份(主人正好也续接了),就不覆盖它。 */
+  async function retakeBaseline(running:Active):Promise<void> {
+    if (running.reviewBaseline||running.cancelled||running.finishing||running.uncertain) return
+    try {
+      const baseline=await captureGitBaseline(running.path,{})
+      if (!running.reviewBaseline&&!running.cancelled&&!running.finishing&&!running.uncertain) running.reviewBaseline=baseline
+    } catch { /* 没基线就没有这一轮的代码对比,其他成果照收 */ }
+  }
   /** 会话安静:本轮做完、没有后台子任务在写、也没有待决权限/提问 —— 只差主人下一句话。
    *  空闲自动收工的判据就是它。 */
   const quiet=isReplied
@@ -673,7 +682,14 @@ export function makeWorkbenchService(opts: Options) {
         if (nowQuiet&&!wasQuiet) { settleQuiet(running); return }
         // 又动起来了(自己被后台通知唤醒也算):不再安静就不再计时。文件夹本来就是它的,
         // 它想写就写 —— 没有什么要 fail-closed 的。
-        if (!nowQuiet&&wasQuiet) cancelIdleClose(running)
+        if (!nowQuiet&&wasQuiet) {
+          cancelIdleClose(running)
+          // 上一轮安静时 `captureCodeChanges` 已经把基线消费掉了,而取基线只有两个入口:起步和
+          // 主人续接(`submitInput`)。自己醒来这条路没有入口 —— BASE 是靠 `onAutonomousStart`
+          // → `beginTurn` 重取的,那两个函数这一轮删了。不补的话「自己醒来干的这一轮」永远生不出
+          // 代码变更,而新不变式下这种活是合法的、它的差异比以前更重要(修复轮 #3)。
+          if (!running.reviewBaseline) void retakeBaseline(running)
+        }
       }
       let summary
       try {
@@ -1090,14 +1106,23 @@ export function makeWorkbenchService(opts: Options) {
       if(running.delivering)throw Error('input_delivery_busy')
       if(store.liveInputs.count(id)>=10)throw Error('input_limit')
       requireInput(running.task.providerId,attachments,running.execution)
+      // 一句补充就是一下互动:先把自动收工的计时取消掉,免得话在路上会话被关了。这一下要在
+      // **入口**做,不能放进下面那个分支 —— `isReplied` 不看 `inputMode`,一条安静的运行若 runtime
+      // 报 `input:'queue'`,补充会存下来等着,而计时还武装着:让位到点就把会话关了,主人收到的
+      // 是「补充尚未发送」(评审 2026-09-21 修复轮 #1)。
+      cancelIdleClose(running)
       if(running.session?.workbenchRuntime&&inputMode(running)!=='queue'){
-        // 一句补充就是一下互动:先把自动收工的计时取消掉,免得话在路上会话被关了。
-        cancelIdleClose(running)
         // 上一轮的快照还在截就等它截完,别把这一轮的改动算进上一轮。
         if(running.reviewCapture)await running.reviewCapture.catch(()=>{})
         // 续接 = 新一轮差异的起点:重新取基线。回合中间补一句话时上一轮还没截过快照
         // (基线还没被消费)—— 那一份要留着,起点提交不动,否则这条 run 的代码变更会丢。
         if(!running.reviewBaseline){try{running.reviewBaseline=await captureGitBaseline(running.path,{})}catch{/* 没基线就没有这一轮的代码对比,其他成果照收 */}}
+        // 上面两处 await 可能等十几秒。这期间一轮自动续作可以正常收尾(新不变式下那是合法工作),
+        // `settleQuiet` 就会重新武装让位计时;计时到点 `closeForIdle` 把会话收工、文件夹交给 B。
+        // 所以醒过来必须把入口那道守卫再跑一遍,否则这句话会投给一条已经关掉的会话 —— 坏的那头是
+        // 原生进程还没死,于是在一个正在移交的文件夹里开始写,两个写手同处一个目录。
+        // (BASE 靠 `acquireTurnLease` 里的 `alive()` 挡这一下,那个函数这一轮删掉了。)
+        if(runsByTask.get(id)!==running||running.cancelled||running.finishing||running.uncertain)throw Error('input_stale')
       }
       let saved:LiveInput
       try{

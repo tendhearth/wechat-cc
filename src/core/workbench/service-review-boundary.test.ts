@@ -49,9 +49,11 @@ beforeEach(()=>{
   db=openDb({path:join(area,'state.db')});runtimes=[]
   const registry=createProviderRegistry()
   registry.register('claude',{async spawn(_project,context){const r=new TurnRuntime(context);runtimes.push(r);return r.session}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
-  store=makeWorkbenchStore(db);grace=10_000
-  // 短让位按测试注入(缺省 15 秒,套件等不起);长空闲保持大值,免得计时器插手别的断言。
-  service=makeWorkbenchService({store,registry,stateDir:area,ownerChatId:()=>null,handoffGraceMs:()=>grace,retainedIdleCloseMs:()=>10_000})
+  // 缺省也给一个绝不会到点的值:要短档的那两条测试自己把 `grace` 调下来。
+  store=makeWorkbenchStore(db);grace=60_000
+  // 短让位按测试注入(缺省 15 秒,套件等不起);长空闲给一个套件里绝不会到点的值 —— 它必须
+  // 远大于 POLL 的上限,否则满载时 A 会在两次 poll 之间被长空闲收工,后面的断言就假红了。
+  service=makeWorkbenchService({store,registry,stateDir:area,ownerChatId:()=>null,handoffGraceMs:()=>grace,retainedIdleCloseMs:()=>60_000})
 })
 afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
 const settled=async(id:string)=>{await expect.poll(()=>service.detail(id).task.status,POLL).not.toMatch(/^(running|queued|cancelling)$/)}
