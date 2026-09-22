@@ -29,7 +29,7 @@ wechat-cc selftest chat --provider cursor --resume
 git push origin dev
 wechat-cc ci triage --wait --rerun   # 退出码 0 绿 / 1 真红 / 2 没运行或 gh 出错 / 3 是已知 flake
 
-# 5. 让 CC 自己走完上面这四步(专用克隆 + 五道闸门 + 主人微信拍板)
+# 5. 让 CC 自己走完上面这四步(专用工作树 + 五道闸门 + 主人微信拍板)
 wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resume / --unhalt
 ```
 
