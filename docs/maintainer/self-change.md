@@ -57,7 +57,7 @@ intake ─► repo ─► implement ─► guard ─► tests ─► review ─�
 
 **回滚之后盘上写的是「现在跑的是什么」。** 自检红、二进制换回 `.prev` ⇒ `deploy.ok=false`、`deploy.version=null`、`deploy.rolledBack=true`,并且**步退回 `deploy`**。老代码把步留在 `selftest`、`deploy.ok` 还留着 `true`,`--resume` 于是对着那个已经被换回去的旧二进制再跑一遍自检 —— 旧的当然绿,报告就写「部署:绿」、`fail_streak` 清零,而机器上根本没有这条改动(审查 #8)。恢复一条收在 `deploy_failed` / `selftest_failed_rolled_back` 的,一律重新构建、重新部署、再自检。
 
-自检的 `--resume` 那一步(`POST /v1/workbench/continue`)会**吞掉那个转瞬即逝的 409 `workbench_busy`**:每秒重试一次、最多 10 次,还不通才算真红。那个 409 是任务刚答复、租约已放但差异快照还在截的那一瞬(`src/core/workbench/service.ts` 的 `acquireTurnLease`),而自检恰恰是 phase 一变 `replied` 就立刻续接。2026-09-18 真机(`f65f4c09`):`resume_replied` 是整场自检**唯一**一条红,就这么把一次本来好好的部署回滚掉了。
+自检的 `--resume` 那一步(`POST /v1/workbench/continue`)会**吞掉那个转瞬即逝的 409 `workbench_busy`**:每秒重试一次、最多 10 次,还不通才算真红。2026-09-18 真机(`f65f4c09`)第一次撞见这个红:`resume_replied` 是整场自检**唯一**一条红,就这么把一次本来好好的部署回滚掉了——当时的成因是旧租约模型下「答复已释放租约、差异快照还在截」的那一瞬(`acquireTurnLease`)。2026-09-21「一个文件夹一个会话」把那整套租约模型删掉了,那个窗口不复存在:**保留会话**(claude/codex)续接走的是 `POST /v1/workbench/input`,根本不经过这条 `/continue` 重试路径;只有**已结算会话**(cursor 一类)续接才会打 `/continue`,这条路上 `continueTask` 仍然可能因为 `runsByTask.has(id)` 而短暂 409——比如结算的同一瞬间有别的补充排队,被 `drainInputs` 立刻重新拉回运行中。重试留着是防这条不相关的窄窗,不是因为原来那个 409 还在。
 
 ## 微信不通时怎么拍板
 
