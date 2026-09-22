@@ -114,7 +114,8 @@ function statusReply(detail:Detail){
   // 等待行说人话:挡路的那位已经答复、正数着秒自己让开时，说清不用干等——不必等桌面才知道。
   // `writer_not_closed` 那种挡路方永远不安静（`holderWriting` 恒为 true），走不到这句。
   if(task.waitingFor?.holderWriting===false&&task.waitingFor.closeInMs!=null){
-    const seconds=Math.max(0,Math.round(task.waitingFor.closeInMs/1000)),blockerId=task.waitingFor.taskId
+    // 向下取:宁可显示得比实际剩的更少,不能说得比实际剩的更多(同桌面那处,评审修复轮 2 #3)。
+    const seconds=Math.max(0,Math.floor(task.waitingFor.closeInMs/1000)),blockerId=task.waitingFor.taskId
     lines.push(`「${singleLine(task.waitingFor.title,80)}」已答复，会话还开着；等 ${seconds} 秒它会自己让开，或者说『任务 ${blockerId} 停止』。`)
   }
   if(latest){

@@ -85,7 +85,8 @@ describe('WeChat task control through the shared service',()=>{
     setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
     const task=store.create({title:'排队中',path:project,providerId:'claude',ownerChatId:'owner'})
     const idle=async()=>{
-      const waitingFor={taskId:'HOLDER',title:'Holder task',reason:'same_path' as const,holderWriting:false,closeInMs:7000}
+      // 7500ms 是挑出来暴露差异的值:向下取是「7 秒」,四舍五入会说成「8 秒」——比实际剩的更多。
+      const waitingFor={taskId:'HOLDER',title:'Holder task',reason:'same_path' as const,holderWriting:false,closeInMs:7500}
       const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,detail:id=>{const detail=service.detail(id);return{...detail,task:{...detail.task,waitingFor}}}}})
       return control('owner',`任务 ${task.id}`)
     }
