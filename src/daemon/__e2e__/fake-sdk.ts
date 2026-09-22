@@ -242,6 +242,17 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
    */
   async function buildCycle(
     dispatchResult: { toolCalls: Array<{ name: string; input: unknown }>; finalText: string },
+    /**
+     * Whether a reply-family tool call should be bridged into a real
+     * outbound. True for a spawned SESSION (the real session has the
+     * wechat MCP child wired). False for the single-shot `query({ prompt:
+     * string })` path: claude-agent-provider's `oneShot` passes
+     * `tools: []`, `settingSources: []`, `maxTurns: 1` and no mcpServers
+     * (core/claude-agent-provider.ts), so a cheapEval / first-use probe
+     * has no reply tool to call — bridging there would manufacture an
+     * outbound production can't produce.
+     */
+    bridge: boolean,
   ): Promise<Array<Record<string, unknown>>> {
     const msgs: Array<Record<string, unknown>> = []
 
@@ -266,7 +277,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
           content: [{ type: 'tool_use', id: toolUseId, name: sdkToolName, input: tc.input }],
         },
       })
-      await bridgeToolCallToInternalApi(tc.name, tc.input)
+      if (bridge) await bridgeToolCallToInternalApi(tc.name, tc.input)
       msgs.push({
         type: 'user',
         message: {
@@ -335,7 +346,14 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
           return
         }
         const result = await script.onDispatch(prompt)
-        for (const msg of await buildCycle(result)) yield msg
+        // bridge=false — see buildCycle's `bridge` param. This branch is the
+        // one-shot eval (moderator / companion introspect / the 2026-09-08
+        // claude first-use probe「只回复两个字母:ok」), which in production
+        // runs with no tools and no MCP. Bridging a scripted reply tool call
+        // here made every claude e2e whose script returns a reply tool emit a
+        // SECOND outbound — the probe's — which is not a thing production can
+        // do.
+        for (const msg of await buildCycle(result, false)) yield msg
         return
       }
 
@@ -373,7 +391,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
         }
 
         const result = await script.onDispatch(text)
-        for (const msg of await buildCycle(result)) yield msg
+        for (const msg of await buildCycle(result, true)) yield msg
       }
     })()
   }
