@@ -45,11 +45,15 @@ intake ─► repo ─► implement ─► guard ─► tests ─► review ─�
 
 过了五道才 `git rebase origin/dev` + **快进 push**(`git push origin HEAD:refs/heads/dev`,不带 `--force` —— 普通 push 天然只许快进,语义和 `merge --ff-only` 一样;被拒就是远端在这中间前进了 ⇒ `merge_conflict`)合进 `dev`,然后构 sidecar、`self deploy`、`selftest workbench` + `selftest chat`。工作树里**不 `checkout dev`**:git 不许同一条分支在两棵树里检出,而且也不需要 —— rebase 完 HEAD 本身就是 `origin/dev` 的直系后代。自检红 ⇒ 二进制回滚到 `.prev`,**但代码已经在 `dev` 上了** —— 报告里会明说这件事,需要人去改好或 revert。
 
-**一次运行,一个工作树。** `<workdir>/repo` 只是**中枢克隆**:只用来 `fetch` 和管工作树,不在里面构建、不在里面 checkout 业务分支。每条运行 `git -C <hub> worktree add <workdir>/runs/<id> -b self/<id> origin/<branch>`,之后 implement / guard / tests / review / ci / merge / deploy 全在这棵树里跑。以前所有运行共用一个克隆(每次 `checkout -B` + `reset --hard`),B 的 `repo` 步会在 A 的树底下把文件换掉 —— 2026-09-21 审查 #4 就是这个类。
+**一次运行,一个工作树。** `<workdir>/repo` 只是**中枢克隆**:只用来 `fetch` 和管工作树,不在里面构建、不在里面 checkout 业务分支。每条运行 `git -C <hub> worktree add -B self/<id> <workdir>/runs/<id> origin/<branch>`(`-B` 而不是 `-b`:同名分支照样丢掉重开,省掉一条每轮都注定失败一次的 `branch -D`),之后 implement / guard / tests / review / ci / merge / deploy 全在这棵树里跑。以前所有运行共用一个克隆(每次 `checkout -B` + `reset --hard`),B 的 `repo` 步会在 A 的树底下把文件换掉 —— 2026-09-21 审查 #4 就是这个类。
 
 **构建之前只剩一条断言。** 上一轮给「共用克隆」打的补丁(部署前 `fetch` + `merge-base --is-ancestor` + `checkout`/`reset --hard`/`clean -fd` 把克隆钉回批准的那条提交,再验一遍)**整条删掉**了:一棵树只有一条运行在用,没有别人能动它。现在 `deploy` 只问两句话:`HEAD == merge.sha`、`status --porcelain` 干净。工作树整个不在了(人手工删过、被顺手清理过)⇒ 先 `git -C <hub> worktree prune`(目录没了但中枢里还登记着,不 prune 的话 `worktree add` 直接拒绝)再 `worktree add --detach <workdir>/runs/<id> <merge.sha>` 重开一个、`bun install --frozen-lockfile` 补上依赖,然后照样断言。对不上、重开不出来(比如批准的那条被 force-push 抹了)、或者存盘里压根没记 `merge.sha` ⇒ `deploy_tree_mismatch`,退 1,不构建不部署;这不算「机器坏了」,所以不推 `fail_streak`、不停机 —— 正因为它不会自动重来,通知里会写明「把 `self_change.workdir` 下的 `runs/<id>` 整个删掉(下一次会按批准的那条提交重开一个)之后 `wechat-cc self change --resume <id>`」。真换上去的那条记在 `deploy.sha` 里(构建出来没装上去的不算)。
 
-**清理是机会性的。** 每条运行的 `repo` 步开头顺手做一次:`git -C <hub> worktree prune`,再把**终局且 `updatedAt` 超过 24 小时**的那几条运行(`StateStore.list()` 列得出来)的 `runs/<id>` 用 `worktree remove --force` 删掉。还没收场的(`result` 还是 `null`)一律不碰 —— 那可能是一条停在拍板上等了一整天的运行,它的工作树还要用。清理失败只记一笔,绝不把新的一条判红。
+**清理是机会性的,门是「还有没有人可能接着跑」。** 每条运行的 `repo` 步开头顺手做一次:`git -C <hub> worktree prune`,再把**结局是 `done` 或 `declined`、且 `updatedAt` 超过 24 小时**的那几条运行(`StateStore.list()` 列得出来)的 `runs/<id>` 用 `worktree remove --force` 删掉。
+
+门**不是「收场了没」**:`approval_timeout` / `ci_unavailable` / `merge_conflict` / `tests_exhausted` / `deploy_failed` 都有结局,但它们全是 `--resume` 能接着跑的。而 `--resume` 是从 `state.step` 起步的,只有 `deploy` 会重开工作树 —— 扫掉一条停在 `approval` 的树,`--resume` 的第一条 git 就在一个不存在的目录里 spawn,拿到的只是一句 ENOENT;`refs/heads/self/<id>` 还在中枢里,但没有一条命令能把那轮花过钱的实现接回来(走 `repo` 步会重开分支,等于把它扔掉)。所以只有 `done`(装上去了)和 `declined`(主人回了 n)这两种**不可恢复的终局**能扫。
+
+代价是别的失败码的树会留在盘上(磁盘泄漏),这是**有意的取舍**:宁可占着盘,也不能把一轮付过钱的实现扫掉;回收它们的活记在 backlog 里。清理失败只记一笔,绝不把新的一条判红。
 
 **回滚之后盘上写的是「现在跑的是什么」。** 自检红、二进制换回 `.prev` ⇒ `deploy.ok=false`、`deploy.version=null`、`deploy.rolledBack=true`,并且**步退回 `deploy`**。老代码把步留在 `selftest`、`deploy.ok` 还留着 `true`,`--resume` 于是对着那个已经被换回去的旧二进制再跑一遍自检 —— 旧的当然绿,报告就写「部署:绿」、`fail_streak` 清零,而机器上根本没有这条改动(审查 #8)。恢复一条收在 `deploy_failed` / `selftest_failed_rolled_back` 的,一律重新构建、重新部署、再自检。
 

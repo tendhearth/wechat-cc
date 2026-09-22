@@ -18,6 +18,13 @@ import type { SelfChangeSettings } from '../../lib/agent-config'
 
 export interface Recorded {
   git: string[][]
+  /**
+   * 同一批 git,连着 cwd 一起记。**这一份不是可选的**:一次运行一个工作树之后,
+   * 「哪条 git 跑在中枢、哪条跑在这条运行自己的树里」就是这套机制的核心不变式 ——
+   * 只记 argv 的话,把 `rebase` 打到中枢上、或把 `worktree` 系列打到运行的树里,
+   * 全套单测照样绿。
+   */
+  gitCwd: Array<{ args: string[]; cwd: string | undefined }>
   exec: string[][]
   /** 同一批 exec,连着 cwd / 超时一起记(`build-sidecar` 必须在 apps/desktop 里跑)。 */
   execOpts: Array<{ cmd: string; args: string[]; cwd: string; timeoutMs: number }>
@@ -100,7 +107,7 @@ export interface FakeOpts {
 }
 
 export function makeFakeDeps(opts: FakeOpts = {}): { deps: PipelineDeps; rec: Recorded; files: Map<string, string> } {
-  const rec: Recorded = { git: [], exec: [], execOpts: [], runner: [], notices: [], asks: [], resolves: [], patches: [], sleeps: [], deployed: [], rolledBack: [] }
+  const rec: Recorded = { git: [], gitCwd: [], exec: [], execOpts: [], runner: [], notices: [], asks: [], resolves: [], patches: [], sleeps: [], deployed: [], rolledBack: [] }
   const files = new Map<string, string>()
   let gitCalls = 0
   let execCalls = 0
@@ -108,8 +115,9 @@ export function makeFakeDeps(opts: FakeOpts = {}): { deps: PipelineDeps; rec: Re
   let decisionCalls = 0
 
   const git: Git = {
-    run(args) {
+    run(args, gitOpts) {
       rec.git.push(args)
+      rec.gitCwd.push({ args, cwd: gitOpts?.cwd })
       const r = opts.git?.(args, gitCalls++)
       return { code: r?.code ?? 0, stdout: r?.stdout ?? '', stderr: r?.stderr ?? '' }
     },

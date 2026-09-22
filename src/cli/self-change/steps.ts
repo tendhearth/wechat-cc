@@ -233,13 +233,30 @@ async function intake(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
 // ── repo ─────────────────────────────────────────────────────────────────────
 
 /**
+ * 能扫的两种结局。**门不是「收场了没」,是「这条运行还有没有人可能接着跑」。**
+ *
+ * `done`(装上去了)和 `declined`(主人回了 n)是**不可恢复的终局** —— 没有任何
+ * 命令会再回到那棵树。别的失败码都不是:`approval_timeout` / `ci_unavailable` /
+ * `merge_conflict` / `tests_exhausted` … 文档明说 `--resume` 能接着跑
+ * (docs/maintainer/self-change.md 五道闸门、run.ts 的失败通知)。而 `--resume`
+ * 是从 `state.step` 起步的,只有 `deploy` 会重开工作树 —— 停在 `approval` 的那条
+ * 树要是被扫了,`--resume` 的第一条 git 就在一个不存在的 cwd 里 spawn,得到的是
+ * 一句 ENOENT;`refs/heads/self/<id>` 还在中枢里,但没有一条命令能把那轮花过钱的
+ * 实现接回来(走 `repo` 步会重开分支,等于把它扔掉)。
+ *
+ * 代价是这些树会留在盘上(磁盘泄漏),这是**有意的取舍**:宁可占着盘,
+ * 也不能把一轮已经付过钱的实现扫掉。回收它们的活记在 backlog 里。
+ */
+const SWEEPABLE_RESULTS: readonly string[] = ['done', 'declined']
+
+/**
  * 顺手把老工作树扫掉。
  *
  * 先 `worktree prune`(目录被人手工删了、机器崩过 —— 元数据还留在中枢里),
- * 再把**终局且超过 24 小时**的那几条运行的工作树连目录一起删掉。
+ * 再把**不可恢复的终局**(见 `SWEEPABLE_RESULTS`)里超过 24 小时的那几条运行的
+ * 工作树连目录一起删掉。
  *
- * 全程尽力而为:清理失败绝不该把一条新自改判红。还没收场的(`result === null`)
- * 一律不碰 —— 那可能是一条停在拍板上等了一整天的运行,它的工作树还要用。
+ * 全程尽力而为:清理失败绝不该把一条新自改判红。
  */
 function sweepWorktrees(s: SelfChangeState, d: PipelineDeps, hub: string): void {
   tryGit(d, hub, ['worktree', 'prune'], '清理失效工作树')
@@ -247,7 +264,7 @@ function sweepWorktrees(s: SelfChangeState, d: PipelineDeps, hub: string): void 
   try { rows = d.state.list() } catch { return }
   const cutoff = d.now() - WORKTREE_KEEP_MS
   for (const old of rows) {
-    if (old.id === s.id || old.result === null || old.updatedAt > cutoff) continue
+    if (old.id === s.id || !SWEEPABLE_RESULTS.includes(old.result ?? '') || old.updatedAt > cutoff) continue
     const dir = runPath(d.config, old.id)
     if (!d.fs.exists(dir)) continue
     tryGit(d, hub, ['worktree', 'remove', '--force', dir], `清理 #${old.id} 的工作树`)
@@ -278,11 +295,14 @@ async function repo(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
 
     sweepWorktrees(s, d, hub)
 
-    // 同一个 id 重跑 `repo`(`--resume` 到这一步):旧工作树和旧分支都要先让路,
-    // 否则 `worktree add -b` 会因为「分支已存在 / 目录已存在」直接失败。
+    // 同一个 id 重跑 `repo`(`--resume` 到这一步):旧工作树要先让路,否则
+    // `worktree add` 会因为「目录已存在」直接失败。
     if (d.fs.exists(tree)) tryGit(d, hub, ['worktree', 'remove', '--force', tree], `清掉 #${s.id} 上一次的工作树`)
-    tryGit(d, hub, ['branch', '-D', s.branch], `清掉本地分支 ${s.branch}`)
-    git(d, hub, ['worktree', 'add', tree, '-b', s.branch, `origin/${d.config.branch}`])
+    // 分支用 `-B` 而不是「无条件 `branch -D` 再 `-b`」:新 id 的分支本来就不存在,
+    // 那条 `branch -D` 每轮都要失败一次、每轮都打一行「失败(不影响结果)」——
+    // 一条部署自己 daemon 的流水线不该把读日志的人训练成忽略失败行。`-B` 语义相同
+    // (同名分支照样丢掉重开),而且分支被**别的工作树**检出时它照样拒绝。
+    git(d, hub, ['worktree', 'add', '-B', s.branch, tree, `origin/${d.config.branch}`])
     s.baseSha = git(d, hub, ['rev-parse', `origin/${d.config.branch}`]).trim()
 
     const install = await d.exec('bun', ['install', '--frozen-lockfile'], { cwd: tree, timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms })

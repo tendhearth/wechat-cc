@@ -8,8 +8,17 @@ import { failingTestFiles, SUMMARY_MAX_CHARS, steps } from './steps'
 
 const HEAD_SHA = 'a'.repeat(40)
 const BASE_SHA = 'b'.repeat(40)
+/** `testConfig()` 里的 workdir。 */
+const WORKDIR = '/w'
+/** 中枢克隆:只 fetch、只管工作树。 */
+const HUB_DIR = join(WORKDIR, 'repo')
 /** `fakeState()` 那条运行自己的工作树(`<workdir>/runs/<id>`)。 */
-const RUN_DIR = join('/w', 'runs', 'ab12cd34')
+const RUN_DIR = join(WORKDIR, 'runs', 'ab12cd34')
+
+/** 一条 git 的「头两个词 + 它跑在哪儿」—— cwd 断言读起来能看出是哪条命令。 */
+function whereGit(rec: { gitCwd: Array<{ args: string[]; cwd: string | undefined }> }): Array<[string, string | undefined]> {
+  return rec.gitCwd.map(r => [r.args.slice(0, 2).join(' '), r.cwd])
+}
 
 describe('intake', () => {
   it('停机了就不干活(blocked)', async () => {
@@ -64,7 +73,7 @@ describe('repo', () => {
     expect(fresh.rec.git[0]).toEqual(['clone', 'file:///tmp/remote.git', 'repo'])
     const lines = fresh.rec.git.map(a => a.join(' '))
     expect(lines).toContain('worktree prune')
-    expect(lines).toContain(`worktree add ${RUN_DIR} -b self/ab12cd34 origin/dev`)
+    expect(lines).toContain(`worktree add -B self/ab12cd34 ${RUN_DIR} origin/dev`)
     // 中枢克隆里不再 checkout 业务分支 —— 那一手正是「B 在 A 的树底下换文件」的来源。
     expect(lines.some(l => l.startsWith('checkout'))).toBe(false)
     expect(lines.some(l => l.startsWith('reset --hard'))).toBe(false)
@@ -73,37 +82,64 @@ describe('repo', () => {
     expect(fresh.rec.exec[0]).toEqual(['bun', 'install', '--frozen-lockfile'])
     // 装依赖在工作树里跑,不在中枢克隆里。
     expect(fresh.rec.execOpts[0]?.cwd).toBe(RUN_DIR)
+    // **repo 步一条 git 都不打在这条运行的工作树里**:clone 在 workdir 上
+    // (那时候中枢还不存在),其余全在中枢。
+    expect(whereGit(fresh.rec)).toEqual([
+      ['clone file:///tmp/remote.git', WORKDIR],
+      ['worktree prune', HUB_DIR],
+      ['worktree add', HUB_DIR],
+      ['rev-parse origin/dev', HUB_DIR],
+    ])
 
     const reused = makeFakeDeps({ exists: () => true, git: gitReply({ 'rev-parse origin/dev': BASE_SHA }) })
     await steps.repo(fakeState(), reused.deps)
-    expect(reused.rec.git[0]).toEqual(['fetch', 'origin', '--prune'])
-    // 同一个 id 重跑(`--resume` 到 repo):旧工作树和旧分支都要先让路。
+    // 同一个 id 重跑(`--resume` 到 repo):旧工作树要先让路;分支用 `-B` 让路
+    // (不是无条件 `branch -D` —— 新 id 的分支本来就不存在,那条注定失败一次)。
+    expect(whereGit(reused.rec)).toEqual([
+      ['fetch origin', HUB_DIR],
+      ['worktree prune', HUB_DIR],
+      ['worktree remove', HUB_DIR],
+      ['worktree add', HUB_DIR],
+      ['rev-parse origin/dev', HUB_DIR],
+    ])
     expect(reused.rec.git.map(a => a.join(' '))).toEqual(expect.arrayContaining([
       `worktree remove --force ${RUN_DIR}`,
-      'branch -D self/ab12cd34',
+      `worktree add -B self/ab12cd34 ${RUN_DIR} origin/dev`,
     ]))
+    expect(reused.rec.git.some(a => a[0] === 'branch')).toBe(false)
   })
 
-  // 没有清理器的话 `<workdir>/runs` 会一条一条攒下去。谁能删是有讲究的:
-  // 停在拍板上等一整天的那条(result 还是 null)工作树还要用,删了它等于把
-  // 一条批准过的改动弄丢。
-  it('顺手删掉终局且超过一天的老工作树;没收场的和刚跑完的都不碰', async () => {
+  // 没有清理器的话 `<workdir>/runs` 会一条一条攒下去。但门**不是「收场了没」,
+  // 是「这条运行还有没有人可能接着跑」**:`--resume` 从 state.step 起步,只有
+  // deploy 会重开工作树 —— 扫掉一条停在 approval 的树,`--resume` 的第一条 git
+  // 就在不存在的 cwd 里 spawn(ENOENT),而那轮实现已经花过钱了。
+  it('只扫不可恢复的终局(done / declined)且超过一天的;能 resume 的一律不碰', async () => {
     const now = 1_700_000_000_000
+    const day = 25 * 60 * 60_000
     const { deps, rec } = makeFakeDeps({
       exists: () => true,
       now: () => now,
       state: memoryStore([
-        fakeState({ id: 'old11111', result: 'done', updatedAt: now - 25 * 60 * 60_000 }),
+        fakeState({ id: 'done1111', result: 'done', updatedAt: now - day }),
+        fakeState({ id: 'deny1111', result: 'declined', updatedAt: now - day }),
         fakeState({ id: 'fresh111', result: 'done', updatedAt: now - 60_000 }),
-        fakeState({ id: 'wait1111', result: null, updatedAt: now - 48 * 60 * 60_000 }),
+        fakeState({ id: 'nores111', result: null, updatedAt: now - day }),
+        // 下面这几条文档明说 `--resume` 能接着跑 —— 扫了就接不回来了。
+        fakeState({ id: 'timeo111', result: 'approval_timeout', updatedAt: now - day }),
+        fakeState({ id: 'noci1111', result: 'ci_unavailable', updatedAt: now - day }),
+        fakeState({ id: 'confl111', result: 'merge_conflict', updatedAt: now - day }),
+        fakeState({ id: 'exhau111', result: 'tests_exhausted', updatedAt: now - day }),
+        fakeState({ id: 'depfa111', result: 'deploy_failed', updatedAt: now - day }),
       ]),
       git: gitReply({ 'rev-parse origin/dev': BASE_SHA }),
     })
     expect(await steps.repo(fakeState(), deps)).toMatchObject({ ok: true })
     const removed = rec.git.filter(a => a[0] === 'worktree' && a[1] === 'remove').map(a => a[3])
-    expect(removed).toContain(join('/w', 'runs', 'old11111'))
-    expect(removed).not.toContain(join('/w', 'runs', 'fresh111'))
-    expect(removed).not.toContain(join('/w', 'runs', 'wait1111'))
+    expect(removed).toContain(join(WORKDIR, 'runs', 'done1111'))
+    expect(removed).toContain(join(WORKDIR, 'runs', 'deny1111'))
+    for (const kept of ['fresh111', 'nores111', 'timeo111', 'noci1111', 'confl111', 'exhau111', 'depfa111']) {
+      expect(removed, kept).not.toContain(join(WORKDIR, 'runs', kept))
+    }
   })
 
   it('清理失败不影响这一条(老工作树删不掉只记一笔)', async () => {
@@ -111,7 +147,7 @@ describe('repo', () => {
     const { deps } = makeFakeDeps({
       exists: () => true,
       now: () => now,
-      state: memoryStore([fakeState({ id: 'old11111', result: 'done', updatedAt: now - 25 * 60 * 60_000 })]),
+      state: memoryStore([fakeState({ id: 'done1111', result: 'done', updatedAt: now - 25 * 60 * 60_000 })]),
       git: args => (args[0] === 'worktree' && args[1] === 'remove' ? { code: 128, stderr: 'fatal: 不是工作树' } : undefined),
     })
     expect(await steps.repo(fakeState(), deps)).toMatchObject({ ok: true, next: 'implement' })
@@ -650,6 +686,8 @@ describe('merge', () => {
       'fetch origin', 'rebase origin/dev', 'rev-parse HEAD',
       'push origin HEAD:refs/heads/dev', 'push origin --delete self/ab12cd34',
     ])
+    // 全在这条运行自己的工作树里跑:打到中枢上的 rebase 会去改中枢的 dev。
+    expect(rec.gitCwd.map(r => r.cwd)).toEqual([RUN_DIR, RUN_DIR, RUN_DIR, RUN_DIR, RUN_DIR])
     expect(s.merge).toEqual({ sha: HEAD_SHA, rebased: false })
     expect(rec.notices[0]).toContain('已合入 dev')
   })
@@ -730,6 +768,8 @@ describe('deploy', () => {
     expect(rec.execOpts[0]?.cwd).toBe(join(RUN_DIR, 'apps', 'desktop'))
     expect(rec.execOpts[0]?.timeoutMs).toBeGreaterThan(0)
     expect(rec.deployed).toEqual([RUN_DIR])
+    // 断言那两条 git 也在工作树里问,不是在中枢里问。
+    expect(whereGit(rec)).toEqual([['rev-parse HEAD', RUN_DIR], ['status --porcelain', RUN_DIR]])
     // 装的是哪条要写在盘上:`--resume` 时没有这一笔就没人说得清机器上是什么。
     expect(s.deploy).toEqual({ ok: true, version: '1.2.3', sha: HEAD_SHA, rolledBack: false })
   })
@@ -789,6 +829,13 @@ describe('deploy', () => {
       // 重建出来的树里没有 node_modules,不装一遍 build-sidecar 当场就红。
       expect(rec.exec).toEqual([['bun', 'install', '--frozen-lockfile'], ['bun', 'run', 'build-sidecar']])
       expect(rec.execOpts[0]?.cwd).toBe(RUN_DIR)
+      // 重开工作树的两条打在中枢上,断言的两条打在重开出来的树里。
+      expect(whereGit(rec)).toEqual([
+        ['worktree prune', HUB_DIR],
+        ['worktree add', HUB_DIR],
+        ['rev-parse HEAD', RUN_DIR],
+        ['status --porcelain', RUN_DIR],
+      ])
       expect(s.deploy.sha).toBe(HEAD_SHA)
       expect(rec.deployed).toEqual([RUN_DIR])
     })
@@ -822,6 +869,39 @@ describe('deploy', () => {
       expect(rec.exec).toEqual([])
     })
   })
+})
+
+// 一次运行一个工作树的核心不变式:**哪条 git 跑在哪儿**。repo / deploy 那两步
+// 各自在自己的用例里钉过(它们要碰中枢);剩下的步骤一条都不该碰中枢 —— 把
+// `rebase` / `reset --hard` / `commit` 打到中枢上,是拿别人的树当自己的。
+describe('git 的 cwd:中枢的归中枢,工作树的归工作树', () => {
+  const REPLY = gitReply({
+    'rev-parse HEAD': HEAD_SHA,
+    'status --porcelain': ' M src/a.ts\n',
+    'rev-list --count': '2\n',
+    'diff --name-only': 'docs/x.md\n',
+    'diff --stat': ' docs/x.md | 1 +\n',
+  })
+
+  const cases: Array<{ name: 'implement' | 'guard' | 'tests' | 'review' | 'approval' | 'merge'; over?: FakeOpts }> = [
+    { name: 'implement' },
+    { name: 'guard' },
+    // tests 全绿时压根不问 git(改动文件列表只在红了才问),所以先弄红一条。
+    { name: 'tests', over: { exec: (_cmd, args) => (args[1] === 'typecheck' ? { code: 1, stdout: 'tsc 报错' } : undefined) } },
+    { name: 'review' },
+    { name: 'approval' },
+    { name: 'merge' },
+  ]
+
+  for (const { name, over } of cases) {
+    it(`${name} 的每一条 git 都在这条运行的工作树里`, async () => {
+      const { deps, rec } = makeFakeDeps({ git: REPLY, ...over })
+      await steps[name](fakeState(), deps)
+      // 一条都没问的话这条断言就是空转的 —— 先证明真问过。
+      expect(rec.gitCwd.length).toBeGreaterThan(0)
+      expect([...new Set(rec.gitCwd.map(r => r.cwd))]).toEqual([RUN_DIR])
+    })
+  }
 })
 
 describe('selftest', () => {
