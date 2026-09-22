@@ -53,7 +53,8 @@ interface Options {
   closeTimeoutMs?: number
   permissionTimeoutMs?: number
   /** 保留会话安静下来、**没人等这个文件夹**时的空闲自动收工时长(ms;缺省 10 分钟)。
-   *  纯粹是别让一个闲着的原生进程占着资源。允许 0(=立刻关)与很大的数(=几乎不自动关);
+   *  纯粹是别让一个闲着的原生进程占着资源。允许 0(=立刻关)与很大的数(封顶约 24.8 天,即
+   *  setTimeout 的合法上限 2³¹−1ms;超界不会当「永不武装」,而是被钳到这个上限);
    *  负数/非数视作缺省。函数形式让主人改了 agent-config.json 立刻生效。 */
   retainedIdleCloseMs?: number | (() => number)
   /** 安静下来而**有人在等这个文件夹**时的短让位时长(ms;缺省 15 秒)。同上。 */
@@ -480,10 +481,14 @@ export function makeWorkbenchService(opts: Options) {
   /** 会话安静:本轮做完、没有后台子任务在写、也没有待决权限/提问 —— 只差主人下一句话。
    *  空闲自动收工的判据就是它。 */
   const quiet=isReplied
+  // setTimeout 的合法上限是 2³¹−1 毫秒(约 24.8 天);超界的值 Node/浏览器会静默钳成 1ms 立刻触发
+  // (TimeoutOverflowWarning),把「几乎不自动关」反转成「立刻收工」。这里在旋钮里就封顶,
+  // 「很大的数」的实际效果因此是「最多约 24.8 天不收工」,不是真的永不武装。
+  const MAX_TIMEOUT_MS=2_147_483_647
   const msKnob=(value:number|(()=>number)|undefined,fallback:number):number=>{
     let raw:unknown
     try { raw=typeof value==='function'?value():value } catch { return fallback }
-    return typeof raw==='number'&&Number.isFinite(raw)&&raw>=0?raw:fallback
+    return typeof raw==='number'&&Number.isFinite(raw)&&raw>=0?Math.min(raw,MAX_TIMEOUT_MS):fallback
   }
   const handoffGraceMs=()=>msKnob(opts.handoffGraceMs,15_000)
   const retainedIdleMs=()=>msKnob(opts.retainedIdleCloseMs,600_000)

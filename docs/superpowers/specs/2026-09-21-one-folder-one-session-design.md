@@ -98,7 +98,7 @@ waitingFor: { taskId, title, reason, holderWriting: boolean, closeInMs: number |
 
 ### 5. 配置
 
-`agent-config.json`:`workbench_retained_idle_close_ms`(缺省 600000)、`workbench_handoff_grace_ms`(缺省 15000)。按 `unattendedAck` 的样子接线(`wire-workbench.ts:99-107,164`),用**闭包**读(`ownerChatId` 那种,`wire-workbench.ts:128`),不要 `loadAgentConfig` 快照,好让改了立刻生效。两个值都允许 `0`(=立刻关)与很大的数(=几乎不自动关);`< 0` 视作缺省。
+`agent-config.json`:`workbench_retained_idle_close_ms`(缺省 600000)、`workbench_handoff_grace_ms`(缺省 15000)。按 `unattendedAck` 的样子接线(`wire-workbench.ts:99-107,164`),用**闭包**读(`ownerChatId` 那种,`wire-workbench.ts:128`),不要 `loadAgentConfig` 快照,好让改了立刻生效。两个值都允许 `0`(=立刻关);很大的数会被封顶到约 24.8 天(`setTimeout` 的合法上限 2³¹−1ms,超界会被静默钳成 1ms 立刻触发,不封顶就会把「几乎不自动关」反转成「立刻收工」),`< 0` 视作缺省。
 
 ## 设计(自改流水线):一次自改,一个工作树
 

@@ -464,3 +464,28 @@ it('等待行报出持有者在不在写、还有多久自动让位',async()=>{
   await expect.poll(()=>status(a.id),POLL).toBe('completed')
   await expect.poll(()=>status(b.id),POLL).toBe('running')
 })
+
+/**
+ * 终审 I1:超界的旋钮值不封上界,原样进 setTimeout,两套 runtime 都会被静默钳成 1ms —— 「几乎
+ * 不自动关」反转成「一答复就立刻收工」。终审实跑复现:asked 9e12 ⇒ `TimeoutOverflowWarning` +
+ * 2ms 就触发。这里用同一个复现值验证:封顶之后既不再被钳成 1ms,报给主人的倒计时也如实反映
+ * 「封顶到约 24.8 天」,不是把 9e12 原样报出去。
+ */
+it('超界的旋钮被封顶,不再钳成 1ms 立刻收工',async()=>{
+  setup({handoffGraceMs:()=>9e12,retainedIdleCloseMs:()=>60_000})
+  const a=create('A');await said(a.id)
+  const r=runtimes[0]!
+  const b=create('B')
+  await expect.poll(()=>status(b.id),POLL).toBe('queued')
+  r.finish()
+  await expect.poll(()=>service.detail(b.id).task.waitingFor?.holderWriting,POLL).toBe(false)
+  const waiting=service.detail(b.id).task.waitingFor!
+  expect(waiting.closeInMs).not.toBeNull()
+  // 封顶到 setTimeout 的合法上限(2³¹−1ms ≈ 24.8 天):既不是被钳成的 1ms 量级,也不是 9e12 原样报出去。
+  expect(waiting.closeInMs!).toBeGreaterThan(2_000_000_000)
+  expect(waiting.closeInMs!).toBeLessThanOrEqual(2_147_483_647)
+  // 没被钳成 1ms 立刻收工:等一小会儿,A 仍然 running,也没有收工事件。
+  await pause(300)
+  expect(status(a.id)).toBe('running')
+  expect(closedEvent(a.id)).toBe(false)
+})

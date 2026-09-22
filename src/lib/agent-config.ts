@@ -171,7 +171,8 @@ export interface AgentConfig {
    *  create(见 core/workbench/service.ts requireInput 的 unattended_ack_required)。 */
   workbench_unattended_ack_at?: number
   /** 工作台的保留会话空闲自动收工:安静下来而**没人等这个文件夹**时等多久关掉会话、让出文件夹
-   *  (ms;缺省 600000 = 10 分钟)。0 = 立刻关;很大的数 = 几乎不自动关。 */
+   *  (ms;缺省 600000 = 10 分钟)。0 = 立刻关;很大的数会被封顶到约 24.8 天(setTimeout 的
+   *  合法上限 2³¹−1ms),不是真的永不武装。 */
   workbench_retained_idle_close_ms?: number
   /** 同上,但**有人在等这个文件夹**时的短让位时长(ms;缺省 15000)。 */
   workbench_handoff_grace_ms?: number
