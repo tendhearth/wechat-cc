@@ -100,6 +100,20 @@ describe('makeStateStore', () => {
     expect(makeStateStore(tempDir()).list()).toEqual([])
   })
 
+  it('记录里的 id 字段被伪造成路径穿越形状 ⇒ 不出现在 list 里(终审 M4)', () => {
+    // list() 拿到的 id 会喂给 sweepWorktrees → `git worktree remove --force`；load() 早就靠
+    // ID_RE 把文件名参数挡住,但文件名合法(读目录只按 .json 后缀过滤)不代表文件内容里的
+    // id 字段也合法——这条记录是"手工改脏"或"写坏"的那种形状,list() 不该替它背书。
+    const dir = tempDir()
+    const store = makeStateStore(dir)
+    store.save(make('11111111', 100))
+    mkdirSync(join(dir, 'self-change'), { recursive: true })
+    writeFileSync(join(dir, 'self-change', 'evil.json'), JSON.stringify({ id: '../../etc/passwd', startedAt: 999 }))
+    const ids = store.list().map(s => s.id)
+    expect(ids).toEqual(['11111111'])
+    expect(ids).not.toContain('../../etc/passwd')
+  })
+
   it('countSince 只数 startedAt ≥ ts 的(日配额)', () => {
     const dir = tempDir()
     const store = makeStateStore(dir)

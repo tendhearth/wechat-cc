@@ -136,7 +136,10 @@ export function makeStateStore(stateDir: string, fs: StateFs = NODE_FS): StateSt
       const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8') as string)
       if (typeof parsed !== 'object' || parsed === null) return null
       const s = parsed as SelfChangeState
-      return typeof s.id === 'string' && typeof s.startedAt === 'number' ? s : null
+      // list() 拿到的 id 会喂给 sweepWorktrees → git worktree remove --force（终审 M4）；
+      // load() 早就用 ID_RE 把门，readOne 是两边共用的唯一读口，这里补上同一道门，
+      // 一条被人手改脏（或写坏）的记录不会再流进 list() / sweepWorktrees。
+      return typeof s.id === 'string' && ID_RE.test(s.id) && typeof s.startedAt === 'number' ? s : null
     } catch { return null }
   }
 
