@@ -784,3 +784,44 @@ describe('runChatSelftest', () => {
     await expect(runChatSelftest(deps, { provider: 'claude' })).rejects.toThrow('daemon_not_running')
   })
 })
+
+
+it('preserves the scratch project when archive fails, even after a terminal reply',async()=>{
+  const api=makeWorkbenchFakeApi({taskResponses:[{task:{status:'completed'},events:[{id:1,kind:'text',text:'done'}],version:1}]})
+  const removed:string[]=[]
+  const deps=baseDeps({fetch:(async(url,init)=>new URL(String(url)).pathname==='/v1/workbench/archive'
+    ? jsonResponse(409,{error:'workbench_busy'}):api.fetchImpl(url,init)) as typeof fetch})
+  deps.fs.rm=p=>removed.push(p)
+  const report=await runWorkbenchSelftest(deps,{executor:'claude'})
+  expect(report.checks.find(c=>c.name==='archived')?.ok).toBe(false)
+  expect(removed).toEqual([])
+})
+
+it('requests an explicit root file and a controlled permission probe, rather than assuming uname asks',async()=>{
+  const api=makeWorkbenchFakeApi({taskResponses:[{task:{status:'completed'},events:[],version:1}]})
+  const files=new Map<string,string>()
+  const deps=baseDeps({fetch:api.fetchImpl})
+  deps.fs.write=(p,v)=>files.set(p,String(v))
+  await runWorkbenchSelftest(deps,{executor:'claude'})
+  const prompt=api.calls.find(c=>c.path==='/v1/workbench/create')!.body.text
+  expect(prompt).toContain('项目根目录')
+  expect(prompt).toContain('rm -- cc-selftest-permission-probe.txt')
+  expect(files.get('/scratch/wb-1000/cc-selftest-permission-probe.txt')).toBeDefined()
+})
+
+
+it('fails permission execution when approval returns OK but the disposable file remains',async()=>{
+  const api=makeWorkbenchFakeApi({taskResponses:[{task:{status:'completed'},events:[{id:1,kind:'text',text:'done'}],permissions:[{id:'p',tool:'Bash',description:'rm -- cc-selftest-permission-probe.txt'}],version:1}]})
+  const deps=baseDeps({fetch:api.fetchImpl})
+  deps.fs.read=p=>p.endsWith('cc-selftest-permission-probe.txt')?'not removed':null
+  const report=await runWorkbenchSelftest(deps,{executor:'claude'})
+  expect(report.checks.find(c=>c.name==='permission_roundtrip')?.ok).toBe(true)
+  expect(report.checks.find(c=>c.name==='permission_executed')?.ok).toBe(false)
+})
+
+
+it('requests Codex native escalation explicitly for the disposable probe',async()=>{
+  const api=makeWorkbenchFakeApi({taskResponses:[{task:{status:'completed'},events:[],version:1}]})
+  await runWorkbenchSelftest(baseDeps({fetch:api.fetchImpl}),{executor:'codex'})
+  expect(api.calls.find(c=>c.path==='/v1/workbench/create')!.body.text).toContain('require_escalated')
+})

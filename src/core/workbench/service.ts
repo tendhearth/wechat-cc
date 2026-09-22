@@ -12,7 +12,7 @@ import type { AgentEvent, AgentSession, AgentExecutionChoice, AgentModelCatalog,
 import {executionFailureMessage,normalizeExecutionChoice,PROVIDER_EXECUTION_CHOICE,sameExecutionChoice} from './execution-settings'
 import type { ProviderRegistry } from '../provider-registry'
 import { TIER_PROFILES, sessionAuthEnv } from '../user-tier'
-import { canonicalProject, collectArtifacts, outputDirectory, readArtifactSnapshot, saveArtifactSnapshot } from './artifacts'
+import { ArtifactSnapshotError, canonicalProject, collectArtifacts, outputDirectory, readArtifactSnapshot, saveArtifactSnapshot } from './artifacts'
 import { captureGitBaseline, finishGitReview, serializeGitReview, GIT_REVIEW_MIME, type GitBaseline, type GitReview, type ReviewFile } from './git-review'
 import { composeReturnText, derivedReturnRequestId, parseGitReviewSnapshot, type ReviewTurn } from './review'
 import type { ReviewMark } from './review-marks'
@@ -99,6 +99,7 @@ interface Active extends PathReservation {
   artifactsCollected: boolean
   collection?:Promise<void>
   turnCollection?:Promise<void>
+  collectionFailure?:string
   /** 已记过的收集警告:每回合都重扫成果目录,同一条只记一次(评审 2026-09-16) */
   warned?:Set<string>
   /** 空闲自动收工的计时器:会话安静下来才起,任何一下互动都取消。`at` 是到点的绝对时刻
@@ -395,11 +396,7 @@ export function makeWorkbenchService(opts: Options) {
       // 先让出事件流回调:目录扫描 + 哈希是同步的,别让它卡在 SDK 流的消费点上。
       await new Promise<void>(resolve=>setImmediate(resolve))
       if (shutdownComplete || running.artifactsCollected || running.uncertain || running.finishing || running.cancelled) return
-      try {
-        if (canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity) return
-        noteWarnings(running,collectArtifacts(store,running.taskId,running.path,opts.stateDir))
-        touched(running.taskId)
-      } catch { /* 结算时还会再收一次,这里不打断本轮 */ }
+      captureTaskArtifacts(running)
     })()
     running.turnCollection=pending;collections.add(pending)
     const clear=()=>{collections.delete(pending);if(running.turnCollection===pending)running.turnCollection=undefined}
@@ -409,18 +406,43 @@ export function makeWorkbenchService(opts: Options) {
     const seen=(running.warned??=new Set())
     for (const warning of warnings) { if (seen.has(warning)) continue; seen.add(warning); store.addEvent(running.taskId,'system',warning); touched(running.taskId) }
   }
+  /** Every turn and final settlement use the same collector and failure semantics. */
+  function captureTaskArtifacts(running:Active) {
+    let stage:'project'|'output'='project'
+    try {
+      if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
+      stage='output'
+      const warnings=collectArtifacts(store,running.taskId,running.path,opts.stateDir)
+      noteWarnings(running,warnings)
+      if(running.collectionFailure) {
+        store.addEvent(running.taskId,'system',warnings.length?'成果收集已恢复，部分文件仍未收集，请查看具体提示。':'成果收集已恢复，文件已保存，可在成果列表查看。')
+        running.collectionFailure=undefined
+      }
+      touched(running.taskId)
+    } catch(error) {
+      const failure=error instanceof ArtifactSnapshotError?'storage':stage
+      const message=failure==='storage'
+        ?'成果快照保存失败；原文件可能仍在项目中，但尚未全部保存到成果列表。请检查 CC 数据目录的空间和写入权限。'
+        :failure==='project'
+          ?'项目文件夹已移动、替换或无法访问，已停止收集成果。请检查原项目位置。'
+          :'本轮成果目录无法读取，请检查目录权限及是否被移动或替换为链接。已保存的成果仍可查看。'
+      try {
+        if(running.collectionFailure!==failure)store.addEvent(running.taskId,'system',message)
+        running.collectionFailure=failure
+        touched(running.taskId)
+      } catch { /* The task database itself may be unavailable. */ }
+    }
+  }
   async function captureOutputs(running:Active) {
     if (running.artifactsCollected || shutdownComplete) return
     running.artifactsCollected=true
-    try {
-      if (canonicalProject(running.path) !== running.path || directoryIdentity(running.path) !== running.directoryIdentity) throw new Error('invalid_path')
-      await captureCodeChanges(running)
-      if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
-      noteWarnings(running,collectArtifacts(store,running.taskId,running.path,opts.stateDir))
-      touched(running.taskId)
-    }
-    catch { try { store.addEvent(running.taskId,'system','本轮成果目录无法读取，请检查文件夹权限或是否被移动。');touched(running.taskId) } catch { /* storage is already unavailable */ } }
+    // Let any turn collection finish before the final attempt, so a recovery
+    // message cannot race with an older failure. Code review is independent.
+    await running.turnCollection
+    await captureCodeChanges(running)
+    captureTaskArtifacts(running)
   }
+
   function revokeCredentials(running:Active) {
     if (!running.credentialsMinted || running.credentialsRevoked) return
     running.credentialsRevoked=true
@@ -620,7 +642,9 @@ export function makeWorkbenchService(opts: Options) {
         `你是 CC 的工作助手。当前任务编号 ${task.id}，任务：${task.title}。`,
         `本任务工作目录：${running.path}。成果目录：${directory}。`,
         '只根据当前任务、选定文件夹和本任务历史工作，不读取个人陪伴记忆或其他任务。',
-        '保留原始输入，除非用户明确要求修改。将待交付文件放入上述成果目录，最后说明生成了哪些文件和验证结果。',
+        '保留原始输入，除非用户明确要求修改。项目代码、配置及用户指定位置的文件，应在项目中的指定位置创建或修改，不要迁移到成果目录。',
+        '未指定保存位置的报告、图片等独立交付物放入上述成果目录，CC 会保存快照供用户查看；项目改动通过代码差异查看，不复制整份项目到成果目录。',
+        '最后分别说明改动或交付文件的位置、实际完成的验证和未完成的验证。执行者结束回复不代表验证通过；工具失败或检查未运行时明确说明，不声称已验收。',
         '回复直接输出文本。不要调用微信发消息、发文件、记忆或社交工具，不替用户发布或发送成果。',
         '不要声称完成没有做过的检查。缺依赖、权限或信息时说明具体缺项。',
       ].join('\n')

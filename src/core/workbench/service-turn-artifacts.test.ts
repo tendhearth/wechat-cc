@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,it} from 'vitest'
-import {mkdtempSync,mkdirSync,realpathSync,writeFileSync} from 'node:fs'
+import {mkdtempSync,mkdirSync,realpathSync,writeFileSync,rmSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
@@ -90,4 +90,24 @@ it('does not repeat the same collection warning on every later turn',async()=>{
   await service.cancel(task.id)
   await expect.poll(()=>service.detail(task.id).task.status).not.toMatch(/^(running|cancelling)$/)
   expect(warnings()).toBe(1)
+})
+
+
+it('reports snapshot storage failure during a retained turn and reports recovery after retry',async()=>{
+  const owned=new TurnRuntime(),registry=createProviderRegistry()
+  registry.register('claude',{async spawn(){return owned.session}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>null})
+  const task=service.create({path:project,providerId:'claude',text:'write report'})
+  await expect.poll(()=>service.detail(task.id).events.some(e=>e.kind==='text')).toBe(true)
+  writeFileSync(join(project,'.cc-workbench',task.id,'report.md'),'verified report')
+  // The output is readable; the snapshot destination is not a directory.
+  writeFileSync(join(area,'workbench-artifacts'),'blocked')
+  owned.queue.push({kind:'result',sessionId:'turn-session',numTurns:1,durationMs:1})
+  await expect.poll(()=>service.detail(task.id).events.some(e=>e.text.includes('成果快照保存失败'))).toBe(true)
+  expect(service.detail(task.id).artifacts).toEqual([])
+  expect(service.detail(task.id).events.some(e=>e.text.includes('成果目录无法读取'))).toBe(false)
+  rmSync(join(area,'workbench-artifacts'))
+  owned.queue.push({kind:'result',sessionId:'turn-session',numTurns:2,durationMs:1})
+  await expect.poll(()=>service.detail(task.id).artifacts.map(a=>a.name)).toEqual(['report.md'])
+  expect(service.detail(task.id).events.some(e=>e.text.includes('成果收集已恢复'))).toBe(true)
 })

@@ -72,6 +72,10 @@ export function saveArtifactSnapshot(store: WorkbenchStore, taskId: string, inpu
   }
   return store.addArtifact({taskId,name,mime,size:bytes.length,sha256,storagePath})
 }
+/** A readable deliverable and a writable snapshot store are independent guarantees. */
+export class ArtifactSnapshotError extends Error {
+  constructor(cause:unknown) { super('artifact_snapshot_failed',{cause}); this.name='ArtifactSnapshotError' }
+}
 export function collectArtifacts(store: WorkbenchStore, taskId: string, project: string, stateDir: string): string[] {
   const output = outputDirectory(project,taskId)
   const warnings: string[] = []
@@ -88,14 +92,15 @@ export function collectArtifacts(store: WorkbenchStore, taskId: string, project:
       if (!entry.isFile()) continue
       const mime = MIMES[extname(file).toLowerCase()]
       if (!mime) { warnings.push(`此文件类型不收集：${entry.name}`); continue }
-      try {
-        const bytes = readRegular(project,file)
-        const sha256 = createHash('sha256').update(bytes).digest('hex')
-        const name=relative(output,file)
-        if (known.has(`${name}\0${sha256}`)) continue
-        saveArtifactSnapshot(store,taskId,{name,mime,bytes},stateDir)
-        count++
-      } catch { warnings.push(`无法收集 ${entry.name}（须为目录内普通文件，且不超过 8 MiB）。`) }
+      let bytes:Buffer
+      try { bytes=readRegular(project,file) }
+      catch { warnings.push(`无法收集 ${entry.name}（须为目录内普通文件，且不超过 8 MiB）。`); continue }
+      const sha256 = createHash('sha256').update(bytes).digest('hex')
+      const name=relative(output,file)
+      if (known.has(`${name}\0${sha256}`)) continue
+      try { saveArtifactSnapshot(store,taskId,{name,mime,bytes},stateDir) }
+      catch(error) { throw new ArtifactSnapshotError(error) }
+      count++
     }
   }
   walk(output,0)

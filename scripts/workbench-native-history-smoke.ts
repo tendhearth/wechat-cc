@@ -33,7 +33,21 @@ registry.register('codex',createWorkbenchCodexProvider({codexPathOverride:binary
 registry.register('claude',createClaudeAgentProvider({sdkOptionsForProject(_a,path,_t,_c,_e,instructions,context){const settingsPath=join(homedir(),'.claude','settings.json'),settings=existsSync(settingsPath)?readJsonFile(settingsPath):{};return workbenchClaudeOptions({cwd:path,pathToClaudeCodeExecutable:claude,env:{...process.env,...workbenchClaudeAuthEnv(settings,process.env)},maxTurns:12},instructions??'',makeWorkbenchClaudeCanUseTool(context?.requestPermission))}}),{workbench:MANAGED_NATIVE_CAPABILITIES,displayName:'Claude',canResume:()=>true})
 const db=openDb({path:join(root,'cc.db')}),store=makeWorkbenchStore(db),service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null,timeoutMs:120000,permissionTimeoutMs:180000})
 const approved=new Set<string>(),seen=new Set<string>();const input=createInterface({input:process.stdin});input.on('line',line=>{try{const value=JSON.parse(line);if(typeof value.taskId==='string'&&typeof value.id==='string'&&['allow','deny'].includes(value.decision)){service.resolvePermission(value.taskId,value.id,value.decision);approved.add(value.id)}}catch{console.log('Invalid approval input')}})
-async function finished(id:string){const deadline=Date.now()+240000;while(['queued','running','cancelling'].includes(service.detail(id).task.status)&&Date.now()<deadline){for(const p of service.detail(id).permissions)if(!seen.has(p.id)){seen.add(p.id);console.log('PERMISSION '+JSON.stringify(p))}await Bun.sleep(100)}const d=service.detail(id);if(d.task.status!=='completed')throw Error(`${d.task.status}: ${d.task.error}`);return d}
+async function finished(id:string){
+ const deadline=Date.now()+240000
+ while(Date.now()<deadline){
+  const d=service.detail(id)
+  if(d.task.phase==='replied'){
+   // A retained idle session has answered. Close it normally before inspecting
+   // its final snapshot; waiting for natural process exit is not completion.
+   if(d.task.status==='running')await service.cancel(id)
+   if(service.detail(id).task.status==='completed')return service.detail(id)
+  }else if(!['queued','running','cancelling'].includes(d.task.status))throw Error(`${d.task.status}: ${d.task.error}`)
+  for(const p of d.permissions)if(!seen.has(p.id)){seen.add(p.id);console.log('PERMISSION '+JSON.stringify(p))}
+  await Bun.sleep(100)
+ }
+ throw Error('task_reply_or_close_timeout')
+}
 /** Each native fixture is created by this script, then read by its exact known ID. */
 async function nativeRecovery(providerId:'claude'|'codex'){
  const project=join(root,`native-${providerId}`);mkdirSync(project)
@@ -58,9 +72,9 @@ async function nativeRecovery(providerId:'claude'|'codex'){
   const decision=await nativeService.prepareNativeResume(imported.task.id)
   await nativeService.continueNativeTask(imported.task.id,'Return only the exact marker I asked you to remember in our first turn. Do not use any tools.',decision.token)
   const deadline=Date.now()+90000
-  while(['queued','running','cancelling'].includes(nativeService.detail(imported.task.id).task.status)&&Date.now()<deadline)await Bun.sleep(100)
+  while(nativeService.detail(imported.task.id).task.phase!=='replied'&&['queued','running','cancelling'].includes(nativeService.detail(imported.task.id).task.status)&&Date.now()<deadline)await Bun.sleep(100)
   const d=nativeService.detail(imported.task.id),reply=d.events.filter(e=>e.kind==='text'&&!e.sourceId).at(-1)?.text??''
-  const ok=d.task.status==='completed'&&nativeStore.get(imported.task.id).sessionId===nativeId&&reply.includes(marker)
+  const ok=d.task.phase==='replied'&&nativeStore.get(imported.task.id).sessionId===nativeId&&reply.includes(marker)
   const result={providerId,taskId:imported.task.id,nativeId,ok,refreshes,status:d.task.status,error:d.task.error};console.log(JSON.stringify(result));if(!ok)throw Error(`${providerId}_native_recovery_failed`);return result
  }finally{await nativeService.shutdown();nativeDb.close()}
 }

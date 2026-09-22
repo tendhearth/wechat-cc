@@ -17,11 +17,11 @@ wechat-cc selftest workbench --executor cursor [--image] [--resume] [--json] [--
 wechat-cc selftest chat --provider cursor [--text "…"] [--resume] [--json] [--timeout-ms N]
 ```
 
-**workbench**:在 `<tmpdir>/wechat-cc-selftest/wb-<ts>` 建一个 scratch 项目(mkdir + README + `git init` 一次提交),`POST /v1/workbench/create`,长轮询 `GET /v1/workbench/task`,碰到权限卡就 `POST /v1/workbench/permission` 放行;跑完(或超时)时任务状态还没到终态就先 `POST /v1/workbench/cancel` 并最多等 20s,再 `POST /v1/workbench/archive`。检查项:`created`、`replied`、`text_seen`、`activity_seen`、`permission_roundtrip`、`file_written`(`--image` 时换成 `answer_mentions_red`)、`resume_replied`(带 `--resume` 时)、`no_error_event`、`archived`(归档那一下的 HTTP 结果本身也是一项)。
+**workbench**:在 `<tmpdir>/wechat-cc-selftest/wb-<ts>` 建一个 scratch 项目(mkdir + README + `git init` 一次提交),`POST /v1/workbench/create`,长轮询 `GET /v1/workbench/task`,碰到权限卡就 `POST /v1/workbench/permission` 放行;跑完(或超时)时任务状态还没到终态就先 `POST /v1/workbench/cancel` 并最多等 20s,再 `POST /v1/workbench/archive`。检查项:`created`、`replied`、`text_seen`、`activity_seen`、`permission_roundtrip`、`permission_executed`、`file_written`(`--image` 时换成 `answer_mentions_red`)、`resume_replied`(带 `--resume` 时)、`no_error_event`、`archived`(归档那一下的 HTTP 结果本身也是一项)。
 
 `--resume` 那一步走哪条路**看执行者的那次 run 还活着没有**:claude / codex 这种答完还留着会话的(`status: running` + `phase: replied`),续接走 `POST /v1/workbench/input`(带任务详情里的 `runId` 和一个新生成的 UUID v4 `requestId`)—— 这种任务上 `POST /v1/workbench/continue` 只会一直回 409 `workbench_busy`(2026-09-18 真机就是被这条假红回滚了一次好部署);run 已经收了的(cursor,`status: completed`)才走 `continue`(那条路上偶发的 409 会每秒重试、最多 10 次)。`resume_replied` 的 detail 里写着这次走的是 `via input` 还是 `via continue`。
 
-scratch 项目**不在 STATE_DIR 底下**(它跟 token / account.json 同级,而 scratch 里跑的是权限全放行的真执行者);跑完默认删掉,`--keep` 保留它、把路径打在 `scratch: …` 那行上给人去翻现场。daemon 侧 `selftest chat` 用的 scratch 项目同理,固定在 `<tmpdir>/wechat-cc-selftest/project`。
+scratch 项目**不在 STATE_DIR 底下**(它跟 token / account.json 同级,而 scratch 里跑的是权限全放行的真执行者);归档成功后默认删掉；归档失败时强制保留，避免删除仍有执行者使用的目录。`--keep` 保留它、把路径打在 `scratch: …` 那行上给人去翻现场。daemon 侧 `selftest chat` 用的 scratch 项目同理,固定在 `<tmpdir>/wechat-cc-selftest/project`。
 
 `--timeout-ms` 是**整轮**上限(workbench 缺省 240000;chat 缺省 180000,daemon 侧轮次看门狗缺省 120000)。非数字 / ≤0 当场报错退 1,不会悄悄按缺省值跑。
 
@@ -73,3 +73,12 @@ POST /v1/workbench/attachment    { id, draftId, name, mime, base64 }
 2. **免审执行者**(agy / cursor)第一次要输入时,桌面弹的那张确认对话框能点、点完不再问;
 3. 「**改动**」面板里逐文件「接受 / 打回」按下去有效,打回的文件下一轮真的回到执行者手里;
 4. 微信里一句真的 `/cursor …`,回一条、只回一条(对话侧协调器一条 text 事件发一条微信,流式 provider 必须按助理消息攒)。
+
+
+### 工作台的文件与审批验收
+
+普通自检明确要求在项目根目录创建 `hello.txt` 并回读验证。项目代码和指定路径的文件留在项目原位置；没有指定路径的独立报告、图片放入任务成果目录，由 CC 保存快照。这两种位置不互相替代，根目录检查失败不能用“其他位置找到同名文件”放宽通过。
+
+`uname -a` 和普通写文件不保证触发审批。自检会预先创建一次性 `cc-selftest-permission-probe.txt`，要求执行者用 `rm -- cc-selftest-permission-probe.txt` 删除它，并分别检查审批往返和文件消失。Claude 走删除操作审批；Codex 的工作区写入默认允许，因此自检明确对这一条命令请求原生提权审批，不改变执行者权限配置。没有权限请求仍为未通过，不能当作已验收；测试只针对这份自建临时项目，不用于真实用户目录。
+
+成果收集在每轮答复和最终收尾采用同一流程：区分项目身份变化、成果目录不可读、快照保存失败。后续收集成功会记录恢复；已有快照始终保留。执行者“已答复”只表示本轮回复结束，不等于内容正确或检查通过。

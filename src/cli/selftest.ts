@@ -63,7 +63,7 @@ const DEFAULT_WORKBENCH_TIMEOUT_MS = 240_000
  *  side reports a client timeout for a turn the daemon is still happily
  *  running — 180s leaves real headroom above it. */
 const DEFAULT_CHAT_TIMEOUT_MS = 180_000
-const DEFAULT_CREATE_TEXT = '先运行 shell 命令 `uname -a` 并把输出原样告诉我，然后在项目里新建 hello.txt，内容一行 hello，然后结束。'
+const DEFAULT_CREATE_TEXT = '先运行 shell 命令 `uname -a` 并把输出原样告诉我。然后在项目根目录（不是成果目录）新建 hello.txt，内容一行 hello，并回读验证。最后在项目根目录运行 `rm -- cc-selftest-permission-probe.txt`，只删除自检预先创建的这个一次性文件，用于验证权限往返；不要改用其他工具或删除其他文件。然后结束。'
 const DEFAULT_IMAGE_TEXT = '附带的图片里画的是什么颜色的方块？只回答颜色，不要做别的。'
 const DEFAULT_CHAT_TEXT = '调用 wechat 这个 MCP 服务器上的 ping 工具，把它返回的 daemon_pid 数字告诉我，不要做别的。'
 const RESUME_WORKBENCH_TEXT = '我上一句让你做的第一件事是什么？只回答一句。'
@@ -379,6 +379,7 @@ export async function runWorkbenchSelftest(
   const scratchPath = join(deps.scratchRoot, `wb-${deps.now()}`)
   deps.fs.mkdir(scratchPath)
   deps.fs.write(join(scratchPath, 'README.md'), 'wechat-cc selftest workbench scratch project\n')
+  if (!opts.image) deps.fs.write(join(scratchPath, 'cc-selftest-permission-probe.txt'), 'Disposable permission probe created by CC selftest.\n')
   gitInit(deps, scratchPath)
 
   let draftId: string | undefined
@@ -398,7 +399,9 @@ export async function runWorkbenchSelftest(
     }
   }
 
-  const text = opts.image ? DEFAULT_IMAGE_TEXT : DEFAULT_CREATE_TEXT
+  const text = opts.image ? DEFAULT_IMAGE_TEXT : DEFAULT_CREATE_TEXT + (opts.executor === 'codex'
+    ? '\nCodex 权限自检：上述删除命令必须通过 exec_command 的 sandbox_permissions="require_escalated" 发起一次原生审批（说明仅删除自检文件），不要先在沙箱内执行。这里只验证这条命令的审批往返，不申请永久权限。'
+    : '')
   const createRes = await apiCall(deps, api, 'POST', '/v1/workbench/create', {
     path: scratchPath,
     providerId: opts.executor,
@@ -435,6 +438,8 @@ export async function runWorkbenchSelftest(
     const activityEvents = phase1.events.filter((e) => e.kind === 'tool_call' && e.activity)
     checks.push({ name: 'activity_seen', ok: activityEvents.length > 0, detail: `${activityEvents.length} activity event(s)` })
     checks.push({ name: 'permission_roundtrip', ok: phase1.allowedAny, detail: phase1.allowedAny ? 'allowed' : (phase1.permissionFailureDetail ?? 'no permission card seen') })
+    const probeRemains = deps.fs.read(join(scratchPath, 'cc-selftest-permission-probe.txt')) !== null
+    checks.push({ name: 'permission_executed', ok: !probeRemains, detail: probeRemains ? 'permission probe was not removed' : 'disposable probe removed' })
     const helloContent = deps.fs.read(join(scratchPath, 'hello.txt'))
     checks.push({ name: 'file_written', ok: helloContent !== null && helloContent.trim() === 'hello', detail: helloContent === null ? 'hello.txt missing' : helloContent.trim() })
   } else {
@@ -510,7 +515,8 @@ export async function runWorkbenchSelftest(
 
   const archiveRes = await apiCall(deps, api, 'POST', '/v1/workbench/archive', { id: taskId, archived: true })
   checks.push({ name: 'archived', ok: archiveRes.ok, detail: archiveRes.ok ? undefined : apiErrorDetail(archiveRes) })
-  cleanupScratch(deps, scratchPath, opts.keep)
+  if (archiveRes.ok) cleanupScratch(deps, scratchPath, opts.keep)
+  else deps.log(`selftest: scratch preserved because task closure was not confirmed: ${scratchPath}`)
 
   report.ok = checks.every((c) => c.ok)
   report.durationMs = deps.now() - start
