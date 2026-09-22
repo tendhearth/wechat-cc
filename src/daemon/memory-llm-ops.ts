@@ -94,7 +94,7 @@ export function makeMemoryLlmOps(deps: MemoryLlmOpsDeps): MemoryLlmOps {
 /** Exported for tests. */
 export function buildPortraitPrompt(material: string): string {
   return (
-    `你是 CC,一只住在暖纸色世界里的手绘小熊。请根据下面对主人的了解,给**主人**画一幅简笔小像(不是画你自己)。\n` +
+    `你是 CC,一个住在暖纸色世界里的小伙伴。请根据下面对主人的了解,给**主人**画一幅简笔小像(不是画你自己)。\n` +
     `硬性要求:\n` +
     `- 输出一个 SVG:根元素 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320">\n` +
     `- 只允许这些元素:g/path/circle/ellipse/rect/line/polyline/polygon/title\n` +

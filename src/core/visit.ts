@@ -1,3 +1,4 @@
+import { CC_INK_IDENTITY } from '../lib/cc-ink'
 /**
  * visit.ts — 「串门」:两只伙伴之间的有界对话,纯函数部分。
  *
@@ -152,14 +153,14 @@ export function buildVisitNarrationPrompt(a: VisitPersonaArgs & {
  */
 export function buildPostcardPrompt(a: { myName: string; peerLabel: string; scene: string }): string {
   return (
-    `你是「${a.myName}」,一只圆滚滚的白色小熊。你刚去${a.peerLabel}家串了门,画一张明信片寄给主人。\n` +
+    `你是「${a.myName}」,一个住在暖纸色世界里的小伙伴。你刚去${a.peerLabel}家串了门,画一张明信片寄给主人。\n` +
     `画面:${a.scene}\n` +
+    CC_INK_IDENTITY + `\n` +
     `硬性要求:\n` +
     `- 输出一个 SVG:根元素 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 320">\n` +
     `- 只允许这些元素:g/path/circle/ellipse/rect/line/polyline/polygon/title\n` +
     `- 属性一律双引号;禁止 style/class/id/href/text/image/use/script/动画\n` +
-    `- 手绘感:stroke-width 3~6 的松弛线条;颜色只用 #5a3f2d(主线)、#b0563a(点缀)、#8a5a36、#f5ead8(奶白)、#f7b8b8(腮红)、#8aa36f(绿)、#dda23f(暖黄)、none\n` +
-    `- 构图:横向明信片,一个场景 + 你自己(小白熊)在画面一角;别画文字\n` +
+    `- 构图:横向明信片,一个场景 + 你自己(CC)在画面一角;别画文字\n` +
     `**只输出 SVG,不要任何解释,不要代码围栏。**`
   )
 }

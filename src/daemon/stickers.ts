@@ -1,3 +1,4 @@
+import { materializeCcStarterPack } from './cc-starter-pack'
 /**
  * stickers — tagged sticker library. Files live under `<stateDir>/stickers/`;
  * a state-store index (`stickers.json`, write-through per
@@ -8,9 +9,16 @@
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname, basename, extname, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { compiledRepoRoot, isCompiledBundle } from '../lib/runtime-info'
+import { isCompiledBundle } from '../lib/runtime-info'
 import { makeStateStore, type StateStore } from './state-store'
 import { readJsonFile } from '../lib/read-json-file'
+
+const LEGACY_BEAR_DESCRIPTIONS: Record<string, string> = {
+  'bear-complete.png': '小熊够到了小蜜蜂,开心',
+  'onboarding-success.png': '小熊看着满满的鱼缸,大功告成',
+  'onboarding-missing.png': '小熊拎着袋装小鱼要送给你',
+  'moment-ai-offline.png': '小熊安静地坐着看鱼缸,陪着你',
+}
 
 const ALLOWED_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp'])
 
@@ -123,9 +131,13 @@ export function makeStickerLib(stateDir: string, deps?: { store?: StateStore; ra
 
     resolve(tag, chatId?: string) {
       const target = tag.trim().toLowerCase()
-      const matches = entries()
+      let matches = entries()
         .filter((e) => e.tags.some((t) => t.trim().toLowerCase() === target))
         .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0))
+      // Retain legacy bundled art in collections, but prefer CC for automatic replies.
+      if (matches.some(e => e.file.startsWith('cc-ink-v1-'))) {
+        matches = matches.filter(e => !(Object.hasOwn(LEGACY_BEAR_DESCRIPTIONS, e.file) && LEGACY_BEAR_DESCRIPTIONS[e.file] === e.desc))
+      }
       if (matches.length === 0) return null
       if (!chatId || !deps?.feedback) {
         const idx = Math.floor(random() * matches.length)
@@ -152,14 +164,12 @@ export function makeStickerLib(stateDir: string, deps?: { store?: StateStore; ra
 
 /**
  * 初始表情包 (2026-08-25, owner: 用户一开始不知道有表情包,给个初始) —
- * bundled starter pack at `<repo>/assets/starter-stickers/` (5 张手绘熊 +
- * manifest.json). Seeded ONLY into an EMPTY library, once: the moment the
- * owner saves/curates anything, this never touches the library again.
+ * Versioned CC packs add missing entries without deleting collections.
+ * Legacy unversioned packs still seed only an empty library.
  */
 export function starterStickersDir(): string | null {
-  const root = isCompiledBundle()
-    ? compiledRepoRoot()
-    : join(dirname(fileURLToPath(import.meta.url)), '..', '..')   // src/daemon → repo
+  if (isCompiledBundle()) return materializeCcStarterPack()
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')   // src/daemon → repo
   if (!root) return null
   const dir = join(root, 'assets', 'starter-stickers')
   return existsSync(dir) ? dir : null
@@ -168,15 +178,19 @@ export function starterStickersDir(): string | null {
 /** Returns how many stickers were seeded (0 = library non-empty / pack absent / bad manifest). */
 export function seedStarterStickers(lib: StickerLib, packDir: string, log?: (tag: string, line: string) => void): number {
   try {
-    if (lib.list().length > 0) return 0
+    const existing = lib.list()
     const manifest = readJsonFile(join(packDir, 'manifest.json')) as unknown
     if (!Array.isArray(manifest)) return 0
+    const versioned = manifest.length > 0 && manifest.every(e => e?.pack === 'cc-ink-v1' && /^cc-ink-v1-[a-z-]+\.png$/.test(e.file))
+    if (existing.length > 0 && !versioned) return 0
+    const present = new Set(existing.map(e => e.file))
     let seeded = 0
     for (const entry of manifest) {
       const e = entry as { file?: unknown; tags?: unknown; desc?: unknown }
-      if (typeof e.file !== 'string' || !Array.isArray(e.tags)) continue
+      if (typeof e.file !== 'string' || !Array.isArray(e.tags) || present.has(e.file)) continue
       try {
         lib.save(join(packDir, e.file), e.tags as string[], typeof e.desc === 'string' ? e.desc : undefined)
+        present.add(e.file)
         seeded++
       } catch (err) {
         log?.('STICKERS', `starter seed skipped ${e.file}: ${String(err)}`)

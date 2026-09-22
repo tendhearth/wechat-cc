@@ -97,7 +97,8 @@ describe('runStickerArtist', () => {
 
   it('variation prompt asks for a different take', () => {
     const p = buildStickerPrompt('晚安', { variation: true })
-    expect(p).toContain('换一个完全不同的构图')
+    expect(p).toContain('保持角色结构')
+    expect(p).toContain('换一个构图/眼神/C 姿势/小道具')
   })
 
   it('unsafe SVG or failed rasterize → nothing saved, notify not called, marker still stamped', async () => {

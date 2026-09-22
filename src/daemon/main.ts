@@ -248,8 +248,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // in-memory index (write-through only protects its own writes).
     const stickerFeedback = makeStickerFeedback(stateDir)
     const stickerLib = makeStickerLib(stateDir, { feedback: stickerFeedback })
-    // 初始表情包 — a fresh install gets the bundled bear pack so CC can send
-    // stickers from day one (empty-library-only; owner curation wins forever).
+    // Versioned CC pack adds missing stickers; existing collections are preserved.
     {
       const packDir = starterStickersDir()
       if (packDir) seedStarterStickers(stickerLib, packDir, (t, l) => log(t, l))

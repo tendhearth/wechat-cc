@@ -1,7 +1,78 @@
 [
-  { "file": "bear-complete.png", "tags": ["开心", "好奇"], "desc": "小熊够到了小蜜蜂,开心" },
-  { "file": "onboarding-success.png", "tags": ["庆祝", "搞定"], "desc": "小熊看着满满的鱼缸,大功告成" },
-  { "file": "onboarding-missing.png", "tags": ["送你", "礼物"], "desc": "小熊拎着袋装小鱼要送给你" },
-  { "file": "companion-fish.png", "tags": ["摸鱼"], "desc": "一条悠哉的金鱼" },
-  { "file": "moment-ai-offline.png", "tags": ["发呆", "陪着"], "desc": "小熊安静地坐着看鱼缸,陪着你" }
+  {
+    "file": "cc-ink-v1-received-light.png",
+    "tags": [
+      "收到",
+      "送你",
+      "礼物"
+    ],
+    "desc": "CC light · 收到",
+    "pack": "cc-ink-v1"
+  },
+  {
+    "file": "cc-ink-v1-received-dark.png",
+    "tags": [
+      "收到",
+      "送你",
+      "礼物"
+    ],
+    "desc": "CC dark · 收到",
+    "pack": "cc-ink-v1"
+  },
+  {
+    "file": "cc-ink-v1-happy-light.png",
+    "tags": [
+      "开心",
+      "好奇",
+      "庆祝",
+      "搞定"
+    ],
+    "desc": "CC light · 开心",
+    "pack": "cc-ink-v1"
+  },
+  {
+    "file": "cc-ink-v1-happy-dark.png",
+    "tags": [
+      "开心",
+      "好奇",
+      "庆祝",
+      "搞定"
+    ],
+    "desc": "CC dark · 开心",
+    "pack": "cc-ink-v1"
+  },
+  {
+    "file": "cc-ink-v1-goodnight-light.png",
+    "tags": [
+      "晚安"
+    ],
+    "desc": "CC light · 晚安",
+    "pack": "cc-ink-v1"
+  },
+  {
+    "file": "cc-ink-v1-goodnight-dark.png",
+    "tags": [
+      "晚安"
+    ],
+    "desc": "CC dark · 晚安",
+    "pack": "cc-ink-v1"
+  },
+  {
+    "file": "cc-ink-v1-company-light.png",
+    "tags": [
+      "发呆",
+      "陪着"
+    ],
+    "desc": "CC light · 发呆",
+    "pack": "cc-ink-v1"
+  },
+  {
+    "file": "cc-ink-v1-company-dark.png",
+    "tags": [
+      "发呆",
+      "陪着"
+    ],
+    "desc": "CC dark · 发呆",
+    "pack": "cc-ink-v1"
+  }
 ]
