@@ -112,8 +112,12 @@ function statusReply(detail:Detail){
   }
   if(task.status==='running'&&detail.runtime?.retained)lines.push(`后续回复仍会留在这个任务里。结束会停止尚未结束的后台工作并保存当前成果。\n结束：任务 ${id} 停止`)
   // 等待行说人话:挡路的那位已经答复、正数着秒自己让开时，说清不用干等——不必等桌面才知道。
-  // `writer_not_closed` 那种挡路方永远不安静（`holderWriting` 恒为 true），走不到这句。
-  if(task.waitingFor?.holderWriting===false&&task.waitingFor.closeInMs!=null){
+  // `writer_not_closed` 那种挡路方永远不安静（`holderWriting` 恒为 true），今天这个依赖成立
+  // （`findPathBlocker` 只在 `state==='uncertain'` 时给 `writer_not_closed`，而 `isReplied` 在
+  // `uncertain` 时必为 false），走不到这句。但这条约束只管着今天一处判据不变，不管着这句话
+  // 本身——桌面那处为「`writer_not_closed` 文案不许被覆盖」的教训另外选了双保险
+  // （`reason!=='writer_not_closed'`），这里补上同一道，呈现给主人的那句话不该只在一半的面上成立。
+  if(task.waitingFor?.holderWriting===false&&task.waitingFor.closeInMs!=null&&task.waitingFor.reason!=='writer_not_closed'){
     // 向下取:宁可显示得比实际剩的更少,不能说得比实际剩的更多(同桌面那处,评审修复轮 2 #3)。
     const seconds=Math.max(0,Math.floor(task.waitingFor.closeInMs/1000)),blockerId=task.waitingFor.taskId
     lines.push(`「${singleLine(task.waitingFor.title,80)}」已答复，会话还开着；等 ${seconds} 秒它会自己让开，或者说『任务 ${blockerId} 停止』。`)

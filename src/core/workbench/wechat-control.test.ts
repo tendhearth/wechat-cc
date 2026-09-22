@@ -101,6 +101,18 @@ describe('WeChat task control through the shared service',()=>{
     }
     expect(await writing()).not.toContain('已答复，会话还开着')
   })
+  it('等待行的双保险:writer_not_closed 挡路即使碰巧带着 holderWriting:false/closeInMs 也不说「已答复」（终审 M7）',async()=>{
+    // 今天 findPathBlocker 只在 state==='uncertain' 时给 writer_not_closed，而 isReplied 在
+    // uncertain 时必为 false，所以这个组合本不可达——但呈现给主人的那句话不该只在一半的面上
+    // 成立(桌面 workbench.js 已经为同一个教训选了双保险:reason!=='writer_not_closed')。
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=store.create({title:'排队中',path:project,providerId:'claude',ownerChatId:'owner'})
+    const waitingFor={taskId:'HOLDER',title:'Holder task',reason:'writer_not_closed' as const,holderWriting:false,closeInMs:7500}
+    const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,detail:id=>{const detail=service.detail(id);return{...detail,task:{...detail.task,waitingFor}}}}})
+    const reply=await control('owner',`任务 ${task.id}`)
+    expect(reply).not.toContain('已答复，会话还开着')
+    expect(reply).not.toContain('自己让开')
+  })
   it('lists only the current owner original tasks and keeps ordinary conversation out of the workbench',async()=>{
     setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
     const mine=store.create({title:'我的报告',path:project,providerId:'claude',ownerChatId:'owner'})
