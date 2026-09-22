@@ -81,6 +81,25 @@ describe('WeChat task control through the shared service',()=>{
     expect(reply).not.toContain('下一轮')
     expect(await control('owner',`任务 ${task.id} 补充 保留接口`,identity)).toBe(reply)
   })
+  it('等待行说人话:持有者已答复即将自动让位时加一句同义的话,持有者仍在写时不加',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    const task=store.create({title:'排队中',path:project,providerId:'claude',ownerChatId:'owner'})
+    const idle=async()=>{
+      const waitingFor={taskId:'HOLDER',title:'Holder task',reason:'same_path' as const,holderWriting:false,closeInMs:7000}
+      const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,detail:id=>{const detail=service.detail(id);return{...detail,task:{...detail.task,waitingFor}}}}})
+      return control('owner',`任务 ${task.id}`)
+    }
+    const reply=await idle()
+    expect(reply).toContain('「Holder task」已答复，会话还开着')
+    expect(reply).toContain('等 7 秒它会自己让开')
+    expect(reply).toContain('或者说『任务 HOLDER 停止』')
+    const writing=async()=>{
+      const waitingFor={taskId:'HOLDER',title:'Holder task',reason:'same_path' as const,holderWriting:true,closeInMs:null}
+      const control=makeWechatWorkbenchControl({store,ownerChatId:()=>owner,actions:{...service,detail:id=>{const detail=service.detail(id);return{...detail,task:{...detail.task,waitingFor}}}}})
+      return control('owner',`任务 ${task.id}`)
+    }
+    expect(await writing()).not.toContain('已答复，会话还开着')
+  })
   it('lists only the current owner original tasks and keeps ordinary conversation out of the workbench',async()=>{
     setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
     const mine=store.create({title:'我的报告',path:project,providerId:'claude',ownerChatId:'owner'})

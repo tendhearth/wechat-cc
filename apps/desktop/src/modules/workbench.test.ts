@@ -235,6 +235,26 @@ describe('workbench rendering', () => {
     expect(ordinaryHtml).not.toContain('等待执行程序退出确认')
   })
 
+  it('说人话:持有者已答复即将自动让位时换文案+收工按钮，仍在写时保持原文案，writer_not_closed 不被盖掉', async () => {
+    const { renderWorkbench } = await import('./workbench.js')
+    const base={id:'WAITING',title:'Waiting task',path:'/work',providerId:'codex',status:'queued' as const,createdAt:1,updatedAt:2,error:null}
+    const render=(waitingFor:import('./workbench.js').WaitingFor)=>renderWorkbench({tasks:[{...base,waitingFor}],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedId:'WAITING',detail:{task:{...base,waitingFor},events:[{id:'u1',taskId:'WAITING',kind:'user',text:'go',createdAt:1}],artifacts:[]},selectedArtifactId:null,error:'',preview:null})
+    // 持有者还在写:保持今天的文案，不报假的倒计时，也没有「收工」按钮。
+    const writing=render({taskId:'A',title:'Holder',reason:'same_path',holderWriting:true,closeInMs:null})
+    expect(writing).toContain('正在等待「Holder」结束')
+    expect(writing).not.toContain('已答复，会话还开着')
+    expect(writing).not.toContain('data-cancel-task-id')
+    // 持有者已答复、计时武装:换成人话，「收工」按钮盯的是持有者的任务编号，不是这条排队任务自己。
+    const idle=render({taskId:'A',title:'Holder',reason:'same_path',holderWriting:false,closeInMs:7000})
+    expect(idle).toContain('「Holder」已答复，会话还开着')
+    expect(idle).toContain('7 秒后自动让出文件夹')
+    expect(idle).toMatch(/data-action="cancel"[^>]*data-cancel-task-id="A"/)
+    // writer_not_closed 就算意外带了 holderWriting:false，也不能被新文案盖掉(终审 I3 的教训)。
+    const writerNotClosed=render({taskId:'OLD',title:'Old',reason:'writer_not_closed',holderWriting:false,closeInMs:1000})
+    expect(writerNotClosed).toContain('执行程序尚未确认退出')
+    expect(writerNotClosed).not.toContain('已答复，会话还开着')
+  })
+
   it('shows genuine pending permission counts for more than one running task', async () => {
     const { renderWorkbench } = await import('./workbench.js')
     const task=(id:string,count:number)=>({id,title:id,path:`/${id}`,providerId:'codex',status:'running',createdAt:1,updatedAt:2,error:null,pendingPermissionCount:count})
@@ -1421,6 +1441,22 @@ describe('workbench mutations', () => {
     const cancel=new FakeElement();cancel.dataset.action='cancel'
     const click=[...(page.listeners.get('click')??[])][0]!;await click({target:cancel})
     expect(posts).toEqual([{path:'/v1/workbench/cancel',body:{id:'QUEUED'}}])
+    stopWorkbenchPolling()
+  })
+
+  it('等待行的「收工」关的是持有者的会话，不带上这条排队任务自己的 runId', async () => {
+    vi.useFakeTimers()
+    const page=installFakePage()
+    const task={id:'QUEUED',title:'Queued',path:'/tmp',providerId:'codex',status:'queued',createdAt:1,updatedAt:2,error:null,waitingFor:{taskId:'HOLDER',title:'Holder',reason:'same_path',holderWriting:false,closeInMs:7000}}
+    const posts:Array<{path:string,body:unknown}>=[]
+    // 这条排队任务自己也带着一个 runId(队列里的任务本来就已经登记了 run)——「收工」关的必须是
+    // 持有者 HOLDER,带上这条自己的 runId 只会让持有者那边的取消请求被当成过期请求拒掉。
+    const invokeWorkbenchApi=vi.fn(async(method:string,path:string,body?:unknown)=>{if(method==='POST'){posts.push({path,body});return {task:{...task,status:'cancelled'}}}return path==='/v1/workbench'?{tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false}:{task,events:[],artifacts:[],runId:'run-QUEUED'}})
+    const {initWorkbenchPage,stopWorkbenchPolling}=await import('./workbench.js')
+    initWorkbenchPage({invokeWorkbenchApi,pollMs:60_000});for(let i=0;i<5;i++)await Promise.resolve()
+    const cancel=new FakeElement();cancel.dataset.action='cancel';cancel.dataset.cancelTaskId='HOLDER'
+    const click=[...(page.listeners.get('click')??[])][0]!;await click({target:cancel})
+    expect(posts).toEqual([{path:'/v1/workbench/cancel',body:{id:'HOLDER'}}])
     stopWorkbenchPolling()
   })
 

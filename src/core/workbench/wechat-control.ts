@@ -3,7 +3,7 @@ import type {WorkbenchStore,Task} from './store'
 import type {LiveInput} from './live-inputs'
 import type {PendingWorkbenchPermission,PermissionDecision} from './permissions'
 import type {AgentRuntimeSnapshot} from '../agent-provider'
-import type {CreateWechatTask,SendWechatArtifact} from './service'
+import type {CreateWechatTask,SendWechatArtifact,TaskWaitingFor} from './service'
 import type {ArtifactDeliveryReceipt} from './artifact-deliveries'
 import type {CreationReceipt} from './creation-receipts'
 import type {ProjectCatalogEntry} from './project-catalog'
@@ -13,7 +13,7 @@ import {isWorkbenchProviderId} from './executor-capabilities'
 
 export interface WechatMessageIdentity {accountId:string;userId:string;msgId?:string;createTimeMs:number}
 export type WechatWorkbenchReply=string|{kind:'artifact_delivered';receiptId:string}
-type Detail=ReturnType<WorkbenchStore['detail']>&{runId?:string;runtime?:AgentRuntimeSnapshot;inputMode?:'steer'|'send'|'queue';inputs:LiveInput[];permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];wechatNotifications?:{enabled:boolean;notices:Array<{status:string}>}}
+type Detail=ReturnType<WorkbenchStore['detail']>&{runId?:string;runtime?:AgentRuntimeSnapshot;inputMode?:'steer'|'send'|'queue';inputs:LiveInput[];permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];wechatNotifications?:{enabled:boolean;notices:Array<{status:string}>};task:Task&{waitingFor?:TaskWaitingFor|null}}
 interface Actions {
   projects():ProjectCatalogEntry[]
   createWechat(input:CreateWechatTask):CreationReceipt
@@ -111,6 +111,12 @@ function statusReply(detail:Detail){
     lines.push(`微信提醒：${detail.wechatNotifications.enabled?'已开启':'已关闭'}${unknown?` · ${unknown} 条尚未确认送达，不会自动重发`:''}${waiting?` · ${waiting} 条等待发送`:''}`)
   }
   if(task.status==='running'&&detail.runtime?.retained)lines.push(`后续回复仍会留在这个任务里。结束会停止尚未结束的后台工作并保存当前成果。\n结束：任务 ${id} 停止`)
+  // 等待行说人话:挡路的那位已经答复、正数着秒自己让开时，说清不用干等——不必等桌面才知道。
+  // `writer_not_closed` 那种挡路方永远不安静（`holderWriting` 恒为 true），走不到这句。
+  if(task.waitingFor?.holderWriting===false&&task.waitingFor.closeInMs!=null){
+    const seconds=Math.max(0,Math.round(task.waitingFor.closeInMs/1000)),blockerId=task.waitingFor.taskId
+    lines.push(`「${singleLine(task.waitingFor.title,80)}」已答复，会话还开着；等 ${seconds} 秒它会自己让开，或者说『任务 ${blockerId} 停止』。`)
+  }
   if(latest){
     lines.push('最近回复：\n'+clip(latest.text,1500))
     if(latest.text.length>1500)lines.push(`完整正文（第 1 页）：任务 ${id} 正文 ${resultToken(latest)} 1`)

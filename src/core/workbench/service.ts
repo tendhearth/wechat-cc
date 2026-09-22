@@ -118,7 +118,13 @@ export interface SendWechatArtifact {ownerChatId:string;accountId:string;request
  * 是「本轮做完没有、还能不能接着说」—— 那是 replied,与进程留不留无关。
  */
 export type WorkbenchPhase='queued'|'working'|'replied'|'failed'|'cancelled'|'interrupted'
-export interface WorkbenchTaskView extends Task { phase:WorkbenchPhase; importedOnly?:boolean; canArchive:boolean; waitingFor: WaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number; runtime?:AgentRuntimeSnapshot }
+/** 等待行给主人看的那份:除了「挡路的是谁、为什么」,还要说清「挡路的那位是不是已经答复、
+ *  是不是正数着秒自己让开」——不然「答复完了」和「文件夹空了」这两件事在等待行里还是分不开
+ *  (docs/superpowers/specs/2026-09-21-one-folder-one-session-design.md，任务 2 的由来)。
+ *  `holderWriting=false` 且 `closeInMs` 不是 null 时,才是「快让开了,可以现在就收工」那句话
+ *  该出现的时候;`writer_not_closed` 那种 holder 永远不安静,这两个字段用不上也盖不掉老文案。 */
+export interface TaskWaitingFor extends WaitingFor { holderWriting: boolean; closeInMs: number | null }
+export interface WorkbenchTaskView extends Task { phase:WorkbenchPhase; importedOnly?:boolean; canArchive:boolean; waitingFor: TaskWaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number; runtime?:AgentRuntimeSnapshot }
 
 function checkedText(text: string,attachments:readonly Attachment[]=[]): string {
   if (typeof text !== 'string' || (!text.trim()&&!attachments.length) || text.length > 20_000) throw new Error('invalid_text')
@@ -324,10 +330,14 @@ export function makeWorkbenchService(opts: Options) {
   }
   /** 当前占着文件夹的 run。 */
   const held=()=>[...reservations.values()]
-  function waitingFor(running:Active):WaitingFor|null {
+  function waitingFor(running:Active):TaskWaitingFor|null {
     if (running.state !== 'queued') return null
     const earlier=queue.filter(item => item.order < running.order && item.state === 'queued')
-    return findPathBlocker(running,[...held(),...earlier])
+    const blocked=findPathBlocker(running,[...held(),...earlier])
+    if (!blocked) return null
+    const holder=runsByTask.get(blocked.taskId)
+    // 找不到持有者是不该发生的时序缝隙;宁可继续说「还在写」,也不能凭空报一个假的倒计时。
+    return {...blocked,holderWriting:!holder||!quiet(holder),closeInMs:holder?.idleClose?Math.max(0,holder.idleClose.at-Date.now()):null}
   }
   function runtimeSnapshot(running:Active|undefined):AgentRuntimeSnapshot|undefined {
     const runtime=running?.session?.workbenchRuntime

@@ -439,3 +439,28 @@ it('有一句还没投出去的补充:后来的等待者也不能把它收工掉
   await expect.poll(()=>status(b.id),POLL).toBe('running')
   expect(status(c.id)).toBe('queued')
 })
+
+/**
+ * 任务 2:等待行说人话。「答复完了」不等于「文件夹空了」——一个已经答复、正在计时到点后自动
+ * 让位的持有者,等待行不能还说得像它八字没一撇。`holderWriting` 与 `closeInMs` 就是让主人分清
+ * 「还在写,干等着」和「已经让开在路上,不用去取消一件做成了的事」的那两个字段。
+ */
+it('等待行报出持有者在不在写、还有多久自动让位',async()=>{
+  setup({handoffGraceMs:()=>5_000,retainedIdleCloseMs:()=>60_000})
+  const a=create('A');await said(a.id)
+  const r=runtimes[0]!
+  const b=create('B')
+  await expect.poll(()=>status(b.id),POLL).toBe('queued')
+  // A 还在写(没答复):等待行照实说「还在等」,不能报一个假的倒计时。
+  expect(service.detail(b.id).task.waitingFor).toMatchObject({taskId:a.id,reason:'same_path',holderWriting:true,closeInMs:null})
+  r.finish()
+  // A 答复、安静下来:B 在等 ⇒ 短让位计时武装,等待行翻成「快让开了」。
+  await expect.poll(()=>service.detail(b.id).task.waitingFor?.holderWriting,POLL).toBe(false)
+  const waiting=service.detail(b.id).task.waitingFor!
+  expect(waiting.closeInMs).not.toBeNull()
+  expect(waiting.closeInMs!).toBeGreaterThan(0)
+  expect(waiting.closeInMs!).toBeLessThanOrEqual(5_000)
+  // 到点真的收工、B 真的起来了 —— 等待行报的倒计时不是纸上谈兵。
+  await expect.poll(()=>status(a.id),POLL).toBe('completed')
+  await expect.poll(()=>status(b.id),POLL).toBe('running')
+})

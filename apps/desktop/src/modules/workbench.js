@@ -20,7 +20,7 @@ import { createWorkbenchInteractions, captureWorkbenchQuestionDrafts, syncWorkbe
 import { renderWorkbenchTimeline, workbenchTimelineEventId, renderWorkbenchOperation, captureWorkbenchTimelineAnchor, restoreWorkbenchTimelineAnchor } from './workbench-timeline.js'
 import { mergeEvents, structuralSignature, patchLiveTimeline, createLongPoll } from './workbench-live.js'
 
-/** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed'}} WaitingFor */
+/** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed',holderWriting?:boolean,closeInMs?:number|null}} WaitingFor */
 /** @typedef {{id:string,title:string,path:string,providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot}} Task */
 /** @typedef {{id:string,type:'command'|'read'|'edit'|'search'|'tool'|'agent',status:'running'|'completed'|'failed'|'cancelled'|'interrupted',label:string,detail?:string,output?:string,parentId?:string,agentIds?:string[]}} WorkbenchActivity */
 /** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,activity?:WorkbenchActivity}} WorkbenchEvent */
@@ -275,8 +275,16 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
       : detail?.task.waitingFor?.reason === 'nested_path'
         ? `正在等待「${escapeWorkbenchHtml(detail.task.waitingFor.title)}」结束；任务文件夹彼此包含。`
         : '任务已记下，正在等待执行。'
+  // 挡路的那位已经答复、正数着秒自己让开:说人话,别让主人去取消一件已经做成了的事。
+  // `writer_not_closed` 那种挡路方永远不安静(`holderWriting` 恒为 true),这句话盖不到它头上——
+  // 终审 I3 的教训。「收工」直接关的是挡路者的会话,不是这条排队任务自己。
+  const holderWaiting = detail?.task.waitingFor
+  const holderCloseSeconds = holderWaiting?.closeInMs != null ? Math.max(0, Math.round(holderWaiting.closeInMs / 1000)) : null
+  const holderHandoffReady = !!holderWaiting && holderWaiting.reason !== 'writer_not_closed' && holderWaiting.holderWriting === false && holderCloseSeconds != null
   const queuedGuidance = detail?.task.status === 'queued' && detail.task.waitingFor
-    ? `<p class="wb-queue-guidance" role="status">${queuedCopy}</p>`
+    ? holderHandoffReady
+      ? `<p class="wb-queue-guidance" role="status">「${escapeWorkbenchHtml(holderWaiting.title)}」已答复，会话还开着；${holderCloseSeconds} 秒后自动让出文件夹 —— 也可以现在就让它收工 <button type="button" class="wb-btn" data-action="cancel" data-cancel-task-id="${escapeWorkbenchHtml(holderWaiting.taskId)}">收工</button></p>`
+      : `<p class="wb-queue-guidance" role="status">${queuedCopy}</p>`
     : ''
   const related=handoffs.length?`<details id="wb-handoffs" class="wb-disclosure wb-handoffs"><summary>交接记录 · ${handoffs.length}</summary>${handoffs.map(h=>{
     const outgoing=h.sourceTaskId===detail?.task.id
@@ -998,7 +1006,12 @@ export function initWorkbenchPage(deps) {
       return
     }
     // 停止要说清楚停的是哪一轮:长轮询期间显示的那一轮可能已经换了。
-    if (action === 'cancel') return mutate('POST', '/v1/workbench/cancel', { id: controller.state.selectedId, ...(typeof controller.state.detail?.runId === 'string' && controller.state.detail.runId ? { expectedRunId: controller.state.detail.runId } : {}) })
+    // 等待行里的「收工」关的是挡路者的会话(`data-cancel-task-id`),不是当前打开的这条排队任务——
+    // 那条 runId 是这条排队任务自己的,和挡路者对不上号,带上去只会被当成过期请求拒掉。
+    if (action === 'cancel') {
+      const holderId = target.dataset.cancelTaskId
+      return mutate('POST', '/v1/workbench/cancel', { id: holderId || controller.state.selectedId, ...(!holderId && typeof controller.state.detail?.runId === 'string' && controller.state.detail.runId ? { expectedRunId: controller.state.detail.runId } : {}) })
+    }
     if (action === 'archive-task' && controller.state.detail?.task.canArchive === true) return mutate('POST', '/v1/workbench/archive', { id: controller.state.selectedId, archived: true })
     if (action === 'restore-task' && controller.state.detail?.task.archivedAt != null) return mutate('POST', '/v1/workbench/archive', { id: controller.state.selectedId, archived: false })
     if ((action === 'allow-permission' || action === 'deny-permission') && target.dataset.requestId) return mutate('POST', '/v1/workbench/permission', { id: controller.state.selectedId, requestId: target.dataset.requestId, decision: action === 'allow-permission' ? 'allow' : 'deny' })
