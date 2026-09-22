@@ -34,7 +34,9 @@ export function structuralSignature(detail) {
   const task = detail.task ?? {}
   return JSON.stringify([
     task.status ?? null, task.phase ?? null, task.error ?? null, task.archivedAt ?? null,
-    task.waitingFor ? { ...task.waitingFor, closeInMs: 0 } : null,
+    // null(没有计时器)与非 null(已武装)是两种不同的状态,抹平成同一个 0 会把这个真转变
+    // 去重吞掉(终审 M1);0 只代表「已武装、数字不重要」,null 保留 null。
+    task.waitingFor ? { ...task.waitingFor, closeInMs: task.waitingFor.closeInMs == null ? null : 0 } : null,
     detail.runId ?? null, detail.inputMode ?? null,
     (detail.permissions ?? []).map(p => p.id),
     (detail.questions ?? []).map(q => q.id),

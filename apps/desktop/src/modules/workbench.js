@@ -355,7 +355,10 @@ export function createWorkbenchController(deps) {
   // 一次的那种状态。摘掉它不会漏该有的重画:计时武装/取消这两下真正的转变都在 `holderWriting`
   // 上,那个字段没被摘,该重画的时候照样重画。
   // 改动快照里是整段 diff:每次 paint 都 stringify 一遍太贵,用它的签名代替(签名含快照 sha 与标记)。
-  const paintKey = () => JSON.stringify({ ...state, reviews: undefined, tasks: (state.tasks ?? []).map(task => ({ ...task, updatedAt: 0, ...(task.waitingFor ? { waitingFor: { ...task.waitingFor, closeInMs: 0 } } : {}) })) })
+  // closeInMs 抹平成 0 只是为了去掉「每次都不一样的数字」——但 null(没有计时器)与非 null
+  // (已武装)是两种不同的状态,抹平不能把它们并成同一个键,否则「没计时」→「已武装」这个真转变
+  // 会被去重吞掉(终审 M1)。用 0 只代表「已武装、数字不重要」,null 保留 null。
+  const paintKey = () => JSON.stringify({ ...state, reviews: undefined, tasks: (state.tasks ?? []).map(task => ({ ...task, updatedAt: 0, ...(task.waitingFor ? { waitingFor: { ...task.waitingFor, closeInMs: task.waitingFor.closeInMs == null ? null : 0 } } : {}) })) })
   const paint = (force = false) => {
     const snapshot = paintKey()
     if (!force && snapshot === lastPaint) return

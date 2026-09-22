@@ -518,6 +518,22 @@ describe('workbench request ordering', () => {
     expect(render).toHaveBeenCalledTimes(2)
   })
 
+  it('closeInMs 从 null(没计时)变成非 null(已武装)必须单独拖出重画，不能被抹平成同一个键（终审 M1）', async () => {
+    const { createWorkbenchController } = await import('./workbench.js')
+    const render = vi.fn()
+    const controller = createWorkbenchController({ invokeWorkbenchApi: vi.fn(async () => ({ tasks: [], providers: [], defaultProvider: '', canWechat: false })), render })
+    const waiting = (closeInMs: number | null) => [{ id: 'B', title: 'Waiting', path: '/work', providerId: 'codex', status: 'queued' as const, createdAt: 1, updatedAt: 2, error: null, waitingFor: { taskId: 'A', title: 'Holder', reason: 'same_path' as const, holderWriting: false, closeInMs } }]
+    // holderWriting 全程不变:唯一的差异是 closeInMs 从 null 变成 15000——如果两者被抹平成同一个
+    // paintKey，这个转变（补充投递失败后 armIdleClose 重新武装计时）就不会拖出重画，「收工」按钮
+    // 永远不出现。
+    controller.state.tasks = waiting(null)
+    controller.paint()
+    expect(render).toHaveBeenCalledTimes(1)
+    controller.state.tasks = waiting(15_000)
+    controller.paint()
+    expect(render).toHaveBeenCalledTimes(2)
+  })
+
 })
 
 describe('workbench mutations', () => {

@@ -42,6 +42,15 @@ describe('structuralSignature', () => {
     expect(structuralSignature({ ...withWaiting, task: { ...withWaiting.task, waitingFor: { ...waiting, holderWriting: true, closeInMs: null } } })).not.toBe(structuralSignature(withWaiting))
     expect(structuralSignature({ ...withWaiting, task: { ...withWaiting.task, waitingFor: null } })).not.toBe(structuralSignature(withWaiting))
   })
+  it('closeInMs 从 null(没计时)变成已武装必须单独算结构变化，不能被抹平成同一个键（终审 M1）', () => {
+    // holderWriting 全程不变，唯一的差异是 closeInMs 从 null 变成 15000——补充投递失败后
+    // armIdleClose 重新武装计时正是这个形状：不单独算结构变化，applyLiveDetail 就不会重画。
+    const notArmed = { taskId: 'A', title: 'Holder', reason: 'same_path', holderWriting: false, closeInMs: null }
+    const armed = { ...notArmed, closeInMs: 15000 }
+    const withNotArmed = { ...base, task: { ...base.task, waitingFor: notArmed } }
+    const withArmed = { ...base, task: { ...base.task, waitingFor: armed } }
+    expect(structuralSignature(withArmed)).not.toBe(structuralSignature(withNotArmed))
+  })
 })
 
 describe('patchLiveTimeline', () => {
