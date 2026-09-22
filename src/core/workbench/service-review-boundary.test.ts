@@ -97,7 +97,7 @@ it('续接时存储写入失败:空闲自动收工的计时要重新起上,别�
   await expect.poll(()=>service.detail(a.id).events.some(e=>e.kind==='text'),POLL).toBe(true)
   runtimes[0]!.finishTurn()
   await expect.poll(()=>service.detail(a.id).task.phase,POLL).toBe('replied')
-  // B 排在 A 后面:此刻 A 手里是一份 10 秒的短让位计时(这条测试跑不到它)。
+  // B 排在 A 后面:此刻 A 手里是一份 60 秒的短让位计时(这条测试跑不到它)。
   const b=service.create({path:project,providerId:'claude',text:'B'})
   await expect.poll(()=>service.detail(b.id).task.waitingFor?.taskId,POLL).toBe(a.id)
   // 续接的第一件事是取消那份计时。把短让位调到 20ms:失败回滚若不重新起计时,A 就再没有

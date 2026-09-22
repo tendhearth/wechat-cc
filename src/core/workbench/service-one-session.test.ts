@@ -362,7 +362,10 @@ it('自己醒来干的那一轮也有代码变更:醒来时重取基线',async()
   // 每轮里「醒来」和「静下来」之间必须真的隔开:两件事挤在同一拍里的话,tool_call 被消费时
   // 快照已经翻回 idle,探测器一次转移都看不到(前后都算安静)。用一条排在 tool_call 后面的
   // 文本当路标,等它落库就说明这一下「不再安静」已经被看见了。
-  for(let round=1;round<=10&&reviews(a.id).length<2;round++){
+  // 轮数给足:一轮里「基线落位」和「写文件」谁先谁后靠的是机器快慢(基线是 IO/CPU 活,会随
+  // 负载放大;路标那 150ms 是墙钟计时器,不会),所以真正保证收敛的是「多试几轮」而不是某个等待
+  // 时长。实测常态 2 轮内就成;满载的 node runner 上见过一次十轮不够。
+  for(let round=1;round<=25&&reviews(a.id).length<2;round++){
     r.write()
     r.say(`醒来 ${round}`)
     await expect.poll(()=>service.detail(a.id).events.some(e=>e.text===`醒来 ${round}`),POLL).toBe(true)
@@ -370,11 +373,13 @@ it('自己醒来干的那一轮也有代码变更:醒来时重取基线',async()
     r.finish()
     await pause(200)
   }
-  expect(reviews(a.id).length).toBe(2)
+  // 不写精确相等:满载时第 1 轮的快照可能晚于那 200ms 才落库,循环会多跑一轮、于是多出一份 ——
+  // 那不影响这条测试要证明的事(第二份里有醒来写的文件),但会是一条假红。
+  expect(reviews(a.id).length).toBeGreaterThanOrEqual(2)
   const second=reviews(a.id).find(shot=>shot.name.endsWith('-2.json'))!
   expect(second.files.some(path=>/^w\d+\.txt$/.test(path))).toBe(true)
-  // 第一轮那份没有被重写:醒来的差异是独立的一份。
-  expect(reviews(a.id).find(shot=>!shot.name.endsWith('-2.json'))!.files).toEqual(['a1.txt'])
+  // 第一轮那份没有被重写:醒来的差异是独立的一份(序号后缀只从第二份起有)。
+  expect(reviews(a.id).find(shot=>!/-\d+\.json$/.test(shot.name))!.files).toEqual(['a1.txt'])
 })
 
 /**
@@ -400,4 +405,37 @@ it('runtime 只收排队的补充:计时照样取消,补充不会被收工冲掉
   expect(closedEvent(a.id)).toBe(false)
   expect(service.detail(a.id).inputs.find(i=>i.id===saved.id)?.status).toBe('pending')
   expect(status(b.id)).toBe('queued')
+})
+
+/**
+ * 修复轮 #6:主人已经交上来、还没投给执行者的补充不能被自动收工盖掉。修复轮 #1 把取消计时提到
+ * 入口之后,这条路的触发者换成了「之后才来的等待者」—— `pump` 会为它重新武装短让位,而
+ * `closeForIdle` / `quiet` 都不看「有没有未投递的补充」;收工走 `cancelRun`,结算时
+ * `running.cancelled` 让这批补充走 `holdInputs` 而不是 `drainInputs`,主人拿到的还是
+ * 「补充尚未发送」—— 和修复轮 #1 同一个失败形状。
+ */
+it('有一句还没投出去的补充:后来的等待者也不能把它收工掉',async()=>{
+  setup({handoffGraceMs:()=>50,retainedIdleCloseMs:()=>60_000})
+  const a=create('A');await said(a.id)
+  const r=runtimes[0]!
+  r.finish()
+  await expect.poll(()=>phase(a.id),POLL).toBe('replied')
+  // 原生会话此刻不收实时补充:这句话只能先存下来排着。
+  r.state={...r.state,input:'queue'}
+  const saved=await service.submitInput(a.id,{runId:service.detail(a.id).runId!,requestId:'77777777-7777-4777-8777-777777777777',text:'排着'})
+  expect(saved.status).toBe('pending')
+  // 补充存下来**之后**才有人来等这个文件夹 —— pump 会为 B 重新武装短让位。
+  const b=create('B')
+  await pause(300)
+  expect(status(a.id)).toBe('running')
+  expect(closedEvent(a.id)).toBe(false)
+  expect(service.detail(a.id).inputs.find(i=>i.id===saved.id)?.status).toBe('pending')
+  expect(r.submitted).toBe(0)
+  expect(status(b.id)).toBe('queued')
+  // 不是把文件夹永久锁住:这一句有了结果(这里是主人撤回)之后,让位照常发生。
+  service.withdrawInput(a.id,saved.id)
+  const c=create('C')
+  await expect.poll(()=>status(a.id),POLL).toBe('completed')
+  await expect.poll(()=>status(b.id),POLL).toBe('running')
+  expect(status(c.id)).toBe('queued')
 })

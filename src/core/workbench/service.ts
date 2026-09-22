@@ -74,6 +74,8 @@ interface Active extends PathReservation {
   /** 已截取的代码变更快照数;第一份沿用旧名,之后带 -2/-3。 */
   reviewSeq?: number
   reviewCapture?: Promise<void>
+  /** 醒来那一下的基线重取是否在途(见 retakeBaseline)。 */
+  baselineRetaking?: boolean
   continuation: AcceptedContinuation
   task: StoredTask
   directoryIdentity: string
@@ -452,13 +454,18 @@ export function makeWorkbenchService(opts: Options) {
     return pending
   }
   /** 给「自己醒来的那一轮」重取一份差异基线。异步且吞异常(同 `submitInput` 里那一格);
-   *  期间要是别人已经放了一份(主人正好也续接了),就不覆盖它。 */
+   *  期间要是别人已经放了一份(主人正好也续接了),就不覆盖它。
+   *  `baselineRetaking` 是在途守卫:基线要到结尾才落位,`!reviewBaseline` 挡不住在途的那一份,
+   *  而一段自动续作会连着抖好几次 quiet↔busy —— 每次都开一个 `captureGitBaseline` 就是白跑一串
+   *  git 子进程(BASE 用 `autonomousTurn` 挡的是同一件事,评审修复轮 #7)。 */
   async function retakeBaseline(running:Active):Promise<void> {
-    if (running.reviewBaseline||running.cancelled||running.finishing||running.uncertain) return
+    if (running.baselineRetaking||running.reviewBaseline||running.cancelled||running.finishing||running.uncertain) return
+    running.baselineRetaking=true
     try {
       const baseline=await captureGitBaseline(running.path,{})
       if (!running.reviewBaseline&&!running.cancelled&&!running.finishing&&!running.uncertain) running.reviewBaseline=baseline
     } catch { /* 没基线就没有这一轮的代码对比,其他成果照收 */ }
+    finally { running.baselineRetaking=false }
   }
   /** 会话安静:本轮做完、没有后台子任务在写、也没有待决权限/提问 —— 只差主人下一句话。
    *  空闲自动收工的判据就是它。 */
@@ -471,11 +478,22 @@ export function makeWorkbenchService(opts: Options) {
   const handoffGraceMs=()=>msKnob(opts.handoffGraceMs,15_000)
   const retainedIdleMs=()=>msKnob(opts.retainedIdleCloseMs,600_000)
   /**
+   * 主人已经交上来、还没投给执行者的补充(`pending` / `sending` —— 和 `holdInputs` / `recover`
+   * 盯的是同一批)。有这种补充就不能自动收工:收工走的是 `cancelRun`,结算时 `running.cancelled`
+   * 让这批补充走 `holdInputs` 而不是 `drainInputs`,主人刚打的那句话被文件夹移交盖成
+   * 「补充尚未发送」(评审修复轮 #6 —— 和修复轮 #1 是同一个失败形状,只是触发者换成了
+   * 「之后才来的等待者把短让位重新武装起来」)。
+   * 读不出来就当有:宁可文件夹多占一会儿,也不能把主人的话弄丢。
+   */
+  function hasUndeliveredInput(running:Active):boolean {
+    try { return store.liveInputs.count(running.taskId)>0 } catch { return true }
+  }
+  /**
    * 会话安静下来就起一个计时器,到点关掉会话、让出文件夹。两档:有人在等这个文件夹 ⇒ 短让位;
    * 没人等 ⇒ 长空闲(别让一个闲着的原生进程占着资源)。已经排好的短让位不会被长空闲推迟。
    */
   function armIdleClose(running:Active):void {
-    if (!quiet(running)||running.finishing||running.cancelled) return
+    if (!quiet(running)||running.finishing||running.cancelled||hasUndeliveredInput(running)) return
     const wanted=queue.some(item=>item.state==='queued'&&!!findPathBlocker(item,[running]))
     const ms=wanted?handoffGraceMs():retainedIdleMs()
     const at=Date.now()+ms
@@ -496,7 +514,8 @@ export function makeWorkbenchService(opts: Options) {
     const armed=running.idleClose
     running.idleClose=undefined
     if (!armed) return
-    if (!quiet(running)||reservations.get(running.identity)!==running||running.finishing||running.cancelled) return
+    // 武装点已经拦过未投递的补充,这里再看一眼只是把「落笔前复查一遍」补全。
+    if (!quiet(running)||reservations.get(running.identity)!==running||running.finishing||running.cancelled||hasUndeliveredInput(running)) return
     const next=queue.find(item=>item.state==='queued'&&!!findPathBlocker(item,[running]))
     const seconds=Math.round((armed.reason==='handoff'?handoffGraceMs():retainedIdleMs())/1000)
     const text=next
