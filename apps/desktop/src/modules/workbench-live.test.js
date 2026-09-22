@@ -31,6 +31,17 @@ describe('structuralSignature', () => {
     expect(structuralSignature({ ...base, handoffs: [{ id: 'h1' }] })).not.toBe(structuralSignature(base))
   })
   it('没有详情时是空串', () => { expect(structuralSignature(null)).toBe('') })
+  it('waitingFor.closeInMs 现算的秒数不算结构;holderWriting 翻转才算(评审修复轮 2 #2)', () => {
+    const waiting = { taskId: 'A', title: 'Holder', reason: 'same_path', holderWriting: false, closeInMs: 15000 }
+    const withWaiting = { ...base, task: { ...base.task, waitingFor: waiting } }
+    // 主人正看着这条排队任务、长轮询在计时武装期间收了一轮:只有 closeInMs 在走,签名不该变——
+    // 不然 applyLiveDetail 判 restructured 就会 paint(true) 无条件全量重画,绕过 paintKey() 那道去重。
+    expect(structuralSignature({ ...withWaiting, task: { ...withWaiting.task, waitingFor: { ...waiting, closeInMs: 3000 } } })).toBe(structuralSignature(withWaiting))
+    expect(structuralSignature({ ...withWaiting, task: { ...withWaiting.task, waitingFor: { ...waiting, closeInMs: 0 } } })).toBe(structuralSignature(withWaiting))
+    // 真正的转变(持有者不再安静,倒计时撤掉)必须照样算结构变化。
+    expect(structuralSignature({ ...withWaiting, task: { ...withWaiting.task, waitingFor: { ...waiting, holderWriting: true, closeInMs: null } } })).not.toBe(structuralSignature(withWaiting))
+    expect(structuralSignature({ ...withWaiting, task: { ...withWaiting.task, waitingFor: null } })).not.toBe(structuralSignature(withWaiting))
+  })
 })
 
 describe('patchLiveTimeline', () => {

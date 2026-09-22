@@ -279,7 +279,8 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   // `writer_not_closed` 那种挡路方永远不安静(`holderWriting` 恒为 true),这句话盖不到它头上——
   // 终审 I3 的教训。「收工」直接关的是挡路者的会话,不是这条排队任务自己。
   const holderWaiting = detail?.task.waitingFor
-  const holderCloseSeconds = holderWaiting?.closeInMs != null ? Math.max(0, Math.round(holderWaiting.closeInMs / 1000)) : null
+  // 向下取:宁可显示得比实际剩的更少,也不能报出一个还没到手的秒数(评审 #3)。
+  const holderCloseSeconds = holderWaiting?.closeInMs != null ? Math.max(0, Math.floor(holderWaiting.closeInMs / 1000)) : null
   const holderHandoffReady = !!holderWaiting && holderWaiting.reason !== 'writer_not_closed' && holderWaiting.holderWriting === false && holderCloseSeconds != null
   const queuedGuidance = detail?.task.status === 'queued' && detail.task.waitingFor
     ? holderHandoffReady

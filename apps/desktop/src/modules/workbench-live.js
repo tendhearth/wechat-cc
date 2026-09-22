@@ -23,12 +23,18 @@ export function mergeEvents(existing, incoming) {
 }
 
 /** 整页重画的判据:事件之外的一切。事件只改时间线,交给增量补丁。
+ * `waitingFor.closeInMs` 是后端按 `Date.now()` 现算的,不摘掉的话:主人正看着排队任务(这个
+ * 功能的目标场景)时,只要长轮询在计时武装期间收一轮,签名就变,`applyLiveDetail` 判定
+ * `restructured` 后直接 `paint(true)` 无条件全量重画,绕过 `paintKey()` 那道去重(评审 #2,
+ * 和上一轮 `paintKey()` 打的是同一个补丁——真转变仍落在 `holderWriting`/`reason`/`taskId`
+ * 上,没被摘,该重画时照样重画)。
  * @param {Detail|null|undefined} detail */
 export function structuralSignature(detail) {
   if (!detail) return ''
   const task = detail.task ?? {}
   return JSON.stringify([
-    task.status ?? null, task.phase ?? null, task.error ?? null, task.archivedAt ?? null, task.waitingFor ?? null,
+    task.status ?? null, task.phase ?? null, task.error ?? null, task.archivedAt ?? null,
+    task.waitingFor ? { ...task.waitingFor, closeInMs: 0 } : null,
     detail.runId ?? null, detail.inputMode ?? null,
     (detail.permissions ?? []).map(p => p.id),
     (detail.questions ?? []).map(q => q.id),

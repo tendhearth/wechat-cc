@@ -249,6 +249,9 @@ describe('workbench rendering', () => {
     expect(idle).toContain('「Holder」已答复，会话还开着')
     expect(idle).toContain('7 秒后自动让出文件夹')
     expect(idle).toMatch(/data-action="cancel"[^>]*data-cancel-task-id="A"/)
+    // 秒数要向下取,宁可显示得比实际早:7500ms 是「7 秒」不是四舍五入出来的「8 秒」
+    // (评审 #3——显示得比实际剩的更多就是反向说谎)。
+    expect(render({taskId:'A',title:'Holder',reason:'same_path',holderWriting:false,closeInMs:7500})).toContain('7 秒后自动让出文件夹')
     // writer_not_closed 就算意外带了 holderWriting:false，也不能被新文案盖掉(终审 I3 的教训)。
     const writerNotClosed=render({taskId:'OLD',title:'Old',reason:'writer_not_closed',holderWriting:false,closeInMs:1000})
     expect(writerNotClosed).toContain('执行程序尚未确认退出')
