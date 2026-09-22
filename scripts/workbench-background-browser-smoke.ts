@@ -73,11 +73,14 @@ async function main(){
   const api=createInternalApi({stateDir,daemonPid:process.pid,workbench:service,db})
   let host:ReturnType<typeof Bun.serve>|undefined,browser:Browser|undefined,page:Page|undefined
   const pageErrors:string[]=[],httpErrors:string[]=[]
+  let detailUnavailable=false
   try{
     const info=await api.start();writeFileSync(join(stateDir,'internal-api-info.json'),JSON.stringify({baseUrl:`http://127.0.0.1:${info.port}`,operatorTokenFilePath:info.operatorTokenFilePath}),{mode:0o600})
     const proxy=createWorkbenchProxy({stateDir,dryRun:false,allowWrites:true}),csp=JSON.parse(readFileSync(join(src,'../src-tauri/tauri.conf.json'),'utf8')).app.security.csp as string
-    host=Bun.serve({hostname:'127.0.0.1',port:0,async fetch(request){
-      const path=new URL(request.url).pathname,res=await proxy(request)
+    host=Bun.serve({hostname:'127.0.0.1',port:0,idleTimeout:30,async fetch(request){
+      const path=new URL(request.url).pathname
+      if(detailUnavailable&&path==='/v1/workbench/task')return Response.json({error:'fixture_unavailable'},{status:503})
+      const res=await proxy(request)
       if(res){if(res.status>=400)httpErrors.push(`${request.method} ${path}: ${await res.clone().text()}`);return res}
       if(path==='/')return new Response(html,{headers:{'content-type':'text/html','content-security-policy':csp}})
       if(path==='/harness.js')return new Response(harness,{headers:{'content-type':'text/javascript'}})
@@ -91,6 +94,17 @@ async function main(){
     await page.waitForFunction(()=>document.body.textContent?.includes('后台执行中 · 2'))
     assert.equal(closed.length,0);assert.equal(store.artifacts(task.id).length,0)
     await page.screenshot({path:join(evidence,'background-running-1280.png')})
+    detailUnavailable=true
+    // Wake the outstanding long poll; the next request hits the outage.
+    pipes.get(task.id)!.push({kind:'text',text:'检查仍在进行。',itemId:'outage-before',textMode:'replace'})
+    await page.waitForFunction(()=>document.body.textContent?.includes('正在重新连接'))
+    await page.screenshot({path:join(evidence,'task-reconnecting-1280.png')})
+    detailUnavailable=false
+    await page.getByRole('button',{name:'立即重试',exact:true}).click()
+    await page.waitForFunction(()=>!document.body.textContent?.includes('正在重新连接'))
+    await page.locator('#wb-followup-text').fill('重开后仍保留的草稿')
+    await page.goto(`http://127.0.0.1:${host.port}`)
+    await page.waitForFunction(()=>document.querySelector<HTMLInputElement>('#wb-followup-text')?.value==='重开后仍保留的草稿')
     for(const child of ['兼容性','测试'])pipes.get(task.id)!.push({kind:'tool_call',tool:'Agent',activity:{id:child,type:'agent',label:`${child}核对`,status:'completed',output:child==='兼容性'?'原有接口保持兼容。\n<script>这只是公开回复中的文字</script>':'针对本次改动的测试通过，未运行用户外部服务。'}})
     Object.assign(states.get(task.id)!,{backgroundCount:0,foreground:'idle'})
     pipes.get(task.id)!.push({kind:'text',text:'两位子助手的结果已收到。兼容性没有冲突，测试也已通过。',itemId:'parent-late',textMode:'replace'})
@@ -111,13 +125,13 @@ async function main(){
     const {outputDirectory}=await import('../src/core/workbench/artifacts')
     writeFileSync(join(outputDirectory(project,task.id),'background-result.md'),'# 已核对的成果\n')
     await page.getByRole('button',{name:'结束后台会话',exact:true}).click()
-    await eventually(()=>store.get(task.id).status==='cancelled'&&store.get(next.id).status==='completed')
+    await eventually(()=>store.get(task.id).status==='completed'&&store.get(next.id).status==='completed')
     assert.deepEqual(started,[task.id,next.id]);assert.ok(store.artifacts(task.id).some(a=>a.name==='background-result.md'));assert.equal(closed[0],task.id)
-    await page.waitForFunction(()=>!!document.querySelector('.wb-task-head [data-status="cancelled"]'))
-    await page.waitForFunction(id=>document.querySelector(`[data-task-id="${id}"]`)?.textContent?.includes('已完成'),next.id)
+    await page.waitForFunction(()=>document.querySelector('.wb-task-head .wb-status')?.textContent==='已答复')
+    await page.waitForFunction(id=>document.querySelector(`[data-task-id="${id}"]`)?.textContent?.includes('已答复'),next.id)
     await page.screenshot({path:join(evidence,'closed-and-saved-1280.png')})
     assert.deepEqual(pageErrors,[]);assert.deepEqual(httpErrors,[])
-    const report={ok:true,transport:'production UI + host proxy + internal HTTP + SQLite',executor:'synthetic fixture, not native proof',tasks:started.length,inputReceipts:submissions.length,sameEpoch:true,noEarlyClose:true,closeBeforePathRelease:true,artifactsAfterClose:true,childOutputEscaped:true,evidence}
+    const report={ok:true,transport:'production UI + host proxy + internal HTTP + SQLite',executor:'synthetic fixture, not native proof',tasks:started.length,inputReceipts:submissions.length,sameEpoch:true,noEarlyClose:true,closeBeforePathRelease:true,artifactsAfterClose:true,childOutputEscaped:true,taskReconnectVisible:true,reloadPreservesDraft:true,evidence}
     writeFileSync(join(evidence,'report.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2))
   }catch(error){await page?.screenshot({path:join(evidence,'failure.png')}).catch(()=>{});writeFileSync(join(evidence,'failure.json'),JSON.stringify({error:String(error),pageErrors,httpErrors},null,2));throw Error(`Background browser smoke failed; ${evidence}`,{cause:error})}
   finally{ack.release();for(const pipe of pipes.values())pipe.end();await browser?.close();await service.shutdown();host?.stop(true);await api.stop();db.close();rmSync(temporary,{recursive:true,force:true})}
