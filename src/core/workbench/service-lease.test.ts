@@ -38,8 +38,10 @@ class TurnRuntime {
   session:AgentSession={workbenchRuntime:this.runtime,async *dispatch(){},close:async()=>{this.queue.end()}}
   finishTurn(){this.state={...this.state,foreground:'idle'};this.queue.push({kind:'result',sessionId:this.sid,numTurns:1,durationMs:1})}
 }
-// 这里不注入档位(缺省 15 秒短让位在套件里到不了点),但等待仍然给足余量:满载套件里
-// 「关会话 → 结算 → pump → spawn」这一串会被放大好几倍(见 vitest.config.ts 那笔账)。
+// 注入一个远大于下面 pause(100) + 两次 poll 的短让位档位(终审 M2):不注入就是吃缺省 15 秒,
+// 满载套件里「关会话 → 结算 → pump → spawn」这一串会被放大好几倍(见 vitest.config.ts 那笔账),
+// 到不了点是走运,不是断言——这正是本轮已经裁决过一次的满载假红形状。POLL 的超时留在 20 秒:
+// 用到它的地方都是 service.cancel() 之后立即收工，不依赖这个 60 秒的档位真的到点。
 const POLL={timeout:20_000}
 const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms))
 
@@ -48,7 +50,7 @@ beforeEach(()=>{
   area=realpathSync(mkdtempSync(join(tmpdir(),'cc-lease-')));project=join(area,'project');mkdirSync(project);db=openDb({path:join(area,'state.db')})
   runtimes=[];const registry=createProviderRegistry()
   registry.register('claude',{async spawn(_project,context){const r=new TurnRuntime(context);runtimes.push(r);return r.session}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
-  service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>null})
+  service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>null,handoffGraceMs:()=>60_000})
 })
 afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
 const create=(text:string)=>service.create({path:project,providerId:'claude',text})
@@ -61,8 +63,8 @@ it('答复之后文件夹还是它的:B 仍然排队,会话收工之后才起',a
   await expect.poll(()=>service.detail(b.id).task.waitingFor?.taskId,POLL).toBe(a.id)
   runtimes[0]!.finishTurn()
   await expect.poll(()=>phase(a.id),POLL).toBe('replied')
-  // 答复 ≠ 文件夹空了:A 的会话还开着,它随时会被后台通知唤醒自己又动手。缺省短让位是 15 秒,
-  // 这条测试跑不到那一下 —— 所以这里看到的是「还在排队」这个不变式本身,不是计时器。
+  // 答复 ≠ 文件夹空了:A 的会话还开着,它随时会被后台通知唤醒自己又动手。短让位注入成 60 秒,
+  // 这条测试到不了那一下 —— 所以这里看到的是「还在排队」这个不变式本身,不是计时器。
   await pause(100)
   expect(status(b.id)).toBe('queued')
   expect(service.detail(b.id).task.waitingFor).toMatchObject({taskId:a.id,reason:'same_path'})
