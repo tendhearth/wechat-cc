@@ -1,3 +1,4 @@
+import { composeCcInk } from '../../lib/cc-ink-compose'
 import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -282,14 +283,16 @@ describe('明信片', () => {
     })
     return { visit, owner, recorded }
   }
-  const evalFor = async (p: string) => p.includes('明信片') ? '```svg\n' + SVG + '\n```' : p.includes('串门回来') ? '去了一趟。' : '嗨'
+  const evalFor = async (p: string) => p.includes('明信片') ? '```json\n' + JSON.stringify({form:'dark',pose:'company',sceneSvg:SVG}) + '\n```' : p.includes('串门回来') ? '去了一趟。' : '嗨'
 
   it('去邻居家 → 叙述之后画一张:safeSvg → 存进那条见闻 → 发给主人;代码围栏剥掉', async () => {
     const attached: Array<[string, string]> = []; const sent: string[] = []
     const { visit, owner } = mk(evalFor, { sanitize: (s) => s.includes('<svg') ? s : null, attach: (id, s) => attached.push([id, s]), send: async (s) => { sent.push(s) } })
     expect((await visit.startVisit('邻居')).ok).toBe(true)
-    expect(attached).toEqual([['row-1', SVG]])
-    expect(sent).toEqual([SVG])
+    const composed = composeCcInk(JSON.stringify({form:'dark',pose:'company',sceneSvg:SVG}), 'postcard')
+    expect(composed).toContain('#343330')
+    expect(attached).toEqual([['row-1', composed]])
+    expect(sent).toEqual([composed])
     expect(owner.some(t => t.startsWith('🚶'))).toBe(true)
   })
 

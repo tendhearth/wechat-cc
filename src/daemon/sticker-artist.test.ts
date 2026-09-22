@@ -26,8 +26,9 @@ describe('buildStickerPrompt', () => {
   it('asks CC to draw ITSELF expressing the mood, SVG-only, allowlist-friendly', () => {
     const p = buildStickerPrompt('晚安')
     expect(p).toContain('晚安')
-    expect(p).toContain('画你自己')
-    expect(p).toContain('只输出 SVG')
+    expect(p).toContain('为你自己设计')
+    expect(p).toContain('只输出 JSON')
+    expect(p).toContain('不要重画身体')
   })
 })
 
@@ -40,7 +41,7 @@ describe('runStickerArtist', () => {
       writeFileSync(src, 'x')
       lib.save(src, tags)
     }
-    const cheapEval = vi.fn(async () => over.evalOut ?? `画好了:\n${GOOD_SVG}`)
+    const cheapEval = vi.fn(async () => over.evalOut ?? JSON.stringify({form:"dark",pose:"company",sceneSvg:GOOD_SVG}))
     const rasterize = vi.fn(async (_svg: string, workDir: string) =>
       over.rasterOk === false ? null : tempPng(workDir))
     const notify = vi.fn(async () => {})

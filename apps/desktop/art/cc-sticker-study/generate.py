@@ -121,3 +121,17 @@ night+=plant(443,274)
 manifest['pairs']=paired
 manifest['postcards'].append({'file':'postcard-night.svg','title':'窗外慢慢安静下来','note':'咖啡馆快打烊了，我又坐了一会儿。窗外的灯一盏盏亮起来，杯子里还有一点温热。想着把这份安静也带给你。'})
 (ROOT/'study.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
+
+# Explicit export for the runtime compositor; normal preview regeneration stays local.
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--export-templates', type=Path)
+    args = parser.parse_args()
+    if args.export_templates:
+        poses = {'received': ('default','default'), 'happy': ('happy','happy'),
+                 'thinking': ('forward','thinking'), 'cheering': ('happy','default'),
+                 'goodnight': ('sleep','sleep'), 'company': ('listening','look')}
+        templates = {f'{form}:{name}': cc(pose,eyes,form)
+                     for form in ('light','dark') for name,(pose,eyes) in poses.items()}
+        args.export_templates.write_text(json.dumps(templates,ensure_ascii=False,indent=2)+'\n')

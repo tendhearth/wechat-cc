@@ -1,3 +1,4 @@
+import { composeCcInk } from '../../lib/cc-ink-compose'
 /**
  * wire-visit.ts — 「串门」的 daemon 接线。协议与 prompt 在 core/visit.ts。
  *
@@ -229,7 +230,8 @@ export function makeVisit(deps: VisitDeps): Visit {
     if (deps.postcard && !hosting) {
       try {
         const raw = await deps.evalText(buildPostcardPrompt({ myName: me.myName, peerLabel: s.peerLabel, scene: s.scene() }))
-        const svg = deps.postcard.sanitize(raw.replace(/^```(?:svg|xml)?\s*/i, '').replace(/```\s*$/, '').trim())
+        const composed = composeCcInk(raw, 'postcard')
+        const svg = composed ? deps.postcard.sanitize(composed) : null
         if (!svg) { deps.log('VISIT', `postcard rejected by safeSvg visit=${s.id}`); return }
         if (rowId) deps.postcard.attach(rowId, svg)
         await deps.postcard.send(svg)
