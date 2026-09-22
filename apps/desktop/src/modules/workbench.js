@@ -349,8 +349,12 @@ export function createWorkbenchController(deps) {
   let lastPaint = ''
   // 列表每 3 秒回来一次,而任务的 updated_at 每条事件都在动:那个时间戳不该把整页
   // 重画拽起来(会打断流式补丁、输入和滚动)。列表上的时间标签因此可能晚一拍。
+  // `waitingFor.closeInMs` 是同一类字段:后端按 `Date.now()` 现算,只要列表里有任务武装着
+  // 自动让位的计时,这个数字每次都不一样——不摘掉的话,那个功能要呈现的正是让整页每 3 秒重画
+  // 一次的那种状态。摘掉它不会漏该有的重画:计时武装/取消这两下真正的转变都在 `holderWriting`
+  // 上,那个字段没被摘,该重画的时候照样重画。
   // 改动快照里是整段 diff:每次 paint 都 stringify 一遍太贵,用它的签名代替(签名含快照 sha 与标记)。
-  const paintKey = () => JSON.stringify({ ...state, reviews: undefined, tasks: (state.tasks ?? []).map(task => ({ ...task, updatedAt: 0 })) })
+  const paintKey = () => JSON.stringify({ ...state, reviews: undefined, tasks: (state.tasks ?? []).map(task => ({ ...task, updatedAt: 0, ...(task.waitingFor ? { waitingFor: { ...task.waitingFor, closeInMs: 0 } } : {}) })) })
   const paint = (force = false) => {
     const snapshot = paintKey()
     if (!force && snapshot === lastPaint) return

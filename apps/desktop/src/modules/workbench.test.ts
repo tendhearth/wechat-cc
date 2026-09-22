@@ -497,6 +497,24 @@ describe('workbench request ordering', () => {
     expect(controller.state.selectedId).toBe('FRESH')
   })
 
+  it('列表里挂着自动让位倒计时时，只有 closeInMs 在走不该拖出全量重画（评审修复轮 #1）', async () => {
+    const { createWorkbenchController } = await import('./workbench.js')
+    const render = vi.fn()
+    const controller = createWorkbenchController({ invokeWorkbenchApi: vi.fn(async () => ({ tasks: [], providers: [], defaultProvider: '', canWechat: false })), render })
+    const waiting = (closeInMs: number | null, holderWriting = false) => [{ id: 'B', title: 'Waiting', path: '/work', providerId: 'codex', status: 'queued' as const, createdAt: 1, updatedAt: 2, error: null, waitingFor: { taskId: 'A', title: 'Holder', reason: 'same_path' as const, holderWriting, closeInMs } }]
+    controller.state.tasks = waiting(15_000)
+    controller.paint()
+    expect(render).toHaveBeenCalledTimes(1)
+    // 模拟连续几轮列表轮询:每一轮里只有 closeInMs 在减小(后端按 Date.now() 现算),其余字段
+    // 原样不动——这正是列表每 3 秒回来一次、挡路方计时武装着的那段窗口。
+    for (const remaining of [12_000, 9_000, 6_000, 3_000, 0]) { controller.state.tasks = waiting(remaining); controller.paint() }
+    expect(render).toHaveBeenCalledTimes(1)
+    // 去重不是连带失效了:真正的转变(持有者不再安静，倒计时撤掉)照样要拖出重画。
+    controller.state.tasks = waiting(null, true)
+    controller.paint()
+    expect(render).toHaveBeenCalledTimes(2)
+  })
+
 })
 
 describe('workbench mutations', () => {
