@@ -71,7 +71,13 @@ describe('e2e: POST /v1/model takes effect on the next spawn (self-heal, no rest
         body: JSON.stringify({ model: 'claude-sonnet-4-6' }),
       })
       expect(res.status).toBe(200)
-      expect(await res.json()).toEqual({ ok: true, provider: 'claude', model: 'claude-sonnet-4-6' })
+      // 只钉这条用例关心的三个键。`released` / `forgotten` 是
+      // 2026-09-09「模型与后端统一管理」给这条路由加的读回计数(放掉该
+      // provider 的活 session + 删掉 sessions 存档行,否则"换了模型"在
+      // 续接的对话上是空操作)—— 有意加的,routes-daemon-control.test.ts
+      // 单测钉着它们的取值。在 e2e 做全等,等于这条路由每加一个读回字段
+      // 就红一次,却并不能多守住什么。
+      expect(await res.json()).toMatchObject({ ok: true, provider: 'claude', model: 'claude-sonnet-4-6' })
 
       // 3. A DIFFERENT chat dispatches → cold spawn → its SDK options must
       //    carry the NEW model, proving the cached reader saw the file rewrite
