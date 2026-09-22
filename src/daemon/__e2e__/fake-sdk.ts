@@ -16,8 +16,9 @@
  *     1. claude-agent-provider.ts: `query({ prompt: AsyncIterable<SDKUserMessage>, options })`
  *        yields SDKMessage objects; the provider iterates `type='assistant'`,
  *        `type='result'`, `type='system'` messages.
- *     2. side-effects.ts: `query({ prompt: string, options })` — single-shot
- *        Haiku eval (makeIsolatedSdkEval). Also reads assistant+text blocks.
+ *     2. claude-agent-provider.ts's `oneShot`: `query({ prompt: string, options })`
+ *        — single-shot eval shared by `cheapEval` (haiku-class) and
+ *        `strongEval` (the /chat verdict). Reads assistant text blocks only.
  *   - The fake query handles both calling conventions (string OR AsyncIterable
  *     prompt). When prompt is an AsyncIterable we drive dispatches from
  *     claudeScript; when it's a plain string we do a single onDispatch call.
@@ -321,8 +322,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
 
       if (typeof prompt === 'string') {
         // Single-shot path: chatroom haiku moderator (bootstrap inline
-        // haikuEval) + side-effects.ts makeIsolatedSdkEval (companion
-        // introspect). Both consume only assistant text blocks. Prefer
+        // haikuEval) + claude-agent-provider.ts's `oneShot` (cheapEval /
+        // strongEval). Both consume only assistant text blocks. Prefer
         // moderatorScript when installed; fall back to claudeScript.onDispatch
         // for tests that don't distinguish.
         if (moderatorScript) {
@@ -341,19 +342,20 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
         const script = claudeScript
         if (!script) {
           // Emit empty assistant message so callers don't hang on an empty
-          // generator. makeIsolatedSdkEval only reads assistant text blocks.
+          // generator. `oneShot` (cheapEval / strongEval) only reads
+          // assistant text blocks.
           yield { type: 'assistant', message: { content: [{ type: 'text', text: '' }] } }
           return
         }
         const result = await script.onDispatch(prompt)
-        // bridge=false — see buildCycle's `bridge` param. This branch is the
-        // one-shot eval (moderator / companion introspect / the 2026-09-08
-        // claude first-use probe「只回复两个字母:ok」), which in production
-        // runs with no tools and no MCP. Bridging a scripted reply tool call
-        // here made every claude e2e whose script returns a reply tool emit a
-        // SECOND outbound — the probe's — which is not a thing production can
-        // do.
-        for (const msg of await buildCycle(result, false)) yield msg
+        // This branch is the one-shot eval (moderator / companion introspect /
+        // the 2026-09-08 claude first-use probe「只回复两个字母:ok」), which
+        // in production runs via `oneShot` with `tools: []` — structurally
+        // incapable of producing a tool_use block. Drop any scripted
+        // toolCalls before building the cycle so the fake can't emit one
+        // either (bridge=false alone used to make a stray tool_use harmless
+        // rather than impossible; this makes it impossible).
+        for (const msg of await buildCycle({ ...result, toolCalls: [] }, false)) yield msg
         return
       }
 

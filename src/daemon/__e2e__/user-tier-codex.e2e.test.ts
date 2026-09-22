@@ -30,7 +30,8 @@
 // captures the thread options passed to every `Codex.startThread()` /
 // `resumeThread()` whose thread is later run via `runStreamed` — i.e.
 // every AgentSession spawn, not the cheapEval path (which uses
-// `thread.run()`, not implemented in the fake).
+// `thread.run()` — the fake DOES implement `run()`, but it deliberately
+// does not record a spawn there; see fake-sdk.ts's FakeCodexThread.run).
 import { describe, it, expect } from 'vitest'
 import { startTestDaemon } from './harness'
 
@@ -87,9 +88,10 @@ describe('e2e: user-tier permissions (codex)', () => {
       daemon.sendText('guest_chat', 'hi from guest')
       await daemon.waitForReplyTo('guest_chat', 8000)
 
-      // Two spawns so far — one per chatId. The recorder is wired only
-      // to the runStreamed path so cheapEval (thread.run, not
-      // implemented in the fake) can't add records.
+      // Two spawns so far — one per chatId. `run()` IS implemented in the
+      // fake (the first-use probe's cheapEval depends on it), but the
+      // recorder is wired only inside `runStreamed`, so `run()` never
+      // fires it — cheapEval can't add records here.
       expect(spawns.length).toBe(2)
 
       const adminSpawn = spawns.find(s => s.sandboxMode === 'workspace-write')
