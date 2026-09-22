@@ -25,7 +25,9 @@ export function implementBrief(input: { id: string; branch: string; forbidden: r
     : ''
   return `# 自改 #${input.id}
 
-你在 wechat-cc 的一个**专用克隆**里(当前工作目录就是仓库根),当前分支 \`${input.branch}\`。
+你在 wechat-cc 的一个**专用工作树**里(当前工作目录就是仓库根,\`.git\` 是指向中枢克隆的文件,
+不是独立仓库 —— 所以这个分支已经在这里检出,不要在别处再 \`git checkout ${input.branch}\`,
+git 会拒绝同一条分支在两处同时检出),当前分支 \`${input.branch}\`。
 这次改动接下来要依次过:本地测试 → 独立评审 → CI → 主人在微信里拍板 → 合进 dev → 部署 → 自检。
 每一道闸门没过都会把失败原文交回给你重修,所以老老实实把事做对比赶快交差划算。
 
@@ -99,7 +101,7 @@ export function fixPrompt(kind: 'tests' | 'review' | 'ci', detail: string): stri
 
 ${detail}
 ${kind === 'tests' ? TESTS_SCOPE_RULE : ''}
-请在同一个克隆、同一个分支上修:先定位**真因**再动手,不要为了让它变绿而删测试、
+请在同一个工作树、同一个分支上修:先定位**真因**再动手,不要为了让它变绿而删测试、
 放宽断言或加跳过。改完**自己 \`git commit\`**;仍然**不要 \`git push\`**、不要切分支。
 修完用一段话说明:真因是什么、改了什么、怎么验的。
 `

@@ -6,10 +6,10 @@ import { FORBIDDEN_GLOBS } from './policy'
 describe('implementBrief', () => {
   const text = implementBrief({ id: 'ab12cd34', branch: 'self/ab12cd34', forbidden: FORBIDDEN_GLOBS })
 
-  it('说清身份:哪次自改、哪个分支、在专用克隆里', () => {
+  it('说清身份:哪次自改、哪个分支、在专用工作树里', () => {
     expect(text).toContain('ab12cd34')
     expect(text).toContain('self/ab12cd34')
-    expect(text).toContain('克隆')
+    expect(text).toContain('工作树')
   })
 
   it('先读 AGENTS.md 与维护者手册', () => {
