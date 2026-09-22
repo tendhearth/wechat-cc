@@ -30,7 +30,7 @@ import { makeGit, nodeGitSpawnSync } from './git'
 import { makeClaudeRunner, spawnCollect } from './runner'
 import type { SelfChangeState } from './state'
 import { makeStateStore } from './state'
-import { repoPath, type PipelineDeps } from './steps'
+import { runPath, type PipelineDeps } from './steps'
 
 /** `launchctl` 那份 plist 的固定位置(和 cli.ts 的 `self deploy` 同一条路径)。 */
 export function launchAgentPlistPath(homeDir: string): string {
@@ -42,7 +42,7 @@ export interface SelfDeployPlanInput {
   arch: string
   homeDir: string
   uid: number
-  /** 部署的来源仓库 —— 流水线里**永远是专用克隆**,不是主人的 checkout。 */
+  /** 部署的来源仓库 —— 流水线里**永远是这条运行自己的工作树**,不是主人的 checkout。 */
   repoRoot: string
   stateDir: string
   plistXml: string | null
@@ -104,8 +104,14 @@ export function makeSelftest(
 const CI_TRIAGE_TIMEOUT_MIN = 30
 
 export interface PipelineDepsOpts {
-  /** 宿主 checkout(源码模式)/ null(打包版)。只在专用克隆还没建出来时给 `gh` 兜个底。 */
+  /** 宿主 checkout(源码模式)/ null(打包版)。只在这条运行的工作树还没开出来时给 `gh` 兜个底。 */
   repoRoot: string | null
+  /**
+   * 这条运行的号。**显式传**,不从 state 里现取:git 和 ci triage 的 cwd 是
+   * 「这一条运行自己的工作树」(`<workdir>/runs/<id>`),不是中枢克隆 ——
+   * 一个「忘了是哪条运行」的缺省迟早把一条 git 打到别人的树上去。
+   */
+  runId: string
 }
 
 /**
@@ -137,13 +143,16 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
     return await executeSelfDeploy(plan, defaultSelfDeployDeps())
   }
 
+  const runTree = runPath(config, opts.runId)
+
   return {
     config,
     state: makeStateStore(stateDir),
-    // 缺省 cwd 是专用克隆;clone 那一步会显式传 workdir(那时候克隆还不存在)。
+    // 缺省 cwd 是这条运行自己的工作树;步骤代码每条 git 都显式传 cwd(中枢克隆
+    // 那几条要打在中枢上),这个缺省只是兜底。
     // env 显式过一遍 workbenchSubprocessEnv:和 exec / runner 同一条规矩,
     // 而且写在这儿看得见(gitEnv 里还会再过一次,这是有意的双保险)。
-    git: makeGit(nodeGitSpawnSync, repoPath(config), workbenchSubprocessEnv(process.env)),
+    git: makeGit(nodeGitSpawnSync, runTree, workbenchSubprocessEnv(process.env)),
     runner: makeClaudeRunner({ launch: spawnCollect, env: process.env }),
     daemon: makeDaemonClient({ readApiInfo: () => readApiInfo(stateDir), fetch }),
 
@@ -158,11 +167,11 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
       return { code: r.code, stdout: r.stdout, stderr: r.stderr }
     },
 
-    // gh 要在一个 git 仓库里跑才知道该问哪个 repo。克隆的 origin 就是
+    // gh 要在一个 git 仓库里跑才知道该问哪个 repo。工作树的 origin 就是
     // config.repoUrl,是最准的那个;deps 在这里**延迟构造**,因为
-    // defaultPipelineDeps 是在 repo 步之前调的,那时候克隆还不存在。
+    // defaultPipelineDeps 是在 repo 步之前调的,那时候工作树还没开出来。
     ciTriage: async (o) => {
-      const cwd = existsSync(repoPath(config)) ? repoPath(config) : (opts.repoRoot ?? process.cwd())
+      const cwd = existsSync(runTree) ? runTree : (opts.repoRoot ?? process.cwd())
       return await runCiTriage(defaultCiTriageDeps(cwd), {
         sha: o.sha,
         branch: o.branch,

@@ -2,12 +2,14 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { fakeState, gitReply, greenTriage, makeFakeDeps, memoryStore } from './pipeline.fixture'
+import { fakeState, gitReply, greenTriage, makeFakeDeps, memoryStore, type FakeOpts } from './pipeline.fixture'
 import type { SelfChangeState } from './state'
 import { failingTestFiles, SUMMARY_MAX_CHARS, steps } from './steps'
 
 const HEAD_SHA = 'a'.repeat(40)
 const BASE_SHA = 'b'.repeat(40)
+/** `fakeState()` 那条运行自己的工作树(`<workdir>/runs/<id>`)。 */
+const RUN_DIR = join('/w', 'runs', 'ab12cd34')
 
 describe('intake', () => {
   it('停机了就不干活(blocked)', async () => {
@@ -55,19 +57,64 @@ function memory(rows: ReturnType<typeof fakeState>[]): ReturnType<typeof makeFak
 }
 
 describe('repo', () => {
-  it('没有克隆就 clone,有就 fetch;两条路都要 reset + checkout -B + 写交代', async () => {
+  it('没有中枢克隆就 clone,有就 fetch;两条路都给这一条运行开一个自己的工作树', async () => {
     const s = fakeState()
     const fresh = makeFakeDeps({ exists: () => false, git: gitReply({ 'rev-parse origin/dev': BASE_SHA }) })
     expect(await steps.repo(s, fresh.deps)).toEqual({ ok: true, next: 'implement' })
     expect(fresh.rec.git[0]).toEqual(['clone', 'file:///tmp/remote.git', 'repo'])
-    expect(fresh.rec.git.some(a => a.join(' ') === 'checkout -B self/ab12cd34 origin/dev')).toBe(true)
+    const lines = fresh.rec.git.map(a => a.join(' '))
+    expect(lines).toContain('worktree prune')
+    expect(lines).toContain(`worktree add ${RUN_DIR} -b self/ab12cd34 origin/dev`)
+    // 中枢克隆里不再 checkout 业务分支 —— 那一手正是「B 在 A 的树底下换文件」的来源。
+    expect(lines.some(l => l.startsWith('checkout'))).toBe(false)
+    expect(lines.some(l => l.startsWith('reset --hard'))).toBe(false)
     expect(s.baseSha).toBe(BASE_SHA)
     expect(fresh.files.get(join('/w', 'briefs', 'ab12cd34.md'))).toContain('自改 #ab12cd34')
     expect(fresh.rec.exec[0]).toEqual(['bun', 'install', '--frozen-lockfile'])
+    // 装依赖在工作树里跑,不在中枢克隆里。
+    expect(fresh.rec.execOpts[0]?.cwd).toBe(RUN_DIR)
 
     const reused = makeFakeDeps({ exists: () => true, git: gitReply({ 'rev-parse origin/dev': BASE_SHA }) })
     await steps.repo(fakeState(), reused.deps)
     expect(reused.rec.git[0]).toEqual(['fetch', 'origin', '--prune'])
+    // 同一个 id 重跑(`--resume` 到 repo):旧工作树和旧分支都要先让路。
+    expect(reused.rec.git.map(a => a.join(' '))).toEqual(expect.arrayContaining([
+      `worktree remove --force ${RUN_DIR}`,
+      'branch -D self/ab12cd34',
+    ]))
+  })
+
+  // 没有清理器的话 `<workdir>/runs` 会一条一条攒下去。谁能删是有讲究的:
+  // 停在拍板上等一整天的那条(result 还是 null)工作树还要用,删了它等于把
+  // 一条批准过的改动弄丢。
+  it('顺手删掉终局且超过一天的老工作树;没收场的和刚跑完的都不碰', async () => {
+    const now = 1_700_000_000_000
+    const { deps, rec } = makeFakeDeps({
+      exists: () => true,
+      now: () => now,
+      state: memoryStore([
+        fakeState({ id: 'old11111', result: 'done', updatedAt: now - 25 * 60 * 60_000 }),
+        fakeState({ id: 'fresh111', result: 'done', updatedAt: now - 60_000 }),
+        fakeState({ id: 'wait1111', result: null, updatedAt: now - 48 * 60 * 60_000 }),
+      ]),
+      git: gitReply({ 'rev-parse origin/dev': BASE_SHA }),
+    })
+    expect(await steps.repo(fakeState(), deps)).toMatchObject({ ok: true })
+    const removed = rec.git.filter(a => a[0] === 'worktree' && a[1] === 'remove').map(a => a[3])
+    expect(removed).toContain(join('/w', 'runs', 'old11111'))
+    expect(removed).not.toContain(join('/w', 'runs', 'fresh111'))
+    expect(removed).not.toContain(join('/w', 'runs', 'wait1111'))
+  })
+
+  it('清理失败不影响这一条(老工作树删不掉只记一笔)', async () => {
+    const now = 1_700_000_000_000
+    const { deps } = makeFakeDeps({
+      exists: () => true,
+      now: () => now,
+      state: memoryStore([fakeState({ id: 'old11111', result: 'done', updatedAt: now - 25 * 60 * 60_000 })]),
+      git: args => (args[0] === 'worktree' && args[1] === 'remove' ? { code: 128, stderr: 'fatal: 不是工作树' } : undefined),
+    })
+    expect(await steps.repo(fakeState(), deps)).toMatchObject({ ok: true, next: 'implement' })
   })
 
   it('git 失败 ⇒ repo_failed,原文带上', async () => {
@@ -593,17 +640,30 @@ describe('merge', () => {
     expect(rec.git.some(a => a.includes('--ff-only'))).toBe(false)
   })
 
-  it('顺序:fetch → rebase → checkout → reset → ff-only → push → 删远端分支', async () => {
+  it('顺序:fetch → rebase → rev-parse → 快进 push → 删远端分支(不再 checkout dev)', async () => {
     const s = fakeState({ ci: { runId: 1, url: null, verdict: 'green', sha: HEAD_SHA } })
     const { deps, rec } = makeFakeDeps({ git: gitReply({ 'rev-parse HEAD': HEAD_SHA }) })
     expect(await steps.merge(s, deps)).toEqual({ ok: true, next: 'deploy' })
+    // 工作树里 checkout 一个别处已检出的分支会被 git 拒绝,而且也不需要 ——
+    // 一条不带 --force 的 push 天然只许快进,语义和 merge --ff-only 一样。
     expect(rec.git.map(a => a.join(' '))).toEqual([
       'fetch origin', 'rebase origin/dev', 'rev-parse HEAD',
-      'checkout dev', 'reset --hard origin/dev', 'merge --ff-only self/ab12cd34',
-      'push origin dev', 'rev-parse HEAD', 'push origin --delete self/ab12cd34',
+      'push origin HEAD:refs/heads/dev', 'push origin --delete self/ab12cd34',
     ])
     expect(s.merge).toEqual({ sha: HEAD_SHA, rebased: false })
     expect(rec.notices[0]).toContain('已合入 dev')
+  })
+
+  it('远端在这中间前进了(push 被拒)⇒ merge_conflict,不强推、不删分支', async () => {
+    const { deps, rec } = makeFakeDeps({
+      git: gitReply({ 'push origin HEAD:': { code: 1, stderr: '! [rejected] HEAD -> dev (non-fast-forward)' } }),
+    })
+    const out = await steps.merge(fakeState(), deps)
+    expect(out).toMatchObject({ ok: false, fail: 'merge_conflict' })
+    expect(out.detail).toContain('non-fast-forward')
+    expect(rec.git.some(a => a.includes('--force') || a.includes('-f'))).toBe(false)
+    // 推不上去的时候 self 分支是这条改动**唯一**还留着的地方,不能删。
+    expect(rec.git.some(a => a.includes('--delete'))).toBe(false)
   })
 
   it('rebase 动了 HEAD ⇒ 记 rebased(报告里要说 CI 跑的不是这个 sha)', async () => {
@@ -626,20 +686,23 @@ describe('merge', () => {
 })
 
 describe('deploy', () => {
-  /** 部署前那道树检查要问的三句话:克隆已经站在批准的那条提交上、干净、在 dev 上。 */
-  const ON_APPROVED = { 'rev-parse --abbrev-ref HEAD': 'dev\n', 'rev-parse HEAD': `${HEAD_SHA}\n`, 'status --porcelain': '' }
+  /** 部署前那条断言要问的两句话:工作树站在批准的那条提交上、干净。 */
+  const ON_APPROVED = { 'rev-parse HEAD': `${HEAD_SHA}\n`, 'status --porcelain': '' }
   /** 合入过的一条(deploy 只从 merge 来,merge.sha 一定有)。 */
   const merged = (): SelfChangeState => fakeState({ merge: { sha: HEAD_SHA, rebased: false } })
+  /** 工作树还在盘上(不走重建那条路)。 */
+  const here = (over: FakeOpts = {}): ReturnType<typeof makeFakeDeps> =>
+    makeFakeDeps({ exists: () => true, git: gitReply(ON_APPROVED), ...over })
 
   it('build-sidecar 红 ⇒ deploy_failed + fail_streak+1', async () => {
-    const { deps, rec } = makeFakeDeps({ git: gitReply(ON_APPROVED), exec: () => ({ code: 1, stderr: '编译错误' }) })
+    const { deps, rec } = here({ exec: () => ({ code: 1, stderr: '编译错误' }) })
     expect(await steps.deploy(merged(), deps)).toMatchObject({ ok: false, fail: 'deploy_failed' })
     expect(rec.patches).toEqual([{ fail_streak: 1 }])
     expect(deps.config.failStreak).toBe(1)
   })
 
   it('部署失败 ⇒ deploy_failed + fail_streak+1', async () => {
-    const { deps, rec } = makeFakeDeps({ git: gitReply(ON_APPROVED), deploy: { ok: false, exitCode: 1, steps: [{ name: '健康门', ok: false, detail: '起不来' }], diagnostics: 'x' } })
+    const { deps, rec } = here({ deploy: { ok: false, exitCode: 1, steps: [{ name: '健康门', ok: false, detail: '起不来' }], diagnostics: 'x' } })
     expect(await steps.deploy(merged(), deps)).toMatchObject({ ok: false, fail: 'deploy_failed' })
     expect(rec.patches).toEqual([{ fail_streak: 1 }])
   })
@@ -648,7 +711,7 @@ describe('deploy', () => {
     // 不接住的话异常跑到 run.ts 的兜底记成 crashed,而 crashed 既不加
     // fail_streak 也不停机 —— 停机护栏会在最该生效的那天整条失效。
     const s = merged()
-    const { deps, rec } = makeFakeDeps({ git: gitReply(ON_APPROVED) })
+    const { deps, rec } = here()
     deps.deploy = async () => { throw new Error('launchagent_not_found') }
     const out = await steps.deploy(s, deps)
     expect(out).toMatchObject({ ok: false, fail: 'deploy_failed' })
@@ -660,60 +723,36 @@ describe('deploy', () => {
 
   it('成功 ⇒ 去自检,版本记进 state', async () => {
     const s = merged()
-    const { deps, rec } = makeFakeDeps({ git: gitReply(ON_APPROVED) })
+    const { deps, rec } = here()
     expect(await steps.deploy(s, deps)).toEqual({ ok: true, next: 'selftest' })
     expect(rec.exec[0]).toEqual(['bun', 'run', 'build-sidecar'])
-    // 在克隆的 apps/desktop 里跑,不是仓库根。
-    expect(rec.execOpts[0]?.cwd).toBe(join('/w', 'repo', 'apps', 'desktop'))
+    // 在**这条运行自己的工作树**的 apps/desktop 里跑,不是中枢克隆、也不是仓库根。
+    expect(rec.execOpts[0]?.cwd).toBe(join(RUN_DIR, 'apps', 'desktop'))
     expect(rec.execOpts[0]?.timeoutMs).toBeGreaterThan(0)
+    expect(rec.deployed).toEqual([RUN_DIR])
     // 装的是哪条要写在盘上:`--resume` 时没有这一笔就没人说得清机器上是什么。
     expect(s.deploy).toEqual({ ok: true, version: '1.2.3', sha: HEAD_SHA, rolledBack: false })
   })
 
-  // 2026-09-21 审查 #4:专用克隆是所有自改共用的。A 批准合入、部署失败;
-  // 之后 B 在同一个目录里被闸门拦下,HEAD 停在 B 上。`--resume A` 从 deploy
-  // 起步,老代码构建的是「目录里当时的东西」—— 主人批的是 A,机器上装的是 B。
-  describe('部署前把克隆钉回批准的那条提交', () => {
+  // 2026-09-21:以前这里有一整套「部署前把共用克隆钉回批准的那条提交」
+  // (fetch + merge-base --is-ancestor + checkout + reset --hard + clean -fd + 再验一遍)。
+  // 那是给「所有自改共用一个目录」打的补丁。现在一次运行一个工作树,没有别人
+  // 能动它 —— 补丁整条删掉,只留一条便宜的断言。
+  describe('部署前那条断言', () => {
     const OTHER_SHA = 'c'.repeat(40)
 
-    it('HEAD 是另一条、但批准的那条还在 origin/dev 上 ⇒ 硬拉回去再构建', async () => {
-      let head = OTHER_SHA
+    it('HEAD 不是批准的那条 ⇒ deploy_tree_mismatch,两个 sha 都写出来,不构建不部署', async () => {
       const s = merged()
-      const { deps, rec } = makeFakeDeps({
-        git: args => {
-          const key = args.join(' ')
-          if (key === 'rev-parse HEAD') return { stdout: `${head}\n` }
-          if (key === 'rev-parse --abbrev-ref HEAD') return { stdout: head === HEAD_SHA ? 'dev\n' : 'self/b\n' }
-          if (key.startsWith('reset --hard')) { head = args[2] ?? head; return undefined }
-          return undefined
-        },
-      })
-      expect(await steps.deploy(s, deps)).toEqual({ ok: true, next: 'selftest' })
-      const lines = rec.git.map(a => a.join(' '))
-      expect(lines).toContain('fetch origin')
-      expect(lines).toContain(`merge-base --is-ancestor ${HEAD_SHA} origin/dev`)
-      expect(lines).toContain(`reset --hard ${HEAD_SHA}`)
-      // 拉回去**之后**才构建,而且构建的是批准的那条。
-      expect(rec.exec).toEqual([['bun', 'run', 'build-sidecar']])
-      expect(s.deploy.sha).toBe(HEAD_SHA)
-      expect(rec.deployed).toEqual([join('/w', 'repo')])
-    })
-
-    it('批准的那条已经不在 origin/dev 上 ⇒ deploy_tree_mismatch,两个 sha 都写出来,不构建不部署', async () => {
-      const s = merged()
-      const { deps, rec } = makeFakeDeps({
-        git: args => {
-          const key = args.join(' ')
-          if (key === 'rev-parse HEAD') return { stdout: `${OTHER_SHA}\n` }
-          if (key === 'rev-parse --abbrev-ref HEAD') return { stdout: 'self/b\n' }
-          if (key.includes('--is-ancestor')) return { code: 1 }
-          return undefined
-        },
-      })
+      const { deps, rec } = here({ git: gitReply({ 'rev-parse HEAD': `${OTHER_SHA}\n`, 'status --porcelain': '' }) })
       const out = await steps.deploy(s, deps)
       expect(out).toMatchObject({ ok: false, fail: 'deploy_tree_mismatch' })
       expect(out.detail).toContain(HEAD_SHA)
       expect(out.detail).toContain(OTHER_SHA)
+      // 那套补丁的三手一个都不该再出现。
+      const lines = rec.git.map(a => a.join(' '))
+      expect(lines.some(l => l.includes('--is-ancestor'))).toBe(false)
+      expect(lines.some(l => l.startsWith('checkout'))).toBe(false)
+      expect(lines.some(l => l.startsWith('reset --hard'))).toBe(false)
       expect(rec.exec).toEqual([])
       expect(rec.deployed).toEqual([])
       expect(s.deploy.sha).toBeNull()
@@ -721,20 +760,17 @@ describe('deploy', () => {
       expect(rec.patches).toEqual([])
     })
 
-    it('工作树脏 ⇒ 洗干净;洗不掉(还是对不上)⇒ 不构建', async () => {
-      const s = merged()
-      const { deps, rec } = makeFakeDeps({
-        git: gitReply({ 'rev-parse --abbrev-ref HEAD': 'dev\n', 'rev-parse HEAD': `${HEAD_SHA}\n`, 'status --porcelain': ' M src/a.ts\n' }),
-      })
-      const out = await steps.deploy(s, deps)
+    it('工作树脏 ⇒ 也是 deploy_tree_mismatch(不洗、不猜,交给人)', async () => {
+      const { deps, rec } = here({ git: gitReply({ 'rev-parse HEAD': `${HEAD_SHA}\n`, 'status --porcelain': ' M src/a.ts\n' }) })
+      const out = await steps.deploy(merged(), deps)
       expect(out).toMatchObject({ ok: false, fail: 'deploy_tree_mismatch' })
       expect(out.detail).toContain('工作树脏')
-      expect(rec.git.map(a => a.join(' '))).toContain('clean -fd')
+      expect(rec.git.map(a => a.join(' '))).not.toContain('clean -fd')
       expect(rec.exec).toEqual([])
     })
 
     it('state 里压根没记合入的提交 ⇒ 也不构建(宁可要人来看一眼)', async () => {
-      const { deps, rec } = makeFakeDeps({ git: gitReply(ON_APPROVED) })
+      const { deps, rec } = here()
       const out = await steps.deploy(fakeState(), deps)
       expect(out).toMatchObject({ ok: false, fail: 'deploy_tree_mismatch' })
       expect(out.detail).toContain('merge.sha 为空')
@@ -742,8 +778,44 @@ describe('deploy', () => {
       expect(rec.git).toEqual([])
     })
 
+    it('工作树整个不在了 ⇒ 按批准的那条重建一个 detached 的,装依赖,再断言再构建', async () => {
+      const s = merged()
+      const { deps, rec } = makeFakeDeps({ exists: () => false, git: gitReply(ON_APPROVED) })
+      expect(await steps.deploy(s, deps)).toEqual({ ok: true, next: 'selftest' })
+      const lines = rec.git.map(a => a.join(' '))
+      // 目录被 rm 掉之后中枢里还登记着,不先 prune 的话 git 直接拒绝。
+      expect(lines).toContain('worktree prune')
+      expect(lines).toContain(`worktree add --detach ${RUN_DIR} ${HEAD_SHA}`)
+      // 重建出来的树里没有 node_modules,不装一遍 build-sidecar 当场就红。
+      expect(rec.exec).toEqual([['bun', 'install', '--frozen-lockfile'], ['bun', 'run', 'build-sidecar']])
+      expect(rec.execOpts[0]?.cwd).toBe(RUN_DIR)
+      expect(s.deploy.sha).toBe(HEAD_SHA)
+      expect(rec.deployed).toEqual([RUN_DIR])
+    })
+
+    it('重建工作树失败(批准的那条已经不在了)⇒ deploy_tree_mismatch,不构建', async () => {
+      const { deps, rec } = makeFakeDeps({
+        exists: () => false,
+        git: args => (args[0] === 'worktree' && args[1] === 'add' ? { code: 128, stderr: 'fatal: invalid reference' } : undefined),
+      })
+      const out = await steps.deploy(merged(), deps)
+      expect(out).toMatchObject({ ok: false, fail: 'deploy_tree_mismatch' })
+      expect(out.detail).toContain('invalid reference')
+      expect(rec.exec).toEqual([])
+      expect(rec.deployed).toEqual([])
+    })
+
+    it('重建之后装依赖红了 ⇒ 也不构建(说不清要装什么,不是机器坏了)', async () => {
+      const { deps, rec } = makeFakeDeps({ exists: () => false, git: gitReply(ON_APPROVED), exec: () => ({ code: 1, stderr: 'lockfile 对不上' }) })
+      const out = await steps.deploy(merged(), deps)
+      expect(out).toMatchObject({ ok: false, fail: 'deploy_tree_mismatch' })
+      expect(out.detail).toContain('lockfile 对不上')
+      expect(rec.exec).toEqual([['bun', 'install', '--frozen-lockfile']])
+      expect(rec.patches).toEqual([])
+    })
+
     it('git 自己失败 ⇒ 当对不上处理,不会一路抛成 crashed', async () => {
-      const { deps, rec } = makeFakeDeps({ git: args => (args[0] === 'rev-parse' ? { code: 128, stderr: 'not a git repository' } : undefined) })
+      const { deps, rec } = here({ git: args => (args[0] === 'rev-parse' ? { code: 128, stderr: 'not a git repository' } : undefined) })
       const out = await steps.deploy(merged(), deps)
       expect(out).toMatchObject({ ok: false, fail: 'deploy_tree_mismatch' })
       expect(out.detail).toContain('not a git repository')
@@ -759,7 +831,7 @@ describe('selftest', () => {
     const out = await steps.selftest(s, deps)
     expect(out).toMatchObject({ ok: false, fail: 'selftest_failed_rolled_back' })
     expect(out.detail).toContain('dev 上的提交 aaaaaaaa 还在,需要人处理')
-    expect(rec.rolledBack).toEqual([join('/w', 'repo')])
+    expect(rec.rolledBack).toEqual([RUN_DIR])
     expect(rec.patches).toEqual([{ fail_streak: 1 }])
     expect(s.selftest).toEqual({ workbench: true, chat: false })
   })
@@ -772,7 +844,7 @@ describe('selftest', () => {
     expect(out).toMatchObject({ ok: false, fail: 'selftest_failed_rolled_back' })
     expect(out.detail).toContain('workbench 起不来')
     expect(out.detail).toContain('dev 上的提交 aaaaaaaa 还在,需要人处理')
-    expect(rec.rolledBack).toEqual([join('/w', 'repo')])
+    expect(rec.rolledBack).toEqual([RUN_DIR])
     expect(rec.patches).toEqual([{ fail_streak: 1 }])
   })
 

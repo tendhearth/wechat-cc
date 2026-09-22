@@ -80,9 +80,10 @@ export const SELF_CHANGE_DEFAULTS = {
 } as const
 
 /**
- * 专用克隆的落脚处。**刻意不在 STATE_DIR 下面** —— 执行者在
- * `--dangerously-skip-permissions` 下跑,不能离 access.json / 钥匙只有一个 `..`;
- * 也不在 tmpdir(克隆要跨次复用,不能被系统清掉)。
+ * 中枢克隆(`repo/`)和每条运行的工作树(`runs/<id>/`)的落脚处。
+ * **刻意不在 STATE_DIR 下面** —— 执行者在 `--dangerously-skip-permissions` 下跑,
+ * 不能离 access.json / 钥匙只有一个 `..`;也不在 tmpdir(中枢克隆要跨次复用,
+ * 不能被系统清掉)。
  */
 export function defaultWorkdir(homeDir: string, platform: NodeJS.Platform): string {
   return platform === 'darwin'

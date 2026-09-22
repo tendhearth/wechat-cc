@@ -2813,7 +2813,7 @@ const selfChangeCmd = defineCommand({
     let outcome: Awaited<ReturnType<typeof runSelfChange>> | null = null
     let crashed: unknown = null
     try {
-      outcome = await runSelfChange(state, defaultPipelineDeps(STATE_DIR, resolved.config, { repoRoot }))
+      outcome = await runSelfChange(state, defaultPipelineDeps(STATE_DIR, resolved.config, { repoRoot, runId: state.id }))
     } catch (err) {
       crashed = err
     } finally {

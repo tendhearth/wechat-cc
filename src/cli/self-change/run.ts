@@ -11,8 +11,10 @@
  *
  * 设计:docs/superpowers/specs/2026-09-18-self-change-pipeline-design.md §流程与闸门。
  */
+import { join } from 'node:path'
+
 import { SELF_CHANGE_DEFAULTS } from './policy'
-import { commitAll, isDirty, notify, repoPath, steps, summaryOf, writePatch, type FixKind, type PipelineDeps } from './steps'
+import { commitAll, isDirty, notify, runPath, steps, summaryOf, writePatch, type FixKind, type PipelineDeps } from './steps'
 import type { SelfChangeState } from './state'
 
 /** 退出码的唯一出处(CLI 和微信侧都读这张表)。 */
@@ -62,9 +64,9 @@ function noticeFor(s: SelfChangeState, result: string, detail: string): string {
   // 「人要做什么」—— 不然主人看到一条失败通知,不知道它会一直停在这儿。
   if (result === 'deploy_tree_mismatch') {
     return [
-      `${head} 没装:专用克隆里躺着的不是批准的那条改动,已经停手(不会自动重来,也不算机器故障)。`,
+      `${head} 没装:这条运行的工作树里躺着的不是批准的那条改动,已经停手(不会自动重来,也不算机器故障)。`,
       detail.slice(0, DETAIL_IN_NOTICE),
-      `要接着装:把克隆弄回干净(或者整个删掉 self_change.workdir 下的 repo 目录让它重新克隆),然后 wechat-cc self change --resume ${s.id}`,
+      `要接着装:把 self_change.workdir 下的 ${join('runs', s.id)} 整个删掉(下一次会按批准的那条提交重开一个),然后 wechat-cc self change --resume ${s.id}`,
     ].join('\n')
   }
   return `${head} 失败:${result}\n${detail.slice(0, DETAIL_IN_NOTICE)}`
@@ -156,7 +158,7 @@ export async function runSelfChange(
     deps.log(`[self-change] 修复轮 ${kind} 第 ${s.implement.rounds[kind]} 轮`)
     save()
     const res = await deps.runner.run({
-      cwd: repoPath(deps.config),
+      cwd: runPath(deps.config, s.id),
       prompt,
       ...(s.implement.sessionId ? { resume: s.implement.sessionId } : {}),
       // 预算是**这条自改实现侧的总额**,不是每轮的额度:六轮修复各给一份
@@ -175,7 +177,8 @@ export async function runSelfChange(
     if (res.stderrTail.length) s.stderrTail = res.stderrTail
     if (!res.ok) return await finish('implement_failed', `修复轮(${kind}):${res.error ?? 'unknown'}${res.timedOut ? '(被超时杀掉)' : ''}\n${res.text.slice(-1000)}`)
     try {
-      if (isDirty(deps)) commitAll(deps, `自改 #${s.id}:修复轮(${kind})未提交的改动`)
+      const dir = runPath(deps.config, s.id)
+      if (isDirty(deps, dir)) commitAll(deps, dir, `自改 #${s.id}:修复轮(${kind})未提交的改动`)
     } catch (err) {
       return await finish('implement_failed', `修复轮(${kind})之后提交不了:${err instanceof Error ? err.message : String(err)}`)
     }

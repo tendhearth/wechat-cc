@@ -51,9 +51,10 @@ export interface SelfChangeState {
   approval: { hash: string | null; code: string | null; decision: string | null; askedAt: number | null; delivered: boolean | null }
   merge: { sha: string | null; rebased: boolean }
   /**
-   * `sha`:**真换上去的那条提交**。部署前会把专用克隆钉回 `merge.sha`,部署
-   * 真成了才记这一笔(构建出来没装上去的不算)—— 没有它,`--resume` 从 deploy
-   * 接着跑时没人说得清机器上到底装的是哪条改动(2026-09-21 审查 #4)。
+   * `sha`:**真换上去的那条提交**。部署前会断言这条运行的工作树站在 `merge.sha`
+   * 上(工作树没了就按它重开一棵),部署真成了才记这一笔(构建出来没装上去的
+   * 不算)—— 没有它,`--resume` 从 deploy 接着跑时没人说得清机器上到底装的是
+   * 哪条改动(2026-09-21 审查 #4)。
    * `rolledBack`:自检红之后二进制已经换回上一版。`ok` 这时是 false、
    * `version` 是 null —— 盘上要写**现在跑着的是什么**,不是「曾经部署成功过」
    * (审查 #8)。

@@ -81,10 +81,27 @@ const APPROVAL_GRACE_MS = 30_000
 /** 评审会话的轮数上限(有预算封顶,这条只防打转)。 */
 const REVIEW_MAX_TURNS = 100
 
-/** 专用克隆的位置。步骤和 run.ts 的修复轮都用这一个。 */
-export function repoPath(config: SelfChangeConfig): string {
+/**
+ * **中枢克隆**:只拿来 fetch 和管工作树,不在里面构建、不在里面 checkout 业务分支。
+ *
+ * 2026-09-21:以前这里就是干活的地方,所有自改共用一个目录 —— B 的 `repo` 步
+ * (`checkout -B self/<id>` + `reset --hard`)会在 A 的树底下把文件换掉。
+ */
+export function hubPath(config: SelfChangeConfig): string {
   return join(config.workdir, 'repo')
 }
+
+/**
+ * **一次运行一个工作树**:`<workdir>/runs/<id>`,从中枢克隆 `git worktree add` 出来。
+ *
+ * 路径由 id 推出来(不进 state):恢复一条老自改时不需要盘上记过这一格。
+ */
+export function runPath(config: SelfChangeConfig, id: string): string {
+  return join(config.workdir, 'runs', id)
+}
+
+/** 机会性清理的年龄线:终局且超过这么久的运行,下一次自改顺手把它的工作树删掉。 */
+export const WORKTREE_KEEP_MS = 24 * 60 * 60_000
 
 function briefPath(config: SelfChangeConfig, id: string): string {
   return join(config.workdir, 'briefs', `${id}.md`)
@@ -102,11 +119,22 @@ class GitFailed extends Error {
   }
 }
 
-function git(d: PipelineDeps, args: string[], opts?: { cwd?: string; timeoutMs?: number }): string {
-  const cwd = opts?.cwd ?? repoPath(d.config)
+/**
+ * 一条 git。**cwd 是必填的**:现在同一条流水线里有两个目录(中枢克隆和这一条
+ * 运行自己的工作树),一个「忘了传就落到某个缺省目录」的口子迟早把 rebase 打到
+ * 中枢上去。
+ */
+function git(d: PipelineDeps, cwd: string, args: string[], opts?: { timeoutMs?: number }): string {
   const r = d.git.run(args, { cwd, ...(opts?.timeoutMs === undefined ? {} : { timeoutMs: opts.timeoutMs }) })
   if (r.code !== 0) throw new GitFailed(args, r)
   return r.stdout
+}
+
+/** 尽力而为的一条 git(清理之类):失败只记一笔,不把整步判红。 */
+function tryGit(d: PipelineDeps, cwd: string, args: string[], why: string): boolean {
+  const r = d.git.run(args, { cwd })
+  if (r.code !== 0) d.log(`[self-change] ${why}失败(不影响结果):git ${args.join(' ')} → ${r.code} ${(r.stderr || r.stdout).trim()}`)
+  return r.code === 0
 }
 
 /** git 失败在这一步里是「这一步失败」,不是崩溃 —— 翻成一个带原文的 fail。 */
@@ -119,8 +147,8 @@ async function guardGit(fail: string, body: () => Promise<StepOutcome>): Promise
   }
 }
 
-export function isDirty(d: PipelineDeps): boolean {
-  return git(d, ['status', '--porcelain']).trim().length > 0
+export function isDirty(d: PipelineDeps, cwd: string): boolean {
+  return git(d, cwd, ['status', '--porcelain']).trim().length > 0
 }
 
 /**
@@ -130,17 +158,17 @@ export function isDirty(d: PipelineDeps): boolean {
  * 身份:全局配置里有就用主人的;没有(打包机、CI 容器)就临时给一个,
  * 否则 `git commit` 会以 "Please tell me who you are" 整条失败。
  */
-export function commitAll(d: PipelineDeps, message: string): void {
-  git(d, ['add', '-A'])
+export function commitAll(d: PipelineDeps, cwd: string, message: string): void {
+  git(d, cwd, ['add', '-A'])
   // 两个都要有:只配了 user.email(或只配了 name)的机器上,git 照样拒绝提交。
   const has = (key: string): boolean => {
-    const r = d.git.run(['config', '--get', key], { cwd: repoPath(d.config) })
+    const r = d.git.run(['config', '--get', key], { cwd })
     return r.code === 0 && r.stdout.trim().length > 0
   }
   const identity = has('user.email') && has('user.name')
     ? []
     : ['-c', 'user.name=wechat-cc self-change', '-c', 'user.email=self-change@wechat-cc.local']
-  git(d, [...identity, 'commit', '-m', message])
+  git(d, cwd, [...identity, 'commit', '-m', message])
 }
 
 /**
@@ -205,25 +233,59 @@ async function intake(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
 // ── repo ─────────────────────────────────────────────────────────────────────
 
 /**
- * 把专用克隆恢复成「origin/<branch> 的干净副本,站在 self/<id> 上」。
- * 克隆里的脏改动一律丢掉 —— 这是流水线自己的目录,没有人类改动可丢。
+ * 顺手把老工作树扫掉。
+ *
+ * 先 `worktree prune`(目录被人手工删了、机器崩过 —— 元数据还留在中枢里),
+ * 再把**终局且超过 24 小时**的那几条运行的工作树连目录一起删掉。
+ *
+ * 全程尽力而为:清理失败绝不该把一条新自改判红。还没收场的(`result === null`)
+ * 一律不碰 —— 那可能是一条停在拍板上等了一整天的运行,它的工作树还要用。
+ */
+function sweepWorktrees(s: SelfChangeState, d: PipelineDeps, hub: string): void {
+  tryGit(d, hub, ['worktree', 'prune'], '清理失效工作树')
+  let rows: SelfChangeState[]
+  try { rows = d.state.list() } catch { return }
+  const cutoff = d.now() - WORKTREE_KEEP_MS
+  for (const old of rows) {
+    if (old.id === s.id || old.result === null || old.updatedAt > cutoff) continue
+    const dir = runPath(d.config, old.id)
+    if (!d.fs.exists(dir)) continue
+    tryGit(d, hub, ['worktree', 'remove', '--force', dir], `清理 #${old.id} 的工作树`)
+  }
+}
+
+/**
+ * 中枢克隆 fetch 一遍,然后给**这一条运行**开一个自己的工作树。
+ *
+ * 不再 `reset --hard` / `clean -fd`:同一个 id 重跑(`--resume` 到这一步)是把
+ * 旧工作树整棵删掉重开,丢掉的永远只是这一条自己的东西 —— 这是流水线自己的
+ * 目录,没有人类改动可丢。
+ *
+ * `bun install --frozen-lockfile` 在新工作树里实测 306 毫秒(bun 自己的缓存
+ * 就是 CoW 链接),所以不拷 `node_modules`。
  */
 async function repo(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
   return await guardGit('repo_failed', async () => {
     const workdir = d.config.workdir
-    const dir = repoPath(d.config)
+    const hub = hubPath(d.config)
+    const tree = runPath(d.config, s.id)
     d.fs.mkdirp(workdir)
-    if (!d.fs.exists(dir)) {
-      git(d, ['clone', d.config.repoUrl, 'repo'], { cwd: workdir, timeoutMs: NETWORK_TIMEOUT_MS })
+    if (!d.fs.exists(hub)) {
+      git(d, workdir, ['clone', d.config.repoUrl, 'repo'], { timeoutMs: NETWORK_TIMEOUT_MS })
     } else {
-      git(d, ['fetch', 'origin', '--prune'], { timeoutMs: NETWORK_TIMEOUT_MS })
+      git(d, hub, ['fetch', 'origin', '--prune'], { timeoutMs: NETWORK_TIMEOUT_MS })
     }
-    git(d, ['reset', '--hard'])
-    git(d, ['clean', '-fd'])
-    git(d, ['checkout', '-B', s.branch, `origin/${d.config.branch}`])
-    s.baseSha = git(d, ['rev-parse', `origin/${d.config.branch}`]).trim()
 
-    const install = await d.exec('bun', ['install', '--frozen-lockfile'], { cwd: dir, timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms })
+    sweepWorktrees(s, d, hub)
+
+    // 同一个 id 重跑 `repo`(`--resume` 到这一步):旧工作树和旧分支都要先让路,
+    // 否则 `worktree add -b` 会因为「分支已存在 / 目录已存在」直接失败。
+    if (d.fs.exists(tree)) tryGit(d, hub, ['worktree', 'remove', '--force', tree], `清掉 #${s.id} 上一次的工作树`)
+    tryGit(d, hub, ['branch', '-D', s.branch], `清掉本地分支 ${s.branch}`)
+    git(d, hub, ['worktree', 'add', tree, '-b', s.branch, `origin/${d.config.branch}`])
+    s.baseSha = git(d, hub, ['rev-parse', `origin/${d.config.branch}`]).trim()
+
+    const install = await d.exec('bun', ['install', '--frozen-lockfile'], { cwd: tree, timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms })
     if (install.code !== 0) {
       return { ok: false, fail: 'repo_failed', detail: `bun install --frozen-lockfile → ${install.code}\n${tail(install.stderr || install.stdout, 40)}` }
     }
@@ -246,7 +308,7 @@ export function summaryOf(text: string): string {
 }
 
 async function implement(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
-  const dir = repoPath(d.config)
+  const dir = runPath(d.config, s.id)
   const res = await d.runner.run({
     cwd: dir,
     prompt: s.request,
@@ -266,8 +328,8 @@ async function implement(s: SelfChangeState, d: PipelineDeps): Promise<StepOutco
 
   return await guardGit('implement_failed', async () => {
     // 执行者忘了提交不算失败。
-    if (isDirty(d)) commitAll(d, `自改 #${s.id}:执行者未提交的改动`)
-    const count = Number(git(d, ['rev-list', '--count', `origin/${d.config.branch}..HEAD`]).trim())
+    if (isDirty(d, dir)) commitAll(d, dir, `自改 #${s.id}:执行者未提交的改动`)
+    const count = Number(git(d, dir, ['rev-list', '--count', `origin/${d.config.branch}..HEAD`]).trim())
     if (!Number.isFinite(count) || count === 0) {
       return { ok: false, fail: 'no_changes', detail: `执行者一个提交都没留下。它最后说:\n${res.text.slice(-1000)}` }
     }
@@ -280,7 +342,7 @@ async function implement(s: SelfChangeState, d: PipelineDeps): Promise<StepOutco
 /** 禁改清单闸门。命中一个就整条失败 —— 这是护栏,不进修复轮。 */
 async function guard(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
   return await guardGit('guard_failed', async () => {
-    const changed = git(d, ['diff', '--name-only', `origin/${d.config.branch}...HEAD`])
+    const changed = git(d, runPath(d.config, s.id), ['diff', '--name-only', `origin/${d.config.branch}...HEAD`])
       .split('\n').map(x => x.trim()).filter(Boolean)
     const hits = forbiddenPaths(changed)
     if (hits.length) {
@@ -318,9 +380,9 @@ export function failingTestFiles(output: string): string[] {
 }
 
 /** 这一轮执行者改了哪些文件。git 问不出来就是 `null`(当「不知道」,不敢判抖动)。 */
-function changedFiles(d: PipelineDeps): string[] | null {
+function changedFiles(d: PipelineDeps, cwd: string): string[] | null {
   try {
-    return git(d, ['diff', '--name-only', `origin/${d.config.branch}...HEAD`])
+    return git(d, cwd, ['diff', '--name-only', `origin/${d.config.branch}...HEAD`])
       .split('\n').map(x => x.trim()).filter(Boolean)
   } catch {
     return null
@@ -360,7 +422,7 @@ function redLooksRelated(changed: string[] | null, output: string, isVitest: boo
  * 从 5s 放宽到 20s)。抖动不该由执行者来「修」。
  */
 async function tests(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
-  const dir = repoPath(d.config)
+  const dir = runPath(d.config, s.id)
   const opts = { cwd: dir, timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms }
   let changed: string[] | null | undefined
   for (const { cmd, args, vitest } of TEST_COMMANDS) {
@@ -370,7 +432,7 @@ async function tests(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> 
     if (out.code === 0) continue
 
     // 只问一次 git:四条命令共用同一份改动文件列表。
-    if (changed === undefined) changed = changedFiles(d)
+    if (changed === undefined) changed = changedFiles(d, dir)
     if (!redLooksRelated(changed, `${out.stdout}\n${out.stderr}`, vitest === true)) {
       d.log(`[self-change] ${line} 红了,但失败文件与本次改动无关 —— 原样重跑一次`)
       const again = await d.exec(cmd, args, opts)
@@ -440,11 +502,11 @@ function scopedFiles(findings: readonly ReviewFinding[], changed: string[] | nul
  * 一个「评审」能改代码,后面三道闸门看到的就不是被评审的那份东西了。
  */
 async function review(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
-  const dir = repoPath(d.config)
+  const dir = runPath(d.config, s.id)
   const baseRef = `origin/${d.config.branch}`
   let headBefore: string
   try {
-    headBefore = git(d, ['rev-parse', 'HEAD']).trim()
+    headBefore = git(d, dir, ['rev-parse', 'HEAD']).trim()
   } catch (err) {
     if (err instanceof GitFailed) return { ok: false, fail: 'review_failed', detail: err.message }
     throw err
@@ -462,13 +524,13 @@ async function review(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
   if (!res.ok) return { ok: false, fail: 'review_failed', detail: `${res.error ?? 'unknown'}${res.timedOut ? '(被超时杀掉)' : ''}\n${res.text.slice(-1000)}` }
 
   return await guardGit('review_failed', async () => {
-    const tampered = isDirty(d) || git(d, ['rev-parse', 'HEAD']).trim() !== headBefore
+    const tampered = isDirty(d, dir) || git(d, dir, ['rev-parse', 'HEAD']).trim() !== headBefore
     if (tampered) {
       // 必须是 `reset --hard`:`checkout -- .` 只把**索引**刷回工作树,评审要是
       // `git add` 过(改了又暂存、没提交),这一手会把它的改动原封不动留下,
       // 接着强制的 review 修复轮里 commitAll 就把评审的手笔提交进去了。
-      git(d, ['reset', '--hard', headBefore])
-      git(d, ['clean', '-fd'])
+      git(d, dir, ['reset', '--hard', headBefore])
+      git(d, dir, ['clean', '-fd'])
     }
 
     const parsed = parseReviewVerdict(res.text)
@@ -484,7 +546,7 @@ async function review(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
       // 越界(`scope:`)的那几条要的是**还原**,不是接着在那些文件上改。但一条越界
       // 意见不能把同一轮里别的 critical / important 吞掉 —— 那些仍然要修,
       // 所以 revertPrompt 里还原和修各占一节。
-      const scopeFiles = scopedFiles(blocking, changedFiles(d))
+      const scopeFiles = scopedFiles(blocking, changedFiles(d, dir))
       const prompt = scopeFiles.length
         ? revertPrompt({
             baseRef,
@@ -517,8 +579,9 @@ async function review(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
  */
 async function ci(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
   return await guardGit('push_failed', async () => {
-    git(d, ['push', '-u', '--force', 'origin', s.branch], { timeoutMs: NETWORK_TIMEOUT_MS })
-    const sha = git(d, ['rev-parse', 'HEAD']).trim()
+    const dir = runPath(d.config, s.id)
+    git(d, dir, ['push', '-u', '--force', 'origin', s.branch], { timeoutMs: NETWORK_TIMEOUT_MS })
+    const sha = git(d, dir, ['rev-parse', 'HEAD']).trim()
     const { report, exitCode } = await d.ciTriage({ sha, branch: s.branch })
     s.ci = { runId: report.runId, url: report.url, verdict: report.verdict, sha }
     if (report.verdict === 'green') return { ok: true, next: 'approval' }
@@ -595,7 +658,7 @@ async function announceUndelivered(s: SelfChangeState, d: PipelineDeps, delivere
 async function approval(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
   let diffstat: string
   try {
-    diffstat = git(d, ['diff', '--stat', `origin/${d.config.branch}...HEAD`])
+    diffstat = git(d, runPath(d.config, s.id), ['diff', '--stat', `origin/${d.config.branch}...HEAD`])
       .split('\n').slice(0, DIFFSTAT_LINES).join('\n').trimEnd()
   } catch (err) {
     if (err instanceof GitFailed) return { ok: false, fail: 'approval_failed', detail: err.message }
@@ -657,30 +720,38 @@ async function approval(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcom
 // ── merge ────────────────────────────────────────────────────────────────────
 
 /**
- * rebase 到最新的 dev 再 ff 合入。
+ * rebase 到最新的 dev,然后**直接把 HEAD 快进推上去**。
+ *
+ * 为什么不再 `checkout dev` + `merge --ff-only`:工作树里 checkout 一个别处
+ * 已经检出的分支会被 git 直接拒绝。而且也不需要 —— rebase 完 HEAD 本身就是
+ * `origin/<branch>` 的直系后代,一条**不带 `--force`** 的 `git push` 天然只许
+ * 快进,语义和 `merge --ff-only` 一模一样:远端在这中间前进了就会被拒。
  *
  * rebase 动了 HEAD 也**不重跑 CI**(spec 的取舍:dev 上并发少,重跑要主人再等
  * 一轮),但要把 `ci_sha ≠ merge_sha` 记下来,报告里说清楚。
  */
 async function merge(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
   return await guardGit('merge_failed', async () => {
-    git(d, ['fetch', 'origin'], { timeoutMs: NETWORK_TIMEOUT_MS })
-    const rebase = d.git.run(['rebase', `origin/${d.config.branch}`], { cwd: repoPath(d.config) })
+    const dir = runPath(d.config, s.id)
+    git(d, dir, ['fetch', 'origin'], { timeoutMs: NETWORK_TIMEOUT_MS })
+    const rebase = d.git.run(['rebase', `origin/${d.config.branch}`], { cwd: dir })
     if (rebase.code !== 0) {
-      d.git.run(['rebase', '--abort'], { cwd: repoPath(d.config) })
+      d.git.run(['rebase', '--abort'], { cwd: dir })
       return { ok: false, fail: 'merge_conflict', detail: `rebase 到 origin/${d.config.branch} 冲突了(分支保留):\n${tail(rebase.stderr || rebase.stdout, 40)}` }
     }
-    const head = git(d, ['rev-parse', 'HEAD']).trim()
+    const head = git(d, dir, ['rev-parse', 'HEAD']).trim()
     s.merge.rebased = head !== s.ci.sha
 
-    git(d, ['checkout', d.config.branch])
-    git(d, ['reset', '--hard', `origin/${d.config.branch}`])
-    git(d, ['merge', '--ff-only', s.branch])
-    git(d, ['push', 'origin', d.config.branch], { timeoutMs: NETWORK_TIMEOUT_MS })
-    s.merge.sha = git(d, ['rev-parse', 'HEAD']).trim()
+    const push = d.git.run(['push', 'origin', `HEAD:refs/heads/${d.config.branch}`], { cwd: dir, timeoutMs: NETWORK_TIMEOUT_MS })
+    if (push.code !== 0) {
+      // 不快进就推不上去 —— 从 rebase 到这一刻之间远端又前进了(另一个人推了东西)。
+      // 和 rebase 冲突同一个失败码:两者都是「远端和这条改动对不齐,要重来一轮」。
+      return { ok: false, fail: 'merge_conflict', detail: `推不上 ${d.config.branch}(远端在这中间前进了,不快进的推会被拒;分支保留):\n${tail(push.stderr || push.stdout, 40)}` }
+    }
+    s.merge.sha = head
 
     // 删远端分支失败只记一笔:代码已经在 dev 上了,一个残留分支不值得把整条判失败。
-    const del = d.git.run(['push', 'origin', '--delete', s.branch], { cwd: repoPath(d.config), timeoutMs: NETWORK_TIMEOUT_MS })
+    const del = d.git.run(['push', 'origin', '--delete', s.branch], { cwd: dir, timeoutMs: NETWORK_TIMEOUT_MS })
     if (del.code !== 0) d.log(`[self-change] 删远端分支 ${s.branch} 失败(不影响结果):${del.stderr.trim()}`)
 
     await notify(s, d, `自改 #${s.id} 已合入 ${d.config.branch}(${s.merge.sha.slice(0, 8)})${s.noDeploy ? ',按 --no-deploy 不部署' : ',开始部署'}`)
@@ -695,73 +766,58 @@ function bumpFailStreak(d: PipelineDeps): void {
   writePatch(d, { fail_streak: d.config.failStreak })
 }
 
-/** 克隆此刻的样子:HEAD 是哪条、干不干净、站在哪个分支上。 */
-function treeNow(d: PipelineDeps): { head: string; dirty: string; branch: string } {
-  return {
-    head: git(d, ['rev-parse', 'HEAD']).trim(),
-    dirty: git(d, ['status', '--porcelain']).trim(),
-    branch: git(d, ['rev-parse', '--abbrev-ref', 'HEAD']).trim(),
-  }
-}
-
 /**
- * 部署之前先确认:克隆里躺着的**正是被批准并合入的那条提交**。
+ * 部署之前先确认:**这条运行自己的工作树**里躺着的正是批准并合入的那条提交。
  *
- * 2026-09-21 审查 #4:专用克隆是所有自改共用的。A 批准合入了但部署失败,
- * 之后 B 在这个目录里被闸门拦下(HEAD 停在 B 的分支上);这时候
- * `--resume A` 直接从 deploy 起步,构建的是**目录里当时的东西**,也就是 B ——
- * 主人批的是 A,机器上装的是一条谁都没看过的改动。
+ * 2026-09-21:这里以前是一整套「把共用克隆钉回批准的提交」——`fetch` +
+ * `merge-base --is-ancestor` + `checkout` + `reset --hard` + `clean -fd` + 再验
+ * 一遍。那是给「所有自改共用一个目录」打的补丁(审查 #4:A 批准合入了但部署
+ * 失败,之后 B 在这个目录里被闸门拦下,`--resume A` 构建的是 B)。现在一次运行
+ * 一个工作树,没有别人能动它 —— 补丁整条删掉,只剩一条便宜的断言。
  *
- * 规矩:
- *  · HEAD == `merge.sha`、工作树干净、站在 `config.branch` 上 ⇒ 照常构建。
- *  · 对不上 ⇒ 只有在「`merge.sha` 仍然是共享分支上的一条提交」时才敢硬拉回去
- *    (先 fetch 再 `merge-base --is-ancestor`):那说明它还是那条批准过的提交,
- *    没有被 force-push 抹掉。拉回去之后**再验一遍**,还对不上就不构建。
- *  · 其它一律 `deploy_tree_mismatch`(退出码 1),detail 里两个 sha 都写出来,
- *    人一眼看得出机器差点装的是什么。
+ * 断言对不上就 `deploy_tree_mismatch`:不猜、不洗、不硬拉,交给人看一眼。
+ * 记不得批准的是哪条(`merge.sha` 为空)也算对不上。
  *
- * 记不得批准的是哪条(`merge.sha` 为空)也算对不上:宁可要人来看一眼,
- * 也不能闭着眼睛把目录里的东西装上去。
+ * 工作树整个不在了(人手工删过 / 顺手清理过 / `--resume` 一条很老的运行)⇒
+ * 按 `merge.sha` 重开一个 detached 的再断言。重开不成也是「说不清要装什么」。
  */
-function ensureApprovedTree(s: SelfChangeState, d: PipelineDeps): StepOutcome | null {
+async function ensureRunTree(s: SelfChangeState, d: PipelineDeps, tree: string): Promise<StepOutcome | null> {
   const approved = s.merge.sha
   const mismatch = (why: string): StepOutcome => ({ ok: false, fail: 'deploy_tree_mismatch', detail: why })
   if (!approved) {
-    return mismatch(`克隆 ${repoPath(d.config)} 里要装哪条说不清:state 里没有记下合入的提交(merge.sha 为空),不构建。`)
+    return mismatch(`工作树 ${tree} 里要装哪条说不清:state 里没有记下合入的提交(merge.sha 为空),不构建。`)
   }
 
-  const nameIt = (t: { head: string; dirty: string; branch: string }): string =>
-    `批准合入的是 ${approved},克隆现在是 ${t.head || '(读不出 HEAD)'}(分支 ${t.branch || '?'}${t.dirty ? '、工作树脏' : ''})`
-
   try {
-    const before = treeNow(d)
-    if (before.head === approved && before.dirty === '' && before.branch === d.config.branch) return null
-
-    // 硬拉回去之前先确认它还在共享分支上 —— 不在就不是「那条批准过的提交」了。
-    git(d, ['fetch', 'origin'], { timeoutMs: NETWORK_TIMEOUT_MS })
-    const onBranch = d.git.run(['merge-base', '--is-ancestor', approved, `origin/${d.config.branch}`], { cwd: repoPath(d.config) })
-    if (onBranch.code !== 0) {
-      return mismatch(`${nameIt(before)};而 ${approved} 已经不在 origin/${d.config.branch} 上(被 force-push 抹掉?),不构建。`)
+    if (!d.fs.exists(tree)) {
+      const hub = hubPath(d.config)
+      // 目录被 `rm -rf` 掉之后中枢里还登记着这棵树,不先 prune 的话
+      // `worktree add` 会以「missing but already registered」直接拒绝。
+      tryGit(d, hub, ['worktree', 'prune'], '清理失效工作树')
+      d.log(`[self-change] 工作树 ${tree} 不在了,按批准的 ${approved.slice(0, 8)} 重开一个`)
+      git(d, hub, ['worktree', 'add', '--detach', tree, approved])
+      // 新开出来的树里没有 node_modules,`bun run build-sidecar` 会当场红。
+      const install = await d.exec('bun', ['install', '--frozen-lockfile'], { cwd: tree, timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms })
+      if (install.code !== 0) {
+        return mismatch(`重开工作树之后装依赖失败,不构建:bun install --frozen-lockfile → ${install.code}\n${tail(install.stderr || install.stdout, 40)}`)
+      }
     }
-    d.log(`[self-change] 部署前把克隆钉回 ${approved.slice(0, 8)}(现在是 ${before.head.slice(0, 8) || '?'})`)
-    git(d, ['checkout', d.config.branch])
-    git(d, ['reset', '--hard', approved])
-    git(d, ['clean', '-fd'])
 
-    const after = treeNow(d)
-    if (after.head === approved && after.dirty === '' && after.branch === d.config.branch) return null
-    return mismatch(`拉回去了还是对不上:${nameIt(after)},不构建。`)
+    const head = git(d, tree, ['rev-parse', 'HEAD']).trim()
+    const dirty = git(d, tree, ['status', '--porcelain']).trim()
+    if (head === approved && dirty === '') return null
+    return mismatch(`批准合入的是 ${approved},工作树 ${tree} 现在是 ${head || '(读不出 HEAD)'}${dirty ? '、而且工作树脏' : ''},不构建。`)
   } catch (err) {
-    if (err instanceof GitFailed) return mismatch(`确认克隆站在 ${approved} 上时 git 失败了,不构建:\n${err.message}`)
+    if (err instanceof GitFailed) return mismatch(`确认工作树站在 ${approved} 上时 git 失败了,不构建:\n${err.message}`)
     throw err
   }
 }
 
 async function deploy(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome> {
-  const dir = repoPath(d.config)
-  const mismatch = ensureApprovedTree(s, d)
+  const dir = runPath(d.config, s.id)
+  const mismatch = await ensureRunTree(s, d, dir)
   // 装错东西不算「机器坏了」,是「不知道该装什么」—— 不加 fail_streak、不停机,
-  // 要的是人来看一眼(`--resume` 在克隆回到那条提交之后照样能接着跑)。
+  // 要的是人来看一眼(把 `<workdir>/runs/<id>` 删掉,`--resume` 会按批准的提交重开)。
   if (mismatch) return mismatch
 
   const build = await d.exec('bun', ['run', 'build-sidecar'], { cwd: join(dir, 'apps', 'desktop'), timeoutMs: SELF_CHANGE_DEFAULTS.tests_timeout_ms })
@@ -829,7 +885,7 @@ async function rollBack(s: SelfChangeState, d: PipelineDeps, why: string): Promi
   }
   let rolled: SelfDeployResult
   try {
-    rolled = await d.rollback(repoPath(d.config))
+    rolled = await d.rollback(runPath(d.config, s.id))
   } catch (err) {
     bumpFailStreak(d)
     // 回滚没跑起来:跑着的还是新二进制,`rolledBack` 不能记成 true。

@@ -182,6 +182,12 @@ export function gitReply(map: Record<string, string | Partial<GitResult>>): (arg
   }
 }
 
+/**
+ * 一条假 state。**`id` 换了分支名跟着换**:分支(`self/<id>`)和工作树
+ * (`<workdir>/runs/<id>`)都由 id 推出来,一个「id 是 B、分支还是 A」的假件
+ * 会让 `worktree add -b` 在真 git 上撞车 —— 而那正是这套测试要验的东西。
+ */
 export function fakeState(over: Partial<SelfChangeState> = {}): SelfChangeState {
-  return { ...newState({ id: 'ab12cd34', request: '给 flake 表加一行', from: 'cli', noDeploy: false, now: 1_700_000_000_000 }), ...over }
+  const id = over.id ?? 'ab12cd34'
+  return { ...newState({ id, request: '给 flake 表加一行', from: 'cli', noDeploy: false, now: 1_700_000_000_000 }), ...over }
 }

@@ -1,6 +1,6 @@
 # 让 CC 自己改自己
 
-`wechat-cc self change "<需求>"` 让 CC 在**自己的专用克隆**里起一个 Claude 执行者实现改动,依次过五道闸门(本地测试 → 独立评审 → 真 CI → 主人在微信拍板 → 合进 `dev`),然后在 daemon 之外做 `self deploy` + 真机自检,不过就把二进制回滚,全程进展发到主人微信。
+`wechat-cc self change "<需求>"` 让 CC 在**这条运行自己的 git 工作树**里起一个 Claude 执行者实现改动,依次过五道闸门(本地测试 → 独立评审 → 真 CI → 主人在微信拍板 → 合进 `dev`),然后在 daemon 之外做 `self deploy` + 真机自检,不过就把二进制回滚,全程进展发到主人微信。
 
 设计见 [`docs/superpowers/specs/2026-09-18-self-change-pipeline-design.md`](../superpowers/specs/2026-09-18-self-change-pipeline-design.md)。
 
@@ -38,14 +38,18 @@ intake ─► repo ─► implement ─► guard ─► tests ─► review ─�
 ```
 
 1. **guard(禁改清单)** —— 改动碰了下面那张表里的文件,整条**立刻失败**,不给修复轮。这是护栏,不是意见。
-2. **tests** —— 在克隆里依次 `bun run typecheck` → `bun run depcheck` → `bun run test` → `npm run test:node -- --reporter=dot`,第一条红就停(后面几条在同一个坏状态上跑没有信息量)。
+2. **tests** —— 在工作树里依次 `bun run typecheck` → `bun run depcheck` → `bun run test` → `npm run test:node -- --reporter=dot`,第一条红就停(后面几条在同一个坏状态上跑没有信息量)。
 3. **review** —— **新会话**的只读 `claude -p`(`--disallowedTools Edit,Write,MultiEdit,NotebookEdit`),要一份 `{ verdict, findings }` 的 JSON。`critical` / `important` ⇒ 修复轮;`approve` 且只剩 `minor` ⇒ 过,minor 带进拍板卡。判了 `changes` 却一条 `critical` / `important` 都列不出来的,**照样算一轮修复轮**(说要改又说不出哪里要改,不该当成放行)。评审会话要是动了工作树,流水线会还原,并**直接按 `changes` 算**。
 4. **ci** —— 推 `self/<id>`,进程内调 `ci triage --wait --rerun`。绿才过;已知 flake 由 triage 重跑,第二次仍红一律真红。triage 退 2(压根没有运行 / 等超时 / `gh` 没登录)⇒ `ci_unavailable`,**不进修复轮** —— 交给执行者修一个它看不见的 CI 是白烧预算,这条要人去看。
 5. **approval** —— 拍板卡发到主人微信(需求、分支、**执行者最后那段交代**、diffstat、测试摘要、评审 verdict、CI 链接、费用),回「y <码>」才合。`n` ⇒ 退 3;超时(缺省 24 小时)⇒ 退 4,`--resume` 会重发卡。daemon 回的 `delivered` 说的是**卡片有没有进微信**:`false` 时条目照样在登记处等着(存盘里记成 `approval.delivered: false`),流水线照常轮询,只是会在终端和微信各说一句「换个面拍」—— 见下一节。
 
-过了五道才 `git rebase` + `--ff-only` 合进 `dev` 并推上去,然后构 sidecar、`self deploy`、`selftest workbench` + `selftest chat`。自检红 ⇒ 二进制回滚到 `.prev`,**但代码已经在 `dev` 上了** —— 报告里会明说这件事,需要人去改好或 revert。
+过了五道才 `git rebase origin/dev` + **快进 push**(`git push origin HEAD:refs/heads/dev`,不带 `--force` —— 普通 push 天然只许快进,语义和 `merge --ff-only` 一样;被拒就是远端在这中间前进了 ⇒ `merge_conflict`)合进 `dev`,然后构 sidecar、`self deploy`、`selftest workbench` + `selftest chat`。工作树里**不 `checkout dev`**:git 不许同一条分支在两棵树里检出,而且也不需要 —— rebase 完 HEAD 本身就是 `origin/dev` 的直系后代。自检红 ⇒ 二进制回滚到 `.prev`,**但代码已经在 `dev` 上了** —— 报告里会明说这件事,需要人去改好或 revert。
 
-**构建之前先确认克隆站在批准的那条提交上。** 专用克隆是所有自改共用的:A 批准合入了但部署失败,之后 B 在同一个目录里被闸门拦下、HEAD 就停在 B 上 —— `--resume A` 从 `deploy` 起步,老代码构建的是「目录里当时的东西」(2026-09-21 审查 #4)。现在 `deploy` 先问三句话:`HEAD == merge.sha`、工作树干净、站在 `<branch>` 上;对不上就只在「`merge.sha` 仍是 `origin/<branch>` 的祖先」时硬拉回去(`fetch` + `merge-base --is-ancestor` + `checkout`/`reset --hard`/`clean -fd`),拉回去再验一遍。还对不上(或者存盘里压根没记 `merge.sha`)⇒ `deploy_tree_mismatch`,退 1,不构建不部署;这不算「机器坏了」,所以不推 `fail_streak`、不停机 —— 正因为它不会自动重来,通知里会写明「把克隆弄回干净(或者整个删掉 `self_change.workdir` 下的 `repo` 让它重新克隆)之后 `wechat-cc self change --resume <id>`」。真换上去的那条记在 `deploy.sha` 里(构建出来没装上去的不算)。
+**一次运行,一个工作树。** `<workdir>/repo` 只是**中枢克隆**:只用来 `fetch` 和管工作树,不在里面构建、不在里面 checkout 业务分支。每条运行 `git -C <hub> worktree add <workdir>/runs/<id> -b self/<id> origin/<branch>`,之后 implement / guard / tests / review / ci / merge / deploy 全在这棵树里跑。以前所有运行共用一个克隆(每次 `checkout -B` + `reset --hard`),B 的 `repo` 步会在 A 的树底下把文件换掉 —— 2026-09-21 审查 #4 就是这个类。
+
+**构建之前只剩一条断言。** 上一轮给「共用克隆」打的补丁(部署前 `fetch` + `merge-base --is-ancestor` + `checkout`/`reset --hard`/`clean -fd` 把克隆钉回批准的那条提交,再验一遍)**整条删掉**了:一棵树只有一条运行在用,没有别人能动它。现在 `deploy` 只问两句话:`HEAD == merge.sha`、`status --porcelain` 干净。工作树整个不在了(人手工删过、被顺手清理过)⇒ 先 `git -C <hub> worktree prune`(目录没了但中枢里还登记着,不 prune 的话 `worktree add` 直接拒绝)再 `worktree add --detach <workdir>/runs/<id> <merge.sha>` 重开一个、`bun install --frozen-lockfile` 补上依赖,然后照样断言。对不上、重开不出来(比如批准的那条被 force-push 抹了)、或者存盘里压根没记 `merge.sha` ⇒ `deploy_tree_mismatch`,退 1,不构建不部署;这不算「机器坏了」,所以不推 `fail_streak`、不停机 —— 正因为它不会自动重来,通知里会写明「把 `self_change.workdir` 下的 `runs/<id>` 整个删掉(下一次会按批准的那条提交重开一个)之后 `wechat-cc self change --resume <id>`」。真换上去的那条记在 `deploy.sha` 里(构建出来没装上去的不算)。
+
+**清理是机会性的。** 每条运行的 `repo` 步开头顺手做一次:`git -C <hub> worktree prune`,再把**终局且 `updatedAt` 超过 24 小时**的那几条运行(`StateStore.list()` 列得出来)的 `runs/<id>` 用 `worktree remove --force` 删掉。还没收场的(`result` 还是 `null`)一律不碰 —— 那可能是一条停在拍板上等了一整天的运行,它的工作树还要用。清理失败只记一笔,绝不把新的一条判红。
 
 **回滚之后盘上写的是「现在跑的是什么」。** 自检红、二进制换回 `.prev` ⇒ `deploy.ok=false`、`deploy.version=null`、`deploy.rolledBack=true`,并且**步退回 `deploy`**。老代码把步留在 `selftest`、`deploy.ok` 还留着 `true`,`--resume` 于是对着那个已经被换回去的旧二进制再跑一遍自检 —— 旧的当然绿,报告就写「部署:绿」、`fail_streak` 清零,而机器上根本没有这条改动(审查 #8)。恢复一条收在 `deploy_failed` / `selftest_failed_rolled_back` 的,一律重新构建、重新部署、再自检。
 
@@ -173,10 +177,11 @@ wechat-cc self change --unhalt     # 清 halted_at / halt_reason,fail_streak 归
 | --- | --- |
 | 每条自改的存盘 | `$STATE_DIR/self-change/<id>.json`(缺省 `~/.claude/channels/wechat/self-change/`,0600 —— 里面有需求原文和会话 id) |
 | 「一次只跑一条」的锁 | `$STATE_DIR/self-change/lock`(写着持有者 pid;持有者死了会被下一条抢过来) |
-| 专用克隆 | `<workdir>/repo`,缺省 `~/Library/Caches/wechat-cc/self-change/repo` |
+| 中枢克隆(只 fetch / 管工作树) | `<workdir>/repo`,缺省 `~/Library/Caches/wechat-cc/self-change/repo` |
+| 每条运行自己的工作树 | `<workdir>/runs/<id>`(终局满 24 小时后由下一条运行顺手删) |
 | 给执行者的那份交代 | `<workdir>/briefs/<id>.md` |
 
-克隆**刻意不在 `STATE_DIR` 下面**:执行者在 `--dangerously-skip-permissions` 下跑,不能离 `access.json` 和钥匙只有一个 `..`;也不在 tmpdir(克隆要跨次复用,不能被系统清掉)。
+这些**刻意不在 `STATE_DIR` 下面**:执行者在 `--dangerously-skip-permissions` 下跑,不能离 `access.json` 和钥匙只有一个 `..`;也不在 tmpdir(中枢克隆要跨次复用,不能被系统清掉)。
 
 ## 微信里怎么用
 

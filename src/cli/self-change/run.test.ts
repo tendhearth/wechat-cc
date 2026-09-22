@@ -14,8 +14,6 @@ const HAPPY_GIT = gitReply({
   'diff --name-only': 'docs/x.md\nsrc/a.ts\n',
   'rev-parse HEAD': 'a'.repeat(40),
   'diff --stat': ' docs/x.md | 1 +\n',
-  // 部署前那道树检查(审查 #4)要问的:克隆站在哪个分支上。
-  'rev-parse --abbrev-ref HEAD': 'dev\n',
 })
 
 function recordingStore(): { store: StateStore; steps: SelfChangeStep[]; rows: SelfChangeState[] } {
@@ -214,8 +212,9 @@ describe('结局', () => {
 
   // deploy_tree_mismatch 既不停机也不会自动重来 —— 通知里不写「人该做什么」
   // 的话,主人只看到一条失败,不知道这条会一直停在这儿。
-  it('克隆里不是批准的那条 ⇒ 通知要带上怎么接着装', async () => {
-    const { deps, rec } = happy({ git: args => (args.includes('--is-ancestor') ? { code: 1 } : HAPPY_GIT(args)) })
+  it('工作树里不是批准的那条 ⇒ 通知要带上怎么接着装', async () => {
+    // HEAD 是 HAPPY_GIT 里的 a…,批准的是 e… —— 对不上(`happy` 的工作树是在的)。
+    const { deps, rec } = happy()
     const s = fakeState({ step: 'deploy', merge: { sha: 'e'.repeat(40), rebased: false } })
     const { state, exitCode } = await runSelfChange(s, deps)
 
@@ -223,7 +222,8 @@ describe('结局', () => {
     expect(exitCode).toBe(1)
     const notice = rec.notices.at(-1) ?? ''
     expect(notice).toContain('wechat-cc self change --resume ab12cd34')
-    expect(notice).toContain('repo')
+    // 恢复办法换了:删掉这条运行自己的工作树,下一次按批准的提交重建。
+    expect(notice).toContain(join('runs', 'ab12cd34'))
     expect(notice).toContain('不会自动重来')
     expect(rec.deployed).toEqual([])
     // 不是机器坏了:不推 fail_streak、不停机。
@@ -399,7 +399,7 @@ describe('回滚之后恢复要重新部署', () => {
 
     expect(exitCode).toBe(0)
     expect(state.result).toBe('done')
-    expect(retry.rec.deployed).toEqual([join('/w', 'repo')])
+    expect(retry.rec.deployed).toEqual([join('/w', 'runs', 'ab12cd34')])
     expect(retry.rec.exec.some(c => c.includes('build-sidecar'))).toBe(true)
     expect(state.deploy).toEqual({ ok: true, version: '1.2.3', sha: SHA, rolledBack: false })
     // 这一次「部署:绿」是真部署换来的。
