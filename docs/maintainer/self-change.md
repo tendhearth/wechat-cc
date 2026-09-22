@@ -202,6 +202,7 @@ daemon 收到之后 spawn 一个 detached 的 `wechat-cc self change --from wech
 
 ## 已知限制
 
+- **工作树只回收两种终局:`done` 与 `declined`。** 其余的终局——`approval_timeout` / `ci_unavailable` / `merge_conflict` / `tests_exhausted` / `deploy_failed`,这些都还能 `--resume` 接着跑——以及压根没跑完就被杀掉的运行(`result` 永远是 `null`,比如进程被强杀、机器意外重启),它们的 `runs/<id>` 目前**永不回收**,磁盘随运行次数单调增长(`bun install` 的 `node_modules` 是 CoW 链接,占块不大,但目录数只增不减)。这是有意的取舍:宁可占着盘,也不能把一轮已经花过钱的实现扫掉;回收它们缺一个显式的"这条我不接了"的入口(比如一条主动作废某条运行的命令),目前还没有做。
 - **rebase 之后不重跑 CI。** 合入前会 `git rebase origin/dev`,动了 HEAD 也不重跑 —— `dev` 上并发提交少,重跑要主人再等一轮。代价是 `ci_sha ≠ merge_sha`,报告里会单独说一句。
 - **一次只跑一条。** 第二条进来直接 `self_change_busy` 退 2。
 - **只支持 macOS。** 最后两步踩的是 launchd(`self deploy`)和真机自检,其他平台在第一行就退 2。

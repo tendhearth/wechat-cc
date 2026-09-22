@@ -137,4 +137,27 @@ waitingFor: { taskId, title, reason, holderWriting: boolean, closeInMs: number |
 
 ## 修订记录
 
-(实现后补。)
+**2026-09-21(实现完成后补):以下是与本文原稿的实质偏差,均经控制器裁决,不是实现者自作主张。**
+
+### 工作台(Task 1、Task 2)
+
+- **`agent-config.json` 两个旋钮的缺省值确认**:`workbench_retained_idle_close_ms` 缺省 `600_000`(10 分钟)、`workbench_handoff_grace_ms` 缺省 `15_000`(15 秒),负数/非数/读取抛错都当缺省,与本文一致,实现落在 `service.ts` 的 `msKnob` / `retainedIdleMs` / `handoffGraceMs`。
+- **`settleQuiet` 补一次 `captureCodeChanges`**(本文只列了 `armIdleClose` / 登记成果 / 标 `replied`)。理由:代码变更快照原来挂在已删除的 `releaseTurnLease` 上,那条路没了之后就没有人会在回合安静时截快照——`captureCodeChanges` 现在改由 `settleQuiet` 直接调用(`void captureCodeChanges(running).catch(()=>{})`),不再带代数参数。
+- **`submitInput` 的两处 `await`(等在途快照截完、缺基线时重取)之后补一道"过期复查"**:`if(runsByTask.get(id)!==running||running.cancelled||running.finishing||running.uncertain) throw Error('input_stale')`。理由:这两步 `await` 可能耗时十几秒,期间一轮自动续作可能正常收尾 ⇒ `settleQuiet` 重新武装了让位计时 ⇒ 到点 `closeForIdle` 把这条会话关掉、文件夹交给了排队的下一位——续接的那句话若不重新检查,会投给一条已经关闭、原生进程尚未退出的会话,造成两个写手同时占着一个文件夹。BASE(旧租约模型)靠 `acquireTurnLease` 里的 `alive()` 挡这一下,那个函数随旧模型一起删除,这道复查是它的替代品,不是新增功能。
+- **`submitInput` 存盘失败的回滚从"什么都不做"改成"重新武装计时器"(`armIdleClose(running)`)**。本文没有细讲这条路径。原因:入口处已经无条件 `cancelIdleClose`(取消当次计时,理由见下一条),如果这句话最终没能存进 `liveInputs`(比如 SQLite 抛错),会话仍然是安静的,但已经没有任何东西会让它自动收工——文件夹会被这次失败的补充永久卡住,直到主人手动结束。回滚后重新武装是"回到失败发生前的状态",不是引入新的释放路径。
+- **未投递的补充会挡住自动收工**(本文完全没写这条,是评审在实现完成后发现的一个回归)。判据:`hasUndeliveredInput(running) = store.liveInputs.count(taskId) > 0`,数的是 `status IN ('pending','sending')`——和 `holdInputs` / `recover` 盯的是同一批。`held` 状态**故意不算**:那一批已经投递失败、要主人自己处理,如果也算进"不安静",一条被弃置的 `held` 补充会永久卡死这个文件夹,比原来的 bug(主人一句话被收工冲成"补充尚未发送")更糟。`armIdleClose` 与 `closeForIdle` 两处都读这个判据(互为纵深防御,任一处都能独立挡住场景,只删一处不会引入可观察的破坏)。这条判据成立的必要条件是:一句已经进 `liveInputs`、还没投给原生 runtime 的补充,如果被**之后才建的**排队任务的等待重新武装了短让位计时,不能被收工冲掉。代价:补充卡在 `pending`/`sending` 状态迟迟不动的会话(真机上这个窗口很窄,紧接着就是投递或结算)不会被自动收工回收,但主人手里还有手动"结束会话"这条路。
+- **两处渲染倒计时统一用 `Math.floor` 而不是 `Math.round`**,并 `Math.max(0, …)` 兜底:桌面 `apps/desktop/src/modules/workbench.js` 与微信 `src/core/workbench/wechat-control.ts` 的 `statusReply` 各一处。理由:显示给主人的"还剩 N 秒"不许比实际更多——`Math.round` 会把 7500ms 报成"8 秒",而收工恰恰会发生在第 8 秒之前,让主人看着一个还没到的数字。向下取的代价是最后一秒会显示"0 秒",方向保守、可接受。
+- **桌面渲染去重(`paintKey()`)与结构签名(`workbench-live.js` 的 `structuralSignature()`)都把 `waitingFor.closeInMs` 从比较键里抹平(设成 0)**,`holderWriting` 等真正的状态字段原样参与比较。本文没有讨论渲染去重这一层。理由:`closeInMs` 每次 `list()` 都按 `Date.now()` 现算,列表轮询(缺省 3 秒)只要有任务挂着让位计时,这个字段就永远在变,会打穿两处本来就是为"永远在变的字段"设计的去重逻辑,造成整个工作台面板每 3 秒无谓重画一次(仓库自己的注释说这类全量重画会打断输入和滚动)。只抹去重键里的一份影子,`state.tasks` 本身与实际渲染用的 `closeInMs` 一个字节不动,显示的秒数照样精确。
+
+### 自改流水线(Task 3)
+
+- **清理门从"终局(`result !== null`)且超 24 小时"改成白名单 `SWEEPABLE_RESULTS = ['done', 'declined']` 且超 24 小时**,推翻本文"删掉 `ensureApprovedTree`"一节里隐含的"终局即可清理"的说法。理由:`approval_timeout` / `ci_unavailable` / `merge_conflict` / `tests_exhausted` / `deploy_failed` 都是有终局的,但它们全是文档明说 `--resume` 能接着跑的;而 `--resume` 是从 `state.step` 起步的,只有 `deploy` 会重开工作树——扫掉一条停在 `approval` 的树,`--resume` 的第一条 git 就在一个不存在的目录里 spawn 得到 ENOENT,`refs/heads/self/<id>` 还在中枢里也接不回来。代价:非白名单失败码的工作树永不回收,是有意的磁盘泄漏(见下一条),记入 backlog。
+- **`git worktree add -B <branch> <tree> origin/<branch>` 取代本文写的"`branch -D` 再 `-b`"**。理由:新 id 的分支本来就不存在,`branch -D` 每轮都注定失败一次,每轮都打一行"清掉本地分支失败(不影响结果)"——一条部署自己 daemon 的流水线不该把读日志的人训练成忽略失败行。已实测确认 `-B` 语义等价(同名分支照样丢弃重开)且安全性不变(分支被别的工作树检出时照样拒绝)。
+- **`ensureRunTree` 重建工作树时,`worktree add --detach` 之前多一条 `worktree prune`,之后多一条 `bun install --frozen-lockfile`**,本文只写了 `worktree add --detach`。前者是必需的:实测 `rm -rf` 掉工作树目录之后不先 `prune`,`worktree add` 会以"missing but already registered worktree"直接拒绝。后者也是必需的:重开的工作树里没有 `node_modules`,后续的 `bun run build-sidecar` 会当场失败——装不上依赖时返回 `deploy_tree_mismatch`(说不清要装什么,不算机器坏了),不会推 `fail_streak`、不会停机。
+- **已知限制,记入 backlog、本轮未修**:可 `--resume` 的运行(白名单之外的失败码)与被 kill 的运行(`result` 永远是 `null`,比如进程被强杀)的工作树目前都**永不回收**,磁盘随运行次数单调增长(`bun install` 的 `node_modules` 是 CoW 链接,占块不大,但目录数只增不减)。这是"宁可占盘,也不扔掉一轮已经花过钱的实现"这条原则的自然延伸,回收缺一个显式的"这条我不接了"的入口,目前没有做。
+
+### 一条依赖,写下来供以后排查(控制器裁决从 Task 1 转到本节)
+
+长空闲/短让位的自动收工**完全是事件驱动的**:只有三处会武装或重排计时器——安静转移(`noteTransition` 的"变安静"分支)、`pump()` 发现有等待者被安静的持有者挡住、以及 `submitInput` 存盘失败之后的回滚。与此同时,回合看门狗(`collectWorkbenchTurn` 的空闲判定回调)对`retained && foreground==='idle' && backgroundCount===0` 的会话**是明确暂停轮询的**——这类会话被认为已经"该收尾了",不再消耗事件循环。
+
+两者叠在一起意味着:如果哪天某个执行者的运行时快照在**没有任何事件**的情况下从"忙"翻成"静"(比如某种底层通知丢失、或者一种今天不存在的运行时报告方式),既不会有转移触发计时,也不会有看门狗的周期性扫描把它捞回来——那个文件夹会一直被占着,直到主人手动结束,或者有新的等待者排上来间接触发 `pump()` 的武装点。**这不是这一轮引入的回归**——旧的租约模型同样完全依赖事件(`result` 事件驱动落定),此前也没有兜底的周期性扫描。但这条依赖此前从未被明确写下来过,现在是唯一的释放路径,值得留一笔,好让以后排查"文件夹莫名被占住"时不必重新发现这件事。

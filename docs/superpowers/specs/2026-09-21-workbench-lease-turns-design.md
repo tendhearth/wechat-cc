@@ -1,5 +1,7 @@
 # 工作台租约按回合计代:交错缺口四条(评审 2026-09-21 #1 #2 #6 #7)
 
+**本设计已被 [`2026-09-21-one-folder-one-session-design.md`](2026-09-21-one-folder-one-session-design.md) 取代**——它去掉了本设计整套「回合代数 + 状态转移探测器 + fail-closed 结束会话」的机制,换成「占用跟着还能写它的会话走」这条更简单的不变式;本设计里 `turn` / `retained_turn` / `onAutonomousStart` 等标识符在新设计里已被整体删除。以下内容保留作为问题分析的历史记录。
+
 日期:2026-09-21。对象:`src/core/workbench/service.ts` 的回合租约 / 保留会话机制(2026-09-15「答复即释放」+ 09-16 评审 #9「差异边界 = 租约边界」之后的形态)。外部评审 `~/Documents/tendhearth/cc-review/2026-09-21-claude-changes-review.md` 用假 runtime 复现了四条交错缺口,探针 `runtime-probe.ts` 在 `87fc118c` 上全部复现。
 
 ## 四条缺口的共同根因
