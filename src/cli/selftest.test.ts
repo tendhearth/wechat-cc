@@ -806,7 +806,9 @@ it('requests an explicit root file and a controlled permission probe, rather tha
   const prompt=api.calls.find(c=>c.path==='/v1/workbench/create')!.body.text
   expect(prompt).toContain('项目根目录')
   expect(prompt).toContain('rm -- cc-selftest-permission-probe.txt')
-  expect(files.get('/scratch/wb-1000/cc-selftest-permission-probe.txt')).toBeDefined()
+  // 期望值用 join 拼:deps.fs.write 记的是产品用 join(scratchPath, …) 拼出来的
+  // 真实路径,Windows 上是反斜杠,POSIX 字面量在那边永远取不到。
+  expect(files.get(join('/scratch', 'wb-1000', 'cc-selftest-permission-probe.txt'))).toBeDefined()
 })
 
 
