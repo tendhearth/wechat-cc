@@ -462,7 +462,7 @@ vi.mock('@openai/codex-sdk', () => {
      * the spawn is actually exercised, not just constructed).
      *
      * Held as `unknown` so the field works for the cheapEval path too
-     * (whose `run()` throws here so the recorder never fires anyway).
+     * (whose `run()` never fires the recorder — see below).
      */
     private readonly _threadOptions: Record<string, unknown> | null
 
@@ -481,8 +481,9 @@ vi.mock('@openai/codex-sdk', () => {
       // Fire the spawn recorder ONCE per thread on the first runStreamed
       // — matches the Claude side, which records inside `query()` so
       // cheapEval (single-shot string path) is naturally excluded.
-      // Codex's cheapEval uses `thread.run()` (which throws below), so
-      // this branch is only reachable from the provider's session spawn.
+      // Codex's cheapEval uses `thread.run()` (below, which deliberately
+      // does NOT record), so this branch is only reachable from the
+      // provider's session spawn.
       if (this._firstRun && codexSpawnRecorder && this._threadOptions) {
         try { codexSpawnRecorder(this._threadOptions) } catch {}
       }
@@ -491,9 +492,28 @@ vi.mock('@openai/codex-sdk', () => {
       return { events: buildTurnEvents(threadId, text, emitStarted) }
     }
 
-    // Satisfy the Thread interface — provider uses runStreamed exclusively.
-    async run(): Promise<never> {
-      throw new Error('FakeCodexThread.run: not implemented; provider uses runStreamed')
+    /**
+     * One-shot eval path. `codex-agent-provider.ts` uses `thread.run()`
+     * (NOT runStreamed) for `cheapEval`, and since 2026-09-09 the codex
+     * provider is wrapped in `withFirstUseProbe`, whose probe IS a
+     * cheapEval call — so every codex e2e now goes through here before
+     * the first spawn. Returning a turn with one `agent_message` is what
+     * the real SDK does; an empty/throwing run() makes the boot probe
+     * fail and the provider refuses every dispatch.
+     *
+     * Deliberately NOT wired to `codexScript` and NOT recording a spawn:
+     *   - the spawn recorder must only see real session spawns (see
+     *     installCodexSpawnRecorder), and
+     *   - routing the probe prompt into the test's onDispatch would make
+     *     the script observe a message the user never sent (and could
+     *     bridge stray tool calls into the outbox).
+     * The moderator script gets first refusal, mirroring the Claude
+     * single-shot path, so codex-as-cheap-model tests can still steer it.
+     */
+    async run(prompt: unknown): Promise<{ items: Array<Record<string, unknown>> }> {
+      const text = typeof prompt === 'string' ? prompt : JSON.stringify(prompt)
+      const out = moderatorScript ? await moderatorScript.onEval(text) : 'ok'
+      return { items: [{ type: 'agent_message', text: out }] }
     }
   }
 
