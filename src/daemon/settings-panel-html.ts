@@ -9,6 +9,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { safeSvg } from '../lib/svg-sanitize'
+import { MOBILE_BRAND_ICON_VERSION } from './mobile-brand-icon'
 import {MOBILE_WORKBENCH_JS} from './mobile-workbench-client'
 
 export function safeSvgFile(path: string): string | null {
@@ -54,7 +55,7 @@ export function pageHtml(token: string): string {
   #toast.show { opacity:1 }
   .save { font:inherit; padding:8px 16px; border:0; border-radius:10px; background:var(--accent); color:#fff; margin-top:8px }
 </style></head><body>
-<h1>🐻 CC 的设置</h1>
+<h1><img src="/m/icon.png" alt="" width="32" height="32" style="vertical-align:middle;margin-right:6px">CC 的设置</h1>
 <div class="sub">改完立即生效 · 链接 10 分钟内有效 · <a href="javascript:void(0)" onclick="ccNav('/m')" style="color:var(--accent)">随身 CC →</a></div>
 
 <section id="sec-persona">
@@ -343,6 +344,8 @@ load().catch(() => {})
 
 export const SW_JS = `
 const CACHE = 'cc-shell-v1'
+// Rotate static brand assets with the PNG; preserve the paired offline shell.
+const BRAND_CACHE = 'cc-brand-${MOBILE_BRAND_ICON_VERSION}'
 self.addEventListener('install', function(e){ self.skipWaiting() })
 self.addEventListener('activate', function(e){ e.waitUntil(self.clients.claim()) })
 self.addEventListener('fetch', function(e){
@@ -355,7 +358,7 @@ self.addEventListener('fetch', function(e){
     return
   }
   if (url.pathname === '/m/icon.png' || url.pathname === '/m/manifest.json') {
-    e.respondWith(caches.open(CACHE).then(function(c){ return c.match(e.request).then(function(m){ return m || fetch(e.request).then(function(r){ c.put(e.request, r.clone()); return r }) }) }))
+    e.respondWith(caches.open(BRAND_CACHE).then(function(c){ return c.match(e.request).then(function(m){ return m || fetch(e.request).then(function(r){ c.put(e.request, r.clone()); return r }) }) }))
     return
   }
   // /m/api/* and everything else — let the page decide (LAN → tunnel).
@@ -365,7 +368,7 @@ self.addEventListener('fetch', function(e){
 export const M_BOOTSTRAP_HTML = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="manifest" href="/m/manifest.json"><title>CC</title>
 <body style="font-family:system-ui;background:#f5ead8;color:#5a3f2d;display:grid;place-items:center;height:100vh;margin:0">
-<div style="text-align:center"><div style="font-size:52px">🐻</div><p id="msg">正在找你的钥匙…</p></div>
+<div style="text-align:center"><img src="/m/icon.png" alt="CC" width="64" height="64"><p id="msg">正在找你的钥匙…</p></div>
 <script>
 try {
   var d = localStorage.getItem("deviceToken")
@@ -511,7 +514,7 @@ export function phoneHtml(token: string, remote: { relay: string; id: string } |
   .more { display:block; margin:6px auto 0; font:inherit; font-size:13px; padding:7px 18px; border:1.5px solid var(--line); border-radius:999px; background:var(--card); color:var(--soft) }
   .sec { margin-top:18px }
 </style></head><body>
-<header><h1>🐻 CC</h1><div class="sub" id="sub">随身小窗 · 数据都在你自己电脑上</div></header>
+<header><h1><img src="/m/icon.png" alt="" width="32" height="32" style="vertical-align:middle;margin-right:6px">CC</h1><div class="sub" id="sub">随身小窗 · 数据都在你自己电脑上</div></header>
 <div id="pairbar" hidden>这个链接 10 分钟就过期<button id="pairbtn">把 CC 带在身上</button></div>
 <div class="pane on" id="p-today">
   <div class="pres" id="pres"><span>现在:</span><b id="pres-txt">不知道</b><button id="refresh">刷新</button></div>
@@ -524,13 +527,16 @@ export function phoneHtml(token: string, remote: { relay: string; id: string } |
   <div class="sec"><div class="grp">表情</div><div class="stgrid" id="stickers"></div></div>
 </div>
 <style>
-#m-controls fieldset{border:1px solid var(--line);border-radius:8px;margin:12px 0;padding:10px} .m-option{display:block;margin:10px 0} .m-option small{display:block;margin-left:22px} .m-option textarea{display:block;box-sizing:border-box;width:100%;font:inherit;padding:8px} .m-description{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit} #m-notice{padding:8px 0;white-space:pre-wrap} #m-controls button{min-height:40px} #m-controls button:disabled,#m-send:disabled{opacity:.5} #m-artifacts small{display:block} #m-list button.card{width:100%;text-align:left;font:inherit;color:inherit} #m-artifact-preview{overflow-wrap:anywhere}
+#m-controls fieldset{border:1px solid var(--line);border-radius:8px;margin:12px 0;padding:10px} .m-option{display:block;margin:10px 0} .m-option small{display:block;margin-left:22px} .m-option textarea{display:block;box-sizing:border-box;width:100%;font:inherit;padding:8px} .m-description{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit} #m-notice{padding:8px 0;white-space:pre-wrap} #m-conn{padding:8px 10px;margin:8px 0;border:1px solid var(--line);border-radius:8px;font-size:.92em;opacity:.85} #m-controls button{min-height:40px} #m-controls button:disabled,#m-send:disabled{opacity:.5} #m-artifacts small{display:block} #m-list button.card{width:100%;text-align:left;font:inherit;color:inherit} #m-artifact-preview{overflow-wrap:anywhere}
 #m-controls .done-btn,#m-send{font:inherit;min-height:44px;padding:9px 16px;border:1px solid var(--accent);border-radius:10px;background:var(--accent);color:#fff;cursor:pointer}
 #m-controls .more{display:inline-block;min-height:44px;margin:8px 0 0 8px;padding:9px 16px;border-radius:10px;color:var(--ink)}
 .m-option textarea{border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
 #m-controls :focus-visible,#m-send:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 </style>
 <div class="pane" id="p-matters">
+  <!-- 连接提示:平时不在,连续两次联系不上 daemon 才浮出来,恢复后自己消失。
+       放在列表与详情之外,两边共用同一行。 -->
+  <div id="m-conn" role="status" aria-live="polite" hidden></div>
   <div id="m-list"><div class="empty">正在读…</div></div>
   <div id="m-detail" hidden>
     <button id="m-back" class="more" type="button">← 全部</button>
