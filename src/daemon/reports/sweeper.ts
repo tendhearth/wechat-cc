@@ -165,6 +165,11 @@ export async function runReportSweep(deps: ReportSweepDeps): Promise<ReportSweep
   const due = await deps.store.listDue(deps.nowMs)
   const result: ReportSweepResult = {delivered: 0, retried: 0, dropped: 0, deferred: 0, held: 0}
   let sendAttempts = 0
+  // fix round 1 Task-4 遗留 B(2026-09-23,评审点名):只在打印的汇总行里露出,
+  // 不进 ReportSweepResult——那个结构化返回值被 sweeper.test.ts 大量 toEqual
+  // 精确比对,加一个字段要动几十处断言,而这条遗留问题原话点名的是"汇总看
+  // 不到",不是"结构化结果看不到"。
+  let heldOverrideCount = 0
 
   for (const rec of due) {
     // Origin chat lookup happens before the budget gate: it's a pure read,
@@ -183,6 +188,12 @@ export async function runReportSweep(deps: ReportSweepDeps): Promise<ReportSweep
     // backoff, no first_fail_at — it just stays pending for the next sweep.
     // See the quiet-gate doc block above the imports for why the call point
     // is here and not at enqueue time.
+    // fix round 1 Task-4 遗留 A(2026-09-23,评审点名):这条日志以前打在预算
+    // 门**之前**,却说"无视粗闸照发"——如果这一拍预算已经耗尽,下面的预算
+    // 门会把这一行 `continue` 成 deferred,这一拍根本没有发,日志撒了谎。
+    // 现在只记一个待发标记,真正的日志挪到预算门**之后**(确认这一拍真的
+    // 会尝试发送)才打,遣词也不再改——"无视粗闸照发"这句话此时才是真的。
+    let forcedRelease = false
     if (!shouldDisturb({lastSeenAt: originBinding.lastSeenAt, now: deps.nowMs})) {
       const heldSinceMs = deps.nowMs - rec.createdAt
       if (heldSinceMs <= HELD_OVERRIDE_MS) {
@@ -191,10 +202,8 @@ export async function runReportSweep(deps: ReportSweepDeps): Promise<ReportSweep
         continue
       }
       // 强制放行:挡了太久,不能让"主人正在正常用微信"变成"永远收不到自己
-      // 交办的这条回报"。不 continue——落到下面照常走预算门 + 发送逻辑,只是
-      // 打一条跟普通 held/delivered 都不一样的日志,方便真机上看出这条是被
-      // 强制放行的,不是自然轮到的。
-      deps.log('REPORTS', `held-override ${rec.id} (matter ${rec.matterId}) → ${chatId}: 粗闸挡了 ${heldSinceMs}ms(超过强制放行上限 ${HELD_OVERRIDE_MS}ms,自入队起算),无视粗闸照发`)
+      // 交办的这条回报"。不 continue——落到下面照常走预算门 + 发送逻辑。
+      forcedRelease = true
     }
 
     if (sendAttempts >= maxSends) {
@@ -202,6 +211,10 @@ export async function runReportSweep(deps: ReportSweepDeps): Promise<ReportSweep
       continue
     }
     sendAttempts++
+    if (forcedRelease) {
+      heldOverrideCount++
+      deps.log('REPORTS', `held-override ${rec.id} (matter ${rec.matterId}) → ${chatId}: 粗闸挡了 ${deps.nowMs - rec.createdAt}ms(超过强制放行上限 ${HELD_OVERRIDE_MS}ms,自入队起算),无视粗闸照发`)
+    }
 
     let outcome: {ok: boolean; error?: string}
     try {
@@ -258,8 +271,13 @@ export async function runReportSweep(deps: ReportSweepDeps): Promise<ReportSweep
   // many reports are currently being quiet-gated" answerable without
   // grepping every tick — same rationale as held-override's distinct log,
   // both aimed at making long-stuck reports observable on a real machine.
-  if (result.held > 0) {
-    deps.log('REPORTS', `sweep summary: held=${result.held} delivered=${result.delivered} retried=${result.retried} dropped=${result.dropped} deferred=${result.deferred}`)
+  // fix round 1 Task-4 遗留 B(2026-09-23,评审点名):held-override 也并进
+  // 汇总行的触发条件与内容——以前只看 result.held,一拍里全是 held-override
+  // (挡住已经全部超过强制放行上限、被强制发送)而 held 恰好是 0 时,汇总行
+  // 完全不出现,"长期被拖延"又只剩逐行日志能看见,回到了这条遗留问题本来
+  // 要解决的那个洞。
+  if (result.held > 0 || heldOverrideCount > 0) {
+    deps.log('REPORTS', `sweep summary: held=${result.held} held-override=${heldOverrideCount} delivered=${result.delivered} retried=${result.retried} dropped=${result.dropped} deferred=${result.deferred}`)
   }
 
   return result

@@ -641,7 +641,7 @@ document.getElementById("todos").addEventListener("click", function(ev) {
     .catch(function(){ toast("网络不通") })
 })
 var HOME_KEY = "cc.home.v1"
-var KIND_ICON = { hunt: "🎯", visit: "🏡", postcard: "💌", thought: "💭", chat_day: "💬" }
+var KIND_ICON = { hunt: "🎯", visit: "🏡", postcard: "💌", recollection: "📖", thought: "💭", chat_day: "💬" }
 var homeState = null
 // I5:presence 没有独立的过期机制 —— 页面一直开着,只有 load/visibilitychange/
 // 手动刷新才会重拉。这里给它记一个「拉到的时间」,过 TTL 就自己塌成「不知道」,

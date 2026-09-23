@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { maybeRecollect, STORY_SIGNALS } from './recollection'
+import { maybeRecollect, STORY_SIGNALS, crossedOvernight, buildRecollectionPrompt, RETURNED_SIGNAL_UNAVAILABLE } from './recollection'
 
 describe('maybeRecollect —— 判据是故事性,不是产出', () => {
   it('够不上门槛的事,连便宜模型都不问', async () => {
@@ -57,5 +57,34 @@ describe('maybeRecollect —— 判据是故事性,不是产出', () => {
 
   it('STORY_SIGNALS 阈值就是 brief 定的那三个数(起步保守,回头按真实数据调)', () => {
     expect(STORY_SIGNALS).toEqual({ turns: 2, returned: 1, overnight: true })
+  })
+})
+
+describe('crossedOvernight —— 交办与答复是不是不在同一天(UTC 日历日)', () => {
+  it('同一个 UTC 日历日内 —— false', () => {
+    expect(crossedOvernight(Date.parse('2026-09-23T08:00:00.000Z'), Date.parse('2026-09-23T23:00:00.000Z'))).toBe(false)
+  })
+  it('跨了 UTC 日历日 —— true', () => {
+    expect(crossedOvernight(Date.parse('2026-09-23T23:50:00.000Z'), Date.parse('2026-09-24T00:10:00.000Z'))).toBe(true)
+  })
+})
+
+describe('buildRecollectionPrompt —— 给便宜模型的理由 + 标题', () => {
+  it('把够格的理由拼进 prompt,不够格的信号不提', () => {
+    const prompt = buildRecollectionPrompt({ title: '改首页', turns: 2, returned: 0, overnight: false })
+    expect(prompt).toContain('改首页')
+    expect(prompt).toContain('来回了 2 轮')
+    expect(prompt).not.toContain('打回或报错')
+    expect(prompt).not.toContain('跨了一夜')
+  })
+  it('overnight 单独够格时也要提到', () => {
+    const prompt = buildRecollectionPrompt({ title: '半夜排查', turns: 0, returned: 0, overnight: true })
+    expect(prompt).toContain('跨了一夜才有回复')
+  })
+})
+
+describe('RETURNED_SIGNAL_UNAVAILABLE —— returned 目前显式挂账为 0', () => {
+  it('就是字面量 0(接上真数据源那天连这条一起删)', () => {
+    expect(RETURNED_SIGNAL_UNAVAILABLE).toBe(0)
   })
 })

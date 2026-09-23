@@ -30,6 +30,7 @@ import { makeQuotaRegistry, classifyProviderError, type QuotaState } from '../pr
 import { providerDisplayName } from '../provider-display-names'
 import type { MatterStore } from '../matters/store'
 import type { ReportSink } from '../matters/report'
+import type { RecollectSink } from '../matters/recollection'
 import type { UsageSnapshot } from '../subscription-usage'
 import { publicTask, TERMINAL_TASK_STATUSES, type WorkbenchListQuery, type StoredTask, type Task, type TaskStatus, type WorkbenchStore } from './store'
 import { makeTaskChangeHub, type TaskChangeHub } from './task-changes'
@@ -43,6 +44,8 @@ interface Options {
   matters?: MatterStore
   /** 每轮答复的回报投递(docs/cc-workbench.md「一件事」,task-3);可选,不传就整条功能不存在(降级路径)。 */
   reports?: ReportSink
+  /** 「回忆」触发(spec 2026-09-23-delegation-report-design.md「回忆」,task-5);可选,不传就整条功能不存在(降级路径,同 opts.reports)。 */
+  recollect?: RecollectSink
   /** 诊断日志(复用 permission-relay 那条通道);可选,不传就没有痕迹 —— 老接线的行为不变。 */
   log?: (tag: string, line: string) => void
   /** 订阅执行者的真实额度快照(subscription-usage.ts 的监视器缓存);登记处据此提前判耗尽,列表把它带给桌面。 */
@@ -111,6 +114,10 @@ interface Active extends PathReservation {
    *  `turnSeq!==reportedTurn` 时才入队,不依赖「有没有观察到静下来又动起来」这件事本身
    *  ——那件事会被漏看(见 reportOnce 的注释)。 */
   reportedTurn: number
+  /** 「回忆」触发的去重键(task-5,fix round 1:与 `reportedTurn` 同一套道理,同一份
+   *  证据——settleQuiet 会因为转移探测器与显式 `result` 分支各调一次而在同一个 `turnSeq`
+   *  上触发两次,`recollectOnce` 靠这个字段挡。`-1` = 还没触发过。 */
+  recollectedTurn: number
   collection?:Promise<void>
   turnCollection?:Promise<void>
   collectionFailure?:string
@@ -592,6 +599,18 @@ export function makeWorkbenchService(opts: Options) {
     try { opts.reports?.enqueue(running.taskId) } catch (err) { opts.log?.('MATTER_REPORT',`enqueue failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
   }
   /**
+   * 回忆触发,按「这是第几轮」去重(task-5,fix round 1:与 `reportOnce` 同一套道理——
+   * settleQuiet 会因为转移探测器与显式 `result` 分支各调一次而在同一个 `turnSeq` 上触发
+   * 两次,不挡的话同一次答复会喂两次便宜模型、可能写两条几乎一样的回忆)。`turns` 就是
+   * 调用这一刻的 `turnSeq`——它只活在这个运行时结构里,不落盘,daemon 侧的
+   * RecollectSink 事后查不到,只能在这里现读现传。
+   */
+  function recollectOnce(running:Active):void {
+    if (running.recollectedTurn===running.turnSeq) return
+    running.recollectedTurn=running.turnSeq
+    opts.recollect?.maybeTrigger(running.taskId,running.turnSeq)
+  }
+  /**
    * 本回合安静下来:登记成果(评审 2026-09-16:会话保留时这条 run 不会结算,`collect` 也就不会跑,
    * 成果得等主人「取消」才看得见)、把 matter 标成已答复、起空闲自动收工的计时。
    * 还在等主人拍板就只收成果、不计时 —— 那不叫安静。重复调用无害:收集自己去重,计时不会被推迟。
@@ -604,6 +623,7 @@ export function makeWorkbenchService(opts: Options) {
     if (!quiet(running)) return
     matterSync(m=>m.setStatus(running.taskId,'replied'))
     reportOnce(running)
+    recollectOnce(running)
     // 差异边界 = 回合边界:这一轮的代码变更现在就截(以前这一步挂在「答复即释放」后面,
     // 那条路没了)。续接会先 await 这份在途的快照再取新基线,所以不会把下一轮的改动算进来。
     void captureCodeChanges(running).catch(()=>{})
@@ -1005,7 +1025,7 @@ export function makeWorkbenchService(opts: Options) {
       execution,
       attachments:dispatchAttachments,
       interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
-      cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,turnSeq:0,reportedTurn:-1,credentialsMinted:false,credentialsRevoked:false,
+      cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,turnSeq:0,reportedTurn:-1,recollectedTurn:-1,credentialsMinted:false,credentialsRevoked:false,
     }
     const activate=()=>{runsByTask.set(task.id,running);runningText.set(running.identity,text);queue.push(running);pump()}
     if(acceptance)acceptance.activate(activate);else activate()

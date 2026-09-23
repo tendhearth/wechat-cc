@@ -14,6 +14,8 @@ import { TIER_PROFILES } from '../../core/user-tier'
 import { makeWorkbenchStore } from '../../core/workbench/store'
 import { makeWorkbenchService } from '../../core/workbench/service'
 import { makeReportSink } from '../reports/report-sink'
+import { makeRecollectSink } from '../recollection/recollect-sink'
+import { makeJournal } from '../../core/journal-store'
 import { ACP_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../../core/workbench/executor-capabilities'
 import { readNativeClaudeTools, workbenchClaudeEnvironment, type NativeClaudeTools } from '../../core/workbench/claude-native-config'
 import { claudeNativeCapabilityNotice } from '../../core/workbench/native-capability-notice'
@@ -161,10 +163,18 @@ export function wireWorkbench(opts: {
     taskTitle:id=>store.get(id).title,artifactCount:id=>store.artifacts(id).length,
     log:opts.log,
   }):undefined
+  // 回忆(task-5,fix round 1,2026-09-23):只要 matters 就接得上——journal 用 opts.db
+  // 现开(makeJournal 是无状态构造,跟 wire-social.ts 里 recordVisit/recordPostcard 同一
+  // 惯例),便宜模型用这个 wireWorkbench 自己的 registry(下面 makeWorkbenchService 传的
+  // 同一个),不缓存 provider 本身、每次现取。
+  const recollect=opts.matters?makeRecollectSink({
+    matters:opts.matters,journal:makeJournal(opts.db),
+    cheapEval:()=>registry.getCheapEval(),ownerChatId,log:opts.log,
+  }):undefined
   return makeWorkbenchService({
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
-    store,registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,reports,log:opts.log,
+    store,registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,reports,recollect,log:opts.log,
     usage:(id)=>id==='claude'||id==='codex'?usageMonitor.cached(id):null,
     registeredProjects:()=>listProjects(join(opts.stateDir,'projects.json')),
     defaultProvider:opts.boot.defaultProviderId,holdBusy:opts.boot.holdBusy,

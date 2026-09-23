@@ -16,6 +16,7 @@ import { AsyncQueue } from '../../core/async-queue'
 import type { AgentEvent, AgentRuntimeSnapshot, AgentSession, AgentWorkbenchRuntime, AgentProvider } from '../../core/agent-provider'
 import { makeMatterStore } from '../../core/matters/store'
 import { makeReportOutboxStore } from '../reports/outbox'
+import { makeJournal } from '../../core/journal-store'
 import type { Bootstrap } from './types'
 
 it('does not inherit companion memory, MCP servers or daemon permission bypass into office work', async () => {
@@ -225,6 +226,86 @@ it('从微信交办的事,答复静下来那一拍真的把回报写进 matter_r
     await expect.poll(async () => (await reportOutbox.listDue(Date.now() + 1)).length).toBeGreaterThan(0)
     const due = await reportOutbox.listDue(Date.now() + 1)
     expect(due).toEqual([expect.objectContaining({ matterId: receipt.taskId, originMatterId: chat.id, originMessageId: 'msg-7' })])
+    await service.shutdown()
+  } finally {
+    db.close()
+  }
+})
+
+/**
+ * 端到端接线(task-5,fix round 1,2026-09-23,控制器裁决:这一轮必须真的
+ * 接上,不许留成死代码):只传 matters(不传 reportOutbox,证明「回忆」这
+ * 条不依赖回报那条),来回两轮之后 turnSeq 达到 STORY_SIGNALS.turns(2),
+ * 真的通过这个 wireWorkbench 自己建的 `registry.getCheapEval()` 问到便宜
+ * 模型(借 agy 那个假 provider 挂一个 cheapEval 字段),写进真实的
+ * journal(makeJournal(opts.db) 那份,不是单测里假的 Journal)。
+ */
+class RecollectTurnRuntime {
+  queue = new AsyncQueue<AgentEvent>()
+  state: AgentRuntimeSnapshot = { retained: true, foreground: 'running', backgroundCount: 0, input: 'send' }
+  subscribed = false
+  runtime: AgentWorkbenchRuntime = {
+    events: { [Symbol.asyncIterator]: () => { this.subscribed = true; return this.queue.iterable()[Symbol.asyncIterator]() } },
+    start: () => { if (!this.subscribed) throw Error('runtime_start_without_consumer'); this.queue.push({ kind: 'init', sessionId: 'native-1' }); this.queue.push({ kind: 'text', itemId: 't0', text: '做。' }) },
+    // 每次续接都直接吐一个 result——跟 service-report.test.ts 的 TurnRuntime 同一手法,
+    // 让每次 submitInput 都能干净地再落一次 settleQuiet。
+    submit: async () => { this.queue.push({ kind: 'result', sessionId: 'native-1', numTurns: 1, durationMs: 1 }) },
+    snapshot: () => this.state,
+  }
+  session: AgentSession = { workbenchRuntime: this.runtime, async *dispatch() {}, close: async () => { this.queue.end() } }
+  finishTurn() { this.state = { ...this.state, foreground: 'idle' }; this.queue.push({ kind: 'result', sessionId: 'native-1', numTurns: 1, durationMs: 1 }) }
+}
+
+it('从微信交办的事,来回两轮之后真的问了便宜模型、把回忆写进 journal', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'wire-workbench-recollect-'))); acknowledgeDirs.push(root)
+  const stateDir = join(root, 'state'), project = join(root, 'project')
+  mkdirSync(project, { recursive: true })
+  saveAgentConfig(stateDir, { provider: 'agy', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false, workbench_unattended_ack_at: 999 })
+  await saveCompanionConfig(stateDir, { ...defaultCompanionConfig(), default_chat_id: 'chat-1' })
+  addProject(join(stateDir, 'projects.json'), 'project', project)
+  const db = openDb({ path: join(stateDir, 'state.db') })
+  const matters = makeMatterStore(db)
+  const bootRegistry = createProviderRegistry()
+  const runtime = new RecollectTurnRuntime()
+  const asked: string[] = []
+  bootRegistry.register('agy', {
+    async spawn() { return runtime.session },
+    cheapEval: async (prompt: string) => { asked.push(prompt); return '那天你让我改首页，我改错了两次。' },
+  }, { displayName: 'Gemini (agy)', canResume: () => true })
+  const boot = {
+    registry: bootRegistry,
+    sdkOptionsForProject: (() => ({})) as unknown as Bootstrap['sdkOptionsForProject'],
+    defaultProviderId: 'agy',
+    holdBusy: (_label: string) => () => {},
+  } as unknown as Bootstrap
+  try {
+    const service = wireWorkbench({
+      db, stateDir, boot, matters,
+      internalApi: { mintSessionToken: () => 'token', invalidateSession: () => {} },
+      askUser: async () => 'allow',
+      log: () => {},
+    })
+    const projectView = service.projects().find(p => p.path === project)!
+    const receipt = service.createWechat({
+      ownerChatId: 'chat-1', accountId: 'acct-1', requestId: randomUUID(),
+      commandHash: createHash('sha256').update('改首页').digest('hex'),
+      originMessageId: 'msg-7', projectId: projectView.id, providerId: 'agy', text: '改首页',
+    })
+    await expect.poll(() => matters.sessions(receipt.taskId)).not.toHaveLength(0)
+    runtime.finishTurn() // turnSeq 还是 0(还没有续接)——够不上门槛,不该问模型。
+    await expect.poll(() => matters.get(receipt.taskId)?.status).toBe('replied')
+    expect(asked).toEqual([])
+    const journal = makeJournal(db)
+    expect(journal.list()).toEqual([])
+    let runId = service.detail(receipt.taskId).runId!
+    await service.submitInput(receipt.taskId, { runId, requestId: randomUUID(), text: '再改一下' }) // turnSeq → 1,还不够。
+    await expect.poll(() => journal.list().length + asked.length).toBe(0) // 稳一拍,确认真的没提前触发
+    runId = service.detail(receipt.taskId).runId!
+    await service.submitInput(receipt.taskId, { runId, requestId: randomUUID(), text: '再改一下' }) // turnSeq → 2,够了。
+    await expect.poll(() => asked.length).toBe(1)
+    expect(asked[0]).toContain('改首页')
+    await expect.poll(() => journal.list().length).toBe(1)
+    expect(journal.list()[0]).toMatchObject({ kind: 'recollection', chat_id: 'chat-1', note: '那天你让我改首页，我改错了两次。' })
     await service.shutdown()
   } finally {
     db.close()

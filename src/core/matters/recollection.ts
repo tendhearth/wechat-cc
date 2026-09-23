@@ -67,3 +67,67 @@ export async function maybeRecollect(input: MaybeRecollectInput): Promise<void> 
   }
   input.write(text)
 }
+
+/**
+ * `returned`(被打回 / 报错过几次)目前在全仓没有数据源。已核实过:唯一
+ * 沾边的 `permissions.rejectAll`(RunPermissions,workbench/permissions.ts)
+ * 是整条 run 收尾时批量拒绝挂起的权限请求,不是"这一轮被打回/报错几次"
+ * 的计数;workbench/service.ts 的 `Active` 接口里没有任何字段在记这件事。
+ *
+ * 这是**显式挂的账**,不是漏掉——不要为它新加记账逻辑(那是另一个任务的
+ * 活,见 spec docs/superpowers/specs/2026-09-23-delegation-report-design.md
+ * 的「还没定」一节)。daemon 侧接线(src/daemon/recollection/recollect-sink.ts)
+ * 只传这个常量,不读任何字段。`recollect-sink.test.ts` 里有一条测试钉住
+ * "仅凭这个常量、不接任何数据源,`returned` 这一支永远不会单独把够格的
+ * 场景撬开"这个现状——谁哪天接上了真数据源、或者不小心把它接成了别的什
+ * 么东西,那条测试要响;等真接上数据源的那天,把这个常量、这条注释和那
+ * 条测试一起删。
+ */
+export const RETURNED_SIGNAL_UNAVAILABLE = 0
+
+/**
+ * 交办与答复是不是不在同一天(spec「回忆」的 overnight 信号)。用创建时刻
+ * 与现在的 **UTC 日历日**比较——简单、不需要传时区状态(matters/store.ts
+ * 的 `Matter.createdAt` 是 UTC ms,调用点 workbench/service.ts 这一层没有
+ * "主人时区"这个概念,那是 companion 那一侧的东西)。
+ *
+ * 边界上会把"隔了两分钟但刚好跨了 UTC 零点"算成 true——这是有意的简化,
+ * 不是 bug:spec 的字面意思是"不在同一天",不是"满 24 小时";而且这个方
+ * 向的误判(把边界情况多算成"够格")比反过来(该算的没算上)更安全,跟
+ * "够不上门槛才是真正的风险"这条设计取向一致。
+ */
+export function crossedOvernight(createdAtMs: number, nowMs: number): boolean {
+  return new Date(createdAtMs).toISOString().slice(0, 10) !== new Date(nowMs).toISOString().slice(0, 10)
+}
+
+/**
+ * 给便宜模型的 prompt。只喂它"够格的理由"和任务标题,不喂完整对话——读
+ * 原文需要把 WorkbenchStore 的事件流一路穿到 daemon 侧的 sink,是明显更
+ * 大的一块改动;这一轮先把"真的问、真的写"这条线接上,读不读得到原文留
+ * 给以后按真实数据调(spec「还没定」)。model 只回一两句像朋友那样会记
+ * 住的话,不是任务总结。
+ */
+export function buildRecollectionPrompt(input: { title: string; turns: number; returned: number; overnight: boolean }): string {
+  const reasons: string[] = []
+  if (input.turns >= STORY_SIGNALS.turns) reasons.push(`来回了 ${input.turns} 轮`)
+  if (input.returned >= STORY_SIGNALS.returned) reasons.push(`被打回或报错过 ${input.returned} 次`)
+  if (input.overnight) reasons.push('跨了一夜才有回复')
+  return [
+    `你是 CC 自己,刚做完一件事:「${input.title}」。`,
+    `这件事记得住,因为${reasons.length > 0 ? reasons.join('、') : '有点特别'}。`,
+    '像朋友之间会记住的那样,写一两句话的记述——不是任务总结,别用"已完成"这类措辞。直接输出这句话本身,不要多余的解释、前后缀或引号包裹。',
+  ].join('\n')
+}
+
+/**
+ * service 侧的可选依赖,注入便于测试;不注入就整条功能不存在(降级路径,
+ * 与 opts.matters/opts.log、report.ts 的 `ReportSink` 同一套「可选依赖」
+ * 约定)。真正的实现(daemon 侧,src/daemon/recollection/recollect-sink.ts)
+ * 在 workbench/service.ts 的 `settleQuiet` 那一拍(紧跟 `reportOnce` 之
+ * 后)被调用:内部去查 matter(拿标题、算 overnight)、拿便宜模型、调
+ * `maybeRecollect`、真的落 journal。
+ */
+export interface RecollectSink {
+  /** `turns` 只能在调用点(`settleQuiet`)现读——它是 `Active.turnSeq`,只活在那一轮的运行时里,不落盘,事后查不到。 */
+  maybeTrigger(taskId: string, turns: number): void
+}

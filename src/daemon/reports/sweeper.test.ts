@@ -253,4 +253,47 @@ describe('runReportSweep', () => {
     // 跟普通的"held <id> (...)"这一句区分开——不能只是复用同一条日志文本
     expect(logs.some(([tag, line]) => tag === 'REPORTS' && /^held \d/.test(line))).toBe(false)
   })
+
+  /**
+   * fix round 1 Task-4 遗留 A(2026-09-23,评审点名):这条超过强制放行上限的
+   * 行本该被"无视粗闸照发",但这一拍的发送预算已经耗尽——预算门会把它
+   * `continue` 成 deferred,这一拍根本没有真的发出去。"held-override" 那句
+   * 日志说的是"无视粗闸照发",如果这一拍其实没发,日志就是在撒谎;这条钉
+   * 住:预算耗尽时不打这条日志,而是照常走 deferred(等下一拍,budget 到了
+   * 才真的发送并打日志)。
+   */
+  it('超过强制放行上限但这一拍发送预算已耗尽:不打"无视粗闸照发"的日志,只是照常 deferred', async () => {
+    const insertAt = 1_000
+    await outbox.insert({matterId: TASK, originMatterId: CHAT, originMessageId: 'msg-7', text: 'x'}, insertAt)
+    const nowMs = insertAt + HELD_OVERRIDE_MS + 1 // 刚过放行上限,本该强制放行
+    matterClock = nowMs - 10_000 // 依然"刚被摸过"——粗闸没变,变的是预算
+    matters.bind(CHAT, 'wechat', 'user-1')
+    let sends = 0
+    const result = await runReportSweep({store: outbox, matters, send: async () => { sends++; return {ok: true} }, nowMs, log: (t, l) => logs.push([t, l]), maxSendsPerSweep: 0})
+    expect(sends).toBe(0) // 这一拍真的没发
+    expect(result).toEqual({delivered: 0, retried: 0, dropped: 0, deferred: 1, held: 0})
+    expect(logs.some(([, line]) => line.includes('held-override'))).toBe(false) // 没发就不该说"照发了"
+    const due = await outbox.listDue(nowMs)
+    expect(due).toHaveLength(1) // 还在等下一拍
+  })
+
+  /**
+   * fix round 1 Task-4 遗留 B(2026-09-23,评审点名):汇总行以前只在 `result.held
+   * > 0` 时打印、且只报 held 计数——一拍里全是 held-override(held 恰好是 0)
+   * 时汇总行完全不出现,"长期被拖延"又只剩逐行日志能看见。这条钉住:
+   * held-override 单独 >0 时也要出现汇总行,并且带上 held-override 的计数。
+   */
+  it('held-override 计数也进 sweep 汇总行(即便 held 是 0)', async () => {
+    const insertAt = 1_000
+    await outbox.insert({matterId: TASK, originMatterId: CHAT, originMessageId: 'msg-7', text: 'x'}, insertAt)
+    const nowMs = insertAt + HELD_OVERRIDE_MS + 1
+    matterClock = nowMs - 10_000
+    matters.bind(CHAT, 'wechat', 'user-1')
+    const result = await runReportSweep({store: outbox, matters, send: async () => ({ok: true}), nowMs, log: (t, l) => logs.push([t, l])})
+    expect(result.held).toBe(0) // 这一行走的是强制放行,不是普通 held
+    const summary = logs.find(([tag, line]) => tag === 'REPORTS' && line.includes('sweep summary'))
+    expect(summary).toBeDefined()
+    expect(summary![1]).toContain('held-override=1')
+    expect(summary![1]).toContain('held=0')
+  })
 })
