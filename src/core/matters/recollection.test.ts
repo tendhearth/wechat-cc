@@ -60,29 +60,59 @@ describe('maybeRecollect —— 判据是故事性,不是产出', () => {
   })
 })
 
-describe('crossedOvernight —— 交办与答复是不是不在同一天(UTC 日历日)', () => {
-  it('同一个 UTC 日历日内 —— false', () => {
-    expect(crossedOvernight(Date.parse('2026-09-23T08:00:00.000Z'), Date.parse('2026-09-23T23:00:00.000Z'))).toBe(false)
+describe('crossedOvernight —— 交办与答复是不是不在同一天(主人本地日历日)', () => {
+  it('同一个本地日历日内(UTC 时区)—— false', () => {
+    expect(crossedOvernight(Date.parse('2026-09-23T08:00:00.000Z'), Date.parse('2026-09-23T23:00:00.000Z'), 'UTC')).toBe(false)
   })
-  it('跨了 UTC 日历日 —— true', () => {
-    expect(crossedOvernight(Date.parse('2026-09-23T23:50:00.000Z'), Date.parse('2026-09-24T00:10:00.000Z'))).toBe(true)
+  it('跨了本地日历日(UTC 时区)—— true', () => {
+    expect(crossedOvernight(Date.parse('2026-09-23T23:50:00.000Z'), Date.parse('2026-09-24T00:10:00.000Z'), 'UTC')).toBe(true)
+  })
+  /**
+   * 终审必判④:原来比的是 UTC 日历日,UTC+8 下那条边界线落在本地早上
+   * 08:00——这不是罕见边界,是每天上午的窗口。这条钉住:UTC 零点跨过去
+   * 了,但在 UTC+8(Asia/Shanghai)本地仍是同一天上午,不该算 overnight。
+   */
+  it('UTC 日历日翻了,但 Asia/Shanghai 本地仍是同一天(本地早上)—— false', () => {
+    // 2026-09-23T23:50 UTC = 2026-09-24T07:50 Asia/Shanghai(UTC+8)
+    // 2026-09-24T00:10 UTC = 2026-09-24T08:10 Asia/Shanghai —— 同一个本地日。
+    expect(crossedOvernight(Date.parse('2026-09-23T23:50:00.000Z'), Date.parse('2026-09-24T00:10:00.000Z'), 'Asia/Shanghai')).toBe(false)
+  })
+  it('Asia/Shanghai 本地真的跨了一夜 —— true', () => {
+    // 2026-09-23T10:00 UTC = 2026-09-23T18:00 Asia/Shanghai(当天傍晚)
+    // 2026-09-24T01:00 UTC = 2026-09-24T09:00 Asia/Shanghai(第二天上午)—— 本地跨天。
+    expect(crossedOvernight(Date.parse('2026-09-23T10:00:00.000Z'), Date.parse('2026-09-24T01:00:00.000Z'), 'Asia/Shanghai')).toBe(true)
+  })
+  it('非法时区名不抛错,退回 UTC', () => {
+    expect(() => crossedOvernight(Date.parse('2026-09-23T08:00:00.000Z'), Date.parse('2026-09-23T23:00:00.000Z'), 'Not/A/Zone')).not.toThrow()
   })
 })
 
 describe('buildRecollectionPrompt —— 给便宜模型的理由 + 标题', () => {
   it('把够格的理由拼进 prompt,不够格的信号不提', () => {
-    const prompt = buildRecollectionPrompt({ title: '改首页', turns: 2, returned: 0, overnight: false })
+    const prompt = buildRecollectionPrompt({ title: '改首页', turns: 2, returned: 0, overnight: false, elapsedHours: 0 })
     expect(prompt).toContain('改首页')
     expect(prompt).toContain('来回了 2 轮')
     expect(prompt).not.toContain('打回或报错')
+    expect(prompt).not.toContain('不在同一天')
+  })
+  /**
+   * 终审必判④(a):原来直接告诉模型"跨了一夜才有回复"是一句断言,不是事
+   * 实——`crossedOvernight` 只是"不在同一天"这个粗糙信号,真实间隔可能
+   * 只有 20 分钟(23:50 建、00:10 终态)。改成事实陈述,把"这算不算故
+   * 事"的判断交还给模型。
+   */
+  it('overnight 单独够格时:理由是事实陈述("不在同一天、相隔约 N 小时"),不是"跨了一夜"这种断言', () => {
+    const prompt = buildRecollectionPrompt({ title: '半夜排查', turns: 0, returned: 0, overnight: true, elapsedHours: 9 })
+    expect(prompt).toContain('交办与答复不在同一天,相隔约 9 小时')
     expect(prompt).not.toContain('跨了一夜')
   })
-  it('overnight 单独够格时也要提到', () => {
-    const prompt = buildRecollectionPrompt({ title: '半夜排查', turns: 0, returned: 0, overnight: true })
-    expect(prompt).toContain('跨了一夜才有回复')
+  it('elapsedHours 四舍五入、不会是负数(哪怕传入的是负值,比如时钟偏差)', () => {
+    const prompt = buildRecollectionPrompt({ title: '半夜排查', turns: 0, returned: 0, overnight: true, elapsedHours: -5 })
+    expect(prompt).toContain('相隔约 0 小时')
+    expect(prompt).not.toContain('-5')
   })
   it('给模型一个"不写"的出口(fix round 3,评审必判②):候选信号很粗,不给出口便宜模型就从过滤器变成了产出器', () => {
-    const prompt = buildRecollectionPrompt({ title: '半夜排查', turns: 0, returned: 0, overnight: true })
+    const prompt = buildRecollectionPrompt({ title: '半夜排查', turns: 0, returned: 0, overnight: true, elapsedHours: 1 })
     expect(prompt).toContain('如果这件事其实没什么可记的,就什么都不要输出')
   })
 })

@@ -10,6 +10,7 @@ import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
 import {makeMatterStore,type MatterStore} from '../matters/store'
+import {wechatTaskMessageKey} from './wechat-control'
 
 /**
  * 交办那一刻的出生地(docs/cc-workbench.md「一件事」;task-2,2026-09-23):
@@ -49,13 +50,17 @@ it('没有 msgId 时不拦创建,origin message 存 null',async()=>{
   expect(matters.get(receipt.taskId)).toMatchObject({originMatterId:chat.id,originMessageId:null})
 })
 
-it('走微信入口(handleWechat)时,identity.msgId 也落到 originMessageId',async()=>{
+it('走微信入口(handleWechat)时,originMessageId 是 wechatTaskMessageKey 算出来的 messages.id,不是平台原始 msgId(终审第 5 项)',async()=>{
   const projectId=service.projects()[0]!.id
-  const reply=await service.handleWechat('chat-1',`任务 新建 ${projectId} 改首页`,{accountId:'acct-1',userId:'chat-1',msgId:'msg-99',createTimeMs:1})
+  const text=`任务 新建 ${projectId} 改首页`
+  const identity={accountId:'acct-1',userId:'chat-1',msgId:'msg-99',createTimeMs:1}
+  const reply=await service.handleWechat('chat-1',text,identity)
   expect(reply).toBeTruthy()
   const task=service.list().tasks[0]!
   const chat=matters.ensureChat('chat-1')
-  expect(matters.get(task.id)).toMatchObject({originMatterId:chat.id,originMessageId:'msg-99'})
+  const expectedId=wechatTaskMessageKey({...identity,chatId:'chat-1',text})
+  expect(expectedId).not.toBe('msg-99') // 反证:wechatTaskMessageKey 算出来的确实不是原始 msgId
+  expect(matters.get(task.id)).toMatchObject({originMatterId:chat.id,originMessageId:expectedId})
 })
 
 it('ensureChat 抛错时不拦建任务、origin 记 null,但留下能区分"出错"和"没有出生地"的痕迹',async()=>{

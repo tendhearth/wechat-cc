@@ -35,12 +35,18 @@ export interface PendingReport {
  * 「这一轮新增了几份」需要在 Active 上另存一个回合起点的基线并在每个回合
  * 边界重置,拿这份复杂度换一个措辞上的精确度不值——文案说清楚累计口径更
  * 便宜也更不容易出新 bug。
+ *
+ * `turn` 是这一轮的 `Active.turnSeq`(终审第 6 项):相邻两轮没有新成果
+ * (`artifactCount` 没变)时,以前 `outcome` 是空字符串,两条文案逐字节相
+ * 同——主人分不清指的是哪一轮,而且重复外发相同文本正是本仓库别处(reminders
+ * 那条退避)专门要躲开的微信风控触发形状。轮次本来就是现成的(去重键就
+ * 是它),塞进文案里,相邻两轮至少「第 N 轮」这几个字不一样。
  */
-export function renderReport(input: {matter: Matter; title: string; artifactCount: number}): PendingReport | null {
-  const {matter, title, artifactCount} = input
+export function renderReport(input: {matter: Matter; title: string; artifactCount: number; turn: number}): PendingReport | null {
+  const {matter, title, artifactCount, turn} = input
   if (!matter.originMatterId) return null
   const outcome = artifactCount > 0 ? `累计生成了${artifactCount}份成果。` : ''
-  const text = `${title} · 已答复。${outcome}\n看:任务 ${matter.id} · 接着说:任务 ${matter.id} 补充 …`
+  const text = `${title} · 已答复（第${turn + 1}轮）。${outcome}\n看:任务 ${matter.id} · 接着说:任务 ${matter.id} 补充 …`
   return {matterId: matter.id, originMatterId: matter.originMatterId, originMessageId: matter.originMessageId, text}
 }
 
@@ -72,5 +78,6 @@ export function shouldDisturb(input: {lastSeenAt: number | null; now: number}): 
  * renderReport,把结果写进 matter_report_outbox(v65)等投递器去发。
  */
 export interface ReportSink {
-  enqueue(matterId: string): void
+  /** `turn` 是这一轮的 `Active.turnSeq`——见 renderReport 的文档注释,用来让相邻两轮的回报文案能区分开。 */
+  enqueue(matterId: string, turn: number): void
 }

@@ -162,6 +162,9 @@ export function wireWorkbench(opts: {
   const reports=opts.matters&&opts.reportOutbox?makeReportSink({
     matters:opts.matters,outbox:opts.reportOutbox,
     taskTitle:id=>store.get(id).title,artifactCount:id=>store.artifacts(id).length,
+    // 终审 Critical:「任务 <id> 静音」落的是 workbench_wechat_subscriptions.enabled=0;
+    // 没有订阅记录(从没配置过)按"没静音过"处理,不是默认静音。
+    notificationsEnabled:id=>store.wechatNotifications.subscription(id)?.enabled??true,
     log:opts.log,
   }):undefined
   // 回忆(task-5,fix round 2,2026-09-23,复审新 Important ③):只要 matters 就接得
@@ -184,6 +187,12 @@ export function wireWorkbench(opts: {
     // 用,不重新发明)。它内部 assertNotAuthFailed 抛错时,maybeRecollect 的
     // try/catch 会当成真的调用失败留痕——跟"没有便宜模型"是两回事。
     cheapEval:()=>wrapCheapEvalWithAuthFailCheck(opts.boot.registry.getCheapEval(),opts.log)??null,
+    // 终审必判④(b):crossedOvernight 按主人本地日历日算,不按 UTC——复用
+    // companion 配置现成的 timezone 字段,不新造配置项。
+    timezone:()=>loadCompanionConfig(opts.stateDir).timezone,
+    // 终审「小的」:cheapEval 的延迟预算,超时按真的调用失败处理(不是
+    // "没有模型")——见 recollect-sink.ts 文件头「cheapEval timeout」。
+    cheapEvalBudgetMs:()=>opts.boot.registry.getCheapEvalBudgetMs(),
     ownerChatId,log:opts.log,
     // fix round 3(评审 M2):终态那一拍的模型调用是 fire-and-forget,没有
     // holdBusy 挡着的话空闲自动重启可能切在中间、这条回忆静默丢失且不留

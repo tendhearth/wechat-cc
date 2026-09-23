@@ -19,11 +19,11 @@ const fromChat: Matter = {...base, id: 'e5f6a7b8', originMatterId: 'c1c1c1c1', o
 
 describe('renderReport', () => {
   it('没有出生地的事不报', () => {
-    expect(renderReport({matter: handmade, title: '手动派的', artifactCount: 0})).toBeNull()
+    expect(renderReport({matter: handmade, title: '手动派的', artifactCount: 0, turn: 0})).toBeNull()
   })
 
   it('从聊天里交办的,报一句带现成动作的话', () => {
-    const r = renderReport({matter: fromChat, title: '首页调整', artifactCount: 2})!
+    const r = renderReport({matter: fromChat, title: '首页调整', artifactCount: 2, turn: 0})!
     expect(r).not.toBeNull()
     expect(r.text).toContain('首页调整')
     expect(r.text).toContain('已答复')
@@ -32,13 +32,13 @@ describe('renderReport', () => {
   })
 
   it('没有成果就不提份数', () => {
-    const r = renderReport({matter: fromChat, title: '首页调整', artifactCount: 0})!
+    const r = renderReport({matter: fromChat, title: '首页调整', artifactCount: 0, turn: 0})!
     expect(r.text).not.toContain('生成了')
     expect(r.text).not.toContain('份成果')
   })
 
   it('PendingReport 带上出生地,供投递器找回原对话', () => {
-    const r = renderReport({matter: fromChat, title: '首页调整', artifactCount: 1})!
+    const r = renderReport({matter: fromChat, title: '首页调整', artifactCount: 1, turn: 0})!
     expect(r.matterId).toBe(fromChat.id)
     expect(r.originMatterId).toBe('c1c1c1c1')
     expect(r.originMessageId).toBe('msg-42')
@@ -46,8 +46,22 @@ describe('renderReport', () => {
 
   it('originMessageId 可以是 null(微信不一定给 msgId)', () => {
     const noMsgId: Matter = {...fromChat, originMessageId: null}
-    const r = renderReport({matter: noMsgId, title: '首页调整', artifactCount: 0})!
+    const r = renderReport({matter: noMsgId, title: '首页调整', artifactCount: 0, turn: 0})!
     expect(r.originMessageId).toBeNull()
+  })
+
+  /**
+   * 终审第 6 项:相邻两轮没有新成果时,以前 outcome 是空字符串,两条文案
+   * 逐字节相同——主人分不清指哪一轮,重复外发相同文本也正是本仓库在
+   * reminders 那条专门退避的微信风控触发形状。轮次(Active.turnSeq)是
+   * 现成的,塞进文案里就够区分。
+   */
+  it('相邻两轮没有新成果时,文案带着轮次、不会逐字节相同', () => {
+    const r0 = renderReport({matter: fromChat, title: '首页调整', artifactCount: 0, turn: 0})!
+    const r1 = renderReport({matter: fromChat, title: '首页调整', artifactCount: 0, turn: 1})!
+    expect(r0.text).not.toBe(r1.text)
+    expect(r0.text).toContain('第1轮')
+    expect(r1.text).toContain('第2轮')
   })
 })
 

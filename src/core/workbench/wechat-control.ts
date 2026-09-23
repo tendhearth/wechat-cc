@@ -191,7 +191,12 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
       const explicit=/^用\s+@(\S+)(?:\s+|$)([\s\S]*)$/i.exec(match[2]!)
       if(/^用\s+@/i.test(match[2]!)&&(!explicit||!isWorkbenchProviderId(explicit[1]!.toLowerCase())))return usage()
       const choice=explicit??/^用\s+(claude|codex)(?:\s+|$)([\s\S]*)$/i.exec(match[2]!)
-      try{return opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),...(identity.msgId?{originMessageId:identity.msgId}:{}),text:choice?choice[2]!:match[2]!}).reply}
+      // 终审第 5 项:origin_message_id 声明(db.ts:1350)的是 messages.id,
+      // 不是平台原始 msgId——那条入站真正的 messages.id 是
+      // wechatTaskMessageKey(v'workbench:'+requestId),不是 identity.msgId。
+      // 今天只写不读,不坏事,但留着就是给第一个写 join 的人埋雷。
+      const originMessageId=wechatTaskMessageKey({...identity,chatId,text})
+      try{return opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),...(originMessageId?{originMessageId}:{}),text:choice?choice[2]!:match[2]!}).reply}
       catch(error){return failure(error,'')}
     }
     if(!command||command==='列表'){

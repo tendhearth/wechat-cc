@@ -281,8 +281,22 @@ export function makeWorkbenchService(opts: Options) {
   function requestNotice(task:StoredTask,runId:string,kind:'permission'|'question',id:string,label:string){
     enqueueNotice(task,runId,kind,`${task.title.replace(/[\r\n]+/g,' ')} · ${task.id}\n${task.providerId} · ${kind==='permission'?'需要你批准':'需要你回答'}\n\n${label.slice(0,600)}\n\n查看：任务 ${task.id} ${kind==='permission'?'权限':'问题'} ${id}`,id)
   }
-  function stageFinishedNotice(running:Active,status:TaskStatus,error:string|null=null){
+  /**
+   * `suppressCompleted`(终审 Important):非 retained 执行者(agy/cursor/
+   * openai/gemini)不经过 settleQuiet,这个函数与 `reportOnce` 同在终态
+   * 那个 try 里、同一拍触发——不挡的话 completed 那一刻两条都发主人
+   * chat:先「…这一轮已完成…查看:任务 xxx」,紧跟「…已答复。累计生成
+   * 了 N 份成果。看:… 接着说:…」,同一件事说了两遍(spec 已定 #1「再
+   * 报一次是噪音」的理由原样适用,只是这次是两条不同措辞的消息同时
+   * 发,不是同一条重发)。回报信息严格更丰富(带续接入口),所以压的是
+   * 这条、留的是回报——但只在"这一轮真的会入队回报"时才压:调用点用
+   * `matter.originMatterId` 判(跟 `renderReport` 自己的判据同一条),桌
+   * 面亲手派的任务没有出生地、reportOnce 什么都不会发,那种情况必须继
+   * 续留着这条通知,不能无条件压。
+   */
+  function stageFinishedNotice(running:Active,status:TaskStatus,error:string|null=null,suppressCompleted=false){
     if(!TERMINAL_TASK_STATUSES.includes(status))return
+    if(status==='completed'&&suppressCompleted)return
     const watch=store.wechatNotifications.subscription(running.taskId)
     if(!watch?.enabled||watch.ownerChatId!==running.task.ownerChatId||watch.ownerChatId!==opts.ownerChatId())return
     let reply=store.events(running.taskId).filter(e=>e.runId===running.identity&&e.kind==='text').at(-1)?.text
@@ -596,7 +610,7 @@ export function makeWorkbenchService(opts: Options) {
   function reportOnce(running:Active):void {
     if (running.reportedTurn===running.turnSeq) return
     running.reportedTurn=running.turnSeq
-    try { opts.reports?.enqueue(running.taskId) } catch (err) { opts.log?.('MATTER_REPORT',`enqueue failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
+    try { opts.reports?.enqueue(running.taskId,running.turnSeq) } catch (err) { opts.log?.('MATTER_REPORT',`enqueue failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
   }
   /**
    * 回忆触发,按「这是第几轮」去重(task-5,fix round 1:与 `reportOnce` 同一套道理——
@@ -890,10 +904,13 @@ export function makeWorkbenchService(opts: Options) {
       let terminalCommitted=false
       try {
         const status=running.cancelled&&!running.uncertain?(running.closedWhileReplied?'completed':'cancelled'):finalStatus
+        // 会不会入队回报,判据跟 renderReport 自己用的是同一条(有没有出生
+        // 地);见 stageFinishedNotice 的 suppressCompleted 参数注释。
+        const willReport=status==='completed'&&!!opts.matters?.get(task.id)?.originMatterId
         store.atomic(()=>{
           store.finishRunActivities(task.id,running.identity,running.cancelled&&!running.uncertain?'cancelled':'interrupted')
           store.update(task.id,status,finalError)
-          stageFinishedNotice(running,status,finalError)
+          stageFinishedNotice(running,status,finalError,willReport)
         })
         touched(task.id)
         terminalCommitted=true
