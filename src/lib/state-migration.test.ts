@@ -21,7 +21,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { openTestDb, type Db } from './db'
+import { migrations, openTestDb, type Db } from './db'
 import { makeSessionStateStore } from '../core/session-state'
 import { makeSessionStore } from '../core/session-store'
 import { makeConversationStore } from '../core/conversation-store'
@@ -111,15 +111,22 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // v60: matters(一件事)+ bindings + sessions,workbench_tasks.matter_id 回填。
     // v61: seq 列(实时事件流)
     // v62: workbench_review_marks(逐文件审阅标记)
-    expect(v).toBe(63)
+    // 断言总条数不写死字面量——每加一条迁移这里就得跟着改一次,而"这一版该有
+    // 多少条"这件事已经由 migration-order.test.ts 的指纹锁看着了(那个锁最后
+    // 一条断言就是 Math.max(...locked) === migrations.length),这里重复一遍
+    // 只是重复且会腐烂,跟 db.test.ts 四处 toBe(migrations.length) 的写法一致。
+    expect(v).toBe(migrations.length)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
+    // v65(投递队列,matter_report_outbox)加了这一版唯一的新表,它的 id 列是
+    // AUTOINCREMENT,SQLite 因此也会自建 sqlite_sequence——这两个同样是三条
+    // 迁移加完之后漏改的(跟上面 v 的字面量是同一处腐烂,一起修)。
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',
-      'customer_review_feedback', 'customer_review_items', 'customer_reviews', 'events', 'handled_messages', 'journal', 'matter_bindings', 'matter_sessions', 'matters', 'message_attempts', 'messages',
+      'customer_review_feedback', 'customer_review_items', 'customer_reviews', 'events', 'handled_messages', 'journal', 'matter_bindings', 'matter_report_outbox', 'matter_sessions', 'matters', 'message_attempts', 'messages',
       'milestones', 'observations', 'penpal_channel', 'penpal_letter', 'reminders', 'session_fts_state', 'session_state',
       'session_turns_fts', 'session_turns_fts_config', 'session_turns_fts_content', 'session_turns_fts_data',
       'session_turns_fts_docsize', 'session_turns_fts_idx',
-      'sessions', 'thread_extract_state', 'threads', 'turn_records',
+      'sessions', 'sqlite_sequence', 'thread_extract_state', 'threads', 'turn_records',
       'workbench_api_sessions', 'workbench_artifact_deliveries', 'workbench_artifacts', 'workbench_attachments', 'workbench_control_receipts',
       'workbench_creation_receipts', 'workbench_events', 'workbench_handoffs', 'workbench_live_inputs', 'workbench_projects', 'workbench_review_marks', 'workbench_run_execution',
       'workbench_sources', 'workbench_tasks', 'workbench_wechat_notice_intents', 'workbench_wechat_notices', 'workbench_wechat_subscriptions',
