@@ -36,6 +36,7 @@
 | 引导与访客 | README 对应章节 | `superpowers/specs/2026-08-18-{owner-onboarding,guest-path}-design.md` |
 | 提醒 | — | `superpowers/specs/2026-08-20-reminders-port-design.md` |
 | 外发健康 | — | `superpowers/specs/2026-08-22-outbound-health-design.md` |
+| 功能全表 / 权限模式 / 微信命令 / 运行时目录 / 访问控制 / A2A / 常见问题 | [reference/](reference/) 下同名文件 | — |
 | 插件 | [plugins.md](plugins.md) | — |
 | 桌面安装器 | [installer/desktop-installer.md](installer/desktop-installer.md) | — |
 | 入站语音 STT(**未做**) | — | `superpowers/specs/2026-07-23-inbound-voice-stt-design.md` |
@@ -52,11 +53,13 @@
 | `design/` `rfc/` `spike/` `research/` | 早期架构论证、技术预研、竞品调研 | 📖 历史,偶尔新增 |
 | `ops/` `smoke/` `handoffs/` `release-notes/` | 各只有 1–3 份历史文件 | 📖 历史 |
 | `plans/`(18) `specs/`(22) | **2026-04 → 06 的老体系**,6 月后停用 | 🗄 归档(见目录内 README) |
+| `reference/`(8) | 从根 README 搬出来的参考级内容:功能全表、权限模式、微信命令、运行时目录、访问控制、A2A、常见问题、Demo 数据 | ✅ 现行 |
 | `screenshots/` | README 用的截图 | ✅ 现行 |
 
 ## docs 根目录那几份零散文件
 
 - [`cc-workbench.md`](cc-workbench.md)、[`architecture.md`](architecture.md)、[`plugins.md`](plugins.md)、[`roadmap.md`](roadmap.md)、[`全景导图.md`](全景导图.md) —— 权威文档,就该在根。
+- **项目指令只有 `AGENTS.md` 一份**(2026-09-22 起):Claude Code v2.1.277+ 会直接读它,Codex 本来就读它。之前并存的 `CLAUDE.md` 已删——两份并存时 Claude 只读 CLAUDE.md、完全忽略 AGENTS.md,而那份恰好已经漂旧了。若将来在读不到 AGENTS.md 的环境里跑(Amazon Bedrock、关掉遥测),或有人加了 `CLAUDE.local.md`(它会把 AGENTS.md 顶掉),补一份只有一行 `@AGENTS.md` 的 CLAUDE.md 即可。
 - `registry.example.json` —— 插件注册表示例,配 `plugins.md` 读。
 - `WeChat-cc-交互动画开发日志.md`、`WeChat-cc-桌面陪伴动画开发计划.md`、`客户回顾模块产品开发日志.md` —— 三份中文开发日志,写作期的过程记录,当历史读。
 - `2026-08-14-knowledge-embed-subprocess-relative-import-bug.md` —— 单个 bug 的排查记录,当历史读。
