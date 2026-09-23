@@ -9,28 +9,34 @@
  * gave birth to this task (matters.bindings(originMatterId)). That's the
  * "回到那次对话里说一声" contract.
  *
- * Failure routing (brief Step 6, three-way; sharpened by evaluation round 1):
+ * Failure routing (brief Step 6, three-way; sharpened by evaluation rounds 1-2):
  *   - No wechat binding on the origin matter at all → permanent failure
  *     ("chat 不存在"): markDropped, log, never retried.
  *   - errcode=-2 (proactive push window closed, same detector as reminders'
  *     outbound-health.ts) → recordAttempt, stays pending, exponential backoff,
  *     counted as `deferred` (matching reminders' counting convention — this
- *     isn't a delivery problem, it's "the window isn't open yet"). NO attempts
- *     cap: "不计入放弃窗口" is brief's own words for exactly this case — the
- *     window reopens the moment the owner sends anything, however long that
- *     takes, and giving up would silently lose the report.
+ *     isn't a delivery problem, it's "the window isn't open yet"). NEVER
+ *     given up on, at any attempts count or elapsed time: "不计入放弃窗口"
+ *     is brief's own words for exactly this case — the window reopens the
+ *     moment the owner sends anything, however long that takes, and giving
+ *     up would silently lose the report.
  *   - Any other send failure (account disconnected, risk-controlled, network
- *     down) → recordAttempt + backoff too, counted as `retried`, but WITH an
- *     attempts cap (MAX_ATTEMPTS): past it, markDropped + log. Unlike -2, brief
- *     never said these should retry forever, and without a cap a persistently
- *     broken account would retry every ~60min "to the end of the database"
- *     (evaluation round 1 finding — the two failure kinds had collapsed onto
- *     the same unbounded control flow, differing only in log wording).
- * Unlike reminders, there is NO TIME-based give-up window here — the outbox's
- * "trace" already lives in the origin conversation, so a late report is still
- * correct; the rule is "the user's turn came back, so did the report", not
- * "give up after N hours" (brief: 绝不烧重试). The attempts cap above is the
- * one exception, and it's deliberately narrow (only non-(-2) failures).
+ *     down) → recordAttempt + backoff too, counted as `retried`, until a
+ *     TIME-based give-up window elapses since the row was first queued
+ *     (`created_at`), same shape and same value as reminders' RETRY_WINDOW_MS
+ *     (24h) — past it, markDropped + log.
+ *
+ * Evaluation round 2 finding: an attempts-COUNT cap (the round-1 fix) is
+ * wrong here because `attempts` is a single field shared by BOTH failure
+ * kinds. A matter can rack up dozens of -2 attempts over a day the owner
+ * never messages (each one legitimately NOT given up on), and then the
+ * very next attempt happens to be a transient non-(-2) blip — with a count
+ * cap, that ordinary blip reads as "already exhausted" and gets dropped on
+ * the spot, even though it's a fresh failure that just arrived. Time doesn't
+ * have this problem: -2 attempts never advance the row past a time window
+ * that only non-(-2) failures ever check, because -2 never checks it at
+ * all. `attempts` now does exactly one job — picking the backoff tier via
+ * `backoffMs` — never "how many strikes before we give up".
  *
  * Volume control on the way IN, not just the way out (evaluation round 1 ②):
  * `store.insert` (outbox.ts) merges repeat enqueues for the same matter into
@@ -46,7 +52,7 @@ import type {Lifecycle} from '../../lib/lifecycle'
 import type {MatterStore} from '../../core/matters/store'
 import type {ReportOutboxStore} from './outbox'
 import {isProactiveWindowClosed} from '../ilink/outbound-health'
-import {backoffMs} from '../reminders/sweeper'
+import {backoffMs, RETRY_WINDOW_MS} from '../reminders/sweeper'
 
 export interface ReportSweepDeps {
   store: ReportOutboxStore
@@ -58,6 +64,8 @@ export interface ReportSweepDeps {
   log: (tag: string, line: string) => void
   /** Override the per-sweep send-attempt budget (same burst-guard rationale as reminders). */
   maxSendsPerSweep?: number
+  /** Override the non-(-2) give-up window (ms). Defaults to reminders' RETRY_WINDOW_MS (24h). */
+  retryWindowMs?: number
 }
 
 export interface ReportSweepResult {
@@ -70,18 +78,9 @@ export interface ReportSweepResult {
 /** Per-sweep send-attempt budget — same WeChat-risk-control rationale as reminders/sweeper.ts. */
 export const MAX_SENDS_PER_SWEEP = 30
 
-/**
- * Give-up threshold for NON-(-2) failures only (evaluation round 1 finding).
- * ~20 attempts at the capped 60min backoff is roughly a day of retrying a
- * persistently broken send path (disconnected account, risk-controlled) —
- * long enough that a transient blip is never mistaken for permanent, short
- * enough that a truly dead path doesn't retry forever. errcode=-2 rows never
- * reach this check (see failure-routing comment above).
- */
-export const MAX_ATTEMPTS = 20
-
 export async function runReportSweep(deps: ReportSweepDeps): Promise<ReportSweepResult> {
   const maxSends = deps.maxSendsPerSweep ?? MAX_SENDS_PER_SWEEP
+  const retryWindow = deps.retryWindowMs ?? RETRY_WINDOW_MS
   const due = await deps.store.listDue(deps.nowMs)
   const result: ReportSweepResult = {delivered: 0, retried: 0, dropped: 0, deferred: 0}
   let sendAttempts = 0
@@ -121,17 +120,22 @@ export async function runReportSweep(deps: ReportSweepDeps): Promise<ReportSweep
     const nextAttempts = rec.attempts + 1
 
     if (isProactiveWindowClosed(err)) {
-      // 不计入放弃窗口:没有 attempts 上限,永远保持 pending 退避重试。
+      // 不计入放弃窗口:errcode=-2 完全不参与放弃判定,attempts 在这里只用来
+      // 选退避档位,不会因为攒得多就被下面的时间窗口连累(评审修复轮 2 ①)。
       await deps.store.recordAttempt(rec.id, deps.nowMs + backoffMs(nextAttempts))
       result.deferred++
       deps.log('REPORTS', `deferred ${rec.id} (matter ${rec.matterId}) → ${chatId}(推送窗口未开,等主人回来即送): ${err}`)
       continue
     }
 
-    if (nextAttempts >= MAX_ATTEMPTS) {
+    // 非 -2 失败的放弃按时间窗口(照 reminders 那条路,同值 24h),不是 attempts
+    // 计数——attempts 会被 -2 的重试一起推高,用它当放弃计数会把"攒了很多次
+    // 票据过期"误判成"已经失败很多次"(评审修复轮 2 ①)。
+    const deadline = rec.createdAt + retryWindow
+    if (deps.nowMs > deadline) {
       await deps.store.markDropped(rec.id)
       result.dropped++
-      deps.log('REPORTS', `dropped ${rec.id} (matter ${rec.matterId}) → ${chatId}: giving up after ${nextAttempts} attempts: ${err}`)
+      deps.log('REPORTS', `dropped ${rec.id} (matter ${rec.matterId}) → ${chatId}: giving up after retry window: ${err}`)
       continue
     }
 

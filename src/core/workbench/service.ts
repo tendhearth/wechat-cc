@@ -862,8 +862,13 @@ export function makeWorkbenchService(opts: Options) {
         matterSync(m=>m.setStatus(task.id,status==='interrupted'?'open':'done'))
         // 非 retained 的执行者永远不经过 settleQuiet(isReplied 要求 snapshot.retained),
         // 只走这条终态路径 —— 不在这里也调一次 reportOnce,那类执行者的任务永远不回报
-        // (评审修复轮 1 #3)。turnSeq 去重保证 settleQuiet 已经报过这一轮时这里是 no-op。
-        if (status!=='interrupted') reportOnce(running)
+        // (评审修复轮 1 ③)。turnSeq 去重保证 settleQuiet 已经报过这一轮时这里是 no-op。
+        // 只在 'completed' 时报(评审修复轮 2 ②):'failed'/'cancelled' 也会落到这条终态
+        // 路径,而 renderReport 只看出生地、不看结果——报出去就是把一件失败或被叫停的事
+        // 说成「已答复」,跟 stageFinishedNotice 给 failed/额度耗尽的既有文案("这一轮
+        // 需要处理"/问"交给 X 继续?")直接打架。失败/取消不经这里回报,不代表主人收不
+        // 到通知——stageFinishedNotice 走的是另一条既有的完成通知路径,不受这里影响。
+        if (status==='completed') reportOnce(running)
         publishFinishedNotices()
       } catch { /* never unlock an uncertain writer for a status failure */ }
       running.publicFinished=true; running.resolveDone()

@@ -175,6 +175,28 @@ it('非 retained 的执行者永不经过 replied(isReplied 要求 snapshot.reta
   expect(enqueued).toEqual([receipt.taskId])
 })
 
+it('非 retained 的执行者以 failed 终态收尾时不入队(评审修复轮 2 ②)——失败不是「已答复」',async()=>{
+  const registry=createProviderRegistry()
+  const q=new AsyncQueue<AgentEvent>()
+  const state:AgentRuntimeSnapshot={retained:false,foreground:'running',backgroundCount:0,input:'send'}
+  registry.register('claude',{async spawn(){return{
+    workbenchRuntime:{
+      events:{[Symbol.asyncIterator]:()=>q.iterable()[Symbol.asyncIterator]()},
+      start:()=>{q.push({kind:'init',sessionId:'nr-2'});q.push({kind:'error',message:'provider exploded'});q.end()},
+      submit:async()=>{},
+      snapshot:()=>state,
+    } as AgentWorkbenchRuntime,
+    async *dispatch(){},close:async()=>{},
+  }}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>'chat-1',matters,
+    registeredProjects:()=>[{alias:'project',path:project}],log:(tag,line)=>logs.push([tag,line]),reports:makeSink()})
+  const projectId=service.projects()[0]!.id
+  const receipt=createTaskFromChat(projectId)
+  await expect.poll(()=>service.detail(receipt.taskId).task.status).toBe('failed')
+  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('done') // matter 侧照样落到 done(失败也是终态)
+  expect(enqueued).toEqual([]) // 但不该被当成「已答复」报给主人
+})
+
 it('没有 opts.reports 时(老接线),什么都不做,不报错',async()=>{
   const runtime=makeService(undefined)
   const projectId=service.projects()[0]!.id

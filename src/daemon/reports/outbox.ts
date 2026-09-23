@@ -28,14 +28,33 @@ export interface OutboxRecord {
 export interface ReportOutboxStore {
   /**
    * Enqueue a report for delivery. If a pending row already exists for this
-   * matter_id, its text is UPDATED in place (and next_at reset to `now`,
-   * so the freshest content gets first crack at the next sweep) instead of
-   * inserting a second row — otherwise a chatty matter (a few quiet↔busy
-   * flaps in one autonomous round, or a chat the owner ignores all day)
-   * would accumulate unboundedly. `attempts` is left untouched by a merge
-   * — repeated re-enqueuing must not be a way to dodge the give-up cap in
-   * sweeper.ts (evaluation round 1, review issues ①②). Returns the row id
-   * (new or the merged existing one).
+   * matter_id, it's REUSED (text updated) instead of inserting a second row
+   * — otherwise a chatty matter (a few quiet↔busy flaps in one autonomous
+   * round, or a chat the owner ignores all day) would accumulate
+   * unboundedly (evaluation round 1, review issue ②).
+   *
+   * Two things a merge must NOT do (evaluation round 2, review issues ③④):
+   *   - Reset next_at unconditionally. A row with attempts>0 is mid-backoff
+   *     for a REASON (send is failing); an unconditional reset would turn
+   *     every re-enqueue into an immediate retry attempt, collapsing the
+   *     exponential backoff to ~1/min — backoff is a WeChat risk-control
+   *     rule here, not a performance nicety. next_at only jumps to `now`
+   *     when attempts===0 (nothing has failed yet, so there's no schedule
+   *     to protect).
+   *   - Touch more than one row. Before this fix, a matter could already
+   *     have accumulated multiple pending rows (dogfood data predates the
+   *     ② merge fix); merging into ALL of them would give them all the same
+   *     text and next_at, and the sweep would then send that text once per
+   *     duplicate row. `insert` always collapses onto the single
+   *     lowest-id pending row for a matter and deletes any other pending
+   *     duplicates outright (DML, not a schema change — no unique
+   *     constraint on matter_id+status exists in v65).
+   *
+   * `attempts`/`created_at` are never touched by a merge — repeated
+   * re-enqueuing must not be a way to dodge the give-up window in
+   * sweeper.ts, and created_at anchors that window to the FIRST time this
+   * matter's report was queued, not the latest edit. Returns the row id
+   * (new or the merged/collapsed existing one).
    */
   insert(report: PendingReport, now: number): Promise<number>
   /** Pending rows with next_at <= now, oldest-due first. */
@@ -81,14 +100,23 @@ export function makeReportOutboxStore(db: Db): ReportOutboxStore {
     "INSERT INTO matter_report_outbox(matter_id, origin_matter_id, origin_message_id, text, status, attempts, next_at, created_at) "
     + "VALUES (?, ?, ?, ?, 'pending', 0, ?, ?) RETURNING id",
   )
-  // Merge target: a pending row for the same matter. Text + next_at only —
-  // attempts and origin_matter_id/origin_message_id (fixed for a matter's
-  // lifetime) are untouched.
-  const stmtMergeExisting = db.query<unknown, [string, number, string]>(
-    "UPDATE matter_report_outbox SET text = ?, next_at = ? WHERE matter_id = ? AND status = 'pending'",
-  )
+  // The one canonical pending row for a matter, if any — lowest id wins
+  // (deterministic; matters if dogfood data has historical duplicates).
   const stmtPendingIdByMatter = db.query<{id: number}, [string]>(
     "SELECT id FROM matter_report_outbox WHERE matter_id = ? AND status = 'pending' ORDER BY id LIMIT 1",
+  )
+  // Merge into that ONE row by id (not by matter_id — a second matching row
+  // must not also be touched). next_at only jumps to `now` when attempts=0
+  // (nothing has failed yet); otherwise the existing backoff schedule
+  // stands untouched.
+  const stmtMergeById = db.query<unknown, [string, number, number]>(
+    "UPDATE matter_report_outbox SET text = ?, next_at = CASE WHEN attempts = 0 THEN ? ELSE next_at END WHERE id = ?",
+  )
+  // Any OTHER pending row for the same matter (historical duplicate from
+  // before this fix) collapses away — it would otherwise get the same text
+  // stamped onto it too and be sent a second time by the sweeper.
+  const stmtDeleteOtherPending = db.query<unknown, [string, number]>(
+    "DELETE FROM matter_report_outbox WHERE matter_id = ? AND status = 'pending' AND id <> ?",
   )
   const stmtListDue = db.query<Row, [number]>(
     `SELECT ${COLS} FROM matter_report_outbox WHERE status = 'pending' AND next_at <= ? ORDER BY next_at ASC, id ASC`,
@@ -107,8 +135,12 @@ export function makeReportOutboxStore(db: Db): ReportOutboxStore {
 
   return {
     async insert(report, now) {
-      const merged = stmtMergeExisting.run(report.text, now, report.matterId) as {changes: number}
-      if (merged.changes > 0) return stmtPendingIdByMatter.get(report.matterId)!.id
+      const existing = stmtPendingIdByMatter.get(report.matterId)
+      if (existing) {
+        stmtMergeById.run(report.text, now, existing.id)
+        stmtDeleteOtherPending.run(report.matterId, existing.id)
+        return existing.id
+      }
       const row = stmtInsert.get(report.matterId, report.originMatterId, report.originMessageId, report.text, now, now)
       return row!.id
     },

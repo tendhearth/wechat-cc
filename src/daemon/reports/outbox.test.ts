@@ -84,13 +84,53 @@ describe('report outbox store', () => {
     expect(due[0]).toMatchObject({id: firstId, text: secondText, nextAt: 5_000})
   })
 
-  it('合并会把 next_at 拨回「立即」,但不动 attempts(不能靠反复入队绕开放弃上限)', async () => {
+  it('从未失败过(attempts=0)时合并,next_at 拨到这次入队的时间', async () => {
     const id = await store.insert(report, 1_000)
-    await store.recordAttempt(id, 60_000) // 之前失败过,正在退避
-    await store.insert({...report, text: '更新后的文本'}, 2_000)
-    const due = await store.listDue(2_000)
+    const mergedId = await store.insert({...report, text: '更新后的文本'}, 5_000)
+    expect(mergedId).toBe(id)
+    const due = await store.listDue(5_000)
     expect(due).toHaveLength(1)
-    expect(due[0]).toMatchObject({id, attempts: 1, nextAt: 2_000, text: '更新后的文本'})
+    expect(due[0]).toMatchObject({id, attempts: 0, nextAt: 5_000, text: '更新后的文本'})
+  })
+
+  /**
+   * 评审修复轮 2 ③:合并不该打断正在退避的重试。之前的版本无条件把 next_at
+   * 拨回「立即」,而 sweeper 只靠 next_at<=now 这一道闸(没有 reminders 那种
+   * 由 last_attempt_at+backoffMs 推出、任何重新入队都绕不开的第二道闸)——
+   * 于是每次入队都换来一次立即投递尝试,指数退避被削成约 1 次/分钟。退避在
+   * 这个项目里是风控红线,不是性能优化,不能被合并悄悄绕开。
+   */
+  it('已经失败过、正在退避时(attempts>0)合并,next_at 保持原样,不提前重试', async () => {
+    const id = await store.insert(report, 1_000)
+    await store.recordAttempt(id, 60_000) // 之前失败过,正在退避到 60_000
+    const mergedId = await store.insert({...report, text: '更新后的文本'}, 2_000)
+    expect(mergedId).toBe(id)
+    // 还没到原定的退避时刻(60_000),合并不该让它提前变成 due。
+    expect(await store.listDue(2_000)).toEqual([])
+    const due = await store.listDue(60_000)
+    expect(due).toHaveLength(1)
+    expect(due[0]).toMatchObject({id, attempts: 1, nextAt: 60_000, text: '更新后的文本'})
+  })
+
+  /**
+   * 评审修复轮 2 ④:v65 的 schema 没有 matter_id+status 的唯一约束,而②修复
+   * 之前的代码本来就会插多行——dogfood 库里可能已经存在这种历史脏数据。合并
+   * 必须收拢成一行,不能把所有历史重复行都改成同一段新文本(那样 sweeper 会
+   * 把同一句话送好几遍)。
+   */
+  it('入队前同一 matter 已有多行历史 pending(dogfood 遗留)时,合并收拢成一行,不是全改', async () => {
+    const insertRaw = db.query<unknown, [string, string, string, string, number, number]>(
+      "INSERT INTO matter_report_outbox(matter_id, origin_matter_id, origin_message_id, text, status, attempts, next_at, created_at) "
+      + "VALUES (?, ?, ?, ?, 'pending', 0, ?, ?)",
+    )
+    insertRaw.run(TASK, CHAT, 'msg-7', '旧文本A', 1_000, 1_000)
+    insertRaw.run(TASK, CHAT, 'msg-7', '旧文本B', 1_000, 1_000)
+    const before = await store.listDue(1_000)
+    expect(before).toHaveLength(2) // 先确认历史脏数据确实是两行
+    const mergedId = await store.insert({...report, text: '新文本'}, 5_000)
+    const after = await store.listDue(5_000)
+    expect(after).toHaveLength(1)
+    expect(after[0]).toMatchObject({id: mergedId, text: '新文本'})
   })
 
   it('已经 sent 的行不会被"合并"——同一 matter 再报一次是新的一行', async () => {
