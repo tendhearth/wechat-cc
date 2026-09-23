@@ -159,3 +159,41 @@ describe('memory page availability', () => {
     expect(root.innerHTML).not.toContain('正在整理')
   })
 })
+
+describe('profile evidence and honest empty states',()=>{
+  async function render(profile:any=null,observations:any[]=[],files:any[]=[],overview=''){
+    vi.resetModules()
+    const memory=await import('./memory.js')
+    const root={...fakeEl(),querySelector:()=>null,querySelectorAll:()=>[]},box=fakeEl()
+    ;(globalThis as any).requestAnimationFrame=()=>0
+    ;(globalThis as any).document.getElementById=(id:string)=>id==='memory-profile-content'?root:['memory-observations','memory-milestones'].includes(id)?box:null
+    const deps=makeDeps({invoke:vi.fn(async(_cmd:string,{args}:{args:string[]})=>{
+      if(args[0]==='memory'&&args[1]==='list')return[{userId:'owner',fileCount:files.length,files}]
+      if(args[0]==='observations')return{observations}
+      if(args[0]==='milestones')return{milestones:[]}
+      if(args[1]==='profile-read')return profile?{ok:true,content:JSON.stringify(profile)}:{ok:false}
+      if(args[0]==='memory'&&args[1]==='read')return overview?{ok:true,content:overview}:{ok:false}
+      return{ok:false}
+    })})
+    await memory.loadMemoryPane(deps as any);await memory.loadMemoryTopZone(deps as any);return root.innerHTML
+  }
+  it('does not invent personality, preferences or file contents without a generated profile',async()=>{
+    const html=await render(null,[],[{path:'sleep-relationship.md',mtime:'2026-09-22',size:1}])
+    expect(html).not.toMatch(/低爆发|高敏感|长期关系型人格|喜欢深度交流|情绪细腻|身体感受|安全感/)
+    expect(html).toContain('尚未生成画像');expect(html).toContain('sleep-relationship.md');expect(html).not.toContain('data-memory-evidence=')
+  })
+  it('shows actual observations without converting their tone into personality',async()=>{
+    const html=await render(null,[{id:'o',body:'今天说想早点休息',tone:'concern',ts:'2026-09-22',archived:false}])
+    expect(html).toContain('今天说想早点休息');expect(html).not.toMatch(/需要低打扰|压力和担心|高内耗/)
+  })
+  it('adds evidence only to generated cards, preserves typed refs and labels stale profiles as history',async()=>{
+    const html=await render({version:1,chatId:'owner',generatedAt:'2026-09-22',needsRefresh:true,summary:'总结文字',insight:'洞察文字',tags:[],traits:[{title:'实际卡片',body:'内容',sourceRefs:[{kind:'memory',path:'a.md',label:'原文'}]}],preferences:[],rememberedEvents:[{title:'旧卡片',body:'旧内容',sources:['guess.md']}]})
+    expect(html.match(/data-memory-evidence=/g)).toHaveLength(2)
+    expect(html).toContain('历史画像');expect(html).toContain('已有画像需更新');expect(html).toContain('历史对话不会被删除')
+    expect(html).not.toContain('data-memory-evidence="summary');expect(html).not.toContain('data-memory-evidence="insight')
+  })
+  it('does not fill missing stale profile fields from a separately generated overview',async()=>{
+    const html=await render({version:1,chatId:'owner',generatedAt:'2026-09-22',needsRefresh:true,summary:'',insight:'',tags:[],traits:[{title:'旧卡片',body:'保留旧内容'}],preferences:[],rememberedEvents:[]},[],[],'## 整体理解\n来源改正前的另一份旧判断。')
+    expect(html).not.toContain('来源改正前的另一份旧判断');expect(html).toContain('保留旧内容')
+  })
+})

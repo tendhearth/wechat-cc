@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { makeMemoryLlmOps } from './memory-llm-ops'
+import { invalidateDerivedMemory } from '../lib/memory-derived-state'
 
 // NOTE: brief used '../../lib/memory-synthesis' — that resolves one level
 // too high from src/daemon/. Both this test file and memory-llm-ops.ts live
@@ -61,6 +62,30 @@ describe('generatePortrait (CC 手绘小像)', () => {
     if (overview) writeFileSync(join(dir, 'memory', 'admin1', '_overview.md'), overview)
     return dir
   }
+
+  it('does not use stale derived material when generating a portrait', async () => {
+    const stateDir = seedState('stale overview')
+    const root = join(stateDir, 'memory', 'admin1')
+    writeFileSync(join(root, '_profile.json'), JSON.stringify({ summary: 'stale profile' }))
+    writeFileSync(join(root, 'profile.md'), 'canonical fresh profile')
+    invalidateDerivedMemory(root)
+    const { ops, cheapEval } = make({ stateDir })
+    cheapEval.mockResolvedValueOnce(GOOD_SVG)
+    expect((await ops.generatePortrait('admin1')).ok).toBe(true)
+    expect(cheapEval.mock.calls[0]![0]).toContain('canonical fresh profile')
+    expect(cheapEval.mock.calls[0]![0]).not.toContain('stale')
+  })
+
+  it('discards a portrait if sources were corrected while the LLM was running', async () => {
+    const stateDir = seedState()
+    const { ops, cheapEval } = make({ stateDir })
+    cheapEval.mockImplementationOnce(async () => {
+      invalidateDerivedMemory(join(stateDir, 'memory', 'admin1'))
+      return GOOD_SVG
+    })
+    expect(await ops.generatePortrait('admin1')).toMatchObject({ ok: false, error: 'source_changed' })
+    expect(existsSync(join(stateDir, 'memory', 'admin1', 'portrait.svg'))).toBe(false)
+  })
 
   it('从画像素材取材,产出净化后的 portrait.svg + 元数据', async () => {
     const stateDir = seedState()

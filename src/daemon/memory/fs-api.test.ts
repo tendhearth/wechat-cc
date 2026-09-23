@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, symlinkSync 
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { makeMemoryFS, MemoryPathError } from './fs-api'
+import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 
 describe('MemoryFS', () => {
   let root: string
@@ -10,6 +11,21 @@ describe('MemoryFS', () => {
   afterEach(() => { rmSync(root, { recursive: true, force: true }) })
 
   const make = () => makeMemoryFS({ rootDir: root })
+
+  it('hides stale overview from reads and listings for both global and per-chat memory roots', () => {
+    const fs = make()
+    fs.write('c1/_overview.md', 'stale judgment')
+    fs.write('c1/profile.md', 'canonical profile')
+    invalidateDerivedMemory(join(root, 'c1'))
+    expect(fs.read('c1/_overview.md')).toBeNull()
+    expect(fs.list()).toEqual(['c1/profile.md'])
+    const chatFs = makeMemoryFS({ rootDir: join(root, 'c1') })
+    expect(chatFs.read('_overview.md')).toBeNull()
+    expect(chatFs.list()).toEqual(['profile.md'])
+    expect(existsSync(join(root, 'c1', '_overview.md'))).toBe(true)
+    symlinkSync(join(root, 'c1', '_overview.md'), join(root, 'c1', 'overview-alias.md'))
+    expect(chatFs.read('overview-alias.md')).toBeNull()
+  })
 
   it('write then read roundtrips content', () => {
     const fs = make()

@@ -19,7 +19,8 @@ import {
   existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { dirname, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { isDerivedMemoryStale } from '../../lib/memory-derived-state'
 
 export interface MemoryFS {
   /** Read a memory file. Returns null if not present (no throw). */
@@ -152,6 +153,11 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
     }
   }
 
+  function staleOverview(full: string): boolean {
+    const real = realpathSync(full)
+    return basename(real) === '_overview.md' && isDerivedMemoryStale(dirname(real), 'overview')
+  }
+
   return {
     rootDir: () => root,
 
@@ -160,6 +166,7 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
       checkExt(full)
       if (!existsSync(full)) return null
       assertWithinRealRoot(full, true)
+      if (staleOverview(full)) return null
       return readFileSync(full, 'utf8')
     },
 
@@ -207,6 +214,7 @@ export function makeMemoryFS(opts: MemoryFSOptions): MemoryFS {
           if (entry.isSymbolicLink()) continue
           if (entry.isDirectory()) stack.push(p)
           else if (entry.isFile() && exts.has(extOf(entry.name))) {
+            if (staleOverview(p)) continue
             // Normalize to POSIX so the public API (paths shown to Claude
             // and consumed by `memory_read`) is identical on Windows + POSIX.
             out.push(relative(root, p).split(sep).join('/'))

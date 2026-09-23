@@ -35,6 +35,7 @@ import { knowledgeRoutes } from './routes-knowledge'
 import { configRoutes } from './routes-config'
 import { pairRoutes } from './routes-pair'
 import { memoryRoutes } from './routes-memory'
+import { memoryReviewRoutes } from './routes-memory-review'
 import { penpalRoutes } from './routes-penpal'
 import { healthRoutes } from './routes-health'
 import { pluginRoutes } from './routes-plugins'
@@ -972,6 +973,7 @@ const onlineStickerCursor = new Map<string, number>()
     ...configRoutes(deps),
     ...pairRoutes(deps),
     ...memoryRoutes(deps),
+    ...memoryReviewRoutes(deps),
     ...penpalRoutes(deps),
     ...healthRoutes(deps),
     ...remindersRoutes(deps),

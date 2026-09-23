@@ -8,6 +8,7 @@
  */
 import type { Db } from '../lib/db'
 import { readJsonFile } from '../lib/read-json-file'
+import { beginDerivedGeneration, isDerivedMemoryStale, readDerivedRevision } from '../lib/memory-derived-state'
 
 export interface MemoryLlmOpsDeps {
   stateDir: string
@@ -62,17 +63,19 @@ export function makeMemoryLlmOps(deps: MemoryLlmOpsDeps): MemoryLlmOps {
         return { ok: false, error: 'bad_chat_id' }
       }
       const memDir = join(deps.stateDir, 'memory', adminChatId)
+      const sourceRevision = beginDerivedGeneration(memDir)
       // Material: prefer the structured profile, fall back to the overview,
       // then the raw profile.md. No material → nothing honest to draw from.
       let material = ''
       const profileJson = join(memDir, '_profile.json')
-      if (existsSync(profileJson)) {
+      if (!isDerivedMemoryStale(memDir, 'profile') && existsSync(profileJson)) {
         try {
           const p = readJsonFile(profileJson) as { summary?: string; tags?: string[]; insight?: string }
           material = [p.summary, p.insight, (p.tags ?? []).join('、')].filter(Boolean).join('\n')
         } catch { /* fall through to overview */ }
       }
       if (!material) for (const f of ['_overview.md', 'profile.md']) {
+        if (f === '_overview.md' && isDerivedMemoryStale(memDir, 'overview')) continue
         const fp = join(memDir, f)
         if (existsSync(fp)) { material = readFileSync(fp, 'utf8').trim(); if (material) break }
       }
@@ -80,6 +83,7 @@ export function makeMemoryLlmOps(deps: MemoryLlmOpsDeps): MemoryLlmOps {
 
       const cheapEval = resolveCheapEval(adminChatId)
       const raw = await cheapEval(buildPortraitPrompt(material.slice(0, 2000)))
+      if (sourceRevision === 'corrupt' || readDerivedRevision(memDir) !== sourceRevision) return { ok: false, error: 'source_changed' }
       const m = raw.match(/<svg[\s\S]*<\/svg>/)
       const svg = m ? safeSvg(m[0]) : null
       if (!svg) return { ok: false, error: 'unsafe_svg' }

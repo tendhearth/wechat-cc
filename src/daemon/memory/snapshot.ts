@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import { makeMemoryFS } from './fs-api'
 
 /**
  * Concatenate all .md files in a chat's memory dir into a single string.
@@ -17,6 +18,7 @@ import { join } from 'node:path'
 const OVERVIEW_FILENAME = '_overview.md'
 
 export async function buildMemorySnapshot(stateDir: string, chatId: string): Promise<string> {
+  if (!chatId || chatId.includes('..') || /[\\/\0]/.test(chatId)) return ''
   const dir = join(stateDir, 'memory', chatId)
   if (!existsSync(dir)) return ''
   const entries = await readdir(dir, { withFileTypes: true })
@@ -30,9 +32,12 @@ export async function buildMemorySnapshot(stateDir: string, chatId: string): Pro
     return a.localeCompare(b)
   })
   const out: string[] = []
+  const memory = makeMemoryFS({ rootDir: dir })
   for (const name of names) {
     try {
-      const content = await readFile(join(dir, name), 'utf8')
+      // No async gap between freshness check and returning the snapshot.
+      const content = memory.read(name)
+      if (content === null) continue
       out.push(`# ${name}\n${content}`)
     } catch { /* skip unreadable */ }
   }

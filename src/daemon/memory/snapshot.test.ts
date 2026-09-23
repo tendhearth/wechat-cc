@@ -3,11 +3,25 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildMemorySnapshot } from './snapshot'
+import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 
 describe('buildMemorySnapshot', () => {
   let stateDir: string
   beforeEach(() => { stateDir = mkdtempSync(join(tmpdir(), 'snap-')) })
   afterEach(() => rmSync(stateDir, { recursive: true, force: true }))
+
+  it('omits stale overview while retaining canonical profile and corrected notes', async () => {
+    const root = join(stateDir, 'memory', 'c1')
+    mkdirSync(root, { recursive: true })
+    writeFileSync(join(root, '_overview.md'), 'outdated judgment')
+    writeFileSync(join(root, 'profile.md'), 'canonical profile')
+    writeFileSync(join(root, 'note.md'), 'corrected note')
+    invalidateDerivedMemory(root)
+    const snap = await buildMemorySnapshot(stateDir, 'c1')
+    expect(snap).not.toContain('outdated judgment')
+    expect(snap).toContain('canonical profile')
+    expect(snap).toContain('corrected note')
+  })
 
   it('returns empty string when chat dir does not exist', async () => {
     expect(await buildMemorySnapshot(stateDir, 'nope')).toBe('')

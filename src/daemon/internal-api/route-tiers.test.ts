@@ -92,6 +92,14 @@ describe('route-tiers', () => {
     expect(minTierFor('POST /v1/memory/profile/generate')).toBe('trusted')
   })
 
+  it('reviewed memory sources require trusted and are registered in the actual dispatcher', () => {
+    const routes = makeRoutes({ deps: { stateDir: '/tmp', daemonPid: 1 }, getDelegate: () => null, maybePrefix: (_c, t) => t })
+    for (const route of ['GET /v1/memory/source', 'POST /v1/memory/source/review']) {
+      expect(minTierFor(route)).toBe('trusted')
+      expect(routes[route]).toBeTypeOf('function')
+    }
+  })
+
   it('reminder routes are guest-reachable (scope enforced in-handler)', () => {
     expect(minTierFor('POST /v1/reminders/schedule')).toBe('guest')
     expect(minTierFor('POST /v1/reminders/cancel')).toBe('guest')

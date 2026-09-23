@@ -91,6 +91,8 @@ export type PetTurnDep = () => Promise<import('../../core/pet-turn').PetTurnPayl
 export interface InternalApiDeps {
   /** State directory; the token file is written under here. */
   stateDir: string
+  /** Optional server-owned Claude projects location; never accepted from a request. */
+  memoryProjectsRoot?: string
   /** Local CC Atelier store; read-only artwork metadata/images for the desktop dashboard. */
   atelier?: import('../atelier-store').AtelierStore
   /** Daemon process pid — exposed by /v1/health for smoke tests. */

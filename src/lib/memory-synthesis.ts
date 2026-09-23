@@ -35,8 +35,12 @@ import { dirname, isAbsolute, join } from 'node:path'
 export interface LifeStoresReader {
   listObservations(adminChatId: string): Promise<string[]>
   listMilestones(adminChatId: string): Promise<string[]>
+  listObservationRecords?(adminChatId: string): Promise<LifeSourceRecord[]>
+  listMilestoneRecords?(adminChatId: string): Promise<LifeSourceRecord[]>
 }
+export interface LifeSourceRecord { id: string; body: string }
 import { readMemoryProfileFile, writeMemoryFile, writeMemoryProfileFile } from './memory'
+import { beginDerivedGeneration, commitDerivedMemory, isDerivedMemoryStale, readDerivedRevision } from './memory-derived-state'
 import { surveyFiles, formatFileSurvey, type SurveyResult } from './file-survey'
 
 /** Default root for Claude Code's per-project memory dirs. */
@@ -325,7 +329,19 @@ export function summarizeProjectMemories(projectsRoot?: string): ProjectMemorySu
 export interface LifeContext {
   observations: string[]
   milestones: string[]
+  observationRecords?: LifeSourceRecord[]
+  milestoneRecords?: LifeSourceRecord[]
   memoryNotes: Array<{ name: string; content: string }>
+}
+
+async function recentLifeSource(readBodies: () => Promise<string[]>, readRecords?: () => Promise<LifeSourceRecord[]>): Promise<{ bodies: string[]; records?: LifeSourceRecord[] }> {
+  if (readRecords) {
+    try {
+      const records = (await readRecords()).filter(r => r.body && r.id).slice(-20).map(({ id, body }) => ({ id, body }))
+      return { bodies: records.map(r => r.body), records }
+    } catch { /* older readers can still supply unlinked context */ }
+  }
+  try { return { bodies: (await readBodies()).filter(Boolean).slice(-20) } } catch { return { bodies: [] } }
 }
 
 /** True when there's no life-side signal at all. */
@@ -347,8 +363,12 @@ export async function gatherLifeContext(opts: { stores?: LifeStoresReader | null
   // most RECENT life context is what makes the overview feel current ("懂你"
   // is about now, not the first things ever noticed).
   if (stores) {
-    try { out.observations = (await stores.listObservations(adminChatId)).filter(Boolean).slice(-20) } catch { /* best-effort */ }
-    try { out.milestones = (await stores.listMilestones(adminChatId)).filter(Boolean).slice(-20) } catch { /* best-effort */ }
+    const observations = await recentLifeSource(() => stores.listObservations(adminChatId), stores.listObservationRecords?.bind(stores, adminChatId))
+    const milestones = await recentLifeSource(() => stores.listMilestones(adminChatId), stores.listMilestoneRecords?.bind(stores, adminChatId))
+    out.observations = observations.bodies
+    out.milestones = milestones.bodies
+    if (observations.records) out.observationRecords = observations.records
+    if (milestones.records) out.milestoneRecords = milestones.records
   }
   try {
     const dir = join(memoryRoot, adminChatId)
@@ -412,7 +432,7 @@ function readOwnerKnowledge(stateDir: string, adminChatId: string): string {
   try { return existsSync(p) ? readFileSync(p, 'utf8') : '' } catch { return '' }
 }
 
-export async function synthesizeOverview(deps: SynthesizeDeps): Promise<SynthesizeResult> {
+async function buildOverviewSource(deps: SynthesizeDeps) {
   const projectsRoot = deps.projectsRoot ?? defaultClaudeProjectsRoot()
   const projects = discoverProjectMemory(projectsRoot)
   const filesScanned = projects.reduce((n, p) => n + (p.index ? 1 : 0) + p.files.length, 0)
@@ -425,6 +445,13 @@ export async function synthesizeOverview(deps: SynthesizeDeps): Promise<Synthesi
   // two person models (daemon synthesis + plugin knowledge) finally merge here.
   const social = readOwnerKnowledge(deps.stateDir, deps.adminChatId)
   const prompt = formatSynthesisPrompt(projects, life, survey, social)
+  return { projects, filesScanned, life, survey, prompt }
+}
+
+export async function synthesizeOverview(deps: SynthesizeDeps): Promise<SynthesizeResult> {
+  const memoryRoot = join(deps.stateDir, 'memory', deps.adminChatId)
+  const revision = deps.dryRun ? readDerivedRevision(memoryRoot) : beginDerivedGeneration(memoryRoot)
+  const { projects, filesScanned, life, survey, prompt } = await buildOverviewSource(deps)
   const base: SynthesizeResult = {
     projectsFound: projects.length,
     projectNames: projects.map(p => p.displayName),
@@ -441,17 +468,29 @@ export async function synthesizeOverview(deps: SynthesizeDeps): Promise<Synthesi
   const raw = await deps.sdkEval(prompt)
   const overview = raw.trim()
   if (overview.length === 0) return base
+  if (sourceFingerprint((await buildOverviewSource(deps)).prompt) !== sourceFingerprint(prompt)) return base
 
   const stamped = `<!-- 由 wechat-cc 从本机 Claude 记忆整理生成 · ${new Date().toISOString()} -->\n\n${overview}\n`
-  const written = writeMemoryFile(deps.stateDir, deps.adminChatId, OVERVIEW_FILENAME, stamped)
-  return { ...base, overview, written: { path: OVERVIEW_FILENAME, bytesWritten: written.bytesWritten } }
+  let bytesWritten = 0
+  const committed = commitDerivedMemory(memoryRoot, 'overview', revision, () => {
+    bytesWritten = writeMemoryFile(deps.stateDir, deps.adminChatId, OVERVIEW_FILENAME, stamped).bytesWritten
+  })
+  return committed ? { ...base, overview, written: { path: OVERVIEW_FILENAME, bytesWritten } } : base
 }
 
 export interface MemoryProfileCard {
   title: string
   body: string
   sources?: string[]
+  sourceRefs?: MemoryProfileSourceRef[]
 }
+
+/** Only server-resolved evidence is navigable; legacy source names are display-only. */
+export type MemoryProfileSourceRef =
+  | { kind: 'memory'; path: string; label: string }
+  | { kind: 'observation'; id: string; label: string }
+  | { kind: 'milestone'; id: string; label: string }
+  | { kind: 'project'; project: string; path: string; label: string }
 
 export interface MemoryProfileSourceStats {
   projectsFound: number
@@ -472,6 +511,7 @@ export interface MemoryProfileDoc {
   minRefreshAfter?: string
   sourceStats?: MemoryProfileSourceStats
   sourceFingerprint?: string
+  needsRefresh?: boolean
   insight: string
   summary: string
   tags: string[]
@@ -513,6 +553,7 @@ export interface MemoryProfileStatusResult {
   sourceFingerprint: string
   previousSourceFingerprint: string | null
   changed: boolean
+  needsRefresh?: boolean
   daysSinceGenerated: number | null
 }
 
@@ -521,9 +562,65 @@ const MIN_MEMORY_NOTES_FOR_PROFILE = 3
 const MIN_LIFE_SIGNALS_FOR_PROFILE = 5
 const MIN_PROMPT_CHARS_FOR_PROFILE = 3_000
 
-function formatProfilePrompt(projects: ProjectMemory[], life: LifeContext | null, survey: SurveyResult | null): string {
-  const source = formatSynthesisPrompt(projects, life, survey)
-  return `${source}
+function formatProfilePrompt(projects: ProjectMemory[], life: LifeContext | null, survey: SurveyResult | null): { prompt: string; catalog: Map<string, MemoryProfileSourceRef> } {
+  const catalog = new Map<string, MemoryProfileSourceRef>()
+  const blocks: string[] = []
+  let remaining = TOTAL_CAP
+  let catalogLimit = 256
+  // Register a reference only after its body fits. A later whole-prompt slice
+  // would leave catalog entries pointing at evidence the model never received.
+  const add = (content: string, label: string, ref?: MemoryProfileSourceRef, cap = remaining): number => {
+    if (!content.trim() || (ref && catalog.size >= catalogLimit)) return 0
+    const header = ref ? `【依据 e_0000000000000000】${label}\n` : `【${label}】\n`
+    const available = Math.min(remaining, cap) - header.length - 2
+    if (available <= 0) return 0
+    const body = content.slice(0, Math.min(PER_FILE_CAP, available))
+    if (!body.trim()) return 0
+    let heading = header
+    if (ref) {
+      const token = `e_${createHash('sha256').update(JSON.stringify([ref, body])).digest('hex').slice(0, 16)}`
+      catalog.set(token, ref)
+      heading = `【依据 ${token}】${label}\n`
+    }
+    const block = `${heading}${body}\n\n`
+    blocks.push(block)
+    remaining -= block.length
+    return block.length
+  }
+  for (const project of projects) {
+    let budget = PER_PROJECT_CAP
+    for (const file of [...(project.index ? [{ path: 'MEMORY.md', content: project.index }] : []), ...project.files]) {
+      const label = `${project.displayName} · ${file.path}`.replace(/\s+/g, ' ').slice(0, 160)
+      budget -= add(file.content, label, { kind: 'project', project: project.encodedDir, path: file.path, label }, budget)
+      if (budget <= 0 || remaining <= 0) break
+    }
+    if (remaining <= 0) break
+  }
+  if (life) {
+    // As in overview synthesis, projects cannot consume the life-side budget.
+    remaining = TOTAL_CAP
+    catalogLimit = catalog.size + 256
+    for (const kind of ['observation', 'milestone'] as const) {
+      const bodies = kind === 'observation' ? life.observations : life.milestones
+      const records = kind === 'observation' ? life.observationRecords : life.milestoneRecords
+      for (const [index, body] of bodies.entries()) {
+        const label = `${kind === 'observation' ? '观察' : '里程碑'}：${body.replace(/\s+/g, ' ').slice(0, 80)}`
+        const record = records?.[index]
+        add(body, label, record?.id && record.body === body ? { kind, id: record.id, label } : undefined)
+      }
+    }
+    for (const note of life.memoryNotes) {
+      const label = note.name.replace(/\s+/g, ' ').slice(0, 160)
+      add(note.content, label, { kind: 'memory', path: note.name, label })
+    }
+  }
+  // A filename survey is context only: it does not establish an editable source.
+  if (survey) {
+    remaining = TOTAL_CAP
+    add(formatFileSurvey(survey), '文件概览（无可跳转依据）')
+  }
+  const source = blocks.join('')
+  const prompt = `下面是关于你的长期记忆、生活观察和项目笔记。每段只提供有界的原始内容。\n${source}
 
 你现在要把上面的长期记忆整理成“数字人格画像”的结构化 JSON。
 
@@ -532,9 +629,9 @@ function formatProfilePrompt(projects: ProjectMemory[], life: LifeContext | null
   "insight": "一句话人格洞察，60-120字",
   "summary": "给用户看的总体描述，80-160字",
   "tags": ["2-8个短标签"],
-  "traits": [{"title":"情绪表达|社交模式|关系模式|压力状态或更贴切标题","body":"基于真实记忆的描述，35-90字","sources":["来源名"]}],
-  "preferences": [{"title":"喜欢|不喜欢|需要|风险或更贴切标题","body":"基于真实记忆的描述，35-90字","sources":["来源名"]}],
-  "rememberedEvents": [{"title":"用户能感到被记住的小标题","body":"具体事件/长期线索的抽象表达，35-90字","sources":["来源名"]}]
+  "traits": [{"title":"情绪表达|社交模式|关系模式|压力状态或更贴切标题","body":"基于真实记忆的描述，35-90字","sources":["来源名"],"sourceRefs":["对应段落的依据标识"]}],
+  "preferences": [{"title":"喜欢|不喜欢|需要|风险或更贴切标题","body":"基于真实记忆的描述，35-90字","sources":["来源名"],"sourceRefs":["对应段落的依据标识"]}],
+  "rememberedEvents": [{"title":"用户能感到被记住的小标题","body":"具体事件/长期线索的抽象表达，35-90字","sources":["来源名"],"sourceRefs":["对应段落的依据标识"]}]
 }
 
 要求:
@@ -543,11 +640,13 @@ function formatProfilePrompt(projects: ProjectMemory[], life: LifeContext | null
 - 不要写文件名本身，不要暴露系统实现。
 - rememberedEvents 要像“CC把你的事情放在心上”，不是列记忆文件。
 - 如果证据不足，少写，不要编造。
+- sourceRefs 只能选取上文【依据 e_…】中的完整标识，每条最多 4 个；没有对应依据则省略。不要返回路径、ID、标签或对象，不要为 insight/summary 返回引用。
 - traits 最多 4 条，preferences 最多 4 条，rememberedEvents 最多 4 条。
 `
+  return { prompt, catalog }
 }
 
-function parseProfileJson(raw: string, chatId: string): MemoryProfileDoc | null {
+function parseProfileJson(raw: string, chatId: string, catalog: Map<string, MemoryProfileSourceRef>): MemoryProfileDoc | null {
   const trimmed = raw.trim().replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '')
   const start = trimmed.indexOf('{')
   const end = trimmed.lastIndexOf('}')
@@ -567,10 +666,13 @@ function parseProfileJson(raw: string, chatId: string): MemoryProfileDoc | null 
   const cards = (value: unknown): MemoryProfileCard[] => Array.isArray(value)
     ? value.map(item => {
         const card = item && typeof item === 'object' ? item as Record<string, unknown> : {}
+        const tokens = Array.isArray(card.sourceRefs) ? [...new Set(card.sourceRefs.filter((token): token is string => typeof token === 'string' && catalog.has(token)))].slice(0, 4) : []
+        const sourceRefs = tokens.map(token => catalog.get(token)!)
         return {
           title: secondPerson(card.title),
           body: secondPerson(card.body),
           sources: Array.isArray(card.sources) ? card.sources.map(s => String(s)).filter(Boolean).slice(0, 4) : [],
+          ...(sourceRefs.length ? { sourceRefs } : {}),
         }
       }).filter(item => item.title && item.body).slice(0, 4)
     : []
@@ -657,6 +759,7 @@ async function buildProfileSource(opts: {
   prompt: string
   stats: MemoryProfileSourceStats
   fingerprint: string
+  catalog: Map<string, MemoryProfileSourceRef>
 }> {
   const projectsRoot = opts.projectsRoot ?? defaultClaudeProjectsRoot()
   const projects = discoverProjectMemory(projectsRoot)
@@ -665,7 +768,7 @@ async function buildProfileSource(opts: {
   const survey = opts.includeFileSurvey
     ? gatherFileSurvey({ stateDir: opts.stateDir, adminChatId: opts.adminChatId, roots: opts.surveyRoots })
     : null
-  const prompt = formatProfilePrompt(projects, life, survey)
+  const { prompt, catalog } = formatProfilePrompt(projects, life, survey)
   const stats = profileSourceStats({ projects, filesScanned, life, survey, promptChars: prompt.length })
   return {
     projects,
@@ -676,10 +779,13 @@ async function buildProfileSource(opts: {
     prompt,
     stats,
     fingerprint: sourceFingerprint(prompt),
+    catalog,
   }
 }
 
 export async function synthesizeProfile(deps: SynthesizeProfileDeps): Promise<SynthesizeProfileResult> {
+  const memoryRoot = join(deps.stateDir, 'memory', deps.adminChatId)
+  const revision = deps.dryRun ? readDerivedRevision(memoryRoot) : beginDerivedGeneration(memoryRoot)
   const source = await buildProfileSource(deps)
   const base: SynthesizeProfileResult = {
     projectsFound: source.stats.projectsFound,
@@ -694,16 +800,20 @@ export async function synthesizeProfile(deps: SynthesizeProfileDeps): Promise<Sy
   if (deps.dryRun || !hasEnoughProfileSource(source.stats) || (source.projects.length === 0 && lifeIsEmpty(source.life) && (!source.survey || source.survey.folders.length === 0))) return base
 
   const raw = await deps.sdkEval(source.prompt)
-  const profile = parseProfileJson(raw, deps.adminChatId)
+  const profile = parseProfileJson(raw, deps.adminChatId, source.catalog)
   if (!profile) return base
+  if ((await buildProfileSource(deps)).fingerprint !== source.fingerprint) return base
   profile.generatedBy = deps.generatedBy ?? 'manual'
   profile.modelProvider = deps.modelProvider
   profile.sourceStats = source.stats
   profile.sourceFingerprint = source.fingerprint
   profile.minRefreshAfter = addDays(profile.generatedAt, AUTO_REFRESH_DAYS) ?? undefined
   const body = `${JSON.stringify(profile, null, 2)}\n`
-  const written = writeMemoryProfileFile(deps.stateDir, deps.adminChatId, body)
-  return { ...base, profile, written: { path: PROFILE_FILENAME, bytesWritten: written.bytesWritten } }
+  let bytesWritten = 0
+  const committed = commitDerivedMemory(memoryRoot, 'profile', revision, () => {
+    bytesWritten = writeMemoryProfileFile(deps.stateDir, deps.adminChatId, body).bytesWritten
+  })
+  return committed ? { ...base, profile, written: { path: PROFILE_FILENAME, bytesWritten } } : base
 }
 
 export async function getMemoryProfileStatus(opts: {
@@ -720,7 +830,8 @@ export async function getMemoryProfileStatus(opts: {
   const generatedAt = existing?.generatedAt ?? null
   const minRefreshAfter = existing?.minRefreshAfter ?? (generatedAt ? addDays(generatedAt, AUTO_REFRESH_DAYS) : null)
   const previousSourceFingerprint = existing?.sourceFingerprint ?? null
-  const changed = previousSourceFingerprint ? previousSourceFingerprint !== source.fingerprint : false
+  const needsRefresh = isDerivedMemoryStale(join(opts.stateDir, 'memory', opts.adminChatId), 'profile')
+  const changed = needsRefresh || (previousSourceFingerprint ? previousSourceFingerprint !== source.fingerprint : false)
   const days = generatedAt ? daysSince(generatedAt) : null
   const oldEnough = days === null ? false : days >= AUTO_REFRESH_DAYS
   let status: MemoryProfileStatusKind = 'empty'
@@ -728,6 +839,9 @@ export async function getMemoryProfileStatus(opts: {
   if (!existing && enough) {
     status = 'ready'
     reason = '已有足够记忆，可以生成画像'
+  } else if (existing && needsRefresh) {
+    status = 'stale'
+    reason = '来源已更正，请更新画像'
   } else if (existing && (!changed || !oldEnough)) {
     status = 'fresh'
     reason = changed && !oldEnough ? '记忆有变化，但自动刷新间隔还没到' : '画像仍然新鲜'
@@ -748,6 +862,7 @@ export async function getMemoryProfileStatus(opts: {
     sourceFingerprint: source.fingerprint,
     previousSourceFingerprint,
     changed,
+    needsRefresh,
     daysSinceGenerated: days,
   }
 }

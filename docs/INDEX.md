@@ -32,6 +32,7 @@
 | 手机版 | [任务衔接现状](cc-workbench.md) | `superpowers/specs/2026-09-06-mobile-home-feed-design.md`；[手机任务验证记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md) |
 | provider(agy / cursor / openai 兼容 / 去重) | README 对应章节 | `superpowers/specs/2026-08-17-{agy-provider,provider-runtime-dedup}-design.md` |
 | 可靠性(降级启动 / 自动重启 / 忙登记处) | — | `superpowers/specs/2026-08-17-subsystem-degraded-boot-design.md` + `2026-08-11-daemon-busy-registry-design.md` + `2026-08-03-daemon-self-restart-on-stale-code-design.md` |
+| 画像依据、来源改正与过时处理 | [`cc-memory-evidence.md`](cc-memory-evidence.md) | `src/lib/memory-synthesis.ts` + `src/daemon/internal-api/routes-memory-review.ts` |
 | 知识与记忆(图 / 人物事实 / hearth 联邦) | — | `superpowers/specs/2026-08-12-knowledge-{graph,facts-person}-inproc-design.md` + `2026-08-13-hearth-*` |
 | 引导与访客 | README 对应章节 | `superpowers/specs/2026-08-18-{owner-onboarding,guest-path}-design.md` |
 | 提醒 | — | `superpowers/specs/2026-08-20-reminders-port-design.md` |

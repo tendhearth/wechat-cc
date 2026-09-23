@@ -22,5 +22,13 @@ export function makeLifeStoresReader(db: Db, stateDir: string): LifeStoresReader
       const store = makeMilestonesStore(db, adminChatId, { migrateFromFile: join(memoryRoot, adminChatId, 'milestones.jsonl') })
       return (await store.list()).map(m => m.body)
     },
+    async listObservationRecords(adminChatId) {
+      const store = makeObservationsStore(db, adminChatId, { migrateFromFile: join(memoryRoot, adminChatId, 'observations.jsonl') })
+      return (await store.listActive()).map(({ id, body }) => ({ id, body }))
+    },
+    async listMilestoneRecords(adminChatId) {
+      const store = makeMilestonesStore(db, adminChatId, { migrateFromFile: join(memoryRoot, adminChatId, 'milestones.jsonl') })
+      return (await store.list()).map(({ id, body }) => ({ id, body }))
+    },
   }
 }
