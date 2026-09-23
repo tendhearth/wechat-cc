@@ -83,6 +83,6 @@ bun x vitest run src/cli/ci-flakes.test.ts
 
 ## 合并纪律
 
-- 只在 `dev` 上开发;`dev → master` **只走 PR,且只用 squash merge**。
+- 开发在独立分支和 worktree 中完成,由指定整合者串行合入 `dev` 并验证、部署、推送;详见[协作规则](README.md#多-agent-协作)。`dev → master` **只走 PR,且只用 squash merge**。
 - `delete_branch_on_merge` 的取值会被改动,每次合并前重新确认一次。
 - CI 红着不合;flake 也要重跑到绿再合,不要口头宣布「这是 flake」—— 让 `wechat-cc ci triage --wait --rerun` 说,退出码 0 才算绿。
