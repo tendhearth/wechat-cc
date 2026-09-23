@@ -408,9 +408,25 @@ async function waitForHealth(plan: SelfDeployPlan, deps: SelfDeployDeps, sinceMs
           })
           if (res.ok) {
             let cliVersion: string | undefined
-            try { cliVersion = ((await res.json()) as { version?: { cli?: string } }).version?.cli } catch { /* body optional */ }
-            const mismatch = !!cliVersion && !!expectedVersion && cliVersion !== expectedVersion
-            return { name: 'health', ok: true, detail: mismatch ? `version mismatch: preflight=${expectedVersion} health=${cliVersion}` : cliVersion }
+            let head: string | null | undefined
+            try {
+              const v = ((await res.json()) as { version?: { cli?: string; head?: string | null } }).version
+              cliVersion = v?.cli; head = v?.head
+            } catch { /* body optional */ }
+            // `--version` 打的是一行 `1.7.0 (63edf14c)`,而健康接口分成 cli(纯 semver)
+            // 与 head(构建 sha)两格 —— 必须拆开逐格比。2026-09-22 真踩过:版本号带上
+            // 构建标识那天,这里整行相等的比较从此永远不成立,每次部署都打一行假的
+            // "version mismatch",门却照样绿 —— 正是把人训练成忽略失败行的那种。
+            // 按「剥掉结尾的 (sha)」来拆,而不是「取第一个词」—— 有的二进制把版本打成
+            // 多个词(`wechat-cc-cli 9.9.8-old`),取第一个词会把它判成不一致。
+            const expected = expectedVersion ?? ''
+            const wantSha = /\(([^()]+)\)\s*$/.exec(expected)?.[1]
+            const wantVersion = expected.replace(/\s*\([^()]+\)\s*$/, '')
+            const versionBad = !!cliVersion && !!wantVersion && cliVersion !== wantVersion
+            // 源码跑出来的产物 sha 是 'dev',那种情况下不比 —— 比了永远不相等。
+            const shaBad = !!wantSha && wantSha !== 'dev' && !!head && head !== wantSha
+            const seen = `${cliVersion ?? '?'}${head ? ` (${head})` : ''}`
+            return { name: 'health', ok: true, detail: versionBad || shaBad ? `version mismatch: preflight=${expectedVersion} health=${seen}` : seen }
           }
         } catch { /* daemon may still be coming up — keep polling */ }
       }

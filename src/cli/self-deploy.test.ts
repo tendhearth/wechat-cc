@@ -451,6 +451,46 @@ describe('executeSelfDeploy', () => {
     expect(rollbackHealth.detail ?? '').not.toContain('mismatch')
   })
 
+  // 2026-09-22:`--version` 开始带构建 sha(`1.7.0 (63edf14c)`),而健康接口把它分成
+  // cli + head 两格。整行相等的老比较从此永远不成立 —— 门照样绿,却每次部署都打一行
+  // 假的 "version mismatch"。这两条钉住:该静的时候静,该响的时候响。
+  it('带构建 sha 的版本行对上 cli+head 两格时,不报 mismatch', async () => {
+    const h = harness()
+    h.setDaemonHealthyAfterKickstart(1)
+    const inner = h.deps.spawnSync
+    h.deps.spawnSync = ((cmd: string, args: string[]) => {
+      if (cmd === h.plan.newBinaryPath && args[0] === '--version') return { status: 0, stdout: '1.7.0 (63edf14c)\n', stderr: '' }
+      return inner(cmd, args)
+    }) as typeof h.deps.spawnSync
+    h.deps.fetch = (async () => ({
+      ok: true, status: 200,
+      json: async () => ({ ok: true, version: { cli: '1.7.0', head: '63edf14c' } }),
+    })) as unknown as typeof fetch
+
+    const health = (await executeSelfDeploy(h.plan, h.deps)).steps.find((x) => x.name === 'health')!
+    expect(health.ok).toBe(true)
+    expect(health.detail ?? '').not.toContain('mismatch')
+    expect(health.detail).toBe('1.7.0 (63edf14c)')
+  })
+
+  it('跑着的构建 sha 与刚装的对不上时,照报 mismatch —— 这正是加 sha 的目的', async () => {
+    const h = harness()
+    h.setDaemonHealthyAfterKickstart(1)
+    const inner = h.deps.spawnSync
+    h.deps.spawnSync = ((cmd: string, args: string[]) => {
+      if (cmd === h.plan.newBinaryPath && args[0] === '--version') return { status: 0, stdout: '1.7.0 (63edf14c)\n', stderr: '' }
+      return inner(cmd, args)
+    }) as typeof h.deps.spawnSync
+    h.deps.fetch = (async () => ({
+      ok: true, status: 200,
+      json: async () => ({ ok: true, version: { cli: '1.7.0', head: 'deadbeef' } }),
+    })) as unknown as typeof fetch
+
+    const health = (await executeSelfDeploy(h.plan, h.deps)).steps.find((x) => x.name === 'health')!
+    expect(health.detail ?? '').toContain('mismatch')
+    expect(health.detail ?? '').toContain('deadbeef')
+  })
+
   it('exits 3 when rollback itself cannot confirm health', async () => {
     const h = harness()
     h.neverHealthy()
