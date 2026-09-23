@@ -257,7 +257,7 @@ const BOTNAME_MAX_LEN = NICKNAME_MAX_LEN
 /** 微信里的背包速览。只读:改状态去桌面端(在微信里做单选按钮不划算)。 */
 async function sendHuntBag(deps: AdminCommandsDeps, chatId: string): Promise<void> {
   if (!deps.huntBag) {
-    await deps.sendMessage(chatId, '这台还没接战利品记录 —— 升级到 1.6.7 以后打猎才会入库。').catch(() => {})
+    await deps.sendMessage(chatId, '这台还没接战利品记录 —— 升级到 1.7.0 以后打猎才会入库。').catch(() => {})
     return
   }
   const all = deps.huntBag()

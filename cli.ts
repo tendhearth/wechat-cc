@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { defineCommand, runMain } from 'citty'
 import selfPkg from './package.json' with { type: 'json' }
+import { VERSION_LINE } from './src/lib/app-version'
 import { STATE_DIR } from './src/lib/config'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider, activeModel, type AgentConfig, type AgentProviderKind } from './src/lib/agent-config'
 import { PROVIDER_IDS, isKnownProviderId } from './src/lib/provider-ids'
@@ -4276,7 +4277,7 @@ const SUBCOMMANDS = {
 export const cittyRoot = defineCommand({
   meta: {
     name: 'wechat-cc',
-    version: selfPkg.version,   // citty 据此自动响应 `wechat-cc --version`
+    version: VERSION_LINE,   // citty 据此自动响应 `wechat-cc --version`(带构建 sha,好认出跑的是哪个构建)
     description: 'WeChat bridge for Claude Code (Agent SDK daemon)',
   },
   subCommands: SUBCOMMANDS,

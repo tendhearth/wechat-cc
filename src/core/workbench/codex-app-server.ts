@@ -9,6 +9,7 @@ import { discoverCodexModels } from './codex-model-catalog'
 import { executionModel, nativeModelId, readCodexModelCatalog } from './native-model-catalog'
 
 import { CodexChildOccurrence } from './codex-runtime'
+import { APP_VERSION } from '../../lib/app-version'
 
 type RpcId = string | number
 // The JSONL boundary is checked below before any request is routed or action accepted.
@@ -649,7 +650,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         if (!closing) fatal(`codex_process_exited: ${signal ?? code ?? 'unknown'}`)
       })
       try {
-        const initialized = await request('initialize', { clientInfo: { name: 'cc_workbench', title: 'CC Workbench', version: '0.6.4' }, capabilities: { experimentalApi: !!lifetime, requestAttestation: false } })
+        const initialized = await request('initialize', { clientInfo: { name: 'cc_workbench', title: 'CC Workbench', version: APP_VERSION }, capabilities: { experimentalApi: !!lifetime, requestAttestation: false } })
         // Registration-before-parent-result was verified with this exact native
         // protocol version. New/unknown versions retain instead of claiming EOF.
         registrationVerified = typeof initialized.userAgent === 'string' && /^[^/\r\n]+\/0\.153\.4(?:\s|$)/.test(initialized.userAgent)

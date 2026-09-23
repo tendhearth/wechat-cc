@@ -20,6 +20,7 @@ import { isAuthFail } from './auth-fail'
 import { AcpRequestError, createAcpConnection, type AcpConnection } from './acp/rpc'
 import { acpPermissionDescription, acpPermissionOption, createAcpTranslator } from './acp/events'
 import { workbenchSubprocessEnv } from './workbench/subprocess-env'
+import { APP_VERSION } from '../lib/app-version'
 
 export interface AcpProviderBaseOptions {
   command: string; args: string[]; displayName: string
@@ -110,7 +111,7 @@ const CLIENT_CAPABILITIES = { fs: { readTextFile: false, writeTextFile: false },
 // 客户端身份(initialize.clientInfo):对面看到的是"谁在连我" —— 现在对话侧也走这条路,
 // 名字不能再说自己是工作台。version 写死成 package.json 当时的版本:core/ 里没有读 package.json
 // 的 helper,直接 import 一份 JSON 只为一行字符串不值当;发版改 package.json 时顺手同步这里。
-const CLIENT_INFO = { name: 'wechat-cc', title: 'CC', version: '0.6.4' }
+const CLIENT_INFO = { name: 'wechat-cc', title: 'CC', version: APP_VERSION }
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
 // 换行会破坏 stdio 上的换行分隔协议(把一个 session id 拆成两条消息),因此当作"缺失"处理。
 const sessionIdOk = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 500 && !/[\r\n]/.test(value)

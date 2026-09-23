@@ -1,6 +1,7 @@
 import {spawn} from 'node:child_process'
 import {discoverWorkbenchCodexConfig,workbenchCodexArgs,workbenchCodexEnv} from './codex-config'
 import {readCodexModelCatalog, type CatalogRequest} from './native-model-catalog'
+import { APP_VERSION } from '../../lib/app-version'
 
 /** Catalog transport never creates a thread or enables an MCP server. */
 export async function discoverCodexModels(binary: string, cwd: string, timeoutMs = 15_000) {
@@ -39,7 +40,7 @@ export async function discoverCodexModels(binary: string, cwd: string, timeoutMs
   })
   const timer = setTimeout(()=>{fail();stop('SIGKILL')},Math.max(0,deadline-Date.now()))
   try {
-    await request('initialize',{clientInfo:{name:'cc_workbench_catalog',version:'0.6.4'},capabilities:{experimentalApi:false}})
+    await request('initialize',{clientInfo:{name:'cc_workbench_catalog',version:APP_VERSION},capabilities:{experimentalApi:false}})
     child.stdin.write(JSON.stringify({method:'initialized'})+'\n')
     const catalog = await readCodexModelCatalog(request,cwd)
     if (Date.now() >= deadline) throw new Error('model_catalog_unavailable')

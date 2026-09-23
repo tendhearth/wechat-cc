@@ -1,10 +1,10 @@
-# wechat-cc desktop v1.6.7(草稿)
+# wechat-cc desktop v1.7.0
 
-**Date**: 待定(草稿起于 2026-09-09)
-**Tag**: `desktop-v1.6.7`(配套 CLI tag `v1.6.7`)—— 版本号待发版时定
-**Scope**: 模型与后端第一次有了「一处管理」;agy / cursor / codex 三条外挂 CLI 路上一批「出了错但没人告诉你」;CC 桌宠接上真实信号;随身 CC 首屏改成「伙伴的一天」;伙伴自己会查心愿、认识人、串门。
+**Date**: 待发版(草稿起于 2026-09-09,2026-09-22 定版为 1.7.0)
+**Tag**: `desktop-v1.7.0`(配套 CLI 同号 —— 2026-09-22 起两者共用一个版本号,见下「版本号统一」)
+**Scope**: 模型与后端第一次有了「一处管理」;agy / cursor / codex 三条外挂 CLI 路上一批「出了错但没人告诉你」;CC 桌宠接上真实信号;随身 CC 首屏改成「伙伴的一天」;伙伴自己会查心愿、认识人、串门。**9 月 10 日之后又压进来一批**:桌面工作台(事件流 / 逐文件 diff 审阅 / 一个文件夹一个活会话)、Cursor 走 ACP、自维护与自改流水线、「一件事」matter 原语、终端会话 ↔ 微信。
 
-> 这是累积开发草稿，不是已发布安装包。本批不改版本号。9 月 14 日工作台收尾已到 schema v58；各阶段验证不能相互替代，完整状态见[收尾记录](../superpowers/reports/2026-09-14-cc-workbench-wrapup.md)。
+> 走 minor 而不是 patch:距上一次公开发版(v1.6.5,2026-08-31)三周、552 个提交、四块新能力,当 patch 发不诚实。
 
 ---
 
@@ -164,3 +164,21 @@ wechat MCP 新增九个社交工具(查心愿 / 派 / 收 / 认识 / 同意 / �
 codex 探测、计划内重启静默、`test:live-cli` 两家各一次。
 
 **待真机**:Windows(`win-test`)未跑本版;首次 `/cc` 的 claude 探测只有单测。
+
+## 9 月 10 日 → 9 月 22 日追加的部分
+
+这三周的东西都在这一版里,详见各自的文档:
+
+- **桌面工作台**([docs/cc-workbench.md](../cc-workbench.md))—— 把一个文件夹交给执行者做完一件事:逐字事件流、逐文件 diff 审阅与打回、免审执行者;文件夹的占用改成**从派发到会话关闭**,保留会话空闲自动收工(有人等 15 秒让位,没人等 10 分钟),还没投出去的补充会挡住收工。
+- **Cursor 走 ACP** —— `cursor-agent acp` 进工作台(命令有卡、编辑免审的中间档),对话侧也从 print 模式换成常驻 ACP 会话;对访客关门。Claude / Codex 不换。
+- **自维护与自改** —— `self deploy`(换 inode / 健康门 / 自动回滚)、`selftest workbench|chat`、`self change`(专用工作树 + 五道闸门 + 微信拍板)、`ci triage`;维护者手册在 [docs/maintainer/](../maintainer/README.md)。自改从此**一次运行一个 git worktree**。
+- **「一件事」matter 原语** —— 微信 / 桌面 / 手机三面共用一张表,intent 路由一站消费。
+- **终端会话 ↔ 微信** —— `wechat-cc hook`:本机 claude / codex 会话完成推到微信、在微信里 y/n 拍板、「看 码」「@码」回话。
+
+## 版本号统一(2026-09-22)
+
+此前同一个产品有四个版本号:发版认 `tauri.conf.json`(1.6.6)、`wechat-cc --version` 报根 `package.json`(0.6.4,自 PR #58 起就没动过)、`apps/desktop/package.json` 写 0.5.18(没人读)、ACP 的 clientInfo 里还硬编码着 `'0.6.4'`。
+
+这一版起**四处对齐成同一个号**,由 `scripts/version-consistency.guard.test.ts` 钉住;`--version` 同时带上构建的 git 短 sha(形如 `1.7.0 (a1b2c3d)`)—— 因为 `self deploy` 的健康门打印的就是这行,没有 sha 就看不出新构建到底起没起来。
+
+对使用者的影响:`wechat-cc --version` 的输出从 `0.6.4` 变成 `1.7.0 (<sha>)`。插件的 `requires wechat-cc >= X` 只会更容易满足(号变大了),不会因此被挡。

@@ -49,7 +49,7 @@ git diff --check
 - [当前导览](../../cc-workbench.md)收拢用户路径、能力表、微信入口和限制。
 - [参考项目说明](../../research/2026-09-14-cc-agent-workbench-references.md)逐一核实 Paseo、Orca、CC Switch、开源 Codex、DeepSeek Harness 的主仓库、固定源码与具体借鉴点；本批没有导入其源码。
 - [架构说明](../../architecture.md)补充独立工作台路径，旧 companion 架构保留日期范围。
-- [统一任务范围](../specs/2026-09-13-cc-unified-task-entry.md)、[专业覆盖](../specs/2026-09-13-cc-professional-coverage.md)、微信阶段记录和[桌面发布草稿](../../releases/desktop-v1.6.7.md)补齐后续交付链接，避免“已完成”仍被写成“待做”。
+- [统一任务范围](../specs/2026-09-13-cc-unified-task-entry.md)、[专业覆盖](../specs/2026-09-13-cc-professional-coverage.md)、微信阶段记录和[桌面发布草稿](../../releases/desktop-v1.7.0.md)补齐后续交付链接，避免“已完成”仍被写成“待做”。
 
 ## 本批之后仍然成立的限制
 

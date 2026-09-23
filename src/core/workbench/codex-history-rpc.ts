@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStd
 import { StringDecoder } from 'node:string_decoder'
 import { workbenchCodexArgs, workbenchCodexEnv, workbenchFeatureConfig } from './codex-config'
 import { historyObject, nativeHistoryFailure, NATIVE_HISTORY_MAX_BYTES, NATIVE_HISTORY_TIMEOUT_MS } from './native-history'
+import { APP_VERSION } from '../../lib/app-version'
 
 export type CodexHistoryMethod='thread/list'|'thread/read'|'thread/items/list'|'account/rateLimits/read'
 export interface CodexHistoryRpc {request(method:CodexHistoryMethod,params:Record<string,unknown>):Promise<unknown>;close():Promise<void>}
@@ -102,7 +103,7 @@ export async function openCodexHistoryRpc(options:CodexHistoryRpcOptions):Promis
   })
   lifetimeTimer=setTimeout(()=>fatal(),Math.max(1,Math.min(options.timeoutMs??NATIVE_HISTORY_TIMEOUT_MS,NATIVE_HISTORY_TIMEOUT_MS)))
   try{
-    await request('initialize',{clientInfo:{name:'cc_workbench_history',title:'CC Workbench History',version:'0.6.4'},capabilities:{experimentalApi:false,requestAttestation:false}})
+    await request('initialize',{clientInfo:{name:'cc_workbench_history',title:'CC Workbench History',version:APP_VERSION},capabilities:{experimentalApi:false,requestAttestation:false}})
     send({method:'initialized'})
     return {request:(method,params)=>request(method,params),close}
   }catch(error){await close().catch(()=>{});throw nativeHistoryFailure(error)}

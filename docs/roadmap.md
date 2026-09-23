@@ -9,18 +9,18 @@
 | 事实 | 数字 |
 |---|---|
 | 最近一次**公开**发版 | `desktop-v1.6.5`,2026-08-31 |
-| `desktop-v1.6.6` | 还是 **Draft**(2026-09-03),没发出去 |
+| `desktop-v1.6.6` | 还是 **Draft**(2026-09-03),没发出去 —— 下一版直接发 **1.7.0** |
 | `master` 最后一条提交 | 2026-09-03(`b58da5fd`) |
 | `dev` 领先 master | **1431 个提交**,其中 552 个在 08-27 之后 |
 | 待合的发版 PR | [#117](https://github.com/tendhearth/wechat-cc/pull/117)(CI 全绿) |
 
-三处版本号互相矛盾,发版前必须对齐:根 `package.json` 写 `0.6.4`、`apps/desktop/src-tauri/tauri.conf.json` 写 `1.6.6`、`apps/desktop/package.json` 写 `0.5.18`。`docs/releases/desktop-v1.6.7.md` 是一份"不定版本号、不发版"的草稿。
+版本号已统一(2026-09-22):此前四处各说各话(发版认 `tauri.conf.json` 的 1.6.6、`--version` 报根 `package.json` 的 0.6.4、`apps/desktop/package.json` 写 0.5.18、ACP 的 clientInfo 还硬编码 `'0.6.4'`),现在四处都是 **1.7.0**,由 `scripts/version-consistency.guard.test.ts` 钉住;`--version` 同时带构建的 git 短 sha(`1.7.0 (a1b2c3d)`),否则 `self deploy` 的健康门打出来的数字两次发版之间永远一样、看不出新构建起没起来。发版说明:`docs/releases/desktop-v1.7.0.md`。
 
 **⇒ 现在的第一优先级不是新功能,是把攒了三周的东西发出去。** 每多攒一周,发版的风险和回归面都在变大。
 
 ## 下一步(按顺序)
 
-1. **合 #117** —— dev→master,squash。合前把三处版本号对齐、把 `desktop-v1.6.7.md` 定版。
+1. **合 #117** —— dev→master,squash。版本号与发版说明都已定版为 1.7.0(走 minor 不走 patch:距上次公开发版三周、552 个提交、四块新能力)。
 2. **发一版桌面** —— 走 [发版管线](maintainer/deploy.md):点 Publish 滚 R2 更新源 + 建 GitHub Release(老用户自动更新,新用户从下载页拿最新)。
 3. **补真机验证**(下面「欠的真机账」整节)—— 这三周里大量功能只有单测和 selftest 绿,没在真机上走过一遍。
 4. 之后才谈新功能。

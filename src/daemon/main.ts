@@ -339,7 +339,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // 后台在跑的版本(2026-09-16):桌面更新器换入新 .app 后旧 daemon 不会被杀,
       // app 只有看到这个才知道后台还是旧的。head 是 thunk-over-bootRef(self-restart
       // 在 bootstrap 里才接线)。
-      version: () => ({ cli: selfPkg.version, head: bootRef?.codeHead ?? null, boot_at: BOOT_AT_ISO }),
+      // codeHead 只在「从 git 检出跑」时有值(self-restart 才知道 head);打包产物里
+      // 是 null,于是装机用户的健康输出永远认不出跑的是哪个构建 —— 退回编译期钉进去的
+      // BUILD_SHA(源码跑时它是 'dev',那种情况下 codeHead 本来就有值)。
+      version: () => ({ cli: APP_VERSION, head: bootRef?.codeHead ?? (BUILD_SHA === 'dev' ? null : BUILD_SHA), boot_at: BOOT_AT_ISO }),
       // Subsystem degraded-boot (spec 2026-08-17) — sup 在本调用之前创建,
       // 直接传引用,无需 thunk-over-bootRef 姿势。
       subsystems: () => sup.statuses(),
@@ -847,6 +850,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
 // would start. Compiled `wechat-cc-cli.exe run` would silently no-op.
 import { existsSync as fsExistsSync, readFileSync as fsReadFileSync } from 'node:fs'
 import { resolveDaemonStateDir } from './resolve-state-dir'
+import { APP_VERSION, BUILD_SHA } from '../lib/app-version'
 export async function main() {
   const stateDir = resolveDaemonStateDir()
   // daemon.env — provider API keys' restart-surviving home (env-file.ts).

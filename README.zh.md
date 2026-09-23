@@ -351,7 +351,7 @@ Remove-Item "$env:USERPROFILE\.claude\channels\wechat" -Recurse -Force
 
 - **源码版本：** 见 [CLI/daemon package](package.json) 与[桌面打包配置](apps/desktop/src-tauri/tauri.conf.json)。本批不修改版本号，也不发布安装包。
 - **安装包与发布状态：** 见 [GitHub Releases](https://github.com/tendhearth/wechat-cc/releases)。上文 dev 工作台能力可能新于最新安装包。
-- **版本记录：** [docs/releases](docs/releases/)；[下一版桌面草稿](docs/releases/desktop-v1.6.7.md)不是发布公告。
+- **版本记录：** [docs/releases](docs/releases/)；[下一版桌面草稿](docs/releases/desktop-v1.7.0.md)不是发布公告。
 - **当前架构与交付证据：** [架构说明](docs/architecture.md)、[工作台导览](docs/cc-workbench.md)。
 
 ---

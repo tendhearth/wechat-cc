@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentEvent, AgentSession, SpawnContext } from './agent-provider'
 import { TIER_PROFILES } from './user-tier'
 import { acpNotice, createAcpWorkbenchProvider, type AcpWorkbenchProviderOptions } from './acp-workbench-provider'
+import { APP_VERSION } from '../lib/app-version'
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn(), kill: vi.fn() }))
 vi.mock('node:child_process', () => ({ spawn: mocks.spawn }))
@@ -102,7 +103,7 @@ describe('ACP workbench provider', () => {
     const { child } = await start({ reportNotice })
     expect(mocks.spawn).toHaveBeenCalledWith('/cursor-agent', ['acp'], expect.objectContaining({ cwd: '/project', detached: true, stdio: ['pipe', 'pipe', 'pipe'] }))
     const init = child.sent.find(m => m.method === 'initialize')!
-    expect(init.params).toEqual({ protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: 'wechat-cc', title: 'CC', version: '0.6.4' } })
+    expect(init.params).toEqual({ protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: 'wechat-cc', title: 'CC', version: APP_VERSION } })
     expect(child.sent.find(m => m.method === 'session/new')!.params).toEqual({ cwd: '/project', mcpServers: [] })
     expect(reportNotice).toHaveBeenCalledWith(acpNotice('Cursor'))
     // 三句对外文案都由 displayName 拼出来,换一个 ACP 执行者不用再改一遍字。

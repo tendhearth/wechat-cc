@@ -36,11 +36,24 @@ const output = join(
 
 mkdirSync(dirname(output), { recursive: true })
 
+// 构建标识:编译期把 git 短 sha 钉进产物(src/lib/app-version.ts 读它)。
+// 为什么:版本号在两次发版之间从不变,`self deploy` 的健康门打印的又正是 `--version`
+// 的输出 —— 没有 sha 就没法从输出里看出新构建到底起没起来。拿不到 sha(不在 git
+// 仓库里构建)不算失败,退回 `unknown`,产物照出。
+const buildSha = (() => {
+  try {
+    const r = Bun.spawnSync({ cmd: ['git', 'rev-parse', '--short', 'HEAD'], cwd: root, stdout: 'pipe', stderr: 'pipe' })
+    const sha = new TextDecoder().decode(r.stdout).trim()
+    return r.exitCode === 0 && /^[0-9a-f]{7,40}$/.test(sha) ? sha : 'unknown'
+  } catch { return 'unknown' }
+})()
+
 const args = [
   process.execPath,
   'build',
   '--compile',
   `--target=${target.bunTarget}`,
+  `--define`, `__BUILD_SHA__=${JSON.stringify(buildSha)}`,
   ...(process.platform === 'win32' ? ['--windows-hide-console'] : []),
   join(root, 'cli.ts'),
   '--outfile',

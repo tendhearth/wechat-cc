@@ -340,7 +340,7 @@ the OS package manager.
 
 - **Current source versions:** [CLI/daemon package](package.json) and [desktop bundle configuration](apps/desktop/src-tauri/tauri.conf.json). This batch does not bump or publish a release.
 - **Installers and release status:** [GitHub Releases](https://github.com/tendhearth/wechat-cc/releases). The dev workbench described above may be newer than the latest installer.
-- **Release notes:** [docs/releases](docs/releases/); the [next desktop draft](docs/releases/desktop-v1.6.7.md) is not a release announcement.
+- **Release notes:** [docs/releases](docs/releases/); the [next desktop draft](docs/releases/desktop-v1.7.0.md) is not a release announcement.
 - **Current architecture and delivery evidence:** [architecture](docs/architecture.md), [workbench guide](docs/cc-workbench.md) (Chinese).
 
 ---

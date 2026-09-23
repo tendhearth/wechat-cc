@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentEvent, AgentSession, SpawnContext } from './agent-provider'
 import { TIER_PROFILES } from './user-tier'
 import { acpPromptBlocks, createAcpProvider, type AcpProviderOptions } from './acp-agent-provider'
+import { APP_VERSION } from '../lib/app-version'
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn(), kill: vi.fn() }))
 vi.mock('node:child_process', () => ({ spawn: mocks.spawn }))
@@ -222,7 +223,7 @@ describe('ACP provider — review fixes', () => {
   })
   it('identifies itself as wechat-cc/CC, not as the workbench (对话侧也走这条路)', async () => {
     const { child } = await start()
-    expect(child.sent.find(m => m.method === 'initialize')!.params.clientInfo).toEqual({ name: 'wechat-cc', title: 'CC', version: '0.6.4' })
+    expect(child.sent.find(m => m.method === 'initialize')!.params.clientInfo).toEqual({ name: 'wechat-cc', title: 'CC', version: APP_VERSION })
   })
   it('a process death mid-turn still delivers the assistant text buffered in messages mode, then the error', async () => {
     const { session, child } = await start()
