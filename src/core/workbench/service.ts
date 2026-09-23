@@ -40,6 +40,8 @@ interface Options {
   ownerChatId: () => string | null
   /** 「一件事」登记处:任务与 matter 一对一同 id,生命周期同步(docs/cc-workbench.md「一件事」)。可选,老接线不传。 */
   matters?: MatterStore
+  /** 诊断日志(复用 permission-relay 那条通道);可选,不传就没有痕迹 —— 老接线的行为不变。 */
+  log?: (tag: string, line: string) => void
   /** 订阅执行者的真实额度快照(subscription-usage.ts 的监视器缓存);登记处据此提前判耗尽,列表把它带给桌面。 */
   usage?: (providerId: string) => UsageSnapshot | null
   defaultProvider?: string
@@ -970,8 +972,14 @@ export function makeWorkbenchService(opts: Options) {
 
   /** matter 同步永不打断任务本身:登记失败只是少一条索引,任务照跑。 */
   function matterSync(fn:(m:MatterStore)=>void):void { if(!opts.matters)return; try{fn(opts.matters)}catch{/* 见上 */} }
-  /** 出生地也不能打断创建:没有 matter store、或那个 chat 的 matter 建不出来,就没有出生地,任务照建。 */
-  function safeOriginMatterId(ownerChatId:string):string|null { if(!opts.matters)return null; try{return opts.matters.ensureChat(ownerChatId).id}catch{return null} }
+  /** 出生地也不能打断创建:没有 matter store、或那个 chat 的 matter 建不出来,就没有出生地,任务照建。
+   *  但「算出生地时出错」不能悄悄退化成「这件事本来就没有出生地」——没接 matters 是老接线的正常状态、
+   *  不留痕;`ensureChat` 真的抛错则是信号,留一条能查到的痕迹(评审 2026-09-23 修复轮 1)。 */
+  function safeOriginMatterId(ownerChatId:string):string|null {
+    if(!opts.matters)return null
+    try{return opts.matters.ensureChat(ownerChatId).id}
+    catch(err){opts.log?.('MATTER_ORIGIN',`ensureChat failed for ${ownerChatId}: ${err instanceof Error?err.message:err} — origin left null, task still created`);return null}
+  }
   function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null}):WorkbenchTaskView {
     ensureAccepting()
     const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)

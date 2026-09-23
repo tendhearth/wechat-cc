@@ -153,7 +153,7 @@ export function wireWorkbench(opts: {
   return makeWorkbenchService({
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
-    store:makeWorkbenchStore(opts.db),registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,
+    store:makeWorkbenchStore(opts.db),registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,log:opts.log,
     usage:(id)=>id==='claude'||id==='codex'?usageMonitor.cached(id):null,
     registeredProjects:()=>listProjects(join(opts.stateDir,'projects.json')),
     defaultProvider:opts.boot.defaultProviderId,holdBusy:opts.boot.holdBusy,
