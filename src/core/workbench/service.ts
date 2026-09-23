@@ -29,6 +29,7 @@ import { findPathBlocker, type PathReservation, type WaitingFor } from './schedu
 import { makeQuotaRegistry, classifyProviderError, type QuotaState } from '../provider-quota'
 import { providerDisplayName } from '../provider-display-names'
 import type { MatterStore } from '../matters/store'
+import type { ReportSink } from '../matters/report'
 import type { UsageSnapshot } from '../subscription-usage'
 import { publicTask, TERMINAL_TASK_STATUSES, type WorkbenchListQuery, type StoredTask, type Task, type TaskStatus, type WorkbenchStore } from './store'
 import { makeTaskChangeHub, type TaskChangeHub } from './task-changes'
@@ -40,6 +41,8 @@ interface Options {
   ownerChatId: () => string | null
   /** 「一件事」登记处:任务与 matter 一对一同 id,生命周期同步(docs/cc-workbench.md「一件事」)。可选,老接线不传。 */
   matters?: MatterStore
+  /** 每轮答复的回报投递(docs/cc-workbench.md「一件事」,task-3);可选,不传就整条功能不存在(降级路径)。 */
+  reports?: ReportSink
   /** 诊断日志(复用 permission-relay 那条通道);可选,不传就没有痕迹 —— 老接线的行为不变。 */
   log?: (tag: string, line: string) => void
   /** 订阅执行者的真实额度快照(subscription-usage.ts 的监视器缓存);登记处据此提前判耗尽,列表把它带给桌面。 */
@@ -99,6 +102,10 @@ interface Active extends PathReservation {
   publicFinished: boolean
   uncertain: boolean
   artifactsCollected: boolean
+  /** 这次静下来是否已经入队过回报(settleQuiet 同一个 result 事件会经两条路径各调一次
+   *  ——转移探测器 + 显式 result 分支,见评审 2026-09-21 #6/#2 ——回报只该报一次;下一轮
+   *  「又动起来了」把它重置回 false)。 */
+  reported: boolean
   collection?:Promise<void>
   turnCollection?:Promise<void>
   collectionFailure?:string
@@ -576,6 +583,14 @@ export function makeWorkbenchService(opts: Options) {
     collectTurnArtifacts(running)
     if (!quiet(running)) return
     matterSync(m=>m.setStatus(running.taskId,'replied'))
+    // 回报:每轮答复入队一次,只对从聊天里交办的事(该不该报是 renderReport 的
+    // 事)。不进 matterSync —— 那个包装故意吞掉所有异常,回报挂进去会把"从来
+    // 没报成功过"伪装成"偶尔漏一条"(2026-09 的教训)。`reported` 防的是本函数
+    // 同一次静下来被叫两次(转移探测器 + 显式 result 分支,评审 2026-09-21 #6/#2)。
+    if (!running.reported) {
+      running.reported=true
+      try { opts.reports?.enqueue(running.taskId) } catch (err) { opts.log?.('MATTER_REPORT',`enqueue failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
+    }
     // 差异边界 = 回合边界:这一轮的代码变更现在就截(以前这一步挂在「答复即释放」后面,
     // 那条路没了)。续接会先 await 这份在途的快照再取新基线,所以不会把下一轮的改动算进来。
     void captureCodeChanges(running).catch(()=>{})
@@ -744,6 +759,8 @@ export function makeWorkbenchService(opts: Options) {
         // 它想写就写 —— 没有什么要 fail-closed 的。
         if (!nowQuiet&&wasQuiet) {
           cancelIdleClose(running)
+          // 又开始新一轮了,下次静下来该再报一次。
+          running.reported=false
           // 上一轮安静时 `captureCodeChanges` 已经把基线消费掉了,而取基线只有两个入口:起步和
           // 主人续接(`submitInput`)。自己醒来这条路没有入口 —— BASE 是靠 `onAutonomousStart`
           // → `beginTurn` 重取的,那两个函数这一轮删了。不补的话「自己醒来干的这一轮」永远生不出
@@ -963,7 +980,7 @@ export function makeWorkbenchService(opts: Options) {
       execution,
       attachments:dispatchAttachments,
       interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
-      cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,credentialsMinted:false,credentialsRevoked:false,
+      cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,reported:false,credentialsMinted:false,credentialsRevoked:false,
     }
     const activate=()=>{runsByTask.set(task.id,running);runningText.set(running.identity,text);queue.push(running);pump()}
     if(acceptance)acceptance.activate(activate);else activate()
