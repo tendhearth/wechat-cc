@@ -9,7 +9,7 @@
  * gave birth to this task (matters.bindings(originMatterId)). That's the
  * "回到那次对话里说一声" contract.
  *
- * Failure routing (brief Step 6, three-way; sharpened by evaluation rounds 1-2):
+ * Failure routing (brief Step 6, three-way; sharpened by evaluation rounds 1-3):
  *   - No wechat binding on the origin matter at all → permanent failure
  *     ("chat 不存在"): markDropped, log, never retried.
  *   - errcode=-2 (proactive push window closed, same detector as reminders'
@@ -22,9 +22,11 @@
  *     up would silently lose the report.
  *   - Any other send failure (account disconnected, risk-controlled, network
  *     down) → recordAttempt + backoff too, counted as `retried`, until a
- *     TIME-based give-up window elapses since the row was first queued
- *     (`created_at`), same shape and same value as reminders' RETRY_WINDOW_MS
- *     (24h) — past it, markDropped + log.
+ *     TIME-based give-up window elapses since the row's FIRST real failure
+ *     (`first_fail_at`, v66 — NOT `created_at`, see below), same shape and
+ *     same value as reminders' RETRY_WINDOW_MS (24h) — past it, markDropped,
+ *     log, AND leave a system event on the matter's own timeline (evaluation
+ *     round 3 issue ③ — see further down).
  *
  * Evaluation round 2 finding: an attempts-COUNT cap (the round-1 fix) is
  * wrong here because `attempts` is a single field shared by BOTH failure
@@ -38,6 +40,19 @@
  * all. `attempts` now does exactly one job — picking the backoff tier via
  * `backoffMs` — never "how many strikes before we give up".
  *
+ * Evaluation round 3 finding: round 2's time window was still wrong — it was
+ * anchored at `created_at` (when the row was first queued). A day the owner
+ * never messages is a day of -2 deferrals; `created_at` keeps getting older
+ * relative to `now` the whole time, so by the time the FIRST real (non-(-2))
+ * failure finally happens, `created_at` may already be past the 24h window
+ * — that one ordinary failure gets dropped on the spot, exactly the bug
+ * round 2 set out to fix, just with a different trigger. `first_fail_at`
+ * (v66) only gets written the first time a non-(-2) failure actually
+ * happens (COALESCE — first write wins, outbox.ts), so -2 deferrals never
+ * start OR advance this clock; the window only ever measures "how long has
+ * it ACTUALLY been failing to send", which is what "give up after N hours"
+ * is supposed to mean.
+ *
  * Volume control on the way IN, not just the way out (evaluation round 1 ②):
  * `store.insert` (outbox.ts) merges repeat enqueues for the same matter into
  * one pending row instead of accumulating unboundedly — see its doc comment.
@@ -47,6 +62,16 @@
  *
  * Backoff is reused verbatim from reminders/sweeper.ts's exported backoffMs
  * (1min, 2min, 4min, … capped at 60min) — brief: "不要另发明退避".
+ *
+ * Give-up visibility (evaluation round 3 issue ③): when a report is finally
+ * given up on (the retry-window branch above; NOT the no-wechat-binding
+ * branch — that one stays out of scope per the controller's ruling), the
+ * owner would otherwise never learn it happened — no message in the origin
+ * chat (that's exactly what failed), nothing anywhere else. `noteAbandoned`,
+ * when wired, writes a system event onto the MATTER'S OWN timeline (visible
+ * in its desktop/phone detail view) saying delivery failed but the task
+ * itself is fine. It's optional (like `log`'s sibling deps elsewhere in this
+ * codebase) so existing tests that don't care about it need no changes.
  */
 import type {Lifecycle} from '../../lib/lifecycle'
 import type {MatterStore} from '../../core/matters/store'
@@ -66,6 +91,14 @@ export interface ReportSweepDeps {
   maxSendsPerSweep?: number
   /** Override the non-(-2) give-up window (ms). Defaults to reminders' RETRY_WINDOW_MS (24h). */
   retryWindowMs?: number
+  /**
+   * Write a system event onto the given matter's own event timeline (e.g.
+   * `workbenchStore.addEvent(matterId, 'system', text)`). Called when a
+   * report is given up on for good (retry-window exhausted), so the owner
+   * has SOMEWHERE to see it happened. Optional — a caller that doesn't wire
+   * it just gets the existing log-only behavior.
+   */
+  noteAbandoned?: (matterId: string, text: string) => void
 }
 
 export interface ReportSweepResult {
@@ -120,26 +153,33 @@ export async function runReportSweep(deps: ReportSweepDeps): Promise<ReportSweep
     const nextAttempts = rec.attempts + 1
 
     if (isProactiveWindowClosed(err)) {
-      // 不计入放弃窗口:errcode=-2 完全不参与放弃判定,attempts 在这里只用来
-      // 选退避档位,不会因为攒得多就被下面的时间窗口连累(评审修复轮 2 ①)。
+      // 不计入放弃窗口:errcode=-2 完全不参与放弃判定,不传 firstFailureAt
+      // 给 recordAttempt——first_fail_at 不会被这一类失败写入或推进
+      // (评审修复轮 3 ①)。attempts 在这里只用来选退避档位。
       await deps.store.recordAttempt(rec.id, deps.nowMs + backoffMs(nextAttempts))
       result.deferred++
       deps.log('REPORTS', `deferred ${rec.id} (matter ${rec.matterId}) → ${chatId}(推送窗口未开,等主人回来即送): ${err}`)
       continue
     }
 
-    // 非 -2 失败的放弃按时间窗口(照 reminders 那条路,同值 24h),不是 attempts
-    // 计数——attempts 会被 -2 的重试一起推高,用它当放弃计数会把"攒了很多次
-    // 票据过期"误判成"已经失败很多次"(评审修复轮 2 ①)。
-    const deadline = rec.createdAt + retryWindow
-    if (deps.nowMs > deadline) {
+    // 非 -2 失败的放弃按时间窗口,锚点是 first_fail_at(这一行第一次真的失败的
+    // 时刻),不是 created_at——主人不在的这段时间全是 -2 deferral,created_at
+    // 早就"过期"了,锚在那儿会把第一次真失败就误判成"早该放弃"(评审修复轮 3
+    // ①,这正是修复轮 2 的原场景没被真正解决的原因)。first_fail_at 还没写过
+    // (rec.firstFailAt===null)就说明这是第一次真失败,不可能已经过了窗口。
+    const deadline = rec.firstFailAt !== null ? rec.firstFailAt + retryWindow : null
+    if (deadline !== null && deps.nowMs > deadline) {
       await deps.store.markDropped(rec.id)
       result.dropped++
       deps.log('REPORTS', `dropped ${rec.id} (matter ${rec.matterId}) → ${chatId}: giving up after retry window: ${err}`)
+      // 放弃对主人完全不可见的话,这条回报就是真的凭空消失了(评审修复轮 3
+      // ③)——那件事自己的事件流上留一笔,桌面/手机详情页看得到。微信这条路
+      // 不会再试:发不出去正是它被放弃的原因。best-effort,失败不影响放弃本身。
+      try { deps.noteAbandoned?.(rec.matterId, '这条回报没能送到微信，任务本身没问题——可以在这里看到完整经过。') } catch { /* best effort */ }
       continue
     }
 
-    await deps.store.recordAttempt(rec.id, deps.nowMs + backoffMs(nextAttempts))
+    await deps.store.recordAttempt(rec.id, deps.nowMs + backoffMs(nextAttempts), deps.nowMs)
     result.retried++
     deps.log('REPORTS', `retry recorded ${rec.id} (matter ${rec.matterId}) → ${chatId}(backoff applies): ${err}`)
   }
@@ -156,6 +196,8 @@ export interface ReportSchedulerDeps {
   log: (tag: string, line: string) => void
   /** Override sweep interval (ms). Defaults to 60s. */
   intervalMs?: number
+  /** See runReportSweep's ReportSweepDeps.noteAbandoned — same contract, threaded through. */
+  noteAbandoned?: (matterId: string, text: string) => void
 }
 
 /**
@@ -179,6 +221,7 @@ export function registerReportSweeper(deps: ReportSchedulerDeps): Lifecycle {
           send: deps.send,
           nowMs: Date.now(),
           log: deps.log,
+          noteAbandoned: deps.noteAbandoned,
         })
       } catch (err) {
         deps.log('REPORTS', `sweep failed: ${err instanceof Error ? err.message : String(err)}`)

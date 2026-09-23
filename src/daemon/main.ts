@@ -35,6 +35,7 @@ import { registerReminders } from './reminders/sweeper'
 import { makeRemindersStore } from './reminders/store'
 import { registerReportSweeper } from './reports/sweeper'
 import { makeReportOutboxStore } from './reports/outbox'
+import { makeWorkbenchStore } from '../core/workbench/store'
 import { buildInboundPipeline } from './inbound/build'
 import { runStartupSweeps } from './startup-sweeps'
 import { markPlannedRestart } from './notify-startup'
@@ -798,6 +799,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 回报投递(task-3,2026-09-23):每轮答复回原对话说一声,人不在就等人回来
     // 再送(errcode=-2 不计入放弃窗口,保持 pending 退避重试)。同样是可选子
     // 系统:sweeper 坏了只降级,不挡启动。
+    // 独立的一份 WorkbenchStore 实例,只用来给"放弃投递"这件事在那件事自己的
+    // 时间线上留一笔(评审修复轮 3 ③)——同一个 db,跟 wireWorkbench 内部那份
+    // 各自持有自己的预备语句,写入互相可见,不需要共享实例。
+    const reportEventStore = makeWorkbenchStore(db)
     const reportsLc = await sup.start('reports', () => registerReportSweeper({
       store: reportOutbox,
       matters,
@@ -806,6 +811,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         return r.error ? { ok: false, error: r.error } : { ok: true }
       },
       log: (t, l) => log(t, l),
+      noteAbandoned: (matterId, text) => {
+        try { reportEventStore.addEvent(matterId, 'system', text) } catch { /* best effort — the drop itself already succeeded */ }
+      },
     }))
     if (reportsLc) lc.register(reportsLc)
     // 5. one-shot startup sweeps — fire-and-forget

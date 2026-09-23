@@ -62,6 +62,33 @@ describe('report outbox store', () => {
     expect(dueLater[0]).toMatchObject({attempts: 1, nextAt: 2_000, status: 'pending'})
   })
 
+  it('recordAttempt 不传 firstFailureAt(errcode=-2 那条路)时,first_fail_at 保持 null', async () => {
+    const id = await store.insert(report, 1_000)
+    await store.recordAttempt(id, 2_000) // 没传第三参数,模拟 -2 分支
+    const due = await store.listDue(2_000)
+    expect(due[0]).toMatchObject({attempts: 1, firstFailAt: null})
+  })
+
+  /**
+   * 评审修复轮 3 ①:放弃窗口的锚点从 created_at 改成 first_fail_at,只在非
+   * -2 失败时写一次(COALESCE 保证"第一次写入生效,后面的调用不再覆盖")。
+   */
+  it('recordAttempt 传 firstFailureAt(非 -2 分支)时,第一次调用写入 first_fail_at', async () => {
+    const id = await store.insert(report, 1_000)
+    await store.recordAttempt(id, 2_000, 1_500)
+    const due = await store.listDue(2_000)
+    expect(due[0]).toMatchObject({attempts: 1, firstFailAt: 1_500})
+  })
+
+  it('first_fail_at 一旦写入,后续 recordAttempt(不管传不传新值)都不会覆盖它 —— 第一次真失败的时刻才算数', async () => {
+    const id = await store.insert(report, 1_000)
+    await store.recordAttempt(id, 2_000, 1_500) // 第一次非 -2 失败,写入 1_500
+    await store.recordAttempt(id, 3_000, 2_800) // 第二次非 -2 失败,不该覆盖
+    await store.recordAttempt(id, 4_000) // -2 那条路,同样不该覆盖
+    const due = await store.listDue(4_000)
+    expect(due[0]).toMatchObject({attempts: 3, firstFailAt: 1_500, nextAt: 4_000})
+  })
+
   it('listDue orders oldest-due first', async () => {
     await store.insert({...report, matterId: LATE}, 3_000)
     await store.insert({...report, matterId: EARLY}, 1_000)
@@ -116,9 +143,10 @@ describe('report outbox store', () => {
    * 评审修复轮 2 ④:v65 的 schema 没有 matter_id+status 的唯一约束,而②修复
    * 之前的代码本来就会插多行——dogfood 库里可能已经存在这种历史脏数据。合并
    * 必须收拢成一行,不能把所有历史重复行都改成同一段新文本(那样 sweeper 会
-   * 把同一句话送好几遍)。
+   * 把同一句话送好几遍)。评审修复轮 3 ②:被收拢掉的那一行要标 dropped(留痕),
+   * 不能直接 DELETE 悄悄消失。
    */
-  it('入队前同一 matter 已有多行历史 pending(dogfood 遗留)时,合并收拢成一行,不是全改', async () => {
+  it('入队前同一 matter 已有多行历史 pending(dogfood 遗留)时,合并收拢成一行(其余标 dropped,不是消失),不是全改', async () => {
     const insertRaw = db.query<unknown, [string, string, string, string, number, number]>(
       "INSERT INTO matter_report_outbox(matter_id, origin_matter_id, origin_message_id, text, status, attempts, next_at, created_at) "
       + "VALUES (?, ?, ?, ?, 'pending', 0, ?, ?)",
@@ -127,10 +155,15 @@ describe('report outbox store', () => {
     insertRaw.run(TASK, CHAT, 'msg-7', '旧文本B', 1_000, 1_000)
     const before = await store.listDue(1_000)
     expect(before).toHaveLength(2) // 先确认历史脏数据确实是两行
+    const beforeIds = before.map(r => r.id)
     const mergedId = await store.insert({...report, text: '新文本'}, 5_000)
     const after = await store.listDue(5_000)
     expect(after).toHaveLength(1)
     expect(after[0]).toMatchObject({id: mergedId, text: '新文本'})
+    // 没被选中合并的那一行还在表里,只是标成了 dropped——不是被静默删除。
+    const droppedId = beforeIds.find(id => id !== mergedId)!
+    const rawRow = db.query<{status: string}, [number]>('SELECT status FROM matter_report_outbox WHERE id = ?').get(droppedId)
+    expect(rawRow).toMatchObject({status: 'dropped'})
   })
 
   it('已经 sent 的行不会被"合并"——同一 matter 再报一次是新的一行', async () => {
