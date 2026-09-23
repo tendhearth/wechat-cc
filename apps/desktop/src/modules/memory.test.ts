@@ -21,7 +21,7 @@ const {
 
 function fakeEl() {
   return {
-    textContent: '', innerHTML: '', hidden: true, disabled: false, dataset: {} as Record<string, string>,
+    querySelector: () => null, textContent: '', innerHTML: '', hidden: true, disabled: false, dataset: {} as Record<string, string>,
   }
 }
 

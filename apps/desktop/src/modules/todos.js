@@ -12,6 +12,7 @@
 // refresh() re-fetches, actions call the admin internal-api routes.
 
 import { escapeHtml, showToast } from "../view.js"
+import { pageStatusHtml, showPageStatus } from "./page-status.js"
 import { invokeApi } from "../api.js"
 
 /** @typedef {{ id: number, contact: string, kind: string|null, predicate: string, value: string, time_ref: string|null, confidence: string, updated_at: number }} ObligationRow */
@@ -86,7 +87,7 @@ export function reminderSlots(now) {
 // ── rendering ──────────────────────────────────────────────────────────
 
 /** @param {ObligationRow} r */
-function itemHtml(r) {
+export function itemHtml(r) {
   const time = r.time_ref ? `<span class="todo-time">${escapeHtml(r.time_ref)}</span>` : ""
   const badge = timeBadge(r.time_ref, new Date())
   const badgeHtml = badge ? `<span class="todo-badge todo-badge-${badge.cls}">${badge.label}</span>` : ""
@@ -97,8 +98,10 @@ function itemHtml(r) {
     </div>
     <div class="todo-actions">
       <button class="btn" data-todo-action="resolve" data-fact-id="${r.id}">完成</button>
+      <details class="todo-more"><summary>更多<span class="sr-only">待办操作</span></summary><div class="todo-more-actions">
       <button class="btn ghost" data-todo-action="remind" data-fact-id="${r.id}">提醒我</button>
       <button class="btn ghost" data-todo-action="reject" data-fact-id="${r.id}">不是承诺</button>
+      </div></details>
     </div>
   </li>`
 }
@@ -133,10 +136,7 @@ async function refresh() {
         </li>`).join("")}</ul>
       </details>`
     if (rows.length === 0) {
-      list.innerHTML = `<div class="todos-empty">
-        <h2>都了结了</h2>
-        <p>你和朋友之间没有挂着的承诺。聊天里一旦出现新的约定，这里会自己长出来。</p>
-      </div>` + settledHtml
+      list.innerHTML = pageStatusHtml({ title: "暂时没有待办", detail: "聊天里答应过、约好过的事会整理在这里。有新的约定时，再来看看。" }) + settledHtml
       return
     }
     const groups = groupObligations(rows, names)
@@ -147,7 +147,8 @@ async function refresh() {
       </section>
     `).join("") + settledHtml
   } catch (err) {
-    list.innerHTML = `<p class="empty-state">待办读不出来：${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`
+    console.error("todos load failed", err)
+    showPageStatus(list, { title: "暂时无法读取待办", detail: "请检查连接后重试。已有待办不会因此改变。", actionLabel: "重新加载" }, refresh)
   } finally {
     loading = false
   }
@@ -270,7 +271,8 @@ async function onListClick(ev) {
     }
   } catch (err) {
     if (btn instanceof HTMLButtonElement) btn.disabled = false
-    showToast(`没改成：${err instanceof Error ? err.message : String(err)}`)
+    console.error("todo update failed", err)
+    showToast("暂时没能更新，请检查连接后重试")
   }
 }
 
@@ -301,7 +303,7 @@ export function initTodosPage(deps, options) {
         </div>
         <button id="todos-refresh" class="btn ghost" type="button">刷新</button>
       </header>
-      <div id="todos-list" class="todos-list"><p class="empty-state">加载中…</p></div>
+      <div id="todos-list" class="todos-list">${pageStatusHtml({ title: "正在整理待办", detail: "稍等片刻。" })}</div>
     `
     root.querySelector("#todos-list")?.addEventListener("click", (ev) => {
       onListClick(/** @type {MouseEvent} */ (ev)).catch(err => console.error("todo action failed", err))
