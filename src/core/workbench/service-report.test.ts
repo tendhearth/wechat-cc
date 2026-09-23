@@ -239,7 +239,12 @@ it('retained 执行者:settleQuiet 已经报过这一轮,idle 自动收工变 co
   const receipt=createTaskFromChat(projectId)
   await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
   runtime.finishTurn()
-  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
+  // 不去 poll `replied` 这个**瞬态** —— 它只活到 retainedIdleCloseMs 到点为止,
+  // 那样整条用例就压在几百毫秒的余量上(满载的 CI 上滑动过,见
+  // service-one-session.test.ts 里那句"第 1 轮的快照可能晚于那 200ms")。
+  // 改成 poll 一个单调量:armIdleClose 只有 settleQuiet 一条路可达,所以
+  // enqueued 到 1 就已经证明 settleQuiet 报过这一轮了。
+  await expect.poll(()=>enqueued.length).toBe(1)
   expect(enqueued).toEqual([receipt.taskId]) // settleQuiet 那一拍已经报过这一轮
   // 不提交新输入,靠 retainedIdleCloseMs 空转到点,armIdleClose 到期自动收工
   // ——那一刻 status 是 completed(closedWhileReplied),reportOnce 因为
