@@ -72,12 +72,31 @@
  * in its desktop/phone detail view) saying delivery failed but the task
  * itself is fine. It's optional (like `log`'s sibling deps elsewhere in this
  * codebase) so existing tests that don't care about it need no changes.
+ *
+ * Quiet gate (task-4-brief.md, "粗闸降噪"): the call point for
+ * `shouldDisturb` (core/matters/report.ts) is HERE, in the send loop — not
+ * at enqueue time. Enqueue (rendering a report) is "did this round produce
+ * something to say", which must happen — and leave its trace — every round,
+ * origin-side, regardless of whether the owner is watching right now.
+ * Disturb-or-not is "is now a good moment to buzz the owner's WeChat", which
+ * only makes sense to ask right before an actual send. Same origin wechat
+ * binding already resolved for `chatId` supplies `lastSeenAt` too, so this
+ * is a second pure read, no extra query.
+ *
+ * A gated row is NOT a failure: it must never call `recordAttempt` (no
+ * `first_fail_at`, no backoff) or `markDropped`. It's counted separately
+ * (`result.held`) and simply left untouched in `pending` at its existing
+ * `next_at` — the next sweep re-evaluates it fresh. Backing off or dropping
+ * a held row would turn "the owner is looking at this right now" into a
+ * lost or delayed delivery, exactly the failure mode the retry-window
+ * plumbing above was hardened against in evaluation rounds 1-3.
  */
 import type {Lifecycle} from '../../lib/lifecycle'
 import type {MatterStore} from '../../core/matters/store'
 import type {ReportOutboxStore} from './outbox'
 import {isProactiveWindowClosed} from '../ilink/outbound-health'
 import {backoffMs, RETRY_WINDOW_MS} from '../reminders/sweeper'
+import {shouldDisturb} from '../../core/matters/report'
 
 export interface ReportSweepDeps {
   store: ReportOutboxStore
@@ -106,6 +125,8 @@ export interface ReportSweepResult {
   retried: number
   dropped: number
   deferred: number
+  /** Held back by the quiet gate (shouldDisturb) this sweep — not a failure, stays pending. */
+  held: number
 }
 
 /** Per-sweep send-attempt budget — same WeChat-risk-control rationale as reminders/sweeper.ts. */
@@ -115,17 +136,29 @@ export async function runReportSweep(deps: ReportSweepDeps): Promise<ReportSweep
   const maxSends = deps.maxSendsPerSweep ?? MAX_SENDS_PER_SWEEP
   const retryWindow = deps.retryWindowMs ?? RETRY_WINDOW_MS
   const due = await deps.store.listDue(deps.nowMs)
-  const result: ReportSweepResult = {delivered: 0, retried: 0, dropped: 0, deferred: 0}
+  const result: ReportSweepResult = {delivered: 0, retried: 0, dropped: 0, deferred: 0, held: 0}
   let sendAttempts = 0
 
   for (const rec of due) {
     // Origin chat lookup happens before the budget gate: it's a pure read,
     // not an outbound send, so it doesn't count against the burst guard.
-    const chatId = deps.matters.bindings(rec.originMatterId).find(b => b.surface === 'wechat')?.surfaceKey
+    const originBinding = deps.matters.bindings(rec.originMatterId).find(b => b.surface === 'wechat')
+    const chatId = originBinding?.surfaceKey
     if (!chatId) {
       await deps.store.markDropped(rec.id)
       result.dropped++
       deps.log('REPORTS', `dropped ${rec.id} (matter ${rec.matterId}): origin matter ${rec.originMatterId} has no wechat binding`)
+      continue
+    }
+
+    // Quiet gate, also a pure read (same binding), also ahead of the budget
+    // gate. A held row is NOT a failure — no recordAttempt/markDropped, no
+    // backoff, no first_fail_at — it just stays pending for the next sweep.
+    // See the quiet-gate doc block above the imports for why the call point
+    // is here and not at enqueue time.
+    if (!shouldDisturb({lastSeenAt: originBinding.lastSeenAt, now: deps.nowMs})) {
+      result.held++
+      deps.log('REPORTS', `held ${rec.id} (matter ${rec.matterId}) → ${chatId}: 主人正看着这件事(粗判据),下一拍再看,不计失败`)
       continue
     }
 

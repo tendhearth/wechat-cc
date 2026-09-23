@@ -45,6 +45,27 @@ export function renderReport(input: {matter: Matter; title: string; artifactCoun
 }
 
 /**
+ * 纯函数:这一轮该不该去微信打扰主人(Task 4,降噪)。只管**打扰**,不管回报
+ * 内容本身(那是 renderReport 的事,上面)。调用点在投递循环的发送分支里,
+ * 不在入队处——入队(生成回报)每轮都该发生、都该在原对话留痕;打扰与否要
+ * 看人此刻在哪,是发送前最后一道闸,跟"要不要生成回报"是两件事。挡住 ≠
+ * 发送失败:投递器不得因为这道闸把行标记失败、写 first_fail_at 或套用失败
+ * 退避——那样降噪就变成了丢投递。挡住的行原样留在 pending,下一拍再看。
+ *
+ * 临时判据(2026-09-23):spec 要的信号是"这件事的详情正被人看着",而今天
+ * matter_bindings.last_seen_at 只在绑定时写(微信入站那下),详情读取不留痕。
+ * 所以这道闸会把"人刚在微信里说过话"误判成"人正在看这件事"——是一道粗闸,
+ * 明确标临时。收紧的条件:手机 /m/api/matter 与桌面长轮询开始写 viewed_at
+ * 之后换判据。
+ */
+const VIEWED_RECENTLY_MS = 60_000
+
+export function shouldDisturb(input: {lastSeenAt: number | null; now: number}): boolean {
+  if (input.lastSeenAt === null) return true
+  return input.now - input.lastSeenAt >= VIEWED_RECENTLY_MS
+}
+
+/**
  * service 侧的可选依赖,注入便于测试;不注入就整条功能不存在(降级路径,
  * 与 opts.matters/opts.log 同一套「可选依赖」约定)。真正的实现(daemon 侧
  * 的 makeReportSink,src/daemon/reports/report-sink.ts)在入队时调用
