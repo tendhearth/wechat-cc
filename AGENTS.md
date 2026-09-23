@@ -4,6 +4,8 @@ wechat-cc 是一个把 Claude Code / Codex / cursor 一类的编码 agent 接到
 
 **维护者(包括 LLM)从这里开始:[`docs/maintainer/README.md`](docs/maintainer/README.md)。**
 
+> 项目指令只有这一份。Claude Code(v2.1.277+)直接读 `AGENTS.md`,Codex 本来就读它——**别再加 `CLAUDE.md`**:两份并存时 Claude 只读 CLAUDE.md、完全忽略这份,2026-09 就是这么漂出两套规矩的。真要在读不到 AGENTS.md 的环境跑(Amazon Bedrock、关掉遥测),或者你本地有 `CLAUDE.local.md`(它会把这份顶掉),加一份只有一行 `@AGENTS.md` 的 CLAUDE.md。
+
 ## 三份总图(动手前先看对应的那一份)
 
 | 想知道 | 读 |
