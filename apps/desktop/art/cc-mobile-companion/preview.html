@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>随身 CC · 此刻三状态</title>
+  <style>
+    :root {
+      --paper:#f4efe4;
+      --paper-deep:#e9dfcc;
+      --card:rgba(255,253,248,.92);
+      --ink:#513c2f;
+      --muted:#917e6e;
+      --line:rgba(103,77,57,.15);
+      --amber:#bd7b24;
+      --amber-soft:#f7e8c5;
+      --green:#677f55;
+      --shadow:0 26px 70px rgba(65,45,31,.16);
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 50% -10%,#fffdf8 0,var(--paper) 54%,#e8dfd1 100%);color:var(--ink);font-family:ui-rounded,"SF Pro Rounded",-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}
+    button{font:inherit;color:inherit}
+    .page-head{max-width:1400px;margin:0 auto;padding:48px 32px 28px;display:flex;align-items:end;gap:24px}
+    .page-head h1{font-size:30px;letter-spacing:-.04em;margin:0 0 7px}.page-head p{margin:0;color:var(--muted);font-size:14px}.legend{margin-left:auto;display:flex;gap:8px}.legend span{font-size:12px;background:rgba(255,255,255,.58);border:1px solid var(--line);padding:7px 11px;border-radius:999px}
+    .gallery{max-width:1400px;margin:0 auto;padding:0 28px 58px;display:grid;grid-template-columns:repeat(3,minmax(300px,390px));gap:26px;justify-content:center;align-items:start}
+    .sample-title{display:flex;align-items:center;gap:9px;margin:0 3px 10px;color:var(--muted);font-size:13px}.sample-title b{color:var(--ink)}.sample-title i{width:7px;height:7px;border-radius:50%;background:#c5ad89}
+    .phone{position:relative;width:100%;aspect-ratio:390/844;min-height:720px;max-height:844px;overflow:hidden;border:1px solid rgba(78,58,44,.18);border-radius:38px;background:#fbf8f1;box-shadow:var(--shadow);display:flex;flex-direction:column}
+    .phone::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(128deg,rgba(255,255,255,.45),transparent 30%)}
+    .status{height:29px;display:flex;align-items:end;justify-content:space-between;padding:0 21px 2px;font-size:11px;font-weight:650;position:relative;z-index:2}.status-icons{display:flex;gap:5px;align-items:center}.status-icons span{display:block;background:var(--ink);opacity:.78}.signal{width:13px;height:8px;border-radius:8px 8px 2px 2px}.wifi{width:10px;height:7px;border-radius:9px 9px 2px 2px}.battery{width:17px;height:8px;border-radius:2px}
+    .app-head{height:60px;padding:9px 18px 7px;display:flex;align-items:center;position:relative;z-index:2}.identity{display:flex;align-items:center;gap:9px}.mini{width:37px;height:37px;border-radius:50%;background:linear-gradient(150deg,#fff8e7,#ead6b8);display:grid;place-items:center;border:1px solid rgba(119,86,54,.13);overflow:hidden}.mini img{width:48px;transform:translateY(3px)}.name{font-weight:700;font-size:15px}.online{display:flex;align-items:center;gap:5px;color:var(--muted);font-size:10.5px;margin-top:2px}.online::before{content:"";width:5px;height:5px;background:#83a168;border-radius:50%}.round-button{margin-left:auto;width:37px;height:37px;border-radius:50%;border:1px solid var(--line);background:rgba(255,255,255,.66);display:grid;place-items:center}.round-button svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+    .scroll{flex:1;min-height:0;overflow:hidden;padding:0 16px 84px;position:relative;z-index:1}
+    .presence{position:relative;height:308px;border-radius:27px;overflow:hidden;padding:22px 21px;background:linear-gradient(180deg,#eee6d4 0,#e2ead9 54%,#f6e8cf 100%);border:1px solid rgba(95,74,50,.09)}
+    .presence::before{content:"";position:absolute;width:230px;height:230px;left:-70px;top:-95px;border-radius:50%;background:rgba(255,252,226,.8);filter:blur(1px)}
+    .presence::after{content:"";position:absolute;left:-5%;right:-5%;bottom:0;height:59px;background:radial-gradient(ellipse at 50% 0,rgba(93,92,56,.14),transparent 66%),linear-gradient(180deg,#dce2c4,#c8d2ad)}
+    .leaf{position:absolute;width:92px;height:125px;bottom:25px;opacity:.62}.leaf.left{left:-12px;transform:rotate(-8deg)}.leaf.right{right:-15px;transform:scaleX(-1) rotate(-8deg)}.leaf path{fill:none;stroke:#819069;stroke-width:3;stroke-linecap:round}.leaf ellipse{fill:#9dab78}
+    .state-copy{position:relative;z-index:3}.eyebrow{font-size:11px;letter-spacing:.08em;color:#7d725e;margin-bottom:7px}.state-copy h2{font-size:23px;line-height:1.22;letter-spacing:-.04em;margin:0;max-width:270px}.state-copy p{font-size:12.5px;line-height:1.55;color:#786b5d;margin:8px 0 0;max-width:275px}
+    .cc{position:absolute;z-index:2;right:16px;bottom:24px;width:173px;height:173px;object-fit:contain;filter:drop-shadow(0 11px 12px rgba(78,55,38,.13))}
+    .speech{position:absolute;z-index:4;left:18px;bottom:26px;max-width:155px;padding:9px 12px;background:rgba(255,253,248,.91);border:1px solid rgba(108,79,56,.12);border-radius:14px 14px 5px 14px;font-size:11.5px;line-height:1.45;box-shadow:0 8px 22px rgba(68,50,36,.08)}
+    .ask{display:flex;align-items:center;gap:10px;margin:12px 2px 14px;padding:11px 12px;border:1px solid var(--line);background:rgba(255,253,248,.78);border-radius:18px;color:#7b695a}.ask svg{width:18px;height:18px;fill:none;stroke:#806e5f;stroke-width:1.8;stroke-linecap:round}.ask span{font-size:12.5px}.ask b{margin-left:auto;background:#eee4d3;color:#6d5948;font-size:10px;padding:4px 8px;border-radius:999px}
+    .section-head{display:flex;justify-content:space-between;align-items:center;margin:17px 4px 9px}.section-head b{font-size:14px}.section-head span{font-size:10.5px;color:var(--muted)}
+    .card{border:1px solid var(--line);background:var(--card);border-radius:19px;padding:14px;box-shadow:0 8px 24px rgba(67,48,33,.045)}
+    .compact{display:flex;gap:12px;align-items:center}.badge{width:40px;height:40px;border-radius:13px;display:grid;place-items:center;background:#efe6d6;color:#75634f}.badge svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.card-copy{min-width:0;flex:1}.card-copy b{display:block;font-size:12.5px}.card-copy small{color:var(--muted);font-size:10.5px;line-height:1.4}.chev{color:#a68d74;font-size:18px}
+    .nav{position:absolute;z-index:10;left:12px;right:12px;bottom:10px;height:64px;padding:6px;background:rgba(255,253,248,.92);border:1px solid rgba(95,69,48,.13);box-shadow:0 10px 35px rgba(72,51,34,.14);border-radius:23px;display:grid;grid-template-columns:repeat(3,1fr);backdrop-filter:blur(16px)}.nav button{border:0;background:transparent;border-radius:17px;font-size:9.5px;color:#95816f;display:grid;place-items:center;align-content:center;gap:2px}.nav svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}.nav button.on{background:#f0e5d3;color:#594331;font-weight:700}
+
+    .attention .presence{height:224px;background:linear-gradient(180deg,#f3e4c6,#edd9b1 70%,#e4d3b0)}.attention .cc{width:137px;height:137px;right:19px;bottom:16px}.attention .speech{bottom:18px;max-width:175px}.attention .scroll{padding-top:0}.decision{margin-top:13px;padding:17px;border-color:rgba(175,116,31,.26);background:#fffaf0}.decision-top{display:flex;align-items:flex-start;gap:10px}.decision .badge{background:var(--amber-soft);color:#9a641e}.decision h3{font-size:16px;line-height:1.35;margin:1px 0 5px}.decision p{font-size:11.5px;color:#7d6c5c;line-height:1.5;margin:0}.context{margin:13px 0 0;padding:10px 11px;background:#f5efe4;border-radius:12px;font-size:10.5px;color:#786a5e}.buttons{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:13px}.buttons button{height:41px;border-radius:13px;border:1px solid var(--line);background:#fffdf8;font-size:12px;font-weight:650}.buttons .primary{background:#805b39;color:white;border-color:#805b39}.later{display:block;text-align:center;margin-top:11px;font-size:10.5px;color:var(--muted)}
+
+    .result .presence{height:220px;background:linear-gradient(180deg,#e9ebda,#dde6d2 64%,#d0d9bd)}.result .cc{width:142px;height:142px;right:16px;bottom:11px}.result .speech{bottom:17px;max-width:173px}.result-card{margin-top:13px;padding:10px}.artifact{height:156px;border-radius:14px;background:#e9e1d2;overflow:hidden;position:relative}.artifact::before{content:"";position:absolute;inset:13px;border-radius:8px;background:linear-gradient(150deg,#fffdf8 0 57%,#e8d8b7 57%);box-shadow:0 7px 18px rgba(67,47,30,.10)}.artifact::after{content:"首页的新样子";position:absolute;left:27px;top:32px;font-weight:730;font-size:16px;letter-spacing:-.02em}.mock-lines{position:absolute;z-index:2;left:28px;top:64px;width:84px;display:grid;gap:6px}.mock-lines i{height:5px;border-radius:6px;background:#d9c4a6}.mock-lines i:nth-child(2){width:68%}.mock-cc{position:absolute;z-index:2;right:25px;bottom:17px;width:79px;height:79px;object-fit:contain}.result-meta{padding:12px 4px 4px;display:flex;align-items:end;gap:8px}.result-meta div{flex:1}.result-meta b{display:block;font-size:13px}.result-meta small{font-size:10.5px;color:var(--muted)}.open{border:0;background:#805b39;color:#fff;border-radius:12px;padding:9px 12px;font-size:11px;font-weight:650}.trace{margin:11px 2px 0;font-size:10.5px;color:var(--muted);display:flex;align-items:center;gap:5px}.trace i{width:5px;height:5px;border-radius:50%;background:#87a06d}
+    @media(max-width:980px){.page-head{padding-top:28px}.legend{display:none}.gallery{grid-template-columns:minmax(300px,390px)}.phone{min-height:0;max-height:none}.sample{margin-bottom:12px}}
+  </style>
+</head>
+<body>
+  <header class="page-head">
+    <div><h1>随身 CC · 此刻</h1><p>让用户五秒内知道：CC 在做什么、哪里需要我、刚带回了什么。</p></div>
+    <div class="legend"><span>陪伴是入口</span><span>任务按需展开</span><span>结果值得回来</span></div>
+  </header>
+  <main class="gallery">
+    <section class="sample">
+      <div class="sample-title"><i></i><b>普通此刻</b><span>不堆过去的记录</span></div>
+      <article class="phone">
+        <div class="status"><span>9:41</span><span class="status-icons"><span class="signal"></span><span class="wifi"></span><span class="battery"></span></span></div>
+        <header class="app-head"><div class="identity"><span class="mini"><img src="../../src/assets/pet/cc-v1/canonical/lit/front.png" alt=""></span><div><div class="name">CC</div><div class="online">在家，连接正常</div></div></div><button class="round-button" aria-label="查看 CC"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button></header>
+        <div class="scroll">
+          <section class="presence">
+            <svg class="leaf left" viewBox="0 0 90 130"><path d="M46 125C43 86 37 47 20 12"/><ellipse cx="27" cy="33" rx="13" ry="7" transform="rotate(38 27 33)"/><ellipse cx="39" cy="61" rx="15" ry="8" transform="rotate(-22 39 61)"/><ellipse cx="41" cy="91" rx="14" ry="7" transform="rotate(25 41 91)"/></svg>
+            <svg class="leaf right" viewBox="0 0 90 130"><path d="M46 125C43 86 37 47 20 12"/><ellipse cx="27" cy="33" rx="13" ry="7" transform="rotate(38 27 33)"/><ellipse cx="39" cy="61" rx="15" ry="8" transform="rotate(-22 39 61)"/><ellipse cx="41" cy="91" rx="14" ry="7" transform="rotate(25 41 91)"/></svg>
+            <div class="state-copy"><div class="eyebrow">此刻</div><h2>我在照看三件事。</h2><p>首页正在检查，另外两件都很安静。</p></div>
+            <div class="speech">暂时没有要你处理的。<br>去忙你的吧。</div>
+            <img class="cc" src="../../src/assets/pet/cc-v1/sprites/lit/working.png" alt="工作的 CC">
+          </section>
+          <div class="ask"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4V5z"/><path d="M8 9h8m-8 3h5"/></svg><span>跟 CC 说点什么……</span><b>语音</b></div>
+          <div class="section-head"><b>刚刚</b><span>只留下值得看的</span></div>
+          <div class="card compact"><span class="badge"><svg viewBox="0 0 24 24"><path d="M4 19h16V6H4z"/><path d="m7 15 3-3 2 2 3-4 2 2"/></svg></span><span class="card-copy"><b>画室里多了一张新明信片</b><small>CC 在杭州咖啡馆想到的 · 2 分钟前</small></span><span class="chev">›</span></div>
+        </div>
+        <nav class="nav"><button class="on"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 16 0 8 8 0 1 0-16 0"/><path d="M12 8v4l3 2"/></svg>此刻</button><button><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="m8 12 2.5 2.5L16 9"/></svg>一起做</button><button><svg viewBox="0 0 24 24"><path d="M4 7h16v12H4z"/><path d="m8 7 1-3h6l1 3M8 12h8"/></svg>回忆</button></nav>
+      </article>
+    </section>
+
+    <section class="sample attention">
+      <div class="sample-title"><i></i><b>需要你</b><span>只在真正卡住时打断</span></div>
+      <article class="phone">
+        <div class="status"><span>9:41</span><span class="status-icons"><span class="signal"></span><span class="wifi"></span><span class="battery"></span></span></div>
+        <header class="app-head"><div class="identity"><span class="mini"><img src="../../src/assets/pet/cc-v1/canonical/lit/front.png" alt=""></span><div><div class="name">CC</div><div class="online">在家，连接正常</div></div></div><button class="round-button" aria-label="查看 CC"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button></header>
+        <div class="scroll">
+          <section class="presence">
+            <div class="state-copy"><div class="eyebrow">等你一下</div><h2>这里需要你决定。</h2><p>我把影响讲清楚了，只要选一次。</p></div>
+            <div class="speech">不急。你选好，我再让它继续。</div>
+            <img class="cc" src="../../src/assets/pet/cc-v1/sprites/lit/permission.png" alt="等待决定的 CC">
+          </section>
+          <section class="card decision">
+            <div class="decision-top"><span class="badge"><svg viewBox="0 0 24 24"><path d="M12 3 3.8 7.2v5.7c0 4.4 3.3 7.1 8.2 8.1 4.9-1 8.2-3.7 8.2-8.1V7.2z"/><path d="m9 12 2 2 4-5"/></svg></span><div><h3>保留旧导航，还是换成新样式？</h3><p>Claude 发现新首页会移除两个旧入口。功能还在，但位置会变化。</p></div></div>
+            <div class="context">首页换新 · Claude 检查 · Codex 等待继续</div>
+            <div class="buttons"><button>保留旧导航</button><button class="primary">采用新样式</button></div>
+            <span class="later">晚点决定，任务会保持等待</span>
+          </section>
+          <div class="section-head"><b>其他事情</b><span>2 件正在安静进行</span></div>
+          <div class="card compact"><span class="badge"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="M8 9h8M8 13h5"/></svg></span><span class="card-copy"><b>发版说明正在整理</b><small>不需要你处理</small></span><span class="chev">›</span></div>
+        </div>
+        <nav class="nav"><button class="on"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 16 0 8 8 0 1 0-16 0"/><path d="M12 8v4l3 2"/></svg>此刻</button><button><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="m8 12 2.5 2.5L16 9"/></svg>一起做</button><button><svg viewBox="0 0 24 24"><path d="M4 7h16v12H4z"/><path d="m8 7 1-3h6l1 3M8 12h8"/></svg>回忆</button></nav>
+      </article>
+    </section>
+
+    <section class="sample result">
+      <div class="sample-title"><i></i><b>带回成果</b><span>先说结论，再看过程</span></div>
+      <article class="phone">
+        <div class="status"><span>9:41</span><span class="status-icons"><span class="signal"></span><span class="wifi"></span><span class="battery"></span></span></div>
+        <header class="app-head"><div class="identity"><span class="mini"><img src="../../src/assets/pet/cc-v1/canonical/lit/front.png" alt=""></span><div><div class="name">CC</div><div class="online">刚完成一件事</div></div></div><button class="round-button" aria-label="查看 CC"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button></header>
+        <div class="scroll">
+          <section class="presence">
+            <div class="state-copy"><div class="eyebrow">刚带回来</div><h2>首页的新版本做好了。</h2><p>检查过手机和桌面，没有发现阻塞问题。</p></div>
+            <div class="speech">有一处颜色我替你保留了原样。</div>
+            <img class="cc" src="../../src/assets/pet/cc-v1/sprites/lit/done.png" alt="完成任务的 CC">
+          </section>
+          <section class="card result-card">
+            <div class="artifact"><div class="mock-lines"><i></i><i></i><i></i></div><img class="mock-cc" src="../../src/assets/pet/cc-v1/canonical/lit/front.png" alt=""></div>
+            <div class="result-meta"><div><b>首页视觉更新</b><small>3 个文件 · 检查全部通过</small></div><button class="open">打开成果</button></div>
+          </section>
+          <div class="trace"><i></i><span>Codex 修改 · Claude 检查 · CC 已核对要求</span></div>
+          <div class="section-head"><b>你可以接着说</b><span>回到同一件事</span></div>
+          <div class="ask"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4V5z"/><path d="M8 9h8m-8 3h5"/></svg><span>让它再改一点……</span><b>语音</b></div>
+        </div>
+        <nav class="nav"><button class="on"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 16 0 8 8 0 1 0-16 0"/><path d="M12 8v4l3 2"/></svg>此刻</button><button><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="m8 12 2.5 2.5L16 9"/></svg>一起做</button><button><svg viewBox="0 0 24 24"><path d="M4 7h16v12H4z"/><path d="m8 7 1-3h6l1 3M8 12h8"/></svg>回忆</button></nav>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
