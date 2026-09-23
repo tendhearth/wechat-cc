@@ -13,6 +13,7 @@ import type { PermissionRelayDeps } from '../../core/permission-relay'
 import { TIER_PROFILES } from '../../core/user-tier'
 import { makeWorkbenchStore } from '../../core/workbench/store'
 import { makeWorkbenchService } from '../../core/workbench/service'
+import { makeReportSink } from '../reports/report-sink'
 import { ACP_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../../core/workbench/executor-capabilities'
 import { readNativeClaudeTools, workbenchClaudeEnvironment, type NativeClaudeTools } from '../../core/workbench/claude-native-config'
 import { claudeNativeCapabilityNotice } from '../../core/workbench/native-capability-notice'
@@ -112,6 +113,8 @@ export function wireWorkbench(opts: {
   askUser: PermissionRelayDeps['askUser']; log: PermissionRelayDeps['log']
   /** 「一件事」登记处:任务与 matter 一对一同步(可选,老接线不传)。 */
   matters?: import('../../core/matters/store').MatterStore
+  /** 回报投递队列(task-3,2026-09-23):与 matters 一起有才接得上 ReportSink,单传一个不够。 */
+  reportOutbox?: import('../reports/outbox').ReportOutboxStore
 }) {
   // 订阅额度监视器:Codex 问 app-server,Claude 用 Claude Code 自己的 OAuth 凭据问 usage 接口(subscription-usage.ts)。
   const usageMonitor=makeUsageMonitor({sources:{
@@ -150,10 +153,18 @@ export function wireWorkbench(opts: {
   if(opts.boot.registry.has('openai'))registerWorkbenchApi(registry,opts.db,opts.stateDir,agentConfig,process.env)
   registerAcpExecutors(registry,opts.boot.registry,agentConfig,{log:opts.log})
   registerUnattendedExecutors(registry,opts.boot.registry)
+  const store=makeWorkbenchStore(opts.db)
+  // 回报投递(task-3,2026-09-23):两样都要有才接得上——没有 matters 就没法建/追出生地,
+  // 没有 reportOutbox 就没地方写;任一个缺,整条功能不存在(降级路径,同 matters 的老接线约定)。
+  const reports=opts.matters&&opts.reportOutbox?makeReportSink({
+    matters:opts.matters,outbox:opts.reportOutbox,
+    taskTitle:id=>store.get(id).title,artifactCount:id=>store.artifacts(id).length,
+    log:opts.log,
+  }):undefined
   return makeWorkbenchService({
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
-    store:makeWorkbenchStore(opts.db),registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,log:opts.log,
+    store,registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,reports,log:opts.log,
     usage:(id)=>id==='claude'||id==='codex'?usageMonitor.cached(id):null,
     registeredProjects:()=>listProjects(join(opts.stateDir,'projects.json')),
     defaultProvider:opts.boot.defaultProviderId,holdBusy:opts.boot.holdBusy,

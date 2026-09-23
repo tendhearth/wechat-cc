@@ -33,6 +33,8 @@ import { registerIlink } from './ilink-lifecycle'
 import { registerMailboxPoller } from './bootstrap/wire-mailbox'
 import { registerReminders } from './reminders/sweeper'
 import { makeRemindersStore } from './reminders/store'
+import { registerReportSweeper } from './reports/sweeper'
+import { makeReportOutboxStore } from './reports/outbox'
 import { buildInboundPipeline } from './inbound/build'
 import { runStartupSweeps } from './startup-sweeps'
 import { markPlannedRestart } from './notify-startup'
@@ -703,7 +705,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     })
     // 「一件事」登记处:一份 store,工作台、微信入站、app 对话、内部 API 都用它(2026-09-16)。
     const matters = makeMatterStore(db)
-    const workbench = wireWorkbench({ db, stateDir, boot, internalApi, matters,
+    // 回报投递队列(v65,task-3,2026-09-23):每轮答复入队一次,sweeper 按到期时间取件送达。
+    const reportOutbox = makeReportOutboxStore(db)
+    const workbench = wireWorkbench({ db, stateDir, boot, internalApi, matters, reportOutbox,
       executionConflict:(path,providerId,nativeId)=>boot.sessionManager.hasProjectConflict(path)||
         (!!nativeId&&Object.values(boot.sessionStore.all()).some(s=>s.provider===providerId&&s.session_id===nativeId))||
         legacyClaims.conflicts({owner:'workbench',path,providerId,nativeId})||
@@ -791,6 +795,19 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       log: (t, l) => log(t, l),
     }))
     if (remindersLc) lc.register(remindersLc)
+    // 回报投递(task-3,2026-09-23):每轮答复回原对话说一声,人不在就等人回来
+    // 再送(errcode=-2 不计入放弃窗口,保持 pending 退避重试)。同样是可选子
+    // 系统:sweeper 坏了只降级,不挡启动。
+    const reportsLc = await sup.start('reports', () => registerReportSweeper({
+      store: reportOutbox,
+      matters,
+      send: async (chatId, text) => {
+        const r = await ilink.sendMessage(chatId, text) as { msgId?: string; error?: string }
+        return r.error ? { ok: false, error: r.error } : { ok: true }
+      },
+      log: (t, l) => log(t, l),
+    }))
+    if (reportsLc) lc.register(reportsLc)
     // 5. one-shot startup sweeps — fire-and-forget
     runStartupSweeps(wired.startupDeps)
     // 外部集成反馈 #6:这个 flag 的语义像"跳过工具确认",实际是全局提权
