@@ -13,7 +13,7 @@ import type { CatchRow } from '../core/journal-store'
 import type { PlanLogEntry } from '../core/companion-plan'
 import { safeSvg } from '../lib/svg-sanitize'
 
-export type FeedKind = 'hunt' | 'visit' | 'postcard' | 'thought' | 'chat_day'
+export type FeedKind = 'hunt' | 'visit' | 'postcard' | 'recollection' | 'thought' | 'chat_day'
 export type FeedSource = 'journal' | 'thought' | 'chat_day'
 
 export interface FeedEvent {

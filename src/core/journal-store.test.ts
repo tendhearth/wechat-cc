@@ -131,6 +131,28 @@ describe('recordPostcard —— 别人回心愿的明信片', () => {
   })
 })
 
+describe('recordRecollection —— CC 自己判断值得记、自己写的一段记述', () => {
+  it('一段一条,kind=recollection,标题固定;空文本不记;summary 的 latest 认得它', () => {
+    const j = makeJournal(openDb({ path: ':memory:' }))
+    expect(j.recordRecollection({ chatId: 'o', text: '   ' })).toBe(null)
+    const id = j.recordRecollection({ chatId: 'o', text: '那天你让我改首页,我改错了两次。', nowIso: '2026-09-23T10:00:00.000Z' })
+    expect(id).toMatch(/:recollection:/)
+    const row = j.list()[0]!
+    expect(row).toMatchObject({ kind: 'recollection', title: '一段回忆', note: '那天你让我改首页,我改错了两次。', status: 'new', url: null })
+    expect(j.summary(null).latest?.kind).toBe('recollection')
+  })
+
+  it('不问主人就写,但主人能删 —— 跟其它条目一样走 remove(),没有另开一条删除路径', () => {
+    const j = makeJournal(openDb({ path: ':memory:' }))
+    const id = j.recordRecollection({ chatId: 'o', text: '第二天早上才通。' })!
+    expect(j.list().some(r => r.id === id)).toBe(true)
+    expect(j.remove(id)).toBe(true)
+    expect(j.list().some(r => r.id === id)).toBe(false)
+    // 删过一次之后再删,跟其它 kind 一样如实说「已经没了」,不是静默成功。
+    expect(j.remove(id)).toBe(false)
+  })
+})
+
 describe('postcard album', () => {
   const svg = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>'
   it('finds old illustrated visits independently of recent hunt entries and paginates', () => {

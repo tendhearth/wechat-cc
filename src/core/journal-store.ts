@@ -11,9 +11,11 @@ import { parseCatch } from './hunt-catch'
 export type CatchStatus = 'new' | 'tried' | 'using' | 'dropped'
 /**
  * 'hunt' = 打猎带回的东西;'visit' = 串门带回的见闻(v37);
- * 'postcard' = 别人回心愿的明信片(spec 2026-09-04-wish-postcard)。
+ * 'postcard' = 别人回心愿的明信片(spec 2026-09-04-wish-postcard);
+ * 'recollection' = CC 自己判断值得记、自己写的一段记述(spec
+ * 2026-09-23-delegation-report-design.md「回忆」,不问主人就写,但能删)。
  */
-export type CatchKind = 'hunt' | 'visit' | 'postcard'
+export type CatchKind = 'hunt' | 'visit' | 'postcard' | 'recollection'
 export const CATCH_STATUSES: readonly CatchStatus[] = ['new', 'tried', 'using', 'dropped']
 
 export interface CatchRow {
@@ -49,6 +51,14 @@ export interface Journal {
    * title = `${peerLabel} 回了你的心愿`;没有链接、没有状态档意义(固定 'new')。
    */
   recordPostcard(args: { chatId: string; text: string; peerLabel: string; nowIso?: string }): string | null
+  /**
+   * 记一段回忆(kind='recollection'):CC 自己判断这件事值得记、自己写的
+   * 一段记述(见 matters/recollection.ts 的 maybeRecollect,判据是故事性
+   * 不是产出)。不问主人就写(标题固定,没有像 peerLabel 那样天然的身份
+   * 字段可用);跟其它条目一样能被 remove() 摘掉 —— 这就是 spec 已定 #6
+   * 「不问、可删」里「可删」那一半,不需要另开一条删除路径。
+   */
+  recordRecollection(args: { chatId: string; text: string; nowIso?: string }): string | null
   /** 明信片画得慢(又一次模型调用 + 栅格化),先记见闻再补图。 */
   attachImage(id: string, svg: string): void
   list(limit?: number): CatchRow[]
@@ -64,6 +74,8 @@ export interface Journal {
 }
 
 const PRUNE_KEEP = 500
+/** recordRecollection 的固定标题 —— 回忆没有像 peerLabel 那样天然的身份字段,记述本身在 note 里。 */
+const RECOLLECTION_TITLE = '一段回忆'
 
 export function makeJournal(db: Db): Journal {
   const ins = db.query<unknown, [string, string, string, string, string | null, string]>(
@@ -77,6 +89,10 @@ export function makeJournal(db: Db): Journal {
   const insPostcard = db.query<unknown, [string, string, string, string, string]>(
     `INSERT INTO journal(id, ts, chat_id, title, url, note, status, kind, image_svg)
      VALUES (?, ?, ?, ?, NULL, ?, 'new', 'postcard', NULL)`,
+  )
+  const insRecollection = db.query<unknown, [string, string, string, string, string]>(
+    `INSERT INTO journal(id, ts, chat_id, title, url, note, status, kind, image_svg)
+     VALUES (?, ?, ?, ?, NULL, ?, 'new', 'recollection', NULL)`,
   )
   const setImage = db.query<unknown, [string, string]>('UPDATE journal SET image_svg = ? WHERE id = ?')
   const selAll = db.query<CatchRow, [number]>('SELECT * FROM journal ORDER BY ts DESC, rowid DESC LIMIT ?')
@@ -123,6 +139,15 @@ export function makeJournal(db: Db): Journal {
       if (body === '') return null
       const id = `${ts}:postcard:${Math.random().toString(36).slice(2, 8)}`
       insPostcard.run(id, ts, chatId, `${peerLabel} 回了你的心愿`, body)
+      prune.run(PRUNE_KEEP)
+      return id
+    },
+    recordRecollection({ chatId, text, nowIso }) {
+      const ts = nowIso ?? new Date().toISOString()
+      const body = text.trim()
+      if (body === '') return null
+      const id = `${ts}:recollection:${Math.random().toString(36).slice(2, 8)}`
+      insRecollection.run(id, ts, chatId, RECOLLECTION_TITLE, body)
       prune.run(PRUNE_KEEP)
       return id
     },
