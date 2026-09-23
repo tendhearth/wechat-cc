@@ -2,7 +2,7 @@ import {afterEach, beforeEach, describe, expect, it} from 'vitest'
 import {openDb, type Db} from '../../lib/db'
 import {makeMatterStore, type MatterStore} from '../../core/matters/store'
 import {makeReportOutboxStore, type ReportOutboxStore} from './outbox'
-import {runReportSweep} from './sweeper'
+import {runReportSweep, HELD_OVERRIDE_MS} from './sweeper'
 import {RETRY_WINDOW_MS} from '../reminders/sweeper'
 
 /**
@@ -203,5 +203,54 @@ describe('runReportSweep', () => {
     expect(sends).toBe(1)
     expect(result).toEqual({delivered: 1, retried: 0, dropped: 0, deferred: 0, held: 0})
     expect(await outbox.listDue(nowMs2)).toEqual([])
+  })
+
+  it('held 计数在 sweep 汇总里也能被外部看到(不止逐行 log)', async () => {
+    matterClock = 1_000 - 10_000
+    matters.bind(CHAT, 'wechat', 'user-1')
+    await outbox.insert({matterId: TASK, originMatterId: CHAT, originMessageId: 'msg-7', text: 'x'}, 1_000)
+    const result = await runReportSweep({store: outbox, matters, send: async () => ({ok: true}), nowMs: 1_000, log: (t, l) => logs.push([t, l])})
+    expect(result.held).toBe(1)
+    expect(logs.some(([tag, line]) => tag === 'REPORTS' && line.includes('sweep summary') && line.includes('held=1'))).toBe(true)
+  })
+
+  it('挡住但没超过强制放行上限(10 分钟)⇒ 仍然 held,不强制发送', async () => {
+    const insertAt = 1_000
+    await outbox.insert({matterId: TASK, originMatterId: CHAT, originMessageId: 'msg-7', text: 'x'}, insertAt)
+    const nowMs = insertAt + HELD_OVERRIDE_MS - 1 // 差 1ms 到放行上限,还没到
+    matterClock = nowMs - 10_000 // 绑定相对这次 sweep 的 nowMs 仍然"刚被摸过"(< 60s 粗闸阈值)
+    matters.bind(CHAT, 'wechat', 'user-1')
+    let sends = 0
+    const result = await runReportSweep({store: outbox, matters, send: async () => { sends++; return {ok: true} }, nowMs, log: (t, l) => logs.push([t, l])})
+    expect(sends).toBe(0)
+    expect(result).toEqual({delivered: 0, retried: 0, dropped: 0, deferred: 0, held: 1})
+    const due = await outbox.listDue(nowMs)
+    expect(due).toHaveLength(1)
+    expect(due[0]).toMatchObject({status: 'pending', attempts: 0, firstFailAt: null})
+  })
+
+  /**
+   * 评审修复轮 1 ②(controller 裁决):粗闸的触发源(该 chat 的任意微信入站
+   * 消息都会刷新 last_seen_at,store.ts:75)跟回报要送达的通道是同一个 chat
+   * ——主人只要在这个 chat 里平均每个 sweep 间隔说一句话(哪怕在聊别的),
+   * 粗闸就可以把这条回报无限期顺延,永远收不到。这条钉住强制放行:同一条
+   * 绑定即便还在"刚被摸过"的状态,只要这一行从入队起被挡超过
+   * HELD_OVERRIDE_MS,也要无视粗闸照发,并且打一条跟普通 held/delivered 都
+   * 不一样的日志(`held-override`),让"长期被挡"在真机日志里看得见。
+   */
+  it('挡住超过强制放行上限(10 分钟)⇒ 无视粗闸照发,日志与普通 held/delivered 可区分', async () => {
+    const insertAt = 1_000
+    await outbox.insert({matterId: TASK, originMatterId: CHAT, originMessageId: 'msg-7', text: 'x'}, insertAt)
+    const nowMs = insertAt + HELD_OVERRIDE_MS + 1 // 刚过放行上限
+    matterClock = nowMs - 10_000 // 绑定依然"刚被摸过"——不是粗闸判据变了,是强制放行接管了
+    matters.bind(CHAT, 'wechat', 'user-1')
+    let sends = 0
+    const result = await runReportSweep({store: outbox, matters, send: async () => { sends++; return {ok: true} }, nowMs, log: (t, l) => logs.push([t, l])})
+    expect(sends).toBe(1)
+    expect(result).toEqual({delivered: 1, retried: 0, dropped: 0, deferred: 0, held: 0})
+    expect(await outbox.listDue(nowMs)).toEqual([])
+    expect(logs.some(([tag, line]) => tag === 'REPORTS' && line.includes('held-override'))).toBe(true)
+    // 跟普通的"held <id> (...)"这一句区分开——不能只是复用同一条日志文本
+    expect(logs.some(([tag, line]) => tag === 'REPORTS' && /^held \d/.test(line))).toBe(false)
   })
 })

@@ -58,7 +58,7 @@ export function renderReport(input: {matter: Matter; title: string; artifactCoun
  * 明确标临时。收紧的条件:手机 /m/api/matter 与桌面长轮询开始写 viewed_at
  * 之后换判据。
  */
-const VIEWED_RECENTLY_MS = 60_000
+export const VIEWED_RECENTLY_MS = 60_000
 
 export function shouldDisturb(input: {lastSeenAt: number | null; now: number}): boolean {
   if (input.lastSeenAt === null) return true

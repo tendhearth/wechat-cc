@@ -90,6 +90,24 @@
  * a held row would turn "the owner is looking at this right now" into a
  * lost or delayed delivery, exactly the failure mode the retry-window
  * plumbing above was hardened against in evaluation rounds 1-3.
+ *
+ * Forced release (evaluation round 1 issue ②, controller ruling): the quiet
+ * gate's trigger — `matter_bindings.last_seen_at`, refreshed by ANY wechat
+ * inbound message on that chat, unrelated messages included (store.ts's
+ * `bind()`) — and the report's own delivery channel are the SAME chat. An
+ * owner who's simply active there, talking about something else entirely,
+ * can refresh `last_seen_at` about as often as the sweep runs, holding a
+ * report back indefinitely with no counter, alert, or escape hatch. That's
+ * backwards: the more normally the owner uses WeChat, the less likely their
+ * own delegated report ever reaches them — not an acceptable tradeoff. A row
+ * held past `HELD_OVERRIDE_MS` since it was ENQUEUED (`rec.createdAt`, an
+ * existing outbox column — no migration needed, deliberately independent of
+ * the quiet gate's own clock) ignores the gate and sends anyway, logged as
+ * `held-override` (distinct from both `held` and `delivered`) so long-stuck
+ * reports are visible in real-machine logs, not just silently eventually
+ * delivered. `result.held` itself also gets a one-line per-sweep summary
+ * (below) — the per-row `held` log alone isn't enough to see the aggregate
+ * without grepping every tick.
  */
 import type {Lifecycle} from '../../lib/lifecycle'
 import type {MatterStore} from '../../core/matters/store'
@@ -132,6 +150,15 @@ export interface ReportSweepResult {
 /** Per-sweep send-attempt budget — same WeChat-risk-control rationale as reminders/sweeper.ts. */
 export const MAX_SENDS_PER_SWEEP = 30
 
+/**
+ * Forced-release grace period for the quiet gate (evaluation round 1 ②).
+ * Measured from `rec.createdAt` (enqueue time), not from when the gate
+ * first started blocking this particular row — there's no separate clock
+ * for that, and enqueue time is the honest "how long has the owner not
+ * gotten this" answer anyway.
+ */
+export const HELD_OVERRIDE_MS = 10 * 60_000
+
 export async function runReportSweep(deps: ReportSweepDeps): Promise<ReportSweepResult> {
   const maxSends = deps.maxSendsPerSweep ?? MAX_SENDS_PER_SWEEP
   const retryWindow = deps.retryWindowMs ?? RETRY_WINDOW_MS
@@ -157,9 +184,17 @@ export async function runReportSweep(deps: ReportSweepDeps): Promise<ReportSweep
     // See the quiet-gate doc block above the imports for why the call point
     // is here and not at enqueue time.
     if (!shouldDisturb({lastSeenAt: originBinding.lastSeenAt, now: deps.nowMs})) {
-      result.held++
-      deps.log('REPORTS', `held ${rec.id} (matter ${rec.matterId}) → ${chatId}: 主人正看着这件事(粗判据),下一拍再看,不计失败`)
-      continue
+      const heldSinceMs = deps.nowMs - rec.createdAt
+      if (heldSinceMs <= HELD_OVERRIDE_MS) {
+        result.held++
+        deps.log('REPORTS', `held ${rec.id} (matter ${rec.matterId}) → ${chatId}: 主人正看着这件事(粗判据),下一拍再看,不计失败`)
+        continue
+      }
+      // 强制放行:挡了太久,不能让"主人正在正常用微信"变成"永远收不到自己
+      // 交办的这条回报"。不 continue——落到下面照常走预算门 + 发送逻辑,只是
+      // 打一条跟普通 held/delivered 都不一样的日志,方便真机上看出这条是被
+      // 强制放行的,不是自然轮到的。
+      deps.log('REPORTS', `held-override ${rec.id} (matter ${rec.matterId}) → ${chatId}: 粗闸挡了 ${heldSinceMs}ms(超过强制放行上限 ${HELD_OVERRIDE_MS}ms,自入队起算),无视粗闸照发`)
     }
 
     if (sendAttempts >= maxSends) {
@@ -215,6 +250,16 @@ export async function runReportSweep(deps: ReportSweepDeps): Promise<ReportSweep
     await deps.store.recordAttempt(rec.id, deps.nowMs + backoffMs(nextAttempts), deps.nowMs)
     result.retried++
     deps.log('REPORTS', `retry recorded ${rec.id} (matter ${rec.matterId}) → ${chatId}(backoff applies): ${err}`)
+  }
+
+  // Sweep summary: the per-row `held` log lines above are easy to miss in a
+  // busy log stream (one line per row, mixed in with every other outcome).
+  // A one-line aggregate, only when there's something to see, makes "how
+  // many reports are currently being quiet-gated" answerable without
+  // grepping every tick — same rationale as held-override's distinct log,
+  // both aimed at making long-stuck reports observable on a real machine.
+  if (result.held > 0) {
+    deps.log('REPORTS', `sweep summary: held=${result.held} delivered=${result.delivered} retried=${result.retried} dropped=${result.dropped} deferred=${result.deferred}`)
   }
 
   return result

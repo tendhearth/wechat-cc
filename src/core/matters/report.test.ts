@@ -1,6 +1,6 @@
 import {describe, expect, it} from 'vitest'
 import type {Matter} from './store'
-import {renderReport, shouldDisturb} from './report'
+import {renderReport, shouldDisturb, VIEWED_RECENTLY_MS} from './report'
 
 /**
  * renderReport 的失败测试先行(task-3-brief.md Step 1)。断言措辞按模板改写:
@@ -68,7 +68,20 @@ describe('shouldDisturb', () => {
     expect(shouldDisturb({lastSeenAt: NOW - 120_000, now: NOW})).toBe(true)
   })
 
+  /**
+   * 评审修复轮 1 ①:原先这条用 now=NOW(1.8e12)代入,鉴别不出 null 分支——
+   * 删掉 `if (input.lastSeenAt === null) return true` 这一行之后,JS 把
+   * `NOW - null` 按 `NOW - 0` 算,算出来仍然 `>= 60_000` 为 true,测试照样
+   * 绿(TS 的 number|null 静态类型是唯一挡住这个删除的东西,不是这条 expect)。
+   * 换成小于阈值的 now(30_000 < VIEWED_RECENTLY_MS):有 null 分支 ⇒ true;
+   * 删掉 null 分支 ⇒ `30_000 - 0 = 30_000 < 60_000` ⇒ false,两者产生真实分歧,
+   * 这条测试才真的在钉这一行。已实测删掉该行确认变红(见 task-4-report.md)。
+   */
   it('从来没被动过(没有绑定记录)⇒ 该响', () => {
-    expect(shouldDisturb({lastSeenAt: null, now: NOW})).toBe(true)
+    expect(shouldDisturb({lastSeenAt: null, now: 30_000})).toBe(true)
+  })
+
+  it('恰好等于阈值(60_000ms)⇒ 该响——边界在">="这一侧', () => {
+    expect(shouldDisturb({lastSeenAt: NOW - VIEWED_RECENTLY_MS, now: NOW})).toBe(true)
   })
 })
