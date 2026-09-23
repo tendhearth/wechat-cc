@@ -90,3 +90,10 @@ describe('deriveTitle —— 只是给列表扫读用的派生字段', () => {
     expect(deriveTitle('', null)).toBe('(无标题)')
   })
 })
+
+it('keeps a recommendation reason with the preceding linked recommendation across blank lines', () => {
+  const items = parseCatch('Foo https://example.com/foo\n\n**为什么你会感兴趣：** 与你有关\n\nBar https://example.com/bar')
+  expect(items).toHaveLength(2)
+  expect(items[0]!.note).toContain('与你有关')
+  expect(items[1]!.url).toBe('https://example.com/bar')
+})
