@@ -34,6 +34,9 @@ import { PROVIDER_SETUP_HINTS, type LlmHealthReport } from './llm-health'
 import { capabilitiesFor } from '../core/capability-matrix'
 import { PROVIDER_IDS } from '../lib/provider-ids'
 import { buildFeed, decodeCursor, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
+import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions} from './mobile-workbench'
+import {mobileMatterDetailResponse} from './mobile-matter-response'
+import type {MatterSayInput} from '../core/matters/service'
 import type { Presence } from '../core/companion-presence'
 import type { CatchRow } from '../core/journal-store'
 import type { PlanLogEntry } from '../core/companion-plan'
@@ -89,10 +92,10 @@ export interface SettingsPanelDeps {
   /** 三轴 presence,经 internal-api lifecycle.getPresence 共用。缺省/抛 ⇒ 手机页显示「不知道」。 */
   presence?: () => Promise<Presence | null>
   /** 「一件事」(2026-09-16):手机看同一份 matter 列表 / 详情,并能往里说话。seenOnPhone 记「在手机露过面」。 */
-  matters?: {
+  matters?: MobileMatterActions & {
     list(filter: { kind?: 'chat' | 'task' | 'companion'; statuses?: Array<'open' | 'replied' | 'done' | 'archived'>; limit?: number }): unknown[]
     detail(id: string): Promise<unknown> | unknown
-    say(id: string, text: string): Promise<unknown>
+    say(id: string, text: string, input?:MatterSayInput): Promise<unknown>
     seenOnPhone(id: string): void
   }
   /** 主人「看到哪了」的水位,与桌面觅食台同一个文件(一个主人一个水位)。缺省 ⇒ POST /m/api/seen 503。 */
@@ -569,6 +572,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             return json({ ok: true, seen_until: clamped })
           }
           // ── 「一件事」:与桌面同一份数据,同一套语义 ──────────────────
+          const mobileResponse=await mobileWorkbenchRoute(deps.matters,url,req)
+          if(mobileResponse)return mobileResponse
           if (url.pathname === '/m/api/matters' && req.method === 'GET') {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
             const kind = url.searchParams.get('kind'), status = url.searchParams.get('status')
@@ -581,21 +586,18 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
             const id = url.searchParams.get('id')
             if (!id || !/^[a-f0-9]{8}$/.test(id)) return json({ ok: false, error: 'invalid' }, 400)
-            try { const detail = await deps.matters.detail(id); try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } return json({ ok: true, ...(detail as object) }) }
+            try { const detail = await deps.matters.detail(id); try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } return mobileMatterDetailResponse(detail) }
             catch (e) { const msg = e instanceof Error ? e.message : 'internal'; return json({ ok: false, error: msg === 'matter_not_found' ? msg : 'unavailable' }, msg === 'matter_not_found' ? 404 : 500) }
           }
           if (url.pathname === '/m/api/matter/say' && req.method === 'POST') {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
             let body: unknown
             try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
-            const b = (body ?? {}) as { id?: unknown; text?: unknown }
+            const b = (body ?? {}) as Record<string,unknown>
             if (typeof b.id !== 'string' || !/^[a-f0-9]{8}$/.test(b.id) || typeof b.text !== 'string' || !b.text.trim() || b.text.length > 20_000) return json({ ok: false, error: 'invalid' }, 400)
-            try { return json({ ok: true, result: await deps.matters.say(b.id, b.text) }) }
+            try { const input=mobileSayInput(b);return json({ ok: true, result: input?await deps.matters.say(b.id,b.text,input):await deps.matters.say(b.id,b.text) }) }
             catch (e) {
-              const msg = e instanceof Error ? e.message : 'internal'
-              if (msg === 'matter_not_found') return json({ ok: false, error: msg }, 404)
-              if (msg === 'workbench_busy' || msg === 'reply_sink_busy') return json({ ok: false, error: msg }, 409)
-              return json({ ok: false, error: /^(invalid_|matter_|workbench_|chat_)/.test(msg) ? msg : 'unavailable' }, /^(invalid_|matter_|workbench_|chat_)/.test(msg) ? 400 : 500)
+              return mobileMatterError(e)
             }
           }
           if (url.pathname === '/m/api/todo' && req.method === 'POST') {

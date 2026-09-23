@@ -505,7 +505,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const settingsPanel = makeSettingsPanel({
     stateDir,
     ownerChatId,
-    ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), say: (id, text) => mattersService.say(id, text, 'phone'), seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
+    ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,artifactChunk:mattersService.artifactChunk,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
     // 「默认大脑」改完自己重启(与远程开关同一条路)。
     ...(opts.requestRestart ? { requestRestart: (reason: string) => opts.requestRestart!(reason) } : {}),

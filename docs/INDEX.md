@@ -23,13 +23,13 @@
 | ACP(Cursor 走 `cursor-agent acp`) | — | `superpowers/specs/2026-09-17-acp-evaluation.md`(定案)+ `2026-09-17-acp-cursor-executor-design.md` + `2026-09-18-acp-cursor-chat-design.md` |
 | 自维护(部署 / 自检 / CI 闸门) | [maintainer/](maintainer/README.md) | `superpowers/specs/2026-09-18-{self-maintenance,ci-triage}-design.md` |
 | 自改流水线(`self change`) | [maintainer/self-change.md](maintainer/self-change.md) | `superpowers/specs/2026-09-18-self-change-pipeline-design.md` |
-| 「一件事」matter 原语与任务入口 | — | `superpowers/specs/2026-09-13-cc-unified-task-entry.md` 那一批(09-12/09-13) |
+| 「一件事」matter 原语与任务入口 | [工作台现状](cc-workbench.md) | `superpowers/specs/2026-09-13-cc-unified-task-entry.md` 那一批(09-12/09-13)；[陪伴交办与手机验收记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md) |
 | 终端会话 ↔ 微信(`wechat-cc hook`) | README 对应章节 | `superpowers/specs/2026-09-09-cli-hook-push-design.md` |
 | 模型与后端管理 | README 对应章节 | `superpowers/specs/2026-09-08-model-management-design.md` |
 | 桌宠 CC / 美术资产 | — | `superpowers/specs/2026-09-05-cc-desktop-pet-design.md` + `2026-09-08-cc-asset-production-brief.md` + `2026-09-01-cc-atelier-design.md` |
 | 社交层(信封 / 关系 / 觅食台 / 串门 / 明信片 / 介绍) | — | `superpowers/specs/2026-09-04-social-architecture-rethink.md`(重构定案)+ `2026-09-04-{wish-postcard,introduction}-design.md` |
 | 伙伴状态与日程判断 | — | `superpowers/specs/2026-09-03-companion-presence-design.md` + `2026-09-05-companion-plan-design.md` |
-| 手机版 | — | `superpowers/specs/2026-09-06-mobile-home-feed-design.md` |
+| 手机版 | [任务衔接现状](cc-workbench.md) | `superpowers/specs/2026-09-06-mobile-home-feed-design.md`；[手机任务验证记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md) |
 | provider(agy / cursor / openai 兼容 / 去重) | README 对应章节 | `superpowers/specs/2026-08-17-{agy-provider,provider-runtime-dedup}-design.md` |
 | 可靠性(降级启动 / 自动重启 / 忙登记处) | — | `superpowers/specs/2026-08-17-subsystem-degraded-boot-design.md` + `2026-08-11-daemon-busy-registry-design.md` + `2026-08-03-daemon-self-restart-on-stale-code-design.md` |
 | 知识与记忆(图 / 人物事实 / hearth 联邦) | — | `superpowers/specs/2026-08-12-knowledge-{graph,facts-person}-inproc-design.md` + `2026-08-13-hearth-*` |
