@@ -84,3 +84,10 @@ it('keeps a failed file visible and prevents the incomplete composer from sendin
  expect(html).toMatch(/type="submit"[^>]*disabled/)
  expect(html).toContain('上传失败');expect(html).toContain('remove-attachment')
 })
+it('renders image thumbnails while leaving ordinary files as downloadable cards',()=>{
+ const image={...metadata,mime:'image/png',name:'square.png'}
+ expect(renderMessageAttachments('deadbeef',[image])).toContain('data-thumbnail-id=')
+ expect(renderMessageAttachments('deadbeef',[metadata])).not.toContain('data-thumbnail-id=')
+ expect(renderAttachmentComposer({attachments:[{...image,status:'ready'}]})).toContain('data-draft-thumbnail=')
+ expect(renderMessageAttachments('deadbeef',[{...image,mime:'image/svg+xml'}])).not.toContain('data-thumbnail-id=')
+})

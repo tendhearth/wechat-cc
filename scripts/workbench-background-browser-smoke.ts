@@ -14,7 +14,7 @@ import {randomUUID} from 'node:crypto'
 import type {AgentEvent,AgentProvider,AgentRuntimeSnapshot} from '../src/core/agent-provider'
 
 const repo=resolve(dirname(fileURLToPath(import.meta.url)),'..'),src=join(repo,'apps/desktop/src')
-interface Locator {fill(text:string):Promise<void>;click():Promise<void>;count():Promise<number>;textContent():Promise<string|null>}
+interface Locator {scrollIntoViewIfNeeded():Promise<void>;setInputFiles(files:Array<{name:string,mimeType:string,buffer:Buffer}>):Promise<void>;fill(text:string):Promise<void>;click():Promise<void>;count():Promise<number>;textContent():Promise<string|null>}
 interface Page {
   goto(url:string):Promise<unknown>;locator(selector:string):Locator;getByRole(role:string,options:{name:string;exact?:boolean}):Locator
   waitForFunction<T=void>(fn:(value:T)=>unknown,value?:T):Promise<unknown>;screenshot(options:{path:string}):Promise<Buffer>
@@ -73,12 +73,13 @@ async function main(){
   const api=createInternalApi({stateDir,daemonPid:process.pid,workbench:service,db})
   let host:ReturnType<typeof Bun.serve>|undefined,browser:Browser|undefined,page:Page|undefined
   const pageErrors:string[]=[],httpErrors:string[]=[]
-  let detailUnavailable=false
+  let detailUnavailable=false,attachmentUnavailable=false
   try{
     const info=await api.start();writeFileSync(join(stateDir,'internal-api-info.json'),JSON.stringify({baseUrl:`http://127.0.0.1:${info.port}`,operatorTokenFilePath:info.operatorTokenFilePath}),{mode:0o600})
     const proxy=createWorkbenchProxy({stateDir,dryRun:false,allowWrites:true}),csp=JSON.parse(readFileSync(join(src,'../src-tauri/tauri.conf.json'),'utf8')).app.security.csp as string
     host=Bun.serve({hostname:'127.0.0.1',port:0,idleTimeout:30,async fetch(request){
       const path=new URL(request.url).pathname
+      if(attachmentUnavailable&&path==='/v1/workbench/attachment'&&request.method==='GET')return Response.json({error:'fixture_unavailable'},{status:503})
       if(detailUnavailable&&path==='/v1/workbench/task')return Response.json({error:'fixture_unavailable'},{status:503})
       const res=await proxy(request)
       if(res){if(res.status>=400)httpErrors.push(`${request.method} ${path}: ${await res.clone().text()}`);return res}
@@ -89,12 +90,19 @@ async function main(){
     }})
     browser=await chromium.launch({headless:true});page=await browser.newPage({viewport:{width:1280,height:900}});page.on('pageerror',error=>pageErrors.push(error.message))
     await page.goto(`http://127.0.0.1:${host.port}`);await page.locator('#wb-path').fill(project);await page.locator('#wb-title').fill('兼容性项目');await page.locator('#wb-project-form button[type=submit]').click();await page.locator('#wb-create-text').fill('请修复导出问题，并请子助手核对兼容性和测试。')
+    const thumbnailPng=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=','base64')
+    await page.locator('#wb-attachment-files').setInputFiles([{name:'square.png',mimeType:'image/png',buffer:thumbnailPng}])
+    await page.waitForFunction(()=>!!document.querySelector<HTMLImageElement>('.wb-draft-thumbnail')?.naturalWidth&&!!document.querySelector('[data-upload-status="ready"]'))
     assert.equal(store.projects().length,1);assert.equal(store.list().length,0);assert.equal(started.length,0)
     await page.screenshot({path:join(evidence,'project-new-conversation-1280.png')})
     await page.getByRole('button',{name:'开始任务',exact:true}).click();await eventually(()=>started.length===1)
     const task=store.get(started[0]!),epoch=service.detail(task.id).runId!
     await page.waitForFunction(()=>document.body.textContent?.includes('后台执行中 · 2'))
     assert.equal(closed.length,0);assert.equal(store.artifacts(task.id).length,0)
+    await page.waitForFunction(()=>!!document.querySelector<HTMLImageElement>('[data-thumbnail-id] img')?.naturalWidth)
+    await page.locator('[data-thumbnail-id]').click()
+    await page.waitForFunction(()=>!!document.querySelector<HTMLImageElement>('dialog[open] img')?.naturalWidth)
+    await page.locator('[data-close-attachment]').click()
     await page.screenshot({path:join(evidence,'background-running-1280.png')})
     detailUnavailable=true
     // Wake the outstanding long poll; the next request hits the outage.
@@ -105,8 +113,15 @@ async function main(){
     await page.getByRole('button',{name:'立即重试',exact:true}).click()
     await page.waitForFunction(()=>!document.body.textContent?.includes('正在重新连接'))
     await page.locator('#wb-followup-text').fill('重开后仍保留的草稿')
+    attachmentUnavailable=true
     await page.goto(`http://127.0.0.1:${host.port}`)
     await page.waitForFunction(()=>document.querySelector<HTMLInputElement>('#wb-followup-text')?.value==='重开后仍保留的草稿')
+    await page.waitForFunction(()=>document.body.textContent?.includes('图片未能加载 · 点击重试'))
+    attachmentUnavailable=false
+    await page.locator('[data-thumbnail-id]').click()
+    await page.waitForFunction(()=>!!document.querySelector<HTMLImageElement>('dialog[open] img')?.naturalWidth)
+    await page.locator('[data-close-attachment]').click()
+    await page.waitForFunction(()=>!!document.querySelector<HTMLImageElement>('[data-thumbnail-id] img')?.naturalWidth)
     for(const child of ['兼容性','测试'])pipes.get(task.id)!.push({kind:'tool_call',tool:'Agent',activity:{id:child,type:'agent',label:`${child}核对`,status:'completed',output:child==='兼容性'?'原有接口保持兼容。\n<script>这只是公开回复中的文字</script>':'针对本次改动的测试通过，未运行用户外部服务。'}})
     Object.assign(states.get(task.id)!,{backgroundCount:0,foreground:'idle'})
     pipes.get(task.id)!.push({kind:'text',text:'两位子助手的结果已收到。兼容性没有冲突，测试也已通过。',itemId:'parent-late',textMode:'replace'})
@@ -136,11 +151,17 @@ async function main(){
     assert.equal(next.status,'queued');assert.equal(started.length,1)
     const {outputDirectory}=await import('../src/core/workbench/artifacts')
     writeFileSync(join(outputDirectory(project,task.id),'background-result.md'),'# 已核对的成果\n')
+    writeFileSync(join(outputDirectory(project,task.id),'generated.png'),thumbnailPng)
     await page.getByRole('button',{name:'结束后台会话',exact:true}).click()
     await eventually(()=>store.get(task.id).status==='completed'&&store.get(next.id).status==='completed')
     assert.deepEqual(started,[task.id,next.id]);assert.ok(store.artifacts(task.id).some(a=>a.name==='background-result.md'));assert.equal(closed[0],task.id)
     await page.waitForFunction(()=>document.querySelector('.wb-task-head .wb-status')?.textContent==='已答复')
     await page.waitForFunction(id=>document.querySelector(`[data-task-id="${id}"]`)?.textContent?.includes('已答复'),next.id)
+    await page.locator('[data-thumbnail-kind="artifact"]').scrollIntoViewIfNeeded()
+    await page.waitForFunction(()=>!!document.querySelector<HTMLImageElement>('[data-thumbnail-kind="artifact"] img')?.naturalWidth)
+    await page.locator('[data-thumbnail-kind="artifact"]').click()
+    await page.waitForFunction(()=>!!document.querySelector<HTMLImageElement>('dialog[open] img')?.naturalWidth)
+    await page.locator('[data-close-attachment]').click()
     await page.screenshot({path:join(evidence,'closed-and-saved-1280.png')})
     await page.locator('[data-action="add-project"]').click()
     await page.waitForFunction(()=>!!document.querySelector('#wb-project-form'))

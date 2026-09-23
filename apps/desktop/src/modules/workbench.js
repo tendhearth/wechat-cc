@@ -5,7 +5,8 @@ import {workbenchRuntimePresentation} from './workbench-runtime.js'
 
 import {createExecutionCatalogs,createContinuationPreviews,continuationPreviewKey,executionSignature,executionErrorMessage,renderExecutionControls,renderExecutionObservation} from './workbench-execution.js'
 /** @typedef {import('./workbench-execution.js').ExecutionChoice} ExecutionChoice */
-import {createWorkbenchAttachments,attachmentSignature,renderAttachmentComposer,renderMessageAttachments} from './workbench-attachments.js'
+import {createWorkbenchThumbnails} from './workbench-thumbnails.js'
+import {createWorkbenchAttachments,attachmentSignature,renderAttachmentComposer,renderMessageAttachments,renderImageArtifacts} from './workbench-attachments.js'
 import { createWorkbenchDraftStore, loadWorkbenchView, saveWorkbenchView, workbenchWindowStorage } from './workbench-window-state.js'
 export { createWorkbenchDraftStore } from './workbench-window-state.js'
 
@@ -244,6 +245,7 @@ export function renderMessageFor({ detail, helper, handoffs, actionable, lastRep
     <header><span>${event.kind === 'user' ? '你' : `<span class="wb-provider-badge">${escapeWorkbenchHtml(helper)}</span>`}</span><time>${escapeWorkbenchHtml((event.sourceId?'原会话记录':time(event.createdAt)))}</time></header>
     ${handoffs.some(h=>h.requestEventId===Number(event.id))?`<div class="wb-message-body"><p>${escapeWorkbenchHtml(handoffs.find(h=>h.requestEventId===Number(event.id))?.request)}</p><button class="wb-new" data-action="handoff-record" data-handoff-id="${escapeWorkbenchHtml(handoffs.find(h=>h.requestEventId===Number(event.id))?.id)}">查看随附的交接内容</button></div>`:event.kind === 'text' ? `<div class="wb-message-body wb-markdown">${renderWorkbenchMarkdown(event.text)}</div>` : `<p class="wb-message-body">${escapeWorkbenchHtml(event.text)}</p>`}
     ${renderMessageAttachments(detail?.task.id??'',event.attachments)}
+    ${event.kind==='text'&&detail?renderImageArtifacts(detail.task.id,(detail.artifacts??[]).filter(a=>detail.events.filter(message=>message.kind==='text'&&message.createdAt<=a.createdAt).at(-1)?.id===event.id)):''}
     ${actionable&&event.kind==='text'&&(origin||(event===lastReply&&otherProvider))?`<button type="button" class="wb-new wb-handoff-action" data-action="${origin?'handoff-revision':'handoff-review'}" data-event-id="${event.id}">${origin?'选择意见，交回原任务':`交给 ${escapeWorkbenchHtml(otherProvider?.displayName)} 检查`}</button>`:''}
   </article>`
 }
@@ -662,7 +664,8 @@ export function initWorkbenchPage(deps) {
       const field = input(id); if (field && value) field.value = value
     }
   }
-  const attachments=createWorkbenchAttachments({drafts:pageDrafts,invokeWorkbenchApi:deps.invokeWorkbenchApi,changed:scope=>{if(alive&&scope===renderedScope)controller.paint(true)}})
+  const thumbnails=createWorkbenchThumbnails({invoke:deps.invokeWorkbenchApi})
+  const attachments=createWorkbenchAttachments({preview:thumbnails.local,removePreview:thumbnails.remove,drafts:pageDrafts,invokeWorkbenchApi:deps.invokeWorkbenchApi,changed:scope=>{if(alive&&scope===renderedScope)controller.paint(true)}})
   const attachmentPayload=(/** @type {Draft} */ draft)=>draft.attachments?.length?{attachmentIds:draft.attachments.map(a=>a.id),draftId:draft.draftId}:{}
   const executionContext=()=>{
     const detail=controller.state.detail
@@ -698,6 +701,7 @@ export function initWorkbenchPage(deps) {
       current.unread = following ? false : current.unread || result.patched + result.appended > 0
     }
     if (following && content) content.scrollTop = content.scrollHeight
+    thumbnails.mount(root)
     showReadingNotice()
     return true
   }
@@ -709,7 +713,7 @@ export function initWorkbenchPage(deps) {
       const acknowledged = interactions.acknowledgedInputDraft(state.detail.task.id, state.detail.inputs ?? [],pageDrafts.get(taskScope).attachments,pageDrafts.get(taskScope).execution)
       if (acknowledged !== null) {
         const draft = pageDrafts.get(taskScope)
-        if (draft.followup === acknowledged) { draft.followup = ''; if(draft.attachments?.length)draft.attachments=[]; pageDrafts.set(taskScope, draft) }
+        if (draft.followup === acknowledged) { draft.followup = ''; if(draft.attachments?.length){draft.attachments.forEach(a=>thumbnails.remove(a.id));draft.attachments=[]}; pageDrafts.set(taskScope, draft) }
         const field = input('wb-followup-text')
         if (renderedScope === taskScope && field?.value === acknowledged) field.value = ''
       }
@@ -755,6 +759,7 @@ export function initWorkbenchPage(deps) {
     const questionPanelScroll = root.querySelector('.wb-questions')?.scrollTop ?? 0
     const nextDraft=pageDrafts.get(nextScope),providerId=state.detail?.task.providerId??nextDraft.providerId??state.defaultProvider??'',path=state.detail?.task.path??nextDraft.path
     root.innerHTML = renderWorkbench(state, interactions,nextDraft,attachments.error(nextScope),{catalog:catalogs.get(providerId||state.defaultProvider||'',path),...(restartPreviewContext()?{restartPreview:recoveryPreviews.get(/** @type {import('./workbench-execution.js').ContinuationContext} */(restartPreviewContext()))}:{}),busy:busy.has(state.detail?`task:${state.detail.task.id}`:'create')})
+    thumbnails.mount(root)
     const questionPanel = root.querySelector('.wb-questions')
     if (questionPanel && sameScope) questionPanel.scrollTop = questionPanelScroll
     // 会话面:每次重画都把「跟 CC 说」的控件挂回新的宿主;没选对话就放回原处。
@@ -892,11 +897,12 @@ export function initWorkbenchPage(deps) {
     if(action==='retry-continuation-preview'){const context=restartPreviewContext();if(context)void recoveryPreviews.load(context,true);return}
     if(action==='retry-execution-models'){loadExecutionCatalog(true);return}
     if(action==='remove-attachment'&&target.dataset.attachmentId){captureDraft();attachments.remove(renderedScope,target.dataset.attachmentId);if(controller.state.selectedId)interactions.editInputDraft(controller.state.selectedId,input('wb-followup-text')?.value??'',pageDrafts.get(renderedScope).attachments,pageDrafts.get(renderedScope).execution);return}
-    if((action==='preview-input-attachment'||action==='download-input-attachment')&&target.dataset.attachmentId){
-      const taskId=target.dataset.ownerTask,id=target.dataset.attachmentId,navigation=navigationGeneration
-      if(!taskId||controller.getTargetTaskId()!==taskId)return
+    if((action==='preview-input-attachment'||action==='download-input-attachment'||action==='preview-image-artifact')&&(target.dataset.attachmentId||target.dataset.artifactId)){
+      if(target.dataset.thumbnailId)thumbnails.retry(target)
+      const taskId=target.dataset.ownerTask,id=target.dataset.attachmentId||target.dataset.artifactId,navigation=navigationGeneration
+      if(!taskId||!id||controller.getTargetTaskId()!==taskId)return
       try{
-        const data=/** @type {{attachment:import('./workbench-attachments.js').Attachment,base64:string}} */(await deps.invokeWorkbenchApi('GET',`/v1/workbench/attachment?taskId=${encodeURIComponent(taskId)}&id=${encodeURIComponent(id)}`))
+        const data=action==='preview-image-artifact'?await (async()=>{const result=/** @type {{name:string,mime:string,size:number,sha256:string,contentBase64:string}} */(await deps.invokeWorkbenchApi('GET',`/v1/workbench/artifact?id=${encodeURIComponent(taskId)}&artifactId=${encodeURIComponent(id)}`));return{attachment:{id,...result},base64:result.contentBase64}})():/** @type {{attachment:import('./workbench-attachments.js').Attachment,base64:string}} */(await deps.invokeWorkbenchApi('GET',`/v1/workbench/attachment?taskId=${encodeURIComponent(taskId)}&id=${encodeURIComponent(id)}`))
         if(!alive||navigation!==navigationGeneration||controller.state.selectedId!==taskId)return
         if(data.attachment.id!==id)throw Error('附件版本不匹配，请重新打开。')
         const a=data.attachment,bytes=decodeBase64(data.base64),url=URL.createObjectURL(new Blob([bytes],{type:a.mime}))
@@ -1128,7 +1134,7 @@ export function initWorkbenchPage(deps) {
       if (!receipt) return
       const scope = `task:${taskId}`, draft = pageDrafts.get(scope)
       const unchanged=attachmentSignature(draft.attachments)===attachmentSignature(sent.attachments)&&executionSignature(draft.execution)===executionSignature(sent.execution)
-      if (draft.followup === text&&unchanged) { draft.followup = ''; if(draft.attachments?.length)draft.attachments=[]; pageDrafts.set(scope, draft) }
+      if (draft.followup === text&&unchanged) { draft.followup = ''; if(draft.attachments?.length){draft.attachments.forEach(a=>thumbnails.remove(a.id));draft.attachments=[]}; pageDrafts.set(scope, draft) }
       if (!alive) return
       const current = input('wb-followup-text')
       if (unchanged&&controller.state.selectedId === taskId && current?.value === text) current.value = ''
@@ -1175,6 +1181,7 @@ export function initWorkbenchPage(deps) {
         const changedAttachments=attachmentSignature(draft.attachments)!==attachmentSignature(files.attachments)||executionSignature(draft.execution)!==executionSignature(files.execution)
         // Submitted IDs now belong to the created task. A newly edited task
         // draft keeps only material that was added after this submission.
+        files.attachments?.forEach(a=>thumbnails.remove(a.id))
         if(files.attachments?.length)draft.attachments=(draft.attachments??[]).filter(a=>!files.attachments?.some(sent=>sent.id===a.id))
         if(changedAttachments){pageDrafts.set(scope,draft);return}
         if (scope.startsWith('new:') && draft.path === sent.path && draft.text === sent.text && draft.title === sent.title && draft.providerId === sent.providerId) {
@@ -1227,7 +1234,7 @@ export function initWorkbenchPage(deps) {
         const scope = `task:${taskId}`
         const draft = pageDrafts.get(scope)
         const unchanged=attachmentSignature(draft.attachments)===attachmentSignature(files.attachments)&&executionSignature(draft.execution)===executionSignature(files.execution)
-        if (draft.followup === text&&unchanged) {draft.followup = '';if(draft.attachments?.length)draft.attachments=[]}
+        if (draft.followup === text&&unchanged) {draft.followup = '';if(draft.attachments?.length){draft.attachments.forEach(a=>thumbnails.remove(a.id));draft.attachments=[]}}
         pageDrafts.set(scope, draft)
         const current = input('wb-followup-text')
         if (unchanged&&controller.state.selectedId === taskId && current?.value === text) current.value = ''
@@ -1286,7 +1293,7 @@ export function initWorkbenchPage(deps) {
     resumeSearch = input('wb-search')?.value ?? searchDraft
     if (controller.state.selectedId) resumeScope = `task:${controller.state.selectedId}`
     else if (document.getElementById('wb-create-form')) resumeScope = scopeFor(controller.state)
-    recoveryPreviews.destroy();catalogs.destroy();root.removeEventListener('toggle',onToggle,true);handoffCleanup?.(); nativeHistoryCleanup?.();attachmentPreviewCleanup?.();root.removeEventListener('paste',onPaste);root.removeEventListener('drop',onDrop);root.removeEventListener('dragover',onDragOver); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', onInput); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
+    thumbnails.destroy();recoveryPreviews.destroy();catalogs.destroy();root.removeEventListener('toggle',onToggle,true);handoffCleanup?.(); nativeHistoryCleanup?.();attachmentPreviewCleanup?.();root.removeEventListener('paste',onPaste);root.removeEventListener('drop',onDrop);root.removeEventListener('dragover',onDragOver); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', onInput); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
   } }
   return controller
 }

@@ -369,3 +369,14 @@
 .wb-task-execution { border-top:1px solid var(--wb-line); padding-top:14px; margin-top:10px; }
 .wb-task-execution h3 { margin:0; color:var(--wb-secondary); font-size:12px; font-weight:500; }
 .wb-execution-observation { margin:14px 0 0; overflow-wrap:anywhere; }
+
+/* Conversation image attachments keep their full aspect ratio. */
+.wb-message-attachments { display:flex; flex-wrap:wrap; gap:10px; }
+.wb-image-attachment { display:flex; flex-wrap:wrap; max-width:280px; gap:8px; }
+.wb-thumbnail { display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; min-width:120px; min-height:96px; padding:8px; border:0; border-radius:8px; background:transparent; color:inherit; cursor:zoom-in; }
+.wb-thumbnail img { display:block; width:100%; height:160px; max-width:100%; max-height:200px; object-fit:contain; border-radius:6px; }
+.wb-thumbnail img[hidden], .wb-draft-thumbnail[hidden] { display:none; }
+.wb-thumbnail small { font-size:11px; opacity:.7; margin-top:6px; }
+.wb-draft-thumbnail { width:64px; height:64px; object-fit:contain; border-radius:6px; }
+.wb-thumbnail:focus-visible { outline:2px solid var(--wb-accent,#64744c); outline-offset:2px; }
+.wb-result-thumbnail { max-width:280px; }
