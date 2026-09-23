@@ -112,7 +112,7 @@ interface Active extends PathReservation {
 }
 export interface InputMaterials {attachmentIds?:string[];draftId?:string;execution?:unknown}
 export interface CreateTask extends InputMaterials { title?: string; path: string; providerId: string; text: string }
-export interface CreateWechatTask {ownerChatId:string;accountId:string;requestId:string;commandHash:string;projectId:string;providerId?:string;text:string}
+export interface CreateWechatTask {ownerChatId:string;accountId:string;requestId:string;commandHash:string;projectId:string;providerId?:string;text:string;originMessageId?:string}
 export interface SendWechatArtifact {ownerChatId:string;accountId:string;requestId:string;commandHash:string;taskId:string;artifactId:string}
 /**
  * 主人眼里的进度,两家执行者一致。持久化的 status 记的是这条 run 的生命周期
@@ -970,7 +970,9 @@ export function makeWorkbenchService(opts: Options) {
 
   /** matter 同步永不打断任务本身:登记失败只是少一条索引,任务照跑。 */
   function matterSync(fn:(m:MatterStore)=>void):void { if(!opts.matters)return; try{fn(opts.matters)}catch{/* 见上 */} }
-  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void):WorkbenchTaskView {
+  /** 出生地也不能打断创建:没有 matter store、或那个 chat 的 matter 建不出来,就没有出生地,任务照建。 */
+  function safeOriginMatterId(ownerChatId:string):string|null { if(!opts.matters)return null; try{return opts.matters.ensureChat(ownerChatId).id}catch{return null} }
+  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null}):WorkbenchTaskView {
     ensureAccepting()
     const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
     const attachments=selectAttachments(input),text=checkedText(input.text,attachments)
@@ -981,7 +983,7 @@ export function makeWorkbenchService(opts: Options) {
     let activate:()=>void=()=>{}
     const accepted=store.atomic(()=>{
       const task=store.create({title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:opts.ownerChatId()})
-      matterSync(m=>{m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:task.ownerChatId??null});m.linkTask(task.id);if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)})
+      matterSync(m=>{m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:task.ownerChatId??null,originMatterId:origin?.matterId??null,originMessageId:origin?.messageId??null});m.linkTask(task.id);if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)})
       return start(task,text,acceptedDirectoryIdentity,undefined,undefined,undefined,undefined,undefined,attachments,input.draftId,execution,{
         persist:runId=>onAccepted?.(task,runId),activate:fn=>{activate=fn},
       })
@@ -1127,7 +1129,7 @@ export function makeWorkbenchService(opts: Options) {
         receipt=store.creationReceipts.add({id,accountId:input.accountId,ownerChatId:input.ownerChatId,commandHash:input.commandHash,projectId:input.projectId,path:task.path,providerId:task.providerId,taskId:task.id,runId,
           reply:`已接下这件事 · ${task.id}\n${task.providerId} · ${task.path}\n\n${task.title}\n\n完成或需要你处理时，会在这里提醒。\n查看：任务 ${task.id}\n补充：任务 ${task.id} 补充 <要求>\n关闭提醒：任务 ${task.id} 静音`,
         })
-      })
+      },{matterId:safeOriginMatterId(input.ownerChatId),messageId:input.originMessageId??null})
       return receipt
     },
     attention(){

@@ -191,7 +191,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
       const explicit=/^用\s+@(\S+)(?:\s+|$)([\s\S]*)$/i.exec(match[2]!)
       if(/^用\s+@/i.test(match[2]!)&&(!explicit||!isWorkbenchProviderId(explicit[1]!.toLowerCase())))return usage()
       const choice=explicit??/^用\s+(claude|codex)(?:\s+|$)([\s\S]*)$/i.exec(match[2]!)
-      try{return opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),text:choice?choice[2]!:match[2]!}).reply}
+      try{return opts.actions.createWechat({ownerChatId:chatId,accountId:identity.accountId,requestId:inputId(chatId,'',text,identity),commandHash:createHash('sha256').update(text).digest('hex'),projectId:match[1]!.toLowerCase(),...(choice?{providerId:choice[1]!.toLowerCase()}:{}),...(identity.msgId?{originMessageId:identity.msgId}:{}),text:choice?choice[2]!:match[2]!}).reply}
       catch(error){return failure(error,'')}
     }
     if(!command||command==='列表'){
