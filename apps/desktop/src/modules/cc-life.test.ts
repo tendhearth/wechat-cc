@@ -15,6 +15,17 @@ describe('CC current activity', () => {
     expect(currentActivity(sample('working')).title).toBe('在忙一件事。')
     expect(currentActivity({...sample('visiting'), activity:{kind:'visiting',label:'去阿柚家串门了'}}).title).toBe('去阿柚家串门了')
   })
+  it('opens the care sheet from the CC avatar without changing the current page', () => {
+    let click!:(event:any)=>void
+    const host={innerHTML:'',addEventListener:(_name:string,cb:any)=>{click=cb}}
+    const navigate=vi.fn(),openCare=vi.fn()
+    const stop=mountCurrentActivity(host,{subscribe:()=>()=>{}},navigate,openCare)
+    expect(host.innerHTML).toContain('data-life-care')
+    expect(host.innerHTML).toContain('aria-label="看看 CC 正在照看什么"')
+    click({target:{closest:(selector:string)=>selector==='[data-life-care]'?{}:null}})
+    expect(openCare).toHaveBeenCalledOnce();expect(navigate).not.toHaveBeenCalled()
+    stop()
+  })
 })
 
 describe('life archive read lifecycle', () => {

@@ -121,7 +121,7 @@ function taskSummary(task) {
 }
 
 /** A transient list of destinations, never a second task view.
- * @param {Omit<PollerOptions,'onChange'> & {host:HTMLElement,openTask:(id:string)=>unknown,documentTarget?:Document}} options */
+ * @param {PollerOptions & {host:HTMLElement,openTask:(id:string)=>unknown,documentTarget?:Document}} options */
 export function mountWorkbenchAttention(options) {
   const { host } = options
   const documentTarget = options.documentTarget ?? host.ownerDocument
@@ -212,6 +212,7 @@ export function mountWorkbenchAttention(options) {
     message.textContent = state.stale ? '待处理状态暂未更新' : '一起做'
     if (tasks.length < 2) close(!!focusedId)
     else if (focusedId && !rows.has(focusedId)) close(true)
+    options.onChange?.(state)
   } })
 
   return {

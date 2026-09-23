@@ -576,6 +576,148 @@ describe('workbench mutations', () => {
     return page
   }
 
+  function installDraftPage(nativeProviderSelect = false) {
+    const fields = Object.fromEntries(['wb-project-form', 'wb-create-form', 'wb-path', 'wb-create-text', 'wb-title', 'wb-provider'].map(id => {
+      const field = new FakeElement(); field.id = id; field.tagName = id.endsWith('-form') ? 'FORM' : ''; return [id, field]
+    }))
+    const page = installFakePage(fields)
+    let html = ''
+    let providerOptions: string[] = [], selectedProvider = ''
+    // A real select cannot retain a value absent from its options. In particular,
+    // restoring a saved executor into an empty loading select yields value=''.
+    if (nativeProviderSelect) Object.defineProperty(fields['wb-provider'], 'value', { get: () => selectedProvider, set: value => { selectedProvider = providerOptions.includes(value) ? value : '' } })
+    Object.defineProperty(page, 'innerHTML', { get: () => html, set: value => {
+      html = value
+      for (const field of Object.values(fields)) field.value = ''
+      if (nativeProviderSelect) {
+        const select = html.match(/<select id="wb-provider"[\s\S]*?<\/select>/)?.[0] ?? ''
+        providerOptions = [...select.matchAll(/<option value="([^"]*)"/g)].map(match => match[1]!)
+        fields['wb-provider']!.value = select.match(/<option value="([^"]*)" selected/)?.[1] ?? providerOptions[0] ?? ''
+      } else fields['wb-provider']!.value = 'codex'
+    } })
+    root.document = { getElementById: (id: string) => id === 'workbench-root' ? page : html.includes(`id="${id}"`) ? fields[id] : null, activeElement: null }
+    return { page, fields }
+  }
+
+  it('preserves the project executor when chat metadata paints before provider options load', async () => {
+    const { page, fields } = installDraftPage(true)
+    const values = new Map<string, string>(), storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value) }, removeItem: (key: string) => { values.delete(key) } }
+    root.window = { sessionStorage: storage }
+    const { createWorkbenchDraftStore, saveWorkbenchView } = await import('./workbench-window-state.js')
+    createWorkbenchDraftStore(storage).set('new:/work/B', { path: '/work/B', text: 'B 项目的原草稿', title: '', providerId: 'claude', followup: '' })
+    saveWorkbenchView(storage, { scope: 'new:/work/B', query: { q: '', archived: 'exclude' }, search: '' })
+    const list = { tasks: [], projects: [{ id: 'B', path: '/work/B', name: 'B', providerId: 'claude' }], projectProviders: { '/work/B': 'claude' }, providers: [{ id: 'codex', displayName: 'Codex' }, { id: 'claude', displayName: 'Claude' }], defaultProvider: 'codex', canWechat: false }
+    let finish!: (value: typeof list) => void
+    const pendingList = new Promise<typeof list>(resolve => { finish = resolve })
+    const api = async (_method: string, path: string) => path === '/v1/workbench' ? pendingList : { matters: [] }
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    try {
+      await vi.waitFor(() => expect(page.innerHTML).toContain('id="wb-provider"'))
+      expect(fields['wb-provider']!.value).toBe('')
+      controller.paint(true)
+      expect(createWorkbenchDraftStore(storage).get('new:/work/B').providerId).toBe('claude')
+      finish(list)
+      await vi.waitFor(() => expect(controller.state.providers).toHaveLength(2))
+      expect(fields['wb-provider']!.value).toBe('claude')
+      expect(fields['wb-create-text']!.value).toBe('B 项目的原草稿')
+    } finally { finish(list); module.stopWorkbenchPolling() }
+  })
+
+  it('prepares a chat request in the existing project form and preserves its unsent draft and executor', async () => {
+    const { page, fields } = installDraftPage()
+    const project = { id: 'site', name: '网站', path: '/work/site', providerId: 'codex' }
+    const values = new Map<string, string>(), storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value) }, removeItem: (key: string) => { values.delete(key) } }
+    root.window = { sessionStorage: storage }
+    const { createWorkbenchDraftStore } = await import('./workbench-window-state.js')
+    const attachment = { id: '12345678-1234-1234-1234-123456789abc', name: 'context.txt', mime: 'text/plain', size: 1, sha256: 'a'.repeat(64), status: 'ready' as const }
+    const execution = { defaults: 'native' as const, model: 'chosen-model', reasoningEffort: 'high' }
+    createWorkbenchDraftStore(storage).set('new:/work/site', { path: project.path, text: '', title: '', providerId: 'codex', followup: '', attachments: [attachment], execution })
+    const list = { projects: [project], tasks: [], projectProviders: { '/work/site': 'claude' }, providers: [{ id: 'codex', displayName: 'Codex' }, { id: 'claude', displayName: 'Claude' }], defaultProvider: 'codex', canWechat: false }
+    const api = vi.fn(async (_method: string, _path: string) => list)
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    try {
+      await controller.refresh()
+      const projectNew = new FakeElement(); projectNew.dataset = { action: 'new-project-task', projectPath: project.path }
+      await [...page.listeners.get('click')!][0]!({ target: projectNew })
+      fields['wb-create-text']!.value = '原来的未发要求'
+      fields['wb-title']!.value = '原来的名称'
+      fields['wb-provider']!.value = 'codex'
+      expect(await module.openWorkbenchDraft?.({ path: project.path, text: '这次聊天交办的要求', providerId: 'claude' })).toBe(true)
+      expect(controller.state.selectedId).toBeNull()
+      expect(controller.state.newScope).toBe('new:/work/site')
+      expect(fields['wb-create-text']!.value).toBe('原来的未发要求\n\n—— 从聊天交办 ——\n这次聊天交办的要求')
+      expect(fields['wb-title']!.value).toBe('原来的名称')
+      expect(fields['wb-provider']!.value).toBe('codex')
+      const stored = createWorkbenchDraftStore(storage).get('new:/work/site')
+      expect(stored.attachments).toEqual([attachment])
+      expect(stored.execution).toEqual(execution)
+      expect(api.mock.calls.every(call => call[0] === 'GET')).toBe(true)
+    } finally { module.stopWorkbenchPolling() }
+  })
+
+  it('waits for project metadata and uses the latest executor when handing over a new draft', async () => {
+    const { fields } = installDraftPage()
+    const api = vi.fn(async (_method: string, _path: string) => ({ projects: [{ id: 'p', name: 'Project', path: '/work', providerId: 'codex' }], tasks: [], projectProviders: { '/work': 'claude' }, providers: [{ id: 'codex', displayName: 'Codex' }, { id: 'claude', displayName: 'Claude' }], defaultProvider: 'codex', canWechat: false }))
+    const module = await import('./workbench.js')
+    module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    try {
+      expect(await module.openWorkbenchDraft?.({ path: '/work', text: '检查文档' })).toBe(true)
+      expect(fields['wb-create-text']!.value).toBe('检查文档')
+      expect(fields['wb-path']!.value).toBe('/work')
+      expect(fields['wb-provider']!.value).toBe('claude')
+      expect(api.mock.calls.every(call => call[0] === 'GET')).toBe(true)
+    } finally { module.stopWorkbenchPolling() }
+  })
+
+  it('keeps the handover request through adding a project, including a failed first attempt', async () => {
+    const { page, fields } = installDraftPage()
+    const originalFormData = globalThis.FormData
+    vi.stubGlobal('FormData', class {
+      values = new Map([['path', fields['wb-path']!.value], ['name', fields['wb-title']!.value], ['providerId', fields['wb-provider']!.value]])
+      get(name: string) { return this.values.get(name) ?? null }
+    })
+    const project = { id: 'p', name: 'New project', path: '/work/new', providerId: 'claude' }
+    let added = false, failAdd = true
+    const api = vi.fn(async (method: string, path: string) => {
+      if (method === 'POST') {
+        if (path !== '/v1/workbench/project') throw Error('Unexpected task execution')
+        if (failAdd) { failAdd = false; throw Error('offline') }
+        added = true; return { project }
+      }
+      return { projects: added ? [project] : [], tasks: [], projectProviders: {}, providers: [{ id: 'codex', displayName: 'Codex' }, { id: 'claude', displayName: 'Claude' }], defaultProvider: 'codex', canWechat: false }
+    })
+    const module = await import('./workbench.js')
+    const controller = module.initWorkbenchPage({ invokeWorkbenchApi: api, pollMs: 60_000 })!
+    try {
+      expect(await module.openWorkbenchDraft?.({ path: '', text: '添加项目后仍需保留', providerId: 'claude' })).toBe(true)
+      expect(page.innerHTML).toContain('id="wb-project-form"')
+      expect(page.innerHTML).toContain('添加项目后仍需保留')
+      fields['wb-path']!.value = '/work/new'
+      fields['wb-title']!.value = 'New project'
+      fields['wb-provider']!.value = 'claude'
+      const submit = [...page.listeners.get('submit')!][0]!
+      await submit({ target: fields['wb-project-form'], preventDefault() {} })
+      expect(controller.state.error).toBe('offline')
+      await controller.refresh()
+      await submit({ target: fields['wb-project-form'], preventDefault() {} })
+      expect(page.innerHTML).toContain('id="wb-create-form"')
+      expect(fields['wb-create-text']!.value).toBe('添加项目后仍需保留')
+      expect(fields['wb-path']!.value).toBe('/work/new')
+      expect(fields['wb-provider']!.value).toBe('claude')
+      expect(api.mock.calls.filter(([method]) => method === 'POST').map(([, path]) => path)).toEqual(['/v1/workbench/project', '/v1/workbench/project'])
+    } finally { module.stopWorkbenchPolling(); vi.stubGlobal('FormData', originalFormData) }
+  })
+
+  it('does not accept a handover into a project that disappeared while opening the workbench', async () => {
+    installDraftPage()
+    const module = await import('./workbench.js')
+    module.initWorkbenchPage({ invokeWorkbenchApi: async () => ({ projects: [], tasks: [], providers: [], defaultProvider: null, canWechat: false }), pollMs: 60_000 })
+    try { expect(await module.openWorkbenchDraft({ path: '/gone', text: '保留在聊天里' })).toBe(false) }
+    finally { module.stopWorkbenchPolling() }
+  })
+
   it('saves a native folder selection and refreshes the catalog for that selected directory',async()=>{
     const values=new Map<string,string>(),storage={getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>{values.set(key,value)},removeItem:(key:string)=>{values.delete(key)}}
     const fields=Object.fromEntries(['wb-create-form','wb-path','wb-create-text','wb-provider'].map(id=>{const f=new FakeElement();f.id=id;f.tagName=id==='wb-path'?'INPUT':'';return[id,f]}))

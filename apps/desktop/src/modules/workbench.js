@@ -52,6 +52,7 @@ function providerLabel(p) {
 /** @typedef {import('./workbench-window-state.js').Draft} Draft */
 /** @typedef {{id:string,kind:string,title:string,status:string,updatedAt:number}} ChatMatter */
 /** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,mountConverse?:(host:HTMLElement)=>void,unmountConverse?:()=>void,confirmUnattended?:()=>Promise<boolean>}} WorkbenchDeps */
+/** @typedef {{path:string,text:string,providerId?:string}} IncomingDraft */
 
 // 一件事都没改过的任务:签名从一开始就是「空」,免得第一次拉回来白重画一整页。
 const EMPTY_REVIEWS = reviewsSignature([])
@@ -62,7 +63,7 @@ const artifactsSignature = detail => JSON.stringify((detail?.artifacts ?? []).ma
 const windowStorage = workbenchWindowStorage()
 const savedView = loadWorkbenchView(windowStorage)
 
-/** @type {{timer:ReturnType<typeof setInterval>,cleanup:()=>void,openTask:(id:string)=>Promise<void>,getTaskId:()=>string|null}|null} */
+/** @type {{timer:ReturnType<typeof setInterval>,cleanup:()=>void,openTask:(id:string)=>Promise<void>,openDraft:(draft:IncomingDraft)=>Promise<boolean>,getTaskId:()=>string|null}|null} */
 let active = null
 /** @type {string|null} */
 let resumeScope = savedView.scope
@@ -71,6 +72,9 @@ let resumeQuery = savedView.query
 let resumeSearch = savedView.search
 
 const emptyDraft = () => ({ path: '', text: '', title: '', providerId: '', followup: '' })
+/** Preserve existing work while making a new handover visibly distinct.
+ * @param {string} existing @param {string} incoming */
+const appendHandoverText = (existing, incoming) => !incoming ? existing : existing.trim() ? `${existing}\n\n—— 从聊天交办 ——\n${incoming}` : incoming
 
 const pageDrafts = createWorkbenchDraftStore(windowStorage)
 /** @type {Map<string,import('./workbench-interaction.js').InputAttempt>} */
@@ -323,6 +327,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
     ${reviewHtml}
     ${artifactHtml}`  : !detail && !state.loadingId && state.projects && !activeProject ? `
     <div class="wb-welcome"><p class="wb-kicker">添加项目</p><h1>把同一件工作的对话放在一起</h1><p>选择一次文件夹。之后在项目里新开对话，不用重复设置。</p>
+      ${draft?.text ? `<details class="wb-options"><summary>已保留交办要求</summary><p class="wb-field-help">添加项目后，可继续检查要求并开始。</p><p class="wb-handover-preview">${escapeWorkbenchHtml(draft.text)}</p></details>` : ''}
       <form id="wb-project-form" class="wb-create-form">
         <label>项目文件夹<div class="wb-folder-row"><input id="wb-path" name="path" required placeholder="选择或粘贴一个本机文件夹"><button type="button" class="wb-btn" data-action="choose-folder">选择…</button></div></label>
         <label>项目名称 <span class="wb-optional">可选</span><input id="wb-title" name="name" maxlength="100" placeholder="默认使用文件夹名称"></label>
@@ -655,7 +660,10 @@ export function initWorkbenchPage(deps) {
     if (!document.getElementById('wb-create-form') && !document.getElementById('wb-project-form') && !input('wb-followup-text')) return
     const model=input('wb-model'),effort=input('wb-reasoning-effort'),draft=pageDrafts.get(renderedScope)
     const execution=model&&effort?{defaults:/** @type {'provider'|'native'} */(model.dataset.executionDefaults??draft.execution?.defaults??controller.state.detail?.execution?.defaults??'provider'),model:model.value||null,reasoningEffort:effort.value||null}:undefined
-    pageDrafts.set(renderedScope, { ...draft,...(execution?{execution}:{}), path: input('wb-path')?.value ?? '', text: input('wb-create-text')?.value ?? '', title: input('wb-title')?.value ?? '', providerId: input('wb-provider')?.value ?? '', followup: input('wb-followup-text')?.value ?? '' })
+    // Chat metadata can paint first with an empty provider select. A real select
+    // cannot hold its saved value until options arrive; that is not a user edit.
+    const providerId = input('wb-provider')?.value || draft.providerId
+    pageDrafts.set(renderedScope, { ...draft,...(execution?{execution}:{}), path: input('wb-path')?.value ?? '', text: input('wb-create-text')?.value ?? draft.text, title: input('wb-title')?.value ?? '', providerId, followup: input('wb-followup-text')?.value ?? '' })
   }
   const restoreDraft = (/** @type {string} */ scope) => {
     const draft = pageDrafts.get(scope)
@@ -1159,9 +1167,13 @@ export function initWorkbenchPage(deps) {
         await controller.refresh({force:true})
         if(!alive||navigation!==navigationGeneration)return
         const {path,providerId}=result.project,scope=`new:${path}`
-        if(!pageDrafts.has(scope))pageDrafts.set(scope,{...emptyDraft(),path,providerId})
+        const pendingText=pageDrafts.get('new').text
+        const draft=pageDrafts.has(scope)?pageDrafts.get(scope):{...emptyDraft(),path,providerId}
         navigationGeneration++;artifactRequest++
         controller.newTask(path)
+        pageDrafts.set(scope,{...draft,text:appendHandoverText(draft.text,pendingText)})
+        restoreDraft(scope)
+        syncWorkbenchProviderLabel(root)
         // Navigation captures the outgoing form; clear only after that capture.
         pageDrafts.delete('new')
       }catch(error){if(alive&&navigation===navigationGeneration)fail(error)}finally{busy.delete('project')}
@@ -1287,7 +1299,28 @@ export function initWorkbenchPage(deps) {
     controller.resumeLive()
     controller.refresh().catch(fail)
   }, deps.pollMs ?? 3000)
-  active = { timer, openTask, getTaskId: () => controller.getTargetTaskId(), cleanup: () => {
+  const openDraft = async (/** @type {IncomingDraft} */ incoming) => {
+    if (!incoming.text.trim()) return false
+    const navigation = ++navigationGeneration
+    await controller.refresh({force:true})
+    if (!alive || navigation !== navigationGeneration) return false
+    captureDraft()
+    const path = incoming.path, scope = path ? `new:${path}` : 'new'
+    const recent = controller.state.tasks.filter(task => task.path === path).sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0]
+    const project = controller.state.projects?.find(project => project.path === path)
+    if (path && controller.state.projects && !project) return false
+    const providerId = incoming.providerId ?? controller.state.projectProviders?.[path] ?? recent?.providerId ?? project?.providerId ?? controller.state.defaultProvider ?? ''
+    artifactRequest++
+    controller.newTask(path)
+    const draft = pageDrafts.has(scope) ? pageDrafts.get(scope) : {...emptyDraft(),path,providerId}
+    pageDrafts.set(scope,{...draft,providerId:draft.providerId || providerId,text:appendHandoverText(draft.text,incoming.text)})
+    restoreDraft(scope)
+    syncWorkbenchProviderLabel(root)
+    if (!path) controller.paint(true)
+    input('wb-create-text')?.focus()
+    return true
+  }
+  active = { timer, openTask, openDraft, getTaskId: () => controller.getTargetTaskId(), cleanup: () => {
     saveWindowState()
     resumeQuery = { ...(controller.state.query ?? { q: '', archived: 'exclude' }) }
     resumeSearch = input('wb-search')?.value ?? searchDraft
@@ -1309,6 +1342,13 @@ export async function openWorkbenchTask(id) {
   if (!id) return
   if (active) await active.openTask(id)
   else resumeScope = `task:${id}`
+}
+
+/** The caller opens the workbench pane first. A successful handover only fills
+ * its existing form; execution still requires its explicit start action.
+ * @param {IncomingDraft} draft */
+export async function openWorkbenchDraft(draft) {
+  return active ? active.openDraft(draft) : false
 }
 
 export function getActiveWorkbenchTaskId() { return active?.getTaskId() ?? null }

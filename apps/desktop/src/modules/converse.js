@@ -18,7 +18,7 @@ import { formatInvokeError } from "../ipc.js"
 
 /**
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
- * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown> }} Deps
+ * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, onDelegate?: (text: string) => Promise<boolean> }} Deps
  * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean }} ConverseMsg
  */
 
@@ -30,6 +30,7 @@ import { formatInvokeError } from "../ipc.js"
 let messages = []
 let nextId = 1
 let sending = false
+let delegating = false
 
 // Voice-out (Stage 1): 🔊 toggle persisted across app restarts, default OFF.
 // `no_voice_config` is expected to fire on every reply once the daemon has
@@ -52,8 +53,8 @@ let recordingTimer = null
 
 // ── skeleton ───────────────────────────────────────────────────────────
 
-/** @param {HTMLElement} root */
-function renderSkeleton(root) {
+/** @param {HTMLElement} root @param {Deps} deps */
+function renderSkeleton(root, deps) {
   root.innerHTML = `
     <div id="converse-scroll" class="converse-scroll"></div>
     <div class="converse-compose">
@@ -67,6 +68,7 @@ function renderSkeleton(root) {
       <div class="converse-toolbar">
         <button id="converse-mic" class="converse-mic" type="button" aria-pressed="false">${icon("mic-01")}<span>语音输入</span></button>
         <button id="converse-voice-toggle" class="converse-voice-toggle" type="button" aria-pressed="false" title="自动朗读 CC 的回复"><span class="converse-switch" aria-hidden="true"></span>朗读回复</button>
+        <button id="converse-delegate" class="btn converse-delegate-btn" type="button" disabled${deps.onDelegate ? '' : ' hidden'}>交给 CC 做</button>
         <button id="converse-send" aria-label="发送消息" class="btn primary converse-send-btn" type="button">${icon("sent")}<span>发送</span></button>
       </div>
       <p id="converse-recording-hint" class="converse-recording-hint" hidden>结束后可检查文字再发送</p>
@@ -175,7 +177,7 @@ function reflectMic() {
   btn.setAttribute("aria-pressed", String(recording))
   const busy = recording || transcribing || requestingMic
   btn.innerHTML = `${icon(recording ? "stop" : "mic-01")}<span>${transcribing ? "识别中…" : requestingMic ? "等待麦克风…" : recording ? "结束录音" : "语音输入"}</span>`
-  btn.toggleAttribute("disabled", transcribing || requestingMic || sending)
+  btn.toggleAttribute("disabled", transcribing || requestingMic || sending || delegating)
   const panel = document.getElementById("converse-recording")
   if (panel) panel.hidden = !busy
   const label = document.getElementById("converse-recording-label")
@@ -184,11 +186,12 @@ function reflectMic() {
   if (cancel) cancel.hidden = !recording
   const hint = document.getElementById("converse-recording-hint")
   if (hint) hint.hidden = !busy
-  const input = document.getElementById("converse-input")
+  const input = /** @type {HTMLTextAreaElement|null} */ (document.getElementById("converse-input"))
   if (input) input.hidden = busy
   const send = document.getElementById("converse-send")
-  if (send) send.toggleAttribute("disabled", busy || sending)
-
+  if (send) send.toggleAttribute("disabled", busy || sending || delegating)
+  const delegate = document.getElementById("converse-delegate")
+  if (delegate) delegate.toggleAttribute("disabled", busy || sending || delegating || !input?.value.trim())
 }
 
 /** Read a Blob as bare base64 (no data: prefix). @param {Blob} blob */
@@ -210,7 +213,7 @@ function blobToBase64(blob) {
  * @param {Deps} deps
  */
 async function toggleMic(deps) {
-  if (transcribing || requestingMic || sending) return
+  if (transcribing || requestingMic || sending || delegating) return
   if (recording) { try { mediaRecorder?.stop() } catch { /* already stopped */ } return }
 
   const md = deps.media ?? {
@@ -267,6 +270,7 @@ async function toggleMic(deps) {
       const input = /** @type {HTMLTextAreaElement|null} */ (document.getElementById("converse-input"))
       if (input) {
         input.value = [input.value.trim(), text.trim()].filter(Boolean).join("\n")
+        reflectMic()
         input.focus()
       }
     } catch (err) {
@@ -347,7 +351,7 @@ function renderMessages() {
 
 /** @param {Deps} deps */
 async function sendMessage(deps) {
-  if (sending || recording || transcribing || requestingMic) return
+  if (sending || delegating || recording || transcribing || requestingMic) return
   const input = /** @type {HTMLTextAreaElement|null} */ (document.getElementById("converse-input"))
   const sendBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById("converse-send"))
   if (!input || !sendBtn) return
@@ -417,13 +421,40 @@ async function sendMessage(deps) {
 
 // ── event wiring ───────────────────────────────────────────────────────
 
+/** Hand over only the current compose text; history stays in the chat.
+ * @param {Deps} deps */
+async function delegateDraft(deps) {
+  if (!deps.onDelegate || sending || delegating || recording || transcribing || requestingMic) return
+  const input = /** @type {HTMLTextAreaElement|null} */ (document.getElementById("converse-input"))
+  if (!input?.value.trim()) return
+  const draft = input.value
+  delegating = true
+  input.disabled = true
+  reflectMic()
+  let accepted = false
+  try {
+    accepted = await deps.onDelegate(draft.trim())
+    if (accepted && input.value === draft) input.value = ""
+  } catch {
+    messages.push({ id: nextId++, role: "system", text: "暂时无法交给 CC 做，要求已保留，请稍后再试。" })
+    renderMessages()
+  } finally {
+    delegating = false
+    input.disabled = false
+    reflectMic()
+    if (!accepted) input.focus()
+  }
+}
+
 /** @param {HTMLElement} root @param {Deps} deps */
 function wireEvents(root, deps) {
+  root.querySelector("#converse-delegate")?.addEventListener("click", () => { void delegateDraft(deps) })
   root.querySelector("#converse-send")?.addEventListener("click", () => {
     sendMessage(deps).catch(err => console.error("converse send failed", err))
   })
 
   const input = /** @type {HTMLTextAreaElement|null} */ (root.querySelector("#converse-input"))
+  input?.addEventListener("input", reflectMic)
   input?.addEventListener("keydown", (ev) => {
     if (ev instanceof KeyboardEvent && ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
       ev.preventDefault()
@@ -487,9 +518,10 @@ export function initConversePage(deps, { focus = true } = {}) {
     return
   }
   root.dataset.ready = "true"
-  renderSkeleton(root)
+  renderSkeleton(root, deps)
   wireEvents(root, deps)
   syncVoiceToggleUI()
+  reflectMic()
   renderMessages()
   void loadSharedHistory(deps)
   const input = document.getElementById("converse-input")

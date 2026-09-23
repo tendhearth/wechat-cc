@@ -48,8 +48,10 @@ import { pingHealth, fetchDaemonVersion } from "./health-probe.js"
 import { refreshWxvaultOnAppStart } from "./modules/wxvault-refresh.js"
 import { loadAtelierGallery } from "./modules/atelier-gallery.js"
 import { mountCurrentActivity, createLifeArchive } from "./modules/cc-life.js"
+import { mountCareSheet } from "./modules/cc-care.js"
+import { chooseWorkbenchProject } from "./modules/workbench-entry.js"
 import { refreshPostcardAlbum } from "./modules/postcard-album.js"
-import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getActiveWorkbenchTaskId } from "./modules/workbench.js"
+import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, openWorkbenchDraft, getActiveWorkbenchTaskId } from "./modules/workbench.js"
 import { createWorkbenchNavigation, isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
 import { mountWorkbenchAttention } from "./modules/workbench-attention.js"
 
@@ -130,8 +132,14 @@ const doctorPoller = createDoctorPoller({ invoke, intervalMs: 5000 })
 // 桌宠状态(spec 2026-09-03-companion-presence):首页鱼缸跟浮窗共用一套推导。
 // 点脚边道具 → 切到觅食台(带回来的在那儿)。switchPane 是函数声明,提升可用。
 const presencePoller = startCompanionPresence({ onOpenJournal: () => switchPane("a2a-agents") })
+const careSheet = mountCareSheet({
+  call: invokeWorkbenchApi, presencePoller, navigate: switchPane,
+  openWorkbench: () => switchPane('workbench'),
+  openTask: async (/** @type {string} */ id) => { switchPane('workbench'); await openWorkbenchTask(id) },
+})
 const currentActivityHost = document.getElementById("cc-current-activity")
-if (currentActivityHost) mountCurrentActivity(currentActivityHost, presencePoller, switchPane)
+if (currentActivityHost) mountCurrentActivity(currentActivityHost, presencePoller, switchPane, () => careSheet.open())
+window.addEventListener('pagehide', () => careSheet.close())
 const memoryRecordsHost = document.getElementById("cc-memory-records")
 const lifeArchive = memoryRecordsHost ? createLifeArchive(memoryRecordsHost, { call: invokeApi }) : null
 let lifeCategory = "postcards"
@@ -156,6 +164,7 @@ function startWorkbenchAttention() {
   if (!host || workbenchAttention) return
   workbenchAttention = mountWorkbenchAttention({
     host, invokeWorkbenchApi, invoke,
+    onChange: snapshot => careSheet.setAttention(snapshot),
     getContext: () => ({
       taskId: state.mode === 'dashboard' ? getActiveWorkbenchTaskId() : null,
       focused: document.visibilityState === 'visible' && document.hasFocus(),
@@ -198,6 +207,12 @@ const deps = {
   invokeWorkbenchApi,
   mountConverse,
   unmountConverse,
+  onDelegate: async (/** @type {string} */ text) => {
+    const project = await chooseWorkbenchProject(invokeWorkbenchApi)
+    if (!project) return false
+    switchPane('workbench')
+    return openWorkbenchDraft({ ...project, text })
+  },
   formatInvokeError,
   doctorPoller,
   mock,

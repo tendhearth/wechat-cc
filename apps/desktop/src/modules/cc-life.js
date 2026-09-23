@@ -18,15 +18,17 @@ export function currentActivity(p) {
   return {kind:p.activity.kind,title:copy[0],detail:p.presence==='offline'?'外部联系暂时不通，这是本机刚确认的活动。':copy[1],pane:copy[2]}
 }
 
-export function mountCurrentActivity(host, poller, navigate) {
+/** @param {(()=>void)|null} [openCare] */
+export function mountCurrentActivity(host, poller, navigate, openCare = null) {
   let expires
   function draw(p) {
     clearTimeout(expires)
     const a=currentActivity(p)
-    host.innerHTML=`<div class="cc-now-scene"><img src="./assets/pet/cc-v1/canonical/${a.kind==='unknown'?'unlit':'lit'}/front.png" alt="CC"></div><span class="cc-life-kicker">${a.kind==='unknown'?'等一等连接':a.kind==='idle'?'在这里':'这一会儿'}</span><h1>${esc(a.title)}</h1><p>${esc(a.detail)}</p><div class="cc-now-actions">${a.pane&&a.pane!=='converse'?`<button type="button" data-life-go="${a.pane}">凑近看看 →</button>`:''}</div>`
+    const image=`<img src="./assets/pet/cc-v1/canonical/${a.kind==='unknown'?'unlit':'lit'}/front.png" alt="CC">`
+    host.innerHTML=`<div class="cc-now-scene">${openCare?`<button type="button" class="cc-care-avatar" data-life-care aria-haspopup="dialog" aria-label="看看 CC 正在照看什么">${image}</button>`:image}</div><span class="cc-life-kicker">${a.kind==='unknown'?'等一等连接':a.kind==='idle'?'在这里':'这一会儿'}</span><h1>${esc(a.title)}</h1><p>${esc(a.detail)}</p><div class="cc-now-actions">${openCare?'<button type="button" data-life-care>正在照看的事 →</button>':''}${a.pane&&a.pane!=='converse'&&(!openCare||a.pane!=='workbench')?`<button type="button" data-life-go="${a.pane}">凑近看看 →</button>`:''}</div>`
     if(p)expires=setTimeout(()=>draw(null),60000)
   }
-  host.addEventListener('click',e=>{const b=e.target.closest?.('[data-life-go]');if(b)navigate(b.dataset.lifeGo)})
+  host.addEventListener('click',e=>{if(e.target.closest?.('[data-life-care]')){openCare?.();return}const b=e.target.closest?.('[data-life-go]');if(b)navigate(b.dataset.lifeGo)})
   draw(null)
   const unsubscribe=poller.subscribe(draw)
   return ()=>{clearTimeout(expires);unsubscribe()}

@@ -97,6 +97,36 @@
 .cc-now-pane .cc-current-activity{flex:1;min-height:0;padding:12px 48px 30px}
 .cc-now-pane .cc-now-scene{width:285px;height:290px;flex:none;margin:0 0 20px}
 .cc-now-scene img{height:100%;object-fit:contain}
+.cc-care-avatar{display:block;width:100%;height:100%;padding:0;border:0;background:transparent;cursor:pointer;border-radius:24px}
+.cc-care-avatar:focus-visible{outline:2px solid #a17b46;outline-offset:5px}
+.cc-care-sheet{box-sizing:border-box;width:min(460px,calc(100vw - 32px));max-height:calc(100vh - 32px);margin:16px 16px 16px auto;padding:26px;border:1px solid #e1d8cb;border-radius:20px;background:#faf8f3;color:#493e32;box-shadow:0 20px 70px #33281f26;font-family:var(--sans,sans-serif)}
+.cc-care-sheet::backdrop{background:#30281e29}
+.cc-care-sheet[open]{display:flex;flex-direction:column}
+.cc-care-sheet header{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex:none}
+.cc-care-sheet h2{font-size:21px;line-height:1.4;margin:8px 0}
+.cc-care-sheet button{font:inherit;color:inherit;cursor:pointer}
+.cc-care-sheet [data-care-close]{border:0;background:transparent;width:36px;height:36px;font-size:24px;border-radius:8px}
+.cc-care-presence{font-size:13px;color:#74685a;line-height:1.6;margin:8px 0 22px}
+.cc-care-body{min-height:80px;overflow:auto;overscroll-behavior:contain}
+.cc-care-body section{margin-bottom:24px}
+.cc-care-body h3{font-size:12px;font-weight:500;color:#85765f;margin:0 0 8px}
+.cc-care-body h3 span{margin-left:6px;color:#9b8c78}
+.cc-care-task{display:block;width:100%;text-align:left;border:0;border-top:1px solid #e8e1d6;background:transparent;padding:14px 4px}
+.cc-care-task:hover{background:#f0ebe2}
+.cc-care-task-title{display:block;font-size:14px;line-height:1.6;overflow-wrap:anywhere}
+.cc-care-task-meta{display:block;font-size:11px;color:#776a59;line-height:1.7;margin-top:5px;overflow-wrap:anywhere}
+.cc-care-note,.cc-care-error{font-size:12px;line-height:1.8;color:#796d5c}
+.cc-care-error:empty{display:none}
+.cc-care-note button{border:0;background:transparent;text-decoration:underline;font-size:12px;margin-left:8px}
+.cc-care-sheet footer{display:flex;flex:none;flex-wrap:wrap;gap:12px;padding-top:18px;border-top:1px solid #e8e1d6}
+.cc-care-sheet footer button{border:1px solid #e0d6c7;background:#fffdf8;border-radius:9px;padding:9px 12px;font-size:12px}
+.cc-care-sheet :focus-visible{outline:2px solid #a17b46;outline-offset:2px}
+.converse-delegate-btn{border:1px solid #e0d6c7!important;background:transparent!important;color:#735a3b!important;border-radius:9px;font:inherit;white-space:nowrap;cursor:pointer}
+.converse-delegate-btn:disabled{opacity:.5;cursor:default}
+.wb-entry-dialog .wb-entry-form{display:flex;flex-direction:column;gap:14px}
+.wb-entry-dialog .wb-history-head{padding:20px 26px 0}
+.wb-entry-dialog select{width:100%;font:inherit;padding:12px;border:1px solid #d9d3c7;border-radius:10px;background:#fffdf8;color:#493e32}
+@media(max-width:740px){.cc-now-pane .converse-compose{grid-template-columns:minmax(0,1fr)}.cc-now-pane .converse-toolbar{justify-content:flex-end}.cc-care-sheet{padding:20px}}
 .cc-now-pane .cc-life-kicker{font-size:10px;letter-spacing:.03em;color:#8b7e69}
 .cc-now-pane .cc-life-kicker::before{content:'';display:inline-block;width:5px;height:5px;background:#9a9f83;border-radius:50%;margin-right:6px;vertical-align:middle}
 .cc-now-pane .cc-current-activity h1{font-size:30px;font-weight:600;line-height:1.4;letter-spacing:-.025em;margin:17px 0 12px}
