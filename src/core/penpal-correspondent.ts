@@ -6,6 +6,7 @@
  * See docs/superpowers/specs/2026-07-18-anonymous-penpal-social-layer-design.md.
  */
 import { randomUUID } from 'node:crypto'
+import { openEnvelope, sealEnvelope, type Envelope } from './envelope'
 import { peerMailboxOfRow, type ChannelStore } from './penpal-channel-store'
 import type { LetterStore } from './penpal-letter-store'
 import { deriveSharedKey, sealLetter, openLetter } from './penpal-crypto'
@@ -21,7 +22,13 @@ export interface CorrespondentDeps {
    *  PEER's inbound address. Returns ok. */
   postLetter(target: { agentId: string; relayVia: string | null; mailbox?: PeerMailbox }, body: { channel_id: string; nonce: string; ct: string; tag: string }): Promise<boolean>
   /** Owner notification on an inbound letter (preview of the decrypted text). */
-  notifyInbound(channelRowId: string, preview: string): void
+  /**
+   * 收到一封新东西 —— 信封已在这里解开(core/envelope.ts,唯一的解析点)。
+   * 调用方按 `env.kind` 分发:'letter' 是主人的来信(ping 主人);'visit'
+   * 是伙伴之间的串门;不认识的 kind 记日志忽略。`letterId` 让非信类型能
+   * 立刻标已读 —— 伙伴之间的话不算主人的未读。
+   */
+  onInbound(ev: { channelRowId: string; letterId: string; plaintext: string; env: Envelope }): void
 }
 
 export interface Correspondent {
@@ -34,13 +41,14 @@ export interface Correspondent {
   sendLetter(channelRowId: string, plaintext: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
   resendLetter(letterRowId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
   receiveLetter(event: { channel_id: string; nonce: string; ct: string; tag: string }): { ok: boolean; error?: string }
+  /** 发一个信封(非 letter 类型)。串门等交互走这里,不再往明文里塞头部。 */
+  sendEnvelope(channelRowId: string, env: Envelope): Promise<{ ok: boolean; error?: string; letter_id?: string }>
 }
 
 /** Relay (degree-2) letters post to the intermediary (relay_via) so the 2-hop
  *  path stays content-blind; direct letters post straight to peer_agent_id.
- *  Mirrors social-reveal.ts's `echo.relay_via ?? echo.peer_agent_id`. A peer
- *  that crossed a mailbox at reveal (Task 10) additionally carries `mailbox`
- *  (relay-direct, Task 11) — W is never consulted for that leg. */
+ *  A peer that crossed a mailbox at 配对 additionally carries `mailbox`
+ *  (relay-direct) — the intermediary is never consulted for that leg. */
 function routeOf(ch: NonNullable<ReturnType<ChannelStore['get']>>): { agentId: string; relayVia: string | null; mailbox?: PeerMailbox } | null {
   const agentId = ch.relay_via ?? ch.peer_agent_id
   if (!agentId) return null
@@ -49,19 +57,21 @@ function routeOf(ch: NonNullable<ReturnType<ChannelStore['get']>>): { agentId: s
 }
 
 export function makeCorrespondent(deps: CorrespondentDeps): Correspondent {
+  const sendSealed = (channelRowId: string, plaintext: string, kind: string, payload: unknown): Promise<{ ok: boolean; error?: string; letter_id?: string }> => {
+    const ch = deps.channelStore.get(channelRowId)
+    if (!ch || ch.status !== 'open' || !ch.peer_pubkey || !ch.peer_channel_id) return Promise.resolve({ ok: false, error: 'channel_not_open' })
+    const route = routeOf(ch)
+    if (!route) return Promise.resolve({ ok: false, error: 'no_route' })
+    const key = deriveSharedKey(ch.my_privkey, ch.peer_pubkey)
+    const sealed = sealLetter(key, plaintext)
+    const id = randomUUID()
+    deps.letterStore.create({ id, channelId: channelRowId, direction: 'out', sealedCiphertext: sealed.ct, nonce: sealed.nonce, tag: sealed.tag, plaintext, kind, payload })
+    return deps.postLetter(route, { channel_id: ch.peer_channel_id, nonce: sealed.nonce, ct: sealed.ct, tag: sealed.tag })
+      .then(ok => ok ? { ok: true } : { ok: false, error: 'send_failed', letter_id: id })
+  }
   return {
-    sendLetter(channelRowId, plaintext) {
-      const ch = deps.channelStore.get(channelRowId)
-      if (!ch || ch.status !== 'open' || !ch.peer_pubkey || !ch.peer_channel_id) return Promise.resolve({ ok: false, error: 'channel_not_open' })
-      const route = routeOf(ch)
-      if (!route) return Promise.resolve({ ok: false, error: 'no_route' })
-      const key = deriveSharedKey(ch.my_privkey, ch.peer_pubkey)
-      const sealed = sealLetter(key, plaintext)
-      const id = randomUUID()
-      deps.letterStore.create({ id, channelId: channelRowId, direction: 'out', sealedCiphertext: sealed.ct, nonce: sealed.nonce, tag: sealed.tag, plaintext })
-      return deps.postLetter(route, { channel_id: ch.peer_channel_id, nonce: sealed.nonce, ct: sealed.ct, tag: sealed.tag })
-        .then(ok => ok ? { ok: true } : { ok: false, error: 'send_failed', letter_id: id })
-    },
+    sendLetter(channelRowId, plaintext) { return sendSealed(channelRowId, plaintext, 'letter', null) },
+    sendEnvelope(channelRowId, env) { return sendSealed(channelRowId, sealEnvelope(env), env.kind, env.payload) },
     resendLetter(letterRowId) {
       const row = deps.letterStore.get(letterRowId)
       // Inbound rows are not resendable — same error as unknown so a caller
@@ -84,8 +94,11 @@ export function makeCorrespondent(deps: CorrespondentDeps): Correspondent {
       if (deps.letterStore.hasInbound(ch.id, ev.nonce)) return { ok: true }
       try {
         const pt = openLetter(deriveSharedKey(ch.my_privkey, ch.peer_pubkey), { nonce: ev.nonce, ct: ev.ct, tag: ev.tag })
-        deps.letterStore.create({ id: randomUUID(), channelId: ch.id, direction: 'in', sealedCiphertext: ev.ct, nonce: ev.nonce, tag: ev.tag, plaintext: pt })
-        deps.notifyInbound(ch.id, pt.slice(0, 40))
+        const letterId = randomUUID()
+        const env = openEnvelope(pt)
+        deps.letterStore.create({ id: letterId, channelId: ch.id, direction: 'in', sealedCiphertext: ev.ct, nonce: ev.nonce, tag: ev.tag, plaintext: pt,
+          kind: env.kind, payload: env.kind === 'letter' ? null : env.payload })
+        deps.onInbound({ channelRowId: ch.id, letterId, plaintext: pt, env })
         return { ok: true }
       } catch { return { ok: false, error: 'open_failed' } }
     },

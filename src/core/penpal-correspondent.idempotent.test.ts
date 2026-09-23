@@ -14,7 +14,7 @@ describe('receiveLetter idempotency (M3)', () => {
     channelStore.setPeerHandle('r1', { pubkey: peer.publicKey, channel_id: 'pc' }); channelStore.setStatus('r1', 'open')
     const sealed = sealLetter(deriveSharedKey(peer.privateKey, me.publicKey), 'hello')
     const notify = vi.fn()
-    const c = makeCorrespondent({ channelStore, letterStore, postLetter: async () => true, notifyInbound: notify })
+    const c = makeCorrespondent({ channelStore, letterStore, postLetter: async () => true, onInbound: notify })
     const ev = { channel_id: 'mc', nonce: sealed.nonce, ct: sealed.ct, tag: sealed.tag }
     expect(c.receiveLetter(ev)).toEqual({ ok: true })
     expect(c.receiveLetter(ev)).toEqual({ ok: true })          // re-delivery

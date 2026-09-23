@@ -26,8 +26,9 @@ describe('buildStickerPrompt', () => {
   it('asks CC to draw ITSELF expressing the mood, SVG-only, allowlist-friendly', () => {
     const p = buildStickerPrompt('晚安')
     expect(p).toContain('晚安')
-    expect(p).toContain('画你自己')
-    expect(p).toContain('只输出 SVG')
+    expect(p).toContain('为你自己设计')
+    expect(p).toContain('只输出 JSON')
+    expect(p).toContain('不要重画身体')
   })
 })
 
@@ -40,7 +41,7 @@ describe('runStickerArtist', () => {
       writeFileSync(src, 'x')
       lib.save(src, tags)
     }
-    const cheapEval = vi.fn(async () => over.evalOut ?? `画好了:\n${GOOD_SVG}`)
+    const cheapEval = vi.fn(async () => over.evalOut ?? JSON.stringify({form:"dark",pose:"company",sceneSvg:GOOD_SVG}))
     const rasterize = vi.fn(async (_svg: string, workDir: string) =>
       over.rasterOk === false ? null : tempPng(workDir))
     const notify = vi.fn(async () => {})
@@ -97,7 +98,8 @@ describe('runStickerArtist', () => {
 
   it('variation prompt asks for a different take', () => {
     const p = buildStickerPrompt('晚安', { variation: true })
-    expect(p).toContain('换一个完全不同的构图')
+    expect(p).toContain('保持角色结构')
+    expect(p).toContain('换一个构图/眼神/C 姿势/小道具')
   })
 
   it('unsafe SVG or failed rasterize → nothing saved, notify not called, marker still stamped', async () => {

@@ -1,3 +1,4 @@
+import '../../../scripts/build-cc-starter-pack'
 /**
  * Compile the CLI that Tauri bundles as its production sidecar.
  *
@@ -7,7 +8,7 @@
  * same checkout. Keep the sidecar tied to the current `cli.ts` on every
  * production build.
  */
-import { chmodSync, mkdirSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
 type Target = { bunTarget: string; rustTriple: string; extension?: string }
@@ -35,11 +36,24 @@ const output = join(
 
 mkdirSync(dirname(output), { recursive: true })
 
+// 构建标识:编译期把 git 短 sha 钉进产物(src/lib/app-version.ts 读它)。
+// 为什么:版本号在两次发版之间从不变,`self deploy` 的健康门打印的又正是 `--version`
+// 的输出 —— 没有 sha 就没法从输出里看出新构建到底起没起来。拿不到 sha(不在 git
+// 仓库里构建)不算失败,退回 `unknown`,产物照出。
+const buildSha = (() => {
+  try {
+    const r = Bun.spawnSync({ cmd: ['git', 'rev-parse', '--short', 'HEAD'], cwd: root, stdout: 'pipe', stderr: 'pipe' })
+    const sha = new TextDecoder().decode(r.stdout).trim()
+    return r.exitCode === 0 && /^[0-9a-f]{7,40}$/.test(sha) ? sha : 'unknown'
+  } catch { return 'unknown' }
+})()
+
 const args = [
   process.execPath,
   'build',
   '--compile',
   `--target=${target.bunTarget}`,
+  `--define`, `__BUILD_SHA__=${JSON.stringify(buildSha)}`,
   ...(process.platform === 'win32' ? ['--windows-hide-console'] : []),
   join(root, 'cli.ts'),
   '--outfile',
@@ -76,7 +90,7 @@ if (process.platform === 'darwin') {
   await Bun.spawn({ cmd: ['xattr', '-cr', output], stdout: 'ignore', stderr: 'ignore' }).exited
   await Bun.spawn({ cmd: ['codesign', '--remove-signature', output], stdout: 'ignore', stderr: 'ignore' }).exited
   const signed = Bun.spawn({
-    cmd: ['codesign', '--force', '--sign', '-', '--identifier=dev.wechat-cc.cli', output],
+    cmd: ['codesign', '--force', '--sign', '-', '--identifier=com.tendhearth.wechat-cc.cli', output],
     stdout: 'inherit',
     stderr: 'inherit',
   })
@@ -86,6 +100,33 @@ if (process.platform === 'darwin') {
 }
 
 console.log(`desktop sidecar ready: ${output}`)
+
+// CC Atelier's first release target is Apple Silicon. The static sd-cli is
+// built separately because it is a large native artifact; allow the release
+// job/developer to provide it explicitly, and keep the checked-out local copy
+// when it is already present. The macOS platform config references this file;
+// Tauri will fail clearly if a macOS build is attempted without it.
+if (process.platform === 'darwin' && process.arch === 'arm64') {
+  const atelierOutput = join(
+    root,
+    'apps/desktop/src-tauri/binaries',
+    'sd-cli-aarch64-apple-darwin',
+  )
+  const supplied = process.env.WECHAT_CC_ATELIER_SD_CLI
+  if (supplied) {
+    if (!existsSync(supplied)) throw new Error(`CC Atelier sd-cli not found: ${supplied}`)
+    copyFileSync(supplied, atelierOutput)
+    chmodSync(atelierOutput, 0o755)
+    await Bun.spawn({ cmd: ['xattr', '-cr', atelierOutput], stdout: 'ignore', stderr: 'ignore' }).exited
+    const signed = Bun.spawn({
+      cmd: ['codesign', '--force', '--sign', '-', '--identifier=dev.wechat-cc.atelier.sd-cli', atelierOutput],
+      stdout: 'inherit', stderr: 'inherit',
+    })
+    if (await signed.exited !== 0) throw new Error('failed to ad-hoc sign the CC Atelier sd-cli sidecar')
+  }
+  if (existsSync(atelierOutput)) console.log(`atelier sidecar ready: ${atelierOutput}`)
+  else console.warn(`atelier sidecar missing: ${atelierOutput} (macOS Tauri build will be unavailable)`)
+}
 
 // ── 打包资源安全断言 (2026-08-26 数据泄露后加固) ──
 // beforeBuildCommand 每次构建必跑,是最早的关卡。核对 tauri.conf 声明的

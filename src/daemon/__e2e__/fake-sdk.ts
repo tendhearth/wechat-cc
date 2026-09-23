@@ -16,8 +16,9 @@
  *     1. claude-agent-provider.ts: `query({ prompt: AsyncIterable<SDKUserMessage>, options })`
  *        yields SDKMessage objects; the provider iterates `type='assistant'`,
  *        `type='result'`, `type='system'` messages.
- *     2. side-effects.ts: `query({ prompt: string, options })` — single-shot
- *        Haiku eval (makeIsolatedSdkEval). Also reads assistant+text blocks.
+ *     2. claude-agent-provider.ts's `oneShot`: `query({ prompt: string, options })`
+ *        — single-shot eval shared by `cheapEval` (haiku-class) and
+ *        `strongEval` (the /chat verdict). Reads assistant text blocks only.
  *   - The fake query handles both calling conventions (string OR AsyncIterable
  *     prompt). When prompt is an AsyncIterable we drive dispatches from
  *     claudeScript; when it's a plain string we do a single onDispatch call.
@@ -242,6 +243,17 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
    */
   async function buildCycle(
     dispatchResult: { toolCalls: Array<{ name: string; input: unknown }>; finalText: string },
+    /**
+     * Whether a reply-family tool call should be bridged into a real
+     * outbound. True for a spawned SESSION (the real session has the
+     * wechat MCP child wired). False for the single-shot `query({ prompt:
+     * string })` path: claude-agent-provider's `oneShot` passes
+     * `tools: []`, `settingSources: []`, `maxTurns: 1` and no mcpServers
+     * (core/claude-agent-provider.ts), so a cheapEval / first-use probe
+     * has no reply tool to call — bridging there would manufacture an
+     * outbound production can't produce.
+     */
+    bridge: boolean,
   ): Promise<Array<Record<string, unknown>>> {
     const msgs: Array<Record<string, unknown>> = []
 
@@ -266,7 +278,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
           content: [{ type: 'tool_use', id: toolUseId, name: sdkToolName, input: tc.input }],
         },
       })
-      await bridgeToolCallToInternalApi(tc.name, tc.input)
+      if (bridge) await bridgeToolCallToInternalApi(tc.name, tc.input)
       msgs.push({
         type: 'user',
         message: {
@@ -310,8 +322,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
 
       if (typeof prompt === 'string') {
         // Single-shot path: chatroom haiku moderator (bootstrap inline
-        // haikuEval) + side-effects.ts makeIsolatedSdkEval (companion
-        // introspect). Both consume only assistant text blocks. Prefer
+        // haikuEval) + claude-agent-provider.ts's `oneShot` (cheapEval /
+        // strongEval). Both consume only assistant text blocks. Prefer
         // moderatorScript when installed; fall back to claudeScript.onDispatch
         // for tests that don't distinguish.
         if (moderatorScript) {
@@ -330,12 +342,20 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
         const script = claudeScript
         if (!script) {
           // Emit empty assistant message so callers don't hang on an empty
-          // generator. makeIsolatedSdkEval only reads assistant text blocks.
+          // generator. `oneShot` (cheapEval / strongEval) only reads
+          // assistant text blocks.
           yield { type: 'assistant', message: { content: [{ type: 'text', text: '' }] } }
           return
         }
         const result = await script.onDispatch(prompt)
-        for (const msg of await buildCycle(result)) yield msg
+        // This branch is the one-shot eval (moderator / companion introspect /
+        // the 2026-09-08 claude first-use probe「只回复两个字母:ok」), which
+        // in production runs via `oneShot` with `tools: []` — structurally
+        // incapable of producing a tool_use block. Drop any scripted
+        // toolCalls before building the cycle so the fake can't emit one
+        // either (bridge=false alone used to make a stray tool_use harmless
+        // rather than impossible; this makes it impossible).
+        for (const msg of await buildCycle({ ...result, toolCalls: [] }, false)) yield msg
         return
       }
 
@@ -373,7 +393,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
         }
 
         const result = await script.onDispatch(text)
-        for (const msg of await buildCycle(result)) yield msg
+        for (const msg of await buildCycle(result, true)) yield msg
       }
     })()
   }
@@ -462,7 +482,7 @@ vi.mock('@openai/codex-sdk', () => {
      * the spawn is actually exercised, not just constructed).
      *
      * Held as `unknown` so the field works for the cheapEval path too
-     * (whose `run()` throws here so the recorder never fires anyway).
+     * (whose `run()` never fires the recorder — see below).
      */
     private readonly _threadOptions: Record<string, unknown> | null
 
@@ -481,8 +501,9 @@ vi.mock('@openai/codex-sdk', () => {
       // Fire the spawn recorder ONCE per thread on the first runStreamed
       // — matches the Claude side, which records inside `query()` so
       // cheapEval (single-shot string path) is naturally excluded.
-      // Codex's cheapEval uses `thread.run()` (which throws below), so
-      // this branch is only reachable from the provider's session spawn.
+      // Codex's cheapEval uses `thread.run()` (below, which deliberately
+      // does NOT record), so this branch is only reachable from the
+      // provider's session spawn.
       if (this._firstRun && codexSpawnRecorder && this._threadOptions) {
         try { codexSpawnRecorder(this._threadOptions) } catch {}
       }
@@ -491,9 +512,28 @@ vi.mock('@openai/codex-sdk', () => {
       return { events: buildTurnEvents(threadId, text, emitStarted) }
     }
 
-    // Satisfy the Thread interface — provider uses runStreamed exclusively.
-    async run(): Promise<never> {
-      throw new Error('FakeCodexThread.run: not implemented; provider uses runStreamed')
+    /**
+     * One-shot eval path. `codex-agent-provider.ts` uses `thread.run()`
+     * (NOT runStreamed) for `cheapEval`, and since 2026-09-09 the codex
+     * provider is wrapped in `withFirstUseProbe`, whose probe IS a
+     * cheapEval call — so every codex e2e now goes through here before
+     * the first spawn. Returning a turn with one `agent_message` is what
+     * the real SDK does; an empty/throwing run() makes the boot probe
+     * fail and the provider refuses every dispatch.
+     *
+     * Deliberately NOT wired to `codexScript` and NOT recording a spawn:
+     *   - the spawn recorder must only see real session spawns (see
+     *     installCodexSpawnRecorder), and
+     *   - routing the probe prompt into the test's onDispatch would make
+     *     the script observe a message the user never sent (and could
+     *     bridge stray tool calls into the outbox).
+     * The moderator script gets first refusal, mirroring the Claude
+     * single-shot path, so codex-as-cheap-model tests can still steer it.
+     */
+    async run(prompt: unknown): Promise<{ items: Array<Record<string, unknown>> }> {
+      const text = typeof prompt === 'string' ? prompt : JSON.stringify(prompt)
+      const out = moderatorScript ? await moderatorScript.onEval(text) : 'ok'
+      return { items: [{ type: 'agent_message', text: out }] }
     }
   }
 

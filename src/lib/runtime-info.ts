@@ -15,8 +15,8 @@
  * import.meta.dir existence) without touching downstream callers.
  */
 
-import { existsSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { existsSync, statSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // Internals exposed for tests (real process.argv / process.execPath aren't
@@ -64,6 +64,25 @@ export function isCompiledBundle(): boolean {
  */
 export function compiledBinaryPath(): string | null {
   return __testInternals.resolveCompiledBinaryPath(isCompiledBundle(), process.execPath)
+}
+
+/**
+ * 打包版里 app 的主二进制(`…/Contents/MacOS/wechat-cc`),和 sidecar 并排。
+ *
+ * WHY(2026-09-04):LaunchAgent 该指向**它**而不是 sidecar —— macOS 把隐私
+ * 权限(TCC)记在「责任进程」上:主二进制在签了名的 bundle 里、带 Info.plist
+ * 的用途说明,系统设置里显示的是「wechat-cc」;sidecar 是个裸二进制,显示
+ * 「wechat-cc-cli」、没有说明,而且 ad-hoc 签名每次构建都变、授权跟着失效。
+ * 主二进制 `--daemon` 只做一件事:把 sidecar 拉起来(apps/desktop/src-tauri/
+ * src/daemon_mode.rs)。claude / codex / agy / wxvault 都是它的后代,继承授权。
+ *
+ * 只在 macOS 打包模式下有意义;别的情况返回 null,规划器回落到 sidecar / bun。
+ */
+export function appMainBinaryPath(): string | null {
+  const side = compiledBinaryPath()
+  if (!side || process.platform !== 'darwin') return null
+  const main = join(dirname(side), 'wechat-cc')
+  try { return statSync(main).isFile() ? main : null } catch { return null }
 }
 
 /**

@@ -13,6 +13,7 @@
  * synchronize on the daemon's async polling loop.
  */
 import type { RawUpdate } from '../poll-loop'
+import { serve } from '../../lib/runtime/http'
 
 export interface OutboundMsg {
   endpoint: 'sendmessage' | 'sendfile' | 'typing'
@@ -53,7 +54,7 @@ export async function startFakeIlink(): Promise<FakeIlinkHandle> {
   const captured: OutboundMsg[] = []
   let sendMessageFailure: { errcode: number; errmsg: string } | null = null
 
-  const server = Bun.serve({
+  const server = serve({
     port: 0,  // random
     // Bind explicitly to IPv4 loopback. Bun.serve's default hostname is
     // "localhost" which on this machine resolves only to ::1 — but our
@@ -119,6 +120,7 @@ export async function startFakeIlink(): Promise<FakeIlinkHandle> {
       return new Response('not found', { status: 404 })
     },
   })
+  await server.ready
 
   const port = server.port!
   const baseUrl = `http://127.0.0.1:${port}`

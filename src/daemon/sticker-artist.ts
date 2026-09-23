@@ -1,3 +1,4 @@
+import { CC_INK_IDENTITY } from '../lib/cc-ink'
 /**
  * sticker-artist.ts — 觅食式表情生长 (2026-08-25, phase 2 of the starter
  * pack): the starter pack covers 开心/庆祝/送你/摸鱼/陪着; the moods it
@@ -5,8 +6,8 @@
  * announced to the owner like a small gift ("我画了张新表情~"), so the
  * library grows the way 觅食台 does.
  *
- * Pipeline: pick an uncovered mood → cheapEval draws an SVG of CC ITSELF
- * (小白熊) expressing it → same reject-only safeSvg gate as the portrait →
+ * Pipeline: pick an uncovered mood → cheapEval chooses a pose and draws SVG surroundings
+ * → compose the fixed CC template → same reject-only safeSvg gate as the portrait →
  * rasterize to PNG (macOS qlmanage; injectable for tests / silently off
  * where unavailable) → StickerLib.save → notify. Every failure mode is
  * non-fatal and stamps the daily marker, so a broken model/renderer costs
@@ -14,9 +15,10 @@
  */
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { safeSvg } from '../lib/svg-sanitize'
+import { composeCcInk, ccInkOutputInstructions } from '../lib/cc-ink-compose'
 import type { StickerLib } from './stickers'
 import { readJsonFile } from '../lib/read-json-file'
+import { spawnSync } from '../lib/runtime/process'
 
 /** Phase-1 moods (基础情绪) — drawn one per DAY until covered. */
 export const STICKER_MOOD_POOL: readonly string[] = [
@@ -75,17 +77,12 @@ export function pickDrawTarget(
 
 export function buildStickerPrompt(mood: string, opts?: { variation?: boolean }): string {
   const variationLine = opts?.variation
-    ? `你以前画过「${mood}」,这次换一个完全不同的构图/姿势/小道具再画一张。\n`
+    ? `你以前画过「${mood}」,这次保持角色结构,换一个构图/眼神/C 姿势/小道具再画一张。\n`
     : ''
   return (
-    `你是 CC,一只圆滚滚的白色小熊。请画你自己正在表达「${mood}」的表情包。\n` + variationLine +
-    `硬性要求:\n` +
-    `- 输出一个 SVG:根元素 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320">\n` +
-    `- 只允许这些元素:g/path/circle/ellipse/rect/line/polyline/polygon/title\n` +
-    `- 属性一律双引号;禁止 style/class/id/href/text/image/use/script/动画\n` +
-    `- 手绘感:stroke-width 3~6 的松弛线条;颜色只用 #5a3f2d(主线)、#b0563a(点缀)、#8a5a36、#f5ead8(奶白身体)、#f7b8b8(腮红)、none\n` +
-    `- 构图:大圆脸小熊占满画面,表情要一眼读出「${mood}」,可加 1 个小道具(月亮/爱心/问号形状用图形拼)\n` +
-    `**只输出 SVG,不要任何解释,不要代码围栏。**`
+    `你是 CC,一个住在暖纸色世界里的小伙伴。请为你自己设计正在表达「${mood}」的表情包。\n` + variationLine +
+    CC_INK_IDENTITY + `\n` +
+    ccInkOutputInstructions('sticker')
   )
 }
 
@@ -96,7 +93,7 @@ export async function rasterizeSvgDarwin(svg: string, workDir: string): Promise<
     mkdirSync(workDir, { recursive: true })
     const svgPath = join(workDir, 'sticker.svg')
     writeFileSync(svgPath, svg)
-    const proc = Bun.spawnSync(['qlmanage', '-t', '-s', '512', '-o', workDir, svgPath])
+    const proc = spawnSync(['qlmanage', '-t', '-s', '512', '-o', workDir, svgPath])
     if (proc.exitCode !== 0) return null
     const out = `${svgPath}.png`
     if (!existsSync(out)) return null
@@ -140,8 +137,7 @@ export async function runStickerArtist(d: StickerArtistDeps): Promise<{ drawn: s
   mkdirSync(workDir, { recursive: true })
   try {
     const raw = await d.cheapEval(buildStickerPrompt(mood, { variation: target.variation }))
-    const m = raw.match(/<svg[\s\S]*<\/svg>/)
-    const svg = m ? safeSvg(m[0]) : null
+    const svg = composeCcInk(raw, 'sticker')
     if (!svg) {
       d.log('STICKERS', `artist: unsafe/absent SVG for 「${mood}」 — retry tomorrow`)
       return { drawn: null }

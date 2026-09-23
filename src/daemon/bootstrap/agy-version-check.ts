@@ -1,3 +1,4 @@
+import { spawn } from '../../lib/runtime/process'
 /**
  * agy-version-check — boot-time gate: does `<bin> --version` exit 0?
  *
@@ -23,7 +24,7 @@ export type AgyVersionProbeSpawn = (bin: string, args: string[]) => AgyVersionPr
 const DEFAULT_TIMEOUT_MS = 5000
 
 function defaultSpawn(bin: string, args: string[]): AgyVersionProbeHandle {
-  const proc = Bun.spawn([bin, ...args], { stdout: 'ignore', stderr: 'ignore' })
+  const proc = spawn([bin, ...args], { stdout: 'ignore', stderr: 'ignore' })
   return {
     exited: proc.exited,
     kill: () => {

@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { buildBootstrap } from './bootstrap'
 import { openTestDb } from '../lib/db'
 import { SubsystemSupervisor } from './subsystems'
+import { serve } from '../lib/runtime/http'
 
 function makeIlinkStub() {
   return {
@@ -264,7 +265,8 @@ describe('bootstrap A2A wiring', () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'bootstrap-a2a-degraded-'))
     // Occupy a real port so a2aServer.start() throws for real (EADDRINUSE),
     // matching how the feature is actually triggered in production.
-    const blocker = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('occupied') })
+    const blocker = serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('occupied') })
+    await blocker.ready
     const blockerPort: number = blocker.port!
     writeFileSync(
       join(stateDir, 'agent-config.json'),

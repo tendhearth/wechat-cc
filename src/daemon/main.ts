@@ -1,6 +1,12 @@
 #!/usr/bin/env bun
+import { makeMatterStore } from '../core/matters/store'
 if (!process.env.CLAUDE_CODE_ENTRYPOINT) { process.env.CLAUDE_CODE_ENTRYPOINT = 'sdk-ts' }
+// 回环守卫(spec 2026-09-09-cli-hook-push §3):daemon 经 SDK 拉起的 claude / codex
+// 继承这个环境,主人装的 hooks 在它们身上也会触发;`wechat-cc hook` 看到这个变量
+// 就直接退出,不然 daemon 自己的每个回合都会被推回微信。
+process.env.WECHAT_CC_DAEMON_CHILD = '1'
 import { join } from 'node:path'
+import selfPkg from '../../package.json' with { type: 'json' }
 import { homedir } from 'node:os'
 import { acquireInstanceLock, releaseInstanceLock, isHeartbeatFresh, writeHeartbeat, startHeartbeatTicker, HEARTBEAT_FILE, HEARTBEAT_STALE_MS } from './single-instance'
 import { openDb } from '../lib/db'
@@ -17,6 +23,7 @@ import { makeTurnRecordStore } from '../core/turn-record-store'
 import { providerDisplayName } from './provider-display-names'
 import { loadAllAccounts, makeIlinkAdapter } from './ilink-glue'
 import { registerInternalApi } from './internal-api/lifecycle'
+import { runSelftestConverse } from './selftest'
 import { makeMessagesStore } from '../lib/messages-store'
 import { registerCompanionPush, registerCompanionIntrospect, registerIngest } from './companion/lifecycle'
 import { registerGuard } from './guard/lifecycle'
@@ -28,23 +35,45 @@ import { registerReminders } from './reminders/sweeper'
 import { makeRemindersStore } from './reminders/store'
 import { buildInboundPipeline } from './inbound/build'
 import { runStartupSweeps } from './startup-sweeps'
+import { markPlannedRestart } from './notify-startup'
 import { wireMain } from './wiring'
 import type { TickBodies } from './wiring/tick-bodies'
 import { makeChatPrefs } from './chat-prefs'
 import { makeStickerLib, seedStarterStickers, starterStickersDir } from './stickers'
 import { makeGiphyRelaySource, makeGiphySource } from './sticker-source'
 import { makeStickerFeedback } from './sticker-feedback'
+import { makeOutboundTaps } from './outbound-taps'
+import { makePetSignals } from './pet-signals'
+import { makeJournal } from '../core/journal-store'
 import { makeReplySinks } from './reply-sinks'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
+import { makeSelfChangeGlue } from './self-change-glue'
+import { makeCliEventHub, makeProjectNamer } from '../core/cli-events'
+import { makeCliPermissionRelay } from '../core/cli-permission-relay'
+import { makeCliReplyHandler, makeCliReplyCore, makeHandReplyExecutor } from './cli-reply-handler'
+import { scopedSend } from './inbound/reply-scope'
+import { makeBrainForwarder } from './cli-brain-forward'
+import { makeRemoteReply } from './cli-remote-reply'
+import { CliEventRequest, CliPermissionRequest } from './internal-api/schema'
+import type { CliEvent } from '../core/cli-events'
+import type { CliPermissionRequest as CliPermissionRequestT } from '../core/cli-permission-relay'
+import { machineIdleSeconds } from '../lib/machine-idle'
+import { notifyDesktop } from '../lib/desktop-notify'
+import { hostname as osHostname } from 'node:os'
+import { makeAtelierStore } from './atelier-store'
 import { companionOfferEligible } from './companion/offer-eligibility'
 import { countInboundMessagesSync, NEW_RELATIONSHIP_MSG_COUNT } from '../lib/messages-store'
 import { startCustomerReviewRuntime } from './customer-review/runtime'
 import { SUPERVISED_ENV } from '../core/supervised-env'
 import { SubsystemSupervisor } from './subsystems'
 import { removeAgyGlobalMcp } from './bootstrap/agy-mcp-config'
-import { removeCursorGlobalMcp } from './bootstrap/cursor-mcp-config'
+import {makeExecutionClaims} from '../core/workbench/execution-claims'
+import {randomUUID as claimUuid, randomBytes} from 'node:crypto'
+import { wireWorkbench } from './bootstrap/wire-workbench'
+import {wireWorkbenchNotifications} from './bootstrap/wire-workbench-notifications'
+import {wireWorkbenchArtifacts} from './bootstrap/wire-workbench-artifacts'
 
 function errorDetails(err: unknown): string {
   if (err instanceof Error) return err.stack || err.message
@@ -156,6 +185,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   let shuttingDown = false; let didStartup = false
   let pollingLcRef: { reconcile(): Promise<void> } | null = null
   let ticksRef: TickBodies | null = null
+  const BOOT_AT_ISO = new Date().toISOString()
   let bootRef: import('./bootstrap').Bootstrap | null = null
 
   const shutdown = async () => {
@@ -186,7 +216,6 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // crash-exit skips this and leaves the dead-token entry on disk, but
     // that's fine — boot rewrites/upserts it fresh next start regardless.
     try { if (bootRef?.registry?.has?.('agy')) removeAgyGlobalMcp({ log }) } catch (err) { log('AGY', `mcp config cleanup error: ${err instanceof Error ? err.message : String(err)}`) }
-    try { if (bootRef?.registry?.has?.('cursor')) removeCursorGlobalMcp({ log }) } catch (err) { log('CURSOR', `mcp config cleanup error: ${err instanceof Error ? err.message : String(err)}`) }
     try { db.close() } catch (err) { console.error('db close failed:', err) }
     releaseInstanceLock(PID_PATH)
   }
@@ -201,6 +230,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   // closure rather than two restart mechanisms.
   const requestRestart = (reason: string) => {
     log('DAEMON', `restart requested (${reason}) — shutting down for KeepAlive respawn`)
+    // 给下次开机留一张「这次是计划内的」纸条,notify-startup 据此决定
+    // 要不要在微信里播报 —— 自愈重启是主人 commit 触发的,不该打扰他。
+    markPlannedRestart(stateDir, reason)
     setTimeout(() => { void shutdown().finally(() => process.exit(0)) }, 500)
   }
 
@@ -216,8 +248,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // in-memory index (write-through only protects its own writes).
     const stickerFeedback = makeStickerFeedback(stateDir)
     const stickerLib = makeStickerLib(stateDir, { feedback: stickerFeedback })
-    // 初始表情包 — a fresh install gets the bundled bear pack so CC can send
-    // stickers from day one (empty-library-only; owner curation wins forever).
+    // Versioned CC pack adds missing stickers; existing collections are preserved.
     {
       const packDir = starterStickersDir()
       if (packDir) seedStarterStickers(stickerLib, packDir, (t, l) => log(t, l))
@@ -238,17 +269,60 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // (Task 2). Both MUST share this one instance — a second instance would
     // never see the capture (same posture as chatPrefs/careLedger above).
     const replySinks = makeReplySinks()
+    // 打猎战利品(2026-09-03):旁听而非改道,见 outbound-taps.ts。同样必须是
+    // **同一个实例** —— 开 tap 的是打猎那一拍(tick-bodies),往里写的是发送
+    // 路径(internal-api reply 路由 / bootstrap 的 fallback);两个实例等于
+    // 永远收不到东西,而且不会报任何错。
+    const outboundTaps = makeOutboundTaps()
+    // 桌宠信号(spec 2026-09-05-cc-desktop-pet §5.1)。和 replySinks/outboundTaps
+    // 同样的理由必须是**同一个实例**:写的三处分别在 bootstrap(tool_call、
+    // 回合结束)、pipeline-deps(起飞、app 联系)与下面的权限 resolve;读的
+    // 只有 GET /v1/companion/pet。纯内存,重启就忘 —— 描述的本来就只是当下。
+    const petSignals = makePetSignals()
+    const huntStore = makeJournal(db)
+    // 一个消息库实例喂两个 dep(messages / latestInboundTs),下面 registerInternalApi 用。
+    const messagesStore = makeMessagesStore(db)
     // 1. internal-api FIRST — bootstrap needs its baseUrl/token for MCP wiring
     const internalApi = await registerInternalApi({
       stateDir, daemonPid: process.pid, memory: memoryFS, db, projects: ilink.projects,
+      atelier: makeAtelierStore(stateDir),
       getChatPrefs: (c) => chatPrefs.get(c),
       setChatPref: (c, p) => chatPrefs.set(c, p),
       stickers: stickerLib,
       stickerFeedback,
       stickerSource,
       replySinks,
+      outboundTaps,
+      hunt: huntStore,
+      // 待决权限的桌面面(spec §6)。和微信「y/n <hash>」共用 ilink 里那一份
+      // PendingPermissions —— 从哪边拍板都算数,另一边随之失效。拍板本身也是
+      // 「主人刚跟我说过话」的证据,所以成功时记一笔 contact。
+      permissions: {
+        list: () => ilink.listPendingPermissions(),
+        resolve: (h, d) => { const ok = ilink.resolvePermission(h, d); if (ok) petSignals.noteContact(); return ok },
+      },
+      // 自改流水线的三个抓手(spec 2026-09-18-self-change-pipeline §daemon 侧)。
+      // 流水线自己是 daemon 外面的一个 CLI 进程:它既没有 ilink 连接,也不知道
+      // 主人是谁,所以「报进展 / 问 y-n / 查拍板」都经这三条回来。问出去的卡片
+      // 和微信、桌面共用同一份 PendingPermissions —— 主人从哪边拍都算数。
+      selfChange: makeSelfChangeGlue({
+        ownerChatId: () => loadCompanionConfig(stateDir).default_chat_id ?? null,
+        sendMessage: (c, t) => ilink.sendMessage(c, t),
+        // 只登记、自己发卡:卡片发不出去时条目要留在登记处,好让主人从桌面
+        // 权限卡或 `self change --approve <id>` 拍板(见 self-change-glue 顶注)。
+        registerPending: (h, t, meta) => ilink.registerPendingPermission(h, t, meta),
+        sweepPending: () => { ilink.sweepPendingPermissions() },
+        codeOf: (h) => ilink.pendingPermissionCodeOf(h),
+        newHash: () => randomBytes(8).toString('hex'),
+        now: () => Date.now(),
+        log: (line) => { log('SELF-CHANGE', line) },
+      }),
       // chat_history 工具后端(provider-handoff 的逃生口)
-      messages: (() => { const ms = makeMessagesStore(db); return { listRange: (c: string, o: { limit: number; beforeTs?: string }) => ms.listRange(c, o), search: (c: string, q: string, l: number) => ms.search(c, q, l) } })(),
+      messages: { listRange: (c: string, o: { limit: number; beforeTs?: string }) => messagesStore.listRange(c, o), search: (c: string, q: string, l: number) => messagesStore.search(c, q, l) },
+      // 桌宠状态的「主人真在跟我说话吗」证据(spec 2026-09-03 §2.1/§2.2)——
+      // 同一个 store 实例,只认入站:伙伴自己的外发(打猎 / 关心推送 / 提醒)
+      // 会 bump 会话的 lastUsedAt,但不该让熊说「在跟你聊」。
+      latestInboundTs: (c: string) => messagesStore.latestInboundTs(c),
       setUserName: (chatId, name) => ilink.setUserName(chatId, name),
       voice: { replyVoice: (c, t) => ilink.voice.replyVoice(c, t), saveConfig: (i) => ilink.voice.saveConfig(i), configStatus: () => ilink.voice.configStatus(), synthesizeSpeech: (t) => ilink.voice.synthesizeSpeech(t), transcribe: (a, m) => ilink.voice.transcribe!(a, m), saveSTTConfig: (i) => ilink.voice.saveSTTConfig!(i), sttStatus: () => ilink.voice.sttStatus!() },
       sharePage: (t, c, o) => ilink.sharePage(t, c, o), resurfacePage: (q) => ilink.resurfacePage(q),
@@ -262,12 +336,50 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // (after this registration) — returns null until then, so the route 503s.
       listSessions: () => bootRef?.sessionManager?.list() ?? null,
       heartbeatFresh: () => isHeartbeatFresh(HEARTBEAT_PATH),
+      // 后台在跑的版本(2026-09-16):桌面更新器换入新 .app 后旧 daemon 不会被杀,
+      // app 只有看到这个才知道后台还是旧的。head 是 thunk-over-bootRef(self-restart
+      // 在 bootstrap 里才接线)。
+      // codeHead 只在「从 git 检出跑」时有值(self-restart 才知道 head);打包产物里
+      // 是 null,于是装机用户的健康输出永远认不出跑的是哪个构建 —— 退回编译期钉进去的
+      // BUILD_SHA(源码跑时它是 'dev',那种情况下 codeHead 本来就有值)。
+      version: () => ({ cli: APP_VERSION, head: bootRef?.codeHead ?? (BUILD_SHA === 'dev' ? null : BUILD_SHA), boot_at: BOOT_AT_ISO }),
       // Subsystem degraded-boot (spec 2026-08-17) — sup 在本调用之前创建,
       // 直接传引用,无需 thunk-over-bootRef 姿势。
       subsystems: () => sup.statuses(),
       outbound: () => ilink.outboundHealth(),
       // Admin remediation hooks (POST /v1/sessions/release, /v1/daemon/restart).
       releaseSession: (k) => bootRef?.sessionManager?.release(k) ?? Promise.resolve(),
+      // 换模型时把该 provider 的会话存档行删掉(同一条 thunk-over-bootRef 姿势):
+      // 不删的话下一次 spawn 会 resume 回旧会话,新模型钉不上。
+      forgetProviderSessions: (providerId) => bootRef?.sessionStore?.deleteProvider(providerId) ?? 0,
+      // Self-maintenance (spec 2026-09-18-self-maintenance §1) — backs
+      // POST /v1/selftest/converse. Unlike forgetProviderSessions/
+      // listSessions above (which degrade to a harmless no-op/null when
+      // bootRef isn't ready yet), a spawn is NOT safe/meaningful before
+      // bootstrap builds the provider registry — so this thunk returns
+      // `null` in that window instead of calling runSelftestConverse with
+      // an empty registry stub, and the route maps `null` to 503
+      // selftest_not_wired (same as the field being absent entirely) —
+      // see the 未接线 503 contract in the spec and InternalApiDeps's
+      // doc comment. Once bootRef exists, mintSessionToken/
+      // invalidateSession close over the `internalApi` binding below:
+      // those two are this SAME internal-api instance's own methods, not
+      // bootstrap's, so there's no ordering problem there — by the time
+      // any HTTP request can reach this handler, `internalApi` has long
+      // since been assigned.
+      selftestConverse: (input) => {
+        if (!bootRef) return Promise.resolve(null)
+        const registry = bootRef.registry
+        return runSelftestConverse(
+          {
+            registry,
+            mintSessionToken: (tier, key, opts) => internalApi.mintSessionToken(tier, key, opts),
+            invalidateSession: (key) => internalApi.invalidateSession(key),
+            log: (t, l) => log(t, l),
+          },
+          input,
+        )
+      },
       requestRestart: () => requestRestart('internal-api'),
       // self-restart idle signal — thunk over bootRef for the same reason
       // listSessions above is one: internal-api is constructed BEFORE
@@ -284,6 +396,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // non-GET request hold (index.ts) and customer-review's task-launch
       // hold (routes-customer-review.ts) — they share this one field.
       holdBusy: (l) => bootRef?.holdBusy?.(l) ?? (() => {}),
+      busyLabels: () => bootRef?.busyLabels?.() ?? [],
       log: (t, l) => log(t, l),
       // LLM memory routes' chat_id default (spec 2026-07-23-daemon-owns-llm-
       // memory-ops): access.json's single admin. Wired eagerly (not late-
@@ -304,6 +417,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // passed to internal-api and wireMain below; makes the coordinator's
       // sendAssistantText fallback sink-aware.
       replySinks,
+      outboundTaps,
+      petSignals,
       onTurnRecord: (r) => turnRecordStore.append(r),
       mintSessionToken: internalApi.mintSessionToken,
       invalidateSession: internalApi.invalidateSession,
@@ -418,9 +533,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // stays unwired and POST /v1/a2a/send keeps 503ing, same posture as any
     // other never-configured subsystem.
     if (boot.a2aDeps) internalApi.setA2A(boot.a2aDeps)
-    // Wire the agent-social M1 broker (T7b-core) — only present when
+    // Wire the social surface (笔友信道 + 心愿) — only present when
     // social_enabled + social_disclosure_policy are both configured. So
-    // POST /v1/social/seek/{propose,confirm,cancel} work when the feature is on.
+    // POST /v1/social/wish{,/send,/cancel} work when the feature is on.
     if (boot.social) internalApi.setSocial(boot.social)
     // Wire the Knowledge Kernel store + semanticSearch (Phase 01 T5) — only
     // present when knowledge_enabled is configured. Without this, every
@@ -462,10 +577,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // dialing happens ONLY when the user clicks 测试连接 — unprompted
     // automated outbound calls on a flaky network are a risk-control (封号)
     // shape. GET /v1/llm/health without ?fresh=1 never dials.
+    let llmHealth: import('./llm-health').LlmHealth | undefined
     {
       const { makeLlmHealth } = await import('./llm-health')
       const { capabilitiesFor } = await import('../core/capability-matrix')
-      const llmHealth = makeLlmHealth({
+      llmHealth = makeLlmHealth({
         registry: boot.registry,
         defaultProviderId: boot.defaultProviderId,
         hintFor: (id) => capabilitiesFor(id).authFailHint,
@@ -481,10 +597,131 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       })
     }
     // 3. main-wiring builds all deps for pipeline + lifecycles
+    // 终端 claude / codex 会话的 hook 事件(spec 2026-09-09-cli-hook-push):压一段
+    // 再推给主人,同会话再敲一句就撤。发到哪:与权限卡、A2A notify 同一个主人
+    // chat;怎么发:boot.sendAssistantText(同一条外发,断线时它自己退避、这里不重试)。
+    const cliEvents = makeCliEventHub({
+      send: async (text) => {
+        const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+        if (!owner || !boot.sendAssistantText) return false
+        await boot.sendAssistantText(owner, text)
+        return true
+      },
+      projectName: makeProjectNamer(() => ilink.projects.list()),
+      log: (t, l) => log(t, l),
+      // 在场的主信号:这台电脑上次键鼠输入距今多久。人在 ⇒ 系统通知;走了 ⇒ 微信。
+      machineIdle: () => machineIdleSeconds(),
+      notifyDesktop: (title, body) => notifyDesktop(title, body),
+      // 超长的最后一句:全文进 share_page,微信里只放前一段 + 链接。
+      sharePage: async (title, markdown) => {
+        const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+        const r = await ilink.sharePage(title, markdown, owner ? { chat_id: owner } : undefined)
+        return r.url
+      },
+      localMachine: osHostname(),
+    })
+    lc.register({ name: 'cli-events', stop: async () => cliEvents.dispose() })
+    // 终端会话的权限 → 微信 y/n(同 spec §6.3)。复用 ilink.askUser,所以微信「y 码」、
+    // 桌宠权限卡都能拍板 —— 一个权限,几个呈现面。主人在场(3 分钟内敲过字)就不问。
+    const cliPermissions = makeCliPermissionRelay({
+      ask: (prompt, hash, ms) => {
+        const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+        if (!owner) return Promise.resolve('undelivered' as const)
+        return ilink.askUser(owner, prompt, hash, ms)
+      },
+      presence: (s, idle) => cliEvents.presence(s, idle),
+      projectName: makeProjectNamer(() => ilink.projects.list()),
+      onRelayed: (s) => cliEvents.notePermissionRelay(s),
+      log: (t, l) => log(t, l),
+      localMachine: osHostname(),
+    })
+    lc.register({ name: 'cli-permissions', stop: async () => cliPermissions.dispose() })
+    // 这边 / 那边(§6.5)。手侧:配对时脑留了回叫的 url + key ⇒ 本机终端事件与权限请求
+    // 转给脑,由脑决定发不发、发到哪;人就在这只手前的除外(本机桌面说一声)。
+    // 脑侧:a2a 服务多三条路 —— 收手的事件 / 权限、把「看 / 说」派给手。
+    const a2a = boot.a2aDeps
+    const forwarder = a2a ? makeBrainForwarder({
+      registry: a2a.registry, client: a2a.client, selfId: boot.selfId,
+      notifyDesktop: (t, b) => notifyDesktop(t, b),
+      projectName: makeProjectNamer(() => ilink.projects.list()),
+      log: (t, l) => log(t, l),
+    }) : null
+    internalApi.setCliEvents({
+      ingest: (ev) => forwarder?.brain() ? forwarder.event(ev) : cliEvents.ingest(ev),
+    })
+    internalApi.setCliPermissions({
+      open: async (req) => (forwarder?.brain() ? await forwarder.permissionOpen(req) : null) ?? cliPermissions.open(req),
+      status: (h) => cliPermissions.status(h),
+      wait: (h, ms) => forwarder?.ownsHash(h) ? forwarder.permissionWait(h, ms) : cliPermissions.wait(h, ms),
+    })
+    const legacyClaims=makeExecutionClaims()
+    const executionConflict=(s:import('../core/cli-events').CliSessionInfo)=>workbench?.conflictsExternal(s.cwd,s.source,s.session_id)??false
+    const reserveExecution=(s:import('../core/cli-events').CliSessionInfo)=>{
+      const release=legacyClaims.acquire({owner:claimUuid(),path:s.cwd,providerId:s.source,nativeId:s.session_id})
+      // A legacy runner's early pipe return is not proof that its writer exited.
+      return(closed:boolean)=>{if(closed)release()}
+    }
+    const replyCore = makeCliReplyCore({ executionConflict,reserveExecution,hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously })
+    const handExecutor = makeHandReplyExecutor(replyCore, {
+      hub: cliEvents,
+      notifyBrain: async (text) => {
+        const link = forwarder?.brain()
+        if (!link || !a2a) throw new Error('no brain to notify')
+        const r = await a2a.client.send({ url: `${link.url}/a2a/notify`, bearer: link.key, body: { agent_id: boot.selfId, text } })
+        if (!r.ok) throw new Error(r.error ?? `http_${r.http_status ?? '?'}`)
+      },
+      log: (t, l) => log(t, l),
+    })
+    boot.a2aServer?.setCliHandlers({
+      onEvent: async (agent, raw) => {
+        const parsed = CliEventRequest.safeParse(raw)
+        if (!parsed.success) return { ok: false, error: 'invalid_body' }
+        const ev: CliEvent = { ...parsed.data, origin_agent: agent.id, machine: parsed.data.machine || agent.name }
+        return { ok: true, action: cliEvents.ingest(ev) }
+      },
+      onPermissionOpen: async (agent, raw) => {
+        const parsed = CliPermissionRequest.safeParse(raw)
+        if (!parsed.success) return { error: 'invalid_body' }
+        const req: CliPermissionRequestT = { ...parsed.data, machine: parsed.data.machine || agent.name }
+        return cliPermissions.open(req)
+      },
+      onPermissionWait: async (_agent, hash, waitMs) => ({ hash, status: await cliPermissions.wait(hash, waitMs) }),
+      onReply: async (_agent, req) => handExecutor(req),
+    })
+    // 「看 码」「@码 文本」:主人对某条终端会话说话。只认主人;那边的会话 v1 先说明。
+    const cliReplyHandler = makeCliReplyHandler({
+      executionConflict,reserveExecution,
+      hub: cliEvents,
+      isOwner: (chatId) => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null) === chatId,
+      sendMessage: scopedSend((c: string, t: string) => ilink.sendMessage(c, t)),
+      sharePage: async (title, md, chatId) => (await ilink.sharePage(title, md, { chat_id: chatId })).url,
+      holdBusy: (l) => boot.holdBusy(l),
+      log: (t, l) => log(t, l),
+      dangerously,
+      localMachine: osHostname(),
+      ...(a2a ? { remote: makeRemoteReply({ registry: a2a.registry, client: a2a.client, selfId: boot.selfId }) } : {}),
+    })
+    // 「一件事」登记处:一份 store,工作台、微信入站、app 对话、内部 API 都用它(2026-09-16)。
+    const matters = makeMatterStore(db)
+    const workbench = wireWorkbench({ db, stateDir, boot, internalApi, matters,
+      executionConflict:(path,providerId,nativeId)=>boot.sessionManager.hasProjectConflict(path)||
+        (!!nativeId&&Object.values(boot.sessionStore.all()).some(s=>s.provider===providerId&&s.session_id===nativeId))||
+        legacyClaims.conflicts({owner:'workbench',path,providerId,nativeId})||
+        (!!nativeId&&cliEvents.sessions().some(s=>s.source===providerId&&s.session_id===nativeId&&!!s.origin_agent)), askUser: ilink.askUser, log: (t,l) => log(t,l) })
+    boot.sessionManager.setExecutionGuard((path,providerId,nativeId)=>workbench.conflictsExternal(path,providerId,nativeId))
+    internalApi.setWorkbench(workbench)
+    lc.register({ name: 'workbench', stop: () => workbench.shutdown() })
     const wired = wireMain({
+      workbench, matters,
+      cliReply: cliReplyHandler,
       stickers: stickerLib,
       requestRestart: (reason) => requestRestart(reason),
+      llmHealth,
       stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,
+      outboundTaps, huntStore, petSignals,
+      // 随身 CC 首屏:聊天日摘要读 turn_records;presence 走 internal-api 的共用入口。
+      turns: turnRecordStore,
+      presence: () => internalApi.getPresence(),
       // Task 11 — tick-bodies pass this to resolveTier() when computing
       // the companion's tierProfile. Same singleton import the bootstrap
       // coordinator uses; 5s TTL cache inside `loadAccess` keeps the
@@ -497,10 +734,15 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // the pipeline wiring are available. Routes access deps.companionConverse
     // at request time, so this late assignment is safe (mirrors setConversation).
     internalApi.setCompanionConverse(wired.companionConverse)
+    // 与手机页共用同一个「一件事」读写面(pipeline-deps 里建的那一个)。
+    if (wired.mattersService) internalApi.setMatters(wired.mattersService)
+    // 同上,桌宠的「在做什么」—— 组装闭包在 pipeline-deps(那里才有 boot)。
+    internalApi.setPetTurn(wired.petTurn)
     ticksRef = wired.ticks
     internalApi.setSettingsLink(wired.settingsPanelLink)
     const pipeline = buildInboundPipeline(wired.pipelineDeps)
     wireRef(wired.refs.pipeline, pipeline)
+    wireRef(wired.refs.appTurn, pipeline.appTurn)
     // 4. register lifecycles (LIFO stop = startup order reversed)
     const pushLc = await sup.start('companion.push', () => registerCompanionPush(wired.companionPushDeps))
     if (pushLc) lc.register(pushLc)
@@ -515,6 +757,11 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     if (guardLc) { wireRef(wired.refs.guard, guardLc); lc.register(guardLc) }
     lc.register(registerSessions(wired.sessionsDeps))
     lc.register(registerIlink(wired.ilinkDeps))
+    let workbenchNotifications:ReturnType<typeof wireWorkbenchNotifications>|undefined
+    let workbenchArtifacts:ReturnType<typeof wireWorkbenchArtifacts>|undefined
+    // Register before polling so shutdown stops inbound, drains task sends, then flushes ilink.
+    lc.register({name:'workbench-notifications',stop:async()=>{await workbenchNotifications?.close()}})
+    lc.register({name:'workbench-artifacts',stop:async()=>{await workbenchArtifacts?.close()}})
     const pollingLc = registerPolling({ ...wired.pollingDeps, runPipeline: pipeline })
     wireRef(wired.refs.polling, pollingLc); lc.register(pollingLc); pollingLcRef = pollingLc
     // Content-blind mailbox transport (Task 8) — mounted only when bootstrap
@@ -574,6 +821,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       }
     }
     didStartup = true
+    // The worker can arm timers immediately: construct only once partial-startup cleanup is active.
+    workbenchNotifications=wireWorkbenchNotifications({workbench,ilink})
+    workbenchArtifacts=wireWorkbenchArtifacts({workbench,ilink})
+    void workbenchNotifications.wake().catch(()=>log('WORKBENCH','Task notifications are waiting for storage recovery.'))
   } catch (err) {
     log('DAEMON', `startup failed mid-init: ${err instanceof Error ? err.message : String(err)}`)
     await shutdown(); throw err
@@ -599,6 +850,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
 // would start. Compiled `wechat-cc-cli.exe run` would silently no-op.
 import { existsSync as fsExistsSync, readFileSync as fsReadFileSync } from 'node:fs'
 import { resolveDaemonStateDir } from './resolve-state-dir'
+import { APP_VERSION, BUILD_SHA } from '../lib/app-version'
 export async function main() {
   const stateDir = resolveDaemonStateDir()
   // daemon.env — provider API keys' restart-surviving home (env-file.ts).
@@ -641,6 +893,12 @@ export async function main() {
   process.on('SIGUSR2', () => {
     log('SCHED', 'SIGUSR2 — manual push tick requested')
     handle.fireTick('push', new Date()).catch(err => log('SCHED', `SIGUSR2 push tick failed: ${err instanceof Error ? err.message : String(err)}`))
+  })
+  // SIGWINCH — fire the daily introspection + optional Atelier tick now. This
+  // is a local operator/testing control; the normal scheduler remains daily.
+  process.on('SIGWINCH', () => {
+    log('SCHED', 'SIGWINCH — manual introspect tick requested')
+    handle.fireTick('introspect', new Date()).catch(err => log('SCHED', `SIGWINCH introspect tick failed: ${err instanceof Error ? err.message : String(err)}`))
   })
 }
 

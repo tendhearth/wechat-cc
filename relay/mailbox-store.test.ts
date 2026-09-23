@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { Database } from 'bun:sqlite'
+import { openSqlite, type SqlDatabase as Database } from '../src/lib/runtime/sqlite'
 import { makeMailboxStore } from './mailbox-store'
 
 const T0 = 1_000_000
 function freshStore(opts?: { ttlMs?: number; depthCap?: number }) {
-  return makeMailboxStore(new Database(':memory:'), opts)
+  return makeMailboxStore(openSqlite(':memory:'), opts)
 }
 
 describe('mailbox-store', () => {

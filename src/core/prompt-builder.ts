@@ -47,6 +47,13 @@ export const KNOWN_KNOWLEDGE_PLUGINS = ['wxsearch', 'wxmedia'] as const
 export interface BuildSystemPromptArgs {
   /** Which provider this session is for. Used to compute peer + delegate tool name. */
   providerId: ProviderId
+  /**
+   * The model id this session actually runs on (session-manager resolves it
+   * per spawn and hands it here). Stated in the identity line so「你是哪个
+   * 模型」gets a truthful answer from any tier, no tool call. Undefined ⇒
+   * the provider's own construction default (rendered as such).
+   */
+  model?: string
   /** The OTHER provider id; the session's delegate-mcp child exposes delegate_<peer>. */
   peerProviderId: ProviderId
   /** Whether companion proactive-tick is enabled at boot. */
@@ -69,6 +76,18 @@ export interface BuildSystemPromptArgs {
    * `tierProfile.allow.has('file_locate')`. Default false.
    */
   fileLocateAvailable?: boolean
+  /**
+   * When true, this session is admin-tier AND the daemon's social layer is
+   * wired, so the wechat-mcp social tools (social_seek / wish_* / intro_* /
+   * relationships / visit, spec 2026-09-05-social-tools) are registered and
+   * functional. Adds the 替主人交朋友 section so the agent queries before
+   * answering and acts on the owner's say-so instead of asking the owner
+   * to type `认识 ab12`. Caller passes
+   * `socialToolsWired && tierProfile.allow.has('social_act')`. Absent or
+   * false ⇒ output is byte-identical to before this field existed
+   * (mirrors `fileLocateAvailable`'s contract).
+   */
+  socialAvailable?: boolean
   /**
    * When true, this chat's effective care level (per proactive-care design
    * §7) is not `off` — adds the care-authoring section so the agent knows
@@ -247,7 +266,7 @@ export interface BuildSystemPromptArgs {
  * sdkOptionsForProject.
  */
 export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
-  const { providerId, peerProviderId, companionEnabled, delegateAvailable } = args
+  const { providerId, peerProviderId, companionEnabled, delegateAvailable, model } = args
 
   // `knowledge_search` is a daemon-owned tool (agent-facing search design
   // Task 5), independent of whether any KNOWN_KNOWLEDGE_PLUGINS entry is
@@ -288,7 +307,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
       : stickerEmptyLibrarySection()
 
   const sections: string[] = [
-    baseChannelSection(providerId),
+    baseChannelSection(providerId, model),
     args.persona && args.persona.trim().length > 0 ? personaSection(args.persona) : '',
     args.coreMemory && args.coreMemory.trim().length > 0 ? coreMemorySection(args.coreMemory) : '',
     args.knowledgeMemory && args.knowledgeMemory.trim().length > 0 ? knowledgeMemorySection(args.knowledgeMemory) : '',
@@ -298,6 +317,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     a2aSection(),
     args.daemonOpsAvailable ? daemonSelfHealSection() : '',
     args.fileLocateAvailable ? fileLocateSection() : '',
+    args.socialAvailable === true ? socialToolsSection() : '',
     args.careEnabled ? careSection() : '',
     args.newRelationship === true ? newRelationshipSection() : '',
     // Belt-and-braces `!companionEnabled` — see BuildSystemPromptArgs.companionOffer
@@ -316,8 +336,10 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
 
 // ─── sections ──────────────────────────────────────────────────────────
 
-function baseChannelSection(providerId: ProviderId): string {
-  return `你是 ${providerId}。你在 wechat-cc 的消息通道里接收来自作者个人微信的消息。基础规则：
+function baseChannelSection(providerId: ProviderId, model?: string): string {
+  const modelTag = model !== undefined ? `当前模型 ${model}` : '当前模型:provider 默认,未单独固定'
+  return `你是 ${providerId}(${modelTag})。你在 wechat-cc 的消息通道里接收来自作者个人微信的消息。基础规则：
+- 用户问你是谁 / 哪个模型 / 用的谁家 → 按上面这行**如实回答**(provider + 模型 id),不要凭感觉猜自己的版本。
 - 每条入站消息用 \`<wechat chat_id="..." user="..." account="..." msg_type="..." ts="...">...</wechat>\` 包裹。chat_id 是路由键；多条连续对话可能来自同一个 chat_id。
 - 信封上的 \`ts\` 是这条消息（或 \`<companion_tick>\` 唤醒）的发生时间，也是你的「当前时间」基准。做任何日期/时间推理（"下周三"、"三天后"、判断某事是否已过期）都以 \`ts\` 为准——**不要用系统提示里的 "Today's date"**，它可能与真实对话时间不符。
 - 媒体附件以 \`[image:/abs/path]\` \`[file:/abs/path]\` \`[voice:/abs/path]\` 行内标注，用 Read/Bash 等工具打开或分析它们。
@@ -414,6 +436,7 @@ export function daemonSelfHealSection(): string {
 你能检查并修复自己所在的 daemon。当主人反映「卡住 / 不回 / 变慢 / 这个对话没反应」这类**运行异常**（不是内容问题）时，主动排查而不是只道歉：
 - 先查：\`diagnostic_health\`（心跳 / 活跃会话数）、\`diagnostic_turns\`（最近回合结局 completed/timeout/auth_failed/error）、\`diagnostic_sessions\`。
 - 再据情况：某回合 timeout/卡死 → \`session_release\`；模型固定错了 / 一直 404 → \`model_set\`；整体像卡死且前面都没用 → \`daemon_restart\`。
+- **换模型不是故障也能做**：主人说「换成 opus 5 / 用 sonnet / 切到 DeepSeek」→ 先把口语映射成完整带版本号的 id（opus 5 → \`claude-opus-5\`；网关模型用它的原名如 \`DeepSeek\`），调 \`model_set({model})\`（默认改你自己这个 provider），拿读回的 model 核对后再答「好了，下一句起用 …」。裸别名（opus/sonnet）会被拒，不要传。主人要换**后端/厂家**而不是同家换版本 → \`provider_switch({chat_id, provider, model?})\`,只影响这个对话：DeepSeek/Kimi/Qwen 这类网关模型 → provider \`openai\` + model 原名；Gemini → \`agy\`；Cursor → \`cursor\`；Claude → \`claude\`。切完自己告诉主人一句就行。
 - 修完用各自的读回（release 的 sessions、model_set 的 model、restart 的 ok）核对，再用自然语言把「查到什么、做了什么、好没好」简短汇报给主人。
 - 这些是高权限操作，会先要你确认（relay）；不确定就只诊断、把结果告诉主人。`
 }
@@ -427,6 +450,20 @@ export function fileLocateSection(): string {
 - 找到并确认后，用 \`Read\` 打开来回答，并用 \`memory_write\` 往 \`locations.md\` 追一行「这是什么 → 绝对路径」，下次直接命中。
 - 实在找不到，就在微信问主人一句「X 一般放哪？」（只问这一次），拿到答案把那个目录记进 \`locations.md\`。
 范围是用出来的，不是让主人配置出来的。`
+}
+
+export function socialToolsSection(): string {
+  return `## 替主人交朋友(管理员)
+
+伙伴的社交层开着,你手里有一组工具。主人问「谁回了心愿」「有人想认识我吗」「我都认识谁」——先查再答,别凭记忆:
+- \`wish_list\`:开着的心愿和每条的回音(reply_id、哪位朋友转来的、预览、是否已在问)。
+- \`intro_offers\`:等主人点头的邀约。\`relationships\`:认识的人。
+主人说「把 X 认识一下」「同意 / 不了」「去串门」——这句话本身就是指令,直接做,做完把结果说清楚,不要再问一遍「你确定吗」:
+- 「认识」:先 \`wish_list\`,在 postcards 的 preview 里对上那个人,拿 reply_id 调 \`intro_request\`;\`requested:true\` 的说「已经在问了」,别再点。对不上或对上多张,把候选列出来让主人挑。
+- 「同意 / 不了」:用 \`intro_offers\` 对上 reply_id,再 \`intro_accept\` / \`intro_decline\`。
+- 「去串门」:\`visit\`,可带对方名字。
+派心愿是唯一的例外:\`social_seek\` 只出脱敏预览并存草稿,把 preview 原样念给主人;主人点头(任何肯定的说法)再 \`wish_send\`,「算了」就 \`wish_cancel\`。
+工具回 \`ok:false\` 时把 reason 用人话说;\`error\` 里是 \`social_not_wired\` 表示社交层没开,连不上 daemon 是另一回事,两句别混。主人也可以直接回「派 w1」「认识 ab12」这类精确命令,那不经过你。`
 }
 
 /**

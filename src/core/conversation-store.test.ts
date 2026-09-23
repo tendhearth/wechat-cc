@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, test } from 'vitest'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { makeConversationStore } from './conversation-store'
 import { modeRequiresParticipantPrefix } from './conversation'
 import { openTestDb, openDb, type Db } from '../lib/db'
+import { removeTempDir } from '../lib/test-temp'
 
 describe('ConversationStore', () => {
   let dir: string
@@ -15,7 +16,7 @@ describe('ConversationStore', () => {
   })
   afterEach(() => {
     db.close()
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   })
 
   it('starts empty', () => {
@@ -29,6 +30,16 @@ describe('ConversationStore', () => {
     s.set('chat-1', { kind: 'solo', provider: 'codex' })
     const r = s.get('chat-1')
     expect(r?.mode).toEqual({ kind: 'solo', provider: 'codex' })
+  })
+
+  it('solo mode round-trips a per-chat model pin, and a later pin-less set clears it', () => {
+    const s = makeConversationStore(db)
+    s.set('chat-1', { kind: 'solo', provider: 'openai', model: 'DeepSeek' })
+    expect(s.get('chat-1')?.mode).toEqual({ kind: 'solo', provider: 'openai', model: 'DeepSeek' })
+    expect(s.all()['chat-1']?.mode).toEqual({ kind: 'solo', provider: 'openai', model: 'DeepSeek' })
+    // `/api`(不带模型)= 回到全局默认 —— 清掉,不是 COALESCE 保留。
+    s.set('chat-1', { kind: 'solo', provider: 'openai' })
+    expect(s.get('chat-1')?.mode).toEqual({ kind: 'solo', provider: 'openai' })
   })
 
   it('set replaces previous mode for the same chat', () => {

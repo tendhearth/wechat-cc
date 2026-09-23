@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "wechat-cc",
-  "version": "1.6.6",
-  "identifier": "dev.wechat-cc.installer",
+  "version": "1.7.0",
+  "identifier": "com.tendhearth.wechat-cc",
   "build": {
     "frontendDist": "../src",
     "beforeDevCommand": "bun run dev:web",
@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost https://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:* http://localhost:*; object-src 'none'; base-uri 'self'; frame-src 'none'",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost https://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:* http://localhost:*; object-src 'none'; base-uri 'self'; frame-src blob:",
       "assetProtocol": {
         "enable": true,
         "scope": [
@@ -58,6 +58,7 @@
       "../../../plugins/README.md"
     ],
     "macOS": {
+      "entitlements": "entitlements.plist",
       "dmg": {
         "background": "dmg/background.tiff",
         "windowSize": {

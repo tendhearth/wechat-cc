@@ -20,6 +20,8 @@ export interface ChatPrefs {
   stickers?: boolean
   /** 每日打猎开关 (daily hunt toggle). undefined ⇒ ON (default); false ⇒ off. */
   hunt?: boolean
+  /** 每日串门开关。undefined ⇒ ON;false ⇒ off。 */
+  visit?: boolean
 }
 
 export interface ChatPrefsStore {

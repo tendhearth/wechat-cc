@@ -1,11 +1,12 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import { createA2AClient } from './a2a-client'
+import { serve, type Server } from '../lib/runtime/http'
 
-let fakeServer: ReturnType<typeof Bun.serve> | null = null
+let fakeServer: Server | null = null
 const requests: Array<{ url: string; method: string; headers: Record<string, string>; body: string }> = []
 
-beforeAll(() => {
-  fakeServer = Bun.serve({
+beforeAll(async () => {
+  fakeServer = serve({
     hostname: '127.0.0.1',  // memory: 'localhost' is IPv6-only on macOS
     port: 0,
     async fetch(req) {
@@ -35,6 +36,7 @@ beforeAll(() => {
       return new Response('not found', { status: 404 })
     },
   })
+  await fakeServer.ready
 })
 
 afterAll(() => {
@@ -96,13 +98,14 @@ describe('a2a-client', () => {
 
   it('send applies timeout', async () => {
     // Set up a server that delays 200ms; client timeout 50ms.
-    const slow = Bun.serve({
+    const slow = serve({
       hostname: '127.0.0.1', port: 0,
       async fetch() {
         await new Promise(r => setTimeout(r, 200))
         return new Response('late')
       },
     })
+    await slow.ready
     try {
       const client = createA2AClient({ timeoutMs: 50 })
       const r = await client.send({

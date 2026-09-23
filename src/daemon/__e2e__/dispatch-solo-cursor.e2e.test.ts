@@ -39,6 +39,15 @@ describe('e2e: solo cursor text inbound → cursor dispatch + outbound reply', (
     let codexWasCalled = false
     daemon = await startTestDaemon({
       dangerously: true,
+      // chat1 必须真的在 admins 里:2026-09-18 起 cursor 的工具面约束不住
+      // 访客(ACP 下工作区内的文件编辑不发权限卡,ProviderCapabilities
+      // .guestSafe === false),于是 dispatchSolo 的 provider 闸门用
+      // **raw** tier 判(conversation-coordinator.ts:551 附近),
+      // --dangerously 故意不给它开门。默认夹具的 admins 是 ['testadmin'],
+      // chat1 会被判成 guest 而在派发前就被拒。这条用例测的是路由,不是
+      // 权限,所以把 chat1 置成 admin;guest 被拒那条有
+      // conversation-coordinator.test.ts 的单测守着。
+      access: { allowFrom: ['*'], admins: ['chat1'] },
       modes: { chat1: { kind: 'solo', provider: 'cursor' } },
       // cursorModel required for cursor provider registration (Cursor SDK
       // demands a model id for local agents; bootstrap fails-fast at boot

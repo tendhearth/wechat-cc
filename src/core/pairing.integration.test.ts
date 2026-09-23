@@ -15,7 +15,7 @@
  * deps lives at src/daemon/bootstrap/wire-pairing.ts (Task 6).
  */
 import { describe, it, expect } from 'vitest'
-import { Database } from 'bun:sqlite'
+import { openSqlite } from '../lib/runtime/sqlite'
 import { makeRelayServer } from '../../relay/server'
 import { makePairing, type PairingDeps } from './pairing'
 import type { MailboxClient } from './mailbox-client'
@@ -45,6 +45,25 @@ function memRegistry() {
     setPaused: () => {}, update: (id: string) => m.get(id) } as any
 }
 
+// A tiny fake ChannelStore + genChannel — mirrors pairing.test.ts's
+// makeFakeChannelStore (Task 4's 配对即开信道). Kept minimal here since
+// these tests assert on the a2a registry, not the penpal channel.
+function makeFakeChannelStore(): PairingDeps['channelStore'] {
+  const rows: Array<{ id: string; peer_agent_id: string | null; status: 'pending' | 'open' }> = []
+  const toRow = (r: { id: string; peer_agent_id: string | null; status: 'pending' | 'open' }) => ({ ...r, seek_id: r.id, my_privkey: '', my_pubkey: '', my_channel_id: '', peer_pubkey: null, peer_channel_id: null, peer_mailbox: null, degree: 1, relay_via: null, created_at: '' })
+  return {
+    get: (id) => { const r = rows.find(x => x.id === id); return r ? toRow(r) as never : null },
+    create: (c) => { rows.push({ id: c.id, peer_agent_id: c.peerAgentId ?? null, status: 'pending' }) },
+    setPeerHandle: () => {},
+    setStatus: (id, s) => { const r = rows.find(x => x.id === id); if (r) r.status = s },
+    list: () => rows.map(toRow) as never,
+  }
+}
+function makeGenChannel(): PairingDeps['genChannel'] {
+  let n = 0
+  return () => { n++; return { channelId: `ichan-${n}`, pubkey: `IPUB${n}`, privkey: `IPRIV${n}` } }
+}
+
 function makeScheduler() {
   let armed: (() => void) | null = null; let cancelled = false
   return { schedule: ((fn: () => void) => { armed = fn; return { cancel() { cancelled = true; armed = null } } }) as PairingDeps['schedule'],
@@ -53,7 +72,7 @@ function makeScheduler() {
 
 describe('pairing integration (two engines, one in-process relay)', () => {
   it('start → accept → poll: both registries get a correct, url-less mailbox record; keys cross', async () => {
-    const srv = makeRelayServer({ db: new Database(':memory:'), now: () => NOW })
+    const srv = makeRelayServer({ db: openSqlite(':memory:'), now: () => NOW })
     const client = inProcessClient(srv)
     const regA = memRegistry(); const regB = memRegistry(); const sched = makeScheduler()
     const relays = ['https://brain.example/mailbox']
@@ -63,12 +82,14 @@ describe('pairing integration (two engines, one in-process relay)', () => {
       selfId: () => 'cc-aaaa1111', name: () => 'Alice', now: () => NOW,
       mintKey: () => 'A-inbound-key-0000000000', genCode: () => '246810', genNonce: () => 'nA',
       notify: () => {}, schedule: sched.schedule,
+      channelStore: makeFakeChannelStore(), genChannel: makeGenChannel(),
     })
     const B = makePairing({
       client, registry: regB, self: { mailbox_addr: 'B_MB', mailbox_enc_pub: 'B_EP', relays },
       selfId: () => 'cc-bbbb2222', name: () => 'Bob', now: () => NOW,
       mintKey: () => 'B-inbound-key-0000000000', genCode: () => 'unused', genNonce: () => 'nB',
       notify: () => {}, schedule: () => ({ cancel() {} }),
+      channelStore: makeFakeChannelStore(), genChannel: makeGenChannel(),
     })
 
     const startRes = await A.start()
@@ -98,7 +119,7 @@ describe('pairing integration (two engines, one in-process relay)', () => {
   })
 
   it('cards on the relay are ciphertext (content-blind spot-check)', async () => {
-    const srv = makeRelayServer({ db: new Database(':memory:'), now: () => NOW })
+    const srv = makeRelayServer({ db: openSqlite(':memory:'), now: () => NOW })
     const client = inProcessClient(srv)
     const regA = memRegistry(); const sched = makeScheduler()
     const relays = ['https://brain.example/mailbox']
@@ -108,6 +129,7 @@ describe('pairing integration (two engines, one in-process relay)', () => {
       selfId: () => 'cc-aaaa1111', name: () => 'Alice', now: () => NOW,
       mintKey: () => 'A-inbound-key-0000000000', genCode: () => '135791', genNonce: () => 'nA',
       notify: () => {}, schedule: sched.schedule,
+      channelStore: makeFakeChannelStore(), genChannel: makeGenChannel(),
     })
     const startRes = await A.start()
     expect(startRes.ok).toBe(true)
@@ -150,7 +172,7 @@ describe('pairing integration (two engines, one in-process relay)', () => {
 
     const stateDir = mkdtempSync(join(tmpdir(), 'pair-disk-'))
     writeFileSync(join(stateDir, 'agent-config.json'), JSON.stringify({ provider: 'claude', mailbox_relays: ['https://brain.example/mailbox'] }))
-    const srv = makeRelayServer({ db: new Database(':memory:'), now: () => NOW })
+    const srv = makeRelayServer({ db: openSqlite(':memory:'), now: () => NOW })
     const client = inProcessClient(srv)
     const relays = ['https://brain.example/mailbox']
 
@@ -166,12 +188,14 @@ describe('pairing integration (two engines, one in-process relay)', () => {
       selfId: () => selfIdB, name: () => 'Bob', now: () => NOW,
       mintKey: () => 'B-inbound-key-0000000000', genCode: () => 'x', genNonce: () => 'nB',
       notify: () => {}, schedule: () => ({ cancel() {} }),
+      channelStore: makeFakeChannelStore(), genChannel: makeGenChannel(),
     })
     const initiator = (id: string, code: string) => makePairing({
       client, registry: memRegistry(), self: { mailbox_addr: `${id}_MB`, mailbox_enc_pub: 'EP', relays },
       selfId: () => id, name: () => id, now: () => NOW,
       mintKey: () => `${id}-key-000000000000`, genCode: () => code, genNonce: () => `n-${id}`,
       notify: () => {}, schedule: () => ({ cancel() {} }),
+      channelStore: makeFakeChannelStore(), genChannel: makeGenChannel(),
     })
 
     const p1 = initiator('cc-aaaa1111', '135790')

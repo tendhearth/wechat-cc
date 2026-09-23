@@ -12,6 +12,20 @@ afterEach(() => {
 })
 
 describe('invokeApi', () => {
+  it('sends workbench requests through the host-only workbench proxy', async () => {
+    const invoke = vi.fn(async (command: string) => command === 'workbench_api'
+      ? JSON.stringify({ tasks: [], providers: [], defaultProvider: 'codex', canWechat: false })
+      : Promise.reject(new Error(`unexpected IPC command: ${command}`)))
+    root.window = { __TAURI__: { core: { invoke } } }
+    const fetchMock = vi.fn()
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    vi.resetModules()
+    const { invokeWorkbenchApi } = await import('./api.js')
+    await expect(invokeWorkbenchApi('GET', '/v1/workbench')).resolves.toMatchObject({ tasks: [] })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(invoke).toHaveBeenCalledWith('workbench_api', { method: 'GET', path: '/v1/workbench' })
+  })
   it('refreshes daemon discovery after a stale localhost port fails to connect', async () => {
     let credentialCalls = 0
     const invoke = vi.fn(async (_command: string, payload: { args: string[] }) => {
@@ -63,6 +77,17 @@ describe('invokeApi', () => {
     expect(invoke).toHaveBeenCalledWith('customer_review_api', { method: 'GET', path: '/v1/customer-review/recent' })
     // and no api-info call at all — no credential was needed in this process
     expect(invoke.mock.calls.every(c => c[0] === 'customer_review_api')).toBe(true)
+  })
+
+  it('keeps private thought credentials in the native host', async () => {
+    const invoke=vi.fn(async()=>JSON.stringify({items:[]}))
+    root.window={__TAURI__:{core:{invoke}}}
+    const fetchMock=vi.fn();globalThis.fetch=fetchMock as unknown as typeof fetch
+    vi.resetModules()
+    const {invokeApi}=await import('./api.js')
+    await expect(invokeApi('GET','/v1/companion/thoughts')).resolves.toEqual({items:[]})
+    expect(invoke).toHaveBeenCalledWith('customer_review_api',{method:'GET',path:'/v1/companion/thoughts'})
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('does NOT replay a POST after a transport failure', async () => {

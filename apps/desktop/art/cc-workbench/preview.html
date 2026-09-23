@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CC 工作台 · 标注样例预览</title>
+  <link rel="stylesheet" href="../../src/styles.css">
+  <link rel="stylesheet" href="../../src/styles/workbench.css">
+  <style>
+    body{background:var(--desktop);padding:28px}.fixture-label{position:fixed;z-index:4;right:18px;top:14px;border:1px solid #d39b55;border-radius:999px;padding:7px 11px;background:#fff2dc;color:#794b17;font:600 12px var(--sans)}.fixture-states{position:fixed;z-index:4;left:50%;top:14px;transform:translateX(-50%);display:flex;gap:5px}.fixture-states a{border-radius:999px;padding:6px 10px;background:#fff;color:#47634f;font:600 11px var(--sans);text-decoration:none}
+    #workbench-root{height:calc(100vh - 56px);overflow:hidden;border-radius:14px;box-shadow:var(--shadow)}
+  </style>
+</head>
+<body>
+  <div class="fixture-label">标注样例数据 · 未连接真实模型</div>
+  <nav class="fixture-states" aria-label="样例状态"><a href="?state=empty">空态</a><a href="?state=running">执行中</a><a href="?state=completed">已完成</a></nav>
+  <div id="workbench-root"></div>
+  <script type="module" src="./preview.js"></script>
+</body>
+</html>

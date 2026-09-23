@@ -15,9 +15,10 @@
 // subscribers + invokes refresh from action handlers.
 
 import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
-import { invokeApi } from "./api.js"
+import { invokeApi, invokeWorkbenchApi } from "./api.js"
 import { initialMode, restartButtonState, afterScanTarget , showToast } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
+import { startCompanionPresence } from "./companion-presence.js"
 import { createConversationsPoller } from "./conversations-poller.js"
 import {
   renderDoctorWizard,
@@ -27,7 +28,7 @@ import {
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
-import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
+import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkFsAccessOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
@@ -37,13 +38,20 @@ import { initTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
 import { initConversePage } from "./modules/converse.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
+import { markJournalSeen } from "./modules/journal.js"
 import { initPluginsTab, refresh as refreshPlugins } from "./modules/plugins.js"
 import { initLicense, refreshLicense } from "./modules/license.js"
 import { loadUpdateProbe, applyUpdate } from "./modules/update.js"
 import { wireSettingsDrawer, openSettingsDrawer } from "./modules/settings-drawer.js"
 import { mountHugeicons } from "./modules/icons.js"
-import { pingHealth } from "./health-probe.js"
+import { pingHealth, fetchDaemonVersion } from "./health-probe.js"
 import { refreshWxvaultOnAppStart } from "./modules/wxvault-refresh.js"
+import { loadAtelierGallery } from "./modules/atelier-gallery.js"
+import { mountCurrentActivity, createLifeArchive } from "./modules/cc-life.js"
+import { refreshPostcardAlbum } from "./modules/postcard-album.js"
+import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getActiveWorkbenchTaskId } from "./modules/workbench.js"
+import { createWorkbenchNavigation, isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
+import { mountWorkbenchAttention } from "./modules/workbench-attention.js"
 
 const state = {
   setup: /** @type {SetupQrJson | null} */ (null),
@@ -64,6 +72,14 @@ const state = {
   updateProbed: false,
   connectionIntent: /** @type {"disconnected" | null} */ (null),
 }
+
+const dashWindow = /** @type {HTMLElement|null} */ (document.querySelector('.dash-window'))
+const dashRail = /** @type {HTMLElement|null} */ (document.getElementById('dash-global-rail'))
+const workbenchNavToggle = /** @type {HTMLElement|null} */ (document.getElementById('workbench-nav-toggle'))
+const workbenchNavScrim = /** @type {HTMLElement|null} */ (document.getElementById('workbench-nav-scrim'))
+const workbenchNavigation = dashWindow && dashRail && workbenchNavToggle && workbenchNavScrim
+  ? createWorkbenchNavigation({ shell: dashWindow, rail: dashRail, toggle: workbenchNavToggle, scrim: workbenchNavScrim })
+  : null
 
 // window.__TAURI__ is injected by the Tauri runtime and not part of the
 // standard Window type. Cast to any to access optional Tauri fields.
@@ -111,14 +127,77 @@ async function withRefreshFeedback(button, fn) {
 const invoke = (cmd, args) => ipcInvoke(cmd, args, state)
 
 const doctorPoller = createDoctorPoller({ invoke, intervalMs: 5000 })
+// 桌宠状态(spec 2026-09-03-companion-presence):首页鱼缸跟浮窗共用一套推导。
+// 点脚边道具 → 切到觅食台(带回来的在那儿)。switchPane 是函数声明,提升可用。
+const presencePoller = startCompanionPresence({ onOpenJournal: () => switchPane("a2a-agents") })
+const currentActivityHost = document.getElementById("cc-current-activity")
+if (currentActivityHost) mountCurrentActivity(currentActivityHost, presencePoller, switchPane)
+const memoryRecordsHost = document.getElementById("cc-memory-records")
+const lifeArchive = memoryRecordsHost ? createLifeArchive(memoryRecordsHost, { call: invokeApi }) : null
+let lifeCategory = "postcards"
+/** @param {string} category */
+async function loadLifeCategory(category) {
+  lifeCategory = category
+  lifeArchive?.cancel()
+  document.querySelectorAll("[data-life-category]").forEach(el => el.setAttribute("aria-pressed", String(el.getAttribute("data-life-category") === category)))
+  const postcards = document.getElementById("cc-memory-postcards")
+  if (postcards) postcards.hidden = category !== "postcards"
+  if (memoryRecordsHost) memoryRecordsHost.hidden = category === "postcards"
+  if (category === "postcards") await refreshPostcardAlbum()
+  else await lifeArchive?.load(category)
+}
+
 const conversationsPoller = createConversationsPoller({ invoke, intervalMs: 10000 })
+
+/** @type {ReturnType<typeof mountWorkbenchAttention>|null} */
+let workbenchAttention = null
+function startWorkbenchAttention() {
+  const host = document.getElementById('workbench-attention')
+  if (!host || workbenchAttention) return
+  workbenchAttention = mountWorkbenchAttention({
+    host, invokeWorkbenchApi, invoke,
+    getContext: () => ({
+      taskId: state.mode === 'dashboard' ? getActiveWorkbenchTaskId() : null,
+      focused: document.visibilityState === 'visible' && document.hasFocus(),
+    }),
+    openTask: id => {
+      if (state.mode !== 'dashboard') setMode('dashboard')
+      switchPane('workbench')
+      return openWorkbenchTask(id)
+    },
+  })
+  void workbenchAttention.start()
+}
+window.addEventListener('pagehide', () => { workbenchAttention?.destroy(); workbenchAttention = null })
+window.addEventListener('pageshow', event => { if (event.persisted) startWorkbenchAttention() })
 
 // Bag passed to module functions instead of imported singletons. Keeps each
 // module testable in isolation (any conformant deps object → run the module
 // in a JSDOM/happy-dom harness).
+// 「一件事」:工作台里选中对话时,把「跟 CC 说」的控件整个搬进会话面(DOM 搬家,状态与监听都不丢);
+// 离开时搬回「此刻」页原位。控件只有一份,所以两个页面永远不会各画一个。
+let converseHome = /** @type {{parent:HTMLElement,next:Node|null}|null} */ (null)
+function mountConverse(/** @type {HTMLElement} */ host) {
+  const root = converseRootEl()
+  if (!root) return
+  if (!converseHome && root.parentElement) converseHome = { parent: root.parentElement, next: root.nextSibling }
+  if (root.parentElement !== host) host.appendChild(root)
+  initConversePage(deps, { focus: true })
+}
+function unmountConverse() {
+  const root = converseRootEl()
+  if (!root || !converseHome || root.parentElement === converseHome.parent) return
+  converseHome.parent.insertBefore(root, converseHome.next && converseHome.next.parentNode === converseHome.parent ? converseHome.next : null)
+}
+let converseRootRef = /** @type {HTMLElement|null} */ (null)
+function converseRootEl() { return (converseRootRef ??= document.getElementById("converse-root")) }
+
 const deps = {
   invoke,
   invokeApi,
+  invokeWorkbenchApi,
+  mountConverse,
+  unmountConverse,
   formatInvokeError,
   doctorPoller,
   mock,
@@ -181,6 +260,12 @@ const deps = {
     const internal_api = doctorPoller.current?.checks?.daemon?.internal_api
     if (!internal_api) return null
     return pingHealth(internal_api.port, internal_api.token_file_path)
+  },
+  // 后台版本 vs 本包自带的 CLI 版本 —— 桌面更新后旧后台还在跑时,重连诊断据此直说「后台还是旧版」。
+  healthVersion: async () => {
+    const internal_api = doctorPoller.current?.checks?.daemon?.internal_api
+    if (!internal_api) return null
+    return fetchDaemonVersion(internal_api.port, internal_api.token_file_path)
   },
 }
 
@@ -289,6 +374,7 @@ function wireDoctorSubscribers() {
   // outage that starts while the app is open surfaces without the owner
   // needing to revisit the overview pane.
   doctorPoller.subscribe(() => checkIncidentsOnPoll(deps))
+  doctorPoller.subscribe(() => checkFsAccessOnPoll({ ...deps, ipcInvoke: invoke }))
   doctorPoller.subscribe(() => checkBrainHealthOnPoll(deps))
   conversationsPoller.subscribe(report => {
     if (state.mode === "dashboard") renderConversations(report, { invoke })
@@ -342,6 +428,7 @@ function renderDashboardIfActive(report) {
   if (state.mode !== "dashboard") return
   const displayReport = dashboardDisplayReport(report)
   renderDashboard(displayReport)
+  if (!document.querySelector('.dash-pane[data-pane="atelier"]')?.hasAttribute("hidden")) loadAtelierGallery({ invokeApi }).catch(() => {})
 }
 
 /** @param {any} report */
@@ -416,6 +503,17 @@ function setToggle(id, on) {
 
 /** @param {string} name */
 function switchPane(name) {
+  const focusConversation = name === "converse"
+  if (focusConversation) {
+    name = "overview"
+    document.querySelector(".cc-home-details")?.removeAttribute("open")
+  }
+  const currentPane = /** @type {HTMLElement|null} */ (document.querySelector('.dash-pane[data-pane]:not([hidden])'))
+  if (isCurrentWorkbenchPane(name, currentPane)) {
+    workbenchNavigation?.setWorkbenchActive(true)
+    return
+  }
+  document.querySelector(".cc-life-nav-more")?.removeAttribute("open")
   const overviewWasHidden = name === "overview" && !!(/** @type {HTMLElement | null} */ (document.querySelector('.dash-pane[data-pane="overview"]')))?.hidden
   const backstagePanes = new Set(["sessions", "plugins", "logs"])
   document.querySelectorAll(".dash-nav-link[data-pane]").forEach(el => {
@@ -429,6 +527,8 @@ function switchPane(name) {
     const htmlEl = /** @type {HTMLElement} */ (el)
     htmlEl.hidden = htmlEl.dataset.pane !== name
   })
+  // The destination must be visible before navigation transfers keyboard focus.
+  workbenchNavigation?.setWorkbenchActive(name === "workbench")
   if (overviewWasHidden) {
     advanceCompanionHeroCopy()
     if (doctorPoller.current) renderDashboardIfActive(doctorPoller.current)
@@ -450,8 +550,18 @@ function switchPane(name) {
     })
     loadMemoryTopZone(deps).catch(err => console.error("memory top zone failed", err))
   }
+  if (name === "recollections") void loadLifeCategory(lifeCategory)
+  else lifeArchive?.cancel()
+  if (name === "atelier") void loadAtelierGallery({ invokeApi })
+  if (name === "overview") void presencePoller.refresh()
   if (name === "todos") {
     initTodosPage(deps)
+  }
+  if (name === "workbench") {
+    initWorkbenchPage(deps)
+  } else {
+    stopWorkbenchPolling()
+    unmountConverse()
   }
   if (name === "sessions") {
     activateDialogueWorkspace()
@@ -461,11 +571,13 @@ function switchPane(name) {
     stopDialogueAutoRefresh()
     stopCustomerReviewPolling()
   }
-  if (name === "converse") {
-    initConversePage(deps)
+  if (name === "overview") {
+    initConversePage(deps, { focus: focusConversation })
   }
   if (name === "a2a-agents") {
     refreshA2AAgents().catch(err => console.error("a2a-agents refresh failed", err))
+    // 打开觅食台 = 看过了:推水位,再立刻刷一次桌宠状态让包袱消失。
+    markJournalSeen().then(() => presencePoller.refresh()).catch(() => {})
   }
   if (name === "plugins") {
     refreshPlugins().catch(err => console.error("plugins refresh failed", err))
@@ -484,6 +596,17 @@ function activateDialogueWorkspace() {
 // ─── DOM event wiring ────────────────────────────────────────────────
 
 function wireEvents() {
+  document.addEventListener("click", ev => {
+    const target = ev.target instanceof Element ? ev.target : null
+    const go = target?.closest("[data-life-pane]")
+    const category = target?.closest("[data-life-category]")
+    if (go) {
+      if (go.getAttribute("data-life-start") === "postcards") lifeCategory = "postcards"
+      switchPane(go.getAttribute("data-life-pane") || "overview")
+    }
+    if (category) void loadLifeCategory(category.getAttribute("data-life-category") || "postcards")
+  })
+
   // 手机上改设置 — 拿一条新鲜的面板链接,渲染成二维码弹层(手机扫码直开)
   document.getElementById("open-phone-settings")?.addEventListener("click", async () => {
     try {
@@ -526,15 +649,21 @@ function wireEvents() {
     }
     if (t.closest('[data-action="brain-close"]')) { closeTroubleshoot(deps); return }
     // 接大脑引导:API Key 直开 OpenAI 兼容表单;订阅登录列 CLI 选项
+    if (t.closest('[data-action="connect-ai"]')) {
+      closeProviderMenu()
+      renderNoBrain(deps, true)
+      document.getElementById("brain-health")?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+      return
+    }
     if (t.closest('[data-action="nb-apikey"]')) { openBrainSetup(deps, "openai"); return }
     if (t.closest('[data-action="nb-cli"]')) {
       const box = document.getElementById("brain-setup")
       if (box) {
         box.hidden = false
-        box.innerHTML = '<div class="brain-setup-title">用哪家订阅?点一个看安装方法</div>'
+        box.innerHTML = '<div class="brain-setup-title">选择已有账号，查看连接步骤</div>'
           + '<div class="nb-cli-row">'
-          + ['claude','codex','cursor'].map(function(pv){ return '<button class="brain-chip brain-off" type="button" data-brain-setup="'+pv+'">'+pv+'</button>' }).join('')
-          + '</div><div id="brain-setup" style="margin-top:8px"></div>'
+          + ['claude','codex','cursor'].map(function(pv){ return '<button class="brain-chip brain-off" type="button" data-brain-setup="'+pv+'">'+({claude:'Claude',codex:'Codex',cursor:'Cursor'}[pv])+'</button>' }).join('')
+          + '</div>'
       }
       return
     }
@@ -1009,7 +1138,7 @@ function wireEvents() {
     // The browser/dev shim cannot spawn a native Tauri window. Open the same
     // isolated scene in a popup there so visual work remains previewable.
     if (mock || /** @type {any} */ (window).__WECHAT_CC_SHIM__) {
-      window.open("./companion-window.html", "wechat-cc-companion", "popup,width=600,height=430")
+      window.open("./companion-window.html", "wechat-cc-companion", "popup,width=260,height=330")
       return
     }
     companionDesktopStart.disabled = true
@@ -1316,7 +1445,9 @@ function showDevBannerIfShim() {
     ? `<b>演示模式 (DRY_RUN)</b> · 界面状态是假的，但未被拦下的命令仍会走真实 CLI`
     : allowMut
       ? `<b>开发模式 · 安全阀已关闭</b> · 删账号 / service / setup / update 会真实生效`
-      : `<b>开发模式</b> · 操作走真实 CLI 与真实 daemon；只放行已知只读的命令`
+      : w.__WECHAT_CC_WORKBENCH_WRITES__
+        ? `<b>开发模式</b> · 一起做已连接真实执行 · 其他页面保持只读`
+        : `<b>开发模式</b> · 操作走真实 CLI 与真实 daemon；只放行已知只读的命令`
   // 关阀是唯一能毁掉真实状态的模式，颜色上必须一眼可辨（spec §3）。
   banner.classList.toggle("is-unsafe", Boolean(allowMut) && !w.__WECHAT_CC_DRY_RUN__)
   banner.hidden = false
@@ -1327,6 +1458,8 @@ async function boot() {
   mountHugeicons()
   wireDoctorSubscribers()
   wireEvents()
+  startWorkbenchAttention()
+  initConversePage(deps, { focus: false })
   startAppUpdateChecks()
   // Refresh an already-configured local WeChat archive on every desktop
   // launch. Keep it off the critical render path: decrypting larger archives
@@ -1344,6 +1477,20 @@ async function boot() {
   // Wire the A2A agents tab (event listeners attached once; first list load
   // is deferred until the user actually switches to that pane).
   initA2AAgentsTab().catch(err => console.error("a2a-agents init failed", err))
+  // 浮窗点道具 → Rust show_main_window 发来的导航事件(spec 2026-09-03 §3.4)。
+  // 只认白名单里的 pane,事件 payload / 命令返回值一律不可信。
+  /** @param {unknown} page */
+  const navigateTo = (page) => { if (page === "a2a-agents") switchPane(page) }
+  const tauriEvent = /** @type {any} */ (window).__TAURI__?.event
+  if (tauriEvent?.listen) {
+    tauriEvent.listen("wechat-cc:navigate", (/** @type {{ payload?: { page?: string } }} */ ev) => {
+      navigateTo(ev?.payload?.page)
+    }).catch((/** @type {unknown} */ err) => console.warn("navigate listener failed", err))
+  }
+  // 主窗口被关掉之后点包袱:Rust 那边是**重建**了窗口,事件早在本监听器存在
+  // 之前就发过了(发出去也没人接)。目的地存在 Rust 侧,这里主动来取一次。
+  // 浏览器 / mock shim 没有这个命令,拒绝就当没有待办。
+  invoke("take_pending_navigate", {}).then(navigateTo).catch(() => {})
   initPluginsTab({ invoke }).catch(err => console.error("plugins init failed", err))
   initLicense().catch(err => console.error("license init failed", err))
   let report = await doctorPoller.refresh()

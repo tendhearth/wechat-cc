@@ -173,8 +173,9 @@ describe('makeIlinkAdapter (composed)', () => {
     // We test the internal wiring: askUser registers + handlePermissionReply consumes.
     // Use askUser with very long timeout — manually consume via handlePermissionReply.
     const p = a.askUser('chat-1', 'test prompt', 'ab123', 60_000)
-    // Immediately consume it
-    const consumed = a.handlePermissionReply('y ab123')
+    // Immediately consume it — from the approver's OWN chat (see the
+    // cross-chat test below for why the second arg is now load-bearing).
+    const consumed = a.handlePermissionReply('y ab123', 'chat-1')
     expect(consumed).toBe(true)
     const decision = await p
     expect(decision).toBe('allow')
@@ -184,10 +185,24 @@ describe('makeIlinkAdapter (composed)', () => {
   it('handlePermissionReply handles deny decision', async () => {
     const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
     const p = a.askUser('chat-1', 'test prompt', 'zz999', 60_000)
-    const consumed = a.handlePermissionReply('n zz999')
+    const consumed = a.handlePermissionReply('n zz999', 'chat-1')
     expect(consumed).toBe(true)
     const decision = await p
     expect(decision).toBe('deny')
+    await a.flush()
+  })
+
+  it('拍板权归当初被问的那个 chat:别人发同一个 hash 不算数,条目还挂着(CC 桌宠 Phase B 安全修)', async () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    const p = a.askUser('chat-1', 'test prompt', 'qq111', 60_000)
+    // hash 现在经 GET /v1/companion/pet 对所有 trusted 调用方可见 —— 一个
+    // 别的 chat 读到它,不该能替 chat-1 批准。
+    expect(a.handlePermissionReply('y qq111', 'chat-2')).toBe(false)
+    // 不带来源的老调用姿势同样不算数(条目带 meta)。
+    expect(a.handlePermissionReply('y qq111')).toBe(false)
+    // 条目仍然挂着,主人自己还能拍。
+    expect(a.handlePermissionReply('n qq111', 'chat-1')).toBe(true)
+    expect(await p).toBe('deny')
     await a.flush()
   })
 
@@ -368,4 +383,121 @@ describe('makeIlinkAdapter (composed)', () => {
     expect(until).toBeGreaterThan(before + 59 * 60_000)
     expect(until).toBeLessThan(before + 61 * 60_000)
   })
+
+  describe('permission surface for the desktop (CC 桌宠 Phase B)', () => {
+    it('askUser 注册后 listPendingPermissions 能看到 prompt;resolvePermission 走同一个 consume', async () => {
+      const adapter = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+      const p = adapter.askUser('owner', 'Bash: ls', 'abcde', 60_000)
+      expect(adapter.listPendingPermissions()).toMatchObject([{ hash: 'abcde', chatId: 'owner', prompt: 'Bash: ls' }])
+      expect(adapter.resolvePermission('abcde', 'deny')).toBe(true)
+      expect(await p).toBe('deny')
+      expect(adapter.listPendingPermissions()).toEqual([])
+      expect(adapter.resolvePermission('abcde', 'allow')).toBe(false)   // 已经没了
+    })
+
+    // 自改流水线要的口子:只登记、不发卡。askUser 外发失败时会 pending.fail
+    // 把条目删掉(一轮工具调用该这样),但自改还有桌面卡和 `--approve` 两条路,
+    // 所以它自己登记、自己发卡、发不出去也不动条目(2026-09-18 真机 errcode=-2)。
+    it('registerPendingPermission 只登记不发卡;条目和 askUser 的进同一个登记处', async () => {
+      const adapter = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+      const sent: string[] = []
+      const spy = vi.spyOn(adapter, 'sendMessage').mockImplementation(async (_c, t) => { sent.push(t); return { msgId: 'm' } })
+      const p = adapter.registerPendingPermission('sc001', 60_000, { chatId: 'owner', prompt: '自改 #ab 请拍板' })
+      expect(sent).toEqual([])   // 一张卡都没发
+      expect(adapter.listPendingPermissions()).toMatchObject([{ hash: 'sc001', chatId: 'owner', prompt: '自改 #ab 请拍板' }])
+      expect(adapter.pendingPermissionCodeOf('sc001')).toMatch(/^0[1-9]$/)
+      expect(adapter.resolvePermission('sc001', 'allow')).toBe(true)
+      expect(await p).toBe('allow')
+      spy.mockRestore(); await adapter.flush()
+    })
+
+    it('sweepPendingPermissions 把过期的落成 timeout', async () => {
+      const adapter = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+      const p = adapter.registerPendingPermission('sc002', 0, { chatId: 'owner', prompt: 'p' })
+      adapter.sweepPendingPermissions()
+      expect(await p).toBe('timeout')
+      expect(adapter.listPendingPermissions()).toEqual([])
+      await adapter.flush()
+    })
+  })
 })
+
+describe('微信拍板的省事路径(2026-09-10:手机上「y og0ez」太难打)', () => {
+  function newStateDir(): string { return mkdtempSync(join(tmpdir(), 'wcc-state-')) }
+  const acct: Account = { id: 'A1', botId: 'b', userId: 'ubot', baseUrl: 'https://x', token: 'T', syncBuf: '' }
+  it('卡片统一带「怎么回」一行,码是两位数', async () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    const sent: string[] = []
+    const spy = vi.spyOn(a, 'sendMessage').mockImplementation(async (_c, text) => { sent.push(text); return { msgId: 'm' } })
+    void a.askUser('chat-1', '✋ 要批这个', 'k3x9z', 120_000)
+    expect(sent[0]).toContain('✋ 要批这个')
+    expect(sent[0]).toContain('回「y」放行、「n」拒绝')
+    expect(sent[0]).toMatch(/「y 0[1-9]」/)
+    expect(sent[0]).toContain('120 秒内有效')
+    spy.mockRestore(); await a.flush()
+  })
+  it('只有一条待批:回「y」不带码就放行;别的 chat 回「y」不算', async () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    vi.spyOn(a, 'sendMessage').mockResolvedValue({ msgId: 'm' })
+    const p = a.askUser('chat-1', 'p', 'aaaaa', 60_000)
+    expect(a.handlePermissionReply('y', 'chat-2')).toBe(false)   // chat-2 名下没有待批 → 当普通消息
+    expect(a.handlePermissionReply('同意', 'chat-1')).toBe(true)
+    expect(await p).toBe('allow')
+    await a.flush()
+  })
+  it('没有待批时「y」不是拍板,交给后面的中间件', () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    expect(a.handlePermissionReply('y', 'chat-1')).toBe(false)
+  })
+  it('多条待批:不带码 → 回一条清单让主人带码,两条都还挂着;「n 02」按码拒绝第二条', async () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    const sent: string[] = []
+    vi.spyOn(a, 'sendMessage').mockImplementation(async (_c, text) => { sent.push(text); return { msgId: 'm' } })
+    const p1 = a.askUser('chat-1', 'Bash: rm -rf ./tmp', 'h0001', 60_000)
+    const p2 = a.askUser('chat-1', 'Write: notes.md', 'h0002', 60_000)
+    expect(a.handlePermissionReply('y', 'chat-1')).toBe(true)      // 吃掉了,但没批
+    expect(sent[sent.length - 1]).toContain('有 2 条在等你')
+    expect(sent[sent.length - 1]).toContain('01:Bash: rm -rf ./tmp')
+    expect(sent[sent.length - 1]).toContain('02:Write: notes.md')
+    expect(a.listPendingPermissions()).toHaveLength(2)
+    expect(a.handlePermissionReply('n 02', 'chat-1')).toBe(true)
+    expect(await p2).toBe('deny')
+    expect(a.handlePermissionReply('y01', 'chat-1')).toBe(true)
+    expect(await p1).toBe('allow')
+    await a.flush()
+  })
+  it('未知的码不认', () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    expect(a.handlePermissionReply('y 42', 'chat-1')).toBe(false)
+  })
+})
+
+describe('引用卡片回「y」', () => {
+  function newStateDir(): string { return mkdtempSync(join(tmpdir(), 'wcc-state-')) }
+  const acct: Account = { id: 'A1', botId: 'b', userId: 'ubot', baseUrl: 'https://x', token: 'T', syncBuf: '' }
+  it('多条待批时引用其中一张回「y」,批的就是那张;引用的不是卡片则退回按条数处理', async () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    const sent: string[] = []
+    vi.spyOn(a, 'sendMessage').mockImplementation(async (_c, text) => { sent.push(text); return { msgId: 'm' } })
+    const p1 = a.askUser('chat-1', 'Bash: rm -rf ./tmp', 'h0001', 60_000)
+    const p2 = a.askUser('chat-1', 'Write: notes.md', 'h0002', 60_000)
+    const card2 = sent[1]!
+    expect(a.handlePermissionReply('y', 'chat-1', card2)).toBe(true)
+    expect(await p2).toBe('allow')
+    expect(a.listPendingPermissions().map(x => x.hash)).toEqual(['h0001'])
+    // 引用的是无关消息:名下只剩一条,照「一条就是它」
+    expect(a.handlePermissionReply('n', 'chat-1', '昨天的天气真好')).toBe(true)
+    expect(await p1).toBe('deny')
+    await a.flush()
+  })
+  it('引用卡片但从别的 chat 回,不算', async () => {
+    const a = makeIlinkAdapter({ stateDir: newStateDir(), accounts: [acct], ...newAdapterDeps() })
+    const sent: string[] = []
+    vi.spyOn(a, 'sendMessage').mockImplementation(async (_c, text) => { sent.push(text); return { msgId: 'm' } })
+    void a.askUser('chat-1', 'Bash: ls', 'h0009', 60_000)
+    expect(a.handlePermissionReply('y', 'chat-2', sent[0])).toBe(false)
+    expect(a.listPendingPermissions()).toHaveLength(1)
+    await a.flush()
+  })
+})
+

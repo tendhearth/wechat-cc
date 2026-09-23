@@ -79,6 +79,8 @@ export function pageHtml(token: string): string {
   <label class="row"><span><b>回复拆成小气泡</b><small>像真人一样分几条发</small></span><input type="checkbox" class="switch" id="f-split"></label>
   <label class="row"><span><b>表情包</b></span><input type="checkbox" class="switch" id="f-stickers"></label>
   <label class="row"><span><b>每日打猎</b><small>早上主动分享它发现的东西</small></span><input type="checkbox" class="switch" id="f-hunt"></label>
+  <label class="row"><span><b>让 CC 自己画画</b><small>CC 有感觉时用你的电脑画画,只存在本机。首次需下载约 5GB</small></span><input type="checkbox" class="switch" id="f-atelier"></label>
+  <div class="say" id="atelier-status" hidden></div>
   <div class="say">💬 也可以直接说:「别拆分回复了」「关心档位调低点」</div>
 </section>
 
@@ -90,9 +92,33 @@ export function pageHtml(token: string): string {
   <label class="row" id="row-devices" hidden><span><b>已配对设备</b><small id="devices-count"></small></span><button type="button" id="forget-devices" style="font:inherit;font-size:12.5px;padding:5px 12px;border:1.5px solid var(--line);border-radius:999px;background:var(--card);color:var(--accent);cursor:pointer">全部忘掉</button></label>
 </section>
 
+<section id="sec-models">
+  <h2>模型与后端</h2>
+  <p class="hint">CC 有哪些大脑、各自通不通。这里改的是全局默认;单个对话换脑子在微信里发 /api /agy /cc</p>
+  <div id="models-table"></div>
+  <label class="row"><span><b>默认大脑</b><small>没在微信里单独切过的对话、还有 CC 主动找你时,用这家。改完 CC 会自己重启(十几秒)</small></span><select id="f-default-provider"></select></label>
+  <div class="row" style="display:block;border-top:1px dashed var(--line);padding-top:10px">
+    <b>自配 API(/api)</b><small style="color:var(--soft)">OpenAI 兼容网关 —— DeepSeek / Kimi / Qwen 这类都从这扇门进</small>
+    <label class="row"><span><b>地址</b><small>以 /v1 结尾</small></span><input type="text" id="f-api-base" style="width:190px" placeholder="https://…/v1"></label>
+    <label class="row"><span><b>默认模型</b><small>没按对话钉时用它</small></span><input type="text" id="f-api-model" style="width:150px" placeholder="DeepSeek"></label>
+    <label class="row"><span><b>API Key</b><small id="api-key-hint"></small></span><input type="password" id="f-api-key" style="width:150px" placeholder="sk-…" autocomplete="off"></label>
+    <button class="save" id="save-api-key">保存 Key(之后重启一下 CC)</button>
+    <div style="border-top:1px dashed var(--line);padding-top:10px;margin-top:10px">
+      <b>短名</b><small style="color:var(--soft);display:block">起了短名,微信里 /api ds 就切;网关上的原名照样能用</small>
+      <div id="alias-list" style="margin:6px 0"></div>
+      <div style="display:flex;gap:6px;align-items:center"><input type="text" id="f-alias-name" style="width:70px" placeholder="ds"><span>→</span><input type="text" id="f-alias-model" style="width:120px" placeholder="DeepSeek"><button type="button" class="seg-btn" id="add-alias" style="font:inherit;font-size:13px;padding:6px 12px;border:1.5px solid var(--line);border-radius:8px;background:#fff;color:var(--accent)">加</button></div>
+    </div>
+  </div>
+  <label class="row"><span><b>后台评估用</b><small>记忆整理 / 辩论主持 / introspect 这些幕后活儿走哪家;auto = 偏好序</small></span><select id="f-cheap"></select></label>
+  <div class="row" style="display:block;border-top:1px dashed var(--line);padding-top:10px">
+    <b>非管理员能用哪些</b><small style="color:var(--soft);display:block">信任/访客对话只能切到勾选的;🔑共享钥匙的(agy)对访客永远不开放</small>
+    <div id="tp-list" style="margin-top:6px"></div>
+  </div>
+  <div class="say">💬 也可以直接跟 CC 说:「换成 DeepSeek」「用 opus 5」「你现在是哪个模型」</div>
+</section>
+
 <section>
   <details><summary>⚙️ 技术详情(好奇再点)</summary>
-    <label class="row"><span><b>模型</b><small>CC 用哪个大脑思考</small></span><input type="text" id="f-model" style="width:190px"></label>
     <label class="row"><span><b>知识库</b><small>长期记忆检索</small></span><input type="checkbox" class="switch" id="f-knowledge"></label>
     <label class="row"><span><b>社交能力</b><small>替你和别人的 CC 打交道</small></span><input type="checkbox" class="switch" id="f-social"></label>
     <label class="row"><span><b>开机自启</b></span><input type="checkbox" class="switch" id="f-autostart"></label>
@@ -131,16 +157,124 @@ function wireSwitch(id, kind, key) {
 function wireText(id, fn) {
   $(id).addEventListener("change", e => { const v = e.target.value.trim(); if (v) fn(v) })
 }
+// 画笔下载状态 → 人话(与 daemon 的 formatAtelierModelStatus 保持一致)。下载在
+// 电脑上跑,这里只是把电脑写下的进度显示出来。
+var atelierStatus = null, atelierPoll = null;
+function atelierLabel(st) {
+  if (!st) return { label: "", done: false, failed: false }
+  if (st.state === "checking") return { label: "正在检查画笔…", done: false, failed: false }
+  if (st.state === "downloading") { if (!(st.total > 0)) return { label: "正在下载画笔…", done: false, failed: false }; var pct = Math.min(100, Math.round(st.received / st.total * 100)); return { label: "正在下载画笔… " + pct + "%", done: false, failed: false } }
+  if (st.state === "ready") return { label: "画笔就绪 ✓", done: true, failed: false }
+  if (st.state === "failed") return { label: "准备失败,点此重试", done: false, failed: true }
+  return { label: "", done: false, failed: false }
+}
+function showAtelier(st) {
+  atelierStatus = st || null
+  var el = $("atelier-status"), r = atelierLabel(st)
+  if (!r.label) { el.hidden = true; return }
+  el.hidden = false; el.textContent = r.label; el.style.cursor = r.failed ? "pointer" : ""
+}
+async function pollAtelier() {
+  var s = await sapi("/set/api/state"); if (!s.ok) return
+  var st = s.atelier && s.atelier.model_status; showAtelier(st)
+  var r = atelierLabel(st); if ((r.done || r.failed) && atelierPoll) { clearInterval(atelierPoll); atelierPoll = null }
+}
+function startAtelierPoll() { if (atelierPoll) clearInterval(atelierPoll); atelierPoll = setInterval(pollAtelier, 2000) }
+// ── 模型与后端 ─────────────────────────────────────────────────────────
+var MODEL_KEY = { claude: "model", agy: "agyModel", cursor: "cursorModel", openai: "openaiModel", gemini: "geminiModel" };
+var PROVIDER_NAME = { claude: "Claude", agy: "Gemini(订阅 agy)", cursor: "Cursor(订阅)", codex: "Codex", openai: "自配 API(/api)", gemini: "Gemini(API key)" };
+function esc(t) { return String(t == null ? "" : t).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] }) }
+function statusText(p) {
+  if (p.status === "ok") return "✓ 通" + (p.latency_ms != null ? "(" + p.latency_ms + "ms)" : "")
+  if (p.status === "broken") return "✗ 不通" + (p.error ? ":" + p.error : "")
+  if (p.status === "unknown") return "已接入,还没测过(桌面「大脑」卡可测)"
+  return "未接入" + (p.hint ? " · " + p.hint : "")
+}
+function renderModels(m) {
+  if (!m) return
+  var html = ""
+  for (var i = 0; i < m.providers.length; i++) {
+    var p = m.providers[i], key = MODEL_KEY[p.id]
+    var isDefault = p.id === m.default_provider
+    var input = key
+      ? '<input type="text" data-model-key="' + key + '" value="' + esc(p.model || "") + '" style="width:150px" placeholder="默认">'
+      : '<small style="color:var(--soft)">' + esc(p.model || (p.id === "codex" ? "同 Claude 那格" : "—")) + '</small>'
+    var shared = (m.shared_token || []).indexOf(p.id) >= 0
+    html += '<label class="row"><span><b>' + esc(PROVIDER_NAME[p.id] || p.id) + (isDefault ? ' <small style="display:inline;color:var(--accent)">默认</small>' : "") + (shared ? ' <small style="display:inline" title="所有对话共用一把 trusted 钥匙,不能按对话分权限">🔑共享钥匙</small>' : "") + '</b><small>' + esc(statusText(p)) + '</small></span>' + input + '</label>'
+  }
+  $("models-table").innerHTML = html
+  // 非管理员能用哪些(勾选 = 允许;全勾 = 不限制)
+  var tp = m.trusted_providers, tpHtml = ""
+  for (var q = 0; q < m.providers.length; q++) {
+    var pp = m.providers[q]; if (!pp.registered) continue
+    var on = tp == null || tp.indexOf(pp.id) >= 0
+    tpHtml += '<label style="display:inline-flex;align-items:center;gap:4px;margin:2px 10px 2px 0"><input type="checkbox" data-tp="' + esc(pp.id) + '"' + (on ? " checked" : "") + '> ' + esc(PROVIDER_NAME[pp.id] || pp.id) + '</label>'
+  }
+  $("tp-list").innerHTML = tpHtml || '<small style="color:var(--soft)">没有已注册的 provider</small>'
+  var tps = $("tp-list").querySelectorAll("input[data-tp]")
+  for (var w = 0; w < tps.length; w++) tps[w].addEventListener("change", function () {
+    var picked = [], all = $("tp-list").querySelectorAll("input[data-tp]")
+    for (var x = 0; x < all.length; x++) if (all[x].checked) picked.push(all[x].dataset.tp)
+    apply("set_config", { key: "trusted_providers", value: picked.length === all.length ? "all" : (picked.join(",") || "none") }, "已更新非管理员可用范围 ✓")
+  })
+  var inputs = $("models-table").querySelectorAll("input[data-model-key]")
+  for (var j = 0; j < inputs.length; j++) (function (el) {
+    el.addEventListener("change", function () { var v = el.value.trim(); if (v) apply("set_config", { key: el.dataset.modelKey, value: v }) })
+  })(inputs[j])
+  $("f-api-base").value = m.openai.base_url || ""
+  $("f-api-model").value = m.openai.model || ""
+  $("api-key-hint").textContent = m.openai.has_key ? "已配好(只能覆盖,不显示)" : "还没配 —— 配好才会接入"
+  var al = "", names = Object.keys(m.openai.aliases || {}).sort()
+  for (var k = 0; k < names.length; k++) al += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0"><span><b>' + esc(names[k]) + '</b> → ' + esc(m.openai.aliases[names[k]]) + '</span><button type="button" data-del-alias="' + esc(names[k]) + '" style="font:inherit;font-size:12px;padding:3px 10px;border:1.5px solid var(--line);border-radius:999px;background:var(--card);color:var(--soft)">删</button></div>'
+  $("alias-list").innerHTML = al || '<small style="color:var(--soft)">还没有短名</small>'
+  var dels = $("alias-list").querySelectorAll("button[data-del-alias]")
+  for (var d = 0; d < dels.length; d++) (function (b) {
+    b.addEventListener("click", async function () { if (await apply("del_alias", { alias: b.dataset.delAlias }, "短名已删 ✓")) reloadModels() })
+  })(dels[d])
+  var dsel = $("f-default-provider"), dopts = ""
+  for (var y = 0; y < m.providers.length; y++) {
+    var dp = m.providers[y]; if (!dp.registered && dp.id !== m.default_provider) continue
+    // 访客不可用 = 共享钥匙的 + 约束不住自己工具面的(ACP 的 cursor);🔑 徽章只跟前者。
+    var dshared = (m.shared_token || []).indexOf(dp.id) >= 0
+    var dblocked = (m.guest_blocked || []).indexOf(dp.id) >= 0
+    dopts += '<option value="' + esc(dp.id) + '"' + (dp.id === m.default_provider ? " selected" : "") + '>' + esc(PROVIDER_NAME[dp.id] || dp.id) + (dshared ? "(共享钥匙,访客不可用)" : dblocked ? "(访客不可用)" : "") + (dp.registered ? "" : "(未接入)") + '</option>'
+  }
+  dsel.innerHTML = dopts
+  var sel = $("f-cheap"), opts = ["auto"]
+  for (var r = 0; r < m.providers.length; r++) if (m.providers[r].registered) opts.push(m.providers[r].id)
+  if (opts.indexOf(m.cheap) < 0) opts.push(m.cheap)
+  sel.innerHTML = opts.map(function (o) { return '<option value="' + esc(o) + '"' + (o === m.cheap ? " selected" : "") + '>' + esc(o === "auto" ? "auto(偏好序)" : (PROVIDER_NAME[o] || o)) + '</option>' }).join("")
+}
+async function reloadModels() { var s = await sapi("/set/api/state"); if (s.ok) renderModels(s.models) }
+wireText("f-api-base", v => apply("set_config", { key: "openaiBaseUrl", value: v }))
+wireText("f-api-model", v => apply("set_config", { key: "openaiModel", value: v }))
+$("save-api-key").addEventListener("click", async function () {
+  var key = $("f-api-key").value.trim(); if (!key) { toast("先填 Key"); return }
+  var ok = await apply("set_llm_key", { provider: "openai", key: key, base_url: $("f-api-base").value.trim(), model: $("f-api-model").value.trim() }, "Key 已存好,重启 CC 后接入 ✓")
+  if (ok) { $("f-api-key").value = ""; reloadModels() }
+})
+$("add-alias").addEventListener("click", async function () {
+  var a = $("f-alias-name").value.trim(), mm = $("f-alias-model").value.trim()
+  if (!a || !mm) { toast("短名和模型名都要填"); return }
+  if (await apply("set_alias", { alias: a, model: mm }, "短名已加 ✓")) { $("f-alias-name").value = ""; $("f-alias-model").value = ""; reloadModels() }
+})
+$("f-cheap").addEventListener("change", function (e) { apply("set_config", { key: "cheap_eval_provider", value: e.target.value }, "后台评估改走 " + e.target.value + " ✓") })
+$("f-default-provider").addEventListener("change", async function (e) {
+  var v = e.target.value
+  var ok = await apply("set_config", { key: "provider", value: v }, "默认大脑改为 " + (PROVIDER_NAME[v] || v) + ",CC 重启中(十几秒)…")
+  if (!ok) reloadModels()
+})
+
 async function load() {
   const s = await sapi("/set/api/state")
   if (!s.ok) { toast("读取失败"); return }
+  renderModels(s.models)
   $("f-name").value = s.name || ""
   $("f-botname").value = s.config.bot_name || ""
   $("f-persona").value = s.persona || ""
   $("f-split").checked = s.prefs.split !== false
   $("f-stickers").checked = s.prefs.stickers !== false
   $("f-hunt").checked = s.prefs.hunt !== false
-  $("f-model").value = s.config.model || ""
   $("f-knowledge").checked = s.config.knowledge_enabled === true
   $("f-social").checked = s.config.social_enabled === true
   $("f-autostart").checked = s.config.autoStart === true
@@ -155,7 +289,23 @@ async function load() {
   }
   const care = s.prefs.care || "low"
   for (const b of $("f-care").querySelectorAll("button")) b.classList.toggle("on", b.dataset.v === care)
+  const am = s.config["companion.atelier_mode"]
+  $("f-atelier").checked = am === "private" || am === "share"
+  const ast = s.atelier && s.atelier.model_status; showAtelier(ast)
+  const ar = atelierLabel(ast); if ($("f-atelier").checked && !ar.done && !ar.failed) startAtelierPoll()
 }
+$("f-atelier").addEventListener("change", async e => {
+  const on = e.target.checked
+  const ok = await apply("set_config", { key: "companion.atelier_mode", value: on ? "private" : "off" }, on ? "开了,正在准备画笔… ✓" : "已关闭")
+  if (!ok) { e.target.checked = !on; return }
+  if (on) { showAtelier({ state: "checking" }); startAtelierPoll() }
+  else { if (atelierPoll) { clearInterval(atelierPoll); atelierPoll = null } showAtelier(null) }
+})
+$("atelier-status").addEventListener("click", async () => {
+  if (!atelierLabel(atelierStatus).failed) return
+  await apply("set_config", { key: "companion.atelier_mode", value: "off" })
+  if (await apply("set_config", { key: "companion.atelier_mode", value: "private" }, "重新开始准备画笔… ✓")) { showAtelier({ state: "checking" }); startAtelierPoll() }
+})
 $("f-care").addEventListener("click", async e => {
   const b = e.target.closest("button"); if (!b) return
   if (await apply("set_pref", { key: "care", value: b.dataset.v })) {
@@ -164,7 +314,6 @@ $("f-care").addEventListener("click", async e => {
 })
 wireText("f-name", v => apply("set_name", { name: v }, "以后就这么称呼你 ✓"))
 wireText("f-botname", v => apply("set_config", { key: "bot_name", value: v }))
-wireText("f-model", v => apply("set_config", { key: "model", value: v }))
 $("save-persona").addEventListener("click", () => apply("set_persona", { content: $("f-persona").value }, "性格已更新 ✓"))
 wireSwitch("f-split", "pref", "split")
 wireSwitch("f-stickers", "pref", "stickers")
@@ -348,16 +497,45 @@ export function phoneHtml(token: string, remote: { relay: string; id: string } |
   #pairbar button { font:inherit; font-size:12.5px; margin-left:8px; padding:4px 12px; border:1.5px solid var(--accent); border-radius:999px; background:var(--accent); color:#fff }
   #toast { position:fixed; left:50%; bottom:76px; transform:translateX(-50%); background:var(--ink); color:#fff; padding:7px 16px; border-radius:16px; font-size:12.5px; opacity:0; transition:.25s; pointer-events:none }
   #toast.show { opacity:1 }
+  .pres { display:flex; align-items:center; gap:8px; padding:0 16px 6px; color:var(--soft); font-size:13px }
+  .pres b { color:var(--ink); font-weight:600 }
+  .pres button { margin-left:auto; font:inherit; font-size:12px; padding:3px 10px; border:1.5px solid var(--line); border-radius:999px; background:var(--card); color:var(--soft) }
+  #banner { margin:6px 14px; padding:8px 12px; background:rgba(176,86,58,.10); border-radius:10px; font-size:12.5px; color:var(--accent) }
+  .ev { display:flex; gap:10px } .ev .k { font-size:18px; width:26px; text-align:center; flex:none }
+  .ev .tx { flex:1; min-width:0 } .ev .tx b { display:block; font-size:14px; font-weight:600 }
+  .ev .tx p { margin:3px 0 0; font-size:13px; color:var(--soft); white-space:pre-wrap; word-break:break-word }
+  .ev .tx small { color:var(--soft); font-size:11.5px }
+  .ev .tx a { color:var(--accent) }
+  .ev .pc { margin-top:6px } .ev .pc svg { width:100%; height:auto; border:1.5px solid var(--line); border-radius:10px }
+  .more { display:block; margin:6px auto 0; font:inherit; font-size:13px; padding:7px 18px; border:1.5px solid var(--line); border-radius:999px; background:var(--card); color:var(--soft) }
+  .sec { margin-top:18px }
 </style></head><body>
 <header><h1>🐻 CC</h1><div class="sub" id="sub">随身小窗 · 数据都在你自己电脑上</div></header>
 <div id="pairbar" hidden>这个链接 10 分钟就过期<button id="pairbtn">把 CC 带在身上</button></div>
-<div class="pane on" id="p-todos"><div id="todos"></div></div>
-<div class="pane" id="p-portrait"><div class="portrait" id="portrait"></div></div>
-<div class="pane" id="p-stickers"><div class="stgrid" id="stickers"></div></div>
+<div class="pane on" id="p-today">
+  <div class="pres" id="pres"><span>现在:</span><b id="pres-txt">不知道</b><button id="refresh">刷新</button></div>
+  <div id="banner" hidden></div>
+  <div id="feed"></div>
+</div>
+<div class="pane" id="p-pocket">
+  <div class="grp">待办</div><div id="todos"></div>
+  <div class="sec"><div class="grp">CC 画的你</div><div class="portrait" id="portrait"></div></div>
+  <div class="sec"><div class="grp">表情</div><div class="stgrid" id="stickers"></div></div>
+</div>
+<div class="pane" id="p-matters">
+  <div id="m-list"><div class="empty">正在读…</div></div>
+  <div id="m-detail" hidden>
+    <button id="m-back" class="more" type="button">← 全部</button>
+    <div class="grp" id="m-title"></div>
+    <div id="m-events"></div>
+    <div class="card" id="m-say-box"><textarea id="m-say" rows="2" placeholder="接着说…" style="width:100%;font:inherit;border:1px solid var(--line);border-radius:8px;padding:8px;box-sizing:border-box"></textarea>
+      <button id="m-send" class="done-btn" type="button" style="margin-top:6px">发送</button></div>
+  </div>
+</div>
 <nav>
-  <button data-p="todos" class="on"><span class="i">📋</span>待办</button>
-  <button data-p="portrait"><span class="i">🖼</span>CC画的你</button>
-  <button data-p="stickers"><span class="i">🐻</span>表情</button>
+  <button data-p="today" class="on"><span class="i">🌤</span>今天</button>
+  <button data-p="pocket"><span class="i">🎒</span>口袋</button>
+  <button data-p="matters"><span class="i">📁</span>一件事</button>
   <button id="nav-set"><span class="i">⚙️</span>设置</button>
 </nav>
 <div id="toast"></div>
@@ -393,6 +571,59 @@ document.querySelectorAll("nav button[data-p]").forEach(function(b) {
   })
 })
 document.getElementById("nav-set").addEventListener("click", function(){ ccNav("/set") })
+// ── 「一件事」:与桌面同一份列表、同一套语义(GET /m/api/matters|matter, POST /m/api/matter/say)
+var M_STATUS = { open: "进行中", replied: "已答复", done: "已了结", archived: "已归档" }
+var M_KIND = { task: "任务", chat: "对话", companion: "陪伴" }
+var mCurrent = null, mPoll = null
+function loadMatters() {
+  api("/m/api/matters?status=open,replied,done").then(function(r){ return r.json() }).then(function(r) {
+    var el = document.getElementById("m-list")
+    if (!r.ok) { el.innerHTML = '<div class="empty">' + (r.error === "matters_not_wired" ? "这台还没开「一件事」" : "读不到") + '</div>'; return }
+    if (!r.matters.length) { el.innerHTML = '<div class="empty">还没有事——微信或桌面上交代一件就会出现在这里</div>'; return }
+    var h = ""
+    r.matters.forEach(function(m) {
+      if (m.kind === "companion") return
+      h += '<div class="card todo" data-mid="' + esc(m.id) + '"><div class="tx"><b>' + esc(m.title) + '</b><small>' + esc(M_KIND[m.kind] || m.kind) + ' · ' + esc(M_STATUS[m.status] || m.status) + (m.projectPath ? ' · ' + esc(m.projectPath.split("/").pop()) : '') + '</small></div></div>'
+    })
+    el.innerHTML = h || '<div class="empty">还没有事</div>'
+  }).catch(function(){ document.getElementById("m-list").innerHTML = '<div class="empty">网络不通</div>' })
+}
+function renderMatter(d) {
+  document.getElementById("m-title").textContent = d.matter.title + " · " + (M_STATUS[d.matter.status] || d.matter.status)
+  var h = ""
+  ;(d.events || []).forEach(function(e) {
+    if (e.kind !== "user" && e.kind !== "text" && e.kind !== "error" && e.kind !== "system") return
+    h += '<div class="card ev"><div class="k">' + (e.kind === "user" ? "你" : e.kind === "text" ? "CC" : "·") + '</div><div class="tx"><p>' + esc(e.text) + '</p><small>' + esc(ago(new Date(e.createdAt).toISOString())) + '</small></div></div>'
+  })
+  if (!h) h = '<div class="empty">' + (d.matter.kind === "chat" ? "对话的内容在微信 / 桌面里;在这里说的话会直接送给 CC" : "还没有对话记录") + '</div>'
+  document.getElementById("m-events").innerHTML = h
+  document.getElementById("m-say-box").hidden = d.matter.kind === "companion" || d.matter.status === "archived"
+}
+function openMatter(id) {
+  mCurrent = id
+  document.getElementById("m-list").hidden = true; document.getElementById("m-detail").hidden = false
+  api("/m/api/matter?id=" + encodeURIComponent(id)).then(function(r){ return r.json() }).then(function(d) {
+    if (!d.ok) { toast(d.error === "matter_not_found" ? "这件事不在了" : "读不到"); return }
+    renderMatter(d)
+  }).catch(function(){ toast("网络不通") })
+}
+function pollMatter(times) {
+  clearTimeout(mPoll)
+  if (!mCurrent || times <= 0) return
+  mPoll = setTimeout(function() { if (!mCurrent) return; openMatter(mCurrent); pollMatter(times - 1) }, 3000)
+}
+document.getElementById("m-list").addEventListener("click", function(ev) { var c = ev.target.closest("[data-mid]"); if (c) openMatter(c.dataset.mid) })
+document.getElementById("m-back").addEventListener("click", function() { mCurrent = null; clearTimeout(mPoll); document.getElementById("m-detail").hidden = true; document.getElementById("m-list").hidden = false; loadMatters() })
+document.getElementById("m-send").addEventListener("click", function() {
+  var ta = document.getElementById("m-say"), text = ta.value.trim()
+  if (!mCurrent || !text) return
+  api("/m/api/matter/say", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: mCurrent, text: text }) })
+    .then(function(r){ return r.json() }).then(function(r) {
+      if (r.ok) { ta.value = ""; toast(r.result && r.result.kind === "chat" ? "CC 回了" : "交代了,等它回"); if (r.result && r.result.kind === "chat" && r.result.reply) { var ev = document.createElement("div"); ev.className = "card ev"; ev.innerHTML = '<div class="k">CC</div><div class="tx"><p>' + esc(r.result.reply) + '</p></div>'; document.getElementById("m-events").appendChild(ev) } else pollMatter(5) }
+      else toast(r.error === "workbench_busy" ? "那个文件夹正有别的事在做" : r.error === "matter_say_unsupported" ? "这件事不能在这里接着说" : "没送出去")
+    }).catch(function(){ toast("网络不通") })
+})
+document.querySelector('nav button[data-p="matters"]').addEventListener("click", function(){ if (!mCurrent) loadMatters() })
 function render(s) {
   var t = document.getElementById("todos")
   var groups = {}
@@ -444,12 +675,120 @@ document.getElementById("todos").addEventListener("click", function(ev) {
     .then(function(r){ return r.json() }).then(function(r) { if (r.ok) { toast(b.dataset.st === "active" ? "捞回来了" : "划掉了 ✓"); load() } else toast("没改成") })
     .catch(function(){ toast("网络不通") })
 })
+var HOME_KEY = "cc.home.v1"
+var KIND_ICON = { hunt: "🎯", visit: "🏡", postcard: "💌", thought: "💭", chat_day: "💬" }
+var homeState = null
+// I5:presence 没有独立的过期机制 —— 页面一直开着,只有 load/visibilitychange/
+// 手动刷新才会重拉。这里给它记一个「拉到的时间」,过 TTL 就自己塌成「不知道」,
+// 而不是让一条越来越旧的「现在」一直挂在屏幕上。TTL 跟 companion-presence.ts
+// 的 ACTIVE_WINDOW_MS 对齐(3 分钟)。
+var PRESENCE_TTL_MS = 3 * 60 * 1000
+var presenceAt = null
+function ago(iso) {
+  var d = Math.max(0, Date.now() - Date.parse(iso)) / 1000
+  if (d < 60) return "刚刚"
+  if (d < 3600) return Math.floor(d / 60) + " 分钟前"
+  if (d < 86400) return Math.floor(d / 3600) + " 小时前"
+  return Math.floor(d / 86400) + " 天前"
+}
+function readCache() { try { var s = localStorage.getItem(HOME_KEY); return s ? JSON.parse(s) : null } catch (e) { return null } }
+function writeCache(s) { try { localStorage.setItem(HOME_KEY, JSON.stringify(s)) } catch (e) {} }
+function evHtml(e) {
+  var h = '<div class="card ev"><div class="k">' + (KIND_ICON[e.kind] || "•") + '</div><div class="tx"><b>' + esc(e.title) + '</b>'
+  if (e.note) h += '<p>' + esc(e.note) + '</p>'
+  // M3:esc() 只挡得住 HTML 特殊字符,挡不住 javascript: 这种协议头 —— href
+  // 的安全性只靠三个文件外的 hunt-catch.ts URL_RE(只收 http(s)://)撑着,
+  // 这里再本地兜一道,只在确实是 http(s) 链接时才输出 <a>。
+  if (e.ref && e.ref.url && (e.ref.url.indexOf("https://") === 0 || e.ref.url.indexOf("http://") === 0)) {
+    h += '<p><a href="' + esc(e.ref.url) + '" target="_blank" rel="noopener">打开链接</a></p>'
+  }
+  if (e.ref && e.ref.image_svg) h += '<div class="pc">' + e.ref.image_svg + '</div>'
+  // I3:后端已经用伙伴时区把 hhmm 拼好了 —— 页面不再用 new Date(iso).getHours()
+  // 自己按手机时区算一遍(隧道出门时两地隔一个时区,算出来的钟点会串到另一天)。
+  h += '<small>' + esc(e.hhmm) + '</small></div></div>'
+  return h
+}
+function presenceTtlCheck() {
+  if (presenceAt !== null && Date.now() - presenceAt > PRESENCE_TTL_MS) {
+    presenceAt = null
+    document.getElementById("pres-txt").textContent = "不知道"
+  }
+}
+function renderFeed(s, stale) {
+  var f = document.getElementById("feed")
+  // presence:只有这次真拉到的才显示;缓存里的永远不渲染 —— 它说的是「现在」。
+  var pt = document.getElementById("pres-txt")
+  if (!stale && s.presence) {
+    presenceAt = Date.now()
+    // C1:kind === "idle" 时 label 是空串(桌宠那边靠 kind 自己表达闲着,熊
+    // 本身就是信号);手机页把 label 当作现成的一句话直接拼,空串会显示成
+    // 光秃秃的「现在:」,比「不知道」还糟——分不清是真没数据还是渲染坏了。
+    pt.textContent = (s.presence.activity.label || "在家待着") + (s.presence.presence === "ok" ? "" : "(" + (s.presence.presence === "offline" ? "断线" : "有点不对劲") + ")")
+  } else {
+    presenceAt = null
+    pt.textContent = "不知道"
+  }
+  var h = ""
+  var evs = s.events || []
+  var degradedAll = s.sources_degraded && s.sources_degraded.length === 3
+  // I2:collectSources 本来就是为「一两个源挂了,剩下的照常显示」写的 ——
+  // 只在三个全挂时才提示,等于把这套设计的价值扔了。挂一两个也要说一声。
+  var degradedSome = !degradedAll && s.sources_degraded && s.sources_degraded.length > 0
+  if (degradedSome) h += '<div class="empty" style="padding:8px 4px">有一部分没读到</div>'
+  if (degradedAll) h += '<div class="empty">今天读不到它的日记</div>'
+  else if (!evs.length) h += '<div class="empty">还什么都没发生——它刚醒</div>'
+  else {
+    var day = null
+    // I4:stale(缓存)渲染时 s.today 是缓存写入那一刻的「今天」,出门一天再
+    // 打开会把昨天的分组标成「今天」—— stale 时绝不把日期换成「今天」。
+    if (!stale && s.today && evs[0].day !== s.today) { h += '<div class="grp">今天</div><div class="empty" style="padding:14px">它今天还没出门</div>' }
+    evs.forEach(function(e) {
+      if (e.day !== day) { day = e.day; h += '<div class="grp">' + (!stale && day === s.today ? "今天" : esc(day)) + '</div>' }
+      h += evHtml(e)
+    })
+    if (s.next_cursor) h += '<button class="more" data-cursor="' + esc(s.next_cursor) + '">再往前</button>'
+  }
+  f.innerHTML = h
+}
+setInterval(presenceTtlCheck, 30000)
+function showBanner(txt) { var b = document.getElementById("banner"); b.hidden = !txt; b.textContent = txt || "" }
+function loadHome() {
+  var cached = readCache()
+  if (cached) { homeState = cached; renderFeed(cached, true); showBanner("上次同步 " + ago(cached.synced_at)) }
+  api("/m/api/home").then(function(r) {
+    if (r.status === 401) { try { localStorage.removeItem("deviceToken") } catch (e) {}; location.replace("/m"); return null }
+    return r.json()
+  }).then(function(s) {
+    if (!s || !s.ok) return
+    homeState = s; renderFeed(s, false); showBanner(""); writeCache(s)
+    if (document.visibilityState === "visible") {
+      api("/m/api/seen", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ until: s.synced_at }) }).catch(function(){})
+    }
+  }).catch(function() {
+    if (cached) showBanner("连不上家里的 CC · 显示的是 " + ago(cached.synced_at) + "的")
+    else { document.getElementById("feed").innerHTML = '<div class="empty">连不上家里的 CC<br><small>看看电脑开着没</small></div>'; document.getElementById("pres-txt").textContent = "不知道" }
+  })
+}
+document.getElementById("feed").addEventListener("click", function(ev) {
+  var b = ev.target.closest("button.more")
+  if (!b || !homeState) return
+  b.disabled = true
+  api("/m/api/feed?cursor=" + encodeURIComponent(b.dataset.cursor)).then(function(r){ return r.json() }).then(function(r) {
+    if (!r || !r.ok) { b.disabled = false; return }
+    homeState.events = homeState.events.concat(r.events); homeState.next_cursor = r.next_cursor
+    if (r.sources_degraded) homeState.sources_degraded = r.sources_degraded
+    renderFeed(homeState, !!document.getElementById("banner").textContent)
+  }).catch(function(){ b.disabled = false; toast("网络不通") })
+})
+document.getElementById("refresh").addEventListener("click", loadHome)
+document.addEventListener("visibilitychange", function(){ if (document.visibilityState === "visible") loadHome() })
 function load() {
   api("/m/api/state").then(function(r) {
     if (r.status === 401) { try { localStorage.removeItem("deviceToken") } catch (e) {}; location.replace("/m"); return null }
     return r.json()
   }).then(function(s){ if (s && s.ok) render(s) }).catch(function(){ toast("连不上家里的电脑 — 看看它开着没") })
 }
+loadHome()
 load()
 </script></body></html>`
 }

@@ -29,10 +29,7 @@ async function startServer(opts: {
   agents?: A2AAgentRecord[]
   onNotify?: (event: import('./a2a-server').NotifyEvent) => Promise<void>
   onExec?: (event: import('./a2a-server').ExecEvent) => Promise<import('./a2a-server').ExecResult>
-  onIntent?: (event: import('./a2a-server').IntentEvent) => Promise<import('./a2a-intent').MatchReceipt>
-  onReveal?: (event: import('./a2a-server').RevealEvent) => Promise<{ mutual: boolean; handle?: import('./penpal-crypto').PenpalHandle }>
   onLetter?: (event: import('./a2a-server').LetterEvent) => Promise<{ ok: boolean; error?: string }>
-  onEcho?: (event: import('./a2a-server').EchoEvent) => Promise<{ ok: boolean }>
 } = {}) {
   const onNotify: (event: import('./a2a-server').NotifyEvent) => Promise<void> = opts.onNotify ?? vi.fn(async () => {})
   const server = createA2AServer({
@@ -40,10 +37,7 @@ async function startServer(opts: {
     registry: fakeRegistry(opts.agents ?? [rec('alpha')]),
     onNotify,
     ...(opts.onExec ? { onExec: opts.onExec } : {}),
-    ...(opts.onIntent ? { onIntent: opts.onIntent } : {}),
-    ...(opts.onReveal ? { onReveal: opts.onReveal } : {}),
     ...(opts.onLetter ? { onLetter: opts.onLetter } : {}),
-    ...(opts.onEcho ? { onEcho: opts.onEcho } : {}),
     daemonInfo: { name: 'wechat-cc', version: '0.6.x' },
   })
   await server.start()
@@ -69,6 +63,8 @@ describe('a2a-server', () => {
     try {
       const card = await (await fetch(`${baseUrl}/.well-known/agent.json`)).json() as { proto_version?: number }
       expect(card.proto_version).toBe(A2A_PROTO_VERSION)
+      // 钉住版本号本身:v3 = 心愿走信封,intent/echo/reveal 退役(a2a-intent.ts)。
+      expect(A2A_PROTO_VERSION).toBe(3)
     } finally { await server.stop() }
   })
 
@@ -275,326 +271,23 @@ describe('a2a-server', () => {
     })
   })
 
-  describe('POST /a2a/intent (agent-social M1)', () => {
-    it('runs onIntent and returns the Match Receipt when authed', async () => {
-      const onIntent = vi.fn(async (e: import('./a2a-server').IntentEvent) => (
-        { intent_id: e.card.intent_id, match: 'yes' as const, blurb: '也爱摄影' }
-      ))
+  describe('退役的三条路由(proto v3:seek/echo/reveal 掮客管道下线)', () => {
+    it('/a2a/intent /a2a/echo /a2a/reveal 一律 404,agent card 也不再宣传它们', async () => {
       const alphaRec = rec('alpha')
-      const { server, baseUrl } = await startServer({ agents: [alphaRec], onIntent })
+      const { server, baseUrl } = await startServer({ agents: [alphaRec], onLetter: async () => ({ ok: true }) })
       try {
-        const res = await fetch(`${baseUrl}/a2a/intent`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
-          body: JSON.stringify({
-            agent_id: 'alpha',
-            card: { intent_id: 'i1', kind: 'seek', topic: '找摄影搭子', expires_at: new Date(Date.now() + 60000).toISOString() },
-          }),
-        })
-        expect(res.status).toBe(200)
-        expect(await res.json()).toMatchObject({ intent_id: 'i1', match: 'yes' })
-        expect(onIntent).toHaveBeenCalledWith(expect.objectContaining({
-          agent: expect.objectContaining({ id: 'alpha' }),
-          card: expect.objectContaining({ intent_id: 'i1', topic: '找摄影搭子' }),
-        }))
+        for (const path of ['/a2a/intent', '/a2a/echo', '/a2a/reveal']) {
+          const res = await fetch(`${baseUrl}${path}`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
+            body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1' }),
+          })
+          expect(res.status).toBe(404)
+        }
+        const card = await (await fetch(`${baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
+        expect(card.capabilities.map(c => c.name)).toEqual(expect.arrayContaining(['notify', 'letter']))
+        expect(card.capabilities.some(c => ['intent', 'echo', 'reveal'].includes(c.name))).toBe(false)
       } finally { await server.stop() }
-    })
-
-    it('returns 501 when this machine is not wired for intent (no onIntent)', async () => {
-      const alphaRec = rec('alpha')
-      const { server, baseUrl } = await startServer({ agents: [alphaRec] })  // no onIntent
-      try {
-        const res = await fetch(`${baseUrl}/a2a/intent`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
-          body: JSON.stringify({
-            agent_id: 'alpha',
-            card: { intent_id: 'i1', kind: 'seek', topic: 'x', expires_at: new Date(Date.now() + 60000).toISOString() },
-          }),
-        })
-        expect(res.status).toBe(501)
-      } finally { await server.stop() }
-    })
-
-    it('rejects intent without a valid Bearer → 401, onIntent not called', async () => {
-      const onIntent = vi.fn(async (e: import('./a2a-server').IntentEvent) => (
-        { intent_id: e.card.intent_id, match: 'yes' as const }
-      ))
-      const { server, baseUrl } = await startServer({ onIntent })
-      try {
-        const res = await fetch(`${baseUrl}/a2a/intent`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            agent_id: 'alpha',
-            card: { intent_id: 'i1', kind: 'seek', topic: 'x', expires_at: new Date(Date.now() + 60000).toISOString() },
-          }),
-        })
-        expect(res.status).toBe(401)
-        expect(onIntent).not.toHaveBeenCalled()
-      } finally { await server.stop() }
-    })
-
-    it('advertises the intent capability in the Agent Card only when wired', async () => {
-      const withIntent = await startServer({ onIntent: async (e) => ({ intent_id: e.card.intent_id, match: 'no' }) })
-      const without = await startServer()
-      try {
-        const a = await (await fetch(`${withIntent.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
-        const b = await (await fetch(`${without.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
-        expect(a.capabilities.some(c => c.name === 'intent')).toBe(true)
-        expect(b.capabilities.some(c => c.name === 'intent')).toBe(false)
-      } finally { await withIntent.server.stop(); await without.server.stop() }
-    })
-  })
-
-  describe('POST /a2a/echo (v2 async echo return)', () => {
-    it('runs onEcho and returns { ok: true } when authed', async () => {
-      const onEcho = vi.fn(async (_e: import('./a2a-server').EchoEvent) => ({ ok: true }))
-      const alphaRec = rec('alpha')
-      const { server, baseUrl } = await startServer({ agents: [alphaRec], onEcho })
-      try {
-        const res = await fetch(`${baseUrl}/a2a/echo`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
-          body: JSON.stringify({
-            agent_id: 'alpha', intent_id: 'i1',
-            echo: { blurb: '也爱摄影', degree: 1 },
-          }),
-        })
-        expect(res.status).toBe(200)
-        expect(await res.json()).toEqual({ ok: true })
-        expect(onEcho).toHaveBeenCalledWith(expect.objectContaining({
-          agent: expect.objectContaining({ id: 'alpha' }),
-          msg: expect.objectContaining({ intent_id: 'i1', agent_id: 'alpha' }),
-        }))
-      } finally { await server.stop() }
-    })
-
-    it('POST /a2a/echo without Authorization → 401, onEcho not called', async () => {
-      const onEcho = vi.fn(async () => ({ ok: true }))
-      const { server, baseUrl } = await startServer({ onEcho })
-      try {
-        const res = await fetch(`${baseUrl}/a2a/echo`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1', echo: { blurb: 'x', degree: 1 } }),
-        })
-        expect(res.status).toBe(401)
-        expect(onEcho).not.toHaveBeenCalled()
-      } finally { await server.stop() }
-    })
-
-    it('POST /a2a/echo with wrong Bearer → 401, onEcho not called', async () => {
-      const onEcho = vi.fn(async () => ({ ok: true }))
-      const alphaRec = rec('alpha')
-      const { server, baseUrl } = await startServer({ agents: [alphaRec], onEcho })
-      try {
-        const res = await fetch(`${baseUrl}/a2a/echo`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'authorization': 'Bearer wrong-key-completely' },
-          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1', echo: { blurb: 'x', degree: 1 } }),
-        })
-        expect(res.status).toBe(401)
-        expect(onEcho).not.toHaveBeenCalled()
-      } finally { await server.stop() }
-    })
-
-    it('POST /a2a/echo with body.agent_id != bearer-owning agent → 403, onEcho not called', async () => {
-      const onEcho = vi.fn(async () => ({ ok: true }))
-      const alphaRec = rec('alpha')
-      const { server, baseUrl } = await startServer({ agents: [alphaRec, rec('beta')], onEcho })
-      try {
-        const res = await fetch(`${baseUrl}/a2a/echo`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
-          body: JSON.stringify({ agent_id: 'beta', intent_id: 'i1', echo: { blurb: 'x', degree: 1 } }),
-        })
-        expect([401, 403]).toContain(res.status)
-        expect(onEcho).not.toHaveBeenCalled()
-      } finally { await server.stop() }
-    })
-
-    it('POST /a2a/echo with paused agent → 202 (silently drop), onEcho not called', async () => {
-      const onEcho = vi.fn(async () => ({ ok: true }))
-      const alphaRec = rec('alpha', { paused: true })
-      const { server, baseUrl } = await startServer({ agents: [alphaRec], onEcho })
-      try {
-        const res = await fetch(`${baseUrl}/a2a/echo`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
-          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1', echo: { blurb: 'x', degree: 1 } }),
-        })
-        expect(res.status).toBe(202)
-        expect(onEcho).not.toHaveBeenCalled()
-      } finally { await server.stop() }
-    })
-
-    it('POST /a2a/echo with a bad shape (missing echo.blurb) → 400, onEcho not called', async () => {
-      const onEcho = vi.fn(async () => ({ ok: true }))
-      const alphaRec = rec('alpha')
-      const { server, baseUrl } = await startServer({ agents: [alphaRec], onEcho })
-      try {
-        const res = await fetch(`${baseUrl}/a2a/echo`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
-          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1', echo: { degree: 1 } }),
-        })
-        expect(res.status).toBe(400)
-        expect(onEcho).not.toHaveBeenCalled()
-      } finally { await server.stop() }
-    })
-
-    it('returns 501 when this machine is not wired for echo (no onEcho)', async () => {
-      const alphaRec = rec('alpha')
-      const { server, baseUrl } = await startServer({ agents: [alphaRec] })  // no onEcho
-      try {
-        const res = await fetch(`${baseUrl}/a2a/echo`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
-          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1', echo: { blurb: 'x', degree: 1 } }),
-        })
-        expect(res.status).toBe(501)
-      } finally { await server.stop() }
-    })
-
-    it('advertises the echo capability in the Agent Card only when wired', async () => {
-      const withEcho = await startServer({ onEcho: async () => ({ ok: true }) })
-      const without = await startServer()
-      try {
-        const a = await (await fetch(`${withEcho.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
-        const b = await (await fetch(`${without.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
-        expect(a.capabilities.some(c => c.name === 'echo')).toBe(true)
-        expect(b.capabilities.some(c => c.name === 'echo')).toBe(false)
-      } finally { await withEcho.server.stop(); await without.server.stop() }
-    })
-  })
-
-  describe('POST /a2a/reveal (async foraging spine)', () => {
-    it('runs onReveal and returns { mutual, handle } when authed', async () => {
-      const onReveal = vi.fn(async (_e: import('./a2a-server').RevealEvent) => ({ mutual: true, handle: { pubkey: 'pub-b', channel_id: 'ch-1' } }))
-      const alphaRec = rec('alpha')
-      const { server, baseUrl } = await startServer({ agents: [alphaRec], onReveal })
-      try {
-        const res = await fetch(`${baseUrl}/a2a/reveal`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
-          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1' }),
-        })
-        expect(res.status).toBe(200)
-        expect(await res.json()).toEqual({ mutual: true, handle: { pubkey: 'pub-b', channel_id: 'ch-1' } })
-        expect(onReveal).toHaveBeenCalledWith(expect.objectContaining({ agent_id: 'alpha', intent_id: 'i1' }))
-      } finally { await server.stop() }
-    })
-
-    it('forwards relay_token + peer_handle from the body to onReveal (verified agent_id preserved)', async () => {
-      const onReveal = vi.fn(async (_e: import('./a2a-server').RevealEvent) => ({ mutual: false }))
-      const alphaRec = rec('alpha')
-      const { server, baseUrl } = await startServer({ agents: [alphaRec], onReveal })
-      try {
-        const res = await fetch(`${baseUrl}/a2a/reveal`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
-          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1', relay_token: 'T', peer_handle: { pubkey: 'pub-q', channel_id: 'ch-9' } }),
-        })
-        expect(res.status).toBe(200)
-        expect(onReveal).toHaveBeenCalledWith(expect.objectContaining({
-          agent_id: 'alpha', intent_id: 'i1', relay_token: 'T', peer_handle: { pubkey: 'pub-q', channel_id: 'ch-9' },
-        }))
-      } finally { await server.stop() }
-    })
-
-    it('drops a malformed peer_handle (missing channel_id) to undefined without 400ing', async () => {
-      const onReveal = vi.fn(async (_e: import('./a2a-server').RevealEvent) => ({ mutual: false }))
-      const alphaRec = rec('alpha')
-      const { server, baseUrl } = await startServer({ agents: [alphaRec], onReveal })
-      try {
-        const res = await fetch(`${baseUrl}/a2a/reveal`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
-          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1', peer_handle: { pubkey: 'pub-q' } }),
-        })
-        expect(res.status).toBe(200)
-        expect(onReveal).toHaveBeenCalledWith(expect.objectContaining({ agent_id: 'alpha', intent_id: 'i1' }))
-        expect(onReveal.mock.calls[0]?.[0]?.peer_handle).toBeUndefined()
-      } finally { await server.stop() }
-    })
-
-    it('passes a crossed mailbox through peer_handle to onReveal', async () => {
-      const onReveal = vi.fn(async (_e: import('./a2a-server').RevealEvent) => ({ mutual: false }))
-      const alphaRec = rec('alpha')
-      const { server, baseUrl } = await startServer({ agents: [alphaRec], onReveal })
-      try {
-        const res = await fetch(`${baseUrl}/a2a/reveal`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
-          body: JSON.stringify({
-            agent_id: 'alpha', intent_id: 'i1',
-            peer_handle: { pubkey: 'pub-q', channel_id: 'ch-9', mailbox: { addr: 'A', enc_pub: 'E', relays: ['https://r/'] } },
-          }),
-        })
-        expect(res.status).toBe(200)
-        expect(onReveal.mock.calls[0]?.[0]?.peer_handle).toEqual({
-          pubkey: 'pub-q', channel_id: 'ch-9', mailbox: { addr: 'A', enc_pub: 'E', relays: ['https://r/'] },
-        })
-      } finally { await server.stop() }
-    })
-
-    it('drops a malformed mailbox (missing enc_pub) to undefined without 400ing, keeps the handle', async () => {
-      const onReveal = vi.fn(async (_e: import('./a2a-server').RevealEvent) => ({ mutual: false }))
-      const alphaRec = rec('alpha')
-      const { server, baseUrl } = await startServer({ agents: [alphaRec], onReveal })
-      try {
-        const res = await fetch(`${baseUrl}/a2a/reveal`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', authorization: `Bearer ${alphaRec.inbound_api_key}` },
-          body: JSON.stringify({
-            agent_id: 'alpha', intent_id: 'i1',
-            peer_handle: { pubkey: 'pub-q', channel_id: 'ch-9', mailbox: { addr: 'A' } },
-          }),
-        })
-        expect(res.status).toBe(200)
-        expect(onReveal.mock.calls[0]?.[0]?.peer_handle).toEqual({ pubkey: 'pub-q', channel_id: 'ch-9' })
-      } finally { await server.stop() }
-    })
-
-    it('returns 501 when this machine is not wired for reveal (no onReveal)', async () => {
-      const alphaRec = rec('alpha')
-      const { server, baseUrl } = await startServer({ agents: [alphaRec] })
-      try {
-        const res = await fetch(`${baseUrl}/a2a/reveal`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'authorization': `Bearer ${alphaRec.inbound_api_key}` },
-          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1' }),
-        })
-        expect(res.status).toBe(501)
-      } finally { await server.stop() }
-    })
-
-    it('rejects reveal without a valid Bearer → 401, onReveal not called', async () => {
-      const onReveal = vi.fn(async () => ({ mutual: false }))
-      const { server, baseUrl } = await startServer({ onReveal })
-      try {
-        const res = await fetch(`${baseUrl}/a2a/reveal`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ agent_id: 'alpha', intent_id: 'i1' }),
-        })
-        expect(res.status).toBe(401)
-        expect(onReveal).not.toHaveBeenCalled()
-      } finally { await server.stop() }
-    })
-
-    it('advertises the reveal capability in the agent card only when wired', async () => {
-      const wired = await startServer({ onReveal: async () => ({ mutual: false }) })
-      try {
-        const card = await (await fetch(`${wired.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
-        expect(card.capabilities.some(c => c.name === 'reveal')).toBe(true)
-      } finally { await wired.server.stop() }
-      const bare = await startServer({})
-      try {
-        const card = await (await fetch(`${bare.baseUrl}/.well-known/agent.json`)).json() as { capabilities: Array<{ name: string }> }
-        expect(card.capabilities.some(c => c.name === 'reveal')).toBe(false)
-      } finally { await bare.server.stop() }
     })
   })
 
@@ -884,5 +577,45 @@ describe('POST /a2a/exec —— 只有我授权过的大脑能派活', () => {
       expect(await r.json()).toMatchObject({ ok: true, response: 'done' })
       expect(onExec).toHaveBeenCalled()
     } finally { server.stop() }
+  })
+})
+
+describe('终端会话桥 /a2a/cli/* (spec 2026-09-09-cli-hook-push §6.5)', () => {
+  const post = (baseUrl: string, path: string, bearer: string, body: unknown) => fetch(`${baseUrl}${path}`, {
+    method: 'POST', headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' }, body: JSON.stringify(body),
+  })
+  it('没挂处理器 → 501;认证同 notify(缺 / 错 Bearer → 401);挂上后按路径分发', async () => {
+    const { server, baseUrl } = await startServer()
+    try {
+      const key = rec('alpha').inbound_api_key
+      expect((await post(baseUrl, '/a2a/cli/event', key, { agent_id: 'alpha', kind: 'stop' })).status).toBe(501)
+      expect((await post(baseUrl, '/a2a/cli/event', 'wrong', { agent_id: 'alpha' })).status).toBe(401)
+      expect((await fetch(`${baseUrl}/a2a/cli/event`, { method: 'POST', body: '{"agent_id":"alpha"}' })).status).toBe(401)
+      const seen: unknown[] = []
+      server.setCliHandlers({
+        onEvent: async (agent, ev) => { seen.push({ agent: agent.id, ev }); return { ok: true, action: 'scheduled' } },
+        onPermissionOpen: async (_a, req) => ({ status: 'pending', hash: 'k3x9z', got: req['tool_name'] }),
+        onPermissionWait: async (_a, hash, waitMs) => ({ hash, status: 'allow', waitMs }),
+        onReply: async (_a, req) => ({ ok: true, echo: req }),
+      })
+      const e = await post(baseUrl, '/a2a/cli/event', key, { agent_id: 'alpha', source: 'claude', kind: 'stop', session_id: 's', cwd: '/w' })
+      expect(await e.json()).toEqual({ ok: true, action: 'scheduled' })
+      expect(seen[0]).toMatchObject({ agent: 'alpha', ev: { kind: 'stop', session_id: 's' } })
+      const o = await post(baseUrl, '/a2a/cli/permission', key, { agent_id: 'alpha', tool_name: 'Bash' })
+      expect(await o.json()).toEqual({ status: 'pending', hash: 'k3x9z', got: 'Bash' })
+      const w = await post(baseUrl, '/a2a/cli/permission', key, { agent_id: 'alpha', hash: 'k3x9z', wait_ms: 99999 })
+      expect(await w.json()).toEqual({ hash: 'k3x9z', status: 'allow', waitMs: 25_000 })
+    } finally { await server.stop() }
+  })
+  it('/a2a/cli/reply 只让 may_exec 的脑调;坏 kind → 400', async () => {
+    const brain = { ...rec('brain'), may_exec: true }
+    const { server, baseUrl } = await startServer({ agents: [rec('alpha'), brain] })
+    try {
+      server.setCliHandlers({ onReply: async (_a, req) => ({ ok: true, echo: req }) })
+      expect((await post(baseUrl, '/a2a/cli/reply', rec('alpha').inbound_api_key, { agent_id: 'alpha', kind: 'view', session_id: 's' })).status).toBe(403)
+      const ok = await post(baseUrl, '/a2a/cli/reply', brain.inbound_api_key, { agent_id: 'brain', kind: 'say', session_id: 's', text: '继续' })
+      expect(await ok.json()).toEqual({ ok: true, echo: { kind: 'say', session_id: 's', text: '继续' } })
+      expect((await post(baseUrl, '/a2a/cli/reply', brain.inbound_api_key, { agent_id: 'brain', kind: 'nope', session_id: 's' })).status).toBe(400)
+    } finally { await server.stop() }
   })
 })

@@ -6,6 +6,7 @@ import {
   type LanguageModel,
 } from 'ai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
+import { makeThinkFilter } from './think-tags'
 
 // Opaque re-export: the rest of the provider treats ChatMessage as a black box
 // it only ever appends. Keeps AI SDK's ModelMessage type from leaking outward.
@@ -33,7 +34,8 @@ export interface StreamedTurn {
 export interface ChatModelClient {
   streamTurn(messages: ChatMessage[], tools: ToolSpec[]): StreamedTurn
   generate(messages: ChatMessage[]): Promise<string>
-  userMessage(text: string): ChatMessage
+  /** 带图就是分块消息(text + image);openai-compatible 会把 image 变成 image_url 的 data URL。 */
+  userMessage(text: string, images?: { data: Uint8Array; mediaType: string }[]): ChatMessage
   systemMessage(text: string): ChatMessage
   toolResultMessage(toolCallId: string, toolName: string, result: unknown): ChatMessage
 }
@@ -44,7 +46,7 @@ export interface ChatModelClient {
  * tools (no `execute`) => AI SDK surfaces tool-call parts but never runs them and
  * stops after one step — WE own the loop (openai-agent-provider, later task).
  */
-export function createChatModelFromLanguageModel(model: LanguageModel): ChatModelClient {
+export function createChatModelFromLanguageModel(model: LanguageModel, opts: { evalMaxOutputTokens?: number } = {}): ChatModelClient {
   const toAiTools = (specs: ToolSpec[]): Record<string, ReturnType<typeof tool>> =>
     Object.fromEntries(
       specs.map(s => [s.name, tool({ description: s.description, inputSchema: jsonSchema(s.parameters) })]),
@@ -70,11 +72,14 @@ export function createChatModelFromLanguageModel(model: LanguageModel): ChatMode
       let streamError: unknown
 
       async function* deltas(): AsyncIterable<TurnDelta> {
+        // 内联在 content 里的思维链不发给主人 —— 见 think-tags.ts。
+        const think = makeThinkFilter()
         for await (const part of result.fullStream) {
           if (part.type === 'text-delta') {
             // v5 fullStream text-delta carries `.text` (confirmed against the
             // installed `ai@5.0.210` types: TextStreamPart's text-delta variant).
-            yield { kind: 'text', text: part.text }
+            const text = think.push(part.text)
+            if (text) yield { kind: 'text', text }
           } else if (part.type === 'tool-call') {
             // v5 tool-call parts carry toolCallId/toolName/input (TypedToolCall).
             toolCalls.push({ id: part.toolCallId, name: part.toolName, input: part.input })
@@ -85,6 +90,8 @@ export function createChatModelFromLanguageModel(model: LanguageModel): ChatMode
           // text-start/end, finish, step markers, etc. are ignored — callers
           // drive their loop off `toolCalls` / the finished text, not these.
         }
+        const tail = think.end()
+        if (tail) yield { kind: 'text', text: tail }
       }
 
       const sharedDeltas = deltas()
@@ -116,7 +123,10 @@ export function createChatModelFromLanguageModel(model: LanguageModel): ChatMode
       // streaming) never satisfies. streamText's `.text` getter drains
       // fullStream internally and resolves once, so one code path serves
       // both one-shot and streamed calls.
-      const result = streamText({ model, messages })
+      // 显式给 max_tokens:思考型模型(KIMI/Kimi-Code/GLM 带思考)把思维链也算
+      // completion token,上游默认预算被思考吃光就回 content="" +
+      // finish_reason=length —— 看起来像模型不回话。主人的网关说明建议 ≥2000。
+      const result = streamText({ model, messages, maxOutputTokens: opts.evalMaxOutputTokens ?? DEFAULT_EVAL_MAX_OUTPUT_TOKENS })
       // Same error-part capture as streamTurn (a54ff96f): transport failures
       // (e.g. 401 APICallError) surface as fullStream error parts and then
       // reject `result.text` with a generic NoOutputGeneratedError — capture
@@ -128,14 +138,23 @@ export function createChatModelFromLanguageModel(model: LanguageModel): ChatMode
         }
       }
       try {
-        return await result.text
+        // 一次性调用也要剥 —— cheapEval / 判断题直接拿这个字符串比对。
+        const think = makeThinkFilter()
+        return think.push(await result.text) + think.end()
       } catch (err) {
         throw streamError ?? err
       }
     },
 
-    userMessage(text) {
-      return { role: 'user', content: text }
+    userMessage(text, images) {
+      if (!images || images.length === 0) return { role: 'user', content: text }
+      return {
+        role: 'user',
+        content: [
+          { type: 'text', text },
+          ...images.map(i => ({ type: 'image' as const, image: i.data, mediaType: i.mediaType })),
+        ],
+      }
     },
     systemMessage(text) {
       return { role: 'system', content: text }
@@ -157,11 +176,14 @@ export function createChatModelFromLanguageModel(model: LanguageModel): ChatMode
 }
 
 /** Production factory: an OpenAI-compatible provider (DeepSeek/Kimi/Qwen/...). */
-export function createAiSdkChatModel(opts: { baseURL: string; apiKey: string; model: string }): ChatModelClient {
+/** generate()(后台一次性评估)的输出上限;聊天回合不设(交给上游默认)。 */
+export const DEFAULT_EVAL_MAX_OUTPUT_TOKENS = 4000
+
+export function createAiSdkChatModel(opts: { baseURL: string; apiKey: string; model: string; evalMaxOutputTokens?: number }): ChatModelClient {
   const provider = createOpenAICompatible({
     name: 'wechat-openai',
     baseURL: opts.baseURL,
     apiKey: opts.apiKey,
   })
-  return createChatModelFromLanguageModel(provider.chatModel(opts.model))
+  return createChatModelFromLanguageModel(provider.chatModel(opts.model), { evalMaxOutputTokens: opts.evalMaxOutputTokens })
 }

@@ -26,7 +26,8 @@ describe('config surface', () => {
     expect(model.writable).toBe(true)
     expect(model.effect).toBe('immediate')
     const provider = rows.find(r => r.key === 'provider')!
-    expect(provider.writable).toBe(false)
+    expect(provider.writable).toBe(true)           // 2026-09-09: 默认大脑让用户选(面板 / /set provider / NL)
+    expect(provider.effect).toBe('daemon-restart')
     expect(typeof provider.value).toBe('string')   // defaults resolve, never undefined-crash
   })
 
@@ -82,12 +83,65 @@ describe('config surface', () => {
 
   it('unknown and read-only keys are refused', async () => {
     expect(await writeConfigKey(stateDir, 'dangerouslySkipPermissions', 'true')).toMatchObject({ ok: false, error: 'unknown_key' })
-    expect(await writeConfigKey(stateDir, 'provider', 'codex')).toMatchObject({ ok: false, error: 'read_only_key' })
+    // read-only example moved to companion.default_chat_id (provider became writable 2026-09-09)
+    expect(await writeConfigKey(stateDir, 'companion.default_chat_id', 'x@im.wechat')).toMatchObject({ ok: false, error: 'read_only_key' })
   })
 
   it('successful write reports the previous value', async () => {
     await writeConfigKey(stateDir, 'model', 'a-model')
     const r = await writeConfigKey(stateDir, 'model', 'b-model')
     expect(r).toMatchObject({ ok: true, previous: 'a-model' })
+  })
+})
+
+describe('cheap_eval_provider', () => {
+  it('stores a provider id, and `auto` removes the field (not a literal "auto")', async () => {
+    const { mkdtempSync, rmSync, readFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'cfg-cheap-'))
+    try {
+      expect((await writeConfigKey(dir, 'cheap_eval_provider', 'agy')).ok).toBe(true)
+      expect(JSON.parse(readFileSync(join(dir, 'agent-config.json'), 'utf8')).cheapEvalProvider).toBe('agy')
+      expect((await writeConfigKey(dir, 'cheap_eval_provider', 'auto')).ok).toBe(true)
+      expect(JSON.parse(readFileSync(join(dir, 'agent-config.json'), 'utf8'))).not.toHaveProperty('cheapEvalProvider')
+      expect((await writeConfigKey(dir, 'cheap_eval_provider', 'bogus')).ok).toBe(false)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})
+
+describe('trusted_providers (list-shaped string key)', () => {
+  it('comma list → string[]; all/empty clears; none → []; unknown ids rejected; reads back as a comma string', async () => {
+    const { mkdtempSync, rmSync, readFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { readConfigSurface } = await import('./config-surface')
+    const dir = mkdtempSync(join(tmpdir(), 'cfg-tp-'))
+    const cfg = () => JSON.parse(readFileSync(join(dir, 'agent-config.json'), 'utf8'))
+    try {
+      expect((await writeConfigKey(dir, 'trusted_providers', 'claude, openai')).ok).toBe(true)
+      expect(cfg().trusted_providers).toEqual(['claude', 'openai'])
+      expect(readConfigSurface(dir).find(r => r.key === 'trusted_providers')?.value).toBe('claude,openai')
+      expect((await writeConfigKey(dir, 'trusted_providers', 'none')).ok).toBe(true)
+      expect(cfg().trusted_providers).toEqual([])
+      expect((await writeConfigKey(dir, 'trusted_providers', 'all')).ok).toBe(true)
+      expect(cfg()).not.toHaveProperty('trusted_providers')
+      expect((await writeConfigKey(dir, 'trusted_providers', 'claude,bogus')).ok).toBe(false)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})
+
+describe('provider (default provider) is writable', () => {
+  it('accepts any known provider id, rejects unknown, and reports daemon-restart effect', async () => {
+    const { mkdtempSync, rmSync, readFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'cfg-provider-'))
+    try {
+      const r = await writeConfigKey(dir, 'provider', 'agy')
+      expect(r).toMatchObject({ ok: true, effect: 'daemon-restart' })
+      expect(JSON.parse(readFileSync(join(dir, 'agent-config.json'), 'utf8')).provider).toBe('agy')
+      expect((await writeConfigKey(dir, 'provider', 'bogus')).ok).toBe(false)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })

@@ -79,3 +79,12 @@ describe('makeLlmHealth', () => {
     expect(Object.keys(PROVIDER_SETUP_HINTS).length).toBeGreaterThanOrEqual(6)
   })
 })
+
+it('current-only testing never calls other configured services', async () => {
+ const current=vi.fn(async()=> 'ok'), other=vi.fn(async()=> 'ok')
+ const h=makeLlmHealth({registry:reg({claude:{cheapEval:current},cursor:{cheapEval:other}}) as never,defaultProviderId:'claude',log:()=>{}})
+ const r=await h.dial('current')
+ expect(r.results.map(x=>x.provider)).toEqual(['claude'])
+ expect(current).toHaveBeenCalledTimes(1)
+ expect(other).not.toHaveBeenCalled()
+})

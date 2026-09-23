@@ -18,7 +18,11 @@ describe('mailbox-crypto', () => {
   it('openEnvelope returns null (no throw) on a tampered envelope', () => {
     const me = generateMailboxIdentity()
     const env = sealEnvelope({ path: '/a2a/letter', bearer: 'b', body: 1 }, me.enc_pub)
-    expect(openEnvelope(me.enc_priv, { ...env, ct: env.ct.slice(0, -2) + 'AA' })).toBeNull()
+    // 改**第一个**字符而不是末尾两个:base64 末尾字符只有 2-4 个有效位,
+    // 原文恰好是 'A…' 时换成 'AA' 解出来的字节一模一样 —— 这条测试此前
+    // 每几百次跑就红一次,而且看起来像加密坏了。
+    const flipped = (env.ct[0] === 'A' ? 'B' : 'A') + env.ct.slice(1)
+    expect(openEnvelope(me.enc_priv, { ...env, ct: flipped })).toBeNull()
   })
 
   it('two seals of the same inner use different ephemeral keys (unlinkable)', () => {

@@ -70,6 +70,7 @@ async function getApiCredentials() {
 const OWNER_WORKSPACE_PATHS = new Set([
   '/v1/knowledge/facts/find_facts',
   '/v1/llm/keys',
+  '/v1/companion/thoughts',
   '/v1/knowledge/facts/set_fact_status',
   '/v1/knowledge/graph/top_contacts',
   '/v1/reminders/schedule',
@@ -102,6 +103,24 @@ async function callOwnerWorkspace(method, path, body) {
  */
 export async function invokeApi(method, path, body, opts) {
   return callApi(method, path, body, false, opts)
+}
+
+/**
+ * Workbench admin calls always stay in the native host. The renderer receives
+ * response JSON, never the operator credential.
+ * @param {'GET' | 'POST'} method
+ * @param {string} path
+ * @param {Record<string, unknown>} [body]
+ */
+export async function invokeWorkbenchApi(method, path, body) {
+  const raw = /** @type {string} */ (await ipcInvoke('workbench_api', {
+    method,
+    path,
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  }, undefined))
+  if (typeof raw !== 'string') return raw
+  try { return JSON.parse(raw) }
+  catch { throw new Error(`workbench returned a non-JSON response: ${raw.slice(0, 120)}`) }
 }
 
 /**

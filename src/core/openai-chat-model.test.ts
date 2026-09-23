@@ -32,10 +32,23 @@ describe('ChatModelClient adapter', () => {
     expect(fin.messages.length).toBeGreaterThan(0)
   })
 
+  it('hides an inline think block streamed inside content (real gateway DeepSeek, tags split across deltas)', async () => {
+    const client = createChatModelFromLanguageModel(textModel(['<th', 'ink>\nWe need answer only "ready".\n</thi', 'nk>\nrea', 'dy']))
+    const turn = client.streamTurn([client.userMessage('say ready')], [])
+    const seen: string[] = []
+    for await (const d of turn.deltas) if (d.kind === 'text') seen.push(d.text)
+    expect(seen.join('')).toBe('ready')
+  })
+
   it('generate() returns the concatenated text for a one-shot call', async () => {
     const client = createChatModelFromLanguageModel(textModel(['42']))
     const out = await client.generate([client.userMessage('answer?')])
     expect(out).toBe('42')
+  })
+
+  it('generate() also hides an inline think block (cheapEval reads this string directly)', async () => {
+    const client = createChatModelFromLanguageModel(textModel(['<think>\nthe answer is yes\n</think>\n\nyes']))
+    expect(await client.generate([client.userMessage('yes or no?')])).toBe('yes')
   })
 
   it('surfaces a tool call (schema-only tool, no execute) as a tool_call delta', async () => {
@@ -101,5 +114,38 @@ describe('ChatModelClient adapter', () => {
     })
     const client = createChatModelFromLanguageModel(model)
     await expect(client.generate([client.userMessage('hi')])).rejects.toBe(cause)
+  })
+})
+
+describe('generate() token budget', () => {
+  it('passes an explicit maxOutputTokens (thinking models burn the default budget and return empty content)', async () => {
+    const seen: number[] = []
+    const model = {
+      specificationVersion: 'v2', provider: 'fake', modelId: 'm', supportedUrls: {},
+      doGenerate: async () => { throw new Error('unused') },
+      doStream: async (opts: { maxOutputTokens?: number }) => {
+        seen.push(opts.maxOutputTokens ?? -1)
+        return { stream: new ReadableStream({ start(c) { c.enqueue({ type: 'text-start', id: '1' }); c.enqueue({ type: 'text-delta', id: '1', delta: 'ok' }); c.enqueue({ type: 'text-end', id: '1' }); c.enqueue({ type: 'finish', finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } }); c.close() } }) }
+      },
+    }
+    const { createChatModelFromLanguageModel, DEFAULT_EVAL_MAX_OUTPUT_TOKENS } = await import('./openai-chat-model')
+    const client = createChatModelFromLanguageModel(model as never)
+    expect(await client.generate([client.userMessage('hi')])).toBe('ok')
+    expect(seen).toEqual([DEFAULT_EVAL_MAX_OUTPUT_TOKENS])
+    const client2 = createChatModelFromLanguageModel(model as never, { evalMaxOutputTokens: 123 })
+    await client2.generate([client2.userMessage('hi')])
+    expect(seen.at(-1)).toBe(123)
+  })
+})
+
+describe('userMessage 带图(openai-vision)', () => {
+  it('没图是纯字符串;有图是 text + image 分块', async () => {
+    const { createChatModelFromLanguageModel } = await import('./openai-chat-model')
+    const client = createChatModelFromLanguageModel({ specificationVersion: 'v2', provider: 'test', modelId: 'm' } as never)
+    expect(client.userMessage('hi')).toEqual({ role: 'user', content: 'hi' })
+    const img = new Uint8Array([1, 2])
+    expect(client.userMessage('看图 [image:/a.png]', [{ data: img, mediaType: 'image/png' }])).toEqual({
+      role: 'user', content: [{ type: 'text', text: '看图 [image:/a.png]' }, { type: 'image', image: img, mediaType: 'image/png' }],
+    })
   })
 })

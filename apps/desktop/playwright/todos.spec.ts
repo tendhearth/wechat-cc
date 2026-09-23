@@ -5,12 +5,12 @@
 // 被一并删除;而接替它的待办当时【一条 e2e 都没有】。这里补上最小骨架
 // 覆盖,免得一次"功能搬家"变成净覆盖下降 —— 这正是那 19 条红能在
 // e2e-browser 里躺七天没人认领的土壤。
-import { test, expect } from './fixtures'
+import { test, expect, clickNav } from './fixtures'
 
 async function openTodos(page: import('@playwright/test').Page, shimUrl: string) {
   await page.goto(shimUrl)
   await page.waitForFunction(() => document.documentElement.dataset.mode === 'dashboard', { timeout: 10_000 })
-  await page.locator('button.dash-nav-link[data-pane="todos"]').click()
+  await clickNav(page, 'todos')
   await expect(page.locator('article.dash-pane[data-pane="todos"]')).toBeVisible()
 }
 

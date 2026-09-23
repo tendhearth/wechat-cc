@@ -9,6 +9,12 @@ export interface InternalApiLifecycle extends Lifecycle {
   setDelegate(d: InternalApiDelegateDep): void
   setConversation(c: NonNullable<InternalApiDeps['conversation']>): void
   setCompanionConverse(fn: NonNullable<InternalApiDeps['companionConverse']>): void
+  setWorkbench(service: NonNullable<InternalApiDeps['workbench']>): void
+  setMatters(service: NonNullable<InternalApiDeps['matters']>): void
+  setPetTurn(fn: NonNullable<InternalApiDeps['petTurn']>): void
+  setCliEvents(hub: NonNullable<InternalApiDeps['cliEvents']>): void
+  setCliPermissions(relay: NonNullable<InternalApiDeps['cliPermissions']>): void
+  getPresence(): Promise<import('../../core/companion-presence').Presence | null>
   setCustomerReview(service: NonNullable<InternalApiDeps['customerReview']>): void
   setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
   setSocial(social: NonNullable<InternalApiDeps['social']>): void
@@ -18,7 +24,7 @@ export interface InternalApiLifecycle extends Lifecycle {
   setIncidents(incidents: NonNullable<InternalApiDeps['incidents']>): void
   setLlmHealth(h: NonNullable<InternalApiDeps['llmHealth']>, registered?: () => string[], endpoints?: () => Record<string, string>): void
   setSettingsLink(fn: NonNullable<InternalApiDeps['settingsLink']>): void
-  mintSessionToken(tier: import('../../core/user-tier').UserTier, sessionKey: string): string
+  mintSessionToken(tier: import('../../core/user-tier').UserTier, sessionKey: string, opts?: import('./token-registry').MintTokenOpts): string
   invalidateSession(sessionKey: string): void
 }
 
@@ -51,6 +57,12 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     setDelegate: (d) => api.setDelegate(d),
     setConversation: (c) => api.setConversation(c),
     setCompanionConverse: (fn) => api.setCompanionConverse(fn),
+    setWorkbench: (service) => api.setWorkbench(service),
+    setMatters: (service) => api.setMatters(service),
+    setPetTurn: (fn) => api.setPetTurn(fn),
+    setCliEvents: (hub) => api.setCliEvents(hub),
+    setCliPermissions: (relay) => api.setCliPermissions(relay),
+    getPresence: () => api.getPresence(),
     setCustomerReview: (service) => api.setCustomerReview(service),
     setA2A: (a2a) => api.setA2A(a2a),
     setSocial: (social) => api.setSocial(social),
@@ -60,7 +72,7 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     setIncidents: (incidents) => api.setIncidents(incidents),
     setLlmHealth: (h, registered, endpoints) => api.setLlmHealth(h, registered, endpoints),
     setSettingsLink: (fn) => api.setSettingsLink(fn),
-    mintSessionToken: (tier, sessionKey) => api.mintSessionToken(tier, sessionKey),
+    mintSessionToken: (tier, sessionKey, opts) => api.mintSessionToken(tier, sessionKey, opts),
     invalidateSession: (sessionKey) => api.invalidateSession(sessionKey),
     stop: async () => {
       // Remove the discovery file on clean stop so stale info doesn't

@@ -1,0 +1,149 @@
+# CC：陪伴与统一任务入口
+
+本文整理 2026-09-14 这批 dev 开发结果。它描述源代码里的能力，不代表已发布安装包、所有平台或全部模型都经过真机验收。
+
+CC 的目标是：日常管理 Claude/Codex 工作时，只打开 CC 就够。陪伴保留在「此刻」和「回忆」，「一起做」专注当前项目、任务对话、需要你判断的地方和最终成果。CC 不代替专业编辑器，也不要求用户先搭工作流。
+
+## 一件事怎样做完
+
+1. 在「一起做」选择项目文件夹、执行者，直接交代要做什么。项目内新建沿用已有目录和执行者。
+2. 在同一条任务里看完整回复与进展，继续补充文字或材料。工具活动与回复按发生顺序出现，结束后可折叠查看。
+3. 权限和问题留在所属任务；能在微信完整展示的请求可按消息给出的编号处理；过长的权限说明和问题集须回桌面确认或回答，微信仍可拒绝权限。
+4. 每一轮答复后就能直接读 Markdown、看图片、下载保存的成果，不必先结束任务；代码任务可检查变更。旧任务可搜索、归档并找回。
+5. 接着原会话继续；恢复失败时先看说明和将携带的记录，再决定是否重新开始。从 CC 之外已有的 Claude/Codex 历史接着做时，先在历史列表里选中那段记录并勾选要带入的消息导入，续接前还要确认外面的进程已经关闭——CC 不接管一个可能还在别处运行的会话。需要第二意见时，选择要交接的上下文、成果版本或原始材料，交给另一位执行者检查，再将选中的意见交回。
+
+不同项目可以并发。同一个文件夹里的冲突任务排队，**不等于自动创建独立工作副本**。普通微信聊天不会凭“最近一个任务”自动插进工作会话。
+
+## 回合与会话是两件事
+
+一轮要求发出、执行者答完，这一**回合**就结束了：成果此时已登记，可以读、可以下载。但**会话**未必随之关闭——Claude 会把会话留着，好让你接着说而不用重新交代上下文；Codex 则在没有命令或子任务仍在运行时自行收尾，续接时按线程恢复。两种情况在你眼里是同一个状态：**已答复**——本轮做完了，还能接着说，也可以归档。
+
+界面上「会话保留中」指的就是这种情况，它不是"还在跑"。
+
+文件夹的占用跟着"哪个会话还能写它"走，不是跟着"这一轮有没有答完"：一轮答复不等于释放——只要执行者的原生会话还开着，文件夹仍然是它的，同一文件夹里排队的下一个任务不会立刻插进来，也没有"续接被拒绝"这回事，续接直接在同一个会话上继续。会话安静下来（本轮做完、没有后台子任务在写、也没有待决权限/提问）之后才起一个自动收工的计时器，分两档：有别的任务正等着这个文件夹 ⇒ 缺省 **15 秒**（`workbench_handoff_grace_ms`）后自动收工、让给它；没人等 ⇒ 缺省 **10 分钟**（`workbench_retained_idle_close_ms`）后自己收工，纯粹是别让一个闲着的原生进程占着资源。两个时长都能在 `agent-config.json` 里改。到点收工等同于手动点"结束后台会话"，**收工之后再续接会按原会话恢复**，不算另开一段。有一句你已经交上来、但还没投给执行者的补充（正在存或正在送）时，这两档自动收工都不会发生——不能让文件夹的移交把这句话盖成"补充尚未发送"。唯一不变的例外是执行程序没有确认退出：那时文件夹仍会被隔离，后来的任务显示"等待写入者退出"，直到退出被确认。排队等着的任务能在等待行里看到"持有者已答复、还有几秒自动让位"，桌面上也能直接点"收工"提前结束它，不用干等。
+
+## 执行者覆盖
+
+| 执行者 | 这批可用范围 | 仍需原工具或后续适配的范围 |
+| --- | --- | --- |
+| Claude Code | 原生执行、项目规则及已支持的技能/直接 MCP 配置、任务权限和提问、材料、模型设置、历史恢复、已验证的后台子助手与后续回复 | 通用插件市场、完整 MCP OAuth/配置 UI、任意全局配置继承、所有系统上的后台资源回收 |
+| Codex | app-server 会话、原生工具/已支持 MCP 与搜索、任务权限和提问、材料、模型设置、历史恢复、子助手和已追踪后台终端 | Codex App 的全部专有功能、所有版本的工具/插件、跨主机活跃进程接管 |
+| 已配置的 API 模型 | 文字/图片材料、读取/列出项目文件、新建文本成果、任务权限、完整工具会话在 CC 中继续 | 命令、项目原文件修改、网页工具、MCP、后台任务、PDF/Office 输入、供应商原生历史、逐任务模型/思考强度选择 |
+| Cursor（ACP） | `cursor-agent acp` 会话、命令逐次进权限卡（桌面 / 微信 y/n）、逐条活动行与逐字流、按 `session/load` 接着原会话、成果 / diff 快照 / 停止与其它执行者一致 | **工作区内的文件编辑由 Cursor 直接执行，不经过权限卡**（Cursor 自己的 allowlist 模式，ACP 面上没有开关）；附件、模型 / 思考强度选择、提问（elicitation）；Cursor 全局 MCP 配置里的服务器在任务里仍可见（任务提示词禁止调用，未按任务隔离） |
+| agy | 原有陪伴聊天接入继续保留；工作台按「免审」接入（见 2026-09-17 修订记录） | 逐步权限、提问、附件与模型选择 |
+
+“支持 API 协议”不是“所有模型的工具能力一样”。无工具调用或不兼容流式响应的端点仍可能无法完成任务；CC 会报告失败，不自动换用另一个付费模型。
+
+### API 任务执行者
+
+复用已有 `openaiBaseUrl`、`openaiModel` 和环境中的 `WECHAT_OPENAI_API_KEY`。后台启动时冻结这组连接配置；不会因为打开列表而发模型请求。它与原有陪伴 API 循环分开，不继承陪伴 shell/MCP。
+
+- `ReadFile`：项目内 UTF-8 文本，单文件最多 256 KiB。
+- `ListFiles`：当前目录最多 200 项，不递归跟随链接。
+- `SaveArtifact`：在本任务成果目录新建最多 1 MiB 的 UTF-8 文件，不覆盖现有文件。
+
+每次文件工具请求都显示具体路径；保存请求还包含大小和摘要。工具不进入其他任务内部目录或 CC 状态目录。受支持的上传图片使用已核验字节，文本材料保持所属任务；PDF 等输入明确提示不支持。
+
+完整模型消息、工具调用与结果保存在任务数据库，称为 **CC 管理的会话延续**，不是云端原生会话。绑定任务、所有者、目录身份及连接指纹。中断工具回合不能静默重放；需要通过原有恢复确认重新开始。停止会中断本地请求、阻止后续文件操作；不承诺服务商物理终止远端推理或免收已发生费用。
+
+这些文件工具目前只支持 macOS/Linux 的原生文件描述符能力，Windows 会明确拒绝，需另行移植和验证。macOS 本轮通过执行验证；Linux 尚未做本批实机验收，不能把平台分支存在当作实测通过。
+
+## 离开电脑后从微信继续
+
+CC 在微信里是管家：你说某件事，它找到是哪个任务、让原来的执行者接着做，不用你记编号，也不用你知道是 Claude 还是 Codex 在做（执行者是任务自己的属性；要换人时说"让 Codex 看看"才会出现）。它按这个顺序落定你指的是哪件，只在**活跃任务**（进行中 / 已答复 / 排队）里找：
+
+1. **引用**：回复 CC 发过的任务消息（消息头带「任务 <编号>」），归属跟着引用走，确定无疑。
+2. **编号**：正文里带 8 位任务编号。
+3. **名称**：项目名、目录名或标题里的片段在活跃任务里唯一命中。执行者名只用来排歧，单独出现不定位。
+4. **焦点**：你说过"接下来说 X"，20 分钟内的裸消息默认归它；每次动作都会复述归属。
+5. **便宜模型**：名称命中多件时让它排歧，零命中时让它判断"是不是在说任务"——它只能从候选里选或说"不确定"。
+
+落定后按你的话办：自由文本是补充要求，"停止"是停止，"怎么样 / 进展"是看状态，"结果"是取成果；回复第一行是管家头 `📁 项目 · 标题 · 执行者 · 状态`，引用它就能接着说。命中多件会列出选项问你回数字；一件都对不上就当普通聊天，**不会**把闲聊塞进工作任务，也**不会**猜"最近一件"。你在微信一露面，之前没送达的任务通知会立刻补发。
+
+**额度用完时不硬送。** 订阅类执行者（Claude Code、Codex）没有可编程的用量接口（`/usage` 只在交互终端里有），CC 只能从失败里认出"额度已用完 / 暂时限流"，记住它，并在恢复前不再把要求送给那家：你再点名那件事，CC 会说"Codex 的额度已用完（约 N 分钟后恢复），交给 Claude 继续？回「是」"——回「是」就在同一文件夹给另一位新开一件，带上原标题和你刚才的要求；回「不用」先放着。失败通知本身也会带这句。两家都没额度时会直说，不新开。
+
+编号命令仍然可用，也是不确定时最稳的写法。先在桌面选过项目，或使用已登记的项目。发送 `任务 项目`，复制返回的项目编号：
+
+```text
+任务 项目
+任务 新建 <项目编号> <要求>
+任务 新建 <项目编号> 用 @codex <要求>
+任务 <任务编号>
+任务 <任务编号> 补充 <要求>
+任务 <任务编号> 停止
+任务 <任务编号> 提醒我
+任务 <任务编号> 结果
+任务 <任务编号> 文件 <成果编号>
+```
+
+权限、回答、分页和文件获取请复制返回消息中的完整命令。编号绑定当前任务、请求和版本；旧权限不能作用于新一轮。发送文件是你明确请求的保存版本，不重新读取一个同名文件。发送结果不确定时不会自动重复发送。
+
+这批验证了真实本地 HTTP、生产任务服务、持久存储和发送边界；没有用用户真实微信账号做整条链路验收。电脑上的后台与网络仍需可用，微信不是另一台执行主机。
+
+## 数据、配置和多设备
+
+任务记录、草稿、会话和成果在本机存储；模型推理所需上下文会到选定的服务商。工作任务不注入陪伴私人记忆，也不直接获取陪伴的微信发送凭证。接入新执行者要逐项确认工具、权限、完成、停止与恢复契约，品牌名称本身不能让它进入工作台。
+
+当前支持从多个入口访问同一个后台，不是自动同步多台电脑的全部文件、身份和运行进程。跨电脑迁移、独立工作副本、更多执行者和通用插件界面留待真实使用反馈决定，不作为本批已交付能力。
+
+## 资料入口
+
+| 想了解什么 | 资料 |
+| --- | --- |
+| 对标项目、具体借鉴点、原始 GitHub 来源 | [参考项目](research/2026-09-14-cc-agent-workbench-references.md) |
+| 本批范围、验证结果、剩余限制 | [收尾记录](superpowers/reports/2026-09-14-cc-workbench-wrapup.md) |
+| 为什么采用两栏、完整会话、按需展开 | [任务入口范围](superpowers/specs/2026-09-12-cc-task-entry-scope.md) |
+| 已实现与尚待证明的专业覆盖 | [能力覆盖](superpowers/specs/2026-09-13-cc-professional-coverage.md) |
+| 原生工具、附件、模型和后台生命周期的证据 | [原生能力](superpowers/reports/2026-09-13-cc-native-capabilities-and-wechat.md)、[附件](superpowers/reports/2026-09-13-cc-task-attachments.md)、[模型设置](superpowers/reports/2026-09-13-cc-task-execution-models.md)、[后台执行](superpowers/reports/2026-09-13-cc-background-runtime.md) |
+| 微信任务流程、提醒与不可变成果发送 | [任务流程](superpowers/reports/2026-09-13-cc-wechat-task-workflow.md)、[成果发送](superpowers/reports/2026-09-13-cc-wechat-artifacts.md) |
+| 新 API 任务执行路径 | [设计契约](superpowers/specs/2026-09-14-cc-api-task-executor.md) |
+
+日期化的设计稿和验证记录保留历史上下文；本页负责当前能力概览。设计板仍保存在私有目录，公开仓库只保留约定的运行/源资产与来源摘要，资产授权见 [ASSETS-LICENSE.md](../ASSETS-LICENSE.md)。
+
+## 一件事（matter）
+
+主人心里的"一件事"，跨表面（微信 / 桌面 / 手机 / 终端）、跨供应商会话都是它。它是统一入口的实体：手机端、桌面、微信管家最终只认它。
+
+- **表**（v60）：`matters(id 8 位十六进制, kind chat|task|companion, title, project_path, status open|replied|done|archived, owner_chat_id)`；`matter_bindings(matter_id, surface wechat|desktop|phone|cli, surface_key, last_seen_at)`：一件事在哪些表面露过面；`matter_sessions(matter_id, provider_id, session_id, role main|review|handoff)`：挂着哪些执行者会话。事件不复制：仍在 `workbench_events` / `messages` 里，按 matter 归属。
+- **怎么落**（全部加法，旧表语义不动）：工作台任务 ↔ `kind='task'` 一对一、同 id；一个微信 chat ↔ 一条 `kind='chat'`（先不按话题拆；知识层的 `threads` 表是另一回事——那是从聊天里抽出来的话题）；App「跟 CC 说」= 同一条 chat matter 多一个 `desktop` 绑定；陪伴事件 `kind='companion'` 先只登记。
+- **API**：`GET /v1/matters?kind=&status=a,b&since=&limit=`；`GET /v1/matter?id=` = matter + bindings + sessions + 任务视图 + 最近事件；`POST /v1/matter/say {id,text}` 按 kind 路由——task 走工作台续接，chat 走 app 对话通道（只对主人那条）。
+- **代码**：`src/core/matters/store.ts`（存储）、`service.ts`（列表 / 详情 / say）、`src/daemon/internal-api/routes-matters.ts`、`src/daemon/inbound/mw-matter.ts`（入站登记）；工作台同步在 `service.ts` 的 `matterSync`（登记失败绝不打断任务）。
+- **下一步**：桌面把对话视图 + 工作台视图收成"一个 matter 列表 + 一个会话面"；手机端走隧道调同一份 API；微信降级成渠道适配器。
+
+## 修订记录
+
+- **2026-09-21**:文件夹占用模型改为"跟着还能写它的会话走",取代同一天早些时候上线、当晚就被拆掉的"按回合计代"那版设计(`turn` / `retained_turn` / `onAutonomousStart` 等全部删除;那版设计见 [`2026-09-21-workbench-lease-turns-design.md`](superpowers/specs/2026-09-21-workbench-lease-turns-design.md),已在文中标记被取代)。新不变式:一轮答复不再等于释放——只要执行者的原生会话还开着,文件夹就还是它的,不存在"续接被拒绝"。会话安静下来(前台空闲、没有后台子任务、也没有待决权限/提问)之后起一个自动收工的计时器:有别的任务在等这个文件夹 ⇒ 缺省 15 秒(`workbench_handoff_grace_ms`);没人等 ⇒ 缺省 10 分钟(`workbench_retained_idle_close_ms`)。到点收工等同手动"结束后台会话",续接按原会话恢复。**有一句主人已经交上来、还没投给执行者的补充**(`pending` / `sending`,`held` 不算——那批已经要主人自己处理)时,这两档自动收工都不会武装或触发:宁可文件夹多占一会儿,也不能让移交把这句话盖成"补充尚未发送"。`writer_not_closed` 隔离不变。等待行现在报"持有者在不在写、还有多久自动让位"(`waitingFor.holderWriting` / `closeInMs`),桌面/微信在能让位时都给一句人话,桌面额外给"收工"按钮直接结束持有者,不用干等。**这套自动收工完全依赖事件驱动**——只有"变安静"的转移、有新的等待者排上来、以及续接失败回滚这三处会武装或重排计时器,回合看门狗对已经安静的保留会话是明确暂停轮询的,没有兜底的周期性扫描;这不是这一轮引入的回归(旧实现同样依赖事件),但意味着如果哪天某个执行者的运行时快照在没有任何事件的情况下从忙翻成静,那个文件夹会一直占着,直到主人动手或有新的等待者排上来。
+- **2026-09-16**：成果改为每一回合答复后即登记，不再等任务结束（此前文件已写入却要先取消任务才出现在成果列表）。补一条迁移，修复从早期开发构建升级的库缺少 `workbench_handoffs.request_event_id` 而导致任务详情打不开的问题；已发布安装包的库不受影响。新增「回合与会话是两件事」一节。
+- **2026-09-16**：任务视图新增 `phase`（`queued / working / replied / failed / cancelled / interrupted`），两家执行者一致：Claude 会话保留中的空闲任务与 Codex 自行收尾的任务都是「已答复」。停止一个已答复的任务记为 `completed`（收工），不再记成 `cancelled`。
+- **2026-09-16**：文件夹租约改为"答复即释放、续接时再申请"：Claude 会话保留中的空闲任务不再堵住同一文件夹的后续任务；续接时若文件夹正被占用返回 `workbench_busy`。执行程序未确认退出的隔离（`writer_not_closed`）保留，对退出未确认之后到来的任务生效。（**此条已被 2026-09-21 的模型取代**：答复不再等于释放，文件夹跟着"还能写它的会话"走，见上文 2026-09-21 条目与"回合与会话是两件事"一节；`writer_not_closed` 隔离本身不变。）
+- **2026-09-16**：打包版后台学会在桌面更新后自行换代。此前更新器换入新 .app 时旧后台不会被杀、也不会被重启，会一直跑上一版直到重启电脑；现在后台记住启动时可执行文件的身份，发现盘上换了且自己空闲（无在途任务、两分钟无入站、微信轮询新鲜）就重启加载新版，与源码模式按 git HEAD 自重启的规则一致。`/v1/health` 新增 `version`（`cli` / `head` / `boot_at`），桌面版据此能看出后台是不是旧的。
+- **2026-09-16**：微信里可以用自然语言指某件事（引用 → 编号 → 名称 → 焦点 → 便宜模型），落定后翻译成原有的 `任务 …` 命令执行；多件命中列选项问你，零命中不劫持聊天。解析器渠道无关（`src/core/workbench/task-reference.ts`），以后手机 app 复用。真实微信账号的全链路验收待做。
+- **2026-09-16**：额度止损。从失败文本识别"额度用完 / 限流"（`provider_quota_exhausted` / `provider_rate_limited`），按执行者登记并带恢复时间（Claude 的错误里有重置时间戳就用它），一次成功回合即清除；`GET /v1/workbench` 的执行者项带 `quota`。失败通知带原因和"交给另一位继续？回「是」"；微信里点名到已耗尽的执行者时不再发送，改为询问接管。订阅类 CLI 没有可编程的用量接口，因此这是被动识别，不是主动查询。第一次真账号试用后修了：裸数字不再变补充、待选窗口 30 分钟、失败的任务仍可指称、从微信点名的任务自动开提醒。
+- **2026-09-16**：独立评审后的第一批修复（管家层）。首次点名任务时"顺手开提醒"曾与真正的命令共用一个消息身份而撞回执、导致指令不执行——改为直调订阅；名称匹配加把握阈值（至少一个强关键词，或两个不同标题片段，或一个片段加"任务感"线索），普通聊天不再被吞成任务；「是 / 不用」只认整句，"交给 Claude"须带名字；接管落账、焦点移到新任务、不再重复新开；额度/限流在错误到达时即登记、任何成功回合即清除；裸数字只在问过"哪一件"时拦；"结果 / 进展"只认短问句；零命中时只对有"任务感"的话问便宜模型，且 3 秒超时。
+- **2026-09-16**：代码变更快照的边界改为租约边界：答复释放租约前截一次、续接申请租约时重新取基线、结算时再截最后一轮。此前对整个项目做一次差异，同一文件夹里别的任务在它空闲期间改的文件会被记到它头上。续接时若这一句没能存下来，刚申请的租约立即放回。成果目录的收集警告（如「此文件类型不收集」）同一条只记一次，不再每回合重复。（**2026-09-21 起**：不再有租约释放/申请这回事，边界改成安静/唤醒的状态转移——会话安静时补一次快照、探测器发现会话自己醒来时重取基线、续接时若基线缺失同样重取；成果目录收集警告的去重逻辑不变。）
+- **2026-09-16**：打包版判定改看「是不是编译产物」而不是「有没有 git HEAD」：源码模式下 git 超时也会读不到 HEAD，那时可执行文件是 bun 本体，`bun upgrade` 曾会误触发一次绕过脏工作树与锁文件闸门的自重启。桌面版错误文案补齐 `provider_quota_exhausted` / `provider_rate_limited` / `workbench_busy`。
+- **2026-09-16**：桌面版跟上后台语义：任务列表按后台给的 `phase` 显示（「已答复」），旧后台没有 `phase` 时仍从运行时快照推；执行者选择器标出「额度已用完」「限流中」；重连诊断新增第 9 条「后台还是旧版」——读 `/v1/health.version.cli` 与本包自带的 CLI 版本比对，不一致就直说并给一键重启（后台空闲时本来也会自行换代）。
+- **2026-09-16**：明确记下 Windows 现状：工作台在 Windows 上**不可用**——Codex 执行者与 Claude 保留会话明确拒绝（进程树清理未验证），成果／附件／API 文件／原生历史依赖 `bun:ffi` 编译的 `*-native.c`（`openat`／dirfd），win32 上一律 `artifact_platform_unsupported`／`native_history_unsupported`。CI 的 Windows 作业不再跑工作台测试（`vitest.config.ts`），只跑其余部分；测试临时目录清理改用 `src/lib/test-temp.ts`（bun:sqlite 关库后 Windows 立刻删目录会 `EBUSY`）。要支持 Windows，先得给原生文件层一个 Windows 实现，再补进程树清理验证。
+- **2026-09-16**：成果／附件／API 文件的"锚定"文件层从 `bun:ffi`（openat／mkdirat／unlinkat + TinyCC 编译的 C 帮手）换成纯 JS（`src/core/workbench/anchored-fs.ts`）：**先开再核**——拿到描述符之后再逐级 lstat 一遍并核对 (dev, ino)，证明"此刻这条不含链接的路径指向的就是这个文件"；硬链接与挂载点仍按老办法拦（API 文件看 `nlink === 1`）。由此 Windows 拿到工作台的文件层（Codex 执行者与 Claude 保留会话在 win32 仍明确拒绝），macOS 不再依赖 Xcode CLT 许可。CI 的 Windows 作业恢复跑大部分工作台测试。
+- **2026-09-16**：运行时适配层落地第一块：`src/lib/runtime/sqlite.ts`（`openSqlite` + `SqlDatabase`/`SqlStatement`，接口按 `bun:sqlite` 照抄，Bun 上返回 Bun 的 Database 本体零开销；Node 上走 `node:sqlite`，事务用 BEGIN/COMMIT + SAVEPOINT 嵌套）。业务代码不再直接 import `bun:sqlite`（depcruise 规则 `bun-builtins-only-in-runtime` 把门）。实测 Node 24 直接跑 `src/lib` + `src/core` 单元套件：2765 过 / 38 红，红的全是测试自己 import `bun:sqlite`、`Bun.serve`/`Bun.spawn` 三处——"换运行时的出口"从此是可以量的。
+- **2026-09-16**：运行时适配层补齐子进程／HTTP／文件：`src/lib/runtime/process.ts`（`spawn`／`spawnSync`，接口按 Bun 的 Subprocess 子集，Node 走 node:child_process + `Readable.toWeb`）、`runtime/http.ts`（`serve`，Node 走 node:http + Fetch Request/Response；读端口前 `await ready`）；`Bun.file` 改 `readFile`。业务代码里不再直接出现 `Bun.*`（`no-bun-globals.test.ts` 把门，唯一白名单是 `yi-ws-server.ts` 的 WebSocket 服务端——Node 没有原生实现）。Node 24 跑 `src/lib` + `src/core`：**2989 过 / 0 红**。
+- **2026-09-16**：Node 出口打通到整个 `src/`：`vitest.node.config.ts`（只排除仍在 `Bun.serve` 上的 WebSocket 服务端三个测试；桌面前端测试是给 webview 写的，只在 Bun 上跑），CI 的 `node · core suite` 改跑它。本地 Node 24：**6391 过 / 0 红**。唯一的运行时语义差异记在 `routes-workbench.test.ts`：服务端按 content-length 提前回 413 并关连接时，Bun 的客户端能读到 413，Node 的 http 客户端写失败即销毁请求——两种都算"解码前被拒"。
+- **2026-09-16**：新增「一件事」（matter）原语，第一步落地（对用户零可见变化）：迁移 v60 建 `matters` / `matter_bindings` / `matter_sessions`，`workbench_tasks` 加可空 `matter_id`（存量任务回填，id 与任务相同）；工作台任务全生命周期同步到 matter（建→open、拿到会话→记会话、答复→replied、结算→done、归档→archived）；微信每个进门的 chat 登记为一条 chat matter；App「跟 CC 说」把主人那条 chat matter 绑上桌面表面；管家的候选集改从 matter 取；三条路由 `GET /v1/matters`、`GET /v1/matter?id=`、`POST /v1/matter/say`（admin 档，operator 凭据放行）。见下面「一件事」一节。
+- **2026-09-16**：订阅额度**改为直接读真实窗口**（此前只能从失败文本里认；"订阅类没有可编程用量口子"那句是错的）：Codex 走 `codex app-server` 的只读 JSON-RPC `account/rateLimits/read`（复用原生历史那条只读传输，方法白名单只多这一条，不碰 OAuth token）；Claude 用 Claude Code 自己登录的 OAuth 凭据（macOS Keychain `Claude Code-credentials`，否则 `~/.claude/.credentials.json`）请求 `GET https://api.anthropic.com/api/oauth/usage`。两条都不是厂商对第三方承诺稳定的公开接口：解析宽松、失败即 null、凭据永不落日志。`src/core/subscription-usage.ts`（解析 + 凭据读取 + 5 分钟缓存的监视器）；额度登记处（provider-quota）把"某窗口到 100%"当作耗尽——管家的「交给另一位继续？」因此在任务失败**之前**就会问；`GET /v1/workbench` 的 `providers[].usage` 带窗口，桌面选择器显示 `Claude · 5h 12% · 周 18%`。真机验证：Claude Max 5h 12% / 周 18%；Codex prolite 周 100%（正是主人那天撞到的耗尽）。
+- **2026-09-16**：「一件事」第二步（桌面）：工作台左栏改成 matter 列表——标题「一件事」，在桌面露过面的对话（`GET /v1/matters?kind=chat&surface=desktop`）排在任务上面，点开右边就是会话面：把「此刻」页的「跟 CC 说」控件整个搬进 `#wb-converse-host`（DOM 搬家，状态与监听不丢，控件只有一份），离开工作台或选了任务就搬回原位。任务视图不变。Tauri 的 `workbench_api` 代理放行三条 matter 路由。`GET /v1/matters` 新增 `surface=` 过滤。
+- **2026-09-16**：「一件事」第三步（手机）：不是新 app，是 `/m` 的 PWA 里多一页「一件事」（底部导航第三个），首屏仍是养成／信件流。三条手机路由走同一个设备 token 门、隧道照过：`GET /m/api/matters`、`GET /m/api/matter?id=`、`POST /m/api/matter/say`——数据与语义和桌面完全一样（同一个 `MattersService` 实例，pipeline-deps 里建、内部 API 与手机页共用），每次在手机看到就绑一个 `phone` 表面。手机上不新建任务（要选文件夹）；陪伴类只列不点开。真机走隧道的验收要主人在场。
+- **2026-09-16**：三个入口看同一段对话：桌面／手机上跟 CC 说的话（`companionConverse(text, origin)`）落进主人 chat 的 `messages` 表（`source` 记 `desktop`／`phone`，微信是 `live`），chat 类 matter 的详情把这条流按时间给回来（`events`，`source` 带表面）——手机能看到桌面上说过的，反之亦然。主人的意图：手机不是只读窗口，是远程控制各个环节的入口。
+- **2026-09-17**：入站意图路由第一步（行为不改，只算 + 记）：新增 `src/daemon/inbound/intent.ts`（`Intent {kind, matterId, data}`，`INTENT_ORDER` = 任务命令 → 管理 → 模式 → 引导 → 权限回话 → 终端回话 → 管家指称，兜底 chat——就是原来链上的先后）和 `mw-route`（按序问每个消费者交出来的**只读** `probe`，第一个说"是"的定 `ctx.intent`，探针抛错记 `ROUTE` 一行当"不是"，永远放行）。管家中间件拆成"只读判定 `decide`"和"执行"两半，探针只算不发不改（问过"哪一件"、待接管、焦点三张表都不动），判定结果随 `intent.data` 带进中间件本体复用，便宜模型不问第二遍。trace 行多了 `intent=<kind>[ matter=<id>]`，先在真机日志里看它和 `consumed=` 是否一致，一致了再让消费者按 intent 早退（第二步）、收成处理表（第三步）、App 通道走同一条路（第四步）。
+- **2026-09-17**：真机核对意图路由：`任务 列表` → `intent=task-command consumed=workbench`、`/帮助` → `mode/mode`、闲聊 → `chat/dispatched`，三种都对上。同时抓到一个上一条引入的回归：路由判成 chat 之后管家中间件又从头判了一遍，每条闲聊要等两次便宜模型超时（3 s × 2）才进对话——现改为"路由判过就算判过"：判成别的意图直接放行，只有管家自己的判定（含数字越界那种算作 chat 但要清待选的）才带进本体。
+- **2026-09-17**：意图路由第二步：七个消费者都按 `ctx.intent` 早退——路由判过且不是我，连 `handle` 都不调，直接放行；没路由（旧链、直接组装的测试）照旧自己试。规矩由 `build.ts` 在组装时守住：开了路由却漏了某个在场消费者的探针 ⇒ 启动即报错，不会上线后某类消息永远轮不到。工作台（任务命令）与管家的探针由 `build.ts` 自己接，外面不用给。副作用：一句没人认的斜杠命令（`/foo`）现在直接进对话，不再去问管家的便宜模型。
+- **2026-09-17**：意图路由第三步：七个消费型中间件收成一张表（`mw-consume`），链上只剩一站消费——有 intent 只交给对应的消费者，它没吃就进对话；没 intent（旧链、直接组装的测试）按 `INTENT_ORDER` 逐个试。原链里夹在消费者中间的副作用站按意图跳过，先后语义不变：任务命令不发"打字中"；`guard` 在管理／模式／引导之后、权限回话之前（断网先看到 🛑）。附件与语音转文字提到路由之前——第二步曾让语音里的指称永远判成闲聊，因为探针跑在转文字之前。消费者本身一行没改，App 通道（第四步）可以直接复用这张表。
+- **2026-09-17**：意图路由第四步：桌面／手机上「跟 CC 说」的话也走同一张表——App 一轮先过 route + consume（与微信同一份消费者实例，`build.ts` 的 `appTurn`），消费者吃了就把回话交还 App，不进模型会话、不开 reply sink；没人吃才照常进对话。消费者回话的去向按**异步上下文**而不是按 chat 记（`inbound/reply-scope.ts`）：App 一轮里 `sendMessage` 被截住，微信来的一轮照常外发，同一时刻两边不串。落库仍进主人 chat 的 `messages`（`source` 记表面）。日志多一行 `APP_INBOUND origin= intent= consumed=`。已知边界：权限回话（y/n）走 ilink 自己的发送口，从 App 发时它的确认语仍会发到微信。
+- **2026-09-17**：工作台实时事件流（桌面）。daemon：每个任务一个持久化 `seq`（`workbench_tasks.seq`，v61），事件行记 `seq`；`GET /v1/workbench/task?since=&wait_ms=` 长轮询（≤20s）只回变过的行并带 `version`；Claude 执行者打开逐字流（`includePartialMessages`），两家的增量 150ms 合并后落库；`cancel` 认 `expectedRunId`。桌面：选中任务改长轮询，事件按 id 合并，正在跑的一组增量补丁，结构变化才整页重画。设计：`docs/superpowers/specs/2026-09-17-workbench-live-stream-design.md`。
+- **2026-09-17**：免审执行者。boot 时发现的 agy / Cursor 进工作台执行者列表（标「免审」）：用它们自己的跳过审批开关启动，daemon 仍守文件夹租约、目录身份、成果收集、diff 快照与停止；看不到、拦不下单步，没有权限卡与提问，工具凭据非按任务隔离，时间线只有文字，不能带附件与选模型。第一次选到要在桌面确认一次（`POST /v1/workbench/unattended-ack`，持久化在 `agent-config.json` 的 `workbench_unattended_ack_at`），未确认时 `create`/`continue`/微信 `用 @agy` 都返回 `unattended_ack_required`（428）。设计：`docs/superpowers/specs/2026-09-17-unattended-executors-design.md`。
+- **2026-09-17**：免审执行者终审修复：浏览器预览代理放行 ack 路由；交接对象不再自动挑到免审执行者；`unattended_ack_required` 有了面向用户的文案。注意：旧版 daemon 重写 agent-config 时会丢掉确认标记，降级再升级后需再确认一次；免审任务的时间线其实会显示工具名，只是没有逐条活动行。
+- **2026-09-17**：逐文件 diff 审阅。任务详情新增「改动」面板：按回合列出租约边界的变更快照（采集逻辑不变），逐文件展开 diff，每个文件可「接受」或「打回」；打回 = 一句意见 + 该文件 diff 节选组成一条续接要求（`POST /v1/workbench/review-return` ⇒ `continueTask`，同一道门）。标记持久化在 `workbench_review_marks`（v62），跨表面经长轮询同步。`GET /v1/workbench/review?id=`、`POST /v1/workbench/review-mark`。设计：`docs/superpowers/specs/2026-09-17-workbench-diff-review-design.md`。
+- **2026-09-17**：逐文件审阅终审修复：`review-return` 接受 `restartToken`；改动记录只在成果或标记变化时重拉；任务运行中的「发回」按钮改为说明而不是误报"另一个任务在写"。
+- **2026-09-17**：Cursor 改由 ACP（Agent Client Protocol v1，`cursor-agent acp`，stdio JSON-RPC）进工作台，不再是免审执行者：命令逐次进权限卡，时间线有逐条活动行（读 / 改 / 检索 / 命令 / 工具），逐字流照旧；按 `session/load` 接着原会话；`close()` 确认进程组退出。每个任务开跑时记一条提示：工作区内的文件编辑由 Cursor 直接执行，不经过权限卡（真机 spike 所见，ACP 面上没有开关）。不注入 MCP、不声明 fs / terminal 客户端能力、不做 elicitation 与附件；权限只回 allow-once / reject-once。agy 与对话侧的 Cursor 不变。工作台的 Cursor 现在要求装有 cursor-agent CLI；只配了 CURSOR_API_KEY（SDK 路径）的安装仍能在对话侧用 Cursor，但工作台执行者列表里不再出现它（daemon 日志有一行 WORKBENCH 说明）。设计：`docs/superpowers/specs/2026-09-17-acp-cursor-executor-design.md`；评估与 spike：`docs/superpowers/specs/2026-09-17-acp-evaluation.md`。
+- **2026-09-18**：对话侧的 Cursor 也改走 ACP（每会话一个常驻 cursor-agent acp，wechat MCP 按会话注入并带逐会话 token 与 tier，主人聊天拿得到 admin 工具；delegate 通道不给 cursor——能力矩阵上它 `supportsDelegation:false`）；不再往 ~/.cursor/mcp.json 写静态钥匙，boot 时清掉上一版留下的条目（这一步需要 cursor-agent 仍装在机器上才会跑到；卸载了 CLI 的用户要清那把旧钥匙得自己手动删 `~/.cursor/mcp.json` 里的 `wechat-cc:wechat` 条目）；一次性评估（cheapEval）仍走 print 模式。设计：docs/superpowers/specs/2026-09-18-acp-cursor-chat-design.md。
+- **2026-09-18**：Cursor（ACP）执行者收附件：图片（PNG / JPEG / GIF / WebP）作为 image 块进 prompt，PDF / 文本 / Office 给引用文本块由执行者用文件工具读；agent 不报图片能力时带图直接失败并说明。
+- **2026-09-18**：按对话换钉模型（/cursor <model> 等）现在同时忘掉该对话在这家执行者上的会话存档，下一句冷启动并按新模型跑；此前只放掉了活会话，续接仍在旧模型上（与全局换模型的修法相同）。

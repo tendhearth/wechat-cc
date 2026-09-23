@@ -61,7 +61,7 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     rmSync(stateDir, { recursive: true, force: true })
   })
 
-  it('opens a fresh db with PRAGMA user_version = 35 and the 28 tables', () => {
+  it('opens a fresh db with every current migration and the expected tables', () => {
     const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
     // v14 (dialogue real data): messages / threads / thread_extract_state tables added;
     // events.kind widened with 'threads_extracted'.
@@ -93,15 +93,36 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // v34 (介绍人欠账): social_relay 加 echo_* 四列 + upstream/downstream_completed_at
     // — no new tables.
     // v35 (工具可见性): turn_records 加 tool_calls — no new tables.
-    expect(v).toBe(35)
+    // v36 (打猎战利品): hunt_catch table added.
+    // v37 (串门见闻): hunt_catch 加 kind — no new tables.
+    // v38 (明信片): hunt_catch 加 image_svg — no new tables.
+    // v39 (社交信封): penpal_letter 加 kind / payload — no new tables.
+    // v40 (伙伴日志): hunt_catch 改名 journal — table set changes, count doesn't.
+    // v41 (reminders 自愈): 补齐旧六月 schema 缺失的重试列 — no new tables.
+    // v42 (Atelier 分支碰撞自愈): 补齐被跳过的 turn_records.tool_calls — no new tables.
+    // v43 (旧社交表退役): 删除 social_seek / social_echo / social_pledge / social_relay / social_seen_intent.
+    // v44 (per-chat model pin): conversations gains a nullable mode_model column — no new tables.
+    // v46–49: tasks/artifacts, archive state, native sources and recorded handoffs.
+    // v50: durable in-flight supplements, retained as unsent after restart.
+    // v51–53: ordered activity, control receipts and task attachments.
+    // v54: accepted per-run execution choices and native observations.
+    // v55–58: creation receipts, WeChat notices, artifact deliveries and API transcripts.
+    // v59: backfills the request_event_id column v49 never added to existing databases.
+    // v60: matters(一件事)+ bindings + sessions,workbench_tasks.matter_id 回填。
+    // v61: seq 列(实时事件流)
+    // v62: workbench_review_marks(逐文件审阅标记)
+    expect(v).toBe(63)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',
-      'customer_review_feedback', 'customer_review_items', 'customer_reviews', 'events', 'handled_messages', 'message_attempts', 'messages',
+      'customer_review_feedback', 'customer_review_items', 'customer_reviews', 'events', 'handled_messages', 'journal', 'matter_bindings', 'matter_sessions', 'matters', 'message_attempts', 'messages',
       'milestones', 'observations', 'penpal_channel', 'penpal_letter', 'reminders', 'session_fts_state', 'session_state',
       'session_turns_fts', 'session_turns_fts_config', 'session_turns_fts_content', 'session_turns_fts_data',
       'session_turns_fts_docsize', 'session_turns_fts_idx',
-      'sessions', 'social_echo', 'social_pledge', 'social_relay', 'social_seek', 'social_seen_intent', 'thread_extract_state', 'threads', 'turn_records',
+      'sessions', 'thread_extract_state', 'threads', 'turn_records',
+      'workbench_api_sessions', 'workbench_artifact_deliveries', 'workbench_artifacts', 'workbench_attachments', 'workbench_control_receipts',
+      'workbench_creation_receipts', 'workbench_events', 'workbench_handoffs', 'workbench_live_inputs', 'workbench_projects', 'workbench_review_marks', 'workbench_run_execution',
+      'workbench_sources', 'workbench_tasks', 'workbench_wechat_notice_intents', 'workbench_wechat_notices', 'workbench_wechat_subscriptions',
     ])
   })
 

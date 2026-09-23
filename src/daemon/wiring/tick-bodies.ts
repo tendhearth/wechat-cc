@@ -5,6 +5,8 @@
  * so they earn their own file vs side-effects.ts which is pure helper factories.
  */
 import { join } from 'node:path'
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
+import { loadAgentConfig } from '../../lib/agent-config'
 import type { Db } from '../../lib/db'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap'
@@ -15,6 +17,8 @@ import { makeObservationsStore } from '../observations/store'
 import { runIntrospectTick } from '../companion/introspect'
 import { resolveIntrospectChatId, makeIntrospectAgent } from '../companion/introspect-runtime'
 import { resolveEffectiveTier, TIER_PROFILES } from '../../core/user-tier'
+import { dueGuestVisit, guestLabel, type GuestVisitState } from '../companion/guest-visits'
+import { buildGuestVisitNarrationPrompt } from '../../core/visit'
 import type { Access } from '../../lib/access'
 import type { PermissionMode } from '../../core/capability-matrix'
 import { makeMemoryFS } from '../memory/fs-api'
@@ -43,6 +47,14 @@ export const INGEST_BATCH_CAP = 4
 export const INGEST_QUIET_MS = 3 * 60_000
 import { runGarden } from '../memory/gardener'
 import { readJsonFile } from '../../lib/read-json-file'
+import type { CheapEval } from '../../core/agent-provider'
+import {
+  computeCandidates, buildPlanPrompt, parsePlan, pickFallback, constrainPlan, shouldReask, formatLocal,
+  PLAN_EVAL_TIMEOUT_MS, PLAN_MAX_OBSERVATIONS, PLAN_JOURNAL_ITEMS,
+  type PlanAction, type PlanContext, type PlanLogEntry,
+} from '../../core/companion-plan'
+import { readPlanLog, appendPlanLog } from '../companion/plan-memory'
+import { readJournalSeen } from '../../core/journal-seen'
 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
@@ -79,7 +91,24 @@ export interface TickDeps {
    * chat. Typed as a structural subset of ChatPrefsStore so tests can fake
    * it without a full store.
    */
-  chatPrefs: { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean }; list(): string[] }
+  chatPrefs: { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean }; list(): string[] }
+  /**
+   * 打猎战利品(2026-09-03)。`outboundTaps` 旁听打猎那一拍发出去的文本,
+   * `huntStore` 把它拆成条目落库。两者都可选:没接就是旧行为(发了不记)。
+   */
+  outboundTaps?: { tap(chatId: string): { close(): string[] } }
+  huntStore?: {
+    recordHunt(a: { chatId: string; text: string; nowIso?: string }): number
+    recordVisit?(a: { chatId: string; text: string; peerLabel: string; nowIso?: string }): string | null
+    /** 日程判断用(spec 2026-09-05-companion-plan):包袱里最近几条 + 没看的数量。main.ts 传的是完整 Journal。 */
+    list?(limit?: number): readonly { kind: string; title: string; ts: string }[]
+    summary?(seenUntil: string | null): { unread: number; latest: { kind: string; title: string; ts: string } | null }
+  }
+  /**
+   * 日程判断的便宜模型(spec 2026-09-05-companion-plan)。测试注入;缺省
+   * `boot.registry.getCheapEval()`。没有 → 回退到固定顺序 hunt → visit → gap。
+   */
+  planEval?: CheapEval
   /**
    * Task 6 — the calibration gate's learning signal (last claimed proactive
    * send + no-reply streak per chat). shouldSpeak() reads it; pushTick
@@ -101,6 +130,12 @@ export interface TickDeps {
    */
   hearthConnect?: typeof connectHearth
   hearthBuildPlan?: typeof buildHearthPlan
+  /**
+   * Optional CC Atelier mount. Kept absent by default until a hosted brush is
+   * provisioned; when present it runs after the normal introspection work and
+   * must remain throw-safe so art can never starve memory maintenance.
+   */
+  runAtelierTick?: (opts?: { nowIso?: string }) => Promise<void>
 }
 
 /**
@@ -347,32 +382,27 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
   }
 
   /**
-   * Resolves the chat's session (project/tier/provider), checks the
-   * in-flight guard, acquires the handle, runs `claim()` (write the
-   * at-most-once marker BEFORE dispatch — see the at-most-once note below),
-   * then dispatches `buildText()`. Shared by the agenda and gap branches so
-   * both get the same session-isolation + claim-before-dispatch contract.
+   * 主动外发的两道闸,连同它们要用的会话解析(project / tier / provider)。
+   * 一份逻辑两处用:真发之前(dispatchToChat)和**日程判断之前**
+   * —— 断线时不该先烧一次判断模型再发现这条根本发不出去
+   * (memory: no-retry-storm-when-disconnected)。
+   *
+   * 只算不打日志:两个调用点要打的日志不一样(dispatchToChat 打
+   * COMPANION / SCHED 那两行原文,判断那边打一行 PLAN skip)。
    */
-  async function dispatchToChat(
-    chatId: string,
-    args: { claim: () => void; buildText: () => string },
-  ): Promise<void> {
+  type DispatchGate =
+    | { blocked: 'wechat_degraded' }
+    | { blocked: 'session_in_flight' | null; proj: { alias: string; path: string }; tier: ReturnType<typeof resolveEffectiveTier>; providerId: typeof deps.boot.defaultProviderId }
+  function resolveDispatch(chatId: string): DispatchGate {
     // 在 LLM 生成之前就拦下:degraded 时这条消息既发不出去,生成它也是白烧
     // token,而且等链路恢复后内容早已过时 —— 所以直接丢弃,不排队。
-    if (deps.health?.shouldSuspend('wechat')) {
-      deps.log('COMPANION', `chat=${chatId} skipped: wechat connection degraded`)
-      return
-    }
+    if (deps.health?.shouldSuspend('wechat')) return { blocked: 'wechat_degraded' }
     const snapshot = deps.ilink.loadProjects()
     const currentAlias = snapshot.current && snapshot.projects[snapshot.current] ? snapshot.current : null
     const proj = currentAlias
       ? { alias: currentAlias, path: snapshot.projects[currentAlias]!.path }
       : { alias: '_default', path: launchCwd }
     const tier = resolveEffectiveTier(chatId, deps.loadAccess(), deps.permissionMode)
-    if (tier !== 'admin') {
-      deps.log('COMPANION', `chat=${chatId} is non-admin tier (${tier}); push tick will run with reduced capabilities`)
-    }
-    const tierProfile = TIER_PROFILES[tier]
     // Dispatch on the chat's OWN mode provider (what its normal replies use),
     // not the daemon default. A codex-default install whose chat is solo-claude
     // would otherwise push via codex — a provider the chat never uses, which on
@@ -387,9 +417,37 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     // user session is obviously already busy. The runExclusive below closes
     // the residual race window this check alone can't — see the comment on
     // it just below.
-    if (deps.boot.sessionManager.isInFlight({ alias: proj.alias, providerId, chatId })) {
+    const inFlight = deps.boot.sessionManager.isInFlight({ alias: proj.alias, providerId, chatId })
+    return { blocked: inFlight ? 'session_in_flight' : null, proj, tier, providerId }
+  }
+
+  /** 判断这一步用的薄壳:能不能发?不能就给个理由。 */
+  const dispatchBlockedReason = (chatId: string): string | null => resolveDispatch(chatId).blocked
+
+  /**
+   * Resolves the chat's session (project/tier/provider), checks the
+   * in-flight guard, acquires the handle, runs `claim()` (write the
+   * at-most-once marker BEFORE dispatch — see the at-most-once note below),
+   * then dispatches `buildText()`. Shared by the agenda and gap branches so
+   * both get the same session-isolation + claim-before-dispatch contract.
+   */
+  async function dispatchToChat(
+    chatId: string,
+    args: { claim: () => void; buildText: () => string },
+  ): Promise<boolean> {
+    const gate = resolveDispatch(chatId)
+    if (gate.blocked === 'wechat_degraded') {
+      deps.log('COMPANION', `chat=${chatId} skipped: wechat connection degraded`)
+      return false
+    }
+    const { proj, tier, providerId } = gate
+    if (tier !== 'admin') {
+      deps.log('COMPANION', `chat=${chatId} is non-admin tier (${tier}); push tick will run with reduced capabilities`)
+    }
+    const tierProfile = TIER_PROFILES[tier]
+    if (gate.blocked === 'session_in_flight') {
       deps.log('SCHED', `[companion] skipping push tick: user session in-flight (alias=${proj.alias} provider=${providerId} chat=${chatId})`)
-      return // leave the item pending — retry next tick
+      return false // leave the item pending — retry next tick
     }
     // Session-serialization (Task 3) — serialize the tick's acquire+claim+
     // dispatch against the SAME per-chatId mutex app converse turns
@@ -429,20 +487,25 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         deps.log('SCHED', `companion tick dispatch failed: ${errMsg(err)}`)
       }
     })
+    return true
   }
 
   /**
    * Per-chat body: agenda branch (due self-authored intention) takes
-   * priority; falls back to the gap check-in branch when nothing is due.
-   * Both branches route through calibration's shouldSpeak() — the single
-   * chokepoint every proactive send passes through.
+   * priority and returns on its own. Nothing due ⇒ 日程判断
+   * (spec 2026-09-05-companion-plan):候选由 computeCandidates 算(三次
+   * shouldSpeak —— 冷却 / care 档 / 无回复暂停一律不变),便宜模型只能在候选
+   * 里选一个或选 none;没有模型 / 超时 / 解析失败就按老顺序 hunt → visit → gap。
+   * calibration 的 shouldSpeak() 仍是每一次主动外发唯一经过的关口。
    */
   async function pushTickForChat(
     chatId: string,
     ctx: { defaultChatId: string | undefined; nowIso: string; today: string; messagesStore: MessagesStore },
   ): Promise<void> {
     const { defaultChatId, nowIso, today, messagesStore } = ctx
-    const level = careLevel(chatId, deps.chatPrefs.get(chatId), defaultChatId)
+    // 一拍一次:care 档、打猎 / 串门开关都从同一份 prefs 读(store 可能是磁盘)。
+    const prefs = deps.chatPrefs.get(chatId)
+    const level = careLevel(chatId, prefs, defaultChatId)
     if (level === 'off') return // care off = master proactive kill-switch: no agenda/gap/hunt sends (別烦我 silences everything); hunt's own pref only gates hunt within a care-enabled chat
 
     const lastInboundAtIso = (await messagesStore.latestInboundTs(chatId)) ?? undefined
@@ -473,37 +536,201 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       return
     }
 
-    // No due agenda item → hunt branch: only the owner's chat, once/day
-    // (calibration cooldown). A cooling hunt must not block a legitimate
-    // gap check-in, so a deny here falls through to the gap branch below
-    // rather than returning.
-    if (chatId === defaultChatId) {
-      const huntLevel = deps.chatPrefs.get(chatId).hunt !== false ? 'low' as const : 'off' as const
-      const huntDecision = shouldSpeak({ kind: 'hunt', level: huntLevel, nowIso, ledger, lastInboundAtIso })
-      if (huntDecision.ok) {
-        await dispatchToChat(chatId, {
+    // ── 三段收成的执行(spec 2026-09-05-companion-plan)─────────────────
+    // 判定(shouldSpeak / 冷却 / care 档 / 无回复暂停)已经在下面的
+    // computeCandidates 里做完了 —— 这三个函数只管「做」,内容与升级前逐字
+    // 一致(旁听入库、busy token、先登记再出门、daysSinceContact 的算法)。
+
+    // 打猎:只有主人那个聊天会成为候选(computeCandidates 里的 isOwnerChat)。
+    async function runHunt(): Promise<boolean> {
+      // 旁听这一拍发出去的东西 —— 打猎的产出此前只存在于微信聊天记录里,
+      // 主人想回头找上周那条链接只能翻聊天。记的是**真发出去的文本**,
+      // 不是要求模型额外调一个登记工具(漏调一次就少一条,且无人知晓)。
+      const tap = deps.outboundTaps?.tap(chatId)
+      // busy token(spec 2026-09-03-companion-presence §2.2):调度器持的是
+      // companion-push(每拍都有,桌宠推导会忽略);打猎要有自己的名字,
+      // 桌宠才知道这一拍是「出门觅食」而不是例行公事。silent-safe:
+      // 测试夹具的 boot 没有 holdBusy。
+      let releaseHunt: (() => void) | undefined
+      try { releaseHunt = (deps.boot as { holdBusy?: (l: string) => () => void }).holdBusy?.('hunt') } catch { releaseHunt = undefined }
+      try {
+        return await dispatchToChat(chatId, {
           claim: () => { deps.careLedger.claimHunt(chatId, nowIso) },
           buildText: () => buildHuntText({ nowIso }),
         })
-        return
+      } finally {
+        try { releaseHunt?.() } catch { /* release 永不抛 */ }
+        const shared = tap?.close() ?? []
+        if (shared.length > 0 && deps.huntStore) {
+          // 记录失败绝不能让这一拍看起来失败 —— 消息已经发出去了。
+          try {
+            const n = deps.huntStore.recordHunt({ chatId, text: shared.join('\n\n'), nowIso })
+            deps.log('HUNT', `chat=${chatId} 入库 ${n} 条`)
+          } catch (err) { deps.log('HUNT', `入库失败(消息已发出): ${errMsg(err)}`) }
+        }
       }
-      deps.log('CARE', `skip chat=${chatId} kind=hunt reason=${huntDecision.reason}`)
     }
 
-    // No due item → gap branch: has it been quiet long enough (by care
-    // level) to warrant a check-in with no concrete agenda reason?
-    const decision = shouldSpeak({ kind: 'gap', level, nowIso, ledger, lastInboundAtIso })
-    if (!decision.ok) {
-      deps.log('CARE', `skip chat=${chatId} kind=gap reason=${decision.reason}`)
-      return
+    // 串门(2026-09-03,core/visit.ts):伙伴自己的社交,一天一次。
+    //
+    // 不走 dispatchToChat:串门不是一次 agent turn(不带工具、不进会话),它
+    // 有自己的 eval 链;这里只做登记 + 出门。`target` 是模型从
+    // provenChannels 里挑的信道 id;没挑就还是 startVisit() 自己挑。
+    async function runVisit(target?: string): Promise<boolean> {
+      const visit = deps.boot.social?.penpal
+      if (!visit) return false
+      // 先登记再出门(at-most-once,同打猎):出门一半 daemon 重启,不该
+      // 下一拍再出一次门 —— 两趟串门比一趟没出门的观感差得多。
+      // 总有地方可去:没有真信道就去邻居家(core/neighbors.ts)。
+      deps.careLedger.claimVisit(chatId, nowIso)
+      const r = target === undefined ? await visit.startVisit() : await visit.startVisit(target)
+      deps.log('VISIT', r.ok ? `tick: 出门了 visit=${r.id} → ${r.channel}` : `tick: 没出得了门 reason=${r.reason}`)
+      return r.ok
     }
-    const daysSinceContact = lastInboundAtIso !== undefined
-      ? Math.floor((Date.parse(nowIso) - Date.parse(lastInboundAtIso)) / 86_400_000)
-      : 0
-    await dispatchToChat(chatId, {
-      claim: () => { deps.careLedger.claim(chatId, nowIso) },
-      buildText: () => buildGapCheckinText({ nowIso, chatId, daysSinceContact }),
-    })
+
+    // 问候:安静够久了(按 care 档)、没有具体由头的一句。
+    async function runGap(): Promise<boolean> {
+      const daysSinceContact = lastInboundAtIso !== undefined
+        ? Math.floor((Date.parse(nowIso) - Date.parse(lastInboundAtIso)) / 86_400_000)
+        : 0
+      return await dispatchToChat(chatId, {
+        claim: () => { deps.careLedger.claim(chatId, nowIso) },
+        buildText: () => buildGapCheckinText({ nowIso, chatId, daysSinceContact }),
+      })
+    }
+
+    // ── 日程判断(spec 2026-09-05-companion-plan)──────────────────────────
+    // 候选由代码算(三次 shouldSpeak,冷却 / care 门 / 无回复暂停一律不变);
+    // 模型只能在候选里选一个或选 none。没有模型 / 超时 / 解析失败 → 固定顺序。
+    const socialWired = !!deps.boot.social?.penpal
+    const { candidates: allCandidates, rejected } = computeCandidates({
+      isOwnerChat: chatId === defaultChatId, level,
+      prefs, socialWired, nowIso, ledger, lastInboundAtIso,
+    }, shouldSpeak)
+    for (const r of rejected) deps.log('CARE', `skip chat=${chatId} kind=${r.action} reason=${r.reason}`)
+    if (allCandidates.length === 0) return
+
+    // 发不出去就别先烧模型:断线 / 会话在忙的时候,微信那三件事(打猎、问候)
+    // 反正到不了主人手里(memory: no-retry-storm-when-disconnected)。串门是
+    // 例外 —— 它走笔友信道,不是一条微信,链路断了照样能出门。
+    // 这道预判闸本身也可能抛(resolveDispatch 里 loadAccess / loadProjects /
+    // getMode / isInFlight 都是真调用):抛了不该把一拍能出的门(visit)也
+    // 一起掀翻 —— 当作没堵,真发那一步(dispatchToChat)还会再判一次。
+    let blocked: string | null
+    try { blocked = dispatchBlockedReason(chatId) }
+    catch (err) { deps.log('PLAN', `预判闸探测失败,当作没堵(真发前还会再判一次): ${errMsg(err)}`); blocked = null }
+    let candidates = allCandidates
+    if (blocked) {
+      candidates = allCandidates.filter(c => c.action === 'visit')
+      if (candidates.length === 0) { deps.log('PLAN', `skip chat=${chatId} reason=${blocked}`); return }
+    }
+
+    const today10 = formatLocal(nowIso).slice(0, 10)
+    const nowMs = Date.parse(nowIso)
+    const run = async (action: PlanAction, target?: string): Promise<boolean> => {
+      if (action === 'hunt') return await runHunt()
+      else if (action === 'visit') return await runVisit(target)
+      else if (action === 'gap') return await runGap()
+      return false
+    }
+    const record = (decision: PlanAction, why: string, source: PlanLogEntry['source']) => {
+      try { appendPlanLog(deps.stateDir, today10, { at: nowIso, chatId, candidates: candidates.map(c => c.action), decision, why, source }) }
+      catch (err) { deps.log('PLAN', `plan-log 写不进去(不影响这一拍): ${errMsg(err)}`) }
+    }
+    /**
+     * 先做,做完才记 —— 台账写的是「做过了」,不是「打算做」。真发那一步还有
+     * 自己的闸(断线 / 会话在忙),记在前面就会把没发出去的一拍记成发过了,
+     * 下一拍的退避与 earlierToday 都跟着骗人。做砸了也要记(标 `(failed) `),
+     * 然后照抛 —— 上层每个 chat 各自 catch。runner 自己判断「真发出去了
+     * 没有」:两道闸之间状态变了(比如预判过闸之后、真发之前微信掉线 /
+     * 会话又忙起来了)导致送时被跳过 → 标 `(skipped) `,不算「做过了」。
+     */
+    const runAndRecord = async (action: PlanAction, why: string, source: PlanLogEntry['source'], target?: string) => {
+      let dispatched: boolean
+      try { dispatched = await run(action, target) } catch (err) { record(action, `(failed) ${why}`, source); throw err }
+      record(action, dispatched ? why : `(skipped) ${why}`, source)
+    }
+    const fallback = async (reason: string) => {
+      const pick = pickFallback(candidates)!
+      deps.log('PLAN', `fallback chat=${chatId} reason=${reason} → ${pick}`)
+      await runAndRecord(pick, `fallback:${reason}`, 'fallback')
+    }
+
+    const evaluate = deps.planEval ?? deps.boot.registry.getCheapEval() ?? null
+    if (!evaluate) { await fallback('no_evaluator'); return }
+
+    const earlier = readPlanLog(deps.stateDir, today10)
+    if (!shouldReask(earlier, chatId, nowMs)) { deps.log('PLAN', `skip chat=${chatId} reason=backoff`); return }
+
+    // `provenChannels?.()` 的可选调用是有用的:老的 penpal 接线和测试夹具
+    // 没有这个方法。整段再包一层 try —— 挑串门目标失败绝不能掀翻这一拍。
+    let proven: Array<{ id: string; label: string }> = []
+    try { proven = socialWired ? (deps.boot.social!.penpal.provenChannels?.() ?? []) : [] } catch { proven = [] }
+    const planCtx = await buildContext()
+    deps.log('PLAN', `ask chat=${chatId} candidates=[${candidates.map(c => c.action).join(',')}]`)
+
+    let raw: string
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      raw = await Promise.race([
+        evaluate(buildPlanPrompt(planCtx)),
+        // 超时也要收摊:问成功了还挂着一个 20 秒的定时器,会把事件循环
+        // (重启、测试拆台)按住不放。
+        new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('timeout')), PLAN_EVAL_TIMEOUT_MS) }),
+      ])
+    } catch (err) {
+      await fallback(err instanceof Error && err.message === 'timeout' ? 'timeout' : 'error')
+      return
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+    const parsed = parsePlan(raw)
+    if (!parsed.ok) { await fallback(`parse:${parsed.reason}`); return }
+    const { plan, downgraded } = constrainPlan(parsed.plan, candidates, proven.map(p => p.id))
+    if (downgraded) deps.log('PLAN', `downgraded chat=${chatId} action=${parsed.plan.action} → none`)
+    deps.log('PLAN', `→ ${plan.action}${plan.target ? ` target=${plan.target}` : ''} (${plan.why})`)
+    // none / 降级:什么都不会跑,当场记。
+    if (plan.action === 'none') { record('none', plan.why, downgraded ? 'downgraded' : 'model'); return }
+    await runAndRecord(plan.action, plan.why, 'model', plan.target)
+
+    /**
+     * 给伙伴看的处境。只读,每个来源各自 try/catch —— 判断这一步永远不该
+     * 因为某个子系统没接线 / 抛了而让整拍失败。
+     */
+    async function buildContext(): Promise<PlanContext> {
+      const hoursAgo = (iso?: string) => iso && !Number.isNaN(Date.parse(iso)) ? Math.round((nowMs - Date.parse(iso)) / 3_600_000) : null
+      let journal: PlanContext['journal'] = null
+      try {
+        if (deps.huntStore?.summary && deps.huntStore.list) {
+          const sum = deps.huntStore.summary(readJournalSeen(deps.stateDir))
+          journal = { unread: sum.unread, latest: deps.huntStore.list(PLAN_JOURNAL_ITEMS).map(x => ({ kind: x.kind, title: x.title, ts: x.ts })) }
+        }
+      } catch { journal = null }
+      // 一格一个 try:某个子服务抛了,不该把另外两格也抹成「没接线」。
+      let social: PlanContext['social'] = null
+      const so = deps.boot.social
+      if (so) {
+        let openWishes = 0
+        try { openWishes = so.wish.list().filter(w => w.effective === 'open').length } catch { openWishes = 0 }
+        let pendingOffers = 0
+        try { pendingOffers = so.intro.offers().length } catch { pendingOffers = 0 }
+        social = { openWishes, pendingOffers, provenChannels: proven }
+      }
+      let observations: PlanContext['observations'] = []
+      try {
+        const rows = await makeObservationsStore(deps.db, chatId, { migrateFromFile: join(deps.stateDir, 'memory', chatId, 'observations.jsonl') }).listActive()
+        observations = rows.slice(-PLAN_MAX_OBSERVATIONS).map(o => ({ tone: o.tone ?? null, body: o.body }))
+      } catch { observations = [] }
+      let personaExcerpt = ''
+      try { personaExcerpt = readFileSync(join(deps.stateDir, 'memory', chatId, 'persona.md'), 'utf8') } catch { personaExcerpt = '' }
+      return {
+        nowLocal: formatLocal(nowIso),
+        ownerLastInboundMinutesAgo: lastInboundAtIso ? Math.round((nowMs - Date.parse(lastInboundAtIso)) / 60_000) : null,
+        today: { lastHuntHoursAgo: hoursAgo(ledger.lastHuntAtIso), lastVisitHoursAgo: hoursAgo(ledger.lastVisitAtIso), lastProactiveHoursAgo: hoursAgo(ledger.lastProactiveAtIso) },
+        candidates, rejected, journal, social, observations, personaExcerpt,
+        earlierToday: earlier.filter(e => e.chatId === chatId).map(e => ({ at: e.at, decision: e.decision, why: e.why })),
+      }
+    }
   }
 
   async function pushTick(opts?: { nowIso?: string }): Promise<void> {
@@ -529,6 +756,66 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       } catch (err) {
         deps.log('SCHED', `companion tick failed for chat=${chatId}: ${errMsg(err)}`)
       }
+    }
+
+    // 人类做客(2026-09-03,companion/guest-visits.ts):主人的朋友来聊过、
+    // 走了 30 分钟 → 伙伴跟主人顺口提一句。每拍都看,自己有水位,不会重复。
+    if (cfg.default_chat_id) {
+      try { await guestVisitPass(cfg.default_chat_id, nowIso, messagesStore) }
+      catch (err) { deps.log('VISIT', `guest pass failed: ${errMsg(err)}`) }
+    }
+  }
+
+  /**
+   * 挑出「不是主人的」chat 里刚聊完的,讲给主人。只讲个大概 —— 来的是主人的
+   * 朋友,它跟伙伴说的话不该被逐字转给第三个人(prompt 里明写)。
+   */
+  async function guestVisitPass(ownerChat: string, nowIso: string, messagesStore: MessagesStore): Promise<void> {
+    const statePath = join(deps.stateDir, 'companion', 'guest-visits.json')
+    const state: GuestVisitState = (() => {
+      try { const j = readJsonFile<Partial<GuestVisitState>>(statePath); return { narrated: j.narrated ?? {}, visits: j.visits ?? {} } }
+      catch { return { narrated: {}, visits: {} } }
+    })()
+    const access = deps.loadAccess()
+    const nowMs = Date.parse(nowIso)
+    let changed = false
+    for (const chatId of await messagesStore.listChatIds()) {
+      if (chatId === ownerChat) continue
+      if (resolveEffectiveTier(chatId, access, deps.permissionMode) === 'admin') continue
+      const latestInboundTs = await messagesStore.latestInboundTs(chatId)
+      if (!latestInboundTs) continue
+      const mark = state.narrated[chatId]
+      if (mark && latestInboundTs <= mark) continue
+      const rows = await messagesStore.listSince(chatId, mark ?? '', 40)
+      const due = dueGuestVisit({
+        chatId, latestInboundTs,
+        since: rows.map(r => ({ direction: r.direction, text: r.text, ts: r.ts })),
+      }, state, nowMs)
+      if (!due) continue
+      // 先记水位再讲:讲到一半 daemon 重启,不该下一拍再讲一遍。
+      state.narrated[chatId] = latestInboundTs
+      state.visits = { ...(state.visits ?? {}), [chatId]: ((state.visits ?? {})[chatId] ?? 0) + 1 }
+      changed = true
+      const evalText = deps.boot.registry.getStrongEval?.(deps.boot.defaultProviderId) ?? deps.boot.registry.getCheapEval()
+      if (!evalText) continue
+      const name = guestLabel(deps.boot.conversationStore?.getIdentity(chatId)?.last_user_name, chatId)
+      const cfgAgent = loadAgentConfig(deps.stateDir)
+      const text = (await evalText(buildGuestVisitNarrationPrompt({
+        myName: cfgAgent.bot_name?.trim() || '我',
+        persona: null, ownerOverview: null,
+        disclosurePolicy: cfgAgent.social_disclosure_policy ?? '别转述朋友的私事。',
+        guestName: name,
+        lines: due.map(m => ({ who: m.direction === 'in' ? 'guest' as const : 'me' as const, text: m.text })),
+      }))).trim().replace(/^[「『"“]+|[」』"”]+$/g, '')
+      if (!text) continue
+      await deps.ilink.sendMessage(ownerChat, `🛎 ${text}`)
+      try { deps.huntStore?.recordVisit?.({ chatId: ownerChat, text, peerLabel: `${name}来过`, nowIso }) }
+      catch (err) { deps.log('VISIT', `guest 见闻入库失败: ${errMsg(err)}`) }
+      deps.log('VISIT', `guest visit told: chat=${chatId} name=${name} lines=${due.length}`)
+    }
+    if (changed) {
+      try { mkdirSync(join(deps.stateDir, 'companion'), { recursive: true }); writeFileSync(statePath, JSON.stringify(state, null, 2)) }
+      catch (err) { deps.log('VISIT', `guest state write failed: ${errMsg(err)}`) }
     }
   }
 
@@ -720,6 +1007,17 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       }
     } catch (err) {
       deps.log('GARDEN', `tick failed: ${err instanceof Error ? err.message : err}`)
+    }
+
+    // CC Atelier is an optional, default-off extension point. The callback is
+    // deliberately after introspection/gardening and isolated: no renderer or
+    // planner failure may break the existing 24h maintenance tick.
+    if (deps.runAtelierTick) {
+      try {
+        await deps.runAtelierTick({ nowIso })
+      } catch (err) {
+        deps.log('ATELIER', `tick failed: ${errMsg(err)}`)
+      }
     }
   }
 

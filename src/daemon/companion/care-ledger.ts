@@ -12,6 +12,8 @@ export interface CareLedger {
   get(chatId: string): CareLedgerEntry
   claim(chatId: string, nowIso: string): void
   claimHunt(chatId: string, nowIso: string): void
+  /** 串门出门前登记(at-most-once,同 claimHunt)。 */
+  claimVisit(chatId: string, nowIso: string): void
   resetNoReply(chatId: string): void
 }
 
@@ -39,6 +41,11 @@ export function makeCareLedger(stateDir: string, deps?: { store?: StateStore }):
     claimHunt(chatId, nowIso) {
       const cur = read(chatId)
       const next: CareLedgerEntry = { ...cur, lastHuntAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
+      store.set(chatId, JSON.stringify(next))
+    },
+    claimVisit(chatId, nowIso) {
+      const cur = read(chatId)
+      const next: CareLedgerEntry = { ...cur, lastVisitAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
       store.set(chatId, JSON.stringify(next))
     },
     resetNoReply(chatId) {

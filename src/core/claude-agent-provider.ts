@@ -1,9 +1,33 @@
-import { query, type Options, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities, SpawnContext } from './agent-provider'
-import type { TierProfile, ToolKind } from './user-tier'
+import { query, type CanUseTool, type Options, type PermissionResult, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import type { AgentActivity, AgentAttachment, AgentEvent, AgentProject, AgentProvider, AgentSession, PermissionMode, ProviderCapabilities, SpawnContext } from './agent-provider'
+import { classifyToolUse, TIER_PROFILES, type TierProfile, type ToolKind } from './user-tier'
+import { WORKBENCH_PERMISSION_DESCRIPTION_MAX, WORKBENCH_PERMISSION_TOOL_MAX } from './workbench/permissions'
+import { validateUserInputAnswers, validateUserInputRequest } from './workbench/user-input'
+import { isCompanionMcp, nativeMcpInputPreview } from './workbench/claude-native-config'
 import { log } from '../lib/log'
 import { AsyncQueue } from './async-queue'
 import { isAuthFail } from './auth-fail'
+import { discoverClaudeModels } from './workbench/claude-model-catalog'
+import { executionModel, nativeModelId } from './workbench/native-model-catalog'
+import { createClaudeWorkbenchSession } from './claude-workbench-runtime'
+
+function userContent(text: string, attachments: readonly AgentAttachment[] = []): Exclude<SDKUserMessage['message']['content'], string> {
+  const content: Exclude<SDKUserMessage['message']['content'], string> = text || !attachments.length ? [{ type: 'text', text }] : []
+  for (const attachment of attachments) {
+    const { name, mime, path, sha256 } = attachment
+    if (mime.startsWith('image/')) {
+      if (mime !== 'image/png' && mime !== 'image/jpeg' && mime !== 'image/gif' && mime !== 'image/webp') throw Error('attachment_image_unsupported')
+      if (!attachment.data) throw Error('attachment_data_missing')
+      content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: attachment.data } })
+    } else if (mime === 'application/pdf') {
+      if (!attachment.data) throw Error('attachment_data_missing')
+      content.push({ type: 'document', title: name, source: { type: 'base64', media_type: 'application/pdf', data: attachment.data } })
+    } else {
+      content.push({ type: 'text', text: 'Attached task file (reference material; read with a file tool if needed):\n' + JSON.stringify({ name, mime, path, sha256 }) })
+    }
+  }
+  return content
+}
 
 /**
  * RFC 05 Phase 2 — static capabilities. Claude is the only provider with
@@ -12,6 +36,7 @@ import { isAuthFail } from './auth-fail'
  */
 export const CLAUDE_CAPABILITIES: ProviderCapabilities = {
   perToolCallback: true,
+  adminMcpTools: true,
   sandboxLevels: new Set(),
   supportsDelegation: true,
   supportsResume: true,
@@ -45,12 +70,14 @@ const TOOL_KIND_TO_CLAUDE_BUILTINS: Record<ToolKind, ReadonlyArray<string>> = {
   file_locate: [],         // MCP-only (mcp__wechat__locate_file), gated by canUseTool
   plugin_tool: [],         // MCP-only (mcp__<plugin>__*), admin-only, gated by canUseTool
   social_seek: [],         // MCP-only (mcp__wechat__social_seek), admin-only, gated by canUseTool
+  social_act: [],          // MCP-only (mcp__wechat__wish_list / wish_send / wish_cancel / intro_request / intro_accept / intro_decline / intro_offers / relationships / visit), admin-only, gated by canUseTool
   knowledge_search: [],    // MCP-only (mcp__wechat__knowledge_search), admin-only, gated by canUseTool
   federated_query: [],     // MCP-only (mcp__wechat__federated_query), admin-only, gated by canUseTool
   graph_query: [],         // MCP-only (mcp__wechat__contact_profile / top_contacts / relationship_subgraph / connectors / graph_status), admin-only, gated by canUseTool
   facts_query: [],         // MCP-only (mcp__wechat__extraction_batch / record_facts / contact_facts / find_facts / set_fact_status / extraction_status), admin-only, gated by canUseTool
   person_query: [],        // MCP-only (mcp__wechat__person_brief), admin-only, gated by canUseTool
   config_admin: [],        // MCP-only (mcp__wechat__config_get / config_set), admin-only, gated by canUseTool
+  mode_switch: [],         // MCP-only (mcp__wechat__provider_switch), trusted+, gated by canUseTool
 }
 
 export interface ClaudeTierSdkOpts {
@@ -98,7 +125,7 @@ export interface ClaudeAgentProviderOptions {
    * `lastActiveChatId` ref, which under concurrent dispatch could read
    * another chat's id mid-call and cross-resolve the tier.
    */
-  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string) => Options
+  sdkOptionsForProject: (alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string, spawnContext?: SpawnContext) => Options
   /**
    * Path to the `claude` binary, threaded into cheapEval's query() call.
    * Optional — when omitted the SDK's bundled discovery runs. Used in
@@ -115,16 +142,136 @@ export interface ClaudeAgentProviderOptions {
   strongModel?: () => string
 }
 
+function taskInputPreview(input: Record<string, unknown>): string | null {
+  if (typeof input.command === 'string') return `command=${input.command}`
+  try {
+    const json=JSON.stringify(input)
+    return json === '{}' ? '' : `input=${json}`
+  } catch {
+    return null
+  }
+}
+
+/** Claude's task-only permission gate. Workbench has no CC-private messaging
+ * or personal-memory MCP surface; local built-ins retain trusted/solo/strict
+ * allow/relay/deny policy, with relay decisions owned by the active task run. */
+export function makeWorkbenchClaudeCanUseTool(
+  requestPermission?: SpawnContext['requestPermission'],
+  requestUserInput?: SpawnContext['requestUserInput'],
+  admittedMcpServers: readonly string[] = [],
+): CanUseTool {
+  return async (toolName, input, options) => {
+    if (options.signal.aborted) {
+      return { behavior:'deny', message:'This task tool call was cancelled.' } satisfies PermissionResult
+    }
+    if (toolName === 'AskUserQuestion') {
+      // Native answers are supplied through updatedInput, keyed by the exact
+      // question text. This is a question callback, never an execution grant.
+      const denied = { behavior: 'deny', message: 'The task question was declined, invalid, or is no longer active.' } satisfies PermissionResult
+      if (!requestUserInput) return denied
+      try {
+        if (typeof options.toolUseID !== 'string' || !options.toolUseID || !Array.isArray(input.questions)) return denied
+        const texts = new Set<string>()
+        const request = validateUserInputRequest({ questions: input.questions.map((value: unknown, index: number) => {
+          if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid_question')
+          const q = value as Record<string, unknown>
+          if (typeof q.question !== 'string' || texts.has(q.question) || typeof q.multiSelect !== 'boolean' || !Array.isArray(q.options) || q.options.length < 2 || q.options.length > 4) throw new Error('invalid_question')
+          texts.add(q.question)
+          return {
+            id: `${options.toolUseID}:${index}`, header: q.header, question: q.question, multiSelect: q.multiSelect, allowOther: true,
+            options: q.options.map((value: unknown) => {
+              if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid_question')
+              const option = value as Record<string, unknown>
+              if (option.preview !== undefined && typeof option.preview !== 'string') throw new Error('invalid_question')
+              return { label: option.label, description: option.preview && typeof option.description === 'string' ? `${option.description}\n${option.preview}` : option.description }
+            }),
+          }
+        }) })
+        const response = await requestUserInput(request, options.signal)
+        if (response === null || options.signal.aborted) return denied
+        const answers = validateUserInputAnswers(request, response)
+        return { behavior: 'allow', updatedInput: { ...input, answers: Object.fromEntries(request.questions.map(question => [question.question, answers[question.id]!.join(', ')])) } } satisfies PermissionResult
+      } catch { return denied }
+    }
+    if (toolName.startsWith('mcp__')) {
+      const denied = { behavior:'deny',message:'The task tool was not admitted, or approval was denied or expired.' } satisfies PermissionResult
+      const server = admittedMcpServers.find(name => !isCompanionMcp(name) && toolName.startsWith(`mcp__${name}__`) && toolName.length > name.length + 7)
+      if (!server || !requestPermission || toolName.length > WORKBENCH_PERMISSION_TOOL_MAX) return denied
+      const inputPreview = nativeMcpInputPreview(input)
+      if (!inputPreview || inputPreview.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX - 256) return denied
+      try {
+        const allowed = await requestPermission({tool:toolName,description:`${toolName}\n${inputPreview}`}, options.signal)
+        return allowed && !options.signal.aborted ? {behavior:'allow'} : denied
+      } catch { return denied }
+    }
+    const kind = classifyToolUse(toolName, input)
+    // Load after provider module initialization. permission-relay depends on
+    // capability-matrix, whose provider declarations include this module.
+    // A static import here would evaluate that cycle before the declarations
+    // exist and fail closed by crashing startup instead of denying a tool.
+    const [{ effectivePolicy }, { lookup }] = await Promise.all([
+      import('./permission-relay'),
+      import('./capability-matrix'),
+    ])
+    if (options.signal.aborted) {
+      return { behavior:'deny', message:'This task tool call was cancelled.' } satisfies PermissionResult
+    }
+    const decision = effectivePolicy(
+      lookup('solo','claude','strict'),
+      TIER_PROFILES.trusted,
+      kind,
+    )
+    if (decision === 'allow') return { behavior: 'allow' } satisfies PermissionResult
+    if (decision === 'deny') {
+      return { behavior: 'deny', message: `Tool '${toolName}' (${kind}) is unavailable in this task.` } satisfies PermissionResult
+    }
+    if (!requestPermission || options.signal.aborted) {
+      return { behavior: 'deny', message: 'This task permission request is no longer active.' } satisfies PermissionResult
+    }
+    const inputPreview=taskInputPreview(input)
+    const context=options.title?.trim() || options.description?.trim() || options.decisionReason?.trim() || ''
+    const description=[context,inputPreview].filter(Boolean).join('\n') || `Run ${toolName}`
+    if (toolName.length > WORKBENCH_PERMISSION_TOOL_MAX || inputPreview === null || description.length > WORKBENCH_PERMISSION_DESCRIPTION_MAX) {
+      return { behavior:'deny', message:'The complete permission detail is too large to review safely.' } satisfies PermissionResult
+    }
+    let allowed = false
+    try {
+      allowed = await requestPermission({
+        tool: toolName.slice(0, WORKBENCH_PERMISSION_TOOL_MAX),
+        description,
+      }, options.signal)
+    } catch {
+      allowed = false
+    }
+    return allowed && !options.signal.aborted
+      ? { behavior: 'allow' } satisfies PermissionResult
+      : { behavior: 'deny', message: 'The task permission request was denied or expired.' } satisfies PermissionResult
+  }
+}
+
+/**
+ * 配置里没设 model 时的兜底。写死的模型名会烂(Anthropic 下线它那天,新装
+ * 用户每一轮都报错)—— 所以只允许在这一处出现,/mode 会标出「用的是内置兜底」,
+ * 首次使用探测(bootstrap)会把它不可用这件事变成用户看得见的错误。
+ * 为什么不干脆不传 model 让 CLI 用自己的默认:2026-05-08 的事故 —— 用户
+ * 交互里的别名(`opus[1m]` 之类)在 SDK 子进程里解析不了,整天 404。
+ */
+export const DEFAULT_CLAUDE_MODEL = 'claude-opus-4-8'
 const CLAUDE_CHEAP_MODEL_DEFAULT = 'claude-haiku-4-5'
 
 // Local mirror of the SDK message variants this provider actually reads.
 // The SDK's full union (`SDKMessage`) covers many more variants but our
-// streaming loop only branches on these three. Defining a narrow local
+// streaming loop only branches on these variants. Defining a narrow local
 // type means every reach into the message shape goes through one cast
 // (`narrow` below) — when the SDK changes shape, that's the only place
 // to update.
-type AssistantContent = string | Array<{ type?: string; text?: string; name?: string }>
-type AssistantMsg = { type: 'assistant'; message?: { content?: AssistantContent } }
+type AssistantBlock = { type?: string; text?: string; name?: string; id?: string }
+type AssistantContent = string | Array<AssistantBlock>
+type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: string | null; message?: { id?: string; model?: string; content?: AssistantContent } }
+// SDKUserMessage.message is the Anthropic MessageParam. Its tool_result
+// blocks correlate to tool_use.id through tool_use_id; result content can
+// contain private file or command output and is deliberately not read here.
+type UserMsg = { type: 'user'; parent_tool_use_id?: string | null; message?: { content?: string | Array<{ type?: string; tool_use_id?: string; is_error?: boolean }> } }
 type ResultMsg = {
   type: 'result'
   subtype?: string
@@ -133,15 +280,15 @@ type ResultMsg = {
   duration_ms?: number
   result?: unknown
 }
-type SystemMsg = { type: 'system'; subtype?: string; session_id?: string }
-type NarrowedMsg = AssistantMsg | ResultMsg | SystemMsg
+type SystemMsg = { type: 'system'; subtype?: string; session_id?: string; model?: string }
+type NarrowedMsg = AssistantMsg | UserMsg | ResultMsg | SystemMsg
 
 // Returns null for SDK message types we don't branch on (rate_limit_event,
 // stream_event, partial_assistant, etc.). The caller's for-await loop
 // simply skips these.
 function narrow(msg: SDKMessage): NarrowedMsg | null {
   const t = (msg as { type?: string }).type
-  if (t === 'assistant' || t === 'result' || t === 'system') {
+  if (t === 'assistant' || t === 'user' || t === 'result' || t === 'system') {
     return msg as unknown as NarrowedMsg
   }
   return null
@@ -197,11 +344,39 @@ function swallowSdkLifecycleError(fn: (() => unknown) | undefined): void {
  * into our normalised `{ server, tool }` shape. Built-in tools (Read,
  * Bash) lack the prefix — those return `{ tool: name }` with no server.
  */
-function parseToolUseToEvent(block: { name?: string }): AgentEvent {
+function parseToolUseToEvent(block: { name?: string }): Extract<AgentEvent, { kind: 'tool_call' }> {
   const name = block.name ?? ''
   const m = /^mcp__([^_]+)__(.+)$/.exec(name)
   if (m) return { kind: 'tool_call', server: m[1], tool: m[2]! }
   return { kind: 'tool_call', tool: name }
+}
+
+type ActivityEvent = Extract<AgentEvent, { kind: 'tool_call' }> & { activity: AgentActivity }
+
+function nativeTimelineId(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 && value.length <= 200 && !/[\u0000-\u001f\u007f]/.test(value) ? value : undefined
+}
+
+// Public activity labels are chosen from tool names only. In particular,
+// commands, agent prompts, edit contents, URLs and tool outputs are not
+// copied into the persisted workbench timeline.
+function claudeActivityLabel(name: string): Pick<AgentActivity, 'type' | 'label'> {
+  switch (name) {
+    case 'Bash': return { type: 'command', label: '运行命令' }
+    case 'KillShell': return { type: 'command', label: '停止命令' }
+    case 'Read': return { type: 'read', label: '读取文件' }
+    case 'LS': return { type: 'read', label: '查看文件列表' }
+    case 'WebFetch': return { type: 'read', label: '读取网页' }
+    case 'Glob': return { type: 'search', label: '查找文件' }
+    case 'Grep': return { type: 'search', label: '搜索内容' }
+    case 'WebSearch': return { type: 'search', label: '搜索网页' }
+    case 'Write': return { type: 'edit', label: '写入文件' }
+    case 'Edit': return { type: 'edit', label: '编辑文件' }
+    case 'NotebookEdit': return { type: 'edit', label: '编辑笔记本' }
+    case 'Task': case 'Agent': return { type: 'agent', label: '协作任务' }
+    case 'AskUserQuestion': return { type: 'tool', label: '询问用户' }
+    default: return { type: 'tool', label: '调用工具' }
+  }
 }
 
 export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): AgentProvider {
@@ -214,19 +389,37 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       options: {
         model,
         maxTurns: 1,
+        // Background evaluators must not inherit interactive Claude Code
+        // hooks, plugins, skills, MCP servers, or project instructions. Those
+        // can alter a strict JSON reply (and add a large cached-token bill).
+        settingSources: [],
+        tools: [],
+        persistSession: false,
         ...(opts.claudeBin ? { pathToClaudeCodeExecutable: opts.claudeBin } : {}),
       } as Options,
     })
     let text = ''
+    let resultText = ''
     for await (const raw of q as AsyncGenerator<SDKMessage>) {
       const msg = narrow(raw)
       if (msg?.type === 'assistant') {
         text += extractText(msg.message?.content)
+      } else if (msg?.type === 'result' && typeof msg.result === 'string') {
+        // Recent Claude CLI/SDK combinations can emit the final answer only
+        // on the result event for one-shot, maxTurns=1 calls. Prefer streamed
+        // assistant text when present, but retain this provider-level fallback
+        // so every CheapEval consumer receives the promised string.
+        resultText = msg.result
       }
     }
-    return text
+    return text.trim().length > 0 ? text : resultText
   }
   return {
+    modelCatalog(project) {
+      const deadline=Date.now()+15_000
+      const options=opts.sdkOptionsForProject(project.alias,project.path,TIER_PROFILES.trusted,'workbench:catalog')
+      return discoverClaudeModels(options,Math.max(0,deadline-Date.now()))
+    },
     // One-shot haiku-class eval. Used by chatroom convergence check +
     // companion introspect via ProviderRegistry.getCheapEval(). Env override
     // lets users pin to a newer haiku without a code change.
@@ -243,7 +436,22 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // chatId is threaded into sdkOptionsForProject so the builder can
       // produce a canUseTool whose tier/mode closures are bound to THIS
       // session — see bootstrap/index.ts:buildCanUseTool().
-      const options = opts.sdkOptionsForProject(project.alias, project.path, spawnOpts.tierProfile, spawnOpts.chatId, spawnOpts.mcpEnv, spawnOpts.appendInstructions)
+      const options = {...opts.sdkOptionsForProject(project.alias, project.path, spawnOpts.tierProfile, spawnOpts.chatId, spawnOpts.mcpEnv, spawnOpts.appendInstructions, spawnOpts)}
+      const execution = spawnOpts.execution ? {...spawnOpts.execution} : undefined
+      if (execution) {
+        if (execution.model) options.model=execution.model
+        else if (execution.defaults === 'native' || spawnOpts.resumeSessionId) delete options.model
+        if (execution.reasoningEffort) {
+          // Validated below against this native model's advertised effort levels.
+          options.effort=execution.reasoningEffort as Options['effort']
+        } else if (execution.defaults === 'native' || spawnOpts.resumeSessionId) {
+          delete options.effort; delete options.thinking; delete options.maxThinkingTokens
+        }
+        if (execution.model || execution.reasoningEffort) {
+          const catalog=await discoverClaudeModels(options)
+          executionModel(catalog,execution,options.model)
+        }
+      }
       if (spawnOpts.resumeSessionId) {
         ;(options as Options & { resume?: string }).resume = spawnOpts.resumeSessionId
       }
@@ -258,11 +466,18 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       const aborter = options.abortController ?? new AbortController()
       options.abortController = aborter
 
+      if (spawnOpts.workbenchLifecycle) {
+        return createClaudeWorkbenchSession(options, spawnOpts, { content: userContent, tool: parseToolUseToEvent, label: claudeActivityLabel })
+      }
+
       const q = query({ prompt: sdkQueue.iterable(), options })
+      let observedSessionId=spawnOpts.resumeSessionId
 
       let activeEventQueue: AsyncQueue<AgentEvent> | null = null
       let closed = false
       let droppedAssistantChunks = 0
+      const activities = new Map<string, ActivityEvent>()
+      let assistantSequence = 0
       let drainResolve: (() => void) | undefined
       const drainPromise = new Promise<void>(resolve => { drainResolve = resolve })
 
@@ -296,12 +511,52 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
             const aq = activeEventQueue as AsyncQueue<AgentEvent>
 
             if (msg.type === 'system' && msg.subtype === 'init') {
+              if (nativeModelId(msg.session_id)) observedSessionId=msg.session_id
+              if (nativeModelId(msg.model)) spawnOpts.reportExecution?.({model:msg.model,...(observedSessionId ? {sessionId:observedSessionId} : {}),source:'native_message'})
               // Routed via log() (info-level) so the line lands in
               // channel.log + dashboard, not just stderr.
               log('SESSION_INIT', `alias=${project.alias} session_id=${msg.session_id ?? ''}`)
               aq.push({ kind: 'init', sessionId: msg.session_id ?? '' })
             } else if (msg.type === 'assistant') {
+              if (!msg.parent_tool_use_id && nativeModelId(msg.message?.model)) spawnOpts.reportExecution?.({model:msg.message.model,...(observedSessionId ? {sessionId:observedSessionId} : {}),source:'native_message'})
               const content = msg.message?.content
+              if (spawnOpts.workbenchTimeline) {
+                const messageId = nativeTimelineId(msg.uuid) ?? nativeTimelineId(msg.message?.id) ?? `message-${++assistantSequence}`
+                const parentId = nativeTimelineId(msg.parent_tool_use_id)
+                const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : content ?? []
+                // Inspect the combined text before emitting any block, so a
+                // login sentinel split across blocks cannot leak as a reply.
+                const text = extractText(content)
+                const authFailed = isAuthFail('claude-sentinel', text)
+                let authReported = false
+                for (const [index, block] of blocks.entries()) {
+                  if (block?.type === 'text' && block.text) {
+                    if (authFailed) {
+                      if (!authReported) aq.push({ kind: 'error', code: 'auth_failed', message: `claude reports not logged in: ${text.slice(0, 160)}` })
+                      authReported = true
+                    } else {
+                      aq.push({ kind: 'text', text: block.text, itemId: `claude:${messageId}:text:${index}`, textMode: 'replace' })
+                    }
+                  } else if (block?.type === 'tool_use') {
+                    const event = parseToolUseToEvent(block)
+                    const id = nativeTimelineId(block.id)
+                    if (!id) { aq.push(event); continue }
+                    // A replay must not create a second start or regress a
+                    // completed tool back to running.
+                    if (activities.has(id)) continue
+                    const activity: AgentActivity = { id, ...claudeActivityLabel(block.name ?? ''), status: 'running', ...(parentId ? { parentId } : {}) }
+                    if (activity.type === 'tool') {
+                      const identifier = [event.server, event.tool].filter(Boolean).join('/')
+                      const detail = identifier.replace(/[^A-Za-z0-9_.:/-]+/g, '_').slice(0, 160)
+                      if (detail) activity.detail = detail
+                    }
+                    const start = { ...event, activity }
+                    activities.set(id, start)
+                    aq.push(start)
+                  }
+                }
+                continue
+              }
               // Emit tool_call events for each tool_use block
               if (Array.isArray(content)) {
                 for (const block of content as Array<{ type?: string; name?: string }>) {
@@ -325,6 +580,17 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 } else {
                   aq.push({ kind: 'text', text })
                 }
+              }
+            } else if (msg.type === 'user' && spawnOpts.workbenchTimeline) {
+              const content = msg.message?.content
+              if (Array.isArray(content)) for (const block of content) {
+                if (block?.type !== 'tool_result') continue
+                const id = nativeTimelineId(block.tool_use_id)
+                const previous = id ? activities.get(id) : undefined
+                if (!previous || previous.activity.status !== 'running' || previous.activity.parentId !== nativeTimelineId(msg.parent_tool_use_id)) continue
+                const event: ActivityEvent = { ...previous, activity: { ...previous.activity, status: block.is_error === true ? 'failed' : 'completed' } }
+                activities.set(previous.activity.id, event)
+                aq.push(event)
               }
             } else if (msg.type === 'result') {
               if (msg.subtype && msg.subtype !== 'success') {
@@ -360,7 +626,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       })()
 
       return {
-        dispatch(text: string): AsyncIterable<AgentEvent> {
+        dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> {
           if (closed) {
             // Already closed — return an iterable that yields nothing.
             return { async *[Symbol.asyncIterator]() {} }
@@ -368,12 +634,15 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           if (activeEventQueue) {
             throw new Error(`claude provider: previous dispatch still in flight (alias=${project.alias})`)
           }
+          const content = userContent(text, attachments)
           const queue = new AsyncQueue<AgentEvent>()
+          activities.clear()
+          assistantSequence = 0
           activeEventQueue = queue
           sdkQueue.push({
             type: 'user',
             parent_tool_use_id: null,
-            message: { role: 'user', content: [{ type: 'text', text }] },
+            message: { role: 'user', content },
           } as SDKUserMessage)
           return queue.iterable()
         },

@@ -91,6 +91,26 @@ export interface SessionStore {
    */
   deleteOne(key: SessionStoreKey): void
   /**
+   * Forget EVERY row of one provider, across aliases and chats. Used when the
+   * provider's pinned model changes: releasing the live sessions is not enough
+   * because the next spawn would resume from a stored session id, and a resumed
+   * session keeps the model it was opened with (ACP `session/load` carries no
+   * model, Claude/Codex resume the same thread) — "改了但没生效" all over again.
+   * Returns how many rows were dropped, so the caller can report it honestly.
+   */
+  deleteProvider(provider: ProviderId): number
+  /**
+   * Per-chat twin of `deleteProvider` — forget EVERY row for one (provider,
+   * chatId), across aliases. Used when a single chat's pinned model changes
+   * (`/cursor <model>`, `/api <model>`, …): releasing the live sessions for
+   * that pair is not enough because the next spawn would resume from a
+   * stored session id, and a resumed session keeps the model it was opened
+   * with — the same 「改了但没生效」 the provider-wide fix addresses, just
+   * scoped to one chat instead of every chat on that provider.
+   * Returns how many rows were dropped, so the caller can report it honestly.
+   */
+  deleteProviderChat(provider: ProviderId, chatId: string): number
+  /**
    * Returns every row keyed by `${alias}|${provider}|${chatId}`. Callers
    * that previously assumed alias-keyed snapshot must now read
    * `rec.alias` (and rec.chat_id) from the value.
@@ -173,6 +193,18 @@ export function makeSessionStore(db: Db, opts: SessionStoreOpts = {}): SessionSt
   const stmtDeleteOne = db.query<unknown, [string, string, string]>(
     'DELETE FROM sessions WHERE alias = ? AND provider = ? AND chat_id = ?',
   )
+  const stmtCountProvider = db.query<{ n: number }, [string]>(
+    'SELECT COUNT(*) AS n FROM sessions WHERE provider = ?',
+  )
+  const stmtDeleteProvider = db.query<unknown, [string]>(
+    'DELETE FROM sessions WHERE provider = ?',
+  )
+  const stmtCountProviderChat = db.query<{ n: number }, [string, string]>(
+    'SELECT COUNT(*) AS n FROM sessions WHERE provider = ? AND chat_id = ?',
+  )
+  const stmtDeleteProviderChat = db.query<unknown, [string, string]>(
+    'DELETE FROM sessions WHERE provider = ? AND chat_id = ?',
+  )
   const stmtAll = db.query<Row, []>(
     'SELECT alias, provider, chat_id, session_id, last_used_at, summary, summary_updated_at ' +
     'FROM sessions ORDER BY alias, provider, chat_id, last_used_at DESC, rowid DESC',
@@ -210,6 +242,24 @@ export function makeSessionStore(db: Db, opts: SessionStoreOpts = {}): SessionSt
 
     deleteOne({ alias, provider, chatId }) {
       stmtDeleteOne.run(alias, provider, chatId)
+    },
+
+    deleteProvider(provider) {
+      // Count first: the DELETE statement's own change count isn't exposed
+      // uniformly across the sqlite bindings this repo runs on (bun:sqlite vs
+      // node:sqlite), and a wrong number here would be a lie in the read-back.
+      const n = stmtCountProvider.get(provider)?.n ?? 0
+      if (n > 0) stmtDeleteProvider.run(provider)
+      return n
+    },
+
+    deleteProviderChat(provider, chatId) {
+      // Same count-then-delete shape as deleteProvider, for the same reason:
+      // the DELETE statement's own change count isn't exposed uniformly
+      // across the sqlite bindings this repo runs on.
+      const n = stmtCountProviderChat.get(provider, chatId)?.n ?? 0
+      if (n > 0) stmtDeleteProviderChat.run(provider, chatId)
+      return n
     },
 
     all() {

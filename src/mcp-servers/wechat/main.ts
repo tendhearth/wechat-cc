@@ -28,13 +28,14 @@ import { registerCompanionTools } from './tools-companion'
 import { registerA2ASendTool } from './tools-a2a'
 import { registerDaemonTools } from './tools-daemon'
 import { registerFileTools } from './tools-files'
-import { registerSocialSeekTool } from './tools-social'
+import { registerSocialTools } from './tools-social'
 import { registerKnowledgeSearchTool } from './tools-knowledge'
 import { registerFederatedQueryTool } from './tools-federated'
 import { registerGraphTools } from './tools-graph'
 import { registerFactsTools } from './tools-facts'
 import { registerConfigTools } from './tools-config'
 import { registerPersonTools } from './tools-person'
+import { registerModeTools } from './tools-mode'
 
 const baseUrl = process.env.WECHAT_INTERNAL_API
 const tokenFilePath = process.env.WECHAT_INTERNAL_TOKEN_FILE
@@ -82,9 +83,12 @@ server.registerTool(
   async () => {
     try {
       const resp = await client.request<{ ok: boolean; daemon_pid: number }>('GET', '/v1/health')
+      // /v1/health 后来多了 version / subsystems 等字段;structuredContent 必须只含 outputSchema
+      // 声明的两项 —— 严格校验的 MCP 客户端(cursor-agent acp 真机抓到)对多出来的字段回 -32602。
+      const structured = { ok: resp.ok, daemon_pid: resp.daemon_pid }
       return {
-        content: [{ type: 'text', text: JSON.stringify(resp) }],
-        structuredContent: resp,
+        content: [{ type: 'text', text: JSON.stringify(structured) }],
+        structuredContent: structured,
       }
     } catch (err) {
       logErr(`ping failed: ${formatError(err)}`)
@@ -176,18 +180,23 @@ registerVoiceShareTools(server, client)
 registerMessagingTools(server, client)
 registerCompanionTools(server, client)
 registerA2ASendTool(server, client)
+// 换后端/换模型(按对话)—— 和 /cc /api /agy 斜杠命令同一条路。guest 会话
+// 不注册(classify 也会拒:mode_switch ∉ GUEST_ALLOW),trusted+ 可用。
+if (process.env.WECHAT_SESSION_TIER !== 'guest') {
+  registerModeTools(server, client)
+}
 
 // Daemon self-diagnosis + remediation — admin-tier sessions only (the
 // provider-agnostic gate; non-admin sessions never see these tools).
 if (SESSION_IS_ADMIN) {
   registerDaemonTools(server, client)
   registerFileTools(server, client)
-  // agent-social M1 (T7b-core), P4 派心愿: social_seek proposes an outbound
-  // intent to external A2A agents (unlike a2a_send's
-  // reply-to-an-established-peer) — the owner's 派/取消 reply is what
-  // actually confirms/cancels the broadcast, so it's admin-only — mirrors
-  // user-tier.ts's ADMIN_ONLY gate.
-  registerSocialSeekTool(server, client)
+  // 社交工具面(spec 2026-09-05-social-tools):social_seek + 九个读 / 动
+  // 主人社交层的工具。admin-only(user-tier.ts 的 social_seek / social_act
+  // 都在 ADMIN_ONLY);非 admin 会话根本看不到。路由层按 trusted 门拒
+  // guest;trusted 会话由注册门(SESSION_IS_ADMIN)+ classify 门
+  // (social_act ∈ ADMIN_ONLY)挡住。
+  registerSocialTools(server, client)
   // agent-facing search (AS T4): knowledge_search runs a semantic query
   // over the owner's WeChat message history — same private-data trust
   // class as file_locate/social_seek, so admin-only.

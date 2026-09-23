@@ -2,12 +2,23 @@ import { describe, expect, it } from 'vitest'
 import { openTestDb } from '../../lib/db'
 import { makeMessagesStore, type MessageRecord } from '../../lib/messages-store'
 import { recentInboundTexts } from './recent-inbound'
+import {makeMwMessages} from '../inbound/mw-messages'
 
 function rec(id: string, dir: 'in' | 'out', text: string, ts: string, kind = 'text'): MessageRecord {
   return { id, chatId: 'chat1', ts, direction: dir, kind, text, source: 'live' }
 }
 
 describe('recentInboundTexts', () => {
+  it('does not feed Chinese workbench commands into the companion reflection history',async()=>{
+    const db=openTestDb(),store=makeMessagesStore(db)
+    try{
+      const record=makeMwMessages({append:store.append,log:()=>{}})
+      for(const [i,text] of ['任务 deadbeef 补充 客户的内部报告','任务 deadbeef 允许 12345678-1234-1234-1234-123456789abc','今天的任务真多'].entries()){
+        await record({msg:{chatId:'chat1',userId:'chat1',accountId:'a',text,msgType:'text',createTimeMs:1000+i},receivedAtMs:1000+i,requestId:String(i)},async()=>{})
+      }
+      expect(await recentInboundTexts(store,'chat1')).toEqual(['今天的任务真多'])
+    }finally{db.close()}
+  })
   it('returns only inbound texts, ascending, skipping commands and empties', async () => {
     const store = makeMessagesStore(openTestDb() as never)
     await store.append(rec('1', 'in', 'hello', '2026-08-01T00:00:01Z'))

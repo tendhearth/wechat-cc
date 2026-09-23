@@ -1,0 +1,170 @@
+[
+  {
+    "form": "unlit",
+    "prop": "micro-light",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/micro-light.png",
+        "width": 384
+      }
+    ]
+  },
+  {
+    "form": "unlit",
+    "prop": "laptop",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/laptop.png",
+        "width": 384
+      }
+    ]
+  },
+  {
+    "form": "unlit",
+    "prop": "envelope",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/envelope.png",
+        "width": 384
+      }
+    ]
+  },
+  {
+    "form": "unlit",
+    "prop": "speech-bubble",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/speech-bubble.png",
+        "width": 384
+      }
+    ]
+  },
+  {
+    "form": "unlit",
+    "prop": "thought-bubble",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/thought-bubble.png",
+        "width": 384
+      }
+    ]
+  },
+  {
+    "form": "unlit",
+    "prop": "exclamation",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/exclamation.png",
+        "width": 384
+      }
+    ]
+  },
+  {
+    "form": "unlit",
+    "prop": "mug",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/mug.png",
+        "width": 384
+      }
+    ]
+  },
+  {
+    "form": "lit",
+    "prop": "micro-light",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/micro-light.png",
+        "width": 384
+      }
+    ]
+  },
+  {
+    "form": "lit",
+    "prop": "laptop",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/laptop.png",
+        "width": 384
+      }
+    ]
+  },
+  {
+    "form": "lit",
+    "prop": "envelope",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/envelope.png",
+        "width": 384
+      }
+    ]
+  },
+  {
+    "form": "lit",
+    "prop": "speech-bubble",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/speech-bubble.png",
+        "width": 384
+      }
+    ]
+  },
+  {
+    "form": "lit",
+    "prop": "thought-bubble",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/thought-bubble.png",
+        "width": 384
+      }
+    ]
+  },
+  {
+    "form": "lit",
+    "prop": "exclamation",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/exclamation.png",
+        "width": 384
+      }
+    ]
+  },
+  {
+    "form": "lit",
+    "prop": "mug",
+    "images": [
+      {
+        "height": 384,
+        "loaded": true,
+        "src": "./assets/pet/cc-v1/../props/mug.png",
+        "width": 384
+      }
+    ]
+  }
+]

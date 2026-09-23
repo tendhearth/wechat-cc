@@ -5,7 +5,8 @@ import { join } from 'node:path'
 // runtime — this is a build-tool interop quirk, not a zod API difference).
 import z from 'zod'
 
-export type AgentProviderKind = 'claude' | 'codex' | 'cursor' | 'openai' | 'gemini'
+import { PROVIDER_IDS, isKnownProviderId, type KnownProviderId } from './provider-ids'
+export type AgentProviderKind = KnownProviderId
 
 export interface AgentConfig {
   provider: AgentProviderKind
@@ -20,6 +21,9 @@ export interface AgentConfig {
   // provider's pinned model/endpoint.
   openaiBaseUrl?: string
   openaiModel?: string
+  /** `/api` 的短名表:alias → 网关模型名(ds → DeepSeek)。主人自己起、自己
+   *  记得住的名字;网关上的原名照样能直接用。 */
+  openaiAliases?: Record<string, string>
   geminiModel?: string
   // agy provider fields (Antigravity CLI — subscription Gemini via Google AI
   // Pro OAuth). Mirrors `geminiModel?`'s optional-string shape: kept
@@ -39,6 +43,9 @@ export interface AgentConfig {
   /** cheapEval 显式指定(外部集成反馈 #2):设定后内部一次性评估只走
    *  该 provider,openai 注册不再静默劫持。 */
   cheapEvalProvider?: string
+  /** 非管理员对话可以切到哪些 provider(core/provider-policy.ts)。缺省 =
+   *  全部已注册。guest 对共享钥匙的 provider(agy/cursor)无论如何都拒。 */
+  trusted_providers?: string[]
   /** openai delegate peer 开关(外部集成反馈 #3):默认 true(向后兼容,
    *  配齐即所有会话可 delegate_openai);false 则不构建该 peer —— 端点只
    *  服务特定会话的场景用它关掉这条"通往端点的路"。 */
@@ -159,6 +166,21 @@ export interface AgentConfig {
   // 夏令时也对;daemon 在用户机器上,系统时区即用户此刻所在)。手动设值是
   // 「万一用户想自己钉一个时区」的口子。见 core/prompt-format.ts localDayKey。
   day_tz_offset_minutes?: number | null
+  /** 免审执行者(UNATTENDED_CAPABILITIES,如 agy/cursor 的 --dangerously-skip-permissions
+   *  旁路)的一次性确认时间戳(ms)。缺省 ⇒ 未确认,工作台 service 拒绝派给免审执行者的
+   *  create(见 core/workbench/service.ts requireInput 的 unattended_ack_required)。 */
+  workbench_unattended_ack_at?: number
+  /** 工作台的保留会话空闲自动收工:安静下来而**没人等这个文件夹**时等多久关掉会话、让出文件夹
+   *  (ms;缺省 600000 = 10 分钟)。0 = 立刻关;很大的数会被封顶到约 24.8 天(setTimeout 的
+   *  合法上限 2³¹−1ms),不是真的永不武装。 */
+  workbench_retained_idle_close_ms?: number
+  /** 同上,但**有人在等这个文件夹**时的短让位时长(ms;缺省 15000)。 */
+  workbench_handoff_grace_ms?: number
+  /** 自改流水线(`wechat-cc self change`,src/cli/self-change/)的配置。全部可选:
+   *  没写就吃 policy.ts 的缺省值。`halted_at` / `halt_reason` / `fail_streak` 是流水线
+   *  自己回写的停机状态(连红两次就停,直到 `--unhalt`),不是主人手填的。
+   *  见 docs/superpowers/specs/2026-09-18-self-change-pipeline-design.md §配置。 */
+  self_change?: SelfChangeSettings
 }
 
 // ── A2A sub-schemas ──────────────────────────────────────────────────────────
@@ -223,6 +245,33 @@ export const ForwardBudgetConfig = z.object({
   window_ms: z.number().int().positive(),
 })
 
+/**
+ * `self_change` 整块的 schema。`.strict()` 是有意的:这一块里每个键都直接决定
+ * 流水线花多少钱、跑多久、什么时候停机,**打错一个键名要被看见,而不是被静默
+ * 忽略然后按缺省值烧 20 刀**。任何一处不合格(错类型、错键名)⇒ loadAgentConfig
+ * 丢掉整块 + 日志一行,其余字段不受影响。
+ */
+export const SelfChangeSettings = z.object({
+  repo_url: z.string().optional(),
+  branch: z.string().optional(),
+  workdir: z.string().optional(),
+  // 预算是钱,允许小数(0.5 刀也是个有效的封顶)。
+  implement_budget_usd: z.number().positive().optional(),
+  review_budget_usd: z.number().positive().optional(),
+  max_turns: z.number().int().positive().optional(),
+  max_per_day: z.number().int().positive().optional(),
+  approval_timeout_h: z.number().positive().optional(),
+  selftest_executor: z.string().optional(),
+  selftest_provider: z.string().optional(),
+  halted_at: z.number().int().positive().optional(),
+  halt_reason: z.string().optional(),
+  // 归零是正常写法(report 步成功后清零),所以 nonnegative 不是 positive ——
+  // 写 positive 的话 `fail_streak: 0` 会让整块在下次 load 时被丢掉。
+  fail_streak: z.number().int().nonnegative().optional(),
+}).strict()
+
+export type SelfChangeSettings = z.infer<typeof SelfChangeSettings>
+
 export type A2AAgentRecord = z.infer<typeof A2AAgentRecord>
 export type A2AListen = z.infer<typeof A2AListen>
 export type YiHubListen = z.infer<typeof YiHubListen>
@@ -230,11 +279,12 @@ export type YiBrain = z.infer<typeof YiBrain>
 export type ForwardBudgetConfig = z.infer<typeof ForwardBudgetConfig>
 
 const AgentConfigSchema = z.object({
-  provider: z.enum(['claude', 'codex', 'cursor', 'openai', 'gemini']).default('claude'),
+  provider: z.enum(PROVIDER_IDS).default('claude'),
   model: z.string().optional(),
   cursorModel: z.string().optional(),
   openaiBaseUrl: z.string().optional(),
   openaiModel: z.string().optional(),
+  openaiAliases: z.record(z.string(), z.string()).optional(),
   geminiModel: z.string().optional(),
   agyModel: z.string().optional(),
   agyBin: z.string().optional(),
@@ -242,6 +292,7 @@ const AgentConfigSchema = z.object({
   remote_tunnel: z.boolean().optional(),
   remote_relay_url: z.string().optional(),
   cheapEvalProvider: z.string().optional(),
+  trusted_providers: z.array(z.string()).optional(),
   delegateOpenai: z.boolean().optional(),
   dangerouslySkipPermissions: z.boolean().default(true),
   autoStart: z.boolean().default(true),
@@ -271,6 +322,11 @@ const AgentConfigSchema = z.object({
   knowledge_embed_runtime: z.enum(['python', 'js']).optional(),
   knowledge_owner: z.string().optional(),
   day_tz_offset_minutes: z.number().int().min(-720).max(840).nullable().optional(),
+  workbench_unattended_ack_at: z.number().int().positive().optional(),
+  // 两档都允许 0(=立刻关);负数由 service 侧当缺省处理。
+  workbench_retained_idle_close_ms: z.number().int().nonnegative().optional(),
+  workbench_handoff_grace_ms: z.number().int().nonnegative().optional(),
+  self_change: SelfChangeSettings.optional(),
 })
 
 /**
@@ -292,12 +348,9 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
     const dangerouslySkipPermissions = parsed.dangerouslySkipPermissions ?? true
     const autoStart = parsed.autoStart ?? true
     const closeStopsDaemon = parsed.closeStopsDaemon ?? false
-    const provider: AgentProviderKind =
-      parsed.provider === 'codex' ? 'codex'
-      : parsed.provider === 'cursor' ? 'cursor'
-      : parsed.provider === 'openai' ? 'openai'
-      : parsed.provider === 'gemini' ? 'gemini'
-      : 'claude'
+    // 名单来自 lib/provider-ids(唯一事实源)。以前这里手写五家、漏了 agy,
+    // provider:"agy" 被静默映射成 claude —— 主人机器上就是这样跑了半个月。
+    const provider: AgentProviderKind = isKnownProviderId(parsed.provider) ? parsed.provider : 'claude'
     // Preserve `model` for both providers. Pre-2026-05-08 only codex
     // honored it; claude inherited the spawned CLI's default which read
     // `~/.claude/.claude.json` and broke daemons whenever the user's
@@ -319,6 +372,14 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
           return result.success ? [result.data] : []
         })
       : undefined
+    // self_change:整块要么全对要么不要(见 SelfChangeSettings 的 .strict())。
+    // 这里比别处吵一句 —— 静默丢掉预算/停机配置,主人只会在账单上发现。
+    let selfChange: SelfChangeSettings | undefined
+    if (typeof parsed.self_change === 'object' && parsed.self_change !== null) {
+      const result = SelfChangeSettings.safeParse(parsed.self_change)
+      if (result.success) selfChange = result.data
+      else console.warn(`[agent-config] self_change 配置不合格,整块忽略:${result.error.issues.map(i => `${i.path.join('.') || '(根)'}: ${i.message}`).join('; ')}`)
+    }
     const forwardBudget = parsed.forward_budget != null
       ? ForwardBudgetConfig.safeParse(parsed.forward_budget).data
       : undefined
@@ -329,6 +390,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.cursorModel === 'string' ? { cursorModel: parsed.cursorModel } : {}),
       ...(typeof parsed.openaiBaseUrl === 'string' ? { openaiBaseUrl: parsed.openaiBaseUrl } : {}),
       ...(typeof parsed.openaiModel === 'string' ? { openaiModel: parsed.openaiModel } : {}),
+      ...(parsed.openaiAliases && Object.keys(parsed.openaiAliases).length > 0 ? { openaiAliases: parsed.openaiAliases } : {}),
       ...(typeof parsed.geminiModel === 'string' ? { geminiModel: parsed.geminiModel } : {}),
       ...(typeof parsed.agyModel === 'string' ? { agyModel: parsed.agyModel } : {}),
       ...(typeof parsed.agyBin === 'string' ? { agyBin: parsed.agyBin } : {}),
@@ -336,6 +398,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.remote_tunnel === 'boolean' ? { remote_tunnel: parsed.remote_tunnel } : {}),
       ...(typeof parsed.remote_relay_url === 'string' ? { remote_relay_url: parsed.remote_relay_url } : {}),
       ...(typeof parsed.cheapEvalProvider === 'string' ? { cheapEvalProvider: parsed.cheapEvalProvider } : {}),
+      ...(Array.isArray(parsed.trusted_providers) ? { trusted_providers: parsed.trusted_providers } : {}),
       ...(typeof parsed.delegateOpenai === 'boolean' ? { delegateOpenai: parsed.delegateOpenai } : {}),
       dangerouslySkipPermissions,
       autoStart,
@@ -359,6 +422,10 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(parsed.knowledge_embed_runtime === 'python' || parsed.knowledge_embed_runtime === 'js' ? { knowledge_embed_runtime: parsed.knowledge_embed_runtime } : {}),
       ...(typeof parsed.knowledge_owner === 'string' ? { knowledge_owner: parsed.knowledge_owner } : {}),
       ...(typeof parsed.day_tz_offset_minutes === 'number' ? { day_tz_offset_minutes: parsed.day_tz_offset_minutes } : {}),
+      ...(typeof parsed.workbench_unattended_ack_at === 'number' ? { workbench_unattended_ack_at: parsed.workbench_unattended_ack_at } : {}),
+      ...(typeof parsed.workbench_retained_idle_close_ms === 'number' ? { workbench_retained_idle_close_ms: parsed.workbench_retained_idle_close_ms } : {}),
+      ...(typeof parsed.workbench_handoff_grace_ms === 'number' ? { workbench_handoff_grace_ms: parsed.workbench_handoff_grace_ms } : {}),
+      ...(selfChange ? { self_change: selfChange } : {}),
     }
   } catch {
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }

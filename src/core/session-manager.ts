@@ -3,6 +3,8 @@ import type { AgentEvent, AgentSession } from './agent-provider'
 import type { ProviderRegistry } from './provider-registry'
 import { tierNameFromProfile, sessionAuthEnv, type TierProfile, type UserTier } from './user-tier'
 import type { PermissionMode } from './capability-matrix'
+import {pathsConflict} from './workbench/scheduler'
+import {canonicalClaimPath} from './workbench/execution-claims'
 import { log } from '../lib/log'
 
 export interface SessionManagerOptions {
@@ -50,7 +52,7 @@ export interface SessionManagerOptions {
    * Omitted in tests/embeddings → `appendInstructions` is left off the
    * SpawnContext entirely.
    */
-  buildInstructions?: (providerId: ProviderId, tierProfile: TierProfile, chatId: string) => string
+  buildInstructions?: (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string) => string
   /**
    * The pinned model id for a (provider) spawn, read per-spawn so a `/model`
    * switch applies without a daemon restart. Returns undefined when no pin
@@ -74,6 +76,11 @@ export interface AcquireRequest {
   providerId: ProviderId
   chatId: string
   tierProfile: TierProfile
+  /**
+   * Per-chat model pin (Mode.solo.model). When set it wins over the daemon's
+   * `currentModelFor(providerId)` global rule for this spawn only.
+   */
+  model?: string
   /**
    * Daemon-wide permission mode. Forwarded into `provider.spawn`'s
    * SpawnContext so providers can honor `--dangerously` independently of
@@ -133,6 +140,18 @@ export class SessionManager {
   // promise instead of forking a duplicate subprocess. Without this, the
   // companion tick + an inbound message racing on the same chat would both
   // miss the cache and both spawn — first one ends up orphaned.
+  private executionGuard:((path:string,providerId:string,nativeId:string|null)=>boolean)|undefined
+  private readonly pendingPaths=new Map<string,string>()
+  private readonly closingPaths=new Map<string,string>()
+  setExecutionGuard(guard:(path:string,providerId:string,nativeId:string|null)=>boolean){this.executionGuard=guard}
+  hasProjectConflict(path:string):boolean {
+    const target=canonicalClaimPath(path)
+    return [...this.pendingPaths.values(),...this.closingPaths.values(),...[...this.sessions.values()].map(s=>s.handle.path)].some(p=>pathsConflict(canonicalClaimPath(p),target))
+  }
+  private checkExecution(req:AcquireRequest){
+    const nativeId=this.opts.sessionStore?.get({alias:req.alias,provider:req.providerId,chatId:req.chatId})?.session_id??null
+    if(this.executionGuard?.(req.path,req.providerId,nativeId))throw new Error('native_session_busy')
+  }
   private readonly pending = new Map<string, Promise<SessionHandle>>()
   // In-flight dispatch counter keyed by (provider, alias, chatId). Each
   // dispatch() iterator increments on first .next() entry and decrements
@@ -156,6 +175,7 @@ export class SessionManager {
    * required for per-chat tier policy + per-chat conversation isolation.
    */
   async acquire(req: AcquireRequest): Promise<SessionHandle> {
+    this.checkExecution(req)
     const k = sessionKey({ alias: req.alias, providerId: req.providerId, chatId: req.chatId })
     const existing = this.sessions.get(k)
     if (existing) {
@@ -164,8 +184,9 @@ export class SessionManager {
     }
     const inFlight = this.pending.get(k)
     if (inFlight) return inFlight
+    this.pendingPaths.set(k,req.path)
     const promise = this.spawn(req).finally(() => {
-      this.pending.delete(k)
+      this.pending.delete(k);this.pendingPaths.delete(k)
     })
     this.pending.set(k, promise)
     return promise
@@ -210,8 +231,11 @@ export class SessionManager {
     // mcpEnv: daemon-owned, computed once per spawn, forwarded for the provider
     // to inject. Conditionally spread so non-wired callers (tests/embeddings)
     // leave the field off entirely.
-    const appendInstructions = this.opts.buildInstructions?.(req.providerId, req.tierProfile, req.chatId)
-    const model = this.opts.currentModelFor?.(req.providerId)
+    // Model first, then the prompt: the prompt states the model so the agent
+    // can answer「你是哪个模型」truthfully instead of guessing (or calling an
+    // admin-only tool a trusted user can't reach).
+    const model = req.model ?? this.opts.currentModelFor?.(req.providerId)
+    const appendInstructions = this.opts.buildInstructions?.(req.providerId, req.tierProfile, req.chatId, model)
     let session: AgentSession
     try {
       session = await provider.spawn(project, {
@@ -235,13 +259,14 @@ export class SessionManager {
 
     const sessionStore = this.opts.sessionStore
     const k = sessionKey({ alias: req.alias, providerId: req.providerId, chatId: req.chatId })
-    const inFlight = this.inFlight
+    const inFlight = this.inFlight,checkExecution=()=>this.checkExecution(req)
     const handle: SessionHandle = {
       alias: req.alias,
       path: req.path,
       providerId: req.providerId,
       lastUsedAt: Date.now(),
       dispatch(text: string): AsyncIterable<AgentEvent> {
+        checkExecution()
         handle.lastUsedAt = Date.now()
         const inner = session.dispatch(text)
         // Track in-flight under (provider, alias, chatId) so sweepIdle
@@ -251,6 +276,7 @@ export class SessionManager {
         // mid-stream.
         return {
           async *[Symbol.asyncIterator]() {
+            checkExecution()
             inFlight.set(k, (inFlight.get(k) ?? 0) + 1)
             try {
               for await (const ev of inner) {
@@ -284,12 +310,19 @@ export class SessionManager {
     const key = sessionKey(k)
     const s = this.sessions.get(key)
     if (!s) return
+    this.closingPaths.set(key,s.handle.path)
     this.sessions.delete(key)
     // Revoke the session's auth token on EVERY release path (coordinator +
     // internal LRU/idle/shutdown eviction). The token key matches what the
     // coordinator minted: provider/alias/chatId (NOT the cache `sessionKey`).
     this.opts.invalidateSessionToken?.(`${k.providerId}/${k.alias}/${k.chatId}`)
-    await s.handle.close()
+    // close() 会抛(ACP provider 等不到进程组退出就抛 acp_process_not_exited)。release 的调用方
+    // 里有三个是没人接的内部清扫:sweepIdle / enforceCapacity / shutdown —— 一个杀不干净的子进程
+    // 就能把整轮清扫掀掉(后面的会话不再释放、容量上限失守、关机卡住)。会话已经从表里摘掉了,
+    // 记一行继续走:泄漏一个进程,好过泄漏其余所有会话。
+    try { await s.handle.close() }
+    catch (err) { log('SESSION_CLOSE_FAILED', `alias=${k.alias} provider=${k.providerId} chat=${k.chatId} — ${err instanceof Error ? err.message : String(err)}`) }
+    this.closingPaths.delete(key)
   }
 
   /**
@@ -311,6 +344,44 @@ export class SessionManager {
   anyInFlight(): boolean {
     for (const n of this.inFlight.values()) if (n > 0) return true
     return false
+  }
+
+  /** Is there a cached (live) session for this key right now? Coordinator uses
+   *  it to know a dispatch is about to cold-spawn (→ cold-start context block). */
+  has(k: InFlightKey): boolean {
+    return this.sessions.has(sessionKey(k))
+  }
+
+  /**
+   * Release every cached session for (providerId, chatId) across aliases,
+   * AND forget the store's stored resume points for that pair. Used when a
+   * chat's pinned model changes: the cache key has no model in it, so
+   * releasing the live sessions alone isn't enough — the next spawn would
+   * otherwise resume from a stored session id, and a resumed session keeps
+   * the model it was opened with (ACP `session/load` carries no model,
+   * Claude/Codex resume the same thread) — "改了但没生效" again. Per-chat
+   * twin of the provider-wide `deleteProvider` fix. Returns the count of
+   * LIVE sessions released (unchanged contract) — the store's own row count
+   * isn't folded in since callers only ever used this number for the live
+   * side. Also fires when there's no live session at all (idle-evicted then
+   * re-pinned) — the store delete still has to happen since the stale
+   * resume row can outlive the cache entry.
+   *
+   * 已知竞态(暂不修,controller ruling):微信 `/cursor <model>` 走 per-chat
+   * 轮次互斥锁里的 setMode,上一轮的 result 事件落存档已经排完队;但桌面
+   * 「模型与后端」面板的 `POST /v1/conversation/set-mode` 不经过那把锁,若
+   * 调用这一刻恰好有一轮在途,它的 result 事件可能在这次 delete 之后才把
+   * 旧 session_id 写回存档,下一次 spawn 又会续到旧模型上。
+   */
+  async releaseFor(providerId: ProviderId, chatId: string): Promise<number> {
+    let n = 0
+    for (const s of Array.from(this.sessions.values())) {
+      if (s.handle.providerId !== providerId || s.chatId !== chatId) continue
+      await this.release({ alias: s.handle.alias, providerId, chatId })
+      n++
+    }
+    this.opts.sessionStore?.deleteProviderChat?.(providerId, chatId)
+    return n
   }
 
   list() {

@@ -39,6 +39,7 @@ const REPO_ROOT = join(dirname(SELF), '..', '..')
  *  filesystem probing. These must be named by at least one test file — the
  *  test is expected to drive the real default, not a stand-in. */
 const BOUNDARY: Record<string, string> = {
+  defaultSdk: 'imports the installed Claude SDK and reads its native history index (workbench/native-claude-history.ts)',
   defaultSpawn: 'spawns the embed subprocess (src/core/knowledge/embed-runner.ts)',
   defaultSpawnBun: 'spawns `bun add` to realign the codex SDK (src/lib/codex-autofix.ts)',
   defaultImporter: 'dynamic import of the hearth MCP client (src/daemon/hearth-adapter.ts)',
@@ -48,6 +49,9 @@ const BOUNDARY: Record<string, string> = {
   defaultProbeGemini: 'spawns the gemini CLI to read its version (src/cli/doctor.ts)',
   defaultSpawnFn: 'spawns the agy (Antigravity) CLI child process per turn (src/core/agy-agent-provider.ts)',
   defaultConnect: 'opens an outbound WebSocket to the remote relay (src/daemon/tunnel-client.ts)',
+  defaultRunner: 'spawns claude / codex to resume a terminal session from a WeChat reply (src/daemon/cli-reply-handler.ts)',
+  defaultExec: 'spawns sips / powershell / convert to shrink an image before it goes to the model (src/lib/image-prep.ts)',
+  defaultCursorSpawnFn: 'spawns the cursor-agent CLI child process for a one-shot cheapEval/strongEval print-mode call (src/core/cursor-eval.ts, used from src/core/acp-cursor-chat.ts)',
 }
 
 /** Seams whose default is a plain value or a pure computation — injecting one
@@ -60,10 +64,12 @@ const PURE: Record<string, string> = {
   defaultOpenaiModel: 'a model-name string',
   defaultModel: 'a model-name string',
   defaultProviderId: 'a provider-name string',
+  defaultWorkdir: 'a path computed from homeDir + platform, no fs access (src/cli/self-change/policy.ts; config.ts uses it as the workdir fallback)',
   defaultClaudeProjectsRoot: 'joins a path; no IO at the seam itself',
   defaultSleep: 'setTimeout wrapper',
   defaultModelRepo: 'maps a model id to a HF repo string; no IO',
   defaultIsWritable: 'a single accessSync, already covered by codex-autofix tests',
+  defaultId: 'formats an id from a timestamp + randomUUID; no IO (src/daemon/atelier-store.ts)',
 }
 
 /** Escape hatch for a BOUNDARY entry no hermetic test can drive.

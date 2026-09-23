@@ -1,4 +1,4 @@
-import type { PipelineRun } from './types'
+import type { InboundCtx, Middleware, PipelineRun } from './types'
 import { compose } from './compose'
 import { makeMwTrace, type TraceMwDeps } from './mw-trace'
 import { makeMwIdentity, type IdentityMwDeps } from './mw-identity'
@@ -10,6 +10,7 @@ import { makeMwAdmin, type AdminMwDeps } from './mw-admin'
 import { makeMwMode, type ModeMwDeps } from './mw-mode'
 import { makeMwOnboarding, type OnboardingMwDeps } from './mw-onboarding'
 import { makeMwPermissionReply, type PermissionReplyMwDeps } from './mw-permission-reply'
+import { makeMwCliReply, type CliReplyMwDeps } from './mw-cli-reply'
 import { makeMwGuard, type GuardMwDeps } from './mw-guard'
 import { makeMwAttachments, type AttachmentsMwDeps } from './mw-attachments'
 import { makeMwTranscribeVoice, type TranscribeVoiceMwDeps } from './mw-transcribe-voice'
@@ -20,6 +21,13 @@ import { makeMwWelcome, type WelcomeMwDeps } from './mw-welcome'
 import { makeMwRecall, type RecallMwDeps } from './mw-recall'
 import { makeMwLlmHealth, type MwLlmHealthDeps } from './mw-llm-health'
 import { makeMwDispatch, type DispatchMwDeps } from './mw-dispatch'
+import {makeMwWorkbench,type WorkbenchMwDeps} from './mw-workbench'
+import { makeMwTaskReference, type TaskReferenceMwDeps } from './mw-task-reference'
+import { makeMwMatter, type MatterMwDeps } from './mw-matter'
+import { makeMwRoute, type RouteMwDeps } from './mw-route'
+import { makeMwConsume, skipFor, skipWhen } from './mw-consume'
+import type { IntentKind } from './intent'
+import { isWechatTaskCommand } from '../../core/workbench/wechat-control'
 
 export interface InboundPipelineDeps {
   trace: TraceMwDeps
@@ -27,11 +35,20 @@ export interface InboundPipelineDeps {
   access: AccessMwDeps
   dedup: DedupMwDeps
   capture: CaptureCtxMwDeps
+  workbench?:WorkbenchMwDeps
+  /** 管家式指称:主人用自然语言说某件事 ⇒ 落定到活跃任务再走 workbench 命令;缺席 ⇒ 不挂。 */
+  taskReference?: TaskReferenceMwDeps
+  /** 每个进门的 chat 登记成一条「一件事」;只登记不改逻辑。 */
+  matter?: MatterMwDeps
+  /** 意图路由(intent.ts):闸门之后、消费者之前算一次;第一步只记不改。 */
+  route?: RouteMwDeps
   typing: TypingMwDeps
   admin: AdminMwDeps
   mode: ModeMwDeps
   onboarding: OnboardingMwDeps
   permissionReply: PermissionReplyMwDeps
+  /** 「看 码」「@码 文本」;缺席 ⇒ 不挂(测试 / 最小嵌入)。 */
+  cliReply?: CliReplyMwDeps
   guard: GuardMwDeps
   attachments: AttachmentsMwDeps
   transcribeVoice: TranscribeVoiceMwDeps
@@ -44,8 +61,46 @@ export interface InboundPipelineDeps {
   dispatch: DispatchMwDeps
 }
 
-export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
-  return compose([
+/** App(桌面 / 手机)发起的一轮:只过 route + consume 这两站(同一份消费者实例);consumed=false ⇒ 调用方照常进对话。 */
+export type AppTurn = (ctx: InboundCtx) => Promise<{ consumed: boolean }>
+export type InboundPipeline = PipelineRun & { appTurn: AppTurn }
+
+export function buildInboundPipeline(d: InboundPipelineDeps): InboundPipeline {
+  // 管家的探针要和它的中间件共用同一份状态(焦点 / 待选 / 接管),所以在这里建一次、两头用。
+  const taskReference = d.taskReference ? makeMwTaskReference(d.taskReference) : null
+  const probes: RouteMwDeps['probes'] = {
+    ...(d.route?.probes ?? {}),
+    ...(d.workbench ? { 'task-command': (ctx) => isWechatTaskCommand(ctx.msg.text ?? '') } : {}),
+    ...(taskReference ? { 'task-reference': taskReference.probe } : {}),
+  }
+  // 消费者按 intent 早退(第二步):在场的消费者必须有探针,否则它永远轮不到 —— 启动时就报,别等真机。
+  if (d.route) {
+    const present: Array<[IntentKind, boolean]> = [['task-command', !!d.workbench], ['admin', true], ['mode', true], ['onboarding', true], ['permission-reply', true], ['cli-reply', !!d.cliReply], ['task-reference', !!taskReference]]
+    const missing = present.filter(([kind, on]) => on && !(kind in probes)).map(([kind]) => kind)
+    if (missing.length) throw new Error(`inbound route: probe missing for ${missing.join(', ')}`)
+  }
+  const route = d.route ? makeMwRoute({ ...d.route, probes }) : null
+  // 第三步(c):消费者收成一张表(mw-consume);原链里夹在消费者中间的副作用站按意图跳过,语义不变:
+  //   打字中 —— 原来在工作台命令之后,所以任务命令不发;
+  //   guard —— 原来在 admin / mode / onboarding 之后、权限回话之前(断网时先看到 🛑 而不是把 y/n 吞进去);
+  //   附件 / 语音转文字 —— 提到路由之前,探针才看得到转出来的文字(4b 曾让语音里的指称永远判成 chat)。
+  const consume = makeMwConsume({ handlers: {
+    ...(d.workbench ? { 'task-command': makeMwWorkbench(d.workbench) } : {}),
+    admin: makeMwAdmin(d.admin),
+    mode: makeMwMode(d.mode),
+    onboarding: makeMwOnboarding(d.onboarding),
+    'permission-reply': makeMwPermissionReply(d.permissionReply),
+    ...(d.cliReply ? { 'cli-reply': makeMwCliReply(d.cliReply) } : {}),
+    ...(taskReference ? { 'task-reference': taskReference } : {}),
+  } })
+  // 第四步(d):App 一轮走同一张表。链尾那一站只负责记"没人吃"。
+  const appTurn: AppTurn = async (ctx) => {
+    let consumed = true
+    const fell: Middleware = async () => { consumed = false }
+    await compose([...(route ? [route] : []), consume, fell])(ctx)
+    return { consumed }
+  }
+  const run = compose([
     makeMwTrace(d.trace),
     makeMwIdentity(d.identity),
     // Access gate runs immediately after identity (so chatId is normalized
@@ -60,23 +115,19 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     // crashed is left unmarked and reprocessed. See mw-dedup for the macOS
     // sleep/wake re-reply bug this guards against.
     makeMwDedup(d.dedup),
+    ...(d.matter?[makeMwMatter(d.matter)]:[]),
     makeMwMessages(d.messages),
     makeMwCaptureCtx(d.capture),
-    makeMwTyping(d.typing),
-    makeMwAdmin(d.admin),
-    makeMwMode(d.mode),
-    makeMwOnboarding(d.onboarding),
-    // Guard runs BEFORE permission-reply: when the network is down we want
-    // the "🛑 出口 IP" notice to surface, not a silent forwarding of a
-    // `y/n abc12` approval into an in-flight tool call that probably needs
-    // the network we just lost.
-    makeMwGuard(d.guard),
-    makeMwPermissionReply(d.permissionReply),
+    skipWhen(ctx => isWechatTaskCommand(ctx.msg.text ?? ''), makeMwTyping(d.typing)),
     makeMwAttachments(d.attachments),
     makeMwTranscribeVoice(d.transcribeVoice),
+    ...(route?[route]:[]),
+    skipFor(['task-command', 'admin', 'mode', 'onboarding'], makeMwGuard(d.guard)),
+    // 三个都是 next() 之后才动、且只在没人消费时动的记账站;放在消费之前才包得住消费者。
     makeMwActivity(d.activity),
     makeMwMilestone(d.milestone),
     makeMwWelcome(d.welcome),
+    consume,
     // Recall runs after every consuming middleware (only messages that will
     // reach dispatch pay the embed cost) and BEFORE llm-health/dispatch so
     // the <recall> element is on ctx.msg when dispatch formats the envelope.
@@ -89,4 +140,5 @@ export function buildInboundPipeline(d: InboundPipelineDeps): PipelineRun {
     makeMwLlmHealth(d.llmHealth),
     makeMwDispatch(d.dispatch),
   ])
+  return Object.assign(run, { appTurn })
 }

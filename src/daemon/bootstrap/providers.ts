@@ -1,6 +1,10 @@
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 import { createProviderRegistry, type ProviderRegistry } from '../../core/provider-registry'
+import { withFirstUseProbe } from '../../core/first-use-probe'
+import { readJsonFile } from '../../lib/read-json-file'
+import { DEFAULT_CLAUDE_MODEL } from '../../core/claude-agent-provider'
+import { DEFAULT_AGY_MODEL } from '../../core/agy-agent-provider'
 import { createClaudeAgentProvider } from '../../core/claude-agent-provider'
 import { createCodexAgentProvider } from '../../core/codex-agent-provider'
 import { buildSystemPrompt } from '../../core/prompt-builder'
@@ -9,7 +13,7 @@ import type { ProviderId } from '../../core/conversation'
 import type { PermissionMode } from '../../core/capability-matrix'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import type { ConversationStore } from '../../core/conversation-store'
-import type { AgentConfig, AgentProviderKind } from '../../lib/agent-config'
+import { makeMtimeCachedConfigReader, type AgentConfig, type AgentProviderKind } from '../../lib/agent-config'
 import type { Access } from '../../lib/access'
 import type { CompanionConfig } from '../companion/config'
 import { loadAccess } from '../../lib/access'
@@ -23,7 +27,6 @@ import { dirname, join } from 'node:path'
 import { buildOpenaiMcpSpecs, type McpStdioSpec } from './mcp-specs'
 import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
 import { setupAgyGlobalMcp } from './agy-mcp-config'
-import { setupCursorGlobalMcp } from './cursor-mcp-config'
 import { agyVersionOk } from './agy-version-check'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
 import { makeCheapEvalPreflight } from './cheap-eval-preflight'
@@ -107,6 +110,8 @@ export interface ProviderWiring {
   defaultProviderId: ProviderId
   codexBinary: string | null
   codexVersionCheck: ReturnType<typeof checkCodexVersion> | null
+  /** 各 provider 一句话状态(/mode 显示):codex 的版本差 + 首次使用探测结果。 */
+  providerNotes: () => Partial<Record<ProviderId, string>>
 }
 
 export async function registerProviders(deps: ProviderDeps): Promise<ProviderWiring> {
@@ -121,6 +126,9 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     agyGeminiConfigDir,
   } = deps
   const HOME = homedir()
+  // mtime 缓存的 config 读法(一次 stat):给注册表的 cheap_eval_provider
+  // getter 用,/set cheap 改完不用重启。
+  const readAgentConfig = makeMtimeCachedConfigReader(deps.stateDir)
 
   const defaultProviderId: ProviderId = deps.agentProviderKind
     ?? (process.env.WECHAT_AGENT_PROVIDER === 'codex' ? 'codex' : configuredAgent.provider)
@@ -135,7 +143,9 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // provider; the user's `codex login` or OPENAI_API_KEY env are honored
   // transparently by the SDK.
   const registry = createProviderRegistry({
-    ...(configuredAgent.cheapEvalProvider ? { cheapEvalProvider: configuredAgent.cheapEvalProvider } : {}),
+    // getter:/set cheap / 面板改了 cheap_eval_provider,下一次后台评估就换家,
+    // 不用重启(mtime 缓存的读法,一次 stat)。
+    cheapEvalProvider: () => readAgentConfig().cheapEvalProvider,
     // 后台 cheapEval 网络预检(2026-08-29,弹 OAuth 浏览器页根治的最后一块):
     // failover 试某候选前 HEAD 探它的 API origin,不可达直接落到下一家,
     // 不再冷启动一个注定撞网络超时的 CLI。UNDER_TEST_RUNNER 下不接——单测
@@ -158,9 +168,26 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       void import('../diagnostics/failure-shapes').then(m => m.recordFailureShape(deps.stateDir, info))
     },
   })
-  registry.register(
-    'claude',
-    createClaudeAgentProvider({
+  // claude 和 codex 是同一个形状:SDK(node_modules 里那份)驱动用户全局装的
+  // `claude` CLI,两者版本之间没有任何检查 —— 一直能用是 Anthropic 协议宽容,
+  // 不是我们做了什么。同样套上首次使用探测(只拦聊天回合,gate:'spawn':
+  // 后台评估开机就可能跑,不让它多一次外呼)。探测失败的两个常见原因都写进
+  // 提示:CLI/SDK 不合、或写死的默认模型不可用了。
+  const claudeCliVersion = claudeBin ? (probeBinaryVersion(claudeBin)?.match(/(\d+\.\d+\.\d+)/)?.[1] ?? null) : null
+  const claudeSdkVersion = (() => {
+    try {
+      const root = wechatCcRepoRoot()
+      if (!root) return null
+      return readJsonFile<{ version?: string }>(`${root}/node_modules/@anthropic-ai/claude-agent-sdk/package.json`).version ?? null
+    } catch { return null }
+  })()
+  const claudeVersionTag = `${claudeCliVersion ? `你的 CLI ${claudeCliVersion}` : 'CLI 版本未知'}${claudeSdkVersion ? `(SDK ${claudeSdkVersion})` : ''}`
+  const claudeModelTag = () => {
+    const c = readAgentConfig()
+    return c.provider === 'claude' && c.model ? `模型 ${c.model}` : `模型 ${DEFAULT_CLAUDE_MODEL}(配置里没设,内置兜底 —— /set model 或面板可改)`
+  }
+  let claudeProbeNote = '未探测'
+  const claudeInner = createClaudeAgentProvider({
       sdkOptionsForProject,
       // Threaded into cheapEval's query() call so the bun-compile
       // findClaudePath() trap doesn't bite the chatroom moderator path
@@ -169,7 +196,23 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       // strongEval (the /chat verdict) runs on the live default model, not
       // haiku — synthesis quality matters more than cost there.
       strongModel: currentClaudeModel,
-    }),
+    })
+  const claudeProvider = withFirstUseProbe(claudeInner, {
+    gate: 'spawn',
+    probe: () => claudeInner.cheapEval!('只回复两个字母:ok'),
+    failureMessage: (detail) =>
+      `claude 探测没通过:${detail.slice(0, 200)}\n` +
+      `可能是 ${claudeVersionTag} 和 SDK 不合,或者${claudeModelTag()}已不可用。` +
+      `先在终端跑一次 \`claude\` 确认能登录;模型不对就 model_set 换一个。`,
+    onResult: (r) => {
+      claudeProbeNote = r.ok ? `探测通过 ✓(${(r.ms / 1000).toFixed(1)}s)` : `探测失败 ✗:${r.detail.slice(0, 120)}`
+      deps.log('CLAUDE_PROBE', r.ok ? `ok in ${r.ms}ms (${claudeVersionTag})` : `FAILED in ${r.ms}ms: ${r.detail.slice(0, 300)}`)
+    },
+  })
+  const claudeNote = () => `${claudeVersionTag} · ${claudeModelTag()} · ${claudeProbeNote}`
+  registry.register(
+    'claude',
+    claudeProvider,
     {
       displayName: 'Claude',
       canResume: (cwd, sid) => existsSync(claudeSessionJsonlPath(HOME, cwd, sid)),
@@ -252,11 +295,19 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         expectedVersion: codexCliPkg.version,
       })
     : null
-  if (codexBinary && codexVersionCheck?.ok) {
-    deps.log('BOOT', `codex binary: ${codexBinary} (v${codexVersionCheck.actualSemver})`)
-    registry.register(
-      'codex',
-      createCodexAgentProvider({
+  // 2026-09-09 两次真机探测定案:SDK 0.144.4 驱动用户的 CLI 0.153.4 正常
+  // 拿到 agent_message;而 SDK 自带的 0.144.4 二进制被 OpenAI 服务端以
+  // 「这个模型需要更新的 Codex」400 拒掉。结论:(1) 版本号判不出能不能用,
+  // (2) 能跑新模型的只有用户那个更新的 CLI。于是版本不匹配只记日志、照常
+  // 注册,把「能不能用」交给首次使用时的真探测(core/first-use-probe.ts);
+  // 只有 --version 都打不出来(二进制坏了)才不注册。
+  let codexNote: string | null = null
+  if (codexBinary && codexVersionCheck && codexVersionCheck.reason !== 'version_probe_failed') {
+    const actual = codexVersionCheck.actualSemver ?? codexVersionCheck.rawVersion ?? '?'
+    const gap = codexVersionCheck.ok ? '' : `(与 SDK ${codexVersionCheck.expectedVersion} 不同版,首次使用时真跑一句探测)`
+    codexNote = `你的 CLI ${actual}${gap} · 未探测`
+    deps.log('BOOT', `codex binary: ${codexBinary} (v${actual}, SDK ${codexVersionCheck.expectedVersion}${codexVersionCheck.ok ? '' : ' — 版本不同,首次使用时探测'})`)
+    const codexInner = createCodexAgentProvider({
         codexPathOverride: codexBinary,
         // Construction-time model default ONLY from CODEX_MODEL. Do NOT fall back
         // to configuredAgent.model — that is the CONFIGURED provider's model, so
@@ -284,40 +335,32 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           ...(delegateStdioForCodex ? { delegate: delegateStdioForCodex } : {}),
           ...pluginMcp,
         },
-      }),
+      })
+    const codexProvider = withFirstUseProbe(codexInner, {
+      probe: () => codexInner.cheapEval!('只回复两个字母:ok'),
+      failureMessage: (detail) =>
+        `codex 探测没通过:${detail.slice(0, 200)}\n` +
+        `你的 codex CLI(${actual})和 wechat-cc 的 SDK(${codexVersionCheck!.expectedVersion})可能不合。` +
+        `试试 \`npm i -g @openai/codex@${codexVersionCheck!.expectedVersion}\`,或者等 wechat-cc 更新。`,
+      onResult: (r) => {
+        codexNote = r.ok
+          ? `你的 CLI ${actual} · 探测通过 ✓(${(r.ms / 1000).toFixed(1)}s)`
+          : `你的 CLI ${actual} · 探测失败 ✗:${r.detail.slice(0, 120)}`
+        deps.log('CODEX_PROBE', r.ok ? `ok in ${r.ms}ms (CLI ${actual}, SDK ${codexVersionCheck!.expectedVersion})` : `FAILED in ${r.ms}ms: ${r.detail.slice(0, 300)}`)
+      },
+    })
+    registry.register(
+      'codex',
+      codexProvider,
       {
         displayName: 'Codex',
         canResume: (_cwd, sid) => codexSessionJsonlPaths(HOME, sid).some(p => existsSync(p)),
       },
     )
-  } else if (codexBinary && codexVersionCheck && !codexVersionCheck.ok) {
-    // VERSION MISMATCH: user has codex installed, but its protocol version
-    // doesn't match our bundled SDK.
-    //
-    // codex-autofix (above) can only run when codexInstallDir is non-null —
-    // i.e. source-mode, where wechatCcRepoRoot() finds package.json next to
-    // this file. On a Bun-compiled desktop bundle codexInstallDir is null,
-    // autofix logs `[CODEX_AUTOFIX] skipped: no install dir resolved
-    // (compiled bundle?)` and never touches node_modules, so "wait for
-    // autofix" and "bun add ... in the install dir" are both unreachable
-    // advice there. `npm i -g` downgrade also doesn't fit the desktop
-    // install path (no npm/global install step in that flow). Branch the
-    // message so bundle users get advice that's actually actionable.
-    const resolution = codexInstallDir
-      ? `Resolution: (a) wait for the background auto-fix to realign SDK to your CLI version, then restart daemon; ` +
-        `or (b) downgrade global codex: \`npm i -g @openai/codex@${codexVersionCheck.expectedVersion}\`.`
-      : `Resolution: install a codex CLI within patch range of v${codexVersionCheck.expectedVersion} ` +
-        `(the version wechat-cc's bundled SDK expects), then restart daemon; ` +
-        `or ignore this if you don't use codex — the daemon runs fine without it.`
+  } else if (codexBinary && codexVersionCheck && codexVersionCheck.reason === 'version_probe_failed') {
     deps.log('BOOT',
-      `codex provider NOT registered — version mismatch. ` +
-      `Your codex CLI at ${codexBinary} is ` +
-      `v${codexVersionCheck.actualSemver ?? codexVersionCheck.rawVersion ?? '(unreadable)'}, ` +
-      `but wechat-cc's bundled SDK expects v${codexVersionCheck.expectedVersion}. ` +
-      `Patch-level differences are tolerated; this gap is not, and a mismatched ` +
-      `protocol fails silently (empty replies, no error). ` +
-      resolution,
-    )
+      `codex provider NOT registered — ${codexBinary} 连 --version 都打不出来(二进制损坏或权限问题)。` +
+      `重装:\`npm i -g @openai/codex\` 或用 codex 官方安装器,然后重启 daemon。`)
   } else {
     // NOT INSTALLED: no codex on PATH or in ~/.nvm. Tell the user the
     // exact one-time setup. We deliberately don't bundle codex (post
@@ -350,33 +393,44 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // bootstrap — tests opt in via `cursorAgentBin` in seeded agent-config.
   const cursorAgentBin = configuredAgent.cursorAgentBin ?? (UNDER_TEST_RUNNER ? null : findOnPath('cursor-agent'))
   let cursorCliRegistered = false
-  if (cursorAgentBin && probeBinaryVersion(cursorAgentBin) !== null) {
+  // ACP provider 的 close() 靠杀进程组收尾,Windows 上那条路没验过(acp-agent-provider.ts
+  // spawn 时会直接抛)。注册了等于每一轮对话都撞一次那句抛错 —— 不如干脆不注册,
+  // 让下面的 SDK 兜底照旧判断(有 CURSOR_API_KEY 就走 SDK,没有就是"未注册")。
+  if (cursorAgentBin && process.platform === 'win32') {
+    deps.log('BOOT', 'cursor: ACP 对话 provider 暂不支持 Windows(进程组清理未验证),未注册')
+  } else if (cursorAgentBin && probeBinaryVersion(cursorAgentBin) !== null) {
     try {
-      const { createCursorCliProvider } = await import('../../core/cursor-cli-provider')
-      // Tier C global MCP upsert into ~/.cursor/mcp.json — cursor-agent's
-      // only global MCP surface, same one-trusted-token contract as agy
-      // (see cursor-mcp-config.ts). Missing internalApi/mint ⇒ provider
-      // still registers, loudly without tools.
-      if (wechatStdioForCursor && mintSessionToken) {
-        setupCursorGlobalMcp({
-          wechatSpec: wechatStdioForCursor,
-          mintToken: () => mintSessionToken('trusted', 'cursor-static'),
-          log: deps.log,
-        })
-      } else {
-        deps.log('BOOT', 'cursor: internalApi/mintSessionToken unavailable — wechat MCP not wired (cursor will have no tools)')
+      const { createAcpCursorChatProvider, DEFAULT_CURSOR_MODEL } = await import('../../core/acp-cursor-chat')
+      // 上一版往 ~/.cursor/mcp.json 塞过一把静态 trusted 钥匙(tier C);对话侧走 ACP 后 MCP 按会话注入,
+      // 那条目只剩风险 —— boot 时清掉(测试 runner 下 remove 自己会跳过)。独立 try/catch:
+      // 清理失败(比如 ~/.cursor 只读或磁盘满)不该拖累注册本身 —— 那样一个坏权限的
+      // 目录就能让 cursor provider 整个消失,比留着一把死钥匙的后果更糟。
+      try {
+        const { removeCursorGlobalMcp } = await import('./cursor-mcp-config')
+        removeCursorGlobalMcp({ log: deps.log })
+      } catch (err) {
+        deps.log('BOOT', `cursor: legacy mcp.json cleanup failed — ${err instanceof Error ? err.message : String(err)}`)
+      }
+      if (!wechatStdioForCursor) {
+        deps.log('BOOT', 'cursor: internalApi unavailable — wechat MCP not wired (cursor will have no tools)')
       }
       registry.register(
         'cursor',
-        createCursorCliProvider({
+        createAcpCursorChatProvider({
           bin: cursorAgentBin,
-          model: configuredAgent.cursorModel ?? 'auto',
+          model: configuredAgent.cursorModel ?? DEFAULT_CURSOR_MODEL,
+          // delegate 固定传 null:ACP_CURSOR_CAPABILITIES.supportsDelegation === false,
+          // capability matrix 上 cursor 没有 delegate 通道 —— delegateStdioForCursor
+          // 只要 internalApi 存在就会是个真 spec(index.ts 给每个有 defaultPeer 的
+          // provider 都建一份),传给它会让每个 cursor 会话偷偷拿到一个矩阵说不存在
+          // 的 delegate_claude MCP 子进程。
+          mcpSpecs: { wechat: wechatStdioForCursor, delegate: null },
           log: deps.log,
         }),
         { displayName: 'Cursor', canResume: () => true },
       )
       cursorCliRegistered = true
-      deps.log('BOOT', 'cursor: cursor-agent CLI present (subscription auth) — provider registered')
+      deps.log('BOOT', 'cursor: cursor-agent CLI present (subscription auth) — provider registered (ACP, per-session MCP)')
     } catch (err) {
       deps.log('BOOT', `cursor: CLI registration failed — ${err instanceof Error ? err.message : String(err)}`)
     }
@@ -610,7 +664,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         'agy',
         createAgyAgentProvider({
           bin: agyBin,
-          model: configuredAgent.agyModel ?? 'gemini-3.7-flash-medium',
+          model: configuredAgent.agyModel ?? DEFAULT_AGY_MODEL,
           turnTimeoutMs,
           log: deps.log,
         }),
@@ -630,5 +684,11 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // would silently slip past and only throw at first use in production.
   assertMatrixComplete(registry.list())
 
-  return { registry, defaultProviderId, codexBinary, codexVersionCheck }
+  // 默认 provider 是共享钥匙的那种(目前只剩 agy):允许,但说清后果。
+  { let shared = false; try { shared = !capabilitiesFor(defaultProviderId).adminMcpTools } catch { /* unknown id → registry will complain */ }
+    if (shared) deps.log('BOOT', `默认 provider 是 ${defaultProviderId}(订阅 CLI,所有对话共用一把 trusted 钥匙):guest 对话会被拒,管理员/信任对话正常;主动关心等走主人会话不受影响`) }
+  return {
+    registry, defaultProviderId, codexBinary, codexVersionCheck,
+    providerNotes: () => ({ claude: claudeNote(), ...(codexNote ? { codex: codexNote } : {}) }),
+  }
 }

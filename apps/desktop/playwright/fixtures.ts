@@ -82,3 +82,25 @@ export const test = base.extend<ShimFixtures, WorkerShimFixtures>({
 })
 
 export { expect }
+
+/**
+ * 点侧栏导航到某个面板。2026-09-13 起「生活与工具」那组入口(记忆 / 跟 CC 说 / 待办 /
+ * 对话 / 觅食…)收进了 `<details class="cc-life-nav-more">`,而 main.js 每次切面板都会把
+ * 它收起 —— 直接点被折叠的按钮会一直等 visible 到超时。先展开再点,和用户的手一样。
+ */
+export async function clickNav(page: import('@playwright/test').Page, pane: string): Promise<void> {
+  await page.locator('details.cc-life-nav-more').evaluateAll(els => { for (const el of els) el.setAttribute('open', '') })
+  await page.locator(`button.dash-nav-link[data-pane="${pane}"]`).click()
+}
+
+/**
+ * 点一个可能藏在折叠 `<details>` 里的元素(09-13 起「此刻」页把连接 / 重启 / 切换后端收进了
+ * `<details class="cc-home-details">`「鱼缸与连接」)。先把它所有 <details> 祖先展开再点。
+ */
+export async function reveal(page: import('@playwright/test').Page, selector: string): Promise<void> {
+  await page.locator(selector).first().evaluate(el => { for (let d = el.closest('details'); d; d = d.parentElement?.closest('details') ?? null) d.setAttribute('open', '') })
+}
+export async function clickRevealed(page: import('@playwright/test').Page, selector: string): Promise<void> {
+  await reveal(page, selector)
+  await page.locator(selector).first().click()
+}

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { Database } from 'bun:sqlite'
+import { openSqlite } from './runtime/sqlite'
 import { createHash } from 'node:crypto'
 import { migrations } from './db'
 
@@ -48,7 +48,7 @@ import { migrations } from './db'
  * constraints and indexes stay fully compared.
  */
 function canonicalSchema(n: number): string {
-  const db = new Database(':memory:')
+  const db = openSqlite(':memory:')
   try {
     db.exec('PRAGMA foreign_keys = ON;')
     for (let i = 0; i < n; i++) migrations[i]!(db)
@@ -86,6 +86,36 @@ const RELEASED: Record<number, string> = {
   33: '97a41f7d8f5fd8f1',
   34: 'e4fe34c660f41349',
   35: '41022320b76d9c7d',
+  36: '62ef6e7e39d23ebb',
+  37: 'b900cbc3159e348d',
+  38: '2ca8d77d56411c44',
+  39: '6e87a230b13bc476',
+  40: 'a9d29d209910cb4f',
+  41: 'a9d29d209910cb4f',
+  42: 'a9d29d209910cb4f',
+  43: '240da1d380c83011',
+  44: '7e027e727340a9f2',
+  45: '22b05abd5990c130',
+  46: '4b3d714cc9e7b966',
+  47: '5964dab0f6b97db5',
+  48: 'd574b3b302b16f53',
+  49: '65095bf11cd18511',
+  50: 'd3b0678876de16b4',
+  51: '101cb6eb7a66af01',
+  52: '1b0b0b3b469c9220',
+  53: 'fc49130789047130',
+  54: '77ef8307a0f3ecf4',
+  55: '6b9abf19891421bb',
+  56: '5c4924e14c3be87e',
+  57: 'f0aadccd2dc525e0',
+  58: '6c6a79e410ef7c78',
+  // v59 只修存量库(给 v49 漏掉的列补 ALTER),新建库的 schema 与 v58 完全相同,
+  // 所以指纹也相同 —— 这类修复本守卫结构上抓不到,靠 db.test.ts 的升级路径用例。
+  59: '6c6a79e410ef7c78',
+  60: '21ffa1ddd4707c6c',
+  61: '52b5edeba1bb4c6b',
+  62: 'dfc0a68e1b28ef98',
+  63: '93b9c07f25fa3815',
 }
 
 it('every released migration still produces the schema it was published with', () => {

@@ -1,0 +1,79 @@
+{
+  "switchFrame": 4,
+  "sourceSha256": "cd163cc60570f911dfb904ef336e713eae833160c8bfe352617f2f3226a33937",
+  "supportPixels": 1232,
+  "frames": [
+    {
+      "path": "transitions/dark-to-light/001.png",
+      "eyeForm": "unlit",
+      "outsideEyeSha256": "c58eb823e8409e2933ea1b56486c061c181c0e47ba48a168b9b1aca0085d86d7",
+      "alphaSha256": "9ff650bf3e551c03ee288e061009867d67ac41839677a76d418f912efc4666c7"
+    },
+    {
+      "path": "transitions/dark-to-light/002.png",
+      "eyeForm": "unlit",
+      "outsideEyeSha256": "dcc4f5aea6b311021a434c79175d1efe976db91bf58f76fbbf6bc937dc9bebbb",
+      "alphaSha256": "d05f7b548f1c2340fc235f11e9f56ab94b98d61aa1039cec0ee664d06d3e74c1"
+    },
+    {
+      "path": "transitions/dark-to-light/003.png",
+      "eyeForm": "unlit",
+      "outsideEyeSha256": "5f16945cf86e4f318c243eee7bd0be1675f655179d666e01382ec887d6fd9f16",
+      "alphaSha256": "12f5e98b1cd3be18c21f6bdfa3497c806078b98e6d7d22f6d79ed9cc75911109"
+    },
+    {
+      "path": "transitions/dark-to-light/004.png",
+      "eyeForm": "lit",
+      "outsideEyeSha256": "da8869d8afffceec06ebea263c6615285e8a1033927a8b77c987619d41797a95",
+      "alphaSha256": "e613e234c339a0b30ce800bf8b8efecb75e44c7752e71d057427ce845ed272c3"
+    },
+    {
+      "path": "transitions/dark-to-light/005.png",
+      "eyeForm": "lit",
+      "outsideEyeSha256": "65716d08f97b45903d20835df82a72b375ed12291dd72dd7f828bb1f45f9e771",
+      "alphaSha256": "f16cdb499b40968ee4593a16a2c6244d443d282afb64385d2f95810c684e3dfb"
+    },
+    {
+      "path": "transitions/dark-to-light/006.png",
+      "eyeForm": "lit",
+      "outsideEyeSha256": "caad6923e247a1563d98acb5a61de389406eae0cbc30a4d27c8f783d72658105",
+      "alphaSha256": "8ef506ed2574e2f931124ca311743ccd7e9cba88eb27a606bef449405b8857c7"
+    },
+    {
+      "path": "transitions/light-to-dark/001.png",
+      "eyeForm": "lit",
+      "outsideEyeSha256": "cfb9c1ea4d372677176a28b55dbb0c3002a8aaf838dffd0ab4521168f57b9a05",
+      "alphaSha256": "135ff2f219a8875f465f45d90b80650e3e7dcad568772a483ccdfa8cfb5f2ec1"
+    },
+    {
+      "path": "transitions/light-to-dark/002.png",
+      "eyeForm": "lit",
+      "outsideEyeSha256": "e44366e18bfaa07a19dd48b83ef2908d0a7e65704663ceb30dbf113851d2a050",
+      "alphaSha256": "88149256e0dcc4beefb3fa9da02e2b98b0c26c3313c8dc18c48c5d031dd17a17"
+    },
+    {
+      "path": "transitions/light-to-dark/003.png",
+      "eyeForm": "lit",
+      "outsideEyeSha256": "4e5c948b88e3ba231c19b0b11c8c54de2e84c8a25569504b072d9e46b1b2fd71",
+      "alphaSha256": "3744e9214469ba0c0ebdcf1f96a1302539028319a1cd9ed76f46d33f1592f355"
+    },
+    {
+      "path": "transitions/light-to-dark/004.png",
+      "eyeForm": "unlit",
+      "outsideEyeSha256": "b9c945e7803c4ce453f7d0aa7a718acce3080123ef93c715d5697595d6d77c96",
+      "alphaSha256": "dd6f4562784cc3e6a62d872c731ae27bfeb018fcacbcb9803405e4aea2945ae9"
+    },
+    {
+      "path": "transitions/light-to-dark/005.png",
+      "eyeForm": "unlit",
+      "outsideEyeSha256": "26808d267dd8ffe134e16a7da748d40447caff108b34a29db83ce3bb5949e0c2",
+      "alphaSha256": "787eccff7dd47368b78d80bd016b9d89e7aa4e42872f556e626e9b793b4fee21"
+    },
+    {
+      "path": "transitions/light-to-dark/006.png",
+      "eyeForm": "unlit",
+      "outsideEyeSha256": "a848277d40b6398c2650736bead702d8698ef2739e0566e6b8622e0f63567b3b",
+      "alphaSha256": "bf0b0496d636628f00956f5c6703b15468b933b9b49aca5b267cb1fd2897266e"
+    }
+  ]
+}

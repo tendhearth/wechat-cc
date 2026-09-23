@@ -17,6 +17,42 @@ export function tierMeets(have: UserTier, need: UserTier): boolean {
 }
 
 export const ROUTE_MIN_TIER: Record<string, UserTier> = {
+  // Owner Workbench: task instructions and generated artifacts are private.
+  'GET /v1/workbench': 'admin',
+  // 「一件事」(2026-09-16):任务指令、聊天都是主人的私事。
+  'GET /v1/matters': 'admin',
+  'GET /v1/matter': 'admin',
+  'GET /v1/matter/owner-chat': 'admin',
+  'POST /v1/matter/say': 'admin',
+  'GET /v1/workbench/models': 'admin',
+  'POST /v1/workbench/attachment': 'admin',
+  'GET /v1/workbench/attachment': 'admin',
+  'POST /v1/workbench/discard-attachment': 'admin',
+  'GET /v1/workbench/attention': 'admin',
+  'POST /v1/workbench/input': 'admin',
+  'POST /v1/workbench/answer': 'admin',
+  'POST /v1/workbench/withdraw-input': 'admin',
+  'GET /v1/workbench/sessions': 'admin',
+  'GET /v1/workbench/session': 'admin',
+  'GET /v1/workbench/task': 'admin',
+  'POST /v1/workbench/project': 'admin',
+  'POST /v1/workbench/create': 'admin',
+  'POST /v1/workbench/continue': 'admin',
+  'POST /v1/workbench/cancel': 'admin',
+  'GET /v1/workbench/artifact': 'admin',
+  'POST /v1/workbench/approve': 'admin',
+  'POST /v1/workbench/permission': 'admin',
+  'POST /v1/workbench/archive': 'admin',
+  'POST /v1/workbench/unattended-ack': 'admin',
+  'GET /v1/workbench/review': 'admin',
+  'POST /v1/workbench/review-mark': 'admin',
+  'POST /v1/workbench/review-return': 'admin',
+  'POST /v1/workbench/import': 'admin',
+  'POST /v1/workbench/prepare-resume': 'admin',
+  'POST /v1/workbench/prepare-continuation': 'admin',
+  'POST /v1/workbench/handoff-preview': 'admin',
+  'POST /v1/workbench/handoff': 'admin',
+  'GET /v1/workbench/handoff': 'admin',
   // guest — liveness + read/reply
   'GET /v1/health': 'guest',
   'POST /v1/wechat/reply': 'guest',
@@ -55,6 +91,11 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/companion/disable': 'trusted',
   'POST /v1/companion/snooze': 'trusted',
   'POST /v1/companion/import-local': 'trusted',
+  'GET /v1/companion/presence': 'trusted',
+  // CC 桌宠的「在做什么」(spec 2026-09-05-cc-desktop-pet §5.1)。trusted,和
+  // presence 同一类:桌面的唯一凭据是 daemon 级 0600 FILE token(=trusted),
+  // admin 会让每一次真机轮询 403 —— 觅食台 2026-07-22 就是这么静默坏的。
+  'GET /v1/companion/pet': 'trusted',
   'POST /v1/conversation/set-mode': 'trusted',
   'GET /v1/projects/list': 'trusted',
   'POST /v1/projects/add': 'trusted',
@@ -78,26 +119,50 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/license/activate': 'trusted',
   'POST /v1/license/deactivate': 'trusted',
   'POST /v1/delegate': 'trusted',
+  // 终端 claude / codex 的 hook 事件(spec 2026-09-09-cli-hook-push):hook 子命令
+  // 拿的是 FILE token(= trusted)。
+  'POST /v1/cli/event': 'trusted',
+  'POST /v1/cli/permission': 'trusted',
+  'GET /v1/cli/permission': 'trusted',
   'POST /v1/chat-prefs': 'trusted',
   // POST /v1/stickers writes an arbitrary sourcePath into the lib — same
   // trust class as send_file, so it's trusted not guest.
   'POST /v1/stickers': 'trusted',
-  // trusted (RESOLVED, P4 spec §3.3) — the CLI (social propose/confirm/cancel)
-  // holds only the daemon-wide FILE token (→ trusted); an admin-tiered route
-  // would 403 every CLI call. internal-api is 127.0.0.1 + 0600 file token = the
-  // owner. confirm IS the real "broadcast to strangers" step, so FLAG all three
-  // for the release security review. See docs/superpowers/specs/2026-07-20-p4-seek-confirm-design.md.
   // 社交总开关。trusted 而非 admin:桌面端的凭证是 daemon 全局 FILE token
   // (=trusted,见 api-info),admin 会让每一次真机点击 403 —— 2026-07-22 那个
   // P0 就是这么来的。**发版评审时请连同同族 trusted 路由一起过一遍。**
   'POST /v1/social/enable': 'trusted',
-  'POST /v1/social/seek/propose': 'trusted',
-  'POST /v1/social/seek/confirm': 'trusted',
-  'POST /v1/social/seek/cancel': 'trusted',
+  // 心愿 (spec 2026-09-04-wish-postcard §4) — same trust class as the old
+  // P4 propose/confirm/cancel it replaces: the CLI/desktop's only credential
+  // is the daemon-wide FILE token (trusted); an admin-tiered route here
+  // would 403 every CLI/desktop call. send IS the real "broadcast to
+  // strangers" step, so FLAG all four for the release security review.
+  'POST /v1/social/wish': 'trusted',
+  'POST /v1/social/wish/send': 'trusted',
+  'POST /v1/social/wish/cancel': 'trusted',
+  'GET /v1/social/wishes': 'trusted',
+  // 介绍 (spec 2026-09-04-introduction) — same trust class as the wish
+  // routes above: CLI/desktop's only credential is the daemon-wide FILE
+  // token (trusted); an admin-tiered route here would 403 every real call.
+  'POST /v1/social/intro/request': 'trusted',
+  'POST /v1/social/intro/accept': 'trusted',
+  'POST /v1/social/intro/decline': 'trusted',
+  'GET /v1/social/intro/offers': 'trusted',
   // admin — owner-only same-session power: drives a real turn on the
   // owner's own chat session and returns the reply to the caller (app
   // conversation channel, voice arc Stage 0). Same trust class as the
   // other admin daemon-control routes below.
+  // admin — 待决权限的桌面面(spec §6)。读出来的是 agent 想动的手(命令原文),
+  // 拍板等于替主人说「可以」—— 和 converse 同一个信任等级:主人本人的事,不是
+  // 任何 trusted 联系人的事。微信侧的对应面是「y/n <hash>」,只认 admin 主人。
+  'GET /v1/permissions/pending': 'admin',
+  'POST /v1/permissions/resolve': 'admin',
+  // admin — 自改流水线的三个抓手(spec 2026-09-18-self-change-pipeline)。
+  // notice 往主人微信里发字,ask 替主人开一张 y/n 卡片,decision 读主人拍了什么:
+  // 三条都是「代表主人」,和上面两条权限面同一档。调用方是 operator 凭据。
+  'POST /v1/self-change/notice': 'admin',
+  'POST /v1/self-change/ask': 'admin',
+  'GET /v1/self-change/decision': 'admin',
   'POST /v1/companion/converse': 'admin',
   // admin — same trust class as converse above (voice arc Stage 1): synths
   // reply audio for the owner's app-conversation-channel session.
@@ -111,39 +176,37 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/sessions/release': 'admin',
   'POST /v1/model': 'admin',
   'POST /v1/daemon/restart': 'admin',
+  // 自维护三件套(spec 2026-09-18-self-maintenance §1)——同上一类:一次真实
+  // spawn,只是权限比 companion/converse 还窄(session token 只放行
+  // GET /v1/health)。admin 而非 trusted:允许任何持 file token 的会话
+  // 白嫖 daemon 去开一整条真会话,不该比 daemon-control 的其它成员松。
+  'POST /v1/selftest/converse': 'admin',
   // admin — on-demand file locate over the owner's computer (file_locate)
   'GET /v1/locate': 'admin',
-  // trusted — 觅食台 read surface + inbound toggle. DEMOTED admin→trusted
-  // 2026-07-22: the desktop's ONLY credential is the daemon-wide FILE token
-  // (= trusted; `daemon api-info` hands out the file token, and the admin
-  // operator token is route-scoped to converse/speak) — admin here 403'd
-  // every real-daemon 觅食台 read, silently rendering "社交觅食未启用"
-  // even when wired. Found by live visual acceptance; same root cause as
-  // the earlier reveal-route demotion below. Trust analysis: these expose
-  // the owner's own stored seeks/echoes/pledges to a local caller who
-  // already holds the credential that can pair, propose+confirm seeks and
-  // send letters — the read is the weaker capability. localhost-only,
-  // 0600 file token. ⚠️ RELEASE-REVIEW FLAG (surface at next dev→master).
-  'GET /v1/social/seeks': 'trusted',
-  'GET /v1/social/echoes': 'trusted',
+  // trusted — 觅食台 inbound toggle. DEMOTED admin→trusted 2026-07-22: the
+  // desktop's ONLY credential is the daemon-wide FILE token (= trusted;
+  // `daemon api-info` hands out the file token, and the admin operator
+  // token is route-scoped to converse/speak) — admin here 403'd every
+  // real-daemon 觅食台 read, silently rendering "社交觅食未启用" even when
+  // wired. Found by live visual acceptance; same root cause as the earlier
+  // reveal-route demotion below. localhost-only, 0600 file token.
+  // ⚠️ RELEASE-REVIEW FLAG (surface at next dev→master).
   'GET /v1/social/inbound': 'trusted',
   'POST /v1/social/inbound': 'trusted',
-  'GET /v1/social/pledges': 'trusted',
-  // trusted, not admin — despite living in the same "async foraging spine"
-  // batch as the admin-tiered routes above. Reveal acts on an ALREADY
-  // established seek/pledge (double opt-in on a match), not a new broadcast —
-  // same trust class as POST /v1/a2a/send ("reply to an established peer",
-  // trusted, in the operator/agent-ops block above), not the admin-tiered
-  // read routes above (GET seeks/echoes/pledges/inbound, which expose the
-  // owner's full stored history rather than acting on one row). This also
-  // has to be trusted because it's the write half of `wechat-cc social reveal`
-  // (docs/superpowers/specs/2026-07-17-cli-social-surface-design.md), and the
-  // CLI only ever holds the daemon-wide FILE token (registerFileToken →
-  // trusted, see token-registry.ts) — an admin-tiered route here would
-  // silently 403 every CLI reveal (caught by cli-routes.test.ts).
-  'POST /v1/social/echoes/reveal': 'trusted',
-  'POST /v1/social/pledges/reveal': 'trusted',
-  // trusted — 配对码 (spec §7). Same trust class as a2a/send + social reveal:
+  'GET /v1/social/relationships': 'trusted',
+  'POST /v1/social/visit': 'trusted',
+  // 打猎战利品(2026-09-03)。trusted 而非 admin:桌面端的凭证是 daemon 级
+  // FILE token(=trusted),admin 会让每一次真实的桌面读 403 —— 觅食台的读
+  // 路由 2026-07-22 正是这么静默坏了一个多月。写的两个也是 trusted:它们
+  // 只改主人自己那份清单的状态,不外发、不触网。
+  'GET /v1/companion/thoughts': 'admin',
+  'GET /v1/journal': 'trusted',
+  'GET /v1/journal/postcards': 'trusted',
+  'POST /v1/journal/favorite': 'trusted',
+  'POST /v1/journal/status': 'trusted',
+  'POST /v1/journal/seen': 'trusted',
+  'POST /v1/journal/remove': 'trusted',
+  // trusted — 配对码 (spec §7). Same trust class as a2a/send + social wish:
   // internal-api is 127.0.0.1 + 0600 file token; the CLI holds the FILE token
   // (trusted). Acts on an operator-driven pairing, not a world-open broadcast.
   'POST /v1/pair/start': 'trusted',
@@ -176,6 +239,11 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // 桌面读故障记录以显示"上次故障"横幅。trusted:桌面/CLI 的唯一凭据是
   // 0600 文件 token;内容只有时间戳与分类,不含聊天数据。
   'GET /v1/health/incidents': 'trusted',
+  'GET /v1/atelier/works': 'trusted',
+  'GET /v1/atelier/model-status': 'trusted',
+  // Explicit desktop action; sends only to companion.default_chat_id and
+  // never accepts a caller-controlled recipient.
+  'POST /v1/atelier/share': 'trusted',
   // Knowledge Kernel (Phase 01, T3, docs/superpowers/specs/
   // 2026-07-12-knowledge-kernel-phase01-design.md "Knowledge API").
   // Ingest = admin/internal only: source/put and semantic/put are written

@@ -14,10 +14,10 @@ describe('authFailNotice', () => {
   it('returns the provider-specific hint from ProviderCapabilities (incl. cursor)', () => {
     expect(authFailNotice('claude')).toContain('claude login')
     expect(authFailNotice('codex')).toContain('codex login')
-    // cursor uses an API key, not a login command — the old ternary wrongly
-    // fell through to the Claude string. Now sourced from capabilities.
+    // cursor's chat provider is ACP now (acp-cursor-chat.ts) — subscription
+    // auth via `cursor-agent login`, not an API key or Claude's login flow.
     const cur = authFailNotice('cursor')
-    expect(cur).toContain('Cursor')
+    expect(cur).toContain('cursor-agent login')
     expect(cur).not.toContain('claude login')
   })
 })
@@ -182,6 +182,31 @@ describe('ConversationCoordinator', () => {
     })
     c.setMode('chat-1', { kind: 'solo', provider: 'codex' })
     expect(store.set).toHaveBeenCalledWith('chat-1', { kind: 'solo', provider: 'codex' })
+  })
+
+  it('setMode with a changed model pin (same provider) releases that chat\'s sessions; a provider change does not', () => {
+    const store = makeMockStore()
+    const registry = createProviderRegistry()
+    registry.register('openai', dummyProvider, { displayName: 'API', canResume: () => true })
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const releaseFor = vi.fn(async () => 1)
+    const c = createConversationCoordinator({
+      resolveProject: () => null,
+      manager: { acquire: vi.fn(), releaseFor },
+      conversationStore: store,
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+    })
+    c.setMode('chat-1', { kind: 'solo', provider: 'openai', model: 'DeepSeek' })
+    expect(releaseFor).not.toHaveBeenCalled()          // provider changed (claude→openai): handoff path, not release
+    c.setMode('chat-1', { kind: 'solo', provider: 'openai', model: 'Qwen3.8' })
+    expect(releaseFor).toHaveBeenCalledWith('openai', 'chat-1')
+    c.setMode('chat-1', { kind: 'solo', provider: 'openai', model: 'Qwen3.8' })
+    expect(releaseFor).toHaveBeenCalledTimes(1)        // same pin → no churn
   })
 
   it('dispatch drops when resolver returns null (no project)', async () => {
@@ -2660,5 +2685,186 @@ describe('submitTurn (D3 — single entrypoint)', () => {
     expect(order).toEqual(['A-start', 'B-start', 'B-end'])   // chat-2 ran while chat-1 held its own lock
     releaseA()
     await Promise.all([p1, p2])
+  })
+})
+
+describe('onTurnEvent (CC 桌宠 Phase B)', () => {
+  it('solo 回合里每个 provider 事件都转给 onTurnEvent(chatId, ev),tool_call 在内;钩子抛错不影响回合', async () => {
+    const seen: Array<[string, string]> = []
+    const session = makeFakeSession({
+      events: [
+        { kind: 'init', sessionId: 's' },
+        { kind: 'tool_call', tool: 'Bash' },
+        { kind: 'text', text: 'ok' },
+        { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 5 },
+      ],
+    })
+    const acquire = vi.fn(async (_req: AcquireRequest) => makeHandle('claude', session))
+    const sendAssistantText = vi.fn(async (_chatId: string, _text: string) => {})
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire },
+      conversationStore: makeMockStore(),
+      registry,
+      defaultProviderId: 'claude',
+      format: () => 'x',
+      sendAssistantText,
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+      onTurnEvent: (chatId, ev) => {
+        seen.push([chatId, ev.kind])
+        // 观察者抛错不许弄坏回合。
+        if (ev.kind === 'text') throw new Error('boom')
+      },
+    })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(seen).toEqual([
+      ['chat-1', 'init'], ['chat-1', 'tool_call'], ['chat-1', 'text'], ['chat-1', 'result'],
+    ])
+    // 回合本身照常收口:文本仍然发出去了。
+    expect(sendAssistantText).toHaveBeenCalledWith('chat-1', 'ok')
+  })
+})
+
+// ── provider policy at dispatch + cold-start context for non-resume providers ──
+describe('dispatch-time provider policy + cold-start block', () => {
+  function setupWith(access: () => Access, extra: { trustedProviders?: () => string[] | undefined; has?: () => boolean; recent?: Array<{ dir: 'in' | 'out'; text: string; ts: string }> } = {}) {
+    const store = makeMockStore()
+    const registry = createProviderRegistry()
+    for (const id of ['claude', 'cursor', 'agy', 'openai']) registry.register(id, dummyProvider, { displayName: id, canResume: () => true })
+    const dispatched: string[] = []
+    const acquire = vi.fn(async (req: AcquireRequest) =>
+      makeHandle(req.providerId, makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }], onDispatch: t => dispatched.push(t) })))
+    const sendAssistantText = vi.fn(async () => {})
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire, ...(extra.has ? { has: extra.has } : {}) },
+      conversationStore: store, registry, defaultProviderId: 'claude',
+      format: (m) => m.text, sendAssistantText, permissionMode: 'strict', loadAccess: access, log: () => {},
+      ...(extra.trustedProviders ? { trustedProviders: extra.trustedProviders } : {}),
+      ...(extra.recent ? { recentTurns: async () => extra.recent! } : {}),
+    })
+    return { c, store, acquire, sendAssistantText, dispatched }
+  }
+  const guest = (): Access => ({ dmPolicy: 'allowlist', allowFrom: [], admins: [], trusted: [] })
+  const trusted = (): Access => ({ dmPolicy: 'allowlist', allowFrom: [], admins: [], trusted: ['chat-1'] })
+
+  it('persisted solo+agy + guest chat: refused at dispatch (shared-token hazard — one static trusted MCP token for every session)', async () => {
+    const { c, store, acquire, sendAssistantText } = setupWith(guest)
+    store.set('chat-1', { kind: 'solo', provider: 'agy' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledWith('chat-1', expect.stringContaining('/agy 目前仅管理员/信任聊天可用'))
+  })
+  it('persisted solo+cursor + guest chat: refused at dispatch — ACP Cursor edits the workspace without a permission card, so a guest tier cannot confine it (guestSafe:false)', async () => {
+    const { c, store, acquire, sendAssistantText } = setupWith(guest)
+    store.set('chat-1', { kind: 'solo', provider: 'cursor' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledWith('chat-1', expect.stringContaining('Cursor 对访客不开放'))
+  })
+  it('persisted solo+cursor + trusted chat: dispatches normally (only guest is gated)', async () => {
+    const { c, store, acquire, sendAssistantText } = setupWith(trusted)
+    store.set('chat-1', { kind: 'solo', provider: 'cursor' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).toHaveBeenCalledTimes(1)
+    expect(sendAssistantText).not.toHaveBeenCalledWith('chat-1', expect.stringContaining('对访客不开放'))
+  })
+  it('trusted chat on a provider outside the admin allowlist is refused; inside dispatches', async () => {
+    const { c, store, acquire, sendAssistantText } = setupWith(trusted, { trustedProviders: () => ['claude'] })
+    store.set('chat-1', { kind: 'solo', provider: 'agy' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledWith('chat-1', expect.stringContaining('没把 /agy 开放给非管理员'))
+    store.set('chat-1', { kind: 'solo', provider: 'claude' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).toHaveBeenCalledTimes(1)
+  })
+  it('openai (no resume) cold spawn with prior turns: the turn is prefixed with a cold-start context block', async () => {
+    const { c, store, dispatched } = setupWith(adminAccess, { has: () => false, recent: [{ dir: 'in', text: '明天去看房', ts: 't1' }, { dir: 'out', text: '记得带身份证', ts: 't2' }] })
+    store.set('chat-1', { kind: 'solo', provider: 'openai' })
+    await c.dispatch(inbound('chat-1', '几点合适?'))
+    expect(dispatched[0]).toContain('<handoff hint="这是系统的续接说明')
+    expect(dispatched[0]).toContain('你(openai)刚刚重新开了会话线程')
+    expect(dispatched[0]).toContain('用户: 明天去看房')
+    expect(dispatched[0]).toContain('你: 记得带身份证')
+    expect(dispatched[0]?.endsWith('几点合适?')).toBe(true)
+  })
+  it('claude (resumes) and warm sessions and empty history get no cold-start block', async () => {
+    const a = setupWith(adminAccess, { has: () => false, recent: [{ dir: 'in', text: 'x', ts: 't' }] })
+    a.store.set('chat-1', { kind: 'solo', provider: 'claude' })
+    await a.c.dispatch(inbound('chat-1', 'hi'))
+    expect(a.dispatched[0]).toBe('hi')
+    const b = setupWith(adminAccess, { has: () => true, recent: [{ dir: 'in', text: 'x', ts: 't' }] })
+    b.store.set('chat-1', { kind: 'solo', provider: 'openai' })
+    await b.c.dispatch(inbound('chat-1', 'hi'))
+    expect(b.dispatched[0]).toBe('hi')
+    const d = setupWith(adminAccess, { has: () => false, recent: [] })
+    d.store.set('chat-1', { kind: 'solo', provider: 'openai' })
+    await d.c.dispatch(inbound('chat-1', 'hi'))
+    expect(d.dispatched[0]).toBe('hi')
+  })
+})
+
+describe('spawn failure is told to the user (first-use probe / missing binary)', () => {
+  it('acquire throwing → one human notice with the provider\'s own detail, no silent drop', async () => {
+    const registry = createProviderRegistry()
+    registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const store = makeMockStore(); store.set('chat-1', { kind: 'solo', provider: 'codex' })
+    const sendAssistantText = vi.fn(async () => {})
+    const log = vi.fn()
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire: vi.fn(async () => { throw new Error('codex 探测没通过:400 requires a newer version of Codex') }) },
+      conversationStore: store, registry, defaultProviderId: 'claude', format: m => m.text, sendAssistantText, permissionMode: 'strict', loadAccess: adminAccess, log,
+    })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
+    const text = (sendAssistantText.mock.calls[0] as unknown as [string, string] | undefined)?.[1] ?? ''
+    expect(text).toContain('codex 这次没起来')
+    expect(text).toContain('requires a newer version of Codex')
+    expect(text).toContain('/cc')
+    expect(log).toHaveBeenCalledWith('COORDINATOR', expect.stringContaining('spawn failed'), expect.objectContaining({ event: 'spawn_failed' }))
+  })
+})
+
+describe('fallback streak detector (onFallbackStreak)', () => {
+  function setupStreak() {
+    const registry = createProviderRegistry()
+    registry.register('agy', dummyProvider, { displayName: 'Agy', canResume: () => true })
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const store = makeMockStore(); store.set('chat-1', { kind: 'solo', provider: 'agy' })
+    let next: 'fallback' | 'reply' = 'fallback'
+    const acquire = vi.fn(async (req: AcquireRequest) => makeHandle(req.providerId, makeFakeSession({
+      events: next === 'fallback'
+        ? [{ kind: 'text', text: '已回复用户的问候。' }, { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }]
+        : [{ kind: 'tool_call', server: 'wechat', tool: 'reply' }, { kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
+    })))
+    const streaks: Array<[string, number]> = []
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire, release: async () => {} },
+      conversationStore: store, registry, defaultProviderId: 'claude', format: m => m.text,
+      sendAssistantText: async () => {}, permissionMode: 'strict', loadAccess: adminAccess, log: () => {},
+      onFallbackStreak: (p, n) => streaks.push([p, n]),
+    })
+    return { c, streaks, setNext: (v: typeof next) => { next = v } }
+  }
+  it('counts consecutive fallback turns per provider and resets to 0 on the next reply-tool turn', async () => {
+    const { c, streaks, setNext } = setupStreak()
+    await c.dispatch(inbound('chat-1', 'a'))
+    await c.dispatch(inbound('chat-1', 'b'))
+    await c.dispatch(inbound('chat-1', 'c'))
+    expect(streaks).toEqual([['agy', 1], ['agy', 2], ['agy', 3]])
+    setNext('reply')
+    await c.dispatch(inbound('chat-1', 'd'))   // this turn calls reply → streak cleared, reported as 0
+    expect(streaks.at(-1)).toEqual(['agy', 0])
+    setNext('fallback')
+    await c.dispatch(inbound('chat-1', 'e'))   // starts a new streak from 1
+    expect(streaks.at(-1)).toEqual(['agy', 1])
   })
 })

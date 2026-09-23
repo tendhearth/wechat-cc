@@ -1,0 +1,34 @@
+Window: "CC Native QA", App: CC Native QA.
+0 standard window CC Native QA, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: CC Native QA, URL: tauri://localhost/cc-native-qa.html
+			3 container
+				4 heading CC · 原生透明窗口验收, Value: 1
+					5 text CC · 原生透明窗口验收
+				6 text 48 / 96 / 128 / 256 CSS px · 每组 Light / Dark · 四个独立透明窗口
+				7 button 浅色底板
+				8 button 深色底板
+				9 button 透明
+				10 button 正身
+				11 button 眨眼
+				12 button 睡觉
+				13 button 停止循环
+				14 button 查看 48
+				15 button 查看 96
+				16 button 查看 128
+				17 button 查看 256
+				18 text 48px · 48×48 · PNG 16 · 加载错误 0 · lit/idle + unlit/idle
+96px · 96×96 · PNG 16 · 加载错误 0 · lit/idle + unlit/idle
+128px · 128×128 · PNG 16 · 加载错误 0 · lit/idle + unlit/idle
+256px · 256×256 · PNG 16 · 加载错误 0 · lit/idle + unlit/idle 循环 8 · blink
+	19 close button
+	20 zoom button (disabled)
+	21 minimize button
+	22 text CC Native QA
+23 menu bar
+	24 CC Native QA
+	25 File
+	26 Edit
+	27 View
+	28 Window
+	29 Help

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { makeOutboundTaps } from '../outbound-taps'
 import { buildTickBodies, buildPushTickText, buildGapCheckinText, buildHuntText, distillAndPushOwnerKnowledge, type TickDeps } from './tick-bodies'
 import { TIER_PROFILES } from '../../core/user-tier'
 import type { Access } from '../../lib/access'
@@ -10,11 +11,13 @@ import { makeMessagesStore } from '../../lib/messages-store'
 import type { CareLedgerEntry } from '../companion/calibration'
 import type { CareLedger } from '../companion/care-ledger'
 import { makeChatMutex, type ChatMutex } from '../../core/async-mutex'
+import { readPlanLog } from '../companion/plan-memory'
+import { formatLocal, PLAN_EVAL_TIMEOUT_MS } from '../../core/companion-plan'
 
 /** Minimal in-memory fake of the structural chatPrefs subset TickDeps needs. */
 function makeFakeChatPrefs(
-  entries: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean }> = {},
-): { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean }; list(): string[] } {
+  entries: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean }> = {},
+): { get(chatId: string): { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean }; list(): string[] } {
   return {
     get: (chatId) => entries[chatId] ?? {},
     list: () => Object.keys(entries),
@@ -34,6 +37,10 @@ function makeFakeCareLedger(entries: Record<string, CareLedgerEntry> = {}): Care
     claimHunt: (chatId, nowIso) => {
       const cur = entries[chatId] ?? { noReplyCount: 0 }
       entries[chatId] = { ...cur, lastHuntAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
+    },
+    claimVisit: (chatId, nowIso) => {
+      const cur = entries[chatId] ?? { noReplyCount: 0 }
+      entries[chatId] = { ...cur, lastVisitAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
     },
     resetNoReply: (chatId) => {
       const cur = entries[chatId]
@@ -103,7 +110,7 @@ interface Setup {
   logs: string[]
   deps: TickDeps
   db: Db
-  chatPrefsEntries: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean }>
+  chatPrefsEntries: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean }>
   careLedgerEntries: Record<string, CareLedgerEntry>
   /** Task 3 (session-serialization) — the fake coordinator's `runExclusive`
    * spy, backed by a REAL per-chatId async mutex (the same implementation
@@ -135,7 +142,7 @@ function setupDeps(opts: {
   db?: Db
   /** Task 6 — chat-prefs entries. Keys double as chatPrefs.list() — i.e.
    * every chat that has ever set a preference (not just non-default ones). */
-  chatPrefsEntries?: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean }>
+  chatPrefsEntries?: Record<string, { care?: 'off' | 'low' | 'high'; hunt?: boolean; visit?: boolean }>
   /** Task 6 — care-ledger entries, keyed by chatId. */
   careLedgerEntries?: Record<string, CareLedgerEntry>
 }): Setup {
@@ -198,6 +205,15 @@ function setupDeps(opts: {
     careLedger: makeFakeCareLedger(careLedgerEntries),
   }
   return { stateDir, acquire, isInFlight, dispatch, logs, deps, db, chatPrefsEntries, careLedgerEntries, runExclusive, coordinatorMutex }
+}
+
+/** 串门用的 penpal 假件。原本长在打猎那个 describe 里,日程判断也要用,提到模块作用域。 */
+const withVisit = (s: Setup, opts: { hasOpen: boolean; result?: { ok: true; id: string; channel: string } | { ok: false; reason: string } }) => {
+  const startVisit = vi.fn(async () => opts.result ?? { ok: true as const, id: 'v1', channel: 'ch' })
+  ;(s.deps.boot as unknown as { social: unknown }).social = {
+    penpal: { startVisit, channelStore: { list: () => (opts.hasOpen ? [{ id: 'ch', status: 'open' }] : []) } },
+  }
+  return startVisit
 }
 
 describe('buildTickBodies / pushTick — companion isolation (PR D)', () => {
@@ -682,6 +698,153 @@ describe('buildTickBodies / pushTick — daily hunt branch (Task 3)', () => {
     expect(s.careLedgerEntries['chat-1']?.lastHuntAtIso).toBe('2026-05-13T10:00:00.000Z')
   })
 
+  it('打猎轮次持 busy token(label=hunt),发完释放 —— 桌宠靠它显示「觅食中」', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const held: string[] = []
+    let released = 0
+    let heldDuringDispatch = false
+    s.deps.boot = { ...s.deps.boot, holdBusy: (label: string) => { held.push(label); return () => { released++ } } } as never
+    s.dispatch.mockImplementation(() => ({
+      async *[Symbol.asyncIterator]() { heldDuringDispatch = held.includes('hunt') && released === 0 },
+    }))
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(held).toEqual(['hunt'])
+    expect(heldDuringDispatch).toBe(true)
+    expect(released).toBe(1)
+  })
+
+  // ── 战利品入库(2026-09-03,用户反馈「桌面端没有记录」)────────────
+  //
+  // 这条链最容易「静默不记」:tap 没开、tap 和发送不是同一个实例、或者
+  // 记录抛异常把整拍带崩 —— 三种都不会有任何报错,只是清单永远空着。
+
+  it('打猎发出去的东西进战利品清单', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const recorded: Array<{ chatId: string; text: string }> = []
+    const taps = makeOutboundTaps()
+    // dispatch 期间模拟 reply 路由往 tap 里写(真实链路上是 internal-api)。
+    s.dispatch.mockImplementation(async function* () { taps.observe('chat-1', '看这个 https://a.com') })
+    const { pushTick } = buildTickBodies({
+      ...s.deps,
+      outboundTaps: taps,
+      huntStore: { recordHunt: (a) => { recorded.push({ chatId: a.chatId, text: a.text }); return 1 } },
+    })
+    await pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(recorded).toEqual([{ chatId: 'chat-1', text: '看这个 https://a.com' }])
+  })
+
+  it('**这一拍什么都没发时不记空条目** —— 打猎允许「今天没猎到」', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const recordHunt = vi.fn(() => 0)
+    await buildTickBodies({ ...s.deps, outboundTaps: makeOutboundTaps(), huntStore: { recordHunt } })
+      .pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(recordHunt).not.toHaveBeenCalled()
+  })
+
+  it('**入库抛异常不能让这一拍看起来失败** —— 消息已经发出去了', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const taps = makeOutboundTaps()
+    s.dispatch.mockImplementation(async function* () { taps.observe('chat-1', '看这个 https://a.com') })
+    const { pushTick } = buildTickBodies({
+      ...s.deps,
+      outboundTaps: taps,
+      huntStore: { recordHunt: () => { throw new Error('db locked') } },
+    })
+    await expect(pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })).resolves.toBeUndefined()
+    expect(s.logs.some(l => l.includes('入库失败'))).toBe(true)
+  })
+
+  it('没接 store 时是旧行为(发了不记),不报错', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    await expect(buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })).resolves.toBeUndefined()
+    expect(s.dispatch).toHaveBeenCalledOnce()
+  })
+
+  // ── 串门 tick(2026-09-03)──────────────────────────────────────────
+  it('打猎刚出过门(冷却中)、有开着的信道 ⇒ 这一拍去串门,并登记 lastVisitAtIso', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1', inFlight: false,
+      careLedgerEntries: { 'chat-1': { lastHuntAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } },
+    })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: true })
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(startVisit).toHaveBeenCalledOnce()
+    expect(s.careLedgerEntries['chat-1']?.lastVisitAtIso).toBe('2026-05-13T10:00:00.000Z')
+    expect(s.dispatch).not.toHaveBeenCalled() // 串门不是 agent turn
+  })
+
+  it('**打猎和串门不在同一拍**:打猎能出门时先打猎并 return,串门等下一拍', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: true })
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.dispatch).toHaveBeenCalledOnce()       // 打猎
+    expect(startVisit).not.toHaveBeenCalled()        // 串门没出
+  })
+
+  it('串门冷却中 ⇒ 不出门,记 visit_cooldown', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1', inFlight: false,
+      careLedgerEntries: { 'chat-1': { lastHuntAtIso: '2026-05-13T09:00:00.000Z', lastVisitAtIso: '2026-05-13T09:30:00.000Z', noReplyCount: 0 } },
+    })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: true })
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(startVisit).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.includes('kind=visit') && l.includes('visit_cooldown'))).toBe(true)
+  })
+
+  it('没有开着的真信道也出门 —— 总有邻居家可去(startVisit 自己挑)', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1', inFlight: false,
+      careLedgerEntries: { 'chat-1': { lastHuntAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } },
+    })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: false, result: { ok: true, id: 'v1', channel: 'neighbor:ayou' } })
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(startVisit).toHaveBeenCalledOnce()
+    expect(s.careLedgerEntries['chat-1']?.lastVisitAtIso).toBe('2026-05-13T10:00:00.000Z')
+  })
+
+  it('/set visit off ⇒ 不出门', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1', inFlight: false,
+      chatPrefsEntries: { 'chat-1': { visit: false } },
+      careLedgerEntries: { 'chat-1': { lastHuntAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } },
+    })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: true })
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(startVisit).not.toHaveBeenCalled()
+  })
+
+  it('主人两次不回 ⇒ 串门也暂停(别在人不想理你时讲今天的事)', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1', inFlight: false,
+      careLedgerEntries: { 'chat-1': { lastHuntAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 2 } },
+    })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: true })
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(startVisit).not.toHaveBeenCalled()
+  })
+
+  it('社交未接线(boot.social 缺失)⇒ 旧行为,什么都不发生', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1', inFlight: false,
+      careLedgerEntries: { 'chat-1': { lastHuntAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } },
+    })
+    cleanup.push(s.stateDir)
+    await expect(buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })).resolves.toBeUndefined()
+  })
+
   it('(b) lastHuntAtIso 1h ago ⇒ hunt skipped (hunt_cooldown), falls through to gap evaluation', async () => {
     const s = setupDeps({
       defaultChatId: 'chat-1',
@@ -997,6 +1160,36 @@ describe('buildTickBodies / introspectTick — provider-agnostic cheap eval (PR 
   })
 })
 
+describe('buildTickBodies / introspectTick — optional Atelier mount', () => {
+  it('runs an injected Atelier callback after the existing introspect work', async () => {
+    const s = setupDeps({ defaultChatId: 'atelier-chat', inFlight: false })
+    const order: string[] = []
+    const sdkEval = vi.fn(async () => {
+      order.push('introspect')
+      return JSON.stringify({ write: false })
+    })
+    s.deps.boot = {
+      ...s.deps.boot,
+      registry: { getCheapEval: () => sdkEval } as never,
+    } as never
+    s.deps.runAtelierTick = vi.fn(async () => { order.push('atelier') })
+    const { introspectTick } = buildTickBodies(s.deps)
+    await introspectTick({ nowIso: '2026-09-01T12:00:00.000Z' })
+    expect(s.deps.runAtelierTick).toHaveBeenCalledWith({ nowIso: '2026-09-01T12:00:00.000Z' })
+    expect(order.at(-1)).toBe('atelier')
+  })
+
+  it('contains an Atelier failure and keeps the tick resolved', async () => {
+    const s = setupDeps({ defaultChatId: 'atelier-chat', inFlight: false })
+    const sdkEval = vi.fn(async () => JSON.stringify({ write: false }))
+    s.deps.boot = { ...s.deps.boot, registry: { getCheapEval: () => sdkEval } as never } as never
+    s.deps.runAtelierTick = async () => { throw new Error('no hosted brush') }
+    const { introspectTick } = buildTickBodies(s.deps)
+    await expect(introspectTick({ nowIso: '2026-09-01T12:00:00.000Z' })).resolves.toBeUndefined()
+    expect(s.logs.some(line => line.includes('ATELIER|tick failed: no hosted brush'))).toBe(true)
+  })
+})
+
 describe('buildTickBodies / introspectTick — memory gardener mount', () => {
   let cleanup: string[]
   beforeEach(() => { cleanup = [] })
@@ -1044,5 +1237,301 @@ describe('buildTickBodies / introspectTick — memory gardener mount', () => {
     expect(s.logs.some(l => l.startsWith('GARDEN|'))).toBe(true)
     expect(existsSync(join(s.stateDir, 'memory-archive', 'chat-1', 'profile.md.2026-07-10.md'))).toBe(true)
     expect(readFileSync(join(memDir, 'profile.md'), 'utf8')).toBe(curated)
+  })
+})
+
+describe('人类做客 —— 朋友来聊过、走了,伙伴跟主人提一句', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => { for (const d of cleanup) { try { rmSync(d, { recursive: true, force: true }) } catch { /* */ } } })
+
+  const seedGuest = async (s: Setup, chatId: string, base: string, n = 2) => {
+    const ms = makeMessagesStore(s.db)
+    for (let i = 0; i < n; i++) {
+      await ms.append({ id: `${chatId}:${i}`, chatId, ts: new Date(Date.parse(base) + i * 60_000).toISOString(), direction: 'in', kind: 'text', text: `客人第${i + 1}句`, source: 'live' })
+      await ms.append({ id: `${chatId}:o${i}`, chatId, ts: new Date(Date.parse(base) + i * 60_000 + 1000).toISOString(), direction: 'out', kind: 'text', text: '好的', source: 'live' })
+    }
+  }
+  const armEval = (s: Setup, out = '刚才小王来过,问了工具的事。') => {
+    const evalFn = vi.fn(async (_p: string) => out)
+    ;(s.deps.boot as unknown as { registry: unknown }).registry = { getCheapEval: () => evalFn, getStrongEval: () => null }
+    ;(s.deps.boot as unknown as { conversationStore: unknown }).conversationStore = { getIdentity: () => ({ last_user_name: '小王' }) }
+    const sent: string[] = []
+    ;(s.deps.ilink as unknown as { sendMessage: unknown }).sendMessage = async (_c: string, t: string) => { sent.push(t); return { msgId: '1' } }
+    return { evalFn, sent }
+  }
+  // 打猎/串门那些分支要在这些测试里安静:打猎冷却中、无社交接线
+  const quiet = (chatId: string) => ({ careLedgerEntries: { [chatId]: { lastHuntAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } } })
+
+  it('客人 40 分钟前聊了两句,走了 → 讲给主人,进背包(标题「小王来过」),记水位', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:15:00.000Z')
+    const { evalFn, sent } = armEval(s)
+    const recorded: Array<{ peerLabel: string }> = []
+    const ticks = buildTickBodies({ ...s.deps, huntStore: { recordHunt: () => 0, recordVisit: (a) => { recorded.push(a); return 'r' } } })
+    await ticks.pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(evalFn).toHaveBeenCalledOnce()
+    expect(evalFn.mock.calls[0]![0]).toContain('小王')
+    expect(evalFn.mock.calls[0]![0]).toContain('别复述原话')
+    expect(sent).toEqual(['🛎 刚才小王来过,问了工具的事。'])
+    expect(recorded[0]!.peerLabel).toBe('小王来过')
+    // 再跑一拍:水位挡住,不重复讲
+    await ticks.pushTick({ nowIso: '2026-05-13T10:05:00.000Z' })
+    expect(evalFn).toHaveBeenCalledOnce()
+  })
+
+  it('**客人还在聊(最后一句 5 分钟前)→ 不讲**', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:54:00.000Z')
+    const { evalFn } = armEval(s)
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(evalFn).not.toHaveBeenCalled()
+  })
+
+  it('**主人自己(admin)的对话不算做客**', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'owner', '2026-05-13T09:00:00.000Z')
+    const { evalFn } = armEval(s)
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(evalFn).not.toHaveBeenCalled()
+  })
+
+  it('只说了一句「在吗」→ 不算做客', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:00:00.000Z', 1)
+    const { evalFn } = armEval(s)
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(evalFn).not.toHaveBeenCalled()
+  })
+})
+
+describe('日程判断(spec 2026-09-05-companion-plan)', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => { for (const d of cleanup) { try { rmSync(d, { recursive: true, force: true }) } catch { /* */ } } })
+  const NOW = '2026-05-13T10:00:00.000Z'
+  const planEvalOf = (raw: string | Error) => vi.fn(async (_prompt: string) => { if (raw instanceof Error) throw raw; return raw })
+
+  it('候选 [hunt, visit],模型选 visit → 只出门不打猎;prompt 含两个候选', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: true })
+    const planEval = planEvalOf('{"action":"visit","why":"上午没人聊"}')
+    await buildTickBodies({ ...s.deps, planEval }).pushTick({ nowIso: NOW })
+    expect(planEval).toHaveBeenCalledOnce()
+    expect(planEval.mock.calls[0]![0]).toContain('"hunt"')
+    expect(planEval.mock.calls[0]![0]).toContain('"visit"')
+    expect(startVisit).toHaveBeenCalledOnce()
+    expect(s.dispatch).not.toHaveBeenCalled()                       // 没打猎
+    expect(s.careLedgerEntries['chat-1']?.lastVisitAtIso).toBe(NOW)
+    expect(s.careLedgerEntries['chat-1']?.lastHuntAtIso).toBeUndefined()
+    expect(s.logs.some(l => l.startsWith('PLAN|') && l.includes('→ visit'))).toBe(true)
+  })
+
+  it('模型选 none → 什么都不发,plan-log 多一条;10 分钟后再跑一拍不再问(退避)', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    withVisit(s, { hasOpen: true })
+    const planEval = planEvalOf('{"action":"none","why":"主人在聊"}')
+    const ticks = buildTickBodies({ ...s.deps, planEval })
+    await ticks.pushTick({ nowIso: NOW })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(readPlanLog(s.stateDir, formatLocal(NOW).slice(0, 10))).toHaveLength(1)
+    await ticks.pushTick({ nowIso: '2026-05-13T10:10:00.000Z' })
+    expect(planEval).toHaveBeenCalledOnce()                         // 第二拍没问
+    expect(s.logs.some(l => l.includes('reason=backoff'))).toBe(true)
+  })
+
+  it('模型选了候选外的 gap → 降级为 none,日志含 downgraded,不发', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const planEval = planEvalOf('{"action":"gap","why":"想问候"}')
+    await buildTickBodies({ ...s.deps, planEval }).pushTick({ nowIso: NOW })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.includes('downgraded'))).toBe(true)
+  })
+
+  it('降级(答了候选外的动作)也退避 —— 10 分钟后再跑一拍不再问', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const planEval = planEvalOf('{"action":"gap","why":"想问候"}')   // gap 不在候选里(never_talked)→ 降级
+    const ticks = buildTickBodies({ ...s.deps, planEval })
+    await ticks.pushTick({ nowIso: NOW })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    await ticks.pushTick({ nowIso: '2026-05-13T10:10:00.000Z' })
+    expect(planEval).toHaveBeenCalledOnce()                         // 第二拍没问
+    expect(s.logs.some(l => l.includes('reason=backoff'))).toBe(true)
+  })
+
+  it('模型抛错 / 回非 JSON → 回退旧顺序:先打猎', async () => {
+    for (const bad of [new Error('boom'), 'not json']) {
+      const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+      cleanup.push(s.stateDir)
+      const startVisit = withVisit(s, { hasOpen: true })
+      await buildTickBodies({ ...s.deps, planEval: planEvalOf(bad) }).pushTick({ nowIso: NOW })
+      expect(s.dispatch).toHaveBeenCalledOnce()                     // 打猎
+      expect(startVisit).not.toHaveBeenCalled()
+      expect(s.logs.some(l => l.includes('PLAN|fallback'))).toBe(true)
+    }
+  })
+
+  it('模型超时 → 回退旧顺序', async () => {
+    vi.useFakeTimers()
+    try {
+      const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+      cleanup.push(s.stateDir)
+      const planEval = vi.fn(() => new Promise<string>(() => { /* never */ }))
+      const p = buildTickBodies({ ...s.deps, planEval }).pushTick({ nowIso: NOW })
+      await vi.advanceTimersByTimeAsync(PLAN_EVAL_TIMEOUT_MS + 1)
+      await p
+      expect(s.dispatch).toHaveBeenCalledOnce()
+      expect(s.logs.some(l => l.includes('reason=timeout'))).toBe(true)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('没有 planEval 且 registry 没有 cheapEval → 旧行为,不写 plan-log', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    await buildTickBodies(s.deps).pushTick({ nowIso: NOW })
+    expect(s.dispatch).toHaveBeenCalledOnce()                       // 打猎(旧顺序第一)
+    expect(s.logs.some(l => l.includes('reason=no_evaluator'))).toBe(true)
+  })
+
+  it('没有 evaluator 的 fallback 也照样写 plan-log,source=fallback', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    await buildTickBodies(s.deps).pushTick({ nowIso: NOW })
+    const log = readPlanLog(s.stateDir, formatLocal(NOW).slice(0, 10))
+    expect(log).toHaveLength(1)
+    expect(log[0]!.source).toBe('fallback')
+    expect(log[0]!.decision).toBe('hunt')
+  })
+
+  it('会话在忙(pre-gate,候选 [hunt])→ 一个模型都不问,PLAN skip reason=session_in_flight', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: true })
+    cleanup.push(s.stateDir)
+    const planEval = planEvalOf('{"action":"hunt","why":"x"}')
+    await buildTickBodies({ ...s.deps, planEval }).pushTick({ nowIso: NOW })
+    expect(planEval).not.toHaveBeenCalled()
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.acquire).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.startsWith('PLAN|skip') && l.includes('session_in_flight'))).toBe(true)
+  })
+
+  it('agenda 到期 → 直接发 agenda,planEval 从未被调', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 问问搬家' })
+    cleanup.push(s.stateDir)
+    const planEval = planEvalOf('{"action":"none","why":"x"}')
+    await buildTickBodies({ ...s.deps, planEval }).pushTick({ nowIso: NOW })
+    expect(planEval).not.toHaveBeenCalled()
+    expect(s.dispatch).toHaveBeenCalledOnce()
+  })
+
+  it('候选为空(打猎与串门都在冷却、安静不够久)→ planEval 从未被调', async () => {
+    const s = setupDeps({
+      defaultChatId: 'chat-1', inFlight: false,
+      careLedgerEntries: { 'chat-1': { lastHuntAtIso: '2026-05-13T09:00:00.000Z', lastVisitAtIso: '2026-05-13T09:30:00.000Z', lastProactiveAtIso: '2026-05-13T09:00:00.000Z', noReplyCount: 0 } },
+    })
+    cleanup.push(s.stateDir)
+    withVisit(s, { hasOpen: true })
+    const planEval = planEvalOf('{"action":"hunt","why":"x"}')
+    await buildTickBodies({ ...s.deps, planEval }).pushTick({ nowIso: NOW })
+    expect(planEval).not.toHaveBeenCalled()
+    expect(s.dispatch).not.toHaveBeenCalled()
+  })
+
+  it('visit 带候选 id 的 target → startVisit(target);不在候选里 → startVisit()', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: true })
+    ;(s.deps.boot as unknown as { social: { penpal: Record<string, unknown> } }).social.penpal.provenChannels = () => [{ id: 'ch', label: '第 1 度的朋友' }]
+    await buildTickBodies({ ...s.deps, planEval: planEvalOf('{"action":"visit","why":"w","target":"ch"}') }).pushTick({ nowIso: NOW })
+    expect(startVisit).toHaveBeenCalledWith('ch')
+    const s2 = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s2.stateDir)
+    const startVisit2 = withVisit(s2, { hasOpen: true })
+    ;(s2.deps.boot as unknown as { social: { penpal: Record<string, unknown> } }).social.penpal.provenChannels = () => [{ id: 'ch', label: '第 1 度的朋友' }]
+    await buildTickBodies({ ...s2.deps, planEval: planEvalOf('{"action":"visit","why":"w","target":"zzz"}') }).pushTick({ nowIso: NOW })
+    expect(startVisit2).toHaveBeenCalledWith()
+  })
+
+  it('问成功之后不留定时器 —— 20 秒的超时闹钟当场撤掉', async () => {
+    vi.useFakeTimers()
+    try {
+      const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+      cleanup.push(s.stateDir)
+      withVisit(s, { hasOpen: true })
+      await buildTickBodies({ ...s.deps, planEval: planEvalOf('{"action":"none","why":"x"}') }).pushTick({ nowIso: NOW })
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('微信断了、候选里没有串门 → 一个模型都不问(不烧 token,也不重试)', async () => {
+    const db = openTestDb()
+    const ms = makeMessagesStore(db)
+    // 12 天前说过话 ⇒ gap 也是候选,于是候选是 [hunt, gap],两件都要走微信。
+    await ms.append({ id: 'm1', chatId: 'chat-1', ts: '2026-05-01T10:00:00.000Z', direction: 'in', kind: 'text', text: 'hi', source: 'live' })
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, db })
+    cleanup.push(s.stateDir)
+    const planEval = planEvalOf('{"action":"hunt","why":"x"}')
+    await buildTickBodies({ ...s.deps, planEval, health: { shouldSuspend: () => true } }).pushTick({ nowIso: NOW })
+    expect(planEval).not.toHaveBeenCalled()
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.acquire).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.startsWith('PLAN|skip') && l.includes('wechat_degraded'))).toBe(true)
+  })
+
+  it('微信断了但能串门 → 候选只剩串门,照样问,照样出门(串门不是一条微信)', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: true })
+    const planEval = planEvalOf('{"action":"visit","why":"链路断着也能出门"}')
+    await buildTickBodies({ ...s.deps, planEval, health: { shouldSuspend: () => true } }).pushTick({ nowIso: NOW })
+    expect(planEval).toHaveBeenCalledOnce()
+    expect(planEval.mock.calls[0]![0]).toContain('["visit"]')       // 【候选】只剩它
+    expect(planEval.mock.calls[0]![0]).not.toContain('"hunt","visit"')
+    expect(startVisit).toHaveBeenCalledOnce()
+    expect(s.dispatch).not.toHaveBeenCalled()
+  })
+
+  it('provenChannels 抛了也掀不翻这一拍', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: true })
+    ;(s.deps.boot as unknown as { social: { penpal: Record<string, unknown> } }).social.penpal.provenChannels = () => { throw new Error('boom') }
+    await buildTickBodies({ ...s.deps, planEval: planEvalOf('{"action":"visit","why":"w"}') }).pushTick({ nowIso: NOW })
+    expect(startVisit).toHaveBeenCalledOnce()
+    expect(s.logs.some(l => l.startsWith('PLAN|') && l.includes('→ visit'))).toBe(true)
+  })
+
+  it('预判过闸之后、真发之前会话忙起来了(送时被跳过)→ 台账记 (skipped),不记成做过了', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    s.isInFlight.mockReturnValueOnce(false).mockReturnValueOnce(true) // 预判闸放行,送时闸挡住
+    const planEval = planEvalOf('{"action":"hunt","why":"x"}')
+    await buildTickBodies({ ...s.deps, planEval }).pushTick({ nowIso: NOW })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    const log = readPlanLog(s.stateDir, formatLocal(NOW).slice(0, 10))
+    expect(log).toHaveLength(1)
+    expect(log[0]!.decision).toBe('hunt')
+    expect(log[0]!.why).toBe('(skipped) x')
+  })
+
+  it('做砸了台账记 (failed),不记成做过了', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const startVisit = vi.fn(async () => { throw new Error('boom') })
+    ;(s.deps.boot as unknown as { social: unknown }).social = {
+      penpal: { startVisit, channelStore: { list: () => [{ id: 'ch', status: 'open' }] } },
+    }
+    await buildTickBodies({ ...s.deps, planEval: planEvalOf('{"action":"visit","why":"出门"}') }).pushTick({ nowIso: NOW })
+    const log = readPlanLog(s.stateDir, formatLocal(NOW).slice(0, 10))
+    expect(log).toHaveLength(1)
+    expect(log[0]!.why).toBe('(failed) 出门')
+    expect(s.logs.some(l => l.includes('companion tick failed'))).toBe(true)
   })
 })

@@ -1,7 +1,7 @@
 {
   "name": "claude-channel-wechat",
-  "version": "0.6.4",
-  "description": "WeChat channel plugin for Claude Code — bridge WeChat messages in and out of your Claude Code session via the ilink bot API.",
+  "version": "1.7.0",
+  "description": "A local-first AI companion and unified task workspace for Claude, Codex and API models, with desktop and WeChat access.",
   "keywords": [
     "claude-code",
     "claude-code-plugin",
@@ -9,13 +9,13 @@
     "ilink",
     "channel"
   ],
-  "homepage": "https://github.com/ggshr9/wechat-cc#readme",
+  "homepage": "https://github.com/tendhearth/wechat-cc#readme",
   "bugs": {
-    "url": "https://github.com/ggshr9/wechat-cc/issues"
+    "url": "https://github.com/tendhearth/wechat-cc/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ggshr9/wechat-cc.git"
+    "url": "git+https://github.com/tendhearth/wechat-cc.git"
   },
   "author": "ggshr9",
   "license": "MIT",
@@ -30,7 +30,11 @@
     "start": "bun install --no-summary && bun src/daemon/main.ts",
     "test": "bun --bun vitest run",
     "test:e2e": "bun --bun vitest run -c vitest.e2e.config.ts",
+    "test:node": "vitest run -c vitest.node.config.ts",
+    "test:live-cli": "WECHAT_CC_LIVE_CLI=1 bun --bun vitest run src/core/external-cli-contract.live.test.ts",
     "eval:companion": "bun eval/companion/run.ts",
+    "spike:atelier-renderer": "bun scripts/atelier-renderer-spike.ts",
+    "smoke:atelier-sidecar": "bun scripts/atelier-sidecar-smoke.ts",
     "typecheck": "tsc --noEmit",
     "depcheck": "depcruise --config .dependency-cruiser.cjs src cli.ts setup.ts docs.ts log-viewer.ts"
   },

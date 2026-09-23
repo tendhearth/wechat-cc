@@ -1,33 +1,42 @@
 <h1 align="center">wechat-cc</h1>
 
 <p align="center">
-  <b>用微信找到电脑上的 Claude Code，让它也能找你回来。</b>
+  <b>陪你生活，也陪你做事。用一个 CC 管理 Claude、Codex 和 API 模型，桌面与微信接着做。</b>
 </p>
 
 <p align="center">
-  <img alt="version"  src="https://img.shields.io/badge/cli-v0.6.3-blue">
-  <img alt="desktop"  src="https://img.shields.io/badge/desktop-v0.6.3-blue">
+  <a href="https://github.com/tendhearth/wechat-cc/releases"><img alt="latest release" src="https://img.shields.io/github/v/release/tendhearth/wechat-cc?display_name=tag"></a>
   <img alt="platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey">
   <img alt="runtime"  src="https://img.shields.io/badge/runtime-Bun-black">
   <img alt="license"  src="https://img.shields.io/badge/license-MIT-green">
-  <a href="https://github.com/ggshr9/wechat-cc/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ggshr9/wechat-cc/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/tendhearth/wechat-cc/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tendhearth/wechat-cc/actions/workflows/ci.yml/badge.svg"></a>
 </p>
 
 <p align="center">
   <a href="./README.md">English</a> | 中文
 </p>
 
+<p align="center">
+  <sub>文档:<a href="./docs/INDEX.md">索引</a> · <a href="./docs/roadmap.md">roadmap</a> · <a href="./docs/architecture.md">架构</a> · <a href="./docs/maintainer/README.md">维护者手册</a></sub>
+</p>
+
 ---
 
 ## 这是什么
 
-`wechat-cc` 是一个 Bun daemon，把你的**微信**账号和电脑上跑的 **Claude Code** 会话桥起来。装好之后：
+**CC 是一个有陪伴感的 AI，也是管理多种执行者的统一工作入口。** 它把 Claude Code、Codex 和已配置的 API 模型接到同一个桌面工作台；离开电脑后，可以从微信继续同一件事。
 
-- 手机微信发文字 / 图片 / 文件 / 语音——电脑上的 Claude 会收到、调工具、回到聊天里
-- 离开电脑也能继续推进长任务——锁屏出门，从手机继续
-- Claude **可以反过来找你**，不只是被动回复。Companion 层 + v0.4 dashboard 把它变成一个长期 AI 陪伴：会写观察、会触发里程碑、会决定什么时候该 push
+- **此刻**：看看 CC 正在做什么，留一点安静相处的空间。
+- **一起做**：交代任务、补充要求、处理权限和问题，查看完整对话与成果，不用来回打开多个 agent 窗口。
+- **回忆**：收好过去的片段、画作、日记和明信片。陪伴记忆与工作任务上下文分开。
 
-定位故意挑窄：**个人 Claude Code 伴侣 × 深度 × 小白**——不追多 IM 多 agent 的广度赛道。要广度去看 [`cc-connect`](https://github.com/chenhg5/cc-connect)。要一段深度的、像关系的微信 × Claude Code 体验，这个对。
+多个项目保留各自的任务、草稿、对话和成果；同目录的冲突任务排队。需要另一位执行者检查时，明确交接选定的上下文和成果版本，再把意见交回原任务。微信也能在已知项目里新建任务、补充要求、处理请求、订阅提醒和获取保存的成果。
+
+**当前边界：** Claude/Codex 走专用原生适配器；API 任务执行者用于文字/图片材料与新的文本成果，工具范围更小。已有 Cursor/agy 聊天接入，目前还不能当作受管工作执行者。这里不承诺完整覆盖各家 CLI/App，也不把本机会话恢复称为跨电脑接管。
+
+> 以上描述的是 **dev 分支当前能力**，不是已经发布的新安装包。先看[工作台使用与能力边界](docs/cc-workbench.md)、[对标项目与原始来源](docs/research/2026-09-14-cc-agent-workbench-references.md)、[本批交付记录](docs/superpowers/reports/2026-09-14-cc-workbench-wrapup.md)。
+
+任务记录保存在本机；执行所需材料会发送给你选择的 AI 服务。本地保存不代表模型在本地运行。
 
 <p align="center">
   <img alt="dashboard sessions detail — WeChat-replica chat in iPhone 17 Pro frame, with file + image + quote-reply" src="docs/screenshots/chat-detail.png" width="380">
@@ -42,7 +51,7 @@
 |---|---|---|
 | 适合谁 | 任何人，包括非技术 | 你 OK 装 bun + git |
 | 拿到什么 | 4 步向导（环境检查 → 选 agent → 扫码 → 装服务）+ dashboard：绑定账号 / 记忆 / 会话 / 日志 / 一键升级 | 同样的 daemon，没有 GUI |
-| 怎么走 | 从 [最新 release](https://github.com/ggshr9/wechat-cc/releases/latest) 下 bundle | `git clone` + `bun install` + `wechat-cc setup` |
+| 怎么走 | 从 [最新 release](https://github.com/tendhearth/wechat-cc/releases/latest) 下 bundle | `git clone` + `bun install` + `wechat-cc setup` |
 | 注意点 | bundle 没签名（Apple Dev ID + Windows EV 证书未配齐）—— 第一次开需要绕一次 OS 警告。Intel Mac 暂不支持（仅 Apple Silicon）。桌面 app 是个壳，调底层的 source-mode CLI，所以源码也得装一份（或设 `WECHAT_CC_ROOT`）| Bun 跑得起来的地方都行 |
 
 大多数人：抓桌面 bundle。下面是终端路径。
@@ -60,7 +69,7 @@
 ```bash
 # Linux / macOS
 curl -fsSL https://bun.sh/install | bash    # 没装 bun 时
-git clone https://github.com/ggshr9/wechat-cc.git ~/.claude/plugins/local/wechat
+git clone https://github.com/tendhearth/wechat-cc.git ~/.claude/plugins/local/wechat
 cd ~/.claude/plugins/local/wechat && bun install && bun link
 wechat-cc setup       # 手机微信扫码
 wechat-cc run         # 启动 daemon
@@ -71,7 +80,7 @@ wechat-cc run         # 启动 daemon
 irm bun.sh/install.ps1 | iex                # 没装 bun 时
 winget install Git.Git                       # 没装 git 时
 # 装完 bun / git 必须重开终端，PATH 才生效。
-git clone https://github.com/ggshr9/wechat-cc.git "$env:USERPROFILE\.claude\plugins\local\wechat"
+git clone https://github.com/tendhearth/wechat-cc.git "$env:USERPROFILE\.claude\plugins\local\wechat"
 cd "$env:USERPROFILE\.claude\plugins\local\wechat"
 bun install ; bun link
 wechat-cc setup ; wechat-cc run
@@ -84,7 +93,7 @@ wechat-cc setup ; wechat-cc run
 <details>
 <summary><b>桌面 bundle 快速开始</b></summary>
 
-从 [最新 release](https://github.com/ggshr9/wechat-cc/releases/latest) 下你平台的包：
+从 [最新 release](https://github.com/tendhearth/wechat-cc/releases/latest) 下你平台的包：
 
 | 平台 | 文件 | 第一次开 |
 |:---|:---|:---|
@@ -95,7 +104,7 @@ wechat-cc setup ; wechat-cc run
 桌面 app 调用底层 `wechat-cc` CLI，所以源码也得放一份：
 
 ```bash
-git clone https://github.com/ggshr9/wechat-cc.git ~/.local/share/wechat-cc
+git clone https://github.com/tendhearth/wechat-cc.git ~/.local/share/wechat-cc
 cd ~/.local/share/wechat-cc && bun install
 ```
 
@@ -109,130 +118,22 @@ cd ~/.local/share/wechat-cc && bun install
 
 ## 功能
 
-### 1 · 双向聊——电脑上的 Claude 真听得见
+十件事。**带截图和例子的完整版:[docs/reference/features.md](docs/reference/features.md)(英文)。**
 
-手机发文本 / 图片 / 文件 / 语音；Claude 全收，能调工具（Edit / Bash 等），回话回到聊天里。媒体走 ilink CDN + AES-128-ECB 加密。语音 ilink 转写显示在消息里，没转写的录音存到 inbox。
+| | |
+|---|---|
+| **双向聊** | 微信进,电脑上的 Claude Code / Codex / Cursor 出——agent 跑在你自己的机器、你自己的仓库里 |
+| **`share_page`** | 长内容变成一个网页,手机上也读得下去 |
+| **多项目切换** | 一个 bot 管多个仓库(`/project add|list|switch`) |
+| **多 agent** | `/cc` `/codex` `/both` `/chat`——Claude 与 Codex 在同一个对话里,还能开一场匿名辩论 |
+| **Companion** | 会反过来找你的 Claude;记忆存在 daemon 里,换哪家大脑都不丢 |
+| **双面镜子** | dashboard:你做过什么,以及 CC 注意到了什么 |
+| **Hearth 集成** | 在手机上做 markdown 笔记库的治理 |
+| **语音回复** | 出站语音走你自己的网关 |
+| **CLI 兜底** | bot 能做的,终端里都能做 |
+| **你自己的终端会话进微信** | `wechat-cc hook` 把本机 claude / codex 会话的结果推到微信,还能在微信里拍板 |
 
-### 2 · `share_page`——长内容也能在手机看
-
-微信不渲染 markdown。Claude 有 plan / spec / 审稿要给你，调 `share_page({title, content})`：
-
-1. 内容写本地 `~/.claude/channels/wechat/docs/<slug>.md`
-2. 本地 Bun server 用 `marked` 渲染，配手机友好 CSS
-3. `cloudflared tunnel` 暴露成 `*.trycloudflare.com`（首次自动下载，无需账号）
-4. URL + 标题 + 预览发到微信
-
-每个分享页底部一个 ✓ Approve 按钮——点一次 daemon 收到通知。故意没有 reject / 评论框；反对意见走聊天。文件 7 天 TTL；`resurface_page` 让过期的 URL 在新 tunnel 上复活。
-
-### 3 · 多项目切换
-
-注册项目一次，微信里自然语言或命令切：
-
-```
-/project add /home/u/Documents/compass compass
-切到 sidecar              ← 自然语言；Claude 解析意图
-/project switch sidecar   ← 显式命令
-```
-
-每个项目保持一个预热 Claude session 在 pool 里——切换大约 5 秒，切换窗口的消息 ilink 缓存重连后补发。提到之前的对话（「刚才聊的 xxx」），Claude 读 `<target>/memory/_handoff.md` 这个小指针，按需打开源 jsonl——项目间不复制对话内容。
-
-### 4 · Companion——会反过来找你的 Claude
-
-Opt-in 主动模式。`companion_enable` 之后，daemon 跑两个 scheduler：
-
-- **推送 tick**（~20 min ± jitter）—— Claude 读 memory + 最近上下文，决定要不要 push 你。两个人格选：
-  - **小助手 (assistant)** —— 干活导向，推送从严
-  - **陪伴 (companion)** —— 温柔一些，下班轻问候
-- **内省 tick**（24h ± jitter，**v0.4.1**）—— Claude (claude-haiku-4-5，隔离单次 eval) 看最近活动，决定要不要在 `memory/<chat>/observations.jsonl` 写新观察。**绝不 push**——惊喜来自你打开 dashboard 那一下
-
-自然语言控制：
-- `开启 companion` / `关闭 companion`
-- `切到陪伴` / `换回小助手`
-- `别烦我` / `snooze 3 小时`
-
-### 5 · 双面镜子（v0.4 dashboard）
-
-桌面 dashboard 把"陪伴"分两个视角：
-
-**记忆 (Memory)** —— Claude 看你的镜子
-- 顶部：Claude 最近的几条观察 + 里程碑卡片（"打开才发现的小惊喜"机制；不 push）
-- 中部：可编辑的 per-chat markdown（`profile.md` / `preferences.md` / ...）
-- 底部：可折叠的 "Claude 的最近决策" 时间轴（push / skip / observation / milestone / SDK 错误）。点一行看 reasoning
-
-![Memory pane — observation card up top, file tree on left, preferences.md showing tool stack / PR habits / session-resume conventions, decisions timeline collapsed at the bottom](docs/screenshots/memory-pane.png)
-
-<sub><i>示意图。Memory 层是个泛用 markdown 容器——这里展示的是项目记忆用法（工具偏好 / PR 习惯 / 会话续接）；同样的容器也能装 Companion 模式下的观察笔记，看 #4 节。</i></sub>
-
-**会话 (Sessions)** —— 你和 Claude 共同的记录
-- 跨 session 全文搜索
-- 项目列表按时间分组（今天 / 7 天内 / 更早），每个项目一行 LLM 摘要（claude-haiku-4-5 lazy-refresh）
-- 钻入任意项目的 jsonl 对话流；可收藏 / 导出 markdown / 删除
-
-里程碑探测每条入站消息后跑：100 / 1000 turn、首次 handoff、首次回复 push、**7 天连续聊**（per-chat `activity.jsonl` UTC date 跟踪）。
-
-> 设计立柱（双面镜子 / 老朋友的随手观察 / 克制 / 留白）见 [`docs/specs/2026-04-29-sessions-memory-design.md`](docs/specs/2026-04-29-sessions-memory-design.md)；SDK + 活动跟踪细节见 [`docs/specs/2026-04-29-v0.4.1.md`](docs/specs/2026-04-29-v0.4.1.md)。
-
-### 6 · Hearth 集成——手机上做 vault 治理
-
-文本捕到个人 markdown vault，生成 ChangePlan，看渲染好的 `share_page`，点 ✓ Approve——全程不离开微信。基于 [hearth](https://github.com/ggshr9/hearth)，agent-native vault 治理层。
-
-```
-/hearth ingest <text>      → 生成 ChangePlan，发审阅卡片
-/hearth list               → 最近 10 条 pending
-/hearth show <id>          → 预览 ops + 内容
-/hearth apply <id>         → kernel apply（owner 直发，无 token）
-```
-
-仅 owner（admin 白名单）。vault 永远不被 channel 直写——所有写都过 hearth kernel + 人工审批。配置：
-
-```bash
-git clone https://github.com/ggshr9/hearth.git ~/Documents/hearth
-cd ~/Documents/hearth && bun install
-bun src/cli/index.ts setup              # 自动探 Obsidian vault
-export HEARTH_VAULT=/path/to/your/vault
-export HEARTH_AGENT=mock                # 配 Anthropic key 后改 "claude"
-```
-
-### 7 · 语音回复
-
-说「念一下 X」/「speak it」，Claude 用语音回。主力 [VoxCPM2](https://huggingface.co/openbmb/VoxCPM2)，本地 `vllm serve --omni`（OpenAI 兼容 `/v1/audio/speech`）。云端备选 Qwen DashScope。两种 provider 都通过微信对话配置——第一次要求语音时 Claude 引导你填 API key / base URL。
-
-### 8 · CLI 兜底
-
-daemon 挂了，从任意终端也能发：
-
-```bash
-wechat-cc reply "10 分钟后回来"             # → 最近活跃的 chat
-wechat-cc reply --to <chat_id> "specific"
-echo "管道文本" | wechat-cc reply
-```
-
-CLI 读跟跑着的 daemon 一样的 `~/.claude/channels/wechat/` 状态，所以收件人解析 + session 续接完全一致。状态文件是真相源——daemon 重启不会丢线程。
-
-### 9 · 一个大脑多手——人在公司，让家里电脑干活
-
-一台 wechat-cc 是「大脑」（扫码、握着 bot），其他装了 wechat-cc 的机器是「手」。微信里说「让家里执行 X」，大脑把任务派给那台手，手在本地跑一个完整 agent（Read/Bash），把结果回传到微信。人在公司，也能操控家里电脑、问家里项目的内容。
-
-配对像配对设备，一边一条命令、不用手抄 token：
-
-```bash
-# 手那台（先把 A2A 绑到自己的 Tailscale IP 上监听）：
-wechat-cc daemon a2a enable --host <本机 100.x.y.z> --port 8717   # 然后重启 daemon
-wechat-cc hand invite              # 打印一次性配对码（10 分钟有效，只能用一次）
-
-# 大脑那台：
-wechat-cc hand join <配对码> --id home --name 家里                # 自动双向注册
-wechat-cc hand ping                # 确认手在线（拉取它的 Agent Card）
-wechat-cc hand list                # 看「能派活的手」/「能向我派活的大脑」
-```
-
-然后微信里：`让家里执行 看下 ~/proj 的 README`。
-
-- **传输**：走 [Tailscale](https://tailscale.com) 私有网，A2A server 只绑 tailnet IP（`100.x.y.z`）——`/a2a/exec` 等于远程跑 agent，**绝不要**绑 `0.0.0.0` 或公网。
-- **配对码**：一次性 + 10 分钟过期 + 单用；换来的密钥就是派活权限，所以全程在你自己的 tailnet 里。
-- **大脑不需要对外监听**——它只主动呼叫手；手才是跑 A2A server 的那台。
-
----
+聊天之外还有**桌面工作台**——把一个文件夹交给执行者,看它的改动、权限卡和等待行:[docs/cc-workbench.md](docs/cc-workbench.md)。
 
 ## 它怎么工作
 
@@ -262,6 +163,9 @@ wechat-cc hand list                # 看「能派活的手」/「能向我派活
 
 ---
 
+
+各家 provider 的差别(Claude 每个工具都转发、Codex 走自己的 `approval_policy`、派发出去的回合又不一样)是一张表:**[docs/reference/permission-modes.md](docs/reference/permission-modes.md)**(英文)。
+
 ## 微信端命令
 
 | 命令 | 效果 |
@@ -286,6 +190,9 @@ Companion + 记忆相关用自然语言配置（`开启 companion` / `切到陪�
 **自检 & 自愈（admin）。** 感觉不对劲就直接问 bot——「你怎么不回消息了，检查下」「这个 chat 为什么不回，修一下」。它能查自己每一回合的结局（上一回合是超时？出错？）、看哪些 agent 会话还活着或卡住、检查 daemon 健康，然后动手修：释放卡住的会话（下一条消息重开一个干净子进程）、切换模型、或重启 daemon——每个动作都会回读确认。这些工具**仅限 admin**，非 admin 的 chat 根本不会注册。用这种方式切模型下一回合就生效，不用重启 daemon。
 
 ---
+
+
+完整清单(含 `@all`、`/users`、`/hearth`、让<name>执行):**[docs/reference/wechat-commands.md](docs/reference/wechat-commands.md)**(英文)。
 
 ## 升级
 
@@ -329,6 +236,9 @@ wechat-cc update --check     # 仅探测，无副作用
 
 ---
 
+
+逐个文件的地图:**[docs/reference/state-layout.md](docs/reference/state-layout.md)**(英文)。
+
 ## 访问控制
 
 默认仅白名单。在**终端**管，不在微信端（防 prompt injection）：
@@ -349,6 +259,15 @@ chat)收到带 6 位码的通知,回码即批准/拒绝;或主动发「邀请码
 
 ---
 
+## A2A 整合(P3,可选)
+
+别的 agent(或者你自己的另一台机器)可以给这个 bot 发通知,它也能把任务派回去——一个大脑,多只手。HTTP 服务**默认关**(`agent-config.json:a2a_listen`),`a2a_send` 和别的工具一样按用户层级管。
+
+怎么开、CLI 子命令、以及「人在公司让家里电脑干活」的完整走法:**[docs/reference/a2a.md](docs/reference/a2a.md)**(英文)。
+
+
+三档权限各自能碰什么、v1 的已知限制(把敏感层级交给它之前该先读)、以及 `access list|add|remove`:**[docs/reference/access-control.md](docs/reference/access-control.md)**(英文)。
+
 ## Demo 数据（截图 / 第一印象用）
 
 新装一片空——记忆 0 / 观察 0。要预览 dashboard 完整形态：
@@ -362,6 +281,9 @@ wechat-cc demo seed --chat-id <id>    # 指定 chat 而非默认
 稳定 id 前缀（`obs_demo_*` / `ms_demo_*`）保证 unseed 干净。
 
 ---
+
+
+**[docs/reference/demo-data.md](docs/reference/demo-data.md)**(英文)。
 
 ## 已知限制
 
@@ -395,6 +317,9 @@ v1.0 已修，`docs.ts` 绑 `127.0.0.1`。旧版本 `wechat-cc update` 升级后
 
 ---
 
+
+每条对应的修法:**[docs/reference/troubleshooting.md](docs/reference/troubleshooting.md)**(英文)。维护者那一侧的回路(部署 / 自检 / CI)见 [docs/maintainer/README.md](docs/maintainer/README.md)。
+
 ## 卸载
 
 ```bash
@@ -424,24 +349,21 @@ Remove-Item "$env:USERPROFILE\.claude\channels\wechat" -Recurse -Force
 
 ## 版本
 
-- **CLI / daemon**: 1.2.0 —— 见 [`package.json`](./package.json)
-- **桌面 bundle**: 最新签名 release 是
-  [`desktop-v0.4.0`](https://github.com/ggshr9/wechat-cc/releases/tag/desktop-v0.4.0)。
-  v0.4 / v0.4.1 功能（双面镜子 dashboard、真 introspect SDK、per-project 摘要、7-day-streak）已经在 `master`，下次桌面 bundle 出版时一起 ship
-- **每个版本的 release notes**: [`docs/releases/`](./docs/releases/)
-- **架构 / 设计 spec**: [`docs/specs/`](./docs/specs/)
-- **路线图**: [`docs/rfc/02-post-v1.1-roadmap.md`](./docs/rfc/02-post-v1.1-roadmap.md)
+- **源码版本：** 见 [CLI/daemon package](package.json) 与[桌面打包配置](apps/desktop/src-tauri/tauri.conf.json)。本批不修改版本号，也不发布安装包。
+- **安装包与发布状态：** 见 [GitHub Releases](https://github.com/tendhearth/wechat-cc/releases)。上文 dev 工作台能力可能新于最新安装包。
+- **版本记录：** [docs/releases](docs/releases/)；[下一版桌面草稿](docs/releases/desktop-v1.7.0.md)不是发布公告。
+- **当前架构与交付证据：** [架构说明](docs/architecture.md)、[工作台导览](docs/cc-workbench.md)。
 
 ---
 
 ## 参与贡献
 
-Issues + PRs 欢迎： [github.com/ggshr9/wechat-cc](https://github.com/ggshr9/wechat-cc/issues)。
+Issues + PRs 欢迎： [github.com/tendhearth/wechat-cc](https://github.com/tendhearth/wechat-cc/issues)。
 
 ```bash
 bun install
-bun x vitest run        # 完整测试套件 (当前 684 测试)
-bun x tsc --noEmit      # 类型检查
+bun --bun vitest run    # 完整测试套件
+bun run typecheck      # 类型检查
 ```
 
 `apps/desktop/` 是 Tauri 2 GUI。四个模式共用同一个 dev server（[`apps/desktop/test-shim.ts`](./apps/desktop/test-shim.ts)），都带热重载：

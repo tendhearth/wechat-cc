@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makePairing, type PairingDeps, type PairCard, type PairScheduleHandle, isAdvertisableUrl } from './pairing'
+import { makePairing, type PairingDeps, type PairCard, type PairScheduleHandle, isAdvertisableUrl, adoptPeerCard, buildOwnCard } from './pairing'
+import { primaryChannels } from './penpal-channel-store'
 import { deriveRendezvous } from './pairing-crypto'
 import { sealEnvelope } from './mailbox-crypto'
 import type { MailboxClient } from './mailbox-client'
@@ -18,6 +19,24 @@ function makeFakeRelay() {
     async ack() { throw new Error('ack must NOT be called during pairing') },
   }
   return { client, boxes }
+}
+
+// createdAt 缺省 = ''(手工塞进来的「上一次配对留下的旧行」);create() 出来的
+// 行带真时间戳,于是「谁更新」这件事在假货上也成立(primaryChannels 要用)。
+type FakeChan = { id: string; seekId: string; myPrivkey: string; myPubkey: string; myChannelId: string; degree: number; peerAgentId: string | null; status: 'pending' | 'open'; peer: unknown; createdAt?: string }
+function rowToChannelRow(r: FakeChan) {
+  return { id: r.id, seek_id: r.seekId, my_privkey: r.myPrivkey, my_pubkey: r.myPubkey, my_channel_id: r.myChannelId, peer_pubkey: null, peer_channel_id: null, peer_mailbox: null, degree: r.degree, relay_via: null, peer_agent_id: r.peerAgentId, status: r.status, created_at: r.createdAt ?? '' }
+}
+function makeFakeChannelStore(): PairingDeps['channelStore'] & { rows: FakeChan[] } {
+  const rows: FakeChan[] = []
+  return {
+    rows,
+    get: (id) => { const r = rows.find(x => x.id === id); return r ? rowToChannelRow(r) as never : null },
+    create: (c) => { rows.push({ id: c.id, seekId: c.seekId, myPrivkey: c.myPrivkey, myPubkey: c.myPubkey, myChannelId: c.myChannelId, degree: c.degree, peerAgentId: c.peerAgentId ?? null, status: 'pending', peer: null, createdAt: new Date().toISOString() }) },
+    setPeerHandle: (id, h) => { const r = rows.find(x => x.id === id); if (r) r.peer = h },
+    setStatus: (id, s) => { const r = rows.find(x => x.id === id); if (r) r.status = s },
+    list: () => rows.map(rowToChannelRow) as never,
+  }
 }
 
 function makeFakeRegistry(): A2ARegistry & { records: Map<string, A2AAgentRecord> } {
@@ -65,6 +84,8 @@ function baseDeps(over: Partial<PairingDeps>): PairingDeps {
     genNonce: () => 'nonceX',
     notify: () => {},
     schedule: () => ({ cancel() {} }),
+    channelStore: makeFakeChannelStore(),
+    genChannel: (() => { let n = 0; return () => { n++; return { channelId: `chan-${n}`, pubkey: `PUB${n}`, privkey: `PRIV${n}` } } })(),
     ...over,
   }
 }
@@ -381,4 +402,137 @@ describe('配对卡片不广播不可路由的 url', () => {
       expect(isAdvertisableUrl(url)).toBe(shouldAdvertise)
     })
   }
+})
+
+describe('配对即开信道(spec 2026-09-04-wish-postcard §2)', () => {
+  function pairBoth(over: { logB?: (m: string) => void } = {}) {
+    const relay = makeFakeRelay()
+    const sA = makeManualScheduler(), sB = makeManualScheduler()
+    const chanA = makeFakeChannelStore(), chanB = makeFakeChannelStore()
+    const A = makePairing(baseDeps({ client: relay.client, selfId: () => 'cc-aaaa0001', name: () => 'A', self: { mailbox_addr: 'MA', mailbox_enc_pub: 'EA', relays: ['https://r/mailbox'] }, schedule: sA.schedule, channelStore: chanA, genNonce: () => 'n0nce' }))
+    const B = makePairing(baseDeps({ client: relay.client, selfId: () => 'cc-bbbb0002', name: () => 'B', self: { mailbox_addr: 'MB', mailbox_enc_pub: 'EB', relays: ['https://r/mailbox'] }, schedule: sB.schedule, channelStore: chanB, ...(over.logB ? { log: over.logB } : {}) }))
+    return { A, B, sA, chanA, chanB }
+  }
+
+  it('双方 card 带 channel 字段;完成后各一条 open 信道,peer_agent_id 互指,peer_mailbox 是对方的', async () => {
+    const { A, B, sA, chanA, chanB } = pairBoth()
+    const { code } = await mustStart(A)
+    const r = await B.accept(code)
+    expect(r.ok).toBe(true)
+    sA.tick()                       // initiator 轮询到 acceptor 的 card
+    await new Promise(r => setTimeout(r, 0))
+    expect(chanB.rows).toHaveLength(1)
+    expect(chanB.rows[0]).toMatchObject({ id: 'pair:n0nce', degree: 1, peerAgentId: 'cc-aaaa0001', status: 'open' })
+    expect(chanB.rows[0]!.peer).toMatchObject({ channel_id: 'chan-1', pubkey: 'PUB1', mailbox: { addr: 'MA', enc_pub: 'EA' } })
+    expect(chanA.rows).toHaveLength(1)
+    expect(chanA.rows[0]).toMatchObject({ id: 'pair:n0nce', peerAgentId: 'cc-bbbb0002', status: 'open' })
+    expect(chanA.rows[0]!.peer).toMatchObject({ mailbox: { addr: 'MB', enc_pub: 'EB' } })
+  })
+
+  it('同一对端已有 open 信道 → 照样按 nonce 建新行(两侧才对称),旧行留着 + 记一条日志', async () => {
+    // 「已有就跳过」是两边**各自**判断的:一侧留着旧行、另一侧没有(库重建过),
+    // 于是一侧跳过、一侧新建 —— 开出一条只有一头存在的信道,谁都不知道。
+    // 收敛交给 primaryChannels(按 peer_agent_id 取最新的 open 行)。
+    const logs: string[] = []
+    const { A, B, sA, chanB } = pairBoth({ logB: (m) => logs.push(m) })
+    chanB.rows.push({ id: 'pair:old', seekId: 'pair:old', myPrivkey: 'p', myPubkey: 'P', myChannelId: 'c', degree: 1, peerAgentId: 'cc-aaaa0001', status: 'open', peer: null })
+    const { code } = await mustStart(A)
+    expect((await B.accept(code)).ok).toBe(true)
+    sA.tick(); await new Promise(r => setTimeout(r, 0))
+    expect(chanB.rows.map(r => r.id)).toEqual(['pair:old', 'pair:n0nce'])
+    expect(chanB.rows.find(r => r.id === 'pair:n0nce')).toMatchObject({ status: 'open', peerAgentId: 'cc-aaaa0001' })
+    expect(logs.some(m => m.includes('pair:old') && m.includes('pair:n0nce'))).toBe(true)
+    // 投递面上仍然只有一条:同一个对端只认最新的那条 open 行。
+    expect(primaryChannels(chanB.list()).map(r => r.id)).toEqual(['pair:n0nce'])
+  })
+
+  it('v1 旧 card(没有 channel 字段)不被认可', async () => {
+    const relay = makeFakeRelay()
+    const chanB = makeFakeChannelStore()
+    const logs: string[] = []
+    const B = makePairing(baseDeps({ client: relay.client, channelStore: chanB, log: (m) => logs.push(m) }))
+    // 手工往 rendezvous 信箱塞一张 v1 initiator card(没有 channel_id/channel_pub,
+    // v:1 而不是 2),绕过 ownCard() 的保证有效构造 —— 就像文件里已有的 malformed
+    // card 测试那样直接伪造对端在中继上会长成的样子。
+    const code = '123456'
+    const rv = deriveRendezvous(code)
+    const v1 = { v: 1, role: 'initiator', nonce: 'x', self_id: 'cc-old00001', name: 'old', mailbox_addr: 'MO', mailbox_enc_pub: 'EO', relays: ['https://r/mailbox'], bearer: 'bearer-key-00000000' }
+    const env = sealEnvelope({ path: '/pair', bearer: '', body: v1 }, rv.enc_pub)
+    await relay.client.drop('https://r/mailbox', rv.addr, JSON.stringify(env))
+    const r = await B.accept(code)
+    expect(r.ok).toBe(false)
+    expect(chanB.rows).toHaveLength(0)
+    // 静默丢弃的话,两边的主人都只会看到「配对码过期了」,谁也想不到该去升级
+    // 对面那台 —— 老名片和垃圾名片要分开说。
+    expect(logs).toContain('PAIR: ignoring pre-v2 card from cc-old00001 — peer needs to upgrade')
+  })
+
+  it('信道开通(create/setPeerHandle/setStatus)半途抛错不拖累配对结果 —— 只记日志', async () => {
+    const relay = makeFakeRelay()
+    const chanB = makeFakeChannelStore()
+    const originalSetStatus = chanB.setStatus
+    let thrown = false
+    // 模拟 create 成功、setPeerHandle 成功之后,setStatus 那一步抛了一次 ——
+    // 三步不是原子的,行会停在 pending。之后正常工作(不是永久坏掉)。
+    chanB.setStatus = (id, s) => {
+      if (!thrown) { thrown = true; throw new Error('boom') }
+      originalSetStatus(id, s)
+    }
+    const logs: string[] = []
+    const A = makePairing(baseDeps({ client: relay.client, selfId: () => 'cc-aaaa0001', name: () => 'A', self: { mailbox_addr: 'MA', mailbox_enc_pub: 'EA', relays: ['https://r/mailbox'] }, genNonce: () => 'n0nce' }))
+    const B = makePairing(baseDeps({ client: relay.client, selfId: () => 'cc-bbbb0002', name: () => 'B', channelStore: chanB, log: (m) => logs.push(m) }))
+    const { code } = await mustStart(A)
+    const r = await B.accept(code)
+    // 注册表已经写好了 —— accept() 仍然报配对成功,信道开失败只是记日志。
+    expect(r.ok).toBe(true)
+    expect(logs.some(m => m.includes('channel open failed'))).toBe(true)
+    // 行留在 pending(setStatus 那一步没跑完),但没有崩、没有 unhandled rejection。
+    expect(chanB.rows).toHaveLength(1)
+    expect(chanB.rows[0]!.status).toBe('pending')
+  })
+
+  it('信道行已存在(比如上次 create 成功但后面失败留下的 pending 行)→ 幂等补完,不建第二条', async () => {
+    const { A, B, sA, chanB } = pairBoth()
+    // 预先塞一条同 id 的 pending 行(peer 句柄还没写),模拟上一次 openPairChannel
+    // 半途失败后的状态。
+    chanB.rows.push({ id: 'pair:n0nce', seekId: 'pair:n0nce', myPrivkey: 'PRIV1', myPubkey: 'PUB1', myChannelId: 'chan-1', degree: 1, peerAgentId: 'cc-aaaa0001', status: 'pending', peer: null })
+    const { code } = await mustStart(A)
+    expect((await B.accept(code)).ok).toBe(true)
+    sA.tick(); await new Promise(r => setTimeout(r, 0))
+    expect(chanB.rows).toHaveLength(1) // 没有 create 第二条(会撞主键)
+    expect(chanB.rows[0]).toMatchObject({ id: 'pair:n0nce', status: 'open', peerAgentId: 'cc-aaaa0001' })
+    expect(chanB.rows[0]!.peer).toMatchObject({ mailbox: { addr: 'MA', enc_pub: 'EA' } })
+  })
+})
+
+describe('adoptPeerCard / buildOwnCard —— 配对码和介绍共用的原语', () => {
+  const card = { v: 2 as const, role: 'acceptor' as const, nonce: 'nn', self_id: 'cc-peer00001', name: 'Peer', mailbox_addr: 'MP', mailbox_enc_pub: 'EP', relays: ['https://r/mailbox'], bearer: 'p'.repeat(16), channel_id: 'pc', channel_pub: 'PPUB' }
+  const mine = { channelId: 'mc', pubkey: 'MPUB', privkey: 'MPRIV' }
+  it('intro 前缀:写注册表 + 开 intro:<nonce> 的 open 行,句柄是对方的', () => {
+    const registry = makeFakeRegistry(); const chan = makeFakeChannelStore()
+    const r = adoptPeerCard({ registry, channelStore: chan }, card, mine, 'k'.repeat(16), 'reply777', 'intro')
+    expect(r).toEqual({ ok: true, rowId: 'intro:reply777', channelOpened: true })
+    expect(registry.get('cc-peer00001')).toMatchObject({ transport: 'mailbox', outbound_api_key: 'p'.repeat(16), inbound_api_key: 'k'.repeat(16), may_exec: false })
+    expect(chan.rows[0]).toMatchObject({ id: 'intro:reply777', peerAgentId: 'cc-peer00001', status: 'open', myChannelId: 'mc' })
+    expect(chan.rows[0]!.peer).toMatchObject({ channel_id: 'pc', pubkey: 'PPUB', mailbox: { addr: 'MP' } })
+  })
+  it('id_conflict(同 id 不同信箱)→ 不写任何东西', () => {
+    const registry = makeFakeRegistry(); const chan = makeFakeChannelStore()
+    registry.records.set('cc-peer00001', { id: 'cc-peer00001', mailbox_addr: 'OTHER' } as never)
+    expect(adoptPeerCard({ registry, channelStore: chan }, card, mine, 'k', 'n', 'intro')).toEqual({ ok: false, reason: 'id_conflict' })
+    expect(chan.rows).toHaveLength(0)
+  })
+  it('信道开失败 → 注册表仍写成,返回 channelOpened:false 并 log', () => {
+    const registry = makeFakeRegistry(); const chan = makeFakeChannelStore(); const logs: string[] = []
+    chan.setStatus = () => { throw new Error('disk full') }
+    const r = adoptPeerCard({ registry, channelStore: chan, log: (m) => logs.push(m) }, card, mine, 'k', 'n', 'pair')
+    expect(r).toMatchObject({ ok: true, channelOpened: false })
+    expect(registry.get('cc-peer00001')).not.toBe(null)
+    expect(logs.join('\n')).toContain('channel open failed')
+  })
+  it('buildOwnCard:v2、带信道字段、不带不可达 url', () => {
+    const c = buildOwnCard({ selfId: () => 'cc-me00000001', name: () => 'Me', url: () => 'http://127.0.0.1:1', self: { mailbox_addr: 'MM', mailbox_enc_pub: 'EM', relays: ['https://r/mailbox'] } }, 'initiator', 'n1', 'b'.repeat(16), { channelId: 'c1', pubkey: 'P1' })
+    expect(c).toMatchObject({ v: 2, role: 'initiator', nonce: 'n1', self_id: 'cc-me00000001', channel_id: 'c1', channel_pub: 'P1', bearer: 'b'.repeat(16) })
+    expect(c.url).toBeUndefined()
+  })
 })

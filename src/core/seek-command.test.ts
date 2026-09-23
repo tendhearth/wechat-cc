@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseSeekCommand, resolveSeekRef } from './seek-command'
-import type { SeekRow } from './social-seek-store'
+import { parseSeekCommand } from './seek-command'
 
 describe('parseSeekCommand', () => {
   it('派 <id> → confirm', () => {
@@ -35,45 +34,5 @@ describe('parseSeekCommand', () => {
   })
   it('派 <real id-ish token> → confirm', () => {
     expect(parseSeekCommand('派 3f9a2b')).toEqual({ kind: 'confirm', ref: '3f9a2b' })
-  })
-})
-
-describe('resolveSeekRef', () => {
-  function row(id: string, status: SeekRow['status']): SeekRow {
-    return {
-      id, status, kind: 'seek', topic: 't',
-      redacted_topic: null, redacted_city: null,
-      hop: 1, peers_asked: 0, created_at: '', updated_at: '',
-    }
-  }
-
-  it('exact full-id match (any length) → ok', () => {
-    const rows = [row('ab', 'proposed')]
-    expect(resolveSeekRef('ab', rows)).toEqual({ ok: true, id: 'ab' })
-  })
-
-  it('unique ≥6-char prefix among proposed rows → ok', () => {
-    const rows = [row('3f9a2bcccc', 'proposed'), row('deadbeef00', 'proposed')]
-    expect(resolveSeekRef('3f9a2b', rows)).toEqual({ ok: true, id: '3f9a2bcccc' })
-  })
-
-  it('prefix matching ≥2 proposed rows → ambiguous', () => {
-    const rows = [row('3f9a2b1111', 'proposed'), row('3f9a2b2222', 'proposed')]
-    expect(resolveSeekRef('3f9a2b', rows)).toEqual({ ok: false, reason: 'ambiguous' })
-  })
-
-  it('prefix <6 chars with no exact match → ambiguous (nudge to longer prefix)', () => {
-    const rows = [row('3f9a2bcccc', 'proposed')]
-    expect(resolveSeekRef('3f9a', rows)).toEqual({ ok: false, reason: 'ambiguous' })
-  })
-
-  it('no match → not_found', () => {
-    const rows = [row('3f9a2bcccc', 'proposed')]
-    expect(resolveSeekRef('deadbeef', rows)).toEqual({ ok: false, reason: 'not_found' })
-  })
-
-  it('prefix that only matches a NON-proposed row → not_found', () => {
-    const rows = [row('3f9a2bcccc', 'foraging')]
-    expect(resolveSeekRef('3f9a2b', rows)).toEqual({ ok: false, reason: 'not_found' })
   })
 })

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { thoughtRoutes } from '../../src/daemon/internal-api/routes-thoughts'
 // Test/dev shim for the desktop installer's frontend (apps/desktop/src/*).
 //
 // Why this exists:
@@ -26,9 +27,11 @@
 // against the real .app, but in seconds and with DOM-aware selectors.
 
 import { spawn } from 'bun'
+import { createWorkbenchProxy } from './workbench-proxy'
 import { join, resolve, relative, isAbsolute } from 'node:path'
 import { guardCliInvoke } from './dev-guard'
 import { makeLiveReload, injectReloadScript } from './dev-reload'
+import { makeAtelierStore } from '../../src/daemon/atelier-store'
 
 const ROOT = process.env.WECHAT_CC_ROOT ?? join(import.meta.dir, '..', '..')
 // Accepts both spellings: src/lib/config.ts and lib.rs read WECHAT_STATE_DIR,
@@ -43,6 +46,13 @@ const dryRun = process.env.WECHAT_CC_DRY_RUN === '1'
 // live 模式默认不跑会改真实状态的 CLI 命令(spec 2026-07-26 §3)。
 const allowMutations = process.env.WECHAT_CC_DEV_ALLOW_MUTATIONS === '1'
   || process.argv.includes('--allow-mutations')
+
+// Optional isolated workbench runtime. Other pages keep using the existing daemon.
+const workbenchWrites = process.env.WECHAT_CC_DEV_WORKBENCH_WRITES === '1'
+const workbenchProxy = createWorkbenchProxy({
+  stateDir: process.env.WECHAT_CC_WORKBENCH_STATE_DIR ?? STATE_DIR,
+  dryRun, allowWrites: allowMutations || workbenchWrites,
+})
 
 // ─── Playwright mock state ────────────────────────────────────────────────────
 // Shared mutable bag for test-controlled data. Playwright tests seed this via
@@ -128,6 +138,11 @@ const __mockState: {
   // shape so dropdown writes (mode set) stay consistent with subsequent
   // poller reads. Lazily seeded from the real CLI on first read.
   conversations: DaemonConversation[] | null
+  // Companion presence served at GET /v1/companion/presence in dry-run. Without
+  // it the presence poller publishes DOWN and the homepage scene draws no CC
+  // (sign 「离线」) — which is why the hover-greeting spec could never pass.
+  // Seed with demo.seed { presence: {...} }; default = daemon up, WeChat ok, idle.
+  presence: { presence: 'ok' | 'degraded' | 'offline'; activity: { kind: string; label: string; since: string | null }; news: { unread: number; latest_kind: string | null; latest_title: string | null } }
   // A2A mock state — seeded by `a2a.seed` test-control command.
   a2aAgents: A2AAgent[]
   a2aEvents: A2AEvent[]
@@ -168,7 +183,7 @@ const __mockState: {
   //                         本机未连接 (exercisable without a real bot).
   //                         Valid values: 'taken_over' | 'connected' | 'inconclusive'
   connectionProbeState: 'taken_over' | 'connected' | 'inconclusive'
-} = { chats: [], observations: [], milestones: [], sessions: [], daemonAlive: true, installProgress: null, installSimulationStep: 0, conversations: null, a2aAgents: [], a2aEvents: [], doctorOverride: null, doctorErrorOnce: false, serviceInvokes: [], healthProbeResult: true, logCalls: [], providerInvokes: [], dialogueMessages: [], dialogueThreads: [], dialoguePassphrase: '1234', dialogueUnlocked: false, connectionProbeState: 'taken_over' }
+} = { chats: [], observations: [], milestones: [], sessions: [], daemonAlive: true, installProgress: null, installSimulationStep: 0, conversations: null, presence: { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }, a2aAgents: [], a2aEvents: [], doctorOverride: null, doctorErrorOnce: false, serviceInvokes: [], healthProbeResult: true, logCalls: [], providerInvokes: [], dialogueMessages: [], dialogueThreads: [], dialoguePassphrase: '1234', dialogueUnlocked: false, connectionProbeState: 'taken_over' }
 
 // ─── A2A mock credentials ─────────────────────────────────────────────────────
 // The A2A routes (/v1/a2a/*) are served by the SAME Bun.serve instance as the
@@ -196,7 +211,7 @@ window.__TAURI__ = window.__TAURI__ ?? { core: {
   invoke: async (command, args) => {
     // Owner-only workspace: hit the proxied path directly so the request is a
     // real HTTP call (Playwright intercepts it) and the token stays server-side.
-    if (command === "customer_review_api") {
+    if (command === "customer_review_api" || command === "workbench_api") {
       const res = await fetch(args.path, {
         method: args.method,
         ...(args.method === "POST" ? { headers: { "content-type": "application/json" }, body: args.body ?? "{}" } : {})
@@ -209,6 +224,7 @@ window.__TAURI__ = window.__TAURI__ ?? { core: {
       }
       return text
     }
+    if (command === "choose_workbench_folder") return null
     const r = await fetch("/__invoke", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -222,6 +238,7 @@ window.__TAURI__ = window.__TAURI__ ?? { core: {
   getCurrentWindow: () => ({ startDragging: async () => {} })
 }}
 window.__WECHAT_CC_DRY_RUN__ = ${dryRun ? 'true' : 'false'}
+window.__WECHAT_CC_WORKBENCH_WRITES__ = ${workbenchWrites && !dryRun ? 'true' : 'false'}
 window.__WECHAT_CC_ALLOW_MUTATIONS__ = ${allowMutations ? 'true' : 'false'}
 `
 const POLYFILL_INLINE = `<script>${POLYFILL_BODY}</script>`
@@ -364,6 +381,9 @@ Bun.serve({
       return new Response(file)
     }
 
+    const workbenchResponse = await workbenchProxy(req)
+    if (workbenchResponse) return workbenchResponse
+
     // Owner-only workspace proxy, same contract as lib.rs's customer_review_api:
     // the admin operator token is read HERE and never handed to the page.
     //
@@ -409,11 +429,45 @@ Bun.serve({
       }
     }
 
+    // CC Atelier gallery proxy: desktop development uses the shim as the
+    // frontend origin, while artwork records live in the real daemon state.
+    if (url.pathname === '/v1/atelier/works' && req.method === 'GET') {
+      if (isCrossSiteRequest(req)) return new Response('forbidden', { status: 403 })
+      if (dryRun) return Response.json({ works: [] })
+      try {
+        const info = JSON.parse(await Bun.file(join(STATE_DIR, 'internal-api-info.json')).text()) as { baseUrl?: string; operatorTokenFilePath?: string }
+        if (!info.baseUrl || !info.operatorTokenFilePath) return Response.json({ error: 'daemon info unavailable' }, { status: 503 })
+        const token = (await Bun.file(info.operatorTokenFilePath).text()).trim()
+        const upstream = await fetch(info.baseUrl + url.pathname + url.search, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) })
+        if (upstream.ok) return new Response(await upstream.text(), { status: upstream.status, headers: { 'content-type': 'application/json' } })
+        // The installed daemon may predate the Atelier route (or reject the
+        // newer route tier); development should still preview the current
+        // workspace's local works.
+        const store = makeAtelierStore(STATE_DIR)
+        const works = []
+        for (const { privateCauseSummary: _private, ...work } of store.list(24)) {
+          const path = store.imagePath(work)
+          const imageData = path ? `data:image/png;base64,${Buffer.from(await Bun.file(path).arrayBuffer()).toString('base64')}` : undefined
+          works.push({ ...work, ...(imageData ? { image_data: imageData } : {}) })
+        }
+        return Response.json({ works })
+      } catch (err) {
+        return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 502 })
+      }
+    }
+
     // 待办 tab (2026-08-24) — same live-proxy posture as customer-review
     // above, but an explicit per-route allowlist: obligations read, fact
     // status write (resolve/reject a promise), contact display names, and
     // reminder scheduling. Nothing else under /v1/knowledge or /v1/reminders
     // passes through the shim.
+    if (url.pathname === '/v1/companion/thoughts' && req.method === 'GET') {
+      if (isCrossSiteRequest(req)) return new Response('forbidden', { status: 403 })
+      if (dryRun) return Response.json({ items: [] })
+      const handler = thoughtRoutes({ stateDir: STATE_DIR } as import('../../src/daemon/internal-api/types').InternalApiDeps)['GET /v1/companion/thoughts']!
+      const result = await handler(url.searchParams, undefined)
+      return Response.json(result.body, { status: result.status })
+    }
     const TODOS_PROXY_ROUTES = new Set([
       '/v1/knowledge/facts/find_facts',
       '/v1/llm/keys',
@@ -575,9 +629,11 @@ Bun.serve({
             daemonAlive?: boolean
             withSessions?: boolean
             oneContact?: boolean
+            presence?: typeof __mockState.presence
           } | undefined
           const chatId = args?.chat_id ?? 'test_chat'
           __mockState.daemonAlive = args?.daemonAlive ?? true
+          __mockState.presence = args?.presence ?? { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }
           __mockState.chats = [{ id: chatId, name: 'Test User', last_active: Date.now() }]
           // Seeding = known state. The shim process outlives individual
           // playwright tests, so per-test mutations (dialogue.set-no-lock's
@@ -1443,6 +1499,16 @@ Bun.serve({
     // same-origin and never blocked by Chromium's CORS policy.
     // The `daemon api-info` intercept above returns baseUrl=http://127.0.0.1:PORT
     // and token=A2A_TOKEN, so api.js routes all fetch() here.
+    // Companion presence (dry-run): the dashboard scene and the pet window both
+    // poll this; serve the seeded state instead of 404 (= DOWN).
+    if (dryRun && url.pathname === '/v1/companion/presence' && req.method === 'GET') {
+      return Response.json(__mockState.presence)
+    }
+    // 切换后端的下拉菜单从这里拿「已配置的 AI 服务」(dashboard.js refreshServiceChoices,
+    // 2026-08-26 起与「大脑」同源);演示模式给三家,和 doctor 报告里的 provider 对得上。
+    if (dryRun && url.pathname === '/v1/llm/health' && req.method === 'GET') {
+      return Response.json({ ok: true, registered: ['claude', 'codex', 'cursor'] })
+    }
     if (dryRun && url.pathname.startsWith('/v1/a2a/')) {
       const authHeader = req.headers.get('authorization') ?? ''
       if (authHeader !== `Bearer ${A2A_TOKEN}`) {

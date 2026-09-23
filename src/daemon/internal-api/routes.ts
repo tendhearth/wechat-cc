@@ -1,3 +1,4 @@
+import { mattersRoutes } from './routes-matters'
 /**
  * Route table for internal-api. Returns the full Record<"METHOD /path", handler>
  * given a deps closure + a `getDelegate` accessor (for late-binding via
@@ -9,7 +10,7 @@
  * so blame survives the split.
  */
 import { basename, join } from 'node:path'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTable } from './types'
 import { splitReply, paceMs } from '../reply-split'
@@ -18,7 +19,17 @@ import { normalizeUserName } from '../../lib/user-name'
 import type { Mode } from '../../core/conversation'
 import type { UserTier } from '../../core/user-tier'
 import { makeEventsStore } from '../events/store'
+import { readModelStatus } from '../atelier-provision'
+import { loadCompanionConfig } from '../companion/config'
 import { a2aRoutes } from './routes-a2a'
+import { probeFsAccess, describeFsAccess } from '../../lib/fs-access'
+import { thoughtRoutes } from './routes-thoughts'
+import { journalRoutes } from './routes-journal'
+import { presenceRoutes } from './routes-presence'
+import { petRoutes } from './routes-pet'
+import { cliEventRoutes } from './routes-cli-events'
+import { permissionRoutes } from './routes-permissions'
+import { selfChangeRoutes } from './routes-self-change'
 import { socialRoutes } from './routes-social'
 import { knowledgeRoutes } from './routes-knowledge'
 import { configRoutes } from './routes-config'
@@ -33,6 +44,7 @@ import { fileRoutes } from './routes-files'
 import { customerReviewRoutes } from './routes-customer-review'
 import { federationRoutes } from './routes-federation'
 import { remindersRoutes } from './routes-reminders'
+import { workbenchRoutes } from './routes-workbench'
 import { countForTag, ONLINE_STICKER_K } from '../stickers'
 import { makeCooldown } from '../sticker-source'
 import type {
@@ -47,6 +59,7 @@ import type {
   WechatEditMessageRequestT, WechatBroadcastRequestT,
   DelegateRequestT,
   ConversationSetModeRequestT,
+  AtelierShareRequestT,
 } from './schema'
 
 export interface MakeRoutesContext {
@@ -92,6 +105,8 @@ const onlineStickerCooldown = makeCooldown(5 * 60_000)
 // always pick the first (often identical) GIPHY result.
 const onlineStickerCursor = new Map<string, number>()
   return {
+    ...workbenchRoutes(deps),
+    ...mattersRoutes(deps),
     'GET /v1/health': () => ({
       status: 200,
       body: {
@@ -103,10 +118,93 @@ const onlineStickerCursor = new Map<string, number>()
         turns_store_wired: !!deps.turns,
         sessions_live: deps.listSessions?.()?.length ?? 0,
         heartbeat_fresh: deps.heartbeatFresh?.() ?? null,
+        ...(deps.version ? { version: deps.version() } : {}),
         subsystems: deps.subsystems?.() ?? [],
         ...(deps.outbound ? { outbound: toWireOutbound(deps.outbound()) } : {}),
+        // 在 daemon 进程里探(权限记在责任进程上,CLI 能读不代表 daemon 能读)。
+        // 三次 readdir,便宜;每次 health 都重探,这样勾完权限刷新就变绿。
+        fs_access: (() => {
+          const r = probeFsAccess()
+          return { any_denied: r.anyDenied, folders: r.folders.map(f => ({ folder: f.folder, path: f.path, state: f.state })), settings_url: r.settingsUrl, hint: describeFsAccess(r) }
+        })(),
       },
     }),
+
+    'GET /v1/atelier/works': async (q) => {
+      if (!deps.atelier) return { status: 503, body: { error: 'atelier_not_wired' } }
+      const limitRaw = Number(q.get('limit') ?? 12)
+      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(24, Math.floor(limitRaw))) : 12
+      const works = deps.atelier.list(limit).map((work) => {
+        const imagePath = deps.atelier!.imagePath(work)
+        let imageData: string | undefined
+        try {
+          if (imagePath) {
+            const bytes = readFileSync(imagePath)
+            if (bytes.byteLength <= 2 * 1024 * 1024) imageData = `data:image/png;base64,${bytes.toString('base64')}`
+          }
+        } catch { /* corrupt/missing image stays metadata-only */ }
+        const { privateCauseSummary: _privateCause, ...publicWork } = work
+        return { ...publicWork, ...(imageData ? { image_data: imageData } : {}) }
+      })
+      return { status: 200, body: { works } }
+    },
+
+    // First-enable paint-set download progress (checking/downloading/ready/
+    // failed). null means the atelier has never been turned on yet.
+    'GET /v1/atelier/model-status': () => {
+      return { status: 200, body: { status: readModelStatus(deps.stateDir), mode: loadCompanionConfig(deps.stateDir).atelier_mode } }
+    },
+
+    // Explicit owner-initiated share from the desktop atelier. The target is
+    // always the configured owner chat; callers cannot supply another chat id.
+    // Edited background copy is send-only and never overwrites CC's original
+    // local artist note. `background:null` sends the image by itself.
+    'POST /v1/atelier/share': async (_q, body) => {
+      if (!deps.atelier) return { status: 503, body: { ok: false, error: 'atelier_not_wired' } }
+      if (!deps.ilink) return { status: 503, body: { ok: false, error: 'ilink_not_wired' } }
+      const { id, background } = body as AtelierShareRequestT
+      const work = deps.atelier.load(id)
+      const imagePath = work ? deps.atelier.imagePath(work) : null
+      if (!work || !imagePath) return { status: 200, body: { ok: false, error: 'artwork_not_found' } }
+      if (work.shareState === 'shared') return { status: 200, body: { ok: false, error: 'already_shared' } }
+      if (work.shareState === 'pending') return { status: 200, body: { ok: false, error: 'share_in_progress' } }
+      const ownerChatId = loadCompanionConfig(deps.stateDir).default_chat_id
+      if (!ownerChatId) return { status: 200, body: { ok: false, error: 'owner_chat_not_configured' } }
+      const claimed = deps.atelier.transitionShare(id, 'private', 'pending')
+      if (!claimed) return { status: 200, body: { ok: false, error: 'share_in_progress' } }
+      try {
+        await deps.ilink.sendFile(ownerChatId, imagePath)
+      } catch (err) {
+        try { deps.atelier.transitionShare(id, 'pending', 'private') } catch { /* next load exposes pending for diagnosis */ }
+        return { status: 200, body: { ok: false, error: errMsg(err) } }
+      }
+
+      const sharedAt = new Date().toISOString()
+      let warning: string | undefined
+      try {
+        if (!deps.atelier.transitionShare(id, 'pending', 'shared', sharedAt)) warning = 'share_state_update_failed'
+      } catch {
+        warning = 'share_state_update_failed'
+      }
+      let backgroundSent = false
+      if (background) {
+        const note = `《${background.title}》\n\n${background.origin}\n\n${background.approach}`
+        try {
+          const sent = await deps.ilink.sendReply(ownerChatId, note)
+          if (sent.error) warning = warning ?? 'background_send_failed'
+          else backgroundSent = true
+        } catch {
+          warning = warning ?? 'background_send_failed'
+        }
+      }
+      return {
+        status: 200,
+        body: {
+          ok: true, shared_at: sharedAt, background_sent: backgroundSent,
+          ...(warning ? { warning } : {}),
+        },
+      }
+    },
 
     // ── memory (RFC 03 P1.B B2) ─────────────────────────────────────────
     'POST /v1/memory/read': (_q, body, caller) => {
@@ -236,47 +334,12 @@ const onlineStickerCursor = new Map<string, number>()
     // admin 层(密钥),桌面走 owner-workspace 通道。值绝不进日志。
     'POST /v1/llm/keys': async (_q, body) => {
       const b = (body ?? {}) as { provider?: unknown; key?: unknown; base_url?: unknown; model?: unknown }
-      const provider = b.provider
-      if (provider !== 'openai' && provider !== 'gemini') {
-        return { status: 400, body: { error: 'unsupported_provider (openai | gemini)' } }
+      const { saveLlmKey } = await import('../llm-keys')
+      const r = await saveLlmKey(deps.stateDir, b, deps.log)
+      if (!r.ok) {
+        const msg = r.error === 'unsupported_provider' ? 'unsupported_provider (openai | gemini)' : r.error
+        return { status: 400, body: { error: msg } }
       }
-      const key = typeof b.key === 'string' ? b.key.trim() : ''
-      if (key === '' || key.length > 500 || /\s/.test(key)) {
-        return { status: 400, body: { error: 'invalid_key' } }
-      }
-      // openai 兼容接口:daemon 要 base_url + model 都在才注册(bootstrap/
-      // providers.ts)。只写 key 会「保存成功」却在重启后没接上 —— 假成功。
-      // 按「本次请求带的 或 之前已存的」算有效值,缺任一就拒,不写 key。
-      // (允许只更新 key 的场景:base_url/model 已在 config 里就放行。)
-      if (provider === 'openai') {
-        const reqBase = typeof b.base_url === 'string' ? b.base_url.trim() : ''
-        const reqModel = typeof b.model === 'string' ? b.model.trim() : ''
-        const { loadAgentConfig } = await import('../../lib/agent-config')
-        const existing = loadAgentConfig(deps.stateDir)
-        const effBase = reqBase || existing.openaiBaseUrl || ''
-        const effModel = reqModel || existing.openaiModel || ''
-        if (!effBase || !effModel) {
-          return { status: 400, body: { error: 'openai_needs_base_url_and_model' } }
-        }
-      }
-      const { existsSync: envExists, readFileSync: envRead, writeFileSync: envWrite, renameSync: envRename } = await import('node:fs')
-      const { join: envJoin } = await import('node:path')
-      const { upsertEnvFile } = await import('../../lib/env-file')
-      const { writeConfigKey } = await import('../config-surface')
-      const envName = provider === 'openai' ? 'WECHAT_OPENAI_API_KEY' : 'GEMINI_API_KEY'
-      const envPath = envJoin(deps.stateDir, 'daemon.env')
-      const current = envExists(envPath) ? envRead(envPath, 'utf8') : ''
-      const tmp = `${envPath}.tmp`
-      envWrite(tmp, upsertEnvFile(current, { [envName]: key }), { mode: 0o600 })
-      envRename(tmp, envPath)
-      // Companion config fields ride the validated config surface.
-      if (provider === 'openai') {
-        if (typeof b.base_url === 'string' && b.base_url.trim() !== '') await writeConfigKey(deps.stateDir, 'openaiBaseUrl', b.base_url.trim())
-        if (typeof b.model === 'string' && b.model.trim() !== '') await writeConfigKey(deps.stateDir, 'openaiModel', b.model.trim())
-      } else if (typeof b.model === 'string' && b.model.trim() !== '') {
-        await writeConfigKey(deps.stateDir, 'geminiModel', b.model.trim())
-      }
-      deps.log?.('LLM_HEALTH', `${envName} saved via desktop form (value not logged) — restart to register`)
       return { status: 200, body: { ok: true, restart_required: true } }
     },
 
@@ -300,7 +363,7 @@ const onlineStickerCursor = new Map<string, number>()
       if (!deps.llmHealth) return { status: 503, body: { error: 'llm_health_not_wired' } }
       const { unconfiguredHints } = await import('../llm-health')
       const fresh = q.get('fresh') === '1'
-      const report = fresh ? await deps.llmHealth.dial() : deps.llmHealth.cached()
+      const report = fresh ? await deps.llmHealth.dial(q.get('scope') === 'current' ? 'current' : undefined) : deps.llmHealth.cached()
       const registered = deps.llmRegistered?.() ?? []
       return { status: 200, body: {
         ok: true,
@@ -427,6 +490,10 @@ const onlineStickerCursor = new Map<string, number>()
       if (deps.replySinks?.capture(chat_id, text)) {
         return { status: 200, body: { ok: true, captured: true } }
       }
+      // 旁听(不改道):打猎那一拍开着 tap,发出去的东西同时进战利品清单。
+      // 放在 sink 检查**之后** —— 被 app 通道截走的回复从没到过微信,记进
+      // 「CC 给你带回来的东西」会是假的。放在分片之前:记原文,不记分片。
+      deps.outboundTaps?.observe(chat_id, text)
       // RFC 03 P3 — mode-aware prefixing. Only applies when the chat is
       // in a multi-participant mode AND the caller supplied its tag.
       // Solo mode (and absent prefix deps) → text passes through unchanged.
@@ -581,7 +648,7 @@ const onlineStickerCursor = new Map<string, number>()
       if (!deps.conversation) return { status: 503, body: { error: 'conversation_not_wired' } }
       // Body is pre-validated by index.ts via ConversationSetModeRequest schema.
       // Schema enforces chatId (string) and mode (discriminated union of known kinds).
-      const { chatId, mode } = body as ConversationSetModeRequestT
+      const { chatId, mode, quiet } = body as ConversationSetModeRequestT
       try {
         deps.conversation.setMode(chatId, mode as unknown as Mode)
       } catch (err) {
@@ -596,7 +663,9 @@ const onlineStickerCursor = new Map<string, number>()
       }
       const humanName = kindNames[mode.kind] ?? String(mode.kind)
       // Best-effort wechat reply — never fail the route if send fails.
-      if (deps.ilink) {
+      // `quiet`: an agent (wechat-mcp provider_switch) is the caller and will
+      // tell the user itself — a second「来自控制台」line would be noise.
+      if (deps.ilink && !quiet) {
         deps.ilink.sendReply(chatId, `🎛 已切换到 ${humanName}（来自控制台）`).catch(err => {
           deps.log?.('SET_MODE', `wechat reply failed: ${errMsg(err)}`)
         })
@@ -892,6 +961,13 @@ const onlineStickerCursor = new Map<string, number>()
     //    / restart / turns) live in sibling files — spread in here. ──────────
     ...a2aRoutes(deps),
     ...socialRoutes(deps),
+    ...journalRoutes(deps),
+    ...thoughtRoutes(deps),
+    ...presenceRoutes(deps),
+    ...petRoutes(deps),
+    ...permissionRoutes(deps),
+    ...selfChangeRoutes(deps),
+    ...cliEventRoutes(deps),
     ...knowledgeRoutes(deps),
     ...configRoutes(deps),
     ...pairRoutes(deps),

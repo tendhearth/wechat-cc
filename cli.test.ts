@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { runCommand } from 'citty'
-import { cittyRoot, computeProviderSetOutcome } from './cli'
+import { cittyRoot, computeProviderSetOutcome, parseBudgetUsdFlag, parseTimeoutMsFlag } from './cli'
 import { activeModel, type AgentConfig } from './src/lib/agent-config'
 
 // PR4 batch 3c removed parseCliArgs — every subcommand now flows through
@@ -60,6 +60,7 @@ describe('citty migrated commands', () => {
       'agent',
       'avatar',
       'backup',
+      'ci',
       'companion',
       'connection',
       'conversations',
@@ -71,6 +72,7 @@ describe('citty migrated commands', () => {
       'federated-source',
       'guard',
       'hand',
+      'hook',
       'install',
       'install-progress',
       'license',
@@ -87,6 +89,8 @@ describe('citty migrated commands', () => {
       'provider',
       'reply',
       'run',
+      'self',
+      'selftest',
       'service',
       'sessions',
       'setup',
@@ -96,6 +100,132 @@ describe('citty migrated commands', () => {
       'status',
       'update',
     ])
+  })
+
+  // 自维护三件套(spec 2026-09-18-self-maintenance)——子命令面也要钉住:
+  // `self deploy` / `selftest workbench|chat` 是手册里写死的入口,改名/漏挂
+  // 会让 docs/maintainer/*.md 里的每条命令一起失效。
+  it('exposes the self / selftest subcommand surface', () => {
+    const subs = cittyRoot.subCommands as Record<string, { subCommands?: Record<string, unknown> }>
+    expect(Object.keys(subs.self?.subCommands ?? {}).sort()).toEqual(['change', 'deploy'])
+    expect(Object.keys(subs.selftest?.subCommands ?? {}).sort()).toEqual(['chat', 'workbench'])
+  })
+
+  // CI 信号面(spec 2026-09-18-ci-triage)——`ci triage` 是手册与 AGENTS.md 里
+  // 写死的「看 CI」那一步,改名/漏挂会让那几行一起失效。
+  it('exposes the ci subcommand surface', () => {
+    const subs = cittyRoot.subCommands as Record<string, { subCommands?: Record<string, unknown> }>
+    expect(Object.keys(subs.ci?.subCommands ?? {}).sort()).toEqual(['triage'])
+  })
+
+  it('ci triage parses its documented flags', async () => {
+    const r = await runWithNestedStub(
+      ['ci', 'triage', '--sha', '25113589', '--branch', 'dev', '--wait', '--rerun', '--max-reruns', '2', '--timeout-min', '45', '--json'],
+      ['ci', 'triage'],
+    )
+    expect(r?.args.sha).toBe('25113589')
+    expect(r?.args.branch).toBe('dev')
+    expect(r?.args.wait).toBe(true)
+    expect(r?.args.rerun).toBe(true)
+    expect(r?.args['max-reruns']).toBe('2')
+    expect(r?.args['timeout-min']).toBe('45')
+    expect(r?.args.json).toBe(true)
+  })
+
+  it('self deploy parses its documented flags', async () => {
+    const r = await runWithNestedStub(
+      ['self', 'deploy', '--binary', '/tmp/x', '--app', '/Applications/wechat-cc.app', '--no-rollback', '--health-timeout-ms', '90000', '--json'],
+      ['self', 'deploy'],
+    )
+    expect(r?.args.binary).toBe('/tmp/x')
+    expect(r?.args.app).toBe('/Applications/wechat-cc.app')
+    // citty/mri parses `--no-rollback` as the negation of a boolean
+    // `rollback`, NOT as a flag literally named `no-rollback` — the handler
+    // has to read both spellings or the flag is a no-op.
+    expect(r?.args.rollback).toBe(false)
+    expect(r?.args['health-timeout-ms']).toBe('90000')
+    expect(r?.args.json).toBe(true)
+  })
+
+  it('self change parses its documented flags', async () => {
+    const r = await runWithNestedStub(
+      ['self', 'change', '在 flake 表里加一行', '--from', 'wechat', '--budget-usd', '8', '--no-deploy', '--json'],
+      ['self', 'change'],
+    )
+    expect(r?.args.request).toBe('在 flake 表里加一行')
+    expect(r?.args.from).toBe('wechat')
+    expect(r?.args['budget-usd']).toBe('8')
+    // 同 `self deploy --no-rollback`:citty/mri 把 `--no-deploy` 解析成布尔
+    // `deploy` 的否定,所以开关必须声明成 `deploy: { default: true }` ——
+    // 声明成 `'no-deploy'` 的话这个标志是个哑弹,会照样部署。
+    expect(r?.args.deploy).toBe(false)
+    expect(r?.args.json).toBe(true)
+
+    const listing = await runWithNestedStub(['self', 'change', '--list'], ['self', 'change'])
+    expect(listing?.args.list).toBe(true)
+    // 没写 `--no-deploy` 时 deploy 是 true(默认部署),不是 undefined。
+    expect(listing?.args.deploy).toBe(true)
+
+    const resumed = await runWithNestedStub(['self', 'change', '--resume', 'a1b2c3d4', '--unhalt'], ['self', 'change'])
+    expect(resumed?.args.resume).toBe('a1b2c3d4')
+    expect(resumed?.args.unhalt).toBe(true)
+
+    // 微信外发不通时的第二条拍板口(2026-09-18 真机 errcode=-2)。两个都是
+    // 带值的开关 —— 声明成 boolean 的话 `--approve a1b2c3d4` 会把 id 当需求。
+    const approved = await runWithNestedStub(['self', 'change', '--approve', 'a1b2c3d4'], ['self', 'change'])
+    expect(approved?.args.approve).toBe('a1b2c3d4')
+    expect(approved?.args.request).toBeUndefined()
+    const denied = await runWithNestedStub(['self', 'change', '--deny', 'a1b2c3d4'], ['self', 'change'])
+    expect(denied?.args.deny).toBe('a1b2c3d4')
+  })
+
+  // 微信进件口(src/daemon/self-change-spawn.ts)把需求放在 `--` 之后。这条钉住
+  // 的是**另一端**:citty 确实把 `--` 之后的东西原样当位置参数,而不是开关。
+  // 不这样的话「自改 --unhalt」会静默解除停机 —— 主人以为在提需求。
+  it('self change 把 `--` 之后的需求当位置参数,哪怕它长得像开关', async () => {
+    const r = await runWithNestedStub(
+      ['self', 'change', '--from', 'wechat', '--json', '--', '--unhalt'],
+      ['self', 'change'],
+    )
+    expect(r?.args.request).toBe('--unhalt')
+    expect(Boolean(r?.args.unhalt)).toBe(false)
+    expect(r?.args.from).toBe('wechat')
+    expect(r?.args.json).toBe(true)
+
+    const dashed = await runWithNestedStub(
+      ['self', 'change', '--from', 'wechat', '--json', '--', '-x 把这个删了'],
+      ['self', 'change'],
+    )
+    expect(dashed?.args.request).toBe('-x 把这个删了')
+
+    const plain = await runWithNestedStub(
+      ['self', 'change', '--from', 'wechat', '--json', '--', '给 flake 表加一行'],
+      ['self', 'change'],
+    )
+    expect(plain?.args.request).toBe('给 flake 表加一行')
+  })
+
+  it('selftest workbench / chat parse their documented flags', async () => {
+    const wb = await runWithNestedStub(
+      ['selftest', 'workbench', '--executor', 'cursor', '--image', '--resume', '--json', '--timeout-ms', '300000', '--keep'],
+      ['selftest', 'workbench'],
+    )
+    expect(wb?.args.executor).toBe('cursor')
+    expect(wb?.args.image).toBe(true)
+    expect(wb?.args.resume).toBe(true)
+    expect(wb?.args.json).toBe(true)
+    expect(wb?.args['timeout-ms']).toBe('300000')
+    expect(wb?.args.keep).toBe(true)
+
+    const chat = await runWithNestedStub(
+      ['selftest', 'chat', '--provider', 'cursor', '--text', '你好', '--resume', '--json', '--timeout-ms', '200000'],
+      ['selftest', 'chat'],
+    )
+    expect(chat?.args.provider).toBe('cursor')
+    expect(chat?.args.text).toBe('你好')
+    expect(chat?.args.resume).toBe(true)
+    expect(chat?.args.json).toBe(true)
+    expect(chat?.args['timeout-ms']).toBe('200000')
   })
 
   it('doctor accepts --json', async () => {
@@ -256,26 +386,10 @@ describe('citty migrated commands', () => {
     expect(await runWithNestedStub(['guard', 'disable', '--json'], ['guard', 'disable'])).not.toBeNull()
   })
 
-  // P4 派心愿 CLI forms — parse-only (real handlers need a running daemon).
-  it('social propose parses topic positional + --city + --json', async () => {
-    const r = await runWithNestedStub(
-      ['social', 'propose', '找摄影搭子', '--city', '北京', '--json'],
-      ['social', 'propose'],
-    )
-    expect(r?.args.topic).toBe('找摄影搭子')
-    expect(r?.args.city).toBe('北京')
-    expect(r?.args.json).toBe(true)
-  })
-
-  it('social confirm parses id positional + --json', async () => {
-    const r = await runWithNestedStub(['social', 'confirm', 'abc123', '--json'], ['social', 'confirm'])
-    expect(r?.args.id).toBe('abc123')
-    expect(r?.args.json).toBe(true)
-  })
-
-  it('social cancel parses id positional + --json', async () => {
-    const r = await runWithNestedStub(['social', 'cancel', 'abc123', '--json'], ['social', 'cancel'])
-    expect(r?.args.id).toBe('abc123')
+  // 心愿 (spec 2026-09-04-wish-postcard §4) CLI form — parse-only (the real
+  // handler needs a running daemon).
+  it('social wishes parses --json', async () => {
+    const r = await runWithNestedStub(['social', 'wishes', '--json'], ['social', 'wishes'])
     expect(r?.args.json).toBe(true)
   })
 
@@ -609,5 +723,62 @@ describe('connection probe CLI — integration (empty state dir)', () => {
     const out = JSON.parse(r.stdout)
     expect(Array.isArray(out.accounts)).toBe(true)
     expect(out.accounts).toHaveLength(0)
+  })
+})
+
+describe('computeProviderSetOutcome — 名单跟 lib/provider-ids 走', () => {
+  it('accepts agy (the desktop 大脑 menu lists it; `provider set agy` used to be refused)', async () => {
+    const { computeProviderSetOutcome } = await import('./cli')
+    const existing = { provider: 'claude' as const, dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }
+    const r = computeProviderSetOutcome({ provider: 'agy' }, existing as never)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.config.provider).toBe('agy')
+    const bad = computeProviderSetOutcome({ provider: 'bogus' }, existing as never)
+    expect(bad.ok).toBe(false)
+    if (!bad.ok) expect(bad.error).toContain('agy')
+  })
+})
+
+describe('parseTimeoutMsFlag — 数值开关写错了当场报错,别替用户猜', () => {
+  it('omitted ⇒ ok with no value (caller falls back to its default)', () => {
+    expect(parseTimeoutMsFlag(undefined)).toEqual({ ok: true })
+    expect(parseTimeoutMsFlag('')).toEqual({ ok: true })
+  })
+
+  it('a positive number parses', () => {
+    expect(parseTimeoutMsFlag('90000')).toEqual({ ok: true, value: 90_000 })
+    expect(parseTimeoutMsFlag(1500)).toEqual({ ok: true, value: 1500 })
+  })
+
+  it('non-numeric / zero / negative are errors (they used to silently become the default)', () => {
+    for (const bad of ['abc', '30s', '0', '-1', 'NaN', 'Infinity']) {
+      const r = parseTimeoutMsFlag(bad)
+      expect(r.ok, bad).toBe(false)
+      if (!r.ok) expect(r.error).toContain(bad)
+    }
+  })
+})
+
+// `self change --budget-usd` 走的是同一条规矩(钱比毫秒更不能替用户猜:
+// 写错了悄悄退回缺省值,就是按 $20 而不是他以为的 $8 跑一整轮实现会话)。
+describe('parseBudgetUsdFlag — 钱的开关写错了当场报错', () => {
+  it('omitted ⇒ ok with no value (caller falls back to implement_budget_usd)', () => {
+    expect(parseBudgetUsdFlag(undefined)).toEqual({ ok: true })
+    expect(parseBudgetUsdFlag(null)).toEqual({ ok: true })
+    expect(parseBudgetUsdFlag('')).toEqual({ ok: true })
+  })
+
+  it('a positive number parses (整数和小数都要认 —— 预算不是毫秒)', () => {
+    expect(parseBudgetUsdFlag('8')).toEqual({ ok: true, value: 8 })
+    expect(parseBudgetUsdFlag('2.5')).toEqual({ ok: true, value: 2.5 })
+    expect(parseBudgetUsdFlag(20)).toEqual({ ok: true, value: 20 })
+  })
+
+  it('non-numeric / zero / negative are errors', () => {
+    for (const bad of ['abc', '$8', '0', '-1', 'NaN', 'Infinity']) {
+      const r = parseBudgetUsdFlag(bad)
+      expect(r.ok, bad).toBe(false)
+      if (!r.ok) expect(r.error).toContain(bad)
+    }
   })
 })

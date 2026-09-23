@@ -1,13 +1,16 @@
 // src/daemon/inbound/types.ts
 import type { InboundMsg } from '../../core/prompt-format'
+import type { Intent } from './intent'
 
-export type ConsumedBy = 'admin' | 'mode' | 'onboarding' | 'permission-reply' | 'guard' | 'access' | 'health'
+export type ConsumedBy = 'admin' | 'mode' | 'onboarding' | 'permission-reply' | 'cli-reply' | 'guard' | 'access' | 'health' | 'workbench'
 
 export interface InboundCtx {
   readonly msg: InboundMsg
   readonly receivedAtMs: number
   readonly requestId: string
   consumedBy?: ConsumedBy
+  /** 路由阶段(mw-route)算出来的意图;闸门之前是 undefined。 */
+  intent?: Intent
   attachmentsMaterialized?: boolean
   /**
    * Onboarding echo re-dispatch: the SAME message id is intentionally

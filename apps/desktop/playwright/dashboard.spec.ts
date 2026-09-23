@@ -1,28 +1,14 @@
 // Dashboard smoke tests — driven against test-shim.ts (DRY_RUN=1).
 //
-// Dashboard DOM structure (post moxiuwen merge — adopted 4-step wizard +
-// moment-redesign dashboard from commit 2712bfb):
-//   <main class="dashboard">  — shown when [data-mode="dashboard"]
-//     <header class="dash-rail">
-//       <nav class="dash-nav">
-//         <button class="dash-nav-link active" data-pane="overview">    此刻
-//         <button class="dash-nav-link"        data-pane="memory">      记忆
-//         <button class="dash-nav-link"        data-pane="sessions">    对话
-//         <button class="dash-nav-link"        data-pane="logs">        日志
-//         <button class="dash-nav-link"        data-pane="a2a-agents">  Agents
-//     <section class="dash-main">
-//       <article class="dash-pane" data-pane="overview">                 (visible)
-//       <article class="dash-pane" data-pane="memory"     hidden>
-//       <article class="dash-pane" data-pane="sessions"   hidden>
-//       <article class="dash-pane" data-pane="logs"       hidden>
-//       <article class="dash-pane" data-pane="a2a-agents" hidden>
+// Presence shell: three primary entries; existing tools remain in the lower
+// disclosure. Conversation is mounted once inside overview.
 //
 // NOTE: In DRY_RUN the doctor --json returns accounts.count=0 so the page
 // boots into wizard mode by default. The dashboard <main> is always in the
 // DOM (CSS shows/hides via data-mode); tests that need the dashboard
 // visible switch data-mode via page.evaluate.
 
-import { test, expect } from './fixtures'
+import { test, expect, clickNav, clickRevealed } from './fixtures'
 
 async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl: string) {
   await page.goto(shimUrl)
@@ -43,7 +29,7 @@ async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl:
 
 // 顶层导航项(2026-08-24 导航重构后):待办升到一级,日志/插件收进后厨
 // —— 它们仍有 pane,但不再有顶层导航按钮,所以分成两张表校验。
-const NAV_PANES = ['overview', 'memory', 'converse', 'todos', 'sessions', 'a2a-agents'] as const
+const NAV_PANES = ['overview', 'workbench', 'recollections', 'memory', 'todos', 'sessions', 'a2a-agents'] as const
 /** 有 pane、但入口在后厨标签页里(见 logs.spec.ts 的 bootAndOpenLogs)。 */
 const BACKSTAGE_PANES = ['logs', 'plugins'] as const
 
@@ -58,6 +44,9 @@ test('dashboard renders nav + panes (all attached)', async ({ page, shimUrl, shi
   for (const pane of BACKSTAGE_PANES) {
     await expect(page.locator(`article.dash-pane[data-pane="sessions"] .dialogue-workspace-tab[data-backstage-pane="${pane}"]`)).toBeAttached()
   }
+  await expect(page.locator('#converse-root')).toHaveCount(1)
+  await expect(page.locator('article[data-pane="overview"] #converse-root')).toBeAttached()
+  await expect(page.locator('button[data-pane="converse"]')).toBeAttached()
   // Settings gear (opens drawer, not wizard — moxiuwen's gear was repurposed
   // when master's wizard refactor landed; #settings-open is the live id).
   await expect(page.locator('#settings-open')).toBeAttached()
@@ -80,7 +69,8 @@ test('clicking a pane button switches active pane', async ({ page, shimUrl, shim
   await bootIntoDashboard(page, shimUrl)
 
   // Click memory tab — should switch active class + un-hide memory pane.
-  await page.locator('button.dash-nav-link[data-pane="memory"]').click()
+  await page.locator('.cc-life-nav-more > summary').click()
+  await clickNav(page, 'memory')
   await expect(page.locator('button.dash-nav-link.active[data-pane="memory"]')).toBeAttached()
   await expect(page.locator('button.dash-nav-link.active[data-pane="overview"]')).toHaveCount(0)
   // The memory pane should no longer be hidden (active panes drop the
@@ -92,8 +82,9 @@ test('clicking a pane button switches active pane', async ({ page, shimUrl, shim
 test('round-trip: overview → memory → overview restores initial state', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('button.dash-nav-link[data-pane="memory"]').click()
-  await page.locator('button.dash-nav-link[data-pane="overview"]').click()
+  await page.locator('.cc-life-nav-more > summary').click()
+  await clickNav(page, 'memory')
+  await clickNav(page, 'overview')
   await expect(page.locator('button.dash-nav-link.active[data-pane="overview"]')).toBeAttached()
   // memory should be hidden again
   await expect(page.locator('article.dash-pane[data-pane="memory"][hidden]')).toBeAttached()
@@ -117,7 +108,8 @@ test('overview pane has hero + current-user + sub-user grid', async ({ page, shi
 test('memory pane has sidebar + observations + milestones + content viewer', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('button.dash-nav-link[data-pane="memory"]').click()
+  await page.locator('.cc-life-nav-more > summary').click()
+  await clickNav(page, 'memory')
   const pane = page.locator('article.dash-pane[data-pane="memory"]')
   await expect(pane).toBeVisible()
   // Real IDs from index.html — the memory pane has a 3-column layout:
@@ -133,7 +125,8 @@ test('memory pane has sidebar + observations + milestones + content viewer', asy
 test('sessions pane mounts the dialogue-root container (Task 10 real-data page)', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('button.dash-nav-link[data-pane="sessions"]').click()
+  await page.locator('.cc-life-nav-more > summary').click()
+  await clickNav(page, 'sessions')
   const pane = page.locator('article.dash-pane[data-pane="sessions"]')
   await expect(pane).toBeVisible()
   // Task 10 replaced the static sessions scaffold with a single dynamic mount
@@ -144,7 +137,8 @@ test('sessions pane mounts the dialogue-root container (Task 10 real-data page)'
 test('logs pane has meta crumb + content container', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  await page.locator('button.dash-nav-link[data-pane="sessions"]').click()
+  await page.locator('.cc-life-nav-more > summary').click()
+  await clickNav(page, 'sessions')
   await page.locator('article.dash-pane[data-pane="sessions"] .dialogue-workspace-tab[data-backstage-pane="logs"]').click()
   const pane = page.locator('article.dash-pane[data-pane="logs"]')
   await expect(pane).toBeVisible()
@@ -154,6 +148,7 @@ test('logs pane has meta crumb + content container', async ({ page, shimUrl, shi
 test('a2a-agents pane has server banner + agent list + Add Agent button', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
+  await page.locator('.cc-life-nav-more > summary').click()
   await page.locator('button.dash-nav-link[data-pane="a2a-agents"]').click()
   const pane = page.locator('article.dash-pane[data-pane="a2a-agents"]')
   await expect(pane).toBeVisible()
@@ -165,6 +160,7 @@ test('a2a-agents pane has server banner + agent list + Add Agent button', async 
 test('a2a add modal opens + closes via ✕ button (regression for fix 5ddeb72)', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
+  await page.locator('.cc-life-nav-more > summary').click()
   await page.locator('button.dash-nav-link[data-pane="a2a-agents"]').click()
   // Open the modal
   await page.locator('#a2a-add-btn').click()
@@ -303,7 +299,7 @@ test.describe('single-surface reconnect flow', () => {
     })
 
     // One click diagnoses internally and starts recovery immediately.
-    await page.locator('#dash-restart').click()
+    await clickRevealed(page, '#dash-restart')
 
     // The old duplicate diagnosis card no longer exists in the page.
     await expect(page.locator('#reconnect-diagnose-card')).toHaveCount(0)
@@ -332,7 +328,7 @@ test.describe('single-surface reconnect flow', () => {
       const btn = document.getElementById('dash-restart')
       if (btn) btn.hidden = false
     })
-    await page.locator('#dash-restart').click()
+    await clickRevealed(page, '#dash-restart')
 
     await expect(page.locator('#reconnect-diagnose-card')).toHaveCount(0)
     await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/, { timeout: 3000 })
@@ -349,7 +345,7 @@ test.describe('single-surface reconnect flow', () => {
       const btn = document.getElementById('dash-restart')
       if (btn) btn.hidden = false
     })
-    await page.locator('#dash-restart').click()
+    await clickRevealed(page, '#dash-restart')
 
     await expect(page.locator('#reconnect-diagnose-card')).toHaveCount(0)
     await expect(page.locator('#dash-pending')).toHaveText('连接正常', { timeout: 3000 })
@@ -378,7 +374,7 @@ test.describe('single-surface reconnect flow', () => {
     //   1. refresh() fails → lastError set, returns null
     //   2. current report has daemon.internal_api → healthProbe fires → true
     //   3. diagnose({ report, healthOk: true, lastError: non-null }) → code 7
-    await page.locator('#dash-restart').click()
+    await clickRevealed(page, '#dash-restart')
 
     await expect(page.locator('#reconnect-diagnose-card')).toHaveCount(0)
     await expect(page.locator('#hero-headline')).toHaveText('CC 暂时失去连接')
@@ -406,7 +402,7 @@ test.describe('provider-switch dropdown', () => {
     await expect(page.locator('#accounts-current .provider-switch')).toBeAttached({ timeout: 8000 })
 
     // Click the provider-switch button to open the dropdown
-    await page.locator('#accounts-current .provider-switch').click()
+    await clickRevealed(page, '#accounts-current .provider-switch')
 
     // Menu should now be visible with 3 option buttons
     await expect(page.locator('#provider-menu')).toBeVisible({ timeout: 3000 })
@@ -467,7 +463,7 @@ test.describe('RECONNECT_DIAGNOSE telemetry', () => {
     })
 
     // Click "重新连接" — triggers restartDaemon() → diagnose() → telemetry
-    await page.locator('#dash-restart').click()
+    await clickRevealed(page, '#dash-restart')
 
     const EXPECTED_FIELD_KEYS = ['code', 'daemon_alive', 'service_installed', 'provider', 'lastError_present', 'health_ok']
 
@@ -494,4 +490,27 @@ test.describe('RECONNECT_DIAGNOSE telemetry', () => {
       expect(firstFields).toHaveProperty(key)
     }
   })
+})
+
+
+test('presence shell keeps one home composer and its draft through navigation', async ({page,shimUrl,shim}) => {
+  await shim.invoke('demo.seed', {chat_id:'test_chat'})
+  await bootIntoDashboard(page,shimUrl)
+  await expect(page.locator('.cc-home-details')).not.toHaveAttribute('open')
+  await expect(page.locator('#converse-input')).toBeVisible()
+  await page.locator('#converse-input').fill('只检查草稿，不发送')
+  await page.locator('.cc-home-details > summary').click()
+  await clickNav(page, 'recollections')
+  await expect(page.locator('article[data-pane="recollections"]')).toBeVisible()
+  await page.locator('.cc-life-nav-more > summary').click()
+  await clickNav(page, 'converse')
+  await expect(page.locator('article[data-pane="overview"]')).toBeVisible()
+  await expect(page.locator('.cc-home-details')).not.toHaveAttribute('open')
+  await expect(page.locator('#converse-input')).toHaveValue('只检查草稿，不发送')
+  await expect(page.locator('#converse-input')).toBeFocused()
+  await expect(page.locator('#converse-root')).toHaveCount(1)
+  const rail=await page.locator('.dash-rail').boundingBox()
+  const main=await page.locator('.dash-main').boundingBox()
+  expect(rail!.x+rail!.width).toBeLessThanOrEqual(main!.x+1)
+  expect(rail!.height).toBeGreaterThan(500)
 })

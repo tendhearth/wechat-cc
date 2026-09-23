@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { Database } from 'bun:sqlite'
+import { openSqlite } from './runtime/sqlite'
 import { migrations, openTestDb, openDb, renameMigrated, runMigrations, withLockRetry } from './db'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import type { Db } from './db'
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { removeTempDir } from './test-temp'
 
 describe('withLockRetry', () => {
   const noop = () => {}
@@ -60,7 +62,7 @@ describe('openDb', () => {
       expect(row?.bot_id).toBe('b1')
       db2.close()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTempDir(dir)
     }
   })
 
@@ -72,7 +74,7 @@ describe('openDb', () => {
       expect(mode.journal_mode.toLowerCase()).toBe('wal')
       db.close()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTempDir(dir)
     }
   })
 })
@@ -87,7 +89,7 @@ describe('renameMigrated', () => {
       expect(existsSync(file)).toBe(false)
       expect(existsSync(`${file}.migrated`)).toBe(true)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTempDir(dir)
     }
   })
 
@@ -98,14 +100,14 @@ describe('renameMigrated', () => {
       // Simulate "another process already renamed it" — file does not exist.
       expect(() => renameMigrated(file)).not.toThrow()
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      removeTempDir(dir)
     }
   })
 })
 
 describe('migration v10 — sessions.chat_id', () => {
   it('adds chat_id column with _legacy default for pre-existing rows', () => {
-    const db = new Database(':memory:')
+    const db = openSqlite(':memory:')
     db.exec(`
       PRAGMA user_version = 9;
       CREATE TABLE sessions (
@@ -134,7 +136,7 @@ describe('migration v10 — sessions.chat_id', () => {
   })
 
   it('legacy rows older than 1 day are cleaned up', () => {
-    const db = new Database(':memory:')
+    const db = openSqlite(':memory:')
     const oldTs = new Date(Date.now() - 2 * 86_400_000).toISOString()
     db.exec(`
       PRAGMA user_version = 9;
@@ -181,7 +183,7 @@ describe('migration v12 — a2a_events table', () => {
 
 describe('migration v27/v28 — customer review completed elsewhere and analysis coverage', () => {
   it('upgrades v26 review feedback without losing items or evidence', () => {
-    const db = new Database(':memory:')
+    const db = openSqlite(':memory:')
     db.exec(`
       PRAGMA foreign_keys = ON;
       PRAGMA user_version = 26;
@@ -279,7 +281,7 @@ describe('migration v13→v14 upgrade — events data preserved', () => {
     // rolling back user_version — but since SQLite doesn't support undoing
     // DDL, the cleanest approach is to construct the v13 schema directly,
     // matching the shape the v13 migration leaves behind, then run v14.
-    const db = new Database(':memory:')
+    const db = openSqlite(':memory:')
     // Replicate the exact v13 schema so runMigrations sees user_version=13
     // and only applies v14.
     db.exec(`
@@ -387,8 +389,12 @@ describe('migration v11 — participants column', () => {
 })
 
 describe('migration v24 — social_seek redacted columns', () => {
-  it('adds nullable redacted_topic / redacted_city columns to social_seek', () => {
-    const db = openTestDb()
+  it('adds nullable redacted_topic / redacted_city columns to social_seek (before v43 retirement)', () => {
+    // Build a db at exactly v23 (before v24, before v43 drops the tables)
+    const db = openSqlite(':memory:')
+    db.exec('PRAGMA foreign_keys = ON;')
+    for (let i = 0; i < 24; i++) migrations[i]!(db)
+    db.exec('PRAGMA user_version = 24;')
     const cols = db.query<{ name: string }, []>("PRAGMA table_info('social_seek')").all()
     const names = cols.map(c => c.name)
     expect(names).toContain('redacted_topic')
@@ -444,14 +450,20 @@ describe('issue #79 — database left mid-schema by the customer-review branch b
     expect(() => runMigrations(db)).not.toThrow()
   })
 
-  it('restores every missing social/penpal table', () => {
+  it('restores every missing social/penpal table (though v43 later drops social ones)', () => {
     const db = branchBuildDb()
     runMigrations(db)
     const present = db
       .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'")
       .all()
       .map(r => r.name)
-    for (const t of SOCIAL_TABLES) expect(present).toContain(t)
+    // v19-v25 restore the social tables, but v43 drops them. So we check that
+    // penpal tables (which survive v43) are present, and social tables are gone.
+    expect(present).toContain('penpal_channel')
+    expect(present).toContain('penpal_letter')
+    for (const t of ['social_seek', 'social_echo', 'social_pledge', 'social_relay', 'social_seen_intent']) {
+      expect(present).not.toContain(t)
+    }
   })
 
   it('keeps the customer-review rows the branch build had already written', () => {
@@ -479,7 +491,7 @@ describe('issue #79 — database left mid-schema by the customer-review branch b
     // 那份手工清单每加一条动 social_*/penpal_* 的迁移就会烂掉一次(v32 就把它
     // 弄红了),而且烂法是「重复的列名」这种看不出因果的报错。改成直接跑
     // migrations[0..20] —— 那就是 1.3.2 真正装出来的库,不需要维护任何清单。
-    const db = new Database(':memory:')
+    const db = openSqlite(':memory:')
     db.exec('PRAGMA foreign_keys = ON;')
     for (let i = 0; i < 21; i++) migrations[i]!(db)
     db.exec('PRAGMA user_version = 21;')
@@ -487,10 +499,12 @@ describe('issue #79 — database left mid-schema by the customer-review branch b
     expect(() => runMigrations(db)).not.toThrow()
 
     const v = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
-    expect(v).toBeGreaterThanOrEqual(28)
-    // v22 ran for real rather than being skipped by a spurious repair.
-    const cols = db.query<{ name: string }, []>("PRAGMA table_info('social_relay')").all().map(c => c.name)
-    expect(cols).toContain('upstream_handle')
+    expect(v).toBe(migrations.length)
+    // v22 ran for real: penpal_channel and penpal_letter tables exist.
+    // (v43 later drops social_relay, so we can't check that anymore.)
+    const tables = db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'").all().map(t => t.name)
+    expect(tables).toContain('penpal_channel')
+    expect(tables).toContain('penpal_letter')
   })
 
   it('leaves an already-healthy fully-migrated database alone', () => {
@@ -500,4 +514,225 @@ describe('issue #79 — database left mid-schema by the customer-review branch b
     const after = (db.query('PRAGMA user_version').get() as { user_version: number }).user_version
     expect(after).toBe(before)
   })
+})
+
+describe('migration v41 — reminders back-fills columns the old June schema lacked', () => {
+  it('adds last_attempt_at/last_error/attempts to a pre-v29 reminders table', () => {
+    // Reproduce the "no such column: last_attempt_at" boot error: a database
+    // that ran June's feat/reminders (a reminders table without the backoff
+    // columns) already has the table, so v29's CREATE TABLE IF NOT EXISTS
+    // skips it and the columns never arrive. user_version=29 marks v29 done.
+    const db = openSqlite(':memory:')
+    db.exec('PRAGMA foreign_keys = ON;')
+    db.exec(`
+      CREATE TABLE reminders (
+        id         TEXT PRIMARY KEY NOT NULL,
+        chat_id    TEXT NOT NULL,
+        due_at     TEXT NOT NULL,
+        text       TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        status     TEXT NOT NULL DEFAULT 'pending'
+      ) STRICT;
+      PRAGMA user_version = 29;
+    `)
+    db.exec(
+      "INSERT INTO reminders (id, chat_id, due_at, text, created_at) VALUES ('r1','c1','2026-08-20T10:00:00.000Z','hi','2026-08-20T09:00:00.000Z')",
+    )
+
+    expect(() => runMigrations(db)).not.toThrow()
+
+    const cols = new Set(
+      db.query<{ name: string }, []>('PRAGMA table_info(reminders)').all().map((r) => r.name),
+    )
+    expect(cols.has('last_attempt_at')).toBe(true)
+    expect(cols.has('last_error')).toBe(true)
+    expect(cols.has('attempts')).toBe(true)
+    // The healed column is writable — the sweeper's stamping UPDATE no longer throws.
+    expect(() =>
+      db.exec("UPDATE reminders SET attempts = attempts + 1, last_attempt_at = '2026-08-20T10:01:00.000Z' WHERE id = 'r1'"),
+    ).not.toThrow()
+    // The pre-existing row survived the migration.
+    const row = db.query<{ attempts: number }, []>("SELECT attempts FROM reminders WHERE id = 'r1'").get()
+    expect(row?.attempts).toBe(1)
+  })
+
+  it('is a no-op on a fresh database where v29 already created the columns', () => {
+    const db = openTestDb()
+    expect(() => runMigrations(db)).not.toThrow()
+    const cols = new Set(
+      db.query<{ name: string }, []>('PRAGMA table_info(reminders)').all().map((r) => r.name),
+    )
+    expect(cols.has('last_attempt_at')).toBe(true)
+  })
+})
+
+describe('migration v42 — heals the Atelier-branch v35 tool_calls collision', () => {
+  it('adds tool_calls when user_version advanced past the skipped official v35', () => {
+    const db = openTestDb()
+    db.exec('ALTER TABLE turn_records DROP COLUMN tool_calls; PRAGMA user_version = 41;')
+
+    expect(() => runMigrations(db)).not.toThrow()
+
+    const cols = db.query<{ name: string }, []>("PRAGMA table_info('turn_records')").all().map(c => c.name)
+    expect(cols).toContain('tool_calls')
+    const version = db.query<{ user_version: number }, []>('PRAGMA user_version').get()?.user_version
+    expect(version).toBe(migrations.length)
+    db.close()
+  })
+})
+
+describe('旧社交表退役(spec 2026-09-04-wish-postcard §3)', () => {
+  const tables = (db: Db) => new Set(db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'").all().map(r => r.name))
+  it('全迁移库里没有四张社交表和 seen_intent;penpal/journal 还在', () => {
+    const db = openDb({ path: ':memory:' })
+    const t = tables(db)
+    for (const n of ['social_seek', 'social_echo', 'social_pledge', 'social_relay', 'social_seen_intent']) expect(t.has(n), n).toBe(false)
+    for (const n of ['penpal_channel', 'penpal_letter', 'journal', 'a2a_events']) expect(t.has(n), n).toBe(true)
+  })
+  it('迁移条数与 user_version 一致(位置契约)', () => {
+    const db = openDb({ path: ':memory:' })
+    expect((db.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(migrations.length)
+  })
+})
+
+
+// 跑完整条迁移阶梯,CI 慢机上实测 7.5s,默认 5s 会假红。
+it('upgrades a real v46 database retaining task history, native identity and approved artifacts',{timeout:30_000},()=>{
+  const dir=mkdtempSync(join(tmpdir(),'workbench-v46-')),path=join(dir,'state.db')
+  try {
+    const prior=openSqlite(path)
+    prior.exec('PRAGMA foreign_keys=ON')
+    for(const migration of migrations.slice(0,46))migration(prior)
+    prior.exec('PRAGMA user_version=46')
+    prior.query('INSERT INTO workbench_tasks(id,title,path,provider_id,owner_chat_id,session_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run('deadbeef','old task','/missing/project','codex','owner','native-session','completed',1,2)
+    prior.query('INSERT INTO workbench_events(task_id,kind,text,created_at) VALUES(?,?,?,?)').run('deadbeef','user','old request',3)
+    prior.query('INSERT INTO workbench_artifacts(id,task_id,name,mime,size,sha256,storage_path,created_at,approved_at) VALUES(?,?,?,?,?,?,?,?,?)').run('artifact-id','deadbeef','report.md','text/plain',7,'a'.repeat(64),'/immutable/file',4,5)
+    const oldTask=prior.query('SELECT * FROM workbench_tasks').get(),oldEvents=prior.query('SELECT * FROM workbench_events').all(),oldArtifacts=prior.query('SELECT * FROM workbench_artifacts').all()
+    prior.close()
+    for(let i=0;i<2;i++) {
+      const upgraded=openDb({path})
+      try {
+        expect(upgraded.query('SELECT * FROM workbench_tasks').get()).toEqual({...oldTask as object,archived_at:null,matter_id:(oldTask as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}',seq:0})
+        expect(upgraded.query('SELECT * FROM workbench_events').all()).toEqual(oldEvents.map(row=>({...row as object,source_id:null,run_id:null,event_key:null,activity_json:null,attachments_json:'[]',seq:0})))
+        expect(upgraded.query('SELECT * FROM workbench_artifacts').all()).toEqual(oldArtifacts)
+      } finally {upgraded.close()}
+    }
+  } finally {removeTempDir(dir)}
+})
+
+
+it('upgrades v51 with separate durable control receipts while preserving task history and text inputs',()=>{
+  const db=openSqlite(':memory:')
+  try{
+    for(const migration of migrations.slice(0,51))migration(db)
+    db.exec('PRAGMA user_version=51')
+    db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,owner_chat_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').run('deadbeef','task','/project','claude','owner','completed',1,2)
+    db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,run_id) VALUES(?,?,?,?,?)').run('deadbeef','user','original input',3,'run-original')
+    db.query('INSERT INTO workbench_live_inputs(id,task_id,run_id,text,status,created_at) VALUES(?,?,?,?,?,?)').run('input-one','deadbeef','run-original','supplement','delivered',4)
+    const tasks=db.query('SELECT * FROM workbench_tasks').all(),events=db.query('SELECT * FROM workbench_events').all(),inputs=db.query('SELECT * FROM workbench_live_inputs').all()
+    runMigrations(db)
+    db.query('INSERT INTO workbench_control_receipts(id,task_id,run_id,action,text_hash,created_at) VALUES(?,?,?,?,?,?)').run('stop-one','deadbeef','run-original','stop','hash',5)
+    runMigrations(db)
+    expect(db.query('SELECT * FROM workbench_tasks').all()).toEqual(tasks.map(row=>({...row as object,matter_id:(row as {id:string}).id,execution_choice_json:'{"defaults":"provider","model":null,"reasoningEffort":null}',seq:0})))
+    expect(db.query('SELECT * FROM workbench_events').all()).toEqual(events.map(row=>({...row as object,attachments_json:'[]',seq:0})))
+    expect(db.query('SELECT * FROM workbench_live_inputs').all()).toEqual(inputs.map(row=>({...row as object,attachments_json:'[]',execution_json:null})))
+    expect(db.query('SELECT * FROM workbench_control_receipts').all()).toHaveLength(1)
+  }finally{db.close()}
+})
+
+it('upgrades v52 with staged attachments and empty refs on existing messages and inputs',()=>{
+  const db=openSqlite(':memory:')
+  try{
+    for(const migration of migrations.slice(0,52))migration(db)
+    db.exec('PRAGMA user_version=52')
+    db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('deadbeef','task','/project','claude','completed',1,2)
+    db.query('INSERT INTO workbench_events(task_id,kind,text,created_at,run_id) VALUES(?,?,?,?,?)').run('deadbeef','user','original',3,'run-original')
+    db.query('INSERT INTO workbench_live_inputs(id,task_id,run_id,text,status,created_at) VALUES(?,?,?,?,?,?)').run('input-one','deadbeef','run-original','supplement','held',4)
+    runMigrations(db);runMigrations(db)
+    expect(db.query('SELECT attachments_json FROM workbench_events').get()).toEqual({attachments_json:'[]'})
+    expect(db.query('SELECT attachments_json FROM workbench_live_inputs').get()).toEqual({attachments_json:'[]'})
+    expect(db.query("SELECT name FROM sqlite_master WHERE name='workbench_attachments'").get()).toEqual({name:'workbench_attachments'})
+  }finally{db.close()}
+})
+
+it('adds request_event_id to a workbench_handoffs table that predates the column',()=>{
+  // 真机 2026-09-15:这张表是在源码还没有 request_event_id 时建的,而 v49 用的是
+  // `CREATE TABLE IF NOT EXISTS` —— 对已存在的表是空操作,所以这一列再也补不上,
+  // store.detail() 的 HANDOFF_SELECT 每次都炸,工作台一个任务都显示不了。
+  // 新建库拿不到这个形状,所以这条必须自己造旧表。
+  const db=openSqlite(':memory:')
+  try{
+    for(const migration of migrations.slice(0,49))migration(db)
+    db.exec('DROP TABLE workbench_handoffs')
+    db.exec(`CREATE TABLE workbench_handoffs (
+      id TEXT PRIMARY KEY, source_task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+      target_task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+      purpose TEXT NOT NULL CHECK(purpose IN ('review','revision')), request TEXT NOT NULL,
+      packet_sha256 TEXT NOT NULL, artifact_refs_json TEXT NOT NULL, quote_json TEXT,
+      created_at INTEGER NOT NULL, source_native_id TEXT, target_native_id TEXT,
+      packet_json TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE
+    ) STRICT`)
+    for(const id of ['srctask1','tgttask1'])db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run(id,'t','/p','claude','completed',1,2)
+    db.query('INSERT INTO workbench_handoffs(id,source_task_id,target_task_id,purpose,request,packet_sha256,artifact_refs_json,quote_json,created_at,source_native_id,target_native_id,packet_json,token_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run('h1','srctask1','tgttask1','review','看一下','sha','[]',null,3,null,null,'{}','tok')
+    db.exec('PRAGMA user_version=49')
+    runMigrations(db);runMigrations(db)
+    const columns=db.query<{name:string},[]>('PRAGMA table_info(workbench_handoffs)').all().map(column=>column.name)
+    expect(columns).toContain('request_event_id')
+    // 补列不能把既有交接记录洗掉。
+    expect(db.query('SELECT id,request,request_event_id AS e FROM workbench_handoffs').all()).toEqual([{id:'h1',request:'看一下',e:null}])
+  }finally{db.close()}
+})
+
+it('upgrades v53 with provider defaults, native import defaults and nullable queued execution snapshots',()=>{
+  const db=openSqlite(':memory:')
+  try{
+    for(const migration of migrations.slice(0,53))migration(db)
+    db.exec('PRAGMA user_version=53')
+    for(const id of ['deadbeef','feedbeef'])db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run(id,'task','/project','claude','completed',1,2)
+    db.query('INSERT INTO workbench_sources(id,task_id,provider_id,native_id,cwd,imported_at,snapshot_sha256,observed_fingerprint,selected_message_count,truncated,snapshot_json,pages_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run('source','feedbeef','claude','native-original','/project',3,'sha','fingerprint',0,0,'{}','[]')
+    db.query('INSERT INTO workbench_live_inputs(id,task_id,run_id,text,status,created_at) VALUES(?,?,?,?,?,?)').run('input','deadbeef','run','queued','held',4)
+    const oldTasks=db.query<Record<string,unknown>,[]>('SELECT * FROM workbench_tasks ORDER BY id').all()
+    runMigrations(db);runMigrations(db)
+    const tasks=db.query<Record<string,unknown>,[]>('SELECT * FROM workbench_tasks ORDER BY id').all()
+    expect(tasks).toEqual(oldTasks.map(row=>({...row,matter_id:row.id,execution_choice_json:JSON.stringify({defaults:row.id==='feedbeef'?'native':'provider',model:null,reasoningEffort:null}),seq:0})))
+    expect(db.query('SELECT execution_json FROM workbench_live_inputs').get()).toEqual({execution_json:null})
+    expect(db.query("SELECT name FROM sqlite_master WHERE name='workbench_run_execution'").get()).toEqual({name:'workbench_run_execution'})
+    // Repair replay must not overwrite an accepted native task choice.
+    db.query('UPDATE workbench_tasks SET execution_choice_json=? WHERE id=?').run('{"defaults":"native","model":"chosen","reasoningEffort":"high"}','feedbeef')
+    migrations[53]!(db)
+    expect(db.query('SELECT execution_choice_json FROM workbench_tasks WHERE id=?').get('feedbeef')).toEqual({execution_choice_json:'{"defaults":"native","model":"chosen","reasoningEffort":"high"}'})
+  }finally{db.close()}
+})
+
+it('v61: workbench_tasks / workbench_events 都有 seq 列,事件表有 (task_id, seq) 索引', () => {
+  const db = openTestDb()
+  const cols = (t: string) => db.query<{ name: string }, []>(`PRAGMA table_info(${t})`).all().map(c => c.name)
+  expect(cols('workbench_tasks')).toContain('seq')
+  expect(cols('workbench_events')).toContain('seq')
+  const idx = db.query<{ name: string }, []>("PRAGMA index_list('workbench_events')").all().map(i => i.name)
+  expect(idx).toContain('workbench_events_task_seq')
+  db.close()
+})
+
+it('v62: workbench_review_marks 表存在,主键为 (task_id, artifact_sha256, path)', () => {
+  const db = openTestDb()
+  const cols = db.query<{ name: string; pk: number }, []>("PRAGMA table_info(workbench_review_marks)").all()
+  expect(cols.map(c => c.name)).toEqual(['task_id', 'artifact_sha256', 'path', 'after_sha256', 'mark', 'comment', 'created_at'])
+  expect(cols.filter(c => c.pk > 0).map(c => c.name)).toEqual(['task_id', 'artifact_sha256', 'path'])
+  db.close()
+})
+
+it('v63 migrates old task folders into durable projects without changing sessions or history',()=>{
+ const db=openSqlite(':memory:')
+ try{
+  db.exec('PRAGMA foreign_keys=ON')
+  for(const migration of migrations.slice(0,62))migration(db)
+  db.exec("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at,session_id) VALUES ('aaaaaaaa','first','/old/site','codex','completed',1,2,'native-one'),('bbbbbbbb','second','/old/site','claude','completed',3,4,'native-two'); PRAGMA user_version=62")
+  runMigrations(db)
+  expect(db.query('SELECT path FROM workbench_projects').all()).toEqual([{path:'/old/site'}])
+  expect(db.query('SELECT session_id FROM workbench_tasks ORDER BY id').all()).toEqual([{session_id:'native-one'},{session_id:'native-two'}])
+  const before=db.query('SELECT * FROM workbench_projects').all();runMigrations(db)
+  expect(db.query('SELECT * FROM workbench_projects').all()).toEqual(before)
+ }finally{db.close()}
 })

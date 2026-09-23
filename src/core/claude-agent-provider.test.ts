@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { createClaudeAgentProvider, tierProfileToClaudeSdkOpts } from './claude-agent-provider'
+import { createClaudeAgentProvider, makeWorkbenchClaudeCanUseTool, tierProfileToClaudeSdkOpts } from './claude-agent-provider'
 import type { AgentEvent } from './agent-provider'
 import { TIER_PROFILES } from './user-tier'
 
@@ -44,6 +44,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
     // `interrupt` method — mirrors the shape of @anthropic-ai/claude-agent-sdk's
     // `query()` return value (Query is a Promise + AsyncIterable with helpers).
     return {
+      supportedModels: async()=>[{value:'native-a',displayName:'Native A',description:'Native',supportsEffort:true,supportedEffortLevels:['low','max'],supportsAdaptiveThinking:true}],
+      close() { endFn?.() },
       [Symbol.asyncIterator]() {
         return {
           next() {
@@ -90,7 +92,274 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
 
 import * as sdk from '@anthropic-ai/claude-agent-sdk'
 
+const emitSdk = (message: unknown) => (sdk as unknown as { __test_yield: (message: unknown) => void }).__test_yield(message)
+const finishSdkTurn = () => emitSdk({ type: 'result', subtype: 'success', session_id: 'timeline-session', num_turns: 1, duration_ms: 1 })
+
+describe('Claude native execution choice',()=>{
+  const project={alias:'task',path:'/tmp'}
+  const context={tierProfile:TIER_PROFILES.trusted,permissionMode:'strict' as const,chatId:'task'}
+  const options=()=> (sdk as unknown as {__test_last_options:()=>any}).__test_last_options()
+  it('discovers a bounded native catalog without prompt, tool, hook or session persistence',async()=>{
+    const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({mcpServers:{user:{command:'must-not-start'}},hooks:{},model:'cc-fallback'})})
+    expect(typeof provider.modelCatalog).toBe('function')
+    expect(await provider.modelCatalog!(project)).toEqual({source:'native',models:[{id:'native-a',displayName:'Native A',description:'Native',reasoningEfforts:['low','max']}]})
+    expect(options()).toMatchObject({tools:[],mcpServers:{},strictMcpConfig:true,persistSession:false,hooks:{},plugins:[],settings:{disableAllHooks:true}})
+    expect(options().abortController.signal.aborted).toBe(true)
+  })
+  it.each(['provider','native'] as const)('omits global fallback on opted-in %s auto resume',async(defaults)=>{
+    const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({model:'cc-fallback',effort:'high',thinking:{type:'disabled'}})})
+    const session=await provider.spawn(project,{...context,resumeSessionId:'existing',execution:{defaults,model:null,reasoningEffort:null}})
+    expect(options()).not.toHaveProperty('model'); expect(options()).not.toHaveProperty('effort')
+    expect(options()).not.toHaveProperty('thinking')
+    expect(options().resume).toBe('existing'); await session.close()
+  })
+  it('maps explicit model and effort while preserving strict options and reports native response models',async()=>{
+    const reportExecution=vi.fn()
+    const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({model:'cc-fallback',permissionMode:'default',allowDangerouslySkipPermissions:false})})
+    const session=await provider.spawn(project,{...context,execution:{defaults:'provider',model:'native-a',reasoningEffort:'max'},reportExecution})
+    expect(options()).toMatchObject({model:'native-a',effort:'max',permissionMode:'default',allowDangerouslySkipPermissions:false})
+    expect(reportExecution).not.toHaveBeenCalled()
+    const run=drain(session.dispatch('hello'))
+    emitSdk({type:'system',subtype:'init',session_id:'native-session',model:'native-resolved'})
+    emitSdk({type:'assistant',parent_tool_use_id:'child',message:{model:'child-model',content:[]}})
+    emitSdk({type:'assistant',parent_tool_use_id:null,message:{model:'fallback-native',content:[{type:'text',text:'Done'}]}})
+    finishSdkTurn(); await run; await session.close()
+    expect(reportExecution.mock.calls.map(call=>call[0])).toEqual([{model:'native-resolved',sessionId:'native-session',source:'native_message'},{model:'fallback-native',sessionId:'native-session',source:'native_message'}])
+  })
+  it('rejects unknown explicit models and model-specific effort before dispatch',async()=>{
+    const provider=createClaudeAgentProvider({sdkOptionsForProject:()=>({})})
+    for(const [model,reasoningEffort] of [['unknown',null],['native-a','medium']])await expect(provider.spawn(project,{...context,execution:{defaults:'native',model:model!,reasoningEffort:reasoningEffort??null}})).rejects.toThrow(/execution_(model|effort)_unsupported/)
+  })
+})
+
 describe('claude-agent-provider', () => {
+  it('supports image-only messages without an empty native text block', async () => {
+    const session = await createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) }).spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
+    const sent = () => (sdk as unknown as { __test_sent: () => any[] }).__test_sent()
+    try {
+      const before = sent().length, done = drain(session.dispatch('', [{ name: 'image.png', mime: 'image/png', path: '/not-read.png', sha256: 'a'.repeat(64), data: 'UE5H' }]))
+      await expect.poll(() => sent().length).toBe(before + 1)
+      expect(sent().at(-1).message.content).toEqual([{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'UE5H' } }])
+      finishSdkTurn(); await done
+    } finally { await session.close() }
+  })
+  it('appends direct image content and safe ordinary-file metadata to successive native user messages', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
+    const sent = () => (sdk as unknown as { __test_sent: () => any[] }).__test_sent()
+    const file = { name: 'data\n"quoted".csv', mime: 'text/csv', path: '/task/data.csv', sha256: 'b'.repeat(64) }
+    try {
+      for (let i = 0; i < 2; i++) {
+        const before = sent().length
+        const done = drain(session.dispatch('inspect', [{ name: 'image.png', mime: 'image/png', path: '/not-read.png', sha256: 'a'.repeat(64), data: 'UE5H' }, file]))
+        await expect.poll(() => sent().length).toBe(before + 1)
+        const content = sent().at(-1).message.content
+        expect(content[0]).toEqual({ type: 'text', text: 'inspect' })
+        expect(content[1]).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'UE5H' } })
+        expect(content[2].text).toContain(JSON.stringify(file))
+        finishSdkTurn(); await done
+      }
+    } finally { await session.close() }
+  })
+  it('sends a direct PDF document block when resuming the specified native session', async () => {
+    const session = await createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) }).spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test', resumeSessionId: 'native-existing' })
+    const sent = () => (sdk as unknown as { __test_sent: () => any[] }).__test_sent()
+    try {
+      const before = sent().length, done = drain(session.dispatch('review', [{ name: 'report.pdf', mime: 'application/pdf', path: '/not-read.pdf', sha256: 'a'.repeat(64), data: 'UERG' }]))
+      await expect.poll(() => sent().length).toBe(before + 1)
+      expect(sent().at(-1).message.content[1]).toEqual({ type: 'document', title: 'report.pdf', source: { type: 'base64', media_type: 'application/pdf', data: 'UERG' } })
+      expect((sdk as unknown as { __test_last_options: () => unknown }).__test_last_options()).toMatchObject({ resume: 'native-existing' })
+      finishSdkTurn(); await done
+    } finally { await session.close() }
+  })
+  it.each(['image/png', 'application/pdf'])('rejects missing %s bytes without occupying the session dispatch queue', async mime => {
+    const session = await createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) }).spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
+    try {
+      expect(() => session.dispatch('inspect', [{ name: 'missing', mime, path: '/missing', sha256: 'a'.repeat(64) }])).toThrow('attachment_data_missing')
+      const done = drain(session.dispatch('still works')); finishSdkTurn(); await done
+    } finally { await session.close() }
+  })
+  it('preserves workbench text-tool-text order and native tool identity without exposing tool input', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test', workbenchTimeline: true })
+    const eventsPromise = drain(session.dispatch('inspect'))
+    emitSdk({ type: 'assistant', uuid: 'message-1', parent_tool_use_id: null, message: { content: [
+      { type: 'text', text: 'Before' },
+      { type: 'tool_use', id: 'read-1', name: 'Read', input: { file_path: '/private/SECRET_INPUT', token: 'SECRET_TOKEN' } },
+      { type: 'thinking', thinking: 'PRIVATE_REASONING' },
+      { type: 'text', text: 'After' },
+    ] } })
+    emitSdk({ type: 'user', parent_tool_use_id: null, message: { content: [
+      { type: 'tool_result', tool_use_id: 'read-1', content: 'SECRET_RESULT' },
+    ] } })
+    finishSdkTurn()
+    const events = await eventsPromise
+    expect(events.map(event => event.kind)).toEqual(['text', 'tool_call', 'text', 'tool_call', 'result'])
+    expect(events[0]).toMatchObject({ kind: 'text', text: 'Before', itemId: expect.any(String) })
+    expect(events[2]).toMatchObject({ kind: 'text', text: 'After', itemId: expect.any(String) })
+    expect((events[0] as { itemId: string }).itemId).not.toEqual((events[2] as { itemId: string }).itemId)
+    expect(events[1]).toMatchObject({ kind: 'tool_call', tool: 'Read', activity: { id: 'read-1', type: 'read', status: 'running', label: expect.any(String) } })
+    expect(events[3]).toMatchObject({ kind: 'tool_call', tool: 'Read', activity: { id: 'read-1', type: 'read', status: 'completed' } })
+    expect(JSON.stringify(events)).not.toMatch(/SECRET_|PRIVATE_REASONING/)
+    await session.close()
+  })
+
+  it('correlates failed tool results and native subagent activities without inventing completions', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test', workbenchTimeline: true })
+    const eventsPromise = drain(session.dispatch('inspect'))
+    emitSdk({ type: 'assistant', uuid: 'message-agent', parent_tool_use_id: null, message: { content: [
+      { type: 'tool_use', id: 'agent-1', name: 'Agent', input: { prompt: 'SECRET_PROMPT' } },
+      { type: 'tool_use', id: 'task-1', name: 'Task', input: { prompt: 'SECRET_PROMPT' } },
+    ] } })
+    emitSdk({ type: 'assistant', uuid: 'message-child', parent_tool_use_id: 'agent-1', message: { content: [
+      { type: 'tool_use', id: 'bash-1', name: 'Bash', input: { command: 'TOKEN=SECRET_COMMAND curl somewhere' } },
+    ] } })
+    emitSdk({ type: 'user', parent_tool_use_id: 'agent-1', message: { content: [
+      { type: 'tool_result', tool_use_id: 'unknown-id', is_error: true, content: 'SECRET_UNKNOWN' },
+      { type: 'tool_result', tool_use_id: 'bash-1', is_error: true, content: 'SECRET_FAILURE' },
+      { type: 'tool_result', tool_use_id: 'bash-1', content: 'Duplicate stale success' },
+    ] } })
+    emitSdk({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'agent-1', content: 'done' }] } })
+    finishSdkTurn()
+    const events = await eventsPromise
+    const activities = events.flatMap(event => event.kind === 'tool_call' && event.activity ? [event.activity] : [])
+    expect(activities).toMatchObject([
+      { id: 'agent-1', type: 'agent', status: 'running' },
+      { id: 'task-1', type: 'agent', status: 'running' },
+      { id: 'bash-1', type: 'command', status: 'running', parentId: 'agent-1' },
+      { id: 'bash-1', type: 'command', status: 'failed', parentId: 'agent-1' },
+      { id: 'agent-1', type: 'agent', status: 'completed' },
+    ])
+    expect(JSON.stringify(events)).not.toContain('SECRET_')
+    await session.close()
+  })
+
+  it('keeps normal chat tool-first combined text and ignores tool-result lifecycle', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
+    const eventsPromise = drain(session.dispatch('inspect'))
+    emitSdk({ type: 'assistant', uuid: 'message-chat', message: { content: [
+      { type: 'text', text: 'Before' }, { type: 'tool_use', id: 'read-1', name: 'Read', input: {} }, { type: 'text', text: 'After' },
+    ] } })
+    emitSdk({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'read-1', content: 'done' }] } })
+    finishSdkTurn()
+    expect((await eventsPromise).slice(0, -1)).toEqual([{ kind: 'tool_call', tool: 'Read' }, { kind: 'text', text: 'BeforeAfter' }])
+    await session.close()
+  })
+
+  it('identifies generic workbench tools with bounded sanitized names without copying their payload', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test', workbenchTimeline: true })
+    const eventsPromise = drain(session.dispatch('inspect'))
+    emitSdk({ type: 'assistant', message: { content: [
+      { type: 'tool_use', id: 'local-tool', name: 'InspectWidget', input: { key: 'SECRET_INPUT' } },
+      { type: 'tool_use', id: 'mcp-tool', name: 'mcp__inventory__find_widget', input: { token: 'SECRET_TOKEN' } },
+      { type: 'tool_use', id: 'messy-tool', name: 'odd\n<tool>' + 'x'.repeat(300), input: {} },
+    ] } })
+    emitSdk({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'mcp-tool', content: 'SECRET_OUTPUT' }] } })
+    finishSdkTurn()
+    const events = await eventsPromise
+    const activities = events.flatMap(event => event.kind === 'tool_call' && event.activity ? [event.activity] : [])
+    expect(activities[0]).toMatchObject({ id: 'local-tool', type: 'tool', detail: 'InspectWidget' })
+    expect(activities[1]).toMatchObject({ id: 'mcp-tool', type: 'tool', detail: 'inventory/find_widget' })
+    expect(activities[2]?.detail).toMatch(/^odd_tool_x+$/)
+    expect(activities[2]?.detail?.length).toBeLessThanOrEqual(160)
+    expect(activities[3]).toMatchObject({ id: 'mcp-tool', status: 'completed', detail: 'inventory/find_widget' })
+    expect(JSON.stringify(events)).not.toContain('SECRET_')
+    await session.close()
+  })
+
+  it('keeps replayed text identity and does not regress completed tools or accept a different parent result', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test', workbenchTimeline: true })
+    const eventsPromise = drain(session.dispatch('inspect'))
+    const message = { type: 'assistant', uuid: 'message-replayed', parent_tool_use_id: 'parent-1', message: { content: [
+      { type: 'text', text: 'Checking' }, { type: 'tool_use', id: 'edit-1', name: 'Edit', input: { new_string: 'SECRET_CONTENT' } },
+    ] } }
+    emitSdk(message)
+    emitSdk({ type: 'user', parent_tool_use_id: 'other-parent', message: { content: [{ type: 'tool_result', tool_use_id: 'edit-1', is_error: true }] } })
+    emitSdk({ type: 'user', parent_tool_use_id: 'parent-1', message: { content: [{ type: 'tool_result', tool_use_id: 'edit-1' }] } })
+    emitSdk(message)
+    finishSdkTurn()
+    const events = await eventsPromise
+    const texts = events.filter(event => event.kind === 'text')
+    expect(texts).toHaveLength(2)
+    expect(texts[0]).toEqual(texts[1])
+    expect(texts[0]).toMatchObject({ textMode: 'replace' })
+    expect(events.flatMap(event => event.kind === 'tool_call' ? [event.activity] : [])).toMatchObject([
+      { id: 'edit-1', type: 'edit', status: 'running', parentId: 'parent-1' },
+      { id: 'edit-1', type: 'edit', status: 'completed', parentId: 'parent-1' },
+    ])
+    await session.close()
+  })
+
+  it('retains authentication sentinel protection across workbench text blocks', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test', workbenchTimeline: true })
+    const eventsPromise = drain(session.dispatch('inspect'))
+    emitSdk({ type: 'assistant', uuid: 'message-auth', message: { content: [
+      { type: 'text', text: 'Not logged ' }, { type: 'text', text: 'in · Please run /login' },
+    ] } })
+    finishSdkTurn()
+    const events = await eventsPromise
+    expect(events.filter(event => event.kind === 'text')).toEqual([])
+    expect(events.filter(event => event.kind === 'error')).toMatchObject([{ code: 'auth_failed' }])
+    await session.close()
+  })
+
+  it('does not carry workbench tool identities or late results into the next dispatch', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test', workbenchTimeline: true })
+    const first = drain(session.dispatch('first'))
+    emitSdk({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'old-tool', name: 'Read', input: {} }] } })
+    finishSdkTurn()
+    await first
+    const second = drain(session.dispatch('second'))
+    emitSdk({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'old-tool', content: 'late' }] } })
+    finishSdkTurn()
+    expect((await second).filter(event => event.kind === 'tool_call')).toEqual([])
+    await session.close()
+  })
+
+  it('routes AskUserQuestion through structured input before permission classification', async () => {
+    const requestPermission = vi.fn(async () => true)
+    const requestUserInput = vi.fn(async () => ({ 'question-tool:0': ['PDF', 'Word'], 'question-tool:1': ['Custom note'] }))
+    const signal = new AbortController().signal
+    const input = { questions: [
+      { header: 'Formats', question: 'Which formats?', options: [{ label: 'PDF', description: 'Fixed' }, { label: 'Word', description: 'Editable' }], multiSelect: true },
+      { header: 'Note', question: 'Which note?', options: [{ label: 'Brief', description: 'Short' }, { label: 'Full', description: 'Long' }], multiSelect: false },
+    ], metadata: { source: 'review' } }
+    const gate = makeWorkbenchClaudeCanUseTool(requestPermission, requestUserInput)
+    await expect(gate('AskUserQuestion', input, { signal, toolUseID: 'question-tool' })).resolves.toEqual({ behavior: 'allow', updatedInput: { ...input, answers: { 'Which formats?': 'PDF, Word', 'Which note?': 'Custom note' } } })
+    expect(requestUserInput).toHaveBeenCalledWith({ questions: [
+      { id: 'question-tool:0', header: 'Formats', question: 'Which formats?', options: input.questions[0]!.options, multiSelect: true, allowOther: true },
+      { id: 'question-tool:1', header: 'Note', question: 'Which note?', options: input.questions[1]!.options, multiSelect: false, allowOther: true },
+    ] }, signal)
+    expect(requestPermission).not.toHaveBeenCalled()
+  })
+
+  it.each(['missing', 'declined', 'failed', 'invalid-answer', 'aborted'])('denies unanswered Claude questions on %s', async reason => {
+    const controller = new AbortController()
+    const input = { questions: [{ header: 'Format', question: 'Which format?', options: [{ label: 'PDF', description: 'Fixed' }, { label: 'Word', description: 'Editable' }], multiSelect: false }] }
+    const requestUserInput = reason === 'missing' ? undefined : async (): Promise<Record<string, string[]> | null> => {
+      if (reason === 'failed') throw new Error('UI gone')
+      if (reason === 'aborted') controller.abort()
+      if (reason === 'invalid-answer') return { unknown: ['PDF'] }
+      return reason === 'declined' ? null : { 'question-tool:0': ['PDF'] }
+    }
+    const gate = makeWorkbenchClaudeCanUseTool(undefined, requestUserInput)
+    await expect(gate('AskUserQuestion', input, { signal: controller.signal, toolUseID: 'question-tool' })).resolves.toMatchObject({ behavior: 'deny' })
+  })
+
+  it('rejects duplicate Claude question text because native answers are keyed by question text', async () => {
+    const requestUserInput = vi.fn(async () => ({ 'question-tool:0': ['PDF'], 'question-tool:1': ['Word'] }))
+    const q = { header: 'Format', question: 'Which format?', options: [{ label: 'PDF', description: 'Fixed' }, { label: 'Word', description: 'Editable' }], multiSelect: false }
+    const gate = makeWorkbenchClaudeCanUseTool(undefined, requestUserInput)
+    await expect(gate('AskUserQuestion', { questions: [q, q] }, { signal: new AbortController().signal, toolUseID: 'question-tool' })).resolves.toMatchObject({ behavior: 'deny' })
+    expect(requestUserInput).not.toHaveBeenCalled()
+  })
+
   it('forwards spawnOpts.appendInstructions to sdkOptionsForProject (unified prompt seam)', async () => {
     const seen: unknown[] = []
     const provider = createClaudeAgentProvider({
@@ -101,11 +370,98 @@ describe('claude-agent-provider', () => {
       mcpEnv: { WECHAT_SESSION_TIER: 'admin' },
       appendInstructions: 'SELF-HEAL-PROMPT',
     })
-    // (alias, path, tierProfile, chatId, mcpEnv, appendInstructions)
+    // The final context lets a task-only options builder consume its local
+    // permission callback without changing ordinary chat builders.
     expect(seen[0]).toEqual([
       'foo', '/tmp', TIER_PROFILES.admin, '_test',
       { WECHAT_SESSION_TIER: 'admin' }, 'SELF-HEAL-PROMPT',
+      expect.objectContaining({ chatId: '_test', appendInstructions: 'SELF-HEAL-PROMPT' }),
     ])
+  })
+
+  it('builds a task-only gate that preserves trusted solo strict policy and SDK abort', async () => {
+    const signal = new AbortController().signal
+    const requestPermission = vi.fn(async () => true)
+    const gate = makeWorkbenchClaudeCanUseTool(requestPermission)
+
+    await expect(gate('Read', { file_path: '/tmp/report.md' }, { signal } as never)).resolves.toEqual({ behavior: 'allow' })
+    await expect(gate('Bash', { command: 'rm -rf build' }, { signal, title: 'Remove build output' } as never)).resolves.toEqual({ behavior: 'allow' })
+    expect(requestPermission).toHaveBeenCalledWith({ tool: 'Bash', description: 'Remove build output\ncommand=rm -rf build' }, signal)
+  })
+
+  it('denies task MCP tools and relay requests without an active callback', async () => {
+    const signal = new AbortController().signal
+    const gate = makeWorkbenchClaudeCanUseTool()
+    await expect(gate('mcp__wechat__reply', {}, { signal } as never)).resolves.toMatchObject({ behavior: 'deny' })
+    await expect(gate('Bash', { command: 'git reset --hard HEAD' }, { signal } as never)).resolves.toMatchObject({ behavior: 'deny' })
+  })
+
+  it('asks the owning task before using an admitted native MCP and redacts credential fields', async () => {
+    const permission = vi.fn(async (_request: {tool:string;description:string}, _signal?: AbortSignal) => true), signal = new AbortController().signal
+    const gate = makeWorkbenchClaudeCanUseTool(permission, undefined, ['my_catalog'])
+    await expect(gate('mcp__my_catalog__lookup', { query:'item', api_key:'never-store', url:'https://user:url-secret@example.test/?token=query-secret', headers:[{name:'Authorization',value:'Bearer header-secret'}] }, { signal } as never)).resolves.toMatchObject({ behavior:'allow' })
+    expect(permission).toHaveBeenCalledOnce()
+    expect(permission.mock.calls[0]?.[0]).toMatchObject({ tool:'mcp__my_catalog__lookup', description:expect.stringContaining('item') })
+    expect(JSON.stringify(permission.mock.calls)).not.toContain('never-store')
+    for (const value of ['url-secret','query-secret','header-secret']) expect(JSON.stringify(permission.mock.calls)).not.toContain(value)
+    for (const tool of ['mcp__my_catalog_other__lookup','mcp__wechat__reply','mcp__delegate__run']) {
+      await expect(gate(tool, {}, { signal } as never)).resolves.toMatchObject({ behavior:'deny' })
+    }
+    expect(permission).toHaveBeenCalledOnce()
+  })
+
+  it('denies admitted MCP when approval is missing, refused, failed or cancelled', async () => {
+    for (const result of ['missing','refused','failed','cancelled']) {
+      const controller = new AbortController()
+      const permission = result === 'missing' ? undefined : async () => {
+        if (result === 'failed') throw Error('closed')
+        if (result === 'cancelled') controller.abort()
+        return result !== 'refused'
+      }
+      const gate = makeWorkbenchClaudeCanUseTool(permission, undefined, ['catalog'])
+      await expect(gate('mcp__catalog__lookup', { query:'item' }, { signal:controller.signal } as never)).resolves.toMatchObject({ behavior:'deny' })
+    }
+  })
+
+  it('fails closed when the full destructive input cannot fit in the bounded permission detail', async () => {
+    const signal = new AbortController().signal
+    const requestPermission = vi.fn(async () => false)
+    const gate = makeWorkbenchClaudeCanUseTool(requestPermission)
+    await expect(gate('Bash', { command: `rm -rf ${'secret'.repeat(4000)}`, ignored: 'x'.repeat(1000) }, { signal } as never)).resolves.toMatchObject({ behavior: 'deny' })
+    expect(requestPermission).not.toHaveBeenCalled()
+  })
+
+  it('denies an already-aborted tool call before any policy branch can allow it', async () => {
+    const controller=new AbortController(); controller.abort()
+    const requestPermission=vi.fn(async()=>true)
+    const gate=makeWorkbenchClaudeCanUseTool(requestPermission)
+    await expect(gate('Read',{file_path:'/tmp/report.md'},{signal:controller.signal} as never)).resolves.toMatchObject({behavior:'deny'})
+    expect(requestPermission).not.toHaveBeenCalled()
+  })
+
+  it('denies an allow-policy tool when the SDK aborts while policy modules load', async () => {
+    const controller = new AbortController()
+    const gate = makeWorkbenchClaudeCanUseTool(vi.fn(async () => true))
+    const decision = gate('Read', { file_path: '/tmp/report.md' }, { signal: controller.signal } as never)
+    controller.abort()
+    await expect(decision).resolves.toMatchObject({ behavior: 'deny' })
+  })
+
+  it('denies an approved relay when the SDK aborts before the approval continuation', async () => {
+    const controller = new AbortController()
+    let approve!: (allowed: boolean) => void
+    let markStarted!: () => void
+    const started = new Promise<void>(resolve => { markStarted = resolve })
+    const requestPermission = vi.fn(() => {
+      markStarted()
+      return new Promise<boolean>(resolve => { approve = resolve })
+    })
+    const gate = makeWorkbenchClaudeCanUseTool(requestPermission)
+    const decision = gate('Bash', { command: 'rm -rf build' }, { signal: controller.signal } as never)
+    await started
+    approve(true)
+    controller.abort()
+    await expect(decision).resolves.toMatchObject({ behavior: 'deny' })
   })
 
   it('yields init then text then result for a simple turn', async () => {
@@ -416,6 +772,24 @@ describe('claude-agent-provider', () => {
     ;(sdk as unknown as { __test_end: () => void }).__test_end()
     const text = await cheapPromise
     expect(text).toBe('8')
+  })
+
+  it('cheapEval falls back to result text when no assistant event is emitted', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const cheapPromise = provider.cheapEval?.('return JSON')
+    await new Promise(r => setTimeout(r, 0))
+    ;(sdk as unknown as { __test_yield: (m: unknown) => void }).__test_yield({
+      type: 'result', subtype: 'success', result: '{"shouldPaint":false}',
+      session_id: 'c-result-only', num_turns: 1, duration_ms: 50,
+    })
+    ;(sdk as unknown as { __test_end: () => void }).__test_end()
+    await expect(cheapPromise).resolves.toBe('{"shouldPaint":false}')
+    const options = (sdk as unknown as { __test_last_options: () => unknown }).__test_last_options() as {
+      settingSources?: string[]; tools?: string[]; persistSession?: boolean
+    }
+    expect(options.settingSources).toEqual([])
+    expect(options.tools).toEqual([])
+    expect(options.persistSession).toBe(false)
   })
 
   it('cheapEval respects WECHAT_CLAUDE_CHEAP_MODEL env override (PR F)', async () => {

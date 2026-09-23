@@ -1094,3 +1094,31 @@ describe('diagnose', () => {
 // fakeReport is intentionally unused-by-default in some test groups but
 // needs to typecheck cleanly under tsc --noEmit.
 void fakeReport
+
+describe('diagnose — code 9 backend still on the old version', () => {
+  function healthy(): any {
+    return {
+      expiredBots: [],
+      checks: {
+        daemon: { alive: true, pid: 1234 },
+        service: { installed: true, kind: 'launchd' },
+        provider: { ok: true, provider: 'claude', binaryPath: '/usr/local/bin/claude' },
+        claude: { ok: true, path: '/usr/local/bin/claude' },
+        accounts: { ok: true, count: 1, items: [{ id: 'bot', userId: 'u1' }] },
+        access: { ok: true, dmPolicy: 'allowlist', allowFromCount: 1 },
+      },
+    }
+  }
+  it('fires when the running cli version differs from the bundled one', () => {
+    const result = diagnose({ report: healthy(), healthOk: true, lastError: null, daemonVersion: { running: { cli: '0.6.3', head: null, boot_at: '2026-09-16T00:00:00Z' }, expected: '0.6.4' } })
+    expect(result.code).toBe(9)
+    expect(result.title).toContain('旧版')
+    expect(result.hint).toContain('0.6.3')
+    expect((result.primary.action as any).kind).toBe('run-restart-sequence')
+  })
+  it('stays green when versions match or the probe has nothing to compare', () => {
+    expect(diagnose({ report: healthy(), healthOk: true, lastError: null, daemonVersion: { running: { cli: '0.6.4', head: null, boot_at: 'x' }, expected: '0.6.4' } }).code).toBe(0)
+    expect(diagnose({ report: healthy(), healthOk: true, lastError: null, daemonVersion: { running: null, expected: '0.6.4' } }).code).toBe(0)
+    expect(diagnose({ report: healthy(), healthOk: true, lastError: null }).code).toBe(0)
+  })
+})

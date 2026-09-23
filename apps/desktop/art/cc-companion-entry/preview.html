@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>CC · 陪伴与事情 · 交互样板</title>
+  <link rel="stylesheet" href="./preview.css">
+</head>
+<body>
+  <div class="demo-bar"><span>交互样板 · 演示数据，不连接模型</span><span>刷新后重置</span></div>
+  <div id="app"></div>
+  <div id="notice" role="status" aria-live="polite"></div>
+  <dialog id="detail-dialog"><button id="close-dialog" aria-label="关闭详情">×</button><div id="dialog-content"></div></dialog>
+  <script type="module" src="./preview.js"></script>
+</body>
+</html>

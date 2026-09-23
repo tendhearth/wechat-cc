@@ -34,6 +34,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { McpStdioSpec } from '../../core/mcp-stdio-spec'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
+import { AGY_WECHAT_MCP_NAMESPACE_ID } from '../../core/agent-provider'
 
 /** Our namespaced entry key inside `mcpServers` — never touch any other key.
  *
@@ -43,7 +44,7 @@ import { UNDER_TEST_RUNNER } from '../../lib/config'
  *  so agy silently rejected all 32 wechat tools at every boot and the
  *  provider ran tool-less from 2026-08-17 until this was caught in its
  *  cli.log on 2026-08-29 ("encountered invalid tool …" ×32). */
-export const AGY_WECHAT_MCP_NAMESPACE_ID = 'wechat-cc-wechat'
+export { AGY_WECHAT_MCP_NAMESPACE_ID }
 
 /** The pre-2026-08-29 colon-carrying key — purged on sight by both setup
  *  (one-time migration) and remove, so stale entries with dead tokens don't

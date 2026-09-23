@@ -20,13 +20,23 @@ import type { InboundPipelineDeps } from '../inbound/build'
 import type { PipelineRun } from '../inbound/types'
 import { isAdmin, loadAccess, appendAllowFrom } from '../../lib/access'
 import { resolveTier } from '../../core/user-tier'
+import { derivePetTurn } from '../../core/pet-turn'
+import type { PetTurnDep } from '../internal-api/types'
 import { makeAdminCommands } from '../admin-commands'
+import { makeSelfChangeSpawner, resolveSelfCli } from '../self-change-spawn'
 import { makeModeCommands } from '../mode-commands'
 import type { ChatPrefsStore } from '../chat-prefs'
 import type { CareLedger } from '../companion/care-ledger'
 import type { ReplySinks } from '../reply-sinks'
 import { loadCompanionConfig } from '../companion/config'
+import { readPlanLogDays } from '../companion/plan-memory'
+import { readJournalSeen, writeJournalSeen } from '../../core/journal-seen'
 import { resolveAdminChatId } from '../companion/resolve-admin'
+import { makeCheapJudge, type TaskCandidate } from '../../core/workbench/task-reference'
+import { scopedSend, withReplyScope } from '../inbound/reply-scope'
+import type { InboundCtx } from '../inbound/types'
+import type { AppTurn } from '../inbound/build'
+import { basename as pathBasename } from 'node:path'
 import { makeSettingsPanel } from '../settings-panel'
 import { makeCommandRouter } from './command-router'
 import { makeEventsStore } from '../events/store'
@@ -35,8 +45,12 @@ import { makeForwardBudget } from '../../core/forward-budget'
 import type { InboundMsg } from '../../core/prompt-format'
 import { makeOnboardingHandler } from '../onboarding'
 import { botName, botNameFromModeFallback } from '../bot-name'
-import { loadAgentConfig, saveAgentConfig, withModelForProvider } from '../../lib/agent-config'
+import { loadAgentConfig, saveAgentConfig } from '../../lib/agent-config'
+import { writeConfigKey } from '../config-surface'
+import { makeOpenaiModels } from '../openai-models'
+import { hasLlmKey } from '../llm-keys'
 import { findOnPath } from '../../lib/util'
+import { isCompiledBundle } from '../../lib/runtime-info'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 import { materializeAttachments } from '../media'
 import { loadGuardConfig } from '../guard/store'
@@ -49,6 +63,7 @@ import type { YiHub, YiDispatch } from '../../core/yi-hub'
 import type { ExecResult } from '../../core/a2a-server'
 import type { Mode, ProviderId } from '../../core/conversation'
 import { readJsonFile } from '../../lib/read-json-file'
+import { makeMattersService } from '../../core/matters/service'
 
 export interface DelegateDeps {
   listHands: () => readonly A2AAgentRecord[]
@@ -111,6 +126,8 @@ export function makeDelegateToHand(deps: DelegateDeps) {
 }
 
 export interface PipelineDepsOpts {
+  workbench?: import('../../core/workbench/service').WorkbenchService
+  matters?: import('../../core/matters/store').MatterStore
   stateDir: string
   db: import('../../lib/db').Db
   ilink: IlinkAdapter
@@ -136,16 +153,35 @@ export interface PipelineDepsOpts {
    * A second instance would never see the capture.
    */
   replySinks: ReplySinks
+  /**
+   * 桌宠信号(spec 2026-09-05-cc-desktop-pet §5.1)—— main.ts 里造的**同一个**
+   * 实例(也传给 buildBootstrap)。这里写两笔:入站分发进门时的 noteTurnStart,
+   * 和 companionConverse 的 noteContact / noteTurnStart。读的那一头是下面
+   * 组装出来的 petTurn 闭包。
+   */
+  petSignals?: import('../pet-signals').PetSignals
+  /** 打猎战利品(v36)。缺失 ⇒ 微信「背包」命令说功能没接。 */
+  huntStore?: { list(limit?: number): readonly import('../../core/journal-store').CatchRow[] }
   /** Sticker library — 随身 CC 手机页展示 + 图片服务(main.ts 传入)。 */
   stickers?: import('../stickers').StickerLib
   /** 触发 daemon 重启(远程访问开关切换后套用新隧道接线)。main.ts 传入。 */
   requestRestart?: (reason: string) => void
+  /** LLM 体检只读缓存 —— 设置面板「模型与后端」的通/不通一列。main.ts 传入。 */
+  llmHealth?: { cached(): import('../llm-health').LlmHealthReport | null }
+  /** 对话回合(turn_records)—— 随身 CC 首屏的「聊天日摘要」来源。main.ts 传 turnRecordStore。 */
+  turns?: { recent(limit: number): readonly { chatId: string; endedAt: number; outcome: string; mode: string; startedAt: number }[] }
+  /** 三轴 presence 共用入口(internal-api lifecycle.getPresence)。main.ts 传入。 */
+  presence?: () => Promise<import('../../core/companion-presence').Presence | null>
+  /** 「看 码」「@码 文本」的执行者(daemon/cli-reply-handler)。main.ts 传入。 */
+  cliReply?: { handle(text: string, chatId: string): Promise<boolean>; probe(text: string, chatId: string): boolean }
 }
 
 export interface PipelineDepsRefs {
   polling: Ref<PollingLifecycle>
   guard: Ref<GuardLifecycle>
   pipeline: Ref<PipelineRun>
+  /** 可选:没接(测试 / 最小嵌入)时 App 一轮不过消费表,直接进对话。 */
+  appTurn?: Ref<AppTurn>
   /** Late-bound ingest nudge — fired per new inbound so the knowledge base tracks fresh activity. */
   ingestNudge: Ref<() => void>
 }
@@ -160,6 +196,8 @@ export interface BuildPipelineDepsResult {
   /** Mint a fresh settings-panel URL (10-min single-active token) — the
    *  desktop 「手机上改设置」 QR entry (GET /v1/settings/link). */
   settingsPanelLink: () => Promise<string | null>
+  /** 「一件事」读写面(有 matters store 才有)。 */
+  mattersService: import('../../core/matters/service').MattersService | null
   /**
    * App-conversation-channel converse closure (voice arc Stage 0, Task 2).
    * Late-bound onto internal-api by main.ts via setCompanionConverse()
@@ -168,11 +206,20 @@ export interface BuildPipelineDepsResult {
    * registration time (see main.ts's staged startup: internal-api first,
    * then bootstrap, then this wiring pass).
    */
-  companionConverse: (text: string) => Promise<{ reply: string }>
+  companionConverse: (text: string, origin?: 'desktop' | 'phone') => Promise<{ reply: string }>
+  /**
+   * 桌宠 turn 的组装闭包(CC 桌宠 Phase B)。和 companionConverse 挨着造,因为
+   * 需要同一批东西:ownerChatId(companion 配置)、resolveOwnerSessionKey +
+   * boot.sessionManager(在飞判断)、opts.petSignals(三个时间戳)、消息库
+   * (主人最近一次入站)。main.ts 经 setPetTurn late-bind 到 internal-api。
+   */
+  petTurn: PetTurnDep
 }
 
 export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs): BuildPipelineDepsResult {
   const { stateDir, db, ilink, boot, log, chatPrefs, careLedger, replySinks } = opts
+  // 消费者的回话:微信来的一轮直发微信;App 来的一轮(withReplyScope 里)截住交还 App(inbound/reply-scope)。
+  const send = scopedSend((cid: string, txt: string, o?: { source: 'workbench' }) => ilink.sendMessage(cid, txt, o))
   const inboxDir = join(stateDir, 'inbox')
 
   // A2A exec (delegate a task to a hand) runs a FULL agent on the hand —
@@ -240,7 +287,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     loadAccess: () => loadAccess(),
     appendAllowFrom: (c) => { appendAllowFrom(c) },
     ...(boot.sendAssistantText ? { sendAssistantText: (c, t) => boot.sendAssistantText!(c, t) } : {}),
-    ...(boot.social ? { social: { revealer: boot.social.revealer, seekStore: boot.social.seekStore, broker: boot.social.broker } } : {}),
+    ...(boot.social ? { social: { wish: boot.social.wish, penpal: { startVisit: (c) => boot.social!.penpal.startVisit(c) }, intro: boot.social.intro } } : {}),
     ...(boot.penpal ? { penpal: boot.penpal } : {}),
     ...(boot.pairing ? { pairing: boot.pairing } : {}),
     guestRequests,
@@ -288,7 +335,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       running: () => refs.polling.current?.running() ?? [],
     },
     resolveUserName: (cid) => ilink.resolveUserName(cid),
-    sendMessage: (cid, txt) => ilink.sendMessage(cid, txt),
+    sendMessage: send,
     sharePage: (t, c, o) => ilink.sharePage(t, c, o),
     // /reset and /health ai need to see the same registry/sessionManager/
     // sessionStore the coordinator drives — that's how dropping a session
@@ -343,6 +390,13 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
           .map(h => ({ id: h.id, name: h.name || h.id, ...(h.url ? { url: h.url } : {}) }))
       } catch { return [] }
     },
+    // 微信里的「背包」速览。读同一张 journal —— 桌面端那个区块是它的
+    // 可编辑版。读失败返回空数组而不是抛:一次查询挂掉不该让整条 admin
+    // 命令链断在这里。
+    huntBag: () => {
+      if (!opts.huntStore?.list) return []
+      try { return opts.huntStore.list(50) } catch { return [] }
+    },
     // 触发器按**已注册的手名**认派活(不按动词)—— 见 admin-commands 的
     // matchDelegate。id 和 name 都给,两种叫法都能触发。
     knownHandNames: () => {
@@ -388,6 +442,22 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         timeoutMs,
       })(handName, task)
     },
+    // 微信「自改 <需求>」的执行端(spec 2026-09-18)。流水线最后要部署 + 重启
+    // 这个 daemon,所以只能 detached 起独立进程 —— 同 updateSelf 的理由。
+    selfChange: makeSelfChangeSpawner({
+      resolve: () => resolveSelfCli({
+        compiled: isCompiledBundle(),
+        execPath: process.execPath,
+        repoRoot: REPO_ROOT,
+        bunPath: findOnPath('bun'),
+        exists: existsSync,
+      }),
+      spawn,
+      env: process.env,
+      stateDir,
+      cwd: REPO_ROOT,
+      log: (line) => log('SELF_CHANGE', line),
+    }),
     updateSelf: async () => {
       if (!existsSync(CLI_ENTRY)) return { ok: false as const, reason: 'source_cli_not_found' }
       const bun = findOnPath('bun')
@@ -419,10 +489,26 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     remoteTunnel = { id: did, relay: remoteCfg.remote_relay_url ?? 'wss://cc.tendhearth.com/tunnel/phone' }
   }
 
+  // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
+  const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+  // 「一件事」读写面:工作台续接 + 对主人 chat 的 app 通道;手机页与内部 API 共用这一个实例。
+  const mattersService = opts.matters ? makeMattersService({
+    store: opts.matters,
+    ...(opts.workbench ? { workbench: opts.workbench } : {}),
+    // companionConverse 在下面才定义;这里只是捕获引用,真正调用发生在请求到来时。
+    chat: {
+      ownerChatId,
+      say: (text: string, surface?: 'desktop' | 'phone') => companionConverse(text, surface ?? 'desktop'),
+      recent: async (chatId: string, limit: number) => (await messagesStore.listRange(chatId, { limit })).map(r => ({ kind: r.direction === 'in' ? 'user' : 'text', text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
+    },
+  }) : null
   const settingsPanel = makeSettingsPanel({
     stateDir,
-    ownerChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null),
+    ownerChatId,
+    ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), say: (id, text) => mattersService.say(id, text, 'phone'), seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
+    // 「默认大脑」改完自己重启(与远程开关同一条路)。
+    ...(opts.requestRestart ? { requestRestart: (reason: string) => opts.requestRestart!(reason) } : {}),
     ...(opts.requestRestart ? {
       remote: {
         isEnabled: () => (loadAgentConfig(stateDir) as { remote_tunnel?: boolean }).remote_tunnel === true,
@@ -446,6 +532,30 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       },
     } : {}),
     ...(opts.stickers ? { stickers: { list: () => opts.stickers!.list(), dir: join(stateDir, 'stickers') } } : {}),
+    // 随身 CC 首屏「伙伴的一天」三源(spec 2026-09-06-mobile-home-feed §5.4)。
+    // journal 缺 ⇒ 整个 feed 不接(三项 degraded),不半接。
+    ...(opts.huntStore ? {
+      feed: {
+        journal: { list: (n?: number) => opts.huntStore!.list(n) },
+        planLogDays: (d: number) => readPlanLogDays(stateDir, d),
+        // M4:不接线时抛(collectSources 的 try/catch 把它记成
+        // sources_degraded),而不是悄悄给 [] —— [] 会被读成「接了,今天没
+        // 聊天」而不是「这一源读不到」,rule 4 的区分就在这一步丢了。
+        turnsRecent: (n: number) => {
+          if (!opts.turns) throw new Error('turns 未接线')
+          return opts.turns.recent(n)
+        },
+        timezone: () => loadCompanionConfig(stateDir).timezone,
+      },
+    } : {}),
+    ...(opts.presence ? { presence: opts.presence } : {}),
+    seen: { read: () => readJournalSeen(stateDir), write: (iso: string) => writeJournalSeen(stateDir, iso) },
+    // 「模型与后端」:注册表 + 体检缓存 + key 有无(只回 boolean)。
+    llm: {
+      registered: () => boot.registry.list(),
+      cached: () => opts.llmHealth?.cached() ?? null,
+      hasKey: (p) => hasLlmKey(stateDir, p),
+    },
     chatPrefs: {
       get: (c) => ({ ...chatPrefs.get(c) }),
       set: (c, patch) => ({ ...chatPrefs.set(c, patch as Parameters<typeof chatPrefs.set>[1]) }),
@@ -485,22 +595,33 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     registry: boot.registry,
     defaultProviderId: boot.defaultProviderId,
     agentConfig: boot.agentConfig,
-    sendMessage: (cid, txt) => ilink.sendMessage(cid, txt),
+    sendMessage: send,
     setUserName: (cid, name) => ilink.setUserName(cid, name),
     getUserName: (cid) => ilink.resolveUserName(cid) ?? null,
-    // `/api <model>` — read-modify-write agent-config.json via
-    // withModelForProvider/saveAgentConfig (per-provider field, unlike the
-    // POST /v1/model route which pins the GLOBAL default provider's model).
-    // The daemon's mtime-cached config reader (currentModelFor,
-    // bootstrap/index.ts) then delivers it to the next openai spawn, no restart.
-    pinModel: (providerId, model) => {
-      // Write the TARGET provider's own model field (openai→openaiModel), NOT
-      // the global default provider's — so `/api <model>` pins openai even when
-      // the global default is claude. Mirrors currentModelFor's per-provider
-      // resolution (bootstrap/index.ts). mtime-cached reader delivers it next spawn.
-      const current = loadAgentConfig(stateDir)
-      saveAgentConfig(stateDir, withModelForProvider(current, providerId, model))
+    // /api list · alias · /set cheap 的读写面 —— 全走 agent-config(mtime
+    // 缓存读)/ config-surface(写),和面板同一条路。
+    readConfig: () => {
+      const c = loadAgentConfig(stateDir)
+      return { openaiBaseUrl: c.openaiBaseUrl, openaiModel: c.openaiModel, openaiAliases: c.openaiAliases, cheapEvalProvider: c.cheapEvalProvider, trusted_providers: c.trusted_providers }
     },
+    setOpenaiAlias: (alias, model) => {
+      const c = loadAgentConfig(stateDir)
+      const next = { ...(c.openaiAliases ?? {}) }
+      if (model === null) delete next[alias]
+      else next[alias] = model
+      const { openaiAliases: _drop, ...rest } = c
+      saveAgentConfig(stateDir, Object.keys(next).length > 0 ? { ...rest, openaiAliases: next } : rest)
+    },
+    setConfig: async (key, value) => {
+      const r = await writeConfigKey(stateDir, key, value)
+      return r.ok ? { ok: true } : { ok: false, error: r.error, detail: r.detail }
+    },
+    openaiModels: makeOpenaiModels({
+      baseUrl: () => loadAgentConfig(stateDir).openaiBaseUrl,
+      apiKey: () => process.env.WECHAT_OPENAI_API_KEY,
+    }),
+    providerNotes: () => boot.providerNotes?.() ?? {},
+    ...(opts.requestRestart ? { requestRestart: (reason: string) => opts.requestRestart!(reason) } : {}),
     chatPrefs,
     log,
     isAdmin,
@@ -525,7 +646,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const onboardingHandler = makeOnboardingHandler({
     isKnownUser: (uid) => ilink.resolveUserName(uid) !== undefined,
     setUserName: (cid, name) => ilink.setUserName(cid, name),
-    sendMessage: async (cid, txt) => { await ilink.sendMessage(cid, txt) },
+    sendMessage: async (cid, txt) => { await send(cid, txt) },
     botName: (cid) => botName(boot.coordinator.getMode(cid), boot.agentConfig),
     dispatchInbound: async (msg) => {
       // Re-fire this inbound through the normal pipeline. Onboarding has
@@ -576,15 +697,58 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     capture: {
       markChatActive: (c, a) => ilink.markChatActive(c, a),
       captureContextToken: (c, t) => ilink.captureContextToken(c, t),
+      onContextAvailable:(c,a)=>opts.workbench?.contextAvailable(c,a),
     },
     typing: { sendTyping: (c, a) => ilink.sendTyping(c, a) },
+    ...(opts.matters?{matter:{ensureChat:(c:string)=>opts.matters!.ensureChat(c),log:(t:string,l:string)=>log(t,l)}}:{}),
+    ...(opts.workbench?{taskReference:{
+      ownerChatId,
+      // 可指称的候选:七天内动过、未归档的任务,包括失败 / 中断的 —— 主人问"那件怎么了"
+      // 时它得还在;焦点指向的任务失败了也不能凭空消失(真机 2026-09-16:Codex 额度耗尽
+      // 把任务打成 failed,焦点随之静默失效,后面两句掉进了普通聊天)。项目显示名用目录名。
+      candidates:():TaskCandidate[]=>{
+        const since=Date.now()-7*24*60*60_000
+        const tasks=opts.workbench!.list({archived:'exclude',limit:50}).tasks
+          .filter(t=>t.phase!=='cancelled'&&t.updatedAt>=since)
+          .sort((a,b)=>b.updatedAt-a.updatedAt)
+        // 有「一件事」登记处时以它为准:候选就是"最近动过的事",顺序也是它的顺序;任务详情仍从工作台取。
+        const ordered=opts.matters
+          ?(()=>{const byId=new Map(tasks.map(t=>[t.id,t]));return opts.matters!.list({kind:'task',statuses:['open','replied','done'],since,limit:50}).flatMap(m=>{const t=byId.get(m.id);return t?[t]:[]})})()
+          :tasks
+        return ordered.map(t=>({id:t.id,title:t.title,project:pathBasename(t.path),path:t.path,providerId:t.providerId,phase:t.phase,updatedAt:t.updatedAt,error:t.error}))
+      },
+      // 额度止损:这家耗尽就不再往它送,问"交给另一位继续?";「是」就在同一文件夹给另一位新开一件。
+      quotaExhausted:(id:string)=>opts.workbench!.quotaExhausted(id),
+      fallbackExecutor:(id:string)=>opts.workbench!.fallbackExecutor(id),
+      watchTask:async(taskId:string,accountId:string)=>{opts.workbench!.setWechatWatch(taskId,accountId,true)},
+      createTask:async(input:{path:string;providerId:string;text:string})=>{const task=await opts.workbench!.create(input);return {id:task.id}},
+      handleWechat:opts.workbench.handleWechat,
+      sendMessage:(chatId:string,text:string)=>send(chatId,text,{source:'workbench'}),
+      // 便宜模型只在名称命中多件 / 零命中且无焦点时被问,且只能选编号或说 0。没配就只走确定性各层。
+      ...(boot.registry.getCheapEval()?{judge:makeCheapJudge(boot.registry.getCheapEval()!)}:{}),
+      log,
+    }}:{}),
+    ...(opts.workbench?{workbench:{handleWechat:opts.workbench.handleWechat,sendMessage:(chatId:string,text:string)=>send(chatId,text,{source:'workbench'})}}:{}),
+    // 意图路由(第一步只记 trace 不改决策):探针全是各消费者自己交出来的只读判定。
+    route: {
+      probes: {
+        admin: (ctx) => adminCommandsHandler.probe(ctx.msg),
+        mode: (ctx) => modeHandler.probe(ctx.msg),
+        onboarding: (ctx) => onboardingHandler.probe(ctx.msg),
+        'permission-reply': (ctx) => ilink.probePermissionReply(ctx.msg.text ?? '', ctx.msg.chatId, ctx.msg.quote?.text),
+        ...(opts.cliReply ? { 'cli-reply': (ctx) => opts.cliReply!.probe(ctx.msg.text ?? '', ctx.msg.chatId) } : {}),
+      },
+      ...(opts.matters ? { matterFor: (chatId: string) => opts.matters!.findBySurface('wechat', chatId)?.id ?? null } : {}),
+      log,
+    },
     admin: { adminHandler: adminCommandsHandler },
     mode: { modeHandler },
     onboarding: { onboardingHandler },
     permissionReply: {
-      handlePermissionReply: (text: string) => ilink.handlePermissionReply(text),
+      handlePermissionReply: (text: string, fromChatId?: string, quoted?: string) => ilink.handlePermissionReply(text, fromChatId, quoted),
       log,
     },
+    ...(opts.cliReply ? { cliReply: { handle: (t: string, c: string) => opts.cliReply!.handle(t, c), log } } : {}),
     guard: {
       guardEnabled: () => loadGuardConfig(stateDir).enabled,
       guardState: () => refs.guard.current?.current() ?? { reachable: true, ip: null },
@@ -677,7 +841,19 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         // 命中即止,否则落到正常 agent 分发。逻辑本体见 command-router.ts。
         dispatch: async (msg) => {
           if (await commandRouter.tryHandle(msg)) return
-          return boot.coordinator.dispatch(msg)
+          // 桌宠「起飞了」的时刻(spec §5.1)。定义:一个「回合」= 从入站分发
+          // 或 converse 进来的那一趟。所以记在命令路由**之后** —— 一句「待批准」
+          // 被路由自己答掉了,桌宠不该说它在想事情。记在这里而不是 coordinator
+          // 里,是因为不是每个 provider 都发 init 事件,而每条入站都从这儿过。
+          opts.petSignals?.noteTurnStart(msg.chatId)
+          try {
+            return await boot.coordinator.dispatch(msg)
+          } finally {
+            // 成对:dispatch 抛错 / 被中途丢弃时 recordTurn 可能根本不响,
+            // 起飞标记会永久挂着,桌宠就永远显示「在想」。noteTurnStop 只撤
+            // 起飞标记;「刚忙完」那一笔仍然归 recordTurn。
+            opts.petSignals?.noteTurnStop(msg.chatId)
+          }
         },
       },
     },
@@ -691,7 +867,14 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // poll-loop/inbound-pipeline middleware chain, since this isn't a WeChat
   // inbound. The agent's `reply` tool still posts to POST /v1/wechat/reply
   // as normal; the open sink captures it instead of ilink-sending.
-  const companionConverse = async (text: string): Promise<{ reply: string }> => {
+  // 「一件事」:桌面 / 手机上跟 CC 说的话和微信里的进同一条消息流(source 记表面),三个入口看到的是同一段对话。落库失败不影响这一轮。
+  const persistAppTurn = (origin: 'desktop' | 'phone', synthetic: InboundMsg, text: string, reply: string | undefined) => {
+    const ts = new Date().toISOString()
+    const ownerChatId = synthetic.chatId
+    void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:in`, chatId: ownerChatId, ts, direction: 'in', kind: 'text', text, source: origin }).catch(() => {})
+    if (reply) void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:out`, chatId: ownerChatId, ts: new Date(Date.now() + 1).toISOString(), direction: 'out', kind: 'text', text: reply, source: origin }).catch(() => {})
+  }
+  const companionConverse = async (text: string, origin: 'desktop' | 'phone' = 'desktop'): Promise<{ reply: string }> => {
     // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code,
     // Task 3 review finding #1) — an App /converse turn is real owner
     // activity, but it dispatches straight through the coordinator and
@@ -702,8 +885,13 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     // Same posture as mw-messages: optional, wrapped so a throw here can
     // never break the app turn it's marking.
     try { boot.markInboundActivity?.() } catch { /* 绝不能因为记一笔就打断 app 轮次 */ }
+    // 桌宠(spec §5.1):app 里说话也是「主人联系过我」。和上面一样,记一笔
+    // 绝不能打断轮次 —— 但这里只是一次 Math.max 赋值,不会抛。
+    opts.petSignals?.noteContact()
     const ownerChatId = loadCompanionConfig(stateDir).default_chat_id
     if (!ownerChatId) throw new Error('companion_owner_chat_not_configured')
+    // 「一件事」:app 里对 CC 说的话属于主人那条 chat matter,并且它现在在桌面表面露过面。
+    try { const m = opts.matters?.ensureChat(ownerChatId); if (m) opts.matters!.bind(m.id, 'desktop', 'app') } catch { /* 登记失败不打断轮次 */ }
     // D3 review follow-up: app-converse captures the reply through a sink, but a
     // chatroom-mode chat is preempt-policy (submitTurn runs the turn BARE, no
     // per-chat lock) AND chatroom forbids the `reply` tool — so an app turn on a
@@ -754,19 +942,95 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       createTimeMs: Date.now(),
       accountId: ilink.resolveAccountId(ownerChatId),
     }
-    return boot.coordinator.submitTurn(synthetic, {
-      within: async (dispatch) => {
-        const sink = replySinks.open(ownerChatId)
-        try {
-          await dispatch()
-          return { reply: sink.close() }
-        } catch (err) {
-          sink.close()
-          throw err
-        }
-      },
+    // 第四步(d):App 说的话也先过 route + consume 这张表(与微信同一份消费者实例)。消费者的
+    // 回话在回复作用域里被截住交还给 App;没人吃 ⇒ 下面照常进对话。没接 appTurn(测试 /
+    // 最小嵌入)⇒ 跳过。
+    const appTurn = refs.appTurn?.current
+    if (appTurn) {
+      const ctx: InboundCtx = { msg: synthetic, receivedAtMs: synthetic.createTimeMs, requestId: `app:${origin}:${synthetic.createTimeMs}` }
+      const front = await withReplyScope(() => appTurn(ctx))
+      log('APP_INBOUND', `origin=${origin} intent=${ctx.intent?.kind ?? '-'} consumed=${front.result.consumed ? (ctx.consumedBy ?? 'yes') : 'dispatched'}`)
+      if (front.result.consumed) {
+        const reply = front.replies.join('\n')
+        persistAppTurn(origin, synthetic, text, reply)
+        return { reply }
+      }
+    }
+    // 起飞时刻:app 轮次不走入站管道(见上面的 dispatch),所以在这儿单独记一笔,
+    // 并且同样用 finally 配对 —— 两条进来的路,同一套 start/stop 语义。
+    opts.petSignals?.noteTurnStart(ownerChatId)
+    try {
+      const result = await boot.coordinator.submitTurn(synthetic, {
+        within: async (dispatch) => {
+          const sink = replySinks.open(ownerChatId)
+          try {
+            await dispatch()
+            return { reply: sink.close() }
+          } catch (err) {
+            sink.close()
+            throw err
+          }
+        },
+      })
+      // 「一件事」:桌面 / 手机上跟 CC 说的话和微信里的进同一条消息流(source 记表面),
+      // 三个入口看到的是同一段对话。落库失败不影响这一轮。
+      persistAppTurn(origin, synthetic, text, result.reply)
+      return result
+    } finally {
+      opts.petSignals?.noteTurnStop(ownerChatId)
+    }
+  }
+
+  // 桌宠的「在做什么」(spec 2026-09-05-cc-desktop-pet §5.1)。推导本身是
+  // core/pet-turn.ts 的纯函数;这里只负责把 daemon 里**已经存在**的信号收齐:
+  // 主人是谁(companion 配置,与 converse 同源)、他的会话在不在飞
+  // (sessionManager.isInFlight,与 converse 的前置守卫同一个判断)、
+  // pet-signals 的三个内存时间戳、待决权限(与微信「y/n」同一份清单)。
+  const petTurn: PetTurnDep = async () => {
+    const nowMs = Date.now()
+    let ownerChatId: string | null = null
+    try { ownerChatId = loadCompanionConfig(stateDir).default_chat_id ?? null } catch { ownerChatId = null }
+    if (!ownerChatId) {
+      // 还没配主人:没有会话可看,也没有「谁能拍板」可言 —— 待决权限一律不外
+      // 泄(见下面的过滤)。但「主人联系过我」这一笔是全局的(converse / 权限
+      // 拍板都会写),照样如实报出去。
+      return derivePetTurn({
+        nowMs, inFlight: false, inFlightSinceMs: null, lastToolCallAtMs: null, lastResultAtMs: null,
+        ownerLastContactAtMs: opts.petSignals?.snapshot('').lastContactMs ?? null,
+        pending: [],
+      })
+    }
+    // 只报**主人自己那些**待决权限。这张表是全 daemon 共享的:任何一个陌生人
+    // 的会话触发的权限询问也在里面,而 hash 一旦露出去就等于一张批准券
+    // (微信侧那条「y <hash>」)。桌宠是主人的面,只该看见主人自己的队列。
+    const pending = opts.ilink.listPendingPermissions().filter(p => p.chatId === ownerChatId)
+    const key = resolveOwnerSessionKey(ownerChatId, {
+      resolveProject: boot.resolve,
+      getMode: (cid) => boot.coordinator.getMode(cid),
+      defaultProviderId: boot.defaultProviderId,
+    })
+    const sessionInFlight = !!key && boot.sessionManager.isInFlight({ alias: key.alias, providerId: key.providerId, chatId: ownerChatId })
+    const sig = opts.petSignals?.snapshot(ownerChatId) ?? { inFlightSinceMs: null, lastToolCallAtMs: null, lastResultAtMs: null, lastContactMs: null }
+    // 两个条件都要:会话在飞(独立事实源)**且**这一趟是从入站/converse 进来的。
+    // 关心推送、打猎、提醒这些**自己发起**的 tick 轮次也会把 isInFlight 抬起来,
+    // 但它们不是「主人问了、我在想」—— 那属于「处境」(presence 那条线),不属于
+    // 桌宠的 turn 相位。没有起飞标记就没有 since 可报,硬报也只能报个 null。
+    const inFlight = sessionInFlight && sig.inFlightSinceMs !== null
+    // 「主人上次联系我」取两边的**较晚者**:消息库只记微信入站,pet-signals 只记
+    // app converse / 权限拍板。任何一边单独看都会把另一边的活动说成「没来过」。
+    const inboundIso = await messagesStore.latestInboundTs(ownerChatId).catch(() => null)
+    const inboundMs = inboundIso ? Date.parse(inboundIso) : NaN
+    const contact = Math.max(Number.isFinite(inboundMs) ? inboundMs : -1, sig.lastContactMs ?? -1)
+    return derivePetTurn({
+      nowMs,
+      inFlight,
+      inFlightSinceMs: sig.inFlightSinceMs,
+      lastToolCallAtMs: sig.lastToolCallAtMs,
+      lastResultAtMs: sig.lastResultAtMs,
+      ownerLastContactAtMs: contact >= 0 ? contact : null,
+      pending,
     })
   }
 
-  return { pipelineDeps, companionConverse, settingsPanelLink: () => settingsPanel.linkUrl() }
+  return { pipelineDeps, companionConverse, petTurn, mattersService, settingsPanelLink: () => settingsPanel.linkUrl() }
 }

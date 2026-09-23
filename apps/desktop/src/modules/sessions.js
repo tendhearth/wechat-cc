@@ -801,7 +801,7 @@ export function turnHtml(turn) {
   if (t.type === 'attachment') {
     const att = t.attachment || {}
     const name = att.path || att.name || 'attachment'
-    return `<div class="jsonl-turn" data-role="attachment">📎 ${escapeHtml(name)}</div>`
+    return `<div class="jsonl-turn" data-role="attachment">${icon("attachment")} ${escapeHtml(name)}</div>`
   }
 
   // tool_result: render body if present, else label.
@@ -983,7 +983,7 @@ function wechatAttachmentRow({ side, role, avatarText, avatarColor, avatarClass,
     inner = `<div class="wechat-bubble-wrap">${fileCard(attachment)}</div>`
   } else if (attachment.kind === 'voice') {
     // 语音 stub — duration not tracked yet, just signal there was one.
-    inner = `<div class="wechat-bubble-wrap"><div class="wechat-bubble wechat-voice-stub">🎤 语音</div></div>`
+    inner = `<div class="wechat-bubble-wrap"><div class="wechat-bubble wechat-voice-stub">${icon("mic-01")} 语音</div></div>`
   }
   return `<div class="wechat-row ${side}" data-role="${escapeHtml(role)}">` +
     avatarHtml({ avatarText, avatarColor, avatarClass, avatarSrc, avatarKey }) +
@@ -1103,7 +1103,7 @@ function renderPart(part, role) {
   }
   if (p.type === 'tool_use') {
     const name = p.name || '?'
-    return `<div class="jsonl-turn" data-role="tool_use">⚙ ${escapeHtml(name)}</div>`
+    return `<div class="jsonl-turn" data-role="tool_use">${icon("settings-01")} ${escapeHtml(name)}</div>`
   }
   if (p.type === 'tool_result') {
     const body = typeof p.content === 'string' ? p.content

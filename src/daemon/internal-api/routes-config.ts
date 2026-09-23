@@ -14,6 +14,7 @@
 import type { InternalApiDeps, RouteTable } from './types'
 import { readConfigSurface, writeConfigKey } from '../config-surface'
 import { makeEventsStore } from '../events/store'
+import { kickAtelierModelProvision, shouldProvisionOnConfigChange } from '../atelier-provision'
 
 export function configRoutes(deps: InternalApiDeps): RouteTable {
   return {
@@ -26,6 +27,11 @@ export function configRoutes(deps: InternalApiDeps): RouteTable {
       if (typeof b.key !== 'string' || b.key.length === 0) return { status: 400, body: { error: 'invalid_key' } }
       if (b.value === undefined || b.value === null) return { status: 400, body: { error: 'invalid_value' } }
       const result = await writeConfigKey(deps.stateDir, b.key, b.value)
+      // Turning the atelier on downloads CC's local paint set (~5GB) in the
+      // background, silently, exactly once. Never blocks or fails this response.
+      if (result.ok && shouldProvisionOnConfigChange(b.key, result.previous, b.value)) {
+        void kickAtelierModelProvision(deps.stateDir, { log: (t, l) => deps.log?.(t, l) })
+      }
       if (result.ok && deps.db) {
         const auditChat = caller?.chatId ?? '_operator'
         const reason = typeof b.reason === 'string' && b.reason.length > 0 ? b.reason : '(no reason given)'

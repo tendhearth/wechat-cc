@@ -1,10 +1,13 @@
-import { test, expect } from './fixtures'
+import { test, expect, reveal } from './fixtures'
 
 test('inline companion animation replaces the overview illustration', async ({ page, shimUrl, shim }) => {
-  await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
+  // 场景里要有 CC 才能测悬停问候:presence 由 shim 的 /v1/companion/presence 提供,默认在线空闲。
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true, presence: { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } } })
   await page.goto(shimUrl)
   await page.waitForFunction(() => document.documentElement.dataset.mode === 'dashboard')
 
+  // 09-13 起鱼缸收进「鱼缸与连接」折叠区,先展开再看画布。
+  await reveal(page, '#companion-stage')
   const canvas = page.locator('#companion-stage')
   await expect(canvas).toBeVisible()
   const box = await canvas.boundingBox()
@@ -18,10 +21,13 @@ test('inline companion animation replaces the overview illustration', async ({ p
   await page.mouse.move(box.x + box.width * .72, box.y + box.height * .52)
   await expect(page.locator('#stage-hint')).toContainText('它们发现你了')
 
-  await page.mouse.move(box.x + box.width * .846, box.y + box.height * .754)
+  // 螃蟹的位置由场景决定(#102 换了插画后它挪了家),从场景读,不写死像素。
+  const crab = await page.evaluate(() => (window as any).__companionScene.crabSpot() as { x: number, y: number })
+  await page.mouse.move(box.x + box.width * crab.x, box.y + box.height * crab.y)
   await expect(page.locator('#stage-hint')).toContainText('点点小螃蟹')
-  await page.mouse.click(box.x + box.width * .846, box.y + box.height * .754)
-  await expect(page.locator('#stage-hint')).toContainText('它要换个地方藏起来')
+  await page.mouse.click(box.x + box.width * crab.x, box.y + box.height * crab.y)
+  // 被点后要么换个地方藏,要么沿鱼缸逃走 —— 哪一种由场景随机决定,两种都是「它动了」。
+  await expect(page.locator('#stage-hint')).toHaveText(/换个地方藏起来|沿着鱼缸逃走/)
   await page.waitForTimeout(1250)
   await expect(page.locator('#crab-escape')).toHaveCSS('opacity', '0')
 
@@ -48,7 +54,17 @@ test('inline companion animation replaces the overview illustration', async ({ p
   await page.locator('#companion-users-toggle').click()
   await expect(page.locator('.moment-body')).not.toHaveClass(/is-companion-users-open/)
   await page.locator('#companion-users-toggle').click()
-  await page.locator('#companion-users-scrim').click({ position: { x: 120, y: 180 } })
+  // 09-13 起左侧全局侧栏(#dash-global-rail)叠在遮罩之上,(120,180) 点到的是侧栏不是遮罩;
+  // 在遮罩上找一个真正露出来的点再点 —— 要验的是「点遮罩收起抽屉」,不是某个像素。
+  const spot = await page.evaluate(() => {
+    const scrim = document.querySelector('#companion-users-scrim')
+    for (const [x, y] of [[640, 700], [640, 360], [1000, 700], [400, 700], [1200, 400]]) {
+      if (document.elementFromPoint(x, y) === scrim) return { x, y }
+    }
+    return null
+  })
+  if (!spot) throw new Error('no exposed point on the users scrim')
+  await page.mouse.click(spot.x, spot.y)
   await expect(page.locator('.moment-body')).not.toHaveClass(/is-companion-users-open/)
   await page.locator('#companion-immersive-exit').click()
   await expect(page.locator('.moment-body')).not.toHaveClass(/is-companion-immersive/)
@@ -57,7 +73,7 @@ test('inline companion animation replaces the overview illustration', async ({ p
   await page.locator('#companion-desktop-start').click()
   const desktopPage = await desktopPagePromise
   await desktopPage.waitForLoadState()
-  await expect(desktopPage.locator('#companion-stage')).toBeVisible()
+  await expect(desktopPage.locator('#pet-stage')).toBeVisible()
   await expect(desktopPage.locator('#companion-window-close')).toBeVisible()
   await desktopPage.close()
 })

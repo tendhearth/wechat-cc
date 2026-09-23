@@ -6,11 +6,38 @@ on:
     # runs on the integration branch too — it sat uncovered while 91 commits
     # piled up, which is how type errors accumulated unnoticed. The heavy e2e
     # jobs below stay master/PR-only to keep routine dev pushes fast.
-    branches: [master, dev]
+    #
+    # `self/**` 是自改流水线(spec 2026-09-18-self-change-pipeline)推的分支:
+    # CC 自己给自己改一版,先推 self/<题目>,CI 绿才是它进 dev 的闸门。漏了这一
+    # 行,那道闸门就根本不存在 —— 而且是**安静地**不存在(推上去一条运行都没有,
+    # 看上去和「跑完了还没红」一模一样)。
+    branches: [master, dev, 'self/**']
   pull_request:
-    branches: [master]
+    # dev 也在内:CI 只在 push 后跑等于永远事后 —— 2026-09-11~14 有 69 条提交
+    # 在本地攒了三天才到 dev,期间一次没验。重型 e2e 仍按 base_ref 限定在 master。
+    branches: [master, dev]
 
 jobs:
+  # 只为算一件事:这一推里 apps/desktop/** 动没动过。
+  #
+  # 为什么要有它:desktop-e2e 一次约 3 分钟,以前只在 master / PR 上跑,于是在
+  # dev 上改了桌面要等到合并前才知道红,而「合并前本地跑一遍 Playwright」的规矩
+  # 靠自觉。有了这个输出,改了桌面的 dev 推送也跑 desktop-e2e,没改的照旧跳过 ——
+  # 多付的那 3 分钟只落在真的动过桌面的那些推送上。
+  changes:
+    name: changes · paths
+    runs-on: ubuntu-latest
+    outputs:
+      desktop: ${{ steps.filter.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            desktop:
+              - 'apps/desktop/**'
+
   build:
     name: build · ${{ matrix.os }}
     strategy:
@@ -28,7 +55,9 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          # 钉死,不用 latest:2026-09-15 上游发到 1.4.2,CI 在没有任何提交的情况下
+          # 自己变红(db.test.ts 的 v53 迁移)。升级 bun 该是一件有人盯着的事。
+          bun-version: 1.3.14
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -53,24 +82,33 @@ jobs:
           await makeJsEmbedder({ model_id: 'bge-small-zh-v1.5' }).embed(['warm'])"
 
       - name: Typecheck
+        # 独立于前面的检查:一条红不该让后面几条一次都不执行。
+        if: ${{ !cancelled() }}
         run: bun run typecheck
 
       - name: Module-boundary check
         # Fast layer-violation guard. Runs only on linux to keep matrix
         # parallelism cheap — the rules are platform-independent.
-        if: matrix.os == 'ubuntu-latest'
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
         run: bun run depcheck
 
       - name: Build cli.ts
-        run: bun build cli.ts --target=node --outfile=dist/cli.js
+        if: ${{ !cancelled() }}
+        # --outdir rather than --outfile: kept from the days the workbench bundled
+        # `*-native.c` file assets (gone since 2026-09-16, the file layer is pure
+        # JS now); --outdir still works and is what the release path exercises.
+        run: bun build cli.ts --target=node --outdir dist
 
       - name: Build docs.ts
+        if: ${{ !cancelled() }}
         run: bun build docs.ts --target=node --outfile=dist/docs.js
 
       - name: Build setup.ts
+        if: ${{ !cancelled() }}
         run: bun build setup.ts --target=node --outfile=dist/setup.js
 
       - name: Build log-viewer.ts
+        if: ${{ !cancelled() }}
         run: bun build log-viewer.ts --target=node --outfile=dist/log-viewer.js
 
       - name: Compiled-sidecar smoke
@@ -79,24 +117,45 @@ jobs:
         # bunfs) against a real `bun build --compile` artifact, not just
         # source-mode unit tests. Linux-only to keep matrix parallelism cheap
         # — the guardrail logic is platform-independent.
-        if: matrix.os == 'ubuntu-latest'
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
         run: bun scripts/smoke-compiled-sidecar.ts
 
       - name: Run tests
+        if: ${{ !cancelled() }}
         # `bun run test` invokes `bun --bun vitest run` per package.json
         # (PR7 — vitest needs Bun's runtime to resolve `bun:sqlite`).
         run: bun run test
 
-  e2e:
-    # Heavy suite — skip on direct dev pushes; still runs on master pushes and
-    # on every PR (where base is master).
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/master'
+  # 「换运行时的出口是真的」的证明:同一套单元测试(整个 src,只差 Bun.serve 上的 ws 服务端)
+  # 在 Node 24 上跑。2026-09-16 起步时 lib + core 是 2765 过 / 38 红;适配层补齐后同日整个 src
+  # 全绿,于是改成必绿 —— 以后谁在业务代码里直接用 Bun.*,这里和 no-bun-globals.test 一起红。
+  node:
+    name: node · core suite
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      - name: Unit tests under Node (whole src, minus the ws server)
+        # 走 npm script 而不是直接敲 node_modules/.bin/vitest:npm 会把 node_modules/.bin 加进 PATH,
+        # bootstrap 的 codex 探测(find-codex-binary)靠它找到 SDK 自带的 codex —— bun run 也是这么做的。
+        run: npm run test:node -- --reporter=dot
+
+  e2e:
+    # Heavy suite — skip on direct dev pushes; still runs on master pushes and
+    # on every PR (where base is master).
+    if: github.base_ref == 'master' || github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
       - run: bun install
       - run: bun --bun vitest run -c vitest.e2e.config.ts
 
@@ -105,14 +164,16 @@ jobs:
     # CSP, attachment path-guard. The spec fixture spawns its own DRY_RUN
     # test-shim on :4174, and playwright.config.ts defaults CSP injection on,
     # so this runs headless with no extra wiring beyond a chromium install.
-    # Heavy suite — master/PR only (skipped on direct dev pushes).
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/master'
+    # Heavy suite — master/PR always, plus any push that actually touched
+    # apps/desktop/** (see the `changes` job above).
+    needs: changes
+    if: github.base_ref == 'master' || github.ref == 'refs/heads/master' || needs.changes.outputs.desktop == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
       - run: bun install
       - name: Install Playwright Chromium
         working-directory: apps/desktop

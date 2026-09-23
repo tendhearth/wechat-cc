@@ -89,7 +89,7 @@ function setup(admins: string[] = ['admin_chat']) {
   } as unknown as IlinkAdapter
 
   const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
-  const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), resetNoReply: vi.fn() }
+  const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), claimVisit: vi.fn(), resetNoReply: vi.fn() }
   const replySinks = makeReplySinks()
   const pipelineRun = vi.fn(async (_ctx: Parameters<PipelineRun>[0]) => {})
   const pipelineRef = new Ref<PipelineRun>('pipeline')
@@ -239,7 +239,7 @@ describe('pipeline-deps guest-command dispatch seam (允许/拒绝/邀请码/待
       markChatActive: vi.fn(),
     } as unknown as IlinkAdapter
     const chatPrefs: ChatPrefsStore = { get: () => ({}), set: () => ({}), list: () => [] }
-    const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), resetNoReply: vi.fn() }
+    const careLedger: CareLedger = { get: () => ({ noReplyCount: 0 }), claim: vi.fn(), claimHunt: vi.fn(), claimVisit: vi.fn(), resetNoReply: vi.fn() }
     const replySinks = makeReplySinks()
     const pipelineRef = new Ref<PipelineRun>('pipeline')
     pipelineRef.set(vi.fn(async () => {}))

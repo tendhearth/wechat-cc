@@ -19,6 +19,12 @@ export interface ServicePlanInput {
   // falls back to legacy `bunPath cli.ts run [--dangerously]` for
   // source-checkout users.
   binaryPath?: string
+  /**
+   * macOS 打包版:app 主二进制(…/Contents/MacOS/wechat-cc)。有它时 LaunchAgent
+   * 指向它 + `--daemon`,而不是 sidecar —— 责任进程 = 签名的 app,TCC 授权才
+   * 稳、才显示成「wechat-cc」。见 runtime-info.appMainBinaryPath 的注释。
+   */
+  appBinaryPath?: string
   // Pass through to plist/unit `ProgramArguments` so the daemon starts with
   // `cli.ts run --dangerously`. Defaults true: wizard-installed daemons must
   // bypass permission prompts since no human will be there to answer them.
@@ -79,7 +85,7 @@ export function buildServicePlan(input: ServicePlanInput): ServicePlan {
       kind: 'launchagent',
       serviceName,
       serviceFile,
-      fileContent: launchAgentPlist({ bunPath, binaryPath, cwd: input.cwd, runArgs, runAtLoad: autoStart, logDir, bundledPluginsDir }),
+      fileContent: launchAgentPlist({ bunPath, binaryPath, appBinaryPath: input.appBinaryPath, cwd: input.cwd, runArgs, runAtLoad: autoStart, logDir, bundledPluginsDir }),
       installCommands: [['launchctl', 'bootstrap', gui, serviceFile], ['launchctl', 'enable', `${gui}/com.wechat-cc.daemon`], ['launchctl', 'kickstart', '-k', `${gui}/com.wechat-cc.daemon`]],
       startCommands: [['launchctl', 'kickstart', '-k', `${gui}/com.wechat-cc.daemon`]],
       stopCommands: [['launchctl', 'bootout', gui, serviceFile]],
@@ -409,10 +415,13 @@ function tryRunCommands(commands: string[][]): { ok: true } | { ok: false; exitC
   return { ok: true }
 }
 
-function launchAgentPlist(opts: { bunPath: string; binaryPath?: string; cwd: string; runArgs: string[]; runAtLoad: boolean; logDir: string; bundledPluginsDir?: string }): string {
-  const argv = opts.binaryPath
-    ? [opts.binaryPath, ...opts.runArgs]
-    : [opts.bunPath, join(opts.cwd, 'cli.ts'), ...opts.runArgs]
+function launchAgentPlist(opts: { bunPath: string; binaryPath?: string; appBinaryPath?: string; cwd: string; runArgs: string[]; runAtLoad: boolean; logDir: string; bundledPluginsDir?: string }): string {
+  // 优先级:app 主二进制(--daemon)> sidecar > bun + cli.ts(开发模式)。
+  const argv = opts.appBinaryPath
+    ? [opts.appBinaryPath, '--daemon', ...opts.runArgs]
+    : opts.binaryPath
+      ? [opts.binaryPath, ...opts.runArgs]
+      : [opts.bunPath, join(opts.cwd, 'cli.ts'), ...opts.runArgs]
   const argsXml = argv
     .map(arg => `    <string>${escapeXml(arg)}</string>`)
     .join('\n')

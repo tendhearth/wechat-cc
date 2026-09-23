@@ -1,0 +1,16 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CC 明信片册 · 交互预览</title><link rel="stylesheet" href="../../src/postcard-album.css"><style>body{margin:0;background:#faf8f3;color:#554c3e;font:16px/1.7 system-ui}main{max-width:1060px;margin:48px auto;padding:0 24px}h1{font-size:28px;margin-bottom:0}.intro{color:#7c766b;margin-bottom:32px}nav{display:flex;gap:12px;align-items:center;margin-bottom:28px}nav button{font:inherit;border:1px solid #ddd7ca;background:#fff;border-radius:8px;padding:6px 14px;cursor:pointer}#notice{min-height:28px;color:#476d56}.hint{margin-top:36px;color:#82796b;font-size:14px}</style><main><nav><strong>CC / 觅食</strong><button id="fail">模拟读取失败</button><button id="empty">模拟空册</button><button id="restore">恢复示例</button></nav><h1>明信片册</h1><p class="intro">CC 寄来的图和话，一起收好。喜欢的收藏起来，就会一直留着。</p><div id="notice" role="status"></div><div id="postcard-album"></div><p class="hint">交互预览 · 使用正式模块和示例数据，不连接真实聊天。可测试放大、收藏、筛选、翻页与保存。保存文件中的图和话可离线查看。</p></main><script type="module">
+import {createPostcardAlbum,savePostcard} from '../../src/modules/postcard-album.js'
+const svg=await (await fetch('./sample.svg')).text()
+let mode='normal';const rows=Array.from({length:27},(_,i)=>({id:`demo-${i}`,ts:new Date(Date.UTC(2026,8,11-i)).toISOString(),title:i===0?'去朋友的咖啡工作室':`串门手记 · ${i+1}`,note:i===0?'烘豆机一直响，橘猫却睡得很香。\n它大概早就把这声音当成摇篮曲了。':'今天停下来坐了一会儿。\n把这片安静也带回来给你。',image_svg:svg,favorite:i===1?1:0}))
+const toast=m=>document.getElementById('notice').textContent=m
+const album=createPostcardAlbum(document.getElementById('postcard-album'),{toast,call:async(method,path,body)=>{
+ if(mode==='fail')throw Error('offline')
+ if(method==='POST'){const row=rows.find(r=>r.id===body.id);if(row)row.favorite=body.favorite?1:0;return {ok:!!row}}
+ const u=new URL(path,location.origin);const all=mode==='empty'?[]:rows.filter(r=>u.searchParams.get('favorites')!=='true'||r.favorite)
+ const offset=Number(u.searchParams.get('offset'));return {items:all.slice(offset,offset+24).map(r=>({...r})),total:all.length}
+},save:async card=>{
+ await savePostcard(card);toast('已开始下载图和话')
+}})
+for(const [id,value] of [['fail','fail'],['empty','empty'],['restore','normal']])document.getElementById(id).onclick=()=>{mode=value;album.refresh()}
+await album.refresh()
+</script></html>

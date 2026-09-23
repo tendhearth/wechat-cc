@@ -1,0 +1,1043 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { openDb, type Db } from '../../lib/db'
+import { createProviderRegistry } from '../provider-registry'
+import type { AgentEvent, AgentProvider, AgentSession, SpawnContext } from '../agent-provider'
+import { makeWorkbenchStore } from './store'
+import { makeWorkbenchService, type WorkbenchService } from './service'
+import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
+
+let root: string, project: string, db: Db, service: WorkbenchService
+let testStore:ReturnType<typeof makeWorkbenchStore>
+const result: AgentEvent = { kind: 'result', sessionId: 'session-one', numTurns: 1, durationMs: 1 }
+function setup(provider: AgentProvider, owner: () => string | null = () => 'owner', permissionTimeoutMs?: number, extra: {
+  timeoutMs?:number; closeTimeoutMs?:number; holdBusy?:(label:string)=>()=>void
+  mintSessionToken?:(key:string)=>string; revokeSessionToken?:(key:string)=>void
+} = {}) {
+  const registry = createProviderRegistry()
+  registry.register('claude', provider, { displayName: 'Claude', canResume: () => true,workbench:MANAGED_NATIVE_CAPABILITIES })
+  registry.register('codex', provider, { displayName: 'Codex', canResume: () => true,workbench:MANAGED_NATIVE_CAPABILITIES })
+  testStore=makeWorkbenchStore(db)
+  service = makeWorkbenchService({ store: testStore, registry, stateDir: root, ownerChatId: owner, permissionTimeoutMs, ...extra })
+  return registry
+}
+function create(text = '整理周报') { return service.create({ path: project, providerId: 'claude', text }) }
+function createAt(path: string, text = '整理周报', providerId = 'claude') { return service.create({ path, providerId, text }) }
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (error?: unknown) => void
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej })
+  return { promise, resolve, reject }
+}
+async function settle(id: string) {
+  await expect.poll(() => service.detail(id).task.status).not.toMatch(/^(queued|running|cancelling)$/)
+}
+beforeEach(() => {
+  root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-workbench-')))
+  project = join(root, 'project'); mkdirSync(project)
+  db = openDb({ path: join(root, 'state.db') })
+})
+afterEach(async () => { await service?.shutdown(); db.close(); removeTempDir(root) })
+
+describe('persistent workbench', () => {
+  it('adds projects without starting an executor and canonicalizes duplicate folder aliases',()=>{
+    let spawned=0
+    setup({spawn:()=>{spawned++;throw Error('must not execute')}})
+    const added=service.addProject({path:project,name:'网站',providerId:'codex'})
+    const alias=join(root,'alias');symlinkSync(project,alias,'dir')
+    expect(service.addProject({path:alias,name:'duplicate',providerId:'claude'}).id).toBe(added.id)
+    expect(service.list().projects).toEqual([added])
+    expect(service.list().projectProviders).toEqual({[project]:'codex'})
+    expect(service.list().tasks).toEqual([]);expect(spawned).toBe(0)
+    expect(()=>service.addProject({path:join(root,'missing'),providerId:'codex'})).toThrow('invalid_path')
+  })
+  it('records bounded native capability notices only for their current uncancelled run',async()=>{
+    const contexts:SpawnContext[]=[],turns:Array<{resolve:()=>void}>=[]
+    setup({async spawn(_p,ctx){const turn=deferred();contexts.push(ctx);turns.push(turn);return{async *dispatch(){yield {kind:'init',sessionId:'session-one'};await turn.promise;yield result},async close(){turn.resolve()}}}})
+    const task=create();await expect.poll(()=>contexts.length).toBe(1)
+    const firstRun=service.detail(task.id).runId
+    contexts[0]!.reportNotice?.('暂未带入：'+ 'x'.repeat(3000))
+    const notice=testStore.events(task.id).find(e=>e.kind==='system'&&e.text.startsWith('暂未带入：'))
+    expect(notice?.runId).toBe(firstRun);expect(notice?.text.length).toBeLessThanOrEqual(2000)
+    turns[0]!.resolve();await settle(task.id)
+    service.continueTask(task.id,'next');await expect.poll(()=>contexts.length).toBe(2)
+    contexts[0]!.reportNotice?.('stale provider callback')
+    await service.cancel(task.id)
+    contexts[1]!.reportNotice?.('cancelled provider callback')
+    expect(testStore.events(task.id).map(e=>e.text).join('\n')).not.toContain('provider callback')
+  })
+  it('gives the executor a fresh idle budget after the user answers a question',async()=>{
+    setup({async spawn(_p,ctx){return{async *dispatch(){await ctx.requestUserInput!({questions:[{id:'q',header:'选择',question:'做什么？',options:[],allowOther:true}]});await new Promise(r=>setTimeout(r,80));yield result},async close(){}}}},undefined,undefined,{timeoutMs:160})
+    const task=create();await expect.poll(()=>service.detail(task.id).questions.length,{interval:5}).toBe(1)
+    await new Promise(r=>setTimeout(r,120))
+    service.resolveAnswer(task.id,service.detail(task.id).questions[0]!.id,{q:['继续']});await settle(task.id)
+    expect(service.detail(task.id).task.status).toBe('completed')
+  })
+  it('stops the writer even when persisting unsubmitted supplements fails',async()=>{
+    const gate=deferred();let closed=false
+    setup({async spawn(){return{async *dispatch(){await gate.promise;yield result},async close(){closed=true;gate.resolve()}}}})
+    const task=create();await expect.poll(()=>service.detail(task.id).task.status).toBe('running')
+    testStore.liveInputs.hold=()=>{throw Error('storage offline')}
+    await expect(service.cancel(task.id)).resolves.toBeDefined();await settle(task.id)
+    expect(closed).toBe(true)
+  })
+  it('does not auto-run a supplement in a replaced project folder',async()=>{
+    const gate=deferred(),seen:string[]=[]
+    setup({async spawn(){return{async *dispatch(text){seen.push(text);await gate.promise;yield result},async close(){}}}})
+    const task=create();await expect.poll(()=>seen.length).toBe(1)
+    await service.submitInput(task.id,{runId:service.detail(task.id).runId!,requestId:crypto.randomUUID(),text:'next'})
+    renameSync(project,project+'-old');mkdirSync(project);gate.resolve();await settle(task.id)
+    expect(seen).toHaveLength(1);expect(service.detail(task.id).inputs[0]?.status).toBe('held')
+  })
+  it('does not mark an unstarted failing supplementary dispatch delivered',async()=>{
+    const gate=deferred();let calls=0
+    setup({async spawn(){return{async *dispatch(){if(calls++)throw Error('not sent');await gate.promise;yield result},async close(){}}}})
+    const task=create();await expect.poll(()=>calls).toBe(1)
+    await service.submitInput(task.id,{runId:service.detail(task.id).runId!,requestId:crypto.randomUUID(),text:'next'})
+    gate.resolve();await expect.poll(()=>calls).toBe(2);await settle(task.id)
+    expect(service.detail(task.id).inputs[0]?.status).toBe('held')
+  })
+  it('keeps waiting for a real question beyond the normal silent-execution deadline',async()=>{
+    setup({async spawn(_p,ctx){return{async *dispatch(){await ctx.requestUserInput!({questions:[{id:'q',header:'选择',question:'做什么？',options:[],allowOther:true}]});yield result},async close(){}}}},undefined,undefined,{timeoutMs:30})
+    const task=create();await expect.poll(()=>service.detail(task.id).questions.length).toBe(1)
+    await new Promise(r=>setTimeout(r,100))
+    expect(service.detail(task.id).task.status).toBe('running')
+    service.resolveAnswer(task.id,service.detail(task.id).questions[0]!.id,{q:['继续']});await settle(task.id)
+  })
+  it('delivers queued supplements as separate turns of the same native session',async()=>{
+    const gate=deferred(),seen:string[]=[],resumes:Array<string|undefined>=[]
+    setup({async spawn(_p,ctx){resumes.push(ctx.resumeSessionId);return{
+      async *dispatch(text){seen.push(text);if(seen.length===1)await gate.promise;yield result},async close(){},
+    }}})
+    const task=create('first')
+    await expect.poll(()=>seen.length).toBe(1)
+    const detail=service.detail(task.id),requestId=crypto.randomUUID()
+    expect(await service.submitInput(task.id,{runId:detail.runId!,requestId,text:'second'})).toMatchObject({status:'pending'})
+    await service.submitInput(task.id,{runId:detail.runId!,requestId,text:'second'})
+    expect(seen).toEqual(['first'])
+    gate.resolve();await expect.poll(()=>seen.length).toBe(2);await settle(task.id)
+    expect(seen).toEqual(['first','second']);expect(resumes).toEqual([undefined,'session-one'])
+    expect(service.detail(task.id).inputs[0]?.status).toBe('delivered')
+  })
+
+  it('native supplements are acknowledged once, stale runs fail, and stop keeps queued text',async()=>{
+    const gate=deferred(),seen:string[]=[]
+    setup({async spawn(){return{async *dispatch(){yield {kind:'init',sessionId:'session-one'} as AgentEvent;await gate.promise;yield result},async steer(text){seen.push(text)},async close(){gate.resolve()}}}})
+    const task=create(),id=crypto.randomUUID()
+    await expect.poll(()=>service.detail(task.id).inputMode).toBe('steer')
+    const runId=service.detail(task.id).runId!
+    await expect(service.submitInput(task.id,{runId:'old',requestId:id,text:'x'})).rejects.toThrow('input_stale')
+    await service.submitInput(task.id,{runId,requestId:id,text:'new condition'})
+    await service.submitInput(task.id,{runId,requestId:id,text:'new condition'})
+    expect(seen).toEqual(['new condition']);expect(service.detail(task.id).inputs[0]?.status).toBe('delivered')
+    await service.cancel(task.id);await settle(task.id)
+  })
+
+  it('routes answers and attention only to their owning task and closes questions on stop',async()=>{
+    let context:SpawnContext|undefined,answer:unknown
+    setup({async spawn(_p,ctx){context=ctx;return{async *dispatch(){answer=await ctx.requestUserInput!({questions:[{id:'q',header:'格式',question:'需要什么？',options:[],allowOther:true}]});yield result},async close(){}}}})
+    const task=create()
+    await expect.poll(()=>service.detail(task.id).questions.length).toBe(1)
+    const pending=service.detail(task.id).questions[0]!
+    expect(service.attention().tasks[0]).toMatchObject({id:task.id,pendingQuestionCount:1})
+    expect(()=>service.resolveAnswer('another',pending.id,{q:['报告']})).toThrow('question_stale')
+    service.resolveAnswer(task.id,pending.id,{q:['报告']});await settle(task.id)
+    expect(answer).toEqual({q:['报告']});expect(service.attention().tasks).toEqual([])
+    expect(await context!.requestUserInput!({questions:[{id:'q',header:'格式',question:'晚到的问题',options:[],allowOther:true}]})).toBeNull()
+  })
+  it('preserves task events and immutable artifact versions across continuation and restart', async () => {
+    let n = 0
+    setup({ async spawn(p) { return {
+      async *dispatch() {
+        const id = p.alias.split(':')[1]!
+        writeFileSync(join(project, '.cc-workbench', id, '周报.md'), `第 ${++n} 版`)
+        yield { kind: 'text', text: '完成周报' } as AgentEvent; yield result
+      }, async close() {},
+    } } })
+    const task = create(); await settle(task.id)
+    const first = service.detail(task.id).artifacts[0]!
+    expect(Buffer.from(service.artifact(task.id, first.id).contentBase64, 'base64').toString()).toBe('第 1 版')
+    service.approve(task.id, first.id, first.sha256)
+    const continued=service.continueTask(task.id, '简短一点')
+    expect(continued.status).toBe('queued')
+    await settle(task.id)
+    const detail = service.detail(task.id)
+    expect(detail.artifacts).toHaveLength(2)
+    expect(detail.artifacts.filter(a => a.approvedAt !== null)).toHaveLength(1)
+    expect(service.artifact(task.id, first.id).sha256).toBe(first.sha256)
+    await service.shutdown()
+    const reopened = makeWorkbenchStore(db)
+    expect(reopened.detail(task.id).events.filter(e => e.kind === 'user').map(e => e.text)).toEqual(['整理周报', '简短一点'])
+    expect(reopened.detail(task.id).task.status).toBe('completed')
+  })
+
+  it('queues another task on the same folder but rejects a duplicate turn on the same task', async () => {
+    let release!: () => void, dispatched = false
+    const wait = new Promise<void>(r => { release = r })
+    setup({ async spawn() { await wait; return {
+      async *dispatch() { dispatched = true; yield result }, async close() {},
+    } } })
+    const task = create()
+    expect(() => service.continueTask(task.id, '重复补充')).toThrow('workbench_busy')
+    const queued = create('第二件事')
+    expect(service.detail(queued.id).task.status).toBe('queued')
+    expect(service.detail(queued.id).task.waitingFor).toMatchObject({ taskId: task.id, reason: 'same_path' })
+    const cancellation = service.cancel(task.id)
+    release(); await cancellation; await settle(task.id); await settle(queued.id)
+    expect(dispatched).toBe(true)
+    expect(service.detail(task.id).task.status).toBe('cancelled')
+  })
+
+  it('runs unrelated folders concurrently with isolated sessions, events, artifacts, and resume ids', async () => {
+    const other = join(root, 'project-other'); mkdirSync(other)
+    const gates = new Map([[project, deferred()], [other, deferred()]])
+    const starts: string[] = []
+    const contexts: Array<{ path: string; resume?: string }> = []
+    setup({ async spawn(p, ctx) {
+      contexts.push({ path:p.path, resume:ctx.resumeSessionId })
+      return { async *dispatch() {
+        starts.push(p.path)
+        await gates.get(p.path)!.promise
+        const id=p.alias.split(':')[1]!
+        writeFileSync(join(p.path,'.cc-workbench',id,'result.txt'),`bytes:${p.path}`)
+        yield {kind:'text',text:`text:${p.path}`} as AgentEvent
+        yield {kind:'result',sessionId:`session:${p.path}`,numTurns:1,durationMs:1} as AgentEvent
+      },async close(){} }
+    } })
+
+    const one=createAt(project,'one')
+    const two=createAt(other,'two')
+    await expect.poll(() => new Set(starts)).toEqual(new Set([project,other]))
+    expect(service.detail(one.id).task.waitingFor).toBeNull()
+    expect(service.detail(two.id).task.waitingFor).toBeNull()
+    expect(() => service.continueTask(one.id,'duplicate')).toThrow('workbench_busy')
+
+    gates.get(project)!.resolve(); gates.get(other)!.resolve()
+    await Promise.all([settle(one.id),settle(two.id)])
+    expect(service.detail(one.id).events.some(e=>e.text===`text:${project}`)).toBe(true)
+    expect(service.detail(two.id).events.some(e=>e.text===`text:${other}`)).toBe(true)
+    expect(Buffer.from(service.artifact(one.id,service.detail(one.id).artifacts[0]!.id).contentBase64,'base64').toString()).toBe(`bytes:${project}`)
+    expect(Buffer.from(service.artifact(two.id,service.detail(two.id).artifacts[0]!.id).contentBase64,'base64').toString()).toBe(`bytes:${other}`)
+
+    service.continueTask(one.id,'resume one'); await settle(one.id)
+    expect(contexts.filter(c=>c.path===project).map(c=>c.resume)).toEqual([undefined,`session:${project}`])
+    expect(contexts.filter(c=>c.path===other).map(c=>c.resume)).toEqual([undefined])
+  })
+
+  it('uses conflict-scoped FIFO without serializing sibling or prefix folders', async () => {
+    const childA=join(project,'child-a'), childB=join(project,'child-b'), prefix=join(root,'project-other')
+    mkdirSync(childA); mkdirSync(childB); mkdirSync(prefix)
+    const gates=new Map([[childA,deferred()],[project,deferred()],[childB,deferred()]])
+    const starts:string[]=[]
+    setup({ async spawn(p) { return { async *dispatch() {
+      starts.push(p.path)
+      await gates.get(p.path)?.promise
+      yield {kind:'result',sessionId:`session:${p.path}`,numTurns:1,durationMs:1} as AgentEvent
+    },async close(){} } } })
+
+    const first=createAt(childA,'first child')
+    await expect.poll(()=>starts).toEqual([childA])
+    const parent=createAt(project,'parent')
+    const laterSibling=createAt(childB,'later sibling')
+    const prefixSibling=createAt(prefix,'prefix sibling')
+    await expect.poll(()=>starts).toContain(prefix)
+    expect(starts).not.toContain(project)
+    expect(starts).not.toContain(childB)
+    expect(service.detail(parent.id).task.waitingFor).toMatchObject({taskId:first.id,reason:'nested_path'})
+    expect(service.detail(laterSibling.id).task.waitingFor).toMatchObject({taskId:parent.id,reason:'nested_path'})
+
+    gates.get(childA)!.resolve(); await settle(first.id)
+    await expect.poll(()=>starts).toContain(project)
+    expect(starts).not.toContain(childB)
+    gates.get(project)!.resolve(); await settle(parent.id)
+    await expect.poll(()=>starts).toContain(childB)
+    gates.get(childB)!.resolve()
+    await Promise.all([settle(laterSibling.id),settle(prefixSibling.id)])
+  })
+
+  it('serializes canonical symlink aliases as the same folder', async () => {
+    const alias=join(root,'project-alias'); symlinkSync(project,alias)
+    const gate=deferred(); let starts=0
+    setup({ async spawn() { return { async *dispatch() {
+      starts++
+      if(starts===1)await gate.promise
+      yield result
+    },async close(){} } } })
+    const first=createAt(project,'real path')
+    await expect.poll(()=>starts).toBe(1)
+    const second=createAt(alias,'alias path')
+    expect(service.detail(second.id).task.waitingFor).toMatchObject({taskId:first.id,reason:'same_path'})
+    expect(starts).toBe(1)
+    gate.resolve(); await Promise.all([settle(first.id),settle(second.id)])
+    expect(starts).toBe(2)
+  })
+
+  it('can shut down and revoke busy ownership when startup never resolves', async () => {
+    setup({ spawn: () => new Promise(() => {}) })
+    const task=create()
+    await expect.poll(() => service.detail(task.id).task.status).toBe('running')
+    await service.shutdown()
+    expect(service.detail(task.id).task).toMatchObject({status:'interrupted',error:'writer_not_closed'})
+  })
+
+  it('does not let 100 old files hide a new artifact on the next turn', async () => {
+    let turn=0
+    setup({ async spawn(p) { return { async *dispatch() {
+      const dir=join(project,'.cc-workbench',p.alias.split(':')[1]!)
+      if (++turn===1) for(let i=0;i<100;i++) writeFileSync(join(dir,`file-${String(i).padStart(3,'0')}.txt`),'old')
+      else writeFileSync(join(dir,'zzz-new.txt'),'new')
+      yield result
+    },async close(){} } } })
+    const task=create(); await settle(task.id)
+    expect(service.detail(task.id).artifacts).toHaveLength(100)
+    service.continueTask(task.id,'one more'); await settle(task.id)
+    expect(service.detail(task.id).artifacts).toHaveLength(101)
+  })
+
+  it('does not call a stream without a result successful; preserves the error', async () => {
+    setup({ async spawn() { return { async *dispatch() { yield { kind: 'text', text: '还在处理' } }, async close() {} } } })
+    const task = create(); await settle(task.id)
+    expect(service.detail(task.id).task).toMatchObject({ status: 'failed', error: 'stream_ended_without_result' })
+  })
+
+  it('keeps a task running and locked until its writer is closed and artifacts are captured', async () => {
+    let release!: () => void
+    const closing=new Promise<void>(r => { release=r })
+    setup({ async spawn(p) { return { async *dispatch() { yield result }, async close() {
+      await closing
+      writeFileSync(join(project,'.cc-workbench',p.alias.split(':')[1]!,'last.txt'),'final bytes')
+    } } } })
+    const task=create()
+    await expect.poll(() => service.detail(task.id).task.status).toBe('running')
+    expect(() => service.continueTask(task.id,'again')).toThrow('workbench_busy')
+    release(); await settle(task.id)
+    expect(service.detail(task.id).artifacts.map(a => a.name)).toEqual(['last.txt'])
+  })
+
+  it('does not start a conflicting task until close finishes and final artifacts are captured', async () => {
+    const closing=deferred(); let firstId='',spawns=0,artifactSeenAtSecondSpawn=false
+    setup({ async spawn(p) {
+      spawns++
+      if(spawns===2)artifactSeenAtSecondSpawn=service.detail(firstId).artifacts.some(a=>a.name==='last.txt')
+      return {async *dispatch(){yield result},async close(){
+        if(spawns===1){await closing.promise;writeFileSync(join(project,'.cc-workbench',p.alias.split(':')[1]!,'last.txt'),'final')}
+      }}
+    } })
+    const first=create('first'); firstId=first.id
+    await expect.poll(()=>service.detail(first.id).task.status).toBe('running')
+    const second=create('second')
+    await new Promise(resolve=>setTimeout(resolve,10))
+    expect(spawns).toBe(1)
+    closing.resolve(); await Promise.all([settle(first.id),settle(second.id)])
+    expect(spawns).toBe(2)
+    expect(artifactSeenAtSecondSpawn).toBe(true)
+  })
+
+  it('cancels a queued task without spawning it and starts the next eligible task', async () => {
+    const gate=deferred(); const spawned:string[]=[]
+    setup({async spawn(p){const id=p.alias.split(':')[1]!;spawned.push(id);return{async *dispatch(){if(spawned.length===1)await gate.promise;yield result},async close(){}}}})
+    const first=create('first'); await expect.poll(()=>spawned).toEqual([first.id])
+    const cancelled=create('cancel me'), next=create('next')
+    await service.cancel(cancelled.id)
+    expect(service.detail(cancelled.id).task.status).toBe('cancelled')
+    gate.resolve(); await Promise.all([settle(first.id),settle(next.id)])
+    expect(spawned).toEqual([first.id,next.id])
+  })
+
+  it('keeps two tasks permission-local when one is cancelled', async () => {
+    const other=join(root,'permission-other');mkdirSync(other)
+    const answers=new Map<string,boolean>(); const cancelled:string[]=[],closed:string[]=[]
+    setup({async spawn(p,ctx){return{async *dispatch(){
+      const answer=await ctx.requestPermission!({tool:'Bash',description:`permission:${p.path}`})
+      answers.set(p.path,answer);yield {kind:'result',sessionId:`session:${p.path}`,numTurns:1,durationMs:1} as AgentEvent
+    },async cancel(){cancelled.push(p.path)},async close(){closed.push(p.path)}}}})
+    const one=createAt(project,'one'),two=createAt(other,'two')
+    await expect.poll(()=>service.detail(one.id).permissions).toHaveLength(1)
+    await expect.poll(()=>service.detail(two.id).permissions).toHaveLength(1)
+    const oneRequest=service.detail(one.id).permissions[0]!.id,twoRequest=service.detail(two.id).permissions[0]!.id
+    expect(()=>service.resolvePermission(one.id,twoRequest,'allow')).toThrow('permission_stale')
+    await service.cancel(one.id); await settle(one.id)
+    expect(service.detail(two.id).permissions).toHaveLength(1)
+    service.resolvePermission(two.id,twoRequest,'allow'); await settle(two.id)
+    expect(answers).toEqual(new Map([[project,false],[other,true]]))
+    expect(cancelled).toEqual([project])
+    expect(new Set(closed)).toEqual(new Set([project,other]))
+    expect(()=>service.resolvePermission(one.id,oneRequest,'allow')).toThrow('permission_stale')
+  })
+
+  it('revokes a cancelled run credential before waiting for its writer to close', async () => {
+    const closeGate=deferred();const revoked:string[]=[]
+    setup({async spawn(){return{async *dispatch(){await new Promise(()=>{})},async cancel(){},async close(){await closeGate.promise}}}},()=> 'owner',undefined,{
+      mintSessionToken:key=>`token:${key}`,revokeSessionToken:key=>{revoked.push(key)},
+    })
+    const task=create();await expect.poll(()=>service.detail(task.id).task.status).toBe('running')
+    await service.cancel(task.id)
+    expect(revoked).toEqual([`workbench/${task.id}`])
+    closeGate.resolve();await settle(task.id)
+    expect(revoked).toEqual([`workbench/${task.id}`])
+  })
+
+  it('still stops and closes a writer when recording the cancelling status fails', async () => {
+    const registry=createProviderRegistry(),dispatchGate=deferred();let cancelled=false,closed=false
+    registry.register('claude',{async spawn(){return{
+      async *dispatch(){await dispatchGate.promise;yield result},
+      async cancel(){cancelled=true},async close(){closed=true},
+    }}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+    const base=makeWorkbenchStore(db)
+    const store={...base,update(id:string,status:Parameters<typeof base.update>[1],error?:string|null){
+      if(status==='cancelling')throw new Error('status storage unavailable')
+      base.update(id,status,error)
+    }}
+    service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null})
+    const task=create();await expect.poll(()=>service.detail(task.id).task.status).toBe('running')
+    const cancellation=service.cancel(task.id)
+    dispatchGate.resolve()
+    await expect(cancellation).resolves.toMatchObject({id:task.id})
+    await settle(task.id)
+    expect(cancelled).toBe(true)
+    expect(closed).toBe(true)
+  })
+
+  it('quarantines a cancelled late spawn until that session later closes without dispatch', async () => {
+    const spawned=deferred<AgentSession>(),closed=deferred();let calls=0,dispatches=0,lateCloseCalled=false
+    setup({async spawn(){
+      if(++calls===1)return spawned.promise
+      return{async *dispatch(){dispatches++;yield result},async close(){}}
+    }})
+    const first=create('late spawn');await expect.poll(()=>service.detail(first.id).task.status).toBe('running')
+    const second=create('waiter')
+    await service.cancel(first.id);await settle(first.id)
+    expect(service.detail(second.id).task.waitingFor).toMatchObject({taskId:first.id,reason:'writer_not_closed'})
+    expect(calls).toBe(1)
+    spawned.resolve({async *dispatch(){dispatches++;yield result},async close(){lateCloseCalled=true;await closed.promise}})
+    await expect.poll(()=>lateCloseCalled).toBe(true)
+    expect(calls).toBe(1)
+    closed.resolve();await settle(second.id)
+    expect(calls).toBe(2)
+    expect(dispatches).toBe(1)
+  })
+
+  it('releases a timed-out close only after its late confirmation and artifact capture', async () => {
+    const closeGate=deferred();let spawns=0
+    const released=new Set<string>()
+    setup({async spawn(p){const call=++spawns;return{async *dispatch(){yield result},async close(){
+      if(call===1){await closeGate.promise;writeFileSync(join(p.path,'.cc-workbench',p.alias.split(':')[1]!,'late.txt'),'late-safe')}
+    }}}},()=> 'owner',undefined,{closeTimeoutMs:5,holdBusy:label=>()=>{released.add(label)}})
+    const first=create('first'),second=create('second')
+    await settle(first.id)
+    expect(service.detail(first.id).task).toMatchObject({status:'interrupted',error:'writer_not_closed'})
+    expect(service.detail(second.id).task.waitingFor).toMatchObject({taskId:first.id,reason:'writer_not_closed'})
+    expect(spawns).toBe(1)
+    expect(released.has(`workbench/${first.id}`)).toBe(false)
+    closeGate.resolve();await settle(second.id)
+    expect(spawns).toBe(2)
+    expect(service.detail(first.id).artifacts.map(a=>a.name)).toEqual(['late.txt'])
+    expect(released.has(`workbench/${first.id}`)).toBe(true)
+  })
+
+  it('does not unlock an uncertain writer when final status storage throws', async () => {
+    const registry=createProviderRegistry(),closeGate=deferred();let spawns=0
+    registry.register('claude',{async spawn(){spawns++;return{async *dispatch(){yield result},async close(){if(spawns===1)await closeGate.promise}}}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+    const base=makeWorkbenchStore(db)
+    const store={...base,update(id:string,status:Parameters<typeof base.update>[1],error?:string|null){
+      if(status==='interrupted')throw new Error('status storage unavailable')
+      base.update(id,status,error)
+    }}
+    service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null,closeTimeoutMs:5})
+    const first=create('first'),second=create('second')
+    // 不用固定 30ms 等(负载高 / Windows 慢机会假红):等到隔离生效为止。
+    await expect.poll(()=>service.detail(second.id).task.waitingFor?.reason).toBe('writer_not_closed')
+    expect(spawns).toBe(1)
+    expect(service.detail(second.id).task.waitingFor).toMatchObject({taskId:first.id,reason:'writer_not_closed'})
+    await service.shutdown()
+    closeGate.resolve()
+  })
+
+  it('starts and settles an accepted run without reading it again in the scheduler', async () => {
+    const registry=createProviderRegistry(),gate=deferred();let dispatches=0
+    registry.register('claude',{async spawn(){return{async *dispatch(){dispatches++;await gate.promise;yield result},async close(){}}}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+    const base=makeWorkbenchStore(db)
+    const unavailableRead={...base,get(){throw new Error('task read unavailable')}}
+    service=makeWorkbenchService({store:unavailableRead,registry,stateDir:root,ownerChatId:()=>null})
+    let task:{id:string}|undefined,creationError:unknown
+    try { task=service.create({path:project,providerId:'claude',text:'accepted'}) }
+    catch(error) { creationError=error }
+    if (creationError) service=makeWorkbenchService({store:base,registry,stateDir:root,ownerChatId:()=>null})
+    expect(creationError).toBeUndefined()
+    await expect.poll(()=>dispatches).toBe(1)
+    gate.resolve()
+    await expect.poll(()=>base.get(task!.id).status).toBe('completed')
+  })
+
+  it('fails a queued run when its accepted directory identity was replaced', async () => {
+    const child=join(project,'child'),oldChild=join(project,'child-old');mkdirSync(child)
+    const gate=deferred();const spawned:string[]=[]
+    setup({async spawn(p){spawned.push(p.path);return{async *dispatch(){if(p.path===project)await gate.promise;yield result},async close(){}}}})
+    const parent=createAt(project,'parent');await expect.poll(()=>spawned).toEqual([project])
+    const queued=createAt(child,'child')
+    renameSync(child,oldChild);mkdirSync(child)
+    gate.resolve();await Promise.all([settle(parent.id),settle(queued.id)])
+    expect(spawned).toEqual([project])
+    expect(service.detail(queued.id).task).toMatchObject({status:'failed',error:'invalid_path'})
+    expect(existsSync(join(child,'.cc-workbench',queued.id))).toBe(false)
+  })
+
+  it('rejects a replaced output-directory symlink instead of collecting files outside the project', async () => {
+    setup({ async spawn(p) { return { async *dispatch() {
+      const dir=join(project,'.cc-workbench',p.alias.split(':')[1]!)
+      rmSync(dir,{recursive:true}); symlinkSync(root,dir)
+      writeFileSync(join(root,'outside.txt'),'private')
+      yield result
+    },async close() {} } } })
+    const task=create(); await settle(task.id)
+    expect(service.detail(task.id).artifacts).toEqual([])
+    expect(service.detail(task.id).events.some(e => e.kind==='system' && e.text.includes('成果目录无法读取'))).toBe(true)
+  })
+
+  it('does not auto-approve new bytes under the same filename', async () => {
+    let version=0
+    setup({ async spawn(p) { return { async *dispatch() {
+      writeFileSync(join(project,'.cc-workbench',p.alias.split(':')[1]!,'report.txt'),++version===1?'first':'second')
+      yield result
+    },async close(){} } } })
+    const task=create(); await settle(task.id)
+    const a=service.detail(task.id).artifacts[0]!
+    service.approve(task.id,a.id,a.sha256)
+    service.continueTask(task.id,'revise'); await settle(task.id)
+    const b=service.detail(task.id).artifacts.find(x=>x.id!==a.id)!
+    expect(b.approvedAt).toBeNull()
+    expect(Buffer.from(service.artifact(task.id,a.id).contentBase64,'base64').toString()).toBe('first')
+  })
+
+  it('gives each task its own session and resumes only its own context', async () => {
+    const contexts: SpawnContext[] = []
+    setup({ async spawn(_p, ctx) { contexts.push(ctx); return { async *dispatch() { yield result }, async close() {} } } })
+    const one = create(); await settle(one.id)
+    service.continueTask(one.id, '继续'); await settle(one.id)
+    const two = create(); await settle(two.id)
+    expect(contexts.map(c => c.resumeSessionId)).toEqual([undefined, 'session-one', undefined])
+    expect(contexts.every(c => c.permissionMode === 'strict')).toBe(true)
+    expect(contexts[0]!.requestPermission).not.toBe(contexts[1]!.requestPermission)
+    await expect(contexts[0]!.requestPermission!({tool:'Bash',description:'stale run'})).resolves.toBe(false)
+    expect(contexts[0]!.appendInstructions).toContain(one.id)
+    expect(contexts[2]!.appendInstructions).not.toContain(one.id)
+  })
+
+  it('lets the admin desktop resolve an ownerless active request once', async () => {
+    let requestPermission: NonNullable<SpawnContext['requestPermission']> | undefined
+    setup({ async spawn(_p, ctx) { requestPermission=ctx.requestPermission; return {
+      async *dispatch() {
+        const allowed = await requestPermission!({ tool:'Bash', description:'remove generated output' })
+        yield { kind:'text', text:allowed ? 'allowed' : 'denied' }
+        yield result
+      }, async close() {},
+    } } }, () => null)
+    const task=create()
+    await expect.poll(() => service.detail(task.id).permissions).toHaveLength(1)
+    const requestId=service.detail(task.id).permissions[0]!.id
+    expect(service.resolvePermission(task.id,requestId,'allow')).toBeUndefined()
+    expect(() => service.resolvePermission(task.id,requestId,'deny')).toThrow('permission_stale')
+    await settle(task.id)
+    expect(service.detail(task.id).events.some(e => e.kind==='text' && e.text==='allowed')).toBe(true)
+  })
+
+  it('shows only the active task permission count in the list and clears it after resolve or cancel', async () => {
+    setup({ async spawn(_p, ctx) { return {
+      async *dispatch() {
+        await ctx.requestPermission!({ tool:'Bash', description:'remove generated output' })
+        yield result
+      }, async cancel() {}, async close() {},
+    } } }, () => null)
+
+    const resolved=create()
+    await expect.poll(() => service.list().tasks.find(task => task.id===resolved.id)?.pendingPermissionCount).toBe(1)
+    const requestId=service.detail(resolved.id).permissions[0]!.id
+    service.resolvePermission(resolved.id,requestId,'allow')
+    expect(service.list().tasks.find(task => task.id===resolved.id)?.pendingPermissionCount).toBe(0)
+    await settle(resolved.id)
+
+    const cancelled=create()
+    await expect.poll(() => service.list().tasks.find(task => task.id===cancelled.id)?.pendingPermissionCount).toBe(1)
+    expect(service.list().tasks.find(task => task.id===resolved.id)?.pendingPermissionCount).toBe(0)
+    await service.cancel(cancelled.id)
+    expect(service.list().tasks.every(task => task.pendingPermissionCount===0)).toBe(true)
+    await settle(cancelled.id)
+  })
+
+  it('denies, audits, and clears a pending request on explicit denial and expiry', async () => {
+    setup({ async spawn(_p, ctx) { return { async *dispatch() {
+      const allowed=await ctx.requestPermission!({tool:'Bash',description:'remove output'})
+      yield {kind:'text',text:allowed?'allowed':'denied'}; yield result
+    },async close(){} } } }, () => null, 5)
+    const task=create()
+    await settle(task.id)
+    const detail=service.detail(task.id)
+    expect(detail.permissions).toEqual([])
+    expect(detail.events.filter(e=>e.kind==='system').map(e=>e.text).join('\n')).toMatch(/权限请求[\s\S]*权限结果.*expired/)
+    expect(detail.events.some(e=>e.kind==='text'&&e.text==='denied')).toBe(true)
+  })
+
+  it('records an explicit denial and never persists the pending card', async () => {
+    setup({ async spawn(_p, ctx) { return { async *dispatch() {
+      const allowed=await ctx.requestPermission!({tool:'Bash',description:'remove output'})
+      yield {kind:'text',text:allowed?'allowed':'denied'}; yield result
+    },async close(){} } } }, () => null)
+    const task=create()
+    await expect.poll(() => service.detail(task.id).permissions).toHaveLength(1)
+    service.resolvePermission(task.id,service.detail(task.id).permissions[0]!.id,'deny')
+    await settle(task.id)
+    const detail=service.detail(task.id)
+    expect(detail.permissions).toEqual([])
+    expect(detail.events.some(e=>e.kind==='system'&&e.text.includes('deny'))).toBe(true)
+    expect(detail.events.some(e=>e.kind==='text'&&e.text==='denied')).toBe(true)
+    await service.shutdown()
+    const reopened=makeWorkbenchService({
+      store:makeWorkbenchStore(db),registry:createProviderRegistry(),stateDir:root,ownerChatId:()=>null,
+    })
+    expect(reopened.detail(task.id).permissions).toEqual([])
+    expect(() => reopened.resolvePermission(task.id,'123e4567-e89b-42d3-a456-426614174000','allow')).toThrow('permission_stale')
+    await reopened.shutdown()
+  })
+
+  it('denies a detached pending callback when the provider finishes', async () => {
+    let answer: Promise<boolean> | undefined
+    setup({ async spawn(_p, ctx) { return { async *dispatch() {
+      answer=ctx.requestPermission!({tool:'Bash',description:'late request'})
+      yield result
+    },async close(){} } } }, () => null)
+    const task=create(); await settle(task.id)
+    await expect(answer!).resolves.toBe(false)
+    expect(service.detail(task.id).permissions).toEqual([])
+    expect(service.detail(task.id).events.some(e=>e.kind==='system'&&e.text.includes('ended'))).toBe(true)
+  })
+
+  it('rejects cross-task, stale-run, and cancelled permission responses', async () => {
+    let firstRequest: string | undefined
+    setup({ async spawn(_p, ctx) { return { async *dispatch() {
+      await ctx.requestPermission!({tool:'Bash',description:'remove output'})
+      yield result
+    },async cancel(){},async close(){} } } }, () => null)
+    const one=create()
+    await expect.poll(() => service.detail(one.id).permissions).toHaveLength(1)
+    firstRequest=service.detail(one.id).permissions[0]!.id
+    await service.cancel(one.id); await settle(one.id)
+    expect(service.detail(one.id).permissions).toEqual([])
+    expect(() => service.resolvePermission(one.id,firstRequest!,'allow')).toThrow('permission_stale')
+
+    const two=create()
+    await expect.poll(() => service.detail(two.id).permissions).toHaveLength(1)
+    const secondRequest=service.detail(two.id).permissions[0]!.id
+    expect(() => service.resolvePermission(one.id,secondRequest,'allow')).toThrow('permission_stale')
+    await service.cancel(two.id); await settle(two.id)
+  })
+
+  it('requires approval to replay prior history when a failed turn never supplied a session id', async () => {
+    const prompts: string[] = []
+    setup({ async spawn() { return { async *dispatch(prompt) {
+      prompts.push(prompt)
+      yield { kind:'text',text:'已读到销售记录' }
+      if (prompts.length>1) yield result
+    },async close() {} } } })
+    const task=create('统计销售'); await settle(task.id)
+    expect(() => service.continueTask(task.id,'继续生成周报')).toThrow('restart_confirmation_required')
+    const restart=service.detail(task.id).continuation!.restart!
+    service.continueTask(task.id,'继续生成周报',{restartToken:restart.token}); await settle(task.id)
+    expect(prompts[1]).toContain('统计销售')
+    expect(prompts[1]).toContain('已读到销售记录')
+    expect(prompts[1]!.split('继续生成周报')).toHaveLength(2)
+  })
+
+  it('rejects unapproved, wrong-task and stale restarts without events, credentials or spawning', async () => {
+    let spawns=0,minted=0
+    const registry=setup({async spawn(){spawns++;return{async *dispatch(){yield {kind:'text',text:'prior answer'};yield result},async close(){}}}},()=> 'owner',undefined,{mintSessionToken:()=>{minted++;return 'private-credential'}})
+    const task=create();await settle(task.id)
+    const other=create();await settle(other.id)
+    registry.get('claude')!.opts.canResume=()=>false
+    const before=service.detail(task.id),restart=before.continuation!.restart!
+    expect(before.continuation!.mode).toBe('restart_required')
+    expect(restart).toMatchObject({context:'user: 整理周报\ntext: prior answer',eventCount:2,includedEventCount:2,truncated:false})
+    expect(restart.token).toMatch(/^[a-f0-9]{64}$/)
+    expect(JSON.stringify(before)).not.toContain('private-credential')
+    expect(() => service.continueTask(task.id,'next')).toThrow('restart_confirmation_required')
+    expect(() => service.continueTask(task.id,'next',{restartToken:'BAD'})).toThrow('invalid_request')
+    expect(() => service.continueTask(other.id,'next',{restartToken:restart.token})).toThrow('restart_confirmation_stale')
+    expect(service.detail(task.id).events).toEqual(before.events)
+    expect(service.detail(task.id).task).toEqual(before.task)
+    expect(makeWorkbenchStore(db).get(task.id).sessionId).toBe('session-one')
+    const changedPath=join(root,'changed-path');mkdirSync(changedPath)
+    registry.get('codex')!.opts.canResume=()=>false
+    for(const [column,changed,original] of [['path',changedPath,project],['provider_id','codex','claude'],['session_id','changed-session','session-one']]) {
+      db.query(`UPDATE workbench_tasks SET ${column}=? WHERE id=?`).run(changed!,task.id)
+      expect(() => service.continueTask(task.id,'next',{restartToken:restart.token})).toThrow('restart_confirmation_stale')
+      db.query(`UPDATE workbench_tasks SET ${column}=? WHERE id=?`).run(original!,task.id)
+    }
+    const sourceEvent=before.events.find(e=>e.kind==='text')!
+    db.query('UPDATE workbench_events SET text=? WHERE id=?').run('edited answer',sourceEvent.id)
+    expect(() => service.continueTask(task.id,'next',{restartToken:restart.token})).toThrow('restart_confirmation_stale')
+    db.query('UPDATE workbench_events SET text=? WHERE id=?').run(sourceEvent.text,sourceEvent.id)
+    db.query('DELETE FROM workbench_events WHERE id=?').run(sourceEvent.id)
+    makeWorkbenchStore(db).addEvent(task.id,'text',sourceEvent.text)
+    expect(() => service.continueTask(task.id,'next',{restartToken:restart.token})).toThrow('restart_confirmation_stale')
+    makeWorkbenchStore(db).addEvent(task.id,'text','new history')
+    expect(() => service.continueTask(task.id,'next',{restartToken:restart.token})).toThrow('restart_confirmation_stale')
+    expect(spawns).toBe(2);expect(minted).toBe(2)
+    expect(await service.handleWechat('owner',`任务 ${task.id} next`)).toMatch(/桌面.*恢复/)
+    expect(service.detail(task.id).events.filter(e=>e.kind==='user')).toHaveLength(1)
+  })
+
+  it('sends exactly the approved bounded context after queue waiting and preserves the transcript', async () => {
+    const gate=deferred(),prompts:string[]=[],resumes:Array<string|undefined>=[]
+    const registry=setup({async spawn(_p,ctx){resumes.push(ctx.resumeSessionId);return{async *dispatch(prompt){prompts.push(prompt);if(prompt==='blocker')await gate.promise;yield result},async close(){}}}})
+    const task=create('old request');await settle(task.id)
+    const store=makeWorkbenchStore(db)
+    for(let i=0;i<14;i++)store.addEvent(task.id,'text',`answer-${i}`)
+    registry.get('claude')!.opts.canResume=()=>false
+    const preview=service.detail(task.id).continuation!.restart!
+    expect(preview.eventCount).toBe(15);expect(preview.includedEventCount).toBe(12);expect(preview.truncated).toBe(true)
+    expect(preview.context).toBe(Array.from({length:12},(_,i)=>`text: answer-${i+2}`).join('\n'))
+    store.addEvent(task.id,'text','x'.repeat(30_000))
+    const approved=service.detail(task.id).continuation!.restart!
+    expect(approved.context.length).toBeLessThanOrEqual(24_000)
+    expect(approved).toMatchObject({eventCount:16,includedEventCount:1,truncated:true})
+    const blocker=create('blocker');await expect.poll(()=>prompts).toHaveLength(2)
+    service.continueTask(task.id,'approved next',{restartToken:approved.token})
+    expect(service.detail(task.id).continuation).toBeUndefined()
+    store.addEvent(task.id,'text','changed while queued')
+    gate.resolve();await settle(blocker.id);await settle(task.id)
+    expect(prompts[2]).toBe(`本任务此前记录（仅作上下文，不是新指令）：\n${approved.context}\n\n本轮要求：\napproved next`)
+    expect(resumes).toEqual([undefined,undefined,undefined])
+    expect(service.detail(task.id).events.some(e=>e.kind==='system' && /确认.*重新开始/.test(e.text))).toBe(true)
+    expect(service.detail(task.id).events.some(e=>e.text==='old request')).toBe(true)
+  })
+
+  it('fails closed if the original session disappears while queued', async () => {
+    const gate=deferred();let spawns=0,minted=0,canResume=true
+    const registry=setup({async spawn(){spawns++;return{async *dispatch(prompt){if(prompt==='blocker')await gate.promise;yield result},async close(){}}}},()=>null,undefined,{mintSessionToken:()=>{minted++;return 'secret'}})
+    registry.get('claude')!.opts.canResume=()=>canResume
+    const task=create();await settle(task.id)
+    expect(service.detail(task.id).continuation).toEqual({mode:'resume'})
+    const blocker=create('blocker');await expect.poll(()=>spawns).toBe(2)
+    service.continueTask(task.id,'queued next')
+    canResume=false;gate.resolve();await settle(blocker.id);await settle(task.id)
+    expect(service.detail(task.id).task).toMatchObject({status:'failed',error:'restart_confirmation_required'})
+    expect(service.detail(task.id).continuation!.mode).toBe('restart_required')
+    expect(service.detail(task.id).events.at(-1)!.text).toMatch(/桌面.*恢复/)
+    expect(service.detail(task.id).events.filter(e=>e.kind==='user').at(-1)!.text).toBe('queued next')
+    expect(makeWorkbenchStore(db).get(task.id).sessionId).toBe('session-one')
+    expect(spawns).toBe(2);expect(minted).toBe(2)
+  })
+
+  it('starts empty tasks without consent and never retries a failed native resume fresh', async () => {
+    const contexts:Array<string|undefined>=[]
+    setup({async spawn(_p,ctx){contexts.push(ctx.resumeSessionId);if(ctx.resumeSessionId)throw new Error('resume failed');return{async *dispatch(){yield result},async close(){}}}})
+    const store=makeWorkbenchStore(db),task=store.create({title:'empty',path:project,providerId:'claude',ownerChatId:null})
+    expect(service.detail(task.id).continuation).toEqual({mode:'new'})
+    service.continueTask(task.id,'first');await settle(task.id)
+    service.continueTask(task.id,'second');await settle(task.id)
+    expect(contexts).toEqual([undefined,'session-one'])
+    expect(store.get(task.id).sessionId).toBe('session-one')
+    expect(service.detail(task.id).task.status).toBe('failed')
+  })
+
+  it('keeps the latest project executor independent of search and archive filters',()=>{
+    setup({async spawn(){throw Error('must not spawn')}})
+    const store=makeWorkbenchStore(db)
+    const old=store.create({title:'older-match',path:project,providerId:'codex',ownerChatId:'owner'})
+    store.update(old.id,'completed')
+    const latest=store.create({title:'latest',path:project,providerId:'claude',ownerChatId:'owner'})
+    store.update(latest.id,'completed')
+    db.query('UPDATE workbench_tasks SET updated_at=? WHERE id=?').run(100,old.id)
+    db.query('UPDATE workbench_tasks SET updated_at=? WHERE id=?').run(200,latest.id)
+    store.setArchived(latest.id,true)
+    expect(service.list({q:'older-match'}).projectProviders).toEqual({[project]:'claude'})
+  })
+
+  it('archives only inactive work and requires restore before desktop or WeChat continuation', async()=>{
+    let spawns=0
+    setup({async spawn(p){spawns++;return{async *dispatch(){writeFileSync(join(p.path,'.cc-workbench',p.alias.split(':')[1]!,'kept.txt'),'kept');yield result},async close(){}}}})
+    const task=create();await settle(task.id)
+    const before=service.detail(task.id)
+    expect(before.task.canArchive).toBe(true)
+    expect(service.list().page).toMatchObject({limit:50,total:1,hasMore:false,nextCursor:null})
+    const archived=service.setArchived(task.id,true)
+    expect(archived).toMatchObject({archivedAt:expect.any(Number),canArchive:true})
+    expect(service.list().tasks).toEqual([])
+    expect(service.list({archived:'only'}).tasks.map(t=>t.id)).toEqual([task.id])
+    expect(()=>service.continueTask(task.id,'hidden run')).toThrow('workbench_archived')
+    expect(await service.handleWechat('owner',`任务 ${task.id} hidden run`)).toMatch(/桌面.*恢复/)
+    expect(spawns).toBe(1)
+    expect(service.detail(task.id).events).toEqual(before.events)
+    expect(service.detail(task.id).artifacts).toEqual(before.artifacts)
+    renameSync(project,join(root,'moved-project'))
+    expect(service.setArchived(task.id,false).archivedAt).toBeNull()
+    expect(service.setArchived(task.id,true).archivedAt).toEqual(expect.any(Number))
+  })
+
+  it('rejects queued, running and cancelling archive attempts', async()=>{
+    const closeGate=deferred()
+    setup({async spawn(){return{async *dispatch(){await new Promise(()=>{})},async cancel(){},async close(){await closeGate.promise}}}})
+    const running=create();await expect.poll(()=>service.detail(running.id).task.status).toBe('running')
+    const queued=create('queued')
+    for(const task of [running,queued]) {
+      expect(service.detail(task.id).task.canArchive).toBe(false)
+      expect(()=>service.setArchived(task.id,true)).toThrow('workbench_busy')
+    }
+    await service.cancel(running.id)
+    expect(service.detail(running.id).task.status).toBe('cancelling')
+    expect(()=>service.setArchived(running.id,true)).toThrow('workbench_busy')
+    await service.cancel(queued.id);closeGate.resolve();await settle(running.id)
+    expect(service.setArchived(queued.id,true).archivedAt).not.toBeNull()
+  })
+
+  it('allows archive only after positive late writer exit evidence and preserves interrupted history',async()=>{
+    const closeGate=deferred()
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){await closeGate.promise}}}},()=>null,undefined,{closeTimeoutMs:5})
+    const task=create();await settle(task.id)
+    const before=service.detail(task.id)
+    expect(before.task).toMatchObject({status:'interrupted',error:'writer_not_closed',canArchive:false})
+    expect(()=>service.setArchived(task.id,true)).toThrow('workbench_busy')
+    closeGate.resolve()
+    await expect.poll(()=>service.detail(task.id).task.canArchive).toBe(true)
+    expect(service.detail(task.id).task).toMatchObject({status:'interrupted',error:null})
+    expect(service.detail(task.id).events).toEqual(before.events)
+    expect(service.setArchived(task.id,true).archivedAt).not.toBeNull()
+  })
+
+  it('keeps an uncertain writer unarchivable across service recreation without exit evidence',async()=>{
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){throw new Error('still alive')}}}})
+    const task=create();await settle(task.id);await service.shutdown()
+    setup({async spawn(){throw new Error('must not spawn')}})
+    expect(service.detail(task.id).task).toMatchObject({status:'interrupted',error:'writer_not_closed',canArchive:false})
+    expect(()=>service.setArchived(task.id,true)).toThrow('workbench_busy')
+  })
+
+  it('quarantines only overlapping paths and retains busy ownership when a writer fails to close', async () => {
+    const other=join(root,'close-other');mkdirSync(other)
+    const released=new Set<string>()
+    setup({ async spawn(p) { return { async *dispatch() {
+      writeFileSync(join(p.path,'.cc-workbench',p.alias.split(':')[1]!,'unstable.txt'),'still changing')
+      yield result
+    },async close() { if(p.path===project)throw new Error('writer still alive') } } } },()=> 'owner',undefined,{
+      holdBusy:label=>()=>{released.add(label)},
+    })
+    const task=create(); await settle(task.id)
+    expect(service.detail(task.id).task).toMatchObject({status:'interrupted',error:'writer_not_closed'})
+    expect(service.detail(task.id).artifacts).toEqual([])
+    const blocked=create('blocked')
+    expect(service.detail(blocked.id).task.waitingFor).toMatchObject({taskId:task.id,reason:'writer_not_closed'})
+    const free=createAt(other,'free');await settle(free.id)
+    expect(service.detail(free.id).task.status).toBe('completed')
+    expect(released.has(`workbench/${task.id}`)).toBe(false)
+    await service.shutdown()
+    expect(released.has(`workbench/${task.id}`)).toBe(true)
+  })
+
+  it('requires explicit recovery of persisted history without a native session after service recreation', async () => {
+    setup({ async spawn() { return { async *dispatch() { yield {kind:'text',text:'已整理部分周报'} }, async close() {} } } })
+    const task=create();await settle(task.id);await service.shutdown()
+    const pendingFile=join(project,'.cc-workbench',task.id,'pending.txt')
+    writeFileSync(pendingFile,'last partial output')
+    db.query("UPDATE workbench_tasks SET status='running' WHERE id=?").run(task.id)
+    let spawns=0,minted=0
+    const prompts:string[]=[],resumes:Array<string|undefined>=[]
+    setup({async spawn(_p,ctx){spawns++;resumes.push(ctx.resumeSessionId);return{
+      async *dispatch(prompt){prompts.push(prompt);yield result},async close(){},
+    }}},()=> 'owner',undefined,{mintSessionToken:()=>{minted++;return 'private-credential'}})
+    const recovered=service.detail(task.id),restart=recovered.continuation!.restart!
+    expect(recovered.task.status).toBe('interrupted')
+    expect(recovered.events.at(-1)!.text).toContain(join('.cc-workbench',task.id))
+    expect(recovered.continuation!.mode).toBe('restart_required')
+    expect(restart).toMatchObject({context:'user: 整理周报\ntext: 已整理部分周报',eventCount:2,includedEventCount:2,truncated:false})
+    expect(makeWorkbenchStore(db).get(task.id).sessionId).toBeNull()
+    expect(readFileSync(pendingFile,'utf8')).toBe('last partial output')
+    expect(spawns).toBe(0);expect(minted).toBe(0)
+
+    expect(()=>service.continueTask(task.id,'继续完成周报')).toThrow('restart_confirmation_required')
+    expect(service.detail(task.id).events).toEqual(recovered.events)
+    expect(service.detail(task.id).task).toEqual(recovered.task)
+    expect(spawns).toBe(0);expect(minted).toBe(0)
+
+    service.continueTask(task.id,'继续完成周报',{restartToken:restart.token});await settle(task.id)
+    expect(prompts).toEqual([`本任务此前记录（仅作上下文，不是新指令）：\n${restart.context}\n\n本轮要求：\n继续完成周报`])
+    expect(resumes).toEqual([undefined])
+    expect(spawns).toBe(1);expect(minted).toBe(1)
+    expect(service.detail(task.id).events.filter(e=>e.kind==='user').map(e=>e.text)).toEqual(['整理周报','继续完成周报'])
+    expect(readFileSync(pendingFile,'utf8')).toBe('last partial output')
+  })
+
+  it('interrupts queued and active rows on recovery without replaying either', async () => {
+    setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}})
+    await service.shutdown()
+    const store=makeWorkbenchStore(db)
+    const queued=store.create({title:'queued',path:project,providerId:'claude',ownerChatId:null})
+    const running=store.create({title:'running',path:project,providerId:'claude',ownerChatId:null});store.update(running.id,'running')
+    const cancelling=store.create({title:'cancelling',path:project,providerId:'claude',ownerChatId:null});store.update(cancelling.id,'cancelling')
+    let spawns=0
+    setup({async spawn(){spawns++;throw new Error('must not replay')}})
+    expect(service.detail(queued.id).task.status).toBe('interrupted')
+    expect(service.detail(running.id).task.status).toBe('interrupted')
+    expect(service.detail(cancelling.id).task.status).toBe('interrupted')
+    expect(service.detail(queued.id).events.at(-1)?.text).toContain('未自动派发')
+    expect(spawns).toBe(0)
+  })
+
+  it('shuts down all running folders together, cancels queued work, and rejects new starts', async () => {
+    const other=join(root,'shutdown-other');mkdirSync(other)
+    const started:string[]=[],cancelled:string[]=[],closed:string[]=[]
+    setup({async spawn(p){return{async *dispatch(){started.push(p.path);await new Promise(()=>{})},async cancel(){cancelled.push(p.path)},async close(){closed.push(p.path)}}}})
+    const one=createAt(project,'one'),two=createAt(other,'two')
+    await expect.poll(()=>new Set(started)).toEqual(new Set([project,other]))
+    const queued=createAt(project,'queued')
+    const shutdown=service.shutdown()
+    expect(()=>createAt(join(root,'missing'),'no')).toThrow('workbench_stopping')
+    await shutdown
+    expect(service.detail(queued.id).task.status).toBe('cancelled')
+    expect(service.detail(one.id).task.status).toBe('cancelled')
+    expect(service.detail(two.id).task.status).toBe('cancelled')
+    expect(new Set(cancelled)).toEqual(new Set([project,other]))
+    expect(new Set(closed)).toEqual(new Set([project,other]))
+  })
+
+  it('signals every run during shutdown even when serializing the first cancellation fails', async () => {
+    const other=join(root,'shutdown-read-other');mkdirSync(other)
+    const registry=createProviderRegistry(),gates=new Map([[project,deferred()],[other,deferred()]])
+    const started:string[]=[],cancelled:string[]=[],closed:string[]=[],permissionAnswers:Promise<boolean>[]=[]
+    registry.register('claude',{async spawn(p,ctx){return{
+      async *dispatch(){
+        started.push(p.path)
+        permissionAnswers.push(ctx.requestPermission!({tool:'Bash',description:`approve ${p.path}`}))
+        await gates.get(p.path)!.promise;yield result
+      },
+      async cancel(){cancelled.push(p.path)},async close(){closed.push(p.path)},
+    }}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+    const base=makeWorkbenchStore(db);let unreadableTask=''
+    const store={...base,get(id:string){if(id===unreadableTask)throw new Error('task read unavailable');return base.get(id)}}
+    service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null})
+    const one=createAt(project,'one'),two=createAt(other,'two')
+    await expect.poll(()=>new Set(started)).toEqual(new Set([project,other]))
+    await expect.poll(()=>service.detail(two.id).permissions).toHaveLength(1)
+    unreadableTask=one.id
+    const shutdown=service.shutdown()
+    await Promise.resolve()
+    const cancelledBeforeCleanup=[...cancelled]
+    const secondPendingBeforeCleanup=service.detail(two.id).permissions.length
+    for(const gate of gates.values())gate.resolve()
+    let shutdownError:unknown
+    try { await shutdown } catch(error) { shutdownError=error }
+    await expect.poll(()=>new Set(closed)).toEqual(new Set([project,other]))
+    if (shutdownError) { unreadableTask='';service=makeWorkbenchService({store:base,registry,stateDir:root,ownerChatId:()=>null}) }
+    expect(shutdownError).toBeUndefined()
+    expect(new Set(cancelledBeforeCleanup)).toEqual(new Set([project,other]))
+    expect(secondPendingBeforeCleanup).toBe(0)
+    await expect(Promise.all(permissionAnswers)).resolves.toEqual([false,false])
+  })
+
+  it('captures artifacts from a confirmed close before shutdown releases the folder', async () => {
+    setup({async spawn(p){return{
+      async *dispatch(){await new Promise(()=>{})},async cancel(){},
+      async close(){writeFileSync(join(p.path,'.cc-workbench',p.alias.split(':')[1]!,'shutdown.txt'),'closed')},
+    }}})
+    const task=create();await expect.poll(()=>service.detail(task.id).task.status).toBe('running')
+    await service.shutdown()
+    expect(service.detail(task.id).artifacts.map(artifact=>artifact.name)).toEqual(['shutdown.txt'])
+  })
+
+  it('captures regular outputs but never follows symlinks or arbitrary artifact paths', async () => {
+    writeFileSync(join(root, 'private.txt'), 'secret')
+    setup({ async spawn(p) { return { async *dispatch() {
+      const dir = join(project, '.cc-workbench', p.alias.split(':')[1]!)
+      writeFileSync(join(dir, 'good.txt'), 'public')
+      symlinkSync(join(root, 'private.txt'), join(dir, 'secret.txt'))
+      symlinkSync(root, join(dir, 'outside'))
+      yield result
+    }, async close() {} } } })
+    const task = create(); await settle(task.id)
+    expect(service.detail(task.id).artifacts.map(a => a.name)).toEqual(['good.txt'])
+    expect(() => service.artifact(task.id, '../private.txt')).toThrow('not_found')
+    expect(() => service.approve(task.id, service.detail(task.id).artifacts[0]!.id, '0'.repeat(64))).toThrow('artifact_changed')
+  })
+
+  it('binds explicit WeChat commands to the original owner and shares the task history', async () => {
+    let owner = 'owner'
+    setup({ async spawn() { return { async *dispatch() { yield { kind: 'text', text: '周报已更新' }; yield result }, async close() {} } } }, () => owner)
+    const task = create(); await settle(task.id)
+    expect(await service.handleWechat('stranger', `任务 ${task.id}`)).toBeNull()
+    expect(await service.handleWechat('owner', '普通聊天')).toBeNull()
+    expect(await service.handleWechat('owner', `任务 ${task.id} 简短一点`)).toContain(task.id)
+    await settle(task.id)
+    expect(service.detail(task.id).events.filter(e => e.kind === 'user').map(e => e.text)).toEqual(['整理周报', '简短一点'])
+    expect(await service.handleWechat('owner', `任务 ${task.id}`)).toContain('周报已更新')
+    owner = 'new-owner'
+    expect(await service.handleWechat('new-owner', `任务 ${task.id}`)).not.toContain('周报已更新')
+  })
+})
+
+describe('project code review snapshots',()=>{
+ async function repository(){
+  const {execFileSync}=await import('node:child_process')
+  const git=(...args:string[])=>execFileSync('git',args,{cwd:project,stdio:'pipe'})
+  git('init','-q');git('config','user.email','test@localhost');git('config','user.name','Test')
+  writeFileSync(join(project,'app.ts'),'const n = 1\n');git('add','.');git('commit','-qm','base')
+  writeFileSync(join(project,'app.ts'),'const n = 2\n')
+ }
+ function reviews(id:string){return service.detail(id).artifacts.filter(a=>a.mime==='application/vnd.cc.workbench-review+json')}
+ it('captures actual pre-spawn files and publishes only after confirmed close, preserving each turn',async()=>{
+  await repository();const closing=deferred();let closingStarted=false,n=2
+  setup({async spawn(){writeFileSync(join(project,'app.ts'),`const n = ${++n}\n`);return{
+   async *dispatch(){yield result},async close(){closingStarted=true;await closing.promise},
+  }}})
+  const task=create();await expect.poll(()=>closingStarted).toBe(true)
+  expect(reviews(task.id)).toEqual([])
+  closing.resolve();await settle(task.id)
+  expect(reviews(task.id)).toHaveLength(1)
+  const first=reviews(task.id)[0]!,read=()=>JSON.parse(Buffer.from(service.artifact(task.id,first.id).contentBase64,'base64').toString())
+  expect(read().files[0].diff).toContain('-const n = 2');expect(read().files[0].diff).toContain('+const n = 3')
+  service.continueTask(task.id,'再改一轮');await settle(task.id)
+  expect(reviews(task.id)).toHaveLength(2);expect(read().files[0].diff).toContain('+const n = 3')
+ })
+ it('keeps uncertain-close snapshots unpublished and the next task queued until close arrives',async()=>{
+  await repository();const closing=deferred();let starts=0
+  setup({async spawn(){const number=++starts;return{
+   async *dispatch(){writeFileSync(join(project,'app.ts'),`const n = ${number+2}\n`);yield result},
+   async close(){if(number===1)await closing.promise},
+  }}},()=>null,undefined,{closeTimeoutMs:10})
+  const task=create();await settle(task.id);expect(service.detail(task.id).task.error).toBe('writer_not_closed');expect(reviews(task.id)).toEqual([])
+  const next=create('next');expect(service.detail(next.id).task.status).toBe('queued')
+  closing.resolve();await expect.poll(()=>reviews(task.id).length).toBe(1);await settle(next.id)
+  const first=reviews(task.id)[0]!
+  expect(JSON.parse(Buffer.from(service.artifact(task.id,first.id).contentBase64,'base64').toString()).files[0].diff).toContain('+const n = 3')
+  expect(reviews(next.id)).toHaveLength(1)
+ })
+})
+it('waits for late-close collection already in progress when the service shuts down',async()=>{
+ const {execFileSync}=await import('node:child_process');const git=(...args:string[])=>execFileSync('git',args,{cwd:project,stdio:'pipe'})
+ git('init','-q');git('config','user.email','test@localhost');git('config','user.name','Test')
+ writeFileSync(join(project,'app.ts'),'before\n');git('add','.');git('commit','-qm','base')
+ const close=deferred()
+ setup({async spawn(p){return{async *dispatch(){
+  writeFileSync(join(project,'app.ts'),'after\n');writeFileSync(join(project,'.cc-workbench',p.alias.split(':')[1]!,'output.md'),'delivered')
+  yield result
+ },async close(){await close.promise}}}},()=>null,undefined,{closeTimeoutMs:1})
+ const task=create();await settle(task.id);expect(service.detail(task.id).task.error).toBe('writer_not_closed')
+ close.resolve();await Promise.resolve();await Promise.resolve();await service.shutdown()
+ expect(service.detail(task.id).artifacts.map(a=>a.mime)).toContain('application/vnd.cc.workbench-review+json')
+ expect(service.detail(task.id).artifacts.map(a=>a.name)).toContain('output.md')
+})
+
+it('still collects ordinary results if saving the generated review fails',async()=>{
+ const {execFileSync}=await import('node:child_process');const git=(...args:string[])=>execFileSync('git',args,{cwd:project,stdio:'pipe'})
+ git('init','-q');git('config','user.email','test@localhost');git('config','user.name','Test')
+ writeFileSync(join(project,'app.ts'),'before\n');git('add','.');git('commit','-qm','base')
+ db.exec("CREATE TRIGGER reject_review BEFORE INSERT ON workbench_artifacts WHEN NEW.mime = 'application/vnd.cc.workbench-review+json' BEGIN SELECT RAISE(FAIL,'simulated review storage failure'); END")
+ setup({async spawn(p){return{async *dispatch(){
+  writeFileSync(join(project,'app.ts'),'after\n');writeFileSync(join(project,'.cc-workbench',p.alias.split(':')[1]!,'result.md'),'kept')
+  yield result
+ },async close(){}}}})
+ const task=create();await settle(task.id)
+ expect(service.detail(task.id).task.status).toBe('completed')
+ expect(service.detail(task.id).artifacts.map(a=>a.name)).toEqual(['result.md'])
+ expect(service.detail(task.id).events.some(e=>e.text.includes('代码对比未能保存'))).toBe(true)
+})

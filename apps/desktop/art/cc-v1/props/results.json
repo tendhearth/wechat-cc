@@ -1,0 +1,16 @@
+{
+  "manifestSha256": "7efe504ab3acf5320dd52c17e1423ced18e678e6461176b16776d6fd9281260f",
+  "renderer": "Blender 5.2.1 / Cycles 96 samples / seed 11",
+  "size": [
+    384,
+    384
+  ],
+  "padding": 12,
+  "formsChecked": [
+    "lit",
+    "unlit"
+  ],
+  "loadedPropCases": 14,
+  "deprecated": "sprout absent from manifest and lab; historical file retained",
+  "native": "QA app rebuilt; real desktop transparent-window review remains pending"
+}

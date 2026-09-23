@@ -1,0 +1,99 @@
+{
+  "date": "2026-09-13",
+  "baseline": "e81fe704",
+  "execution": {
+    "ok": true,
+    "executionChecks": true,
+    "catalogProjects": [
+      "/private/var/folders/yc/y9bc_lbd69z5_3_dqbt5bn6c0000gn/T/cc-attachments-browser-state-tKhXBk/project-a",
+      "/private/var/folders/yc/y9bc_lbd69z5_3_dqbt5bn6c0000gn/T/cc-attachments-browser-state-tKhXBk/project-b",
+      "/private/var/folders/yc/y9bc_lbd69z5_3_dqbt5bn6c0000gn/T/cc-attachments-browser-state-tKhXBk/project-a"
+    ],
+    "executionChoices": [
+      {
+        "defaults": "provider",
+        "model": "fixture-model-A",
+        "reasoningEffort": "deep"
+      },
+      {
+        "defaults": "provider",
+        "model": "fixture-model-B",
+        "reasoningEffort": "high"
+      },
+      {
+        "defaults": "provider",
+        "model": null,
+        "reasoningEffort": null
+      },
+      {
+        "defaults": "provider",
+        "model": null,
+        "reasoningEffort": null
+      },
+      {
+        "defaults": "provider",
+        "model": null,
+        "reasoningEffort": null
+      },
+      {
+        "defaults": "provider",
+        "model": "fixture-model-B",
+        "reasoningEffort": "high"
+      }
+    ],
+    "restartVerification": {
+      "tokenChanged": true,
+      "choice": {
+        "defaults": "provider",
+        "model": "fixture-model-B",
+        "reasoningEffort": "high"
+      }
+    },
+    "transport": "production browser API + browser proxy + internal HTTP",
+    "execution": "fixture AgentProvider only",
+    "taskCount": 2,
+    "dispatchCount": 6,
+    "attachmentHashes": {
+      "reference.png": "4c5d573cfb85b8ab0a5659062b830a058d1a449e51a6d79c13b483a77ea7ed28",
+      "brief.txt": "8bddab58c7cdc818523b4ad9a1b1fc892252a0f0403b798f785feaa30e72605b",
+      "followup.txt": "8240e46199aecd6af6cb9b8b5f7853dbd4cdf2d8068eec9ece0a9c71602e2009",
+      "queued.txt": "98c6628e76d1ac2532c9c3e3b685601d402430fd3e8393203bed6ff7a9674154"
+    },
+    "queuedReceipt": {
+      "id": "4ec20d6b-1fbe-437b-8022-f7ecfb1c7226",
+      "runId": "c4e03173-7242-4b2f-82ea-f6a79adbe9f1",
+      "status": "delivered"
+    },
+    "databaseReopened": true,
+    "refusedClaimedDiscards": 1,
+    "evidenceDirectory": "/private/var/folders/yc/y9bc_lbd69z5_3_dqbt5bn6c0000gn/T/cc-attachments-browser-evidence-U8GWK6"
+  },
+  "attachmentRegression": {
+    "ok": true,
+    "executionChecks": false,
+    "transport": "production browser API + browser proxy + internal HTTP",
+    "execution": "fixture AgentProvider only",
+    "taskCount": 2,
+    "dispatchCount": 5,
+    "attachmentHashes": {
+      "reference.png": "4c5d573cfb85b8ab0a5659062b830a058d1a449e51a6d79c13b483a77ea7ed28",
+      "brief.txt": "8bddab58c7cdc818523b4ad9a1b1fc892252a0f0403b798f785feaa30e72605b",
+      "followup.txt": "8240e46199aecd6af6cb9b8b5f7853dbd4cdf2d8068eec9ece0a9c71602e2009",
+      "queued.txt": "98c6628e76d1ac2532c9c3e3b685601d402430fd3e8393203bed6ff7a9674154"
+    },
+    "queuedReceipt": {
+      "id": "76405b4b-feae-4b66-a37a-0bb58deabbb7",
+      "runId": "c387c864-22db-4ad4-af75-223aff7bbe0a",
+      "status": "delivered"
+    },
+    "databaseReopened": true,
+    "refusedClaimedDiscards": 1,
+    "evidenceDirectory": "/private/var/folders/yc/y9bc_lbd69z5_3_dqbt5bn6c0000gn/T/cc-attachments-browser-evidence-SRUKJA"
+  },
+  "screenshotsInspected": [
+    "restart-execution-preview.png",
+    "task-options-1280.png",
+    "task-options-430.png"
+  ],
+  "scope": "Production browser module, host operator proxy, internal HTTP, service, SQLite and snapshot storage. AgentProvider catalog, execution and observations are synthetic fixtures."
+}

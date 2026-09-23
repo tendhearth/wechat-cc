@@ -1,0 +1,72 @@
+{
+  "root": "<owned temporary QA directory>",
+  "ok": true,
+  "stage": "revision",
+  "nativeRecoveries": [
+    {
+      "status": "fulfilled",
+      "value": {
+        "providerId": "claude",
+        "taskId": "1f33748a",
+        "nativeId": "4fb34d6f-d224-4e62-8277-7850529d75d5",
+        "ok": true,
+        "refreshes": 0,
+        "status": "completed",
+        "error": null
+      }
+    },
+    {
+      "status": "fulfilled",
+      "value": {
+        "providerId": "codex",
+        "taskId": "2027db98",
+        "nativeId": "01a0993e-1ff6-7552-8639-29fd12ae8d29",
+        "ok": true,
+        "refreshes": 0,
+        "status": "completed",
+        "error": null
+      }
+    }
+  ],
+  "sourceTaskId": "4281f619",
+  "originalNativeId": "01a0993e-a6d2-7463-bc4f-c784d9c93565",
+  "preexistingPreserved": true,
+  "reviewTaskId": "fa0d7820",
+  "reviewNativeId": "3ef02307-87ec-4c8a-b879-1834fac1c9dd",
+  "identityPreserved": true,
+  "markerRecovered": true,
+  "revisionCorrect": true,
+  "pinnedOldVersion": true,
+  "onlySelectedOpinion": true,
+  "newDiff": true,
+  "userNotesPreserved": true,
+  "permissionDecisions": 0,
+  "records": [
+    {
+      "id": "f70c8a0c-7373-4e42-9795-bcca69431eca",
+      "purpose": "review",
+      "sourceTaskId": "4281f619",
+      "targetTaskId": "fa0d7820",
+      "sourceNativeId": "01a0993e-a6d2-7463-bc4f-c784d9c93565",
+      "targetNativeId": "3ef02307-87ec-4c8a-b879-1834fac1c9dd",
+      "sha256": "493642595dc9856f34b1d7880fb26879826be60b91926a1832d99ec5f663f4ea",
+      "requestEventId": 9
+    },
+    {
+      "id": "9b7f9625-67d2-4a7d-9ca0-684737de5342",
+      "purpose": "revision",
+      "sourceTaskId": "fa0d7820",
+      "targetTaskId": "4281f619",
+      "sourceNativeId": "3ef02307-87ec-4c8a-b879-1834fac1c9dd",
+      "targetNativeId": "01a0993e-a6d2-7463-bc4f-c784d9c93565",
+      "sha256": "493642595dc9856f34b1d7880fb26879826be60b91926a1832d99ec5f663f4ea",
+      "requestEventId": 19
+    }
+  ],
+  "versions": {
+    "codexCli": "0.153.4",
+    "claudeCode": "2.1.267",
+    "claudeSdk": "0.2.116",
+    "bun": "1.3.14"
+  }
+}

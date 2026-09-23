@@ -19,7 +19,8 @@
  * statements. bun:sqlite is API-compatible enough with better-sqlite3
  * that swapping later (if Bun ever drops the builtin) would be local.
  */
-import { Database } from 'bun:sqlite'
+import { openSqlite, type SqlDatabase as Database } from './runtime/sqlite'
+import { sleepSync } from './runtime'
 import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
@@ -942,7 +943,505 @@ export const migrations: Migration[] = [
     if (cols.some(c => c.name === 'tool_calls')) return
     db.exec(`ALTER TABLE turn_records ADD COLUMN tool_calls TEXT;`)
   },
+  // v36 — hunt_catch:每日打猎带回来的东西。
+  //
+  // WHY(2026-09-03,用户反馈):打猎每天在跑,发完就没了。careLedger 只记
+  // 「今天打过猎」,**猎到什么一个字都没存** —— 主人想回头找上周那条链接,
+  // 只能去微信聊天记录里翻。一位用户的 CC 自己想了个办法:建个 Excel
+  // 「军火库」,每样东西记「是什么/对你有什么用/链接/状态(没试/跑过/在用)」。
+  // 那张表就是这张表要长成的样子。
+  //
+  // `note` 是**发出去的原文**,一字不改;`title` 是派生的短标题,只为列表
+  // 扫读。status 由主人在桌面端改,默认 new。
+  //
+  // IF NOT EXISTS 不是保险起见 —— #79 的修复路径「回退到 v18 再重放 v19+」
+  // 只 drop social_* 那批表,hunt_catch 会活下来,于是重放到这里时裸 CREATE
+  // 必抛 already exists。v35 刚为同一条路径吃过一次(那次是 duplicate
+  // column name)。
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS hunt_catch (
+        id TEXT PRIMARY KEY NOT NULL,
+        ts TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        url TEXT,
+        note TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'new'
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS hunt_catch_ts ON hunt_catch(ts DESC);
+    `)
+  },
+  // v37 — hunt_catch 加 kind:'hunt'(打猎带回的东西)| 'visit'(串门带回的见闻)。
+  //
+  // WHY(2026-09-03):串门(core/visit.ts)让伙伴回家跟主人讲一段话。那段话
+  // 发到微信就没了,跟打猎一开始的洞一模一样。背包本来就是「CC 出门带回来
+  // 的」,东西和见闻是同一个面的两个分类,不另开一张表。
+  //
+  // 列存在守卫,不是表守卫:#79 修复路径重放时 hunt_catch 会活下来(v36 用了
+  // IF NOT EXISTS),裸 ALTER 会抛 duplicate column name。同 v35。
+  (db) => {
+    const cols = db.query<{ name: string }, []>("PRAGMA table_info('hunt_catch')").all()
+    if (cols.length === 0 || cols.some(c => c.name === 'kind')) return
+    db.exec(`ALTER TABLE hunt_catch ADD COLUMN kind TEXT NOT NULL DEFAULT 'hunt';`)
+  },
+  // v38 — hunt_catch 加 image_svg:串门回来的明信片(SVG 文本,已 safeSvg)。
+  // 桌面直接内联渲染(和 portrait.svg 一样);微信收到的是栅格化后的 PNG。
+  // 同款列存在守卫。
+  (db) => {
+    const cols = db.query<{ name: string }, []>("PRAGMA table_info('hunt_catch')").all()
+    if (cols.length === 0 || cols.some(c => c.name === 'image_svg')) return
+    db.exec(`ALTER TABLE hunt_catch ADD COLUMN image_svg TEXT;`)
+  },
+  // v39 — penpal_letter 加 kind / payload:社交信封(架构重构 §2.1,core/envelope.ts)。
+  //
+  // 此前每个社交功能一条路由;串门为了不加路由往明文塞头部。现在密封明文里
+  // 只有一种结构 `⟪env⟫{kind,payload}`,在 correspondent 一处解析、按 kind 分发。
+  // kind='letter' 是主人写的真信(明文即信,payload NULL)。
+  // 表名不改:概念上它是 social_message,改名只有搬迁成本。
+  //
+  // 两列各自带列存在守卫(同 v35/v37/v38)。#79 重放路径下 penpal_letter 会被
+  // drop 重建,但守卫不多余:任何一条只跑到一半的迁移都会留下半张表。
+  (db) => {
+    const cols = db.query<{ name: string }, []>("PRAGMA table_info('penpal_letter')").all()
+    if (cols.length === 0) return
+    if (!cols.some(c => c.name === 'kind')) db.exec(`ALTER TABLE penpal_letter ADD COLUMN kind TEXT NOT NULL DEFAULT 'letter';`)
+    if (!cols.some(c => c.name === 'payload')) db.exec(`ALTER TABLE penpal_letter ADD COLUMN payload TEXT;`)
+  },
+  // v40 — hunt_catch → journal(架构重构 §2.4)。
+  //
+  // 背包本来是「打猎带回的东西」,一天之内又装进了见闻和明信片。它其实是
+  // 伙伴的**日志**:今天干了什么、遇到了谁、带回了什么。名字跟着概念走;
+  // kind 决定每条是什么(hunt | visit | 将来的 gift / proposal / letter)。
+  //
+  // 三种起点都要能到:已有 hunt_catch(改名)/ 已是 journal(跳过)/ 都没有
+  // (#79 路径下不会发生,但守着不亏)。
+  (db) => {
+    const has = (name: string) =>
+      (db.query<{ c: number }, [string]>("SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name=?").get(name)?.c ?? 0) > 0
+    if (has('journal')) return
+    if (has('hunt_catch')) { db.exec(`ALTER TABLE hunt_catch RENAME TO journal;`); return }
+    db.exec(`
+      CREATE TABLE journal (
+        id TEXT PRIMARY KEY NOT NULL, ts TEXT NOT NULL, chat_id TEXT NOT NULL,
+        title TEXT NOT NULL, url TEXT, note TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'new', kind TEXT NOT NULL DEFAULT 'hunt', image_svg TEXT
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS hunt_catch_ts ON journal(ts DESC);
+    `)
+  },
+  // v41 — reminders 表少列的自愈。v29 用 `CREATE TABLE IF NOT EXISTS reminders`
+  // 建表,但六月的 feat/reminders(当时编号 v15)先建过一版**没有**
+  // last_attempt_at 的 reminders 表。跑过那条老分支的库里表已存在,v29 的
+  // IF NOT EXISTS 直接跳过,列就永远补不上 —— sweeper 每次 SELECT/UPDATE
+  // last_attempt_at 都抛 "no such column: last_attempt_at",reminders 子系统
+  // 每次启动都 degraded。和 v32/v33/v34 同一个形状:表在、列缺。
+  // 区别是这几列在**全新装**的库里(v29 建的)本就存在,ALTER ADD 已存在的列会
+  // 报 duplicate,所以不能像 v32 那样无脑 ALTER —— 先用 table_info 探缺哪列、
+  // 只补缺的。Nullable-TEXT / 带 DEFAULT 的 INTEGER ADD COLUMN 在 STRICT 表安全。
+  (db) => {
+    const found = db
+      .query<{ cnt: number }, []>("SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type='table' AND name='reminders'")
+      .get()
+    if (!found || found.cnt === 0) return
+    const cols = new Set(
+      db.query<{ name: string }, []>('PRAGMA table_info(reminders)').all().map((r) => r.name),
+    )
+    if (!cols.has('attempts')) db.exec('ALTER TABLE reminders ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;')
+    if (!cols.has('last_error')) db.exec('ALTER TABLE reminders ADD COLUMN last_error TEXT;')
+    if (!cols.has('last_attempt_at')) db.exec('ALTER TABLE reminders ADD COLUMN last_attempt_at TEXT;')
+  },
+  // v42 — turn_records.tool_calls 的分支编号碰撞自愈。
+  //
+  // 2026-09-03 的 Atelier 工作树曾把 reminders 自愈作为自己的 v35 跑在本机；
+  // 随后 origin/dev 的正式 v35 用来新增 tool_calls。PRAGMA user_version 只记
+  // 数量，所以那台机器升级时会跳过正式 v35，却继续跑 v36+，最终在启动
+  // turn-record store 时因缺列崩溃。不能改写已发布 v35；在数组尾部再做一次
+  // 列存在守卫，既修复受影响数据库，也对正常数据库保持无操作。
+  (db) => {
+    const found = db
+      .query<{ cnt: number }, []>("SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type='table' AND name='turn_records'")
+      .get()
+    if (!found || found.cnt === 0) return
+    const cols = db.query<{ name: string }, []>("PRAGMA table_info('turn_records')").all()
+    if (cols.some(c => c.name === 'tool_calls')) return
+    db.exec('ALTER TABLE turn_records ADD COLUMN tool_calls TEXT;')
+  },
+  // v43 — 旧的工具社交管道退役(spec 2026-09-04-wish-postcard §3)。
+  //
+  // 派心愿 / 回声 / 揭晓改写成走 E2E 信道的信封(kind='wish' / 'postcard'),
+  // 状态在 penpal_letter + companion/wishes.json。四张表 + seen_intent 在
+  // 真机上全是 0 行。DROP IF EXISTS:#79 路径下的库可能从没建过它们。
+  // repairBranchRenumberedSchema 只看 user_version 19–21,这里不受影响。
+  (db) => {
+    db.exec(`
+      DROP TABLE IF EXISTS social_seen_intent;
+      DROP TABLE IF EXISTS social_relay;
+      DROP TABLE IF EXISTS social_pledge;
+      DROP TABLE IF EXISTS social_echo;
+      DROP TABLE IF EXISTS social_seek;
+    `)
+  },
+  // v44 — conversations.mode_model:按对话钉的模型(/api DeepSeek、
+  // provider_switch)。provider 本来就是按对话的,模型钉之前却写在全局
+  // agent-config 里 —— 这个群钉了 Qwen,那个群也被换了。守卫同 v11:
+  // 表可能不存在(user_version=9 起步的单测库)、列可能已在(重跑)。
+  (db) => {
+    const has = db
+      .query<{ cnt: number }, []>("SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type='table' AND name='conversations'")
+      .get()
+    if (!has || has.cnt === 0) return
+    const cols = db.query<{ name: string }, []>("PRAGMA table_info('conversations')").all()
+    if (cols.some(c => c.name === 'mode_model')) return
+    db.exec('ALTER TABLE conversations ADD COLUMN mode_model TEXT;')
+  },
+  // v45 — explicit postcard favorites survive journal retention.
+  (db) => {
+    const cols = db.query<{ name: string }, []>('PRAGMA table_info(journal)').all()
+    if (cols.length && !cols.some(c => c.name === 'favorite')) {
+      db.exec('ALTER TABLE journal ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1))')
+    }
+  },
+
+  // v46 — durable desktop tasks, event history and immutable deliverables.
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS workbench_tasks (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, path TEXT NOT NULL,
+        provider_id TEXT NOT NULL, owner_chat_id TEXT, session_id TEXT,
+        status TEXT NOT NULL CHECK(status IN ('queued','running','cancelling','completed','failed','cancelled','interrupted')),
+        error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS workbench_events (
+        id INTEGER PRIMARY KEY, task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+        kind TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS workbench_events_task ON workbench_events(task_id, id);
+      CREATE TABLE IF NOT EXISTS workbench_artifacts (
+        id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+        name TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL,
+        sha256 TEXT NOT NULL, storage_path TEXT NOT NULL,
+        created_at INTEGER NOT NULL, approved_at INTEGER,
+        UNIQUE(task_id, name, sha256)
+      ) STRICT;
+    `)
+  },
+  // v47 — task archive state and stable full-history listing order.
+  (db) => {
+    // Repair migrations can rewind user_version on an otherwise newer schema.
+    const columns=db.query<{name:string},[]>('PRAGMA table_info(workbench_tasks)').all()
+    if(!columns.some(column=>column.name==='archived_at'))db.exec('ALTER TABLE workbench_tasks ADD COLUMN archived_at INTEGER')
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS workbench_tasks_visible_order ON workbench_tasks(updated_at DESC,id DESC) WHERE archived_at IS NULL;
+      CREATE INDEX IF NOT EXISTS workbench_tasks_archived_order ON workbench_tasks(updated_at DESC,id DESC) WHERE archived_at IS NOT NULL;
+    `)
+  },
+  // v48 — immutable provenance for explicitly imported native sessions.
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS workbench_sources (
+        id TEXT PRIMARY KEY, task_id TEXT NOT NULL UNIQUE REFERENCES workbench_tasks(id),
+        provider_id TEXT NOT NULL CHECK(provider_id IN ('claude','codex')), native_id TEXT NOT NULL,
+        cwd TEXT NOT NULL, imported_at INTEGER NOT NULL, first_dispatched_at INTEGER,
+        snapshot_sha256 TEXT NOT NULL, observed_fingerprint TEXT NOT NULL,
+        selected_message_count INTEGER NOT NULL, truncated INTEGER NOT NULL CHECK(truncated IN (0,1)),
+        snapshot_json TEXT NOT NULL, pages_json TEXT NOT NULL,
+        UNIQUE(provider_id,native_id)
+      ) STRICT;
+    `)
+    const columns=db.query<{name:string},[]>('PRAGMA table_info(workbench_events)').all()
+    if(!columns.some(column=>column.name==='source_id'))db.exec('ALTER TABLE workbench_events ADD COLUMN source_id TEXT REFERENCES workbench_sources(id)')
+  },
+
+  // v49 — version-pinned review and revision provenance.
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS workbench_handoffs (
+        id TEXT PRIMARY KEY, source_task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+        target_task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+        purpose TEXT NOT NULL CHECK(purpose IN ('review','revision')), request TEXT NOT NULL,
+        packet_sha256 TEXT NOT NULL, artifact_refs_json TEXT NOT NULL, quote_json TEXT,
+        created_at INTEGER NOT NULL, request_event_id INTEGER REFERENCES workbench_events(id),
+        source_native_id TEXT, target_native_id TEXT,
+        packet_json TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS workbench_handoffs_source ON workbench_handoffs(source_task_id,created_at);
+      CREATE INDEX IF NOT EXISTS workbench_handoffs_target ON workbench_handoffs(target_task_id,created_at);
+    `)
+  },
+
+  // v50 — task/run-bound supplemental input, never replayed after restart.
+  (db) => {
+    db.exec(`CREATE TABLE IF NOT EXISTS workbench_live_inputs (
+      id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+      run_id TEXT NOT NULL, text TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('pending','sending','delivered','held','withdrawn')),
+      created_at INTEGER NOT NULL, error TEXT
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS workbench_live_inputs_task ON workbench_live_inputs(task_id,status);`)
+  },
+  // v51 — ordered native activity updates, isolated by task and dispatch run.
+  (db) => {
+    const columns=new Set(db.query<{name:string},[]>('PRAGMA table_info(workbench_events)').all().map(c=>c.name))
+    for(const column of ['run_id','event_key','activity_json']) {
+      if(!columns.has(column))db.exec(`ALTER TABLE workbench_events ADD COLUMN ${column} TEXT`)
+    }
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS workbench_events_native_item ON workbench_events(task_id,run_id,event_key) WHERE event_key IS NOT NULL')
+  },
+  // v52 — durable run-bound receipts for phone control actions, separate from task inputs.
+  (db) => {
+    db.exec(`CREATE TABLE IF NOT EXISTS workbench_control_receipts (
+      id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+      run_id TEXT, action TEXT NOT NULL CHECK(action IN ('stop')),
+      text_hash TEXT NOT NULL, result TEXT, created_at INTEGER NOT NULL
+    ) STRICT;`)
+  },
+  // v53 — immutable task input snapshots and ordered refs on durable input history.
+  (db) => {
+    db.exec(`CREATE TABLE IF NOT EXISTS workbench_attachments (
+      id TEXT PRIMARY KEY, draft_id TEXT NOT NULL,
+      task_id TEXT REFERENCES workbench_tasks(id), upload_task_id TEXT REFERENCES workbench_tasks(id),
+      name TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL CHECK(size>0 AND size<=8388608),
+      sha256 TEXT NOT NULL, storage_path TEXT NOT NULL, created_at INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS workbench_attachments_task ON workbench_attachments(task_id,created_at);
+    CREATE INDEX IF NOT EXISTS workbench_attachments_draft ON workbench_attachments(draft_id) WHERE task_id IS NULL;`)
+    for(const table of ['workbench_events','workbench_live_inputs']) {
+      const columns=db.query<{name:string},[]>(`PRAGMA table_info(${table})`).all()
+      if(!columns.some(column=>column.name==='attachments_json'))db.exec(`ALTER TABLE ${table} ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]'`)
+    }
+  },
+  // v54 — retained task execution choice and immutable choices for accepted runs.
+  (db) => {
+    const columns=db.query<{name:string},[]>('PRAGMA table_info(workbench_tasks)').all()
+    if(!columns.some(column=>column.name==='execution_choice_json')) {
+      db.exec(`ALTER TABLE workbench_tasks ADD COLUMN execution_choice_json TEXT NOT NULL DEFAULT '{"defaults":"provider","model":null,"reasoningEffort":null}';`)
+      db.exec(`UPDATE workbench_tasks SET execution_choice_json='{"defaults":"native","model":null,"reasoningEffort":null}' WHERE id IN (SELECT task_id FROM workbench_sources);`)
+    }
+    db.exec(`CREATE TABLE IF NOT EXISTS workbench_run_execution (
+      run_id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+      choice_json TEXT NOT NULL, effective_json TEXT,
+      created_at INTEGER NOT NULL, observed_at INTEGER
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS workbench_run_execution_task ON workbench_run_execution(task_id,created_at);`)
+    const inputs=db.query<{name:string},[]>('PRAGMA table_info(workbench_live_inputs)').all()
+    if(!inputs.some(column=>column.name==='execution_json'))db.exec('ALTER TABLE workbench_live_inputs ADD COLUMN execution_json TEXT')
+  },
+  // v55 — immutable receipts for idempotent phone-created workbench tasks.
+  (db) => {
+    db.exec(`CREATE TABLE IF NOT EXISTS workbench_creation_receipts (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL,
+      owner_chat_id TEXT NOT NULL,
+      command_hash TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      path TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+      run_id TEXT NOT NULL,
+      reply TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS workbench_creation_receipts_task ON workbench_creation_receipts(task_id);`)
+  },
+  // v56 — original-account task subscriptions and durable delivery state.
+  (db) => {
+    initializeWechatNotificationSchema(db)
+    db.exec(`ALTER TABLE workbench_control_receipts RENAME TO workbench_control_receipts_v52;
+      CREATE TABLE workbench_control_receipts (
+        id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+        run_id TEXT, action TEXT NOT NULL CHECK(action IN ('stop','watch','mute')),
+        text_hash TEXT NOT NULL, result TEXT, created_at INTEGER NOT NULL
+      ) STRICT;
+      INSERT INTO workbench_control_receipts SELECT * FROM workbench_control_receipts_v52;
+      DROP TABLE workbench_control_receipts_v52;`)
+  },
+  // v57 — explicit owner requests for immutable workbench artifact delivery.
+  (db) => { initializeArtifactDeliverySchema(db) },
+  // v58 — durable transcripts for managed OpenAI-compatible workbench tasks.
+  (db) => { initializeApiSessionSchema(db) },
+  // v59 — 补 v49 漏掉的列。v49 建 workbench_handoffs 用的是 CREATE TABLE IF
+  // NOT EXISTS,而 request_event_id 是在这张表已经被建出来之后才加进那条语句的
+  // —— 对存量库是空操作,列永远补不上,于是 store.detail() 的 HANDOFF_SELECT
+  // 每次都抛 "no such column",工作台一个任务都打不开(2026-09-15 真机)。
+  // 只能追加新迁移,不能改 v49:user_version 是计数,改旧条目对已过该位的库无效。
+  (db) => {
+    if(!hasTable(db,'workbench_handoffs'))return
+    const columns=db.query<{name:string},[]>('PRAGMA table_info(workbench_handoffs)').all()
+    if(!columns.some(column=>column.name==='request_event_id'))db.exec('ALTER TABLE workbench_handoffs ADD COLUMN request_event_id INTEGER REFERENCES workbench_events(id)')
+  },
+
+  // v60 — matter(事):主人心里的"一件事",跨表面、跨供应商会话的统一原语
+  // (2026-09-16 定案,docs/cc-workbench.md「一件事」)。全部是加法:三张新表 +
+  // workbench_tasks 一列可空的 matter_id。存量任务回填成 kind='task' 的 matter,
+  // id 与任务 id 相同(一对一,微信里照样好念);聊天的 matter 在首次入站时才建。
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS matters (
+        id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('chat','task','companion')),
+        title TEXT NOT NULL, project_path TEXT,
+        status TEXT NOT NULL CHECK(status IN ('open','replied','done','archived')),
+        owner_chat_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS matters_updated ON matters(updated_at);
+      CREATE TABLE IF NOT EXISTS matter_bindings (
+        matter_id TEXT NOT NULL REFERENCES matters(id),
+        surface TEXT NOT NULL CHECK(surface IN ('wechat','desktop','phone','cli')),
+        surface_key TEXT NOT NULL, last_seen_at INTEGER NOT NULL,
+        PRIMARY KEY(matter_id, surface, surface_key)
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS matter_bindings_key ON matter_bindings(surface, surface_key);
+      CREATE TABLE IF NOT EXISTS matter_sessions (
+        matter_id TEXT NOT NULL REFERENCES matters(id),
+        provider_id TEXT NOT NULL, session_id TEXT NOT NULL,
+        role TEXT NOT NULL CHECK(role IN ('main','review','handoff')), created_at INTEGER NOT NULL,
+        PRIMARY KEY(matter_id, provider_id, session_id)
+      ) STRICT;
+    `)
+    const columns=db.query<{name:string},[]>('PRAGMA table_info(workbench_tasks)').all()
+    if(!columns.some(column=>column.name==='matter_id'))db.exec('ALTER TABLE workbench_tasks ADD COLUMN matter_id TEXT REFERENCES matters(id)')
+    db.exec(`
+      INSERT INTO matters(id, kind, title, project_path, status, owner_chat_id, created_at, updated_at)
+        SELECT id, 'task', title, path,
+               CASE WHEN archived_at IS NOT NULL THEN 'archived'
+                    WHEN status IN ('completed','failed','cancelled') THEN 'done'
+                    ELSE 'open' END,
+               owner_chat_id, created_at, updated_at
+        FROM workbench_tasks WHERE id NOT IN (SELECT id FROM matters);
+      UPDATE workbench_tasks SET matter_id = id WHERE matter_id IS NULL;
+    `)
+  },
+
+  // v61: 工作台实时事件流 —— 任务变更序号(持久化)与事件行的 seq(长轮询只取 seq > since 的行)。
+  (db) => {
+    const has = (table: string, column: string) => db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all().some(c => c.name === column)
+    if (!has('workbench_tasks', 'seq')) db.exec('ALTER TABLE workbench_tasks ADD COLUMN seq INTEGER NOT NULL DEFAULT 0')
+    if (!has('workbench_events', 'seq')) db.exec('ALTER TABLE workbench_events ADD COLUMN seq INTEGER NOT NULL DEFAULT 0')
+    db.exec('CREATE INDEX IF NOT EXISTS workbench_events_task_seq ON workbench_events(task_id, seq)')
+  },
+
+  // v62: workbench_review_marks(逐文件审阅标记)
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS workbench_review_marks (
+        task_id TEXT NOT NULL, artifact_sha256 TEXT NOT NULL, path TEXT NOT NULL,
+        after_sha256 TEXT, mark TEXT NOT NULL CHECK(mark IN ('accepted','returned')),
+        comment TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL,
+        PRIMARY KEY(task_id, artifact_sha256, path)
+      ) STRICT;
+    `)
+  },
+  // v63: projects survive empty/archived conversation lists. Existing canonical
+  // task paths remain the association key, including external session imports.
+  (db) => {
+    db.exec(`CREATE TABLE IF NOT EXISTS workbench_projects (
+      id TEXT PRIMARY KEY NOT NULL,
+      path TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    ) STRICT;
+    INSERT OR IGNORE INTO workbench_projects(id,path,name,provider_id,created_at)
+      SELECT 'p-' || lower(hex(randomblob(16))),path,'',provider_id,MIN(created_at)
+      FROM workbench_tasks GROUP BY path;`)
+  },
+
 ]
+
+/**
+ * 工作台表的建表语句 —— 放在这里而不是各自模块里,是因为 `src/lib` 是依赖树的底,
+ * 不能反向依赖 `src/core`(depcruise `lib-must-not-depend-on-anything-internal`)。
+ * 迁移阶梯本来就在本文件,v46 起的工作台表也都写在这儿;这三个只是补齐同一处。
+ * 模块侧按原名再导出,单测照旧可以只建自己那几张表,不跑整条阶梯。
+ */
+export function initializeWechatNotificationSchema(db: Database):void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workbench_wechat_subscriptions (
+      task_id TEXT PRIMARY KEY NOT NULL REFERENCES workbench_tasks(id) ON DELETE CASCADE,
+      owner_chat_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+      generation INTEGER NOT NULL CHECK(generation >= 1),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS workbench_wechat_notices (
+      id TEXT PRIMARY KEY NOT NULL,
+      task_id TEXT NOT NULL REFERENCES workbench_tasks(id) ON DELETE CASCADE,
+      run_id TEXT NOT NULL,
+      owner_chat_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      subscription_generation INTEGER NOT NULL CHECK(subscription_generation >= 1),
+      kind TEXT NOT NULL CHECK(kind IN ('permission','question','completed','failed','interrupted','cancelled')),
+      request_id TEXT,
+      text TEXT NOT NULL CHECK(length(text) BETWEEN 1 AND 4000),
+      status TEXT NOT NULL CHECK(status IN ('pending','sending','accepted','unknown','suppressed')),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      reason TEXT,
+      next_attempt_at INTEGER,
+      defer_count INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(task_id,run_id,kind,request_id,subscription_generation)
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS workbench_wechat_notices_pending ON workbench_wechat_notices(status,next_attempt_at,created_at);
+    CREATE INDEX IF NOT EXISTS workbench_wechat_notices_task ON workbench_wechat_notices(task_id,created_at,id);
+    CREATE TABLE IF NOT EXISTS workbench_wechat_notice_intents (
+      id TEXT PRIMARY KEY NOT NULL,
+      notice_id TEXT NOT NULL UNIQUE,
+      task_id TEXT NOT NULL REFERENCES workbench_tasks(id) ON DELETE CASCADE,
+      run_id TEXT NOT NULL,
+      owner_chat_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      subscription_generation INTEGER NOT NULL CHECK(subscription_generation >= 1),
+      kind TEXT NOT NULL CHECK(kind IN ('permission','question','completed','failed','interrupted','cancelled')),
+      request_id TEXT,
+      text TEXT NOT NULL CHECK(length(text) BETWEEN 1 AND 4000),
+      status TEXT NOT NULL CHECK(status IN ('pending','materialized','suppressed')),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      reason TEXT
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS workbench_wechat_notice_intents_pending ON workbench_wechat_notice_intents(status,created_at,id);
+  `)
+}
+
+export function initializeArtifactDeliverySchema(db: Database):void {
+  db.exec(`CREATE TABLE IF NOT EXISTS workbench_artifact_deliveries (
+    id TEXT PRIMARY KEY,
+    command_hash TEXT NOT NULL,
+    task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+    artifact_id TEXT NOT NULL REFERENCES workbench_artifacts(id),
+    artifact_sha256 TEXT NOT NULL,
+    name TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    size INTEGER NOT NULL CHECK(size>=0 AND size<=8388608),
+    owner_chat_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('prepared','uploading','uploaded','sending','accepted','unknown','blocked')),
+    media_item_json TEXT,
+    reason TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX IF NOT EXISTS workbench_artifact_deliveries_task ON workbench_artifact_deliveries(task_id,created_at);`)
+}
+
+export function initializeApiSessionSchema(db: Database):void{
+  db.exec(`CREATE TABLE IF NOT EXISTS workbench_api_sessions(
+    id TEXT PRIMARY KEY NOT NULL,
+    task_id TEXT NOT NULL REFERENCES workbench_tasks(id),
+    owner TEXT NOT NULL,
+    path TEXT NOT NULL,
+    directory_identity TEXT NOT NULL,
+    config_hash TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision>=0),
+    messages_json TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('active','ready','interrupted')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX IF NOT EXISTS idx_workbench_api_sessions_task ON workbench_api_sessions(task_id);`)
+}
 
 export interface OpenDbOpts {
   /**
@@ -983,7 +1482,7 @@ export function withLockRetry<T>(
 ): T {
   const attempts = opts.attempts ?? 12
   const delayMs = opts.delayMs ?? 250
-  const sleep = opts.sleep ?? ((ms: number) => { Bun.sleepSync(ms) })
+  const sleep = opts.sleep ?? sleepSync
   let lastErr: unknown
   for (let i = 0; i < attempts; i++) {
     try {
@@ -1006,7 +1505,7 @@ export function openDb(opts: OpenDbOpts): Database {
   // restart the SIGKILLed old process may still hold it (busy_timeout doesn't
   // cover the journal-mode switch). Retry instead of crashing the boot.
   const db = withLockRetry(() => {
-    const d = new Database(opts.path, { create: true })
+    const d = openSqlite(opts.path, { create: true })
     d.exec('PRAGMA journal_mode = WAL;')
     return d
   })

@@ -7,10 +7,9 @@ import { ROUTE_MIN_TIER, tierMeets } from '../daemon/internal-api/route-tiers'
 // trusted. An admin-only CLI route would silently 403 in the field.
 const CLI_ROUTES = [
   'POST /v1/a2a/send',
-  // wechat-cc social reveal (src/cli/social.ts: cmdSocialReveal) — tries
-  // echoes/reveal first, falls back to pledges/reveal on 404.
-  'POST /v1/social/echoes/reveal',
-  'POST /v1/social/pledges/reveal',
+  // wechat-cc social wishes (src/cli/social.ts: cmdSocialWishes) —
+  // spec 2026-09-04-wish-postcard §4, replaces the old reveal routes.
+  'GET /v1/social/wishes',
 ]
 
 describe('CLI is capped at trusted', () => {

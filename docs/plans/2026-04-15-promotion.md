@@ -135,7 +135,7 @@ Anthropic 官方已经有 Telegram channel plugin。wechat-cc 做的是官方不
 | 15-19s | 手机：发 "帮我写个 Bun hello world"，终端显示 Claude 接收 | 双向 | `手机发，Claude 收` |
 | 19-24s | 终端：Claude 响应 + 调 `share_page` → 生成 URL | 产出 | `长内容自动发网页` |
 | 24-28s | 手机：点开 share_page URL 看到渲染好的 markdown + 底部 Approve 按钮 | 交互 | `手机端渲染 + 一键审阅` |
-| 28-30s | 收尾：Logo + GitHub URL + disclaimer 脚注一行 | CTA | `github.com/ggshr9/wechat-cc` |
+| 28-30s | 收尾：Logo + GitHub URL + disclaimer 脚注一行 | CTA | `github.com/tendhearth/wechat-cc` |
 
 每个镜头要干净 —— 不要多余的终端 prompt、浏览器 tab 栏、通知弹窗。
 

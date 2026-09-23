@@ -43,13 +43,108 @@ describe('token-registry', () => {
       'POST /v1/customer-review/item',
       'POST /v1/knowledge/facts/find_facts',
       'POST /v1/llm/keys',
+      'GET /v1/companion/thoughts',
       'POST /v1/knowledge/facts/set_fact_status',
       'POST /v1/knowledge/graph/top_contacts',
       'POST /v1/reminders/schedule',
+      'POST /v1/permissions/resolve',
       'POST /v1/federation/mint',
+      'POST /v1/workbench/attachment',
+      'GET /v1/workbench/attachment',
+      'POST /v1/workbench/discard-attachment',
+      'GET /v1/workbench',
+      'GET /v1/matters','GET /v1/matter','GET /v1/matter/owner-chat','POST /v1/matter/say',
+      'GET /v1/workbench/models',
+      'GET /v1/workbench/sessions',
+      'GET /v1/workbench/session',
+      'GET /v1/workbench/task',
+      'POST /v1/workbench/project',
+      'POST /v1/workbench/create',
+      'POST /v1/workbench/continue',
+      'POST /v1/workbench/cancel',
+      'GET /v1/workbench/artifact',
+      'POST /v1/workbench/approve',
+      'POST /v1/workbench/permission',
+      'POST /v1/workbench/archive',
+      'POST /v1/workbench/unattended-ack',
+      'GET /v1/workbench/review',
+      'POST /v1/workbench/review-mark',
+      'POST /v1/workbench/review-return',
+      'POST /v1/workbench/import',
+      'POST /v1/workbench/prepare-resume',
+      'POST /v1/workbench/prepare-continuation',
+      'POST /v1/workbench/handoff-preview',
+      'POST /v1/workbench/handoff',
+      'GET /v1/workbench/handoff',
+      'GET /v1/workbench/attention',
+      'POST /v1/workbench/input',
+      'POST /v1/workbench/answer',
+      'POST /v1/workbench/withdraw-input',
+      'POST /v1/selftest/converse',
+      'POST /v1/self-change/notice',
+      'POST /v1/self-change/ask',
+      'GET /v1/self-change/decision',
     ]))
     expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })
+  })
+
+  it('operator token grants exactly the supported Workbench routes without widening agent tokens', () => {
+    const r = makeTokenRegistry(() => 'ee'.repeat(32))
+    r.registerOperatorToken('dd'.repeat(32))
+    r.registerFileToken('cc'.repeat(32))
+    const session = r.mint('trusted', 'codex/default/contact')
+    const workbenchRoutes = [...(r.resolve('dd'.repeat(32))?.routeAllow ?? [])].filter(route => route.includes('/v1/workbench'))
+    expect(workbenchRoutes).toEqual([
+      'POST /v1/workbench/attachment',
+      'GET /v1/workbench/attachment',
+      'POST /v1/workbench/discard-attachment',
+      'GET /v1/workbench',
+      'GET /v1/workbench/models',
+      'GET /v1/workbench/sessions',
+      'GET /v1/workbench/session',
+      'GET /v1/workbench/task',
+      'POST /v1/workbench/project',
+      'POST /v1/workbench/create',
+      'POST /v1/workbench/continue',
+      'POST /v1/workbench/cancel',
+      'GET /v1/workbench/artifact',
+      'POST /v1/workbench/approve',
+      'POST /v1/workbench/permission',
+      'POST /v1/workbench/archive',
+      'POST /v1/workbench/unattended-ack',
+      'GET /v1/workbench/review',
+      'POST /v1/workbench/review-mark',
+      'POST /v1/workbench/review-return',
+      'POST /v1/workbench/import',
+      'POST /v1/workbench/prepare-resume',
+      'POST /v1/workbench/prepare-continuation',
+      'POST /v1/workbench/handoff-preview',
+      'POST /v1/workbench/handoff',
+      'GET /v1/workbench/handoff',
+      'GET /v1/workbench/attention',
+      'POST /v1/workbench/input',
+      'POST /v1/workbench/answer',
+      'POST /v1/workbench/withdraw-input',
+    ])
+    expect(r.resolve('cc'.repeat(32))?.routeAllow).toBeUndefined()
+    expect(r.resolve(session)?.routeAllow).toBeUndefined()
+    expect(r.resolve(session)?.tier).toBe('trusted')
+    expect(r.resolve('dd'.repeat(32))?.routeAllow?.has('POST /v1/workbench/models')).toBe(false)
+    expect(r.resolve('dd'.repeat(32))?.routeAllow?.has('GET /v1/workbench/models/extra')).toBe(false)
+    expect(r.resolve('dd'.repeat(32))?.routeAllow?.has('GET /v1/workbench/prepare-continuation')).toBe(false)
+    expect(r.resolve('dd'.repeat(32))?.routeAllow?.has('POST /v1/workbench/prepare-continuation/extra')).toBe(false)
+  })
+
+  // 桌宠卡片上的「允许 / 拒绝」只有这一个 admin 档凭据够得着(Tauri 的
+  // pet_permission_resolve)。少了这条路由,按钮按下去就是 403 route_not_allowed。
+  it('operator token 够得着桌宠权限卡片的 resolve 路由,但够不着待决列表', () => {
+    const r = makeTokenRegistry()
+    r.registerOperatorToken('dd'.repeat(32))
+    const allow = r.resolve('dd'.repeat(32))?.routeAllow
+    expect(allow?.has('POST /v1/permissions/resolve')).toBe(true)
+    // 待决列表桌面走 GET /v1/companion/pet 读,operator 不需要这一条。
+    expect(allow?.has('GET /v1/permissions/pending')).toBe(false)
   })
 
   it('file and session tokens carry no routeAllow (unrestricted by route, tier gate only)', () => {

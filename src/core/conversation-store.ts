@@ -84,6 +84,7 @@ interface Row {
   mode_kind: string
   mode_provider: string | null
   mode_primary: string | null
+  mode_model: string | null      // per-chat model pin (solo only), or NULL
   participants: string | null    // JSON array of ProviderId, or NULL
   user_id: string | null
   account_id: string | null
@@ -94,7 +95,7 @@ function rowToMode(r: Row): Mode | null {
   const participants = r.participants ? parseParticipants(r.participants, r.chat_id) : undefined
   switch (r.mode_kind) {
     case 'solo':
-      return r.mode_provider ? { kind: 'solo', provider: r.mode_provider } : null
+      return r.mode_provider ? { kind: 'solo', provider: r.mode_provider, ...(r.mode_model ? { model: r.mode_model } : {}) } : null
     case 'primary_tool':
       return r.mode_primary ? { kind: 'primary_tool', primary: r.mode_primary } : null
     case 'parallel':
@@ -118,20 +119,20 @@ function parseParticipants(json: string, chatId?: string): ProviderId[] | undefi
   }
 }
 
-function modeColumns(mode: Mode): { kind: string; provider: string | null; primary: string | null; participants: string | null } {
+function modeColumns(mode: Mode): { kind: string; provider: string | null; primary: string | null; model: string | null; participants: string | null } {
   switch (mode.kind) {
     case 'solo':
-      return { kind: 'solo', provider: mode.provider, primary: null, participants: null }
+      return { kind: 'solo', provider: mode.provider, primary: null, model: mode.model ?? null, participants: null }
     case 'primary_tool':
-      return { kind: 'primary_tool', provider: null, primary: mode.primary, participants: null }
+      return { kind: 'primary_tool', provider: null, primary: mode.primary, model: null, participants: null }
     case 'parallel':
       return {
-        kind: 'parallel', provider: null, primary: null,
+        kind: 'parallel', provider: null, primary: null, model: null,
         participants: mode.participants ? JSON.stringify(mode.participants) : null,
       }
     case 'chatroom':
       return {
-        kind: 'chatroom', provider: null, primary: null,
+        kind: 'chatroom', provider: null, primary: null, model: null,
         participants: mode.participants ? JSON.stringify(mode.participants) : null,
       }
   }
@@ -142,7 +143,7 @@ export function makeConversationStore(db: Db, opts: ConversationStoreOpts = {}):
   if (opts.migrateFromUserNamesFile) maybeBackfillUserNames(db, opts.migrateFromUserNamesFile)
 
   const stmtGet = db.query<Row, [string]>(
-    'SELECT chat_id, mode_kind, mode_provider, mode_primary, participants, user_id, account_id, last_user_name FROM conversations WHERE chat_id = ?',
+    'SELECT chat_id, mode_kind, mode_provider, mode_primary, mode_model, participants, user_id, account_id, last_user_name FROM conversations WHERE chat_id = ?',
   )
   // ON CONFLICT participants column uses COALESCE so an upsert that omits
   // participants (e.g. `/chat` with no args → setMode(chatId, {kind:'chatroom'}))
@@ -152,13 +153,15 @@ export function makeConversationStore(db: Db, opts: ConversationStoreOpts = {}):
   // straight over the column.
   //
   // Callers that legitimately want to clear participants use setParticipants(chatId, undefined).
-  const stmtUpsert = db.query<unknown, [string, string, string | null, string | null, string | null, string]>(
-    'INSERT INTO conversations(chat_id, mode_kind, mode_provider, mode_primary, participants, updated_at) VALUES (?, ?, ?, ?, ?, ?) ' +
-    'ON CONFLICT(chat_id) DO UPDATE SET mode_kind = excluded.mode_kind, mode_provider = excluded.mode_provider, mode_primary = excluded.mode_primary, participants = COALESCE(excluded.participants, participants), updated_at = excluded.updated_at',
+  // mode_model is NOT coalesced: a `/api` (no model) after `/api DeepSeek`
+  // means「back to the global default」— clearing is the intent.
+  const stmtUpsert = db.query<unknown, [string, string, string | null, string | null, string | null, string | null, string]>(
+    'INSERT INTO conversations(chat_id, mode_kind, mode_provider, mode_primary, mode_model, participants, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ' +
+    'ON CONFLICT(chat_id) DO UPDATE SET mode_kind = excluded.mode_kind, mode_provider = excluded.mode_provider, mode_primary = excluded.mode_primary, mode_model = excluded.mode_model, participants = COALESCE(excluded.participants, participants), updated_at = excluded.updated_at',
   )
   const stmtDelete = db.query<unknown, [string]>('DELETE FROM conversations WHERE chat_id = ?')
   const stmtAll = db.query<Row, []>(
-    'SELECT chat_id, mode_kind, mode_provider, mode_primary, participants, user_id, account_id, last_user_name FROM conversations',
+    'SELECT chat_id, mode_kind, mode_provider, mode_primary, mode_model, participants, user_id, account_id, last_user_name FROM conversations',
   )
   const stmtSetParticipants = db.query<unknown, [string | null, string, string]>(
     'UPDATE conversations SET participants = ?, updated_at = ? WHERE chat_id = ?',
@@ -202,7 +205,7 @@ export function makeConversationStore(db: Db, opts: ConversationStoreOpts = {}):
 
     set(chatId, mode) {
       const cols = modeColumns(mode)
-      stmtUpsert.run(chatId, cols.kind, cols.provider, cols.primary, cols.participants, new Date().toISOString())
+      stmtUpsert.run(chatId, cols.kind, cols.provider, cols.primary, cols.model, cols.participants, new Date().toISOString())
     },
 
     delete(chatId) {

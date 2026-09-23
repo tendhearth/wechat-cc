@@ -11,6 +11,7 @@ import type { GuardLifecycle } from '../guard/lifecycle'
 import type { PollingLifecycle } from '../polling-lifecycle'
 import type { InboundPipelineDeps } from '../inbound/build'
 import type { PipelineRun } from '../inbound/types'
+import type { AppTurn } from '../inbound/build'
 import type { CompanionPushDeps, CompanionIntrospectDeps, CompanionIngestDeps } from '../companion/lifecycle'
 import type { SchedulerDeps } from '../guard/scheduler'
 import type { SessionsLifecycleDeps } from '../sessions-lifecycle'
@@ -24,8 +25,19 @@ import { buildPipelineDeps } from './pipeline-deps'
 import { buildLifecycleDeps } from './lifecycle-deps'
 import { buildTickBodies, type TickBodies } from './tick-bodies'
 import { makeMemoryLlmOps } from '../memory-llm-ops'
+import { makeAtelierStore } from '../atelier-store'
+import { makeJsonAtelierPlanner } from '../atelier-planner'
+import { locateAtelierSdCli, resolveAtelierRenderer } from '../atelier-renderer-resolve'
+import { buildAtelierContext, runAtelierCycle } from '../atelier-runtime'
+import { makeObservationsStore } from '../observations/store'
+import { resolveIntrospectChatId } from '../companion/introspect-runtime'
+import { join } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
 
 export interface WireMainOpts {
+  workbench?: import('../../core/workbench/service').WorkbenchService
+  /** 「一件事」登记处(matters store);微信入站登记 chat、app 对话绑桌面表面、管家候选集都从这里来。 */
+  matters?: import('../../core/matters/store').MatterStore
   stateDir: string
   db: Db
   ilink: IlinkAdapter
@@ -33,6 +45,10 @@ export interface WireMainOpts {
   stickers?: import('../stickers').StickerLib
   /** 远程访问开关的重启触发(settings-panel set_remote)。 */
   requestRestart?: (reason: string) => void
+  /** 「看 码」「@码 文本」的执行者。 */
+  cliReply?: { handle(text: string, chatId: string): Promise<boolean>; probe(text: string, chatId: string): boolean }
+  /** LLM 体检的只读缓存(settings-panel「模型与后端」表格;面板绝不主动外呼)。 */
+  llmHealth?: { cached(): import('../llm-health').LlmHealthReport | null }
   /** Loaded before makeIlinkAdapter — passed separately because IlinkAdapter doesn't expose accounts. */
   accounts: IlinkAccount[]
   boot: Bootstrap
@@ -68,6 +84,32 @@ export interface WireMainOpts {
    * SAME registry the reply route captures into.
    */
   replySinks: ReplySinks
+  /**
+   * 打猎战利品(2026-09-03)。和 replySinks 一样必须是 main.ts 里那个**同
+   * 一个实例**:开 tap 的是打猎那一拍,往里写的是发送路径。经 `...opts`
+   * 透传进 buildTickBodies。
+   */
+  outboundTaps?: { tap(chatId: string): { close(): string[] } }
+  // 三条用途:tick-bodies 用 recordHunt(打猎入库)与 list/summary(日程判断
+  // 要看包袱里堆了什么),pipeline-deps 用 list(微信「背包」命令)。这里给
+  // 全,下游各取所需 —— main.ts 传的是完整 Journal。
+  /**
+   * 桌宠信号(spec 2026-09-05-cc-desktop-pet §5.1)。和 replySinks/outboundTaps
+   * 一样必须是 main.ts 那个**同一个实例**:写的一头在 bootstrap(tool_call /
+   * 回合结束)与 pipeline-deps(起飞 / 主人联系),读的一头是 pipeline-deps
+   * 组装出的 petTurn。两个实例 = 桌宠永远看不到动静,而且不会报任何错。
+   */
+  petSignals?: import('../pet-signals').PetSignals
+  huntStore?: {
+    recordHunt(a: { chatId: string; text: string; nowIso?: string }): number
+    list(limit?: number): readonly import('../../core/journal-store').CatchRow[]
+    /** 包袱水位(spec 2026-09-05-companion-plan):水位之后有几条、最新一条是什么。 */
+    summary(seenUntil: string | null): { unread: number; latest: { kind: string; title: string; ts: string } | null }
+  }
+  /** 对话回合(turn_records)—— 随身 CC 首屏的「聊天日摘要」来源。main.ts 传 turnRecordStore。 */
+  turns?: { recent(limit: number): readonly { chatId: string; endedAt: number; outcome: string; mode: string; startedAt: number }[] }
+  /** 三轴 presence 共用入口(internal-api lifecycle.getPresence)。main.ts 传入。 */
+  presence?: () => Promise<import('../../core/companion-presence').Presence | null>
 }
 
 export interface WiredDeps {
@@ -77,10 +119,16 @@ export interface WiredDeps {
    * main.ts late-binds this onto internal-api via setCompanionConverse()
    * once wireMain returns (bootstrap must be ready first).
    */
-  companionConverse: (text: string) => Promise<{ reply: string }>
+  companionConverse: (text: string, origin?: 'desktop' | 'phone') => Promise<{ reply: string }>
+  /**
+   * 桌宠 turn 闭包(CC 桌宠 Phase B)。main.ts 在 setCompanionConverse 旁边
+   * setPetTurn 到 internal-api —— 同样要等 bootstrap 就绪。
+   */
+  petTurn: import('../internal-api/types').PetTurnDep
   /** Mint a fresh graphical-settings-panel URL (10-min token). Null when no
    *  LAN/owner. Wired to GET /v1/settings/link for the desktop QR entry. */
   settingsPanelLink: () => Promise<string | null>
+  mattersService: import('../../core/matters/service').MattersService | null
   companionPushDeps: CompanionPushDeps
   companionIntrospectDeps: CompanionIntrospectDeps
   companionIngestDeps: CompanionIngestDeps
@@ -104,6 +152,8 @@ export interface WiredDeps {
     polling: Ref<PollingLifecycle>
     guard: Ref<GuardLifecycle>
     pipeline: Ref<PipelineRun>
+    /** App 一轮的 route + consume(build.ts 的 appTurn);main.ts 建完管道后接上。 */
+    appTurn: Ref<AppTurn>
     ingestNudge: Ref<() => void>
   }
 }
@@ -113,6 +163,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     polling: new Ref<PollingLifecycle>('polling'),
     guard: new Ref<GuardLifecycle>('guard'),
     pipeline: new Ref<PipelineRun>('pipeline'),
+    appTurn: new Ref<AppTurn>('appTurn'),
     ingestNudge: new Ref<() => void>('ingestNudge'),
   }
   // CC 画的你 —— 小像自动刷新用的 generatePortrait(portrait-artist tick)。
@@ -123,6 +174,56 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     getMode: (cid) => opts.boot.coordinator.getMode(cid),
     registry: opts.boot.registry,
   })
+  // Atelier is deliberately lazy and default-off. The callback is mounted
+  // only when the persisted mode is enabled and both local sidecar/model
+  // paths are explicitly available; missing assets remain a safe no-op.
+  const runAtelierTick = async ({ nowIso }: { nowIso?: string } = {}): Promise<void> => {
+    const cfg = (await import('../companion/config')).loadCompanionConfig(opts.stateDir)
+    if (cfg.atelier_mode === 'off') return
+    const sdCliPath = locateAtelierSdCli({
+      explicitPath: process.env.WECHAT_CC_ATELIER_SD_CLI,
+      execPath: process.execPath,
+      stateDir: opts.stateDir,
+      existsSync,
+    })
+    const modelPath = process.env.WECHAT_CC_ATELIER_SD_MODEL ?? join(opts.stateDir, 'atelier', 'models', 'sd-turbo.safetensors')
+    const renderer = resolveAtelierRenderer({ platform: process.platform, arch: process.arch, existsSync, sdCliPath, modelPath, workDir: join(opts.stateDir, 'atelier', 'tmp') })
+    if (!renderer) { opts.log('ATELIER', 'skip — local renderer/model unavailable'); return }
+    const sdkEval = opts.boot.registry.getCheapEval()
+    if (!sdkEval) { opts.log('ATELIER', 'skip — no cheap evaluator'); return }
+    const store = makeAtelierStore(opts.stateDir)
+    const planner = makeJsonAtelierPlanner({ evaluate: sdkEval })
+    // Feed CC its own derived signals (recent observations + persona) so a real
+    // creative impulse can form. Falls back to empty context when CC has no
+    // anchor chat yet — that just means no impulse, never a crash.
+    const chatId = resolveIntrospectChatId(opts.stateDir)
+    const memoryRoot = join(opts.stateDir, 'memory')
+    let observations: Awaited<ReturnType<ReturnType<typeof makeObservationsStore>['listActive']>> = []
+    let persona: string | null = null
+    if (chatId) {
+      try {
+        observations = await makeObservationsStore(opts.db, chatId, { migrateFromFile: join(memoryRoot, chatId, 'observations.jsonl') }).listActive()
+      } catch (err) { opts.log('ATELIER', `observations unavailable: ${String(err)}`) }
+      try { persona = readFileSync(join(memoryRoot, chatId, 'persona.md'), 'utf8') } catch { /* persona is optional */ }
+    }
+    const result = await runAtelierCycle({
+      stateDir: opts.stateDir,
+      mode: cfg.atelier_mode,
+      planner,
+      renderer,
+      store,
+      context: buildAtelierContext({
+        observations,
+        persona,
+        recentWorks: store.list(6).map(w => ({ id: w.id, createdAt: w.createdAt, subject: w.impulse.subject, surface: w.impulse.surface, medium: w.impulse.medium })),
+        nowLocal: nowIso ?? new Date().toISOString(),
+      }),
+      log: (tag, line) => opts.log(tag, line),
+    })
+    opts.log('ATELIER', result.status === 'created'
+      ? `cycle created record=${result.recordId} shared=${result.shared}`
+      : `cycle ${result.status}`)
+  }
   const ticks = buildTickBodies({
     ...opts,
     permissionMode: opts.dangerously ? 'dangerously' : 'strict',
@@ -132,13 +233,16 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     // while the connection is confirmed down (see TickDeps.health's doc
     // comment in ./tick-bodies.ts).
     health: opts.boot.health.health,
+    runAtelierTick,
   })
-  const { pipelineDeps, companionConverse, settingsPanelLink } = buildPipelineDeps(opts, refs)
+  const { pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService } = buildPipelineDeps(opts, refs)
   const lifecycleDeps = buildLifecycleDeps(opts, ticks)
   return {
     pipelineDeps,
     companionConverse,
+    petTurn,
     settingsPanelLink,
+    mattersService,
     ...lifecycleDeps,
     ticks,
     refs,

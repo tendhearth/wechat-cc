@@ -21,6 +21,13 @@ import { test, expect } from './fixtures'
 // actually runs (it bails when state.mode !== 'dashboard' even if the
 // DOM data-mode attr says otherwise).
 
+async function openConnections(page: import('@playwright/test').Page) {
+  const panel = page.locator('.cc-home-details')
+  await expect(panel).not.toHaveAttribute('open', '')
+  await panel.locator(':scope > summary').click()
+  await expect(panel).toHaveAttribute('open', '')
+}
+
 // ── Hero tone (daemon alive vs dead) ────────────────────────────────────
 //
 // To exercise the hero render path, the page must boot INTO dashboard mode
@@ -48,6 +55,7 @@ async function bootAndForceDashboardRender(page: import('@playwright/test').Page
     // Trigger any visibility-listener path the app uses for fresh data.
     document.dispatchEvent(new Event('visibilitychange'))
   })
+  await openConnections(page)
 }
 
 // NOTE on the 3-state dashboardHero logic in view.js::dashboardHero —
@@ -97,6 +105,11 @@ test('stop button visible + restart hidden when account bound and daemon alive',
   await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
   await bootAndForceDashboardRender(page, shimUrl)
   await expect(page.locator('#hero-headline')).toHaveText(/此刻，陪你一起看鱼/, { timeout: 10_000 })
+  // #109 起断开连接收进「连接选项」折叠里:连着时折叠可见、按钮要展开才露出来;重连按钮仍然藏着。
+  const options = page.locator('#dash-connection-options')
+  await expect(options).toBeVisible()
+  await expect(page.locator('#dash-stop')).toBeHidden()
+  await options.locator('summary').click()
   await expect(page.locator('#dash-stop')).toBeVisible()
   await expect(page.locator('#dash-restart')).toBeHidden()
 })
@@ -116,12 +129,13 @@ test('current-user card renders bound account name + 管理员 pill', async ({ p
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await page.goto(shimUrl)
   await expect(page.locator('main.dashboard')).toBeVisible({ timeout: 10_000 })
+  await openConnections(page)
   const current = page.locator('#accounts-current')
   // Friendly name comes from userNames[userId] in the doctor response.
   // demo.seed seeds userNames = { test_chat: 'Test User' }.
   await expect(current).toContainText(/Test User/, { timeout: 10_000 })
   await expect(current.locator('.role-pill')).toContainText(/管理员/)
-  await expect(current.locator('.provider-chip')).toContainText(/claude/)
+  await expect(current.locator('.provider-chip')).toContainText('Claude')
 })
 
 // ── Sub-user grid ───────────────────────────────────────────────────────
@@ -130,10 +144,11 @@ test('sub-user grid shows a truthful empty state when only the admin is bound', 
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await page.goto(shimUrl)
   await expect(page.locator('main.dashboard')).toBeVisible({ timeout: 10_000 })
+  await openConnections(page)
   await expect(page.locator('#accounts-body .sub-user-card')).toHaveCount(0)
+  // #109 起空状态是一个紧凑的「＋ 添加使用者」入口,不再是大块占位。
   await expect(page.locator('#accounts-body .sub-user-empty')).toBeVisible({ timeout: 10_000 })
-  await expect(page.locator('#accounts-body .sub-user-empty-title')).toHaveText('还没有子用户')
-  await expect(page.locator('#accounts-body .sub-user-empty-copy')).toHaveText('点击这里添加一位')
+  await expect(page.locator('#accounts-body .sub-user-empty')).toContainText('添加使用者')
   await expect(page.locator('#accounts-meta')).toHaveText('0 个')
   await expect(page.locator('#accounts-subhead')).toBeHidden()
 })
@@ -142,6 +157,7 @@ test('empty sub-user area opens the add-user page', async ({ page, shimUrl, shim
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await page.goto(shimUrl)
   await expect(page.locator('main.dashboard')).toBeVisible({ timeout: 10_000 })
+  await openConnections(page)
   const trigger = page.locator('#accounts-body .sub-user-empty-trigger')
   await expect(trigger).toBeVisible()
   await trigger.click()

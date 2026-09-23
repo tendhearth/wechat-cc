@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import ts from 'typescript'
 
 // Why this test exists:
 //
@@ -76,6 +77,22 @@ function importsChildProcessSpawn(text: string): boolean {
     || /require\(['"]child_process['"]\)/.test(text)
 }
 
+function spawnCalls(text: string): Array<{ start: number; text: string }> {
+  const source = ts.createSourceFile('source.ts', text, ts.ScriptTarget.Latest, true)
+  const calls: Array<{ start: number; text: string }> = []
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node)) {
+      const expression = node.expression
+      const name = ts.isIdentifier(expression) ? expression.text
+        : ts.isPropertyAccessExpression(expression) ? expression.name.text : null
+      if (name === 'spawn' || name === 'spawnSync') calls.push({ start: node.getStart(source), text: node.getText(source) })
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return calls
+}
+
 describe('spawn/spawnSync windowsHide:true lint (subsystem=2 daemon prerequisite)', () => {
   it('every production spawn/spawnSync sets windowsHide in its options', () => {
     const violations: string[] = []
@@ -84,18 +101,11 @@ describe('spawn/spawnSync windowsHide:true lint (subsystem=2 daemon prerequisite
       // Only scan files that import from node:child_process — otherwise
       // we'd false-positive on `spawn` as a method name elsewhere.
       if (!importsChildProcessSpawn(text)) continue
-      // Find each `spawn(` or `spawnSync(` call. The options bag may
-      // span up to ~400 chars of arguments + multiline options object;
-      // 600 is generous. The `\b` word boundary stops matches inside
-      // identifiers like `respawn(` or `webspawn(`.
-      const re = /\bspawn(?:Sync)?\s*\(/g
-      let m: RegExpExecArray | null
-      while ((m = re.exec(text)) !== null) {
-        const tail = text.slice(m.index, m.index + 600)
-        // Crude but accurate enough: every legitimate options bag in this
-        // codebase puts `windowsHide` literally in the object literal.
-        if (!tail.includes('windowsHide')) {
-          violations.push(`${relative(REPO_ROOT, file)}:${lineNumberAt(text, m.index)}`)
+      // Parse calls, so an AgentProvider.spawn method declaration cannot
+      // accidentally depend on the distance to a later subprocess call.
+      for (const call of spawnCalls(text)) {
+        if (!call.text.includes('windowsHide')) {
+          violations.push(`${relative(REPO_ROOT, file)}:${lineNumberAt(text, call.start)}`)
         }
       }
     }
@@ -110,11 +120,21 @@ describe('spawn/spawnSync windowsHide:true lint (subsystem=2 daemon prerequisite
     for (const file of scanFiles()) {
       const text = readFileSync(file, 'utf8')
       if (!importsChildProcessSpawn(text)) continue
-      const matches = text.match(/\bspawn(?:Sync)?\s*\(/g)
-      if (matches) total += matches.length
+      total += spawnCalls(text).length
     }
     // As of v0.5.4 + Phase 3 scan expansion (root-level bin scripts) +
     // codex-autofix's async spawn() added in v0.6: ≥11. Allow growth.
     expect(total).toBeGreaterThanOrEqual(11)
+  })
+
+  it('distinguishes method declarations and comments from real calls, including long argument lists', () => {
+    const source = `import {spawn, spawnSync} from 'node:child_process'
+      class Provider { async spawn(project: string) { return spawn('tool', [], {windowsHide: true}) } }
+      // spawn('not executable')
+      spawnSync('tool', [${Array(200).fill("'arg'").join(',')}], {windowsHide: true})
+      spawn('unguarded', [])`
+    const calls = spawnCalls(source)
+    expect(calls).toHaveLength(3)
+    expect(calls.filter(call => !call.text.includes('windowsHide')).map(call => call.text)).toEqual(["spawn('unguarded', [])"])
   })
 })

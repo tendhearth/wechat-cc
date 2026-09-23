@@ -1,0 +1,103 @@
+{
+  "status": "visual-study-not-shipped",
+  "character": "Authored SVG adaptation of CC; not frozen render geometry. One body template, five C poses.",
+  "stickers": [
+    {
+      "file": "received.svg",
+      "title": "收到",
+      "note": "记住啦。"
+    },
+    {
+      "file": "happy.svg",
+      "title": "开心",
+      "note": "这下开心了。"
+    },
+    {
+      "file": "thinking.svg",
+      "title": "思考",
+      "note": "让我想一会儿。"
+    },
+    {
+      "file": "cheering.svg",
+      "title": "加油",
+      "note": "我陪你慢慢来。"
+    },
+    {
+      "file": "goodnight.svg",
+      "title": "晚安",
+      "note": "今天就到这里。"
+    },
+    {
+      "file": "company.svg",
+      "title": "陪着",
+      "note": "不急，我在呢。"
+    }
+  ],
+  "postcards": [
+    {
+      "file": "postcard-coffee.svg",
+      "title": "烘豆机旁，猫睡着了",
+      "note": "烘豆机嗡嗡响，那只橘猫连耳朵都懒得动。我在旁边待了一会儿，觉得今天也可以不用那么赶。"
+    },
+    {
+      "file": "postcard-fish.svg",
+      "title": "隔着玻璃打个招呼",
+      "note": "有条小鱼隔着玻璃跟着我转。我停下来，它也停下来。什么都没说，倒像已经认识了。"
+    },
+    {
+      "file": "postcard-night.svg",
+      "title": "窗外慢慢安静下来",
+      "note": "咖啡馆快打烊了，我又坐了一会儿。窗外的灯一盏盏亮起来，杯子里还有一点温热。想着把这份安静也带给你。"
+    }
+  ],
+  "pairs": [
+    {
+      "file": "received-light.svg",
+      "title": "收到",
+      "note": "记住啦。",
+      "form": "light"
+    },
+    {
+      "file": "received-dark.svg",
+      "title": "收到",
+      "note": "记住啦。",
+      "form": "dark"
+    },
+    {
+      "file": "happy-light.svg",
+      "title": "开心",
+      "note": "这下开心了。",
+      "form": "light"
+    },
+    {
+      "file": "happy-dark.svg",
+      "title": "开心",
+      "note": "这下开心了。",
+      "form": "dark"
+    },
+    {
+      "file": "goodnight-light.svg",
+      "title": "晚安",
+      "note": "今天就到这里。",
+      "form": "light"
+    },
+    {
+      "file": "goodnight-dark.svg",
+      "title": "晚安",
+      "note": "今天就到这里。",
+      "form": "dark"
+    },
+    {
+      "file": "company-light.svg",
+      "title": "陪着",
+      "note": "不急，我在呢。",
+      "form": "light"
+    },
+    {
+      "file": "company-dark.svg",
+      "title": "陪着",
+      "note": "不急，我在呢。",
+      "form": "dark"
+    }
+  ]
+}

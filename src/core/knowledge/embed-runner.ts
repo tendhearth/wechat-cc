@@ -1,3 +1,4 @@
+import { spawn } from '../../lib/runtime/process'
 /**
  * Persistent embed-subprocess runner — Knowledge Kernel Task 6' (Option C
  * pivot). Embed stays Python but as a DUMB subprocess (text in, vectors
@@ -87,7 +88,7 @@ export interface EmbedRunner {
 }
 
 function defaultSpawn(cmd: string[], opts: { env: Record<string, string | undefined> }): EmbedRunnerChild {
-  const proc = Bun.spawn(cmd, { stdin: 'pipe', stdout: 'pipe', stderr: 'inherit', env: opts.env })
+  const proc = spawn(cmd, { stdin: 'pipe', stdout: 'pipe', stderr: 'inherit', env: opts.env })
   return {
     // Bun's FileSink (stdin: 'pipe') exposes write()/end() — structurally
     // compatible with EmbedRunnerChild['stdin'] without a class dependency.

@@ -1,0 +1,49 @@
+# 真机抓到的规矩
+
+下面每一条都是**单测没抓到、真机抓到**的。写相关代码前先扫一眼。
+
+## 协议 / 外部 CLI
+
+- **MCP 的 `structuredContent` 只能含 `outputSchema` 里声明过的键。** 多一个键,严格的客户端(cursor-agent)就回 `-32602`,模型看不懂错误于是原地重试,一直转圈。wechat MCP 的 `ping` 就这么栽过。
+- **ACP 的 `initialize` 结果里,`promptCapabilities` 嵌在 `agentCapabilities` 下面**(`result.agentCapabilities.promptCapabilities.image`),不是平铺在 `result` 上。2026-09-18 照文档写的那版就取空了。
+- **凡是照协议文档写的字段路径,先去录到的报文里对一遍。** 仓库里有真机报文:`src/core/acp/fixtures/cursor-acp-2026-09-17.jsonl`,回放契约测试 `src/core/acp/fixtures.test.ts`。
+- ACP 的 `toolCallId` 里会嵌**字面换行**;拿它当 DOM id / event key 之前一律过 `acpActivityId()`。
+- ACP 的 `agent_message_chunk` **一条 `messageId` 都没有**;同一轮里工具调用前后是两条助理消息,itemId 只能自己合成。
+- 外部 CLI 的 MCP 命名空间各家不同(agy 的 server 名带命名空间前缀,cursor 的 envelope 形状完全是另一套);别假设「就叫 `wechat`」,用 `normalizeWechatMcpServer` 折回规范名。
+- **版本号判不出能不能用。** 别按 CLI 版本号拒绝注册某个执行者,用用户自己装的 CLI + 首次使用时真探测。
+
+## 进程与超时
+
+- **provider 的超时必须短于服务层的超时**,否则精确的错误永远到不了调用方,调用方只会拿到一个笼统的「超时」:spawn 45s < 60s,close 2.5s < 3s。
+- **`close()` 要确认进程组真的没了。** 关 stdin 不会让 `cursor-agent` 退出。
+- **daemon 里的后台长任务必须持 `holdBusy` token**,否则空闲自动重启会在它干到一半时把它踢掉。
+- 断线 / 网络不稳时停掉外发与 LLM 轮次,重试退避必须是**指数级**(微信风控)。
+- **测试的超时预算按「满载套件里」算,不是按单跑算。** `bun run test` 自己就把机器吃满(614 个文件 / 18 worker,`tests` 累计 770s 挤进 113s 墙钟),而自改流水线的 tests 闸门跑在主人那台**同时还在干别的活**的真机上,实测放大 5~10 倍:单跑 1.0s 的用例在套件里 5.6s。所以「单跑 1s、预算 5s」看着很宽也照样假红,而且**每次受害者都不一样**(2026-09-19 两次连跑换了三个受害者,全是 `Test timed out`)。平台默认已统一抬到 20s(`vitest.config.ts`),真启一遍 daemon 那种重活自己再宽一档;别用「给这一条 +2s」打地鼠。
+- **刚写出来的可执行夹具,第一次 exec 要付一笔一次性校验开销 —— 别让产线的短 deadline 替它付。** macOS 上新文件首跑实测 210 / 329 / 400ms,满载套件里涨到 **3002ms 和 4886ms**;同一个文件第二次起 4ms,`/bin/echo` 这种早跑过的系统二进制一直 4ms —— **按文件算,不按进程算**。而 `probeBinaryVersion` 硬顶 3s、`agyVersionOk` 缺省 5s,于是 bootstrap / providers 里「装上假 CLI ⇒ provider 注册成功」那几条随机红成 `expected false to be true`(探测超时 ⇒ 不注册,**不是** `Test timed out`,从报错看不出病因)。写这种夹具一律用 `writeWarmExecFixture`(`src/lib/test-temp.ts`),它写完先空跑一次把开销付在断言之前。真机上被探测的是早就跑过的稳定二进制(4ms),所以**别去放宽产线的 deadline**。
+- **同一个道理:别用 `await new Promise(r => setTimeout(r, 5))` 当同步手段。** 「睡一小会儿,异步链应该推进到那儿了」在空机器上成立,在满载套件里就是假红(2026-09-19 routes-workbench 的长轮询用例:睡 5ms 之后 `detail` 还是 0 次)。等**条件**:`await vi.waitFor(() => expect(x).toHaveBeenCalled(), { timeout: 5_000 })`,断言本身一个字都不用动。
+
+## 路由登记
+
+新加一条内部 API 路由:
+
+- **桌面 app 会调** ⇒ 要登记**五处**:`src/daemon/internal-api/route-tiers.ts`、`token-registry.ts` 的 `routeAllow` **以及它那个精确集合测试**、`apps/desktop/src-tauri/src/lib.rs` 的 `matches!` **以及它的测试表**、`apps/desktop/workbench-proxy.ts`。
+- **桌面不调** ⇒ 登记**三处**(route-tiers + token-registry + 它的精确集合测试)。
+
+漏一处的典型症状是按钮按下去 403 `route_not_allowed`,而且只在打包版上出现。
+
+## 对话侧
+
+- **对话侧的 solo 协调器,每收到一条 `text` 事件就发一条微信。** 所以流式 provider 必须按「一条助理消息」攒完再吐一条 text,否则主人收到几十条碎片。ACP 翻译器的 `text: 'messages'` 模式就是干这个的。
+- 旁听 ≠ 改道:别让旁路的事件把回复通道抢走。
+
+## 跨平台盲区
+
+- **`bun:sqlite` 的 URI 打开方式、`bun:test` 的 import**:在 Mac 上看着好好的,在 node / Windows 上要么炸要么根本没跑过。本地复现:`npm run test:node`。运行时相关的东西一律走 `src/lib/runtime/*` 适配层。
+- Windows 真机抓到过两个真 bug:`STATE_DIR` 环境变量名在两处写法分裂;`account.json` 不容忍 BOM。读配置文件时把 BOM 剥掉。
+- Windows / 微信侧目前**没有免审确认入口** —— 需要主人确认的流程在那两个面上是断的,设计时要知道。
+- **测试里的假文件系统和期望值,别写死 `/a/b` 这类 POSIX 路径,也别用 `endsWith('/x')` 认文件。** Windows 上 `path.join()` 拼出来的是反斜杠(`C:\w\repo\x`),这种用例在 Mac 上全绿、到 CI 的 `build · windows-latest` 上假红一片 —— 2026-09-18 一天踩了两次(相关 flake 与处置见 [ci-and-flakes.md](ci-and-flakes.md))。判文件名用 `basename(p) === 'x'`,写期望值用 `join(...)` 跟被测代码同样拼一遍;假 fs 的键也用 `join(...)` 造,别手写字面量。
+
+## 报告与日志
+
+- **永远不要把 token 打进日志或报告**。要证明读到了,就贴长度或哈希前 8 位。
+- 真机脚本 / fixture 进仓库前脱敏:用户名 ⇒ `owner`,会话 token ⇒ `<redacted>`。进仓库后 `rg -n "<你的用户名>" <路径>` 必须是空的。

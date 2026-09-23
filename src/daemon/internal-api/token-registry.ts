@@ -57,7 +57,8 @@ import type { UserTier } from '../../core/user-tier'
  *     its tier; the dispatcher enforces this as a second gate after the
  *     tier check (see index.ts). registerOperatorToken sets
  *     to the desktop application's owner-only surfaces: companion converse /
- *     voice plus Customer Review. It still cannot restart the daemon, list
+ *     voice, Customer Review, 待办, Workbench, plus the pet window's permission
+ *     resolve. It still cannot restart the daemon, list
  *     sessions, or locate arbitrary files. That residual owner-surface access
  *     is accepted and documented: closing it
  *     fully needs real local-auth (peer-cred / agent-sandboxing) before
@@ -151,13 +152,71 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           // writes, contact display names, reminder scheduling.
           'POST /v1/knowledge/facts/find_facts',
           'POST /v1/llm/keys',
+          // Owner's retained thoughts, read through the desktop host only.
+          'GET /v1/companion/thoughts',
           'POST /v1/knowledge/facts/set_fact_status',
           'POST /v1/knowledge/graph/top_contacts',
           'POST /v1/reminders/schedule',
+          // 桌宠权限卡片(spec 2026-09-05-cc-desktop-pet §6)—— 主人在陪伴窗上
+          // 点「允许 / 拒绝」,经 Tauri 的 pet_permission_resolve 命令走这一条。
+          // 路由本身是 admin 档(route-tiers),所以只有这个 operator 凭据够得着;
+          // 少了这一行,按钮按下去必然 403 route_not_allowed(2026-09-05 终审
+          // Critical #1)。**只加 resolve,不加 GET /v1/permissions/pending**:
+          // 这个集合的口径是「桌面 app 真会调的那几条」,而待决列表桌面是从
+          // GET /v1/companion/pet(trusted 档)读的,operator 凭据永远不会去
+          // 调 /v1/permissions/pending —— 不调的就不给。
+          'POST /v1/permissions/resolve',
           // hearth federation mint (grant-gated, see routes-federation.ts) —
           // the operator token alone is not enough; readGrant(stateDir) must
           // also be non-null (explicit owner authorization, design option B).
           'POST /v1/federation/mint',
+          // Owner Workbench (2026-09-11) — the Tauri host proxies these
+          // requests with this operator credential; the webview never sees
+          // the token. Keep the grant to the exact Workbench methods.
+          'POST /v1/workbench/attachment',
+          'GET /v1/workbench/attachment',
+          'POST /v1/workbench/discard-attachment',
+          'GET /v1/workbench',
+          // 「一件事」三条:桌面 / 手机都从这里读同一份列表(2026-09-16)。
+          'GET /v1/matters','GET /v1/matter','GET /v1/matter/owner-chat','POST /v1/matter/say',
+          'GET /v1/workbench/models',
+          'GET /v1/workbench/sessions','GET /v1/workbench/session','GET /v1/workbench/task',
+          'POST /v1/workbench/project',
+          'POST /v1/workbench/create',
+          'POST /v1/workbench/continue',
+          'POST /v1/workbench/cancel',
+          'GET /v1/workbench/artifact',
+          'POST /v1/workbench/approve',
+          'POST /v1/workbench/permission',
+          'POST /v1/workbench/archive',
+          'POST /v1/workbench/unattended-ack',
+          'GET /v1/workbench/review',
+          'POST /v1/workbench/review-mark',
+          'POST /v1/workbench/review-return',
+      'POST /v1/workbench/import',
+      'POST /v1/workbench/prepare-resume',
+      'POST /v1/workbench/prepare-continuation',
+      'POST /v1/workbench/handoff-preview',
+      'POST /v1/workbench/handoff',
+      'GET /v1/workbench/handoff',
+          'GET /v1/workbench/attention',
+          'POST /v1/workbench/input',
+          'POST /v1/workbench/answer',
+          'POST /v1/workbench/withdraw-input',
+          // 自维护三件套(spec 2026-09-18-self-maintenance §1/§2) — the
+          // `wechat-cc selftest chat` CLI drives this route with the SAME
+          // operator token it uses for Workbench above (own credential
+          // read from internal-api-info.json, never the shared trusted
+          // file token). The desktop app itself never calls this route.
+          'POST /v1/selftest/converse',
+          // 自改流水线(spec 2026-09-18-self-change-pipeline §daemon 侧)——
+          // `wechat-cc self change` 跑在 daemon 外面,用的是和 Workbench /
+          // selftest 同一份 operator 凭据(从 internal-api-info.json 读,不是
+          // 共享的 trusted 文件 token)。三条路由都是 admin 档,少了这三行
+          // 自改一开口就 403 route_not_allowed。
+          'POST /v1/self-change/notice',
+          'POST /v1/self-change/ask',
+          'GET /v1/self-change/decision',
         ]),
       })
     },

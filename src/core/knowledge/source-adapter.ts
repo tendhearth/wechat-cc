@@ -93,7 +93,8 @@
  * and skipped (leaves source.db's contacts exactly as they were), never
  * aborts the message ingestion this function otherwise does.
  */
-import { Database, constants } from 'bun:sqlite'
+import { openSqlite, SQLITE_OPEN, type SqlDatabase as Database } from '../../lib/runtime/sqlite'
+import { zstdDecompressSync } from '../../lib/runtime/zstd'
 
 /**
  * Open flags for every read of wxvault's output.
@@ -111,7 +112,7 @@ import { Database, constants } from 'bun:sqlite'
  * regardless of the compile-time default, so the same code path works on all
  * three platforms.
  */
-const IMMUTABLE_RO = constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI
+const IMMUTABLE_RO = SQLITE_OPEN.READONLY | SQLITE_OPEN.URI
 import { createHash } from 'node:crypto'
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -234,7 +235,7 @@ function decodeRaw(content: Uint8Array | string | null): string {
   let bytes = content
   if (isZstd(bytes)) {
     try {
-      bytes = new Uint8Array(Bun.zstdDecompressSync(bytes))
+      bytes = zstdDecompressSync(bytes)
     } catch {
       // Malformed/truncated frame — fall through and decode the raw
       // (still-compressed) bytes, mirroring text_source.py's final `pass`:
@@ -287,7 +288,7 @@ function ingestContacts(decryptedDir: string, store: KnowledgeStore): void {
     // — read-only, tolerant of a WAL-mode file shipped without its
     // -wal/-shm sidecars, and never writes to wxvault's output. Also throws
     // (caught below) when contact.sqlite simply doesn't exist.
-    db = new Database(`file:${contactPath}?mode=ro&immutable=1`, IMMUTABLE_RO)
+    db = openSqlite(`file:${contactPath}?mode=ro&immutable=1`, IMMUTABLE_RO)
   } catch (err) {
     console.error(`[source-adapter] skipping missing/unreadable contact.sqlite:`, err)
     return
@@ -333,7 +334,7 @@ export function runSourceAdapter(opts: {
       // Immutable URI open: works on wxvault's WAL-mode output even when
       // the -wal/-shm sidecars aren't present (see header comment). Still
       // strictly read-only — wxvault's files are never written to.
-      db = new Database(`file:${dbPath}?mode=ro&immutable=1`, IMMUTABLE_RO)
+      db = openSqlite(`file:${dbPath}?mode=ro&immutable=1`, IMMUTABLE_RO)
     } catch (err) {
       console.error(`[source-adapter] skipping unreadable db ${dbFile}:`, err)
       continue

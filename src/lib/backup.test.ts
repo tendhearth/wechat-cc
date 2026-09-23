@@ -2,20 +2,21 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Database } from 'bun:sqlite'
+import { openSqlite } from './runtime/sqlite'
 import { createBackup, listBackups, pruneBackups, restoreBackup, BACKUP_DIRNAME } from './backup'
+import { spawnSync } from './runtime/process'
 
 function seedStateDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'backup-state-'))
   // live-ish sqlite dbs (WAL like production)
-  const db = new Database(join(dir, 'wechat-cc.db'))
+  const db = openSqlite(join(dir, 'wechat-cc.db'))
   db.exec("PRAGMA journal_mode = WAL; CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('主库数据')")
   db.close()
   mkdirSync(join(dir, 'knowledge'), { recursive: true })
-  const facts = new Database(join(dir, 'knowledge', 'facts.db'))
+  const facts = openSqlite(join(dir, 'knowledge', 'facts.db'))
   facts.exec("PRAGMA journal_mode = WAL; CREATE TABLE facts (v TEXT); INSERT INTO facts VALUES ('事实')")
   facts.close()
-  const graph = new Database(join(dir, 'knowledge', 'graph.db'))
+  const graph = openSqlite(join(dir, 'knowledge', 'graph.db'))
   graph.exec("CREATE TABLE contacts (v TEXT); INSERT INTO contacts VALUES ('联系人')")
   graph.close()
   // irreplaceable files
@@ -28,7 +29,7 @@ function seedStateDir(): string {
   writeFileSync(join(dir, 'access.json'), '{"dmPolicy":"allowlist"}')
   // must be EXCLUDED: secrets + derivable bulk
   writeFileSync(join(dir, 'internal-api-info.json'), '{"token":"secret"}')
-  const sem = new Database(join(dir, 'knowledge', 'semantic.db'))
+  const sem = openSqlite(join(dir, 'knowledge', 'semantic.db'))
   sem.exec("CREATE TABLE chunks (v BLOB)")
   sem.close()
   mkdirSync(join(dir, 'plugin-data', 'wxvault'), { recursive: true })
@@ -46,7 +47,7 @@ describe('backup', () => {
     expect(existsSync(r.path)).toBe(true)
     expect(r.path).toContain(BACKUP_DIRNAME)
     expect(r.bytes).toBeGreaterThan(0)
-    const listing = Bun.spawnSync(['tar', '-tzf', r.path]).stdout.toString()
+    const listing = spawnSync(['tar', '-tzf', r.path]).stdout.toString()
     expect(listing).toContain('wechat-cc.db')
     expect(listing).toContain('knowledge/facts.db')
     expect(listing).toContain('knowledge/graph.db')
@@ -61,7 +62,7 @@ describe('backup', () => {
   })
 
   it('snapshot is consistent even while the source db stays open (VACUUM INTO)', async () => {
-    const live = new Database(join(stateDir, 'wechat-cc.db'))
+    const live = openSqlite(join(stateDir, 'wechat-cc.db'))
     live.exec("INSERT INTO t VALUES ('写入中')")
     const r = await createBackup({ stateDir })
     live.close()

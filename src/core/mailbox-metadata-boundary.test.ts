@@ -29,9 +29,9 @@ describe('信箱投递:relay 能看见什么、不能看见什么', () => {
     }) as unknown) as typeof fetch
 
     await makeMailboxSender({ client: makeMailboxClient() }).send({
-      path: '/a2a/reveal',
+      path: '/a2a/letter',
       bearer: 'SECRET-BEARER',
-      body: { agent_id: 'cc-me', intent_id: 'i-42', peer_handle: { pubkey: 'PUB', channel_id: 'chan-7' } },
+      body: { agent_id: 'cc-me', channel_id: 'chan-7', nonce: 'NONCE-42', ct: 'CIPHER', tag: 'TAG' },
     }, peer)
 
     expect(seen).toHaveLength(1)
@@ -48,7 +48,7 @@ describe('信箱投递:relay 能看见什么、不能看见什么', () => {
 
     // ③ 整个上线字节里不得出现任何内层信息:路由 path、bearer、业务 id、handle
     const wire = JSON.stringify(body)
-    for (const secret of ['/a2a/reveal', 'SECRET-BEARER', 'cc-me', 'i-42', 'chan-7', 'PUB']) {
+    for (const secret of ['/a2a/letter', 'SECRET-BEARER', 'cc-me', 'chan-7', 'NONCE-42', 'CIPHER']) {
       expect(wire).not.toContain(secret)
     }
   })
@@ -63,7 +63,7 @@ describe('信箱投递:relay 能看见什么、不能看见什么', () => {
 
   it('已知且刻意接受的暴露:收件地址、投递时刻、信封长度 —— 这三项 relay 看得见', () => {
     const peerId = generateMailboxIdentity()
-    const env = sealEnvelope({ path: '/a2a/intent', bearer: 'b', body: { card: { topic: '找摄影搭子' } } }, peerId.enc_pub)
+    const env = sealEnvelope({ path: '/a2a/letter', bearer: 'b', body: { channel_id: 'c', nonce: 'n', ct: '找摄影搭子', tag: 't' } }, peerId.enc_pub)
     // 收件地址是"地址即能力"的寻址基础,长度随明文增长 —— 都是 v0 已记账的
     // 妥协(relay/README §M2、设计文档 §11)。此处仅确认它们确实【只有】这些:
     // 密文长度随明文变化,但内容本身不可读。

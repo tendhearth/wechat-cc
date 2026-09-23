@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readGitHead, readGitLockfileBlob } from './git-head'
+/** 注入的假 spawn 按运行时适配层的形状来(不再是 typeof Bun.spawn)。 */
+type GitSpawn = NonNullable<import('./git-head').GitRevParseDeps['spawn']>
 
 /** 造一个假的 Bun.spawn:按需返回 stdout / 退出码 / 永不结束。 */
 function fakeSpawn(opts: { stdout?: string; exitCode?: number; hang?: boolean }) {
@@ -7,7 +9,7 @@ function fakeSpawn(opts: { stdout?: string; exitCode?: number; hang?: boolean })
     stdout: new Response(opts.stdout ?? '').body,
     exited: opts.hang ? new Promise<number>(() => {}) : Promise.resolve(opts.exitCode ?? 0),
     kill() {},
-  })) as unknown as typeof Bun.spawn
+  })) as unknown as GitSpawn
 }
 
 describe('readGitHead', () => {
@@ -32,7 +34,7 @@ describe('readGitHead', () => {
   })
 
   it('spawn 直接抛 ⇒ null,不向上抛', async () => {
-    const throwing = (() => { throw new Error('ENOENT: git not found') }) as unknown as typeof Bun.spawn
+    const throwing = (() => { throw new Error('ENOENT: git not found') }) as unknown as GitSpawn
     await expect(readGitHead({ cwd: '/repo', spawn: throwing })).resolves.toBeNull()
   })
 })
@@ -59,7 +61,7 @@ describe('readGitLockfileBlob', () => {
   })
 
   it('spawn 直接抛 ⇒ null,不向上抛', async () => {
-    const throwing = (() => { throw new Error('ENOENT: git not found') }) as unknown as typeof Bun.spawn
+    const throwing = (() => { throw new Error('ENOENT: git not found') }) as unknown as GitSpawn
     await expect(readGitLockfileBlob({ cwd: '/repo', spawn: throwing })).resolves.toBeNull()
   })
 })

@@ -23,6 +23,8 @@ import { makeTurnEmitter } from './turn-emitter'
  *  like Claude). Delegation + resume deferred to a follow-up. */
 export const GEMINI_CAPABILITIES: ProviderCapabilities = {
   perToolCallback: true,
+  // mcpEnv threads WECHAT_SESSION_TIER per session.
+  adminMcpTools: true,
   sandboxLevels: new Set(),
   supportsDelegation: false,
   supportsResume: false,
@@ -388,7 +390,14 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
             mcp: { callTool: (n, a) => conn.callTool(n, a) },
             gate,
             model: opts.model,
-            systemInstruction: opts.systemInstruction,
+            // Per-spawn prompt from the daemon (persona / core memory / care /
+            // sticker / knowledge sections + the model line — the SAME text
+            // every other provider gets). The construction-time
+            // `opts.systemInstruction` is only the fallback for callers that
+            // spawn without one (tests, one-shot evals). Without this line
+            // gemini ran as a bare model with no persona and no memory
+            // guidance while claude/agy/openai/cursor all had them.
+            systemInstruction: ctx.appendInstructions ?? opts.systemInstruction,
             functionDeclarations,
             history,
             sessionId,

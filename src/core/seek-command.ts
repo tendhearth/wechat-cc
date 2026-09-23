@@ -1,10 +1,10 @@
 /**
- * seek-command.ts — the WeChat 派 / 取消 (confirm / cancel a proposed wish)
- * triggers (P4 派心愿). Deterministic pipeline-layer parse, mirroring
- * pair-command.ts / reveal-command.ts (never relies on the model noticing).
+ * seek-command.ts — the WeChat 派 / 取消 心愿 triggers (spec
+ * 2026-09-04-wish-postcard). Deterministic pipeline-layer parse, mirroring
+ * pair-command.ts / visit-command.ts (never relies on the model noticing).
+ * The ref is resolved against the wish list by `WishService.resolveRef`, not
+ * here — this file only decides "is this a 派/取消 command, and for what ref".
  */
-import type { SeekRow } from './social-seek-store'
-
 export type SeekCommand = { kind: 'confirm'; ref: string } | { kind: 'cancel'; ref: string }
 
 // The ref is an intent_id (randomUUID) or a prefix of one — hex + hyphen ONLY.
@@ -20,17 +20,4 @@ export function parseSeekCommand(text: string): SeekCommand | null {
   m = t.match(new RegExp(`^取消\\s+${REF}$`))
   if (m) return { kind: 'cancel', ref: m[1]! }
   return null
-}
-
-export type SeekRefResolution = { ok: true; id: string } | { ok: false; reason: 'not_found' | 'ambiguous' }
-
-export function resolveSeekRef(ref: string, rows: SeekRow[]): SeekRefResolution {
-  const proposed = rows.filter(r => r.status === 'proposed')
-  const exact = proposed.find(r => r.id === ref)
-  if (exact) return { ok: true, id: exact.id }
-  if (ref.length < 6) return { ok: false, reason: 'ambiguous' } // too short to prefix-match safely
-  const hits = proposed.filter(r => r.id.startsWith(ref))
-  if (hits.length === 1) return { ok: true, id: hits[0]!.id }
-  if (hits.length > 1) return { ok: false, reason: 'ambiguous' }
-  return { ok: false, reason: 'not_found' }
 }

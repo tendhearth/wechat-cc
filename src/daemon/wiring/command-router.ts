@@ -4,8 +4,8 @@
  * 架构审查:逻辑不该藏在接线文件里).
  *
  * Responsibility: parse an owner/admin WeChat message as a deterministic
- * control command (揭晓 / 回信 / 配对 / 派 / 允许-拒绝-邀请码-待批准) and, if
- * it matches, handle it and report `true`. Anything that isn't a command —
+ * control command (串门 / 回信 / 配对 / 派 / 取消 / 允许-拒绝-邀请码-待批准)
+ * and, if it matches, handle it and report `true`. Anything that isn't a command —
  * or comes from a non-admin, or from an install whose gate isn't satisfied —
  * returns `false`, and the caller falls through to a normal agent turn.
  *
@@ -17,18 +17,18 @@
  */
 import { randomBytes } from 'node:crypto'
 import type { InboundMsg } from '../../core/prompt-format'
-import { parseRevealCommand } from '../../core/reveal-command'
 import { parseLetterCommand } from '../../core/penpal-letter-command'
+import { parseVisitCommand } from '../../core/visit-command'
 import { parsePairCommand } from '../../core/pair-command'
-import { parseSeekCommand, resolveSeekRef } from '../../core/seek-command'
+import { parseSeekCommand } from '../../core/seek-command'
 import { parseGuestCommand } from '../../core/guest-command'
+import { parseIntroCommand } from '../../core/intro-command'
 import { previewText } from '../inbound/mw-access'
 import { GUEST_REQUEST_TTL_MS } from '../guest-requests'
 import type { GuestRequestStore } from '../guest-requests'
-import type { Revealer } from '../../core/social-reveal'
 import type { PairingEngine } from '../../core/pairing'
-import type { SeekStore } from '../../core/social-seek-store'
-import type { ConfirmOutcome, CancelOutcome } from '../../core/social-broker'
+import type { WishService } from '../bootstrap/wire-wish'
+import type { IntroService } from '../bootstrap/wire-intro'
 
 export interface CommandRouterDeps {
   isAdmin: (chatId: string) => boolean
@@ -37,11 +37,14 @@ export interface CommandRouterDeps {
   /** CC-voice outbound to the owner's own chat. Absent ⇒ outcomes are silent
    *  (same optional posture as the pre-extraction closure). */
   sendAssistantText?: (chatId: string, text: string) => void | Promise<void>
-  /** 揭晓 / 派 — present only when social is wired; undefined ⇒ those blocks inert. */
+  /** 串门 / 派 / 取消 — present only when social is wired; undefined ⇒ those
+   *  blocks inert (the message falls through to a normal turn). */
   social?: {
-    revealer: Pick<Revealer, 'revealEcho' | 'revealPledge'>
-    seekStore: Pick<SeekStore, 'list'>
-    broker: { confirmSeek(id: string): ConfirmOutcome; cancelSeek(id: string): CancelOutcome }
+    wish: Pick<WishService, 'send' | 'cancel' | 'resolveRef'>
+    penpal: { startVisit(channel?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }> }
+    /** 「认识 / 同意 / 不了」(spec 2026-09-04-introduction) — present only
+     *  when social is wired; undefined ⇒ inert (message falls through). */
+    intro: Pick<IntroService, 'request' | 'accept' | 'decline'>
   }
   /** 回信 — present only when the pen-pal channel is wired. */
   penpal?: { sendLetter(channel: string, text: string): Promise<{ ok: boolean; error?: string }> }
@@ -70,12 +73,18 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
 
   return {
     async tryHandle(msg: InboundMsg): Promise<boolean> {
+      // 串门(2026-09-03 实验)—— 主人说「串门」,伙伴挑一个开着的笔友信道过去
+      // 聊几句,回来讲给主人听。见 core/visit.ts 顶部的 WHY。
       if (deps.social && deps.isAdmin(msg.chatId)) {
-        const cmd = parseRevealCommand(msg.text)
-        if (cmd) {
-          const echoOutcome = await deps.social.revealer.revealEcho(cmd.id)
-          const outcome = echoOutcome === null ? await deps.social.revealer.revealPledge(cmd.id) : echoOutcome
-          if (outcome === null) say(msg.chatId, `没找到「${cmd.id}」这条,可能已过期或已牵线。`)
+        const v = parseVisitCommand(msg.text)
+        if (v) {
+          say(msg.chatId, '🚶 出门了,聊完回来跟你说。')
+          const r = await deps.social.penpal.startVisit(v.channel)
+          if (!r.ok) {
+            say(msg.chatId, r.reason === 'unknown_channel'
+              ? '没找到这一家。说「串门」我自己挑,或者「串门 邻居」去邻居家。'
+              : `没出得了门:${r.reason}`)
+          }
           return true
         }
       }
@@ -93,7 +102,7 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
           return true
         }
       }
-      // 配对 (spec §7) — admin-gated, deterministic parse, mirrors 揭晓/回信.
+      // 配对 (spec §7) — admin-gated, deterministic parse, mirrors 串门/回信.
       // Inert (falls through to a normal turn) until boot.pairing is wired
       // (Task 6, i.e. mailbox_relays configured). start()/accept() are
       // SYNC calls the caller is waiting on — this seam renders EVERY
@@ -126,8 +135,8 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
           return true
         }
       }
-      // 派 / 取消 (P4 派心愿) — admin-gated confirm/cancel of a `proposed`
-      // social_seek row, mirrors the 揭晓/配对 blocks above (renders every
+      // 派 / 取消 心愿 (spec 2026-09-04-wish-postcard) — admin-gated send/cancel
+      // of a drafted wish, mirrors the 串门/配对 blocks above (renders every
       // outcome itself, no engine notify). `派` is ALREADY the delegate
       // imperative (admin-commands.ts's DELEGATE_RE: 让/派 <hand> 执行/跑
       // <task>) — parseSeekCommand's id-charset guard ([0-9a-fA-F-]+)
@@ -135,29 +144,69 @@ export function makeCommandRouter(deps: CommandRouterDeps): CommandRouter {
       // matching here (belt); makeMwAdmin already runs before this
       // dispatch seam in the wired pipeline and consumes DELEGATE_RE
       // first (suspenders). Inert (falls through) until boot.social is
-      // wired, same posture as the 揭晓/配对 blocks.
+      // wired, same posture as the 串门/配对 blocks.
       if (deps.social && deps.isAdmin(msg.chatId)) {
         const cmd = parseSeekCommand(msg.text)
         if (cmd) {
-          const res = resolveSeekRef(cmd.ref, deps.social.seekStore.list())
+          // 派 only ever acts on a draft; 取消 also closes one already out
+          // (its replies keep landing in the bag — see wish.cancel).
+          const among = cmd.kind === 'confirm' ? ['draft'] as const : ['draft', 'open'] as const
+          const res = deps.social.wish.resolveRef(cmd.ref, among)
           if (!res.ok) {
             say(msg.chatId, res.reason === 'ambiguous'
-              ? '有多条心愿匹配这个开头,请给更长的编号(≥6 位)'
+              ? '有多条心愿匹配这个开头,请给更长的编号'
               : '这条心愿不存在或已处理')
             return true
           }
           if (cmd.kind === 'confirm') {
-            const r = await deps.social.broker.confirmSeek(res.id)
-            say(msg.chatId, r.ok ? '已发出,觅食中…(稍后回来看回声)' : '这条心愿不存在或已处理')
+            const r = await deps.social.wish.send(res.id)
+            say(msg.chatId, r.ok
+              ? `已派给 ${r.sentTo} 个朋友,等回音…`
+              : r.reason === 'no_channels'
+                ? '你还没有开着信道的朋友,先配对'
+                : r.reason === 'too_many_open'
+                  ? '同时最多 3 条心愿,先取消一条'
+                  : '这条心愿不存在或已处理')
           } else {
-            await deps.social.broker.cancelSeek(res.id)
-            say(msg.chatId, '已作废')
+            const r = deps.social.wish.cancel(res.id)
+            say(msg.chatId, r.ok
+              ? (r.status === 'cancelled' ? '已作废' : '已关掉,之后的回音还会进背包')
+              : '这条心愿不存在或已处理')
+          }
+          return true
+        }
+      }
+      // 认识 / 同意 / 不了 (spec 2026-09-04-introduction) — admin-gated,
+      // deterministic parse, same posture as 派/取消 above: the router
+      // renders EVERY outcome itself. `认识` asks the introducer to forward
+      // a request on a postcard's replyId (from `wish.list()`'s postcards);
+      // `同意`/`不了` answer an incoming offer (from `intro.offers()`).
+      // Inert (falls through) until boot.social is wired.
+      if (deps.social && deps.isAdmin(msg.chatId)) {
+        const cmd = parseIntroCommand(msg.text)
+        if (cmd) {
+          if (cmd.kind === 'request') {
+            const r = await deps.social.intro.request(cmd.ref)
+            say(msg.chatId, r.ok
+              ? '已经托朋友去问了,对方点头我就告诉你'
+              : r.reason === 'not_found' ? '没有这张明信片'
+                : r.reason === 'ambiguous' ? '有多张匹配,请给更长的编号'
+                  : r.reason === 'already_requested' ? '已经在问了,等对方点头'
+                    : '没送出去,稍后再试')
+          } else {
+            const fn = cmd.kind === 'accept' ? deps.social.intro.accept : deps.social.intro.decline
+            const r = await fn(cmd.ref)
+            say(msg.chatId, r.ok
+              ? (cmd.kind === 'accept' ? '好,我把名片递过去了' : '好,我回了不了')
+              : r.reason === 'not_found' ? '没有这条邀约(可能过期了)'
+                : r.reason === 'ambiguous' ? '有多张匹配,请给更长的编号'
+                  : '没送出去,稍后再试')
           }
           return true
         }
       }
       // 允许/拒绝/邀请码/待批准 (guest path spec §3) — admin-gated,
-      // deterministic parse, mirrors 揭晓/回信/配对 above. Unlike those,
+      // deterministic parse, mirrors 串门/回信/配对 above. Unlike those,
       // this block is NOT gated behind an optional boot.X wire —
       // guestRequests/guestForwardBudget are unconditionally constructed
       // above, so the guest path is always live; the gate is

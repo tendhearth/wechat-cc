@@ -75,6 +75,8 @@ export interface OnboardingDeps {
 }
 
 export interface OnboardingHandler {
+  /** 只读:这条会不会进入 onboarding(等昵称中,或还不认识这个人)。 */
+  probe(msg: InboundMsg): boolean
   /**
    * Returns true if the message was consumed by the onboarding flow
    * (caller MUST NOT route to Claude). Returns false to continue normal
@@ -281,6 +283,12 @@ export function makeOnboardingHandler(deps: OnboardingDeps): OnboardingHandler {
   }
 
   return {
+    probe(msg) {
+      const aw = getAwaiting(msg.chatId)
+      const stillWaiting = aw !== undefined && (now() - aw.since) < AWAIT_TIMEOUT_MS
+      if (stillWaiting && aw.phase === 'awaiting_bot_name') return true
+      return !deps.isKnownUser(msg.userId)
+    },
     async handle(msg) {
       const aw = getAwaiting(msg.chatId)
       const stillWaiting = aw !== undefined && (now() - aw.since) < AWAIT_TIMEOUT_MS

@@ -4,11 +4,13 @@ import { dirname, join } from 'node:path'
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { defineCommand, runMain } from 'citty'
 import selfPkg from './package.json' with { type: 'json' }
+import { VERSION_LINE } from './src/lib/app-version'
 import { STATE_DIR } from './src/lib/config'
 import { loadAgentConfig, saveAgentConfig, withModelForProvider, activeModel, type AgentConfig, type AgentProviderKind } from './src/lib/agent-config'
-import { analyzeDoctor, defaultDoctorDeps, printDoctor, probeOutboundWarning, serviceStatus, setupStatus } from './src/cli/doctor'
+import { PROVIDER_IDS, isKnownProviderId } from './src/lib/provider-ids'
+import { analyzeDoctor, defaultDoctorDeps, printDoctor, probeFsAccessWarning, probeOutboundWarning, serviceStatus, setupStatus } from './src/cli/doctor'
 import { buildServicePlan, installService, startService, stopService, uninstallService } from './src/cli/service-manager'
-import { compiledBinaryPath, compiledRepoRoot, isCompiledBundle } from './src/lib/runtime-info'
+import { appMainBinaryPath, compiledBinaryPath, compiledRepoRoot, isCompiledBundle } from './src/lib/runtime-info'
 import { delegateMemoryOp, type CliApiInfo } from './src/lib/cli-llm-eval'
 import {
   DoctorOutput, SetupPollOutput, SetupStatusOutput, SetupQrJsonOutput,
@@ -59,6 +61,11 @@ Usage:
                         --dangerously: skip permission prompts
                         (matches claude --dangerously-skip-permissions)
   wechat-cc install [--user]   Register the MCP plugin entry for claude
+  wechat-cc hook install [--claude] [--codex] [--json]
+                        终端里的 claude / codex 跑完一个回合、或停下来等批准时
+                        推到主人微信(写 ~/.claude/settings.json 与 $CODEX_HOME/
+                        hooks.json 的 hooks;幂等;只动自己的条目)。
+  wechat-cc hook uninstall | status
   wechat-cc status      Show daemon status + accounts
   wechat-cc list        List bound accounts
   wechat-cc doctor [--json]        Diagnose install/setup state
@@ -148,6 +155,33 @@ Usage:
                         Pull latest + reinstall deps + restart service.
                         --check probes only (no side effects); GUI calls
                         this on a timer to surface the Update button.
+  wechat-cc self deploy [--binary <path>] [--app <path>] [--no-rollback]
+                        [--health-timeout-ms N] [--json]
+                        自维护:原子换 sidecar 进 .app、launchd 重启、健康门,
+                        失败自动回滚(仅 macOS)。见 docs/maintainer/deploy.md。
+  wechat-cc self change "<需求>" [--from cli|wechat] [--budget-usd N]
+                        [--no-deploy] [--json]
+  wechat-cc self change --resume <id> | --list | --unhalt
+  wechat-cc self change --approve <id> | --deny <id>
+                        自改:执行者在专用克隆里实现,依次过测试 / 评审 / CI /
+                        主人微信拍板 / 合 dev 五道闸门,再部署 + 自检,不过就
+                        回滚(仅 macOS)。退出码 0 完成 / 1 失败 / 2 停机·配额·
+                        平台·daemon 没起 / 3 主人回了 n / 4 没等到拍板(可
+                        --resume)。微信外发不通时用 --approve / --deny 在终端
+                        拍板(桌面权限卡也行)。见 docs/maintainer/self-change.md。
+  wechat-cc selftest workbench --executor <id> [--image] [--resume] [--json]
+                        [--timeout-ms N] [--keep]
+  wechat-cc selftest chat --provider <id> [--text "…"] [--resume] [--json]
+                        [--timeout-ms N]
+                        自维护:daemon 在跑的前提下做一次真机闭环自检并给出
+                        机器可读的结论。--keep 保留 scratch 项目目录。
+                        见 docs/maintainer/verify.md。
+  wechat-cc ci triage [--sha <sha|HEAD>] [--branch <b>] [--wait] [--rerun]
+                        [--max-reruns N] [--timeout-min N] [--json]
+                        看 CI:这个 SHA 绿了吗?红的是自己的锅,还是
+                        src/cli/ci-flakes.json 里登记过的 flake。退出码
+                        0 绿 / 1 真红(含判不明白)/ 2 没有运行或 gh 出错 /
+                        3 是已知 flake。见 docs/maintainer/ci-and-flakes.md。
   wechat-cc agent inspect <url>       Fetch Agent Card, print metadata
   wechat-cc agent add <url> [--id ID] [--name-override N] [--outbound-key K]
                         Register an external A2A agent; generates inbound API key.
@@ -163,22 +197,13 @@ Usage:
   wechat-cc agent test <id> [--text MSG] [--outbound]
                         Send a synthetic notify to validate inbound→chat path
                         (default) or outbound (--outbound: send to external URL)
-  wechat-cc social seeks [--limit N] [--json]
-  wechat-cc social echoes [--seek <id>] [--limit N] [--json]
-  wechat-cc social pledges [--limit N] [--json]
-  wechat-cc social propose <topic> [--city X] [--json]
-                        派心愿(预览)— gate + persist a redacted preview; nothing
-                          sent yet (needs running daemon)
-  wechat-cc social confirm <id> [--json]
-                        派 <id> — confirm a proposed wish and broadcast it
-  wechat-cc social cancel <id> [--json]
-                        取消 <id> — void a proposed wish before it ever goes out
-  wechat-cc social reveal <id> [--json]
+  wechat-cc social wishes [--json]
+                        List my 心愿 + effective status (needs running daemon)
   wechat-cc social enable [--status]
                         一键开启觅食台社交(merge-persist,不覆盖已有设置);
                           --status 只打印当前三项设置,不写入
   wechat-cc provider show [--json]  Show selected agent provider
-  wechat-cc provider set <claude|codex|cursor|openai|gemini> [--model MODEL] [--unattended true|false]
+  wechat-cc provider set <claude|codex|cursor|openai|gemini|agy> [--model MODEL] [--unattended true|false]
                         --unattended: when true (default for new installs), the
                           installed daemon runs the daemon with --dangerously so
                           inbound WeChat messages don't hang waiting for human
@@ -258,6 +283,8 @@ const doctorCmd = defineCommand({
       printDoctor(report)
       const warn = await probeOutboundWarning(report.checks.daemon)
       if (warn) console.log(warn)
+      const fsWarn = await probeFsAccessWarning(report.checks.daemon)
+      if (fsWarn) console.log(fsWarn)
     }
   },
 })
@@ -869,10 +896,12 @@ export function computeProviderSetOutcome(
   existing: AgentConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): ProviderSetOutcome {
-  if (args.provider !== 'claude' && args.provider !== 'codex' && args.provider !== 'cursor' && args.provider !== 'openai' && args.provider !== 'gemini') {
-    return { ok: false, error: `provider must be 'claude', 'codex', 'cursor', 'openai', or 'gemini' (got: ${args.provider})` }
+  // 名单来自 lib/provider-ids(唯一事实源)。以前这里手写五家、漏了 agy:桌面
+  // 「大脑」菜单选 agy → `provider set agy` 被拒 →「切换 provider 失败」。
+  if (!isKnownProviderId(args.provider)) {
+    return { ok: false, error: `provider must be one of ${PROVIDER_IDS.join(' | ')} (got: ${args.provider})` }
   }
-  const provider = args.provider as AgentProviderKind
+  const provider: AgentProviderKind = args.provider
   const unattended = parseBoolValue(args.unattended)
   const autoStart = parseBoolValue(args.autoStart)
   const closeStopsDaemon = parseBoolValue(args.closeStopsDaemon)
@@ -926,9 +955,9 @@ export function computeProviderSetOutcome(
 }
 
 const providerSetCmd = defineCommand({
-  meta: { name: 'set', description: 'Switch agent provider (claude|codex|cursor|openai|gemini), optionally with --model + --base-url + --unattended + --auto-start + --close-stops-daemon' },
+  meta: { name: 'set', description: 'Switch agent provider (claude|codex|cursor|openai|gemini|agy), optionally with --model + --base-url + --unattended + --auto-start + --close-stops-daemon' },
   args: {
-    provider: { type: 'positional', required: true, description: 'claude | codex | cursor | openai | gemini', valueHint: 'claude|codex|cursor|openai|gemini' },
+    provider: { type: 'positional', required: true, description: 'claude | codex | cursor | openai | gemini | agy', valueHint: 'claude|codex|cursor|openai|gemini|agy' },
     model: { type: 'string', description: 'Override default model (openai: required the first time, unless already stored)' },
     'base-url': { type: 'string', description: 'OpenAI-compatible API base URL — openai only, e.g. https://api.deepseek.com/v1 (required the first time, unless already stored)', valueHint: 'https://api.deepseek.com/v1' },
     // String, not boolean: matches the legacy parseBoolFlag tri-state semantics
@@ -957,7 +986,7 @@ const providerSetCmd = defineCommand({
 })
 
 const providerCmd = defineCommand({
-  meta: { name: 'provider', description: 'Agent provider config (claude / codex / cursor / openai / gemini)' },
+  meta: { name: 'provider', description: 'Agent provider config (claude / codex / cursor / openai / gemini / agy)' },
   subCommands: {
     show: providerShowCmd,
     set: providerSetCmd,
@@ -1731,9 +1760,159 @@ const companionPushCmd = defineCommand({
   },
 })
 
+// ── hook — 终端 claude / codex 会话的事件推到微信(spec 2026-09-09-cli-hook-push)──
+// 两家的 hooks 各拉起一个 `wechat-cc hook <source>` 子进程,stdin 是 hook JSON。
+// 永远 exit 0、永远不阻塞 CLI:daemon 没跑 / 网络不通 / 400 一律静默
+// (WECHAT_CC_HOOK_DEBUG=1 时把结果打到 stderr)。
+function hookRelayCmd(source: 'claude' | 'codex') {
+  return defineCommand({
+    meta: { name: source, description: `${source} 的 hook 出口(stdin 收 hook JSON,转给本机 daemon)` },
+    async run() {
+      const { shouldSkipHook, normalizeHookPayload, postCliEvent, parsePermissionRequest, relayPermission, permissionDecisionOutput, withMachineContext } = await import('./src/cli/hook.ts')
+      const debug = process.env['WECHAT_CC_HOOK_DEBUG'] === '1'
+      try {
+        // 回环守卫:daemon 自己拉起的 claude / codex 也会触发同一份 hooks。
+        if (shouldSkipHook(process.env)) { if (debug) console.error('hook: skipped (daemon child)'); return }
+        const raw = await readStdin()
+        let parsed: unknown = null
+        try { parsed = JSON.parse(raw) } catch { if (debug) console.error('hook: stdin is not JSON'); return }
+        // PermissionRequest:去微信问主人;拿到 y/n 就往 stdout 写答复(两家同形状)。
+        // 主人在场 / 没答 / daemon 没跑 → 什么都不写,终端自己弹提示;顺手按老规矩
+        // 压一条「等你批准」提醒(刚发过卡片的话 daemon 那头会压掉)。
+        const perm = parsePermissionRequest(source, parsed)
+        if (perm) {
+          const r = await relayPermission(STATE_DIR, await withMachineContext(perm))
+          if (debug) console.error(`hook: permission ${JSON.stringify(r)}`)
+          if (r.decision) { process.stdout.write(permissionDecisionOutput(r.decision) + '\n'); return }
+          await postCliEvent(STATE_DIR, await withMachineContext({ source, kind: 'permission' as const, session_id: perm.session_id, cwd: perm.cwd, text: perm.summary ? `${perm.tool_name}: ${perm.summary}` : perm.tool_name }))
+          return
+        }
+        const ev = normalizeHookPayload(source, parsed)
+        if (!ev) { if (debug) console.error('hook: event ignored'); return }
+        // prompt / session_end 不用探空闲(它们本身就说明有人在);stop / permission 要。
+        const r = await postCliEvent(STATE_DIR, ev.kind === 'stop' || ev.kind === 'permission' ? await withMachineContext(ev) : ev)
+        if (debug) console.error(`hook: ${JSON.stringify(r)}`)
+      } catch (err) {
+        if (debug) console.error(`hook: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    },
+  })
+}
+
+function hookTargets(args: { claude?: boolean; codex?: boolean }): ('claude' | 'codex')[] {
+  const both = !args.claude && !args.codex
+  return [...(both || args.claude ? ['claude' as const] : []), ...(both || args.codex ? ['codex' as const] : [])]
+}
+
+async function hookFileFor(source: 'claude' | 'codex'): Promise<string> {
+  const { claudeSettingsPath, codexHooksPath } = await import('./src/cli/hook.ts')
+  const { homedir } = await import('node:os')
+  return source === 'claude' ? claudeSettingsPath(homedir()) : codexHooksPath(homedir(), process.env)
+}
+
+const hookInstallCmd = defineCommand({
+  meta: { name: 'install', description: '把 wechat-cc 的 hooks 写进 ~/.claude/settings.json 与 $CODEX_HOME/hooks.json(幂等;缺省两家都装)' },
+  args: {
+    claude: { type: 'boolean', description: '只装 Claude Code' },
+    codex: { type: 'boolean', description: '只装 Codex CLI' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { installHooks, hookCommandLine } = await import('./src/cli/hook.ts')
+    const cliEntry = fileURLToPath(import.meta.url)
+    const out: Record<string, unknown> = {}
+    for (const source of hookTargets(args)) {
+      const file = await hookFileFor(source)
+      const command = hookCommandLine({ execPath: process.execPath, compiled: isCompiledBundle(), cliEntry, source })
+      try {
+        const { changed } = installHooks(file, source, command)
+        out[source] = { ok: true, file, changed, command }
+        if (!args.json) console.log(`${changed ? '✅' : '✔'} ${source}: ${changed ? '已写入' : '已是最新'} ${file}`)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        out[source] = { ok: false, file, error: msg }
+        if (!args.json) console.error(`❌ ${source}: ${msg}`)
+      }
+    }
+    if (args.json) { console.log(JSON.stringify(out)); return }
+    console.log('之后终端里的 claude / codex 跑完一个长回合,主人微信会收到一条(压 45s;期间你再敲一句就不发;一次提问最多推一条)。')
+    console.log('停下来等批准时:你最近 3 分钟没在终端敲过字 ⇒ 微信里收到卡片,回「y 码」/「n 码」就替终端拍板(120s 内);否则终端自己问。')
+    console.log('daemon 自己拉起的会话不会推(回环守卫)。查看:wechat-cc hook status;撤掉:wechat-cc hook uninstall。')
+  },
+})
+
+const hookUninstallCmd = defineCommand({
+  meta: { name: 'uninstall', description: '只删 wechat-cc 自己的 hook 条目,别人的原样保留' },
+  args: {
+    claude: { type: 'boolean', description: '只删 Claude Code 的' },
+    codex: { type: 'boolean', description: '只删 Codex CLI 的' },
+    json: { type: 'boolean', description: 'JSON envelope' },
+  },
+  async run({ args }) {
+    const { uninstallHooks } = await import('./src/cli/hook.ts')
+    const out: Record<string, unknown> = {}
+    for (const source of hookTargets(args)) {
+      const file = await hookFileFor(source)
+      try {
+        const r = uninstallHooks(file, source)
+        out[source] = { ok: true, file, ...r }
+        if (!args.json) console.log(`${r.changed ? '✅' : '✔'} ${source}: ${r.changed ? `删了 ${r.removed} 条` : '本来就没装'}(${file})`)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        out[source] = { ok: false, file, error: msg }
+        if (!args.json) console.error(`❌ ${source}: ${msg}`)
+      }
+    }
+    if (args.json) console.log(JSON.stringify(out))
+  },
+})
+
+const hookStatusCmd = defineCommand({
+  meta: { name: 'status', description: '两家的 hook 装没装、命令行是什么' },
+  args: { json: { type: 'boolean', description: 'JSON envelope' } },
+  async run({ args }) {
+    const { hookStatus } = await import('./src/cli/hook.ts')
+    const out: Record<string, unknown> = {}
+    for (const source of ['claude', 'codex'] as const) {
+      const file = await hookFileFor(source)
+      const st = hookStatus(file, source)
+      out[source] = { file, ...st }
+      if (!args.json) console.log(`${st.installed ? '✅' : '—'} ${source}: ${st.installed ? st.command : '未安装'}(${file})`)
+    }
+    if (args.json) console.log(JSON.stringify(out))
+  },
+})
+
+const hookCmd = defineCommand({
+  meta: { name: 'hook', description: '终端 claude / codex 会话的事件推到微信(hooks 出口):install / uninstall / status;claude / codex 由 hooks 自己调' },
+  subCommands: { claude: hookRelayCmd('claude'), codex: hookRelayCmd('codex'), install: hookInstallCmd, uninstall: hookUninstallCmd, status: hookStatusCmd },
+})
+
+const companionIntrospectCmd = defineCommand({
+  meta: { name: 'introspect', description: 'Fire introspection + CC Atelier tick NOW (instead of waiting for the daily schedule)' },
+  args: { json: { type: 'boolean', description: 'JSON envelope' } },
+  async run({ args }) {
+    const { requestIntrospectTick } = await import('./src/cli/companion-introspect.ts')
+    const { existsSync, readFileSync } = await import('node:fs')
+    try {
+      const { pid } = requestIntrospectTick({
+        readPid: (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null),
+        kill: (pidNum, sig) => process.kill(pidNum, sig),
+      }, STATE_DIR)
+      if (args.json) { console.log(JSON.stringify({ ok: true, pid })); return }
+      console.log(`已通知本机 daemon (pid ${pid}) 立刻跑一次 introspect + Atelier tick。`)
+      console.log('查看结果：wechat-cc logs（或 tail channel.log 看 INTROSPECT / ATELIER）。')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (args.json) { console.log(JSON.stringify({ ok: false, error: msg })); return }
+      console.error(`companion introspect failed: ${msg}`); process.exit(1)
+    }
+  },
+})
+
 const companionCmd = defineCommand({
   meta: { name: 'companion', description: 'Companion (proactive contact) controls' },
-  subCommands: { push: companionPushCmd },
+  subCommands: { push: companionPushCmd, introspect: companionIntrospectCmd },
 })
 
 // ── connection probe — wechat-cc connection probe [--json] ─────────────────
@@ -2131,12 +2310,14 @@ const serviceCmd = defineCommand({
     // `bunPath cli.ts run` ExecStart. compiledBinaryPath/compiledRepoRoot
     // both return non-null only in compiled mode — see runtime-info.ts.
     const binaryPath = compiledBinaryPath() ?? undefined
+    const appBinaryPath = appMainBinaryPath() ?? undefined
     const planCwd = compiledRepoRoot() ?? dirname(fileURLToPath(import.meta.url))
     const plan = buildServicePlan({
       cwd: planCwd,
       dangerouslySkipPermissions: config.dangerouslySkipPermissions,
       autoStart: config.autoStart,
       ...(binaryPath ? { binaryPath } : {}),
+      ...(appBinaryPath ? { appBinaryPath } : {}),
     })
     const json = Boolean(args.json)
     if (action === 'status') {
@@ -2319,6 +2500,509 @@ const updateCmd = defineCommand({
       console.log(`updated: ${result.fromCommit} → ${result.toCommit}${lockNote}, daemon=${result.daemonAction} (${result.elapsedMs}ms)`)
     }
   },
+})
+
+/**
+ * `--timeout-ms` / `--health-timeout-ms` 的解析(自维护三件套共用)。
+ *
+ * WHY 不再用 `Number(x)` + `Number.isFinite` 悄悄兜底:`--timeout-ms abc`
+ * 以前是 NaN ⇒ 当成「没传」⇒ 按缺省值跑完一整轮真机自检,人以为自己设了
+ * 30 秒上限,其实等了四分钟。`--timeout-ms 0` / 负数同理(缺省顶上)。
+ * 数值开关写错了就当场报错退 1,别替用户猜。
+ */
+export function parseTimeoutMsFlag(raw: unknown): { ok: true; value?: number } | { ok: false; error: string } {
+  if (raw === undefined || raw === null || raw === '') return { ok: true }
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value <= 0) {
+    return { ok: false, error: `invalid value: ${String(raw)} (expected a positive number of milliseconds)` }
+  }
+  return { ok: true, value }
+}
+
+// ── self deploy — atomic sidecar swap + launchd restart + health gate ──
+//
+// spec: docs/superpowers/specs/2026-09-18-self-maintenance-design.md §3.
+// macOS/launchd only (Windows/Linux self deploy is explicitly out of scope —
+// exit 2). repoRoot in source mode is this file's own directory (cli.ts
+// lives at the repo root); compiled bundles have no repo checkout nearby,
+// so --binary is required there.
+
+const selfDeployCmd = defineCommand({
+  meta: { name: 'deploy', description: '原子换 sidecar 进 .app、重启 daemon(launchd)、健康门,失败自动回滚(仅 macOS)' },
+  args: {
+    binary: { type: 'string', description: '新 sidecar 二进制路径(源码模式缺省按 repoRoot + 架构推导;打包模式下必填)' },
+    app: { type: 'string', description: '.app 包路径,覆盖从 LaunchAgent plist 推导的部署目标' },
+    'no-rollback': { type: 'boolean', description: '健康门失败时不自动回滚（默认会回滚）' },
+    'health-timeout-ms': { type: 'string', description: '健康门超时,毫秒(缺省 60000)' },
+    json: { type: 'boolean', description: 'JSON 输出（SelfDeployResult）' },
+  },
+  async run({ args }) {
+    const json = Boolean(args.json)
+    if (process.platform !== 'darwin') {
+      const message = 'self deploy only supports macOS (launchd) — see spec §3'
+      if (json) console.log(JSON.stringify({ ok: false, exitCode: 2, error: 'self_deploy_unsupported_platform', message }, null, 2))
+      else console.error(message)
+      process.exit(2)
+      return
+    }
+
+    const { planSelfDeploy, executeSelfDeploy, defaultSelfDeployDeps } = await import('./src/cli/self-deploy.ts')
+    const { homedir } = await import('node:os')
+    const { existsSync, readFileSync } = await import('node:fs')
+
+    const compiled = isCompiledBundle()
+    if (compiled && !args.binary) {
+      const message = 'compiled bundle: --binary is required (no repo checkout nearby to derive the sidecar path from)'
+      if (json) console.log(JSON.stringify({ ok: false, exitCode: 1, error: 'binary_required', message }, null, 2))
+      else console.error(message)
+      process.exit(1)
+      return
+    }
+
+    const repoRoot = compiledRepoRoot() ?? dirname(fileURLToPath(import.meta.url))
+    const homeDir = homedir()
+    const plistPath = join(homeDir, 'Library', 'LaunchAgents', 'com.wechat-cc.daemon.plist')
+    const plistXml = existsSync(plistPath) ? readFileSync(plistPath, 'utf8') : null
+    const uid = typeof process.getuid === 'function' ? process.getuid() : 501
+    const healthTimeout = parseTimeoutMsFlag(args['health-timeout-ms'])
+    if (!healthTimeout.ok) {
+      const message = `--health-timeout-ms ${healthTimeout.error}`
+      if (json) console.log(JSON.stringify({ ok: false, exitCode: 1, error: 'invalid_health_timeout_ms', message }, null, 2))
+      else console.error(`self deploy: ${message}`)
+      process.exit(1)
+      return
+    }
+
+    let plan
+    try {
+      plan = planSelfDeploy({
+        platform: process.platform,
+        arch: process.arch,
+        homeDir,
+        uid,
+        repoRoot,
+        stateDir: STATE_DIR,
+        plistXml,
+        binary: args.binary,
+        app: args.app,
+        healthTimeoutMs: healthTimeout.value,
+        // citty/mri turns `--no-rollback` into `rollback:false` (boolean
+        // negation) — the declared `'no-rollback'` key stays undefined, so
+        // reading only that key silently ignored the flag and deployed with
+        // rollback still armed. Accept both spellings.
+        rollback: !((args as Record<string, unknown>)['no-rollback'] === true || (args as Record<string, unknown>).rollback === false),
+      })
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err)
+      // planSelfDeploy() can itself throw self_deploy_unsupported_platform
+      // (defense in depth — the process.platform check above already
+      // short-circuits the normal path) — keep both paths agreeing on exit 2.
+      const exitCode = error === 'self_deploy_unsupported_platform' ? 2 : 1
+      const message = error === 'launchagent_not_app_bundle'
+        ? 'installed LaunchAgent does not point at an app bundle (looks like a dev-mode/source-checkout plist) — pass --app <path-to-wechat-cc.app> to target it explicitly'
+        : error
+      if (json) console.log(JSON.stringify({ ok: false, exitCode, error, message }, null, 2))
+      else console.error(`self deploy: ${message}`)
+      process.exit(exitCode)
+      return
+    }
+
+    const result = await executeSelfDeploy(plan, defaultSelfDeployDeps())
+    if (json) {
+      console.log(JSON.stringify(result, null, 2))
+    } else {
+      for (const step of result.steps) {
+        console.log(`${step.ok ? '✓' : '✗'} ${step.name}${step.detail ? ` — ${step.detail}` : ''}`)
+      }
+      if (result.ok) console.log(`✓ deployed${result.version ? ` (${result.version})` : ''}`)
+      else {
+        console.error(`✗ self deploy failed${result.rolledBack ? ' — rolled back to previous binary' : ''}`)
+        if (result.diagnostics) console.error(result.diagnostics)
+      }
+    }
+    process.exit(result.exitCode)
+  },
+})
+
+
+// ── self change — 自改流水线:CC 自己给自己做一次改动 ──────────────────
+//
+// spec: docs/superpowers/specs/2026-09-18-self-change-pipeline-design.md。
+// 手册:docs/maintainer/self-change.md。这里只做四件事:解析开关、把配置合出来、
+// 拿锁、把真件接上跑 run.ts —— 流水线本身一行都不在 cli.ts 里(它要能在没有
+// citty、没有 process.argv 的测试里跑完整条)。
+//
+// 和 `self deploy` 一样是 darwin-only:最后两步(部署 + 自检)踩的是 launchd。
+
+/** `--budget-usd`:钱的开关写错了当场报错,不替用户猜(同 parseTimeoutMsFlag 的理由)。 */
+export function parseBudgetUsdFlag(raw: unknown): { ok: true; value?: number } | { ok: false; error: string } {
+  if (raw === undefined || raw === null || raw === '') return { ok: true }
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value <= 0) {
+    return { ok: false, error: `invalid value: ${String(raw)} (expected a positive number of dollars)` }
+  }
+  return { ok: true, value }
+}
+
+const selfChangeCmd = defineCommand({
+  meta: { name: 'change', description: '自改流水线:执行者在专用克隆里实现 → 测试/评审/CI/主人拍板/合 dev → 部署 + 自检,不过就回滚(仅 macOS)' },
+  args: {
+    request: { type: 'positional', required: false, description: '需求原文(一句话说清要改什么)', valueHint: 'request' },
+    resume: { type: 'string', description: '接着跑某条(`--list` 里的 id);拍板超时之后会重新发卡' },
+    list: { type: 'boolean', description: '列最近 10 条自改的 id · 步骤 · 结果 · 起始时间' },
+    unhalt: { type: 'boolean', description: '解除停机(清 halted_at / halt_reason,fail_streak 归零)' },
+    approve: { type: 'string', description: '替某条(`--list` 里的 id)拍「放行」—— 微信外发不通时的第二条拍板口', valueHint: 'id' },
+    deny: { type: 'string', description: '替某条拍「拒绝」', valueHint: 'id' },
+    from: { type: 'string', default: 'cli', description: '进件口:cli | wechat(daemon 从微信接单时传 wechat)' },
+    'budget-usd': { type: 'string', description: '这一条的实现预算上限,美元(覆盖 self_change.implement_budget_usd)' },
+    deploy: { type: 'boolean', default: true, description: '合完 dev 之后部署 + 自检;`--no-deploy` 只合不部署' },
+    json: { type: 'boolean', description: 'JSON 输出(整份 state),不输出人读版' },
+  },
+  async run({ args }) {
+    const json = Boolean(args.json)
+    const bail = (exitCode: number, error: string, message: string): void => {
+      if (json) console.log(JSON.stringify({ ok: false, exitCode, error, message }, null, 2))
+      else console.error(`self change: ${message}`)
+      process.exit(exitCode)
+    }
+
+    // run.ts 先进来:平台那一关也要用它的 exitCodeFor。退出码只有那张表说了算,
+    // CLI 这边再写一遍 `2` 迟早和它对不上(哪天某个码从 blocked 挪走就穿帮)。
+    const { exitCodeFor, runSelfChange } = await import('./src/cli/self-change/run.ts')
+
+    // 平台在最前面:流水线最后两步是 `self deploy` + 真机自检,两者都是 launchd 专属。
+    if (process.platform !== 'darwin') {
+      const error = 'self_change_unsupported_platform'
+      bail(exitCodeFor(error), error, '自改流水线只支持 macOS(部署那一步是 launchd 专属)')
+      return
+    }
+
+    const { resolveSelfChangeConfig, writeSelfChangeConfigPatch } = await import('./src/cli/self-change/config.ts')
+    const { acquireLock, makeStateStore, newSelfChangeId, newState } = await import('./src/cli/self-change/state.ts')
+    const { defaultPipelineDeps, formatSelfChangeSummary } = await import('./src/cli/self-change/index.ts')
+
+    const store = makeStateStore(STATE_DIR)
+
+    // `--approve <id>` / `--deny <id>`:微信外发不通时的第二条拍板口
+    // (2026-09-18 真机:errcode=-2 让一条全绿的自改白等到 approval_timeout)。
+    // daemon 侧现在发不出卡也**不删**待批条目,所以这里走的就是桌面那张权限卡
+    // 同一条路由、同一个 consume —— 从哪边拍都算数。
+    const verdictId = args.approve !== undefined ? String(args.approve) : args.deny !== undefined ? String(args.deny) : null
+    if (verdictId !== null) {
+      // 和别的口互斥:`--approve x --list` 到底是哪个意思,猜不得。
+      if (args.approve !== undefined && args.deny !== undefined) {
+        bail(1, 'invalid_flags', '--approve 和 --deny 只能给一个')
+        return
+      }
+      if (args.list || args.unhalt || args.resume !== undefined || (typeof args.request === 'string' && args.request.trim() !== '')) {
+        bail(1, 'invalid_flags', '--approve / --deny 不能和 <需求> / --resume / --list / --unhalt 一起用')
+        return
+      }
+      const decision = args.approve !== undefined ? 'allow' as const : 'deny' as const
+      const { runApprove } = await import('./src/cli/self-change/approve.ts')
+      const { makeDaemonClient } = await import('./src/cli/self-change/daemon-client.ts')
+      const { readApiInfo } = await import('./src/lib/api-info.ts')
+      const daemon = makeDaemonClient({ readApiInfo: () => readApiInfo(STATE_DIR), fetch })
+      const verdict = await runApprove(store, daemon, verdictId, decision)
+      if (!verdict.ok) {
+        bail(1, verdict.code, verdict.message)
+        return
+      }
+      if (json) console.log(JSON.stringify({ ok: true, id: verdictId, decision, message: verdict.message }, null, 2))
+      else console.log(verdict.message)
+      process.exit(0)
+      return
+    }
+
+    // `--unhalt`:给 undefined 等于把键删掉(JSON.stringify 不序列化 undefined)。
+    if (args.unhalt) {
+      writeSelfChangeConfigPatch(STATE_DIR, { halted_at: undefined, halt_reason: undefined, fail_streak: 0 })
+      if (json) console.log(JSON.stringify({ ok: true, unhalted: true }, null, 2))
+      else console.log('自改停机已解除:halted_at / halt_reason 清掉,fail_streak 归零。')
+      process.exit(0)
+      return
+    }
+
+    if (args.list) {
+      const rows = store.list().slice(0, 10)
+      if (json) {
+        console.log(JSON.stringify(rows.map(s => ({ id: s.id, step: s.step, result: s.result, startedAt: s.startedAt })), null, 2))
+      } else if (rows.length === 0) {
+        console.log('还没有跑过自改。')
+      } else {
+        for (const s of rows) {
+          // 停在 approval 的那条要一眼看得出来:它在等人,而不是在跑
+          // (微信卡可能根本没送到 —— 见 `--approve`)。
+          const status = s.result ?? (s.step === 'approval' ? '等拍板 ' + String(s.approval?.hash ?? '').slice(0, 8) : '进行中')
+          console.log(`${s.id} · ${s.step} · ${status} · ${new Date(s.startedAt).toISOString()}`)
+        }
+      }
+      process.exit(0)
+      return
+    }
+
+    const budget = parseBudgetUsdFlag(args['budget-usd'])
+    if (!budget.ok) {
+      bail(1, 'invalid_budget_usd', `--budget-usd ${budget.error}`)
+      return
+    }
+    const from = args.from === undefined ? 'cli' : String(args.from)
+    if (from !== 'cli' && from !== 'wechat') {
+      bail(1, 'invalid_from', `--from ${from}(只认 cli 或 wechat)`)
+      return
+    }
+
+    // `--resume` 接着跑的是**存盘里的那一条**:需求、分支、已经花掉的钱、
+    // 修复轮次数都在里面,这里不能拿命令行再覆盖一遍。
+    const resumed = args.resume === undefined ? null : store.load(String(args.resume))
+    if (args.resume !== undefined && !resumed) {
+      bail(1, 'self_change_not_found', `没有这条自改:${String(args.resume)}(wechat-cc self change --list 看有哪些)`)
+      return
+    }
+    const request = typeof args.request === 'string' ? args.request.trim() : ''
+    // `--resume` 又带了需求正文:照存盘里的跑,但得说一声 —— 人多半以为自己
+    // 是在「接着跑并且顺手改一下要求」,闷着不响他会等一个永远不会发生的行为。
+    if (resumed && request) {
+      console.error(`self change: --resume 用存盘里的需求,命令行上这句忽略了(存盘:${resumed.request.slice(0, 60)})`)
+    }
+    if (!resumed && !request) {
+      bail(1, 'request_required', '要改什么?例:wechat-cc self change "在 ci-and-flakes.md 的 flake 表里加一行"')
+      return
+    }
+
+    // 克隆哪个仓库:源码模式问自己的 origin;打包版没有 checkout 可问,
+    // 只能要求主人在 agent-config.json 里写 self_change.repo_url。
+    const repoRoot = isCompiledBundle() ? null : dirname(fileURLToPath(import.meta.url))
+    let originUrl: string | null = null
+    if (repoRoot) {
+      const { makeGit, nodeGitSpawnSync } = await import('./src/cli/self-change/git.ts')
+      const r = makeGit(nodeGitSpawnSync, repoRoot).run(['remote', 'get-url', 'origin'])
+      originUrl = r.code === 0 && r.stdout.trim() ? r.stdout.trim() : null
+    }
+
+    const { homedir } = await import('node:os')
+    const resolved = resolveSelfChangeConfig({
+      agent: loadAgentConfig(STATE_DIR).self_change,
+      homeDir: homedir(),
+      platform: process.platform,
+      originUrl,
+      ...(budget.value === undefined ? {} : { overrides: { implementBudgetUsd: budget.value } }),
+    })
+    if (!resolved.ok) {
+      // blocked(2)而不是 failed(1):不是这次改动的错,重跑同样的需求没有
+      // 意义 —— 得先有人去配。码归哪一档由 exitCodeFor 那张表说了算。
+      bail(exitCodeFor(resolved.error), resolved.error, '不知道该克隆哪个仓库:打包版请在 agent-config.json 里写 self_change.repo_url(源码模式会问 git remote get-url origin)')
+      return
+    }
+
+    // 一次只跑一条。锁文件里写着 pid,持有者死了会被抢过来(见 state.ts)。
+    const lock = acquireLock(STATE_DIR, process.pid)
+    if (!lock.ok) {
+      const error = 'self_change_busy'
+      bail(exitCodeFor(error), error, `已经有一条自改在跑(pid ${lock.holder});等它结束,或者先 wechat-cc self change --list 看看`)
+      return
+    }
+
+    const state = resumed ?? newState({
+      id: newSelfChangeId(),
+      request,
+      from,
+      noDeploy: args.deploy === false,
+      now: Date.now(),
+    })
+
+    let outcome: Awaited<ReturnType<typeof runSelfChange>> | null = null
+    let crashed: unknown = null
+    try {
+      outcome = await runSelfChange(state, defaultPipelineDeps(STATE_DIR, resolved.config, { repoRoot, runId: state.id }))
+    } catch (err) {
+      crashed = err
+    } finally {
+      // process.exit 之后 finally 不会跑,所以锁必须在这儿先还回去。
+      lock.release()
+    }
+    if (!outcome) {
+      bail(1, 'self_change_crashed', crashed instanceof Error ? `${crashed.message}\n${crashed.stack ?? ''}`.trim() : String(crashed))
+      return
+    }
+
+    if (json) console.log(JSON.stringify(outcome.state, null, 2))
+    else console.log(formatSelfChangeSummary(outcome.state))
+    process.exit(outcome.exitCode)
+  },
+})
+
+const selfCmd = defineCommand({
+  meta: { name: 'self', description: '自维护:部署自身、让 CC 自己改自己（仅 macOS launchd；见 docs/maintainer/deploy.md 与 self-change.md）' },
+  subCommands: { change: selfChangeCmd, deploy: selfDeployCmd },
+})
+
+// ── selftest — real-machine closed loop against a running daemon ───────
+//
+// spec: docs/superpowers/specs/2026-09-18-self-maintenance-design.md §2.
+// Pure logic lives in src/cli/selftest.ts (runWorkbenchSelftest /
+// runChatSelftest, injected deps); this just parses flags, wires the real
+// deps (operator token from STATE_DIR/internal-api-info.json), and prints
+// + exits per SELFTEST_EXIT. Never touches the owner's real WeChat chat.
+
+const selftestWorkbenchCmd = defineCommand({
+  meta: { name: 'workbench', description: '真机闭环自检:起一个 scratch 工作台任务,核对回复/工具活动/权限卡放行/写文件等信号(daemon 需在跑)' },
+  args: {
+    executor: { type: 'string', required: true, description: '执行者 provider id(claude / codex / cursor / agy / …)' },
+    image: { type: 'boolean', description: '带一张自生成的红方块 PNG 附件,问模型图里是什么颜色(替换 activity_seen/permission_roundtrip/file_written 三项为 answer_mentions_red)' },
+    resume: { type: 'boolean', description: '额外走一次 continue,核对续接(resume_replied)' },
+    json: { type: 'boolean', description: 'JSON 输出(SelftestReport),不输出人读版' },
+    'timeout-ms': { type: 'string', description: '总超时,毫秒(缺省 240000)' },
+    keep: { type: 'boolean', description: '保留 scratch 项目目录,不在跑完后删除' },
+  },
+  async run({ args }) {
+    const json = Boolean(args.json)
+    const { runWorkbenchSelftest, formatSelftestReport, defaultSelftestDeps, SELFTEST_EXIT } = await import('./src/cli/selftest.ts')
+    const timeout = parseTimeoutMsFlag(args['timeout-ms'])
+    if (!timeout.ok) {
+      const message = `--timeout-ms ${timeout.error}`
+      if (json) console.log(JSON.stringify({ ok: false, error: 'invalid_timeout_ms', message }, null, 2))
+      else console.error(`selftest workbench: ${message}`)
+      process.exit(SELFTEST_EXIT.failed)
+      return
+    }
+    try {
+      const report = await runWorkbenchSelftest(defaultSelftestDeps(STATE_DIR), {
+        executor: args.executor,
+        image: Boolean(args.image),
+        resume: Boolean(args.resume),
+        keep: Boolean(args.keep),
+        ...(timeout.value !== undefined ? { timeoutMs: timeout.value } : {}),
+      })
+      if (json) console.log(JSON.stringify(report, null, 2))
+      else {
+        console.log(formatSelftestReport(report))
+        if (report.scratchPath) console.log(`scratch: ${report.scratchPath}`)
+      }
+      process.exit(report.ok ? SELFTEST_EXIT.ok : SELFTEST_EXIT.failed)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      const noDaemon = message === 'daemon_not_running'
+      if (json) console.log(JSON.stringify({ ok: false, error: message }, null, 2))
+      else console.error(`selftest workbench: ${noDaemon ? 'daemon 没在跑' : message}`)
+      process.exit(noDaemon ? SELFTEST_EXIT.noDaemon : SELFTEST_EXIT.failed)
+    }
+  },
+})
+
+const selftestChatCmd = defineCommand({
+  meta: { name: 'chat', description: '真机闭环自检:一轮测试对话(daemon 代 spawn,不发微信),核对回复/工具调用(daemon 需在跑)' },
+  args: {
+    provider: { type: 'string', required: true, description: 'provider id' },
+    text: { type: 'string', description: '自定义测试话术(缺省会额外核对 wechat/ping 被调用)' },
+    resume: { type: 'boolean', description: '用第一轮的 sessionId 再问一轮,核对续接(resume_replied)' },
+    json: { type: 'boolean', description: 'JSON 输出(SelftestReport),不输出人读版' },
+    'timeout-ms': { type: 'string', description: '单轮对话上限,毫秒(缺省 180000;daemon 侧轮次看门狗缺省 120000)' },
+  },
+  async run({ args }) {
+    const json = Boolean(args.json)
+    const { runChatSelftest, formatSelftestReport, defaultSelftestDeps, SELFTEST_EXIT } = await import('./src/cli/selftest.ts')
+    const timeout = parseTimeoutMsFlag(args['timeout-ms'])
+    if (!timeout.ok) {
+      const message = `--timeout-ms ${timeout.error}`
+      if (json) console.log(JSON.stringify({ ok: false, error: 'invalid_timeout_ms', message }, null, 2))
+      else console.error(`selftest chat: ${message}`)
+      process.exit(SELFTEST_EXIT.failed)
+      return
+    }
+    try {
+      const report = await runChatSelftest(defaultSelftestDeps(STATE_DIR), {
+        provider: args.provider,
+        ...(args.text !== undefined ? { text: args.text } : {}),
+        resume: Boolean(args.resume),
+        ...(timeout.value !== undefined ? { timeoutMs: timeout.value } : {}),
+      })
+      if (json) console.log(JSON.stringify(report, null, 2))
+      else console.log(formatSelftestReport(report))
+      process.exit(report.ok ? SELFTEST_EXIT.ok : SELFTEST_EXIT.failed)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      const noDaemon = message === 'daemon_not_running'
+      if (json) console.log(JSON.stringify({ ok: false, error: message }, null, 2))
+      else console.error(`selftest chat: ${noDaemon ? 'daemon 没在跑' : message}`)
+      process.exit(noDaemon ? SELFTEST_EXIT.noDaemon : SELFTEST_EXIT.failed)
+    }
+  },
+})
+
+const selftestCmd = defineCommand({
+  meta: { name: 'selftest', description: '自维护:真机闭环自检(daemon 需在跑);见 docs/maintainer/verify.md' },
+  subCommands: { workbench: selftestWorkbenchCmd, chat: selftestChatCmd },
+})
+
+// ── ci triage — 「看 CI」这一步从人的判断变成一条命令 ──────────────────
+//
+// spec: docs/superpowers/specs/2026-09-18-ci-triage-design.md §3。纯逻辑在
+// src/cli/ci-triage.ts,取数与等待在 src/cli/ci-triage-run.ts;这里只解析开关、
+// 打印、按 CI_TRIAGE_EXIT 退出。跟 `self deploy` 一样,只在开发机上有意义
+// (依赖 gh 的登录态)。
+
+/** `--max-reruns` / `--timeout-min` 这类计数开关:写错了当场报错,别替用户猜。 */
+function parseCountFlag(raw: unknown, min: number): { ok: true; value?: number } | { ok: false; error: string } {
+  if (raw === undefined || raw === null || raw === '') return { ok: true }
+  const value = Number(raw)
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value < min) {
+    return { ok: false, error: `invalid value: ${String(raw)} (expected an integer ≥ ${min})` }
+  }
+  return { ok: true, value }
+}
+
+const ciTriageCmd = defineCommand({
+  meta: { name: 'triage', description: '看 CI:这个 SHA 绿了吗?红的是自己的锅还是已知 flake(需要 gh 登录态)' },
+  args: {
+    sha: { type: 'string', description: '要看的提交(缺省 HEAD;短 sha 会先 git rev-parse 成 40 位)' },
+    branch: { type: 'string', description: '去哪条分支上找「上一次绿」当 diff 基线(缺省当前分支)' },
+    wait: { type: 'boolean', description: '等运行出现(最多 2 分钟)并等它跑完' },
+    rerun: { type: 'boolean', description: '判成 flake 时重跑失败作业;--wait 时等完重判,第二次仍红一律算真红' },
+    'max-reruns': { type: 'string', description: '最多重跑几次(缺省 1;0 = 从不重跑)。>1 只对 __NO_SUMMARY__ 那类作业级 flake 有意义 —— 具体测试的失败第二轮一律判真红,再重跑也翻不过来' },
+    'timeout-min': { type: 'string', description: '等运行跑完的总上限,分钟(缺省 30)' },
+    json: { type: 'boolean', description: 'JSON 输出(TriageReport),不输出人读版' },
+  },
+  async run({ args }) {
+    const json = Boolean(args.json)
+    const { runCiTriage, defaultCiTriageDeps, CI_TRIAGE_EXIT } = await import('./src/cli/ci-triage-run.ts')
+    const { formatTriage } = await import('./src/cli/ci-triage.ts')
+
+    const maxReruns = parseCountFlag(args['max-reruns'], 0)
+    if (!maxReruns.ok) {
+      const message = `--max-reruns ${maxReruns.error}`
+      if (json) console.log(JSON.stringify({ ok: false, error: 'invalid_max_reruns', message }, null, 2))
+      else console.error(`ci triage: ${message}`)
+      // 2 而不是 1:开关写错了是「没能去判」,不是「判出来是真红」。
+      process.exit(CI_TRIAGE_EXIT.noRun)
+      return
+    }
+    const timeoutMin = parseCountFlag(args['timeout-min'], 1)
+    if (!timeoutMin.ok) {
+      const message = `--timeout-min ${timeoutMin.error}`
+      if (json) console.log(JSON.stringify({ ok: false, error: 'invalid_timeout_min', message }, null, 2))
+      else console.error(`ci triage: ${message}`)
+      process.exit(CI_TRIAGE_EXIT.noRun)
+      return
+    }
+
+    const { report, exitCode } = await runCiTriage(defaultCiTriageDeps(process.cwd()), {
+      ...(args.sha !== undefined ? { sha: String(args.sha) } : {}),
+      ...(args.branch !== undefined ? { branch: String(args.branch) } : {}),
+      wait: Boolean(args.wait),
+      rerun: Boolean(args.rerun),
+      ...(maxReruns.value !== undefined ? { maxReruns: maxReruns.value } : {}),
+      ...(timeoutMin.value !== undefined ? { timeoutMin: timeoutMin.value } : {}),
+    })
+    if (json) console.log(JSON.stringify(report, null, 2))
+    else console.log(formatTriage(report))
+    process.exit(exitCode)
+  },
+})
+
+const ciCmd = defineCommand({
+  meta: { name: 'ci', description: '看 CI 的信号面(见 docs/maintainer/ci-and-flakes.md)' },
+  subCommands: { triage: ciTriageCmd },
 })
 
 // ── mode set — programmatic mode switch via running daemon's internal-api ──
@@ -2658,119 +3342,24 @@ const agentCmd = defineCommand({
   },
 })
 
-// ── 觅食台 social surface — wechat-cc social {seeks,echoes,pledges,reveal} ──
-// Reads go straight to the daemon's SQLite (work with the daemon down);
-// reveal needs the running daemon (network + notify). See
-// docs/superpowers/specs/2026-07-17-cli-social-surface-design.md.
+// ── 觅食台 social surface — wechat-cc social {wishes,enable} ──
+// `wishes` needs the running daemon (GET /v1/social/wishes — spec
+// 2026-09-04-wish-postcard §4); it replaces the P4-era propose/confirm/
+// cancel/reveal/seeks/echoes/pledges subcommands (心愿 signals a wish
+// through-and-through, sent with 派 <id> / voided with 取消 <id> in WeChat
+// or the mcp tool — the CLI's only remaining job here is to list them).
 
-const socialSeeksCmd = defineCommand({
-  meta: { name: 'seeks', description: 'List my wishes (心愿) + status — newest first' },
+const socialWishesCmd = defineCommand({
+  meta: { name: 'wishes', description: 'List my 心愿 + effective status (needs running daemon)' },
   args: {
-    limit: { type: 'string', description: 'Max rows (default 20)' },
     json: { type: 'boolean', description: 'JSON envelope' },
   },
   async run({ args }) {
-    const n = args.limit ? Number.parseInt(args.limit, 10) : 20
-    const limit = Number.isFinite(n) && n > 0 ? n : 20
-    const { cmdSocialSeeks } = await import('./src/cli/social.ts')
-    cmdSocialSeeks(STATE_DIR, { limit, json: Boolean(args.json) })
-  },
-})
-
-const socialEchoesCmd = defineCommand({
-  meta: { name: 'echoes', description: 'List postcards that came back (回声) — masked until a mutual reveal' },
-  args: {
-    seek: { type: 'string', description: 'Only echoes for this wish (intent id)' },
-    limit: { type: 'string', description: 'Max rows (default 20)' },
-    json: { type: 'boolean', description: 'JSON envelope' },
-  },
-  async run({ args }) {
-    const n = args.limit ? Number.parseInt(args.limit, 10) : 20
-    const limit = Number.isFinite(n) && n > 0 ? n : 20
-    const { cmdSocialEchoes } = await import('./src/cli/social.ts')
-    cmdSocialEchoes(STATE_DIR, { limit, json: Boolean(args.json), ...(args.seek ? { seek: args.seek } : {}) })
-  },
-})
-
-const socialPledgesCmd = defineCommand({
-  meta: { name: 'pledges', description: "List others' wishes I answered (应答)" },
-  args: {
-    limit: { type: 'string', description: 'Max rows (default 20)' },
-    json: { type: 'boolean', description: 'JSON envelope' },
-  },
-  async run({ args }) {
-    const n = args.limit ? Number.parseInt(args.limit, 10) : 20
-    const limit = Number.isFinite(n) && n > 0 ? n : 20
-    const { cmdSocialPledges } = await import('./src/cli/social.ts')
-    cmdSocialPledges(STATE_DIR, { limit, json: Boolean(args.json) })
-  },
-})
-
-const socialRevealCmd = defineCommand({
-  meta: { name: 'reveal', description: '揭晓 — reveal your side of an echo or pledge (calls the running daemon)' },
-  args: {
-    id: { type: 'positional', required: true, description: 'Echo id or pledge id', valueHint: 'id' },
-    json: { type: 'boolean', description: 'JSON envelope' },
-  },
-  async run({ args }) {
-    const { cmdSocialReveal } = await import('./src/cli/social.ts')
+    const { cmdSocialWishes } = await import('./src/cli/social.ts')
     try {
-      await cmdSocialReveal(STATE_DIR, args.id, { json: Boolean(args.json) })
+      await cmdSocialWishes(STATE_DIR, { json: Boolean(args.json) })
     } catch {
-      // cmdSocialReveal's default `fail` already printed the message.
-      process.exit(1)
-    }
-  },
-})
-
-// P4 派心愿 — propose (preview) → confirm/cancel. All three call the running
-// daemon's internal-api (propose gates via the model, confirm/cancel touch
-// the broker) — same posture as `reveal` above. Default `fail` already
-// prints the message, so the catch here just sets the exit code.
-const socialProposeCmd = defineCommand({
-  meta: { name: 'propose', description: '派心愿(预览)— gate + persist a redacted preview; nothing sent yet (needs running daemon)' },
-  args: {
-    topic: { type: 'positional', required: true, description: 'What to seek (raw text; gated + redacted before storage)', valueHint: 'topic' },
-    city: { type: 'string', description: 'Optional city context (also gated)' },
-    json: { type: 'boolean', description: 'JSON envelope' },
-  },
-  async run({ args }) {
-    const { cmdSocialPropose } = await import('./src/cli/social.ts')
-    try {
-      await cmdSocialPropose(STATE_DIR, args.topic, { ...(args.city ? { city: args.city } : {}), json: Boolean(args.json) })
-    } catch {
-      process.exit(1)
-    }
-  },
-})
-
-const socialConfirmCmd = defineCommand({
-  meta: { name: 'confirm', description: '派 <id> — confirm a proposed wish and broadcast it (needs running daemon)' },
-  args: {
-    id: { type: 'positional', required: true, description: 'Proposed wish id (intent id)', valueHint: 'id' },
-    json: { type: 'boolean', description: 'JSON envelope' },
-  },
-  async run({ args }) {
-    const { cmdSocialConfirm } = await import('./src/cli/social.ts')
-    try {
-      await cmdSocialConfirm(STATE_DIR, args.id, { json: Boolean(args.json) })
-    } catch {
-      process.exit(1)
-    }
-  },
-})
-
-const socialCancelCmd = defineCommand({
-  meta: { name: 'cancel', description: '取消 <id> — void a proposed wish before it ever goes out (needs running daemon)' },
-  args: {
-    id: { type: 'positional', required: true, description: 'Proposed wish id (intent id)', valueHint: 'id' },
-    json: { type: 'boolean', description: 'JSON envelope' },
-  },
-  async run({ args }) {
-    const { cmdSocialCancel } = await import('./src/cli/social.ts')
-    try {
-      await cmdSocialCancel(STATE_DIR, args.id, { json: Boolean(args.json) })
-    } catch {
+      // cmdSocialWishes's default `fail` already printed the message.
       process.exit(1)
     }
   },
@@ -2792,15 +3381,9 @@ const socialEnableCmd = defineCommand({
 })
 
 const socialCmd = defineCommand({
-  meta: { name: 'social', description: '觅食台 — list wishes/echoes/pledges, propose/confirm/cancel (派心愿), reveal (揭晓), and enable (开启)' },
+  meta: { name: 'social', description: '觅食台 — list 心愿 (wishes), and enable (开启)' },
   subCommands: {
-    seeks: socialSeeksCmd,
-    echoes: socialEchoesCmd,
-    pledges: socialPledgesCmd,
-    propose: socialProposeCmd,
-    confirm: socialConfirmCmd,
-    cancel: socialCancelCmd,
-    reveal: socialRevealCmd,
+    wishes: socialWishesCmd,
     enable: socialEnableCmd,
   },
 })
@@ -2809,7 +3392,7 @@ const socialCmd = defineCommand({
 // wechat-cc pair          → mint + print a 6-digit code (share with a friend)
 // wechat-cc pair <code>   → redeem a friend's code and connect
 // Both need the RUNNING daemon (internal-api, tier trusted) — same idiom as
-// `social reveal`. NOT to be confused with `hand invite`/`hand join`, which
+// `social wishes`. NOT to be confused with `hand invite`/`hand join`, which
 // pair two WORKER hands (delegated-agent capacity), not two people's bots.
 const pairCmd = defineCommand({
   meta: {
@@ -3668,12 +4251,18 @@ const SUBCOMMANDS = {
   service: serviceCmd,
   reply: replyCmd,
   update: updateCmd,
+  // 自维护三件套 Task 3 — `self deploy` (spec 2026-09-18-self-maintenance §3).
+  self: selfCmd,
+  // 自维护三件套 Task 2 — `selftest workbench|chat` (spec 2026-09-18-self-maintenance §2).
+  selftest: selftestCmd,
+  // CI 信号面 — `ci triage` (spec 2026-09-18-ci-triage §3);「看 CI」不再是人的判断。
+  ci: ciCmd,
   'install-progress': installProgressCmd,
   mode: modeCmd,
   'mcp-server': mcpServerCmd,
   // A2A agent management (Task 7).
   agent: agentCmd,
-  // 觅食台 social surface — seeks/echoes/pledges/reveal.
+  // 觅食台 social surface — wishes/enable.
   social: socialCmd,
   // 配对码 — automatic edge-building (spec §7).
   pair: pairCmd,
@@ -3681,12 +4270,14 @@ const SUBCOMMANDS = {
   dialogue: dialogueCmd,
   // hearth federated source — authorize/deauthorize/status + run mode.
   'federated-source': federatedSourceCmd,
+  // 终端 claude / codex 的 hooks 出口(spec 2026-09-09-cli-hook-push)。
+  hook: hookCmd,
 } as const
 
 export const cittyRoot = defineCommand({
   meta: {
     name: 'wechat-cc',
-    version: selfPkg.version,   // citty 据此自动响应 `wechat-cc --version`
+    version: VERSION_LINE,   // citty 据此自动响应 `wechat-cc --version`(带构建 sha,好认出跑的是哪个构建)
     description: 'WeChat bridge for Claude Code (Agent SDK daemon)',
   },
   subCommands: SUBCOMMANDS,

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" color="#bcb6a9">
+<title>CC v1 normative placeholder — lit/front/idle; NOT final art</title>
+<defs><linearGradient id="material" x2="0" y2="1"><stop stop-color="#65625e"/><stop offset="1" stop-color="#55524b"/></linearGradient></defs>
+<g id="contact-shadow"><ellipse cx="256" cy="466" rx="118" ry="4" fill="#191715" opacity="0.16"/></g>
+<g id="geometry">
+<path data-part="c" d="M 230 224 C 194 203 190 164 208 125 C 226 85 257 65 294 78" fill="none" stroke="url(#material)" stroke-width="54" stroke-linecap="round"/>
+<ellipse data-part="body" cx="256" cy="327" rx="152" ry="129" fill="url(#material)"/>
+<ellipse data-part="foot-1" cx="170" cy="451" rx="31" ry="19" fill="url(#material)"/>
+<ellipse data-part="foot-2" cx="342" cy="451" rx="31" ry="19" fill="url(#material)"/>
+<rect data-part="eye-1" x="218" y="322" width="14" height="40" rx="7" fill="currentColor" opacity="1"/>
+<rect data-part="eye-2" x="294" y="322" width="14" height="40" rx="7" fill="currentColor" opacity="1"/>
+</g>
+<g id="self-light" opacity="0.0186"><ellipse cx="248" cy="278" rx="93" ry="50" fill="#fffdf4"/></g><g id="rim"/>
+</svg>

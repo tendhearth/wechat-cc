@@ -21,7 +21,7 @@ export function makeMwTrace(deps: TraceMwDeps): Middleware {
       // 不 rethrow —— 保 polling loop 活
     } finally {
       deps.log('INBOUND',
-        `req=${ctx.requestId} chat=${ctx.msg.chatId} consumed=${ctx.consumedBy ?? 'dispatched'} ms=${Date.now() - start}`)
+        `req=${ctx.requestId} chat=${ctx.msg.chatId} intent=${ctx.intent?.kind ?? '-'}${ctx.intent?.matterId ? ` matter=${ctx.intent.matterId}` : ''} consumed=${ctx.consumedBy ?? 'dispatched'} ms=${Date.now() - start}`)
     }
   }
 }

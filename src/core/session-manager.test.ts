@@ -181,6 +181,84 @@ describe('SessionManager', () => {
     await mgr.shutdown()
   })
 
+  it('hands the resolved model to buildInstructions so the prompt can state it (model self-awareness)', async () => {
+    const seen: Array<string | undefined> = []
+    const spawn = vi.fn(async () => makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }] }))
+    const mgr = new SessionManager({
+      maxConcurrent: 4,
+      idleEvictMs: 60_000,
+      registry: registryWithProvider({ spawn } as unknown as AgentProvider),
+      buildInstructions: (_p, _t, _c, model) => { seen.push(model); return '' },
+      currentModelFor: () => 'claude-opus-5',
+    })
+    await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'c', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' })
+    expect(seen).toEqual(['claude-opus-5'])
+    await mgr.shutdown()
+  })
+
+  it('a per-chat pin (req.model) wins over the daemon-wide currentModelFor', async () => {
+    let seen: string | undefined
+    const spawn = vi.fn(async (_p: unknown, ctx: { model?: string }) => {
+      seen = ctx.model
+      return makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }] })
+    })
+    const mgr = new SessionManager({
+      maxConcurrent: 4, idleEvictMs: 60_000,
+      registry: registryWithProvider({ spawn } as unknown as AgentProvider),
+      currentModelFor: () => 'claude-opus-4-8',
+    })
+    await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'c', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', model: 'claude-opus-5' })
+    expect(seen).toBe('claude-opus-5')
+    await mgr.shutdown()
+  })
+
+  it('releaseFor(provider, chat) closes every alias of that pair and nothing else', async () => {
+    const spawn = vi.fn(async () => makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }] }))
+    const registry = registryWithProvider({ spawn } as unknown as AgentProvider)
+    registry.register('openai', { spawn } as unknown as AgentProvider, { displayName: 'API', canResume: () => true })
+    const mgr = new SessionManager({ maxConcurrent: 8, idleEvictMs: 60_000, registry })
+    const base = { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' as const }
+    await mgr.acquire({ alias: 'a', path: '/p', providerId: 'openai', chatId: 'c1', ...base })
+    await mgr.acquire({ alias: 'b', path: '/q', providerId: 'openai', chatId: 'c1', ...base })
+    await mgr.acquire({ alias: 'a', path: '/p', providerId: 'openai', chatId: 'c2', ...base })
+    await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'c1', ...base })
+    expect(await mgr.releaseFor('openai', 'c1')).toBe(2)
+    expect(mgr.list().map(s => `${s.providerId}|${s.alias}|${s.chatId}`).sort()).toEqual(['claude|a|c1', 'openai|a|c2'])
+    await mgr.shutdown()
+  })
+
+  it('a session whose close() throws does not break release — the entry is gone and the sweep keeps going', async () => {
+    // ACP provider 的 close() 等不到进程组退出就抛 acp_process_not_exited;sweepIdle /
+    // enforceCapacity / shutdown 都是 bare await,一个杀不干净的进程会掀掉整轮清扫。
+    const angry = () => ({
+      dispatch: () => ({ async *[Symbol.asyncIterator]() {} }),
+      async cancel() {},
+      async close() { throw new Error('acp_process_not_exited') },
+    })
+    const spawn = vi.fn(async () => angry() as unknown as Awaited<ReturnType<AgentProvider['spawn']>>)
+    const mgr = new SessionManager({ maxConcurrent: 8, idleEvictMs: 60_000, registry: registryWithProvider({ spawn } as unknown as AgentProvider) })
+    const base = { path: '/p', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' as const }
+    await mgr.acquire({ alias: 'a', providerId: 'claude', chatId: 'c1', ...base })
+    await mgr.acquire({ alias: 'b', providerId: 'claude', chatId: 'c1', ...base })
+    await expect(mgr.release({ alias: 'a', providerId: 'claude', chatId: 'c1' })).resolves.toBeUndefined()
+    expect(mgr.has({ alias: 'a', providerId: 'claude', chatId: 'c1' })).toBe(false)
+    // 整轮清扫不被一个抛错的 close 掀掉:第二个会话照样释放。
+    await expect(mgr.shutdown()).resolves.toBeUndefined()
+    expect(mgr.list()).toEqual([])
+  })
+
+  it('has(key) reflects the live cache (false before acquire, true after, false after release)', async () => {
+    const spawn = vi.fn(async () => makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }] }))
+    const mgr = new SessionManager({ maxConcurrent: 4, idleEvictMs: 60_000, registry: registryWithProvider({ spawn } as unknown as AgentProvider) })
+    const k = { alias: 'a', providerId: 'claude', chatId: 'c' }
+    expect(mgr.has(k)).toBe(false)
+    await mgr.acquire({ ...k, path: '/p', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' })
+    expect(mgr.has(k)).toBe(true)
+    await mgr.release(k)
+    expect(mgr.has(k)).toBe(false)
+    await mgr.shutdown()
+  })
+
   it('omits model when currentModelFor returns undefined', async () => {
     let hadKey = true
     const spawn = vi.fn(async (_p: unknown, ctx: object) => {
@@ -704,6 +782,16 @@ describe('SessionManager', () => {
         deleteOne: vi.fn(({ alias, provider, chatId }: { alias: string; provider: string; chatId: string }) => {
           data.delete(k(alias, provider, chatId))
         }),
+        deleteProvider: vi.fn((provider: string) => {
+          let n = 0
+          for (const [mapKey, rec] of data) if (rec.provider === provider) { data.delete(mapKey); n++ }
+          return n
+        }),
+        deleteProviderChat: vi.fn((provider: string, chatId: string) => {
+          let n = 0
+          for (const [mapKey, rec] of data) if (rec.provider === provider && rec.chat_id === chatId) { data.delete(mapKey); n++ }
+          return n
+        }),
         all: () => Object.fromEntries(data),
         flush: async () => {},
       }
@@ -834,6 +922,57 @@ describe('SessionManager', () => {
       expect(args.options.resume).toBeUndefined()
       await mgr.shutdown()
     })
+
+    it('releaseFor also forgets the stored resume points for that (provider, chat) pair', async () => {
+      const store = makeMockStore({
+        a: { session_id: 'sid-1', last_used_at: new Date().toISOString(), provider: 'claude', chatId: 'c1' },
+      })
+      const mgr = new SessionManager({
+        maxConcurrent: 4,
+        idleEvictMs: 60_000,
+        registry: singleClaudeRegistry((_alias, path) => ({ cwd: path } as Options)),
+        sessionStore: store,
+      })
+      await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'c1', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' })
+      await mgr.releaseFor('claude', 'c1')
+      expect(store.deleteProviderChat).toHaveBeenCalledTimes(1)
+      expect(store.deleteProviderChat).toHaveBeenCalledWith('claude', 'c1')
+      await mgr.shutdown()
+    })
+
+    it('releaseFor with no live session for (provider, chat) still calls deleteProviderChat — the idle-evicted-then-repinned case', async () => {
+      const store = makeMockStore({
+        a: { session_id: 'sid-stale', last_used_at: new Date().toISOString(), provider: 'claude', chatId: 'c1' },
+      })
+      const mgr = new SessionManager({
+        maxConcurrent: 4,
+        idleEvictMs: 60_000,
+        registry: singleClaudeRegistry((_alias, path) => ({ cwd: path } as Options)),
+        sessionStore: store,
+      })
+      // No acquire() — the cache has nothing for (claude, c1), only the
+      // store's stale row survives (session was idle-evicted earlier).
+      await expect(mgr.releaseFor('claude', 'c1')).resolves.toBe(0)
+      expect(store.deleteProviderChat).toHaveBeenCalledTimes(1)
+      expect(store.deleteProviderChat).toHaveBeenCalledWith('claude', 'c1')
+      await mgr.shutdown()
+    })
+
+    it('releaseFor still works when the store lacks deleteProviderChat (older fake store)', async () => {
+      const store = makeMockStore({
+        a: { session_id: 'sid-1', last_used_at: new Date().toISOString(), provider: 'claude', chatId: 'c1' },
+      }) as any
+      delete store.deleteProviderChat
+      const mgr = new SessionManager({
+        maxConcurrent: 4,
+        idleEvictMs: 60_000,
+        registry: singleClaudeRegistry((_alias, path) => ({ cwd: path } as Options)),
+        sessionStore: store,
+      })
+      await mgr.acquire({ alias: 'a', path: '/p', providerId: 'claude', chatId: 'c1', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' })
+      await expect(mgr.releaseFor('claude', 'c1')).resolves.toBe(1)
+      await mgr.shutdown()
+    })
   })
 })
 
@@ -951,3 +1090,17 @@ function mockSession() {
     events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }],
   })
 }
+
+it('guards cached dispatch and retains directory ownership while a close is pending',async()=>{
+ let blocked=false,finish!:()=>void
+ const registry=createProviderRegistry(),spawn=vi.fn(async()=>({async *dispatch(){yield{kind:'text' as const,text:'x'}},close:()=>new Promise<void>(r=>finish=r)}))
+ registry.register('claude',{spawn},{displayName:'Claude',canResume:()=>false})
+ const manager=new SessionManager({registry,maxConcurrent:5,idleEvictMs:1000})
+ manager.setExecutionGuard(()=>blocked)
+ const req={alias:'one',path:'/project',providerId:'claude',chatId:'owner',tierProfile:TIER_PROFILES.trusted,permissionMode:'strict' as const}
+ const handle=await manager.acquire(req);expect(manager.hasProjectConflict('/project/sub')).toBe(true)
+ blocked=true;await expect(manager.acquire(req)).rejects.toThrow('native_session_busy')
+ await expect((async()=>{for await(const _ of handle.dispatch('should not start')){}})()).rejects.toThrow('native_session_busy')
+ const closing=manager.release(req);expect(manager.hasProjectConflict('/project/sub')).toBe(true);finish();await closing
+ expect(manager.hasProjectConflict('/project/sub')).toBe(false);expect(spawn).toHaveBeenCalledTimes(1)
+})

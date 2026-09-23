@@ -2,9 +2,12 @@
  * A2A server — inbound HTTP listener that lets registered external
  * A2A agents push notify(...) calls into wechat-cc.
  *
- * Two endpoints:
+ * Endpoints:
  *   GET  /.well-known/agent.json — daemon's Agent Card (unauthenticated)
  *   POST /a2a/notify — push a message to the operator
+ *   POST /a2a/exec   — delegated work (only for may_exec peers)
+ *   POST /a2a/letter — a sealed pen-pal envelope for one of my channels
+ *   POST /a2a/pair   — the 6-digit pairing rendezvous
  *
  * The server itself is dumb: it verifies Bearer auth, validates the
  * body shape, and hands off to an injected `onNotify` callback. The
@@ -20,7 +23,8 @@
 import type { A2ARegistry } from './a2a-registry'
 import type { A2AAgentRecord } from '../lib/agent-config'
 import type { ProviderId } from './conversation'
-import { A2A_PROTO_VERSION, IntentCardSchema, EchoMessageSchema, type IntentCard, type MatchReceipt, type EchoMessage } from './a2a-intent'
+import { A2A_PROTO_VERSION } from './a2a-intent'
+import { serve, type Server } from '../lib/runtime/http'
 
 /**
  * How long the HAND holds an /a2a/exec connection open with no bytes flowing.
@@ -67,43 +71,22 @@ export interface PairEvent {
   secret: string
   brainId: string
   execKey: string
+  /** 脑自己的 a2a 地址 + 手→脑的钥匙(spec 2026-09-09-cli-hook-push §6.5);老脑不带。 */
+  brainUrl?: string
+  callbackKey?: string
 }
 
 /**
- * A peer's "seek" Intent Card, delivered for THIS owner's agent to judge
- * against its owner's derived facts and answer with a policy-filtered
- * Match Receipt. Part of the agent-social M1 broker flow.
+ * 终端会话桥(§6.5):手把本机 claude / codex 的 hook 事件与权限请求转给脑;
+ * 脑把「看 / 说」转给手执行。由 main.ts 在 hub 建好后 setCliHandlers 挂上。
  */
-export interface IntentEvent {
-  agent: A2AAgentRecord
-  card: IntentCard
-}
-
-/**
- * v2 async echo return (spec §1): a responder (or a relay) posts the judged
- * result of an earlier "seek" intent back to the sender, out-of-band from
- * the original synchronous /a2a/intent call. `agent` is the verified Bearer
- * identity — body.agent_id is never trusted as the acting identity.
- */
-export interface EchoEvent {
-  agent: A2AAgentRecord
-  msg: EchoMessage
-}
-
-/**
- * A peer's "my owner revealed; wants to connect on this intent" event —
- * the inbound half of the mutual async reveal. Handler marks the local
- * echo/pledge row's peer_revealed_at and, if this side already revealed,
- * responds { mutual:true, handle } for a synchronous connect. `handle` is a
- * PenpalHandle (pubkey + channel_id) — real identity never crosses.
- */
-export interface RevealEvent {
-  agent_id: string
-  intent_id: string
-  /** spec #2: present when this reveal is a 2-hop relay leg addressed to an intermediary. */
-  relay_token?: string
-  /** spec #2: the OTHER endpoint's penpal handle, handed over by the intermediary on the mutual instant. */
-  peer_handle?: import('./penpal-crypto').PenpalHandle
+export interface A2ACliHandlers {
+  /** 脑侧:收手转来的事件。origin 是**已验证**的手 id(不信 body 里的)。 */
+  onEvent?: (agent: A2AAgentRecord, ev: Record<string, unknown>) => Promise<unknown>
+  onPermissionOpen?: (agent: A2AAgentRecord, req: Record<string, unknown>) => Promise<unknown>
+  onPermissionWait?: (agent: A2AAgentRecord, hash: string, waitMs: number) => Promise<unknown>
+  /** 手侧:脑要看 / 说某条本机会话。只有 may_exec 的脑能调。 */
+  onReply?: (agent: A2AAgentRecord, req: { kind: 'view' | 'say'; session_id: string; text?: string }) => Promise<unknown>
 }
 
 /**
@@ -150,15 +133,6 @@ export interface A2AServerOpts {
    * /a2a/pair returns 501. Auth is the one-time secret, not a Bearer token.
    */
   onPair?: (event: PairEvent) => Promise<{ ok: boolean; error?: string }>
-  /** Optional. When wired, enables POST /a2a/intent — judge a peer's Intent
-   *  Card against the owner's derived facts and return a Match Receipt.
-   *  Undefined → /a2a/intent returns 501. */
-  onIntent?: (event: IntentEvent) => Promise<MatchReceipt>
-  /** v2 async echo return (spec §1). Undefined → /a2a/echo returns 501. */
-  onEcho?: (event: EchoEvent) => Promise<{ ok: boolean }>
-  /** Optional. When wired, enables POST /a2a/reveal — a peer signals its owner
-   *  revealed; mark my matching row + return { mutual, handle? }. Undefined → 501. */
-  onReveal?: (event: RevealEvent) => Promise<{ mutual: boolean; handle?: { pubkey: string; channel_id: string; mailbox?: { addr: string; enc_pub: string; relays: string[] } } }>
   /** Optional. When wired, enables POST /a2a/letter — a peer delivers a sealed
    *  E2E pen-pal letter (ciphertext only, never plaintext) addressed to a
    *  PenpalHandle channel on this machine. Undefined → /a2a/letter returns 501. */
@@ -176,11 +150,13 @@ export interface A2AServer {
   start(): Promise<void>
   stop(): Promise<void>
   baseUrl(): string
+  /** 终端会话桥的处理器,晚绑定(hub 在 main.ts 里比 a2a 服务晚建)。 */
+  setCliHandlers(h: A2ACliHandlers): void
   port(): number
 }
 
 export function createA2AServer(opts: A2AServerOpts): A2AServer {
-  let server: ReturnType<typeof Bun.serve> | null = null
+  let server: Server | null = null
 
   // Fire-and-forget wrapper — observability hook must not crash the response.
   function emitAuthFailed(event: AuthFailedEvent): void {
@@ -221,31 +197,6 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
           cwd: 'string (optional, working directory on this machine)',
         },
       }] : []),
-      // Advertised only when this machine is wired to broker intents (onIntent set).
-      ...(opts.onIntent ? [{
-        name: 'intent',
-        description: 'Broker a "seek" intent: judge a match against my owner and return a policy-filtered Match Receipt.',
-        endpoint: '/a2a/intent',
-        method: 'POST',
-        request_schema: { agent_id: 'string', card: 'IntentCard' },
-      }] : []),
-      // v2 async echo return — advertised only when this machine is wired
-      // to receive echo returns (onEcho set). Same shape/gate as `intent`.
-      ...(opts.onEcho ? [{
-        name: 'echo',
-        description: 'v2 async echo return: post the judged result of an earlier "seek" intent back to its sender (or relay it onward), out-of-band from the original synchronous /a2a/intent call.',
-        endpoint: '/a2a/echo',
-        method: 'POST',
-        request_schema: { agent_id: 'string', intent_id: 'string', echo: '{ blurb: string, degree: number, relay_token?: string }' },
-      }] : []),
-      // Advertised only when this machine is wired to receive inbound reveals.
-      ...(opts.onReveal ? [{
-        name: 'reveal',
-        description: 'Mutual async reveal: a peer whose owner revealed asks THIS owner\'s row to mark peer-revealed; returns { mutual, handle } when both sides have revealed.',
-        endpoint: '/a2a/reveal',
-        method: 'POST',
-        request_schema: { agent_id: 'string', intent_id: 'string' },
-      }] : []),
       // Advertised only when this machine is wired to receive inbound letters.
       ...(opts.onLetter ? [{
         name: 'letter',
@@ -256,6 +207,8 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
       }] : []),
     ],
   }
+
+  let cli: A2ACliHandlers = {}
 
   async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url)
@@ -374,60 +327,50 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
         return new Response(JSON.stringify({ ok: false, reason: msg }), { status: 200 })
       }
     }
-    if (url.pathname === '/a2a/reveal') {
-      if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
-      if (!opts.onReveal) return new Response(JSON.stringify({ error: 'reveal_not_supported' }), { status: 501 })
-
-      let body: { agent_id?: unknown; intent_id?: unknown; relay_token?: unknown; peer_handle?: unknown }
-      try {
-        body = await req.json() as typeof body
-      } catch {
-        return new Response(JSON.stringify({ error: 'invalid_json' }), { status: 400 })
-      }
-      if (typeof body.agent_id !== 'string') return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
-      const claimedId = body.agent_id
-
+    if (url.pathname === '/a2a/cli/event' || url.pathname === '/a2a/cli/permission' || url.pathname === '/a2a/cli/reply') {
+      // 终端会话桥(§6.5)。认证与 notify 同款:body.agent_id + Bearer = registry 里那把钥匙。
+      const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+      let body: Record<string, unknown>
+      if (req.method === 'GET') {
+        body = Object.fromEntries(url.searchParams.entries())
+      } else if (req.method === 'POST') {
+        try { body = await req.json() as Record<string, unknown> } catch { return json(400, { error: 'invalid_json' }) }
+      } else return new Response('method not allowed', { status: 405 })
+      if (!body || typeof body !== 'object' || typeof body['agent_id'] !== 'string') return json(400, { error: 'invalid_body' })
+      const claimedId = body['agent_id']
       const auth = req.headers.get('authorization')
-      if (!auth?.startsWith('Bearer ')) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'missing_bearer' })
-        return new Response(JSON.stringify({ error: 'missing_bearer' }), { status: 401 })
-      }
+      if (!auth?.startsWith('Bearer ')) { emitAuthFailed({ agent_id_claimed: claimedId, reason: 'missing_bearer' }); return json(401, { error: 'missing_bearer' }) }
       const agent = opts.registry.verifyBearer(claimedId, auth.slice('Bearer '.length).trim())
-      if (!agent) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'wrong_bearer' })
-        return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
-      }
-      if (agent.id !== claimedId) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'agent_id_mismatch' })
-        return new Response(JSON.stringify({ error: 'agent_id_mismatch' }), { status: 403 })
-      }
-      if (agent.paused) return new Response(JSON.stringify({ ok: false, reason: 'paused' }), { status: 202 })
-
-      if (typeof body.intent_id !== 'string' || body.intent_id.length === 0) {
-        return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
-      }
+      if (!agent) { emitAuthFailed({ agent_id_claimed: claimedId, reason: 'wrong_bearer' }); return json(401, { error: 'unauthorized' }) }
+      if (agent.id !== claimedId) { emitAuthFailed({ agent_id_claimed: claimedId, reason: 'agent_id_mismatch' }); return json(403, { error: 'agent_id_mismatch' }) }
+      if (agent.paused) return json(202, { ok: false, reason: 'paused' })
       try {
-        // `agent_id` stays the verified Bearer `agent.id` — client-supplied
-        // agent_id is never trusted as the acting identity. relay_token/peer_handle
-        // are routing/pen-pal metadata the intermediary provides. peer_handle
-        // is the PenpalHandle {pubkey, channel_id} — real identity never crosses.
-        const relayToken = typeof body.relay_token === 'string' && body.relay_token ? body.relay_token : undefined
-        const ph = body.peer_handle
-        const peerHandle = (ph && typeof ph === 'object'
-          && typeof (ph as any).pubkey === 'string' && (ph as any).pubkey
-          && typeof (ph as any).channel_id === 'string' && (ph as any).channel_id)
-          ? {
-              pubkey: (ph as any).pubkey, channel_id: (ph as any).channel_id,
-              ...((ph as any).mailbox && typeof (ph as any).mailbox === 'object'
-                && typeof (ph as any).mailbox.addr === 'string' && typeof (ph as any).mailbox.enc_pub === 'string' && Array.isArray((ph as any).mailbox.relays)
-                ? { mailbox: { addr: (ph as any).mailbox.addr, enc_pub: (ph as any).mailbox.enc_pub, relays: (ph as any).mailbox.relays } } : {}),
-            }
-          : undefined
-        const result = await opts.onReveal({ agent_id: agent.id, intent_id: body.intent_id, relay_token: relayToken, ...(peerHandle ? { peer_handle: peerHandle } : {}) })
-        return new Response(JSON.stringify(result), { status: 200 })
+        if (url.pathname === '/a2a/cli/event') {
+          if (!cli.onEvent) return json(501, { error: 'cli_bridge_not_wired' })
+          return json(200, await cli.onEvent(agent, body))
+        }
+        if (url.pathname === '/a2a/cli/permission') {
+          // 同一个路径两件事:带 hash 是轮询,不带是登记(a2a-client 只会 POST)。
+          if (typeof body['hash'] !== 'string') {
+            if (!cli.onPermissionOpen) return json(501, { error: 'cli_bridge_not_wired' })
+            return json(200, await cli.onPermissionOpen(agent, body))
+          }
+          if (!cli.onPermissionWait) return json(501, { error: 'cli_bridge_not_wired' })
+          const hash = typeof body['hash'] === 'string' ? body['hash'] : ''
+          const waitRaw = Number(body['wait_ms'] ?? '0')
+          const waitMs = Math.max(0, Math.min(Number.isFinite(waitRaw) ? waitRaw : 0, 25_000))
+          return json(200, await cli.onPermissionWait(agent, hash, waitMs))
+        }
+        // /a2a/cli/reply:在这台机上看 / 接着跑某条会话 —— 只有我授权过的脑能调(与 exec 同一道门)。
+        if (!agent.may_exec) { emitAuthFailed({ agent_id_claimed: claimedId, reason: 'exec_not_authorized' }); return json(403, { error: 'exec_not_authorized' }) }
+        if (!cli.onReply) return json(501, { error: 'cli_bridge_not_wired' })
+        const kind = body['kind']
+        const sessionId = body['session_id']
+        if ((kind !== 'view' && kind !== 'say') || typeof sessionId !== 'string' || !sessionId) return json(400, { error: 'invalid_body' })
+        const text = typeof body['text'] === 'string' ? body['text'] : undefined
+        return json(200, await cli.onReply(agent, { kind, session_id: sessionId, ...(text ? { text } : {}) }))
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        return new Response(JSON.stringify({ error: 'reveal_failed', detail: msg }), { status: 500 })
+        return json(500, { error: 'cli_bridge_failed', detail: err instanceof Error ? err.message : String(err) })
       }
     }
     if (url.pathname === '/a2a/letter') {
@@ -478,86 +421,6 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
         return new Response(JSON.stringify({ error: 'letter_failed', detail: msg }), { status: 500 })
       }
     }
-    if (url.pathname === '/a2a/intent') {
-      if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
-      if (!opts.onIntent) return new Response(JSON.stringify({ error: 'intent_not_supported' }), { status: 501 })
-
-      let body: { agent_id?: unknown; card?: unknown }
-      try {
-        body = await req.json() as typeof body
-      } catch {
-        return new Response(JSON.stringify({ error: 'invalid_json' }), { status: 400 })
-      }
-      if (typeof body.agent_id !== 'string') return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
-      const claimedId = body.agent_id
-
-      const auth = req.headers.get('authorization')
-      if (!auth?.startsWith('Bearer ')) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'missing_bearer' })
-        return new Response(JSON.stringify({ error: 'missing_bearer' }), { status: 401 })
-      }
-      const agent = opts.registry.verifyBearer(claimedId, auth.slice('Bearer '.length).trim())
-      if (!agent) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'wrong_bearer' })
-        return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
-      }
-      if (agent.id !== claimedId) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'agent_id_mismatch' })
-        return new Response(JSON.stringify({ error: 'agent_id_mismatch' }), { status: 403 })
-      }
-      if (agent.paused) return new Response(JSON.stringify({ ok: false, reason: 'paused' }), { status: 202 })
-
-      const parsed = IntentCardSchema.safeParse(body.card)
-      if (!parsed.success) return new Response(JSON.stringify({ error: 'invalid_card' }), { status: 400 })
-      try {
-        const receipt = await opts.onIntent({ agent, card: parsed.data })
-        return new Response(JSON.stringify(receipt), { status: 200 })
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        return new Response(JSON.stringify({ error: 'intent_failed', detail: msg }), { status: 500 })
-      }
-    }
-    if (url.pathname === '/a2a/echo') {
-      if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
-      if (!opts.onEcho) return new Response(JSON.stringify({ error: 'echo_not_supported' }), { status: 501 })
-
-      let body: { agent_id?: unknown; intent_id?: unknown; echo?: unknown }
-      try {
-        body = await req.json() as typeof body
-      } catch {
-        return new Response(JSON.stringify({ error: 'invalid_json' }), { status: 400 })
-      }
-      if (typeof body.agent_id !== 'string') return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
-      const claimedId = body.agent_id
-
-      const auth = req.headers.get('authorization')
-      if (!auth?.startsWith('Bearer ')) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'missing_bearer' })
-        return new Response(JSON.stringify({ error: 'missing_bearer' }), { status: 401 })
-      }
-      const agent = opts.registry.verifyBearer(claimedId, auth.slice('Bearer '.length).trim())
-      if (!agent) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'wrong_bearer' })
-        return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
-      }
-      if (agent.id !== claimedId) {
-        emitAuthFailed({ agent_id_claimed: claimedId, reason: 'agent_id_mismatch' })
-        return new Response(JSON.stringify({ error: 'agent_id_mismatch' }), { status: 403 })
-      }
-      if (agent.paused) return new Response(JSON.stringify({ ok: false, reason: 'paused' }), { status: 202 })
-
-      // /a2a/echo's body IS the EchoMessage at top level (agent_id lives on the
-      // schema itself) — unlike /a2a/intent's {agent_id, card} wrapper.
-      const parsed = EchoMessageSchema.safeParse(body)
-      if (!parsed.success) return new Response(JSON.stringify({ error: 'invalid_echo' }), { status: 400 })
-      try {
-        const result = await opts.onEcho({ agent, msg: parsed.data })
-        return new Response(JSON.stringify(result), { status: 200 })
-      } catch (err) {
-        const msg2 = err instanceof Error ? err.message : String(err)
-        return new Response(JSON.stringify({ error: 'echo_failed', detail: msg2 }), { status: 500 })
-      }
-    }
     if (url.pathname === '/a2a/pair') {
       if (req.method !== 'POST') return new Response('method not allowed', { status: 405 })
       if (!opts.onPair) return new Response(JSON.stringify({ error: 'pair_not_supported' }), { status: 501 })
@@ -576,7 +439,10 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
         return new Response(JSON.stringify({ error: 'invalid_body' }), { status: 400 })
       }
       try {
-        const result = await opts.onPair({ secret: body.secret, brainId: body.brain_id, execKey: body.exec_key })
+        const extra = body as { brain_url?: unknown; callback_key?: unknown }
+        const brainUrl = typeof extra.brain_url === 'string' && extra.brain_url ? extra.brain_url : undefined
+        const callbackKey = typeof extra.callback_key === 'string' && extra.callback_key.length >= 16 ? extra.callback_key : undefined
+        const result = await opts.onPair({ secret: body.secret, brainId: body.brain_id, execKey: body.exec_key, ...(brainUrl && callbackKey ? { brainUrl, callbackKey } : {}) })
         return result.ok
           ? new Response(JSON.stringify({ ok: true }), { status: 200 })
           : new Response(JSON.stringify({ ok: false, error: result.error ?? 'pairing_rejected' }), { status: 401 })
@@ -591,7 +457,7 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
   return {
     async start() {
       if (server) return
-      server = Bun.serve({
+      server = serve({
         hostname: opts.host,
         port: opts.port,
         // /a2a/exec runs a full local agent (tens of seconds to minutes) with
@@ -601,6 +467,7 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
         idleTimeout: A2A_EXEC_IDLE_TIMEOUT_S,
         fetch: handle,
       })
+      await server.ready
     },
     async stop() {
       server?.stop()
@@ -613,6 +480,9 @@ export function createA2AServer(opts: A2AServerOpts): A2AServer {
     port() {
       if (!server) throw new Error('a2a-server not started')
       return server.port!
+    },
+    setCliHandlers(h) {
+      cli = h
     },
   }
 }

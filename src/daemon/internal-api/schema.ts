@@ -30,8 +30,18 @@ export const HealthResponse = z.object({
   turns_store_wired: z.boolean().optional(),
   sessions_live: z.number().optional(),
   heartbeat_fresh: z.boolean().nullable().optional(),
+  // 后台在跑的版本(2026-09-16):桌面更新后 app 用它判断 daemon 是否还是旧的。
+  version: z.object({ cli: z.string(), head: z.string().nullable(), boot_at: z.string() }).optional(),
   // Subsystem degraded-boot (spec 2026-08-17) — 启动降级状态表。
   subsystems: z.array(SubsystemStatusSchema).optional(),
+  // 文件访问(macOS TCC,2026-09-04)—— daemon 进程自己能不能读主人的文件夹。
+  // 权限缺失此前是静默的;这里让它进 health / doctor / 桌面。
+  fs_access: z.object({
+    any_denied: z.boolean(),
+    folders: z.array(z.object({ folder: z.string(), path: z.string(), state: z.enum(['ok', 'denied', 'missing', 'unknown']) })),
+    settings_url: z.string(),
+    hint: z.string(),
+  }).optional(),
   // Passive outbound link health (spec 2026-08-22-outbound-health) — sibling
   // of subsystems by design: subsystems is the supervisor's BOOT-time list,
   // outbound is a RUNTIME link signal. Optional for older daemons.
@@ -42,6 +52,23 @@ export const HealthResponse = z.object({
     last_error: z.string().nullable(),
   }).optional(),
 })
+
+// ── POST /v1/atelier/share ─────────────────────────────────────────────────
+
+const AtelierSharedBackground = z.object({
+  title: z.string().trim().min(1).max(120),
+  origin: z.string().trim().min(1).max(800),
+  approach: z.string().trim().min(1).max(500),
+})
+export const AtelierShareRequest = z.object({
+  id: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$/),
+  // null means image-only; an object is the user-reviewed copy sent beside it.
+  background: AtelierSharedBackground.nullable(),
+})
+export const AtelierShareResponse = z.union([
+  z.object({ ok: z.literal(true), shared_at: z.string(), background_sent: z.boolean(), warning: z.string().optional() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
 
 // ── POST /v1/memory/read ─────────────────────────────────────────────────────
 
@@ -221,6 +248,21 @@ export const CompanionStatusResponse = z.object({
   default_chat_id: z.string().nullable(),
   snooze_until: z.string().nullable(),
   import_local_history: z.boolean(),
+})
+
+// ── GET /v1/companion/presence(spec 2026-09-03-companion-presence)───────────
+export const PresenceResponse = z.object({
+  presence: z.enum(['ok', 'degraded', 'offline']),
+  activity: z.object({
+    kind: z.enum(['idle', 'chatting', 'hosting_human', 'visiting', 'hosting_peer', 'foraging', 'working']),
+    label: z.string(),
+    since: z.string().nullable(),
+  }),
+  news: z.object({
+    unread: z.number().int().nonnegative(),
+    latest_kind: z.string().nullable(),
+    latest_title: z.string().nullable(),
+  }),
 })
 
 // ── POST /v1/companion/enable ────────────────────────────────────────────────
@@ -439,10 +481,9 @@ export const A2ASendResponse = z.union([
 ])
 export type A2ASendRequestT = z.infer<typeof A2ASendRequest>
 
-// P4 派心愿: the old POST /v1/social/seek one-shot (SocialSeekRequest) was
-// deleted here — propose/confirm/cancel (routes-social.ts) are
-// inline-validated per the pair/inbound routes' precedent, so they get no
-// REQUEST_SCHEMAS entry.
+// 心愿 (2026-09-04) has no entry here on purpose: the wish routes
+// (routes-social.ts) are inline-validated per the pair/inbound routes'
+// precedent, so they get no REQUEST_SCHEMAS entry.
 
 // ── POST /v1/a2a/test ────────────────────────────────────────────────────────
 // Server-side smoke test for the dashboard's Test button. With outbound=false
@@ -472,7 +513,7 @@ export type A2ATestRequestT = z.infer<typeof A2ATestRequest>
 // mode to "use registry default" — visible to the user as their explicit
 // participant choice being ignored.
 const ModeSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('solo'), provider: z.string() }),
+  z.object({ kind: z.literal('solo'), provider: z.string(), model: z.string().min(1).max(100).optional() }),
   z.object({ kind: z.literal('parallel'), participants: z.array(z.string()).optional() }),
   z.object({ kind: z.literal('primary_tool'), primary: z.string() }),
   z.object({ kind: z.literal('chatroom'), participants: z.array(z.string()).optional() }),
@@ -481,6 +522,9 @@ const ModeSchema = z.discriminatedUnion('kind', [
 export const ConversationSetModeRequest = z.object({
   chatId: z.string(),
   mode: ModeSchema,
+  /** Skip the route's own「🎛 已切换到 …」wechat reply — the caller (wechat-mcp
+   *  provider_switch) is an agent that will tell the user itself. */
+  quiet: z.boolean().optional(),
 })
 export const ConversationSetModeResponse = z.union([
   z.object({ ok: z.literal(true) }),
@@ -585,6 +629,9 @@ export type WechatEditMessageResponseT = z.infer<typeof WechatEditMessageRespons
 export type WechatBroadcastRequestT = z.infer<typeof WechatBroadcastRequest>
 export type WechatBroadcastResponseT = z.infer<typeof WechatBroadcastResponse>
 
+export type AtelierShareRequestT = z.infer<typeof AtelierShareRequest>
+export type AtelierShareResponseT = z.infer<typeof AtelierShareResponse>
+
 export type DelegateRequestT = z.infer<typeof DelegateRequest>
 export type DelegateResponseT = z.infer<typeof DelegateResponse>
 
@@ -592,6 +639,35 @@ export type ConversationSetModeRequestT = z.infer<typeof ConversationSetModeRequ
 export type ConversationSetModeResponseT = z.infer<typeof ConversationSetModeResponse>
 
 export type A2ASendResponseT = z.infer<typeof A2ASendResponse>
+
+// ── POST /v1/cli/event ───────────────────────────────────────────────────────
+// 终端 claude / codex 会话的 hook 事件(spec 2026-09-09-cli-hook-push §6.1)。
+export const CliEventRequest = z.object({
+  source: z.enum(['claude', 'codex']),
+  kind: z.enum(['stop', 'prompt', 'permission', 'session_end']),
+  session_id: z.string().min(1).max(200),
+  cwd: z.string().min(1).max(1000),
+  text: z.string().max(4000).optional(),
+  automated: z.boolean().optional(),
+  transcript_path: z.string().max(1000).optional(),
+  idle_s: z.number().min(0).optional(),
+  machine: z.string().max(200).optional(),
+})
+export type CliEventRequestT = z.infer<typeof CliEventRequest>
+
+export const CliPermissionRequest = z.object({
+  source: z.enum(['claude', 'codex']),
+  session_id: z.string().min(1).max(200),
+  cwd: z.string().min(1).max(1000),
+  tool_name: z.string().min(1).max(200),
+  summary: z.string().max(2000).optional(),
+  idle_s: z.number().min(0).optional(),
+  machine: z.string().max(200).optional(),
+})
+export const CliPermissionQuery = z.object({
+  hash: z.string().min(1).max(16),
+  wait_ms: z.coerce.number().int().min(0).max(60_000).optional(),
+})
 
 // ── Lookup tables ───────────────────────────────────────────────────────
 // REQUEST_SCHEMAS includes both POST body schemas (most routes) and GET
@@ -603,6 +679,9 @@ export type A2ASendResponseT = z.infer<typeof A2ASendResponse>
 // assertion is a possible follow-up.
 
 export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
+  // atelier
+  'POST /v1/atelier/share': AtelierShareRequest,
+
   // memory
   'POST /v1/memory/read': MemoryReadRequest,
   'POST /v1/memory/write': MemoryWriteRequest,
@@ -648,6 +727,11 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   // delegate
   'POST /v1/delegate': DelegateRequest,
 
+  // cli hook events
+  'POST /v1/cli/event': CliEventRequest,
+  'POST /v1/cli/permission': CliPermissionRequest,
+  'GET /v1/cli/permission': CliPermissionQuery,
+
   // conversation
   'POST /v1/conversation/set-mode': ConversationSetModeRequest,
 
@@ -671,6 +755,7 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
 
 export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'GET /v1/health': HealthResponse,
+  'POST /v1/atelier/share': AtelierShareResponse,
   'POST /v1/memory/read': MemoryReadResponse,
   'POST /v1/memory/write': MemoryWriteResponse,
   'GET /v1/memory/list': MemoryListResponse,
@@ -685,6 +770,8 @@ export const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'GET /v1/voice/status': VoiceStatusResponse,
   'POST /v1/voice/save_config': VoiceSaveConfigResponse,
   'GET /v1/companion/status': CompanionStatusResponse,
+  'GET /v1/companion/presence': PresenceResponse,
+  'GET /v1/companion/thoughts': z.object({ items: z.array(z.object({ id: z.string(), ts: z.string(), title: z.string(), note: z.string() })) }),
   'POST /v1/companion/enable': CompanionEnableResponse,
   'POST /v1/companion/disable': CompanionDisableResponse,
   'POST /v1/companion/snooze': CompanionSnoozeResponse,

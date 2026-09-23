@@ -20,7 +20,8 @@ import type { ConversationStore } from './conversation-store'
 import type { ProviderRegistry } from './provider-registry'
 import type { Mode, ProviderId } from './conversation'
 import type { InboundMsg } from './prompt-format'
-import { makeHandoffLedger, buildHandoffBlock, type HandoffTurn } from './provider-handoff'
+import { makeHandoffLedger, buildHandoffBlock, buildColdStartBlock, type HandoffTurn } from './provider-handoff'
+import { providerDenialFor, describeProviderDenial, slashFor } from './provider-policy'
 import {
   buildOpeningPrompt, buildRebuttalPrompt, buildVerdictPrompt, buildConvergencePrompt, parseConvergence,
   labelOpenings, buildContentionPrompt, parseContention, lensFor,
@@ -28,7 +29,7 @@ import {
   type Opening, type Contention, type RankedSpeaker,
 } from './chatroom-conductor'
 import { assertSupported, capabilitiesFor, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
-import { collectTurn, TURN_TIMEOUT_CODE, type TurnSummary } from './agent-provider'
+import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } from './agent-provider'
 import { resolveEffectiveTier, resolveTier, TIER_PROFILES, type TierProfile } from './user-tier'
 import type { Access } from '../lib/access'
 import { makeChatMutex } from './async-mutex'
@@ -75,7 +76,7 @@ export interface TurnRecord {
 
 export interface ConversationCoordinatorDeps {
   resolveProject(chatId: string): { alias: string; path: string } | null
-  manager: Pick<SessionManager, 'acquire'> & Partial<Pick<SessionManager, 'release'>>
+  manager: Pick<SessionManager, 'acquire'> & Partial<Pick<SessionManager, 'release' | 'releaseFor' | 'has'>>
   conversationStore: Pick<ConversationStore, 'get' | 'set' | 'setParticipants'>
   registry: Pick<ProviderRegistry, 'has' | 'list' | 'get'>
   /**
@@ -112,6 +113,14 @@ export interface ConversationCoordinatorDeps {
    */
   turnTimeoutMs?: number
   /**
+   * Per-event observer for every provider event of every turn (solo,
+   * parallel, chatroom), tagged with the inbound chat id. Feeds the
+   * desktop pet's live "what is it doing" signals — bookkeeping only:
+   * `collectTurn` swallows anything it throws, so it can never affect
+   * the turn.
+   */
+  onTurnEvent?: (chatId: string, ev: AgentEvent) => void
+  /**
    * Sink for the per-turn structured record (see [[TurnRecord]]). Optional —
    * tests and minimal embeddings can omit it. Bootstrap wires it to a daemon
    * ring buffer surfaced on internal-api for diagnosis/self-healing.
@@ -123,6 +132,16 @@ export interface ConversationCoordinatorDeps {
    * 第一条 prompt。缺省 ⇒ 交接块只有提示语,没有近况原文。
    */
   recentTurns?: (chatId: string, n: number) => Promise<HandoffTurn[]>
+  /** agent-config `trusted_providers`(非管理员可用的 provider),缺省 = 全部。
+   *  读法带 mtime 缓存,/set providers 改完下一条就生效。 */
+  trustedProviders?: () => readonly ProviderId[] | undefined
+  /**
+   * 某 provider **连续**几轮走了 FALLBACK_REPLY(有文字、零 reply 工具)。
+   * 0 = 这轮正常调了 reply,连击清零。外部 CLI(agy/cursor)的流格式一变,
+   * tool_call 就解析不出来,双发旁白悄悄回来 —— 2026-09-08 靠主人截图才发现。
+   * 这个钩子把「静默」变「可见」:bootstrap 记进 /mode 并打 [PROVIDER_ANOMALY]。
+   */
+  onFallbackStreak?: (providerId: ProviderId, streak: number) => void
   sendAssistantText?: (chatId: string, text: string) => Promise<void>
   /**
    * Optional `fields` arg lands in the JSONL sidecar (channel.log.jsonl)
@@ -188,6 +207,15 @@ export function authFailNotice(providerId: ProviderId): string {
  *  接入」— silence reads as being ignored). Two flavors: a spawn/missing-
  *  binary shape means the brain was never hooked up; anything else is a
  *  transient hiccup. Both point at the desktop 大脑 card, in CC's voice. */
+/** spawn 阶段的失败(不是回合中途):探测没过 / 二进制不在。把 provider 自己
+ *  给的人话原样带上 —— first-use-probe 的 failureMessage 就是写给用户看的。 */
+export function spawnFailedNotice(providerId: ProviderId, detail: string): string {
+  const head = `❌ ${providerId} 这次没起来,这条我没接住。`
+  const d = detail.trim()
+  if (/enoent|not found|no such file|not installed/i.test(d)) return `${head}它好像还没在电脑上接好 —— 主人在「此刻」页的大脑卡里帮我接上,或者 /cc 先用 Claude。`
+  return `${head}${d.length > 0 ? d.slice(0, 300) : ''}\n先 /cc 用 Claude 也行。`
+}
+
 export function turnErrorNotice(providerId: ProviderId, error: string | undefined): string {
   const e = (error ?? '').toLowerCase()
   if (/enoent|not found|no such file|spawn|not installed/.test(e)) {
@@ -269,6 +297,8 @@ export interface ConversationCoordinator {
 export function createConversationCoordinator(deps: ConversationCoordinatorDeps): ConversationCoordinator {
   // 换 provider 不断片 — setMode 标记,下一次 solo dispatch 取用(取即清)。
   const handoffLedger = makeHandoffLedger()
+  // 每家 provider 连续走 fallback 的轮数(见 deps.onFallbackStreak)。
+  const fallbackStreak = new Map<ProviderId, number>()
   function defaultMode(): Mode {
     return { kind: 'solo', provider: deps.defaultProviderId }
   }
@@ -508,26 +538,30 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     // 'solo' would mislabel those in GET /v1/turns and misdirect diagnosis.
     recordMode: TurnRecord['mode'] = 'solo',
   ): Promise<void> {
-    // agy final-review Important 2 — dispatch-time fail-closed gate.
-    // mode-commands.ts's `/agy` guest gate only guards the SLASH-COMMAND
-    // flip: POST /v1/conversation/set-mode (trusted-tier bearer token, no
-    // agy-aware check of its own) can set solo+agy directly, and a
-    // solo+agy row set validly while the chat WAS trusted survives a later
-    // demotion to guest in access.json with no re-validation. Both land
-    // here with providerId==='agy' for a chat that resolves to guest
-    // RIGHT NOW — refuse to spawn rather than trust the mode row's
-    // vintage. Raw resolveTier (NOT resolveEffectiveTier) on purpose:
-    // mirrors pipeline-deps.ts's /agy closure, which deliberately omits
-    // the --dangerously⇒admin shortcut for this exact shared-token hazard
-    // (agy's tier-C MCP config is one long-lived 'trusted' token shared by
-    // every conversation agy runs — see agy-mcp-config.ts).
-    if (providerId === 'agy' && resolveTier(msg.chatId, deps.loadAccess()) === 'guest') {
-      deps.log('COORDINATOR', `chat=${msg.chatId} refuse solo+agy dispatch: guest tier (dispatch-time gate)`, {
-        event: 'agy_guest_refused',
-        chat_id: msg.chatId,
-      })
-      await deps.sendAssistantText?.(msg.chatId, '❌ /agy 目前仅管理员/信任聊天可用（工具通道暂无法按会话隔离权限）。')
-      return
+    // Dispatch-time fail-closed provider gate (core/provider-policy.ts).
+    // mode-commands' slash gate only guards the SLASH flip: POST
+    // /v1/conversation/set-mode can set any solo row directly, and a row set
+    // validly while the chat WAS trusted survives a later demotion to guest in
+    // access.json with no re-validation. Both land here — refuse to spawn
+    // rather than trust the mode row's vintage. Raw resolveTier (NOT
+    // resolveEffectiveTier) on purpose: --dangerously⇒admin must not unlock
+    // a provider a guest may not use: agy (one long-lived 'trusted' token for
+    // every conversation — agy-mcp-config.ts) or cursor (ACP: its own file
+    // edits inside the workspace never surface a permission card, so a guest's
+    // tier cannot confine it — ProviderCapabilities.guestSafe === false).
+    // Originally agy-only ("agy final-review Important 2").
+    {
+      const rawTier = resolveTier(msg.chatId, deps.loadAccess())
+      const denial = providerDenialFor(providerId, rawTier, deps.trustedProviders?.())
+      if (denial) {
+        deps.log('COORDINATOR', `chat=${msg.chatId} refuse solo+${providerId} dispatch: ${denial.kind} tier=${rawTier} (dispatch-time gate)`, {
+          event: denial.kind === 'shared_token_guest' ? 'shared_token_guest_refused' : denial.kind === 'unconfined_guest' ? 'unconfined_guest_refused' : 'provider_not_allowed_refused',
+          chat_id: msg.chatId,
+          provider: providerId,
+        })
+        await deps.sendAssistantText?.(msg.chatId, describeProviderDenial(denial, slashFor(providerId)))
+        return
+      }
     }
     const tier = resolveEffectiveTier(msg.chatId, deps.loadAccess(), deps.permissionMode)
     const tierProfile = TIER_PROFILES[tier]
@@ -547,14 +581,32 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     let summary: TurnSummary | undefined
     let unregisterCancel: (() => void) | undefined
     try {
-      const handle = await deps.manager.acquire({
-        alias: proj.alias,
-        path: proj.path,
-        providerId,
-        chatId: msg.chatId,
-        tierProfile,
-        permissionMode: deps.permissionMode,
-      })
+      // Per-chat model pin lives on the solo mode row; only solo carries it.
+      const cur = getMode(msg.chatId)
+      const pinnedModel = cur.kind === 'solo' && cur.provider === providerId ? cur.model : undefined
+      // 冷启动判定要在 acquire 之前看:acquire 之后缓存里一定有了。
+      const coldSpawn = deps.manager.has ? !deps.manager.has({ alias: proj.alias, providerId, chatId: msg.chatId }) : false
+      let handle: Awaited<ReturnType<typeof deps.manager.acquire>>
+      try {
+        handle = await deps.manager.acquire({
+          alias: proj.alias,
+          path: proj.path,
+          providerId,
+          chatId: msg.chatId,
+          tierProfile,
+          permissionMode: deps.permissionMode,
+          ...(pinnedModel !== undefined ? { model: pinnedModel } : {}),
+        })
+      } catch (err) {
+        // spawn 阶段就挂了(二进制不在 / 首次使用探测没过 / SDK 起不来):
+        // 之前这个异常一路冒到 dispatch 外层只记日志,用户端一片沉默。
+        // 沉默 = 被无视;把原因用人话交给用户,并记一条 turn。
+        const detail = err instanceof Error ? err.message : String(err)
+        outcome = 'error'
+        deps.log('COORDINATOR', `chat=${msg.chatId} provider=${providerId} spawn failed: ${detail.slice(0, 300)}`, { event: 'spawn_failed', chat_id: msg.chatId, provider: providerId })
+        await deps.sendAssistantText?.(msg.chatId, spawnFailedNotice(providerId, detail))
+        return
+      }
       // Registered before collectTurn starts draining so /stop can reach
       // this turn for its entire lifetime — cleared in the finally below,
       // same lifecycle as chatroom's inFlightAborters.
@@ -567,8 +619,18 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         try { recent = await deps.recentTurns?.(msg.chatId, 12) ?? [] } catch { /* 交接是增强,拿不到就只给提示语 */ }
         text = `${buildHandoffBlock(handoff.from, handoff.to, recent)}\n\n${text}`
         deps.log?.('HANDOFF', `chat=${msg.chatId} ${handoff.from}→${handoff.to} recent=${recent.length}`)
+      } else if (coldSpawn && !capabilitiesFor(providerId).supportsResume) {
+        // 不能续线程的 provider(openai/gemini)刚被冷 spawn:daemon 重启 /
+        // 空闲驱逐后它对「刚才聊到哪」一无所知,而 claude/agy 都接得上。
+        // 用交接块同样的原文源补一段近况;新对话(没记录)就什么都不加。
+        let recent: HandoffTurn[] = []
+        try { recent = await deps.recentTurns?.(msg.chatId, 12) ?? [] } catch { /* 增强,拿不到就算了 */ }
+        if (recent.length > 0) {
+          text = `${buildColdStartBlock(providerId, recent)}\n\n${text}`
+          deps.log?.('HANDOFF', `chat=${msg.chatId} cold-start ${providerId} recent=${recent.length}`)
+        }
       }
-      summary = await collectTurn(handle.dispatch(text), { timeoutMs: deps.turnTimeoutMs })
+      summary = await collectTurn(handle.dispatch(text), { timeoutMs: deps.turnTimeoutMs, onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) })
       const assistantTexts = summary.assistantText
       const replyToolCalled = summary.replyToolCalled
 
@@ -609,7 +671,16 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // tool this turn. Prevents the duplicate-message footgun while
       // protecting users from a forgetful agent that describes an image
       // in plain text without ever calling reply.
-      if (replyToolCalled || assistantTexts.length === 0) return
+      if (replyToolCalled) {
+        if ((fallbackStreak.get(providerId) ?? 0) > 0) { fallbackStreak.set(providerId, 0); deps.onFallbackStreak?.(providerId, 0) }
+        return
+      }
+      if (assistantTexts.length === 0) return
+      {
+        const n = (fallbackStreak.get(providerId) ?? 0) + 1
+        fallbackStreak.set(providerId, n)
+        deps.onFallbackStreak?.(providerId, n)
+      }
       deps.log('FALLBACK_REPLY', `chat=${msg.chatId} project=${proj.alias} provider=${providerId} chunks=${assistantTexts.length} preview=${JSON.stringify(assistantTexts[0]?.slice(0, 80) ?? '')}`)
       for (const t of assistantTexts) {
         await deps.sendAssistantText?.(msg.chatId, t)
@@ -857,7 +928,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     try {
       settled = await Promise.allSettled(acquired.map(a =>
         a.status === 'fulfilled'
-          ? collectTurn(a.value.dispatch(text), { timeoutMs: deps.turnTimeoutMs })
+          ? collectTurn(a.value.dispatch(text), { timeoutMs: deps.turnTimeoutMs, onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) })
           : Promise.reject(a.reason),
       ))
     } finally {
@@ -976,7 +1047,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           alias: proj.alias, path: proj.path, providerId,
           chatId: msg.chatId, tierProfile, permissionMode: deps.permissionMode,
         })
-        summary = await collectTurn(handle.dispatch(promptFor(providerId)), { timeoutMs: Math.min(deps.turnTimeoutMs ?? CHATROOM_BEAT_TIMEOUT_MS, CHATROOM_BEAT_TIMEOUT_MS) })
+        summary = await collectTurn(handle.dispatch(promptFor(providerId)), { timeoutMs: Math.min(deps.turnTimeoutMs ?? CHATROOM_BEAT_TIMEOUT_MS, CHATROOM_BEAT_TIMEOUT_MS), onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) })
       } catch (e) {
         err = e instanceof Error ? e.message : String(e)
       }
@@ -1150,6 +1221,13 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // 模型不换会话线(session key 含 provider 不含 model),无需交接。
       if (oldMode.kind === 'solo' && mode.kind === 'solo' && oldMode.provider !== mode.provider) {
         handoffLedger.markSwitch(chatId, oldMode.provider, mode.provider)
+      }
+      // 同 provider 换钉模型:session 缓存键里没有 model,不放掉旧会话它就
+      // 一直在旧模型上答 ——「说了换、没换」。best-effort,失败只记日志。
+      if (oldMode.kind === 'solo' && mode.kind === 'solo' && oldMode.provider === mode.provider && oldMode.model !== mode.model) {
+        void deps.manager.releaseFor?.(mode.provider, chatId).catch(err => {
+          deps.log('COORDINATOR', `releaseFor after model pin change failed chat=${chatId}: ${err instanceof Error ? err.message : String(err)}`)
+        })
       }
     },
     cancel(chatId) {

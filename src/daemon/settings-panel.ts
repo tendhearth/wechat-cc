@@ -25,15 +25,34 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { basename, join } from 'node:path'
 import { normalizeUserName } from '../lib/user-name'
 import { writeConfigKey, readConfigSurface } from './config-surface'
+import { kickAtelierModelProvision, readModelStatus, shouldProvisionOnConfigChange } from './atelier-provision'
 import { safeSvgFile, EXPIRED_HTML, SW_JS, M_BOOTSTRAP_HTML, pageHtml, phoneHtml } from './settings-panel-html'
 import { readJsonFile } from '../lib/read-json-file'
+import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../lib/agent-config'
+import { saveLlmKey } from './llm-keys'
+import { PROVIDER_SETUP_HINTS, type LlmHealthReport } from './llm-health'
+import { capabilitiesFor } from '../core/capability-matrix'
+import { PROVIDER_IDS } from '../lib/provider-ids'
+import { buildFeed, decodeCursor, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
+import type { Presence } from '../core/companion-presence'
+import type { CatchRow } from '../core/journal-store'
+import type { PlanLogEntry } from '../core/companion-plan'
 
 export const SETTINGS_LINK_TTL_MS = 10 * 60_000
 
 /** Config-surface keys the panel may show/write (surface whitelist ∩ panel). */
 export const PANEL_CONFIG_KEYS: readonly string[] = [
   'bot_name', 'model', 'knowledge_enabled', 'social_enabled', 'autoStart',
+  'companion.atelier_mode',
+  // 「模型与后端」一块(2026-09-08):各家模型、/api 地址、后台评估用哪家。
+  'openaiModel', 'openaiBaseUrl', 'agyModel', 'cursorModel', 'geminiModel', 'cheap_eval_provider', 'trusted_providers',
+  'provider',
 ]
+
+/** 面板「模型与后端」表格覆盖的六家,顺序即显示顺序。 */
+const PANEL_PROVIDERS = PROVIDER_IDS
+const ALIAS_RE = /^[A-Za-z0-9._-]{1,32}$/
+const MODEL_NAME_RE = /^[A-Za-z0-9._/:-]{1,100}$/
 
 const PREF_KEYS = new Set(['split', 'care', 'stickers', 'hunt'])
 const PERSONA_MAX_CHARS = 8000
@@ -57,6 +76,27 @@ export interface SettingsPanelDeps {
   }
   /** 表情库(只读展示 + 图片文件服务)。 */
   stickers?: { list(): Array<{ file: string; tags: string[]; desc?: string }>; dir: string }
+  /**
+   * 随身 CC 首屏「伙伴的一天」的三个来源(spec 2026-09-06-mobile-home-feed §5.4)。
+   * 缺省 ⇒ /m/api/home 三项 sources_degraded。IO 全在这里,mobile-feed.ts 是纯函数。
+   */
+  feed?: {
+    journal: { list(limit?: number): readonly CatchRow[] }
+    planLogDays: (days: number) => readonly PlanLogEntry[]
+    turnsRecent: (limit: number) => readonly TurnLite[]
+    timezone: () => string
+  }
+  /** 三轴 presence,经 internal-api lifecycle.getPresence 共用。缺省/抛 ⇒ 手机页显示「不知道」。 */
+  presence?: () => Promise<Presence | null>
+  /** 「一件事」(2026-09-16):手机看同一份 matter 列表 / 详情,并能往里说话。seenOnPhone 记「在手机露过面」。 */
+  matters?: {
+    list(filter: { kind?: 'chat' | 'task' | 'companion'; statuses?: Array<'open' | 'replied' | 'done' | 'archived'>; limit?: number }): unknown[]
+    detail(id: string): Promise<unknown> | unknown
+    say(id: string, text: string): Promise<unknown>
+    seenOnPhone(id: string): void
+  }
+  /** 主人「看到哪了」的水位,与桌面觅食台同一个文件(一个主人一个水位)。缺省 ⇒ POST /m/api/seen 503。 */
+  seen?: { read: () => string | null; write: (iso: string) => void }
   /** 远程隧道信息(启用时):relay wss + 本机 daemon id。手机页出门时用它
    *  经中继访问。缺省 ⇒ 手机页只能在同一 Wi-Fi 直连。 */
   remoteInfo?: () => { relay: string; id: string } | null
@@ -67,6 +107,17 @@ export interface SettingsPanelDeps {
     setEnabled: (on: boolean) => void
     requestRestart: () => void
   }
+  /**
+   * 「模型与后端」的数据源:哪些 provider 注册了、上次体检结果(只读缓存,
+   * 面板绝不主动外呼)、key 配了没(只回 boolean)。缺省 ⇒ 表格只显示模型字段。
+   */
+  llm?: {
+    registered: () => string[]
+    cached: () => LlmHealthReport | null
+    hasKey: (provider: 'openai' | 'gemini') => boolean
+  }
+  /** 改了要重启才生效的键(provider)写完后触发 daemon 重启。缺省 ⇒ 只写不重启,回复里说明。 */
+  requestRestart?: (reason: string) => void
   /** config_changed audit sink (events store append) — best-effort. */
   audit?: (reasoning: string) => void
   log: (tag: string, line: string) => void
@@ -77,7 +128,7 @@ export interface SettingsPanel {
   issueToken(): string
   validToken(t: string | null | undefined): boolean
   state(): object
-  apply(op: unknown): Promise<{ ok: boolean; error?: string }>
+  apply(op: unknown): Promise<{ ok: boolean; error?: string; restart?: 'requested' | 'required' }>
   /** Start the HTTP server (idempotent). port 0 = ephemeral. */
   start(port?: number): Promise<{ port: number }>
   stop(): Promise<void>
@@ -94,6 +145,7 @@ export interface SettingsPanel {
  *  (配手的 `hand invite` 也要用它)。 */
 export { lanIp } from '../lib/local-address'
 import { lanIp } from '../lib/local-address'
+import { serve, type Server } from '../lib/runtime/http'
 
 const DEVICES_FILE = 'settings-devices.json'
 const MAX_DEVICES = 20
@@ -101,7 +153,7 @@ const MAX_DEVICES = 20
 export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   const now = deps.now ?? (() => Date.now())
   let active: { token: string; expiresAt: number } | null = null
-  let server: ReturnType<typeof Bun.serve> | null = null
+  let server: Server | null = null
 
   // 长期设备令牌(随身 CC 配对):在家扫码用短令牌换一枚,加进主屏后
   // 一直有效。落盘 JSON(0600 state dir),上限 MAX_DEVICES 防无限膨胀。
@@ -124,6 +176,73 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     const owner = deps.ownerChatId()
     if (!owner || owner.includes('..') || owner.includes('/') || owner.includes('\\')) return null
     return join(deps.stateDir, 'memory', owner, 'persona.md')
+  }
+
+  /** 「模型与后端」:六家一行(注册/体检/模型),openai 的地址·key·别名,后台评估用谁。 */
+  const modelsState = () => {
+    const cfg = loadAgentConfig(deps.stateDir)
+    const registered = new Set(deps.llm?.registered() ?? [])
+    const report = deps.llm?.cached() ?? null
+    const probe = new Map((report?.results ?? []).map(r => [r.provider, r]))
+    const providers = PANEL_PROVIDERS.map(id => {
+      const isReg = registered.has(id)
+      const pr = probe.get(id)
+      const status = !isReg ? 'unconfigured' : pr == null ? 'unknown' : pr.ok === true ? 'ok' : pr.ok === false ? 'broken' : 'unknown'
+      return {
+        id,
+        registered: isReg,
+        model: modelForProvider(cfg, id) ?? null,
+        status,
+        ...(pr?.error ? { error: pr.error.slice(0, 160) } : {}),
+        ...(!isReg && PROVIDER_SETUP_HINTS[id] ? { hint: PROVIDER_SETUP_HINTS[id] } : {}),
+        ...(pr?.latency_ms != null ? { latency_ms: pr.latency_ms } : {}),
+      }
+    })
+    return {
+      default_provider: cfg.provider,
+      checked_at: report?.checked_at ?? null,
+      providers,
+      openai: {
+        base_url: cfg.openaiBaseUrl ?? '',
+        model: cfg.openaiModel ?? '',
+        has_key: deps.llm?.hasKey('openai') ?? false,
+        aliases: cfg.openaiAliases ?? {},
+      },
+      gemini: { has_key: deps.llm?.hasKey('gemini') ?? false },
+      cheap: cfg.cheapEvalProvider ?? 'auto',
+      // 非管理员可用哪些(null = 全部)。两张单子不是一回事:
+      //  - shared_token:共享一把 trusted 钥匙(adminMcpTools=false)⇒ 面板上的 🔑 徽章;
+      //  - guest_blocked:guest 一律拒的(共享钥匙的 + 约束不住自己工具面的 guestSafe:false,
+      //    如走 ACP 的 cursor)⇒ 面板上"访客不可用"那句。cursor 不是共享钥匙,所以没有 🔑,
+      //    但访客照样用不了 —— 两条规矩(core/provider-policy.ts)对得上。
+      trusted_providers: cfg.trusted_providers ?? null,
+      shared_token: PANEL_PROVIDERS.filter(id => { try { return !capabilitiesFor(id).adminMcpTools } catch { return false } }),
+      guest_blocked: PANEL_PROVIDERS.filter(id => { try { const c = capabilitiesFor(id); return c.guestSafe === false || !c.adminMcpTools } catch { return false } }),
+    }
+  }
+
+  const FEED_WINDOW_DAYS = 14
+  const FEED_JOURNAL_LIMIT = 200
+  const FEED_TURNS_LIMIT = 2000
+
+  /** 三源各自 try;哪个抛就记 null(buildFeed 会翻译成 sources_degraded)。 */
+  const collectSources = (): FeedSources => {
+    const f = deps.feed
+    if (!f) return { journal: null, thoughts: null, turns: null }
+    const since = now() - FEED_WINDOW_DAYS * 86_400_000
+    let journal: FeedSources['journal'] = null
+    let thoughts: FeedSources['thoughts'] = null
+    let turns: FeedSources['turns'] = null
+    try { journal = f.journal.list(FEED_JOURNAL_LIMIT) } catch (e) { deps.log('SETTINGS', `feed journal 读不到: ${e instanceof Error ? e.message : e}`) }
+    try { thoughts = f.planLogDays(FEED_WINDOW_DAYS) } catch (e) { deps.log('SETTINGS', `feed plan-log 读不到: ${e instanceof Error ? e.message : e}`) }
+    try { turns = f.turnsRecent(FEED_TURNS_LIMIT).filter(t => t.endedAt >= since) } catch (e) { deps.log('SETTINGS', `feed turns 读不到: ${e instanceof Error ? e.message : e}`) }
+    return { journal, thoughts, turns }
+  }
+  const feedTimezone = (): string => { try { return deps.feed?.timezone() || 'UTC' } catch { return 'UTC' } }
+  const readSeen = (): string | null => { try { return deps.seen?.read() ?? null } catch { return null } }
+  const parseLimit = (url: URL): number => {
+    const n = Number(url.searchParams.get('limit'))
+    return Number.isFinite(n) && n > 0 ? n : FEED_DEFAULT_LIMIT
   }
 
   // 随身 CC 首页数据:待办(活跃+最近了结,带显示名)、小像、表情库。
@@ -198,6 +317,10 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         remote: deps.remote
           ? { available: true, enabled: deps.remote.isEnabled(), devices: Object.keys(readDevices()).length }
           : { available: false, enabled: false, devices: 0 },
+        // Paint-set download progress so the phone can show "已开始 / 62%" right
+        // after the owner flips the switch; the download itself runs on the Mac.
+        atelier: { model_status: readModelStatus(deps.stateDir) },
+        models: modelsState(),
       }
     },
 
@@ -248,12 +371,48 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           deps.remote.requestRestart()
           return { ok: true }
         }
+        if (b.op === 'set_llm_key') {
+          // key 只进 daemon.env,不进日志、不进 audit 正文、不回显。
+          const r = await saveLlmKey(deps.stateDir, b, deps.log)
+          if (!r.ok) return { ok: false, error: r.error }
+          deps.audit?.(`llm key(${String(b.provider)}) 已保存 — 设置面板(值不记录);重启后生效`)
+          return { ok: true }
+        }
+        if (b.op === 'set_alias' || b.op === 'del_alias') {
+          const alias = typeof b.alias === 'string' ? b.alias.trim() : ''
+          if (!ALIAS_RE.test(alias) || /^(list|alias|unalias)$/i.test(alias)) return { ok: false, error: 'invalid_alias' }
+          const cfg = loadAgentConfig(deps.stateDir)
+          const next = { ...(cfg.openaiAliases ?? {}) }
+          if (b.op === 'del_alias') {
+            if (!(alias in next)) return { ok: false, error: 'unknown_alias' }
+            delete next[alias]
+          } else {
+            const model = typeof b.model === 'string' ? b.model.trim() : ''
+            if (!MODEL_NAME_RE.test(model)) return { ok: false, error: 'invalid_model' }
+            next[alias] = model
+          }
+          const { openaiAliases: _drop, ...rest } = cfg
+          saveAgentConfig(deps.stateDir, Object.keys(next).length > 0 ? { ...rest, openaiAliases: next } : rest)
+          deps.audit?.(`/api 别名 ${b.op === 'del_alias' ? `删除 ${alias}` : `${alias} → ${String(b.model).trim()}`} — 设置面板`)
+          return { ok: true }
+        }
         if (b.op === 'set_config') {
           const key = typeof b.key === 'string' ? b.key : ''
           if (!PANEL_CONFIG_KEYS.includes(key)) return { ok: false, error: 'unknown_key' }
           const r = await writeConfigKey(deps.stateDir, key, b.value)
           if (!r.ok) return { ok: false, error: r.error }
+          // Turning the atelier on here (phone) kicks the same silent, deduped
+          // ~5GB paint-set download that /v1/config/set does. Never blocks.
+          if (shouldProvisionOnConfigChange(key, r.previous, b.value)) {
+            void kickAtelierModelProvision(deps.stateDir, { log: deps.log })
+          }
           deps.audit?.(`${key}: ${JSON.stringify(r.previous)} → ${JSON.stringify(b.value)} — 设置面板`)
+          // 默认 provider 是开机捕获的,改完自己重启(和 set_remote 同一条路);
+          // 没接 requestRestart 时告诉调用方要手动重启。
+          if (key === 'provider' && r.previous !== b.value) {
+            if (deps.requestRestart) { deps.requestRestart('provider-change'); return { ok: true, restart: 'requested' } }
+            return { ok: true, restart: 'required' }
+          }
           return { ok: true }
         }
         return { ok: false, error: 'unknown_op' }
@@ -266,11 +425,12 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     handleRequest,
     async start(port = 0) {
       if (server) return { port: server.port! }
-      server = Bun.serve({
+      server = serve({
         hostname: '0.0.0.0',
         port,
         fetch: handleRequest,
       })
+      await server.ready
       deps.log('SETTINGS', `panel listening on 0.0.0.0:${server.port} (token-gated)`)
       return { port: server.port! }
     },
@@ -367,6 +527,76 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           }
           if (url.pathname === '/m/api/state' && req.method === 'GET') {
             return json(phoneState())
+          }
+          if (url.pathname === '/m/api/home' && req.method === 'GET') {
+            let presence: Presence | null = null
+            let presenceFailed = false
+            try { presence = (await deps.presence?.()) ?? null } catch (e) { presenceFailed = true; deps.log('SETTINGS', `presence 读不到: ${e instanceof Error ? e.message : e}`) }
+            const tz = feedTimezone()
+            const seenUntil = readSeen()
+            const r = buildFeed(collectSources(), { ownerChatId: deps.ownerChatId(), timezone: tz, limit: parseLimit(url), seenUntil })
+            return json({
+              ok: true,
+              synced_at: new Date(now()).toISOString(),
+              today: dayKey(now(), tz),
+              presence,
+              ...(presenceFailed ? { presence_error: 'unavailable' } : {}),
+              unread: r.unread,
+              seen_until: seenUntil,
+              events: r.events,
+              next_cursor: r.next_cursor,
+              sources_degraded: r.sources_degraded,
+            })
+          }
+          if (url.pathname === '/m/api/feed' && req.method === 'GET') {
+            const cursor = url.searchParams.get('cursor')
+            if (cursor !== null && !decodeCursor(cursor)) return json({ ok: false, error: 'invalid_cursor' }, 400)
+            const r = buildFeed(collectSources(), { ownerChatId: deps.ownerChatId(), timezone: feedTimezone(), limit: parseLimit(url), cursor, seenUntil: readSeen() })
+            return json({ ok: true, events: r.events, next_cursor: r.next_cursor, sources_degraded: r.sources_degraded })
+          }
+          if (url.pathname === '/m/api/seen' && req.method === 'POST') {
+            if (!deps.seen) return json({ ok: false, error: 'seen_not_wired' }, 503)
+            let body: unknown
+            try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
+            const until = (body as { until?: unknown } | null)?.until
+            const ms = typeof until === 'string' ? Date.parse(until) : NaN
+            if (!Number.isFinite(ms)) return json({ ok: false, error: 'invalid_until' }, 400)
+            // 夹到 now(不许推到未来);单调(桌面与手机两边推,谁靠后算谁)。
+            const clamped = new Date(Math.min(ms, now())).toISOString()
+            const cur = readSeen()
+            if (cur !== null && clamped <= cur) return json({ ok: true, seen_until: cur })
+            deps.seen.write(clamped)
+            return json({ ok: true, seen_until: clamped })
+          }
+          // ── 「一件事」:与桌面同一份数据,同一套语义 ──────────────────
+          if (url.pathname === '/m/api/matters' && req.method === 'GET') {
+            if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
+            const kind = url.searchParams.get('kind'), status = url.searchParams.get('status')
+            if ((kind !== null && !['chat', 'task', 'companion'].includes(kind)) || (status !== null && status.split(',').some(s => !['open', 'replied', 'done', 'archived'].includes(s)))) return json({ ok: false, error: 'invalid' }, 400)
+            const matters = deps.matters.list({ ...(kind ? { kind: kind as 'chat' | 'task' | 'companion' } : {}), ...(status ? { statuses: status.split(',') as Array<'open' | 'replied' | 'done' | 'archived'> } : {}), limit: 50 })
+            for (const m of matters) { const id = (m as { id?: unknown }).id; if (typeof id === 'string') { try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } } }
+            return json({ ok: true, matters })
+          }
+          if (url.pathname === '/m/api/matter' && req.method === 'GET') {
+            if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
+            const id = url.searchParams.get('id')
+            if (!id || !/^[a-f0-9]{8}$/.test(id)) return json({ ok: false, error: 'invalid' }, 400)
+            try { const detail = await deps.matters.detail(id); try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } return json({ ok: true, ...(detail as object) }) }
+            catch (e) { const msg = e instanceof Error ? e.message : 'internal'; return json({ ok: false, error: msg === 'matter_not_found' ? msg : 'unavailable' }, msg === 'matter_not_found' ? 404 : 500) }
+          }
+          if (url.pathname === '/m/api/matter/say' && req.method === 'POST') {
+            if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
+            let body: unknown
+            try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
+            const b = (body ?? {}) as { id?: unknown; text?: unknown }
+            if (typeof b.id !== 'string' || !/^[a-f0-9]{8}$/.test(b.id) || typeof b.text !== 'string' || !b.text.trim() || b.text.length > 20_000) return json({ ok: false, error: 'invalid' }, 400)
+            try { return json({ ok: true, result: await deps.matters.say(b.id, b.text) }) }
+            catch (e) {
+              const msg = e instanceof Error ? e.message : 'internal'
+              if (msg === 'matter_not_found') return json({ ok: false, error: msg }, 404)
+              if (msg === 'workbench_busy' || msg === 'reply_sink_busy') return json({ ok: false, error: msg }, 409)
+              return json({ ok: false, error: /^(invalid_|matter_|workbench_|chat_)/.test(msg) ? msg : 'unavailable' }, /^(invalid_|matter_|workbench_|chat_)/.test(msg) ? 400 : 500)
+            }
           }
           if (url.pathname === '/m/api/todo' && req.method === 'POST') {
             let body: unknown

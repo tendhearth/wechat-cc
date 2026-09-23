@@ -10,7 +10,7 @@
  * Each delegate call spawns a fresh thread; SessionManager isn't involved
  * because these are throwaway one-shot consultations.
  */
-import { createClaudeAgentProvider } from '../../core/claude-agent-provider'
+import { DEFAULT_CLAUDE_MODEL, createClaudeAgentProvider } from '../../core/claude-agent-provider'
 import { createCodexAgentProvider } from '../../core/codex-agent-provider'
 import { createOpenAiAgentProvider } from '../../core/openai-agent-provider'
 import { createAiSdkChatModel } from '../../core/openai-chat-model'
@@ -92,7 +92,7 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
   // for the 2026-05-08 incident write-up.
   const claudeModel = configuredAgent.provider === 'claude' && configuredAgent.model
     ? configuredAgent.model
-    : 'claude-opus-4-8'
+    : DEFAULT_CLAUDE_MODEL
 
   const delegateClaude = createClaudeAgentProvider({
     sdkOptionsForProject: (_alias: string, path: string, _tierProfile: TierProfile, _chatId: string): Options => {

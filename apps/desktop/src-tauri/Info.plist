@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    用途说明:macOS 弹隐私授权框时显示的那一句。没有这些,弹框只有一个裸进程名。
+    授权记在「责任进程」上 —— LaunchAgent 启动的是本 app 的主二进制(--daemon),
+    所以这些字符串就是 daemon 及其全部子进程(claude / codex / agy / wxvault)
+    申请权限时用户看到的话。2026-09-04,见 src/daemon_mode.rs。
+  -->
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>wechat-cc 需要读取「文稿」里的项目文件,才能替你查看代码、整理笔记。只在你让它做事时读。</string>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>wechat-cc 需要读取「桌面」上的文件,才能替你处理你丢在桌面上的东西。</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>wechat-cc 需要读取「下载」里的文件,才能替你查看刚下载的内容。</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>wechat-cc 需要控制其它应用(如打开浏览器)来完成你交代的事。</string>
+  <!-- 微信本地数据库(客户回顾 / wxvault)在「完全磁盘访问」之下,那个不能用弹框申请,
+       只能在系统设置里手动勾;app 里的「文件访问」检查会带你过去。 -->
+</dict>
+</plist>

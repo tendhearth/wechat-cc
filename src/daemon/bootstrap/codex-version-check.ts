@@ -10,9 +10,12 @@
  * reply, no error, no signal anything is wrong.
  *
  * This helper compares the CLI's `--version` output against the SDK's
- * expected version and surfaces a structured pass/fail so the bootstrap
- * can refuse to register the codex provider entirely on mismatch (better
- * a loud "codex disabled" at boot than a silent dead chat).
+ * expected version and surfaces a structured pass/fail. Since 2026-09-09
+ * a mismatch is ADVISORY: bootstrap still registers codex (logs the gap,
+ * /mode shows it) and a real first-use probe decides — two live probes
+ * showed a 9-minor gap working while the SDK-matched bundled binary was
+ * refused by OpenAI's server for a new model. Only `version_probe_failed`
+ * (the binary can't even print --version) still blocks registration.
  */
 
 export interface CheckCodexVersionInput {

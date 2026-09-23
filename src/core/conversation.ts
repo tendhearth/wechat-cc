@@ -17,7 +17,16 @@ export type ProviderId = string
 
 export type Mode =
   /** Single agent answers each inbound. The default. */
-  | { kind: 'solo'; provider: ProviderId }
+  | {
+      kind: 'solo'; provider: ProviderId
+      /**
+       * Per-chat model pin (`/api DeepSeek`, provider_switch). Overrides the
+       * provider's global field for THIS chat only; undefined ⇒ global.
+       * Provider switching was always per-chat — the model pin now matches
+       * that granularity instead of leaking one chat's choice to every chat.
+       */
+      model?: string
+    }
   /** One primary agent; the other is exposed as a `mcp__delegate__*` tool. (P4 — not yet operational.) */
   | { kind: 'primary_tool'; primary: ProviderId }
   /** N agents reply concurrently to each inbound (≥2). Undefined `participants` resolves to the registry's full list at dispatch time. */

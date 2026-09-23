@@ -18,6 +18,7 @@ import { makeActivityStore } from '../activity/store'
 import { makeObservationsStore } from '../observations/store'
 import { botName } from '../bot-name'
 import { readJsonFile } from '../../lib/read-json-file'
+import { lateNotifyText } from '../notify-startup'
 
 export interface SideEffectDeps {
   stateDir: string
@@ -66,7 +67,11 @@ async function flushPendingNotify(deps: SideEffectDeps, chatId: string): Promise
     // 24h 以上的旧通知不补 — 迟到太久的「我回来了」只会困惑。
     if (typeof pending.ts === 'number' && Date.now() - pending.ts > 24 * 3600_000) { rmSync(pendingPath, { force: true }); return }
     rmSync(pendingPath, { force: true })   // 先删再发:失败也不无限重投
-    const r = await deps.sendMessage?.(chatId, pending.text)
+    // 补发的正文写的是「刚重启」,可它其实是几十分钟前的事,而主人是在
+    // 自己说完一句话之后才收到 —— 读起来就成了「我一说话它就重启」。
+    // 迟到就把真实时差说出来(notify-startup.lateNotifyText)。
+    const text = typeof pending.ts === 'number' ? lateNotifyText(pending.text, Date.now() - pending.ts) : pending.text
+    const r = await deps.sendMessage?.(chatId, text)
     deps.log?.('NOTIFY', `pending notify flushed to ${chatId}: ${r && !(r as { error?: string }).error ? 'ok' : 'failed'}`)
   } catch { /* best effort */ }
 }

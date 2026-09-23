@@ -41,3 +41,17 @@ export async function pingHealth(port, tokenFilePath, timeoutMs = 1500) {
     return false
   }
 }
+
+/**
+ * 读 /v1/health 的 version 段,连同本包自带的 CLI 版本一起返回;任何失败都是 null(诊断不因此报错)。
+ * @param {number} port @param {string} tokenFilePath @param {number} [timeoutMs=1500]
+ * @returns {Promise<{running:{cli:string|null,head?:string|null,boot_at?:string}|null,expected:string|null}|null>}
+ */
+export async function fetchDaemonVersion(port, tokenFilePath, timeoutMs = 1500) {
+  try {
+    const result = await invoke('wechat_health_version', { tokenFilePath, port, timeoutMs })
+    return result && typeof result === 'object' ? /** @type {any} */ (result) : null
+  } catch {
+    return null
+  }
+}

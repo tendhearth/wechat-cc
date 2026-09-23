@@ -1,13 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { makeJudge } from './social-judge'
+import { makeJudge, type JudgeInput } from './social-judge'
 
-const card = {
-  intent_id: 'i1',
-  kind: 'seek' as const,
-  topic: '找摄影搭子',
-  hop: 1,
-  expires_at: new Date(Date.now() + 60_000).toISOString(),
-}
+const card: JudgeInput = { topic: '找摄影搭子' }
 
 describe('makeJudge', () => {
   it('parses a clean {"match":"yes","blurb":"..."} verdict', async () => {
@@ -88,7 +82,7 @@ describe('makeJudge', () => {
       ground: async () => '主人相关事实：\n- 爱好: 摄影',
       policy: 'p',
     })
-    const v = await judge({ intent_id: 'i', kind: 'seek', topic: '摄影', expires_at: 'x', hop: 1 } as any)
+    const v = await judge({ topic: '摄影' })
     expect(seenUser).toContain('摄影')
     expect(v.match).toBe('yes')
   })
@@ -99,7 +93,7 @@ describe('makeJudge', () => {
       ground: async () => { throw new Error('x') },
       policy: 'p',
     })
-    const v = await judge({ intent_id: 'i', kind: 'seek', topic: 't', expires_at: 'x', hop: 1 } as any)
+    const v = await judge({ topic: 't' })
     expect(v.match).toBe('no')
   })
 
@@ -110,7 +104,7 @@ describe('makeJudge', () => {
       ground: (() => { throw new Error('sync') }) as any,
       policy: 'p',
     })
-    const v = await judge({ intent_id: 'i', kind: 'seek', topic: 't', expires_at: 'x', hop: 1 } as any)
+    const v = await judge({ topic: 't' })
     expect(v).toEqual({ match: 'no' })
     expect(runTurnCalled).toBe(true)
   })

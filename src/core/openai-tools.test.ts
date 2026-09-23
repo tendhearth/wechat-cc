@@ -35,3 +35,26 @@ describe('builtin tools', () => {
     expect(risk('Bash')).toBe('dangerous')
   })
 })
+
+describe('view_image', () => {
+  it('小图原样载入,文字说尺寸,图在 images 里;缺文件 → 说明,images 空', async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'view-image-'))
+    try {
+      const png = new Uint8Array(33); png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]); const dv = new DataView(png.buffer)
+      dv.setUint32(8, 13); png.set([0x49, 0x48, 0x44, 0x52], 12); dv.setUint32(16, 64); dv.setUint32(20, 48)
+      writeFileSync(join(dir, 'shot.png'), png)
+      const tool = byName(dir, 'view_image')
+      const rich = await tool.executeRich!({ path: 'shot.png' })
+      expect(rich.text).toContain('64x48')
+      expect(rich.images).toHaveLength(1)
+      expect(rich.images[0]!.mediaType).toBe('image/png')
+      expect(await tool.execute({ path: 'shot.png' })).toContain('Loaded image')
+      const miss = await tool.executeRich!({ path: 'nope.png' })
+      expect(miss.text).toContain('Could not load')
+      expect(miss.images).toEqual([])
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})

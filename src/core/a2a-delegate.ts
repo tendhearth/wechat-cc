@@ -38,38 +38,11 @@ export function handExecUrl(agentUrl: string): string {
 }
 
 /**
- * Derive a peer's /a2a/intent URL from its registered url, tolerating the
- * same common shapes as {@link handExecUrl}: a bare base, `/a2a`,
- * `/a2a/notify`, `/a2a/exec`, or already `/a2a/intent`.
- */
-export function intentUrl(agentUrl: string): string {
-  const u = agentUrl.replace(/\/+$/, '')
-  if (u.endsWith('/a2a/intent')) return u
-  if (u.endsWith('/a2a/notify')) return u.replace(/\/a2a\/notify$/, '/a2a/intent')
-  if (u.endsWith('/a2a/exec')) return u.replace(/\/a2a\/exec$/, '/a2a/intent')
-  if (u.endsWith('/a2a')) return `${u}/intent`
-  return `${u}/a2a/intent`
-}
-
-/**
- * Derive a peer's /a2a/reveal URL from its registered url, tolerating the same
- * shapes as {@link intentUrl}: a bare base, `/a2a`, `/a2a/notify`, `/a2a/exec`,
- * `/a2a/intent`, or already `/a2a/reveal`.
- */
-export function revealUrl(agentUrl: string): string {
-  const u = agentUrl.replace(/\/+$/, '')
-  if (u.endsWith('/a2a/reveal')) return u
-  if (u.endsWith('/a2a/notify')) return u.replace(/\/a2a\/notify$/, '/a2a/reveal')
-  if (u.endsWith('/a2a/exec')) return u.replace(/\/a2a\/exec$/, '/a2a/reveal')
-  if (u.endsWith('/a2a/intent')) return u.replace(/\/a2a\/intent$/, '/a2a/reveal')
-  if (u.endsWith('/a2a')) return `${u}/reveal`
-  return `${u}/a2a/reveal`
-}
-
-/**
  * Derive a peer's /a2a/letter URL from its registered url, tolerating the same
- * shapes as {@link revealUrl}: a bare base, `/a2a`, `/a2a/notify`, `/a2a/exec`,
- * `/a2a/intent`, `/a2a/reveal`, or already `/a2a/letter`.
+ * shapes as {@link handExecUrl}: a bare base, `/a2a`, `/a2a/notify`,
+ * `/a2a/exec`, or already `/a2a/letter`. `/a2a/intent` `/a2a/reveal` 是
+ * v2 遗留 —— 路由本身退役了(proto v3),但注册表里可能还躺着老 url,
+ * 所以继续容忍这两个后缀。
  */
 export function letterUrl(agentUrl: string): string {
   const u = agentUrl.replace(/\/+$/, '')
@@ -80,23 +53,6 @@ export function letterUrl(agentUrl: string): string {
   if (u.endsWith('/a2a/reveal')) return u.replace(/\/a2a\/reveal$/, '/a2a/letter')
   if (u.endsWith('/a2a')) return `${u}/letter`
   return `${u}/a2a/letter`
-}
-
-/**
- * Derive a peer's /a2a/echo URL from its registered url, tolerating the same
- * shapes as {@link letterUrl}: a bare base, `/a2a`, `/a2a/notify`, `/a2a/exec`,
- * `/a2a/intent`, `/a2a/reveal`, `/a2a/letter`, or already `/a2a/echo`.
- */
-export function echoUrl(agentUrl: string): string {
-  const u = agentUrl.replace(/\/+$/, '')
-  if (u.endsWith('/a2a/echo')) return u
-  if (u.endsWith('/a2a/notify')) return u.replace(/\/a2a\/notify$/, '/a2a/echo')
-  if (u.endsWith('/a2a/exec')) return u.replace(/\/a2a\/exec$/, '/a2a/echo')
-  if (u.endsWith('/a2a/intent')) return u.replace(/\/a2a\/intent$/, '/a2a/echo')
-  if (u.endsWith('/a2a/reveal')) return u.replace(/\/a2a\/reveal$/, '/a2a/echo')
-  if (u.endsWith('/a2a/letter')) return u.replace(/\/a2a\/letter$/, '/a2a/echo')
-  if (u.endsWith('/a2a')) return `${u}/echo`
-  return `${u}/a2a/echo`
 }
 
 export interface DelegateToHandReq {

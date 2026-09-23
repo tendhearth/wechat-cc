@@ -26,8 +26,28 @@ import { log } from '../lib/log'
  * surface (so it can't be a delegate peer in v1 — see RFC 05 §7 #3).
  * Flip `supportsDelegation` when Cursor ships sub-agent support.
  */
+// NOTE (2026-09-18): the capability-matrix row the daemon actually runs
+// under for the `cursor` provider id is `ACP_CURSOR_CAPABILITIES`
+// (core/acp-cursor-chat.ts, capability-matrix.ts:113) — chat-side Cursor
+// moved to ACP that day and its MCP child is injected per session/new with
+// the real tier, so `adminMcpTools` is true there, not false. This constant
+// (the `@cursor/sdk` / CURSOR_API_KEY fallback path's own capabilities) is
+// no longer what production wires up; it's kept because
+// createCursorAgentProvider (the SDK provider below) and this file's own
+// tests still reference it.
 export const CURSOR_CAPABILITIES: ProviderCapabilities = {
   perToolCallback: false,
+  // What the code below actually does: createCursorAgentProvider merges the
+  // spawn's `mcpEnv` (session token + tier) into the CORE MCP children per
+  // session — `mergeEnvIntoMcpServers(opts.mcpServers, sessionEnv,
+  // CORE_MCP_SERVER_NAMES)`, the same seam claude/codex use. The boot-time
+  // `opts.mcpServers` object is only the template; the env is per-session.
+  // So there is no privilege hole in leaving this `false` — it is simply not
+  // the row production reads. `capability-matrix.ts` maps the `cursor`
+  // provider id to ACP_CURSOR_CAPABILITIES (noted above), and that row is
+  // `adminMcpTools: true` for the same reason. Kept conservative here
+  // because this constant is only referenced by this file's own tests.
+  adminMcpTools: false,
   sandboxLevels: new Set(['workspace-write', 'full']),
   supportsDelegation: false,
   supportsResume: true,

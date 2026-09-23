@@ -22,6 +22,7 @@ import type { SessionStateStore, ExpiredBot } from '../core/session-state'
 import { loadHearthApi, type HearthApi, type HearthLoadResult } from './hearth-adapter'
 import type { SynthesizeResult } from '../lib/memory-synthesis'
 import { isConnectFailure } from '../lib/net-errors'
+import type { SelfChangeSpawner } from './self-change-spawn'
 
 export interface AdminCommandsDeps {
   stateDir: string
@@ -83,6 +84,8 @@ export interface AdminCommandsDeps {
   >
   /** 列出已注册的手(名字 + 地址),给发现性用。 */
   listHands?: () => readonly { id: string; name: string; url?: string }[]
+  /** 伙伴日志(journal,v40)。缺失 ⇒ 「背包」命令说功能没接,而不是说空。 */
+  huntBag?: () => readonly { title: string; url: string | null; ts: string; status: string }[]
   /**
    * Starts an external updater process. The updater must live outside this
    * daemon process because a real update can stop/restart the service that is
@@ -101,9 +104,18 @@ export interface AdminCommandsDeps {
    * no-op, same posture as every other Task-4/5/6 hold point.
    */
   holdBusy?: (label: string) => () => void
+  /**
+   * 自改流水线的进件口(spec 2026-09-18 §daemon 侧)。`start` 把
+   * `wechat-cc self change` 作为独立进程拉起来 —— **不能**在 daemon 里跑:
+   * 流水线最后要部署 + 重启这个 daemon。`list` 只读状态目录。
+   * 缺省(没接)⇒ 「自改」命令老实说这台机器没接,而不是假装在跑。
+   */
+  selfChange?: SelfChangeSpawner
 }
 
 export interface AdminCommands {
+  /** 只读:这条会不会被管理员命令吃掉(非管理员发命令也算 —— 会被丢掉,不再往下走)。 */
+  probe(msg: InboundMsg): boolean
   /** Returns true iff the message was consumed (admin command handled or silently dropped). */
   handle(msg: InboundMsg): Promise<boolean>
 }
@@ -125,8 +137,22 @@ const RESET_RE = /^\s*\/(?:reset|重置)\s*$/
 const HAND_JOIN_RE = /^\s*(?:\/(?:hand|配对)\s+)?(WCCP1[A-Za-z0-9_\-\s]+)$/
 /** 列出已注册的手。补回上一轮为了精确性删掉的发现性(见 matchDelegate)。 */
 const HANDS_LIST_RE = /^\s*(?:\/hands|有哪些手|手列表|看看有哪些手)\s*[?？]?\s*$/
+// 打猎战利品的微信入口(2026-09-03)。打猎的消息本来就发在微信里,能在同一
+// 个地方回头翻是最自然的;桌面端那个「🎒 打猎背包」是同一份数据的可编辑版。
+const BAG_RE = /^\s*(?:\/(?:bag|背包)|背包|打猎背包|猎物|战利品|打到了什么|打到什么了)\s*[?？]?\s*$/
+// 微信里下自改的单(2026-09-18)。**必须带需求**:`自改` 后面要么跟空白 + 一段
+// 文字,要么正好是「状态 / 列表」。裸的「自改」二字落回正常聊天 —— 主人说
+// 「你能自改吗」这类句子不该被劫成命令(同 matchDelegate 那条「别按动词认」的
+// 教训:触发面越窄,和日常汉语抢词的机会越少)。
+const SELF_CHANGE_RE = /^\s*自改\s+([\s\S]+)$/
+const SELF_CHANGE_STATUS_RE = /^\s*自改\s*(?:状态|列表)\s*$/
 
 /** 认出一串配对码(裸码或 /hand <码>)。返回去掉空白的码,或 null。 */
+/** 管理员命令的识别面(纯函数)—— handle 与 probe 共用这一份,别再各写一遍。 */
+export function isAdminCommandText(text: string, handNames: readonly string[]): boolean {
+  return !!matchHandJoin(text) || HANDS_LIST_RE.test(text) || BAG_RE.test(text) || text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || SHOW_OVERVIEW_RE.test(text) || !!matchDelegate(text, handNames) || RESET_RE.test(text) || UPDATE_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text) || SELF_CHANGE_STATUS_RE.test(text) || SELF_CHANGE_RE.test(text)
+}
+
 export function matchHandJoin(text: string): string | null {
   const m = HAND_JOIN_RE.exec(text)
   if (!m) return null
@@ -227,8 +253,32 @@ const BOTNAME_SKIP_WORDS = new Set(['跳过', '不用', '没有', 'skip', 'clear
 const BOTNAME_VALID_RE = NICKNAME_RE
 const BOTNAME_MAX_LEN = NICKNAME_MAX_LEN
 
+
+/** 微信里的背包速览。只读:改状态去桌面端(在微信里做单选按钮不划算)。 */
+async function sendHuntBag(deps: AdminCommandsDeps, chatId: string): Promise<void> {
+  if (!deps.huntBag) {
+    await deps.sendMessage(chatId, '这台还没接战利品记录 —— 升级到 1.7.0 以后打猎才会入库。').catch(() => {})
+    return
+  }
+  const all = deps.huntBag()
+  const kept = all.filter(r => r.status !== 'dropped')
+  if (kept.length === 0) {
+    await deps.sendMessage(chatId, all.length === 0
+      ? '背包还是空的。我每天会上网替你找一两样东西,找到就记进来。'
+      : '背包里的都处理完了(丢掉的那些还在桌面端折着)。').catch(() => {})
+    return
+  }
+  const LABEL: Record<string, string> = { new: '没试', tried: '跑过', using: '在用' }
+  const lines = kept.slice(0, 10).map(r =>
+    `· [${LABEL[r.status] ?? '没试'}] ${r.title}${r.url ? `\n  ${r.url}` : ''}`)
+  const more = kept.length > lines.length ? `\n\n还有 ${kept.length - lines.length} 件,桌面端「觅食台 → 打猎背包」看全部。` : ''
+  await deps.sendMessage(chatId, `🎒 背包里有 ${kept.length} 件:\n\n${lines.join('\n')}${more}`).catch(() => {})
+}
+
 export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
+  const knownHands = (): readonly string[] => { try { return deps.knownHandNames?.() ?? [] } catch { return [] } }
   return {
+    probe(msg) { return isAdminCommandText(msg.text.trim(), knownHands()) },
     async handle(msg) {
       const text = msg.text.trim()
       // 认一次派活指令。按**已注册的手名**认(不是按动词)—— 名字没命中就
@@ -239,7 +289,7 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
       const delegateMatch = matchDelegate(text, handNames)
       const isDelegate = !!delegateMatch
       const handCode = matchHandJoin(text)
-      const isCmd = !!handCode || HANDS_LIST_RE.test(text) || text === '/health' || HEALTH_AI_RE.test(text) || SYNTHESIZE_RE.test(text) || SHOW_OVERVIEW_RE.test(text) || isDelegate || RESET_RE.test(text) || UPDATE_RE.test(text) || CLEANUP_RE.test(text) || HEARTH_INGEST_RE.test(text) || HEARTH_LIST_RE.test(text) || HEARTH_SHOW_RE.test(text) || HEARTH_APPLY_RE.test(text) || HEARTH_HELP_RE.test(text) || BOTNAME_RE.test(text)
+      const isCmd = isAdminCommandText(text, handNames)
       if (!isCmd) return false
 
       if (!deps.isAdmin(msg.chatId)) {
@@ -260,6 +310,11 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
         return true
       }
 
+      if (BAG_RE.test(text)) {
+        await sendHuntBag(deps, msg.chatId)
+        return true
+      }
+
       if (text === '/health') {
         await sendHealthReport(deps, msg.chatId)
         return true
@@ -277,6 +332,19 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
 
       if (UPDATE_RE.test(text)) {
         await runUpdate(deps, msg.chatId)
+        return true
+      }
+
+      // 「自改 状态」要先认:它也落在 SELF_CHANGE_RE 的 `自改\s+<文字>` 里,
+      // 顺序反了就会把「状态」当成需求下单。
+      if (SELF_CHANGE_STATUS_RE.test(text)) {
+        await runSelfChangeStatus(deps, msg.chatId)
+        return true
+      }
+
+      const selfChange = SELF_CHANGE_RE.exec(text)
+      if (selfChange) {
+        await runSelfChangeStart(deps, msg.chatId, selfChange[1]!.trim())
         return true
       }
 
@@ -376,6 +444,43 @@ export function makeAdminCommands(deps: AdminCommandsDeps): AdminCommands {
       return false
     },
   }
+}
+
+/**
+ * 「自改 <需求>」—— 下单就回执,进展由流水线自己发卡回来(它是独立进程,
+ * 微信通知走 internal-api,不经过这里)。这里**不等**:一条自改要跑几十分钟,
+ * 在消息管道里 await 它等于把整条微信堵死。
+ */
+async function runSelfChangeStart(deps: AdminCommandsDeps, adminChatId: string, request: string): Promise<void> {
+  if (!deps.selfChange) {
+    await deps.sendMessage(adminChatId, '这台机器没法自改:daemon 没接自改流水线。').catch(() => {})
+    return
+  }
+  const r = deps.selfChange.start(request)
+  if (!r.ok) {
+    deps.log('ADMIN_CMD', `自改 refused chat=${adminChatId}: ${r.reason}`)
+    await deps.sendMessage(adminChatId, `这台机器没法自改:${r.reason}`).catch(() => {})
+    return
+  }
+  deps.log('ADMIN_CMD', `自改 started chat=${adminChatId} pid=${r.pid}`)
+  await deps.sendMessage(adminChatId, `自改开始了(pid ${r.pid}),进展会发到这里;说「自改 状态」看进度。`).catch(() => {})
+}
+
+/** 「自改 状态」—— 最近五条的 id · 步骤 · 结果。只读,不碰流水线。 */
+async function runSelfChangeStatus(deps: AdminCommandsDeps, adminChatId: string): Promise<void> {
+  if (!deps.selfChange) {
+    await deps.sendMessage(adminChatId, '这台机器没法自改:daemon 没接自改流水线。').catch(() => {})
+    return
+  }
+  let rows: readonly { id: string; step: string; result: string | null }[] = []
+  try { rows = deps.selfChange.list() }
+  catch (err) { deps.log('ADMIN_CMD', `自改 状态 list failed: ${err}`) }
+  if (rows.length === 0) {
+    await deps.sendMessage(adminChatId, '还没有自改记录').catch(() => {})
+    return
+  }
+  const lines = rows.slice(0, 5).map(r => `#${r.id} · ${r.step} · ${r.result ?? '进行中'}`)
+  await deps.sendMessage(adminChatId, lines.join('\n')).catch(() => {})
 }
 
 async function runUpdate(deps: AdminCommandsDeps, adminChatId: string): Promise<void> {

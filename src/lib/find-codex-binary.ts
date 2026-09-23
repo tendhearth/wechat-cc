@@ -3,13 +3,17 @@
  *
  * Design (post Task #18): pure PATH + nvm lookup. No bundled-shim probes.
  *
- * Why no bundle: the codex SDK ↔ CLI protocol is version-locked. A bundled
- * CLI that lags the user's preferred version forces wechat-cc into "stale
- * bundle" UX ("I upgraded codex, why is wechat-cc still on the old one?").
- * Codex auth lives in `~/.codex/auth.json` regardless of which CLI binary
- * spawns it — so the user's globally-installed CLI is the natural source
- * of truth. When user's CLI version != our SDK SDK version, codex-autofix
- * (src/lib/codex-autofix.ts) realigns the SDK via `bun add`.
+ * Why no bundle (re-confirmed 2026-09-09 with two live probes): our bundled
+ * SDK 0.144.4 drove the user's CLI 0.153.4 fine (9 minors apart), while the
+ * SDK's OWN bundled 0.144.4 binary was rejected by OpenAI's server with
+ * "The 'gpt-6-astra' model requires a newer version of Codex". The server
+ * gates new models by CLI version, so the user's newer CLI is the only one
+ * that can run new models — a bundled binary would be a floor that only
+ * reaches old models. Codex auth lives in `~/.codex/auth.json` regardless of
+ * which binary spawns it. Version mismatch is therefore ADVISORY (logged,
+ * shown in /mode), not a refusal; compatibility is settled by a real
+ * first-use probe (src/core/first-use-probe.ts), and codex-autofix
+ * (src/lib/codex-autofix.ts) still realigns the SDK in dev checkouts.
  *
  * If the user has never installed codex globally, this returns null and
  * the daemon refuses to register the codex provider with a clear error

@@ -21,6 +21,32 @@ describe('service-manager', () => {
     expect(plan.installCommands[0]).toEqual(['launchctl', 'bootstrap', 'gui/501', plan.serviceFile])
   })
 
+  it('macOS 打包版:LaunchAgent 指向 app 主二进制 + --daemon,而不是 sidecar', () => {
+    // TCC 把权限记在责任进程上:主二进制在签名 bundle 里、有用途说明;sidecar 是
+    // 裸二进制且 ad-hoc 签名每次构建都变。见 runtime-info.appMainBinaryPath。
+    const plan = buildServicePlan({
+      platform: 'darwin', homeDir: '/Users/alice', cwd: '/Applications/wechat-cc.app/Contents/MacOS',
+      bunPath: '/opt/homebrew/bin/bun', uid: 501,
+      binaryPath: '/Applications/wechat-cc.app/Contents/MacOS/wechat-cc-cli',
+      appBinaryPath: '/Applications/wechat-cc.app/Contents/MacOS/wechat-cc',
+    })
+    const pa = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(plan.fileContent!)![1]!
+    const argv = [...pa.matchAll(/<string>([^<]*)<\/string>/g)].map(m => m[1])
+    expect(argv.slice(0, 3)).toEqual(['/Applications/wechat-cc.app/Contents/MacOS/wechat-cc', '--daemon', 'run'])
+    expect(pa).not.toContain('wechat-cc-cli')
+  })
+
+  it('只有 sidecar、没有 app 主二进制(非 macOS 或老布局)→ 仍指向 sidecar', () => {
+    const plan = buildServicePlan({
+      platform: 'darwin', homeDir: '/Users/alice', cwd: '/x', bunPath: '/opt/homebrew/bin/bun', uid: 501,
+      binaryPath: '/x/wechat-cc-cli',
+    })
+    const pa = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(plan.fileContent!)![1]!
+    const argv = [...pa.matchAll(/<string>([^<]*)<\/string>/g)].map(m => m[1])
+    expect(argv.slice(0, 2)).toEqual(['/x/wechat-cc-cli', 'run'])
+    expect(pa).not.toContain('--daemon')
+  })
+
   it('builds a Windows Scheduled Task plan', () => {
     const plan = buildServicePlan({
       platform: 'win32',

@@ -13,17 +13,22 @@
  * alone lazily, per pairing-engine tick) would re-enter that persistence and
  * risk a slug-minting daemon broadcasting two different identities.
  */
-import { randomBytes, randomInt } from 'node:crypto'
+import { randomBytes, randomInt, randomUUID } from 'node:crypto'
 import { makePairing, type PairingEngine } from '../../core/pairing'
 import { makeMailboxClient } from '../../core/mailbox-client'
 import { loadMailboxIdentity } from '../../core/mailbox-crypto'
+import { makeChannelStore } from '../../core/penpal-channel-store'
+import { generateKeypair } from '../../core/penpal-crypto'
 import type { A2ARegistry } from '../../core/a2a-registry'
 import type { AgentConfig } from '../../lib/agent-config'
+import type { Db } from '../../lib/db'
 
 export interface PairingWireDeps {
   stateDir: string
   configuredAgent: AgentConfig
   a2aRegistry: A2ARegistry
+  /** 配对即开信道(spec 2026-09-04-wish-postcard §2)所需的持久层。 */
+  db: Db
   /** Resolved ONCE by bootstrap/index.ts (resolveSelfAgentId) — shared with
    *  wireSocial + pipeline-deps' delegate path. Never re-resolved here. */
   selfId: string
@@ -59,6 +64,8 @@ export function wirePairing(deps: PairingWireDeps): PairingEngine | undefined {
     notify: deps.notify,
     schedule: (fn, ms) => { const t = setTimeout(fn, ms); if (typeof t.unref === 'function') t.unref(); return { cancel: () => clearTimeout(t) } },
     log: (m) => deps.log('PAIR', m),
+    channelStore: makeChannelStore(deps.db),
+    genChannel: () => { const kp = generateKeypair(); return { channelId: randomUUID(), pubkey: kp.publicKey, privkey: kp.privateKey } },
   })
   deps.log('BOOT', `pairing: wired (rendezvous relay ${relays[0]})`)
   return engine

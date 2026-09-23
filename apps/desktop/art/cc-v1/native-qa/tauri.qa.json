@@ -1,0 +1,101 @@
+{
+  "productName": "CC Native QA",
+  "identifier": "com.tendhearth.cc-native-qa",
+  "build": {
+    "beforeBuildCommand": "bun scripts/prepare-cc-native-qa.mjs",
+    "frontendDist": "../art/cc-v1/native-qa/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "qa-board",
+        "title": "CC Native QA",
+        "url": "cc-native-qa.html",
+        "width": 1280,
+        "height": 610,
+        "x": 40,
+        "y": 70,
+        "resizable": false
+      },
+      {
+        "label": "qa-48",
+        "title": "CC 48px transparent",
+        "url": "cc-native-qa.html?size=48",
+        "width": 112,
+        "height": 296,
+        "x": 80,
+        "y": 220,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "skipTaskbar": true
+      },
+      {
+        "label": "qa-96",
+        "title": "CC 96px transparent",
+        "url": "cc-native-qa.html?size=96",
+        "width": 208,
+        "height": 296,
+        "x": 214,
+        "y": 220,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "skipTaskbar": true
+      },
+      {
+        "label": "qa-128",
+        "title": "CC 128px transparent",
+        "url": "cc-native-qa.html?size=128",
+        "width": 272,
+        "height": 296,
+        "x": 444,
+        "y": 220,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "skipTaskbar": true
+      },
+      {
+        "label": "qa-256",
+        "title": "CC 256px transparent",
+        "url": "cc-native-qa.html?size=256",
+        "width": 528,
+        "height": 296,
+        "x": 738,
+        "y": 220,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "skipTaskbar": true
+      }
+    ],
+    "security": {
+      "capabilities": [
+        {
+          "identifier": "cc-native-qa-events",
+          "windows": [
+            "qa-*"
+          ],
+          "permissions": [
+            "core:event:default",
+            "core:window:allow-set-focus"
+          ]
+        }
+      ]
+    }
+  },
+  "bundle": {
+    "externalBin": [],
+    "resources": [],
+    "createUpdaterArtifacts": false
+  }
+}

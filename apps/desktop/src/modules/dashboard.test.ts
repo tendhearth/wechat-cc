@@ -110,6 +110,9 @@ function installDashboardDom() {
     accountsCurrent: fakeEl(),
     accountsMeta: fakeEl(),
     dashHealthBanner: { ...fakeEl(), hidden: true },
+    dashHealthHistory: { ...fakeEl(), hidden: true, open: false },
+    dashHealthHistoryDetail: fakeEl(),
+    connectionOptions: { ...fakeEl(), hidden: true, open: false },
   }
   const byId: Record<string, any> = {
     'hero-card': els.heroCard,
@@ -123,6 +126,9 @@ function installDashboardDom() {
     'accounts-current': els.accountsCurrent,
     'accounts-meta': els.accountsMeta,
     'dash-health-banner': els.dashHealthBanner,
+    'dash-health-history': els.dashHealthHistory,
+    'dash-health-history-detail': els.dashHealthHistoryDetail,
+    'dash-connection-options': els.connectionOptions,
   }
   const fakeDocument = {
     getElementById: (id: string) => byId[id] ?? null,
@@ -337,6 +343,9 @@ describe('dashboard button state', () => {
     expect(els.heroHeadline.textContent).toBe('此刻，陪你一起看鱼')
     expect(els.heroMeta.textContent).toBe('把鼠标轻轻移进鱼缸，看看谁会先回应你')
     expect(els.dashStop.hidden).toBe(false)
+    expect(els.connectionOptions.hidden).toBe(false)
+    expect(els.accountsBody.innerHTML).toContain('添加使用者')
+    expect(els.accountsBody.innerHTML).toContain('data-action="add-sub-user"')
     expect(els.dashRestart.hidden).toBe(true)
   })
 
@@ -366,6 +375,8 @@ describe('dashboard button state', () => {
     expect(els.heroHeadline.textContent).toBe('CC 暂时失去连接')
     expect(els.heroMeta.textContent).toBe('可能暂时无法接收微信消息')
     expect(els.dashStop.hidden).toBe(true)
+    expect(els.connectionOptions.hidden).toBe(true)
+    expect(els.connectionOptions.open).toBe(false)
     expect(els.dashRestart.hidden).toBe(false)
   })
 
@@ -384,6 +395,8 @@ describe('dashboard button state', () => {
     expect(els.heroHeadline.textContent).toBe('CC 暂时失去连接')
     expect(els.heroMeta.textContent).toBe('可能暂时无法接收微信消息')
     expect(els.dashStop.hidden).toBe(true)
+    expect(els.connectionOptions.hidden).toBe(true)
+    expect(els.connectionOptions.open).toBe(false)
     expect(els.dashRestart.hidden).toBe(false)
   })
 })
@@ -1164,7 +1177,7 @@ describe('provider menu', () => {
   it('toggleProviderMenu populates menu with claude, codex, cursor buttons', async () => {
     const { menuButtons } = installProviderMenuDom()
     await toggleProviderMenu(
-      { invoke: vi.fn(async () => ({ ok: true })), doctorPoller: { current: null } },
+      { invoke: vi.fn(async () => ({ ok: true })), invokeApi: vi.fn(async () => ({ok:true,registered:['claude','codex','cursor']})), doctorPoller: { current: null } },
       makeProviderReport('claude'),
     )
     const providers = menuButtons.map(b => b.dataset.provider)
@@ -1177,7 +1190,7 @@ describe('provider menu', () => {
   it('active provider button has provider-menu-active class', async () => {
     const { menuButtons } = installProviderMenuDom()
     await toggleProviderMenu(
-      { invoke: vi.fn(async () => ({ ok: true })), doctorPoller: { current: null } },
+      { invoke: vi.fn(async () => ({ ok: true })), invokeApi: vi.fn(async () => ({ok:true,registered:['claude','codex','cursor']})), doctorPoller: { current: null } },
       makeProviderReport('codex'),
     )
     const activeBtn = menuButtons.find(b => b.className === 'provider-menu-active')
@@ -1197,7 +1210,7 @@ describe('provider menu', () => {
       waitForCondition: vi.fn(async (pred: (r: any) => boolean) => makeProviderReport('codex')),
       lastError: null,
     }
-    await toggleProviderMenu({ invoke, doctorPoller }, makeProviderReport('claude'))
+    await toggleProviderMenu({ invoke, invokeApi: vi.fn(async () => ({ok:true,registered:["claude","codex","cursor"]})), doctorPoller }, makeProviderReport('claude'))
     // providerMenu is open — click 'codex' button
     const codexBtn = menuButtons.find(b => b.dataset.provider === 'codex')
     expect(codexBtn).toBeDefined()
@@ -1217,7 +1230,7 @@ describe('provider menu', () => {
   it('clicking the same provider closes menu without invoking CLI', async () => {
     const { menuButtons, providerMenu } = installProviderMenuDom()
     const invoke = vi.fn(async () => ({ ok: true }))
-    await toggleProviderMenu({ invoke, doctorPoller: { current: null } }, makeProviderReport('claude'))
+    await toggleProviderMenu({ invoke, invokeApi: vi.fn(async () => ({ok:true,registered:['claude','codex','cursor']})), doctorPoller: { current: null } }, makeProviderReport('claude'))
     const claudeBtn = menuButtons.find(b => b.dataset.provider === 'claude')
     expect(claudeBtn).toBeDefined()
     for (const handler of claudeBtn!._clickHandlers) {
@@ -1236,7 +1249,7 @@ describe('provider menu', () => {
   it('closeProviderMenu hides the menu', async () => {
     const { providerMenu } = installProviderMenuDom()
     await toggleProviderMenu(
-      { invoke: vi.fn(async () => ({ ok: true })), doctorPoller: { current: null } },
+      { invoke: vi.fn(async () => ({ ok: true })), invokeApi: vi.fn(async () => ({ok:true,registered:['claude','codex','cursor']})), doctorPoller: { current: null } },
       makeProviderReport('claude'),
     )
     expect(providerMenu.hidden).toBe(false)
@@ -1255,7 +1268,7 @@ describe('provider menu', () => {
       }
       return { ok: true }
     })
-    await toggleProviderMenu({ invoke, doctorPoller: { current: null } }, makeProviderReport('claude'))
+    await toggleProviderMenu({ invoke, invokeApi: vi.fn(async () => ({ok:true,registered:['claude','codex','cursor']})), doctorPoller: { current: null } }, makeProviderReport('claude'))
     const codexBtn = menuButtons.find(b => b.dataset.provider === 'codex')
     for (const handler of codexBtn!._clickHandlers) {
       await handler({ stopPropagation: () => {} })
@@ -1267,7 +1280,7 @@ describe('provider menu', () => {
     })
     expect(serviceStopCall).toBeUndefined()
     // Error toast should be visible
-    expect(els.dashPending.textContent).toBe('切换 provider 失败')
+    expect(els.dashPending.textContent).toBe('切换 AI 服务失败')
   })
 
   it('toggleUserProviderMenu populates card menu from the registered-provider fallback', async () => {
@@ -1281,7 +1294,7 @@ describe('provider menu', () => {
     }
 
     await toggleUserProviderMenu(
-      { invoke: vi.fn(async () => ({ ok: true })), doctorPoller: { current: null } },
+      { invoke: vi.fn(async () => ({ ok: true })), invokeApi: vi.fn(async () => ({ok:true,registered:['claude','codex','cursor']})), doctorPoller: { current: null } },
       anchor,
       makeProviderReport('claude'),
     )
@@ -1301,7 +1314,7 @@ describe('provider menu', () => {
     }
     const invoke = vi.fn(async () => ({ ok: true }))
 
-    await toggleUserProviderMenu({ invoke, doctorPoller: { refresh: vi.fn(async () => null) } }, anchor, makeProviderReport('claude'))
+    await toggleUserProviderMenu({ invoke, invokeApi: vi.fn(async () => ({ok:true,registered:['claude','codex','cursor']})), doctorPoller: { refresh: vi.fn(async () => null) } }, anchor, makeProviderReport('claude'))
     const geminiBtn = menuButtons.find(b => b.dataset.provider === 'cursor')
     expect(geminiBtn).toBeDefined()
     for (const handler of geminiBtn!._clickHandlers) {
@@ -1344,15 +1357,17 @@ describe('loadLastIncident', () => {
     expect(invoke).not.toHaveBeenCalled()
   })
 
-  it('已恢复的故障 → 横幅显示时长与"现已恢复"文案', async () => {
+  it('已恢复的故障 → 折叠历史保留时长与恢复文案，隐藏警告', async () => {
     const els = installDashboardDom()
     const invoke = vi.fn(async () => ({}))
     const invokeApi = vi.fn(async () => ({ incidents: [CLOSED] }))
     globalThis.localStorage = fakeLocalStorage() as any
     await loadLastIncident({ invoke, invokeApi })
-    expect(els.dashHealthBanner.hidden).toBe(false)
-    expect(els.dashHealthBanner.textContent).toContain('现已恢复')
-    expect(els.dashHealthBanner.textContent).toContain('小时')
+    expect(els.dashHealthBanner.hidden).toBe(true)
+    expect(els.dashHealthHistory.hidden).toBe(false)
+    expect(els.dashHealthHistory.open).toBe(false)
+    expect(els.dashHealthHistoryDetail.textContent).toContain('现已恢复')
+    expect(els.dashHealthHistoryDetail.textContent).toContain('小时')
   })
 
   it('仍在进行的故障 → 横幅文案标"仍在进行"/断开状态,不写"现已恢复"', async () => {
@@ -1362,8 +1377,27 @@ describe('loadLastIncident', () => {
     globalThis.localStorage = fakeLocalStorage() as any
     await loadLastIncident({ invoke, invokeApi })
     expect(els.dashHealthBanner.hidden).toBe(false)
+    expect(els.dashHealthHistory.hidden).toBe(true)
     expect(els.dashHealthBanner.textContent).toContain('断开状态')
     expect(els.dashHealthBanner.textContent).not.toContain('现已恢复')
+  })
+
+  it('恢复记录遇到新故障或空记录时收起，避免留下过期的恢复提示', async () => {
+    const els = installDashboardDom()
+    globalThis.localStorage = fakeLocalStorage() as any
+    let incidents: any[] = [CLOSED]
+    const deps = { invoke: vi.fn(async () => ({})), invokeApi: vi.fn(async () => ({ incidents })) }
+    await loadLastIncident(deps)
+    els.dashHealthHistory.open = true
+    incidents = [ONGOING]
+    await loadLastIncident(deps)
+    expect(els.dashHealthHistory.hidden).toBe(true)
+    expect(els.dashHealthHistory.open).toBe(false)
+    expect(els.dashHealthBanner.hidden).toBe(false)
+    incidents = []
+    await loadLastIncident(deps)
+    expect(els.dashHealthHistory.hidden).toBe(true)
+    expect(els.dashHealthBanner.hidden).toBe(true)
   })
 
   it('首次运行(localStorage 里没有存过)→ 不弹通知,只记录当前最新的复合 key', async () => {
@@ -1569,5 +1603,33 @@ describe('checkIncidentsOnPoll', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('loadFsAccess —— daemon 自己读不到主人的文件夹时要说出来', async () => {
+  const { loadFsAccess } = await import('./dashboard.js')
+  const mk = () => {
+    const els: Record<string, { hidden: boolean; textContent: string; dataset: Record<string, string>; addEventListener: (e: string, f: () => void) => void; _click?: () => void }> = {}
+    for (const id of ['dash-fs-access', 'dash-fs-access-text', 'dash-fs-access-open']) {
+      els[id] = { hidden: true, textContent: '', dataset: {}, addEventListener(_e, f) { this._click = f } }
+    }
+    // @ts-expect-error stub
+    globalThis.document = { getElementById: (id: string) => els[id] ?? null }
+    return els
+  }
+  it('any_denied → 显示提示 + 按钮打开系统设置(经 Rust open_url,白名单 scheme)', async () => {
+    const els = mk()
+    const ipc = vi.fn(async () => undefined)
+    await loadFsAccess({ invokeApi: async () => ({ fs_access: { any_denied: true, hint: '系统没给…', settings_url: 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles' } }), ipcInvoke: ipc })
+    expect(els['dash-fs-access']!.hidden).toBe(false)
+    expect(els['dash-fs-access-text']!.textContent).toBe('系统没给…')
+    els['dash-fs-access-open']!._click!()
+    expect(ipc).toHaveBeenCalledWith('open_url', { url: expect.stringContaining('Privacy_AllFiles') })
+  })
+  it('权限正常 / 老 daemon 没这个字段 / 读不到 → 都不显示(不制造假警报)', async () => {
+    const els = mk()
+    await loadFsAccess({ invokeApi: async () => ({ fs_access: { any_denied: false } }) }); expect(els['dash-fs-access']!.hidden).toBe(true)
+    await loadFsAccess({ invokeApi: async () => ({}) }); expect(els['dash-fs-access']!.hidden).toBe(true)
+    await loadFsAccess({ invokeApi: async () => { throw new Error('down') } }); expect(els['dash-fs-access']!.hidden).toBe(true)
   })
 })

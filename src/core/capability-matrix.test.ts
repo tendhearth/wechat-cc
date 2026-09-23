@@ -93,6 +93,7 @@ describe('ghost-gemini — extensibility check (RFC 05 Phase 2)', () => {
     const { deriveCapability } = await import('./capability-matrix')
     const GEMINI_CAPABILITIES = {
       perToolCallback: true,
+      adminMcpTools: true,
       sandboxLevels: new Set<'none' | 'read-only' | 'workspace-write' | 'full'>(),
       supportsDelegation: false,
       supportsResume: false,
@@ -233,5 +234,13 @@ describe('capability-matrix — supportsDelegation conjunct (B2, spec §4)', () 
       expect(lookup('primary_tool', 'codex', pm).delegate).toBe('loaded')
       expect(lookup('primary_tool', 'openai', pm).delegate).toBe('loaded')
     }
+  })
+})
+
+describe('provider id single source', () => {
+  it('CAPABILITIES_BY_PROVIDER keys == lib/provider-ids PROVIDER_IDS (adding a provider = one list, not seven)', async () => {
+    const { capabilityProviderIds } = await import('./capability-matrix')
+    const { PROVIDER_IDS } = await import('../lib/provider-ids')
+    expect([...capabilityProviderIds()].sort()).toEqual([...PROVIDER_IDS].sort())
   })
 })

@@ -8,7 +8,7 @@
 //      successful unlock (mock passphrase "1234") re-queries and shows private
 //      threads; the `no_lock_configured` path hides the affordance entirely.
 
-import { test, expect } from './fixtures'
+import { test, expect, clickNav } from './fixtures'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -26,7 +26,7 @@ async function bootAndOpenDialogue(page: import('@playwright/test').Page, shimUr
     document.documentElement.dataset.mode = 'dashboard'
   })
   await expect(page.locator('main.dashboard')).toBeVisible({ timeout: 5_000 })
-  await page.locator('button.dash-nav-link[data-pane="sessions"]').click()
+  await clickNav(page, 'sessions')
   await expect(page.locator('#dialogue-root')).toBeVisible()
 }
 
@@ -63,7 +63,7 @@ test('upward paging: scroll-to-top prepends older messages and preserves positio
   )
   await page.evaluate(() => { document.documentElement.dataset.mode = 'dashboard' })
   await page.locator('main.dashboard').waitFor({ state: 'visible', timeout: 5_000 })
-  await page.locator('button.dash-nav-link[data-pane="sessions"]').click()
+  await clickNav(page, 'sessions')
   await expect(page.locator('#dialogue-root')).toBeVisible()
 
   const timeline = page.locator('#dialogue-timeline')
@@ -122,7 +122,7 @@ test('upward paging does not fire when hasMore is false (no further pages)', asy
   )
   await page.evaluate(() => { document.documentElement.dataset.mode = 'dashboard' })
   await page.locator('main.dashboard').waitFor({ state: 'visible', timeout: 5_000 })
-  await page.locator('button.dash-nav-link[data-pane="sessions"]').click()
+  await clickNav(page, 'sessions')
   await expect(page.locator('#dialogue-root')).toBeVisible()
 
   const timeline = page.locator('#dialogue-timeline')

@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { makeSessionStore } from './session-store'
 import { openTestDb, openDb, type Db } from '../lib/db'
+import { removeTempDir } from '../lib/test-temp'
 
 // Pre-tier (v0.5) rows migrated from the legacy sessions.json land
 // under chat_id='_legacy'. Most tests in this file pre-date the
@@ -21,7 +22,7 @@ describe('SessionStore', () => {
   })
   afterEach(() => {
     db.close()
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   })
 
   it('starts empty', () => {
@@ -202,6 +203,37 @@ describe('SessionStore', () => {
       s.set({ alias: 'compass', provider: 'codex', chatId: CHAT, sessionId: 'sid-codex' })
       s.deleteOne({ alias: 'compass', provider: 'claude', chatId: CHAT })  // no claude row exists
       expect(s.get({ alias: 'compass', provider: 'codex', chatId: CHAT })?.session_id).toBe('sid-codex')
+    })
+
+    it('deleteProvider drops every row of that provider across aliases and chats, counts them, and leaves the others alone', () => {
+      // 换模型走这条路:续接的会话会沿用旧模型,所以存档行必须一起清掉。
+      const s = makeSessionStore(db)
+      s.set({ alias: 'compass', provider: 'cursor', chatId: 'chat-a', sessionId: 'sid-1' })
+      s.set({ alias: 'mobile', provider: 'cursor', chatId: 'chat-b', sessionId: 'sid-2' })
+      s.set({ alias: 'compass', provider: 'claude', chatId: 'chat-a', sessionId: 'sid-claude' })
+      expect(s.deleteProvider('cursor')).toBe(2)
+      expect(s.get({ alias: 'compass', provider: 'cursor', chatId: 'chat-a' })).toBeNull()
+      expect(s.get({ alias: 'mobile', provider: 'cursor', chatId: 'chat-b' })).toBeNull()
+      expect(s.get({ alias: 'compass', provider: 'claude', chatId: 'chat-a' })?.session_id).toBe('sid-claude')
+      // 没有行时报 0,不是撒谎的"删了"。
+      expect(s.deleteProvider('cursor')).toBe(0)
+    })
+
+    it('deleteProviderChat drops every row of that (provider, chat) across aliases, counts them, and leaves other chats/providers/aliases alone', () => {
+      // 按对话换钉模型走这条路:只忘掉这一个对话在这家执行者上的存档,
+      // 别的对话、别的 provider、同 provider 的别的对话都不能受影响。
+      const s = makeSessionStore(db)
+      s.set({ alias: 'compass', provider: 'cursor', chatId: 'chat-a', sessionId: 'sid-1' })
+      s.set({ alias: 'mobile', provider: 'cursor', chatId: 'chat-a', sessionId: 'sid-2' })
+      s.set({ alias: 'compass', provider: 'cursor', chatId: 'chat-b', sessionId: 'sid-other-chat' })
+      s.set({ alias: 'compass', provider: 'claude', chatId: 'chat-a', sessionId: 'sid-other-provider' })
+      expect(s.deleteProviderChat('cursor', 'chat-a')).toBe(2)
+      expect(s.get({ alias: 'compass', provider: 'cursor', chatId: 'chat-a' })).toBeNull()
+      expect(s.get({ alias: 'mobile', provider: 'cursor', chatId: 'chat-a' })).toBeNull()
+      expect(s.get({ alias: 'compass', provider: 'cursor', chatId: 'chat-b' })?.session_id).toBe('sid-other-chat')
+      expect(s.get({ alias: 'compass', provider: 'claude', chatId: 'chat-a' })?.session_id).toBe('sid-other-provider')
+      // 没有行时报 0,不是撒谎的"删了"。
+      expect(s.deleteProviderChat('cursor', 'chat-a')).toBe(0)
     })
   })
 

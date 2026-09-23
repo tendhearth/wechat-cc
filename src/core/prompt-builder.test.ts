@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSystemPrompt, bubbleRepliesSection, careSection, companionOfferSection, CORE_MEMORY_MAX_CHARS, coreMemorySection, KNOWLEDGE_MEMORY_MAX_CHARS, knowledgeMemorySection, daemonSelfHealSection, knowledgeOrchestrationSection, newRelationshipSection, personaCultivationSection, personaSection, stickerEmptyLibrarySection, stickerSection } from './prompt-builder'
+import { buildSystemPrompt, bubbleRepliesSection, careSection, companionOfferSection, CORE_MEMORY_MAX_CHARS, coreMemorySection, KNOWLEDGE_MEMORY_MAX_CHARS, knowledgeMemorySection, daemonSelfHealSection, knowledgeOrchestrationSection, newRelationshipSection, personaCultivationSection, personaSection, socialToolsSection, stickerEmptyLibrarySection, stickerSection } from './prompt-builder'
 
 describe('buildSystemPrompt', () => {
   function defaults() {
@@ -17,6 +17,19 @@ describe('buildSystemPrompt', () => {
     expect(p).toContain('reply')
     expect(p).toContain('FALLBACK_REPLY')   // accurate fallback log tag (RFC 03 review #4)
     expect(p).toContain('<quote')
+  })
+
+  // 主人问「你是哪个模型」—— bot 之前只知道自己是 claude,不知道模型 id,
+  // 要么瞎猜要么去调 admin-only 的 model_get(信任用户还被挡)。真相直接
+  // 写进提示,零工具零权限。
+  it('states the current model id next to the identity line when known', () => {
+    const p = buildSystemPrompt({ ...defaults(), model: 'claude-opus-5' })
+    expect(p).toContain('你是 claude(当前模型 claude-opus-5)')
+    expect(p).toContain('如实回答')
+  })
+  it('falls back to「provider 默认」wording when no model is pinned', () => {
+    const p = buildSystemPrompt({ ...defaults() })
+    expect(p).toContain('你是 claude(当前模型:provider 默认')
   })
 
   it('opens with `你是 ${providerId}` so the agent knows its own identity (chatroom mode peer disambiguation)', () => {
@@ -764,5 +777,42 @@ describe('knowledge-orchestration prompt section', () => {
     const multiModeIdxWithout = withoutKnowledge.indexOf('模式感知')
     const withoutKnowledgeSpliced = withKnowledge.slice(0, memoryIdx) + withKnowledge.slice(multiModeIdx)
     expect(withoutKnowledgeSpliced).toBe(withoutKnowledge.slice(0, memoryIdx) + withoutKnowledge.slice(multiModeIdxWithout))
+  })
+})
+
+describe('socialAvailable (social-tools 2026-09-05)', () => {
+  const base = { providerId: 'claude' as const, peerProviderId: 'codex' as const, companionEnabled: false, delegateAvailable: false }
+  const TOOLS = ['social_seek', 'wish_list', 'wish_send', 'wish_cancel', 'intro_request', 'intro_accept', 'intro_decline', 'intro_offers', 'relationships', 'visit']
+
+  it('buildSystemPrompt is byte-identical whether socialAvailable is absent or explicitly false', () => {
+    const withoutKey = buildSystemPrompt({ ...base })
+    const withFalse = buildSystemPrompt({ ...base, socialAvailable: false })
+    expect(withFalse).toBe(withoutKey)
+    expect(withoutKey).not.toContain('替主人交朋友')
+    for (const t of TOOLS.filter(t => t !== 'social_seek')) expect(withoutKey).not.toContain(t)
+  })
+
+  it('renders the 替主人交朋友 section with all ten tool names when socialAvailable is true', () => {
+    const p = buildSystemPrompt({ ...base, socialAvailable: true })
+    expect(p).toContain('## 替主人交朋友(管理员)')
+    for (const t of TOOLS) expect(p).toContain(`\`${t}\``)
+  })
+
+  it('socialToolsSection() says: query before answering, act on say-so, wish keeps the preview nod', () => {
+    const s = socialToolsSection()
+    expect(s).toContain('先查再答')
+    expect(s).toContain('直接做')
+    expect(s).toContain('preview')
+    expect(s).toContain('social_not_wired')
+  })
+})
+
+describe('daemonSelfHealSection — 换模型是正常操作,不只是修故障', () => {
+  it('tells the agent model_set is the way to honor「换成 opus 5」and to pass its own provider', () => {
+    const t = daemonSelfHealSection()
+    expect(t).toContain('换模型')
+    expect(t).toContain('model_set')
+    expect(t).toContain('claude-opus-5')
+    expect(t).toContain('provider_switch')
   })
 })

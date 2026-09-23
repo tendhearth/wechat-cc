@@ -4,7 +4,7 @@
  * we ask it to resume.
  *
  *   Claude:  ~/.claude/projects/<encoded-cwd>/<session_id>.jsonl
- *   Codex:   ~/.codex/sessions/<YYYY>/<MM>/<DD>/<thread_id>.jsonl  (sharded)
+ *   Codex:   ~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<timestamp>-<thread_id>.jsonl
  *
  * Codex's sharding caused RFC 03 P5 review #9: the original P0 impl
  * checked only the unsharded path which never matched real Codex output,
@@ -14,7 +14,16 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 export function claudeSessionJsonlPath(home: string, cwd: string, sessionId: string): string {
-  const encoded = cwd.replace(/\//g, '-')
+  // Match Claude Code's native project-directory encoding, including its
+  // long-path suffix. Checking a different path silently breaks resume.
+  let encoded = cwd.replace(/[^a-zA-Z0-9]/g, '-')
+  if (encoded.length > 200) {
+    let hash = 0
+    for (let index = 0; index < cwd.length; index++) {
+      hash = ((hash << 5) - hash + cwd.charCodeAt(index)) | 0
+    }
+    encoded = `${encoded.slice(0, 200)}-${Math.abs(hash).toString(36)}`
+  }
   return join(home, '.claude', 'projects', encoded, `${sessionId}.jsonl`)
 }
 
@@ -44,6 +53,11 @@ export function codexSessionJsonlPaths(home: string, threadId: string): string[]
             join(dayDir, `${threadId}.jsonl`),
             join(dayDir, `${threadId}.json`),
           )
+          for (const file of safeReaddir(dayDir, readdirSync)) {
+            if (file.startsWith('rollout-') && file.endsWith(`-${threadId}.jsonl`)) {
+              candidates.push(join(dayDir, file))
+            }
+          }
         }
       }
     }

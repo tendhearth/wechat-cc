@@ -9,6 +9,7 @@ import type { Middleware } from './types'
 import type { MessageRecord } from '../../lib/messages-store'
 import { inboundMessageId, inboundFallbackMessageId } from '../../lib/messages-store'
 import { isoFromMs } from '../../lib/iso-time'
+import {isWechatTaskCommand,wechatTaskMessageKey} from '../../core/workbench/wechat-control'
 
 export interface MessagesMwDeps {
   append(rec: MessageRecord): Promise<number>
@@ -24,9 +25,9 @@ export interface MessagesMwDeps {
 export function makeMwMessages(deps: MessagesMwDeps): Middleware {
   return async (ctx, next) => {
     try { deps.markInboundActivity?.() } catch { /* 绝不能因为记一笔就打断入站管线 */ }
-    const messageId = ctx.msg.createTimeMs
+    const messageId = wechatTaskMessageKey(ctx.msg) ?? (ctx.msg.createTimeMs
       ? inboundMessageId(ctx.msg.userId, ctx.msg.createTimeMs)
-      : inboundFallbackMessageId(ctx.msg.userId, ctx.msg.text)
+      : inboundFallbackMessageId(ctx.msg.userId, ctx.msg.text))
     const rec: MessageRecord = {
       id: messageId,
       chatId: ctx.msg.chatId,
@@ -36,11 +37,11 @@ export function makeMwMessages(deps: MessagesMwDeps): Middleware {
       // user's message. Fall back to the receive time.
       ts: isoFromMs(ctx.msg.createTimeMs || ctx.receivedAtMs, ctx.receivedAtMs),
       direction: 'in',
-      kind: ctx.msg.text.startsWith('/') ? 'command'
+      kind: ctx.msg.text.startsWith('/') || isWechatTaskCommand(ctx.msg.text) ? 'command'
         : ctx.msg.msgType !== 'text' ? ctx.msg.msgType
         : 'text',
       text: ctx.msg.text,
-      source: 'live',
+      source: isWechatTaskCommand(ctx.msg.text) ? 'workbench' : 'live',
     }
     try { await deps.append(rec) } catch (err) {
       deps.log('MESSAGES', `inbound record failed for ${ctx.msg.chatId}: ${err instanceof Error ? err.message : err}`)

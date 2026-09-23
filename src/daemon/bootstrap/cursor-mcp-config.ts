@@ -1,38 +1,26 @@
 /**
- * cursor-agent MCP session-config machinery — tier C (global-only), the
- * cursor twin of agy-mcp-config.ts (read that file's header for the full
- * safety rationale; every rule below is inherited from it):
+ * cursor-agent 全局 mcp.json 清理 —— 只剩 boot 时清掉上一版留下的条目。
  *
- * cursor-agent reads MCP servers from the global `~/.cursor/mcp.json`
- * (claude-style `{"mcpServers":{…}}`). Like agy, that file is static and
- * shared across whatever the operator runs — it can't carry a per-session
- * token, so we upsert ONE boot-minted long-lived 'trusted' token under our
- * namespaced key and gate /cursor to admin/trusted chats (mode-commands'
- * existing tier-C gate family).
+ * 上一版(print 模式)往 cursor-agent 唯一的全局 MCP 入口 `~/.cursor/mcp.json`
+ * (claude 式 `{"mcpServers":{…}}`)里塞过一把 boot-minted 长效 'trusted' 令牌,
+ * 命名空间键是 `wechat-cc:wechat`。对话侧改走 ACP 后(acp-cursor-chat.ts),
+ * wechat/delegate MCP 按会话注入、带逐会话 token 与 tier,那个全局静态条目
+ * 不再被读取 —— 留着只是一把风险更高的旧钥匙,所以 boot 时主动删掉它。
  *
- * Safety rules (same as agy): only touch our own `wechat-cc:wechat` entry;
- * read-modify-write; create-if-absent; idempotent (no churn); never
- * "fix" corrupted JSON by clobbering; test-runner guard against writing the
- * operator's real ~/.cursor.
+ * 安全规则与 agy-mcp-config.ts 一致(read-modify-write;只动自己的
+ * `wechat-cc:wechat` 一个键;绝不因为文件损坏就整体覆盖;测试 runner 下
+ * 不传 cursorConfigDir 就自动跳过,绝不碰操作者真的 ~/.cursor)。
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { McpStdioSpec } from '../../core/mcp-stdio-spec'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
 
-export const CURSOR_WECHAT_MCP_NAMESPACE_ID = 'wechat-cc:wechat'
+/** 上一版写入时用的命名空间键 —— 只在本文件内私有,不再对外导出。 */
+const LEGACY_CURSOR_WECHAT_MCP_KEY = 'wechat-cc:wechat'
 
 const CONFIG_FILE_NAME = 'mcp.json'
 const LOG_TAG = 'cursor-mcp'
-
-export interface PrepareCursorMcpOpts {
-  wechatSpec: McpStdioSpec
-  mintToken: () => string
-  /** Test seam — defaults to `~/.cursor`. Tests MUST pass a mkdtemp dir. */
-  cursorConfigDir?: string
-  log: (tag: string, line: string) => void
-}
 
 interface McpConfigRoot {
   mcpServers?: unknown
@@ -43,73 +31,12 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
-/** Boot-time global upsert. Returns true iff the file was written. */
-export function setupCursorGlobalMcp(opts: PrepareCursorMcpOpts): boolean {
-  if (!opts.cursorConfigDir && UNDER_TEST_RUNNER) {
-    opts.log(LOG_TAG, 'skipped under test runner — no explicit cursorConfigDir (refusing to default to the real ~/.cursor)')
-    return false
-  }
-  const dir = opts.cursorConfigDir ?? join(homedir(), '.cursor')
-  const path = join(dir, CONFIG_FILE_NAME)
-
-  let existingRaw: string | null
-  try {
-    existingRaw = readFileSync(path, 'utf8')
-  } catch {
-    existingRaw = null
-  }
-  if (existingRaw !== null && existingRaw.trim() === '') existingRaw = null
-
-  let existingRoot: McpConfigRoot = {}
-  if (existingRaw !== null) {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(existingRaw)
-    } catch (err) {
-      opts.log(LOG_TAG, `refusing to touch corrupted ${path}: ${(err as Error).message}`)
-      return false
-    }
-    if (!isPlainObject(parsed) || ('mcpServers' in parsed && !isPlainObject(parsed.mcpServers))) {
-      opts.log(LOG_TAG, `refusing to touch ${path}: unexpected shape (not {"mcpServers":{...}})`)
-      return false
-    }
-    existingRoot = parsed
-  }
-
-  const existingServers = isPlainObject(existingRoot.mcpServers) ? existingRoot.mcpServers : {}
-  const token = opts.mintToken()
-  const entry: McpStdioSpec = {
-    command: opts.wechatSpec.command,
-    args: opts.wechatSpec.args,
-    env: {
-      ...(opts.wechatSpec.env ?? {}),
-      // NEVER a per-session token — tier C contract, see header.
-      WECHAT_SESSION_TOKEN: token,
-      WECHAT_SESSION_TIER: 'trusted',
-    },
-  }
-
-  const newRoot: McpConfigRoot = {
-    ...existingRoot,
-    mcpServers: { ...existingServers, [CURSOR_WECHAT_MCP_NAMESPACE_ID]: entry },
-  }
-  const newText = JSON.stringify(newRoot, null, 2) + '\n'
-  if (existingRaw !== null && existingRaw === newText) return false
-
-  mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const tmp = `${path}.tmp`
-  writeFileSync(tmp, newText, { mode: 0o600 })
-  renameSync(tmp, path)
-  opts.log(LOG_TAG, `${existingRaw === null ? 'created' : 'updated'} ${path} (namespace "${CURSOR_WECHAT_MCP_NAMESPACE_ID}")`)
-  return true
-}
-
 export interface RemoveCursorMcpOpts {
   cursorConfigDir?: string
   log: (tag: string, line: string) => void
 }
 
-/** Shutdown mirror — removes ONLY our namespaced entry. Returns true iff written. */
+/** boot-time 清理 —— 移除 ONLY 我们的命名空间条目。Returns true iff written. */
 export function removeCursorGlobalMcp(opts: RemoveCursorMcpOpts): boolean {
   if (!opts.cursorConfigDir && UNDER_TEST_RUNNER) {
     opts.log(LOG_TAG, 'skipped under test runner — no explicit cursorConfigDir (refusing to default to the real ~/.cursor)')
@@ -139,14 +66,14 @@ export function removeCursorGlobalMcp(opts: RemoveCursorMcpOpts): boolean {
   }
   const existingRoot: McpConfigRoot = parsed
   const existingServers = isPlainObject(existingRoot.mcpServers) ? existingRoot.mcpServers : undefined
-  if (!existingServers || !(CURSOR_WECHAT_MCP_NAMESPACE_ID in existingServers)) return false
+  if (!existingServers || !(LEGACY_CURSOR_WECHAT_MCP_KEY in existingServers)) return false
 
   const remainingServers = { ...existingServers }
-  delete remainingServers[CURSOR_WECHAT_MCP_NAMESPACE_ID]
+  delete remainingServers[LEGACY_CURSOR_WECHAT_MCP_KEY]
   const newRoot: McpConfigRoot = { ...existingRoot, mcpServers: remainingServers }
   const tmp = `${path}.tmp`
   writeFileSync(tmp, JSON.stringify(newRoot, null, 2) + '\n', { mode: 0o600 })
   renameSync(tmp, path)
-  opts.log(LOG_TAG, `removed namespace "${CURSOR_WECHAT_MCP_NAMESPACE_ID}" from ${path}`)
+  opts.log(LOG_TAG, `removed namespace "${LEGACY_CURSOR_WECHAT_MCP_KEY}" from ${path}`)
   return true
 }

@@ -11,9 +11,10 @@
  * source of the CONTROLLER RULINGS baked into arg assembly below).
  */
 import { tmpdir } from 'node:os'
-import { assertNotAuthFailed, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type CheapEval, type ProviderCapabilities, type SpawnContext } from './agent-provider'
+import { assertNotAuthFailed, normalizeWechatMcpServer, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type CheapEval, type ProviderCapabilities, type SpawnContext } from './agent-provider'
 import { makeAgyStreamParser } from './agy-stream'
 import { makeTurnEmitter } from './turn-emitter'
+import { spawn } from '../lib/runtime/process'
 
 /**
  * RFC 05 Phase 2 capability declaration. agy has no per-tool callback (print
@@ -22,8 +23,16 @@ import { makeTurnEmitter } from './turn-emitter'
  * `--conversation <id>`); delegation is explicitly out for v1 (spec §0
  * decision 2 — supportsDelegation:false keeps agy off primary_tool/parallel).
  */
+/** agyModel 没设时的兜底 —— 只此一处(见 claude-agent-provider 的 DEFAULT_CLAUDE_MODEL 注释)。 */
+export const DEFAULT_AGY_MODEL = 'gemini-3.7-flash-medium'
+
 export const AGY_CAPABILITIES: ProviderCapabilities = {
   perToolCallback: false,
+  // agy-mcp-config.ts pins WECHAT_SESSION_TIER to 'trusted' for its MCP
+  // child (one static token, not per-session) — SESSION_IS_ADMIN is always
+  // false, so admin-only tools (incl. the social-tools family) never
+  // register for agy even when the owner is chatting.
+  adminMcpTools: false,
   sandboxLevels: new Set(),
   supportsDelegation: false,
   supportsResume: true,
@@ -114,7 +123,7 @@ export function drainCappedStderr(stream: ReadableStream<Uint8Array>, capBytes: 
 
 function defaultSpawnFn(bin: string): AgySpawnFn {
   return (args, opts) => {
-    const proc = Bun.spawn([bin, ...args], { cwd: opts.cwd, stdout: 'pipe', stderr: 'pipe' })
+    const proc = spawn([bin, ...args], { cwd: opts.cwd, stdout: 'pipe', stderr: 'pipe' })
     // Start draining stderr NOW (concurrently with whatever the caller does
     // with stdout/exited) — see drainCappedStderr's doc comment for why a
     // lazy read-on-demand deadlocks against a chatty child.
@@ -232,7 +241,8 @@ function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | typ
 }
 
 /** Base args shared by every invocation (turn dispatch AND one-shot evals). */
-function baseArgs(prompt: string, model: string, turnTimeoutMs: number): string[] {
+/** 生产 spawn 用的参数;导出给 external-cli-contract.live.test 用同一份。 */
+export function agyBaseArgs(prompt: string, model: string, turnTimeoutMs: number): string[] {
   return ['-p', prompt, '--output-format', 'stream-json', '--model', model, '--print-timeout', msToPrintTimeout(turnTimeoutMs)]
 }
 
@@ -244,7 +254,7 @@ function baseArgs(prompt: string, model: string, turnTimeoutMs: number): string[
  * cwd is `tmpdir()` since these calls never touch the daemon's project tree.
  */
 async function oneShotEval(spawnFn: AgySpawnFn, model: string, prompt: string, turnTimeoutMs: number): Promise<string> {
-  const proc = spawnFn(baseArgs(prompt, model, turnTimeoutMs), { cwd: tmpdir() })
+  const proc = spawnFn(agyBaseArgs(prompt, model, turnTimeoutMs), { cwd: tmpdir() })
   const parser = makeAgyStreamParser()
   const texts: string[] = []
   let sawResult = false
@@ -363,7 +373,7 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
                 dispatchedText = `${appendInstructions}\n\n---\n\n${text}`
                 instructionsInjected = true
               }
-              const args = baseArgs(dispatchedText, model, turnTimeoutMs)
+              const args = agyBaseArgs(dispatchedText, model, turnTimeoutMs)
               // CONTROLLER RULING 1: agy's tool execution follows its
               // internal project binding, not process cwd — the FIRST
               // dispatch of a brand-new conversation must claim one via
@@ -408,7 +418,7 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
                       continue
                     }
                     if (ev.kind === 'tool_call') {
-                      yield em.toolCall(ev.tool, ev.server)
+                      yield em.toolCall(ev.tool, normalizeWechatMcpServer(ev.server))
                       continue
                     }
                     if (ev.kind === 'result') {

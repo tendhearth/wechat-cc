@@ -20,6 +20,22 @@ describe('route-tiers', () => {
     expect(minTierFor('GET /v1/model')).toBe('admin')
   })
 
+  it('selftest converse requires admin (2026-09-18-self-maintenance §1)', () => {
+    expect(minTierFor('POST /v1/selftest/converse')).toBe('admin')
+  })
+
+  it('task permission decisions require admin', () => {
+    expect(minTierFor('POST /v1/workbench/permission')).toBe('admin')
+    expect(ROUTE_MIN_TIER['POST /v1/workbench/archive']).toBe('admin')
+    expect(ROUTE_MIN_TIER['GET /v1/workbench/sessions']).toBe('admin')
+    expect(ROUTE_MIN_TIER['GET /v1/workbench/session']).toBe('admin')
+    expect(ROUTE_MIN_TIER['GET /v1/workbench/models']).toBe('admin')
+    expect(ROUTE_MIN_TIER['POST /v1/workbench/prepare-continuation']).toBe('admin')
+    expect(ROUTE_MIN_TIER['POST /v1/workbench/attachment']).toBe('admin')
+    expect(ROUTE_MIN_TIER['GET /v1/workbench/attachment']).toBe('admin')
+    expect(ROUTE_MIN_TIER['POST /v1/workbench/discard-attachment']).toBe('admin')
+  })
+
   it('reply/health/memory-read are guest; broadcast/a2a are trusted', () => {
     expect(minTierFor('GET /v1/health')).toBe('guest')
     expect(minTierFor('POST /v1/wechat/reply')).toBe('guest')
@@ -38,13 +54,15 @@ describe('route-tiers', () => {
     expect(minTierFor('POST /v1/pair/accept')).toBe('trusted')
   })
 
-  it('P4 seek propose/confirm/cancel require trusted (CLI-reachable, flagged for release review)', () => {
-    expect(minTierFor('POST /v1/social/seek/propose')).toBe('trusted')
-    expect(minTierFor('POST /v1/social/seek/confirm')).toBe('trusted')
-    expect(minTierFor('POST /v1/social/seek/cancel')).toBe('trusted')
+  it('心愿 wish/wish-send/wish-cancel/wishes require trusted (CLI-reachable, flagged for release review)', () => {
+    expect(minTierFor('POST /v1/social/wish')).toBe('trusted')
+    expect(minTierFor('POST /v1/social/wish/send')).toBe('trusted')
+    expect(minTierFor('POST /v1/social/wish/cancel')).toBe('trusted')
+    expect(minTierFor('GET /v1/social/wishes')).toBe('trusted')
   })
 
-  it('the deleted one-shot POST /v1/social/seek has no explicit tier (falls to the admin default)', () => {
+  it('the deleted P4 seek/propose route has no explicit tier (falls to the admin default)', () => {
+    expect(ROUTE_MIN_TIER['POST /v1/social/seek/propose']).toBeUndefined()
     expect(ROUTE_MIN_TIER['POST /v1/social/seek']).toBeUndefined()
   })
 
@@ -60,10 +78,11 @@ describe('route-tiers', () => {
     expect(minTierFor('GET /v1/health/incidents')).toBe('trusted')
   })
 
-  it('觅食台读面 + inbound toggle 是 trusted(同上:桌面/CLI 的唯一凭据是文件 token)', () => {
-    expect(minTierFor('GET /v1/social/seeks')).toBe('trusted')
-    expect(minTierFor('GET /v1/social/echoes')).toBe('trusted')
-    expect(minTierFor('GET /v1/social/pledges')).toBe('trusted')
+  it('atelier sharing requires the trusted desktop credential', () => {
+    expect(minTierFor('POST /v1/atelier/share')).toBe('trusted')
+  })
+
+  it('觅食台 inbound toggle 是 trusted(同上:桌面/CLI 的唯一凭据是文件 token)', () => {
     expect(minTierFor('GET /v1/social/inbound')).toBe('trusted')
     expect(minTierFor('POST /v1/social/inbound')).toBe('trusted')
   })
@@ -77,6 +96,18 @@ describe('route-tiers', () => {
     expect(minTierFor('POST /v1/reminders/schedule')).toBe('guest')
     expect(minTierFor('POST /v1/reminders/cancel')).toBe('guest')
     expect(minTierFor('GET /v1/reminders/list')).toBe('guest')
+  })
+
+  it('桌宠 turn 是 trusted;权限拍板两条是 admin(CC 桌宠 Phase B)', () => {
+    expect(minTierFor('GET /v1/companion/pet')).toBe('trusted')
+    expect(minTierFor('GET /v1/permissions/pending')).toBe('admin')
+    expect(minTierFor('POST /v1/permissions/resolve')).toBe('admin')
+  })
+
+  it('自改三条是 admin(代表主人发话 / 替主人开卡片 / 读主人的拍板)', () => {
+    expect(minTierFor('POST /v1/self-change/notice')).toBe('admin')
+    expect(minTierFor('POST /v1/self-change/ask')).toBe('admin')
+    expect(minTierFor('GET /v1/self-change/decision')).toBe('admin')
   })
 
   it('every registered route has an explicit min tier (no accidental default-deny)', () => {

@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "externalBin": [
+      "binaries/wechat-cc-cli",
+      "binaries/sd-cli"
+    ]
+  }
+}

@@ -11,9 +11,10 @@
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from './wechat-tool-deps'
-import { parsePermissionReply } from './pending-permissions'
-import { buildMediaItemFromFile, assertSendable } from './media'
+import { howToReplyLine, parsePermissionReply, type PendingPermissionMeta, type PendingPermissionView, type PermissionDecision } from './pending-permissions'
+import { buildMediaItemFromArtifact,buildMediaItemFromFile, assertSendable } from './media'
 import { ilinkSendMessage, botTextMessage } from '../lib/ilink'
+import { sendIlinkWorkbenchItem,sendIlinkWorkbenchText, type ArtifactTransportOutcome,type WorkbenchMediaItem,type WorkbenchNoticeOutcome } from '../lib/ilink-workbench'
 import type { SessionStateStore } from '../core/session-state'
 import { sendReplyOnce, chunk } from '../lib/send-reply'
 import { MAX_TEXT_CHUNK } from '../lib/config'
@@ -51,7 +52,7 @@ export type { Account } from './ilink/context'
 export type IlinkAccount = import('./ilink/context').Account
 
 export interface IlinkAdapter {
-  sendMessage(chatId: string, text: string): Promise<{ msgId: string; error?: string }>
+  sendMessage(chatId: string, text: string, metadata?: {source:'workbench'}): Promise<{ msgId: string; error?: string }>
   sendFile(chatId: string, path: string): Promise<void>
   /** Passive outbound link health (spec 2026-08-22-outbound-health). */
   outboundHealth(): OutboundHealth
@@ -70,6 +71,19 @@ export interface IlinkAdapter {
    * chat and needs a valid accountId to dispatch it through the coordinator.
    */
   resolveAccountId(chatId: string): string
+  /** Strict persisted-route lookup for workbench notifications; never falls back. */
+  chatAccountId?(chatId: string): string | null
+  /** Single-attempt task text delivery with explicit server acknowledgement. */
+  sendWorkbenchNotice?(notice: {
+    id: string
+    taskId: string
+    runId: string
+    ownerChatId: string
+    accountId: string
+    text: string
+  }, signal?: AbortSignal): Promise<WorkbenchNoticeOutcome>
+  uploadWorkbenchArtifact?(request:{id:string;ownerChatId:string;accountId:string;bytes:Uint8Array;name:string;mime:string},signal?:AbortSignal):Promise<{status:'uploaded';item:WorkbenchMediaItem}|{status:'retryable'|'blocked';reason:string}>
+  sendWorkbenchArtifact?(receipt:{id:string;taskId:string;artifactId:string;artifactSha256:string;ownerChatId:string;accountId:string;name:string},item:WorkbenchMediaItem,signal?:AbortSignal):Promise<ArtifactTransportOutcome>
   projects: WechatProjectsDep
   voice: WechatVoiceDep
   companion: WechatCompanionDep
@@ -94,7 +108,33 @@ export interface IlinkAdapter {
     /** Client-side long-poll timeout — see GetUpdatesResp.timed_out. */
     timed_out?: boolean
   }>
-  handlePermissionReply(text: string): boolean
+  /**
+   * 微信侧的「y/n <hash>」。`fromChatId` 是发这句话的 chat —— 条目带 meta 时
+   * **只有当初被问的那个 chat** 能拍板(hash 现在经 /v1/companion/pet 对所有
+   * trusted 调用方可见,不校验来源等于谁看到 hash 谁就能替主人批准)。
+   * 老条目(无 meta)保持原行为。
+   */
+  handlePermissionReply(text: string, fromChatId?: string, quoted?: string): boolean
+  /** 只读版 handlePermissionReply:同样的判定,不 consume、不发消息。 */
+  probePermissionReply(text: string, fromChatId?: string, quoted?: string): boolean
+  /** Desktop pet permission queue (CC 桌宠 Phase B) — same registry as WeChat. */
+  listPendingPermissions(): PendingPermissionView[]
+  /** Resolve a pending permission from the desktop. = pending.consume(hash, decision). */
+  resolvePermission(hash: string, decision: 'allow' | 'deny'): boolean
+  /** 这条待批在微信里的两位数码(自改流水线要把它一起回给 CLI)。= pending.codeOf. */
+  pendingPermissionCodeOf(hash: string): string | null
+  /**
+   * 只登记一条待批,**不发卡**。= pending.register.
+   *
+   * 自改流水线要的就是这个口子:`askUser` 在外发失败时会 `pending.fail(hash)`
+   * 把条目从登记处删掉(对一轮工具调用是对的 —— 没人能回,别死等),可自改的
+   * 拍板还有桌面权限卡和 `self change --approve <id>` 两条路。外发不通时把条目
+   * 留着,主人换个面拍板就行(2026-09-18 真机:errcode=-2 让整条流水线白跑到
+   * approval_timeout)。发卡由调用方自己做。
+   */
+  registerPendingPermission(hash: string, timeoutMs: number, meta: PendingPermissionMeta): Promise<PermissionDecision>
+  /** 到点扫一遍待批(把过期的 resolve 成 timeout)。= pending.sweep. */
+  sweepPendingPermissions(): void
   /** Session state accessor for admin commands (/health, cleanup). */
   sessionState: SessionStateStore
   flush(): Promise<void>
@@ -165,7 +205,7 @@ export function makeIlinkAdapter(opts: {
   })
 
   const adapter: IlinkAdapter = {
-    async sendMessage(chatId, text) {
+    async sendMessage(chatId, text, metadata) {
       if (!text) return { msgId: `err:${Date.now()}`, error: 'empty text' }
       let reachedWire = false
       try {
@@ -197,7 +237,7 @@ export function makeIlinkAdapter(opts: {
           // send primitive called from many paths (admin, mode, onboarding,
           // AI reply). Recorded as undefined — can be enriched later if needed.
           provider: undefined,
-          source: 'live',
+          source: metadata?.source ?? 'live',
         }).catch(err => log('MESSAGES', `outbound record failed: ${err instanceof Error ? err.message : err}`))
         return { msgId: `sent:${Date.now()}` }
       } catch (err) {
@@ -283,6 +323,80 @@ export function makeIlinkAdapter(opts: {
       return resolveAccount(chatId).id
     },
 
+    chatAccountId(chatId) {
+      const persistedId = acctStore.get(chatId)
+      if (!persistedId) return null
+      return accounts.some(account => account.id === persistedId) ? persistedId : null
+    },
+
+    async sendWorkbenchNotice(notice, signal) {
+      if (!notice.text || notice.text.length > 4000) {
+        return { status: 'blocked', reason: 'invalid_text' }
+      }
+
+      // Binding is checked before selecting (and therefore reading credentials
+      // from) the account. A stale notice must never drift to another account.
+      if (acctStore.get(notice.ownerChatId) !== notice.accountId) {
+        return { status: 'blocked', reason: 'binding_changed' }
+      }
+      const account = accounts.find(candidate => candidate.id === notice.accountId)
+      if (!account) return { status: 'blocked', reason: 'account_unavailable' }
+      const contextToken = ctxStore.get(notice.ownerChatId)
+      if (!contextToken) return { status: 'deferred', reason: 'missing_context' }
+
+      const outcome = await sendIlinkWorkbenchText({
+        baseUrl: account.baseUrl,
+        token: account.token,
+        clientId: notice.id,
+        ownerChatId: notice.ownerChatId,
+        text: notice.text,
+        contextToken,
+        signal,
+      })
+      if (outcome.status === 'accepted'&&!signal?.aborted) {
+        try {
+          await messagesStore.append({
+            id: `workbench:${notice.id}`,
+            chatId: notice.ownerChatId,
+            ts: new Date().toISOString(),
+            direction: 'out',
+            kind: 'text',
+            text: notice.text,
+            source: 'workbench',
+          })
+        } catch (err) {
+          log('MESSAGES', `workbench outbound audit failed for notice=${notice.id}: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+      return outcome
+    },
+
+    async uploadWorkbenchArtifact(request,signal){
+      if(acctStore.get(request.ownerChatId)!==request.accountId)return{status:'blocked',reason:'binding_changed'}
+      const account=accounts.find(candidate=>candidate.id===request.accountId);if(!account)return{status:'blocked',reason:'account_unavailable'}
+      if(!ctxStore.get(request.ownerChatId))return{status:'retryable',reason:'missing_context'}
+      try{
+        const item=await buildMediaItemFromArtifact({bytes:request.bytes,name:request.name,mime:request.mime,toUserId:request.ownerChatId,baseUrl:account.baseUrl,token:account.token,signal})
+        if(acctStore.get(request.ownerChatId)!==request.accountId)return{status:'blocked',reason:'binding_changed'}
+        if(!accounts.some(candidate=>candidate.id===request.accountId))return{status:'blocked',reason:'account_unavailable'}
+        if(!ctxStore.get(request.ownerChatId))return{status:'retryable',reason:'missing_context'}
+        return{status:'uploaded',item}
+      }
+      catch(error){
+        const reason=error instanceof Error?error.message:'upload_failed'
+        return reason==='artifact_too_large'||reason==='invalid_artifact'?{status:'blocked',reason}:{status:'retryable',reason}
+      }
+    },
+
+    async sendWorkbenchArtifact(receipt,item,signal){
+      if(acctStore.get(receipt.ownerChatId)!==receipt.accountId)return{status:'blocked',reason:'binding_changed'}
+      const account=accounts.find(candidate=>candidate.id===receipt.accountId);if(!account)return{status:'blocked',reason:'account_unavailable'}
+      const contextToken=ctxStore.get(receipt.ownerChatId);if(!contextToken)return{status:'deferred',reason:'missing_context'}
+      const outcome=await sendIlinkWorkbenchItem({baseUrl:account.baseUrl,token:account.token,clientId:receipt.id,ownerChatId:receipt.ownerChatId,contextToken,item,signal})
+      if(outcome.status==='accepted'&&!signal?.aborted)try{await messagesStore.append({id:`workbench:${receipt.id}`,chatId:receipt.ownerChatId,ts:new Date().toISOString(),direction:'out',kind:'file',text:receipt.name,source:'workbench'})}catch(error){log('MESSAGES',`workbench artifact audit failed for receipt=${receipt.id}: ${error instanceof Error?error.message:String(error)}`)}
+      return outcome
+    },
+
     projects: {
       list() {
         const views = listProjects(projectsFile)
@@ -316,7 +430,12 @@ export function makeIlinkAdapter(opts: {
 
     async askUser(chatId, prompt, hash, timeoutMs) {
       // Register pending entry first so timeout can fire even if send fails.
-      const resultPromise = pending.register(hash, timeoutMs)
+      const resultPromise = pending.register(hash, timeoutMs, { chatId, prompt })
+      // 怎么回的那一行在这里统一加,调用方(工具权限 / 终端 hook / gemini)只描述「要批什么」。
+      // 两位数码由登记处分配;手机上回「y」即可,同时几条待批才要带码。
+      const code = pending.codeOf(hash)
+      // 措辞和自改的拍板卡共用一个纯函数(见 pending-permissions.howToReplyLine)。
+      const card = `${prompt}\n${howToReplyLine(code, hash, timeoutMs)}`
       // Schedule a sweep at the timeout boundary so the promise resolves
       // with 'timeout' even when the global 30s sweep interval hasn't fired.
       // Using setTimeout so fake-timer tests can advance past the timeout.
@@ -329,7 +448,7 @@ export function makeIlinkAdapter(opts: {
       // reply can EVER come. Don't dead-wait the full 10-min timeout (which
       // races the turn's own no-activity kill → user gets nothing). Resolve
       // 'undelivered' at once so the turn ends now with an honest reason.
-      adapter.sendMessage(chatId, prompt).then(
+      adapter.sendMessage(chatId, card).then(
         (res) => {
           const err = (res as { error?: string } | null | undefined)?.error
           if (err) {
@@ -377,11 +496,55 @@ export function makeIlinkAdapter(opts: {
 
     sessionState,
 
-    handlePermissionReply(text) {
+    probePermissionReply(text, fromChatId, quoted) {
       const parsed = parsePermissionReply(text)
       if (!parsed) return false
-      return pending.consume(parsed.hash, parsed.decision)
+      const owned = (hash: string) => { const approver = pending.approverOf(hash); return approver === null || approver === fromChatId }
+      if (!parsed.ref) {
+        if (quoted) { const hash = pending.hashOfQuote(quoted); if (hash) return owned(hash) && pending.list().some(p => p.hash === hash) }
+        return pending.list().some(p => p.chatId === fromChatId)
+      }
+      const hash = parsed.ref.kind === 'code' ? pending.hashOfCode(parsed.ref.value) : parsed.ref.value
+      return !!hash && owned(hash) && pending.list().some(p => p.hash === hash)
     },
+    handlePermissionReply(text, fromChatId, quoted) {
+      const parsed = parsePermissionReply(text)
+      if (!parsed) return false
+      // 引用了卡片回「y」:最顺手的手机操作。引用的原文里有码就按码,截断了就按卡片正文认。
+      if (!parsed.ref && quoted) {
+        const hash = pending.hashOfQuote(quoted)
+        if (hash) {
+          const approver = pending.approverOf(hash)
+          if (approver !== null && approver !== fromChatId) return false
+          return pending.consume(hash, parsed.decision)
+        }
+        // 引用的不是待批卡片(或已经过期):按没引用处理,下面看待批条数。
+      }
+      // 没带码:看这个 chat 名下现在有几条待批。一条 → 就是它;零条 → 这不是拍板,
+      // 是普通聊天(比如「y」是在回别的事),放行给后面的中间件;多条 → 列出来让主人带码。
+      if (!parsed.ref) {
+        const mine = pending.list().filter(p => p.chatId === fromChatId)
+        if (mine.length === 0) return false
+        if (mine.length === 1) return pending.consume(mine[0]!.hash, parsed.decision)
+        const lines = mine.map(p => `${p.code}:${(p.prompt.split('\n')[0] ?? '').slice(0, 40)}`)
+        void adapter.sendMessage(fromChatId ?? mine[0]!.chatId, `有 ${mine.length} 条在等你,带上码回:\n${lines.join('\n')}\n例如「y ${mine[0]!.code}」`)
+        log('PERMISSION', `bare reply with ${mine.length} pending for chat=${fromChatId}: asked for a code`)
+        return true
+      }
+      const hash = parsed.ref.kind === 'code' ? pending.hashOfCode(parsed.ref.value) : parsed.ref.value
+      if (!hash) return false
+      // 拍板权归当初被问的那个 chat。approverOf 返回 null = 没 meta(老条目
+      // 或 hash 根本不存在)⇒ 走旧路径:不存在的 hash 由 consume 报 false。
+      const approver = pending.approverOf(hash)
+      if (approver !== null && approver !== fromChatId) return false
+      return pending.consume(hash, parsed.decision)
+    },
+
+    listPendingPermissions() { return pending.list() },
+    resolvePermission(hash, decision) { return pending.consume(hash, decision) },
+    pendingPermissionCodeOf(hash) { return pending.codeOf(hash) },
+    registerPendingPermission(hash, timeoutMs, meta) { return pending.register(hash, timeoutMs, meta) },
+    sweepPendingPermissions() { pending.sweep() },
 
     async flush() {
       clearInterval(sweepTimer)

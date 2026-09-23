@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>CC · 一起做 · 协作现场</title>
+  <link rel="stylesheet" href="./preview.css">
+</head>
+<body>
+  <header class="review-bar">
+    <div class="review-label"><span class="review-dot"></span><strong>交互样板</strong><span>合成内容 · 未连接模型</span></div>
+    <div class="scenarios" role="group" aria-label="演示状态">
+      <button data-scenario="running" aria-pressed="true">执行中</button>
+      <button data-scenario="permission" aria-pressed="false">子任务待授权</button>
+      <button data-scenario="completed" aria-pressed="false">成果就绪</button>
+      <button data-scenario="disconnected" aria-pressed="false">连接中断</button>
+    </div>
+    <button class="review-help" data-action="design">设计说明 ↗</button>
+  </header>
+  <div id="app"></div>
+  <dialog id="modal" aria-labelledby="modal-title"><div class="modal-head"><span class="eyebrow">CC · 交互样板</span><button data-action="close-modal" class="icon-button" aria-label="关闭对话框">×</button></div><div id="modal-content"></div></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="./preview.js"></script>
+</body>
+</html>

@@ -23,7 +23,8 @@
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { Database } from 'bun:sqlite'
+import { openSqlite } from './runtime/sqlite'
+import { spawnSync } from './runtime/process'
 
 export const BACKUP_DIRNAME = 'backups'
 const BACKUP_PREFIX = 'wechat-cc-backup-'
@@ -47,7 +48,7 @@ function stamp(now: Date): string {
 
 /** VACUUM INTO — consistent snapshot of a possibly-live WAL database. */
 function snapshotSqlite(src: string, dest: string): void {
-  const db = new Database(src, { readonly: true })
+  const db = openSqlite(src, { readonly: true })
   try {
     db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`)
   } finally {
@@ -91,7 +92,7 @@ export async function createBackup(opts: { stateDir: string; outDir?: string; no
     }
 
     const outPath = join(outDir, `${BACKUP_PREFIX}${stamp(now)}.tar.gz`)
-    const tar = Bun.spawnSync(['tar', '-czf', outPath, '-C', staging, ...readdirSync(staging)])
+    const tar = spawnSync(['tar', '-czf', outPath, '-C', staging, ...readdirSync(staging)])
     if (tar.exitCode !== 0) {
       throw new Error(`tar failed: ${tar.stderr.toString().slice(0, 500)}`)
     }
@@ -155,7 +156,7 @@ export async function restoreBackup(opts: {
 
   const staging = mkdtempSync(join(tmpdir(), 'wcc-restore-'))
   try {
-    const untar = Bun.spawnSync(['tar', '-xzf', opts.file, '-C', staging])
+    const untar = spawnSync(['tar', '-xzf', opts.file, '-C', staging])
     if (untar.exitCode !== 0) {
       return { ok: false, error: 'bad_archive', detail: untar.stderr.toString().slice(0, 500) }
     }

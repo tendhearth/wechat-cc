@@ -21,6 +21,11 @@ function ctxNoTs(text: string, receivedAtMs = 1780000000500): InboundCtx {
 }
 
 describe('mw-messages', () => {
+  it('persists explicit task origin for the personal-memory boundary',async()=>{
+    const records:Array<Record<string,unknown>>=[]
+    await makeMwMessages({append:async record=>{records.push(record as never);return 1},log:()=>{}})(ctx('任务 deadbeef 补充 private task'),async()=>{})
+    expect(records[0]).toMatchObject({kind:'command',source:'workbench'})
+  })
   it('records inbound text before next() so consumed commands still land', async () => {
     const appended: Array<Record<string, unknown>> = []
     const mw = makeMwMessages({

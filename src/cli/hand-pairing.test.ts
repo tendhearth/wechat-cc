@@ -160,6 +160,40 @@ describe('smooth pairing (invite code) end-to-end', () => {
     }
   })
 
+  it('脑带上自己的 a2a 地址 → 手那边的脑记录存下 url + 回叫钥匙(= 脑侧手记录的 inbound key)', async () => {
+    // onPair 照 bootstrap/wire-a2a-server 的新形状:新脑带 brainUrl + callbackKey 就存下来。
+    const handRegistry = createA2ARegistry({ stateDir: handDir })
+    const server = createA2AServer({
+      host: '127.0.0.1', port: 0, registry: handRegistry, onNotify: vi.fn(async () => {}),
+      onPair: async ({ secret, brainId, execKey, brainUrl, callbackKey }) => {
+        if (!verifyAndConsumeInvite(handDir, secret, Date.now())) return { ok: false, error: 'invalid_or_expired_invite' }
+        handRegistry.add({
+          id: brainId, name: brainId, url: brainUrl ?? 'http://brain.local/a2a',
+          inbound_api_key: execKey, outbound_api_key: callbackKey ?? 'unused', capabilities: [], paused: false,
+          transport: 'push', may_exec: true,
+        })
+        return { ok: true }
+      },
+      daemonInfo: { name: 'wechat-cc', version: 'test' },
+    })
+    await server.start()
+    try {
+      const handUrl = `${server.baseUrl()}/a2a`
+      const { code } = mintInvite(handDir, { handUrl, nowMs: Date.now() })
+      const r = await joinHand(brainDir, { code, id: 'home', selfId: 'wechat-cc', brainUrl: 'http://10.0.0.2:8717/a2a' })
+      expect(r.ok).toBe(true)
+      const brainOnHand = handRegistry.get('wechat-cc')!
+      const handOnBrain = createA2ARegistry({ stateDir: brainDir }).get('home')!
+      expect(brainOnHand.url).toBe('http://10.0.0.2:8717/a2a')
+      expect(brainOnHand.outbound_api_key).toBe(handOnBrain.inbound_api_key)
+      expect(listPairings(handDir).brains.map(b => b.id)).toEqual(['wechat-cc'])
+      // 老形状(brainUrl: null)照旧不带
+      const { code: code2 } = mintInvite(handDir, { handUrl, nowMs: Date.now() })
+      await joinHand(brainDir, { code: code2, id: 'home2', selfId: 'wechat-cc-2', brainUrl: null })
+      expect(handRegistry.get('wechat-cc-2')!.outbound_api_key).toBe('unused')
+    } finally { await server.stop() }
+  })
+
   it('fails cleanly when the hand is unreachable, leaving no brain record', async () => {
     const { code } = mintInvite(handDir, { handUrl: 'http://127.0.0.1:1/a2a', nowMs: Date.now() })
     const r = await joinHand(brainDir, { code, id: 'home', selfId: 'wechat-cc', timeoutMs: 1000 })

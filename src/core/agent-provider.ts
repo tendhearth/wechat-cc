@@ -12,6 +12,32 @@ export interface AgentProject {
   path: string
 }
 
+/** Null omits a task override; it does not reset retained native settings. */
+export interface AgentExecutionChoice {
+  defaults: 'provider' | 'native'
+  model: string | null
+  reasoningEffort: string | null
+}
+export interface AgentExecutionModel {
+  id: string
+  displayName: string
+  description?: string
+  reasoningEfforts: string[]
+  defaultReasoningEffort?: string
+  inputModalities?: string[]
+}
+export interface AgentModelCatalog {
+  models: AgentExecutionModel[]
+  defaultModel?: string
+  source: 'native'
+}
+export interface AgentExecutionObservation {
+  model: string
+  reasoningEffort?: string
+  sessionId?: string
+  source: 'native_response' | 'native_message' | 'native_reroute'
+}
+
 /**
  * The provider-agnostic event a session yields on a dispatch turn.
  *
@@ -31,14 +57,60 @@ export interface AgentProject {
  *               result.subtype !== 'success'). Iterator continues to
  *               close normally — true exceptions throw instead.
  */
+/** Public execution activity, never raw model reasoning or unrestricted tool input. */
+export interface AgentActivity {
+  id: string
+  type: 'command' | 'read' | 'edit' | 'search' | 'tool' | 'agent'
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+  label: string
+  detail?: string
+  /** Intentionally public child reply, not tool output or hidden reasoning. */
+  output?: string
+  parentId?: string
+  agentIds?: string[]
+}
+
 export type AgentEvent =
-  | { kind: 'text'; text: string }
-  | { kind: 'tool_call'; server?: string; tool: string }
+  | { kind: 'text'; text: string; itemId?: string; textMode?: 'append' | 'replace' }
+  | { kind: 'tool_call'; server?: string; tool: string; activity?: AgentActivity }
   | { kind: 'init'; sessionId: string }
   | { kind: 'result'; sessionId: string; numTurns: number; durationMs: number }
   | { kind: 'error'; message: string; code?: string }
 
+/** Validated task-owned immutable material; image/PDF data is exact base64 bytes. */
+export interface AgentAttachment {
+  name: string
+  mime: string
+  path: string
+  sha256: string
+  data?: string
+}
+
+/** Observations, not an assertion that native notification queues are drained. */
+export interface AgentRuntimeSnapshot {
+  retained: boolean
+  foreground: 'running' | 'idle' | 'unknown'
+  backgroundCount: number
+  input: 'steer' | 'send' | 'queue'
+}
+
+/** Workbench-only stream: parent results are milestones, not runtime closure. */
+export interface AgentWorkbenchRuntime {
+  /** One consumer, installed before start; ends only on safe no-background completion or close/failure. */
+  events: AsyncIterable<AgentEvent>
+  /** Exactly one initial request per owned runtime epoch. */
+  start(text: string, attachments?: readonly AgentAttachment[]): void
+  /** Same epoch. Resolves only on native acceptance evidence; local enqueue is insufficient. */
+  submit(requestId: string, text: string, attachments?: readonly AgentAttachment[]): Promise<void>
+  /** Synchronous, non-throwing copy; retained is sticky after observed background work. */
+  snapshot(): AgentRuntimeSnapshot
+}
+
 export interface AgentSession {
+  /** Optional owned lifetime capability; legacy dispatch remains unchanged. */
+  workbenchRuntime?: AgentWorkbenchRuntime
+  /** Native acknowledgement of supplemental input to the current turn only. */
+  steer?(text: string, attachments?: readonly AgentAttachment[]): Promise<void>
   /**
    * Send `text` to the agent and yield events as they arrive. The
    * iterator closes after the first `result` (or `error`) event.
@@ -47,7 +119,7 @@ export interface AgentSession {
    * dispatches. Claude provider serialises (one in-flight per session);
    * Codex provider runs each turn as a separate runStreamed.
    */
-  dispatch(text: string): AsyncIterable<AgentEvent>
+  dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent>
   /**
    * Interrupt the in-flight dispatch (if any) without closing the
    * session — future dispatches still work. Wired into the chatroom
@@ -73,6 +145,17 @@ export interface AgentSession {
  */
 export type CheapEval = (prompt: string) => Promise<string>
 
+export interface AgentUserQuestion {
+  id: string
+  header: string
+  question: string
+  options: Array<{label:string;description:string}>
+  multiSelect?: boolean
+  allowOther?: boolean
+}
+export interface AgentUserInputRequest { questions: AgentUserQuestion[] }
+export type AgentUserInputAnswers = Record<string, string[]>
+
 /**
  * Per-spawn context passed to every `AgentProvider.spawn`. RFC 05 — the
  * uniform shape lets providers (Claude / Codex / Cursor / future
@@ -94,6 +177,10 @@ export type CheapEval = (prompt: string) => Promise<string>
  * thread `permissionMode` explicitly.
  */
 export interface SpawnContext {
+  /** Workbench-only ordered activity updates. Normal chat consumers keep legacy events. */
+  workbenchTimeline?: boolean
+  /** Enable retained native background execution only for the workbench consumer. */
+  workbenchLifecycle?: boolean
   tierProfile: TierProfile
   permissionMode: PermissionMode
   /** Bound at spawn time so per-session canUseTool closures resolve the
@@ -133,6 +220,18 @@ export interface SpawnContext {
    * just injects it. (Claude has an equivalent per-spawn reader of its own.)
    */
   model?: string
+  execution?: AgentExecutionChoice
+  reportExecution?(value: AgentExecutionObservation): void
+  /** A task-local approval bridge. It is bound to one active run and fails
+   * closed after that run is cancelled, completed, or restarted. */
+  requestPermission?: (
+    request: { tool: string; description: string },
+    signal?: AbortSignal,
+  ) => Promise<boolean>
+  requestUserInput?: (request: AgentUserInputRequest, signal?: AbortSignal) => Promise<AgentUserInputAnswers | null>
+  /** Public native-capability notice for the active task journal only, never
+   * assistant text or an instruction injected into the executor. */
+  reportNotice?: (message: string) => void
 }
 
 /**
@@ -207,6 +306,19 @@ export interface ProviderCapabilities {
    */
   perToolCallback: boolean
   /**
+   * Can this provider's MCP child session ever be granted admin tier, so
+   * that `SESSION_IS_ADMIN`-gated tool registration (daemon self-diag,
+   * file_locate, knowledge_search, the social-tools family, …) actually
+   * runs? False ⇒ the provider's MCP config pins `WECHAT_SESSION_TIER`
+   * to a static value (agy/cursor: `'trusted'`, one token for every
+   * session — see `agy-mcp-config.ts` / `cursor-mcp-config.ts`), so
+   * `SESSION_IS_ADMIN` is always false there regardless of who is
+   * chatting, and admin-only tools never register for this provider.
+   * True ⇒ the MCP env is threaded per-session (claude/codex/gemini/
+   * openai), so an owner/admin chat does reach admin tier.
+   */
+  adminMcpTools: boolean
+  /**
    * Sandbox levels the SDK exposes. Decides which tier→sandbox
    * translations are realisable. Empty set ⇒ no SDK sandbox (Claude).
    */
@@ -219,9 +331,16 @@ export interface ProviderCapabilities {
   supportsDelegation: boolean
   /** Can resume an existing session id across daemon restarts. */
   supportsResume: boolean
+  /** false ⇒ 该 provider 无法按 tier 约束自己的工具(如 ACP 的工作区编辑不经权限卡),guest 一律拒。
+   *  与 `adminMcpTools` 是两件事:那条说的是"MCP 子进程拿到的是不是本会话的 tier",
+   *  这条说的是"provider 自带的工具(Cursor 自己的读写/执行)有没有一道按 tier 收紧的门"。
+   *  缺省(未声明)= true:老 provider 的工具面要么走 daemon 的权限桥,要么由 SDK 的 sandbox 收着。 */
+  guestSafe?: boolean
 }
 
 export interface AgentProvider {
+  /** Discovery owns one bounded native deadline and subprocess cleanup; no model turn is sent. */
+  modelCatalog?(project: AgentProject): Promise<AgentModelCatalog>
   /**
    * Spawn a session. See `SpawnContext` for the per-spawn shape;
    * provider-construction opts (model, mcpServers, claude binary,
@@ -290,8 +409,45 @@ export function assertNotAuthFailed(text: string, log: (tag: string, line: strin
  */
 const REPLY_TOOLS = new Set(['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast', 'send_sticker', 'search_online_sticker', 'send_online_sticker_candidate', 'sticker_feedback'])
 
+/** 我们的 wechat MCP 服务器的规范名 —— 进程内 SDK(claude / codex /
+ *  cursor-SDK / gemini)都按这个键注册,工具名因此是 `mcp__wechat__reply`。 */
+export const WECHAT_MCP_SERVER = 'wechat'
+
+/**
+ * 外部 CLI(agy)不吃我们传的 mcpServers:它只读自己的
+ * **全局** 配置文件,我们的条目必须带命名空间前缀才不会撞上主人自己装的
+ * 服务器 —— 于是它回报的 `ServerName` 是那个命名空间键,不是 `wechat`。
+ * 这个常量是 bootstrap 的 agy-mcp-config 与这里共用的唯一事实源
+ * (那个文件从这里 re-export)。
+ *
+ * WHY 这条是承重的(真机 2026-09-08):`isReplyToolCall` 用 server 名判定
+ * 「这一轮 agent 自己发消息了吗」。agy 的 `wechat-cc-wechat` 没折回规范名,
+ * 于是每个 agy 回合都 replyToolCalled=false,协调器的 FALLBACK_REPLY 在
+ * agent 已经把正文发出去之后,又把模型的旁白(「已回复用户的问候。」)当
+ * 成回复发了一遍 —— 主人每问一句收到两条。
+ */
+export const AGY_WECHAT_MCP_NAMESPACE_ID = 'wechat-cc-wechat'
+
+const WECHAT_MCP_SERVER_ALIASES: ReadonlySet<string> = new Set([
+  WECHAT_MCP_SERVER,
+  AGY_WECHAT_MCP_NAMESPACE_ID,
+])
+
+/**
+ * 把外部 CLI 报上来的命名空间键折回规范名;其他服务器名原样返回。
+ * Provider 在 **发事件之前** 调用它(见 agy-agent-provider),这样下游
+ * 所有消费者(reply 判定、TURN 日志的 tools=、桌宠活动信号)看到的都是
+ * 同一个 `wechat`。`isReplyToolCall` 内部也过一道,是纵深防御:将来新加
+ * 的 provider 忘了折,回复判定也不会再静默失效。
+ */
+export function normalizeWechatMcpServer(server: string | undefined): string | undefined {
+  return server !== undefined && WECHAT_MCP_SERVER_ALIASES.has(server) ? WECHAT_MCP_SERVER : server
+}
+
 export function isReplyToolCall(ev: AgentEvent): boolean {
-  return ev.kind === 'tool_call' && ev.server === 'wechat' && REPLY_TOOLS.has(ev.tool)
+  return ev.kind === 'tool_call'
+    && normalizeWechatMcpServer(ev.server) === WECHAT_MCP_SERVER
+    && REPLY_TOOLS.has(ev.tool)
 }
 
 /**
@@ -350,6 +506,14 @@ export interface CollectTurnOpts {
    * only a genuinely silent stall is.
    */
   timeoutMs?: number
+  /**
+   * Per-event observer, called once per event just before it is folded
+   * into the summary — on BOTH consumption paths (plain drain and the
+   * watchdog loop). Purely for outside-the-turn bookkeeping (the desktop
+   * pet's "what is it doing right now" signals); a throw is swallowed, so
+   * an observer can never break or alter a turn.
+   */
+  onEvent?: (ev: AgentEvent) => void
 }
 
 export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: CollectTurnOpts): Promise<TurnSummary> {
@@ -378,9 +542,14 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
     }
   }
 
+  /** 观察者不许影响回合:抛错就地吞掉。 */
+  const observe = (ev: AgentEvent): void => {
+    try { opts?.onEvent?.(ev) } catch { /* ignore */ }
+  }
+
   const timeoutMs = opts?.timeoutMs
   if (!timeoutMs || timeoutMs <= 0) {
-    for await (const ev of events) apply(ev)
+    for await (const ev of events) { observe(ev); apply(ev) }
     return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode }
   }
 
@@ -413,6 +582,7 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
         }
       }
       if (step.done) break
+      observe(step.value)
       apply(step.value)
     }
   } finally {

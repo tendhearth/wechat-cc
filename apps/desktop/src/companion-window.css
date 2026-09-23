@@ -4,30 +4,57 @@
 html, body { width: 100%; height: 100%; margin: 0; background: transparent; overflow: hidden; }
 body { color: var(--ink); font-family: Geist, "PingFang SC", sans-serif; }
 button { font: inherit; }
-.companion-window-shell { position: relative; display: grid; width: 100%; height: 100%; padding: 12px; place-items: center; }
-.companion-window-bar { position: absolute; z-index: 4; top: 23%; left: 29%; right: 5%; height: 6%; cursor: grab; }
-.companion-window-bar:active { cursor: grabbing; }
-.companion-window-drag-zone { position: absolute; z-index: 4; cursor: grab; }
-.companion-window-drag-zone:active { cursor: grabbing; }
-.companion-window-drag-zone.is-left { top: 29%; bottom: 17%; left: 27%; width: 5%; }
-.companion-window-drag-zone.is-right { top: 29%; right: 3.5%; bottom: 17%; width: 5%; }
-.companion-window-drag-zone.is-bottom { right: 5%; bottom: 14%; left: 29%; height: 5%; }
-.companion-window-stage { position: relative; width: 100%; max-height: 100%; aspect-ratio: 3 / 2; overflow: hidden; background: transparent; }
-#companion-stage { width: 100%; height: 100%; display: block; cursor: crosshair; }
-#companion-window-close { position: absolute; z-index: 5; top: 27%; right: 5%; width: 23px; height: 23px; padding: 0; border: 0; background: transparent; color: rgba(111, 78, 49, .72); cursor: pointer; font-size: 19px; line-height: 22px; text-shadow: 0 1px rgba(255, 255, 255, .76); transform: translateY(-20px); }
-#companion-window-close:hover { color: #795034; }
-.companion-window-zoom { position: absolute; z-index: 5; top: 27%; left: 29%; display: flex; align-items: center; gap: 4px; transform: translateY(-20px); }
-.companion-window-zoom button { width: 22px; height: 22px; padding: 0; border: 0; background: transparent; color: rgba(111, 78, 49, .72); cursor: pointer; font-size: 16px; line-height: 19px; text-align: center; text-shadow: 0 1px rgba(255, 255, 255, .76); }
-.companion-window-zoom button:hover { color: #795034; }
-.stage-hint, .bear-message { position: absolute; opacity: 0; pointer-events: none; transition: opacity .35s ease, transform .35s ease; }
-.stage-hint { top: 8%; left: 50%; display: inline-flex; align-items: center; gap: 5px; max-width: calc(100% - 28px); padding: 5px 8px; border-radius: 999px; background: rgba(255, 253, 247, .82); backdrop-filter: blur(6px); color: #7b6b5c; font-size: 10px; line-height: 1.25; white-space: nowrap; transform: translate(-50%, 8px); }
-.stage-hint::before { content: ""; width: 7px; height: 7px; flex: 0 0 auto; }
-.stage-hint.is-water-hint { background: rgba(221, 241, 242, .90); border: 1px solid rgba(100, 158, 162, .42); color: #47747a; }
-.stage-hint.is-water-hint::before { border: 1.5px solid #6d9fa2; border-radius: 50%; box-shadow: 0 0 0 2px rgba(109, 159, 162, .20); }
-.stage-hint.is-grass-hint { background: rgba(245, 235, 207, .92); border: 1px dashed rgba(128, 111, 64, .54); border-radius: 9px 15px 15px 15px; color: #725f37; }
-.stage-hint.is-grass-hint::before { background: #91a873; border-radius: 9px 1px 9px 1px; transform: rotate(-35deg); }
-.stage-hint.is-visible { opacity: 1; transform: translate(-50%, 0); }
-.bear-message { left: var(--bear-message-x, 26.2%); top: var(--bear-message-y, 43.1%); width: max-content; max-width: 175px; padding: 7px 9px; border-radius: 12px 12px 12px 3px; background: #fffdf8; box-shadow: 0 6px 20px rgba(72, 51, 32, .14); font-size: 10px; font-weight: 600; line-height: 1.35; transform: translate(-50%, 8px) scale(var(--bear-message-scale, .9)); transform-origin: center top; }
-.bear-message.is-visible { opacity: 1; transform: translate(-50%, 0) scale(var(--bear-message-scale, .9)); }
-.crab-escape { position: fixed; z-index: 10; top: 0; left: 0; width: 86px; opacity: 0; pointer-events: none; transform-origin: center; will-change: transform, opacity; }
-@media (prefers-reduced-motion: reduce) { .stage-hint, .bear-message { transition: none; } }
+/* [hidden] 必须赢过任何带 display 的类(.pet-card-host 是 flex)—— 同 styles.css 的那条,
+   否则空卡片会一直占着一行画在 CC 底下。 */
+[hidden] { display: none !important; }
+
+/* minmax(0, 1fr):默认的 auto 最小值会让方形舞台自己撑住行高 —— 权限卡片一出来就把 shell 顶出窗口。 */
+.pet-shell { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr); width: 100%; height: 100%; padding: 8px; }
+/* 舞台填满格子,不再靠 aspect-ratio 装正方形(height:100% + max-width 一冲突 aspect-ratio 就失效,
+   240×300 的窗口里舞台其实是 244×304,按舞台高度算的 anchor 比真实脚底低 26px)。
+   真正的正方形是 object-fit: contain 算出来的那块:边长 --pet-side = min(宽, 高),居中。
+   anchor 与道具槽位都相对这块正方形定位,--pet-anchor-x/y 是 manifest 给的无单位比例。 */
+.pet-stage { position: relative; width: 100%; height: 100%; container-type: size; cursor: grab;
+  --pet-side: min(100cqw, 100cqh); --pet-box-x: calc((100cqw - var(--pet-side)) / 2); --pet-box-y: calc((100cqh - var(--pet-side)) / 2);
+  --pet-origin-x: calc(var(--pet-box-x) + var(--pet-anchor-x, 0.5) * var(--pet-side)); --pet-origin-y: calc(var(--pet-box-y) + var(--pet-anchor-y, 0.92) * var(--pet-side)); }
+.pet-stage:active { cursor: grabbing; }
+.pet-sprite { position: absolute; left: 50%; top: 0; width: 100%; height: 100%; transform: translateX(-50%); transform-origin: var(--pet-origin-x) var(--pet-origin-y); object-fit: contain; pointer-events: none; user-select: none; transition: opacity 240ms ease; }
+.pet-sprite.pet-fading { opacity: 0; }
+/* 交叉淡化的 ghost:平时透明,行为切换时 renderer 把上一帧放上来、加一个淡出类。
+   两套同样的 keyframes 交替用,因为同名 animation 不会重启。主体 <img> 在 DOM 后面,永远压在 ghost 上。 */
+.pet-ghost { opacity: 0; transition: none; }
+.pet-ghost.pet-ghost-out-a { animation: pet-ghost-out-a 160ms ease-out forwards; }
+.pet-ghost.pet-ghost-out-b { animation: pet-ghost-out-b 160ms ease-out forwards; }
+@keyframes pet-ghost-out-a { from { opacity: 1; } to { opacity: 0; } }
+@keyframes pet-ghost-out-b { from { opacity: 1; } to { opacity: 0; } }
+.pet-breathing .pet-sprite { animation: pet-breathe 2.8s ease-in-out infinite; }
+.pet-breathing .pet-ghost.pet-ghost-out-a { animation: pet-breathe 2.8s ease-in-out infinite, pet-ghost-out-a 160ms ease-out forwards; }
+.pet-breathing .pet-ghost.pet-ghost-out-b { animation: pet-breathe 2.8s ease-in-out infinite, pet-ghost-out-b 160ms ease-out forwards; }
+@keyframes pet-breathe { 0%, 100% { transform: translateX(-50%) scale(1); } 50% { transform: translateX(-50%) scale(1.02); } }
+/* 道具:相对 anchor 点的比例偏移(prop-layer.js 的槽位表),以舞台边长为 1。 */
+.pet-props { position: absolute; inset: 0; pointer-events: none; }
+.pet-prop { position: absolute; left: calc(var(--pet-origin-x) + var(--slot-dx, 0) * var(--pet-side)); top: calc(var(--pet-origin-y) + var(--slot-dy, 0) * var(--pet-side)); width: calc(var(--slot-scale, .34) * var(--pet-side)); aspect-ratio: 1 / 1; transform: translate(-50%, -50%); }
+.pet-prop img { width: 100%; height: 100%; object-fit: contain; }
+.pet-badge { position: absolute; right: 4%; top: 4%; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #d9773b; color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.pet-hint { margin: 4px 0 0; padding: 4px 8px; border-radius: 999px; background: rgba(255, 253, 247, .86); color: #7b6b5c; font-size: 11px; text-align: center; justify-self: center; }
+/* 权限卡片(spec §6)。限高必须是确定长度:百分比对着 auto 的网格行解不出来,prompt 会被压成一条缝。
+   52vh 是在 300 px 高的窗口上量的:卡片 156 px → prompt 84 px 可滚、CC 还剩 94 px。
+   真正的下限比这更矮 —— min_inner_size 与缩放 clamp 都是 250 px(见 src-tauri/src/lib.rs):
+   那里卡片 130 px → prompt ≈ 48 px(约 3 行,仍可滚)、CC ≈ 70 px。挤,但两样都还在。 */
+.pet-card-host { display: flex; flex-direction: column; max-height: 52vh; overflow: hidden; margin-top: 6px; padding: 8px 10px; border-radius: 12px; background: rgba(255, 253, 247, .94); box-shadow: 0 6px 20px rgba(72, 51, 32, .14); font-size: 12px; }
+.pet-card { display: flex; flex-direction: column; min-height: 0; }
+.pet-card-title { margin: 0 0 6px; font-weight: 600; }
+.pet-card-count { opacity: .6; margin-left: 4px; }
+.pet-card-prompt { flex: 1 1 auto; min-height: 0; margin: 0 0 6px; overflow: auto; padding: 6px; border-radius: 6px; background: #f3efe7; font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
+.pet-card-actions { display: flex; gap: 6px; }
+.pet-card-actions button { flex: 1; padding: 5px 0; border: 0; border-radius: 8px; cursor: pointer; }
+.pet-card-allow { background: #d9773b; color: #fff; }
+.pet-card-deny { background: #e9e2d6; }
+.pet-card-view { background: transparent; text-decoration: underline; }
+.pet-card-actions button:focus-visible { outline: 2px solid #d9773b; outline-offset: 1px; }
+.pet-card-note { margin: 0; color: #7b6b5c; }
+.pet-controls { position: absolute; right: 6px; top: 6px; display: flex; gap: 2px; opacity: 0; transition: opacity .2s ease; }
+.pet-shell:hover .pet-controls, .pet-controls:focus-within { opacity: 1; }
+.pet-controls button { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: rgba(255, 253, 247, .8); color: rgba(111, 78, 49, .8); cursor: pointer; font-size: 14px; line-height: 22px; }
+.pet-controls button:focus-visible { outline: 2px solid #d9773b; outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { .pet-breathing .pet-sprite { animation: none; } .pet-sprite { transition: opacity 400ms ease; } .pet-ghost { animation: none !important; opacity: 0; } }

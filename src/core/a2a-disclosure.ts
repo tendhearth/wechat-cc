@@ -31,6 +31,22 @@ ${policy}
 
 只输出一行 JSON,无解释:{"violation": <true|false>, "redacted": "<把违规内容删干净后的安全文本;若无违规则原样返回>", "reasons": ["<简短原因>"]}`
 
+/**
+ * 这一串 violations 是「审查器自己没跑成」,还是「主人的话真的违规」?
+ *
+ * gateOutbound **从不抛** —— 超时、provider 挂了、回话不是 JSON,统统变成
+ * `{ ok:false, violations:['checker_timeout' | 'checker_error: …' | …] }`。
+ * 调用方要是只看 `ok`,就会把「模型没响应」当成「你这句话不能说」报给主人,
+ * 甚至把违规原因栏填上一句 checker_timeout。两者的处置完全不同:真违规要
+ * 告诉主人哪里不能说,审查器故障只能说「稍后再试」。
+ */
+export function isCheckerFailure(violations: readonly string[]): boolean {
+  return violations.some(v =>
+    v === 'checker_timeout' || v === 'checker_unparseable'
+    || v === 'checker_malformed' || v === 'checker_malformed_schema'
+    || v.startsWith('checker_error'))
+}
+
 export async function gateOutbound(
   text: string,
   opts: { policy: string; cheapEval: CheapEval; timeoutMs?: number },

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveTier, resolveEffectiveTier, TIER_PROFILES, type UserTier, type ToolKind } from './user-tier'
+import { resolveTier, resolveEffectiveTier, TIER_PROFILES, ALL_KINDS, type UserTier, type ToolKind } from './user-tier'
 import type { Access } from '../lib/access'
 
 const baseAccess: Access = {
@@ -55,13 +55,6 @@ describe('resolveEffectiveTier — --dangerously override', () => {
 })
 
 describe('TIER_PROFILES', () => {
-  const ALL_KINDS: ToolKind[] = [
-    'reply', 'share_page', 'memory_read', 'memory_write', 'memory_delete',
-    'observations_read', 'observations_write',
-    'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
-    'a2a_send', 'plugin_tool', 'knowledge_search', 'federated_query', 'graph_query', 'facts_query', 'person_query',
-  ]
-
   for (const tier of ['admin', 'trusted', 'guest'] as UserTier[]) {
     it(`tier=${tier}: allow ∪ relay ∪ deny covers every ToolKind exactly once`, () => {
       const p = TIER_PROFILES[tier]
@@ -105,12 +98,13 @@ describe('TIER_PROFILES', () => {
     expect(TIER_PROFILES.trusted.relay.has('memory_delete')).toBe(true)
     // trusted denies all admin-exclusive tools (was 0 before
     // self-diagnosis / remediation / plugin tools existed).
-    expect(TIER_PROFILES.trusted.deny.size).toBe(11)
+    expect(TIER_PROFILES.trusted.deny.size).toBe(12)
     expect(TIER_PROFILES.trusted.deny.has('daemon_introspect')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('daemon_remediate')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('file_locate')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('plugin_tool')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('social_seek')).toBe(true)
+    expect(TIER_PROFILES.trusted.deny.has('social_act')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('knowledge_search')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('federated_query')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('graph_query')).toBe(true)
@@ -431,6 +425,13 @@ describe('facts_query / person_query tier kinds (Knowledge Facts/Person inproc F
     expect(TIER_PROFILES.guest.deny.has('config_admin')).toBe(true)
   })
 
+  it('classifies provider_switch as mode_switch — trusted+ (same reach as the /api /agy slash commands), guest denied', () => {
+    expect(classifyToolUse('mcp__wechat__provider_switch', { chat_id: 'c', provider: 'openai' })).toBe('mode_switch')
+    expect(TIER_PROFILES.admin.allow.has('mode_switch')).toBe(true)
+    expect(TIER_PROFILES.trusted.allow.has('mode_switch')).toBe(true)
+    expect(TIER_PROFILES.guest.deny.has('mode_switch')).toBe(true)
+  })
+
   it('classifies the person_brief MCP tool as ToolKind person_query', () => {
     expect(classifyToolUse('mcp__wechat__person_brief', { name: 'x' })).toBe('person_query')
   })
@@ -446,5 +447,25 @@ describe('facts_query / person_query tier kinds (Knowledge Facts/Person inproc F
       expect(TIER_PROFILES.guest.deny.has(kind)).toBe(true)
       expect(TIER_PROFILES.guest.allow.has(kind)).toBe(false)
     }
+  })
+})
+
+describe('social_act tier kind (social-tools 2026-09-05)', () => {
+  const NAMES = ['wish_list', 'wish_send', 'wish_cancel', 'intro_request', 'intro_accept', 'intro_decline', 'intro_offers', 'relationships', 'visit'] as const
+  it('classifies the nine mcp__wechat__ social tools as ToolKind social_act', () => {
+    for (const n of NAMES) expect(classifyToolUse(`mcp__wechat__${n}`, {})).toBe('social_act')
+  })
+  it('leaves social_seek on its own kind', () => {
+    expect(classifyToolUse('mcp__wechat__social_seek', { topic: 'x' })).toBe('social_seek')
+  })
+  it('admin allows social_act; trusted and guest deny it, no relay path', () => {
+    // 认识 / 同意 / 不了 / 串门 / 查心愿都是替主人对外动作或读主人的社交状态,
+    // 和 social_seek 同一信任档:只有主人能调,不走中继。
+    expect(TIER_PROFILES.admin.allow.has('social_act')).toBe(true)
+    expect(TIER_PROFILES.admin.relay.has('social_act')).toBe(false)
+    expect(TIER_PROFILES.trusted.deny.has('social_act')).toBe(true)
+    expect(TIER_PROFILES.trusted.allow.has('social_act')).toBe(false)
+    expect(TIER_PROFILES.guest.deny.has('social_act')).toBe(true)
+    expect(TIER_PROFILES.guest.allow.has('social_act')).toBe(false)
   })
 })

@@ -12,18 +12,29 @@
 // cursor when mode says cursor, or if cursor provider's spawnOpts
 // contract drifts, this test fails.
 //
-// Scenario — strict mode sandboxes every cursor tier:
+// Scenario — strict mode sandboxes every cursor tier that may use cursor:
 //   Two chats on the same daemon, same alias, both pinned to solo+cursor
-//   — one in `admins`, one not — both spawn with
+//   — one in `admins`, one in `trusted` — both spawn with
 //   `local.sandboxOptions.enabled: true` on `Agent.create()`. Cursor has
 //   only one knob (sandbox on/off) and no canUseTool relay, so post-RFC-05
 //   the safe default under strict mode is "sandboxed for every tier";
 //   `enabled: false` (full access) is reachable only via `--dangerously`.
-//   Per-tier separation for cursor guests is a documented limitation —
-//   route guests to Claude when strict separation is required. What this
+//   Per-tier separation for cursor is a documented limitation — route
+//   users to Claude when strict separation is required. What this
 //   still guards: the wiring (session-manager threads tierProfile into
 //   cursor.spawn; coordinator routes solo+cursor to the cursor provider)
 //   and that no cursor chat is left unsandboxed under strict mode.
+//
+//   The second chat is `trusted`, NOT `guest`, on purpose: since
+//   2026-09-18 (「对话侧 Cursor 走 ACP」) cursor declares
+//   `guestSafe: false` — its in-workspace file edits never surface a
+//   permission card, so a guest's tier can't confine it and dispatchSolo
+//   refuses a guest+cursor turn outright (core/provider-policy.ts +
+//   conversation-coordinator.ts). A refusal is a STRONGER guarantee than
+//   "sandboxed", and the refusal itself is covered by
+//   conversation-coordinator.test.ts / mode-commands.test.ts. `trusted`
+//   is the lowest tier that still reaches the spawn path, which is what
+//   this wiring test needs.
 //
 // The per-chat isolation comes from the user-tier session-manager refactor
 // keying sessions by `(alias, provider, chat_id)` — so two chats on the
@@ -78,17 +89,18 @@ describe('e2e: user-tier permissions (cursor)', () => {
       // forcing everyone to admin tier.
       dangerously: false,
       access: {
-        allowFrom: ['admin_chat', 'guest_chat'],
+        allowFrom: ['admin_chat', 'trusted_chat'],
         admins: ['admin_chat'],
+        trusted: ['trusted_chat'],
       },
-      knownUsers: { admin_chat: 'admin_user', guest_chat: 'guest_user' },
+      knownUsers: { admin_chat: 'admin_user', trusted_chat: 'trusted_user' },
       // cursorModel required — bootstrap refuses to register cursor without it.
       agentConfig: { provider: 'cursor', cursorModel: 'composer-2' },
       // Pin both chats to solo+cursor so the coordinator routes them
       // through the cursor provider's spawn path (not claude or codex).
       modes: {
         admin_chat: { kind: 'solo', provider: 'cursor' },
-        guest_chat: { kind: 'solo', provider: 'cursor' },
+        trusted_chat: { kind: 'solo', provider: 'cursor' },
       },
       cursorScript: {
         async onDispatch(_text) {
@@ -102,13 +114,13 @@ describe('e2e: user-tier permissions (cursor)', () => {
       },
     })
 
-    // Send from admin first, wait for dispatch to finish, then from guest.
+    // Send from admin first, wait for dispatch to finish, then from trusted.
     // Sequencing avoids races over the shared recorder array.
     daemon.sendText('admin_chat', 'hi from admin')
     await daemon.waitForReplyTo('admin_chat', 8000)
 
-    daemon.sendText('guest_chat', 'hi from guest')
-    await daemon.waitForReplyTo('guest_chat', 8000)
+    daemon.sendText('trusted_chat', 'hi from trusted')
+    await daemon.waitForReplyTo('trusted_chat', 8000)
 
     // Two spawns — one per chatId. Session keying is
     // (alias, provider, chat_id), so two chats on the same alias produce
@@ -118,9 +130,9 @@ describe('e2e: user-tier permissions (cursor)', () => {
     // Post-RFC-05, cursor sandbox no longer varies by tier in strict mode:
     // the only knob is sandbox on/off and there's no canUseTool relay, so
     // the safe default is "sandboxed unless --dangerously". Both admin and
-    // guest therefore spawn with sandboxOptions.enabled=true. The
+    // trusted therefore spawn with sandboxOptions.enabled=true. The
     // security-relevant guarantee held here: no cursor chat runs unsandboxed
-    // under strict mode. (admin sent first ⇒ spawns[0]=admin, spawns[1]=guest.)
+    // under strict mode. (admin sent first ⇒ spawns[0]=admin, spawns[1]=trusted.)
     expect(spawns.map(s => s.enabled)).toEqual([true, true])
   })
 })

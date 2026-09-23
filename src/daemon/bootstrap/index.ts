@@ -13,7 +13,7 @@
  * sessions (sessionStore + registerProviders) →
  * sendAssistantText / recordTurn / coordinator → dispatchDelegate → A2A
  * infra (registry/client/eventsStore + resolveOperatorChatId) → wireSocial
- * → wireA2aServer → resumeForaging() → 乙 v2 (yiHub/yiClient) → return.
+ * → wireA2aServer → 乙 v2 (yiHub/yiClient) → return.
  *
  * Helpers extracted for readability:
  *   - ./types.ts       — BootstrapDeps / Bootstrap interfaces
@@ -21,7 +21,7 @@
  *   - ./session-paths.ts — per-provider jsonl path resolvers (canResume probes)
  *   - ./delegate.ts    — bare delegate providers + dispatchDelegate
  *   - ./providers.ts   — provider registrations (claude/codex/cursor/openai/gemini)
- *   - ./wire-social.ts — agent-social wiring (seeks/echoes) + boot-resume
+ *   - ./wire-social.ts — 社交接线(笔友信道 / 串门 / 心愿)
  *   - ./wire-a2a-server.ts — A2A HTTP server + routeA2ANotify + a2a-info.json
  *   - ./wire-health.ts — connection-health runtime (onFailure/onSuccess)
  *
@@ -50,6 +50,9 @@ import { fileURLToPath } from 'node:url'
 import { makeSessionStore } from '../../core/session-store'
 import { homedir } from 'node:os'
 import { loadAgentConfig, makeMtimeCachedConfigReader, modelForProvider } from '../../lib/agent-config'
+import { DEFAULT_CLAUDE_MODEL } from '../../core/claude-agent-provider'
+import { DEFAULT_AGY_MODEL } from '../../core/agy-agent-provider'
+import { DEFAULT_CURSOR_MODEL } from '../../core/acp-cursor-chat'
 import { loadAccess, setSessionInvalidator } from '../../lib/access'
 import { loadCompanionConfig } from '../companion/config'
 import { resolveAdminChatId } from '../companion/resolve-admin'
@@ -79,6 +82,7 @@ import { runIndexer } from '../../core/knowledge/indexer'
 import { makeEmbedderService } from '../../core/knowledge/embedder-service'
 import { makeJsEmbedder, withEmbedderFallback } from '../../core/knowledge/js-embedder'
 import { readJsonFile } from '../../lib/read-json-file'
+import { shouldNoteTurnEnd } from '../pet-signals'
 import { rebuildGraphFromSource } from '../../core/knowledge/graph-build'
 import { makeGraphQueryApi } from '../../core/knowledge/graph-query'
 import { makeFactsApi } from '../../core/knowledge/facts'
@@ -562,7 +566,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const readAgentConfig = makeMtimeCachedConfigReader(deps.stateDir)
   const currentClaudeModel = (): string => {
     const c = readAgentConfig()
-    return c.provider === 'claude' && c.model ? c.model : 'claude-opus-4-8'
+    return c.provider === 'claude' && c.model ? c.model : DEFAULT_CLAUDE_MODEL
   }
   // Per-spawn pinned model, resolved PER provider id (not the global default).
   // `modelForProvider` owns the field rule: openai→openaiModel and
@@ -571,8 +575,18 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // what lets `/api <model>` (which switches ONE chat to openai while the
   // global default may stay claude) hot-reload the openai model on the next
   // spawn with no restart. Read via the mtime-cached reader.
-  const currentModelFor = (providerId: ProviderId): string | undefined =>
-    modelForProvider(readAgentConfig(), providerId)
+  const currentModelFor = (providerId: ProviderId): string | undefined => {
+    const pinned = modelForProvider(readAgentConfig(), providerId)
+    if (pinned !== undefined) return pinned
+    // 没钉时报 provider 实际会用的默认值,而不是 undefined —— 这个值同时
+    // 进系统提示(「当前模型 …」),说「provider 默认」不如说出真名。
+    // claude 的默认在 currentClaudeModel();cursor/agy 与 providers.ts 里
+    // 注册时的字面量一致(改那边记得改这边)。
+    if (providerId === 'claude') return currentClaudeModel()
+    if (providerId === 'cursor') return DEFAULT_CURSOR_MODEL
+    if (providerId === 'agy') return DEFAULT_AGY_MODEL
+    return undefined
+  }
 
   const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string): Options => {
     // The per-session system prompt is assembled by the daemon's
@@ -658,7 +672,9 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     return Number.isFinite(n) && n >= 0 ? n : 10 * 60_000
   })()
 
-  const { registry, defaultProviderId, codexBinary, codexVersionCheck } = await registerProviders({
+  // provider 异常备注(fallback 连击),与 providers.ts 的版本/探测备注合并进 /mode。
+  const anomalyNotes = new Map<ProviderId, string>()
+  const { registry, defaultProviderId, codexBinary, codexVersionCheck, providerNotes: baseProviderNotes } = await registerProviders({
     log: deps.log,
     stateDir: deps.stateDir,
     ilink: deps.ilink,
@@ -718,7 +734,13 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // §2). Unlike personaFor (owner chat via default_chat_id), coreMemoryFor
   // is called with THIS chat's own chatId, so each chat gets its own
   // profile.md excerpt.
-  const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile, chatId: string): string => {
+  // social-tools (2026-09-05): flipped to true right after `socialWiring`
+  // below resolves. A `let` read lazily by buildInstructions — NOT a direct
+  // reference to `socialWiring` from inside the closure, which is declared
+  // later with `const` and would be a TDZ hazard if any session's prompt
+  // were built before social wiring completes.
+  let socialToolsWired = false
+  const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string): string => {
     const p = deps.personaFor?.(chatId)
     // owner-onboarding design §C2, fix round 2: the empty-library variant
     // nudges `save_sticker` — a memory_write-gated write, same posture as
@@ -734,12 +756,27 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       : rawStickerTags
     return buildSystemPrompt({
       providerId,
+      // 让 bot 知道自己此刻跑的是哪个模型(session-manager 按 spawn 解析后
+      // 传进来;claude 的解析见下面 currentModelFor 的 claude 分支)。
+      model,
       // Unused when delegateAvailable is false; fall back to the daemon default.
       peerProviderId: capabilitiesFor(providerId).defaultPeer ?? defaultProviderId,
       companionEnabled: deps.ilink.companion.status().enabled,
       delegateAvailable: !!delegateStdioByProvider[providerId],
       daemonOpsAvailable: tierProfile.allow.has('daemon_introspect'),
       fileLocateAvailable: tierProfile.allow.has('file_locate'),
+      // Tracks tool registration exactly, same posture as fileLocateAvailable:
+      // `social_act` is ADMIN_ONLY (user-tier.ts), matching wechat-mcp/main.ts's
+      // SESSION_IS_ADMIN gate on registerSocialTools; `socialToolsWired` says
+      // the daemon's social layer actually came up (otherwise every tool 503s).
+      // `adminMcpTools` (ProviderCapabilities) additionally gates out agy: its
+      // MCP child's WECHAT_SESSION_TIER is pinned to 'trusted' in a static
+      // config (agy-mcp-config.ts), so SESSION_IS_ADMIN is never true there and
+      // registerSocialTools never runs — advertising the section anyway would
+      // send the model to call tools that don't exist. cursor is per-session now
+      // (acp-cursor-chat.ts threads WECHAT_SESSION_TIER through session/new
+      // each call), so its adminMcpTools tracks the real tier like claude/codex.
+      socialAvailable: socialToolsWired && tierProfile.allow.has('social_act') && capabilitiesFor(providerId).adminMcpTools,
       careEnabled: (deps.careLevelFor?.(chatId) ?? 'off') !== 'off' && tierProfile.allow.has('memory_write'),
       // Tri-state (owner-onboarding design §C2) — absent thunk defaults to
       // `null` (pref-off shape), NOT `[]`, so an unwired bootstrap stays
@@ -911,7 +948,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // Extracted as a named variable so routeA2ANotify can also call it.
   // v0.5.3 — extracted to fallback-reply.ts so the failure paths log
   // [FALLBACK_REPLY_FAIL] / success path logs [FALLBACK_REPLY_SENT].
-  const sendAssistantText = makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log, capture: deps.replySinks?.capture })
+  const sendAssistantText = makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log, capture: deps.replySinks?.capture, observe: deps.outboundTaps?.observe })
 
   // (turnTimeoutMs is resolved earlier now — see the block just above
   // registerProviders() — so the agy provider's `--print-timeout` can be
@@ -949,6 +986,11 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     // (./wire-health.ts) — extracted so it's unit-testable against a real
     // health runtime without constructing a full Bootstrap.
     reportLlmTurnOutcome(health, record.outcome, record.error)
+    // 桌宠(spec 2026-09-05-cc-desktop-pet §5.1)—— 回合结束的那一刻。recordTurn
+    // 是唯一一处**每种结局都会经过**的窄点,所以「刚忙完」用它的 endedAt,而不是
+    // 任何一条成功路径上的时间。但不是每条记录都算一次「忙完」:哪些算,判据写在
+    // shouldNoteTurnEnd 里(只认 completed;chatroom 每participant每拍一条,得排除)。
+    if (shouldNoteTurnEnd(record)) deps.petSignals?.noteTurnEnd(record.chatId, record.endedAt)
   }
 
   const handoffMessages = makeMessagesStore(deps.db)
@@ -960,6 +1002,16 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     defaultProviderId,
     format: formatInbound,
     // 换 provider 交接的近况原文 — 消息库最近 n 条(text 类为主,升序)。
+    // 非管理员可用的 provider 允许表(core/provider-policy.ts),mtime 缓存读。
+    trustedProviders: () => readAgentConfig().trusted_providers,
+    // 连续走 fallback 的 provider:≥3 轮就是「流格式变了」的形状,记进 /mode
+    // 并打一条 [PROVIDER_ANOMALY](每 10 轮再提醒一次,别刷屏)。
+    onFallbackStreak: (providerId, streak) => {
+      if (streak === 0) { anomalyNotes.delete(providerId); return }
+      if (streak < 3) return
+      anomalyNotes.set(providerId, `最近 ${streak} 轮连续走 fallback(有文字、零 reply 工具)—— 像是流格式变了,看 channel.log 的 tools=`)
+      if (streak === 3 || streak % 10 === 0) deps.log('PROVIDER_ANOMALY', `provider=${providerId} fallback streak=${streak}: 有文字、零 reply 工具,像是流格式变了(tool_call 解析不出来);见 TURN 行的 tools=`, { event: 'fallback_streak', provider: providerId, streak })
+    },
     recentTurns: async (chatId, n) => {
       const rows = await handoffMessages.listRange(chatId, { limit: n })
       return rows.filter(r => r.text.trim().length > 0)
@@ -968,6 +1020,11 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     permissionMode,
     turnTimeoutMs,
     recordTurn,
+    // 桌宠「在干活」的证据(spec §5.1):只认 tool_call —— 起飞由
+    // sessionManager.isInFlight 判定,起飞时刻由 pipeline-deps 的入站分发处
+    // noteTurnStart 记(见 pet-signals.ts 的头注释)。钩子抛错不影响回合:
+    // collectTurn 的 onEvent 已经把它围起来了,这里也只做一次 Map.set。
+    onTurnEvent: (chatId, ev) => { if (ev.kind === 'tool_call') deps.petSignals?.noteToolCall(chatId) },
     // sendAssistantText fallback path: same fall-through the legacy
     // routeInbound used to take when the agent didn't call a reply tool.
     // main.ts injects a real ilink.sendMessage closure; bootstrap.ts only
@@ -1008,7 +1065,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     // 没有 claude 二进制就别把 claude 放进 delegate 名单 —— 与 codex/openai
     // 同一个姿态。上面那条 WARNING 之前只是说说,名单照旧列着它。
     claudeAvailable: !!claudeBin,
-    ...(codexBinary && codexVersionCheck?.ok ? { codexPathOverride: codexBinary } : {}),
+    // 版本不同不再拦(见 providers.ts 的 2026-09-09 定案);只有 --version 都打不出来才不给。
+    ...(codexBinary && codexVersionCheck && codexVersionCheck.reason !== 'version_probe_failed' ? { codexPathOverride: codexBinary } : {}),
     // busy-registry hold (spec 2026-08-11 §2, Task 4 step 3 + Task 6) —
     // a delegate dispatch is a one-shot session outside SessionManager.
     holdBusy: busyRegistry.hold,
@@ -1053,36 +1111,32 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // 降级兜底:social 抛错时的 inert wiring — 与 wireSocial 未配置时的内部
   // 状态同形(全 handler undefined),下游 a2a/mailbox/return 的门原样生效。
   const inertSocialWiring: import('./wire-social').SocialWiring = {
-    onIntent: undefined, onEcho: undefined, onReveal: undefined, onLetter: undefined,
-    resumeForaging: () => {},
+    onLetter: undefined,
   }
   const socialWiring = (await sup.start('social', async () => {
     const w = await wireSocial({
       log: deps.log,
       stateDir: deps.stateDir,
+      sendFile: deps.ilink.sendFile ? (c, p) => deps.ilink.sendFile!(c, p) : undefined,
       db: deps.db,
       configuredAgent,
       selfId,
       registry,
       defaultProviderId,
-      pluginMcp,
-      currentClaudeModel,
-      claudeBin,
       resolveOperatorChatId,
       sendAssistantText,
       a2aRegistry,
       a2aClient,
-      eventsStore: a2aEventsStore,
       knowledge,
-      // busy-registry hold (spec 2026-08-11 §2, Task 4 step 4 + Task 6) —
-      // broker.forage() + the async responder run as fire-and-forget
-      // coroutines outside SessionManager.
+      // 串门 / 答心愿是脱离会话的后台模型活 —— 登记进 busy,空闲自动重启
+      // 才不会掐在半程(和 delegate 的 'a2a-delegate' 同一个理由)。
       holdBusy: busyRegistry.hold,
     })
     // 未配置 / 无 cheapEval ⇒ wireSocial 返回 inert 对象(social 字段缺席)
     // ⇒ 映射为 null ⇒ supervisor 记 off。
     return w.social ? w : null
   })) ?? inertSocialWiring
+  socialToolsWired = !!socialWiring.social
 
   const a2aWiring = await sup.start('a2a-server', () => wireA2aServer({
     log: deps.log,
@@ -1094,9 +1148,6 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     dispatchDelegate,
     resolveOperatorChatId,
     sendAssistantText,
-    onIntent: socialWiring.onIntent,
-    onEcho: socialWiring.onEcho,
-    onReveal: socialWiring.onReveal,
     onLetter: socialWiring.onLetter,
   }))
   const a2aDeps = a2aWiring?.a2aDeps
@@ -1114,48 +1165,27 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     stateDir: deps.stateDir,
     configuredAgent,
     a2aRegistry,
+    db: deps.db,
     selfId,
     url: a2aServer ? a2aServer.baseUrl() : undefined,
     notify: (msg) => { const op = resolveOperatorChatId(); if (op && sendAssistantText) void sendAssistantText(op, msg) },
     log: deps.log,
   }))
 
-  // Restart-resume: a seek still in `foraging` means its background leg never
-  // finished (a completed leg moves the row to echoed/closed). Re-forage them.
-  // Idempotent via the echo PK (intent_id:peer_agent_id): a duplicate send does
-  // not double-insert. Fire-and-forget; one bad row never blocks boot.
-  // (Runs after wireA2aServer's a2a-info.json write — a behavior-neutral
-  // cross-block reorder: both are independent fire-and-forget side effects.)
-  socialWiring.resumeForaging()
-
   // Content-blind mailbox transport (sub-project B, Task 8) — the poller's
   // deps, constructed only when social wiring is live AND at least one relay
   // is configured. main.ts mounts `registerMailboxPoller(mailboxPollerDeps)`
   // on the companion scheduler iff this is present; otherwise the feature
   // stays fully inert (no poll timer, no relay traffic). I1: `onMailboxLetter`
-  // is `socialWiring.onMailboxLetter` (own-channel-only) — NEVER
-  // `socialWiring.onLetter` (which falls through to letterRelay.routeLetter).
+  // is `socialWiring.onMailboxLetter` (own-channel-only) — the only inbound
+  // arm a bearer-less mailbox drop may reach.
   const mailboxRelays = configuredAgent.mailbox_relays ?? []
   const mailboxPollerDeps = (configuredAgent.social_enabled && mailboxRelays.length > 0 && socialWiring.onMailboxLetter)
     ? {
         stateDir: deps.stateDir,
         a2aRegistry,
-        onReveal: socialWiring.onReveal,
         onMailboxLetter: socialWiring.onMailboxLetter,
-        // v2 (Task 8): the mailbox transport is now a first-class dispatch arm
-        // for intent/echo too (see wire-social.ts's postToHand + broker.discover
-        // opening to mailbox peers) — a mailbox-dropped /a2a/intent or /a2a/echo
-        // envelope must reach the SAME onIntent/onEcho the HTTP routes use, or
-        // a mailbox-only peer's seek/echo traffic silently vanishes at the
-        // poller. Same undefined-gate posture as onReveal/onMailboxLetter above.
-        onIntent: socialWiring.onIntent,
-        onEcho: socialWiring.onEcho,
         relays: mailboxRelays,
-        // 补投:每一拍取件之后,把「我做了、但从没送到对端」的行重投一遍
-        // (揭晓 + 明信片)。2026-09-01 真机上就是这里断的 —— 投递失败之后
-        // 没有任何人会再试一次,而 owner 看到的是「已连接」/「回过了」。
-        // 见 social-reveal.ts / social-echo-retry.ts。
-        sweepUndelivered: socialWiring.sweepUndelivered,
         // Re-checked at every tick (mtime-cached read) so a `/set` toggle of
         // social_enabled takes effect without a daemon restart, same posture
         // as the companion schedulers' shouldRun gates.
@@ -1207,6 +1237,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     sdkOptionsForProject,
     buildInstructions,
     defaultProviderId,
+    codeHead: wiredSelfRestart?.loadedHead ?? null,
+    providerNotes: () => {
+      const out: Partial<Record<ProviderId, string>> = { ...baseProviderNotes() }
+      for (const [id, note] of anomalyNotes) out[id] = out[id] ? `${out[id]} · ⚠️ ${note}` : `⚠️ ${note}`
+      return out
+    },
     agentProviderKind: defaultProviderId,
     /**
      * RFC 03 P4 — late-bound into internal-api by main.ts after
@@ -1226,10 +1262,10 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
      */
     selfId,
     /**
-     * Agent-social M1 (T7b-core) — late-bound into internal-api by main.ts
+     * 社交面(笔友信道 + 心愿)— late-bound into internal-api by main.ts
      * (mirrors a2aDeps/setA2A). Undefined when social_enabled +
      * social_disclosure_policy aren't both configured — POST
-     * /v1/social/seek then 503s.
+     * /v1/social/wish then 503s.
      */
     ...(socialWiring.social ? { social: socialWiring.social } : {}),
     /**
@@ -1268,6 +1304,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
      * self-restart itself is enabled).
      */
     holdBusy: busyRegistry.hold,
+    /** busy-registry label 快照(spec 2026-09-03-companion-presence)。 */
+    busyLabels: busyRegistry.labels,
     /**
      * self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code) —
      * undefined when deps.requestRestart wasn't provided (mechanism fully

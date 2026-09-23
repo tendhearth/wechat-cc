@@ -9,11 +9,13 @@
 import type { MemoryFS } from '../memory/fs-api'
 import type { Db } from '../../lib/db'
 import type { WechatProjectsDep, WechatVoiceDep, WechatCompanionDep } from '../wechat-tool-deps'
+import type { Journal } from '../../core/journal-store'
 import type { ReplySinks } from '../reply-sinks'
 import type { ConversationStore } from '../../core/conversation-store'
 import type { ProviderId } from '../../core/conversation'
 import type { PermissionMode } from '../../core/capability-matrix'
 import type { UserTier } from '../../core/user-tier'
+import type { WorkbenchService } from '../../core/workbench/service'
 
 /**
  * RFC 03 P3: when conversation mode is parallel (or chatroom), the
@@ -79,11 +81,24 @@ export interface InternalApiIlinkDep {
   broadcast(text: string, accountId?: string): Promise<{ ok: number; failed: number }>
 }
 
+/**
+ * 桌宠 turn 的组装闭包(CC 桌宠 Phase B)。返回 core/pet-turn.ts 的纯推导结果;
+ * 输入的采集在 wiring/pipeline-deps.ts(那里才有 ownerChatId / sessionManager /
+ * petSignals / 消息库)。命名成型是为了 routes-pet.test.ts 能不 cast 就构造 deps。
+ */
+export type PetTurnDep = () => Promise<import('../../core/pet-turn').PetTurnPayload>
+
 export interface InternalApiDeps {
   /** State directory; the token file is written under here. */
   stateDir: string
+  /** Local CC Atelier store; read-only artwork metadata/images for the desktop dashboard. */
+  atelier?: import('../atelier-store').AtelierStore
   /** Daemon process pid — exposed by /v1/health for smoke tests. */
   daemonPid: number
+  /** Owner-only Workbench service; late-bound after provider bootstrap. */
+  workbench?: WorkbenchService
+  /** 「一件事」读写面(routes-matters);与 workbench 一样晚绑定。 */
+  matters?: import('../../core/matters/service').MattersService
   /**
    * Sandbox FS for memory_read / memory_write / memory_list (RFC 03 P1.B
    * B2). The same MemoryFS instance is shared with the legacy in-process
@@ -133,6 +148,18 @@ export interface InternalApiDeps {
    */
   replySinks?: ReplySinks
   /**
+   * Optional outbound tap (打猎战利品, 2026-09-03). Unlike replySinks this
+   * does NOT divert — it observes a copy of what goes out so the hunt tick
+   * can record what it shared. Absent ⇒ nothing observed, send unchanged.
+   */
+  outboundTaps?: { observe(chatId: string, text: string): void }
+  /**
+   * 伙伴日志读写(GET/POST /v1/journal*)。缺失 ⇒ 路由 503,桌面端显示
+   * 「这个 daemon 还没有战利品记录」而不是空清单 —— 空清单会被读成
+   * 「CC 什么都没打到」。
+   */
+  hunt?: Journal
+  /**
    * Optional mode-aware reply prefixing (RFC 03 P3). When wired, the
    * `reply` route consults `conversationStore` for the chat's mode and
    * prefixes `[Display]` in parallel + chatroom modes. Without this,
@@ -174,6 +201,42 @@ export interface InternalApiDeps {
    */
   companionConverse?: (text: string) => Promise<{ reply: string }>
   /**
+   * CC 桌宠的「在做什么」(spec 2026-09-05-cc-desktop-pet §5.1)。整段推导 +
+   * 输入采集在 wiring/pipeline-deps.ts 的闭包里(主人 chatId、会话在飞、
+   * pet-signals 的三个时间戳、待决权限),这里只留一个函数位。
+   *
+   * Late-bound:和 companionConverse 一样,要等 bootstrap 造出 coordinator /
+   * sessionManager 之后 main.ts 才 setPetTurn。没设之前 GET /v1/companion/pet
+   * 返回 503 pet_not_wired。
+   */
+  petTurn?: PetTurnDep
+  /**
+   * 待决权限的两个面(spec §6)。list/resolve 都直接落到 ilink-glue 的
+   * PendingPermissions —— 和微信「y/n <hash>」是同一个 consume(),所以桌面
+   * 拍板之后微信那条提示也随之失效。main.ts 直接接线(不需要 late-bind:
+   * PendingPermissions 在 ilink adapter 里,早于 bootstrap)。
+   */
+  permissions?: {
+    list(): import('../pending-permissions').PendingPermissionView[]
+    resolve(hash: string, decision: 'allow' | 'deny'): boolean
+  }
+  /**
+   * 自改流水线跟主人打交道的三件事(spec 2026-09-18-self-change-pipeline)。
+   * 流水线本身是 daemon 外面的一个 CLI 进程,没有 ilink 连接也不知道主人是谁,
+   * 所以「报进展 / 问 y-n / 查拍板」都得回到 daemon 来。main.ts 直接接线
+   * (和 permissions 一样不需要 late-bind:两者都只依赖 ilink adapter)。
+   * 没接线时三条路由 503 self_change_not_wired。
+   */
+  selfChange?: import('../self-change-glue').SelfChangeDep
+  /**
+   * 终端 claude / codex 会话的 hook 事件入口(spec 2026-09-09-cli-hook-push)。
+   * main.ts 在 bootstrap 之后 setCliEvents —— hub 要 boot.sendAssistantText。
+   * 没设之前 POST /v1/cli/event 503。
+   */
+  cliEvents?: { ingest(ev: import('../../core/cli-events').CliEvent): import('../../core/cli-events').CliEventAction | Promise<import('../../core/cli-events').CliEventAction> }
+  /** 终端会话权限 → 微信 y/n(spec 2026-09-09-cli-hook-push §6.3)。main.ts setCliPermissions。 */
+  cliPermissions?: Pick<import('../../core/cli-permission-relay').CliPermissionRelay, 'open' | 'status' | 'wait'>
+  /**
    * Owner-only Customer Review application service. Late-bound after
    * bootstrap because it needs the active provider registry and wxvault MCP.
    */
@@ -203,25 +266,13 @@ export interface InternalApiDeps {
     baseUrl: string | null
   }
   /**
-   * Agent-social M1 (T7b-core) — undefined when `social_enabled` +
-   * `social_disclosure_policy` aren't both configured (or bootstrap hasn't
-   * late-bound it yet). POST /v1/social/seek/{propose,confirm,cancel} return
-   * 503 until this is set. Late-bound by main.ts from `bootstrap.social`
-   * (mirrors the `a2a` dep above / `setA2A`).
-   *
-   * P4 派心愿: `propose`/`confirmSeek`/`cancelSeek` back the propose→confirm
-   * routes.
+   * 社交 — undefined when `social_enabled` + `social_disclosure_policy`
+   * aren't both configured (or bootstrap hasn't late-bound it yet).
+   * /v1/social/wish* and /v1/penpal/* return 503 until this is set.
+   * Late-bound by main.ts from `bootstrap.social` (mirrors the `a2a` dep
+   * above / `setA2A`).
    */
   social?: {
-    broker: {
-      propose(topic: string, opts?: { city?: string }): Promise<import('../../core/social-broker').ProposeOutcome>
-      confirmSeek(id: string): import('../../core/social-broker').ConfirmOutcome
-      cancelSeek(id: string): import('../../core/social-broker').CancelOutcome
-    }
-    seekStore: import('../../core/social-seek-store').SeekStore
-    echoStore: import('../../core/social-echo-store').EchoStore
-    pledgeStore: import('../../core/social-pledge-store').PledgeStore
-    revealer: import('../../core/social-reveal').Revealer
     /** 笔友信箱(spec 2026-07-22-penpal-mailbox-desktop)— boot.social.penpal
      *  原样带入。可选:老 fixture/未接线时 undefined ⇒ /v1/penpal/* 503。 */
     penpal?: {
@@ -229,7 +280,15 @@ export interface InternalApiDeps {
       resendLetter(letterId: string): Promise<{ ok: boolean; error?: string; letter_id?: string }>
       channelStore: import('../../core/penpal-channel-store').ChannelStore
       letterStore: import('../../core/penpal-letter-store').LetterStore
+      /** 串门(架构重构 §2.3)。可选:老 fixture 没有。 */
+      startVisit?(target?: string): Promise<{ ok: true; id: string; channel: string } | { ok: false; reason: string }>
+      /** 进行中的串门(spec 2026-09-03-companion-presence §2.2)。可选:老 fixture 没有。 */
+      activeVisit?(): import('../../core/companion-presence').ActiveVisit | null
     }
+    /** 派心愿(spec 2026-09-04-wish-postcard)。可选:老 fixture / 未接线时 undefined。 */
+    wish?: Omit<import('../bootstrap/wire-wish').WishService, 'onInbound'>
+    /** 介绍(spec 2026-09-04-introduction)。可选:老 fixture / 未接线时 undefined。 */
+    intro?: Omit<import('../bootstrap/wire-intro').IntroService, 'onInbound'>
   }
   /**
    * Knowledge Kernel (Phase 01, T3) — the daemon-owned KnowledgeStore +
@@ -256,6 +315,15 @@ export interface InternalApiDeps {
     listRange(chatId: string, opts: { limit: number; beforeTs?: string }): Promise<Array<{ ts: string; direction: string; kind: string; text: string }>>
     search(chatId: string, query: string, limit: number): Promise<Array<{ ts: string; direction: string; kind: string; text: string }>>
   }
+  /**
+   * 某个 chat 最近一条**入站**消息的时间(ISO),没有则 null —— 桌宠状态
+   * (`GET /v1/companion/presence`)判断「主人/客人真的在跟我说话」的唯一依据。
+   * 不能拿 `listSessions()` 的 `lastUsedAt`:打猎、关心推送、提醒这些伙伴自己的
+   * 外发也会 bump 它,于是打猎那一拍熊就说「在跟你聊」,而主人一个字都没说。
+   * main.ts 注入的是与 `messages` 同一个 `makeMessagesStore(db)` 实例的方法;
+   * 未接线 ⇒ 每个会话都当 null(没有入站证据就不算在聊)。
+   */
+  latestInboundTs?: (chatId: string) => Promise<string | null>
   knowledge?: {
     store: import('../../core/knowledge/store').KnowledgeStore
     search: typeof import('../../core/knowledge/search').semanticSearch
@@ -310,11 +378,29 @@ export interface InternalApiDeps {
    *  main.ts wires it to isHeartbeatFresh(server.heartbeat). */
   heartbeatFresh?: () => boolean
   /**
+   * 本进程在跑的到底是哪一版 —— backs `version` in GET /v1/health。桌面更新器换入
+   * 新 .app 后旧 daemon 不会被杀(2026-09-16 实测),app 若看不到后台版本就无从发现
+   * "后台还是旧的"。cli = package.json 版本;head = 启动时加载的 git commit(打包版为
+   * null);boot_at = 本进程启动时刻。
+   */
+  version?: () => { cli: string; head: string | null; boot_at: string }
+  /**
    * Optional session releaser — backs POST /v1/sessions/release (admin
    * remediation: force-release a wedged session so the next message spawns a
    * fresh subprocess). A thunk over bootRef.sessionManager. 503 when unwired.
    */
   releaseSession?: (k: { alias: string; providerId: string; chatId: string }) => Promise<void>
+  /**
+   * Optional resume-archive dropper — backs the model-switch path in
+   * POST /v1/model (and therefore the `model_set` MCP tool). Releasing the
+   * live sessions only drops the running subprocess; the next spawn would
+   * resume from a stored session id and keep the OLD model (a resumed
+   * session carries no model — ACP `session/load`, Claude/Codex thread
+   * resume). Deleting this provider's rows makes that next spawn a cold
+   * start, which is the only place the model actually gets pinned.
+   * Returns how many rows were dropped. A thunk over bootRef.sessionStore.
+   */
+  forgetProviderSessions?: (providerId: string) => number
   /**
    * Optional restart trigger — backs POST /v1/daemon/restart. main.ts schedules
    * a graceful shutdown + process.exit shortly after (so the HTTP response
@@ -430,6 +516,11 @@ export interface InternalApiDeps {
    */
   holdBusy?: (label: string) => () => void
   /**
+   * busy-registry 的 label 快照(spec 2026-09-03-companion-presence §2.2)——
+   * 桌宠状态推导用。thunk-over-bootRef,同 holdBusy;bootstrap 之前返回 []。
+   */
+  busyLabels?: () => string[]
+  /**
    * Mint an env-only per-session token — mirrors `InternalApi.mintSessionToken`
    * below (see there for the full contract). Set INTERNALLY by
    * createInternalApi (index.ts) right after it constructs its token
@@ -447,6 +538,29 @@ export interface InternalApiDeps {
     sessionKey: string,
     opts?: import('./token-registry').MintTokenOpts,
   ) => string
+  /**
+   * Optional test-conversation runner — backs POST /v1/selftest/converse
+   * (spec 2026-09-18-self-maintenance §1). A thunk-over-bootRef wired in
+   * main.ts (same posture as forgetProviderSessions above): it closes over
+   * bootRef?.registry plus this same internalApi's mintSessionToken /
+   * invalidateSession, so it can't exist before bootstrap constructs the
+   * provider registry.
+   *
+   * This field itself is wired UNCONDITIONALLY in main.ts (the HTTP port
+   * opens before `bootRef` is assigned, same as every other
+   * thunk-over-bootRef field) — so "the field is present but bootRef isn't
+   * ready yet" is a real, reachable window, not just a test-only shape.
+   * Returns `null` in exactly that window; the route treats BOTH "field
+   * absent" and "field present but returned null" as 503
+   * `selftest_not_wired`, matching the spec's "未接线 503". Never called by
+   * the desktop app — only the `wechat-cc selftest chat` CLI (separate
+   * task), driven with the operator token.
+   */
+  selftestConverse?: (input: {
+    providerId: string
+    text: string
+    resumeSessionId?: string
+  }) => Promise<import('../selftest').SelftestConverseResult | null>
 }
 
 export interface InternalApi {
@@ -458,6 +572,9 @@ export interface InternalApi {
   port(): number
   /** Filesystem path of the token file. */
   tokenFilePath(): string
+  /** Late-bind the owner-only Workbench after provider bootstrap. */
+  setWorkbench(service: WorkbenchService): void
+  setMatters(service: import('../../core/matters/service').MattersService): void
   /**
    * RFC 03 P4 — late-bind the delegate dispatcher after bootstrap has
    * constructed the bare delegate providers. /v1/delegate route returns
@@ -479,6 +596,16 @@ export interface InternalApi {
    * until this is called.
    */
   setCompanionConverse(fn: NonNullable<InternalApiDeps['companionConverse']>): void
+  /**
+   * Late-bind 桌宠 turn 的组装闭包(CC 桌宠 Phase B),同 setCompanionConverse:
+   * 它闭包了 boot.sessionManager / boot.coordinator,只有 wireMain 返回之后
+   * 才存在。GET /v1/companion/pet 在此之前返回 503。
+   */
+  setPetTurn(fn: NonNullable<InternalApiDeps['petTurn']>): void
+  setCliEvents(hub: NonNullable<InternalApiDeps['cliEvents']>): void
+  setCliPermissions(relay: NonNullable<InternalApiDeps['cliPermissions']>): void
+  /** 三轴 presence 的共用入口(随身 CC 手机页经此读,不自己拼输入)。null = journal 没接。 */
+  getPresence(): Promise<import('../../core/companion-presence').Presence | null>
   /** Late-bind Customer Review after wxvault + an eval provider are ready. */
   setCustomerReview(service: NonNullable<InternalApiDeps['customerReview']>): void
   /**
@@ -488,8 +615,8 @@ export interface InternalApi {
    */
   setA2A(a2a: NonNullable<InternalApiDeps['a2a']>): void
   /**
-   * Late-bind the agent-social M1 broker (T7b-core) after bootstrap has
-   * constructed it. POST /v1/social/seek/{propose,confirm,cancel} return 503
+   * Late-bind the social surface (笔友信道 + 心愿) after bootstrap has
+   * constructed it. POST /v1/social/wish{,/send,/cancel} return 503
    * until this is called (only happens when social_enabled +
    * social_disclosure_policy are both configured).
    */
