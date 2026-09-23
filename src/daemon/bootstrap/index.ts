@@ -175,7 +175,7 @@ function hydrateClaudeAuthEnvFromUserSettings(log: BootstrapDeps['log']): void {
  * Returns undefined when the registry has no cheapEval — the coordinator
  * treats `haikuEval: undefined` as absent, skipping beat ②b and beat ③.
  */
-function wrapCheapEvalWithAuthFailCheck(
+export function wrapCheapEvalWithAuthFailCheck(
   cheapEval: CheapEval | null,
   log: BootstrapDeps['log'],
 ): ((prompt: string) => Promise<string>) | undefined {

@@ -174,12 +174,49 @@ describe('makeRecollectSink', () => {
    * 才有鉴别力(光看"问没问模型"在 turns≥2 时怎么都问得到,分不出
    * returned 传对没传对)。
    */
-  it('returned 原样等于导出的常量,不会被接错成别的东西——prompt 里永不出现"被打回或报错"', async () => {
+  it('returned 原样等于导出的常量,不会被接错成别的东西——prompt 里永不出现"被打回或报错"(turns 与 overnight 两条轴都要钉住)', async () => {
     const asked: string[] = []
     const cheapEval = vi.fn(async (prompt: string) => { asked.push(prompt); return '写完了。' })
     const sink = makeRecollectSink({matters, journal, cheapEval: () => cheapEval, ownerChatId: () => 'owner', now: () => DAY1_LATER, log: (t, l) => logs.push([t, l])})
     sink.maybeTrigger(TASK, 2) // turns 本身就够格 → 无论 returned 算成什么,ask() 都会被调用
     await vi.waitFor(() => expect(cheapEval).toHaveBeenCalledTimes(1))
     expect(asked[0]).not.toContain('被打回或报错')
+
+    // fix round 3(复审 M3):只钉 turns 这一条轴逃不掉 `const returned =
+    // overnight ? 1 : 0` 这种错接法——它跟 turns 无关,turns=2 这组输入
+    // 根本测不到它。换一个新 matter(上面那条已经把 TASK 标成"写过了",
+    // 持久去重会挡住第二次触发),overnight 单独够格、turns=0,同样断言
+    // prompt 里不出现"被打回或报错"才有鉴别力。
+    const TASK2 = 'b0000002'
+    matters.create({id: TASK2, kind: 'task', title: '半夜排查'})
+    const sink2 = makeRecollectSink({matters, journal, cheapEval: () => cheapEval, ownerChatId: () => 'owner', now: () => DAY2, log: (t, l) => logs.push([t, l])})
+    sink2.maybeTrigger(TASK2, 0)
+    await vi.waitFor(() => expect(cheapEval).toHaveBeenCalledTimes(2))
+    expect(asked[1]).not.toContain('被打回或报错')
+  })
+
+  /**
+   * fix round 3(2026-09-23,评审 M2):终态那一拍的模型调用是 fire-and-
+   * forget,没有 holdBusy 挡着的话空闲自动重启可能切在中间、这条回忆静
+   * 默丢失且不留痕(被 abort 不算抛错,.catch 记不到;matter 已经
+   * done,不会再有下一拍来补)。这条钉住:发起模型调用之前就该持有 token
+   * (ask() 还没 resolve 时 token 已经在手),真正写完(或声明放弃)之后
+   * 才放开。
+   */
+  it('holdBusy:模型调用期间持有 busy token,收尾(写完/声明放弃)才放开', async () => {
+    let resolveAsk: (v: string) => void = () => {}
+    const askPromise = new Promise<string>(resolve => { resolveAsk = resolve })
+    const cheapEval = vi.fn(() => askPromise)
+    const held: string[] = []
+    const released: string[] = []
+    const holdBusy = (label: string) => { held.push(label); return () => { released.push(label) } }
+    const sink = makeRecollectSink({matters, journal, cheapEval: () => cheapEval, ownerChatId: () => 'owner', now: () => DAY1_LATER, log: (t, l) => logs.push([t, l]), holdBusy})
+    sink.maybeTrigger(TASK, 2)
+    await new Promise(resolve => setImmediate(resolve))
+    expect(held).toEqual(['recollect']) // ask() 还没 resolve,token 已经在手
+    expect(released).toEqual([])
+    resolveAsk('写完了。')
+    await vi.waitFor(() => expect(journal.list()).toHaveLength(1))
+    await vi.waitFor(() => expect(released).toEqual(['recollect']))
   })
 })

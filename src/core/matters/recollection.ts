@@ -106,6 +106,16 @@ export function crossedOvernight(createdAtMs: number, nowMs: number): boolean {
  * 大的一块改动;这一轮先把"真的问、真的写"这条线接上,读不读得到原文留
  * 给以后按真实数据调(spec「还没定」)。model 只回一两句像朋友那样会记
  * 住的话,不是任务总结。
+ *
+ * 结尾那句"没什么可记的就什么都不要输出"(fix round 3,评审必判②)不是
+ * 装饰:候选信号本身很粗——非 retained 执行者(agy/cursor-ACP/openai/
+ * gemini,全仓没有任何 provider 实现 `steer`,`turnSeq` 结构性地推不
+ * 动)turns/returned 恒为 0,`crossedOvernight` 只比 UTC 日历日(UTC+8
+ * 下那条线落在本地早上 08:00,不是罕见边界,是日常上午的窗口)——不给这
+ * 句话,模型没有"不写"这个出口,凡跨 UTC 零点的事都会被要求凭一句"跨了
+ * 一夜才有回复"的理由编一句话,便宜模型就从过滤器变成了产出器。空输出
+ * 已经在 recollect-sink.ts 里被当成"它决定不写"处理(latch + 留痕),
+ * 天然接得上。
  */
 export function buildRecollectionPrompt(input: { title: string; turns: number; returned: number; overnight: boolean }): string {
   const reasons: string[] = []
@@ -116,6 +126,7 @@ export function buildRecollectionPrompt(input: { title: string; turns: number; r
     `你是 CC 自己,刚做完一件事:「${input.title}」。`,
     `这件事记得住,因为${reasons.length > 0 ? reasons.join('、') : '有点特别'}。`,
     '像朋友之间会记住的那样,写一两句话的记述——不是任务总结,别用"已完成"这类措辞。直接输出这句话本身,不要多余的解释、前后缀或引号包裹。',
+    '如果这件事其实没什么可记的,就什么都不要输出。',
   ].join('\n')
 }
 
@@ -123,8 +134,11 @@ export function buildRecollectionPrompt(input: { title: string; turns: number; r
  * service 侧的可选依赖,注入便于测试;不注入就整条功能不存在(降级路径,
  * 与 opts.matters/opts.log、report.ts 的 `ReportSink` 同一套「可选依赖」
  * 约定)。真正的实现(daemon 侧,src/daemon/recollection/recollect-sink.ts)
- * 在 workbench/service.ts 的 `settleQuiet` 那一拍(紧跟 `reportOnce` 之
- * 后)被调用:内部去查 matter(拿标题、算 overnight)、拿便宜模型、调
+ * 只在 workbench/service.ts 的**终态**(`recollectOnce`,execute() 的
+ * finally 块提交完 `store.update`/`matterSync` 之后,`status!=='interrupted'`
+ * 时)被调用——fix round 3 去掉了 `settleQuiet` 那一处(答复静下来每次都
+ * 触发,跟"持久去重、按 matter 只给一条"天生冲突,见 recollectOnce 旁边
+ * 的注释)。内部去查 matter(拿标题、算 overnight)、拿便宜模型、调
  * `maybeRecollect`、真的落 journal。
  */
 export interface RecollectSink {

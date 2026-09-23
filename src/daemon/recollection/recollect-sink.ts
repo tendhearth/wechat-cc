@@ -1,10 +1,14 @@
 /**
  * recollect-sink.ts — the daemon-side RecollectSink (src/core/matters/
- * recollection.ts) that src/core/workbench/service.ts's settleQuiet AND its
- * terminal-completion branch both call into (via recollectOnce; fix round
- * 1/5, 2026-09-23, controller ruling: this must be wired up this round, not
- * left for a later task; fix round 2/5 wires the second call point + fixes
- * below).
+ * recollection.ts) that src/core/workbench/service.ts's terminal-completion
+ * branch calls into (via recollectOnce; fix round 1/5, 2026-09-23,
+ * controller ruling: this must be wired up this round, not left for a later
+ * task). Fix round 3 removed the settleQuiet call point that rounds 1-2 also
+ * had — see recollectOnce's own doc comment in service.ts for why (it
+ * conflicted with the persistent, per-matter dedup below: settleQuiet fires
+ * on every quiet turn, so the FIRST qualifying moment — often an empty
+ * overnight-only story — would use up the matter's one slot before any real
+ * "back-and-forth" (turns/returned) ever had a chance to accumulate).
  *
  * Thin glue, same philosophy as ../reports/report-sink.ts: look up the
  * matter (title + createdAt), pick a cheap model, and let the pure
@@ -46,6 +50,17 @@
  *     In-memory only (not persisted like #1) — a deliberate, narrower
  *     scope than the persistent write-dedup; see the report's concerns for
  *     the tradeoff this accepts.
+ *
+ * holdBusy (fix round 3, evaluation M2): this is fire-and-forget — the call
+ * site (`recollectOnce` in service.ts) never awaits `maybeTrigger`. Since
+ * fix round 3, it only fires ONCE per matter, at the true terminal moment
+ * (no next settle to retry from), so a lost in-flight call here is a
+ * PERMANENT loss, not a delay — more important than round 1-2's version,
+ * not less. This repo's rule for exactly this shape (a background task that
+ * doesn't go through SessionManager) is `boot.holdBusy(label)` so idle
+ * self-restart won't kill the daemon mid-call; see Bootstrap.holdBusy's own
+ * doc comment (bootstrap/types.ts) and wire-intro.ts's `bg()` helper for the
+ * idiom this copies.
  */
 import type {MatterStore} from '../../core/matters/store'
 import {maybeRecollect, buildRecollectionPrompt, crossedOvernight, RETURNED_SIGNAL_UNAVAILABLE, type RecollectSink} from '../../core/matters/recollection'
@@ -61,6 +76,8 @@ export interface RecollectSinkDeps {
   ownerChatId(): string | null
   now?(): number
   log?(tag: string, line: string): void
+  /** 后台长任务的 busy 登记(见文件头「holdBusy」一节);不给就不登记(降级,不报错)。 */
+  holdBusy?(label: string): () => void
 }
 
 export function makeRecollectSink(deps: RecollectSinkDeps): RecollectSink {
@@ -80,6 +97,13 @@ export function makeRecollectSink(deps: RecollectSinkDeps): RecollectSink {
       const returned = RETURNED_SIGNAL_UNAVAILABLE
       const cheapEval = deps.cheapEval()
       inFlight.add(taskId)
+      // holdBusy(见文件头):这是终态那一拍唯一的一次机会,空闲自动重启若
+      // 正好切在这一段中间,没有 token 挡着的话这条回忆会静默丢失、也不
+      // 会有下一拍来补(不像 round 1-2 挂在 settleQuiet 时那样还有后续
+      // 轮次兜底)。登记失败/放开失败都只当没登记(照 wire-intro.ts 的
+      // holdBusy() 包法),不让这条降级反过来砸了回忆本身。
+      let releaseBusy: () => void = () => {}
+      try { releaseBusy = deps.holdBusy?.('recollect') ?? releaseBusy } catch { /* 登记失败:降级为不登记 */ }
       void maybeRecollect({
         turns, returned, overnight,
         ask: cheapEval ? () => cheapEval(buildRecollectionPrompt({title: matter.title, turns, returned, overnight})) : undefined,
@@ -95,7 +119,7 @@ export function makeRecollectSink(deps: RecollectSinkDeps): RecollectSink {
         log: msg => deps.log?.('MATTER_RECOLLECT', `${taskId}: ${msg}`),
       })
         .catch(err => deps.log?.('MATTER_RECOLLECT', `maybeRecollect threw for ${taskId}: ${err instanceof Error ? err.message : err}`))
-        .finally(() => { inFlight.delete(taskId) })
+        .finally(() => { inFlight.delete(taskId); try { releaseBusy() } catch { /* 放开失败:下一次重启窗口再说 */ } })
     },
   }
 }

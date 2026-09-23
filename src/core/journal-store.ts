@@ -75,6 +75,16 @@ export interface Journal {
    * Important):recollect-sink.ts 在问便宜模型之前先查一次,daemon 重启
    * 之后也认得——不像纯内存的 Set,重启就归零、同一个 matter 会被再问、
    * 再写一条几乎一样的记述。
+   *
+   * 取舍(fix round 3,评审判定「不是问题」,记下来别让下一个人当成漏
+   * 洞):这条行也会被 `prune()` 按时间收拢(favorite=0 时超出
+   * `PRUNE_KEEP` 就会被删,跟 hunt/visit/postcard 一视同仁)——被收拢之
+   * 后 `hasRecollection` 会重新变回 false,理论上那个 matter 之后再够格
+   * 一次会再写一条。这不是"重复",是"替补":那段记忆本身已经不在背包里
+   * 了(收拢按 ts 从旧到新剪,被剪掉的正是"够旧、够被后面 500 条挤出去"
+   * 的那些),写一条新的补上去跟这个地方"装的是最近的东西"这条设计是一
+   * 致的。而且主人真在意的那些(`favorite=1`)prune 永不碰,那些的去重
+   * 是永久的。
    */
   hasRecollection(matterId: string): boolean
   /** 明信片画得慢(又一次模型调用 + 栅格化),先记见闻再补图。 */

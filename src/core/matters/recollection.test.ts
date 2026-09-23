@@ -81,6 +81,10 @@ describe('buildRecollectionPrompt —— 给便宜模型的理由 + 标题', () 
     const prompt = buildRecollectionPrompt({ title: '半夜排查', turns: 0, returned: 0, overnight: true })
     expect(prompt).toContain('跨了一夜才有回复')
   })
+  it('给模型一个"不写"的出口(fix round 3,评审必判②):候选信号很粗,不给出口便宜模型就从过滤器变成了产出器', () => {
+    const prompt = buildRecollectionPrompt({ title: '半夜排查', turns: 0, returned: 0, overnight: true })
+    expect(prompt).toContain('如果这件事其实没什么可记的,就什么都不要输出')
+  })
 })
 
 describe('RETURNED_SIGNAL_UNAVAILABLE —— returned 目前显式挂账为 0', () => {

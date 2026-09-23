@@ -274,11 +274,12 @@ it('从微信交办的事(真 agy 形状:非 retained、无 workbenchRuntime),�
     async spawn() { return { async *dispatch() { yield { kind: 'text' as const, itemId: 't0', text: '做完了。' }; yield { kind: 'result' as const, sessionId: 'agy-1', numTurns: 1, durationMs: 1 } }, async cancel() {}, async close() {} } },
     cheapEval: async (prompt: string) => { asked.push(prompt); return '那天你让我改首页，我改错了两次。' },
   }, { displayName: 'Gemini (agy)', canResume: () => true })
+  const heldLabels: string[] = []
   const boot = {
     registry: bootRegistry,
     sdkOptionsForProject: (() => ({})) as unknown as Bootstrap['sdkOptionsForProject'],
     defaultProviderId: 'agy',
-    holdBusy: (_label: string) => () => {},
+    holdBusy: (label: string) => { heldLabels.push(label); return () => {} },
   } as unknown as Bootstrap
   try {
     const service = wireWorkbench({
@@ -301,6 +302,10 @@ it('从微信交办的事(真 agy 形状:非 retained、无 workbenchRuntime),�
     const journal = makeJournal(db)
     await expect.poll(() => journal.list().length).toBe(1)
     expect(journal.list()[0]).toMatchObject({ kind: 'recollection', chat_id: 'chat-1', note: '那天你让我改首页，我改错了两次。' })
+    // fix round 3(评审 M2):wireWorkbench 真的把 opts.boot.holdBusy 接给了
+    // makeRecollectSink,不是漏接——这条 e2e 顺手核实这一根线,不用另起一
+    // 条完整的 e2e。
+    expect(heldLabels).toContain('recollect')
     await service.shutdown()
   } finally {
     db.close()
@@ -370,6 +375,60 @@ it('回忆的便宜模型来源是 opts.boot.registry(带 cheapEvalProvider 钉�
     const journal = makeJournal(db)
     await expect.poll(() => journal.list().length).toBe(1)
     expect(journal.list()[0]!.note).toBe('钉死答的:改首页') // 不是 agy 自己那句
+    await service.shutdown()
+  } finally {
+    db.close()
+  }
+})
+
+/**
+ * fix round 3(2026-09-23,评审 M6):裸 `registry.getCheapEval()` 不会把
+ * "登出/401 之类的认证失败"跟"正常答复"分开——供应商的鉴权失效经常表
+ * 现成一句普通的助手文本(比如「Please log in」),不是抛错;不套
+ * `wrapCheapEvalWithAuthFailCheck` 的话,这段文本会被 `maybeRecollect`
+ * 直接当成"CC 写的记述"落进 journal。这条钉住:认证失效的文本会被识别
+ * 出来、当成真的调用失败留痕(不是"没有模型"那种静默跳过),journal 不
+ * 会写进那句假记述。
+ */
+it('便宜模型的回复其实是认证失效(401/登出):当成真的调用失败留痕,不写进 journal', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'wire-workbench-recollect-authfail-'))); acknowledgeDirs.push(root)
+  const stateDir = join(root, 'state'), project = join(root, 'project')
+  mkdirSync(project, { recursive: true })
+  saveAgentConfig(stateDir, { provider: 'agy', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false, workbench_unattended_ack_at: 999 })
+  await saveCompanionConfig(stateDir, { ...defaultCompanionConfig(), default_chat_id: 'chat-1' })
+  addProject(join(stateDir, 'projects.json'), 'project', project)
+  const db = openDb({ path: join(stateDir, 'state.db') })
+  const matters = makeMatterStore(db, () => Date.now() - 48 * 60 * 60 * 1000)
+  const bootRegistry = createProviderRegistry()
+  bootRegistry.register('agy', {
+    async spawn() { return { async *dispatch() { yield { kind: 'text' as const, itemId: 't0', text: '做完了。' }; yield { kind: 'result' as const, sessionId: 'agy-1', numTurns: 1, durationMs: 1 } }, async cancel() {}, async close() {} } },
+    cheapEval: async () => 'Please log in — 401 unauthorized', // 认证失效的典型措辞,不是抛错
+  }, { displayName: 'Gemini (agy)', canResume: () => true })
+  const boot = {
+    registry: bootRegistry,
+    sdkOptionsForProject: (() => ({})) as unknown as Bootstrap['sdkOptionsForProject'],
+    defaultProviderId: 'agy',
+    holdBusy: (_label: string) => () => {},
+  } as unknown as Bootstrap
+  const logs: Array<[string, string]> = []
+  try {
+    const service = wireWorkbench({
+      db, stateDir, boot, matters,
+      internalApi: { mintSessionToken: () => 'token', invalidateSession: () => {} },
+      askUser: async () => 'allow',
+      log: (tag, line) => logs.push([tag, line]),
+    })
+    const projectView = service.projects().find(p => p.path === project)!
+    const receipt = service.createWechat({
+      ownerChatId: 'chat-1', accountId: 'acct-1', requestId: randomUUID(),
+      commandHash: createHash('sha256').update('改首页').digest('hex'),
+      originMessageId: 'msg-7', projectId: projectView.id, providerId: 'agy', text: '改首页',
+    })
+    await expect.poll(() => matters.get(receipt.taskId)?.status).toBe('done')
+    await expect.poll(() => logs.some(([tag]) => tag === 'MATTER_RECOLLECT')).toBe(true)
+    expect(logs.some(([tag, line]) => tag === 'MATTER_RECOLLECT' && line.includes('auth_failed'))).toBe(true)
+    const journal = makeJournal(db)
+    expect(journal.list()).toEqual([]) // 那句假记述没有被写进去
     await service.shutdown()
   } finally {
     db.close()

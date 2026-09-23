@@ -16,6 +16,7 @@ import { makeWorkbenchService } from '../../core/workbench/service'
 import { makeReportSink } from '../reports/report-sink'
 import { makeRecollectSink } from '../recollection/recollect-sink'
 import { makeJournal } from '../../core/journal-store'
+import { wrapCheapEvalWithAuthFailCheck } from './index'
 import { ACP_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../../core/workbench/executor-capabilities'
 import { readNativeClaudeTools, workbenchClaudeEnvironment, type NativeClaudeTools } from '../../core/workbench/claude-native-config'
 import { claudeNativeCapabilityNotice } from '../../core/workbench/native-capability-notice'
@@ -177,7 +178,18 @@ export function wireWorkbench(opts: {
   // `boot.registry.getCheapEval()`),不缓存 provider 本身、每次现取。
   const recollect=opts.matters?makeRecollectSink({
     matters:opts.matters,journal:makeJournal(opts.db),
-    cheapEval:()=>opts.boot.registry.getCheapEval(),ownerChatId,log:opts.log,
+    // fix round 3(评审 M6):跟 bootstrap/index.ts:1048 的 haikuEval/verdictEval
+    // 同一处理——裸 getCheapEval() 拿到的候选没做过「登出/401 之类的认证失败
+    // 别当成正常回复」这道检查,套上 wrapCheapEvalWithAuthFailCheck(导出复
+    // 用,不重新发明)。它内部 assertNotAuthFailed 抛错时,maybeRecollect 的
+    // try/catch 会当成真的调用失败留痕——跟"没有便宜模型"是两回事。
+    cheapEval:()=>wrapCheapEvalWithAuthFailCheck(opts.boot.registry.getCheapEval(),opts.log)??null,
+    ownerChatId,log:opts.log,
+    // fix round 3(评审 M2):终态那一拍的模型调用是 fire-and-forget,没有
+    // holdBusy 挡着的话空闲自动重启可能切在中间、这条回忆静默丢失且不留
+    // 痕——已经在手边(opts.boot.holdBusy 这个函数在这个文件里到处用,见
+    // 下面 makeWorkbenchService 传的那个),零新依赖。
+    holdBusy:opts.boot.holdBusy,
   }):undefined
   return makeWorkbenchService({
     executionConflict:opts.executionConflict,

@@ -633,7 +633,15 @@ export function makeWorkbenchService(opts: Options) {
     if (!quiet(running)) return
     matterSync(m=>m.setStatus(running.taskId,'replied'))
     reportOnce(running)
-    recollectOnce(running)
+    // 回忆(task-5,fix round 3,评审必判①):不在这里调 recollectOnce 了——
+    // settleQuiet 每次安静都触发一次,而持久去重(journal.hasRecollection)
+    // 是"按 matter 只给一条",两者天生冲突:matter 隔夜第一次静下来就够格
+    // (overnight),凭标题写一句空话,之后主人打回好几次的「波折」反而全被
+    // 已经写过的那条挡住——留下的恰好是最没内容的那条,跟"最该记住的是波
+    // 折"这条设计取向正相反。只在终态(下面那处 recollectOnce)触发:那时
+    // turnSeq 才是这个 run 真实的轮数,"一件事一段记述"与"最该记住的是波
+    // 折"只有写在结局时才同时成立。代价是回忆延迟到 idle-close(最长十分
+    // 钟级),接受。
     // 差异边界 = 回合边界:这一轮的代码变更现在就截(以前这一步挂在「答复即释放」后面,
     // 那条路没了)。续接会先 await 这份在途的快照再取新基线,所以不会把下一轮的改动算进来。
     void captureCodeChanges(running).catch(()=>{})
@@ -899,15 +907,27 @@ export function makeWorkbenchService(opts: Options) {
         // 需要处理"/问"交给 X 继续?")直接打架。失败/取消不经这里回报,不代表主人收不
         // 到通知——stageFinishedNotice 走的是另一条既有的完成通知路径,不受这里影响。
         if (status==='completed') reportOnce(running)
-        // 回忆(task-5,fix round 2,评审必判 ①):非 retained 的执行者(agy/cursor/openai,
-        // 没有 workbenchRuntime)永不经过 settleQuiet(runtimeSnapshot() 在没有
-        // workbenchRuntime 时返回 undefined,settleQuiet 第一行的门直接 return)——只走
-        // 这条终态路径,不在这里也调一次 recollectOnce,这三家执行者的事永远进不了回忆。
-        // 跟 reportOnce 不同,这里**不继承** `status==='completed'` 那道门:spec 的回忆
-        // 判据恰恰是"反复失败、被打回、隔夜才通的才记得"——继承那道门会把最该被记住的
-        // 那类事正好挡掉。被主人当场取消的事 turnSeq 还是初始值、当天创建,门槛(turns/
-        // overnight/returned)自己会挡住,不用在这里特判 cancelled。
-        recollectOnce(running)
+        // 回忆(task-5,fix round 3,评审必判①):这是唯一的触发点(round 2
+        // 还有 settleQuiet 那一处,这一轮去掉了——见 settleQuiet 里的注
+        // 释)。这里的 turnSeq 是这个 run 真实的总轮数,"一件事一段记述"与
+        // "最该记住的是波折"只有写在结局时才同时成立。跟 reportOnce 不
+        // 同,不继承 `status==='completed'` 那道门:spec 的回忆判据恰恰是
+        // "反复失败、被打回、隔夜才通的才记得",继承那道门会把最该被记住
+        // 的那类事正好挡掉。被主人当场取消的事 turnSeq 还是初始值、当天
+        // 创建,门槛(turns/overnight/returned)自己会挡住,不用在这里特
+        // 判 cancelled。
+        //
+        // 但**排除 'interrupted'**(fix round 3 M5/I1 同根):这个状态是
+        // "执行程序没确认退出,不确定它是不是还活着"——matterSync 上面那
+        // 一行把 matter 设回 'open',故事没完。若在这里也调 recollectOnce
+        // 并真写了一条,后面这件事真的收尾时会被持久去重(journal.
+        // hasRecollection)挡住,永久用掉它唯一那次机会,记下的还是当下这
+        // 个"不确定"状态而不是真正的结局。排除后 hasRecollection 仍是
+        // false——这个 matter 之后无论是被继续(比如 restart_required 那
+        // 条续接路径,service.continueTask)还是干脆没人再碰,都不会被这
+        // 一次 interrupted"用掉"配额;等它真的收尾(哪怕是后来某一次新的
+        // run 的终态),recollectOnce 会在那时才第一次真正评估。
+        if (status!=='interrupted') recollectOnce(running)
         publishFinishedNotices()
       } catch { /* never unlock an uncertain writer for a status failure */ }
       running.publicFinished=true; running.resolveDone()
