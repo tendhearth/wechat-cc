@@ -102,4 +102,84 @@ describe('makeRecollectSink', () => {
     expect(cheapEval).toHaveBeenCalledTimes(1)
     expect(journal.list()).toHaveLength(1)
   })
+
+  /**
+   * fix round 2(2026-09-23,复审新 Important ④):round 1 的 `done` Set 是纯
+   * 内存的,daemon 重启就归零——两个 sink 实例(= 两个 daemon 生命周期)共
+   * 用同一个 db,复审实测第二次照样写出第二条一模一样的「一段回忆」。改成
+   * 持久去重(journal.hasRecollection,v67 的 journal.matter_id)之后,第
+   * 二个 sink 实例也认得"这件事已经写过"。
+   */
+  it('持久去重(v67 journal.matter_id):第二个 sink 实例(模拟 daemon 重启)共用同一个 db,不会再写第二条', async () => {
+    const cheapEval1 = vi.fn(async () => '第一次写的回忆。')
+    const sink1 = makeRecollectSink({matters, journal, cheapEval: () => cheapEval1, ownerChatId: () => 'owner', now: () => DAY1_LATER, log: (t, l) => logs.push([t, l])})
+    sink1.maybeTrigger(TASK, 2)
+    await vi.waitFor(() => expect(journal.list()).toHaveLength(1))
+
+    // 模拟重启:全新的 sink 实例(全新的内存 Set),但共用同一个 journal/db。
+    // now 特意换成 DAY2(overnight 恒真)——如果没有持久去重,门槛照样够格,
+    // 这条测试才有鉴别力(不是因为"这次刚好不够格"才没触发)。
+    const cheapEval2 = vi.fn(async () => '重启后又写一条(不该发生)。')
+    const sink2 = makeRecollectSink({matters, journal, cheapEval: () => cheapEval2, ownerChatId: () => 'owner', now: () => DAY2, log: (t, l) => logs.push([t, l])})
+    sink2.maybeTrigger(TASK, 0)
+    await new Promise(resolve => setImmediate(resolve))
+    expect(cheapEval2).not.toHaveBeenCalled()
+    expect(journal.list()).toHaveLength(1)
+  })
+
+  /**
+   * fix round 2「小的」①:同一次 `settleQuiet` 会因为不同 turnSeq 陆续触发
+   * `maybeTrigger`(见 service.ts 的 recollectOnce,它只挡"同一个 turnSeq
+   * 再来一次",不挡"不同 turnSeq 连着来")。round 1 的持久去重要等
+   * `write` 真的落地才生效,两次调用若都在第一次落地之前抵达,会各问一次
+   * 模型、可能各写一条。
+   */
+  it('in-flight 守卫:同一件事不许同时发起两次模型调用', async () => {
+    let resolveAsk: (v: string) => void = () => {}
+    const askPromise = new Promise<string>(resolve => { resolveAsk = resolve })
+    const cheapEval = vi.fn(() => askPromise)
+    const sink = makeRecollectSink({matters, journal, cheapEval: () => cheapEval, ownerChatId: () => 'owner', now: () => DAY1_LATER, log: (t, l) => logs.push([t, l])})
+    sink.maybeTrigger(TASK, 2) // 第一次触发,ask() 挂起、还没 resolve
+    sink.maybeTrigger(TASK, 3) // 第二个 turnSeq 在第一次写入落地前就到了
+    await new Promise(resolve => setImmediate(resolve)) // 让两次同步调用都跑到 ask() 那一步
+    expect(cheapEval).toHaveBeenCalledTimes(1) // 没有并发的第二次模型调用
+    resolveAsk('写完了。')
+    await vi.waitFor(() => expect(journal.list()).toHaveLength(1))
+  })
+
+  /**
+   * fix round 2 第 6 项:空回复是 CC 决定"这件事不值得写"的合法结果,不是
+   * 错误——但不 latch 掉的话,每次 settle 都会再问一次,持续烧额度且完全
+   * 不留痕(这既不是"没模型"也不是"调用失败")。
+   */
+  it('模型给了空回复:latch 掉(declined)、留痕,不再问', async () => {
+    const cheapEval = vi.fn(async () => '   ') // trim 后为空
+    const sink = makeRecollectSink({matters, journal, cheapEval: () => cheapEval, ownerChatId: () => 'owner', now: () => DAY1_LATER, log: (t, l) => logs.push([t, l])})
+    sink.maybeTrigger(TASK, 2)
+    await vi.waitFor(() => expect(cheapEval).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(logs.some(([tag, line]) => tag === 'MATTER_RECOLLECT' && line.includes(TASK) && line.includes('空回复'))).toBe(true))
+    expect(journal.list()).toEqual([])
+    sink.maybeTrigger(TASK, 3) // 又一轮,又够格——不该再问
+    await new Promise(resolve => setImmediate(resolve))
+    expect(cheapEval).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * fix round 2 第 5 项(指定动作,复审给的变异实验):`returned` 必须原样
+   * 传常量,不能被后人接成看起来合理、实则错误的东西(比如把"不是第一
+   * 轮"误当成"被打回过",写成 `Math.max(0, turns - 1)`)。turns=2 时那种
+   * 错接法算出的 `Math.max(0,1)=1` 恰好等于阈值,`buildRecollectionPrompt`
+   * 就会在 prompt 里加一句"被打回或报错过 1 次"——用 turns 本身就够格的
+   * 输入(排除"根本没问模型"这种空转),直接断言 prompt 里永远不出现这句
+   * 才有鉴别力(光看"问没问模型"在 turns≥2 时怎么都问得到,分不出
+   * returned 传对没传对)。
+   */
+  it('returned 原样等于导出的常量,不会被接错成别的东西——prompt 里永不出现"被打回或报错"', async () => {
+    const asked: string[] = []
+    const cheapEval = vi.fn(async (prompt: string) => { asked.push(prompt); return '写完了。' })
+    const sink = makeRecollectSink({matters, journal, cheapEval: () => cheapEval, ownerChatId: () => 'owner', now: () => DAY1_LATER, log: (t, l) => logs.push([t, l])})
+    sink.maybeTrigger(TASK, 2) // turns 本身就够格 → 无论 returned 算成什么,ask() 都会被调用
+    await vi.waitFor(() => expect(cheapEval).toHaveBeenCalledTimes(1))
+    expect(asked[0]).not.toContain('被打回或报错')
+  })
 })

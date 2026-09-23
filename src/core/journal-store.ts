@@ -30,6 +30,13 @@ export interface CatchRow {
   /** 明信片(v38):已 safeSvg 的 SVG 文本;没有就 null。 */
   image_svg: string | null
   favorite?: number
+  /**
+   * v67:这条记述来自哪件事(目前只有 kind='recollection' 会写;其它 kind
+   * 恒为 null,历史行也是 null——没有 matter 可补,查不到不算错)。既是回
+   * 忆的持久去重键(见 hasRecollection),也是面板回溯"这条回忆是哪件事"
+   * 的产品缺陷修复(评审修复轮 2)。
+   */
+  matter_id: string | null
 }
 
 export interface Journal {
@@ -57,8 +64,19 @@ export interface Journal {
    * 不是产出)。不问主人就写(标题固定,没有像 peerLabel 那样天然的身份
    * 字段可用);跟其它条目一样能被 remove() 摘掉 —— 这就是 spec 已定 #6
    * 「不问、可删」里「可删」那一半,不需要另开一条删除路径。
+   *
+   * `matterId`(v67)必填:这是持久去重的键(见 hasRecollection),也是
+   * 面板回溯"这条回忆是哪件事"的依据——调用方(recollect-sink.ts)永远
+   * 拿得到它(matter 是查出来的),没有"没有 matter 也要写"这种场景。
    */
-  recordRecollection(args: { chatId: string; text: string; nowIso?: string }): string | null
+  recordRecollection(args: { chatId: string; text: string; matterId: string; nowIso?: string }): string | null
+  /**
+   * 这个 matter 是否已经写过一段回忆(v67,持久去重键;评审修复轮 2 新
+   * Important):recollect-sink.ts 在问便宜模型之前先查一次,daemon 重启
+   * 之后也认得——不像纯内存的 Set,重启就归零、同一个 matter 会被再问、
+   * 再写一条几乎一样的记述。
+   */
+  hasRecollection(matterId: string): boolean
   /** 明信片画得慢(又一次模型调用 + 栅格化),先记见闻再补图。 */
   attachImage(id: string, svg: string): void
   list(limit?: number): CatchRow[]
@@ -90,9 +108,12 @@ export function makeJournal(db: Db): Journal {
     `INSERT INTO journal(id, ts, chat_id, title, url, note, status, kind, image_svg)
      VALUES (?, ?, ?, ?, NULL, ?, 'new', 'postcard', NULL)`,
   )
-  const insRecollection = db.query<unknown, [string, string, string, string, string]>(
-    `INSERT INTO journal(id, ts, chat_id, title, url, note, status, kind, image_svg)
-     VALUES (?, ?, ?, ?, NULL, ?, 'new', 'recollection', NULL)`,
+  const insRecollection = db.query<unknown, [string, string, string, string, string, string]>(
+    `INSERT INTO journal(id, ts, chat_id, title, url, note, status, kind, image_svg, matter_id)
+     VALUES (?, ?, ?, ?, NULL, ?, 'new', 'recollection', NULL, ?)`,
+  )
+  const selHasRecollection = db.query<{ cnt: number }, [string]>(
+    "SELECT COUNT(*) AS cnt FROM journal WHERE kind = 'recollection' AND matter_id = ?",
   )
   const setImage = db.query<unknown, [string, string]>('UPDATE journal SET image_svg = ? WHERE id = ?')
   const selAll = db.query<CatchRow, [number]>('SELECT * FROM journal ORDER BY ts DESC, rowid DESC LIMIT ?')
@@ -142,15 +163,16 @@ export function makeJournal(db: Db): Journal {
       prune.run(PRUNE_KEEP)
       return id
     },
-    recordRecollection({ chatId, text, nowIso }) {
+    recordRecollection({ chatId, text, matterId, nowIso }) {
       const ts = nowIso ?? new Date().toISOString()
       const body = text.trim()
       if (body === '') return null
       const id = `${ts}:recollection:${Math.random().toString(36).slice(2, 8)}`
-      insRecollection.run(id, ts, chatId, RECOLLECTION_TITLE, body)
+      insRecollection.run(id, ts, chatId, RECOLLECTION_TITLE, body, matterId)
       prune.run(PRUNE_KEEP)
       return id
     },
+    hasRecollection(matterId) { return (selHasRecollection.get(matterId)?.cnt ?? 0) > 0 },
     attachImage(id, svg) { setImage.run(svg, id) },
     list(limit = 200) { return selAll.all(limit) },
     listPostcards({ limit = 24, offset = 0, favoritesOnly = false }) {

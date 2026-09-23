@@ -132,24 +132,37 @@ describe('recordPostcard —— 别人回心愿的明信片', () => {
 })
 
 describe('recordRecollection —— CC 自己判断值得记、自己写的一段记述', () => {
-  it('一段一条,kind=recollection,标题固定;空文本不记;summary 的 latest 认得它', () => {
+  it('一段一条,kind=recollection,标题固定,带 matter_id;空文本不记;summary 的 latest 认得它', () => {
     const j = makeJournal(openDb({ path: ':memory:' }))
-    expect(j.recordRecollection({ chatId: 'o', text: '   ' })).toBe(null)
-    const id = j.recordRecollection({ chatId: 'o', text: '那天你让我改首页,我改错了两次。', nowIso: '2026-09-23T10:00:00.000Z' })
+    expect(j.recordRecollection({ chatId: 'o', text: '   ', matterId: 'deadbeef' })).toBe(null)
+    const id = j.recordRecollection({ chatId: 'o', text: '那天你让我改首页,我改错了两次。', matterId: 'deadbeef', nowIso: '2026-09-23T10:00:00.000Z' })
     expect(id).toMatch(/:recollection:/)
     const row = j.list()[0]!
-    expect(row).toMatchObject({ kind: 'recollection', title: '一段回忆', note: '那天你让我改首页,我改错了两次。', status: 'new', url: null })
+    expect(row).toMatchObject({ kind: 'recollection', title: '一段回忆', note: '那天你让我改首页,我改错了两次。', status: 'new', url: null, matter_id: 'deadbeef' })
     expect(j.summary(null).latest?.kind).toBe('recollection')
   })
 
   it('不问主人就写,但主人能删 —— 跟其它条目一样走 remove(),没有另开一条删除路径', () => {
     const j = makeJournal(openDb({ path: ':memory:' }))
-    const id = j.recordRecollection({ chatId: 'o', text: '第二天早上才通。' })!
+    const id = j.recordRecollection({ chatId: 'o', text: '第二天早上才通。', matterId: 'a0000001' })!
     expect(j.list().some(r => r.id === id)).toBe(true)
     expect(j.remove(id)).toBe(true)
     expect(j.list().some(r => r.id === id)).toBe(false)
     // 删过一次之后再删,跟其它 kind 一样如实说「已经没了」,不是静默成功。
     expect(j.remove(id)).toBe(false)
+  })
+
+  it('hasRecollection(v67 持久去重键):写过就是 true,没写过 / 没写成功都是 false', () => {
+    const j = makeJournal(openDb({ path: ':memory:' }))
+    expect(j.hasRecollection('a0000001')).toBe(false)
+    j.recordRecollection({ chatId: 'o', text: '   ', matterId: 'a0000001' }) // 空文本没写成
+    expect(j.hasRecollection('a0000001')).toBe(false)
+    j.recordRecollection({ chatId: 'o', text: '写成了一条。', matterId: 'a0000001' })
+    expect(j.hasRecollection('a0000001')).toBe(true)
+    // 别的 matter 不受影响,也不因为存在其它 kind 的行而误判。
+    expect(j.hasRecollection('b0000002')).toBe(false)
+    j.recordVisit({ chatId: 'o', text: '串门见闻', peerLabel: '朋友' })
+    expect(j.hasRecollection('b0000002')).toBe(false)
   })
 })
 
@@ -186,7 +199,7 @@ it('upgrades an existing v44 journal without losing its picture and narration', 
   const old = openSqlite(':memory:')
   old.exec("CREATE TABLE journal(id TEXT PRIMARY KEY, image_svg TEXT, note TEXT); INSERT INTO journal VALUES ('old','<svg></svg>','the story'); PRAGMA user_version=44;")
   runMigrations(old)
-  expect(old.query('SELECT * FROM journal').get()).toEqual({id:'old',image_svg:'<svg></svg>',note:'the story',favorite:0})
+  expect(old.query('SELECT * FROM journal').get()).toEqual({id:'old',image_svg:'<svg></svg>',note:'the story',favorite:0,matter_id:null})
   runMigrations(old)
   expect(old.query('SELECT COUNT(*) AS n FROM journal').get()).toEqual({n:1})
   old.close()

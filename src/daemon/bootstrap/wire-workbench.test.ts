@@ -234,29 +234,27 @@ it('从微信交办的事,答复静下来那一拍真的把回报写进 matter_r
 
 /**
  * 端到端接线(task-5,fix round 1,2026-09-23,控制器裁决:这一轮必须真的
- * 接上,不许留成死代码):只传 matters(不传 reportOutbox,证明「回忆」这
- * 条不依赖回报那条),来回两轮之后 turnSeq 达到 STORY_SIGNALS.turns(2),
- * 真的通过这个 wireWorkbench 自己建的 `registry.getCheapEval()` 问到便宜
- * 模型(借 agy 那个假 provider 挂一个 cheapEval 字段),写进真实的
- * journal(makeJournal(opts.db) 那份,不是单测里假的 Journal)。
+ * 接上,不许留成死代码;fix round 2,复审「小的」②:第一版这里的假 agy
+ * 带着 `workbenchRuntime` 且 `retained:true`——那是 claude/codex 的形状,
+ * **真 agy 永远没有** `workbenchRuntime`(agy-agent-provider.ts 的
+ * `spawn()` 只返回 `dispatch`/`cancel`/`close`,没有 `workbenchRuntime`
+ * 字段;`registerUnattendedExecutors` 原样透传同一个 provider 对象,不做
+ * 任何适配)。带着假形状的 'agy' 会让这条 e2e 走 `settleQuiet` 那条路
+ * (claude/codex 专属),而真 agy 只走终态提交那条路径(fix round 2 第 1
+ * 项新补的那处)——e2e 绿了,却正好没测到真正要测的那条路,比没有 e2e 更
+ * 危险(这个仓库 09-16 刚因为 stale fixture 瞎了四天)。
+ *
+ * 改法:`spawn()` 直接返回 `dispatch`/`cancel`/`close`(照 service-unattended.test.ts
+ * 的 `fakeProvider()` 写法,那是这个仓库给"非 retained、无
+ * workbenchRuntime"执行者的既有惯用 fixture),一次 dispatch 就终态收尾,
+ * 不经过 settleQuiet。真 agy 的会话也没有"续接"这个动作能推进 turnSeq
+ * (`submitInput` 的 runtime 分支要求 `workbenchRuntime` 存在,agy 没有;
+ * `steer` 它也没实现)——所以 turns 对这类执行者结构性地恒为 0,这条 e2e
+ * 改成用 `overnight` 信号过门槛(matters store 注入一个"48 小时前"的固
+ * 定时钟,让 matter.createdAt 与真实的 `Date.now()` 隔着至少一个 UTC 日
+ * 历日),这比继续假装 turns 能到 2 更贴近这类执行者的真实处境。
  */
-class RecollectTurnRuntime {
-  queue = new AsyncQueue<AgentEvent>()
-  state: AgentRuntimeSnapshot = { retained: true, foreground: 'running', backgroundCount: 0, input: 'send' }
-  subscribed = false
-  runtime: AgentWorkbenchRuntime = {
-    events: { [Symbol.asyncIterator]: () => { this.subscribed = true; return this.queue.iterable()[Symbol.asyncIterator]() } },
-    start: () => { if (!this.subscribed) throw Error('runtime_start_without_consumer'); this.queue.push({ kind: 'init', sessionId: 'native-1' }); this.queue.push({ kind: 'text', itemId: 't0', text: '做。' }) },
-    // 每次续接都直接吐一个 result——跟 service-report.test.ts 的 TurnRuntime 同一手法,
-    // 让每次 submitInput 都能干净地再落一次 settleQuiet。
-    submit: async () => { this.queue.push({ kind: 'result', sessionId: 'native-1', numTurns: 1, durationMs: 1 }) },
-    snapshot: () => this.state,
-  }
-  session: AgentSession = { workbenchRuntime: this.runtime, async *dispatch() {}, close: async () => { this.queue.end() } }
-  finishTurn() { this.state = { ...this.state, foreground: 'idle' }; this.queue.push({ kind: 'result', sessionId: 'native-1', numTurns: 1, durationMs: 1 }) }
-}
-
-it('从微信交办的事,来回两轮之后真的问了便宜模型、把回忆写进 journal', async () => {
+it('从微信交办的事(真 agy 形状:非 retained、无 workbenchRuntime),终态收尾时真的问了便宜模型、把回忆写进 journal', async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'wire-workbench-recollect-'))); acknowledgeDirs.push(root)
   const stateDir = join(root, 'state'), project = join(root, 'project')
   mkdirSync(project, { recursive: true })
@@ -264,12 +262,16 @@ it('从微信交办的事,来回两轮之后真的问了便宜模型、把回忆
   await saveCompanionConfig(stateDir, { ...defaultCompanionConfig(), default_chat_id: 'chat-1' })
   addProject(join(stateDir, 'projects.json'), 'project', project)
   const db = openDb({ path: join(stateDir, 'state.db') })
-  const matters = makeMatterStore(db)
+  // matter 的创建时刻钉在"48 小时前"——保证跟真实 Date.now() 隔着至少一个 UTC
+  // 日历日,不依赖 turns(agy 结构性地推不动 turnSeq)也能过 overnight 门槛。
+  const matters = makeMatterStore(db, () => Date.now() - 48 * 60 * 60 * 1000)
   const bootRegistry = createProviderRegistry()
-  const runtime = new RecollectTurnRuntime()
   const asked: string[] = []
   bootRegistry.register('agy', {
-    async spawn() { return runtime.session },
+    // 真 agy 的 spawn() 形状(agy-agent-provider.ts):没有 workbenchRuntime,
+    // 一次 dispatch 吐完 text + result 就算这一轮完事——跟
+    // service-unattended.test.ts 的 fakeProvider() 同一手法。
+    async spawn() { return { async *dispatch() { yield { kind: 'text' as const, itemId: 't0', text: '做完了。' }; yield { kind: 'result' as const, sessionId: 'agy-1', numTurns: 1, durationMs: 1 } }, async cancel() {}, async close() {} } },
     cheapEval: async (prompt: string) => { asked.push(prompt); return '那天你让我改首页，我改错了两次。' },
   }, { displayName: 'Gemini (agy)', canResume: () => true })
   const boot = {
@@ -291,21 +293,83 @@ it('从微信交办的事,来回两轮之后真的问了便宜模型、把回忆
       commandHash: createHash('sha256').update('改首页').digest('hex'),
       originMessageId: 'msg-7', projectId: projectView.id, providerId: 'agy', text: '改首页',
     })
-    await expect.poll(() => matters.sessions(receipt.taskId)).not.toHaveLength(0)
-    runtime.finishTurn() // turnSeq 还是 0(还没有续接)——够不上门槛,不该问模型。
-    await expect.poll(() => matters.get(receipt.taskId)?.status).toBe('replied')
-    expect(asked).toEqual([])
-    const journal = makeJournal(db)
-    expect(journal.list()).toEqual([])
-    let runId = service.detail(receipt.taskId).runId!
-    await service.submitInput(receipt.taskId, { runId, requestId: randomUUID(), text: '再改一下' }) // turnSeq → 1,还不够。
-    await expect.poll(() => journal.list().length + asked.length).toBe(0) // 稳一拍,确认真的没提前触发
-    runId = service.detail(receipt.taskId).runId!
-    await service.submitInput(receipt.taskId, { runId, requestId: randomUUID(), text: '再改一下' }) // turnSeq → 2,够了。
+    // 非 retained:永不经过 settleQuiet,直接终态 done(跟 service-report.test.ts
+    // 的「非 retained 执行者」用例、service-recollect.test.ts 的同类用例一致)。
+    await expect.poll(() => matters.get(receipt.taskId)?.status).toBe('done')
     await expect.poll(() => asked.length).toBe(1)
     expect(asked[0]).toContain('改首页')
+    const journal = makeJournal(db)
     await expect.poll(() => journal.list().length).toBe(1)
     expect(journal.list()[0]).toMatchObject({ kind: 'recollection', chat_id: 'chat-1', note: '那天你让我改首页，我改错了两次。' })
+    await service.shutdown()
+  } finally {
+    db.close()
+  }
+})
+
+/**
+ * fix round 2(2026-09-23,复审新 Important ③):回忆的便宜模型来源必须是
+ * `opts.boot.registry`(带 `/set cheap` 的 `cheapEvalProvider` 钉死、
+ * `cheapEvalPreflight` 网络预检、`onProviderFailure`/`log` 诊断的那一
+ * 个),不能是 `wireWorkbench` 自己另建的、`createProviderRegistry()`
+ * **不带任何 opts** 的本地 registry——那个本地 registry 没有钉死机制,
+ * `/set cheap` 对回忆完全无效。
+ *
+ * 判定方式:给 `bootRegistry` 钉死 `cheapEvalProvider` 到一个**只注册在
+ * boot registry、从不会被 wireWorkbench 复制进本地 registry**的 id
+ * (`registerUnattendedExecutors` 只复制 'agy';managed 的 claude/codex
+ * 是本地重新构造的、跟 boot 这份是两个不同的 cheapEval 实现)。如果接线
+ * 真的用 `opts.boot.registry.getCheapEval()`,钉死会生效,问到的是这个
+ * "pinned" provider;如果不小心接回本地 registry(没有这份 opts,钉不
+ * 住),就会落到本地注册的 agy(它有自己的 cheapEval),两者的回答内容
+ * 从设计上就不同,断言能抓住这个差异。
+ */
+it('回忆的便宜模型来源是 opts.boot.registry(带 cheapEvalProvider 钉死),不是 wireWorkbench 自己那个没有 opts 的本地 registry', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'wire-workbench-recollect-cheap-src-'))); acknowledgeDirs.push(root)
+  const stateDir = join(root, 'state'), project = join(root, 'project')
+  mkdirSync(project, { recursive: true })
+  saveAgentConfig(stateDir, { provider: 'agy', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false, workbench_unattended_ack_at: 999 })
+  await saveCompanionConfig(stateDir, { ...defaultCompanionConfig(), default_chat_id: 'chat-1' })
+  addProject(join(stateDir, 'projects.json'), 'project', project)
+  const db = openDb({ path: join(stateDir, 'state.db') })
+  const matters = makeMatterStore(db, () => Date.now() - 48 * 60 * 60 * 1000)
+  const bootRegistry = createProviderRegistry({ cheapEvalProvider: () => 'pinned-cheap', log: () => {} })
+  // 驱动任务的是 agy(真实形状,非 retained、无 workbenchRuntime),它自己也带
+  // cheapEval——如果钉死没生效、接线退回本地那份 registry,问到的就会是它。
+  bootRegistry.register('agy', {
+    async spawn() { return { async *dispatch() { yield { kind: 'text' as const, itemId: 't0', text: '做完了。' }; yield { kind: 'result' as const, sessionId: 'agy-1', numTurns: 1, durationMs: 1 } }, async cancel() {}, async close() {} } },
+    cheapEval: async () => '来自 agy 自己的便宜模型(不该被问到)',
+  }, { displayName: 'Gemini (agy)', canResume: () => true })
+  // 'pinned-cheap' 只注册在 boot registry——wireWorkbench 的 registerUnattendedExecutors
+  // 只认 'agy' 这一个 id,不会把它复制进本地 registry;它也不是 claude/codex/cursor,
+  // 不会被本地 registry 的其它构造路径间接建出来。
+  bootRegistry.register('pinned-cheap', {
+    async spawn() { throw new Error('pinned-cheap 不该被用来驱动任何工作台任务') },
+    cheapEval: async (prompt: string) => { return `钉死答的:${prompt.includes('改首页') ? '改首页' : '?'}` },
+  }, { displayName: 'Pinned', canResume: () => true })
+  const boot = {
+    registry: bootRegistry,
+    sdkOptionsForProject: (() => ({})) as unknown as Bootstrap['sdkOptionsForProject'],
+    defaultProviderId: 'agy',
+    holdBusy: (_label: string) => () => {},
+  } as unknown as Bootstrap
+  try {
+    const service = wireWorkbench({
+      db, stateDir, boot, matters,
+      internalApi: { mintSessionToken: () => 'token', invalidateSession: () => {} },
+      askUser: async () => 'allow',
+      log: () => {},
+    })
+    const projectView = service.projects().find(p => p.path === project)!
+    const receipt = service.createWechat({
+      ownerChatId: 'chat-1', accountId: 'acct-1', requestId: randomUUID(),
+      commandHash: createHash('sha256').update('改首页').digest('hex'),
+      originMessageId: 'msg-7', projectId: projectView.id, providerId: 'agy', text: '改首页',
+    })
+    await expect.poll(() => matters.get(receipt.taskId)?.status).toBe('done')
+    const journal = makeJournal(db)
+    await expect.poll(() => journal.list().length).toBe(1)
+    expect(journal.list()[0]!.note).toBe('钉死答的:改首页') // 不是 agy 自己那句
     await service.shutdown()
   } finally {
     db.close()

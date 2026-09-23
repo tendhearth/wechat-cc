@@ -163,13 +163,21 @@ export function wireWorkbench(opts: {
     taskTitle:id=>store.get(id).title,artifactCount:id=>store.artifacts(id).length,
     log:opts.log,
   }):undefined
-  // 回忆(task-5,fix round 1,2026-09-23):只要 matters 就接得上——journal 用 opts.db
-  // 现开(makeJournal 是无状态构造,跟 wire-social.ts 里 recordVisit/recordPostcard 同一
-  // 惯例),便宜模型用这个 wireWorkbench 自己的 registry(下面 makeWorkbenchService 传的
-  // 同一个),不缓存 provider 本身、每次现取。
+  // 回忆(task-5,fix round 2,2026-09-23,复审新 Important ③):只要 matters 就接得
+  // 上——journal 用 opts.db 现开(makeJournal 是无状态构造,跟 wire-social.ts 里
+  // recordVisit/recordPostcard 同一惯例)。便宜模型**不用**上面这个 wireWorkbench 自己
+  // 建的 workbench-local `registry`(那是 `createProviderRegistry()` 不带任何 opts 建
+  // 的,丢了 cheapEvalProvider getter——`/set cheap` 和面板钉死的便宜模型对回忆完全无
+  // 效、丢了 cheapEvalPreflight——2026-08-29 为根治"开机 spawn agy → 刷 token 撞超时 →
+  // 弹浏览器 Google OAuth 页"而加的网络预检、也丢了 onProviderFailure/log 的失败诊
+  // 断)。而工作台的这个 registry 里有 cheapEval 的只有 agy 和 claude(claude 还没传
+  // claudeBin),意味着装了 agy 的机器上回忆恰好由 agy 来答——正是当年弹 OAuth 页那条
+  // 路,这次还没有预检。改用 `opts.boot.registry`(已经在这个函数里到处用,见
+  // :123/124/155/156/157),跟 pipeline-deps.ts:728 的管家判定同一惯例(同样调
+  // `boot.registry.getCheapEval()`),不缓存 provider 本身、每次现取。
   const recollect=opts.matters?makeRecollectSink({
     matters:opts.matters,journal:makeJournal(opts.db),
-    cheapEval:()=>registry.getCheapEval(),ownerChatId,log:opts.log,
+    cheapEval:()=>opts.boot.registry.getCheapEval(),ownerChatId,log:opts.log,
   }):undefined
   return makeWorkbenchService({
     executionConflict:opts.executionConflict,

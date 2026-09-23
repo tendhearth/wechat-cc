@@ -39,13 +39,13 @@ class TurnRuntime {
   session:AgentSession={workbenchRuntime:this.runtime,async *dispatch(){},close:async()=>{this.queue.end()}}
   finishTurn(){this.state={...this.state,foreground:'idle'};this.queue.push({kind:'result',sessionId:'native-1',numTurns:1,durationMs:1})}
 }
-let area:string,project:string,db:Db,service:WorkbenchService,matters:MatterStore,triggered:Array<[string,number]>
-function makeSink():RecollectSink { return {maybeTrigger(taskId,turns){triggered.push([taskId,turns])}} }
+let area:string,project:string,db:Db,service:WorkbenchService,matters:MatterStore,triggered:Array<[string,number]>,logs:Array<[string,string]>
+function makeSink(fail?:Error):RecollectSink { return {maybeTrigger(taskId,turns){triggered.push([taskId,turns]);if(fail)throw fail}} }
 function makeService(recollect?:RecollectSink){
   const registry=createProviderRegistry();const runtime=new TurnRuntime()
   registry.register('claude',{async spawn(){return runtime.session}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>'chat-1',matters,
-    registeredProjects:()=>[{alias:'project',path:project}],recollect})
+    registeredProjects:()=>[{alias:'project',path:project}],recollect,log:(tag,line)=>logs.push([tag,line])})
   return runtime
 }
 function createTaskFromChat(projectId:string){
@@ -54,7 +54,7 @@ function createTaskFromChat(projectId:string){
 
 beforeEach(()=>{
   area=realpathSync(mkdtempSync(join(tmpdir(),'cc-service-recollect-')));project=join(area,'project');mkdirSync(project)
-  db=openDb({path:join(area,'state.db')});matters=makeMatterStore(db);triggered=[]
+  db=openDb({path:join(area,'state.db')});matters=makeMatterStore(db);triggered=[];logs=[]
 })
 afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
 
@@ -92,4 +92,74 @@ it('没有 opts.recollect 时(老接线),什么都不做,不报错',async()=>{
   runtime.finishTurn()
   await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
   expect(triggered).toEqual([])
+})
+
+/**
+ * fix round 2(2026-09-23,复审新 Important ②):recollect.maybeTrigger 抛
+ * 错必须被 recollectOnce 吞掉、留痕——对位的 reportOnce(service.ts:596-600)
+ * 专门包了 try/catch,recollectOnce 第一版裸调,抛错会穿出 settleQuiet(这
+ * 条调用点自己没有 try/catch),复审实测这会让 matter 永远到不了 replied、
+ * 直接变 done,captureCodeChanges/armIdleClose 全被跳过。
+ */
+it('recollect.maybeTrigger 抛错:留痕(MATTER_RECOLLECT),不打断 settleQuiet——matter 照样到 replied',async()=>{
+  const runtime=makeService(makeSink(new Error('recollect_boom')))
+  const projectId=service.projects()[0]!.id
+  const receipt=createTaskFromChat(projectId)
+  await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
+  runtime.finishTurn()
+  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
+  expect(triggered).toEqual([[receipt.taskId,0]])
+  expect(logs.some(([tag,line])=>tag==='MATTER_RECOLLECT'&&line.includes(receipt.taskId)&&line.includes('recollect_boom'))).toBe(true)
+})
+
+/**
+ * fix round 2(2026-09-23,复审必判 ①,NOT ADDRESSED → 这轮补):非 retained
+ * 执行者(agy/cursor/openai 那类,没有 workbenchRuntime)永不经过
+ * settleQuiet——runtimeSnapshot() 在没有 workbenchRuntime 时返回 undefined,
+ * settleQuiet 第一行的门就直接 return。它们只走终态提交那条路径
+ * (service.ts:891 一带),那里以前只在 status==='completed' 时调
+ * reportOnce,这一轮在同一处**无条件**调 recollectOnce——不继承那道
+ * completed 门,因为回忆恰恰最想记住"反复失败、被打回"这一类。
+ */
+it('非 retained 执行者(没有 workbenchRuntime):completed 终态也触发 recollect',async()=>{
+  const registry=createProviderRegistry()
+  const q=new AsyncQueue<AgentEvent>()
+  const state:AgentRuntimeSnapshot={retained:false,foreground:'running',backgroundCount:0,input:'send'}
+  registry.register('claude',{async spawn(){return{
+    workbenchRuntime:{
+      events:{[Symbol.asyncIterator]:()=>q.iterable()[Symbol.asyncIterator]()},
+      start:()=>{q.push({kind:'init',sessionId:'nr-1'});q.push({kind:'text',itemId:'t0',text:'done.'});q.push({kind:'result',sessionId:'nr-1',numTurns:1,durationMs:1});q.end()},
+      submit:async()=>{},
+      snapshot:()=>state,
+    } as AgentWorkbenchRuntime,
+    async *dispatch(){},close:async()=>{},
+  }}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>'chat-1',matters,
+    registeredProjects:()=>[{alias:'project',path:project}],recollect:makeSink(),log:(tag,line)=>logs.push([tag,line])})
+  const projectId=service.projects()[0]!.id
+  const receipt=createTaskFromChat(projectId)
+  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('done')
+  expect(triggered).toEqual([[receipt.taskId,0]])
+})
+
+it('非 retained 执行者以 failed 终态收尾:也触发 recollect(不再继承 completed 门——「波折」正是回忆最想记住的)',async()=>{
+  const registry=createProviderRegistry()
+  const q=new AsyncQueue<AgentEvent>()
+  const state:AgentRuntimeSnapshot={retained:false,foreground:'running',backgroundCount:0,input:'send'}
+  registry.register('claude',{async spawn(){return{
+    workbenchRuntime:{
+      events:{[Symbol.asyncIterator]:()=>q.iterable()[Symbol.asyncIterator]()},
+      start:()=>{q.push({kind:'init',sessionId:'nr-2'});q.push({kind:'error',message:'provider exploded'});q.end()},
+      submit:async()=>{},
+      snapshot:()=>state,
+    } as AgentWorkbenchRuntime,
+    async *dispatch(){},close:async()=>{},
+  }}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:area,ownerChatId:()=>'chat-1',matters,
+    registeredProjects:()=>[{alias:'project',path:project}],recollect:makeSink(),log:(tag,line)=>logs.push([tag,line])})
+  const projectId=service.projects()[0]!.id
+  const receipt=createTaskFromChat(projectId)
+  await expect.poll(()=>service.detail(receipt.taskId).task.status).toBe('failed')
+  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('done')
+  expect(triggered).toEqual([[receipt.taskId,0]]) // 旧行为(继承 completed 门)下这里会是 []
 })

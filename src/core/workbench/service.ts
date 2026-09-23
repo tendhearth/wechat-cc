@@ -604,11 +604,21 @@ export function makeWorkbenchService(opts: Options) {
    * 两次,不挡的话同一次答复会喂两次便宜模型、可能写两条几乎一样的回忆)。`turns` 就是
    * 调用这一刻的 `turnSeq`——它只活在这个运行时结构里,不落盘,daemon 侧的
    * RecollectSink 事后查不到,只能在这里现读现传。
+   *
+   * try/catch 是 fix round 2(复审新 Important ②):跟 `reportOnce` 同一套
+   * 道理——`maybeTrigger` 内部的同步段(读 sqlite、读 companion config、
+   * `crossedOvernight` 对非法时间戳可能抛 RangeError)任何一次抛出,若不
+   * 在这里接住,会穿出两处调用点(`settleQuiet` 自己没有 try/catch;终态
+   * 提交那处虽然外层有 try/catch,但那个 catch 是"never unlock an
+   * uncertain writer",会把 `matterSync`/`reportOnce`/`publishFinishedNotices`
+   * 一起吞掉,爆炸半径远大于只丢一次回忆判断)。概率低,但代价是这一轮
+   * matter 永远到不了 replied、直接变 done,`captureCodeChanges`/
+   * `armIdleClose` 全被跳过——跟 `reportOnce` 当初要挡的是同一类风险。
    */
   function recollectOnce(running:Active):void {
     if (running.recollectedTurn===running.turnSeq) return
     running.recollectedTurn=running.turnSeq
-    opts.recollect?.maybeTrigger(running.taskId,running.turnSeq)
+    try { opts.recollect?.maybeTrigger(running.taskId,running.turnSeq) } catch (err) { opts.log?.('MATTER_RECOLLECT',`maybeTrigger failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
   }
   /**
    * 本回合安静下来:登记成果(评审 2026-09-16:会话保留时这条 run 不会结算,`collect` 也就不会跑,
@@ -889,6 +899,15 @@ export function makeWorkbenchService(opts: Options) {
         // 需要处理"/问"交给 X 继续?")直接打架。失败/取消不经这里回报,不代表主人收不
         // 到通知——stageFinishedNotice 走的是另一条既有的完成通知路径,不受这里影响。
         if (status==='completed') reportOnce(running)
+        // 回忆(task-5,fix round 2,评审必判 ①):非 retained 的执行者(agy/cursor/openai,
+        // 没有 workbenchRuntime)永不经过 settleQuiet(runtimeSnapshot() 在没有
+        // workbenchRuntime 时返回 undefined,settleQuiet 第一行的门直接 return)——只走
+        // 这条终态路径,不在这里也调一次 recollectOnce,这三家执行者的事永远进不了回忆。
+        // 跟 reportOnce 不同,这里**不继承** `status==='completed'` 那道门:spec 的回忆
+        // 判据恰恰是"反复失败、被打回、隔夜才通的才记得"——继承那道门会把最该被记住的
+        // 那类事正好挡掉。被主人当场取消的事 turnSeq 还是初始值、当天创建,门槛(turns/
+        // overnight/returned)自己会挡住,不用在这里特判 cancelled。
+        recollectOnce(running)
         publishFinishedNotices()
       } catch { /* never unlock an uncertain writer for a status failure */ }
       running.publicFinished=true; running.resolveDone()
