@@ -16,6 +16,10 @@
   <a href="./README.md">English</a> | 中文
 </p>
 
+<p align="center">
+  <sub>文档:<a href="./docs/INDEX.md">索引</a> · <a href="./docs/roadmap.md">roadmap</a> · <a href="./docs/architecture.md">架构</a> · <a href="./docs/maintainer/README.md">维护者手册</a></sub>
+</p>
+
 ---
 
 ## 这是什么

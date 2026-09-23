@@ -16,6 +16,10 @@
   English | <a href="./README.zh.md">中文</a>
 </p>
 
+<p align="center">
+  <sub>Docs: <a href="./docs/INDEX.md">index</a> · <a href="./docs/roadmap.md">roadmap</a> · <a href="./docs/architecture.md">architecture</a> · <a href="./docs/maintainer/README.md">maintainer</a></sub>
+</p>
+
 ---
 
 ## What is this?
