@@ -183,12 +183,20 @@ describe('makeRecollectSink', () => {
     },
   )
 
+  /**
+   * 反证:过滤器没有矫枉过正——终审后修复第二轮 Minor:原来这条用的反证
+   * 文本("那天你让我改首页,我改错了两次。")恰好不含任何退化词,测不出
+   * "精确匹配"和"包含退化词就误杀"(`.some(d=>normalized.includes(d))`)
+   * 这两种写法的差别——复审把 isDegenerateReply 变异成后者,这条用例照
+   * 样全绿(25 条)。换成含"没有"这个退化词、但整句明显不是在说"不写"
+   * 的记述,才有鉴别力。
+   */
   it('不是退化回复的正常记述照常写进 journal(反证:过滤器没有矫枉过正)', async () => {
-    const cheapEval = vi.fn(async () => '那天你让我改首页,我改错了两次。')
+    const cheapEval = vi.fn(async () => '我没有找到原因，折腾了三个小时。')
     const sink = makeRecollectSink({matters, journal, timezone: () => 'UTC', cheapEval: () => cheapEval, ownerChatId: () => 'owner', now: () => DAY1_LATER, log: (t, l) => logs.push([t, l])})
     sink.maybeTrigger(TASK, 2)
     await vi.waitFor(() => expect(journal.list()).toHaveLength(1))
-    expect(journal.list()[0]!.note).toBe('那天你让我改首页,我改错了两次。')
+    expect(journal.list()[0]!.note).toBe('我没有找到原因，折腾了三个小时。')
   })
 
   /**

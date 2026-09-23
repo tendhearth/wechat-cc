@@ -84,7 +84,20 @@ describe('makeReportSink', () => {
     sink.enqueue(FROM_CHAT, 3)
     const due = await outbox.listDue(1_000)
     expect(due).toHaveLength(1)
-    expect(due[0]!.text).toContain('第4轮')
-    expect(due[0]!.text).not.toContain('第1轮')
+    expect(due[0]!.text).toContain('第 4 轮')
+    expect(due[0]!.text).not.toContain('第 1 轮')
+  })
+
+  /**
+   * 终审后修复第二轮 Important②b:enqueue 的第三个参数(body,来自
+   * workbench/service.ts 被压掉的通知正文)要真的穿透给 renderReport——这
+   * 一层只验证参数确实传过去了,措辞本身的用例在 report.test.ts。
+   */
+  it('body 参数穿透给 renderReport:传了就出现在写进 outbox 的文案里', async () => {
+    const sink = makeReportSink({matters, outbox, taskTitle: () => '首页调整', artifactCount: () => 0, notificationsEnabled: () => true, now: () => 1_000})
+    sink.enqueue(FROM_CHAT, 0, '改好了,首页现在用新配色。')
+    const due = await outbox.listDue(1_000)
+    expect(due).toHaveLength(1)
+    expect(due[0]!.text).toContain('改好了,首页现在用新配色。')
   })
 })

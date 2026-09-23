@@ -41,12 +41,32 @@ export interface PendingReport {
  * 同——主人分不清指的是哪一轮,而且重复外发相同文本正是本仓库别处(reminders
  * 那条退避)专门要躲开的微信风控触发形状。轮次本来就是现成的(去重键就
  * 是它),塞进文案里,相邻两轮至少「第 N 轮」这几个字不一样。
+ *
+ * **但 `turn` 对非 retained 执行者(agy/cursor-ACP/openai/gemini)基本等
+ * 于没修**(终审后修复第二轮③,记账明确写下来,别让下一个人以为轮次号
+ * 在所有执行者上都有效):`turnSeq` 只在有 `workbenchRuntime` 的执行者
+ * 身上推进(workbench/service.ts 的 `submitInput`/转移探测器那两处
+ * `turnSeq++`);其余执行者走纯 `dispatch`,而且**每一轮都是新的
+ * `Active`**(初值 0)——它们永远是 `turn===0`,「第 1 轮」这几个字在相
+ * 邻两轮之间不会变,单靠这个字段区分不开。这类执行者真正的可区分性来自
+ * `body`(见下面,通常每轮内容不同,终审后修复第二轮 Important②b 并进
+ * 来的那段答复正文)。
+ *
+ * `body`(终审后修复第二轮 Important②b):非 retained 执行者 completed
+ * 终态时,workbench/service.ts 会把 `stageFinishedNotice` 原本会发的通
+ * 知正文(这一轮最后一条文本回复 + 保存的成果文件名)并进来——那条通知
+ * 因为跟这次回报同一拍触发、内容重叠而被压掉了,正文不能跟着一起丢,否
+ * 则主人这一轮的答案就只剩"看:任务 X",必须自己再问一句才能看到内
+ * 容,而"交给 CC 之后能放心离开、回来接得上"正是这整个功能存在的理由。
+ * retained 执行者的报(`settleQuiet` 那条路)没有通知被压,不传这个参
+ * 数。
  */
-export function renderReport(input: {matter: Matter; title: string; artifactCount: number; turn: number}): PendingReport | null {
-  const {matter, title, artifactCount, turn} = input
+export function renderReport(input: {matter: Matter; title: string; artifactCount: number; turn: number; body?: string}): PendingReport | null {
+  const {matter, title, artifactCount, turn, body} = input
   if (!matter.originMatterId) return null
   const outcome = artifactCount > 0 ? `累计生成了${artifactCount}份成果。` : ''
-  const text = `${title} · 已答复（第${turn + 1}轮）。${outcome}\n看:任务 ${matter.id} · 接着说:任务 ${matter.id} 补充 …`
+  const bodyBlock = body ? `\n\n${body}` : ''
+  const text = `${title} · 已答复（第 ${turn + 1} 轮）。${outcome}${bodyBlock}\n看:任务 ${matter.id} · 接着说:任务 ${matter.id} 补充 …`
   return {matterId: matter.id, originMatterId: matter.originMatterId, originMessageId: matter.originMessageId, text}
 }
 
@@ -78,6 +98,10 @@ export function shouldDisturb(input: {lastSeenAt: number | null; now: number}): 
  * renderReport,把结果写进 matter_report_outbox(v65)等投递器去发。
  */
 export interface ReportSink {
-  /** `turn` 是这一轮的 `Active.turnSeq`——见 renderReport 的文档注释,用来让相邻两轮的回报文案能区分开。 */
-  enqueue(matterId: string, turn: number): void
+  /**
+   * `turn` 是这一轮的 `Active.turnSeq`;`body`(可选)是并进回报文案的
+   * 答复正文——见 renderReport 的文档注释,两者都是用来让相邻两轮的回
+   * 报文案能区分开、并保住非 retained 执行者被压掉的那条通知的正文。
+   */
+  enqueue(matterId: string, turn: number, body?: string): void
 }

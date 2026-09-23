@@ -55,8 +55,8 @@ class TurnRuntime {
     this.queue.push({kind:'result',sessionId:'native-1',numTurns:1,durationMs:1})
   }
 }
-let area:string,project:string,db:Db,service:WorkbenchService,matters:MatterStore,logs:Array<[string,string]>,enqueued:string[],enqueuedTurns:number[]
-function makeSink(fail?:Error):ReportSink { return {enqueue(matterId,turn){enqueued.push(matterId);enqueuedTurns.push(turn);if(fail)throw fail}} }
+let area:string,project:string,db:Db,service:WorkbenchService,matters:MatterStore,logs:Array<[string,string]>,enqueued:string[],enqueuedTurns:number[],enqueuedBodies:Array<string|undefined>
+function makeSink(fail?:Error):ReportSink { return {enqueue(matterId,turn,body){enqueued.push(matterId);enqueuedTurns.push(turn);enqueuedBodies.push(body);if(fail)throw fail}} }
 function makeService(reports?:ReportSink){
   const registry=createProviderRegistry();const runtime=new TurnRuntime()
   registry.register('claude',{async spawn(){return runtime.session}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
@@ -70,7 +70,7 @@ function createTaskFromChat(projectId:string){
 
 beforeEach(()=>{
   area=realpathSync(mkdtempSync(join(tmpdir(),'cc-service-report-')));project=join(area,'project');mkdirSync(project)
-  db=openDb({path:join(area,'state.db')});matters=makeMatterStore(db);logs=[];enqueued=[];enqueuedTurns=[]
+  db=openDb({path:join(area,'state.db')});matters=makeMatterStore(db);logs=[];enqueued=[];enqueuedTurns=[];enqueuedBodies=[]
 })
 afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(area)})
 
@@ -179,15 +179,17 @@ it('非 retained 的执行者永不经过 replied(isReplied 要求 snapshot.reta
 })
 
 /**
- * 终审 Important②:非 retained 执行者(agy/cursor/openai/gemini 那类)不
- * 经过 settleQuiet,`stageFinishedNotice` 和 `reportOnce` 同在终态那个
- * try 里、同一拍触发,completed 时以前会两条一起外发——先「…这一轮已完
- * 成…查看:任务 xxx」,紧跟「…已答复。…看:… 接着说:…」,同一件事说
- * 了两遍。回报信息更丰富(带续接入口),压的是 stageFinishedNotice 那
- * 条:微信交办、有出生地的任务 completed 时,通知队列里不该再有一条
- * 'completed' 通知——只留回报这一条外发。
+ * 终审 Important②(终审后修复第二轮 Important②a/b 改过判据与内容,见
+ * service.ts 的 stageFinishedNotice/reportOnce 文档注释):非 retained 执
+ * 行者(agy/cursor/openai/gemini 那类)不经过 settleQuiet,`stageFinishedNotice`
+ * 和 `reportOnce` 同在终态那个 try 里、同一拍触发,completed 时以前会两条
+ * 一起外发——先「…这一轮已完成…查看:任务 xxx」,紧跟「…已答复。…看:…
+ * 接着说:…」,同一件事说了两遍。压的是 stageFinishedNotice 那条:微信交
+ * 办、有出生地、且这一拍 `reportOnce` 真的会入队的任务 completed 时,通知
+ * 队列里不该再有一条 'completed' 通知——只留回报这一条外发,而且被压掉的
+ * 正文(`terminalReportBody`)要并进回报文案,不是凭空丢掉。
  */
-it('非 retained 执行者(微信交办、有出生地)completed:stageFinishedNotice 的 completed 通知被压,只留回报一条外发',async()=>{
+it('非 retained 执行者(微信交办、有出生地)completed:stageFinishedNotice 的 completed 通知被压,正文并进回报文案',async()=>{
   const registry=createProviderRegistry()
   const q=new AsyncQueue<AgentEvent>()
   const state:AgentRuntimeSnapshot={retained:false,foreground:'running',backgroundCount:0,input:'send'}
@@ -209,6 +211,43 @@ it('非 retained 执行者(微信交办、有出生地)completed:stageFinishedNo
   expect(enqueued).toEqual([receipt.taskId]) // 回报确实入队了(有出生地)
   const notices=wbStore.wechatNotifications.list(receipt.taskId)
   expect(notices.some(n=>n.kind==='completed')).toBe(false) // 通知被压——不重叠外发
+  // 终审后修复第二轮 Important②b:压掉的通知正文(这一轮的回复"done.")
+  // 必须并进回报文案里,不能凭空丢掉——否则主人这一轮的答案就只剩「看:
+  // 任务 X」,得自己再问一句才看得到内容。
+  expect(enqueuedBodies[0]).toContain('done.')
+})
+
+/**
+ * 终审后修复第二轮 Important②a(裁决修正):上一轮把压制判据写成「这一轮
+ * 有没有出生地」,误伤了 retained 执行者——retained 执行者到终态之前已经
+ * 在 `settleQuiet` 报过这一轮,这里的 `reportOnce` 调用因 `reportedTurn
+ * ===turnSeq` 本来就是 no-op,根本不存在"同一拍双发",通知却照样被压掉
+ * 了。这条用例精确复现这个场景:retained 执行者答复静下来(settleQuiet
+ * 已经入队一次回报)之后,不提交新输入,靠 `retainedIdleCloseMs` 空转到
+ * 点自动收工(`closeForIdle`)——那一刻终态是 `completed`,`reportOnce`
+ * 因为 turnSeq 没变而是 no-op,但 `stageFinishedNotice` 的 completed 通
+ * 知必须原样保留。
+ */
+it('retained 执行者:settleQuiet 已经报过这一轮,idle 自动收工变 completed 时 reportOnce 是 no-op,通知不该被压',async()=>{
+  const registry=createProviderRegistry();const runtime=new TurnRuntime()
+  registry.register('claude',{async spawn(){return runtime.session}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  const wbStore=makeWorkbenchStore(db)
+  service=makeWorkbenchService({store:wbStore,registry,stateDir:area,ownerChatId:()=>'chat-1',matters,
+    registeredProjects:()=>[{alias:'project',path:project}],log:(tag,line)=>logs.push([tag,line]),reports:makeSink(),
+    retainedIdleCloseMs:()=>300})
+  const projectId=service.projects()[0]!.id
+  const receipt=createTaskFromChat(projectId)
+  await expect.poll(()=>matters.sessions(receipt.taskId)).not.toHaveLength(0)
+  runtime.finishTurn()
+  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
+  expect(enqueued).toEqual([receipt.taskId]) // settleQuiet 那一拍已经报过这一轮
+  // 不提交新输入,靠 retainedIdleCloseMs 空转到点,armIdleClose 到期自动收工
+  // ——那一刻 status 是 completed(closedWhileReplied),reportOnce 因为
+  // turnSeq 没变而是 no-op。
+  await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('done')
+  expect(enqueued).toEqual([receipt.taskId]) // 终态那一拍没有再入队第二条(reportOnce no-op)
+  const notices=wbStore.wechatNotifications.list(receipt.taskId)
+  expect(notices.some(n=>n.kind==='completed')).toBe(true) // 通知原样保留——Important②a 修正的地方
 })
 
 /**
@@ -276,4 +315,50 @@ it('没有 opts.reports 时(老接线),什么都不做,不报错',async()=>{
   await expect.poll(()=>matters.get(receipt.taskId)?.status).toBe('replied')
   expect(enqueued).toEqual([])
   expect(logs).toEqual([])
+})
+
+/**
+ * 终审后修复第二轮 Important①(本轮唯一"改前不会、改后会"的硬失败):
+ * `opts.matters?.get(task.id)` 以前裸放在终态 try 里、且在 `store.update
+ * (status)` 之前——这个仓库的既有约定是所有 matter 读写都走故意吞异常的
+ * `matterSync`,这里违反了。复审的变异复现:注入一个终态时 `get` 抛
+ * `disk_io_error` 的 matters ⇒ 整个终态 try 被外层那句"永不给一次状态
+ * 失败解锁一个不确定的写者"的 catch 吞掉,任务永远停在 running,终态状态、
+ * 完成通知、matterSync、reportOnce、recollectOnce、publishFinishedNotices
+ * 全部没有发生。修复:willReport 的探测包一层独立 try/catch,读不到出生
+ * 地就当"这一轮不会报"处理——默认值必须是「不压」(多一条通知是噪音,
+ * 两条都不发是主人什么都收不到,两个方向代价不对称)。这条用例直接复现
+ * 复审的探针:传一个 `get` 抛错的 matters,断言①任务终态照常推进到
+ * completed(不再卡在 running)②stageFinishedNotice 的 completed 通知
+ * 没有被压(默认不压)③留一条 MATTER_REPORT 日志说明探测失败了。
+ */
+it('willReport 探测时 matters.get 抛错(终审后修复第二轮 Important①):终态照常推进,通知默认不压,留一条日志',async()=>{
+  const registry=createProviderRegistry()
+  const q=new AsyncQueue<AgentEvent>()
+  const state:AgentRuntimeSnapshot={retained:false,foreground:'running',backgroundCount:0,input:'send'}
+  registry.register('claude',{async spawn(){return{
+    workbenchRuntime:{
+      events:{[Symbol.asyncIterator]:()=>q.iterable()[Symbol.asyncIterator]()},
+      start:()=>{q.push({kind:'init',sessionId:'nr-5'});q.push({kind:'text',itemId:'t0',text:'done.'});q.push({kind:'result',sessionId:'nr-5',numTurns:1,durationMs:1});q.end()},
+      submit:async()=>{},
+      snapshot:()=>state,
+    } as AgentWorkbenchRuntime,
+    async *dispatch(){},close:async()=>{},
+  }}},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  const wbStore=makeWorkbenchStore(db)
+  // 探针:除了 get 全部转发给真实的 matters(create/setStatus 等都要真的
+  // 落库,不然任务连出生地都建不出来),只有 get 抛错——精确复现"这一拍
+  // 读不到出生地"这件事,而不是让整条 matters 都坏掉。
+  const throwingGet:MatterStore={...matters,get:()=>{throw new Error('disk_io_error')}}
+  service=makeWorkbenchService({store:wbStore,registry,stateDir:area,ownerChatId:()=>'chat-1',matters:throwingGet,
+    registeredProjects:()=>[{alias:'project',path:project}],log:(tag,line)=>logs.push([tag,line]),reports:makeSink()})
+  const projectId=service.projects()[0]!.id
+  const receipt=createTaskFromChat(projectId)
+  // 任务终态照常推进——不再卡在 running(复审变异复现的正是"卡住"这个症状)。
+  await expect.poll(()=>service.detail(receipt.taskId).task.status).toBe('completed')
+  // 通知默认不压:matters.get 抛错时 willReport 必须默认为 false。
+  const notices=wbStore.wechatNotifications.list(receipt.taskId)
+  expect(notices.some(n=>n.kind==='completed')).toBe(true)
+  // 留一条日志说明这一拍的探测失败了(不是静默吞掉)。
+  expect(logs.some(([tag,line])=>tag==='MATTER_REPORT'&&line.includes(receipt.taskId)&&line.includes('willReport probe failed')&&line.includes('disk_io_error'))).toBe(true)
 })

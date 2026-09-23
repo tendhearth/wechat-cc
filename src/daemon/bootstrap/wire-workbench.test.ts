@@ -233,6 +233,63 @@ it('从微信交办的事,答复静下来那一拍真的把回报写进 matter_r
 })
 
 /**
+ * 终审后修复第二轮 Minor:`wire-workbench.ts` 里
+ * `notificationsEnabled:id=>store.wechatNotifications.subscription(id)?.enabled??true`
+ * 的 `?? true` 是一条载重默认值——它决定"没有订阅记录的任务算不算静
+ * 音"。复审实测:改成 `?? false` 全套单测照样 28 条全绿(正常 createWechat
+ * 流程总是同时建订阅记录,现有测试摸不到"有出生地但没有订阅记录"这个边
+ * 界状态),说明这条默认值此前完全没有测试守着。这条用手动删掉订阅记录
+ * 表行(正常命令面摸不到这个状态,但 `notificationsEnabled` 必须对它防
+ * 御)的办法精确复现,确认默认值是"没静音过"。
+ */
+it('notificationsEnabled 默认值:没有订阅记录时按"没静音过"处理,回报照样入队', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'wire-workbench-mute-default-'))); acknowledgeDirs.push(root)
+  const stateDir = join(root, 'state'), project = join(root, 'project')
+  mkdirSync(project, { recursive: true })
+  saveAgentConfig(stateDir, { provider: 'agy', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false, workbench_unattended_ack_at: 999 })
+  await saveCompanionConfig(stateDir, { ...defaultCompanionConfig(), default_chat_id: 'chat-1' })
+  addProject(join(stateDir, 'projects.json'), 'project', project)
+  const db = openDb({ path: join(stateDir, 'state.db') })
+  const matters = makeMatterStore(db), reportOutbox = makeReportOutboxStore(db)
+  const bootRegistry = createProviderRegistry()
+  const runtime = new TurnRuntime()
+  bootRegistry.register('agy', { async spawn() { return runtime.session } }, { displayName: 'Gemini (agy)', canResume: () => true })
+  const boot = {
+    registry: bootRegistry,
+    sdkOptionsForProject: (() => ({})) as unknown as Bootstrap['sdkOptionsForProject'],
+    defaultProviderId: 'agy',
+    holdBusy: (_label: string) => () => {},
+  } as unknown as Bootstrap
+  try {
+    const service = wireWorkbench({
+      db, stateDir, boot, matters, reportOutbox,
+      internalApi: { mintSessionToken: () => 'token', invalidateSession: () => {} },
+      askUser: async () => 'allow',
+      log: () => {},
+    })
+    const projectView = service.projects().find(p => p.path === project)!
+    const receipt = service.createWechat({
+      ownerChatId: 'chat-1', accountId: 'acct-1', requestId: randomUUID(),
+      commandHash: createHash('sha256').update('改首页').digest('hex'),
+      originMessageId: 'msg-7', projectId: projectView.id, providerId: 'agy', text: '改首页',
+    })
+    // 正常创建流程会一并写一条订阅记录(enabled=true)——手动删掉,精确模拟
+    // "有出生地但没有订阅记录"这个边界状态,只测 notificationsEnabled 的默认值。
+    db.query('DELETE FROM workbench_wechat_subscriptions WHERE task_id=?').run(receipt.taskId)
+    expect(db.query('SELECT * FROM workbench_wechat_subscriptions WHERE task_id=?').get(receipt.taskId)).toBeNull()
+    await expect.poll(() => matters.sessions(receipt.taskId)).not.toHaveLength(0)
+    runtime.finishTurn()
+    await expect.poll(() => matters.get(receipt.taskId)?.status).toBe('replied')
+    await expect.poll(async () => (await reportOutbox.listDue(Date.now() + 1)).length).toBeGreaterThan(0)
+    const due = await reportOutbox.listDue(Date.now() + 1)
+    expect(due).toEqual([expect.objectContaining({ matterId: receipt.taskId })])
+    await service.shutdown()
+  } finally {
+    db.close()
+  }
+})
+
+/**
  * 端到端接线(task-5,fix round 1,2026-09-23,控制器裁决:这一轮必须真的
  * 接上,不许留成死代码;fix round 2,复审「小的」②:第一版这里的假 agy
  * 带着 `workbenchRuntime` 且 `retained:true`——那是 claude/codex 的形状,

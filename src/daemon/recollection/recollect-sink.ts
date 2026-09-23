@@ -73,6 +73,14 @@
  * not reinvented). A timeout is a real failure (not "no model available"),
  * so it goes through `maybeRecollect`'s own `ask()` catch → `log` path,
  * same as any other ask() rejection.
+ *
+ * This only unblocks the CALLER (releases holdBusy, lets the daemon go
+ * idle again) — it does NOT cancel the underlying cheapEval call itself.
+ * A stuck agy subprocess keeps running toward its own 600s
+ * `--print-timeout` regardless; `Promise.race` has no way to reach in and
+ * kill it. Real cancellation would need the provider side to accept an
+ * abort signal — out of scope here, recorded as a known gap, not silently
+ * assumed away.
  */
 import type {MatterStore} from '../../core/matters/store'
 import {maybeRecollect, buildRecollectionPrompt, crossedOvernight, RETURNED_SIGNAL_UNAVAILABLE, type RecollectSink} from '../../core/matters/recollection'

@@ -282,17 +282,46 @@ export function makeWorkbenchService(opts: Options) {
     enqueueNotice(task,runId,kind,`${task.title.replace(/[\r\n]+/g,' ')} · ${task.id}\n${task.providerId} · ${kind==='permission'?'需要你批准':'需要你回答'}\n\n${label.slice(0,600)}\n\n查看：任务 ${task.id} ${kind==='permission'?'权限':'问题'} ${id}`,id)
   }
   /**
-   * `suppressCompleted`(终审 Important):非 retained 执行者(agy/cursor/
-   * openai/gemini)不经过 settleQuiet,这个函数与 `reportOnce` 同在终态
-   * 那个 try 里、同一拍触发——不挡的话 completed 那一刻两条都发主人
-   * chat:先「…这一轮已完成…查看:任务 xxx」,紧跟「…已答复。累计生成
-   * 了 N 份成果。看:… 接着说:…」,同一件事说了两遍(spec 已定 #1「再
-   * 报一次是噪音」的理由原样适用,只是这次是两条不同措辞的消息同时
-   * 发,不是同一条重发)。回报信息严格更丰富(带续接入口),所以压的是
-   * 这条、留的是回报——但只在"这一轮真的会入队回报"时才压:调用点用
-   * `matter.originMatterId` 判(跟 `renderReport` 自己的判据同一条),桌
-   * 面亲手派的任务没有出生地、reportOnce 什么都不会发,那种情况必须继
-   * 续留着这条通知,不能无条件压。
+   * 终审后修复第二轮 Important②b:非 retained 执行者 completed 终态时,
+   * `stageFinishedNotice` 的 completed 通知被压掉——被压掉的正文必须并
+   * 进回报文案,否则等于用"去噪"换掉了"主人被动收到答案"这件事(spec 开
+   * 头那句:交给 CC 之后能放心离开、回来接得上)。这里读的是跟
+   * `stageFinishedNotice` 同一份数据(这一轮最后一条文本事件 + 保存的成
+   * 果文件名),但故意**不是**同一个函数——`stageFinishedNotice` 还有
+   * failed 时改写额度耗尽文案那一支,那部分只在通知里有意义,不该混进
+   * 回报文案。
+   */
+  function terminalReportBody(running:Active):string|undefined {
+    const reply=store.events(running.taskId).filter(e=>e.runId===running.identity&&e.kind==='text').at(-1)?.text
+    const artifacts=store.artifacts(running.taskId).slice(0,5)
+    const parts=[reply?reply.slice(0,1800):undefined,artifacts.length?'已保存成果：'+artifacts.map(a=>a.name).join('、').slice(0,500):undefined].filter((s):s is string=>!!s)
+    return parts.length?parts.join('\n\n'):undefined
+  }
+  /**
+   * `suppressCompleted`(终审 Important,终审后修复第二轮 Important②改
+   * 过一次判据):非 retained 执行者(agy/cursor/openai/gemini)不经过
+   * settleQuiet,这个函数与 `reportOnce` 同在终态那个 try 里、同一拍触
+   * 发——不挡的话 completed 那一刻两条都发主人 chat:先「…这一轮已完
+   * 成…查看:任务 xxx」,紧跟「…已答复。累计生成了 N 份成果。看:… 接
+   * 着说:…」,同一件事说了两遍(spec 已定 #1「再报一次是噪音」的理由原
+   * 样适用,只是这次是两条不同措辞的消息同时发,不是同一条重发)。
+   *
+   * 判据不是"这一轮有没有出生地"那么简单(终审后修复第二轮 Important②a
+   * 改正:上一版这么写,把 retained 执行者也误伤了——retained 执行者到
+   * 这里之前已经在 `settleQuiet` 报过这一轮,这里的 `reportOnce` 调用因
+   * `reportedTurn===turnSeq` 本来就是 no-op,根本不存在"同一拍双发",通
+   * 知却照样被压掉了)。真正的判据是调用点算出来的 `willReport`——"这
+   * 一拍 `reportOnce` 真的会入队"(有出生地 **且** 不是因为
+   * `reportedTurn===turnSeq` 而 no-op),只在这个条件成立时才压。
+   *
+   * 压的时候留的不是"信息更丰富"的空话(上一版这么写,但回报模板只有
+   * `标题 · 已答复(第N轮)。看:… · 接着说:…`,没有正文——那句理由是假
+   * 的,终审后修复第二轮 Important②b 点名的说谎注释,已改正)。真正的
+   * 理由是:调用点把这一轮的答复正文 + 成果文件名(`terminalReportBody`,
+   * 跟这个函数原来自己读的是同一份数据)并进了回报文案里再传给
+   * `reportOnce`——压的是通知外壳,正文本身**没有**被丢掉,只是换了个
+   * 地方送达。桌面亲手派的任务没有出生地、`reportOnce` 什么都不会发,那
+   * 种情况必须继续留着这条通知,不能无条件压。
    */
   function stageFinishedNotice(running:Active,status:TaskStatus,error:string|null=null,suppressCompleted=false){
     if(!TERMINAL_TASK_STATUSES.includes(status))return
@@ -607,10 +636,17 @@ export function makeWorkbenchService(opts: Options) {
    * 「有没有被看见」。调用点:`settleQuiet`(答复)与终态收工(评审 #3,非
    * retained 执行者永远不经过 `settleQuiet`)都调它,序号相同则第二次是no-op。
    */
-  function reportOnce(running:Active):void {
+  /**
+   * `body`(终审后修复第二轮 Important②b,可选,默认不传):非 retained
+   * 执行者终态那一拍会传 `terminalReportBody(running)`,把
+   * `stageFinishedNotice` 原本会发的正文并进回报文案。`settleQuiet` 那
+   * 处调用(retained 执行者)不传——那条路没有通知被压,不需要额外正
+   * 文,回报只是"事情有进展,看这里"的一句指路。
+   */
+  function reportOnce(running:Active,body?:string):void {
     if (running.reportedTurn===running.turnSeq) return
     running.reportedTurn=running.turnSeq
-    try { opts.reports?.enqueue(running.taskId,running.turnSeq) } catch (err) { opts.log?.('MATTER_REPORT',`enqueue failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
+    try { opts.reports?.enqueue(running.taskId,running.turnSeq,body) } catch (err) { opts.log?.('MATTER_REPORT',`enqueue failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
   }
   /**
    * 回忆触发,按「这是第几轮」去重(task-5,fix round 1:与 `reportOnce` 同一套道理——
@@ -904,9 +940,35 @@ export function makeWorkbenchService(opts: Options) {
       let terminalCommitted=false
       try {
         const status=running.cancelled&&!running.uncertain?(running.closedWhileReplied?'completed':'cancelled'):finalStatus
-        // 会不会入队回报,判据跟 renderReport 自己用的是同一条(有没有出生
-        // 地);见 stageFinishedNotice 的 suppressCompleted 参数注释。
-        const willReport=status==='completed'&&!!opts.matters?.get(task.id)?.originMatterId
+        // 会不会真的在这一拍入队回报,两个条件都要成立(终审后修复第二轮
+        // Important②a,判据比"这一轮有没有出生地"更紧):①这一轮有出生地
+        // (跟 renderReport 自己的判据同一条)②reportOnce 这一拍真的会执
+        // 行、不是因为 reportedTurn===turnSeq 而 no-op——retained 执行者
+        // 到这里之前已经在 settleQuiet 报过这一轮,这里的 reportOnce 调用
+        // 只是 no-op,不存在"同一拍双发",stageFinishedNotice 的通知不该
+        // 被压(上一版漏了这一条,把 retained 执行者也误伤了)。
+        let willReport=false
+        try {
+          willReport=status==='completed'
+            &&running.reportedTurn!==running.turnSeq
+            &&!!opts.matters?.get(task.id)?.originMatterId
+        } catch (err) {
+          // 读不到出生地(比如 matters.get 抛错)就当这一轮不会报处理,默认
+          // 「不压」——两个方向的代价不对称:多一条通知是噪音,两条都不
+          // 发是主人什么都收不到(终审后修复第二轮 Important①)。
+          opts.log?.('MATTER_REPORT',`willReport probe failed for ${task.id}: ${err instanceof Error?err.message:err}`)
+          willReport=false
+        }
+        // 终审后修复第二轮 Important②b:压掉 stageFinishedNotice 的 completed
+        // 通知时,把它原本会发的正文(terminalReportBody)并进回报文案——
+        // 不然"压通知"就变成了"主人这一轮的答案从此要自己回一句「任务
+        // <id>」才能看到",那正是这个功能存在的理由(spec:交给 CC 之后能
+        // 放心离开、回来接得上)的反面。这也顺带补上了第 6 项对非 retained
+        // 执行者的缺口——它们的 turnSeq 恒为 0(见下面 recollectOnce 之后
+        // 的调用点、report.ts 的 renderReport 文档注释),「第 N 轮」这几
+        // 个字对它们本来就区分不开相邻两轮,真正让文案不同的是这里并进去
+        // 的正文(每轮答复内容通常不同)。
+        const body=willReport?terminalReportBody(running):undefined
         store.atomic(()=>{
           store.finishRunActivities(task.id,running.identity,running.cancelled&&!running.uncertain?'cancelled':'interrupted')
           store.update(task.id,status,finalError)
@@ -923,7 +985,7 @@ export function makeWorkbenchService(opts: Options) {
         // 说成「已答复」,跟 stageFinishedNotice 给 failed/额度耗尽的既有文案("这一轮
         // 需要处理"/问"交给 X 继续?")直接打架。失败/取消不经这里回报,不代表主人收不
         // 到通知——stageFinishedNotice 走的是另一条既有的完成通知路径,不受这里影响。
-        if (status==='completed') reportOnce(running)
+        if (status==='completed') reportOnce(running,body)
         // 回忆(task-5,fix round 3,评审必判①):这是唯一的触发点(round 2
         // 还有 settleQuiet 那一处,这一轮去掉了——见 settleQuiet 里的注
         // 释)。这里的 turnSeq 是这个 run 真实的总轮数,"一件事一段记述"与

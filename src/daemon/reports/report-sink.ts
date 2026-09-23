@@ -38,7 +38,7 @@ export interface ReportSinkDeps {
 
 export function makeReportSink(deps: ReportSinkDeps): ReportSink {
   return {
-    enqueue(matterId, turn) {
+    enqueue(matterId, turn, body) {
       const matter = deps.matters.get(matterId)
       if (!matter) {
         // 终审 Important:这不是预期路径——桌面任务是下一行 renderReport
@@ -56,7 +56,7 @@ export function makeReportSink(deps: ReportSinkDeps): ReportSink {
         deps.log?.('MATTER_REPORT', `enqueue skipped for ${matterId}: wechat notifications muted`)
         return
       }
-      const report = renderReport({matter, title: deps.taskTitle(matterId), artifactCount: deps.artifactCount(matterId), turn})
+      const report = renderReport({matter, title: deps.taskTitle(matterId), artifactCount: deps.artifactCount(matterId), turn, body})
       if (!report) return // No birthplace — renderReport already decided not to report.
       void deps.outbox.insert(report, deps.now?.() ?? Date.now())
         .catch(err => deps.log?.('MATTER_REPORT', `outbox insert failed for ${matterId}: ${err instanceof Error ? err.message : err}`))

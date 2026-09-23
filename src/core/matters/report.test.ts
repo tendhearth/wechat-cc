@@ -60,8 +60,23 @@ describe('renderReport', () => {
     const r0 = renderReport({matter: fromChat, title: '首页调整', artifactCount: 0, turn: 0})!
     const r1 = renderReport({matter: fromChat, title: '首页调整', artifactCount: 0, turn: 1})!
     expect(r0.text).not.toBe(r1.text)
-    expect(r0.text).toContain('第1轮')
-    expect(r1.text).toContain('第2轮')
+    expect(r0.text).toContain('第 1 轮')
+    expect(r1.text).toContain('第 2 轮')
+  })
+
+  /**
+   * 终审后修复第二轮 Important②b:非 retained 执行者的 completed 通知被
+   * workbench/service.ts 压掉时,原本会发的正文要并进回报文案——不传 body
+   * 时文案不带这段(向后兼容 retained 执行者那条路);传了就要出现在文案
+   * 里,且仍然带着「看:/接着说:」这两个现成指称动作(不是把整条模板换
+   * 掉,是插进去)。
+   */
+  it('传了 body:并进文案里,不丢现成的指称动作', () => {
+    const withBody = renderReport({matter: fromChat, title: '首页调整', artifactCount: 0, turn: 0, body: '改好了,首页现在用新配色。'})!
+    expect(withBody.text).toContain('改好了,首页现在用新配色。')
+    expect(withBody.text).toContain(`任务 ${fromChat.id}`)
+    const withoutBody = renderReport({matter: fromChat, title: '首页调整', artifactCount: 0, turn: 0})!
+    expect(withoutBody.text).not.toContain('改好了')
   })
 })
 
