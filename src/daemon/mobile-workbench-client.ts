@@ -4,16 +4,18 @@ var M_STATUS = { open: "进行中", replied: "已答复", done: "已了结", arc
 var M_KIND = { task: "任务", chat: "对话", companion: "陪伴" }
 var M_INPUT_STATUS={pending:"补充已保存，等待执行者接收。",sending:"补充正在发送，等待执行者确认。",delivered:"这条补充已送达。",held:"未确认送达，请先查看任务记录。原文已保留。",withdrawn:"这条补充已撤回，原文已保留。"},mInputStates={}
 var mCurrent = null, mDetail = null, mPoll = null, mSeq = 0, mActive = false, mBusy = {}, mQuestionKey = "", mObjectUrls = [], mTooLarge = false
+var mDetailFresh = false, mConnectionEpoch = 0, mOffline = false
+var mAutoPreview = ''
 /** 最后一次真正联系上 daemon 的时刻。断网时它会停住变旧 —— 这正是"你看到的是几点的样子"要报的那个数。 */
-var mLastOkAt = Date.now()
+var mLastOkAt = null
 /** 连续几次没联系上才浮提示:一次抖动不打扰人。按"次数"而不是"过了多久"判 ——
  * 重算只发生在有请求的时候,按时长判会出现"门槛到了却没人算"的空窗。 */
 var M_STALE_MISSES = 2, mMisses = 0
-/** 提交失败、生死不明的那一下:{id, requestId}。只活到下一次拿到新详情,不落盘。
- * 有了它才能在重连后回答"刚才那下到底算不算数" —— 但**绝不据此自动重发**:
+/** 提交失败、生死不明的请求,按任务保存到下一次读到详情,不落盘。
+ * 重连后只报告请求是否仍在等待,消失不代表本次提交成功;绝不自动重发:
  * 权限这种事不该在人走开之后被静默重发。(「接着说」不走这条:它有自己的
  * pending/sending/delivered/held 状态在报。) */
-var mUnsure = null
+var mUnsure = {}
 var mStorage = "cc.phone.matter.v1:" + (REMOTE ? REMOTE.id : location.host) + ":"
 function mRead(key) { try { return JSON.parse(localStorage.getItem(mStorage + key) || "null") } catch (e) { return null } }
 function mWrite(key,value) { try { if (value === null) localStorage.removeItem(mStorage + key); else localStorage.setItem(mStorage + key,JSON.stringify(value)) } catch (e) {} }
@@ -28,7 +30,7 @@ function mClock(ts) { var d = new Date(ts); return String(d.getHours()).padStart
 function mConn() {
   var el = document.getElementById("m-conn"), stale = mMisses >= M_STALE_MISSES
   el.hidden = !stale
-  el.textContent = stale ? "连不上 CC —— 你看到的是 " + mClock(mLastOkAt) + " 的样子" : ""
+  el.textContent = stale ? (mLastOkAt===null?"还没有连上 CC，请检查电脑连接。":"连不上 CC —— 你看到的是 " + mClock(mLastOkAt) + " 的样子") : ""
 }
 function mError(code) {
   if (code === "detail_too_large") return "完整内容过长，请到桌面查看。草稿已保留，这里暂时不能提交判断或补充。"
@@ -42,23 +44,24 @@ function mError(code) {
   return "暂时没能完成，请检查连接后重试。草稿已保留。"
 }
 function mApi(path,opts) {
-  var timer
+  var timer, epoch=mConnectionEpoch
   return Promise.race([api(path,opts).then(function(r){return r.json().then(function(b){if (!r.status || r.status < 400) { if (b.ok) return b }; throw new Error(b.error || "unavailable")})}),new Promise(function(_r,reject){timer=setTimeout(function(){reject(new Error("timeout"))},15000)})])
     .then(function(b){
       // 只在"从断线里回来"这一下清提示:断线期间那条错误不清就会赖到下一次操作,
       // 让人以为刚才的动作失败了。平时成功不动它 —— 否则会把"已提交""补充已送达"
       // 这些该留着的话一起抹掉。
+      if(epoch!==mConnectionEpoch||mOffline)return b
       var recovered = mMisses > 0
       mLastOkAt=Date.now();mMisses=0;mConn();if(recovered)mNotice("")
       return b
-    },function(e){mMisses++;mConn();throw e})
+    },function(e){if(epoch===mConnectionEpoch){mMisses++;mDetailFresh=false;mConn();mSetButtons()}throw e})
     .finally(function(){clearTimeout(timer)})
 }
 function mClearPreview() { mObjectUrls.forEach(function(u){URL.revokeObjectURL(u)});mObjectUrls=[];document.getElementById("m-artifact-preview").replaceChildren() }
 function mSetButtons() {
-  document.querySelectorAll("#m-controls button[data-request]").forEach(function(b){b.disabled=!!mBusy[b.dataset.task+":"+b.dataset.request]})
+  document.querySelectorAll("#m-controls button[data-request]").forEach(function(b){b.disabled=!mDetailFresh||!!mBusy[b.dataset.task+":"+b.dataset.request]})
   document.querySelectorAll("#m-questions [data-question-request]").forEach(function(card){var disabled=!!mBusy[mCurrent+":"+card.dataset.questionRequest];card.querySelectorAll('input,textarea').forEach(function(input){input.disabled=disabled})})
-  document.getElementById("m-send").disabled=!mDetail||mTooLarge||!!mBusy[mCurrent+":say"]
+  document.getElementById("m-send").disabled=!mDetailFresh||!mDetail||mTooLarge||!!mBusy[mCurrent+":say"]
   document.getElementById("m-say").disabled=mTooLarge
 }
 function loadMatters() {
@@ -102,15 +105,15 @@ function mRenderQuestions(d) {
     }).join("")+'<button type="button" class="done-btn" data-control="answer" data-task="'+esc(d.matter.id)+'" data-request="'+esc(r.id)+'">提交回答</button> <button type="button" class="more" data-control="decline" data-task="'+esc(d.matter.id)+'" data-request="'+esc(r.id)+'">暂不回答</button></div>'
   }).join("")
 }
-/** 断网期间点的那一下,拿到新详情后当场给个准话:那条请求还在 = 没送出去;不在了 = 已经生效。 */
+/** A disappearing request is not a receipt: another device or expiry may have removed it. */
 function mSettleUnsure(d) {
-  if(!mUnsure||mUnsure.id!==d.matter.id)return
-  var pending=(d.permissions||[]).concat(d.questions||[]).some(function(r){return r.id===mUnsure.requestId})
-  mUnsure=null
-  mNotice(pending?"刚才那下没送出去,可以再点一次。":"刚才那下已经生效。")
+  var unsure=mUnsure[d.matter.id];if(!unsure)return
+  var pending=d.runId===unsure.runId&&(d.permissions||[]).concat(d.questions||[]).some(function(r){return r.taskId===d.matter.id&&r.id===unsure.requestId})
+  delete mUnsure[d.matter.id]
+  mNotice(pending?"这项请求仍在等待。请确认当前内容，再决定是否提交。":"这项请求已结束或被其他设备处理，无法确认刚才的提交是否生效。请查看任务记录。")
 }
 function renderMatter(d) {
-  mDetail=d;mTooLarge=false
+  mDetail=d;mTooLarge=false;mDetailFresh=true
   document.getElementById("m-title").textContent=d.matter.title+" · "+(M_STATUS[d.matter.status]||d.matter.status)
   document.getElementById("m-events").innerHTML=(d.events||[]).filter(function(e){return ["user","text","error","system"].indexOf(e.kind)>=0}).map(function(e){return '<div class="card ev"><div class="k">'+(e.kind==='user'?'你':e.kind==='text'?'CC':'·')+'</div><div class="tx"><p>'+esc(e.text)+'</p><small>'+esc(ago(new Date(e.createdAt).toISOString()))+'</small></div></div>'}).join("")||'<div class="empty">还没有对话记录</div>'
   document.getElementById("m-permissions").innerHTML=(d.permissions||[]).filter(function(p){return p.taskId===d.matter.id}).map(function(p){return '<div class="card"><b>需要你允许这一次</b><p>'+esc(p.tool)+'</p><pre class="m-description">'+esc(p.description)+'</pre><button type="button" class="done-btn" data-control="allow" data-task="'+esc(d.matter.id)+'" data-request="'+esc(p.id)+'">允许这一次</button> <button type="button" class="more" data-control="deny" data-task="'+esc(d.matter.id)+'" data-request="'+esc(p.id)+'">拒绝</button></div>'}).join("")
@@ -120,10 +123,15 @@ function renderMatter(d) {
   document.getElementById("m-artifacts").innerHTML=(d.artifacts||[]).filter(function(a){return a.taskId===d.matter.id}).map(function(a){return '<div class="card"><b>'+esc(a.name)+'</b><small>已保存 · '+Math.ceil(a.size/1024)+' KB</small><button type="button" class="more" data-artifact="'+esc(a.id)+'">查看 '+esc(a.name)+'</button></div>'}).join("")
   document.getElementById("m-say-box").hidden=d.matter.kind==='companion'||d.matter.status==='archived'
   mSetButtons()
+  var preview=(d.artifacts||[]).find(function(a){return a.taskId===d.matter.id&&['image/png','image/jpeg','image/webp'].indexOf(a.mime)>=0&&a.size<=8*1024*1024})
+  if(preview&&!(d.permissions||[]).length&&!(d.questions||[]).length){
+    var previewKey=d.matter.id+':'+preview.id+':'+preview.sha256
+    if(mAutoPreview!==previewKey){mAutoPreview=previewKey;mArtifact(preview)}
+  }
 }
 function mSchedule() { clearTimeout(mPoll);if(mActive&&mCurrent&&!document.hidden&&!mTooLarge)mPoll=setTimeout(mRefresh,3000) }
 function mRefresh() {
-  clearTimeout(mPoll);if(!mActive||!mCurrent||document.hidden)return Promise.resolve()
+  clearTimeout(mPoll);if(!mActive||!mCurrent||document.hidden||mOffline)return Promise.resolve()
   var id=mCurrent,seq=++mSeq
   return mApi('/m/api/matter?id='+encodeURIComponent(id)).then(function(d){if(mCurrent===id&&seq===mSeq&&d.matter.id===id)renderMatter(d)}).catch(function(e){if(mCurrent===id&&seq===mSeq){
     if(e.message==='detail_too_large'){mTooLarge=true;mDetail=null;mQuestionKey="";['m-permissions','m-questions','m-events','m-artifacts','m-inputs'].forEach(function(key){document.getElementById(key).replaceChildren()});mClearPreview();mSetButtons()}
@@ -131,6 +139,8 @@ function mRefresh() {
   }}).finally(function(){if(mCurrent===id&&seq===mSeq)mSchedule()})
 }
 function openMatter(id) {
+  mDetailFresh=false
+  if(mCurrent!==id)mAutoPreview=''
   if(mCurrent!==id){mSeq++;mDetail=null;mTooLarge=false;mQuestionKey="";mClearPreview();document.getElementById("m-events").replaceChildren();document.getElementById("m-permissions").replaceChildren();document.getElementById("m-questions").replaceChildren();document.getElementById("m-artifacts").replaceChildren();document.getElementById('m-inputs').replaceChildren();mSetButtons();mNotice("");document.getElementById("m-title").textContent="正在读…"}
   mCurrent=id;mActive=true
   var draft=mRead(id+":say");document.getElementById("m-say").value=draft&&typeof draft.text==='string'?draft.text:""
@@ -139,7 +149,7 @@ function openMatter(id) {
 }
 function mDecision(control,request) {
   var id=mCurrent,runId=mDetail&&mDetail.runId,key=id+":"+request.id
-  if(!id||!runId||request.taskId!==id||mBusy[key])return
+  if(!id||!runId||!mDetailFresh||request.taskId!==id||mBusy[key])return
   var answers=null
   if(control==='answer'){
     var draft=mQuestionDraft(request);answers={}
@@ -149,7 +159,7 @@ function mDecision(control,request) {
   var permission=control==='allow'||control==='deny',body={id:id,runId:runId,requestId:request.id}
   if(permission)body.decision=control;else body.answers=answers
   mBusy[key]=true;mSetButtons();mNotice("正在提交…")
-  mApi('/m/api/matter/'+(permission?'permission':'answer'),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(function(){if(!permission)mWrite(id+":question:"+request.id,null);if(mCurrent===id)mNotice("已提交")}).catch(function(e){mUnsure={id:id,requestId:request.id};if(mCurrent===id)mNotice(mError(e.message))}).finally(function(){delete mBusy[key];if(mCurrent===id){mSetButtons();mRefresh()}})
+  mApi('/m/api/matter/'+(permission?'permission':'answer'),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(function(){if(!permission)mWrite(id+":question:"+request.id,null);if(mCurrent===id)mNotice("已提交")}).catch(function(e){mUnsure[id]={runId:runId,requestId:request.id};if(mCurrent===id)mNotice(mError(e.message))}).finally(function(){delete mBusy[key];if(mCurrent===id){mDetailFresh=false;mSetButtons();mRefresh()}})
 }
 document.getElementById("m-controls").addEventListener("click",function(ev){var b=ev.target.closest('[data-control]');if(!b||!mDetail)return;var request=(b.dataset.control==='allow'||b.dataset.control==='deny'?mDetail.permissions:mDetail.questions||[]).find(function(r){return r.id===b.dataset.request&&r.taskId===b.dataset.task});if(request)mDecision(b.dataset.control,request)})
 document.getElementById("m-questions").addEventListener("input",function(ev){
@@ -163,7 +173,7 @@ document.getElementById("m-questions").addEventListener("input",function(ev){
 document.getElementById("m-say").addEventListener("input",function(){if(mCurrent)mWrite(mCurrent+":say",{text:this.value})})
 document.getElementById("m-send").addEventListener("click",function(){
   var id=mCurrent,text=document.getElementById("m-say").value.trim(),key=id+":say"
-  if(!id||!text||!mDetail||mBusy[key])return
+  if(!id||!text||!mDetail||!mDetailFresh||mBusy[key])return
   var prior=mRead(id+":say"),draft=prior&&prior.requestId&&prior.text===text?prior:{text:text,requestId:mUuid(),...(mDetail.runId?{runId:mDetail.runId}:{})}
   mWrite(id+":say",draft);mBusy[key]=true;mSetButtons();mNotice("正在发送…")
   mApi('/m/api/matter/say',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:id,...draft})}).then(function(r){
@@ -190,9 +200,11 @@ document.getElementById("m-back").addEventListener("click",function(){mSeq++;mCu
 document.querySelectorAll('nav button[data-p]').forEach(function(b){b.addEventListener('click',function(){mActive=b.dataset.p==='matters';clearTimeout(mPoll);if(mActive){if(mCurrent)mRefresh();else loadMatters()}})})
 // 回前台按当前页分路:在详情页刷详情,在列表页刷列表。此前只调 mRefresh(),而它要
 // mCurrent —— 停在列表上回来时什么都不刷,人看到的还是切走之前那份。
-document.addEventListener('visibilitychange',function(){clearTimeout(mPoll);if(!document.hidden&&mActive){if(mCurrent)mRefresh();else loadMatters()}})
-window.addEventListener('pagehide',function(){clearTimeout(mPoll);mSeq++})
-window.addEventListener('pageshow',function(){if(mActive)mRefresh()})
+document.addEventListener('visibilitychange',function(){clearTimeout(mPoll);mSeq++;mConnectionEpoch++;mDetailFresh=false;mSetButtons();if(!document.hidden&&mActive){if(mCurrent)mRefresh();else loadMatters()}})
+window.addEventListener('offline',function(){clearTimeout(mPoll);mOffline=true;mSeq++;mConnectionEpoch++;mDetailFresh=false;mMisses=M_STALE_MISSES;mConn();mSetButtons()})
+window.addEventListener('online',function(){mOffline=false;if(mActive){if(mCurrent)mRefresh();else loadMatters()}})
+window.addEventListener('pagehide',function(){clearTimeout(mPoll);mSeq++;mConnectionEpoch++;mDetailFresh=false;mSetButtons()})
+window.addEventListener('pageshow',function(){if(mActive){if(mCurrent)mRefresh();else loadMatters()}})
 // Web Crypto is unavailable on a LAN HTTP origin. The fallback verifies the same
 // SHA-256 bytes there, without loading third-party code or weakening verification.
 async function mSha256(bytes) {
@@ -226,7 +238,7 @@ async function mArtifact(artifact) {
       offset=p.nextOffset
     }while(offset<bytes.length)
     if(await mSha256(bytes)!==artifact.sha256)throw new Error('artifact_checksum')
-    if(mCurrent!==id)return
+    if(mCurrent!==id||!mDetail||(mDetail.artifacts||[]).every(function(a){return a.id!==artifact.id||a.sha256!==artifact.sha256}))return
     mClearPreview();var preview=document.getElementById('m-artifact-preview'),title=document.createElement('p');title.textContent=artifact.name;preview.appendChild(title)
     var imageMime=['image/png','image/jpeg','image/webp'].indexOf(artifact.mime)>=0
     if(imageMime){var imageUrl=URL.createObjectURL(new Blob([bytes],{type:artifact.mime}));mObjectUrls.push(imageUrl);var img=document.createElement('img');img.src=imageUrl;img.alt=artifact.name;img.style.maxWidth='100%';preview.appendChild(img)}

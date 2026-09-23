@@ -69,13 +69,20 @@ function harness() {
     permissions: [] as Array<Record<string, unknown>>, questions: [], events: [], artifacts: [], inputs: [],
   }
 
+  let deferred: (() => void) | undefined
+  let deferNext = false
   const api = (path: string, opts?: { method?: string; body?: string }) => {
     calls.push({ path, ...(opts ? { opts } : {}) })
     if (mode === 'down') return Promise.reject(new Error('network down'))
     const body = path.startsWith('/m/api/matters')
       ? { ok: true, matters: [{ id: 'm1', title: '首页调整', kind: 'task', status: 'open' }] }
       : path.startsWith('/m/api/matter?') ? detail : { ok: true }
-    return Promise.resolve({ status: 200, json: () => Promise.resolve(body) })
+    const response = { status: 200, json: () => Promise.resolve(body) }
+    if (deferNext && path.startsWith('/m/api/matter?')) {
+      deferNext = false
+      return new Promise<typeof response>((resolve) => { deferred = () => resolve(response) })
+    }
+    return Promise.resolve(response)
   }
 
   const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'URL', MOBILE_WORKBENCH_JS)
@@ -89,6 +96,9 @@ function harness() {
     els, doc, calls, navButton, docHandlers, winHandlers,
     get conn() { return els.get('m-conn')! },
     get notice() { return els.get('m-notice')! },
+    deferDetail() { deferNext = true },
+    async resolveDetail() { deferred?.(); await vi.advanceTimersByTimeAsync(0) },
+    async offline() { for (const fn of winHandlers.offline ?? []) fn({}); await vi.advanceTimersByTimeAsync(0) },
     down() { mode = 'down' },
     up() { mode = 'ok' },
     setDetail(next: Partial<typeof detail>) { detail = { ...detail, ...next } as typeof detail },
@@ -165,7 +175,7 @@ describe('连不上的时候,页面说清你看到的是几点的样子', () => 
     expect(h.listCalls()).toBe(before + 1)
   })
 
-  it('断网时批的那一下:重连后发现已经生效,就明说生效了 —— 而且不重发', async () => {
+  it('审批消失不能证明自己的提交成功:可能过期或被别处处理,而且不重发', async () => {
     const h = harness()
     h.setDetail({ permissions: [{ id: 'p1', taskId: 'm1', tool: 'Bash', description: 'rm tmp' }] })
     await h.enterPane()
@@ -176,12 +186,13 @@ describe('连不上的时候,页面说清你看到的是几点的样子', () => 
     await h.tick(0)
     expect(h.postCalls()).toBe(1)
 
-    // 重连时那条请求已经不在了 —— 说明刚才那下其实落到了 daemon 上。
+    // 请求消失不是提交回执,也可能是任务结束或其他设备已经处理。
     h.up()
     h.setDetail({ permissions: [] })
     await h.tick(3000)
 
-    expect(h.notice.textContent).toContain('已经生效')
+    expect(h.notice.textContent).toContain('无法确认')
+    expect(h.notice.textContent).not.toContain('已经生效')
     expect(h.postCalls()).toBe(1)   // 绝不自动重发
   })
 
@@ -198,7 +209,31 @@ describe('连不上的时候,页面说清你看到的是几点的样子', () => 
     h.up()
     await h.tick(3000)   // 详情里 p1 仍然挂着
 
-    expect(h.notice.textContent).toContain('没送出去')
+    expect(h.notice.textContent).toContain('仍在等待')
+    expect(h.postCalls()).toBe(1)
+  })
+
+  it.each(['offline', 'background'] as const)('失效前的在途详情不能在 %s 后重新启用提交', async (event) => {
+    const h = harness()
+    h.setDetail({ permissions: [{ id: 'p1', taskId: 'm1', tool: 'Bash', description: 'command' }] })
+    await h.enterPane(); await h.openMatter()
+    h.deferDetail(); await h.tick(3000)
+    await h[event]()
+    await h.resolveDetail()
+    expect(h.els.get('m-send')!.disabled).toBe(true)
+    await h.allow('p1')
+    expect(h.postCalls()).toBe(0)
+    if (event === 'offline') expect(h.conn.hidden).toBe(false)
+  })
+
+  it('一次详情读取失败后就停止接受审批,直到重新取得当前详情', async () => {
+    const h=harness()
+    h.setDetail({permissions:[{id:'p1',taskId:'m1',tool:'Bash',description:'command'}]})
+    await h.enterPane();await h.openMatter()
+    h.down();await h.tick(3000)
+    await h.allow('p1')
+    expect(h.postCalls()).toBe(0)
+    h.up();await h.tick(3000);await h.allow('p1')
     expect(h.postCalls()).toBe(1)
   })
 })

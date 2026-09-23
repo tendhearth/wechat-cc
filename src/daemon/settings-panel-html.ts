@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs'
 import { safeSvg } from '../lib/svg-sanitize'
 import { MOBILE_BRAND_ICON_VERSION } from './mobile-brand-icon'
 import {MOBILE_WORKBENCH_JS} from './mobile-workbench-client'
+import {MOBILE_PRESENCE_HTML,MOBILE_PRESENCE_CSS,MOBILE_PRESENCE_JS} from './mobile-presence-view'
 
 export function safeSvgFile(path: string): string | null {
   try { return safeSvg(readFileSync(path, 'utf8')) } catch { return null }
@@ -463,7 +464,7 @@ function ccNav(path) {
 }
 `
 
-/** 随身 CC 手机页 — 待办 / 小像 / 表情,自包含无 CDN,PWA 可加主屏。 */
+/** 随身 CC 手机页 — 此刻 / 一起做 / 回忆,自包含无 CDN,PWA 可加主屏。 */
 export function phoneHtml(token: string, remote: { relay: string; id: string } | null): string {
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -514,17 +515,23 @@ export function phoneHtml(token: string, remote: { relay: string; id: string } |
   .more { display:block; margin:6px auto 0; font:inherit; font-size:13px; padding:7px 18px; border:1.5px solid var(--line); border-radius:999px; background:var(--card); color:var(--soft) }
   .sec { margin-top:18px }
 </style></head><body>
-<header><h1><img src="/m/icon.png" alt="" width="32" height="32" style="vertical-align:middle;margin-right:6px">CC</h1><div class="sub" id="sub">随身小窗 · 数据都在你自己电脑上</div></header>
+<header><h1>CC</h1><div class="sub" id="sub">随身小窗 · 数据都在你自己电脑上</div><button id="nav-set" type="button">设置</button></header>
 <div id="pairbar" hidden>这个链接 10 分钟就过期<button id="pairbtn">把 CC 带在身上</button></div>
 <div class="pane on" id="p-today">
-  <div class="pres" id="pres"><span>现在:</span><b id="pres-txt">不知道</b><button id="refresh">刷新</button></div>
+  <div class="home-toolbar"><button id="refresh" type="button">刷新</button></div>
   <div id="banner" hidden></div>
-  <div id="feed"></div>
+  ${MOBILE_PRESENCE_HTML}
 </div>
-<div class="pane" id="p-pocket">
+<div class="pane" id="p-memory">
+  <div class="grp">回忆</div>
+  <div id="feed"></div>
+  <details class="memory-pocket"><summary>待办、画像与表情</summary>
+<div id="p-pocket">
   <div class="grp">待办</div><div id="todos"></div>
   <div class="sec"><div class="grp">CC 画的你</div><div class="portrait" id="portrait"></div></div>
   <div class="sec"><div class="grp">表情</div><div class="stgrid" id="stickers"></div></div>
+</div>
+  </details>
 </div>
 <style>
 #m-controls fieldset{border:1px solid var(--line);border-radius:8px;margin:12px 0;padding:10px} .m-option{display:block;margin:10px 0} .m-option small{display:block;margin-left:22px} .m-option textarea{display:block;box-sizing:border-box;width:100%;font:inherit;padding:8px} .m-description{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit} #m-notice{padding:8px 0;white-space:pre-wrap} #m-conn{padding:8px 10px;margin:8px 0;border:1px solid var(--line);border-radius:8px;font-size:.92em;opacity:.85} #m-controls button{min-height:40px} #m-controls button:disabled,#m-send:disabled{opacity:.5} #m-artifacts small{display:block} #m-list button.card{width:100%;text-align:left;font:inherit;color:inherit} #m-artifact-preview{overflow-wrap:anywhere}
@@ -543,22 +550,22 @@ export function phoneHtml(token: string, remote: { relay: string; id: string } |
     <div class="grp" id="m-title"></div>
     <div id="m-notice" role="status" aria-live="polite"></div>
     <div id="m-controls"><div id="m-permissions"></div><div id="m-questions"></div></div>
-    <div id="m-events"></div>
     <div id="m-artifacts"></div><div id="m-artifact-preview"></div><div id="m-inputs"></div>
+    <details><summary>对话与执行记录</summary><div id="m-events"></div></details>
     <div class="card" id="m-say-box"><textarea id="m-say" rows="2" placeholder="接着说…" style="width:100%;font:inherit;border:1px solid var(--line);border-radius:8px;padding:8px;box-sizing:border-box"></textarea>
       <button id="m-send" class="done-btn" type="button" style="margin-top:6px">发送</button></div>
   </div>
 </div>
 <nav>
-  <button data-p="today" class="on"><span class="i">🌤</span>今天</button>
-  <button data-p="pocket"><span class="i">🎒</span>口袋</button>
-  <button data-p="matters"><span class="i">📁</span>一件事</button>
-  <button id="nav-set"><span class="i">⚙️</span>设置</button>
+  <button data-p="today" class="on">此刻</button>
+  <button data-p="matters">一起做</button>
+  <button data-p="memory">回忆</button>
 </nav>
+<style>${MOBILE_PRESENCE_CSS}</style>
 <div id="toast"></div>
 <script>
-var T = ${JSON.stringify(token)}
-var REMOTE = ${JSON.stringify(remote)}
+var T = ${JSON.stringify(token).replace(/</g,'\\u003c')}
+var REMOTE = ${JSON.stringify(remote).replace(/</g,'\\u003c')}
 try {
   if (T.charAt(0) === "d") localStorage.setItem("deviceToken", T)
   if (REMOTE) localStorage.setItem("ccRemote", JSON.stringify(REMOTE))
@@ -589,6 +596,7 @@ document.querySelectorAll("nav button[data-p]").forEach(function(b) {
 })
 document.getElementById("nav-set").addEventListener("click", function(){ ccNav("/set") })
 ${MOBILE_WORKBENCH_JS}
+${MOBILE_PRESENCE_JS}
 function render(s) {
   var t = document.getElementById("todos")
   var groups = {}
@@ -640,9 +648,9 @@ document.getElementById("todos").addEventListener("click", function(ev) {
     .then(function(r){ return r.json() }).then(function(r) { if (r.ok) { toast(b.dataset.st === "active" ? "捞回来了" : "划掉了 ✓"); load() } else toast("没改成") })
     .catch(function(){ toast("网络不通") })
 })
-var HOME_KEY = "cc.home.v1"
+var HOME_KEY = "cc.home.v2:" + (REMOTE ? REMOTE.id : location.host) + ":" + T.slice(-12)
 var KIND_ICON = { hunt: "🎯", visit: "🏡", postcard: "💌", thought: "💭", chat_day: "💬" }
-var homeState = null
+var homeState = null, homeSeq = 0
 // I5:presence 没有独立的过期机制 —— 页面一直开着,只有 load/visibilitychange/
 // 手动刷新才会重拉。这里给它记一个「拉到的时间」,过 TTL 就自己塌成「不知道」,
 // 而不是让一条越来越旧的「现在」一直挂在屏幕上。TTL 跟 companion-presence.ts
@@ -680,6 +688,7 @@ function presenceTtlCheck() {
   }
 }
 function renderFeed(s, stale) {
+  renderPresenceHome(s,stale)
   var f = document.getElementById("feed")
   // presence:只有这次真拉到的才显示;缓存里的永远不渲染 —— 它说的是「现在」。
   var pt = document.getElementById("pres-txt")
@@ -718,22 +727,30 @@ function renderFeed(s, stale) {
 setInterval(presenceTtlCheck, 30000)
 function showBanner(txt) { var b = document.getElementById("banner"); b.hidden = !txt; b.textContent = txt || "" }
 function loadHome() {
+  var seq=++homeSeq
   var cached = readCache()
-  if (cached) { homeState = cached; renderFeed(cached, true); showBanner("上次同步 " + ago(cached.synced_at)) }
+  if (cached&&!homeState) { homeState = cached; renderFeed(cached, true); showBanner("上次同步 " + ago(cached.synced_at)) }
   api("/m/api/home").then(function(r) {
     if (r.status === 401) { try { localStorage.removeItem("deviceToken") } catch (e) {}; location.replace("/m"); return null }
     return r.json()
   }).then(function(s) {
-    if (!s || !s.ok) return
+    if(seq!==homeSeq)return
+    if (!s || !s.ok) throw new Error('unavailable')
     homeState = s; renderFeed(s, false); showBanner(""); writeCache(s)
-    if (document.visibilityState === "visible") {
-      api("/m/api/seen", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ until: s.synced_at }) }).catch(function(){})
-    }
+    markMemoriesSeen()
   }).catch(function() {
-    if (cached) showBanner("连不上家里的 CC · 显示的是 " + ago(cached.synced_at) + "的")
-    else { document.getElementById("feed").innerHTML = '<div class="empty">连不上家里的 CC<br><small>看看电脑开着没</small></div>'; document.getElementById("pres-txt").textContent = "不知道" }
+    if(seq!==homeSeq)return
+    var previous=homeState||cached
+    if (previous) {renderFeed(previous,true);showBanner("连不上家里的 CC · 上次更新 " + new Date(previous.synced_at).toLocaleString())}
+    else {renderPresenceHome({work:{focus:null,partial:true}},true);showBanner('暂时连不上家里的 CC，请检查电脑连接。');document.getElementById("feed").innerHTML = '<div class="empty">连不上家里的 CC<br><small>看看电脑开着没</small></div>'; document.getElementById("pres-txt").textContent = "暂时不知道 CC 在做什么" }
   })
 }
+function markMemoriesSeen(){
+  if(homeState&&document.visibilityState==='visible'&&document.getElementById('p-memory').classList.contains('on')&&!document.getElementById('banner').textContent)
+    api('/m/api/seen',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({until:homeState.synced_at})}).catch(function(){})
+}
+document.querySelector('nav button[data-p="memory"]').addEventListener('click',markMemoriesSeen)
+setInterval(function(){if(!document.hidden&&document.getElementById('p-today').classList.contains('on'))loadHome()},15000)
 document.getElementById("feed").addEventListener("click", function(ev) {
   var b = ev.target.closest("button.more")
   if (!b || !homeState) return

@@ -36,6 +36,7 @@ import { PROVIDER_IDS } from '../lib/provider-ids'
 import { buildFeed, decodeCursor, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
 import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions} from './mobile-workbench'
 import {mobileMatterDetailResponse} from './mobile-matter-response'
+import {mobileHomeFocus} from './mobile-home-focus'
 import type {MatterSayInput} from '../core/matters/service'
 import type { Presence } from '../core/companion-presence'
 import type { CatchRow } from '../core/journal-store'
@@ -543,6 +544,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
               synced_at: new Date(now()).toISOString(),
               today: dayKey(now(), tz),
               presence,
+              work: await mobileHomeFocus(deps.matters),
               ...(presenceFailed ? { presence_error: 'unavailable' } : {}),
               unread: r.unread,
               seen_until: seenUntil,
