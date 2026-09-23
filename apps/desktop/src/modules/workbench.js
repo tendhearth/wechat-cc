@@ -44,10 +44,10 @@ function providerLabel(p) {
 /** @typedef {{execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number}} Detail */
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} TaskQuery */
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
-/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],page?:TaskPage,projectProviders?:Record<string,string>}} ListResult */
+/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>}} ListResult */
 /** @typedef {{artifactId:string,html:string}|null} Preview */
 /** @typedef {{artifactId:string,paths:string[],comment?:string,notice?:string,restartToken?:string}} ReviewReturnOpen */
-/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,query?:TaskQuery,page?:TaskPage,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,chats?:ChatMatter[],selectedMatterId?:string|null,version?:number,reviews?:ReviewTurn[],reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null}} WorkbenchState */
+/** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,nativeResume?:NativeResume|null,historyProviders?:string[],selectedId:string|null,loadingId?:string|null,detail:Detail|null,selectedArtifactId:string|null,error:string,detailDisconnected?:boolean,preview:Preview,query?:TaskQuery,page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>,loadingMore?:boolean,newScope?:string,chats?:ChatMatter[],selectedMatterId?:string|null,version?:number,reviews?:ReviewTurn[],reviewsSignature?:string,reviewsError?:boolean,reviewReturnOpen?:ReviewReturnOpen|null}} WorkbenchState */
 /** @typedef {import('./workbench-window-state.js').Draft} Draft */
 /** @typedef {{id:string,kind:string,title:string,status:string,updatedAt:number}} ChatMatter */
 /** @typedef {{invokeWorkbenchApi:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>,invoke?:(command:string,args:Record<string,unknown>)=>Promise<unknown>,pollMs?:number,mountConverse?:(host:HTMLElement)=>void,unmountConverse?:()=>void,confirmUnattended?:()=>Promise<boolean>}} WorkbenchDeps */
@@ -183,15 +183,16 @@ function pathParts(path) {
   return { name: parts.at(-1) || clean || '未命名项目', parent: clean.slice(0, Math.max(0, clean.length - (parts.at(-1)?.length ?? 0))).replace(/[\\/]+$/, '') || '/' }
 }
 
-/** @param {Task[]} tasks */
-export function groupWorkbenchTasks(tasks) {
+/** @param {Task[]} tasks @param {Array<{name:string,path:string}>} [projects] */
+export function groupWorkbenchTasks(tasks,projects=[]) {
   /** @type {Map<string,Task[]>} */
-  const grouped = new Map()
+  const grouped = new Map(projects.map(project=>[project.path,/** @type {Task[]} */([])]))
+  const names=new Map(projects.map(project=>[project.path,project.name]))
   for (const task of tasks) grouped.set(task.path, [...(grouped.get(task.path) ?? []), task])
   const nameCounts = new Map()
-  for (const path of grouped.keys()) { const name = pathParts(path).name; nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1) }
+  for (const path of grouped.keys()) { const name = names.get(path)||pathParts(path).name; nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1) }
   return [...grouped].map(([path, projectTasks]) => {
-    const { name, parent } = pathParts(path)
+    const { parent } = pathParts(path),name=names.get(path)||pathParts(path).name
     return { path, label: (nameCounts.get(name) ?? 0) > 1 ? `${name} · ${parent}` : name, tasks: projectTasks }
   })
 }
@@ -252,16 +253,18 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const tasks = state.tasks ?? []
   const detail = state.detail
   const query = state.query ?? { q: '', archived: 'exclude' }
-  const listEmptyCopy = state.error ? '暂时没能读取任务列表。' : query.q ? '没有找到匹配的任务。试试其他任务名称或文件夹。' : query.archived === 'only' ? '还没有已归档的任务。' : '还没有任务。选一个文件夹，把要做的事交给执行者。'
+  const listEmptyCopy = state.error ? '暂时没能读取任务列表。' : query.q ? '没有找到匹配的任务。试试其他任务名称或文件夹。' : query.archived === 'only' ? '还没有已归档的任务。' : '还没有项目。添加一个文件夹，就能在里面开始对话。'
   const selectedArtifact = detail?.artifacts?.find(a => a.id === state.selectedArtifactId)
-  const taskList = tasks.length ? groupWorkbenchTasks(tasks).map((project, index) => `<section class="wb-project" aria-labelledby="wb-project-${index}">
-    <header title="${escapeWorkbenchHtml(project.path)}"><h3 id="wb-project-${index}">${escapeWorkbenchHtml(project.label)}</h3><button type="button" class="wb-new wb-project-new" data-action="new-project-task" data-project-path="${escapeWorkbenchHtml(project.path)}" aria-label="在 ${escapeWorkbenchHtml(project.label)} 新建任务">＋</button></header>
-    <div>${project.tasks.map(task => renderTask(task, state.providers, state.loadingId ?? state.selectedId)).join('')}</div>
+  const activeProject=state.projects?.find(project=>state.newScope===`new:${project.path}`)
+  const projects=groupWorkbenchTasks(tasks,state.projects).filter(project=>!query.q&&query.archived!=='only'||project.tasks.length||query.archived!=='only'&&project.label.toLowerCase().includes(query.q.toLowerCase()))
+  const taskList = projects.length ? projects.map((project, index) => `<section class="wb-project" aria-labelledby="wb-project-${index}">
+    <header title="${escapeWorkbenchHtml(project.path)}"><h3 id="wb-project-${index}">${escapeWorkbenchHtml(project.label)}</h3><button type="button" class="wb-new wb-project-new" data-action="new-project-task" data-project-path="${escapeWorkbenchHtml(project.path)}" aria-label="在 ${escapeWorkbenchHtml(project.label)} 新对话">＋ 新对话</button></header>
+    <div>${project.tasks.map(task => renderTask(task, state.providers, state.loadingId ?? state.selectedId)).join('')||'<p class="wb-empty-copy">当前列表没有对话</p>'}</div>
   </section>`).join('') : `<p class="wb-empty-copy">${listEmptyCopy}</p>`
   // 「一件事」:在桌面露过面的对话(主人跟 CC 说的那条)也在这张列表里,排在任务上面。
   const chats = state.chats ?? []
   const chatList = chats.length ? `<section class="wb-project wb-chats" aria-labelledby="wb-chats"><header><h3 id="wb-chats">对话</h3></header><div>${chats.map(chat => `<button type="button" class="wb-task ${chat.id === state.selectedMatterId ? 'is-selected' : ''}" data-matter-id="${escapeWorkbenchHtml(chat.id)}" aria-label="${escapeWorkbenchHtml(chat.title)}"><span class="wb-task-title">${escapeWorkbenchHtml(chat.title)}</span><span class="wb-task-meta"><span class="wb-task-provider">跟 CC 说</span></span></button>`).join('')}</div></section>` : ''
-  const listControls = `<div class="wb-list-controls"><form id="wb-search-form" class="wb-search"><label class="wb-sr-only" for="wb-search">搜索任务名称、文件夹或任务编号</label><input id="wb-search" name="q" type="search" maxlength="200" placeholder="搜索任务或文件夹" value="${escapeWorkbenchHtml(query.q)}"><button class="wb-new" type="submit" aria-label="搜索任务">搜索</button></form><div class="wb-list-filters"><button class="wb-new" type="button" data-action="toggle-archived" aria-pressed="${query.archived === 'only'}">${query.archived === 'only' ? '返回任务' : '已归档'}</button>${state.historyProviders?.length?'<button class="wb-new" type="button" data-action="native-history">已有会话</button>':''}${query.q ? '<button class="wb-new" type="button" data-action="clear-search">清除搜索</button>' : ''}</div>${query.archived === 'only' ? '<p class="wb-archive-label">已归档的任务</p>' : ''}</div>`
+  const listControls = `<div class="wb-list-controls"><form id="wb-search-form" class="wb-search"><label class="wb-sr-only" for="wb-search">搜索任务名称、文件夹或任务编号</label><input id="wb-search" name="q" type="search" maxlength="200" placeholder="搜索项目或对话" value="${escapeWorkbenchHtml(query.q)}"><button class="wb-new" type="submit" aria-label="搜索任务">搜索</button></form><div class="wb-list-filters"><button class="wb-new" type="button" data-action="toggle-archived" aria-pressed="${query.archived === 'only'}">${query.archived === 'only' ? '返回任务' : '已归档'}</button>${state.historyProviders?.length?'<button class="wb-new" type="button" data-action="native-history">已有会话</button>':''}${query.q ? '<button class="wb-new" type="button" data-action="clear-search">清除搜索</button>' : ''}</div>${query.archived === 'only' ? '<p class="wb-archive-label">已归档的任务</p>' : ''}</div>`
   const pagination = state.page?.hasMore ? `<button type="button" class="wb-new wb-load-more" data-action="load-more"${state.loadingMore ? ' disabled' : ''}>${state.loadingMore ? '正在加载…' : '加载更早的任务'}</button>` : ''
   const messageContext = workbenchMessageContext(state)
   const { helper, handoffs } = messageContext
@@ -316,12 +319,19 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
     ${renderWorkbenchInputs(detail.task.id, detail.inputs ?? [], interactions,!!detail.runtime?.retained)}
     ${detail.task.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(executionErrorMessage(detail.task.error)??detail.task.error)}</div>` : ''}
     ${reviewHtml}
-    ${artifactHtml}` : state.loadingId ? `
+    ${artifactHtml}`  : !detail && !state.loadingId && state.projects && !activeProject ? `
+    <div class="wb-welcome"><p class="wb-kicker">添加项目</p><h1>把同一件工作的对话放在一起</h1><p>选择一次文件夹。之后在项目里新开对话，不用重复设置。</p>
+      <form id="wb-project-form" class="wb-create-form">
+        <label>项目文件夹<div class="wb-folder-row"><input id="wb-path" name="path" required placeholder="选择或粘贴一个本机文件夹"><button type="button" class="wb-btn" data-action="choose-folder">选择…</button></div></label>
+        <label>项目名称 <span class="wb-optional">可选</span><input id="wb-title" name="name" maxlength="100" placeholder="默认使用文件夹名称"></label>
+        <label>默认执行者<select id="wb-provider" name="providerId">${state.providers.map(p=>`<option value="${escapeWorkbenchHtml(p.id)}" ${p.id===state.defaultProvider?'selected':''}>${escapeWorkbenchHtml(providerLabel(p))}</option>`).join('')}</select></label>
+        <button class="wb-btn wb-btn-primary" type="submit" ${state.providers.length?'':'disabled'}>添加项目</button>
+      </form></div>` : state.loadingId ? `
     <div class="wb-welcome wb-task-loading" role="status"><p class="wb-kicker">打开任务</p><h1>正在打开任务…</h1><p>正在读取这项任务的对话和成果。</p></div>` : `
     ${state.error && !state.providers.length ? '<div class="wb-welcome"><p class="wb-kicker">一起做</p><h1>暂时没能打开手头的事。</h1><p>连接恢复后，就能继续查看任务和交代新事情。</p><button class="wb-btn" type="button" data-action="refresh">重新连接</button></div>' : ''}
-    <div class="wb-welcome" ${state.error && !state.providers.length ? 'hidden' : ''}><p class="wb-kicker">新的一件事</p><h1>我们一起做点什么？</h1><p>说说你想做的事，再选一个放材料的文件夹。</p>
+    <div class="wb-welcome" ${state.error && !state.providers.length ? 'hidden' : ''}><p class="wb-kicker">${activeProject?escapeWorkbenchHtml(activeProject.name)+' · 新对话':'新的一件事'}</p><h1>我们一起做点什么？</h1><p>${activeProject?'这是一段独立对话，同项目的其他对话不会自动带入。':'说说你想做的事，再选一个放材料的文件夹。'}</p>
       <form id="wb-create-form" class="wb-create-form">
-        <label>文件夹<div class="wb-folder-row"><input id="wb-path" name="path" required aria-describedby="wb-folder-help" placeholder="选择或粘贴一个本机文件夹"><button type="button" class="wb-btn" data-action="choose-folder">选择…</button></div><small id="wb-folder-help" class="wb-field-help">也可以直接粘贴完整路径；原生选择目前只在 macOS 提供。</small></label>
+        ${activeProject?`<input id="wb-path" name="path" type="hidden" value="${escapeWorkbenchHtml(activeProject.path)}"><p class="wb-field-help">${escapeWorkbenchHtml(activeProject.path)}</p>`:`<label>文件夹<div class="wb-folder-row"><input id="wb-path" name="path" required aria-describedby="wb-folder-help" placeholder="选择或粘贴一个本机文件夹"><button type="button" class="wb-btn" data-action="choose-folder">选择…</button></div><small id="wb-folder-help" class="wb-field-help">也可以直接粘贴完整路径；原生选择目前只在 macOS 提供。</small></label>`}
         <label>要做什么<textarea id="wb-create-text" name="text" rows="4" maxlength="20000" placeholder="例如：整理这些访谈记录，做一份主题摘要和引用表"></textarea></label>
         ${renderAttachmentComposer(draft,attachmentError)}
         ${state.providers.length ? '' : '<p class="wb-provider-missing" role="alert">暂时没有可用的工作执行者。请连接或管理一个支持工作任务的执行者后再开始任务。</p>'}
@@ -332,7 +342,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   const chosenContinuation=executionView.restartPreview?(executionView.restartPreview.status==='ready'?executionView.restartPreview.continuation??undefined:{mode:'restart_required'}):detail?.continuation
   const previewError=executionView.restartPreview?.error?`<p class="wb-interaction-error" role="alert">${escapeWorkbenchHtml(executionView.restartPreview.error)} <button type="button" class="wb-new" data-action="retry-continuation-preview">重新读取恢复说明</button></p>`:''
   const controls = detail ? `<div class="wb-controls"><div class="wb-controls-inner">${permissionHtml}${renderWorkbenchQuestions(detail.task.id, detail.questions ?? [], interactions)}${previewError}${renderTaskControls(detail.task.status, chosenContinuation, detail.task.archivedAt,{requiresClose:!!detail.requiresExternalClose,decision:state.nativeResume?.taskId===detail.task.id?state.nativeResume:null},{taskId:detail.task.id,runId:detail.runId,inputMode:detail.inputMode,runtime:detail.runtime,...interactions?.inputState(detail.task.id)},draft,attachmentError)}</div></div>` : ''
-  return `<div class="workbench-shell"><aside class="wb-sidebar"><header><p class="wb-kicker">一件事</p><button type="button" class="wb-new" data-action="new-task">＋ 新建</button></header>${listControls}<div class="wb-task-list">${chatList}${taskList}</div>${pagination}</aside><main class="wb-main">${taskHeader || chatHeader}<div class="wb-content"><div class="wb-content-inner">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${detail && state.detailDisconnected ? '<div class="wb-error" role="status">任务更新暂时中断，正在重新连接。当前显示的是上次收到的内容。<button type="button" class="wb-btn" data-action="refresh">立即重试</button></div>' : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main></div>`
+  return `<div class="workbench-shell"><aside class="wb-sidebar"><header><p class="wb-kicker">项目</p><button type="button" class="wb-new" data-action="add-project">＋ 添加项目</button></header>${listControls}<div class="wb-task-list">${chatList}${taskList}</div>${pagination}</aside><main class="wb-main">${taskHeader || chatHeader}<div class="wb-content"><div class="wb-content-inner">${state.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(state.error)}</div>` : ''}${detail && state.detailDisconnected ? '<div class="wb-error" role="status">任务更新暂时中断，正在重新连接。当前显示的是上次收到的内容。<button type="button" class="wb-btn" data-action="refresh">立即重试</button></div>' : ''}${content}</div></div>${detail ? '<div class="wb-reading-bar" hidden><button type="button" class="wb-btn" data-action="latest-content">有新内容 ↓</button></div>' : ''}${controls}</main></div>`
 }
 
 /** @param {{invokeWorkbenchApi:WorkbenchDeps['invokeWorkbenchApi'],render:(state:WorkbenchState)=>void,initialScope?:string|null,initialQuery?:TaskQuery,patchLive?:(changed:WorkbenchEvent[])=>boolean}} deps */
@@ -640,7 +650,7 @@ export function initWorkbenchPage(deps) {
       const boxes = /** @type {HTMLInputElement[]} */ (Array.from(returnForm.querySelectorAll?.('input[name="paths"]') ?? []))
       if (boxes.length) open.paths = [...new Set(boxes.filter(box => box.checked).map(box => box.value))]
     }
-    if (!document.getElementById('wb-create-form') && !input('wb-followup-text')) return
+    if (!document.getElementById('wb-create-form') && !document.getElementById('wb-project-form') && !input('wb-followup-text')) return
     const model=input('wb-model'),effort=input('wb-reasoning-effort'),draft=pageDrafts.get(renderedScope)
     const execution=model&&effort?{defaults:/** @type {'provider'|'native'} */(model.dataset.executionDefaults??draft.execution?.defaults??controller.state.detail?.execution?.defaults??'provider'),model:model.value||null,reasoningEffort:effort.value||null}:undefined
     pageDrafts.set(renderedScope, { ...draft,...(execution?{execution}:{}), path: input('wb-path')?.value ?? '', text: input('wb-create-text')?.value ?? '', title: input('wb-title')?.value ?? '', providerId: input('wb-provider')?.value ?? '', followup: input('wb-followup-text')?.value ?? '' })
@@ -990,7 +1000,7 @@ export function initWorkbenchPage(deps) {
     }
     if (action === 'native-history') { captureDraft(); nativeHistoryCleanup?.(); nativeHistoryCleanup=mountHistoryDialog(deps.invokeWorkbenchApi,controller.state.historyProviders??[],async id=>{if(!alive)return;navigationGeneration++;await controller.refresh({force:true});await controller.selectTask(id)}); return }
     if (action === 'refresh') return controller.refresh({ force: true }).catch(fail)
-    if (action === 'new-task') { captureDraft(); navigationGeneration++; artifactRequest++; return controller.newTask() }
+    if (action === 'new-task' || action === 'add-project') { captureDraft(); navigationGeneration++; artifactRequest++; return controller.newTask() }
     if (action === 'new-project-task' && target.dataset.projectPath) {
       captureDraft()
       const path = target.dataset.projectPath
@@ -1132,6 +1142,24 @@ export function initWorkbenchPage(deps) {
     if (form.id === 'wb-search-form') {
       searchDraft = input('wb-search')?.value ?? ''
       return controller.filterTasks({ q: searchDraft, archived: controller.state.query?.archived ?? 'exclude' }).catch(fail)
+    }
+    if(form?.id==='wb-project-form'){
+      if(busy.has('project'))return
+      captureDraft()
+      const data=new FormData(form),navigation=navigationGeneration
+      busy.add('project')
+      try{
+        const result=/** @type {{project:{path:string,providerId:string}}} */(await deps.invokeWorkbenchApi('POST','/v1/workbench/project',{path:String(data.get('path')??''),name:String(data.get('name')??'').trim()||undefined,providerId:String(data.get('providerId')??'')}))
+        await controller.refresh({force:true})
+        if(!alive||navigation!==navigationGeneration)return
+        const {path,providerId}=result.project,scope=`new:${path}`
+        if(!pageDrafts.has(scope))pageDrafts.set(scope,{...emptyDraft(),path,providerId})
+        navigationGeneration++;artifactRequest++
+        controller.newTask(path)
+        // Navigation captures the outgoing form; clear only after that capture.
+        pageDrafts.delete('new')
+      }catch(error){if(alive&&navigation===navigationGeneration)fail(error)}finally{busy.delete('project')}
+      return
     }
     if (form?.id === 'wb-create-form') {
       const data = new FormData(form)

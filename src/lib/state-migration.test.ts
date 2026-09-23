@@ -111,7 +111,7 @@ describe('full state-dir migration — upgrading-user smoke', () => {
     // v60: matters(一件事)+ bindings + sessions,workbench_tasks.matter_id 回填。
     // v61: seq 列(实时事件流)
     // v62: workbench_review_marks(逐文件审阅标记)
-    expect(v).toBe(62)
+    expect(v).toBe(63)
     const tables = db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
     expect(tables.map(t => t.name)).toEqual([
       'a2a_events', 'activity', 'connection_heartbeat', 'conversations', 'customer_review_analysis_issues', 'customer_review_evidence',
@@ -121,7 +121,7 @@ describe('full state-dir migration — upgrading-user smoke', () => {
       'session_turns_fts_docsize', 'session_turns_fts_idx',
       'sessions', 'thread_extract_state', 'threads', 'turn_records',
       'workbench_api_sessions', 'workbench_artifact_deliveries', 'workbench_artifacts', 'workbench_attachments', 'workbench_control_receipts',
-      'workbench_creation_receipts', 'workbench_events', 'workbench_handoffs', 'workbench_live_inputs', 'workbench_review_marks', 'workbench_run_execution',
+      'workbench_creation_receipts', 'workbench_events', 'workbench_handoffs', 'workbench_live_inputs', 'workbench_projects', 'workbench_review_marks', 'workbench_run_execution',
       'workbench_sources', 'workbench_tasks', 'workbench_wechat_notice_intents', 'workbench_wechat_notices', 'workbench_wechat_subscriptions',
     ])
   })

@@ -122,13 +122,13 @@ describe('workbench task organization', () => {
     Object.assign(controller.state, list([task('A')], 'next'), { query: { q: '<folder>', archived: 'only' } })
     const html = renderWorkbench(controller.state)
     expect(html).toContain('id="wb-search-form"')
-    expect(html).toContain('placeholder="搜索任务或文件夹"')
+    expect(html).toContain('placeholder="搜索项目或对话"')
     expect(html).toContain('maxlength="200"')
     expect(html).toContain('value="&lt;folder&gt;"')
     expect(html).toContain('返回任务')
     expect(html).toContain('data-action="clear-search"')
     expect(html).toContain('加载更早的任务')
-    expect(html).toContain('aria-label="在 work 新建任务"')
+    expect(html).toContain('aria-label="在 work 新对话"')
     expect(html).toContain('data-project-path="/work"')
     controller.state.page = { limit: 2, total: 0, hasMore: false, nextCursor: null }
     controller.state.tasks = []

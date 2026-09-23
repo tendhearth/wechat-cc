@@ -43,6 +43,17 @@ beforeEach(() => {
 afterEach(async () => { await service?.shutdown(); db.close(); removeTempDir(root) })
 
 describe('persistent workbench', () => {
+  it('adds projects without starting an executor and canonicalizes duplicate folder aliases',()=>{
+    let spawned=0
+    setup({spawn:()=>{spawned++;throw Error('must not execute')}})
+    const added=service.addProject({path:project,name:'网站',providerId:'codex'})
+    const alias=join(root,'alias');symlinkSync(project,alias,'dir')
+    expect(service.addProject({path:alias,name:'duplicate',providerId:'claude'}).id).toBe(added.id)
+    expect(service.list().projects).toEqual([added])
+    expect(service.list().projectProviders).toEqual({[project]:'codex'})
+    expect(service.list().tasks).toEqual([]);expect(spawned).toBe(0)
+    expect(()=>service.addProject({path:join(root,'missing'),providerId:'codex'})).toThrow('invalid_path')
+  })
   it('records bounded native capability notices only for their current uncancelled run',async()=>{
     const contexts:SpawnContext[]=[],turns:Array<{resolve:()=>void}>=[]
     setup({async spawn(_p,ctx){const turn=deferred();contexts.push(ctx);turns.push(turn);return{async *dispatch(){yield {kind:'init',sessionId:'session-one'};await turn.promise;yield result},async close(){turn.resolve()}}}})

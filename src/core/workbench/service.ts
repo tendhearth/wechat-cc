@@ -1395,11 +1395,17 @@ export function makeWorkbenchService(opts: Options) {
       const managedTaskId=store.sourceByIdentity(providerId,nativeId)?.taskId??store.taskByNativeIdentity(providerId,nativeId)?.id
       return {...preview,...(managedTaskId?{managedTaskId}:{})}
     },
+    addProject(input:{path:string;name?:string;providerId:string}) {
+      if(typeof input.path!=='string'||input.path.length>4096||typeof input.providerId!=='string'||(input.name!==undefined&&(typeof input.name!=='string'||!input.name.trim()||input.name.length>100)))throw Error('invalid_request')
+      provider(input.providerId)
+      return store.addProject({...input,path:canonicalProject(input.path)})
+    },
     list(query:WorkbenchListQuery={}) {
       const providers=opts.registry.list().flatMap(id=>{const p=opts.registry.get(id);return isWorkbenchProviderId(id)&&p&&isWorkbenchExecutorCapabilities(p.opts.workbench)?[{id,displayName:p.opts.displayName,capabilities:structuredClone(p.opts.workbench),quota:quota.exhausted(id),usage:opts.usage?.(id)??null}]:[]})
       const result=store.listPage(query)
-      const projectProviders=Object.fromEntries([...new Set(result.tasks.map(task=>task.path))].map(path=>[path,store.projectProvider(path)]))
-      return {tasks:result.tasks.map(task => taskView(task,true)),page:result.page,projectProviders,providers,historyProviders:Object.keys(opts.nativeHistory??{}),defaultProvider:providers.find(p=>p.id===opts.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!opts.ownerChatId(),unattendedAcknowledgedAt:opts.unattendedAck?.get()??null}
+      const projects=store.projects()
+      const projectProviders=Object.fromEntries(projects.map(project=>[project.path,store.projectProvider(project.path)??project.providerId]))
+      return {projects,tasks:result.tasks.map(task => taskView(task,true)),page:result.page,projectProviders,providers,historyProviders:Object.keys(opts.nativeHistory??{}),defaultProvider:providers.find(p=>p.id===opts.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!opts.ownerChatId(),unattendedAcknowledgedAt:opts.unattendedAck?.get()??null}
     },
     async modelCatalog(providerId:string,path:string):Promise<AgentModelCatalog>{
       const entry=provider(providerId),canonical=canonicalProject(path)

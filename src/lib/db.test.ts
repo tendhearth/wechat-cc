@@ -722,3 +722,17 @@ it('v62: workbench_review_marks 表存在,主键为 (task_id, artifact_sha256, p
   expect(cols.filter(c => c.pk > 0).map(c => c.name)).toEqual(['task_id', 'artifact_sha256', 'path'])
   db.close()
 })
+
+it('v63 migrates old task folders into durable projects without changing sessions or history',()=>{
+ const db=openSqlite(':memory:')
+ try{
+  db.exec('PRAGMA foreign_keys=ON')
+  for(const migration of migrations.slice(0,62))migration(db)
+  db.exec("INSERT INTO workbench_tasks(id,title,path,provider_id,status,created_at,updated_at,session_id) VALUES ('aaaaaaaa','first','/old/site','codex','completed',1,2,'native-one'),('bbbbbbbb','second','/old/site','claude','completed',3,4,'native-two'); PRAGMA user_version=62")
+  runMigrations(db)
+  expect(db.query('SELECT path FROM workbench_projects').all()).toEqual([{path:'/old/site'}])
+  expect(db.query('SELECT session_id FROM workbench_tasks ORDER BY id').all()).toEqual([{session_id:'native-one'},{session_id:'native-two'}])
+  const before=db.query('SELECT * FROM workbench_projects').all();runMigrations(db)
+  expect(db.query('SELECT * FROM workbench_projects').all()).toEqual(before)
+ }finally{db.close()}
+})

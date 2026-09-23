@@ -4,7 +4,7 @@ import {join} from 'node:path'
 const ROUTES = new Set([
   'POST /v1/workbench/attachment','GET /v1/workbench/attachment','POST /v1/workbench/discard-attachment',
   'GET /v1/workbench/models','GET /v1/workbench','GET /v1/workbench/sessions','GET /v1/workbench/session','GET /v1/workbench/task','GET /v1/workbench/artifact',
-  'POST /v1/workbench/create','POST /v1/workbench/continue','POST /v1/workbench/cancel','POST /v1/workbench/approve','POST /v1/workbench/permission','POST /v1/workbench/archive','POST /v1/workbench/unattended-ack',
+  'POST /v1/workbench/project','POST /v1/workbench/create','POST /v1/workbench/continue','POST /v1/workbench/cancel','POST /v1/workbench/approve','POST /v1/workbench/permission','POST /v1/workbench/archive','POST /v1/workbench/unattended-ack',
   'GET /v1/workbench/review','POST /v1/workbench/review-mark','POST /v1/workbench/review-return',
   'POST /v1/workbench/import',
   'POST /v1/workbench/prepare-resume','POST /v1/workbench/prepare-continuation',

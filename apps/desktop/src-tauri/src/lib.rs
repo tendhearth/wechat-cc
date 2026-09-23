@@ -995,6 +995,7 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("GET", "/v1/workbench/attachment")
             | ("POST", "/v1/workbench/attachment")
             | ("POST", "/v1/workbench/discard-attachment")
+            | ("POST", "/v1/workbench/project")
             | ("POST", "/v1/workbench/create")
             | ("POST", "/v1/workbench/continue")
             | ("POST", "/v1/workbench/cancel")
@@ -1383,6 +1384,7 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/attachment"),
             ("GET", "/v1/workbench/attachment?taskId=deadbeef&id=file-1"),
             ("POST", "/v1/workbench/discard-attachment"),
+            ("POST", "/v1/workbench/project"),
             ("POST", "/v1/workbench/create"),
             ("POST", "/v1/workbench/continue"),
             ("POST", "/v1/workbench/cancel"),

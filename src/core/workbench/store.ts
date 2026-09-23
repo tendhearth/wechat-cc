@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import type {StoredHandoff,HandoffView} from './handoff-record'
 import {publicSource,type StoredNativeSource} from './native-adoption'
 import type {NativeHistoryMessage} from './native-history'
@@ -20,6 +20,9 @@ export interface Task {
   id: string; title: string; path: string; providerId: string; status: TaskStatus
   createdAt: number; updatedAt: number; error: string | null; archivedAt: number | null
 }
+export interface WorkbenchProject { id:string; path:string; name:string; providerId:string; createdAt:number }
+const PROJECT_SELECT='SELECT id,path,name,provider_id AS providerId,created_at AS createdAt FROM workbench_projects'
+const projectName=(project:WorkbenchProject):WorkbenchProject=>({...project,name:project.name||basename(project.path)||project.path})
 export interface StoredTask extends Task { ownerChatId: string | null; sessionId: string | null }
 export interface TaskEvent { id: number; taskId: string; kind: 'user' | 'text' | 'tool_call' | 'system' | 'error'; text: string; createdAt: number; sourceId?:string|null; runId?:string; activity?:AgentActivity; attachments?:import('./attachments').Attachment[] }
 export interface Artifact { id: string; taskId: string; name: string; mime: string; size: number; sha256: string; createdAt: number; approvedAt: number | null }
@@ -63,6 +66,10 @@ function listFilters(query:WorkbenchListQuery) {
 }
 
 export function makeWorkbenchStore(db: Db) {
+  const addProject=(input:{path:string;name?:string;providerId:string}):WorkbenchProject=>{
+    db.query('INSERT OR IGNORE INTO workbench_projects(id,path,name,provider_id,created_at) VALUES(?,?,?,?,?)').run('p-'+randomUUID(),input.path,input.name?.trim()||basename(input.path)||input.path,input.providerId,Date.now())
+    return projectName(db.query<WorkbenchProject,[string]>(PROJECT_SELECT+' WHERE path=?').get(input.path)!)
+  }
   const get = (id: string): StoredTask => {
     const task = db.query<StoredTask, [string]>(`${TASK_SELECT} WHERE id=?`).get(id)
     if (!task) throw new Error('not_found')
@@ -88,6 +95,8 @@ export function makeWorkbenchStore(db: Db) {
     return{...h,artifacts:JSON.parse(artifactRefsJson),quote:quoteJson?JSON.parse(quoteJson):null,sourceTitle:a.title,targetTitle:b.title,sourceProviderId:a.providerId,targetProviderId:b.providerId,sourceStatus:a.status,targetStatus:b.status}
   })
   return {
+    addProject,
+    projects:()=>db.query<WorkbenchProject,[]>(PROJECT_SELECT+' ORDER BY created_at,id').all().map(projectName),
     atomic:<T>(operation:()=>T):T=>db.transaction(operation)(),
     attachments:makeTaskAttachmentStore(db),
     execution:makeExecutionSettingsStore(db),
@@ -164,8 +173,8 @@ export function makeWorkbenchStore(db: Db) {
       if(archived!=='all')where.push(archived==='only' ? 'archived_at IS NOT NULL' : 'archived_at IS NULL')
       if(q) {
         const pattern='%'+q.replace(/[\\%_]/g,char=>'\\'+char)+'%'
-        where.push("(title LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\')")
-        args.push(pattern,pattern,pattern)
+        where.push("(title LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\' OR path IN (SELECT path FROM workbench_projects WHERE name LIKE ? ESCAPE '\\'))")
+        args.push(pattern,pattern,pattern,pattern)
       }
       const filter=where.length ? ' WHERE '+where.join(' AND ') : ''
       return db.transaction(()=>{
@@ -197,6 +206,7 @@ export function makeWorkbenchStore(db: Db) {
       let id: string
       do { id = randomBytes(4).toString('hex') } while (db.query('SELECT 1 FROM workbench_tasks WHERE id=?').get(id))
       const now = Date.now()
+      addProject(input)
       db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,owner_chat_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').run(id,input.title,input.path,input.providerId,input.ownerChatId,'queued',now,now)
       return get(id)
     },

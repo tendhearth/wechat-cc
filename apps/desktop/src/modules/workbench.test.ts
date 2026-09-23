@@ -2409,7 +2409,7 @@ describe('一件事:对话也在同一张列表里(2026-09-16)',()=>{
     const chat={id:'0badcafe',kind:'chat',title:'跟 CC 说',status:'open',updatedAt:3}
     const base={tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedArtifactId:null,error:'',preview:null,chats:[chat]}
     const listed=renderWorkbench({...base,selectedId:null,detail:null,selectedMatterId:null})
-    expect(listed).toContain('class="wb-kicker">一件事<')
+    expect(listed).toContain('class="wb-kicker">项目<')
     expect(listed).toMatch(/data-matter-id="0badcafe"[\s\S]*data-task-id="deadbeef"/)
     expect(listed).not.toContain('id="wb-converse-host"')
     const opened=renderWorkbench({...base,selectedId:null,detail:null,selectedMatterId:'0badcafe'})

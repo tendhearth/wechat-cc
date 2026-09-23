@@ -69,6 +69,12 @@ function mappedError(err: unknown): ReturnType<RouteHandler> {
 
 export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
   return {
+    'POST /v1/workbench/project':async(_query,body)=>{
+      const value=objectBody(body)
+      if(!value||typeof value.path!=='string'||!isAbsolute(value.path)||value.path.includes('\0')||!isWorkbenchProviderId(value.providerId)||(value.name!==undefined&&typeof value.name!=='string'))return invalid()
+      if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
+      try{return{status:200,body:{project:deps.workbench.addProject({path:value.path,providerId:value.providerId,...(value.name!==undefined?{name:value.name as string}:{})})}}}catch(error){return mappedError(error)}
+    },
     'GET /v1/workbench/models':async query=>{
       const providerId=query.get('providerId'),path=query.get('path')
       if(query.getAll('providerId').length!==1||query.getAll('path').length!==1||!isWorkbenchProviderId(providerId)||!path||path.length>4096||path.includes('\0')||!isAbsolute(path))return invalid()

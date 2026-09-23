@@ -181,6 +181,7 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
           'GET /v1/matters','GET /v1/matter','GET /v1/matter/owner-chat','POST /v1/matter/say',
           'GET /v1/workbench/models',
           'GET /v1/workbench/sessions','GET /v1/workbench/session','GET /v1/workbench/task',
+          'POST /v1/workbench/project',
           'POST /v1/workbench/create',
           'POST /v1/workbench/continue',
           'POST /v1/workbench/cancel',

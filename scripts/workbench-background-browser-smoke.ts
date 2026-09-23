@@ -88,7 +88,9 @@ async function main(){
       const file=Bun.file(filePath);return await file.exists()?new Response(file):new Response('Not found',{status:404})
     }})
     browser=await chromium.launch({headless:true});page=await browser.newPage({viewport:{width:1280,height:900}});page.on('pageerror',error=>pageErrors.push(error.message))
-    await page.goto(`http://127.0.0.1:${host.port}`);await page.locator('#wb-path').fill(project);await page.locator('#wb-create-text').fill('请修复导出问题，并请子助手核对兼容性和测试。')
+    await page.goto(`http://127.0.0.1:${host.port}`);await page.locator('#wb-path').fill(project);await page.locator('#wb-title').fill('兼容性项目');await page.locator('#wb-project-form button[type=submit]').click();await page.locator('#wb-create-text').fill('请修复导出问题，并请子助手核对兼容性和测试。')
+    assert.equal(store.projects().length,1);assert.equal(store.list().length,0);assert.equal(started.length,0)
+    await page.screenshot({path:join(evidence,'project-new-conversation-1280.png')})
     await page.getByRole('button',{name:'开始任务',exact:true}).click();await eventually(()=>started.length===1)
     const task=store.get(started[0]!),epoch=service.detail(task.id).runId!
     await page.waitForFunction(()=>document.body.textContent?.includes('后台执行中 · 2'))
@@ -109,7 +111,8 @@ async function main(){
     Object.assign(states.get(task.id)!,{backgroundCount:0,foreground:'idle'})
     pipes.get(task.id)!.push({kind:'text',text:'两位子助手的结果已收到。兼容性没有冲突，测试也已通过。',itemId:'parent-late',textMode:'replace'})
     await page.waitForFunction(()=>!!document.querySelector('.wb-task-head [data-status="retained"]'))
-    await page.locator('details[data-timeline-group] > summary').click()
+    await page.waitForFunction(()=>document.body.textContent?.includes('两位子助手的结果已收到。兼容性没有冲突，测试也已通过。')&&document.querySelectorAll('.wb-operation[data-activity-type="agent"][data-status="completed"]').length===2)
+    if(await page.locator('details[data-timeline-group] > summary').count())await page.locator('details[data-timeline-group] > summary').click()
     await page.locator('.wb-operation[data-activity-type="agent"]:first-child details > summary').click()
     await page.screenshot({path:join(evidence,'retained-child-reply-1280.png')})
     assert.equal(await page.locator('.wb-operation-output script').count(),0)
@@ -120,7 +123,16 @@ async function main(){
     await page.screenshot({path:join(evidence,'input-awaiting-native-ack.png')})
     ack.release();await eventually(()=>store.liveInputs.get(submissions[0]!.requestId)?.status==='delivered')
     assert.equal(store.liveInputs.get(submissions[0]!.requestId)?.runId,epoch);assert.equal(service.detail(task.id).runId,epoch)
-    const next=service.create({providerId:'claude',path:project,text:'下一项独立任务'})
+    await page.locator('[data-action="new-project-task"]').click()
+    await page.waitForFunction(path=>document.querySelector<HTMLInputElement>('#wb-path')?.value===path,project)
+    assert.equal(await page.locator('[data-action="choose-folder"]').count(),0)
+    await page.locator('#wb-create-text').fill('下一项独立任务')
+    await page.getByRole('button',{name:'开始任务',exact:true}).click()
+    await eventually(()=>store.list().length===2)
+    const next=store.list().find(item=>item.id!==task.id)!
+    assert.equal(store.projects().length,1)
+    assert.equal(store.events(next.id).filter(event=>event.kind==='user').length,1)
+    await page.locator(`[data-task-id="${task.id}"]`).click()
     assert.equal(next.status,'queued');assert.equal(started.length,1)
     const {outputDirectory}=await import('../src/core/workbench/artifacts')
     writeFileSync(join(outputDirectory(project,task.id),'background-result.md'),'# 已核对的成果\n')
@@ -130,8 +142,12 @@ async function main(){
     await page.waitForFunction(()=>document.querySelector('.wb-task-head .wb-status')?.textContent==='已答复')
     await page.waitForFunction(id=>document.querySelector(`[data-task-id="${id}"]`)?.textContent?.includes('已答复'),next.id)
     await page.screenshot({path:join(evidence,'closed-and-saved-1280.png')})
+    await page.locator('[data-action="add-project"]').click()
+    await page.waitForFunction(()=>!!document.querySelector('#wb-project-form'))
+    assert.equal(await page.locator('#wb-path').count(),1)
+    await page.waitForFunction(()=>document.querySelector<HTMLInputElement>('#wb-path')?.value===''&&document.querySelector<HTMLInputElement>('#wb-title')?.value==='')
     assert.deepEqual(pageErrors,[]);assert.deepEqual(httpErrors,[])
-    const report={ok:true,transport:'production UI + host proxy + internal HTTP + SQLite',executor:'synthetic fixture, not native proof',tasks:started.length,inputReceipts:submissions.length,sameEpoch:true,noEarlyClose:true,closeBeforePathRelease:true,artifactsAfterClose:true,childOutputEscaped:true,taskReconnectVisible:true,reloadPreservesDraft:true,evidence}
+    const report={ok:true,transport:'production UI + host proxy + internal HTTP + SQLite',executor:'synthetic fixture, not native proof',tasks:started.length,inputReceipts:submissions.length,sameEpoch:true,noEarlyClose:true,closeBeforePathRelease:true,artifactsAfterClose:true,childOutputEscaped:true,taskReconnectVisible:true,reloadPreservesDraft:true,emptyProjectPersisted:true,twoConversationsOneProject:true,evidence}
     writeFileSync(join(evidence,'report.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2))
   }catch(error){await page?.screenshot({path:join(evidence,'failure.png')}).catch(()=>{});writeFileSync(join(evidence,'failure.json'),JSON.stringify({error:String(error),pageErrors,httpErrors},null,2));throw Error(`Background browser smoke failed; ${evidence}`,{cause:error})}
   finally{ack.release();for(const pipe of pipes.values())pipe.end();await browser?.close();await service.shutdown();host?.stop(true);await api.stop();db.close();rmSync(temporary,{recursive:true,force:true})}

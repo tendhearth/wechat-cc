@@ -43,6 +43,16 @@ function service(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Workbench internal HTTP API', () => {
+  it('allows adding a project only through the exact desktop operator route',async()=>{
+    const project={id:'p-site',path:'/tmp/project',name:'网站',providerId:'codex'},addProject=vi.fn(()=>project)
+    const {request,operatorToken,trustedToken}=await start(service({addProject}))
+    const post=(body:unknown,token=operatorToken)=>request('/v1/workbench/project',{method:'POST',body:JSON.stringify(body)},token)
+    expect((await post(project,trustedToken)).status).toBe(403)
+    const response=await post(project);expect(response.status).toBe(200);expect(await response.json()).toEqual({project})
+    for(const body of [{path:'relative',providerId:'codex'},{path:'/tmp',providerId:123},null])expect((await post(body)).status).toBe(400)
+    expect(addProject).toHaveBeenCalledTimes(1)
+    expect((await request('/v1/workbench/project',{},operatorToken)).status).toBe(404)
+  })
   it('prepares continuation only on its exact operator route and preserves absent versus explicit execution',async()=>{
     const continuation={mode:'restart_required',restart:{token:'a'.repeat(64),context:'history'}}
     const prepareContinuation=vi.fn(()=>continuation),{request,operatorToken,trustedToken}=await start(service({prepareContinuation}))
