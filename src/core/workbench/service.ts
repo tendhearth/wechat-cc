@@ -102,10 +102,15 @@ interface Active extends PathReservation {
   publicFinished: boolean
   uncertain: boolean
   artifactsCollected: boolean
-  /** 这次静下来是否已经入队过回报(settleQuiet 同一个 result 事件会经两条路径各调一次
-   *  ——转移探测器 + 显式 result 分支,见评审 2026-09-21 #6/#2 ——回报只该报一次;下一轮
-   *  「又动起来了」把它重置回 false)。 */
-  reported: boolean
+  /** 「这是第几轮」——回报去重键(评审修复轮 1:布尔 `reported` 选错了层,见 `reportOnce`)。
+   *  `submitInput` 实际投给 runtime 时(主人续接,可靠的同步点)与转移探测器观察到
+   *  「又动起来了」时(自己醒来,尽力而为——没有比快照更早的信号)各加一次。不是幂等锁
+   *  ——同一轮里两条路径都触发也只是多加了一次,不影响「序号变了就该再报」这个判据。 */
+  turnSeq: number
+  /** 已经报过、且报的是第几轮(`turnSeq` 的快照)。`-1` = 还没报过。`reportOnce` 只在
+   *  `turnSeq!==reportedTurn` 时才入队,不依赖「有没有观察到静下来又动起来」这件事本身
+   *  ——那件事会被漏看(见 reportOnce 的注释)。 */
+  reportedTurn: number
   collection?:Promise<void>
   turnCollection?:Promise<void>
   collectionFailure?:string
@@ -572,6 +577,21 @@ export function makeWorkbenchService(opts: Options) {
     try { cancelRun(running) } catch { /* 已经在收尾的路上,留给 execute 的 finally */ }
   }
   /**
+   * 回报入队,按「这是第几轮」去重(评审修复轮 1)。不进 matterSync —— 那个包装
+   * 故意吞掉所有异常,回报挂进去会把"从来没报成功过"伪装成"偶尔漏一条"
+   * (2026-09 的教训)。去重键是 `turnSeq`(见 Active 字段注释),不是布尔:
+   * 布尔只能在「观察到静下来又动起来」那一刻复位,而这件事本身可能被漏看
+   * (回合可能在探测器读到忙碌快照之前就已经又静下来),漏看 = 永久锁死不再报。
+   * `turnSeq` 在更早、更可靠的同步点(`submitInput` 实际投递)就已经推进,不依赖
+   * 「有没有被看见」。调用点:`settleQuiet`(答复)与终态收工(评审 #3,非
+   * retained 执行者永远不经过 `settleQuiet`)都调它,序号相同则第二次是no-op。
+   */
+  function reportOnce(running:Active):void {
+    if (running.reportedTurn===running.turnSeq) return
+    running.reportedTurn=running.turnSeq
+    try { opts.reports?.enqueue(running.taskId) } catch (err) { opts.log?.('MATTER_REPORT',`enqueue failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
+  }
+  /**
    * 本回合安静下来:登记成果(评审 2026-09-16:会话保留时这条 run 不会结算,`collect` 也就不会跑,
    * 成果得等主人「取消」才看得见)、把 matter 标成已答复、起空闲自动收工的计时。
    * 还在等主人拍板就只收成果、不计时 —— 那不叫安静。重复调用无害:收集自己去重,计时不会被推迟。
@@ -583,14 +603,7 @@ export function makeWorkbenchService(opts: Options) {
     collectTurnArtifacts(running)
     if (!quiet(running)) return
     matterSync(m=>m.setStatus(running.taskId,'replied'))
-    // 回报:每轮答复入队一次,只对从聊天里交办的事(该不该报是 renderReport 的
-    // 事)。不进 matterSync —— 那个包装故意吞掉所有异常,回报挂进去会把"从来
-    // 没报成功过"伪装成"偶尔漏一条"(2026-09 的教训)。`reported` 防的是本函数
-    // 同一次静下来被叫两次(转移探测器 + 显式 result 分支,评审 2026-09-21 #6/#2)。
-    if (!running.reported) {
-      running.reported=true
-      try { opts.reports?.enqueue(running.taskId) } catch (err) { opts.log?.('MATTER_REPORT',`enqueue failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
-    }
+    reportOnce(running)
     // 差异边界 = 回合边界:这一轮的代码变更现在就截(以前这一步挂在「答复即释放」后面,
     // 那条路没了)。续接会先 await 这份在途的快照再取新基线,所以不会把下一轮的改动算进来。
     void captureCodeChanges(running).catch(()=>{})
@@ -759,8 +772,11 @@ export function makeWorkbenchService(opts: Options) {
         // 它想写就写 —— 没有什么要 fail-closed 的。
         if (!nowQuiet&&wasQuiet) {
           cancelIdleClose(running)
-          // 又开始新一轮了,下次静下来该再报一次。
-          running.reported=false
+          // 自己醒来这条路唯一能推进 turnSeq 的地方(评审修复轮 1)——没有比这更早的信号
+          // 了,所以是尽力而为:一段自动续作连着抖好几次 quiet↔busy 时,这里会跟着抖好几
+          // 次(每次都算「新一轮」),多出来的入队调用在 outbox 那一层按 matter 合并,不在
+          // 这里想办法压 —— 这里的职责只是「不要漏成永久锁死」,不是「精确数出真实回合数」。
+          running.turnSeq++
           // 上一轮安静时 `captureCodeChanges` 已经把基线消费掉了,而取基线只有两个入口:起步和
           // 主人续接(`submitInput`)。自己醒来这条路没有入口 —— BASE 是靠 `onAutonomousStart`
           // → `beginTurn` 重取的,那两个函数这一轮删了。不补的话「自己醒来干的这一轮」永远生不出
@@ -844,6 +860,10 @@ export function makeWorkbenchService(opts: Options) {
         touched(task.id)
         terminalCommitted=true
         matterSync(m=>m.setStatus(task.id,status==='interrupted'?'open':'done'))
+        // 非 retained 的执行者永远不经过 settleQuiet(isReplied 要求 snapshot.retained),
+        // 只走这条终态路径 —— 不在这里也调一次 reportOnce,那类执行者的任务永远不回报
+        // (评审修复轮 1 #3)。turnSeq 去重保证 settleQuiet 已经报过这一轮时这里是 no-op。
+        if (status!=='interrupted') reportOnce(running)
         publishFinishedNotices()
       } catch { /* never unlock an uncertain writer for a status failure */ }
       running.publicFinished=true; running.resolveDone()
@@ -980,7 +1000,7 @@ export function makeWorkbenchService(opts: Options) {
       execution,
       attachments:dispatchAttachments,
       interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
-      cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,reported:false,credentialsMinted:false,credentialsRevoked:false,
+      cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,turnSeq:0,reportedTurn:-1,credentialsMinted:false,credentialsRevoked:false,
     }
     const activate=()=>{runsByTask.set(task.id,running);runningText.set(running.identity,text);queue.push(running);pump()}
     if(acceptance)acceptance.activate(activate);else activate()
@@ -1230,6 +1250,10 @@ export function makeWorkbenchService(opts: Options) {
           if(canonicalProject(running.path)!==running.path||directoryIdentity(running.path)!==running.directoryIdentity)throw Error('invalid_path')
           const material=store.attachments.prepare(id,attachments,running.path,opts.stateDir)
           running.interactionAt=Date.now()
+          // 主人续接 = 新一轮的可靠起点(评审修复轮 1):这个同步点不依赖快照观察,
+          // 「投给 runtime 了」这件事本身就是新一轮开始的证据,回报去重键(reportOnce)
+          // 靠它才不会因为快照从未被看见处于「忙碌」而永久锁死。
+          running.turnSeq++
           // Replay acknowledgement may wait behind an autonomous native turn.
           // The HTTP receipt is already durable; never wait here or auto-resend.
           void runtime.submit(saved.id,text,material).then(

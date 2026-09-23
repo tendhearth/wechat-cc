@@ -31,7 +31,7 @@ describe('makeReportSink', () => {
     expect(due).toHaveLength(1)
     expect(due[0]).toMatchObject({matterId: FROM_CHAT, originMatterId: CHAT, originMessageId: 'msg-7'})
     expect(due[0]!.text).toContain('首页调整')
-    expect(due[0]!.text).toContain('生成了2份成果。')
+    expect(due[0]!.text).toContain('累计生成了2份成果。')
   })
 
   it('没有出生地(桌面手动派的):不写进 outbox', async () => {

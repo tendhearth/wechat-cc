@@ -26,7 +26,17 @@ export interface OutboxRecord {
 }
 
 export interface ReportOutboxStore {
-  /** Insert a pending row, immediately due (next_at = now). Returns the row id. */
+  /**
+   * Enqueue a report for delivery. If a pending row already exists for this
+   * matter_id, its text is UPDATED in place (and next_at reset to `now`,
+   * so the freshest content gets first crack at the next sweep) instead of
+   * inserting a second row — otherwise a chatty matter (a few quiet↔busy
+   * flaps in one autonomous round, or a chat the owner ignores all day)
+   * would accumulate unboundedly. `attempts` is left untouched by a merge
+   * — repeated re-enqueuing must not be a way to dodge the give-up cap in
+   * sweeper.ts (evaluation round 1, review issues ①②). Returns the row id
+   * (new or the merged existing one).
+   */
   insert(report: PendingReport, now: number): Promise<number>
   /** Pending rows with next_at <= now, oldest-due first. */
   listDue(now: number): Promise<OutboxRecord[]>
@@ -71,6 +81,15 @@ export function makeReportOutboxStore(db: Db): ReportOutboxStore {
     "INSERT INTO matter_report_outbox(matter_id, origin_matter_id, origin_message_id, text, status, attempts, next_at, created_at) "
     + "VALUES (?, ?, ?, ?, 'pending', 0, ?, ?) RETURNING id",
   )
+  // Merge target: a pending row for the same matter. Text + next_at only —
+  // attempts and origin_matter_id/origin_message_id (fixed for a matter's
+  // lifetime) are untouched.
+  const stmtMergeExisting = db.query<unknown, [string, number, string]>(
+    "UPDATE matter_report_outbox SET text = ?, next_at = ? WHERE matter_id = ? AND status = 'pending'",
+  )
+  const stmtPendingIdByMatter = db.query<{id: number}, [string]>(
+    "SELECT id FROM matter_report_outbox WHERE matter_id = ? AND status = 'pending' ORDER BY id LIMIT 1",
+  )
   const stmtListDue = db.query<Row, [number]>(
     `SELECT ${COLS} FROM matter_report_outbox WHERE status = 'pending' AND next_at <= ? ORDER BY next_at ASC, id ASC`,
   )
@@ -88,6 +107,8 @@ export function makeReportOutboxStore(db: Db): ReportOutboxStore {
 
   return {
     async insert(report, now) {
+      const merged = stmtMergeExisting.run(report.text, now, report.matterId) as {changes: number}
+      if (merged.changes > 0) return stmtPendingIdByMatter.get(report.matterId)!.id
       const row = stmtInsert.get(report.matterId, report.originMatterId, report.originMessageId, report.text, now, now)
       return row!.id
     },

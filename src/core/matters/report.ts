@@ -26,13 +26,20 @@ export interface PendingReport {
  * 文案模板:
  *   <标题> · 已答复。<成果句>
  *   看:任务 <id> · 接着说:任务 <id> 补充 …
- * 成果句:artifactCount===0 时省略;>0 时「生成了 N 份成果。」。用现成的
+ * 成果句:artifactCount===0 时省略;>0 时「累计生成了 N 份成果。」。用现成的
  * 「任务」指称动词(见微信管家指称解析),不造新命令。
+ *
+ * `artifactCount` 是调用方给的**累计**成果数(不是这一轮新增的),文案里写
+ * 明「累计」二字(评审修复轮 1 ④ Minor):一件事跨多轮答复,数字会一路涨,
+ * 不写清楚容易被读成「这次生成了 N 份」这种一轮内的成果,像 bug。算清楚
+ * 「这一轮新增了几份」需要在 Active 上另存一个回合起点的基线并在每个回合
+ * 边界重置,拿这份复杂度换一个措辞上的精确度不值——文案说清楚累计口径更
+ * 便宜也更不容易出新 bug。
  */
 export function renderReport(input: {matter: Matter; title: string; artifactCount: number}): PendingReport | null {
   const {matter, title, artifactCount} = input
   if (!matter.originMatterId) return null
-  const outcome = artifactCount > 0 ? `生成了${artifactCount}份成果。` : ''
+  const outcome = artifactCount > 0 ? `累计生成了${artifactCount}份成果。` : ''
   const text = `${title} · 已答复。${outcome}\n看:任务 ${matter.id} · 接着说:任务 ${matter.id} 补充 …`
   return {matterId: matter.id, originMatterId: matter.originMatterId, originMessageId: matter.originMessageId, text}
 }

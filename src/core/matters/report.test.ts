@@ -5,9 +5,10 @@ import {renderReport} from './report'
 /**
  * renderReport 的失败测试先行(task-3-brief.md Step 1)。断言措辞按模板改写:
  * brief 里「生成了两份预览」是从设计文档示例句抄来的示例,不是规格——模板
- * 是「生成了 N 份成果。」,这里按模板断言;`quiet` 也不在 renderReport 的
- * 签名里(brief「Produces」块才是权威接口:{matter,title,artifactCount}),
- * 测试不传它。
+ * 是「累计生成了 N 份成果。」,这里按模板断言(评审修复轮 1 ④:artifactCount
+ * 是累计数不是这一轮新增,文案里补了「累计」二字,免得读起来像 bug);
+ * `quiet` 也不在 renderReport 的签名里(brief「Produces」块才是权威接口:
+ * {matter,title,artifactCount}),测试不传它。
  */
 const base: Matter = {
   id: 'a1b2c3d4', kind: 'task', title: '手动派的', projectPath: '/work', status: 'replied',
@@ -26,7 +27,7 @@ describe('renderReport', () => {
     expect(r).not.toBeNull()
     expect(r.text).toContain('首页调整')
     expect(r.text).toContain('已答复')
-    expect(r.text).toContain('生成了2份成果。')
+    expect(r.text).toContain('累计生成了2份成果。')
     expect(r.text).toContain(`任务 ${fromChat.id}`)
   })
 
