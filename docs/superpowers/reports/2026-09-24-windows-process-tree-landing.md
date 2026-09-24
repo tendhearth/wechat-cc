@@ -292,3 +292,32 @@ stdout→stderr 与 POSIX 直通两处修改,不重编等于没验落地的那�
 
 验证用的临时文件与目录已从 win-test 上删净,未留游荡进程。
 
+## 打包接线与 POSIX 直通(2026-09-24,macOS 上验)
+
+win-test 在这一轮中途掉线(ping 100% 丢包),装 bun 那条走不下去;先把**不需要 Windows**
+的两项验掉。
+
+**打包接线 —— 通过。** 在 macOS 上跑 `bun run build-sidecar`:
+
+- 产出 `apps/desktop/src-tauri/binaries/cc-jobspawn-aarch64-apple-darwin`(392 KB),
+  与 CLI sidecar 同一套 target 表、同一步 ad-hoc 签名。
+- `tauri.conf.json` 与 `tauri.macos.conf.json` 的 `externalBin` 都已含 `binaries/cc-jobspawn`。
+- 构建产物不污染工作区(`binaries/` 是 gitignore 的)。
+- 这坐实了裁决 1 的必要性与可行性:**所有平台都编**,mac 上 `externalBin` 拿得到文件,
+  不需要按平台改配置。
+
+**POSIX 直通 —— 通过,而且是真 exec、零额外进程。**
+
+| 检查 | 结果 |
+|---|---|
+| 退出码 | `exit 42` → `42` |
+| stdout 纯净 | 默认与 `WECHAT_CC_JOBSPAWN_DEBUG=1` 下 stdout 都只有 `PURE`,stderr 为空 |
+| 是否多套一层进程 | **不是**。被包命令的父进程直接是调用方 shell(`/bin/zsh`),说明 cc-jobspawn 已 `exec` 掉自己 —— POSIX 上不残留中间进程 |
+| stdin 透传 | `{"id":1}` → `{"echoed":{"id":1}}` |
+
+### 仍然没验的(与上一节一致,原因也一样)
+
+- **产品真的走到这一层 + 降级留痕**:需要 win-test 上有 bun 与至少一个 CLI。机器掉线,未做。
+- **PATH 解析换引擎(libuv → Rust std)**:同上,且那台机上本来就没有 claude/codex 可解析。
+- **Windows 包真的带上了 `cc-jobspawn.exe`**:mac 侧接线已验,Windows 侧要打一次包才算。
+
