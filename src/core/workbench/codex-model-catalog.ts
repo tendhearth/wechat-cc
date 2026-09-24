@@ -1,4 +1,5 @@
 import {spawn} from 'node:child_process'
+import { wrapForProcessTree } from '../../lib/jobspawn'
 import {discoverWorkbenchCodexConfig,workbenchCodexArgs,workbenchCodexEnv} from './codex-config'
 import {readCodexModelCatalog, type CatalogRequest} from './native-model-catalog'
 import { APP_VERSION } from '../../lib/app-version'
@@ -10,7 +11,11 @@ export async function discoverCodexModels(binary: string, cwd: string, timeoutMs
   // A late config close can win its timer callback. Never spawn a second child
   // after the single caller-owned budget is exhausted.
   if (Date.now() >= deadline) throw new Error('model_catalog_unavailable')
-  const child = spawn(binary,[...workbenchCodexArgs(discovery.config),'app-server','--listen','stdio://'],{cwd,env:workbenchCodexEnv(),stdio:['pipe','pipe','pipe'],windowsHide:true,detached:process.platform !== 'win32'})
+  // win32 上没有进程组:下面 stop() 的 else 分支只杀 codex 本身,app-server 自己开的
+  // 子进程留下。这条路在 Windows 上会跑(工作台的硬闸门在 provider.spawn() 里,
+  // modelCatalog 不过那道门)。套一层 cc-jobspawn(只在 win32 生效);stop() 一行没改。
+  const wrapped = wrapForProcessTree(binary,[...workbenchCodexArgs(discovery.config),'app-server','--listen','stdio://'])
+  const child = spawn(wrapped.command,wrapped.args,{cwd,env:workbenchCodexEnv(),stdio:['pipe','pipe','pipe'],windowsHide:true,detached:process.platform !== 'win32'})
   let buffer = '', nextId = 0, failure: Error | undefined, exited = false
   const pending = new Map<number,{resolve:(value:any)=>void;reject:(error:Error)=>void}>()
   const fail = () => { failure ??= new Error('model_catalog_unavailable'); for (const entry of pending.values()) entry.reject(failure); pending.clear() }

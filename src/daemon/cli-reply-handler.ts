@@ -9,6 +9,7 @@
  * 那边(别的机器)的会话:v1 先说明白「暂时只能看这台机的」,转发是下一步。
  */
 import { spawn } from 'node:child_process'
+import { wrapForProcessTree } from '../lib/jobspawn'
 import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { parseCliReply, resumeCommand } from '../core/cli-reply'
 import { renderTranscriptTail } from '../core/cli-transcript'
@@ -23,10 +24,15 @@ export type Runner = (cmd: string, args: string[], cwd: string, timeoutMs: numbe
 /**
  * 起进程、收输出、到点掐掉。掐的是**进程组**(POSIX 下 detached 起),不然 `claude` 下面
  * 还挂着的子进程会拖住管道,'close' 永远不来。exit 之后再等一小会儿冲掉尾巴就算完。
+ *
+ * win32 上没有进程组:`killAll` 的 else 分支只杀 `claude` / `codex` 本身,它们自己开的
+ * MCP 与子代理留下继续跑(而且照旧拖着管道)。所以 spawn 这一侧套一层 `cc-jobspawn`
+ * (`wrapForProcessTree`,只在 win32 生效),杀它等于杀整棵树 —— 下面两处 kill 没动。
  */
 export const defaultRunner: Runner = (cmd, args, cwd, timeoutMs) => new Promise((resolve) => {
   const posix = process.platform !== 'win32'
-  const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: posix })
+  const wrapped = wrapForProcessTree(cmd, args)
+  const child = spawn(wrapped.command, wrapped.args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: posix })
   let stdout = '', stderr = '', timedOut = false, done = false
   const closed=()=>{if(!child.pid)return false;if(!posix)return child.exitCode!==null;try{process.kill(-child.pid,0);return false}catch(error){return (error as NodeJS.ErrnoException).code==='ESRCH'}}
   const finish = (code: number | null, extraErr?: string) => {

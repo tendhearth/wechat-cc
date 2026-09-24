@@ -52,7 +52,8 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/wechat-cc-cli"
+      "binaries/wechat-cc-cli",
+      "binaries/cc-jobspawn"
     ],
     "resources": [
       "../../../plugins/README.md"

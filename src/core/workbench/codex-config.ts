@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { wrapForProcessTree } from '../../lib/jobspawn'
 import { isCompanionMcp } from './native-tools'
 import { workbenchSubprocessEnv } from './subprocess-env'
 
@@ -74,7 +75,12 @@ export function workbenchCodexEnv(source: NodeJS.ProcessEnv = process.env): Node
 export async function discoverWorkbenchCodexConfig(binary: string, cwd: string, deadline = Date.now() + 15_000) {
   if (Date.now() >= deadline) throw configFailure()
   return new Promise<{ config: ReturnType<typeof workbenchCodexConfig>; servers: unknown }>((resolve, reject) => {
-    const child = spawn(binary, [...workbenchCodexArgs(workbenchFeatureConfig), 'mcp', 'list', '--json'], {
+    // win32 上没有进程组:下面 stop() 的 else 分支只杀 codex 本身。这条路**在 Windows 上
+    // 真的会跑** —— codex 工作台的硬闸门在 provider.spawn() 里,而模型目录
+    // (codex-model-catalog.ts → 这里)走的是 modelCatalog(),闸门之外。套一层
+    // cc-jobspawn(只在 win32 生效),杀它等于杀整棵树;stop() 一行没改。
+    const wrapped = wrapForProcessTree(binary, [...workbenchCodexArgs(workbenchFeatureConfig), 'mcp', 'list', '--json'])
+    const child = spawn(wrapped.command, wrapped.args, {
       cwd, env: workbenchCodexEnv(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32',
     })
     let output = '', settled = false, closed = false

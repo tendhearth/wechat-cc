@@ -15,6 +15,7 @@ import { assertNotAuthFailed, normalizeWechatMcpServer, type AgentEvent, type Ag
 import { makeAgyStreamParser } from './agy-stream'
 import { makeTurnEmitter } from './turn-emitter'
 import { spawn } from '../lib/runtime/process'
+import { wrapForProcessTree } from '../lib/jobspawn'
 
 /**
  * RFC 05 Phase 2 capability declaration. agy has no per-tool callback (print
@@ -123,7 +124,11 @@ export function drainCappedStderr(stream: ReadableStream<Uint8Array>, capBytes: 
 
 function defaultSpawnFn(bin: string): AgySpawnFn {
   return (args, opts) => {
-    const proc = spawn([bin, ...args], { cwd: opts.cwd, stdout: 'pipe', stderr: 'pipe' })
+    // win32 上套一层 cc-jobspawn:`kill()` 下面那句只杀 agy 本身,agy 自己开的子进程
+    // (它的 MCP 子进程)会留下继续跑 —— 这里以前**一处 win32 判断都没有**,漏得最彻底。
+    // 其他平台原样(见 src/lib/jobspawn.ts)。
+    const wrapped = wrapForProcessTree(bin, args)
+    const proc = spawn([wrapped.command, ...wrapped.args], { cwd: opts.cwd, stdout: 'pipe', stderr: 'pipe' })
     // Start draining stderr NOW (concurrently with whatever the caller does
     // with stdout/exited) — see drainCappedStderr's doc comment for why a
     // lazy read-on-demand deadlocks against a chatty child.
