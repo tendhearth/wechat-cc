@@ -14,6 +14,7 @@ import { invokeApi } from '../api.js'
 import { initHuntBag, renderHuntBag } from './journal.js'
 import { initPeople, renderPeople } from './people.js'
 import { initWishes, refreshWishes } from './wishes.js'
+import { icon } from './icons.js'
 
 // ── module-level state ────────────────────────────────────────────────────
 /** @type {Record<string, unknown> | null} */
@@ -247,12 +248,7 @@ export function renderForageDesk(data) {
   if (status) {
     const n = agents.length
     status.innerHTML =
-      `<svg class="fd-frog" viewBox="0 0 30 30" fill="none" aria-hidden="true">` +
-      `<ellipse cx="15" cy="19" rx="10" ry="8" fill="#8AA36F"/>` +
-      `<circle cx="10" cy="10" r="4.2" fill="#8AA36F"/><circle cx="20" cy="10" r="4.2" fill="#8AA36F"/>` +
-      `<circle cx="10" cy="10" r="2" fill="#fff"/><circle cx="20" cy="10" r="2" fill="#fff"/>` +
-      `<circle cx="10.6" cy="10.4" r="1" fill="#3B3125"/><circle cx="20.6" cy="10.4" r="1" fill="#3B3125"/>` +
-      `<path d="M11 20 q4 3 8 0" stroke="#3B3125" stroke-width="1.3" stroke-linecap="round"/></svg>` +
+      icon('user-group', { size: 24, className: 'fd-status-icon' }) +
       `<span class="fd-status-line"><span>连着 <b>${n} 位</b>朋友的 bot</span></span>`
   }
   const note = document.getElementById('fd-social-note')
@@ -566,6 +562,16 @@ function pairErrText(err) {
   return `配对失败：${msg}`
 }
 
+/** @param {HTMLElement | null} note @param {string} text @param {'success' | 'error'} [state] */
+function showPairNote(note, text, state = 'error') {
+  if (!note) return
+  note.hidden = false
+  note.textContent = text
+  note.classList.toggle('status-success', state === 'success')
+  note.classList.toggle('status-error', state === 'error')
+  note.setAttribute('role', 'status')
+}
+
 function stopPairTimers() {
   if (pairCountdownTimer) { clearInterval(pairCountdownTimer); pairCountdownTimer = null }
   if (pairPollTimer) { clearInterval(pairPollTimer); pairPollTimer = null }
@@ -583,21 +589,21 @@ async function onPairStart() {
     // 老友都当成刚配对成功的新边(误判)。`{agents:[]}` 才是真正的“确实没有朋友”。
     const before = /** @type {{agents?:Array<any>}|null} */ (await invokeApi('GET', '/v1/a2a/list').catch(() => null))
     if (before === null) {
-      if (note) { note.hidden = false; note.textContent = '暂时读不到现有朋友列表，稍后再试' }
+      showPairNote(note, '暂时读不到现有朋友列表，稍后再试')
       return
     }
     const knownIds = new Set((before.agents ?? []).map(a => String(a.id)))
     const r = /** @type {{ok?:boolean, code?:string, expiresAt?:number, reason?:string}} */ (
       await invokeApi('POST', '/v1/pair/start'))
     if (!r?.ok) {
-      if (note) { note.hidden = false; note.textContent = PAIR_FAIL_COPY[String(r?.reason)] ?? `配对失败：${String(r?.reason ?? '未知错误')}` }
+      showPairNote(note, PAIR_FAIL_COPY[String(r?.reason)] ?? `配对失败：${String(r?.reason ?? '未知错误')}`)
       return
     }
     renderPairPanel(String(r.code ?? ''), Number(r.expiresAt) || 0)
     pairCountdownTimer = setInterval(() => updatePairCountdown(Number(r.expiresAt) || 0), 1000)
     pairPollTimer = setInterval(() => { checkPairLanded(knownIds).catch(() => {}) }, 15_000)
   } catch (err) {
-    if (note) { note.hidden = false; note.textContent = pairErrText(err) }
+    showPairNote(note, pairErrText(err))
   } finally {
     if (btn) btn.disabled = false
   }
@@ -622,7 +628,7 @@ function updatePairCountdown(expiresAt) {
     const panel = document.getElementById('fd-pair-panel')
     if (panel) { panel.hidden = true; panel.innerHTML = '' }
     const note = document.getElementById('fd-pair-note')
-    if (note) { note.hidden = false; note.textContent = '配对码已过期 —— 需要时再生成一个。' }
+    showPairNote(note, '配对码已过期 —— 需要时再生成一个。')
     return
   }
   const el = document.getElementById('fd-pair-countdown')
@@ -641,7 +647,7 @@ async function checkPairLanded(knownIds) {
   const panel = document.getElementById('fd-pair-panel')
   if (panel) { panel.hidden = true; panel.innerHTML = '' }
   const note = document.getElementById('fd-pair-note')
-  if (note) { note.hidden = false; note.textContent = `🎉 配对成功：已和 ${fresh.name || fresh.id} 成为邻居` }
+  showPairNote(note, `配对成功：已和 ${fresh.name || fresh.id} 成为邻居`, 'success')
   refresh().catch(() => {})
 }
 
@@ -651,7 +657,7 @@ async function onPairAccept() {
   const btn = /** @type {HTMLButtonElement | null} */ (document.getElementById('fd-pair-accept'))
   const code = String(input?.value ?? '').trim()
   if (!/^\d{6}$/.test(code)) {
-    if (note) { note.hidden = false; note.textContent = '配对码是 6 位数字' }
+    showPairNote(note, '配对码是 6 位数字')
     return
   }
   if (btn) { btn.disabled = true; btn.textContent = '配对中…' }
@@ -665,14 +671,14 @@ async function onPairAccept() {
       stopPairTimers()
       const panel = document.getElementById('fd-pair-panel')
       if (panel) { panel.hidden = true; panel.innerHTML = '' }
-      if (note) { note.hidden = false; note.textContent = `🎉 已和 ${r.peer?.name ?? r.peer?.self_id ?? '对方'} 成为邻居` }
+      showPairNote(note, `配对成功：已和 ${r.peer?.name ?? r.peer?.self_id ?? '对方'} 成为邻居`, 'success')
       if (input) input.value = ''
       refresh().catch(() => {})
     } else {
-      if (note) { note.hidden = false; note.textContent = PAIR_FAIL_COPY[String(r?.reason)] ?? `配对失败：${String(r?.reason ?? '未知错误')}` }
+      showPairNote(note, PAIR_FAIL_COPY[String(r?.reason)] ?? `配对失败：${String(r?.reason ?? '未知错误')}`)
     }
   } catch (err) {
-    if (note) { note.hidden = false; note.textContent = pairErrText(err) }
+    showPairNote(note, pairErrText(err))
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '配对' }
   }
@@ -725,7 +731,7 @@ async function runTest(outbound) {
     if (r?.ok) {
       const dir = r.direction === 'in' ? 'inbound' : 'outbound'
       const status = r.http_status ? ` (HTTP ${r.http_status})` : ''
-      result.textContent = `✅ ${dir} delivered${status}` +
+      result.textContent = `${dir} delivered${status}` +
         (r.direction === 'in'
           ? ` — check your WeChat chat for [A2A:${testAgentId}] ${text}`
           : '')
@@ -733,11 +739,11 @@ async function runTest(outbound) {
     } else {
       const errMsg = r?.error ?? 'unknown error'
       const status = r?.http_status ? ` (HTTP ${r.http_status})` : ''
-      result.textContent = `❌ ${r?.direction ?? 'test'} failed: ${errMsg}${status}`
+      result.textContent = `${r?.direction ?? 'test'} failed: ${errMsg}${status}`
       result.className = 'a2a-test-result fail'
     }
   } catch (err) {
-    result.textContent = `❌ request failed: ${err instanceof Error ? err.message : String(err)}`
+    result.textContent = `request failed: ${err instanceof Error ? err.message : String(err)}`
     result.className = 'a2a-test-result fail'
   }
   // Refresh the agent list (counts may have updated from this test).

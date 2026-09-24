@@ -2,21 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { decisionRow, decisionGlyph, decisionSummary } from './decisions.js'
 
 describe('decisionGlyph', () => {
-  it('💬 for cron_eval_pushed', () => {
-    expect(decisionGlyph('cron_eval_pushed')).toBe('💬')
-  })
-  it('🤔 for cron_eval_skipped', () => {
-    expect(decisionGlyph('cron_eval_skipped')).toBe('🤔')
-  })
-  it('✨ for observation_written', () => {
-    expect(decisionGlyph('observation_written')).toBe('✨')
-  })
-  it('🎉 for milestone', () => {
-    expect(decisionGlyph('milestone')).toBe('🎉')
-  })
-  it('⚠ for cron_eval_failed', () => {
-    expect(decisionGlyph('cron_eval_failed')).toBe('⚠')
-  })
+  it.each(['cron_eval_pushed', 'cron_eval_skipped', 'observation_written', 'milestone', 'cron_eval_failed', 'unknown'])(
+    '%s renders a decorative icon beside the event summary', (kind) => {
+      expect(decisionGlyph(kind)).toMatch(/^<svg[^>]*aria-hidden="true"/)
+    })
 })
 
 describe('decisionSummary', () => {
@@ -40,7 +29,7 @@ describe('decisionRow', () => {
       id: 'evt_1', ts: new Date().toISOString(), kind: 'cron_eval_skipped',
       trigger: 'introspect', reasoning: 'user在专注',
     })
-    expect(html).toContain('🤔')
+    expect(html).toContain('<svg ')
     expect(html).toContain('刚刚')
     expect(html).toContain('想了想，决定不打扰')
     expect(html).toContain('data-reasoning="user在专注"')
@@ -53,5 +42,10 @@ describe('decisionRow', () => {
     })
     expect(html).not.toContain('<script>alert(1)')
     expect(html).toContain('&lt;script&gt;')
+  })
+
+  it('preserves emoji inside the CC-generated push text', () => {
+    expect(decisionRow({ id: 'evt_emoji', ts: new Date().toISOString(), kind: 'cron_eval_pushed', push_text: '庆祝一下 🎉' }))
+      .toContain('主动找你：「庆祝一下 🎉」')
   })
 })

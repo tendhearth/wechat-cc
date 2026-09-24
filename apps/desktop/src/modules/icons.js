@@ -3,6 +3,7 @@
 // Keep this file small: add only icons actually used by the desktop app.
 
 const ICONS = {
+  "brush": '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7.495 13.753c3.088-3.589 10.084-10.598 13.044-10.749c1.83-.175-1.817 6.321-10.46 13.43m1.38-6.39l2.257 2.28M3 20.855c.71-2.507.262-1.275.504-4.162c.13-.428.389-1.754 2.01-2.415c1.842-.752 3.193.384 3.542.918c1.029 1.115 1.148 2.5 0 4.082S4.504 21.253 3 20.855"/>',
   "attachment": '<path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l9-9m-6 12 8-8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
   "mail-01": '<g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m4 6 8 7 8-7"/></g>',
   "edit-02": '<path d="m4 16 12-12 4 4L8 20H4v-4Zm9-9 4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
@@ -53,7 +54,7 @@ export function icon(name, options = {}) {
   if (!body) return ""
   const size = options.size ?? 24
   const cls = options.className ? ` ${escapeAttr(options.className)}` : ""
-  const label = options.label ? ` aria-label="${escapeAttr(options.label)}"` : " aria-hidden=\"true\""
+  const label = options.label ? ` role="img" aria-label="${escapeAttr(options.label)}"` : " aria-hidden=\"true\""
   return `<svg class="hg-icon${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" focusable="false"${label}>${body}</svg>`
 }
 

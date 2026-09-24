@@ -233,15 +233,27 @@ describe('随身 CC (phone PWA + device pairing)', () => {
     expect(Buffer.from(r.data, 'base64').toString()).toBe('png-bytes')
   })
 
-  it('sticker image serving guards path traversal; icon is tokenless', async () => {
+  it('sticker image serving guards path traversal', async () => {
     const { port } = await panel.start(0)
     const base = `http://127.0.0.1:${port}`
     const t = panel.issueToken()
     expect((await fetch(`${base}/m/api/sticker/bear.png?t=${t}`)).status).toBe(200)
     expect((await fetch(`${base}/m/api/sticker/..%2F..%2Fagent-config.json?t=${t}`)).status).toBe(404)
+  })
+
+  it('serves the CC brand PNG without a token and declares its actual PWA dimensions', async () => {
+    const { port } = await panel.start(0)
+    const base = `http://127.0.0.1:${port}`
     const icon = await fetch(`${base}/m/icon.png`)
-    expect([200, 404]).toContain(icon.status)   // bundled art may be absent in test env — must not 401
-    expect(icon.status).not.toBe(401)
+    expect(icon.status).toBe(200)
+    expect(icon.headers.get('content-type')).toBe('image/png')
+    const bytes = Buffer.from(await icon.arrayBuffer())
+    expect(bytes.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    expect(bytes.equals(readFileSync(new URL('../../apps/desktop/src/wechat-cc-logo.png', import.meta.url)))).toBe(true)
+    const manifest = await (await fetch(`${base}/m/manifest.json`)).json() as { icons: Array<{ src: string; sizes: string; type: string }> }
+    expect(manifest.icons).toEqual([{
+      src: '/m/icon.png', sizes: `${bytes.readUInt32BE(16)}x${bytes.readUInt32BE(20)}`, type: 'image/png',
+    }])
   })
 
   it('/m 首屏是「今天」,口袋里还有原来三块', async () => {

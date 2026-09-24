@@ -22,6 +22,7 @@
 import { escapeHtml } from "../view.js"
 import { formatRelativeTimeShort } from "./observations.js"
 import { icon } from "./icons.js"
+import { showPageError } from "./page-status.js"
 // Shared, Tauri-safe helpers — single source of truth lives in sessions.js.
 // attachmentUrl routes through convertFileSrc in packaged Tauri (no
 // /attachment HTTP handler exists there); avatarInitial / avatarInfo were
@@ -41,6 +42,8 @@ const TIMELINE_PAGE = 100
 // ── module state ───────────────────────────────────────────────────────
 /** @type {string|null} */
 let selectedChatId = null
+// Keep failed/unfinished chat-list reads distinct from a genuinely empty list.
+let chatListReady = false
 /** @type {ViewId} */
 let currentView = "timeline"
 // Session-scoped: once the user enters the right passphrase we keep private
@@ -166,14 +169,9 @@ function renderSkeleton(root) {
  */
 async function loadChats(deps) {
   const switcher = document.getElementById("dialogue-chat-switcher")
-  /** @type {Array<{chat_id:string,user_name:string|null,session_count:number,last_used_at?:string}>} */
-  let chats = []
-  try {
-    const resp = /** @type {any} */ (await cli(deps, ["sessions", "list-chats", "--json"]))
-    chats = (resp && resp.chats) || []
-  } catch (err) {
-    console.error("dialogue list-chats failed", err)
-  }
+  // A failed read must not erase the selection or masquerade as no history.
+  const resp = /** @type {any} */ (await cli(deps, ["sessions", "list-chats", "--json"]))
+  const chats = /** @type {Array<{chat_id:string,user_name:string|null,session_count:number,last_used_at?:string}>} */ (resp?.chats || [])
 
   chatNames = {}
   for (const c of chats) {
@@ -278,7 +276,8 @@ async function loadTimeline(deps, opts = {}) {
     hasMore = !!(resp && resp.hasMore)
   } catch (err) {
     if (seq !== loadSeq) return
-    stage.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`
+    console.error("dialogue timeline failed", err)
+    showPageError(stage, { title: "暂时没能读取对话", description: "重新读取后，可以接着查看这段记录。", retry: () => loadTimeline(deps, opts) })
     return
   }
 
@@ -449,6 +448,10 @@ function updateLatestButton() {
  * @param {Deps} deps @param {{ auto?: boolean }} [opts]
  */
 async function refreshCurrentView(deps, opts = {}) {
+  if (!chatListReady) {
+    if (!opts.auto) await loadDialogue(deps)
+    return
+  }
   if (opts.auto && pagingInFlight) return
   if (currentView === "timeline") {
     if (opts.auto) {
@@ -532,7 +535,8 @@ async function loadThreads(deps, facet) {
     threads = (resp && resp.threads) || []
   } catch (err) {
     if (seq !== loadSeq) return
-    groups.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`
+    console.error("dialogue threads failed", err)
+    showPageError(groups, { title: "话题暂时没读出来", description: "稍后可以再试一次。", retry: () => loadThreads(deps, facet) })
     return
   }
 
@@ -606,7 +610,8 @@ async function openThreadDetail(deps, threadId) {
     else data = resp
   } catch (err) {
     if (seq !== loadSeq) return
-    detail.innerHTML = `<p class="empty-state">读取失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`
+    console.error("dialogue detail failed", err)
+    showPageError(detail, { title: "暂时没能打开这段话题", description: "可以重新读取当前话题。", retry: () => openThreadDetail(deps, threadId) })
     return
   }
   if (!data || !data.thread) {
@@ -745,7 +750,8 @@ async function runSearch(deps, query) {
     hits = (resp && resp.hits) || []
   } catch (err) {
     if (seq !== loadSeq) return
-    stage.innerHTML = `<p class="empty-state">搜索失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`
+    console.error("dialogue search failed", err)
+    showPageError(stage, { title: "这次搜索没能完成", description: "搜索内容还在，可以再试一次。", retry: () => runSearch(deps, trimmed) })
     return
   }
   if (seq !== loadSeq) return
@@ -993,6 +999,23 @@ function wireEvents(root, deps) {
 
 // ── entry point ────────────────────────────────────────────────────────
 
+/** @param {Deps} deps */
+async function loadDialogue(deps) {
+  chatListReady = false
+  try {
+    await loadChats(deps)
+    chatListReady = true
+    await switchView(deps, currentView)
+  } catch (err) {
+    console.error("dialogue init failed", err)
+    const stage = document.getElementById("dialogue-timeline")
+    if (stage) {
+      showTimelineView()
+      showPageError(stage, { title: "暂时没能打开对话记录", description: "重新读取后，就能继续查看。", retry: () => loadDialogue(deps) })
+    }
+  }
+}
+
 /**
  * Initialise the 对话 pane. Idempotent — guarded by root.dataset.ready so
  * re-entry (pane re-switch) doesn't double-wire. On first init it renders
@@ -1008,19 +1031,11 @@ export function initDialoguePage(deps) {
   if (root.dataset.ready === "true") {
     // Already mounted — just refresh the current view so re-entering the
     // pane picks up new messages.
-    loadChats(deps)
-      .then(() => switchView(deps, currentView))
-      .catch(err => console.error("dialogue refresh failed", err))
+    loadDialogue(deps)
     return
   }
   root.dataset.ready = "true"
   renderSkeleton(root)
   wireEvents(root, deps)
-  loadChats(deps)
-    .then(() => loadTimeline(deps))
-    .catch(err => {
-      console.error("dialogue init failed", err)
-      const stage = document.getElementById("dialogue-timeline")
-      if (stage) stage.innerHTML = `<p class="empty-state">加载失败：${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`
-    })
+  loadDialogue(deps)
 }

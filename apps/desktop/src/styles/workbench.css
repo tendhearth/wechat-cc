@@ -115,7 +115,7 @@
 .wb-operation-detail>summary { width:fit-content; cursor:pointer; }
 .wb-operation-detail pre { max-height:260px; overflow:auto; margin:8px 0 0; padding:10px; border-radius:5px; background:#f0eee7; color:var(--wb-secondary); white-space:pre-wrap; overflow-wrap:anywhere; font:11px/1.6 var(--mono); }
 .wb-operation-detail p { margin:7px 0 0; overflow-wrap:anywhere; }
-.wb-operation-output pre { color:var(--wb-text); font:13px/1.7 var(--font-body, sans-serif); }
+.wb-operation-output pre { color:var(--wb-text); font:13px/1.7 var(--sans); }
 .wb-operation-group>summary:focus-visible,.wb-operation-detail>summary:focus-visible { outline:2px solid #758168; outline-offset:4px; border-radius:2px; }
 @media(max-width:640px) { .wb-operation-line { flex-wrap:wrap; gap:4px 8px; } .wb-operation-label { flex-basis:calc(100% - 45px); } .wb-operation-line time { margin-left:auto; } }
 .wb-queue-guidance { border-left:2px solid #b99653; padding:10px 12px; margin-bottom:18px; background:#f7f1e5; color:#795a28; font-size:12px; line-height:1.65; }

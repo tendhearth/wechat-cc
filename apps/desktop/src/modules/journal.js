@@ -13,6 +13,7 @@
  */
 import { invokeApi } from '../api.js'
 import { escapeHtml, showToast } from '../view.js'
+import { icon } from './icons.js'
 
 /** 状态机:主人手点,不由系统推断。 */
 export const STATUSES = [
@@ -80,9 +81,9 @@ export function splitByStatus(items) {
  * @param {any} it
  */
 function renderVisitCard(it) {
-  return `<article class="hb-card hb-visit" data-hb-id="${escapeHtml(it.id)}">
+  return `<article class="hb-card hb-visit" aria-label="串门见闻" data-hb-id="${escapeHtml(it.id)}">
     <div class="hb-head">
-      <h3 class="hb-title">🚶 ${escapeHtml(it.title || '串门')}</h3>
+      <h3 class="hb-title">${icon('user-group', { size: 18, className: 'hb-kind-icon' })} ${escapeHtml(it.title || '串门')}</h3>
       <span class="hb-day">${escapeHtml(dayLabel(it.ts))}</span>
     </div>
     ${it.image_svg ? `<div class="hb-postcard">${it.image_svg}</div>` : ''}
@@ -98,9 +99,9 @@ function renderVisitCard(it) {
  * @param {any} it
  */
 function renderPostcardCard(it) {
-  return `<article class="hb-card hb-postcard-card" data-hb-id="${escapeHtml(it.id)}">
+  return `<article class="hb-card hb-postcard-card" aria-label="明信片" data-hb-id="${escapeHtml(it.id)}">
     <div class="hb-head">
-      <h3 class="hb-title">📮 ${escapeHtml(it.title || '明信片')}</h3>
+      <h3 class="hb-title">${icon('mail-01', { size: 18, className: 'hb-kind-icon' })} ${escapeHtml(it.title || '明信片')}</h3>
       <span class="hb-day">${escapeHtml(dayLabel(it.ts))}</span>
     </div>
     <p class="hb-note">${escapeHtml(it.note || '')}</p>

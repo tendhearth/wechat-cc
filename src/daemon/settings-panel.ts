@@ -34,6 +34,7 @@ import { PROVIDER_SETUP_HINTS, type LlmHealthReport } from './llm-health'
 import { capabilitiesFor } from '../core/capability-matrix'
 import { PROVIDER_IDS } from '../lib/provider-ids'
 import { buildFeed, decodeCursor, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
+import { MOBILE_BRAND_ICON_PNG, MOBILE_BRAND_ICON_SIZES } from './mobile-brand-icon'
 import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions} from './mobile-workbench'
 import {mobileMatterDetailResponse} from './mobile-matter-response'
 import type {MatterSayInput} from '../core/matters/service'
@@ -462,21 +463,14 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   async function routeRequest(url: URL, t: string | null, req: Request): Promise<Response> {
           // ── tokenless surfaces (non-sensitive) ─────────────────────────
           if (url.pathname === '/m/icon.png') {
-            const { starterStickersDir } = await import('./stickers')
-            const dir = starterStickersDir()
-            const icon = dir ? join(dir, 'bear-complete.png') : null
-            if (icon && existsSync(icon)) {
-              return new Response(readFileSync(icon), { headers: { 'content-type': 'image/png' } })
-            }
-            return json({ error: 'not_found' }, 404)
+            return new Response(MOBILE_BRAND_ICON_PNG, { headers: { 'content-type': 'image/png' } })
           }
           if (url.pathname === '/m/manifest.json') {
             return json({
               name: 'CC', short_name: 'CC', id: '/m', start_url: '/m', scope: '/m', display: 'standalone',
               background_color: '#f5ead8', theme_color: '#f5ead8',
-              // bear-complete.png 实际是 340x360;声明尺寸必须跟真实一致,否则
-              // 浏览器判定不匹配、拒用这个图标,主屏就退化成通用字母图标。
-              icons: [{ src: '/m/icon.png', sizes: '340x360', type: 'image/png' }],
+              // Read dimensions from the bundled PNG so launchers accept it.
+              icons: [{ src: '/m/icon.png', sizes: MOBILE_BRAND_ICON_SIZES, type: 'image/png' }],
             })
           }
           if (url.pathname === '/m/sw.js') {

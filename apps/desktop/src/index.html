@@ -695,13 +695,7 @@
                   <div class="fd-eyebrow">觅食台 · 你 bot 的秘密交易台</div>
                   <h1 class="fd-h1">你的 bot 正在替你，悄悄地找。</h1>
                   <div class="fd-status" id="fd-hero-status">
-                    <svg class="fd-frog" viewBox="0 0 30 30" fill="none" aria-hidden="true">
-                      <ellipse cx="15" cy="19" rx="10" ry="8" fill="#8AA36F"/>
-                      <circle cx="10" cy="10" r="4.2" fill="#8AA36F"/><circle cx="20" cy="10" r="4.2" fill="#8AA36F"/>
-                      <circle cx="10" cy="10" r="2" fill="#fff"/><circle cx="20" cy="10" r="2" fill="#fff"/>
-                      <circle cx="10.6" cy="10.4" r="1" fill="#3B3125"/><circle cx="20.6" cy="10.4" r="1" fill="#3B3125"/>
-                      <path d="M11 20 q4 3 8 0" stroke="#3B3125" stroke-width="1.3" stroke-linecap="round"/>
-                    </svg>
+                    <span class="fd-status-icon" data-hg-icon="user-group" data-hg-size="24" aria-hidden="true"></span>
                     <span class="fd-status-line">加载中…</span>
                   </div>
                   <div class="fd-social-note" id="fd-social-note" hidden></div>
@@ -746,7 +740,7 @@
                     <div class="fd-net-body">
                       <!-- ✉️ 笔友信箱 -->
                       <div class="fd-sub">
-                        <div class="fd-sec-head"><h2>✉️ 笔友信箱</h2><span class="fd-count" id="fd-mailbox-count"></span><span class="fd-hint">只有你们俩看得到 · 中间人碰不到内容</span></div>
+                        <div class="fd-sec-head"><h2><span class="ic" data-hg-icon="mail-01" aria-hidden="true"></span>笔友信箱</h2><span class="fd-count" id="fd-mailbox-count"></span><span class="fd-hint">只有你们俩看得到 · 中间人碰不到内容</span></div>
                         <div class="fd-mailbox" id="fd-mailbox"></div>
                       </div>
                     </div>
@@ -833,7 +827,7 @@
       <form id="a2a-add-form">
         <label>对方 bot 的地址 <input type="url" name="url" required placeholder="https://example.com/a2a"></label>
         <div class="a2a-form-actions">
-          <button type="submit">看看是谁 →</button>
+          <button class="btn primary" type="submit">看看是谁</button>
         </div>
       </form>
       <section id="a2a-add-preview" hidden>
@@ -843,14 +837,14 @@
         <label>给它起个短名（英文/数字） <input name="id" required></label>
         <label>对方给的钥匙（选填） <input name="outbound_key" placeholder="对方 bot 文档里的 API key"></label>
         <div class="a2a-form-actions">
-          <button id="a2a-install-confirm" type="button">连上</button>
-          <button id="a2a-install-cancel" type="button">算了</button>
+          <button id="a2a-install-confirm" class="btn primary" type="button">连上</button>
+          <button id="a2a-install-cancel" class="btn" type="button">算了</button>
         </div>
       </section>
       <section id="a2a-add-success" hidden>
-        <p>✅ 连上了。把下面这段发给对方，对方的 bot 才能回消息给你：</p>
+        <p class="status-success" role="status">连上了。把下面这段发给对方，对方的 bot 才能回消息给你：</p>
         <pre id="a2a-add-curl"></pre>
-        <button id="a2a-add-close" type="button">好</button>
+        <button id="a2a-add-close" class="btn primary" type="button">好</button>
       </section>
     </dialog>
 

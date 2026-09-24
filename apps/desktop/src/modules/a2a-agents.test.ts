@@ -153,6 +153,8 @@ describe('配对面板', () => {
     await __onPairAcceptForTest?.()
     expect((invokeApi as any)).toHaveBeenCalledWith('POST', '/v1/pair/accept', { code: '277499' })
     expect(el['fd-pair-note'].textContent).toContain('老王的CC')
+    expect(el['fd-pair-note'].textContent).toMatch(/^配对成功：/)
+    expect(el['fd-pair-note'].classList.contains('status-success')).toBe(true)
     expect(el['fd-pair-code'].value).toBe('')
   })
 
@@ -168,6 +170,7 @@ describe('配对面板', () => {
     const { __onPairAcceptForTest } = await import('./a2a-agents.js')
     await __onPairAcceptForTest?.()
     expect(el['fd-pair-note'].textContent).toContain(copy)
+    expect(el['fd-pair-note'].classList.contains('status-error')).toBe(true)
   })
 
   it('checkPairLanded 发现新 agent → 配对成功文案 + 收起面板', async () => {
@@ -178,6 +181,8 @@ describe('配对面板', () => {
     const { __checkPairLandedForTest } = await import('./a2a-agents.js')
     await __checkPairLandedForTest?.(new Set(['old']))
     expect(el['fd-pair-note'].textContent).toContain('小李的CC')
+    expect(el['fd-pair-note'].textContent).toMatch(/^配对成功：/)
+    expect(el['fd-pair-note'].classList.contains('status-success')).toBe(true)
     expect(el['fd-pair-panel'].hidden).toBe(true)
   })
 
