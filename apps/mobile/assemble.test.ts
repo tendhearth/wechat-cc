@@ -36,6 +36,10 @@ describe('assembleMobilePage', () => {
   it('refuses unknown runtime markers', () => {
     expect(() => assembleMobilePage(files({ 'a.js': '{{TOKNE_JSON}}' }))).toThrow('unknown runtime marker {{TOKNE_JSON}}')
   })
+  it.each(['{{token_json}}', '{{Token_JSON}}', '{{> boot.js}}', '{{>boot.ts}}', '{{ TOKEN_JSON }}'])(
+    'refuses a malformed marker %s instead of shipping it literally', (marker) => {
+      expect(() => assembleMobilePage(files({ 'a.js': `x ${marker} y` }))).toThrow(/malformed or unknown marker/)
+    })
   it('fails loudly on a missing include', () => {
     expect(() => assembleMobilePage(files({ 'a.js': '{{>nope.js}}' }))).toThrow('no file nope.js')
   })

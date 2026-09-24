@@ -2,3 +2,8 @@
 # (2026-09-10 dev 的 windows-latest 因此 111 个 digest / geometry 错误)。整棵树按原样进出。
 apps/desktop/src/assets/pet/** -text
 apps/desktop/art/** -text
+
+# 手机页源码与生成物:apps/mobile/build.test.ts 按整份文本比对「源码 → 生成物」,
+# autocrlf 把两边行尾改成 CRLF 后比对必红(windows-latest)。服务出去的字节本来就该是 LF。
+apps/mobile/src/** text eol=lf
+src/daemon/mobile-page.generated.json text eol=lf

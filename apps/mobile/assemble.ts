@@ -19,6 +19,8 @@ export interface MobilePage {
 const INCLUDE = /\{\{>([a-z-]+\.(?:js|css|html))\}\}/g
 // 键名里有数字(ART_LIT_B64):少了 0-9 会让冻结图原封不动地以 {{…}} 送上手机。
 const RUNTIME = /\{\{([A-Z0-9_]+)\}\}/g
+const RUNTIME_ONE = /^\{\{([A-Z0-9_]+)\}\}$/
+const ANY_MARKER = /\{\{[^{}\n]*\}\}/g
 
 function expand(name: string, read: (name: string) => string, stack: string[]): string {
   if (stack.includes(name)) throw new Error(`mobile page: include cycle ${[...stack, name].join(' → ')}`)
@@ -36,6 +38,11 @@ export function assembleMobilePage(read: (name: string) => string): MobilePage {
   for (const text of [page.phone, page.sw, page.bootstrap, page.transport, page.scripts.workbench, page.scripts.presence]) {
     for (const m of text.matchAll(RUNTIME)) {
       if (!(RUNTIME_VARS as readonly string[]).includes(m[1]!)) throw new Error(`mobile page: unknown runtime marker {{${m[1]}}}`)
+    }
+    // 两种合法标记之外的 {{…}}(小写、空格、错扩展名的包含)两个正则都不认,会原样送上手机 —— 这里兜住。
+    for (const m of text.matchAll(ANY_MARKER)) {
+      const key = RUNTIME_ONE.exec(m[0])?.[1]
+      if (!key || !(RUNTIME_VARS as readonly string[]).includes(key)) throw new Error(`mobile page: malformed or unknown marker ${m[0]}`)
     }
   }
   return page
