@@ -16,18 +16,22 @@ wechat-cc 是一个把 Claude Code / Codex / cursor 一类的编码 agent 接到
 
 ## 三条硬规矩
 
-1. 只在 `dev` 分支上干活。
+1. 功能开发和修复从 `dev` 起独立分支,在各自独立的 worktree 中完成;`dev` 用于集成与验收。同一批任务指定一名整合者,串行负责合入 `dev`、部署和推送。
 2. 进 `master` 只走 PR,而且只用 squash merge。
-3. 不碰兄弟工作树(`~/Documents/tendhearth/` 下还有别的 checkout,它们不是这个仓库)。
+3. 只修改分配给自己的工作区和分支。其他工作区只读,不得替别人切分支、清理、暂存或覆盖未提交修改;不得让两个执行者同时写同一工作区。
 
 ## 标准回路
 
+开发者在自己的分支完成修改、验证和提交,交给整合者。整合者在指定的集成工作区逐项合入 `dev`,对合并后的版本重新验证,再部署、推送。分工、冲突处理和运行环境隔离见[维护者手册](docs/maintainer/README.md#多-agent-协作)。
+
 ```bash
+# 开发分支本地验证;整合者合入 dev 后也要验证
 bun run test          # bun --bun vitest run
 npm run test:node     # 同一套源码在 node 下再跑一遍
 bun run typecheck     # tsc --noEmit
 bun run depcheck      # 模块边界
 
+# 以下由整合者在已验证的 dev 版本上串行执行
 cd apps/desktop && bun run build-sidecar && cd -
 wechat-cc self deploy                                          # 原子换 sidecar + 重启 + 健康门,失败自动回滚
 wechat-cc selftest workbench --executor cursor --image --resume
@@ -35,6 +39,7 @@ wechat-cc selftest chat --provider cursor --resume
 
 git push origin dev && wechat-cc ci triage --wait --rerun      # 看 CI(0 绿 / 1 真红 / 2 没运行 / 3 flake)
 
+# 自动自改也要纳入同一整合安排,不要与人工部署/推送同时运行
 wechat-cc self change "<需求>"                                  # 让 CC 自己走完上面整套(五道闸门 + 主人微信拍板)
 ```
 

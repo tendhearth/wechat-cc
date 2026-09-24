@@ -256,14 +256,15 @@ describe('随身 CC (phone PWA + device pairing)', () => {
     }])
   })
 
-  it('/m 首屏是「今天」,口袋里还有原来三块', async () => {
+  it('/m 首屏是「此刻」,回忆里仍能访问口袋三块', async () => {
     const { port } = await panel.start(0)
     const t = panel.issueToken()
     const html = await (await fetch(`http://127.0.0.1:${port}/m?t=${t}`)).text()
     expect(html).toContain('id="p-today"')
     expect(html).toContain('id="p-pocket"')
     expect(html).toContain('/m/api/home')
-    expect(html).toContain('cc.home.v1')
+    expect(html).toContain('cc.home.v2:')
+    expect(html).toContain('id="p-memory"')
     for (const id of ['id="todos"', 'id="portrait"', 'id="stickers"']) expect(html).toContain(id)
   })
 })
@@ -342,6 +343,15 @@ describe('随身 CC 首屏:伙伴的一天', () => {
       expect(r.presence_error).toBe('unavailable')
       expect(r.sources_degraded).toEqual(['thought'])
       expect((r.events as unknown[]).length).toBe(2)
+    })
+  })
+  it('home returns an authenticated decision shortcut, not an approval payload', async()=>{
+    const task={id:'deadbeef',kind:'task',title:'首页调整',status:'open',updatedAt:NOW}
+    await withPanel(mk({matters:{list:()=>[task],detail:()=>({matter:task,task:{id:task.id,status:'running'},runId:'r1',permissions:[{id:'request1',taskId:task.id,description:'private command'}]}),say:async()=>({}),seenOnPhone:()=>{}}}),async(base,t)=>{
+      expect((await fetch(`${base}/m/api/home`)).status).toBe(401)
+      const response=await (await fetch(`${base}/m/api/home?t=${t}`)).json() as {work:unknown}
+      expect(response.work).toEqual({focus:{id:'deadbeef',title:'首页调整',kind:'decision'},partial:false})
+      expect(JSON.stringify(response.work)).not.toContain('private command')
     })
   })
   it('home:feed dep 缺 → 三项 degraded、空 events,仍 200', async () => {
