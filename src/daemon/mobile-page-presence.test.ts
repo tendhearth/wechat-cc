@@ -1,6 +1,6 @@
 import {describe,it,expect} from 'vitest'
 import {phoneHtml} from './settings-panel-html'
-import {MOBILE_PRESENCE_JS} from './mobile-presence-view'
+import {MOBILE_PRESENCE_JS} from './mobile-page'
 import art from './mobile-presence-art.json'
 import {readFileSync} from 'node:fs'
 import {createHash} from 'node:crypto'

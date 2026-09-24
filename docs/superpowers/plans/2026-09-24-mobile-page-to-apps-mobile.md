@@ -469,6 +469,8 @@ for (const [name, text] of Object.entries(files)) writeFileSync(`${OUT}/${name}`
 console.log(Object.keys(files).sort().join(' '))
 ```
 
+> **执行时更正(2026-09-24):** 不能用 `bun` 直接跑这个脚本 —— Bun 转译 `String.raw` 模板时把中文改写成 `进` 这类转义,`workbench.js` / `presence.js` 抽出来就带字面转义,金标当场红。实际做法:在旧提交的临时工作树里把脚本改成一条 vitest 用例,用 node 运行器(`npx vitest run -c vitest.node.config.ts`)跑。
+
 - [ ] **Step 2: 跑抽取,删脚本**
 
 ```bash

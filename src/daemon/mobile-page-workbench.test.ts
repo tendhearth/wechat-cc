@@ -10,7 +10,7 @@
  * 恢复即撤、回前台按当前页分路刷新、断网期间点的那一下重连后核对(绝不自动重发)。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { MOBILE_WORKBENCH_JS } from './mobile-workbench-client'
+import { MOBILE_WORKBENCH_JS } from './mobile-page'
 import { phoneHtml } from './settings-panel-html'
 
 const IDS = ['m-list', 'm-detail', 'm-back', 'm-title', 'm-notice', 'm-controls', 'm-permissions',

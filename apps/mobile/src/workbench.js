@@ -1,5 +1,4 @@
-/** Standalone PWA task interactions. No external scripts or desktop operator credential. */
-export const MOBILE_WORKBENCH_JS=String.raw`
+
 var M_STATUS = { open: "进行中", replied: "已答复", done: "已了结", archived: "已归档" }
 var M_KIND = { task: "任务", chat: "对话", companion: "陪伴" }
 var M_INPUT_STATUS={pending:"补充已保存，等待执行者接收。",sending:"补充正在发送，等待执行者确认。",delivered:"这条补充已送达。",held:"未确认送达，请先查看任务记录。原文已保留。",withdrawn:"这条补充已撤回，原文已保留。"},mInputStates={}
@@ -247,4 +246,3 @@ async function mArtifact(artifact) {
   }catch(e){if(mCurrent===id)mNotice(mError(e.message))}finally{delete mBusy[key]}
 }
 document.getElementById('m-artifacts').addEventListener('click',function(ev){var b=ev.target.closest('[data-artifact]');if(!b||!mDetail)return;var a=(mDetail.artifacts||[]).find(function(a){return a.id===b.dataset.artifact&&a.taskId===mCurrent});if(a)mArtifact(a)})
-`
