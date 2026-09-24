@@ -59,3 +59,15 @@ Restart the daemon. On boot it generates `mailbox-key.json` (0600) in the state 
 - **Anti-replay (M2):** fetch/ack sigs carry a ±5-min freshness window, no per-request jti, and don't bind `since` — harmless under TLS + content-blindness (a replay only re-reads the caller's own mailbox), a known v0 limitation.
 - **v1 (NOT in v0):** multi-relay redundancy, per-connection rotating addresses, PoW anti-flood, sealed-sender metadata hardening. Single relay = single point of failure for the mailbox path (push/ws peers unaffected).
 - **Metadata:** the relay operator can see "which address polls / who drops to whom" (content-blind, not metadata-blind). v0 accepts a self-hosted/trusted operator (parent spec §11).
+
+## 壳页 pset(`relay/pset.html`)
+
+微信里 `/set` 链接落地的公网引导壳,**不随 daemon 发布**,是 nginx 静态文件:`cc.tendhearth.com` 在 `195.133.192.92`(`ssh vps-195-133-192-92`,免密 sudo),vhost `/etc/nginx/conf.d/cc-tendhearth.conf`,文件 `/var/www/cc.tendhearth.com/pset/index.html`。改了 `relay/pset.html` 要手动上:
+
+```bash
+scp relay/pset.html vps-195-133-192-92:/tmp/pset.html
+ssh vps-195-133-192-92 'D=/var/www/cc.tendhearth.com/pset; sudo cp -p $D/index.html $D/index.html.bak-$(date +%Y%m%d); sudo install -m 644 -o root -g root /tmp/pset.html $D/index.html; rm /tmp/pset.html'
+curl -s https://cc.tendhearth.com/pset/ | shasum -a 256; shasum -a 256 relay/pset.html   # 两个哈希要一致
+```
+
+这台机器同时跑翻墙出口、tailnet DERP 等,只动上面这一个文件。
