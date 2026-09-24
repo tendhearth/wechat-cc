@@ -1,9 +1,10 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest'
 import {createHash,randomUUID} from 'node:crypto'
-import {mkdirSync,mkdtempSync,realpathSync,rmSync} from 'node:fs'
+import {mkdirSync,mkdtempSync,realpathSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../lib/db'
+import {removeTempDir} from '../lib/test-temp'
 import {createProviderRegistry} from '../core/provider-registry'
 import {makeMatterStore} from '../core/matters/store'
 import {makeMattersService} from '../core/matters/service'
@@ -50,7 +51,10 @@ beforeEach(async()=>{
   panel=makeSettingsPanel({stateDir:root,ownerChatId:()=>'owner',chatPrefs:{get:()=>({}),set:()=>({})},getUserName:()=>null,setUserName:async()=>{},log:()=>{},matters:{...service,say:(id,text,input)=>service.say(id,text,'phone',input),seenOnPhone:id=>{matters.bind(id,'phone','pwa')}}})
   const {port}=await panel.start(0);base=`http://127.0.0.1:${port}`;token=panel.issueToken()
 })
-afterEach(async()=>{await panel?.stop();await workbench?.shutdown();db?.close();rmSync(root,{recursive:true,force:true})})
+// 用 removeTempDir 而不是裸 rmSync:Windows 上 daemon 刚关、句柄还没落地时
+// rm 会抛 EBUSY,而这里是 afterEach ⇒ 抛出来就把整块 9 条用例判红。helper 会
+// 重试 20 次再降级成一条 warning(仓库约定,见 AGENTS.md 的临时目录那条)。
+afterEach(async()=>{await panel?.stop();await workbench?.shutdown();db?.close();removeTempDir(root)})
 function create(name:string){const path=join(root,name);mkdirSync(path);return workbench.create({path,providerId:'claude',text:name})}
 function request(path:string,body?:unknown,auth=token){return fetch(base+path+(path.includes('?')?'&':'?')+'t='+encodeURIComponent(auth),body===undefined?{}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})}
 async function ready(id:string){await expect.poll(()=>workbench.detail(id).permissions.length).toBe(1);return workbench.detail(id)}
