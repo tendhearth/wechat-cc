@@ -25,7 +25,7 @@
 | 自改流水线(`self change`) | [maintainer/self-change.md](maintainer/self-change.md) | `superpowers/specs/2026-09-18-self-change-pipeline-design.md` |
 | 「一件事」matter 原语与任务入口 | [工作台现状](cc-workbench.md) | `superpowers/specs/2026-09-13-cc-unified-task-entry.md` 那一批(09-12/09-13)；[陪伴交办与手机验收记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md) |
 | 交办后的回报(形状已定,细节未完) | — | `superpowers/specs/2026-09-23-delegation-report-design.md` |
-| Windows 进程树清理(**待批准的 spike**,未开工) | — | `superpowers/specs/2026-09-23-windows-process-tree-spike.md` |
+| Windows 进程树清理(spike **已跑完:可行**,落地待定) | — | `superpowers/specs/2026-09-23-windows-process-tree-spike.md` |
 | 终端会话 ↔ 微信(`wechat-cc hook`) | README 对应章节 | `superpowers/specs/2026-09-09-cli-hook-push-design.md` |
 | 模型与后端管理 | README 对应章节 | `superpowers/specs/2026-09-08-model-management-design.md` |
 | 桌宠 CC / 美术资产 | — | `superpowers/specs/2026-09-05-cc-desktop-pet-design.md` + `2026-09-08-cc-asset-production-brief.md` + `2026-09-01-cc-atelier-design.md` |
