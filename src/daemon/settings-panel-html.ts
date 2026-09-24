@@ -5,7 +5,7 @@
  *
  * These are pure string builders (pageHtml/phoneHtml take their args, the rest
  * are constants). No dependency on makeSettingsPanel internals — safe to live
- * apart. `TUNNEL_CLIENT_JS` is shared by both pages and stays private here.
+ * apart. `TUNNEL_CLIENT_JS` is shared by both pages; exported only so the apps/mobile move can extract it verbatim.
  */
 import { readFileSync } from 'node:fs'
 import { safeSvg } from '../lib/svg-sanitize'
@@ -378,7 +378,7 @@ try {
 } catch (e) { document.getElementById("msg").textContent = "浏览器不让存钥匙,回微信重新拿链接吧" }
 </script></body>`
 
-const TUNNEL_CLIENT_JS = `
+export const TUNNEL_CLIENT_JS = `
 // 传输层:先直连(同 Wi-Fi),失败且配了 remote 就走中继隧道(端到端加密)。
 var b64u = { enc: function(b){ return btoa(String.fromCharCode.apply(null, new Uint8Array(b))).replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/,"") },
   dec: function(s){ s = s.replace(/-/g,"+").replace(/_/g,"/"); var bin = atob(s); var a = new Uint8Array(bin.length); for (var i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return a } }
