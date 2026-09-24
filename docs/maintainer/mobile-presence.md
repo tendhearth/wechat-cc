@@ -2,6 +2,8 @@
 
 本轮把 `apps/desktop/art/cc-mobile-companion/` 第二版设计接到现有 `/m` PWA,复用原有手机配对、直连/隧道、matter 详情与审批接口。没有另建权限系统或改生产数据结构。
 
+> 2026-09-24 起页面源码在 [`apps/mobile/src`](../../apps/mobile/README.md),改完跑 `bun run build:mobile`;daemon 只读生成物 `src/daemon/mobile-page.generated.json`。下文提到的 `mobile-presence-view` / `mobile-workbench-client` 已并入 `apps/mobile/src/presence.*` / `workbench.js`,测试改名为 `mobile-page-presence` / `mobile-page-workbench`。
+
 ## 页面和数据
 
 - **此刻**: `/m/api/home` 的真实 presence,未知时明确说不知道。没有信号就不声称正在画画。Light / Dark 使用冻结正身,仅在页面到来时淡化亮起,不跟网络或主题切换。
@@ -21,7 +23,7 @@
 
 `bun scripts/build-mobile-presence-art.ts` 将两张冻结 PNG 原字节嵌入 JSON,供编译后的 sidecar 和隧道页面使用,无需运行时访问源码路径。测试校验原文件、摘要和嵌入字节一致,并检查页面经过 base64 封装后仍低于 512KB。
 
-定向回归覆盖 `mobile-home-focus`、`mobile-presence-view`、`mobile-workbench-client`、`settings-panel`、`settings-panel-workbench` 和 `core/matters/service`。浏览器验收使用隔离数据,检查首页到任务、审批、图片预览、补充送达和断线恢复。真机软键盘、微信内置浏览器与公网隧道仍需部署后验收。
+定向回归覆盖 `mobile-home-focus`、`mobile-page-presence`、`mobile-page-workbench`、`settings-panel`、`settings-panel-workbench` 和 `core/matters/service`。浏览器验收使用隔离数据,检查首页到任务、审批、图片预览、补充送达和断线恢复。真机软键盘、微信内置浏览器与公网隧道仍需部署后验收。
 
 本轮仅在独立开发分支交付,不重启共享 daemon。整合者合入并验证后,按维护者标准回路构建、部署和真机自检。
 
