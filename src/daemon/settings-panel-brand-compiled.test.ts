@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { removeTempDir } from '../lib/test-temp'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -38,7 +39,10 @@ try {
       expect(icon.type).toBe('image/png')
       expect(Buffer.from(icon.png, 'base64').equals(readFileSync(new URL('../../apps/desktop/src/wechat-cc-logo.png', import.meta.url)))).toBe(true)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      // 刚 spawn 过一个可执行文件就删它所在的目录:Windows 上句柄还没落地,
+      // 裸 rmSync 会抛 EBUSY,而这里在 finally 里 ⇒ 抛出来就把用例判红。
+      // removeTempDir 重试 20 次后降级成一条 warning(AGENTS.md 的临时目录约定)。
+      removeTempDir(dir)
     }
   }, 60_000)
 })
