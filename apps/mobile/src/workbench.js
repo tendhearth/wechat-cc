@@ -58,10 +58,11 @@ function mApi(path,opts) {
 }
 function mClearPreview() { mObjectUrls.forEach(function(u){URL.revokeObjectURL(u)});mObjectUrls=[];document.getElementById("m-artifact-preview").replaceChildren() }
 function mSetButtons() {
-  document.querySelectorAll("#m-controls button[data-request]").forEach(function(b){b.disabled=!mDetailFresh||!!mBusy[b.dataset.task+":"+b.dataset.request]})
-  document.querySelectorAll("#m-questions [data-question-request]").forEach(function(card){var disabled=!!mBusy[mCurrent+":"+card.dataset.questionRequest];card.querySelectorAll('input,textarea').forEach(function(input){input.disabled=disabled})})
-  document.getElementById("m-send").disabled=!mDetailFresh||!mDetail||mTooLarge||!!mBusy[mCurrent+":say"]
-  document.getElementById("m-say").disabled=mTooLarge
+  document.querySelectorAll("#m-controls button[data-request]").forEach(function(/** @type {HTMLButtonElement} */ b){b.disabled=!mDetailFresh||!!mBusy[b.dataset.task+":"+b.dataset.request]})
+  document.querySelectorAll("#m-questions [data-question-request]").forEach(function(/** @type {HTMLElement} */ card){var disabled=!!mBusy[mCurrent+":"+card.dataset.questionRequest];card.querySelectorAll('input,textarea').forEach(function(/** @type {HTMLInputElement} */ input){input.disabled=disabled})})
+  var send=/** @type {HTMLButtonElement} */ (document.getElementById("m-send")),say=/** @type {HTMLTextAreaElement} */ (document.getElementById("m-say"))
+  send.disabled=!mDetailFresh||!mDetail||mTooLarge||!!mBusy[mCurrent+":say"]
+  say.disabled=mTooLarge
 }
 function loadMatters() {
   mApi("/m/api/matters?status=open,replied,done").then(function(r){
@@ -79,7 +80,7 @@ function mObserveInput(id,input,notify) {
   if(matches){
     if(input.status==='delivered'){
       mWrite(id+':say',null)
-      if(mCurrent===id&&document.getElementById('m-say').value.trim()===input.text)document.getElementById('m-say').value=''
+      if(mCurrent===id&&/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say')).value.trim()===input.text)/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say')).value=''
     }else if(!draft.runId){draft.runId=input.runId;mWrite(id+':say',draft)}
   }
   if(mCurrent===id&&(notify||(matches&&changed)))mNotice(M_INPUT_STATUS[input.status])
@@ -142,7 +143,7 @@ function openMatter(id) {
   if(mCurrent!==id)mAutoPreview=''
   if(mCurrent!==id){mSeq++;mDetail=null;mTooLarge=false;mQuestionKey="";mClearPreview();document.getElementById("m-events").replaceChildren();document.getElementById("m-permissions").replaceChildren();document.getElementById("m-questions").replaceChildren();document.getElementById("m-artifacts").replaceChildren();document.getElementById('m-inputs').replaceChildren();mSetButtons();mNotice("");document.getElementById("m-title").textContent="正在读…"}
   mCurrent=id;mActive=true
-  var draft=mRead(id+":say");document.getElementById("m-say").value=draft&&typeof draft.text==='string'?draft.text:""
+  var draft=mRead(id+":say");/** @type {HTMLTextAreaElement} */ (document.getElementById("m-say")).value=draft&&typeof draft.text==='string'?draft.text:""
   document.getElementById("m-list").hidden=true;document.getElementById("m-detail").hidden=false
   return mRefresh()
 }
@@ -160,18 +161,18 @@ function mDecision(control,request) {
   mBusy[key]=true;mSetButtons();mNotice("正在提交…")
   mApi('/m/api/matter/'+(permission?'permission':'answer'),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(function(){if(!permission)mWrite(id+":question:"+request.id,null);if(mCurrent===id)mNotice("已提交")}).catch(function(e){mUnsure[id]={runId:runId,requestId:request.id};if(mCurrent===id)mNotice(mError(e.message))}).finally(function(){delete mBusy[key];if(mCurrent===id){mDetailFresh=false;mSetButtons();mRefresh()}})
 }
-document.getElementById("m-controls").addEventListener("click",function(ev){var b=ev.target.closest('[data-control]');if(!b||!mDetail)return;var request=(b.dataset.control==='allow'||b.dataset.control==='deny'?mDetail.permissions:mDetail.questions||[]).find(function(r){return r.id===b.dataset.request&&r.taskId===b.dataset.task});if(request)mDecision(b.dataset.control,request)})
+document.getElementById("m-controls").addEventListener("click",function(ev){var b=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-control]'));if(!b||!mDetail)return;var request=(b.dataset.control==='allow'||b.dataset.control==='deny'?mDetail.permissions:mDetail.questions||[]).find(function(r){return r.id===b.dataset.request&&r.taskId===b.dataset.task});if(request)mDecision(b.dataset.control,request)})
 document.getElementById("m-questions").addEventListener("input",function(ev){
-  var el=ev.target,card=el.closest('[data-question-request]');if(!card||!mDetail)return
+  var el=/** @type {HTMLInputElement} */ (ev.target),card=/** @type {HTMLElement} */ (el.closest('[data-question-request]'));if(!card||!mDetail)return
   var request=(mDetail.questions||[]).find(function(r){return r.id===card.dataset.questionRequest}),qid=el.dataset.answerChoice||el.dataset.answerOther;if(!request||!qid)return
   var q=request.questions.find(function(q){return q.id===qid}),draft=mQuestionDraft(request),v=draft[qid]||{selected:[],other:""};if(!q)return
-  if(el.dataset.answerOther){v.other=el.value;if(!q.multiSelect&&el.value){v.selected=[];card.querySelectorAll('[data-answer-choice]').forEach(function(i){if(i.dataset.answerChoice===qid)i.checked=false})}}
-  else{v.selected=Array.from(card.querySelectorAll('[data-answer-choice]')).filter(function(i){return i.dataset.answerChoice===qid&&i.checked}).map(function(i){return i.value});if(!q.multiSelect){v.other="";card.querySelectorAll('[data-answer-other]').forEach(function(i){if(i.dataset.answerOther===qid)i.value=""})}}
+  if(el.dataset.answerOther){v.other=el.value;if(!q.multiSelect&&el.value){v.selected=[];card.querySelectorAll('[data-answer-choice]').forEach(function(/** @type {HTMLInputElement} */ i){if(i.dataset.answerChoice===qid)i.checked=false})}}
+  else{v.selected=Array.from(card.querySelectorAll('[data-answer-choice]')).filter(function(/** @type {HTMLInputElement} */ i){return i.dataset.answerChoice===qid&&i.checked}).map(function(/** @type {HTMLInputElement} */ i){return i.value});if(!q.multiSelect){v.other="";card.querySelectorAll('[data-answer-other]').forEach(function(/** @type {HTMLInputElement} */ i){if(i.dataset.answerOther===qid)i.value=""})}}
   draft[qid]=v;mWrite(mCurrent+":question:"+request.id,draft)
 })
-document.getElementById("m-say").addEventListener("input",function(){if(mCurrent)mWrite(mCurrent+":say",{text:this.value})})
+document.getElementById("m-say").addEventListener("input",function(){if(mCurrent)mWrite(mCurrent+":say",{text:/** @type {HTMLTextAreaElement} */ (this).value})})
 document.getElementById("m-send").addEventListener("click",function(){
-  var id=mCurrent,text=document.getElementById("m-say").value.trim(),key=id+":say"
+  var id=mCurrent,text=/** @type {HTMLTextAreaElement} */ (document.getElementById("m-say")).value.trim(),key=id+":say"
   if(!id||!text||!mDetail||!mDetailFresh||mBusy[key])return
   var prior=mRead(id+":say"),draft=prior&&prior.requestId&&prior.text===text?prior:{text:text,requestId:mUuid(),...(mDetail.runId?{runId:mDetail.runId}:{})}
   mWrite(id+":say",draft);mBusy[key]=true;mSetButtons();mNotice("正在发送…")
@@ -182,21 +183,21 @@ document.getElementById("m-send").addEventListener("click",function(){
       else if(mCurrent===id)mNotice('补充已受理，等待执行者确认。')
       return
     }
-    if((mRead(id+":say")||{}).requestId===draft.requestId){mWrite(id+":say",null);if(mCurrent===id)document.getElementById("m-say").value=""}
+    if((mRead(id+":say")||{}).requestId===draft.requestId){mWrite(id+":say",null);if(mCurrent===id)/** @type {HTMLTextAreaElement} */ (document.getElementById("m-say")).value=""}
     if(mCurrent===id)mNotice("已送达")
   }).catch(function(e){if(mCurrent===id)mNotice(mError(e.message))}).finally(function(){delete mBusy[key];if(mCurrent===id){mSetButtons();mRefresh()}})
 })
 document.getElementById('m-inputs').addEventListener('click',function(ev){
-  var b=ev.target.closest('[data-restore-input]');if(!b||!mDetail||mTooLarge)return
+  var b=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-restore-input]'));if(!b||!mDetail||mTooLarge)return
   var input=(mDetail.inputs||[]).find(function(r){return r.taskId===mCurrent&&r.id===b.dataset.restoreInput})
   if(!input)return
-  var ta=document.getElementById('m-say')
+  var ta=/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say'))
   if(ta.value.trim()&&ta.value.trim()!==input.text){mNotice('输入框里还有新的补充。原文保留在这条记录中，清空输入框后可以取回。');return}
   ta.value=input.text;mWrite(mCurrent+':say',{requestId:input.id,runId:input.runId,text:input.text});mNotice(M_INPUT_STATUS[input.status])
 })
-document.getElementById("m-list").addEventListener("click",function(ev){var c=ev.target.closest('[data-mid]');if(c)openMatter(c.dataset.mid)})
+document.getElementById("m-list").addEventListener("click",function(ev){var c=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-mid]'));if(c)openMatter(c.dataset.mid)})
 document.getElementById("m-back").addEventListener("click",function(){mSeq++;mCurrent=null;mDetail=null;clearTimeout(mPoll);mClearPreview();document.getElementById("m-detail").hidden=true;document.getElementById("m-list").hidden=false;loadMatters()})
-document.querySelectorAll('nav button[data-p]').forEach(function(b){b.addEventListener('click',function(){mActive=b.dataset.p==='matters';clearTimeout(mPoll);if(mActive){if(mCurrent)mRefresh();else loadMatters()}})})
+document.querySelectorAll('nav button[data-p]').forEach(function(/** @type {HTMLButtonElement} */ b){b.addEventListener('click',function(){mActive=b.dataset.p==='matters';clearTimeout(mPoll);if(mActive){if(mCurrent)mRefresh();else loadMatters()}})})
 // 回前台按当前页分路:在详情页刷详情,在列表页刷列表。此前只调 mRefresh(),而它要
 // mCurrent —— 停在列表上回来时什么都不刷,人看到的还是切走之前那份。
 document.addEventListener('visibilitychange',function(){clearTimeout(mPoll);mSeq++;mConnectionEpoch++;mDetailFresh=false;mSetButtons();if(!document.hidden&&mActive){if(mCurrent)mRefresh();else loadMatters()}})
@@ -245,4 +246,4 @@ async function mArtifact(artifact) {
     var download=URL.createObjectURL(new Blob([bytes],{type:'application/octet-stream'}));mObjectUrls.push(download);var link=document.createElement('a');link.href=download;link.download=artifact.name;link.textContent='下载 '+artifact.name;preview.appendChild(link);mNotice("文件已完整校验")
   }catch(e){if(mCurrent===id)mNotice(mError(e.message))}finally{delete mBusy[key]}
 }
-document.getElementById('m-artifacts').addEventListener('click',function(ev){var b=ev.target.closest('[data-artifact]');if(!b||!mDetail)return;var a=(mDetail.artifacts||[]).find(function(a){return a.id===b.dataset.artifact&&a.taskId===mCurrent});if(a)mArtifact(a)})
+document.getElementById('m-artifacts').addEventListener('click',function(ev){var b=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-artifact]'));if(!b||!mDetail)return;var a=(mDetail.artifacts||[]).find(function(a){return a.id===b.dataset.artifact&&a.taskId===mCurrent});if(a)mArtifact(a)})

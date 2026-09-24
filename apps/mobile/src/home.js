@@ -36,13 +36,13 @@ function render(s) {
     }).join("")
     s.stickers.forEach(function(e, i) {
       api("/m/api/sticker/" + encodeURIComponent(e.file) + "?b64=1").then(function(r){ return r.json() }).then(function(r) {
-        if (r && r.ok) { var img = sg.querySelector('[data-sti="' + i + '"]'); if (img) img.src = "data:" + r.mime + ";base64," + r.data }
+        if (r && r.ok) { var img = /** @type {HTMLImageElement} */ (sg.querySelector('[data-sti="' + i + '"]')); if (img) img.src = "data:" + r.mime + ";base64," + r.data }
       }).catch(function(){})
     })
   }
 }
 document.getElementById("todos").addEventListener("click", function(ev) {
-  var b = ev.target.closest("button[data-id]")
+  var b = /** @type {HTMLButtonElement} */ (/** @type {Element} */ (ev.target).closest("button[data-id]"))
   if (!b) return
   // 走隧道感知的 api()(在家直连,出门/壳模式走隧道)—— 不能用裸 fetch,
   // 否则出门时待办勾选打不到家里的 daemon。
@@ -154,7 +154,7 @@ function markMemoriesSeen(){
 document.querySelector('nav button[data-p="memory"]').addEventListener('click',markMemoriesSeen)
 setInterval(function(){if(!document.hidden&&document.getElementById('p-today').classList.contains('on'))loadHome()},15000)
 document.getElementById("feed").addEventListener("click", function(ev) {
-  var b = ev.target.closest("button.more")
+  var b = /** @type {HTMLButtonElement} */ (/** @type {Element} */ (ev.target).closest("button.more"))
   if (!b || !homeState) return
   b.disabled = true
   api("/m/api/feed?cursor=" + encodeURIComponent(b.dataset.cursor)).then(function(r){ return r.json() }).then(function(r) {

@@ -1,7 +1,7 @@
 
 var homeFocus = null
 function mobilePane(name) {
-  var button=document.querySelector('nav button[data-p="'+name+'"]')
+  var button=/** @type {HTMLButtonElement} */ (document.querySelector('nav button[data-p="'+name+'"]'))
   if(button)button.click()
 }
 function renderPresenceHome(s,stale) {

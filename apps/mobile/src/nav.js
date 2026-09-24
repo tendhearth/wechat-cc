@@ -9,7 +9,7 @@ document.getElementById("pairbtn").addEventListener("click", function() {
     } else toast("没配上:" + (r.error || ""))
   }).catch(function(){ toast("没配上,网络不通") })
 })
-document.querySelectorAll("nav button[data-p]").forEach(function(b) {
+document.querySelectorAll("nav button[data-p]").forEach(function(/** @type {HTMLButtonElement} */ b) {
   b.addEventListener("click", function() {
     document.querySelectorAll("nav button").forEach(function(o){ o.classList.toggle("on", o === b) })
     document.querySelectorAll(".pane").forEach(function(p){ p.classList.toggle("on", p.id === "p-" + b.dataset.p) })
