@@ -132,6 +132,8 @@ export interface SettingsPanelDeps {
 export interface SettingsPanel {
   issueToken(): string
   validToken(t: string | null | undefined): boolean
+  /** 当前还有效的链接令牌(没有或已过期就 null)—— 隧道只额外认这一个。 */
+  activeLinkToken(): string | null
   state(): object
   apply(op: unknown): Promise<{ ok: boolean; error?: string; restart?: 'requested' | 'required' }>
   /** Start the HTTP server (idempotent). port 0 = ephemeral. */
@@ -294,9 +296,14 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
 
   const panel: SettingsPanel = {
     issueToken() {
-      const token = randomBytes(16).toString('hex')
+      // 't' 前缀:手机页按首字母 'd' 认长期设备令牌,裸 hex 有 1/16 会被误认。
+      const token = 't' + randomBytes(16).toString('hex')
       active = { token, expiresAt: now() + SETTINGS_LINK_TTL_MS }
       return token
+    },
+
+    activeLinkToken() {
+      return active && now() < active.expiresAt ? active.token : null
     },
 
     validToken(t) {

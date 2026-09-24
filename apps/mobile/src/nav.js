@@ -1,11 +1,14 @@
 
 document.getElementById("pairbtn").addEventListener("click", function() {
-  fetch(q("/set/api/pair"), { method: "POST" }).then(function(r){ return r.json() }).then(function(r) {
+  // 走 api():壳模式(微信里点 /set 链接,人在外面)下裸 fetch 打到中继域,必 404。
+  api("/set/api/pair", { method: "POST" }).then(function(r){ return r.json() }).then(function(r) {
     if (r.ok && r.device_token) {
       try { localStorage.setItem("deviceToken", r.device_token) } catch (e) {}
       T = r.device_token; isDevice = true
       document.getElementById("pairbar").hidden = true
-      toast("配好了,把这页加到主屏幕就能一直用")
+      toast("配好了,这台手机以后点链接不会再过期")
+      // 壳页优先读本域的 deviceToken:重开一次,隧道就用长期令牌重新握手(这条流还绑着 10 分钟短令牌)。
+      if (window.__CC_SHELL__) setTimeout(function(){ location.reload() }, 1200)
     } else toast("没配上:" + (r.error || ""))
   }).catch(function(){ toast("没配上,网络不通") })
 })

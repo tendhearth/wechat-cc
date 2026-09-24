@@ -99,6 +99,19 @@ describe('settings panel', () => {
     expect(panel.validToken(t3)).toBe(true)
   })
 
+  it('link tokens never look like device tokens — the phone page treats a leading "d" as a paired device', () => {
+    // 以前是裸 16 字节 hex:1/16 的链接以 d 开头,手机页会把它当长期令牌存下、隐藏配对条,10 分钟后 401。
+    for (let i = 0; i < 64; i++) expect(panel.issueToken()).toMatch(/^t[0-9a-f]{32}$/)
+  })
+
+  it('activeLinkToken: the current link while it is valid, null once expired (the tunnel accepts only this one)', () => {
+    expect(panel.activeLinkToken()).toBeNull()
+    const t = panel.issueToken()
+    expect(panel.activeLinkToken()).toBe(t)
+    nowMs += SETTINGS_LINK_TTL_MS + 1
+    expect(panel.activeLinkToken()).toBeNull()
+  })
+
   it('state() assembles name/persona/prefs/config for the owner', () => {
     const s = panel.state() as { ok: true; name: string; persona: string; prefs: Record<string, unknown>; config: Record<string, unknown> }
     expect(s.ok).toBe(true)

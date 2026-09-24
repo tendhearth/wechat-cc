@@ -583,6 +583,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         knownDeviceTokens: () => {
           try { return Object.keys(readJsonFile(join(stateDir, 'settings-devices.json'))) } catch { return [] }
         },
+        activeLinkToken: () => settingsPanel.activeLinkToken(),
         relayUrl: daemonRelay,
         log: (tag, line) => log(tag, line),
       }).start()

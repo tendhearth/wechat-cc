@@ -19,7 +19,8 @@ function tunnel() {
     }
     ws.onmessage = async function(ev) {
       var f = JSON.parse(ev.data)
-      if (f.error) { reject(new Error(f.error)); return }
+      // 握手前的错误让 tunnel() 失败;握手后的(daemon 认不出这台手机:auth_failed)让挂着的请求全部失败,别永远等。
+      if (f.error) { var err = new Error(f.error); reject(err); failAllPending(err); try { ws.close() } catch (e) {}; return }
       if (f.hs) {
         var pub = await crypto.subtle.importKey("raw", b64u.dec(f.hs), { name:"X25519" }, true, [])
         var bits = await crypto.subtle.deriveBits({ name:"X25519", public: pub }, kp.privateKey, 256)
