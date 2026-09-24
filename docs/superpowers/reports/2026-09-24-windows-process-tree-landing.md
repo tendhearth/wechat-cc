@@ -254,3 +254,41 @@ Select-String -Path "$env:USERPROFILE\.claude\channels\wechat\channel.log" -Patt
    但这是一条只能在真机上最终确认的推理。
 6. **jobspawn 自己成为孤儿的那条缺口没变**:daemon 被杀时 jobspawn 变孤儿,树跟着它继续活。
    POSIX 今天也一样(杀 daemon 不会杀进程组),所以不是回归,是同一条既有缺口。
+
+---
+
+## 真机验证结果(2026-09-24,控制器在 win-test `030-SJWJ-GSR-B` / Win10 企业版 LTSC 上跑)
+
+**用仓库里的 `scripts/jobspawn.rs` 重新编译验证的**,不是复用 spike 那个二进制 —— 两者之间隔着
+stdout→stderr 与 POSIX 直通两处修改,不重编等于没验落地的那一份。
+
+| 步骤 | 结果 |
+|---|---|
+| ① `rustc -O -C strip=symbols -C debuginfo=0 --edition 2021` | **通过**,产物 228 KB,无网络、零 crate |
+| ② 退出码穿透 | **通过**,`exit 42` → `$LASTEXITCODE = 42` |
+| ② stdout 纯净 | **通过**。默认与 `WECHAT_CC_JOBSPAWN_DEBUG=1` 两种情况下 stdout 都**只有** `PURE`;`cc-jobspawn: pid=… job=kill-on-close` 只出现在 stderr。裁决 2 要求修掉的协议流污染,真机确认已修。 |
+| ③ 整棵树(**基线对照**) | **通过**。同一棵树:不套 jobspawn ⇒ 杀掉直接子进程后孙子**活着**;套上 jobspawn ⇒ 中间层与孙子**一起没了**。两边都跑了,单看一边证明不了什么。 |
+| ④ PATH 解析 | **验不了,不是通过也不是失败** —— 见下。 |
+
+### 验不了的那两条(诚实记账)
+
+这台机上 `claude` / `codex` / `cursor-agent` / `agy` / `bun` / `node` / `git` **全都不在 PATH**
+(它的用途是验 Win 包,不从源码构建)。于是:
+
+- **PATH 解析换引擎那条风险(libuv → Rust std)在这台机上没有可解析的对象**,无法验证。
+  它要在一台**装了那些 CLI 的** Windows 上验:`where claude` / `where codex` 必须是 `.exe`
+  而不是 `.cmd`(实现者的判断是"不算回归,因为 Node 20.12+ 本来就拒绝不带 `shell:true` 的 `.cmd`",
+  但这条判断**还没有真机证据**)。
+- **实现者报告里的第 4 步(产品真的走到那一层 + 降级留痕)也跑不了**:没有 bun、没有 CLI,
+  起不了 daemon。那一步目前**只在单测里成立过**。要么给这台机装 bun + 至少一个 CLI,
+  要么在装了 app 的 Windows 机器上验。
+
+### 落地状态判定
+
+原语本身(编译、直通、退出码、stdout 纯净、整棵树被收)**在真 Windows 上全部验过**。
+没验的是**产品是否真的接上了这条路**,以及裸命令名的 PATH 解析。
+所以这一轮可以认为"能力具备且可信",但**不能认为"Windows 上的静默泄漏已经消除"** ——
+后者要等第 4 步。
+
+验证用的临时文件与目录已从 win-test 上删净,未留游荡进程。
+
