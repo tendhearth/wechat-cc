@@ -29,6 +29,7 @@
 1. 配置放 companion config 的**扁平**字段 `memory_nightly_enabled` / `memory_nightly_at`(该文件全是扁平 snake_case),并登记进 `src/daemon/config-surface.ts`;不是 spec 写的 `memory.nightly.*`。
 2. 归档的过期条目写到 `<stateDir>/memory-archive/<owner>/memory-expired.md`,**不放**在 `memory/<owner>/` 下 —— 那里的 `.md` 会被 recall / snapshot / 园丁读到。
 3. 没有「每日聊天摘要」这种现成文本(turn_records 只有计数);素材改用 `messages-store.listSince` 的原始聊天(主人/CC 两方,纯文本,截断)。notes 全量读入(指纹没变就不调模型,效果等价于「只看变动」)。
+4. (执行中终审裁定,2026-09-25)`POST /v1/memory/synthesize` **没有**改成跑本流程:桌面记忆面板的「整理记忆」按钮走它,且桌面项目地图解析 `_overview.md`(`apps/desktop/src/modules/memory.js:475`),切过去会断。所以微信「整理记忆」/ CLI `memory nightly --now` 跑每晚整理,桌面按钮仍重算 `_overview.md` —— 两个同名按钮做的事不同,留给主人定是否统一。另:素材最终改为 30k 字总预算按优先级填充(执行中实际用 `listRange` 取最新 400 条聊天,不是 `listSince`)。
 
 ## Review Focus
 
