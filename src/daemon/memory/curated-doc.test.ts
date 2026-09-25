@@ -46,4 +46,11 @@ describe('curated memory doc', () => {
     expect(d.sections['偏好'][1]).toEqual({ id: 'n0ab', text: '主人手写的一条', seen: '2026-09-25' })
     expect(d.sections['关于你'][0]!.id).toBe('7f3a')
   })
+  it('keeps blank lines inside hand-written extra text, without growing on repeated round-trips', () => {
+    const md = '## 承诺\n- x\n## 随手记\n第一段\n\n第二段\n'
+    const d = parseMemoryDoc(md)
+    expect(d.extra).toEqual(['## 随手记', '第一段', '', '第二段'])
+    const once = serializeMemoryDoc(d, 'T')
+    expect(serializeMemoryDoc(parseMemoryDoc(once), 'T')).toBe(once)
+  })
 })

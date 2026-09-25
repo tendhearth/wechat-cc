@@ -42,7 +42,9 @@ export function parseMemoryDoc(md: string): MemoryDoc {
       continue
     }
     if (line.trim()) doc.extra.push(line)
+    else if (cur === null && doc.extra.length > 0) doc.extra.push(line)
   }
+  while (doc.extra.length > 0 && !doc.extra[doc.extra.length - 1]!.trim()) doc.extra.pop()
   return doc
 }
 
