@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { runMemoryNightly, readNightlyState, writeNightlyState, type NightlyRunDeps } from './nightly'
+import { runMemoryNightly, readNightlyState, writeNightlyState, MEMORY_LOG_FILE, type NightlyRunDeps } from './nightly'
 import { parseMemoryDoc } from './curated-doc'
 
 const OWNER = 'owner@im.wechat'
@@ -23,7 +23,7 @@ function deps(over: Partial<NightlyRunDeps> = {}): NightlyRunDeps {
     cheapEval: () => async (p: string) => { calls.push(p); return reply },
     ownerRecentlyActive: async () => false,
     now: () => now,
-    newId: () => `id${String(n++).padStart(2, '0')}`,
+    newId: () => (0xa000 + n++).toString(16),
     log: () => {},
     ...over,
   }
@@ -97,7 +97,7 @@ describe('runMemoryNightly', () => {
     expect((await runMemoryNightly(deps(), { force: false })).status).toBe('written')
     const doc = parseMemoryDoc(readFileSync(join(root, 'memory.md'), 'utf8'))
     expect(doc.sections['偏好'][0]).toMatchObject({ text: '主人手写:别用表情', seen: '2026-09-26' })
-    expect(doc.sections['偏好'][0]!.id).toMatch(/^id\d\d$/)
+    expect(doc.sections['偏好'][0]!.id).toMatch(/^[0-9a-f]{4,}$/)
     expect(existsSync(join(stateDir, 'memory-archive', OWNER, 'memory.md.2026-09-26.md'))).toBe(true)
   })
   it('forced runs return the notice instead of queueing it', async () => {
@@ -112,5 +112,46 @@ describe('runMemoryNightly', () => {
     expect(readNightlyState(stateDir)).toEqual({ lastRunDay: null, lastRunIso: null, fingerprint: null, failures: 0, lastFailDay: null, firstRunDone: false, pendingNotice: null })
     writeNightlyState(stateDir, { ...readNightlyState(stateDir), failures: 2 })
     expect(readNightlyState(stateDir).failures).toBe(2)
+  })
+  it('same-day backup keeps the pre-tidy content from the first write of the day — a later same-day run does not overwrite it', async () => {
+    const seed = '## 关于你\n- 种子条目 <!-- m:aaaa · 2026-09-24 -->\n'
+    writeFileSync(join(root, 'memory.md'), seed)
+    await runMemoryNightly(deps(), { force: true })
+    const archivePath = join(stateDir, 'memory-archive', OWNER, 'memory.md.2026-09-25.md')
+    expect(readFileSync(archivePath, 'utf8')).toBe(seed)
+    writeFileSync(join(root, 'profile.md'), '同一天第二次触发\n')
+    await runMemoryNightly(deps(), { force: true })
+    expect(readFileSync(archivePath, 'utf8')).toBe(seed)
+  })
+  it('a write-phase fs error fails cleanly (no state corruption, no retry storm) and does not double-log', async () => {
+    await runMemoryNightly(deps(), { force: true })
+    writeFileSync(join(root, 'profile.md'), '新草稿触发第二次整理\n')
+    // Sabotage: put a FILE where memory-archive/<owner> needs to be a directory,
+    // so mkdirSync(archiveDir, { recursive: true }) throws inside the write phase.
+    mkdirSync(join(stateDir, 'memory-archive'), { recursive: true })
+    writeFileSync(join(stateDir, 'memory-archive', OWNER), 'not a directory')
+    const before = readFileSync(join(root, 'memory.md'), 'utf8')
+    const logBefore = readFileSync(join(root, MEMORY_LOG_FILE), 'utf8')
+    const r = await runMemoryNightly(deps(), { force: true })
+    expect(r.status).toBe('failed')
+    expect(r.status === 'failed' && r.reason.startsWith('write_error:')).toBe(true)
+    expect(readFileSync(join(root, 'memory.md'), 'utf8')).toBe(before)
+    expect(readNightlyState(stateDir)).toMatchObject({ failures: 1, lastFailDay: '2026-09-25' })
+    expect(readFileSync(join(root, MEMORY_LOG_FILE), 'utf8')).toBe(logBefore)
+  })
+  it('keeps the newest chat messages, not the oldest, when the chat block exceeds the cap', async () => {
+    const lines = Array.from({ length: 100 }, () => 'a'.repeat(100))
+    lines[99] = `${'b'.repeat(90)}UNIQUE_TAIL_MARKER`
+    const d = deps({
+      sources: {
+        observationsSince: async () => [],
+        milestonesSince: async () => [],
+        messagesSince: async () => lines,
+        projectMemory: () => '',
+      },
+    })
+    const r = await runMemoryNightly(d, { force: true })
+    expect(r.status).toBe('written')
+    expect(calls[0]).toContain('UNIQUE_TAIL_MARKER')
   })
 })

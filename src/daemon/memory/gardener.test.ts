@@ -449,7 +449,7 @@ describe('runGarden', () => {
     expect(cheapEval).toHaveBeenCalledTimes(2)
   })
 
-  it('never touches memory.md — that file is owned by the nightly tidy (memory/nightly.ts), not the gardener', async () => {
+  it('regression guard: never curates the nightly memory.md — that file is owned by memory/nightly.ts, not the gardener', async () => {
     const content = bigContent('memory.md content')
     const full = writeMemoryFile('chat-1', 'memory.md', content)
     const cheapEval = vi.fn(async (_prompt: string) => 'curated')

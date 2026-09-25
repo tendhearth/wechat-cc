@@ -80,7 +80,11 @@ export async function gatherMaterial(root: string, sources: NightlySources, sinc
   blocks.push(['里程碑', (await sources.milestonesSince(sinceIso)).join('\n')])
   blocks.push(['这段时间的聊天', (await sources.messagesSince(sinceIso)).join('\n')])
   blocks.push(['本机 Claude 记忆', sources.projectMemory()])
-  return blocks.filter(([, v]) => v.trim()).map(([k, v]) => `### ${k}\n${v.slice(0, BLOCK_CAP)}`).join('\n\n')
+  // Every block is capped to BLOCK_CAP chars, but the chat block keeps the
+  // TAIL (newest messages), not the head — sinceIso only advances, so the
+  // oldest text in this block is the part already covered by a previous
+  // night's tidy; the newest is what's actually new material.
+  return blocks.filter(([, v]) => v.trim()).map(([k, v]) => `### ${k}\n${k === '这段时间的聊天' ? v.slice(-BLOCK_CAP) : v.slice(0, BLOCK_CAP)}`).join('\n\n')
 }
 
 export function buildNightlyPrompt(a: { today: string; current: string; material: string }): string {
@@ -163,21 +167,37 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
     return { status: 'skipped', reason: 'owner_edited' }
   }
   const nowIso = new Date(nowMs).toISOString()
-  if (!firstRun) {
-    const archiveDir = join(deps.stateDir, 'memory-archive', owner)
-    mkdirSync(archiveDir, { recursive: true })
-    copyFileSync(memPath, join(archiveDir, `memory.md.${day}.md`))
+  const archiveDir = join(deps.stateDir, 'memory-archive', owner)
+  // Write phase: backup copy, tmp write, rename, log append. Any fs error
+  // here must go through fail() — an uncaught throw would skip lastFailDay
+  // (⇒ the scheduler retries the model every tick, a forbidden retry storm)
+  // and, if it happened after a partial write, could leave state stale.
+  try {
+    if (!firstRun) {
+      const archivePath = join(archiveDir, `memory.md.${day}.md`)
+      mkdirSync(archiveDir, { recursive: true })
+      // Only the FIRST backup of a day is worth keeping — a later same-day
+      // run (e.g. owner forces 整理记忆 after the 04:00 tidy already ran)
+      // must not overwrite it with that later run's own (already-tidied)
+      // pre-write content.
+      if (!existsSync(archivePath)) copyFileSync(memPath, archivePath)
+    }
+    const tmp = `${memPath}.tmp-${process.pid}`
+    writeFileSync(tmp, serializeMemoryDoc(res.doc, nowIso))
+    renameSync(tmp, memPath)
+
+    // Only append expired-entry lines AFTER the rename succeeded — otherwise
+    // a failure further down (or on a later retry re-expiring the same
+    // entries) would double-append them.
+    const expired = res.applied.filter(a => a.kind === 'expire')
+    if (expired.length) {
+      mkdirSync(archiveDir, { recursive: true })
+      appendFileSync(join(archiveDir, 'memory-expired.md'), expired.map(a => `- ${day} [${a.section}] ${a.text}(${a.kind === 'expire' ? a.reason : ''})`).join('\n') + '\n')
+    }
+    appendFileSync(join(root, MEMORY_LOG_FILE), JSON.stringify({ at: nowIso, ops: res.applied }) + '\n')
+  } catch (e) {
+    return fail(`write_error:${e instanceof Error ? e.message : String(e)}`)
   }
-  const expired = res.applied.filter(a => a.kind === 'expire')
-  if (expired.length) {
-    const archiveDir = join(deps.stateDir, 'memory-archive', owner)
-    mkdirSync(archiveDir, { recursive: true })
-    appendFileSync(join(archiveDir, 'memory-expired.md'), expired.map(a => `- ${day} [${a.section}] ${a.text}(${a.kind === 'expire' ? a.reason : ''})`).join('\n') + '\n')
-  }
-  const tmp = `${memPath}.tmp-${process.pid}`
-  writeFileSync(tmp, serializeMemoryDoc(res.doc, nowIso))
-  renameSync(tmp, memPath)
-  appendFileSync(join(root, MEMORY_LOG_FILE), JSON.stringify({ at: nowIso, ops: res.applied }) + '\n')
 
   const notice = composeNotice(noticeItems(res.applied), !state.firstRunDone)
   writeNightlyState(deps.stateDir, {

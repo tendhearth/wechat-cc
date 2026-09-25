@@ -12,10 +12,7 @@ export interface MemoryEntry { id: string | null; text: string; seen: string | n
 export interface MemoryDoc { sections: Record<Section, MemoryEntry[]>; extra: string[] }
 
 const HEADER_PREFIX = '<!-- wechat-cc 记忆'
-// id 是不透明的编号:生产环境用小写 hex,但解析不该假设发号器只吐 hex(见
-// nightly.ts 的 newId 契约,只保证「稳定、每次不同」,不保证字符集)——放宽到
-// 小写字母数字,现有 hex id 仍然匹配,不影响任何既有行为。
-const ENTRY_RE = /^-\s+(.*?)\s*(?:<!--\s*m:([0-9a-z]{4,})\s*·\s*(\d{4}-\d{2}-\d{2})\s*-->)?\s*$/
+const ENTRY_RE = /^-\s+(.*?)\s*(?:<!--\s*m:([0-9a-f]{4,})\s*·\s*(\d{4}-\d{2}-\d{2})\s*-->)?\s*$/
 const DUE_RE = /(期限 (\d{4}-\d{2}-\d{2}))/
 
 export function emptyDoc(): MemoryDoc {
