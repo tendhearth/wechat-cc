@@ -6,6 +6,7 @@
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
+import { readJsonFile } from '../../lib/read-json-file'
 import { MEMORY_FILENAME, assignMissingIds, parseMemoryDoc, serializeMemoryDoc } from './curated-doc'
 import { applyNightly, parseOps } from './nightly-ops'
 import { composeNotice, noticeItems, type NightlyRunResult } from './nightly-notify'
@@ -46,7 +47,7 @@ const EVAL_TIMEOUT_MS = 5 * 60_000
 const DEFAULT_STATE: NightlyState = { lastRunDay: null, lastRunIso: null, fingerprint: null, failures: 0, lastFailDay: null, firstRunDone: false, pendingNotice: null }
 
 export function readNightlyState(stateDir: string): NightlyState {
-  try { return { ...DEFAULT_STATE, ...(JSON.parse(readFileSync(join(stateDir, 'companion', STATE_FILE), 'utf8')) as Partial<NightlyState>) } }
+  try { return { ...DEFAULT_STATE, ...(readJsonFile<Partial<NightlyState>>(join(stateDir, 'companion', STATE_FILE))) } }
   catch { return { ...DEFAULT_STATE } }
 }
 
