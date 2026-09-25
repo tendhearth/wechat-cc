@@ -433,6 +433,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     setSettingsLink(fn) {
       deps.settingsLink = fn
     },
+    setMemoryNightly(r) {
+      deps.memoryNightly = r
+    },
     mintSessionToken,
     invalidateSession(sessionKey: string) {
       registry.invalidateSession(sessionKey)

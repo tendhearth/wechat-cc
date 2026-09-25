@@ -51,3 +51,13 @@ describe('POST /v1/memory/profile/generate', () => {
     expect(r.status).toBe(503)
   })
 })
+describe('POST /v1/memory/nightly/run', () => {
+  it('POST /v1/memory/nightly/run runs the nightly tidy now and returns its result', async () => {
+    const runNow = vi.fn().mockResolvedValue({ status: 'skipped', reason: 'no_new_material' })
+    const r = await memoryRoutes(deps({ memoryNightly: { runNow } }))['POST /v1/memory/nightly/run']!(q(), {})
+    expect(r).toEqual({ status: 200, body: { ok: true, result: { status: 'skipped', reason: 'no_new_material' } } })
+  })
+  it('POST /v1/memory/nightly/run is 503 when not wired', async () => {
+    expect(await memoryRoutes(deps())['POST /v1/memory/nightly/run']!(q(), {})).toEqual({ status: 503, body: { error: 'memory_nightly_not_wired' } })
+  })
+})

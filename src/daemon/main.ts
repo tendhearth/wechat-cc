@@ -31,6 +31,7 @@ import { registerPolling } from './polling-lifecycle'
 import { registerSessions } from './sessions-lifecycle'
 import { registerIlink } from './ilink-lifecycle'
 import { registerMailboxPoller } from './bootstrap/wire-mailbox'
+import { registerMemoryNightly } from './memory/nightly-lifecycle'
 import { registerReminders } from './reminders/sweeper'
 import { makeRemindersStore } from './reminders/store'
 import { registerReportSweeper } from './reports/sweeper'
@@ -777,6 +778,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     const mailboxLc = await sup.start('mailbox-poller',
       () => boot.mailboxPollerDeps ? registerMailboxPoller(boot.mailboxPollerDeps) : undefined)
     if (mailboxLc) lc.register(mailboxLc)
+    // 每晚整理长期记忆 memory.md(2026-09-25)。15 分钟一次「该不该跑」,运行时在 pipeline-deps 造好。
+    const memoryNightlyLc = await sup.start('memory-nightly', () => registerMemoryNightly({
+      runtime: wired.memoryNightly, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l),
+    }))
+    if (memoryNightlyLc) lc.register(memoryNightlyLc)
+    internalApi.setMemoryNightly(wired.memoryNightly)
     // Reminder sweeper (spec 2026-08-20-reminders-port) — multi-user
     // precise-time delivery. Optional subsystem: a broken sweeper degrades,
     // never blocks boot. Store is db-backed so pending reminders survive

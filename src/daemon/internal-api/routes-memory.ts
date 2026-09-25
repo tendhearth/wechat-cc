@@ -34,6 +34,11 @@ export function memoryRoutes(deps: InternalApiDeps): RouteTable {
       if (!chatId) return { status: 400, body: { error: 'no_admin_chat_id' } }
       return { status: 200, body: { ok: true, ...(await deps.memoryLlm.generateProfile(chatId)) } }
     },
+    // 每晚记忆整理的立即运行(CLI `memory nightly --now`)。忽略时间点,仍走指纹 / 校验 / 修订检查。
+    'POST /v1/memory/nightly/run': async () => {
+      if (!deps.memoryNightly) return { status: 503, body: { error: 'memory_nightly_not_wired' } }
+      return { status: 200, body: { ok: true, result: await deps.memoryNightly.runNow() } }
+    },
     // CC 手绘小像 (2026-08-25) — draw the owner from profile material.
     'POST /v1/memory/portrait/generate': async (_q, body) => {
       if (!deps.memoryLlm) return { status: 503, body: { error: 'memory_not_wired' } }

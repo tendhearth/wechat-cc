@@ -56,7 +56,10 @@ import { materializeAttachments } from '../media'
 import { loadGuardConfig } from '../guard/store'
 import { makeFireMilestonesFor, makeRecordInbound, makeMaybeWriteWelcomeObservation } from './side-effects'
 import { makeMessagesStore } from '../../lib/messages-store'
-import { makeMemoryLlmOps } from '../memory-llm-ops'
+import { makeMemoryLlmOps, resolveCheapEval } from '../memory-llm-ops'
+import { makeMemoryNightlyRuntime } from '../memory/nightly-runtime'
+import { makeNightlySources } from '../memory/nightly-sources'
+import { shouldSpeak, careLevel } from '../companion/calibration'
 import { makeDedupStore } from '../../lib/dedup-store'
 import { DEFAULT_DELEGATE_TIMEOUT_MS } from '../../core/a2a-delegate'
 import type { YiHub, YiDispatch } from '../../core/yi-hub'
@@ -214,6 +217,8 @@ export interface BuildPipelineDepsResult {
    * (主人最近一次入站)。main.ts 经 setPetTurn late-bind 到 internal-api。
    */
   petTurn: PetTurnDep
+  /** 每晚记忆整理运行时;main.ts 挂定时器并接到 internal-api。 */
+  memoryNightly: import('../memory/nightly-runtime').MemoryNightlyRuntime
 }
 
 export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs): BuildPipelineDepsResult {
@@ -318,6 +323,39 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     db,
     getMode: (cid) => boot.coordinator.getMode(cid),
     registry: boot.registry,
+  })
+  // 每晚整理长期记忆 memory.md(spec 2026-09-25-memory-nightly-design)。定时器由 main.ts 挂。
+  const nightlyOwner = (): string | null => loadCompanionConfig(stateDir).default_chat_id ?? null
+  const memoryNightly = makeMemoryNightlyRuntime({
+    stateDir,
+    ownerChatId: nightlyOwner,
+    config: () => {
+      const c = loadCompanionConfig(stateDir)
+      return { enabled: c.memory_nightly_enabled, at: c.memory_nightly_at, timezone: c.timezone }
+    },
+    sources: makeNightlySources({ db, stateDir, ownerChatId: nightlyOwner }),
+    cheapEval: () => {
+      const o = nightlyOwner()
+      return o ? resolveCheapEval({ getMode: (c) => boot.coordinator.getMode(c), registry: boot.registry }, o) : boot.registry.getCheapEval()
+    },
+    ownerRecentlyActive: async () => {
+      const o = nightlyOwner()
+      if (!o) return false
+      const ts = await makeMessagesStore(db).latestInboundTs(o)
+      return !!ts && Date.now() - Date.parse(ts) < 3 * 60_000
+    },
+    now: () => Date.now(),
+    newId: () => randomBytes(3).toString('hex'),
+    log: (t, l) => log(t, l),
+    careGate: (chatId, nowIso) => shouldSpeak({
+      kind: 'memory',
+      level: careLevel(chatId, chatPrefs.get(chatId), loadCompanionConfig(stateDir).default_chat_id ?? undefined),
+      nowIso,
+      ledger: careLedger.get(chatId),
+    }),
+    claim: (chatId, nowIso) => careLedger.claimMemory(chatId, nowIso),
+    wechatSuspended: () => boot.health.health.shouldSuspend('wechat'),
+    send: (chatId, text) => ilink.sendMessage(chatId, text),
   })
   const maybeWriteWelcomeObservation = makeMaybeWriteWelcomeObservation({
     stateDir,
@@ -1033,5 +1071,5 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     })
   }
 
-  return { pipelineDeps, companionConverse, petTurn, mattersService, settingsPanelLink: () => settingsPanel.linkUrl() }
+  return { pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, settingsPanelLink: () => settingsPanel.linkUrl() }
 }

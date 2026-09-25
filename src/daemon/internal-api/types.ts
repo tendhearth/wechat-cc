@@ -476,6 +476,8 @@ export interface InternalApiDeps {
   llmEndpoints?: () => Record<string, string>
   /** Graphical-settings-panel link minter (settings-panel.ts, late-bound). */
   settingsLink?: () => Promise<string | null>
+  /** 每晚记忆整理运行时(pipeline-deps 造,main.ts 通过 setMemoryNightly 接进来)。 */
+  memoryNightly?: { runNow(): Promise<unknown> }
   /**
    * Resolves the default admin chat_id (access.json's single admin) when a
    * memory route's request body omits `chat_id`. Wired eagerly in main.ts
@@ -585,6 +587,7 @@ export interface InternalApi {
   setDelegate(d: InternalApiDelegateDep): void
   setLlmHealth(h: import('../llm-health').LlmHealth, registered?: () => string[], endpoints?: () => Record<string, string>): void
   setSettingsLink(fn: () => Promise<string | null>): void
+  setMemoryNightly(r: { runNow(): Promise<unknown> }): void
   /**
    * Late-bind the conversation controller (coordinator.setMode) after
    * bootstrap has constructed the coordinator. /v1/conversation/set-mode

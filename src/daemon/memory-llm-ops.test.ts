@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makeMemoryLlmOps } from './memory-llm-ops'
+import { makeMemoryLlmOps, resolveCheapEval } from './memory-llm-ops'
 import { invalidateDerivedMemory } from '../lib/memory-derived-state'
 
 // NOTE: brief used '../../lib/memory-synthesis' — that resolves one level
@@ -121,5 +121,14 @@ describe('generatePortrait (CC 手绘小像)', () => {
     const { ops } = make({ stateDir: seedState() })
     const r = await ops.generatePortrait('../evil') as { ok: boolean }
     expect(r.ok).toBe(false)
+  })
+})
+
+describe('resolveCheapEval', () => {
+  const own = async () => 'own', fallback = async () => 'fallback'
+  const registry = { get: (id: string) => (id === 'codex' ? { provider: { cheapEval: own } } : null), getCheapEval: () => fallback }
+  it('follows the chat solo provider, else the registry default', () => {
+    expect(resolveCheapEval({ getMode: () => ({ kind: 'solo', provider: 'codex' }), registry }, 'c')).toBe(own)
+    expect(resolveCheapEval({ getMode: () => undefined, registry }, 'c')).toBe(fallback)
   })
 })

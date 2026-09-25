@@ -1264,6 +1264,21 @@ const memorySynthesizeCmd = defineCommand({
   },
 })
 
+const memoryNightlyCmd = defineCommand({
+  meta: { name: 'nightly', description: '立刻跑一次每晚记忆整理(需要 daemon 在跑)' },
+  args: {
+    now: { type: 'boolean', description: '忽略时间点,立刻跑(目前只支持这一种)', default: false },
+    json: { type: 'boolean', description: '机器可读输出', default: false },
+  },
+  async run({ args }) {
+    if (!args.now) { console.error('用法:wechat-cc memory nightly --now'); process.exitCode = 2; return }
+    const apiInfo = await readCliApiInfo()
+    const r = await delegateMemoryOp('nightly', {}, { readApiInfo: () => apiInfo, fetch })
+    console.log(args.json ? JSON.stringify(r) : JSON.stringify(r, null, 2))
+    if (!(r as { ok?: boolean }).ok) process.exitCode = 1
+  },
+})
+
 async function resolveProfileChatId(chatIdArg: string | undefined): Promise<string> {
   if (chatIdArg) return chatIdArg
   const { readFileSync } = await import('node:fs')
@@ -1569,6 +1584,7 @@ const memoryCmd = defineCommand({
     write: memoryWriteCmd,
     'profile-read': memoryProfileReadCmd,
     synthesize: memorySynthesizeCmd,
+    nightly: memoryNightlyCmd,
     profile: memoryProfileCmd,
     projects: memoryProjectsCmd,
     status: memoryStatusCmd,
