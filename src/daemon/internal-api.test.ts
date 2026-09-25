@@ -416,6 +416,21 @@ describe('internal-api', () => {
         expect(await r.json()).toEqual({ error: 'memory_scope_denied' })
       })
 
+      it('a session (even admin) cannot overwrite the curated memory.md; the CLI/operator path still can', async () => {
+        const { port, token } = await startWithMemory()
+        const admin = api!.mintSessionToken('admin', 'claude/a/ownerchat')
+        const w = await write(port, admin, 'ownerchat/memory.md')
+        expect(w.status).toBe(200)
+        expect(await w.json()).toMatchObject({ ok: false, error: 'curated_memory_readonly' })
+        const other = await write(port, admin, 'ownerchat/profile.md')
+        expect(await other.json()).toEqual({ ok: true })
+        // Non-session (file-token/CLI) callers are the intended writer of
+        // memory.md (the nightly tidy tick) — curatedMemoryDenied only
+        // gates caller.origin === 'session'.
+        const fileWrite = await write(port, token, 'ownerchat/memory.md')
+        expect(await fileWrite.json()).toEqual({ ok: true })
+      })
+
       it('`..` traversal in the path is 403 for a non-admin session even when it appears in-scope', async () => {
         const { port } = await startWithMemory()
         const tok = api!.mintSessionToken('trusted', 'claude/a/chat-1')

@@ -91,6 +91,16 @@ function memoryScopeDenied(path: string, caller?: { tier: UserTier; origin: stri
   return !(norm === caller.chatId || norm.startsWith(`${caller.chatId}/`))
 }
 
+/** 每晚整理的长期记忆由 daemon 独管:会话(任何 tier)不许写 / 删 `<chat>/memory.md`;CLI / 桌面(非 session 来源)照常。 */
+function curatedMemoryDenied(path: string, caller?: { origin: string }): boolean {
+  if (!caller || caller.origin !== 'session') return false
+  return /^[^/]+\/memory\.md$/.test(path.replace(/\\/g, '/'))
+}
+const CURATED_READONLY = {
+  status: 200 as const,
+  body: { ok: false, error: 'curated_memory_readonly', hint: 'memory.md 每晚自动整理,白天别直接改:新情况记到 profile.md 或 notes/,今晚会整理进去。' },
+}
+
 function toWireOutbound(h: import('../ilink/outbound-health').OutboundHealth) {
   return {
     state: h.state,
@@ -225,6 +235,7 @@ const onlineStickerCursor = new Map<string, number>()
       // Body is pre-validated by index.ts via MemoryWriteRequest schema.
       const { path, content } = body as MemoryWriteRequestT
       if (memoryScopeDenied(path, caller)) return { status: 403, body: { error: 'memory_scope_denied' } }
+      if (curatedMemoryDenied(path, caller)) return CURATED_READONLY
       try {
         deps.memory.write(path, content)
         return { status: 200, body: { ok: true } }
@@ -259,6 +270,7 @@ const onlineStickerCursor = new Map<string, number>()
       // Body is pre-validated by index.ts via MemoryDeleteRequest schema.
       const { chat_id, path, reason } = body as MemoryDeleteRequestT
       if (memoryScopeDenied(path, caller)) return { status: 403, body: { error: 'memory_scope_denied' } }
+      if (curatedMemoryDenied(path, caller)) return CURATED_READONLY
       try {
         const tombstone = deps.memory.softDelete(path)
         if (tombstone === null) {

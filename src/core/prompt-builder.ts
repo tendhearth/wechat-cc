@@ -184,6 +184,8 @@ export interface BuildSystemPromptArgs {
    * (mirrors `persona`/`careEnabled`'s contract).
    */
   coreMemory?: string
+  /** 每晚整理的长期记忆 memory.md 正文(去尾注);有它就不再注入 coreMemory(2026-09-25)。 */
+  curatedMemory?: string
   /** Daemon-distilled objective plugin knowledge (knowledge.md), injected after core memory. */
   knowledgeMemory?: string
   /**
@@ -309,7 +311,9 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
   const sections: string[] = [
     baseChannelSection(providerId, model),
     args.persona && args.persona.trim().length > 0 ? personaSection(args.persona) : '',
-    args.coreMemory && args.coreMemory.trim().length > 0 ? coreMemorySection(args.coreMemory) : '',
+    args.curatedMemory && args.curatedMemory.trim().length > 0
+      ? curatedMemorySection(args.curatedMemory)
+      : args.coreMemory && args.coreMemory.trim().length > 0 ? coreMemorySection(args.coreMemory) : '',
     args.knowledgeMemory && args.knowledgeMemory.trim().length > 0 ? knowledgeMemorySection(args.knowledgeMemory) : '',
     toolsSection(),
     args.bubbleReplies === true ? bubbleRepliesSection() : '',
@@ -511,6 +515,18 @@ export function coreMemorySection(content: string): string {
 这是你此刻对这个人最核心的了解(来自 profile),始终加载、不用查。更细的东西在长期记忆里,需要时用 \`memory_read\`。
 
 ${capped}`
+}
+
+export const CURATED_MEMORY_MAX_CHARS = 3200
+
+/** 长期记忆段:每晚整理的 memory.md。CC 白天不改它(daemon 会拒写),新东西记到 profile.md / notes/。 */
+export function curatedMemorySection(content: string): string {
+  const body = content.length > CURATED_MEMORY_MAX_CHARS ? `${content.slice(0, CURATED_MEMORY_MAX_CHARS)}\n(长期记忆已截断)` : content
+  return [
+    '## 长期记忆(每晚整理的你眼中的 ta)',
+    body,
+    '这份每晚整理,你白天别改它;聊天里得知的新情况、主人说哪条不对,记到 profile.md 或 notes/,今晚会整理进来。',
+  ].join('\n')
 }
 
 export const KNOWLEDGE_MEMORY_MAX_CHARS = 1500

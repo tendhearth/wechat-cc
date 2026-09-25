@@ -18,6 +18,7 @@ import { buildBootstrap, resolveAdminChatId } from './bootstrap'
 import { makeMemoryFS } from './memory/fs-api'
 import { makeMemoryLlmOps } from './memory-llm-ops'
 import { CORE_MEMORY_MAX_CHARS, KNOWLEDGE_MEMORY_MAX_CHARS } from '../core/prompt-builder'
+import { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from './memory/curated-doc'
 import { makeConversationStore } from '../core/conversation-store'
 import { makeTurnRecordStore } from '../core/turn-record-store'
 import { providerDisplayName } from './provider-display-names'
@@ -492,6 +493,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         const fs = makeMemoryFS({ rootDir: join(stateDir, 'memory', c) })
         const profile = fs.read('profile.md') ?? ''
         return profile.length > CORE_MEMORY_MAX_CHARS ? profile.slice(0, CORE_MEMORY_MAX_CHARS) : profile
+      },
+      // 每晚整理的长期记忆(2026-09-25):有 memory.md 就注入它(去尾注),prompt-builder 据此不再注入 profile.md。
+      curatedMemoryFor: (c) => {
+        const fs = makeMemoryFS({ rootDir: join(stateDir, 'memory', c) })
+        const raw = fs.read(MEMORY_FILENAME)
+        return raw ? renderForPrompt(parseMemoryDoc(raw)) : ''
       },
       // knowledge-distillation §2 — THIS chat's daemon-distilled knowledge.md
       // (objective plugin facts), read fresh per spawn + capped. Written by the
