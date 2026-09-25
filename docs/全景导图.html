@@ -25,11 +25,12 @@
 <div class="meta"><p>v2 · 2026-09-22 · 唯一事实源。标记:<span class="badge done">定</span> 已拍板 · <span class="badge todo">待</span> 待决 · <del>删除线</del> 已否决留痕(附原因)</p><p>分界纪律:本图只记「想过什么 / 定了什么 / 还欠什么」。实现细节在代码和 commit message 里,不在这里。</p><p>用法:节点只写<b>结论</b>,原因写在 <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden> </span> 里。交互版把 <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden> </span> 折成点击展开;读 MD 时它就是完整的一句话。</p><p>分类原则:<b>有替代做法的写成「做 A · 不做 B」对照;没有替代、纯禁止的进「绝对不做」;过程性收获进「教训」。</b></p><p>另两份总图:[roadmap](roadmap.md) 说「往哪走 / 卡在哪」,[文档索引](INDEX.md) 说「某件事的文档在哪」。</p></div>
 
 <details class="sec" open>
-  <summary>定位 <span class="count">4</span></summary>
+  <summary>定位 <span class="count">5</span></summary>
   <ul><li>做 <b>陪伴者 CC(有人格的熊)</b> · 不做 <b>工具型 bot</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>全部产品决策的总开关:兜底话术要像 CC 在说话、表情包要成长、画像是 CC 画的用户——每一处都在强化「这是一个活物」而不是一个命令行。工具可以被替代,伙伴不会</span></li>
 <li>做 <b>数据不出厂(本地 daemon)</b> · 不做 <b>云端托管</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>记忆、消息、画像全在用户自己电脑的 state 目录里。这是信任的底座,也是后面每一个技术选型(中继盲转、E2E 加密)的约束来源——不是功能,是原则</span></li>
 <li>做 <b>微信 + 桌面工作台两个操作面</b> · 不做 <b>只做聊天</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>陪伴住在微信里,但「把一件事交出去做完」需要能看见进度、改动和权限请求——微信给不了这些。工作台不是第二个产品,是同一只 CC 的另一只手:daemon 管会话、执行者与权限,两个面只是入口</span></li>
-<li>做 <b>记忆外置于 daemon,provider 只是过路的大脑</b> · 不做 <b>记忆绑死在某家 LLM 会话里</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>persona/profile/knowledge/facts 全在 daemon,每次 spawn 现读注入。所以换 provider 长期记忆一分不丢。字节 OpenViking(13K star)的核心论点与此一致:记忆库独立于 harness,Claude Code/Codex/Cursor 共用——我们无意中先做对了这层</span></li></ul>
+<li>做 <b>记忆外置于 daemon,provider 只是过路的大脑</b> · 不做 <b>记忆绑死在某家 LLM 会话里</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>persona/profile/knowledge/facts 全在 daemon,每次 spawn 现读注入。所以换 provider 长期记忆一分不丢。字节 OpenViking(13K star)的核心论点与此一致:记忆库独立于 harness,Claude Code/Codex/Cursor 共用——我们无意中先做对了这层</span></li>
+<li>做 <b>每晚整理的长期记忆 memory.md(五栏、每条隐藏编号、模型只报改动)</b> <span class="badge done">定</span> · 不做 <b>整份重写的 _overview / JSON 记忆库</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>2026-09-25,借鉴 Meta Muse 的 MEMORY.md:每次对话都读,主人能看能改,只在「新承诺 / 偏好被推翻 / 模型删除」时告诉主人。整份重写说不清改了什么;JSON 推翻「记忆保留 .md」。profile.md 退回白天草稿,_overview.md 不再更新。下一步 A 逐条纠错、C 第二天「我注意到…」</span></li></ul>
 </details>
 
 <details class="sec" open>

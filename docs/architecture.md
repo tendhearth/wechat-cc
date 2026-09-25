@@ -188,7 +188,8 @@ Three physically separate tiers:
 - **B — Daemon `.md` memory** (`<stateDir>/memory/<chatId>/`): `profile.md` ("你眼中的 ta",
   injected as core memory), `persona.md`, `agenda.md`, `notes/`, synthesized `_overview.md` +
   `_profile.json`. Agent-authored via `memory_write`; curated by the gardener; sandboxed
-  (`memory/fs-api.ts`).
+  (`memory/fs-api.ts`). 每次对话注入的长期记忆是每晚整理的 `memory.md`(`src/daemon/memory/nightly*.ts`);
+  `profile.md` 是白天草稿;`_overview.md` 已停止更新。
 - **C — Plugin knowledge SQLite** (`wechat-cc-plugins`, Python, reads the **raw decrypted vault** —
   the user's *entire* WeChat history): `wxfacts` FactStore (claims/obligations),
   `wxgraph` GraphStore (relationship stats), `wxsearch` IndexStore (FTS5 + embeddings).
