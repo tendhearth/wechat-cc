@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { runMemoryNightly, readNightlyState, writeNightlyState, MEMORY_LOG_FILE, type NightlyRunDeps } from './nightly'
+import { runMemoryNightly, readNightlyState, writeNightlyState, gatherMaterial, MATERIAL_BUDGET, MEMORY_LOG_FILE, type NightlyRunDeps } from './nightly'
 import { parseMemoryDoc } from './curated-doc'
 
 const OWNER = 'owner@im.wechat'
@@ -153,5 +153,34 @@ describe('runMemoryNightly', () => {
     const r = await runMemoryNightly(d, { force: true })
     expect(r.status).toBe('written')
     expect(calls[0]).toContain('UNIQUE_TAIL_MARKER')
+  })
+  it('a failing run does not clobber state written by a run that succeeded during its model call', async () => {
+    const d = deps({
+      cheapEval: () => async () => {
+        writeNightlyState(stateDir, { ...readNightlyState(stateDir), lastRunDay: '2026-09-25', lastRunIso: '2026-09-25T04:06:00.000Z', fingerprint: 'newer', firstRunDone: true })
+        throw new Error('boom')
+      },
+    })
+    const r = await runMemoryNightly(d, { force: true })
+    expect(r.status).toBe('failed')
+    expect(readNightlyState(stateDir)).toMatchObject({ lastRunDay: '2026-09-25', lastRunIso: '2026-09-25T04:06:00.000Z', fingerprint: 'newer', firstRunDone: true, failures: 1, lastFailDay: '2026-09-25' })
+  })
+  it('caps the whole material at one total budget, filling profile first and the newest notes before older ones', async () => {
+    const notes = join(root, 'notes')
+    mkdirSync(notes, { recursive: true })
+    const base = Date.parse('2026-09-01T00:00:00Z') / 1000
+    for (let i = 0; i < 20; i++) {
+      const name = `n${String(i).padStart(2, '0')}.md`
+      const p = join(notes, name)
+      writeFileSync(p, `NOTE_${i}_MARKER\n` + 'x'.repeat(6000))
+      // name order is the reverse of age: n00 is the newest, n19 the oldest
+      utimesSync(p, base + (20 - i) * 3600, base + (20 - i) * 3600)
+    }
+    const { text, truncated } = await gatherMaterial(root, deps().sources, null, false)
+    expect(truncated).toBe(true)
+    expect(text.length).toBeLessThanOrEqual(MATERIAL_BUDGET + 20 * 40)
+    expect(text).toContain('主人叫大人')
+    expect(text).toContain('NOTE_0_MARKER')
+    expect(text).not.toContain('NOTE_19_MARKER')
   })
 })

@@ -3,7 +3,7 @@
  * 素材 → 指纹(没新东西不调模型)→ 便宜模型出改动清单 → 程序校验执行 → 修订检查(主人正在改就作废)
  * → 备份旧版、原子写、追加日志、更新状态。任何失败都不写文件;同一天不再自动重试。
  */
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
@@ -59,6 +59,21 @@ export function writeNightlyState(stateDir: string, s: NightlyState): void {
   renameSync(tmp, join(dir, STATE_FILE))
 }
 
+/** Only the fields a run owns. pendingNotice is deliberately absent — see mergeRunState. */
+type RunOwnedFields = Partial<Pick<NightlyState, 'lastRunDay' | 'lastRunIso' | 'fingerprint' | 'failures' | 'lastFailDay' | 'firstRunDone'>>
+
+/**
+ * Re-read the state right before writing and merge only this run's fields.
+ * A run spans a model call of up to minutes; meanwhile a delivery may have
+ * cleared pendingNotice, or another run may have succeeded. Writing back the
+ * snapshot read at the start would resurrect a sent notice or overwrite a
+ * newer success. pendingNotice is written only when this run sets a new one.
+ */
+function mergeRunState(stateDir: string, fields: RunOwnedFields, newNotice?: NightlyState['pendingNotice']): void {
+  const cur = readNightlyState(stateDir)
+  writeNightlyState(stateDir, { ...cur, ...fields, ...(newNotice ? { pendingNotice: newNotice } : {}) })
+}
+
 export function ownerMemoryRoot(stateDir: string, owner: string): string | null {
   if (!owner || owner.includes('..') || owner.includes('/') || owner.includes('\\')) return null
   return join(stateDir, 'memory', owner)
@@ -66,26 +81,49 @@ export function ownerMemoryRoot(stateDir: string, owner: string): string | null 
 
 const readIf = (p: string): string => (existsSync(p) ? readFileSync(p, 'utf8') : '')
 
-export async function gatherMaterial(root: string, sources: NightlySources, sinceIso: string | null, firstRun: boolean): Promise<string> {
-  const blocks: Array<[string, string]> = [
-    ['CC 白天的草稿 profile.md', readIf(join(root, 'profile.md'))],
-    ['待办 agenda.md', readIf(join(root, 'agenda.md'))],
-    ['从聊天提炼的待办与联系人 knowledge.md', readIf(join(root, 'knowledge.md'))],
-  ]
-  const notes = join(root, 'notes')
-  if (existsSync(notes)) {
-    for (const f of readdirSync(notes).filter(f => f.endsWith('.md')).sort()) blocks.push([`笔记 notes/${f}`, readIf(join(notes, f))])
-  }
+export const MATERIAL_BUDGET = 30_000
+const CHAT_BLOCK = '这段时间的聊天'
+
+/**
+ * 素材有一个总预算(MATERIAL_BUDGET 字),按优先级往里装:profile → (首次)_overview → 聊天尾部
+ * → 观察 → 里程碑 → agenda → knowledge → 本机 Claude 记忆 → notes(新改的在前)。每块仍各自封顶
+ * BLOCK_CAP;预算不够时最后一块截到剩余额度(聊天留尾、其余留头),之后的块不再装。否则笔记一多,
+ * 提示词无限长,便宜模型一拒就天天失败。
+ */
+export async function gatherMaterial(root: string, sources: NightlySources, sinceIso: string | null, firstRun: boolean): Promise<{ text: string; truncated: boolean }> {
+  const blocks: Array<[string, string]> = [['CC 白天的草稿 profile.md', readIf(join(root, 'profile.md'))]]
   if (firstRun) blocks.push(['旧的整体理解 _overview.md', readIf(join(root, '_overview.md'))])
+  // Chat keeps the TAIL (newest messages) — sinceIso only advances, so the
+  // oldest text is the part a previous night's tidy already covered.
+  blocks.push([CHAT_BLOCK, (await sources.messagesSince(sinceIso)).join('\n')])
   blocks.push(['观察', (await sources.observationsSince(sinceIso)).join('\n')])
   blocks.push(['里程碑', (await sources.milestonesSince(sinceIso)).join('\n')])
-  blocks.push(['这段时间的聊天', (await sources.messagesSince(sinceIso)).join('\n')])
+  blocks.push(['待办 agenda.md', readIf(join(root, 'agenda.md'))])
+  blocks.push(['从聊天提炼的待办与联系人 knowledge.md', readIf(join(root, 'knowledge.md'))])
   blocks.push(['本机 Claude 记忆', sources.projectMemory()])
-  // Every block is capped to BLOCK_CAP chars, but the chat block keeps the
-  // TAIL (newest messages), not the head — sinceIso only advances, so the
-  // oldest text in this block is the part already covered by a previous
-  // night's tidy; the newest is what's actually new material.
-  return blocks.filter(([, v]) => v.trim()).map(([k, v]) => `### ${k}\n${k === '这段时间的聊天' ? v.slice(-BLOCK_CAP) : v.slice(0, BLOCK_CAP)}`).join('\n\n')
+  const notes = join(root, 'notes')
+  if (existsSync(notes)) {
+    const files = readdirSync(notes).filter(f => f.endsWith('.md')).map(f => {
+      let mtime = 0
+      try { mtime = statSync(join(notes, f)).mtimeMs } catch { /* vanished mid-read */ }
+      return { f, mtime }
+    })
+    files.sort((a, b) => b.mtime - a.mtime || a.f.localeCompare(b.f))
+    for (const { f } of files) blocks.push([`笔记 notes/${f}`, readIf(join(notes, f))])
+  }
+  let left = MATERIAL_BUDGET
+  let truncated = false
+  const out: string[] = []
+  for (const [k, v] of blocks) {
+    if (!v.trim()) continue
+    if (left <= 0) { truncated = true; break }
+    const capped = k === CHAT_BLOCK ? v.slice(-BLOCK_CAP) : v.slice(0, BLOCK_CAP)
+    const body = capped.length > left ? (k === CHAT_BLOCK ? capped.slice(-left) : capped.slice(0, left)) : capped
+    if (body.length < capped.length) truncated = true
+    left -= body.length
+    out.push(`### ${k}\n${body}`)
+  }
+  return { text: out.join('\n\n'), truncated }
 }
 
 export function buildNightlyPrompt(a: { today: string; current: string; material: string }): string {
@@ -134,16 +172,17 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   const memPath = join(root, MEMORY_FILENAME)
   const firstRun = !existsSync(memPath)
   const currentText = readIf(memPath)
-  const material = await gatherMaterial(root, deps.sources, state.lastRunIso, firstRun)
+  const { text: material, truncated } = await gatherMaterial(root, deps.sources, state.lastRunIso, firstRun)
+  if (truncated) deps.log('MEMORY_NIGHTLY', `material over budget (${MATERIAL_BUDGET} chars) — lower-priority blocks dropped/truncated`)
   const fingerprint = createHash('sha256').update(material).digest('hex')
   if (!firstRun && fingerprint === state.fingerprint) {
-    writeNightlyState(deps.stateDir, { ...state, lastRunDay: day })
+    mergeRunState(deps.stateDir, { lastRunDay: day })
     return { status: 'skipped', reason: 'no_new_material' }
   }
 
   const fail = (reason: string): NightlyRunResult => {
-    const failures = state.failures + 1
-    writeNightlyState(deps.stateDir, { ...state, failures, lastFailDay: day })
+    const failures = readNightlyState(deps.stateDir).failures + 1
+    mergeRunState(deps.stateDir, { failures, lastFailDay: day })
     deps.log('MEMORY_NIGHTLY', `failed (${reason}); ${failures} in a row`)
     if (failures >= 3) deps.log('MEMORY_NIGHTLY', `ALERT: ${failures} consecutive failures — memory.md may be stale`)
     return { status: 'failed', reason }
@@ -201,16 +240,14 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   }
 
   const notice = composeNotice(noticeItems(res.applied), !state.firstRunDone)
-  writeNightlyState(deps.stateDir, {
-    ...state,
+  mergeRunState(deps.stateDir, {
     lastRunDay: day,
     lastRunIso: nowIso,
     fingerprint,
     failures: 0,
     lastFailDay: null,
     firstRunDone: true,
-    pendingNotice: !opts.force && notice ? { text: notice, createdAtMs: nowMs } : state.pendingNotice,
-  })
+  }, !opts.force && notice ? { text: notice, createdAtMs: nowMs } : null)
   deps.log('MEMORY_NIGHTLY', `written: ${res.applied.length} change(s)`)
   return { status: 'written', applied: res.applied, notice }
 }

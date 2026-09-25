@@ -71,13 +71,31 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
     const p = r ? join(r, MEMORY_FILENAME) : null
     return r && p && existsSync(p) ? { root: r, doc: parseMemoryDoc(readFileSync(p, 'utf8')) } : null
   }
+  // tick() and runNow() (CLI, /v1/memory/nightly/run, 微信「整理记忆」) share
+  // one chain: a call waits for any in-flight run, so this process never has
+  // two runMemoryNightly in parallel (they'd race on memory.md and state).
+  let chain: Promise<unknown> = Promise.resolve()
+  const serial = <T>(fn: () => Promise<T>): Promise<T> => {
+    const next = chain.then(fn, fn)
+    chain = next.catch(() => {})
+    return next
+  }
+  // A skip reason like disabled / failed_today would otherwise log every
+  // 15-min tick (~96 lines/day). Log it only when it changes.
+  let lastSkipReason: string | null = null
   return {
-    async tick() {
+    tick: () => serial(async () => {
       const r = await runMemoryNightly(deps, { force: false })
-      if (r.status !== 'skipped' || r.reason !== 'not_due') deps.log('MEMORY_NIGHTLY', `tick: ${r.status}${r.status === 'written' ? '' : ` (${r.reason})`}`)
+      if (r.status === 'skipped') {
+        if (r.reason !== 'not_due' && r.reason !== lastSkipReason) deps.log('MEMORY_NIGHTLY', `tick: skipped (${r.reason})`)
+        lastSkipReason = r.reason
+      } else {
+        lastSkipReason = null
+        deps.log('MEMORY_NIGHTLY', `tick: ${r.status}${r.status === 'written' ? '' : ` (${r.reason})`}`)
+      }
       await deliverPendingNotice(deps)
-    },
-    runNow: () => runMemoryNightly(deps, { force: true }),
+    }),
+    runNow: () => serial(() => runMemoryNightly(deps, { force: true })),
     readCurated() {
       const got = readDoc()
       if (!got) return null

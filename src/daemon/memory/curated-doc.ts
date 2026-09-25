@@ -24,6 +24,9 @@ function isSection(s: string): s is Section {
 }
 
 export function parseMemoryDoc(md: string): MemoryDoc {
+  // A BOM (Windows editors add one) would hide the header from startsWith —
+  // it'd land in extra, get injected into every prompt and be written twice.
+  if (md.charCodeAt(0) === 0xfeff) md = md.slice(1)
   const doc = emptyDoc()
   let cur: Section | null = null
   for (const raw of md.split('\n')) {

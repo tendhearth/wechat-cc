@@ -79,4 +79,63 @@ describe('memory nightly runtime', () => {
     writeNightlyState(stateDir, { ...readNightlyState(stateDir), failures: 3 })
     expect(rt.readCurated()!.split('\n')[0]).toBe('⚠️ 最近 3 次整理都没成功,下面可能是旧的。')
   })
+  it('serializes concurrent runNow calls — the model is never called by two runs at once', async () => {
+    let active = 0, maxActive = 0, calls = 0, msg = 0
+    const rt = makeMemoryNightlyRuntime(deps({
+      sources: { observationsSince: async () => [], milestonesSince: async () => [], messagesSince: async () => [`主人:第 ${msg++} 句`], projectMemory: () => '' },
+      cheapEval: () => async () => {
+        active++; calls++; maxActive = Math.max(maxActive, active)
+        await new Promise(r => setTimeout(r, 20))
+        active--
+        return JSON.stringify({ add: [{ section: '近况', text: `第 ${calls} 次` }], update: [], confirm: [], remove: [] })
+      },
+    }))
+    const [a, b] = await Promise.all([rt.runNow(), rt.runNow()])
+    expect(a.status).toBe('written')
+    expect(b.status).toBe('written')
+    expect(calls).toBe(2)
+    expect(maxActive).toBe(1)
+  })
+  it('a notice cleared by a delivery while a run is in flight is not resurrected', async () => {
+    writeNightlyState(stateDir, { ...readNightlyState(stateDir), pendingNotice: { text: '旧通知', createdAtMs: Date.parse('2026-09-25T04:00:00Z') } })
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    let entered!: () => void
+    const inEval = new Promise<void>(r => { entered = r })
+    const rt = makeMemoryNightlyRuntime(deps({
+      cheapEval: () => async () => {
+        entered()
+        await gate
+        return JSON.stringify({ add: [{ section: '近况', text: '在赶发版' }], update: [], confirm: [], remove: [] })
+      },
+    }))
+    const run = rt.runNow()
+    await inEval
+    // a delivery sent the old notice and cleared it while the model was thinking
+    writeNightlyState(stateDir, { ...readNightlyState(stateDir), pendingNotice: null })
+    release()
+    expect((await run).status).toBe('written')
+    expect(readNightlyState(stateDir).pendingNotice).toBeNull()
+  })
+  it('logs a repeated skip reason once, not every tick', async () => {
+    const log = vi.fn()
+    const rt = makeMemoryNightlyRuntime(deps({ log, config: () => ({ enabled: false, at: '04:00', timezone: 'UTC' }) }))
+    await rt.tick()
+    await rt.tick()
+    await rt.tick()
+    expect(log).toHaveBeenCalledTimes(1)
+    expect(log).toHaveBeenCalledWith('MEMORY_NIGHTLY', 'tick: skipped (disabled)')
+  })
+  it('logs the same skip reason again after a non-skipped result in between', async () => {
+    const log = vi.fn()
+    let enabled = false
+    const rt = makeMemoryNightlyRuntime(deps({ log, config: () => ({ enabled, at: '04:00', timezone: 'UTC' }) }))
+    await rt.tick()
+    enabled = true
+    await rt.tick()   // written
+    enabled = false
+    await rt.tick()
+    const tickLines = log.mock.calls.filter(c => String(c[1]).startsWith('tick:')).map(c => c[1])
+    expect(tickLines).toEqual(['tick: skipped (disabled)', 'tick: written', 'tick: skipped (disabled)'])
+  })
 })

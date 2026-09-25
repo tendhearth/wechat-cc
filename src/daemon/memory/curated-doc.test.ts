@@ -53,4 +53,18 @@ describe('curated memory doc', () => {
     const once = serializeMemoryDoc(d, 'T')
     expect(serializeMemoryDoc(parseMemoryDoc(once), 'T')).toBe(once)
   })
+  it('a leading BOM does not push the header into extra, and the rewrite has exactly one header and no BOM', () => {
+    const d0 = parseMemoryDoc(SAMPLE)
+    const bommed = '﻿' + serializeMemoryDoc(d0, '2026-09-24T04:00:00.000Z')
+    const d = parseMemoryDoc(bommed)
+    expect(d.extra).toEqual(d0.extra)
+    expect(d.extra.some(l => l.includes('wechat-cc 记忆'))).toBe(false)
+    const out = serializeMemoryDoc(d, '2026-09-25T04:00:00.000Z')
+    expect(out.startsWith('﻿')).toBe(false)
+    expect(out.split('\n').filter(l => l.includes('<!-- wechat-cc 记忆'))).toHaveLength(1)
+  })
+  it('a BOM-prefixed doc without extras parses with empty extra', () => {
+    const bommed = '﻿' + serializeMemoryDoc(emptyDoc(), 'T')
+    expect(parseMemoryDoc(bommed).extra).toEqual([])
+  })
 })
