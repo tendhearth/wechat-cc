@@ -623,3 +623,22 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     expect((await fetch(`${b2}/m/api/matter/say?t=${t2}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: 'x' }) })).status).toBe(409)
   })
 })
+
+describe('phone curated memory', () => {
+  it('serves the curated memory view behind the token', async () => {
+    const view = { updated_at: '2026-09-25T04:05:00.000Z', sections: [{ name: '偏好' as const, items: [{ id: 'b1', text: '回复直接', due: null, changed: true }] }] }
+    const p = makeSettingsPanel({
+      stateDir: mkdtempSync(join(tmpdir(), 'sp-mem-')), ownerChatId: () => null,
+      chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
+      getUserName: () => null, setUserName: async () => {}, log: () => {},
+      curatedMemory: () => view,
+    })
+    const { port } = await p.start(0)
+    try {
+      const base = `http://127.0.0.1:${port}`
+      expect((await fetch(`${base}/m/api/memory`)).status).toBe(401)
+      const r = await (await fetch(`${base}/m/api/memory?t=${p.issueToken()}`)).json()
+      expect(r).toEqual({ ok: true, ...view })
+    } finally { await p.stop() }
+  })
+})

@@ -46,6 +46,7 @@
   .ev .pc { margin-top:6px } .ev .pc svg { width:100%; height:auto; border:1.5px solid var(--line); border-radius:10px }
   .more { display:block; margin:6px auto 0; font:inherit; font-size:13px; padding:7px 18px; border:1.5px solid var(--line); border-radius:999px; background:var(--card); color:var(--soft) }
   .sec { margin-top:18px }
+  .mem-dot { color:var(--accent); font-weight:700 } .mem-at { display:block; color:var(--soft); margin:4px 0 8px }
 </style></head><body>
 <header><h1>CC</h1><div class="sub" id="sub">随身小窗 · 数据都在你自己电脑上</div><button id="nav-set" type="button">设置</button></header>
 <div id="pairbar" hidden>这个链接 10 分钟就过期<button id="pairbtn">把 CC 带在身上</button></div>
@@ -64,6 +65,7 @@
   <div class="sec"><div class="grp">表情</div><div class="stgrid" id="stickers"></div></div>
 </div>
   </details>
+  <details class="memory-pocket" id="mem-box"><summary>CC 记得你</summary><div id="mem"></div></details>
 </div>
 <style>
 #m-controls fieldset{border:1px solid var(--line);border-radius:8px;margin:12px 0;padding:10px} .m-option{display:block;margin:10px 0} .m-option small{display:block;margin-left:22px} .m-option textarea{display:block;box-sizing:border-box;width:100%;font:inherit;padding:8px} .m-description{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit} #m-notice{padding:8px 0;white-space:pre-wrap} #m-conn{padding:8px 10px;margin:8px 0;border:1px solid var(--line);border-radius:8px;font-size:.92em;opacity:.85} #m-controls button{min-height:40px} #m-controls button:disabled,#m-send:disabled{opacity:.5} #m-artifacts small{display:block} #m-list button.card{width:100%;text-align:left;font:inherit;color:inherit} #m-artifact-preview{overflow-wrap:anywhere}

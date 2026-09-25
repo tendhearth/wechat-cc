@@ -172,5 +172,23 @@ function load() {
     return r.json()
   }).then(function(s){ if (s && s.ok) render(s) }).catch(function(){ toast("连不上家里的电脑 — 看看它开着没") })
 }
+// CC 记得你(2026-09-25):每晚整理的长期记忆,只读;昨晚改过的标一个点。展开时才取。
+function loadMemory() {
+  api("/m/api/memory").then(function(r){ return r.json() }).then(function(m) {
+    var box = document.getElementById("mem")
+    if (!m || !m.ok) { box.innerHTML = '<div class="empty">暂时读不到</div>'; return }
+    var h = ""
+    m.sections.forEach(function(s) {
+      if (!s.items.length) return
+      h += '<div class="grp">' + esc(s.name) + '</div>'
+      s.items.forEach(function(it) {
+        h += '<div class="card">' + (it.changed ? '<span class="mem-dot" title="昨晚更新">•</span> ' : '') + esc(it.text) + '</div>'
+      })
+    })
+    box.innerHTML = h ? (m.updated_at ? '<small class="mem-at">最近整理 ' + esc(ago(m.updated_at)) + '</small>' : '') + h : '<div class="empty">还没整理过 —— 今晚会整理第一份</div>'
+  }).catch(function(){ toast("网络不通") })
+}
+var memBox = /** @type {HTMLDetailsElement} */ (document.getElementById("mem-box"))
+memBox.addEventListener("toggle", function(){ if (memBox.open) loadMemory() })
 loadHome()
 load()
