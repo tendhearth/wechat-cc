@@ -57,7 +57,7 @@ import { loadGuardConfig } from '../guard/store'
 import { makeFireMilestonesFor, makeRecordInbound, makeMaybeWriteWelcomeObservation } from './side-effects'
 import { makeMessagesStore } from '../../lib/messages-store'
 import { makeMemoryLlmOps, resolveCheapEval } from '../memory-llm-ops'
-import { makeMemoryNightlyRuntime } from '../memory/nightly-runtime'
+import { makeMemoryNightlyRuntime, type MemoryNightlyRuntime } from '../memory/nightly-runtime'
 import { makeNightlySources } from '../memory/nightly-sources'
 import { shouldSpeak, careLevel } from '../companion/calibration'
 import { makeDedupStore } from '../../lib/dedup-store'
@@ -326,7 +326,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   })
   // 每晚整理长期记忆 memory.md(spec 2026-09-25-memory-nightly-design)。定时器由 main.ts 挂。
   const nightlyOwner = (): string | null => loadCompanionConfig(stateDir).default_chat_id ?? null
-  const memoryNightly = makeMemoryNightlyRuntime({
+  const nightlyRuntime = makeMemoryNightlyRuntime({
     stateDir,
     ownerChatId: nightlyOwner,
     config: () => {
@@ -357,6 +357,15 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     wechatSuspended: () => boot.health.health.shouldSuspend('wechat'),
     send: (chatId, text) => ilink.sendMessage(chatId, text),
   })
+  // 手动立即运行(内部 API / 以后的微信「整理记忆」)可能跑到 5 分钟 —— 持 busy token,
+  // 免得空闲自动重启把它杀掉。定时 tick 的 busy 由 registerMemoryNightly 自己持。
+  const memoryNightly: MemoryNightlyRuntime = {
+    ...nightlyRuntime,
+    runNow: async () => {
+      const release = boot.holdBusy('memory-nightly-manual')
+      try { return await nightlyRuntime.runNow() } finally { release() }
+    },
+  }
   const maybeWriteWelcomeObservation = makeMaybeWriteWelcomeObservation({
     stateDir,
     db,
