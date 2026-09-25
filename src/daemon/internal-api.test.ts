@@ -431,24 +431,27 @@ describe('internal-api', () => {
         expect(await fileWrite.json()).toEqual({ ok: true })
       })
 
-      it('write guard survives path spellings that normalize to the same memory.md: ./, //, x/../, case-insensitive', async () => {
+      it('write guard survives path spellings that normalize to the same memory.md: ./, //, x/../, trailing slash(es), case-insensitive', async () => {
         const { port } = await startWithMemory()
         const admin = api!.mintSessionToken('admin', 'claude/a/ownerchat')
-        for (const p of ['./ownerchat/memory.md', 'ownerchat//memory.md', 'ownerchat/x/../memory.md', 'ownerchat/Memory.md']) {
+        for (const p of ['./ownerchat/memory.md', 'ownerchat//memory.md', 'ownerchat/x/../memory.md', 'ownerchat/Memory.md', 'ownerchat/./memory.md', 'ownerchat/memory.md/', 'ownerchat/memory.md//']) {
           const w = await write(port, admin, p)
           expect(w.status).toBe(200)
           expect(await w.json()).toMatchObject({ ok: false, error: 'curated_memory_readonly' })
         }
+        // A legit neighbour path (not memory.md itself) must NOT be blocked.
+        const neighbour = await write(port, admin, 'ownerchat/notes/memory.md')
+        expect(await neighbour.json()).toEqual({ ok: true })
       })
 
-      it('delete guard also survives path normalization: plain and ./ spellings of ownerchat/memory.md', async () => {
+      it('delete guard also survives path normalization: plain, ./, and trailing-slash spellings of ownerchat/memory.md', async () => {
         memoryRoot = join(stateDir, 'memory')
         const memory = makeMemoryFS({ rootDir: memoryRoot })
         const db = openTestDb()
         api = createInternalApi({ stateDir, daemonPid: 999, memory, db })
         const { port } = await api.start()
         const admin = api.mintSessionToken('admin', 'claude/a/ownerchat')
-        for (const p of ['ownerchat/memory.md', './ownerchat/memory.md']) {
+        for (const p of ['ownerchat/memory.md', './ownerchat/memory.md', 'ownerchat/memory.md/']) {
           const resp = await fetch(`http://127.0.0.1:${port}/v1/memory/delete`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${admin}`, 'content-type': 'application/json' },

@@ -101,11 +101,14 @@ function memoryScopeDenied(path: string, caller?: { tier: UserTier; origin: stri
  * `ownerchat/x/../memory.md` all land on the same file as `ownerchat/
  * memory.md` and must be caught too (fix round 1, 2026-09-25). Also
  * case-insensitive: default macOS APFS is case-insensitive, so
- * `ownerchat/Memory.md` is the same file on disk there.
+ * `ownerchat/Memory.md` is the same file on disk there. And trailing
+ * slash(es) — `resolve()` strips them (`ownerchat/memory.md/` resolves to
+ * the same file) but `posix.normalize` keeps one, so they must be stripped
+ * separately before the `$`-anchored match (fix round 2, 2026-09-25).
  */
 function curatedMemoryDenied(path: string, caller?: { origin: string }): boolean {
   if (!caller || caller.origin !== 'session') return false
-  const n = posix.normalize(path.replace(/\\/g, '/')).replace(/^(\.\/)+/, '')
+  const n = posix.normalize(path.replace(/\\/g, '/')).replace(/^(\.\/)+/, '').replace(/\/+$/, '')
   return /^[^/]+\/memory\.md$/i.test(n)
 }
 const CURATED_READONLY = {
