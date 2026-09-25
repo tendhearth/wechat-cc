@@ -677,8 +677,21 @@ export function formatOverviewForDisplay(raw: string): string {
 }
 
 async function runShowOverview(deps: AdminCommandsDeps, adminChatId: string): Promise<void> {
-  const curated = deps.readCuratedMemory ? await deps.readCuratedMemory(adminChatId) : null
-  if (curated) { await deps.sendMessage(adminChatId, `🧠 我记得的你:\n\n${curated}`); return }
+  // Guarded like the rest of this function: a throw here (e.g. memory.md I/O
+  // error) must not escape — the pipeline awaits runShowOverview unguarded,
+  // so an escaping rejection would surface as an unhandled rejection. On
+  // failure we log and fall through to the existing overview path below,
+  // same as any other "curated memory not available" case.
+  let curated: string | null = null
+  if (deps.readCuratedMemory) {
+    try {
+      curated = await deps.readCuratedMemory(adminChatId)
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      deps.log('ADMIN_CMD', `show-overview curated-read failed chat=${adminChatId}: ${detail}`)
+    }
+  }
+  if (curated) { await deps.sendMessage(adminChatId, `🧠 我记得的你:\n\n${curated}`).catch(() => {}); return }
   if (!deps.readOverview) {
     await deps.sendMessage(adminChatId, '记忆查看暂不可用（daemon 未接线）。').catch(() => {})
     return
@@ -717,11 +730,11 @@ async function runSynthesize(deps: AdminCommandsDeps, adminChatId: string): Prom
     synthesizeInFlight.add(adminChatId)
     const release = deps.holdBusy?.('admin-memory-nightly')
     try {
-      await deps.sendMessage(adminChatId, '🧠 正在整理记忆…')
-      await deps.sendMessage(adminChatId, formatNightlyReply(await deps.runMemoryNightlyNow()))
+      await deps.sendMessage(adminChatId, '🧠 正在整理记忆…').catch(() => {})
+      await deps.sendMessage(adminChatId, formatNightlyReply(await deps.runMemoryNightlyNow())).catch(() => {})
     } catch (e) {
       deps.log('ADMIN', `memory nightly failed: ${e instanceof Error ? e.message : String(e)}`)
-      await deps.sendMessage(adminChatId, '这次没整理成，记忆保持原样。')
+      await deps.sendMessage(adminChatId, '这次没整理成，记忆保持原样。').catch(() => {})
     } finally {
       synthesizeInFlight.delete(adminChatId)
       release?.()
