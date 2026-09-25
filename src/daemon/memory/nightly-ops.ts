@@ -24,11 +24,34 @@ const RECENT_STALE_DAYS = 14
 const isStr = (v: unknown): v is string => typeof v === 'string'
 const isSection = (v: unknown): v is Section => isStr(v) && (SECTIONS as readonly string[]).includes(v)
 
+function extractJsonObjectText(raw: string): string | null {
+  const fence = /```(?:json)?\s*\n?([\s\S]*?)```/.exec(raw)
+  if (fence) {
+    const inner = fence[1]!.trim()
+    try {
+      const v = JSON.parse(inner)
+      if (v && typeof v === 'object') return inner
+    } catch { /* fall through to brace scan */ }
+  }
+  const lastBrace = raw.lastIndexOf('}')
+  if (lastBrace >= 0) {
+    for (let i = 0; i < raw.length; i++) {
+      if (raw[i] !== '{' || i >= lastBrace) continue
+      const candidate = raw.slice(i, lastBrace + 1)
+      try {
+        const v = JSON.parse(candidate)
+        if (v && typeof v === 'object') return candidate
+      } catch { /* try next '{' */ }
+    }
+  }
+  return null
+}
+
 export function parseOps(raw: string): NightlyOps | null {
-  const m = /\{[\s\S]*\}/.exec(raw)
-  if (!m) return null
+  const text = extractJsonObjectText(raw)
+  if (!text) return null
   let j: unknown
-  try { j = JSON.parse(m[0]) } catch { return null }
+  try { j = JSON.parse(text) } catch { return null }
   if (!j || typeof j !== 'object') return null
   const o = j as Record<string, unknown>
   if (!Array.isArray(o.add) || !Array.isArray(o.update) || !Array.isArray(o.confirm) || !Array.isArray(o.remove)) return null
@@ -72,17 +95,25 @@ export function applyNightly(
   for (const t of [...ops.add.map(a => a.text), ...ops.update.map(u => u.text)]) {
     if (!t || t.length > MAX_ENTRY_CHARS) return { ok: false, reason: 'bad_text' }
   }
-  if (ops.remove.length > Math.max(2, Math.floor(index.size * 0.3))) return { ok: false, reason: 'too_many_removals' }
+  const updateIdsSeen = new Set<string>()
+  for (const u of ops.update) {
+    if (updateIdsSeen.has(u.id)) return { ok: false, reason: 'duplicate_update' }
+    updateIdsSeen.add(u.id)
+  }
+  const dedupedConfirm = [...new Set(ops.confirm)]
+  const dedupedRemove: NightlyOps['remove'] = []
+  { const seen = new Set<string>(); for (const r of ops.remove) if (!seen.has(r.id)) { seen.add(r.id); dedupedRemove.push(r) } }
+  if (dedupedRemove.length > Math.max(2, Math.floor(index.size * 0.3))) return { ok: false, reason: 'too_many_removals' }
 
   const applied: AppliedOp[] = []
-  for (const id of ops.confirm) index.get(id)!.entry.seen = o.today
+  for (const id of dedupedConfirm) index.get(id)!.entry.seen = o.today
   for (const u of ops.update) {
     const hit = index.get(u.id)!
     applied.push({ kind: 'update', id: u.id, section: hit.section, text: u.text, before: hit.entry.text, reversal: u.reversal })
     hit.entry.text = u.text
     hit.entry.seen = o.today
   }
-  for (const r of ops.remove) {
+  for (const r of dedupedRemove) {
     const hit = index.get(r.id)!
     doc.sections[hit.section] = doc.sections[hit.section].filter(e => e !== hit.entry)
     applied.push({ kind: 'remove', id: r.id, section: hit.section, text: hit.entry.text, reason: r.reason })

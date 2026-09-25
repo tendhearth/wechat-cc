@@ -24,6 +24,11 @@ describe('parseOps', () => {
     expect(parseOps('{"add":[{"section":"杂项","text":"x"}],"update":[],"confirm":[],"remove":[]}')).toBeNull()
     expect(parseOps('我觉得没什么要改的')).toBeNull()
   })
+  it('finds the JSON even when the prose around it has braces', () => {
+    expect(parseOps('我先想一下 {大概是这个意思} 然后给出结果:\n```json\n{"add":[],"update":[],"confirm":["a001"],"remove":[]}\n```'))
+      .toEqual({ add: [], update: [], confirm: ['a001'], remove: [] })
+    expect(parseOps('结果 {"add":[],"update":[],"confirm":[],"remove":[]} 以上')).toEqual({ add: [], update: [], confirm: [], remove: [] })
+  })
 })
 
 describe('applyNightly', () => {
@@ -68,5 +73,11 @@ describe('applyNightly', () => {
   })
   it('counts days between local dates', () => {
     expect(daysBetween('2026-09-10', '2026-09-25')).toBe(15)
+  })
+  it('dedupes repeated remove/confirm ids and rejects a doubly-updated id', () => {
+    const r = applyNightly(doc(), { ...none, remove: [{ id: 'b002', reason: 'x' }, { id: 'b002', reason: 'y' }], confirm: ['a001', 'a001'] }, opts)
+    expect(r.ok && r.applied.filter(a => a.kind === 'remove')).toEqual([{ kind: 'remove', id: 'b002', section: '偏好', text: '回复直接', reason: 'x' }])
+    expect(applyNightly(doc(), { ...none, update: [{ id: 'b001', text: 'a', reversal: false }, { id: 'b001', text: 'b', reversal: false }] }, opts))
+      .toEqual({ ok: false, reason: 'duplicate_update' })
   })
 })
