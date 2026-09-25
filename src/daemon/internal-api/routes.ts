@@ -9,7 +9,7 @@ import { mattersRoutes } from './routes-matters'
  * sections are kept in stable order to match the original file's layout
  * so blame survives the split.
  */
-import { basename, join } from 'node:path'
+import { basename, join, posix } from 'node:path'
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { errMsg, type InternalApiDeps, type InternalApiDelegateDep, type RouteTable } from './types'
@@ -91,10 +91,22 @@ function memoryScopeDenied(path: string, caller?: { tier: UserTier; origin: stri
   return !(norm === caller.chatId || norm.startsWith(`${caller.chatId}/`))
 }
 
-/** 每晚整理的长期记忆由 daemon 独管:会话(任何 tier)不许写 / 删 `<chat>/memory.md`;CLI / 桌面(非 session 来源)照常。 */
+/**
+ * 每晚整理的长期记忆由 daemon 独管:会话(任何 tier)不许写 / 删 `<chat>/memory.md`;
+ * CLI / 桌面(非 session 来源)照常。
+ *
+ * Must match the RESOLVED path, not the raw one — MemoryFS's resolveSafe
+ * (fs-api.ts) normalizes via `resolve(root, relPath)` before touching disk,
+ * so `./ownerchat/memory.md`, `ownerchat//memory.md`, and
+ * `ownerchat/x/../memory.md` all land on the same file as `ownerchat/
+ * memory.md` and must be caught too (fix round 1, 2026-09-25). Also
+ * case-insensitive: default macOS APFS is case-insensitive, so
+ * `ownerchat/Memory.md` is the same file on disk there.
+ */
 function curatedMemoryDenied(path: string, caller?: { origin: string }): boolean {
   if (!caller || caller.origin !== 'session') return false
-  return /^[^/]+\/memory\.md$/.test(path.replace(/\\/g, '/'))
+  const n = posix.normalize(path.replace(/\\/g, '/')).replace(/^(\.\/)+/, '')
+  return /^[^/]+\/memory\.md$/i.test(n)
 }
 const CURATED_READONLY = {
   status: 200 as const,
