@@ -405,6 +405,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     // Delegates to the shared factory (memory-llm-ops.ts) so this path and
     // the internal-api routes the desktop calls resolve cheapEval identically.
     synthesizeMemory: (adminChatId) => memoryLlmOps.synthesize(adminChatId),
+    readCuratedMemory: async () => memoryNightly.readCurated(),
+    runMemoryNightlyNow: () => memoryNightly.runNow(),
     // Read back the synthesized overview so the admin can see what the bot
     // understands about them ("看记忆" / "你对我的理解" from WeChat).
     readOverview: async (adminChatId) => {

@@ -551,6 +551,23 @@ describe('admin-commands', () => {
       expect(sentBody(0)).toContain('喜欢猫')
     })
 
+    it('查看记忆 shows the curated memory when there is one', async () => {
+      const readOverview = vi.fn().mockResolvedValue('## 整体理解\n旧的')
+      const readCuratedMemory = vi.fn().mockResolvedValue('最近整理:2026-09-25 04:05 · 改了 1 处\n\n### 偏好\n- 回复直接')
+      const cmds = make({ readOverview: readOverview as unknown as AdminCommandsDeps['readOverview'], readCuratedMemory })
+      expect(await cmds.handle(msg('查看记忆'))).toBe(true)
+      expect(sentBody(0)).toBe('🧠 我记得的你:\n\n最近整理:2026-09-25 04:05 · 改了 1 处\n\n### 偏好\n- 回复直接')
+      expect(readOverview).not.toHaveBeenCalled()
+    })
+    it('整理记忆 runs the nightly tidy now and replies with what changed', async () => {
+      const runMemoryNightlyNow = vi.fn().mockResolvedValue({ status: 'skipped', reason: 'no_new_material' })
+      const cmds = make({ runMemoryNightlyNow })
+      expect(await cmds.handle(msg('整理记忆'))).toBe(true)
+      await vi.waitFor(() => expect(runMemoryNightlyNow).toHaveBeenCalled())
+      await vi.waitFor(() => expect(sentBody(1)).toBe('没有新东西要整理,记忆保持原样。'))
+      expect(sentBody(0)).toBe('🧠 正在整理记忆…')
+    })
+
     it('strips the machine stamp comment from the read-back', async () => {
       const stamped = '<!-- 由 wechat-cc 从本机 Claude 记忆整理生成 · 2026-06-15T14:58:22.979Z -->\n\n## 整体理解\n喜欢猫。'
       const readOverview = vi.fn().mockResolvedValue(stamped)

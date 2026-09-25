@@ -23,6 +23,7 @@ import { loadHearthApi, type HearthApi, type HearthLoadResult } from './hearth-a
 import type { SynthesizeResult } from '../lib/memory-synthesis'
 import { isConnectFailure } from '../lib/net-errors'
 import type { SelfChangeSpawner } from './self-change-spawn'
+import { formatNightlyReply } from './memory/nightly-notify'
 
 export interface AdminCommandsDeps {
   stateDir: string
@@ -62,6 +63,10 @@ export interface AdminCommandsDeps {
    * overview has been synthesized yet. Wired in pipeline-deps.
    */
   readOverview?: (adminChatId: string) => Promise<string | null>
+  /** 每晚整理的长期记忆(渲染好的文本,带「最近整理」首行);没有 memory.md 时 null。 */
+  readCuratedMemory?: (adminChatId: string) => Promise<string | null>
+  /** 「整理记忆」:立刻跑一次每晚整理。 */
+  runMemoryNightlyNow?: () => Promise<import('./memory/nightly-notify').NightlyRunResult>
   /**
    * Optional. Delegate a task to a registered "hand" (another machine running
    * wechat-cc with A2A exec). Returns the hand's result, or a list of known
@@ -672,6 +677,8 @@ export function formatOverviewForDisplay(raw: string): string {
 }
 
 async function runShowOverview(deps: AdminCommandsDeps, adminChatId: string): Promise<void> {
+  const curated = deps.readCuratedMemory ? await deps.readCuratedMemory(adminChatId) : null
+  if (curated) { await deps.sendMessage(adminChatId, `🧠 我记得的你:\n\n${curated}`); return }
   if (!deps.readOverview) {
     await deps.sendMessage(adminChatId, '记忆查看暂不可用（daemon 未接线）。').catch(() => {})
     return
@@ -696,12 +703,34 @@ async function runSynthesize(deps: AdminCommandsDeps, adminChatId: string): Prom
   // Whole body is guarded: runSynthesize is dispatched fire-and-forget (the
   // pipeline doesn't await it), so ANY escaping rejection — including the
   // "整理中" ack send — would surface as an unhandled rejection.
-  if (!deps.synthesizeMemory) {
+  if (!deps.synthesizeMemory && !deps.runMemoryNightlyNow) {
     await deps.sendMessage(adminChatId, '记忆整理暂不可用（daemon 未接线）。').catch(() => {})
     return
   }
   if (synthesizeInFlight.has(adminChatId)) {
     await deps.sendMessage(adminChatId, '还在整理上一次，稍等一下…').catch(() => {})
+    return
+  }
+  // 每晚整理落地后(Task 6/7),「整理记忆」优先立刻跑一次那套流程,而不是走
+  // 下面的旧 cheapEval overview 重新生成。两条路复用同一个 in-flight 判重集合。
+  if (deps.runMemoryNightlyNow) {
+    synthesizeInFlight.add(adminChatId)
+    const release = deps.holdBusy?.('admin-memory-nightly')
+    try {
+      await deps.sendMessage(adminChatId, '🧠 正在整理记忆…')
+      await deps.sendMessage(adminChatId, formatNightlyReply(await deps.runMemoryNightlyNow()))
+    } catch (e) {
+      deps.log('ADMIN', `memory nightly failed: ${e instanceof Error ? e.message : String(e)}`)
+      await deps.sendMessage(adminChatId, '这次没整理成，记忆保持原样。')
+    } finally {
+      synthesizeInFlight.delete(adminChatId)
+      release?.()
+    }
+    return
+  }
+  const synthesizeMemory = deps.synthesizeMemory
+  if (!synthesizeMemory) {
+    await deps.sendMessage(adminChatId, '记忆整理暂不可用（daemon 未接线）。').catch(() => {})
     return
   }
   synthesizeInFlight.add(adminChatId)
@@ -714,7 +743,7 @@ async function runSynthesize(deps: AdminCommandsDeps, adminChatId: string): Prom
   try { releaseBusy = deps.holdBusy?.('admin-synthesize') } catch { releaseBusy = undefined }
   try {
     await deps.sendMessage(adminChatId, '🧠 正在重新整理我对你的理解…')
-    const r = await deps.synthesizeMemory(adminChatId)
+    const r = await synthesizeMemory(adminChatId)
     let lines: string[]
     if (r.written) {
       lines = ['✅ 整理完成，我对你的理解已更新。']
