@@ -3,7 +3,7 @@ import { assembleMobilePage, serializeMobilePage } from './assemble'
 
 const BASE: Record<string, string> = {
   'phone.html': '<script>{{>a.js}}</script>', 'a.js': 'var x = {{TOKEN_JSON}}',
-  'sw.js': 'sw', 'bootstrap.html': 'b', 'transport.js': 't', 'workbench.js': 'w', 'presence.js': 'p',
+  'sw.js': 'sw', 'bootstrap.html': 'b', 'tokens.css': 'k', 'transport.js': 't', 'workbench.js': 'w', 'presence.js': 'p',
 }
 function files(over: Record<string, string> = {}) {
   const all = { ...BASE, ...over }

@@ -20,6 +20,8 @@ export function mobilePhoneHtml(token: string, remote: { relay: string; id: stri
 
 // 下面几份不带运行时键;照样过一遍 fill,将来有人加了键却忘了给值,模块加载时就炸,不会把 {{…}} 送上手机。
 export const MOBILE_SW_JS = fillMobileTemplate(page.sw, { BRAND_ICON_VERSION: MOBILE_BRAND_ICON_VERSION })
+/** 单一色板(apps/mobile/src/tokens.css):/set 页与过期页内联它,和 /m 同一套颜色、圆角、字体。 */
+export const MOBILE_TOKENS_CSS = fillMobileTemplate(page.tokens, {})
 export const MOBILE_BOOTSTRAP_HTML = fillMobileTemplate(page.bootstrap, {})
 /** /set 与 /m 共用的传输层:同 Wi-Fi 直连,失败走端到端加密隧道。 */
 export const TUNNEL_CLIENT_JS = fillMobileTemplate(page.transport, {})

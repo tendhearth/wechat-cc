@@ -6,7 +6,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { safeSvg } from '../lib/svg-sanitize'
-import { TUNNEL_CLIENT_JS } from './mobile-page'
+import { MOBILE_TOKENS_CSS, TUNNEL_CLIENT_JS } from './mobile-page'
 
 // 手机页三件现在由 apps/mobile 生成;这里保留旧名字转出口,settings-panel.ts 与测试不用改。
 export { mobilePhoneHtml as phoneHtml, MOBILE_SW_JS as SW_JS, MOBILE_BOOTSTRAP_HTML as M_BOOTSTRAP_HTML } from './mobile-page'
@@ -15,10 +15,12 @@ export function safeSvgFile(path: string): string | null {
   try { return safeSvg(readFileSync(path, 'utf8')) } catch { return null }
 }
 
-export const EXPIRED_HTML = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<body style="font-family:system-ui;background:#f5ead8;color:#5a3f2d;display:grid;place-items:center;height:100vh;margin:0">
-<div style="text-align:center"><div style="font-size:52px">⏳</div><h2 style="margin:8px 0">链接过期啦</h2>
-<p style="color:#8b5e3c">回微信跟 CC 说「/set」再要一个新链接~</p></div></body>`
+export const EXPIRED_HTML = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CC</title>
+<style>${MOBILE_TOKENS_CSS}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--paper);color:var(--ink);font-family:var(--font)}
+.box{text-align:center;max-width:300px;padding:24px}.box img{width:72px;height:72px;opacity:.9}
+.hand{font-family:var(--hand);color:var(--hand-ink);font-size:17px;margin:12px 0 4px}.msg{color:var(--soft);font-size:14px;line-height:1.7;margin:0}
+</style><body><div class="box"><img src="/m/icon.png" alt="CC"><p class="hand">链接过期啦</p><p class="msg">回微信跟 CC 说「/set」,再要一个新链接</p></div></body>`
 
 /** The settings page — fully self-contained (WeChat's browser, no CDN). */
 export function pageHtml(token: string): string {
@@ -26,35 +28,38 @@ export function pageHtml(token: string): string {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CC 的设置</title>
 <style>
-  :root { --ink:#5a3f2d; --soft:#8b5e3c; --accent:#b0563a; --paper:#f5ead8; --card:#fffdf8; --line:rgba(89,63,44,.25); }
+${MOBILE_TOKENS_CSS}
   * { box-sizing:border-box }
-  body { margin:0; font-family:system-ui,-apple-system,"PingFang SC",sans-serif; background:var(--paper); color:var(--ink); padding:20px 16px 48px }
-  h1 { font-size:26px; margin:6px 0 2px }
-  .sub { color:var(--soft); font-size:13px; margin-bottom:18px }
-  section { background:var(--card); border:2px solid var(--line); border-radius:14px 18px 12px 20px; padding:16px; margin-bottom:16px }
-  section h2 { font-size:16px; margin:0 0 4px; color:var(--accent) }
-  .hint { font-size:12px; color:var(--soft); margin:0 0 12px }
-  label.row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 0; border-top:1px dashed var(--line) }
+  body { margin:0 auto; max-width:680px; font-family:var(--font); background:var(--paper); color:var(--ink); padding:28px 20px 56px; line-height:1.6 }
+  h1 { font-size:22px; font-weight:500; letter-spacing:-.02em; margin:0 0 2px; display:flex; align-items:center; gap:8px }
+  .sub { color:var(--soft); font-size:12.5px; margin-bottom:22px }
+  section { background:var(--card); border:1px solid var(--line); border-radius:var(--r-l); padding:18px 16px 14px; margin-bottom:14px }
+  section h2 { font-size:15px; font-weight:600; margin:0 0 2px; color:var(--ink) }
+  .hint { font-size:12px; color:var(--faint); margin:0 0 10px }
+  label.row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 0; border-top:1px solid var(--line-soft) }
   label.row:first-of-type { border-top:0 }
-  .row b { font-size:14px; font-weight:600 }
-  .row small { display:block; color:var(--soft); font-weight:400; margin-top:2px }
-  input[type=text], textarea, select { font:inherit; color:var(--ink); background:#fff; border:1.5px solid var(--line); border-radius:8px; padding:8px 10px }
+  .row b { font-size:14px; font-weight:500 }
+  .row small { display:block; color:var(--soft); font-weight:400; font-size:12px; margin-top:2px }
+  input[type=text], input[type=password], textarea, select { font:inherit; font-size:14px; color:var(--ink); background:var(--paper); border:1px solid var(--line); border-radius:var(--r-s); padding:8px 10px }
+  input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-visible { outline:2px solid var(--accent); outline-offset:2px }
   input[type=text] { width:150px }
-  textarea { width:100%; min-height:110px; resize:vertical }
-  .switch { appearance:none; width:46px; height:26px; border-radius:13px; background:#d8c6ae; position:relative; cursor:pointer; transition:.15s; flex-shrink:0 }
+  label.row > span:first-child { flex:1; min-width:0; overflow-wrap:anywhere }
+  label.row > input[type=text], label.row > input[type=password], label.row > select { max-width:48%; flex-shrink:0 }
+  textarea { width:100%; min-height:110px; resize:vertical; margin-top:8px }
+  .switch { appearance:none; width:44px; height:26px; border-radius:var(--r-pill); background:var(--line); position:relative; cursor:pointer; transition:.15s; flex-shrink:0 }
   .switch:checked { background:var(--accent) }
-  .switch::after { content:""; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:#fff; transition:.15s }
-  .switch:checked::after { left:23px }
+  .switch::after { content:""; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:var(--card); box-shadow:0 1px 2px rgba(72,63,53,.2); transition:.15s }
+  .switch:checked::after { left:21px }
   .seg { display:flex; gap:6px }
-  .seg button { font:inherit; font-size:13px; padding:6px 12px; border:1.5px solid var(--line); background:#fff; border-radius:8px; color:var(--soft) }
-  .seg button.on { background:var(--accent); border-color:var(--accent); color:#fff }
-  details { margin-top:4px } summary { color:var(--soft); font-size:14px; cursor:pointer; padding:6px 0 }
-  .say { font-size:12px; color:var(--soft); background:rgba(176,86,58,.07); border-radius:8px; padding:8px 10px; margin-top:10px }
-  #toast { position:fixed; left:50%; bottom:28px; transform:translateX(-50%); background:var(--ink); color:#fff; padding:8px 18px; border-radius:20px; font-size:13px; opacity:0; transition:.25s; pointer-events:none }
+  .seg button { font:inherit; font-size:13px; padding:5px 12px; border:1px solid var(--line); background:var(--card); border-radius:var(--r-pill); color:var(--soft); cursor:pointer }
+  .seg button.on { background:var(--accent); border-color:var(--accent); color:var(--card) }
+  details { margin-top:2px } summary { color:var(--soft); font-size:13.5px; cursor:pointer; padding:6px 0 }
+  .say { font-size:12.5px; color:var(--soft); background:var(--wash); border-radius:var(--r-s); padding:9px 12px; margin-top:12px }
+  #toast { position:fixed; left:50%; bottom:28px; transform:translateX(-50%); background:var(--ink); color:var(--paper); padding:8px 18px; border-radius:var(--r-pill); font-size:13px; opacity:0; transition:.25s; pointer-events:none }
   #toast.show { opacity:1 }
-  .save { font:inherit; padding:8px 16px; border:0; border-radius:10px; background:var(--accent); color:#fff; margin-top:8px }
+  .save { font:inherit; font-size:14px; padding:8px 18px; border:0; border-radius:var(--r-pill); background:var(--accent); color:var(--card); margin-top:10px; cursor:pointer }
 </style></head><body>
-<h1><img src="/m/icon.png" alt="" width="32" height="32" style="vertical-align:middle;margin-right:6px">CC 的设置</h1>
+<h1><img src="/m/icon.png" alt="" width="28" height="28">CC 的设置</h1>
 <div class="sub">改完立即生效 · 链接 10 分钟内有效 · <a href="javascript:void(0)" onclick="ccNav('/m')" style="color:var(--accent)">随身 CC →</a></div>
 
 <section id="sec-persona">
@@ -62,12 +67,12 @@ export function pageHtml(token: string): string {
   <p class="hint">CC 是谁、该怎么叫你</p>
   <label class="row"><span><b>CC 怎么称呼你</b><small>只填称呼本身,比如「大人」</small></span><input type="text" id="f-name"></label>
   <label class="row"><span><b>CC 叫什么名字</b></span><input type="text" id="f-botname"></label>
-  <div class="row" style="display:block;border-top:1px dashed var(--line);padding-top:10px">
+  <div class="row" style="display:block;border-top:1px solid var(--line-soft);padding-top:10px">
     <b>CC 的性格</b><small style="color:var(--soft)">写给 CC 的性格说明,每次聊天都会带上</small>
     <textarea id="f-persona" placeholder="比如:说话温柔,偶尔损我一句,别太啰嗦…"></textarea>
     <button class="save" id="save-persona">保存性格</button>
   </div>
-  <div class="say">💬 也可以直接跟 CC 说:「以后叫我大人」「说话毒舌一点」</div>
+  <div class="say">也可以直接跟 CC 说:「以后叫我大人」「说话毒舌一点」</div>
 </section>
 
 <section id="sec-companion">
@@ -82,7 +87,7 @@ export function pageHtml(token: string): string {
   <label class="row"><span><b>每日打猎</b><small>早上主动分享它发现的东西</small></span><input type="checkbox" class="switch" id="f-hunt"></label>
   <label class="row"><span><b>让 CC 自己画画</b><small>CC 有感觉时用你的电脑画画,只存在本机。首次需下载约 5GB</small></span><input type="checkbox" class="switch" id="f-atelier"></label>
   <div class="say" id="atelier-status" hidden></div>
-  <div class="say">💬 也可以直接说:「别拆分回复了」「关心档位调低点」</div>
+  <div class="say">也可以直接说:「别拆分回复了」「关心档位调低点」</div>
 </section>
 
 <section id="sec-remote" hidden>
@@ -90,7 +95,7 @@ export function pageHtml(token: string): string {
   <p class="hint">开启后,手机加到主屏,出门也能看待办和 CC 画的你</p>
   <label class="row"><span><b>出门也能用</b><small>经加密中继回家,数据只在你自己电脑上,中间人看不到</small></span><input type="checkbox" class="switch" id="f-remote"></label>
   <div class="say" id="remote-hint">开启需要重启一下 CC(约十几秒),之后在同一 Wi-Fi 下打开随身 CC,点「把 CC 带在身上」即可</div>
-  <label class="row" id="row-devices" hidden><span><b>已配对设备</b><small id="devices-count"></small></span><button type="button" id="forget-devices" style="font:inherit;font-size:12.5px;padding:5px 12px;border:1.5px solid var(--line);border-radius:999px;background:var(--card);color:var(--accent);cursor:pointer">全部忘掉</button></label>
+  <label class="row" id="row-devices" hidden><span><b>已配对设备</b><small id="devices-count"></small></span><button type="button" id="forget-devices" style="font:inherit;font-size:12.5px;padding:5px 12px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--card);color:var(--accent);cursor:pointer">全部忘掉</button></label>
 </section>
 
 <section id="sec-models">
@@ -98,28 +103,28 @@ export function pageHtml(token: string): string {
   <p class="hint">CC 有哪些大脑、各自通不通。这里改的是全局默认;单个对话换脑子在微信里发 /api /agy /cc</p>
   <div id="models-table"></div>
   <label class="row"><span><b>默认大脑</b><small>没在微信里单独切过的对话、还有 CC 主动找你时,用这家。改完 CC 会自己重启(十几秒)</small></span><select id="f-default-provider"></select></label>
-  <div class="row" style="display:block;border-top:1px dashed var(--line);padding-top:10px">
+  <div class="row" style="display:block;border-top:1px solid var(--line-soft);padding-top:10px">
     <b>自配 API(/api)</b><small style="color:var(--soft)">OpenAI 兼容网关 —— DeepSeek / Kimi / Qwen 这类都从这扇门进</small>
     <label class="row"><span><b>地址</b><small>以 /v1 结尾</small></span><input type="text" id="f-api-base" style="width:190px" placeholder="https://…/v1"></label>
     <label class="row"><span><b>默认模型</b><small>没按对话钉时用它</small></span><input type="text" id="f-api-model" style="width:150px" placeholder="DeepSeek"></label>
     <label class="row"><span><b>API Key</b><small id="api-key-hint"></small></span><input type="password" id="f-api-key" style="width:150px" placeholder="sk-…" autocomplete="off"></label>
     <button class="save" id="save-api-key">保存 Key(之后重启一下 CC)</button>
-    <div style="border-top:1px dashed var(--line);padding-top:10px;margin-top:10px">
+    <div style="border-top:1px solid var(--line-soft);padding-top:10px;margin-top:10px">
       <b>短名</b><small style="color:var(--soft);display:block">起了短名,微信里 /api ds 就切;网关上的原名照样能用</small>
       <div id="alias-list" style="margin:6px 0"></div>
-      <div style="display:flex;gap:6px;align-items:center"><input type="text" id="f-alias-name" style="width:70px" placeholder="ds"><span>→</span><input type="text" id="f-alias-model" style="width:120px" placeholder="DeepSeek"><button type="button" class="seg-btn" id="add-alias" style="font:inherit;font-size:13px;padding:6px 12px;border:1.5px solid var(--line);border-radius:8px;background:#fff;color:var(--accent)">加</button></div>
+      <div style="display:flex;gap:6px;align-items:center"><input type="text" id="f-alias-name" style="width:70px" placeholder="ds"><span>→</span><input type="text" id="f-alias-model" style="width:120px" placeholder="DeepSeek"><button type="button" class="seg-btn" id="add-alias" style="font:inherit;font-size:13px;padding:6px 12px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--card);color:var(--accent)">加</button></div>
     </div>
   </div>
   <label class="row"><span><b>后台评估用</b><small>记忆整理 / 辩论主持 / introspect 这些幕后活儿走哪家;auto = 偏好序</small></span><select id="f-cheap"></select></label>
-  <div class="row" style="display:block;border-top:1px dashed var(--line);padding-top:10px">
+  <div class="row" style="display:block;border-top:1px solid var(--line-soft);padding-top:10px">
     <b>非管理员能用哪些</b><small style="color:var(--soft);display:block">信任/访客对话只能切到勾选的;🔑共享钥匙的(agy)对访客永远不开放</small>
     <div id="tp-list" style="margin-top:6px"></div>
   </div>
-  <div class="say">💬 也可以直接跟 CC 说:「换成 DeepSeek」「用 opus 5」「你现在是哪个模型」</div>
+  <div class="say">也可以直接跟 CC 说:「换成 DeepSeek」「用 opus 5」「你现在是哪个模型」</div>
 </section>
 
 <section>
-  <details><summary>⚙️ 技术详情(好奇再点)</summary>
+  <details><summary>技术详情(好奇再点)</summary>
     <label class="row"><span><b>知识库</b><small>长期记忆检索</small></span><input type="checkbox" class="switch" id="f-knowledge"></label>
     <label class="row"><span><b>社交能力</b><small>替你和别人的 CC 打交道</small></span><input type="checkbox" class="switch" id="f-social"></label>
     <label class="row"><span><b>开机自启</b></span><input type="checkbox" class="switch" id="f-autostart"></label>
@@ -226,7 +231,7 @@ function renderModels(m) {
   $("f-api-model").value = m.openai.model || ""
   $("api-key-hint").textContent = m.openai.has_key ? "已配好(只能覆盖,不显示)" : "还没配 —— 配好才会接入"
   var al = "", names = Object.keys(m.openai.aliases || {}).sort()
-  for (var k = 0; k < names.length; k++) al += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0"><span><b>' + esc(names[k]) + '</b> → ' + esc(m.openai.aliases[names[k]]) + '</span><button type="button" data-del-alias="' + esc(names[k]) + '" style="font:inherit;font-size:12px;padding:3px 10px;border:1.5px solid var(--line);border-radius:999px;background:var(--card);color:var(--soft)">删</button></div>'
+  for (var k = 0; k < names.length; k++) al += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0"><span><b>' + esc(names[k]) + '</b> → ' + esc(m.openai.aliases[names[k]]) + '</span><button type="button" data-del-alias="' + esc(names[k]) + '" style="font:inherit;font-size:12px;padding:3px 10px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--card);color:var(--soft)">删</button></div>'
   $("alias-list").innerHTML = al || '<small style="color:var(--soft)">还没有短名</small>'
   var dels = $("alias-list").querySelectorAll("button[data-del-alias]")
   for (var d = 0; d < dels.length; d++) (function (b) {

@@ -14,10 +14,14 @@
   链接里的 lan= 参数保留但不再使用。
 -->
 <style>
-  body { margin:0; font-family:system-ui,-apple-system,"PingFang SC",sans-serif; background:#f5ead8; color:#5a3f2d; display:grid; place-items:center; min-height:100vh }
-  .box { text-align:center; padding:24px } .box .b { font-size:52px } .box p { color:#8b5e3c; font-size:14px }
+  /* 色值与 apps/mobile/src/tokens.css 保持一致(壳页单独部署,不能引用它;src/daemon/design-tokens.test.ts 守着) */
+  body { margin:0; font-family:system-ui,-apple-system,"PingFang SC",sans-serif; background:#f9f7f1; color:#483f35; display:grid; place-items:center; min-height:100vh }
+  .box { text-align:center; padding:24px; max-width:300px }
+  .box .b { width:64px; height:64px; margin:0 auto 14px; border-radius:50%; background:radial-gradient(circle at 45% 40%,#fffefa 0%,#efd9bd 70%); box-shadow:0 0 36px 10px rgba(255,236,205,.95) }
+  .box .hand { font-family:"Kaiti SC","STKaiti",serif; color:#8a7a66; font-size:15px; margin:0 0 6px }
+  .box p { color:#7e7365; font-size:14px; line-height:1.7; margin:0 }
 </style></head><body>
-<div class="box"><div class="b">🐻</div><p id="msg">正在找回家的路…</p></div>
+<div class="box"><div class="b" aria-hidden="true"></div><p class="hand">随身 CC</p><p id="msg">正在找回家的路…</p></div>
 <script>
 var P = {}
 location.hash.slice(1).split("&").forEach(function(kv){ var i = kv.indexOf("="); if (i > 0) P[kv.slice(0,i)] = decodeURIComponent(kv.slice(i+1)) })

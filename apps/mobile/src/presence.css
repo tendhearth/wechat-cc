@@ -1,5 +1,4 @@
 
-:root{--ink:#483f35;--soft:#7e7365;--accent:#735b3e;--paper:#f9f7f1;--card:#fffefa;--line:#e5dfd3}
 body{max-width:680px;margin:auto;padding-bottom:calc(80px + env(safe-area-inset-bottom));line-height:1.65}
 body>header{display:flex;align-items:center;justify-content:space-between;padding:24px 22px 12px}
 body>header h1{font-size:21px;letter-spacing:-.04em}body>header .sub{display:none}
