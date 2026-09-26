@@ -24,7 +24,7 @@ function youNote(v) {
   return h + '</div>'
 }
 function youItem(section, it) {
-  var dot = it.changed ? '<span class="you-new" aria-label="昨晚更新"></span>' : ""
+  var dot = it.changed ? '<span class="you-new" role="img" aria-label="昨晚更新"></span>' : ""
   if (it.person) return '<div class="you-who"><b>' + esc(it.person.name) + '</b><span>' + esc(it.person.rel) + dot + '</span></div>'
   var due = it.due_label ? '<span class="you-due">' + esc(it.due_label) + '</span>' : ""
   return '<div class="you-it"><span>' + esc(it.display) + dot + '</span>' + due + '</div>'

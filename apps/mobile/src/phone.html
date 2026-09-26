@@ -16,7 +16,7 @@
   .todo { display:flex; align-items:center; gap:10px }
   .todo .tx { flex:1; min-width:0 } .todo .tx b { font-size:14px; font-weight:600; display:block }
   .todo .tx small { color:var(--soft) }
-  .todo button { font:inherit; font-size:12.5px; padding:5px 12px; border:1.5px solid var(--line); border-radius:999px; background:var(--card); color:var(--ink) }
+  .todo button { font:inherit; font-size:12.5px; padding:5px 12px; border:1.5px solid var(--line); border-radius:var(--r-pill); background:var(--card); color:var(--ink) }
   .todo button.done-btn { background:var(--accent); border-color:var(--accent); color:var(--card) }
   .grp { color:var(--accent); font-size:13px; font-weight:700; margin:14px 2px 6px }
   .empty { text-align:center; color:var(--soft); padding:40px 10px }
@@ -24,27 +24,27 @@
   .portrait .frame { display:inline-block; background:var(--card); border:1px solid var(--line); border-radius:var(--r-l); padding:16px; max-width:78vw }
   .portrait svg { width:100%; height:auto } .portrait figcaption { color:var(--soft); font-size:13px; margin-top:8px }
   .stgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px }
-  .stgrid figure { margin:0; background:var(--card); border:1.5px solid var(--line); border-radius:12px; padding:8px; text-align:center }
+  .stgrid figure { margin:0; background:var(--card); border:1.5px solid var(--line); border-radius:var(--r-m); padding:8px; text-align:center }
   .stgrid img { width:100%; height:84px; object-fit:contain } .stgrid figcaption { font-size:11.5px; color:var(--soft) }
   nav { position:fixed; left:0; right:0; bottom:0; display:flex; background:var(--card); border-top:1.5px solid var(--line); padding-bottom:env(safe-area-inset-bottom) }
   nav button { flex:1; font:inherit; font-size:12px; padding:10px 0 8px; border:0; background:none; color:var(--soft) }
   nav button.on { color:var(--accent); font-weight:700 }
   nav button .i { display:block; font-size:20px }
   #pairbar { margin:8px 14px; padding:9px 12px; background:var(--wash); border-radius:var(--r-s); font-size:12.5px; color:var(--soft) }
-  #pairbar button { font:inherit; font-size:12.5px; margin-left:8px; padding:4px 12px; border:1.5px solid var(--accent); border-radius:999px; background:var(--accent); color:var(--card) }
-  #toast { position:fixed; left:50%; bottom:76px; transform:translateX(-50%); background:var(--ink); color:var(--card); padding:7px 16px; border-radius:16px; font-size:12.5px; opacity:0; transition:.25s; pointer-events:none }
+  #pairbar button { font:inherit; font-size:12.5px; margin-left:8px; padding:4px 12px; border:1.5px solid var(--accent); border-radius:var(--r-pill); background:var(--accent); color:var(--card) }
+  #toast { position:fixed; left:50%; bottom:76px; transform:translateX(-50%); background:var(--ink); color:var(--card); padding:7px 16px; border-radius:var(--r-l); font-size:12.5px; opacity:0; transition:.25s; pointer-events:none }
   #toast.show { opacity:1 }
   .pres { display:flex; align-items:center; gap:8px; padding:0 16px 6px; color:var(--soft); font-size:13px }
   .pres b { color:var(--ink); font-weight:600 }
-  .pres button { margin-left:auto; font:inherit; font-size:12px; padding:3px 10px; border:1.5px solid var(--line); border-radius:999px; background:var(--card); color:var(--soft) }
+  .pres button { margin-left:auto; font:inherit; font-size:12px; padding:3px 10px; border:1.5px solid var(--line); border-radius:var(--r-pill); background:var(--card); color:var(--soft) }
   #banner { margin:6px 14px; padding:8px 12px; background:var(--wash); border-radius:var(--r-s); font-size:12.5px; color:var(--accent) }
   .ev { display:flex; gap:10px } .ev .k { font-size:18px; width:26px; text-align:center; flex:none }
   .ev .tx { flex:1; min-width:0 } .ev .tx b { display:block; font-size:14px; font-weight:600 }
   .ev .tx p { margin:3px 0 0; font-size:13px; color:var(--soft); white-space:pre-wrap; word-break:break-word }
   .ev .tx small { color:var(--soft); font-size:11.5px }
   .ev .tx a { color:var(--accent) }
-  .ev .pc { margin-top:6px } .ev .pc svg { width:100%; height:auto; border:1.5px solid var(--line); border-radius:10px }
-  .more { display:block; margin:6px auto 0; font:inherit; font-size:13px; padding:7px 18px; border:1.5px solid var(--line); border-radius:999px; background:var(--card); color:var(--soft) }
+  .ev .pc { margin-top:6px } .ev .pc svg { width:100%; height:auto; border:1.5px solid var(--line); border-radius:var(--r-s) }
+  .more { display:block; margin:6px auto 0; font:inherit; font-size:13px; padding:7px 18px; border:1.5px solid var(--line); border-radius:var(--r-pill); background:var(--card); color:var(--soft) }
   .sec { margin-top:18px }
 </style></head><body>
 <header><h1>CC</h1><div class="sub" id="sub">随身小窗 · 数据都在你自己电脑上</div><button id="nav-set" type="button">设置</button></header>
@@ -66,10 +66,10 @@
   </details>
 </div>
 <style>
-#m-controls fieldset{border:1px solid var(--line);border-radius:8px;margin:12px 0;padding:10px} .m-option{display:block;margin:10px 0} .m-option small{display:block;margin-left:22px} .m-option textarea{display:block;box-sizing:border-box;width:100%;font:inherit;padding:8px} .m-description{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit} #m-notice{padding:8px 0;white-space:pre-wrap} #m-conn{padding:8px 10px;margin:8px 0;border:1px solid var(--line);border-radius:8px;font-size:.92em;opacity:.85} #m-controls button{min-height:40px} #m-controls button:disabled,#m-send:disabled{opacity:.5} #m-artifacts small{display:block} #m-list button.card{width:100%;text-align:left;font:inherit;color:inherit} #m-artifact-preview{overflow-wrap:anywhere}
-#m-controls .done-btn,#m-send{font:inherit;min-height:44px;padding:9px 16px;border:1px solid var(--accent);border-radius:10px;background:var(--accent);color:var(--card);cursor:pointer}
-#m-controls .more{display:inline-block;min-height:44px;margin:8px 0 0 8px;padding:9px 16px;border-radius:10px;color:var(--ink)}
-.m-option textarea{border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
+#m-controls fieldset{border:1px solid var(--line);border-radius:var(--r-s);margin:12px 0;padding:10px} .m-option{display:block;margin:10px 0} .m-option small{display:block;margin-left:22px} .m-option textarea{display:block;box-sizing:border-box;width:100%;font:inherit;padding:8px} .m-description{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit} #m-notice{padding:8px 0;white-space:pre-wrap} #m-conn{padding:8px 10px;margin:8px 0;border:1px solid var(--line);border-radius:var(--r-s);font-size:.92em;opacity:.85} #m-controls button{min-height:40px} #m-controls button:disabled,#m-send:disabled{opacity:.5} #m-artifacts small{display:block} #m-list button.card{width:100%;text-align:left;font:inherit;color:inherit} #m-artifact-preview{overflow-wrap:anywhere}
+#m-controls .done-btn,#m-send{font:inherit;min-height:44px;padding:9px 16px;border:1px solid var(--accent);border-radius:var(--r-s);background:var(--accent);color:var(--card);cursor:pointer}
+#m-controls .more{display:inline-block;min-height:44px;margin:8px 0 0 8px;padding:9px 16px;border-radius:var(--r-s);color:var(--ink)}
+.m-option textarea{border:1px solid var(--line);border-radius:var(--r-s);background:var(--card);color:var(--ink)}
 #m-controls :focus-visible,#m-send:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 </style>
 <div class="pane" id="p-you">
@@ -89,7 +89,7 @@
     <div id="m-controls"><div id="m-permissions"></div><div id="m-questions"></div></div>
     <div id="m-artifacts"></div><div id="m-artifact-preview"></div><div id="m-inputs"></div>
     <details><summary>对话与执行记录</summary><div id="m-events"></div></details>
-    <div class="card" id="m-say-box"><textarea id="m-say" rows="2" placeholder="接着说…" style="width:100%;font:inherit;border:1px solid var(--line);border-radius:8px;padding:8px;box-sizing:border-box"></textarea>
+    <div class="card" id="m-say-box"><textarea id="m-say" rows="2" placeholder="接着说…" style="width:100%;font:inherit;border:1px solid var(--line);border-radius:var(--r-s);padding:8px;box-sizing:border-box"></textarea>
       <button id="m-send" class="done-btn" type="button" style="margin-top:6px">发送</button></div>
   </div>
 </div>

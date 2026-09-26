@@ -19,5 +19,4 @@
 .you-due{flex:none;font-size:11.5px;color:var(--warm)}
 .you-new{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--dot);margin-left:6px;vertical-align:middle}
 .you-foot{text-align:center;color:var(--faint);font-size:12px;margin-top:26px;font-family:var(--hand)}
-.home-character{cursor:pointer}
 @media(prefers-reduced-motion:reduce){.you-cc,.you-halo{animation:none}}

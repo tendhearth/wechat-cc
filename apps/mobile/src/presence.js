@@ -31,6 +31,6 @@ function renderPresenceHome(s,stale) {
 document.getElementById('home-work').addEventListener('click',function(){mobilePane('matters')})
 var homeCharacter = document.querySelector(".home-character")
 homeCharacter.addEventListener("click", function(){ openYou() })
-homeCharacter.addEventListener("keydown", function(/** @type {KeyboardEvent} */ ev){ if (ev.key === "Enter" || ev.key === " ") openYou() })
+homeCharacter.addEventListener("keydown", function(/** @type {KeyboardEvent} */ ev){ if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openYou() } })
 // Arrival is a local attention event, not a network status or theme switch.
 setTimeout(function(){document.querySelector('.home-scene').classList.add('home-arrived')},800)

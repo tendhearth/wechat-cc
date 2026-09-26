@@ -39,4 +39,18 @@ describe('one design language across the owner-facing web pages', () => {
       expect(src.match(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b(?![0-9a-fA-F])/g) ?? [], f).toEqual([])
     }
   })
+  it('phone page sources use the radius tokens (only 50% circles stay literal)', () => {
+    const dir = new URL('../../apps/mobile/src/', import.meta.url)
+    for (const f of readdirSync(dir).filter(n => /\.(css|html|js)$/.test(n) && n !== 'tokens.css')) {
+      const src = readFileSync(new URL(f, dir), 'utf8')
+      expect(src.match(/border-radius:\s*\d+px/g) ?? [], f).toEqual([])
+    }
+  })
+  it('the CC entry is keyboard-friendly and themed on focus', () => {
+    const presence = readFileSync(new URL('../../apps/mobile/src/presence.js', import.meta.url), 'utf8')
+    const css = readFileSync(new URL('../../apps/mobile/src/presence.css', import.meta.url), 'utf8')
+    expect(presence).toMatch(/preventDefault\(\)/)
+    expect(css).toMatch(/\.home-character:focus-visible\{[^}]*outline:2px solid var\(--accent\)/)
+    expect(css).toContain('.home-character{cursor:pointer')
+  })
 })
