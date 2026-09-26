@@ -43,7 +43,7 @@
 
 - 正式 Light CC 资产(`canonical/lit/front.png`,已嵌在页面里,和「此刻」共用同一份 base64)。
 - 呼吸:整体 `scale(1)↔scale(1.025,1.035)`,4.2s,锚点脚底;身后柔光同周期明暗。
-- 眨眼:每 3–7 秒随机一次,帧序 `blink-half → blink-closed → blink-half → front`,每帧 70ms。两帧取自 `sprites/lit/blink-{half,closed}.png`,构建期缩到 256px 嵌进 `mobile-presence-art.json`(与现有冻结图同一机制,逐字节校验照旧)。
+- 眨眼:每 3–7 秒随机一次,帧序 `blink-half → blink-closed → blink-half → front`,每帧 70ms。两帧取自 `sprites/lit/blink-{half,closed}.png`,预先缩到 256px **全彩**(约 38KB/帧),以文件形式提交在 `apps/mobile/art/`,构建期嵌进 daemon 侧 JSON(`src/daemon/mobile-blink-art.json`,逐字节校验),**不进页面**:第一次打开「CC 眼中的你」时经 `api('/m/api/art/blink')` 取 base64(隧道同样可用),之后内存复用;没取到就只呼吸不眨眼。(2026-09-26 owner 看过压缩到 128 色的版本:放大可见色带与脏边,否决;嵌进页面的全彩帧会超 512KB 中继帧,所以改懒加载。)
 - 只在 `p-you` 可见且页面在前台时眨眼;`prefers-reduced-motion: reduce` 时呼吸与眨眼都关。
 - 手写一句(楷体,`#8a7a66`),按状态:
   - 最近一次整理(36 小时内)有变化 →「昨晚又认识了你一点。」
@@ -69,7 +69,7 @@
 - `GET /m/api/memory` 响应增加 `changes: Array<{ kind: 'add'|'update'|'remove'; section; text; before?; reason? }>`(取最近一次整理日志、36 小时内,不含 expire)与 `failures: number`;已有字段不变。
 - 所有文字用 `esc()` 进 innerHTML;不接受任何 HTML。
 
-**体积**:页面整体仍须满足 512KB 中继帧(现有测试);新增两帧眨眼图约 30KB。
+**体积**:页面整体仍须满足 512KB 中继帧(现有测试);眨眼帧不进页面,页面体积基本不变。`GET /m/api/art/blink` 返回 `{ ok: true, half: <base64>, closed: <base64>, mime: 'image/png' }`(令牌校验同其它 `/m/api/*`;约 100KB,远低于单帧上限)。
 
 ## 3. 微信「查看记忆」
 
@@ -101,7 +101,7 @@
 - 提示词含两条新规矩与「拆分用 update + add」;`applyNightly` 对「1 条 update + 4 条 add」的拆分批次 ok 且无 remove。
 - `/m/api/memory`:`changes` / `failures` 形状;无 memory.md 时 `sections: []`。
 - 手机渲染(照 `apps/mobile/pairing.test.ts` 的经典脚本跑法):三种状态(无记忆 / 有变化 / 无变化)、期限标签、身边的人两列、所有文字经 `esc`(含 `<script>` 的条目不产生元素)。
-- 眨眼帧:`mobile-presence-art.json` 逐字节校验扩到新两帧;512KB 帧测试照旧通过。
+- 眨眼帧:`mobile-blink-art.json` 与 `apps/mobile/art/` 源文件逐字节一致;`/m/api/art/blink` 形状与 401;512KB 帧测试照旧通过;手机脚本在接口失败时不眨眼、不报错。
 - 微信文案:完整格式快照一条 + 无变化 / 失败两种首部。
 - 行首不许 `(` / `[`(已有测试)与 `build:mobile` 同步测试照旧。
 
