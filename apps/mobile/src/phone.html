@@ -17,7 +17,7 @@
   .todo .tx { flex:1; min-width:0 } .todo .tx b { font-size:14px; font-weight:600; display:block }
   .todo .tx small { color:var(--soft) }
   .todo button { font:inherit; font-size:12.5px; padding:5px 12px; border:1.5px solid var(--line); border-radius:999px; background:var(--card); color:var(--ink) }
-  .todo button.done-btn { background:var(--accent); border-color:var(--accent); color:#fff }
+  .todo button.done-btn { background:var(--accent); border-color:var(--accent); color:var(--card) }
   .grp { color:var(--accent); font-size:13px; font-weight:700; margin:14px 2px 6px }
   .empty { text-align:center; color:var(--soft); padding:40px 10px }
   .portrait { text-align:center; padding:12px }
@@ -31,8 +31,8 @@
   nav button.on { color:var(--accent); font-weight:700 }
   nav button .i { display:block; font-size:20px }
   #pairbar { margin:8px 14px; padding:9px 12px; background:var(--wash); border-radius:var(--r-s); font-size:12.5px; color:var(--soft) }
-  #pairbar button { font:inherit; font-size:12.5px; margin-left:8px; padding:4px 12px; border:1.5px solid var(--accent); border-radius:999px; background:var(--accent); color:#fff }
-  #toast { position:fixed; left:50%; bottom:76px; transform:translateX(-50%); background:var(--ink); color:#fff; padding:7px 16px; border-radius:16px; font-size:12.5px; opacity:0; transition:.25s; pointer-events:none }
+  #pairbar button { font:inherit; font-size:12.5px; margin-left:8px; padding:4px 12px; border:1.5px solid var(--accent); border-radius:999px; background:var(--accent); color:var(--card) }
+  #toast { position:fixed; left:50%; bottom:76px; transform:translateX(-50%); background:var(--ink); color:var(--card); padding:7px 16px; border-radius:16px; font-size:12.5px; opacity:0; transition:.25s; pointer-events:none }
   #toast.show { opacity:1 }
   .pres { display:flex; align-items:center; gap:8px; padding:0 16px 6px; color:var(--soft); font-size:13px }
   .pres b { color:var(--ink); font-weight:600 }
@@ -67,7 +67,7 @@
 </div>
 <style>
 #m-controls fieldset{border:1px solid var(--line);border-radius:8px;margin:12px 0;padding:10px} .m-option{display:block;margin:10px 0} .m-option small{display:block;margin-left:22px} .m-option textarea{display:block;box-sizing:border-box;width:100%;font:inherit;padding:8px} .m-description{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit} #m-notice{padding:8px 0;white-space:pre-wrap} #m-conn{padding:8px 10px;margin:8px 0;border:1px solid var(--line);border-radius:8px;font-size:.92em;opacity:.85} #m-controls button{min-height:40px} #m-controls button:disabled,#m-send:disabled{opacity:.5} #m-artifacts small{display:block} #m-list button.card{width:100%;text-align:left;font:inherit;color:inherit} #m-artifact-preview{overflow-wrap:anywhere}
-#m-controls .done-btn,#m-send{font:inherit;min-height:44px;padding:9px 16px;border:1px solid var(--accent);border-radius:10px;background:var(--accent);color:#fff;cursor:pointer}
+#m-controls .done-btn,#m-send{font:inherit;min-height:44px;padding:9px 16px;border:1px solid var(--accent);border-radius:10px;background:var(--accent);color:var(--card);cursor:pointer}
 #m-controls .more{display:inline-block;min-height:44px;margin:8px 0 0 8px;padding:9px 16px;border-radius:10px;color:var(--ink)}
 .m-option textarea{border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
 #m-controls :focus-visible,#m-send:focus-visible{outline:2px solid var(--accent);outline-offset:3px}

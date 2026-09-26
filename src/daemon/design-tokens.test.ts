@@ -4,7 +4,7 @@
  * 用到的每个颜色都在 tokens 里。
  */
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { MOBILE_TOKENS_CSS, mobilePhoneHtml, MOBILE_BOOTSTRAP_HTML } from './mobile-page'
 import { pageHtml, EXPIRED_HTML } from './settings-panel-html'
 
@@ -31,5 +31,12 @@ describe('one design language across the owner-facing web pages', () => {
     const allowed = hexes(MOBILE_TOKENS_CSS)
     for (const c of hexes(shell)) expect(allowed, c).toContain(c)
     for (const c of LEGACY) expect(shell.toLowerCase(), c).not.toContain(c)
+  })
+  it('phone page sources outside tokens.css use no literal hex colours', () => {
+    const dir = new URL('../../apps/mobile/src/', import.meta.url)
+    for (const f of readdirSync(dir).filter(n => /\.(css|html|js)$/.test(n) && n !== 'tokens.css')) {
+      const src = readFileSync(new URL(f, dir), 'utf8')
+      expect(src.match(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b(?![0-9a-fA-F])/g) ?? [], f).toEqual([])
+    }
   })
 })
