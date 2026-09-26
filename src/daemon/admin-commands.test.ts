@@ -556,7 +556,7 @@ describe('admin-commands', () => {
       const readCuratedMemory = vi.fn().mockResolvedValue('最近整理:2026-09-25 04:05 · 改了 1 处\n\n### 偏好\n- 回复直接')
       const cmds = make({ readOverview: readOverview as unknown as AdminCommandsDeps['readOverview'], readCuratedMemory })
       expect(await cmds.handle(msg('查看记忆'))).toBe(true)
-      expect(sentBody(0)).toBe('🧠 我记得的你:\n\n最近整理:2026-09-25 04:05 · 改了 1 处\n\n### 偏好\n- 回复直接')
+      expect(sentBody(0)).toBe('最近整理:2026-09-25 04:05 · 改了 1 处\n\n### 偏好\n- 回复直接')
       expect(readOverview).not.toHaveBeenCalled()
     })
 

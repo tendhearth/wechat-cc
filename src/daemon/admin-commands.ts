@@ -691,7 +691,7 @@ async function runShowOverview(deps: AdminCommandsDeps, adminChatId: string): Pr
       deps.log('ADMIN_CMD', `show-overview curated-read failed chat=${adminChatId}: ${detail}`)
     }
   }
-  if (curated) { await deps.sendMessage(adminChatId, `🧠 我记得的你:\n\n${curated}`).catch(() => {}); return }
+  if (curated) { await deps.sendMessage(adminChatId, curated).catch(() => {}); return }
   if (!deps.readOverview) {
     await deps.sendMessage(adminChatId, '记忆查看暂不可用（daemon 未接线）。').catch(() => {})
     return

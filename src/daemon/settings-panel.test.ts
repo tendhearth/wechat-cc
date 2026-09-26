@@ -626,7 +626,9 @@ describe('「一件事」手机路由(2026-09-16)', () => {
 
 describe('phone curated memory', () => {
   it('serves the curated memory view behind the token', async () => {
-    const view = { updated_at: '2026-09-25T04:05:00.000Z', sections: [{ name: '偏好' as const, items: [{ id: 'b1', text: '回复直接', due: null, changed: true }] }] }
+    const view = { updated_at: '2026-09-25T04:05:00.000Z', when_label: '今天凌晨 4 点', mood: 'changed' as const, failures: 0,
+      changes: [{ kind: 'add' as const, label: '新记下' as const, section: '承诺' as const, text: '周五回话' }],
+      sections: [{ name: '偏好' as const, items: [{ id: 'b1', text: '回复直接', display: '回复直接', due: null, due_label: null, person: null, changed: true }] }] }
     const p = makeSettingsPanel({
       stateDir: mkdtempSync(join(tmpdir(), 'sp-mem-')), ownerChatId: () => null,
       chatPrefs: { get: () => ({}), set: (_id, patch) => patch },

@@ -4,7 +4,8 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { MEMORY_FILENAME, SECTIONS, parseDue, parseMemoryDoc, renderForPrompt, type Section } from './curated-doc'
+import { MEMORY_FILENAME, parseDue, parseMemoryDoc, type Section } from './curated-doc'
+import { DISPLAY_ORDER, dueLabel, formatWeChatMemory, splitPerson, spokenTime, stripDue, viewChanges, type ViewChange } from './memory-text'
 import { MEMORY_LOG_FILE, ownerMemoryRoot, readNightlyState, runMemoryNightly, writeNightlyState, type NightlyRunDeps } from './nightly'
 import type { NightlyRunResult } from './nightly-notify'
 import type { AppliedOp } from './nightly-ops'
@@ -16,15 +17,28 @@ export interface NoticeDeps {
   wechatSuspended(): boolean
   send(chatId: string, text: string): Promise<{ error?: string }>
 }
+export interface CuratedItem {
+  id: string | null
+  text: string
+  display: string
+  due: string | null
+  due_label: string | null
+  person: { name: string; rel: string } | null
+  changed: boolean
+}
 export interface CuratedView {
   updated_at: string | null
-  sections: Array<{ name: Section; items: Array<{ id: string | null; text: string; due: string | null; changed: boolean }> }>
+  when_label: string | null
+  mood: 'changed' | 'steady' | 'first'
+  failures: number
+  changes: ViewChange[]
+  sections: Array<{ name: Section; items: CuratedItem[] }>
 }
 export interface MemoryNightlyRuntime {
   tick(): Promise<void>
   runNow(): Promise<NightlyRunResult>
   readCurated(): string | null
-  curatedView(): CuratedView | null
+  curatedView(): CuratedView
 }
 
 const CHANGED_WINDOW_MS = 36 * 3_600_000
@@ -100,25 +114,44 @@ export function makeMemoryNightlyRuntime(deps: NightlyRunDeps & NoticeDeps): Mem
       const got = readDoc()
       if (!got) return null
       const state = readNightlyState(deps.stateDir)
+      const tz = deps.config().timezone
       const log = lastLog(got.root)
-      const changes = log ? log.ops.length : 0
-      const when = state.lastRunIso ? localParts(Date.parse(state.lastRunIso), deps.config().timezone) : null
-      const header = state.failures >= 3
-        ? `⚠️ 最近 ${state.failures} 次整理都没成功,下面可能是旧的。`
-        : `最近整理:${when ? `${when.day} ${when.hhmm}` : '还没有'} · 改了 ${changes} 处`
-      return `${header}\n\n${renderForPrompt(got.doc)}`
+      const fresh = !!log && deps.now() - Date.parse(log.at) < CHANGED_WINDOW_MS
+      return formatWeChatMemory({
+        doc: got.doc,
+        whenLabel: state.lastRunIso ? spokenTime(Date.parse(state.lastRunIso), tz, deps.now()) : null,
+        changes: fresh ? viewChanges(log!.ops) : [],
+        failures: state.failures,
+        today: localParts(deps.now(), tz).day,
+      })
     },
     curatedView() {
+      const state = readNightlyState(deps.stateDir)
       const got = readDoc()
-      if (!got) return null
+      if (!got) return { updated_at: null, when_label: null, mood: 'first', failures: state.failures, changes: [], sections: [] }
+      const tz = deps.config().timezone
+      const today = localParts(deps.now(), tz).day
       const log = lastLog(got.root)
-      const fresh = log && deps.now() - Date.parse(log.at) < CHANGED_WINDOW_MS
+      const fresh = !!log && deps.now() - Date.parse(log.at) < CHANGED_WINDOW_MS
+      const changes: ViewChange[] = fresh ? viewChanges(log!.ops) : []
       const changed = new Set(fresh ? log!.ops.filter(o => o.kind === 'add' || o.kind === 'update').map(o => o.id) : [])
       return {
-        updated_at: readNightlyState(deps.stateDir).lastRunIso,
-        sections: SECTIONS.map(name => ({
+        updated_at: state.lastRunIso,
+        when_label: state.lastRunIso ? spokenTime(Date.parse(state.lastRunIso), tz, deps.now()) : null,
+        mood: changes.length ? 'changed' : 'steady',
+        failures: state.failures,
+        changes,
+        sections: DISPLAY_ORDER.filter(name => got.doc.sections[name].length).map(name => ({
           name,
-          items: got.doc.sections[name].map(e => ({ id: e.id, text: e.text, due: parseDue(e.text), changed: !!e.id && changed.has(e.id) })),
+          items: got.doc.sections[name].map((e): CuratedItem => {
+            const due = parseDue(e.text.replace(/[\uff08]/, '(').replace(/[\uff09]/, ')'))
+            return {
+              id: e.id, text: e.text, display: stripDue(e.text), due,
+              due_label: due ? dueLabel(due, today) : null,
+              person: name === '身边的人' ? splitPerson(e.text) : null,
+              changed: !!e.id && changed.has(e.id),
+            }
+          }),
         })),
       }
     },

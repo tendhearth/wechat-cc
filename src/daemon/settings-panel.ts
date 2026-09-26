@@ -103,7 +103,7 @@ export interface SettingsPanelDeps {
   /** 主人「看到哪了」的水位,与桌面觅食台同一个文件(一个主人一个水位)。缺省 ⇒ POST /m/api/seen 503。 */
   seen?: { read: () => string | null; write: (iso: string) => void }
   /** 手机「CC 记得你」(2026-09-25,memory/nightly-runtime)。 */
-  curatedMemory?: () => import('./memory/nightly-runtime').CuratedView | null
+  curatedMemory?: () => import('./memory/nightly-runtime').CuratedView
   /** 远程隧道信息(启用时):relay wss + 本机 daemon id。手机页出门时用它
    *  经中继访问。缺省 ⇒ 手机页只能在同一 Wi-Fi 直连。 */
   remoteInfo?: () => { relay: string; id: string } | null
@@ -537,8 +537,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           }
           if (url.pathname === '/m/api/memory' && req.method === 'GET') {
             if (!deps.curatedMemory) return json({ ok: false, error: 'memory_not_wired' }, 503)
-            const v = deps.curatedMemory()
-            return json({ ok: true, updated_at: v?.updated_at ?? null, sections: v?.sections ?? [] })
+            return json({ ok: true, ...deps.curatedMemory() })
           }
           if (url.pathname === '/m/api/home' && req.method === 'GET') {
             let presence: Presence | null = null

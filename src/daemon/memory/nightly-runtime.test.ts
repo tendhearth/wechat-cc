@@ -67,8 +67,8 @@ describe('memory nightly runtime', () => {
     expect(rt.readCurated()).toBeNull()
     await rt.runNow()
     const text = rt.readCurated()!
-    expect(text.split('\n')[0]).toBe('最近整理:2026-09-25 04:05 · 改了 1 处')
-    expect(text).toContain('### 承诺\n- 周五前给 X 回话(期限 2026-09-26)')
+    expect(text.split('\n').slice(0, 2)).toEqual(['这是我眼中的你 🌙', '今天凌晨 4 点整理的,改了 1 处。'])
+    expect(text).toContain('【承诺】\n· 周五前给 X 回话(明天)')
     const v = rt.curatedView()!
     expect(v.updated_at).toBe('2026-09-25T04:05:00.000Z')
     expect(v.sections.find(s => s.name === '承诺')!.items[0]).toMatchObject({ text: '周五前给 X 回话(期限 2026-09-26)', due: '2026-09-26', changed: true })
@@ -137,5 +137,38 @@ describe('memory nightly runtime', () => {
     await rt.tick()
     const tickLines = log.mock.calls.filter(c => String(c[1]).startsWith('tick:')).map(c => c[1])
     expect(tickLines).toEqual(['tick: skipped (disabled)', 'tick: written', 'tick: skipped (disabled)'])
+  })
+})
+
+describe('rich view + WeChat letter', () => {
+  it('first: no memory.md yet', () => {
+    const v = makeMemoryNightlyRuntime(deps()).curatedView()!
+    expect(v).toMatchObject({ mood: 'first', updated_at: null, when_label: null, changes: [], sections: [] })
+  })
+  it('changed: derived display fields, order, labels', async () => {
+    const rt = makeMemoryNightlyRuntime(deps({
+      cheapEval: () => async () => JSON.stringify({ add: [
+        { section: '承诺', text: '周五回话(期限 2026-09-26)' },
+        { section: '身边的人', text: '猪大哥 —— 女友,最亲' },
+      ], update: [], confirm: [], remove: [] }),
+    }))
+    await rt.runNow()
+    const v = rt.curatedView()!
+    expect(v.mood).toBe('changed')
+    expect(v.when_label).toBe('今天凌晨 4 点')
+    expect(v.sections.map(s => s.name)).toEqual(['承诺', '身边的人'])
+    expect(v.sections[0]!.items[0]).toMatchObject({ display: '周五回话', due: '2026-09-26', due_label: '明天', person: null, changed: true })
+    expect(v.sections[1]!.items[0]).toMatchObject({ person: { name: '猪大哥', rel: '女友,最亲' } })
+    expect(v.changes.map(c => c.label)).toEqual(['新记下', '记下'])
+  })
+  it('steady after the changed window; WeChat letter uses the new format', async () => {
+    const rt = makeMemoryNightlyRuntime(deps())
+    await rt.runNow()
+    now = Date.parse('2026-09-27T20:00:00Z')   // > 36h later
+    expect(rt.curatedView()!.mood).toBe('steady')
+    const text = rt.readCurated()!
+    expect(text.split('\n')[0]).toBe('这是我眼中的你 🌙')
+    expect(text).toContain('最近没有新变化。')
+    expect(text).toContain('【承诺】')
   })
 })
