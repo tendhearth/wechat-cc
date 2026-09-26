@@ -32,6 +32,19 @@ describe('parseOps', () => {
 })
 
 describe('applyNightly', () => {
+  it('splitting one crowded entry via update + adds is accepted and removes nothing', () => {
+    const d = emptyDoc()
+    d.sections['身边的人'] = [{ id: 'd77a', text: '猪大哥:女友;莫秀文:视觉;黄灵希:搭档', seen: '2026-09-26' }]
+    const r = applyNightly(d, {
+      add: [{ section: '身边的人', text: '莫秀文 —— 帮 app 把视觉关' }, { section: '身边的人', text: '黄灵希 —— 事务上的搭档' }],
+      update: [{ id: 'd77a', text: '猪大哥 —— 女友,最亲', reversal: false }],
+      confirm: [], remove: [],
+    }, opts)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.doc.sections['身边的人'].map(e => e.text)).toEqual(['猪大哥 —— 女友,最亲', '莫秀文 —— 帮 app 把视觉关', '黄灵希 —— 事务上的搭档'])
+    expect(r.applied.some(a => a.kind === 'remove')).toBe(false)
+  })
   it('applies confirm/update/remove/add and records what happened', () => {
     const r = applyNightly(doc(), {
       add: [{ section: '承诺', text: '周五前给 Y 回话(期限 2026-09-26)' }],

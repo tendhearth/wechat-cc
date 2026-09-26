@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { runMemoryNightly, readNightlyState, writeNightlyState, gatherMaterial, MATERIAL_BUDGET, MEMORY_LOG_FILE, type NightlyRunDeps } from './nightly'
+import { runMemoryNightly, readNightlyState, writeNightlyState, gatherMaterial, buildNightlyPrompt, MATERIAL_BUDGET, MEMORY_LOG_FILE, type NightlyRunDeps } from './nightly'
 import { parseMemoryDoc } from './curated-doc'
 
 const OWNER = 'owner@im.wechat'
@@ -182,5 +182,14 @@ describe('runMemoryNightly', () => {
     expect(text).toContain('主人叫大人')
     expect(text).toContain('NOTE_0_MARKER')
     expect(text).not.toContain('NOTE_19_MARKER')
+  })
+})
+
+describe('buildNightlyPrompt granularity rules', () => {
+  it('asks for one fact per entry, commitments in 承诺, and splitting via update + add', () => {
+    const p = buildNightlyPrompt({ today: '2026-09-26', current: '', material: '' })
+    expect(p).toContain('- 每条只写一件事:一个人一条,一个偏好一条。')
+    expect(p).toContain('- 欠别人的、别人欠主人的、约好的事放进「承诺」,有日期就在正文写「(期限 YYYY-MM-DD)」。')
+    expect(p).toContain('- 当前记忆里一条写了好几件事时,把它拆开:用 update 把原条目改成其中一件(reversal=false),其余用 add。')
   })
 })
