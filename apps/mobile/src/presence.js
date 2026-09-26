@@ -29,5 +29,8 @@ function renderPresenceHome(s,stale) {
   document.getElementById('home-context').textContent=stale?'这是上次留下的画面，当前活动尚未确认。':s.presence&&s.presence.presence==='ok'?'你可以在这里陪它一会儿。':'有些连接状态还需要确认。'
 }
 document.getElementById('home-work').addEventListener('click',function(){mobilePane('matters')})
+var homeCharacter = document.querySelector(".home-character")
+homeCharacter.addEventListener("click", function(){ openYou() })
+homeCharacter.addEventListener("keydown", function(/** @type {KeyboardEvent} */ ev){ if (ev.key === "Enter" || ev.key === " ") openYou() })
 // Arrival is a local attention event, not a network status or theme switch.
 setTimeout(function(){document.querySelector('.home-scene').classList.add('home-arrived')},800)
