@@ -625,6 +625,23 @@ describe('「一件事」手机路由(2026-09-16)', () => {
 })
 
 describe('phone curated memory', () => {
+  it('serves the blink frames behind the token', async () => {
+    const p = makeSettingsPanel({
+      stateDir: mkdtempSync(join(tmpdir(), 'sp-art-')), ownerChatId: () => null,
+      chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
+      getUserName: () => null, setUserName: async () => {}, log: () => {},
+    })
+    const { port } = await p.start(0)
+    try {
+      const base = `http://127.0.0.1:${port}`
+      expect((await fetch(`${base}/m/api/art/blink`)).status).toBe(401)
+      const r = await (await fetch(`${base}/m/api/art/blink?t=${p.issueToken()}`)).json() as { ok: boolean; mime: string; half: string; closed: string }
+      expect(r.ok).toBe(true)
+      expect(r.mime).toBe('image/png')
+      expect(Buffer.from(r.half, 'base64').subarray(1, 4).toString()).toBe('PNG')
+      expect(Buffer.from(r.closed, 'base64').subarray(1, 4).toString()).toBe('PNG')
+    } finally { await p.stop() }
+  })
   it('serves the curated memory view behind the token', async () => {
     const view = { updated_at: '2026-09-25T04:05:00.000Z', when_label: '今天凌晨 4 点', mood: 'changed' as const, failures: 0,
       changes: [{ kind: 'add' as const, label: '新记下' as const, section: '承诺' as const, text: '周五回话' }],

@@ -7,3 +7,6 @@ apps/desktop/art/** -text
 # autocrlf 把两边行尾改成 CRLF 后比对必红(windows-latest)。服务出去的字节本来就该是 LF。
 apps/mobile/src/** text eol=lf
 src/daemon/mobile-page.generated.json text eol=lf
+
+# 「CC 眼中的你」眨眼帧:二进制原样进出(同 pet 资产)。
+apps/mobile/art/** -text

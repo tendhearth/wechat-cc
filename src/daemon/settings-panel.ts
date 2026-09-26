@@ -34,6 +34,7 @@ import { PROVIDER_SETUP_HINTS, type LlmHealthReport } from './llm-health'
 import { capabilitiesFor } from '../core/capability-matrix'
 import { PROVIDER_IDS } from '../lib/provider-ids'
 import { buildFeed, decodeCursor, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
+import blinkArt from './mobile-blink-art.json'
 import { MOBILE_BRAND_ICON_PNG, MOBILE_BRAND_ICON_SIZES } from './mobile-brand-icon'
 import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions} from './mobile-workbench'
 import {mobileMatterDetailResponse} from './mobile-matter-response'
@@ -534,6 +535,9 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           }
           if (url.pathname === '/m/api/state' && req.method === 'GET') {
             return json(phoneState())
+          }
+          if (url.pathname === '/m/api/art/blink' && req.method === 'GET') {
+            return json({ ok: true, mime: 'image/png', half: blinkArt.half.base64, closed: blinkArt.closed.base64 })
           }
           if (url.pathname === '/m/api/memory' && req.method === 'GET') {
             if (!deps.curatedMemory) return json({ ok: false, error: 'memory_not_wired' }, 503)
