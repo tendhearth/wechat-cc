@@ -64,6 +64,7 @@ function youLoadFrames() {
 }
 function loadYou() {
   var body = document.getElementById("you-body")
+  body.innerHTML = '<p class="you-meta">看看我记得什么…</p>'
   youLoadFrames()
   return api("/m/api/memory").then(function(r) { return r.json() }).then(function(v) {
     if (!v || !v.ok) throw new Error("unavailable")

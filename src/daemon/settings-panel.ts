@@ -541,7 +541,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           }
           if (url.pathname === '/m/api/memory' && req.method === 'GET') {
             if (!deps.curatedMemory) return json({ ok: false, error: 'memory_not_wired' }, 503)
-            return json({ ok: true, ...deps.curatedMemory() })
+            // 经隧道时 handleRequest 抛出不会回包,手机会一直等 —— 这里兜住,让页面走「暂时读不到」。
+            try { return json({ ok: true, ...deps.curatedMemory() }) } catch { return json({ ok: false, error: 'unavailable' }, 500) }
           }
           if (url.pathname === '/m/api/home' && req.method === 'GET') {
             let presence: Presence | null = null

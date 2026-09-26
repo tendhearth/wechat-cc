@@ -67,4 +67,9 @@ describe('CC 眼中的你', () => {
     await expect(loadYou()).resolves.toBeUndefined()
     expect(els['you-img']?.src ?? '').toBe('')   // 没被碰过(元素都没取)或 src 仍为空
   })
+  it('shows a loading line right away instead of an empty letter', () => {
+    const { loadYou, els } = load(() => new Promise(() => {}))
+    void loadYou()
+    expect(els['you-body']!.innerHTML).toContain('看看我记得什么')
+  })
 })

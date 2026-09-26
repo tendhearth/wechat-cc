@@ -625,6 +625,20 @@ describe('「一件事」手机路由(2026-09-16)', () => {
 })
 
 describe('phone curated memory', () => {
+  it('a throwing memory view answers 500 instead of leaving the phone waiting', async () => {
+    const p = makeSettingsPanel({
+      stateDir: mkdtempSync(join(tmpdir(), 'sp-mem-err-')), ownerChatId: () => null,
+      chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
+      getUserName: () => null, setUserName: async () => {}, log: () => {},
+      curatedMemory: () => { throw new Error('EACCES') },
+    })
+    const { port } = await p.start(0)
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/m/api/memory?t=${p.issueToken()}`)
+      expect(r.status).toBe(500)
+      expect(await r.json()).toEqual({ ok: false, error: 'unavailable' })
+    } finally { await p.stop() }
+  })
   it('serves the blink frames behind the token', async () => {
     const p = makeSettingsPanel({
       stateDir: mkdtempSync(join(tmpdir(), 'sp-art-')), ownerChatId: () => null,

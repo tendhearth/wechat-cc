@@ -55,20 +55,20 @@ export function viewChanges(applied: readonly AppliedOp[]): ViewChange[] {
   const newCommit: ViewChange[] = [], reversed: ViewChange[] = [], removed: ViewChange[] = [], rest: ViewChange[] = []
   for (const op of applied) {
     if (op.kind === 'add') {
-      if (op.section === '承诺') newCommit.push({ kind: 'add', label: '新记下', section: op.section, text: op.text })
-      else rest.push({ kind: 'add', label: '记下', section: op.section, text: op.text })
+      if (op.section === '承诺') newCommit.push({ kind: 'add', label: '新记下', section: op.section, text: stripDue(op.text) })
+      else rest.push({ kind: 'add', label: '记下', section: op.section, text: stripDue(op.text) })
     } else if (op.kind === 'update') {
-      const v: ViewChange = { kind: 'update', label: '改了', section: op.section, text: op.text, before: op.before }
+      const v: ViewChange = { kind: 'update', label: '改了', section: op.section, text: stripDue(op.text), before: stripDue(op.before) }
       if (op.reversal && (op.section === '偏好' || op.section === '关于你')) reversed.push(v)
       else rest.push(v)
-    } else if (op.kind === 'remove') removed.push({ kind: 'remove', label: '删了', section: op.section, text: op.text, reason: op.reason })
+    } else if (op.kind === 'remove') removed.push({ kind: 'remove', label: '删了', section: op.section, text: stripDue(op.text), reason: op.reason })
   }
   return [...newCommit, ...reversed, ...removed, ...rest]
 }
 
 function changeLine(c: ViewChange): string {
-  const text = stripDue(c.text)
-  if (c.kind === 'update') return `· 改了:${text}${c.before ? `(原来是${stripDue(c.before)})` : ''}`
+  const text = c.text
+  if (c.kind === 'update') return `· 改了:${text}${c.before ? `(原来是${c.before})` : ''}`
   if (c.kind === 'remove') return `· 删了:${text}${c.reason ? `(${c.reason})` : ''}`
   return `· ${c.label}:${text}`
 }

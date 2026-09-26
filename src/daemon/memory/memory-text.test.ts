@@ -87,4 +87,11 @@ describe('memory-text', () => {
     expect(formatWeChatMemory({ doc: d, whenLabel: null, changes: [], failures: 3, today: '2026-09-26' }).split('\n')[0])
       .toBe('⚠️ 最近 3 次整理都没成功,下面可能是旧的。')
   })
+  it('change texts carry no raw due marker, so phone and WeChat agree', () => {
+    const v = viewChanges([
+      { kind: 'add', id: 'a', section: '承诺', text: '周五回话(期限 2026-09-27)' },
+      { kind: 'update', id: 'b', section: '承诺', text: '周六回话(期限 2026-09-28)', before: '周五回话(期限 2026-09-27)', reversal: false },
+    ])
+    expect(v.map(c => [c.text, c.before])).toEqual([['周五回话', undefined], ['周六回话', '周五回话']])
+  })
 })
