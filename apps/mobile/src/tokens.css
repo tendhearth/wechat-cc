@@ -1,4 +1,5 @@
 :root{
+  /* --faint 只作装饰(描边、点),文字用 --soft:它在纸/卡片上不到 4.5:1 */
   --paper:#f9f7f1; --card:#fffefa; --ink:#483f35; --soft:#7e7365; --faint:#9a8f82;
   --line:#e5dfd3; --line-soft:#efe9de;
   --accent:#735b3e; --warm:#b0763a; --warm-line:#efd9bd; --dot:#e8a25a; --glow:rgba(255,236,205,.95);

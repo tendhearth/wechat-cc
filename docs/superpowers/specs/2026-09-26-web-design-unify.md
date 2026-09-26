@@ -29,19 +29,20 @@
   --paper:#f9f7f1; --card:#fffefa; --ink:#483f35; --soft:#7e7365; --faint:#9a8f82;
   --line:#e5dfd3; --line-soft:#efe9de;
   --accent:#735b3e; --warm:#b0763a; --warm-line:#efd9bd; --dot:#e8a25a; --glow:rgba(255,236,205,.95);
-  --danger:#a8553d;
+  --danger:#a8553d; --wash:rgba(115,91,62,.07); --scene:#eee6d5;
   --r-s:10px; --r-m:14px; --r-l:16px; --r-pill:999px;
   --font:system-ui,-apple-system,"PingFang SC",sans-serif;
-  --hand:"Kaiti SC","STKaiti",serif;
+  --hand:"Kaiti SC","STKaiti",serif; --hand-ink:#8a7a66;
 }
 ```
+（与 `apps/mobile/src/tokens.css` 一致;以文件为准。）
 
    - `/m`:`phone.html` 第一段样式包含它;删掉 `phone.html` 与 `presence.css` 各自的 `:root`。
    - `/set`、过期页:daemon 不能 import `apps/mobile` —— 生成物 `mobile-page.generated.json` 多带一份 `tokens`,daemon 侧从 `mobile-page.ts` 导出 `MOBILE_TOKENS_CSS` 给 `settings-panel-html.ts` 内联。
    - 引导页 `bootstrap.html`:包含 `{{>tokens.css}}`。
    - 壳页 `relay/pset.html`(中继静态文件,单独部署):手工同步色值,**测试**断言它用到的颜色都在 tokens 里。
 3. **规则化形状**:按钮 / 输入 `--r-s`;卡片 `--r-m`;大块便签 `--r-l`;胶囊 `--r-pill`。去掉不规则手绘圆角 —— 「手绘感」只留给手写体(`--hand`)的一两句话,不放在边框上。
-4. **层次**:标题 500 字重、字距略紧;次要信息 `--soft` / `--faint`;强调色只用于可点的主要动作与少量状态(期限、新点)。危险 / 错误用 `--danger`,不再用锈红当主强调。
+4. **层次**:标题 500 字重、字距略紧;次要文字一律 `--soft`(`--faint` 在纸 / 卡片上只有约 3:1,不达 AA,**只作装饰**:开关关态描边、分隔点等,测试守住);强调色只用于可点的主要动作与少量状态(期限、新点)。危险 / 错误用 `--danger`,不再用锈红当主强调。
 5. **不引入新依赖、不改结构**:只换样式与颜色引用;任何 DOM id / 脚本行为不变(现有测试保护)。
 
 ## 验证

@@ -35,7 +35,7 @@ ${MOBILE_TOKENS_CSS}
   .sub { color:var(--soft); font-size:12.5px; margin-bottom:22px }
   section { background:var(--card); border:1px solid var(--line); border-radius:var(--r-l); padding:18px 16px 14px; margin-bottom:14px }
   section h2 { font-size:15px; font-weight:600; margin:0 0 2px; color:var(--ink) }
-  .hint { font-size:12px; color:var(--faint); margin:0 0 10px }
+  .hint { font-size:12px; color:var(--soft); margin:0 0 10px }
   label.row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 0; border-top:1px solid var(--line-soft) }
   label.row:first-of-type { border-top:0 }
   .row b { font-size:14px; font-weight:500 }
@@ -46,9 +46,10 @@ ${MOBILE_TOKENS_CSS}
   label.row > span:first-child { flex:1; min-width:0; overflow-wrap:anywhere }
   label.row > input[type=text], label.row > input[type=password], label.row > select { max-width:48%; flex-shrink:0 }
   textarea { width:100%; min-height:110px; resize:vertical; margin-top:8px }
-  .switch { appearance:none; width:44px; height:26px; border-radius:var(--r-pill); background:var(--line); position:relative; cursor:pointer; transition:.15s; flex-shrink:0 }
-  .switch:checked { background:var(--accent) }
-  .switch::after { content:""; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:var(--card); box-shadow:0 1px 2px rgba(72,63,53,.2); transition:.15s }
+  .switch { appearance:none; width:44px; height:26px; border-radius:var(--r-pill); background:var(--line-soft); box-shadow:inset 0 0 0 1px var(--faint); position:relative; cursor:pointer; transition:.15s; flex-shrink:0 }
+  .switch:checked { background:var(--accent); box-shadow:none }
+  .switch:disabled { opacity:.45; cursor:not-allowed }
+  .switch::after { content:""; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:var(--card); border:1px solid var(--line); box-sizing:border-box; box-shadow:0 1px 2px rgba(72,63,53,.2); transition:.15s }
   .switch:checked::after { left:21px }
   .seg { display:flex; gap:6px }
   .seg button { font:inherit; font-size:13px; padding:5px 12px; border:1px solid var(--line); background:var(--card); border-radius:var(--r-pill); color:var(--soft); cursor:pointer }

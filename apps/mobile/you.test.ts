@@ -72,4 +72,16 @@ describe('CC 眼中的你', () => {
     void loadYou()
     expect(els['you-body']!.innerHTML).toContain('看看我记得什么')
   })
+  it('re-opening keeps the last letter on screen while it refreshes (no loading flash)', async () => {
+    let pending = false
+    const { loadYou, els } = load(async (p: string) => {
+      if (p === '/m/api/memory' && pending) return new Promise(() => {})
+      return { json: async () => ({ ok: true, ...base, mood: 'steady', changes: [], sections: [] }) }
+    })
+    await loadYou()
+    pending = true
+    void loadYou()
+    expect(els['you-body']!.innerHTML).toContain('这是我眼中的你。')
+    expect(els['you-body']!.innerHTML).not.toContain('看看我记得什么')
+  })
 })

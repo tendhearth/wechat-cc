@@ -62,14 +62,18 @@ function youLoadFrames() {
     if (f && f.ok) youFrames = { half: "data:" + f.mime + ";base64," + f.half, closed: "data:" + f.mime + ";base64," + f.closed }
   }).catch(function() { youFramesAsked = false })
 }
+// 读到过一封信就留着它刷新,不再每次打开都闪一下「看看我记得什么…」。
+var youShown = false
 function loadYou() {
   var body = document.getElementById("you-body")
-  body.innerHTML = '<p class="you-meta">看看我记得什么…</p>'
+  if (!youShown) body.innerHTML = '<p class="you-meta">看看我记得什么…</p>'
   youLoadFrames()
   return api("/m/api/memory").then(function(r) { return r.json() }).then(function(v) {
     if (!v || !v.ok) throw new Error("unavailable")
     body.innerHTML = youHtml(v)
+    youShown = true
   }).catch(function() {
+    youShown = false
     body.innerHTML = '<p class="you-line">暂时读不到。</p><p class="you-meta">看看电脑开着没,一会儿再点我。</p>'
   })
 }

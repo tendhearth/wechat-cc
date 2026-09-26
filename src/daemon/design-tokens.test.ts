@@ -53,4 +53,15 @@ describe('one design language across the owner-facing web pages', () => {
     expect(css).toMatch(/\.home-character:focus-visible\{[^}]*outline:2px solid var\(--accent\)/)
     expect(css).toContain('.home-character{cursor:pointer')
   })
+  it('--faint is decorative only: no page sets text colour to it (fails AA on paper/card)', () => {
+    const dir = new URL('../../apps/mobile/src/', import.meta.url)
+    const sources = [pageHtml('tTOKEN'), EXPIRED_HTML, ...readdirSync(dir).filter(n => /\.(css|html|js)$/.test(n) && n !== 'tokens.css').map(f => readFileSync(new URL(f, dir), 'utf8'))]
+    for (const src of sources) expect(src.match(/(?<![-\w])color:\s*var\(--faint\)/g) ?? []).toEqual([])
+  })
+  it('/set toggles show their off state (track outlined, knob bordered) and a disabled look', () => {
+    const css = pageHtml('tTOKEN').replace(/\s+/g, ' ')
+    expect(css).toMatch(/\.switch \{[^}]*box-shadow:inset 0 0 0 1px var\(--faint\)/)
+    expect(css).toMatch(/\.switch::after \{[^}]*border:1px solid var\(--line\)/)
+    expect(css).toMatch(/\.switch:disabled \{[^}]*opacity:/)
+  })
 })
