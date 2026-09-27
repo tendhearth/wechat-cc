@@ -39,6 +39,7 @@ interface Options {
   store: WorkbenchStore
   registry: ProviderRegistry
   stateDir: string
+  managedWorkspaceRoot?: string
   ownerChatId: () => string | null
   /** 「一件事」登记处:任务与 matter 一对一同 id,生命周期同步(docs/cc-workbench.md「一件事」)。可选,老接线不传。 */
   matters?: MatterStore

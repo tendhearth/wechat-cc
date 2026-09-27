@@ -201,6 +201,7 @@ export function wireWorkbench(opts: {
     holdBusy:opts.boot.holdBusy,
   }):undefined
   return makeWorkbenchService({
+    managedWorkspaceRoot:join(homedir(),'CC','Tasks'),
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
     store,registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,reports,recollect,log:opts.log,

@@ -89,17 +89,17 @@ expect(store.get(owner, requestId)?.phase).toBe('reserved')
 
 **Interfaces:** 新增 createManagedWorkspaces({root,stateDir})，返回 ensure(reservation): ManagedWorkspace、verify(workspace): void、removeEmptyCreated(workspace): boolean。ManagedWorkspace含id/path/directoryIdentity及本调用是否新建；分配身份由任务1登记持有。store.create只增加内部 registerProject?:boolean（默认true）与 workspaceKind:'project'|'managed'，不改变旧公开create参数。
 
-- [ ] 写测试：两个不同登记得到两个兄弟目录；同登记重试同目录；stateDir双向重叠、链接、身份替换、.cc-workbench*组件拒绝；出现陌生文件后不得删除。受管task不新增project、旧create仍新增。
+- [x] 写测试：两个不同登记得到两个兄弟目录；同登记重试同目录；stateDir双向重叠、链接、身份替换、.cc-workbench*组件拒绝；出现陌生文件后不得删除。受管task不新增project、旧create仍新增。
 ~~~ts
 expect(first.path).not.toBe(second.path)
 expect(retried.path).toBe(first.path)
 expect(projectsAfterManaged).toEqual(projectsBefore)
 expect(removeResultForNonEmptyDirectory).toBe(false)
 ~~~
-- [ ] 运行 `bun run test src/core/workbench/managed-workspaces.test.ts src/core/workbench/projects.test.ts`，确认新目录/归属行为尚未实现。
-- [ ] 复用anchored-fs逐级锚定创建和身份核验；先持久登记再建目录。补“已分配但尚未记录inode”重启处理，未知非空目录保守拒绝；服务注入默认根，勿在核心读取任意用户路径。
-- [ ] 运行本任务全部测试，确认两兄弟目录不互斥，旧项目相同目录仍按原租约排队。
-- [ ] 提交：`feat: isolate managed task workspaces`。
+- [x] 运行 `bun run test src/core/workbench/managed-workspaces.test.ts src/core/workbench/projects.test.ts`，确认新目录/归属行为尚未实现。
+- [x] 复用anchored-fs逐级锚定创建和身份核验；先持久登记再建目录。补“已分配但尚未记录inode”重启处理，未知非空目录保守拒绝；服务注入默认根，勿在核心读取任意用户路径。
+- [x] 运行本任务全部测试，确认两兄弟目录不互斥，旧项目相同目录仍按原租约排队。
+- [x] 提交：`feat: isolate managed task workspaces`。
 
 ### Task 3: 一个原子创建入口
 

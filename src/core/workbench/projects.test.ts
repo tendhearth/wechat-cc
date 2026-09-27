@@ -2,6 +2,22 @@ import {expect,it} from 'vitest'
 import {openTestDb} from '../../lib/db'
 import {makeWorkbenchStore} from './store'
 
+it('keeps managed workspaces out of both stored and history-derived project choices',()=>{
+ const db=openTestDb()
+ try{
+  const store=makeWorkbenchStore(db)
+  const legacy=store.create({title:'project',path:'/work/site',providerId:'claude',ownerChatId:'owner'})
+  const projects=store.projects(),owned=store.ownedProjects('owner',['claude'])
+  const managed=store.create({title:'draft',path:'/tasks/random',providerId:'claude',ownerChatId:'owner',workspaceKind:'managed',registerProject:false})
+  expect(store.projects()).toEqual(projects)
+  expect(store.ownedProjects('owner',['claude'])).toEqual(owned)
+  expect(store.ownedProjects('owner')).toEqual(owned)
+  expect(store.get(managed.id).workspaceKind).toBe('managed')
+  expect(store.get(legacy.id).workspaceKind).toBe('project')
+  expect(store.listPage().tasks.find(task=>task.id===managed.id)?.workspaceKind).toBe('managed')
+ }finally{db.close()}
+})
+
 it('keeps empty projects and independent conversations through archive and store recreation',()=>{
  const db=openTestDb()
  try{
