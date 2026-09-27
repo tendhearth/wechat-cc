@@ -1,6 +1,6 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest'
 import {createHash,randomUUID} from 'node:crypto'
-import {mkdirSync,mkdtempSync,realpathSync} from 'node:fs'
+import {mkdirSync,mkdtempSync,realpathSync,readFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../lib/db'
@@ -49,7 +49,7 @@ beforeEach(async()=>{
   }},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   workbench=makeWorkbenchService({store,registry,stateDir:root,managedWorkspaceRoot:managedRoot,ownerChatId:()=>'owner',defaultProvider:'claude',matters})
   const service=makeMattersService({store:matters,workbench})
-  panel=makeSettingsPanel({stateDir:root,ownerChatId:()=>'owner',chatPrefs:{get:()=>({}),set:()=>({})},getUserName:()=>null,setUserName:async()=>{},log:()=>{},entry:{entryOptions:()=>workbench.entryOptions({ownerKey:'owner',surface:'phone'}),createEntry:input=>workbench.createEntry(input,{ownerKey:'owner',surface:'phone'}),entryReceipt:id=>workbench.entryReceipt(id,{ownerKey:'owner',surface:'phone'})},matters:{...service,say:(id,text,input)=>service.say(id,text,'phone',input),seenOnPhone:id=>{matters.bind(id,'phone','pwa')}}})
+  panel=makeSettingsPanel({stateDir:root,ownerChatId:()=>'owner',chatPrefs:{get:()=>({}),set:()=>({})},getUserName:()=>null,setUserName:async()=>{},log:()=>{},uploads:{chunk:input=>workbench.uploadAttachmentChunk(input,{ownerKey:'owner',surface:'phone'}),status:input=>workbench.attachmentUploadStatus(input,{ownerKey:'owner',surface:'phone'}),discard:input=>workbench.discardAttachmentUpload(input,{ownerKey:'owner',surface:'phone'})},entry:{entryOptions:()=>workbench.entryOptions({ownerKey:'owner',surface:'phone'}),createEntry:input=>workbench.createEntry(input,{ownerKey:'owner',surface:'phone'}),entryReceipt:id=>workbench.entryReceipt(id,{ownerKey:'owner',surface:'phone'})},matters:{...service,say:(id,text,input)=>service.say(id,text,'phone',input),seenOnPhone:id=>{matters.bind(id,'phone','pwa')}}})
   const {port}=await panel.start(0);base=`http://127.0.0.1:${port}`;token=panel.issueToken()
 })
 // 用 removeTempDir 而不是裸 rmSync:Windows 上 daemon 刚关、句柄还没落地时
@@ -84,6 +84,24 @@ describe('phone unified task entry',()=>{
     expect((await request('/m/api/matter/create-receipt?requestId='+randomUUID())).status).toBe(404)
     expect((await request('/m/api/matter/create-receipt?requestId='+randomUUID(),undefined,'wrong')).status).toBe(401)
     expect(store.list()).toEqual([])
+  })
+})
+
+describe('phone material upload and continuation',()=>{
+  it('uploads exact bytes through authenticated chunks, then preserves materials in the same matter',async()=>{
+    const task=create('material-target'),live=await ready(task.id),bytes=Buffer.from('phone material'),id=randomUUID(),draftId=randomUUID()
+    const body={id,draftId,taskId:task.id,name:'material.txt',mime:'text/plain',size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),offset:0,contentBase64:bytes.toString('base64')}
+    expect((await request('/m/api/attachment/chunk',body,'wrong')).status).toBe(401)
+    const response=await request('/m/api/attachment/chunk',body);expect(response.status).toBe(200)
+    const uploaded=await response.json();expect(uploaded).toMatchObject({ok:true,id,draftId,status:'ready',nextOffset:bytes.length})
+    const status=await(await request('/m/api/attachment/upload?id='+id+'&draftId='+draftId)).json();expect(status.attachment).toEqual(uploaded.attachment)
+    const input={id:task.id,requestId:randomUUID(),runId:live.runId,text:'',draftId,attachmentIds:[id]}
+    const accepted=await request('/m/api/matter/say',input);expect(accepted.status).toBe(200)
+    const receipt=await accepted.json();expect(receipt.result.input).toMatchObject({status:'delivered',attachments:[uploaded.attachment]})
+    const detail=await(await request('/m/api/matter?id='+task.id)).json();expect(detail.inputs[0].attachments).toEqual([uploaded.attachment])
+    expect((await request('/m/api/matter/say',{...input,ownerKey:'other'})).status).toBe(400)
+    expect((await request('/m/api/attachment/discard',{id,draftId})).status).toBe(409)
+    expect(workbench.readAttachment(task.id,id).base64).toBe(bytes.toString('base64'))
   })
 })
 
@@ -212,7 +230,8 @@ describe('phone task controls keep the existing execution boundary',()=>{
       await expect.poll(()=>received.length).toBe(1)
       const key=await deriveSharedKey(keys.privateKey,await importPublicKeyB64(JSON.parse(received.shift()!).hs),new TextEncoder().encode(paired.device_token))
       const remote=async(path:string,body?:unknown)=>{
-        hub.onPhoneFrame(phone.streamId!,JSON.stringify(await sealFrame(key,new TextEncoder().encode(JSON.stringify({path,method:body===undefined?'GET':'POST',...(body===undefined?{}:{body:JSON.stringify(body)}),rid:randomUUID()})))))
+        const frame=JSON.stringify(await sealFrame(key,new TextEncoder().encode(JSON.stringify({path,method:body===undefined?'GET':'POST',...(body===undefined?{}:{body:JSON.stringify(body)}),rid:randomUUID()}))))
+        frames.push(frame);hub.onPhoneFrame(phone.streamId!,frame)
         await expect.poll(()=>received.length).toBe(1)
         const decoded=JSON.parse(new TextDecoder().decode(await openFrame(key,JSON.parse(received.shift()!))))
         return {status:decoded.status,body:JSON.parse(decoded.body)}
@@ -228,6 +247,22 @@ describe('phone task controls keep the existing execution boundary',()=>{
       }
       expect(Buffer.concat(parts)).toEqual(bytes)
       expect(frames.every(frame=>Buffer.byteLength(frame)<512*1024)).toBe(true)
+      const image=readFileSync(new URL('../../assets/starter-stickers/moment-ai-offline.png',import.meta.url))
+      expect(image.length).toBeGreaterThan(512*1024)
+      const imageId=randomUUID(),imageDraft=randomUUID(),imageHash=createHash('sha256').update(image).digest('hex')
+      let finalUpload:any
+      for(let offset=0;offset<image.length;offset+=128*1024){
+        const body={id:imageId,draftId:imageDraft,name:'public-cc.png',mime:'image/png',size:image.length,sha256:imageHash,offset,contentBase64:image.subarray(offset,offset+128*1024).toString('base64')}
+        const uploaded=await remote('/m/api/attachment/chunk',body);expect(uploaded.status).toBe(200)
+        // A lost acknowledgement can replay the same middle/final block safely.
+        expect((await remote('/m/api/attachment/chunk',body)).body).toEqual(uploaded.body);finalUpload=uploaded.body
+      }
+      expect(finalUpload).toMatchObject({status:'ready',attachment:{id:imageId,sha256:imageHash}})
+      const creation={requestId:randomUUID(),text:'',target:{kind:'managed'},draftId:imageDraft,attachmentIds:[imageId]}
+      const created=await remote('/m/api/matter/create',creation);expect(created.status).toBe(202)
+      expect((await remote('/m/api/matter/create',creation)).body.receipt).toEqual(created.body.receipt)
+      expect(workbench.readAttachment(created.body.receipt.taskId,imageId).base64).toBe(image.toString('base64'))
+      expect(frames.every(frame=>Buffer.byteLength(frame)<512*1024)).toBe(true)
       // A large native reply must return an explicit error through the real
       // relay cap instead of silently dropping an oversized encrypted frame.
       for(let i=0;i<4;i++)store.addEvent(task.id,'text','很长的完整内容'.repeat(6_000))
@@ -235,6 +270,9 @@ describe('phone task controls keep the existing execution boundary',()=>{
       expect(oversized.status).toBe(413)
       expect(oversized.body).toEqual({ok:false,error:'detail_too_large'})
       await panel.apply({op:'forget_devices'})
+      expect((await remote('/m/api/attachment/upload?id='+imageId+'&draftId='+imageDraft)).status).toBe(401)
+      expect((await remote('/m/api/attachment/discard',{id:imageId,draftId:imageDraft})).status).toBe(401)
+      expect((await remote('/m/api/attachment/chunk',{id:imageId,draftId:imageDraft})).status).toBe(401)
       expect((await remote('/m/api/entry/options')).status).toBe(401)
       expect((await remote('/m/api/matter/create',{requestId:randomUUID(),text:'revoked',target:{kind:'managed'}})).status).toBe(401)
       expect((await remote('/m/api/matter/create-receipt?requestId='+randomUUID())).status).toBe(401)

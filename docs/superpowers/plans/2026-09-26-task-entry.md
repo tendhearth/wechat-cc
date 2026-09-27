@@ -167,17 +167,17 @@ expect(retainedNewDraft).toBe('再补一份要求')
 
 **Interfaces:** createAttachmentUploads(deps)返回 chunk(input:UploadChunk,context:EntryContext):UploadState、status({id,draftId},context):UploadState、discard({id,draftId},context):void。实现设计中的三条/m/api/attachment路由。正式完成只调用原uploadAttachment；UploadState对手机只暴露安全附件元数据。
 
-- [ ] 写真实字节测试：128KiB块重复内容幂等，乱序/错hash/元数据冲突409，最后块丢回包重试返回同ready；重启核验部分文件；受管新任务与已有任务draft隔离；伪造owner/path拒绝；撤销设备后全部上传路由拒绝。空块、超限个数/磁盘预留、ready丢临时文件和取消后重试也必须有确定结果。
+- [x] 写真实字节测试：128KiB块重复内容幂等，乱序/错hash/元数据冲突409，最后块丢回包重试返回同ready；重启核验部分文件；受管新任务与已有任务draft隔离；伪造owner/path拒绝；撤销设备后全部上传路由拒绝。空块、超限个数/磁盘预留、ready丢临时文件和取消后重试也必须有确定结果。
 ~~~ts
 expect(repeatedFinal.status).toBe('ready')
 expect(repeatedFinal.attachment?.id).toBe(firstFinal.attachment?.id)
 expect(finalizedAttachmentCount).toBe(1)
 expect(allEncryptedFrameByteLengths.every(n => n < 512 * 1024)).toBe(true)
 ~~~
-- [ ] 运行 `bun run test src/core/workbench/attachment-uploads.test.ts src/daemon/settings-panel-workbench.test.ts`，确认协议缺失失败。
-- [ ] 追加workbench_attachment_uploads表：owner/id/draft/task、固定元数据、状态uploading/finalizing/ready/discarded/expired、已提交offset与块摘要、预约空间、到期时间。按设计原子预约与SQLite同步短事务串行写块，不跨await；首块前检查32个未完成上传及磁盘峰值。重启截回未提交尾部，短文件/摘要错拒绝；finalizing按同附件ID恢复，成功盖owner后转ready。discard与清理共用状态机，已绑定或有效reserved引用返回409；取消墓碑阻止复活，过期解除未接受预约，最小身份记录保留。测试两并发首块争最后配额、写字节后DB失败、blob落盘后ready失败、取消与末块同时到达四条故障路径。
-- [ ] 重跑本任务测试及原attachments.test.ts；使用真实加密LAN/隧道handler传输大于512KiB图片，验证所有帧和最终hash。
-- [ ] 独立审查路径/配额/重复最终化后提交：`feat: upload phone materials in resumable chunks`。
+- [x] 运行 `bun run test src/core/workbench/attachment-uploads.test.ts src/daemon/settings-panel-workbench.test.ts`，确认协议缺失失败。
+- [x] 追加workbench_attachment_uploads表：owner/id/draft/task、固定元数据、状态uploading/finalizing/ready/discarded/expired、已提交offset与块摘要、预约空间、到期时间。按设计原子预约与SQLite同步短事务串行写块，不跨await；首块前检查32个未完成上传及磁盘峰值。重启截回未提交尾部，短文件/摘要错拒绝；finalizing按同附件ID恢复，成功盖owner后转ready。discard与清理共用状态机，已绑定或有效reserved引用返回409；取消墓碑阻止复活，过期解除未接受预约，最小身份记录保留。测试两并发首块争最后配额、写字节后DB失败、blob落盘后ready失败、取消与末块同时到达四条故障路径。
+- [x] 重跑本任务测试及原attachments.test.ts；使用真实加密LAN/隧道handler传输大于512KiB图片，验证所有帧和最终hash。
+- [x] 独立审查路径/配额/重复最终化后提交：`feat: upload phone materials in resumable chunks`。
 
 ### Task 8: 同一事项材料投影和接着改
 
@@ -185,11 +185,11 @@ expect(allEncryptedFrameByteLengths.every(n => n < 512 * 1024)).toBe(true)
 
 **Interfaces:** MatterEvent、MatterInput新增只含id/name/mime/size/sha256的材料元数据；MatterSayInput增加draftId?:string、attachmentIds?:string[]。继续现有say→submitInput/continueTask；原续说回执hash覆盖有序附件和归属，不能只比文字。
 
-- [ ] 写测试：图片only新建与补充成功；活会话/已结束会话均拿到同一真实附件；跨draft/task/owner材料拒绝；同requestId改附件顺序409；无需base64即可在detail确认附件；运行中补充处于held时不显示送达。超大历史详情仍遵循现有分页/裁剪及帧约束。
-- [ ] 运行 `bun run test src/core/matters/service.test.ts src/core/workbench/service-attachments.test.ts src/core/workbench/live-inputs.test.ts`，确认材料在matter边界丢失的用例失败。
-- [ ] 实现材料投影和输入传递，统一各层“空文字有材料”校验；维持原run/request绑定、恢复确认和审批。新手机材料严格核验owner；旧已绑定NULL材料经原task.owner_chat_id核验后复用，copyToTask不能丢owner。遇到需要桌面恢复确认的两类错误保留图文并明确指引，测试不能假报已接收。身份边界不从UI状态推断。
-- [ ] 重跑本任务测试和settings-panel-workbench，验证首轮/续说各自回执不混用、同一task/matter/目录保持。
-- [ ] 提交：`feat: preserve materials across task continuations`。
+- [x] 写测试：图片only新建与补充成功；活会话/已结束会话均拿到同一真实附件；跨draft/task/owner材料拒绝；同requestId改附件顺序409；无需base64即可在detail确认附件；运行中补充处于held时不显示送达。超大历史详情仍遵循现有分页/裁剪及帧约束。
+- [x] 运行 `bun run test src/core/matters/service.test.ts src/core/workbench/service-attachments.test.ts src/core/workbench/live-inputs.test.ts`，确认材料在matter边界丢失的用例失败。
+- [x] 实现材料投影和输入传递，统一各层“空文字有材料”校验；维持原run/request绑定、恢复确认和审批。新手机材料严格核验owner；旧已绑定NULL材料经原task.owner_chat_id核验后复用，copyToTask不能丢owner。遇到需要桌面恢复确认的两类错误保留图文并明确指引，测试不能假报已接收。身份边界不从UI状态推断。
+- [x] 重跑本任务测试和settings-panel-workbench，验证首轮/续说各自回执不混用、同一task/matter/目录保持。
+- [x] 提交：`feat: preserve materials across task continuations`。
 
 ### Task 9: 手机选图、上传状态与任务材料
 

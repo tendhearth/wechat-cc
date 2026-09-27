@@ -108,6 +108,7 @@ function snapshot(row:StoredAttachment,stateDir:string):Buffer {
 /** Called with the SQLite write transaction held, so another process cannot claim a collected blob. */
 function collectUnusedBlobs(db:Db,root:string,dir:string):void {
   const referenced=new Set(db.query<{storagePath:string},[]>('SELECT DISTINCT storage_path AS storagePath FROM workbench_attachments').all().map(row=>row.storagePath))
+  for(const row of db.query<{sha256:string},[]>("SELECT sha256 FROM workbench_attachment_uploads WHERE status IN ('uploading','finalizing')").all())referenced.add(join(root,row.sha256))
   for(const entry of readdirSync(root)){
     if(!/^[a-f0-9]{64}$/.test(entry)||referenced.has(join(root,entry)))continue
     // 只删真文件;unlink 本身也从不跟链接走。
@@ -115,17 +116,16 @@ function collectUnusedBlobs(db:Db,root:string,dir:string):void {
     try{unlinkSync(join(dir,entry))}catch{throw Error('invalid_attachment_path')}
   }
 }
-/** Count any remaining orphan/unknown files too; failed cleanup cannot bypass disk limits. */
-function checkDiskQuota(root:string,sha256:string,additionalBytes:number):void {
-  const entries=readdirSync(root,{withFileTypes:true})
-  if(entries.length>=4096&&!entries.some(entry=>entry.name===sha256))throw Error('attachment_storage_limit')
-  let total=0,alreadyExists=false
-  for(const entry of entries){
-    const stat=lstatSync(join(root,entry.name))
-    if(!stat.isFile()||stat.isSymbolicLink())throw Error('invalid_attachment_path')
-    total+=stat.size;alreadyExists ||= entry.name===sha256
-  }
-  if(total+(alreadyExists?0:additionalBytes)>MAX_STORAGE_BYTES)throw Error('attachment_storage_limit')
+interface UploadBudgetRow {id:string;draftId:string;taskId:string|null;size:number;sha256:string;status:string}
+/** Include unknown/orphan files. A corrupt path fails closed rather than disappearing from the budget. */
+function diskFiles(stateDir:string,leaf:string):Map<string,number> {
+  return withDirectory(resolve(stateDir),[leaf],dir=>{
+    const entries=readdirSync(dir)
+    if(entries.length>4096)throw Error('attachment_storage_limit')
+    const files=new Map<string,number>()
+    for(const name of entries){const stat=lstatNoLink(join(dir,name),'invalid_attachment_path');if(!stat.isFile())throw Error('invalid_attachment_path');files.set(name,Number(stat.size))}
+    return files
+  })
 }
 
 export function makeTaskAttachmentStore(db:Db) {
@@ -143,6 +143,46 @@ export function makeTaskAttachmentStore(db:Db) {
     if(row.ownerKey!==null){if(row.ownerKey!==owner)throw Error('attachment_scope')}
     else if(row.taskId===null&&scope&&!scope.allowLegacyUnbound)throw Error('attachment_scope')
   }
+  const activeReservation=(id:string)=>!!db.query<{present:number},[number,string]>(`SELECT 1 AS present FROM workbench_entry_requests e, json_each(e.frozen_json,'$.materialSnapshot') material
+    WHERE e.phase='reserved' AND e.created_at>=? AND json_extract(material.value,'$.id')=? LIMIT 1`).get(Date.now()-STAGED_RETENTION_MS,id)
+  const inUse=(id:string)=>activeReservation(id)||!!db.query<{present:number},[string]>(`SELECT 1 AS present FROM workbench_live_inputs i, json_each(i.attachments_json) material WHERE json_extract(material.value,'$.id')=? LIMIT 1`).get(id)
+  const requireConsumable=(id:string)=>{
+    const state=db.query<{status:string},[string]>('SELECT status FROM workbench_attachment_uploads WHERE id=?').get(id)
+    if(state?.status==='discarded'||state?.status==='expired')throw Error('upload_'+state.status)
+  }
+  const assertDiscardable=(id:string,draftId:string,scope?:AttachmentScope)=>{
+    const normalized=uuid(id),draft=uuid(draftId),row=get(normalized)
+    const partial=db.query<{ownerKey:string;draftId:string},[string]>('SELECT owner_key AS ownerKey,draft_id AS draftId FROM workbench_attachment_uploads WHERE id=?').get(normalized)
+    if(partial&&(partial.draftId!==draft||partial.ownerKey!==scope?.ownerKey))throw Error('attachment_scope')
+    if(row){requireOwner(row,undefined,scope);if(row.draftId!==draft)throw Error('attachment_scope');if(row.taskId!==null)throw Error('attachment_in_use')}
+    if(inUse(normalized))throw Error('attachment_in_use')
+  }
+  /** Caller holds the shared SQLite write lock; reservations cover future bytes as well as every existing file. */
+  const checkUploadQuota=(input:{id:string;draftId:string;taskId?:string;size:number;sha256:string;reservedBytes:number},stateDir:string,scope?:AttachmentScope)=>{
+    const id=uuid(input.id),draftId=uuid(input.draftId)
+    if(scope&&!scope.ownerKey)throw Error('attachment_scope')
+    if(input.taskId)requireTask(input.taskId,scope)
+    if(!Number.isSafeInteger(input.size)||input.size<=0||input.size>MAX_ATTACHMENT_BYTES||!/^[a-f0-9]{64}$/.test(input.sha256)||!Number.isSafeInteger(input.reservedBytes)||input.reservedBytes<0)throw Error('invalid_attachment')
+    const uploads=db.query<UploadBudgetRow,[]>('SELECT id,draft_id AS draftId,task_id AS taskId,size,sha256,status FROM workbench_attachment_uploads').all()
+    const rows=db.query<StoredAttachment,[]>(SELECT).all(),byId=new Map(rows.map(row=>[row.id,row]))
+    const draft=new Map(rows.filter(row=>row.taskId===null&&row.draftId===draftId).map(row=>[row.id,row.size]))
+    for(const row of uploads)if(row.draftId===draftId&&!['discarded','expired'].includes(row.status)&&!byId.get(row.id)?.taskId)draft.set(row.id,row.size)
+    if(input.reservedBytes!==1024)draft.set(id,input.size)
+    if(input.reservedBytes!==1024&&draft.size>MAX_ATTACHMENTS)throw Error('attachment_limit')
+    if(input.reservedBytes!==1024&&[...draft.values()].reduce((a,b)=>a+b,0)>MAX_ATTACHMENT_BATCH_BYTES)throw Error('invalid_attachment_size')
+    const blobs=diskFiles(stateDir,'workbench-attachments'),parts=diskFiles(stateDir,'workbench-attachment-uploads'),uploadIds=new Set(uploads.map(row=>row.id))
+    let total=[...blobs.values(),...parts.values()].reduce((a,b)=>a+b,0)+rows.filter(row=>!uploadIds.has(row.id)).length*1024
+    for(const row of uploads){
+      total+=['discarded','expired'].includes(row.status)?1024:16384
+      if(row.status==='uploading'||row.status==='finalizing')total+=Math.max(0,row.size-(parts.get(row.id+'.part')??0))+Math.max(0,row.size-(blobs.get(row.sha256)??0))
+    }
+    if(!uploadIds.has(id)&&!byId.has(id)){
+      if(input.reservedBytes===1024)total+=1024
+      else if(input.reservedBytes>0)total+=16384+input.size+Math.max(0,input.size-(blobs.get(input.sha256)??0))
+      else total+=1024+Math.max(0,input.size-(blobs.get(input.sha256)??0))
+    }
+    if(total>MAX_STORAGE_BYTES)throw Error('attachment_storage_limit')
+  }
   const getTaskRow=(taskId:string,id:string):StoredAttachment=>{
     taskIdentity(taskId);const row=get(uuid(id));if(!row||row.taskId!==taskId)throw Error('not_found');requireOwner(row,taskId);return row
   }
@@ -150,8 +190,8 @@ export function makeTaskAttachmentStore(db:Db) {
     if(taskId!==undefined)requireTask(taskId,scope)
     const draft=draftId===undefined?undefined:uuid(draftId)
     const rows=attachmentIds(ids).map(id=>{
-      const row=get(id);if(!row)throw Error('not_found')
-      if(row.taskId===null&&row.createdAt<Date.now()-STAGED_RETENTION_MS)throw Error('not_found')
+      requireConsumable(id);const row=get(id);if(!row)throw Error('not_found')
+      if(row.taskId===null&&row.createdAt<Date.now()-STAGED_RETENTION_MS&&!activeReservation(row.id))throw Error('not_found')
       if(row.taskId!==null?row.taskId!==taskId:!draft||row.draftId!==draft||(row.uploadTaskId!==null&&row.uploadTaskId!==taskId))throw Error('attachment_scope')
       requireOwner(row,taskId,scope)
       return row
@@ -160,6 +200,7 @@ export function makeTaskAttachmentStore(db:Db) {
     return rows
   }
   return {
+    checkUploadQuota,assertDiscardable,
     upload(input:AttachmentUpload,stateDir:string,scope?:AttachmentScope):Attachment {
       if(!input||typeof input!=='object'||['ownerKey','ownerChatId','accountId','surface'].some(key=>Object.hasOwn(input,key)))throw Error('invalid_attachment')
       if(scope&&!scope.ownerKey)throw Error('attachment_scope')
@@ -167,10 +208,17 @@ export function makeTaskAttachmentStore(db:Db) {
       const mime=inferredMime(name,input.mime),bytes=decodeUpload(mime,input.base64),sha256=hash(bytes),storageRoot=resolve(stateDir,'workbench-attachments'),storagePath=join(storageRoot,sha256)
       return db.transaction(()=>{
         // Check ownership before collection; an expired foreign ID cannot be reclaimed.
+        requireConsumable(id)
+        const reservation=db.query<{ownerKey:string;draftId:string;taskId:string|null;name:string;mime:string;size:number;sha256:string;status:string},[string]>('SELECT owner_key AS ownerKey,draft_id AS draftId,task_id AS taskId,name,mime,size,sha256,status FROM workbench_attachment_uploads WHERE id=?').get(id)
+        if(reservation){
+          if(reservation.ownerKey!==scope?.ownerKey)throw Error('attachment_scope')
+          if(reservation.draftId!==draftId||reservation.taskId!==taskId||reservation.name!==name||reservation.mime!==mime||reservation.size!==bytes.length||reservation.sha256!==sha256||!['finalizing','ready'].includes(reservation.status))throw Error('attachment_conflict')
+        }
         const existing=get(id)
         if(existing)requireOwner(existing,taskId??undefined,scope)
+        else if(reservation?.status==='ready')throw Error('attachment_changed')
         // Expired unsent uploads can be explicitly selected and uploaded afresh.
-        db.query('DELETE FROM workbench_attachments WHERE task_id IS NULL AND created_at<?').run(Date.now()-STAGED_RETENTION_MS)
+        for(const expired of db.query<{id:string},[number]>('SELECT id FROM workbench_attachments WHERE task_id IS NULL AND created_at<?').all(Date.now()-STAGED_RETENTION_MS))if(!inUse(expired.id))db.query('DELETE FROM workbench_attachments WHERE id=? AND task_id IS NULL').run(expired.id)
         const prior=get(id)
         if(prior){
           if(prior.draftId!==draftId||prior.uploadTaskId!==taskId||prior.name!==name||prior.mime!==mime||prior.sha256!==sha256)throw Error('attachment_conflict')
@@ -179,15 +227,16 @@ export function makeTaskAttachmentStore(db:Db) {
         if(taskId)requireTask(taskId,scope)
         // Only unclaimed metadata expires. Collection below retains every blob
         // referenced by any remaining draft, submitted task, or handoff copy.
-        const draft=db.query<{count:number;bytes:number},[string]>('SELECT COUNT(*) AS count,COALESCE(SUM(size),0) AS bytes FROM workbench_attachments WHERE draft_id=? AND task_id IS NULL').get(draftId)!
-        if(draft.count>=MAX_ATTACHMENTS)throw Error('attachment_limit')
-        if(draft.bytes+bytes.length>MAX_ATTACHMENT_BATCH_BYTES)throw Error('invalid_attachment_size')
-        const staged=db.query<{count:number;bytes:number},[]>('SELECT COUNT(*) AS count,COALESCE(SUM(size),0) AS bytes FROM workbench_attachments WHERE task_id IS NULL').get()!
-        if(staged.count>=512||staged.bytes+bytes.length>MAX_STORAGE_BYTES)throw Error('attachment_storage_limit')
-        withDirectory(resolve(stateDir),['workbench-attachments'],fd=>{collectUnusedBlobs(db,storageRoot,fd);checkDiskQuota(storageRoot,sha256,bytes.length);writeImmutable(fd,sha256,bytes,sha256)})
+        const staged=db.query<{count:number},[]>('SELECT COUNT(*) AS count FROM workbench_attachments WHERE task_id IS NULL').get()!
+        if(staged.count>=512)throw Error('attachment_storage_limit')
+        withDirectory(resolve(stateDir),['workbench-attachments'],fd=>{
+          collectUnusedBlobs(db,storageRoot,fd)
+          checkUploadQuota({id,draftId,...(taskId?{taskId}:{}),size:bytes.length,sha256,reservedBytes:0},stateDir,scope)
+          writeImmutable(fd,sha256,bytes,sha256)
+        })
         db.query('INSERT INTO workbench_attachments(id,draft_id,task_id,upload_task_id,name,mime,size,sha256,storage_path,created_at,owner_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,draftId,null,taskId,name,mime,bytes.length,sha256,storagePath,Date.now(),scope?.ownerKey??null)
         return publicAttachment(get(id)!)
-      })()
+      }).immediate()
     },
     select:(ids:unknown,taskId?:string,draftId?:string,scope?:AttachmentScope):Attachment[]=>selected(ids,taskId,draftId,scope).map(publicAttachment),
     verify(ids:unknown,taskId:string|undefined,draftId:string|undefined,stateDir:string,scope?:AttachmentScope):Attachment[]{
@@ -198,7 +247,7 @@ export function makeTaskAttachmentStore(db:Db) {
         requireTask(taskId,scope);const rows=selected(ids,taskId,draftId,scope)
         for(const row of rows)if(row.taskId===null)db.query('UPDATE workbench_attachments SET task_id=? WHERE id=? AND task_id IS NULL').run(taskId,row.id)
         return rows.map(publicAttachment)
-      })()
+      }).immediate()
     },
     getTask:(taskId:string,id:string):Attachment=>publicAttachment(getTaskRow(taskId,id)),
     list(taskId:string):Attachment[]{requireTask(taskId);return db.query<StoredAttachment,[string]>(SELECT+' WHERE task_id=? ORDER BY created_at,rowid').all(taskId).map(publicAttachment)},
@@ -221,23 +270,24 @@ export function makeTaskAttachmentStore(db:Db) {
         const rows=attachmentIds(ids).map(id=>getTaskRow(sourceTaskId,id))
         if(rows.reduce((sum,row)=>sum+row.size,0)>MAX_ATTACHMENT_BATCH_BYTES)throw Error('invalid_attachment_size')
         return rows.map(row=>{
-          const id=randomUUID()
-          db.query('INSERT INTO workbench_attachments(id,draft_id,task_id,upload_task_id,name,mime,size,sha256,storage_path,created_at,owner_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,randomUUID(),targetTaskId,targetTaskId,row.name,row.mime,row.size,row.sha256,row.storagePath,Date.now(),row.ownerKey)
+          const id=randomUUID(),draftId=randomUUID(),root=dirname(row.storagePath)
+          if(basename(root)!=='workbench-attachments'||basename(row.storagePath)!==row.sha256)throw Error('invalid_attachment_path')
+          checkUploadQuota({id,draftId,taskId:targetTaskId,size:row.size,sha256:row.sha256,reservedBytes:0},dirname(root),scope)
+          db.query('INSERT INTO workbench_attachments(id,draft_id,task_id,upload_task_id,name,mime,size,sha256,storage_path,created_at,owner_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,draftId,targetTaskId,targetTaskId,row.name,row.mime,row.size,row.sha256,row.storagePath,Date.now(),row.ownerKey)
           return{...publicAttachment(row),id}
         })
-      })()
+      }).immediate()
     },
     discard(id:string,draftId:string,scope?:AttachmentScope):void {
       const normalized=uuid(id),draft=uuid(draftId)
       db.transaction(()=>{
+        assertDiscardable(normalized,draft,scope)
         const row=get(normalized);if(!row)return
-        requireOwner(row,undefined,scope)
-        if(row.taskId!==null||row.draftId!==draft)throw Error('attachment_scope')
         const root=dirname(row.storagePath)
         if(basename(root)!=='workbench-attachments'||basename(row.storagePath)!==row.sha256)throw Error('invalid_attachment_path')
         db.query('DELETE FROM workbench_attachments WHERE id=? AND task_id IS NULL').run(normalized)
         withDirectory(dirname(root),[basename(root)],fd=>collectUnusedBlobs(db,root,fd))
-      })()
+      }).immediate()
     },
   }
 }

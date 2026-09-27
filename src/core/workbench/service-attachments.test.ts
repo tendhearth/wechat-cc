@@ -2,7 +2,7 @@ import {afterEach,beforeEach,expect,it} from 'vitest'
 import {mkdtempSync,mkdirSync,realpathSync,readFileSync,writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {randomUUID} from 'node:crypto'
+import {randomUUID,createHash} from 'node:crypto'
 import {openDb,type Db} from '../../lib/db'
 import {createProviderRegistry} from '../provider-registry'
 import type {AgentAttachment,AgentEvent,AgentProvider} from '../agent-provider'
@@ -165,4 +165,14 @@ it('handoff creates task-owned copies of selected inputs and pins originals thro
   await service.handoff({token:back.token});await settled(source.id)
   expect(received.map(files=>files[0]?.sha256)).toEqual([input.attachment.sha256,input.attachment.sha256,input.attachment.sha256])
   await service.handoff({token:preview.token});expect(received).toHaveLength(3)
+})
+it('uses the same cancellation tombstone for a desktop discard of a phone upload',()=>{
+  setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}},true,'owner')
+  const bytes=Buffer.alloc(128*1024+1,65),id=randomUUID(),draftId=randomUUID(),context={ownerKey:'owner',surface:'phone' as const}
+  const metadata={id,draftId,name:'large.txt',mime:'text/plain',size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')}
+  service.uploadAttachmentChunk({...metadata,offset:0,contentBase64:bytes.subarray(0,128*1024).toString('base64')},context)
+  service.discardAttachment(id,draftId)
+  expect(()=>service.uploadAttachmentChunk({...metadata,offset:128*1024,contentBase64:bytes.subarray(128*1024).toString('base64')},context)).toThrow('upload_discarded')
+  expect(()=>service.attachmentUploadStatus({id,draftId},context)).toThrow('upload_discarded')
+  expect(db.query('SELECT * FROM workbench_attachments').all()).toEqual([])
 })

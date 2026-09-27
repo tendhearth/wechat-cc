@@ -6,6 +6,7 @@ import type {NativeHistoryMessage} from './native-history'
 import type { Db } from '../../lib/db'
 import {makeLiveInputStore} from './live-inputs'
 import {makeTaskAttachmentStore} from './attachments'
+import {createAttachmentUploads} from './attachment-uploads'
 import {makeExecutionSettingsStore,NATIVE_EXECUTION_CHOICE} from './execution-settings'
 import {makeControlReceiptStore} from './control-receipts'
 import {makeCreationReceiptStore} from './creation-receipts'
@@ -101,6 +102,8 @@ export function makeWorkbenchStore(db: Db) {
     projects:()=>db.query<WorkbenchProject,[]>(PROJECT_SELECT+' ORDER BY created_at,id').all().map(projectName),
     atomic:<T>(operation:()=>T,immediate=false):T=>{const transaction=db.transaction(operation);return immediate?transaction.immediate():transaction()},
     attachments:makeTaskAttachmentStore(db),
+    uploadRequestExists:(id:string)=>!!db.query('SELECT id FROM workbench_attachment_uploads WHERE id=?').get(id),
+    attachmentUploads:(options:Omit<Parameters<typeof createAttachmentUploads>[0],'db'|'attachments'>)=>createAttachmentUploads({...options,db,attachments:makeTaskAttachmentStore(db)}),
     execution:makeExecutionSettingsStore(db),
     liveInputs:makeLiveInputStore(db),
     controlReceipts:makeControlReceiptStore(db),

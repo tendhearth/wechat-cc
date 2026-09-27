@@ -210,6 +210,8 @@ export function makeWorkbenchService(opts: Options) {
   const touched = (id: string, seq?: number) => { try { changes.publish(id, seq ?? store.version(id)) } catch { /* 信号丢了只是多等一轮 */ } }
   /** 非 store 状态变化:先落库拿新 seq 再唤醒。bump 本身可能抛(任务不存在),别让它冒进调用方的 finally/catch。 */
   const bumped = (id: string) => { try { touched(id, store.bump(id)) } catch { /* 信号丢了只是多等一轮 */ } }
+  let materialUploads:ReturnType<typeof store.attachmentUploads>|undefined
+  const uploads=()=>materialUploads??=store.attachmentUploads({stateDir:opts.stateDir,ownerChatId:opts.ownerChatId,onTransaction:event=>opts.log?.('attachment-upload',`${event.operation} lock_ms=${event.durationMs.toFixed(1)}`)})
   const attachmentScope=()=>{const ownerKey=opts.ownerChatId();return ownerKey?{ownerKey,allowLegacyUnbound:true}:undefined}
   const strictAttachmentScope=(taskId?:string)=>{
     const ownerKey=opts.ownerChatId()
@@ -1371,6 +1373,7 @@ export function makeWorkbenchService(opts: Options) {
        }
         // Another connection may have accepted between the initial read and reserve.
         if(record.phase==='accepted')return entryResult(record)
+        if(record.createdAt<Date.now()-7*86400_000)throw Error('entry_expired')
         requireEntryInput(record.providerId,record.materialSnapshot,record.execution,text)
         const current=store.attachments.verify(input.attachmentIds??[],undefined,input.draftId,opts.stateDir,context)
         if(!sameAttachments(current,record.materialSnapshot))throw Error('attachment_changed')
@@ -1803,8 +1806,11 @@ export function makeWorkbenchService(opts: Options) {
       }
     },
     uploadAttachment(input:Parameters<typeof store.attachments.upload>[0]){ensureAccepting();if(input.taskId&&store.get(input.taskId).archivedAt!==null)throw Error('workbench_archived');return store.attachments.upload(input,opts.stateDir,opts.ownerChatId()?strictAttachmentScope(input.taskId):undefined)},
+    uploadAttachmentChunk(input:Parameters<ReturnType<typeof store.attachmentUploads>['chunk']>[0],context:EntryContext){ensureAccepting();return uploads().chunk(input,context)},
+    attachmentUploadStatus(input:{id:string;draftId:string},context:EntryContext){return uploads().status(input,context)},
+    discardAttachmentUpload(input:{id:string;draftId:string},context:EntryContext){return uploads().discard(input,context)},
     readAttachment(taskId:string,id:string){store.get(taskId);return store.attachments.read(taskId,id,opts.stateDir)},
-    discardAttachment(id:string,draftId:string){return store.attachments.discard(id,draftId,attachmentScope())},
+    discardAttachment(id:string,draftId:string){if(store.uploadRequestExists(id))return uploads().discard({id,draftId},{...strictAttachmentScope(),surface:'desktop'});return store.attachments.discard(id,draftId,attachmentScope())},
     setArchived(id:string,archived:boolean):WorkbenchTaskView {
       if(typeof archived!=='boolean')throw new Error('invalid_request')
       const task=store.get(id)

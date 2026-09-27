@@ -217,3 +217,12 @@ it('rejects API-incompatible binary material before reservation, binding or mode
   expect(store.entryRequests.get('owner',request.requestId)).toBeNull();expect(spawnCount).toBe(0)
   expect(store.attachments.select([id],undefined,draftId,context)).toEqual([attachment])
 })
+
+it('expires an unaccepted creation reservation instead of reviving released material claims',()=>{
+  const request=input();db.exec("CREATE TRIGGER entry_fault BEFORE INSERT ON matters BEGIN SELECT RAISE(ABORT,'entry_fault'); END")
+  expect(()=>service.createEntry(request,context)).toThrow('entry_fault')
+  db.exec('DROP TRIGGER entry_fault')
+  db.query('UPDATE workbench_entry_requests SET created_at=? WHERE request_id=?').run(Date.now()-8*86400_000,request.requestId)
+  expect(()=>service.createEntry(request,context)).toThrow('entry_expired')
+  expect(store.list()).toEqual([]);expect(spawnCount).toBe(0)
+})

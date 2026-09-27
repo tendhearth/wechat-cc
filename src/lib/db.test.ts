@@ -752,3 +752,8 @@ it('v63 migrates old task folders into durable projects without changing session
   expect(db.query('SELECT * FROM workbench_projects').all()).toEqual(before)
  }finally{db.close()}
 })
+
+it('creates durable resumable upload state without rewriting legacy material',()=>{
+  const db=openTestDb()
+  try{expect(db.query('SELECT * FROM workbench_attachment_uploads').all()).toEqual([])}finally{db.close()}
+})

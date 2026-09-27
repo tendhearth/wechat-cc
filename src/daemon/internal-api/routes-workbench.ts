@@ -42,6 +42,8 @@ function errorCode(err: unknown): string {
 
 function mappedError(err: unknown): ReturnType<RouteHandler> {
   const code = errorCode(err)
+  if(['entry_expired','upload_discarded','upload_expired'].includes(code))return{status:410,body:{error:code}}
+  if(code==='attachment_in_use')return{status:409,body:{error:code}}
   if(code==='invalid_entry_owner')return{status:403,body:{error:code}}
   if(['creation_conflict','project_stale','managed_workspace_changed'].includes(code))return{status:409,body:{error:code}}
   if(['entry_not_wired','managed_workspace_unavailable','invalid_managed_workspace','workbench_stopping'].includes(code))return{status:503,body:{error:code}}

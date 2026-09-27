@@ -28,3 +28,8 @@ Task 4: trusted desktop/phone entry routes plus current-owner desktop uploads; s
 桌面步骤5：6文件190项定向测试通过；真实 Chromium 使用隔离服务、SQLite 与确定性执行者，12个宽/窄窗口场景无横向溢出，无页面或HTTP错误。报告及13张截图保存在 `/private/var/folders/yc/y9bc_lbd69z5_3_dqbt5bn6c0000gn/T/cc-companion-browser-evidence-BZoeQy/`。根代理检查了740px摘录预览截图。此记录证明浏览器组件与隔离HTTP接线，不等同于完整Tauri主窗口、真实模型或手机真人验收。
 
 macOS「打开工作位置」仅向原生端传任务ID，由原生端读取daemon任务目录，检查绝对目录、路径链和本次inode再调用系统打开程序。7项新增Rust测试通过；连同工作台精确路由和body边界共11项通过，测试启动器为fixture未打开Finder。其他平台明确不支持；检查本次打开期间的目录身份，不声称核验创建以来的历史inode。
+
+
+后端步骤7/8合并交付：10文件172项Bun集成验证通过。共享配额独立审查发现的预约编号跨owner/内容借用、旧桌面取消漏墓碑、handoff复制元数据漏计费，均先复现失败再修正；fresh review发现64条已绑定旧上传阻塞过期扫描，也已补失败用例并修为排除已绑定记录、游标有界推进。新增v69指纹 `2df729ce442f770e`，旧指纹未改。真实SQLite两连接交错与事务故障路径有覆盖，未宣称完成独立外部服务进程压力测试。
+
+真实配对HTTP/加密relay handler使用公共资产 `moment-ai-offline.png`（529,448字节，大于512KiB）验证128KiB分块、重复中间/最后块、image-only创建和原回执重放；最终存储字节一致，双向密文帧均小于512KiB，撤销设备后三条材料接口及新交办接口拒绝。该12项自动化使用受控执行者，不是实际模型看图验收。

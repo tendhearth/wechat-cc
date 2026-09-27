@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,it} from 'vitest'
-import {randomUUID} from 'node:crypto'
+import {randomUUID,createHash} from 'node:crypto'
 import {existsSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,rmSync,statSync,symlinkSync,truncateSync,writeFileSync} from 'node:fs'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
@@ -223,4 +223,66 @@ it('does not follow input-directory or materialized-file symlinks',()=>{
   rmSync(prepared.path);symlinkSync(secret,prepared.path)
   expect(()=>store.attachments.prepare(owner,[a],project,root)).toThrow('invalid_attachment_path')
   expect(readFileSync(secret,'utf8')).toBe('untouched')
+})
+
+const uploadReservation=(input:{id:string;draftId:string;size:number;sha256:string},status='uploading')=>{
+  const now=Date.now()
+  db.query('INSERT INTO workbench_attachment_uploads(id,owner_key,draft_id,name,mime,size,sha256,status,reserved_bytes,created_at,updated_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(input.id,'owner',input.draftId,'notes.txt','text/plain',input.size,input.sha256,status,2*input.size+16384,now,now,now+7*86400_000)
+}
+it('shares draft count and byte reservations with full uploads and counts orphan parts',()=>{
+  const draftId=randomUUID(),scope={ownerKey:'owner'}
+  for(let i=0;i<8;i++)uploadReservation({id:randomUUID(),draftId,size:1,sha256:'a'.repeat(64)})
+  expect(()=>store.attachments.upload(upload({draftId}) as never,root,scope)).toThrow('attachment_limit')
+  const parts=join(root,'workbench-attachment-uploads');mkdirSync(parts,{recursive:true})
+  const orphan=join(parts,'orphan');writeFileSync(orphan,'');truncateSync(orphan,256*1024*1024)
+  expect(()=>store.attachments.upload(upload() as never,root,scope)).toThrow('attachment_storage_limit')
+})
+it('reserves future part and blob bytes and reuses its reservation during finalize',()=>{
+  const scope={ownerKey:'owner'},input=upload(),bytes=Buffer.from(input.base64 as string,'base64')
+  const sha256='f'.repeat(64),parts=join(root,'workbench-attachment-uploads');mkdirSync(parts,{recursive:true})
+  const orphan=join(parts,'orphan');writeFileSync(orphan,'');truncateSync(orphan,256*1024*1024-16384-bytes.length*2)
+  const reservation={id:input.id as string,draftId:input.draftId as string,size:bytes.length,sha256}
+  expect(()=>store.attachments.checkUploadQuota({...reservation,reservedBytes:2*bytes.length+16384},root,scope)).not.toThrow()
+  expect(()=>store.attachments.checkUploadQuota({...reservation,size:bytes.length+1,reservedBytes:2*(bytes.length+1)+16384},root,scope)).toThrow('attachment_storage_limit')
+  // An actual reservation covers both files, including the final full-upload metadata.
+  const actualSha=(bytesHash(bytes))
+  uploadReservation({...reservation,sha256:actualSha},'finalizing')
+  writeFileSync(join(parts,reservation.id+'.part'),bytes)
+  expect(store.attachments.upload(input as never,root,scope).sha256).toBe(actualSha)
+})
+function bytesHash(bytes:Buffer){return createHash('sha256').update(bytes).digest('hex')}
+it('protects a reserved creation material from discard and collection until the reservation expires',()=>{
+  const scope={ownerKey:'owner'},input=upload(),a=store.attachments.upload(input as never,root,scope)
+  const requestId=randomUUID()
+  store.entryRequests.reserve({ownerKey:'owner',requestId,canonicalRequestHash:'f'.repeat(64),target:{kind:'managed'},workspaceId:randomUUID(),resolvedPath:null,directoryIdentity:null,providerId:'claude',execution:{defaults:'provider',model:null,reasoningEffort:null},materialSnapshot:[a]})
+  expect(()=>store.attachments.discard(a.id,input.draftId as string,scope)).toThrow('attachment_in_use')
+  db.query('UPDATE workbench_attachments SET created_at=? WHERE id=?').run(Date.now()-8*86400_000,a.id)
+  store.attachments.upload(upload() as never,root,scope)
+  expect(store.attachments.select([a.id],undefined,input.draftId as string,scope)).toEqual([a])
+  db.query('UPDATE workbench_entry_requests SET created_at=? WHERE request_id=?').run(Date.now()-8*86400_000,requestId)
+  expect(()=>store.attachments.discard(a.id,input.draftId as string,scope)).not.toThrow()
+})
+it.each(['discarded','expired'])('rejects consumption after an upload %s tombstone',status=>{
+  const scope={ownerKey:'owner'},input=upload(),a=store.attachments.upload(input as never,root,scope)
+  uploadReservation({id:a.id,draftId:input.draftId as string,size:a.size,sha256:a.sha256},status)
+  const ownerTask=store.create({title:'own',path:project,providerId:'claude',ownerChatId:'owner'}).id
+  for(const operation of [()=>store.attachments.select([a.id],undefined,input.draftId as string,scope),()=>store.attachments.bind([a.id],ownerTask,input.draftId as string,scope),()=>store.attachments.upload(input as never,root,scope)])expect(operation).toThrow('upload_'+status)
+  expect(()=>store.attachments.discard(a.id,input.draftId as string,scope)).not.toThrow()
+})
+it('does not let a whole upload borrow another owner or payload reservation',()=>{
+  const input=upload(),bytes=Buffer.from(input.base64 as string,'base64'),sha256=bytesHash(bytes)
+  uploadReservation({id:input.id as string,draftId:input.draftId as string,size:bytes.length,sha256},'finalizing')
+  expect(()=>store.attachments.upload(input as never,root,{ownerKey:'other'})).toThrow('attachment_scope')
+  for(const extra of [{draftId:randomUUID()},{base64:Buffer.alloc(8*1024*1024,65).toString('base64')},{name:'changed.txt'}])expect(()=>store.attachments.upload({...input,...extra} as never,root,{ownerKey:'owner'})).toThrow('attachment_conflict')
+  db.query("UPDATE workbench_attachment_uploads SET status='uploading'").run()
+  expect(()=>store.attachments.upload(input as never,root,{ownerKey:'owner'})).toThrow('attachment_conflict')
+  expect(db.query('SELECT * FROM workbench_attachments').all()).toEqual([])
+})
+it('charges copied handoff metadata to the same global storage budget',()=>{
+  const scope={ownerKey:'owner'},input=upload(),a=store.attachments.upload(input as never,root,scope)
+  const own=()=>store.create({title:'own',path:project,providerId:'claude',ownerChatId:'owner'}).id,source=own(),target=own()
+  store.attachments.bind([a.id],source,input.draftId as string,scope)
+  const orphan=join(root,'workbench-attachment-uploads','orphan');writeFileSync(orphan,'');truncateSync(orphan,256*1024*1024-a.size-1024)
+  expect(()=>store.attachments.copyToTask(source,[a.id],target,scope)).toThrow('attachment_storage_limit')
+  expect(store.attachments.list(target)).toEqual([])
 })
