@@ -218,6 +218,13 @@ if (!uploaded) {
   for (const t of targets) copyFileSync(t.artifactPath, join(out, t.artifactName))
   writeFileSync(join(out, 'latest.json'), JSON.stringify(latest, null, 2))
   console.log(`已暂存到 ${out}/ — 把两个文件传到 ${hosting.baseUrl}/ 即完成发布`)
+  // --strict(CI 用):暂存不算发布。runner 上的 dist-update/ 没有人会去拿,
+  // 作业绿 = 老用户永远收不到更新(2026-09-27 desktop-v1.7.0:CF_API_TOKEN 失效,
+  // GitHub Release 已发而 latest.json 还是 1.6.5)。本地手工发版仍可靠暂存兜底。
+  if (process.argv.includes('--strict')) {
+    console.error('::error::--strict:R2 未上传(令牌无效或上传失败),自动更新源没有更新 —— 换新的 CF_API_TOKEN 后用 workflow_dispatch 补发')
+    process.exit(1)
+  }
 } else {
   console.log(`已发布 v${version} (${targets.map(t => t.platformKey).join(', ')}) → ${hosting.baseUrl}/latest.json`)
   console.log('提醒:R2 bucket 需绑定自定义域(R2 → Settings → Custom Domains → 绑定 dl.tendhearth.com)后,更新源才对外可达。')

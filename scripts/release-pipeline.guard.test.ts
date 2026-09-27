@@ -89,6 +89,15 @@ describe('publish-update.yml —— 点 Publish 就该滚更新源', () => {
     expect(yml).toContain('environment: release-signing')
   })
 
+  it('publish-update.ts 在 CI 里带 --strict:令牌无效 / 上传失败时退出非零,不能「降级为本地暂存」还报成功', () => {
+    // 2026-09-27 desktop-v1.7.0:CF_API_TOKEN 已失效(verify 401),脚本降级暂存到 runner 的
+    // dist-update/ 然后 exit 0,作业绿、GitHub Release 已发,而 latest.json 还是 1.6.5 ——
+    // 新用户装到 1.7.0、老用户永远收不到更新。runner 上的暂存目录没有人会去拿。
+    expect(yml).toMatch(/publish-update\.ts[\s\S]*--strict/)
+    const script = readFileSync(join(HERE, 'publish-update.ts'), 'utf8')
+    expect(script).toContain("'--strict'")
+  })
+
   it('CF_API_TOKEN 缺失时**失败**,不静默跳过', () => {
     // 静默跳过的后果:release 发了,老用户永远停在旧版,没人会发现。
     expect(yml).toMatch(/if \[ -z "\$CF_API_TOKEN" \]/)
