@@ -15,6 +15,54 @@ const task=()=>store.create({title:'task',path:project,providerId:'claude',owner
 const upload=(extra:Record<string,unknown>={})=>({id:randomUUID(),draftId:randomUUID(),name:'notes.txt',mime:'text/plain',base64:Buffer.from('original bytes').toString('base64'),...extra})
 const accepted=(input:ReturnType<typeof upload>&{taskId?:string})=>{const a=store.attachments.upload(input as never,root);store.attachments.bind([a.id],input.taskId as string,input.draftId as string);return a}
 
+it('stamps trusted ownership without exposing it or accepting an owner from the upload body',()=>{
+  const input=upload(),scope={ownerKey:'owner'},a=store.attachments.upload(input as never,root,scope)
+  expect(Object.keys(a).sort()).toEqual(['id','mime','name','sha256','size'])
+  expect(db.query('SELECT owner_key FROM workbench_attachments WHERE id=?').get(a.id)).toEqual({owner_key:'owner'})
+  expect(store.attachments.upload(input as never,root,scope)).toEqual(a)
+  expect(()=>store.attachments.upload(input as never,root,{ownerKey:'other'})).toThrow('attachment_scope')
+  expect(()=>store.attachments.upload(input as never,root)).toThrow('attachment_scope')
+  expect(()=>store.attachments.upload(upload({ownerKey:'forged'}) as never,root,scope)).toThrow('invalid_attachment')
+})
+
+it('requires the stamped owner even on legacy calls and cannot bind or discard foreign material',()=>{
+  const input=upload(),scope={ownerKey:'owner'},a=store.attachments.upload(input as never,root,scope)
+  const own=store.create({title:'own',path:project,providerId:'claude',ownerChatId:'owner'}).id
+  const foreign=store.create({title:'other',path:project,providerId:'claude',ownerChatId:'other'}).id
+  expect(()=>store.attachments.select([a.id],undefined,input.draftId as string)).toThrow('attachment_scope')
+  expect(()=>store.attachments.bind([a.id],foreign,input.draftId as string)).toThrow('attachment_scope')
+  expect(()=>store.attachments.bind([a.id],foreign,input.draftId as string,scope)).toThrow('attachment_scope')
+  expect(()=>store.attachments.discard(a.id,input.draftId as string,{ownerKey:'other'})).toThrow('attachment_scope')
+  expect(()=>store.attachments.discard(a.id,input.draftId as string)).toThrow('attachment_scope')
+  expect(store.attachments.select([a.id],undefined,input.draftId as string,scope)).toEqual([a])
+  expect(store.attachments.bind([a.id],own,input.draftId as string,scope)).toEqual([a])
+  expect(store.attachments.select([a.id],own)).toEqual([a])
+  expect(()=>store.attachments.select([a.id],own,undefined,{ownerKey:'other'})).toThrow('attachment_scope')
+})
+
+it('does not claim legacy unbound material through a strict new entry, but keeps legacy task reads',()=>{
+  const input=upload(),a=store.attachments.upload(input as never,root),scope={ownerKey:'owner'}
+  const own=store.create({title:'own',path:project,providerId:'claude',ownerChatId:'owner'}).id
+  expect(()=>store.attachments.select([a.id],undefined,input.draftId as string,scope)).toThrow('attachment_scope')
+  expect(()=>store.attachments.upload(input as never,root,scope)).toThrow('attachment_scope')
+  expect(()=>store.attachments.bind([a.id],own,input.draftId as string,scope)).toThrow('attachment_scope')
+  expect(store.attachments.bind([a.id],own,input.draftId as string,{...scope,allowLegacyUnbound:true})).toEqual([a])
+  expect(store.attachments.select([a.id],own,undefined,scope)).toEqual([a])
+  expect(db.query('SELECT owner_key FROM workbench_attachments WHERE id=?').get(a.id)).toEqual({owner_key:null})
+  expect(()=>store.attachments.upload(input as never,root,{ownerKey:'other'})).toThrow('attachment_scope')
+})
+
+it('preserves the original owner on copies and refuses cross-owner targets',()=>{
+  const input=upload(),scope={ownerKey:'owner'},a=store.attachments.upload(input as never,root,scope)
+  const own=()=>store.create({title:'own',path:project,providerId:'claude',ownerChatId:'owner'}).id
+  const first=own(),second=own(),foreign=store.create({title:'other',path:project,providerId:'claude',ownerChatId:'other'}).id
+  store.attachments.bind([a.id],first,input.draftId as string,scope)
+  expect(()=>store.attachments.copyToTask(first,[a.id],foreign)).toThrow('attachment_scope')
+  const copy=store.attachments.copyToTask(first,[a.id],second,scope)[0]!
+  expect(db.query('SELECT owner_key FROM workbench_attachments WHERE id=?').get(copy.id)).toEqual({owner_key:'owner'})
+  expect(store.attachments.read(second,copy.id,root).base64).toBe(input.base64)
+})
+
 it('claims a staged upload once and restricts reads to its owning task',()=>{
   expect(store.attachments).toBeDefined()
   const first=task(),second=task(),input=upload(),a=store.attachments.upload(input as never,root)

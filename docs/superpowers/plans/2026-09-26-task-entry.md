@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript、Bun/Node、SQLite、原生 JavaScript/CSS、Tauri、既有手机内联页面与加密隧道、Vitest/Chromium。
 
-**Spec:** [第一批设计](../specs/2026-09-26-task-entry.md)。基线 origin/dev@39cf7f5f543587bffaae07c1cf2557948ffaf8b1；本文件中任务和测试均未执行。
+**Spec:** [第一批设计](../specs/2026-09-26-task-entry.md)。基线 origin/dev@39cf7f5f543587bffaae07c1cf2557948ffaf8b1；实现进度见各任务勾选与同目录 task-entry-validation 记录；实施已同步到 origin/dev@261a2ca1。
 
 ## Global Constraints
 
@@ -54,10 +54,10 @@
 
 **Interfaces:** 消费已确认的本任务工作区；产出实现基线 SHA、当前失败清单及验收记录 docs/superpowers/plans/2026-09-26-task-entry-validation.md。
 
-- [ ] 核对codex/cc-task-entry、起点提交、未提交改动和远端关系，保留所有既有工作；不得检出或改动他人使用的dev。
-- [ ] 阅读维护者要求，记录实际 owner/provider 条件和可用真机，不读取凭据内容。
-- [ ] 运行基线 `bun run test`、`npm run test:node`、`bun run typecheck`、`bun run depcheck`。记录失败原文与归属；无未解释的新失败才开始相应模块。
-- [ ] 将设计/计划归档到上述路径并提交：`docs: plan unified task entry`。不把外部个人截图复制进仓库。
+- [x] 核对codex/cc-task-entry、起点提交、未提交改动和远端关系，保留所有既有工作；不得检出或改动他人使用的dev。
+- [x] 阅读维护者要求，记录实际 owner/provider 条件和可用真机，不读取凭据内容。
+- [x] 运行基线 `bun run test`、`npm run test:node`、`bun run typecheck`、`bun run depcheck`。记录失败原文与归属；无未解释的新失败才开始相应模块。
+- [x] 将设计/计划归档到上述路径并提交：`docs: plan unified task entry`。不把外部个人截图复制进仓库。
 
 ### Task 1: 输入契约和持久创建登记
 
@@ -71,17 +71,17 @@ createEntryStore(db: Database): EntryStore
 ~~~
 Database沿用仓库db类型。EntryStore提供 get(ownerKey,requestId)、reserve(reservation)、accept(ownerKey,requestId,accepted)；事务由service持有。EntryReservation包含请求hash、冻结目标/执行者/材料、workspaceId与分配状态；EntryAccepted增加设计列出的完整回执和目录身份。store不调用模型、不创建目录、不启动执行者。
 
-- [ ] 写输入/迁移/唯一键测试，钉住未知字段拒绝、UUID、长度和有序材料的hash：
+- [x] 写输入/迁移/唯一键测试，钉住未知字段拒绝、UUID、长度和有序材料的hash：
 ~~~ts
 expect(canonicalEntryHash(a)).not.toBe(canonicalEntryHash(reorderedAttachments))
 expect(() => parseEntryInput({ ...valid, path: '/tmp/x' })).toThrow()
 expect(store.get(owner, requestId)?.phase).toBe('reserved')
 ~~~
 其中 a、valid、reorderedAttachments 为本文件明示的有效夹具；测试同owner同ID异内容冲突、不同owner隔离、accepted缺字段拒绝、升级保留旧任务。
-- [ ] 运行 `bun run test src/core/workbench/task-entry.test.ts src/core/workbench/entry-store.test.ts src/lib/migration-order.test.ts`，确认失败指向缺少新契约或表。
-- [ ] 实现严格解析与确定性hash，追加workbench_entry_requests、任务workspaceKind（旧值默认project）及workbench_attachments.owner_key迁移。省略与显式默认区分；accepted回放只需规范输入hash，不访问当前暂存材料。附件仅StoredAttachment增加ownerKey，upload/select/bind/copyToTask/discard增加可信scope参数，不从body读取；旧NULL未绑定记录不自动认领，已盖章记录不能覆盖owner。为这套兼容规则先写并跑失败测试，再实现并跑attachments.test.ts。
-- [ ] 运行以上测试及 `bun run test src/lib/db.test.ts src/lib/state-migration.test.ts`；全部通过且原迁移顺序不变。
-- [ ] 提交：`feat: add durable task entry requests`。
+- [x] 运行 `bun run test src/core/workbench/task-entry.test.ts src/core/workbench/entry-store.test.ts src/lib/migration-order.test.ts`，确认失败指向缺少新契约或表。
+- [x] 实现严格解析与确定性hash，追加workbench_entry_requests、任务workspaceKind（旧值默认project）及workbench_attachments.owner_key迁移。省略与显式默认区分；accepted回放只需规范输入hash，不访问当前暂存材料。附件仅StoredAttachment增加ownerKey，upload/select/bind/copyToTask/discard增加可信scope参数，不从body读取；旧NULL未绑定记录不自动认领，已盖章记录不能覆盖owner。为这套兼容规则先写并跑失败测试，再实现并跑attachments.test.ts。
+- [x] 运行以上测试及 `bun run test src/lib/db.test.ts src/lib/state-migration.test.ts`；全部通过且原迁移顺序不变。
+- [x] 提交：`feat: add durable task entry requests`。
 
 ### Task 2: 独立目录与任务归属
 
