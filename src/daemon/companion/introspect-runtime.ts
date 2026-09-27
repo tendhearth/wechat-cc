@@ -35,10 +35,16 @@ export function makeIntrospectAgent(deps: IntrospectAgentDeps): IntrospectAgent 
     async runIntrospect() {
       try {
         const memory = await deps.memorySnapshot()
-        const observations = (await deps.observations.listActive())
+        const activeObservations = await deps.observations.listActive()
+        const activeObservationIds = new Set(activeObservations.map(o => o.id))
+        const observations = activeObservations
           .slice(-5)
           .map(o => ({ ts: o.ts, body: o.body }))
         const events = (await deps.events.list({ limit: 20 }))
+          // Audit history remains intact, but an archived/missing observation's
+          // old inference must not seed a replacement observation. Legacy events
+          // without a source id cannot prove that their inference is still active.
+          .filter(e => e.kind !== 'observation_written' || (e.observation_id !== undefined && activeObservationIds.has(e.observation_id)))
           .map(e => ({ ts: e.ts, kind: e.kind, reasoning: e.reasoning }))
         const messages = await deps.recentInboundMessages()
 

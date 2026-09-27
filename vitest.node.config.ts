@@ -9,7 +9,7 @@ import base from './vitest.config'
 export default mergeConfig(base, defineConfig({
   test: {
     // 桌面前端的测试是给 Tauri webview 写的,只在 Bun 上跑;Node 作业只看 src/。
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'apps/mobile/**/*.test.ts'],
     exclude: [
       ...(base.test?.exclude ?? []),
       'src/daemon/yi-ws-server.test.ts',

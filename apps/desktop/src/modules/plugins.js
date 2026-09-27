@@ -13,6 +13,7 @@
  */
 
 import { invokeApi } from '../api.js'
+import { icon } from './icons.js'
 
 // Packages whose MCP tools were retired when their logic moved into the
 // daemon's in-process Knowledge Kernel — kept on disk as library modules
@@ -72,7 +73,7 @@ async function refreshInstalled() {
       ? `<div class="plugin-tools">工具：${p.tools.map(/** @param {string} t */ t => escapeHtml(t)).join(' · ')}</div>`
       : ''
     const warn = (p.enabled && !p.ready)
-      ? `<div class="plugin-warn">⚠ 未就绪，暂不提供给 agent：${escapeHtml(String(p.not_ready_reason ?? ''))}</div>`
+      ? `<div class="plugin-warn">${icon('alert-02', { size: 16, className: 'plugin-status-icon' })} 未就绪，暂不提供给 agent：${escapeHtml(String(p.not_ready_reason ?? ''))}</div>`
       : ''
     const desc = p.description
       ? `<div class="a2a-card-url">${escapeHtml(String(p.description))}</div>`
@@ -153,9 +154,9 @@ async function runSync(name, btn) {
   showNote('正在本机同步最新微信数据；不会上传聊天记录…')
   try {
     await invoke('wechat_cli_text', { args: ['plugin', 'sync', name] })
-    showNote(`✓ ${name} 同步完成`)
+    showNote(`${name} 同步完成`, 'success')
   } catch (err) {
-    showNote(`同步失败：${err instanceof Error ? err.message : String(err)}`)
+    showNote(`同步失败：${err instanceof Error ? err.message : String(err)}`, 'error')
   } finally {
     btn.disabled = false
     btn.textContent = orig
@@ -187,10 +188,10 @@ async function runSetup(name, btn) {
     await invoke('wechat_cli_text', { args: ['plugin', 'setup', name] })
     const s = await invoke('wechat_cli_json', { args: ['plugin', 'setup-status'] }).catch(() => null)
     showNote(s?.ok
-      ? `✓ ${name} 解密完成 — 现在可「启用」并重启 daemon 生效`
-      : `连接失败：${escapeHtml(String(s?.error ?? '见日志'))}（微信是否已登录？）`)
+      ? `${name} 解密完成 — 现在可「启用」并重启 daemon 生效`
+      : `连接失败：${escapeHtml(String(s?.error ?? '见日志'))}（微信是否已登录？）`, s?.ok ? 'success' : 'error')
   } catch (err) {
-    showNote(`连接失败：${err instanceof Error ? err.message : String(err)}`)
+    showNote(`连接失败：${err instanceof Error ? err.message : String(err)}`, 'error')
   } finally {
     clearInterval(poll)
     btn.disabled = false
@@ -269,11 +270,14 @@ async function onMarketAction(e) {
   }
 }
 
-/** @param {string} msg */
-function showNote(msg) {
+/** @param {string} msg @param {'info' | 'success' | 'error'} [state] */
+function showNote(msg, state = 'info') {
   const note = document.getElementById('plugins-note')
   if (!note) return
   note.textContent = msg
+  note.classList.toggle('status-success', state === 'success')
+  note.classList.toggle('status-error', state === 'error')
+  note.setAttribute('role', 'status')
   note.hidden = false
 }
 

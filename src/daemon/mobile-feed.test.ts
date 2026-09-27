@@ -5,7 +5,7 @@ import type { PlanLogEntry } from '../core/companion-plan'
 
 const TZ = 'Asia/Shanghai'
 const row = (over: Partial<CatchRow> = {}): CatchRow => ({
-  id: 'j1', ts: '2026-09-06T02:43:36.412Z', chat_id: 'o', title: '一个好玩的东西', url: 'https://x', note: '', status: 'new', kind: 'hunt', image_svg: null, ...over,
+  id: 'j1', ts: '2026-09-06T02:43:36.412Z', chat_id: 'o', title: '一个好玩的东西', url: 'https://x', note: '', status: 'new', kind: 'hunt', image_svg: null, matter_id: null, ...over,
 })
 const plan = (over: Partial<PlanLogEntry> = {}): PlanLogEntry => ({
   at: '2026-09-06T03:03:55.347Z', chatId: 'o', candidates: ['visit'], decision: 'none', why: '通讯录里没朋友,先在家歇着。', source: 'model', ...over,

@@ -42,6 +42,10 @@ function makeFakeCareLedger(entries: Record<string, CareLedgerEntry> = {}): Care
       const cur = entries[chatId] ?? { noReplyCount: 0 }
       entries[chatId] = { ...cur, lastVisitAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
     },
+    claimMemory: (chatId, nowIso) => {
+      const cur = entries[chatId] ?? { noReplyCount: 0 }
+      entries[chatId] = { ...cur, lastMemoryAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
+    },
     resetNoReply: (chatId) => {
       const cur = entries[chatId]
       if (cur) entries[chatId] = { ...cur, noReplyCount: 0 }

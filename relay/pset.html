@@ -6,20 +6,26 @@
   「手机走流量扫不开 LAN 二维码」:壳从公网加载,真正的页面通过 E2E
   隧道取回注入。锚点携带 id/令牌 —— # 后的内容不发给服务器,中继
   连令牌都看不到;页面数据全程密文,中继盲转。
-  流程:解析 hash → Image() 探测 LAN icon(在家 → 直接跳 LAN 原始
-  地址,最快路径)→ 不通 → 隧道握手(HKDF salt=令牌)→ 密文取页 →
+  流程:解析 hash → 隧道握手(HKDF salt=令牌)→ 密文取页 →
   注入 window.__CC_SHELL__ 后 document.write(页面自身的传输层看到
   壳标记即强制走隧道)。
+  2026-09-24 删掉「先探 LAN」:家里直接用电脑,手机网页只在外面用;
+  而且 https 页里探 http 私网地址会被现代浏览器拦,探测几乎总失败,白等 2s。
+  链接里的 lan= 参数保留但不再使用。
 -->
 <style>
-  body { margin:0; font-family:system-ui,-apple-system,"PingFang SC",sans-serif; background:#f5ead8; color:#5a3f2d; display:grid; place-items:center; min-height:100vh }
-  .box { text-align:center; padding:24px } .box .b { font-size:52px } .box p { color:#8b5e3c; font-size:14px }
+  /* 色值与 apps/mobile/src/tokens.css 保持一致(壳页单独部署,不能引用它;src/daemon/design-tokens.test.ts 守着) */
+  body { margin:0; font-family:system-ui,-apple-system,"PingFang SC",sans-serif; background:#f9f7f1; color:#483f35; display:grid; place-items:center; min-height:100vh }
+  .box { text-align:center; padding:24px; max-width:300px }
+  .box .b { width:64px; height:64px; margin:0 auto 14px; border-radius:50%; background:radial-gradient(circle at 45% 40%,#fffefa 0%,#efd9bd 70%); box-shadow:0 0 36px 10px rgba(255,236,205,.95) }
+  .box .hand { font-family:"Kaiti SC","STKaiti",serif; color:#8a7a66; font-size:15px; margin:0 0 6px }
+  .box p { color:#7e7365; font-size:14px; line-height:1.7; margin:0 }
 </style></head><body>
-<div class="box"><div class="b">🐻</div><p id="msg">正在找回家的路…</p></div>
+<div class="box"><div class="b" aria-hidden="true"></div><p class="hand">随身 CC</p><p id="msg">正在找回家的路…</p></div>
 <script>
 var P = {}
 location.hash.slice(1).split("&").forEach(function(kv){ var i = kv.indexOf("="); if (i > 0) P[kv.slice(0,i)] = decodeURIComponent(kv.slice(i+1)) })
-var ID = P.id, T = P.t, PATH = P.p || "/m", LAN = P.lan
+var ID = P.id, LINK_T = P.t, T = P.t, PATH = P.p || "/m"
 // 配对过的手机:设备令牌存在本域 localStorage(注入页写的),永不过期 ——
 // 优先于 hash 里可能已过期的 10 分钟短令牌。加主屏后重开因此总能进。
 try { var dt = localStorage.getItem("deviceToken"); if (dt) T = dt } catch (e) {}
@@ -41,7 +47,15 @@ function viaTunnel() {
   }
   ws.onmessage = async function(ev) {
     var f = JSON.parse(ev.data)
-    if (f.error) { clearTimeout(timer); msg.textContent = f.error === "daemon_offline" ? "家里的 CC 不在线 — 电脑开着吗?" : ("连接出错:" + f.error); return }
+    if (f.error) {
+      clearTimeout(timer); try { ws.close() } catch (e) {}
+      if (f.error === "auth_failed") {
+        // 本域存的设备令牌不被认了(解除配对 / 换了电脑):丢掉它,用链接里的短令牌重来一次。
+        if (T !== LINK_T && LINK_T) { try { localStorage.removeItem("deviceToken") } catch (e) {}; T = LINK_T; viaTunnel(); return }
+        msg.textContent = "链接过期啦,回微信跟 CC 再要一个"; return
+      }
+      msg.textContent = f.error === "daemon_offline" ? "家里的 CC 不在线 — 电脑开着吗?" : ("连接出错:" + f.error); return
+    }
     if (f.hs) {
       var pub = await crypto.subtle.importKey("raw", b64u.dec(f.hs), { name:"X25519" }, true, [])
       var bits = await crypto.subtle.deriveBits({ name:"X25519", public: pub }, kp.privateKey, 256)
@@ -67,18 +81,5 @@ function viaTunnel() {
   ws.onerror = function(){ clearTimeout(timer); msg.textContent = "网络不给力,稍后再试" }
 }
 
-if (ID && T) {
-  if (LAN) {
-    // 在家优先:LAN icon 图片探测(passive 混合内容,浏览器放行)。
-    // 通 → 直接跳 LAN 原始地址(最快、可加主屏);2s 不通 → 隧道。
-    var probe = new Image()
-    var settled = false
-    var lanTimer = setTimeout(function(){ if (!settled) { settled = true; viaTunnel() } }, 2000)
-    probe.onload = function(){ if (!settled) { settled = true; clearTimeout(lanTimer); location.replace("http://" + LAN + PATH + "?t=" + T) } }
-    probe.onerror = function(){ if (!settled) { settled = true; clearTimeout(lanTimer); viaTunnel() } }
-    probe.src = "http://" + LAN + "/m/icon.png?_=" + Date.now()
-  } else {
-    viaTunnel()
-  }
-}
+if (ID && T) viaTunnel()
 </script></body></html>

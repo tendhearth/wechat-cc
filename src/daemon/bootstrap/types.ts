@@ -146,6 +146,15 @@ export interface BootstrapDeps {
    */
   coreMemoryFor?: (chatId: string) => string
   /**
+   * Resolve a chat's curated long-term memory (memory.md), nightly-curated
+   * and rendered for the prompt (Task 1's `renderForPrompt`, trailer
+   * stripped). When present, `buildSystemPrompt` injects this INSTEAD of
+   * `coreMemoryFor`'s profile excerpt (nightly memory tidy design, Task 8).
+   * Absent ⇒ falls back to `coreMemoryFor` — byte-identical to before this
+   * feature existed.
+   */
+  curatedMemoryFor?: (chatId: string) => string
+  /**
    * Daemon-distilled objective plugin knowledge for this chat (knowledge.md),
    * read fresh per spawn + capped. Injected right after core memory. Absent
    * thunk / empty ⇒ section omitted (knowledge-distillation design, D1).

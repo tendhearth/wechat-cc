@@ -1,6 +1,10 @@
 /**
  * Gemini agent provider — drives Gemini via @google/genai.
  *
+ * @deprecated 2026-09-27:订阅版 Gemini 走 agy(Antigravity CLI:真 resume、
+ * cheapEval 顺序在前、不用 API key)。这条 API-key 路保留给已配 GEMINI_API_KEY
+ * 的用户,不再加功能;主人拍板「标 deprecated 保留」。
+ *
  * Unlike claude/codex/cursor (whose SDKs run the agentic loop), @google/genai
  * gives only model calls + tool-calling primitives, so THIS provider owns the
  * tool-use loop: generateContent → emit text → for each functionCall, gate it

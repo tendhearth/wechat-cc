@@ -9,6 +9,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
+import { isDerivedMemoryStale } from './memory-derived-state'
 
 export interface MemoryFileEntry {
   name: string
@@ -88,7 +89,9 @@ export function readMemoryProfileFile(stateDir: string, userId: string): string 
   if (!existsSync(target)) {
     throw new Error(`file not found: ${userId}/${PROFILE_FILENAME}`)
   }
-  return readFileSync(target, 'utf8')
+  const content = readFileSync(target, 'utf8')
+  if (!isDerivedMemoryStale(dirname(target), 'profile')) return content
+  return JSON.stringify({ ...JSON.parse(content), needsRefresh: true })
 }
 
 export function writeMemoryProfileFile(stateDir: string, userId: string, body: string): { bytesWritten: number; created: boolean } {

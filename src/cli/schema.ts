@@ -371,10 +371,18 @@ export const MemoryWriteOutput = z.discriminatedUnion('ok', [
 ])
 export type MemoryWriteOutputT = z.infer<typeof MemoryWriteOutput>
 
+const MemoryProfileSourceRef = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('memory'), path: z.string(), label: z.string() }),
+  z.object({ kind: z.literal('observation'), id: z.string(), label: z.string() }),
+  z.object({ kind: z.literal('milestone'), id: z.string(), label: z.string() }),
+  z.object({ kind: z.literal('project'), project: z.string(), path: z.string(), label: z.string() }),
+])
+
 const MemoryProfileCard = z.object({
   title: z.string(),
   body: z.string(),
   sources: z.array(z.string()).optional(),
+  sourceRefs: z.array(MemoryProfileSourceRef).optional(),
 })
 
 const MemoryProfileSourceStats = z.object({
@@ -396,6 +404,7 @@ export const MemoryProfileDocument = z.object({
   minRefreshAfter: z.string().optional(),
   sourceStats: MemoryProfileSourceStats.optional(),
   sourceFingerprint: z.string().optional(),
+  needsRefresh: z.boolean().optional(),
   insight: z.string(),
   summary: z.string(),
   tags: z.array(z.string()),
@@ -446,6 +455,7 @@ export const MemoryProfileStatusOutput = z.discriminatedUnion('ok', [
     sourceFingerprint: z.string(),
     previousSourceFingerprint: z.string().nullable(),
     changed: z.boolean(),
+    needsRefresh: z.boolean().optional(),
     daysSinceGenerated: z.number().nullable(),
   }),
   z.object({ ok: z.literal(false), error: z.string() }),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSystemPrompt, bubbleRepliesSection, careSection, companionOfferSection, CORE_MEMORY_MAX_CHARS, coreMemorySection, KNOWLEDGE_MEMORY_MAX_CHARS, knowledgeMemorySection, daemonSelfHealSection, knowledgeOrchestrationSection, newRelationshipSection, personaCultivationSection, personaSection, socialToolsSection, stickerEmptyLibrarySection, stickerSection } from './prompt-builder'
+import { buildSystemPrompt, bubbleRepliesSection, careSection, companionOfferSection, CORE_MEMORY_MAX_CHARS, coreMemorySection, curatedMemorySection, KNOWLEDGE_MEMORY_MAX_CHARS, knowledgeMemorySection, daemonSelfHealSection, knowledgeOrchestrationSection, newRelationshipSection, personaCultivationSection, personaSection, socialToolsSection, stickerEmptyLibrarySection, stickerSection } from './prompt-builder'
 
 describe('buildSystemPrompt', () => {
   function defaults() {
@@ -505,6 +505,20 @@ describe('core-memory prompt section', () => {
     const p = buildSystemPrompt({ ...base, coreMemory: '这个人叫小明,喜欢徒步' })
     expect(p).toContain('核心记忆')
     expect(p).toContain('这个人叫小明,喜欢徒步')
+  })
+
+  it('curated memory replaces the profile section when present', () => {
+    const p = buildSystemPrompt({ ...base, coreMemory: 'PROFILE 草稿', curatedMemory: '### 偏好\n- 回复直接' })
+    expect(p).toContain('### 偏好\n- 回复直接')
+    expect(p).not.toContain('PROFILE 草稿')
+    expect(p).toContain('长期记忆')
+  })
+  it('falls back to the profile section when curated memory is empty', () => {
+    const p = buildSystemPrompt({ ...base, coreMemory: 'PROFILE 草稿', curatedMemory: '  ' })
+    expect(p).toContain('PROFILE 草稿')
+  })
+  it('curatedMemorySection tells CC where daytime notes go', () => {
+    expect(curatedMemorySection('- x')).toContain('profile.md')
   })
 
   it('knowledgeMemorySection() includes the 算出来的事实 heading + content, and caps at KNOWLEDGE_MEMORY_MAX_CHARS', () => {

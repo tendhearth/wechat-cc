@@ -307,3 +307,13 @@ describe('shouldSpeak — hunt', () => {
     })
   })
 })
+
+describe('memory kind', () => {
+  const base = { level: 'low' as const, nowIso: '2026-09-25T09:00:00Z' }
+  it('pauses after two unanswered proactive sends and allows one per 20h', () => {
+    expect(shouldSpeak({ ...base, kind: 'memory', ledger: { noReplyCount: 2 } })).toEqual({ ok: false, reason: 'paused_no_reply' })
+    expect(shouldSpeak({ ...base, kind: 'memory', ledger: { noReplyCount: 0, lastMemoryAtIso: '2026-09-24T20:00:00Z' } })).toEqual({ ok: false, reason: 'memory_cooldown' })
+    expect(shouldSpeak({ ...base, kind: 'memory', ledger: { noReplyCount: 0, lastMemoryAtIso: '2026-09-24T12:00:00Z' } })).toEqual({ ok: true })
+    expect(shouldSpeak({ ...base, level: 'off', kind: 'memory', ledger: { noReplyCount: 0 } })).toEqual({ ok: false, reason: 'care_off' })
+  })
+})

@@ -12,7 +12,8 @@ const TASK={id:'deadbeef',title:'整理周报',status:'running',phase:'replied',
 describe('matters service',()=>{
   it('details a task matter with its workbench view and recent events, and says into it via continueTask',async()=>{
     store.create({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',ownerChatId:'owner'});store.bind('deadbeef','wechat','owner');store.setStatus('deadbeef','replied')
-    const workbench={detail:vi.fn(()=>({task:TASK,events:[{kind:'text',text:'做好了',createdAt:3}]})),continueTask:vi.fn(()=>({...TASK,phase:'working'}))}
+    let task=TASK
+    const workbench={detail:vi.fn(()=>({task,events:[{kind:'text',text:'做好了',createdAt:3}]})),continueTask:vi.fn(()=>(task={...TASK,phase:'working'}))}
     const service=makeMattersService({store,workbench})
     const detail=await service.detail('deadbeef')
     expect(detail.matter.id).toBe('deadbeef');expect(detail.task).toEqual(TASK);expect(detail.events).toEqual([{kind:'text',text:'做好了',createdAt:3}])

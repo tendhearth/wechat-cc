@@ -18,6 +18,7 @@ import { buildBootstrap, resolveAdminChatId } from './bootstrap'
 import { makeMemoryFS } from './memory/fs-api'
 import { makeMemoryLlmOps } from './memory-llm-ops'
 import { CORE_MEMORY_MAX_CHARS, KNOWLEDGE_MEMORY_MAX_CHARS } from '../core/prompt-builder'
+import { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from './memory/curated-doc'
 import { makeConversationStore } from '../core/conversation-store'
 import { makeTurnRecordStore } from '../core/turn-record-store'
 import { providerDisplayName } from './provider-display-names'
@@ -31,8 +32,12 @@ import { registerPolling } from './polling-lifecycle'
 import { registerSessions } from './sessions-lifecycle'
 import { registerIlink } from './ilink-lifecycle'
 import { registerMailboxPoller } from './bootstrap/wire-mailbox'
+import { registerMemoryNightly } from './memory/nightly-lifecycle'
 import { registerReminders } from './reminders/sweeper'
 import { makeRemindersStore } from './reminders/store'
+import { registerReportSweeper } from './reports/sweeper'
+import { makeReportOutboxStore } from './reports/outbox'
+import { makeWorkbenchStore } from '../core/workbench/store'
 import { buildInboundPipeline } from './inbound/build'
 import { runStartupSweeps } from './startup-sweeps'
 import { markPlannedRestart } from './notify-startup'
@@ -489,6 +494,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         const profile = fs.read('profile.md') ?? ''
         return profile.length > CORE_MEMORY_MAX_CHARS ? profile.slice(0, CORE_MEMORY_MAX_CHARS) : profile
       },
+      // 每晚整理的长期记忆(2026-09-25):有 memory.md 就注入它(去尾注),prompt-builder 据此不再注入 profile.md。
+      curatedMemoryFor: (c) => {
+        const fs = makeMemoryFS({ rootDir: join(stateDir, 'memory', c) })
+        const raw = fs.read(MEMORY_FILENAME)
+        return raw ? renderForPrompt(parseMemoryDoc(raw)) : ''
+      },
       // knowledge-distillation §2 — THIS chat's daemon-distilled knowledge.md
       // (objective plugin facts), read fresh per spawn + capped. Written by the
       // ingest tick for the owner chat; absent for chats without it.
@@ -703,7 +714,9 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     })
     // 「一件事」登记处:一份 store,工作台、微信入站、app 对话、内部 API 都用它(2026-09-16)。
     const matters = makeMatterStore(db)
-    const workbench = wireWorkbench({ db, stateDir, boot, internalApi, matters,
+    // 回报投递队列(v65,task-3,2026-09-23):每轮答复入队一次,sweeper 按到期时间取件送达。
+    const reportOutbox = makeReportOutboxStore(db)
+    const workbench = wireWorkbench({ db, stateDir, boot, internalApi, matters, reportOutbox,
       executionConflict:(path,providerId,nativeId)=>boot.sessionManager.hasProjectConflict(path)||
         (!!nativeId&&Object.values(boot.sessionStore.all()).some(s=>s.provider===providerId&&s.session_id===nativeId))||
         legacyClaims.conflicts({owner:'workbench',path,providerId,nativeId})||
@@ -772,6 +785,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     const mailboxLc = await sup.start('mailbox-poller',
       () => boot.mailboxPollerDeps ? registerMailboxPoller(boot.mailboxPollerDeps) : undefined)
     if (mailboxLc) lc.register(mailboxLc)
+    // 每晚整理长期记忆 memory.md(2026-09-25)。15 分钟一次「该不该跑」,运行时在 pipeline-deps 造好。
+    const memoryNightlyLc = await sup.start('memory-nightly', () => registerMemoryNightly({
+      runtime: wired.memoryNightly, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l),
+    }))
+    if (memoryNightlyLc) lc.register(memoryNightlyLc)
+    internalApi.setMemoryNightly(wired.memoryNightly)
     // Reminder sweeper (spec 2026-08-20-reminders-port) — multi-user
     // precise-time delivery. Optional subsystem: a broken sweeper degrades,
     // never blocks boot. Store is db-backed so pending reminders survive
@@ -791,6 +810,26 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       log: (t, l) => log(t, l),
     }))
     if (remindersLc) lc.register(remindersLc)
+    // 回报投递(task-3,2026-09-23):每轮答复回原对话说一声,人不在就等人回来
+    // 再送(errcode=-2 不计入放弃窗口,保持 pending 退避重试)。同样是可选子
+    // 系统:sweeper 坏了只降级,不挡启动。
+    // 独立的一份 WorkbenchStore 实例,只用来给"放弃投递"这件事在那件事自己的
+    // 时间线上留一笔(评审修复轮 3 ③)——同一个 db,跟 wireWorkbench 内部那份
+    // 各自持有自己的预备语句,写入互相可见,不需要共享实例。
+    const reportEventStore = makeWorkbenchStore(db)
+    const reportsLc = await sup.start('reports', () => registerReportSweeper({
+      store: reportOutbox,
+      matters,
+      send: async (chatId, text) => {
+        const r = await ilink.sendMessage(chatId, text) as { msgId?: string; error?: string }
+        return r.error ? { ok: false, error: r.error } : { ok: true }
+      },
+      log: (t, l) => log(t, l),
+      noteAbandoned: (matterId, text) => {
+        try { reportEventStore.addEvent(matterId, 'system', text) } catch { /* best effort — the drop itself already succeeded */ }
+      },
+    }))
+    if (reportsLc) lc.register(reportsLc)
     // 5. one-shot startup sweeps — fire-and-forget
     runStartupSweeps(wired.startupDeps)
     // 外部集成反馈 #6:这个 flag 的语义像"跳过工具确认",实际是全局提权

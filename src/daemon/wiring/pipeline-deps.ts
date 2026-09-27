@@ -56,7 +56,10 @@ import { materializeAttachments } from '../media'
 import { loadGuardConfig } from '../guard/store'
 import { makeFireMilestonesFor, makeRecordInbound, makeMaybeWriteWelcomeObservation } from './side-effects'
 import { makeMessagesStore } from '../../lib/messages-store'
-import { makeMemoryLlmOps } from '../memory-llm-ops'
+import { makeMemoryLlmOps, resolveCheapEval } from '../memory-llm-ops'
+import { makeMemoryNightlyRuntime, type MemoryNightlyRuntime } from '../memory/nightly-runtime'
+import { makeNightlySources } from '../memory/nightly-sources'
+import { shouldSpeak, careLevel } from '../companion/calibration'
 import { makeDedupStore } from '../../lib/dedup-store'
 import { DEFAULT_DELEGATE_TIMEOUT_MS } from '../../core/a2a-delegate'
 import type { YiHub, YiDispatch } from '../../core/yi-hub'
@@ -214,6 +217,8 @@ export interface BuildPipelineDepsResult {
    * (主人最近一次入站)。main.ts 经 setPetTurn late-bind 到 internal-api。
    */
   petTurn: PetTurnDep
+  /** 每晚记忆整理运行时;main.ts 挂定时器并接到 internal-api。 */
+  memoryNightly: import('../memory/nightly-runtime').MemoryNightlyRuntime
 }
 
 export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs): BuildPipelineDepsResult {
@@ -319,6 +324,48 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     getMode: (cid) => boot.coordinator.getMode(cid),
     registry: boot.registry,
   })
+  // 每晚整理长期记忆 memory.md(spec 2026-09-25-memory-nightly-design)。定时器由 main.ts 挂。
+  const nightlyOwner = (): string | null => loadCompanionConfig(stateDir).default_chat_id ?? null
+  const nightlyRuntime = makeMemoryNightlyRuntime({
+    stateDir,
+    ownerChatId: nightlyOwner,
+    config: () => {
+      const c = loadCompanionConfig(stateDir)
+      return { enabled: c.memory_nightly_enabled, at: c.memory_nightly_at, timezone: c.timezone }
+    },
+    sources: makeNightlySources({ db, stateDir, ownerChatId: nightlyOwner }),
+    cheapEval: () => {
+      const o = nightlyOwner()
+      return o ? resolveCheapEval({ getMode: (c) => boot.coordinator.getMode(c), registry: boot.registry }, o) : boot.registry.getCheapEval()
+    },
+    ownerRecentlyActive: async () => {
+      const o = nightlyOwner()
+      if (!o) return false
+      const ts = await makeMessagesStore(db).latestInboundTs(o)
+      return !!ts && Date.now() - Date.parse(ts) < 3 * 60_000
+    },
+    now: () => Date.now(),
+    newId: () => randomBytes(3).toString('hex'),
+    log: (t, l) => log(t, l),
+    careGate: (chatId, nowIso) => shouldSpeak({
+      kind: 'memory',
+      level: careLevel(chatId, chatPrefs.get(chatId), loadCompanionConfig(stateDir).default_chat_id ?? undefined),
+      nowIso,
+      ledger: careLedger.get(chatId),
+    }),
+    claim: (chatId, nowIso) => careLedger.claimMemory(chatId, nowIso),
+    wechatSuspended: () => boot.health.health.shouldSuspend('wechat'),
+    send: (chatId, text) => ilink.sendMessage(chatId, text),
+  })
+  // 手动立即运行(内部 API / 以后的微信「整理记忆」)可能跑到 5 分钟 —— 持 busy token,
+  // 免得空闲自动重启把它杀掉。定时 tick 的 busy 由 registerMemoryNightly 自己持。
+  const memoryNightly: MemoryNightlyRuntime = {
+    ...nightlyRuntime,
+    runNow: async () => {
+      const release = boot.holdBusy('memory-nightly-manual')
+      try { return await nightlyRuntime.runNow() } finally { release() }
+    },
+  }
   const maybeWriteWelcomeObservation = makeMaybeWriteWelcomeObservation({
     stateDir,
     db,
@@ -358,6 +405,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     // Delegates to the shared factory (memory-llm-ops.ts) so this path and
     // the internal-api routes the desktop calls resolve cheapEval identically.
     synthesizeMemory: (adminChatId) => memoryLlmOps.synthesize(adminChatId),
+    readCuratedMemory: async () => memoryNightly.readCurated(),
+    runMemoryNightlyNow: () => memoryNightly.runNow(),
     // Read back the synthesized overview so the admin can see what the bot
     // understands about them ("看记忆" / "你对我的理解" from WeChat).
     readOverview: async (adminChatId) => {
@@ -505,7 +554,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const settingsPanel = makeSettingsPanel({
     stateDir,
     ownerChatId,
-    ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), say: (id, text) => mattersService.say(id, text, 'phone'), seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
+    curatedMemory: () => memoryNightly.curatedView(),
+    ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,artifactChunk:mattersService.artifactChunk,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
     // 「默认大脑」改完自己重启(与远程开关同一条路)。
     ...(opts.requestRestart ? { requestRestart: (reason: string) => opts.requestRestart!(reason) } : {}),
@@ -583,6 +633,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         knownDeviceTokens: () => {
           try { return Object.keys(readJsonFile(join(stateDir, 'settings-devices.json'))) } catch { return [] }
         },
+        activeLinkToken: () => settingsPanel.activeLinkToken(),
         relayUrl: daemonRelay,
         log: (tag, line) => log(tag, line),
       }).start()
@@ -1032,5 +1083,5 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     })
   }
 
-  return { pipelineDeps, companionConverse, petTurn, mattersService, settingsPanelLink: () => settingsPanel.linkUrl() }
+  return { pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, settingsPanelLink: () => settingsPanel.linkUrl() }
 }

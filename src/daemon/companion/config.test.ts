@@ -109,3 +109,13 @@ describe('companion/config (v2 — memory-first, no triggers/personas)', () => {
     })
   })
 })
+
+describe('memory nightly config', () => {
+  it('defaults to enabled at 04:00 and rejects malformed times', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cfg-'))
+    expect(loadCompanionConfig(dir)).toMatchObject({ memory_nightly_enabled: true, memory_nightly_at: '04:00' })
+    mkdirSync(join(dir, 'companion'), { recursive: true })
+    writeFileSync(join(dir, 'companion', 'config.json'), JSON.stringify({ memory_nightly_enabled: false, memory_nightly_at: '4am' }))
+    expect(loadCompanionConfig(dir)).toMatchObject({ memory_nightly_enabled: false, memory_nightly_at: '04:00' })
+  })
+})

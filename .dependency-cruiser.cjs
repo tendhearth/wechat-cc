@@ -68,6 +68,20 @@ module.exports = {
       to: { path: '^src/daemon/' },
     },
     {
+      name: 'mobile-page-talks-http-only',
+      severity: 'error',
+      comment: '手机页(apps/mobile)只通过 /m/api/* 跟 daemon 说话,源码与构建脚本不链接 src/(2026-09-24)。',
+      from: { path: '^apps/mobile/', pathNot: '\\.test\\.ts$' },
+      to: { path: '^src/' },
+    },
+    {
+      name: 'daemon-reads-mobile-only-via-generated',
+      severity: 'error',
+      comment: 'daemon 只吃 src/daemon/mobile-page.generated.json;import apps/mobile 在本地能跑,编译后的 sidecar 没有源码树就挂了。',
+      from: { path: '^src/', pathNot: '\\.test\\.ts$' },
+      to: { path: '^apps/mobile/' },
+    },
+    {
       name: 'inbound-must-not-link-main',
       severity: 'error',
       comment: 'inbound mw 通过工厂注入 deps，不能 import main.ts',
@@ -84,8 +98,8 @@ module.exports = {
     {
       name: 'no-orphans',
       severity: 'warn',
-      comment: 'Unreachable files are usually dead code. Verify and delete.',
-      from: { orphan: true, pathNot: '(\\.test\\.ts|\\.d\\.ts|tsconfig\\.json|\\.dependency-cruiser\\.cjs)$' },
+      comment: 'Unreachable files are usually dead code. Verify and delete. apps/mobile/src 是经典脚本,由构建期 {{>…}} 包含而非 import —— 天生"孤儿"。',
+      from: { orphan: true, pathNot: ['(\\.test\\.ts|\\.d\\.ts|tsconfig\\.json|\\.dependency-cruiser\\.cjs)$', '^apps/mobile/src/'] },
       to: {},
     },
   ],

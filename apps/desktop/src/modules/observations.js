@@ -2,18 +2,19 @@
 // HTML strings that main.js mounts. Tested in observations.test.ts.
 
 import { escapeHtml } from "../view.js"
+import { icon } from "./icons.js"
 
-const TONE_GLYPH = {
-  concern: '·',
-  curious: '·',
-  proud:   '✦',
-  playful: '·',
-  quiet:   '·',
+const TONE_ICON = {
+  concern: 'heart-check',
+  curious: 'search-01',
+  proud:   'star',
+  playful: 'smile',
+  quiet:   'edit-02',
 }
 
 export function observationRow(obs) {
   const toneAttr = obs.tone ? ` data-tone="${escapeHtml(obs.tone)}"` : ''
-  const glyph = TONE_GLYPH[obs.tone] || '·'
+  const glyph = icon(TONE_ICON[obs.tone] || 'edit-02', { size: 18 })
   // Outer is a div (no row-level click action exists today). Archive is a
   // real <button> for keyboard reachability + screen-reader announcement —
   // a clickable <span> nested inside <button> is invalid HTML and the
@@ -31,7 +32,7 @@ export function observationRow(obs) {
 export function milestoneCard(ms) {
   return `
     <div class="milestone-card" data-id="${escapeHtml(ms.id)}">
-      <span class="glyph">🎉</span>
+      <span class="glyph" role="img" aria-label="里程碑">${icon('star', { size: 18 })}</span>
       <span class="body">${escapeHtml(ms.body)}</span>
       <span class="ts-rel">${escapeHtml(formatRelativeTimeShort(ms.ts))}</span>
     </div>

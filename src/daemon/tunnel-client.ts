@@ -39,6 +39,10 @@ export interface TunnelClientDeps {
    *  (see the handshake below) — so the token is NEVER sent over the wire, and
    *  a MITM relay (which knows no token) can't forge a working key. */
   knownDeviceTokens: () => string[]
+  /** 当前还有效的 /set 链接令牌(单活、10 分钟),没有就 null。没配对的手机在外面点链接,
+   *  只有它可以用来握手;进去后点「把 CC 带在身上」换长期设备令牌(2026-09-24)。
+   *  与设备令牌同一套 HKDF 绑定:令牌只在链接的 # 里,不上中继。 */
+  activeLinkToken?: () => string | null
   /** Opens the outbound WS. Default dials the relay via Bun's WebSocket. */
   connect?: (url: string) => TunnelWS
   relayUrl?: string
@@ -132,7 +136,8 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     if (st.key) {
       try { reqBytes = await openFrame(st.key, frame as { iv: string; ct: string }) } catch { reqBytes = null }
     } else {
-      for (const tok of deps.knownDeviceTokens()) {
+      const link = deps.activeLinkToken?.() ?? null
+      for (const tok of link ? [...deps.knownDeviceTokens(), link] : deps.knownDeviceTokens()) {
         try {
           const cand = await hkdfAesKey(st.bits, new TextEncoder().encode(tok))
           const opened = await openFrame(cand, frame as { iv: string; ct: string })
@@ -140,7 +145,12 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
         } catch { /* not this token */ }
       }
     }
-    if (!reqBytes) { log('TUNNEL', `frame auth failed on ${stream} (no paired device / MITM) — dropped`); return }
+    if (!reqBytes) {
+      log('TUNNEL', `frame auth failed on ${stream} (no paired device / expired link / MITM) — dropped`)
+      // 明文告诉手机「没认出你」,别让页面永远卡在「连回你的电脑…」。不带任何令牌或密文信息。
+      sendToStream(stream, { error: 'auth_failed' })
+      return
+    }
     let parsed: { path?: unknown; method?: unknown; body?: unknown; rid?: unknown }
     try { parsed = JSON.parse(new TextDecoder().decode(reqBytes)) }
     catch { return }

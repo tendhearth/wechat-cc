@@ -770,6 +770,14 @@ describe('makeModeCommands', () => {
     expect(text).toContain('让<名字>执行')
   })
 
+  it('/help tells non-guests that /gemini (API key) is deprecated and points at /agy (2026-09-27 owner ruling: keep, mark)', async () => {
+    const { cmds, sentMessages } = setup({ isAdmin: () => false })
+    await cmds.handle(inbound('/help'))
+    const text = sentMessages[0]?.[1] ?? ''
+    expect(text).toContain('/gemini 是 API key 版(已弃用')
+    expect(text).toContain('新接入请用 /agy')
+  })
+
   it('/帮助 is an alias for /help and produces the same output', async () => {
     const { cmds: cmdsAdmin, sentMessages: msgsAdmin } = setup({ isAdmin: () => true })
     const { cmds: cmdsUser, sentMessages: msgsUser } = setup({ isAdmin: () => false })

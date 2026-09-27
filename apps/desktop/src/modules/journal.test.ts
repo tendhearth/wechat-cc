@@ -75,6 +75,7 @@ describe('见闻卡(kind=visit)', () => {
     expect(host().innerHTML).not.toContain('hb-link')
     // 但能删
     expect(host().innerHTML).toContain('data-hb-action="remove"')
+    expect(host().innerHTML).toMatch(/<h3 class="hb-title"><svg[^>]*aria-hidden="true"/)
   })
 
   it('有明信片就内联渲染;没有就不留空框', () => {
@@ -174,15 +175,17 @@ describe('markJournalSeen —— 打开觅食台 = 看过了', () => {
 })
 
 describe('明信片卡(kind=postcard)', () => {
-  it('渲染成 📮 卡,没有状态档、没有链接;计数多一桶', () => {
+  it('明信片标题使用系统图标,保留原文 emoji;没有状态档、没有链接;计数多一桶', () => {
     els.set('fd-catch', mkEl()); els.set('fd-catch-count', mkEl())
     renderHuntBag({ items: [
-      item({ id: 'p1', kind: 'postcard', title: '阿一 回了你的心愿', note: '我朋友周末常去' }),
+      item({ id: 'p1', kind: 'postcard', title: '阿一 回了你的心愿 📮', note: '我朋友周末常去 🎉' }),
       item({ id: 'h1', kind: 'hunt', title: 'x', url: 'https://a.com' }),
     ] })
     const html = els.get('fd-catch')!.innerHTML
     expect(html).toContain('hb-postcard-card')
-    expect(html).toContain('📮 阿一 回了你的心愿')
+    expect(html).toMatch(/<h3 class="hb-title"><svg[^>]*aria-hidden="true"/)
+    expect(html).toContain('阿一 回了你的心愿 📮')
+    expect(html).toContain('我朋友周末常去 🎉')
     // 只看明信片自己那张卡有没有状态档 —— 混进来的 hunt 卡本来就该有四个状态按钮(含 tried),不算这里的事。
     const postcardArticle = html.slice(0, html.indexOf('data-hb-id="h1"'))
     expect(postcardArticle).not.toContain('data-hb-status="tried"')

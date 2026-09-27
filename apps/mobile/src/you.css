@@ -1,0 +1,22 @@
+#p-you{padding:8px 22px 40px}
+.you-back{border:0;background:none;color:var(--soft);font:inherit;font-size:12px;min-height:44px;padding:8px 0}
+.you-hero{position:relative;height:190px;display:flex;align-items:flex-end;justify-content:center}
+.you-halo{position:absolute;top:0;left:calc(50% - 85px);width:170px;height:170px;border-radius:50%;background:radial-gradient(circle,var(--glow) 0%,rgba(255,236,205,0) 68%);animation:you-glow 4.2s ease-in-out infinite}
+.you-cc{width:128px;height:128px;position:relative;animation:you-breathe 4.2s ease-in-out infinite;transform-origin:50% 92%}
+.you-cc img{width:100%;height:100%;object-fit:contain}
+@keyframes you-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.025,1.035)}}
+@keyframes you-glow{0%,100%{opacity:.75;transform:scale(1)}50%{opacity:1;transform:scale(1.06)}}
+.you-line{font-family:var(--hand);color:var(--hand-ink);font-size:15px;text-align:center;margin:8px 0 2px}
+.you-meta{text-align:center;color:var(--soft);font-size:11.5px;margin:0}
+.you-note{background:var(--card);border:1px solid var(--line);border-radius:var(--r-l);padding:12px 14px;margin:18px 0 6px}
+.you-eyebrow{font-size:11px;color:var(--soft);letter-spacing:.08em;margin-bottom:4px}
+.you-ch{display:flex;gap:8px;padding:3px 0;font-size:13.5px}
+.you-k{flex:none;font-size:11px;color:var(--warm);border:1px solid var(--warm-line);border-radius:var(--r-pill);padding:0 7px;height:18px;line-height:17px;margin-top:2px}
+.you-was{color:var(--soft);font-size:12px}
+.you-sec{font-size:11px;color:var(--soft);letter-spacing:.12em;margin:24px 0 4px}
+.you-it,.you-who{display:flex;gap:10px;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line);font-size:13.5px}
+.you-who{justify-content:flex-start}.you-who b{font-weight:550;min-width:48px}
+.you-due{flex:none;font-size:11.5px;color:var(--warm)}
+.you-new{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--dot);margin-left:6px;vertical-align:middle}
+.you-foot{text-align:center;color:var(--soft);font-size:12px;margin-top:26px;font-family:var(--hand)}
+@media(prefers-reduced-motion:reduce){.you-cc,.you-halo{animation:none}}

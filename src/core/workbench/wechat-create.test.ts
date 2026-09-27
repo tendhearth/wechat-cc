@@ -8,6 +8,8 @@ import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
 import {removeTempDir} from '../../lib/test-temp'
+import {makeMatterStore} from '../matters/store'
+import {wechatTaskMessageKey} from './wechat-control'
 
 let root:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService
 let owner:string|null,registered:Array<{alias:string,path:string}>,seen:Array<{path:string,text:string,provider:string}>
@@ -107,5 +109,30 @@ describe('create one shared workbench task from WeChat',()=>{
     expect(db.query('SELECT count(*) AS n FROM workbench_events').get()).toEqual({n:0})
     expect(db.query('SELECT count(*) AS n FROM workbench_run_execution').get()).toEqual({n:0})
     expect(service.attention().tasks).toHaveLength(0)
+  })
+
+  /**
+   * 终审第 5 项:matters.origin_message_id 声明(db.ts:1350)的是
+   * messages.id——那条入站真正的 messages.id 是
+   * wechatTaskMessageKey('workbench:'+requestId 那一套),不是平台原始
+   * identity.msgId。今天只写不读不坏事,留着就是给第一个写 join 的人埋
+   * 雷。这条钉住:matter 的 originMessageId 跟 wechatTaskMessageKey 算出
+   * 来的一样,不是那条消息的原始 msgId。
+   */
+  it('matter 的 originMessageId 是 wechatTaskMessageKey 算出来的 messages.id,不是平台原始 msgId',async()=>{
+    const matters=makeMatterStore(db)
+    const registry=createProviderRegistry()
+    registry.register('codex',{async spawn(project){return{
+      async *dispatch(text){seen.push({path:project.path,text,provider:'codex'});yield{kind:'text' as const,text:'done'};yield{kind:'result' as const,sessionId:'s',numTurns:1,durationMs:1}},async close(){},
+    }}},{displayName:'codex',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+    service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>owner,defaultProvider:'codex',registeredProjects:()=>registered,matters})
+    const text=command()
+    await service.handleWechat('owner',text,message)
+    const task=service.list().tasks[0]!
+    const expectedId=wechatTaskMessageKey({...message,chatId:'owner',text})
+    expect(expectedId).not.toBeNull()
+    expect(expectedId).not.toBe(message.msgId) // 反证:算出来的跟原始 msgId 不是一回事
+    expect(matters.get(task.id)?.originMessageId).toBe(expectedId)
+    expect(matters.get(task.id)?.originMessageId).not.toBe(message.msgId)
   })
 })

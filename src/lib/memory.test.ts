@@ -2,9 +2,21 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { listAllMemory, readMemoryFile, writeMemoryFile } from './memory'
+import { listAllMemory, readMemoryFile, writeMemoryFile, readMemoryProfileFile } from './memory'
+import { invalidateDerivedMemory } from './memory-derived-state'
 
 let stateDir: string
+
+it('marks the preserved structured profile as needing refresh after review', () => {
+  const userId = 'o9cq800sObd3lbrHBgiItB1pooDQ@im.wechat'
+  const root = join(stateDir, 'memory', userId)
+  const raw = JSON.stringify({ summary: 'old judgment', tags: [] })
+  writeFileSync(join(root, '_profile.json'), raw)
+  expect(readMemoryProfileFile(stateDir, userId)).toBe(raw)
+  invalidateDerivedMemory(root)
+  expect(JSON.parse(readMemoryProfileFile(stateDir, userId))).toMatchObject({ summary: 'old judgment', needsRefresh: true })
+  expect(readFileSync(join(root, '_profile.json'), 'utf8')).toBe(raw)
+})
 
 beforeEach(() => {
   stateDir = mkdtempSync(join(tmpdir(), 'wechat-cc-mem-'))

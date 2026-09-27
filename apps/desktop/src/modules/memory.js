@@ -27,13 +27,18 @@ import { escapeHtml, formatRelativeTime } from "../view.js"
 import { observationRow, milestoneCard } from "./observations.js"
 import { decisionRow } from "./decisions.js"
 import { icon } from "./icons.js"
+import { mountMemoryEvidenceDialog, normalizeMemorySourceRefs } from "./memory-evidence.js"
 
 // `selected` doubles as the edit-target identity (userId + path) AND the
 // "we have a file open" flag for the edit button visibility. `editing`
 // flips the textarea/render visibility; `pristine` is the unsaved-content
 // snapshot used by the cancel path.
 /** @typedef {{ intro: string, projects: Array<{ name: string, summary: string }> }} OverviewModel */
-/** @typedef {{ title: string, body: string, sources?: string[] }} ProfileCard */
+/** @typedef {{ title: string, body: string, sources?: string[], sourceRefs?: import('./memory-evidence.js').MemorySourceRef[], generated?:boolean }} ProfileCard */
+/** @type {ReturnType<typeof mountMemoryEvidenceDialog>|null} */
+let memoryEvidenceDialog=null
+/** @type {Map<string,{generatedAt:string,message:string}>} */
+const reviewedProfiles=new Map()
 /** @typedef {'observation'|'milestone'|'file'|'overview'} EmbryoSourceKind */
 /** @typedef {{ kind: EmbryoSourceKind, text: string, ts: string, label: string, obsId?: string, userId?: string, path?: string }} EmbryoSourceItem */
 const MEMORY_EMBRYO_STORAGE_KEY = "wechat-cc:memory-embryo-enabled"
@@ -531,6 +536,7 @@ function normalizeProfile(value) {
           title: String(card.title || "").trim(),
           body: String(card.body || "").trim(),
           sources: Array.isArray(card.sources) ? card.sources.map(s => String(s)).filter(Boolean).slice(0, 4) : [],
+          sourceRefs: normalizeMemorySourceRefs(card.sourceRefs),
         }
       }).filter(item => item.title && item.body).slice(0, 4)
     : []
@@ -538,6 +544,7 @@ function normalizeProfile(value) {
     version: 1,
     generatedAt: String(obj.generatedAt || ""),
     chatId: String(obj.chatId || ""),
+    needsRefresh: obj.needsRefresh === true,
     insight: String(obj.insight || "").trim(),
     summary: String(obj.summary || "").trim(),
     tags: Array.isArray(obj.tags) ? obj.tags.map(t => String(t).trim()).filter(Boolean).slice(0, 8) : [],
@@ -556,6 +563,11 @@ async function loadProfile(deps, chatId) {
     const result = /** @type {MemoryRead} */ (await deps.invoke("wechat_cli_json", { args: ["memory", "profile-read", chatId, "--json"] }))
     if (result && result.ok && typeof result.content === "string") {
       memoryState.profile = normalizeProfile(JSON.parse(result.content))
+      if(memoryState.profile){
+        const reviewed=reviewedProfiles.get(memoryState.profile.chatId)
+        if(reviewed?.generatedAt===memoryState.profile.generatedAt)memoryState.profile.needsRefresh=true
+        else if(reviewed)reviewedProfiles.delete(memoryState.profile.chatId)
+      }
     } else {
       memoryState.profile = null
     }
@@ -586,6 +598,10 @@ export function renderMemoryProfileOverview(deps) {
   const profile = buildMemoryProfileModel(friendly, totalFiles, updatedAt)
   const embryo = buildMemoryEmbryoModel(totalFiles)
   const embryoEnabled = isMemoryEmbryoEnabled()
+  const stale=memoryState.profile?.needsRefresh===true
+  const staleMessage=reviewedProfiles.get(memoryState.profile?.chatId||'')?.message||'来源已改正或观察已过时；已有画像需更新。历史对话不会被删除。'
+  /** @param {ProfileCard} card @param {string} key */
+  const evidenceButton=(card,key)=>card.generated?`<button type="button" class="memory-evidence-trigger" data-memory-evidence="${key}" aria-label="查看${escapeHtml(card.title)}的依据">依据</button>`:''
 
   root.innerHTML = `
     <div class="memory-artboard" id="memory-artboard">
@@ -601,6 +617,7 @@ export function renderMemoryProfileOverview(deps) {
             更新画像
           </button>
         </div>
+        ${stale?`<p class="memory-evidence-stale" role="status">${escapeHtml(staleMessage)}</p>`:''}
         ${(() => {
           const paras = summaryParagraphs(profile.summary)
           const lead = paras[0] || ""
@@ -627,11 +644,11 @@ export function renderMemoryProfileOverview(deps) {
           </div>
         </div>
         <div class="profile-trait-list">
-          ${profile.traits.map(trait => `
+          ${profile.traits.map((trait,index) => `
             <article class="profile-trait">
               <span class="trait-icon" aria-hidden="true">${icon(trait.icon, { size: 34 })}</span>
               <div>
-                <h3>${escapeHtml(trait.title)}</h3>
+                <h3>${escapeHtml(trait.title)} ${evidenceButton(trait,`trait:${index}`)}</h3>
                 <p>${escapeHtml(trait.body)}</p>
               </div>
             </article>
@@ -643,10 +660,10 @@ export function renderMemoryProfileOverview(deps) {
         <section class="profile-panel profile-panel-preferences">
           <h2>互动偏好画像</h2>
           <div class="preference-grid">
-            ${profile.preferences.map(item => `
+            ${profile.preferences.map((item,index) => `
               <article>
                 <span class="preference-icon" aria-hidden="true">${icon(item.icon, { size: 30 })}</span>
-                <h3>${escapeHtml(item.title)}</h3>
+                <h3>${escapeHtml(item.title)} ${evidenceButton(item,`preference:${index}`)}</h3>
                 <p>${escapeHtml(item.body)}</p>
               </article>
             `).join("")}
@@ -656,9 +673,9 @@ export function renderMemoryProfileOverview(deps) {
         <section class="profile-panel profile-panel-snippets">
           <h2>${escapeHtml(profile.snippetsTitle || "CC记住你的事情")}</h2>
           <div class="memory-snippet-grid">
-            ${profile.snippets.length ? profile.snippets.map(item => `
+            ${profile.snippets.length ? profile.snippets.map((item,index) => `
               <article>
-                <h3>${escapeHtml(item.title)}</h3>
+                <h3>${escapeHtml(item.title)} ${evidenceButton(item,`snippet:${index}`)}</h3>
                 ${item.body ? `<p>${escapeHtml(item.body)}</p>` : ""}
               </article>
             `).join("") : `<article class="memory-snippet-empty"><h3>还没有足够的长期记忆</h3><p>当 CC 积累到稳定的观察、里程碑或长期记忆后，会在这里整理成可检查的内容。</p></article>`}
@@ -668,6 +685,22 @@ export function renderMemoryProfileOverview(deps) {
     </div>
     </div>
   `
+  root.querySelectorAll('[data-memory-evidence]').forEach(element=>{
+    const trigger=/** @type {HTMLElement} */(element)
+    trigger.addEventListener('click',()=>{
+      const [kind,rawIndex]=(trigger.dataset.memoryEvidence||'').split(':'),index=Number(rawIndex)
+      const card=(kind==='trait'?profile.traits:kind==='preference'?profile.preferences:profile.snippets)[index]
+      const generated=memoryState.profile
+      if(!card?.generated||!generated)return
+      if(!memoryEvidenceDialog)memoryEvidenceDialog=mountMemoryEvidenceDialog({call:deps.invokeApi,onReviewed:({chatId,action})=>{
+        const current=memoryState.profile
+        const message=`${action==='outdated'?'观察已过时':'来源已改正'}；已有画像需更新。历史对话不会被删除。`
+        reviewedProfiles.set(chatId,{generatedAt:current?.chatId===chatId?current.generatedAt:'',message})
+        if(current?.chatId===chatId){current.needsRefresh=true;renderMemoryProfileOverview(deps);void refreshMemoryProfileStatus(deps)}
+      }})
+      void memoryEvidenceDialog.open({chatId:generated.chatId,title:card.title,sourceRefs:card.sourceRefs,sources:card.sources},trigger)
+    })
+  })
   root.querySelector("#memory-summary-toggle")?.addEventListener("click", () => {
     const more = document.getElementById("memory-summary-more")
     const btn = document.getElementById("memory-summary-toggle")
@@ -996,17 +1029,7 @@ export function tidyProfileTag(tag) {
  */
 function buildMemoryProfileModel(friendly, totalFiles, updatedAt) {
   const observations = memoryState.observations.filter(obs => !obs.archived && !isIntroObservation(obs.body))
-  const milestones = memoryState.milestones
   const obsBodies = observations.map(obs => obs.body).filter(Boolean)
-  const primaryObservation = obsBodies[0]
-  const expression = observations.length || totalFiles
-    ? clamp(58 + observations.length * 7 + totalFiles * 2, 62, 88)
-    : 82
-  const safety = milestones.length || observations.length
-    ? clamp(64 + milestones.length * 4 - Math.max(0, observations.length - 4) * 2, 58, 84)
-    : 65
-  const memoryLabel = totalFiles > 0 ? `${totalFiles}份` : "65%"
-  const companionLabel = observations.length >= 3 ? "中高" : observations.length >= 1 ? "温和" : "中高"
   const freshness = updatedAt ? ` · 更新于 ${formatRelativeTime(updatedAt)}` : ""
   const remembered = obsBodies.slice(0, 4)
   const memoryFiles = memoryState.users
@@ -1014,102 +1037,46 @@ function buildMemoryProfileModel(friendly, totalFiles, updatedAt) {
     .sort((a, b) => String(b.mtime || "").localeCompare(String(a.mtime || "")))
     .slice(0, 4)
 
-  // When the synthesized overview exists, it IS the real "CC 眼中的你" content
-  // (整体理解 + 项目地图). Use it for the hero narrative, insight, tags and the
-  // "记住的事情" cards; the observation/placeholder model is the fallback.
-  const ov = memoryState.overview
-  const ovIntro = ov && ov.intro ? ov.intro.trim() : ""
-  const ovProjects = ov ? ov.projects.filter(p => p.name) : []
-  const ovInsight = ovIntro ? ((ovIntro.split(/(?<=[。！？!?])/)[0] || ovIntro).trim()) : ""
+  // A generated profile is its own historical document. Never fill gaps from
+  // another derived document, especially after its evidence has been corrected.
   const generatedProfile = memoryState.profile
   if (generatedProfile) {
     const generatedFreshness = generatedProfile.generatedAt ? ` · 更新于 ${formatRelativeTime(generatedProfile.generatedAt)}` : freshness
     return {
-      kicker: `数字人格空间·实时更新${generatedFreshness}`,
+      kicker: `${generatedProfile.needsRefresh ? "历史画像 · 待更新" : "画像记录"}${generatedFreshness}`,
       title: `CC眼中的${friendly}`,
-      summary: generatedProfile.summary || ovIntro || `这些画像来自最近的长期记忆、观察和里程碑。CC 正在把零散对话整理成可被你检查、修正和继续生长的理解。`,
-      tags: generatedProfile.tags.length ? generatedProfile.tags : (ovProjects.length ? ovProjects.map(p => p.name).slice(0, 7) : deriveProfileTags(observations, totalFiles)),
-      metrics: {
-        expression,
-        safety,
-        memory: memoryLabel,
-        companion: companionLabel,
-      },
-      insight: generatedProfile.insight || ovInsight || primaryObservation || "CC 正在从你的长期记忆里整理更稳定的画像。",
+      summary: generatedProfile.summary || "这份画像没有保存总体描述。可以核对已有卡片的依据，再更新画像。",
+      tags: generatedProfile.tags.length ? generatedProfile.tags : deriveProfileTags(observations, totalFiles),
+      insight: generatedProfile.insight || "这份画像没有保存一句话洞察。",
       traits: fillProfileCards(generatedProfile.traits, [
         { title: "情绪表达", body: "还没有足够稳定的长期线索。" },
         { title: "社交模式", body: "还没有足够稳定的长期线索。" },
         { title: "关系模式", body: "还没有足够稳定的长期线索。" },
         { title: "压力状态", body: "还没有足够稳定的长期线索。" },
-      ]).map((item, index) => ({ ...item, icon: profileCardIcon(item.title, index) })),
+      ]).map((item, index) => ({ ...item, generated: generatedProfile.traits.includes(item), icon: profileCardIcon(item.title, index) })),
       preferences: fillProfileCards(generatedProfile.preferences, [
         { title: "喜欢", body: "还没有足够稳定的偏好线索。" },
         { title: "不喜欢", body: "还没有足够稳定的偏好线索。" },
         { title: "需要", body: "还没有足够稳定的需求线索。" },
         { title: "风险", body: "还没有足够稳定的风险线索。" },
-      ]).map((item, index) => ({ ...item, icon: profileCardIcon(item.title, index) })),
-      snippets: generatedProfile.rememberedEvents,
+      ]).map((item, index) => ({ ...item, generated: generatedProfile.preferences.includes(item), icon: profileCardIcon(item.title, index) })),
+      snippets: generatedProfile.rememberedEvents.map(item=>({...item,generated:true})),
       snippetsTitle: "CC记住你的事情",
     }
   }
 
   return {
-    kicker: ovIntro ? `本机记忆整理·CC 眼中的你${freshness}` : `数字人格空间·实时更新${freshness}`,
+    kicker: `尚未生成画像${freshness}`,
     title: `CC眼中的${friendly}`,
-    summary: ovIntro || (primaryObservation
-      ? `这些画像来自最近的长期记忆、观察和里程碑。CC 正在把零散对话整理成可被你检查、修正和继续生长的理解。`
-      : `你是一个情绪细腻、长期主义、喜欢真实连接的人。\n你会被新世界点亮，也会在关系没有回应时反复确认自己的位置。`),
-    tags: ovProjects.length ? ovProjects.map(p => p.name).slice(0, 7) : deriveProfileTags(observations, totalFiles),
-    metrics: {
-      expression,
-      safety,
-      memory: memoryLabel,
-      companion: companionLabel,
-    },
-    insight: ovInsight || primaryObservation || `你正在从“设计执行者”过渡到“AI产品参与者”。你的优势不是一开始就懂技术，而是你愿意把不懂的东西拆开、追问、理解，并最终转化成可视化和产品表达。`,
-    traits: [
-      {
-        icon: "heart-check",
-        title: "情绪表达",
-        body: observations.some(obs => obs.tone === "concern")
-          ? "压力和担心会被记录为需要照看的信号，CC 会尽量减少打扰式追问。"
-          : "低爆发，高内耗。更习惯用温和表达承载复杂感受。",
-      },
-      {
-        icon: "user-group",
-        title: "社交模式",
-        body: "喜欢深度交流，不喜欢敷衍式寒暄，对回应质量敏感。",
-      },
-      {
-        icon: "link-03",
-        title: "关系模式",
-        body: milestones.length > 0
-          ? "稳定的互动会被保留下来，CC 会把重要节点变成可回看的长期记忆。"
-          : "重视长期稳定的连接，会通过细节判断对方是否在意自己。",
-      },
-      {
-        icon: "alert-02",
-        title: "压力状态",
-        body: "压力升高时会减少表达，同时会去确认自己的价值。",
-      },
-    ],
-    preferences: [
-      { icon: "heart-check", title: "喜欢", body: "更习惯用温和表达承载复杂感受，对内在原则比较坚持。" },
-      { icon: "cancel-01", title: "不喜欢", body: "喜欢深度交流，不喜欢敷衍式寒暄，对回应质量敏感。" },
-      { icon: "link-03", title: "需要", body: "重视长期稳定的连接，不喜欢泛泛之交，比较重视友谊。" },
-      { icon: "alert-02", title: "风险", body: "压力升高时会减少表达，同时会去确认自己的价值。" },
-    ],
-    snippets: ovProjects.length > 0
-      ? ovProjects.map(p => ({ title: p.name, body: p.summary }))
-      : remembered.length > 0
-      ? remembered.map((body, index) => ({
-          title: index === 0 ? "最近观察" : `记忆片段 ${index + 1}`,
-          body,
-        }))
-      : memoryFiles.length > 0
-      ? memoryFiles.map(memoryEventFromFile)
-      : [],
-    snippetsTitle: ovProjects.length > 0 ? "CC 了解的项目" : "CC记住你的事情",
+    summary: "还没有足够的可核对依据来描述你的长期人格与偏好。这里先保留已经记录的内容，你可以查看后再更新画像。",
+    tags: deriveProfileTags(observations, totalFiles),
+    insight: "尚未生成有依据的长期画像。单次观察和文件名称不代表人格判断。",
+    traits: [{icon:"heart-check",title:"依据还不够",body:"积累并核对记录后，再整理长期倾向。"}],
+    preferences: [{icon:"link-03",title:"偏好尚待了解",body:"目前没有生成的偏好画像。"}],
+    snippets: remembered.length > 0
+      ? remembered.map((body,index)=>({title:index===0?"最近观察":`观察记录 ${index+1}`,body}))
+      : memoryFiles.map(memoryEventFromFile),
+    snippetsTitle: remembered.length > 0 ? "已记录的观察" : "已保存的记忆文件",
   }
 }
 
@@ -1135,60 +1102,12 @@ function profileCardIcon(title, index) {
 }
 
 /**
- * Turn a raw long-term-memory file into a human-facing remembered event.
- * The UI should feel like CC kept the user's life in mind, not like a file
- * browser leaking implementation details.
+ * A filename establishes only that a file exists, not a life event or trait.
  * @param {{ path: string, mtime?: string }} file
  */
 function memoryEventFromFile(file) {
-  const path = String(file.path || "").toLowerCase()
   const when = file.mtime ? ` · ${formatRelativeTime(file.mtime)}` : ""
-  if (path.includes("agenda")) {
-    return {
-      title: "你最近在推进的事情",
-      body: `你近期的计划和待办已经被保留下来，之后对话时 CC 会尽量接住这些上下文${when}。`,
-    }
-  }
-  if (path.includes("interaction") || path.includes("style")) {
-    return {
-      title: "你喜欢怎样被回应",
-      body: `你的表达偏好、沟通节奏和不喜欢的互动方式会被持续参考，而不是每次重新解释${when}。`,
-    }
-  }
-  if (path.includes("sleep")) {
-    return {
-      title: "你在意自己的状态",
-      body: `和休息、精力、身体感受有关的长期线索已经被记录，CC 会把它当作理解你的背景${when}。`,
-    }
-  }
-  if (path.includes("relationship")) {
-    return {
-      title: "你对关系的感受",
-      body: `关于连接、回应和安全感的线索已经被放进长期记忆里，之后会帮助 CC 更谨慎地理解你${when}。`,
-    }
-  }
-  if (path.includes("career") || path.includes("interview") || path.includes("resume")) {
-    return {
-      title: "你正在经历的职业变化",
-      body: `你的求职、转型或能力梳理线索已经被保存，CC 会把它们作为后续陪伴和建议的背景${when}。`,
-    }
-  }
-  if (path.includes("personal-site") || path.includes("project") || path.includes("uiux")) {
-    return {
-      title: "你正在打磨自己的作品",
-      body: `关于作品、审美和项目表达的长期线索已经被保存，之后会帮助 CC 延续你的判断标准${when}。`,
-    }
-  }
-  if (path.includes("profile") || path.includes("compass")) {
-    return {
-      title: "你的长期画像",
-      body: `一些关于你是谁、你重视什么、你怎样做决定的线索已经被整理进长期记忆${when}。`,
-    }
-  }
-  return {
-    title: "一件和你有关的事",
-    body: `这条长期记忆已经被保存，之后会帮助 CC 更连续地理解你${when}。`,
-  }
+  return { title: String(file.path || "记忆文件"), body: `已保存此文件，内容尚未在这里核对${when}。` }
 }
 
 /**
@@ -1196,15 +1115,7 @@ function memoryEventFromFile(file) {
  * @param {number} totalFiles
  */
 function deriveProfileTags(observations, totalFiles) {
-  if (observations.length === 0 && totalFiles === 0) {
-    return ["温柔型表达者", "高敏感观察者", "长期关系型人格", "低攻击性", "重视被记住", "强探索欲"]
-  }
-  const tags = ["长期关系型人格", "重视被记住", "偏好深度交流"]
-  if (observations.some(obs => obs.tone === "curious")) tags.unshift("强探索欲")
-  if (observations.some(obs => obs.tone === "concern")) tags.unshift("需要低打扰")
-  if (observations.some(obs => obs.tone === "proud")) tags.unshift("会被新进展点亮")
-  if (totalFiles > 0) tags.push("记忆可编辑")
-  return [...new Set(tags)].slice(0, 7)
+  return [observations.length ? `${observations.length} 条观察待核对` : "依据待积累", ...(totalFiles ? [`${totalFiles} 份记忆文件`] : [])]
 }
 
 /**

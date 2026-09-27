@@ -1346,6 +1346,63 @@ export const migrations: Migration[] = [
       FROM workbench_tasks GROUP BY path;`)
   },
 
+  // v64 — matter 记住出生地:哪次陪伴交流(origin_matter_id,它本身是一行 kind='chat'
+  // 的 matter)、哪条消息(origin_message_id,messages.id)。两列可空:桌面上亲手派的
+  // 事没有出生地,而「没有出生地 ⇒ 不回报」正是设计里的判据,不另设开关。
+  (db) => {
+    if(!hasTable(db,'matters'))return
+    const columns=db.query<{name:string},[]>('PRAGMA table_info(matters)').all()
+    if(!columns.some(column=>column.name==='origin_matter_id'))db.exec('ALTER TABLE matters ADD COLUMN origin_matter_id TEXT REFERENCES matters(id)')
+    if(!columns.some(column=>column.name==='origin_message_id'))db.exec('ALTER TABLE matters ADD COLUMN origin_message_id TEXT')
+    db.exec('CREATE INDEX IF NOT EXISTS matters_origin ON matters(origin_matter_id)')
+  },
+
+  // v65 — 回报的投递队列。回报的"痕"在原对话的流里(不新增事实源);这张表只管
+  // 送达:票据过期不算失败(照提醒那条路的教训),存 pending、人回来补发、绝不烧重试。
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS matter_report_outbox (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        matter_id TEXT NOT NULL REFERENCES matters(id),
+        origin_matter_id TEXT NOT NULL REFERENCES matters(id),
+        origin_message_id TEXT,
+        text TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','sent','dropped')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS matter_report_outbox_due ON matter_report_outbox(status, next_at);
+    `)
+  },
+
+  // v66 — 回报放弃窗口的锚点从「这行何时创建」(created_at)改成「它第一次真的
+  // 失败是什么时候」(first_fail_at,评审修复轮 3):主人一整天不回微信时,这段
+  // 时间全是 errcode=-2 的退避,created_at 早早就过了 24h——这时第一次真正的
+  // 送达失败(网络抖动、风控)会被误判成"早该放弃"。first_fail_at 只在非 -2
+  // 失败时写一次(已有值不动);为空 = 从没真的失败过,放弃判定永远不成立。
+  (db) => {
+    if(!hasTable(db,'matter_report_outbox'))return
+    const columns=db.query<{name:string},[]>('PRAGMA table_info(matter_report_outbox)').all()
+    if(!columns.some(column=>column.name==='first_fail_at'))db.exec('ALTER TABLE matter_report_outbox ADD COLUMN first_fail_at INTEGER')
+  },
+
+  // v67 — journal.matter_id(回忆的持久去重 + 可回溯;评审修复轮 2 新
+  // Important):recordRecollection 写的行以前完全不带任何 matter/task 标识,
+  // 结构上就不可能"按 matter 查一次"——daemon 重启会换一个新的 in-memory
+  // Set(recollect-sink.ts),同一个 matter 只要重启后再次够格,就会再写一条
+  // 几乎一样的「一段回忆」,且已上线的空闲自动重启会让长期开着的事每次重启
+  // 各留一条。这列既是持久去重的键(recordRecollection 之前先按 matter_id
+  // 查一次 kind='recollection' 的行在不在),也顺手修了复审指出的产品缺陷
+  // ——面板上的回忆条目以前回溯不到哪件事。只给 journal 加一个可空列,不
+  // 影响其它 kind(hunt/visit/postcard 继续传 NULL,老行也是 NULL——历史
+  // 数据没有 matter 可补,查不到不算错)。
+  (db) => {
+    if(!hasTable(db,'journal'))return
+    const columns=db.query<{name:string},[]>('PRAGMA table_info(journal)').all()
+    if(!columns.some(column=>column.name==='matter_id'))db.exec('ALTER TABLE journal ADD COLUMN matter_id TEXT')
+  },
+
 ]
 
 /**

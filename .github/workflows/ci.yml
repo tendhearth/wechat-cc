@@ -107,10 +107,6 @@ jobs:
         if: ${{ !cancelled() }}
         run: bun build setup.ts --target=node --outfile=dist/setup.js
 
-      - name: Build log-viewer.ts
-        if: ${{ !cancelled() }}
-        run: bun build log-viewer.ts --target=node --outfile=dist/log-viewer.js
-
       - name: Compiled-sidecar smoke
         # Proves guardrail #1 (compiled sidecar delegates LLM memory ops to
         # the daemon instead of inline-spawning claude, which crashes under
@@ -157,6 +153,12 @@ jobs:
         with:
           bun-version: 1.3.14
       - run: bun install
+      # src/daemon/__e2e__/mobile-workbench.e2e.test.ts(2026-09-22)用 Playwright 驱动
+      # 真页面;没有这一步它在 CI 上「Executable doesn't exist」(2026-09-27 PR #121
+      # 第一次跑 e2e 就红)。守卫:scripts/ci-workflow.guard.test.ts。
+      - name: Install Playwright Chromium
+        working-directory: apps/desktop
+        run: bun x playwright install --with-deps chromium
       - run: bun --bun vitest run -c vitest.e2e.config.ts
 
   desktop-e2e:

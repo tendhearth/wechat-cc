@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { recallFromMemory } from './recall'
+import { invalidateDerivedMemory } from '../../lib/memory-derived-state'
 
 describe('recallFromMemory', () => {
   let stateDir: string
@@ -16,6 +17,12 @@ describe('recallFromMemory', () => {
       writeFileSync(join(root, rel), content)
     }
   }
+
+  it('excludes invalidated generated memories from future recall', () => {
+    seed('c1', { '_overview.md': '上海出差以前的判断', 'notes/a.md': '上海出差修正后的笔记' })
+    invalidateDerivedMemory(join(stateDir, 'memory', 'c1'))
+    expect(recallFromMemory(stateDir, 'c1', '上海出差')).toEqual(['[notes/a.md] 上海出差修正后的笔记'])
+  })
 
   it('finds matching lines across memory files, tagged with their file', () => {
     seed('c1', {

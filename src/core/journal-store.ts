@@ -11,9 +11,11 @@ import { parseCatch } from './hunt-catch'
 export type CatchStatus = 'new' | 'tried' | 'using' | 'dropped'
 /**
  * 'hunt' = 打猎带回的东西;'visit' = 串门带回的见闻(v37);
- * 'postcard' = 别人回心愿的明信片(spec 2026-09-04-wish-postcard)。
+ * 'postcard' = 别人回心愿的明信片(spec 2026-09-04-wish-postcard);
+ * 'recollection' = CC 自己判断值得记、自己写的一段记述(spec
+ * 2026-09-23-delegation-report-design.md「回忆」,不问主人就写,但能删)。
  */
-export type CatchKind = 'hunt' | 'visit' | 'postcard'
+export type CatchKind = 'hunt' | 'visit' | 'postcard' | 'recollection'
 export const CATCH_STATUSES: readonly CatchStatus[] = ['new', 'tried', 'using', 'dropped']
 
 export interface CatchRow {
@@ -28,6 +30,13 @@ export interface CatchRow {
   /** 明信片(v38):已 safeSvg 的 SVG 文本;没有就 null。 */
   image_svg: string | null
   favorite?: number
+  /**
+   * v67:这条记述来自哪件事(目前只有 kind='recollection' 会写;其它 kind
+   * 恒为 null,历史行也是 null——没有 matter 可补,查不到不算错)。既是回
+   * 忆的持久去重键(见 hasRecollection),也是面板回溯"这条回忆是哪件事"
+   * 的产品缺陷修复(评审修复轮 2)。
+   */
+  matter_id: string | null
 }
 
 export interface Journal {
@@ -49,6 +58,35 @@ export interface Journal {
    * title = `${peerLabel} 回了你的心愿`;没有链接、没有状态档意义(固定 'new')。
    */
   recordPostcard(args: { chatId: string; text: string; peerLabel: string; nowIso?: string }): string | null
+  /**
+   * 记一段回忆(kind='recollection'):CC 自己判断这件事值得记、自己写的
+   * 一段记述(见 matters/recollection.ts 的 maybeRecollect,判据是故事性
+   * 不是产出)。不问主人就写(标题固定,没有像 peerLabel 那样天然的身份
+   * 字段可用);跟其它条目一样能被 remove() 摘掉 —— 这就是 spec 已定 #6
+   * 「不问、可删」里「可删」那一半,不需要另开一条删除路径。
+   *
+   * `matterId`(v67)必填:这是持久去重的键(见 hasRecollection),也是
+   * 面板回溯"这条回忆是哪件事"的依据——调用方(recollect-sink.ts)永远
+   * 拿得到它(matter 是查出来的),没有"没有 matter 也要写"这种场景。
+   */
+  recordRecollection(args: { chatId: string; text: string; matterId: string; nowIso?: string }): string | null
+  /**
+   * 这个 matter 是否已经写过一段回忆(v67,持久去重键;评审修复轮 2 新
+   * Important):recollect-sink.ts 在问便宜模型之前先查一次,daemon 重启
+   * 之后也认得——不像纯内存的 Set,重启就归零、同一个 matter 会被再问、
+   * 再写一条几乎一样的记述。
+   *
+   * 取舍(fix round 3,评审判定「不是问题」,记下来别让下一个人当成漏
+   * 洞):这条行也会被 `prune()` 按时间收拢(favorite=0 时超出
+   * `PRUNE_KEEP` 就会被删,跟 hunt/visit/postcard 一视同仁)——被收拢之
+   * 后 `hasRecollection` 会重新变回 false,理论上那个 matter 之后再够格
+   * 一次会再写一条。这不是"重复",是"替补":那段记忆本身已经不在背包里
+   * 了(收拢按 ts 从旧到新剪,被剪掉的正是"够旧、够被后面 500 条挤出去"
+   * 的那些),写一条新的补上去跟这个地方"装的是最近的东西"这条设计是一
+   * 致的。而且主人真在意的那些(`favorite=1`)prune 永不碰,那些的去重
+   * 是永久的。
+   */
+  hasRecollection(matterId: string): boolean
   /** 明信片画得慢(又一次模型调用 + 栅格化),先记见闻再补图。 */
   attachImage(id: string, svg: string): void
   list(limit?: number): CatchRow[]
@@ -64,6 +102,8 @@ export interface Journal {
 }
 
 const PRUNE_KEEP = 500
+/** recordRecollection 的固定标题 —— 回忆没有像 peerLabel 那样天然的身份字段,记述本身在 note 里。 */
+const RECOLLECTION_TITLE = '一段回忆'
 
 export function makeJournal(db: Db): Journal {
   const ins = db.query<unknown, [string, string, string, string, string | null, string]>(
@@ -77,6 +117,13 @@ export function makeJournal(db: Db): Journal {
   const insPostcard = db.query<unknown, [string, string, string, string, string]>(
     `INSERT INTO journal(id, ts, chat_id, title, url, note, status, kind, image_svg)
      VALUES (?, ?, ?, ?, NULL, ?, 'new', 'postcard', NULL)`,
+  )
+  const insRecollection = db.query<unknown, [string, string, string, string, string, string]>(
+    `INSERT INTO journal(id, ts, chat_id, title, url, note, status, kind, image_svg, matter_id)
+     VALUES (?, ?, ?, ?, NULL, ?, 'new', 'recollection', NULL, ?)`,
+  )
+  const selHasRecollection = db.query<{ cnt: number }, [string]>(
+    "SELECT COUNT(*) AS cnt FROM journal WHERE kind = 'recollection' AND matter_id = ?",
   )
   const setImage = db.query<unknown, [string, string]>('UPDATE journal SET image_svg = ? WHERE id = ?')
   const selAll = db.query<CatchRow, [number]>('SELECT * FROM journal ORDER BY ts DESC, rowid DESC LIMIT ?')
@@ -126,6 +173,16 @@ export function makeJournal(db: Db): Journal {
       prune.run(PRUNE_KEEP)
       return id
     },
+    recordRecollection({ chatId, text, matterId, nowIso }) {
+      const ts = nowIso ?? new Date().toISOString()
+      const body = text.trim()
+      if (body === '') return null
+      const id = `${ts}:recollection:${Math.random().toString(36).slice(2, 8)}`
+      insRecollection.run(id, ts, chatId, RECOLLECTION_TITLE, body, matterId)
+      prune.run(PRUNE_KEEP)
+      return id
+    },
+    hasRecollection(matterId) { return (selHasRecollection.get(matterId)?.cnt ?? 0) > 0 },
     attachImage(id, svg) { setImage.run(svg, id) },
     list(limit = 200) { return selAll.all(limit) },
     listPostcards({ limit = 24, offset = 0, favoritesOnly = false }) {

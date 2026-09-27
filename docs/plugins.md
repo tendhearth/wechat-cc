@@ -133,6 +133,9 @@ Manage plugins from the CLI:
 wechat-cc plugin list                 # ● enabled+ready / ○ disabled / not-ready reason
 wechat-cc plugin enable <name>
 wechat-cc plugin disable <name>
+wechat-cc plugin setup <name>         # build the plugin's .venv (python plugins)
+wechat-cc plugin setup-status <name>
+wechat-cc plugin upgrade <name>
 ```
 
 ## The market (registry)

@@ -37,6 +37,23 @@ describe('desktop.yml —— 上传到 release 的产物必须带签名', () => 
   })
 })
 
+describe('desktop.yml —— macOS 画室渲染器的源码克隆要带子模块', () => {
+  // 2026-09-27 desktop-v1.7.0 第一次在真 tag 上跑这一步就红:stable-diffusion.cpp 的
+  // ggml 是 git submodule,`git clone --depth 1` 不带 --recurse-submodules 时 ggml/ 是
+  // 空目录,CMake 在 add_subdirectory(ggml) 处停。这一步 09-03 加进来后一直没被发版
+  // 真正跑过(1.6.5 在它之前)。
+  const yml = wf('desktop.yml')
+  const cloneLine = yml.split('\n').find(l => l.includes('git clone') && l.includes('stable-diffusion.cpp')) ?? ''
+
+  it('克隆 stable-diffusion.cpp 那一行存在', () => {
+    expect(cloneLine).not.toBe('')
+  })
+
+  it('带 --recurse-submodules(否则 ggml/ 为空,CMake 必红)', () => {
+    expect(cloneLine).toContain('--recurse-submodules')
+  })
+})
+
 describe('publish-update.yml —— 点 Publish 就该滚更新源', () => {
   const yml = wf('publish-update.yml')
 

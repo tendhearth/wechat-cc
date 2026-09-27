@@ -33,7 +33,6 @@ import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
-import { stopCustomerReviewPolling } from "./modules/customer-review.js"
 import { initTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
 import { initConversePage } from "./modules/converse.js"
@@ -48,8 +47,10 @@ import { pingHealth, fetchDaemonVersion } from "./health-probe.js"
 import { refreshWxvaultOnAppStart } from "./modules/wxvault-refresh.js"
 import { loadAtelierGallery } from "./modules/atelier-gallery.js"
 import { mountCurrentActivity, createLifeArchive } from "./modules/cc-life.js"
+import { mountCareSheet } from "./modules/cc-care.js"
+import { chooseWorkbenchProject } from "./modules/workbench-entry.js"
 import { refreshPostcardAlbum } from "./modules/postcard-album.js"
-import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getActiveWorkbenchTaskId } from "./modules/workbench.js"
+import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, openWorkbenchDraft, getActiveWorkbenchTaskId } from "./modules/workbench.js"
 import { createWorkbenchNavigation, isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
 import { mountWorkbenchAttention } from "./modules/workbench-attention.js"
 
@@ -130,8 +131,14 @@ const doctorPoller = createDoctorPoller({ invoke, intervalMs: 5000 })
 // 桌宠状态(spec 2026-09-03-companion-presence):首页鱼缸跟浮窗共用一套推导。
 // 点脚边道具 → 切到觅食台(带回来的在那儿)。switchPane 是函数声明,提升可用。
 const presencePoller = startCompanionPresence({ onOpenJournal: () => switchPane("a2a-agents") })
+const careSheet = mountCareSheet({
+  call: invokeWorkbenchApi, presencePoller, navigate: switchPane,
+  openWorkbench: () => switchPane('workbench'),
+  openTask: async (/** @type {string} */ id) => { switchPane('workbench'); await openWorkbenchTask(id) },
+})
 const currentActivityHost = document.getElementById("cc-current-activity")
-if (currentActivityHost) mountCurrentActivity(currentActivityHost, presencePoller, switchPane)
+if (currentActivityHost) mountCurrentActivity(currentActivityHost, presencePoller, switchPane, () => careSheet.open())
+window.addEventListener('pagehide', () => careSheet.close())
 const memoryRecordsHost = document.getElementById("cc-memory-records")
 const lifeArchive = memoryRecordsHost ? createLifeArchive(memoryRecordsHost, { call: invokeApi }) : null
 let lifeCategory = "postcards"
@@ -156,6 +163,7 @@ function startWorkbenchAttention() {
   if (!host || workbenchAttention) return
   workbenchAttention = mountWorkbenchAttention({
     host, invokeWorkbenchApi, invoke,
+    onChange: snapshot => careSheet.setAttention(snapshot),
     getContext: () => ({
       taskId: state.mode === 'dashboard' ? getActiveWorkbenchTaskId() : null,
       focused: document.visibilityState === 'visible' && document.hasFocus(),
@@ -198,6 +206,12 @@ const deps = {
   invokeWorkbenchApi,
   mountConverse,
   unmountConverse,
+  onDelegate: async (/** @type {string} */ text) => {
+    const project = await chooseWorkbenchProject(invokeWorkbenchApi)
+    if (!project) return false
+    switchPane('workbench')
+    return openWorkbenchDraft({ ...project, text })
+  },
   formatInvokeError,
   doctorPoller,
   mock,
@@ -569,7 +583,6 @@ function switchPane(name) {
     // Stop the dialogue pane's 30s auto-refresh tick when leaving it
     // (mirrors the logs/sessions auto-refresh lifecycle).
     stopDialogueAutoRefresh()
-    stopCustomerReviewPolling()
   }
   if (name === "overview") {
     initConversePage(deps, { focus: focusConversation })
@@ -586,10 +599,10 @@ function switchPane(name) {
 
 function activateDialogueWorkspace() {
   // 后厨's 会话 view. 待办 is a top-level pane now and 客户回顾 is retired
-  // (2026-08-25 owner IA decisions) — no mode branching left here.
+  // (2026-08-25 owner IA decisions; module deleted 2026-09-27) — no mode
+  // branching left here.
   const dialogueRoot = document.getElementById("dialogue-root")
   if (dialogueRoot) dialogueRoot.hidden = false
-  stopCustomerReviewPolling()
   initDialoguePage(deps)
 }
 
@@ -1404,11 +1417,8 @@ function extractContactNameFromOpenChat() {
 
 /** @param {typeof deps} deps */
 function reopenCurrentSession(deps) {
-  const detail = document.getElementById("sessions-detail")
-  const alias = detail?.dataset.alias
-  if (alias) {
-    import("./modules/sessions.js").then(m => m.openProjectDetail(deps, alias, { chatId: detail?.dataset.chat || '' }))
-  }
+  // (The old #sessions-detail branch was removed 2026-09-27: that DOM has been
+  // gone since 2026-06-04, so it never fired.)
   // If the dialogue pane is mounted, refresh its timeline so new avatars appear.
   const dialogueRoot = document.getElementById("dialogue-root")
   if (dialogueRoot?.dataset.ready === "true") {
@@ -1466,8 +1476,8 @@ async function boot() {
   // can take seconds, while the dashboard should remain immediately usable.
   void refreshWxvaultOnAppStart({ invoke })
     .then(result => {
-      // Log the skip reason too. A silent no-op here means customer review
-      // reads a stale archive, and "not-ready"/"disabled" is indistinguishable
+      // Log the skip reason too. A silent no-op here means 待办 / knowledge
+      // read a stale archive, and "not-ready"/"disabled" is indistinguishable
       // from success unless we say so.
       if (result.refreshed) console.info('[wxvault] startup refresh complete')
       else console.info(`[wxvault] startup refresh skipped: ${result.reason}`)

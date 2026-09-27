@@ -24,6 +24,7 @@ export interface InternalApiLifecycle extends Lifecycle {
   setIncidents(incidents: NonNullable<InternalApiDeps['incidents']>): void
   setLlmHealth(h: NonNullable<InternalApiDeps['llmHealth']>, registered?: () => string[], endpoints?: () => Record<string, string>): void
   setSettingsLink(fn: NonNullable<InternalApiDeps['settingsLink']>): void
+  setMemoryNightly(r: { runNow(): Promise<unknown> }): void
   mintSessionToken(tier: import('../../core/user-tier').UserTier, sessionKey: string, opts?: import('./token-registry').MintTokenOpts): string
   invalidateSession(sessionKey: string): void
 }
@@ -72,6 +73,7 @@ export async function registerInternalApi(deps: InternalApiDeps): Promise<Intern
     setIncidents: (incidents) => api.setIncidents(incidents),
     setLlmHealth: (h, registered, endpoints) => api.setLlmHealth(h, registered, endpoints),
     setSettingsLink: (fn) => api.setSettingsLink(fn),
+    setMemoryNightly: (r) => api.setMemoryNightly(r),
     mintSessionToken: (tier, sessionKey, opts) => api.mintSessionToken(tier, sessionKey, opts),
     invalidateSession: (sessionKey) => api.invalidateSession(sessionKey),
     stop: async () => {

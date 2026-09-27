@@ -206,8 +206,10 @@ describe('global workbench attention entry', () => {
     const { host, documentTarget } = dom()
     let tasks = [attentionTask('A', ['a-1']), attentionTask('B', ['b-1'], { title: '<img src=x onerror=alert(1)>' })]
     const api = vi.fn(async (_method: string, _path: string) => ({ tasks })), openTask = vi.fn(async () => undefined)
-    const attention = mountWorkbenchAttention({ host: host as any, documentTarget: documentTarget as any, invokeWorkbenchApi: api, invoke: vi.fn(), openTask })
+    const onChange = vi.fn()
+    const attention = mountWorkbenchAttention({ host: host as any, documentTarget: documentTarget as any, invokeWorkbenchApi: api, invoke: vi.fn(), openTask, onChange })
     await attention.start()
+    expect(onChange).toHaveBeenLastCalledWith({tasks,stale:false})
     expect(host.hidden).toBe(false)
     const toggle = host.find(element => element.getAttribute('aria-controls') === 'workbench-attention-tasks')!
     toggle.dispatch('click')

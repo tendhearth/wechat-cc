@@ -10,7 +10,7 @@ wechat-cc self deploy            # 缺省:自动挑本机架构的二进制、�
 wechat-cc self deploy --json     # 机器可读
 ```
 
-可用开关(spec §3):`--binary <path>`(缺省 `apps/desktop/src-tauri/binaries/wechat-cc-cli-<arch>-apple-darwin`,`arm64→aarch64`、`x64→x86_64`)、`--app <path>`(缺省从 LaunchAgent plist 的 `ProgramArguments[0]` 推)、`--no-rollback`、`--health-timeout-ms N`(缺省 60000)、`--json`。
+可用开关(spec §3):`--binary <path>`(源码模式缺省 `apps/desktop/src-tauri/binaries/wechat-cc-cli-<arch>-apple-darwin`,`arm64→aarch64`、`x64→x86_64`;**打包版里必填**)、`--app <path>`(缺省从 LaunchAgent plist 的 `ProgramArguments[0]` 推)、`--no-rollback`、`--health-timeout-ms N`(缺省 60000)、`--json`。
 
 它按顺序做六件事:
 

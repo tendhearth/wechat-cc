@@ -1,0 +1,56 @@
+/**
+ * 把 apps/mobile/src 组装成 daemon 服务的整份文档。纯函数:不碰文件系统、不用 Bun API,
+ * bun / node 两个测试运行器都能直接调。
+ *
+ * 两种标记:
+ *   {{>file.js}}   构建期包含,原样内联(页面必须自包含:公网壳页 document.write 整份写入,没有可用的相对路径)
+ *   {{UPPER_KEY}}  运行时键,留给 src/daemon/mobile-page.ts 按请求填;只认 RUNTIME_VARS 里的名字
+ */
+export const RUNTIME_VARS = ['TOKEN_JSON', 'REMOTE_JSON', 'ART_UNLIT_B64', 'ART_LIT_B64', 'BRAND_ICON_VERSION'] as const
+
+export interface MobilePage {
+  phone: string
+  sw: string
+  bootstrap: string
+  /** 单一色板(spec 2026-09-26-web-design-unify),daemon 侧 /set 与过期页也内联它。 */
+  tokens: string
+  transport: string
+  scripts: { workbench: string; presence: string }
+}
+
+const INCLUDE = /\{\{>([a-z-]+\.(?:js|css|html))\}\}/g
+// 键名里有数字(ART_LIT_B64):少了 0-9 会让冻结图原封不动地以 {{…}} 送上手机。
+const RUNTIME = /\{\{([A-Z0-9_]+)\}\}/g
+const RUNTIME_ONE = /^\{\{([A-Z0-9_]+)\}\}$/
+const ANY_MARKER = /\{\{[^{}\n]*\}\}/g
+
+function expand(name: string, read: (name: string) => string, stack: string[]): string {
+  if (stack.includes(name)) throw new Error(`mobile page: include cycle ${[...stack, name].join(' → ')}`)
+  return read(name).replace(INCLUDE, (_m, file: string) => expand(file, read, [...stack, name]))
+}
+
+export function assembleMobilePage(read: (name: string) => string): MobilePage {
+  const page: MobilePage = {
+    phone: expand('phone.html', read, []),
+    sw: expand('sw.js', read, []),
+    bootstrap: expand('bootstrap.html', read, []),
+    tokens: expand('tokens.css', read, []),
+    transport: expand('transport.js', read, []),
+    scripts: { workbench: expand('workbench.js', read, []), presence: expand('presence.js', read, []) },
+  }
+  for (const text of [page.phone, page.sw, page.bootstrap, page.tokens, page.transport, page.scripts.workbench, page.scripts.presence]) {
+    for (const m of text.matchAll(RUNTIME)) {
+      if (!(RUNTIME_VARS as readonly string[]).includes(m[1]!)) throw new Error(`mobile page: unknown runtime marker {{${m[1]}}}`)
+    }
+    // 两种合法标记之外的 {{…}}(小写、空格、错扩展名的包含)两个正则都不认,会原样送上手机 —— 这里兜住。
+    for (const m of text.matchAll(ANY_MARKER)) {
+      const key = RUNTIME_ONE.exec(m[0])?.[1]
+      if (!key || !(RUNTIME_VARS as readonly string[]).includes(key)) throw new Error(`mobile page: malformed or unknown marker ${m[0]}`)
+    }
+  }
+  return page
+}
+
+export function serializeMobilePage(page: MobilePage): string {
+  return JSON.stringify(page, null, 2) + '\n'
+}

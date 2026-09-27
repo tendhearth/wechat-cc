@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>随身 CC · 在这里生活</title>
+  <link rel="stylesheet" href="preview.css">
+</head>
+<body>
+  <header class="page-head">
+    <div><p class="kicker">CC / MOBILE STUDY 02</p><h1>在这里生活，也陪你做事。</h1><p>交互样板 · 内容与操作均为演示，不连接你的任务。</p></div>
+    <div class="demo-controls"><button id="arrival">重演：你来了</button><label><input id="offline" type="checkbox"> 模拟断开连接</label></div>
+  </header>
+  <main class="gallery">
+    <section class="sample">
+      <p class="sample-title"><b>01　普通此刻</b> 先看见 CC 的生活</p>
+      <article class="phone" data-screen="home">
+        <div class="status" aria-hidden="true"><span>9:41</span><span>▰</span></div>
+        <header class="app-head"><span class="wordmark">CC<span>此刻</span></span><button class="settings" aria-label="打开设置">设置</button></header>
+        <div class="connection" hidden>暂时连不上电脑 · 上次更新 9:41</div>
+        <div class="scroll">
+          <section class="presence">
+            <div class="scene-heading"><p class="eyebrow">窗边 · 上午</p><h2>在给昨天的小故事<br>画一张明信片。</h2></div>
+            <img class="scene-postcard" src="../cc-sticker-study/postcard-coffee.svg" alt="咖啡馆明信片：咖啡机、窗子与 CC">
+            <div class="cc-ground"></div>
+            <div class="cc-pair"><img class="cc dark" src="../../src/assets/pet/cc-v1/canonical/unlit/front.png" alt="安静待着的 Dark CC"><img class="cc light" src="../../src/assets/pet/cc-v1/canonical/lit/front.png" alt="看见你到来的 Light CC"></div>
+            <p class="greeting" aria-live="polite">你来啦，陪我坐一会儿。</p>
+          </section>
+          <button class="quiet-task" data-dialog="tasks"><span class="dot"></span><span>首页还在检查，有进展我会告诉你。</span><span aria-hidden="true">↗</span></button>
+          <div class="breathing-room"><span class="small-rule"></span><p>不用交代什么，也可以待一会儿。</p></div>
+        </div>
+        <form class="composer" data-draft="home"><label class="sr-only" for="home-draft">跟 CC 说点什么</label><input id="home-draft" placeholder="跟 CC 说点什么…" autocomplete="off"><button type="submit" aria-label="发送给 CC">↑</button></form>
+        <p class="draft-note" aria-live="polite"></p>
+        <nav class="nav" aria-label="普通此刻导航"><button class="on" aria-current="page">此刻</button><button data-dialog="tasks">一起做</button><button data-dialog="memories">回忆</button></nav>
+      </article>
+    </section>
+    <section class="sample">
+      <p class="sample-title"><b>02　需要你</b> 只问眼前这一件</p>
+      <article class="phone attention" data-screen="decision">
+        <div class="status" aria-hidden="true"><span>9:41</span><span>▰</span></div>
+        <header class="app-head"><span class="wordmark">CC<span>此刻</span></span><button class="settings" aria-label="打开设置">设置</button></header>
+        <div class="connection" hidden>暂时连不上电脑 · 上次更新 9:41</div>
+        <div class="scroll">
+          <div class="presence-short"><img src="../../src/assets/pet/cc-v1/sprites/lit/permission.png" alt="等你决定的 CC"><p>有个选择，想听你的。</p></div>
+          <section class="decision">
+            <p class="eyebrow">一起做 / 首页换新</p><h2>把两个旧入口<br>收进「回忆」里吗？</h2>
+            <p class="description">明信片和日记会放到一起。内容都保留，只是首页不再单独展示入口。</p>
+            <div class="change"><span>明信片　日记</span><span aria-hidden="true">↓</span><strong>回忆</strong></div>
+            <details><summary>为什么需要我决定</summary><p>演示情境：Claude 检查时发现这会改变你熟悉的入口。Codex 已停在这一步，等你选好再继续。</p></details>
+            <div class="choices"><button class="primary" data-choice="收进回忆">收进回忆</button><button data-choice="保留原来的入口">保留原来的入口</button></div>
+            <p class="decision-feedback" role="status">晚点再选也没关系，这一步会等你。</p>
+            <button class="text-button reset-decision" hidden>重新体验这个选择</button>
+          </section>
+        </div>
+        <nav class="nav" aria-label="需要你导航"><button class="on" aria-current="page">此刻</button><button data-dialog="tasks">一起做</button><button data-dialog="memories">回忆</button></nav>
+      </article>
+    </section>
+    <section class="sample">
+      <p class="sample-title"><b>03　带回成果</b> 先看到，再展开</p>
+      <article class="phone result" data-screen="result">
+        <div class="status" aria-hidden="true"><span>9:41</span><span>▰</span></div>
+        <header class="app-head"><span class="wordmark">CC<span>此刻</span></span><button class="settings" aria-label="打开设置">设置</button></header>
+        <div class="connection" hidden>暂时连不上电脑 · 上次更新 9:41</div>
+        <div class="scroll">
+          <div class="result-heading"><p class="eyebrow">一起做 / 咖啡馆明信片</p><h2>那张明信片，<br>已经画好了。</h2><p>把你说的烘豆香和窗边的暖意留下了。</p></div>
+          <button class="artwork" data-dialog="artwork" aria-label="放大咖啡馆明信片"><img src="../cc-sticker-study/postcard-coffee.svg" alt="完成的咖啡馆明信片，点击放大"><span>看大图 ↗</span></button>
+          <div class="artifact-meta"><strong>咖啡馆的一小会儿</strong><span>SVG 插画 · 示例成果</span></div>
+          <details class="evidence"><summary>看看怎么完成的</summary><p>这里使用仓库已有的明信片原图，不是占位图。</p><p>正式接入时，这里展示执行者、检查结论和对应版本；本页没有发起模型任务。</p><a href="../cc-sticker-study/postcard-coffee.svg" download="cc-coffee-postcard.svg">保存这张示例</a></details>
+        </div>
+        <form class="composer" data-draft="result"><label class="sr-only" for="result-draft">继续修改明信片</label><input id="result-draft" placeholder="想再改一点？跟我说…" autocomplete="off"><button type="submit" aria-label="发送修改意见">↑</button></form>
+        <p class="draft-note" aria-live="polite"></p>
+        <nav class="nav" aria-label="带回成果导航"><button class="on" aria-current="page">此刻</button><button data-dialog="tasks">一起做</button><button data-dialog="memories">回忆</button></nav>
+      </article>
+    </section>
+  </main>
+  <dialog id="detail"><button class="close" aria-label="关闭详情">×</button><div id="detail-content"></div></dialog>
+  <script src="preview.js"></script>
+</body>
+</html>

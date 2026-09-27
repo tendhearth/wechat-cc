@@ -13,17 +13,17 @@ export type MatterKind='chat'|'task'|'companion'
 export type MatterStatus='open'|'replied'|'done'|'archived'
 export type MatterSurface='wechat'|'desktop'|'phone'|'cli'
 export type MatterSessionRole='main'|'review'|'handoff'
-export interface Matter {id:string;kind:MatterKind;title:string;projectPath:string|null;status:MatterStatus;ownerChatId:string|null;createdAt:number;updatedAt:number}
+export interface Matter {id:string;kind:MatterKind;title:string;projectPath:string|null;status:MatterStatus;ownerChatId:string|null;originMatterId:string|null;originMessageId:string|null;createdAt:number;updatedAt:number}
 export interface MatterBinding {matterId:string;surface:MatterSurface;surfaceKey:string;lastSeenAt:number}
 export interface MatterSession {matterId:string;providerId:string;sessionId:string;role:MatterSessionRole;createdAt:number}
-export interface CreateMatter {id?:string;kind:MatterKind;title:string;projectPath?:string|null;ownerChatId?:string|null;status?:MatterStatus}
+export interface CreateMatter {id?:string;kind:MatterKind;title:string;projectPath?:string|null;ownerChatId?:string|null;status?:MatterStatus;originMatterId?:string|null;originMessageId?:string|null}
 export interface ListMatters {kind?:MatterKind;statuses?:MatterStatus[];since?:number;limit?:number;/** 只要在这个表面露过面的 */surface?:MatterSurface}
 
 const KINDS=new Set<string>(['chat','task','companion']),STATUSES=new Set<string>(['open','replied','done','archived']),SURFACES=new Set<string>(['wechat','desktop','phone','cli']),ROLES=new Set<string>(['main','review','handoff'])
 const ID=/^[a-f0-9]{8}$/
-type Row={id:string;kind:MatterKind;title:string;project_path:string|null;status:MatterStatus;owner_chat_id:string|null;created_at:number;updated_at:number}
-const SELECT='SELECT id,kind,title,project_path,status,owner_chat_id,created_at,updated_at FROM matters'
-const toMatter=(r:Row):Matter=>({id:r.id,kind:r.kind,title:r.title,projectPath:r.project_path,status:r.status,ownerChatId:r.owner_chat_id,createdAt:r.created_at,updatedAt:r.updated_at})
+type Row={id:string;kind:MatterKind;title:string;project_path:string|null;status:MatterStatus;owner_chat_id:string|null;origin_matter_id:string|null;origin_message_id:string|null;created_at:number;updated_at:number}
+const SELECT='SELECT id,kind,title,project_path,status,owner_chat_id,origin_matter_id,origin_message_id,created_at,updated_at FROM matters'
+const toMatter=(r:Row):Matter=>({id:r.id,kind:r.kind,title:r.title,projectPath:r.project_path,status:r.status,ownerChatId:r.owner_chat_id,originMatterId:r.origin_matter_id,originMessageId:r.origin_message_id,createdAt:r.created_at,updatedAt:r.updated_at})
 
 export interface MatterStore {
   create(input:CreateMatter):Matter
@@ -52,7 +52,7 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
     if(typeof input.title!=='string')throw new Error('invalid_matter_title')
     const id=input.id??randomBytes(4).toString('hex');if(!ID.test(id))throw new Error('invalid_matter_id')
     const ts=now()
-    db.query('INSERT INTO matters(id,kind,title,project_path,status,owner_chat_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').run(id,input.kind,input.title,input.projectPath??null,status,input.ownerChatId??null,ts,ts)
+    db.query('INSERT INTO matters(id,kind,title,project_path,status,owner_chat_id,origin_matter_id,origin_message_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,input.kind,input.title,input.projectPath??null,status,input.ownerChatId??null,input.originMatterId??null,input.originMessageId??null,ts,ts)
     return require(id)
   }
   function list(filter:ListMatters={}):Matter[] {

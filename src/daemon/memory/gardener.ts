@@ -352,6 +352,7 @@ export async function runGarden(deps: GardenerDeps): Promise<GardenResult> {
     const chatDir = join(memoryRoot, chatId)
     const relPaths = candidateRelPaths(chatDir)
     for (const relPath of relPaths) {
+      if (relPath === 'memory.md') continue   // 每晚整理的长期记忆由 memory/nightly.ts 独管,园丁不压缩它(2026-09-25)
       const fullPath = join(chatDir, relPath)
       let content: string
       try {

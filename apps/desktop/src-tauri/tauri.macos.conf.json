@@ -2,7 +2,8 @@
   "bundle": {
     "externalBin": [
       "binaries/wechat-cc-cli",
-      "binaries/sd-cli"
+      "binaries/sd-cli",
+      "binaries/cc-jobspawn"
     ]
   }
 }

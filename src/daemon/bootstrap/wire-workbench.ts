@@ -13,6 +13,10 @@ import type { PermissionRelayDeps } from '../../core/permission-relay'
 import { TIER_PROFILES } from '../../core/user-tier'
 import { makeWorkbenchStore } from '../../core/workbench/store'
 import { makeWorkbenchService } from '../../core/workbench/service'
+import { makeReportSink } from '../reports/report-sink'
+import { makeRecollectSink } from '../recollection/recollect-sink'
+import { makeJournal } from '../../core/journal-store'
+import { wrapCheapEvalWithAuthFailCheck } from './index'
 import { ACP_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES, UNATTENDED_CAPABILITIES } from '../../core/workbench/executor-capabilities'
 import { readNativeClaudeTools, workbenchClaudeEnvironment, type NativeClaudeTools } from '../../core/workbench/claude-native-config'
 import { claudeNativeCapabilityNotice } from '../../core/workbench/native-capability-notice'
@@ -112,6 +116,8 @@ export function wireWorkbench(opts: {
   askUser: PermissionRelayDeps['askUser']; log: PermissionRelayDeps['log']
   /** 「一件事」登记处:任务与 matter 一对一同步(可选,老接线不传)。 */
   matters?: import('../../core/matters/store').MatterStore
+  /** 回报投递队列(task-3,2026-09-23):与 matters 一起有才接得上 ReportSink,单传一个不够。 */
+  reportOutbox?: import('../reports/outbox').ReportOutboxStore
 }) {
   // 订阅额度监视器:Codex 问 app-server,Claude 用 Claude Code 自己的 OAuth 凭据问 usage 接口(subscription-usage.ts)。
   const usageMonitor=makeUsageMonitor({sources:{
@@ -150,10 +156,54 @@ export function wireWorkbench(opts: {
   if(opts.boot.registry.has('openai'))registerWorkbenchApi(registry,opts.db,opts.stateDir,agentConfig,process.env)
   registerAcpExecutors(registry,opts.boot.registry,agentConfig,{log:opts.log})
   registerUnattendedExecutors(registry,opts.boot.registry)
+  const store=makeWorkbenchStore(opts.db)
+  // 回报投递(task-3,2026-09-23):两样都要有才接得上——没有 matters 就没法建/追出生地,
+  // 没有 reportOutbox 就没地方写;任一个缺,整条功能不存在(降级路径,同 matters 的老接线约定)。
+  const reports=opts.matters&&opts.reportOutbox?makeReportSink({
+    matters:opts.matters,outbox:opts.reportOutbox,
+    taskTitle:id=>store.get(id).title,artifactCount:id=>store.artifacts(id).length,
+    // 终审 Critical:「任务 <id> 静音」落的是 workbench_wechat_subscriptions.enabled=0;
+    // 没有订阅记录(从没配置过)按"没静音过"处理,不是默认静音。
+    notificationsEnabled:id=>store.wechatNotifications.subscription(id)?.enabled??true,
+    log:opts.log,
+  }):undefined
+  // 回忆(task-5,fix round 2,2026-09-23,复审新 Important ③):只要 matters 就接得
+  // 上——journal 用 opts.db 现开(makeJournal 是无状态构造,跟 wire-social.ts 里
+  // recordVisit/recordPostcard 同一惯例)。便宜模型**不用**上面这个 wireWorkbench 自己
+  // 建的 workbench-local `registry`(那是 `createProviderRegistry()` 不带任何 opts 建
+  // 的,丢了 cheapEvalProvider getter——`/set cheap` 和面板钉死的便宜模型对回忆完全无
+  // 效、丢了 cheapEvalPreflight——2026-08-29 为根治"开机 spawn agy → 刷 token 撞超时 →
+  // 弹浏览器 Google OAuth 页"而加的网络预检、也丢了 onProviderFailure/log 的失败诊
+  // 断)。而工作台的这个 registry 里有 cheapEval 的只有 agy 和 claude(claude 还没传
+  // claudeBin),意味着装了 agy 的机器上回忆恰好由 agy 来答——正是当年弹 OAuth 页那条
+  // 路,这次还没有预检。改用 `opts.boot.registry`(已经在这个函数里到处用,见
+  // :123/124/155/156/157),跟 pipeline-deps.ts:728 的管家判定同一惯例(同样调
+  // `boot.registry.getCheapEval()`),不缓存 provider 本身、每次现取。
+  const recollect=opts.matters?makeRecollectSink({
+    matters:opts.matters,journal:makeJournal(opts.db),
+    // fix round 3(评审 M6):跟 bootstrap/index.ts:1048 的 haikuEval/verdictEval
+    // 同一处理——裸 getCheapEval() 拿到的候选没做过「登出/401 之类的认证失败
+    // 别当成正常回复」这道检查,套上 wrapCheapEvalWithAuthFailCheck(导出复
+    // 用,不重新发明)。它内部 assertNotAuthFailed 抛错时,maybeRecollect 的
+    // try/catch 会当成真的调用失败留痕——跟"没有便宜模型"是两回事。
+    cheapEval:()=>wrapCheapEvalWithAuthFailCheck(opts.boot.registry.getCheapEval(),opts.log)??null,
+    // 终审必判④(b):crossedOvernight 按主人本地日历日算,不按 UTC——复用
+    // companion 配置现成的 timezone 字段,不新造配置项。
+    timezone:()=>loadCompanionConfig(opts.stateDir).timezone,
+    // 终审「小的」:cheapEval 的延迟预算,超时按真的调用失败处理(不是
+    // "没有模型")——见 recollect-sink.ts 文件头「cheapEval timeout」。
+    cheapEvalBudgetMs:()=>opts.boot.registry.getCheapEvalBudgetMs(),
+    ownerChatId,log:opts.log,
+    // fix round 3(评审 M2):终态那一拍的模型调用是 fire-and-forget,没有
+    // holdBusy 挡着的话空闲自动重启可能切在中间、这条回忆静默丢失且不留
+    // 痕——已经在手边(opts.boot.holdBusy 这个函数在这个文件里到处用,见
+    // 下面 makeWorkbenchService 传的那个),零新依赖。
+    holdBusy:opts.boot.holdBusy,
+  }):undefined
   return makeWorkbenchService({
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
-    store:makeWorkbenchStore(opts.db),registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,
+    store,registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,reports,recollect,log:opts.log,
     usage:(id)=>id==='claude'||id==='codex'?usageMonitor.cached(id):null,
     registeredProjects:()=>listProjects(join(opts.stateDir,'projects.json')),
     defaultProvider:opts.boot.defaultProviderId,holdBusy:opts.boot.holdBusy,

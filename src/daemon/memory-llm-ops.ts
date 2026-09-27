@@ -8,6 +8,7 @@
  */
 import type { Db } from '../lib/db'
 import { readJsonFile } from '../lib/read-json-file'
+import { beginDerivedGeneration, isDerivedMemoryStale, readDerivedRevision } from '../lib/memory-derived-state'
 
 export interface MemoryLlmOpsDeps {
   stateDir: string
@@ -28,13 +29,18 @@ export interface MemoryLlmOps {
   generatePortrait(adminChatId: string): Promise<{ ok: boolean; error?: string; path?: string }>
 }
 
+/** 与主人当前对话同一家的 cheapEval,没有就用注册表默认 —— 记忆整理类任务统一走这里。 */
+export function resolveCheapEval(deps: Pick<MemoryLlmOpsDeps, 'getMode' | 'registry'>, chatId: string): ((p: string) => Promise<string>) | null {
+  const mode = deps.getMode(chatId)
+  const provider = mode && mode.kind === 'solo' ? mode.provider : undefined
+  return (provider ? deps.registry.get(provider)?.provider.cheapEval : null) ?? deps.registry.getCheapEval()
+}
+
 export function makeMemoryLlmOps(deps: MemoryLlmOpsDeps): MemoryLlmOps {
   // Follow the admin conversation's provider; fall back to the registry's
-  // cheapest eval. (Lifted verbatim from pipeline-deps synthesizeMemory.)
-  const resolveCheapEval = (adminChatId: string) => {
-    const mode = deps.getMode(adminChatId)
-    const provider = mode && mode.kind === 'solo' ? mode.provider : undefined
-    const cheapEval = (provider ? deps.registry.get(provider)?.provider.cheapEval : null) ?? deps.registry.getCheapEval()
+  // cheapest eval. Throws when neither exists (synthesis can't run).
+  const requireCheapEval = (adminChatId: string) => {
+    const cheapEval = resolveCheapEval(deps, adminChatId)
     if (!cheapEval) throw new Error('no LLM provider available for synthesis')
     return cheapEval
   }
@@ -42,7 +48,7 @@ export function makeMemoryLlmOps(deps: MemoryLlmOpsDeps): MemoryLlmOps {
     async synthesize(adminChatId) {
       const { synthesizeOverview } = await import('../lib/memory-synthesis')
       const { makeLifeStoresReader } = await import('./life-stores')
-      const cheapEval = resolveCheapEval(adminChatId)
+      const cheapEval = requireCheapEval(adminChatId)
       return synthesizeOverview({ stateDir: deps.stateDir, adminChatId, sdkEval: (p) => cheapEval(p), lifeStores: makeLifeStoresReader(deps.db, deps.stateDir), includeFileSurvey: true })
     },
     async generateProfile(adminChatId) {
@@ -50,7 +56,7 @@ export function makeMemoryLlmOps(deps: MemoryLlmOpsDeps): MemoryLlmOps {
       const { makeLifeStoresReader } = await import('./life-stores')
       const mode = deps.getMode(adminChatId)
       const modelProvider = mode && mode.kind === 'solo' ? (mode.provider ?? 'claude') : 'claude'
-      const cheapEval = resolveCheapEval(adminChatId)
+      const cheapEval = requireCheapEval(adminChatId)
       return synthesizeProfile({ stateDir: deps.stateDir, adminChatId, sdkEval: (p) => cheapEval(p), lifeStores: makeLifeStoresReader(deps.db, deps.stateDir), generatedBy: 'manual', modelProvider })
     },
     async generatePortrait(adminChatId) {
@@ -62,24 +68,27 @@ export function makeMemoryLlmOps(deps: MemoryLlmOpsDeps): MemoryLlmOps {
         return { ok: false, error: 'bad_chat_id' }
       }
       const memDir = join(deps.stateDir, 'memory', adminChatId)
+      const sourceRevision = beginDerivedGeneration(memDir)
       // Material: prefer the structured profile, fall back to the overview,
       // then the raw profile.md. No material → nothing honest to draw from.
       let material = ''
       const profileJson = join(memDir, '_profile.json')
-      if (existsSync(profileJson)) {
+      if (!isDerivedMemoryStale(memDir, 'profile') && existsSync(profileJson)) {
         try {
           const p = readJsonFile(profileJson) as { summary?: string; tags?: string[]; insight?: string }
           material = [p.summary, p.insight, (p.tags ?? []).join('、')].filter(Boolean).join('\n')
         } catch { /* fall through to overview */ }
       }
       if (!material) for (const f of ['_overview.md', 'profile.md']) {
+        if (f === '_overview.md' && isDerivedMemoryStale(memDir, 'overview')) continue
         const fp = join(memDir, f)
         if (existsSync(fp)) { material = readFileSync(fp, 'utf8').trim(); if (material) break }
       }
       if (!material) return { ok: false, error: 'no_profile' }
 
-      const cheapEval = resolveCheapEval(adminChatId)
+      const cheapEval = requireCheapEval(adminChatId)
       const raw = await cheapEval(buildPortraitPrompt(material.slice(0, 2000)))
+      if (sourceRevision === 'corrupt' || readDerivedRevision(memDir) !== sourceRevision) return { ok: false, error: 'source_changed' }
       const m = raw.match(/<svg[\s\S]*<\/svg>/)
       const svg = m ? safeSvg(m[0]) : null
       if (!svg) return { ok: false, error: 'unsafe_svg' }

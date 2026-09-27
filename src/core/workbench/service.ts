@@ -29,6 +29,8 @@ import { findPathBlocker, type PathReservation, type WaitingFor } from './schedu
 import { makeQuotaRegistry, classifyProviderError, type QuotaState } from '../provider-quota'
 import { providerDisplayName } from '../provider-display-names'
 import type { MatterStore } from '../matters/store'
+import type { ReportSink } from '../matters/report'
+import type { RecollectSink } from '../matters/recollection'
 import type { UsageSnapshot } from '../subscription-usage'
 import { publicTask, TERMINAL_TASK_STATUSES, type WorkbenchListQuery, type StoredTask, type Task, type TaskStatus, type WorkbenchStore } from './store'
 import { makeTaskChangeHub, type TaskChangeHub } from './task-changes'
@@ -40,6 +42,12 @@ interface Options {
   ownerChatId: () => string | null
   /** 「一件事」登记处:任务与 matter 一对一同 id,生命周期同步(docs/cc-workbench.md「一件事」)。可选,老接线不传。 */
   matters?: MatterStore
+  /** 每轮答复的回报投递(docs/cc-workbench.md「一件事」,task-3);可选,不传就整条功能不存在(降级路径)。 */
+  reports?: ReportSink
+  /** 「回忆」触发(spec 2026-09-23-delegation-report-design.md「回忆」,task-5);可选,不传就整条功能不存在(降级路径,同 opts.reports)。 */
+  recollect?: RecollectSink
+  /** 诊断日志(复用 permission-relay 那条通道);可选,不传就没有痕迹 —— 老接线的行为不变。 */
+  log?: (tag: string, line: string) => void
   /** 订阅执行者的真实额度快照(subscription-usage.ts 的监视器缓存);登记处据此提前判耗尽,列表把它带给桌面。 */
   usage?: (providerId: string) => UsageSnapshot | null
   defaultProvider?: string
@@ -97,6 +105,19 @@ interface Active extends PathReservation {
   publicFinished: boolean
   uncertain: boolean
   artifactsCollected: boolean
+  /** 「这是第几轮」——回报去重键(评审修复轮 1:布尔 `reported` 选错了层,见 `reportOnce`)。
+   *  `submitInput` 实际投给 runtime 时(主人续接,可靠的同步点)与转移探测器观察到
+   *  「又动起来了」时(自己醒来,尽力而为——没有比快照更早的信号)各加一次。不是幂等锁
+   *  ——同一轮里两条路径都触发也只是多加了一次,不影响「序号变了就该再报」这个判据。 */
+  turnSeq: number
+  /** 已经报过、且报的是第几轮(`turnSeq` 的快照)。`-1` = 还没报过。`reportOnce` 只在
+   *  `turnSeq!==reportedTurn` 时才入队,不依赖「有没有观察到静下来又动起来」这件事本身
+   *  ——那件事会被漏看(见 reportOnce 的注释)。 */
+  reportedTurn: number
+  /** 「回忆」触发的去重键(task-5,fix round 1:与 `reportedTurn` 同一套道理,同一份
+   *  证据——settleQuiet 会因为转移探测器与显式 `result` 分支各调一次而在同一个 `turnSeq`
+   *  上触发两次,`recollectOnce` 靠这个字段挡。`-1` = 还没触发过。 */
+  recollectedTurn: number
   collection?:Promise<void>
   turnCollection?:Promise<void>
   collectionFailure?:string
@@ -112,7 +133,7 @@ interface Active extends PathReservation {
 }
 export interface InputMaterials {attachmentIds?:string[];draftId?:string;execution?:unknown}
 export interface CreateTask extends InputMaterials { title?: string; path: string; providerId: string; text: string }
-export interface CreateWechatTask {ownerChatId:string;accountId:string;requestId:string;commandHash:string;projectId:string;providerId?:string;text:string}
+export interface CreateWechatTask {ownerChatId:string;accountId:string;requestId:string;commandHash:string;projectId:string;providerId?:string;text:string;originMessageId?:string}
 export interface SendWechatArtifact {ownerChatId:string;accountId:string;requestId:string;commandHash:string;taskId:string;artifactId:string}
 /**
  * 主人眼里的进度,两家执行者一致。持久化的 status 记的是这条 run 的生命周期
@@ -260,8 +281,51 @@ export function makeWorkbenchService(opts: Options) {
   function requestNotice(task:StoredTask,runId:string,kind:'permission'|'question',id:string,label:string){
     enqueueNotice(task,runId,kind,`${task.title.replace(/[\r\n]+/g,' ')} · ${task.id}\n${task.providerId} · ${kind==='permission'?'需要你批准':'需要你回答'}\n\n${label.slice(0,600)}\n\n查看：任务 ${task.id} ${kind==='permission'?'权限':'问题'} ${id}`,id)
   }
-  function stageFinishedNotice(running:Active,status:TaskStatus,error:string|null=null){
+  /**
+   * 终审后修复第二轮 Important②b:非 retained 执行者 completed 终态时,
+   * `stageFinishedNotice` 的 completed 通知被压掉——被压掉的正文必须并
+   * 进回报文案,否则等于用"去噪"换掉了"主人被动收到答案"这件事(spec 开
+   * 头那句:交给 CC 之后能放心离开、回来接得上)。这里读的是跟
+   * `stageFinishedNotice` 同一份数据(这一轮最后一条文本事件 + 保存的成
+   * 果文件名),但故意**不是**同一个函数——`stageFinishedNotice` 还有
+   * failed 时改写额度耗尽文案那一支,那部分只在通知里有意义,不该混进
+   * 回报文案。
+   */
+  function terminalReportBody(running:Active):string|undefined {
+    const reply=store.events(running.taskId).filter(e=>e.runId===running.identity&&e.kind==='text').at(-1)?.text
+    const artifacts=store.artifacts(running.taskId).slice(0,5)
+    const parts=[reply?reply.slice(0,1800):undefined,artifacts.length?'已保存成果：'+artifacts.map(a=>a.name).join('、').slice(0,500):undefined].filter((s):s is string=>!!s)
+    return parts.length?parts.join('\n\n'):undefined
+  }
+  /**
+   * `suppressCompleted`(终审 Important,终审后修复第二轮 Important②改
+   * 过一次判据):非 retained 执行者(agy/cursor/openai/gemini)不经过
+   * settleQuiet,这个函数与 `reportOnce` 同在终态那个 try 里、同一拍触
+   * 发——不挡的话 completed 那一刻两条都发主人 chat:先「…这一轮已完
+   * 成…查看:任务 xxx」,紧跟「…已答复。累计生成了 N 份成果。看:… 接
+   * 着说:…」,同一件事说了两遍(spec 已定 #1「再报一次是噪音」的理由原
+   * 样适用,只是这次是两条不同措辞的消息同时发,不是同一条重发)。
+   *
+   * 判据不是"这一轮有没有出生地"那么简单(终审后修复第二轮 Important②a
+   * 改正:上一版这么写,把 retained 执行者也误伤了——retained 执行者到
+   * 这里之前已经在 `settleQuiet` 报过这一轮,这里的 `reportOnce` 调用因
+   * `reportedTurn===turnSeq` 本来就是 no-op,根本不存在"同一拍双发",通
+   * 知却照样被压掉了)。真正的判据是调用点算出来的 `willReport`——"这
+   * 一拍 `reportOnce` 真的会入队"(有出生地 **且** 不是因为
+   * `reportedTurn===turnSeq` 而 no-op),只在这个条件成立时才压。
+   *
+   * 压的时候留的不是"信息更丰富"的空话(上一版这么写,但回报模板只有
+   * `标题 · 已答复(第N轮)。看:… · 接着说:…`,没有正文——那句理由是假
+   * 的,终审后修复第二轮 Important②b 点名的说谎注释,已改正)。真正的
+   * 理由是:调用点把这一轮的答复正文 + 成果文件名(`terminalReportBody`,
+   * 跟这个函数原来自己读的是同一份数据)并进了回报文案里再传给
+   * `reportOnce`——压的是通知外壳,正文本身**没有**被丢掉,只是换了个
+   * 地方送达。桌面亲手派的任务没有出生地、`reportOnce` 什么都不会发,那
+   * 种情况必须继续留着这条通知,不能无条件压。
+   */
+  function stageFinishedNotice(running:Active,status:TaskStatus,error:string|null=null,suppressCompleted=false){
     if(!TERMINAL_TASK_STATUSES.includes(status))return
+    if(status==='completed'&&suppressCompleted)return
     const watch=store.wechatNotifications.subscription(running.taskId)
     if(!watch?.enabled||watch.ownerChatId!==running.task.ownerChatId||watch.ownerChatId!==opts.ownerChatId())return
     let reply=store.events(running.taskId).filter(e=>e.runId===running.identity&&e.kind==='text').at(-1)?.text
@@ -563,6 +627,50 @@ export function makeWorkbenchService(opts: Options) {
     try { cancelRun(running) } catch { /* 已经在收尾的路上,留给 execute 的 finally */ }
   }
   /**
+   * 回报入队,按「这是第几轮」去重(评审修复轮 1)。不进 matterSync —— 那个包装
+   * 故意吞掉所有异常,回报挂进去会把"从来没报成功过"伪装成"偶尔漏一条"
+   * (2026-09 的教训)。去重键是 `turnSeq`(见 Active 字段注释),不是布尔:
+   * 布尔只能在「观察到静下来又动起来」那一刻复位,而这件事本身可能被漏看
+   * (回合可能在探测器读到忙碌快照之前就已经又静下来),漏看 = 永久锁死不再报。
+   * `turnSeq` 在更早、更可靠的同步点(`submitInput` 实际投递)就已经推进,不依赖
+   * 「有没有被看见」。调用点:`settleQuiet`(答复)与终态收工(评审 #3,非
+   * retained 执行者永远不经过 `settleQuiet`)都调它,序号相同则第二次是no-op。
+   */
+  /**
+   * `body`(终审后修复第二轮 Important②b,可选,默认不传):非 retained
+   * 执行者终态那一拍会传 `terminalReportBody(running)`,把
+   * `stageFinishedNotice` 原本会发的正文并进回报文案。`settleQuiet` 那
+   * 处调用(retained 执行者)不传——那条路没有通知被压,不需要额外正
+   * 文,回报只是"事情有进展,看这里"的一句指路。
+   */
+  function reportOnce(running:Active,body?:string):void {
+    if (running.reportedTurn===running.turnSeq) return
+    running.reportedTurn=running.turnSeq
+    try { opts.reports?.enqueue(running.taskId,running.turnSeq,body) } catch (err) { opts.log?.('MATTER_REPORT',`enqueue failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
+  }
+  /**
+   * 回忆触发,按「这是第几轮」去重(task-5,fix round 1:与 `reportOnce` 同一套道理——
+   * settleQuiet 会因为转移探测器与显式 `result` 分支各调一次而在同一个 `turnSeq` 上触发
+   * 两次,不挡的话同一次答复会喂两次便宜模型、可能写两条几乎一样的回忆)。`turns` 就是
+   * 调用这一刻的 `turnSeq`——它只活在这个运行时结构里,不落盘,daemon 侧的
+   * RecollectSink 事后查不到,只能在这里现读现传。
+   *
+   * try/catch 是 fix round 2(复审新 Important ②):跟 `reportOnce` 同一套
+   * 道理——`maybeTrigger` 内部的同步段(读 sqlite、读 companion config、
+   * `crossedOvernight` 对非法时间戳可能抛 RangeError)任何一次抛出,若不
+   * 在这里接住,会穿出两处调用点(`settleQuiet` 自己没有 try/catch;终态
+   * 提交那处虽然外层有 try/catch,但那个 catch 是"never unlock an
+   * uncertain writer",会把 `matterSync`/`reportOnce`/`publishFinishedNotices`
+   * 一起吞掉,爆炸半径远大于只丢一次回忆判断)。概率低,但代价是这一轮
+   * matter 永远到不了 replied、直接变 done,`captureCodeChanges`/
+   * `armIdleClose` 全被跳过——跟 `reportOnce` 当初要挡的是同一类风险。
+   */
+  function recollectOnce(running:Active):void {
+    if (running.recollectedTurn===running.turnSeq) return
+    running.recollectedTurn=running.turnSeq
+    try { opts.recollect?.maybeTrigger(running.taskId,running.turnSeq) } catch (err) { opts.log?.('MATTER_RECOLLECT',`maybeTrigger failed for ${running.taskId}: ${err instanceof Error?err.message:err}`) }
+  }
+  /**
    * 本回合安静下来:登记成果(评审 2026-09-16:会话保留时这条 run 不会结算,`collect` 也就不会跑,
    * 成果得等主人「取消」才看得见)、把 matter 标成已答复、起空闲自动收工的计时。
    * 还在等主人拍板就只收成果、不计时 —— 那不叫安静。重复调用无害:收集自己去重,计时不会被推迟。
@@ -574,6 +682,16 @@ export function makeWorkbenchService(opts: Options) {
     collectTurnArtifacts(running)
     if (!quiet(running)) return
     matterSync(m=>m.setStatus(running.taskId,'replied'))
+    reportOnce(running)
+    // 回忆(task-5,fix round 3,评审必判①):不在这里调 recollectOnce 了——
+    // settleQuiet 每次安静都触发一次,而持久去重(journal.hasRecollection)
+    // 是"按 matter 只给一条",两者天生冲突:matter 隔夜第一次静下来就够格
+    // (overnight),凭标题写一句空话,之后主人打回好几次的「波折」反而全被
+    // 已经写过的那条挡住——留下的恰好是最没内容的那条,跟"最该记住的是波
+    // 折"这条设计取向正相反。只在终态(下面那处 recollectOnce)触发:那时
+    // turnSeq 才是这个 run 真实的轮数,"一件事一段记述"与"最该记住的是波
+    // 折"只有写在结局时才同时成立。代价是回忆延迟到 idle-close(最长十分
+    // 钟级),接受。
     // 差异边界 = 回合边界:这一轮的代码变更现在就截(以前这一步挂在「答复即释放」后面,
     // 那条路没了)。续接会先 await 这份在途的快照再取新基线,所以不会把下一轮的改动算进来。
     void captureCodeChanges(running).catch(()=>{})
@@ -742,6 +860,11 @@ export function makeWorkbenchService(opts: Options) {
         // 它想写就写 —— 没有什么要 fail-closed 的。
         if (!nowQuiet&&wasQuiet) {
           cancelIdleClose(running)
+          // 自己醒来这条路唯一能推进 turnSeq 的地方(评审修复轮 1)——没有比这更早的信号
+          // 了,所以是尽力而为:一段自动续作连着抖好几次 quiet↔busy 时,这里会跟着抖好几
+          // 次(每次都算「新一轮」),多出来的入队调用在 outbox 那一层按 matter 合并,不在
+          // 这里想办法压 —— 这里的职责只是「不要漏成永久锁死」,不是「精确数出真实回合数」。
+          running.turnSeq++
           // 上一轮安静时 `captureCodeChanges` 已经把基线消费掉了,而取基线只有两个入口:起步和
           // 主人续接(`submitInput`)。自己醒来这条路没有入口 —— BASE 是靠 `onAutonomousStart`
           // → `beginTurn` 重取的,那两个函数这一轮删了。不补的话「自己醒来干的这一轮」永远生不出
@@ -817,14 +940,73 @@ export function makeWorkbenchService(opts: Options) {
       let terminalCommitted=false
       try {
         const status=running.cancelled&&!running.uncertain?(running.closedWhileReplied?'completed':'cancelled'):finalStatus
+        // 会不会真的在这一拍入队回报,两个条件都要成立(终审后修复第二轮
+        // Important②a,判据比"这一轮有没有出生地"更紧):①这一轮有出生地
+        // (跟 renderReport 自己的判据同一条)②reportOnce 这一拍真的会执
+        // 行、不是因为 reportedTurn===turnSeq 而 no-op——retained 执行者
+        // 到这里之前已经在 settleQuiet 报过这一轮,这里的 reportOnce 调用
+        // 只是 no-op,不存在"同一拍双发",stageFinishedNotice 的通知不该
+        // 被压(上一版漏了这一条,把 retained 执行者也误伤了)。
+        let willReport=false
+        try {
+          willReport=status==='completed'
+            &&running.reportedTurn!==running.turnSeq
+            &&!!opts.matters?.get(task.id)?.originMatterId
+        } catch (err) {
+          // 读不到出生地(比如 matters.get 抛错)就当这一轮不会报处理,默认
+          // 「不压」——两个方向的代价不对称:多一条通知是噪音,两条都不
+          // 发是主人什么都收不到(终审后修复第二轮 Important①)。
+          opts.log?.('MATTER_REPORT',`willReport probe failed for ${task.id}: ${err instanceof Error?err.message:err}`)
+          willReport=false
+        }
+        // 终审后修复第二轮 Important②b:压掉 stageFinishedNotice 的 completed
+        // 通知时,把它原本会发的正文(terminalReportBody)并进回报文案——
+        // 不然"压通知"就变成了"主人这一轮的答案从此要自己回一句「任务
+        // <id>」才能看到",那正是这个功能存在的理由(spec:交给 CC 之后能
+        // 放心离开、回来接得上)的反面。这也顺带补上了第 6 项对非 retained
+        // 执行者的缺口——它们的 turnSeq 恒为 0(见下面 recollectOnce 之后
+        // 的调用点、report.ts 的 renderReport 文档注释),「第 N 轮」这几
+        // 个字对它们本来就区分不开相邻两轮,真正让文案不同的是这里并进去
+        // 的正文(每轮答复内容通常不同)。
+        const body=willReport?terminalReportBody(running):undefined
         store.atomic(()=>{
           store.finishRunActivities(task.id,running.identity,running.cancelled&&!running.uncertain?'cancelled':'interrupted')
           store.update(task.id,status,finalError)
-          stageFinishedNotice(running,status,finalError)
+          stageFinishedNotice(running,status,finalError,willReport)
         })
         touched(task.id)
         terminalCommitted=true
         matterSync(m=>m.setStatus(task.id,status==='interrupted'?'open':'done'))
+        // 非 retained 的执行者永远不经过 settleQuiet(isReplied 要求 snapshot.retained),
+        // 只走这条终态路径 —— 不在这里也调一次 reportOnce,那类执行者的任务永远不回报
+        // (评审修复轮 1 ③)。turnSeq 去重保证 settleQuiet 已经报过这一轮时这里是 no-op。
+        // 只在 'completed' 时报(评审修复轮 2 ②):'failed'/'cancelled' 也会落到这条终态
+        // 路径,而 renderReport 只看出生地、不看结果——报出去就是把一件失败或被叫停的事
+        // 说成「已答复」,跟 stageFinishedNotice 给 failed/额度耗尽的既有文案("这一轮
+        // 需要处理"/问"交给 X 继续?")直接打架。失败/取消不经这里回报,不代表主人收不
+        // 到通知——stageFinishedNotice 走的是另一条既有的完成通知路径,不受这里影响。
+        if (status==='completed') reportOnce(running,body)
+        // 回忆(task-5,fix round 3,评审必判①):这是唯一的触发点(round 2
+        // 还有 settleQuiet 那一处,这一轮去掉了——见 settleQuiet 里的注
+        // 释)。这里的 turnSeq 是这个 run 真实的总轮数,"一件事一段记述"与
+        // "最该记住的是波折"只有写在结局时才同时成立。跟 reportOnce 不
+        // 同,不继承 `status==='completed'` 那道门:spec 的回忆判据恰恰是
+        // "反复失败、被打回、隔夜才通的才记得",继承那道门会把最该被记住
+        // 的那类事正好挡掉。被主人当场取消的事 turnSeq 还是初始值、当天
+        // 创建,门槛(turns/overnight/returned)自己会挡住,不用在这里特
+        // 判 cancelled。
+        //
+        // 但**排除 'interrupted'**(fix round 3 M5/I1 同根):这个状态是
+        // "执行程序没确认退出,不确定它是不是还活着"——matterSync 上面那
+        // 一行把 matter 设回 'open',故事没完。若在这里也调 recollectOnce
+        // 并真写了一条,后面这件事真的收尾时会被持久去重(journal.
+        // hasRecollection)挡住,永久用掉它唯一那次机会,记下的还是当下这
+        // 个"不确定"状态而不是真正的结局。排除后 hasRecollection 仍是
+        // false——这个 matter 之后无论是被继续(比如 restart_required 那
+        // 条续接路径,service.continueTask)还是干脆没人再碰,都不会被这
+        // 一次 interrupted"用掉"配额;等它真的收尾(哪怕是后来某一次新的
+        // run 的终态),recollectOnce 会在那时才第一次真正评估。
+        if (status!=='interrupted') recollectOnce(running)
         publishFinishedNotices()
       } catch { /* never unlock an uncertain writer for a status failure */ }
       running.publicFinished=true; running.resolveDone()
@@ -961,7 +1143,7 @@ export function makeWorkbenchService(opts: Options) {
       execution,
       attachments:dispatchAttachments,
       interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
-      cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,credentialsMinted:false,credentialsRevoked:false,
+      cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,turnSeq:0,reportedTurn:-1,recollectedTurn:-1,credentialsMinted:false,credentialsRevoked:false,
     }
     const activate=()=>{runsByTask.set(task.id,running);runningText.set(running.identity,text);queue.push(running);pump()}
     if(acceptance)acceptance.activate(activate);else activate()
@@ -970,7 +1152,15 @@ export function makeWorkbenchService(opts: Options) {
 
   /** matter 同步永不打断任务本身:登记失败只是少一条索引,任务照跑。 */
   function matterSync(fn:(m:MatterStore)=>void):void { if(!opts.matters)return; try{fn(opts.matters)}catch{/* 见上 */} }
-  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void):WorkbenchTaskView {
+  /** 出生地也不能打断创建:没有 matter store、或那个 chat 的 matter 建不出来,就没有出生地,任务照建。
+   *  但「算出生地时出错」不能悄悄退化成「这件事本来就没有出生地」——没接 matters 是老接线的正常状态、
+   *  不留痕;`ensureChat` 真的抛错则是信号,留一条能查到的痕迹(评审 2026-09-23 修复轮 1)。 */
+  function safeOriginMatterId(ownerChatId:string):string|null {
+    if(!opts.matters)return null
+    try{return opts.matters.ensureChat(ownerChatId).id}
+    catch(err){opts.log?.('MATTER_ORIGIN',`ensureChat failed for ${ownerChatId}: ${err instanceof Error?err.message:err} — origin left null, task still created`);return null}
+  }
+  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null}):WorkbenchTaskView {
     ensureAccepting()
     const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
     const attachments=selectAttachments(input),text=checkedText(input.text,attachments)
@@ -981,7 +1171,7 @@ export function makeWorkbenchService(opts: Options) {
     let activate:()=>void=()=>{}
     const accepted=store.atomic(()=>{
       const task=store.create({title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:opts.ownerChatId()})
-      matterSync(m=>{m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:task.ownerChatId??null});m.linkTask(task.id);if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)})
+      matterSync(m=>{m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:task.ownerChatId??null,originMatterId:origin?.matterId??null,originMessageId:origin?.messageId??null});m.linkTask(task.id);if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)})
       return start(task,text,acceptedDirectoryIdentity,undefined,undefined,undefined,undefined,undefined,attachments,input.draftId,execution,{
         persist:runId=>onAccepted?.(task,runId),activate:fn=>{activate=fn},
       })
@@ -1127,7 +1317,7 @@ export function makeWorkbenchService(opts: Options) {
         receipt=store.creationReceipts.add({id,accountId:input.accountId,ownerChatId:input.ownerChatId,commandHash:input.commandHash,projectId:input.projectId,path:task.path,providerId:task.providerId,taskId:task.id,runId,
           reply:`已接下这件事 · ${task.id}\n${task.providerId} · ${task.path}\n\n${task.title}\n\n完成或需要你处理时，会在这里提醒。\n查看：任务 ${task.id}\n补充：任务 ${task.id} 补充 <要求>\n关闭提醒：任务 ${task.id} 静音`,
         })
-      })
+      },{matterId:safeOriginMatterId(input.ownerChatId),messageId:input.originMessageId??null})
       return receipt
     },
     attention(){
@@ -1203,6 +1393,10 @@ export function makeWorkbenchService(opts: Options) {
           if(canonicalProject(running.path)!==running.path||directoryIdentity(running.path)!==running.directoryIdentity)throw Error('invalid_path')
           const material=store.attachments.prepare(id,attachments,running.path,opts.stateDir)
           running.interactionAt=Date.now()
+          // 主人续接 = 新一轮的可靠起点(评审修复轮 1):这个同步点不依赖快照观察,
+          // 「投给 runtime 了」这件事本身就是新一轮开始的证据,回报去重键(reportOnce)
+          // 靠它才不会因为快照从未被看见处于「忙碌」而永久锁死。
+          running.turnSeq++
           // Replay acknowledgement may wait behind an autonomous native turn.
           // The HTTP receipt is already durable; never wait here or auto-resend.
           void runtime.submit(saved.id,text,material).then(

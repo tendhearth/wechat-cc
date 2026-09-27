@@ -34,6 +34,12 @@ import { PROVIDER_SETUP_HINTS, type LlmHealthReport } from './llm-health'
 import { capabilitiesFor } from '../core/capability-matrix'
 import { PROVIDER_IDS } from '../lib/provider-ids'
 import { buildFeed, decodeCursor, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
+import blinkArt from './mobile-blink-art.json'
+import { MOBILE_BRAND_ICON_PNG, MOBILE_BRAND_ICON_SIZES } from './mobile-brand-icon'
+import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions} from './mobile-workbench'
+import {mobileMatterDetailResponse} from './mobile-matter-response'
+import {mobileHomeFocus} from './mobile-home-focus'
+import type {MatterSayInput} from '../core/matters/service'
 import type { Presence } from '../core/companion-presence'
 import type { CatchRow } from '../core/journal-store'
 import type { PlanLogEntry } from '../core/companion-plan'
@@ -89,14 +95,16 @@ export interface SettingsPanelDeps {
   /** 三轴 presence,经 internal-api lifecycle.getPresence 共用。缺省/抛 ⇒ 手机页显示「不知道」。 */
   presence?: () => Promise<Presence | null>
   /** 「一件事」(2026-09-16):手机看同一份 matter 列表 / 详情,并能往里说话。seenOnPhone 记「在手机露过面」。 */
-  matters?: {
+  matters?: MobileMatterActions & {
     list(filter: { kind?: 'chat' | 'task' | 'companion'; statuses?: Array<'open' | 'replied' | 'done' | 'archived'>; limit?: number }): unknown[]
     detail(id: string): Promise<unknown> | unknown
-    say(id: string, text: string): Promise<unknown>
+    say(id: string, text: string, input?:MatterSayInput): Promise<unknown>
     seenOnPhone(id: string): void
   }
   /** 主人「看到哪了」的水位,与桌面觅食台同一个文件(一个主人一个水位)。缺省 ⇒ POST /m/api/seen 503。 */
   seen?: { read: () => string | null; write: (iso: string) => void }
+  /** 手机「CC 记得你」(2026-09-25,memory/nightly-runtime)。 */
+  curatedMemory?: () => import('./memory/nightly-runtime').CuratedView
   /** 远程隧道信息(启用时):relay wss + 本机 daemon id。手机页出门时用它
    *  经中继访问。缺省 ⇒ 手机页只能在同一 Wi-Fi 直连。 */
   remoteInfo?: () => { relay: string; id: string } | null
@@ -127,6 +135,8 @@ export interface SettingsPanelDeps {
 export interface SettingsPanel {
   issueToken(): string
   validToken(t: string | null | undefined): boolean
+  /** 当前还有效的链接令牌(没有或已过期就 null)—— 隧道只额外认这一个。 */
+  activeLinkToken(): string | null
   state(): object
   apply(op: unknown): Promise<{ ok: boolean; error?: string; restart?: 'requested' | 'required' }>
   /** Start the HTTP server (idempotent). port 0 = ephemeral. */
@@ -289,9 +299,14 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
 
   const panel: SettingsPanel = {
     issueToken() {
-      const token = randomBytes(16).toString('hex')
+      // 't' 前缀:手机页按首字母 'd' 认长期设备令牌,裸 hex 有 1/16 会被误认。
+      const token = 't' + randomBytes(16).toString('hex')
       active = { token, expiresAt: now() + SETTINGS_LINK_TTL_MS }
       return token
+    },
+
+    activeLinkToken() {
+      return active && now() < active.expiresAt ? active.token : null
     },
 
     validToken(t) {
@@ -459,21 +474,14 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   async function routeRequest(url: URL, t: string | null, req: Request): Promise<Response> {
           // ── tokenless surfaces (non-sensitive) ─────────────────────────
           if (url.pathname === '/m/icon.png') {
-            const { starterStickersDir } = await import('./stickers')
-            const dir = starterStickersDir()
-            const icon = dir ? join(dir, 'bear-complete.png') : null
-            if (icon && existsSync(icon)) {
-              return new Response(readFileSync(icon), { headers: { 'content-type': 'image/png' } })
-            }
-            return json({ error: 'not_found' }, 404)
+            return new Response(MOBILE_BRAND_ICON_PNG, { headers: { 'content-type': 'image/png' } })
           }
           if (url.pathname === '/m/manifest.json') {
             return json({
               name: 'CC', short_name: 'CC', id: '/m', start_url: '/m', scope: '/m', display: 'standalone',
               background_color: '#f5ead8', theme_color: '#f5ead8',
-              // bear-complete.png 实际是 340x360;声明尺寸必须跟真实一致,否则
-              // 浏览器判定不匹配、拒用这个图标,主屏就退化成通用字母图标。
-              icons: [{ src: '/m/icon.png', sizes: '340x360', type: 'image/png' }],
+              // Read dimensions from the bundled PNG so launchers accept it.
+              icons: [{ src: '/m/icon.png', sizes: MOBILE_BRAND_ICON_SIZES, type: 'image/png' }],
             })
           }
           if (url.pathname === '/m/sw.js') {
@@ -528,6 +536,14 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           if (url.pathname === '/m/api/state' && req.method === 'GET') {
             return json(phoneState())
           }
+          if (url.pathname === '/m/api/art/blink' && req.method === 'GET') {
+            return json({ ok: true, mime: 'image/png', half: blinkArt.half.base64, closed: blinkArt.closed.base64 })
+          }
+          if (url.pathname === '/m/api/memory' && req.method === 'GET') {
+            if (!deps.curatedMemory) return json({ ok: false, error: 'memory_not_wired' }, 503)
+            // 经隧道时 handleRequest 抛出不会回包,手机会一直等 —— 这里兜住,让页面走「暂时读不到」。
+            try { return json({ ok: true, ...deps.curatedMemory() }) } catch { return json({ ok: false, error: 'unavailable' }, 500) }
+          }
           if (url.pathname === '/m/api/home' && req.method === 'GET') {
             let presence: Presence | null = null
             let presenceFailed = false
@@ -540,6 +556,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
               synced_at: new Date(now()).toISOString(),
               today: dayKey(now(), tz),
               presence,
+              work: await mobileHomeFocus(deps.matters),
               ...(presenceFailed ? { presence_error: 'unavailable' } : {}),
               unread: r.unread,
               seen_until: seenUntil,
@@ -569,6 +586,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             return json({ ok: true, seen_until: clamped })
           }
           // ── 「一件事」:与桌面同一份数据,同一套语义 ──────────────────
+          const mobileResponse=await mobileWorkbenchRoute(deps.matters,url,req)
+          if(mobileResponse)return mobileResponse
           if (url.pathname === '/m/api/matters' && req.method === 'GET') {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
             const kind = url.searchParams.get('kind'), status = url.searchParams.get('status')
@@ -581,21 +600,18 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
             const id = url.searchParams.get('id')
             if (!id || !/^[a-f0-9]{8}$/.test(id)) return json({ ok: false, error: 'invalid' }, 400)
-            try { const detail = await deps.matters.detail(id); try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } return json({ ok: true, ...(detail as object) }) }
+            try { const detail = await deps.matters.detail(id); try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } return mobileMatterDetailResponse(detail) }
             catch (e) { const msg = e instanceof Error ? e.message : 'internal'; return json({ ok: false, error: msg === 'matter_not_found' ? msg : 'unavailable' }, msg === 'matter_not_found' ? 404 : 500) }
           }
           if (url.pathname === '/m/api/matter/say' && req.method === 'POST') {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
             let body: unknown
             try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
-            const b = (body ?? {}) as { id?: unknown; text?: unknown }
+            const b = (body ?? {}) as Record<string,unknown>
             if (typeof b.id !== 'string' || !/^[a-f0-9]{8}$/.test(b.id) || typeof b.text !== 'string' || !b.text.trim() || b.text.length > 20_000) return json({ ok: false, error: 'invalid' }, 400)
-            try { return json({ ok: true, result: await deps.matters.say(b.id, b.text) }) }
+            try { const input=mobileSayInput(b);return json({ ok: true, result: input?await deps.matters.say(b.id,b.text,input):await deps.matters.say(b.id,b.text) }) }
             catch (e) {
-              const msg = e instanceof Error ? e.message : 'internal'
-              if (msg === 'matter_not_found') return json({ ok: false, error: msg }, 404)
-              if (msg === 'workbench_busy' || msg === 'reply_sink_busy') return json({ ok: false, error: msg }, 409)
-              return json({ ok: false, error: /^(invalid_|matter_|workbench_|chat_)/.test(msg) ? msg : 'unavailable' }, /^(invalid_|matter_|workbench_|chat_)/.test(msg) ? 400 : 500)
+              return mobileMatterError(e)
             }
           }
           if (url.pathname === '/m/api/todo' && req.method === 'POST') {

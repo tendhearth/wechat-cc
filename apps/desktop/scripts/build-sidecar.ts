@@ -101,6 +101,46 @@ if (process.platform === 'darwin') {
 
 console.log(`desktop sidecar ready: ${output}`)
 
+// ── cc-jobspawn:Windows 上「杀掉整棵进程树」靠的那一层壳(scripts/jobspawn.rs)──
+//
+// 为什么**所有平台**都编:`tauri.conf.json` 的 `externalBin` 一旦加了条目,当前
+// target 的文件必须存在,否则 mac / linux 的 `tauri build` 直接失败。POSIX 上这个
+// 程序的行为是直通(exec 目标命令),而且 TS 侧只在 win32 包 —— 宁可多带三百来 KB,
+// 也不要按平台改配置那种脆弱做法。
+//
+// 零外部 crate 依赖 ⇒ `rustc` 单文件编译就够(win-test 是域机,未必连得上 crates.io)。
+// rustc 必须在 PATH 上;Tauri 构建本来就要 Rust 工具链,所以这不是新依赖。
+{
+  const jobspawnSource = join(root, 'scripts', 'jobspawn.rs')
+  const jobspawnOutput = join(
+    root,
+    'apps/desktop/src-tauri/binaries',
+    `cc-jobspawn-${target.rustTriple}${target.extension ?? ''}`,
+  )
+  const built = Bun.spawn({
+    cmd: ['rustc', '-O', '-C', 'strip=symbols', '-C', 'debuginfo=0', '--edition', '2021',
+      '-o', jobspawnOutput, jobspawnSource],
+    stdout: 'inherit',
+    stderr: 'inherit',
+  })
+  if (await built.exited !== 0) {
+    throw new Error('failed to compile cc-jobspawn from scripts/jobspawn.rs (is `rustc` on PATH?)')
+  }
+  if (process.platform !== 'win32') chmodSync(jobspawnOutput, 0o755)
+  if (process.platform === 'darwin') {
+    // 同 CLI sidecar:Tauri 打包之前先要一个 ad-hoc 签名,最终签名在 Tauri 那一步。
+    await Bun.spawn({ cmd: ['xattr', '-cr', jobspawnOutput], stdout: 'ignore', stderr: 'ignore' }).exited
+    await Bun.spawn({ cmd: ['codesign', '--remove-signature', jobspawnOutput], stdout: 'ignore', stderr: 'ignore' }).exited
+    const signed = Bun.spawn({
+      cmd: ['codesign', '--force', '--sign', '-', '--identifier=com.tendhearth.wechat-cc.jobspawn', jobspawnOutput],
+      stdout: 'inherit',
+      stderr: 'inherit',
+    })
+    if (await signed.exited !== 0) throw new Error('failed to ad-hoc sign cc-jobspawn')
+  }
+  console.log(`jobspawn ready: ${jobspawnOutput}`)
+}
+
 // CC Atelier's first release target is Apple Silicon. The static sd-cli is
 // built separately because it is a large native artifact; allow the release
 // job/developer to provide it explicitly, and keep the checked-out local copy

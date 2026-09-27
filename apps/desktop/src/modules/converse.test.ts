@@ -16,12 +16,13 @@ let els: Record<string, El>
 let recorder: { mimeType: string; addEventListener: Function; start: Function; stop: Function }
 let stopTrack: ReturnType<typeof vi.fn>
 let invoke: ReturnType<typeof vi.fn<(cmd: string, args: Record<string, unknown>) => Promise<string>>>
+let onDelegate: ReturnType<typeof vi.fn<(text: string) => Promise<boolean>>>
 const settle = async () => { for (let i = 0; i < 15; i++) await Promise.resolve() }
 
 beforeEach(async () => {
   vi.resetModules()
   vi.useFakeTimers()
-  els = Object.fromEntries(['root', 'scroll', 'input', 'send', 'voice-toggle', 'mic', 'cancel-recording', 'recording', 'recording-label', 'recording-time', 'recording-hint'].map(id => [`converse-${id}`, new El()]))
+  els = Object.fromEntries(['root', 'scroll', 'input', 'send', 'delegate', 'voice-toggle', 'mic', 'cancel-recording', 'recording', 'recording-label', 'recording-time', 'recording-hint'].map(id => [`converse-${id}`, new El()]))
   vi.stubGlobal('window', {})
   vi.stubGlobal('localStorage', { getItem: () => null, setItem() {} })
   vi.stubGlobal('document', { getElementById: (id: string) => els[id] })
@@ -41,10 +42,69 @@ beforeEach(async () => {
   }
   stopTrack = vi.fn()
   invoke = vi.fn(async (cmd: string) => cmd === 'agent_transcribe' ? '识别的文字' : '回复')
+  onDelegate = vi.fn(async () => true)
   const { initConversePage } = await import('./converse.js')
-  initConversePage({ invoke, media: { getUserMedia: async () => ({ getTracks: () => [{ stop: stopTrack }] }) as any, makeRecorder: () => recorder as any } })
+  initConversePage({ invoke, onDelegate, media: { getUserMedia: async () => ({ getTracks: () => [{ stop: stopTrack }] }) as any, makeRecorder: () => recorder as any } })
 })
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
+
+it('delegates only this draft and clears it only after the workbench accepts it', async () => {
+  els['converse-input']!.value = '私人聊天内容'
+  els['converse-send']!.handlers.click!()
+  await settle()
+  let finish!: (accepted: boolean) => void
+  onDelegate.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+  els['converse-input']!.value = '  整理本项目的说明  '
+  els['converse-delegate']!.handlers.click?.()
+  await settle()
+  expect(onDelegate).toHaveBeenCalledExactlyOnceWith('整理本项目的说明')
+  expect(els['converse-input']!.value).toBe('  整理本项目的说明  ')
+  expect(els['converse-delegate']!.disabled).toBe(true)
+  els['converse-delegate']!.handlers.click?.()
+  els['converse-send']!.handlers.click!()
+  finish(true)
+  await settle()
+  expect(onDelegate).toHaveBeenCalledOnce()
+  expect(invoke.mock.calls.filter(([cmd]) => cmd === 'agent_converse')).toHaveLength(1)
+  expect(els['converse-input']!.value).toBe('')
+  expect(els['converse-scroll']!.innerHTML).toContain('私人聊天内容')
+})
+
+it.each(['cancel', 'failure'])('keeps the chat draft when delegation ends with %s', async result => {
+  onDelegate.mockImplementation(async () => { if (result === 'failure') throw new Error('offline'); return false })
+  els['converse-input']!.value = '不能丢的要求'
+  els['converse-delegate']!.handlers.click?.()
+  await settle()
+  expect(onDelegate).toHaveBeenCalledOnce()
+  expect(els['converse-input']!.value).toBe('不能丢的要求')
+  expect(els['converse-input']!.disabled).toBe(false)
+  expect(els['converse-delegate']!.disabled).toBe(false)
+  if (result === 'failure') expect(els['converse-scroll']!.innerHTML).toContain('暂时无法交给 CC 做')
+  expect(invoke).not.toHaveBeenCalled()
+})
+
+it('does not hand off an empty draft or a draft during recording or sending', async () => {
+  els['converse-delegate']!.handlers.click?.()
+  expect(els['converse-delegate']!.disabled).toBe(true)
+  els['converse-input']!.value = '先保留'
+  els['converse-input']!.handlers.input?.()
+  expect(els['converse-delegate']!.disabled).toBe(false)
+  els['converse-mic']!.handlers.click!()
+  expect(els['converse-delegate']!.disabled).toBe(true)
+  els['converse-delegate']!.handlers.click?.()
+  await settle()
+  els['converse-delegate']!.handlers.click?.()
+  els['converse-cancel-recording']!.handlers.click!()
+  await settle()
+  let finish!: (text: string) => void
+  invoke.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+  els['converse-send']!.handlers.click!()
+  expect(els['converse-delegate']!.disabled).toBe(true)
+  els['converse-delegate']!.handlers.click?.()
+  finish('回复')
+  await settle()
+  expect(onDelegate).not.toHaveBeenCalled()
+})
 
 it('uses frozen CC and labelled SVG controls in a single composer', () => {
   expect(els['converse-scroll']!.innerHTML).toContain('canonical/lit/front.png')
@@ -68,6 +128,15 @@ it('recording transcribes to an editable draft, preserving existing text without
   expect(invoke).toHaveBeenCalledWith('agent_transcribe', expect.anything())
   expect(invoke).not.toHaveBeenCalledWith('agent_converse', expect.anything())
   expect(vi.getTimerCount()).toBe(0)
+})
+
+it('enables delegation after voice transcription fills an initially empty draft', async () => {
+  els['converse-mic']!.handlers.click!()
+  await settle()
+  els['converse-mic']!.handlers.click!()
+  await settle()
+  expect(els['converse-input']!.value).toBe('识别的文字')
+  expect(els['converse-delegate']!.disabled).toBe(false)
 })
 
 it('cancelling discards audio, stops tracks and keeps the draft', async () => {

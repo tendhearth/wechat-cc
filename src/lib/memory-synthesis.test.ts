@@ -6,15 +6,19 @@ import { openTestDb } from './db'
 import { makeObservationsStore } from '../daemon/observations/store'
 import { makeMilestonesStore } from '../daemon/milestones/store'
 import { makeLifeStoresReader } from '../daemon/life-stores'
-import { writeMemoryFile } from './memory'
+import { readMemoryProfileFile, writeMemoryFile } from './memory'
+import { MemoryProfileDocument } from '../cli/schema'
+import { invalidateDerivedMemory, isDerivedMemoryStale } from './memory-derived-state'
 import {
   discoverProjectMemory,
   formatSynthesisPrompt,
   gatherFileSurvey,
   gatherLifeContext,
+  getMemoryProfileStatus,
   projectDisplayName,
   summarizeProjectMemories,
   synthesizeOverview,
+  synthesizeProfile,
   OVERVIEW_FILENAME,
 } from './memory-synthesis'
 
@@ -301,5 +305,236 @@ describe('file survey in synthesis', () => {
     const withoutSurvey = formatSynthesisPrompt([], null, emptySurvey)
     expect(withoutSurvey).not.toContain('电脑里在忙的东西')
     expect(withoutSurvey).toContain('工作和生活不要分开看')
+  })
+})
+
+describe('profile evidence', () => {
+  const adminChatId = 'owner@im.wechat'
+  const tokensIn = (prompt: string): Array<{ token: string; label: string }> =>
+    [...prompt.matchAll(/【依据 (e_[a-f0-9]{16})】([^\n]+)\n/g)].map(m => ({ token: m[1]!, label: m[2]! }))
+
+  it('keeps real store IDs aligned with the recent bodies while preserving legacy readers', async () => {
+    const db = openTestDb()
+    try {
+      const observations = makeObservationsStore(db, adminChatId)
+      const ids = []
+      for (let i = 0; i < 22; i++) ids.push(await observations.append({ body: `观察 ${i}` }))
+      await observations.archive(ids[0]!)
+      await makeMilestonesStore(db, adminChatId).fire({ id: 'ms_first', body: '第一次散步' })
+      const reader = makeLifeStoresReader(db, stateDir)
+      const life = await gatherLifeContext({ stores: reader, stateDir, adminChatId })
+      expect(await reader.listObservations(adminChatId)).toHaveLength(21)
+      expect(await reader.listMilestones(adminChatId)).toEqual(['第一次散步'])
+      expect(life.observationRecords).toHaveLength(20)
+      expect(life.observationRecords?.[0]).toEqual({ id: ids[2], body: '观察 2' })
+      expect(life.observations[0]).toBe('观察 2')
+      expect(life.milestoneRecords).toEqual([{ id: 'ms_first', body: '第一次散步' }])
+    } finally { db.close() }
+  })
+
+  it('resolves only catalog tokens to exact memory, observation, milestone and project sources', async () => {
+    const db = openTestDb()
+    try {
+      const obsId = await makeObservationsStore(db, adminChatId).append({ body: '喜欢清晨散步' })
+      await makeMilestonesStore(db, adminChatId).fire({ id: 'ms_walk', body: '完成了第一次远足' })
+      writeMemoryFile(stateDir, adminChatId, 'preferences.md', '偏爱安静的树林')
+      writeMemoryFile(stateDir, adminChatId, 'family.md', '记挂家人')
+      writeMemoryFile(stateDir, adminChatId, 'notes.md', '每周运动')
+      seedProject('-alpha', { 'MEMORY.md': '你在做 alpha', 'routine.md': '你会认真检查改动' })
+      seedProject('-beta', { 'routine.md': '你会记录读书笔记' })
+      const result = await synthesizeProfile({
+        stateDir, adminChatId, projectsRoot, lifeStores: makeLifeStoresReader(db, stateDir),
+        sdkEval: async prompt => {
+          const entries = tokensIn(prompt)
+          const selected = ['preferences.md', '观察：喜欢清晨散步', '里程碑：完成了第一次远足', 'alpha · routine.md']
+            .map(label => entries.find(entry => entry.label === label)?.token)
+          expect(selected.every(Boolean)).toBe(true)
+          return JSON.stringify({
+            insight: '你喜欢自然', summary: '你愿意为重要的事情花时间', tags: [],
+            sourceRefs: [{ kind: 'memory', path: 'fabricated.md', label: '伪造' }],
+            traits: [{ title: '你的习惯', body: '你会坚持关注在意的事情', sources: ['旧名称'], sourceRefs: [
+              'e_0000000000000000', { kind: 'memory', path: '../secrets.md', label: '伪造' }, ...selected, selected[0],
+            ] }],
+            preferences: [], rememberedEvents: [],
+          })
+        },
+      })
+      const expected = [
+        { kind: 'memory', path: 'preferences.md', label: 'preferences.md' },
+        { kind: 'observation', id: obsId, label: '观察：喜欢清晨散步' },
+        { kind: 'milestone', id: 'ms_walk', label: '里程碑：完成了第一次远足' },
+        { kind: 'project', project: '-alpha', path: 'routine.md', label: 'alpha · routine.md' },
+      ]
+      expect(result.profile?.traits[0]?.sourceRefs).toEqual(expected)
+      expect(result.profile?.traits[0]?.sources).toEqual(['旧名称'])
+      expect(result.profile).not.toHaveProperty('sourceRefs')
+      const persisted = JSON.parse(readFileSync(join(stateDir, 'memory', adminChatId, '_profile.json'), 'utf8'))
+      expect(MemoryProfileDocument.parse(persisted).traits[0]?.sourceRefs).toEqual(expected)
+    } finally { db.close() }
+  })
+
+  it('never upgrades legacy source names or fabricated ref objects into links', async () => {
+    for (const name of ['preferences.md', 'family.md', 'notes.md']) writeMemoryFile(stateDir, adminChatId, name, '你的一条记忆')
+    const result = await synthesizeProfile({
+      stateDir, adminChatId, projectsRoot,
+      lifeStores: { listObservations: async () => ['旧观察'], listMilestones: async () => [] },
+      sdkEval: async () => JSON.stringify({
+        insight: '你关心生活', summary: '', tags: [],
+        traits: [{ title: '你的偏好', body: '你喜欢安静', sources: ['preferences.md', '旧观察'],
+          sourceRefs: ['preferences.md', 'e_0000000000000000', { kind: 'memory', path: 'preferences.md', label: '伪造' }] }],
+        preferences: [], rememberedEvents: [],
+      }),
+    })
+    expect(result.profile?.traits[0]?.sources).toEqual(['preferences.md', '旧观察'])
+    expect(result.profile?.traits[0]?.sourceRefs).toBeUndefined()
+    expect(MemoryProfileDocument.parse(result.profile).traits[0]?.sourceRefs).toBeUndefined()
+  })
+
+  it('retains personal-memory evidence when project content exhausts the work budget', async () => {
+    for (let i = 0; i < 5; i++) seedProject(`-project-${i}`, {
+      'a.md': '项目内容'.repeat(1000), 'b.md': '项目内容'.repeat(1000), 'c.md': '项目内容'.repeat(1000),
+    })
+    writeMemoryFile(stateDir, adminChatId, 'personal.md', '你会记得给家人打电话')
+    const result = await synthesizeProfile({ stateDir, adminChatId, projectsRoot,
+      lifeStores: { listObservations: async () => [], listMilestones: async () => [] },
+      sdkEval: async prompt => {
+        const token = tokensIn(prompt).find(entry => entry.label === 'personal.md')?.token
+        expect(token).toBeDefined()
+        return JSON.stringify({ insight: '你关心家人', traits: [{ title: '你的关系', body: '你在意与家人的联系', sourceRefs: [token] }] })
+      },
+    })
+    expect(result.profile?.traits[0]?.sourceRefs).toEqual([{ kind: 'memory', path: 'personal.md', label: 'personal.md' }])
+  })
+
+  it('does not accept a previously valid reference when its material was omitted by the prompt budget', async () => {
+    const stores = { listObservations: async () => [], listMilestones: async () => [] }
+    writeMemoryFile(stateDir, adminChatId, 'zz-hidden.md', '只存在于最后一份笔记的依据'.repeat(400))
+    let originalToken = ''
+    await synthesizeProfile({
+      stateDir, adminChatId, projectsRoot, lifeStores: stores,
+      sdkEval: async prompt => {
+        originalToken = tokensIn(prompt).find(entry => entry.label === 'zz-hidden.md')?.token ?? ''
+        return JSON.stringify({ insight: '你有长期记忆' })
+      },
+    })
+    expect(originalToken).toMatch(/^e_[a-f0-9]{16}$/)
+    for (let i = 0; i < 15; i++) writeMemoryFile(stateDir, adminChatId, `a${i}.md`, '已提供的内容'.repeat(1000))
+    const result = await synthesizeProfile({
+      stateDir, adminChatId, projectsRoot, lifeStores: stores,
+      sdkEval: async prompt => {
+        expect(prompt).not.toContain('只存在于最后一份笔记的依据')
+        expect(prompt).not.toContain(originalToken)
+        expect(prompt.length).toBeLessThan(43_000)
+        return JSON.stringify({ insight: '你有长期记忆', traits: [{ title: '你的习惯', body: '你喜欢记录', sourceRefs: [originalToken] }] })
+      },
+    })
+    expect(result.profile?.traits[0]?.sourceRefs).toBeUndefined()
+  })
+})
+
+describe('derived memory generation fences', () => {
+  const adminChatId = 'owner@im.wechat'
+  const lifeStores = { listObservations: async () => [], listMilestones: async () => [] }
+  const seedNotes = () => {
+    for (const name of ['preferences.md', 'family.md', 'notes.md']) writeMemoryFile(stateDir, adminChatId, name, '你的一条记忆')
+  }
+
+  it.each(['overview', 'profile'] as const)('regenerates %s after metadata corruption while leaving the other artifact stale', async kind => {
+    seedNotes()
+    const root = join(stateDir, 'memory', adminChatId)
+    const deps = { stateDir, adminChatId, projectsRoot, lifeStores }
+    await synthesizeOverview({ ...deps, sdkEval: async () => '旧概要' })
+    await synthesizeProfile({ ...deps, sdkEval: async () => JSON.stringify({ insight: '旧画像' }) })
+    writeFileSync(join(root, '.derived-state.json'), '{ broken')
+    const synthesize = kind === 'overview' ? synthesizeOverview : synthesizeProfile
+    const result = await synthesize({ ...deps, sdkEval: async () => kind === 'overview' ? '重新生成的概要' : JSON.stringify({ insight: '重新生成的画像' }) })
+    expect(result.written).toBeDefined()
+    expect(readFileSync(join(root, kind === 'overview' ? '_overview.md' : '_profile.json'), 'utf8')).toContain('重新生成')
+    expect(isDerivedMemoryStale(root, kind)).toBe(false)
+    expect(isDerivedMemoryStale(root, kind === 'overview' ? 'profile' : 'overview')).toBe(true)
+    expect(readFileSync(join(root, kind === 'overview' ? '_profile.json' : '_overview.md'), 'utf8')).toContain(kind === 'overview' ? '旧画像' : '旧概要')
+  })
+
+  it.each(['overview', 'profile'] as const)('still rejects late %s output if a correction follows metadata recovery', async kind => {
+    seedNotes()
+    const root = join(stateDir, 'memory', adminChatId)
+    writeFileSync(join(root, '.derived-state.json'), '{ broken')
+    const synthesize = kind === 'overview' ? synthesizeOverview : synthesizeProfile
+    const result = await synthesize({ stateDir, adminChatId, projectsRoot, lifeStores, sdkEval: async () => {
+      // Recovery must happen before the asynchronous model call, not when committing.
+      expect(() => JSON.parse(readFileSync(join(root, '.derived-state.json'), 'utf8'))).not.toThrow()
+      invalidateDerivedMemory(root)
+      writeMemoryFile(stateDir, adminChatId, 'preferences.md', '你更正后的偏好')
+      return kind === 'overview' ? '迟到的概要' : JSON.stringify({ insight: '迟到的画像' })
+    } })
+    expect(result.written).toBeUndefined()
+    expect(isDerivedMemoryStale(root, 'overview')).toBe(true)
+    expect(isDerivedMemoryStale(root, 'profile')).toBe(true)
+  })
+
+  it.each(['overview', 'profile'] as const)('does not repair corrupt metadata during a %s dry run', async kind => {
+    seedNotes()
+    const root = join(stateDir, 'memory', adminChatId)
+    writeFileSync(join(root, '.derived-state.json'), '{ broken')
+    const synthesize = kind === 'overview' ? synthesizeOverview : synthesizeProfile
+    const result = await synthesize({ stateDir, adminChatId, projectsRoot, lifeStores, dryRun: true, sdkEval: async () => { throw new Error('dry run must not call the model') } })
+    expect(result.written).toBeUndefined()
+    expect(readFileSync(join(root, '.derived-state.json'), 'utf8')).toBe('{ broken')
+  })
+
+  it.each(['overview', 'profile'] as const)('does not overwrite %s after a correction during the model call', async kind => {
+    seedNotes()
+    const synthesize = kind === 'overview' ? synthesizeOverview : synthesizeProfile
+    const output = (text: string) => kind === 'overview' ? text : JSON.stringify({ insight: text })
+    await synthesize({ stateDir, adminChatId, projectsRoot, lifeStores, sdkEval: async () => output('旧的画像') })
+    const file = join(stateDir, 'memory', adminChatId, kind === 'overview' ? '_overview.md' : '_profile.json')
+    const before = readFileSync(file, 'utf8')
+    const result = await synthesize({ stateDir, adminChatId, projectsRoot, lifeStores, sdkEval: async () => {
+      invalidateDerivedMemory(join(stateDir, 'memory', adminChatId))
+      return output('过时的推断')
+    } })
+    expect(result.written).toBeUndefined()
+    expect(readFileSync(file, 'utf8')).toBe(before)
+    expect(isDerivedMemoryStale(join(stateDir, 'memory', adminChatId), kind)).toBe(true)
+  })
+
+  it.each(['overview', 'profile'] as const)('does not overwrite %s when source text changed outside the correction API', async kind => {
+    seedNotes()
+    const synthesize = kind === 'overview' ? synthesizeOverview : synthesizeProfile
+    const result = await synthesize({ stateDir, adminChatId, projectsRoot, lifeStores, sdkEval: async () => {
+      writeMemoryFile(stateDir, adminChatId, 'preferences.md', '现在你喜欢户外活动')
+      return kind === 'overview' ? '根据旧材料生成' : JSON.stringify({ insight: '根据旧材料生成' })
+    } })
+    expect(result.written).toBeUndefined()
+  })
+
+  it('reports a recently corrected profile as stale and makes a successful refresh fresh', async () => {
+    seedNotes()
+    const deps = { stateDir, adminChatId, projectsRoot, lifeStores, sdkEval: async () => JSON.stringify({ insight: '你喜欢生活' }) }
+    await synthesizeProfile(deps)
+    const root = join(stateDir, 'memory', adminChatId)
+    invalidateDerivedMemory(root)
+    const stale = await getMemoryProfileStatus(deps)
+    expect(stale).toMatchObject({ status: 'stale', changed: true, needsRefresh: true, canAutoGenerate: true, daysSinceGenerated: 0 })
+    expect(MemoryProfileDocument.parse(JSON.parse(readMemoryProfileFile(stateDir, adminChatId))).needsRefresh).toBe(true)
+    await synthesizeProfile(deps)
+    expect(isDerivedMemoryStale(root, 'profile')).toBe(false)
+    expect(isDerivedMemoryStale(root, 'overview')).toBe(true)
+    expect(MemoryProfileDocument.parse(JSON.parse(readMemoryProfileFile(stateDir, adminChatId))).needsRefresh).toBeUndefined()
+    expect(await getMemoryProfileStatus(deps)).toMatchObject({ status: 'fresh', changed: false, needsRefresh: false })
+  })
+
+  it('captures the revision before awaiting source readers', async () => {
+    seedNotes()
+    let read = false
+    const result = await synthesizeProfile({ stateDir, adminChatId, projectsRoot,
+      lifeStores: { ...lifeStores, listObservations: async () => {
+        if (!read) invalidateDerivedMemory(join(stateDir, 'memory', adminChatId))
+        read = true
+        return []
+      } },
+      sdkEval: async () => JSON.stringify({ insight: '你喜欢生活' }),
+    })
+    expect(result.written).toBeUndefined()
   })
 })

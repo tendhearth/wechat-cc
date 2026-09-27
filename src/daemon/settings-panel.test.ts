@@ -99,6 +99,19 @@ describe('settings panel', () => {
     expect(panel.validToken(t3)).toBe(true)
   })
 
+  it('link tokens never look like device tokens — the phone page treats a leading "d" as a paired device', () => {
+    // 以前是裸 16 字节 hex:1/16 的链接以 d 开头,手机页会把它当长期令牌存下、隐藏配对条,10 分钟后 401。
+    for (let i = 0; i < 64; i++) expect(panel.issueToken()).toMatch(/^t[0-9a-f]{32}$/)
+  })
+
+  it('activeLinkToken: the current link while it is valid, null once expired (the tunnel accepts only this one)', () => {
+    expect(panel.activeLinkToken()).toBeNull()
+    const t = panel.issueToken()
+    expect(panel.activeLinkToken()).toBe(t)
+    nowMs += SETTINGS_LINK_TTL_MS + 1
+    expect(panel.activeLinkToken()).toBeNull()
+  })
+
   it('state() assembles name/persona/prefs/config for the owner', () => {
     const s = panel.state() as { ok: true; name: string; persona: string; prefs: Record<string, unknown>; config: Record<string, unknown> }
     expect(s.ok).toBe(true)
@@ -233,25 +246,38 @@ describe('随身 CC (phone PWA + device pairing)', () => {
     expect(Buffer.from(r.data, 'base64').toString()).toBe('png-bytes')
   })
 
-  it('sticker image serving guards path traversal; icon is tokenless', async () => {
+  it('sticker image serving guards path traversal', async () => {
     const { port } = await panel.start(0)
     const base = `http://127.0.0.1:${port}`
     const t = panel.issueToken()
     expect((await fetch(`${base}/m/api/sticker/bear.png?t=${t}`)).status).toBe(200)
     expect((await fetch(`${base}/m/api/sticker/..%2F..%2Fagent-config.json?t=${t}`)).status).toBe(404)
-    const icon = await fetch(`${base}/m/icon.png`)
-    expect([200, 404]).toContain(icon.status)   // bundled art may be absent in test env — must not 401
-    expect(icon.status).not.toBe(401)
   })
 
-  it('/m 首屏是「今天」,口袋里还有原来三块', async () => {
+  it('serves the CC brand PNG without a token and declares its actual PWA dimensions', async () => {
+    const { port } = await panel.start(0)
+    const base = `http://127.0.0.1:${port}`
+    const icon = await fetch(`${base}/m/icon.png`)
+    expect(icon.status).toBe(200)
+    expect(icon.headers.get('content-type')).toBe('image/png')
+    const bytes = Buffer.from(await icon.arrayBuffer())
+    expect(bytes.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    expect(bytes.equals(readFileSync(new URL('../../apps/desktop/src/wechat-cc-logo.png', import.meta.url)))).toBe(true)
+    const manifest = await (await fetch(`${base}/m/manifest.json`)).json() as { icons: Array<{ src: string; sizes: string; type: string }> }
+    expect(manifest.icons).toEqual([{
+      src: '/m/icon.png', sizes: `${bytes.readUInt32BE(16)}x${bytes.readUInt32BE(20)}`, type: 'image/png',
+    }])
+  })
+
+  it('/m 首屏是「此刻」,回忆里仍能访问口袋三块', async () => {
     const { port } = await panel.start(0)
     const t = panel.issueToken()
     const html = await (await fetch(`http://127.0.0.1:${port}/m?t=${t}`)).text()
     expect(html).toContain('id="p-today"')
     expect(html).toContain('id="p-pocket"')
     expect(html).toContain('/m/api/home')
-    expect(html).toContain('cc.home.v1')
+    expect(html).toContain('cc.home.v2:')
+    expect(html).toContain('id="p-memory"')
     for (const id of ['id="todos"', 'id="portrait"', 'id="stickers"']) expect(html).toContain(id)
   })
 })
@@ -330,6 +356,15 @@ describe('随身 CC 首屏:伙伴的一天', () => {
       expect(r.presence_error).toBe('unavailable')
       expect(r.sources_degraded).toEqual(['thought'])
       expect((r.events as unknown[]).length).toBe(2)
+    })
+  })
+  it('home returns an authenticated decision shortcut, not an approval payload', async()=>{
+    const task={id:'deadbeef',kind:'task',title:'首页调整',status:'open',updatedAt:NOW}
+    await withPanel(mk({matters:{list:()=>[task],detail:()=>({matter:task,task:{id:task.id,status:'running'},runId:'r1',permissions:[{id:'request1',taskId:task.id,description:'private command'}]}),say:async()=>({}),seenOnPhone:()=>{}}}),async(base,t)=>{
+      expect((await fetch(`${base}/m/api/home`)).status).toBe(401)
+      const response=await (await fetch(`${base}/m/api/home?t=${t}`)).json() as {work:unknown}
+      expect(response.work).toEqual({focus:{id:'deadbeef',title:'首页调整',kind:'decision'},partial:false})
+      expect(JSON.stringify(response.work)).not.toContain('private command')
     })
   })
   it('home:feed dep 缺 → 三项 degraded、空 events,仍 200', async () => {
@@ -586,5 +621,57 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     expect((await fetch(`${b2}/m/api/matter?id=00000000&t=${t2}`)).status).toBe(404)
     matters.say.mockImplementationOnce(async () => { throw new Error('workbench_busy') })
     expect((await fetch(`${b2}/m/api/matter/say?t=${t2}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: 'x' }) })).status).toBe(409)
+  })
+})
+
+describe('phone curated memory', () => {
+  it('a throwing memory view answers 500 instead of leaving the phone waiting', async () => {
+    const p = makeSettingsPanel({
+      stateDir: mkdtempSync(join(tmpdir(), 'sp-mem-err-')), ownerChatId: () => null,
+      chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
+      getUserName: () => null, setUserName: async () => {}, log: () => {},
+      curatedMemory: () => { throw new Error('EACCES') },
+    })
+    const { port } = await p.start(0)
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/m/api/memory?t=${p.issueToken()}`)
+      expect(r.status).toBe(500)
+      expect(await r.json()).toEqual({ ok: false, error: 'unavailable' })
+    } finally { await p.stop() }
+  })
+  it('serves the blink frames behind the token', async () => {
+    const p = makeSettingsPanel({
+      stateDir: mkdtempSync(join(tmpdir(), 'sp-art-')), ownerChatId: () => null,
+      chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
+      getUserName: () => null, setUserName: async () => {}, log: () => {},
+    })
+    const { port } = await p.start(0)
+    try {
+      const base = `http://127.0.0.1:${port}`
+      expect((await fetch(`${base}/m/api/art/blink`)).status).toBe(401)
+      const r = await (await fetch(`${base}/m/api/art/blink?t=${p.issueToken()}`)).json() as { ok: boolean; mime: string; half: string; closed: string }
+      expect(r.ok).toBe(true)
+      expect(r.mime).toBe('image/png')
+      expect(Buffer.from(r.half, 'base64').subarray(1, 4).toString()).toBe('PNG')
+      expect(Buffer.from(r.closed, 'base64').subarray(1, 4).toString()).toBe('PNG')
+    } finally { await p.stop() }
+  })
+  it('serves the curated memory view behind the token', async () => {
+    const view = { updated_at: '2026-09-25T04:05:00.000Z', when_label: '今天凌晨 4 点', mood: 'changed' as const, failures: 0,
+      changes: [{ kind: 'add' as const, label: '新记下' as const, section: '承诺' as const, text: '周五回话' }],
+      sections: [{ name: '偏好' as const, items: [{ id: 'b1', text: '回复直接', display: '回复直接', due: null, due_label: null, person: null, changed: true }] }] }
+    const p = makeSettingsPanel({
+      stateDir: mkdtempSync(join(tmpdir(), 'sp-mem-')), ownerChatId: () => null,
+      chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
+      getUserName: () => null, setUserName: async () => {}, log: () => {},
+      curatedMemory: () => view,
+    })
+    const { port } = await p.start(0)
+    try {
+      const base = `http://127.0.0.1:${port}`
+      expect((await fetch(`${base}/m/api/memory`)).status).toBe(401)
+      const r = await (await fetch(`${base}/m/api/memory?t=${p.issueToken()}`)).json()
+      expect(r).toEqual({ ok: true, ...view })
+    } finally { await p.stop() }
   })
 })

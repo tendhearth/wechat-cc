@@ -1,5 +1,7 @@
 # RFC 02 · wechat-cc Post-v1.1 Roadmap (v1.1-final → v2.1)
 
+> **已被取代(2026-09-22)**:这份是 v1.2 时代(2026-04-24)的路线图,只当历史读。现行 roadmap 在 [`docs/roadmap.md`](../roadmap.md)。
+
 **Status**: v1.2 shipped 2026-04-24 · v2.1 not started
 **Supersedes**: none (extends RFC 01 §7 Roadmap)
 **Context**: v1.1.0-rc.1 tagged 2026-04-22; 6 reliability fixes landed in 2cab581 (2026-04-23); cc-connect audited 2026-04-24; v1.2 closed 2026-04-24 (3.5-day sprint vs 3-4 wk budget — less-is-more paid off)

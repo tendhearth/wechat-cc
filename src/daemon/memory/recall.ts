@@ -10,7 +10,7 @@
  * injects them EVERY turn (core/knowledge memory sections) — recalling them
  * again would only duplicate context.
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { makeMemoryFS } from './fs-api'
 
@@ -47,8 +47,10 @@ export function recallFromMemory(
   const needed = Math.max(2, Math.ceil(tokens.length / 3))
 
   let files: string[]
+  let memory: ReturnType<typeof makeMemoryFS>
   try {
-    files = makeMemoryFS({ rootDir: root }).list().filter((f) => !EXCLUDED.has(f)).slice(0, MAX_FILES)
+    memory = makeMemoryFS({ rootDir: root })
+    files = memory.list().filter((f) => !EXCLUDED.has(f)).slice(0, MAX_FILES)
   } catch {
     return []
   }
@@ -57,7 +59,9 @@ export function recallFromMemory(
   for (const file of files) {
     let content: string
     try {
-      content = readFileSync(join(root, file), 'utf8')
+      const read = memory.read(file)
+      if (read === null) continue
+      content = read
     } catch {
       continue
     }

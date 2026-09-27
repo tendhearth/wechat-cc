@@ -43,6 +43,41 @@ describe('makeIntrospectAgent (real SDK)', () => {
     expect(result).toEqual({ write: true, body: '观察一条', tone: 'curious', reasoning: 'r' })
   })
 
+  it('excludes archived observation reasoning from future introspection without removing audit history', async () => {
+    const { events, observations } = makeStores(dir, 'chat_x', db)
+    const archived = await observations.append({ body: 'superseded observation body' })
+    const active = await observations.append({ body: 'current observation body' })
+    // The event remains relevant even when its active observation is older
+    // than the five bodies included in the bounded prompt context.
+    for (let i = 0; i < 5; i++) await observations.append({ body: `newer body ${i}` })
+    await events.append({ kind: 'observation_written', trigger: 'introspect', reasoning: 'superseded inference', observation_id: archived })
+    await events.append({ kind: 'observation_written', trigger: 'introspect', reasoning: 'still active inference', observation_id: active })
+    await events.append({ kind: 'cron_eval_skipped', trigger: 'daily', reasoning: 'unrelated cron decision' })
+    await observations.archive(archived)
+    const sdkEval = vi.fn(async (_prompt: string) => '{"write":false,"reasoning":"nothing new"}')
+    const agent = makeIntrospectAgent({ chatId: 'chat_x', events, observations, memorySnapshot: async () => '', recentInboundMessages: async () => [], sdkEval })
+    await agent.runIntrospect()
+    const prompt = sdkEval.mock.calls[0]![0]
+    expect(prompt).not.toContain('superseded inference')
+    expect(prompt).not.toContain('superseded observation body')
+    expect(prompt).toContain('still active inference')
+    expect(prompt).toContain('unrelated cron decision')
+    expect(await events.list()).toHaveLength(3)
+    expect(await observations.listArchived()).toMatchObject([{ id: archived, body: 'superseded observation body' }])
+  })
+
+  it('omits observation event reasoning when its source cannot be verified as active', async () => {
+    const { events, observations } = makeStores(dir, 'chat_x', db)
+    await events.append({ kind: 'observation_written', trigger: 'legacy', reasoning: 'unverifiable legacy inference' })
+    await events.append({ kind: 'observation_written', trigger: 'legacy', reasoning: 'missing record inference', observation_id: 'obs_missing' })
+    const sdkEval = vi.fn(async (_prompt: string) => '{"write":false,"reasoning":"nothing new"}')
+    const agent = makeIntrospectAgent({ chatId: 'chat_x', events, observations, memorySnapshot: async () => '', recentInboundMessages: async () => [], sdkEval })
+    await agent.runIntrospect()
+    expect(sdkEval.mock.calls[0]![0]).not.toContain('unverifiable legacy inference')
+    expect(sdkEval.mock.calls[0]![0]).not.toContain('missing record inference')
+    expect(await events.list()).toHaveLength(2)
+  })
+
   it('returns write=false on SDK error (does not throw)', async () => {
     const { events, observations } = makeStores(dir, 'chat_x', db)
     const sdkEval = vi.fn(async () => { throw new Error('timeout') })

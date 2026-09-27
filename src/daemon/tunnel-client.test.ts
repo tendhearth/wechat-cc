@@ -208,7 +208,54 @@ describe('tunnel-client (daemon side)', () => {
     sock.emitMessage(JSON.stringify({ stream: 'sB', frame: await sealFrame(key, req) }))
     await new Promise(r => setTimeout(r, 30))
     expect(handled).toBe(false)                 // never reached the router
-    expect(sock.sent.length).toBe(1)            // only the handshake reply, no sealed response
+    // 握手回复之外只多一个明文错误帧(2026-09-24:以前静默丢弃,手机页永远卡在「连回你的电脑…」)。
+    // 它不带任何密文或令牌信息 —— 中继本来就知道这条流没通。
+    expect(sock.sent.length).toBe(2)
+    expect(JSON.parse(sock.sent.at(-1)!)).toEqual({ stream: 'sB', frame: { error: 'auth_failed' } })
+  })
+
+  it('accepts the active /set link token, so an unpaired phone can open the link from outside', async () => {
+    const LINK = 'tlink0000'
+    const phone = await generateTunnelKeypair()
+    const sock = fakeSocket()
+    let seenToken: string | null = null
+    const client = makeTunnelClient({
+      daemonId: 'cc-1', knownDeviceTokens: () => [], activeLinkToken: () => LINK,
+      handleRequest: async (req) => { seenToken = new URL(req.url).searchParams.get('d'); return new Response('{}') },
+      connect: () => sock.ws as never, log: () => {},
+    })
+    client.start()
+    sock.emitMessage(JSON.stringify({ stream: 'sL', frame: { hs: await exportPublicKeyB64(phone.publicKey) } }))
+    for (let i = 0; i < 20 && sock.sent.length < 1; i++) await new Promise(r => setTimeout(r, 5))
+    const daemonPub = JSON.parse(sock.sent.at(-1)!).frame.hs
+    const key = await deriveSharedKey(phone.privateKey, await importDaemonPub(daemonPub), new TextEncoder().encode(LINK))
+    const req = new TextEncoder().encode(JSON.stringify({ path: '/set', method: 'GET', rid: 'r1' }))
+    sock.emitMessage(JSON.stringify({ stream: 'sL', frame: await sealFrame(key, req) }))
+    for (let i = 0; i < 20 && sock.sent.length < 2; i++) await new Promise(r => setTimeout(r, 5))
+    // 认证后注入的是这个链接令牌 —— routeRequest 照常用 validToken 判它是否还在 10 分钟内。
+    expect(seenToken).toBe(LINK)
+    const opened = JSON.parse(new TextDecoder().decode(await openFrame(key, JSON.parse(sock.sent.at(-1)!).frame)))
+    expect(opened.status).toBe(200)
+  })
+
+  it('an expired /set link (no active link token) is refused with an error frame', async () => {
+    const phone = await generateTunnelKeypair()
+    const sock = fakeSocket()
+    let handled = false
+    const client = makeTunnelClient({
+      daemonId: 'cc-1', knownDeviceTokens: () => [], activeLinkToken: () => null,
+      handleRequest: async () => { handled = true; return new Response('x') },
+      connect: () => sock.ws as never, log: () => {},
+    })
+    client.start()
+    sock.emitMessage(JSON.stringify({ stream: 'sE', frame: { hs: await exportPublicKeyB64(phone.publicKey) } }))
+    for (let i = 0; i < 20 && sock.sent.length < 1; i++) await new Promise(r => setTimeout(r, 5))
+    const daemonPub = JSON.parse(sock.sent.at(-1)!).frame.hs
+    const key = await deriveSharedKey(phone.privateKey, await importDaemonPub(daemonPub), new TextEncoder().encode('tstale'))
+    sock.emitMessage(JSON.stringify({ stream: 'sE', frame: await sealFrame(key, new TextEncoder().encode('{"path":"/set"}')) }))
+    for (let i = 0; i < 20 && sock.sent.length < 2; i++) await new Promise(r => setTimeout(r, 5))
+    expect(handled).toBe(false)
+    expect(JSON.parse(sock.sent.at(-1)!)).toEqual({ stream: 'sE', frame: { error: 'auth_failed' } })
   })
 
   it('a closed control frame frees the stream state (later sealed frames drop)', async () => {

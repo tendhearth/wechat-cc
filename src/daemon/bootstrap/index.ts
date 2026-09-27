@@ -175,7 +175,7 @@ function hydrateClaudeAuthEnvFromUserSettings(log: BootstrapDeps['log']): void {
  * Returns undefined when the registry has no cheapEval — the coordinator
  * treats `haikuEval: undefined` as absent, skipping beat ②b and beat ③.
  */
-function wrapCheapEvalWithAuthFailCheck(
+export function wrapCheapEvalWithAuthFailCheck(
   cheapEval: CheapEval | null,
   log: BootstrapDeps['log'],
 ): ((prompt: string) => Promise<string>) | undefined {
@@ -813,6 +813,9 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       // excerpt (not the owner's). No tier gate: it's a read-only context
       // block, unlike personaCultivate/newRelationship which nudge writes.
       coreMemory: deps.coreMemoryFor?.(chatId),
+      // nightly memory tidy design, Task 8 — when present, prompt-builder
+      // injects this INSTEAD of coreMemory's profile excerpt.
+      curatedMemory: deps.curatedMemoryFor?.(chatId),
       knowledgeMemory: deps.knowledgeMemoryFor?.(chatId),
       // bubbleReplies mirrors `deps.bubbleRepliesFor` the same way — absent
       // thunk ⇒ section never included. Deliberately NO tier gate here

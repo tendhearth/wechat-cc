@@ -10,6 +10,7 @@ describe('observationRow', () => {
     expect(html).toContain('data-tone="curious"')
     expect(html).toContain('你说过想学吉他')
     expect(html).toContain('archive-btn')
+    expect(html).toMatch(/<svg[^>]*aria-hidden="true"/)
   })
 
   it('escapes html in body to prevent xss', () => {
@@ -27,9 +28,10 @@ describe('observationRow', () => {
 describe('milestoneCard', () => {
   it('renders glyph + body + relative time', () => {
     const oneDayAgo = new Date(Date.now() - 86400_000).toISOString()
-    const html = milestoneCard({ id: 'ms_100msg', body: '聊了第 100 条', ts: oneDayAgo })
-    expect(html).toContain('🎉')
-    expect(html).toContain('聊了第 100 条')
+    const html = milestoneCard({ id: 'ms_100msg', body: '聊了第 100 条 🎉', ts: oneDayAgo })
+    expect(html).toMatch(/<svg[^>]*aria-hidden="true"/)
+    expect(html).toContain('里程碑')
+    expect(html).toContain('聊了第 100 条 🎉')
     expect(html).toContain('1 天前')
   })
 })

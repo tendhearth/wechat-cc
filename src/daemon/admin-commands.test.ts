@@ -551,6 +551,61 @@ describe('admin-commands', () => {
       expect(sentBody(0)).toContain('喜欢猫')
     })
 
+    it('查看记忆 shows the curated memory when there is one', async () => {
+      const readOverview = vi.fn().mockResolvedValue('## 整体理解\n旧的')
+      const readCuratedMemory = vi.fn().mockResolvedValue('最近整理:2026-09-25 04:05 · 改了 1 处\n\n### 偏好\n- 回复直接')
+      const cmds = make({ readOverview: readOverview as unknown as AdminCommandsDeps['readOverview'], readCuratedMemory })
+      expect(await cmds.handle(msg('查看记忆'))).toBe(true)
+      expect(sentBody(0)).toBe('最近整理:2026-09-25 04:05 · 改了 1 处\n\n### 偏好\n- 回复直接')
+      expect(readOverview).not.toHaveBeenCalled()
+    })
+
+    // Fix round 1, F2: readCuratedMemory throwing (e.g. I/O error) must not
+    // escape runShowOverview — the pipeline awaits it unguarded. Falls
+    // through to the existing overview path instead.
+    it('查看记忆: readCuratedMemory throwing falls through to the overview reply, does not throw', async () => {
+      const readCuratedMemory = vi.fn().mockRejectedValue(new Error('io boom'))
+      const readOverview = vi.fn().mockResolvedValue('## 整体理解\n旧的')
+      const cmds = make({ readCuratedMemory, readOverview: readOverview as unknown as AdminCommandsDeps['readOverview'] })
+      await expect(cmds.handle(msg('查看记忆'))).resolves.toBe(true)
+      expect(sentBody(0)).toContain('我目前对你的理解')
+    })
+
+    it('整理记忆 runs the nightly tidy now and replies with what changed', async () => {
+      const runMemoryNightlyNow = vi.fn().mockResolvedValue({ status: 'skipped', reason: 'no_new_material' })
+      const cmds = make({ runMemoryNightlyNow })
+      expect(await cmds.handle(msg('整理记忆'))).toBe(true)
+      await vi.waitFor(() => expect(runMemoryNightlyNow).toHaveBeenCalled())
+      await vi.waitFor(() => expect(sentBody(1)).toBe('没有新东西要整理,记忆保持原样。'))
+      expect(sentBody(0)).toBe('🧠 正在整理记忆…')
+    })
+
+    // Fix round 1, F1: runSynthesize's runMemoryNightlyNow branch must not let
+    // a failing sendMessage escape (fire-and-forget → unhandledRejection →
+    // main.ts process.exit(1)), same invariant as every other send in this
+    // file. Covers both the runMemoryNightlyNow rejection AND the send
+    // rejection, and that the in-flight guard is released either way.
+    it('整理记忆: runMemoryNightlyNow rejects and sendMessage always rejects — no unhandled rejection, in-flight released', async () => {
+      const unhandled = vi.fn()
+      process.on('unhandledRejection', unhandled)
+      try {
+        const runMemoryNightlyNow = vi.fn().mockRejectedValue(new Error('boom'))
+        sendMessage.mockRejectedValue(new Error('send failed'))
+        const cmds = make({ runMemoryNightlyNow })
+        expect(await cmds.handle(msg('整理记忆'))).toBe(true)
+        await vi.waitFor(() => expect(runMemoryNightlyNow).toHaveBeenCalledTimes(1))
+        await new Promise(r => setTimeout(r, 20))
+        expect(unhandled).not.toHaveBeenCalled()
+
+        // in-flight set was released: a second 整理记忆 triggers a second run
+        // (not swallowed by the "still busy" guard).
+        expect(await cmds.handle(msg('整理记忆'))).toBe(true)
+        await vi.waitFor(() => expect(runMemoryNightlyNow).toHaveBeenCalledTimes(2))
+      } finally {
+        process.removeListener('unhandledRejection', unhandled)
+      }
+    })
+
     it('strips the machine stamp comment from the read-back', async () => {
       const stamped = '<!-- 由 wechat-cc 从本机 Claude 记忆整理生成 · 2026-06-15T14:58:22.979Z -->\n\n## 整体理解\n喜欢猫。'
       const readOverview = vi.fn().mockResolvedValue(stamped)

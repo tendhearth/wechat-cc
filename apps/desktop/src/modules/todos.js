@@ -8,11 +8,12 @@
 // the fact store's own: resolve/reject writes fact status, and a re-extracted
 // identical promise merges into the resolved row instead of resurfacing.
 //
-// Same vanilla-module shape as customer-review.js: renderSkeleton once,
+// Same vanilla-module shape as converse.js: renderSkeleton once,
 // refresh() re-fetches, actions call the admin internal-api routes.
 
 import { escapeHtml, showToast } from "../view.js"
 import { invokeApi } from "../api.js"
+import { showPageError } from "./page-status.js"
 
 /** @typedef {{ id: number, contact: string, kind: string|null, predicate: string, value: string, time_ref: string|null, confidence: string, updated_at: number }} ObligationRow */
 
@@ -147,7 +148,13 @@ async function refresh() {
       </section>
     `).join("") + settledHtml
   } catch (err) {
-    list.innerHTML = `<p class="empty-state">待办读不出来：${escapeHtml(err instanceof Error ? err.message : String(err))}</p>`
+    console.error("todos load failed", err)
+    if (meta) meta.textContent = ""
+    showPageError(list, {
+      title: "暂时没能读取待办",
+      description: "稍后再试一次，就能继续查看挂着的约定。",
+      retry: refresh,
+    })
   } finally {
     loading = false
   }
@@ -282,7 +289,7 @@ export function __setApi(fn) { api = fn }
 
 /**
  * Init the 待办 tab. Idempotent via dataset.ready (same shape as
- * customer-review.js / converse.js).
+ * converse.js).
  * @param {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> }} deps
  * @param {{ api?: typeof invokeApi }} [options]
  */

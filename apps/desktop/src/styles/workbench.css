@@ -115,7 +115,7 @@
 .wb-operation-detail>summary { width:fit-content; cursor:pointer; }
 .wb-operation-detail pre { max-height:260px; overflow:auto; margin:8px 0 0; padding:10px; border-radius:5px; background:#f0eee7; color:var(--wb-secondary); white-space:pre-wrap; overflow-wrap:anywhere; font:11px/1.6 var(--mono); }
 .wb-operation-detail p { margin:7px 0 0; overflow-wrap:anywhere; }
-.wb-operation-output pre { color:var(--wb-text); font:13px/1.7 var(--font-body, sans-serif); }
+.wb-operation-output pre { color:var(--wb-text); font:13px/1.7 var(--sans); }
 .wb-operation-group>summary:focus-visible,.wb-operation-detail>summary:focus-visible { outline:2px solid #758168; outline-offset:4px; border-radius:2px; }
 @media(max-width:640px) { .wb-operation-line { flex-wrap:wrap; gap:4px 8px; } .wb-operation-label { flex-basis:calc(100% - 45px); } .wb-operation-line time { margin-left:auto; } }
 .wb-queue-guidance { border-left:2px solid #b99653; padding:10px 12px; margin-bottom:18px; background:#f7f1e5; color:#795a28; font-size:12px; line-height:1.65; }
@@ -369,3 +369,14 @@
 .wb-task-execution { border-top:1px solid var(--wb-line); padding-top:14px; margin-top:10px; }
 .wb-task-execution h3 { margin:0; color:var(--wb-secondary); font-size:12px; font-weight:500; }
 .wb-execution-observation { margin:14px 0 0; overflow-wrap:anywhere; }
+
+/* Conversation image attachments keep their full aspect ratio. */
+.wb-message-attachments { display:flex; flex-wrap:wrap; gap:10px; }
+.wb-image-attachment { display:flex; flex-wrap:wrap; max-width:280px; gap:8px; }
+.wb-thumbnail { display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; min-width:120px; min-height:96px; padding:8px; border:0; border-radius:8px; background:transparent; color:inherit; cursor:zoom-in; }
+.wb-thumbnail img { display:block; width:100%; height:160px; max-width:100%; max-height:200px; object-fit:contain; border-radius:6px; }
+.wb-thumbnail img[hidden], .wb-draft-thumbnail[hidden] { display:none; }
+.wb-thumbnail small { font-size:11px; opacity:.7; margin-top:6px; }
+.wb-draft-thumbnail { width:64px; height:64px; object-fit:contain; border-radius:6px; }
+.wb-thumbnail:focus-visible { outline:2px solid var(--wb-accent,#64744c); outline-offset:2px; }
+.wb-result-thumbnail { max-width:280px; }

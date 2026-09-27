@@ -13,7 +13,7 @@ afterEach(()=>db.close())
 describe('matters',()=>{
   it('creates a task matter with the task id and reads it back',()=>{
     const m=store.create({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',ownerChatId:'owner'})
-    expect(m).toEqual({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',status:'open',ownerChatId:'owner',createdAt:1_000,updatedAt:1_000})
+    expect(m).toEqual({id:'deadbeef',kind:'task',title:'整理周报',projectPath:'/work',status:'open',ownerChatId:'owner',originMatterId:null,originMessageId:null,createdAt:1_000,updatedAt:1_000})
     expect(store.get('deadbeef')).toEqual(m)
     expect(store.get('nope')).toBeNull()
   })
@@ -71,5 +71,14 @@ describe('matters',()=>{
     expect(()=>store.setStatus(m.id,'weird' as never)).toThrow()
     expect(()=>store.bind(m.id,'fax' as never,'k')).toThrow()
     expect(()=>store.bind('missing','wechat','k')).toThrow()
+  })
+
+  it('记住出生地:从哪次交流、哪条消息里被交办的',()=>{
+    const chat=store.ensureChat('chat-1')
+    const task=store.create({kind:'task',title:'改首页',originMatterId:chat.id,originMessageId:'msg-7'})
+    expect(store.get(task.id)).toMatchObject({originMatterId:chat.id,originMessageId:'msg-7'})
+    // 桌面上亲手派的没有出生地 —— 这正是「不回报」的判据,不需要额外开关。
+    const handmade=store.create({kind:'task',title:'手动派的'})
+    expect(store.get(handmade.id)).toMatchObject({originMatterId:null,originMessageId:null})
   })
 })

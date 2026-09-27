@@ -4,17 +4,18 @@
 
 import { escapeHtml } from "../view.js"
 import { formatRelativeTimeShort } from "./observations.js"
+import { icon } from "./icons.js"
 
-const GLYPH_BY_KIND = {
-  cron_eval_pushed: '💬',
-  cron_eval_skipped: '🤔',
-  cron_eval_failed: '⚠',
-  observation_written: '✨',
-  milestone: '🎉',
+const ICON_BY_KIND = {
+  cron_eval_pushed: 'mail-01',
+  cron_eval_skipped: 'time-02',
+  cron_eval_failed: 'alert-02',
+  observation_written: 'edit-02',
+  milestone: 'star',
 }
 
 export function decisionGlyph(kind) {
-  return GLYPH_BY_KIND[kind] || '·'
+  return icon(ICON_BY_KIND[kind] || 'more-horizontal', { size: 18 })
 }
 
 export function decisionSummary(ev) {

@@ -15,6 +15,7 @@
  * 设计:docs/superpowers/specs/2026-09-18-self-change-pipeline-design.md §执行者调用。
  */
 import { spawn as nodeSpawn } from 'node:child_process'
+import { wrapForProcessTree } from '../../lib/jobspawn'
 
 import { workbenchSubprocessEnv } from '../../core/workbench/subprocess-env'
 
@@ -199,6 +200,10 @@ export const KILL_GRACE_MS = 5_000
  * 早就是这个写法,这里照抄。SIGTERM 先发是因为 claude 收到 SIGTERM 还会把那份 JSON
  * 打完,一上来就 SIGKILL 就什么都拿不到。
  *
+ * Windows 没有进程组,所以那条 else 分支只杀 `claude` 本身、MCP 与子代理留下继续烧
+ * 预算(2026-09-23 真机复现)。修法在 spawn 这一侧:`wrapForProcessTree` 在 win32 上
+ * 套一层 `cc-jobspawn`,杀它等于杀整棵树 —— 上面的 `killGroup` 一行没改。
+ *
  * 单测注入假件;这一条另有一个真进程的测试钉住「孙子进程也死了」。
  */
 export async function spawnCollect(
@@ -207,7 +212,11 @@ export async function spawnCollect(
   opts: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number },
 ): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
   return await new Promise((resolve, reject) => {
-    const child = nodeSpawn(cmd, args, {
+    // win32 上没有进程组,`killGroup` 下面那条 else 分支只杀 `claude` 本身 —— 套一层
+    // cc-jobspawn,它一死内核就把整棵树收掉(见 src/lib/jobspawn.ts)。POSIX 原样:
+    // detached + `kill(-pid)` 本来就好使,不多套一层进程。
+    const wrapped = wrapForProcessTree(cmd, args)
+    const child = nodeSpawn(wrapped.command, wrapped.args, {
       cwd: opts.cwd,
       env: opts.env,
       windowsHide: true,

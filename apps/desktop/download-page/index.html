@@ -3,12 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>CC — 住在你电脑里的那只熊</title>
-<meta name="description" content="CC 是一只住在你微信里的小熊:替你记着答应别人的事,给你画画,记得你的每一天——全都安安静静待在你自己的电脑上。">
-<meta property="og:title" content="CC — 住在你电脑里的那只熊">
+<title>CC — 住在你电脑里的伙伴</title>
+<meta name="description" content="CC 是住在你电脑里的伙伴:替你记着答应别人的事,给你画画,记得你的每一天。打开微信,就能和它说说话。">
+<meta property="og:title" content="CC — 住在你电脑里的伙伴">
 <meta property="og:description" content="你陪 CC 说说话,CC 替你记着那些事。记忆只属于你俩。">
-<meta property="og:image" content="https://wechat-cc.tendhearth.com/hero-bear.png">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23f4ead6'/%3E%3Ctext y='25' x='3.5' font-size='23'%3E%F0%9F%90%BB%3C/text%3E%3C/svg%3E">
+<meta property="og:image" content="https://wechat-cc.tendhearth.com/cc-logo.png">
+<meta property="og:image:alt" content="CC 品牌图标">
+<link rel="icon" type="image/png" href="cc-logo.png">
+<link rel="apple-touch-icon" href="cc-logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800&family=Noto+Serif+SC:wght@600;700&display=swap">
@@ -43,28 +45,43 @@
   }
   .wrap { max-width:840px; margin:0 auto; padding:0 22px }
   @media (prefers-reduced-motion:no-preference) {
-    @keyframes bob { 0%,100%{transform:translateY(0) rotate(-1deg)} 50%{transform:translateY(-9px) rotate(-1deg)} }
+    @keyframes swim { 0%,100%{translate:0 0} 50%{translate:7px -3px} }
     @keyframes fadeup { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:none} }
   }
 
   /* ── hero ── */
   header.hero { text-align:center; padding:34px 0 6px }
   .stage {
-    position:relative; display:inline-block; margin:0 auto 6px; max-width:min(92vw,560px);
+    position:relative; width:min(100%,560px); aspect-ratio:4/3; margin:0 auto 6px;
+    border-radius:22px 28px 20px 26px; overflow:hidden; isolation:isolate;
+    box-shadow:0 20px 50px rgba(112,76,42,.14); border:3px solid var(--card);
   }
-  .stage img {
-    display:block; width:100%; height:auto; border-radius:22px 28px 20px 26px;
-    box-shadow:0 20px 50px rgba(112,76,42,.20); border:3px solid var(--card);
-    animation:bob 6s ease-in-out infinite;
+  .stage .aquarium { display:block; width:100%; height:100%; object-fit:contain }
+  .stage .cc {
+    position:absolute; width:34%; height:auto; left:8.8%; top:38.986%;
+    mask:url('cc-mask.png') center/contain no-repeat;
+    -webkit-mask:url('cc-mask.png') center/contain no-repeat;
   }
+  .cc-shadow {
+    position:absolute; left:14.92%; top:78.923%; width:21.76%; height:4.08%;
+    background:radial-gradient(ellipse,rgba(91,66,43,.20),rgba(91,66,43,.14) 45%,transparent 72%);
+  }
+  .fish {
+    position:absolute; width:12%; aspect-ratio:1;
+    background:url('cc-fish-atlas.png') no-repeat; background-size:300% 100%;
+    animation:swim 7s ease-in-out infinite;
+  }
+  .fish-gold { left:45%; top:45%; background-position:0 0 }
+  .fish-coral { left:58%; top:56%; background-position:50% 0; animation-delay:-2s }
+  .fish-blue { left:71%; top:42%; background-position:100% 0; animation-delay:-4s; transform:scaleX(-1) }
   .bubble {
-    position:absolute; top:8%; left:-4%; background:var(--card); color:var(--ink);
+    position:absolute; top:13%; left:9%; background:var(--card); color:var(--ink);
     border:1.5px solid var(--rule); border-radius:16px 16px 16px 4px; padding:7px 13px;
     font-size:13.5px; font-weight:700; box-shadow:0 6px 16px rgba(112,76,42,.14);
     animation:fadeup .7s .5s both;
   }
   .kicker { color:var(--accent); font-weight:800; letter-spacing:.16em; text-transform:uppercase; font-size:12px; margin:20px 0 8px }
-  h1 { font-family:var(--serif); font-weight:700; font-size:clamp(28px,6.6vw,42px); line-height:1.22; margin:0 auto; max-width:16ch; text-wrap:balance }
+  h1 { font-family:var(--serif); font-weight:700; font-size:clamp(28px,6.6vw,42px); line-height:1.22; margin:0 auto; max-width:18em; text-wrap:balance }
   .lede { color:var(--ink-soft); font-size:clamp(15.5px,3.4vw,18px); max-width:32ch; margin:15px auto 0; text-wrap:balance }
 
   /* ── download ── */
@@ -77,7 +94,7 @@
   }
   .btn:hover { transform:translateY(-2px); box-shadow:0 12px 26px rgba(176,86,58,.36) }
   .btn:focus-visible { outline:3px solid var(--accent); outline-offset:3px }
-  .btn .ico { font-size:20px }
+  .btn .ico { display:inline-flex; align-items:center; flex:none }
   .plat-note { color:var(--muted); font-size:13px; margin-top:11px }
   .alt { margin-top:7px; font-size:13.5px }
   .alt a { color:var(--accent); text-decoration:none; border-bottom:1px dotted currentColor }
@@ -94,7 +111,7 @@
             border-radius:16px 20px 14px 18px; padding:14px 16px;
             color:var(--ink-soft); font-size:14px; line-height:1.6 }
   .invite b { color:var(--accent-cc) }
-  .invite-ico { font-size:20px; line-height:1.3 }
+  .invite-ico { display:inline-flex; flex:0 0 24px; color:var(--accent-cc) }
   .steps { counter-reset:s; list-style:none; padding:0; margin:0 auto; max-width:52ch }
   .steps li { counter-increment:s; position:relative; padding:12px 0 12px 40px;
               border-bottom:1px solid var(--rule); color:var(--ink-soft);
@@ -113,7 +130,7 @@
   .vigs { display:grid; gap:15px; grid-template-columns:1fr }
   @media (min-width:640px) { .vigs { grid-template-columns:repeat(3,1fr) } }
   .vig { background:var(--card); border:1.5px solid var(--rule); border-radius:18px 22px 16px 20px; padding:20px 18px; text-align:center }
-  .vig .emoji { font-size:30px; line-height:1 }
+  .feature-icon { display:grid; place-items:center; width:44px; height:44px; margin:0 auto; border-radius:14px; color:var(--accent-cc); background:var(--paper-warm) }
   .vig h3 { font-size:16px; margin:11px 0 5px; font-weight:800 }
   .vig p { margin:0; color:var(--ink-soft); font-size:13.8px; line-height:1.55 }
 
@@ -126,10 +143,11 @@
   .msg.me .b { background:#95d16a; color:#173a08; border-radius:14px 14px 4px 14px }
   .msg.cc .b { background:var(--card); border:1.5px solid var(--rule); border-radius:14px 14px 14px 4px }
   .msg .cc-ava { width:30px; height:30px; border-radius:9px; margin-right:8px; flex:0 0 30px; display:grid; place-items:center; background:var(--paper); font-size:18px; align-self:flex-end }
+  .msg .cc-ava img { display:block; width:100%; height:100% }
 
   /* ── stays home (privacy as warmth) ── */
   .home { text-align:center; max-width:36ch; margin:0 auto }
-  .home .emoji { font-size:40px }
+  .home .feature-icon { margin-bottom:12px }
   .home p { color:var(--ink-soft); font-size:15px; margin:12px 0 0 }
   .home b { color:var(--ink); font-weight:800 }
 
@@ -148,24 +166,29 @@
        只带一个打招呼用的名字(?from=),【不携带任何配对码或密钥】:配对码是
        一次性密钥、10 分钟 TTL,必须在微信里当面给,不能进一条可以被转发的链接。 -->
   <div class="invite" id="invite-banner" hidden>
-    <span class="invite-ico" aria-hidden="true">🎏</span>
+    <span class="invite-ico" aria-hidden="true"><svg class="hg-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" focusable="false" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"><path d="M15.5 11a3.5 3.5 0 1 0-7 0a3.5 3.5 0 0 0 7 0"/><path d="M15.483 11.35q.484.149 1.017.15a3.5 3.5 0 1 0-3.483-3.85m-2.034 0a3.5 3.5 0 1 0-2.466 3.7M22 16.5c0-2.761-2.462-5-5.5-5m1 8c0-2.761-2.462-5-5.5-5s-5.5 2.239-5.5 5"/><path d="M7.5 11.5c-3.038 0-5.5 2.239-5.5 5"/></g></svg></span>
     <span><b id="invite-from"></b> 邀请你把 CC 带回家 —— 装好之后,你们的 CC 就能互相串门了。</span>
   </div>
 
   <header class="hero">
-    <div class="stage">
-      <img src="hero-bear.png" alt="CC 小熊坐在长满水草的鱼缸旁,手扶着玻璃看鱼" width="560" height="374">
+    <div class="stage" role="img" aria-label="CC 陪在水彩鱼缸旁,小鱼在水草间游动">
+      <img class="aquarium" src="cc-aquarium.png" alt="" width="1448" height="1086" fetchpriority="high">
+      <span class="fish fish-gold" aria-hidden="true"></span>
+      <span class="fish fish-coral" aria-hidden="true"></span>
+      <span class="fish fish-blue" aria-hidden="true"></span>
+      <span class="cc-shadow" aria-hidden="true"></span>
+      <img class="cc" src="cc-companion.png" alt="" width="512" height="512">
       <span class="bubble">我在这儿陪你 🌿</span>
     </div>
     <p class="kicker">wechat · cc</p>
-    <h1>一只住在你电脑里的小熊</h1>
+    <h1>住在你电脑里的伙伴</h1>
     <p class="lede">你陪 CC 说说话,CC 替你记着那些事——记得你的日子,替你守着答应别人的约定,偶尔还给你画张画。</p>
   </header>
 
   <div class="dl">
     <div id="dl-slot">
       <a class="btn" id="btn-primary" href="https://github.com/tendhearth/wechat-cc/releases/latest">
-        <span class="ico" aria-hidden="true">🐻</span> 把 CC 带回家
+        <span class="ico" aria-hidden="true"><svg class="hg-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" focusable="false" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 17c0 .93 0 1.395.102 1.777a3 3 0 0 0 2.121 2.121C5.605 21 6.07 21 7 21h10c.93 0 1.395 0 1.776-.102a3 3 0 0 0 2.122-2.121C21 18.395 21 17.93 21 17m-4.5-5.5S13.186 16 12 16s-4.5-4.5-4.5-4.5M12 15V3"/></svg></span> 把 CC 带回家
       </a>
     </div>
     <p class="plat-note" id="plat-note">选一个开始 · 装好后用微信扫码,它就住进来了</p>
@@ -178,17 +201,17 @@
     <p class="sec-sub">CC 不是一个工具,是一个会记着你的伙伴</p>
     <div class="vigs">
       <div class="vig">
-        <div class="emoji" aria-hidden="true">🧠</div>
+        <div class="feature-icon" aria-hidden="true"><svg class="hg-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" focusable="false" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5" d="M13 2h-2C7.229 2 5.343 2 4.172 3.172S3 6.229 3 10v4c0 3.771 0 5.657 1.172 6.828S7.229 22 11 22h2c3.771 0 5.657 0 6.828-1.172S21 17.771 21 14v-4c0-3.771 0-5.657-1.172-6.828S16.771 2 13 2Zm8 10H3m12-5H9m6 10H9"/></svg></div>
         <h3>它记得你</h3>
         <p>聊得越久越懂你——你的性子、在忙什么、习惯怎么说话。换个大脑也不会忘。</p>
       </div>
       <div class="vig">
-        <div class="emoji" aria-hidden="true">📋</div>
+        <div class="feature-icon" aria-hidden="true"><svg class="hg-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" focusable="false" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2S2 6.477 2 12s4.477 10 10 10Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M12.008 10.508a1.5 1.5 0 1 0 0 3a1.5 1.5 0 0 0 0-3m0 0V7m3.007 8.02l-1.949-1.948"/></g></svg></div>
         <h3>替你记着约定</h3>
         <p>你答应别人的、别人托付你的,它悄悄记下,该提醒时轻轻提醒你。</p>
       </div>
       <div class="vig">
-        <div class="emoji" aria-hidden="true">🎨</div>
+        <div class="feature-icon" aria-hidden="true"><svg class="hg-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" focusable="false" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7.495 13.753c3.088-3.589 10.084-10.598 13.044-10.749c1.83-.175-1.817 6.321-10.46 13.43m1.38-6.39l2.257 2.28M3 20.855c.71-2.507.262-1.275.504-4.162c.13-.428.389-1.754 2.01-2.415c1.842-.752 3.193.384 3.542.918c1.029 1.115 1.148 2.5 0 4.082S4.504 21.253 3 20.855"/></svg></div>
         <h3>它会给你画画</h3>
         <p>给你画一幅小像,还照着心情给自己攒表情,一点点长出一整套。</p>
       </div>
@@ -215,14 +238,14 @@
     <p class="sec-sub">不用开新的 app——像跟朋友发消息一样跟它说话</p>
     <div class="chat" aria-label="和 CC 的微信对话示例">
       <div class="msg me"><div class="b">周五提醒我给妈妈打电话</div></div>
-      <div class="msg cc"><div class="cc-ava" aria-hidden="true">🐻</div><div class="b">记下啦,周五提醒你 📞<br>要不要我也画只熊举着小牌子？</div></div>
+      <div class="msg cc"><div class="cc-ava" aria-hidden="true"><img src="cc-logo.png" alt="" width="30" height="30" loading="lazy"></div><div class="b">记下啦,周五提醒你 📞<br>要不要我也给你画张小卡片？</div></div>
       <div class="msg me"><div class="b">哈哈好啊</div></div>
     </div>
   </section>
 
   <section>
     <div class="home">
-      <div class="emoji" aria-hidden="true">🏠</div>
+      <div class="feature-icon" aria-hidden="true"><svg class="hg-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" focusable="false" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4.268 18.845c.225 1.67 1.608 2.979 3.292 3.056c1.416.065 2.855.099 4.44.099s3.024-.034 4.44-.1c1.684-.076 3.067-1.385 3.292-3.055c.147-1.09.268-2.207.268-3.345s-.121-2.255-.268-3.345c-.225-1.67-1.608-2.979-3.292-3.056A95 95 0 0 0 12 9c-1.585 0-3.024.034-4.44.1c-1.684.076-3.067 1.385-3.292 3.055C4.12 13.245 4 14.362 4 15.5s.121 2.255.268 3.345Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 9V6.5a4.5 4.5 0 0 1 9 0V9"/><path stroke-linecap="round" d="M12.125 15.5H12m.25 0a.25.25 0 1 1-.5 0a.25.25 0 0 1 .5 0Z"/></g></svg></div>
       <h2 class="sec-h">只在你自己的电脑上</h2>
       <p>记忆、消息、你们一起画的画,<b>全都待在你自己的电脑里</b>,不上任何云。出门想它了,走加密直连回家取——你们之间的话,只属于你们俩。</p>
     </div>
@@ -232,7 +255,7 @@
     <p class="line">CC 在等你回家。</p>
     <div id="close-slot">
       <a class="btn" href="https://github.com/tendhearth/wechat-cc/releases/latest">
-        <span class="ico" aria-hidden="true">🐻</span> 把 CC 带回家
+        <span class="ico" aria-hidden="true"><svg class="hg-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" focusable="false" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 17c0 .93 0 1.395.102 1.777a3 3 0 0 0 2.121 2.121C5.605 21 6.07 21 7 21h10c.93 0 1.395 0 1.776-.102a3 3 0 0 0 2.122-2.121C21 18.395 21 17.93 21 17m-4.5-5.5S13.186 16 12 16s-4.5-4.5-4.5-4.5M12 15V3"/></svg></span> 把 CC 带回家
       </a>
     </div>
     <p class="plat-note">Mac 需要 Apple 芯片 · Windows 10/11 64 位</p>
@@ -251,6 +274,8 @@
   var isMac = /Mac/i.test(plat) || /Mac OS X/i.test(ua)
   var isMobile = /iPhone|iPad|iPod|Android/i.test(ua)
   var REPO = "tendhearth/wechat-cc"
+  // Same local Hugeicons download mark as the static buttons (24px / 1.5px stroke).
+  var downloadIcon = "<svg class=\"hg-icon\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" focusable=\"false\" aria-hidden=\"true\"><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"1.5\" d=\"M3 17c0 .93 0 1.395.102 1.777a3 3 0 0 0 2.121 2.121C5.605 21 6.07 21 7 21h10c.93 0 1.395 0 1.776-.102a3 3 0 0 0 2.122-2.121C21 18.395 21 17.93 21 17m-4.5-5.5S13.186 16 12 16s-4.5-4.5-4.5-4.5M12 15V3\"/></svg>"
 
   // 邀请横幅。名字用 textContent 落地(不可信输入,绝不进 innerHTML),
   // 并做长度截断,免得超长串把版面撑坏。
@@ -280,16 +305,16 @@
 
       ;["dl-slot","close-slot"].forEach(function(slotId, idx){
         var slot = document.getElementById(slotId); if (!slot) return
-        function btn(url, ico, text){ return '<a class="btn" href="'+ (url||relPage) +'"><span class="ico" aria-hidden="true">'+ico+'</span> '+text+'</a>' }
+        function btn(url, text){ return '<a class="btn" href="'+ (url||relPage) +'"><span class="ico" aria-hidden="true">'+downloadIcon+'</span> '+text+'</a>' }
         if (isMobile) {
-          slot.innerHTML = btn(relPage, "🐻", "在电脑上打开来下载")
+          slot.innerHTML = btn(relPage, "在电脑上打开来下载")
         } else if (isWin && winUrl) {
-          slot.innerHTML = btn(winUrl, "⊞", "下载给 Windows")
+          slot.innerHTML = btn(winUrl, "下载给 Windows")
         } else if (isMac && macUrl) {
-          slot.innerHTML = btn(macUrl, "", "下载给 Mac")
+          slot.innerHTML = btn(macUrl, "下载给 Mac")
         } else {
           // 识别不出/资产缺失 → 保留「带回家」通往 release 页,双平台自选
-          slot.innerHTML = btn(relPage, "🐻", "把 CC 带回家")
+          slot.innerHTML = btn(relPage, "把 CC 带回家")
         }
         // 只在首个下载区显示「换个平台」小链接
         if (idx === 0) {

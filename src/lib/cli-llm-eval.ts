@@ -12,7 +12,7 @@
  * call `delegateMemoryOp` in the compiled branch.
  */
 
-export type MemoryDelegateOp = 'synthesize' | 'profile-generate'
+export type MemoryDelegateOp = 'synthesize' | 'profile-generate' | 'nightly'
 
 /** Minimal shape of STATE_DIR/internal-api-info.json → resolved baseUrl +
  * bearer token, already read/decoded by the caller (see cli.ts's existing
@@ -36,6 +36,7 @@ export interface DelegateMemoryOpDeps {
 const MEMORY_OP_PATHS: Record<MemoryDelegateOp, string> = {
   'synthesize': '/v1/memory/synthesize',
   'profile-generate': '/v1/memory/profile/generate',
+  'nightly': '/v1/memory/nightly/run',
 }
 
 /**

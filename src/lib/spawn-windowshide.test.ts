@@ -52,11 +52,11 @@ function lineNumberAt(text: string, index: number): number {
 
 // Scan roots: src/ (the bulk of the codebase) plus the root-level
 // bin scripts that compile into the same wechat-cc-cli binary. The
-// root files (docs.ts, cli.ts, setup.ts, log-viewer.ts) ship with
-// the GUI-subsystem flip too, so any unguarded spawnSync there has
-// the same flashing-console regression risk.
+// root files (docs.ts, cli.ts, setup.ts) ship with the GUI-subsystem
+// flip too, so any unguarded spawnSync there has the same
+// flashing-console regression risk. (log-viewer.ts deleted 2026-09-27.)
 const SCAN_ROOTS = ['src']
-const SCAN_ROOT_FILES = ['docs.ts', 'cli.ts', 'setup.ts', 'log-viewer.ts']
+const SCAN_ROOT_FILES = ['docs.ts', 'cli.ts', 'setup.ts']
 
 function* scanFiles(): Generator<string> {
   for (const root of SCAN_ROOTS) yield* walkTsFiles(join(REPO_ROOT, root))

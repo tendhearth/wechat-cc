@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makeMemoryLlmOps } from './memory-llm-ops'
+import { makeMemoryLlmOps, resolveCheapEval } from './memory-llm-ops'
+import { invalidateDerivedMemory } from '../lib/memory-derived-state'
 
 // NOTE: brief used '../../lib/memory-synthesis' — that resolves one level
 // too high from src/daemon/. Both this test file and memory-llm-ops.ts live
@@ -62,6 +63,30 @@ describe('generatePortrait (CC 手绘小像)', () => {
     return dir
   }
 
+  it('does not use stale derived material when generating a portrait', async () => {
+    const stateDir = seedState('stale overview')
+    const root = join(stateDir, 'memory', 'admin1')
+    writeFileSync(join(root, '_profile.json'), JSON.stringify({ summary: 'stale profile' }))
+    writeFileSync(join(root, 'profile.md'), 'canonical fresh profile')
+    invalidateDerivedMemory(root)
+    const { ops, cheapEval } = make({ stateDir })
+    cheapEval.mockResolvedValueOnce(GOOD_SVG)
+    expect((await ops.generatePortrait('admin1')).ok).toBe(true)
+    expect(cheapEval.mock.calls[0]![0]).toContain('canonical fresh profile')
+    expect(cheapEval.mock.calls[0]![0]).not.toContain('stale')
+  })
+
+  it('discards a portrait if sources were corrected while the LLM was running', async () => {
+    const stateDir = seedState()
+    const { ops, cheapEval } = make({ stateDir })
+    cheapEval.mockImplementationOnce(async () => {
+      invalidateDerivedMemory(join(stateDir, 'memory', 'admin1'))
+      return GOOD_SVG
+    })
+    expect(await ops.generatePortrait('admin1')).toMatchObject({ ok: false, error: 'source_changed' })
+    expect(existsSync(join(stateDir, 'memory', 'admin1', 'portrait.svg'))).toBe(false)
+  })
+
   it('从画像素材取材,产出净化后的 portrait.svg + 元数据', async () => {
     const stateDir = seedState()
     const { ops, cheapEval } = make({ stateDir })
@@ -96,5 +121,14 @@ describe('generatePortrait (CC 手绘小像)', () => {
     const { ops } = make({ stateDir: seedState() })
     const r = await ops.generatePortrait('../evil') as { ok: boolean }
     expect(r.ok).toBe(false)
+  })
+})
+
+describe('resolveCheapEval', () => {
+  const own = async () => 'own', fallback = async () => 'fallback'
+  const registry = { get: (id: string) => (id === 'codex' ? { provider: { cheapEval: own } } : null), getCheapEval: () => fallback }
+  it('follows the chat solo provider, else the registry default', () => {
+    expect(resolveCheapEval({ getMode: () => ({ kind: 'solo', provider: 'codex' }), registry }, 'c')).toBe(own)
+    expect(resolveCheapEval({ getMode: () => undefined, registry }, 'c')).toBe(fallback)
   })
 })

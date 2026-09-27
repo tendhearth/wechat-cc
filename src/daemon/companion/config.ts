@@ -34,6 +34,10 @@ export interface CompanionConfig {
    * history into the bot is privacy-sensitive, so it's an explicit choice.
    */
   import_local_history: boolean
+  /** 每晚整理长期记忆 memory.md(2026-09-25,memory/nightly.ts)。 */
+  memory_nightly_enabled: boolean
+  /** 每晚整理的时间点,主人时区的 HH:MM。 */
+  memory_nightly_at: string
   /**
    * WRITE-side knowledge ingestion loop (keeps wxgraph/wxsearch/wxfacts fresh
    * from decrypted messages). Optional; absent = ON when the companion is
@@ -68,6 +72,8 @@ export function defaultCompanionConfig(): CompanionConfig {
     snooze_until: null,
     last_introspect_at: null,
     import_local_history: false,
+    memory_nightly_enabled: true,
+    memory_nightly_at: '04:00',
     hearth_enabled: false,
     hearth_vault: null,
     hearth_cmd: null,
@@ -93,6 +99,8 @@ export function loadCompanionConfig(stateDir: string): CompanionConfig {
       snooze_until: typeof parsed.snooze_until === 'string' ? parsed.snooze_until : null,
       last_introspect_at: typeof parsed.last_introspect_at === 'string' ? parsed.last_introspect_at : null,
       import_local_history: typeof parsed.import_local_history === 'boolean' ? parsed.import_local_history : d.import_local_history,
+      memory_nightly_enabled: typeof parsed.memory_nightly_enabled === 'boolean' ? parsed.memory_nightly_enabled : d.memory_nightly_enabled,
+      memory_nightly_at: typeof parsed.memory_nightly_at === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(parsed.memory_nightly_at) ? parsed.memory_nightly_at : d.memory_nightly_at,
       ingest_enabled: typeof parsed.ingest_enabled === 'boolean' ? parsed.ingest_enabled : undefined,
       hearth_enabled: typeof parsed.hearth_enabled === 'boolean' ? parsed.hearth_enabled : d.hearth_enabled,
       hearth_vault: typeof parsed.hearth_vault === 'string' ? parsed.hearth_vault : null,
