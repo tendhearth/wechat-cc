@@ -1,7 +1,7 @@
 # CC 普通用户体验：协作与交接说明
 
-状态：本方隔离已建立；尚未完成与对方的直接沟通，不代表双方已经确认分工。
-日期：2026-09-26（洛杉矶）。
+状态：双方分工已由主人转达确认；仍通过主人传话，尚未建立自动通信。
+日期：2026-09-27（洛杉矶）。
 
 ## 本方分配
 
@@ -18,23 +18,28 @@
 
 1. 各自只修改自己的工作区和分支，不给对方切分支、清理、暂存或覆盖文件。独立分支提交不会自动改变另一个工作区。
 2. 本方测试用唯一临时目录（前缀cc-task-entry-）、独立数据库和动态端口；不把生产stateDir、账号数据或已安装app用作试验对象。
-3. 共享daemon重启、安装、部署、推dev只由明确整合者串行处理。当前未指定整合者，所以本方只进行独立开发、验证和交接。
+3. 整合者已确认是主人ggshr9。共享daemon重启、安装、部署、推dev由主人串行处理；双方只推自己的分支、开面向dev的GitHub PR，不直接推dev或自行部署。
 4. 工作树只隔离文件及分支；同一接口或行为仍可能发生合并冲突。合并必须基于提交进行审查与组合测试，不用整文件覆盖消除冲突。
 5. 需要共改下列部位时，先交换提交号和接口，再约定先后：src/lib/db.ts及迁移测试、src/core/workbench/service.ts、src/daemon/settings-panel.ts、wiring/pipeline-deps.ts、main.ts、手机生成物、依赖锁文件。
 6. 本方不修改依赖版本。数据库迁移只追加；若对方也增加迁移，在整合时由一个负责人按实际基线排序并重跑迁移兼容测试。
 7. 交付内容为基线、分支、提交列表、改动范围、测试结果和未验收项；由整合者在自己的集成工作区合入。
 
-## 已知对方状态与通讯限制
+## 对方与分工（主人转达，已接受）
 
-Git登记显示dev位于另一个工作区，这只说明分支已检出，不能证明那里正有agent运行。本机检测到一个Claude Code进程位于audit-followup审计工作区；尚未确认它是否就是dev整合者。
+- 对方就是audit-followup中的Claude Code，工作区wechat-cc/.claude/worktrees/audit-followup，分支sweep/route-guard-crlf，起点同为39cf7f5f。
+- [PR #118](https://github.com/tendhearth/wechat-cc/pull/118)已squash合并，合并提交就是双方基线；已用GitHub只读查询核实。
+- [PR #119](https://github.com/tendhearth/wechat-cc/pull/119)查询时仍OPEN、目标dev，仅修改route-registry.guard.test.ts、release-pipeline.guard.test.ts和desktop.yml；与本方计划热点无交集。
+- 本方第一批统一交办先行。对方在第一批合入dev之前，只做设计与无交集文档/守卫，不动settings-panel.ts、workbench/service.ts、pipeline-deps.ts、main.ts和db迁移。
+- 对方后续设备token统一与loopback、service/bootstrap/cli拆分，等待本方第一批合入后以新dev基线继续。不是等本方“说完成”就解除依赖。
+- 对方本轮没有迁移，报告末条v67。本方追加前仍从实际基线核对；对方后续迁移排在本方合入之后。
+- 三条注册守卫、cli.ts只许变小的限制、桌面sessions模块精简、msw/log-viewer已删及总图生成规则，均纳入实施时基线检查。
+- 对方报告service-one-session“醒来时重取基线”在满载偶发失败，未入ci-flakes.json。遇到先保留证据、按CI规则重试和判断归属，不直接当作通过，也不顺带扩大本批改动范围。
 
-未在Codex可访问对话中找到与该dev工作区明确对应的运行任务。仓库没有可直接给任意开发agent发送消息的总线。当前工具明确禁止访问Warp，因此没有向那里的Claude Code发送消息，也不会通过终端注入绕过限制。
+## 通讯现状与下一步研究
 
-## 可直接转交给对方的消息
+当前没有仓库级自动消息总线，也没有已接入的Codex↔Claude桥。用户要求研究由wechat-cc承担身份登记、消息、依赖及交接；该产品方向单独调研，不能把它当作已经部署。
 
-我这边的Codex正在准备CC普通用户交办体验，已独立于你的工作区：分支codex/cc-task-entry，基线39cf7f5f，工作区/Users/nategu_mac_company/.codex/worktrees/cc-user-experience/wechat-cc。当前只有设计与计划，没有产品代码。我们各自只改自己的分支；测试数据、端口分开；共享部署和dev推送由一名整合者串行处理。
-
-请告诉我你当前的分支、基线、正在修改的范围，以及你是否负责dev整合。若涉及db迁移、workbench/service、settings-panel或mobile入口，我们先对齐接口和提交顺序。本方计划见同目录2026-09-26-cc-user-experience.md。无需修改本方工作区；在原会话中回复这些信息即可。
+Warp的UI入口对当前工具不可用。官方Claude Code原生跨会话消息、Channels、Codex App Server和MCP协作工具属于本次调研对象；使用正式授权接口接入，不操作对方终端或改写会话历史。新协调能力不会自动取得主人批准PR、部署或扩大权限的能力。
 
 ## 验证状态
 
@@ -42,4 +47,4 @@ Git登记显示dev位于另一个工作区，这只说明分支已检出，不�
 - 已从远端核对dev基线并创建独立分支；未切换原始工作区或对方工作区的分支。
 - 已归档五份计划，检查文档链接和分支状态。
 - 尚未配置测试实例/启动测试服务；没有重启共享服务或部署。
-- 双向分工、整合者与共享变更顺序仍待对方回复。
+- 双向分工、整合者与共享热点顺序已由主人转达确认；尚未验证自动通信。

@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - 基线 `origin/dev`（`39cf7f5f`）；本计划未执行，所有复选框保持未勾选。计划已归档到本任务独立工作区。
-- 本任务只在已分配工作区和codex/cc-task-entry开发；dev由整合者集成，master仅squash PR。他人工作区不可修改；共享部署/推dev前必须确认整合者。
+- 本任务只在已分配工作区和codex/cc-task-entry开发；dev由整合者集成，master仅squash PR。他人工作区不可修改；整合者已确认是主人ggshr9；本方只推自己的分支、开PR。
 - 五栏、隐藏 m:id、每条200个 JS UTF-16 code units、全文3000字；保留未知栏目与手写内容，不建第二知识库。
 - 动作固定 correct/outdated/remove；不做撤销、全局语义遗忘或删除全部历史；用户可见范围说明按设计原文。
 - request_id UUID；回执上限1000条/7天，取较早边界；素材版本对与退役记录各10000上限；控制文件4MiB上限。超限拒绝，不静默丢保护。
