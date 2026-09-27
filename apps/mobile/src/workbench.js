@@ -17,7 +17,47 @@ var M_STALE_MISSES = 2, mMisses = 0
 var mUnsure = {}
 var mStorage = "cc.phone.matter.v1:" + (REMOTE ? REMOTE.id : location.host) + ":"
 function mRead(key) { try { return JSON.parse(localStorage.getItem(mStorage + key) || "null") } catch (e) { return null } }
-function mWrite(key,value) { try { if (value === null) localStorage.removeItem(mStorage + key); else localStorage.setItem(mStorage + key,JSON.stringify(value)) } catch (e) {} }
+function mWrite(key,value) { try { if (value === null) localStorage.removeItem(mStorage + key); else localStorage.setItem(mStorage + key,JSON.stringify(value));return true } catch (e) {return false} }
+// One visible upload control; submitted snapshots survive independently of the editable draft.
+var mMaterials = null
+function mMaterialSignature(items) { return JSON.stringify((items||[]).map(function(a){return[a.id,a.sha256,a.size]})) }
+function mMaterialViews(items) { return (items||[]).map(function(a){return{id:a.id,name:a.name,mime:a.mime,size:a.size,sha256:a.sha256}}) }
+function mMaterialCards(items) { return (items||[]).map(function(a){return '<p class="m-material">'+esc(a.name)+' <small>'+Math.ceil(a.size/1024)+' KB</small></p>'}).join('') }
+function mPending(id) {
+  var rows=mRead(id+':say-pending')||[],legacy=mRead(id+':say')
+  if(legacy&&legacy.requestId&&!rows.some(function(r){return r.requestId===legacy.requestId}))rows=rows.concat([legacy])
+  return rows
+}
+function mSavePending(id,draft) { var rows=mPending(id).filter(function(r){return r.requestId!==draft.requestId});rows.push(draft);return mWrite(id+':say-pending',rows) }
+function mDisposeMaterials() { if(mMaterials){mMaterials.control.dispose();document.getElementById('m-say-materials').replaceChildren()};mMaterials=null }
+function mMountMaterials(id) {
+  if(typeof createPhoneAttachments!=='function'||mCurrent!==id||!mDetail||mDetail.matter.kind!=='task')return
+  var draft=mRead(id+':say')||{text:/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say')).value}
+  if(!draft.draftId){draft.draftId=mUuid();mWrite(id+':say',draft)}
+  if(mMaterials&&mMaterials.taskId===id&&mMaterials.draftId===draft.draftId)return
+  mDisposeMaterials()
+  var draftId=draft.draftId,control=createPhoneAttachments({draftId:draftId,taskId:id,onChange:function(){
+    var current=mRead(id+':say')
+    if(!current||current.draftId!==draftId)return
+    current.attachments=mMaterialViews(control.items());mWrite(id+':say',current)
+    if(mCurrent===id)mSetButtons()
+  }})
+  mMaterials={taskId:id,draftId:draftId,control:control}
+  control.mount(document.getElementById('m-say-materials'))
+}
+function mAcknowledgeMaterials(id,draft) {
+  if(!draft.draftId||typeof createPhoneAttachments!=='function')return
+  var visible=mMaterials&&mMaterials.taskId===id&&mMaterials.draftId===draft.draftId
+  var control=visible?mMaterials.control:createPhoneAttachments({draftId:draft.draftId,taskId:id})
+  control.acknowledge((draft.attachments||[]).map(function(a){return a.id}))
+  if(!visible)control.dispose()
+}
+function mMatchesInput(id,draft,input) {
+  return !!draft&&input.taskId===id&&input.id===draft.requestId&&typeof input.runId==='string'&&!!input.runId&&(!draft.runId||draft.runId===input.runId)&&draft.text.trim()===input.text&&mMaterialSignature(draft.attachments)===mMaterialSignature(input.attachments)
+}
+function mMatchesDraft(current,snapshot) {
+  return !!current&&!!snapshot&&current.requestId===snapshot.requestId&&current.draftId===snapshot.draftId&&current.text.trim()===snapshot.text.trim()&&mMaterialSignature(current.attachments)===mMaterialSignature(snapshot.attachments)
+}
 function mUuid() {
   var bytes = crypto.getRandomValues(new Uint8Array(16)); bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128
   var h = Array.from(bytes,function(b){return b.toString(16).padStart(2,"0")}).join("")
@@ -61,7 +101,7 @@ function mSetButtons() {
   document.querySelectorAll("#m-controls button[data-request]").forEach(function(/** @type {HTMLButtonElement} */ b){b.disabled=!mDetailFresh||!!mBusy[b.dataset.task+":"+b.dataset.request]})
   document.querySelectorAll("#m-questions [data-question-request]").forEach(function(/** @type {HTMLElement} */ card){var disabled=!!mBusy[mCurrent+":"+card.dataset.questionRequest];card.querySelectorAll('input,textarea').forEach(function(/** @type {HTMLInputElement} */ input){input.disabled=disabled})})
   var send=/** @type {HTMLButtonElement} */ (document.getElementById("m-send")),say=/** @type {HTMLTextAreaElement} */ (document.getElementById("m-say"))
-  send.disabled=!mDetailFresh||!mDetail||mTooLarge||!!mBusy[mCurrent+":say"]
+  send.disabled=!mDetailFresh||!mDetail||mTooLarge||!!mBusy[mCurrent+":say"]||!!(mMaterials&&!mMaterials.control.isReady())
   say.disabled=mTooLarge
 }
 function loadMatters() {
@@ -71,24 +111,34 @@ function loadMatters() {
 }
 function mQuestionDraft(request) { return mRead(mCurrent+":question:"+request.id) || {} }
 function mObserveInput(id,input,notify) {
-  if(!input||input.taskId!==id||!M_INPUT_STATUS[input.status])return
+  if(!input||input.taskId!==id||!M_INPUT_STATUS[input.status])return false
   var known=mCurrent===id&&mDetail&&(mDetail.inputs||[]).find(function(r){return r.taskId===id&&r.id===input.id&&r.runId===input.runId})
   if(known&&['held','withdrawn','delivered'].indexOf(known.status)>=0&&['pending','sending'].indexOf(input.status)>=0)input=known
-  var key=id+':'+input.id,changed=mInputStates[key]!==input.status,draft=mRead(id+':say')
-  var matches=draft&&draft.requestId===input.id&&(!draft.runId||draft.runId===input.runId)&&draft.text.trim()===input.text
-  mInputStates[key]=input.status
-  if(matches){
-    if(input.status==='delivered'){
-      mWrite(id+':say',null)
-      if(mCurrent===id&&/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say')).value.trim()===input.text)/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say')).value=''
-    }else if(!draft.runId){draft.runId=input.runId;mWrite(id+':say',draft)}
+  var key=id+':'+input.id,changed=mInputStates[key]!==input.status,snapshot=mPending(id).find(function(r){return r.requestId===input.id})
+  if(!mMatchesInput(id,snapshot,input))return false
+  var current=mRead(id+':say'),matches=mMatchesDraft(current,snapshot)
+  mInputStates[key]=input.status;snapshot.runId=input.runId;snapshot.status=input.status
+  if(input.status==='delivered'){
+    if(matches)mWrite(id+':say',null)
+    mWrite(id+':say-pending',mPending(id).filter(function(r){return r.requestId!==input.id}))
+    mAcknowledgeMaterials(id,snapshot)
+    if(matches&&mCurrent===id){
+      var field=/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say'))
+      if(field.value.trim()===input.text)field.value=''
+      mDisposeMaterials();mMountMaterials(id)
+    }
+  }else{
+    mSavePending(id,snapshot)
+    if(matches)mWrite(id+':say',snapshot)
   }
   if(mCurrent===id&&(notify||(matches&&changed)))mNotice(M_INPUT_STATUS[input.status])
+  return true
 }
 function mRenderInputs(d) {
   var inputs=(d.inputs||[]).filter(function(input){return input.taskId===d.matter.id&&M_INPUT_STATUS[input.status]})
   inputs.forEach(function(input){mObserveInput(d.matter.id,input,false)})
-  document.getElementById('m-inputs').innerHTML=inputs.filter(function(input){return input.status!=='delivered'}).map(function(input){return '<div class="card"><b>'+esc(M_INPUT_STATUS[input.status])+'</b><pre class="m-description">'+esc(input.text)+'</pre><button type="button" class="more" data-restore-input="'+esc(input.id)+'">取回这条补充</button></div>'}).join('')
+  var local=mPending(d.matter.id).filter(function(p){return !inputs.some(function(input){return input.id===p.requestId})}).map(function(p){return '<div class="card"><b>'+esc(M_INPUT_STATUS[p.status]||'正在确认是否收到，原文和材料已保留。')+'</b><pre class="m-description">'+esc(p.text)+'</pre>'+mMaterialCards(p.attachments)+'<button type="button" class="more" data-restore-input="'+esc(p.requestId)+'">取回这条补充</button></div>'}).join('')
+  document.getElementById('m-inputs').innerHTML=local+inputs.filter(function(input){return input.status!=='delivered'}).map(function(input){return '<div class="card"><b>'+esc(M_INPUT_STATUS[input.status])+'</b><pre class="m-description">'+esc(input.text)+'</pre>'+mMaterialCards(input.attachments)+'<button type="button" class="more" data-restore-input="'+esc(input.id)+'">取回这条补充</button></div>'}).join('')
 }
 function mRenderQuestions(d) {
   var questions=(d.questions||[]).filter(function(r){return r.taskId===d.matter.id})
@@ -112,16 +162,24 @@ function mSettleUnsure(d) {
   delete mUnsure[d.matter.id]
   mNotice(pending?"这项请求仍在等待。请确认当前内容，再决定是否提交。":"这项请求已结束或被其他设备处理，无法确认刚才的提交是否生效。请查看任务记录。")
 }
+function mRenderEvents(events) {
+  var root=document.getElementById('m-events'),expanded=root.querySelectorAll('details.m-tool-events[open]').length>0
+  var dialogue=events.filter(function(e){return ['user','text','error','system'].indexOf(e.kind)>=0}).map(function(e){return '<div class="card ev"><div class="k">'+(e.kind==='user'?'你':e.kind==='text'?'CC':'·')+'</div><div class="tx"><p>'+esc(e.text)+'</p>'+mMaterialCards(e.attachments)+'<small>'+esc(ago(new Date(e.createdAt).toISOString()))+'</small></div></div>'}).join('')
+  var tools=events.filter(function(e){return e.kind==='tool_call'})
+  var folded=tools.length?'<details class="m-tool-events"'+(expanded?' open':'')+'><summary>工具记录（'+tools.length+'）</summary>'+tools.map(function(e){return '<div class="card"><pre class="m-description">'+esc(e.text)+'</pre><small>'+esc(ago(new Date(e.createdAt).toISOString()))+'</small></div>'}).join('')+'</details>':''
+  root.innerHTML=dialogue+folded||'<div class="empty">还没有对话记录</div>'
+}
 function renderMatter(d) {
   mDetail=d;mTooLarge=false;mDetailFresh=true
   document.getElementById("m-title").textContent=d.matter.title+" · "+(M_STATUS[d.matter.status]||d.matter.status)
-  document.getElementById("m-events").innerHTML=(d.events||[]).filter(function(e){return ["user","text","error","system"].indexOf(e.kind)>=0}).map(function(e){return '<div class="card ev"><div class="k">'+(e.kind==='user'?'你':e.kind==='text'?'CC':'·')+'</div><div class="tx"><p>'+esc(e.text)+'</p><small>'+esc(ago(new Date(e.createdAt).toISOString()))+'</small></div></div>'}).join("")||'<div class="empty">还没有对话记录</div>'
+  mRenderEvents(d.events||[])
   document.getElementById("m-permissions").innerHTML=(d.permissions||[]).filter(function(p){return p.taskId===d.matter.id}).map(function(p){return '<div class="card"><b>需要你允许这一次</b><p>'+esc(p.tool)+'</p><pre class="m-description">'+esc(p.description)+'</pre><button type="button" class="done-btn" data-control="allow" data-task="'+esc(d.matter.id)+'" data-request="'+esc(p.id)+'">允许这一次</button> <button type="button" class="more" data-control="deny" data-task="'+esc(d.matter.id)+'" data-request="'+esc(p.id)+'">拒绝</button></div>'}).join("")
   mRenderQuestions(d)
   mRenderInputs(d)
   mSettleUnsure(d)
   document.getElementById("m-artifacts").innerHTML=(d.artifacts||[]).filter(function(a){return a.taskId===d.matter.id}).map(function(a){return '<div class="card"><b>'+esc(a.name)+'</b><small>已保存 · '+Math.ceil(a.size/1024)+' KB</small><button type="button" class="more" data-artifact="'+esc(a.id)+'">查看 '+esc(a.name)+'</button></div>'}).join("")
   document.getElementById("m-say-box").hidden=d.matter.kind==='companion'||d.matter.status==='archived'
+  mMountMaterials(d.matter.id)
   mSetButtons()
   var preview=(d.artifacts||[]).find(function(a){return a.taskId===d.matter.id&&['image/png','image/jpeg','image/webp'].indexOf(a.mime)>=0&&a.size<=8*1024*1024})
   if(preview&&!(d.permissions||[]).length&&!(d.questions||[]).length){
@@ -141,7 +199,7 @@ function mRefresh() {
 function openMatter(id) {
   mDetailFresh=false
   if(mCurrent!==id)mAutoPreview=''
-  if(mCurrent!==id){mSeq++;mDetail=null;mTooLarge=false;mQuestionKey="";mClearPreview();document.getElementById("m-events").replaceChildren();document.getElementById("m-permissions").replaceChildren();document.getElementById("m-questions").replaceChildren();document.getElementById("m-artifacts").replaceChildren();document.getElementById('m-inputs').replaceChildren();mSetButtons();mNotice("");document.getElementById("m-title").textContent="正在读…"}
+  if(mCurrent!==id){mDisposeMaterials();mSeq++;mDetail=null;mTooLarge=false;mQuestionKey="";mClearPreview();document.getElementById("m-events").replaceChildren();document.getElementById("m-permissions").replaceChildren();document.getElementById("m-questions").replaceChildren();document.getElementById("m-artifacts").replaceChildren();document.getElementById('m-inputs').replaceChildren();mSetButtons();mNotice("");document.getElementById("m-title").textContent="正在读…"}
   mCurrent=id;mActive=true
   var draft=mRead(id+":say");/** @type {HTMLTextAreaElement} */ (document.getElementById("m-say")).value=draft&&typeof draft.text==='string'?draft.text:""
   document.getElementById("m-list").hidden=true;document.getElementById("m-detail").hidden=false
@@ -170,33 +228,57 @@ document.getElementById("m-questions").addEventListener("input",function(ev){
   else{v.selected=Array.from(card.querySelectorAll('[data-answer-choice]')).filter(function(/** @type {HTMLInputElement} */ i){return i.dataset.answerChoice===qid&&i.checked}).map(function(/** @type {HTMLInputElement} */ i){return i.value});if(!q.multiSelect){v.other="";card.querySelectorAll('[data-answer-other]').forEach(function(/** @type {HTMLInputElement} */ i){if(i.dataset.answerOther===qid)i.value=""})}}
   draft[qid]=v;mWrite(mCurrent+":question:"+request.id,draft)
 })
-document.getElementById("m-say").addEventListener("input",function(){if(mCurrent)mWrite(mCurrent+":say",{text:/** @type {HTMLTextAreaElement} */ (this).value})})
+document.getElementById("m-say").addEventListener("input",function(){
+  if(!mCurrent)return
+  var prior=mRead(mCurrent+':say')||{},text=/** @type {HTMLTextAreaElement} */ (this).value
+  if(prior.requestId){
+    mSavePending(mCurrent,prior)
+    mWrite(mCurrent+':say',{text:text,...(prior.draftId?{draftId:mUuid(),attachments:[]}: {})})
+    mDisposeMaterials();mMountMaterials(mCurrent)
+    if(prior.attachments&&prior.attachments.length)mNotice('当前文字是新草稿；已提交的材料留在上一条补充中。')
+  }else mWrite(mCurrent+':say',Object.assign({},prior,{text:text}))
+  mSetButtons()
+})
 document.getElementById("m-send").addEventListener("click",function(){
-  var id=mCurrent,text=/** @type {HTMLTextAreaElement} */ (document.getElementById("m-say")).value.trim(),key=id+":say"
-  if(!id||!text||!mDetail||!mDetailFresh||mBusy[key])return
-  var prior=mRead(id+":say"),draft=prior&&prior.requestId&&prior.text===text?prior:{text:text,requestId:mUuid(),...(mDetail.runId?{runId:mDetail.runId}:{})}
-  mWrite(id+":say",draft);mBusy[key]=true;mSetButtons();mNotice("正在发送…")
-  mApi('/m/api/matter/say',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:id,...draft})}).then(function(r){
+  var id=mCurrent,text=/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say')).value.trim(),key=id+':say'
+  if(!id||!mDetail||!mDetailFresh||mBusy[key]||mTooLarge)return
+  var materials=mMaterials&&mMaterials.taskId===id?mMaterials.control:null
+  if(materials&&!materials.isReady()){mNotice('材料还没准备好，请等上传完成后再发送。');return}
+  var items=materials?mMaterialViews(materials.items()):[],prior=mRead(id+':say')||{}
+  if(!text&&!items.length)return
+  var draft=prior.requestId&&prior.text.trim()===text&&mMaterialSignature(prior.attachments)===mMaterialSignature(items)?prior:{text:text,requestId:mUuid(),...(mDetail.runId?{runId:mDetail.runId}:{}),...(materials?{draftId:mMaterials.draftId,attachments:items}:{})}
+  var failure=''
+  if(!mWrite(id+':say',draft)||!mSavePending(id,draft)){mNotice('这台手机暂时无法保存补充，原文和材料仍在，请恢复存储后重试。');return}
+  try{if(materials)materials.freeze(items.map(function(a){return a.id}))}catch(e){mNotice('暂时无法保存材料状态，请保留草稿后重试。');return}
+  mBusy[key]=true;mSetButtons();mNotice('正在发送…')
+  var body={id:id,text:draft.text,requestId:draft.requestId,...(draft.runId?{runId:draft.runId}:{}),...(draft.draftId?{draftId:draft.draftId}:{}),...(draft.attachments&&draft.attachments.length?{attachmentIds:draft.attachments.map(function(a){return a.id})}:{})}
+  mApi('/m/api/matter/say',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(function(r){
     if(r.result&&r.result.kind==='task'){
       var input=r.result.input
-      if(input){if(input.taskId!==id||input.id!==draft.requestId||(draft.runId&&input.runId!==draft.runId))throw new Error('input_conflict');mObserveInput(id,input,true)}
+      if(input){if(!mMatchesInput(id,draft,input)||!mObserveInput(id,input,true))throw new Error('input_conflict')}
       else if(mCurrent===id)mNotice('补充已受理，等待执行者确认。')
       return
     }
-    if((mRead(id+":say")||{}).requestId===draft.requestId){mWrite(id+":say",null);if(mCurrent===id)/** @type {HTMLTextAreaElement} */ (document.getElementById("m-say")).value=""}
-    if(mCurrent===id)mNotice("已送达")
-  }).catch(function(e){if(mCurrent===id)mNotice(mError(e.message))}).finally(function(){delete mBusy[key];if(mCurrent===id){mSetButtons();mRefresh()}})
+    if(draft.attachments&&draft.attachments.length)throw new Error('input_conflict')
+    if(mMatchesDraft(mRead(id+':say'),draft)){mWrite(id+':say',null);if(mCurrent===id)/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say')).value=''}
+    mWrite(id+':say-pending',mPending(id).filter(function(p){return p.requestId!==draft.requestId}))
+    if(mCurrent===id)mNotice('已送达')
+  }).catch(function(e){failure=mError(e.message);if(mCurrent===id)mNotice(failure)}).finally(function(){delete mBusy[key];if(mCurrent===id){mSetButtons();return mRefresh().then(function(){if(failure&&mCurrent===id)mNotice(failure)})}})
 })
 document.getElementById('m-inputs').addEventListener('click',function(ev){
   var b=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-restore-input]'));if(!b||!mDetail||mTooLarge)return
-  var input=(mDetail.inputs||[]).find(function(r){return r.taskId===mCurrent&&r.id===b.dataset.restoreInput})
+  var local=mPending(mCurrent).find(function(p){return p.requestId===b.dataset.restoreInput})
+  var input=(mDetail.inputs||[]).find(function(r){return r.taskId===mCurrent&&r.id===b.dataset.restoreInput})||local&&{id:local.requestId,taskId:mCurrent,runId:local.runId,text:local.text,status:local.status,attachments:local.attachments}
   if(!input)return
   var ta=/** @type {HTMLTextAreaElement} */ (document.getElementById('m-say'))
   if(ta.value.trim()&&ta.value.trim()!==input.text){mNotice('输入框里还有新的补充。原文保留在这条记录中，清空输入框后可以取回。');return}
-  ta.value=input.text;mWrite(mCurrent+':say',{requestId:input.id,runId:input.runId,text:input.text});mNotice(M_INPUT_STATUS[input.status])
+  var current=mRead(mCurrent+':say'),snapshot=local||mPending(mCurrent).find(function(p){return mMatchesInput(mCurrent,p,input)})
+  if(current&&current.attachments&&current.attachments.length&&!mMatchesDraft(current,snapshot||{})){mNotice('输入框里还有新的材料，原补充仍保留在记录中。');return}
+  if(input.attachments&&input.attachments.length&&!snapshot){mNotice('原图文保留在这条记录中，请到桌面查看或重新选择材料。');return}
+  ta.value=input.text;mWrite(mCurrent+':say',snapshot||{requestId:input.id,runId:input.runId,text:input.text});mDisposeMaterials();mMountMaterials(mCurrent);mNotice(M_INPUT_STATUS[input.status]||'原文和材料已取回，发送会继续核对同一条补充。')
 })
 document.getElementById("m-list").addEventListener("click",function(ev){var c=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-mid]'));if(c)openMatter(c.dataset.mid)})
-document.getElementById("m-back").addEventListener("click",function(){mSeq++;mCurrent=null;mDetail=null;clearTimeout(mPoll);mClearPreview();document.getElementById("m-detail").hidden=true;document.getElementById("m-list").hidden=false;loadMatters()})
+document.getElementById("m-back").addEventListener("click",function(){mDisposeMaterials();mSeq++;mCurrent=null;mDetail=null;clearTimeout(mPoll);mClearPreview();document.getElementById("m-detail").hidden=true;document.getElementById("m-list").hidden=false;loadMatters()})
 document.querySelectorAll('nav button[data-p]').forEach(function(/** @type {HTMLButtonElement} */ b){b.addEventListener('click',function(){mActive=b.dataset.p==='matters';clearTimeout(mPoll);if(mActive){if(mCurrent)mRefresh();else loadMatters()}})})
 // 回前台按当前页分路:在详情页刷详情,在列表页刷列表。此前只调 mRefresh(),而它要
 // mCurrent —— 停在列表上回来时什么都不刷,人看到的还是切走之前那份。
@@ -214,6 +296,7 @@ async function mSha256(bytes) {
   data.set(bytes);data[bytes.length]=128;new DataView(data.buffer).setUint32(data.length-4,bytes.length*8)
   function ro(x,n){return(x>>>n)|(x<<(32-n))}
   for(var off=0;off<data.length;off+=64){
+    if(off&&off%(128*1024)===0)await new Promise(function(resolve){setTimeout(resolve,0)})
     for(var i=0;i<16;i++)w[i]=(data[off+i*4]<<24)|(data[off+i*4+1]<<16)|(data[off+i*4+2]<<8)|data[off+i*4+3]
     for(var i=16;i<64;i++){var x=w[i-15],y=w[i-2];w[i]=(w[i-16]+(ro(x,7)^ro(x,18)^(x>>>3))+w[i-7]+(ro(y,17)^ro(y,19)^(y>>>10)))|0}
     var a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],hh=h[7]
