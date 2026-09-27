@@ -16,7 +16,7 @@ let els: Record<string, El>
 let recorder: { mimeType: string; addEventListener: Function; start: Function; stop: Function }
 let stopTrack: ReturnType<typeof vi.fn>
 let invoke: ReturnType<typeof vi.fn<(cmd: string, args: Record<string, unknown>) => Promise<string>>>
-type EntryResult = import('../../../../src/core/workbench/task-entry').EntryResult
+type EntryResult = import('../../../../src/core/workbench/service').EntryResult
 const accepted = {receipt:{requestId:'request',taskId:'aabbccdd',matterId:'aabbccdd',runId:'run',acceptedAt:1},task:{id:'aabbccdd'}} as EntryResult
 let onDelegate: ReturnType<typeof vi.fn<(draft: {text:string;visibleMessages?:{role:'user'|'cc';text:string}[]}) => Promise<EntryResult|null>>>
 const settle = async () => { for (let i = 0; i < 15; i++) await Promise.resolve() }

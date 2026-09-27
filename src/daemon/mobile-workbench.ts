@@ -1,6 +1,7 @@
+import type {EntryResult} from '../core/workbench/service'
 import type {UploadChunk,UploadState} from '../core/workbench/attachment-uploads'
 import type {MattersService,MatterSayInput} from '../core/matters/service'
-import {parseEntryInput,type EntryInput,type EntryOptions,type EntryResult} from '../core/workbench/task-entry'
+import {parseEntryInput,type EntryInput,type EntryOptions} from '../core/workbench/task-entry'
 
 export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'>>
 export interface MobileEntryActions {

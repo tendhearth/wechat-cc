@@ -5,7 +5,7 @@ import {createExecutionCatalogs, renderExecutionControls, executionErrorMessage}
 import {createWorkbenchThumbnails} from './workbench-thumbnails.js'
 
 /** @typedef {import('../../../../src/core/workbench/task-entry').EntryInput} EntryInput */
-/** @typedef {import('../../../../src/core/workbench/task-entry').EntryResult} EntryResult */
+/** @typedef {import('../../../../src/core/workbench/service').EntryResult} EntryResult */
 /** @typedef {import('../../../../src/core/workbench/task-entry').EntryOptions} EntryOptions */
 /** @typedef {{role:'user'|'cc',text:string,pending?:boolean}} Message */
 /** @typedef {{text:string,visibleMessages?:Message[]}} Draft */

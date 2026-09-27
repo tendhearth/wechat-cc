@@ -3,7 +3,6 @@ import type {WorkbenchExecutorCapabilities} from './executor-capabilities'
 import {isWorkbenchProviderId} from './executor-capabilities'
 import {normalizeExecutionChoice, PROVIDER_EXECUTION_CHOICE} from './execution-settings'
 import type {ProjectCatalogEntry} from './project-catalog'
-import type {WorkbenchTaskView} from './service'
 
 export type EntryTarget = {kind: 'managed'} | {kind: 'project'; projectId: string}
 export type EntryExcerpt = {role: 'user' | 'assistant'; text: string}
@@ -26,7 +25,6 @@ export type EntryReceipt = {
   runId: string
   acceptedAt: number
 }
-export type EntryResult = {receipt: EntryReceipt; task: WorkbenchTaskView}
 export type EntryOptions = {
   status: 'ready' | 'needs_connection'
   reason?: {code: string; message: string}

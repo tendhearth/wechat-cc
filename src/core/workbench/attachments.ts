@@ -3,8 +3,7 @@ import {closeSync,constants,fstatSync,lstatSync,readdirSync,readSync,unlinkSync,
 import {basename,dirname,extname,isAbsolute,join,resolve} from 'node:path'
 import type {Db} from '../../lib/db'
 import type {AgentAttachment} from '../agent-provider'
-import {readAnchoredRegular} from './artifacts'
-import {O_NONBLOCK,lstatNoLink,mkdirAnchored,openAnchored} from './anchored-fs'
+import {O_NONBLOCK,readAnchoredFile,lstatNoLink,mkdirAnchored,openAnchored} from './anchored-fs'
 
 export interface Attachment {id:string;name:string;mime:string;size:number;sha256:string}
 export interface AttachmentUpload {id:string;draftId:string;taskId?:string;name:string;mime:string;base64:string}
@@ -98,7 +97,7 @@ function snapshot(row:StoredAttachment,stateDir:string):Buffer {
   const root=resolve(stateDir,'workbench-attachments')
   if(row.storagePath!==join(root,row.sha256))throw Error('invalid_attachment_path')
   let bytes:Buffer
-  try{bytes=readAnchoredRegular(root,row.sha256)}catch(error){
+  try{bytes=readAnchoredFile(root,row.sha256,MAX_ATTACHMENT_BYTES,{path:'invalid_artifact_path',size:'invalid_artifact_size',changed:'artifact_changed'})}catch(error){
     if(error instanceof Error&&error.message==='artifact_changed')throw Error('attachment_changed')
     throw Error('invalid_attachment_path')
   }

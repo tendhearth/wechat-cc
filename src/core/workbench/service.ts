@@ -34,7 +34,7 @@ import type { RecollectSink } from '../matters/recollection'
 import type { UsageSnapshot } from '../subscription-usage'
 import { publicTask, TERMINAL_TASK_STATUSES, type WorkbenchListQuery, type StoredTask, type Task, type TaskStatus, type WorkbenchStore } from './store'
 import { makeTaskChangeHub, type TaskChangeHub } from './task-changes'
-import {canonicalEntryHash,composeEntryPrompt,parseEntryInput,type EntryContext,type EntryInput,type EntryOptions,type EntryResult} from './task-entry'
+import {canonicalEntryHash,composeEntryPrompt,parseEntryInput,type EntryContext,type EntryInput,type EntryOptions,type EntryReceipt} from './task-entry'
 import {createManagedWorkspaces,type ManagedWorkspaces} from './managed-workspaces'
 import type {EntryRecord} from './entry-store'
 import {readdirAnchored} from './anchored-fs'
@@ -153,6 +153,7 @@ export type WorkbenchPhase='queued'|'working'|'replied'|'failed'|'cancelled'|'in
  *  该出现的时候;`writer_not_closed` 那种 holder 永远不安静,这两个字段用不上也盖不掉老文案。 */
 export interface TaskWaitingFor extends WaitingFor { holderWriting: boolean; closeInMs: number | null }
 export interface WorkbenchTaskView extends Task { phase:WorkbenchPhase; importedOnly?:boolean; canArchive:boolean; waitingFor: TaskWaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number; runtime?:AgentRuntimeSnapshot }
+export type EntryResult = {receipt: EntryReceipt; task: WorkbenchTaskView}
 
 function checkedText(text: string,attachments:readonly Attachment[]=[]): string {
   if (typeof text !== 'string' || (!text.trim()&&!attachments.length) || text.length > 20_000) throw new Error('invalid_text')
@@ -219,7 +220,11 @@ export function makeWorkbenchService(opts: Options) {
     if(taskId&&store.get(taskId).ownerChatId!==ownerKey)throw Error('attachment_scope')
     return {ownerKey}
   }
-  const selectAttachments=(input:InputMaterials={},taskId?:string,policy?:'owner')=>store.attachments.select(input.attachmentIds??[],taskId,input.draftId,policy?strictAttachmentScope(taskId):attachmentScope())
+  const selectAttachments=(input:InputMaterials={},taskId?:string,policy?:'owner')=>{
+    // Legacy text-only continuation does not claim materials; phone requests always verify the owner.
+    const scope=policy?strictAttachmentScope(taskId):input.attachmentIds?.length?attachmentScope():undefined
+    return store.attachments.select(input.attachmentIds??[],taskId,input.draftId,scope)
+  }
   let managedWorkspaces:ManagedWorkspaces|undefined
   const managed=()=>{
     if(!opts.managedWorkspaceRoot)throw Error('entry_not_wired')
