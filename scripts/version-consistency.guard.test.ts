@@ -23,11 +23,16 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const readJson = (...p: string[]) => JSON.parse(readFileSync(join(ROOT, ...p), 'utf8')) as { version?: string }
 const read = (...p: string[]) => readFileSync(join(ROOT, ...p), 'utf8')
 
-describe('四处版本号对得上', () => {
+describe('五处版本号对得上', () => {
   const tauri = readJson('apps', 'desktop', 'src-tauri', 'tauri.conf.json').version
 
   it('tauri.conf 是发版号,根 package.json 必须跟它一致(--version 显示的就是后者)', () => {
     expect(readJson('package.json').version).toBe(tauri)
+  })
+
+  it('Cargo.toml 也跟着(2026-09-26 梳理抓到它停在 0.6.3;tauri 打包不读它,但人读、cargo 读)', () => {
+    const cargo = read('apps', 'desktop', 'src-tauri', 'Cargo.toml')
+    expect(/^version = "([^"]+)"/m.exec(cargo)?.[1]).toBe(tauri)
   })
 
   it('apps/desktop/package.json 也跟着,别留第三个数', () => {
