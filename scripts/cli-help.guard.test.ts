@@ -8,17 +8,20 @@
  */
 import { describe, it, expect } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, mkdtempSync } from 'node:fs'
 import { join, dirname } from 'node:path'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CLI = join(ROOT, 'cli.ts')
+// 只读命令的 STATE_DIR 放系统临时目录:doctor / status 会开 sqlite,别把 .db 写进 checkout。
+const STATE_DIR = mkdtempSync(join(tmpdir(), 'cli-help-guard-'))
 
 function run(args: string[]): { code: number; out: string } {
   const r = spawnSync('bun', [CLI, ...args], {
     cwd: ROOT, encoding: 'utf8', timeout: 15_000,
-    env: { ...process.env, NO_COLOR: '1', WECHAT_STATE_DIR: join(ROOT, '.superpowers', 'cli-help-state') },
+    env: { ...process.env, NO_COLOR: '1', WECHAT_STATE_DIR: STATE_DIR },
   })
   return { code: r.status ?? -1, out: ((r.stdout ?? '') + (r.stderr ?? '')).replace(/\r\n/g, '\n') }
 }
@@ -62,14 +65,17 @@ describe('只读命令真的跑(动态 import 路径)', () => {
   const READ_ONLY: string[][] = [
     ['status', '--json'], ['doctor', '--json'], ['provider', 'show', '--json'],
     ['access', 'list', '--json'], ['license', 'status', '--json'], ['backup', 'list', '--json'],
-    ['setup-status', '--json'], ['guard', 'status', '--json'],
+    ['setup-status', '--json'],
+    // 不放 `guard status`:它真的探公网 IP(fetchPublicIp / probeReachable),单测套件不上网。
   ]
   for (const args of READ_ONLY) {
     it(args.join(' '), () => {
       const r = run(args)
-      // 只要求进程正常结束、有输出(内容随机器状态变,不快照;`status` / `backup list`
+      // 只要求退出码 0、有输出(内容随机器状态变,不快照;`status` / `backup list`
       // 没有 --json 也照跑 —— 要抓的是动态 import 路径,不是输出格式)。
-      expect(r.code, r.out).toBeLessThan(2)
+      // 必须是 0:run() 里 import 路径写错时 main().catch 以 1 退出,`< 2` 会放过它(2026-09-27 评审抓到)。
+      expect(r.code, r.out).toBe(0)
+      expect(r.out, 'dynamic import failed').not.toContain('Cannot find module')
       expect(r.out.trim().length, 'no output').toBeGreaterThan(0)
     })
   }
