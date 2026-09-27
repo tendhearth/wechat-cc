@@ -25,6 +25,9 @@ describe('route-tiers', () => {
   })
 
   it('task permission decisions require admin', () => {
+    expect(ROUTE_MIN_TIER['GET /v1/workbench/entry-options']).toBe('admin')
+    expect(ROUTE_MIN_TIER['POST /v1/workbench/create-entry']).toBe('admin')
+    expect(ROUTE_MIN_TIER['GET /v1/workbench/entry-receipt']).toBe('admin')
     expect(minTierFor('POST /v1/workbench/permission')).toBe('admin')
     expect(ROUTE_MIN_TIER['POST /v1/workbench/archive']).toBe('admin')
     expect(ROUTE_MIN_TIER['GET /v1/workbench/sessions']).toBe('admin')

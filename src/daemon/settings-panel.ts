@@ -36,7 +36,7 @@ import { PROVIDER_IDS } from '../lib/provider-ids'
 import { buildFeed, decodeCursor, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
 import blinkArt from './mobile-blink-art.json'
 import { MOBILE_BRAND_ICON_PNG, MOBILE_BRAND_ICON_SIZES } from './mobile-brand-icon'
-import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions} from './mobile-workbench'
+import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions} from './mobile-workbench'
 import {mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileHomeFocus} from './mobile-home-focus'
 import type {MatterSayInput} from '../core/matters/service'
@@ -66,6 +66,7 @@ const PERSONA_MAX_CHARS = 8000
 export interface SettingsPanelDeps {
   stateDir: string
   ownerChatId: () => string | null
+  entry?:MobileEntryActions
   chatPrefs: {
     get(chatId: string): Record<string, unknown>
     set(chatId: string, patch: Record<string, unknown>): Record<string, unknown>
@@ -586,7 +587,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             return json({ ok: true, seen_until: clamped })
           }
           // ── 「一件事」:与桌面同一份数据,同一套语义 ──────────────────
-          const mobileResponse=await mobileWorkbenchRoute(deps.matters,url,req)
+          const mobileResponse=await mobileWorkbenchRoute(deps.matters,url,req,deps.entry)
           if(mobileResponse)return mobileResponse
           if (url.pathname === '/m/api/matters' && req.method === 'GET') {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)

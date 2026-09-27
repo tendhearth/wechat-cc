@@ -987,6 +987,9 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
     matches!(
         (method, route),
         ("GET", "/v1/workbench")
+            | ("GET", "/v1/workbench/entry-options")
+            | ("POST", "/v1/workbench/create-entry")
+            | ("GET", "/v1/workbench/entry-receipt")
             | ("GET", "/v1/workbench/models")
             | ("GET", "/v1/workbench/sessions")
             | ("GET", "/v1/workbench/session")
@@ -1375,6 +1378,9 @@ mod workbench_proxy_tests {
     #[test]
     fn allows_only_the_exact_workbench_method_route_pairs() {
         for (method, path) in [
+            ("GET", "/v1/workbench/entry-options"),
+            ("POST", "/v1/workbench/create-entry"),
+            ("GET", "/v1/workbench/entry-receipt?requestId=123e4567-e89b-42d3-a456-426614174000"),
             ("GET", "/v1/workbench"),
             ("GET", "/v1/workbench/task?id=A1B2C3D4"),
             ("GET", "/v1/workbench/sessions?providerId=claude"),
@@ -1410,6 +1416,18 @@ mod workbench_proxy_tests {
             assert!(workbench_request_allowed(method, path), "expected {method} {path} to be allowed");
         }
         for (method, path) in [
+            ("POST", "/v1/workbench/entry-options"),
+            ("GET", "/v1/workbench/create-entry"),
+            ("POST", "/v1/workbench/entry-receipt"),
+            ("GET", "/v1/workbench/entry-options/extra"),
+            ("POST", "/v1/workbench/create-entry/extra"),
+            ("GET", "/v1/workbench/entry-receipt/extra"),
+            ("GET", "/v1/workbench/entry-options-extra"),
+            ("POST", "/v1/workbench/create-entry-extra"),
+            ("GET", "/v1/workbench/entry-receipt-extra"),
+            ("GET", "/v1/workbench/entry-options/"),
+            ("POST", "/v1/workbench/create-entry/"),
+            ("GET", "/v1/workbench/entry-receipt/"),
             ("DELETE", "/v1/workbench/attachment"),
             ("GET", "/v1/workbench/discard-attachment"),
             ("POST", "/v1/workbench/attachment/extra"),

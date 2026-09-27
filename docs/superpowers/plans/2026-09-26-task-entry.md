@@ -126,11 +126,11 @@ expect(replayed.receipt.taskId).toBe(replayed.receipt.matterId)
 
 **Interfaces:** 仅暴露设计表中的三个桌面路由和三个手机路由；SettingsPanelDeps增加窄entryOptions/createEntry/entryReceipt依赖。两端成功结果使用EntryResult；不存在回执404。owner和surface由认证接线层构造，不能信body。
 
-- [ ] 写成对授权测试：operator精确三路由通过；guest/trusted拒绝；admin session保持既有策略；未认证/撤销手机拒绝。body path/owner/account/未知字段400；伪造请求编号不能读取另一owner回执；错误稳定JSON并有对应状态码。
-- [ ] 运行 `bun run test src/daemon/internal-api/routes-workbench.test.ts src/daemon/settings-panel-workbench.test.ts scripts/route-registry.guard.test.ts apps/desktop/workbench-proxy.test.ts`，确认新增端点及集合断言失败。
-- [ ] 注册路由、tier、operator、Rust白名单、开发代理与精确集合；手机放在现有token gate后，调用任务3，无通用/v1转发。桌面原attachment上传body不变，由服务端给任务1的可信scope盖当前owner；补原上传契约回归与body伪造owner拒绝测试。
-- [ ] 重跑以上测试；运行 `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml workbench_request`，确认新路径放行、近似前缀和未列路径拒绝。若现有Rust测试名不同，先列出精确测试名并记录再运行，不把0 tests算通过。
-- [ ] 提交：`feat: expose authenticated task entry adapters`。
+- [x] 写成对授权测试：operator精确三路由通过；guest/trusted拒绝；admin session保持既有策略；未认证/撤销手机拒绝。body path/owner/account/未知字段400；伪造请求编号不能读取另一owner回执；错误稳定JSON并有对应状态码。
+- [x] 运行 `bun run test src/daemon/internal-api/routes-workbench.test.ts src/daemon/settings-panel-workbench.test.ts scripts/route-registry.guard.test.ts apps/desktop/workbench-proxy.test.ts`，确认新增端点及集合断言失败。
+- [x] 注册路由、tier、operator、Rust白名单、开发代理与精确集合；手机放在现有token gate后，调用任务3，无通用/v1转发。桌面原attachment上传body不变，由服务端给任务1的可信scope盖当前owner；补原上传契约回归与body伪造owner拒绝测试。
+- [x] 重跑以上测试；运行 `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml workbench_request`，确认新路径放行、近似前缀和未列路径拒绝。若现有Rust测试名不同，先列出精确测试名并记录再运行，不把0 tests算通过。
+- [x] 提交：`feat: expose authenticated task entry adapters`。
 
 ### Task 5: 桌面交办预览与默认入口
 

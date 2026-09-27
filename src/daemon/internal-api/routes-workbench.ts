@@ -5,6 +5,7 @@ import { isAbsolute } from 'node:path'
 import type { WorkbenchListQuery } from '../../core/workbench/store'
 import type {InputMaterials} from '../../core/workbench/service'
 import {isWorkbenchProviderId} from '../../core/workbench/executor-capabilities'
+import {parseEntryInput} from '../../core/workbench/task-entry'
 import type { InternalApiDeps, RouteHandler, RouteTable } from './types'
 
 const TASK_ID = /^[a-f0-9]{8}$/
@@ -14,6 +15,7 @@ const nonNegInt = (v: string | null): number | null => v !== null && /^\d{1,12}$
 const ARTIFACT_ID = /^[a-f0-9-]{8,64}$/
 const SHA256 = /^[a-f0-9]{64}$/
 const REQUEST_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
+const IDENTITY_FIELDS=['ownerKey','ownerChatId','accountId','surface','scope','owner','owner_key','owner_chat_id','account_id']
 const NATIVE_HISTORY_PROVIDERS = new Set<NativeHistoryProvider>(['claude', 'codex'])
 const isNativeHistoryProvider=(value:string|null):value is NativeHistoryProvider=>value!==null&&NATIVE_HISTORY_PROVIDERS.has(value as NativeHistoryProvider)
 
@@ -40,6 +42,11 @@ function errorCode(err: unknown): string {
 
 function mappedError(err: unknown): ReturnType<RouteHandler> {
   const code = errorCode(err)
+  if(code==='invalid_entry_owner')return{status:403,body:{error:code}}
+  if(['creation_conflict','project_stale','managed_workspace_changed'].includes(code))return{status:409,body:{error:code}}
+  if(['entry_not_wired','managed_workspace_unavailable','invalid_managed_workspace','workbench_stopping'].includes(code))return{status:503,body:{error:code}}
+  if(['api_task_input_invalid','api_task_attachment_invalid'].includes(code))return{status:400,body:{error:code}}
+  if(code==='api_task_attachment_unsupported')return{status:422,body:{error:code}}
   if(['model_catalog_unavailable','model_catalog_invalid'].includes(code))return{status:503,body:{error:code}}
   if(/^execution_.+_(unsupported|unknown)$/.test(code))return{status:400,body:{error:code}}
   if(code==='execution_conflict')return{status:409,body:{error:code}}
@@ -68,7 +75,30 @@ function mappedError(err: unknown): ReturnType<RouteHandler> {
 }
 
 export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
+  const entryContext=()=>({ownerKey:deps.resolveAdminChatId?.()??'',surface:'desktop' as const})
   return {
+    'GET /v1/workbench/entry-options':async query=>{
+      if(query.size)return invalid()
+      if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
+      try{return{status:200,body:deps.workbench.entryOptions(entryContext())}}catch(error){return mappedError(error)}
+    },
+    'POST /v1/workbench/create-entry':async(query,body)=>{
+      if(query.size)return invalid()
+      try{
+        const input=parseEntryInput(body)
+        if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
+        return{status:202,body:deps.workbench.createEntry(input,entryContext())}
+      }catch(error){return mappedError(error)}
+    },
+    'GET /v1/workbench/entry-receipt':async query=>{
+      const requestId=query.get('requestId')
+      if(query.size!==1||!requestId||!REQUEST_ID.test(requestId))return invalid()
+      if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
+      try{
+        const result=deps.workbench.entryReceipt(requestId.toLowerCase(),entryContext())
+        return result?{status:200,body:result}:{status:404,body:{error:'not_found'}}
+      }catch(error){return mappedError(error)}
+    },
     'POST /v1/workbench/project':async(_query,body)=>{
       const value=objectBody(body)
       if(!value||typeof value.path!=='string'||!isAbsolute(value.path)||value.path.includes('\0')||!isWorkbenchProviderId(value.providerId)||(value.name!==undefined&&typeof value.name!=='string'))return invalid()
@@ -83,7 +113,7 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
     },
     'POST /v1/workbench/attachment':async(_query,body)=>{
       const value=objectBody(body)
-      if(!value||typeof value.id!=='string'||!REQUEST_ID.test(value.id)||typeof value.draftId!=='string'||!REQUEST_ID.test(value.draftId)||typeof value.name!=='string'||typeof value.mime!=='string'||typeof value.base64!=='string'||(value.taskId!==undefined&&(typeof value.taskId!=='string'||!TASK_ID.test(value.taskId))))return invalid()
+      if(!value||IDENTITY_FIELDS.some(key=>Object.hasOwn(value,key))||typeof value.id!=='string'||!REQUEST_ID.test(value.id)||typeof value.draftId!=='string'||!REQUEST_ID.test(value.draftId)||typeof value.name!=='string'||typeof value.mime!=='string'||typeof value.base64!=='string'||(value.taskId!==undefined&&(typeof value.taskId!=='string'||!TASK_ID.test(value.taskId))))return invalid()
       if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
       try{return{status:200,body:{attachment:deps.workbench.uploadAttachment({id:value.id,draftId:value.draftId,name:value.name,mime:value.mime,base64:value.base64,...(value.taskId?{taskId:value.taskId as string}:{})})}}}catch(error){return mappedError(error)}
     },

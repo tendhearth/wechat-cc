@@ -21,3 +21,5 @@
 已完成后端步骤 1–3：严格输入/持久登记（144 项定向测试）、独立工作目录与项目归属（38 项）、原子创建与兼容回归（独立复核后 8 文件、112 项）。新增迁移 v68；历史迁移指纹未变。独立复核发现的首次材料校验竞争与已登记目录出现未知文件，均已用失败用例复现并修复。真实双 SQLite 连接以受控交错检查单次接受；尚未以两个外部服务进程进行并发压力验收。
 
 手机路由回归在首次 Cargo 满并发编译期间有两条既有 20 秒超时；保留超时设置，将本任务 Cargo 限为两并发后同文件 11 项全部通过。未归入已知 flake、未改超时。
+
+Task 4: trusted desktop/phone entry routes plus current-owner desktop uploads; strict phone continuation foundation landed here. Bun 7 files / 178 tests passed, including revoked phone requests. Rust exact whitelist: 1 test passed / 5 filtered with CARGO_BUILD_JOBS=2 and process-only TAURI_CONFIG disabling externalBin resource packaging. Node initial routes run: 102 passed, one existing chunked-upload ECONNRESET during compile; isolated idle retry passed, complete Node suite remains final gate.

@@ -554,6 +554,11 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const settingsPanel = makeSettingsPanel({
     stateDir,
     ownerChatId,
+    ...(opts.workbench?{entry:{
+      entryOptions:()=>opts.workbench!.entryOptions({ownerKey:ownerChatId()??'',surface:'phone'}),
+      createEntry:(input:import('../../core/workbench/task-entry').EntryInput)=>opts.workbench!.createEntry(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
+      entryReceipt:(requestId:string)=>opts.workbench!.entryReceipt(requestId,{ownerKey:ownerChatId()??'',surface:'phone'}),
+    }}:{}),
     curatedMemory: () => memoryNightly.curatedView(),
     ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,artifactChunk:mattersService.artifactChunk,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),

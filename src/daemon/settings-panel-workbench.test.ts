@@ -20,13 +20,14 @@ import {AsyncQueue} from '../core/async-queue'
 import type {AgentEvent} from '../core/agent-provider'
 
 // Real stores, service and HTTP router; only the external native executor is a fixture.
-let root:string,db:Db,workbench:WorkbenchService,panel:SettingsPanel,base:string,token:string
+let root:string,managedRoot:string,db:Db,workbench:WorkbenchService,panel:SettingsPanel,base:string,token:string
 let store:ReturnType<typeof makeWorkbenchStore>,matters:ReturnType<typeof makeMatterStore>
 const seen=new Map<string,{permission?:boolean;answers?:unknown;inputs:string[]}>()
 const runtimeReplies=new Map<string,{finish:(failed:boolean)=>void;submissions:string[]}>()
 const terminalFinishes=new Map<string,()=>void>()
 beforeEach(async()=>{
   root=realpathSync(mkdtempSync(join(tmpdir(),'cc-phone-workbench-')))
+  managedRoot=realpathSync(mkdtempSync(join(tmpdir(),'cc-phone-managed-')))
   db=openDb({path:join(root,'state.db')});matters=makeMatterStore(db);store=makeWorkbenchStore(db);seen.clear();runtimeReplies.clear()
   const registry=createProviderRegistry()
   registry.register('claude',{async spawn(project,ctx){
@@ -46,18 +47,45 @@ beforeEach(async()=>{
       yield {kind:'text' as const,text:'已保存'};await gate
     },async steer(text){receipt.inputs.push(text)},async close(){finish()}}
   }},{displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
-  workbench=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>'owner',matters})
+  workbench=makeWorkbenchService({store,registry,stateDir:root,managedWorkspaceRoot:managedRoot,ownerChatId:()=>'owner',defaultProvider:'claude',matters})
   const service=makeMattersService({store:matters,workbench})
-  panel=makeSettingsPanel({stateDir:root,ownerChatId:()=>'owner',chatPrefs:{get:()=>({}),set:()=>({})},getUserName:()=>null,setUserName:async()=>{},log:()=>{},matters:{...service,say:(id,text,input)=>service.say(id,text,'phone',input),seenOnPhone:id=>{matters.bind(id,'phone','pwa')}}})
+  panel=makeSettingsPanel({stateDir:root,ownerChatId:()=>'owner',chatPrefs:{get:()=>({}),set:()=>({})},getUserName:()=>null,setUserName:async()=>{},log:()=>{},entry:{entryOptions:()=>workbench.entryOptions({ownerKey:'owner',surface:'phone'}),createEntry:input=>workbench.createEntry(input,{ownerKey:'owner',surface:'phone'}),entryReceipt:id=>workbench.entryReceipt(id,{ownerKey:'owner',surface:'phone'})},matters:{...service,say:(id,text,input)=>service.say(id,text,'phone',input),seenOnPhone:id=>{matters.bind(id,'phone','pwa')}}})
   const {port}=await panel.start(0);base=`http://127.0.0.1:${port}`;token=panel.issueToken()
 })
 // 用 removeTempDir 而不是裸 rmSync:Windows 上 daemon 刚关、句柄还没落地时
 // rm 会抛 EBUSY,而这里是 afterEach ⇒ 抛出来就把整块 9 条用例判红。helper 会
 // 重试 20 次再降级成一条 warning(仓库约定,见 AGENTS.md 的临时目录那条)。
-afterEach(async()=>{await panel?.stop();await workbench?.shutdown();db?.close();removeTempDir(root)})
+afterEach(async()=>{await panel?.stop();await workbench?.shutdown();db?.close();removeTempDir(root);removeTempDir(managedRoot)})
 function create(name:string){const path=join(root,name);mkdirSync(path);return workbench.create({path,providerId:'claude',text:name})}
 function request(path:string,body?:unknown,auth=token){return fetch(base+path+(path.includes('?')?'&':'?')+'t='+encodeURIComponent(auth),body===undefined?{}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})}
 async function ready(id:string){await expect.poll(()=>workbench.detail(id).permissions.length).toBe(1);return workbench.detail(id)}
+
+describe('phone unified task entry',()=>{
+  it('requires pairing and creates the same task/matter/receipt on retries',async()=>{
+    const body={requestId:randomUUID(),text:'从手机开始',target:{kind:'managed'}}
+    expect((await request('/m/api/entry/options',undefined,'wrong')).status).toBe(401)
+    expect((await request('/m/api/matter/create',body,'wrong')).status).toBe(401)
+    const options=await(await request('/m/api/entry/options')).json()
+    expect(options).toMatchObject({ok:true,status:'ready',defaultProviderId:'claude',projects:[]})
+    const response=await request('/m/api/matter/create',body);expect(response.status).toBe(202)
+    const first=await response.json();expect(first.task.workspaceKind).toBe('managed');expect(first.receipt.taskId).toBe(first.receipt.matterId)
+    const second=await(await request('/m/api/matter/create',body)).json();expect(second.receipt).toEqual(first.receipt)
+    const receipt=await(await request('/m/api/matter/create-receipt?requestId='+body.requestId)).json();expect(receipt.receipt).toEqual(first.receipt)
+    expect((await request('/m/api/matter/create',{...body,text:'different'})).status).toBe(409)
+    expect(store.list()).toHaveLength(1);expect(matters.get(first.receipt.matterId)?.ownerChatId).toBe('owner')
+    expect(matters.bindings(first.receipt.matterId)).toEqual([expect.objectContaining({surface:'phone',surfaceKey:'owner'})])
+  })
+  it('rejects body identity/path injection, malformed receipts, and unsupported methods',async()=>{
+    const body={requestId:randomUUID(),text:'保留草稿',target:{kind:'managed'}}
+    for(const extra of [{path:'/tmp/forged'},{ownerKey:'other'},{ownerChatId:'other'},{accountId:'account'},{surprise:true}])expect((await request('/m/api/matter/create',{...body,...extra})).status).toBe(400)
+    expect((await request('/m/api/matter/create')).status).toBe(405)
+    expect((await request('/m/api/entry/options',{})).status).toBe(405)
+    expect((await request('/m/api/matter/create-receipt?requestId=nope')).status).toBe(400)
+    expect((await request('/m/api/matter/create-receipt?requestId='+randomUUID())).status).toBe(404)
+    expect((await request('/m/api/matter/create-receipt?requestId='+randomUUID(),undefined,'wrong')).status).toBe(401)
+    expect(store.list()).toEqual([])
+  })
+})
 
 describe('phone task controls keep the existing execution boundary',()=>{
   it('projects only this task requests and preserves original task/run/request identities',async()=>{
@@ -207,6 +235,9 @@ describe('phone task controls keep the existing execution boundary',()=>{
       expect(oversized.status).toBe(413)
       expect(oversized.body).toEqual({ok:false,error:'detail_too_large'})
       await panel.apply({op:'forget_devices'})
+      expect((await remote('/m/api/entry/options')).status).toBe(401)
+      expect((await remote('/m/api/matter/create',{requestId:randomUUID(),text:'revoked',target:{kind:'managed'}})).status).toBe(401)
+      expect((await remote('/m/api/matter/create-receipt?requestId='+randomUUID())).status).toBe(401)
       expect((await remote('/m/api/matter/answer',{id:task.id,runId:live.runId,requestId:question.id,answers:null})).status).toBe(401)
     }finally{client.stop();hub.dropPhone(phone.streamId!)}
   })

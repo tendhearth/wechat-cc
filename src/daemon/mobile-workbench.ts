@@ -1,6 +1,12 @@
 import type {MattersService,MatterSayInput} from '../core/matters/service'
+import {parseEntryInput,type EntryInput,type EntryOptions,type EntryResult} from '../core/workbench/task-entry'
 
 export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'>>
+export interface MobileEntryActions {
+  entryOptions():EntryOptions
+  createEntry(input:EntryInput):EntryResult
+  entryReceipt(requestId:string):EntryResult|null
+}
 const ID=/^[a-f0-9]{8}$/
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
 const SHA=/^[a-f0-9]{64}$/
@@ -9,6 +15,11 @@ const json=(body:object,status=200)=>new Response(JSON.stringify(body),{status,h
 export function mobileMatterError(error:unknown):Response {
   const code=error instanceof Error?error.message:'internal'
   if(['matter_not_found','not_found'].includes(code))return json({ok:false,error:'matter_not_found'},404)
+  if(code==='invalid_entry_owner')return json({ok:false,error:code},403)
+  if(['creation_conflict','project_stale','managed_workspace_changed','attachment_changed','attachment_scope','attachment_conflict'].includes(code))return json({ok:false,error:code},409)
+  if(['entry_not_wired','managed_workspace_unavailable','invalid_managed_workspace','workbench_stopping','unavailable_provider','provider_quota_exhausted'].includes(code))return json({ok:false,error:code},503)
+  if(['api_task_input_invalid','api_task_attachment_invalid'].includes(code))return json({ok:false,error:code},400)
+  if(['api_task_attachment_unsupported','workbench_attachments_unsupported','workbench_execution_unsupported','unattended_ack_required'].includes(code))return json({ok:false,error:code},422)
   if(['permission_stale','question_stale','input_stale','input_conflict','input_delivery_busy','workbench_busy','reply_sink_busy','workbench_archived','artifact_changed','restart_confirmation_required','restart_confirmation_stale','external_close_confirmation_required','external_close_confirmation_stale'].includes(code))return json({ok:false,error:code},409)
   if(code.endsWith('_not_wired')||code==='input_storage_unavailable')return json({ok:false,error:'unavailable'},503)
   if(code.startsWith('invalid_')||['matter_task_required','matter_say_unsupported'].includes(code))return json({ok:false,error:code},400)
@@ -20,7 +31,23 @@ export function mobileSayInput(body:Record<string,unknown>):MatterSayInput|undef
   return {requestId:body.requestId,...(body.runId!==undefined?{runId:body.runId as string}:{})}
 }
 /** Called only inside settings-panel's existing authenticated-device boundary. */
-export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined,url:URL,req:Request):Promise<Response|null>{
+export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined,url:URL,req:Request,entry?:MobileEntryActions):Promise<Response|null>{
+  const entryOperation=url.pathname==='/m/api/entry/options'?'options':url.pathname==='/m/api/matter/create'?'create':url.pathname==='/m/api/matter/create-receipt'?'receipt':null
+  if(entryOperation){
+    if(req.method!==(entryOperation==='create'?'POST':'GET'))return json({ok:false,error:'method_not_allowed'},405)
+    try{
+      if(!entry)throw Error('entry_not_wired')
+      if(entryOperation==='options')return json({ok:true,...entry.entryOptions()})
+      if(entryOperation==='create'){
+        let body:unknown;try{body=await req.json()}catch{throw Error('invalid_entry')}
+        return json({ok:true,...entry.createEntry(parseEntryInput(body))},202)
+      }
+      const requestId=url.searchParams.get('requestId')
+      if(!requestId||!UUID.test(requestId)||url.searchParams.getAll('requestId').length!==1)throw Error('invalid_request_id')
+      const result=entry.entryReceipt(requestId.toLowerCase());if(!result)throw Error('not_found')
+      return json({ok:true,...result})
+    }catch(error){return mobileMatterError(error)}
+  }
   const operation=url.pathname==='/m/api/matter/permission'?'permission':url.pathname==='/m/api/matter/answer'?'answer':url.pathname==='/m/api/matter/artifact'?'artifact':null
   if(!operation)return null
   if(req.method!==(operation==='artifact'?'GET':'POST'))return json({ok:false,error:'method_not_allowed'},405)

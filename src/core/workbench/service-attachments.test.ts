@@ -14,10 +14,10 @@ import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,service:WorkbenchService,store:ReturnType<typeof makeWorkbenchStore>
 const result:AgentEvent={kind:'result',sessionId:'native-session',numTurns:1,durationMs:1}
-function setup(provider:AgentProvider,resume=true){
+function setup(provider:AgentProvider,resume=true,ownerChatId:string|null=null){
   const registry=createProviderRegistry()
   for(const id of ['claude','codex'] as const)registry.register(id,provider,{displayName:id,canResume:()=>resume,workbench:MANAGED_NATIVE_CAPABILITIES})
-  store=makeWorkbenchStore(db);service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null})
+  store=makeWorkbenchStore(db);service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>ownerChatId})
 }
 function gate(){let resolve!:()=>void;const promise=new Promise<void>(r=>resolve=r);return{promise,resolve}}
 function upload(name='brief.txt',text='original input',taskId?:string){
@@ -28,6 +28,40 @@ function upload(name='brief.txt',text='original input',taskId?:string){
 async function settled(id:string){await expect.poll(()=>service.detail(id).task.status).not.toMatch(/^(queued|running|cancelling)$/)}
 beforeEach(()=>{root=realpathSync(mkdtempSync(join(tmpdir(),'cc-attachment-service-')));project=join(root,'project');mkdirSync(project);db=openDb({path:join(root,'state.db')})})
 afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(root)})
+
+it('stamps current-owner desktop uploads and permits only that owner to remove its draft',()=>{
+  setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}},true,'owner')
+  const own=upload(),foreign={id:randomUUID(),draftId:randomUUID(),name:'foreign.txt',mime:'text/plain',base64:'YQ=='}
+  store.attachments.upload(foreign,root,{ownerKey:'other'})
+  expect(db.query('SELECT owner_key FROM workbench_attachments WHERE id=?').get(own.attachment.id)).toEqual({owner_key:'owner'})
+  expect(()=>service.discardAttachment(foreign.id,foreign.draftId)).toThrow('attachment_scope')
+  service.discardAttachment(own.attachment.id,own.draftId)
+  expect(()=>store.attachments.select(own.attachmentIds,undefined,own.draftId,{ownerKey:'owner'})).toThrow('not_found')
+})
+
+it('uses a strict trusted owner policy for phone continuations, retaining bound legacy compatibility',async()=>{
+  setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}},true,'owner')
+  const task=service.create({path:project,providerId:'claude',text:'start'});await settled(task.id)
+  const legacy={id:randomUUID(),draftId:randomUUID(),name:'legacy.txt',mime:'text/plain',base64:'YQ=='}
+  store.attachments.upload(legacy,root)
+  const materials={draftId:legacy.draftId,attachmentIds:[legacy.id],inputRequestId:randomUUID()}
+  expect(()=>service.continueTask(task.id,'',materials,'owner')).toThrow('attachment_scope')
+  service.continueTask(task.id,'',materials);await settled(task.id)
+  service.continueTask(task.id,'',{attachmentIds:[legacy.id],inputRequestId:randomUUID()},'owner');await settled(task.id)
+})
+
+it('rejects legacy unbound material under the strict phone policy on a live run',async()=>{
+  const wait=gate()
+  setup({async spawn(){return{async *dispatch(){yield{kind:'init',sessionId:'native-session'};await wait.promise;yield result},async steer(){},async close(){wait.resolve()}}}},true,'owner')
+  const task=service.create({path:project,providerId:'codex',text:'start'});await expect.poll(()=>service.detail(task.id).inputMode).toBe('steer')
+  const legacy={id:randomUUID(),draftId:randomUUID(),name:'legacy.txt',mime:'text/plain',base64:'YQ=='}
+  store.attachments.upload(legacy,root)
+  const input={requestId:randomUUID(),runId:service.detail(task.id).runId!,text:'',draftId:legacy.draftId,attachmentIds:[legacy.id]}
+  await expect(service.submitInput(task.id,input,'owner')).rejects.toThrow('attachment_scope')
+  const owned=upload('owned.txt','owned',task.id)
+  expect(await service.submitInput(task.id,{...input,draftId:owned.draftId,attachmentIds:owned.attachmentIds},'owner')).toMatchObject({status:'delivered',attachments:[owned.attachment]})
+  wait.resolve();await settled(task.id)
+})
 
 it('dispatches attachment-only input as pinned material and binds it to the user event',async()=>{
   const received:AgentAttachment[][]=[]

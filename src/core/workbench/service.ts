@@ -211,7 +211,13 @@ export function makeWorkbenchService(opts: Options) {
   /** 非 store 状态变化:先落库拿新 seq 再唤醒。bump 本身可能抛(任务不存在),别让它冒进调用方的 finally/catch。 */
   const bumped = (id: string) => { try { touched(id, store.bump(id)) } catch { /* 信号丢了只是多等一轮 */ } }
   const attachmentScope=()=>{const ownerKey=opts.ownerChatId();return ownerKey?{ownerKey,allowLegacyUnbound:true}:undefined}
-  const selectAttachments=(input:InputMaterials={},taskId?:string)=>store.attachments.select(input.attachmentIds??[],taskId,input.draftId,attachmentScope())
+  const strictAttachmentScope=(taskId?:string)=>{
+    const ownerKey=opts.ownerChatId()
+    if(!ownerKey)throw Error('invalid_entry_owner')
+    if(taskId&&store.get(taskId).ownerChatId!==ownerKey)throw Error('attachment_scope')
+    return {ownerKey}
+  }
+  const selectAttachments=(input:InputMaterials={},taskId?:string,policy?:'owner')=>store.attachments.select(input.attachmentIds??[],taskId,input.draftId,policy?strictAttachmentScope(taskId):attachmentScope())
   let managedWorkspaces:ManagedWorkspaces|undefined
   const managed=()=>{
     if(!opts.managedWorkspaceRoot)throw Error('entry_not_wired')
@@ -1111,7 +1117,7 @@ export function makeWorkbenchService(opts: Options) {
     }
   }
 
-  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string}}):WorkbenchTaskView {
+  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string}},attachmentPolicy?:'owner'):WorkbenchTaskView {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
     if(opts.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
     if([...runsByTask.values()].some(run=>task.sessionId&&run.task.providerId===task.providerId&&run.task.sessionId===task.sessionId))throw new Error('native_session_busy')
@@ -1127,7 +1133,7 @@ export function makeWorkbenchService(opts: Options) {
     const addRunEvent=(kind:'user'|'system',text:string)=>{const id=store.addEvent(task.id,kind,text,null,runId);touched(task.id);return id}
     const handoffPeer=store.atomic(()=>{
       store.execution.accept(task.id,runId,execution)
-      const bound=store.attachments.bind(attachments.map(a=>a.id),task.id,draftId,acceptance?.scope)
+      const bound=store.attachments.bind(attachments.map(a=>a.id),task.id,draftId,attachmentPolicy?strictAttachmentScope(task.id):acceptance?.scope)
       if(!sameAttachments(bound,attachments))throw Error('invalid_attachment_changed')
       // A queued receipt keeps the ORIGINAL accepted run, even when this is a new dispatch run.
       if(queuedInputId&&!store.liveInputs.get(queuedInputId)){
@@ -1457,10 +1463,10 @@ export function makeWorkbenchService(opts: Options) {
       store.liveInputs.set(requestId,'withdrawn')
       bumped(id)
     },
-    async submitInput(id:string,input:{runId:string;requestId:string;text:string}&InputMaterials){
+    async submitInput(id:string,input:{runId:string;requestId:string;text:string}&InputMaterials,attachmentPolicy?:'owner'){
       ensureAccepting()
       if(Object.hasOwn(input,'execution'))throw Error('invalid_execution')
-      const attachments=selectAttachments(input,id),text=checkedText(input.text,attachments)
+      const attachments=selectAttachments(input,id,attachmentPolicy),text=checkedText(input.text,attachments)
       if(autoContinueBlocked.has(id))throw Error('input_storage_unavailable')
       const requestId=normalizeInputRequestId(input.requestId)
       const prior=store.liveInputs.get(requestId)
@@ -1491,7 +1497,7 @@ export function makeWorkbenchService(opts: Options) {
       let saved:LiveInput
       try{
         saved=store.atomic(()=>{
-          store.attachments.bind(attachments.map(a=>a.id),id,input.draftId)
+          store.attachments.bind(attachments.map(a=>a.id),id,input.draftId,attachmentPolicy?strictAttachmentScope(id):undefined)
           return store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text,attachments,execution:running.execution})
         })
       }catch(error){
@@ -1760,9 +1766,9 @@ export function makeWorkbenchService(opts: Options) {
       opts.unattendedAck.set(at)
       return at
     },
-    continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials):WorkbenchTaskView {
+    continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials,attachmentPolicy?:'owner'):WorkbenchTaskView {
       ensureAccepting()
-      const attachments=selectAttachments(options,id)
+      const attachments=selectAttachments(options,id,attachmentPolicy)
       const inputRequestId=options?.inputRequestId===undefined?undefined:normalizeInputRequestId(options.inputRequestId)
       if(inputRequestId!==undefined){
         const prior=store.liveInputs.get(inputRequestId)
@@ -1790,15 +1796,15 @@ export function makeWorkbenchService(opts: Options) {
       const accepted:AcceptedContinuation=decision.mode==='restart_required'
         ? {mode:'restart',preview:decision.restart}
         : decision.mode==='resume' ? {mode:'resume',sessionId:task.sessionId!} : {mode:'new'}
-      try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId,attachments,options?.draftId,execution)}
+      try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId,attachments,options?.draftId,execution,undefined,attachmentPolicy)}
       catch(error){
         if(inputRequestId&&store.liveInputs.get(inputRequestId))try{store.liveInputs.set(inputRequestId,'held','本轮未确认开始，补充内容已保留。');bumped(id)}catch{autoContinueBlocked.add(id)}
         throw error
       }
     },
-    uploadAttachment(input:Parameters<typeof store.attachments.upload>[0]){ensureAccepting();if(input.taskId&&store.get(input.taskId).archivedAt!==null)throw Error('workbench_archived');return store.attachments.upload(input,opts.stateDir)},
+    uploadAttachment(input:Parameters<typeof store.attachments.upload>[0]){ensureAccepting();if(input.taskId&&store.get(input.taskId).archivedAt!==null)throw Error('workbench_archived');return store.attachments.upload(input,opts.stateDir,opts.ownerChatId()?strictAttachmentScope(input.taskId):undefined)},
     readAttachment(taskId:string,id:string){store.get(taskId);return store.attachments.read(taskId,id,opts.stateDir)},
-    discardAttachment(id:string,draftId:string){return store.attachments.discard(id,draftId)},
+    discardAttachment(id:string,draftId:string){return store.attachments.discard(id,draftId,attachmentScope())},
     setArchived(id:string,archived:boolean):WorkbenchTaskView {
       if(typeof archived!=='boolean')throw new Error('invalid_request')
       const task=store.get(id)
