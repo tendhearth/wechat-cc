@@ -32,7 +32,7 @@
 
 多个项目保留各自的任务、草稿、对话和成果；同目录的冲突任务排队。需要另一位执行者检查时，明确交接选定的上下文和成果版本，再把意见交回原任务。微信也能在已知项目里新建任务、补充要求、处理请求、订阅提醒和获取保存的成果。
 
-**当前边界：** Claude/Codex 走专用原生适配器；API 任务执行者用于文字/图片材料与新的文本成果，工具范围更小。已有 Cursor/agy 聊天接入，目前还不能当作受管工作执行者。这里不承诺完整覆盖各家 CLI/App，也不把本机会话恢复称为跨电脑接管。
+**当前边界：** Claude/Codex 走专用原生适配器；Cursor 经 `cursor-agent acp` 进工作台（命令过权限卡、工作区内的文件编辑不过）；agy 在桌面确认一次后按免审执行者进；API 任务执行者用于文字/图片材料与新的文本成果，工具范围更小。执行者边界表见 [docs/cc-workbench.md](docs/cc-workbench.md#执行者覆盖)。这里不承诺完整覆盖各家 CLI/App，也不把本机会话恢复称为跨电脑接管。
 
 > 以上描述的是 **dev 分支当前能力**，不是已经发布的新安装包。先看[工作台使用与能力边界](docs/cc-workbench.md)、[对标项目与原始来源](docs/research/2026-09-14-cc-agent-workbench-references.md)、[本批交付记录](docs/superpowers/reports/2026-09-14-cc-workbench-wrapup.md)。
 
@@ -124,8 +124,8 @@ cd ~/.local/share/wechat-cc && bun install
 |---|---|
 | **双向聊** | 微信进,电脑上的 Claude Code / Codex / Cursor 出——agent 跑在你自己的机器、你自己的仓库里 |
 | **`share_page`** | 长内容变成一个网页,手机上也读得下去 |
-| **多项目切换** | 一个 bot 管多个仓库(`/project add|list|switch`) |
-| **多 agent** | `/cc` `/codex` `/both` `/chat`——Claude 与 Codex 在同一个对话里,还能开一场匿名辩论 |
+| **多项目切换** | 一个 bot 管多个仓库(桌面上登记文件夹,或说「切到 <alias>」) |
+| **多 agent** | `/cc` `/codex` `/cursor` `/api` `/agy` `/both` `/chat`——几家大脑在同一个对话里,还能开一场匿名辩论 |
 | **Companion** | 会反过来找你的 Claude;记忆存在 daemon 里,换哪家大脑都不丢 |
 | **双面镜子** | dashboard:你做过什么,以及 CC 注意到了什么 |
 | **Hearth 集成** | 在手机上做 markdown 笔记库的治理 |
@@ -149,7 +149,7 @@ cd ~/.local/share/wechat-cc && bun install
 - **发送**：`POST /ilink/bot/sendmessage`，要用户的 `context_token`（对方必须先发过消息）
 - **驱动**：`@anthropic-ai/claude-agent-sdk` 0.2.116 锁定。daemon 自己管 claude 子进程，不再注册成 Claude Code MCP channel
 - **状态**：全部在 `~/.claude/channels/wechat/`（见 [运行时目录](#运行时目录)）
-- **Companion**：两个 scheduler（push + introspect），不同节奏；introspect / 摘要走隔离 SDK eval，prompt 风格不污染项目对话
+- **Companion**：三个 scheduler（push / introspect / ingest），不同节奏；introspect / 摘要走隔离 SDK eval，prompt 风格不污染项目对话
 
 ---
 
@@ -170,20 +170,12 @@ cd ~/.local/share/wechat-cc && bun install
 
 | 命令 | 效果 |
 |:---|:---|
-| `/help` | 帮助 |
-| `/status` | 连接状态 + 版本 + 升级探测 |
-| `/ping` | 连通性测试 |
-| `/users` | 在线用户 |
-| `/project add <路径> <别名>` | 注册项目 (admin) |
-| `/project list` | 列项目 |
-| `/project switch <别名>` | 切项目 (admin) |
-| `/project status` | 当前项目 + cwd |
-| `/project remove <别名>` | 取消注册 (admin) |
-| `@all <消息>` | 群发 |
-| `@<名字> <消息>` | 私发给指定人 |
-| `/health` | bot 健康 (admin)——列过期 bot + 清理建议 |
-| `/hearth ingest｜list｜show｜apply` | vault 治理 (admin，hearth 启用后) |
-| `让<名字>执行 <任务>` / `派<名字>跑 <任务>` | 把任务派给已配对的手 (admin，见[功能 9](#9--一个大脑多手人在公司让家里电脑干活))；名字不对会回已配对列表 |
+| `/help` `/帮助` · `/whoami` | 按你的档位列命令 · 你是谁 + 当前模式 |
+| `/cc` `/codex` `/cursor` `/api` `/agy` · `/both` · `/chat` | 哪家大脑回答,或全部一起 |
+| `/set` | 图形设置面板(不用背命令) |
+| `/health` · `/reset` | 大脑通不通 · 本对话从头来 (admin) |
+| `任务 …` | 手机上管工作台任务(见 [docs/cc-workbench.md](docs/cc-workbench.md)) |
+| `让<名字><任务>` / `派<名字><任务>` | 把任务派给已配对的手 (admin,见[功能 9](#9--一个大脑多手人在公司让家里电脑干活)) |
 
 Companion + 记忆相关用自然语言配置（`开启 companion` / `切到陪伴` / `别烦我` 等），不是 slash 命令。记忆：说 `整理记忆` 让 CC 重新整理对你的理解，说 `看记忆` / `你对我的理解` 看它目前怎么理解你（admin）。
 
@@ -192,7 +184,7 @@ Companion + 记忆相关用自然语言配置（`开启 companion` / `切到陪�
 ---
 
 
-完整清单(含 `@all`、`/users`、`/hearth`、让<name>执行):**[docs/reference/wechat-commands.md](docs/reference/wechat-commands.md)**(英文)。
+完整清单(含 `/set …`、`/hearth`、`自改`、让<名字>执行):**[docs/reference/wechat-commands.md](docs/reference/wechat-commands.md)**。
 
 ## 升级
 
@@ -266,7 +258,7 @@ chat)收到带 6 位码的通知,回码即批准/拒绝;或主动发「邀请码
 怎么开、CLI 子命令、以及「人在公司让家里电脑干活」的完整走法:**[docs/reference/a2a.md](docs/reference/a2a.md)**(英文)。
 
 
-三档权限各自能碰什么、v1 的已知限制(把敏感层级交给它之前该先读)、以及 `access list|add|remove`:**[docs/reference/access-control.md](docs/reference/access-control.md)**(英文)。
+三档权限各自能碰什么、v1 的已知限制(把敏感层级交给它之前该先读)、以及 `access list|remove`(加人走管理员聊天流程):**[docs/reference/access-control.md](docs/reference/access-control.md)**(英文)。
 
 ## Demo 数据（截图 / 第一印象用）
 
