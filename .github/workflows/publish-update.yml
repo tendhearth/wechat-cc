@@ -82,8 +82,11 @@ jobs:
             exit 1
           fi
           # --no-github:release 已经存在,资产就是从它下载来的,不必回传。
+          # --strict:令牌无效 / 上传失败 ⇒ 作业红,不许「降级为本地暂存」还报成功
+          # (2026-09-27 desktop-v1.7.0 就这样静默漏发了自动更新源)。
           bun scripts/publish-update.ts \
             --from-dir release-assets \
             --version "$VERSION" \
             --notes "$NOTES" \
-            --no-github
+            --no-github \
+            --strict
