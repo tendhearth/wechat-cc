@@ -1,5 +1,6 @@
 // 从 cli.ts 逐字搬出(2026-09-27 cli 拆分,spec 2026-09-27-cli-split-design);行为、参数、文案不变。
 import { defineCommand } from 'citty'
+import { readJsonFile } from '../../lib/read-json-file'
 import { join } from 'node:path'
 import { STATE_DIR } from '../../lib/config'
 // ── mode set — programmatic mode switch via running daemon's internal-api ──
@@ -37,7 +38,7 @@ const modeSetCmd = defineCommand({
 
     let info: { baseUrl: string; tokenFilePath: string }
     try {
-      info = JSON.parse(readFileSync(infoPath, 'utf8'))
+      info = readJsonFile(infoPath)
     } catch (err) {
       emitError(`could not read internal-api-info.json: ${err instanceof Error ? err.message : String(err)}`)
     }

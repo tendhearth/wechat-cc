@@ -1,5 +1,6 @@
 // 从 cli.ts 逐字搬出(2026-09-27 cli 拆分,spec 2026-09-27-cli-split-design);行为、参数、文案不变。
 import { defineCommand } from 'citty'
+import { readJsonFile } from '../../lib/read-json-file'
 import { join } from 'node:path'
 import { STATE_DIR } from '../../lib/config'
 import { isCompiledBundle } from '../../lib/runtime-info'
@@ -127,7 +128,7 @@ async function readCliApiInfo(): Promise<CliApiInfo | null> {
   const infoPath = join(STATE_DIR, 'internal-api-info.json')
   if (!existsSync(infoPath)) return null
   try {
-    const info = JSON.parse(readFileSync(infoPath, 'utf8')) as { baseUrl?: string; tokenFilePath?: string }
+    const info = readJsonFile(infoPath) as { baseUrl?: string; tokenFilePath?: string }
     if (!info.baseUrl || !info.tokenFilePath) return null
     const token = readFileSync(info.tokenFilePath, 'utf8').trim()
     return { baseUrl: info.baseUrl, token }
@@ -165,14 +166,13 @@ const memorySynthesizeCmd = defineCommand({
       return
     }
 
-    const { readFileSync } = await import('node:fs')
 
     // ── Resolve admin chat-id (same pattern as `dialogue backfill`) ──────
     let chatId = args['chat-id']
     if (!chatId) {
       let access: { admins?: string[] } = {}
       try {
-        access = JSON.parse(readFileSync(join(STATE_DIR, 'access.json'), 'utf8'))
+        access = readJsonFile(join(STATE_DIR, 'access.json'))
       } catch { /* missing/corrupt — fail below */ }
       const admins = access.admins ?? []
       if (admins.length === 1) chatId = admins[0]!
@@ -280,10 +280,9 @@ const memoryNightlyCmd = defineCommand({
 
 async function resolveProfileChatId(chatIdArg: string | undefined): Promise<string> {
   if (chatIdArg) return chatIdArg
-  const { readFileSync } = await import('node:fs')
   let access: { admins?: string[] } = {}
   try {
-    access = JSON.parse(readFileSync(join(STATE_DIR, 'access.json'), 'utf8'))
+    access = readJsonFile(join(STATE_DIR, 'access.json'))
   } catch { /* missing/corrupt — fail below */ }
   const admins = access.admins ?? []
   if (admins.length === 1) return admins[0]!
@@ -517,13 +516,13 @@ const memoryStatusCmd = defineCommand({
     json: { type: 'boolean', description: 'JSON envelope' },
   },
   async run({ args }) {
-    const { readFileSync, existsSync, statSync } = await import('node:fs')
+    const { existsSync, statSync } = await import('node:fs')
 
     // Resolve admin chat-id — same pattern as `memory synthesize`.
     let chatId = args['chat-id']
     if (!chatId) {
       let access: { admins?: string[] } = {}
-      try { access = JSON.parse(readFileSync(join(STATE_DIR, 'access.json'), 'utf8')) } catch { /* handled below */ }
+      try { access = readJsonFile(join(STATE_DIR, 'access.json')) } catch { /* handled below */ }
       const admins = access.admins ?? []
       if (admins.length === 1) chatId = admins[0]!
       else {

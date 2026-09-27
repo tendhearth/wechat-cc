@@ -1,5 +1,6 @@
 // 从 cli.ts 逐字搬出(2026-09-27 cli 拆分,spec 2026-09-27-cli-split-design);行为、参数、文案不变。
 import { defineCommand } from 'citty'
+import { readJsonFile } from '../../lib/read-json-file'
 import { STATE_DIR } from '../../lib/config'
 // ── connection probe — wechat-cc connection probe [--json] ─────────────────
 //
@@ -35,7 +36,7 @@ const connectionProbeCmd = defineCommand({
         const metaPath = join(acctDir, 'account.json')
         const tokenPath = join(acctDir, 'token')
         if (!existsSync(metaPath) || !existsSync(tokenPath)) continue
-        const meta = JSON.parse(readFileSync(metaPath, 'utf8'))
+        const meta = readJsonFile<{ botId: string; baseUrl: string }>(metaPath)
         const token = readFileSync(tokenPath, 'utf8').trim()
         const result = await probeConnection({
           account: { id, botId: meta.botId, baseUrl: meta.baseUrl, token },

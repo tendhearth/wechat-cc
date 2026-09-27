@@ -1,5 +1,6 @@
 // 从 cli.ts 逐字搬出(2026-09-27 cli 拆分,spec 2026-09-27-cli-split-design);行为、参数、文案不变。
 import { defineCommand } from 'citty'
+import { readJsonFile } from '../../lib/read-json-file'
 import { join } from 'node:path'
 import { STATE_DIR } from '../../lib/config'
 // ── dialogue — backfill + (future) query commands ────────────────────
@@ -98,11 +99,10 @@ const dialogueBackfillCmd = defineCommand({
     // Resolve chat-id: use --chat-id if provided, else sole admin from access.json
     let chatId = args['chat-id']
     if (!chatId) {
-      const { readFileSync } = await import('node:fs')
       const accessPath = join(STATE_DIR, 'access.json')
       let access: { admins?: string[]; allowFrom?: string[] } = {}
       try {
-        access = JSON.parse(readFileSync(accessPath, 'utf8'))
+        access = readJsonFile(accessPath)
       } catch {
         // file missing or corrupt — will fail below
       }
