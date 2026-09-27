@@ -16,7 +16,7 @@ issue #79 就是这么炸的:一条分支从 v18 的树上切出去,自己编了
 
 ## 加一条新迁移要改的三处测试
 
-1. `src/lib/state-migration.test.ts` —— 里面有一行 `expect(v).toBe(<N>)`,把 N 加一。
+1. `src/lib/state-migration.test.ts` —— 2026-09 起断言 `toBe(migrations.length)`,不用再手改 N;只需确认它仍然绿(表清单那条可能要加新表)。
 2. `src/lib/migration-order.test.ts` —— 指纹表。**别自己算指纹**:跑一次测试,从失败输出里把实际值抄进去(前提是你确信自己只是在末尾追加)。
 3. `src/lib/db.test.ts` —— 该套件里跟迁移条数 / 新表相关的断言。
 

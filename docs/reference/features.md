@@ -134,7 +134,7 @@ Appendix D.
 > (subscription) or set `OPENAI_API_KEY` (API plan), the daemon doesn't know
 > or care — both paths just work.
 
-> **Where do the tools live?** v2.0 moved all 22 tools (reply / share_page /
+> **Where do the tools live?** v2.0 moved all tools (reply / share_page /
 > memory / companion / delegate / …) into stdio MCP servers. Both providers
 > talk to the same tool surface via a localhost-only daemon HTTP API
 > (bearer-token, `0o600` token file, depth-header recursion guard).
@@ -156,8 +156,8 @@ schedulers:
   decides whether to push you something. Two pickable personas:
   - **小助手 (assistant)** — work-focused, strict push rules
   - **陪伴 (companion)** — warmer, lighter rules, evening check-ins
-- **Introspect tick** (24 h ± jitter, **v0.4.1**) — Claude (claude-haiku-4-5,
-  isolated single-shot) reviews recent activity and decides whether to write
+- **Introspect tick** (24 h ± jitter, **v0.4.1**) — the cheap-eval provider
+  (`/set cheap`, isolated single-shot) reviews recent activity and decides whether to write
   a new observation in `memory/<chat>/observations.jsonl`. Never pushes.
   Surface comes when you open the dashboard.
 

@@ -99,9 +99,8 @@ To enable it:
      "openaiModel": "deepseek-chat"
    }
    ```
-   (`wechat-cc provider set` doesn't accept `openai` yet — edit
-   `agent-config.json`'s `provider` field directly alongside the two
-   `openai*` fields shown above.)
+   (`wechat-cc provider set openai --base-url <url> --model <model>` writes
+   the same three fields.)
 3. Restart the daemon. The boot log prints `openai: base_url + model +
    WECHAT_OPENAI_API_KEY present — provider registered` once it's live.
 
