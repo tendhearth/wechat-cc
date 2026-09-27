@@ -77,17 +77,20 @@ describe('ci.yml —— desktop-e2e 按路径在 dev 上跑', () => {
   })
 })
 
-describe('ci.yml —— bun 版本钉死', () => {
-  it('每一处 setup-bun 都是 1.3.14(用 latest 会让 CI 自己变红)', () => {
-    const pins: unknown[] = []
-    for (const job of Object.values(jobs)) {
-      for (const step of job.steps ?? []) {
-        if (typeof step.uses === 'string' && step.uses.startsWith('oven-sh/setup-bun@')) {
-          pins.push(step.with?.['bun-version'])
+describe('三个 workflow —— bun 版本钉死', () => {
+  it('ci.yml / desktop.yml / publish-update.yml 每一处 setup-bun 都是 1.3.14(2026-09-15 bun 1.4.2 把 CI 弄红;发版链此前仍是 latest,2026-09-27 一并钉住)', () => {
+    const pins: string[] = []
+    for (const file of ['ci.yml', 'desktop.yml', 'publish-update.yml']) {
+      const wf = parse(readFileSync(join(HERE, '..', '.github', 'workflows', file), 'utf8')) as { jobs: Record<string, { steps?: Array<{ uses?: string; with?: Record<string, unknown> }> }> }
+      for (const job of Object.values(wf.jobs)) {
+        for (const step of job.steps ?? []) {
+          if (typeof step.uses === 'string' && step.uses.startsWith('oven-sh/setup-bun@')) {
+            pins.push(`${file}:${String(step.with?.['bun-version'])}`)
+          }
         }
       }
     }
-    expect(pins.length).toBeGreaterThanOrEqual(3)
-    for (const p of pins) expect(p).toBe('1.3.14')
+    expect(pins.length).toBeGreaterThanOrEqual(6)
+    for (const p of pins) expect(p, p).toMatch(/:1\.3\.14$/)
   })
 })

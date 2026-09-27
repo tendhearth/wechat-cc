@@ -47,21 +47,23 @@ async function getApiCredentials() {
 /**
  * Owner-only workspaces never see their credential.
  *
- * The customer-review routes are admin-tier, and admin is NOT what this file's
+ * The owner-workspace routes are admin-tier, and admin is NOT what this file's
  * cached token carries. The earlier approach — fetch the operator token via
  * `daemon api-info --operator` and use it here — put an admin credential in the
  * renderer's heap, where any script running in the webview could take it and
  * then reach everything in that token's routeAllow, including
  * POST /v1/companion/converse (speak to WeChat as the owner).
  *
- * So the host performs the call instead: `customer_review_api` reads the token
- * in Rust, enforces the /v1/customer-review path prefix, and returns only the
- * response body. The dev server implements the same command (test-shim.ts), so
- * browser dev keeps the token server-side too.
+ * So the host performs the call instead: `customer_review_api` (named for the
+ * 客户回顾 workspace it was built for — that frontend module was retired
+ * 2026-08-24 and deleted 2026-09-27; the command now serves the 待办 routes
+ * below) reads the token in Rust, enforces an exact route allowlist, and
+ * returns only the response body. The dev server implements the same command
+ * (test-shim.ts), so browser dev keeps the token server-side too.
  *
  * Demoting the routes to `trusted` was the other candidate and is unsafe:
  * ordinary chat sessions are minted `trusted`, so anyone talking to the bot
- * would be able to read the owner's private customer judgments.
+ * would be able to read the owner's private obligations and thoughts.
  * @param {'GET' | 'POST'} method
  * @param {string} path
  * @param {Record<string, unknown>} [body]
@@ -87,7 +89,7 @@ async function callOwnerWorkspace(method, path, body) {
   try {
     return JSON.parse(raw)
   } catch {
-    throw new Error(`customer review returned a non-JSON response: ${raw.slice(0, 120)}`)
+    throw new Error(`owner workspace returned a non-JSON response: ${raw.slice(0, 120)}`)
   }
 }
 
@@ -138,8 +140,8 @@ async function callApi(method, path, body, retried, opts) {
   // Owner-only workspace routes: the host holds the admin credential, so
   // these requests never run in this file. See callOwnerWorkspace. The 待办
   // routes (obligation read/write, contact names, reminder scheduling) are
-  // the same trust class as customer review — the owner's private data.
-  if (path.startsWith('/v1/customer-review') || OWNER_WORKSPACE_PATHS.has(path.split('?')[0] ?? path)) {
+  // the owner's private data.
+  if (OWNER_WORKSPACE_PATHS.has(path.split('?')[0] ?? path)) {
     return callOwnerWorkspace(method, path, body)
   }
   const { baseUrl, token } = await getApiCredentials()
@@ -170,7 +172,7 @@ async function callApi(method, path, body, retried, opts) {
     // replaying a POST can duplicate its effect — and this is shared code, so
     // it would do that to every surface: a second 60s memory synthesize, the
     // grounded judge run twice, the SAME pen-pal letter delivered twice, two
-    // customer-review records for one click. A timeout is the worst case to
+    // reminders scheduled for one click. A timeout is the worst case to
     // replay, because the daemon is most likely still working on the first
     // one. The 401/403 path below stays for both methods: that is a response,
     // and it proves the daemon refused rather than acted.

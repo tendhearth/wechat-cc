@@ -8,7 +8,7 @@
 // the fact store's own: resolve/reject writes fact status, and a re-extracted
 // identical promise merges into the resolved row instead of resurfacing.
 //
-// Same vanilla-module shape as customer-review.js: renderSkeleton once,
+// Same vanilla-module shape as converse.js: renderSkeleton once,
 // refresh() re-fetches, actions call the admin internal-api routes.
 
 import { escapeHtml, showToast } from "../view.js"
@@ -289,7 +289,7 @@ export function __setApi(fn) { api = fn }
 
 /**
  * Init the 待办 tab. Idempotent via dataset.ready (same shape as
- * customer-review.js / converse.js).
+ * converse.js).
  * @param {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> }} deps
  * @param {{ api?: typeof invokeApi }} [options]
  */

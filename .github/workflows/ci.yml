@@ -107,10 +107,6 @@ jobs:
         if: ${{ !cancelled() }}
         run: bun build setup.ts --target=node --outfile=dist/setup.js
 
-      - name: Build log-viewer.ts
-        if: ${{ !cancelled() }}
-        run: bun build log-viewer.ts --target=node --outfile=dist/log-viewer.js
-
       - name: Compiled-sidecar smoke
         # Proves guardrail #1 (compiled sidecar delegates LLM memory ops to
         # the daemon instead of inline-spawning claude, which crashes under

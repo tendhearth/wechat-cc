@@ -62,6 +62,7 @@ wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resum
 | 文件 | 讲什么 |
 | --- | --- |
 | [deploy.md](deploy.md) | sidecar 构建、`self deploy`、inode 陷阱、launchd 崩溃循环怎么看、plist 为什么指主二进制 |
+| [release.md](release.md) | 给用户发版:四个人工步骤、两道 `release-signing` 批准、tag 镜像、R2 更新源;和 `self deploy` 的区别 |
 | [verify.md](verify.md) | `selftest` 两种用法、两种 token 分别够得着什么、必须主人在场的检查清单 |
 | [mobile-presence.md](mobile-presence.md) | 手机此刻、待处理入口、成果与回忆,断线提交和冻结资产的接线边界 |
 | [ci-and-flakes.md](ci-and-flakes.md) | 三平台作业、Windows 排除清单的规矩、`ci triage` 与 flake 登记表、PR 与合并纪律 |

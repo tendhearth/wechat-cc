@@ -4,8 +4,8 @@
  * Two output streams:
  *   - <stateDir>/channel.log       — human-readable `<ISO> [TAG] <msg>` (legacy
  *                                    format, consumed by `wechat-cc logs`,
- *                                    log-viewer.ts, the dashboard logs pane,
- *                                    and operators tailing with `tail -f`)
+ *                                    the dashboard logs pane, and operators
+ *                                    tailing with `tail -f`)
  *   - <stateDir>/channel.log.jsonl — structured JSON lines, ONE per call that
  *                                    supplies the optional `fields` arg. Built
  *                                    for programmatic consumers (dashboard

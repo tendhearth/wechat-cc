@@ -555,6 +555,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
 
   // ──────────────────────────────────────────────────────────────
   // Gemini provider — fifth registered provider.
+  // DEPRECATED 2026-09-27 in favour of agy; see gemini-agent-provider.ts header.
   //
   // GEMINI_API_KEY (or GOOGLE_API_KEY) is env-only — not stored in
   // agent-config.json. The @google/genai SDK is loaded via dynamic
@@ -605,6 +606,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         { displayName: 'Gemini', canResume: () => false },
       )
       deps.log('BOOT', 'gemini: SDK + API key present — provider registered')
+      deps.log('BOOT', 'gemini (API key) is deprecated since 2026-09-27 — prefer /agy (subscription Gemini via Antigravity CLI); this path is kept for existing GEMINI_API_KEY users and gets no new features')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       deps.log('BOOT', `gemini: SDK not available (${msg}) — run \`bun add @google/genai\` to enable; provider not registered`)

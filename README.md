@@ -32,7 +32,7 @@
 
 Projects have separate task records, drafts, conversations and artifacts. Conflicting work in the same directory queues; explicit Claude ↔ Codex handoffs preserve the selected context and result versions. WeChat can create tasks in known projects, supply input, handle requests, opt into notifications and retrieve saved results.
 
-**Current scope:** Claude/Codex use specialized native adapters. The configured API task adapter handles text/image materials and new text artifacts with a narrower tool set. Existing Cursor/agy chat connections are **not** yet admitted as managed workbench executors. CC does not claim complete feature parity with every CLI or app, or live-process transfer between computers.
+**Current scope:** Claude and Codex use native adapters; Cursor joins through `cursor-agent acp` (commands go through permission cards, in-workspace edits do not); agy joins as an unattended executor after a one-time desktop acknowledgement; the configured API adapter handles text/image materials and new text artifacts with a narrower tool set. The executor table with exact boundaries is in [docs/cc-workbench.md](docs/cc-workbench.md#执行者覆盖). CC does not claim feature parity with every CLI or app, or live-process transfer between computers.
 
 > This describes the current **dev branch**, not a newly released installer. Start with the [workspace guide and capability boundaries](docs/cc-workbench.md), the [reference projects and sources](docs/research/2026-09-14-cc-agent-workbench-references.md), and the [batch delivery record](docs/superpowers/reports/2026-09-14-cc-workbench-wrapup.md). These three documents are written in Chinese.
 
@@ -134,8 +134,8 @@ Ten things it does. **Full detail with screenshots and examples: [docs/reference
 |---|---|
 | **Two-way chat with the agent on your desk** | WeChat in, Claude Code / Codex / Cursor out — the agent runs on your machine, in your repos |
 | **`share_page`** | long-form output becomes a page you can read on your phone |
-| **Multi-project switching** | one bot, many repos (`/project add|list|switch`) |
-| **Multi-agent** | `/cc` `/codex` `/both` `/chat` — Claude × Codex on the same chat, including a chatroom debate |
+| **Multi-project switching** | one bot, many repos (register folders on the desktop or say "切到 <alias>") |
+| **Multi-agent** | `/cc` `/codex` `/cursor` `/api` `/agy` `/both` `/chat` — several brains on the same chat, including a chatroom debate |
 | **Companion** | the Claude that reaches out first, with memory that outlives any one provider |
 | **Two mirrors of accompaniment** | the dashboard: what you did, and what CC noticed |
 | **Hearth integration** | govern your markdown vault from your phone |
@@ -166,15 +166,20 @@ Beyond chat there is a **desktop workbench** — hand a folder to an executor an
   `context_token` — they must message the bot first)
 - **Drivers**: `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk`, and
   (optionally, via `optionalDependencies`) `@cursor/sdk`, registered
-  side-by-side via `ProviderRegistry`. Cursor is enabled when `CURSOR_API_KEY`
-  is set and the SDK loads. Adding a fourth provider (Gemini / your own) is
-  a new file in `src/core/`. See
+  side-by-side via `ProviderRegistry`. Cursor runs through `cursor-agent acp`
+  (the SDK path is only a chat-side fallback when `CURSOR_API_KEY` is set).
+  Six provider ids are registered today — claude / codex / cursor / openai /
+  gemini / agy — see [docs/reference/model-management.md](docs/reference/model-management.md).
+  Adding one is a capability-matrix row plus a registration in
+  `src/daemon/bootstrap/providers.ts`; `scripts/provider-registry.guard.test.ts`
+  lists every enumeration that must agree. Background:
   [`docs/rfc/03-multi-agent-architecture.md`](docs/rfc/03-multi-agent-architecture.md)
-- **Tools**: 22 tools (reply / share_page / memory / companion / delegate /
-  …) live in stdio MCP servers under `src/mcp-servers/`. Both providers
-  reach them through the daemon's localhost-only internal HTTP API
+- **Tools**: the MCP tools (reply / share_page / memory / companion / delegate /
+  …) live in stdio MCP servers under `src/mcp-servers/`. Every provider
+  reaches them through the daemon's localhost-only internal HTTP API
+  ([auth model](docs/reference/internal-api-auth.md))
 - **State**: everything under `~/.claude/channels/wechat/` (see [State layout](#state-layout))
-- **Companion**: two schedulers (push + introspect) with separate cadences;
+- **Companion**: three schedulers (push / introspect / ingest) with separate cadences;
   isolated SDK evals for introspect / summary so the prompt style doesn't
   leak into project sessions
 
@@ -195,13 +200,13 @@ Per-provider behaviour (Claude relays each tool, Codex uses its own `approval_po
 
 | Command | What |
 |---|---|
-| `/status` · `/health` | is the bot alive · is its brain reachable |
-| `/project add <path> <alias>` · `/project switch <alias>` | many repos, one bot |
-| `/cc` · `/codex` · `/both` · `/chat` | which agent answers, or all of them |
+| `/help` · `/whoami` | what you can do here · who you are + current mode |
+| `/cc` · `/codex` · `/cursor` · `/api` · `/agy` · `/both` · `/chat` | which agent answers, or all of them |
 | `/set` | the graphical settings panel (you don't have to memorise commands) |
-| `/reset` | start the conversation over |
+| `/health` · `/reset` | is its brain reachable · start the conversation over (admin) |
+| `任务 …` | workbench tasks from your phone ([docs/cc-workbench.md](docs/cc-workbench.md)) |
 
-Full list including `@all`, `/users`, `/hearth`, and 让&lt;name&gt;执行: **[docs/reference/wechat-commands.md](docs/reference/wechat-commands.md)**.
+Full list including `/set …`, `/hearth`, `自改`, and 让&lt;name&gt;执行: **[docs/reference/wechat-commands.md](docs/reference/wechat-commands.md)**.
 
 ## Updating
 
@@ -222,7 +227,7 @@ won't kill your shell — Ctrl+C the foreground process first.
 
 ## State layout
 
-Everything lives on your machine, under `~/.local/state/wechat-cc` (macOS: `~/Library/Application Support/wechat-cc`): sessions, memory, access list, keys (0600), plugin data. Nothing is uploaded.
+Everything lives on your machine, under `~/.claude/channels/wechat/` (override with `WECHAT_STATE_DIR`): sessions, memory, access list, keys (0600), plugin data. Nothing is uploaded.
 
 The file-by-file map is in **[docs/reference/state-layout.md](docs/reference/state-layout.md)**.
 
@@ -233,7 +238,7 @@ The file-by-file map is in **[docs/reference/state-layout.md](docs/reference/sta
 - Three tiers: **admin** / **trusted** / **guest** — they differ in which tools and providers they can reach.
 - Cursor and the OpenAI-compatible provider are opt-in, and cursor is closed to guests by design.
 
-Tier-by-tier permissions, the v1 limitations you should read before trusting a tier with anything sensitive, and the CLI (`access list|add|remove`): **[docs/reference/access-control.md](docs/reference/access-control.md)**.
+Tier-by-tier permissions, the v1 limitations you should read before trusting a tier with anything sensitive, and the CLI (`access list|remove` — adding people happens in the admin chat flow): **[docs/reference/access-control.md](docs/reference/access-control.md)**.
 
 ## A2A integration (P3, opt-in)
 

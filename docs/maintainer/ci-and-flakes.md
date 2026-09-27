@@ -4,7 +4,7 @@
 
 `.github/workflows/ci.yml` 在 push 到 `master` / `dev` / `self/**`,以及 PR 到 `master` / `dev` 时跑。(`self/**` 是自改流水线推的分支 —— 那条流水线的「CI 绿才进 dev」闸门就架在这上面。)
 
-- **build · ${{ matrix.os }}** —— `ubuntu-latest` / `macos-latest` / `windows-latest` 三平台,`fail-fast: false`(一条红不该让另外两条看不见)。每平台:`bun run typecheck` → `bun run depcheck` → 编译 `cli.ts` / `docs.ts` / `setup.ts` / `log-viewer.ts` → 编译版 sidecar smoke → `bun run test`。
+- **build · ${{ matrix.os }}** —— `ubuntu-latest` / `macos-latest` / `windows-latest` 三平台,`fail-fast: false`(一条红不该让另外两条看不见)。每平台:`bun run typecheck` → `bun run depcheck` → 编译 `cli.ts` / `docs.ts` / `setup.ts` → 编译版 sidecar smoke → `bun run test`。
 - **node · core suite** —— `npm run test:node`,同一套源码在 node 下再跑一遍。这条不是冗余:`bun:sqlite` 的 URI 打开方式、`bun:test` 的 import,在 Mac 上看着好好的,换个运行时就炸。本地复现就是 `npm run test:node`。
 - **changes · paths** —— 一个只算一件事的小作业(`dorny/paths-filter`):这一推里 `apps/desktop/**` 动没动过。
 - **e2e**(vitest e2e 配置)按 base_ref 限定在 master / PR,dev 的日常推送不跑。

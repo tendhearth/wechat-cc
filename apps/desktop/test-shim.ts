@@ -384,50 +384,9 @@ Bun.serve({
     const workbenchResponse = await workbenchProxy(req)
     if (workbenchResponse) return workbenchResponse
 
-    // Owner-only workspace proxy, same contract as lib.rs's customer_review_api:
-    // the admin operator token is read HERE and never handed to the page.
-    //
-    // Served on the real /v1/customer-review path (rather than only through
-    // /__invoke) for one concrete reason: Playwright's customer-review specs
-    // intercept with `page.route("**/v1/customer-review**")`. Routing this
-    // through an IPC command would make those interceptions silently stop
-    // matching — the browser would never issue a request to match.
-    if (url.pathname === '/v1/customer-review' || url.pathname.startsWith('/v1/customer-review/')) {
-      if (isCrossSiteRequest(req)) return new Response('forbidden', { status: 403 })
-      if (req.method !== 'GET' && req.method !== 'POST') {
-        return new Response('method not allowed', { status: 405 })
-      }
-      if (dryRun) {
-        // Playwright intercepts before this ever runs; answering explicitly
-        // keeps mock mode from touching a real daemon if one is running.
-        return Response.json({ error: 'customer_review_not_wired' }, { status: 503 })
-      }
-      try {
-        const infoRaw = await Bun.file(join(STATE_DIR, 'internal-api-info.json')).text()
-        const info = JSON.parse(infoRaw) as { baseUrl?: string; operatorTokenFilePath?: string }
-        if (!info.baseUrl) return Response.json({ error: 'missing baseUrl in internal-api-info.json' }, { status: 500 })
-        // Same rule as the Rust host: never fall back to the trusted token.
-        if (!info.operatorTokenFilePath) {
-          return Response.json({ error: 'operator token unavailable — daemon too old' }, { status: 503 })
-        }
-        const token = (await Bun.file(info.operatorTokenFilePath).text()).trim()
-        const upstream = await fetch(info.baseUrl + url.pathname + url.search, {
-          method: req.method,
-          headers: {
-            authorization: `Bearer ${token}`,
-            ...(req.method === 'POST' ? { 'content-type': 'application/json' } : {}),
-          },
-          ...(req.method === 'POST' ? { body: await req.text() } : {}),
-          signal: AbortSignal.timeout(30_000),
-        })
-        return new Response(await upstream.text(), {
-          status: upstream.status,
-          headers: { 'content-type': 'application/json' },
-        })
-      } catch (err) {
-        return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 502 })
-      }
-    }
+    // (The /v1/customer-review live proxy that lived here was deleted
+    // 2026-09-27 with the retired 客户回顾 frontend module; the 待办 proxy below
+    // is the same owner-only posture.)
 
     // CC Atelier gallery proxy: desktop development uses the shim as the
     // frontend origin, while artwork records live in the real daemon state.
