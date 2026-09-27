@@ -9,6 +9,7 @@ import {makeTaskAttachmentStore} from './attachments'
 import {makeExecutionSettingsStore,NATIVE_EXECUTION_CHOICE} from './execution-settings'
 import {makeControlReceiptStore} from './control-receipts'
 import {makeCreationReceiptStore} from './creation-receipts'
+import {createEntryStore} from './entry-store'
 import {makeWechatNotificationStore} from './wechat-notifications'
 import {makeArtifactDeliveryStore} from './artifact-deliveries'
 import {makeTimelineEvents} from './timeline-events'
@@ -98,12 +99,14 @@ export function makeWorkbenchStore(db: Db) {
   return {
     addProject,
     projects:()=>db.query<WorkbenchProject,[]>(PROJECT_SELECT+' ORDER BY created_at,id').all().map(projectName),
-    atomic:<T>(operation:()=>T):T=>db.transaction(operation)(),
+    atomic:<T>(operation:()=>T,immediate=false):T=>{const transaction=db.transaction(operation);return immediate?transaction.immediate():transaction()},
     attachments:makeTaskAttachmentStore(db),
     execution:makeExecutionSettingsStore(db),
     liveInputs:makeLiveInputStore(db),
     controlReceipts:makeControlReceiptStore(db),
     creationReceipts:makeCreationReceiptStore(db),
+    entryRequests:createEntryStore(db),
+    taskMatterId:(id:string)=>db.query<{id:string|null},[string]>('SELECT matter_id AS id FROM workbench_tasks WHERE id=?').get(id)?.id??null,
     wechatNotifications:makeWechatNotificationStore(db),
     artifactDeliveries:makeArtifactDeliveryStore(db),
     reviewMarks:{

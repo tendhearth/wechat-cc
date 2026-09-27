@@ -190,6 +190,9 @@ export function makeTaskAttachmentStore(db:Db) {
       })()
     },
     select:(ids:unknown,taskId?:string,draftId?:string,scope?:AttachmentScope):Attachment[]=>selected(ids,taskId,draftId,scope).map(publicAttachment),
+    verify(ids:unknown,taskId:string|undefined,draftId:string|undefined,stateDir:string,scope?:AttachmentScope):Attachment[]{
+      return selected(ids,taskId,draftId,scope).map(row=>{snapshot(row,stateDir);return publicAttachment(row)})
+    },
     bind(ids:string[],taskId:string,draftId?:string,scope?:AttachmentScope):Attachment[] {
       return db.transaction(()=>{
         requireTask(taskId,scope);const rows=selected(ids,taskId,draftId,scope)

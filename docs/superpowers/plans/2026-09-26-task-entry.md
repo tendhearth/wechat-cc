@@ -107,7 +107,7 @@ expect(removeResultForNonEmptyDirectory).toBe(false)
 
 **Interfaces:** 产出 WorkbenchService.entryOptions(context):EntryOptions、createEntry(input,context):EntryResult、entryReceipt(requestId,context):EntryResult|null。消费任务1/2及原createTask/start、MatterStore、attachment select/bind、normalizeExecutionChoice/requireWorkbenchInput。组合执行输入标明要求与主人选择的讨论材料。
 
-- [ ] 用真实SQLite和受控fake provider写行为测试：LAN重复/两个连接并发只一个task/matter/user事件/accepted run；matter/binding/receipt任一写失败零spawn、零附件消费；接受后换默认provider、移动目录、清理暂存再查仍原回执；重新进程装配后结果一致。
+- [x] 用真实SQLite和受控fake provider写行为测试：LAN重复/两个连接并发只一个task/matter/user事件/accepted run；matter/binding/receipt任一写失败零spawn、零附件消费；接受后换默认provider、移动目录、清理暂存再查仍原回执；重新进程装配后结果一致。
 ~~~ts
 expect([taskCount, matterCount, firstUserEventCount, acceptedRunCount]).toEqual([1, 1, 1, 1])
 expect(spawnCountAfterReceiptFailure).toBe(0)
@@ -115,10 +115,10 @@ expect(replayed.receipt).toEqual(first.receipt)
 expect(replayed.receipt.taskId).toBe(replayed.receipt.matterId)
 ~~~
 同时测同ID改摘录/执行设置/附件顺序409、reserved后默认配置变化仍冻结原provider、项目catalog ID解析、无owner/provider、API不支持材料、免审未确认、所选摘录之外内容不进入任务。新入口使用未绑定附件必须owner完全匹配；旧无owner材料与主人变更后的旧材料拒绝且不消费，原direct create对legacy NULL保持兼容、对已盖章材料也校验owner。
-- [ ] 运行 `bun run test src/core/workbench/service-entry.test.ts`，确认失败后实现。
-- [ ] 依设计的reserved→accepted流程接入原createTask事务；严格matter登记不吞错；提交后activate。已接受请求先回放，不重新解析默认值。冻结provider、执行设置和已验证材料；origin由owner resolver产生，不伪造message ID。不同已配对表面的同ID回放返回原事项，并允许按owner访问已有matter。
-- [ ] 运行本任务全部测试；验证“提交后、spawn前崩溃”被原恢复逻辑标为可继续的中断，不创建第二项；需要新增恢复接线时在本任务实现并补测试。
-- [ ] 独立审查事务边界、目录故障与认证主体，修正后提交：`feat: create tasks through one atomic entry`。
+- [x] 运行 `bun run test src/core/workbench/service-entry.test.ts`，确认失败后实现。
+- [x] 依设计的reserved→accepted流程接入原createTask事务；严格matter登记不吞错；提交后activate。已接受请求先回放，不重新解析默认值。冻结provider、执行设置和已验证材料；origin由owner resolver产生，不伪造message ID。不同已配对表面的同ID回放返回原事项，并允许按owner访问已有matter。
+- [x] 运行本任务全部测试；验证“提交后、spawn前崩溃”被原恢复逻辑标为可继续的中断，不创建第二项；需要新增恢复接线时在本任务实现并补测试。
+- [x] 独立审查事务边界、目录故障与认证主体，修正后提交：`feat: create tasks through one atomic entry`。
 
 ### Task 4: 桌面和手机共用的窄路由
 

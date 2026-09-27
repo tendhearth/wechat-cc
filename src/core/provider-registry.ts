@@ -19,6 +19,8 @@ import { hasAuthCode } from '../lib/auth-failure'
 export interface ProviderRegistration {
   /** Explicitly opted-in task protocol; a normal chat provider is not sufficient. */
   workbench?: WorkbenchExecutorCapabilities
+  /** Synchronous provider limits, checked before accepting a task; no execution or material reads. */
+  validateWorkbenchInput?: (input:{text:string;attachments:readonly {mime:string;size:number}[]})=>void
   /** Human-readable name; used by mode-commands prompts and dashboard. */
   displayName: string
   /**

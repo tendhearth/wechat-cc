@@ -21,6 +21,8 @@ import { ACP_CAPABILITIES, MANAGED_NATIVE_CAPABILITIES, UNATTENDED_CAPABILITIES 
 import { readNativeClaudeTools, workbenchClaudeEnvironment, type NativeClaudeTools } from '../../core/workbench/claude-native-config'
 import { claudeNativeCapabilityNotice } from '../../core/workbench/native-capability-notice'
 import { loadCompanionConfig } from '../companion/config'
+import {loadAccess} from '../../lib/access'
+import {resolveAdminChatId} from '../companion/resolve-admin'
 import type { Bootstrap } from './types'
 import type { InternalApi } from '../internal-api/types'
 import {registerWorkbenchApi} from './workbench-api'
@@ -131,7 +133,7 @@ export function wireWorkbench(opts: {
     }}:{}),
   },ttlMs:5*60_000})
 
-  const ownerChatId=() => loadCompanionConfig(opts.stateDir).default_chat_id ?? null
+  const ownerChatId=() => resolveAdminChatId(loadAccess(),loadCompanionConfig(opts.stateDir),null)
   const registry=createProviderRegistry()
   const agentConfig=loadAgentConfig(opts.stateDir)
   const claude=opts.boot.registry.get('claude')
