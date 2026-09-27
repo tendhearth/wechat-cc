@@ -5,6 +5,8 @@
 > companion path and must not be treated as the current workbench capability contract.
 > Start with [the current product/capability guide](cc-workbench.md) and
 > [batch evidence](superpowers/reports/2026-09-14-cc-workbench-wrapup.md).
+>
+> **2026-09-27 修订**:去掉了所有会漂的数字与行号(迁移条数、中间件条数、provider 数、`file.ts:NNN`),改成「看哪个文件」。数字型事实以这些为准:迁移 `src/lib/db.ts` 的 `migrations` 数组(末条注释 `// vNN`);入站链 `src/daemon/inbound/build.ts`;provider 列表 `src/lib/provider-ids.ts`;路由与 tier `src/daemon/internal-api/route-tiers.ts`(鉴权现状:[reference/internal-api-auth.md](reference/internal-api-auth.md))。
 
 ---
 
@@ -45,7 +47,7 @@ WeChat task commands ─┤
 The implementation starts at `src/daemon/bootstrap/wire-workbench.ts` and
 `src/core/workbench/service.ts`. Executors are admitted through the explicit contract in
 `executor-capabilities.ts`; ordinary companion providers do not become workbench executors
-merely by being installed. API registration in `workbench-api.ts` uses a separate file-tool
+merely by being installed. API registration (`src/daemon/bootstrap/workbench-api.ts` + `src/core/workbench/api-task-provider.ts`) uses a separate file-tool
 and persistent-transcript implementation, without companion shell or private-memory tools.
 
 Different projects may run concurrently. Conflicting directories remain reserved until
@@ -66,7 +68,7 @@ and the [API task contract](superpowers/specs/2026-09-14-cc-api-task-executor.md
 
 ```
                  ┌───────────────────────── channels (turn entries) ─────────────────────────┐
-   WeChat  ──────│ long-poll → inbound pipeline (17 mw) ─┐                                     │
+   WeChat  ──────│ long-poll → inbound pipeline (build.ts) ─┐                                   │
    Desktop app ──│ internal-api /converse → companionConverse ─┤  all serialize per chatId    │
    Companion tick│ scheduler → dispatchToChat ─────────────────┘  (async-mutex.runExclusive)  │
                  └──────────────────────────────┬──────────────────────────────────────────────┘
@@ -103,22 +105,27 @@ a per-chat **reply-sink** (app captures the reply) vs the ilink transport (WeCha
 ### 2.1 Provider layer — `src/core/*-agent-provider.ts`
 
 The one genuinely-unifying abstraction is the **event stream**: every provider funnels its native
-runtime into `AgentEvent` (`text|tool_call|init|result|error`, `agent-provider.ts:33`) and takes a
-`SpawnContext` (`:95`, tier/permission/chatId/model/appendInstructions). `ProviderCapabilities`
-(`:186`) declares per-provider traits (`perToolCallback`, `sandboxLevels`, `supportsDelegation`,
-`supportsResume`, `defaultPeer`).
+runtime into `AgentEvent` (`text|tool_call|init|result|error`, `agent-provider.ts`) and takes a
+`SpawnContext` (tier/permission/chatId/model/appendInstructions). `ProviderCapabilities`
+declares per-provider traits (`perToolCallback`, `sandboxLevels`, `supportsDelegation`,
+`supportsResume`, `defaultPeer`); the static table is `capability-matrix.ts`, the id list
+`src/lib/provider-ids.ts` (guard: `scripts/provider-registry.guard.test.ts`).
 
 | Provider | Family | Wraps | Loop owner | cheapEval | delegation |
 |---|---|---|---|---|---|
 | claude | **wrap** | `@anthropic-ai/claude-agent-sdk` | SDK | ✅ haiku | peer + target |
-| codex | **wrap** | `@openai/codex-sdk` (Thread) | SDK | ✅ | target |
-| cursor | **wrap** | `@cursor/sdk` (optional dep) | SDK | ❌ | ❌ |
-| gemini | **self-built** | `@google/genai` (raw) | **us** (`runDispatchLoop`) | ✅ | ❌ |
+| codex | **wrap** | `@openai/codex-sdk` (Thread) / `codex app-server` (workbench) | SDK | ✅ | target |
+| cursor | **wrap** | `cursor-agent acp` (ACP v1, stdio JSON-RPC; `@cursor/sdk` only as chat-side fallback) | CLI | ❌ | ❌ |
+| agy | **wrap** | Antigravity CLI (subscription Gemini, real `--conversation` resume) | CLI | ✅ | ❌ |
 | openai | **self-built** | any OpenAI-compat (DeepSeek/Kimi/Qwen) | **us** (`makeOpenAiSession`) | ✅ +strong | target |
+| gemini | **self-built** | `@google/genai` (raw) — **deprecated 2026-09-27**, superseded by agy | **us** (`runDispatchLoop`) | ✅ | ❌ |
 
 Registry (`provider-registry.ts`) is per-daemon (not singleton); `ProviderId` is an open string;
-`getCheapEval()` walks a hardcoded cost order `['openai','claude','codex','gemini']`. Selection: a
-chat's persisted `Mode` → `providerId` → `SessionManager.acquire` keyed by `provider|alias|chatId`.
+`getCheapEval()` walks a hardcoded cost order `['openai','agy','claude','codex','gemini']`
+(overridable per install via `/set cheap`). Selection: a chat's persisted `Mode` → `providerId` →
+`SessionManager.acquire` keyed by `provider|alias|chatId`. The same CLI can be registered twice —
+once as a chat provider, once as a workbench executor (`ProviderRegistration.workbench?`); "executor"
+is a role, not a type. Current model/backend surfaces: [reference/model-management.md](reference/model-management.md).
 
 **Shared:** `AgentEvent`/`SpawnContext`/`ProviderCapabilities`, `collectTurn` (turn aggregation +
 watchdog), `mergeEnvIntoMcpServers`, `assertNotAuthFailed`, `isReplyToolCall`.
@@ -127,19 +134,21 @@ teardown, tier→SDK translation, and the MCP stdio spec type (4 near-identical 
 
 ### 2.2 Channel / Session / Turn layer
 
-**Turn lifecycle** (`conversation-coordinator.ts`, `inbound/`, `reply-sinks.ts`):
-- **WeChat**: `poll-loop` (turn runs *inline* in the poll loop, `poll-loop.ts:353`) → 17-mw onion
-  pipeline (`inbound/build.ts:42`, order is load-bearing: access-gate before side-effects, dedup
-  wraps the turn, guard-before-permission) → terminal `mw-dispatch` → `coordinator.dispatch`.
-- **App**: `companionConverse` (`pipeline-deps.ts:388`) opens a reply-sink, calls `dispatchInner`
-  directly (not `dispatch` — self-deadlock), returns the captured text.
-- **Tick**: `dispatchToChat` (`tick-bodies.ts:243`) drives `SessionManager.acquire` directly under
+**Turn lifecycle** (`src/core/conversation-coordinator.ts`, `src/daemon/inbound/`, `reply-sinks.ts`):
+- **WeChat**: `poll-loop` (turn runs *inline* in the poll loop) → onion pipeline (`inbound/build.ts`;
+  order is load-bearing: access-gate before side-effects, dedup wraps the turn, attachments and voice
+  transcription *before* the read-only intent probe `mw-route`, then the single consumer table
+  `mw-consume` — a consumer present without a probe fails boot) → terminal `mw-dispatch` →
+  `coordinator.submitTurn`.
+- **App / phone**: `companionConverse` (`wiring/pipeline-deps.ts`) runs the same route + consume
+  table (`appTurn`), opens a reply-sink, submits the turn, returns the captured text.
+- **Tick**: `dispatchToChat` (`wiring/tick-bodies.ts`) drives `SessionManager.acquire` directly under
   `runExclusive`.
 
 **Serialization**: `makeChatMutex().runExclusive(chatId, fn)` (`async-mutex.ts`, poison-proof
 tail-chain). All three entries take the **same per-chat lock**. **Chatroom is exempt** — it has its
 own abort-based preempt protocol (latest-message-wins), and routing it through the mutex would break
-that (verified empirically, comment `conversation-coordinator.ts:863`).
+that (verified empirically, see the comment in `conversation-coordinator.ts`).
 
 **Modes**: `solo | primary_tool | parallel(/both) | chatroom(/chat)` (`mode-commands.ts`).
 `primary_tool` ≈ solo at dispatch (peer reached via a pre-loaded `delegate_<peer>` MCP tool).
@@ -181,7 +190,8 @@ with jitter + a `shouldRun()` gate + an 11-min bounded-tick watchdog. Three: pus
 ### 2.4 Store / Memory / Knowledge layer
 
 Three physically separate tiers:
-- **A — Daemon SQLite** (`src/lib/db.ts`, v1–v15): `messages` (bot-chat log only), `threads`
+- **A — Daemon SQLite** (`src/lib/db.ts`, one append-only `migrations` array — v67 as of 2026-09-26;
+  `user_version` is a COUNT, see [maintainer/migrations.md](maintainer/migrations.md)): `messages` (bot-chat log only), `threads`
   (LLM-extracted topics), `observations` (introspect notes, 30d TTL), `milestones`, `events`
   (decision log), + operational (session_state, dedup, heartbeat). JSON sidecars: `care_ledger`,
   `garden_state`.
@@ -196,8 +206,8 @@ Three physically separate tiers:
   `wxperson.person_brief` fans them into one view at read-time.
 
 **Designed boundary (crisp):** `.md` = the bot's *subjective take*; plugins = *objective derived
-data*; the agent fuses them at prompt time (`brief.py:1` "DATA ONLY, does NOT read .md";
-`prompt-builder.ts:346/509`).
+data*; the agent fuses them at prompt time (`brief.py` "DATA ONLY, does NOT read .md";
+`src/core/prompt-builder.ts`).
 
 ### 2.5 Deployment / Runtime topology
 
@@ -206,17 +216,25 @@ data*; the agent fuses them at prompt time (`brief.py:1` "DATA ONLY, does NOT re
   (`Restart=always`), Windows ScheduledTask. Single-instance O_EXCL pidfile + health-heartbeat
   steal. State in `~/.claude/channels/wechat/`.
 - **Desktop app**: Tauri v2, vanilla-JS frontend, ships a **compiled sidecar** `wechat-cc-cli`
-  (bun `--compile`, 74 MB) — does NOT embed the daemon; drives `service install/start/stop` and
+  (bun `--compile`, ~78 MB) — does NOT embed the daemon; drives `service install/start/stop` and
   reaches the running daemon via `internal-api-info.json` (loopback port + two token files). MIT +
   a Pro tier (Lemon Squeezy, `license.json`).
 - **Plugins**: discovered from bundled `<repoRoot>/plugins/` (default enabled) + user
   `<stateDir>/plugins/` (default disabled). First-party are **dev symlinks** into the sibling repos;
   the marketplace (`catalog.ts`, git-clone-from-registry) is built but `registry.json` is empty.
   `wxsearch`/`wxmedia` need Python 3.10+ ⇒ each owns a per-plugin `.venv` built live at setup.
-- **Voice**: STT is now **local** (`wxmedia/stt_server.py` on 127.0.0.1:8001, faster-whisper,
-  OpenAI-shaped); TTS is **remote** (VoxCPM2 on a VPS, `brain.youdamaster.cc/voice`). Both configured
-  at runtime via `stt-config.json`/`voice-config.json`; no defaults, no host in code.
-- **随身 CC / `/m` phone page** (`settings-panel.ts`): a page served inside the daemon, reachable at
+- **Voice**: STT is **inbound-ready but gateway-shaped** (`src/daemon/stt/*`, configured by
+  `stt-config.json` → an OpenAI-shaped whisper endpoint, wired into the inbound chain as
+  `mw-transcribe-voice`; unset ⇒ voice notes are not transcribed); TTS is **remote** (VoxCPM2 gateway,
+  `voice-config.json`). No defaults, no host in code.
+- **Runtime adapter layer** (`src/lib/runtime/{sqlite,process,http,zstd}.ts`, 2026-09-16): business
+  code never imports `bun:*` or touches `Bun.*` (depcruise rule `bun-builtins-only-in-runtime` +
+  `no-bun-globals.test.ts`); Node 24 runs the whole `src/` suite via `npm run test:node`. Known gap:
+  `process.ts` does not abstract `detached`/process groups, so the spawn sites that need them still
+  call `node:child_process` directly.
+- **随身 CC / `/m` phone page**: source in `apps/mobile/`, assembled into
+  `src/daemon/mobile-page.generated.json` (committed, byte-guarded) and served by
+  `src/daemon/mobile-page.ts`; the settings panel itself stays in `settings-panel.ts`. Reachable at
   home over the LAN directly or away over an end-to-end-encrypted relay tunnel (`tunnel-client.ts`)
   — X25519 handshake per stream, AES-GCM frames, the relay itself content-blind, the device token
   authenticated by whether its derived key opens the first frame. 首屏「今天」是伙伴的一天:`GET
@@ -283,13 +301,13 @@ Ranked by **impact × reach**. Each is real and evidenced; none is a fire.
 
 | # | Debt | Layer | Why it matters | Direction |
 |---|---|---|---|---|
-| **D1** | **Fragmented person model** — `person_brief` (plugin) vs `_overview.md`/`_profile.json` (daemon) never merge; two extraction pipelines (`threads` vs `wxfacts`) with no shared vocab/join key | Store | The *product thesis* is "coherent knowledge of each person" — currently there are two half-views. Directly undercuts the moat | **CORE ADDRESSED 2026-07-12.** (1) always-on: `knowledge-distill.ts` distills the owner's plugin knowledge → `knowledge.md`, injected beside `profile.md` (`knowledgeMemorySection`). (2) synthesized: `synthesizeOverview` now folds `knowledge.md` in as a 社交侧 category → `_overview.md` is plugin-aware (the actual "one canonical, other feeds it" merge). **Remaining (lower priority):** chatId↔wxid is a fuzzy display-name match across id spaces (`@i` vs `@openim`) — per-contact enrichment only fires when a contact chats the bot directly; `threads` vs `wxfacts` serve different corpora/subjects (bot-chats vs whole vault) so reconciliation is likely not a merge but a cross-reference — deferred as not-clearly-worth-it |
+| **D1** | **Fragmented person model** — `person_brief` (plugin) vs `_overview.md`/`_profile.json` (daemon) never merge; two extraction pipelines (`threads` vs `wxfacts`) with no shared vocab/join key | Store | The *product thesis* is "coherent knowledge of each person" — currently there are two half-views. Directly undercuts the moat | **CORE ADDRESSED 2026-07-12.** (1) always-on: `knowledge-distill.ts` distills the owner's plugin knowledge → `knowledge.md`, injected beside `profile.md` (`knowledgeMemorySection`). (2) synthesized: `synthesizeOverview` now folds `knowledge.md` in as a 社交侧 category → `_overview.md` is plugin-aware (the actual "one canonical, other feeds it" merge). **2026-09-25 起** `_overview.md` 不再更新,每晚整理的 `memory.md` 取代它注入(§2.4)。**Remaining (lower priority):** chatId↔wxid is a fuzzy display-name match across id spaces (`@i` vs `@openim`) — per-contact enrichment only fires when a contact chats the bot directly; `threads` vs `wxfacts` serve different corpora/subjects (bot-chats vs whole vault) so reconciliation is likely not a merge but a cross-reference — deferred as not-clearly-worth-it |
 | **D2** | **Plugin/voice deployment is author-shaped** — dev symlinks, empty registry, live-built venvs into read-only bundle dirs, unsupervised local STT, hand-typed VPS URL, POSIX-only ML | Deploy | Blocks anyone but you from running the full stack; the `.app` can't actually deliver wxsearch/wxmedia/voice | Decide: is the knowledge stack a shipped product or a power-user add-on? Then either productize (populate registry, venv→dataDir, supervise STT) or scope it explicitly as dev-only |
 | **D3** | **Turn-serialization invariant is convention, not structure** — 3 callers must each remember runExclusive + dispatch-vs-dispatchInner; chatroom exempt; reply-sink keys only on chatId; reply route guest-tier | Channel | The single most fragile seam; a future turn-entry author can silently reintroduce a race | **CORE DONE 2026-07-12** (conversation-actor pattern — borrowed from Durable Objects + voice-agent turn-taking; spec `2026-07-12-turn-entry-unification-design.md`): one `coordinator.submitTurn(chatId, {within})` entrypoint owns the lock + dispatch; `turnPolicy(mode)` makes queue-vs-preempt explicit (chatroom=preempt = the shape voice barge-in needs); `companionConverse` moved onto it; **`dispatchInner` is now private** — the bare-callable turn path is eliminated, invariant enforced by types not comments. **Deferred to the phone build:** the channel-neutral `{text, source}` input (so app/phone stop fabricating a WeChat InboundMsg) + a voice `preempt` mode — both plug into `submitTurn`/`turnPolicy`. The tick keeps `runExclusive` for its own SessionManager dispatch (legit, not a dispatchInner bypass) |
 | ~~**D4**~~ | ~~**Provider layer re-implements the loop 5×** — no shared session-loop helper; auth-fail 3×; tier→SDK + MCP-spec per-provider~~ **RESOLVED 2026-08-17** | Provider | — | **Done:** shared `mcp-stdio-spec` / `auth-fail` / `async-queue` / `turn-emitter` modules now live once in `src/core`, with the B1 (gemini tier-auth env merge), B2 (delegation capability validation), B3 (cursor/openai/gemini auth-fail recognition) fixes landed on top; see `docs/superpowers/specs/2026-08-17-provider-runtime-dedup-design.md`. **`gemini→agy` migration (registered deferred in that spec's non-goals) also landed 2026-08-17:** new `agy` provider drives the Antigravity CLI (subscription Gemini via Google AI Pro OAuth) — solo dispatch + cheapEval + real `--conversation` resume; `/agy` is admin/trusted-only pending per-session MCP isolation; see `docs/superpowers/specs/2026-08-17-agy-provider-design.md`. (Out of scope, still per-provider: `cancel()` for cursor/openai/gemini; text-event granularity; the original `gemini` provider's `resume` stays fake — `agy` is the real-resume path going forward.) |
 | **D5** | **Boot/wiring ceremony** — 250-line `bootDaemon` god-function holds ordering implicitly; 3 late-bind mechanisms; a new feature touches 5–8 wiring files; ingest gating across 4 gates in 3 files | Wiring | High cognitive load; "why didn't this tick fire?" has no single answer | Consolidate to one late-bind mechanism (Ref); a `registerBackgroundFeature()` helper to collapse the 5-file thread; co-locate a feature's gates |
 | ~~**D6**~~ | ~~**`HF_ENDPOINT=hf-mirror.com` forced in manifests**~~ **FIXED 2026-07-12** (plugins `728698a`) | Deploy | — | **Done:** manifests no longer hardcode `HF_ENDPOINT`; server.py/setup.py `setdefault` to hf-mirror (China default) so a `HF_ENDPOINT` in the daemon env now overrides. (The earlier failure was hf-mirror being *transient*, not persistently broken; a cache-based auto-probe can't reliably discriminate endpoints, so overridable is the honest fix.) Still-open (minor): two download paths (HF vs modelscope) |
-| — | **Minor**: two state-dir env var names (`WECHAT_CC_STATE_DIR` vs `WECHAT_STATE_DIR`); two GitHub orgs (ggshr9 vs tendhearth); three unsynced app versions | Deploy | Latent confusion | Pick one each |
+| — | **Minor**: two state-dir env var names (`WECHAT_STATE_DIR` is primary, `WECHAT_CC_STATE_DIR` legacy; daemon side unified in `resolve-state-dir.ts`, `src/lib/config.ts` still reads only the primary — see rules-from-real-machines.md); two GitHub orgs (ggshr9 vs tendhearth); ~~three unsynced app versions~~ (unified 2026-09-22, guarded) | Deploy | Latent confusion | Pick one each |
 
 **Not debt (for the record) — deliberately good:** the `AgentEvent` contract; the `.md`(subjective)
 vs plugin(objective) boundary; the auth tier + routeAllow model; the health-aware instance lock; the
