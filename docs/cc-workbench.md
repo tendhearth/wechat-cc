@@ -1,6 +1,6 @@
 # CC：陪伴与统一任务入口
 
-本文整理截至 2026-09-22 的 dev 开发结果。它描述源代码里的能力，不代表已发布安装包、所有平台或全部模型都经过真机验收。
+本文整理截至 2026-09-27 的 dev 开发结果(正文 09-27 补入 9 月的实时事件流 / diff 审阅 / 免审与 ACP 三节;更早的逐日变更在修订记录)。它描述源代码里的能力，不代表已发布安装包、所有平台或全部模型都经过真机验收。
 
 CC 的目标是：日常管理 Claude/Codex 工作时，只打开 CC 就够。陪伴保留在「此刻」和「回忆」，「一起做」专注当前项目、任务对话、需要你判断的地方和最终成果。CC 不代替专业编辑器，也不要求用户先搭工作流。
 
@@ -47,6 +47,19 @@ CC 的目标是：日常管理 Claude/Codex 工作时，只打开 CC 就够。�
 完整模型消息、工具调用与结果保存在任务数据库，称为 **CC 管理的会话延续**，不是云端原生会话。绑定任务、所有者、目录身份及连接指纹。中断工具回合不能静默重放；需要通过原有恢复确认重新开始。停止会中断本地请求、阻止后续文件操作；不承诺服务商物理终止远端推理或免收已发生费用。
 
 这些文件工具目前只支持 macOS/Linux 的原生文件描述符能力，Windows 会明确拒绝，需另行移植和验证。macOS 本轮通过执行验证；Linux 尚未做本批实机验收，不能把平台分支存在当作实测通过。
+
+## 任务里能看到什么(实时事件流)
+
+每个任务有持久化 `seq`(`workbench_tasks.seq`),事件行带 `seq`;桌面用 `GET /v1/workbench/task?since=&wait_ms=` 长轮询(≤20s)只取变过的行。Claude 执行者开逐字流,两家的增量 150ms 合并后落库,正在跑的一组按增量补丁渲染,结构变化才整页重画。不嵌终端 —— 执行者的事件当数据渲染,才做得出「改动」「权限卡」「等待行」这些只有产品才给得了的东西。
+
+## 改动怎么审(逐文件 diff)
+
+任务详情的「改动」面板按回合列出安静/唤醒边界的变更快照,逐文件展开 diff,每个文件可**接受**或**打回**;打回 = 一句意见 + 该文件 diff 节选,组成一条续接要求走 `POST /v1/workbench/review-return`(与普通续接同一道门)。标记存 `workbench_review_marks`,跨表面经长轮询同步。不做 hunk 级接受(等真实需求)。
+
+## 免审执行者与 ACP
+
+- **免审**(agy):用执行者 CLI 自己的跳过审批开关启动;daemon 仍守文件夹占用、目录身份、成果收集、diff 快照与停止,但看不到、拦不下单步,没有权限卡与提问。第一次选到要在桌面确认一次(`POST /v1/workbench/unattended-ack`,存 `agent-config.json` 的 `workbench_unattended_ack_at`),未确认返回 428 `unattended_ack_required`。微信 / Windows 上没有这个确认入口。
+- **ACP**(Cursor):`cursor-agent acp`(Agent Client Protocol v1,stdio JSON-RPC)—— 命令逐次进权限卡(allow-once / reject-once),时间线有逐条活动行,`session/load` 接原会话,`close()` 确认进程组退出。工作区内的文件编辑由 Cursor 直接执行、不过权限卡(ACP 面上没有开关),每个任务开跑记一条提示。不注入 MCP、不做 elicitation;图片附件进 prompt。对话侧的 Cursor 同样常驻 ACP,按会话注入 wechat MCP。真机报文:`src/core/acp/fixtures/cursor-acp-2026-09-17.jsonl`。Claude / Codex 不换到 ACP(定案见 `superpowers/specs/2026-09-17-acp-evaluation.md`)。
 
 ## 离开电脑后从微信继续
 
