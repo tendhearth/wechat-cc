@@ -19,11 +19,24 @@ import { makeTokenRegistry } from '../src/daemon/internal-api/token-registry'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (...p: string[]) => readFileSync(join(ROOT, ...p), 'utf8')
 
-function rustAllowed(): Set<string> {
-  const src = read('apps', 'desktop', 'src-tauri', 'src', 'lib.rs')
+const LIB_RS = read('apps', 'desktop', 'src-tauri', 'src', 'lib.rs')
+
+/**
+ * 只取 `fn workbench_request_allowed` 的函数体:从签名后的第一个 `{` 起按花括号配对
+ * 截到对应的 `}`。不用行尾当边界(CRLF 下 `\n}\n` 找不到,会一路切到文件末尾把
+ * `mod tests` 里的用例元组也抓进来 —— 2026-09-27 CI windows 就是这么红的),也不依赖
+ * 函数定义在 `mod tests` 之前。
+ */
+function rustAllowed(src: string = LIB_RS): Set<string> {
   const start = src.indexOf('fn workbench_request_allowed')
-  const end = src.indexOf('\n}\n', start)
-  const body = src.slice(start, end)
+  if (start < 0) throw new Error('lib.rs 里找不到 fn workbench_request_allowed')
+  const open = src.indexOf('{', start)
+  let depth = 0, end = open
+  for (; end < src.length; end++) {
+    if (src[end] === '{') depth++
+    else if (src[end] === '}') { depth--; if (depth === 0) break }
+  }
+  const body = src.slice(open, end + 1)
   const out = new Set<string>()
   for (const m of body.matchAll(/\(\s*"(GET|POST)"\s*,\s*"(\/v1\/[^"]+)"\s*\)/g)) out.add(`${m[1]} ${m[2]}`)
   return out
@@ -48,6 +61,13 @@ const diff = (a: Set<string>, b: Set<string>) => [...a].filter(k => !b.has(k)).s
 
 describe('桌面可达路由四份白名单对得上', () => {
   const rust = rustAllowed(), proxy = proxyAllowed(), op = operatorAllowed()
+
+  it('lib.rs 的解析只取 workbench_request_allowed 的 matches! 块,不受行尾影响(2026-09-27 CI windows:CRLF 让 \\n}\\n 找不到,整段 mod tests 的用例元组被当成白名单)', () => {
+    const crlf = rustAllowed(LIB_RS.replace(/\r?\n/g, '\r\n'))
+    expect([...crlf].sort()).toEqual([...rust].sort())
+    // 测试模块里的用例长这样:/v1/workbench/../companion/presence、?id=、/extra —— 白名单里绝不该有
+    for (const k of rust) expect(k, k).not.toMatch(/\.\.|\?|\/extra$|\/$/)
+  })
 
   it('三份都真的抓到了东西(正则没抓空 = 守卫沉默,比误报危险)', () => {
     expect(rust.size).toBeGreaterThanOrEqual(30)
