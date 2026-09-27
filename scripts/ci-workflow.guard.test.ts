@@ -77,6 +77,17 @@ describe('ci.yml —— desktop-e2e 按路径在 dev 上跑', () => {
   })
 })
 
+describe('ci.yml —— e2e 作业要装 Playwright chromium', () => {
+  // 2026-09-27 PR #121(dev→master)第一次跑 e2e 就红:src/daemon/__e2e__/mobile-workbench.e2e.test.ts
+  // (09-22 加的)用 Playwright 驱动真页面,而 e2e 作业只 bun install、没装浏览器 ——
+  // 「Executable doesn't exist at ~/.cache/ms-playwright/…」。desktop-e2e 作业早就有这一步。
+  it('e2e 作业里有一步 `playwright install … chromium`(__e2e__ 里有测试 import playwright)', () => {
+    const steps = jobs.e2e!.steps ?? []
+    const install = steps.find(s => typeof (s as { run?: unknown }).run === 'string' && /playwright install .*chromium/.test(String((s as { run?: string }).run)))
+    expect(install, 'e2e 作业缺 playwright install chromium 步骤').toBeTruthy()
+  })
+})
+
 describe('三个 workflow —— bun 版本钉死', () => {
   it('ci.yml / desktop.yml / publish-update.yml 每一处 setup-bun 都是 1.3.14(2026-09-15 bun 1.4.2 把 CI 弄红;发版链此前仍是 latest,2026-09-27 一并钉住)', () => {
     const pins: string[] = []
