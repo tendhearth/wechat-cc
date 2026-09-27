@@ -31,6 +31,17 @@
 
 漏一处的典型症状是按钮按下去 403 `route_not_allowed`,而且只在打包版上出现。
 
+- 2026-09-27 起四份白名单的包含关系(`lib.rs ⊆ workbench-proxy ⊆ routeAllow ⊆ ROUTE_MIN_TIER`)由 `scripts/route-registry.guard.test.ts` 钉住;漏登记会在本地就红,不用等打包版。鉴权模型现状见 [reference/internal-api-auth.md](../reference/internal-api-auth.md)。
+- 同类守卫:`scripts/provider-registry.guard.test.ts`(加一家 provider 要改的名单)、`scripts/cli-ratchet.guard.test.ts`(`cli.ts` 只许变小)。
+
+## 承重但此前只写在代码注释里的规矩(2026-09-27 抄出来)
+
+- **新接线进 `src/daemon/bootstrap/wire-*.ts`,别再往 `bootstrap/index.ts` 里加**(`index.ts` 头注释)。`index.ts` 已 1100 多行、7 月以来改了 84 次。
+- **STATE_DIR 两个环境变量名的优先级是 `WECHAT_STATE_DIR` > `WECHAT_CC_STATE_DIR`**(`src/daemon/resolve-state-dir.ts` 头注释);`src/lib/config.ts` 只认前者。e2e harness 两个都设,所以测试发现不了漂移 —— 改 state-dir 相关代码时手动只设一个名试。
+- **入站链开了意图路由后,每个在场消费者必须交探针,漏一个 boot 即抛**(`src/daemon/inbound/build.ts` 注释);探针要看的字段(附件、语音转文字)必须在路由之前就绪。
+- **A2A `proto_version` 现在是 3**(`src/core/a2a-intent.ts`);改信封形状要升它,两台真机都得重新配对。
+- **`agent-config.json` 只经 `saveAgentConfig` 写**(`src/lib/agent-config.ts`);裸读改写(2026-09 还有四处)会互相覆盖字段,09-17 丢过 `workbench_unattended_ack_at`。
+
 ## 对话侧
 
 - **对话侧的 solo 协调器,每收到一条 `text` 事件就发一条微信。** 所以流式 provider 必须按「一条助理消息」攒完再吐一条 text,否则主人收到几十条碎片。ACP 翻译器的 `text: 'messages'` 模式就是干这个的。

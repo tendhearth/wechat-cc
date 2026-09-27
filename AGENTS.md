@@ -12,7 +12,7 @@ wechat-cc 是一个把 Claude Code / Codex / cursor 一类的编码 agent 接到
 |---|---|
 | 某件事的文档在哪、哪一份还可信 | [`docs/INDEX.md`](docs/INDEX.md) |
 | 现在往哪走、卡在哪、欠什么账 | [`docs/roadmap.md`](docs/roadmap.md) |
-| 定了什么、为什么这样定、什么被否决过 | [`docs/全景导图.md`](docs/全景导图.md)(HTML 是生成物,永不手改) |
+| 定了什么、为什么这样定、什么被否决过 | [`docs/全景导图.md`](docs/全景导图.md)(HTML 是生成物,永不手改;改完 md 跑 `bun run build:map`) |
 
 ## 三条硬规矩
 
