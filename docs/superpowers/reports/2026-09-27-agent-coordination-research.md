@@ -2,15 +2,15 @@
 
 日期：2026-09-27（洛杉矶）。性质：调研与建议，未实现、未安装新工具、未启用自动通信。
 本地代码基线：39cf7f5f；本方计划提交：9d67b72b。当前双方约定见[协作说明](../plans/2026-09-26-cc-agent-coordination.md)。
-同日修订：纳入主人转达的Claude评审和会话实测；第一版建议收窄为异步分支交接，尚未立项或形成实施契约。
+同日修订：先纳入主人转达的Claude评审与实测，再专项核查Paseo/Orca当前编排功能。此前把轻量JSON交接作为首选过早；现将其降为既有外部会话的临时选项，产品路线优先对照现成编排能力复用CC已有运行时。尚未实施。
 
 ## 结论
 
 wechat-cc适合承担“主人只交代目标，CC替执行者传递上下文、维护分工、等依赖、整理交接”的角色。建议采用：**统一协调入口 + 持久任务/消息记录 + 独立执行工作区 + 主人掌握集成与发布**。
 
-这是长期方向。第一版建议只验证**分支登记 + 依赖已核验的合并事件 + 交接包**，由执行者主动查收；通用成员注册、收件箱、热点预约和唤醒延后。建议在对方第⑦步大模块拆分后另行立项，不阻塞本方现有第一批。
+产品实现应先参考Paseo的**托管会话 + 统一控制工具 + 编排技能**，以及Orca已有的任务依赖/交接实现，复用CC已有委派工具和工作台接口。不要由“当前两条外部活会话尚未连通”推导出“CC必须先新造成员表、收件箱或共享JSON系统”。当前双方的分支登记、合并依赖与交接仍有价值，但属于开发协作场景，不能取代产品能力评估。
 
-成熟的是这些组成模式。跨任意品牌、任意运行中终端会话、无需预先接入便可靠唤醒执行的通用产品，本次资料不能证明已经存在。先解决当前两个agent需要主人转述的具体链路，再扩展自动分解任务。
+已经存在可使用的跨Claude/Codex编排产品，Paseo有官方工作流，Orca的对应功能已发布但明确标为实验功能。它们能管理自身接入的会话；这与无需接入便接管任意运行中的外部终端是两个问题。本次核查未实际运行两家产品，不能把源码与文档证据写成现场验收通过。
 
 本报告将官方产品能力、社区项目能力与对CC的设计建议分开。没有把能发送消息当作已接单，也没有把协议兼容当作代码冲突已经解决。
 
@@ -41,6 +41,28 @@ LangGraph的interrupt会保存执行状态，凭thread_id恢复；恢复可能�
 
 ## 2. 与当前传话问题最直接相关的产品
 
+### Paseo：已提供跨执行者分派、通信与回传
+
+官方编排文档明确支持由主agent选择不同provider创建worker、互发提示、检查进度、收集结果和隔离工作树。CLI提供run/send/wait/logs；MCP提供相应工具，工具注入默认关闭、需启用并新建或重新加载会话。具有shell能力的外部agent也可调用CLI控制Paseo托管的worker。[编排入口](https://paseo.sh/docs/orchestration)、[CLI](https://paseo.sh/docs/cli)
+
+同一host上，agent可按ID向其他workspace中的会话发消息，包括非自己创建的agent；接收方在原会话继续，若要单独回信需要发送方ID。跨host使用指向目标daemon的CLI。[官方工作流](https://paseo.sh/docs/orchestration-workflows)
+
+官方还提供paseo-handoff（Claude规划、Codex实现）、paseo-advisor和paseo-committee技能，以及可集成到外部程序的@getpaseo/client。它已有“派工→等待→收集→独立审查”的完整控制手段，并非仅让用户手工排列多个窗口。[官方README](https://github.com/getpaseo/paseo#skills)
+
+核查时最新非预发布为[v0.9.2](https://github.com/getpaseo/paseo/releases/tag/v0.9.2)，发布于2026-09-24。已固定对应提交c67b7158b441bb09026b38d86ae335cc4b49190a，核对[发送并等待](https://github.com/getpaseo/paseo/blob/c67b7158b441bb09026b38d86ae335cc4b49190a/packages/server/src/server/agent/tools/paseo-tools.ts#L1888-L1968)、[完成回传](https://github.com/getpaseo/paseo/blob/c67b7158b441bb09026b38d86ae335cc4b49190a/packages/server/src/server/agent/agent-prompt.ts#L395-L496)及[handoff技能](https://github.com/getpaseo/paseo/blob/c67b7158b441bb09026b38d86ae335cc4b49190a/skills/paseo-handoff/SKILL.md#L23-L65)。这些是发布源码中的实现；回传使用内存订阅/队列，不能由此承诺跨daemon崩溃的可靠消息重投。
+
+[既有历史导入](https://github.com/getpaseo/paseo/blob/c67b7158b441bb09026b38d86ae335cc4b49190a/packages/server/src/server/agent/provider-session-import.ts#L13-L44)调用原provider的resumeSession并读取历史，因此不要求所有执行者从空白上下文开始。但导入后由Paseo管理继续执行，不等于接管当前Codex桌面或Warp中的活动进程。外部调用者能使用CLI与等待结果；自动父子回传则依赖Paseo可识别的caller上下文。
+
+### Orca：已有任务依赖、工作者派发和收件箱，编排仍属实验功能
+
+官方文档提供Run、Task及其依赖图、Dispatch、worker-start（Claude/Codex）、inbox send/check/ack和decision gates。两位agent围绕同一任务运行交换进度和结果已有具体实现。文档明确标Experimental，需启用对应设置并运行Orca runtime；不能因为Orca整体有正式发行就省略该功能的实验标记。[官方编排文档](https://www.onorca.dev/docs/cli/orchestration)
+
+核查时最新非预发布为[v1.4.215](https://github.com/stablyai/orca/releases/tag/v1.4.215)，发布于2026-09-27；固定当前源码d30165820826c5ee69d7b64be9d21e6631ba9728，并核实[协作模型](https://github.com/stablyai/orca/blob/d30165820826c5ee69d7b64be9d21e6631ba9728/docs/site/content/docs/cli/orchestration.mdx#L8-L47)、[消息持久化与状态核验](https://github.com/stablyai/orca/blob/d30165820826c5ee69d7b64be9d21e6631ba9728/src/main/runtime/rpc/methods/orchestration/messaging/send-point-to-point.ts#L50-L151)、[复用worker校验](https://github.com/stablyai/orca/blob/d30165820826c5ee69d7b64be9d21e6631ba9728/src/main/runtime/rpc/methods/orchestration/worker/explicit-worker-terminal-validation.ts#L13-L53)与[历史恢复说明](https://github.com/stablyai/orca/blob/d30165820826c5ee69d7b64be9d21e6631ba9728/docs/site/content/docs/agents/session-history.mdx#L35-L56)均与发行tag逐字节相同。
+
+Run保存任务和收件箱，不会自行调度worker；worker默认新建终端，也不默认一人一worktree。已有Orca内的agent pane可在验证其归属后选作worker，外部历史可通过原生resume在新终端继续；都不能据此承诺原地控制任意外部进程。旧orchestration run/coordinator-start入口已经退役，评估时应使用当前接口。
+
+**对CC的修正：**先比较它们如何把已有任务生命周期变成agent能调用的工具，及哪些部分可直接集成/借鉴。Orca的收件箱实现反驳了“这类产品只有并行管理”的判断；Paseo的工具与技能则说明无需先设计一整套新协调数据模型才能开展协作。
+
 ### Claude Code：原生跨会话消息已经存在
 
 官方提供ListAgents/SendMessage，可向独立Claude会话传文字；活动会话在工具调用间接收，空闲会话可因消息开始新一轮。消息来自另一个agent，不等于主人授权。本机claude --version实测2.1.282，满足文档版本门槛。[官方跨会话消息](https://code.claude.com/docs/en/cross-session-messaging)
@@ -55,7 +77,7 @@ Claude Agent Teams提供team lead、独立上下文、共享任务与消息；�
 
 作者原项目为Dicklesworthstone/mcp_agent_mail，提供身份、线程、收发箱、收件确认和文件范围预约。预约是advisory，收件确认不等于任务完成；hook提醒也不能保证任意休眠宿主被唤醒。它是实用参考与试验候选，0.x版本记录不能证明生产SLA。[原仓库](https://github.com/Dicklesworthstone/mcp_agent_mail)、[更新记录](https://github.com/Dicklesworthstone/mcp_agent_mail/blob/main/CHANGELOG.md)
 
-**修订后的选择：**保留该项目作为设计参考，不为当前异步交接验证引入第三方服务。先用两端都能调用的本地CLI验证共享交接记录是否有用；需要真正的通用消息能力时再比较接入成本。CC最终应只有一个任务状态的权威来源。
+**修订后的选择：**保留该项目作为设计参考，当前不为传话引入第三方服务。既有外部会话可考虑本地CLI共享交接记录；CC产品的控制链优先复用已有接口。需要通用消息能力时再比较接入成本，最终应只有一个任务状态的权威来源。
 
 ## 3. 协议各负责什么
 
@@ -85,6 +107,8 @@ A2A已有稳定v1.0，提供Agent Card、task/context、message、artifact及可
 
 | 已有模块 | 可以复用 | 需要补的部分 |
 | --- | --- | --- |
+| [delegate MCP](../../../src/mcp-servers/delegate/main.ts)、[委派实现](../../../src/daemon/bootstrap/delegate.ts) | delegate_claude/delegate_codex已能同步委派并返回回答 | 一次性worker完成即关闭，不提供可持续操作的任务ID；工具描述不能代替权限保证 |
+| [工作台API](../../../src/daemon/internal-api/routes-workbench.ts) | 已有create、input/continue、task长轮询与artifact | 适合agent调用的通用CLI/MCP入口及窄授权；普通CLI token不能直接调用admin接口 |
 | [CLI hooks](../../../src/cli/hook.ts)、[cli-events](../../../src/core/cli-events.ts) | session/cwd与会话事件 | 当前内存观察改为独立持久成员登记；不能把扫描到进程当成已接入 |
 | [MCP接线](../../../src/daemon/bootstrap/mcp-specs.ts)、[token registry](../../../src/daemon/internal-api/token-registry.ts) | 工具注册、限时限路由token | 成员级身份和窄协作权限，不能共用file token冒认发送者 |
 | [live-inputs](../../../src/core/workbench/live-inputs.ts)、[control receipts](../../../src/core/workbench/control-receipts.ts) | 去重、回执、待确认状态的实现模式 | 单独的跨agent持久收件箱，不混进现有任务补充状态机 |
@@ -115,7 +139,7 @@ A2A已有稳定v1.0，提供Agent Card、task/context、message、artifact及可
 
 现已确认：Codex与audit-followup的Claude基线相同；PR119只改守卫和构建流程，可以独立进行。对方的设备鉴权和大文件拆分要等待本方第一批合入dev。
 
-接入后的目标流程如下；第一版以主动查询和读取交接包实现，不承诺自动通知或启动空闲会话：
+若为当前两条未纳管会话选择临时文件交接方案，可用以下主动查询流程；它不承诺自动通知或启动空闲会话，也不代表CC产品已选定这一实现：
 
 1. 双方分别向CC登记并确认身份/范围；CC记录本方第一批优先及Claude暂缓热点。
 2. Claude提交PR119，CC记录它与第一批范围不冲突；各自继续，无需主人搬运说明。
@@ -130,12 +154,16 @@ A2A已有稳定v1.0，提供Agent Card、task/context、message、artifact及可
 
 | 选择 | 适用情况 | 判断 |
 | --- | --- | --- |
-| 纯本地coord CLI与共享交接记录 | 当前两个宿主都能调用CLI，接受主动查收 | 第一版建议；先验证合并依赖与交接，尚未实现 |
+| 复用CC任务接口，提供统一控制工具与编排技能 | 用户仍在CC交办，由CC托管Claude/Codex执行者 | 优先设计路径，对照Paseo完整调用链，避免重复建设运行时 |
+| 通过Paseo CLI/SDK使用其托管worker | 希望直接试用现成编排，接受新增Paseo运行依赖 | 可评估的复用方案；需确定会话、授权及成果由谁负责 |
+| 纯本地coord CLI与共享交接记录 | 仅临时连接当前两个未纳管会话，接受主动查收 | 备用开发工具方案，不再作为CC产品首选 |
 | 引入现成Agent Mail | 后续确实需要通用跨工具收件箱 | 保留参考，当前不引入 |
 | 在CC内补coordination服务，MCP/CLI作适配 | 异步交接已证明价值，需要产品内统一呈现和可靠投递 | 后续方向；先核算大模块与注册成本 |
 | 直接建设完整A2A联邦、通用多agent平台 | 要接大量独立组织/远程服务 | 当前需求不需要，后续再加适配 |
 
-第一版只验证三件事：分支登记（仓库、负责人、工作区、base/head）；依赖合并事件（PR及目标分支、核验结果）；交接包（提交、范围、验证与限制、接收者确认）。GitHub暂不可访问时保留未核验状态，不能凭agent声明解除依赖。拟议命令放src/cli/coord.ts一类独立模块；仍要遵守CLI分发与体积守卫，不给现有汇点继续堆业务逻辑。
+产品方向的最小验证应覆盖：主agent创建一个不同provider的worker、获得任务ID、追加要求、等待真实回合结果、读取产物，再交给独立reviewer。先盘点和包装已有控制接口；任务变化通知不等于任务完成，原生接受不等于验收通过。具体权限设计和接线仍需审查，不复用桌面高权限token给任意agent。
+
+若最终选择临时文件交接工具，其范围仍只包含三件事：分支登记（仓库、负责人、工作区、base/head）；依赖合并事件（PR及目标分支、核验结果）；交接包（提交、范围、验证与限制、接收者确认）。GitHub暂不可访问时保留未核验状态，不能凭agent声明解除依赖。拟议命令放src/cli/coord.ts一类独立模块；仍要遵守CLI分发与体积守卫，不给现有汇点继续堆业务逻辑。
 
 源码核查支持这条减法：纯本地CLI不需要HTTP路由、tier、operator白名单或MCP登记；所谓“登记税”取决于实际暴露面，参见[鉴权登记说明](../../reference/internal-api-auth.md)。但仍需更新根命令登记、手写帮助和顶层命令集合测试。基线39cf7f5f的cli.ts有4332行，恰好达到[守卫上限](../../../scripts/cli-ratchet.guard.test.ts)，不能提高上限来加入口。⑦拆分后应以新基线重估接线成本；CLI模块不得依赖daemon内部实现。
 
@@ -145,12 +173,12 @@ A2A已有稳定v1.0，提供Agent Card、task/context、message、artifact及可
 
 建议的验收是：两端从各自工作区读取同一交接记录，重复更新与并发写不丢记录；PR未合入、合错目标、网络失败都不能解除依赖；接收者确认后能指出准确提交。明确显示“待查收”，不承诺空闲时自动继续，也不为首轮引入daemon路由、MCP工具、通用收件箱或唤醒测试。
 
-顺序：本方第一批交办先行；对方⑥⑦仍等第一批合入。协调CLI建议在⑦之后另行立项、设计和审查，当前反馈不代表实施排期已经批准。既有发布操作由主人按当前发布安排串行完成，本报告不触发合并、重打tag或批准。
+顺序：本方第一批交办先行；对方⑥⑦仍等第一批合入。协调功能在后续独立设计中先比较现成能力和已有接口，再决定是否需要新CLI/存储；此前“在⑦后做本地coord”的提议不视为已选型或获批排期。既有发布操作由主人按当前发布安排串行完成，本报告不触发合并、重打tag或批准。
 
-第一版验收的一句话：**双方主动查收同一份交接记录，就能知道在等哪个合并、应使用哪个提交；主人不再复制粘贴这些说明。**
+产品验收的一句话：**用户在CC交代目标后，Claude/Codex执行者能分工、回传并接续工作，用户看到成果与待决事项。** 文件交接备用方案的验收更窄：双方主动查收同一份记录，知道等待哪个合并、应使用哪个提交。
 
 ## 本轮完成与未完成
 
-已完成官方资料核查、本地代码落点核查、双方分工记录与方案比较；前次查询已只读核实PR118合并提交和PR119当时的OPEN状态及三文件范围。同日根据主人转达的评审收窄第一版范围，记录Claude原生消息实测的来源与局限。
+已完成官方资料核查、本地代码落点核查、双方分工记录与方案比较；前次查询已只读核实PR118合并提交和PR119当时的OPEN状态及三文件范围。同日记录Claude实测，随后专项核查Paseo/Orca当前编排文档、发行信息及固定源码，修正过早偏向自建文件交接的建议。
 
 未实现协调层，未安装Agent Mail、未修改Claude/Codex接入配置、未发送自动agent消息、未运行产品测试或部署。上文“接入后的流程”均为拟议能力。
