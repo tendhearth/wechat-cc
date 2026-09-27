@@ -1,5 +1,6 @@
 /**
- * Rough token estimator for prompt-cost auditing (scripts/prompt-audit.ts).
+ * Rough token estimator for prompt-cost auditing (originally for
+ * scripts/prompt-audit.ts, deleted 2026-09-27 as unreferenced).
  * Heuristic, not a tokenizer: CJK chars (incl. CJK punctuation) ≈ 1 token
  * each; everything else ≈ 3.8 chars/token. Good to ±20% — enough to rank
  * prompt sections by cost, not enough for billing math.
