@@ -25,26 +25,12 @@ import {
   AvatarInfoOutput, AvatarSetOutput, AvatarRemoveOutput,
   LogOutput,
 } from './src/cli/schema'
-
-// Write potentially-large JSON to a sibling file, return the small
-// envelope {ok, out_file, bytes} via stdout. Fixes the desktop sessions
-// browser truncation: bun --compile binaries lose bytes when emitting
-// MB-sized payloads to a pipe (observed across console.log, process.stdout
-// .write, and chunked fs.writeSync — the kernel pipe buffer fills, the
-// receiver drains line-by-line, and the producer drops writes on
-// EAGAIN). Tauri-side reads from disk instead. CLI consumers that pass
-// --out-file get the file route; everyone else (terminal users, tests)
-// falls back to plain stdout via console.log.
-function emitJson(data: unknown, outFile: string | undefined): void {
-  if (!outFile) {
-    console.log(JSON.stringify(data, null, 2))
-    return
-  }
-  // Sync write to a regular file: no pipe buffer, no async stdio path.
-  const body = JSON.stringify(data, null, 2)
-  writeFileSync(outFile, body, 'utf8')
-  console.log(JSON.stringify({ ok: true, out_file: outFile, bytes: body.length }))
-}
+// 跨族帮手(2026-09-27 cli 拆分 Task 1 从这里搬出去的)。
+import { emitJson } from './src/cli/output'
+import { parseBoolValue, parseTimeoutMsFlag, parseBudgetUsdFlag, parseCountFlag } from './src/cli/flags'
+import { readStdin } from './src/cli/stdin'
+import { restartDaemonAndWait } from './src/cli/daemon-restart'
+import { HELP_TEXT } from './src/cli/help'
 
 // PR4 batch 3c: parseCliArgs + CliArgs union deleted. All subcommands now
 // flow through citty (see `cittyRoot` below). The previous gate
@@ -52,175 +38,6 @@ function emitJson(data: unknown, outFile: string | undefined): void {
 // by printing its auto-generated usage. Bare `wechat-cc` / `--help` /
 // `-h` / `help` is intercepted in main() and renders HELP_TEXT.
 
-const HELP_TEXT = `wechat-cc — WeChat bridge for Claude Code (Agent SDK daemon)
-
-Usage:
-  wechat-cc setup [--qr-json] Scan QR + bind a WeChat bot
-  wechat-cc setup-poll --qrcode TOKEN [--base-url URL] [--json]
-  wechat-cc run [--dangerously]   Start the daemon (foreground)
-                        --dangerously: skip permission prompts
-                        (matches claude --dangerously-skip-permissions)
-  wechat-cc install [--user]   Register the MCP plugin entry for claude
-  wechat-cc hook install [--claude] [--codex] [--json]
-                        终端里的 claude / codex 跑完一个回合、或停下来等批准时
-                        推到主人微信(写 ~/.claude/settings.json 与 $CODEX_HOME/
-                        hooks.json 的 hooks;幂等;只动自己的条目)。
-  wechat-cc hook uninstall | status
-  wechat-cc status      Show daemon status + accounts
-  wechat-cc list        List bound accounts
-  wechat-cc doctor [--json]        Diagnose install/setup state
-  wechat-cc setup-status [--json]  Machine-readable setup status for desktop UI
-  wechat-cc service <status|install|start|stop|uninstall> [--json] [--unattended true|false] [--auto-start true|false]
-                        --unattended: persist into agent-config and re-write plist.
-                                      Idempotent: install replaces any existing daemon.
-                        --auto-start: register for boot/login auto-start
-                                      (macOS RunAtLoad, systemd enable,
-                                      schtasks ONLOGON). Default false: opt-in.
-                        Crash-respawn (macOS KeepAlive / systemd Restart=always)
-                        is always on — no longer a user-facing flag.
-  wechat-cc account remove <bot-id> [--json]
-                        Decommission a bound bot — wipes its account dir,
-                        context_token, user_account_id, session-state entry.
-                        Restart the daemon afterwards for it to take effect.
-  wechat-cc daemon kill <pid> [--json]
-                        Force-kill a daemon process by pid. Verifies cmdline
-                        contains cli.ts or src/daemon/main.ts before signaling.
-                        SIGTERM (1.5s grace) then SIGKILL.
-  wechat-cc daemon a2a enable [--host HOST] [--port PORT]
-                        Enable the A2A inbound server (default 127.0.0.1:8717).
-                        Writes agent-config.json; restart the daemon to apply.
-  wechat-cc daemon a2a disable
-                        Remove the A2A inbound server config.
-  wechat-cc daemon a2a status
-                        Show on-disk config vs runtime; flags drift between them.
-  wechat-cc memory list [--json]
-                        List Companion v2 memory files (per user).
-  wechat-cc memory read <user-id> <path> [--json]
-                        Read one .md memory file. Path is relative to the
-                        user's memory dir, traversal-safe.
-  wechat-cc memory write <user-id> <path> --body-base64 <b64> [--json]
-                        Write/overwrite one .md memory file. Body is
-                        passed as base64 (avoids shell-quote pain with
-                        multi-line markdown). Sandboxed: .md only,
-                        ≤100KB, no traversal, atomic rename.
-  wechat-cc memory profile status [--chat-id <id>] [--json]
-                        Inspect whether _profile.json is empty/ready/fresh/stale.
-  wechat-cc memory profile generate [--chat-id <id>] [--provider claude|codex] [--dry-run] [--json]
-                        Generate memory/<chat-id>/_profile.json for the
-                        desktop memory page.
-  wechat-cc memory profile-read <user-id> [--json]
-                        Read memory/<user-id>/_profile.json.
-  wechat-cc events list <chat-id> [--limit N] [--json]
-                        Tail Companion decisions log (push/skip/observation/milestone).
-  wechat-cc observations list <chat-id> [--include-archived] [--json]
-                        Active observations (default) or archive.
-  wechat-cc observations archive <chat-id> <obs-id> [--json]
-                        Mark an observation archived (user "ignore").
-  wechat-cc milestones list <chat-id> [--json]
-                        Per-chat milestones (id-deduped).
-  wechat-cc sessions list-chats [--json]
-                        Contacts (chats) that have sessions.
-  wechat-cc sessions list-projects [--chat <chat_id>] [--json]
-                        Project sessions with cached summaries.
-  wechat-cc sessions read-jsonl <alias> [--chat <chat_id>] [--json]
-                        Read all turns from the alias's session jsonl.
-  wechat-cc sessions delete <alias> [--chat <chat_id>] [--json]
-                        Remove the sessions.json entry (jsonl on disk untouched).
-  wechat-cc sessions search <query> [--limit N] [--json]
-                        Naive case-insensitive substring search across
-                        all sessions.json-registered jsonls.
-  wechat-cc demo seed [--chat-id <id>] [--json]
-                        Populate sample observations + milestones + events
-                        for first-impression / screenshot use. Defaults to
-                        companion default_chat_id if --chat-id omitted.
-  wechat-cc demo unseed [--chat-id <id>] [--json]
-                        Remove items written by \`demo seed\`. Idempotent.
-  wechat-cc reply [--to <chat_id>] [text] [--json]
-                        Send a text reply via WeChat. Reuses the daemon's
-                        on-disk state (contextToken + account routing) so
-                        recipient resolution matches the running daemon.
-                        --to omitted → most-recently-active chat.
-                        text omitted → read from stdin.
-                        Useful when the daemon's MCP server is unreachable.
-  wechat-cc logs [--tail N] [--json]
-                        Tail the daemon's channel.log. Default --tail 50.
-                        --json returns parsed entries (timestamp, tag,
-                        message). Without --json, raw lines are printed
-                        (equivalent to: tail -n N channel.log).
-  wechat-cc log <tag> <msg> [--fields <json>] [--json]
-                        Write a structured line to channel.log (frontend
-                        telemetry). --fields must be a JSON object string.
-                        Exits non-zero if --fields is malformed JSON.
-  wechat-cc update [--check] [--json]
-                        Pull latest + reinstall deps + restart service.
-                        --check probes only (no side effects); GUI calls
-                        this on a timer to surface the Update button.
-  wechat-cc self deploy [--binary <path>] [--app <path>] [--no-rollback]
-                        [--health-timeout-ms N] [--json]
-                        自维护:原子换 sidecar 进 .app、launchd 重启、健康门,
-                        失败自动回滚(仅 macOS)。见 docs/maintainer/deploy.md。
-  wechat-cc self change "<需求>" [--from cli|wechat] [--budget-usd N]
-                        [--no-deploy] [--json]
-  wechat-cc self change --resume <id> | --list | --unhalt
-  wechat-cc self change --approve <id> | --deny <id>
-                        自改:执行者在专用克隆里实现,依次过测试 / 评审 / CI /
-                        主人微信拍板 / 合 dev 五道闸门,再部署 + 自检,不过就
-                        回滚(仅 macOS)。退出码 0 完成 / 1 失败 / 2 停机·配额·
-                        平台·daemon 没起 / 3 主人回了 n / 4 没等到拍板(可
-                        --resume)。微信外发不通时用 --approve / --deny 在终端
-                        拍板(桌面权限卡也行)。见 docs/maintainer/self-change.md。
-  wechat-cc selftest workbench --executor <id> [--image] [--resume] [--json]
-                        [--timeout-ms N] [--keep]
-  wechat-cc selftest chat --provider <id> [--text "…"] [--resume] [--json]
-                        [--timeout-ms N]
-                        自维护:daemon 在跑的前提下做一次真机闭环自检并给出
-                        机器可读的结论。--keep 保留 scratch 项目目录。
-                        见 docs/maintainer/verify.md。
-  wechat-cc ci triage [--sha <sha|HEAD>] [--branch <b>] [--wait] [--rerun]
-                        [--max-reruns N] [--timeout-min N] [--json]
-                        看 CI:这个 SHA 绿了吗?红的是自己的锅,还是
-                        src/cli/ci-flakes.json 里登记过的 flake。退出码
-                        0 绿 / 1 真红(含判不明白)/ 2 没有运行或 gh 出错 /
-                        3 是已知 flake。见 docs/maintainer/ci-and-flakes.md。
-  wechat-cc agent inspect <url>       Fetch Agent Card, print metadata
-  wechat-cc agent add <url> [--id ID] [--name-override N] [--outbound-key K]
-                        Register an external A2A agent; generates inbound API key.
-  wechat-cc agent list              List registered A2A agents
-  wechat-cc agent pause <id>        Pause inbound/outbound for an agent
-  wechat-cc agent resume <id>       Un-pause an agent
-  wechat-cc agent remove <id>       Drop agent registration
-  wechat-cc agent activity <id> [--limit N]
-                        Print recent A2A events (newest first, default 20)
-  wechat-cc agent info              Show A2A server status (base URL + agent count)
-  wechat-cc agent edit <id> [--name N] [--url U] [--outbound-key K] [--rotate-inbound-key]
-                        Patch a registered agent in place (no remove + re-add)
-  wechat-cc agent test <id> [--text MSG] [--outbound]
-                        Send a synthetic notify to validate inbound→chat path
-                        (default) or outbound (--outbound: send to external URL)
-  wechat-cc social wishes [--json]
-                        List my 心愿 + effective status (needs running daemon)
-  wechat-cc social enable [--status]
-                        一键开启觅食台社交(merge-persist,不覆盖已有设置);
-                          --status 只打印当前三项设置,不写入
-  wechat-cc provider show [--json]  Show selected agent provider
-  wechat-cc provider set <claude|codex|cursor|openai|gemini|agy> [--model MODEL] [--unattended true|false]
-                        --unattended: when true (default for new installs), the
-                          installed daemon runs the daemon with --dangerously so
-                          inbound WeChat messages don't hang waiting for human
-                          permission prompts. Set false for interactive mode.
-                        openai: also requires --base-url (e.g. an OpenAI-compatible
-                          endpoint like https://api.deepseek.com/v1) the first time
-                          it's set — persists to agent-config.json so future
-                          'provider set openai' calls can omit it. API key is read
-                          from the WECHAT_OPENAI_API_KEY env var, never persisted.
-
-Notes for 0.x users:
-  * The old --fresh / --continue flags are ignored; --dangerously is restored.
-    v1.0 uses @anthropic-ai/claude-agent-sdk; daemon manages claude
-    subprocesses internally, per-project session pool.
-  * /restart from WeChat is removed. Use /project switch or restart
-    the daemon process.
-`
 
 /**
  * citty migration — batch 1.
@@ -999,12 +816,6 @@ const providerCmd = defineCommand({
  * `provider set --unattended` (and reusable for any future flag where
  * "absent" is a distinct meaning from "explicit false").
  */
-function parseBoolValue(value: string | undefined): boolean | undefined {
-  if (value === undefined) return undefined
-  if (value === 'true' || value === '1' || value === 'yes' || value === 'on') return true
-  if (value === 'false' || value === '0' || value === 'no' || value === 'off') return false
-  return undefined
-}
 
 // ── PR4 batch 3b — memory / account / daemon / demo ─────────────────
 //
@@ -2526,14 +2337,6 @@ const updateCmd = defineCommand({
  * 30 秒上限,其实等了四分钟。`--timeout-ms 0` / 负数同理(缺省顶上)。
  * 数值开关写错了就当场报错退 1,别替用户猜。
  */
-export function parseTimeoutMsFlag(raw: unknown): { ok: true; value?: number } | { ok: false; error: string } {
-  if (raw === undefined || raw === null || raw === '') return { ok: true }
-  const value = Number(raw)
-  if (!Number.isFinite(value) || value <= 0) {
-    return { ok: false, error: `invalid value: ${String(raw)} (expected a positive number of milliseconds)` }
-  }
-  return { ok: true, value }
-}
 
 // ── self deploy — atomic sidecar swap + launchd restart + health gate ──
 //
@@ -2651,14 +2454,6 @@ const selfDeployCmd = defineCommand({
 // 和 `self deploy` 一样是 darwin-only:最后两步(部署 + 自检)踩的是 launchd。
 
 /** `--budget-usd`:钱的开关写错了当场报错,不替用户猜(同 parseTimeoutMsFlag 的理由)。 */
-export function parseBudgetUsdFlag(raw: unknown): { ok: true; value?: number } | { ok: false; error: string } {
-  if (raw === undefined || raw === null || raw === '') return { ok: true }
-  const value = Number(raw)
-  if (!Number.isFinite(value) || value <= 0) {
-    return { ok: false, error: `invalid value: ${String(raw)} (expected a positive number of dollars)` }
-  }
-  return { ok: true, value }
-}
 
 const selfChangeCmd = defineCommand({
   meta: { name: 'change', description: '自改流水线:执行者在专用克隆里实现 → 测试/评审/CI/主人拍板/合 dev → 部署 + 自检,不过就回滚(仅 macOS)' },
@@ -2959,14 +2754,6 @@ const selftestCmd = defineCommand({
 // (依赖 gh 的登录态)。
 
 /** `--max-reruns` / `--timeout-min` 这类计数开关:写错了当场报错,别替用户猜。 */
-function parseCountFlag(raw: unknown, min: number): { ok: true; value?: number } | { ok: false; error: string } {
-  if (raw === undefined || raw === null || raw === '') return { ok: true }
-  const value = Number(raw)
-  if (!Number.isFinite(value) || !Number.isInteger(value) || value < min) {
-    return { ok: false, error: `invalid value: ${String(raw)} (expected an integer ≥ ${min})` }
-  }
-  return { ok: true, value }
-}
 
 const ciTriageCmd = defineCommand({
   meta: { name: 'triage', description: '看 CI:这个 SHA 绿了吗?红的是自己的锅还是已知 flake(需要 gh 登录态)' },
@@ -3787,45 +3574,6 @@ const handInviteCmd = defineCommand({
   },
 })
 
-/**
- * 重启 daemon 并等新的监听真的起来。
- *
- * 「写完配置让用户自己重启」是这条流程里最贵的一步之一:用户得知道这台是
- * launchd 还是 schtasks 还是前台跑的。
- *
- * **不走 `/v1/daemon/restart`** —— 那条路要 admin **session** token,只有
- * 微信里的 agent(daemon_restart 工具)拿得到;CLI 手里的 internal-token 是
- * trusted 档,打过去是 403。我第一版就是这么写的,真机上当场撞了。
- * 改用仓库自己那条验证过的杀进程路径(`daemon kill-residual` 用的同一个):
- * 读 server.pid、**核对 cmdline 确认是我们的 daemon**、SIGTERM,然后靠进程
- * 管理器(launchd / schtasks / systemd)拉起来。
- *
- * 等的是**新地址真的出现在 a2a-info.json 里**,不是 sleep 一个拍脑袋的秒数
- * —— 后者在慢机器上会偶发失败,而失败长得像「配对码是坏的」。
- *
- * 前台 `wechat-cc run` 起的 daemon 没有管理器会拉它,所以等不回来时必须
- * **明说配置已经写好了、手动起一下再跑一次**,不能只丢一句超时。
- */
-async function restartDaemonAndWait(stateDir: string, wantBaseUrl: string): Promise<void> {
-  const { readA2AInfo } = await import('./src/cli/agent.ts')
-  const { killResidualDaemon, defaultResidualKillDeps } = await import('./src/cli/daemon-kill.ts')
-  const r = await killResidualDaemon(defaultResidualKillDeps(), join(STATE_DIR, 'server.pid'))
-  if (!r.killed) {
-    throw new Error(`没能停下当前 daemon(${r.message})—— A2A 配置已经写好了,手动重启 daemon 后再跑一次 hand invite`)
-  }
-  const deadline = Date.now() + 90_000
-  while (Date.now() < deadline) {
-    await new Promise(res => setTimeout(res, 1500))
-    const info = readA2AInfo(stateDir)
-    if (info?.enabled && info.base_url === wantBaseUrl) return
-  }
-  throw new Error(
-    `等了 90 秒,A2A 还没在 ${wantBaseUrl} 上起来。`
-    + `A2A 配置已经写好了 —— 如果这台的 daemon 是前台 \`wechat-cc run\` 起的,`
-    + `没有进程管理器会自动拉它:手动启动后再跑一次 hand invite 即可。`,
-  )
-}
-
 
 const handJoinCmd = defineCommand({
   meta: { name: 'join', description: 'Join a hand using its pairing code — auto-registers both sides (run on the BRAIN)' },
@@ -4319,13 +4067,6 @@ async function main() {
   await runMain(cittyRoot, { rawArgs: argv })
 }
 
-/** Read stdin to EOF. Returns '' immediately if stdin is a TTY. */
-async function readStdin(): Promise<string> {
-  if (process.stdin.isTTY) return ''
-  const chunks: Buffer[] = []
-  for await (const c of process.stdin) chunks.push(c as Buffer)
-  return Buffer.concat(chunks).toString('utf8')
-}
 
 if (import.meta.main) {
   main().catch((e) => { console.error(e); process.exit(1) })

@@ -1890,6 +1890,22 @@ Usage:
                           'provider set openai' calls can omit it. API key is read
                           from the WECHAT_OPENAI_API_KEY env var, never persisted.
 
+More subcommands (each has its own --help):
+  wechat-cc access list|remove      Allowlist management — the add path stays in the admin chat flow
+  wechat-cc avatar info|set|remove  Avatar metadata + binary (per chat / bot / user key)
+  wechat-cc backup create|list|restore  备份/恢复不可再生数据(记忆、事实库、配置)
+  wechat-cc connection probe        Inspect this machine's WeChat connection
+  wechat-cc conversations list      Per-chat conversation modes (RFC 03)
+  wechat-cc dialogue <timeline|threads|search|thread-detail|backfill|lock|unlock>
+  wechat-cc guard status|enable|disable  Network-guard config + live probe
+  wechat-cc hand add|accept|invite|join|list|ping  一个大脑多手: hand invite → hand join <code>
+  wechat-cc license status|activate|deactivate  Manage the Pro license
+  wechat-cc mode set …              Conversation mode management (via running daemon)
+  wechat-cc pair [<6-digit code>]   配对码 — 和朋友的 bot 建边(需运行中的 daemon)
+  wechat-cc install-progress        Read service-install progress (JSON; desktop wizard polls it)
+  wechat-cc mcp-server <wechat|delegate>   Internal — stdio MCP server entrypoint (spawned by the daemon)
+  wechat-cc federated-source …      Expose wechat as a hearth federated source (run mode: stdio MCP)
+
 Notes for 0.x users:
   * The old --fresh / --continue flags are ignored; --dangerously is restored.
     v1.0 uses @anthropic-ai/claude-agent-sdk; daemon manages claude

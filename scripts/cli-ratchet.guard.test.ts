@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const src = readFileSync(join(ROOT, 'cli.ts'), 'utf8')
 
-const MAX_LINES = 4332
+const MAX_LINES = 4073
 const MAX_DAEMON_IMPORTS = 39
 
 describe('cli.ts 只许变小', () => {

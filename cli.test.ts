@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { runCommand } from 'citty'
-import { cittyRoot, computeProviderSetOutcome, parseBudgetUsdFlag, parseTimeoutMsFlag } from './cli'
+import { cittyRoot, computeProviderSetOutcome } from './cli'
+import { parseBudgetUsdFlag, parseTimeoutMsFlag } from './src/cli/flags'
 import { activeModel, type AgentConfig } from './src/lib/agent-config'
 
 // PR4 batch 3c removed parseCliArgs — every subcommand now flows through
