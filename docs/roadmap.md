@@ -4,24 +4,22 @@
 > 「定了什么 / 为什么这样定」在 [全景导图](全景导图.md);「某件事的文档在哪」在 [文档索引](INDEX.md);
 > `docs/rfc/02-post-v1.1-roadmap.md` 是 2026-04 的历史版本(v1.2 时代),已被本文取代。
 
-## 现状:代码跑在前面,发版落在后面
+## 现状:1.7.0 已合、正在发
 
-| 事实 | 数字 |
+| 事实 | 怎么看(别写死数字,每次改这页先跑) |
 |---|---|
-| 最近一次**公开**发版 | `desktop-v1.6.5`,2026-08-31 |
-| `desktop-v1.6.6` | 还是 **Draft**(2026-09-03),没发出去 —— 下一版直接发 **1.7.0** |
-| `master` 最后一条提交 | 2026-09-03(`b58da5fd`) |
-| `dev` 领先 master | **1431 个提交**,其中 552 个在 08-27 之后 |
-| 待合的发版 PR | [#117](https://github.com/tendhearth/wechat-cc/pull/117)(CI 全绿) |
+| 最近一次**公开**发版 | `gh release list --limit 1`(2026-09-27:仍是 `desktop-v1.6.5`,08-31) |
+| 1.7.0 | PR #117 已于 2026-09-23 squash 合进 master(`63edf14c`);`v1.7.0` tag 2026-09-27 已推,`desktop-v1.7.0` 三平台构建等 `release-signing` 批准 → Draft → 人点 Publish(步骤见 [maintainer/release.md](maintainer/release.md)) |
+| `dev` 领先 master | `git rev-list --count origin/master..origin/dev`(2026-09-27:1537) |
 
-版本号已统一(2026-09-22):此前四处各说各话(发版认 `tauri.conf.json` 的 1.6.6、`--version` 报根 `package.json` 的 0.6.4、`apps/desktop/package.json` 写 0.5.18、ACP 的 clientInfo 还硬编码 `'0.6.4'`),现在四处都是 **1.7.0**,由 `scripts/version-consistency.guard.test.ts` 钉住;`--version` 同时带构建的 git 短 sha(`1.7.0 (a1b2c3d)`),否则 `self deploy` 的健康门打出来的数字两次发版之间永远一样、看不出新构建起没起来。发版说明:`docs/releases/desktop-v1.7.0.md`。
+版本号已统一(2026-09-22):此前四处各说各话(发版认 `tauri.conf.json` 的 1.6.6、`--version` 报根 `package.json` 的 0.6.4、`apps/desktop/package.json` 写 0.5.18、ACP 的 clientInfo 还硬编码 `'0.6.4'`),现在四处 + `Cargo.toml` 都是 **1.7.0**,由 `scripts/version-consistency.guard.test.ts` 钉住;`--version` 同时带构建的 git 短 sha(`1.7.0 (a1b2c3d)`),否则 `self deploy` 的健康门打出来的数字两次发版之间永远一样、看不出新构建起没起来。发版说明:`docs/releases/desktop-v1.7.0.md`。
 
-**⇒ 现在的第一优先级不是新功能,是把攒了三周的东西发出去。** 每多攒一周,发版的风险和回归面都在变大。
+**⇒ 第一优先级仍是把攒了三周的东西发出去。** 每多攒一周,发版的风险和回归面都在变大。
 
 ## 下一步(按顺序)
 
-1. **合 #117** —— dev→master,squash。版本号与发版说明都已定版为 1.7.0(走 minor 不走 patch:距上次公开发版三周、552 个提交、四块新能力)。
-2. **发一版桌面** —— 走 [发版管线](maintainer/deploy.md):点 Publish 滚 R2 更新源 + 建 GitHub Release(老用户自动更新,新用户从下载页拿最新)。
+1. ~~合 #117~~(2026-09-23 已合)。
+2. **发 1.7.0** —— tag 已推;剩 `release-signing` 批准 ×2 + 点 Publish,走 [maintainer/release.md](maintainer/release.md)。
 3. **补真机验证**(下面「欠的真机账」整节)—— 这三周里大量功能只有单测和 selftest 绿,没在真机上走过一遍。
 4. 之后才谈新功能。
 
@@ -56,11 +54,13 @@
 - **发版节奏本身要有纪律** —— 三周不发版是这轮最大的结构性问题,不是某个功能的问题。
 - **e2e 只在 master 相关的分支跑**(`.github/workflows/ci.yml:152` 的分支条件)—— dev 上推送不跑 e2e,于是积压的 e2e 红会在开 PR 那一刻一次性砸下来(这次砸了 8 条)。要不要让 dev 也跑是成本取舍。
 - **自改的工作树回收缺一个显式入口** —— 现在只回收 `done`/`declined` 的运行,可 resume 的和被 kill 的永不回收(磁盘单调增长)。缺的是「这条我不接了」这个动作。
+- **设备 token 进 token-registry、http 默认 loopback**(梳理 2026-09-26 第 6 步)—— 手机页的 token 体系在 tier/routeAllow 之外、永不过期、面板监听 0.0.0.0;要先出设计稿。现状写在 [reference/internal-api-auth.md](reference/internal-api-auth.md)。
+- **拆三个大文件**(梳理第 7 步)—— `core/workbench/service.ts`(1622 行闭包,按 20 份 `service-*.test.ts` 的边界抽)、`bootstrap/index.ts`(剩余 8 个关注点进 `wire-*.ts`)、`cli.ts`(按命令族下沉;`scripts/cli-ratchet.guard.test.ts` 先钉住不再增长)。
 - **错误通道结构化**(arch backlog #4)—— 要 owner 参与定两条判定红线。
 - **纯 JS 的锚定文件访问**(评审 #3)—— 去 ffi 之后没有 `openat`,逐级 lstat 是多个时刻的观察;两条路(写清威胁模型 + 目录替换回归测试,或 macOS/Linux 恢复原生 openat),安全边界取舍等 owner。
 - **动态 provider 注册** —— 等 openai-compatible 这条路被外部集成者真用起来、暴露出覆盖不了的需求再做。
 - **手机台阶 B(桌面 Widget + 原生推送)** —— 解锁条件:PWA 验证有人用 + 决定掏 Apple $99/年。
-- **STT(语音入站)** —— 出站语音已通(VoxCPM2),入站还没。
+- **STT(语音入站)** —— 已通(2026-09-27 口径):网关形态,`stt-config.json` 指定 whisper 网关(`src/daemon/stt/*`),接在入站链 `mw-transcribe-voice`;未配置即关。出站语音也已通(VoxCPM2)。缺的是本地 STT 与首次配置引导。
 - **Developer ID 证书** —— 签名分发仍缺,要 owner 去申请。
 - **Windows 拿不到工作台** —— 工作台整块在 win32 上不跑(依赖已去掉的 ffi 原生层),是产品缺口不只是测试缺口。
 
@@ -73,4 +73,5 @@
 
 ## 修订记录
 
+- 2026-09-27:现状表改成「命令 + 当日值」;#117 已合、tag 已推;STT 口径定为已做(网关形态);第 6/7 步(设备 token、拆大文件)入「已定未做」;发版链接改指 maintainer/release.md。
 - 2026-09-22 v1:首份现行 roadmap。此前五个月的方向只活在 PR 描述和对话记忆里,文档侧唯一叫 roadmap 的是 4 月的 RFC 02。
