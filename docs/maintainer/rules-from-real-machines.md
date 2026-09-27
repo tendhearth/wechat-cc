@@ -34,6 +34,14 @@
 - 2026-09-27 起四份白名单的包含关系(`lib.rs ⊆ workbench-proxy ⊆ routeAllow ⊆ ROUTE_MIN_TIER`)由 `scripts/route-registry.guard.test.ts` 钉住;漏登记会在本地就红,不用等打包版。鉴权模型现状见 [reference/internal-api-auth.md](../reference/internal-api-auth.md)。
 - 同类守卫:`scripts/provider-registry.guard.test.ts`(加一家 provider 要改的名单)、`scripts/cli-ratchet.guard.test.ts`(`cli.ts` 只许变小)。
 
+## 加 CLI 命令(2026-09-27 起)
+
+- 建 `src/cli/commands/<family>.ts`,`export const <family>Cmd = defineCommand(…)`;`cli.ts` 只加一行 import + `SUBCOMMANDS` 一行。`cli.ts` 有行数棘轮(`scripts/cli-ratchet.guard.test.ts`),往里塞命令体会红。
+- `src/cli/help.ts` 的 `HELP_TEXT` 加一行(`src/cli/help.test.ts` 守着「SUBCOMMANDS 每个键都出现在 HELP 里」)。
+- `scripts/cli-help.guard.test.ts` 给每个子命令的 `--help` 存了快照:改文案后 `bun --bun vitest run scripts/cli-help.guard.test.ts -u`,把快照 diff 贴进 PR。
+- 命令体里需要仓库根 / `cli.ts` 路径,从 `src/cli/repo-root.ts` 取 `SOURCE_REPO_ROOT` / `CLI_ENTRY`,别再写 `import.meta.url`(搬进 commands/ 后它指向别处;打包版先判 `compiledRepoRoot()`)。
+- 命令体动态 import `src/daemon` 是 depcruise 的 warn 不是许可,总数由棘轮第二把尺钉住只降不升。
+
 ## 承重但此前只写在代码注释里的规矩(2026-09-27 抄出来)
 
 - **新接线进 `src/daemon/bootstrap/wire-*.ts`,别再往 `bootstrap/index.ts` 里加**(`index.ts` 头注释)。`index.ts` 已 1100 多行、7 月以来改了 84 次。
