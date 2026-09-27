@@ -1419,11 +1419,8 @@ function extractContactNameFromOpenChat() {
 
 /** @param {typeof deps} deps */
 function reopenCurrentSession(deps) {
-  const detail = document.getElementById("sessions-detail")
-  const alias = detail?.dataset.alias
-  if (alias) {
-    import("./modules/sessions.js").then(m => m.openProjectDetail(deps, alias, { chatId: detail?.dataset.chat || '' }))
-  }
+  // (The old #sessions-detail branch was removed 2026-09-27: that DOM has been
+  // gone since 2026-06-04, so it never fired.)
   // If the dialogue pane is mounted, refresh its timeline so new avatars appear.
   const dialogueRoot = document.getElementById("dialogue-root")
   if (dialogueRoot?.dataset.ready === "true") {
