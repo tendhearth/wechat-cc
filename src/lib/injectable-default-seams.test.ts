@@ -51,6 +51,7 @@ const BOUNDARY: Record<string, string> = {
   defaultConnect: 'opens an outbound WebSocket to the remote relay (src/daemon/tunnel-client.ts)',
   defaultRunner: 'spawns claude / codex to resume a terminal session from a WeChat reply (src/daemon/cli-reply-handler.ts)',
   defaultExec: 'spawns sips / powershell / convert to shrink an image before it goes to the model (src/lib/image-prep.ts)',
+  defaultTerminalChatId: 'reads user_account_ids.json / context_tokens.json under STATE_DIR to pick the last chat (src/lib/send-reply.ts, seam in src/cli/commands/reply.ts)',
   defaultCursorSpawnFn: 'spawns the cursor-agent CLI child process for a one-shot cheapEval/strongEval print-mode call (src/core/cursor-eval.ts, used from src/core/acp-cursor-chat.ts)',
 }
 

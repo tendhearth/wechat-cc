@@ -61,10 +61,17 @@ module.exports = {
       to: { path: '^src/(cli|daemon)/' },
     },
     {
+      name: 'cli-commands-may-link-daemon-for-now',
+      severity: 'warn',
+      comment: '2026-09-27 cli.ts 拆分:命令体从根 cli.ts 搬进 src/cli/commands/ 时把 39 处 daemon 动态 import 一起带了过来。这是搬家前就存在的耦合,不是许可;总数由 scripts/cli-ratchet.guard.test.ts 钉住只降不升,真正解耦另立项。',
+      from: { path: '^src/cli/commands/', pathNot: '\\.test\\.ts$' },
+      to: { path: '^src/daemon/' },
+    },
+    {
       name: 'cli-must-not-depend-on-daemon',
       severity: 'error',
       comment: 'CLI subcommand handlers are short-lived; they should spawn the daemon, not link to its internals.',
-      from: { path: '^src/cli/', pathNot: '\\.test\\.ts$' },
+      from: { path: '^src/cli/', pathNot: ['\\.test\\.ts$', '^src/cli/commands/'] },
       to: { path: '^src/daemon/' },
     },
     {
