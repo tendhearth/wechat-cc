@@ -1,6 +1,6 @@
 # 统一交办验证记录
 
-实施中。分支 `codex/cc-task-entry`，独立工作区 `cc-user-experience/wechat-cc`。
+代码实现与本地自动化验证完成，待整合者合并、部署和真机验收。分支 `codex/cc-task-entry`，独立工作区 `cc-user-experience/wechat-cc`。
 
 2026-09-27 开工：原设计基线 `39cf7f5f`；实现前将仅含设计文档的分支同步到 `origin/dev@261a2ca10e428face03d2ad3d522fb2b627ee566`，实现起点 `d4397523`。其间上游仅变更 CI、发布和文档，产品源码及末条迁移 v67 均未变化。#119 已合入；#127 是对方后续拆分设计。
 
@@ -33,3 +33,36 @@ macOS「打开工作位置」仅向原生端传任务ID，由原生端读取daem
 后端步骤7/8合并交付：10文件172项Bun集成验证通过。共享配额独立审查发现的预约编号跨owner/内容借用、旧桌面取消漏墓碑、handoff复制元数据漏计费，均先复现失败再修正；fresh review发现64条已绑定旧上传阻塞过期扫描，也已补失败用例并修为排除已绑定记录、游标有界推进。新增v69指纹 `2df729ce442f770e`，旧指纹未改。真实SQLite两连接交错与事务故障路径有覆盖，未宣称完成独立外部服务进程压力测试。
 
 真实配对HTTP/加密relay handler使用公共资产 `moment-ai-offline.png`（529,448字节，大于512KiB）验证128KiB分块、重复中间/最后块、image-only创建和原回执重放；最终存储字节一致，双向密文帧均小于512KiB，撤销设备后三条材料接口及新交办接口拒绝。该12项自动化使用受控执行者，不是实际模型看图验收。
+
+
+原生适配器隔离验收：`bun scripts/workbench-native-attachments-smoke.ts --run` 使用本机 Claude Code 2.1.282 与 Codex CLI 0.153.4、临时配置/目录、仅 loopback 的本地确定性模型服务。两家均通过首次图片字节、image-only补充、历史图片恢复与新图片续接、同一原生会话；Codex另验活动会话图片steer及过期请求拒绝，Claude另验PDF原生内容块。测试未访问云端模型、用户聊天或共享daemon，因此不能替代“真实模型理解图片”验收。
+
+收尾全量首次发现两项回归：新手机材料样式硬编码圆角、legacy无owner任务的纯文字续聊被材料owner检查误拦。保留原测试修复两处，3文件83项回归通过；手机严格owner路径始终校验任务归属，新入口也不经过legacy兼容分支，独立复核确认无新增绕过。模块边界首次发现新增循环，已将EntryResult放在服务输出层，并把有界文件读取下移既有anchored-fs层；6文件128项、类型检查通过，循环警告由基线7条降为4条，未修改规则。
+
+截图使用公开fixture，记录浏览器组件，不代表真机验收：
+
+![桌面选择讨论材料](../../screenshots/task-entry/desktop-selected-discussion.png)
+
+![手机原任务补充图片](../../screenshots/task-entry/phone-material-continuation.png)
+
+
+最终自动化验收（2026-09-27，产品代码提交 `b15ee2a1`）：
+
+| 检查 | 结果 |
+| --- | --- |
+| `bun run test --maxWorkers=4` | 676文件通过、1跳过；9038测试通过、10跳过 |
+| `npm run test:node -- --maxWorkers=4` | 575文件通过、2跳过；7792测试通过、11跳过 |
+| `bun run typecheck` | 根目录及手机通过 |
+| `bun run depcheck` | 0错误、4条既有循环警告；基线7条，无新增 |
+| `bun run build:mobile` 后生成物差异检查 | 与已提交页面一致 |
+| 手机 Chromium E2E | 17项通过；包括丢创建回包恢复、大图image-only创建/补充、公开对话与可展开工具记录 |
+| 桌面 Playwright 全套 | 118项通过，独立临时状态与mock服务 |
+| Rust工作台定向测试 | 11项通过（含7项打开工作位置），2项非本范围过滤 |
+| `apps/desktop` 中 `bun run build-sidecar` | CLI与jobspawn构建通过，版本 `1.7.0 (b15ee2a1)` |
+| `bun scripts/smoke-compiled-sidecar.ts` | 编译后二进制在空状态目录正确返回daemon_required，无SDK虚拟路径崩溃 |
+
+Task6/9以同一个前端提交交付。新增工具记录默认折叠、全部转义、无记录不占位；公开对话直接可见，同任务刷新保留展开选择。验收末轮独立审查无剩余行动项，既有微信创建/续接、项目、恢复、成果相关回归包含在全套测试中。
+
+构建限制：本工作区缺少既有绘图组件 `sd-cli-aarch64-apple-darwin`，构建脚本已明确提示无法在此完成完整macOS Tauri打包；本轮只验证CLI/jobspawn及Rust测试，不声称完整app打包成功。测试日志里既有marked sourcemap缺失、颜色变量冲突和一次mock服务空闲超时未造成失败；没有更改超时、忽略测试或增加flake白名单。
+
+交接顺序：ggshr9审查本分支PR并合入dev，核验GitHub合并事件与实际merge SHA后，才把新基线交给等待⑥/⑦的Claude；当前基线仍为 `261a2ca1`。迁移已占用v68/v69。合并后由整合者串行构建/部署共享daemon，跑健康门及维护者workbench/chat selftest，再做真实Tauri、Safari/微信、云端模型看图和网络切换验收。该部分保留未完成，不由HTTP/CLI投递成功替代。后续agent协调层没有混入本批产品实现。

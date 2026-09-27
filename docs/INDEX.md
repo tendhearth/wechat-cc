@@ -25,7 +25,7 @@
 | 发版(tag → 三平台构建 → Publish → R2 更新源) | [maintainer/release.md](maintainer/release.md) | — |
 | 自维护(部署 / 自检 / CI 闸门) | [maintainer/](maintainer/README.md) | `superpowers/specs/2026-09-18-{self-maintenance,ci-triage}-design.md` |
 | 自改流水线(`self change`) | [maintainer/self-change.md](maintainer/self-change.md) | `superpowers/specs/2026-09-18-self-change-pipeline-design.md` |
-| 「一件事」matter 原语与任务入口 | [工作台现状](cc-workbench.md) | `superpowers/specs/2026-09-13-cc-unified-task-entry.md` 那一批(09-12/09-13)；[陪伴交办与手机验收记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md) |
+| 「一件事」matter 原语与任务入口 | [工作台现状](cc-workbench.md) | `superpowers/specs/2026-09-13-cc-unified-task-entry.md` 那一批(09-12/09-13)；[陪伴交办与手机验收记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md)；[统一交办开发分支验证](superpowers/plans/2026-09-26-task-entry-validation.md) |
 | 交办后的回报(形状已定,细节未完) | — | `superpowers/specs/2026-09-23-delegation-report-design.md` |
 | Windows 进程树清理(**已落地** dev 2026-09-24,`src/lib/jobspawn.ts`) | [superpowers/reports/2026-09-24-windows-process-tree-landing.md](superpowers/reports/2026-09-24-windows-process-tree-landing.md) | `superpowers/specs/2026-09-23-windows-process-tree-spike.md` |
 | 终端会话 ↔ 微信(`wechat-cc hook`) | [reference/features.md §10](reference/features.md) | `superpowers/specs/2026-09-09-cli-hook-push-design.md` |

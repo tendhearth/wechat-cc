@@ -155,11 +155,11 @@ expect(retainedNewDraft).toBe('再补一份要求')
 
 **Interfaces:** 经典脚本新增 openEntry()、submitEntry()、restoreEntry()；用任务4的entry/options、matter/create和create-receipt。新草稿key独立于matter续说草稿；保存requestId与草稿版本，taskId来自回执。不在本任务额外加入普通闲聊的新API。
 
-- [ ] 写浏览器/存储测试：无项目能交办；LAN已接受但回包丢失后隧道重发只一个事项；刷新用原requestId查回执；新输入不被迟到回包覆盖；切任务不被旧响应拉回；离线显示尚未确认并留稿。任务公开对话默认可见、工具细节仍折叠。
-- [ ] 运行 `bun run test apps/mobile/entry.test.ts src/daemon/mobile-page-workbench.test.ts`，確認新入口测试失败。
-- [ ] 按原页面组合约定接入表单；选项默认managed；更多只列服务返回的可用执行者与项目；请求已送出但结果不明时不生成新requestId重试。用户明确另开新事时才分配新ID。
-- [ ] 执行 `bun run build:mobile`，重跑本任务测试及 `bun run test:e2e src/daemon/__e2e__/mobile-workbench.e2e.test.ts`；确认页面封装预算、草稿隔离和文字闭环。
-- [ ] 提交：`feat: start and resume tasks from phone`。这一提交仅完成文字，整个第一批尚未交付。
+- [x] 写浏览器/存储测试：无项目能交办；LAN已接受但回包丢失后隧道重发只一个事项；刷新用原requestId查回执；新输入不被迟到回包覆盖；切任务不被旧响应拉回；离线显示尚未确认并留稿。任务公开对话默认可见、工具细节仍折叠。
+- [x] 运行 `bun run test apps/mobile/entry.test.ts src/daemon/mobile-page-workbench.test.ts`，確認新入口测试失败。
+- [x] 按原页面组合约定接入表单；选项默认managed；更多只列服务返回的可用执行者与项目；请求已送出但结果不明时不生成新requestId重试。用户明确另开新事时才分配新ID。
+- [x] 执行 `bun run build:mobile`，重跑本任务测试及 `bun run test:e2e src/daemon/__e2e__/mobile-workbench.e2e.test.ts`；确认页面封装预算、草稿隔离和文字闭环。
+- [x] 提交：与 Task 9 合为 `feat: start and continue phone tasks with materials`。最终 entry 模块依赖附件控件与脚本顺序，合并提交避免产生缺依赖的中间状态。
 
 ### Task 7: 有界、可恢复的手机分块上传
 
@@ -197,11 +197,11 @@ expect(allEncryptedFrameByteLengths.every(n => n < 512 * 1024)).toBe(true)
 
 **Interfaces:** 经典脚本createPhoneAttachments({draftId,taskId?,onChange})返回 select(files)、resume(files)、remove(id)、readyIds()、signature()、dispose()；网络使用任务7路由，signature包括有序id/hash/size。新建和续说使用各自实例。transport的b64u外部接口不变，只内部有界分段编码。
 
-- [ ] 写控件/浏览器测试：照片选择→分块上传→ready才可提交；刷新后重新选同文件续传、错文件拒绝；取消/换事项不串预览；全空文字+ready照片可提交；HEIC明确说明；软键盘下按钮可用；大密文字节数组base64来回一致且无整数组apply。
-- [ ] 运行 `bun run test apps/mobile/attachments.test.ts apps/mobile/entry.test.ts`，确认新控件未实现。
-- [ ] 实现选图、进度、重试/移除和任务材料展示；localStorage只保存元数据。每个回包核对id/draftId/taskId/size/sha256及当前上传代次；取消使用新ID重选，迟到响应无作用。输入编辑不等待上传；未ready不能冒充已交材料；clear条件含requestId+文字+材料signature。已发提交快照的材料不能先删除，结果未知先核对回执；用户新草稿另行保留。详情展示实际接收/held状态。
-- [ ] 运行 `bun run build:mobile`、以上测试、`bun run test apps/mobile/build.test.ts`、`bun run test:e2e src/daemon/__e2e__/mobile-workbench.e2e.test.ts`，验证最终帧/页面大小和迟到响应。
-- [ ] 提交：`feat: attach and continue phone tasks with materials`。
+- [x] 写控件/浏览器测试：照片选择→分块上传→ready才可提交；刷新后重新选同文件续传、错文件拒绝；取消/换事项不串预览；全空文字+ready照片可提交；HEIC明确说明；窄屏下按钮可见（真机软键盘留 Task 10）；大密文字节数组base64来回一致且无整数组apply。
+- [x] 运行 `bun run test apps/mobile/attachments.test.ts apps/mobile/entry.test.ts`，确认新控件未实现。
+- [x] 实现选图、进度、重试/移除和任务材料展示；localStorage只保存元数据。每个回包核对id/draftId/taskId/size/sha256及当前上传代次；取消使用新ID重选，迟到响应无作用。输入编辑不等待上传；未ready不能冒充已交材料；clear条件含requestId+文字+材料signature。已发提交快照的材料不能先删除，结果未知先核对回执；用户新草稿另行保留。详情展示实际接收/held状态。
+- [x] 运行 `bun run build:mobile`、以上测试、`bun run test apps/mobile/build.test.ts`、`bun run test:e2e src/daemon/__e2e__/mobile-workbench.e2e.test.ts`，验证最终帧/页面大小和迟到响应。
+- [x] 提交：与 Task 6 合为 `feat: start and continue phone tasks with materials`。
 
 ### Task 10: 整批验收、文档与交付
 
@@ -209,12 +209,13 @@ expect(allEncryptedFrameByteLengths.every(n => n < 512 * 1024)).toBe(true)
 
 **Interfaces:** 消费任务1–9；产出可核查验收记录（版本、测试命令、结果、截图、限制），每条区分自动化/真实执行者/原生窗口/真人手机。
 
-- [ ] 执行 `bun run test`、`npm run test:node`、`bun run typecheck`、`bun run depcheck` 和手机生成同步检查；全部要求通过，既有失败逐项说明而非改成“通过”。
+- [x] 执行 `bun run test`、`npm run test:node`、`bun run typecheck`、`bun run depcheck` 和手机生成同步检查；全部要求通过，既有失败逐项说明而非改成“通过”。
 - [ ] 用独立测试目录及无隐私材料走真实执行者：桌面聊天选五轮材料→新事项→手机看成果→补大图修改→桌面打开同一事项与文件；验证真实模型确实读到图片。已配置Claude Code、Codex等执行者按能力分别记录，未测的不得写成支持已验收。
 - [ ] 在真实Tauri窗口及手机Safari/微信内置浏览器验收：照片选择、键盘、切后台、刷新、Wi-Fi到移动网络、回包丢失、恢复确认、成果保存。同请求始终一件事，至少一次超过512KiB图片完整上传。
-- [ ] 独立整批审查；修正后只重跑受影响验证与必要整合闸门。确认旧微信创建、项目入口、任务恢复与成果下载未回归。
-- [ ] 依据docs/maintainer/deploy.md构建sidecar，再交给主人ggshr9串行完成原子部署与健康检查；使用维护者规定的workbench/chat selftest，明确测试消息的接收范围。无真机时保留该框未完成、交付状态标为待真机验收。
-- [ ] 更新上述文档与验收记录并提交：`docs: record task entry acceptance`。由明确整合者推dev后按CI triage要求确认结果；master只通过PR squash，创建PR后附加到本对话。
+- [x] 独立整批审查；修正后只重跑受影响验证与必要整合闸门。确认旧微信创建、项目入口、任务恢复与成果下载未回归。
+- [x] 依据docs/maintainer/deploy.md构建CLI/jobspawn sidecar并做编译后smoke；完整Tauri打包因本机缺少既有sd-cli组件未完成，详见验证记录。
+- [ ] ggshr9合入dev后串行完成共享daemon原子部署与健康检查，使用维护者规定的workbench/chat selftest；交付状态保持待真机验收。
+- [x] 更新上述文档与验收记录并提交：`docs: record task entry acceptance`。由明确整合者推dev后按CI triage要求确认结果；master只通过PR squash，创建PR后附加到本对话。
 
 ## 自审结论与暂停点
 
