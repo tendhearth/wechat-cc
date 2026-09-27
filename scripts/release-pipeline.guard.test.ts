@@ -54,6 +54,26 @@ describe('desktop.yml —— macOS 画室渲染器的源码克隆要带子模块
   })
 })
 
+describe('desktop.yml —— 没有 Developer ID 时,公证的三个环境变量必须**不存在**,不能是空串', () => {
+  // 2026-09-27 desktop-v1.7.0 第二次真跑:sidecar 过了,Tauri build 红在
+  // 「failed to notarize app: Team ID must be at least 3 characters」。原因:Tauri build 步骤的
+  // env 里写着 APPLE_TEAM_ID: ${{ … || '' }} —— macOS/Linux 上「设成空串」不等于「没设」,
+  // tauri-bundler 看到键存在就去公证。(和导图里 Win32「赋空串 = 删除」正好相反。)
+  // 正确做法:只在证书 import 成功的那一步把三个变量写进 $GITHUB_ENV,Tauri build 的 env 里不出现它们。
+  const yml = wf('desktop.yml')
+  const tauriStep = yml.slice(yml.indexOf('- name: Tauri build'), yml.indexOf('- name:', yml.indexOf('- name: Tauri build') + 10))
+
+  it('Tauri build 步骤的 env 里没有 APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID', () => {
+    for (const k of ['APPLE_ID:', 'APPLE_PASSWORD:', 'APPLE_TEAM_ID:']) {
+      expect(tauriStep, `${k} 出现在 Tauri build 的 env 里 —— 空串也会触发公证`).not.toContain(k)
+    }
+  })
+
+  it('公证变量由证书 import 之后的一步按 DEVELOPER_ID_READY 写进 GITHUB_ENV', () => {
+    expect(yml).toMatch(/DEVELOPER_ID_READY == '1'[\s\S]*APPLE_TEAM_ID=[\s\S]*GITHUB_ENV/)
+  })
+})
+
 describe('publish-update.yml —— 点 Publish 就该滚更新源', () => {
   const yml = wf('publish-update.yml')
 

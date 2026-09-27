@@ -308,6 +308,26 @@ jobs:
           rm -f "$RUNNER_TEMP/cert.p12"
           echo "DEVELOPER_ID_READY=1" >> "$GITHUB_ENV"
 
+      # 公证的三个变量只在证书 import 成功后才**存在**。以前写在 Tauri build 的 env 里、
+      # 没证书时给空串 —— 但 macOS 上「设成空串」不等于「没设」,tauri-bundler 看到键就去公证,
+      # 于是 desktop-v1.7.0 第二次真跑红在「Team ID must be at least 3 characters」(2026-09-27)。
+      # (导图里 Win32「赋空串 = 删除」那条教训在 POSIX 上正好相反。)守卫:release-pipeline.guard。
+      - name: Export notarization env (macOS, only when Developer ID is ready)
+        if: matrix.os == 'macos-latest' && env.DEVELOPER_ID_READY == '1'
+        env:
+          APPLE_ID_SECRET: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD_SECRET: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID_SECRET: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_ID_SECRET" ] || [ -z "$APPLE_PASSWORD_SECRET" ] || [ -z "$APPLE_TEAM_ID_SECRET" ]; then
+            echo "Developer ID present but notarization secrets incomplete — signing only, no notarize"
+            exit 0
+          fi
+          echo "::add-mask::$APPLE_PASSWORD_SECRET"
+          echo "APPLE_ID=$APPLE_ID_SECRET" >> "$GITHUB_ENV"
+          echo "APPLE_PASSWORD=$APPLE_PASSWORD_SECRET" >> "$GITHUB_ENV"
+          echo "APPLE_TEAM_ID=$APPLE_TEAM_ID_SECRET" >> "$GITHUB_ENV"
+
       - name: Tauri build
         working-directory: apps/desktop
         run: bun run tauri build
@@ -316,10 +336,7 @@ jobs:
           # 身份不稳,见上面的说明)。Setting this to '' makes Tauri fall through
           # to default signing which fails when no identity is provisioned.
           APPLE_SIGNING_IDENTITY: ${{ env.DEVELOPER_ID_READY == '1' && secrets.APPLE_SIGNING_IDENTITY || '-' }}
-          # 公证:三个都在时 Tauri 自动 notarize + staple;缺任何一个就跳过(不报错)。
-          APPLE_ID: ${{ env.DEVELOPER_ID_READY == '1' && secrets.APPLE_ID || '' }}
-          APPLE_PASSWORD: ${{ env.DEVELOPER_ID_READY == '1' && secrets.APPLE_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ env.DEVELOPER_ID_READY == '1' && secrets.APPLE_TEAM_ID || '' }}
+          # 公证变量(APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID)不在这里:见上一步。
           # tauri-bundler passes `--skip-jenkins` to bundle_dmg.sh whenever
           # CI=true (its guard for tauri-apps/tauri#592, where osascript hangs
           # on headless builders). That flag skips the entire Finder/AppleScript
