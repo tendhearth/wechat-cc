@@ -1,0 +1,2253 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`cli.ts --help 快照(逐字节) > access --help > access list --help 1`] = `
+"Show access.json: admins / trusted / allowFrom (access list)
+
+USAGE access list [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > access --help > access remove --help 1`] = `
+"Remove a userId from allowFrom (admins refuse — self-lockout guard). Takes effect within ~5s, no restart. (access remove)
+
+USAGE access remove [OPTIONS] <USERID>
+
+ARGUMENTS
+
+  USERID=<xxx@im.wechat>    The chat/user id to remove (Required)
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > access --help 1`] = `
+"Allowlist management (list / remove) — the add path stays in the admin chat flow (wechat-cc access v1.7.0 (dev))
+
+USAGE wechat-cc access list|remove
+
+COMMANDS
+
+    list    Show access.json: admins / trusted / allowFrom                                                           
+  remove    Remove a userId from allowFrom (admins refuse — self-lockout guard). Takes effect within ~5s, no restart.
+
+Use wechat-cc access <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > account --help > account export --help 1`] = `
+"Export a bound bot (encrypted) so another machine can drive it — no re-scan (account export)
+
+USAGE account export [OPTIONS] --passphrase=<passphrase>
+
+OPTIONS
+
+          --bot-id=<bot_id>    Which account (default: the sole bound one)                 
+  --passphrase=<passphrase>    Encrypts the bundle (you type the same on import) (Required)
+                --out=<out>    Output file (default: <botId>.wccaccount)                   
+                     --json    JSON envelope                                               
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > account --help > account import --help 1`] = `
+"Import an account bundle from another machine — drive the same bot without re-scanning (account import)
+
+USAGE account import [OPTIONS] <FILE> --passphrase=<passphrase>
+
+ARGUMENTS
+
+  FILE=<file>    The .wccaccount bundle (Required)
+
+OPTIONS
+
+  --passphrase=<passphrase>    The passphrase used on export (Required)
+                     --json    JSON envelope                           
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > account --help > account remove --help 1`] = `
+"Decommission a bound bot — wipes account dir + related state. Restart daemon afterwards. (account remove)
+
+USAGE account remove [OPTIONS] <BOTID>
+
+ARGUMENTS
+
+  BOTID=<bot-id>    Bot id (Required)
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > account --help > account takeover --help 1`] = `
+"Take over the bot session on THIS machine (re-poll a stood-by account) — no daemon restart (account takeover)
+
+USAGE account takeover [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > account --help 1`] = `
+"Account management (export/import + takeover for multi-device, decommission a bound bot) (wechat-cc account v1.7.0 (dev))
+
+USAGE wechat-cc account remove|export|import|takeover
+
+COMMANDS
+
+    remove    Decommission a bound bot — wipes account dir + related state. Restart daemon afterwards.  
+    export    Export a bound bot (encrypted) so another machine can drive it — no re-scan               
+    import    Import an account bundle from another machine — drive the same bot without re-scanning    
+  takeover    Take over the bot session on THIS machine (re-poll a stood-by account) — no daemon restart
+
+Use wechat-cc account <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > agent --help > agent activity --help 1`] = `
+"Print recent A2A events for an agent (newest first) (agent activity)
+
+USAGE agent activity [OPTIONS] <ID>
+
+ARGUMENTS
+
+  ID=<agent-id>    Agent id (Required)
+
+OPTIONS
+
+  --limit=<limit>    Max events to show (default 20)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > agent --help > agent add --help 1`] = `
+"Register a new A2A agent (fetches Agent Card, generates inbound API key) (agent add)
+
+USAGE agent add [OPTIONS] <URL>
+
+ARGUMENTS
+
+  URL=<url>    Agent base URL (Required)
+
+OPTIONS
+
+                        --id=<id>    Explicit agent id slug (default: slugified name from Agent Card)
+  --name-override=<name_override>    Override the display name from the Agent Card                   
+    --outbound-key=<outbound_key>    Bearer key to send when wechat-cc calls out to this agent       
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > agent --help > agent edit --help 1`] = `
+"Edit a registered A2A agent (rotate keys, rename, change URL) without remove + re-add (agent edit)
+
+USAGE agent edit [OPTIONS] <ID>
+
+ARGUMENTS
+
+  ID=<agent-id>    Agent id (Required)
+
+OPTIONS
+
+                  --name=<name>    New display name                                                    
+                    --url=<url>    New URL                                                             
+  --outbound-key=<outbound_key>    Rotate outbound API key (we use this when calling the agent)        
+           --rotate-inbound-key    Generate a fresh inbound API key (external agent uses it to call us)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > agent --help > agent info --help 1`] = `
+"Show A2A server status (base URL + registered agents) — for sharing URL with external agents (agent info)
+
+USAGE agent info 
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > agent --help > agent inspect --help 1`] = `
+"Fetch Agent Card and print metadata (agent inspect)
+
+USAGE agent inspect [OPTIONS] <URL>
+
+ARGUMENTS
+
+  URL=<url>    Agent base URL (/.well-known/agent.json is appended) (Required)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > agent --help > agent list --help 1`] = `
+"List registered A2A agents (agent list)
+
+USAGE agent list 
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > agent --help > agent pause --help 1`] = `
+"Pause inbound/outbound for an agent (agent pause)
+
+USAGE agent pause [OPTIONS] <ID>
+
+ARGUMENTS
+
+  ID=<agent-id>    Agent id (Required)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > agent --help > agent remove --help 1`] = `
+"Drop agent registration (agent remove)
+
+USAGE agent remove [OPTIONS] <ID>
+
+ARGUMENTS
+
+  ID=<agent-id>    Agent id (Required)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > agent --help > agent resume --help 1`] = `
+"Un-pause an agent (agent resume)
+
+USAGE agent resume [OPTIONS] <ID>
+
+ARGUMENTS
+
+  ID=<agent-id>    Agent id (Required)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > agent --help > agent test --help 1`] = `
+"Send a synthetic notify to validate the inbound→chat path (default) or outbound (--outbound) (agent test)
+
+USAGE agent test [OPTIONS] <ID>
+
+ARGUMENTS
+
+  ID=<agent-id>    Registered agent id (Required)
+
+OPTIONS
+
+  --text=<text>    Test message text (default: "test from <id> via wechat-cc")  
+     --outbound    Test outbound (wechat-cc → external agent) instead of inbound
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > agent --help 1`] = `
+"A2A agent registry — register, inspect, pause, resume, remove, and view activity (wechat-cc agent v1.7.0 (dev))
+
+USAGE wechat-cc agent inspect|add|list|pause|resume|remove|activity|info|edit|test
+
+COMMANDS
+
+   inspect    Fetch Agent Card and print metadata                                                         
+       add    Register a new A2A agent (fetches Agent Card, generates inbound API key)                    
+      list    List registered A2A agents                                                                  
+     pause    Pause inbound/outbound for an agent                                                         
+    resume    Un-pause an agent                                                                           
+    remove    Drop agent registration                                                                     
+  activity    Print recent A2A events for an agent (newest first)                                         
+      info    Show A2A server status (base URL + registered agents) — for sharing URL with external agents
+      edit    Edit a registered A2A agent (rotate keys, rename, change URL) without remove + re-add       
+      test    Send a synthetic notify to validate the inbound→chat path (default) or outbound (--outbound)
+
+Use wechat-cc agent <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > avatar --help > avatar info --help 1`] = `
+"Show stored avatar metadata for a key (chat / bot / user) (avatar info)
+
+USAGE avatar info [OPTIONS] <KEY>
+
+ARGUMENTS
+
+  KEY=<key>    Avatar key (Required)
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > avatar --help > avatar remove --help 1`] = `
+"Remove stored avatar for a key (avatar remove)
+
+USAGE avatar remove [OPTIONS] <KEY>
+
+ARGUMENTS
+
+  KEY=<key>    Avatar key (Required)
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > avatar --help > avatar set --help 1`] = `
+"Set avatar from base64 (PNG/JPG) (avatar set)
+
+USAGE avatar set [OPTIONS] <KEY> --base64=<base64>
+
+ARGUMENTS
+
+  KEY=<key>    Avatar key (Required)
+
+OPTIONS
+
+  --base64=<base64>    Base64-encoded image bytes (Required)
+             --json    JSON envelope                        
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > avatar --help 1`] = `
+"Avatar metadata + binary set/remove (per chat / bot / user key) (wechat-cc avatar v1.7.0 (dev))
+
+USAGE wechat-cc avatar info|set|remove
+
+COMMANDS
+
+    info    Show stored avatar metadata for a key (chat / bot / user)
+     set    Set avatar from base64 (PNG/JPG)                         
+  remove    Remove stored avatar for a key                           
+
+Use wechat-cc avatar <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > backup --help > backup create --help 1`] = `
+"立即做一次备份快照（仅不可再生数据，约 2MB） (backup create)
+
+USAGE backup create [OPTIONS] 
+
+OPTIONS
+
+  --keep=<keep>    备份后仅保留最新 N 份（默认不清理）
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > backup --help > backup list --help 1`] = `
+"列出已有备份（新→旧） (backup list)
+
+USAGE backup list 
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > backup --help > backup restore --help 1`] = `
+"从备份恢复（需先停掉 daemon；被替换的文件会存进 restore-undo-*） (backup restore)
+
+USAGE backup restore [OPTIONS] <FILE>
+
+ARGUMENTS
+
+  FILE    备份文件路径（backup list 里的一行） (Required)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > backup --help 1`] = `
+"备份/恢复不可再生数据（记忆、事实库、配置） (wechat-cc backup v1.7.0 (dev))
+
+USAGE wechat-cc backup create|list|restore
+
+COMMANDS
+
+   create    立即做一次备份快照（仅不可再生数据，约 2MB）                   
+     list    列出已有备份（新→旧）                                
+  restore    从备份恢复（需先停掉 daemon；被替换的文件会存进 restore-undo-*）
+
+Use wechat-cc backup <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > ci --help > ci triage --help 1`] = `
+"看 CI:这个 SHA 绿了吗?红的是自己的锅还是已知 flake(需要 gh 登录态) (ci triage)
+
+USAGE ci triage [OPTIONS] 
+
+OPTIONS
+
+                  --sha=<sha>    要看的提交(缺省 HEAD;短 sha 会先 git rev-parse 成 40 位)                                          
+            --branch=<branch>    去哪条分支上找「上一次绿」当 diff 基线(缺省当前分支)                                                        
+                       --wait    等运行出现(最多 2 分钟)并等它跑完                                                                   
+                      --rerun    判成 flake 时重跑失败作业;--wait 时等完重判,第二次仍红一律算真红                                              
+    --max-reruns=<max_reruns>    最多重跑几次(缺省 1;0 = 从不重跑)。>1 只对 __NO_SUMMARY__ 那类作业级 flake 有意义 —— 具体测试的失败第二轮一律判真红,再重跑也翻不过来
+  --timeout-min=<timeout_min>    等运行跑完的总上限,分钟(缺省 30)                                                                   
+                       --json    JSON 输出(TriageReport),不输出人读版                                                          
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > ci --help 1`] = `
+"看 CI 的信号面(见 docs/maintainer/ci-and-flakes.md) (wechat-cc ci v1.7.0 (dev))
+
+USAGE wechat-cc ci triage
+
+COMMANDS
+
+  triage    看 CI:这个 SHA 绿了吗?红的是自己的锅还是已知 flake(需要 gh 登录态)
+
+Use wechat-cc ci <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > companion --help > companion introspect --help 1`] = `
+"Fire introspection + CC Atelier tick NOW (instead of waiting for the daily schedule) (companion introspect)
+
+USAGE companion introspect [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > companion --help > companion push --help 1`] = `
+"Fire a companion push tick NOW (instead of waiting for the ~20min scheduler) — nudges any due agenda follow-up (companion push)
+
+USAGE companion push [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > companion --help 1`] = `
+"Companion (proactive contact) controls (wechat-cc companion v1.7.0 (dev))
+
+USAGE wechat-cc companion push|introspect
+
+COMMANDS
+
+        push    Fire a companion push tick NOW (instead of waiting for the ~20min scheduler) — nudges any due agenda follow-up
+  introspect    Fire introspection + CC Atelier tick NOW (instead of waiting for the daily schedule)                          
+
+Use wechat-cc companion <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > connection --help > connection probe --help 1`] = `
+"Test whether THIS machine holds the live WeChat connection (connection probe)
+
+USAGE connection probe [OPTIONS] 
+
+OPTIONS
+
+  --json    machine-readable output
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > connection --help 1`] = `
+"Inspect this machine's WeChat connection (wechat-cc connection v1.7.0 (dev))
+
+USAGE wechat-cc connection probe
+
+COMMANDS
+
+  probe    Test whether THIS machine holds the live WeChat connection
+
+Use wechat-cc connection <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > conversations --help > conversations list --help 1`] = `
+"Read-only snapshot of conversations + identities (conversations list)
+
+USAGE conversations list [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > conversations --help 1`] = `
+"Per-chat conversation modes (RFC 03) (wechat-cc conversations v1.7.0 (dev))
+
+USAGE wechat-cc conversations list
+
+COMMANDS
+
+  list    Read-only snapshot of conversations + identities
+
+Use wechat-cc conversations <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > daemon --help > daemon api-info --help 1`] = `
+"Read internal-api-info.json (base URL + token) — used by the desktop GUI to call /v1/* endpoints (daemon api-info)
+
+USAGE daemon api-info [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope (always emits JSON; flag is for CLI consistency)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > daemon --help > daemon kill --help 1`] = `
+"Force-kill a daemon process by pid (verifies cmdline; SIGTERM 1.5s grace then SIGKILL) (daemon kill)
+
+USAGE daemon kill [OPTIONS] <PID>
+
+ARGUMENTS
+
+  PID=<pid>    Process id (positive integer) (Required)
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > daemon --help > daemon kill-residual --help 1`] = `
+"Read server.pid and kill the daemon if alive (covers manual \`wechat-cc run\` instances launchctl/systemd cannot reach) (daemon kill-residual)
+
+USAGE daemon kill-residual [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > daemon --help 1`] = `
+"Daemon process control (wechat-cc daemon v1.7.0 (dev))
+
+USAGE wechat-cc daemon kill|kill-residual|api-info|a2a
+
+COMMANDS
+
+           kill    Force-kill a daemon process by pid (verifies cmdline; SIGTERM 1.5s grace then SIGKILL)                               
+  kill-residual    Read server.pid and kill the daemon if alive (covers manual \`wechat-cc run\` instances launchctl/systemd cannot reach)
+       api-info    Read internal-api-info.json (base URL + token) — used by the desktop GUI to call /v1/* endpoints                     
+            a2a    A2A inbound server config — enable, disable, status                                                                  
+
+Use wechat-cc daemon <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > demo --help > demo seed --help 1`] = `
+"Populate sample observations + milestones + events for first-impression / screenshot use (demo seed)
+
+USAGE demo seed [OPTIONS] 
+
+OPTIONS
+
+  --chat-id=<chat_id>    Target chat (defaults to companion default_chat_id)
+               --json    JSON envelope                                      
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > demo --help > demo unseed --help 1`] = `
+"Remove items written by \`demo seed\`. Idempotent. (demo unseed)
+
+USAGE demo unseed [OPTIONS] 
+
+OPTIONS
+
+  --chat-id=<chat_id>    Target chat (defaults to companion default_chat_id)
+               --json    JSON envelope                                      
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > demo --help 1`] = `
+"Seed/unseed demo data for the dashboard (wechat-cc demo v1.7.0 (dev))
+
+USAGE wechat-cc demo seed|unseed
+
+COMMANDS
+
+    seed    Populate sample observations + milestones + events for first-impression / screenshot use
+  unseed    Remove items written by \`demo seed\`. Idempotent.                                        
+
+Use wechat-cc demo <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > dialogue --help > dialogue backfill --help 1`] = `
+"Import history from agent session JSONLs into the messages table (dialogue backfill)
+
+USAGE dialogue backfill [OPTIONS] 
+
+OPTIONS
+
+  --chat-id=<chat_id>    Attribute history to this chat (default: sole admin in access.json)
+            --dry-run    Scan and count without writing (Default: false)                    
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > dialogue --help > dialogue lock --help 1`] = `
+"Manage the dialogue private-thread passphrase (dialogue lock)
+
+USAGE dialogue lock set
+
+COMMANDS
+
+  set    Set the dialogue private-thread passphrase (scrypt hash stored in agent-config.json)
+
+Use dialogue lock <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > dialogue --help > dialogue search --help 1`] = `
+"Substring search over messages for a chat (dialogue search)
+
+USAGE dialogue search [OPTIONS] --chat-id=<chat_id> <QUERY>
+
+ARGUMENTS
+
+  QUERY=<query>    Search query (Required)
+
+OPTIONS
+
+  --chat-id=<chat_id>    WeChat chat id (Required)
+      --limit=<limit>    Max hits (default 50)    
+               --json    (Default: false)         
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > dialogue --help > dialogue thread-detail --help 1`] = `
+"Full thread detail with per-episode messages (dialogue thread-detail)
+
+USAGE dialogue thread-detail [OPTIONS] <ID>
+
+ARGUMENTS
+
+  ID=<id>    Thread id (thr_…) (Required)
+
+OPTIONS
+
+  --json    (Default: false)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > dialogue --help > dialogue threads --help 1`] = `
+"List topic threads for a chat (dialogue threads)
+
+USAGE dialogue threads [OPTIONS] --chat-id=<chat_id>
+
+OPTIONS
+
+  --chat-id=<chat_id>    WeChat chat id (Required)                               
+      --facet=<facet>    Filter by facet: task | knowledge | life                
+    --include-private    Include private threads (default false) (Default: false)
+               --json    (Default: false)                                        
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > dialogue --help > dialogue timeline --help 1`] = `
+"Paged conversation timeline for a chat (dialogue timeline)
+
+USAGE dialogue timeline [OPTIONS] --chat-id=<chat_id>
+
+OPTIONS
+
+  --chat-id=<chat_id>    WeChat chat id (Required)                             
+      --limit=<limit>    page size (default 100)                               
+    --before=<before>    page upward: only messages strictly before this ISO ts
+               --json    (Default: false)                                      
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > dialogue --help > dialogue unlock --help 1`] = `
+"Verify the dialogue private-thread passphrase (dialogue unlock)
+
+USAGE dialogue unlock [OPTIONS] --passphrase=<passphrase>
+
+OPTIONS
+
+  --passphrase=<passphrase>    Candidate passphrase (Required)
+                     --json    (Default: false)               
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > dialogue --help 1`] = `
+"Dialogue page data — backfill + query commands (wechat-cc dialogue v1.7.0 (dev))
+
+USAGE wechat-cc dialogue backfill|timeline|threads|search|thread-detail|lock|unlock
+
+COMMANDS
+
+       backfill    Import history from agent session JSONLs into the messages table
+       timeline    Paged conversation timeline for a chat                          
+        threads    List topic threads for a chat                                   
+         search    Substring search over messages for a chat                       
+  thread-detail    Full thread detail with per-episode messages                    
+           lock    Manage the dialogue private-thread passphrase                   
+         unlock    Verify the dialogue private-thread passphrase                   
+
+Use wechat-cc dialogue <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > doctor --help 1`] = `
+"Diagnose install/setup state (wechat-cc doctor v1.7.0 (dev))
+
+USAGE wechat-cc doctor [OPTIONS] 
+
+OPTIONS
+
+  --json    machine-readable output
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > events --help > events list --help 1`] = `
+"Tail Companion decisions log (push/skip/observation/milestone) (events list)
+
+USAGE events list [OPTIONS] <CHATID>
+
+ARGUMENTS
+
+  CHATID=<chat-id>    WeChat chat id (Required)
+
+OPTIONS
+
+  --limit=<limit>    Max events to return (default 50)
+           --json    JSON envelope                    
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > events --help 1`] = `
+"Companion decisions log (wechat-cc events v1.7.0 (dev))
+
+USAGE wechat-cc events list
+
+COMMANDS
+
+  list    Tail Companion decisions log (push/skip/observation/milestone)
+
+Use wechat-cc events <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > federated-source --help 1`] = `
+"Expose wechat as a hearth federated source (run mode: stdio MCP spawned by hearth) (wechat-cc federated-source v1.7.0 (dev))
+
+USAGE wechat-cc federated-source [OPTIONS] 
+
+OPTIONS
+
+         --authorize    Grant hearth consent to mint admin-tier tokens (writes federated-grant.json, 0600)              
+       --deauthorize    Revoke the federation grant                                                                     
+            --status    Show grant state + daemon baseUrl                                                               
+  --info-path=<path>    Override internal-api-info.json path (default: ~/.claude/channels/wechat/internal-api-info.json)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > guard --help > guard disable --help 1`] = `
+"Disable network-guard scheduler (guard disable)
+
+USAGE guard disable [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > guard --help > guard enable --help 1`] = `
+"Enable network-guard scheduler (next daemon start) (guard enable)
+
+USAGE guard enable [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > guard --help > guard status --help 1`] = `
+"Live one-shot probe — current external IP + reachability (guard status)
+
+USAGE guard status [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > guard --help 1`] = `
+"Network-guard config + live probe (wechat-cc guard v1.7.0 (dev))
+
+USAGE wechat-cc guard status|enable|disable
+
+COMMANDS
+
+   status    Live one-shot probe — current external IP + reachability
+   enable    Enable network-guard scheduler (next daemon start)      
+  disable    Disable network-guard scheduler                         
+
+Use wechat-cc guard <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > hand --help > hand accept --help 1`] = `
+"Accept a brain that may delegate tasks to THIS machine (run on the HAND) (hand accept)
+
+USAGE hand accept [OPTIONS] --token=<token>
+
+OPTIONS
+
+          --token=<token>    The shared pairing token (same as on the brain) (Required)                                     
+    --brain-id=<brain_id>    Brain's a2a self-id (default wechat-cc; must match its WECHAT_A2A_SELF_ID) (Default: wechat-cc)
+  --brain-url=<brain_url>    Optional: brain's A2A url (only for the hand to call back later)                               
+                   --json    JSON envelope                                                                                  
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > hand --help > hand add --help 1`] = `
+"Register a hand the brain can delegate tasks to (run on the BRAIN) (hand add)
+
+USAGE hand add [OPTIONS] <ID> <URL> --token=<token>
+
+ARGUMENTS
+
+    ID=<id>    Hand id — lowercase slug, e.g. home (Required)                       
+  URL=<url>    Hand's A2A url (tailnet), e.g. http://home.ts.net:7000/a2a (Required)
+
+OPTIONS
+
+    --name=<name>    Display name (e.g. 家里) — used in 「让<name>执行 X」                   
+  --token=<token>    Shared pairing token (≥16 chars; the SAME on the hand) (Required)
+           --json    JSON envelope                                                    
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > hand --help > hand invite --help 1`] = `
+"一条命令把这台配成「手」:自动开 A2A 监听 + 重启 + 出配对码(在 HAND 那台跑) (hand invite)
+
+USAGE hand invite [OPTIONS] 
+
+OPTIONS
+
+  --host=<host>    强制绑定到这个地址(默认自动挑:Tailscale 优先,其次局域网网卡)           
+  --port=<port>    A2A 端口(默认 8717)                                 
+    --url=<url>    完全覆盖这台手的 A2A url(不碰配置、不重启)                      
+       --cancel    Cancel any pending invite instead of minting one
+         --json    JSON envelope                                   
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > hand --help > hand join --help 1`] = `
+"Join a hand using its pairing code — auto-registers both sides (run on the BRAIN) (hand join)
+
+USAGE hand join [OPTIONS] <CODE>
+
+ARGUMENTS
+
+  CODE=<code>    The pairing code from \`hand invite\` (Required)
+
+OPTIONS
+
+      --id=<id>    Hand id(小写 slug)。默认从码里带来的机器名推 —— 通常不用填  
+  --name=<name>    显示名(如 家里)。默认用手那台的机器名 —— 微信里说「让<名字>…」就派给它
+         --json    JSON envelope                           
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > hand --help > hand list --help 1`] = `
+"Show paired hands (you can delegate to) and brains (can delegate here) (hand list)
+
+USAGE hand list [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > hand --help > hand ping --help 1`] = `
+"Check whether paired hands are reachable (fetches each hand's Agent Card) (hand ping)
+
+USAGE hand ping [OPTIONS] [TARGET]
+
+ARGUMENTS
+
+  TARGET=<id|name>    A specific hand id or name (default: all)
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > hand --help 1`] = `
+"Multi-machine (一个大脑多手): pair a brain with hands. Smooth: hand invite → hand join <code> (wechat-cc hand v1.7.0 (dev))
+
+USAGE wechat-cc hand invite|join|list|ping|add|accept
+
+COMMANDS
+
+  invite    一条命令把这台配成「手」:自动开 A2A 监听 + 重启 + 出配对码(在 HAND 那台跑)                                  
+    join    Join a hand using its pairing code — auto-registers both sides (run on the BRAIN)
+    list    Show paired hands (you can delegate to) and brains (can delegate here)           
+    ping    Check whether paired hands are reachable (fetches each hand's Agent Card)        
+     add    Register a hand the brain can delegate tasks to (run on the BRAIN)               
+  accept    Accept a brain that may delegate tasks to THIS machine (run on the HAND)         
+
+Use wechat-cc hand <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > hook --help > hook claude --help 1`] = `
+"claude 的 hook 出口(stdin 收 hook JSON,转给本机 daemon) (hook claude)
+
+USAGE hook claude 
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > hook --help > hook codex --help 1`] = `
+"codex 的 hook 出口(stdin 收 hook JSON,转给本机 daemon) (hook codex)
+
+USAGE hook codex 
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > hook --help > hook install --help 1`] = `
+"把 wechat-cc 的 hooks 写进 ~/.claude/settings.json 与 $CODEX_HOME/hooks.json(幂等;缺省两家都装) (hook install)
+
+USAGE hook install [OPTIONS] 
+
+OPTIONS
+
+  --claude    只装 Claude Code
+   --codex    只装 Codex CLI  
+    --json    JSON envelope 
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > hook --help > hook status --help 1`] = `
+"两家的 hook 装没装、命令行是什么 (hook status)
+
+USAGE hook status [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > hook --help > hook uninstall --help 1`] = `
+"只删 wechat-cc 自己的 hook 条目,别人的原样保留 (hook uninstall)
+
+USAGE hook uninstall [OPTIONS] 
+
+OPTIONS
+
+  --claude    只删 Claude Code 的
+   --codex    只删 Codex CLI 的  
+    --json    JSON envelope   
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > hook --help 1`] = `
+"终端 claude / codex 会话的事件推到微信(hooks 出口):install / uninstall / status;claude / codex 由 hooks 自己调 (wechat-cc hook v1.7.0 (dev))
+
+USAGE wechat-cc hook claude|codex|install|uninstall|status
+
+COMMANDS
+
+     claude    claude 的 hook 出口(stdin 收 hook JSON,转给本机 daemon)                                   
+      codex    codex 的 hook 出口(stdin 收 hook JSON,转给本机 daemon)                                    
+    install    把 wechat-cc 的 hooks 写进 ~/.claude/settings.json 与 $CODEX_HOME/hooks.json(幂等;缺省两家都装)
+  uninstall    只删 wechat-cc 自己的 hook 条目,别人的原样保留                                                  
+     status    两家的 hook 装没装、命令行是什么                                                               
+
+Use wechat-cc hook <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > install --help 1`] = `
+"Deprecated since v1.0 — use \`wechat-cc service install\` (wechat-cc install v1.7.0 (dev))
+
+USAGE wechat-cc install [OPTIONS] 
+
+OPTIONS
+
+  --user    legacy --user scope (ignored)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > install-progress --help 1`] = `
+"Read the current service-install progress (JSON: {step, total, label, ts}). Used by the desktop wizard to poll real install state instead of guessing. Empty {} when no install is in flight. (wechat-cc install-progress v1.7.0 (dev))
+
+USAGE wechat-cc install-progress [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope (default; flag is for symmetry with other commands)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > license --help > license activate --help 1`] = `
+"Activate a license key (use DEV-xxx to unlock Pro locally for testing) (license activate)
+
+USAGE license activate [OPTIONS] <KEY>
+
+ARGUMENTS
+
+  KEY=<key>    License key (Required)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > license --help > license deactivate --help 1`] = `
+"Remove the local license (back to Free) (license deactivate)
+
+USAGE license deactivate 
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > license --help > license status --help 1`] = `
+"Show Pro entitlement (free / pro, expiry) (license status)
+
+USAGE license status [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON output
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > license --help 1`] = `
+"Manage the Pro license (wechat-cc license v1.7.0 (dev))
+
+USAGE wechat-cc license status|activate|deactivate
+
+COMMANDS
+
+      status    Show Pro entitlement (free / pro, expiry)                             
+    activate    Activate a license key (use DEV-xxx to unlock Pro locally for testing)
+  deactivate    Remove the local license (back to Free)                               
+
+Use wechat-cc license <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > list --help 1`] = `
+"List bound accounts (wechat-cc list v1.7.0 (dev))
+
+USAGE wechat-cc list 
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > log --help 1`] = `
+"Write a structured log line to channel.log (for frontend telemetry) (wechat-cc log v1.7.0 (dev))
+
+USAGE wechat-cc log [OPTIONS] <TAG> <MSG>
+
+ARGUMENTS
+
+  TAG=<tag>    Log tag (e.g. RECONNECT_DIAGNOSE) (Required)
+  MSG=<msg>    Human-readable log message (Required)       
+
+OPTIONS
+
+  --fields=<fields>    Structured fields as a JSON object string (e.g. '{"code":1}')
+             --json    Emit { ok: true } JSON envelope on stdout                    
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > logs --help 1`] = `
+"Tail the daemon's channel.log (default --tail 50) (wechat-cc logs v1.7.0 (dev))
+
+USAGE wechat-cc logs [OPTIONS] 
+
+OPTIONS
+
+          --tail=<tail>    Number of trailing entries (default 50)                                          
+                 --json    JSON envelope (parsed entries)                                                   
+  --out-file=<out_file>    Write JSON to a sibling file (avoids pipe buffer truncation in compiled binaries)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > mcp-server --help 1`] = `
+"Internal — run a stdio MCP server entrypoint (wechat | delegate). Spawned by the daemon when running from the compiled binary. (wechat-cc mcp-server v1.7.0 (dev))
+
+USAGE wechat-cc mcp-server [OPTIONS] <NAME>
+
+ARGUMENTS
+
+  NAME=<name>    Server name (wechat | delegate) (Required)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > memory --help > memory list --help 1`] = `
+"List Companion v2 memory files (per user) (memory list)
+
+USAGE memory list [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > memory --help > memory nightly --help 1`] = `
+"立刻跑一次每晚记忆整理(需要 daemon 在跑) (memory nightly)
+
+USAGE memory nightly [OPTIONS] 
+
+OPTIONS
+
+   --now    忽略时间点,立刻跑(目前只支持这一种) (Default: false)
+  --json    机器可读输出 (Default: false)             
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > memory --help > memory profile --help 1`] = `
+"User profile generation status and refresh commands (memory profile)
+
+USAGE memory profile [OPTIONS] status|generate
+
+OPTIONS
+
+    --chat-id=<chat_id>    Admin chat_id (default: sole admin in access.json)                
+  --provider=<provider>    Force provider claude|codex (default: admin conversation provider)
+              --dry-run    Compatibility: generate with dry-run (Default: false)             
+                 --json    JSON envelope                                                     
+
+COMMANDS
+
+    status    Show whether memory/<chat-id>/_profile.json is missing, fresh, stale, or blocked by too little memory
+  generate    Generate or refresh memory/<chat-id>/_profile.json for the desktop memory page                       
+
+Use memory profile <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > memory --help > memory profile-read --help 1`] = `
+"Read memory/<user-id>/_profile.json (desktop profile data) (memory profile-read)
+
+USAGE memory profile-read [OPTIONS] <USERID>
+
+ARGUMENTS
+
+  USERID=<user-id>    User id (Required)
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > memory --help > memory projects --help 1`] = `
+"List the admin's local Claude per-project memory (read-only source for the desktop viewer) (memory projects)
+
+USAGE memory projects [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > memory --help > memory read --help 1`] = `
+"Read one .md memory file (path is relative to the user dir, traversal-safe) (memory read)
+
+USAGE memory read [OPTIONS] <USERID> <PATH>
+
+ARGUMENTS
+
+  USERID=<user-id>    User id (Required)                       
+       PATH=<path>    Path under the user memory dir (Required)
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > memory --help > memory status --help 1`] = `
+"Show the synthesized overview's freshness + how much source memory is available to fold in (memory status)
+
+USAGE memory status [OPTIONS] 
+
+OPTIONS
+
+  --chat-id=<chat_id>    Admin chat_id (default: sole admin in access.json)
+               --json    JSON envelope                                     
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > memory --help > memory synthesize --help 1`] = `
+"Synthesize the admin's local Claude memory (across projects) into an _overview.md the bot reads (memory synthesize)
+
+USAGE memory synthesize [OPTIONS] 
+
+OPTIONS
+
+    --chat-id=<chat_id>    Admin chat_id (default: sole admin in access.json)                     
+  --provider=<provider>    Force provider claude|codex (default: admin conversation provider)     
+              --dry-run    Discover + build prompt; make no LLM call and no write (Default: false)
+                 --json    JSON envelope                                                          
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > memory --help > memory write --help 1`] = `
+"Write/overwrite one .md memory file (sandboxed: .md only, ≤100KB, no traversal) (memory write)
+
+USAGE memory write [OPTIONS] <USERID> <PATH> --body-base64=<body_base64>
+
+ARGUMENTS
+
+  USERID=<user-id>    User id (Required)                       
+       PATH=<path>    Path under the user memory dir (Required)
+
+OPTIONS
+
+  --body-base64=<body_base64>    Base64-encoded UTF-8 body (avoids shell-quote pain) (Required)
+                       --json    JSON envelope                                                 
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > memory --help 1`] = `
+"Companion v2 memory files (per user) (wechat-cc memory v1.7.0 (dev))
+
+USAGE wechat-cc memory list|read|write|profile-read|synthesize|nightly|profile|projects|status
+
+COMMANDS
+
+          list    List Companion v2 memory files (per user)                                                      
+          read    Read one .md memory file (path is relative to the user dir, traversal-safe)                    
+         write    Write/overwrite one .md memory file (sandboxed: .md only, ≤100KB, no traversal)                
+  profile-read    Read memory/<user-id>/_profile.json (desktop profile data)                                     
+    synthesize    Synthesize the admin's local Claude memory (across projects) into an _overview.md the bot reads
+       nightly    立刻跑一次每晚记忆整理(需要 daemon 在跑)                                                                      
+       profile    User profile generation status and refresh commands                                            
+      projects    List the admin's local Claude per-project memory (read-only source for the desktop viewer)     
+        status    Show the synthesized overview's freshness + how much source memory is available to fold in     
+
+Use wechat-cc memory <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > milestones --help > milestones list --help 1`] = `
+"Per-chat milestones (id-deduped) (milestones list)
+
+USAGE milestones list [OPTIONS] <CHATID>
+
+ARGUMENTS
+
+  CHATID=<chat-id>    WeChat chat id (Required)
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > milestones --help 1`] = `
+"Per-chat milestone fires (wechat-cc milestones v1.7.0 (dev))
+
+USAGE wechat-cc milestones list
+
+COMMANDS
+
+  list    Per-chat milestones (id-deduped)
+
+Use wechat-cc milestones <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > mode --help > mode set --help 1`] = `
+"Set chat mode programmatically (calls running daemon via internal-api) (mode set)
+
+USAGE mode set [OPTIONS] <CHATID> <MODE>
+
+ARGUMENTS
+
+                     CHATID=<chat-id>    WeChat chat id (Required)                                   
+  MODE=<cc|codex|solo|both|chat|json>    cc|codex|solo|both|chat (or full JSON mode shape) (Required)
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > mode --help 1`] = `
+"Conversation mode management (programmatic switch via running daemon) (wechat-cc mode v1.7.0 (dev))
+
+USAGE wechat-cc mode set
+
+COMMANDS
+
+  set    Set chat mode programmatically (calls running daemon via internal-api)
+
+Use wechat-cc mode <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > observations --help > observations archive --help 1`] = `
+"Mark an observation archived (user "ignore") (observations archive)
+
+USAGE observations archive [OPTIONS] <CHATID> <OBSID>
+
+ARGUMENTS
+
+  CHATID=<chat-id>    WeChat chat id (Required)        
+    OBSID=<obs-id>    Observation id (obs_…) (Required)
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > observations --help > observations list --help 1`] = `
+"List observations (active by default; --include-archived for the archive) (observations list)
+
+USAGE observations list [OPTIONS] <CHATID>
+
+ARGUMENTS
+
+  CHATID=<chat-id>    WeChat chat id (Required)
+
+OPTIONS
+
+  --include-archived    Show archived items instead of active
+              --json    JSON envelope                        
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > observations --help 1`] = `
+"Companion observations (per chat) (wechat-cc observations v1.7.0 (dev))
+
+USAGE wechat-cc observations list|archive
+
+COMMANDS
+
+     list    List observations (active by default; --include-archived for the archive)
+  archive    Mark an observation archived (user "ignore")                             
+
+Use wechat-cc observations <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > pair --help 1`] = `
+"配对码 — 和朋友的 bot 建边:无参生成码,带 6 位码接受(≠ hand invite/join 的干活手配对;需运行中的 daemon) (wechat-cc pair v1.7.0 (dev))
+
+USAGE wechat-cc pair [OPTIONS] [CODE]
+
+ARGUMENTS
+
+  CODE=<code>    朋友的 6 位配对码
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > plugin --help > plugin disable --help 1`] = `
+"Disable a plugin (plugin disable)
+
+USAGE plugin disable [OPTIONS] <NAME>
+
+ARGUMENTS
+
+  NAME=<name>    Plugin name (Required)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > plugin --help > plugin enable --help 1`] = `
+"Enable a plugin (agent gets its tools after a daemon restart) (plugin enable)
+
+USAGE plugin enable [OPTIONS] <NAME>
+
+ARGUMENTS
+
+  NAME=<name>    Plugin name (Required)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > plugin --help > plugin install --help 1`] = `
+"Install a plugin from the registry (git clone; stays disabled until you enable it) (plugin install)
+
+USAGE plugin install [OPTIONS] <NAME>
+
+ARGUMENTS
+
+  NAME=<name>    Plugin name from \`plugin search\` (Required)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > plugin --help > plugin list --help 1`] = `
+"List discovered plugins and their enable/ready state (plugin list)
+
+USAGE plugin list [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON output
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > plugin --help > plugin search --help 1`] = `
+"Browse the plugin registry (the market) (plugin search)
+
+USAGE plugin search [OPTIONS] [QUERY]
+
+ARGUMENTS
+
+  QUERY=<query>    Filter by name/description
+
+OPTIONS
+
+  --json    JSON output
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > plugin --help > plugin setup --help 1`] = `
+"Run a plugin's one-time setup, streaming progress (desktop 「连接微信」 calls this) (plugin setup)
+
+USAGE plugin setup [OPTIONS] <NAME>
+
+ARGUMENTS
+
+  NAME=<name>    Plugin name (Required)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > plugin --help > plugin setup-status --help 1`] = `
+"Emit the last plugin-setup progress (JSON) — polled by the desktop wizard (plugin setup-status)
+
+USAGE plugin setup-status 
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > plugin --help > plugin sync --help 1`] = `
+"Run a plugin's repeatable local refresh action (plugin sync)
+
+USAGE plugin sync [OPTIONS] <NAME>
+
+ARGUMENTS
+
+  NAME=<name>    Plugin name (Required)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > plugin --help > plugin upgrade --help 1`] = `
+"Upgrade an installed plugin to the registry version (preserves plugin data) (plugin upgrade)
+
+USAGE plugin upgrade [OPTIONS] [NAME]
+
+ARGUMENTS
+
+  NAME=<name>    Plugin name (omit with --all)
+
+OPTIONS
+
+  --all    Upgrade every installed plugin that has an update
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > plugin --help 1`] = `
+"Manage plugins (MCP tool providers) (wechat-cc plugin v1.7.0 (dev))
+
+USAGE wechat-cc plugin list|search|install|upgrade|setup|sync|setup-status|enable|disable
+
+COMMANDS
+
+          list    List discovered plugins and their enable/ready state                              
+        search    Browse the plugin registry (the market)                                           
+       install    Install a plugin from the registry (git clone; stays disabled until you enable it)
+       upgrade    Upgrade an installed plugin to the registry version (preserves plugin data)       
+         setup    Run a plugin's one-time setup, streaming progress (desktop 「连接微信」 calls this)     
+          sync    Run a plugin's repeatable local refresh action                                    
+  setup-status    Emit the last plugin-setup progress (JSON) — polled by the desktop wizard         
+        enable    Enable a plugin (agent gets its tools after a daemon restart)                     
+       disable    Disable a plugin                                                                  
+
+Use wechat-cc plugin <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > provider --help > provider set --help 1`] = `
+"Switch agent provider (claude|codex|cursor|openai|gemini|agy), optionally with --model + --base-url + --unattended + --auto-start + --close-stops-daemon (provider set)
+
+USAGE provider set [OPTIONS] <PROVIDER>
+
+ARGUMENTS
+
+  PROVIDER=<claude|codex|cursor|openai|gemini|agy>    claude | codex | cursor | openai | gemini | agy (Required)
+
+OPTIONS
+
+                           --model=<model>    Override default model (openai: required the first time, unless already stored)                                                
+  --base-url=<https://api.deepseek.com/v1>    OpenAI-compatible API base URL — openai only, e.g. https://api.deepseek.com/v1 (required the first time, unless already stored)
+                 --unattended=<true|false>    true | false | yes | no | on | off (omit to leave unchanged)                                                                   
+                 --auto-start=<true|false>    true | false (omit to leave unchanged) — register service for boot/login auto-start                                            
+         --close-stops-daemon=<true|false>    true | false (omit to leave unchanged) — when true, closing the GUI window stops the daemon                                    
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > provider --help > provider show --help 1`] = `
+"Show selected agent provider (provider show)
+
+USAGE provider show [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > provider --help 1`] = `
+"Agent provider config (claude / codex / cursor / openai / gemini / agy) (wechat-cc provider v1.7.0 (dev))
+
+USAGE wechat-cc provider show|set
+
+COMMANDS
+
+  show    Show selected agent provider                                                                                                                            
+   set    Switch agent provider (claude|codex|cursor|openai|gemini|agy), optionally with --model + --base-url + --unattended + --auto-start + --close-stops-daemon
+
+Use wechat-cc provider <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > reply --help 1`] = `
+"Send a text reply via WeChat (CLI fallback for the MCP \`reply\` tool — same on-disk state as the running daemon) (wechat-cc reply v1.7.0 (dev))
+
+USAGE wechat-cc reply [OPTIONS] 
+
+OPTIONS
+
+  --to=<to>    Target chat id (omit → most-recently-active chat)
+     --json    JSON envelope                                    
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > root --help 1`] = `
+"wechat-cc — WeChat bridge for Claude Code (Agent SDK daemon)
+
+Usage:
+  wechat-cc setup [--qr-json] Scan QR + bind a WeChat bot
+  wechat-cc setup-poll --qrcode TOKEN [--base-url URL] [--json]
+  wechat-cc run [--dangerously]   Start the daemon (foreground)
+                        --dangerously: skip permission prompts
+                        (matches claude --dangerously-skip-permissions)
+  wechat-cc install [--user]   Register the MCP plugin entry for claude
+  wechat-cc hook install [--claude] [--codex] [--json]
+                        终端里的 claude / codex 跑完一个回合、或停下来等批准时
+                        推到主人微信(写 ~/.claude/settings.json 与 $CODEX_HOME/
+                        hooks.json 的 hooks;幂等;只动自己的条目)。
+  wechat-cc hook uninstall | status
+  wechat-cc status      Show daemon status + accounts
+  wechat-cc list        List bound accounts
+  wechat-cc doctor [--json]        Diagnose install/setup state
+  wechat-cc setup-status [--json]  Machine-readable setup status for desktop UI
+  wechat-cc service <status|install|start|stop|uninstall> [--json] [--unattended true|false] [--auto-start true|false]
+                        --unattended: persist into agent-config and re-write plist.
+                                      Idempotent: install replaces any existing daemon.
+                        --auto-start: register for boot/login auto-start
+                                      (macOS RunAtLoad, systemd enable,
+                                      schtasks ONLOGON). Default false: opt-in.
+                        Crash-respawn (macOS KeepAlive / systemd Restart=always)
+                        is always on — no longer a user-facing flag.
+  wechat-cc account remove <bot-id> [--json]
+                        Decommission a bound bot — wipes its account dir,
+                        context_token, user_account_id, session-state entry.
+                        Restart the daemon afterwards for it to take effect.
+  wechat-cc daemon kill <pid> [--json]
+                        Force-kill a daemon process by pid. Verifies cmdline
+                        contains cli.ts or src/daemon/main.ts before signaling.
+                        SIGTERM (1.5s grace) then SIGKILL.
+  wechat-cc daemon a2a enable [--host HOST] [--port PORT]
+                        Enable the A2A inbound server (default 127.0.0.1:8717).
+                        Writes agent-config.json; restart the daemon to apply.
+  wechat-cc daemon a2a disable
+                        Remove the A2A inbound server config.
+  wechat-cc daemon a2a status
+                        Show on-disk config vs runtime; flags drift between them.
+  wechat-cc memory list [--json]
+                        List Companion v2 memory files (per user).
+  wechat-cc memory read <user-id> <path> [--json]
+                        Read one .md memory file. Path is relative to the
+                        user's memory dir, traversal-safe.
+  wechat-cc memory write <user-id> <path> --body-base64 <b64> [--json]
+                        Write/overwrite one .md memory file. Body is
+                        passed as base64 (avoids shell-quote pain with
+                        multi-line markdown). Sandboxed: .md only,
+                        ≤100KB, no traversal, atomic rename.
+  wechat-cc memory profile status [--chat-id <id>] [--json]
+                        Inspect whether _profile.json is empty/ready/fresh/stale.
+  wechat-cc memory profile generate [--chat-id <id>] [--provider claude|codex] [--dry-run] [--json]
+                        Generate memory/<chat-id>/_profile.json for the
+                        desktop memory page.
+  wechat-cc memory profile-read <user-id> [--json]
+                        Read memory/<user-id>/_profile.json.
+  wechat-cc events list <chat-id> [--limit N] [--json]
+                        Tail Companion decisions log (push/skip/observation/milestone).
+  wechat-cc observations list <chat-id> [--include-archived] [--json]
+                        Active observations (default) or archive.
+  wechat-cc observations archive <chat-id> <obs-id> [--json]
+                        Mark an observation archived (user "ignore").
+  wechat-cc milestones list <chat-id> [--json]
+                        Per-chat milestones (id-deduped).
+  wechat-cc sessions list-chats [--json]
+                        Contacts (chats) that have sessions.
+  wechat-cc sessions list-projects [--chat <chat_id>] [--json]
+                        Project sessions with cached summaries.
+  wechat-cc sessions read-jsonl <alias> [--chat <chat_id>] [--json]
+                        Read all turns from the alias's session jsonl.
+  wechat-cc sessions delete <alias> [--chat <chat_id>] [--json]
+                        Remove the sessions.json entry (jsonl on disk untouched).
+  wechat-cc sessions search <query> [--limit N] [--json]
+                        Naive case-insensitive substring search across
+                        all sessions.json-registered jsonls.
+  wechat-cc demo seed [--chat-id <id>] [--json]
+                        Populate sample observations + milestones + events
+                        for first-impression / screenshot use. Defaults to
+                        companion default_chat_id if --chat-id omitted.
+  wechat-cc demo unseed [--chat-id <id>] [--json]
+                        Remove items written by \`demo seed\`. Idempotent.
+  wechat-cc reply [--to <chat_id>] [text] [--json]
+                        Send a text reply via WeChat. Reuses the daemon's
+                        on-disk state (contextToken + account routing) so
+                        recipient resolution matches the running daemon.
+                        --to omitted → most-recently-active chat.
+                        text omitted → read from stdin.
+                        Useful when the daemon's MCP server is unreachable.
+  wechat-cc logs [--tail N] [--json]
+                        Tail the daemon's channel.log. Default --tail 50.
+                        --json returns parsed entries (timestamp, tag,
+                        message). Without --json, raw lines are printed
+                        (equivalent to: tail -n N channel.log).
+  wechat-cc log <tag> <msg> [--fields <json>] [--json]
+                        Write a structured line to channel.log (frontend
+                        telemetry). --fields must be a JSON object string.
+                        Exits non-zero if --fields is malformed JSON.
+  wechat-cc update [--check] [--json]
+                        Pull latest + reinstall deps + restart service.
+                        --check probes only (no side effects); GUI calls
+                        this on a timer to surface the Update button.
+  wechat-cc self deploy [--binary <path>] [--app <path>] [--no-rollback]
+                        [--health-timeout-ms N] [--json]
+                        自维护:原子换 sidecar 进 .app、launchd 重启、健康门,
+                        失败自动回滚(仅 macOS)。见 docs/maintainer/deploy.md。
+  wechat-cc self change "<需求>" [--from cli|wechat] [--budget-usd N]
+                        [--no-deploy] [--json]
+  wechat-cc self change --resume <id> | --list | --unhalt
+  wechat-cc self change --approve <id> | --deny <id>
+                        自改:执行者在专用克隆里实现,依次过测试 / 评审 / CI /
+                        主人微信拍板 / 合 dev 五道闸门,再部署 + 自检,不过就
+                        回滚(仅 macOS)。退出码 0 完成 / 1 失败 / 2 停机·配额·
+                        平台·daemon 没起 / 3 主人回了 n / 4 没等到拍板(可
+                        --resume)。微信外发不通时用 --approve / --deny 在终端
+                        拍板(桌面权限卡也行)。见 docs/maintainer/self-change.md。
+  wechat-cc selftest workbench --executor <id> [--image] [--resume] [--json]
+                        [--timeout-ms N] [--keep]
+  wechat-cc selftest chat --provider <id> [--text "…"] [--resume] [--json]
+                        [--timeout-ms N]
+                        自维护:daemon 在跑的前提下做一次真机闭环自检并给出
+                        机器可读的结论。--keep 保留 scratch 项目目录。
+                        见 docs/maintainer/verify.md。
+  wechat-cc ci triage [--sha <sha|HEAD>] [--branch <b>] [--wait] [--rerun]
+                        [--max-reruns N] [--timeout-min N] [--json]
+                        看 CI:这个 SHA 绿了吗?红的是自己的锅,还是
+                        src/cli/ci-flakes.json 里登记过的 flake。退出码
+                        0 绿 / 1 真红(含判不明白)/ 2 没有运行或 gh 出错 /
+                        3 是已知 flake。见 docs/maintainer/ci-and-flakes.md。
+  wechat-cc agent inspect <url>       Fetch Agent Card, print metadata
+  wechat-cc agent add <url> [--id ID] [--name-override N] [--outbound-key K]
+                        Register an external A2A agent; generates inbound API key.
+  wechat-cc agent list              List registered A2A agents
+  wechat-cc agent pause <id>        Pause inbound/outbound for an agent
+  wechat-cc agent resume <id>       Un-pause an agent
+  wechat-cc agent remove <id>       Drop agent registration
+  wechat-cc agent activity <id> [--limit N]
+                        Print recent A2A events (newest first, default 20)
+  wechat-cc agent info              Show A2A server status (base URL + agent count)
+  wechat-cc agent edit <id> [--name N] [--url U] [--outbound-key K] [--rotate-inbound-key]
+                        Patch a registered agent in place (no remove + re-add)
+  wechat-cc agent test <id> [--text MSG] [--outbound]
+                        Send a synthetic notify to validate inbound→chat path
+                        (default) or outbound (--outbound: send to external URL)
+  wechat-cc social wishes [--json]
+                        List my 心愿 + effective status (needs running daemon)
+  wechat-cc social enable [--status]
+                        一键开启觅食台社交(merge-persist,不覆盖已有设置);
+                          --status 只打印当前三项设置,不写入
+  wechat-cc provider show [--json]  Show selected agent provider
+  wechat-cc provider set <claude|codex|cursor|openai|gemini|agy> [--model MODEL] [--unattended true|false]
+                        --unattended: when true (default for new installs), the
+                          installed daemon runs the daemon with --dangerously so
+                          inbound WeChat messages don't hang waiting for human
+                          permission prompts. Set false for interactive mode.
+                        openai: also requires --base-url (e.g. an OpenAI-compatible
+                          endpoint like https://api.deepseek.com/v1) the first time
+                          it's set — persists to agent-config.json so future
+                          'provider set openai' calls can omit it. API key is read
+                          from the WECHAT_OPENAI_API_KEY env var, never persisted.
+
+Notes for 0.x users:
+  * The old --fresh / --continue flags are ignored; --dangerously is restored.
+    v1.0 uses @anthropic-ai/claude-agent-sdk; daemon manages claude
+    subprocesses internally, per-project session pool.
+  * /restart from WeChat is removed. Use /project switch or restart
+    the daemon process.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > run --help 1`] = `
+"Start the daemon (foreground). --dangerously skips permission prompts. (wechat-cc run v1.7.0 (dev))
+
+USAGE wechat-cc run [OPTIONS] 
+
+OPTIONS
+
+              --dangerously    Skip permission prompts (matches claude --dangerously-skip-permissions)
+                    --fresh    Legacy v0.x flag (ignored)                                             
+                 --continue    Legacy v0.x flag (ignored)                                             
+                 --channels    Legacy v0.x flag (ignored)                                             
+  --mcp-config=<mcp_config>    Legacy v0.x flag (ignored)                                             
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > self --help > self change --help 1`] = `
+"自改流水线:执行者在专用克隆里实现 → 测试/评审/CI/主人拍板/合 dev → 部署 + 自检,不过就回滚(仅 macOS) (self change)
+
+USAGE self change [OPTIONS] [REQUEST]
+
+ARGUMENTS
+
+  REQUEST=<request>    需求原文(一句话说清要改什么)
+
+OPTIONS
+
+          --resume=<resume>    接着跑某条(\`--list\` 里的 id);拍板超时之后会重新发卡                     
+                     --list    列最近 10 条自改的 id · 步骤 · 结果 · 起始时间                       
+                   --unhalt    解除停机(清 halted_at / halt_reason,fail_streak 归零)        
+             --approve=<id>    替某条(\`--list\` 里的 id)拍「放行」—— 微信外发不通时的第二条拍板口             
+                --deny=<id>    替某条拍「拒绝」                                              
+              --from=<from>    进件口:cli | wechat(daemon 从微信接单时传 wechat) (Default: cli)
+  --budget-usd=<budget_usd>    这一条的实现预算上限,美元(覆盖 self_change.implement_budget_usd)    
+                   --deploy    合完 dev 之后部署 + 自检;\`--no-deploy\` 只合不部署 (Default: true)  
+                --no-deploy                                                          
+                     --json    JSON 输出(整份 state),不输出人读版                              
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > self --help > self deploy --help 1`] = `
+"原子换 sidecar 进 .app、重启 daemon(launchd)、健康门,失败自动回滚(仅 macOS) (self deploy)
+
+USAGE self deploy [OPTIONS] 
+
+OPTIONS
+
+                        --binary=<binary>    新 sidecar 二进制路径(源码模式缺省按 repoRoot + 架构推导;打包模式下必填)
+                              --app=<app>    .app 包路径,覆盖从 LaunchAgent plist 推导的部署目标          
+                            --no-rollback    健康门失败时不自动回滚（默认会回滚）                              
+  --health-timeout-ms=<health_timeout_ms>    健康门超时,毫秒(缺省 60000)                              
+                                   --json    JSON 输出（SelfDeployResult）                       
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > self --help 1`] = `
+"自维护:部署自身、让 CC 自己改自己（仅 macOS launchd；见 docs/maintainer/deploy.md 与 self-change.md） (wechat-cc self v1.7.0 (dev))
+
+USAGE wechat-cc self change|deploy
+
+COMMANDS
+
+  change    自改流水线:执行者在专用克隆里实现 → 测试/评审/CI/主人拍板/合 dev → 部署 + 自检,不过就回滚(仅 macOS)
+  deploy    原子换 sidecar 进 .app、重启 daemon(launchd)、健康门,失败自动回滚(仅 macOS)       
+
+Use wechat-cc self <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > selftest --help > selftest chat --help 1`] = `
+"真机闭环自检:一轮测试对话(daemon 代 spawn,不发微信),核对回复/工具调用(daemon 需在跑) (selftest chat)
+
+USAGE selftest chat [OPTIONS] --provider=<provider>
+
+OPTIONS
+
+      --provider=<provider>    provider id (Required)                     
+              --text=<text>    自定义测试话术(缺省会额外核对 wechat/ping 被调用)           
+                   --resume    用第一轮的 sessionId 再问一轮,核对续接(resume_replied)  
+                     --json    JSON 输出(SelftestReport),不输出人读版             
+  --timeout-ms=<timeout_ms>    单轮对话上限,毫秒(缺省 180000;daemon 侧轮次看门狗缺省 120000)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > selftest --help > selftest workbench --help 1`] = `
+"真机闭环自检:起一个 scratch 工作台任务,核对回复/工具活动/权限卡放行/写文件等信号(daemon 需在跑) (selftest workbench)
+
+USAGE selftest workbench [OPTIONS] --executor=<executor>
+
+OPTIONS
+
+      --executor=<executor>    执行者 provider id(claude / codex / cursor / agy / …) (Required)                                           
+                    --image    带一张自生成的红方块 PNG 附件,问模型图里是什么颜色(替换 activity_seen/permission_roundtrip/file_written 三项为 answer_mentions_red)
+                   --resume    额外走一次 continue,核对续接(resume_replied)                                                                     
+                     --json    JSON 输出(SelftestReport),不输出人读版                                                                          
+  --timeout-ms=<timeout_ms>    总超时,毫秒(缺省 240000)                                                                                       
+                     --keep    保留 scratch 项目目录,不在跑完后删除                                                                                 
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > selftest --help 1`] = `
+"自维护:真机闭环自检(daemon 需在跑);见 docs/maintainer/verify.md (wechat-cc selftest v1.7.0 (dev))
+
+USAGE wechat-cc selftest workbench|chat
+
+COMMANDS
+
+  workbench    真机闭环自检:起一个 scratch 工作台任务,核对回复/工具活动/权限卡放行/写文件等信号(daemon 需在跑)
+       chat    真机闭环自检:一轮测试对话(daemon 代 spawn,不发微信),核对回复/工具调用(daemon 需在跑)   
+
+Use wechat-cc selftest <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > service --help 1`] = `
+"Daemon service management — register / start / stop / uninstall a launchd / systemd / ScheduledTask entry (wechat-cc service v1.7.0 (dev))
+
+USAGE wechat-cc service [OPTIONS] <ACTION>
+
+ARGUMENTS
+
+  ACTION=<status|install|start|stop|uninstall>    status | install | start | stop | uninstall (Required)
+
+OPTIONS
+
+                     --json    JSON envelope                                                                           
+  --unattended=<unattended>    true | false | yes | no | on | off — persist into agent-config (omit to leave unchanged)
+  --auto-start=<auto_start>    true | false | yes | no | on | off — register for boot/login auto-start                 
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > sessions --help > sessions delete --help 1`] = `
+"Remove the sessions table entry (jsonl on disk untouched) (sessions delete)
+
+USAGE sessions delete [OPTIONS] <ALIAS>
+
+ARGUMENTS
+
+  ALIAS=<alias>    Session alias (Required)
+
+OPTIONS
+
+  --chat=<chat>    Delete only this contact's session under the alias
+         --json    JSON envelope                                     
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > sessions --help > sessions list-chats --help 1`] = `
+"Contacts (chats) that have sessions, for the pane sidebar (sessions list-chats)
+
+USAGE sessions list-chats [OPTIONS] 
+
+OPTIONS
+
+                 --json    JSON envelope                                                             
+  --out-file=<out_file>    Write JSON to a sibling file (avoids pipe truncation in compiled binaries)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > sessions --help > sessions list-projects --help 1`] = `
+"Project sessions with cached summaries (sessions list-projects)
+
+USAGE sessions list-projects [OPTIONS] 
+
+OPTIONS
+
+                 --json    JSON envelope                                                                    
+  --out-file=<out_file>    Write JSON to a sibling file (avoids pipe buffer truncation in compiled binaries)
+          --chat=<chat>    Filter to one contact (chat_id)                                                  
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > sessions --help > sessions read-jsonl --help 1`] = `
+"Read all turns from the alias's session jsonl (sessions read-jsonl)
+
+USAGE sessions read-jsonl [OPTIONS] <ALIAS>
+
+ARGUMENTS
+
+  ALIAS=<alias>    Session alias (Required)
+
+OPTIONS
+
+          --chat=<chat>    Scope to one contact (chat_id)                                                   
+                 --json    JSON envelope                                                                    
+  --out-file=<out_file>    Write JSON to a sibling file (avoids pipe buffer truncation in compiled binaries)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > sessions --help > sessions search --help 1`] = `
+"Naive case-insensitive substring search across all session jsonls (sessions search)
+
+USAGE sessions search [OPTIONS] <QUERY>
+
+ARGUMENTS
+
+  QUERY=<query>    Search query (Required)
+
+OPTIONS
+
+        --limit=<limit>    Max hits (default 50)       
+                 --json    JSON envelope               
+  --out-file=<out_file>    Write JSON to a sibling file
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > sessions --help 1`] = `
+"Per-project session inspection (resume-id store + jsonl readers) (wechat-cc sessions v1.7.0 (dev))
+
+USAGE wechat-cc sessions list-chats|list-projects|read-jsonl|delete|search
+
+COMMANDS
+
+     list-chats    Contacts (chats) that have sessions, for the pane sidebar        
+  list-projects    Project sessions with cached summaries                           
+     read-jsonl    Read all turns from the alias's session jsonl                    
+         delete    Remove the sessions table entry (jsonl on disk untouched)        
+         search    Naive case-insensitive substring search across all session jsonls
+
+Use wechat-cc sessions <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > setup --help 1`] = `
+"Scan QR + bind a WeChat bot (wechat-cc setup v1.7.0 (dev))
+
+USAGE wechat-cc setup [OPTIONS] 
+
+OPTIONS
+
+  --qr-json    Emit JSON envelope (one-shot QR fetch) instead of starting an interactive scan
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > setup-poll --help 1`] = `
+"Poll a setup-status QR code (paired with \`setup --qr-json\`) (wechat-cc setup-poll v1.7.0 (dev))
+
+USAGE wechat-cc setup-poll [OPTIONS] --qrcode=<qrcode>
+
+OPTIONS
+
+      --qrcode=<qrcode>    QR token returned from \`setup --qr-json\` (Required)              
+  --base-url=<base_url>    Override ilink base URL (defaults to setup-flow internal default)
+                 --json    JSON envelope                                                    
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > setup-status --help 1`] = `
+"Machine-readable setup status for desktop UI (wechat-cc setup-status v1.7.0 (dev))
+
+USAGE wechat-cc setup-status [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope (vs single-line text)
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > social --help > social enable --help 1`] = `
+"一键开启觅食台社交(merge-persist,不覆盖已有设置) (social enable)
+
+USAGE social enable [OPTIONS] 
+
+OPTIONS
+
+  --status    只打印当前三项设置,不写入
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > social --help > social wishes --help 1`] = `
+"List my 心愿 + effective status (needs running daemon) (social wishes)
+
+USAGE social wishes [OPTIONS] 
+
+OPTIONS
+
+  --json    JSON envelope
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > social --help 1`] = `
+"觅食台 — list 心愿 (wishes), and enable (开启) (wechat-cc social v1.7.0 (dev))
+
+USAGE wechat-cc social wishes|enable
+
+COMMANDS
+
+  wishes    List my 心愿 + effective status (needs running daemon)
+  enable    一键开启觅食台社交(merge-persist,不覆盖已有设置)                    
+
+Use wechat-cc social <command> --help for more information about a command.
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > status --help 1`] = `
+"Show daemon status + accounts (wechat-cc status v1.7.0 (dev))
+
+USAGE wechat-cc status 
+
+
+"
+`;
+
+exports[`cli.ts --help 快照(逐字节) > update --help 1`] = `
+"Pull latest + reinstall deps + restart service. --check probes only (no side effects). (wechat-cc update v1.7.0 (dev))
+
+USAGE wechat-cc update [OPTIONS] 
+
+OPTIONS
+
+  --check    Probe only — no side effects
+   --json    JSON envelope               
+
+
+"
+`;
