@@ -1,16 +1,12 @@
 // 从 cli.ts 逐字搬出(2026-09-27 cli 拆分,spec 2026-09-27-cli-split-design);行为、参数、文案不变。
 import { defineCommand } from 'citty'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { STATE_DIR } from '../../lib/config'
 import { loadAgentConfig } from '../../lib/agent-config'
 import { compiledRepoRoot, isCompiledBundle } from '../../lib/runtime-info'
 import { parseTimeoutMsFlag, parseBudgetUsdFlag } from '../flags'
-
-// 源码模式下的仓库根。这段代码原来住在根 cli.ts 里,用 `dirname(fileURLToPath(import.meta.url))`
-// 就是仓库根;搬到 src/cli/commands/ 之后同一个表达式指向这个目录,所以这里显式回退三级
-// (2026-09-27 cli 拆分:唯一一处不能逐字搬的地方)。
-const SOURCE_REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+// 源码模式下的仓库根:原来这段代码住在根 cli.ts 里,用 import.meta.url 就是仓库根;搬家后统一从 repo-root 取。
+import { SOURCE_REPO_ROOT } from '../repo-root'
 // ── self deploy — atomic sidecar swap + launchd restart + health gate ──
 //
 // spec: docs/superpowers/specs/2026-09-18-self-maintenance-design.md §3.

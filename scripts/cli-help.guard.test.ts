@@ -81,7 +81,9 @@ describe('搬走的命令文件不许自己成为入口', () => {
     if (!existsSync(dir)) return
     for (const f of readdirSync(dir)) {
       if (!f.endsWith('.ts')) continue
-      expect(readFileSync(join(dir, f), 'utf8'), f).not.toContain('import.meta.main')
+      // 只看代码,不看注释(run.ts 的注释里提到过 import.meta.main)。
+      const code = readFileSync(join(dir, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+      expect(code, f).not.toContain('import.meta.main')
     }
   })
 })
