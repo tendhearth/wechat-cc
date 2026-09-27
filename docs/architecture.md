@@ -115,7 +115,7 @@ declares per-provider traits (`perToolCallback`, `sandboxLevels`, `supportsDeleg
 |---|---|---|---|---|---|
 | claude | **wrap** | `@anthropic-ai/claude-agent-sdk` | SDK | ✅ haiku | peer + target |
 | codex | **wrap** | `@openai/codex-sdk` (Thread) / `codex app-server` (workbench) | SDK | ✅ | target |
-| cursor | **wrap** | `cursor-agent acp` (ACP v1, stdio JSON-RPC; `@cursor/sdk` only as chat-side fallback) | CLI | ❌ | ❌ |
+| cursor | **wrap** | `cursor-agent acp` (ACP v1, stdio JSON-RPC; `@cursor/sdk` only as chat-side fallback) | CLI | ✅ (one-shot print mode, `cursor-eval.ts`) | ❌ |
 | agy | **wrap** | Antigravity CLI (subscription Gemini, real `--conversation` resume) | CLI | ✅ | ❌ |
 | openai | **self-built** | any OpenAI-compat (DeepSeek/Kimi/Qwen) | **us** (`makeOpenAiSession`) | ✅ +strong | target |
 | gemini | **self-built** | `@google/genai` (raw) — **deprecated 2026-09-27**, superseded by agy | **us** (`runDispatchLoop`) | ✅ | ❌ |

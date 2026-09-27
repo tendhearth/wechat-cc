@@ -21,7 +21,7 @@ daemon 的内部 HTTP API 只监听 127.0.0.1,地址与 token 文件路径写在
 | origin | 谁拿 | tier | routeAllow | 存哪 |
 |---|---|---|---|---|
 | `file` | 任何能读 `<stateDir>/internal-token` 的本机进程(CLI、trusted agent 的 shell) | 固定 `trusted`:shell 可读的凭据不能高于最不可信的读者 | 无 | 文件 0600,每次 boot 轮换 |
-| `session` | 每次 spawn 的 agent 会话,经 `WECHAT_SESSION_TOKEN` 环境变量 | 该会话的真实 tier;**admin 只从这里来** | 无(例外:hearth federation mint 出来的 token 带 TTL + routeAllow) | 只在子进程 env。例外 `agy-static`:agy 只有全局 `~/.gemini/config/mcp_config.json`,所以 boot 时铸一枚长期 `trusted` token 写进那个文件;补偿控制是 `/agy` 拒 guest、solo+agy 在 dispatch 时再拒一次 |
+| `session` | 每次 spawn 的 agent 会话,经 `WECHAT_SESSION_TOKEN` 环境变量 | 该会话的真实 tier;**不带 routeAllow 的 admin 只从这里来**(operator 也是 admin,但被路由白名单框住) | 无(例外:hearth federation mint 出来的 token 带 TTL + routeAllow) | 只在子进程 env。例外 `agy-static`:agy 只有全局 `~/.gemini/config/mcp_config.json`,所以 boot 时铸一枚长期 `trusted` token 写进那个文件;补偿控制是 `/agy` 拒 guest、solo+agy 在 dispatch 时再拒一次 |
 | `operator` | 桌面 app 的 Tauri 宿主(`<stateDir>/internal-operator-token`) | `admin` | **有**:converse / speak / transcribe、customer-review 八条、待办五条、pet permission resolve、federation mint、workbench 全套、matters 四条(精确集合见 `token-registry.ts` 与 `token-registry.test.ts`) | 文件 0600;能读它的人已经是本机主人 |
 
 ## 新加一条路由要登记几处

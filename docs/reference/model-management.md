@@ -34,4 +34,4 @@
 
 ## 有意不做
 
-`/model` `/use` 新动词(别名只对 `/api`);别名跨 provider;面板主动拨号;gemini(API key)的模型在面板只读。
+`/model` `/use` 新动词(别名只对 `/api`);别名跨 provider;面板主动拨号。(设计稿曾写「gemini 的模型在面板只读」,实现里 `geminiModel` 和别家一样可改 —— `settings-panel.ts` 白名单含它;gemini 已弃用,不再收口。)

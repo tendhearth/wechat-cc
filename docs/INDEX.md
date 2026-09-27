@@ -46,7 +46,7 @@
 | 功能全表 / 权限模式 / 微信命令 / 运行时目录 / 访问控制 / A2A / 常见问题 | [reference/](reference/) 下同名文件 | — |
 | 插件 | [plugins.md](plugins.md) | — |
 | 桌面安装器 | [installer/desktop-installer.md](installer/desktop-installer.md) | — |
-| 入站语音 STT(已通:网关形态,`stt-config.json` 门控) | [reference/features.md §8](reference/features.md) | `superpowers/specs/2026-07-23-inbound-voice-stt-design.md` |
+| 入站语音 STT(已通:网关形态,`stt-config.json` 门控) | [architecture.md §2.5 Voice](architecture.md) | `superpowers/specs/2026-07-23-inbound-voice-stt-design.md` |
 
 ## 目录都装什么
 

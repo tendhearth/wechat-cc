@@ -62,7 +62,7 @@
 - **手机台阶 B(桌面 Widget + 原生推送)** —— 解锁条件:PWA 验证有人用 + 决定掏 Apple $99/年。
 - **STT(语音入站)** —— 已通(2026-09-27 口径):网关形态,`stt-config.json` 指定 whisper 网关(`src/daemon/stt/*`),接在入站链 `mw-transcribe-voice`;未配置即关。出站语音也已通(VoxCPM2)。缺的是本地 STT 与首次配置引导。
 - **Developer ID 证书** —— 签名分发仍缺,要 owner 去申请。
-- **Windows 拿不到工作台** —— 工作台整块在 win32 上不跑(依赖已去掉的 ffi 原生层),是产品缺口不只是测试缺口。
+- **Windows 拿不到 Codex 工作台**(2026-09-27 口径,三份文档同此)—— 文件层已通(`anchored-fs.ts` 纯 JS,有 win32 分支)、进程树清理 `jobspawn` 已落地(codex-config / model-catalog 两条路);但 Codex 执行者本身在 win32 仍显式拒绝(`codex-app-server.ts`「尚未验证任务进程树清理」),原生历史 win32 不支持(`codex-history-rpc.ts`),Claude 保留会话的 win32 真机验收也欠。要做的是:拿掉那道拒绝前先在 Windows 真机验一遍进程树清理。
 
 ## 有意推迟 / 已否决
 
