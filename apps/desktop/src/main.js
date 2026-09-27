@@ -48,9 +48,9 @@ import { refreshWxvaultOnAppStart } from "./modules/wxvault-refresh.js"
 import { loadAtelierGallery } from "./modules/atelier-gallery.js"
 import { mountCurrentActivity, createLifeArchive } from "./modules/cc-life.js"
 import { mountCareSheet } from "./modules/cc-care.js"
-import { chooseWorkbenchProject } from "./modules/workbench-entry.js"
+import { createTaskEntry } from "./modules/task-entry.js"
 import { refreshPostcardAlbum } from "./modules/postcard-album.js"
-import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, openWorkbenchDraft, getActiveWorkbenchTaskId } from "./modules/workbench.js"
+import { initWorkbenchPage, stopWorkbenchPolling, openWorkbenchTask, getActiveWorkbenchTaskId } from "./modules/workbench.js"
 import { createWorkbenchNavigation, isCurrentWorkbenchPane } from "./modules/workbench-navigation.js"
 import { mountWorkbenchAttention } from "./modules/workbench-attention.js"
 
@@ -200,17 +200,22 @@ function unmountConverse() {
 let converseRootRef = /** @type {HTMLElement|null} */ (null)
 function converseRootEl() { return (converseRootRef ??= document.getElementById("converse-root")) }
 
+const openAcceptedEntry = async (/** @type {import('./modules/task-entry.js').EntryResult} */ result) => {
+  switchPane('workbench')
+  await openWorkbenchTask(result.receipt.taskId)
+}
+const taskEntry = createTaskEntry({invokeWorkbenchApi, onAccepted: openAcceptedEntry})
+
 const deps = {
   invoke,
   invokeApi,
   invokeWorkbenchApi,
   mountConverse,
   unmountConverse,
-  onDelegate: async (/** @type {string} */ text) => {
-    const project = await chooseWorkbenchProject(invokeWorkbenchApi)
-    if (!project) return false
-    switchPane('workbench')
-    return openWorkbenchDraft({ ...project, text })
+  onDelegate: async (/** @type {import('./modules/task-entry.js').Draft} */ draft) => {
+    const result = await taskEntry.open(draft)
+    if (result) await openAcceptedEntry(result)
+    return result
   },
   formatInvokeError,
   doctorPoller,

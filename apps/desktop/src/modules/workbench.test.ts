@@ -599,6 +599,53 @@ describe('workbench mutations', () => {
     return { page, fields }
   }
 
+  it('opens the shared entry from an empty workbench and keeps explicit add-project available', async () => {
+    const page=installFakePage(), onDelegate=vi.fn(async()=>null)
+    const module=await import('./workbench.js')
+    const controller=module.initWorkbenchPage({invokeWorkbenchApi:async()=>({tasks:[],projects:[],providers:[],defaultProvider:null,canWechat:false}),onDelegate,pollMs:60_000})!
+    try {
+      await controller.refresh()
+      expect(page.innerHTML).toContain('data-action="task-entry"')
+      const button=new FakeElement(); button.dataset.action='task-entry'
+      for(const listener of page.listeners.get('click')??[])await listener({target:button})
+      expect(onDelegate).toHaveBeenCalledExactlyOnceWith({text:''})
+      expect(controller.state.selectedId).toBeNull()
+      button.dataset.action='add-project'
+      for(const listener of page.listeners.get('click')??[])await listener({target:button})
+      expect(page.innerHTML).toContain('id="wb-project-form"')
+    } finally {module.stopWorkbenchPolling()}
+  })
+
+  it('opens a managed task location using only its task identity',async()=>{
+    const page=installFakePage(),invoke=vi.fn(async()=>undefined),module=await import('./workbench.js')
+    const controller=module.initWorkbenchPage({invokeWorkbenchApi:async()=>({tasks:[],projects:[],providers:[],defaultProvider:null,canWechat:false}),invoke,pollMs:60_000})!
+    try{
+      await controller.refresh()
+      const task={id:'deadbeef',title:'Managed',path:'/private/task',workspaceKind:'managed' as const,providerId:'codex',status:'completed',createdAt:1,updatedAt:2,error:null}
+      controller.state.selectedId=task.id;controller.state.detail={task,events:[],artifacts:[]};controller.paint()
+      expect(page.innerHTML).toContain('data-action="open-task-folder"')
+      const button=new FakeElement();button.dataset.action='open-task-folder'
+      for(const listener of page.listeners.get('click')??[])await listener({target:button})
+      expect(invoke).toHaveBeenCalledExactlyOnceWith('open_workbench_folder',{taskId:'deadbeef'})
+    }finally{module.stopWorkbenchPolling()}
+  })
+
+  it('returns to an explicit add-project form after the workbench is remounted', async () => {
+    const page=installFakePage(), values=new Map<string,string>()
+    root.window={sessionStorage:{getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>values.set(key,value),removeItem:(key:string)=>values.delete(key)}}
+    const api=async()=>({tasks:[],projects:[],providers:[],defaultProvider:null,canWechat:false})
+    let module=await import('./workbench.js')
+    const first=module.initWorkbenchPage({invokeWorkbenchApi:api,pollMs:60_000})!
+    await first.refresh()
+    const button=new FakeElement();button.dataset.action='add-project'
+    for(const listener of page.listeners.get('click')??[])await listener({target:button})
+    module.stopWorkbenchPolling();vi.resetModules()
+    module=await import('./workbench.js')
+    const restored=module.initWorkbenchPage({invokeWorkbenchApi:api,pollMs:60_000})!
+    try {await restored.refresh();expect(page.innerHTML).toContain('id="wb-project-form"')}
+    finally {module.stopWorkbenchPolling()}
+  })
+
   it('preserves the project executor when chat metadata paints before provider options load', async () => {
     const { page, fields } = installDraftPage(true)
     const values = new Map<string, string>(), storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value) }, removeItem: (key: string) => { values.delete(key) } }
@@ -2551,7 +2598,7 @@ describe('一件事:对话也在同一张列表里(2026-09-16)',()=>{
     const chat={id:'0badcafe',kind:'chat',title:'跟 CC 说',status:'open',updatedAt:3}
     const base={tasks:[task],providers:[{id:'codex',displayName:'Codex'}],defaultProvider:'codex',canWechat:false,selectedArtifactId:null,error:'',preview:null,chats:[chat]}
     const listed=renderWorkbench({...base,selectedId:null,detail:null,selectedMatterId:null})
-    expect(listed).toContain('class="wb-kicker">项目<')
+    expect(listed).toContain('class="wb-kicker">手头的事<')
     expect(listed).toMatch(/data-matter-id="0badcafe"[\s\S]*data-task-id="deadbeef"/)
     expect(listed).not.toContain('id="wb-converse-host"')
     const opened=renderWorkbench({...base,selectedId:null,detail:null,selectedMatterId:'0badcafe'})

@@ -35,7 +35,7 @@ const repo=resolve(dirname(fileURLToPath(import.meta.url)),'..'),src=join(repo,'
 const privateHistory='私人聊天：今晚只想休息，这句话不能成为项目要求。'
 const request='请检查项目说明，整理一份可复核的修改建议。'
 const draftA='A 项目原有未发送要求：保留安装说明。',draftB='B 项目原有未发送要求：检查图片目录。'
-const submitted=`${draftA}\n\n—— 从聊天交办 ——\n${request}`
+const publicHistory=Array.from({length:12},(_,index)=>({kind:index%2?'text':'user',text:`公开讨论 ${index}：请保留可复核的来源。`,createdAt:index+3}))
 const nextChat='另一句尚未发送的私人聊天。'
 function gate(){let release!:()=>void;const promise=new Promise<void>(done=>{release=done});return{promise,release}}
 async function eventually(label:string,test:()=>boolean){const deadline=Date.now()+15_000;while(!test()){if(Date.now()>deadline)throw Error(`Timed out: ${label}`);await Bun.sleep(20)}}
@@ -51,17 +51,18 @@ window.__TAURI__={core:{invoke:async(command,args)=>{
 const {invoke}=await import('/ipc.js');
 const {invokeWorkbenchApi}=await import('/api.js');
 const {initConversePage}=await import('/modules/converse.js');
-const {initWorkbenchPage,stopWorkbenchPolling,openWorkbenchTask,openWorkbenchDraft}=await import('/modules/workbench.js');
-const {chooseWorkbenchProject}=await import('/modules/workbench-entry.js');
+const {initWorkbenchPage,stopWorkbenchPolling,openWorkbenchTask}=await import('/modules/workbench.js');
+const {createTaskEntry}=await import('/modules/task-entry.js');
 const {mountCurrentActivity}=await import('/modules/cc-life.js');
 const {mountCareSheet}=await import('/modules/cc-care.js');
 const {createPresencePoller}=await import('/presence-poller.js');
 const {createWorkbenchNavigation,isCurrentWorkbenchPane}=await import('/modules/workbench-navigation.js');
 const navigation=createWorkbenchNavigation({shell:document.querySelector('.dash-window'),rail:document.getElementById('dash-global-rail'),toggle:document.getElementById('workbench-nav-toggle'),scrim:document.getElementById('workbench-nav-scrim')});
 const presencePoller=createPresencePoller({invokeApi:async()=>await(await fetch('/__fixture/presence')).json(),intervalMs:1000});
-const deps={invoke,invokeWorkbenchApi,pollMs:250,onDelegate:async text=>{
-  const project=await chooseWorkbenchProject(invokeWorkbenchApi);if(!project)return false;
-  switchPane('workbench');return openWorkbenchDraft({...project,text});
+const openAcceptedEntry=async result=>{switchPane('workbench');await openWorkbenchTask(result.receipt.taskId)};
+const entry=createTaskEntry({invokeWorkbenchApi,onAccepted:openAcceptedEntry});
+const deps={invoke,invokeWorkbenchApi,pollMs:250,onDelegate:async draft=>{
+  const result=await entry.open(draft);if(result)await openAcceptedEntry(result);return result;
 }};
 function switchPane(name){
   const current=document.querySelector('.dash-pane[data-pane]:not([hidden])');
@@ -98,10 +99,10 @@ async function main(){
   registry.register('codex',provider,{workbench:MANAGED_NATIVE_CAPABILITIES,displayName:'Codex',canResume:()=>true})
   registry.register('claude',provider,{workbench:MANAGED_NATIVE_CAPABILITIES,displayName:'Claude',canResume:()=>true})
   const db=openDb({path:join(stateDir,'workbench.db')}),store=makeWorkbenchStore(db)
-  const service=makeWorkbenchService({store,registry,stateDir,ownerChatId:()=>null})
-  service.addProject({path:projectA,name:'说明整理',providerId:'codex'});service.addProject({path:projectB,name:'图片整理',providerId:'claude'})
-  const matters=makeMattersService({store:makeMatterStore(db),workbench:service,chat:{ownerChatId:()=> 'fixture-owner',say:async()=>{throw Error('Chat must not be sent')},recent:async()=>[{kind:'user',text:privateHistory,createdAt:1},{kind:'text',text:'好，今天先慢下来。',createdAt:2}]}})
-  const api=createInternalApi({stateDir,daemonPid:process.pid,workbench:service,matters,db})
+  const registeredProjects:Array<{alias:string;path:string}>=[]
+  const service=makeWorkbenchService({store,registry,stateDir,managedWorkspaceRoot:join(temporary,'Tasks'),ownerChatId:()=> 'fixture-owner',defaultProvider:'codex',registeredProjects:()=>registeredProjects,matters:makeMatterStore(db)})
+  const matters=makeMattersService({store:makeMatterStore(db),workbench:service,chat:{ownerChatId:()=> 'fixture-owner',say:async()=>{throw Error('Chat must not be sent')},recent:async()=>[{kind:'user',text:privateHistory,createdAt:1},{kind:'text',text:'好，今天先慢下来。',createdAt:2},...publicHistory,{kind:'system',text:'系统诊断，不是讨论材料',createdAt:20}]}})
+  const api=createInternalApi({stateDir,daemonPid:process.pid,workbench:service,matters,db,resolveAdminChatId:()=> 'fixture-owner'})
   let host:ReturnType<typeof Bun.serve>|undefined,browser:Browser|undefined,page:Page|undefined,stage='start services'
   const pageErrors:string[]=[],httpErrors:string[]=[],requests:Array<{method:string,path:string,status:number}>=[],layouts:Array<{screen:string,width:number,documentWidth:number,viewport:number,overflowing:string[]}>=[]
   const draftSnapshots:Array<{stage:string,drafts:Record<string,unknown>}>=[]
@@ -118,7 +119,7 @@ async function main(){
       // operator credential stays outside the renderer in both cases.
       const matterRead=req.method==='GET'&&['/v1/matters','/v1/matter/owner-chat'].includes(path)
       const response=matterRead?await fetch(`http://127.0.0.1:${info.port}${url.pathname}${url.search}`,{headers:{authorization:`Bearer ${operatorToken}`}}):await proxy(req)
-      if(response){requests.push({method:req.method,path:url.pathname+url.search,status:response.status});if(response.status>=400)httpErrors.push(`${req.method} ${url.pathname+url.search}: ${await response.clone().text()}`);return response}
+      if(response){requests.push({method:req.method,path:url.pathname+url.search,status:response.status});if(response.status>=400&&!(url.pathname==='/v1/workbench/entry-receipt'&&response.status===404))httpErrors.push(`${req.method} ${url.pathname+url.search}: ${await response.clone().text()}`);return response}
       if(path==='/')return new Response(html,{headers:{'content-type':'text/html','content-security-policy':csp}})
       if(path==='/harness.js')return new Response(harness,{headers:{'content-type':'text/javascript'}})
       const filename=resolve(src,'.'+path);if(!filename.startsWith(src+'/'))return new Response('Not found',{status:404})
@@ -130,7 +131,7 @@ async function main(){
       for(const width of [1280,740]){
         await page!.setViewportSize({width,height:900})
         await page!.waitForFunction(()=>Array.from(document.images).filter(image=>image.getClientRects().length).every(image=>image.complete))
-        const dimensions=await page!.evaluate(()=>({documentWidth:document.documentElement.scrollWidth,viewport:innerWidth,overflowing:[...document.querySelectorAll<HTMLElement>('.dash-pane:not([hidden]),dialog[open],dialog[open] .cc-care-body,dialog[open] .wb-entry-form,.dash-pane:not([hidden]) .converse-compose')].filter(el=>el.scrollWidth>el.clientWidth+1).map(el=>`${el.tagName}.${el.className}: ${el.scrollWidth}>${el.clientWidth}`)}))
+        const dimensions=await page!.evaluate(()=>({documentWidth:document.documentElement.scrollWidth,viewport:innerWidth,overflowing:[...document.querySelectorAll<HTMLElement>('.dash-pane:not([hidden]),dialog[open],dialog[open] .cc-care-body,dialog[open] .task-entry-form,.dash-pane:not([hidden]) .converse-compose')].filter(el=>el.scrollWidth>el.clientWidth+1).map(el=>`${el.tagName}.${el.className}: ${el.scrollWidth}>${el.clientWidth}`)}))
         layouts.push({screen,width,...dimensions})
         await page!.screenshot({path:join(evidence,`${screen}-${width}.png`)})
         assert.ok(dimensions.documentWidth<=dimensions.viewport+1,`${screen} has page overflow at ${width}`)
@@ -139,49 +140,75 @@ async function main(){
       await page!.setViewportSize({width:1280,height:900})
     }
     const home=async()=>{await page!.locator('#workbench-nav-toggle').click();await page!.locator('.dash-nav-link[data-pane="overview"]').click();await page!.waitForFunction(()=>!document.querySelector<HTMLElement>('.dash-pane[data-pane="overview"]')?.hidden)}
-    const selectProject=async(path:string)=>{await page!.locator('#wb-entry-project').selectOption({label:`${path===projectA?'说明整理':'图片整理'} · ${path}`});await page!.locator('.wb-entry-dialog button[type=submit]').click()}
     stage='home and project draft isolation'
     await page.goto(`http://127.0.0.1:${host.port}`)
     await page.waitForFunction(text=>document.querySelector('#converse-scroll')?.textContent?.includes(text),privateHistory)
     await checkLayout('home')
+    stage='zero-project managed preview'
     await page.locator('.dash-nav-link[data-pane="workbench"]').click()
+    await page.getByRole('button',{name:'交给 CC 做',exact:true}).click()
+    await page.waitForFunction(()=>!!document.querySelector('.task-entry-dialog[open]'))
+    assert.equal(await page.locator('.task-entry-dialog [name="project"]').inputValue(),'managed')
+    assert.equal(await page.locator('.task-entry-dialog option').count()>0,true)
+    await checkLayout('zero-project-preview')
+    await page.getByRole('button',{name:'取消',exact:true}).click()
+    assert.equal(store.list().length,0)
+    service.addProject({path:projectA,name:'说明整理',providerId:'codex'});service.addProject({path:projectB,name:'图片整理',providerId:'claude'})
+    registeredProjects.push({alias:'说明整理',path:projectA},{alias:'图片整理',path:projectB})
+    await page.waitForFunction(path=>!!document.querySelector(`[data-action="new-project-task"][data-project-path="${path}"]`),projectA)
     await page.locator(`[data-action="new-project-task"][data-project-path="${projectA}"]`).click();await page.locator('#wb-create-text').fill(draftA)
     await page.locator(`[data-action="new-project-task"][data-project-path="${projectB}"]`).click();await page.locator('#wb-create-text').fill(draftB)
     assert.equal(await page.locator('#wb-provider').inputValue(),'claude','B should start with its registered executor')
     await captureDrafts('B draft before leaving workbench')
     await home()
-    stage='cancel project choice'
+    stage='cancel managed preview'
     await page.locator('#converse-input').fill(request);await page.locator('#converse-delegate').click()
-    await page.waitForFunction(()=>!!document.querySelector('dialog.wb-entry-dialog[open]'))
-    await checkLayout('project-chooser')
-    await page.locator('[data-entry-cancel]').click()
+    await page.waitForFunction(()=>!!document.querySelector('dialog.task-entry-dialog[open]'))
+    assert.equal(await page.evaluate(()=>document.activeElement?.id),'task-entry-text')
+    assert.equal(await page.locator('.task-entry-dialog input[name="excerpt"]').count(),10)
+    assert.equal(await page.locator('.task-entry-dialog input[name="excerpt"]:checked').count(),0)
+    assert.ok(!(await page.locator('.task-entry-dialog').textContent())?.includes(privateHistory))
+    assert.ok(!(await page.locator('.task-entry-dialog').textContent())?.includes('系统诊断'))
+    await checkLayout('managed-preview')
+    await page.getByRole('button',{name:'取消',exact:true}).click()
     assert.equal(await page.locator('#converse-input').inputValue(),request)
+    await page.waitForFunction(()=>document.activeElement?.id==='converse-input')
     assert.equal(store.list().length,0);assert.equal(started.length,0)
-    stage='prepare without execution'
-    await page.locator('#converse-delegate').click();await selectProject(projectA)
-    await page.waitForFunction(text=>document.querySelector<HTMLTextAreaElement>('#wb-create-text')?.value===text,submitted)
-    assert.equal(await page.locator('#wb-path').inputValue(),projectA);assert.equal(await page.locator('#wb-provider').inputValue(),'codex')
-    assert.equal(await page.locator('#converse-input').inputValue(),'')
+    stage='select visible public discussion and explicitly create'
+    await page.locator('#converse-delegate').click()
+    await page.locator('[data-entry-action="recent"]').click()
+    assert.equal(await page.locator('.task-entry-dialog input[name="excerpt"]:checked').count(),10)
+    await page.locator('.task-entry-dialog input[name="excerpt"][value="0"]').click()
+    assert.equal(await page.locator('.task-entry-dialog input[name="excerpt"]:checked').count(),9)
+    await checkLayout('selected-discussion')
     assert.equal(store.list().length,0);assert.equal(started.length,0)
-    await captureDrafts('A handover prepared after workbench remount')
-    await checkLayout('prepared-request')
-    stage='explicit task creation'
-    await page.getByRole('button',{name:'开始任务',exact:true}).click();await eventually('executor started once',()=>started.length===1)
+    await page.locator('.task-entry-dialog button[type="submit"]').click()
+    await eventually('executor started once',()=>started.length===1)
     const task=store.get(started[0]!.taskId)
-    assert.equal(task.path,projectA);assert.equal(task.providerId,'codex')
-    assert.deepEqual(store.events(task.id).filter(e=>e.kind==='user').map(e=>e.text),[submitted])
-    assert.ok(!started[0]!.text.includes(privateHistory));assert.ok(!started[0]!.text.includes(draftB))
+    assert.equal(task.workspaceKind,'managed');assert.ok(task.path.startsWith(join(temporary,'Tasks')+'/'));assert.equal(task.providerId,'codex')
+    await page.waitForFunction(id=>Array.from(document.querySelectorAll('#wb-task-info code')).some(el=>el.textContent===id),task.id)
+    assert.equal(await page.locator('#converse-input').inputValue(),'')
+    assert.ok(started[0]!.text.includes(request))
+    for(const message of publicHistory.slice(3))assert.ok(started[0]!.text.includes(message.text))
+    for(const text of [privateHistory,...publicHistory.slice(0,3).map(m=>m.text),draftA,draftB,'系统诊断'])assert.ok(!started[0]!.text.includes(text))
+    assert.equal(store.events(task.id).filter(e=>e.kind==='user').length,1)
+    assert.equal(service.projects().length,2,'managed UUID folder must not enter project catalog')
+    assert.equal(service.list().projects.length,2,'managed UUID folder must not become a sidebar project')
+    assert.ok((await page.locator('.wb-task-list').textContent())?.includes('随手交办'))
+    await checkLayout('accepted-same-task')
     await home();await page.locator('#converse-input').fill(nextChat)
     stage='care sheet opens original task'
     await page.locator('.cc-care-avatar').click()
     await page.waitForFunction(id=>!!document.querySelector(`[data-care-task="${id}"]`),task.id)
     await checkLayout('care-sheet')
-    assert.ok((await page.locator(`[data-care-task="${task.id}"]`).textContent())?.includes('说明整理'))
+    assert.ok((await page.locator(`[data-care-task="${task.id}"]`).textContent())?.includes(request))
     await page.locator(`[data-care-task="${task.id}"]`).click()
     await page.waitForFunction(id=>Array.from(document.querySelectorAll('#wb-task-info code')).some(el=>el.textContent===id),task.id)
     assert.equal(await page.locator('.cc-care-sheet[open]').count(),0);assert.equal(store.list().length,1)
     await page.screenshot({path:join(evidence,'same-task-return-1280.png')})
     stage='unrelated drafts remain separate'
+    await page.locator(`[data-action="new-project-task"][data-project-path="${projectA}"]`).click()
+    await page.waitForFunction(text=>document.querySelector<HTMLTextAreaElement>('#wb-create-text')?.value===text,draftA)
     await page.locator(`[data-action="new-project-task"][data-project-path="${projectB}"]`).click()
     await page.waitForFunction(text=>document.querySelector<HTMLTextAreaElement>('#wb-create-text')?.value===text,draftB)
     await captureDrafts('B draft after care-sheet round trip')
@@ -190,8 +217,8 @@ async function main(){
     assert.ok((await page.locator('#converse-scroll').textContent())?.includes(privateHistory))
     hold.release();await eventually('fixture finishes',()=>store.get(task.id).status==='completed')
     assert.deepEqual(pageErrors,[]);assert.deepEqual(httpErrors,[])
-    assert.equal(requests.filter(r=>r.method==='POST'&&r.path==='/v1/workbench/create').length,1)
-    const report={ok:true,transport:'production index/CSS/modules + host proxy + internal HTTP + services + SQLite',bootstrap:'narrow fixture mount, not full main.js startup',executor:'deterministic fixture, not native proof',presenceAndChatHistory:'fixtures',cancelPreservesRequest:true,noExecutionBeforeExplicitStart:true,sameTaskInCareSheet:true,originalProjectDraftMerged:true,otherProjectAndChatDraftsPreserved:true,privateHistoryExcluded:true,taskId:task.id,layouts,evidence}
+    assert.equal(requests.filter(r=>r.method==='POST'&&r.path==='/v1/workbench/create-entry').length,1)
+    const report={ok:true,transport:'production index/CSS/modules + host proxy + internal HTTP + services + SQLite',bootstrap:'narrow fixture mount, not full main.js startup',executor:'deterministic fixture, not native proof',presenceAndChatHistory:'fixtures',cancelPreservesRequest:true,noExecutionBeforeExplicitStart:true,sameTaskInCareSheet:true,zeroProjectManagedEntry:true,visibleDiscussionOptIn:true,projectAndChatDraftsPreserved:true,unselectedHistoryExcluded:true,acceptedSameTask:true,taskId:task.id,layouts,evidence}
     writeFileSync(join(evidence,'report.json'),JSON.stringify(report,null,2)+'\n');writeFileSync(join(evidence,'requests.json'),JSON.stringify(requests,null,2)+'\n');console.log(JSON.stringify(report,null,2))
   }catch(error){await page?.screenshot({path:join(evidence,'failure.png')}).catch(()=>{});writeFileSync(join(evidence,'failure.json'),JSON.stringify({stage,error:String(error),pageErrors,httpErrors,layouts,draftSnapshots,requests},null,2));throw Error(`Companion browser smoke failed at ${stage}; ${evidence}`,{cause:error})}
   finally{hold.release();await browser?.close();await service.shutdown();host?.stop(true);await api.stop();db.close();rmSync(temporary,{recursive:true,force:true})}

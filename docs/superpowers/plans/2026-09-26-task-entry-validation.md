@@ -23,3 +23,8 @@
 手机路由回归在首次 Cargo 满并发编译期间有两条既有 20 秒超时；保留超时设置，将本任务 Cargo 限为两并发后同文件 11 项全部通过。未归入已知 flake、未改超时。
 
 Task 4: trusted desktop/phone entry routes plus current-owner desktop uploads; strict phone continuation foundation landed here. Bun 7 files / 178 tests passed, including revoked phone requests. Rust exact whitelist: 1 test passed / 5 filtered with CARGO_BUILD_JOBS=2 and process-only TAURI_CONFIG disabling externalBin resource packaging. Node initial routes run: 102 passed, one existing chunked-upload ECONNRESET during compile; isolated idle retry passed, complete Node suite remains final gate.
+
+
+桌面步骤5：6文件190项定向测试通过；真实 Chromium 使用隔离服务、SQLite 与确定性执行者，12个宽/窄窗口场景无横向溢出，无页面或HTTP错误。报告及13张截图保存在 `/private/var/folders/yc/y9bc_lbd69z5_3_dqbt5bn6c0000gn/T/cc-companion-browser-evidence-BZoeQy/`。根代理检查了740px摘录预览截图。此记录证明浏览器组件与隔离HTTP接线，不等同于完整Tauri主窗口、真实模型或手机真人验收。
+
+macOS「打开工作位置」仅向原生端传任务ID，由原生端读取daemon任务目录，检查绝对目录、路径链和本次inode再调用系统打开程序。7项新增Rust测试通过；连同工作台精确路由和body边界共11项通过，测试启动器为fixture未打开Finder。其他平台明确不支持；检查本次打开期间的目录身份，不声称核验创建以来的历史inode。

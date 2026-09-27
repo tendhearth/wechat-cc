@@ -138,16 +138,16 @@ expect(replayed.receipt.taskId).toBe(replayed.receipt.matterId)
 
 **Interfaces:** 新模块导出 createTaskEntry(deps)，返回 open(draft):Promise<EntryResult|null>。Draft={text,visibleMessages?:{role:'user'|'cc';text:string}[]}；UI内部管理requestId/draftId/materialSignature；deps提供既有API、附件控件和成功导航。converse.onDelegate改收Draft；旧“已有项目新建”继续原入口。
 
-- [ ] 写测试：预览默认不选聊天；带上最近五轮最多10条，error/system/pending不出现；发送输入只含所选摘录；取消保留文字；接受后仍在编辑的新稿不清；重复点击同请求；options catalog ID正确；受管任务归“随手交办”，原项目列表不多UUID项目。
+- [x] 写测试：预览默认不选聊天；带上最近五轮最多10条，error/system/pending不出现；发送输入只含所选摘录；取消保留文字；接受后仍在编辑的新稿不清；重复点击同请求；options catalog ID正确；受管任务归“随手交办”，原项目列表不多UUID项目。
 ~~~ts
 expect(initiallySelectedExcerpts).toEqual([])
 expect(selectedExcerpts).toHaveLength(10)
 expect(retainedNewDraft).toBe('再补一份要求')
 ~~~
-- [ ] 运行 `bun run test apps/desktop/src/modules/task-entry.test.ts apps/desktop/src/modules/converse.test.ts apps/desktop/src/modules/workbench-entry.test.ts`，确认新交办路径失败。
-- [ ] 实现独立预览模块和此刻/无项目空态入口。完整展示最终要求与材料；更多收起项目/执行设置；默认不可用保留草稿并显示原因。成功只按匹配回执清对应稿、打开原matter；详情可查看并打开受管位置。
-- [ ] 重跑本任务测试；运行 `bun scripts/workbench-companion-browser-smoke.ts`，检查宽/窄窗口、键盘焦点、取消返回、真实公开摘录，保存截图和结果于验收记录。
-- [ ] 提交：`feat: hand off owner requests from desktop`。
+- [x] 运行 `bun run test apps/desktop/src/modules/task-entry.test.ts apps/desktop/src/modules/converse.test.ts apps/desktop/src/modules/workbench-entry.test.ts`，确认新交办路径失败。
+- [x] 实现独立预览模块和此刻/无项目空态入口。完整展示最终要求与材料；更多收起项目/执行设置；默认不可用保留草稿并显示原因。成功只按匹配回执清对应稿、打开原matter；详情可查看并打开受管位置。
+- [x] 重跑本任务测试；运行 `bun scripts/workbench-companion-browser-smoke.ts`，检查宽/窄窗口、键盘焦点、取消返回、真实公开摘录，保存截图和结果于验收记录。
+- [x] 提交：`feat: hand off owner requests from desktop`。
 
 ### Task 6: 手机文字交办与回执恢复
 
@@ -218,6 +218,6 @@ expect(allEncryptedFrameByteLengths.every(n => n < 512 * 1024)).toBe(true)
 
 ## 自审结论与暂停点
 
-本计划覆盖设计的三个入口、事务/目录、默认执行者、聊天摘录、手机文字与材料、续接/草稿、权限/路由及真实验收。双方分工已由主人转达确认；本方第一批先行，ggshr9负责合dev和部署。产品代码与部署均未开始。
+本计划覆盖设计的三个入口、事务/目录、默认执行者、聊天摘录、手机文字与材料、续接/草稿、权限/路由及真实验收。双方分工已由主人转达确认；本方第一批先行，ggshr9负责合dev和部署。产品代码按本计划在独立分支实施；部署仍由整合者串行负责。
 
 实施中若发现无法在同一SQLite事务登记matter、现有恢复逻辑不能涵盖提交后崩溃、或已确认目录身份不能可靠恢复，应先收窄并修订相应设计与测试，再继续其依赖任务；不能用吞错、重复创建或自动删除来“打通流程”。
