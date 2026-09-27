@@ -33,7 +33,6 @@ import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
-import { stopCustomerReviewPolling } from "./modules/customer-review.js"
 import { initTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
 import { initConversePage } from "./modules/converse.js"
@@ -584,7 +583,6 @@ function switchPane(name) {
     // Stop the dialogue pane's 30s auto-refresh tick when leaving it
     // (mirrors the logs/sessions auto-refresh lifecycle).
     stopDialogueAutoRefresh()
-    stopCustomerReviewPolling()
   }
   if (name === "overview") {
     initConversePage(deps, { focus: focusConversation })
@@ -601,10 +599,10 @@ function switchPane(name) {
 
 function activateDialogueWorkspace() {
   // 后厨's 会话 view. 待办 is a top-level pane now and 客户回顾 is retired
-  // (2026-08-25 owner IA decisions) — no mode branching left here.
+  // (2026-08-25 owner IA decisions; module deleted 2026-09-27) — no mode
+  // branching left here.
   const dialogueRoot = document.getElementById("dialogue-root")
   if (dialogueRoot) dialogueRoot.hidden = false
-  stopCustomerReviewPolling()
   initDialoguePage(deps)
 }
 
@@ -1478,8 +1476,8 @@ async function boot() {
   // can take seconds, while the dashboard should remain immediately usable.
   void refreshWxvaultOnAppStart({ invoke })
     .then(result => {
-      // Log the skip reason too. A silent no-op here means customer review
-      // reads a stale archive, and "not-ready"/"disabled" is indistinguishable
+      // Log the skip reason too. A silent no-op here means 待办 / knowledge
+      // read a stale archive, and "not-ready"/"disabled" is indistinguishable
       // from success unless we say so.
       if (result.refreshed) console.info('[wxvault] startup refresh complete')
       else console.info(`[wxvault] startup refresh skipped: ${result.reason}`)
