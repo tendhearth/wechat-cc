@@ -222,19 +222,27 @@ export function detectDeveloperIdIdentity(spawnSync: SelfDeployDeps['spawnSync']
 /**
  * cli(`self deploy`)与自改流水线共用的那一层:探身份 + 找 entitlements.plist,
  * 结果原样喂给 `planSelfDeploy`。`disabled`(`--no-sign`)⇒ 连 security 都不问。
- * entitlements 不在(打包版没仓库)⇒ null,plan 判成不签,跟以前一模一样。
+ *
+ * entitlements.plist 找两处,先 repoRoot 再 `--binary` 旁边:打包版的 CLI
+ * (`wechat-cc self deploy`,手册里的标准回路)把 repoRoot 算成 .app 的 MacOS/
+ * 目录,那里没有这个文件 —— 2026-09-28 从 dev 首次部署时一步签名都没跑。而
+ * `--binary` 指的是 `<repo>/apps/desktop/src-tauri/binaries/wechat-cc-cli-…`,
+ * entitlements.plist 就在 binaries/ 的上一级。两处都没有 ⇒ null,plan 判成不签。
  */
 export function resolveSigningInputs(input: {
   repoRoot: string
   disabled: boolean
+  /** `--binary`(或计划算出的 newBinaryPath);缺省 ⇒ 只看 repoRoot。 */
+  binaryPath?: string | null
   spawnSync: SelfDeployDeps['spawnSync']
   exists: (p: string) => boolean
 }): { signingIdentity: DeveloperIdIdentity | null; entitlementsPath: string | null } {
   if (input.disabled) return { signingIdentity: null, entitlementsPath: null }
-  const entitlementsPath = posixJoin(input.repoRoot, 'apps', 'desktop', 'src-tauri', 'entitlements.plist')
+  const candidates = [posixJoin(input.repoRoot, 'apps', 'desktop', 'src-tauri', 'entitlements.plist')]
+  if (input.binaryPath) candidates.push(posixJoin(posixDirname(posixDirname(input.binaryPath)), 'entitlements.plist'))
   return {
     signingIdentity: detectDeveloperIdIdentity(input.spawnSync),
-    entitlementsPath: input.exists(entitlementsPath) ? entitlementsPath : null,
+    entitlementsPath: candidates.find((p) => input.exists(p)) ?? null,
   }
 }
 

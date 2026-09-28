@@ -67,7 +67,7 @@ const selfDeployCmd = defineCommand({
     // (boolean 取反落到 `sign:false`),两种拼法都认。
     const deps = defaultSelfDeployDeps()
     const noSign = (args as Record<string, unknown>)['no-sign'] === true || (args as Record<string, unknown>).sign === false
-    const signing = resolveSigningInputs({ repoRoot, disabled: noSign, spawnSync: deps.spawnSync, exists: existsSync })
+    const signing = resolveSigningInputs({ repoRoot, disabled: noSign, binaryPath: args.binary ?? null, spawnSync: deps.spawnSync, exists: existsSync })
 
     let plan
     try {

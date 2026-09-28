@@ -36,7 +36,7 @@ wechat-cc self deploy --json     # 机器可读
 
 **第一次跑要知道的事**:活着的 .app 从 ad-hoc 变成 Developer ID,系统当它是个新客户端,「完全磁盘访问」等授权要**再点一次**;之后就稳了。本地 `tauri build` 没导出 `APPLE_SIGNING_IDENTITY` 时出来的仍是 ad-hoc 包,下一次 `self deploy` 会把它重封回 Developer ID。证书有效期到 2027-02-01,到期前换一张(Team ID 不变,指定要求就不变,授权不掉)。
 
-打包版(`--binary` 必填那种)旁边没有 `entitlements.plist` ⇒ 不签,步骤里也不会出现 sign / seal。`--no-sign` 强制不签。
+`entitlements.plist` 找两处:先 repoRoot,再 `--binary` 所在 `binaries/` 的上一级 —— 打包版的 CLI(`wechat-cc self deploy`,也就是标准回路)repoRoot 是 .app 的 MacOS/,只有第二处能中。两处都没有 ⇒ 不签,步骤里也不会出现 sign / seal。`--no-sign` 强制不签。
 
 ## 回滚别把备份吃了(2026-09-18 复审)
 
