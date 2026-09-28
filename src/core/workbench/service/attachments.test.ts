@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb, type Db } from '../../../lib/db'
 import { Ref } from '../../../lib/lifecycle'
+import { createProviderRegistry } from '../../provider-registry'
 import { makeWorkbenchStore, type WorkbenchStore } from '../store'
 import type { Attachment } from '../attachments'
 import { removeTempDir } from '../../../lib/test-temp'
@@ -23,7 +24,7 @@ function setup(owner: string | null = 'owner') {
   const store: WorkbenchStore = makeWorkbenchStore(db)
   const state = makeRuntimeState()
   const log = vi.fn()
-  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn() }, deps: { ownerChatId: () => owner }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, log, now: Date.now, actions: new Ref<ServiceActions>('t') }
+  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn() }, deps: { ownerChatId: () => owner, registry: createProviderRegistry() }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, log, now: Date.now, actions: new Ref<ServiceActions>('t') }
   const domain = makeAttachmentsDomain(ctx)
   const task = (ownerChatId: string | null) => store.create({ title: '事', path: project, providerId: 'claude', ownerChatId })
   return { store, state, domain, task, log, project }
