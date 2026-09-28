@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const src = readFileSync(join(ROOT, 'src', 'daemon', 'bootstrap', 'index.ts'), 'utf8')
 
-const MAX_LINES = 1321
+const MAX_LINES = 1265
 const MAX_LET_NULL = 2   // cachedOperatorChatId, a2aServer
 
 describe('bootstrap/index.ts 只许变小', () => {

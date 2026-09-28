@@ -39,7 +39,7 @@ import { buildSystemPrompt } from '../../core/prompt-builder'
 import type { ProviderId } from '../../core/conversation'
 import { makeResolver } from '../../core/project-resolver'
 import { makeCanUseTool } from '../../core/permission-relay'
-import { capabilitiesFor, capabilityProviderIds, type PermissionMode } from '../../core/capability-matrix'
+import { capabilitiesFor, type PermissionMode } from '../../core/capability-matrix'
 import { formatInbound } from '../../core/prompt-format'
 import { makeMessagesStore } from '../../lib/messages-store'
 import type { Options } from '@anthropic-ai/claude-agent-sdk'
@@ -56,12 +56,11 @@ import { DEFAULT_CURSOR_MODEL } from '../../core/acp-cursor-chat'
 import { loadAccess, setSessionInvalidator } from '../../lib/access'
 import { loadCompanionConfig } from '../companion/config'
 import { resolveAdminChatId } from '../companion/resolve-admin'
-import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
-import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
-import { bundledPluginsDir, pluginDataDir } from '../plugins/paths'
+import { pluginDataDir } from '../plugins/paths'
 import { buildDelegateDispatch } from './delegate'
 import { makeSendAssistantText } from './fallback-reply'
 import { registerProviders } from './providers'
+import { wirePlugins } from './wire-plugins'
 import { wireSocial } from './wire-social'
 import { wireA2aServer } from './wire-a2a-server'
 import { wirePairing } from './wire-pairing'
@@ -88,9 +87,6 @@ import { makeGraphQueryApi } from '../../core/knowledge/graph-query'
 import { makeFactsApi } from '../../core/knowledge/facts'
 import { makePersonApi } from '../../core/knowledge/person'
 import { runKnowledgeCycle } from '../../core/knowledge/cycle'
-// JSON import — version field is read at module init. resolveJsonModule is
-// on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
-import selfPkg from '../../../package.json' with { type: 'json' }
 import type { BootstrapDeps, Bootstrap } from './types'
 export type { BootstrapDeps, Bootstrap } from './types'
 
@@ -203,6 +199,9 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // through this supervisor so a startup failure degrades that block to
   // "not configured" instead of aborting the whole daemon boot.
   const sup = deps.supervisor
+  // 各 wire-* 共用的上下文(BootstrapCtx);configuredAgent 在下面第 5 步才有,
+  // 之前的 wire 用 ctxBase,之后的用 ctx。
+  const ctxBase = { sup, log: deps.log, stateDir: deps.stateDir, db: deps.db }
 
   // Connection-health runtime (Task 7) — constructed FIRST and unconditionally,
   // no config gate, so it exists before anything that could report a failure:
@@ -293,67 +292,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     deps.log('BOOT', `claude binary: ${claudeBin}`)
   }
 
-  // RFC 03 §5 — standalone wechat-mcp stdio server. When deps.internalApi is
-  // wired, both providers receive a `wechat` MCP server spec that spawns
-  // the wechat-mcp child with token-auth env vars.
-  const wechatStdioForClaude: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'claude') : null
-  const wechatStdioForCodex: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'codex') : null
-
-  // RFC 03 P4 — delegate-mcp stdio server. Loaded alongside wechat-mcp so the
-  // primary agent can call `delegate_<peer>(prompt)` to consult the OTHER
-  // provider once. The peer is fixed per-spawn AND sourced from each provider's
-  // ProviderCapabilities.defaultPeer — the single declaration site, so adding a
-  // provider needs no edit here (its delegate spec is built iff it declares a
-  // defaultPeer). Replaces the old per-provider literals + a 2-provider ternary.
-  const delegateStdioByProvider: Partial<Record<ProviderId, McpStdioSpec>> = {}
-  if (deps.internalApi) {
-    for (const p of capabilityProviderIds()) {
-      const peer = capabilitiesFor(p).defaultPeer
-      if (peer) delegateStdioByProvider[p] = delegateStdioMcpSpec(deps.internalApi, peer)
-    }
-  }
-  const delegateStdioForClaude: McpStdioSpec | null = delegateStdioByProvider.claude ?? null
-  const delegateStdioForCodex: McpStdioSpec | null = delegateStdioByProvider.codex ?? null
-  const delegateStdioForCursor: McpStdioSpec | null = delegateStdioByProvider.cursor ?? null
-  const wechatStdioForCursor: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'cursor') : null
-  const delegateStdioForOpenai: McpStdioSpec | null = delegateStdioByProvider.openai ?? null
-  const wechatStdioForOpenai: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'openai') : null
-  const wechatStdioForGemini: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'gemini') : null
-  const wechatStdioForAgy: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'agy') : null
-
-  // Decoupled plugin lane — third-party MCP tool providers
-  // spawned as stdio children exactly like wechat/delegate, but discovered
-  // from `{stateDir}/plugins/<name>/` (drop-in, survives upgrades) or the
-  // bundled `plugins/` dir. wechat-cc never imports plugin code; the process
-  // boundary + MCP wire protocol are the only coupling, so a plugin can be
-  // any language. USER plugins default DISABLED (a manifest spawns a process
-  // = arbitrary code; enable via dashboard / plugins.json); BUNDLED default
-  // ENABLED. Unlike installUserMcp (which pollutes the human's global
-  // ~/.claude.json), this injects only into the daemon-spawned providers.
-  const loadedPlugins = loadPlugins({
-    stateDir: deps.stateDir,
-    bundledDir: bundledPluginsDir(),
-    hostVersion: selfPkg.version,
-    log: (m) => deps.log('BOOT', `plugin: ${m}`),
-  })
-  const pluginMcp = pluginMcpSpecs(loadedPlugins)
-  // Names of ACTUALLY-registered plugins (enabled AND ready — same gate
-  // pluginMcpSpecs applies above), daemon-global (computed once at boot, NOT
-  // per-chat), threaded into buildSystemPrompt's `knowledgePlugins` arg
-  // (knowledge-orchestration design Task 2). Deliberately == Object.keys(
-  // pluginMcp) rather than a looser `enabled`-only filter: a bundled
-  // knowledge plugin (e.g. wxsearch) defaults ENABLED but is commonly NOT
-  // READY (its healthcheck requires wxvault's decrypted output, which a
-  // fresh install/dev box won't have yet) — mentioning it in the prompt
-  // before its tools actually exist would send the agent at tools that
-  // don't exist. Unknown plugin names are harmless — buildSystemPrompt
-  // silently ignores anything outside KNOWN_KNOWLEDGE_PLUGINS.
-  const knowledgePluginNames = Object.keys(pluginMcp)
-  // Claude's SDK wants each server tagged `type: 'stdio'`; codex/cursor take
-  // the bare {command,args,env} shape (structurally identical to McpStdioSpec).
-  const pluginMcpForClaude = Object.fromEntries(
-    Object.entries(pluginMcp).map(([k, s]) => [k, { type: 'stdio' as const, ...s }]),
-  )
+  // MCP specs + plugin lane — ./wire-plugins.ts(2026-09-27 拆分)。
+  const {
+    wechatStdioForClaude, wechatStdioForCodex, wechatStdioForCursor, wechatStdioForOpenai, wechatStdioForGemini, wechatStdioForAgy,
+    delegateStdioByProvider, delegateStdioForClaude, delegateStdioForCodex, delegateStdioForCursor, delegateStdioForOpenai,
+    loadedPlugins, pluginMcp, knowledgePluginNames, pluginMcpForClaude,
+  } = wirePlugins(deps, ctxBase)
 
   // Pin a Claude model from agent-config.json (or fall back to a stable
   // full ID). Without this, the spawned Claude Code subprocess inherits
