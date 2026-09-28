@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openTestDb, type Db } from '../../../lib/db'
 import { Ref } from '../../../lib/lifecycle'
+import { createProviderRegistry } from '../../provider-registry'
 import { makeWorkbenchStore, type WorkbenchStore } from '../store'
 import { saveArtifactSnapshot } from '../artifacts'
 import { GIT_REVIEW_MIME, serializeGitReview, type GitReview, type ReviewFile } from '../git-review'
@@ -30,7 +31,7 @@ function setup() {
   const state = makeRuntimeState()
   const hub = { touched: vi.fn(), bumped: vi.fn() }
   const actions = new Ref<ServiceActions>('test-actions')
-  const ctx: ServiceCtx = { store, stateDir, state, hub, deps: { ownerChatId: () => 'owner' }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now, actions }
+  const ctx: ServiceCtx = { store, stateDir, state, hub, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry() }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now, actions }
   const domain = makeReviewDomain(ctx)
   const plant = (name: string, bytes: Buffer) => { saveArtifactSnapshot(store, task.id, { name, mime: GIT_REVIEW_MIME, bytes }, stateDir); return store.artifacts(task.id).find(a => a.name === name)!.id }
   const good = plant('代码变更-run1.json', serializeGitReview(review([file('src/a.ts'), file('src/big.bin', { kind: 'not_reviewed', reason: '二进制文件未展开', beforeSha256: undefined, afterSha256: undefined, diff: undefined })])))

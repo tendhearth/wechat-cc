@@ -174,10 +174,10 @@ export function makeWorkbenchService(opts: Options) {
   const state=makeRuntimeState()
   const {runsByTask,reservations,queue,runningText,collections,nativeDecisions,handoffDecisions}=state
   const actions=new Ref<ServiceActions>('workbench-actions')
-  const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped},deps:{ownerChatId:opts.ownerChatId},ensureAccepting,...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
+  const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped},deps:{ownerChatId:opts.ownerChatId,registry:opts.registry,...(opts.usage?{usage:opts.usage}:{})},ensureAccepting,...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
   const review=makeReviewDomain(ctx)
-  const materials=makeAttachmentsDomain(ctx)
-  const {uploads,attachmentScope,strictAttachmentScope,continuationAttachmentScope,selectAttachments,combinedAttachments,handoffAttachments}=materials
+  const attachmentsDomain=makeAttachmentsDomain(ctx)
+  const {uploads,attachmentScope,strictAttachmentScope,continuationAttachmentScope,selectAttachments,combinedAttachments,handoffAttachments}=attachmentsDomain
   /** 各执行者的额度/限流状态(provider-quota.ts):从失败里认出来、记住、再避开。 */
   const quota=makeQuotaRegistry(Date.now,opts.usage)
   /** 除了 exhaustedId 之外、已准入且没耗尽的原生执行者 —— "交给谁继续"的候选。 */
@@ -1679,12 +1679,12 @@ export function makeWorkbenchService(opts: Options) {
         throw error
       }
     },
-    uploadAttachment:materials.uploadAttachment,
-    uploadAttachmentChunk:materials.uploadAttachmentChunk,
-    attachmentUploadStatus:materials.attachmentUploadStatus,
-    discardAttachmentUpload:materials.discardAttachmentUpload,
-    readAttachment:materials.readAttachment,
-    discardAttachment:materials.discardAttachment,
+    uploadAttachment:attachmentsDomain.uploadAttachment,
+    uploadAttachmentChunk:attachmentsDomain.uploadAttachmentChunk,
+    attachmentUploadStatus:attachmentsDomain.attachmentUploadStatus,
+    discardAttachmentUpload:attachmentsDomain.discardAttachmentUpload,
+    readAttachment:attachmentsDomain.readAttachment,
+    discardAttachment:attachmentsDomain.discardAttachment,
     setArchived(id:string,archived:boolean):WorkbenchTaskView {
       if(typeof archived!=='boolean')throw new Error('invalid_request')
       const task=store.get(id)
