@@ -15,6 +15,8 @@ export default mergeConfig(base, defineConfig({
       'src/daemon/yi-ws-server.test.ts',
       'src/daemon/yi-ws-client.test.ts',
       'src/daemon/yi-e2e.test.ts',
+      // 同一个理由:wire-yi 的「端口被占 ⇒ degraded」在 Node 上会因为 Bun.serve 不存在而"碰巧"降级,测的不再是同一件事。
+      'src/daemon/bootstrap/wire-yi.test.ts',
     ],
   },
 }))
