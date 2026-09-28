@@ -6,10 +6,14 @@
 import type { Ref } from '../../../lib/lifecycle'
 import type { ProviderRegistry } from '../../provider-registry'
 import type { UsageSnapshot } from '../../subscription-usage'
-import type { WorkbenchStore } from '../store'
+import type { StoredTask, WorkbenchStore } from '../store'
+import type { NativeHistoryProvider, NativeHistoryReader } from '../native-history'
+import type { Continuation } from '../continuation'
+import type { QuotaState } from '../../provider-quota'
+import type { AgentExecutionChoice } from '../../agent-provider'
 import type { LiveInput } from '../live-inputs'
 import type { Active, WorkbenchRuntimeState } from './state'
-import type { InputMaterials, WorkbenchTaskView } from './types'
+import type { AdmittedProvider, InputMaterials, WorkbenchTaskView } from './types'
 
 export interface ServiceHub {
   /** store 的写方法把 seq 落库,但不知道 hub —— 这里把持久化 seq 送进去唤醒长轮询。 */
@@ -26,6 +30,12 @@ export interface ServiceActions {
   fallbackExecutor(exhaustedId:string):string|null
   /** 一件成果的字节与元数据(notices 的成果投递用)。 */
   artifact(id:string,artifactId:string):{name:string;mime:string;size:number;sha256:string;contentBase64:string}
+  /** quota 域:这家现在还能用吗;null = 能(admission 的 requireEntryInput 与 view 的 list 用)。 */
+  quotaExhausted(providerId:string):QuotaState|null
+  /** admission 域:任务的续接判定(view 的 detail 用)。 */
+  continuation(task:StoredTask,execution?:AgentExecutionChoice):Continuation
+  /** admission 域:已准入的执行者登记项(view 的 addProject 用);没登记 / 没能力 ⇒ 抛 unavailable_provider。 */
+  provider(id:string):AdmittedProvider
 }
 /** service 的外部依赖里域会用到的那几样(opts 的子集,只读);按需加,不整个 opts 透传。 */
 export interface ServiceDeps {
@@ -37,6 +47,12 @@ export interface ServiceDeps {
   usage?: (providerId: string) => UsageSnapshot | null
   /** 权限卡的等待上限(ms);缺省 WORKBENCH_PERMISSION_TIMEOUT_MS。 */
   permissionTimeoutMs?: number
+  /** 免审执行者的一次性确认(daemon 侧持久化);不传 ⇒ 免审执行者永远要求确认。 */
+  unattendedAck?: { get(): number | null; set(at: number): void }
+  /** 原生历史读取器(claude / codex):list 只报名字,native 域真读。 */
+  nativeHistory?: Partial<Record<NativeHistoryProvider, NativeHistoryReader>>
+  registeredProjects?: () => Array<{alias:string;path:string}>
+  defaultProvider?: string
 }
 export interface ServiceCtx {
   store: WorkbenchStore

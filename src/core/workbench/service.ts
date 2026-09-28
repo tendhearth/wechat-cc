@@ -5,7 +5,7 @@ import type {CreationReceipt} from './creation-receipts'
 import {normalizeInputRequestId,sameAttachments,type LiveInput} from './live-inputs'
 import type {Attachment} from './attachments'
 import { randomUUID } from 'node:crypto'
-import type { AgentEvent, AgentSession, AgentExecutionChoice, AgentModelCatalog, AgentRuntimeSnapshot } from '../agent-provider'
+import type { AgentEvent, AgentSession, AgentExecutionChoice, AgentRuntimeSnapshot } from '../agent-provider'
 import {executionFailureMessage,normalizeExecutionChoice,PROVIDER_EXECUTION_CHOICE,sameExecutionChoice} from './execution-settings'
 import type { ProviderRegistry } from '../provider-registry'
 import { TIER_PROFILES, sessionAuthEnv } from '../user-tier'
@@ -18,7 +18,7 @@ import {handoffToken,handoffTokenHash,validateHandoffInput,handoffArtifactText,h
 import {makeDeltaCoalescer} from './delta-coalescer'
 import {pathsConflict} from './scheduler'
 import { restartPreview, type Continuation, type RestartPreview } from './continuation'
-import {canResumeWorkbenchExecutor,isUnattendedExecutor,isWorkbenchExecutorCapabilities,isWorkbenchProviderId,requireWorkbenchInput,type WorkbenchExecutorCapabilities} from './executor-capabilities'
+import {isUnattendedExecutor,isWorkbenchExecutorCapabilities,isWorkbenchProviderId} from './executor-capabilities'
 import { makeRunPermissions, type PermissionDecision, type RunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
 import { findPathBlocker, type PathReservation, type WaitingFor } from './scheduler'
 import { classifyProviderError, type QuotaState } from '../provider-quota'
@@ -79,6 +79,8 @@ import { makeQuotaDomain } from './service/quota'
 import { makeNoticesDomain } from './service/notices'
 import { directoryIdentity } from './service/directory-identity'
 import { makeArtifactsDomain } from './service/artifacts'
+import { makeAdmissionDomain } from './service/admission'
+import { makeViewDomain } from './service/view'
 import type { ServiceActions, ServiceCtx } from './service/ctx'
 export type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
 import type { CreateWechatTask, TaskWaitingFor } from './wechat-types'
@@ -169,12 +171,16 @@ export function makeWorkbenchService(opts: Options) {
   const state=makeRuntimeState()
   const {runsByTask,reservations,queue,runningText,collections,nativeDecisions,handoffDecisions}=state
   const actions=new Ref<ServiceActions>('workbench-actions')
-  const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped},deps:{ownerChatId:opts.ownerChatId,registry:opts.registry,...(opts.usage?{usage:opts.usage}:{}),...(opts.permissionTimeoutMs!==undefined?{permissionTimeoutMs:opts.permissionTimeoutMs}:{})},ensureAccepting,...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
+  const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped},deps:{ownerChatId:opts.ownerChatId,registry:opts.registry,...(opts.usage?{usage:opts.usage}:{}),...(opts.permissionTimeoutMs!==undefined?{permissionTimeoutMs:opts.permissionTimeoutMs}:{}),...(opts.unattendedAck?{unattendedAck:opts.unattendedAck}:{}),...(opts.nativeHistory?{nativeHistory:opts.nativeHistory}:{}),...(opts.registeredProjects?{registeredProjects:opts.registeredProjects}:{}),...(opts.defaultProvider!==undefined?{defaultProvider:opts.defaultProvider}:{})},ensureAccepting,...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
   const review=makeReviewDomain(ctx)
   const attachmentsDomain=makeAttachmentsDomain(ctx)
   const {uploads,attachmentScope,strictAttachmentScope,continuationAttachmentScope,selectAttachments,combinedAttachments,handoffAttachments}=attachmentsDomain
   const quotaDomain=makeQuotaDomain(ctx)
   const {quota,fallbackExecutor}=quotaDomain
+  const admissionDomain=makeAdmissionDomain(ctx)
+  const {provider,requireInput,requireEntryInput,canResume,continuation,taskVersion}=admissionDomain
+  const viewDomain=makeViewDomain(ctx)
+  const {held,runtimeSnapshot,inputMode,isReplied,taskView}=viewDomain
   const noticesDomain=makeNoticesDomain(ctx)
   const {requestNotice,terminalReportBody,stageFinishedNotice,publishFinishedNotices}=noticesDomain
   const artifactsDomain=makeArtifactsDomain(ctx)
@@ -182,36 +188,6 @@ export function makeWorkbenchService(opts: Options) {
   store.recover()
   store.liveInputs.recover()
 
-  function provider(id: string) {
-    const entry=isWorkbenchProviderId(id)?opts.registry.get(id):null
-    if(!entry||!isWorkbenchExecutorCapabilities(entry.opts.workbench))throw new Error('unavailable_provider')
-    return entry as typeof entry&{opts:typeof entry.opts&{workbench:WorkbenchExecutorCapabilities}}
-  }
-  function requireInput(providerId:string,attachments:readonly unknown[],execution:AgentExecutionChoice,resume=false){
-    const entry=provider(providerId)
-    if(isUnattendedExecutor(entry.opts.workbench)&&(opts.unattendedAck?.get()??null)===null)throw new Error('unattended_ack_required')
-    requireWorkbenchInput(entry.opts.workbench,{attachments,execution,resume})
-    return entry
-  }
-  function requireEntryInput(providerId:string,attachments:readonly Attachment[],execution:AgentExecutionChoice,text:string){
-    const entry=requireInput(providerId,attachments,execution)
-    entry.opts.validateWorkbenchInput?.({text,attachments})
-    if(quota.exhausted(providerId))throw Error('provider_quota_exhausted')
-  }
-  function canResume(task:StoredTask):boolean {
-    try {
-      const entry=provider(task.providerId)
-      return !!task.sessionId&&canResumeWorkbenchExecutor(entry.opts.workbench)&&!!entry.opts.canResume(task.path,task.sessionId)
-    }
-    catch { return false }
-  }
-  function continuation(task:StoredTask,execution:AgentExecutionChoice=store.execution.choice(task.id)):Continuation {
-    const events=store.events(task.id)
-    if (!events.some(event => event.kind==='user' || event.kind==='text')) return {mode:'new'}
-    if (canResume(task)) return {mode:'resume'}
-    return {mode:'restart_required',restart:restartPreview(task,events,execution,store.execution.choice(task.id))}
-  }
-  function taskVersion(task:StoredTask){return snapshotHash(JSON.stringify({updatedAt:task.updatedAt,status:task.status,sessionId:task.sessionId,events:store.events(task.id),source:store.source(task.id)?.firstDispatchedAt,execution:store.execution.choice(task.id)}))}
   function nativeReader(id:string){const reader=opts.nativeHistory?.[id as NativeHistoryProvider];if(!reader)throw new Error('native_history_unsupported');return reader}
   async function currentNativePages(task:StoredTask,pages:ImportPage[]) {
     const call=historyDeadline(),key=Buffer.from(JSON.stringify({v:1,providerId:task.providerId,nativeId:store.source(task.id)!.nativeId})).toString('base64url')
@@ -236,52 +212,6 @@ export function makeWorkbenchService(opts: Options) {
   }
   function ensureAccepting() {
     if (state.stopping) throw new Error('workbench_stopping')
-  }
-  /** 当前占着文件夹的 run。 */
-  const held=()=>[...reservations.values()]
-  function waitingFor(running:Active):TaskWaitingFor|null {
-    if (running.state !== 'queued') return null
-    const earlier=queue.filter(item => item.order < running.order && item.state === 'queued')
-    const blocked=findPathBlocker(running,[...held(),...earlier])
-    if (!blocked) return null
-    const holder=runsByTask.get(blocked.taskId)
-    // 找不到持有者是不该发生的时序缝隙;宁可继续说「还在写」,也不能凭空报一个假的倒计时。
-    return {...blocked,holderWriting:!holder||!quiet(holder),closeInMs:holder?.idleClose?Math.max(0,holder.idleClose.at-Date.now()):null}
-  }
-  function runtimeSnapshot(running:Active|undefined):AgentRuntimeSnapshot|undefined {
-    const runtime=running?.session?.workbenchRuntime
-    return runtime?{...runtime.snapshot()}:undefined
-  }
-  function inputMode(running:Active):'steer'|'send'|'queue' {
-    return runtimeSnapshot(running)?.input??(running.session?.steer?'steer':'queue')
-  }
-  /** 本轮做完、会话闲着、没有子任务在写、也没有在等主人拍板 —— 只差主人下一句话。 */
-  function isReplied(running:Active):boolean {
-    if (running.cancelled||running.finishing||running.uncertain) return false
-    const snapshot=runtimeSnapshot(running)
-    return !!snapshot&&snapshot.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0
-      &&running.permissions.pending().length===0&&running.questions.pending().length===0
-  }
-  function phaseOf(task:Task, running:Active|undefined):WorkbenchPhase {
-    switch (task.status) {
-      case 'queued': return 'queued'
-      case 'running': case 'cancelling': return running&&isReplied(running)?'replied':'working'
-      case 'completed': return 'replied'
-      case 'failed': case 'cancelled': case 'interrupted': return task.status
-    }
-  }
-  function taskView(task:Task, includePermissions=false):WorkbenchTaskView {
-    const running=runsByTask.get(task.id)
-    const runtime=runtimeSnapshot(running)
-    return {
-      ...task,
-      phase:phaseOf(task,running),
-      ...(runtime?{runtime}:{}),
-      ...(!running&&TERMINAL_TASK_STATUSES.includes(task.status)&&store.source(task.id)?.firstDispatchedAt===null?{importedOnly:true}:{}),
-      canArchive:TERMINAL_TASK_STATUSES.includes(task.status) && !running && task.error!=='writer_not_closed',
-      waitingFor:running ? waitingFor(running) : null,
-      ...(includePermissions ? { pendingPermissionCount:running?.permissions.pending().length ?? 0,pendingQuestionCount:running?.questions.pending().length ?? 0 } : {}),
-    }
   }
   function revokeCredentials(running:Active) {
     if (!running.credentialsMinted || running.credentialsRevoked) return
@@ -1053,11 +983,7 @@ export function makeWorkbenchService(opts: Options) {
         throw error
       }
     },
-    projects(){
-      const ownerChatId=opts.ownerChatId();if(!ownerChatId)return[]
-      const providers=opts.registry.list().filter(id=>isWorkbenchProviderId(id)&&isWorkbenchExecutorCapabilities(opts.registry.get(id)?.opts.workbench))
-      return makeProjectCatalog({ownerChatId,registered:opts.registeredProjects?.()??[],known:store.ownedProjects(ownerChatId,providers),providers,defaultProvider:opts.defaultProvider})
-    },
+    projects:viewDomain.projects,
     createWechat(input:CreateWechatTask):CreationReceipt {
       ensureAccepting()
       if(!input.ownerChatId||opts.ownerChatId()!==input.ownerChatId||!input.accountId?.trim())throw Error('invalid_wechat_identity')
@@ -1083,14 +1009,7 @@ export function makeWorkbenchService(opts: Options) {
       },{matterId:safeOriginMatterId(input.ownerChatId),messageId:input.originMessageId??null})
       return receipt
     },
-    attention(){
-      const tasks=Array.from(runsByTask.values()).flatMap(run=>{
-        const permissions=run.permissions.pending(),questions=run.questions.pending()
-        if(!permissions.length&&!questions.length)return[]
-        return[{id:run.taskId,title:run.title,providerId:run.task.providerId,pendingPermissionCount:permissions.length,pendingQuestionCount:questions.length,attentionKey:JSON.stringify([...permissions,...questions].map(q=>q.id).sort())}]
-      })
-      return{tasks}
-    },
+    attention:viewDomain.attention,
     resolveAnswer(id:string,requestId:string,answers:unknown){
       const running=runsByTask.get(id)
       if(!running||running.cancelled||running.finishing||!running.questions.resolve(requestId,answers))throw Error('question_stale')
@@ -1352,61 +1271,17 @@ export function makeWorkbenchService(opts: Options) {
       const managedTaskId=store.sourceByIdentity(providerId,nativeId)?.taskId??store.taskByNativeIdentity(providerId,nativeId)?.id
       return {...preview,...(managedTaskId?{managedTaskId}:{})}
     },
-    addProject(input:{path:string;name?:string;providerId:string}) {
-      if(typeof input.path!=='string'||input.path.length>4096||typeof input.providerId!=='string'||(input.name!==undefined&&(typeof input.name!=='string'||!input.name.trim()||input.name.length>100)))throw Error('invalid_request')
-      provider(input.providerId)
-      return store.addProject({...input,path:canonicalProject(input.path)})
-    },
-    list(query:WorkbenchListQuery={}) {
-      const providers=opts.registry.list().flatMap(id=>{const p=opts.registry.get(id);return isWorkbenchProviderId(id)&&p&&isWorkbenchExecutorCapabilities(p.opts.workbench)?[{id,displayName:p.opts.displayName,capabilities:structuredClone(p.opts.workbench),quota:quota.exhausted(id),usage:opts.usage?.(id)??null}]:[]})
-      const result=store.listPage(query)
-      const projects=store.projects()
-      const projectProviders=Object.fromEntries(projects.map(project=>[project.path,store.projectProvider(project.path)??project.providerId]))
-      return {projects,tasks:result.tasks.map(task => taskView(task,true)),page:result.page,projectProviders,providers,historyProviders:Object.keys(opts.nativeHistory??{}),defaultProvider:providers.find(p=>p.id===opts.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!opts.ownerChatId(),unattendedAcknowledgedAt:opts.unattendedAck?.get()??null}
-    },
-    async modelCatalog(providerId:string,path:string):Promise<AgentModelCatalog>{
-      const entry=provider(providerId),canonical=canonicalProject(path)
-      if(!entry.opts.workbench.features.modelCatalog||!entry.provider.modelCatalog)throw Error('model_catalog_unavailable')
-      // Discovery providers own one bounded lifecycle, including process cleanup.
-      // A second race here would abandon (rather than cancel) their work.
-      try{return await entry.provider.modelCatalog({alias:'workbench:model-catalog',path:canonical})}
-      catch(error){throw Error(error instanceof Error&&error.message==='model_catalog_invalid'?'model_catalog_invalid':'model_catalog_unavailable')}
-    },
-    prepareContinuation(id:string,executionChoice?:unknown):Continuation{
-      ensureAccepting()
-      const task=store.get(id)
-      if(runsByTask.has(id)||!TERMINAL_TASK_STATUSES.includes(task.status))throw Error('workbench_busy')
-      if(task.archivedAt!==null)throw Error('workbench_archived')
-      if(store.source(id)?.firstDispatchedAt===null)throw Error('external_close_confirmation_required')
-      return continuation(task,normalizeExecutionChoice(executionChoice,store.execution.choice(id)))
-    },
+    addProject:viewDomain.addProject,
+    list:viewDomain.list,
+    modelCatalog:admissionDomain.modelCatalog,
+    prepareContinuation:admissionDomain.prepareContinuation,
     // 不标 async:内部 wechatControl(见文件末尾)按同步 Actions 接口拿它,标了 async 会把
     // 返回类型变成 Promise 而破坏那个结构化类型;外部调用方(HTTP 长轮询、测试)照样能 await 一个普通值。
-    detail(id:string,options:{since?:number}={}) {
-      const detail=store.detail(id,options),running=runsByTask.get(id)
-      const runtime=runtimeSnapshot(running)
-      const subscription=store.wechatNotifications.subscription(id)
-      const wechatNotifications={enabled:!!subscription?.enabled,notices:store.wechatNotifications.list(id).slice(-10).map(({id,runId,kind,status,reason,createdAt})=>({id,runId,kind,status,reason,createdAt}))}
-      const result={...detail,wechatNotifications,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
-        // The timeline stays live through cancellation and process cleanup;
-        // accepting supplemental input is a separate, narrower capability.
-        ...(running?{runId:running.identity}:{}),
-        ...(running&&!running.cancelled&&!running.finishing&&!running.uncertain?{inputMode:inputMode(running)}:{}),
-        permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:continuation(store.get(id)),...(store.source(id)?.firstDispatchedAt===null?{requiresExternalClose:true}:{})} : {})}
-      touched(id,detail.version)
-      return result
-    },
+    detail:viewDomain.detail,
     create(input:CreateTask):WorkbenchTaskView {
       return createTask(input)
     },
-    /** 免审执行者的一次性确认;不接 `unattendedAck`(老接线)时永远拒绝 —— 免审执行者只能停在
-     *  「要求确认」,不能悄悄放行。 */
-    acknowledgeUnattended():number {
-      if(!opts.unattendedAck)throw new Error('unattended_ack_unavailable')
-      const at=Date.now()
-      opts.unattendedAck.set(at)
-      return at
-    },
+    acknowledgeUnattended:admissionDomain.acknowledgeUnattended,
     continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials,attachmentPolicy?:'owner'):WorkbenchTaskView {
       ensureAccepting()
       const attachments=selectAttachments(options,id,attachmentPolicy)
@@ -1518,7 +1393,7 @@ export function makeWorkbenchService(opts: Options) {
       },
     },
   }
-  actions.set({submitInput:(id,input,policy)=>service.submitInput(id,input,policy),continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),isReplied,fallbackExecutor,artifact:(id,artifactId)=>service.artifact(id,artifactId)})
+  actions.set({submitInput:(id,input,policy)=>service.submitInput(id,input,policy),continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),isReplied,fallbackExecutor,artifact:(id,artifactId)=>service.artifact(id,artifactId),quotaExhausted:quotaDomain.quotaExhausted,continuation,provider})
   const wechatControl=makeWechatWorkbenchControl({store,ownerChatId:opts.ownerChatId,actions:service})
   return service
 }

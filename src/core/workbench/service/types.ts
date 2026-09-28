@@ -3,6 +3,8 @@ import type { AgentRuntimeSnapshot } from '../../agent-provider'
 import type { Task } from '../store'
 import type { EntryReceipt } from '../task-entry'
 import type { TaskWaitingFor } from '../wechat-types'
+import type { ProviderRegistry } from '../../provider-registry'
+import type { WorkbenchExecutorCapabilities } from '../executor-capabilities'
 
 export interface InputMaterials {attachmentIds?:string[];draftId?:string;execution?:unknown}
 export interface CreateTask extends InputMaterials { title?: string; path: string; providerId: string; text: string }
@@ -14,3 +16,7 @@ export interface CreateTask extends InputMaterials { title?: string; path: strin
 export type WorkbenchPhase='queued'|'working'|'replied'|'failed'|'cancelled'|'interrupted'
 export interface WorkbenchTaskView extends Task { phase:WorkbenchPhase; importedOnly?:boolean; canArchive:boolean; waitingFor: TaskWaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number; runtime?:AgentRuntimeSnapshot }
 export type EntryResult = {receipt: EntryReceipt; task: WorkbenchTaskView}
+
+/** 已准入的执行者登记项:登记处的条目 + 一定带 workbench 能力(admission.provider 的返回;放这里是为了 ctx.ts 能引用而不 import admission 成环)。 */
+type RegistryEntry = NonNullable<ReturnType<ProviderRegistry['get']>>
+export type AdmittedProvider = RegistryEntry & {opts:RegistryEntry['opts']&{workbench:WorkbenchExecutorCapabilities}}
