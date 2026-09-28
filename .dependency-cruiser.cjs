@@ -33,6 +33,20 @@ module.exports = {
       to: { circular: true },
     },
     {
+      name: 'workbench-service-no-circular',
+      severity: 'error',
+      comment: '2026-09-28 workbench service 拆分:service.ts 与 service/<domain>.ts 之间不许有环(type-only 也算);域只认 ctx,动作走 ctx.actions 晚绑定。store 层那 4 个环另立项,这里不管。',
+      from: { path: '^src/core/workbench/service(/|\\.ts$)' },
+      to: { circular: true, viaOnly: { path: '^src/core/workbench/(service(/|\\.ts$)|wechat-control\\.ts$)' } },
+    },
+    {
+      name: 'wechat-control-must-not-link-service',
+      severity: 'error',
+      comment: '2026-09-28:wechat-control.ts 需要的三个类型在 wechat-types.ts;回头 import ./service 就是环。',
+      from: { path: '^src/core/workbench/wechat-control\\.ts$' },
+      to: { path: '^src/core/workbench/service\\.ts$' },
+    },
+    {
       name: 'bun-builtins-only-in-runtime',
       severity: 'error',
       comment: 'Bun 专属模块(bun:sqlite / bun:ffi …)只许出现在 src/lib/runtime/;别处走适配层,保住换运行时的出口(2026-09-16)。测试暂不受限。',

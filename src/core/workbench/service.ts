@@ -136,22 +136,16 @@ interface Active extends PathReservation {
   credentialsMinted: boolean
   credentialsRevoked: boolean
 }
+export type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
+import type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
 export interface InputMaterials {attachmentIds?:string[];draftId?:string;execution?:unknown}
 export interface CreateTask extends InputMaterials { title?: string; path: string; providerId: string; text: string }
-export interface CreateWechatTask {ownerChatId:string;accountId:string;requestId:string;commandHash:string;projectId:string;providerId?:string;text:string;originMessageId?:string}
-export interface SendWechatArtifact {ownerChatId:string;accountId:string;requestId:string;commandHash:string;taskId:string;artifactId:string}
 /**
  * 主人眼里的进度,两家执行者一致。持久化的 status 记的是这条 run 的生命周期
  * (Claude 会话保留时它永远是 running,Codex 自行收尾后是 completed),而主人要问的
  * 是「本轮做完没有、还能不能接着说」—— 那是 replied,与进程留不留无关。
  */
 export type WorkbenchPhase='queued'|'working'|'replied'|'failed'|'cancelled'|'interrupted'
-/** 等待行给主人看的那份:除了「挡路的是谁、为什么」,还要说清「挡路的那位是不是已经答复、
- *  是不是正数着秒自己让开」——不然「答复完了」和「文件夹空了」这两件事在等待行里还是分不开
- *  (docs/superpowers/specs/2026-09-21-one-folder-one-session-design.md，任务 2 的由来)。
- *  `holderWriting=false` 且 `closeInMs` 不是 null 时,才是「快让开了,可以现在就收工」那句话
- *  该出现的时候;`writer_not_closed` 那种 holder 永远不安静,这两个字段用不上也盖不掉老文案。 */
-export interface TaskWaitingFor extends WaitingFor { holderWriting: boolean; closeInMs: number | null }
 export interface WorkbenchTaskView extends Task { phase:WorkbenchPhase; importedOnly?:boolean; canArchive:boolean; waitingFor: TaskWaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number; runtime?:AgentRuntimeSnapshot }
 export type EntryResult = {receipt: EntryReceipt; task: WorkbenchTaskView}
 
