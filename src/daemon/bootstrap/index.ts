@@ -51,6 +51,7 @@ import { wireInstructions } from './wire-instructions'
 import { wireCoordinator } from './wire-coordinator'
 import { wireA2a } from './wire-a2a'
 import { wireYi } from './wire-yi'
+import { wireMailboxDeps } from './wire-mailbox-deps'
 import { Ref } from '../../lib/lifecycle'
 import { resolveClaudeBinary, hydrateClaudeAuthEnvFromUserSettings } from './claude-env'
 import { wireSocial } from './wire-social'
@@ -370,27 +371,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     log: deps.log,
   }))
 
-  // Content-blind mailbox transport (sub-project B, Task 8) — the poller's
-  // deps, constructed only when social wiring is live AND at least one relay
-  // is configured. main.ts mounts `registerMailboxPoller(mailboxPollerDeps)`
-  // on the companion scheduler iff this is present; otherwise the feature
-  // stays fully inert (no poll timer, no relay traffic). I1: `onMailboxLetter`
-  // is `socialWiring.onMailboxLetter` (own-channel-only) — the only inbound
-  // arm a bearer-less mailbox drop may reach.
-  const mailboxRelays = configuredAgent.mailbox_relays ?? []
-  const mailboxPollerDeps = (configuredAgent.social_enabled && mailboxRelays.length > 0 && socialWiring.onMailboxLetter)
-    ? {
-        stateDir: deps.stateDir,
-        a2aRegistry,
-        onMailboxLetter: socialWiring.onMailboxLetter,
-        relays: mailboxRelays,
-        // Re-checked at every tick (mtime-cached read) so a `/set` toggle of
-        // social_enabled takes effect without a daemon restart, same posture
-        // as the companion schedulers' shouldRun gates.
-        shouldRun: () => readAgentConfig().social_enabled === true,
-        log: deps.log,
-      }
-    : undefined
+  // mailbox 轮询器 deps — ./wire-mailbox-deps.ts(2026-09-27 拆分)。
+  const mailboxPollerDeps = wireMailboxDeps(ctx, { a2aRegistry, onMailboxLetter: socialWiring.onMailboxLetter, readAgentConfig })
 
   // 乙 v2 — ./wire-yi.ts(2026-09-27 拆分);经 sup.start('yi')。
   const yiHub = await wireYi(ctx, { a2aRegistry, dispatchDelegate })
