@@ -294,8 +294,8 @@ interface Harness {
   codesignCalls: Array<{ args: string[]; sidecarContentAtCall: string }>
   /** Turn signing on (plan.signing) with a fake identity + entitlements file. */
   enableSigning(): void
-  /** Make `codesign` fail for the sidecar ('sidecar') or the .app ('app'). */
-  failCodesign(which: 'sidecar' | 'app'): void
+  /** Make `codesign` fail for the sidecar ('sidecar'), every .app seal ('app'), or only the first .app seal ('app-once'). */
+  failCodesign(which: 'sidecar' | 'app' | 'app-once'): void
   /** The freshly signed `<sidecar>.new` dies on `--version` (hardened runtime without the right entitlements). */
   killSignedSidecar(): void
 }
@@ -347,7 +347,7 @@ function makeHarness(): Harness {
   let alwaysUnhealthy = false
   let brokenCurrentSidecar = false
   const codesignCalls: Array<{ args: string[]; sidecarContentAtCall: string }> = []
-  let codesignFails: 'sidecar' | 'app' | null = null
+  let codesignFails: 'sidecar' | 'app' | 'app-once' | null = null
   let signedSidecarDies = false
   const entitlementsPath = join(dir, 'entitlements.plist')
   const appPath = join(dir, 'app')
@@ -383,7 +383,8 @@ function makeHarness(): Harness {
         codesignCalls.push({ args: [...args], sidecarContentAtCall: readFileSync(sidecarPath, 'utf8') })
         const target = args[args.length - 1]!
         const isApp = target === appPath
-        if ((codesignFails === 'app' && isApp) || (codesignFails === 'sidecar' && !isApp)) {
+        const appSealsSoFar = codesignCalls.filter((c) => c.args.at(-1) === appPath).length
+        if ((codesignFails === 'app' && isApp) || (codesignFails === 'sidecar' && !isApp) || (codesignFails === 'app-once' && isApp && appSealsSoFar === 1)) {
           return { status: 1, stdout: '', stderr: `${target}: errSecInternalComponent` }
         }
         return { status: 0, stdout: '', stderr: '' }
@@ -737,23 +738,44 @@ describe('executeSelfDeploy', () => {
     expect(h.kickstartCalls).toBe(0)
   })
 
-  it('.app 重封失败 ⇒ 不 kickstart 新的,直接回滚(回滚也重封一次)', async () => {
+  // 评审(2026-09-28,minor):seal 失败发生在 kickstart 之前 —— 老 daemon 还在跑、一次
+  // 都没被打断。所以这不是「回滚」而是「部署没发生」:把 .prev 的字节换回来、重封,
+  // 不 kickstart;`--no-rollback` 也一样(那个开关管的是健康门之后的事)。以前走回滚
+  // 路会白白重启两次,而 --no-rollback 时会把一个没验过的 sidecar 留在盘上。
+  it('.app 重封失败 ⇒ 部署没发生:换回 .prev、重封、不 kickstart', async () => {
     const h = harness()
     h.enableSigning()
-    h.failCodesign('app')
+    h.failCodesign('app-once')
 
     const result = await executeSelfDeploy(h.plan, h.deps)
 
     expect(result.ok).toBe(false)
+    expect(result.exitCode).toBe(1)
     expect(result.rolledBack).toBe(true)
-    const names = result.steps.map((s) => s.name)
-    expect(names).toEqual(['preflight', 'stage', 'sign', 'backup', 'swap', 'seal', 'rollback_swap', 'rollback_seal', 'rollback_restart', 'rollback_health'])
+    expect(result.steps.map((s) => s.name)).toEqual(['preflight', 'stage', 'sign', 'backup', 'swap', 'seal', 'restore_swap', 'restore_seal'])
     expect(result.steps.find((s) => s.name === 'seal')!.ok).toBe(false)
+    expect(result.steps.find((s) => s.name === 'restore_seal')!.ok).toBe(true)
     expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
-    expect(h.kickstartCalls).toBe(1)
-    // sidecar sign, app seal (failed), app re-seal on rollback (also fails here — recorded, not fatal)
+    expect(h.kickstartCalls).toBe(0)
     expect(h.codesignCalls.map((c) => c.args.at(-1))).toEqual([h.plan.tmpPath, h.plan.signing!.appPath, h.plan.signing!.appPath])
-    expect(result.steps.find((s) => s.name === 'rollback_seal')!.ok).toBe(false)
+    expect(h.codesignCalls[2]!.sidecarContentAtCall).toBe('OLD_BINARY_CONTENT')
+    expect(result.diagnostics).toBeUndefined()
+  })
+
+  it('.app 重封失败 + --no-rollback:同样换回 .prev、不 kickstart(盘上不留没验过的 sidecar)', async () => {
+    const h = harness()
+    h.enableSigning()
+    h.plan.rollback = false
+    h.failCodesign('app')
+
+    const result = await executeSelfDeploy(h.plan, h.deps)
+
+    expect(result.exitCode).toBe(1)
+    expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+    expect(h.kickstartCalls).toBe(0)
+    // the re-seal fails too here — recorded, the old bytes are back regardless
+    expect(result.steps.find((s) => s.name === 'restore_seal')!.ok).toBe(false)
+    expect(result.rolledBack).toBe(true)
   })
 
   it('健康门不过回滚时,换回 .prev 后 .app 再重封一次', async () => {

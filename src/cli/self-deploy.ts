@@ -414,27 +414,44 @@ export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDe
   }
 
   // 4b. seal — re-sign the whole .app now that the new sidecar sits inside
-  // it. Everything past this point runs with the NEW binary already on
-  // disk, so every failure from here rolls back (unless the caller opted
-  // out); a failed seal skips the kickstart and goes straight there.
-  const seal = plan.signing ? sealApp(plan.signing, deps) : null
-  if (seal) steps.push(seal)
-
-  // 5 + 6. restart + health gate.
-  let restart: SelfDeployStep | null = null
-  let health: SelfDeployStep | null = null
-  if (!seal || seal.ok) {
-    const kickstartAt = deps.now()
-    restart = kickstart(deps, plan.serviceTarget)
-    steps.push(restart)
-    if (restart.ok) {
-      deps.log(`waiting for health check (up to ${plan.healthTimeoutMs}ms)...`)
-      health = await waitForHealth(plan, deps, kickstartAt, plan.healthTimeoutMs, version)
-      steps.push(health)
+  // it. A failed seal happens BEFORE any kickstart: the old daemon is still
+  // running, untouched. So this is not a rollback but an aborted deploy —
+  // put the `.prev` bytes back (same copy+rename), re-seal, never restart.
+  // `plan.rollback` doesn't apply here (it governs the health gate, i.e.
+  // after a restart); honouring it would leave an unvalidated sidecar on
+  // disk for the next respawn to pick up.
+  if (plan.signing) {
+    const seal = sealApp(plan.signing, deps)
+    steps.push(seal)
+    if (!seal.ok) {
+      let restored = false
+      try {
+        swapBinary(deps, plan.prevPath, plan.tmpPath, plan.sidecarPath)
+        steps.push({ name: 'restore_swap', ok: true })
+        restored = true
+      } catch (err) {
+        try { deps.fs.unlink(plan.tmpPath) } catch { /* best-effort tmp cleanup */ }
+        steps.push({ name: 'restore_swap', ok: false, detail: errMsg(err) })
+      }
+      steps.push({ ...sealApp(plan.signing, deps), name: 'restore_seal' })
+      return { ok: false, exitCode: 1, steps, version, rolledBack: restored }
     }
   }
 
-  if (restart?.ok && health?.ok) {
+  // 5 + 6. restart + health gate. Everything past this point runs with the
+  // NEW binary already on disk, so every failure from here rolls back
+  // (unless the caller opted out).
+  const kickstartAt = deps.now()
+  const restart = kickstart(deps, plan.serviceTarget)
+  steps.push(restart)
+  let health: SelfDeployStep | null = null
+  if (restart.ok) {
+    deps.log(`waiting for health check (up to ${plan.healthTimeoutMs}ms)...`)
+    health = await waitForHealth(plan, deps, kickstartAt, plan.healthTimeoutMs, version)
+    steps.push(health)
+  }
+
+  if (restart.ok && health?.ok) {
     return { ok: true, exitCode: 0, steps, version }
   }
 
