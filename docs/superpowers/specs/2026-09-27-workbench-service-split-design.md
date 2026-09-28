@@ -2,7 +2,7 @@
 
 日期:2026-09-27。状态:**实施中**(2026-09-28)。Codex #129 已合,基线改为 dev `6c455751`;§1 按新行号重画在 [`plans/2026-09-28-workbench-service-split-pr1.md`](../plans/2026-09-28-workbench-service-split-pr1.md),PR 1(地基 types/state/ctx + review 域 + 断环 + 棘轮)见该计划。下文 §1 行号仍是 39cf7f5f 的,只作域划分参考。同批:[cli 拆分](2026-09-27-cli-split-design.md)、[bootstrap 拆分](2026-09-27-bootstrap-split-design.md)。
 
-**目标:** `makeWorkbenchService`(201-1822,1622 行,64 个内函数,11 项共享可变状态)拆成 `src/core/workbench/service/<domain>.ts` 若干模块,共享一个**显式**的 `ServiceCtx`;`service.ts` 只剩组装与 public 对象。20 份 `service-*.test.ts` **一行不改、每步全绿**。顺手断掉 `wechat-control.ts ↔ service.ts` 的环,把 workbench 目录的 `no-circular` 从 warn 升 error。
+**目标:** `makeWorkbenchService`(201-1822,1622 行,64 个内函数,11 项共享可变状态)拆成 `src/core/workbench/service/<domain>.ts` 若干模块,共享一个**显式**的 `ServiceCtx`;`service.ts` 只剩组装与 public 对象。20 份 `service-*.test.ts` **一行不改、每步全绿**。顺手断掉 `wechat-control.ts ↔ service.ts` 的环,把 service 族的 `no-circular` 升 error(整个 workbench 目录的等 store 层环另修,见 §5)。
 
 **做 · 不做:** 做「闭包拆模块 + 显式 ctx」· 不做「改成 class」(仓库风格是闭包,没收益)· 不做「域之间走事件总线」(会把 `execute` 必须看见的耦合藏起来)· 不做任何行为变化。
 
@@ -57,7 +57,7 @@ core/workbench/wechat-types.ts        # CreateWechatTask / SendWechatArtifact / 
 
 按耦合从低到高,**一个域一个 PR**(每个 PR 都是行为不变的纯搬家,可单独评审、单独合):
 
-1. `wechat-types.ts` + review 域(自包含,只读 `runsByTask` 与 `isReplied`)—— 顺手断环,depcruise `no-circular` 对 `src/core/workbench/` 升 error。
+1. `wechat-types.ts` + review 域(自包含,只读 `runsByTask` 与 `isReplied`)—— 顺手断环;depcruise 只对 service 族(`service.ts`、`service/`、`wechat-control.ts`)升 error(PR 1 #132 已做),整个 `src/core/workbench/` 升 error 等 §4 提到的 store 层 4 个环另修之后(与 §5 一致)。
 2. attachments 域。
 3. quota 域。
 4. notices 域(含 wechat 投递与 `createWechat`)。

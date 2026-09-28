@@ -78,6 +78,7 @@ interface Options {
 import { makeRuntimeState, type Active, type AcceptedContinuation } from './service/state'
 import { Ref } from '../../lib/lifecycle'
 import { makeReviewDomain } from './service/review'
+import { makeAttachmentsDomain } from './service/attachments'
 import type { ServiceActions, ServiceCtx } from './service/ctx'
 export type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
 import type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
@@ -140,27 +141,6 @@ export function makeWorkbenchService(opts: Options) {
   const touched = (id: string, seq?: number) => { try { changes.publish(id, seq ?? store.version(id)) } catch { /* 信号丢了只是多等一轮 */ } }
   /** 非 store 状态变化:先落库拿新 seq 再唤醒。bump 本身可能抛(任务不存在),别让它冒进调用方的 finally/catch。 */
   const bumped = (id: string) => { try { touched(id, store.bump(id)) } catch { /* 信号丢了只是多等一轮 */ } }
-  let materialUploads:ReturnType<typeof store.attachmentUploads>|undefined
-  const uploads=()=>materialUploads??=store.attachmentUploads({stateDir:opts.stateDir,ownerChatId:opts.ownerChatId,onTransaction:event=>opts.log?.('attachment-upload',`${event.operation} lock_ms=${event.durationMs.toFixed(1)}`)})
-  const attachmentScope=()=>{const ownerKey=opts.ownerChatId();return ownerKey?{ownerKey,allowLegacyUnbound:true}:undefined}
-  const strictAttachmentScope=(taskId?:string)=>{
-    const ownerKey=opts.ownerChatId()
-    if(!ownerKey)throw Error('invalid_entry_owner')
-    if(taskId&&store.get(taskId).ownerChatId!==ownerKey)throw Error('attachment_scope')
-    return {ownerKey}
-  }
-  const continuationAttachmentScope=(taskId:string,ids:unknown)=>{
-    const scope=strictAttachmentScope()
-    // Configured owners may continue pre-owner tasks with text; this never claims materials or changes ownership.
-    if(Array.isArray(ids)&&ids.length===0&&store.get(taskId).ownerChatId===null)return undefined
-    if(store.get(taskId).ownerChatId!==scope.ownerKey)throw Error('attachment_scope')
-    return scope
-  }
-  const selectAttachments=(input:InputMaterials={},taskId?:string,policy?:'owner')=>{
-    const ids=input.attachmentIds??[]
-    const scope=policy&&taskId?continuationAttachmentScope(taskId,ids):policy?strictAttachmentScope():input.attachmentIds?.length?attachmentScope():undefined
-    return store.attachments.select(ids,taskId,input.draftId,scope)
-  }
   let managedWorkspaces:ManagedWorkspaces|undefined
   const managed=()=>{
     if(!opts.managedWorkspaceRoot)throw Error('entry_not_wired')
@@ -174,21 +154,6 @@ export function makeWorkbenchService(opts: Options) {
     const task=store.get(record.taskId)
     if(task.ownerChatId!==record.ownerKey)throw Error('invalid_entry_owner')
     return{receipt:{requestId:record.requestId,taskId:record.taskId,matterId:record.matterId,runId:record.runId,acceptedAt:record.acceptedAt},task:taskView(publicTask(task))}
-  }
-  function combinedAttachments(current:readonly Attachment[],previous:readonly Attachment[]=[]){
-    const unique=new Map<string,Attachment>()
-    for(const a of [...previous,...current])unique.set(a.id,{...a})
-    const refs=[...unique.values()]
-    if(refs.length>8||refs.reduce((n,a)=>n+a.size,0)>24*1024*1024)throw Error('invalid_attachment_context_limit')
-    return refs
-  }
-  function handoffAttachments(refs:AttachmentSelection[],expectedTaskId:string){
-    const files=store.attachments.select(refs.map(a=>a.attachmentId),expectedTaskId)
-    for(let i=0;i<refs.length;i++){
-      if(refs[i]!.taskId!==expectedTaskId||refs[i]!.sha256!==files[i]!.sha256)throw Error('invalid_handoff_attachment')
-      store.attachments.read(expectedTaskId,refs[i]!.attachmentId,opts.stateDir)
-    }
-    return files
   }
   const autoContinueBlocked=new Set<string>()
   function holdInputs(id:string,error:string){
@@ -209,8 +174,10 @@ export function makeWorkbenchService(opts: Options) {
   const state=makeRuntimeState()
   const {runsByTask,reservations,queue,runningText,collections,nativeDecisions,handoffDecisions}=state
   const actions=new Ref<ServiceActions>('workbench-actions')
-  const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped},...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
+  const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped},deps:{ownerChatId:opts.ownerChatId},ensureAccepting,...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
   const review=makeReviewDomain(ctx)
+  const materials=makeAttachmentsDomain(ctx)
+  const {uploads,attachmentScope,strictAttachmentScope,continuationAttachmentScope,selectAttachments,combinedAttachments,handoffAttachments}=materials
   /** 各执行者的额度/限流状态(provider-quota.ts):从失败里认出来、记住、再避开。 */
   const quota=makeQuotaRegistry(Date.now,opts.usage)
   /** 除了 exhaustedId 之外、已准入且没耗尽的原生执行者 —— "交给谁继续"的候选。 */
@@ -1712,12 +1679,12 @@ export function makeWorkbenchService(opts: Options) {
         throw error
       }
     },
-    uploadAttachment(input:Parameters<typeof store.attachments.upload>[0]){ensureAccepting();if(input.taskId&&store.get(input.taskId).archivedAt!==null)throw Error('workbench_archived');return store.attachments.upload(input,opts.stateDir,opts.ownerChatId()?strictAttachmentScope(input.taskId):undefined)},
-    uploadAttachmentChunk(input:Parameters<ReturnType<typeof store.attachmentUploads>['chunk']>[0],context:EntryContext){ensureAccepting();return uploads().chunk(input,context)},
-    attachmentUploadStatus(input:{id:string;draftId:string},context:EntryContext){return uploads().status(input,context)},
-    discardAttachmentUpload(input:{id:string;draftId:string},context:EntryContext){return uploads().discard(input,context)},
-    readAttachment(taskId:string,id:string){store.get(taskId);return store.attachments.read(taskId,id,opts.stateDir)},
-    discardAttachment(id:string,draftId:string){if(store.uploadRequestExists(id))return uploads().discard({id,draftId},{...strictAttachmentScope(),surface:'desktop'});return store.attachments.discard(id,draftId,attachmentScope())},
+    uploadAttachment:materials.uploadAttachment,
+    uploadAttachmentChunk:materials.uploadAttachmentChunk,
+    attachmentUploadStatus:materials.attachmentUploadStatus,
+    discardAttachmentUpload:materials.discardAttachmentUpload,
+    readAttachment:materials.readAttachment,
+    discardAttachment:materials.discardAttachment,
     setArchived(id:string,archived:boolean):WorkbenchTaskView {
       if(typeof archived!=='boolean')throw new Error('invalid_request')
       const task=store.get(id)
