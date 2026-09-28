@@ -5,7 +5,7 @@ import { isAbsolute } from 'node:path'
 import type { WorkbenchListQuery } from '../../core/workbench/store'
 import type {InputMaterials} from '../../core/workbench/service'
 import {isWorkbenchProviderId} from '../../core/workbench/executor-capabilities'
-import {parseEntryInput} from '../../core/workbench/task-entry'
+import {entryErrorStatus,parseEntryInput} from '../../core/workbench/task-entry'
 import type { InternalApiDeps, RouteHandler, RouteTable } from './types'
 
 const TASK_ID = /^[a-f0-9]{8}$/
@@ -40,23 +40,24 @@ function errorCode(err: unknown): string {
   return err instanceof Error ? err.message : ''
 }
 
-function mappedError(err: unknown): ReturnType<RouteHandler> {
+function mappedError(err: unknown,entry=false): ReturnType<RouteHandler> {
   const code = errorCode(err)
-  if(['entry_expired','upload_discarded','upload_expired'].includes(code))return{status:410,body:{error:code}}
+  // Existing task APIs keep their established unattended 428 response.
+  const entryStatus=entryErrorStatus(code)
+  if(entryStatus!==undefined&&(entry||code!=='unattended_ack_required'))return{status:entryStatus,body:{error:code}}
+  if(['upload_discarded','upload_expired'].includes(code))return{status:410,body:{error:code}}
   if(code==='attachment_in_use')return{status:409,body:{error:code}}
   if(code==='invalid_entry_owner')return{status:403,body:{error:code}}
-  if(['creation_conflict','project_stale','managed_workspace_changed'].includes(code))return{status:409,body:{error:code}}
+  if(['creation_conflict','managed_workspace_changed'].includes(code))return{status:409,body:{error:code}}
   if(['entry_not_wired','managed_workspace_unavailable','invalid_managed_workspace','workbench_stopping'].includes(code))return{status:503,body:{error:code}}
-  if(['api_task_input_invalid','api_task_attachment_invalid'].includes(code))return{status:400,body:{error:code}}
-  if(code==='api_task_attachment_unsupported')return{status:422,body:{error:code}}
   if(['model_catalog_unavailable','model_catalog_invalid'].includes(code))return{status:503,body:{error:code}}
   if(/^execution_.+_(unsupported|unknown)$/.test(code))return{status:400,body:{error:code}}
   if(code==='execution_conflict')return{status:409,body:{error:code}}
   if(['attachment_limit','attachment_storage_limit','invalid_attachment_size','request_body_too_large'].includes(code))return{status:413,body:{error:code}}
-  if(['attachment_conflict','attachment_changed'].includes(code))return{status:409,body:{error:code}}
+  if(['attachment_conflict'].includes(code))return{status:409,body:{error:code}}
   if(code==='attachment_scope')return{status:404,body:{error:'not_found'}}
   if(code==='attachment_platform_unsupported')return{status:422,body:{error:code}}
-  if(['workbench_attachments_unsupported','workbench_execution_unsupported','workbench_resume_unsupported'].includes(code))return{status:422,body:{error:code}}
+  if(['workbench_resume_unsupported'].includes(code))return{status:422,body:{error:code}}
   if (['input_stale','input_conflict','input_delivery_busy','question_stale','input_limit'].includes(code))return{status:409,body:{error:code}}
   if (code === 'invalid_question'||code === 'invalid_answer')return{status:400,body:{error:code}}
   if (code === 'review_file_unmarkable'||code === 'invalid_review_reference')return{status:400,body:{error:code}}
@@ -90,7 +91,7 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
         const input=parseEntryInput(body)
         if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
         return{status:202,body:deps.workbench.createEntry(input,entryContext())}
-      }catch(error){return mappedError(error)}
+      }catch(error){return mappedError(error,true)}
     },
     'GET /v1/workbench/entry-receipt':async query=>{
       const requestId=query.get('requestId')

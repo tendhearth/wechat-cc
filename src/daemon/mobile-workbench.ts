@@ -1,7 +1,7 @@
 import type {EntryResult} from '../core/workbench/service'
 import type {UploadChunk,UploadState} from '../core/workbench/attachment-uploads'
 import type {MattersService,MatterSayInput} from '../core/matters/service'
-import {parseEntryInput,type EntryInput,type EntryOptions} from '../core/workbench/task-entry'
+import {entryErrorStatus,parseEntryInput,type EntryInput,type EntryOptions} from '../core/workbench/task-entry'
 
 export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'>>
 export interface MobileEntryActions {
@@ -17,16 +17,17 @@ const object=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&
 const json=(body:object,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}})
 export function mobileMatterError(error:unknown):Response {
   const code=error instanceof Error?error.message:'internal'
+  const entryStatus=entryErrorStatus(code)
+  if(entryStatus!==undefined)return json({ok:false,error:code},entryStatus)
+  if(code==='upload_invalid_content')return json({ok:false,error:code},400)
   if(['matter_not_found','not_found'].includes(code))return json({ok:false,error:'matter_not_found'},404)
   if(code==='upload_not_found')return json({ok:false,error:code},404)
-  if(['upload_discarded','upload_expired','entry_expired'].includes(code))return json({ok:false,error:code},410)
+  if(['upload_discarded','upload_expired'].includes(code))return json({ok:false,error:code},410)
   if(['attachment_storage_limit','attachment_limit','upload_limit','upload_unfinished_limit','invalid_attachment_size'].includes(code))return json({ok:false,error:code},413)
   if(['upload_conflict','upload_changed','upload_offset','attachment_in_use'].includes(code))return json({ok:false,error:code},409)
   if(code==='invalid_entry_owner')return json({ok:false,error:code},403)
-  if(['creation_conflict','project_stale','managed_workspace_changed','attachment_changed','attachment_scope','attachment_conflict'].includes(code))return json({ok:false,error:code},409)
+  if(['creation_conflict','managed_workspace_changed','attachment_scope','attachment_conflict'].includes(code))return json({ok:false,error:code},409)
   if(['entry_not_wired','managed_workspace_unavailable','invalid_managed_workspace','workbench_stopping','unavailable_provider','provider_quota_exhausted'].includes(code))return json({ok:false,error:code},503)
-  if(['api_task_input_invalid','api_task_attachment_invalid'].includes(code))return json({ok:false,error:code},400)
-  if(['api_task_attachment_unsupported','workbench_attachments_unsupported','workbench_execution_unsupported','unattended_ack_required'].includes(code))return json({ok:false,error:code},422)
   if(['permission_stale','question_stale','input_stale','input_conflict','input_delivery_busy','workbench_busy','reply_sink_busy','workbench_archived','artifact_changed','restart_confirmation_required','restart_confirmation_stale','external_close_confirmation_required','external_close_confirmation_stale'].includes(code))return json({ok:false,error:code},409)
   if(code.endsWith('_not_wired')||code==='input_storage_unavailable')return json({ok:false,error:'unavailable'},503)
   if(code.startsWith('invalid_')||['matter_task_required','matter_say_unsupported'].includes(code))return json({ok:false,error:code},400)

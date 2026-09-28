@@ -205,6 +205,21 @@ it('rejects oversized selected material without sending or silently truncating i
   dialog.click('cancel'); await pending
 })
 
+it('uses the shared composed prompt boundary, including selected context labels, before creating',async()=>{
+  const {createTaskEntry}=await import('./task-entry.js')
+  const {composeEntryPrompt,ENTRY_LIMITS}=await import('../shared/task-entry-contract.js')
+  const context={excerpts:[{role:'user' as const,text:'x'.repeat(8000)}]}
+  const remaining=ENTRY_LIMITS.text-composeEntryPrompt({text:'',context}).length
+  const entry=createTaskEntry({storage,invokeWorkbenchApi:api()})
+  const pending=entry.open({text:'y'.repeat(remaining+1),visibleMessages:[{role:'user',text:context.excerpts[0]!.text}]})
+  await settle();dialog.click('recent');dialog.submit();await settle()
+  expect(drafts).toHaveLength(0)
+  expect(dialog.innerHTML).toContain('合计过长')
+  dialog.edit('text','y'.repeat(remaining));dialog.submit();await settle();await pending
+  expect(drafts).toHaveLength(1)
+  expect(composeEntryPrompt(drafts[0] as any)).toHaveLength(20_000)
+})
+
 it.each(['invalid_text', 'project_stale', 'attachment_changed'])('lets a request rejected with %s be corrected without reusing its payload identity', async rejection => {
   const {createTaskEntry} = await import('./task-entry.js')
   const entry = createTaskEntry({storage, invokeWorkbenchApi: api(async (_method, path, body) => {
@@ -219,6 +234,22 @@ it.each(['invalid_text', 'project_stale', 'attachment_changed'])('lets a request
   expect(drafts[1]?.text).toBe('已修正要求')
   expect(drafts[1]?.requestId).not.toBe(drafts[0]?.requestId)
   await pending
+})
+
+it.each(['creation_conflict','unavailable_provider'])('preserves an unknown identity after POST %s even when the current draft is edited',async code=>{
+  const {createTaskEntry}=await import('./task-entry.js')
+  const entry=createTaskEntry({storage,invokeWorkbenchApi:api(async(_method,path,body)=>{
+    if(path==='/v1/workbench/create-entry'){
+      drafts.push(structuredClone(body!))
+      if(drafts.length===1)throw Error(code)
+      return result(body!.requestId)
+    }
+  })})
+  const pending=entry.open({text:'已送出的旧要求'});await settle();dialog.submit();await settle()
+  dialog.edit('text','尚未交办的新要求');dialog.submit();await settle()
+  expect(drafts[1]).toEqual(drafts[0])
+  expect(dialog.innerHTML).toContain('尚未交办的新要求')
+  dialog.click('cancel');await pending
 })
 
 it('blocks incomplete attachments and then sends the ready attachment identity', async () => {

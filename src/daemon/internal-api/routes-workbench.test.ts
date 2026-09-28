@@ -110,8 +110,11 @@ describe('Workbench internal HTTP API', () => {
     for(const [code,status] of [
       ['invalid_entry_owner',403],['creation_conflict',409],['project_stale',409],['managed_workspace_changed',409],
       ['entry_not_wired',503],['managed_workspace_unavailable',503],['invalid_managed_workspace',503],['workbench_stopping',503],
+      ['invalid_entry',400],['invalid_request_id',400],['invalid_text',400],['invalid_title',400],['invalid_context',400],
+      ['invalid_target',400],['invalid_execution',400],['invalid_provider',400],['invalid_attachment',400],['invalid_path',400],
       ['api_task_input_invalid',400],['api_task_attachment_invalid',400],['api_task_attachment_unsupported',422],
-      ['attachment_scope',404],['attachment_limit',413],['unattended_ack_required',428],['unavailable_provider',422],
+      ['workbench_attachments_unsupported',422],['workbench_execution_unsupported',422],['attachment_changed',409],['entry_expired',410],
+      ['attachment_scope',404],['attachment_limit',413],['unattended_ack_required',422],['unavailable_provider',422],
     ] as const){
       createEntry.mockImplementationOnce(()=>{throw Error(code)})
       const response=await request('/v1/workbench/create-entry',{method:'POST',body:JSON.stringify(input)},operatorToken)

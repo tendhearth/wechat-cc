@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { assembleMobilePage, serializeMobilePage } from './assemble'
 import { readMobileSource, MOBILE_PAGE_OUT } from './sources'
+import * as serverEntry from '../../src/core/workbench/task-entry'
 
 describe('apps/mobile → src/daemon/mobile-page.generated.json', () => {
   const page = assembleMobilePage(readMobileSource)
@@ -38,5 +39,22 @@ describe('apps/mobile → src/daemon/mobile-page.generated.json', () => {
   it('pulls in no external script or stylesheet — the shell page has no usable origin', () => {
     expect(page.phone).not.toMatch(/<script[^>]*\ssrc=/)
     expect(page.phone).not.toMatch(/<link[^>]*rel="stylesheet"/)
+  })
+
+  it('inlines the same browser-safe entry contract into the classic script without importing runtime modules',()=>{
+    const source=readMobileSource('entry.js')
+    const contract=new Function('REMOTE','location',source+'\nreturn eContract')(null,{host:'localhost'})
+    expect(contract.ENTRY_LIMITS).toEqual(serverEntry.ENTRY_LIMITS)
+    const input={text:'要求',context:{excerpts:[{role:'assistant',text:'讨论'}]}}
+    expect(contract.composeEntryPrompt(input)).toBe(serverEntry.composeEntryPrompt(input as any))
+    expect(contract.entryFailureKind('api_task_attachment_invalid',{surface:'phone',method:'POST',status:400})).toBe('rejected')
+    expect(page.phone).toContain(source)
+    expect(source).not.toMatch(/^\s*(?:import|export)\s/m)
+  })
+
+  it('keeps inline contract bytes identical between the production builder and the test runtime',()=>{
+    const root=fileURLToPath(new URL('../../',import.meta.url))
+    const production=execFileSync('bun',['--eval',"import {readMobileSource} from './apps/mobile/sources.ts'; process.stdout.write(readMobileSource('entry.js'))"],{cwd:root,encoding:'utf8'})
+    expect(production).toBe(readMobileSource('entry.js'))
   })
 })

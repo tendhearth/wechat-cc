@@ -220,10 +220,17 @@ export function makeWorkbenchService(opts: Options) {
     if(taskId&&store.get(taskId).ownerChatId!==ownerKey)throw Error('attachment_scope')
     return {ownerKey}
   }
+  const continuationAttachmentScope=(taskId:string,ids:unknown)=>{
+    const scope=strictAttachmentScope()
+    // Configured owners may continue pre-owner tasks with text; this never claims materials or changes ownership.
+    if(Array.isArray(ids)&&ids.length===0&&store.get(taskId).ownerChatId===null)return undefined
+    if(store.get(taskId).ownerChatId!==scope.ownerKey)throw Error('attachment_scope')
+    return scope
+  }
   const selectAttachments=(input:InputMaterials={},taskId?:string,policy?:'owner')=>{
-    // Legacy text-only continuation does not claim materials; phone requests always verify the owner.
-    const scope=policy?strictAttachmentScope(taskId):input.attachmentIds?.length?attachmentScope():undefined
-    return store.attachments.select(input.attachmentIds??[],taskId,input.draftId,scope)
+    const ids=input.attachmentIds??[]
+    const scope=policy&&taskId?continuationAttachmentScope(taskId,ids):policy?strictAttachmentScope():input.attachmentIds?.length?attachmentScope():undefined
+    return store.attachments.select(ids,taskId,input.draftId,scope)
   }
   let managedWorkspaces:ManagedWorkspaces|undefined
   const managed=()=>{
@@ -1140,7 +1147,7 @@ export function makeWorkbenchService(opts: Options) {
     const addRunEvent=(kind:'user'|'system',text:string)=>{const id=store.addEvent(task.id,kind,text,null,runId);touched(task.id);return id}
     const handoffPeer=store.atomic(()=>{
       store.execution.accept(task.id,runId,execution)
-      const bound=store.attachments.bind(attachments.map(a=>a.id),task.id,draftId,attachmentPolicy?strictAttachmentScope(task.id):acceptance?.scope)
+      const bound=store.attachments.bind(attachments.map(a=>a.id),task.id,draftId,attachmentPolicy?continuationAttachmentScope(task.id,attachments):acceptance?.scope)
       if(!sameAttachments(bound,attachments))throw Error('invalid_attachment_changed')
       // A queued receipt keeps the ORIGINAL accepted run, even when this is a new dispatch run.
       if(queuedInputId&&!store.liveInputs.get(queuedInputId)){
@@ -1196,10 +1203,10 @@ export function makeWorkbenchService(opts: Options) {
     try{return opts.matters.ensureChat(ownerChatId).id}
     catch(err){opts.log?.('MATTER_ORIGIN',`ensureChat failed for ${ownerChatId}: ${err instanceof Error?err.message:err} — origin left null, task still created`);return null}
   }
-  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null},entry?:{context:EntryContext;workspaceKind:'managed'|'project';fromChat:boolean;beforeCreate:()=>void;verifyDirectory:(path:string,identity:string)=>void}):WorkbenchTaskView {
+  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null},entry?:{context:EntryContext;workspaceKind:'managed'|'project';fromChat:boolean;materials:Attachment[];beforeCreate:()=>void;verifyDirectory:(path:string,identity:string)=>void}):WorkbenchTaskView {
     ensureAccepting()
     const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
-    const attachments=entry?store.attachments.verify(input.attachmentIds??[],undefined,input.draftId,opts.stateDir,entry.context):selectAttachments(input)
+    const attachments=entry?entry.materials:selectAttachments(input)
     const checked=checkedText(input.text,attachments),text=entry?input.text:checked
     requireInput(input.providerId,attachments,execution)
     if(input.title!==undefined&&(typeof input.title!=='string'||!input.title.trim()||input.title.length>120))throw Error('invalid_title')
@@ -1364,23 +1371,26 @@ export function makeWorkbenchService(opts: Options) {
       if(!opts.matters)throw Error('entry_not_wired')
       const text=composeEntryPrompt(input)
       try{
+        if(record&&record.createdAt<Date.now()-7*86400_000)throw Error('entry_expired')
+        const prepared=store.attachments.prepareAcceptance(input.attachmentIds??[],undefined,input.draftId,opts.stateDir,context)
        if(!record){
-        const materialSnapshot=store.attachments.verify(input.attachmentIds??[],undefined,input.draftId,opts.stateDir,context)
+        const materialSnapshot=prepared.attachments
         const target=input.target,project=target.kind==='project'?service.projects().find(p=>p.id===target.projectId):null
         if(input.target.kind==='project'&&!project)throw Error('project_stale')
         const providerId=input.providerId??project?.providerId??opts.defaultProvider
         if(!providerId)throw Error('unavailable_provider')
         const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
         requireEntryInput(providerId,materialSnapshot,execution,text)
+        const workspaceId=input.target.kind==='managed'?randomUUID():null
         record=store.entryRequests.reserve({ownerKey:context.ownerKey,requestId:input.requestId,canonicalRequestHash:hash,target:input.target,
-          workspaceId:input.target.kind==='managed'?randomUUID():null,resolvedPath:project?.path??null,directoryIdentity:project?directoryIdentity(project.path):null,
+          workspaceId,resolvedPath:workspaceId?managed().resolvePath(workspaceId):project?.path??null,directoryIdentity:project?directoryIdentity(project.path):null,
           providerId,execution,materialSnapshot})
        }
         // Another connection may have accepted between the initial read and reserve.
         if(record.phase==='accepted')return entryResult(record)
         if(record.createdAt<Date.now()-7*86400_000)throw Error('entry_expired')
         requireEntryInput(record.providerId,record.materialSnapshot,record.execution,text)
-        const current=store.attachments.verify(input.attachmentIds??[],undefined,input.draftId,opts.stateDir,context)
+        const current=prepared.attachments
         if(!sameAttachments(current,record.materialSnapshot))throw Error('attachment_changed')
         const workspace=record.target.kind==='managed'?managed().ensure(record):null
         const path=workspace?.path??record.resolvedPath!,identity=workspace?.directoryIdentity??record.directoryIdentity!
@@ -1401,14 +1411,13 @@ export function makeWorkbenchService(opts: Options) {
           verify()
           store.entryRequests.accept(context.ownerKey,input.requestId,{taskId:task.id,matterId:task.id,runId,acceptedAt:Date.now(),resolvedPath:path,directoryIdentity:identity})
         },undefined,{
-          context,workspaceKind:frozen.target.kind==='managed'?'managed':'project',fromChat:!!input.context,
+          context,workspaceKind:frozen.target.kind==='managed'?'managed':'project',fromChat:!!input.context,materials:current,
           beforeCreate:()=>{
             const latest=store.entryRequests.get(context.ownerKey,input.requestId)
             if(latest?.phase==='accepted')throw Error('entry_already_accepted')
             verify()
             requireEntryInput(frozen.providerId,frozen.materialSnapshot,frozen.execution,text)
-            const current=store.attachments.verify(input.attachmentIds??[],undefined,input.draftId,opts.stateDir,context)
-            if(!sameAttachments(current,frozen.materialSnapshot))throw Error('attachment_changed')
+            prepared.assertCurrent()
           },
           verifyDirectory:(acceptedPath,acceptedIdentity)=>{if(acceptedPath!==path||acceptedIdentity!==identity)throw Error('invalid_path');verify()},
         })
@@ -1505,7 +1514,7 @@ export function makeWorkbenchService(opts: Options) {
       let saved:LiveInput
       try{
         saved=store.atomic(()=>{
-          store.attachments.bind(attachments.map(a=>a.id),id,input.draftId,attachmentPolicy?strictAttachmentScope(id):undefined)
+          store.attachments.bind(attachments.map(a=>a.id),id,input.draftId,attachmentPolicy?continuationAttachmentScope(id,attachments):undefined)
           return store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text,attachments,execution:running.execution})
         })
       }catch(error){

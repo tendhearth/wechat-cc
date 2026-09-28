@@ -1,5 +1,7 @@
 import {describe, expect, it} from 'vitest'
 import {canonicalEntryHash, composeEntryPrompt, parseEntryInput, type EntryInput} from './task-entry'
+import * as entryContract from './task-entry'
+import {execFileSync} from 'node:child_process'
 
 const requestId = '12345678-1234-4234-8234-123456789abc'
 const draftId = '23456789-2345-4345-9345-23456789abcd'
@@ -14,6 +16,50 @@ const withContext: EntryInput = {
     {role: 'assistant', text: '可以只调整按钮。'},
   ]},
 }
+
+describe('browser-safe shared entry contract', () => {
+  it('loads the packaged shared source as native ESM and runs its classic factory without module bindings',async()=>{
+    const moduleUrl=new URL('../../../apps/desktop/src/shared/task-entry-contract.js',import.meta.url).href
+    // Vitest's VM does not implement native dynamic imports from Function.
+    // A fresh runtime loads untransformed ESM, without Vite resolution.
+    const output=JSON.parse(execFileSync('node',['--input-type=module','-e',`
+      const native=await import(${JSON.stringify(moduleUrl)})
+      const classic=new Function('return ('+native.createEntryContract.toString()+')()')()
+      process.stdout.write(JSON.stringify({native:native.composeEntryPrompt(${JSON.stringify(withContext)}),classic:classic.composeEntryPrompt(${JSON.stringify(withContext)}),limits:classic.ENTRY_LIMITS,status:native.entryErrorStatus('api_task_attachment_invalid'),unknown:[native.entryErrorStatus('creation_conflict'),native.entryErrorStatus('upload_invalid_content')]}))
+    `],{encoding:'utf8'}))
+    expect(output.native).toBe(composeEntryPrompt(withContext))
+    expect(output.classic).toBe(composeEntryPrompt(withContext))
+    expect(output.limits).toEqual(entryContract.ENTRY_LIMITS)
+    expect(output.status).toBe(400)
+    expect(output.unknown).toEqual([null,null])
+  })
+
+  it('exports the content limits used by validation and rejects the same composed boundary', () => {
+    expect(entryContract.ENTRY_LIMITS).toEqual({text:20_000,context:8_000,excerpts:10,title:120,attachments:8})
+    const payload={...withContext,text:'x'.repeat(19_990)}
+    expect(entryContract.entryContentError(payload)).toBe('invalid_text')
+    expect(()=>parseEntryInput(payload)).toThrow('invalid_text')
+  })
+
+  it.each([
+    ['api_task_attachment_invalid','phone','POST',400,'rejected'],
+    ['api_task_attachment_unsupported','phone','POST',422,'rejected'],
+    ['api_task_attachment_unsupported','phone','GET',422,'unknown'],
+    ['api_task_attachment_unsupported','phone','POST',503,'unknown'],
+    ['api_task_attachment_unsupported','phone','POST',undefined,'unknown'],
+    ['api_task_attachment_unsupported','desktop','POST',undefined,'rejected'],
+    ['creation_conflict','desktop','POST',undefined,'unknown'],
+    ['unavailable_provider','desktop','POST',undefined,'unknown'],
+    ['project_stale','desktop','POST',undefined,'rejected'],
+    ['project_stale','phone','POST',409,'unknown'],
+    ['entry_expired','phone','POST',410,'expired'],
+    ['entry_expired','phone','GET',410,'unknown'],
+    ['upload_invalid_content','phone','POST',400,'unknown'],
+    ['network disconnected','desktop','POST',undefined,'unknown'],
+  ] as const)('classifies %s for %s %s with status %s as %s', (code,surface,method,status,expected)=>{
+    expect(entryContract.entryFailureKind(code,{surface,method,status})).toBe(expected)
+  })
+})
 
 describe('parseEntryInput', () => {
   it('keeps the request and original text without inventing a provider or execution choice', () => {

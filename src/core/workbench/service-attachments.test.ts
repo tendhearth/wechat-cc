@@ -176,3 +176,35 @@ it('uses the same cancellation tombstone for a desktop discard of a phone upload
   expect(()=>service.attachmentUploadStatus({id,draftId},context)).toThrow('upload_discarded')
   expect(db.query('SELECT * FROM workbench_attachments').all()).toEqual([])
 })
+
+
+it('lets a configured phone owner continue a legacy ownerless task with text only',async()=>{
+  setup({async spawn(){return{async *dispatch(){yield result},async close(){}}}},true,'owner')
+  const legacy=store.create({title:'legacy',path:project,providerId:'claude',ownerChatId:null})
+  const material=upload()
+  expect(()=>service.continueTask(legacy.id,'with material',material,'owner')).toThrow('attachment_scope')
+  service.continueTask(legacy.id,'next',{inputRequestId:randomUUID()},'owner');await settled(legacy.id)
+  expect(store.get(legacy.id).ownerChatId).toBeNull()
+  expect(store.events(legacy.id).find(e=>e.kind==='user')?.text).toBe('next')
+  const foreign=store.create({title:'foreign',path:project,providerId:'claude',ownerChatId:'other'})
+  expect(()=>service.continueTask(foreign.id,'next',{attachmentIds:[]},'owner')).toThrow('attachment_scope')
+})
+
+it('lets phone text reach a live legacy task without allowing materials or a foreign owner',async()=>{
+  const pending=gate(),received:string[]=[]
+  setup({async spawn(){return{async *dispatch(){yield{kind:'init',sessionId:'native-session'};await pending.promise;yield result},async steer(text){received.push(text)},async close(){pending.resolve()}}}},true,'owner')
+  const task=service.create({path:project,providerId:'codex',text:'start'})
+  await expect.poll(()=>service.detail(task.id).inputMode).toBe('steer')
+  db.query('UPDATE workbench_tasks SET owner_chat_id=NULL WHERE id=?').run(task.id)
+  const request={text:'next',runId:service.detail(task.id).runId!,requestId:randomUUID()}
+  expect(await service.submitInput(task.id,request,'owner')).toMatchObject({status:'delivered',text:'next'})
+  expect(received).toEqual(['next'])
+  db.query('UPDATE workbench_tasks SET owner_chat_id=? WHERE id=?').run('other',task.id)
+  await expect(service.submitInput(task.id,{...request,requestId:randomUUID()},'owner')).rejects.toThrow('attachment_scope')
+})
+
+it('does not enable phone legacy text continuation before a current owner is configured',()=>{
+  setup({async spawn(){throw Error('must not spawn')}},true,null)
+  const task=store.create({title:'legacy',path:project,providerId:'claude',ownerChatId:null})
+  expect(()=>service.continueTask(task.id,'next',undefined,'owner')).toThrow('invalid_entry_owner')
+})

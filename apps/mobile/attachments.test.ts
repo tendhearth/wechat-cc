@@ -96,6 +96,23 @@ describe('phone attachment controls',()=>{
     expect(api.mock.calls).toHaveLength(before);expect(refreshed.readyIds()).toEqual([])
   })
 
+  it.each(['upload_invalid_content','upload_discarded','upload_expired'])('requires a fresh file addition after terminal %s, including after refresh',async error=>{
+    const backend=server();let reject=true
+    const api=vi.fn<Api>(async(path,opts)=>reject&&path.endsWith('/chunk')?reply({ok:false,error},error==='upload_invalid_content'?400:410):backend.api(path,opts))
+    const env=load(api),control=env.create({draftId:DRAFT}),view=root(),file=new File(['invalid image'],'photo.png',{type:'image/png'})
+    control.mount(view);await control.select([file]);const oldId=control.items()[0]!.id
+    expect(control.items()[0]!.status).toBe('rejected')
+    expect(control.readyIds()).toEqual([]);expect(control.isReady()).toBe(false)
+    expect(view.innerHTML).toContain('移除后重新添加')
+    expect(view.innerHTML).not.toContain('data-pa-resume')
+    control.dispose();const restored=load(api,env.storage).create({draftId:DRAFT}),before=api.mock.calls.length
+    expect(restored.items()[0]!.status).toBe('rejected')
+    await expect(restored.resume([file])).rejects.toThrow('upload_restart_required')
+    expect(api.mock.calls).toHaveLength(before)
+    reject=false;await restored.remove(oldId);await restored.select([file])
+    expect(restored.readyIds()).toHaveLength(1);expect(restored.readyIds()[0]).not.toBe(oldId)
+  })
+
   it.each(['id','draftId','taskId','size','sha256','attachment'])('refuses a response with mismatched %s',async field=>{
     const backend=server()
     const api:Api=async(path,opts)=>{

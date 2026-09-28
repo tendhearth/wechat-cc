@@ -1,6 +1,6 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest'
 import {randomUUID} from 'node:crypto'
-import {chmodSync,existsSync,lstatSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,renameSync,symlinkSync,writeFileSync} from 'node:fs'
+import {chmodSync,existsSync,lstatSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,renameSync,symlinkSync,unlinkSync,writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {removeTempDir} from '../../lib/test-temp'
@@ -101,14 +101,102 @@ describe('managed workspace boundaries',()=>{
     expect(existsSync(root)).toBe(false)
   })
 
-  it('rejects links in a root ancestor, at the root, at the leaf and in stateDir',()=>{
+  it('rejects links at the root, at the task leaf and at stateDir',()=>{
     const outside=join(base,'outside');mkdirSync(outside)
     const alias=join(base,'alias');link(outside,alias)
-    for(const unsafeRoot of [alias,join(alias,'Tasks')])expect(()=>createManagedWorkspaces({root:unsafeRoot,stateDir}).ensure(reservation())).toThrow('managed_workspace_unavailable')
+    expect(()=>createManagedWorkspaces({root:alias,stateDir}).ensure(reservation())).toThrow('managed_workspace_unavailable')
     expect(()=>createManagedWorkspaces({root,stateDir:alias}).ensure(reservation())).toThrow('managed_workspace_unavailable')
     mkdirSync(root,{recursive:true});const request=reservation();link(outside,join(root,request.workspaceId))
     expect(()=>createManagedWorkspaces({root,stateDir}).ensure(request)).toThrow('managed_workspace_unavailable')
     expect(existsSync(join(outside,'Tasks'))).toBe(false)
+  })
+
+  it.each([false,true])('pins a physical workspace through a trusted ancestor symlink or Windows junction (root exists: %s)',exists=>{
+    const home=join(base,'physical-home'),alias=join(base,'home');mkdirSync(home);link(home,alias)
+    const configuredRoot=join(alias,'CC','Tasks'),physicalRoot=join(home,'CC','Tasks'),request=reservation()
+    if(exists)mkdirSync(physicalRoot,{recursive:true})
+    const manager=createManagedWorkspaces({root:configuredRoot,stateDir})
+    expect(manager.resolvePath(request.workspaceId)).toBe(join(physicalRoot,request.workspaceId))
+    expect(existsSync(physicalRoot)).toBe(exists)
+    const workspace=manager.ensure({...request,resolvedPath:manager.resolvePath(request.workspaceId)})
+    expect(workspace.path).toBe(join(physicalRoot,request.workspaceId));expect(workspace.directoryIdentity).toBe(identity(workspace.path))
+    expect(()=>manager.verify(workspace)).not.toThrow()
+    const restarted=createManagedWorkspaces({root:configuredRoot,stateDir})
+    expect(restarted.ensure({workspaceId:workspace.id,resolvedPath:workspace.path,directoryIdentity:workspace.directoryIdentity})).toEqual({...workspace,created:false})
+  })
+
+  it('rejects a trusted ancestor retargeted before lazy creation or after allocation',()=>{
+    const home=join(base,'physical-home'),other=join(base,'other-home'),alias=join(base,'home');mkdirSync(home);mkdirSync(other);link(home,alias)
+    const configuredRoot=join(alias,'CC','Tasks'),manager=createManagedWorkspaces({root:configuredRoot,stateDir}),request=reservation()
+    const path=manager.resolvePath(request.workspaceId)
+    unlinkSync(alias);link(other,alias)
+    expect(()=>manager.ensure({...request,resolvedPath:path})).toThrow('managed_workspace_changed')
+    expect(existsSync(join(home,'CC'))).toBe(false);expect(existsSync(join(other,'CC'))).toBe(false)
+    unlinkSync(alias);link(home,alias)
+    const workspace=manager.ensure({...request,resolvedPath:path})
+    unlinkSync(alias);link(other,alias)
+    expect(()=>manager.verify(workspace)).toThrow('managed_workspace_changed')
+    expect(manager.removeEmptyCreated(workspace)).toBe(false);expect(existsSync(workspace.path)).toBe(true)
+  })
+
+  it('uses a persisted physical path to reject retargeting across restart before any directory was created',()=>{
+    const home=join(base,'physical-home'),other=join(base,'other-home'),alias=join(base,'home');mkdirSync(home);mkdirSync(other);link(home,alias)
+    const configuredRoot=join(alias,'CC','Tasks'),request=reservation(),manager=createManagedWorkspaces({root:configuredRoot,stateDir})
+    const frozen={...request,resolvedPath:manager.resolvePath(request.workspaceId)}
+    unlinkSync(alias);link(other,alias)
+    expect(()=>createManagedWorkspaces({root:configuredRoot,stateDir}).ensure(frozen)).toThrow('invalid_managed_workspace')
+    expect(existsSync(join(home,'CC'))).toBe(false);expect(existsSync(join(other,'CC'))).toBe(false)
+  })
+
+  it.each(['same','inside','around'] as const)('rejects physical %s state overlap hidden behind a trusted ancestor link',shape=>{
+    const home=join(base,'physical-home'),alias=join(base,'home');mkdirSync(home);link(home,alias)
+    const physicalRoot=join(home,'Tasks');mkdirSync(physicalRoot)
+    const physicalState=shape==='same'?physicalRoot:shape==='inside'?join(physicalRoot,'state'):home
+    expect(()=>createManagedWorkspaces({root:join(alias,'Tasks'),stateDir:physicalState}).ensure(reservation())).toThrow('invalid_managed_workspace')
+  })
+
+  it('allows a trusted state ancestor link but still rejects reserved physical path components',()=>{
+    const home=join(base,'physical-home'),alias=join(base,'home');mkdirSync(home);mkdirSync(join(home,'state'));link(home,alias)
+    expect(createManagedWorkspaces({root,stateDir:join(alias,'state')}).ensure(reservation()).path.startsWith(root)).toBe(true)
+    const hidden=join(base,'.cc-workbench-private'),hiddenAlias=join(base,'hidden-alias');mkdirSync(hidden);link(hidden,hiddenAlias)
+    expect(()=>createManagedWorkspaces({root:join(hiddenAlias,'Tasks'),stateDir})).toThrow('invalid_managed_workspace')
+  })
+
+  it('pins the root and the nearest existing lazy ancestor before the first allocation',()=>{
+    mkdirSync(root,{recursive:true})
+    const existing=createManagedWorkspaces({root,stateDir});renameSync(root,root+'-old');mkdirSync(root)
+    expect(()=>existing.ensure(reservation())).toThrow('managed_workspace_changed')
+    const parent=join(base,'lazy-parent');mkdirSync(parent)
+    const lazy=createManagedWorkspaces({root:join(parent,'Tasks'),stateDir});renameSync(parent,parent+'-old');mkdirSync(parent)
+    expect(()=>lazy.ensure(reservation())).toThrow('managed_workspace_changed')
+    expect(existsSync(join(parent,'Tasks'))).toBe(false)
+  })
+
+  it('does not accept a root replaced by a link back to the original directory',()=>{
+    const manager=createManagedWorkspaces({root,stateDir}),workspace=manager.ensure(reservation())
+    renameSync(root,root+'-saved');link(root+'-saved',root)
+    expect(()=>manager.verify(workspace)).toThrow('managed_workspace_unavailable')
+    expect(()=>manager.ensure({workspaceId:workspace.id,resolvedPath:workspace.path,directoryIdentity:workspace.directoryIdentity})).toThrow('managed_workspace_unavailable')
+    expect(manager.removeEmptyCreated(workspace)).toBe(false)
+    expect(identity(join(root+'-saved',workspace.id))).toBe(workspace.directoryIdentity)
+  })
+
+  it('rejects a state ancestor retargeted into the managed root',()=>{
+    const home=join(base,'state-home'),alias=join(base,'state-alias');mkdirSync(home);mkdirSync(join(home,'state'));link(home,alias)
+    const manager=createManagedWorkspaces({root,stateDir:join(alias,'state')}),workspace=manager.ensure(reservation())
+    unlinkSync(alias);link(root,alias)
+    expect(()=>manager.verify(workspace)).toThrow('managed_workspace_changed')
+    expect(()=>manager.ensure(reservation())).toThrow('managed_workspace_changed')
+    expect(existsSync(workspace.path)).toBe(true)
+  })
+
+  it('rejects a persisted allocation after restart if its ancestor is retargeted, even with the original task inode',()=>{
+    const home=join(base,'physical-home'),other=join(base,'other-home'),alias=join(base,'home');mkdirSync(home);mkdirSync(other);link(home,alias)
+    const configuredRoot=join(alias,'Tasks'),workspace=createManagedWorkspaces({root:configuredRoot,stateDir}).ensure(reservation())
+    mkdirSync(join(other,'Tasks'));renameSync(workspace.path,join(other,'Tasks',workspace.id));unlinkSync(alias);link(other,alias)
+    const restarted=createManagedWorkspaces({root:configuredRoot,stateDir})
+    expect(()=>restarted.ensure({workspaceId:workspace.id,resolvedPath:workspace.path,directoryIdentity:workspace.directoryIdentity})).toThrow('invalid_managed_workspace')
+    expect(identity(join(other,'Tasks',workspace.id))).toBe(workspace.directoryIdentity)
   })
 
   it('does not follow a link introduced after allocation during verify or cleanup',()=>{

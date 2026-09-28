@@ -1,12 +1,22 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
 import {createHash,randomUUID} from 'node:crypto'
-import {existsSync,linkSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,renameSync,statSync,symlinkSync,truncateSync,unlinkSync,writeFileSync} from 'node:fs'
+import {existsSync,fstatSync,linkSync,mkdirSync,mkdtempSync,readFileSync,realpathSync,renameSync,statSync,symlinkSync,truncateSync,unlinkSync,writeFileSync} from 'node:fs'
 import {join} from 'node:path'
 import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../lib/db'
 import {removeTempDir} from '../../lib/test-temp'
 import {makeWorkbenchStore} from './store'
 import {createAttachmentUploads,type UploadChunk} from './attachment-uploads'
+
+const reads=vi.hoisted(()=>({bytes:0,observe:null as null|((fd:number,count:number,requested:number)=>void)}))
+vi.mock('node:fs',async importOriginal=>{
+  const fs=await importOriginal<typeof import('node:fs')>()
+  return{...fs,readSync:(...args:unknown[])=>{
+    const count=Reflect.apply(fs.readSync,fs,args) as number
+    reads.bytes+=count;reads.observe?.(args[0] as number,count,args[3] as number)
+    return count
+  }}
+})
 
 const CHUNK=128*1024,DAY=24*60*60*1000
 const hash=(bytes:Buffer)=>createHash('sha256').update(bytes).digest('hex')
@@ -21,7 +31,7 @@ const instance=(database=db,attachmentStore=store.attachments,extra={})=>createA
 beforeEach(()=>{
   root=realpathSync(mkdtempSync(join(tmpdir(),'cc-chunks-')));db=openDb({path:join(root,'state.db')});store=makeWorkbenchStore(db);owner='owner';now=Date.now();uploads=instance()
 })
-afterEach(()=>{vi.restoreAllMocks();db.close();removeTempDir(root)})
+afterEach(()=>{reads.observe=null;vi.restoreAllMocks();db.close();removeTempDir(root)})
 
 it('replays exact chunks and produces one existing Attachment with the original ID',()=>{
   const bytes=Buffer.alloc(CHUNK+7,97),m=meta(bytes),first=uploads.chunk(packet(m,bytes),context)
@@ -66,12 +76,55 @@ it('checks the current trusted owner and task ownership for every upload operati
   expect(()=>uploads.status(query(m),{ownerKey:'changed-owner',surface:'phone'})).toThrow('attachment_scope')
 })
 
-it('does not finalize bytes whose complete hash or MIME signature is invalid',()=>{
-  const bytes=Buffer.from('not an image'),m=meta(bytes,{name:'picture.png',mime:'image/png'})
-  expect(()=>uploads.chunk(packet(m,bytes),context)).toThrow('invalid_attachment')
-  const wrong=meta(bytes,{sha256:'a'.repeat(64)})
-  expect(()=>uploads.chunk(packet(wrong,bytes),context)).toThrow('upload_changed')
+it.each([
+  ['picture.png','image/png',Buffer.from('actually HEIC')],
+  ['document.pdf','application/pdf',Buffer.from('not a PDF')],
+  ['notes.txt','text/plain',Buffer.from([0xff,0xfe])],
+  ['notes.txt','text/plain',Buffer.from('text\0binary')],
+])('terminates deterministic content rejection for %s', (name,mime,bytes)=>{
+  const m=meta(bytes as Buffer,{name:name as string,mime:mime as string})
+  expect(()=>uploads.chunk(packet(m,bytes as Buffer),context)).toThrow('upload_invalid_content')
+  expect(db.query('SELECT status,reserved_bytes,chunks_json FROM workbench_attachment_uploads WHERE id=?').get(m.id)).toEqual({status:'discarded',reserved_bytes:1024,chunks_json:'[]'})
+  expect(existsSync(part(m.id))).toBe(false)
+  uploads=instance()
+  expect(()=>uploads.chunk(packet(m,bytes as Buffer),context)).toThrow('upload_discarded')
+  expect(()=>uploads.status(query(m),context)).toThrow('upload_discarded')
+  expect(db.query("SELECT id FROM workbench_attachment_uploads WHERE status IN ('uploading','finalizing')").all()).toEqual([])
   expect(db.query('SELECT id FROM workbench_attachments').all()).toEqual([])
+})
+
+it.each(['EIO','attachment_storage_limit'])('preserves a resumable finalization after temporary %s failure',failure=>{
+  const bytes=Buffer.from('valid text'),m=meta(bytes);let fail=true
+  uploads=instance(db,{...store.attachments,upload:(...args:Parameters<typeof store.attachments.upload>)=>{if(fail)throw Error(failure);return store.attachments.upload(...args)}})
+  expect(()=>uploads.chunk(packet(m,bytes),context)).toThrow(failure)
+  expect(db.query('SELECT status FROM workbench_attachment_uploads WHERE id=?').get(m.id)).toEqual({status:'finalizing'})
+  expect(existsSync(part(m.id))).toBe(true)
+  fail=false
+  expect(uploads.status(query(m),context).attachment?.id).toBe(m.id)
+  expect(db.query('SELECT id FROM workbench_attachments').all()).toEqual([{id:m.id}])
+})
+
+it('terminates a complete-file digest mismatch instead of retrying the same last block',()=>{
+  const bytes=Buffer.alloc(CHUNK+9,97),m=meta(bytes,{sha256:'a'.repeat(64)})
+  uploads.chunk(packet(m,bytes),context)
+  expect(()=>uploads.chunk(packet(m,bytes,CHUNK),context)).toThrow('upload_invalid_content')
+  expect(db.query('SELECT status,reserved_bytes FROM workbench_attachment_uploads WHERE id=?').get(m.id)).toEqual({status:'discarded',reserved_bytes:1024})
+  expect(existsSync(part(m.id))).toBe(false)
+  uploads=instance()
+  expect(()=>uploads.chunk(packet(m,bytes,CHUNK),context)).toThrow('upload_discarded')
+  expect(()=>uploads.status(query(m),context)).toThrow('upload_discarded')
+  expect(db.query('SELECT id FROM workbench_attachments').all()).toEqual([])
+})
+
+it('does not delete rejected bytes before the terminal record commits',()=>{
+  const bytes=Buffer.from('not a PNG'),m=meta(bytes,{name:'photo.png',mime:'image/png'})
+  db.exec("CREATE TRIGGER fault BEFORE UPDATE OF status ON workbench_attachment_uploads WHEN NEW.status='discarded' BEGIN SELECT RAISE(ABORT,'terminal_fault'); END")
+  expect(()=>uploads.chunk(packet(m,bytes),context)).toThrow('terminal_fault')
+  expect(existsSync(part(m.id))).toBe(true)
+  expect(db.query('SELECT status FROM workbench_attachment_uploads WHERE id=?').get(m.id)).toEqual({status:'finalizing'})
+  db.exec('DROP TRIGGER fault')
+  expect(()=>uploads.status(query(m),context)).toThrow('upload_invalid_content')
+  expect(existsSync(part(m.id))).toBe(false)
 })
 
 it('truncates bytes written before a failed offset commit and resumes from the committed boundary',()=>{
@@ -85,6 +138,105 @@ it('truncates bytes written before a failed offset commit and resumes from the c
   expect(statSync(part(m.id)).size).toBe(CHUNK)
   uploads.chunk(packet(m,bytes,CHUNK),context)
   expect(uploads.chunk(packet(m,bytes,CHUNK*2),context).status).toBe('ready')
+})
+
+it('reads linear bytes for an 8 MiB upload and keeps full-file reads outside the SQLite writer lock',()=>{
+  const bytes=Buffer.alloc(8*1024*1024,97),m=meta(bytes),otherDb=openDb({path:join(root,'state.db')})
+  otherDb.exec('PRAGMA busy_timeout=0')
+  const events:{operation:string;durationMs:number}[]=[],lockedFullReads:number[]=[],lockedCallbacks:string[]=[]
+  const writable=()=>{try{otherDb.transaction(()=>{}).immediate();return true}catch{return false}}
+  uploads=instance(db,store.attachments,{onTransaction:(event:{operation:string;durationMs:number})=>{events.push(event);if(!writable())lockedCallbacks.push(event.operation)}})
+  reads.bytes=0
+  reads.observe=(_fd,count,requested)=>{if(count>CHUNK&&requested>CHUNK&&!writable())lockedFullReads.push(count)}
+  try{
+    for(let offset=0;offset<bytes.length;offset+=CHUNK)uploads.chunk(packet(m,bytes,offset),context)
+    expect(uploads.status(query(m),context).status).toBe('ready')
+    expect(reads.bytes).toBeGreaterThanOrEqual(bytes.length)
+    expect(reads.bytes).toBeLessThanOrEqual(bytes.length*4)
+    expect(lockedFullReads).toEqual([])
+    expect(lockedCallbacks).toEqual([])
+    expect(events.filter(e=>e.operation==='write')).toHaveLength(64)
+    expect(events.every(e=>Number.isFinite(e.durationMs)&&e.durationMs>=0)).toBe(true)
+    if(process.env.CC_UPLOAD_BENCHMARK==='1')process.stdout.write(JSON.stringify({readBytes:reads.bytes,transactions:events.length,maxTransactionMs:Math.max(...events.map(e=>e.durationMs))})+'\n')
+  }finally{reads.observe=null;otherDb.close()}
+})
+
+it.each(['another upload','exact replay'])('verifies a shared 8 MiB blob outside the writer lock for %s',operation=>{
+  const bytes=Buffer.alloc(8*1024*1024,97),first=meta(bytes)
+  for(let offset=0;offset<bytes.length;offset+=CHUNK)uploads.chunk(packet(first,bytes,offset),context)
+  const otherDb=openDb({path:join(root,'state.db')}),lockedFullReads:number[]=[],events:{operation:string;durationMs:number}[]=[]
+  otherDb.exec('PRAGMA busy_timeout=0')
+  const durations:number[]=[],original=db.transaction.bind(db)
+  vi.spyOn(db,'transaction').mockImplementation(<A extends any[],T>(body:(...args:A)=>T)=>{
+    const transaction=original(body)
+    return Object.assign((...args:A)=>transaction(...args),{
+      deferred:transaction.deferred,exclusive:transaction.exclusive,
+      immediate:(...args:A)=>{const start=performance.now();try{return transaction.immediate(...args)}finally{durations.push(performance.now()-start)}},
+    })
+  })
+  uploads=instance(db,store.attachments,{onTransaction:(event:{operation:string;durationMs:number})=>events.push(event)})
+  reads.bytes=0
+  reads.observe=(_fd,count,requested)=>{
+    if(count<=CHUNK||requested<=CHUNK)return
+    try{otherDb.transaction(()=>{}).immediate()}catch{lockedFullReads.push(count)}
+  }
+  try{
+    if(operation==='another upload'){
+      const second=meta(bytes)
+      for(let offset=0;offset<bytes.length;offset+=CHUNK)uploads.chunk(packet(second,bytes,offset),context)
+      expect(uploads.status(query(second),context)).toMatchObject({status:'ready',attachment:{id:second.id,sha256:first.sha256}})
+      expect(db.query('SELECT id FROM workbench_attachments').all()).toHaveLength(2)
+    }else{
+      expect(store.attachments.upload({...first,base64:bytes.toString('base64')},root,context)).toMatchObject({id:first.id,sha256:first.sha256})
+      expect(db.query('SELECT id FROM workbench_attachments').all()).toHaveLength(1)
+    }
+    expect(reads.bytes).toBeGreaterThanOrEqual(bytes.length)
+    expect(reads.bytes).toBeLessThanOrEqual(bytes.length*5)
+    expect(lockedFullReads).toEqual([])
+    expect(durations.every(duration=>Number.isFinite(duration)&&duration>=0)).toBe(true)
+    if(process.env.CC_UPLOAD_BENCHMARK==='1')process.stdout.write(JSON.stringify({operation,readBytes:reads.bytes,transactions:durations.length,maxTransactionMs:Math.max(...durations),moduleTransactions:events.length})+'\n')
+  }finally{reads.observe=null;otherDb.close()}
+})
+
+it('checks an earlier committed block after restart or unexpected file modification',()=>{
+  const bytes=Buffer.alloc(CHUNK*4,97),m=meta(bytes)
+  for(let offset=0;offset<CHUNK*3;offset+=CHUNK)uploads.chunk(packet(m,bytes,offset),context)
+  const damaged=Buffer.alloc(CHUNK*3,97);damaged[0]=98;writeFileSync(part(m.id),damaged)
+  expect(()=>uploads.chunk(packet(m,bytes,CHUNK*3),context)).toThrow('upload_changed')
+  uploads=instance()
+  expect(()=>uploads.chunk(packet(m,bytes,CHUNK),context)).toThrow('upload_changed')
+  expect(()=>uploads.status(query(m),context)).toThrow('upload_changed')
+  expect(db.query('SELECT next_offset FROM workbench_attachment_uploads WHERE id=?').get(m.id)).toEqual({next_offset:CHUNK*3})
+  expect(db.query('SELECT id FROM workbench_attachments').all()).toEqual([])
+})
+
+it('lets a second connection cancel during unlocked full-file verification without reviving the upload',()=>{
+  const bytes=Buffer.alloc(CHUNK+7,97),m=meta(bytes),otherDb=openDb({path:join(root,'state.db')}),other=instance(otherDb,makeWorkbenchStore(otherDb).attachments)
+  otherDb.exec('PRAGMA busy_timeout=0');let cancelled=false
+  uploads.chunk(packet(m,bytes),context)
+  reads.observe=(_fd,count)=>{if(count>CHUNK&&!cancelled){cancelled=true;other.discard(query(m),context)}}
+  try{
+    expect(()=>uploads.chunk(packet(m,bytes,CHUNK),context)).toThrow('upload_discarded')
+    expect(cancelled).toBe(true)
+    expect(db.query('SELECT status FROM workbench_attachment_uploads WHERE id=?').get(m.id)).toEqual({status:'discarded'})
+    expect(db.query('SELECT id FROM workbench_attachments').all()).toEqual([])
+  }finally{reads.observe=null;otherDb.close()}
+})
+
+it('rechecks cancellation after verifying an existing shared blob outside the write transaction',()=>{
+  const bytes=Buffer.alloc(CHUNK+7,97),first=meta(bytes),m=meta(bytes)
+  uploads.chunk(packet(first,bytes),context);uploads.chunk(packet(first,bytes,CHUNK),context)
+  uploads.chunk(packet(m,bytes),context)
+  const otherDb=openDb({path:join(root,'state.db')}),other=instance(otherDb,makeWorkbenchStore(otherDb).attachments)
+  const blob=statSync(join(root,'workbench-attachments',first.sha256));let cancelled=false
+  otherDb.exec('PRAGMA busy_timeout=0')
+  reads.observe=(fd,count)=>{if(count>CHUNK&&fstatSync(fd).ino===blob.ino&&!cancelled){cancelled=true;other.discard(query(m),context)}}
+  try{
+    expect(()=>uploads.chunk(packet(m,bytes,CHUNK),context)).toThrow('upload_discarded')
+    expect(cancelled).toBe(true)
+    expect(db.query('SELECT status FROM workbench_attachment_uploads WHERE id=?').get(m.id)).toEqual({status:'discarded'})
+    expect(db.query('SELECT id FROM workbench_attachments').all()).toEqual([{id:first.id}])
+  }finally{reads.observe=null;otherDb.close()}
 })
 
 it.each(['short','changed'] as const)('refuses a %s committed part after restart',damage=>{

@@ -70,7 +70,8 @@ export function createEntryStore(db:Db) {
         if(typeof accepted.taskId!=='string'||!/^[a-f0-9]{8}$/.test(accepted.taskId)||accepted.matterId!==accepted.taskId||!nonempty(accepted.runId)||!Number.isSafeInteger(accepted.acceptedAt)||accepted.acceptedAt<=0)throw Error('invalid_entry_receipt')
         requireAllocation(prior,accepted.resolvedPath,accepted.directoryIdentity)
         if(prior.phase==='accepted') {
-          if((Object.keys(accepted) as Array<keyof EntryAccepted>).some(key=>prior[key]!==accepted[key]))throw Error('creation_conflict')
+          // Acceptance time records the first commit, not the caller's retry.
+          if(prior.taskId!==accepted.taskId||prior.matterId!==accepted.matterId||prior.runId!==accepted.runId)throw Error('creation_conflict')
           return prior
         }
         db.query(`UPDATE workbench_entry_requests SET phase='accepted',task_id=?,matter_id=?,run_id=?,accepted_at=?,resolved_path=?,directory_identity=?

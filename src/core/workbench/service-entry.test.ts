@@ -1,6 +1,6 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
 import {randomUUID} from 'node:crypto'
-import {mkdirSync,mkdtempSync,realpathSync,renameSync,writeFileSync,unlinkSync} from 'node:fs'
+import {existsSync,mkdirSync,mkdtempSync,realpathSync,renameSync,writeFileSync,unlinkSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {openDb,type Db} from '../../lib/db'
@@ -13,6 +13,12 @@ import {MANAGED_NATIVE_CAPABILITIES,UNATTENDED_CAPABILITIES} from './executor-ca
 import {makeTaskChangeHub} from './task-changes'
 import {canonicalEntryHash,type EntryInput} from './task-entry'
 import {validateApiTaskInput} from './api-task-provider'
+
+const entryReads=vi.hoisted(()=>({observe:null as null|((count:number)=>void)}))
+vi.mock('node:fs',async importOriginal=>{
+  const fs=await importOriginal<typeof import('node:fs')>()
+  return{...fs,readSync:(...args:unknown[])=>{const count=Reflect.apply(fs.readSync,fs,args) as number;entryReads.observe?.(count);return count}}
+})
 
 let area:string,stateDir:string,project:string,db:Db,store:ReturnType<typeof makeWorkbenchStore>,service:WorkbenchService
 let owner:string|null,spawnCount:number,mintCount:number,seen:string[],hub:ReturnType<typeof makeTaskChangeHub>
@@ -148,10 +154,10 @@ it.each(['allocation','first material check'])('reuses the winner when another c
     {displayName:'Claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
   const other=makeWorkbenchService({store:secondStore,registry,stateDir,managedWorkspaceRoot:join(area,'Tasks'),ownerChatId:()=>owner,defaultProvider:'claude',matters:makeMatterStore(secondDb)})
   try{
-    const material=staged(),request=input({draftId:material.draftId,attachmentIds:material.attachmentIds}),allocate=store.entryRequests.allocate,verify=store.attachments.verify
+    const material=staged(),request=input({draftId:material.draftId,attachmentIds:material.attachmentIds}),allocate=store.entryRequests.allocate,verify=store.attachments.prepareAcceptance
     let winner:ReturnType<typeof other.createEntry>|undefined
     if(point==='allocation')vi.spyOn(store.entryRequests,'allocate').mockImplementation((...args)=>{const reserved=allocate(...args);winner=other.createEntry(request,{...context,surface:'phone'});return reserved})
-    else vi.spyOn(store.attachments,'verify').mockImplementationOnce((...args)=>{winner=other.createEntry(request,{...context,surface:'phone'});return verify(...args)})
+    else vi.spyOn(store.attachments,'prepareAcceptance').mockImplementationOnce((...args)=>{winner=other.createEntry(request,{...context,surface:'phone'});return verify(...args)})
     const result=service.createEntry(request,context)
     expect(result.receipt).toEqual(winner!.receipt)
     for(const table of ['workbench_tasks','matters','workbench_events','workbench_run_execution'])expect(db.query(`SELECT * FROM ${table}`).all()).toHaveLength(1)
@@ -218,11 +224,49 @@ it('rejects API-incompatible binary material before reservation, binding or mode
   expect(store.attachments.select([id],undefined,draftId,context)).toEqual([attachment])
 })
 
-it('expires an unaccepted creation reservation instead of reviving released material claims',()=>{
-  const request=input();db.exec("CREATE TRIGGER entry_fault BEFORE INSERT ON matters BEGIN SELECT RAISE(ABORT,'entry_fault'); END")
+it.each(['none','expired','missing'] as const)('expires an unaccepted creation reservation before checking %s material',kind=>{
+  const material=kind==='none'?null:staged()
+  const request=input(material?{draftId:material.draftId,attachmentIds:material.attachmentIds}:{});db.exec("CREATE TRIGGER entry_fault BEFORE INSERT ON matters BEGIN SELECT RAISE(ABORT,'entry_fault'); END")
   expect(()=>service.createEntry(request,context)).toThrow('entry_fault')
   db.exec('DROP TRIGGER entry_fault')
   db.query('UPDATE workbench_entry_requests SET created_at=? WHERE request_id=?').run(Date.now()-8*86400_000,request.requestId)
+  if(material&&kind==='expired')db.query('UPDATE workbench_attachments SET created_at=? WHERE id=?').run(Date.now()-8*86400_000,material.attachment.id)
+  if(material&&kind==='missing')store.attachments.discard(material.attachment.id,material.draftId,context)
   expect(()=>service.createEntry(request,context)).toThrow('entry_expired')
   expect(store.list()).toEqual([]);expect(spawnCount).toBe(0)
+})
+
+it('reads entry materials once before acceptance and never under the SQLite write lock',async()=>{
+  const material=staged(),request=input({draftId:material.draftId,attachmentIds:material.attachmentIds})
+  const other=openDb({path:join(stateDir,'state.db')});other.exec('PRAGMA busy_timeout=0')
+  let bytes=0,locked=false
+  entryReads.observe=count=>{bytes+=count;try{other.transaction(()=>{}).immediate()}catch{locked=true}}
+  let result:ReturnType<WorkbenchService['createEntry']>
+  try{result=service.createEntry(request,context)}finally{entryReads.observe=null;other.close()}
+  expect(bytes).toBe(material.attachment.size)
+  expect(locked).toBe(false)
+  await settle(result!.receipt.taskId)
+})
+
+it.each(['bytes','owner','discard'] as const)('rechecks %s changed after entry material verification before acceptance',async change=>{
+  const material=staged(),request=input({draftId:material.draftId,attachmentIds:material.attachmentIds}),atomic=store.atomic
+  vi.spyOn(store,'atomic').mockImplementationOnce((operation,immediate)=>{
+    if(change==='bytes')writeFileSync(join(stateDir,'workbench-attachments',material.attachment.sha256),'changed! material')
+    if(change==='owner')db.query('UPDATE workbench_attachments SET owner_key=? WHERE id=?').run('other',material.attachment.id)
+    if(change==='discard')store.attachments.discard(material.attachment.id,material.draftId,context)
+    return atomic(operation,immediate)
+  })
+  expect(()=>service.createEntry(request,context)).toThrow()
+  expect(store.list()).toHaveLength(0);expect(spawnCount).toBe(0)
+})
+
+
+it('persists the physical managed allocation path before any directory is created',()=>{
+  const request=input(),reserve=store.entryRequests.reserve
+  vi.spyOn(store.entryRequests,'reserve').mockImplementationOnce(value=>{reserve(value);throw Error('reservation_fault')})
+  expect(()=>service.createEntry(request,context)).toThrow('reservation_fault')
+  const reservation=store.entryRequests.get('owner',request.requestId)!
+  expect(reservation.resolvedPath).toBe(join(area,'Tasks',reservation.workspaceId!))
+  expect(reservation.directoryIdentity).toBeNull()
+  expect(existsSync(reservation.resolvedPath!)).toBe(false)
 })

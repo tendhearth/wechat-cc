@@ -51,6 +51,23 @@ describe('durable entry reservation',()=>{
     expect(createEntryStore(db).get(input.ownerKey,input.requestId)).toEqual(first)
   })
 
+  it('replays the original acceptance time across connections and restart when receipt identity is unchanged',()=>{
+    const store=createEntryStore(db),input=reservation(),receipt={...accepted(),acceptedAt:100};store.reserve(input)
+    const first=store.accept(input.ownerKey,input.requestId,receipt),second=openDb({path})
+    try{expect(createEntryStore(second).accept(input.ownerKey,input.requestId,{...receipt,acceptedAt:200})).toEqual(first)}finally{second.close()}
+    db.close();db=openDb({path})
+    expect(createEntryStore(db).accept(input.ownerKey,input.requestId,{...receipt,acceptedAt:300})).toEqual(first)
+    expect(createEntryStore(db).get(input.ownerKey,input.requestId)?.acceptedAt).toBe(100)
+  })
+
+  it('still rejects changed task, run, path or inode when a repeated acceptance has a newer time',()=>{
+    const store=createEntryStore(db),input=reservation(),receipt={...accepted(),acceptedAt:100};store.reserve(input);store.accept(input.ownerKey,input.requestId,receipt)
+    for(const change of [{taskId:'deadbeef',matterId:'deadbeef'},{runId:randomUUID()},{resolvedPath:'/elsewhere'},{directoryIdentity:'1:3'}]){
+      expect(()=>store.accept(input.ownerKey,input.requestId,{...receipt,...change,acceptedAt:200})).toThrow('creation_conflict')
+    }
+    expect(store.get(input.ownerKey,input.requestId)?.acceptedAt).toBe(100)
+  })
+
   it('participates in the caller transaction, leaving the retry reservation after rollback',()=>{
     const store=createEntryStore(db),input=reservation();store.reserve(input)
     expect(()=>db.transaction(()=>{store.accept(input.ownerKey,input.requestId,accepted());throw Error('abort')})()).toThrow('abort')

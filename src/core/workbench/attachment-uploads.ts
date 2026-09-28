@@ -5,6 +5,7 @@ import type {Db} from '../../lib/db'
 import {MAX_ATTACHMENT_BYTES,MAX_IMAGE_ATTACHMENT_BYTES,type Attachment,type makeTaskAttachmentStore} from './attachments'
 import {mkdirAnchored,openAnchored,O_NONBLOCK,verifyOpened} from './anchored-fs'
 import type {EntryContext} from './task-entry'
+import {UPLOAD_METADATA_BYTES as METADATA_BYTES,UPLOAD_TOMBSTONE_BYTES as TOMBSTONE_BYTES} from './attachment-budget'
 
 export interface UploadChunk {
   id:string;draftId:string;taskId?:string;name:string;mime:string;size:number;sha256:string;offset:number;contentBase64:string
@@ -24,7 +25,7 @@ interface Options {
   /** Emitted after the write lock has been released; diagnostic failures never affect acceptance. */
   onTransaction?:(event:{operation:string;durationMs:number})=>void
 }
-const BLOCK_BYTES=128*1024,METADATA_BYTES=16*1024,TOMBSTONE_BYTES=1024,RETENTION_MS=7*24*60*60*1000
+const BLOCK_BYTES=128*1024,RETENTION_MS=7*24*60*60*1000
 const PARTS='workbench-attachment-uploads',CHANGED='upload_changed',PATH_ERROR='invalid_attachment_path'
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
 const HASH=/^[a-f0-9]{64}$/
@@ -64,8 +65,8 @@ function blocks(row:Row):Block[] {
 }
 const sameMetadata=(row:Row,input:UploadChunk)=>row.draftId===input.draftId&&row.taskId===(input.taskId??null)&&row.name===input.name&&row.mime===input.mime&&row.size===input.size&&row.sha256===input.sha256
 
-/** Synchronous, bounded disk operations inside SQLite immediate transactions.
- * Reservation commits before file creation; finalization and ready have separate commits. */
+/** Chunk writes use bounded synchronous SQLite transactions. Full content
+ * verification stays outside the writer lock; ready has its own commit. */
 export function createAttachmentUploads(options:Options) {
   const {db,attachments}=options,stateDir=resolve(options.stateDir),now=options.now??Date.now
   const get=(id:string)=>db.query<Row,[string]>(SELECT+' WHERE id=?').get(id)
@@ -90,26 +91,51 @@ export function createAttachmentUploads(options:Options) {
   const terminal=(row:Row)=>{if(row.status==='discarded'||row.status==='expired')throw Error(`upload_${row.status}`)}
   const partName=(row:Row)=>`${row.id}.part`
   const fileIdentity=(fd:number)=>{const s=fstatSync(fd,{bigint:true});if(!s.isFile()||s.nlink!==1n)throw Error(PATH_ERROR);return`${s.dev}:${s.ino}`}
+  // The cache only skips repeated prefix reads while the same file and committed
+  // prefix remain unchanged. A new process, unexpected write or new offset must
+  // verify the persisted prefix again; finalization always checks every byte.
+  const verifiedParts=new Map<string,string>()
+  const partStamp=(row:Row,fd:number)=>{
+    const s=fstatSync(fd,{bigint:true})
+    return`${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}:${row.nextOffset}:${row.chunksJson}`
+  }
+  function rememberPart(row:Row,fd:number):void {
+    verifiedParts.delete(row.id);verifiedParts.set(row.id,partStamp(row,fd))
+    if(verifiedParts.size>64)verifiedParts.delete(verifiedParts.keys().next().value!)
+  }
+  function readRange(fd:number,offset:number,size:number):Buffer {
+    const bytes=Buffer.alloc(size);let length=0
+    while(length<size){const n=readSync(fd,bytes,length,size-length,offset+length);if(!n)throw Error(CHANGED);length+=n}
+    return bytes
+  }
   /** Any excess bytes are uncommitted. Never invent bytes for a short committed prefix. */
-  function openPart(row:Row,create=false):{fd:number;bytes:Buffer;identity:string}|null {
+  function openPart(row:Row,options:{create?:boolean;full?:boolean;replayOffset?:number;readOnly?:boolean}={}):{fd:number;bytes:Buffer|null;identity:string}|null {
+    const {create=false,readOnly=false}=options
     const path=join(stateDir,PARTS,partName(row))
     if(!existsSync(path)&&!create){if(row.nextOffset||row.partIdentity)throw Error(CHANGED);return null}
     if(!existsSync(path)&&row.partIdentity)throw Error(CHANGED)
-    mkdirAnchored(stateDir,[PARTS],PATH_ERROR)
-    const fd=openAnchored(stateDir,[PARTS,partName(row)],constants.O_RDWR|O_NONBLOCK|(create?constants.O_CREAT:0),0o600,PATH_ERROR)
+    if(!readOnly)mkdirAnchored(stateDir,[PARTS],PATH_ERROR)
+    const fd=openAnchored(stateDir,[PARTS,partName(row)],(readOnly?constants.O_RDONLY:constants.O_RDWR)|O_NONBLOCK|(create?constants.O_CREAT:0),0o600,PATH_ERROR)
     try{
       const id=fileIdentity(fd),stat=fstatSync(fd)
       if(row.partIdentity!==null&&id!==row.partIdentity)throw Error(CHANGED)
       if(stat.size<row.nextOffset)throw Error(CHANGED)
-      if(stat.size>row.nextOffset){ftruncateSync(fd,row.nextOffset);fsyncSync(fd)}
-      const bytes=Buffer.alloc(row.nextOffset);let length=0
-      while(length<bytes.length){const n=readSync(fd,bytes,length,bytes.length-length,length);if(!n)throw Error(CHANGED);length+=n}
-      for(const b of blocks(row))if(hash(bytes.subarray(b.offset,b.offset+b.size))!==b.sha256)throw Error(CHANGED)
+      if(stat.size>row.nextOffset){if(readOnly)throw Error(CHANGED);ftruncateSync(fd,row.nextOffset);fsyncSync(fd)}
+      const before=partStamp(row,fd),committed=blocks(row),full=options.full||verifiedParts.get(row.id)!==before
+      const bytes=full?readRange(fd,0,row.nextOffset):null
+      const last=committed.at(-1)
+      for(const b of committed){
+        if(!full&&b!==last&&b.offset!==options.replayOffset)continue
+        if(hash(bytes?bytes.subarray(b.offset,b.offset+b.size):readRange(fd,b.offset,b.size))!==b.sha256)throw Error(CHANGED)
+      }
       verifyOpened(fd,stateDir,[PARTS,partName(row)],PATH_ERROR)
+      if(partStamp(row,fd)!==before)throw Error(CHANGED)
+      rememberPart(row,fd)
       return{fd,bytes,identity:id}
     }catch(error){closeSync(fd);throw error}
   }
   function removePart(row:Row):void {
+    verifiedParts.delete(row.id)
     const path=join(stateDir,PARTS,partName(row));if(!existsSync(path))return
     const fd=openAnchored(stateDir,[PARTS,partName(row)],constants.O_RDONLY|O_NONBLOCK,0,PATH_ERROR)
     try{if(row.partIdentity&&fileIdentity(fd)!==row.partIdentity)throw Error(CHANGED);verifyOpened(fd,stateDir,[PARTS,partName(row)],PATH_ERROR)}finally{closeSync(fd)}
@@ -170,23 +196,50 @@ export function createAttachmentUploads(options:Options) {
     if(row.status==='ready'&&!ready)throw Error(CHANGED)
     return{id:row.id,draftId:row.draftId,taskId:row.taskId,size:row.size,sha256:row.sha256,nextOffset:row.nextOffset,status:row.status==='ready'?'ready':'uploading',...(ready?{attachment:ready}:{})}
   }
+  function rejectContent(key:Identity,context:EntryContext):never {
+    // Persist the terminal identity separately from the failed finalization.
+    // Cleanup must never make a rolled-back upload appear resumable again.
+    const rejected=transaction('reject-content',()=>{
+      const row=current(key,context)
+      if(row.status!=='finalizing'||attachment(row,false))throw Error(CHANGED)
+      attachments.assertDiscardable(row.id,row.draftId,scope(row))
+      db.query("UPDATE workbench_attachment_uploads SET status='discarded',chunks_json='[]',reserved_bytes=?,updated_at=? WHERE id=?").run(TOMBSTONE_BYTES,now(),row.id)
+      return get(row.id)!
+    })
+    try{cleanup(rejected)}catch{/* Terminal identity is durable; leftover bytes remain charged. */}
+    throw Error('upload_invalid_content')
+  }
   function finalize(key:Identity,context:EntryContext):UploadState {
     refresh(key,context)
-    transaction('finalize',()=>{
-      const row=current(key,context);if(row.status==='ready')return
+    try{
+      const row=current(key,context);if(row.status==='ready')return state(row)
       if(row.status!=='finalizing'||row.nextOffset!==row.size)throw Error(CHANGED)
-      if(attachment(row,true))return
-      const part=openPart(row);if(!part)throw Error(CHANGED)
-      try{
-        if(hash(part.bytes)!==row.sha256)throw Error(CHANGED)
-        const result=attachments.upload({id:row.id,draftId:row.draftId,...(row.taskId?{taskId:row.taskId}:{}),name:row.name,mime:row.mime,base64:part.bytes.toString('base64')},stateDir,scope(row))
-        if(result.id!==row.id||result.name!==row.name||result.mime!==row.mime||result.size!==row.size||result.sha256!==row.sha256)throw Error('upload_conflict')
-      }finally{closeSync(part.fd)}
-    })
+      if(!attachment(row,true)){
+        // finalizing has already committed; no writer can append to this part.
+        // Content reads/hash/decoding do not hold the daemon-wide SQLite lock.
+        const part=openPart(row,{full:true,readOnly:true});if(!part?.bytes)throw Error(CHANGED)
+        try{
+          if(hash(part.bytes)!==row.sha256)throw Error('upload_invalid_content')
+          let result:Attachment
+          // upload owns its own immediate transaction and rechecks the durable
+          // tombstone and fixed metadata before any blob/attachment write.
+          try{result=attachments.upload({id:row.id,draftId:row.draftId,...(row.taskId?{taskId:row.taskId}:{}),name:row.name,mime:row.mime,base64:part.bytes.toString('base64')},stateDir,scope(row))}
+          catch(error){if(code(error)==='invalid_attachment')throw Error('upload_invalid_content');throw error}
+          if(result.id!==row.id||result.name!==row.name||result.mime!==row.mime||result.size!==row.size||result.sha256!==row.sha256)throw Error('upload_conflict')
+        }finally{closeSync(part.fd)}
+      }
+      transaction('finalize',()=>{if(!attachment(current(key,context),false))throw Error(CHANGED)})
+    }catch(error){
+      const latest=current(key,context)
+      if(latest.status==='ready')return state(latest)
+      if(code(error)==='upload_invalid_content')rejectContent(key,context)
+      throw error
+    }
     refresh(key,context)
+    if(!attachment(current(key,context),true))throw Error(CHANGED)
     const ready=transaction('ready',()=>{
       const row=current(key,context);if(row.status==='ready')return row
-      if(row.status!=='finalizing'||!attachment(row,true))throw Error(CHANGED)
+      if(row.status!=='finalizing'||!attachment(row,false))throw Error(CHANGED)
       db.query("UPDATE workbench_attachment_uploads SET status='ready',reserved_bytes=?,updated_at=? WHERE id=?").run(METADATA_BYTES,now(),row.id)
       return get(row.id)!
     })
@@ -206,7 +259,7 @@ export function createAttachmentUploads(options:Options) {
           const unfinished=db.query<{n:number},[string]>("SELECT COUNT(*) AS n FROM workbench_attachment_uploads WHERE owner_key=? AND status IN ('uploading','finalizing')").get(context.ownerKey)!.n
           if(unfinished>=32)throw Error('upload_unfinished_limit')
           const reservedBytes=input.size*2+METADATA_BYTES
-          attachments.checkUploadQuota({id:input.id,draftId:input.draftId,...(input.taskId?{taskId:input.taskId}:{}),size:input.size,sha256:input.sha256,reservedBytes},stateDir,{ownerKey:context.ownerKey})
+          attachments.checkUploadQuota({id:input.id,draftId:input.draftId,...(input.taskId?{taskId:input.taskId}:{}),size:input.size,sha256:input.sha256,kind:'resumable'},stateDir,{ownerKey:context.ownerKey})
           const timestamp=now()
           db.query(`INSERT INTO workbench_attachment_uploads(id,owner_key,draft_id,task_id,name,mime,size,sha256,status,next_offset,chunks_json,part_identity,reserved_bytes,created_at,updated_at,expires_at)
             VALUES(?,?,?,?,?,?,?,?,'uploading',0,'[]',NULL,?,?,?,?)`).run(input.id,context.ownerKey,input.draftId,input.taskId??null,input.name,input.mime,input.size,input.sha256,reservedBytes,timestamp,timestamp,timestamp+RETENTION_MS)
@@ -218,20 +271,19 @@ export function createAttachmentUploads(options:Options) {
         const committed=blocks(row),digest=hash(bytes),prior=committed.find(b=>b.offset===input.offset)
         if(input.offset<row.nextOffset){
           if(!prior||prior.size!==bytes.length||prior.sha256!==digest)throw Error('upload_conflict')
-          if(row.status==='uploading'){const part=openPart(row);if(part)closeSync(part.fd)}
+          if(row.status==='uploading'){const part=openPart(row,{replayOffset:input.offset});if(part)closeSync(part.fd)}
           return row
         }
         if(row.status!=='uploading'||input.offset!==row.nextOffset)throw Error('upload_conflict')
-        const part=openPart(row,true);if(!part)throw Error(CHANGED)
+        const part=openPart(row,{create:true});if(!part)throw Error(CHANGED)
         try{
           let written=0
           while(written<bytes.length){const n=writeSync(part.fd,bytes,written,bytes.length-written,input.offset+written);if(!n)throw Error(CHANGED);written+=n}
           fsyncSync(part.fd);verifyOpened(part.fd,stateDir,[PARTS,partName(row)],PATH_ERROR)
           const offset=row.nextOffset+bytes.length
-          if(offset===row.size&&createHash('sha256').update(part.bytes).update(bytes).digest('hex')!==row.sha256)throw Error(CHANGED)
           committed.push({offset:input.offset,size:bytes.length,sha256:digest})
           db.query('UPDATE workbench_attachment_uploads SET next_offset=?,chunks_json=?,part_identity=?,status=?,updated_at=? WHERE id=?').run(offset,JSON.stringify(committed),part.identity,offset===row.size?'finalizing':'uploading',now(),row.id)
-          return get(row.id)!
+          const updated=get(row.id)!;rememberPart(updated,part.fd);return updated
         }finally{closeSync(part.fd)}
       })
       if(next.status==='finalizing')return finalize(key,context)
@@ -249,7 +301,7 @@ export function createAttachmentUploads(options:Options) {
         authorize(context)
         if(!get(key.id)){
           attachments.assertDiscardable(key.id,key.draftId,{ownerKey:context.ownerKey})
-          attachments.checkUploadQuota({...key,size:1,sha256:'0'.repeat(64),reservedBytes:TOMBSTONE_BYTES},stateDir,{ownerKey:context.ownerKey})
+          attachments.checkUploadQuota({...key,size:1,sha256:'0'.repeat(64),kind:'tombstone'},stateDir,{ownerKey:context.ownerKey})
           const timestamp=now()
           db.query(`INSERT INTO workbench_attachment_uploads(id,owner_key,draft_id,task_id,name,mime,size,sha256,status,next_offset,chunks_json,part_identity,reserved_bytes,created_at,updated_at,expires_at)
             VALUES(?,?,?,NULL,'','',1,?,'discarded',0,'[]',NULL,?,?,?,?)`).run(key.id,context.ownerKey,key.draftId,'0'.repeat(64),TOMBSTONE_BYTES,timestamp,timestamp,timestamp+RETENTION_MS)

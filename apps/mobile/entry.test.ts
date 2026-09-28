@@ -514,10 +514,10 @@ describe('phone task entry', () => {
     expect(phone.state().draft.requestId).toBe(phone.state().pending[0].input.requestId)
   })
 
-  it('a receipt lookup error never becomes a definitive creation rejection',async()=>{
+  it.each([[400,'api_task_input_invalid'],[410,'entry_expired']])('a receipt lookup error HTTP %s %s never becomes a definitive creation rejection',async(status,code)=>{
     const api:Api=async path=>{
       if(path.endsWith('/options'))return response(ready)
-      if(path.includes('create-receipt'))return response({ok:false,error:'api_task_input_invalid'},400)
+      if(path.includes('create-receipt'))return response({ok:false,error:code},status as number)
       throw Error('offline')
     }
     const phone=load(api);await phone.openEntry();phone.edit('可能已经收到的要求');await phone.submitEntry()

@@ -10,6 +10,7 @@ function paMessage(error) {
   if (code === "attachment_frozen") return "这些材料属于已交办的请求，正在确认是否收到，暂时不能移除或替换。"
   if (code === "upload_reply_mismatch") return "收到的上传信息对不上，已暂停。请重新选择原文件再确认。"
   if (code === "upload_discarded" || code === "upload_expired") return "这次上传已取消或过期，请移除后重新添加文件。"
+  if (code === "upload_invalid_content" || code === "upload_restart_required") return "文件内容与格式或校验信息不一致，无法继续这次上传。请移除后重新添加可用文件。"
   if (code === "upload_storage") return "这台手机暂时无法保存上传进度，请先恢复浏览器存储再试。"
   return "还没确认上传完成，文件信息已保留。重新选择原文件可以继续。"
 }
@@ -43,7 +44,7 @@ function createPhoneAttachments(options) {
   try {
     var saved = JSON.parse(localStorage.getItem(key) || "null")
     if (saved && saved.version === 1 && Array.isArray(saved.items)) rows = saved.items.filter(function(r){ return r.draftId === draftId && r.taskId === taskId && typeof r.id === "string" }).map(function(r){
-      return Object.assign(metadata(r), { generation:0, file:null, url:null, status:r.removed ? "discard_failed" : r.status === "ready" ? "ready" : "needs_file" })
+      return Object.assign(metadata(r), { generation:0, file:null, url:null, status:r.removed ? "discard_failed" : r.status === "ready" ? "ready" : r.status === "rejected" ? "rejected" : "needs_file" })
     })
   } catch (e) {}
   function selected() { return rows.filter(function(r){ return !r.removed }) }
@@ -60,6 +61,12 @@ function createPhoneAttachments(options) {
   function changed() { if (!alive) return false; var saved = persist(); paint(); if (options.onChange) options.onChange(); return saved }
   function current(row, generation) { return alive && !row.removed && rows.indexOf(row) >= 0 && row.generation === generation }
   function revoke(row) { if (row.url) { URL.revokeObjectURL(row.url); row.url = null } }
+  function failed(row, error) {
+    var code = error && error.message || error
+    row.status = /^(upload_invalid_content|upload_discarded|upload_expired)$/.test(code) ? "rejected" : "paused"
+    if (row.status === "rejected") { row.file = null; revoke(row) }
+    row.error = paMessage(error); changed()
+  }
   function checked(row, state) {
     if (!state || state.id !== row.id || state.draftId !== draftId || state.taskId !== taskId || state.size !== row.size || state.sha256 !== row.sha256 || !Number.isSafeInteger(state.nextOffset) || state.nextOffset < 0 || state.nextOffset > row.size || (state.status !== "uploading" && state.status !== "ready")) throw new Error("upload_reply_mismatch")
     if (state.status === "ready") {
@@ -88,7 +95,7 @@ function createPhoneAttachments(options) {
         if (response.nextOffset < offset + bytes.length) throw new Error("upload_reply_mismatch")
         apply(row, response)
       }
-    } catch (error) { if (current(row, generation)) { row.status = "paused"; row.error = paMessage(error); changed() } }
+    } catch (error) { if (current(row, generation)) failed(row, error) }
   }
   async function select(files) {
     try {
@@ -109,7 +116,7 @@ function createPhoneAttachments(options) {
           if (!changed()) throw new Error("upload_storage")
           busy[row.id] = true
           await upload(row, row.file, generation, false)
-        } catch (error) { if (current(row, generation)) { row.status = "paused"; row.error = paMessage(error); changed() } }
+        } catch (error) { if (current(row, generation)) failed(row, error) }
         finally { delete busy[row.id] }
       }))
     } catch (error) { notice = paMessage(error); changed(); throw error }
@@ -118,8 +125,9 @@ function createPhoneAttachments(options) {
     try {
       if (!alive) return
       for (var file of Array.from(files)) {
-        var mime = paMime(file), candidates = selected().filter(function(r){ return !r.frozen && !busy[r.id] && r.status !== "ready" && r.name === file.name && r.size === file.size && r.mime === mime })
-        if (!candidates.length) throw new Error("reselect_mismatch")
+        var mime = paMime(file), matches = selected().filter(function(r){ return !r.frozen && !busy[r.id] && r.name === file.name && r.size === file.size && r.mime === mime })
+        var candidates = matches.filter(function(r){ return r.status === "needs_file" || r.status === "paused" })
+        if (!candidates.length) throw new Error(matches.some(function(r){ return r.status === "rejected" }) ? "upload_restart_required" : "reselect_mismatch")
         var sha256 = await mSha256(new Uint8Array(await file.arrayBuffer()))
         if (!alive) return
         var row = candidates.find(function(r){ return r.sha256 === sha256 && !r.removed && !busy[r.id] && rows.indexOf(r) >= 0 })

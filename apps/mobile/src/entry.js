@@ -1,4 +1,5 @@
-
+/** @type {ReturnType<typeof import('../../desktop/src/shared/task-entry-contract.js').createEntryContract>} */
+var eContract
 // 新交办与任务里的「接着说」各存各的。pending 保留送出时的原文，不能随编辑改变。
 var eStorage = "cc.phone.entry.v1:" + (REMOTE ? REMOTE.id : location.host)
 var eState = null, eOptions = null, eMounted = false, eViewEpoch = 0, eOptionsSeq = 0, eBusy = {}, eAttachments = null, eMaterialQuiet = false
@@ -82,9 +83,9 @@ function eSelectionError() {
 function eUpdate() {
   var record = eCurrentRecord(), same = record && eSame(record), button = /** @type {HTMLButtonElement} */ (document.getElementById("entry-submit"))
   button.textContent = same ? (eBusy[record.input.requestId] ? "正在确认是否收到…" : "确认是否收到") : (eState.draft.requestId ? "交办这件新事" : "交给 CC")
-  button.disabled = same ? !!eBusy[record.input.requestId] : !!eSelectionError() || (!eState.draft.text.trim() && !eAttachments.readyIds().length) || !eAttachments.isReady() || eState.draft.text.length > 20000 || eState.pending.length >= E_PENDING_LIMIT
+  button.disabled = same ? !!eBusy[record.input.requestId] : !!eSelectionError() || (!eState.draft.text.trim() && !eAttachments.readyIds().length) || !eAttachments.isReady() || !!eContract.entryContentError(eState.draft) || eState.pending.length >= E_PENDING_LIMIT
   document.getElementById("entry-another").hidden = !eAttachments.items().some(function(item){ return item.frozen })
-  document.getElementById("entry-count").textContent = eState.draft.text.length > 20000 ? "要求有些长，请缩减到 20,000 字以内；原文还在。" : ""
+  document.getElementById("entry-count").textContent = eContract.entryContentError(eState.draft) ? "要求有些长，请缩减到 " + eContract.ENTRY_LIMITS.text.toLocaleString("en-US") + " 字以内；原文还在。" : ""
   document.getElementById("entry-selection").textContent = eState.draft.target.kind === "managed" ? "CC 会为这件事安排一处独立的工作位置。" : "会在你选择的项目里继续工作。"
 }
 function eChoices() {
@@ -198,19 +199,14 @@ function eCheck(record) {
   return eRequest("/m/api/matter/create-receipt?requestId=" + encodeURIComponent(record.input.requestId), undefined)
     .catch(function(error){ if (error.status === 404) return null; throw error })
 }
-function eDefiniteRejection(error) {
-  // 只列创建前的已知拒绝；认证、身份冲突、查询失败、服务端故障不能证明未接受。
-  if (error.status === 400) return /^(invalid_(entry|text|title|context|target|execution|provider|attachment)|api_task_(input_invalid|attachment_invalid))$/.test(error.message)
-  return error.status === 422 && /^(api_task_attachment_unsupported|workbench_(attachments|execution)_unsupported|unattended_ack_required)$/.test(error.message)
-}
 function eRejectionMessage(code) {
   if (/attachment/.test(code)) return "这位执行者暂时不能接收这份材料，请调整材料或在更多选择里换一位执行者。"
   if (code === "unattended_ack_required") return "请先在桌面确认这位执行者的运行方式，再回来交办。"
   return "请调整要求或更多选择，再交给 CC。"
 }
 function eFailure(record, error, creating) {
-  var expired = error.status === 410 && error.message === "entry_expired"
-  var rejected = creating && eDefiniteRejection(error)
+  var kind = eContract.entryFailureKind(error.message, {surface:"phone", method:creating ? "POST" : "GET", status:error.status})
+  var expired = kind === "expired", rejected = kind === "rejected"
   if (expired || rejected) {
     eState.pending = eState.pending.filter(function(p){ return p.input.requestId !== record.input.requestId })
     var history = expired ? eState.expired : eState.rejected
@@ -260,7 +256,7 @@ function submitEntry() {
   var error = eSelectionError()
   if (!error && !eAttachments.isReady()) error = "材料还没有准备好。可以继续写要求，等上传确认后再交给 CC。"
   if (!error && !eState.draft.text.trim() && !eAttachments.readyIds().length) error = "写一句要求，或者先添一份材料吧。"
-  if (!error && eState.draft.text.length > 20000) error = "要求有些长，请缩减到 20,000 字以内；原文还在。"
+  if (!error && eContract.entryContentError(eState.draft)) error = "要求有些长，请缩减到 " + eContract.ENTRY_LIMITS.text.toLocaleString("en-US") + " 字以内；原文还在。"
   if (!error && eState.pending.length >= E_PENDING_LIMIT) error = "还有几件交办正在确认，先确认一件再交办新的。草稿会留在这里。"
   if (error) { eNotice(error); return Promise.resolve() }
   // 此按钮在改写后明确显示「交办这件新事」；编辑本身不产生新身份。

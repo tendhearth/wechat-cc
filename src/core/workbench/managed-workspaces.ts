@@ -20,8 +20,15 @@ function location(value:string):string {
   return resolve(value)
 }
 
-/** Inspect existing ancestors without following links; missing suffixes stay lexical. */
-function existingLocation(path:string):string {
+interface Location {path:string;anchor:string;directoryIdentity:string}
+const physical=(path:string)=>{
+  let resolved:string
+  try{resolved=realpathSync(path)}catch{throw Error(UNAVAILABLE)}
+  return location(resolved)
+}
+
+/** Resolve trusted configuration ancestors, but never accept a linked root leaf. */
+function existingLocation(path:string):Location {
   const filesystemRoot=parse(path).root,parts=path.slice(filesystemRoot.length).split(sep).filter(Boolean)
   let cursor=filesystemRoot
   for(let index=0;index<parts.length;index++){
@@ -29,25 +36,42 @@ function existingLocation(path:string):string {
     let stat:BigIntStats
     try{stat=lstatSync(next,{bigint:true})}catch(error){
       if((error as NodeJS.ErrnoException).code==='ENOENT'){
-        try{return join(realpathSync(cursor),...parts.slice(index))}catch{throw Error(UNAVAILABLE)}
+        const anchor=physical(cursor)
+        return {path:location(join(anchor,...parts.slice(index))),anchor,directoryIdentity:identity(verifyFromFilesystemRoot(anchor,UNAVAILABLE).stat)}
       }
       throw Error(UNAVAILABLE)
     }
-    if(stat.isSymbolicLink()||!stat.isDirectory())throw Error(UNAVAILABLE)
-    cursor=next
+    if(stat.isSymbolicLink()){
+      if(index===parts.length-1)throw Error(UNAVAILABLE)
+      cursor=physical(next)
+      verifyFromFilesystemRoot(cursor,UNAVAILABLE)
+    }else{
+      if(!stat.isDirectory())throw Error(UNAVAILABLE)
+      cursor=next
+    }
   }
-  try{return realpathSync(cursor)}catch{throw Error(UNAVAILABLE)}
+  const anchor=physical(cursor)
+  return {path:anchor,anchor,directoryIdentity:identity(verifyFromFilesystemRoot(anchor,UNAVAILABLE).stat)}
 }
 
 /** The caller persists the reservation before ensure; no task lifecycle deletes directories here. */
 export function createManagedWorkspaces(options:{root:string;stateDir:string}) {
-  const root=location(options.root),stateDir=location(options.stateDir)
+  const configuredRoot=location(options.root),configuredState=location(options.stateDir)
+  if(within(configuredRoot,configuredState)||within(configuredState,configuredRoot))throw Error(INVALID)
+  // Resolve without mkdir: reservations can persist this physical path before
+  // allocation. An existing root (or its nearest ancestor) is pinned now.
+  const initialRoot=existingLocation(configuredRoot),initialState=existingLocation(configuredState)
+  const root=initialRoot.path,stateDir=initialState.path
   if(within(root,stateDir)||within(stateDir,root))throw Error(INVALID)
-  let rootIdentity:string|null=null
+  let rootIdentity:string|null=initialRoot.anchor===root?initialRoot.directoryIdentity:null
   const created=new WeakMap<ManagedWorkspace,{path:string;directoryIdentity:string}>()
   const checkLocations=()=>{
-    const physicalRoot=existingLocation(root),physicalState=existingLocation(stateDir)
-    if(within(physicalRoot,physicalState)||within(physicalState,physicalRoot))throw Error(INVALID)
+    const physicalRoot=existingLocation(configuredRoot),physicalState=existingLocation(configuredState)
+    if(physicalRoot.path!==root||physicalState.path!==stateDir)throw Error(CHANGED)
+    for(const original of [initialRoot,initialState]){
+      if(identity(verifyFromFilesystemRoot(original.anchor,CHANGED).stat)!==original.directoryIdentity)throw Error(CHANGED)
+    }
+    if(within(physicalRoot.path,physicalState.path)||within(physicalState.path,physicalRoot.path))throw Error(INVALID)
   }
   const checkRoot=(error:string)=>{
     const current=identity(verifyFromFilesystemRoot(root,error).stat)
@@ -79,6 +103,13 @@ export function createManagedWorkspaces(options:{root:string;stateDir:string}) {
     verify(workspace)
   }
   return {
+    /** Persist before ensure; does not create the root or workspace directory. */
+    resolvePath(workspaceId:string):string {
+      const {path}=allocation({workspaceId,resolvedPath:null,directoryIdentity:null})
+      checkLocations()
+      if(rootIdentity!==null)checkRoot(CHANGED)
+      return path
+    },
     ensure(reservation:Reservation):ManagedWorkspace {
       const {id,path}=allocation(reservation)
       checkLocations()
