@@ -44,7 +44,7 @@
 
 ## 承重但此前只写在代码注释里的规矩(2026-09-27 抄出来)
 
-- **新接线进 `src/daemon/bootstrap/wire-*.ts`,别再往 `bootstrap/index.ts` 里加**(`index.ts` 头注释)。`index.ts` 已 1100 多行、7 月以来改了 84 次。
+- **新接线进 `src/daemon/bootstrap/wire-*.ts`,`index.ts` 只组装**(spec `docs/superpowers/specs/2026-09-27-bootstrap-split-design.md`;守卫 `scripts/bootstrap-ratchet.guard.test.ts` 钉住行数与 `let x | null = null` 个数只降不升,`bootstrap/boot-order.test.ts` 钉住 `sup.start` 名字序列)。晚绑定用 `src/lib/lifecycle.ts` 的 `Ref`(没 wire 就读会抛);可能失败 / 可能未配置的块经 `deps.supervisor.start(name)`,名字别重复(重复直接 throw)。2026-09-27 之前 `index.ts` 1321 行、7 月以来改了 84 次,拆完 460。
 - **STATE_DIR 两个环境变量名的优先级是 `WECHAT_STATE_DIR` > `WECHAT_CC_STATE_DIR`**(`src/daemon/resolve-state-dir.ts` 头注释);`src/lib/config.ts` 只认前者。e2e harness 两个都设,所以测试发现不了漂移 —— 改 state-dir 相关代码时手动只设一个名试。
 - **入站链开了意图路由后,每个在场消费者必须交探针,漏一个 boot 即抛**(`src/daemon/inbound/build.ts` 注释);探针要看的字段(附件、语音转文字)必须在路由之前就绪。
 - **A2A `proto_version` 现在是 3**(`src/core/a2a-intent.ts`);改信封形状要升它,两台真机都得重新配对。
