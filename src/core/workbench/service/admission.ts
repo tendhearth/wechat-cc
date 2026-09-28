@@ -12,11 +12,8 @@ import { snapshotHash } from '../native-adoption'
 import { TERMINAL_TASK_STATUSES, type StoredTask } from '../store'
 import type { Attachment } from '../attachments'
 import type { AgentExecutionChoice, AgentModelCatalog } from '../../agent-provider'
-import type { ProviderRegistry } from '../../provider-registry'
 import type { ServiceCtx } from './ctx'
-
-type RegistryEntry = NonNullable<ReturnType<ProviderRegistry['get']>>
-export type AdmittedProvider = RegistryEntry & {opts:RegistryEntry['opts']&{workbench:WorkbenchExecutorCapabilities}}
+import type { AdmittedProvider } from './types'
 
 export interface AdmissionDomain {
   provider(id:string): AdmittedProvider

@@ -80,6 +80,7 @@ import { makeNoticesDomain } from './service/notices'
 import { directoryIdentity } from './service/directory-identity'
 import { makeArtifactsDomain } from './service/artifacts'
 import { makeAdmissionDomain } from './service/admission'
+import { makeViewDomain } from './service/view'
 import type { ServiceActions, ServiceCtx } from './service/ctx'
 export type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
 import type { CreateWechatTask, TaskWaitingFor } from './wechat-types'
@@ -178,6 +179,8 @@ export function makeWorkbenchService(opts: Options) {
   const {quota,fallbackExecutor}=quotaDomain
   const admissionDomain=makeAdmissionDomain(ctx)
   const {provider,requireInput,requireEntryInput,canResume,continuation,taskVersion}=admissionDomain
+  const viewDomain=makeViewDomain(ctx)
+  const {held,runtimeSnapshot,inputMode,isReplied,taskView}=viewDomain
   const noticesDomain=makeNoticesDomain(ctx)
   const {requestNotice,terminalReportBody,stageFinishedNotice,publishFinishedNotices}=noticesDomain
   const artifactsDomain=makeArtifactsDomain(ctx)
@@ -209,52 +212,6 @@ export function makeWorkbenchService(opts: Options) {
   }
   function ensureAccepting() {
     if (state.stopping) throw new Error('workbench_stopping')
-  }
-  /** 当前占着文件夹的 run。 */
-  const held=()=>[...reservations.values()]
-  function waitingFor(running:Active):TaskWaitingFor|null {
-    if (running.state !== 'queued') return null
-    const earlier=queue.filter(item => item.order < running.order && item.state === 'queued')
-    const blocked=findPathBlocker(running,[...held(),...earlier])
-    if (!blocked) return null
-    const holder=runsByTask.get(blocked.taskId)
-    // 找不到持有者是不该发生的时序缝隙;宁可继续说「还在写」,也不能凭空报一个假的倒计时。
-    return {...blocked,holderWriting:!holder||!quiet(holder),closeInMs:holder?.idleClose?Math.max(0,holder.idleClose.at-Date.now()):null}
-  }
-  function runtimeSnapshot(running:Active|undefined):AgentRuntimeSnapshot|undefined {
-    const runtime=running?.session?.workbenchRuntime
-    return runtime?{...runtime.snapshot()}:undefined
-  }
-  function inputMode(running:Active):'steer'|'send'|'queue' {
-    return runtimeSnapshot(running)?.input??(running.session?.steer?'steer':'queue')
-  }
-  /** 本轮做完、会话闲着、没有子任务在写、也没有在等主人拍板 —— 只差主人下一句话。 */
-  function isReplied(running:Active):boolean {
-    if (running.cancelled||running.finishing||running.uncertain) return false
-    const snapshot=runtimeSnapshot(running)
-    return !!snapshot&&snapshot.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0
-      &&running.permissions.pending().length===0&&running.questions.pending().length===0
-  }
-  function phaseOf(task:Task, running:Active|undefined):WorkbenchPhase {
-    switch (task.status) {
-      case 'queued': return 'queued'
-      case 'running': case 'cancelling': return running&&isReplied(running)?'replied':'working'
-      case 'completed': return 'replied'
-      case 'failed': case 'cancelled': case 'interrupted': return task.status
-    }
-  }
-  function taskView(task:Task, includePermissions=false):WorkbenchTaskView {
-    const running=runsByTask.get(task.id)
-    const runtime=runtimeSnapshot(running)
-    return {
-      ...task,
-      phase:phaseOf(task,running),
-      ...(runtime?{runtime}:{}),
-      ...(!running&&TERMINAL_TASK_STATUSES.includes(task.status)&&store.source(task.id)?.firstDispatchedAt===null?{importedOnly:true}:{}),
-      canArchive:TERMINAL_TASK_STATUSES.includes(task.status) && !running && task.error!=='writer_not_closed',
-      waitingFor:running ? waitingFor(running) : null,
-      ...(includePermissions ? { pendingPermissionCount:running?.permissions.pending().length ?? 0,pendingQuestionCount:running?.questions.pending().length ?? 0 } : {}),
-    }
   }
   function revokeCredentials(running:Active) {
     if (!running.credentialsMinted || running.credentialsRevoked) return
@@ -1026,11 +983,7 @@ export function makeWorkbenchService(opts: Options) {
         throw error
       }
     },
-    projects(){
-      const ownerChatId=opts.ownerChatId();if(!ownerChatId)return[]
-      const providers=opts.registry.list().filter(id=>isWorkbenchProviderId(id)&&isWorkbenchExecutorCapabilities(opts.registry.get(id)?.opts.workbench))
-      return makeProjectCatalog({ownerChatId,registered:opts.registeredProjects?.()??[],known:store.ownedProjects(ownerChatId,providers),providers,defaultProvider:opts.defaultProvider})
-    },
+    projects:viewDomain.projects,
     createWechat(input:CreateWechatTask):CreationReceipt {
       ensureAccepting()
       if(!input.ownerChatId||opts.ownerChatId()!==input.ownerChatId||!input.accountId?.trim())throw Error('invalid_wechat_identity')
@@ -1056,14 +1009,7 @@ export function makeWorkbenchService(opts: Options) {
       },{matterId:safeOriginMatterId(input.ownerChatId),messageId:input.originMessageId??null})
       return receipt
     },
-    attention(){
-      const tasks=Array.from(runsByTask.values()).flatMap(run=>{
-        const permissions=run.permissions.pending(),questions=run.questions.pending()
-        if(!permissions.length&&!questions.length)return[]
-        return[{id:run.taskId,title:run.title,providerId:run.task.providerId,pendingPermissionCount:permissions.length,pendingQuestionCount:questions.length,attentionKey:JSON.stringify([...permissions,...questions].map(q=>q.id).sort())}]
-      })
-      return{tasks}
-    },
+    attention:viewDomain.attention,
     resolveAnswer(id:string,requestId:string,answers:unknown){
       const running=runsByTask.get(id)
       if(!running||running.cancelled||running.finishing||!running.questions.resolve(requestId,answers))throw Error('question_stale')
@@ -1325,36 +1271,13 @@ export function makeWorkbenchService(opts: Options) {
       const managedTaskId=store.sourceByIdentity(providerId,nativeId)?.taskId??store.taskByNativeIdentity(providerId,nativeId)?.id
       return {...preview,...(managedTaskId?{managedTaskId}:{})}
     },
-    addProject(input:{path:string;name?:string;providerId:string}) {
-      if(typeof input.path!=='string'||input.path.length>4096||typeof input.providerId!=='string'||(input.name!==undefined&&(typeof input.name!=='string'||!input.name.trim()||input.name.length>100)))throw Error('invalid_request')
-      provider(input.providerId)
-      return store.addProject({...input,path:canonicalProject(input.path)})
-    },
-    list(query:WorkbenchListQuery={}) {
-      const providers=opts.registry.list().flatMap(id=>{const p=opts.registry.get(id);return isWorkbenchProviderId(id)&&p&&isWorkbenchExecutorCapabilities(p.opts.workbench)?[{id,displayName:p.opts.displayName,capabilities:structuredClone(p.opts.workbench),quota:quota.exhausted(id),usage:opts.usage?.(id)??null}]:[]})
-      const result=store.listPage(query)
-      const projects=store.projects()
-      const projectProviders=Object.fromEntries(projects.map(project=>[project.path,store.projectProvider(project.path)??project.providerId]))
-      return {projects,tasks:result.tasks.map(task => taskView(task,true)),page:result.page,projectProviders,providers,historyProviders:Object.keys(opts.nativeHistory??{}),defaultProvider:providers.find(p=>p.id===opts.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!opts.ownerChatId(),unattendedAcknowledgedAt:opts.unattendedAck?.get()??null}
-    },
+    addProject:viewDomain.addProject,
+    list:viewDomain.list,
     modelCatalog:admissionDomain.modelCatalog,
     prepareContinuation:admissionDomain.prepareContinuation,
     // 不标 async:内部 wechatControl(见文件末尾)按同步 Actions 接口拿它,标了 async 会把
     // 返回类型变成 Promise 而破坏那个结构化类型;外部调用方(HTTP 长轮询、测试)照样能 await 一个普通值。
-    detail(id:string,options:{since?:number}={}) {
-      const detail=store.detail(id,options),running=runsByTask.get(id)
-      const runtime=runtimeSnapshot(running)
-      const subscription=store.wechatNotifications.subscription(id)
-      const wechatNotifications={enabled:!!subscription?.enabled,notices:store.wechatNotifications.list(id).slice(-10).map(({id,runId,kind,status,reason,createdAt})=>({id,runId,kind,status,reason,createdAt}))}
-      const result={...detail,wechatNotifications,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
-        // The timeline stays live through cancellation and process cleanup;
-        // accepting supplemental input is a separate, narrower capability.
-        ...(running?{runId:running.identity}:{}),
-        ...(running&&!running.cancelled&&!running.finishing&&!running.uncertain?{inputMode:inputMode(running)}:{}),
-        permissions:running?.permissions.pending() ?? [],...(!running ? {continuation:continuation(store.get(id)),...(store.source(id)?.firstDispatchedAt===null?{requiresExternalClose:true}:{})} : {})}
-      touched(id,detail.version)
-      return result
-    },
+    detail:viewDomain.detail,
     create(input:CreateTask):WorkbenchTaskView {
       return createTask(input)
     },
@@ -1470,7 +1393,7 @@ export function makeWorkbenchService(opts: Options) {
       },
     },
   }
-  actions.set({submitInput:(id,input,policy)=>service.submitInput(id,input,policy),continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),isReplied,fallbackExecutor,artifact:(id,artifactId)=>service.artifact(id,artifactId),quotaExhausted:quotaDomain.quotaExhausted,continuation})
+  actions.set({submitInput:(id,input,policy)=>service.submitInput(id,input,policy),continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),isReplied,fallbackExecutor,artifact:(id,artifactId)=>service.artifact(id,artifactId),quotaExhausted:quotaDomain.quotaExhausted,continuation,provider})
   const wechatControl=makeWechatWorkbenchControl({store,ownerChatId:opts.ownerChatId,actions:service})
   return service
 }

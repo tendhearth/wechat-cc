@@ -13,7 +13,7 @@ import type { QuotaState } from '../../provider-quota'
 import type { AgentExecutionChoice } from '../../agent-provider'
 import type { LiveInput } from '../live-inputs'
 import type { Active, WorkbenchRuntimeState } from './state'
-import type { InputMaterials, WorkbenchTaskView } from './types'
+import type { AdmittedProvider, InputMaterials, WorkbenchTaskView } from './types'
 
 export interface ServiceHub {
   /** store 的写方法把 seq 落库,但不知道 hub —— 这里把持久化 seq 送进去唤醒长轮询。 */
@@ -34,6 +34,8 @@ export interface ServiceActions {
   quotaExhausted(providerId:string):QuotaState|null
   /** admission 域:任务的续接判定(view 的 detail 用)。 */
   continuation(task:StoredTask,execution?:AgentExecutionChoice):Continuation
+  /** admission 域:已准入的执行者登记项(view 的 addProject 用);没登记 / 没能力 ⇒ 抛 unavailable_provider。 */
+  provider(id:string):AdmittedProvider
 }
 /** service 的外部依赖里域会用到的那几样(opts 的子集,只读);按需加,不整个 opts 透传。 */
 export interface ServiceDeps {
