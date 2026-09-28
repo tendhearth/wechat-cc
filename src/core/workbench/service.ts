@@ -10,13 +10,10 @@ import type { ProviderRegistry } from '../provider-registry'
 import { TIER_PROFILES, sessionAuthEnv } from '../user-tier'
 import { canonicalProject, outputDirectory } from './artifacts'
 import { captureGitBaseline } from './git-review'
-import { decodeNativeHistoryKey, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryReader, type NativeHistoryProvider, type NativeHistoryListInput, type NativeHistoryReadInput } from './native-history'
-import {readNativeImport,nativeImportInput,publicSource,pageInput,nativeResumeToken,snapshotHash,type ImportPage,type NativeImportInput,type NativeResumeDecision,type AcceptedNativeResume} from './native-adoption'
-import {historyDeadline} from './native-history'
-import {handoffToken,handoffTokenHash,validateHandoffInput,handoffArtifactText,handoffContext,type HandoffInput,type HandoffPreview,type ArtifactSelection,type AttachmentSelection} from './handoff'
+import { type NativeHistoryReader, type NativeHistoryProvider } from './native-history'
+import { type AcceptedNativeResume } from './native-adoption'
+import { handoffArtifactText, type ArtifactSelection } from './handoff'
 import {makeDeltaCoalescer} from './delta-coalescer'
-import {pathsConflict} from './scheduler'
-import { restartPreview, type Continuation } from './continuation'
 import {isUnattendedExecutor,isWorkbenchExecutorCapabilities,isWorkbenchProviderId} from './executor-capabilities'
 import { makeRunPermissions, type PermissionDecision, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
 import { findPathBlocker } from './scheduler'
@@ -81,6 +78,7 @@ import { makeArtifactsDomain } from './service/artifacts'
 import { makeAdmissionDomain } from './service/admission'
 import { makeViewDomain } from './service/view'
 import { checkedText } from './service/checked-text'
+import { makeNativeDomain } from './service/native'
 import type { ServiceActions, ServiceCtx } from './service/ctx'
 export type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
 import type { CreateWechatTask } from './wechat-types'
@@ -165,7 +163,7 @@ export function makeWorkbenchService(opts: Options) {
     }catch{/* Stop must not depend on a successful disk write. */}
   }
   const state=makeRuntimeState()
-  const {runsByTask,reservations,queue,runningText,collections,nativeDecisions,handoffDecisions}=state
+  const {runsByTask,reservations,queue,runningText,collections}=state
   const actions=new Ref<ServiceActions>('workbench-actions')
   const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped},deps:{ownerChatId:opts.ownerChatId,registry:opts.registry,...(opts.usage?{usage:opts.usage}:{}),...(opts.permissionTimeoutMs!==undefined?{permissionTimeoutMs:opts.permissionTimeoutMs}:{}),...(opts.unattendedAck?{unattendedAck:opts.unattendedAck}:{}),...(opts.nativeHistory?{nativeHistory:opts.nativeHistory}:{}),...(opts.registeredProjects?{registeredProjects:opts.registeredProjects}:{}),...(opts.defaultProvider!==undefined?{defaultProvider:opts.defaultProvider}:{}),...(opts.executionConflict?{executionConflict:opts.executionConflict}:{})},ensureAccepting,...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
   const review=makeReviewDomain(ctx)
@@ -177,6 +175,8 @@ export function makeWorkbenchService(opts: Options) {
   const {provider,requireInput,requireEntryInput,canResume,continuation,taskVersion}=admissionDomain
   const viewDomain=makeViewDomain(ctx)
   const {held,runtimeSnapshot,inputMode,isReplied,taskView}=viewDomain
+  const nativeDomain=makeNativeDomain(ctx)
+  const {validateNativeDecision}=nativeDomain
   const noticesDomain=makeNoticesDomain(ctx)
   const {requestNotice,terminalReportBody,stageFinishedNotice,publishFinishedNotices}=noticesDomain
   const artifactsDomain=makeArtifactsDomain(ctx)
@@ -184,28 +184,6 @@ export function makeWorkbenchService(opts: Options) {
   store.recover()
   store.liveInputs.recover()
 
-  function nativeReader(id:string){const reader=opts.nativeHistory?.[id as NativeHistoryProvider];if(!reader)throw new Error('native_history_unsupported');return reader}
-  async function currentNativePages(task:StoredTask,pages:ImportPage[]) {
-    const call=historyDeadline(),key=Buffer.from(JSON.stringify({v:1,providerId:task.providerId,nativeId:store.source(task.id)!.nativeId})).toString('base64url')
-    const current:ImportPage[]=[]
-    for(const page of pages){
-      const preview=await call(()=>nativeReader(task.providerId).read(key,pageInput(page)))
-      if(preview.session.key!==key||preview.session.cwd!==task.path)throw new Error('native_history_changed')
-      if(preview.session.remote||preview.session.observedState==='active'||opts.executionConflict?.(task.path,task.providerId,store.source(task.id)!.nativeId))throw new Error('native_session_busy')
-      current.push({...page,sourceFingerprint:preview.sourceFingerprint})
-    }
-    return current
-  }
-  async function validateNativeDecision(task:StoredTask,decision:AcceptedNativeResume,dispatch=false) {
-    if(decision.taskId!==task.id||decision.sourceId!==store.source(task.id)?.id||decision.expiresAt<Date.now()||(!dispatch&&decision.taskVersion!==taskVersion(task)))throw new Error('external_close_confirmation_stale')
-    if(directoryIdentity(task.path)!==decision.directoryIdentity||canonicalProject(task.path)!==task.path)throw new Error('invalid_path')
-    if(opts.executionConflict?.(task.path,task.providerId,decision.nativeId))throw new Error('native_session_busy')
-    if(decision.mode==='native_resume'){
-      if(task.sessionId!==decision.nativeId||!canResume(task))throw new Error('restart_confirmation_required')
-      const current=await currentNativePages(task,decision.pages)
-      if(JSON.stringify(current)!==JSON.stringify(decision.pages))throw new Error('external_close_confirmation_stale')
-    }
-  }
   function ensureAccepting() {
     if (state.stopping) throw new Error('workbench_stopping')
   }
@@ -1097,176 +1075,15 @@ export function makeWorkbenchService(opts: Options) {
       finally{running.delivering=false}
       return store.liveInputs.get(saved.id)!
     },
-    async previewHandoff(raw:HandoffInput):Promise<HandoffPreview> {
-      ensureAccepting()
-      const input=validateHandoffInput(raw),source=store.get(input.sourceTaskId),version=taskVersion(source)
-      provider(input.targetProviderId)
-      if(source.providerId===input.targetProviderId)throw new Error('invalid_request')
-      if(canonicalProject(source.path)!==source.path)throw new Error('invalid_path')
-      const identity=directoryIdentity(source.path)
-      let artifacts=input.artifacts,attachments=input.attachments??[],target:StoredTask|null=null,targetContinuation:Continuation|undefined,nativeResume:NativeResumeDecision|undefined
-      if(input.purpose==='revision') {
-        target=store.get(input.targetTaskId!)
-        if(target.archivedAt!==null)throw new Error('workbench_archived')
-        if(runsByTask.has(target.id)||!TERMINAL_TASK_STATUSES.includes(target.status)||target.error==='writer_not_closed')throw new Error('workbench_busy')
-        if(target.providerId!==input.targetProviderId||target.path!==source.path)throw new Error('invalid_handoff_target')
-        const origin=store.handoffs(source.id).find(h=>h.purpose==='review'&&h.sourceTaskId===target!.id&&h.targetTaskId===source.id)
-        const event=store.events(source.id).find(e=>e.id===input.quote!.eventId&&e.kind==='text')
-        if(!origin||!event?.text.includes(input.quote!.text))throw new Error('invalid_handoff_quote')
-        artifacts=origin.artifacts
-        const original=store.handoffRecord(source.id,origin.id)
-        if(snapshotHash(original.packetJson)!==original.packetSha256)throw Error('artifact_changed')
-        attachments=(JSON.parse(original.packetJson) as {attachments?:AttachmentSelection[]}).attachments??[]
-        targetContinuation=continuation(target)
-        if(store.source(target.id)?.firstDispatchedAt===null)nativeResume=await service.prepareNativeResume(target.id,targetContinuation.mode==='restart_required'?'fresh_context':'native_resume')
-      }
-      const files=artifacts.map(a=>handoffArtifactText(store,a,target?.id??source.id,opts.stateDir))
-      const materials=handoffAttachments(attachments,target?.id??source.id)
-      requireInput(input.targetProviderId,combinedAttachments(materials,targetContinuation?.mode==='restart_required'?targetContinuation.restart.attachments:[]),target?store.execution.choice(target.id):PROVIDER_EXECUTION_CHOICE,!!target&&targetContinuation?.mode==='resume')
-      const packet=handoffContext({...input,attachments},source,store.events(source.id),files,materials)
-      ensureAccepting()
-      if(taskVersion(store.get(source.id))!==version)throw new Error('handoff_changed')
-      const preview:HandoffPreview={token:handoffToken(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:input.targetProviderId,purpose:input.purpose,request:input.request,...packet,artifacts,targetExecution:target?store.execution.choice(target.id):{...PROVIDER_EXECUTION_CHOICE},...(attachments.length?{attachments}:{}),quote:input.quote??null,...(targetContinuation?{targetContinuation}:{}),...(nativeResume?{nativeResume}:{})}
-      for(const [token,d] of handoffDecisions)if(d.expiresAt<Date.now()||d.preview.sourceTaskId===source.id)handoffDecisions.delete(token)
-      if(handoffDecisions.size>=100)handoffDecisions.delete(handoffDecisions.keys().next().value!)
-      handoffDecisions.set(preview.token,{preview:structuredClone(preview),sourceVersion:version,targetVersion:target?taskVersion(target):null,directoryIdentity:identity,expiresAt:Date.now()+5*60_000})
-      return preview
-    },
-    async handoff(input:{token:string;restartToken?:string;sourceClosedToken?:string}) {
-      ensureAccepting()
-      if(!input||typeof input.token!=='string'||! /^[a-f0-9]{64}$/.test(input.token))throw new Error('invalid_request')
-      for(const optional of [input.restartToken,input.sourceClosedToken])if(optional!==undefined&&(typeof optional!=='string'||! /^[a-f0-9]{64}$/.test(optional)))throw new Error('invalid_request')
-      const hash=handoffTokenHash(input.token),previous=store.handoffByToken(hash)
-      if(previous)return{task:taskView(publicTask(store.get(previous.targetTaskId))),handoffId:previous.id,sourceTaskId:previous.sourceTaskId}
-      const decision=handoffDecisions.get(input.token)
-      if(!decision||decision.expiresAt<Date.now())throw new Error('handoff_changed')
-      const p=decision.preview,source=store.get(p.sourceTaskId),target=p.targetTaskId?store.get(p.targetTaskId):null
-      const assertCurrent=()=>{
-        ensureAccepting()
-        if(handoffDecisions.get(input.token)!==decision||decision.expiresAt<Date.now()||taskVersion(store.get(source.id))!==decision.sourceVersion||(target&&taskVersion(store.get(target.id))!==decision.targetVersion))throw new Error('handoff_changed')
-        if(canonicalProject(source.path)!==source.path||directoryIdentity(source.path)!==decision.directoryIdentity)throw new Error('invalid_path')
-        if(target?.archivedAt!=null)throw new Error('workbench_archived')
-        if(target&&(runsByTask.has(target.id)||!TERMINAL_TASK_STATUSES.includes(target.status)||target.error==='writer_not_closed'))throw new Error('workbench_busy')
-        if(opts.executionConflict?.(source.path,p.targetProviderId,target?.sessionId??null))throw new Error('native_session_busy')
-      }
-      assertCurrent();provider(p.targetProviderId)
-      for(const ref of p.artifacts)handoffArtifactText(store,ref,target?.id??source.id,opts.stateDir)
-      const checkedHandoffAttachments=handoffAttachments(p.attachments??[],target?.id??source.id)
-      let accepted:AcceptedContinuation={mode:'new'},native:AcceptedNativeResume|undefined
-      if(target){
-        const current=continuation(target)
-        if(current.mode==='restart_required'){
-          if(!input.restartToken)throw new Error('restart_confirmation_required')
-          if(input.restartToken!==current.restart.token||p.targetContinuation?.mode!=='restart_required'||input.restartToken!==p.targetContinuation.restart.token)throw new Error('restart_confirmation_stale')
-          accepted={mode:'restart',preview:current.restart}
-        }else{
-          if(input.restartToken!==undefined)throw new Error('restart_confirmation_stale')
-          accepted=current.mode==='resume'?{mode:'resume',sessionId:target.sessionId!}:{mode:'new'}
-        }
-        if(store.source(target.id)?.firstDispatchedAt===null){
-          native=input.sourceClosedToken?nativeDecisions.get(input.sourceClosedToken):undefined
-          if(!native||input.sourceClosedToken!==p.nativeResume?.token)throw new Error('external_close_confirmation_required')
-          await validateNativeDecision(target,native)
-          assertCurrent()
-          if(nativeDecisions.get(native.token)!==native)throw new Error('external_close_confirmation_stale')
-        }
-      }
-      requireInput(p.targetProviderId,combinedAttachments(checkedHandoffAttachments,accepted.mode==='restart'?accepted.preview.attachments:[]),p.targetExecution??PROVIDER_EXECUTION_CHOICE,accepted.mode==='resume')
-      const packetJson=JSON.stringify({context:p.context,request:p.request,artifacts:p.artifacts,attachments:p.attachments??[],quote:p.quote,truncated:p.truncated,continuation:accepted,execution:p.targetExecution})
-      const record=store.createHandoff({id:randomUUID(),sourceTaskId:source.id,targetTaskId:target?.id??null,targetProviderId:p.targetProviderId,path:source.path,title:`检查 · ${source.title}`.slice(0,120),ownerChatId:source.ownerChatId,purpose:p.purpose,request:p.request,packetSha256:snapshotHash(packetJson),packetJson,artifactRefsJson:JSON.stringify(p.artifacts),quoteJson:p.quote?JSON.stringify(p.quote):null,sourceNativeId:source.sessionId,tokenHash:hash})
-      handoffDecisions.delete(input.token)
-      if(native)nativeDecisions.delete(native.token)
-      let task:WorkbenchTaskView
-      try{
-        const materials=target
-          ?handoffAttachments(p.attachments??[],target.id)
-          :store.attachments.copyToTask(source.id,(p.attachments??[]).map(a=>a.attachmentId),record.targetTaskId)
-        task=start(store.get(record.targetTaskId),p.context,decision.directoryIdentity,accepted,native,p.artifacts,record.id,undefined,materials,undefined,p.targetExecution)
-      }
-      catch(error){
-        if(!target){store.update(record.targetTaskId,'failed',error instanceof Error?error.message:'task_failed');matterSync(m=>m.setStatus(record.targetTaskId,'done'))}
-        store.addEvent(record.targetTaskId,'system','交接已记录，但本轮未启动。请查看任务状态，手动决定是否继续。')
-        touched(record.targetTaskId)
-        throw error
-      }
-      return{task,handoffId:record.id,sourceTaskId:source.id}
-    },
-    handoffRecord(taskId:string,id:string){
-      const record=store.handoffRecord(taskId,id)
-      if(snapshotHash(record.packetJson)!==record.packetSha256)throw new Error('artifact_changed')
-      return{id:record.id,sourceTaskId:record.sourceTaskId,targetTaskId:record.targetTaskId,createdAt:record.createdAt,sourceNativeId:record.sourceNativeId,targetNativeId:record.targetNativeId,packetSha256:record.packetSha256,packet:JSON.parse(record.packetJson) as {context:string;request:string;truncated:boolean;artifacts:ArtifactSelection[];attachments?:AttachmentSelection[];continuation:AcceptedContinuation;execution?:AgentExecutionChoice}}
-    },
-    conflictsExternal(path:string,providerId:string,nativeId:string|null):boolean {
-      let canonical:string
-      try{canonical=canonicalProject(path)}catch{return true}
-      if(nativeId&&(store.sourceByIdentity(providerId,nativeId)||store.taskByNativeIdentity(providerId,nativeId)))return true
-      return [...runsByTask.values()].some(run=>pathsConflict(run.path,canonical))
-    },
-    async importNativeHistory(raw:NativeImportInput) {
-      ensureAccepting()
-      const input=nativeImportInput(raw),{providerId,nativeId}=decodeNativeHistoryKey(input.key)
-      const existing=store.sourceByIdentity(providerId,nativeId)
-      if(existing)return{task:taskView(publicTask(store.get(existing.taskId))),source:publicSource(existing),created:false}
-      const managed=store.taskByNativeIdentity(providerId,nativeId)
-      if(managed)throw new Error('native_session_already_managed')
-      const read=await readNativeImport(nativeReader(providerId),input)
-      ensureAccepting()
-      if(!read.session.cwd)throw new Error('invalid_path')
-      const path=canonicalProject(read.session.cwd)
-      if(path!==read.session.cwd)throw new Error('invalid_path')
-      const result=store.importSource({providerId,nativeId,cwd:path,title:read.session.title.slice(0,120),ownerChatId:opts.ownerChatId(),messages:read.messages,snapshotJson:read.snapshotJson,snapshotSha256:read.snapshotSha256,pagesJson:read.pagesJson,observedFingerprint:read.observedFingerprint,truncated:read.truncated})
-      return{...result,task:taskView(publicTask(result.task))}
-    },
-    async prepareNativeResume(id:string,mode:'native_resume'|'fresh_context'='native_resume',executionChoice?:unknown):Promise<NativeResumeDecision> {
-      ensureAccepting()
-      const task=store.get(id),source=store.source(id)
-      if(!source||source.firstDispatchedAt!==null)throw new Error('invalid_request')
-      if(mode!=='native_resume'&&mode!=='fresh_context')throw new Error('invalid_request')
-      if(runsByTask.has(id)||task.archivedAt!==null)throw new Error('workbench_busy')
-      const execution=normalizeExecutionChoice(executionChoice,store.execution.choice(id))
-      requireInput(task.providerId,[],execution,mode==='native_resume')
-      const identity=directoryIdentity(task.path),version=taskVersion(task),pages=JSON.parse(source.pagesJson) as ImportPage[]
-      if(opts.executionConflict?.(task.path,task.providerId,source.nativeId))throw new Error('native_session_busy')
-      const current=mode==='native_resume'?await currentNativePages(task,pages):pages
-      if(mode==='native_resume'&&!canResume(task))throw new Error('restart_confirmation_required')
-      const recovery=continuation(task)
-      if(mode==='fresh_context'&&recovery.mode!=='restart_required')throw new Error('invalid_request')
-      ensureAccepting()
-      if(taskVersion(store.get(id))!==version||runsByTask.has(id))throw new Error('external_close_confirmation_stale')
-      const preview=restartPreview(task,store.events(id),store.execution.choice(id))
-      const decision:AcceptedNativeResume={token:nativeResumeToken(),taskId:id,sourceId:source.id,providerId:source.providerId,nativeId:source.nativeId,path:task.path,mode,expiresAt:Date.now()+5*60_000,context:mode==='fresh_context'?preview.context:'',truncated:source.truncated,changedSinceImport:JSON.stringify(current)!==JSON.stringify(pages),pages:current,taskVersion:version,directoryIdentity:identity,execution,...(mode==='fresh_context'?{restartToken:preview.token}:{})}
-      for(const [token,value] of nativeDecisions)if(value.expiresAt<Date.now()||value.taskId===id)nativeDecisions.delete(token)
-      if(nativeDecisions.size>=100)nativeDecisions.delete(nativeDecisions.keys().next().value!)
-      nativeDecisions.set(decision.token,decision)
-      const {pages:_pages,taskVersion:_version,directoryIdentity:_identity,restartToken:_restart,...result}=decision;return structuredClone(result)
-    },
-    async continueNativeTask(id:string,text:string,sourceClosedToken:string,restartToken?:string,materials:InputMaterials={}):Promise<WorkbenchTaskView> {
-      ensureAccepting();const task=store.get(id),decision=nativeDecisions.get(sourceClosedToken),attachments=selectAttachments(materials,id),request=checkedText(text,attachments)
-      if(!decision)throw new Error('external_close_confirmation_stale')
-      const execution=normalizeExecutionChoice(materials.execution,store.execution.choice(id))
-      if(!sameExecutionChoice(execution,decision.execution))throw Error('external_close_confirmation_stale')
-      if(runsByTask.has(id)||task.archivedAt!==null)throw new Error('workbench_busy')
-      await validateNativeDecision(task,decision)
-      ensureAccepting()
-      if(taskVersion(store.get(id))!==decision.taskVersion||runsByTask.has(id)||nativeDecisions.get(sourceClosedToken)!==decision)throw new Error('external_close_confirmation_stale')
-      const accepted:AcceptedContinuation=decision.mode==='native_resume'?{mode:'resume',sessionId:decision.nativeId}:{mode:'restart',preview:restartPreview(task,store.events(id),store.execution.choice(id))}
-      if(accepted.mode==='restart'&&(restartToken!==accepted.preview.token||restartToken!==decision.restartToken))throw new Error('restart_confirmation_stale')
-      requireInput(task.providerId,combinedAttachments(attachments,accepted.mode==='restart'?accepted.preview.attachments:[]),execution,accepted.mode==='resume')
-      nativeDecisions.delete(sourceClosedToken)
-      return start(task,request,decision.directoryIdentity,accepted,decision,undefined,undefined,undefined,attachments,materials.draftId,execution)
-    },
-    async listNativeHistory(providerId:NativeHistoryProvider,input:NativeHistoryListInput) {
-      const reader=opts.nativeHistory?.[providerId]
-      if(!reader)throw new Error('native_history_unsupported')
-      return reader.list(normalizeHistoryList(input))
-    },
-    async readNativeHistory(key:string,input:NativeHistoryReadInput) {
-      const {providerId}=decodeNativeHistoryKey(key),reader=opts.nativeHistory?.[providerId]
-      if(!reader)throw new Error('native_history_unsupported')
-      const preview=await reader.read(key,normalizeHistoryRead(input)),{nativeId}=decodeNativeHistoryKey(key)
-      const managedTaskId=store.sourceByIdentity(providerId,nativeId)?.taskId??store.taskByNativeIdentity(providerId,nativeId)?.id
-      return {...preview,...(managedTaskId?{managedTaskId}:{})}
-    },
+    previewHandoff:nativeDomain.previewHandoff,
+    handoff:nativeDomain.handoff,
+    handoffRecord:nativeDomain.handoffRecord,
+    conflictsExternal:nativeDomain.conflictsExternal,
+    importNativeHistory:nativeDomain.importNativeHistory,
+    prepareNativeResume:nativeDomain.prepareNativeResume,
+    continueNativeTask:nativeDomain.continueNativeTask,
+    listNativeHistory:nativeDomain.listNativeHistory,
+    readNativeHistory:nativeDomain.readNativeHistory,
     addProject:viewDomain.addProject,
     list:viewDomain.list,
     modelCatalog:admissionDomain.modelCatalog,
