@@ -50,6 +50,7 @@ import { wireModelOptions } from './wire-model-options'
 import { wireInstructions } from './wire-instructions'
 import { wireCoordinator } from './wire-coordinator'
 import { wireA2a } from './wire-a2a'
+import { wireYi } from './wire-yi'
 import { Ref } from '../../lib/lifecycle'
 import { resolveClaudeBinary, hydrateClaudeAuthEnvFromUserSettings } from './claude-env'
 import { wireSocial } from './wire-social'
@@ -58,8 +59,6 @@ import { wirePairing } from './wire-pairing'
 import { wireHealth } from './wire-health'
 import { wireSelfRestart } from './wire-self-restart'
 import { resolveSelfAgentId } from '../../core/self-agent-id'
-import { createYiHub, type YiHub } from '../../core/yi-hub'
-import { createYiWsServer } from '../yi-ws-server'
 import type { BootstrapDeps, Bootstrap } from './types'
 export type { BootstrapDeps, Bootstrap } from './types'
 
@@ -393,37 +392,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
       }
     : undefined
 
-  // ── 乙 v2 wiring (guarded — no-op when config absent) ────────────────────
-  // BRAIN side: start a WebSocket rendezvous that hands connect to.
-  let yiHub: YiHub | undefined
-  if ((configuredAgent as { yi_hub_listen?: { host: string; port: number } }).yi_hub_listen) {
-    const cfg = (configuredAgent as { yi_hub_listen: { host: string; port: number } }).yi_hub_listen
-    yiHub = createYiHub()
-    const yiServer = createYiWsServer({
-      host: cfg.host,
-      port: cfg.port,
-      hub: yiHub,
-      verify: (id, tok) => !!a2aRegistry.verifyBearer(id, tok),
-    })
-    await yiServer.start()
-    deps.log('YI', `hub listening on ws://${cfg.host}:${yiServer.port()}`)
-  }
-
-  // HAND side: connect outbound to a brain's rendezvous.
-  if ((configuredAgent as { yi_brain?: { url: string; handId: string; authToken: string } }).yi_brain) {
-    const cfg = (configuredAgent as { yi_brain: { url: string; handId: string; authToken: string } }).yi_brain
-    const { createYiWsClient } = await import('../yi-ws-client')
-    const yiClient = createYiWsClient({
-      brainUrl: cfg.url,
-      handId: cfg.handId,
-      authToken: cfg.authToken,
-      capabilities: ['exec'],
-      onExec: (t) => dispatchDelegate(t.peer, t.prompt, t.cwd),
-      log: (m) => deps.log('YI', m),
-    })
-    yiClient.start()
-    deps.log('YI', `hand connecting to brain at ${cfg.url}`)
-  }
+  // 乙 v2 — ./wire-yi.ts(2026-09-27 拆分);经 sup.start('yi')。
+  const yiHub = await wireYi(ctx, { a2aRegistry, dispatchDelegate })
 
   return {
     sessionManager,
