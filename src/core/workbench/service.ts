@@ -1,7 +1,7 @@
 import { makeRunUserInput } from './user-input'
 import {makeWechatWorkbenchControl,type WechatMessageIdentity,type WechatWorkbenchReply} from './wechat-control'
 import type {CreationReceipt} from './creation-receipts'
-import {normalizeInputRequestId,sameAttachments,type LiveInput} from './live-inputs'
+import { normalizeInputRequestId, sameAttachments } from './live-inputs'
 import type {Attachment} from './attachments'
 import { randomUUID } from 'node:crypto'
 import type { AgentEvent, AgentSession, AgentExecutionChoice } from '../agent-provider'
@@ -15,7 +15,7 @@ import { type AcceptedNativeResume } from './native-adoption'
 import { handoffArtifactText, type ArtifactSelection } from './handoff'
 import {makeDeltaCoalescer} from './delta-coalescer'
 import {isUnattendedExecutor,isWorkbenchExecutorCapabilities,isWorkbenchProviderId} from './executor-capabilities'
-import { makeRunPermissions, type PermissionDecision, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
+import { makeRunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
 import { findPathBlocker } from './scheduler'
 import { classifyProviderError } from '../provider-quota'
 import type { MatterStore } from '../matters/store'
@@ -79,6 +79,7 @@ import { makeAdmissionDomain } from './service/admission'
 import { makeViewDomain } from './service/view'
 import { checkedText } from './service/checked-text'
 import { makeNativeDomain } from './service/native'
+import { makeInputsDomain } from './service/inputs'
 import type { ServiceActions, ServiceCtx } from './service/ctx'
 export type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
 import type { CreateWechatTask } from './wechat-types'
@@ -86,7 +87,6 @@ export type { InputMaterials, CreateTask, WorkbenchPhase, WorkbenchTaskView, Ent
 import type { InputMaterials, CreateTask, WorkbenchTaskView, EntryResult } from './service/types'
 
 const RECOVERY_MESSAGE='原执行会话暂时无法恢复。请打开桌面工作台，查看恢复选项并确认是否带此前记录重新开始。'
-const INPUT_UNCONFIRMED='未确认执行者收到，请检查当前对话后再决定是否重发。'
 
 /** Cancellation must clear the idle timer even if a broken adapter leaves next() pending. */
 async function collectWorkbenchTurn(events: AsyncIterable<AgentEvent>, stop: Promise<null>, timeoutMs: number, observe: (event: AgentEvent) => void, waiting:()=>boolean=()=>false,interactionAt:()=>number=()=>0,begin?:()=>void) {
@@ -146,22 +146,6 @@ export function makeWorkbenchService(opts: Options) {
     if(task.ownerChatId!==record.ownerKey)throw Error('invalid_entry_owner')
     return{receipt:{requestId:record.requestId,taskId:record.taskId,matterId:record.matterId,runId:record.runId,acceptedAt:record.acceptedAt},task:taskView(publicTask(task))}
   }
-  const autoContinueBlocked=new Set<string>()
-  function holdInputs(id:string,error:string){
-    autoContinueBlocked.add(id)
-    try{
-      store.atomic(()=>{
-        // A native send awaiting acknowledgement is ambiguous, even after stop.
-        for(const saved of runsByTask.get(id)?.runtimeInputs?.values()??[]){
-          const current=store.liveInputs.get(saved.id)
-          if(current?.status==='sending'&&current.taskId===saved.taskId&&current.runId===saved.runId&&current.text===saved.text&&sameAttachments(current.attachments,saved.attachments))store.liveInputs.set(saved.id,'held',INPUT_UNCONFIRMED)
-        }
-        store.liveInputs.hold(id,error)
-      })
-      bumped(id)
-      autoContinueBlocked.delete(id)
-    }catch{/* Stop must not depend on a successful disk write. */}
-  }
   const state=makeRuntimeState()
   const {runsByTask,reservations,queue,runningText,collections}=state
   const actions=new Ref<ServiceActions>('workbench-actions')
@@ -177,6 +161,8 @@ export function makeWorkbenchService(opts: Options) {
   const {held,runtimeSnapshot,inputMode,isReplied,taskView}=viewDomain
   const nativeDomain=makeNativeDomain(ctx)
   const {validateNativeDecision}=nativeDomain
+  const inputsDomain=makeInputsDomain(ctx)
+  const {holdInputs,hasUndeliveredInput,drainInputs,settleRuntimeInput}=inputsDomain
   const noticesDomain=makeNoticesDomain(ctx)
   const {requestNotice,terminalReportBody,stageFinishedNotice,publishFinishedNotices}=noticesDomain
   const artifactsDomain=makeArtifactsDomain(ctx)
@@ -218,17 +204,6 @@ export function makeWorkbenchService(opts: Options) {
   }
   const handoffGraceMs=()=>msKnob(opts.handoffGraceMs,15_000)
   const retainedIdleMs=()=>msKnob(opts.retainedIdleCloseMs,600_000)
-  /**
-   * 主人已经交上来、还没投给执行者的补充(`pending` / `sending` —— 和 `holdInputs` / `recover`
-   * 盯的是同一批)。有这种补充就不能自动收工:收工走的是 `cancelRun`,结算时 `running.cancelled`
-   * 让这批补充走 `holdInputs` 而不是 `drainInputs`,主人刚打的那句话被文件夹移交盖成
-   * 「补充尚未发送」(评审修复轮 #6 —— 和修复轮 #1 是同一个失败形状,只是触发者换成了
-   * 「之后才来的等待者把短让位重新武装起来」)。
-   * 读不出来就当有:宁可文件夹多占一会儿,也不能把主人的话弄丢。
-   */
-  function hasUndeliveredInput(running:Active):boolean {
-    try { return store.liveInputs.count(running.taskId)>0 } catch { return true }
-  }
   /**
    * 会话安静下来就起一个计时器,到点关掉会话、让出文件夹。两档:有人在等这个文件夹 ⇒ 短让位;
    * 没人等 ⇒ 长空闲(别让一个闲着的原生进程占着资源)。已经排好的短让位不会被长空闲推迟。
@@ -656,46 +631,6 @@ export function makeWorkbenchService(opts: Options) {
     }
   }
 
-  function drainInputs(id:string,expectedDirectoryIdentity:string){
-    if(autoContinueBlocked.has(id))return
-    const next=store.liveInputs.next(id);if(!next)return
-    try{
-      const task=store.get(id),decision=continuation(task)
-      if(decision.mode!=='resume')throw Error('原会话需要你确认恢复方式，补充尚未发送。')
-      const path=canonicalProject(task.path);if(path!==task.path||directoryIdentity(path)!==expectedDirectoryIdentity)throw Error('invalid_path')
-      store.liveInputs.set(next.id,'sending');bumped(id)
-      const execution=next.execution??store.execution.run(id,next.runId)?.choice??store.execution.choice(id)
-      requireInput(task.providerId,next.attachments??[],execution,true)
-      start(task,next.text,expectedDirectoryIdentity,{mode:'resume',sessionId:task.sessionId!},undefined,undefined,undefined,next.id,next.attachments,undefined,execution)
-    }catch(error){holdInputs(id,error instanceof Error?error.message:'input_not_delivered')}
-  }
-
-  function settleRuntimeInput(running:Active,saved:LiveInput,error?:unknown) {
-    if(state.shutdownComplete){running.runtimeInputs?.delete(saved.id);return}
-    try {
-      // held-only 落库不会自己 bump(store.addEvent 才会);两条分支分别记账,没写就不吵。
-      let changed:'held'|'delivered'|null=null
-      store.atomic(()=>{
-        const current=store.liveInputs.get(saved.id)
-        if(!current||current.taskId!==saved.taskId||current.runId!==saved.runId||current.text!==saved.text||!sameAttachments(current.attachments,saved.attachments))return
-        if(error!==undefined){
-          // Stop/recovery may already have held it. Never revive an old send.
-          if(current.status==='sending'){store.liveInputs.set(saved.id,'held',`${INPUT_UNCONFIRMED}${error instanceof Error?' '+error.message:''}`);changed='held'}
-          return
-        }
-        if(current.status!=='sending'&&current.status!=='held')return
-        // A late positive native acknowledgement is truthful only for this receipt.
-        store.liveInputs.set(saved.id,'delivered')
-        store.addEvent(saved.taskId,'user',saved.text,null,saved.runId,saved.attachments)
-        changed='delivered'
-      })
-      if(changed==='held')bumped(saved.taskId)
-      else if(changed==='delivered')touched(saved.taskId)
-      // Keep delivery uncertainty tracked if the durable transition failed.
-      running.runtimeInputs?.delete(saved.id)
-      if(runsByTask.get(saved.taskId)===running&&!running.cancelled&&!running.finishing)running.interactionAt=Date.now()
-    }catch{autoContinueBlocked.add(saved.taskId)}
-  }
 
   function pump() {
     if (state.stopping) return
@@ -984,97 +919,9 @@ export function makeWorkbenchService(opts: Options) {
       return receipt
     },
     attention:viewDomain.attention,
-    resolveAnswer(id:string,requestId:string,answers:unknown){
-      const running=runsByTask.get(id)
-      if(!running||running.cancelled||running.finishing||!running.questions.resolve(requestId,answers))throw Error('question_stale')
-      bumped(id)
-      // 回合早就静下来、只差这一个待决请求时,不会再有事件把落定叫起来 —— 拍完板自己补一次。
-      settleAfterDecision(running)
-    },
-    withdrawInput(id:string,requestId:string){
-      const input=store.liveInputs.get(requestId)
-      if(!input||input.taskId!==id||input.status!=='pending')throw Error('input_stale')
-      store.liveInputs.set(requestId,'withdrawn')
-      bumped(id)
-    },
-    async submitInput(id:string,input:{runId:string;requestId:string;text:string}&InputMaterials,attachmentPolicy?:'owner'){
-      ensureAccepting()
-      if(Object.hasOwn(input,'execution'))throw Error('invalid_execution')
-      const attachments=selectAttachments(input,id,attachmentPolicy),text=checkedText(input.text,attachments)
-      if(autoContinueBlocked.has(id))throw Error('input_storage_unavailable')
-      const requestId=normalizeInputRequestId(input.requestId)
-      const prior=store.liveInputs.get(requestId)
-      if(prior){if(prior.taskId!==id||prior.runId!==input.runId||prior.text!==text||!sameAttachments(prior.attachments,attachments))throw Error('input_conflict');return prior}
-      const running=runsByTask.get(id)
-      if(!running||running.identity!==input.runId||running.cancelled||running.finishing||running.uncertain)throw Error('input_stale')
-      if(running.delivering)throw Error('input_delivery_busy')
-      if(store.liveInputs.count(id)>=10)throw Error('input_limit')
-      requireInput(running.task.providerId,attachments,running.execution)
-      // 一句补充就是一下互动:先把自动收工的计时取消掉,免得话在路上会话被关了。这一下要在
-      // **入口**做,不能放进下面那个分支 —— `isReplied` 不看 `inputMode`,一条安静的运行若 runtime
-      // 报 `input:'queue'`,补充会存下来等着,而计时还武装着:让位到点就把会话关了,主人收到的
-      // 是「补充尚未发送」(评审 2026-09-21 修复轮 #1)。
-      cancelIdleClose(running)
-      if(running.session?.workbenchRuntime&&inputMode(running)!=='queue'){
-        // 上一轮的快照还在截就等它截完,别把这一轮的改动算进上一轮。
-        if(running.reviewCapture)await running.reviewCapture.catch(()=>{})
-        // 续接 = 新一轮差异的起点:重新取基线。回合中间补一句话时上一轮还没截过快照
-        // (基线还没被消费)—— 那一份要留着,起点提交不动,否则这条 run 的代码变更会丢。
-        if(!running.reviewBaseline){try{running.reviewBaseline=await captureGitBaseline(running.path,{})}catch{/* 没基线就没有这一轮的代码对比,其他成果照收 */}}
-        // 上面两处 await 可能等十几秒。这期间一轮自动续作可以正常收尾(新不变式下那是合法工作),
-        // `settleQuiet` 就会重新武装让位计时;计时到点 `closeForIdle` 把会话收工、文件夹交给 B。
-        // 所以醒过来必须把入口那道守卫再跑一遍,否则这句话会投给一条已经关掉的会话 —— 坏的那头是
-        // 原生进程还没死,于是在一个正在移交的文件夹里开始写,两个写手同处一个目录。
-        // (BASE 靠 `acquireTurnLease` 里的 `alive()` 挡这一下,那个函数这一轮删掉了。)
-        if(runsByTask.get(id)!==running||running.cancelled||running.finishing||running.uncertain)throw Error('input_stale')
-      }
-      let saved:LiveInput
-      try{
-        saved=store.atomic(()=>{
-          store.attachments.bind(attachments.map(a=>a.id),id,input.draftId,attachmentPolicy?continuationAttachmentScope(id,attachments):undefined)
-          return store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text,attachments,execution:running.execution})
-        })
-      }catch(error){
-        // 这一句没存下来就没有人会去写文件夹:会话还安静着,把自动收工的计时重新起上,
-        // 别让一句存不下来的补充把文件夹永久锁住。
-        armIdleClose(running)
-        throw error
-      }
-      const runtime=running.session?.workbenchRuntime
-      if(runtime){
-        if(inputMode(running)==='queue')return saved
-        store.liveInputs.set(saved.id,'sending');bumped(id)
-        ;(running.runtimeInputs??=new Map()).set(saved.id,saved)
-        try{
-          if(canonicalProject(running.path)!==running.path||directoryIdentity(running.path)!==running.directoryIdentity)throw Error('invalid_path')
-          const material=store.attachments.prepare(id,attachments,running.path,opts.stateDir)
-          running.interactionAt=Date.now()
-          // 主人续接 = 新一轮的可靠起点(评审修复轮 1):这个同步点不依赖快照观察,
-          // 「投给 runtime 了」这件事本身就是新一轮开始的证据,回报去重键(reportOnce)
-          // 靠它才不会因为快照从未被看见处于「忙碌」而永久锁死。
-          running.turnSeq++
-          // Replay acknowledgement may wait behind an autonomous native turn.
-          // The HTTP receipt is already durable; never wait here or auto-resend.
-          void runtime.submit(saved.id,text,material).then(
-            ()=>settleRuntimeInput(running,saved),
-            error=>{settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));armIdleClose(running)},
-          )
-        }catch(error){settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));armIdleClose(running)}
-        return store.liveInputs.get(saved.id)!
-      }
-      if(!running.session?.steer)return saved
-      running.delivering=true;store.liveInputs.set(saved.id,'sending');bumped(id)
-      try{
-        if(canonicalProject(running.path)!==running.path||directoryIdentity(running.path)!==running.directoryIdentity)throw Error('invalid_path')
-        const material=store.attachments.prepare(id,attachments,running.path,opts.stateDir)
-        await running.session.steer(text,material)
-        running.interactionAt=Date.now()
-        store.liveInputs.set(saved.id,'delivered');bumped(id)
-        store.addEvent(id,'user',text,null,running.identity,attachments);touched(id)
-      }catch(error){store.liveInputs.set(saved.id,'held',`未确认执行者收到，请检查当前对话后再决定是否重发。${error instanceof Error?' '+error.message:''}`);bumped(id)}
-      finally{running.delivering=false}
-      return store.liveInputs.get(saved.id)!
-    },
+    resolveAnswer:inputsDomain.resolveAnswer,
+    withdrawInput:inputsDomain.withdrawInput,
+    submitInput:inputsDomain.submitInput,
     previewHandoff:nativeDomain.previewHandoff,
     handoff:nativeDomain.handoff,
     handoffRecord:nativeDomain.handoffRecord,
@@ -1127,7 +974,7 @@ export function makeWorkbenchService(opts: Options) {
         : decision.mode==='resume' ? {mode:'resume',sessionId:task.sessionId!} : {mode:'new'}
       try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId,attachments,options?.draftId,execution,undefined,attachmentPolicy)}
       catch(error){
-        if(inputRequestId&&store.liveInputs.get(inputRequestId))try{store.liveInputs.set(inputRequestId,'held','本轮未确认开始，补充内容已保留。');bumped(id)}catch{autoContinueBlocked.add(id)}
+        if(inputRequestId&&store.liveInputs.get(inputRequestId))try{store.liveInputs.set(inputRequestId,'held','本轮未确认开始，补充内容已保留。');bumped(id)}catch{state.autoContinueBlocked.add(id)}
         throw error
       }
     },
@@ -1162,15 +1009,7 @@ export function makeWorkbenchService(opts: Options) {
     reviewList:review.reviewList,
     markReviewFile:review.markReviewFile,
     returnReviewFiles:review.returnReviewFiles,
-    resolvePermission(id:string,requestId:string,decision:PermissionDecision):void {
-      store.get(id)
-      if (decision!=='allow' && decision!=='deny') throw new Error('invalid_decision')
-      const running=runsByTask.get(id)
-      if (!running || !running.permissions.resolve(requestId,decision)) throw new Error('permission_stale')
-      bumped(id)
-      // 同 resolveAnswer:静默期里拍的板,得由拍板这一下把落定补上。
-      settleAfterDecision(running)
-    },
+    resolvePermission:inputsDomain.resolvePermission,
     async handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>{return wechatControl(chatId,text,identity)},
     shutdown():Promise<void> {
       if (state.shutdownPromise) return state.shutdownPromise
@@ -1206,7 +1045,7 @@ export function makeWorkbenchService(opts: Options) {
       },
     },
   }
-  actions.set({submitInput:(id,input,policy)=>service.submitInput(id,input,policy),continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),isReplied,fallbackExecutor,artifact:(id,artifactId)=>service.artifact(id,artifactId),quotaExhausted:quotaDomain.quotaExhausted,continuation,provider,requireInput,canResume,taskVersion,selectAttachments,combinedAttachments,handoffAttachments,taskView,matterSync,start})
+  actions.set({submitInput:(id,input,policy)=>service.submitInput(id,input,policy),continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),isReplied,fallbackExecutor,artifact:(id,artifactId)=>service.artifact(id,artifactId),quotaExhausted:quotaDomain.quotaExhausted,continuation,provider,requireInput,canResume,taskVersion,selectAttachments,combinedAttachments,handoffAttachments,taskView,matterSync,start,continuationAttachmentScope,inputMode,armIdleClose,cancelIdleClose,settleAfterDecision})
   const wechatControl=makeWechatWorkbenchControl({store,ownerChatId:opts.ownerChatId,actions:service})
   return service
 }

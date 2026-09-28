@@ -51,6 +51,12 @@ export interface ServiceActions {
   matterSync(fn:(m:MatterStore)=>void):void
   /** execute 域:派发一条 run(handoff / continueNativeTask 的最后一步)。签名逐字抄自 service.ts 的 start。 */
   start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation?:AcceptedContinuation,nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments?:Attachment[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string}},attachmentPolicy?:'owner'):WorkbenchTaskView
+  // ---- inputs 域(PR 8):前两个是查询,后三个是 lifecycle 的动作 —— 环第一次真正经这里走。
+  continuationAttachmentScope(taskId:string,ids:unknown):{ownerKey:string}|undefined
+  inputMode(running:Active):'steer'|'send'|'queue'
+  armIdleClose(running:Active):void
+  cancelIdleClose(running:Active):void
+  settleAfterDecision(running:Active):void
 }
 /** service 的外部依赖里域会用到的那几样(opts 的子集,只读);按需加,不整个 opts 透传。 */
 export interface ServiceDeps {
