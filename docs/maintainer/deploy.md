@@ -36,6 +36,8 @@ wechat-cc self deploy --json     # 机器可读
 
 **第一次跑要知道的事**:活着的 .app 从 ad-hoc 变成 Developer ID,系统当它是个新客户端,「完全磁盘访问」等授权要**再点一次**;之后就稳了。本地 `tauri build` 没导出 `APPLE_SIGNING_IDENTITY` 时出来的仍是 ad-hoc 包,下一次 `self deploy` 会把它重封回 Developer ID。证书有效期到 2027-02-01,到期前换一张(Team ID 不变,指定要求就不变,授权不掉)。
 
+**DevID 封过的 .app 里永远别再放 ad-hoc sidecar(2026-09-28 事故)**:#143 合入后用**已装的**打包版 CLI 部署,它还是没有「从 `--binary` 旁找 entitlements」那条修的老构建 ⇒ 没签,把 ad-hoc sidecar 换进了 Developer ID 封好的 .app。TCC 当它是新身份弹了框,sidecar 单线程卡在 `openat`、一行日志没有、`internal-api-info.json` 不出现,健康门与回滚的健康门都 60s 超时(exit 3);主人点「允许」才起来。两条:① `self deploy` 步骤里没出现 `sign` / `seal` 就别让它往下走;② 改的是 CLI 自己的部署逻辑时,第一次要从目标分支用**源码模式** `bun cli.ts self deploy` 跑,已装的 CLI 是旧逻辑。诊断口诀:进程在、没日志、info 不出现 ⇒ `sample <sidecar pid> 1`,主线程停在 `openat` 就是权限框,看屏幕。
+
 `entitlements.plist` 找两处:先 repoRoot,再 `--binary` 所在 `binaries/` 的上一级 —— 打包版的 CLI(`wechat-cc self deploy`,也就是标准回路)repoRoot 是 .app 的 MacOS/,只有第二处能中。两处都没有 ⇒ 不签,步骤里也不会出现 sign / seal。`--no-sign` 强制不签。
 
 ## 回滚别把备份吃了(2026-09-18 复审)
