@@ -66,7 +66,11 @@ export default defineConfig({
     // 建库这类重活恰恰都在 hook 里,所以这条比 testTimeout 更该抬。
     // 2026-09-19 一并跟着 testTimeout 去掉平台分叉:满载套件里 hook 同样被
     // 放大 5~10 倍,10s 对 mkdtemp + 建库这种活一样没有余量。
-    hookTimeout: 20_000,
+    // 2026-09-28:#129 把 Windows 上跑的测试文件从 671 加到 682 之后,dev 上
+    // 同一 SHA 两连红、六条失败是六个不同文件的 beforeEach,全是
+    // `Hook timed out in 20000ms`(run 36387436016)—— 20s 在满载下也见底了。
+    // 抬到 40s:hook 做完立刻往下走,只有真挂死才多等 20s;真挂死照样红。
+    hookTimeout: 40_000,
     // 2026-09-27:第三个同病的旋钮。`expect.poll` 的缺省 1s 是空闲机器的口径,
     // 工作台那 200 多处 `await expect.poll(...)` 在 windows-latest 上两连红 ——
     // service.test.ts:36 的 settle() 等一次真 git 快照收尾,报的不是超时而是
