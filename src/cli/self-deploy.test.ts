@@ -248,6 +248,27 @@ describe('resolveSigningInputs', () => {
     const r = resolveSigningInputs({ repoRoot: '/repo', disabled: false, spawnSync: () => ({ status: 0, stdout: found, stderr: '' }), exists: () => false })
     expect(r).toEqual({ signingIdentity: ID, entitlementsPath: null })
   })
+  // 打包版的 CLI(`wechat-cc self deploy`,也就是手册里的标准回路)把 repoRoot 算成
+  // .app 的 MacOS/ 目录,那里没有 entitlements.plist ⇒ 2026-09-28 首次从 dev 部署时
+  // 一步签名都没跑。但 --binary 指的是 <repo>/apps/desktop/src-tauri/binaries/…,
+  // entitlements.plist 就在 binaries/ 的上一级 —— 从那里找。
+  it('repoRoot 旁没有 entitlements 时,从 --binary 所在 binaries/ 的上一级找', () => {
+    const r = resolveSigningInputs({
+      repoRoot: '/Applications/wechat-cc.app/Contents/MacOS', disabled: false,
+      binaryPath: '/Users/nate/wechat-cc-cc-kit/apps/desktop/src-tauri/binaries/wechat-cc-cli-aarch64-apple-darwin',
+      spawnSync: () => ({ status: 0, stdout: found, stderr: '' }),
+      exists: (p) => p === '/Users/nate/wechat-cc-cc-kit/apps/desktop/src-tauri/entitlements.plist',
+    })
+    expect(r).toEqual({ signingIdentity: ID, entitlementsPath: '/Users/nate/wechat-cc-cc-kit/apps/desktop/src-tauri/entitlements.plist' })
+  })
+
+  it('repoRoot 那份优先;两处都没有 ⇒ null', () => {
+    const both = resolveSigningInputs({ repoRoot: '/repo', disabled: false, binaryPath: '/other/apps/desktop/src-tauri/binaries/x', spawnSync: () => ({ status: 0, stdout: found, stderr: '' }), exists: () => true })
+    expect(both.entitlementsPath).toBe('/repo/apps/desktop/src-tauri/entitlements.plist')
+    const none = resolveSigningInputs({ repoRoot: '/repo', disabled: false, binaryPath: '/other/apps/desktop/src-tauri/binaries/x', spawnSync: () => ({ status: 0, stdout: found, stderr: '' }), exists: () => false })
+    expect(none.entitlementsPath).toBeNull()
+  })
+
   it('--no-sign ⇒ 连 security 都不问', () => {
     let asked = 0
     const r = resolveSigningInputs({ repoRoot: '/repo', disabled: true, spawnSync: () => { asked++; return { status: 0, stdout: found, stderr: '' } }, exists: () => true })
