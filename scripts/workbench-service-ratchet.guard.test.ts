@@ -13,9 +13,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const WB = join(ROOT, 'src', 'core', 'workbench')
 const src = readFileSync(join(WB, 'service.ts'), 'utf8')
 
-// 搬走一个域就把这两个数往下调(只降不升)。当前值 = PR 6 搬完 admission + view 域之后的实际值。
-const MAX_LINES = 1400
-const MAX_INNER_FUNCTIONS = 34
+// 搬走一个域就把这两个数往下调(只降不升)。当前值 = PR 7 搬完 native+handoff 域之后的实际值。
+const MAX_LINES = 1213
+const MAX_INNER_FUNCTIONS = 31
 
 const lineCount = (s: string) => s.split('\n').length - (s.endsWith('\n') ? 1 : 0)
 /** makeWorkbenchService 体内两格缩进的 `function x(` / `async function x(` / `const x=(`/`const x = (` 箭头。 */
