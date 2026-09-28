@@ -2,7 +2,7 @@
  * inputs 域:主人的补充 —— 持有(hold)/ 排空(drain)/ 结算(settle)三个内部动作,以及
  * submitInput / withdrawInput / resolveAnswer / resolvePermission 四个入口。
  * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 8 项);只认 ctx。
- * 与 lifecycle 互调:这里要 cancelIdleClose / armIdleClose / settleAfterDecision,经 a()=ctx.actions.deref('inputs') 在调用时取;
+ * 与 lifecycle 互调:这里要 cancelIdleClose / armIdleClose / settleAfterDecision,经 act()=ctx.actions.deref('inputs') 在调用时取;
  * 反过来 lifecycle / execute 要的 holdInputs / drainInputs / settleRuntimeInput / hasUndeliveredInput 由 service.ts 解构。
  * autoContinueBlocked 在 state 上,与 execute 共享同一个 Set。
  */
@@ -20,7 +20,7 @@ const INPUT_UNCONFIRMED='未确认执行者收到，请检查当前对话后再�
 
 export function makeInputsDomain(ctx:ServiceCtx) {
   const { store, state } = ctx
-  const a=()=>ctx.actions.deref('inputs')
+  const act=()=>ctx.actions.deref('inputs')
   function holdInputs(id:string,error:string){
     state.autoContinueBlocked.add(id)
     try{
@@ -51,13 +51,13 @@ export function makeInputsDomain(ctx:ServiceCtx) {
     if(state.autoContinueBlocked.has(id))return
     const next=store.liveInputs.next(id);if(!next)return
     try{
-      const task=store.get(id),decision=a().continuation(task)
+      const task=store.get(id),decision=act().continuation(task)
       if(decision.mode!=='resume')throw Error('原会话需要你确认恢复方式，补充尚未发送。')
       const path=canonicalProject(task.path);if(path!==task.path||directoryIdentity(path)!==expectedDirectoryIdentity)throw Error('invalid_path')
       store.liveInputs.set(next.id,'sending');ctx.hub.bumped(id)
       const execution=next.execution??store.execution.run(id,next.runId)?.choice??store.execution.choice(id)
-      a().requireInput(task.providerId,next.attachments??[],execution,true)
-      a().start(task,next.text,expectedDirectoryIdentity,{mode:'resume',sessionId:task.sessionId!},undefined,undefined,undefined,next.id,next.attachments,undefined,execution)
+      act().requireInput(task.providerId,next.attachments??[],execution,true)
+      act().start(task,next.text,expectedDirectoryIdentity,{mode:'resume',sessionId:task.sessionId!},undefined,undefined,undefined,next.id,next.attachments,undefined,execution)
     }catch(error){holdInputs(id,error instanceof Error?error.message:'input_not_delivered')}
   }
 
@@ -92,7 +92,7 @@ export function makeInputsDomain(ctx:ServiceCtx) {
     if(!running||running.cancelled||running.finishing||!running.questions.resolve(requestId,answers))throw Error('question_stale')
     ctx.hub.bumped(id)
     // 回合早就静下来、只差这一个待决请求时,不会再有事件把落定叫起来 —— 拍完板自己补一次。
-    a().settleAfterDecision(running)
+    act().settleAfterDecision(running)
   }
   function withdrawInput(id:string,requestId:string){
     const input=store.liveInputs.get(requestId)
@@ -103,7 +103,7 @@ export function makeInputsDomain(ctx:ServiceCtx) {
   async function submitInput(id:string,input:{runId:string;requestId:string;text:string}&InputMaterials,attachmentPolicy?:'owner'){
     ctx.ensureAccepting()
     if(Object.hasOwn(input,'execution'))throw Error('invalid_execution')
-    const attachments=a().selectAttachments(input,id,attachmentPolicy),text=checkedText(input.text,attachments)
+    const attachments=act().selectAttachments(input,id,attachmentPolicy),text=checkedText(input.text,attachments)
     if(state.autoContinueBlocked.has(id))throw Error('input_storage_unavailable')
     const requestId=normalizeInputRequestId(input.requestId)
     const prior=store.liveInputs.get(requestId)
@@ -112,13 +112,13 @@ export function makeInputsDomain(ctx:ServiceCtx) {
     if(!running||running.identity!==input.runId||running.cancelled||running.finishing||running.uncertain)throw Error('input_stale')
     if(running.delivering)throw Error('input_delivery_busy')
     if(store.liveInputs.count(id)>=10)throw Error('input_limit')
-    a().requireInput(running.task.providerId,attachments,running.execution)
+    act().requireInput(running.task.providerId,attachments,running.execution)
     // 一句补充就是一下互动:先把自动收工的计时取消掉,免得话在路上会话被关了。这一下要在
     // **入口**做,不能放进下面那个分支 —— `isReplied` 不看 `inputMode`,一条安静的运行若 runtime
     // 报 `input:'queue'`,补充会存下来等着,而计时还武装着:让位到点就把会话关了,主人收到的
     // 是「补充尚未发送」(评审 2026-09-21 修复轮 #1)。
-    a().cancelIdleClose(running)
-    if(running.session?.workbenchRuntime&&a().inputMode(running)!=='queue'){
+    act().cancelIdleClose(running)
+    if(running.session?.workbenchRuntime&&act().inputMode(running)!=='queue'){
       // 上一轮的快照还在截就等它截完,别把这一轮的改动算进上一轮。
       if(running.reviewCapture)await running.reviewCapture.catch(()=>{})
       // 续接 = 新一轮差异的起点:重新取基线。回合中间补一句话时上一轮还没截过快照
@@ -134,18 +134,18 @@ export function makeInputsDomain(ctx:ServiceCtx) {
     let saved:LiveInput
     try{
       saved=store.atomic(()=>{
-        store.attachments.bind(attachments.map(a=>a.id),id,input.draftId,attachmentPolicy?a().continuationAttachmentScope(id,attachments):undefined)
+        store.attachments.bind(attachments.map(a=>a.id),id,input.draftId,attachmentPolicy?act().continuationAttachmentScope(id,attachments):undefined)
         return store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text,attachments,execution:running.execution})
       })
     }catch(error){
       // 这一句没存下来就没有人会去写文件夹:会话还安静着,把自动收工的计时重新起上,
       // 别让一句存不下来的补充把文件夹永久锁住。
-      a().armIdleClose(running)
+      act().armIdleClose(running)
       throw error
     }
     const runtime=running.session?.workbenchRuntime
     if(runtime){
-      if(a().inputMode(running)==='queue')return saved
+      if(act().inputMode(running)==='queue')return saved
       store.liveInputs.set(saved.id,'sending');ctx.hub.bumped(id)
       ;(running.runtimeInputs??=new Map()).set(saved.id,saved)
       try{
@@ -160,9 +160,9 @@ export function makeInputsDomain(ctx:ServiceCtx) {
         // The HTTP receipt is already durable; never wait here or auto-resend.
         void runtime.submit(saved.id,text,material).then(
           ()=>settleRuntimeInput(running,saved),
-          error=>{settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));a().armIdleClose(running)},
+          error=>{settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));act().armIdleClose(running)},
         )
-      }catch(error){settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));a().armIdleClose(running)}
+      }catch(error){settleRuntimeInput(running,saved,error??new Error('input_not_delivered'));act().armIdleClose(running)}
       return store.liveInputs.get(saved.id)!
     }
     if(!running.session?.steer)return saved
@@ -185,7 +185,7 @@ export function makeInputsDomain(ctx:ServiceCtx) {
     if (!running || !running.permissions.resolve(requestId,decision)) throw new Error('permission_stale')
     ctx.hub.bumped(id)
     // 同 resolveAnswer:静默期里拍的板,得由拍板这一下把落定补上。
-    a().settleAfterDecision(running)
+    act().settleAfterDecision(running)
   }
 
   return { holdInputs,hasUndeliveredInput,drainInputs,settleRuntimeInput, submitInput,withdrawInput,resolveAnswer,resolvePermission }

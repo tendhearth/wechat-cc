@@ -44,7 +44,7 @@
 
 这三周的东西**单测和 selftest 绿 ≠ 用户能用**,以下都没在真机上走过:
 
-- 桌面同一个文件夹连开两件事,看等待行说的话对不对(一个文件夹一个活会话)。
+- ~~桌面同一个文件夹连开两件事,看等待行说的话对不对(一个文件夹一个活会话)。~~ 2026-09-28 真机核对通过:第二件 `waitingFor={reason:same_path, holderWriting:true}`、第一件独占在写(workbench service 拆分 PR 9 合入后,脚本见 PR 10 计划)。
 - `self change --no-deploy` 走一条完整链路,确认每条运行一个 worktree 全程成立。
 - 桌宠 Phase B 的权限卡闭环(微信 y/n 只认被问的那个 chat)。
 - 介绍 2 跳的完整链路(需要第三台真机)。
@@ -57,7 +57,7 @@
 - **e2e 只在 master 相关的分支跑**(`.github/workflows/ci.yml:152` 的分支条件)—— dev 上推送不跑 e2e,于是积压的 e2e 红会在开 PR 那一刻一次性砸下来(这次砸了 8 条)。要不要让 dev 也跑是成本取舍。
 - **自改的工作树回收缺一个显式入口** —— 现在只回收 `done`/`declined` 的运行,可 resume 的和被 kill 的永不回收(磁盘单调增长)。缺的是「这条我不接了」这个动作。
 - **设备 token 进 token-registry、http 默认 loopback**(梳理 2026-09-26 第 6 步)—— 手机页的 token 体系在 tier/routeAllow 之外、永不过期、面板监听 0.0.0.0;要先出设计稿。现状写在 [reference/internal-api-auth.md](reference/internal-api-auth.md)。
-- **拆三个大文件**(梳理第 7 步)—— `core/workbench/service.ts`(1622 行闭包,按 20 份 `service-*.test.ts` 的边界抽)、`bootstrap/index.ts`(剩余 8 个关注点进 `wire-*.ts`)、`cli.ts`(按命令族下沉;`scripts/cli-ratchet.guard.test.ts` 先钉住不再增长)。
+- ~~**拆三个大文件**(梳理第 7 步)—— `core/workbench/service.ts`(1622 行闭包,按 20 份 `service-*.test.ts` 的边界抽)、`bootstrap/index.ts`(剩余 8 个关注点进 `wire-*.ts`)、`cli.ts`(按命令族下沉;`scripts/cli-ratchet.guard.test.ts` 先钉住不再增长)。~~ **2026-09-28 三件全部完成**:`cli.ts` 4332→157(#128)、`bootstrap/index.ts` 1321→460(#131)、`core/workbench/service.ts` 1965→179 行 / 内函数 68→3(PR #132–#141 + PR 10,十个域进 `service/<domain>.ts`,棘轮守卫 `scripts/workbench-service-ratchet.guard.test.ts` 只降不升;19 份旧测试一行没改)。
 - **错误通道结构化**(arch backlog #4)—— 要 owner 参与定两条判定红线。
 - **纯 JS 的锚定文件访问**(评审 #3)—— 去 ffi 之后没有 `openat`,逐级 lstat 是多个时刻的观察;两条路(写清威胁模型 + 目录替换回归测试,或 macOS/Linux 恢复原生 openat),安全边界取舍等 owner。
 - **动态 provider 注册** —— 等 openai-compatible 这条路被外部集成者真用起来、暴露出覆盖不了的需求再做。
@@ -76,5 +76,6 @@
 ## 修订记录
 
 - 2026-09-27(晚):1.7.0 已发,现状表与下一步改写;发版链五个坑与「全自动发版」入账;⑥⑦ 四份设计稿入下一步。
+- 2026-09-28:第 7 步「拆三个大文件」三件全部完成(cli #128、bootstrap #131、workbench service PR #132–#141 + 收尾);真机账「一个文件夹连开两件事」核对通过;hookTimeout 抬到 40s(#133);Codex 第一批 #129 合入。第 6 步(设备令牌进 token-registry)仍是「已定未做」。
 - 2026-09-27:现状表改成「命令 + 当日值」;#117 已合、tag 已推;STT 口径定为已做(网关形态);第 6/7 步(设备 token、拆大文件)入「已定未做」;发版链接改指 maintainer/release.md。
 - 2026-09-22 v1:首份现行 roadmap。此前五个月的方向只活在 PR 描述和对话记忆里,文档侧唯一叫 roadmap 的是 4 月的 RFC 02。

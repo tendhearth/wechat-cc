@@ -29,7 +29,12 @@ export interface ServiceHub {
   /** 长轮询中心收尾:叫醒所有 waiter、清缓存(shutdown 最后一步)。 */
   dispose():void
 }
-/** service.ts / 别的域提供、域模块在调用时才取的动作;后续 PR 往里加字段(execute/pump/cancelRun/…)。 */
+/**
+ * service.ts 在 public 对象建好后 set 一次;域在**调用时** deref。平铺不分组(重排是纯 churn),
+ * 每段注释标明谁提供、谁消费。pump / cancelRun 留在 lifecycle 域内不进这里;execute 是唯一真正
+ * 需要晚绑定的(lifecycle.pump → execute)。最后两个模块(execute / entry)改用「已建好的域对象显式注入」
+ * (makeExecuteDomain(ctx, domains)),不再往这里加字段 —— 见 plans/2026-09-28-workbench-service-split-pr10.md。
+ */
 export interface ServiceActions {
   submitInput(id:string,input:{runId:string;requestId:string;text:string}&InputMaterials,attachmentPolicy?:'owner'):Promise<LiveInput>
   continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials,attachmentPolicy?:'owner'):WorkbenchTaskView
@@ -100,6 +105,17 @@ export interface ServiceDeps {
   retainedIdleCloseMs?: number | (() => number)
   /** 安静下来而有人在等这个文件夹时的短让位时长(ms;缺省 15 秒)。 */
   handoffGraceMs?: number | (() => number)
+  // ---- execute / entry 域(PR 10)
+  /** 「一件事」登记处:任务与 matter 一对一同 id;可选,老接线不传。 */
+  matters?: MatterStore
+  mintSessionToken?: (sessionKey: string) => string
+  /** 一回合无事件的上限 / 会话关闭的上限(ms);缺省见 execute。 */
+  timeoutMs?: number
+  closeTimeoutMs?: number
+  /** 忙碌登记处:派发时持有,结算时释放(self-restart 靠它判空闲)。 */
+  holdBusy?: (label: string) => () => void
+  /** 受管工作目录的根;不传 ⇒ entry 的 managed 目标一律 entry_not_wired。 */
+  managedWorkspaceRoot?: string
 }
 export interface ServiceCtx {
   store: WorkbenchStore

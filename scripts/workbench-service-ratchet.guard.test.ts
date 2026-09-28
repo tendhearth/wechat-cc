@@ -13,9 +13,10 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const WB = join(ROOT, 'src', 'core', 'workbench')
 const src = readFileSync(join(WB, 'service.ts'), 'utf8')
 
-// 搬走一个域就把这两个数往下调(只降不升)。当前值 = PR 9 搬完 lifecycle 域之后的实际值。
-const MAX_LINES = 789
-const MAX_INNER_FUNCTIONS = 11
+// 拆分已完成(PR 1–10,2026-09-28):service.ts 只剩 Options、组装、public 对象、actions.set。这两个数只许降;
+// 新逻辑一律进 src/core/workbench/service/<domain>.ts,别再往 makeWorkbenchService 里加内函数。
+const MAX_LINES = 179
+const MAX_INNER_FUNCTIONS = 3
 
 const lineCount = (s: string) => s.split('\n').length - (s.endsWith('\n') ? 1 : 0)
 /** makeWorkbenchService 体内两格缩进的 `function x(` / `async function x(` / `const x=(`/`const x = (` 箭头。 */
