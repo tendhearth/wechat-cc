@@ -29,7 +29,7 @@ function setup() {
   const store: WorkbenchStore = makeWorkbenchStore(db)
   const task = store.create({ title: '做点事', path: project, providerId: 'claude', ownerChatId: 'owner' })
   const state = makeRuntimeState()
-  const hub = { touched: vi.fn(), bumped: vi.fn() }
+  const hub = { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }
   const actions = new Ref<ServiceActions>('test-actions')
   const ctx: ServiceCtx = { store, stateDir, state, hub, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry() }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, now: Date.now, actions }
   const domain = makeReviewDomain(ctx)
@@ -37,7 +37,7 @@ function setup() {
   const good = plant('代码变更-run1.json', serializeGitReview(review([file('src/a.ts'), file('src/big.bin', { kind: 'not_reviewed', reason: '二进制文件未展开', beforeSha256: undefined, afterSha256: undefined, diff: undefined })])))
   const broken = plant('代码变更-坏.json', Buffer.from('{这不是 JSON'))
   const view = { id: task.id } as never
-  const stub = (over: Partial<ServiceActions> = {}) => actions.set({ submitInput: vi.fn(async () => ({ id: 'li' } as never)), continueTask: vi.fn(() => view), isReplied: () => false, fallbackExecutor: () => null, artifact: () => { throw new Error('unused') }, quotaExhausted: () => null, continuation: () => ({ mode: 'new' }), provider: () => { throw new Error('unused') }, requireInput: () => { throw new Error('unused') }, canResume: () => false, taskVersion: () => 'v', selectAttachments: () => [], combinedAttachments: () => [], handoffAttachments: () => [], taskView: () => { throw new Error('unused') }, matterSync: () => {}, start: () => { throw new Error('unused') }, continuationAttachmentScope: () => undefined, inputMode: () => 'queue' as const, armIdleClose: () => {}, cancelIdleClose: () => {}, settleAfterDecision: () => {}, ...over })
+  const stub = (over: Partial<ServiceActions> = {}) => actions.set({ submitInput: vi.fn(async () => ({ id: 'li' } as never)), continueTask: vi.fn(() => view), isReplied: () => false, fallbackExecutor: () => null, artifact: () => { throw new Error('unused') }, quotaExhausted: () => null, continuation: () => ({ mode: 'new' }), provider: () => { throw new Error('unused') }, requireInput: () => { throw new Error('unused') }, canResume: () => false, taskVersion: () => 'v', selectAttachments: () => [], combinedAttachments: () => [], handoffAttachments: () => [], taskView: () => { throw new Error('unused') }, matterSync: () => {}, start: () => { throw new Error('unused') }, continuationAttachmentScope: () => undefined, inputMode: () => 'queue' as const, armIdleClose: () => {}, cancelIdleClose: () => {}, settleAfterDecision: () => {}, execute: () => { throw new Error('unused') }, hasUndeliveredInput: () => false, holdInputs: () => {}, collect: async () => {}, collectTurnArtifacts: () => {}, captureCodeChanges: async () => {}, runtimeSnapshot: () => undefined, held: () => [], stageFinishedNotice: () => {}, publishFinishedNotices: () => {}, ...over })
   return { store, task, state, hub, actions, domain, good, broken, stub }
 }
 

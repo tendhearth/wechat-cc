@@ -6,15 +6,17 @@
 import type { Ref } from '../../../lib/lifecycle'
 import type { ProviderRegistry } from '../../provider-registry'
 import type { UsageSnapshot } from '../../subscription-usage'
-import type { StoredTask, Task, WorkbenchStore } from '../store'
+import type { StoredTask, Task, TaskStatus, WorkbenchStore } from '../store'
 import type { NativeHistoryProvider, NativeHistoryReader } from '../native-history'
 import type { Continuation } from '../continuation'
 import type { QuotaState } from '../../provider-quota'
-import type { AgentExecutionChoice } from '../../agent-provider'
+import type { AgentExecutionChoice, AgentRuntimeSnapshot } from '../../agent-provider'
 import type { LiveInput } from '../live-inputs'
 import type { AcceptedContinuation, Active, WorkbenchRuntimeState } from './state'
 import type { AdmittedProvider, InputMaterials, WorkbenchTaskView } from './types'
 import type { MatterStore } from '../../matters/store'
+import type { ReportSink } from '../../matters/report'
+import type { RecollectSink } from '../../matters/recollection'
 import type { AcceptedNativeResume } from '../native-adoption'
 import type { ArtifactSelection, AttachmentSelection } from '../handoff'
 import type { Attachment } from '../attachments'
@@ -24,6 +26,8 @@ export interface ServiceHub {
   touched(id:string,seq?:number):void
   /** 非 store 状态变化:先落库拿新 seq 再唤醒。 */
   bumped(id:string):void
+  /** 长轮询中心收尾:叫醒所有 waiter、清缓存(shutdown 最后一步)。 */
+  dispose():void
 }
 /** service.ts / 别的域提供、域模块在调用时才取的动作;后续 PR 往里加字段(execute/pump/cancelRun/…)。 */
 export interface ServiceActions {
@@ -57,6 +61,17 @@ export interface ServiceActions {
   armIdleClose(running:Active):void
   cancelIdleClose(running:Active):void
   settleAfterDecision(running:Active):void
+  // ---- lifecycle 域(PR 9):环完整经这里走。execute 是真晚绑定,其余是别的域的查询/动作。
+  execute(task:StoredTask,text:string,running:Active):Promise<void>
+  hasUndeliveredInput(running:Active):boolean
+  holdInputs(id:string,error:string):void
+  collect(running:Active):Promise<void>
+  collectTurnArtifacts(running:Active):void
+  captureCodeChanges(running:Active):Promise<void>
+  runtimeSnapshot(running:Active|undefined):AgentRuntimeSnapshot|undefined
+  held():Active[]
+  stageFinishedNotice(running:Active,status:TaskStatus,error?:string|null,suppressCompleted?:boolean):void
+  publishFinishedNotices():void
 }
 /** service 的外部依赖里域会用到的那几样(opts 的子集,只读);按需加,不整个 opts 透传。 */
 export interface ServiceDeps {
@@ -76,6 +91,15 @@ export interface ServiceDeps {
   defaultProvider?: string
   /** 外部(终端里的 claude/codex)是否正占着这个文件夹/会话;不传 ⇒ 不查。 */
   executionConflict?: (path:string,providerId:string,nativeId:string|null) => boolean
+  /** 每轮答复的回报投递;可选,不传就整条功能不存在(降级路径)。 */
+  reports?: ReportSink
+  /** 「回忆」触发;可选,同上。 */
+  recollect?: RecollectSink
+  revokeSessionToken?: (sessionKey: string) => void
+  /** 保留会话安静下来、没人等这个文件夹时的空闲自动收工时长(ms;缺省 10 分钟);函数形式热生效。 */
+  retainedIdleCloseMs?: number | (() => number)
+  /** 安静下来而有人在等这个文件夹时的短让位时长(ms;缺省 15 秒)。 */
+  handoffGraceMs?: number | (() => number)
 }
 export interface ServiceCtx {
   store: WorkbenchStore
