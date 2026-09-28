@@ -29,8 +29,8 @@ wechat-cc self deploy --json     # 机器可读
 
 公司的 `Developer ID Application: Nate Gu & Co LLC (9Y6JAPDP7A)` 证书到手之后,`self deploy` 在本机钥匙串里探到它(`security find-identity -v -p codesigning`)就多做两步,否则一切照旧(build-sidecar 打的 ad-hoc):
 
-- **sign**(stage 之后、backup 之前):`codesign --force --sign <身份> --options runtime --entitlements apps/desktop/src-tauri/entitlements.plist --identifier com.tendhearth.wechat-cc.cli <sidecar>.new`,签完**再探一次** `--version`。bun 编译出来的 sidecar 是 JIT 运行时,hardened runtime 下缺 entitlement 会被内核直接 SIGKILL、一行日志都没有 —— 所以这一探必须发生在换活之前:死了就退 1,现场一个字节没动、`.prev` 也没写。
-- **seal**(swap 之后、kickstart 之前):对整个 `.app` 再 `codesign --force --sign <身份> --options runtime --entitlements …`(不 `--deep`,跟 CI 里 tauri 一样;`.app` 里其它二进制各带各的签名)。失败就不 kickstart 新的,直接走回滚。回滚换回 `.prev` 之后也重封一次(`rollback_seal`,记录、不致命)。
+- **sign**(stage 之后、backup 之前):`codesign --force --sign <证书 SHA-1> --options runtime --entitlements apps/desktop/src-tauri/entitlements.plist --identifier com.tendhearth.wechat-cc.cli <sidecar>.new`,签完**再探一次** `--version`。bun 编译出来的 sidecar 是 JIT 运行时,hardened runtime 下缺 entitlement 会被内核直接 SIGKILL、一行日志都没有 —— 所以这一探必须发生在换活之前:死了就退 1,现场一个字节没动、`.prev` 也没写。`--sign` 给的是 SHA-1 不是名字:换证书那阵子新旧两张同名同时有效,按名字签 codesign 会报 ambiguous。装的就是 `.prev` 自己(回滚配方)时**跳过**这一步:它已经活过,再签只会给回滚多开失败路。
+- **seal**(swap 之后、kickstart 之前):对整个 `.app` 再 `codesign --force --sign <证书 SHA-1> --options runtime --entitlements …`(不 `--deep`,跟 CI 里 tauri 一样;`.app` 里其它二进制各带各的签名)。失败就不 kickstart 新的,直接走回滚;`--no-rollback` 时则退 1 停在原地 —— 新 sidecar 已在盘上、包封是坏的、没经健康门,下一次主进程拉 sidecar 跑的就是它,要么手工 `self deploy --binary <sidecar>.prev` 要么重跑。回滚换回 `.prev` 之后也重封一次(`rollback_seal`,记录、不致命)。
 
 **为什么要重封 .app 而不只签 sidecar**:TCC 把「完全磁盘访问」这类授权记在责任进程(主二进制,plist 指的那个)的**指定要求**上。ad-hoc 签名的指定要求是一串 cdhash,`tauri build` 一次就变一次;Developer ID 的是「identifier + team」,重建、换 sidecar 都不变。权限间歇掉的根因在这,不在 sidecar。
 

@@ -60,10 +60,10 @@ describe('selfDeployPlanFor', () => {
   // 2026-09-28:Developer ID 到手后 self deploy 会重签;流水线的部署与回滚都得带上
   // 同一份签名输入,否则自改部署出来的 sidecar 又变回 ad-hoc、TCC 授权又掉。
   it('签名输入原样进 plan —— 部署与回滚都带;不给 ⇒ null', () => {
-    const signed = { signingIdentity: 'Developer ID Application: X (T)', entitlementsPath: `${BASE.repoRoot}/apps/desktop/src-tauri/entitlements.plist` }
+    const signed = { signingIdentity: { name: 'Developer ID Application: X (T)', hash: 'A'.repeat(40) }, entitlementsPath: `${BASE.repoRoot}/apps/desktop/src-tauri/entitlements.plist` }
     const forward = selfDeployPlanFor({ ...BASE, mode: 'deploy', ...signed })
     const back = selfDeployPlanFor({ ...BASE, mode: 'rollback', ...signed })
-    expect(forward.signing).toEqual({ identity: 'Developer ID Application: X (T)', entitlementsPath: signed.entitlementsPath, appPath: '/Applications/wechat-cc.app' })
+    expect(forward.signing).toEqual({ identity: 'Developer ID Application: X (T)', identityHash: 'A'.repeat(40), entitlementsPath: signed.entitlementsPath, appPath: '/Applications/wechat-cc.app' })
     expect(back.signing).toEqual(forward.signing)
     expect(selfDeployPlanFor({ ...BASE, mode: 'deploy' }).signing).toBeNull()
   })

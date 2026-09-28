@@ -22,7 +22,7 @@ import { join } from 'node:path'
 import { workbenchSubprocessEnv } from '../../core/workbench/subprocess-env'
 import { readApiInfo } from '../../lib/api-info'
 import { defaultCiTriageDeps, runCiTriage } from '../ci-triage-run'
-import { defaultSelfDeployDeps, executeSelfDeploy, planSelfDeploy, resolveSigningInputs, type SelfDeployPlan, type SelfDeployResult } from '../self-deploy'
+import { defaultSelfDeployDeps, executeSelfDeploy, planSelfDeploy, resolveSigningInputs, type DeveloperIdIdentity, type SelfDeployPlan, type SelfDeployResult } from '../self-deploy'
 import { defaultSelftestDeps, runChatSelftest, runWorkbenchSelftest, type SelftestReport } from '../selftest'
 import type { SelfChangeConfig } from './config'
 import { makeDaemonClient } from './daemon-client'
@@ -48,7 +48,7 @@ export interface SelfDeployPlanInput {
   plistXml: string | null
   mode: 'deploy' | 'rollback'
   /** 签名输入(`resolveSigningInputs` 的结果);部署与回滚带同一份。缺省 ⇒ 不签。 */
-  signingIdentity?: string | null
+  signingIdentity?: DeveloperIdIdentity | null
   entitlementsPath?: string | null
 }
 
