@@ -11,8 +11,8 @@ import { fileURLToPath } from 'node:url'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const src = readFileSync(join(ROOT, 'src', 'daemon', 'bootstrap', 'index.ts'), 'utf8')
 
-const MAX_LINES = 469
-const MAX_LET_NULL = 1   // a2aServer(cachedOperatorChatId 随 wire-a2a 走了)
+const MAX_LINES = 460
+const MAX_LET_NULL = 0   // 全部改成 Ref 或 const 了(spec §3 规矩 1)
 
 describe('bootstrap/index.ts 只许变小', () => {
   it(`行数 ≤ ${MAX_LINES}(新接线进 src/daemon/bootstrap/wire-*.ts)`, () => {

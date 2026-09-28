@@ -1,33 +1,30 @@
 /**
- * buildBootstrap — wires up the daemon's core dispatch graph.
+ * buildBootstrap — 把 daemon 的核心分发图拼起来。**这里只组装**:每一块的构造都在
+ * ./wire-*.ts(或同目录的小模块)里,index 按 boot 顺序调用、用解构 / 展开把各块的
+ * 产物拼回 `Bootstrap`(./types.ts,键集合与类型是对外契约,别在这里改)。
  *
- * Composes:
- *   - Provider registry (Claude + Codex providers)
- *   - SessionManager (LRU-evicting cache of (provider, alias) → session)
- *   - ConversationStore (per-chat mode persistence)
- *   - ConversationCoordinator (mode-aware dispatch entry)
- *   - Bare delegate providers (RFC 03 P4 peer-as-tool)
+ * Boot 顺序(即代码顺序;有副作用的几步位置不能动 —— resolveSelfAgentId 会持久化,
+ * turnTimeoutMs 要在 registerProviders 之前,socialWired 在 social 之后 set):
+ *   wireHealth(无条件、最先)→ wirePlugins(MCP specs + 插件)→ wirePermissions
+ *   (busy / resolver / permissionMode / conversationStore / canUseTool)→ claudeBin →
+ *   configuredAgent / selfId → wireKnowledge[sup] → wireModelOptions → sessionStore /
+ *   turnTimeoutMs → registerProviders(./providers.ts)→ wireInstructions → SessionManager
+ *   → access-change 失效 → wireSelfRestart[sup] → idle sweep → wireCoordinator
+ *   (fallback 回复 / recordTurn / coordinator)→ buildDelegateDispatch(./delegate.ts)
+ *   → wireA2a(registry / client / events / resolveOperatorChatId)→ wireSocial[sup]
+ *   → wireA2aServer[sup] → wirePairing[sup] → wireMailboxDeps → wireYi[sup] → return。
+ *   [sup] = 经 deps.supervisor.start(name) 拉起:抛错降级、未配置记 off,
+ *   /v1/health.subsystems 能看见;同名二次 start 直接 throw。名字序列由
+ *   ./boot-order.test.ts 钉住。
  *
- * Boot order inside buildBootstrap(): wireHealth (connection-health runtime,
- * first + unconditional) → stores (conversationStore, plugin MCP specs) →
- * sessions (sessionStore + registerProviders) →
- * sendAssistantText / recordTurn / coordinator → dispatchDelegate → A2A
- * infra (registry/client/eventsStore + resolveOperatorChatId) → wireSocial
- * → wireA2aServer → 乙 v2 (yiHub/yiClient) → return.
- *
- * Helpers extracted for readability:
- *   - ./types.ts       — BootstrapDeps / Bootstrap interfaces
- *   - ./mcp-specs.ts   — wechat / delegate stdio MCP spec builders
- *   - ./session-paths.ts — per-provider jsonl path resolvers (canResume probes)
- *   - ./delegate.ts    — bare delegate providers + dispatchDelegate
- *   - ./providers.ts   — provider registrations (claude/codex/cursor/openai/gemini)
- *   - ./wire-social.ts — 社交接线(笔友信道 / 串门 / 心愿)
- *   - ./wire-a2a-server.ts — A2A HTTP server + routeA2ANotify + a2a-info.json
- *   - ./wire-health.ts — connection-health runtime (onFailure/onSuccess)
+ * 三条规矩(spec 2026-09-27-bootstrap-split §3;守卫 scripts/bootstrap-ratchet.guard.test.ts):
+ *   1. 新接线进 wire-<x>.ts,index 只加一次调用 + return 里一行;行数只降不升。
+ *   2. 晚绑定只用 src/lib/lifecycle.ts 的 Ref(没 wire 就读会抛),不写 `let x | null = null`。
+ *   3. 可能失败 / 可能未配置的块一律经 supervisor.start。
  *
  * Imported only by:
  *   - src/daemon/main.ts (production entry)
- *   - src/daemon/bootstrap.test.ts (integration tests)
+ *   - src/daemon/bootstrap.test.ts / bootstrap.a2a.test.ts / bootstrap/boot-order.test.ts
  */
 import { SessionManager } from '../../core/session-manager'
 import type { TierProfile } from '../../core/user-tier'
@@ -301,12 +298,6 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // A2A registry / client / events + resolveOperatorChatId — ./wire-a2a.ts(2026-09-27 拆分)。
   const { a2aRegistry, a2aClient, a2aEventsStore, resolveOperatorChatId } = wireA2a(ctxBase)
 
-  // Single server holder — assigned once wireA2aServer builds it below.
-  // (曾经有一条注释说 wireSocial 的 getServerBaseUrl thunk 闭包在这上面、
-  // 所以顺序要紧。那个 dep 从头到尾没被 wireSocial 用过,注释比死代码更贵
-  // —— 它会让后来的人以为这里的顺序是有约束的。一并删掉。)
-  let a2aServer: import('../../core/a2a-server').A2AServer | null = null
-
   // 降级兜底:social 抛错时的 inert wiring — 与 wireSocial 未配置时的内部
   // 状态同形(全 handler undefined),下游 a2a/mailbox/return 的门原样生效。
   const inertSocialWiring: import('./wire-social').SocialWiring = {
@@ -350,7 +341,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     onLetter: socialWiring.onLetter,
   }))
   const a2aDeps = a2aWiring?.a2aDeps
-  a2aServer = a2aWiring?.a2aServer ?? null
+  const a2aServer = a2aWiring?.a2aServer ?? null
 
   // 配对码 (pairing-code design §7) — the daemon-side pairing engine. Gated
   // ONLY on mailbox_relays (rendezvous needs a relay); independent of
