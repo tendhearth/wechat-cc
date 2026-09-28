@@ -21,11 +21,19 @@ export interface ServiceActions {
   continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials,attachmentPolicy?:'owner'):WorkbenchTaskView
   isReplied(running:Active):boolean
 }
+/** service 的外部依赖里域会用到的那几样(opts 的子集,只读);按需加,不整个 opts 透传。 */
+export interface ServiceDeps {
+  /** 主人身份的唯一来源(材料作用域、微信投递、entry 校验都看它)。 */
+  ownerChatId: () => string | null
+}
 export interface ServiceCtx {
   store: WorkbenchStore
   stateDir: string
   state: WorkbenchRuntimeState
   hub: ServiceHub
+  deps: ServiceDeps
+  /** 停机闸:stopping 后所有会开新工作的入口先过这一道(`workbench_stopping`)。只在 service.ts 定义一次。 */
+  ensureAccepting: () => void
   log?: (tag:string,line:string)=>void
   now: () => number
   actions: Ref<ServiceActions>
