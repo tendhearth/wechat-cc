@@ -24,7 +24,7 @@ import { restartPreview, type Continuation, type RestartPreview } from './contin
 import {canResumeWorkbenchExecutor,isUnattendedExecutor,isWorkbenchExecutorCapabilities,isWorkbenchProviderId,requireWorkbenchInput,type WorkbenchExecutorCapabilities} from './executor-capabilities'
 import { makeRunPermissions, type PermissionDecision, type RunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
 import { findPathBlocker, type PathReservation, type WaitingFor } from './scheduler'
-import { makeQuotaRegistry, classifyProviderError, type QuotaState } from '../provider-quota'
+import { classifyProviderError, type QuotaState } from '../provider-quota'
 import { providerDisplayName } from '../provider-display-names'
 import type { MatterStore } from '../matters/store'
 import type { ReportSink } from '../matters/report'
@@ -79,6 +79,7 @@ import { makeRuntimeState, type Active, type AcceptedContinuation } from './serv
 import { Ref } from '../../lib/lifecycle'
 import { makeReviewDomain } from './service/review'
 import { makeAttachmentsDomain } from './service/attachments'
+import { makeQuotaDomain } from './service/quota'
 import type { ServiceActions, ServiceCtx } from './service/ctx'
 export type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
 import type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
@@ -178,18 +179,8 @@ export function makeWorkbenchService(opts: Options) {
   const review=makeReviewDomain(ctx)
   const attachmentsDomain=makeAttachmentsDomain(ctx)
   const {uploads,attachmentScope,strictAttachmentScope,continuationAttachmentScope,selectAttachments,combinedAttachments,handoffAttachments}=attachmentsDomain
-  /** 各执行者的额度/限流状态(provider-quota.ts):从失败里认出来、记住、再避开。 */
-  const quota=makeQuotaRegistry(Date.now,opts.usage)
-  /** 除了 exhaustedId 之外、已准入且没耗尽的原生执行者 —— "交给谁继续"的候选。 */
-  function fallbackExecutor(exhaustedId:string):string|null {
-    for(const id of opts.registry.list()){
-      if(id===exhaustedId||!isWorkbenchProviderId(id))continue
-      const p=opts.registry.get(id);if(!p||!isWorkbenchExecutorCapabilities(p.opts.workbench)||p.opts.workbench.background!=='tracked')continue
-      if(quota.exhausted(id))continue
-      return id
-    }
-    return null
-  }
+  const quotaDomain=makeQuotaDomain(ctx)
+  const {quota,fallbackExecutor}=quotaDomain
   const wakeNotices=(context?:{ownerChatId:string;accountId:string})=>queueMicrotask(()=>{if(!state.stopping)void state.noticeWake(context).catch(()=>{})})
   store.recover()
   store.liveInputs.recover()
@@ -1176,10 +1167,8 @@ export function makeWorkbenchService(opts: Options) {
     },
     notificationStore:store.wechatNotifications,
     setNotificationWake(wake:(context?:{ownerChatId:string;accountId:string})=>Promise<void>){state.noticeWake=wake},
-    /** 各执行者的额度/限流状态快照;没登记的不在里面。 */
-    providerQuota():Record<string,QuotaState>{return quota.snapshot()},
-    /** 这家现在还能用吗;null = 能。 */
-    quotaExhausted(providerId:string):QuotaState|null{return quota.exhausted(providerId)},
+    providerQuota:quotaDomain.providerQuota,
+    quotaExhausted:quotaDomain.quotaExhausted,
     /** 额度耗尽时"交给谁继续"的默认人选;null = 没有可接的。 */
     fallbackExecutor(exhaustedId:string):string|null{return fallbackExecutor(exhaustedId)},
     contextAvailable(ownerChatId:string,accountId:string){if(ownerChatId===opts.ownerChatId())wakeNotices({ownerChatId,accountId})},
