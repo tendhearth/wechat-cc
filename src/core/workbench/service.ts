@@ -5,7 +5,7 @@ import type {CreationReceipt} from './creation-receipts'
 import {normalizeInputRequestId,sameAttachments,type LiveInput} from './live-inputs'
 import type {Attachment} from './attachments'
 import { randomUUID } from 'node:crypto'
-import type { AgentEvent, AgentSession, AgentExecutionChoice, AgentModelCatalog, AgentRuntimeSnapshot } from '../agent-provider'
+import type { AgentEvent, AgentSession, AgentExecutionChoice, AgentRuntimeSnapshot } from '../agent-provider'
 import {executionFailureMessage,normalizeExecutionChoice,PROVIDER_EXECUTION_CHOICE,sameExecutionChoice} from './execution-settings'
 import type { ProviderRegistry } from '../provider-registry'
 import { TIER_PROFILES, sessionAuthEnv } from '../user-tier'
@@ -18,7 +18,7 @@ import {handoffToken,handoffTokenHash,validateHandoffInput,handoffArtifactText,h
 import {makeDeltaCoalescer} from './delta-coalescer'
 import {pathsConflict} from './scheduler'
 import { restartPreview, type Continuation, type RestartPreview } from './continuation'
-import {canResumeWorkbenchExecutor,isUnattendedExecutor,isWorkbenchExecutorCapabilities,isWorkbenchProviderId,requireWorkbenchInput,type WorkbenchExecutorCapabilities} from './executor-capabilities'
+import {isUnattendedExecutor,isWorkbenchExecutorCapabilities,isWorkbenchProviderId} from './executor-capabilities'
 import { makeRunPermissions, type PermissionDecision, type RunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
 import { findPathBlocker, type PathReservation, type WaitingFor } from './scheduler'
 import { classifyProviderError, type QuotaState } from '../provider-quota'
@@ -79,6 +79,7 @@ import { makeQuotaDomain } from './service/quota'
 import { makeNoticesDomain } from './service/notices'
 import { directoryIdentity } from './service/directory-identity'
 import { makeArtifactsDomain } from './service/artifacts'
+import { makeAdmissionDomain } from './service/admission'
 import type { ServiceActions, ServiceCtx } from './service/ctx'
 export type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
 import type { CreateWechatTask, TaskWaitingFor } from './wechat-types'
@@ -175,6 +176,8 @@ export function makeWorkbenchService(opts: Options) {
   const {uploads,attachmentScope,strictAttachmentScope,continuationAttachmentScope,selectAttachments,combinedAttachments,handoffAttachments}=attachmentsDomain
   const quotaDomain=makeQuotaDomain(ctx)
   const {quota,fallbackExecutor}=quotaDomain
+  const admissionDomain=makeAdmissionDomain(ctx)
+  const {provider,requireInput,requireEntryInput,canResume,continuation,taskVersion}=admissionDomain
   const noticesDomain=makeNoticesDomain(ctx)
   const {requestNotice,terminalReportBody,stageFinishedNotice,publishFinishedNotices}=noticesDomain
   const artifactsDomain=makeArtifactsDomain(ctx)
@@ -182,36 +185,6 @@ export function makeWorkbenchService(opts: Options) {
   store.recover()
   store.liveInputs.recover()
 
-  function provider(id: string) {
-    const entry=isWorkbenchProviderId(id)?opts.registry.get(id):null
-    if(!entry||!isWorkbenchExecutorCapabilities(entry.opts.workbench))throw new Error('unavailable_provider')
-    return entry as typeof entry&{opts:typeof entry.opts&{workbench:WorkbenchExecutorCapabilities}}
-  }
-  function requireInput(providerId:string,attachments:readonly unknown[],execution:AgentExecutionChoice,resume=false){
-    const entry=provider(providerId)
-    if(isUnattendedExecutor(entry.opts.workbench)&&(opts.unattendedAck?.get()??null)===null)throw new Error('unattended_ack_required')
-    requireWorkbenchInput(entry.opts.workbench,{attachments,execution,resume})
-    return entry
-  }
-  function requireEntryInput(providerId:string,attachments:readonly Attachment[],execution:AgentExecutionChoice,text:string){
-    const entry=requireInput(providerId,attachments,execution)
-    entry.opts.validateWorkbenchInput?.({text,attachments})
-    if(quota.exhausted(providerId))throw Error('provider_quota_exhausted')
-  }
-  function canResume(task:StoredTask):boolean {
-    try {
-      const entry=provider(task.providerId)
-      return !!task.sessionId&&canResumeWorkbenchExecutor(entry.opts.workbench)&&!!entry.opts.canResume(task.path,task.sessionId)
-    }
-    catch { return false }
-  }
-  function continuation(task:StoredTask,execution:AgentExecutionChoice=store.execution.choice(task.id)):Continuation {
-    const events=store.events(task.id)
-    if (!events.some(event => event.kind==='user' || event.kind==='text')) return {mode:'new'}
-    if (canResume(task)) return {mode:'resume'}
-    return {mode:'restart_required',restart:restartPreview(task,events,execution,store.execution.choice(task.id))}
-  }
-  function taskVersion(task:StoredTask){return snapshotHash(JSON.stringify({updatedAt:task.updatedAt,status:task.status,sessionId:task.sessionId,events:store.events(task.id),source:store.source(task.id)?.firstDispatchedAt,execution:store.execution.choice(task.id)}))}
   function nativeReader(id:string){const reader=opts.nativeHistory?.[id as NativeHistoryProvider];if(!reader)throw new Error('native_history_unsupported');return reader}
   async function currentNativePages(task:StoredTask,pages:ImportPage[]) {
     const call=historyDeadline(),key=Buffer.from(JSON.stringify({v:1,providerId:task.providerId,nativeId:store.source(task.id)!.nativeId})).toString('base64url')
@@ -1364,22 +1337,8 @@ export function makeWorkbenchService(opts: Options) {
       const projectProviders=Object.fromEntries(projects.map(project=>[project.path,store.projectProvider(project.path)??project.providerId]))
       return {projects,tasks:result.tasks.map(task => taskView(task,true)),page:result.page,projectProviders,providers,historyProviders:Object.keys(opts.nativeHistory??{}),defaultProvider:providers.find(p=>p.id===opts.defaultProvider)?.id ?? providers[0]?.id ?? null,canWechat:!!opts.ownerChatId(),unattendedAcknowledgedAt:opts.unattendedAck?.get()??null}
     },
-    async modelCatalog(providerId:string,path:string):Promise<AgentModelCatalog>{
-      const entry=provider(providerId),canonical=canonicalProject(path)
-      if(!entry.opts.workbench.features.modelCatalog||!entry.provider.modelCatalog)throw Error('model_catalog_unavailable')
-      // Discovery providers own one bounded lifecycle, including process cleanup.
-      // A second race here would abandon (rather than cancel) their work.
-      try{return await entry.provider.modelCatalog({alias:'workbench:model-catalog',path:canonical})}
-      catch(error){throw Error(error instanceof Error&&error.message==='model_catalog_invalid'?'model_catalog_invalid':'model_catalog_unavailable')}
-    },
-    prepareContinuation(id:string,executionChoice?:unknown):Continuation{
-      ensureAccepting()
-      const task=store.get(id)
-      if(runsByTask.has(id)||!TERMINAL_TASK_STATUSES.includes(task.status))throw Error('workbench_busy')
-      if(task.archivedAt!==null)throw Error('workbench_archived')
-      if(store.source(id)?.firstDispatchedAt===null)throw Error('external_close_confirmation_required')
-      return continuation(task,normalizeExecutionChoice(executionChoice,store.execution.choice(id)))
-    },
+    modelCatalog:admissionDomain.modelCatalog,
+    prepareContinuation:admissionDomain.prepareContinuation,
     // 不标 async:内部 wechatControl(见文件末尾)按同步 Actions 接口拿它,标了 async 会把
     // 返回类型变成 Promise 而破坏那个结构化类型;外部调用方(HTTP 长轮询、测试)照样能 await 一个普通值。
     detail(id:string,options:{since?:number}={}) {
@@ -1399,14 +1358,7 @@ export function makeWorkbenchService(opts: Options) {
     create(input:CreateTask):WorkbenchTaskView {
       return createTask(input)
     },
-    /** 免审执行者的一次性确认;不接 `unattendedAck`(老接线)时永远拒绝 —— 免审执行者只能停在
-     *  「要求确认」,不能悄悄放行。 */
-    acknowledgeUnattended():number {
-      if(!opts.unattendedAck)throw new Error('unattended_ack_unavailable')
-      const at=Date.now()
-      opts.unattendedAck.set(at)
-      return at
-    },
+    acknowledgeUnattended:admissionDomain.acknowledgeUnattended,
     continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials,attachmentPolicy?:'owner'):WorkbenchTaskView {
       ensureAccepting()
       const attachments=selectAttachments(options,id,attachmentPolicy)
