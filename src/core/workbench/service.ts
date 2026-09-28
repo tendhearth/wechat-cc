@@ -5,7 +5,6 @@ import type {CreationReceipt} from './creation-receipts'
 import {normalizeInputRequestId,sameAttachments,type LiveInput} from './live-inputs'
 import type {Attachment} from './attachments'
 import { randomUUID } from 'node:crypto'
-import { statSync } from 'node:fs'
 import type { AgentEvent, AgentSession, AgentExecutionChoice, AgentModelCatalog, AgentRuntimeSnapshot } from '../agent-provider'
 import {executionFailureMessage,normalizeExecutionChoice,PROVIDER_EXECUTION_CHOICE,sameExecutionChoice} from './execution-settings'
 import type { ProviderRegistry } from '../provider-registry'
@@ -78,6 +77,7 @@ import { makeReviewDomain } from './service/review'
 import { makeAttachmentsDomain } from './service/attachments'
 import { makeQuotaDomain } from './service/quota'
 import { makeNoticesDomain } from './service/notices'
+import { directoryIdentity } from './service/directory-identity'
 import type { ServiceActions, ServiceCtx } from './service/ctx'
 export type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
 import type { CreateWechatTask, TaskWaitingFor } from './wechat-types'
@@ -87,11 +87,6 @@ import type { InputMaterials, CreateTask, WorkbenchPhase, WorkbenchTaskView, Ent
 function checkedText(text: string,attachments:readonly Attachment[]=[]): string {
   if (typeof text !== 'string' || (!text.trim()&&!attachments.length) || text.length > 20_000) throw new Error('invalid_text')
   return text.trim()
-}
-function directoryIdentity(path:string):string {
-  const stat=statSync(path,{bigint:true})
-  if (!stat.isDirectory()) throw new Error('invalid_path')
-  return `${stat.dev}:${stat.ino}`
 }
 const RECOVERY_MESSAGE='原执行会话暂时无法恢复。请打开桌面工作台，查看恢复选项并确认是否带此前记录重新开始。'
 const INPUT_UNCONFIRMED='未确认执行者收到，请检查当前对话后再决定是否重发。'
