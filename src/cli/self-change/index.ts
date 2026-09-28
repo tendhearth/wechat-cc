@@ -22,7 +22,7 @@ import { join } from 'node:path'
 import { workbenchSubprocessEnv } from '../../core/workbench/subprocess-env'
 import { readApiInfo } from '../../lib/api-info'
 import { defaultCiTriageDeps, runCiTriage } from '../ci-triage-run'
-import { defaultSelfDeployDeps, executeSelfDeploy, planSelfDeploy, type SelfDeployPlan, type SelfDeployResult } from '../self-deploy'
+import { defaultSelfDeployDeps, executeSelfDeploy, planSelfDeploy, resolveSigningInputs, type SelfDeployPlan, type SelfDeployResult } from '../self-deploy'
 import { defaultSelftestDeps, runChatSelftest, runWorkbenchSelftest, type SelftestReport } from '../selftest'
 import type { SelfChangeConfig } from './config'
 import { makeDaemonClient } from './daemon-client'
@@ -47,6 +47,9 @@ export interface SelfDeployPlanInput {
   stateDir: string
   plistXml: string | null
   mode: 'deploy' | 'rollback'
+  /** 签名输入(`resolveSigningInputs` 的结果);部署与回滚带同一份。缺省 ⇒ 不签。 */
+  signingIdentity?: string | null
+  entitlementsPath?: string | null
 }
 
 /**
@@ -70,6 +73,8 @@ export function selfDeployPlanFor(input: SelfDeployPlanInput): SelfDeployPlan {
     repoRoot: input.repoRoot,
     stateDir: input.stateDir,
     plistXml: input.plistXml,
+    signingIdentity: input.signingIdentity ?? null,
+    entitlementsPath: input.entitlementsPath ?? null,
   }
   const plan = planSelfDeploy(base)
   if (input.mode === 'deploy') return plan
@@ -130,6 +135,9 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
   }
 
   const runDeploy = async (repoRoot: string, mode: 'deploy' | 'rollback'): Promise<SelfDeployResult> => {
+    const deps = defaultSelfDeployDeps()
+    // entitlements.plist 从这条运行自己的工作树拿(它就是 repoRoot);身份从本机钥匙串探。
+    const signing = resolveSigningInputs({ repoRoot, disabled: false, spawnSync: deps.spawnSync, exists: existsSync })
     const plan = selfDeployPlanFor({
       platform: process.platform,
       arch: process.arch,
@@ -139,8 +147,9 @@ export function defaultPipelineDeps(stateDir: string, config: SelfChangeConfig, 
       stateDir,
       plistXml: readPlist(),
       mode,
+      ...signing,
     })
-    return await executeSelfDeploy(plan, defaultSelfDeployDeps())
+    return await executeSelfDeploy(plan, deps)
   }
 
   const runTree = runPath(config, opts.runId)

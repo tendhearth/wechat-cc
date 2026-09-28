@@ -14,6 +14,16 @@
  * target gives the replacement a brand-new inode, so the kernel builds a
  * fresh cache entry instead of reusing a poisoned one. Rollback uses the
  * same copy+rename trick for the same reason.
+ *
+ * 签名(2026-09-28,Developer ID 证书到手后加的):本机钥匙串里有
+ * `Developer ID Application:` 身份时,换 inode 顺手用它重签 —— 先签 `<sidecar>.new`
+ * (hardened runtime + entitlements.plist,签完再探一次 `--version`:bun 编译的
+ * JIT 二进制缺 entitlement 会被内核直接 SIGKILL,必须在换活之前发现),rename
+ * 之后再给整个 .app 重封一次(不 `--deep`,跟 CI 里 tauri 的做法一样)。为什么要
+ * 重封 .app:TCC 把授权记在责任进程(主二进制)的「指定要求」上,ad-hoc 签名的
+ * 指定要求是一串 cdhash、每次重建都变,Developer ID 的是「identifier + team」,
+ * 重建 / 换 sidecar 都不变 —— 这才是权限不再间歇掉的根因修法。没身份 / 没
+ * entitlements 文件 ⇒ `plan.signing` 为 null,一切照旧(build-sidecar 的 ad-hoc)。
  */
 import { spawnSync as nodeSpawnSync } from 'node:child_process'
 import { chmodSync, copyFileSync, existsSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs'
@@ -78,7 +88,21 @@ export interface SelfDeployPlan {
   infoPath: string
   healthTimeoutMs: number
   rollback: boolean
+  /** null ⇒ 不重签(照旧 ad-hoc)。见文件头「签名」。 */
+  signing: SelfDeploySigning | null
 }
+
+export interface SelfDeploySigning {
+  /** 钥匙串里的完整身份名,如 `Developer ID Application: Nate Gu & Co LLC (9Y6JAPDP7A)`。 */
+  identity: string
+  /** apps/desktop/src-tauri/entitlements.plist —— 与 CI 里 tauri 给 sidecar / .app 用的同一份。 */
+  entitlementsPath: string
+  /** .app 包根(`<MacOS>` 往上两级),rename 之后整包重封的对象。 */
+  appPath: string
+}
+
+/** build-sidecar.ts 给 sidecar 打的 identifier —— 重签时保持一致,TCC / 日志里认的是它。 */
+const SIDECAR_CODE_IDENTIFIER = 'com.tendhearth.wechat-cc.cli'
 
 const DEFAULT_HEALTH_TIMEOUT_MS = 60_000
 // Fallback stderr log path when the plist has no StandardErrorPath (or no
@@ -102,6 +126,10 @@ export interface PlanSelfDeployInput {
   app?: string
   healthTimeoutMs?: number
   rollback?: boolean
+  /** 调用方用 `detectDeveloperIdIdentity` 探出来的身份;缺省 / null ⇒ 不签。 */
+  signingIdentity?: string | null
+  /** entitlements.plist 的路径(调用方已确认存在);缺省 / null ⇒ 不签。 */
+  entitlementsPath?: string | null
 }
 
 /**
@@ -164,6 +192,40 @@ export function planSelfDeploy(input: PlanSelfDeployInput): SelfDeployPlan {
     infoPath: posixJoin(input.stateDir, 'internal-api-info.json'),
     healthTimeoutMs: input.healthTimeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS,
     rollback: input.rollback ?? true,
+    signing: input.signingIdentity && input.entitlementsPath
+      ? { identity: input.signingIdentity, entitlementsPath: input.entitlementsPath, appPath: posixDirname(posixDirname(macosDir)) }
+      : null,
+  }
+}
+
+/**
+ * 从 `security find-identity -v -p codesigning` 里挑第一张 `Developer ID
+ * Application:`。只认 Developer ID(Apple Development 那种签出来 TCC 照样按
+ * cdhash 记,白签);没有 / security 失败 ⇒ null,调用方就按不签处理。
+ */
+export function detectDeveloperIdIdentity(spawnSync: SelfDeployDeps['spawnSync']): string | null {
+  const r = spawnSync('security', ['find-identity', '-v', '-p', 'codesigning'], { timeoutMs: 10_000, windowsHide: true })
+  if (r.status !== 0) return null
+  const m = /"(Developer ID Application: [^"]+)"/.exec(r.stdout)
+  return m?.[1] ?? null
+}
+
+/**
+ * cli(`self deploy`)与自改流水线共用的那一层:探身份 + 找 entitlements.plist,
+ * 结果原样喂给 `planSelfDeploy`。`disabled`(`--no-sign`)⇒ 连 security 都不问。
+ * entitlements 不在(打包版没仓库)⇒ null,plan 判成不签,跟以前一模一样。
+ */
+export function resolveSigningInputs(input: {
+  repoRoot: string
+  disabled: boolean
+  spawnSync: SelfDeployDeps['spawnSync']
+  exists: (p: string) => boolean
+}): { signingIdentity: string | null; entitlementsPath: string | null } {
+  if (input.disabled) return { signingIdentity: null, entitlementsPath: null }
+  const entitlementsPath = posixJoin(input.repoRoot, 'apps', 'desktop', 'src-tauri', 'entitlements.plist')
+  return {
+    signingIdentity: detectDeveloperIdIdentity(input.spawnSync),
+    entitlementsPath: input.exists(entitlementsPath) ? entitlementsPath : null,
   }
 }
 
@@ -263,6 +325,20 @@ export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDe
   }
   steps.push({ name: 'stage', ok: true })
 
+  // 2b. sign — the staged copy gets the Developer ID + hardened runtime +
+  // entitlements, then is probed once more: a JIT binary the kernel refuses
+  // dies right here (`Killed: 9`), on the still-inert tmp file, with nothing
+  // live touched and no backup taken. See the file header.
+  if (plan.signing) {
+    const signed = signSidecar(plan, deps)
+    if (!signed.ok) {
+      try { deps.fs.unlink(plan.tmpPath) } catch { /* best-effort tmp cleanup */ }
+      steps.push(signed)
+      return { ok: false, exitCode: 1, steps, version }
+    }
+    steps.push(signed)
+  }
+
   // 3. backup — <sidecar> → <sidecar>.prev, overwriting whatever backup was
   // already there. Exactly one generation of rollback is kept on purpose.
   //
@@ -308,20 +384,28 @@ export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDe
     return { ok: false, exitCode: 1, steps, version }
   }
 
-  // 4 + 5. restart + health gate. Everything past this point runs with the
-  // NEW binary already on disk, so every failure from here rolls back
-  // (unless the caller opted out).
-  const kickstartAt = deps.now()
-  const restart = kickstart(deps, plan.serviceTarget)
-  steps.push(restart)
+  // 4b. seal — re-sign the whole .app now that the new sidecar sits inside
+  // it. Everything past this point runs with the NEW binary already on
+  // disk, so every failure from here rolls back (unless the caller opted
+  // out); a failed seal skips the kickstart and goes straight there.
+  const seal = plan.signing ? sealApp(plan.signing, deps) : null
+  if (seal) steps.push(seal)
+
+  // 5 + 6. restart + health gate.
+  let restart: SelfDeployStep | null = null
   let health: SelfDeployStep | null = null
-  if (restart.ok) {
-    deps.log(`waiting for health check (up to ${plan.healthTimeoutMs}ms)...`)
-    health = await waitForHealth(plan, deps, kickstartAt, plan.healthTimeoutMs, version)
-    steps.push(health)
+  if (!seal || seal.ok) {
+    const kickstartAt = deps.now()
+    restart = kickstart(deps, plan.serviceTarget)
+    steps.push(restart)
+    if (restart.ok) {
+      deps.log(`waiting for health check (up to ${plan.healthTimeoutMs}ms)...`)
+      health = await waitForHealth(plan, deps, kickstartAt, plan.healthTimeoutMs, version)
+      steps.push(health)
+    }
   }
 
-  if (restart.ok && health?.ok) {
+  if (restart?.ok && health?.ok) {
     return { ok: true, exitCode: 0, steps, version }
   }
 
@@ -371,6 +455,31 @@ function swapBinary(deps: SelfDeployDeps, source: string, tmpPath: string, targe
  *  stat-ing anything. */
 function samePath(a: string, b: string): boolean {
   return resolve(a) === resolve(b)
+}
+
+const CODESIGN_TIMEOUT_MS = 60_000
+
+/** codesign the staged sidecar, then prove it still runs (`--version`). */
+function signSidecar(plan: SelfDeployPlan, deps: SelfDeployDeps): SelfDeployStep {
+  const { identity, entitlementsPath } = plan.signing!
+  const r = deps.spawnSync('codesign', [
+    '--force', '--sign', identity, '--options', 'runtime',
+    '--entitlements', entitlementsPath, '--identifier', SIDECAR_CODE_IDENTIFIER, plan.tmpPath,
+  ], { timeoutMs: CODESIGN_TIMEOUT_MS, windowsHide: true })
+  if (r.status !== 0) return { name: 'sign', ok: false, detail: `codesign exited ${r.status ?? 'null'}: ${(r.stderr || r.stdout).trim()}` }
+  const probe = deps.spawnSync(plan.tmpPath, ['--version'], { timeoutMs: 5000, windowsHide: true })
+  if (probe.status !== 0) return { name: 'sign', ok: false, detail: `signed binary fails --version (exit ${probe.status ?? 'null'}): ${(probe.stderr || probe.stdout).trim()}` }
+  return { name: 'sign', ok: true, detail: identity }
+}
+
+/** Re-sign the .app bundle (main binary + resource seal). No `--deep`: nested binaries carry their own signatures. */
+function sealApp(signing: SelfDeploySigning, deps: SelfDeployDeps): SelfDeployStep {
+  const r = deps.spawnSync('codesign', [
+    '--force', '--sign', signing.identity, '--options', 'runtime',
+    '--entitlements', signing.entitlementsPath, signing.appPath,
+  ], { timeoutMs: CODESIGN_TIMEOUT_MS, windowsHide: true })
+  if (r.status !== 0) return { name: 'seal', ok: false, detail: `codesign exited ${r.status ?? 'null'}: ${(r.stderr || r.stdout).trim()}` }
+  return { name: 'seal', ok: true }
 }
 
 function kickstart(deps: SelfDeployDeps, serviceTarget: string): SelfDeployStep {
@@ -446,6 +555,11 @@ async function performRollback(plan: SelfDeployPlan, deps: SelfDeployDeps, expec
     steps.push({ name: 'rollback_swap', ok: false, detail: errMsg(err) })
     return { steps, rolledBack: false, healthy: false }
   }
+  // `.prev` is whatever was live before (already Developer-ID-signed, or the
+  // ad-hoc build from before this feature — both run), so it isn't re-signed;
+  // the bundle seal is redone because the sidecar inside it changed again.
+  // Recorded, never fatal: the old binary is back either way.
+  if (plan.signing) steps.push({ ...sealApp(plan.signing, deps), name: 'rollback_seal' })
 
   const kickstartAt = deps.now()
   const restart = kickstart(deps, plan.serviceTarget)

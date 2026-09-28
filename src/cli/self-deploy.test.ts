@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   defaultSelfDeployDeps,
+  detectDeveloperIdIdentity,
   executeSelfDeploy,
+  resolveSigningInputs,
   parseLaunchAgentPlist,
   planSelfDeploy,
   type SelfDeployDeps,
@@ -157,6 +159,29 @@ describe('planSelfDeploy', () => {
     expect(plan.sidecarPath).toBe('/Applications/wechat-cc.app/Contents/MacOS/wechat-cc-cli')
   })
 
+  // ── 签名(2026-09-28:Developer ID 证书到手后,self deploy 换完 inode 顺手重签)──
+  it('signingIdentity + entitlementsPath ⇒ plan.signing 指向 .app 根(MacOS 往上两级)', () => {
+    const xml = plistWith(['/Applications/wechat-cc.app/Contents/MacOS/wechat_cc_desktop', '--daemon', 'run'])
+    const plan = planSelfDeploy({ ...baseInput, arch: 'arm64', plistXml: xml, signingIdentity: 'Developer ID Application: Nate Gu & Co LLC (9Y6JAPDP7A)', entitlementsPath: '/Users/nate/wechat-cc-cc-kit/apps/desktop/src-tauri/entitlements.plist' })
+    expect(plan.signing).toEqual({
+      identity: 'Developer ID Application: Nate Gu & Co LLC (9Y6JAPDP7A)',
+      entitlementsPath: '/Users/nate/wechat-cc-cc-kit/apps/desktop/src-tauri/entitlements.plist',
+      appPath: '/Applications/wechat-cc.app',
+    })
+  })
+
+  it('没有身份 ⇒ signing null(照旧 ad-hoc);有身份没 entitlements ⇒ 也 null', () => {
+    const xml = plistWith(['/Applications/wechat-cc.app/Contents/MacOS/wechat_cc_desktop', '--daemon', 'run'])
+    expect(planSelfDeploy({ ...baseInput, arch: 'arm64', plistXml: xml }).signing).toBeNull()
+    expect(planSelfDeploy({ ...baseInput, arch: 'arm64', plistXml: xml, signingIdentity: null, entitlementsPath: '/x/ent.plist' }).signing).toBeNull()
+    expect(planSelfDeploy({ ...baseInput, arch: 'arm64', plistXml: xml, signingIdentity: 'Developer ID Application: X (T)', entitlementsPath: null }).signing).toBeNull()
+  })
+
+  it('--app 给的是 Contents/MacOS 路径时 appPath 同样是 .app 根', () => {
+    const plan = planSelfDeploy({ ...baseInput, arch: 'arm64', plistXml: null, app: '/Users/nate/Downloads/wechat-cc.app/Contents/MacOS/', signingIdentity: 'Developer ID Application: X (T)', entitlementsPath: '/x/ent.plist' })
+    expect(plan.signing?.appPath).toBe('/Users/nate/Downloads/wechat-cc.app')
+  })
+
   it('throws self_deploy_unsupported_platform on non-darwin', () => {
     expect(() => planSelfDeploy({ ...baseInput, platform: 'win32', arch: 'x64', plistXml: null, app: '/x' }))
       .toThrow('self_deploy_unsupported_platform')
@@ -173,6 +198,56 @@ describe('planSelfDeploy', () => {
   })
 })
 
+// ── detectDeveloperIdIdentity ────────────────────────────────────────
+
+describe('detectDeveloperIdIdentity', () => {
+  const found = [
+    'Policy: Code Signing',
+    '  Matching identities',
+    '  1) 3E62EDBEEC908F8B905994E90C64C2457E4CA4AD "Developer ID Application: Nate Gu & Co LLC (9Y6JAPDP7A)"',
+    '  2) AAAA "Apple Development: someone@example.com (ABC123)"',
+    '     2 identities found',
+    '',
+    '  Valid identities only',
+    '  1) 3E62EDBEEC908F8B905994E90C64C2457E4CA4AD "Developer ID Application: Nate Gu & Co LLC (9Y6JAPDP7A)"',
+    '     1 valid identities found',
+  ].join('\n')
+
+  it('从 security find-identity -v -p codesigning 里挑出 Developer ID Application 那张', () => {
+    const calls: string[][] = []
+    const id = detectDeveloperIdIdentity((cmd, args) => { calls.push([cmd, ...args]); return { status: 0, stdout: found, stderr: '' } })
+    expect(id).toBe('Developer ID Application: Nate Gu & Co LLC (9Y6JAPDP7A)')
+    expect(calls).toEqual([['security', 'find-identity', '-v', '-p', 'codesigning']])
+  })
+
+  it('只有 Apple Development / 一张都没有 / security 本身失败 ⇒ null', () => {
+    const onlyDev = '  1) AAAA "Apple Development: someone@example.com (ABC123)"\n     1 valid identities found'
+    expect(detectDeveloperIdIdentity(() => ({ status: 0, stdout: onlyDev, stderr: '' }))).toBeNull()
+    expect(detectDeveloperIdIdentity(() => ({ status: 0, stdout: '     0 valid identities found', stderr: '' }))).toBeNull()
+    expect(detectDeveloperIdIdentity(() => ({ status: 1, stdout: '', stderr: 'boom' }))).toBeNull()
+  })
+})
+
+// ── resolveSigningInputs(cli 与自改流水线共用的那一层)────────────────
+
+describe('resolveSigningInputs', () => {
+  const found = '  1) ABCD "Developer ID Application: Nate Gu & Co LLC (9Y6JAPDP7A)"\n     1 valid identities found'
+  it('有身份 + 仓库里有 entitlements.plist ⇒ 两个都给', () => {
+    const r = resolveSigningInputs({ repoRoot: '/repo', disabled: false, spawnSync: () => ({ status: 0, stdout: found, stderr: '' }), exists: (p) => p === '/repo/apps/desktop/src-tauri/entitlements.plist' })
+    expect(r).toEqual({ signingIdentity: 'Developer ID Application: Nate Gu & Co LLC (9Y6JAPDP7A)', entitlementsPath: '/repo/apps/desktop/src-tauri/entitlements.plist' })
+  })
+  it('entitlements 不在(打包模式没仓库)⇒ entitlementsPath null,身份照给(plan 会判成不签)', () => {
+    const r = resolveSigningInputs({ repoRoot: '/repo', disabled: false, spawnSync: () => ({ status: 0, stdout: found, stderr: '' }), exists: () => false })
+    expect(r).toEqual({ signingIdentity: 'Developer ID Application: Nate Gu & Co LLC (9Y6JAPDP7A)', entitlementsPath: null })
+  })
+  it('--no-sign ⇒ 连 security 都不问', () => {
+    let asked = 0
+    const r = resolveSigningInputs({ repoRoot: '/repo', disabled: true, spawnSync: () => { asked++; return { status: 0, stdout: found, stderr: '' } }, exists: () => true })
+    expect(r).toEqual({ signingIdentity: null, entitlementsPath: null })
+    expect(asked).toBe(0)
+  })
+})
+
 // ── executeSelfDeploy ────────────────────────────────────────────────
 
 interface Harness {
@@ -186,6 +261,14 @@ interface Harness {
   /** Make the sidecar currently on disk fail `--version` (the crash-loop
    *  machine state `self deploy` is usually run to get out of). */
   breakCurrentSidecar(): void
+  /** Every `codesign` invocation: its args plus what the live sidecar held at that moment. */
+  codesignCalls: Array<{ args: string[]; sidecarContentAtCall: string }>
+  /** Turn signing on (plan.signing) with a fake identity + entitlements file. */
+  enableSigning(): void
+  /** Make `codesign` fail for the sidecar ('sidecar') or the .app ('app'). */
+  failCodesign(which: 'sidecar' | 'app'): void
+  /** The freshly signed `<sidecar>.new` dies on `--version` (hardened runtime without the right entitlements). */
+  killSignedSidecar(): void
 }
 
 // Real tmp dir + real fs (via defaultSelfDeployDeps().fs / .readFileToken /
@@ -226,6 +309,7 @@ function makeHarness(): Harness {
     infoPath,
     healthTimeoutMs: 300,
     rollback: true,
+    signing: null,
   }
 
   let kickstartCalls = 0
@@ -233,6 +317,11 @@ function makeHarness(): Harness {
   let healthyAfterKickstart = 1 // by default the very first kickstart brings up a healthy daemon
   let alwaysUnhealthy = false
   let brokenCurrentSidecar = false
+  const codesignCalls: Array<{ args: string[]; sidecarContentAtCall: string }> = []
+  let codesignFails: 'sidecar' | 'app' | null = null
+  let signedSidecarDies = false
+  const entitlementsPath = join(dir, 'entitlements.plist')
+  const appPath = join(dir, 'app')
 
   const real = defaultSelfDeployDeps()
 
@@ -253,6 +342,22 @@ function makeHarness(): Harness {
       }
       if (cmd === `${sidecarPath}.prev` && args[0] === '--version') {
         return { status: 0, stdout: 'wechat-cc-cli 9.9.8-old\n', stderr: '' }
+      }
+      // The staged copy, probed again AFTER codesign: a hardened-runtime
+      // binary missing its JIT entitlements is SIGKILLed right here, before
+      // anything goes live.
+      if (cmd === `${sidecarPath}.new` && args[0] === '--version') {
+        if (signedSidecarDies) return { status: null, stdout: '', stderr: 'Killed: 9' }
+        return { status: 0, stdout: 'wechat-cc-cli 9.9.9-test\n', stderr: '' }
+      }
+      if (cmd === 'codesign') {
+        codesignCalls.push({ args: [...args], sidecarContentAtCall: readFileSync(sidecarPath, 'utf8') })
+        const target = args[args.length - 1]!
+        const isApp = target === appPath
+        if ((codesignFails === 'app' && isApp) || (codesignFails === 'sidecar' && !isApp)) {
+          return { status: 1, stdout: '', stderr: `${target}: errSecInternalComponent` }
+        }
+        return { status: 0, stdout: '', stderr: '' }
       }
       if (cmd === 'launchctl' && args[0] === 'kickstart') {
         kickstartCalls++
@@ -304,6 +409,13 @@ function makeHarness(): Harness {
     setDaemonHealthyAfterKickstart(n: number) { healthyAfterKickstart = n },
     neverHealthy() { alwaysUnhealthy = true },
     breakCurrentSidecar() { brokenCurrentSidecar = true },
+    codesignCalls,
+    enableSigning() {
+      writeFileSync(entitlementsPath, '<plist/>')
+      plan.signing = { identity: 'Developer ID Application: Test Co (TEAM1234)', entitlementsPath, appPath }
+    },
+    failCodesign(which) { codesignFails = which },
+    killSignedSidecar() { signedSidecarDies = true },
   } as Harness
 }
 
@@ -489,6 +601,108 @@ describe('executeSelfDeploy', () => {
     const health = (await executeSelfDeploy(h.plan, h.deps)).steps.find((x) => x.name === 'health')!
     expect(health.detail ?? '').toContain('mismatch')
     expect(health.detail ?? '').toContain('deadbeef')
+  })
+
+  // ── 签名(2026-09-28)──────────────────────────────────────────────
+  it('没有 signing ⇒ 一次 codesign 都不跑(照旧 ad-hoc)', async () => {
+    const h = harness()
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result.ok).toBe(true)
+    expect(h.codesignCalls).toEqual([])
+    expect(result.steps.map((s) => s.name)).toEqual(['preflight', 'stage', 'backup', 'swap', 'restart', 'health'])
+  })
+
+  it('有 signing:先签 <sidecar>.new(换活之前),换完 inode 再给 .app 重封,然后才 kickstart', async () => {
+    const h = harness()
+    h.enableSigning()
+
+    const result = await executeSelfDeploy(h.plan, h.deps)
+
+    expect(result.ok).toBe(true)
+    expect(result.steps.map((s) => s.name)).toEqual(['preflight', 'stage', 'sign', 'backup', 'swap', 'seal', 'restart', 'health'])
+    expect(result.steps.every((s) => s.ok)).toBe(true)
+    expect(h.codesignCalls).toHaveLength(2)
+    const [sidecar, app] = h.codesignCalls
+    // 1st: the staged copy, with hardened runtime + entitlements + the CLI identifier, while the OLD sidecar is still live
+    expect(sidecar!.args).toEqual([
+      '--force', '--sign', 'Developer ID Application: Test Co (TEAM1234)', '--options', 'runtime',
+      '--entitlements', h.plan.signing!.entitlementsPath, '--identifier', 'com.tendhearth.wechat-cc.cli', h.plan.tmpPath,
+    ])
+    expect(sidecar!.sidecarContentAtCall).toBe('OLD_BINARY_CONTENT')
+    // 2nd: the .app bundle re-sealed AFTER the rename (new sidecar already in place), no --deep
+    expect(app!.args).toEqual([
+      '--force', '--sign', 'Developer ID Application: Test Co (TEAM1234)', '--options', 'runtime',
+      '--entitlements', h.plan.signing!.entitlementsPath, h.plan.signing!.appPath,
+    ])
+    expect(app!.sidecarContentAtCall).toBe('NEW_BINARY_CONTENT')
+    expect(h.kickstartCalls).toBe(1)
+  })
+
+  it('签 sidecar 失败 ⇒ 退 1、什么都没换活、没备份、没 kickstart、.new 已清掉', async () => {
+    const h = harness()
+    h.enableSigning()
+    h.failCodesign('sidecar')
+
+    const result = await executeSelfDeploy(h.plan, h.deps)
+
+    expect(result.ok).toBe(false)
+    expect(result.exitCode).toBe(1)
+    expect(result.steps.map((s) => s.name)).toEqual(['preflight', 'stage', 'sign'])
+    expect(result.steps.at(-1)).toMatchObject({ name: 'sign', ok: false, detail: expect.stringContaining('errSecInternalComponent') })
+    expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+    const { existsSync } = await import('node:fs')
+    expect(existsSync(h.plan.prevPath)).toBe(false)
+    expect(existsSync(h.plan.tmpPath)).toBe(false)
+    expect(h.kickstartCalls).toBe(0)
+  })
+
+  it('签完的 .new 自己 --version 就被杀(hardened runtime 缺 entitlement)⇒ 同样在换活之前止损', async () => {
+    const h = harness()
+    h.enableSigning()
+    h.killSignedSidecar()
+
+    const result = await executeSelfDeploy(h.plan, h.deps)
+
+    expect(result.ok).toBe(false)
+    expect(result.exitCode).toBe(1)
+    expect(result.steps.at(-1)).toMatchObject({ name: 'sign', ok: false, detail: expect.stringContaining('Killed: 9') })
+    expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+    expect(h.kickstartCalls).toBe(0)
+  })
+
+  it('.app 重封失败 ⇒ 不 kickstart 新的,直接回滚(回滚也重封一次)', async () => {
+    const h = harness()
+    h.enableSigning()
+    h.failCodesign('app')
+
+    const result = await executeSelfDeploy(h.plan, h.deps)
+
+    expect(result.ok).toBe(false)
+    expect(result.rolledBack).toBe(true)
+    const names = result.steps.map((s) => s.name)
+    expect(names).toEqual(['preflight', 'stage', 'sign', 'backup', 'swap', 'seal', 'rollback_swap', 'rollback_seal', 'rollback_restart', 'rollback_health'])
+    expect(result.steps.find((s) => s.name === 'seal')!.ok).toBe(false)
+    expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+    expect(h.kickstartCalls).toBe(1)
+    // sidecar sign, app seal (failed), app re-seal on rollback (also fails here — recorded, not fatal)
+    expect(h.codesignCalls.map((c) => c.args.at(-1))).toEqual([h.plan.tmpPath, h.plan.signing!.appPath, h.plan.signing!.appPath])
+    expect(result.steps.find((s) => s.name === 'rollback_seal')!.ok).toBe(false)
+  })
+
+  it('健康门不过回滚时,换回 .prev 后 .app 再重封一次', async () => {
+    const h = harness()
+    h.enableSigning()
+    h.setDaemonHealthyAfterKickstart(2)
+
+    const result = await executeSelfDeploy(h.plan, h.deps)
+
+    expect(result.rolledBack).toBe(true)
+    expect(result.exitCode).toBe(1)
+    const names = result.steps.map((s) => s.name)
+    expect(names.slice(-4)).toEqual(['rollback_swap', 'rollback_seal', 'rollback_restart', 'rollback_health'])
+    expect(result.steps.find((s) => s.name === 'rollback_seal')!.ok).toBe(true)
+    expect(h.codesignCalls.map((c) => c.args.at(-1))).toEqual([h.plan.tmpPath, h.plan.signing!.appPath, h.plan.signing!.appPath])
+    expect(h.codesignCalls[2]!.sidecarContentAtCall).toBe('OLD_BINARY_CONTENT')
   })
 
   it('exits 3 when rollback itself cannot confirm health', async () => {
