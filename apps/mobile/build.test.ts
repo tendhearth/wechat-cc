@@ -15,7 +15,7 @@ describe('apps/mobile → src/daemon/mobile-page.generated.json', () => {
   })
 
   it('sources and the generated JSON check out with LF on every platform (Windows autocrlf would desync the sync test)', () => {
-    const paths = ['apps/mobile/src/phone.html', 'apps/mobile/src/workbench.js', 'src/daemon/mobile-page.generated.json']
+    const paths = ['apps/mobile/src/phone.html', 'apps/mobile/src/workbench.js', 'apps/desktop/src/shared/task-entry-contract.js', 'src/daemon/mobile-page.generated.json']
     const root = fileURLToPath(new URL('../../', import.meta.url))
     const out = execFileSync('git', ['check-attr', 'eol', '--', ...paths], { cwd: root, encoding: 'utf8' })
     for (const p of paths) expect(out, p).toContain(`${p}: eol: lf`)

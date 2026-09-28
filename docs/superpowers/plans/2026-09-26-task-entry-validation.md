@@ -99,3 +99,5 @@ rebase 后实际涉及的 bootstrap 文件为 `wire-workbench.ts`、`wire-workbe
 本轮未新增跳过项、提高超时或加入 flake 白名单。旧 HTTP create 的 unattended 428 保留，新 create-entry 与手机统一为 422。存储重复 accept 的时间戳缺陷已证实，但普通重试必然 409 的说法未证实；空间不足和临时 I/O/SQLite 故障保持可恢复，不作为永久内容错误处理。
 
 GitHub 新提交的检查结果记录在 PR；旧 head `8072d185` 的绿色运行不能代替本轮 CI。完整 Tauri 打包仍受缺少既有 sd-cli 限制；真实设备、云端模型和共享部署仍由整合者验收。本轮不把测试通过或分支推送当作合并完成，后续基线仍应取实际 GitHub merge SHA。
+
+Windows CI 跟进：`fd2f35e9` 的运行 [36383927299](https://github.com/tendhearth/wechat-cc/actions/runs/36383927299) 中，Linux、macOS、Node、desktop-e2e 通过，Windows 唯一失败为手机生成页同步。新共享源码未被原有 LF 属性清单覆盖，Windows autocrlf 改变了原样内联的换行。先把共享文件加入既有属性守卫，复现 eol:unspecified，再补精确路径的 text eol=lf。后续只修改检出属性和守卫：Bun/Node 各3文件、133项通过，手机生成物重建后无变化，运行代码及数据库未改。此问题按真实缺陷处理，没有重跑冒充修复或添加 flake 白名单；新提交的 Windows 结果仍需另行核验。
