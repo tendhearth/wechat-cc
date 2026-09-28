@@ -6,14 +6,18 @@
 import type { Ref } from '../../../lib/lifecycle'
 import type { ProviderRegistry } from '../../provider-registry'
 import type { UsageSnapshot } from '../../subscription-usage'
-import type { StoredTask, WorkbenchStore } from '../store'
+import type { StoredTask, Task, WorkbenchStore } from '../store'
 import type { NativeHistoryProvider, NativeHistoryReader } from '../native-history'
 import type { Continuation } from '../continuation'
 import type { QuotaState } from '../../provider-quota'
 import type { AgentExecutionChoice } from '../../agent-provider'
 import type { LiveInput } from '../live-inputs'
-import type { Active, WorkbenchRuntimeState } from './state'
+import type { AcceptedContinuation, Active, WorkbenchRuntimeState } from './state'
 import type { AdmittedProvider, InputMaterials, WorkbenchTaskView } from './types'
+import type { MatterStore } from '../../matters/store'
+import type { AcceptedNativeResume } from '../native-adoption'
+import type { ArtifactSelection, AttachmentSelection } from '../handoff'
+import type { Attachment } from '../attachments'
 
 export interface ServiceHub {
   /** store 的写方法把 seq 落库,但不知道 hub —— 这里把持久化 seq 送进去唤醒长轮询。 */
@@ -36,6 +40,17 @@ export interface ServiceActions {
   continuation(task:StoredTask,execution?:AgentExecutionChoice):Continuation
   /** admission 域:已准入的执行者登记项(view 的 addProject 用);没登记 / 没能力 ⇒ 抛 unavailable_provider。 */
   provider(id:string):AdmittedProvider
+  // ---- 以下九个是 native/handoff 域的跨域依赖(PR 7);查询类也走这里只为保持「只此一种晚绑定」。
+  requireInput(providerId:string,attachments:readonly unknown[],execution:AgentExecutionChoice,resume?:boolean):AdmittedProvider
+  canResume(task:StoredTask):boolean
+  taskVersion(task:StoredTask):string
+  selectAttachments(input?:InputMaterials,taskId?:string,policy?:'owner'):Attachment[]
+  combinedAttachments(current:readonly Attachment[],previous?:readonly Attachment[]):Attachment[]
+  handoffAttachments(refs:AttachmentSelection[],expectedTaskId:string):Attachment[]
+  taskView(task:Task,includePermissions?:boolean):WorkbenchTaskView
+  matterSync(fn:(m:MatterStore)=>void):void
+  /** execute 域:派发一条 run(handoff / continueNativeTask 的最后一步)。签名逐字抄自 service.ts 的 start。 */
+  start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation?:AcceptedContinuation,nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments?:Attachment[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string}},attachmentPolicy?:'owner'):WorkbenchTaskView
 }
 /** service 的外部依赖里域会用到的那几样(opts 的子集,只读);按需加,不整个 opts 透传。 */
 export interface ServiceDeps {
@@ -53,6 +68,8 @@ export interface ServiceDeps {
   nativeHistory?: Partial<Record<NativeHistoryProvider, NativeHistoryReader>>
   registeredProjects?: () => Array<{alias:string;path:string}>
   defaultProvider?: string
+  /** 外部(终端里的 claude/codex)是否正占着这个文件夹/会话;不传 ⇒ 不查。 */
+  executionConflict?: (path:string,providerId:string,nativeId:string|null) => boolean
 }
 export interface ServiceCtx {
   store: WorkbenchStore

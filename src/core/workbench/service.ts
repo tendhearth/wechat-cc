@@ -1,34 +1,33 @@
-import {makeRunUserInput,type RunUserInput} from './user-input'
+import { makeRunUserInput } from './user-input'
 import {makeWechatWorkbenchControl,type WechatMessageIdentity,type WechatWorkbenchReply} from './wechat-control'
-import {makeProjectCatalog} from './project-catalog'
 import type {CreationReceipt} from './creation-receipts'
 import {normalizeInputRequestId,sameAttachments,type LiveInput} from './live-inputs'
 import type {Attachment} from './attachments'
 import { randomUUID } from 'node:crypto'
-import type { AgentEvent, AgentSession, AgentExecutionChoice, AgentRuntimeSnapshot } from '../agent-provider'
+import type { AgentEvent, AgentSession, AgentExecutionChoice } from '../agent-provider'
 import {executionFailureMessage,normalizeExecutionChoice,PROVIDER_EXECUTION_CHOICE,sameExecutionChoice} from './execution-settings'
 import type { ProviderRegistry } from '../provider-registry'
 import { TIER_PROFILES, sessionAuthEnv } from '../user-tier'
 import { canonicalProject, outputDirectory } from './artifacts'
-import { captureGitBaseline, type GitBaseline } from './git-review'
+import { captureGitBaseline } from './git-review'
 import { decodeNativeHistoryKey, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryReader, type NativeHistoryProvider, type NativeHistoryListInput, type NativeHistoryReadInput } from './native-history'
 import {readNativeImport,nativeImportInput,publicSource,pageInput,nativeResumeToken,snapshotHash,type ImportPage,type NativeImportInput,type NativeResumeDecision,type AcceptedNativeResume} from './native-adoption'
 import {historyDeadline} from './native-history'
 import {handoffToken,handoffTokenHash,validateHandoffInput,handoffArtifactText,handoffContext,type HandoffInput,type HandoffPreview,type ArtifactSelection,type AttachmentSelection} from './handoff'
 import {makeDeltaCoalescer} from './delta-coalescer'
 import {pathsConflict} from './scheduler'
-import { restartPreview, type Continuation, type RestartPreview } from './continuation'
+import { restartPreview, type Continuation } from './continuation'
 import {isUnattendedExecutor,isWorkbenchExecutorCapabilities,isWorkbenchProviderId} from './executor-capabilities'
-import { makeRunPermissions, type PermissionDecision, type RunPermissions, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
-import { findPathBlocker, type PathReservation, type WaitingFor } from './scheduler'
-import { classifyProviderError, type QuotaState } from '../provider-quota'
+import { makeRunPermissions, type PermissionDecision, WORKBENCH_PERMISSION_TIMEOUT_MS } from './permissions'
+import { findPathBlocker } from './scheduler'
+import { classifyProviderError } from '../provider-quota'
 import type { MatterStore } from '../matters/store'
 import type { ReportSink } from '../matters/report'
 import type { RecollectSink } from '../matters/recollection'
 import type { UsageSnapshot } from '../subscription-usage'
-import { publicTask, TERMINAL_TASK_STATUSES, type WorkbenchListQuery, type StoredTask, type Task, type TaskStatus, type WorkbenchStore } from './store'
+import { publicTask, TERMINAL_TASK_STATUSES, type StoredTask, type TaskStatus, type WorkbenchStore } from './store'
 import { makeTaskChangeHub, type TaskChangeHub } from './task-changes'
-import {canonicalEntryHash,composeEntryPrompt,parseEntryInput,type EntryContext,type EntryInput,type EntryOptions,type EntryReceipt} from './task-entry'
+import { canonicalEntryHash, composeEntryPrompt, parseEntryInput, type EntryContext, type EntryInput, type EntryOptions } from './task-entry'
 import {createManagedWorkspaces,type ManagedWorkspaces} from './managed-workspaces'
 import type {EntryRecord} from './entry-store'
 import {readdirAnchored} from './anchored-fs'
@@ -81,16 +80,13 @@ import { directoryIdentity } from './service/directory-identity'
 import { makeArtifactsDomain } from './service/artifacts'
 import { makeAdmissionDomain } from './service/admission'
 import { makeViewDomain } from './service/view'
+import { checkedText } from './service/checked-text'
 import type { ServiceActions, ServiceCtx } from './service/ctx'
 export type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
-import type { CreateWechatTask, TaskWaitingFor } from './wechat-types'
+import type { CreateWechatTask } from './wechat-types'
 export type { InputMaterials, CreateTask, WorkbenchPhase, WorkbenchTaskView, EntryResult } from './service/types'
-import type { InputMaterials, CreateTask, WorkbenchPhase, WorkbenchTaskView, EntryResult } from './service/types'
+import type { InputMaterials, CreateTask, WorkbenchTaskView, EntryResult } from './service/types'
 
-function checkedText(text: string,attachments:readonly Attachment[]=[]): string {
-  if (typeof text !== 'string' || (!text.trim()&&!attachments.length) || text.length > 20_000) throw new Error('invalid_text')
-  return text.trim()
-}
 const RECOVERY_MESSAGE='原执行会话暂时无法恢复。请打开桌面工作台，查看恢复选项并确认是否带此前记录重新开始。'
 const INPUT_UNCONFIRMED='未确认执行者收到，请检查当前对话后再决定是否重发。'
 
@@ -171,7 +167,7 @@ export function makeWorkbenchService(opts: Options) {
   const state=makeRuntimeState()
   const {runsByTask,reservations,queue,runningText,collections,nativeDecisions,handoffDecisions}=state
   const actions=new Ref<ServiceActions>('workbench-actions')
-  const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped},deps:{ownerChatId:opts.ownerChatId,registry:opts.registry,...(opts.usage?{usage:opts.usage}:{}),...(opts.permissionTimeoutMs!==undefined?{permissionTimeoutMs:opts.permissionTimeoutMs}:{}),...(opts.unattendedAck?{unattendedAck:opts.unattendedAck}:{}),...(opts.nativeHistory?{nativeHistory:opts.nativeHistory}:{}),...(opts.registeredProjects?{registeredProjects:opts.registeredProjects}:{}),...(opts.defaultProvider!==undefined?{defaultProvider:opts.defaultProvider}:{})},ensureAccepting,...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
+  const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped},deps:{ownerChatId:opts.ownerChatId,registry:opts.registry,...(opts.usage?{usage:opts.usage}:{}),...(opts.permissionTimeoutMs!==undefined?{permissionTimeoutMs:opts.permissionTimeoutMs}:{}),...(opts.unattendedAck?{unattendedAck:opts.unattendedAck}:{}),...(opts.nativeHistory?{nativeHistory:opts.nativeHistory}:{}),...(opts.registeredProjects?{registeredProjects:opts.registeredProjects}:{}),...(opts.defaultProvider!==undefined?{defaultProvider:opts.defaultProvider}:{}),...(opts.executionConflict?{executionConflict:opts.executionConflict}:{})},ensureAccepting,...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
   const review=makeReviewDomain(ctx)
   const attachmentsDomain=makeAttachmentsDomain(ctx)
   const {uploads,attachmentScope,strictAttachmentScope,continuationAttachmentScope,selectAttachments,combinedAttachments,handoffAttachments}=attachmentsDomain
@@ -1393,7 +1389,7 @@ export function makeWorkbenchService(opts: Options) {
       },
     },
   }
-  actions.set({submitInput:(id,input,policy)=>service.submitInput(id,input,policy),continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),isReplied,fallbackExecutor,artifact:(id,artifactId)=>service.artifact(id,artifactId),quotaExhausted:quotaDomain.quotaExhausted,continuation,provider})
+  actions.set({submitInput:(id,input,policy)=>service.submitInput(id,input,policy),continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),isReplied,fallbackExecutor,artifact:(id,artifactId)=>service.artifact(id,artifactId),quotaExhausted:quotaDomain.quotaExhausted,continuation,provider,requireInput,canResume,taskVersion,selectAttachments,combinedAttachments,handoffAttachments,taskView,matterSync,start})
   const wechatControl=makeWechatWorkbenchControl({store,ownerChatId:opts.ownerChatId,actions:service})
   return service
 }
