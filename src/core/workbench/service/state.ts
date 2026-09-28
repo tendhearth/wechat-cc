@@ -91,6 +91,8 @@ export interface WorkbenchRuntimeState {
   shutdownPromise: Promise<void> | undefined
   noticeWake: (context?:{ownerChatId:string;accountId:string}) => Promise<void>
   artifactDelivery: ((id:string)=>Promise<ArtifactDeliveryReceipt>) | undefined
+  /** 补充暂时不能自动续投的任务(存库失败 / 被 hold 中);见 inputs 域。 */
+  autoContinueBlocked: Set<string>
 }
 
 export function makeRuntimeState(): WorkbenchRuntimeState {
@@ -99,5 +101,6 @@ export function makeRuntimeState(): WorkbenchRuntimeState {
     nativeDecisions: new Map(), handoffDecisions: new Map(),
     order: 0, stopping: false, shutdownComplete: false, shutdownPromise: undefined,
     noticeWake: async () => {}, artifactDelivery: undefined,
+    autoContinueBlocked: new Set(),
   }
 }

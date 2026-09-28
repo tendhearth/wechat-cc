@@ -146,9 +146,8 @@ export function makeWorkbenchService(opts: Options) {
     if(task.ownerChatId!==record.ownerKey)throw Error('invalid_entry_owner')
     return{receipt:{requestId:record.requestId,taskId:record.taskId,matterId:record.matterId,runId:record.runId,acceptedAt:record.acceptedAt},task:taskView(publicTask(task))}
   }
-  const autoContinueBlocked=new Set<string>()
   function holdInputs(id:string,error:string){
-    autoContinueBlocked.add(id)
+    state.autoContinueBlocked.add(id)
     try{
       store.atomic(()=>{
         // A native send awaiting acknowledgement is ambiguous, even after stop.
@@ -159,7 +158,7 @@ export function makeWorkbenchService(opts: Options) {
         store.liveInputs.hold(id,error)
       })
       bumped(id)
-      autoContinueBlocked.delete(id)
+      state.autoContinueBlocked.delete(id)
     }catch{/* Stop must not depend on a successful disk write. */}
   }
   const state=makeRuntimeState()
@@ -657,7 +656,7 @@ export function makeWorkbenchService(opts: Options) {
   }
 
   function drainInputs(id:string,expectedDirectoryIdentity:string){
-    if(autoContinueBlocked.has(id))return
+    if(state.autoContinueBlocked.has(id))return
     const next=store.liveInputs.next(id);if(!next)return
     try{
       const task=store.get(id),decision=continuation(task)
@@ -694,7 +693,7 @@ export function makeWorkbenchService(opts: Options) {
       // Keep delivery uncertainty tracked if the durable transition failed.
       running.runtimeInputs?.delete(saved.id)
       if(runsByTask.get(saved.taskId)===running&&!running.cancelled&&!running.finishing)running.interactionAt=Date.now()
-    }catch{autoContinueBlocked.add(saved.taskId)}
+    }catch{state.autoContinueBlocked.add(saved.taskId)}
   }
 
   function pump() {
@@ -1001,7 +1000,7 @@ export function makeWorkbenchService(opts: Options) {
       ensureAccepting()
       if(Object.hasOwn(input,'execution'))throw Error('invalid_execution')
       const attachments=selectAttachments(input,id,attachmentPolicy),text=checkedText(input.text,attachments)
-      if(autoContinueBlocked.has(id))throw Error('input_storage_unavailable')
+      if(state.autoContinueBlocked.has(id))throw Error('input_storage_unavailable')
       const requestId=normalizeInputRequestId(input.requestId)
       const prior=store.liveInputs.get(requestId)
       if(prior){if(prior.taskId!==id||prior.runId!==input.runId||prior.text!==text||!sameAttachments(prior.attachments,attachments))throw Error('input_conflict');return prior}
@@ -1127,7 +1126,7 @@ export function makeWorkbenchService(opts: Options) {
         : decision.mode==='resume' ? {mode:'resume',sessionId:task.sessionId!} : {mode:'new'}
       try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId,attachments,options?.draftId,execution,undefined,attachmentPolicy)}
       catch(error){
-        if(inputRequestId&&store.liveInputs.get(inputRequestId))try{store.liveInputs.set(inputRequestId,'held','本轮未确认开始，补充内容已保留。');bumped(id)}catch{autoContinueBlocked.add(id)}
+        if(inputRequestId&&store.liveInputs.get(inputRequestId))try{store.liveInputs.set(inputRequestId,'held','本轮未确认开始，补充内容已保留。');bumped(id)}catch{state.autoContinueBlocked.add(id)}
         throw error
       }
     },
@@ -1206,7 +1205,7 @@ export function makeWorkbenchService(opts: Options) {
       },
     },
   }
-  actions.set({submitInput:(id,input,policy)=>service.submitInput(id,input,policy),continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),isReplied,fallbackExecutor,artifact:(id,artifactId)=>service.artifact(id,artifactId),quotaExhausted:quotaDomain.quotaExhausted,continuation,provider,requireInput,canResume,taskVersion,selectAttachments,combinedAttachments,handoffAttachments,taskView,matterSync,start})
+  actions.set({submitInput:(id,input,policy)=>service.submitInput(id,input,policy),continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),isReplied,fallbackExecutor,artifact:(id,artifactId)=>service.artifact(id,artifactId),quotaExhausted:quotaDomain.quotaExhausted,continuation,provider,requireInput,canResume,taskVersion,selectAttachments,combinedAttachments,handoffAttachments,taskView,matterSync,start,continuationAttachmentScope,inputMode,armIdleClose,cancelIdleClose,settleAfterDecision})
   const wechatControl=makeWechatWorkbenchControl({store,ownerChatId:opts.ownerChatId,actions:service})
   return service
 }

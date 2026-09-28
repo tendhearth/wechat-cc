@@ -9,6 +9,7 @@ describe('makeRuntimeState', () => {
     expect(a.nativeDecisions.size).toBe(0); expect(a.handoffDecisions.size).toBe(0)
     expect(a.order).toBe(0); expect(a.stopping).toBe(false); expect(a.shutdownComplete).toBe(false)
     expect(a.shutdownPromise).toBeUndefined(); expect(a.artifactDelivery).toBeUndefined()
+    expect(a.autoContinueBlocked.size).toBe(0)
     expect(a.runsByTask).not.toBe(b.runsByTask)
   })
   it('缺省 noticeWake 是个不抛的空实现(setNotificationWake 之前的行为)', async () => {
