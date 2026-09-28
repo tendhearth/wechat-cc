@@ -21,6 +21,7 @@ const selfDeployCmd = defineCommand({
     binary: { type: 'string', description: '新 sidecar 二进制路径(源码模式缺省按 repoRoot + 架构推导;打包模式下必填)' },
     app: { type: 'string', description: '.app 包路径,覆盖从 LaunchAgent plist 推导的部署目标' },
     'no-rollback': { type: 'boolean', description: '健康门失败时不自动回滚（默认会回滚）' },
+    'no-sign': { type: 'boolean', description: '不用本机钥匙串里的 Developer ID 重签 sidecar 与 .app(缺省:有证书就签)' },
     'health-timeout-ms': { type: 'string', description: '健康门超时,毫秒(缺省 60000)' },
     json: { type: 'boolean', description: 'JSON 输出（SelfDeployResult）' },
   },
@@ -34,7 +35,7 @@ const selfDeployCmd = defineCommand({
       return
     }
 
-    const { planSelfDeploy, executeSelfDeploy, defaultSelfDeployDeps } = await import('../self-deploy.ts')
+    const { planSelfDeploy, executeSelfDeploy, defaultSelfDeployDeps, resolveSigningInputs } = await import('../self-deploy.ts')
     const { homedir } = await import('node:os')
     const { existsSync, readFileSync } = await import('node:fs')
 
@@ -61,6 +62,13 @@ const selfDeployCmd = defineCommand({
       return
     }
 
+    // 签名:本机钥匙串里有 Developer ID 就用它重签(见 self-deploy.ts 文件头);
+    // `--no-sign` 关掉。citty/mri 对 `--no-sign` 的处理与 `--no-rollback` 同一套
+    // (boolean 取反落到 `sign:false`),两种拼法都认。
+    const deps = defaultSelfDeployDeps()
+    const noSign = (args as Record<string, unknown>)['no-sign'] === true || (args as Record<string, unknown>).sign === false
+    const signing = resolveSigningInputs({ repoRoot, disabled: noSign, spawnSync: deps.spawnSync, exists: existsSync })
+
     let plan
     try {
       plan = planSelfDeploy({
@@ -79,6 +87,7 @@ const selfDeployCmd = defineCommand({
         // reading only that key silently ignored the flag and deployed with
         // rollback still armed. Accept both spellings.
         rollback: !((args as Record<string, unknown>)['no-rollback'] === true || (args as Record<string, unknown>).rollback === false),
+        ...signing,
       })
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err)
@@ -95,7 +104,7 @@ const selfDeployCmd = defineCommand({
       return
     }
 
-    const result = await executeSelfDeploy(plan, defaultSelfDeployDeps())
+    const result = await executeSelfDeploy(plan, deps)
     if (json) {
       console.log(JSON.stringify(result, null, 2))
     } else {

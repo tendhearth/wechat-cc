@@ -103,7 +103,7 @@ Usage:
                         --check probes only (no side effects); GUI calls
                         this on a timer to surface the Update button.
   wechat-cc self deploy [--binary <path>] [--app <path>] [--no-rollback]
-                        [--health-timeout-ms N] [--json]
+                        [--no-sign] [--health-timeout-ms N] [--json]
                         自维护:原子换 sidecar 进 .app、launchd 重启、健康门,
                         失败自动回滚(仅 macOS)。见 docs/maintainer/deploy.md。
   wechat-cc self change "<需求>" [--from cli|wechat] [--budget-usd N]
