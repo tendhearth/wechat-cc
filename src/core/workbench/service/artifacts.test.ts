@@ -24,7 +24,7 @@ function setup() {
   const store: WorkbenchStore = makeWorkbenchStore(db)
   const state = makeRuntimeState()
   const touched = vi.fn()
-  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched, bumped: vi.fn() }, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry() }, ensureAccepting: () => {}, now: Date.now, actions: new Ref<ServiceActions>('t') }
+  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched, bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => 'owner', registry: createProviderRegistry() }, ensureAccepting: () => {}, now: Date.now, actions: new Ref<ServiceActions>('t') }
   const domain = makeArtifactsDomain(ctx)
   const task = store.create({ title: '事', path: project, providerId: 'claude', ownerChatId: 'owner' })
   const running = (over: Partial<Active> = {}): Active => ({ identity: 'run-1abcdef', taskId: task.id, title: task.title, task, path: project, directoryIdentity: directoryIdentity(project), cancelled: false, finishing: false, uncertain: false, artifactsCollected: false, ...over } as unknown as Active)

@@ -24,7 +24,7 @@ function setup(owner: string | null = 'owner') {
   const store: WorkbenchStore = makeWorkbenchStore(db)
   const state = makeRuntimeState()
   const log = vi.fn()
-  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn() }, deps: { ownerChatId: () => owner, registry: createProviderRegistry() }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, log, now: Date.now, actions: new Ref<ServiceActions>('t') }
+  const ctx: ServiceCtx = { store, stateDir, state, hub: { touched: vi.fn(), bumped: vi.fn(), dispose: vi.fn() }, deps: { ownerChatId: () => owner, registry: createProviderRegistry() }, ensureAccepting: () => { if (state.stopping) throw new Error('workbench_stopping') }, log, now: Date.now, actions: new Ref<ServiceActions>('t') }
   const domain = makeAttachmentsDomain(ctx)
   const task = (ownerChatId: string | null) => store.create({ title: '事', path: project, providerId: 'claude', ownerChatId })
   return { store, state, domain, task, log, project }
