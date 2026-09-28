@@ -22,6 +22,10 @@ export interface ServiceActions {
   submitInput(id:string,input:{runId:string;requestId:string;text:string}&InputMaterials,attachmentPolicy?:'owner'):Promise<LiveInput>
   continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials,attachmentPolicy?:'owner'):WorkbenchTaskView
   isReplied(running:Active):boolean
+  /** quota 域:额度耗尽时「交给谁继续」的候选(notices 的终态文案用)。 */
+  fallbackExecutor(exhaustedId:string):string|null
+  /** 一件成果的字节与元数据(notices 的成果投递用)。 */
+  artifact(id:string,artifactId:string):{name:string;mime:string;size:number;sha256:string;contentBase64:string}
 }
 /** service 的外部依赖里域会用到的那几样(opts 的子集,只读);按需加,不整个 opts 透传。 */
 export interface ServiceDeps {
@@ -31,6 +35,8 @@ export interface ServiceDeps {
   registry: ProviderRegistry
   /** 订阅执行者的真实额度快照(subscription-usage.ts 的监视器缓存);可选,不传就只靠失败信息判耗尽。 */
   usage?: (providerId: string) => UsageSnapshot | null
+  /** 权限卡的等待上限(ms);缺省 WORKBENCH_PERMISSION_TIMEOUT_MS。 */
+  permissionTimeoutMs?: number
 }
 export interface ServiceCtx {
   store: WorkbenchStore
