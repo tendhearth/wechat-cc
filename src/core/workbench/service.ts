@@ -13,9 +13,7 @@ import {executionFailureMessage,normalizeExecutionChoice,PROVIDER_EXECUTION_CHOI
 import type { ProviderRegistry } from '../provider-registry'
 import { TIER_PROFILES, sessionAuthEnv } from '../user-tier'
 import { ArtifactSnapshotError, canonicalProject, collectArtifacts, outputDirectory, readArtifactSnapshot, saveArtifactSnapshot } from './artifacts'
-import { captureGitBaseline, finishGitReview, serializeGitReview, GIT_REVIEW_MIME, type GitBaseline, type GitReview, type ReviewFile } from './git-review'
-import { composeReturnText, derivedReturnRequestId, parseGitReviewSnapshot, type ReviewTurn } from './review'
-import type { ReviewMark } from './review-marks'
+import { captureGitBaseline, finishGitReview, serializeGitReview, GIT_REVIEW_MIME, type GitBaseline } from './git-review'
 import { decodeNativeHistoryKey, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryReader, type NativeHistoryProvider, type NativeHistoryListInput, type NativeHistoryReadInput } from './native-history'
 import {readNativeImport,nativeImportInput,publicSource,pageInput,nativeResumeToken,snapshotHash,type ImportPage,type NativeImportInput,type NativeResumeDecision,type AcceptedNativeResume} from './native-adoption'
 import {historyDeadline} from './native-history'
@@ -77,83 +75,14 @@ interface Options {
   /** 免审执行者的一次性确认(daemon 侧持久化);不传 ⇒ 免审执行者永远要求确认。 */
   unattendedAck?: { get(): number | null; set(at: number): void }
 }
-type AcceptedContinuation = { mode: 'new' } | { mode: 'resume'; sessionId: string } | { mode: 'restart'; preview: RestartPreview }
-interface Active extends PathReservation {
-  execution:AgentExecutionChoice
-  attachments:Attachment[]
-  handoffId?:string
-  handoffArtifacts?:ArtifactSelection[]
-  nativeResume?:AcceptedNativeResume
-  reviewBaseline?: GitBaseline
-  /** 已截取的代码变更快照数;第一份沿用旧名,之后带 -2/-3。 */
-  reviewSeq?: number
-  reviewCapture?: Promise<void>
-  /** 醒来那一下的基线重取是否在途(见 retakeBaseline)。 */
-  baselineRetaking?: boolean
-  continuation: AcceptedContinuation
-  task: StoredTask
-  directoryIdentity: string
-  cancelled: boolean
-  session?: AgentSession
-  done: Promise<void>
-  resolveDone: () => void
-  stop: Promise<null>
-  signalStop: () => void
-  permissions: RunPermissions
-  questions: RunUserInput
-  queuedInputId?:string
-  finishing?:boolean
-  delivering?:boolean
-  runtimeInputs?:Map<string,LiveInput>
-  interactionAt:number
-  releaseBusy?: () => void
-  publicFinished: boolean
-  uncertain: boolean
-  artifactsCollected: boolean
-  /** 「这是第几轮」——回报去重键(评审修复轮 1:布尔 `reported` 选错了层,见 `reportOnce`)。
-   *  `submitInput` 实际投给 runtime 时(主人续接,可靠的同步点)与转移探测器观察到
-   *  「又动起来了」时(自己醒来,尽力而为——没有比快照更早的信号)各加一次。不是幂等锁
-   *  ——同一轮里两条路径都触发也只是多加了一次,不影响「序号变了就该再报」这个判据。 */
-  turnSeq: number
-  /** 已经报过、且报的是第几轮(`turnSeq` 的快照)。`-1` = 还没报过。`reportOnce` 只在
-   *  `turnSeq!==reportedTurn` 时才入队,不依赖「有没有观察到静下来又动起来」这件事本身
-   *  ——那件事会被漏看(见 reportOnce 的注释)。 */
-  reportedTurn: number
-  /** 「回忆」触发的去重键(task-5,fix round 1:与 `reportedTurn` 同一套道理,同一份
-   *  证据——settleQuiet 会因为转移探测器与显式 `result` 分支各调一次而在同一个 `turnSeq`
-   *  上触发两次,`recollectOnce` 靠这个字段挡。`-1` = 还没触发过。 */
-  recollectedTurn: number
-  collection?:Promise<void>
-  turnCollection?:Promise<void>
-  collectionFailure?:string
-  /** 已记过的收集警告:每回合都重扫成果目录,同一条只记一次(评审 2026-09-16) */
-  warned?:Set<string>
-  /** 空闲自动收工的计时器:会话安静下来才起,任何一下互动都取消。`at` 是到点的绝对时刻
-   *  (重排时用来判「新档位是不是更短」),`reason` 分「有人等的短让位」与「没人等的长空闲」。 */
-  idleClose?:{timer:ReturnType<typeof setTimeout>;at:number;reason:'handoff'|'idle'}
-  /** 停止请求到达时本轮已经答复 —— 那是收工,不是取消,终态记 completed。 */
-  closedWhileReplied?: boolean
-  credentialsMinted: boolean
-  credentialsRevoked: boolean
-}
-export interface InputMaterials {attachmentIds?:string[];draftId?:string;execution?:unknown}
-export interface CreateTask extends InputMaterials { title?: string; path: string; providerId: string; text: string }
-export interface CreateWechatTask {ownerChatId:string;accountId:string;requestId:string;commandHash:string;projectId:string;providerId?:string;text:string;originMessageId?:string}
-export interface SendWechatArtifact {ownerChatId:string;accountId:string;requestId:string;commandHash:string;taskId:string;artifactId:string}
-/**
- * 主人眼里的进度,两家执行者一致。持久化的 status 记的是这条 run 的生命周期
- * (Claude 会话保留时它永远是 running,Codex 自行收尾后是 completed),而主人要问的
- * 是「本轮做完没有、还能不能接着说」—— 那是 replied,与进程留不留无关。
- */
-export type WorkbenchPhase='queued'|'working'|'replied'|'failed'|'cancelled'|'interrupted'
-/** 等待行给主人看的那份:除了「挡路的是谁、为什么」,还要说清「挡路的那位是不是已经答复、
- *  是不是正数着秒自己让开」——不然「答复完了」和「文件夹空了」这两件事在等待行里还是分不开
- *  (docs/superpowers/specs/2026-09-21-one-folder-one-session-design.md，任务 2 的由来)。
- *  `holderWriting=false` 且 `closeInMs` 不是 null 时,才是「快让开了,可以现在就收工」那句话
- *  该出现的时候;`writer_not_closed` 那种 holder 永远不安静,这两个字段用不上也盖不掉老文案。 */
-export interface TaskWaitingFor extends WaitingFor { holderWriting: boolean; closeInMs: number | null }
-export interface WorkbenchTaskView extends Task { phase:WorkbenchPhase; importedOnly?:boolean; canArchive:boolean; waitingFor: TaskWaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number; runtime?:AgentRuntimeSnapshot }
-export type EntryResult = {receipt: EntryReceipt; task: WorkbenchTaskView}
+import { makeRuntimeState, type Active, type AcceptedContinuation } from './service/state'
+import { Ref } from '../../lib/lifecycle'
+import { makeReviewDomain } from './service/review'
+import type { ServiceActions, ServiceCtx } from './service/ctx'
+export type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
+import type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
+export type { InputMaterials, CreateTask, WorkbenchPhase, WorkbenchTaskView, EntryResult } from './service/types'
+import type { InputMaterials, CreateTask, WorkbenchPhase, WorkbenchTaskView, EntryResult } from './service/types'
 
 function checkedText(text: string,attachments:readonly Attachment[]=[]): string {
   if (typeof text !== 'string' || (!text.trim()&&!attachments.length) || text.length > 20_000) throw new Error('invalid_text')
@@ -277,9 +206,11 @@ export function makeWorkbenchService(opts: Options) {
       autoContinueBlocked.delete(id)
     }catch{/* Stop must not depend on a successful disk write. */}
   }
-  const runsByTask=new Map<string,Active>()
-  /** 文件夹的占用:派发时写入,会话关闭(结算 / 隔离)时删除 —— 中间从不释放。 */
-  const reservations=new Map<string,Active>()
+  const state=makeRuntimeState()
+  const {runsByTask,reservations,queue,runningText,collections,nativeDecisions,handoffDecisions}=state
+  const actions=new Ref<ServiceActions>('workbench-actions')
+  const ctx:ServiceCtx={store,stateDir:opts.stateDir,state,hub:{touched,bumped},...(opts.log?{log:opts.log}:{}),now:Date.now,actions}
+  const review=makeReviewDomain(ctx)
   /** 各执行者的额度/限流状态(provider-quota.ts):从失败里认出来、记住、再避开。 */
   const quota=makeQuotaRegistry(Date.now,opts.usage)
   /** 除了 exhaustedId 之外、已准入且没耗尽的原生执行者 —— "交给谁继续"的候选。 */
@@ -292,18 +223,7 @@ export function makeWorkbenchService(opts: Options) {
     }
     return null
   }
-  const queue:Active[]=[]
-  const runningText=new Map<string,string>()
-  const collections=new Set<Promise<void>>()
-  const nativeDecisions=new Map<string,AcceptedNativeResume>()
-  const handoffDecisions=new Map<string,{preview:HandoffPreview;sourceVersion:string;targetVersion:string|null;directoryIdentity:string;expiresAt:number}>()
-  let order=0
-  let stopping=false
-  let shutdownComplete=false
-  let shutdownPromise:Promise<void> | undefined
-  let noticeWake:(context?:{ownerChatId:string;accountId:string})=>Promise<void>=async()=>{}
-  let artifactDelivery:((id:string)=>Promise<ArtifactDeliveryReceipt>)|undefined
-  const wakeNotices=(context?:{ownerChatId:string;accountId:string})=>queueMicrotask(()=>{if(!stopping)void noticeWake(context).catch(()=>{})})
+  const wakeNotices=(context?:{ownerChatId:string;accountId:string})=>queueMicrotask(()=>{if(!state.stopping)void state.noticeWake(context).catch(()=>{})})
   store.recover()
   store.liveInputs.recover()
 
@@ -437,7 +357,7 @@ export function makeWorkbenchService(opts: Options) {
     }
   }
   function ensureAccepting() {
-    if (stopping) throw new Error('workbench_stopping')
+    if (state.stopping) throw new Error('workbench_stopping')
   }
   /** 当前占着文件夹的 run。 */
   const held=()=>[...reservations.values()]
@@ -487,7 +407,7 @@ export function makeWorkbenchService(opts: Options) {
   }
   function collect(running:Active):Promise<void> {
     if(running.collection)return running.collection
-    if(shutdownComplete)return Promise.resolve()
+    if(state.shutdownComplete)return Promise.resolve()
     const pending=captureOutputs(running)
     running.collection=pending;collections.add(pending)
     void pending.then(()=>collections.delete(pending),()=>collections.delete(pending))
@@ -500,11 +420,11 @@ export function makeWorkbenchService(opts: Options) {
    * 重复调用安全;结算时那次照旧,代码变更快照仍然只在那里生成。
    */
   function collectTurnArtifacts(running:Active) {
-    if (running.artifactsCollected || shutdownComplete || running.turnCollection) return
+    if (running.artifactsCollected || state.shutdownComplete || running.turnCollection) return
     const pending=(async()=>{
       // 先让出事件流回调:目录扫描 + 哈希是同步的,别让它卡在 SDK 流的消费点上。
       await new Promise<void>(resolve=>setImmediate(resolve))
-      if (shutdownComplete || running.artifactsCollected || running.uncertain || running.finishing || running.cancelled) return
+      if (state.shutdownComplete || running.artifactsCollected || running.uncertain || running.finishing || running.cancelled) return
       captureTaskArtifacts(running)
     })()
     running.turnCollection=pending;collections.add(pending)
@@ -543,7 +463,7 @@ export function makeWorkbenchService(opts: Options) {
     }
   }
   async function captureOutputs(running:Active) {
-    if (running.artifactsCollected || shutdownComplete) return
+    if (running.artifactsCollected || state.shutdownComplete) return
     running.artifactsCollected=true
     // Let any turn collection finish before the final attempt, so a recovery
     // message cannot race with an older failure. Code review is independent.
@@ -583,7 +503,7 @@ export function makeWorkbenchService(opts: Options) {
       running.reviewBaseline=undefined
       try {
         const report=await finishGitReview(baseline)
-        if(shutdownComplete)return
+        if(state.shutdownComplete)return
         if(canonicalProject(running.path)!==running.path || directoryIdentity(running.path)!==running.directoryIdentity)throw new Error('invalid_path')
         if(!report||!report.files.some(f=>f.kind!=='not_reviewed'))return
         const seq=(running.reviewSeq??0)+1; running.reviewSeq=seq
@@ -757,7 +677,7 @@ export function makeWorkbenchService(opts: Options) {
     runningText.delete(running.identity)
     const release=running.releaseBusy; running.releaseBusy=undefined
     try { release?.() } catch { /* busy registry releases are best effort and idempotent */ }
-    if (!stopping) pump()
+    if (!state.stopping) pump()
   }
   async function confirmLateClose(running:Active,capture:boolean) {
     if (!running.uncertain) return
@@ -1056,7 +976,7 @@ export function makeWorkbenchService(opts: Options) {
       } catch { /* never unlock an uncertain writer for a status failure */ }
       running.publicFinished=true; running.resolveDone()
       if (!running.uncertain) releaseReservation(running)
-      if(terminalCommitted&&finalStatus==='completed'&&!running.cancelled&&!running.uncertain&&!stopping)drainInputs(task.id,running.directoryIdentity)
+      if(terminalCommitted&&finalStatus==='completed'&&!running.cancelled&&!running.uncertain&&!state.stopping)drainInputs(task.id,running.directoryIdentity)
       else holdInputs(task.id,'任务已停止或未正常完成；这条补充尚未发送。')
     }
   }
@@ -1076,7 +996,7 @@ export function makeWorkbenchService(opts: Options) {
   }
 
   function settleRuntimeInput(running:Active,saved:LiveInput,error?:unknown) {
-    if(shutdownComplete){running.runtimeInputs?.delete(saved.id);return}
+    if(state.shutdownComplete){running.runtimeInputs?.delete(saved.id);return}
     try {
       // held-only 落库不会自己 bump(store.addEvent 才会);两条分支分别记账,没写就不吵。
       let changed:'held'|'delivered'|null=null
@@ -1103,7 +1023,7 @@ export function makeWorkbenchService(opts: Options) {
   }
 
   function pump() {
-    if (stopping) return
+    if (state.stopping) return
     const launch:Active[]=[]
     for (const running of queue) {
       if (running.state !== 'queued') continue
@@ -1185,7 +1105,7 @@ export function makeWorkbenchService(opts: Options) {
     const running:Active={
       execution,
       attachments:dispatchAttachments,
-      interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
+      interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++state.order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
       cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,turnSeq:0,reportedTurn:-1,recollectedTurn:-1,credentialsMinted:false,credentialsRevoked:false,
     }
     const activate=()=>{if(handoffPeer)touched(handoffPeer.sourceTaskId);touched(task.id);runsByTask.set(task.id,running);runningText.set(running.identity,text);queue.push(running);pump()}
@@ -1250,7 +1170,7 @@ export function makeWorkbenchService(opts: Options) {
       } catch { /* in-memory cancellation still must settle */ }
       running.publicFinished=true; running.resolveDone()
       if (runsByTask.get(running.taskId)===running) runsByTask.delete(running.taskId)
-      if (!stopping) pump()
+      if (!state.stopping) pump()
       return
     }
     if (running.state==='uncertain') return
@@ -1263,38 +1183,11 @@ export function makeWorkbenchService(opts: Options) {
     }
   }
 
-  /** 一件成果 ⇒ 它装的变更快照;不是 review mime、读不出、解析不出都是 null(坏快照不抛,由调用方标 unavailable)。 */
-  function readReviewSnapshot(artifact:{mime:string;storagePath:string;sha256:string}):GitReview|null {
-    if(artifact.mime!==GIT_REVIEW_MIME)return null
-    try{return parseGitReviewSnapshot(readArtifactSnapshot(artifact.storagePath,opts.stateDir,artifact.sha256))}catch{return null}
-  }
-  /** 标记的落点:成果必须属于该任务(否则 store.artifact 抛 not_found)且真是一份读得出的快照。 */
-  function reviewTarget(id:string,artifactId:string) {
-    const artifact=store.artifact(id,artifactId)
-    const review=readReviewSnapshot(artifact)
-    if(!review)throw new Error('invalid_review_reference')
-    return {artifact,review}
-  }
-  function reviewComment(value:unknown,required:boolean):string {
-    if(value===undefined&&!required)return ''
-    if(typeof value!=='string'||value.length>2000)throw new Error('invalid_review_reference')
-    const comment=value.trim()
-    if(required&&!comment)throw new Error('invalid_review_reference')
-    return comment
-  }
-  /** 门控:路径要在这份快照里,且不是「没展开」的那种 —— 没看过的文件不能说接受或打回。 */
-  function markableFile(review:GitReview,path:string):ReviewFile {
-    const file=review.files.find(candidate=>candidate.path===path)
-    if(!file)throw new Error('invalid_review_reference')
-    if(file.kind==='not_reviewed')throw new Error('review_file_unmarkable')
-    return file
-  }
-
   const service={
     artifactDeliveryStore:store.artifactDeliveries,
-    setArtifactDelivery(deliver:((id:string)=>Promise<ArtifactDeliveryReceipt>)|undefined){artifactDelivery=deliver},
+    setArtifactDelivery(deliver:((id:string)=>Promise<ArtifactDeliveryReceipt>)|undefined){state.artifactDelivery=deliver},
     artifactDeliveryEligible(receipt:ArtifactDeliveryReceipt):boolean{
-      return !stopping&&receipt.ownerChatId===opts.ownerChatId()&&store.get(receipt.taskId).ownerChatId===receipt.ownerChatId
+      return !state.stopping&&receipt.ownerChatId===opts.ownerChatId()&&store.get(receipt.taskId).ownerChatId===receipt.ownerChatId
     },
     async deliverWechatArtifact(input:SendWechatArtifact):Promise<ArtifactDeliveryReceipt>{
       ensureAccepting()
@@ -1307,15 +1200,15 @@ export function makeWorkbenchService(opts: Options) {
         if(prior.taskId!==input.taskId||prior.artifactId!==input.artifactId||prior.ownerChatId!==input.ownerChatId||prior.accountId!==input.accountId||prior.commandHash!==input.commandHash)throw Error('artifact_delivery_conflict')
         if(prior.status==='accepted'||prior.status==='unknown'||prior.status==='blocked')return prior
       }
-      if(!artifactDelivery)throw Error('artifact_transport_unavailable')
+      if(!state.artifactDelivery)throw Error('artifact_transport_unavailable')
       if(!prior){
         const artifact=service.artifact(input.taskId,input.artifactId)
         store.artifactDeliveries.reserve({id,commandHash:input.commandHash,taskId:input.taskId,artifactId:input.artifactId,ownerChatId:input.ownerChatId,accountId:input.accountId,artifactSha256:artifact.sha256,name:artifact.name,mime:artifact.mime,size:artifact.size})
       }
-      return artifactDelivery(id)
+      return state.artifactDelivery(id)
     },
     notificationStore:store.wechatNotifications,
-    setNotificationWake(wake:(context?:{ownerChatId:string;accountId:string})=>Promise<void>){noticeWake=wake},
+    setNotificationWake(wake:(context?:{ownerChatId:string;accountId:string})=>Promise<void>){state.noticeWake=wake},
     /** 各执行者的额度/限流状态快照;没登记的不在里面。 */
     providerQuota():Record<string,QuotaState>{return quota.snapshot()},
     /** 这家现在还能用吗;null = 能。 */
@@ -1850,71 +1743,9 @@ export function makeWorkbenchService(opts: Options) {
     },
     approve(id:string,artifactId:string,sha256:string) { service.artifact(id,artifactId); store.approve(id,artifactId,sha256); touched(id) },
     /** 这个任务的所有变更快照,新→旧,每个文件附上当前标记。坏的那一轮单独 unavailable,不牵连别轮。 */
-    reviewList(id:string):ReviewTurn[] {
-      store.get(id)
-      const marks=new Map<string,ReviewMark>()
-      for(const mark of store.reviewMarks.list(id))marks.set(`${mark.artifactSha256}\0${mark.path}`,mark)
-      return store.artifacts(id).filter(a=>a.mime===GIT_REVIEW_MIME).map(a=>{
-        const head={artifactId:a.id,sha256:a.sha256,name:a.name,createdAt:a.createdAt}
-        const review=readReviewSnapshot(a)
-        if(!review)return {...head,status:'unavailable' as const,headBefore:null,headAfter:null,preexistingPaths:[],notes:['快照无法读取或已损坏'],files:[]}
-        return {...head,status:review.status,headBefore:review.headBefore,headAfter:review.headAfter,preexistingPaths:review.preexistingPaths,notes:review.notes,
-          files:review.files.map(file=>{
-            const mark=marks.get(`${a.sha256}\0${file.path}`)
-            return mark?{...file,mark:{mark:mark.mark,comment:mark.comment,createdAt:mark.createdAt}}:{...file}
-          })}
-      })
-    },
-    markReviewFile(id:string,input:{artifactId:string;path:string;mark:'accepted'|'returned';comment?:string}):ReviewMark {
-      if(input.mark!=='accepted'&&input.mark!=='returned')throw new Error('invalid_request')
-      const comment=reviewComment(input.comment,false)
-      const {artifact,review}=reviewTarget(id,input.artifactId)
-      const file=markableFile(review,input.path)
-      const mark=store.reviewMarks.set({taskId:id,artifactSha256:artifact.sha256,path:file.path,afterSha256:file.afterSha256??null,mark:input.mark,comment})
-      touched(id)
-      return mark
-    },
-    /**
-     * 打回 = 把「哪几处、为什么、当时长什么样」组成一段续接要求 + 逐文件标 `returned`。
-     * 按会话状态分路(评审 2026-09-21 #7):**会话还留着且已答复** ⇒ 走 `submitInput` 投给同一条
-     * 会话(和主人自己在输入框里补一句话同一条路),回的是一张投递回执;`continueTask` 对任何还在
-     * `runsByTask` 的任务一律 `workbench_busy`,照旧走它的话保留会话(Claude)答复后永远送不到。
-     * **还在写** ⇒ `workbench_busy`(回合中间不能打回)。**已经结算** ⇒ `continueTask` 照旧:
-     * 那道门(忙 / 归档 / 免审未确认 / 要不要重开都由它判)错误码原样透传。
-     * 标记**在续接成功之后**才落:`restart_confirmation_required` 是设计内的首次回应(桌面要靠它拿
-     * 重开令牌),`workbench_busy` 是常见的抢跑 —— 先落标记会让主人常态化看到「已打回」却根本没发出去。
-     * 原会话不能恢复时,主人确认后带上 `restartToken` 再发一次(校验交给 continueTask,和「继续」同一道门),
-     * 打回就不再是死胡同。
-     * 重发同一个 inputRequestId 时 continueTask 走幂等分支,再写一遍同样的标记无妨。
-     */
-    returnReviewFiles(id:string,input:{artifactId:string;paths:string[];comment:string;inputRequestId?:string;restartToken?:string}):WorkbenchTaskView|Promise<LiveInput> {
-      if(!Array.isArray(input.paths)||!input.paths.length||input.paths.length>20||input.paths.some(path=>typeof path!=='string'||!path))throw new Error('invalid_review_reference')
-      const comment=reviewComment(input.comment,true)
-      // 请求 id 先验,免得为一个畸形请求留下标记。
-      const given=input.inputRequestId===undefined?undefined:normalizeInputRequestId(input.inputRequestId)
-      const {artifact,review}=reviewTarget(id,input.artifactId)
-      // 重发同一笔打回要落到幂等分支,所以文本必须可重现:去重**排序** + 同一句意见 ⇒ 同一段文本。
-      // 排序是为了跟派生 id 对齐 —— id 不看顺序,文本要是看,换个勾选顺序重发就会撞 `input_conflict`。
-      const files=[...new Set(input.paths)].sort().map(path=>markableFile(review,path))
-      const text=composeReturnText(files.map(({path,diff})=>({path,diff})),comment)
-      const marks=()=>{
-        for(const file of files)store.reviewMarks.set({taskId:id,artifactSha256:artifact.sha256,path:file.path,afterSha256:file.afterSha256??null,mark:'returned',comment})
-        touched(id)
-      }
-      const running=runsByTask.get(id)
-      if(running){
-        // 回合中间打回 = 抢跑:这一轮还在写,等它答复(桌面/微信都会把这句话如实转给主人)。
-        if(!isReplied(running))throw new Error('workbench_busy')
-        // 请求 id 没给就从这笔打回本身派生:重发落 liveInputs 的幂等分支,不会投第二遍。
-        // 把 run 的 identity 也算进去:会话重开之后这是另一次投递,不然会撞上一条 run 那笔 liveInput。
-        const requestId=given??derivedReturnRequestId(artifact.sha256,files.map(file=>file.path),comment,running.identity)
-        // 标记仍在拿到回执之后才落:投不出去就不该让主人看到「已打回」。
-        return service.submitInput(id,{runId:running.identity,requestId,text}).then(receipt=>{marks();return receipt})
-      }
-      const task=service.continueTask(id,text,{inputRequestId:given??randomUUID(),...(input.restartToken!==undefined?{restartToken:input.restartToken}:{})})
-      marks()
-      return task
-    },
+    reviewList:review.reviewList,
+    markReviewFile:review.markReviewFile,
+    returnReviewFiles:review.returnReviewFiles,
     resolvePermission(id:string,requestId:string,decision:PermissionDecision):void {
       store.get(id)
       if (decision!=='allow' && decision!=='deny') throw new Error('invalid_decision')
@@ -1926,9 +1757,9 @@ export function makeWorkbenchService(opts: Options) {
     },
     async handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>{return wechatControl(chatId,text,identity)},
     shutdown():Promise<void> {
-      if (shutdownPromise) return shutdownPromise
-      stopping=true
-      shutdownPromise=(async () => {
+      if (state.shutdownPromise) return state.shutdownPromise
+      state.stopping=true
+      state.shutdownPromise=(async () => {
         const snapshot=[...runsByTask.values()]
         for (const running of snapshot) {
           try { cancelRun(running) }
@@ -1941,11 +1772,11 @@ export function makeWorkbenchService(opts: Options) {
         }
         await Promise.allSettled(snapshot.map(running => running.done))
         while(collections.size)await Promise.allSettled([...collections])
-        shutdownComplete=true
+        state.shutdownComplete=true
         for (const running of [...runsByTask.values()]) releaseReservation(running)
         changes.dispose()
       })()
-      return shutdownPromise
+      return state.shutdownPromise
     },
     changes: {
       /** store.version 才是权威:hub 缓存可能因为一笔回滚的事务而"幻影提前",落库的 seq 从不会。
@@ -1959,6 +1790,7 @@ export function makeWorkbenchService(opts: Options) {
       },
     },
   }
+  actions.set({submitInput:(id,input,policy)=>service.submitInput(id,input,policy),continueTask:(id,text,options,policy)=>service.continueTask(id,text,options,policy),isReplied})
   const wechatControl=makeWechatWorkbenchControl({store,ownerChatId:opts.ownerChatId,actions:service})
   return service
 }
