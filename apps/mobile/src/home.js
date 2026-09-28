@@ -174,3 +174,6 @@ function load() {
 }
 loadHome()
 load()
+
+// 恢复只核对已有请求；重新发送仍由主人明确点击。
+void restoreEntry()

@@ -12,6 +12,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { MOBILE_WORKBENCH_JS } from './mobile-page'
 import { phoneHtml } from './settings-panel-html'
+import { assembleMobilePage } from '../../apps/mobile/assemble'
+import { readMobileSource } from '../../apps/mobile/sources'
 
 const IDS = ['m-list', 'm-detail', 'm-back', 'm-title', 'm-notice', 'm-controls', 'm-permissions',
   'm-questions', 'm-events', 'm-artifacts', 'm-artifact-preview', 'm-inputs', 'm-say-box', 'm-say', 'm-send', 'm-conn']
@@ -39,7 +41,7 @@ function fakeEl(id: string): FakeEl {
   }
 }
 
-function harness() {
+function harness(source = MOBILE_WORKBENCH_JS) {
   const els = new Map(IDS.map((id) => [id, fakeEl(id)]))
   // 照真页面来:连接提示那行平时不在(<div id="m-conn" hidden>),详情栏也是先藏着。
   els.get('m-conn')!.hidden = true
@@ -66,7 +68,7 @@ function harness() {
   let mode: 'ok' | 'down' = 'ok'
   let detail = {
     ok: true, matter: { id: 'm1', title: '首页调整', kind: 'task', status: 'open' }, runId: 'run1',
-    permissions: [] as Array<Record<string, unknown>>, questions: [], events: [], artifacts: [], inputs: [],
+    permissions: [] as Array<Record<string, unknown>>, questions: [], events: [] as Array<Record<string, unknown>>, artifacts: [], inputs: [],
   }
 
   let deferred: (() => void) | undefined
@@ -85,12 +87,12 @@ function harness() {
     return Promise.resolve(response)
   }
 
-  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'URL', MOBILE_WORKBENCH_JS)
+  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'URL', 'ago', source)
   boot(doc, win, {
     getItem: (k: string) => store.get(k) ?? null,
     setItem: (k: string, v: string) => { store.set(k, v) },
     removeItem: (k: string) => { store.delete(k) },
-  }, { relay: 'https://relay.example', id: 'phone1' }, api, (s: string) => String(s), { revokeObjectURL() {} })
+  }, { relay: 'https://relay.example', id: 'phone1' }, api, (s: string) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'), { revokeObjectURL() {} }, () => '刚刚')
 
   return {
     els, doc, calls, navButton, docHandlers, winHandlers,
@@ -246,5 +248,97 @@ describe('脚本要的元素,真页面里都得有', () => {
     // 这条守的是"测试里注册了、真页面却没加"这个空档 —— 假 DOM 抓不到它,
     // 因为假 DOM 的元素清单是测试自己写的。
     expect(missing, '脚本要用但页面上没有的元素').toEqual([])
+  })
+})
+
+describe('手机交办页面接线', () => {
+  it('keeps public messages visible while tool calls are escaped inside a closed section', async () => {
+    const h=harness(readMobileSource('workbench.js'))
+    h.setDetail({events:[
+      {kind:'user',text:'公开要求',createdAt:1},
+      {kind:'tool_call',text:'<img src=x onerror=evil()>\n读取文件 & 检查',createdAt:2},
+      {kind:'text',text:'公开答复',createdAt:3},
+      {kind:'tool_call',text:'继续检查',createdAt:4},
+    ]})
+    await h.openMatter()
+    const html=h.els.get('m-events')!.innerHTML
+    const folded=html.match(/<details\b[^>]*class="m-tool-events"[^>]*>([\s\S]*?)<\/details>/)
+    expect(folded).not.toBeNull()
+    expect(folded![0]).not.toMatch(/<details\b[^>]*\bopen\b/)
+    expect(folded![1]).toContain('<summary>工具记录（2）</summary>')
+    expect(folded![1]).toContain('&lt;img src=x onerror=evil()&gt;\n读取文件 &amp; 检查')
+    expect(folded![1]).not.toContain('<img')
+    expect(folded![1]).not.toContain('公开要求')
+    expect(folded![1]).not.toContain('公开答复')
+    expect(html.replace(folded![0],'')).toContain('公开要求')
+    expect(html.replace(folded![0],'')).toContain('公开答复')
+  })
+
+  it('does not reserve a tool section when no tool calls exist', async () => {
+    const h=harness(readMobileSource('workbench.js'))
+    h.setDetail({events:[{kind:'text',text:'只有公开答复',createdAt:1}]})
+    await h.openMatter()
+    expect(h.els.get('m-events')!.innerHTML).toContain('只有公开答复')
+    expect(h.els.get('m-events')!.innerHTML).not.toContain('<details')
+    expect(h.els.get('m-events')!.innerHTML).not.toContain('工具记录')
+  })
+
+  it('preserves the owner’s expanded tool section during refresh', async () => {
+    const h=harness(readMobileSource('workbench.js'))
+    h.setDetail({events:[{kind:'tool_call',text:'执行细节',createdAt:1}]})
+    await h.openMatter()
+    h.els.get('m-events')!.querySelectorAll=()=>[fakeEl('expanded-tool-records')]
+    await h.foreground()
+    expect(h.els.get('m-events')!.innerHTML).toMatch(/<details\b[^>]*class="m-tool-events"[^>]*\bopen\b/)
+    h.els.get('m-events')!.querySelectorAll=()=>[]
+    await h.foreground()
+    expect(h.els.get('m-events')!.innerHTML).not.toMatch(/<details\b[^>]*\bopen\b/)
+  })
+
+  it('assembles the visible entry and keeps public messages outside collapsed tool details', () => {
+    const page=assembleMobilePage(readMobileSource).phone
+    expect(page.includes('id="home-entry"')).toBe(true)
+    expect(page.includes('id="entry-root"')).toBe(true)
+    const ancestors:string[]=[]
+    let eventsAncestors:string[]|undefined
+    for(const match of page.replace(/<script>[\s\S]*?<\/script>|<style>[\s\S]*?<\/style>/g,'').matchAll(/<(\/?)([a-z][a-z0-9]*)\b([^>]*)>/gi)){
+      const [,closing,tag,attributes]=match
+      if(closing){const index=ancestors.lastIndexOf(tag!);if(index>=0)ancestors.splice(index)}
+      else{
+        if(/\bid="m-events"/.test(attributes!))eventsAncestors=[...ancestors]
+        if(!['meta','link','img','input','br','hr'].includes(tag!))ancestors.push(tag!)
+      }
+    }
+    expect(eventsAncestors).toBeDefined()
+    expect(eventsAncestors).not.toContain('details')
+    expect(page.indexOf('function createPhoneAttachments')).toBeGreaterThan(page.indexOf('var mCurrent'))
+    expect(page.indexOf('function openEntry')).toBeGreaterThan(page.indexOf('function createPhoneAttachments'))
+    expect(page.indexOf('function renderPresenceHome')).toBeGreaterThan(page.indexOf('function openEntry'))
+    expect(page.indexOf('function render(s)')).toBeGreaterThan(page.indexOf('function renderPresenceHome'))
+    expect(page.slice(page.indexOf('<script'),page.indexOf('<script')+8)).toBe('<script>')
+  })
+
+  it('starts by checking saved receipts and opens entry only on an explicit tap, without resending', async () => {
+    const els=new Map<string,ReturnType<typeof fakeEl>&{focus:ReturnType<typeof vi.fn>;scrollIntoView:()=>void;appendChild:()=>void;click:()=>void;classList:{contains:()=>boolean;add:()=>void}}>()
+    const get=(id:string)=>{if(!els.has(id))els.set(id,{...fakeEl(id),focus:vi.fn(),scrollIntoView(){},appendChild(){},click(){this.fire('click')},classList:{contains:()=>false,add(){}}});return els.get(id)!}
+    const requestId='123e4567-e89b-42d3-a456-426614174000',input={requestId,text:'已经送出，不能再送一遍',target:{kind:'managed'}}
+    const saved=new Map([['cc.phone.entry.v1:fixture',JSON.stringify({version:1,draft:{...input,providerId:'',revision:1},pending:[{input,revision:1}],last:null})]])
+    const calls:Array<{path:string;method:string}>=[]
+    const api=async(path:string,opts?:{method?:string})=>{
+      calls.push({path,method:opts?.method??'GET'})
+      const body=path.endsWith('/options')?{ok:true,status:'ready',defaultProviderId:'codex',projects:[],providers:[{id:'codex',displayName:'Codex',available:true}]}:{ok:false,error:'not_found'}
+      return{status:path.includes('create-receipt')?404:200,json:async()=>body}
+    }
+    const env={document:{hidden:false,visibilityState:'visible',getElementById:get,createElement:(tag:string)=>get('created-'+tag),querySelector:(selector:string)=>get(selector),querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},REMOTE:{id:'fixture'},T:'test-token',location:{host:'test',replace(){}},localStorage:{getItem:(key:string)=>saved.get(key)??null,setItem:(key:string,value:string)=>saved.set(key,value),removeItem:(key:string)=>saved.delete(key)},api,esc:String,toast(){},setTimeout,clearTimeout,setInterval,crypto,openMatter:vi.fn(),openYou(){},mUuid:()=>crypto.randomUUID()}
+    new Function(...Object.keys(env),`var mCurrent=null,mSeq=0;\n${readMobileSource('attachments.js')}\n${readMobileSource('entry.js')}\n${readMobileSource('presence.js')}\n${readMobileSource('home.js')}`)(...Object.values(env))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(calls.filter(c=>c.path.includes('create-receipt'))).toEqual([{path:'/m/api/matter/create-receipt?requestId='+requestId,method:'GET'}])
+    expect(calls.filter(c=>c.method==='POST')).toEqual([])
+    expect(get('entry-text').value).toBe(input.text)
+    expect(get('entry-text').focus).not.toHaveBeenCalled()
+    get('home-entry').fire('click');await vi.advanceTimersByTimeAsync(0)
+    expect(get('entry-text').focus).toHaveBeenCalledOnce()
+    expect(calls.filter(c=>c.method==='POST')).toEqual([])
+    expect(env.openMatter).not.toHaveBeenCalled()
   })
 })

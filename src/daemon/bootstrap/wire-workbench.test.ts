@@ -19,6 +19,11 @@ import { makeReportOutboxStore } from '../reports/outbox'
 import { makeJournal } from '../../core/journal-store'
 import type { Bootstrap } from './types'
 
+// The paired owner belongs to access.admins, just as the HTTP/mobile resolver requires.
+vi.mock('../../lib/access',async importOriginal=>({...await importOriginal<typeof import('../../lib/access')>(),
+  loadAccess:()=>({dmPolicy:'allowlist',allowFrom:['chat-1'],admins:['chat-1']}),
+}))
+
 it('does not inherit companion memory, MCP servers or daemon permission bypass into office work', async () => {
   const permit = vi.fn(async () => ({ behavior: 'allow' as const }))
   const base = { cwd:'/project',model:'existing-model',permissionMode:'bypassPermissions' as const,mcpServers:{ private:{ command:'private-memory' } },systemPrompt:'private life memory',canUseTool:permit,settingSources:['project' as const,'local' as const] }

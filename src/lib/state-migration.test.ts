@@ -127,8 +127,8 @@ describe('full state-dir migration — upgrading-user smoke', () => {
       'session_turns_fts', 'session_turns_fts_config', 'session_turns_fts_content', 'session_turns_fts_data',
       'session_turns_fts_docsize', 'session_turns_fts_idx',
       'sessions', 'sqlite_sequence', 'thread_extract_state', 'threads', 'turn_records',
-      'workbench_api_sessions', 'workbench_artifact_deliveries', 'workbench_artifacts', 'workbench_attachments', 'workbench_control_receipts',
-      'workbench_creation_receipts', 'workbench_events', 'workbench_handoffs', 'workbench_live_inputs', 'workbench_projects', 'workbench_review_marks', 'workbench_run_execution',
+      'workbench_api_sessions', 'workbench_artifact_deliveries', 'workbench_artifacts', 'workbench_attachment_uploads', 'workbench_attachments', 'workbench_control_receipts',
+      'workbench_creation_receipts', 'workbench_entry_requests', 'workbench_events', 'workbench_handoffs', 'workbench_live_inputs', 'workbench_projects', 'workbench_review_marks', 'workbench_run_execution',
       'workbench_sources', 'workbench_tasks', 'workbench_wechat_notice_intents', 'workbench_wechat_notices', 'workbench_wechat_subscriptions',
     ])
   })

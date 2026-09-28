@@ -43,6 +43,106 @@ function service(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Workbench internal HTTP API', () => {
+  it('serves task entry only to operator and admin sessions with the configured owner context',async()=>{
+    const input={requestId:crypto.randomUUID(),text:'Draft this',target:{kind:'managed'}},options={status:'ready',defaultProviderId:'codex',providers:[],projects:[]}
+    const result={receipt:{requestId:input.requestId,taskId:TASK.id,matterId:TASK.id,runId:crypto.randomUUID(),acceptedAt:1},task:TASK}
+    const entryOptions=vi.fn(()=>options),createEntry=vi.fn(()=>result),entryReceipt=vi.fn(()=>result)
+    const {request,operatorToken,adminToken,trustedToken,trustedSessionToken,guestToken}=await start(service({entryOptions,createEntry,entryReceipt}))
+    const routes=[['GET','/v1/workbench/entry-options',options],['POST','/v1/workbench/create-entry',result],['GET','/v1/workbench/entry-receipt?requestId='+input.requestId,result]] as const
+    for(const [method,path,expected] of routes){
+      const init={method,...(method==='POST'?{body:JSON.stringify(input)}:{})}
+      for(const token of [guestToken,trustedToken,trustedSessionToken])expect((await request(path,init,token)).status).toBe(403)
+      for(const token of [operatorToken,adminToken]){
+        const response=await request(path,init,token)
+        expect(response.status).toBe(method==='POST'?202:200);expect(await response.json()).toEqual(expected)
+      }
+      const route=path.split('?')[0]!
+      expect((await request(route,{method:method==='POST'?'GET':'POST',body:method==='GET'?'{}':undefined},operatorToken)).status).toBe(404)
+      for(const suffix of ['/extra','/','-extra'])expect((await request(route+suffix,init,operatorToken)).status).toBe(404)
+    }
+    expect(entryOptions).toHaveBeenCalledWith({ownerKey:'configured-owner',surface:'desktop'})
+    expect(createEntry).toHaveBeenCalledWith(input,{ownerKey:'configured-owner',surface:'desktop'})
+    expect(entryReceipt).toHaveBeenCalledWith(input.requestId,{ownerKey:'configured-owner',surface:'desktop'})
+    expect(entryOptions).toHaveBeenCalledTimes(2);expect(createEntry).toHaveBeenCalledTimes(2);expect(entryReceipt).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects unknown entry fields and caller-supplied identity before calling the service',async()=>{
+    const createEntry=vi.fn(),{request,operatorToken}=await start(service({createEntry}))
+    const input={requestId:crypto.randomUUID(),text:'Draft',target:{kind:'managed'}}
+    for(const key of ['path','ownerKey','ownerChatId','accountId','surface','scope','unexpected']){
+      const response=await request('/v1/workbench/create-entry',{method:'POST',body:JSON.stringify({...input,[key]:'forged'})},operatorToken)
+      expect(response.status).toBe(400);expect(await response.json()).toEqual({error:'invalid_entry'})
+    }
+    for(const body of [null,{}, {...input,target:{kind:'project',path:'/tmp'}},{...input,context:{source:'owner-chat',excerpts:[],ownerKey:'forged'}}])expect((await request('/v1/workbench/create-entry',{method:'POST',body:JSON.stringify(body)},operatorToken)).status).toBe(400)
+    expect(createEntry).not.toHaveBeenCalled()
+  })
+
+  it('validates receipt queries and returns missing receipts without accepting a supplied owner',async()=>{
+    let owner='configured-owner'
+    const own=crypto.randomUUID(),foreign=crypto.randomUUID(),db=openDb({path:join(stateDir,'entry-receipts.sqlite')}),store=makeWorkbenchStore(db)
+    const task=store.create({title:'Private',path:stateDir,ownerChatId:owner,providerId:'codex'}),runId=crypto.randomUUID()
+    db.query("INSERT INTO matters(id,kind,title,status,owner_chat_id,created_at,updated_at) VALUES(?,'task','Private','open',?,1,1)").run(task.id,owner)
+    store.entryRequests.reserve({ownerKey:owner,requestId:own,canonicalRequestHash:'a'.repeat(64),target:{kind:'project',projectId:'p-'+'a'.repeat(20)},workspaceId:null,resolvedPath:stateDir,directoryIdentity:'1:1',providerId:'codex',execution:{defaults:'provider',model:null,reasoningEffort:null},materialSnapshot:[]})
+    store.entryRequests.accept(owner,own,{taskId:task.id,matterId:task.id,runId,acceptedAt:1,resolvedPath:stateDir,directoryIdentity:'1:1'})
+    const actual=makeWorkbenchService({store,registry:createProviderRegistry(),stateDir,ownerChatId:()=>owner}),entryReceipt=vi.spyOn(actual,'entryReceipt')
+    try{
+      const {request,operatorToken}=await start(actual as never,()=>owner)
+      const response=await request('/v1/workbench/entry-receipt?requestId='+own,{},operatorToken)
+      expect(response.status).toBe(200);expect(await response.json()).toMatchObject({receipt:{requestId:own,taskId:task.id,matterId:task.id,runId,acceptedAt:1},task:{id:task.id,title:'Private'}})
+      for(const id of [foreign,own]){
+        if(id===own)owner='different-owner'
+        const missing=await request('/v1/workbench/entry-receipt?requestId='+id,{},operatorToken)
+        expect(missing.status).toBe(404);expect(await missing.json()).toEqual({error:'not_found'})
+      }
+      for(const query of ['', '?requestId=bad',`?requestId=${own}&requestId=${own}`,`?requestId=${own}&ownerKey=configured-owner`,`?requestId=${own}&unknown=x`])expect((await request('/v1/workbench/entry-receipt'+query,{},operatorToken)).status).toBe(400)
+      expect(entryReceipt).toHaveBeenCalledTimes(3)
+    }finally{await actual.shutdown();db.close()}
+  })
+
+  it('keeps needs_connection as an options response and maps entry errors to stable JSON status codes',async()=>{
+    const entryOptions=vi.fn(()=>({status:'needs_connection',defaultProviderId:null,providers:[],projects:[]})),createEntry=vi.fn()
+    const {request,operatorToken}=await start(service({entryOptions,createEntry}),()=>null)
+    const options=await request('/v1/workbench/entry-options',{},operatorToken)
+    expect(options.status).toBe(200);expect(await options.json()).toMatchObject({status:'needs_connection'})
+    expect(entryOptions).toHaveBeenCalledWith({ownerKey:'',surface:'desktop'})
+    expect((await request('/v1/workbench/entry-options?ownerKey=forged',{},operatorToken)).status).toBe(400)
+    const input={requestId:crypto.randomUUID(),text:'Draft',target:{kind:'managed'}}
+    for(const [code,status] of [
+      ['invalid_entry_owner',403],['creation_conflict',409],['project_stale',409],['managed_workspace_changed',409],
+      ['entry_not_wired',503],['managed_workspace_unavailable',503],['invalid_managed_workspace',503],['workbench_stopping',503],
+      ['invalid_entry',400],['invalid_request_id',400],['invalid_text',400],['invalid_title',400],['invalid_context',400],
+      ['invalid_target',400],['invalid_execution',400],['invalid_provider',400],['invalid_attachment',400],['invalid_path',400],
+      ['api_task_input_invalid',400],['api_task_attachment_invalid',400],['api_task_attachment_unsupported',422],
+      ['workbench_attachments_unsupported',422],['workbench_execution_unsupported',422],['attachment_changed',409],['entry_expired',410],
+      ['attachment_scope',404],['attachment_limit',413],['unattended_ack_required',422],['unavailable_provider',422],
+    ] as const){
+      createEntry.mockImplementationOnce(()=>{throw Error(code)})
+      const response=await request('/v1/workbench/create-entry',{method:'POST',body:JSON.stringify(input)},operatorToken)
+      expect(response.status,code).toBe(status);expect(await response.json()).toEqual({error:code==='attachment_scope'?'not_found':code})
+    }
+  })
+
+  it('returns unavailable on each entry route before workbench is wired',async()=>{
+    const {request,operatorToken}=await start()
+    for(const [path,init] of [
+      ['/v1/workbench/entry-options',{}],
+      ['/v1/workbench/create-entry',{method:'POST',body:JSON.stringify({requestId:crypto.randomUUID(),text:'Draft',target:{kind:'managed'}})}],
+      ['/v1/workbench/entry-receipt?requestId='+crypto.randomUUID(),{}],
+    ] as const){const response=await request(path,init,operatorToken);expect(response.status).toBe(503);expect(await response.json()).toEqual({error:'workbench_not_wired'})}
+  })
+
+  it('preserves the desktop upload body contract while refusing forged identity fields',async()=>{
+    const uploadAttachment=vi.fn(()=>({id:crypto.randomUUID()})),{request,operatorToken}=await start(service({uploadAttachment}))
+    const input={id:crypto.randomUUID(),draftId:crypto.randomUUID(),name:'x.txt',mime:'text/plain',base64:'eA=='}
+    expect((await request('/v1/workbench/attachment',{method:'POST',body:JSON.stringify({...input,size:1,sha256:'a'.repeat(64)})},operatorToken)).status).toBe(200)
+    expect(uploadAttachment).toHaveBeenCalledWith(input)
+    for(const key of ['ownerKey','ownerChatId','accountId','surface','scope','owner','owner_key','owner_chat_id','account_id']){
+      const response=await request('/v1/workbench/attachment',{method:'POST',body:JSON.stringify({...input,[key]:'forged'})},operatorToken)
+      expect(response.status,key).toBe(400);expect(await response.json()).toEqual({error:'invalid_request'})
+    }
+    expect(uploadAttachment).toHaveBeenCalledTimes(1)
+  })
+
   it('allows adding a project only through the exact desktop operator route',async()=>{
     const project={id:'p-site',path:'/tmp/project',name:'网站',providerId:'codex'},addProject=vi.fn(()=>project)
     const {request,operatorToken,trustedToken}=await start(service({addProject}))
@@ -261,9 +361,11 @@ describe('Workbench internal HTTP API', () => {
     removeTempDir(stateDir)
   })
 
-  async function start(initial?: ReturnType<typeof service>) {
-    api = createInternalApi({ stateDir, daemonPid: 1, workbench: initial } as never)
+  async function start(initial?: ReturnType<typeof service>,resolveAdminChatId:()=>string|null=()=> 'configured-owner') {
+    api = createInternalApi({ stateDir, daemonPid: 1, workbench: initial,resolveAdminChatId } as never)
     const adminToken = api.mintSessionToken('admin', 'codex/default/owner')
+    const guestToken = api.mintSessionToken('guest', 'codex/default/guest')
+    const trustedSessionToken = api.mintSessionToken('trusted', 'codex/default/trusted')
     const { port, tokenFilePath, operatorTokenFilePath } = await api.start()
     const trustedToken = readFileSync(tokenFilePath, 'utf8').trim()
     const operatorToken = readFileSync(operatorTokenFilePath, 'utf8').trim()
@@ -271,7 +373,7 @@ describe('Workbench internal HTTP API', () => {
       ...init,
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...init.headers },
     })
-    return { request, trustedToken, operatorToken, port, adminToken }
+    return { request, trustedToken, operatorToken, port, adminToken,guestToken,trustedSessionToken }
   }
 
   it('reads native history only through exact admin routes with bounded query input',async()=>{

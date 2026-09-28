@@ -34,11 +34,16 @@ import type { RecollectSink } from '../matters/recollection'
 import type { UsageSnapshot } from '../subscription-usage'
 import { publicTask, TERMINAL_TASK_STATUSES, type WorkbenchListQuery, type StoredTask, type Task, type TaskStatus, type WorkbenchStore } from './store'
 import { makeTaskChangeHub, type TaskChangeHub } from './task-changes'
+import {canonicalEntryHash,composeEntryPrompt,parseEntryInput,type EntryContext,type EntryInput,type EntryOptions,type EntryReceipt} from './task-entry'
+import {createManagedWorkspaces,type ManagedWorkspaces} from './managed-workspaces'
+import type {EntryRecord} from './entry-store'
+import {readdirAnchored} from './anchored-fs'
 
 interface Options {
   store: WorkbenchStore
   registry: ProviderRegistry
   stateDir: string
+  managedWorkspaceRoot?: string
   ownerChatId: () => string | null
   /** 「一件事」登记处:任务与 matter 一对一同 id,生命周期同步(docs/cc-workbench.md「一件事」)。可选,老接线不传。 */
   matters?: MatterStore
@@ -148,6 +153,7 @@ export type WorkbenchPhase='queued'|'working'|'replied'|'failed'|'cancelled'|'in
  *  该出现的时候;`writer_not_closed` 那种 holder 永远不安静,这两个字段用不上也盖不掉老文案。 */
 export interface TaskWaitingFor extends WaitingFor { holderWriting: boolean; closeInMs: number | null }
 export interface WorkbenchTaskView extends Task { phase:WorkbenchPhase; importedOnly?:boolean; canArchive:boolean; waitingFor: TaskWaitingFor | null; pendingPermissionCount?: number; pendingQuestionCount?:number; runtime?:AgentRuntimeSnapshot }
+export type EntryResult = {receipt: EntryReceipt; task: WorkbenchTaskView}
 
 function checkedText(text: string,attachments:readonly Attachment[]=[]): string {
   if (typeof text !== 'string' || (!text.trim()&&!attachments.length) || text.length > 20_000) throw new Error('invalid_text')
@@ -205,7 +211,41 @@ export function makeWorkbenchService(opts: Options) {
   const touched = (id: string, seq?: number) => { try { changes.publish(id, seq ?? store.version(id)) } catch { /* 信号丢了只是多等一轮 */ } }
   /** 非 store 状态变化:先落库拿新 seq 再唤醒。bump 本身可能抛(任务不存在),别让它冒进调用方的 finally/catch。 */
   const bumped = (id: string) => { try { touched(id, store.bump(id)) } catch { /* 信号丢了只是多等一轮 */ } }
-  const selectAttachments=(input:InputMaterials={},taskId?:string)=>store.attachments.select(input.attachmentIds??[],taskId,input.draftId)
+  let materialUploads:ReturnType<typeof store.attachmentUploads>|undefined
+  const uploads=()=>materialUploads??=store.attachmentUploads({stateDir:opts.stateDir,ownerChatId:opts.ownerChatId,onTransaction:event=>opts.log?.('attachment-upload',`${event.operation} lock_ms=${event.durationMs.toFixed(1)}`)})
+  const attachmentScope=()=>{const ownerKey=opts.ownerChatId();return ownerKey?{ownerKey,allowLegacyUnbound:true}:undefined}
+  const strictAttachmentScope=(taskId?:string)=>{
+    const ownerKey=opts.ownerChatId()
+    if(!ownerKey)throw Error('invalid_entry_owner')
+    if(taskId&&store.get(taskId).ownerChatId!==ownerKey)throw Error('attachment_scope')
+    return {ownerKey}
+  }
+  const continuationAttachmentScope=(taskId:string,ids:unknown)=>{
+    const scope=strictAttachmentScope()
+    // Configured owners may continue pre-owner tasks with text; this never claims materials or changes ownership.
+    if(Array.isArray(ids)&&ids.length===0&&store.get(taskId).ownerChatId===null)return undefined
+    if(store.get(taskId).ownerChatId!==scope.ownerKey)throw Error('attachment_scope')
+    return scope
+  }
+  const selectAttachments=(input:InputMaterials={},taskId?:string,policy?:'owner')=>{
+    const ids=input.attachmentIds??[]
+    const scope=policy&&taskId?continuationAttachmentScope(taskId,ids):policy?strictAttachmentScope():input.attachmentIds?.length?attachmentScope():undefined
+    return store.attachments.select(ids,taskId,input.draftId,scope)
+  }
+  let managedWorkspaces:ManagedWorkspaces|undefined
+  const managed=()=>{
+    if(!opts.managedWorkspaceRoot)throw Error('entry_not_wired')
+    return managedWorkspaces??=createManagedWorkspaces({root:opts.managedWorkspaceRoot,stateDir:opts.stateDir})
+  }
+  const requireEntryOwner=(context:EntryContext)=>{
+    if(!context.ownerKey||context.ownerKey!==opts.ownerChatId()||!['desktop','phone'].includes(context.surface))throw Error('invalid_entry_owner')
+  }
+  const entryResult=(record:EntryRecord):EntryResult=>{
+    if(record.phase!=='accepted')throw Error('entry_not_accepted')
+    const task=store.get(record.taskId)
+    if(task.ownerChatId!==record.ownerKey)throw Error('invalid_entry_owner')
+    return{receipt:{requestId:record.requestId,taskId:record.taskId,matterId:record.matterId,runId:record.runId,acceptedAt:record.acceptedAt},task:taskView(publicTask(task))}
+  }
   function combinedAttachments(current:readonly Attachment[],previous:readonly Attachment[]=[]){
     const unique=new Map<string,Attachment>()
     for(const a of [...previous,...current])unique.set(a.id,{...a})
@@ -354,6 +394,11 @@ export function makeWorkbenchService(opts: Options) {
     if(isUnattendedExecutor(entry.opts.workbench)&&(opts.unattendedAck?.get()??null)===null)throw new Error('unattended_ack_required')
     requireWorkbenchInput(entry.opts.workbench,{attachments,execution,resume})
     return entry
+  }
+  function requireEntryInput(providerId:string,attachments:readonly Attachment[],execution:AgentExecutionChoice,text:string){
+    const entry=requireInput(providerId,attachments,execution)
+    entry.opts.validateWorkbenchInput?.({text,attachments})
+    if(quota.exhausted(providerId))throw Error('provider_quota_exhausted')
   }
   function canResume(task:StoredTask):boolean {
     try {
@@ -1086,7 +1131,7 @@ export function makeWorkbenchService(opts: Options) {
     }
   }
 
-  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void}):WorkbenchTaskView {
+  function start(task:StoredTask,text:string,acceptedDirectoryIdentity:string,acceptedContinuation:AcceptedContinuation={mode:'new'},nativeResume?:AcceptedNativeResume,handoffArtifacts?:ArtifactSelection[],handoffId?:string,queuedInputId?:string,attachments:Attachment[]=[],draftId?:string,executionChoice?:AgentExecutionChoice,acceptance?:{persist:(runId:string)=>void;activate:(fn:()=>void)=>void;scope?:{ownerKey:string}},attachmentPolicy?:'owner'):WorkbenchTaskView {
     if (runsByTask.has(task.id)) throw new Error('workbench_busy')
     if(opts.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
     if([...runsByTask.values()].some(run=>task.sessionId&&run.task.providerId===task.providerId&&run.task.sessionId===task.sessionId))throw new Error('native_session_busy')
@@ -1102,7 +1147,7 @@ export function makeWorkbenchService(opts: Options) {
     const addRunEvent=(kind:'user'|'system',text:string)=>{const id=store.addEvent(task.id,kind,text,null,runId);touched(task.id);return id}
     const handoffPeer=store.atomic(()=>{
       store.execution.accept(task.id,runId,execution)
-      const bound=store.attachments.bind(attachments.map(a=>a.id),task.id,draftId)
+      const bound=store.attachments.bind(attachments.map(a=>a.id),task.id,draftId,attachmentPolicy?continuationAttachmentScope(task.id,attachments):acceptance?.scope)
       if(!sameAttachments(bound,attachments))throw Error('invalid_attachment_changed')
       // A queued receipt keeps the ORIGINAL accepted run, even when this is a new dispatch run.
       if(queuedInputId&&!store.liveInputs.get(queuedInputId)){
@@ -1117,8 +1162,6 @@ export function makeWorkbenchService(opts: Options) {
       return peer
     })
     // recordHandoffEvent 同时 bump 了交接的另一头(source 任务),不发它那边就看不到这条请求已挂上。
-    if(handoffPeer)touched(handoffPeer.sourceTaskId)
-    touched(task.id)
     let signalStop!:()=>void,resolveDone!:()=>void
     const stop=new Promise<null>(resolve => { signalStop=() => resolve(null) })
     const done=new Promise<void>(resolve => { resolveDone=resolve })
@@ -1145,7 +1188,7 @@ export function makeWorkbenchService(opts: Options) {
       interactionAt:Date.now(),questions,queuedInputId,handoffId,handoffArtifacts,nativeResume,continuation:acceptedContinuation,identity:runId,taskId:task.id,title:task.title,path:task.path,order:++order,state:'queued',task,directoryIdentity:acceptedDirectoryIdentity,
       cancelled:false,done,resolveDone,stop,signalStop,permissions,publicFinished:false,uncertain:false,artifactsCollected:false,turnSeq:0,reportedTurn:-1,recollectedTurn:-1,credentialsMinted:false,credentialsRevoked:false,
     }
-    const activate=()=>{runsByTask.set(task.id,running);runningText.set(running.identity,text);queue.push(running);pump()}
+    const activate=()=>{if(handoffPeer)touched(handoffPeer.sourceTaskId);touched(task.id);runsByTask.set(task.id,running);runningText.set(running.identity,text);queue.push(running);pump()}
     if(acceptance)acceptance.activate(activate);else activate()
     return taskView(publicTask({...task,status:'queued',error:null}))
   }
@@ -1160,22 +1203,33 @@ export function makeWorkbenchService(opts: Options) {
     try{return opts.matters.ensureChat(ownerChatId).id}
     catch(err){opts.log?.('MATTER_ORIGIN',`ensureChat failed for ${ownerChatId}: ${err instanceof Error?err.message:err} — origin left null, task still created`);return null}
   }
-  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null}):WorkbenchTaskView {
+  function createTask(input:CreateTask,onAccepted?:(task:StoredTask,runId:string)=>void,origin?:{matterId:string|null;messageId:string|null},entry?:{context:EntryContext;workspaceKind:'managed'|'project';fromChat:boolean;materials:Attachment[];beforeCreate:()=>void;verifyDirectory:(path:string,identity:string)=>void}):WorkbenchTaskView {
     ensureAccepting()
     const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
-    const attachments=selectAttachments(input),text=checkedText(input.text,attachments)
+    const attachments=entry?entry.materials:selectAttachments(input)
+    const checked=checkedText(input.text,attachments),text=entry?input.text:checked
     requireInput(input.providerId,attachments,execution)
     if(input.title!==undefined&&(typeof input.title!=='string'||!input.title.trim()||input.title.length>120))throw Error('invalid_title')
     const path=canonicalProject(input.path),acceptedDirectoryIdentity=directoryIdentity(path)
+    entry?.verifyDirectory(path,acceptedDirectoryIdentity)
     if(opts.executionConflict?.(path,input.providerId,null))throw Error('native_session_busy')
     let activate:()=>void=()=>{}
     const accepted=store.atomic(()=>{
-      const task=store.create({title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:opts.ownerChatId()})
-      matterSync(m=>{m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:task.ownerChatId??null,originMatterId:origin?.matterId??null,originMessageId:origin?.messageId??null});m.linkTask(task.id);if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)})
+      entry?.beforeCreate()
+      const task=store.create({title:input.title?.trim()??(text.slice(0,40)||attachments[0]!.name.slice(0,40)),path,providerId:input.providerId,ownerChatId:entry?.context.ownerKey??opts.ownerChatId(),workspaceKind:entry?.workspaceKind,registerProject:entry?.workspaceKind!=='managed'})
+      if(entry){
+        const m=opts.matters;if(!m)throw Error('entry_not_wired')
+        const chat=entry.fromChat?m.ensureChat(entry.context.ownerKey):null
+        if(chat&&chat.ownerChatId!==entry.context.ownerKey)throw Error('invalid_entry_owner')
+        m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:entry.context.ownerKey,originMatterId:chat?.id??null,originMessageId:null})
+        m.linkTask(task.id)
+        if(store.taskMatterId(task.id)!==task.id)throw Error('entry_matter_link_failed')
+        m.bind(task.id,entry.context.surface,entry.context.ownerKey)
+      }else matterSync(m=>{m.create({id:task.id,kind:'task',title:task.title,projectPath:path,ownerChatId:task.ownerChatId??null,originMatterId:origin?.matterId??null,originMessageId:origin?.messageId??null});m.linkTask(task.id);if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)})
       return start(task,text,acceptedDirectoryIdentity,undefined,undefined,undefined,undefined,undefined,attachments,input.draftId,execution,{
-        persist:runId=>onAccepted?.(task,runId),activate:fn=>{activate=fn},
+        persist:runId=>onAccepted?.(task,runId),activate:fn=>{activate=fn},scope:entry?.context,
       })
-    })
+    },!!entry)
     // An accepted in-memory run must never outlive a rolled-back creation transaction.
     activate()
     return accepted
@@ -1290,6 +1344,91 @@ export function makeWorkbenchService(opts: Options) {
       }
       wakeNotices();return watch
     },
+    entryOptions(context:EntryContext):EntryOptions {
+      if(!context.ownerKey||context.ownerKey!==opts.ownerChatId())return{status:'needs_connection',reason:{code:'invalid_entry_owner',message:'请先在电脑上配置主人身份。'},defaultProviderId:null,providers:[],projects:[]}
+      const providers=opts.registry.list().flatMap(id=>{
+        const p=opts.registry.get(id)
+        if(!isWorkbenchProviderId(id)||!p||!isWorkbenchExecutorCapabilities(p.opts.workbench))return[]
+        let reason:string|undefined
+        try{requireInput(id,[],PROVIDER_EXECUTION_CHOICE);if(quota.exhausted(id))reason='provider_quota_exhausted'}catch(error){reason=error instanceof Error?error.message:'unavailable_provider'}
+        return[{id,displayName:p.opts.displayName,available:!reason,...(reason?{unavailableReason:{code:reason,message:reason==='unattended_ack_required'?'请先在电脑上确认免审执行。':executionFailureMessage(reason)}}:{}),capabilities:structuredClone(p.opts.workbench)}]
+      })
+      const defaultProviderId=providers.find(p=>p.id===opts.defaultProvider&&p.available)?.id??null
+      return{status:defaultProviderId?'ready':'needs_connection',...(!defaultProviderId?{reason:{code:'unavailable_provider',message:'请在电脑上连接默认执行者，或在更多选项中选择已连接的执行者。'}}:{}),defaultProviderId,providers,projects:service.projects()}
+    },
+    entryReceipt(requestId:string,context:EntryContext):EntryResult|null {
+      requireEntryOwner(context)
+      const record=store.entryRequests.get(context.ownerKey,normalizeInputRequestId(requestId))
+      return record?.phase==='accepted'?entryResult(record):null
+    },
+    createEntry(value:EntryInput,context:EntryContext):EntryResult {
+      requireEntryOwner(context)
+      const input=parseEntryInput(value),hash=canonicalEntryHash(input)
+      let record=store.entryRequests.get(context.ownerKey,input.requestId)
+      if(record&&record.canonicalRequestHash!==hash)throw Error('creation_conflict')
+      if(record?.phase==='accepted')return entryResult(record)
+      ensureAccepting()
+      if(!opts.matters)throw Error('entry_not_wired')
+      const text=composeEntryPrompt(input)
+      try{
+        if(record&&record.createdAt<Date.now()-7*86400_000)throw Error('entry_expired')
+        const prepared=store.attachments.prepareAcceptance(input.attachmentIds??[],undefined,input.draftId,opts.stateDir,context)
+       if(!record){
+        const materialSnapshot=prepared.attachments
+        const target=input.target,project=target.kind==='project'?service.projects().find(p=>p.id===target.projectId):null
+        if(input.target.kind==='project'&&!project)throw Error('project_stale')
+        const providerId=input.providerId??project?.providerId??opts.defaultProvider
+        if(!providerId)throw Error('unavailable_provider')
+        const execution=normalizeExecutionChoice(input.execution,PROVIDER_EXECUTION_CHOICE)
+        requireEntryInput(providerId,materialSnapshot,execution,text)
+        const workspaceId=input.target.kind==='managed'?randomUUID():null
+        record=store.entryRequests.reserve({ownerKey:context.ownerKey,requestId:input.requestId,canonicalRequestHash:hash,target:input.target,
+          workspaceId,resolvedPath:workspaceId?managed().resolvePath(workspaceId):project?.path??null,directoryIdentity:project?directoryIdentity(project.path):null,
+          providerId,execution,materialSnapshot})
+       }
+        // Another connection may have accepted between the initial read and reserve.
+        if(record.phase==='accepted')return entryResult(record)
+        if(record.createdAt<Date.now()-7*86400_000)throw Error('entry_expired')
+        requireEntryInput(record.providerId,record.materialSnapshot,record.execution,text)
+        const current=prepared.attachments
+        if(!sameAttachments(current,record.materialSnapshot))throw Error('attachment_changed')
+        const workspace=record.target.kind==='managed'?managed().ensure(record):null
+        const path=workspace?.path??record.resolvedPath!,identity=workspace?.directoryIdentity??record.directoryIdentity!
+        if(!path||!identity||canonicalProject(path)!==path||directoryIdentity(path)!==identity)throw Error('invalid_path')
+        record=store.entryRequests.allocate(context.ownerKey,input.requestId,path,identity)
+        if(record.phase==='accepted')return entryResult(record)
+        const frozen=record
+        const verify=()=>{
+          requireEntryOwner(context)
+          if(workspace){
+            managed().verify(workspace)
+            if(readdirAnchored(workspace.path,[],'managed_workspace_unavailable').length)throw Error('managed_workspace_changed')
+            managed().verify(workspace)
+          }
+          else if(canonicalProject(path)!==path||directoryIdentity(path)!==identity)throw Error('invalid_path')
+        }
+        createTask({path,providerId:frozen.providerId,text,title:input.title??(input.text.trim().slice(0,40)||current[0]!.name.slice(0,40)),execution:frozen.execution,draftId:input.draftId,attachmentIds:input.attachmentIds},(task,runId)=>{
+          verify()
+          store.entryRequests.accept(context.ownerKey,input.requestId,{taskId:task.id,matterId:task.id,runId,acceptedAt:Date.now(),resolvedPath:path,directoryIdentity:identity})
+        },undefined,{
+          context,workspaceKind:frozen.target.kind==='managed'?'managed':'project',fromChat:!!input.context,materials:current,
+          beforeCreate:()=>{
+            const latest=store.entryRequests.get(context.ownerKey,input.requestId)
+            if(latest?.phase==='accepted')throw Error('entry_already_accepted')
+            verify()
+            requireEntryInput(frozen.providerId,frozen.materialSnapshot,frozen.execution,text)
+            prepared.assertCurrent()
+          },
+          verifyDirectory:(acceptedPath,acceptedIdentity)=>{if(acceptedPath!==path||acceptedIdentity!==identity)throw Error('invalid_path');verify()},
+        })
+        return entryResult(store.entryRequests.get(context.ownerKey,input.requestId)!)
+      }catch(error){
+        // A racing winner is authoritative, but never commit a losing task along with it.
+        const winner=store.entryRequests.get(context.ownerKey,input.requestId)
+        if(winner?.phase==='accepted'&&winner.canonicalRequestHash===hash)return entryResult(winner)
+        throw error
+      }
+    },
     projects(){
       const ownerChatId=opts.ownerChatId();if(!ownerChatId)return[]
       const providers=opts.registry.list().filter(id=>isWorkbenchProviderId(id)&&isWorkbenchExecutorCapabilities(opts.registry.get(id)?.opts.workbench))
@@ -1341,10 +1480,10 @@ export function makeWorkbenchService(opts: Options) {
       store.liveInputs.set(requestId,'withdrawn')
       bumped(id)
     },
-    async submitInput(id:string,input:{runId:string;requestId:string;text:string}&InputMaterials){
+    async submitInput(id:string,input:{runId:string;requestId:string;text:string}&InputMaterials,attachmentPolicy?:'owner'){
       ensureAccepting()
       if(Object.hasOwn(input,'execution'))throw Error('invalid_execution')
-      const attachments=selectAttachments(input,id),text=checkedText(input.text,attachments)
+      const attachments=selectAttachments(input,id,attachmentPolicy),text=checkedText(input.text,attachments)
       if(autoContinueBlocked.has(id))throw Error('input_storage_unavailable')
       const requestId=normalizeInputRequestId(input.requestId)
       const prior=store.liveInputs.get(requestId)
@@ -1375,7 +1514,7 @@ export function makeWorkbenchService(opts: Options) {
       let saved:LiveInput
       try{
         saved=store.atomic(()=>{
-          store.attachments.bind(attachments.map(a=>a.id),id,input.draftId)
+          store.attachments.bind(attachments.map(a=>a.id),id,input.draftId,attachmentPolicy?continuationAttachmentScope(id,attachments):undefined)
           return store.liveInputs.add({id:requestId,taskId:id,runId:input.runId,text,attachments,execution:running.execution})
         })
       }catch(error){
@@ -1644,9 +1783,9 @@ export function makeWorkbenchService(opts: Options) {
       opts.unattendedAck.set(at)
       return at
     },
-    continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials):WorkbenchTaskView {
+    continueTask(id:string,text:string,options?:{restartToken?:string;inputRequestId?:string}&InputMaterials,attachmentPolicy?:'owner'):WorkbenchTaskView {
       ensureAccepting()
-      const attachments=selectAttachments(options,id)
+      const attachments=selectAttachments(options,id,attachmentPolicy)
       const inputRequestId=options?.inputRequestId===undefined?undefined:normalizeInputRequestId(options.inputRequestId)
       if(inputRequestId!==undefined){
         const prior=store.liveInputs.get(inputRequestId)
@@ -1674,15 +1813,18 @@ export function makeWorkbenchService(opts: Options) {
       const accepted:AcceptedContinuation=decision.mode==='restart_required'
         ? {mode:'restart',preview:decision.restart}
         : decision.mode==='resume' ? {mode:'resume',sessionId:task.sessionId!} : {mode:'new'}
-      try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId,attachments,options?.draftId,execution)}
+      try{return start(task,request,acceptedDirectoryIdentity,accepted,undefined,undefined,undefined,inputRequestId,attachments,options?.draftId,execution,undefined,attachmentPolicy)}
       catch(error){
         if(inputRequestId&&store.liveInputs.get(inputRequestId))try{store.liveInputs.set(inputRequestId,'held','本轮未确认开始，补充内容已保留。');bumped(id)}catch{autoContinueBlocked.add(id)}
         throw error
       }
     },
-    uploadAttachment(input:Parameters<typeof store.attachments.upload>[0]){ensureAccepting();if(input.taskId&&store.get(input.taskId).archivedAt!==null)throw Error('workbench_archived');return store.attachments.upload(input,opts.stateDir)},
+    uploadAttachment(input:Parameters<typeof store.attachments.upload>[0]){ensureAccepting();if(input.taskId&&store.get(input.taskId).archivedAt!==null)throw Error('workbench_archived');return store.attachments.upload(input,opts.stateDir,opts.ownerChatId()?strictAttachmentScope(input.taskId):undefined)},
+    uploadAttachmentChunk(input:Parameters<ReturnType<typeof store.attachmentUploads>['chunk']>[0],context:EntryContext){ensureAccepting();return uploads().chunk(input,context)},
+    attachmentUploadStatus(input:{id:string;draftId:string},context:EntryContext){return uploads().status(input,context)},
+    discardAttachmentUpload(input:{id:string;draftId:string},context:EntryContext){return uploads().discard(input,context)},
     readAttachment(taskId:string,id:string){store.get(taskId);return store.attachments.read(taskId,id,opts.stateDir)},
-    discardAttachment(id:string,draftId:string){return store.attachments.discard(id,draftId)},
+    discardAttachment(id:string,draftId:string){if(store.uploadRequestExists(id))return uploads().discard({id,draftId},{...strictAttachmentScope(),surface:'desktop'});return store.attachments.discard(id,draftId,attachmentScope())},
     setArchived(id:string,archived:boolean):WorkbenchTaskView {
       if(typeof archived!=='boolean')throw new Error('invalid_request')
       const task=store.get(id)

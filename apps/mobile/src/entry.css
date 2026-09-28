@@ -1,0 +1,23 @@
+#entry-root{margin:22px 0 18px;scroll-margin-top:24px}
+.entry-card{padding:20px;background:var(--card);border:1px solid var(--line);border-radius:var(--r-l)}
+.entry-heading{display:block;font-size:1.14rem;font-weight:650;letter-spacing:.02em;color:var(--ink)}
+.entry-intro{margin:7px 0 15px;color:var(--soft);font-size:.93rem;line-height:1.6}
+#entry-text{display:block;box-sizing:border-box;width:100%;min-height:104px;resize:vertical;border:1px solid var(--line);border-radius:var(--r-s);padding:12px;background:var(--paper);color:var(--ink);font:inherit;line-height:1.65}
+#entry-text::placeholder{color:var(--soft)}
+.entry-hint,#entry-notice{font-size:.88rem;line-height:1.65;color:var(--soft);margin:8px 0 0;overflow-wrap:anywhere}
+#entry-count:empty,#entry-notice:empty{display:none}
+.entry-more{margin:12px 0 16px;color:var(--soft);font-size:.9rem}
+.entry-more summary{cursor:pointer;min-height:32px;line-height:32px}
+.entry-more label{display:block;margin:10px 0;color:var(--ink)}
+.entry-more select{display:block;box-sizing:border-box;width:100%;min-height:44px;margin-top:6px;border:1px solid var(--line);border-radius:var(--r-s);padding:8px;background:var(--card);color:var(--ink);font:inherit}
+.entry-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+#entry-root button{min-height:44px;padding:9px 14px;border:1px solid var(--line);border-radius:var(--r-s);font:inherit;background:transparent;color:var(--ink);cursor:pointer}
+#entry-submit{background:var(--accent)!important;border-color:var(--accent)!important;color:var(--card)!important}
+#entry-refresh{border-color:transparent!important;font-size:.88rem!important;color:var(--soft)!important}
+#entry-root button:disabled{opacity:.5;cursor:default}
+#entry-root :focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.entry-pending,.entry-received{margin-top:10px;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-m);background:var(--card);font-size:.92rem;overflow-wrap:anywhere}
+.entry-pending p{margin:0 0 6px;white-space:pre-wrap}
+.entry-pending small{display:block;color:var(--soft);line-height:1.65}
+.entry-pending button,.entry-received button{display:block;margin-top:8px;font-size:.88rem!important}
+@media(prefers-reduced-motion:reduce){#entry-root{scroll-behavior:auto}}

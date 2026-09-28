@@ -6,9 +6,11 @@ import type {NativeHistoryMessage} from './native-history'
 import type { Db } from '../../lib/db'
 import {makeLiveInputStore} from './live-inputs'
 import {makeTaskAttachmentStore} from './attachments'
+import {createAttachmentUploads} from './attachment-uploads'
 import {makeExecutionSettingsStore,NATIVE_EXECUTION_CHOICE} from './execution-settings'
 import {makeControlReceiptStore} from './control-receipts'
 import {makeCreationReceiptStore} from './creation-receipts'
+import {createEntryStore} from './entry-store'
 import {makeWechatNotificationStore} from './wechat-notifications'
 import {makeArtifactDeliveryStore} from './artifact-deliveries'
 import {makeTimelineEvents} from './timeline-events'
@@ -18,6 +20,7 @@ import type {AgentActivity} from '../agent-provider'
 export type TaskStatus = 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 export interface Task {
   id: string; title: string; path: string; providerId: string; status: TaskStatus
+  workspaceKind: 'project' | 'managed'
   createdAt: number; updatedAt: number; error: string | null; archivedAt: number | null
 }
 export interface WorkbenchProject { id:string; path:string; name:string; providerId:string; createdAt:number }
@@ -27,7 +30,7 @@ export interface StoredTask extends Task { ownerChatId: string | null; sessionId
 export interface TaskEvent { id: number; taskId: string; kind: 'user' | 'text' | 'tool_call' | 'system' | 'error'; text: string; createdAt: number; sourceId?:string|null; runId?:string; activity?:AgentActivity; attachments?:import('./attachments').Attachment[] }
 export interface Artifact { id: string; taskId: string; name: string; mime: string; size: number; sha256: string; createdAt: number; approvedAt: number | null }
 export interface StoredArtifact extends Artifact { storagePath: string }
-const TASK_SELECT = 'SELECT id,title,path,provider_id AS providerId,owner_chat_id AS ownerChatId,session_id AS sessionId,status,error,created_at AS createdAt,updated_at AS updatedAt,archived_at AS archivedAt FROM workbench_tasks'
+const TASK_SELECT = 'SELECT id,title,path,provider_id AS providerId,owner_chat_id AS ownerChatId,session_id AS sessionId,status,error,created_at AS createdAt,updated_at AS updatedAt,archived_at AS archivedAt,workspace_kind AS workspaceKind FROM workbench_tasks'
 const HANDOFF_SELECT='SELECT id,source_task_id AS sourceTaskId,target_task_id AS targetTaskId,purpose,request,packet_sha256 AS packetSha256,artifact_refs_json AS artifactRefsJson,quote_json AS quoteJson,created_at AS createdAt,request_event_id AS requestEventId,source_native_id AS sourceNativeId,target_native_id AS targetNativeId,packet_json AS packetJson,token_hash AS tokenHash FROM workbench_handoffs'
 const SOURCE_SELECT='SELECT id,task_id AS taskId,provider_id AS providerId,native_id AS nativeId,cwd,imported_at AS importedAt,first_dispatched_at AS firstDispatchedAt,snapshot_sha256 AS snapshotSha256,observed_fingerprint AS observedFingerprint,selected_message_count AS selectedMessageCount,truncated,snapshot_json AS snapshotJson,pages_json AS pagesJson FROM workbench_sources'
 const ART_SELECT = 'SELECT id,task_id AS taskId,name,mime,size,sha256,storage_path AS storagePath,created_at AS createdAt,approved_at AS approvedAt FROM workbench_artifacts'
@@ -97,12 +100,16 @@ export function makeWorkbenchStore(db: Db) {
   return {
     addProject,
     projects:()=>db.query<WorkbenchProject,[]>(PROJECT_SELECT+' ORDER BY created_at,id').all().map(projectName),
-    atomic:<T>(operation:()=>T):T=>db.transaction(operation)(),
+    atomic:<T>(operation:()=>T,immediate=false):T=>{const transaction=db.transaction(operation);return immediate?transaction.immediate():transaction()},
     attachments:makeTaskAttachmentStore(db),
+    uploadRequestExists:(id:string)=>!!db.query('SELECT id FROM workbench_attachment_uploads WHERE id=?').get(id),
+    attachmentUploads:(options:Omit<Parameters<typeof createAttachmentUploads>[0],'db'|'attachments'>)=>createAttachmentUploads({...options,db,attachments:makeTaskAttachmentStore(db)}),
     execution:makeExecutionSettingsStore(db),
     liveInputs:makeLiveInputStore(db),
     controlReceipts:makeControlReceiptStore(db),
     creationReceipts:makeCreationReceiptStore(db),
+    entryRequests:createEntryStore(db),
+    taskMatterId:(id:string)=>db.query<{id:string|null},[string]>('SELECT matter_id AS id FROM workbench_tasks WHERE id=?').get(id)?.id??null,
     wechatNotifications:makeWechatNotificationStore(db),
     artifactDeliveries:makeArtifactDeliveryStore(db),
     reviewMarks:{
@@ -156,10 +163,10 @@ export function makeWorkbenchStore(db: Db) {
     list: () => db.query<StoredTask, []>(`${TASK_SELECT} ORDER BY updated_at DESC,rowid DESC LIMIT 200`).all().map(publicTask),
     listOwned:(ownerChatId:string,limit=8)=>db.query<StoredTask,[string,number]>(`${TASK_SELECT} WHERE owner_chat_id=? AND archived_at IS NULL ORDER BY updated_at DESC,id DESC LIMIT ?`).all(ownerChatId,Math.max(1,Math.min(20,limit))).map(publicTask),
     ownedProjects(ownerChatId:string,providers?:readonly string[]):Array<{path:string;providerId:string}> {
-      const rows=db.query<{path:string;providerId:string},[string]>('SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? ORDER BY updated_at DESC,id DESC').all(ownerChatId)
+      const rows=db.query<{path:string;providerId:string},[string]>("SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' ORDER BY updated_at DESC,id DESC").all(ownerChatId)
       const accepted=[...new Set(providers??[])]
       const available=accepted.length
-        ? db.query<{path:string;providerId:string},string[]>(`SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND provider_id IN (${accepted.map(()=>'?').join(',')}) ORDER BY updated_at DESC,id DESC`).all(ownerChatId,...accepted)
+        ? db.query<{path:string;providerId:string},string[]>(`SELECT path,provider_id AS providerId FROM workbench_tasks WHERE owner_chat_id=? AND workspace_kind='project' AND provider_id IN (${accepted.map(()=>'?').join(',')}) ORDER BY updated_at DESC,id DESC`).all(ownerChatId,...accepted)
         : []
       const preferred=new Map<string,string>()
       for(const row of available)if(!preferred.has(row.path))preferred.set(row.path,row.providerId)
@@ -202,12 +209,12 @@ export function makeWorkbenchStore(db: Db) {
     clearWriterError(id:string) {
       db.query("UPDATE workbench_tasks SET error=NULL WHERE id=? AND error='writer_not_closed'").run(id)
     },
-    create(input: { title: string; path: string; providerId: string; ownerChatId: string | null }): StoredTask {
+    create(input: { title: string; path: string; providerId: string; ownerChatId: string | null;workspaceKind?:'project'|'managed';registerProject?:boolean }): StoredTask {
       let id: string
       do { id = randomBytes(4).toString('hex') } while (db.query('SELECT 1 FROM workbench_tasks WHERE id=?').get(id))
       const now = Date.now()
-      addProject(input)
-      db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,owner_chat_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').run(id,input.title,input.path,input.providerId,input.ownerChatId,'queued',now,now)
+      if(input.registerProject!==false)addProject(input)
+      db.query('INSERT INTO workbench_tasks(id,title,path,provider_id,owner_chat_id,status,created_at,updated_at,workspace_kind) VALUES(?,?,?,?,?,?,?,?,?)').run(id,input.title,input.path,input.providerId,input.ownerChatId,'queued',now,now,input.workspaceKind??'project')
       return get(id)
     },
     update(id: string, status: TaskStatus, error: string | null = null) {

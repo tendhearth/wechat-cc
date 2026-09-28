@@ -22,7 +22,7 @@
 
 1. ~~合 #117~~(09-23)· ~~发 1.7.0~~(09-27)。
 2. **补真机验证**(下面「欠的真机账」整节)—— 这三周里大量功能只有单测和 selftest 绿,没在真机上走过一遍。
-3. **Codex `codex/cc-task-entry` 第一批**(普通用户交办体验)先行;它合入后再做 ⑥(设备令牌进 token-registry)与 workbench service 拆分。cli.ts 与 bootstrap 的拆分不等它。四份设计稿:`superpowers/specs/2026-09-27-{device-token-registry,cli-split,bootstrap-split,workbench-service-split}-design.md`。
+3. **Codex `codex/cc-task-entry` 第一批**(普通用户交办体验)先行，独立分支实现统一创建回执、默认独立工作位置和手机材料续说，自动验证与真机待验状态见[验证记录](superpowers/plans/2026-09-26-task-entry-validation.md);它合入后再做 ⑥(设备令牌进 token-registry)与 workbench service 拆分。cli.ts 与 bootstrap 的拆分不等它。四份设计稿:`superpowers/specs/2026-09-27-{device-token-registry,cli-split,bootstrap-split,workbench-service-split}-design.md`。
 4. 之后才谈新功能。
 
 ## 1.7.0 里交付的(2026-09-27 已发)

@@ -36,7 +36,7 @@ import { PROVIDER_IDS } from '../lib/provider-ids'
 import { buildFeed, decodeCursor, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
 import blinkArt from './mobile-blink-art.json'
 import { MOBILE_BRAND_ICON_PNG, MOBILE_BRAND_ICON_SIZES } from './mobile-brand-icon'
-import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions} from './mobile-workbench'
+import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions,type MobileUploadActions} from './mobile-workbench'
 import {mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileHomeFocus} from './mobile-home-focus'
 import type {MatterSayInput} from '../core/matters/service'
@@ -66,6 +66,8 @@ const PERSONA_MAX_CHARS = 8000
 export interface SettingsPanelDeps {
   stateDir: string
   ownerChatId: () => string | null
+  entry?:MobileEntryActions
+  uploads?:MobileUploadActions
   chatPrefs: {
     get(chatId: string): Record<string, unknown>
     set(chatId: string, patch: Record<string, unknown>): Record<string, unknown>
@@ -586,7 +588,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             return json({ ok: true, seen_until: clamped })
           }
           // ── 「一件事」:与桌面同一份数据,同一套语义 ──────────────────
-          const mobileResponse=await mobileWorkbenchRoute(deps.matters,url,req)
+          const mobileResponse=await mobileWorkbenchRoute(deps.matters,url,req,deps.entry,deps.uploads)
           if(mobileResponse)return mobileResponse
           if (url.pathname === '/m/api/matters' && req.method === 'GET') {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
@@ -608,7 +610,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             let body: unknown
             try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
             const b = (body ?? {}) as Record<string,unknown>
-            if (typeof b.id !== 'string' || !/^[a-f0-9]{8}$/.test(b.id) || typeof b.text !== 'string' || !b.text.trim() || b.text.length > 20_000) return json({ ok: false, error: 'invalid' }, 400)
+            if (typeof b.id !== 'string' || !/^[a-f0-9]{8}$/.test(b.id) || typeof b.text !== 'string' || (!b.text.trim()&&(!Array.isArray(b.attachmentIds)||!b.attachmentIds.length)) || b.text.length > 20_000) return json({ ok: false, error: 'invalid' }, 400)
             try { const input=mobileSayInput(b);return json({ ok: true, result: input?await deps.matters.say(b.id,b.text,input):await deps.matters.say(b.id,b.text) }) }
             catch (e) {
               return mobileMatterError(e)

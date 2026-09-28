@@ -127,3 +127,14 @@ export function readBounded(fd: number, maxBytes: number, sizeError: string, cha
   if (BigInt(length) !== before.size || after.size !== before.size || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs) throw new Error(changedError)
   return {bytes: bytes.subarray(0, length), before}
 }
+
+/** Read a bounded regular file under a verified root without following links. */
+export function readAnchoredFile(root:string,relativeName:string,maxBytes:number,errors:{path:string;size:string;changed:string}):Buffer {
+  if(!Number.isSafeInteger(maxBytes)||maxBytes<1)throw new Error(errors.size)
+  if(!isAbsolute(root)||isAbsolute(relativeName))throw new Error(errors.path)
+  const parts=relativeName.split(/[\\/]/)
+  if(!parts.length||parts.some(part=>!part||part==='.'||part==='..'))throw new Error(errors.path)
+  const fd=openAnchored(root,parts,constants.O_RDONLY|O_NONBLOCK,0,errors.path)
+  try{return readBounded(fd,maxBytes,errors.size,errors.changed).bytes}
+  finally{closeSync(fd)}
+}

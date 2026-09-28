@@ -16,7 +16,9 @@ let els: Record<string, El>
 let recorder: { mimeType: string; addEventListener: Function; start: Function; stop: Function }
 let stopTrack: ReturnType<typeof vi.fn>
 let invoke: ReturnType<typeof vi.fn<(cmd: string, args: Record<string, unknown>) => Promise<string>>>
-let onDelegate: ReturnType<typeof vi.fn<(text: string) => Promise<boolean>>>
+type EntryResult = import('../../../../src/core/workbench/service').EntryResult
+const accepted = {receipt:{requestId:'request',taskId:'aabbccdd',matterId:'aabbccdd',runId:'run',acceptedAt:1},task:{id:'aabbccdd'}} as EntryResult
+let onDelegate: ReturnType<typeof vi.fn<(draft: {text:string;visibleMessages?:{role:'user'|'cc';text:string}[]}) => Promise<EntryResult|null>>>
 const settle = async () => { for (let i = 0; i < 15; i++) await Promise.resolve() }
 
 beforeEach(async () => {
@@ -42,27 +44,27 @@ beforeEach(async () => {
   }
   stopTrack = vi.fn()
   invoke = vi.fn(async (cmd: string) => cmd === 'agent_transcribe' ? '识别的文字' : '回复')
-  onDelegate = vi.fn(async () => true)
+  onDelegate = vi.fn(async () => accepted)
   const { initConversePage } = await import('./converse.js')
   initConversePage({ invoke, onDelegate, media: { getUserMedia: async () => ({ getTracks: () => [{ stop: stopTrack }] }) as any, makeRecorder: () => recorder as any } })
 })
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
 
-it('delegates only this draft and clears it only after the workbench accepts it', async () => {
+it('offers only visible public messages and clears its unchanged source draft after acceptance', async () => {
   els['converse-input']!.value = '私人聊天内容'
   els['converse-send']!.handlers.click!()
   await settle()
-  let finish!: (accepted: boolean) => void
+  let finish!: (result: EntryResult|null) => void
   onDelegate.mockImplementation(() => new Promise(resolve => { finish = resolve }))
   els['converse-input']!.value = '  整理本项目的说明  '
   els['converse-delegate']!.handlers.click?.()
   await settle()
-  expect(onDelegate).toHaveBeenCalledExactlyOnceWith('整理本项目的说明')
+  expect(onDelegate).toHaveBeenCalledExactlyOnceWith({text:'  整理本项目的说明  ',visibleMessages:[{role:'user',text:'私人聊天内容'},{role:'cc',text:'回复'}]})
   expect(els['converse-input']!.value).toBe('  整理本项目的说明  ')
   expect(els['converse-delegate']!.disabled).toBe(true)
   els['converse-delegate']!.handlers.click?.()
   els['converse-send']!.handlers.click!()
-  finish(true)
+  finish(accepted)
   await settle()
   expect(onDelegate).toHaveBeenCalledOnce()
   expect(invoke.mock.calls.filter(([cmd]) => cmd === 'agent_converse')).toHaveLength(1)
@@ -71,7 +73,7 @@ it('delegates only this draft and clears it only after the workbench accepts it'
 })
 
 it.each(['cancel', 'failure'])('keeps the chat draft when delegation ends with %s', async result => {
-  onDelegate.mockImplementation(async () => { if (result === 'failure') throw new Error('offline'); return false })
+  onDelegate.mockImplementation(async () => { if (result === 'failure') throw new Error('offline'); return null })
   els['converse-input']!.value = '不能丢的要求'
   els['converse-delegate']!.handlers.click?.()
   await settle()
@@ -174,4 +176,26 @@ it('keeps the empty state when the registry is unavailable', async () => {
   initConversePage({ invoke, invokeWorkbenchApi: vi.fn(async () => { throw new Error('offline') }) })
   await settle()
   expect(els['converse-scroll']!.innerHTML).toContain('canonical/lit/front.png')
+})
+
+it('keeps a newer source draft when an older preview receives its acceptance', async () => {
+  let finish!: (result: EntryResult|null) => void
+  onDelegate.mockImplementation(() => new Promise(resolve => {finish = resolve}))
+  els['converse-input']!.value = '第一份要求'
+  els['converse-delegate']!.handlers.click!(); await settle()
+  els['converse-input']!.value = '再补一份要求'
+  finish(accepted); await settle()
+  expect(els['converse-input']!.value).toBe('再补一份要求')
+})
+
+it('excludes errors and system notices from the visible discussion candidates', async () => {
+  invoke.mockRejectedValueOnce(new Error('private diagnostic'))
+  els['converse-input']!.value = '已发送的公开要求'
+  els['converse-send']!.handlers.click!(); await settle()
+  onDelegate.mockRejectedValueOnce(new Error('offline'))
+  els['converse-input']!.value = '这次交办'
+  els['converse-delegate']!.handlers.click!(); await settle()
+  els['converse-delegate']!.handlers.click!(); await settle()
+  expect(onDelegate.mock.calls[1]?.[0]).toEqual({text:'这次交办',visibleMessages:[{role:'user',text:'已发送的公开要求'}]})
+  expect(els['converse-scroll']!.innerHTML).toContain('暂时无法交给 CC 做')
 })

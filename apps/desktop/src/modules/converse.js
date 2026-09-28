@@ -18,7 +18,7 @@ import { formatInvokeError } from "../ipc.js"
 
 /**
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
- * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, onDelegate?: (text: string) => Promise<boolean> }} Deps
+ * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, onDelegate?: (draft: import('./task-entry.js').Draft) => Promise<import('./task-entry.js').EntryResult|null> }} Deps
  * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean }} ConverseMsg
  */
 
@@ -421,7 +421,7 @@ async function sendMessage(deps) {
 
 // ── event wiring ───────────────────────────────────────────────────────
 
-/** Hand over only the current compose text; history stays in the chat.
+/** Offer visible public discussion as unchecked preview candidates.
  * @param {Deps} deps */
 async function delegateDraft(deps) {
   if (!deps.onDelegate || sending || delegating || recording || transcribing || requestingMic) return
@@ -433,7 +433,8 @@ async function delegateDraft(deps) {
   reflectMic()
   let accepted = false
   try {
-    accepted = await deps.onDelegate(draft.trim())
+    const result = await deps.onDelegate({text: draft, visibleMessages: messages.flatMap(message => (message.role === 'user' || message.role === 'cc') && !message.pending && message.text.trim() ? [{role: message.role, text: message.text}] : [])})
+    accepted = !!result
     if (accepted && input.value === draft) input.value = ""
   } catch {
     messages.push({ id: nextId++, role: "system", text: "暂时无法交给 CC 做，要求已保留，请稍后再试。" })

@@ -1,6 +1,6 @@
 
 // 传输层:先直连(同 Wi-Fi),失败且配了 remote 就走中继隧道(端到端加密)。
-var b64u = { enc: function(b){ return btoa(String.fromCharCode.apply(null, new Uint8Array(b))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"") },
+var b64u = { enc: function(b){ var bytes=new Uint8Array(b),parts=[];for(var i=0;i<bytes.length;i+=0x8000)parts.push(String.fromCharCode.apply(null,bytes.subarray(i,i+0x8000)));return btoa(parts.join("")).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"") },
   dec: function(s){ s = s.replace(/-/g,"+").replace(/_/g,"/"); var bin = atob(s); var a = new Uint8Array(bin.length); for (var i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return a } }
 var tun = null
 function tunnel() {
