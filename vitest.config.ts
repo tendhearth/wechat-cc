@@ -67,5 +67,12 @@ export default defineConfig({
     // 2026-09-19 一并跟着 testTimeout 去掉平台分叉:满载套件里 hook 同样被
     // 放大 5~10 倍,10s 对 mkdtemp + 建库这种活一样没有余量。
     hookTimeout: 20_000,
+    // 2026-09-27:第三个同病的旋钮。`expect.poll` 的缺省 1s 是空闲机器的口径,
+    // 工作台那 200 多处 `await expect.poll(...)` 在 windows-latest 上两连红 ——
+    // service.test.ts:36 的 settle() 等一次真 git 快照收尾,报的不是超时而是
+    // `Matcher did not succeed in time`,所以 ci-flakes.json 的两条超时模式都
+    // 认不出它。按 testTimeout / hookTimeout 同一个理由抬到 10s:条件成立立刻
+    // 返回,只有真等不到才多等 9s;别去逐处加 `{ timeout }`。
+    expect: { poll: { timeout: 10_000 } },
   },
 })
