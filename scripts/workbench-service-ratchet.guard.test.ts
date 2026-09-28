@@ -13,9 +13,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const WB = join(ROOT, 'src', 'core', 'workbench')
 const src = readFileSync(join(WB, 'service.ts'), 'utf8')
 
-// Task 4 会把这两个数调成搬完 review 域之后的实际值;此刻先按 6c455751 的现状钉住「不再增长」。
-const MAX_LINES = 1965
-const MAX_INNER_FUNCTIONS = 130
+// 搬走一个域就把这两个数往下调(只降不升)。当前值 = PR 1 搬完 review 域之后的实际值。
+const MAX_LINES = 1797
+const MAX_INNER_FUNCTIONS = 68
 
 const lineCount = (s: string) => s.split('\n').length - (s.endsWith('\n') ? 1 : 0)
 /** makeWorkbenchService 体内两格缩进的 `function x(` / `async function x(` / `const x=(`/`const x = (` 箭头。 */

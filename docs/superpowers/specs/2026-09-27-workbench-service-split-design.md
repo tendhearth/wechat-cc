@@ -1,6 +1,6 @@
 # `core/workbench/service.ts` 按域拆模块(梳理第 7 步之三)设计
 
-日期:2026-09-27。状态:设计稿,主人已在对话中批准;代码未动;**实施等 Codex `codex/cc-task-entry` 第一批合入 dev 之后**(它会改这个文件)。基线 origin/dev 39cf7f5f。同批:[cli 拆分](2026-09-27-cli-split-design.md)、[bootstrap 拆分](2026-09-27-bootstrap-split-design.md)。
+日期:2026-09-27。状态:**实施中**(2026-09-28)。Codex #129 已合,基线改为 dev `6c455751`;§1 按新行号重画在 [`plans/2026-09-28-workbench-service-split-pr1.md`](../plans/2026-09-28-workbench-service-split-pr1.md),PR 1(地基 types/state/ctx + review 域 + 断环 + 棘轮)见该计划。下文 §1 行号仍是 39cf7f5f 的,只作域划分参考。同批:[cli 拆分](2026-09-27-cli-split-design.md)、[bootstrap 拆分](2026-09-27-bootstrap-split-design.md)。
 
 **目标:** `makeWorkbenchService`(201-1822,1622 行,64 个内函数,11 项共享可变状态)拆成 `src/core/workbench/service/<domain>.ts` 若干模块,共享一个**显式**的 `ServiceCtx`;`service.ts` 只剩组装与 public 对象。20 份 `service-*.test.ts` **一行不改、每步全绿**。顺手断掉 `wechat-control.ts ↔ service.ts` 的环,把 workbench 目录的 `no-circular` 从 warn 升 error。
 
