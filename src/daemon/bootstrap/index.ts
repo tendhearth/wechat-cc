@@ -49,6 +49,7 @@ import { wirePermissions } from './wire-permissions'
 import { wireModelOptions } from './wire-model-options'
 import { wireInstructions } from './wire-instructions'
 import { wireCoordinator } from './wire-coordinator'
+import { wireA2a } from './wire-a2a'
 import { Ref } from '../../lib/lifecycle'
 import { resolveClaudeBinary, hydrateClaudeAuthEnvFromUserSettings } from './claude-env'
 import { wireSocial } from './wire-social'
@@ -57,9 +58,6 @@ import { wirePairing } from './wire-pairing'
 import { wireHealth } from './wire-health'
 import { wireSelfRestart } from './wire-self-restart'
 import { resolveSelfAgentId } from '../../core/self-agent-id'
-import { createA2ARegistry } from '../../core/a2a-registry'
-import { createA2AClient } from '../../core/a2a-client'
-import { makeA2AEventsStore } from '../../core/a2a-events-store'
 import { createYiHub, type YiHub } from '../../core/yi-hub'
 import { createYiWsServer } from '../yi-ws-server'
 import type { BootstrapDeps, Bootstrap } from './types'
@@ -300,31 +298,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     },
   })
 
-  // ── A2A wiring ────────────────────────────────────────────────────────
-  // Instantiate registry, client, events store. These are cheap objects
-  // that don't require a2a_listen to be configured — they're also used
-  // by POST /v1/a2a/send (outbound calls from the MCP tool).
-  const a2aRegistry = createA2ARegistry({ stateDir: deps.stateDir })
-  const a2aClient = createA2AClient()
-  const a2aEventsStore = makeA2AEventsStore(deps.db)
-
-  // Helper: resolve operator chat. v1 = earliest-updated_at conversation
-  // row (first chat the operator ever used; most stable identity).
-  //
-  // Cache only POSITIVE hits: on a fresh install the conversations table
-  // is empty until the operator sends their first WeChat message. If we
-  // also cached `null`, every A2A notify that arrived before that first
-  // message would be permanently dropped as `dropped_no_operator_chat`
-  // — even after the operator binds — until daemon restart.
-  let cachedOperatorChatId: string | null = null
-  function resolveOperatorChatId(): string | null {
-    if (cachedOperatorChatId) return cachedOperatorChatId
-    const row = deps.db.query<{ chat_id: string }, []>(
-      'SELECT chat_id FROM conversations ORDER BY updated_at ASC LIMIT 1',
-    ).get()
-    if (row?.chat_id) cachedOperatorChatId = row.chat_id
-    return cachedOperatorChatId
-  }
+  // A2A registry / client / events + resolveOperatorChatId — ./wire-a2a.ts(2026-09-27 拆分)。
+  const { a2aRegistry, a2aClient, a2aEventsStore, resolveOperatorChatId } = wireA2a(ctxBase)
 
   // Single server holder — assigned once wireA2aServer builds it below.
   // (曾经有一条注释说 wireSocial 的 getServerBaseUrl thunk 闭包在这上面、
