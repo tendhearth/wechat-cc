@@ -56,4 +56,30 @@ describe('b64u', () => {
   it('decodes an empty string to an empty Uint8Array', () => {
     expect(b64uDecode('')).toEqual(new Uint8Array(0))
   })
+
+  /**
+   * 协议包解的是不可信的线上数据。base64(url) 每组 4 个字符编 3 字节;剥掉尾部
+   * 填充后,合法长度模 4 只能是 0、2、3 —— 模 4 余 1 意味着只剩 6 个 bit,连一个
+   * 字节都不够,是畸形输入,必须拒绝而不是悄悄截断。
+   */
+  it('rejects a decoded length whose stripped-padding length is 1 mod 4', () => {
+    // 'AQIDB' 长度 5,5 % 4 === 1;修复前会悄悄截断成 [1,2,3]。
+    expect(() => b64uDecode('AQIDB')).toThrow()
+    // 更广地扫一遍:任何 len % 4 === 1 的字符串都必须被拒绝。
+    for (const len of [1, 5, 9, 13]) {
+      const s = 'A'.repeat(len)
+      expect(() => b64uDecode(s)).toThrow()
+    }
+  })
+
+  it('rejects characters outside the base64url alphabet', () => {
+    expect(() => b64uDecode('A!QI')).toThrow()
+    expect(() => b64uDecode('AQI+')).toThrow() // 标准 base64 的 '+',不是 url 版的
+    expect(() => b64uDecode('AQI/')).toThrow() // 标准 base64 的 '/'
+  })
+
+  it('rejects padding that appears anywhere but the end', () => {
+    expect(() => b64uDecode('AQ=D')).toThrow()
+    expect(() => b64uDecode('=AQD')).toThrow()
+  })
 })

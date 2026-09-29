@@ -50,6 +50,12 @@ export function b64uEncode(bytes: Uint8Array): string {
 export function b64uDecode(s: string): Uint8Array {
   const clean = s.replace(/=+$/, '')
   const len = clean.length
+  // 每 4 个字符编 3 字节;剥掉尾部填充后合法长度模 4 只能是 0、2、3 —— 模 4 余 1
+  // 只剩 6 个 bit,连一个字节都不够,是畸形输入(不可信的线上数据,必须拒绝而
+  // 不是悄悄截断)。
+  if (len % 4 === 1) {
+    throw new Error(`b64uDecode: invalid length ${len} (mod 4 === 1 can't encode whole bytes)`)
+  }
   const byteLen = Math.floor((len * 6) / 8)
   const out = new Uint8Array(byteLen)
   let outIdx = 0

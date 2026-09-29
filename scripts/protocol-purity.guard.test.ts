@@ -28,7 +28,11 @@ interface Violation {
 
 const FORBIDDEN_RULES: Array<{ name: string; pattern: RegExp }> = [
   { name: `from 'node:`, pattern: /from\s+['"]node:/ },
-  { name: 'require(', pattern: /\brequire\(/ },
+  // 动态 import('node:...') / import("node:...") 绕不开静态 `from` 那条正则
+  // (它要求字面量 "from" 紧跟引号),所以单独一条。
+  { name: `import('node:`, pattern: /\bimport\s*\(\s*['"]node:/ },
+  // 容忍 require 和左括号之间有空白(`require ('x')`),不只是紧贴的 `require(`。
+  { name: 'require(', pattern: /\brequire\s*\(/ },
   { name: 'Buffer', pattern: /\bBuffer\b/ },
   { name: 'crypto.subtle', pattern: /crypto\.subtle\b/ },
   { name: 'window', pattern: /\bwindow\b/ },
@@ -88,7 +92,8 @@ describe('packages/protocol 纯净守卫', () => {
     try {
       const fixture = [
         "import fs from 'node:fs'",
-        "const mod = require('foo')",
+        "const mod = await import('node:fs')",
+        "const mod2 = require ('foo')",
         'const b = Buffer.from([1])',
         'await crypto.subtle.digest("SHA-256", data)',
         'window.location.href',
