@@ -690,7 +690,7 @@ export interface InternalApi {
 export type RouteHandler = (
   query: URLSearchParams,
   body: unknown,
-  caller?: { tier: UserTier; origin: 'file' | 'session' | 'operator'; chatId?: string },
+  caller?: { tier: UserTier; origin: import('./token-registry').TokenOrigin; chatId?: string },
 ) => Promise<{ status: number; body: unknown }> | { status: number; body: unknown }
 
 export type RouteTable = Record<string, RouteHandler | undefined>
