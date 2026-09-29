@@ -131,7 +131,7 @@ describe('makePhoneEvents', () => {
     hub.dispose()
   })
 
-  it('poll 定时器缺省 2000ms、unref 过', () => {
+  it('poll 定时器缺省 2000ms、unref 过(在第一个订阅到来时才起)', () => {
     const realSetInterval = globalThis.setInterval
     let capturedMs: number | undefined
     let unrefCalled = false
@@ -147,6 +147,9 @@ describe('makePhoneEvents', () => {
     }) as unknown) as typeof globalThis.setInterval)
 
     const hub = makePhoneEvents({ sources: [] })
+    expect(capturedMs).toBeUndefined() // 还没有订阅者,不该起定时器(修 5)
+
+    hub.subscribe('home', undefined, () => {})
     expect(capturedMs).toBe(2000)
     expect(unrefCalled).toBe(true)
 
@@ -163,10 +166,30 @@ describe('makePhoneEvents', () => {
     }) as unknown) as typeof globalThis.setInterval)
 
     const hub = makePhoneEvents({ sources: [], pollMs: 250 })
+    hub.subscribe('home', undefined, () => {})
     expect(capturedMs).toBe(250)
 
     hub.dispose()
     spy.mockRestore()
+  })
+
+  it('轮询定时器随订阅者数量起停(用假时钟数「当前挂着的定时器数」)', () => {
+    vi.useFakeTimers()
+    try {
+      const source: TopicSource = { match: t => t === 'home', snapshot: async () => ({ ok: true }) }
+      const hub = makePhoneEvents({ sources: [source] })
+      expect(vi.getTimerCount()).toBe(0) // 修 5:零订阅者时不该有定时器在跑
+
+      const unsub = hub.subscribe('home', undefined, () => {})
+      expect(vi.getTimerCount()).toBe(1) // 来了一个订阅者,定时器起了
+
+      unsub()
+      expect(vi.getTimerCount()).toBe(0) // 最后一个订阅者走了,定时器也该停
+
+      hub.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('dispose 清定时器与订阅;之后的 subscribe/poke/dispose 都是空操作', async () => {
@@ -285,6 +308,132 @@ describe('makePhoneEvents', () => {
     hub.poke()
     await tick()
     expect(received).toHaveLength(1) // 没有被当成变化
+
+    hub.dispose()
+  })
+
+  // ---- 评审第一轮修复(2026-09-29)----
+
+  it('修 1:取消订阅后数据变了,拿旧 since 重新订阅回来 ⇒ 照样发(topic state 可以被回收,但 seq 全局单调、同一 epoch 不复用)', async () => {
+    let value: Record<string, number> = { v: 1 }
+    const source: TopicSource = { match: t => t === 'matter/x', snapshot: async () => value }
+    const hub = makePhoneEvents({ sources: [source] })
+
+    const first: Array<{ epoch: string; seq: number }> = []
+    const unsub = hub.subscribe('matter/x', undefined, ev => first.push(ev))
+    await tick()
+    expect(first).toHaveLength(1)
+    const staleSince = { epoch: first[0]!.epoch, seq: first[0]!.seq }
+
+    unsub() // 最后一个订阅者走了 —— topic state 允许被回收
+    value = { v: 2 } // 没人订阅期间数据变了
+
+    const second: unknown[] = []
+    hub.subscribe('matter/x', staleSince, ev => second.push(ev))
+    await tick()
+    expect(second).toHaveLength(1) // 不能因为 since 巧合命中旧 seq 就当成「没变化」而漏发
+
+    hub.dispose()
+  })
+
+  it('修 1:1000 次 matter/<id> 订阅/取消订阅,不留下 topic state(不泄漏)', async () => {
+    const source: TopicSource = { match: t => t.startsWith('matter/'), snapshot: async t => ({ id: t }) }
+    const hub = makePhoneEvents({ sources: [source] })
+    const debug = hub as unknown as { topicCount(): number }
+
+    for (let i = 0; i < 1000; i++) {
+      const unsub = hub.subscribe(`matter/id-${i}`, undefined, () => {})
+      unsub()
+    }
+    expect(debug.topicCount()).toBe(0) // 取消订阅同步清掉 topics 表,不用等重算落地
+
+    await tick() // 让还在飞的 recomputeTopic 都落地,确认不会把已经没人要的 topic 塞回去
+    expect(debug.topicCount()).toBe(0)
+
+    hub.dispose()
+  })
+
+  it('修 2:dispose 之后来源才 resolve ⇒ 不再发送', async () => {
+    let resolveSnapshot: ((v: unknown) => void) | undefined
+    const source: TopicSource = {
+      match: t => t === 'home',
+      snapshot: () => new Promise(resolve => { resolveSnapshot = resolve }),
+    }
+    const hub = makePhoneEvents({ sources: [source] })
+    const received: unknown[] = []
+    hub.subscribe('home', undefined, ev => received.push(ev))
+    await tick() // 让 recomputeTopic 跑到 await source.snapshot() 卡住
+
+    hub.dispose()
+    resolveSnapshot!({ ok: true }) // dispose 之后来源才回来
+    await tick()
+    await tick()
+
+    expect(received).toHaveLength(0)
+  })
+
+  it('修 3:快照有循环引用 ⇒ 记一条日志、本轮跳过,不产生未处理的 rejection,其它主题不受影响', async () => {
+    const cyclic: Record<string, unknown> = { a: 1 }
+    cyclic.self = cyclic
+    const logs: Array<[string, string]> = []
+    const unhandled: unknown[] = []
+    const onUnhandled = (err: unknown) => unhandled.push(err)
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const sourceHome: TopicSource = { match: t => t === 'home', snapshot: async () => cyclic }
+      const sourceAgents: TopicSource = { match: t => t === 'agents', snapshot: async () => ({ ok: true }) }
+      const hub = makePhoneEvents({ sources: [sourceHome, sourceAgents], log: (tag, line) => logs.push([tag, line]) })
+      const homeEvents: unknown[] = []
+      const agentEvents: unknown[] = []
+      hub.subscribe('home', undefined, ev => homeEvents.push(ev))
+      hub.subscribe('agents', undefined, ev => agentEvents.push(ev))
+      await tick()
+      await tick()
+
+      expect(homeEvents).toHaveLength(0) // 序列化失败,这轮啥都没发出去
+      expect(agentEvents).toHaveLength(1) // 另一个主题不受影响
+      expect(logs.length).toBeGreaterThanOrEqual(1)
+
+      hub.dispose()
+      await tick()
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+    expect(unhandled).toHaveLength(0)
+  })
+
+  it('修 3:快照带 BigInt(JSON.stringify 会抛)⇒ 同样按「本轮跳过」处理,不崩', async () => {
+    const logs: Array<[string, string]> = []
+    const source: TopicSource = { match: t => t === 'home', snapshot: async () => ({ n: 1n }) }
+    const hub = makePhoneEvents({ sources: [source], log: (tag, line) => logs.push([tag, line]) })
+    const received: unknown[] = []
+    hub.subscribe('home', undefined, ev => received.push(ev))
+    await tick()
+    expect(received).toHaveLength(0)
+    expect(logs.length).toBeGreaterThanOrEqual(1)
+    hub.dispose()
+  })
+
+  it('修 4:遵循 toJSON(覆盖 Date)—— 快照里的 Date 变了也能测出变化', async () => {
+    let value: { d: Date } = { d: new Date('2026-01-01T00:00:00.000Z') }
+    const source: TopicSource = { match: t => t === 'home', snapshot: async () => value }
+    const hub = makePhoneEvents({ sources: [source] })
+    const received: Array<{ seq: number }> = []
+    hub.subscribe('home', undefined, ev => received.push(ev))
+    await tick()
+    expect(received).toHaveLength(1)
+
+    value = { d: new Date('2026-01-02T00:00:00.000Z') }
+    hub.poke()
+    await tick()
+    expect(received).toHaveLength(2) // Date 变了要测得出来,不能被排序逻辑吞成 {}
+    expect(received[1]!.seq).toBeGreaterThan(received[0]!.seq)
+
+    // Date 没变(同一时刻的两个不同 Date 实例)不该被当成变化。
+    value = { d: new Date('2026-01-02T00:00:00.000Z') }
+    hub.poke()
+    await tick()
+    expect(received).toHaveLength(2)
 
     hub.dispose()
   })
