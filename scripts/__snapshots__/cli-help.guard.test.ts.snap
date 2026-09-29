@@ -31,7 +31,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > access --help 1`] = `
-"Allowlist management (list / remove) — the add path stays in the admin chat flow (wechat-cc access v1.7.0 (dev))
+"Allowlist management (list / remove) — the add path stays in the admin chat flow (wechat-cc access v1.7.1 (dev))
 
 USAGE wechat-cc access list|remove
 
@@ -110,7 +110,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > account --help 1`] = `
-"Account management (export/import + takeover for multi-device, decommission a bound bot) (wechat-cc account v1.7.0 (dev))
+"Account management (export/import + takeover for multi-device, decommission a bound bot) (wechat-cc account v1.7.1 (dev))
 
 USAGE wechat-cc account remove|export|import|takeover
 
@@ -271,7 +271,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > agent --help 1`] = `
-"A2A agent registry — register, inspect, pause, resume, remove, and view activity (wechat-cc agent v1.7.0 (dev))
+"A2A agent registry — register, inspect, pause, resume, remove, and view activity (wechat-cc agent v1.7.1 (dev))
 
 USAGE wechat-cc agent inspect|add|list|pause|resume|remove|activity|info|edit|test
 
@@ -346,7 +346,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > avatar --help 1`] = `
-"Avatar metadata + binary set/remove (per chat / bot / user key) (wechat-cc avatar v1.7.0 (dev))
+"Avatar metadata + binary set/remove (per chat / bot / user key) (wechat-cc avatar v1.7.1 (dev))
 
 USAGE wechat-cc avatar info|set|remove
 
@@ -397,7 +397,7 @@ ARGUMENTS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > backup --help 1`] = `
-"备份/恢复不可再生数据（记忆、事实库、配置） (wechat-cc backup v1.7.0 (dev))
+"备份/恢复不可再生数据（记忆、事实库、配置） (wechat-cc backup v1.7.1 (dev))
 
 USAGE wechat-cc backup create|list|restore
 
@@ -432,7 +432,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > ci --help 1`] = `
-"看 CI 的信号面(见 docs/maintainer/ci-and-flakes.md) (wechat-cc ci v1.7.0 (dev))
+"看 CI 的信号面(见 docs/maintainer/ci-and-flakes.md) (wechat-cc ci v1.7.1 (dev))
 
 USAGE wechat-cc ci triage
 
@@ -472,7 +472,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > companion --help 1`] = `
-"Companion (proactive contact) controls (wechat-cc companion v1.7.0 (dev))
+"Companion (proactive contact) controls (wechat-cc companion v1.7.1 (dev))
 
 USAGE wechat-cc companion push|introspect
 
@@ -500,7 +500,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > connection --help 1`] = `
-"Inspect this machine's WeChat connection (wechat-cc connection v1.7.0 (dev))
+"Inspect this machine's WeChat connection (wechat-cc connection v1.7.1 (dev))
 
 USAGE wechat-cc connection probe
 
@@ -527,7 +527,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > conversations --help 1`] = `
-"Per-chat conversation modes (RFC 03) (wechat-cc conversations v1.7.0 (dev))
+"Per-chat conversation modes (RFC 03) (wechat-cc conversations v1.7.1 (dev))
 
 USAGE wechat-cc conversations list
 
@@ -584,7 +584,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > daemon --help 1`] = `
-"Daemon process control (wechat-cc daemon v1.7.0 (dev))
+"Daemon process control (wechat-cc daemon v1.7.1 (dev))
 
 USAGE wechat-cc daemon kill|kill-residual|api-info|a2a
 
@@ -629,7 +629,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > demo --help 1`] = `
-"Seed/unseed demo data for the dashboard (wechat-cc demo v1.7.0 (dev))
+"Seed/unseed demo data for the dashboard (wechat-cc demo v1.7.1 (dev))
 
 USAGE wechat-cc demo seed|unseed
 
@@ -754,7 +754,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > dialogue --help 1`] = `
-"Dialogue page data — backfill + query commands (wechat-cc dialogue v1.7.0 (dev))
+"Dialogue page data — backfill + query commands (wechat-cc dialogue v1.7.1 (dev))
 
 USAGE wechat-cc dialogue backfill|timeline|threads|search|thread-detail|lock|unlock
 
@@ -774,7 +774,7 @@ Use wechat-cc dialogue <command> --help for more information about a command.
 `;
 
 exports[`cli.ts --help 快照(逐字节) > doctor --help 1`] = `
-"Diagnose install/setup state (wechat-cc doctor v1.7.0 (dev))
+"Diagnose install/setup state (wechat-cc doctor v1.7.1 (dev))
 
 USAGE wechat-cc doctor [OPTIONS] 
 
@@ -805,7 +805,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > events --help 1`] = `
-"Companion decisions log (wechat-cc events v1.7.0 (dev))
+"Companion decisions log (wechat-cc events v1.7.1 (dev))
 
 USAGE wechat-cc events list
 
@@ -819,7 +819,7 @@ Use wechat-cc events <command> --help for more information about a command.
 `;
 
 exports[`cli.ts --help 快照(逐字节) > federated-source --help 1`] = `
-"Expose wechat as a hearth federated source (run mode: stdio MCP spawned by hearth) (wechat-cc federated-source v1.7.0 (dev))
+"Expose wechat as a hearth federated source (run mode: stdio MCP spawned by hearth) (wechat-cc federated-source v1.7.1 (dev))
 
 USAGE wechat-cc federated-source [OPTIONS] 
 
@@ -874,7 +874,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > guard --help 1`] = `
-"Network-guard config + live probe (wechat-cc guard v1.7.0 (dev))
+"Network-guard config + live probe (wechat-cc guard v1.7.1 (dev))
 
 USAGE wechat-cc guard status|enable|disable
 
@@ -992,7 +992,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > hand --help 1`] = `
-"Multi-machine (一个大脑多手): pair a brain with hands. Smooth: hand invite → hand join <code> (wechat-cc hand v1.7.0 (dev))
+"Multi-machine (一个大脑多手): pair a brain with hands. Smooth: hand invite → hand join <code> (wechat-cc hand v1.7.1 (dev))
 
 USAGE wechat-cc hand invite|join|list|ping|add|accept
 
@@ -1072,7 +1072,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > hook --help 1`] = `
-"终端 claude / codex 会话的事件推到微信(hooks 出口):install / uninstall / status;claude / codex 由 hooks 自己调 (wechat-cc hook v1.7.0 (dev))
+"终端 claude / codex 会话的事件推到微信(hooks 出口):install / uninstall / status;claude / codex 由 hooks 自己调 (wechat-cc hook v1.7.1 (dev))
 
 USAGE wechat-cc hook claude|codex|install|uninstall|status
 
@@ -1090,7 +1090,7 @@ Use wechat-cc hook <command> --help for more information about a command.
 `;
 
 exports[`cli.ts --help 快照(逐字节) > install --help 1`] = `
-"Deprecated since v1.0 — use \`wechat-cc service install\` (wechat-cc install v1.7.0 (dev))
+"Deprecated since v1.0 — use \`wechat-cc service install\` (wechat-cc install v1.7.1 (dev))
 
 USAGE wechat-cc install [OPTIONS] 
 
@@ -1103,7 +1103,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > install-progress --help 1`] = `
-"Read the current service-install progress (JSON: {step, total, label, ts}). Used by the desktop wizard to poll real install state instead of guessing. Empty {} when no install is in flight. (wechat-cc install-progress v1.7.0 (dev))
+"Read the current service-install progress (JSON: {step, total, label, ts}). Used by the desktop wizard to poll real install state instead of guessing. Empty {} when no install is in flight. (wechat-cc install-progress v1.7.1 (dev))
 
 USAGE wechat-cc install-progress [OPTIONS] 
 
@@ -1151,7 +1151,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > license --help 1`] = `
-"Manage the Pro license (wechat-cc license v1.7.0 (dev))
+"Manage the Pro license (wechat-cc license v1.7.1 (dev))
 
 USAGE wechat-cc license status|activate|deactivate
 
@@ -1167,7 +1167,7 @@ Use wechat-cc license <command> --help for more information about a command.
 `;
 
 exports[`cli.ts --help 快照(逐字节) > list --help 1`] = `
-"List bound accounts (wechat-cc list v1.7.0 (dev))
+"List bound accounts (wechat-cc list v1.7.1 (dev))
 
 USAGE wechat-cc list 
 
@@ -1176,7 +1176,7 @@ USAGE wechat-cc list
 `;
 
 exports[`cli.ts --help 快照(逐字节) > log --help 1`] = `
-"Write a structured log line to channel.log (for frontend telemetry) (wechat-cc log v1.7.0 (dev))
+"Write a structured log line to channel.log (for frontend telemetry) (wechat-cc log v1.7.1 (dev))
 
 USAGE wechat-cc log [OPTIONS] <TAG> <MSG>
 
@@ -1195,7 +1195,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > logs --help 1`] = `
-"Tail the daemon's channel.log (default --tail 50) (wechat-cc logs v1.7.0 (dev))
+"Tail the daemon's channel.log (default --tail 50) (wechat-cc logs v1.7.1 (dev))
 
 USAGE wechat-cc logs [OPTIONS] 
 
@@ -1210,7 +1210,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > mcp-server --help 1`] = `
-"Internal — run a stdio MCP server entrypoint (wechat | delegate). Spawned by the daemon when running from the compiled binary. (wechat-cc mcp-server v1.7.0 (dev))
+"Internal — run a stdio MCP server entrypoint (wechat | delegate). Spawned by the daemon when running from the compiled binary. (wechat-cc mcp-server v1.7.1 (dev))
 
 USAGE wechat-cc mcp-server [OPTIONS] <NAME>
 
@@ -1369,7 +1369,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > memory --help 1`] = `
-"Companion v2 memory files (per user) (wechat-cc memory v1.7.0 (dev))
+"Companion v2 memory files (per user) (wechat-cc memory v1.7.1 (dev))
 
 USAGE wechat-cc memory list|read|write|profile-read|synthesize|nightly|profile|projects|status
 
@@ -1408,7 +1408,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > milestones --help 1`] = `
-"Per-chat milestone fires (wechat-cc milestones v1.7.0 (dev))
+"Per-chat milestone fires (wechat-cc milestones v1.7.1 (dev))
 
 USAGE wechat-cc milestones list
 
@@ -1440,7 +1440,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > mode --help 1`] = `
-"Conversation mode management (programmatic switch via running daemon) (wechat-cc mode v1.7.0 (dev))
+"Conversation mode management (programmatic switch via running daemon) (wechat-cc mode v1.7.1 (dev))
 
 USAGE wechat-cc mode set
 
@@ -1490,7 +1490,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > observations --help 1`] = `
-"Companion observations (per chat) (wechat-cc observations v1.7.0 (dev))
+"Companion observations (per chat) (wechat-cc observations v1.7.1 (dev))
 
 USAGE wechat-cc observations list|archive
 
@@ -1505,7 +1505,7 @@ Use wechat-cc observations <command> --help for more information about a command
 `;
 
 exports[`cli.ts --help 快照(逐字节) > pair --help 1`] = `
-"配对码 — 和朋友的 bot 建边:无参生成码,带 6 位码接受(≠ hand invite/join 的干活手配对;需运行中的 daemon) (wechat-cc pair v1.7.0 (dev))
+"配对码 — 和朋友的 bot 建边:无参生成码,带 6 位码接受(≠ hand invite/join 的干活手配对;需运行中的 daemon) (wechat-cc pair v1.7.1 (dev))
 
 USAGE wechat-cc pair [OPTIONS] [CODE]
 
@@ -1643,7 +1643,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > plugin --help 1`] = `
-"Manage plugins (MCP tool providers) (wechat-cc plugin v1.7.0 (dev))
+"Manage plugins (MCP tool providers) (wechat-cc plugin v1.7.1 (dev))
 
 USAGE wechat-cc plugin list|search|install|upgrade|setup|sync|setup-status|enable|disable
 
@@ -1699,7 +1699,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > provider --help 1`] = `
-"Agent provider config (claude / codex / cursor / openai / gemini / agy) (wechat-cc provider v1.7.0 (dev))
+"Agent provider config (claude / codex / cursor / openai / gemini / agy) (wechat-cc provider v1.7.1 (dev))
 
 USAGE wechat-cc provider show|set
 
@@ -1714,7 +1714,7 @@ Use wechat-cc provider <command> --help for more information about a command.
 `;
 
 exports[`cli.ts --help 快照(逐字节) > reply --help 1`] = `
-"Send a text reply via WeChat (CLI fallback for the MCP \`reply\` tool — same on-disk state as the running daemon) (wechat-cc reply v1.7.0 (dev))
+"Send a text reply via WeChat (CLI fallback for the MCP \`reply\` tool — same on-disk state as the running daemon) (wechat-cc reply v1.7.1 (dev))
 
 USAGE wechat-cc reply [OPTIONS] 
 
@@ -1917,7 +1917,7 @@ Notes for 0.x users:
 `;
 
 exports[`cli.ts --help 快照(逐字节) > run --help 1`] = `
-"Start the daemon (foreground). --dangerously skips permission prompts. (wechat-cc run v1.7.0 (dev))
+"Start the daemon (foreground). --dangerously skips permission prompts. (wechat-cc run v1.7.1 (dev))
 
 USAGE wechat-cc run [OPTIONS] 
 
@@ -1978,7 +1978,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > self --help 1`] = `
-"自维护:部署自身、让 CC 自己改自己（仅 macOS launchd；见 docs/maintainer/deploy.md 与 self-change.md） (wechat-cc self v1.7.0 (dev))
+"自维护:部署自身、让 CC 自己改自己（仅 macOS launchd；见 docs/maintainer/deploy.md 与 self-change.md） (wechat-cc self v1.7.1 (dev))
 
 USAGE wechat-cc self change|deploy
 
@@ -2028,7 +2028,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > selftest --help 1`] = `
-"自维护:真机闭环自检(daemon 需在跑);见 docs/maintainer/verify.md (wechat-cc selftest v1.7.0 (dev))
+"自维护:真机闭环自检(daemon 需在跑);见 docs/maintainer/verify.md (wechat-cc selftest v1.7.1 (dev))
 
 USAGE wechat-cc selftest workbench|chat
 
@@ -2043,7 +2043,7 @@ Use wechat-cc selftest <command> --help for more information about a command.
 `;
 
 exports[`cli.ts --help 快照(逐字节) > service --help 1`] = `
-"Daemon service management — register / start / stop / uninstall a launchd / systemd / ScheduledTask entry (wechat-cc service v1.7.0 (dev))
+"Daemon service management — register / start / stop / uninstall a launchd / systemd / ScheduledTask entry (wechat-cc service v1.7.1 (dev))
 
 USAGE wechat-cc service [OPTIONS] <ACTION>
 
@@ -2147,7 +2147,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > sessions --help 1`] = `
-"Per-project session inspection (resume-id store + jsonl readers) (wechat-cc sessions v1.7.0 (dev))
+"Per-project session inspection (resume-id store + jsonl readers) (wechat-cc sessions v1.7.1 (dev))
 
 USAGE wechat-cc sessions list-chats|list-projects|read-jsonl|delete|search
 
@@ -2165,7 +2165,7 @@ Use wechat-cc sessions <command> --help for more information about a command.
 `;
 
 exports[`cli.ts --help 快照(逐字节) > setup --help 1`] = `
-"Scan QR + bind a WeChat bot (wechat-cc setup v1.7.0 (dev))
+"Scan QR + bind a WeChat bot (wechat-cc setup v1.7.1 (dev))
 
 USAGE wechat-cc setup [OPTIONS] 
 
@@ -2178,7 +2178,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > setup-poll --help 1`] = `
-"Poll a setup-status QR code (paired with \`setup --qr-json\`) (wechat-cc setup-poll v1.7.0 (dev))
+"Poll a setup-status QR code (paired with \`setup --qr-json\`) (wechat-cc setup-poll v1.7.1 (dev))
 
 USAGE wechat-cc setup-poll [OPTIONS] --qrcode=<qrcode>
 
@@ -2193,7 +2193,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > setup-status --help 1`] = `
-"Machine-readable setup status for desktop UI (wechat-cc setup-status v1.7.0 (dev))
+"Machine-readable setup status for desktop UI (wechat-cc setup-status v1.7.1 (dev))
 
 USAGE wechat-cc setup-status [OPTIONS] 
 
@@ -2232,7 +2232,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > social --help 1`] = `
-"觅食台 — list 心愿 (wishes), and enable (开启) (wechat-cc social v1.7.0 (dev))
+"觅食台 — list 心愿 (wishes), and enable (开启) (wechat-cc social v1.7.1 (dev))
 
 USAGE wechat-cc social wishes|enable
 
@@ -2247,7 +2247,7 @@ Use wechat-cc social <command> --help for more information about a command.
 `;
 
 exports[`cli.ts --help 快照(逐字节) > status --help 1`] = `
-"Show daemon status + accounts (wechat-cc status v1.7.0 (dev))
+"Show daemon status + accounts (wechat-cc status v1.7.1 (dev))
 
 USAGE wechat-cc status 
 
@@ -2256,7 +2256,7 @@ USAGE wechat-cc status
 `;
 
 exports[`cli.ts --help 快照(逐字节) > update --help 1`] = `
-"Pull latest + reinstall deps + restart service. --check probes only (no side effects). (wechat-cc update v1.7.0 (dev))
+"Pull latest + reinstall deps + restart service. --check probes only (no side effects). (wechat-cc update v1.7.1 (dev))
 
 USAGE wechat-cc update [OPTIONS] 
 
