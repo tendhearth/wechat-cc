@@ -2009,6 +2009,21 @@ OPTIONS
 "
 `;
 
+exports[`cli.ts --help 快照(逐字节) > selftest --help > selftest phone --help 1`] = `
+"真机闭环自检:配一台一次性设备经真中继连隧道,核对 v2 协议/agents 事件流,收尾撤销该设备(daemon 需在跑) (selftest phone)
+
+USAGE selftest phone [OPTIONS] --executor=<executor>
+
+OPTIONS
+
+      --executor=<executor>    执行者 provider id(claude / codex / cursor / agy / …),给自检建的最小工作台任务用 (Required)
+                     --json    JSON 输出(SelftestReport),不输出人读版                                             
+  --timeout-ms=<timeout_ms>    总超时,毫秒(缺省 90000)                                                           
+
+
+"
+`;
+
 exports[`cli.ts --help 快照(逐字节) > selftest --help > selftest workbench --help 1`] = `
 "真机闭环自检:起一个 scratch 工作台任务,核对回复/工具活动/权限卡放行/写文件等信号(daemon 需在跑) (selftest workbench)
 
@@ -2030,12 +2045,13 @@ OPTIONS
 exports[`cli.ts --help 快照(逐字节) > selftest --help 1`] = `
 "自维护:真机闭环自检(daemon 需在跑);见 docs/maintainer/verify.md (wechat-cc selftest v1.7.1 (dev))
 
-USAGE wechat-cc selftest workbench|chat
+USAGE wechat-cc selftest workbench|chat|phone
 
 COMMANDS
 
-  workbench    真机闭环自检:起一个 scratch 工作台任务,核对回复/工具活动/权限卡放行/写文件等信号(daemon 需在跑)
-       chat    真机闭环自检:一轮测试对话(daemon 代 spawn,不发微信),核对回复/工具调用(daemon 需在跑)   
+  workbench    真机闭环自检:起一个 scratch 工作台任务,核对回复/工具活动/权限卡放行/写文件等信号(daemon 需在跑)   
+       chat    真机闭环自检:一轮测试对话(daemon 代 spawn,不发微信),核对回复/工具调用(daemon 需在跑)      
+      phone    真机闭环自检:配一台一次性设备经真中继连隧道,核对 v2 协议/agents 事件流,收尾撤销该设备(daemon 需在跑)
 
 Use wechat-cc selftest <command> --help for more information about a command.
 
