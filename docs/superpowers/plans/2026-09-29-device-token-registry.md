@@ -101,7 +101,7 @@ export interface DeviceRow { id: string; created_at: string; last_seen_at: strin
 export interface DeviceStore { list(): DeviceRow[]; tokens(): string[]; pair(): { token: string; id: string } | null; revoke(id: string): string | null /* 返回被删的 token */; forgetAll(): string[]; touch(id: string): void; label(id: string, text: string): boolean; idOf(token: string): string | null }
 export function makeDeviceStore(stateDir: string, now?: () => number): DeviceStore
 export interface DeviceCredentials { bootRegister(): void; pair(): { token: string; id: string } | null; revoke(id: string): boolean; forgetAll(): void; touch(id: string): void; label(id: string, text: string): boolean; list(): DeviceRow[]; tokens(): string[] }
-export function makeDeviceCredentials(deps: { store: DeviceStore; tokens: PanelTokens }): DeviceCredentials
+export function makeDeviceCredentials(deps: { store: DeviceStore; tokens: PanelTokens; routeAllow: ReadonlySet<string> }): DeviceCredentials  // 执行时裁决:routeAllow 注入,device-store 不依赖 phone-routes
 export const deviceSessionKey = (id: string) => `device:${id}`
 ```
 
