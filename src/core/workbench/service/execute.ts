@@ -1,7 +1,7 @@
 /**
  * execute 域:一条 run 的完整生命周期(派发 → 事件流 → 结算 → 终态),以及创建入口 create / continueTask / createWechat。
  * 从 service.ts 逐字搬来(spec 2026-09-27-workbench-service-split §3 第 10 项);spec §4:execute 跨九个域是事实,不再往下切。
- * 跨域依赖用「已建好的域对象显式注入」(domains),工厂顶部解构成与 service.ts 同名的局部量,函数体零替换;
+ * 跨域依赖用「已建好的域对象显式注入」(domains),工厂顶部解构成与 service.ts 同名的局部量,函数体只做机械替换(opts.x → ctx.deps.x、touched → ctx.hub.touched 等);
  * 真正需要晚绑定的只有 lifecycle.pump → ctx.actions.execute(那头由 lifecycle 走 Ref)。
  */
 import { randomUUID } from 'node:crypto'
@@ -89,12 +89,12 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
   const {requireInput,canResume,continuation,provider}=domains.admission
   const {selectAttachments,combinedAttachments,continuationAttachmentScope}=domains.attachments
   const {quota}=domains.quota
-  const {taskView,runtimeSnapshot,isReplied,projects}=domains.view
+  const {taskView,runtimeSnapshot,projects}=domains.view
   const {validateNativeDecision}=domains.native
   const {holdInputs,drainInputs,settleRuntimeInput}=domains.inputs
   const {revokeCredentials,cancelIdleClose,reportOnce,recollectOnce,settleQuiet,settleAfterDecision,releaseReservation,confirmLateClose,markUncertain,pump}=domains.lifecycle
   const {requestNotice,terminalReportBody,stageFinishedNotice,publishFinishedNotices}=domains.notices
-  const {collect,captureCodeChanges,retakeBaseline}=domains.artifacts
+  const {collect,retakeBaseline}=domains.artifacts
   async function execute(task:StoredTask,text:string,running:Active) {
     const sessionKey=`workbench/${task.id}`
     let finalStatus:TaskStatus='failed'
