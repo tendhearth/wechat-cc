@@ -23,8 +23,12 @@
  *     没事可做时不重连,下次用到再连。
  *   - 订阅重连后带最后见过的 `{epoch, seq}` 重新 `sub`;事件是状态快照,
  *     不保证每条中间事件都到,同 epoch 下 seq 不更新的一律丢(去重)。
- *   - 明文 `auth_failed` ⇒ 所有挂起请求以它拒绝,永不再连;其它明文错误
- *     (中继的 `daemon_offline` 等)⇒ 挂起请求以该 code 拒绝,断开后按退避重连。
+ *   - 明文 `auth_failed` ⇒ 所有挂起请求以它拒绝,永不再连;明文 `stream_unknown`
+ *     (后台跟中继重连过、忘了这条流)⇒ 断开按退避重连,这条连接上在途的可重试请求耗一次
+ *     重试以同一 rid 重发,不可重试的以 `stream_unknown` 拒绝,订阅带 since 重新 sub;其它
+ *     明文错误(中继的 `daemon_offline` 等)⇒ 挂起请求以该 code 拒绝,断开后按退避重连。
+ *   - 保活:v2 连接上只挂订阅、没有挂起请求时,空闲 `keepaliveMs`(缺省 30 s)就发 `ping`,
+ *     `requestTimeoutMs` 内一帧都没回 ⇒ 当死连接丢掉重连。v1 连接从不发。
  *   - 线上来的一切先过 zod;不合形状就丢并报 `onProtocolError`,永不从
  *     socket 回调里往外抛。
  *
@@ -49,6 +53,7 @@ const DEFAULT_TIMEOUT_MS = 15_000
 const BACKOFF_BASE_MS = 500
 const BACKOFF_CAP_MS = 15_000
 const STABLE_MS = 10_000
+const DEFAULT_KEEPALIVE_MS = 30_000
 
 type Timer = ReturnType<typeof setTimeout>
 
@@ -62,6 +67,10 @@ interface Conn {
   /** 这条连接收到过几帧(任何帧都算,用来判断「悄悄死掉」)。 */
   recv: number
   hsTimer?: Timer
+  /** 保活:空闲 keepaliveMs 后触发;每收到一帧重新计时。只在 v2 连接上用。 */
+  kaTimer?: Timer
+  /** 保活 ping 已发、在等任何一帧回来(requestTimeoutMs)。 */
+  pingTimer?: Timer
 }
 
 interface Pending {
@@ -107,6 +116,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
   const retries = opts.retries ?? 1
   const hsTimeoutMs = opts.handshakeTimeoutMs ?? timeoutMs
   const deadlineMs = opts.requestDeadlineMs
+  const keepaliveMs = opts.keepaliveMs ?? DEFAULT_KEEPALIVE_MS
   const now = opts.now ?? (() => Date.now())
   const protoErr = (reason: string, detail?: unknown) => { try { opts.onProtocolError?.(reason, detail) } catch { /* 钩子自己的错不关我们的事 */ } }
   const subErr = (topic: string, code: string) => { try { opts.onSubscriptionError?.(topic, code) } catch { /* 同上 */ } }
@@ -119,6 +129,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
   let backoffAttempt = 0
   let ridSeq = 0
   let sidSeq = 0
+  let pingSeq = 0
   const byRid = new Map<string, Pending>()
   const subs = new Map<string, Sub>()
 
@@ -146,6 +157,9 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     sock.onMessage(s => {
       if (conn !== c) return
       c.recv += 1
+      // 收到任何帧都证明这条流活着、后台还认得它:清掉在等的 ping,空闲计时重来。
+      if (c.pingTimer) { clearTimeout(c.pingTimer); c.pingTimer = undefined }
+      armKeepalive(c)
       try { onFrame(c, s) } catch (e) { protoErr('handler_threw', e) }
     })
     sock.onClose(() => { if (conn === c) dropConn(c) })
@@ -156,6 +170,8 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     if (conn !== c) return
     conn = null
     if (c.hsTimer) { clearTimeout(c.hsTimer); c.hsTimer = undefined }
+    if (c.kaTimer) { clearTimeout(c.kaTimer); c.kaTimer = undefined }
+    if (c.pingTimer) { clearTimeout(c.pingTimer); c.pingTimer = undefined }
     try { c.sock.close() } catch { /* 已经关了 */ }
     if (c.readyAt !== undefined && now() - c.readyAt >= STABLE_MS) backoffAttempt = 0
     if (!closed && !fatal && needsConnection()) scheduleReconnect()
@@ -169,6 +185,32 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
       reconnectTimer = null
       if (needsConnection()) connect()
     }, delay)
+  }
+
+  // ── 保活 ────────────────────────────────────────────────────────────
+  // 只挂订阅、没有挂起请求的客户端没有任何超时会触发:后台把流忘了(它跟中继重连过)或者
+  // 连接悄悄死了,都永远察觉不到。所以空闲 keepaliveMs 就发一个 v2 `ping`;requestTimeoutMs
+  // 内一帧都没回来 ⇒ 当死连接丢掉、按退避重连、重新 sub。后台不认这条流会明文回
+  // `stream_unknown`,走 onErrorFrame 那条更快的路。v1 连接永远不发(老后台不认 ping)。
+
+  function armKeepalive(c: Conn): void {
+    if (keepaliveMs <= 0 || c.version !== 2 || conn !== c) return
+    if (c.kaTimer) clearTimeout(c.kaTimer)
+    c.kaTimer = setTimeout(() => onIdle(c), keepaliveMs)
+  }
+
+  function onIdle(c: Conn): void {
+    c.kaTimer = undefined
+    if (conn !== c || closed) return
+    armKeepalive(c)
+    // 有挂起请求 ⇒ 请求自己的超时会发现死连接;没订阅 ⇒ 这条连接断了也没人在乎。
+    if (subs.size === 0 || byRid.size > 0 || c.pingTimer) return
+    const recvAtPing = c.recv
+    sendV2(c, { t: 'ping', rid: `k${++pingSeq}` })
+    c.pingTimer = setTimeout(() => {
+      c.pingTimer = undefined
+      if (conn === c && c.recv === recvAtPing) dropConn(c)
+    }, timeoutMs)
   }
 
   function sendRaw(c: Conn, s: string): void {
@@ -199,6 +241,19 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
       dropConn(c)
       return
     }
+    if (code === 'stream_unknown') {
+      // 后台不认这条流(它跟中继重连过,流状态没了)。发在这条流上的请求多半没被处理:可重试的
+      // 按老规矩耗一次重试、以同一 rid 在新连接上重发;其余以 stream_unknown 拒绝。还没发出去
+      // 的留着等新连接。订阅在新握手后带 since 重新 sub。
+      for (const p of [...byRid.values()]) {
+        if (!p.sent || p.sentOn !== c) continue
+        if (p.timer) { clearTimeout(p.timer); p.timer = undefined }
+        if (p.retriesLeft > 0 && !p.overdue) { p.retriesLeft -= 1; p.sent = false; p.sentOn = undefined }
+        else settle(p.rid, q => q.reject(new Error(code)))
+      }
+      dropConn(c)
+      return
+    }
     failAll(new Error(code))
     dropConn(c)
   }
@@ -222,6 +277,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     negotiated = c.version
     c.readyAt = now()
     if (c.hsTimer) { clearTimeout(c.hsTimer); c.hsTimer = undefined }
+    armKeepalive(c)
     if (c.version === 1) {
       for (const sub of [...subs.values()]) { subs.delete(sub.sid); subErr(sub.topic, 'subscriptions_need_v2') }
     } else {
@@ -261,6 +317,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
       settle(m.rid, p => p.resolve(makeResponse(m.status, m.headers, bytes)))
       return
     }
+    if (m.t === 'pong') return   // 保活回执:到达本身已在 onMessage 里清掉了在等的 ping
     if (m.t === 'err') {
       if (m.rid !== undefined) settle(m.rid, p => p.reject(new Error(m.code)))
       if (m.sid !== undefined) {

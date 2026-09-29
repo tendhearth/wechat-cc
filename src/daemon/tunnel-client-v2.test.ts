@@ -404,3 +404,72 @@ describe('tunnel-client v2', () => {
     hub.dispose()
   })
 })
+
+describe('tunnel-client:认不出的流 ⇒ 明文 stream_unknown(中继重连后手机那头还挂着旧流)', () => {
+  const unknownFrames = (sock: Sock, stream: string) =>
+    sock.sent.map(s => JSON.parse(s)).filter(e => e.stream === stream && e.frame?.error === 'stream_unknown')
+
+  it('密封帧(v1 形状或 v2 形状)落在没握过手的流上 ⇒ 回一次 stream_unknown;同一流几秒内只回一次', async () => {
+    let t = 1_000_000
+    const sock = fakeSocket()
+    client(sock, { now: () => t })
+    sock.emit({ stream: 'sGone', frame: { c: '5', ct: 'AAAA' } })
+    await settle()
+    expect(unknownFrames(sock, 'sGone')).toHaveLength(1)
+    sock.emit({ stream: 'sGone', frame: { c: '6', ct: 'AAAA' } })
+    sock.emit({ stream: 'sGone', frame: { iv: 'aa', ct: 'bb' } })
+    await settle()
+    expect(unknownFrames(sock, 'sGone')).toHaveLength(1)       // 限流:不来回打乒乓
+    sock.emit({ stream: 'sOld1', frame: { iv: 'aa', ct: 'bb' } })
+    await settle()
+    expect(unknownFrames(sock, 'sOld1')).toHaveLength(1)       // 别的流各算各的
+    t += 6_000
+    sock.emit({ stream: 'sGone', frame: { c: '7', ct: 'AAAA' } })
+    await settle()
+    expect(unknownFrames(sock, 'sGone')).toHaveLength(2)       // 过了窗口再说一次
+    // 不是密封帧的垃圾不回
+    sock.emit({ stream: 'sJunk', frame: { hello: 1 } })
+    await settle()
+    expect(unknownFrames(sock, 'sJunk')).toHaveLength(0)
+  })
+
+  it('握手还在进行中(hs 紧跟着密封帧到)⇒ 不回 stream_unknown,帧照常处理', async () => {
+    const sock = fakeSocket()
+    let calls = 0
+    client(sock, { handleRequest: async () => { calls++; return new Response('{}', { headers: { 'content-type': 'application/json' } }) } })
+    const kp = x25519KeyPair()
+    sock.emit({ stream: 'sHs', frame: { hs: b64uEncode(kp.pub), v: [1, 2] } })
+    sock.emit({ stream: 'sHs', frame: { c: '0', ct: 'AAAA' } })   // 密钥还没算完就到的(假)密封帧
+    await settle()
+    expect(unknownFrames(sock, 'sHs')).toHaveLength(0)
+    expect(calls).toBe(0)
+  })
+
+  it('中继连接重连后,旧流上的帧 ⇒ 在新连接上回 stream_unknown', async () => {
+    const socks = [fakeSocket(), fakeSocket()]
+    let n = 0
+    const c = makeTunnelClient({
+      daemonId: 'cc-1', knownDeviceTokens: () => [DTOK], handleRequest: async () => new Response('{}'),
+      connect: () => socks[n++]!.ws as never, reconnectMs: 5, log: () => {},
+    })
+    c.start()
+    const p = await v2Phone(socks[0]!, 'sKeep')
+    p.send({ t: 'req', rid: 'r1', method: 'GET', path: '/m/api/x' })
+    await p.next()
+    socks[0]!.emitClose()
+    await waitFor(() => n === 2, 'reconnect')
+    const f = p.seal({ t: 'req', rid: 'r2', method: 'GET', path: '/m/api/x' })
+    socks[1]!.emit({ stream: 'sKeep', frame: f })
+    await settle()
+    expect(unknownFrames(socks[1]!, 'sKeep')).toHaveLength(1)
+    c.stop()
+  })
+
+  it('ping ⇒ pong(同一个 rid),便宜的保活', async () => {
+    const sock = fakeSocket()
+    client(sock)
+    const p = await v2Phone(sock, 'sPing')
+    p.send({ t: 'ping', rid: 'k1' })
+    expect(await p.next()).toEqual({ t: 'pong', rid: 'k1' })
+  })
+})

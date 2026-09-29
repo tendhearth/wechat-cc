@@ -185,7 +185,9 @@ describe('tunnel-client (daemon side)', () => {
     client.start()
     sock.emitMessage(JSON.stringify({ stream: 'sZ', frame: { iv: 'aa', ct: 'bb' } }))
     await new Promise(r => setTimeout(r, 0))
-    expect(sock.sent).toHaveLength(0)   // nothing sealed back
+    // Nothing sealed back (no key). Only a plaintext stream_unknown, so a phone whose stream the
+    // daemon forgot (relay reconnect) closes and re-handshakes instead of hanging (2026-09-29).
+    expect(sock.sent.map(s => JSON.parse(s))).toEqual([{ stream: 'sZ', frame: { error: 'stream_unknown' } }])
   })
 
   it('a frame from a device whose token the daemon does not know is dropped (MITM/unknown device)', async () => {

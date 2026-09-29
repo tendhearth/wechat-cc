@@ -11,8 +11,8 @@
 | `v1.ts` | `deriveV1Key` `sealV1` `openV1` | 老协议:HKDF(salt=令牌)+ AES-GCM 随机 nonce,无防重放。只为兼容老后台/老页面 |
 | `v2.ts` | `deriveV2Keys` `makeV2Channel` | v2:两个方向各一把密钥、计数器 nonce、收到重复/倒退的计数一律拒绝(防重放) |
 | `push.ts` | `derivePushKey` `sealPush` `openPush` | 推送载荷加密的密钥派生(推送本身在子项目 2 发) |
-| `messages.ts` | `ClientHello` `ServerHello` `ReqMsg` `ResMsg` `SubMsg` `UnsubMsg` `EvMsg` `ErrMsg` `V2Message` … | 线上消息的 zod 模式;`b64Encode`/`b64Decode` |
-| `client.ts` | `makeProtocolClient` | 协议客户端:握手协商 v1/v2、`request()`、`subscribe()`、重连退避 |
+| `messages.ts` | `ClientHello` `ServerHello` `ReqMsg` `ResMsg` `SubMsg` `UnsubMsg` `EvMsg` `ErrMsg` `PingMsg` `PongMsg` `V2Message` … | 线上消息的 zod 模式;`b64Encode`/`b64Decode` |
+| `client.ts` | `makeProtocolClient` | 协议客户端:握手协商 v1/v2、`request()`、`subscribe()`、重连退避、保活 |
 | `api.ts` | `PHONE_API_SCHEMAS` `PHONE_HTML_ROUTES` 及 `Matter*` `Presence` `HomeWork` `FeedEvent` … | `/m/api/*` 响应体的 zod 模式;后台有守卫测试对着真实响应核对 |
 | `browser.ts` | (默认导出 `CCP`) | 经典脚本入口,打成 IIFE 挂 `globalThis.CCP`,给不能 `import` 的手写页面用 |
 
@@ -60,6 +60,13 @@ interface ProtocolSocket {
 - 握手有自己的期限 `handshakeTimeoutMs`(缺省 = `requestTimeoutMs`),超时断开按退避重连。
 - **整体期限 `requestDeadlineMs`。** 缺省 = (`requestTimeoutMs` + `handshakeTimeoutMs` + 15 s 退避封顶) × (可用重试次数 + 1)。按默认值(15 s / 15 s / 重试 1),**后台连不上的 GET 大约 90 秒后才以 `unreachable` 失败**。
 - **app 必须自己处理这个:** 要么设 `requestDeadlineMs`(比如首屏 10–20 s),要么在等连接时显示「连接中」而不是转圈 90 秒。到期还没发出去 ⇒ `unreachable`;到期时已在途 ⇒ 这次超时后不再重试。
+
+## 保活与 stream_unknown
+
+- **后台会忘掉流。** daemon 心跳判定到中继的连接已死、重连时,会清掉全部流状态(密钥、订阅);但中继(`relay/tunnel.ts` 的 `registerDaemon`)让手机的旧流原样挂到新 socket 上 —— 手机那头的 WebSocket 不会断。
+- 这时手机再发的任何密封帧,后台都明文回 `{error:'stream_unknown'}`(每条流 5 s 内最多回一次,防乒乓;握手进行中的流不会收到)。客户端收到后:断开、按退避重连;这条连接上**在途的可重试请求**耗一次重试、以同一 rid 在新连接上重发,**不可重试的**以 `stream_unknown` 拒绝;还没发出去的等新连接;订阅在新握手后带最后的 `{epoch, seq}` 重新 `sub`。
+- **只挂订阅的客户端没有任何超时会触发**,所以有保活:v2 连接上有订阅、没有挂起请求、空闲 `keepaliveMs`(缺省 30 s,`0` 关掉)⇒ 发一个密封的 `{t:'ping', rid}`,后台回 `{t:'pong', rid}`(顺带核对令牌,被撤销就关流)。`requestTimeoutMs` 内**任何一帧**都没回来 ⇒ 当死连接丢掉、退避重连、重新订阅。后台忘了这条流时,ping 会先撞上 `stream_unknown`,恢复更快。
+- v1 连接从不发 ping(老后台不认)。老手机网页(`apps/mobile/src/transport.js`)把任何明文 `{error}` 当「挂起请求全失败、关连接」,下一次 `api()` 自然重连 —— `stream_unknown` 走的就是这条路(`apps/mobile/pairing.test.ts` 有测试)。
 
 ## 后台侧对应
 

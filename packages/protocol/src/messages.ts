@@ -25,7 +25,10 @@ export type ClientHelloT = z.infer<typeof ClientHello>
 export const ServerHello = z.object({ hs: z.string().min(1), v: z.union([z.literal(1), z.literal(2)]).optional() })
 export type ServerHelloT = z.infer<typeof ServerHello>
 
-/** 明文控制错误:后台的 `auth_failed`,中继的 `daemon_offline` 等。 */
+/**
+ * 明文控制错误:后台的 `auth_failed`(令牌不认,致命)、`stream_unknown`(后台不认这条流 ——
+ * 多半是它跟中继重连过、把流状态丢了,客户端该断开重握手),中继的 `daemon_offline` 等。
+ */
 export const ErrorFrame = z.object({ error: z.string().min(1) })
 
 export const SealedV1Frame = z.object({ iv: z.string(), ct: z.string() })
@@ -77,12 +80,15 @@ export const EvMsg = z.object({
   data: z.unknown(),
 })
 export const ErrMsg = z.object({ t: z.literal('err'), rid: z.string().optional(), sid: z.string().optional(), code: z.string().min(1) })
+/** 保活:客户端只挂着订阅、很久没收到东西时发;后台原样带 rid 回 `pong`。不进面板路由。 */
+export const PingMsg = z.object({ t: z.literal('ping'), rid: z.string().min(1) })
+export const PongMsg = z.object({ t: z.literal('pong'), rid: z.string().min(1) })
 
-export const V2Message = z.discriminatedUnion('t', [ReqMsg, ResMsg, SubMsg, UnsubMsg, EvMsg, ErrMsg])
+export const V2Message = z.discriminatedUnion('t', [ReqMsg, ResMsg, SubMsg, UnsubMsg, EvMsg, ErrMsg, PingMsg, PongMsg])
 /** 客户端 → 后台。 */
-export const V2ClientMessage = z.discriminatedUnion('t', [ReqMsg, SubMsg, UnsubMsg])
+export const V2ClientMessage = z.discriminatedUnion('t', [ReqMsg, SubMsg, UnsubMsg, PingMsg])
 /** 后台 → 客户端。 */
-export const V2ServerMessage = z.discriminatedUnion('t', [ResMsg, EvMsg, ErrMsg])
+export const V2ServerMessage = z.discriminatedUnion('t', [ResMsg, EvMsg, ErrMsg, PongMsg])
 
 export type ReqMsgT = z.infer<typeof ReqMsg>
 export type ResMsgT = z.infer<typeof ResMsg>
@@ -90,6 +96,8 @@ export type SubMsgT = z.infer<typeof SubMsg>
 export type UnsubMsgT = z.infer<typeof UnsubMsg>
 export type EvMsgT = z.infer<typeof EvMsg>
 export type ErrMsgT = z.infer<typeof ErrMsg>
+export type PingMsgT = z.infer<typeof PingMsg>
+export type PongMsgT = z.infer<typeof PongMsg>
 export type V2MessageT = z.infer<typeof V2Message>
 export type V2ClientMessageT = z.infer<typeof V2ClientMessage>
 export type V2ServerMessageT = z.infer<typeof V2ServerMessage>

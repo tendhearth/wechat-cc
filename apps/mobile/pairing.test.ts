@@ -78,4 +78,35 @@ describe('transport error frame after the handshake', () => {
     sock!.onmessage!({ data: JSON.stringify({ error: 'auth_failed' }) })
     await expect(pending).rejects.toThrow('auth_failed')
   })
+
+  it('stream_unknown (daemon reconnected to the relay and forgot this stream) ⇒ the request fails, the socket closes, the next api() re-handshakes on a fresh socket', async () => {
+    const socks: Array<{ onopen?: () => void; onmessage?: (ev: { data: string }) => void; onclose?: () => void; sent: string[]; closed: boolean }> = []
+    class FakeWS {
+      onopen?: () => void; onmessage?: (ev: { data: string }) => void; onclose?: () => void; onerror?: () => void
+      sent: string[] = []; closed = false
+      constructor() { socks.push(this); setTimeout(() => this.onopen?.(), 0) }
+      send(s: string) { this.sent.push(s) }
+      close() { this.closed = true; this.onclose?.() }
+    }
+    const env = {
+      WebSocket: FakeWS, crypto: globalThis.crypto, TextEncoder, TextDecoder, btoa, atob,
+      T: 'tLINK', REMOTE: { relay: 'wss://r', id: 'x' }, q: (p: string) => p,
+      window: { __CC_SHELL__: { relay: 'wss://r', id: 'x' } }, location: {},
+      fetch: vi.fn(async () => { throw new Error('offline') }),
+    }
+    const api = new Function(...Object.keys(env), `${readMobileSource('transport.js')}\nreturn api`)(...Object.values(env)) as
+      (path: string, opts?: object) => Promise<unknown>
+    const daemon = await generateTunnelKeypair()
+    const hs = JSON.stringify({ hs: await exportPublicKeyB64(daemon.publicKey) })
+    const first = api('/m/api/home')
+    await vi.waitFor(() => expect(socks[0]?.sent.length).toBe(1))
+    socks[0]!.onmessage!({ data: hs })
+    await vi.waitFor(() => expect(socks[0]!.sent.length).toBe(2))
+    socks[0]!.onmessage!({ data: JSON.stringify({ error: 'stream_unknown' }) })
+    await expect(first).rejects.toThrow('stream_unknown')
+    expect(socks[0]!.closed).toBe(true)
+    void api('/m/api/home').catch(() => {})
+    await vi.waitFor(() => expect(socks[1]?.sent.length).toBe(1))                              // new socket, new hs
+    expect(JSON.parse(socks[1]!.sent[0]!)).toHaveProperty('hs')
+  })
 })

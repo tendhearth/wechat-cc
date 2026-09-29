@@ -31,6 +31,8 @@ let workbench: WorkbenchService, panel: SettingsPanel, hub: TunnelHub, tunnel: T
 let wiring: ReturnType<typeof makePhoneEventsWiring>
 let store: ReturnType<typeof makeWorkbenchStore>, matters: ReturnType<typeof makeMatterStore>
 let deviceToken: string
+/** 模拟 daemon 的心跳判死中继连接:触发 close ⇒ tunnel-client 清流状态、退避后重连(中继那边手机的流不断)。 */
+let relayReconnect: () => void
 let seenValue: string | null
 let handled: string[]
 const gates: Array<{ path: string; finish: () => void }> = []
@@ -77,12 +79,14 @@ beforeEach(async () => {
   wiring = makePhoneEventsWiring({ workbench, matters, home: panel.home, changes: workbench.changes, pollMs: 40 })
   hub = makeTunnelHub()
   let incoming: ((ev: { data?: unknown }) => void) | undefined
+  let closed: ((ev: { data?: unknown }) => void) | undefined
   const daemonSocket: TunnelWS = {
     readyState: 1,
     send(raw) { hub.onDaemonFrame(DAEMON, raw) },
     close() {},
-    addEventListener(type, handler) { if (type === 'message') incoming = handler },
+    addEventListener(type, handler) { if (type === 'message') incoming = handler; if (type === 'close') closed = handler },
   }
+  relayReconnect = () => closed?.({})
   hub.registerDaemon(DAEMON, { readyState: 1, send(raw) { incoming?.({ data: raw }) }, close() {} })
   tunnel = makeTunnelClient({
     daemonId: DAEMON,
@@ -90,6 +94,7 @@ beforeEach(async () => {
     activeLinkToken: () => panel.activeLinkToken(),
     handleRequest: req => { handled.push(`${req.method} ${new URL(req.url).pathname}`); return panel.handleRequest(req) },
     connect: () => daemonSocket,
+    reconnectMs: 50,
     events: wiring.events,
     log: () => {},
   })
@@ -144,9 +149,9 @@ function phoneLine(opts: { stripV?: boolean } = {}): { open: () => ProtocolSocke
   return { open, line: { sent, streamId: () => current!.streamId, drop: () => current?.kill(), handshakes: () => handshakes } }
 }
 
-function phone(opts: { stripV?: boolean; token?: string } = {}) {
+function phone(opts: { stripV?: boolean; token?: string; keepaliveMs?: number } = {}) {
   const { open, line } = phoneLine(opts)
-  const client = makeProtocolClient({ open, token: opts.token ?? deviceToken, requestTimeoutMs: 3000 })
+  const client = makeProtocolClient({ open, token: opts.token ?? deviceToken, requestTimeoutMs: 3000, ...(opts.keepaliveMs !== undefined ? { keepaliveMs: opts.keepaliveMs } : {}) })
   clients.push(client)
   return { client, line }
 }
@@ -276,6 +281,20 @@ describe('手机协议 v2 进程内端到端', () => {
     expect(got[1]!.data).toEqual(got[0]!.data)
     expect(got[1]!.epoch).toBe(got[0]!.epoch)
     expect(got[1]!.seq).toBeGreaterThan(got[0]!.seq)
+  })
+
+  it('daemon 跟中继重连、手机只挂着订阅 ⇒ 保活碰上 stream_unknown,重握手、重新 sub,收到下一次变化', async () => {
+    const { client, line } = phone({ keepaliveMs: 200 })
+    const got = collect(client, 'agents')
+    await expect.poll(() => got.length).toBe(1)
+    relayReconnect()                                 // daemon 这边流状态全丢;中继让手机的旧流挂到新 socket 上
+    await pause(100)                                 // tunnel-client 退避(reconnectMs 50)后已重连
+    expect(line.handshakes()).toBe(1)                // 手机的 WebSocket 没断,它自己不知道
+    // 保活 200 ms + 退避 500 ms 内就重握手 —— 靠的是 daemon 明文回 stream_unknown,不是等 ping 超时(3 s)。
+    await expect.poll(() => line.handshakes(), { timeout: 2000 }).toBe(2)
+    const task = createTask('after-relay-reconnect')
+    await expect.poll(() => (got.at(-1)!.data.tasks as Array<{ id: string }>).map(t => t.id), { timeout: 5000 }).toEqual([task.id])
+    release(task)
   })
 
   it('重放旧帧被拒:同一个密封请求再注入一次,面板不会再处理,流照常可用', async () => {

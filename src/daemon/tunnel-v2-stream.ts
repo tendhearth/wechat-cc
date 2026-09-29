@@ -7,6 +7,7 @@
  *     丢掉、流不断,每条流只记一次日志。
  *   - `req`:跟 v1 同一套 URL 改写(去 d/t、注入认证过的 d= 与 _via=tunnel),交给面板;
  *     `res` 带全部响应头,正文按 content-type 判 utf8 / base64。
+ *   - `ping` ⇒ `pong`(同 rid):手机只挂着订阅时的保活,顺带核对令牌。
  *   - `sub` / `unsub`:接到 PhoneEvents 集线器;每条 `ev` 发出前、每个 `req` 处理前
  *     重新核对这条流的令牌还在不在册 —— 不在 ⇒ `onRevoked`(调用方发明文 auth_failed
  *     并忘掉这条流),这里先把订阅全退掉。
@@ -181,6 +182,7 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
     // 失败回成密封 err;这里只兜住意外(比如 seal 计数器溢出)。
     if (m.t === 'req') void onReq(m).catch(e => log('TUNNEL', `v2 req handler threw on ${stream}: ${String(e)}`))
     else if (m.t === 'sub') { if (checkToken()) onSub(m) }
+    else if (m.t === 'ping') { if (checkToken()) sendMsg({ t: 'pong', rid: m.rid }) }   // 保活;令牌被撤销的话这里就关流
     else unsubscribe(m.sid)
   }
 

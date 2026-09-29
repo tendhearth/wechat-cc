@@ -40,6 +40,7 @@ interface Conn {
   /** 黑洞:收什么都不回,也不关(换网络后没收到 TCP 关闭的死连接)。 */
   blackhole: boolean
   serverClose(): void
+  rawIn: string[]
 }
 
 function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolean; manualOpen?: boolean }) {
@@ -48,7 +49,12 @@ function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolea
   const reqs: ReqSeen[] = []
   const subMsgs: Array<{ sid: string; topic: string; since?: { epoch: string; seq: number } }> = []
   const unsubs: string[] = []
+  const pings: string[] = []
+  /** 每条连接收到的原始帧(含 hello)。 */
   const d = {
+    pings,
+    /** 收到 ping 不回 pong(但连接不死)。 */
+    noPong: false,
     conns,
     reqs,
     subMsgs,
@@ -76,6 +82,7 @@ function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolea
         subs: new Map(),
         opened: false,
         blackhole: false,
+        rawIn: [],
         fireOpen() { if (conn.opened || conn.closed) return; conn.opened = true; conn.openCb?.() },
         toClient(obj) { conn.raw(JSON.stringify(obj)) },
         raw(s) { queueMicrotask(() => { if (!conn.closed) conn.msgCb?.(s) }) },
@@ -91,6 +98,7 @@ function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolea
       return {
         send(s: string) {
           if (!conn.opened) throw new Error('InvalidStateError: still CONNECTING')
+          conn.rawIn.push(s)
           queueMicrotask(() => { if (!conn.closed && !conn.blackhole) handle(conn, s) })
         },
         onOpen(cb) { conn.openCb = cb },
@@ -159,6 +167,9 @@ function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolea
     } else if (m.t === 'unsub') {
       unsubs.push(m.sid as string)
       conn.subs.delete(m.sid as string)
+    } else if (m.t === 'ping') {
+      pings.push(m.rid as string)
+      if (!d.noPong) sendV2(conn, { t: 'pong', rid: m.rid })
     }
   }
 
@@ -695,6 +706,128 @@ describe('畸形消息', () => {
     const { c } = client(daemon)
     await c.request({ method: 'GET', path: '/warm' })
     expect(() => daemon.d.live().msgCb!('garbage')).not.toThrow()
+    c.close()
+  })
+})
+
+describe('后台不认这条流(stream_unknown)', () => {
+  it('只挂订阅 ⇒ 断开、退避重连、带最后的 {epoch, seq} 重新 sub,之后照常收事件', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    const { c, open } = client(daemon, { keepaliveMs: 0 })
+    const got: unknown[] = []
+    c.subscribe('now', d => got.push(d))
+    await flush()
+    daemon.d.emit('now', 'e1', 4, 'a')
+    await flush()
+    daemon.d.live().raw(JSON.stringify({ error: 'stream_unknown' }))
+    await flush()
+    expect(daemon.d.conns[0]!.closed).toBe(true)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(open).toHaveBeenCalledTimes(2)
+    expect(daemon.d.subMsgs[1]).toMatchObject({ topic: 'now', since: { epoch: 'e1', seq: 4 } })
+    daemon.d.emit('now', 'e1', 5, 'b')
+    await flush()
+    expect(got).toEqual(['a', 'b'])
+    c.close()
+  })
+
+  it('在途的可重试请求 ⇒ 以同一 rid 在新连接上重发并成功;不可重试的以 stream_unknown 拒绝', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    const { c } = client(daemon, { keepaliveMs: 0 })
+    await c.request({ method: 'GET', path: '/warm' })
+    daemon.d.dropNextReqs = 2
+    const g = c.request({ method: 'GET', path: '/g' })
+    const post = c.request({ method: 'POST', path: '/p', body: '{}' })
+    const postAssertion = expect(post).rejects.toThrow('stream_unknown')
+    await flush()
+    const gRid = daemon.d.reqs.find(r => r.path === '/g')!.rid
+    daemon.d.live().raw(JSON.stringify({ error: 'stream_unknown' }))
+    await flush()
+    await postAssertion
+    await vi.advanceTimersByTimeAsync(500)
+    expect((await g).status).toBe(200)
+    expect(daemon.d.reqs.filter(r => r.path === '/g').map(r => r.rid)).toEqual([gRid, gRid])
+    expect(daemon.d.reqs.filter(r => r.path === '/p')).toHaveLength(1)
+    c.close()
+  })
+})
+
+describe('保活(只挂订阅时)', () => {
+  it('keepaliveMs 内什么都没收到 ⇒ 发 ping;有 pong 就保持这条连接', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    const { c, open } = client(daemon, { keepaliveMs: 30_000 })
+    c.subscribe('now', () => {})
+    await flush()
+    await vi.advanceTimersByTimeAsync(29_000)
+    expect(daemon.d.pings).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(daemon.d.pings).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(95_000)
+    expect(daemon.d.pings.length).toBeGreaterThanOrEqual(3)
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(daemon.d.conns[0]!.closed).toBe(false)
+    c.close()
+  })
+
+  it('悄悄死掉的连接(不回也不关)⇒ ping 在 requestTimeoutMs 内没回音就断开、重连、重新 sub', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    const { c, open } = client(daemon, { keepaliveMs: 30_000 })
+    c.subscribe('now', () => {})
+    await flush()
+    daemon.d.conns[0]!.blackhole = true
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(daemon.d.conns[0]!.closed).toBe(false)
+    await vi.advanceTimersByTimeAsync(1_000)            // requestTimeoutMs = 1000
+    expect(daemon.d.conns[0]!.closed).toBe(true)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(open).toHaveBeenCalledTimes(2)
+    expect(daemon.d.subMsgs).toHaveLength(2)
+    c.close()
+  })
+
+  it('pong 不来但别的帧在来 ⇒ 算活着,不断开', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    daemon.d.noPong = true
+    const { c } = client(daemon, { keepaliveMs: 30_000 })
+    c.subscribe('now', () => {})
+    await flush()
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(daemon.d.pings).toHaveLength(1)
+    daemon.d.emit('now', 'e1', 1, 'x')
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(daemon.d.conns[0]!.closed).toBe(false)
+    c.close()
+  })
+
+  it('有挂起请求时不发 ping(请求自己的超时管);没订阅也不发;keepaliveMs:0 关掉', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    daemon.d.dropNextReqs = 1
+    const { c } = client(daemon, { keepaliveMs: 30_000, requestTimeoutMs: 60_000 })
+    const p = c.request({ method: 'GET', path: '/slow' })
+    await vi.advanceTimersByTimeAsync(45_000)
+    expect(daemon.d.pings).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(20_000)
+    await p
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(daemon.d.pings).toHaveLength(0)             // 没订阅
+    c.close()
+
+    const d2 = makeFakeDaemon({ version: 2 })
+    const { c: c2 } = client(d2, { keepaliveMs: 0 })
+    c2.subscribe('now', () => {})
+    await vi.advanceTimersByTimeAsync(300_000)
+    expect(d2.d.pings).toHaveLength(0)
+    expect(d2.d.conns).toHaveLength(1)
+    c2.close()
+  })
+
+  it('v1 连接从不发 ping', async () => {
+    const daemon = makeFakeDaemon({ version: 1 })
+    const { c } = client(daemon, { keepaliveMs: 1_000 })
+    await c.request({ method: 'GET', path: '/a' })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(daemon.d.conns[0]!.rawIn).toHaveLength(2)    // hello + 那一个请求
+    expect(daemon.d.conns[0]!.closed).toBe(false)
     c.close()
   })
 })

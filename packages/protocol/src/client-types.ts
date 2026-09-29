@@ -45,6 +45,12 @@ export interface ClientOpts {
    * (该请求可用的重试次数 + 1):每次尝试都够一整轮「退避 → 握手 → 等回复」。
    */
   requestDeadlineMs?: number
+  /**
+   * 保活间隔,缺省 30 s,0 关掉。v2 连接上挂着订阅、又没有挂起请求时,这么久什么都没收到就发
+   * 一个 `ping`;`requestTimeoutMs` 内一帧都没回来 ⇒ 当死连接丢掉、退避重连、带 since 重新订阅。
+   * v1 连接从不发。
+   */
+  keepaliveMs?: number
   /** 时钟(毫秒),缺省 Date.now。用于判断连接是否稳定到可以清零退避。 */
   now?: () => number
   /** 丢弃了一条畸形/无法解密的线上消息,或 hello 畸形(只做记录)。 */

@@ -142,6 +142,26 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     if (typeof (pingTimer as unknown as { unref?: () => void }).unref === 'function') (pingTimer as unknown as { unref: () => void }).unref()
   }
 
+  // 认不出的流(2026-09-29 终审):心跳判死重连后 streams 清空了,但中继 registerDaemon 让手机
+  // 的旧流原样挂到新 socket 上 —— 手机那头 WebSocket 不断,它再发的密封帧在这里一律找不到
+  // 状态。以前只记一行就丢,只挂订阅的客户端永远察觉不到(Live Activity / 角标冻住)。现在
+  // 明文回 `{error:'stream_unknown'}`,客户端据此断开重握手。握手进行中的流不会走到这里:
+  // hs 进了这条流的串行链,后面的帧排在它后面,轮到时状态已经在了。每条流每 5 s 最多回一次,
+  // 防止跟一个坏客户端来回打乒乓。
+  const STREAM_UNKNOWN_EVERY_MS = 5_000
+  const unknownNotified = new Map<string, number>()
+  function notifyStreamUnknown(stream: string, frame: unknown): void {
+    const ct = (frame as { ct?: unknown } | null)?.ct
+    if (typeof ct !== 'string') { log('TUNNEL', `non-sealed frame on unknown stream ${stream} — dropped`); return }
+    const t = now()
+    const last = unknownNotified.get(stream)
+    if (last !== undefined && t - last < STREAM_UNKNOWN_EVERY_MS) return
+    for (const [s, at] of unknownNotified) if (t - at >= STREAM_UNKNOWN_EVERY_MS) unknownNotified.delete(s)
+    unknownNotified.set(stream, t)
+    log('TUNNEL', `sealed frame on unknown stream ${stream} (relay reconnect / before handshake) — told phone stream_unknown`)
+    sendToStream(stream, { error: 'stream_unknown' })
+  }
+
   const defaultConnect = (url: string): TunnelWS => new (globalThis as unknown as { WebSocket: new (u: string) => TunnelWS }).WebSocket(url)
   const connect = deps.connect ?? defaultConnect
 
@@ -175,7 +195,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     // the paired token whose HKDF(bits, token) key decrypts it. A MITM relay
     // knows no token, so no candidate authenticates → dropped.
     const st = streams.get(stream)
-    if (!st) { log('TUNNEL', `sealed frame before handshake on ${stream} — dropped`); return }
+    if (!st) { notifyStreamUnknown(stream, frame); return }
     if (st.v2) { await onV2Frame(stream, st, frame); return }
     let reqBytes: Uint8Array | null = null
     if (st.key) {
