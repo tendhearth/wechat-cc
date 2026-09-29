@@ -5258,7 +5258,7 @@ dependencies = [
 
 [[package]]
 name = "wechat_cc_desktop"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "qrcode",
  "reqwest 0.12.28",
