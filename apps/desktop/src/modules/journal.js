@@ -15,6 +15,42 @@ import { invokeApi } from '../api.js'
 import { escapeHtml, showToast } from '../view.js'
 import { icon } from './icons.js'
 
+/** 推荐理由段的开头(与 src/core/hunt-catch.ts 的 REASON_RE 同一张词表)。 */
+const REASON_RE = /^[*#\s]*(?:为什么你会感兴趣|推荐理由|为什么推荐|对你有什么用|适合你|怎么用)[*\s]*[:：\s]/
+
+/**
+ * 旧记录归组(2026-09-29,取代 Codex #114 的一半):hunt-catch 修好之前,「推荐理由」段被单独存成一条
+ * 没链接的记录。展示时把它并进紧挨着的上一条 —— 同一次打猎(同 ts)、同 chat、同状态、编号连续、
+ * 理由段本身没链接。原始数据不动;返回的是拷贝,带 `sourceIds`,卡上的状态 / 删除覆盖组里每一条。
+ * @param {Array<any>} items
+ */
+export function groupRecommendations(items) {
+  const copies = items.map(it => ({ ...it, sourceIds: [it.id] }))
+  const seq = (/** @type {any} */ it) => {
+    const m = String(it.id).slice(String(it.ts).length).match(/^:(\d+):/)
+    return m ? Number(m[1]) : null
+  }
+  const removed = new Set()
+  for (const child of copies) {
+    if (child.kind !== 'hunt' || child.url || !REASON_RE.test(String(child.note || ''))) continue
+    const n = seq(child)
+    if (n === null || n === 0) continue
+    const parent = copies.find(it => it.kind === 'hunt' && it.url && !removed.has(it.id)
+      && it.ts === child.ts && it.chat_id === child.chat_id && it.status === child.status && seq(it) === n - 1)
+    if (!parent) continue
+    parent.note = `${parent.note || ''}\n\n${child.note}`
+    parent.sourceIds.push(child.id)
+    removed.add(child.id)
+  }
+  return copies.filter(it => !removed.has(it.id))
+}
+
+/** 只放行 http / https —— 记录里的链接来自模型输出,`javascript:` 之类绝不能进 href。 @param {unknown} raw */
+function safeUrl(raw) {
+  if (!raw) return ''
+  try { const u = new URL(String(raw)); return u.protocol === 'http:' || u.protocol === 'https:' ? String(raw) : '' } catch { return '' }
+}
+
 /** 状态机:主人手点,不由系统推断。 */
 export const STATUSES = [
   { key: 'new',     label: '没试' },
@@ -115,14 +151,16 @@ function renderPostcardCard(it) {
 function renderCard(it) {
   if (it.kind === 'visit') return renderVisitCard(it)
   if (it.kind === 'postcard') return renderPostcardCard(it)
-  const url = it.url ? String(it.url) : ''
+  const url = safeUrl(it.url)
+  const ids = escapeHtml(JSON.stringify(it.sourceIds || [it.id]))
+  const title = String(it.title || '').replace(/[*#`]/g, '').trim() || '(无标题)'
   const chips = STATUSES.map(s =>
     `<button class="hb-chip${it.status === s.key ? ' on' : ''}" data-hb-action="status"`
-    + ` data-hb-id="${escapeHtml(it.id)}" data-hb-status="${s.key}" type="button">${s.label}</button>`).join('')
+    + ` data-hb-id="${escapeHtml(it.id)}" data-hb-ids="${ids}" data-hb-status="${s.key}" type="button">${s.label}</button>`).join('')
   // note 里已经包含链接原文;单独再列一次链接是为了能点、能复制。
   return `<article class="hb-card" data-hb-id="${escapeHtml(it.id)}">
     <div class="hb-head">
-      <h3 class="hb-title">${escapeHtml(it.title || '(无标题)')}</h3>
+      <h3 class="hb-title">${escapeHtml(title)}</h3>
       <span class="hb-day">${escapeHtml(dayLabel(it.ts))}</span>
     </div>
     <p class="hb-note">${escapeHtml(it.note || '')}</p>
@@ -132,7 +170,7 @@ function renderCard(it) {
     </div>` : ''}
     <div class="hb-foot">
       <div class="hb-chips">${chips}</div>
-      <button class="hb-del" data-hb-action="remove" data-hb-id="${escapeHtml(it.id)}" type="button" title="从背包里删掉">×</button>
+      <button class="hb-del" data-hb-action="remove" data-hb-id="${escapeHtml(it.id)}" data-hb-ids="${ids}" type="button" title="从背包里删掉">×</button>
     </div>
   </article>`
 }
@@ -152,7 +190,7 @@ export function renderHuntBag(data) {
     host.innerHTML = '<div class="fd-empty">暂时无法读取带回来的内容，请到首页检查连接后重试。</div>'
     return
   }
-  const { kept, dropped } = splitByStatus(data.items)
+  const { kept, dropped } = splitByStatus(groupRecommendations(data.items))
   if (count) count.textContent = countLabel(kept)
 
   if (kept.length === 0 && dropped.length === 0) {
@@ -202,22 +240,34 @@ export async function onHuntBagClick(ev) {
 
   const id = btn.getAttribute('data-hb-id')
   if (!id) return
+  // 归组卡(groupRecommendations)上的动作覆盖组里每一条。
+  /** @type {string[]} */
+  let ids = [id]
+  try {
+    const g = JSON.parse(btn.getAttribute('data-hb-ids') || 'null')
+    if (Array.isArray(g) && g.length > 0 && g.every(x => typeof x === 'string')) ids = g
+  } catch { /* 单条 */ }
+  /** @param {string} path @param {(id: string) => Record<string, unknown>} body */
+  const each = async (path, body) => {
+    const rs = await Promise.all(ids.map(x => invokeApi('POST', path, body(x)).catch(() => null)))
+    return rs.map(r => !!(/** @type {{ok?:boolean}|null} */ (r))?.ok)
+  }
+  // ok:false = 这条已经不在了(另一个窗口删过)。**不能装作成功** ——
+  // 界面会显示一个改不动的状态,主人只会觉得点了没反应。
+  const report = (/** @type {boolean[]} */ oks) => {
+    if (oks.every(Boolean)) return
+    showToast(oks.some(Boolean) ? '有一部分没改成 —— 刷新后看看' : '这条已经不在背包里了')
+  }
 
   if (action === 'status') {
     const status = btn.getAttribute('data-hb-status')
-    const r = /** @type {{ok?:boolean}|null} */ (
-      await invokeApi('POST', '/v1/journal/status', { id, status }).catch(() => null))
-    // ok:false = 这条已经不在了(另一个窗口删过)。**不能装作成功** ——
-    // 界面会显示一个改不动的状态,主人只会觉得点了没反应。
-    if (!r?.ok) showToast('这条已经不在背包里了')
+    report(await each('/v1/journal/status', x => ({ id: x, status })))
     await refreshHuntBag()
     return
   }
 
   if (action === 'remove') {
-    const r = /** @type {{ok?:boolean}|null} */ (
-      await invokeApi('POST', '/v1/journal/remove', { id }).catch(() => null))
-    if (!r?.ok) showToast('这条已经不在背包里了')
+    report(await each('/v1/journal/remove', x => ({ id: x })))
     await refreshHuntBag()
   }
 }
