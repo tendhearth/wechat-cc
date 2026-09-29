@@ -273,7 +273,7 @@
               <div class="lab">开机自启</div>
               <div class="sub">登录系统时自动启动 daemon。</div>
             </div>
-            <button class="toggle" id="autostart-toggle" type="button" data-toggle aria-pressed="false" aria-label="开机自启"></button>
+            <button class="toggle" id="autostart-toggle" type="button" data-toggle aria-pressed="false" aria-label="开机自启" aria-describedby="autostart-toggle-feedback"></button><span class="setting-feedback" id="autostart-toggle-feedback" role="status"></span>
           </div>
           <p class="drawer-section-help">默认配置：daemon 在系统启动时自动跑，关闭窗口不会影响接收消息。</p>
         </section>
@@ -284,14 +284,14 @@
               <div class="lab">自动同意工具调用</div>
               <div class="sub">关闭后，每次工具调用都需要在微信里回 y / n（10 分钟超时即拒绝）。</div>
             </div>
-            <button class="toggle on" id="unattended-toggle" type="button" data-toggle aria-pressed="true" aria-label="自动同意工具调用"></button>
+            <button class="toggle on" id="unattended-toggle" type="button" data-toggle aria-pressed="true" aria-label="自动同意工具调用" aria-describedby="unattended-toggle-feedback"></button><span class="setting-feedback" id="unattended-toggle-feedback" role="status"></span>
           </div>
           <div class="toggle-row">
             <div>
               <div class="lab">网络守护</div>
               <div class="sub">每 30 秒探活；网络掉了通知微信端。<span id="guard-status-line" class="guard-status-line">—</span></div>
             </div>
-            <button class="toggle" id="guard-toggle" type="button" data-toggle aria-pressed="false" aria-label="网络守护"></button>
+            <button class="toggle" id="guard-toggle" type="button" data-toggle aria-pressed="false" aria-label="网络守护" aria-describedby="guard-toggle-feedback"></button><span class="setting-feedback" id="guard-toggle-feedback" role="status"></span>
           </div>
         </section>
         <section class="drawer-section">
@@ -301,7 +301,7 @@
               <div class="lab">记忆胚胎</div>
               <div class="sub">在记忆页显示胚胎状态，并允许从吸收项直接跳回来源。</div>
             </div>
-            <button class="toggle on" id="memory-embryo-toggle" type="button" data-toggle aria-pressed="true" aria-label="记忆胚胎"></button>
+            <button class="toggle on" id="memory-embryo-toggle" type="button" data-toggle aria-pressed="true" aria-label="记忆胚胎" aria-describedby="memory-embryo-toggle-feedback"></button><span class="setting-feedback" id="memory-embryo-toggle-feedback" role="status"></span>
           </div>
         </section>
         <section class="drawer-section">
@@ -545,19 +545,31 @@
               <aside class="memory-sources-panel" id="memory-sources-panel" hidden>
                 <div class="memory-sources-head">
                   <span>记忆来源</span>
-                  <button id="memory-synthesize-btn" class="btn" title="读本机 Claude 各项目记忆，重新整理出「CC 眼中的你」总体记忆（供 bot 使用）">
-                    <span class="ic" data-hg-icon="star" data-hg-size="16"></span>
-                    重新整理
-                  </button>
-                  <button id="memory-profile-generate-btn" class="btn" title="根据长期记忆刷新用户画像">
-                    <span class="ic" data-hg-icon="refresh" data-hg-size="16"></span>
-                    刷新画像
-                  </button>
-                  <span id="memory-profile-status" class="memory-profile-status">检查中</span>
-                  <button id="memory-refresh" class="btn">
-                    <span class="ic" data-hg-icon="refresh" data-hg-size="16"></span>
-                    刷新
-                  </button>
+                  <span id="memory-profile-status" class="memory-profile-status" role="status">检查中</span>
+                </div>
+                <!-- 三个维护动作各说一句它做什么(2026-09-29,取代 Codex #116 的一半):按钮文字与 id 不动。 -->
+                <div class="memory-maintenance">
+                  <div class="memory-maintenance-item">
+                    <button id="memory-refresh" class="btn" type="button">
+                      <span class="ic" data-hg-icon="refresh" data-hg-size="16"></span>
+                      刷新
+                    </button>
+                    <p>重新读取已有记录,不生成新内容。</p>
+                  </div>
+                  <div class="memory-maintenance-item">
+                    <button id="memory-profile-generate-btn" class="btn" type="button" title="根据长期记忆刷新用户画像">
+                      <span class="ic" data-hg-icon="refresh" data-hg-size="16"></span>
+                      刷新画像
+                    </button>
+                    <p>根据已有的长期记忆,更新 CC 对你的理解。</p>
+                  </div>
+                  <div class="memory-maintenance-item">
+                    <button id="memory-synthesize-btn" class="btn" type="button" title="读本机 Claude 各项目记忆，重新整理出「CC 眼中的你」总体记忆（供 bot 使用）">
+                      <span class="ic" data-hg-icon="star" data-hg-size="16"></span>
+                      重新整理
+                    </button>
+                    <p>从本机 Claude 各项目的记忆重新整理总体记忆,要花一些时间。</p>
+                  </div>
                 </div>
 
                 <section class="memory-fold">
