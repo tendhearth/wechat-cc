@@ -24,7 +24,7 @@ Override the root with `WECHAT_STATE_DIR` (legacy name `WECHAT_CC_STATE_DIR` is 
 ├── install-progress.json  # transient: written by `service install` (M/N step), read by GUI
 ├── stt-config.json        # inbound STT gateway
 ├── voice-config.json      # outbound TTS gateway
-├── settings-devices.json  # paired phone device tokens (≤20)
+├── settings-devices.json  # paired phone device tokens (≤20): {token:{id,created_at,last_seen_at,label?}}; old {token:{created_at}} upgraded in place
 ├── license.json           # Pro tier
 ├── wechat-cc.db           # SQLite (67 migrations as of 2026-09; ~46 live tables)
 ├── docs/                  # share_page content (7-day TTL)

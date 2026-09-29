@@ -1,6 +1,6 @@
 # 手机设备令牌进 token-registry(梳理第 6 步)设计
 
-日期:2026-09-27。状态:设计稿,主人已在对话中批准七节设计;代码未动。基线 origin/dev 39cf7f5f。
+日期:2026-09-27。状态:**完成**(2026-09-29,实施计划 [plans/2026-09-29-device-token-registry.md](../plans/2026-09-29-device-token-registry.md);与本稿不同的六条裁决写在计划开头,最要紧的两条:链接令牌与设备令牌同一套路由、路由门按「路径在册」放行)。基线 origin/dev 39cf7f5f。
 
 **目标:** 三种操作面(微信 MCP 子进程、桌面 Tauri 宿主、手机页)的凭据在**同一个** token-registry 里,各有 origin / tier / routeAllow;手机设备能按台撤销而不只是一键全忘;隧道来的请求有一份具名的「只允局域网」集合;`runtime/http.ts` 默认监听 loopback。
 

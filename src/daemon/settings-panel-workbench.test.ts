@@ -280,3 +280,15 @@ describe('phone task controls keep the existing execution boundary',()=>{
     }finally{client.stop();hub.dropPhone(phone.streamId!)}
   })
 })
+
+// 评审(2026-09-29)顺带抓到的 #129 老 bug:上传状态查询只认 `t=` 与 id / draftId 三个键,
+// 配对过的手机用 `d=` 带令牌、走隧道还会多一个 `_via`,于是断点续传一律 invalid_upload_chunk。
+describe('attachment upload status accepts device tokens and tunnel marker',()=>{
+  it('d= and _via do not make the status query invalid',async()=>{
+    const pair=await(await request('/set/api/pair',{})).json() as {device_token:string}
+    const d=pair.device_token
+    const r=await fetch(`${base}/m/api/attachment/upload?id=${randomUUID()}&draftId=${randomUUID()}&d=${d}&_via=tunnel`)
+    const body=await r.json() as {error?:string}
+    expect(body.error).not.toBe('invalid_upload_chunk')
+  })
+})

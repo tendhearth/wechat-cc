@@ -36,6 +36,8 @@ import { existsSync, readFileSync } from 'node:fs'
 
 export interface WireMainOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
+  /** 内部 API 的 token-registry 窄接口 → 手机设置面板(梳理第 6 步)。 */
+  panelTokens?: import('../internal-api/token-registry').PanelTokens
   /** 「一件事」登记处(matters store);微信入站登记 chat、app 对话绑桌面表面、管家候选集都从这里来。 */
   matters?: import('../../core/matters/store').MatterStore
   stateDir: string

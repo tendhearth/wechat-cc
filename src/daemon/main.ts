@@ -726,6 +726,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     lc.register({ name: 'workbench', stop: () => workbench.shutdown() })
     const wired = wireMain({
       workbench, matters,
+      panelTokens: internalApi.panelTokens,
       cliReply: cliReplyHandler,
       stickers: stickerLib,
       requestRestart: (reason) => requestRestart(reason),

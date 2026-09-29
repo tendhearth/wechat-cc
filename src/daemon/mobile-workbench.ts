@@ -53,7 +53,7 @@ export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined
       if(!uploads)throw Error('uploads_not_wired')
       if(uploadOperation==='status'){
         const q=url.searchParams
-        if(q.getAll('id').length!==1||q.getAll('draftId').length!==1||[...q.keys()].some(key=>!['id','draftId','t'].includes(key)))throw Error('invalid_upload_chunk')
+        if(q.getAll('id').length!==1||q.getAll('draftId').length!==1||[...q.keys()].some(key=>!['id','draftId','t','d','_via'].includes(key)))throw Error('invalid_upload_chunk')
         return json({ok:true,...uploads.status({id:q.get('id')!,draftId:q.get('draftId')!})})
       }
       let body:unknown;try{body=await req.json()}catch{throw Error('invalid_upload_chunk')}

@@ -130,6 +130,8 @@ export function makeDelegateToHand(deps: DelegateDeps) {
 
 export interface PipelineDepsOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
+  /** 内部 API 的 token-registry 窄接口,给手机设置面板登记链接 / 设备令牌(梳理第 6 步)。 */
+  panelTokens?: import('../internal-api/token-registry').PanelTokens
   matters?: import('../../core/matters/store').MatterStore
   stateDir: string
   db: import('../../lib/db').Db
@@ -628,6 +630,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         .catch(() => { /* audit is best-effort — same posture as routes-config */ })
     },
     log: (tag, line) => log(tag, line),
+    // 内部 API 同一个 token-registry(梳理第 6 步);没接上(测试)⇒ 面板自建。
+    ...(opts.panelTokens ? { tokens: opts.panelTokens } : {}),
   })
 
   // 远程中继隧道 daemon leg — dials /tunnel/daemon out (NAT-piercing); phone
@@ -640,9 +644,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       makeTunnelClient({
         daemonId,
         handleRequest: (req) => settingsPanel.handleRequest(req),
-        knownDeviceTokens: () => {
-          try { return Object.keys(readJsonFile(join(stateDir, 'settings-devices.json'))) } catch { return [] }
-        },
+        // 设备令牌从面板取(梳理第 6 步:不再裸读 settings-devices.json,文件只有 device-store 一个读者)。
+        knownDeviceTokens: () => settingsPanel.deviceTokens(),
         activeLinkToken: () => settingsPanel.activeLinkToken(),
         relayUrl: daemonRelay,
         log: (tag, line) => log(tag, line),

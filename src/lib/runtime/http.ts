@@ -22,10 +22,16 @@ export interface Server {
 
 const isBun = (): boolean => typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined'
 
+/**
+ * 缺省只听本机(梳理第 6 步,2026-09-29)。要对局域网开门的调用方(手机设置面板的 `0.0.0.0`、
+ * A2A 的 `opts.host`)一律显式传;忘了写 hostname 不该默默对整个局域网开门。
+ */
+const DEFAULT_HOSTNAME = '127.0.0.1'
+
 export function serve(options: ServeOptions): Server {
   if (isBun()) {
     const bun = (globalThis as unknown as { Bun: { serve: (o: ServeOptions) => { port: number; hostname: string; stop(force?: boolean): void } } }).Bun
-    const server = bun.serve(options)
+    const server = bun.serve({ ...options, hostname: options.hostname ?? DEFAULT_HOSTNAME })
     return { get port() { return server.port }, get hostname() { return server.hostname }, ready: Promise.resolve(), stop: force => server.stop(force) }
   }
   return nodeServe(options)
@@ -34,7 +40,7 @@ export function serve(options: ServeOptions): Server {
 function nodeServe(options: ServeOptions): Server {
   const http = require('node:http') as typeof import('node:http')
   const {Readable} = require('node:stream') as typeof import('node:stream')
-  const hostname = options.hostname ?? '0.0.0.0'
+  const hostname = options.hostname ?? DEFAULT_HOSTNAME
   const server = http.createServer(async (req, res) => {
     try {
       const url = `http://${req.headers.host ?? `${hostname}:${(server.address() as {port: number}).port}`}${req.url ?? '/'}`

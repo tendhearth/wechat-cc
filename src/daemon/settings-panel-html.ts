@@ -97,6 +97,7 @@ ${MOBILE_TOKENS_CSS}
   <label class="row"><span><b>出门也能用</b><small>经加密中继回家,数据只在你自己电脑上,中间人看不到</small></span><input type="checkbox" class="switch" id="f-remote"></label>
   <div class="say" id="remote-hint">开启需要重启一下 CC(约十几秒),之后在同一 Wi-Fi 下打开随身 CC,点「把 CC 带在身上」即可</div>
   <label class="row" id="row-devices" hidden><span><b>已配对设备</b><small id="devices-count"></small></span><button type="button" id="forget-devices" style="font:inherit;font-size:12.5px;padding:5px 12px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--card);color:var(--accent);cursor:pointer">全部忘掉</button></label>
+  <div id="devices-list"></div>
 </section>
 
 <section id="sec-models">
@@ -292,7 +293,7 @@ async function load() {
       $("f-remote").disabled = true
       $("remote-hint").textContent = "出门在外不能动这个开关 — 回家(和电脑同一网络)再改"
     }
-    if (s.remote.devices > 0) { $("row-devices").hidden = false; $("devices-count").textContent = s.remote.devices + " 台手机拿着长期钥匙" }
+    renderDevices(Array.isArray(s.remote.devices) ? s.remote.devices : [])
   }
   const care = s.prefs.care || "low"
   for (const b of $("f-care").querySelectorAll("button")) b.classList.toggle("on", b.dataset.v === care)
@@ -331,8 +332,39 @@ wireSwitch("f-autostart", "config", "autoStart")
 $("forget-devices").addEventListener("click", async () => {
   if (!confirm("忘掉所有已配对设备?手机上的随身 CC 会立即失效,需要重新配对。")) return
   const r = await sapi("/set/api/apply", { op: "forget_devices" })
-  if (r.ok) { $("row-devices").hidden = true; toast("都忘掉了,手机要重新配对") }
+  if (r.ok) { renderDevices([]); toast("都忘掉了,手机要重新配对") }
+  else if (r.error === "lan_only") toast("忘掉设备要在家里(和电脑同一网络)做")
 })
+// 逐台列表(梳理第 6 步):标签是用户输入,一律 textContent,不拼 HTML。
+function renderDevices(list) {
+  const box = $("devices-list")
+  box.replaceChildren()
+  $("row-devices").hidden = list.length === 0
+  $("devices-count").textContent = list.length + " 台手机拿着长期钥匙"
+  const day = iso => (iso || "").slice(0, 10)
+  for (const d of list) {
+    const row = document.createElement("div")
+    row.className = "row"
+    const info = document.createElement("span")
+    const name = document.createElement("b")
+    name.textContent = (d.label || d.id) + (d.current ? " · 这台" : "")
+    const meta = document.createElement("small")
+    meta.textContent = "配对 " + day(d.created_at) + " · 最近 " + day(d.last_seen_at)
+    info.append(name, meta)
+    const btn = document.createElement("button")
+    btn.type = "button"
+    btn.textContent = "忘掉"
+    btn.style.cssText = "font:inherit;font-size:12.5px;padding:5px 12px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--card);color:var(--accent);cursor:pointer"
+    btn.addEventListener("click", async () => {
+      if (!confirm(d.current ? "忘掉这台手机?它会立即失效,要重新配对。" : "忘掉这台设备?它会立即失效。")) return
+      const r = await sapi("/set/api/apply", { op: "revoke_device", id: d.id })
+      if (r.ok) { renderDevices(list.filter(x => x.id !== d.id)); toast(d.current ? "这台手机需要重新配对" : "已忘掉") }
+      else toast(r.error === "lan_only" ? "忘掉设备要在家里(和电脑同一网络)做" : "没忘掉: " + (r.error || "unknown"))
+    })
+    row.append(info, btn)
+    box.append(row)
+  }
+}
 $("f-remote").addEventListener("change", async e => {
   const on = e.target.checked
   const h = $("remote-hint")

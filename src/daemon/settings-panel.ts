@@ -21,13 +21,12 @@
  *    conversational where CC can confirm context.
  */
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { normalizeUserName } from '../lib/user-name'
 import { writeConfigKey, readConfigSurface } from './config-surface'
 import { kickAtelierModelProvision, readModelStatus, shouldProvisionOnConfigChange } from './atelier-provision'
 import { safeSvgFile, EXPIRED_HTML, SW_JS, M_BOOTSTRAP_HTML, pageHtml, phoneHtml } from './settings-panel-html'
-import { readJsonFile } from '../lib/read-json-file'
 import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../lib/agent-config'
 import { saveLlmKey } from './llm-keys'
 import { PROVIDER_SETUP_HINTS, type LlmHealthReport } from './llm-health'
@@ -132,6 +131,11 @@ export interface SettingsPanelDeps {
   audit?: (reasoning: string) => void
   log: (tag: string, line: string) => void
   now?: () => number
+  /**
+   * 内部 API 的 token-registry 窄接口(梳理第 6 步):链接令牌与设备令牌登记在这里,
+   * 带 origin / routeAllow,撤销走 invalidateSession。缺省 ⇒ 面板自建一个(测试用)。
+   */
+  tokens?: PanelTokens
 }
 
 export interface SettingsPanel {
@@ -139,7 +143,10 @@ export interface SettingsPanel {
   validToken(t: string | null | undefined): boolean
   /** 当前还有效的链接令牌(没有或已过期就 null)—— 隧道只额外认这一个。 */
   activeLinkToken(): string | null
-  state(): object
+  /** 已配对设备的令牌 —— 隧道握手要逐个试(替代裸读 settings-devices.json)。 */
+  deviceTokens(): string[]
+  /** `currentToken`:调用者自己的令牌,用来在设备列表里标「这台」。 */
+  state(currentToken?: string | null): object
   apply(op: unknown): Promise<{ ok: boolean; error?: string; restart?: 'requested' | 'required' }>
   /** Start the HTTP server (idempotent). port 0 = ephemeral. */
   start(port?: number): Promise<{ port: number }>
@@ -158,31 +165,32 @@ export interface SettingsPanel {
 export { lanIp } from '../lib/local-address'
 import { lanIp } from '../lib/local-address'
 import { serve, type Server } from '../lib/runtime/http'
-
-const DEVICES_FILE = 'settings-devices.json'
-const MAX_DEVICES = 20
+import { makeTokenRegistry, type PanelTokens } from './internal-api/token-registry'
+import { makeDeviceCredentials, makeDeviceStore, type DeviceRow } from './device-store'
+import { LAN_ONLY_OPS, LINK_ROUTES, PHONE_ROUTES, phoneRouteAllowed } from './phone-routes'
 
 export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   const now = deps.now ?? (() => Date.now())
-  let active: { token: string; expiresAt: number } | null = null
   let server: Server | null = null
 
-  // 长期设备令牌(随身 CC 配对):在家扫码用短令牌换一枚,加进主屏后
-  // 一直有效。落盘 JSON(0600 state dir),上限 MAX_DEVICES 防无限膨胀。
-  const devicesPath = () => join(deps.stateDir, DEVICES_FILE)
-  const readDevices = (): Record<string, { created_at: string }> => {
-    try { return readJsonFile(devicesPath()) as Record<string, { created_at: string }> } catch { return {} }
+  // 令牌都在内部 API 的 token-registry 里(梳理第 6 步):链接令牌 origin 'link'、
+  // 10 分钟;长期设备令牌(随身 CC 配对)origin 'device'、永不过期但可按台撤销。
+  // 设备的落盘与注册表同步只在 device-store.ts 的 makeDeviceCredentials 一处。
+  const tokens: PanelTokens = deps.tokens ?? makeTokenRegistry(undefined, now)
+  const devices = makeDeviceCredentials({ store: makeDeviceStore(deps.stateDir, now), tokens, routeAllow: PHONE_ROUTES })
+  devices.bootRegister()
+  /** 只认面板自己的两种令牌 —— 共享注册表后 session / file / operator 也能 resolve,必须挡住。 */
+  const panelToken = (t: string | null | undefined) => {
+    if (!t) return null
+    const info = tokens.resolve(t)
+    return info && (info.origin === 'device' || info.origin === 'link') ? info : null
   }
-  const issueDeviceToken = (): string | null => {
-    const devices = readDevices()
-    if (Object.keys(devices).length >= MAX_DEVICES) return null
-    const token = 'd' + randomBytes(24).toString('hex')
-    devices[token] = { created_at: new Date().toISOString() }
-    writeFileSync(devicesPath(), JSON.stringify(devices, null, 2), { mode: 0o600 })
-    return token
+  const deviceIdOfSession = (sessionKey: string | undefined) =>
+    sessionKey?.startsWith('device:') ? sessionKey.slice('device:'.length) : null
+  const deviceList = (currentToken: string | null | undefined): Array<DeviceRow & { current: boolean }> => {
+    const mine = deviceIdOfSession(panelToken(currentToken)?.sessionKey)
+    return devices.list().map(d => ({ ...d, current: d.id === mine }))
   }
-  const validDeviceToken = (t: string | null | undefined): boolean =>
-    !!t && t.startsWith('d') && t in readDevices()
 
   const personaPath = (): string | null => {
     const owner = deps.ownerChatId()
@@ -302,21 +310,26 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   const panel: SettingsPanel = {
     issueToken() {
       // 't' 前缀:手机页按首字母 'd' 认长期设备令牌,裸 hex 有 1/16 会被误认。
+      // 同一时刻只一枚:发新的之前撤掉旧的。
+      tokens.invalidateSession('link')
       const token = 't' + randomBytes(16).toString('hex')
-      active = { token, expiresAt: now() + SETTINGS_LINK_TTL_MS }
+      tokens.register(token, { tier: 'admin', origin: 'link', sessionKey: 'link', routeAllow: LINK_ROUTES, ttlMs: SETTINGS_LINK_TTL_MS })
       return token
     },
 
     activeLinkToken() {
-      return active && now() < active.expiresAt ? active.token : null
+      return tokens.listSessions('link')[0]?.token ?? null
+    },
+
+    deviceTokens() {
+      return devices.tokens()
     },
 
     validToken(t) {
-      if (validDeviceToken(t)) return true
-      return !!t && !!active && t === active.token && now() < active.expiresAt
+      return panelToken(t) !== null
     },
 
-    state() {
+    state(currentToken) {
       const owner = deps.ownerChatId()
       if (!owner) return { ok: false, error: 'no_owner' }
       const pp = personaPath()
@@ -332,8 +345,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         prefs: deps.chatPrefs.get(owner),
         config,
         remote: deps.remote
-          ? { available: true, enabled: deps.remote.isEnabled(), devices: Object.keys(readDevices()).length }
-          : { available: false, enabled: false, devices: 0 },
+          ? { available: true, enabled: deps.remote.isEnabled(), devices: deviceList(currentToken) }
+          : { available: false, enabled: false, devices: [] },
         // Paint-set download progress so the phone can show "已开始 / 62%" right
         // after the owner flips the switch; the download itself runs on the Mac.
         atelier: { model_status: readModelStatus(deps.stateDir) },
@@ -375,8 +388,18 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         if (b.op === 'forget_devices') {
           // 安全 review HIGH 收尾 (2026-08-26):设备令牌长期有效是产品决策
           // (加主屏永不过期),但必须可撤销。一键全忘,手机重新配对即可。
-          try { rmSync(devicesPath(), { force: true }) } catch { /* already gone */ }
+          devices.forgetAll()
           deps.audit?.('随身 CC:忘掉所有已配对设备 — 设置面板')
+          return { ok: true }
+        }
+        if (b.op === 'revoke_device') {
+          // 按台撤销(梳理第 6 步):丢了一台手机不必让所有设备重新配对。
+          if (typeof b.id !== 'string' || !devices.revoke(b.id)) return { ok: false, error: 'unknown_device' }
+          deps.audit?.(`随身 CC:忘掉设备 ${b.id} — 设置面板`)
+          return { ok: true }
+        }
+        if (b.op === 'label_device') {
+          if (typeof b.id !== 'string' || typeof b.label !== 'string' || !devices.label(b.id, b.label)) return { ok: false, error: 'invalid_value' }
           return { ok: true }
         }
         if (b.op === 'set_remote') {
@@ -500,19 +523,27 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             return new Response(M_BOOTSTRAP_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } })
           }
 
-          if (!panel.validToken(t)) {
+          const caller = panelToken(t)
+          if (!caller) {
             if (url.pathname === '/set') {
               return new Response(EXPIRED_HTML, { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } })
             }
             return json({ error: 'unauthorized' }, 401)
           }
+          // routeAllow(phone-routes.ts):不在册的路径一律 403,与内部 API 同名的错误与日志字段。
+          if (!phoneRouteAllowed(caller.routeAllow ?? new Set(), req.method, url.pathname)) {
+            deps.log('SETTINGS', `route_not_allowed origin=${caller.origin} path=${req.method} ${url.pathname}`)
+            return json({ error: 'route_not_allowed' }, 403)
+          }
+          const deviceId = deviceIdOfSession(caller.sessionKey)
+          if (caller.origin === 'device' && deviceId) devices.touch(deviceId)
 
           // ── token-gated ────────────────────────────────────────────────
           if (url.pathname === '/set') {
             return new Response(pageHtml(t!), { headers: { 'content-type': 'text/html; charset=utf-8' } })
           }
           if (url.pathname === '/set/api/state' && req.method === 'GET') {
-            return json(panel.state())
+            return json(panel.state(t))
           }
           if (url.pathname === '/set/api/apply' && req.method === 'POST') {
             let body: unknown
@@ -521,16 +552,18 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             // flow-shaped op — refuse it over the tunnel; you only toggle remote
             // access from home anyway, and a leaked device token must not be
             // able to flip config + force restarts remotely.
-            if ((body as { op?: unknown })?.op === 'set_remote' && url.searchParams.get('_via') === 'tunnel') {
+            // LAN_ONLY_OPS(phone-routes.ts):开关远程访问、撤销 / 全忘设备 —— 只在家做。
+            const op = (body as { op?: unknown })?.op
+            if (typeof op === 'string' && LAN_ONLY_OPS.has(op) && url.searchParams.get('_via') === 'tunnel') {
               return json({ ok: false, error: 'lan_only' })
             }
             return json(await panel.apply(body))
           }
           if (url.pathname === '/set/api/pair' && req.method === 'POST') {
-            const token = issueDeviceToken()
-            if (!token) return json({ ok: false, error: 'device_limit' })
-            deps.log('SETTINGS', 'phone device paired (token issued)')
-            return json({ ok: true, device_token: token })
+            const paired = devices.pair()
+            if (!paired) return json({ ok: false, error: 'device_limit' })
+            deps.log('SETTINGS', `phone device paired (id ${paired.id})`)
+            return json({ ok: true, device_token: paired.token })
           }
           if (url.pathname === '/m') {
             return new Response(phoneHtml(t!, deps.remoteInfo?.() ?? null), { headers: { 'content-type': 'text/html; charset=utf-8' } })

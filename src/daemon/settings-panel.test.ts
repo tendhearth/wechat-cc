@@ -76,8 +76,8 @@ describe('settings panel', () => {
     expect(panel.validToken(r.device_token)).toBe(true)
     expect((await panel.apply({ op: 'forget_devices' })).ok).toBe(true)
     expect(panel.validToken(r.device_token)).toBe(false)   // revoked immediately
-    const st = panel.state() as { remote?: { devices: number } }
-    expect(st.remote?.devices).toBe(0)
+    const st = panel.state() as { remote?: { devices: unknown[] } }
+    expect(st.remote?.devices).toEqual([])   // 2026-09-29 起是设备列表(按台撤销)
   })
 
   it('apply: set_remote toggles remote_tunnel in config and requests a restart', async () => {
