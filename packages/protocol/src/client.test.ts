@@ -33,10 +33,16 @@ interface Conn {
   raw(s: string): void
   msgCb?: (s: string) => void
   closeCb?: () => void
+  openCb?: () => void
+  /** 真 WebSocket 那样:open 之前 send 会抛。 */
+  opened: boolean
+  fireOpen(): void
+  /** 黑洞:收什么都不回,也不关(换网络后没收到 TCP 关闭的死连接)。 */
+  blackhole: boolean
   serverClose(): void
 }
 
-function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolean }) {
+function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolean; manualOpen?: boolean }) {
   const token = opts.token ?? TOKEN
   const conns: Conn[] = []
   const reqs: ReqSeen[] = []
@@ -49,6 +55,12 @@ function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolea
     unsubs,
     offline: opts.offline ?? false,
     dropNextReqs: 0,
+    /** 接下来这么多条连接收到 hs 后一声不吭。 */
+    silentHellos: 0,
+    /** 接下来这么多条连接回一个畸形 hello。 */
+    badHellos: 0,
+    /** 每个请求回两遍(第二遍 status 500)。 */
+    dupReplies: false,
     onSub: undefined as undefined | ((conn: Conn, sid: string, topic: string, since?: { epoch: string; seq: number }) => void),
     handler: (r: ReqSeen): { status: number; headers: Record<string, string>; body: string; bodyEncoding: 'utf8' | 'base64' } => ({
       status: 200,
@@ -62,6 +74,9 @@ function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolea
         hellos: [],
         version: null,
         subs: new Map(),
+        opened: false,
+        blackhole: false,
+        fireOpen() { if (conn.opened || conn.closed) return; conn.opened = true; conn.openCb?.() },
         toClient(obj) { conn.raw(JSON.stringify(obj)) },
         raw(s) { queueMicrotask(() => { if (!conn.closed) conn.msgCb?.(s) }) },
         serverClose() {
@@ -72,8 +87,13 @@ function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolea
       }
       conns.push(conn)
       if (d.offline) conn.serverClose()
+      else if (!opts.manualOpen) queueMicrotask(() => conn.fireOpen())
       return {
-        send(s: string) { queueMicrotask(() => { if (!conn.closed) handle(conn, s) }) },
+        send(s: string) {
+          if (!conn.opened) throw new Error('InvalidStateError: still CONNECTING')
+          queueMicrotask(() => { if (!conn.closed && !conn.blackhole) handle(conn, s) })
+        },
+        onOpen(cb) { conn.openCb = cb },
         close() { conn.serverClose() },
         onMessage(cb) { conn.msgCb = cb },
         onClose(cb) { conn.closeCb = cb },
@@ -97,6 +117,8 @@ function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolea
     const f = JSON.parse(s) as Record<string, unknown>
     if (typeof f.hs === 'string') {
       conn.hellos.push(f)
+      if (d.silentHellos > 0) { d.silentHellos--; return }
+      if (d.badHellos > 0) { d.badHellos--; conn.toClient({ hs: 42, v: 2 }); return }
       const kp = x25519KeyPair()
       const shared = x25519Shared(kp.priv, b64uDecode(f.hs))
       if (opts.version === 2 && Array.isArray(f.v) && f.v.includes(2)) {
@@ -128,6 +150,7 @@ function makeFakeDaemon(opts: { version: 1 | 2; token?: string; offline?: boolea
       reqs.push(r)
       if (d.dropNextReqs > 0) { d.dropNextReqs--; return }
       sendV2(conn, { t: 'res', rid: r.rid, ...d.handler(r) })
+      if (d.dupReplies) sendV2(conn, { t: 'res', rid: r.rid, ...d.handler(r), status: 500 })
     } else if (m.t === 'sub') {
       const sm = m as { sid: string; topic: string; since?: { epoch: string; seq: number } }
       subMsgs.push({ sid: sm.sid, topic: sm.topic, since: sm.since })
@@ -233,18 +256,68 @@ describe('请求 / 响应', () => {
     expect(() => b64Decode('-_-_')).toThrow()
   })
 
-  it('假后台吞掉一帧 ⇒ 超时后换新 rid 重发并成功', async () => {
+  it('GET 被吞 ⇒ 超时后以同一 rid 重发(连接上什么都没收到 ⇒ 先换新连接)并成功', async () => {
     const daemon = makeFakeDaemon({ version: 2 })
     daemon.d.dropNextReqs = 1
     const { c } = client(daemon)
     const p = c.request({ method: 'GET', path: '/slow' })
     await flush()
     expect(daemon.d.reqs).toHaveLength(1)
-    await vi.advanceTimersByTimeAsync(1000)
+    await vi.advanceTimersByTimeAsync(1000 + 500)
     const res = await p
     expect(res.status).toBe(200)
     expect(daemon.d.reqs).toHaveLength(2)
-    expect(daemon.d.reqs[0]!.rid).not.toBe(daemon.d.reqs[1]!.rid)
+    expect(daemon.d.reqs[1]!.rid).toBe(daemon.d.reqs[0]!.rid)
+    c.close()
+  })
+
+  it('POST 缺省不重试 ⇒ 第一次超时就以 timeout 拒绝', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    daemon.d.dropNextReqs = 1
+    const { c } = client(daemon)
+    const p = c.request({ method: 'POST', path: '/do', body: 'x' })
+    const assertion = expect(p).rejects.toThrow('timeout')
+    await vi.advanceTimersByTimeAsync(1000)
+    await assertion
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(daemon.d.reqs).toHaveLength(1)
+    c.close()
+  })
+
+  it('POST 显式 retry:true ⇒ 以同一 rid 重发(后台可去重)', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    daemon.d.dropNextReqs = 1
+    const { c } = client(daemon)
+    const p = c.request({ method: 'POST', path: '/do', body: 'x', retry: true })
+    await vi.advanceTimersByTimeAsync(1000 + 500)
+    expect((await p).status).toBe(200)
+    expect(daemon.d.reqs).toHaveLength(2)
+    expect(daemon.d.reqs[1]!.rid).toBe(daemon.d.reqs[0]!.rid)
+    c.close()
+  })
+
+  it('GET 显式 retry:false ⇒ 不重试', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    daemon.d.dropNextReqs = 1
+    const { c } = client(daemon)
+    const p = c.request({ method: 'GET', path: '/x', retry: false })
+    const assertion = expect(p).rejects.toThrow('timeout')
+    await vi.advanceTimersByTimeAsync(1000)
+    await assertion
+    c.close()
+  })
+
+  it('同一 rid 的回复到两遍 ⇒ 只按第一遍 resolve,第二遍静默忽略', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    daemon.d.dupReplies = true
+    const onProtocolError = vi.fn()
+    const { c } = client(daemon, { onProtocolError })
+    const res = await c.request({ method: 'GET', path: '/x' })
+    await flush()
+    expect(res.status).toBe(200)
+    expect(onProtocolError).not.toHaveBeenCalled()
+    const res2 = await c.request({ method: 'GET', path: '/y' })
+    expect(res2.status).toBe(200)
     c.close()
   })
 
@@ -428,11 +501,11 @@ describe('断线、退避与致命错误', () => {
     c.close()
   })
 
-  it('请求在途时断线 ⇒ 不立刻重发(避免重复执行),超时后换新 rid 在新连接上重发', async () => {
+  it('请求在途时断线 ⇒ 不立刻重发,超时后以同一 rid 在新连接上重发', async () => {
     const daemon = makeFakeDaemon({ version: 2 })
     daemon.d.dropNextReqs = 1
     const { c } = client(daemon)
-    const p = c.request({ method: 'POST', path: '/once' })
+    const p = c.request({ method: 'GET', path: '/once' })
     await flush()
     daemon.d.conns[0]!.serverClose()
     await vi.advanceTimersByTimeAsync(500)
@@ -441,7 +514,83 @@ describe('断线、退避与致命错误', () => {
     await vi.advanceTimersByTimeAsync(500)
     expect((await p).status).toBe(200)
     expect(daemon.d.reqs).toHaveLength(2)
-    expect(daemon.d.reqs[1]!.rid).not.toBe(daemon.d.reqs[0]!.rid)
+    expect(daemon.d.reqs[1]!.rid).toBe(daemon.d.reqs[0]!.rid)
+    c.close()
+  })
+
+  it('后台收到 hs 却一直不回 ⇒ 握手期限(= requestTimeoutMs)到就断开,退避后新握手(新公钥)', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    daemon.d.silentHellos = 1
+    const { c } = client(daemon, { retries: 0 })
+    const p = c.request({ method: 'GET', path: '/x' })
+    const assertion = expect(p).rejects.toThrow('timeout')
+    await vi.advanceTimersByTimeAsync(999)
+    expect(daemon.d.conns).toHaveLength(1)
+    expect(daemon.d.conns[0]!.closed).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(daemon.d.conns[0]!.closed).toBe(true)
+    await assertion
+    c.subscribe('now', () => {})
+    await vi.advanceTimersByTimeAsync(500)
+    expect(daemon.d.conns).toHaveLength(2)
+    const h0 = daemon.d.conns[0]!.hellos[0] as { hs: string }
+    const h1 = daemon.d.conns[1]!.hellos[0] as { hs: string }
+    expect(h1.hs).not.toBe(h0.hs)
+    expect(c.version()).toBe(2)
+    c.close()
+  })
+
+  it('后台不回 hs、请求可重试 ⇒ 重试在新连接的新握手上成功', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    daemon.d.silentHellos = 1
+    const { c } = client(daemon, { requestTimeoutMs: 3000, handshakeTimeoutMs: 1000 })
+    const p = c.request({ method: 'GET', path: '/x' })
+    await vi.advanceTimersByTimeAsync(1000 + 500)
+    expect((await p).status).toBe(200)
+    expect(daemon.d.conns).toHaveLength(2)
+    c.close()
+  })
+
+  it('畸形 hello ⇒ 记协议错误并断开,退避后重连成功', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    daemon.d.badHellos = 1
+    const onProtocolError = vi.fn()
+    const { c } = client(daemon, { onProtocolError, requestTimeoutMs: 3000 })
+    const p = c.request({ method: 'GET', path: '/x' })
+    await flush()
+    expect(onProtocolError).toHaveBeenCalledWith('bad_hello', expect.anything())
+    expect(daemon.d.conns[0]!.closed).toBe(true)
+    await vi.advanceTimersByTimeAsync(500)
+    expect((await p).status).toBe(200)
+    expect(daemon.d.conns).toHaveLength(2)
+    c.close()
+  })
+
+  it('已建立的连接悄悄死掉(不回也不关)⇒ 超时的请求先丢掉这条连接,重试走新连接', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    const { c } = client(daemon)
+    await c.request({ method: 'GET', path: '/warm' })
+    daemon.d.conns[0]!.blackhole = true
+    const p = c.request({ method: 'GET', path: '/x' })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(daemon.d.conns[0]!.closed).toBe(true)
+    await vi.advanceTimersByTimeAsync(500)
+    expect((await p).status).toBe(200)
+    expect(daemon.d.conns).toHaveLength(2)
+    c.close()
+  })
+
+  it('open 之前 send 会抛的 socket ⇒ 等 onOpen 才发 hello,握手照常完成', async () => {
+    const daemon = makeFakeDaemon({ version: 2, manualOpen: true })
+    const onProtocolError = vi.fn()
+    const { c } = client(daemon, { onProtocolError })
+    const p = c.request({ method: 'GET', path: '/x' })
+    await flush()
+    expect(daemon.d.conns[0]!.hellos).toHaveLength(0)
+    daemon.d.conns[0]!.fireOpen()
+    await flush()
+    expect((await p).status).toBe(200)
+    expect(onProtocolError).not.toHaveBeenCalled()
     c.close()
   })
 

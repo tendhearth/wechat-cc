@@ -2,17 +2,19 @@
  * client.ts — 手机隧道协议客户端(未来的 Expo/RN app 与 CLI 自检用)。
  *
  * 一条连接的生命周期:
- *   1. `opts.open()` 拿到一个 socket(调用方负责把 RN/浏览器 WebSocket 包成
- *      `ProtocolSocket`;在 open 事件之前 `send` 的帧由它缓冲)。
- *   2. 明文发 `{hs, v:[1,2]}`;后台回 `{hs, v:2}` ⇒ v2,回 `{hs}` ⇒ 老后台 v1。
+ *   1. `opts.open()` 拿到一个 socket(接口见 client-types.ts),等它 `onOpen`。
+ *   2. 明文发 `{hs, v:[1,2]}`,开握手期限(缺省 = requestTimeoutMs,过期或
+ *      hello 畸形 ⇒ 断开按退避重连);后台回 `{hs, v:2}` ⇒ v2,回 `{hs}` ⇒ 老后台 v1。
  *      密钥经 HKDF 绑定设备令牌(令牌从不上线)。
  *   3. 之后全是密封帧。v2 每次握手新建一条 V2Channel —— 每次重连都是新的
  *      X25519 密钥对 ⇒ 新密钥 ⇒ 新 channel,同一组密钥永不重建(否则
  *      计数器 nonce 复用)。
  *
  * 可靠性语义:
- *   - 请求超时 ⇒ 换新 rid 重发(`retries` 次,缺省 1),用完以 `timeout` 拒绝。
- *     旧 rid 的迟到回复直接忽略。
+ *   - 请求超时 ⇒ 只有可重试的请求(GET/HEAD,或显式 `retry: true`)以**同一个
+ *     rid** 重发(`retries` 次,缺省 1),用完以 `timeout` 拒绝;同一 rid 的
+ *     回复先到先得,后到的忽略。超时时若该连接自请求发出后什么都没收到
+ *     (换网络后没收到关闭的死连接),先丢掉连接,重试走新握手。
  *   - 断线 ⇒ 若还有挂起请求或订阅,指数退避重连(500 ms 起,封顶 15 s);
  *     连接稳定 ≥ 10 s 才把退避清零,抖动的连接不会以最快速度狂连。
  *     没事可做时不重连,下次用到再连。
@@ -36,49 +38,9 @@ import {
 } from './messages'
 import type { V1RequestT, ReqMsgT, V2ClientMessageT, V2ServerMessageT } from './messages'
 
-export interface ProtocolSocket {
-  send(s: string): void
-  close(): void
-  onMessage(cb: (s: string) => void): void
-  onClose(cb: () => void): void
-}
+import type { ProtocolSocket, ClientOpts, ProtocolRequest, ProtocolResponse, EventMeta, ProtocolClient } from './client-types'
 
-export interface ClientOpts {
-  open: () => ProtocolSocket
-  token: string
-  requestTimeoutMs?: number
-  retries?: number
-  now?: () => number
-  /** 丢弃了一条畸形/无法解密的线上消息(只做记录,不影响连接)。 */
-  onProtocolError?: (reason: string, detail?: unknown) => void
-  /** 订阅被后台拒绝(`err{sid}`)或老后台不支持订阅;该订阅随即作废。 */
-  onSubscriptionError?: (topic: string, code: string) => void
-}
-
-export interface ProtocolRequest {
-  method: string
-  path: string
-  headers?: Record<string, string>
-  body?: string | Uint8Array
-}
-
-export interface ProtocolResponse {
-  status: number
-  headers: Record<string, string>
-  body: Uint8Array
-  text(): string
-  json<T>(): T
-}
-
-export interface EventMeta { epoch: string; seq: number }
-
-export interface ProtocolClient {
-  version(): 1 | 2 | null
-  request(r: ProtocolRequest): Promise<ProtocolResponse>
-  /** 老后台(v1)下抛 Error('subscriptions_need_v2')。返回取消函数(幂等)。 */
-  subscribe(topic: string, onEvent: (data: unknown, meta: EventMeta) => void): () => void
-  close(): void
-}
+export type { ProtocolSocket, ClientOpts, ProtocolRequest, ProtocolResponse, EventMeta, ProtocolClient } from './client-types'
 
 const DEFAULT_TIMEOUT_MS = 15_000
 const BACKOFF_BASE_MS = 500
@@ -94,6 +56,9 @@ interface Conn {
   v1Key?: Uint8Array
   chan?: V2Channel
   readyAt?: number
+  /** 这条连接收到过几帧(任何帧都算,用来判断「悄悄死掉」)。 */
+  recv: number
+  hsTimer?: Timer
 }
 
 interface Pending {
@@ -101,6 +66,9 @@ interface Pending {
   retriesLeft: number
   rid: string
   sent: boolean
+  /** 本次尝试发在哪条连接上、当时那条连接已收到几帧。 */
+  sentOn?: Conn
+  recvAtSend: number
   timer?: Timer
   resolve(r: ProtocolResponse): void
   reject(e: Error): void
@@ -129,6 +97,7 @@ function makeResponse(status: number, headers: Record<string, string>, body: Uin
 export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
   const timeoutMs = opts.requestTimeoutMs ?? DEFAULT_TIMEOUT_MS
   const retries = opts.retries ?? 1
+  const hsTimeoutMs = opts.handshakeTimeoutMs ?? timeoutMs
   const now = opts.now ?? (() => Date.now())
   const protoErr = (reason: string, detail?: unknown) => { try { opts.onProtocolError?.(reason, detail) } catch { /* 钩子自己的错不关我们的事 */ } }
   const subErr = (topic: string, code: string) => { try { opts.onSubscriptionError?.(topic, code) } catch { /* 同上 */ } }
@@ -157,20 +126,27 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     const kp = x25519KeyPair()
     let sock: ProtocolSocket
     try { sock = opts.open() } catch (e) { protoErr('open_failed', e); scheduleReconnect(); return }
-    const c: Conn = { sock, priv: kp.priv, version: null }
+    const c: Conn = { sock, priv: kp.priv, version: null, recv: 0 }
     conn = c
+    // 握手期限从 open 起算:连不上、连上了后台不回 hs,都走同一条断开+退避。
+    c.hsTimer = setTimeout(() => { c.hsTimer = undefined; if (c.version === null) dropConn(c) }, hsTimeoutMs)
+    sock.onOpen(() => {
+      if (conn !== c) return
+      sendRaw(c, JSON.stringify({ hs: b64uEncode(kp.pub), v: [1, 2] }))
+    })
     sock.onMessage(s => {
       if (conn !== c) return
+      c.recv += 1
       try { onFrame(c, s) } catch (e) { protoErr('handler_threw', e) }
     })
     sock.onClose(() => { if (conn === c) dropConn(c) })
-    sendRaw(c, JSON.stringify({ hs: b64uEncode(kp.pub), v: [1, 2] }))
   }
 
   /** 这条连接作废:清状态,按需排重连。可由 onClose 或我们主动断开触发,只生效一次。 */
   function dropConn(c: Conn): void {
     if (conn !== c) return
     conn = null
+    if (c.hsTimer) { clearTimeout(c.hsTimer); c.hsTimer = undefined }
     try { c.sock.close() } catch { /* 已经关了 */ }
     if (c.readyAt !== undefined && now() - c.readyAt >= STABLE_MS) backoffAttempt = 0
     if (!closed && !fatal && needsConnection()) scheduleReconnect()
@@ -220,13 +196,13 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
 
   function onHello(c: Conn, f: unknown): void {
     const h = ServerHello.safeParse(f)
-    if (!h.success) { protoErr('bad_hello', h.error); return }
+    if (!h.success) { protoErr('bad_hello', h.error); dropConn(c); return }
     let theirPub: Uint8Array
     let shared: Uint8Array
     try {
       theirPub = b64uDecode(h.data.hs)
       shared = x25519Shared(c.priv, theirPub)
-    } catch (e) { protoErr('bad_hello_key', e); return }
+    } catch (e) { protoErr('bad_hello_key', e); dropConn(c); return }
     if (h.data.v === 2) {
       c.chan = makeV2Channel(deriveV2Keys(shared, opts.token), 'client')
       c.version = 2
@@ -236,6 +212,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     }
     negotiated = c.version
     c.readyAt = now()
+    if (c.hsTimer) { clearTimeout(c.hsTimer); c.hsTimer = undefined }
     if (c.version === 1) {
       for (const sub of [...subs.values()]) { subs.delete(sub.sid); subErr(sub.topic, 'subscriptions_need_v2') }
     } else {
@@ -306,8 +283,8 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
   }
 
   function startAttempt(p: Pending): void {
-    p.rid = `r${++ridSeq}`
     p.sent = false
+    p.sentOn = undefined
     byRid.set(p.rid, p)
     p.timer = setTimeout(() => onTimeout(p), timeoutMs)
     ensureConnected()
@@ -316,9 +293,17 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
 
   function onTimeout(p: Pending): void {
     if (byRid.get(p.rid) !== p) return
+    // 发出后这条连接一帧都没再收到 ⇒ 多半是悄悄死掉的连接,换一条再说。
+    const dead = p.sentOn !== undefined && p.sentOn === conn && p.sentOn.recv === p.recvAtSend
+    if (p.retriesLeft > 0) {
+      p.retriesLeft -= 1
+      if (dead) dropConn(p.sentOn!)
+      startAttempt(p)
+      return
+    }
     byRid.delete(p.rid)
-    if (p.retriesLeft > 0) { p.retriesLeft -= 1; startAttempt(p); return }
     p.reject(new Error('timeout'))
+    if (dead) dropConn(p.sentOn!)
   }
 
   function sendReq(c: Conn, p: Pending): void {
@@ -327,7 +312,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
       if (req.body instanceof Uint8Array) { settle(p.rid, q => q.reject(new Error('binary_body_needs_v2'))); return }
       const m: V1RequestT = { path: req.path, method: req.method, rid: p.rid }
       if (req.body !== undefined) m.body = req.body
-      p.sent = true
+      markSent(c, p)
       sendRaw(c, JSON.stringify(sealV1(c.v1Key!, utf8.encode(JSON.stringify(m)))))
       return
     }
@@ -335,8 +320,14 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     if (req.headers) m.headers = req.headers
     if (req.body instanceof Uint8Array) { m.body = b64Encode(req.body); m.bodyEncoding = 'base64' }
     else if (req.body !== undefined) { m.body = req.body; m.bodyEncoding = 'utf8' }
-    p.sent = true
+    markSent(c, p)
     sendV2(c, m)
+  }
+
+  function markSent(c: Conn, p: Pending): void {
+    p.sent = true
+    p.sentOn = c
+    p.recvAtSend = c.recv
   }
 
   // ── 订阅 ────────────────────────────────────────────────────────────
@@ -354,7 +345,9 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
       if (closed) return Promise.reject(new Error('closed'))
       if (fatal) return Promise.reject(fatal)
       return new Promise<ProtocolResponse>((resolve, reject) => {
-        startAttempt({ req, retriesLeft: retries, rid: '', sent: false, resolve, reject })
+        const m = req.method.toUpperCase()
+        const retryable = req.retry ?? (m === 'GET' || m === 'HEAD')
+        startAttempt({ req, retriesLeft: retryable ? retries : 0, rid: `r${++ridSeq}`, sent: false, recvAtSend: 0, resolve, reject })
       })
     },
 
