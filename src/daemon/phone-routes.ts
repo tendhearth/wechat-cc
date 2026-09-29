@@ -73,9 +73,9 @@ export function phoneRouteAllowed(allow: ReadonlySet<string>, method: string, pa
  * 是前缀标记,跟 PHONE_ROUTES 同一个约定 —— 真正允许的是 `matter/<id>`,`phoneTopicAllowed`
  * 负责把前缀展开成"后面必须是合法 id"这条规矩。
  *
- * 这里只对 `PHONE_TOPICS` 与 `phoneTopicAllowed` 双向核对(哪个主题名允许、哪个不允许);
- * "每个主题都有登记的来源、每个来源都对得上主题" 是第 11 步真来源接上之后才有意义的
- * 交叉核对,不在这一步的守卫范围里。
+ * `scripts/phone-routes.guard.test.ts` 双向核对两件事:`PHONE_TOPICS` 与 `phoneTopicAllowed`
+ * (哪个主题名允许、哪个不允许);每个主题恰好一个来源、每个来源都对得上主题
+ * (`phone-topic-sources.ts`,第 11 步)。
  */
 export const PHONE_TOPICS: ReadonlySet<string> = new Set(['home', 'approvals', 'agents', 'matter/'])
 
