@@ -16,7 +16,7 @@
  */
 
 import { existsSync, statSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, posix } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // Internals exposed for tests (real process.argv / process.execPath aren't
@@ -48,7 +48,8 @@ export const __testInternals = {
   /** 主二进制的两个名字:新包 `wechat_cc_desktop`(Cargo 包名),老包 `wechat-cc`。新名字优先。 */
   resolveAppMainBinary(macosDir: string, isFile: (p: string) => boolean): string | null {
     for (const name of ['wechat_cc_desktop', 'wechat-cc']) {
-      const p = join(macosDir, name)
+      // posix:只在 macOS 打包模式下有意义;测试在 Windows runner 上也要跑出同样的斜杠。
+      const p = posix.join(macosDir, name)
       if (isFile(p)) return p
     }
     return null
