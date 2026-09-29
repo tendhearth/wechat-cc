@@ -17,9 +17,12 @@
  * nonces + replay rejection, `req`/`res` with headers + binary bodies, and
  * `sub`/`unsub` onto the PhoneEvents hub. That per-stream logic lives in
  * tunnel-v2-stream.ts; this file only negotiates, identifies the device and
- * routes frames. v1 streams behave exactly as before. Every stream's frames are
- * processed strictly in arrival order (one promise chain per stream) — v2's
- * counter check depends on it.
+ * routes frames. v1 streams behave exactly as before (fully concurrent). Only
+ * the ordering-sensitive part is serialized per stream (one promise chain):
+ * handshakes, v2 device identification and v2 `channel.open` — the counter
+ * check needs frames OPENED in arrival order. A v2 `req` is dispatched off the
+ * chain once opened, so a slow request (a chat `say` awaiting a model turn)
+ * never head-of-line-blocks the requests behind it.
  *
  * The relay never sees plaintext (tunnel.ts is content-blind); confidentiality
  * lives entirely here + on the phone. Device-token auth still applies: the
@@ -95,7 +98,9 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   // v2 streams also carry `v2: true` from the handshake and, once identified, their V2Stream.
   type StreamState = { kp: TunnelKeypair; bits: ArrayBuffer; key?: TunnelSharedKey; device?: string; v2?: boolean; v2s?: V2Stream }
   const streams = new Map<string, StreamState>()
-  // One promise chain per stream: frames are handled strictly in arrival order.
+  // One promise chain per stream for the ordering-sensitive work (handshake, v2
+  // identification + open). v2 req handling is dispatched off it; v1 never uses it
+  // once its handshake is done.
   const chains = new Map<string, Promise<void>>()
   function enqueue(stream: string, task: () => Promise<void>): void {
     const next = (chains.get(stream) ?? Promise.resolve())
@@ -286,7 +291,10 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       if (typeof msg.stream !== 'string') return
       if (msg.closed === true) { forgetStream(msg.stream); return }   // relay 通知手机断开 — 释放该 stream 的密钥条目与订阅
       const stream = msg.stream, frame = msg.frame
-      enqueue(stream, () => onStreamFrame(stream, frame))
+      // Handshakes, v2 streams, and anything queued behind a pending handshake go
+      // through the per-stream chain; an established v1 stream stays fully concurrent.
+      if (handshakePlaintext(frame) || streams.get(stream)?.v2 || chains.has(stream)) enqueue(stream, () => onStreamFrame(stream, frame))
+      else void onStreamFrame(stream, frame)
     })
     ws.addEventListener('close', () => {
       stopHeartbeat()

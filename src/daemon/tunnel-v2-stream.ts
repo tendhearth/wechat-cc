@@ -74,7 +74,8 @@ export interface V2StreamDeps {
 }
 
 export interface V2Stream {
-  /** 已识别设备后的密封帧(首帧的明文由 identifyV2 给出,走 onPlaintext)。 */
+  /** 已识别设备后的密封帧(首帧的明文由 identifyV2 给出,走 onPlaintext)。
+   *  resolve 于开帧 + 分派之后:sub/unsub 在内做完,req 分派出去不等。 */
   onFrame(frame: unknown): Promise<void>
   onPlaintext(pt: Uint8Array): Promise<void>
   /** 退订这条流的全部订阅,之后什么都不再发。幂等。 */
@@ -117,6 +118,7 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
     if (typeof url === 'string') { log('TUNNEL', `${url} path on ${stream} — rejected`); sendMsg({ t: 'err', rid: m.rid, code: 'bad_request' }); return }
     const method = m.method.toUpperCase()
     const init: RequestInit = { method }
+    // 手机给的请求头原样透传 —— 面板路由绝不能从请求头取身份(身份只来自上面注入的 d=)。
     const headers: Record<string, string> = { ...(m.headers ?? {}) }
     if (m.body !== undefined && method !== 'GET' && method !== 'HEAD') {
       try { init.body = m.bodyEncoding === 'base64' ? new Uint8Array(b64Decode(m.body)) : m.body }
@@ -175,7 +177,9 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
     const parsed = V2ClientMessage.safeParse(body)
     if (!parsed.success) { log('TUNNEL', `v2 malformed message on ${stream} — dropped`); return }
     const m = parsed.data
-    if (m.t === 'req') await onReq(m)
+    // req 不在链上等:开帧已按序完成,处理并发(慢的 say 不挡后面的请求)。onReq 自己把
+    // 失败回成密封 err;这里只兜住意外(比如 seal 计数器溢出)。
+    if (m.t === 'req') void onReq(m).catch(e => log('TUNNEL', `v2 req handler threw on ${stream}: ${String(e)}`))
     else if (m.t === 'sub') { if (checkToken()) onSub(m) }
     else unsubscribe(m.sid)
   }

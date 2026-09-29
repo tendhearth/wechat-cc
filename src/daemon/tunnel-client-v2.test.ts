@@ -9,6 +9,7 @@ import {
 } from '@wechat-cc/protocol'
 import type { V2ClientMessageT, V2ServerMessageT, SealedFrameV2 } from '@wechat-cc/protocol'
 import { makeTunnelClient } from './tunnel-client'
+import { generateTunnelKeypair, exportPublicKeyB64, importPublicKeyB64, deriveSharedKey, sealFrame, openFrame } from '../lib/tunnel-crypto'
 import { makePhoneEvents, type PhoneEvents, type TopicSource } from './phone-events'
 
 const DTOK = 'dtest0000'
@@ -57,6 +58,8 @@ async function v2Phone(sock: Sock, stream: string, token = DTOK) {
       sock.emit({ stream, frame: f })
       return f
     },
+    /** 只封不发(测乱序用)。 */
+    seal(m: V2ClientMessageT): SealedFrameV2 { return chan.seal(new TextEncoder().encode(JSON.stringify(m))) },
     raw(f: unknown) { sock.emit({ stream, frame: f }) },
     /** 把新到的帧拆进 inbox 并返回整个 inbox。 */
     drain(): Inbound[] {
@@ -209,28 +212,76 @@ describe('tunnel-client v2', () => {
     expect(d).toBe('tlink')
   })
 
-  it('每条流串行:前一个请求没回,后一个不进面板(v2 与 v1 都是)', async () => {
-    const sock = fakeSocket()
+  function gatedHandler() {
     const order: string[] = []
     let release!: () => void
     const gate = new Promise<void>(r => { release = r })
-    client(sock, {
-      handleRequest: async (req) => {
-        const path = new URL(req.url).pathname
-        order.push(`start ${path}`)
-        if (path === '/slow') await gate
-        order.push(`end ${path}`)
-        return new Response('{}', { headers: { 'content-type': 'application/json' } })
-      },
-    })
+    let calls = 0
+    const handleRequest = async (req: Request) => {
+      calls++
+      const path = new URL(req.url).pathname
+      order.push(`start ${path}`)
+      if (path === '/slow') await gate
+      order.push(`end ${path}`)
+      return new Response(JSON.stringify({ path }), { headers: { 'content-type': 'application/json' } })
+    }
+    return { order, release: () => release(), handleRequest, calls: () => calls }
+  }
+
+  it('v2:慢请求不挡后面的请求 —— 后发的 rid 先回(只串行开帧,不串行处理)', async () => {
+    const g = gatedHandler()
+    const sock = fakeSocket()
+    client(sock, { handleRequest: g.handleRequest })
     const p = await v2Phone(sock, 'sS')
-    p.send({ t: 'req', rid: 'a', method: 'GET', path: '/slow' })
+    p.send({ t: 'req', rid: 'a', method: 'POST', path: '/slow' })
     p.send({ t: 'req', rid: 'b', method: 'GET', path: '/fast' })
+    expect(await p.next()).toMatchObject({ t: 'res', rid: 'b' })   // 第一条到的回复就是 b
+    expect(g.order).toEqual(['start /slow', 'start /fast', 'end /fast'])
+    g.release()
+    expect(await p.next()).toMatchObject({ t: 'res', rid: 'a' })
+  })
+
+  it('v2:处理并发但开帧仍按到达顺序 —— 慢请求在途时重放 / 乱序的计数器照样被拒', async () => {
+    const g = gatedHandler()
+    const sock = fakeSocket()
+    client(sock, { handleRequest: g.handleRequest })
+    const p = await v2Phone(sock, 'sO')
+    const f0 = p.send({ t: 'req', rid: 'a', method: 'POST', path: '/slow' })
+    await waitFor(() => g.calls() === 1, 'slow started')
+    p.raw(f0)                                                      // 在途时重放
+    // 乱序:c=2 先到,c=1 后到 ⇒ c=1 被拒
+    const f1 = p.seal({ t: 'req', rid: 'b', method: 'GET', path: '/fast' })
+    const f2 = p.seal({ t: 'req', rid: 'c', method: 'GET', path: '/fast' })
+    p.raw(f2)
+    p.raw(f1)
+    expect(await p.next()).toMatchObject({ t: 'res', rid: 'c' })
     await settle()
-    expect(order).toEqual(['start /slow'])
-    release()
-    await p.next(m => 't' in m && m.t === 'res' && m.rid === 'b')
-    expect(order).toEqual(['start /slow', 'end /slow', 'start /fast', 'end /fast'])
+    expect(g.calls()).toBe(2)                                      // slow + c;重放的 a 和迟到的 b 都没进面板
+    g.release()
+    expect(await p.next()).toMatchObject({ t: 'res', rid: 'a' })
+    await settle()
+    expect(p.drain()).toEqual([])
+  })
+
+  it('v1:两个并发请求,第一个慢 —— 第二个先回(Task 10 之前的行为)', async () => {
+    const g = gatedHandler()
+    const sock = fakeSocket()
+    client(sock, { handleRequest: g.handleRequest })
+    const kp = await generateTunnelKeypair()
+    sock.emit({ stream: 'v1', frame: { hs: await exportPublicKeyB64(kp.publicKey) } })
+    await waitFor(() => sock.sent.length === 1, 'v1 hello')
+    const key = await deriveSharedKey(kp.privateKey, await importPublicKeyB64(JSON.parse(sock.sent[0]!).frame.hs), new TextEncoder().encode(DTOK))
+    const req = (rid: string, path: string) => sealFrame(key, new TextEncoder().encode(JSON.stringify({ path, method: 'GET', rid })))
+    const fa = await req('a', '/slow'), fb = await req('b', '/fast')
+    sock.emit({ stream: 'v1', frame: fa })
+    sock.emit({ stream: 'v1', frame: fb })
+    await waitFor(() => sock.sent.length === 2, 'first v1 reply')
+    const first = JSON.parse(new TextDecoder().decode(await openFrame(key, JSON.parse(sock.sent[1]!).frame)))
+    expect(first.rid).toBe('b')
+    g.release()
+    await waitFor(() => sock.sent.length === 3, 'second v1 reply')
+    const second = JSON.parse(new TextDecoder().decode(await openFrame(key, JSON.parse(sock.sent[2]!).frame)))
+    expect(second.rid).toBe('a')
   })
 
   it('sub:先收到当下状态,poke 后收到变化;同 epoch seq 递增', async () => {
