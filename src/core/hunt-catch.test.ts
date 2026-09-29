@@ -90,3 +90,21 @@ describe('deriveTitle —— 只是给列表扫读用的派生字段', () => {
     expect(deriveTitle('', null)).toBe('(无标题)')
   })
 })
+
+// 2026-09-29(取代 Codex #114 的一半):模型爱把「为什么你会感兴趣」单独成段,按空行拆条就把
+// 理由和它的链接拆成两条 —— 背包里一条只有链接、一条只有理由。
+describe('推荐理由跟着上一条带链接的推荐', () => {
+  it('隔着空行也并进上一条', () => {
+    const items = parseCatch('Foo https://example.com/foo\n\n**为什么你会感兴趣:** 与你有关\n\nBar https://example.com/bar')
+    expect(items).toHaveLength(2)
+    expect(items[0]!.note).toContain('与你有关')
+    expect(items[1]!.url).toBe('https://example.com/bar')
+  })
+  it('前面没有带链接的推荐 ⇒ 理由自己成一条,不丢', () => {
+    const items = parseCatch('推荐理由:这周很多人在聊\n\n没有链接的一段分享')
+    expect(items.map(i => i.note)).toEqual(['推荐理由:这周很多人在聊', '没有链接的一段分享'])
+  })
+  it('标题去掉 Markdown 的 ** # `', () => {
+    expect(deriveTitle('**Continue.dev** —— 开源编码助手', 'https://continue.dev')).toBe('Continue.dev')
+  })
+})

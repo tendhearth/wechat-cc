@@ -10,7 +10,7 @@ const mkEl = () => ({ innerHTML: '', textContent: '', addEventListener: () => {}
 // @ts-expect-error minimal DOM stub before import (same shape as todos.test.ts)
 globalThis.document = { getElementById: (id: string) => els.get(id) ?? null }
 
-const { renderHuntBag, splitByStatus, dayLabel, statusLabel, onHuntBagClick, countLabel, markJournalSeen } = await import('./journal.js')
+const { renderHuntBag, groupRecommendations, splitByStatus, dayLabel, statusLabel, onHuntBagClick, countLabel, markJournalSeen } = await import('./journal.js')
 
 const item = (o: Partial<Record<string, unknown>> = {}) => ({
   id: 'i1', ts: new Date().toISOString(), chat_id: 'c', title: 'Continue.dev',
@@ -190,5 +190,55 @@ describe('明信片卡(kind=postcard)', () => {
     const postcardArticle = html.slice(0, html.indexOf('data-hb-id="h1"'))
     expect(postcardArticle).not.toContain('data-hb-status="tried"')
     expect(countLabel([{ kind: 'postcard' } as never, { kind: 'hunt' } as never, { kind: 'visit' } as never])).toBe('1 件 · 1 段见闻 · 1 张明信片')
+  })
+})
+
+// 2026-09-29(取代 Codex #114 的另一半):hunt-catch 修好之前存下的旧记录,理由和链接是两条。
+// 展示时把「紧挨着、同一次打猎、同一 chat、同一状态、理由段无链接」的归成一张卡;原始数据不动,
+// 这张卡上的状态和删除覆盖组里每一条。
+describe('旧记录的推荐理由归组', () => {
+  const ts = '2026-09-10T10:00:00.000Z'
+  const parent = () => item({ id: `${ts}:0:aaaaaa`, ts })
+  const reason = (o: Partial<Record<string, unknown>> = {}) => item({ id: `${ts}:1:bbbbbb`, ts, url: null, title: '为什么你会感兴趣', note: '**为什么你会感兴趣:** 与你有关', ...o })
+
+  it('紧挨着的理由段并进上一张卡,sourceIds 记下两条,输入不被改', () => {
+    const p = parent(), r = reason()
+    const out = groupRecommendations([r, p])
+    expect(out).toHaveLength(1)
+    expect(out[0].sourceIds).toEqual([p.id, r.id])
+    expect(out[0].note).toContain('与你有关')
+    expect(p.note).toBe('能改多文件')
+  })
+  it('不同 chat / 不同状态 / 不连号 / 不像理由 ⇒ 不归', () => {
+    expect(groupRecommendations([parent(), reason({ chat_id: 'other' })])).toHaveLength(2)
+    expect(groupRecommendations([parent(), reason({ status: 'tried' })])).toHaveLength(2)
+    expect(groupRecommendations([parent(), reason({ id: `${ts}:2:bbbbbb` })])).toHaveLength(2)
+    expect(groupRecommendations([parent(), reason({ note: '随便一段话' })])).toHaveLength(2)
+  })
+  it('渲染时一张卡、卡上带 data-hb-ids', () => {
+    renderHuntBag({ items: [parent(), reason()] })
+    expect(host().innerHTML.match(/<article class="hb-card"/g)).toHaveLength(1)
+    // 属性值走 escapeHtml(真实实现把 " 转成 &quot;;测试里 escapeHtml 是原样返回)
+    expect(host().innerHTML).toContain(`data-hb-ids="${JSON.stringify([`${ts}:0:aaaaaa`, `${ts}:1:bbbbbb`])}"`)
+    expect(count().textContent).toBe('1 件')
+  })
+  it('归组卡上改状态 ⇒ 每条都改;有一条失败就如实说', async () => {
+    invokeApi.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({ ok: false }).mockResolvedValueOnce({ items: [] })
+    const attrs: Record<string, string> = { 'data-hb-action': 'status', 'data-hb-id': 'one', 'data-hb-status': 'tried', 'data-hb-ids': JSON.stringify(['one', 'two']) }
+    await onHuntBagClick({ target: { closest: () => ({ getAttribute: (k: string) => attrs[k] ?? null }) } })
+    expect(invokeApi).toHaveBeenCalledWith('POST', '/v1/journal/status', { id: 'one', status: 'tried' })
+    expect(invokeApi).toHaveBeenCalledWith('POST', '/v1/journal/status', { id: 'two', status: 'tried' })
+    expect(showToast).toHaveBeenCalledWith('有一部分没改成 —— 刷新后看看')
+  })
+})
+
+describe('卡片的安全与整洁', () => {
+  it('只放行 http / https 链接', () => {
+    renderHuntBag({ items: [item({ url: 'javascript:alert(1)' })] })
+    expect(host().innerHTML).not.toContain('href="javascript:')
+  })
+  it('旧记录标题里的 ** 不显示', () => {
+    renderHuntBag({ items: [item({ title: '**Continue.dev**' })] })
+    expect(host().innerHTML).toContain('>Continue.dev<')
   })
 })
