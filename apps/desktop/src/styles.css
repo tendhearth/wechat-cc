@@ -1333,6 +1333,11 @@ input { font: inherit; color: inherit; }
   background: #fff9f3;
 }
 .settings-drawer .toggle-row--danger .toggle.on { background: #c96a3f; }
+/* 开关保存反馈(2026-09-29):占满一行,没内容时不占位。 */
+.toggle-row .setting-feedback { grid-column: 1 / -1; margin-top: -6px; font-size: 12px; color: #8b6a4f; }
+.toggle-row .setting-feedback:empty { display: none; }
+.toggle-row .setting-feedback[data-state="error"] { color: #c96a3f; }
+.toggle[disabled] { opacity: .6; cursor: progress; }
 .settings-drawer .btn {
   border-color: rgba(89, 63, 44, .24);
   border-radius: 8px;
@@ -3495,6 +3500,10 @@ input { font: inherit; color: inherit; }
   font-size: 18px;
   font-weight: 760;
 }
+/* 三个维护动作各带一句说明(2026-09-29)。 */
+.memory-maintenance { display: grid; gap: 8px; padding: 0 2px 12px; }
+.memory-maintenance-item { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; }
+.memory-maintenance-item p { margin: 0; color: #6b6480; font-size: 13px; line-height: 1.45; }
 .memory-profile-status {
   color: #8b6a4f;
   font-size: 13px;
