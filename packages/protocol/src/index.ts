@@ -5,6 +5,8 @@ export type { SealedFrameV1 } from './v1'
 export { deriveV1Key, sealV1, openV1 } from './v1'
 export type { SealedFrameV2, V2Channel } from './v2'
 export { deriveV2Keys, makeV2Channel } from './v2'
+export type { SealedPush } from './push'
+export { derivePushKey, sealPush, openPush } from './push'
 export {
   ClientHello, ServerHello, ErrorFrame, SealedV1Frame, SealedV2Frame, V1Request, V1Response,
   ReqMsg, ResMsg, SubMsg, UnsubMsg, EvMsg, ErrMsg, V2Message, V2ClientMessage, V2ServerMessage,
