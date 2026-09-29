@@ -17,10 +17,7 @@
  * synthesized request carries the phone's `d=` token in its URL, so an
  * un-paired phone's requests 401 exactly as on the LAN.
  */
-import { deriveSharedBits, hkdfAesKey, generateTunnelKeypair, exportPublicKeyB64, importPublicKeyB64, sealFrame, openFrame, type TunnelKeypair } from '../lib/tunnel-crypto'
-import type { webcrypto } from 'node:crypto'
-
-type CryptoKey = webcrypto.CryptoKey
+import { deriveSharedBits, hkdfAesKey, generateTunnelKeypair, exportPublicKeyB64, importPublicKeyB64, sealFrame, openFrame, type TunnelKeypair, type TunnelSharedKey } from '../lib/tunnel-crypto'
 
 /** Minimal WS surface (browser-style events) both Bun's WebSocket and a fake satisfy. */
 export interface TunnelWS {
@@ -76,7 +73,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   let now = deps.now ?? (() => Date.now())
   // Per-stream ephemeral state: our keypair, the raw ECDH bits, and — once the
   // first frame identifies the device — the token-bound key + that device token.
-  const streams = new Map<string, { kp: TunnelKeypair; bits: ArrayBuffer; key?: CryptoKey; device?: string }>()
+  const streams = new Map<string, { kp: TunnelKeypair; bits: ArrayBuffer; key?: TunnelSharedKey; device?: string }>()
   let ws: TunnelWS | null = null
   let stopped = false
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null

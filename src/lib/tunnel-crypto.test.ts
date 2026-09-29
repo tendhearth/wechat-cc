@@ -78,9 +78,19 @@ describe('tunnel-crypto', () => {
     expect(new TextDecoder().decode(await openFrame(kBok, sealed))).toBe('secret')
   })
 
-  it('uses X25519 (WebCrypto-portable), verified by importing a raw 32-byte key', async () => {
+  it('uses X25519 (WebCrypto-portable): the exported public key is raw 32 bytes and WebCrypto can import it', async () => {
+    // 2026-09-29: publicKey is no longer a WebCrypto CryptoKey (tunnel-crypto.ts
+    // now derives it via @wechat-cc/protocol's noble implementation) — so this
+    // can't call subtle.exportKey on it directly anymore. What still has to be
+    // true, and is the point of this test, is the property that matters for
+    // interop with the phone (apps/mobile/src/transport.js, real WebCrypto):
+    // the b64u-encoded public key IS raw 32-byte X25519 key material that a
+    // real browser's WebCrypto can import.
     const a = await generateTunnelKeypair()
-    const raw = await webcrypto.subtle.exportKey('raw', a.publicKey)
+    const b64 = await exportPublicKeyB64(a.publicKey)
+    const raw = Buffer.from(b64, 'base64url')
     expect(raw.byteLength).toBe(32)   // X25519 raw pubkey is 32 bytes
+    const imported = await webcrypto.subtle.importKey('raw', raw, { name: 'X25519' }, true, [])
+    expect(imported.type).toBe('public')
   })
 })
