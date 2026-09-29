@@ -44,6 +44,7 @@ wechat-cc ci triage --sha <sha> --json      # 给机器看的一份
 - **失败测试的文件本轮动过**(`x.test.ts` 动了、或它对应的 `x.ts` 动了)⇒ 一律 `real`,**不重跑**。「本轮」= 从这条分支上一次绿的 commit 到这个 SHA(找不到上一次绿就退化成 `<sha>~1`)。
 - 没动过、且症状对上登记表 ⇒ `flake`。给了 `--rerun` 就 `gh run rerun <id> --failed`,`--wait` 时等它跑完再判一次。
 - **第二次仍红一律改判 `real`** —— 哪怕症状还对得上。连着两次红的 flake 就当真的看。
+- **唯一的例外:Windows runner 卡死(`runner-stall`,2026-09-29 起)。** 三条同时成立才算:作业是 `build · windows-latest`;同一次运行里别的 `build · *` 都绿;至少三条 `Hook timed out` 挤在两秒之内。这时整条作业判一个 flake,**先于**「动过相关文件 / 重跑后仍红 ⇒ real」,并且多给一次重跑(`--max-reruns` + 1);还卡就报 flake(退出 3),不冒充 real 也不冒充 green。来历:09-28 #142、#145 两次 —— 后者是纯文档 PR,Windows 两连红,日志里同一秒六条 `Hook timed out in 40000ms`,第三跑绿。只看「同一秒批量超时」不够:一个改动让公共 setup 卡住,几个并行文件也会同一刻超时 —— 但那样 Linux / macOS 也会红,所以才要求兄弟构建都绿。
 - 判不出来的是 `unknown`:打印证据片段,**不会自动重跑**。要么是新 bug,要么该往登记表里加一条(人/LLM 开 PR 的事,triage 自己不写)。
 - **日志取不回来**(gh 抖一下、超时)也一律记 `unknown`,不会当成「作业红了但没有汇总行」那条 flake。空日志跟 `__NO_SUMMARY__` 长得一模一样,认错了就会把一条真红自动重跑掉。
 

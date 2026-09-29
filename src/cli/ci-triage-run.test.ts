@@ -196,6 +196,31 @@ describe('runCiTriage', () => {
     expect(h.calls.filter(c => c.startsWith('gh run rerun'))).toHaveLength(1)
   })
 
+  // 2026-09-29:runner 卡死(同一两秒一批 Hook timed out、兄弟构建都绿)第二轮再卡也不算真红,
+  // 多给一次重跑;还卡就如实报 flake(退出 3),不冒充 real,也不冒充 green。
+  it('runner-stall:第二轮再卡 ⇒ 多重跑一次;一直卡 ⇒ flake 退出 3,不打转', async () => {
+    const W = 'build · windows-latest'
+    const at = (ms: number) => `2026-09-28T17:27:53.${String(ms).padStart(3, '0')}Z`
+    const STALL = [
+      `${W}\tRun tests\t${at(0)}  FAIL  src/core/workbench/service.test.ts > persistent workbench > x`,
+      ...[961, 994, 997].map(ms => `${W}\tRun tests\t${at(ms)} ##[error]Error: Hook timed out in 40000ms.`),
+      `${W}\tRun tests\t${at(999)}  Test Files  3 failed | 700 passed`,
+    ].join('\n')
+    const h = harness((line) => {
+      const base = failedRunHandler(STALL, 'src/core/workbench/service.ts\n')(line)
+      if (line.startsWith('gh run view') && line.includes('--json status,conclusion')) {
+        return JSON.stringify({ status: 'completed', conclusion: 'failure' })
+      }
+      return base
+    })
+    const { report, exitCode } = await runCiTriage(h.deps, { sha: SHA, rerun: true, wait: true })
+    expect(h.calls.filter(c => c.startsWith('gh run rerun'))).toHaveLength(2)
+    expect(report.reruns).toBe(2)
+    expect(report.verdict).toBe('flake')
+    expect(report.jobs[0]!.classified).toEqual([{ kind: 'flake', failure: null, id: 'runner-stall' }])
+    expect(exitCode).toBe(CI_TRIAGE_EXIT.flake)
+  })
+
   it('flake + --rerun 但没 --wait:重跑了就收工,verdict 仍是 flake(退出 3)', async () => {
     const h = harness(failedRunHandler(FLAKE_LOG, 'docs/x.md\n'))
     const { report, exitCode } = await runCiTriage(h.deps, { sha: SHA, rerun: true })

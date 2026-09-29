@@ -192,8 +192,11 @@ function triageFailedRun(
     deps.log(`git diff ${base}..${sha} 失败(${(diff.stderr || '').trim().slice(0, 200)})—— 按「本轮没动过文件」处理,判定会偏向 flake。`)
   }
 
-  const ctx: ClassifyCtx = { changedFiles: new Set(changedFiles), registry: deps.registry, secondRun }
+  const ctx0: ClassifyCtx = { changedFiles: new Set(changedFiles), registry: deps.registry, secondRun }
   const out = failed.map(job => {
+    // runner 卡死判定要看「别的构建作业都绿」—— 按作业算,不是按整次运行。
+    const siblings = jobs.filter(j => j.name !== job.name && j.name.startsWith('build · '))
+    const ctx: ClassifyCtx = { ...ctx0, siblingBuildsGreen: siblings.length > 0 && siblings.every(j => j.conclusion === 'success') }
     const failedStep = job.steps.find(s => s.conclusion === 'failure')?.name ?? null
     const logRes = deps.exec('gh', ['run', 'view', '--job', String(job.databaseId), '--log-failed'], {
       cwd: deps.cwd,
@@ -283,11 +286,17 @@ export async function runCiTriage(
       const verdict = verdictOf(all)
       const report: TriageReport = { sha, runId: runRow.databaseId, url: runRow.url, verdict, base, changedFiles, jobs, reruns }
 
-      if (verdict === 'flake' && opts.rerun && reruns < maxReruns) {
+      // runner 卡死(ci-triage.ts 的 runner-stall)不是测试的事,第二轮再卡也不改判 real,
+      // 多给一次重跑;还卡就如实报 flake(退出 3)。
+      const onlyStalls = all.length > 0 && all.every(c => c.kind === 'flake' && c.id === 'runner-stall')
+      const cap = onlyStalls ? maxReruns + 1 : maxReruns
+      if (verdict === 'flake' && opts.rerun && reruns < cap) {
         run(deps, 'gh', ['run', 'rerun', String(runRow.databaseId), '--failed'])
         reruns += 1
         report.reruns = reruns
-        deps.log(`判成 flake —— 已重跑失败作业(第 ${reruns} 次)。第二次仍红一律算真红。`)
+        deps.log(onlyStalls
+          ? `Windows runner 卡死(同一两秒一批 hook 超时、别的构建都绿)—— 已重跑(第 ${reruns} 次)。`
+          : `判成 flake —— 已重跑失败作业(第 ${reruns} 次)。第二次仍红一律算真红。`)
         if (!wait) return { report, exitCode: CI_TRIAGE_EXIT.flake }
         // 重跑刚发出去时 GitHub 那边可能还报 completed;先睡一轮再问,否则会
         // 拿着上一轮的结论直接二次分类(于是「仍红」是假的)。
