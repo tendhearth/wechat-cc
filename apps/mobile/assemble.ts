@@ -6,7 +6,7 @@
  *   {{>file.js}}   构建期包含,原样内联(页面必须自包含:公网壳页 document.write 整份写入,没有可用的相对路径)
  *   {{UPPER_KEY}}  运行时键,留给 src/daemon/mobile-page.ts 按请求填;只认 RUNTIME_VARS 里的名字
  */
-export const RUNTIME_VARS = ['TOKEN_JSON', 'REMOTE_JSON', 'ART_UNLIT_B64', 'ART_LIT_B64', 'BRAND_ICON_VERSION'] as const
+export const RUNTIME_VARS = ['TOKEN_JSON', 'REMOTE_JSON', 'BRAND_ICON_VERSION'] as const
 
 export interface MobilePage {
   phone: string
@@ -19,7 +19,9 @@ export interface MobilePage {
 }
 
 const INCLUDE = /\{\{>([a-z-]+\.(?:js|css|html))\}\}/g
-// 键名里有数字(ART_LIT_B64):少了 0-9 会让冻结图原封不动地以 {{…}} 送上手机。
+// 键名允许数字(防御性的——正则少了 0-9,任何带数字的键名都会原封不动地以
+// {{…}} 送上手机;2026-09-29 起没有真实键名带数字了,但字符类不收窄,免得
+// 将来加一个带数字的键又踩同一个坑)。
 const RUNTIME = /\{\{([A-Z0-9_]+)\}\}/g
 const RUNTIME_ONE = /^\{\{([A-Z0-9_]+)\}\}$/
 const ANY_MARKER = /\{\{[^{}\n]*\}\}/g

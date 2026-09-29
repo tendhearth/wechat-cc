@@ -26,16 +26,7 @@ export interface TunnelSocket {
 
 interface PhoneEntry { ws: TunnelSocket; daemonId: string }
 
-// sealed frames carry JSON API bodies + occasional small images, and (2026-09-29,
-// 手机协议包 v2 Task 4) the whole /m page HTML — it now ships its own v1 crypto
-// (packages/protocol, ~44KB minified) inlined instead of relying on browser
-// WebCrypto, so the page grew past the old 512KB cap; see
-// src/daemon/mobile-page-presence.test.ts's budget test, which imports this
-// same constant so the two can't drift apart again. `server.ts`'s
-// `websocket.maxPayloadLength` reuses this export for the same reason — Bun's
-// WS layer enforces payload size before a frame even reaches the hub, so both
-// caps must move together.
-export const DEFAULT_MAX_FRAME = 1024 * 1024
+const DEFAULT_MAX_FRAME = 512 * 1024   // sealed frames carry JSON API bodies + occasional small images
 
 export interface TunnelHub {
   registerDaemon(id: string, ws: TunnelSocket): void

@@ -34,6 +34,7 @@ import { capabilitiesFor } from '../core/capability-matrix'
 import { PROVIDER_IDS } from '../lib/provider-ids'
 import { buildFeed, decodeCursor, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
 import blinkArt from './mobile-blink-art.json'
+import presenceArt from './mobile-presence-art.json'
 import { MOBILE_BRAND_ICON_PNG, MOBILE_BRAND_ICON_SIZES } from './mobile-brand-icon'
 import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions,type MobileUploadActions} from './mobile-workbench'
 import {mobileMatterDetailResponse} from './mobile-matter-response'
@@ -573,6 +574,12 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           }
           if (url.pathname === '/m/api/art/blink' && req.method === 'GET') {
             return json({ ok: true, mime: 'image/png', half: blinkArt.half.base64, closed: blinkArt.closed.base64 })
+          }
+          // 「此刻」形象画(手机协议包 v2 Task 4 fix round 1,2026-09-29):按需拉,
+          // 不再内联进 /m 页 —— 两张 PNG base64 加起来 ~257KB,是页面撑爆中继
+          // 512KB 帧预算的大头。apps/mobile/src/presence.js 的 loadPresenceArt() 调这个。
+          if (url.pathname === '/m/api/art/presence' && req.method === 'GET') {
+            return json({ ok: true, mime: 'image/png', unlit: presenceArt.unlit.base64, lit: presenceArt.lit.base64 })
           }
           if (url.pathname === '/m/api/memory' && req.method === 'GET') {
             if (!deps.curatedMemory) return json({ ok: false, error: 'memory_not_wired' }, 503)

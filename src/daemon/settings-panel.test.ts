@@ -656,6 +656,26 @@ describe('phone curated memory', () => {
       expect(Buffer.from(r.closed, 'base64').subarray(1, 4).toString()).toBe('PNG')
     } finally { await p.stop() }
   })
+  it('serves the presence art (「此刻」形象画) behind the token — moved out of the inlined /m page, 手机协议包 v2 Task 4 fix round 1', async () => {
+    const p = makeSettingsPanel({
+      stateDir: mkdtempSync(join(tmpdir(), 'sp-art-presence-')), ownerChatId: () => null,
+      chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
+      getUserName: () => null, setUserName: async () => {}, log: () => {},
+    })
+    const { port } = await p.start(0)
+    try {
+      const base = `http://127.0.0.1:${port}`
+      expect((await fetch(`${base}/m/api/art/presence`)).status).toBe(401)
+      const resp = await fetch(`${base}/m/api/art/presence?t=${p.issueToken()}`)
+      // 200,不是 403 route_not_allowed —— 证明路由确实登记在 PHONE_ROUTES(phone-routes.ts)里。
+      expect(resp.status).toBe(200)
+      const r = await resp.json() as { ok: boolean; mime: string; unlit: string; lit: string }
+      expect(r.ok).toBe(true)
+      expect(r.mime).toBe('image/png')
+      expect(Buffer.from(r.unlit, 'base64').subarray(1, 4).toString()).toBe('PNG')
+      expect(Buffer.from(r.lit, 'base64').subarray(1, 4).toString()).toBe('PNG')
+    } finally { await p.stop() }
+  })
   it('serves the curated memory view behind the token', async () => {
     const view = { updated_at: '2026-09-25T04:05:00.000Z', when_label: '今天凌晨 4 点', mood: 'changed' as const, failures: 0,
       changes: [{ kind: 'add' as const, label: '新记下' as const, section: '承诺' as const, text: '周五回话' }],
