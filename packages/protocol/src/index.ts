@@ -1,1 +1,5 @@
 export { b64uEncode, b64uDecode } from './b64u'
+export type { KeyPair } from './x25519'
+export { x25519KeyPair, x25519Shared } from './x25519'
+export type { SealedFrameV1 } from './v1'
+export { deriveV1Key, sealV1, openV1 } from './v1'
