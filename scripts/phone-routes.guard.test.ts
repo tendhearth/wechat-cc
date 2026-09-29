@@ -10,7 +10,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { PHONE_ROUTES } from '../src/daemon/phone-routes'
+import { PHONE_ROUTES, PHONE_TOPICS, phoneTopicAllowed } from '../src/daemon/phone-routes'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (...p: string[]) => readFileSync(join(ROOT, ...p), 'utf8')
@@ -58,5 +58,29 @@ describe('手机面板路由与 PHONE_ROUTES 对得上', () => {
   it('CRLF 下抓到的一样', () => {
     const panel = read('src', 'daemon', 'settings-panel.ts').replace(/\r?\n/g, '\r\n')
     expect(body(panel, 'async function routeRequest(').length).toBeGreaterThan(1000)
+  })
+})
+
+/**
+ * 事件主题(第 9 步,`src/daemon/phone-events.ts` 的 `subscribe`)的双向核对:
+ * `PHONE_TOPICS` 里的每个名字都要被 `phoneTopicAllowed` 接受,几个有代表性的坏主题
+ * 都要被拒。"每个主题都有登记的来源、每个来源都对得上主题" 是第 11 步真来源接上
+ * 之后才有意义的交叉核对(来源注册在那一步才存在),不在这里做。
+ */
+describe('PHONE_TOPICS 与 phoneTopicAllowed 对得上', () => {
+  it('PHONE_TOPICS 里的每个主题名都被接受', () => {
+    for (const topic of PHONE_TOPICS) {
+      // 'matter/' 本身是前缀标记,不是一个可订阅的主题名 —— 得跟上合法 id 才行。
+      if (topic === 'matter/') {
+        expect(phoneTopicAllowed(`${topic}sample-id`)).toBe(true)
+        continue
+      }
+      expect(phoneTopicAllowed(topic)).toBe(true)
+    }
+  })
+  it('有代表性的坏主题都被拒', () => {
+    for (const bad of ['matter/', 'matter/../x', 'unknown', '', 'Home', 'matter/a b']) {
+      expect(phoneTopicAllowed(bad)).toBe(false)
+    }
   })
 })
