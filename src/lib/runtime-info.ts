@@ -16,7 +16,7 @@
  */
 
 import { existsSync, statSync } from 'node:fs'
-import { dirname, join, posix } from 'node:path'
+import { dirname, posix } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // Internals exposed for tests (real process.argv / process.execPath aren't
