@@ -4,26 +4,28 @@
 > 「定了什么 / 为什么这样定」在 [全景导图](全景导图.md);「某件事的文档在哪」在 [文档索引](INDEX.md);
 > `docs/rfc/02-post-v1.1-roadmap.md` 是 2026-04 的历史版本(v1.2 时代),已被本文取代。
 
-## 现状:1.7.0 已合、正在发
+## 现状:1.7.0 已发(2026-09-27)
 
 | 事实 | 怎么看(别写死数字,每次改这页先跑) |
 |---|---|
-| 最近一次**公开**发版 | `gh release list --limit 1`(2026-09-27:仍是 `desktop-v1.6.5`,08-31) |
-| 1.7.0 | PR #117 已于 2026-09-23 squash 合进 master(`63edf14c`);`v1.7.0` tag 2026-09-27 已推,`desktop-v1.7.0` 三平台构建等 `release-signing` 批准 → Draft → 人点 Publish(步骤见 [maintainer/release.md](maintainer/release.md)) |
-| `dev` 领先 master | `git rev-list --count origin/master..origin/dev`(2026-09-27:1537) |
+| 最近一次**公开**发版 | `gh release list --limit 1`(2026-09-27:`desktop-v1.7.0`,master `3a14196b`) |
+| 自动更新源 | `curl -s https://dl.tendhearth.com/wechat-cc/latest.json \| grep version`(2026-09-27:1.7.0,与 GitHub 一致) |
+| `dev` 领先 master | `git rev-list --count origin/master..origin/dev`(簿记合并之后是真实差值) |
+
+1.7.0 是发版链 09-03 改造后第一次真跑,一路踩到五个「加进去后没在真 tag 上跑过」的坑,全部修在 dev 并有守卫/手册条目:dev→master 簿记合并(#121)、e2e 作业装浏览器(#122)、sd.cpp 子模块(#119)、公证变量空串(#123)、R2 令牌失效还报绿(#125)。**发版从此全自动**:合 PR、打 tag、两道 `release-signing` 审批(助手用主人 gh 凭据经 API)、Publish、核对更新源,主人不用点;细则 [maintainer/release.md](maintainer/release.md)。
 
 版本号已统一(2026-09-22):此前四处各说各话(发版认 `tauri.conf.json` 的 1.6.6、`--version` 报根 `package.json` 的 0.6.4、`apps/desktop/package.json` 写 0.5.18、ACP 的 clientInfo 还硬编码 `'0.6.4'`),现在四处 + `Cargo.toml` 都是 **1.7.0**,由 `scripts/version-consistency.guard.test.ts` 钉住;`--version` 同时带构建的 git 短 sha(`1.7.0 (a1b2c3d)`),否则 `self deploy` 的健康门打出来的数字两次发版之间永远一样、看不出新构建起没起来。发版说明:`docs/releases/desktop-v1.7.0.md`。
 
-**⇒ 第一优先级仍是把攒了三周的东西发出去。** 每多攒一周,发版的风险和回归面都在变大。
+**⇒ 发版节奏的教训:三周不发、发版链改了不真跑,代价是一天修五个坑。** 之后每合一批就发一版 patch。
 
 ## 下一步(按顺序)
 
-1. ~~合 #117~~(2026-09-23 已合)。
-2. **发 1.7.0** —— tag 已推;剩 `release-signing` 批准 ×2 + 点 Publish,走 [maintainer/release.md](maintainer/release.md)。
-3. **补真机验证**(下面「欠的真机账」整节)—— 这三周里大量功能只有单测和 selftest 绿,没在真机上走过一遍。
+1. ~~合 #117~~(09-23)· ~~发 1.7.0~~(09-27)。
+2. **补真机验证**(下面「欠的真机账」整节)—— 这三周里大量功能只有单测和 selftest 绿,没在真机上走过一遍。
+3. **Codex `codex/cc-task-entry` 第一批**(普通用户交办体验)先行，独立分支实现统一创建回执、默认独立工作位置和手机材料续说，自动验证与真机待验状态见[验证记录](superpowers/plans/2026-09-26-task-entry-validation.md);它合入后再做 ⑥(设备令牌进 token-registry)与 workbench service 拆分。cli.ts 与 bootstrap 的拆分不等它。四份设计稿:`superpowers/specs/2026-09-27-{device-token-registry,cli-split,bootstrap-split,workbench-service-split}-design.md`。
 4. 之后才谈新功能。
 
-## 已交付但没发版(都在 dev 上)
+## 1.7.0 里交付的(2026-09-27 已发)
 
 按主题,括号里是权威文档。
 
@@ -42,7 +44,7 @@
 
 这三周的东西**单测和 selftest 绿 ≠ 用户能用**,以下都没在真机上走过:
 
-- 桌面同一个文件夹连开两件事,看等待行说的话对不对(一个文件夹一个活会话)。
+- ~~桌面同一个文件夹连开两件事,看等待行说的话对不对(一个文件夹一个活会话)。~~ 2026-09-28 真机核对通过:第二件 `waitingFor={reason:same_path, holderWriting:true}`、第一件独占在写(workbench service 拆分 PR 9 合入后,脚本见 PR 10 计划)。
 - `self change --no-deploy` 走一条完整链路,确认每条运行一个 worktree 全程成立。
 - 桌宠 Phase B 的权限卡闭环(微信 y/n 只认被问的那个 chat)。
 - 介绍 2 跳的完整链路(需要第三台真机)。
@@ -55,7 +57,7 @@
 - **e2e 只在 master 相关的分支跑**(`.github/workflows/ci.yml:152` 的分支条件)—— dev 上推送不跑 e2e,于是积压的 e2e 红会在开 PR 那一刻一次性砸下来(这次砸了 8 条)。要不要让 dev 也跑是成本取舍。
 - **自改的工作树回收缺一个显式入口** —— 现在只回收 `done`/`declined` 的运行,可 resume 的和被 kill 的永不回收(磁盘单调增长)。缺的是「这条我不接了」这个动作。
 - **设备 token 进 token-registry、http 默认 loopback**(梳理 2026-09-26 第 6 步)—— 手机页的 token 体系在 tier/routeAllow 之外、永不过期、面板监听 0.0.0.0;要先出设计稿。现状写在 [reference/internal-api-auth.md](reference/internal-api-auth.md)。
-- **拆三个大文件**(梳理第 7 步)—— `core/workbench/service.ts`(1622 行闭包,按 20 份 `service-*.test.ts` 的边界抽)、`bootstrap/index.ts`(剩余 8 个关注点进 `wire-*.ts`)、`cli.ts`(按命令族下沉;`scripts/cli-ratchet.guard.test.ts` 先钉住不再增长)。
+- ~~**拆三个大文件**(梳理第 7 步)—— `core/workbench/service.ts`(1622 行闭包,按 20 份 `service-*.test.ts` 的边界抽)、`bootstrap/index.ts`(剩余 8 个关注点进 `wire-*.ts`)、`cli.ts`(按命令族下沉;`scripts/cli-ratchet.guard.test.ts` 先钉住不再增长)。~~ **2026-09-28 三件全部完成**:`cli.ts` 4332→157(#128)、`bootstrap/index.ts` 1321→460(#131)、`core/workbench/service.ts` 1965→179 行 / 内函数 68→3(PR #132–#141 + PR 10,十个域进 `service/<domain>.ts`,棘轮守卫 `scripts/workbench-service-ratchet.guard.test.ts` 只降不升;19 份旧测试一行没改)。
 - **错误通道结构化**(arch backlog #4)—— 要 owner 参与定两条判定红线。
 - **纯 JS 的锚定文件访问**(评审 #3)—— 去 ffi 之后没有 `openat`,逐级 lstat 是多个时刻的观察;两条路(写清威胁模型 + 目录替换回归测试,或 macOS/Linux 恢复原生 openat),安全边界取舍等 owner。
 - **动态 provider 注册** —— 等 openai-compatible 这条路被外部集成者真用起来、暴露出覆盖不了的需求再做。
@@ -73,5 +75,7 @@
 
 ## 修订记录
 
+- 2026-09-27(晚):1.7.0 已发,现状表与下一步改写;发版链五个坑与「全自动发版」入账;⑥⑦ 四份设计稿入下一步。
+- 2026-09-28:第 7 步「拆三个大文件」三件全部完成(cli #128、bootstrap #131、workbench service PR #132–#141 + 收尾);真机账「一个文件夹连开两件事」核对通过;hookTimeout 抬到 40s(#133);Codex 第一批 #129 合入。第 6 步(设备令牌进 token-registry)仍是「已定未做」。
 - 2026-09-27:现状表改成「命令 + 当日值」;#117 已合、tag 已推;STT 口径定为已做(网关形态);第 6/7 步(设备 token、拆大文件)入「已定未做」;发版链接改指 maintainer/release.md。
 - 2026-09-22 v1:首份现行 roadmap。此前五个月的方向只活在 PR 描述和对话记忆里,文档侧唯一叫 roadmap 的是 4 月的 RFC 02。

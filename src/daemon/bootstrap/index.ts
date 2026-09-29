@@ -1,160 +1,64 @@
 /**
- * buildBootstrap — wires up the daemon's core dispatch graph.
+ * buildBootstrap — 把 daemon 的核心分发图拼起来。**这里只组装**:每一块的构造都在
+ * ./wire-*.ts(或同目录的小模块)里,index 按 boot 顺序调用、用解构 / 展开把各块的
+ * 产物拼回 `Bootstrap`(./types.ts,键集合与类型是对外契约,别在这里改)。
  *
- * Composes:
- *   - Provider registry (Claude + Codex providers)
- *   - SessionManager (LRU-evicting cache of (provider, alias) → session)
- *   - ConversationStore (per-chat mode persistence)
- *   - ConversationCoordinator (mode-aware dispatch entry)
- *   - Bare delegate providers (RFC 03 P4 peer-as-tool)
+ * Boot 顺序(即代码顺序;有副作用的几步位置不能动 —— resolveSelfAgentId 会持久化,
+ * turnTimeoutMs 要在 registerProviders 之前,socialWired 在 social 之后 set):
+ *   wireHealth(无条件、最先)→ wirePlugins(MCP specs + 插件)→ wirePermissions
+ *   (busy / resolver / permissionMode / conversationStore / canUseTool)→ claudeBin →
+ *   configuredAgent / selfId → wireKnowledge[sup] → wireModelOptions → sessionStore /
+ *   turnTimeoutMs → registerProviders(./providers.ts)→ wireInstructions → SessionManager
+ *   → access-change 失效 → wireSelfRestart[sup] → idle sweep → wireCoordinator
+ *   (fallback 回复 / recordTurn / coordinator)→ buildDelegateDispatch(./delegate.ts)
+ *   → wireA2a(registry / client / events / resolveOperatorChatId)→ wireSocial[sup]
+ *   → wireA2aServer[sup] → wirePairing[sup] → wireMailboxDeps → wireYi[sup] → return。
+ *   [sup] = 经 deps.supervisor.start(name) 拉起:抛错降级、未配置记 off,
+ *   /v1/health.subsystems 能看见;同名二次 start 直接 throw。名字序列由
+ *   ./boot-order.test.ts 钉住。
  *
- * Boot order inside buildBootstrap(): wireHealth (connection-health runtime,
- * first + unconditional) → stores (conversationStore, plugin MCP specs) →
- * sessions (sessionStore + registerProviders) →
- * sendAssistantText / recordTurn / coordinator → dispatchDelegate → A2A
- * infra (registry/client/eventsStore + resolveOperatorChatId) → wireSocial
- * → wireA2aServer → 乙 v2 (yiHub/yiClient) → return.
- *
- * Helpers extracted for readability:
- *   - ./types.ts       — BootstrapDeps / Bootstrap interfaces
- *   - ./mcp-specs.ts   — wechat / delegate stdio MCP spec builders
- *   - ./session-paths.ts — per-provider jsonl path resolvers (canResume probes)
- *   - ./delegate.ts    — bare delegate providers + dispatchDelegate
- *   - ./providers.ts   — provider registrations (claude/codex/cursor/openai/gemini)
- *   - ./wire-social.ts — 社交接线(笔友信道 / 串门 / 心愿)
- *   - ./wire-a2a-server.ts — A2A HTTP server + routeA2ANotify + a2a-info.json
- *   - ./wire-health.ts — connection-health runtime (onFailure/onSuccess)
+ * 三条规矩(spec 2026-09-27-bootstrap-split §3;守卫 scripts/bootstrap-ratchet.guard.test.ts):
+ *   1. 新接线进 wire-<x>.ts,index 只加一次调用 + return 里一行;行数只降不升。
+ *   2. 晚绑定只用 src/lib/lifecycle.ts 的 Ref(没 wire 就读会抛),不写 `let x | null = null`。
+ *   3. 可能失败 / 可能未配置的块一律经 supervisor.start。
  *
  * Imported only by:
  *   - src/daemon/main.ts (production entry)
- *   - src/daemon/bootstrap.test.ts (integration tests)
+ *   - src/daemon/bootstrap.test.ts / bootstrap.a2a.test.ts / bootstrap/boot-order.test.ts
  */
 import { SessionManager } from '../../core/session-manager'
-import { tierProfileToClaudeSdkOpts } from '../../core/claude-agent-provider'
 import type { TierProfile } from '../../core/user-tier'
-import { resolveTier } from '../../core/user-tier'
-import { createConversationCoordinator, type ConversationCoordinator, type TurnRecord } from '../../core/conversation-coordinator'
-import { makeConversationStore, type ConversationStore } from '../../core/conversation-store'
-import { buildSystemPrompt } from '../../core/prompt-builder'
 import type { ProviderId } from '../../core/conversation'
-import { makeResolver } from '../../core/project-resolver'
-import { makeCanUseTool } from '../../core/permission-relay'
-import { capabilitiesFor, capabilityProviderIds, type PermissionMode } from '../../core/capability-matrix'
 import { formatInbound } from '../../core/prompt-format'
-import { makeMessagesStore } from '../../lib/messages-store'
-import type { Options } from '@anthropic-ai/claude-agent-sdk'
 import { findOnPath } from '../../lib/util'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { makeSessionStore } from '../../core/session-store'
-import { homedir } from 'node:os'
-import { loadAgentConfig, makeMtimeCachedConfigReader, modelForProvider } from '../../lib/agent-config'
-import { DEFAULT_CLAUDE_MODEL } from '../../core/claude-agent-provider'
-import { DEFAULT_AGY_MODEL } from '../../core/agy-agent-provider'
-import { DEFAULT_CURSOR_MODEL } from '../../core/acp-cursor-chat'
-import { loadAccess, setSessionInvalidator } from '../../lib/access'
-import { loadCompanionConfig } from '../companion/config'
+import { loadAgentConfig } from '../../lib/agent-config'
+import { setSessionInvalidator } from '../../lib/access'
 import { resolveAdminChatId } from '../companion/resolve-admin'
-import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
-import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
-import { bundledPluginsDir, pluginDataDir } from '../plugins/paths'
 import { buildDelegateDispatch } from './delegate'
-import { makeSendAssistantText } from './fallback-reply'
 import { registerProviders } from './providers'
+import { wirePlugins } from './wire-plugins'
+import { wireKnowledge } from './wire-knowledge'
+import { wirePermissions } from './wire-permissions'
+import { wireModelOptions } from './wire-model-options'
+import { wireInstructions } from './wire-instructions'
+import { wireCoordinator } from './wire-coordinator'
+import { wireA2a } from './wire-a2a'
+import { wireYi } from './wire-yi'
+import { wireMailboxDeps } from './wire-mailbox-deps'
+import { Ref } from '../../lib/lifecycle'
+import { resolveClaudeBinary, hydrateClaudeAuthEnvFromUserSettings } from './claude-env'
 import { wireSocial } from './wire-social'
 import { wireA2aServer } from './wire-a2a-server'
 import { wirePairing } from './wire-pairing'
-import { wireHealth, reportLlmTurnOutcome } from './wire-health'
+import { wireHealth } from './wire-health'
 import { wireSelfRestart } from './wire-self-restart'
-import { makeBusyRegistry } from '../../core/busy-registry'
 import { resolveSelfAgentId } from '../../core/self-agent-id'
-import { assertNotAuthFailed, type CheapEval } from '../../core/agent-provider'
-import { createA2ARegistry } from '../../core/a2a-registry'
-import { createA2AClient } from '../../core/a2a-client'
-import { makeA2AEventsStore } from '../../core/a2a-events-store'
-import { createYiHub, type YiHub } from '../../core/yi-hub'
-import { createYiWsServer } from '../yi-ws-server'
-import { openKnowledge } from '../../core/knowledge/store'
-import { semanticSearch } from '../../core/knowledge/search'
-import { runSourceAdapter } from '../../core/knowledge/source-adapter'
-import { runIndexer } from '../../core/knowledge/indexer'
-import { makeEmbedderService } from '../../core/knowledge/embedder-service'
-import { makeJsEmbedder, withEmbedderFallback } from '../../core/knowledge/js-embedder'
-import { readJsonFile } from '../../lib/read-json-file'
-import { shouldNoteTurnEnd } from '../pet-signals'
-import { rebuildGraphFromSource } from '../../core/knowledge/graph-build'
-import { makeGraphQueryApi } from '../../core/knowledge/graph-query'
-import { makeFactsApi } from '../../core/knowledge/facts'
-import { makePersonApi } from '../../core/knowledge/person'
-import { runKnowledgeCycle } from '../../core/knowledge/cycle'
-// JSON import — version field is read at module init. resolveJsonModule is
-// on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
-import selfPkg from '../../../package.json' with { type: 'json' }
 import type { BootstrapDeps, Bootstrap } from './types'
 export type { BootstrapDeps, Bootstrap } from './types'
-
-/**
- * Locate a working Claude Code binary. The SDK's own native-binary detection
- * mis-picks the musl variant under bun on glibc Ubuntu (bug in libc probing);
- * passing pathToClaudeCodeExecutable bypasses that. Preference order:
- *   1. env var override
- *   2. system claude on PATH (works in any CC-installed env)
- *   3. bundled glibc variant shipped with the SDK itself
- */
-function resolveClaudeBinary(): string | undefined {
-  if (process.env.CLAUDE_CODE_EXECUTABLE && existsSync(process.env.CLAUDE_CODE_EXECUTABLE)) {
-    return process.env.CLAUDE_CODE_EXECUTABLE
-  }
-  const fromPath = findOnPath('claude')
-  if (fromPath && existsSync(fromPath)) return fromPath
-  const here = dirname(fileURLToPath(import.meta.url))
-  // src/daemon/bootstrap/index.ts → ../../../node_modules/...
-  const bundled = join(here, '..', '..', '..', 'node_modules', '@anthropic-ai', 'claude-agent-sdk-linux-x64', 'claude')
-  if (existsSync(bundled)) return bundled
-  return undefined
-}
-
-// Knowledge Kernel T7' — provenance tag stamped alongside `knowledge_embed_model`
-// on every semantic.db row this daemon writes (store.putSemantic(model_id,
-// model_version, ...)). NOTE: the indexer's resume cursor is keyed on
-// model_id ALONE (see indexer.ts's header comment) — bumping this constant
-// does NOT by itself trigger a re-embed of already-indexed rows; it is
-// purely the provenance label recorded on rows embedded from here on. A
-// real re-embed after a pipeline change needs either a new model_id or a
-// manual cursor reset (`indexer_cursor:<model_id>` in semantic.db's meta).
-const KNOWLEDGE_EMBED_MODEL_VERSION = '1'
-
-const CLAUDE_AUTH_ENV_KEYS = [
-  'ANTHROPIC_API_KEY',
-  'ANTHROPIC_AUTH_TOKEN',
-  'ANTHROPIC_BASE_URL',
-] as const
-
-function hydrateClaudeAuthEnvFromUserSettings(log: BootstrapDeps['log']): void {
-  const settingsPath = join(homedir(), '.claude', 'settings.json')
-  if (!existsSync(settingsPath)) return
-
-  try {
-    const parsed = readJsonFile(settingsPath) as { env?: Record<string, unknown> }
-    const env = parsed.env
-    if (!env || typeof env !== 'object') return
-
-    const copied: string[] = []
-    for (const key of CLAUDE_AUTH_ENV_KEYS) {
-      if (process.env[key]) continue
-      const value = env[key]
-      if (typeof value !== 'string' || value.length === 0) continue
-      process.env[key] = value
-      copied.push(key)
-    }
-    if (copied.length > 0) {
-      log('BOOT', `claude auth env loaded from ~/.claude/settings.json: ${copied.join(', ')}`)
-    }
-  } catch {
-    log('BOOT', 'claude auth env not loaded: failed to parse ~/.claude/settings.json')
-  }
-}
 
 // buildChannelSystemPrompt() moved to src/core/prompt-builder.ts in
 // the RFC 03 review follow-up: the inline string here was v0.x and
@@ -163,30 +67,6 @@ function hydrateClaudeAuthEnvFromUserSettings(log: BootstrapDeps['log']): void {
 // available tools. The prompt-builder also encodes mode-awareness so
 // the agent doesn't get confused by chatroom envelopes.
 
-/**
- * PR F — wrap a CheapEval so the auth-failed sentinel (Claude's "Not
- * logged in / Please run /login" emitted as assistant text; Codex's
- * "401 unauthorized" etc.) is converted into a thrown error instead of
- * leaking to downstream JSON parsers. The chatroom moderator's
- * existing `haiku eval threw` branch then falls back to forced
- * alternation, and the auth-failed log line surfaces in channel.log
- * alongside solo/parallel auth-failures (single vocabulary across paths).
- *
- * Returns undefined when the registry has no cheapEval — the coordinator
- * treats `haikuEval: undefined` as absent, skipping beat ②b and beat ③.
- */
-export function wrapCheapEvalWithAuthFailCheck(
-  cheapEval: CheapEval | null,
-  log: BootstrapDeps['log'],
-): ((prompt: string) => Promise<string>) | undefined {
-  if (!cheapEval) return undefined
-  return async (prompt: string) => {
-    const text = await cheapEval(prompt)
-    assertNotAuthFailed(text, (tag, line) => log(tag, line), 'cheap-eval moderator')
-    return text
-  }
-}
-
 // resolveAdminChatId moved to ../companion/resolve-admin.ts (fix round 1,
 // owner-onboarding design §C1 review) so companion/offer-eligibility.ts can
 // reuse the SAME owner-resolution rule without importing this whole
@@ -194,6 +74,8 @@ export function wrapCheapEvalWithAuthFailCheck(
 // bootstrap.test.ts) that do `import { resolveAdminChatId } from './bootstrap'`
 // keep working unchanged.
 export { resolveAdminChatId } from '../companion/resolve-admin'
+// wrapCheapEvalWithAuthFailCheck 搬到了 ./wire-coordinator.ts;这里 re-export 给还从 './bootstrap' 导入它的调用方。
+export { wrapCheapEvalWithAuthFailCheck } from './wire-coordinator'
 
 export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   hydrateClaudeAuthEnvFromUserSettings(deps.log)
@@ -203,6 +85,9 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // through this supervisor so a startup failure degrades that block to
   // "not configured" instead of aborting the whole daemon boot.
   const sup = deps.supervisor
+  // 各 wire-* 共用的上下文(BootstrapCtx);configuredAgent 在下面第 5 步才有,
+  // 之前的 wire 用 ctxBase,之后的用 ctx。
+  const ctxBase = { sup, log: deps.log, stateDir: deps.stateDir, db: deps.db }
 
   // Connection-health runtime (Task 7) — constructed FIRST and unconditionally,
   // no config gate, so it exists before anything that could report a failure:
@@ -212,79 +97,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // present from the very first line of BootstrapDeps.
   const health = wireHealth({ stateDir: deps.stateDir, log: deps.log })
 
-  // busy-registry (spec 2026-08-11 §1) — the "work is happening" complement
-  // to SessionManager's anyInFlight(): long tasks that never go through
-  // SessionManager (A2A delegate, customer-review, social forage/respond,
-  // internal-api non-GET requests, companion ticks) each hold a token here
-  // for their duration. Constructed unconditionally (same posture as
-  // `health` above) so every hold point below has something real to call —
-  // `holdBusy` is exposed on Bootstrap regardless of whether self-restart
-  // itself is enabled (deps.requestRestart may be absent), since the other
-  // consumers (internal-api, customer-review, delegate, wireSocial,
-  // companion schedulers) don't depend on self-restart being wired.
-  const busyRegistry = makeBusyRegistry()
-
-  const resolve = makeResolver({
-    loadProjects: deps.loadProjects,
-    fallback: deps.fallbackProject,
-  })
-
-  const permissionMode: PermissionMode = deps.dangerouslySkipPermissions ? 'dangerously' : 'strict'
-
-  // Hoisted from below: canUseTool's per-dispatch mode lookup reads
-  // from this store. Bootstrap's later code uses the SAME instance —
-  // assigning it here just brings the creation up so the closure has a
-  // live reference instead of one needing a forward declaration.
-  const conversationStore = deps.conversationStore ?? makeConversationStore(
-    deps.db,
-    { migrateFromFile: join(deps.stateDir, 'conversations.json') },
-  )
-
-  // Per-session canUseTool builder — closes over the boot-time deps
-  // (askUser, adminChatId resolver, log, provider, permissionMode,
-  // conversationStore) and bakes the session's OWN `chatId` into the
-  // tier/mode closures. Previously canUseTool was built once at bootstrap
-  // and read `deps.lastActiveChatId()` per call — a process-wide ref.
-  // Under concurrent dispatch (chat A mid-turn while chat B sends an
-  // inbound) the lastActiveChatId could flip to B's id between when A
-  // initiated a tool call and when canUseTool fired, cross-resolving
-  // A's tier as B's and either auto-allowing A's destructive Bash (if B
-  // is admin) or denying B's MCP call (if A is guest).
-  //
-  // Binding chatId at spawn time eliminates that race: each session's
-  // canUseTool closure resolves tier/mode for its OWN chatId, regardless
-  // of what arrived after.
-  const buildCanUseTool = (chatId: string) => makeCanUseTool({
-    askUser: deps.ilink.askUser,
-    // initiatingChatId is the session's own chatId, baked in at spawn.
-    // (The relay only uses this for log correlation; prompts always route
-    // to adminChatId.)
-    initiatingChatId: () => chatId,
-    // Task 13 — permission prompts route to a configured admin chat, NOT
-    // the chat that initiated the dispatch. Closes a self-approval hole
-    // where a guest who could trigger a tool call could also click 'allow'
-    // on their own request.
-    adminChatId: () => resolveAdminChatId(loadAccess(), loadCompanionConfig(deps.stateDir), chatId),
-    // Task 13 — tier resolution rules:
-    //   - dangerouslySkipPermissions=true  → every chat is admin tier
-    //     (global override; old default-allow path's new spelling).
-    //   - otherwise → access.json-derived tier for THIS session's chatId
-    //     (admin/trusted/guest). chatId is captured at spawn time so the
-    //     resolution stays stable regardless of any concurrent inbound
-    //     activity on other chats.
-    resolveTier: () => {
-      if (deps.dangerouslySkipPermissions) return 'admin'
-      return resolveTier(chatId, loadAccess())
-    },
-    log: deps.log,
-    // Per-dispatch mode lookup: read THIS session's current mode from
-    // the conversation store at the moment the tool call arrives.
-    // chatId is bound at spawn; only the mode kind is dynamic (operator
-    // can flip /solo /cc /codex /both mid-session).
-    mode: () => conversationStore.get(chatId)?.mode.kind ?? 'solo',
-    provider: 'claude',
-    permissionMode,
-  })
+  // busy / resolver / permissionMode / conversationStore / canUseTool — ./wire-permissions.ts(2026-09-27 拆分)。
+  const { busyRegistry, resolve, permissionMode, conversationStore, buildCanUseTool } = wirePermissions(deps, ctxBase)
 
   const claudeBin = resolveClaudeBinary()
   if (!claudeBin) {
@@ -293,67 +107,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     deps.log('BOOT', `claude binary: ${claudeBin}`)
   }
 
-  // RFC 03 §5 — standalone wechat-mcp stdio server. When deps.internalApi is
-  // wired, both providers receive a `wechat` MCP server spec that spawns
-  // the wechat-mcp child with token-auth env vars.
-  const wechatStdioForClaude: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'claude') : null
-  const wechatStdioForCodex: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'codex') : null
-
-  // RFC 03 P4 — delegate-mcp stdio server. Loaded alongside wechat-mcp so the
-  // primary agent can call `delegate_<peer>(prompt)` to consult the OTHER
-  // provider once. The peer is fixed per-spawn AND sourced from each provider's
-  // ProviderCapabilities.defaultPeer — the single declaration site, so adding a
-  // provider needs no edit here (its delegate spec is built iff it declares a
-  // defaultPeer). Replaces the old per-provider literals + a 2-provider ternary.
-  const delegateStdioByProvider: Partial<Record<ProviderId, McpStdioSpec>> = {}
-  if (deps.internalApi) {
-    for (const p of capabilityProviderIds()) {
-      const peer = capabilitiesFor(p).defaultPeer
-      if (peer) delegateStdioByProvider[p] = delegateStdioMcpSpec(deps.internalApi, peer)
-    }
-  }
-  const delegateStdioForClaude: McpStdioSpec | null = delegateStdioByProvider.claude ?? null
-  const delegateStdioForCodex: McpStdioSpec | null = delegateStdioByProvider.codex ?? null
-  const delegateStdioForCursor: McpStdioSpec | null = delegateStdioByProvider.cursor ?? null
-  const wechatStdioForCursor: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'cursor') : null
-  const delegateStdioForOpenai: McpStdioSpec | null = delegateStdioByProvider.openai ?? null
-  const wechatStdioForOpenai: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'openai') : null
-  const wechatStdioForGemini: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'gemini') : null
-  const wechatStdioForAgy: McpStdioSpec | null = deps.internalApi ? wechatStdioMcpSpec(deps.internalApi, 'agy') : null
-
-  // Decoupled plugin lane — third-party MCP tool providers
-  // spawned as stdio children exactly like wechat/delegate, but discovered
-  // from `{stateDir}/plugins/<name>/` (drop-in, survives upgrades) or the
-  // bundled `plugins/` dir. wechat-cc never imports plugin code; the process
-  // boundary + MCP wire protocol are the only coupling, so a plugin can be
-  // any language. USER plugins default DISABLED (a manifest spawns a process
-  // = arbitrary code; enable via dashboard / plugins.json); BUNDLED default
-  // ENABLED. Unlike installUserMcp (which pollutes the human's global
-  // ~/.claude.json), this injects only into the daemon-spawned providers.
-  const loadedPlugins = loadPlugins({
-    stateDir: deps.stateDir,
-    bundledDir: bundledPluginsDir(),
-    hostVersion: selfPkg.version,
-    log: (m) => deps.log('BOOT', `plugin: ${m}`),
-  })
-  const pluginMcp = pluginMcpSpecs(loadedPlugins)
-  // Names of ACTUALLY-registered plugins (enabled AND ready — same gate
-  // pluginMcpSpecs applies above), daemon-global (computed once at boot, NOT
-  // per-chat), threaded into buildSystemPrompt's `knowledgePlugins` arg
-  // (knowledge-orchestration design Task 2). Deliberately == Object.keys(
-  // pluginMcp) rather than a looser `enabled`-only filter: a bundled
-  // knowledge plugin (e.g. wxsearch) defaults ENABLED but is commonly NOT
-  // READY (its healthcheck requires wxvault's decrypted output, which a
-  // fresh install/dev box won't have yet) — mentioning it in the prompt
-  // before its tools actually exist would send the agent at tools that
-  // don't exist. Unknown plugin names are harmless — buildSystemPrompt
-  // silently ignores anything outside KNOWN_KNOWLEDGE_PLUGINS.
-  const knowledgePluginNames = Object.keys(pluginMcp)
-  // Claude's SDK wants each server tagged `type: 'stdio'`; codex/cursor take
-  // the bare {command,args,env} shape (structurally identical to McpStdioSpec).
-  const pluginMcpForClaude = Object.fromEntries(
-    Object.entries(pluginMcp).map(([k, s]) => [k, { type: 'stdio' as const, ...s }]),
-  )
+  // MCP specs + plugin lane — ./wire-plugins.ts(2026-09-27 拆分)。
+  const {
+    wechatStdioForClaude, wechatStdioForCodex, wechatStdioForCursor, wechatStdioForOpenai, wechatStdioForGemini, wechatStdioForAgy,
+    delegateStdioByProvider, delegateStdioForClaude, delegateStdioForCodex, delegateStdioForCursor, delegateStdioForOpenai,
+    loadedPlugins, pluginMcp, knowledgePluginNames, pluginMcpForClaude,
+  } = wirePlugins(deps, ctxBase)
 
   // Pin a Claude model from agent-config.json (or fall back to a stable
   // full ID). Without this, the spawned Claude Code subprocess inherits
@@ -378,277 +137,12 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // momentarily disagreeing on this daemon's own identity.
   const selfId = resolveSelfAgentId(configuredAgent, deps.stateDir)
 
-  // Knowledge Kernel Phase 01 (T5) — daemon-owned KnowledgeStore + the
-  // Query-face `semanticSearch`, gated behind `knowledge_enabled` (default
-  // off — opt-in during the walking-skeleton slice; T1-T4 built the store/
-  // search/source-adapter, this task only wires them into the daemon).
-  // When on: open the store, run one backfill pass over wxvault's decrypted
-  // output off the synchronous boot path (setTimeout(0) — buildBootstrap
-  // must not block startup on a directory scan), then keep it fresh via a
-  // periodic incremental pass. `runSourceAdapter` is cheap to re-run when
-  // there's nothing new (its cursor is per Msg_* table via source_meta —
-  // see source-adapter.ts's header comment), so a short daemon-lifetime
-  // interval is safe — mirrors idleSweepTimer's unref()'d setInterval a
-  // little further down in this function (a background job outside the
-  // companion tick graph in wiring/tick-bodies.ts, not competing with it).
-  const knowledge: Bootstrap['knowledge'] = await sup.start('knowledge', async () => {
-    if (!configuredAgent.knowledge_enabled) {
-      deps.log('BOOT', 'knowledge: disabled (knowledge_enabled not set)')
-      return undefined
-    }
-    const knowledgeStore = openKnowledge(join(deps.stateDir, 'knowledge'))
-    try {
-      const decryptedDir = configuredAgent.knowledge_source_dir
-        ?? join(deps.stateDir, 'plugin-data', 'wxvault', 'out', 'decrypted')
+  // Knowledge Kernel — ./wire-knowledge.ts(2026-09-27 拆分);经 sup.start('knowledge')。
+  const ctx = { ...ctxBase, configuredAgent }
+  const knowledge: Bootstrap['knowledge'] = await wireKnowledge(ctx, loadedPlugins)
 
-      // T7' — the in-process indexer's embed subprocess. Rather than invent a
-      // new discovery path, this reuses `loadedPlugins` (built just above, at
-      // ~line 327, for the plugin-MCP lane) to find wxsearch's resolved plugin
-      // dir — bundled or user, whichever the registry's normal shadowing rule
-      // picked — and derives the script/interpreter paths the SAME way
-      // wxsearch's own manifest spawns itself (`${pluginDir}/wxsearch/
-      // embed_subprocess.py` via `${pluginDir}/.venv/bin/python`, see
-      // packages/wxsearch/wechat-cc.plugin.json's `spawn`). This works whether
-      // or not wxsearch is enabled/ready as an MCP server — the indexer runs
-      // the script directly, in-process orchestration only, never through MCP.
-      // `knowledge_embed_script` is an escape hatch for a non-standard install
-      // (e.g. wxsearch vendored somewhere else); when set without a resolvable
-      // wxsearch plugin dir, the interpreter falls back to `python3` on PATH
-      // (the override is for advanced/manual setups, not the common path).
-      const wxsearchPlugin = loadedPlugins.find(p => p.name === 'wxsearch')
-      const knowledgeEmbedModelId = configuredAgent.knowledge_embed_model ?? 'bge-small-zh-v1.5'
-      const embedScriptPath = configuredAgent.knowledge_embed_script
-        ?? (wxsearchPlugin ? join(wxsearchPlugin.dir, 'wxsearch', 'embed_subprocess.py') : undefined)
-      const embedPythonBin = wxsearchPlugin
-        ? join(wxsearchPlugin.dir, '.venv', 'bin', 'python')
-        : (findOnPath('python3') ?? 'python3')
-
-      // T7' review Finding 1 — the embed subprocess must see the SAME
-      // WXVAULT_STATE_DIR wxvault/wxsearch itself uses
-      // (`<stateDir>/plugin-data/wxvault`, exactly what the plugin registry's
-      // manifest templating resolves `${dataDir}/../wxvault` to for wxsearch's
-      // own spawn — see packages/wxsearch/wechat-cc.plugin.json). Without this,
-      // Bun.spawn's child inherits the daemon's bare process.env, and
-      // embed_subprocess.py's ModelManager falls back to a state dir relative
-      // to its own (read-only, in a packaged app) script path — re-downloading
-      // the model every run and writing config the indexer never reads.
-      const embedEnv = { ...process.env, WXVAULT_STATE_DIR: pluginDataDir(deps.stateDir, 'wxvault') }
-
-      // Agent-facing Search (Task 2) — ONE shared, long-lived embedder
-      // service instead of a fresh embed subprocess per cycle. Built once
-      // here (not per cycle) and reused by both the indexer (below) and the
-      // query path (deps.knowledge.embedQuery, wired further down) so index
-      // and query embed in the SAME model space via the SAME model_id.
-      // Undefined when no embed script resolved (no wxsearch plugin dir and
-      // no `knowledge_embed_script` override) — the indexer stays disabled
-      // in that case, same gating as before this task. NOT closed between
-      // cycles — only on daemon shutdown (main.ts reaches it via
-      // boot.knowledge.embedder).
-      // Runtime selection. 'js' runs transformers.js in-process — no venv, no
-      // subprocess, and a model that warm() can load directly. It is not the
-      // default: the packaged desktop sidecar is a compiled single file and
-      // cannot dlopen onnxruntime's native binding, so a selection that cannot
-      // load must degrade to the Python path rather than take the daemon's
-      // whole knowledge face down with it. Vectors are equivalent either way
-      // (cosine > 0.9999 — see js-embedder.e2e.test.ts), so switching runtimes
-      // never invalidates an existing semantic.db.
-      const embedRuntime = configuredAgent.knowledge_embed_runtime ?? 'python'
-      const pythonEmbedder = embedScriptPath
-        ? makeEmbedderService({
-            pythonBin: embedPythonBin,
-            scriptPath: embedScriptPath,
-            model_id: knowledgeEmbedModelId,
-            env: embedEnv,
-          })
-        : undefined
-      const embedder = embedRuntime === 'js'
-        ? withEmbedderFallback(
-            makeJsEmbedder({ model_id: knowledgeEmbedModelId }),
-            pythonEmbedder,
-            err => deps.log('KNOWLEDGE',
-              `embed runtime 'js' unavailable (${err instanceof Error ? err.message : String(err)}) — `
-              + `falling back to the python subprocess for the rest of this run`),
-          )
-        : pythonEmbedder
-
-      // Extracted (T7' review Finding 2 + Finding 4) into
-      // core/knowledge/cycle.ts's runKnowledgeCycle — adapter-then-indexer
-      // ordering, error-swallowing, and the "still running" concurrency guard
-      // now live there with direct unit coverage (cycle.test.ts) instead of
-      // only being reachable through this closure.
-      const runKnowledgeAdapter = (onBoot: boolean) => runKnowledgeCycle(
-        {
-          runAdapter: () => Promise.resolve(runSourceAdapter({ decryptedDir, store: knowledgeStore })),
-          // Uses the shared `embedder` above (no per-cycle spawn/close —
-          // Task 2). `embedder.model_id` (not the outer
-          // `knowledgeEmbedModelId`) flows into both the embed call AND
-          // putSemantic's provenance tag, so index and query are always
-          // stamped with whatever model the shared service is actually
-          // running.
-          runIndex: embedder
-            ? async () => runIndexer({
-                store: knowledgeStore,
-                embed: embedder.embed,
-                model_id: embedder.model_id,
-                model_version: KNOWLEDGE_EMBED_MODEL_VERSION,
-              })
-            : undefined,
-          // Knowledge Graph inproc Task 4 — rebuilds graph.db (contacts/edges)
-          // from whatever's in source.db right now. `now` is read fresh on
-          // EVERY cycle (not captured once at boot) — graph-profiles.ts's
-          // recency scoring needs the actual wall-clock time of each rebuild,
-          // same posture as the rest of this file never caching `Date.now()`.
-          // Owner resolution: `knowledge_owner` config wins outright; falls
-          // back to `WXGRAPH_OWNER` (mirrors wxgraph's own env-var escape
-          // hatch for accounts detectOwner's 1:1-vote heuristic can't infer);
-          // absent both, rebuildGraphFromSource's detectOwner call decides.
-          runGraphRebuild: () => Promise.resolve(rebuildGraphFromSource({
-            store: knowledgeStore,
-            now: Math.floor(Date.now() / 1000),
-            ownerOverride: configuredAgent.knowledge_owner ?? process.env.WXGRAPH_OWNER,
-          })),
-          log: deps.log,
-        },
-        { onBoot },
-      )
-      // Backfill — deferred one tick so it never delays buildBootstrap's return.
-      setTimeout(() => { void runKnowledgeAdapter(true) }, 0)
-      // Warm the model on the same deferred tick, AFTER the backfill is
-      // scheduled. The backfill often finds nothing new (`0 chunk(s) embedded`)
-      // and then never calls embed, so without this the model stays unloaded
-      // until a user query arrives — and hearth's federated client gives a
-      // source 5s, which a 90MB ONNX load does not fit into. Measured on the
-      // live daemon: first federated query after a restart took 5801ms, timed
-      // out, and reported 0 hits; the second took 396ms and returned 20.
-      // Fire-and-forget and non-rejecting by contract (see warm()'s doc), so it
-      // can only cost time, never a boot.
-      if (embedder) setTimeout(() => { void embedder.warm() }, 0)
-      const knowledgeAdapterTimer = setInterval(() => { void runKnowledgeAdapter(false) }, 5 * 60_000)
-      knowledgeAdapterTimer.unref()
-      return {
-        store: knowledgeStore,
-        search: semanticSearch,
-        ...(embedder ? { embedder, embedQuery: (t: string) => embedder.embed([t]).then(v => v[0]!) } : {}),
-        // Knowledge Graph inproc (Task 5) — unconditional (unlike embedder
-        // above): graph rebuild (graph-build.ts's rebuildGraphFromSource, run
-        // every cycle above) needs no embed script, so the query accessor is
-        // wired whenever knowledge_enabled is on at all.
-        graph: makeGraphQueryApi(knowledgeStore),
-        // Facts + Person (Knowledge Facts/Person inproc, Task 5) —
-        // unconditional (like graph above): facts.db extraction/query needs
-        // no embed script, so both accessors are wired whenever
-        // knowledge_enabled is on at all.
-        facts: makeFactsApi(knowledgeStore),
-        person: makePersonApi(knowledgeStore),
-      }
-    } catch (err) {
-      // Partial-construction cleanup: the store is already open, so a
-      // failure past this point must close it before rethrowing, or the
-      // sqlite handle leaks past the daemon's lifecycle (main.ts's shutdown
-      // only closes boot.knowledge, which is undefined on a degraded boot).
-      // The embedder needs NO equivalent cleanup here: makeEmbedderService
-      // (embedder-service.ts) is a lazy, respawn-on-death singleton — it
-      // spawns no subprocess until the first embed() call, so at
-      // construction time (this try block) it holds no process handle to
-      // leak; only knowledgeStore's already-open sqlite handle needs closing.
-      try { knowledgeStore.close() } catch { /* best-effort */ }
-      throw err
-    }
-  })
-
-  // The model is re-read per spawn via an mtime-cached reader (one stat, parse
-  // only on change) instead of being captured once. An operator's `/model`
-  // switch rewrites agent-config.json, so the next session spawned in each chat
-  // picks up the new model with NO daemon restart (an in-flight session keeps
-  // its model until released). Claude reads `currentClaudeModel()` in its
-  // Options builder; codex/cursor read `currentModelFor()` per spawn via
-  // SpawnContext.model (session-manager forwards it) — all three hot-reload.
-  const readAgentConfig = makeMtimeCachedConfigReader(deps.stateDir)
-  const currentClaudeModel = (): string => {
-    const c = readAgentConfig()
-    return c.provider === 'claude' && c.model ? c.model : DEFAULT_CLAUDE_MODEL
-  }
-  // Per-spawn pinned model, resolved PER provider id (not the global default).
-  // `modelForProvider` owns the field rule: openai→openaiModel and
-  // cursor→cursorModel resolve unconditionally (own field), while claude/codex
-  // share `model` so it only applies when the global provider matches. This is
-  // what lets `/api <model>` (which switches ONE chat to openai while the
-  // global default may stay claude) hot-reload the openai model on the next
-  // spawn with no restart. Read via the mtime-cached reader.
-  const currentModelFor = (providerId: ProviderId): string | undefined => {
-    const pinned = modelForProvider(readAgentConfig(), providerId)
-    if (pinned !== undefined) return pinned
-    // 没钉时报 provider 实际会用的默认值,而不是 undefined —— 这个值同时
-    // 进系统提示(「当前模型 …」),说「provider 默认」不如说出真名。
-    // claude 的默认在 currentClaudeModel();cursor/agy 与 providers.ts 里
-    // 注册时的字面量一致(改那边记得改这边)。
-    if (providerId === 'claude') return currentClaudeModel()
-    if (providerId === 'cursor') return DEFAULT_CURSOR_MODEL
-    if (providerId === 'agy') return DEFAULT_AGY_MODEL
-    return undefined
-  }
-
-  const sdkOptionsForProject = (_alias: string, path: string, tierProfile: TierProfile, chatId: string, mcpEnv?: Record<string, string>, appendInstructions?: string): Options => {
-    // The per-session system prompt is assembled by the daemon's
-    // `buildInstructions` thunk (see SessionManager wiring below) and arrives
-    // here via SpawnContext — this builder no longer calls buildSystemPrompt,
-    // so claude/codex share one provider-agnostic source.
-    const systemPrompt = appendInstructions ?? ''
-    // Per-session internal-api auth: merge the daemon-computed env overlay
-    // (WECHAT_SESSION_TOKEN — the bearer the MCP children send — plus the
-    // non-secret WECHAT_SESSION_TIER the wechat child gates admin tools on)
-    // into the wechat + delegate children. session-manager builds this once;
-    // every provider merges the same overlay, so the route layer enforces a
-    // consistent tier across claude/codex/cursor.
-    const sessionEnv = mcpEnv ?? {}
-    const wechatEnv = wechatStdioForClaude ? { ...wechatStdioForClaude.env, ...sessionEnv } : undefined
-    const delegateEnv = delegateStdioForClaude ? { ...delegateStdioForClaude.env, ...sessionEnv } : undefined
-    const common: Options = {
-      cwd: path,
-      model: currentClaudeModel(),
-      mcpServers: {
-        ...(wechatStdioForClaude ? { wechat: { type: 'stdio' as const, ...wechatStdioForClaude, env: wechatEnv! } } : {}),
-        ...(delegateStdioForClaude ? { delegate: { type: 'stdio' as const, ...delegateStdioForClaude, env: delegateEnv! } } : {}),
-        ...pluginMcpForClaude,
-      },
-      // Using preset+append (instead of raw string) keeps MCP tools inline in
-      // the system prompt — otherwise they're deferred behind ToolSearch,
-      // which adds a round-trip every time Claude wants to call `reply`
-      // (~10-15s per inbound). Extra ~2-4k tokens per turn is a fair trade.
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: systemPrompt },
-      // Drop 'user' from settingSources (2026-05-08): user-global
-      // ~/.claude/settings.json is meant for the human's interactive CLI
-      // — its `effortLevel`, `alwaysThinkingEnabled`, custom mcpServers,
-      // model alias preferences (cf. opus[1m] / 404 incident driving
-      // commit e6f40f5) shouldn't bleed into a long-running headless
-      // daemon. project + local still load so a per-project .claude/
-      // setup the user wires in CWD continues to work.
-      settingSources: ['project', 'local'],
-      ...(claudeBin ? { pathToClaudeCodeExecutable: claudeBin } : {}),
-    }
-    // Task 13 — SDK permission knobs derived from the spawn-time tierProfile
-    // via the provider's pure translation helper. Pre-Task-13 this branched
-    // on `deps.dangerouslySkipPermissions`; post-Task-13 that flag only
-    // influences which tier is resolved (see the resolveTier closure in
-    // makeCanUseTool above), and the SDK options follow the tier.
-    //
-    // canUseTool is always wired — even at admin tier the relay may need
-    // to surface destructive-Bash or memory_delete prompts that the
-    // matrix's per-tool askUser flag asks for. Under bypassPermissions the
-    // SDK won't fire canUseTool; under default mode canUseTool is what
-    // gates everything not statically excluded via disallowedTools.
-    const tierOpts = tierProfileToClaudeSdkOpts(tierProfile, permissionMode)
-    // Build canUseTool with this session's chatId baked in. Done per-call
-    // (not once at bootstrap) so concurrent sessions on different chats
-    // each get a closure resolving tier/mode for their OWN chatId.
-    const canUseTool = buildCanUseTool(chatId)
-    return {
-      ...common,
-      permissionMode: tierOpts.permissionMode,
-      ...(tierOpts.disallowedTools ? { disallowedTools: tierOpts.disallowedTools } : {}),
-      canUseTool,
-    }
-  }
+  // 模型热读 + Claude SDK Options — ./wire-model-options.ts(2026-09-27 拆分)。
+  const { readAgentConfig, currentClaudeModel, currentModelFor, sdkOptionsForProject } = wireModelOptions(ctxBase, { plugins: { wechatStdioForClaude, delegateStdioForClaude, pluginMcpForClaude }, permissionMode, buildCanUseTool, claudeBin })
 
   // Persistent session_id map — enables `resume` after daemon restart.
   // Each provider stores its session/thread jsonl in a different place; we
@@ -672,8 +166,6 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     return Number.isFinite(n) && n >= 0 ? n : 10 * 60_000
   })()
 
-  // provider 异常备注(fallback 连击),与 providers.ts 的版本/探测备注合并进 /mode。
-  const anomalyNotes = new Map<ProviderId, string>()
   const { registry, defaultProviderId, codexBinary, codexVersionCheck, providerNotes: baseProviderNotes } = await registerProviders({
     log: deps.log,
     stateDir: deps.stateDir,
@@ -700,169 +192,9 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     agyGeminiConfigDir: deps.agyGeminiConfigDir,
   })
 
-  // The single, provider-agnostic source of every session's system prompt.
-  // SessionManager calls this once per spawn (like mcpEnv) and forwards the
-  // result via SpawnContext; each provider injects it through its own
-  // transport. peerProviderId + delegateAvailable derive from the provider's
-  // ProviderCapabilities.defaultPeer + whether its delegate spec was actually
-  // wired (no per-provider ternary — adding a provider needs no edit here).
-  // daemonOpsAvailable mirrors the admin predicate the wechat MCP server gates
-  // its daemon-control tools on, so the self-heal section appears iff those
-  // tools are actually registered for this spawn. careEnabled mirrors
-  // `deps.careLevelFor` the same way — absent thunk ⇒ 'off' ⇒ section never
-  // included (proactive-care design §7). It also requires memory_write:
-  // guests can't author agenda.md entries or call set_chat_pref (both
-  // memory_write), so showing the care section would just burn turns on
-  // denied tool calls — gap check-ins (guest-allowed `reply`) work fine
-  // without it. stickerTags mirrors `deps.stickerTagsFor` the same way for
-  // the ABSENT-thunk case (⇒ `null` ⇒ neither sticker section included);
-  // its EMPTY-library variant is additionally memory_write-gated (see the
-  // `stickerTags` local computed in `buildInstructions` below) since it
-  // nudges `save_sticker`, a memory_write-gated write — non-empty behavior
-  // is unaffected. persona /
-  // personaCultivate mirror `deps.personaFor` the same way — absent thunk
-  // ⇒ both persona sections never included (persona design §2).
-  // newRelationship mirrors `deps.newRelationshipFor` the same way — absent
-  // thunk ⇒ section never included (onboarding-curiosity design §2). Like
-  // careEnabled it's also memory_write-gated: the section nudges the agent
-  // to jot notes/observations into memory, so a guest-tier owner chat must
-  // not get that instruction either. personaEmpty is passed through
-  // unconditionally — buildSystemPrompt only surfaces it nested inside the
-  // (already tier-gated) persona-cultivation section, so no extra gating
-  // is needed here. coreMemory mirrors `deps.coreMemoryFor` the same way —
-  // absent thunk ⇒ section never included (core-memory-injection design
-  // §2). Unlike personaFor (owner chat via default_chat_id), coreMemoryFor
-  // is called with THIS chat's own chatId, so each chat gets its own
-  // profile.md excerpt.
-  // social-tools (2026-09-05): flipped to true right after `socialWiring`
-  // below resolves. A `let` read lazily by buildInstructions — NOT a direct
-  // reference to `socialWiring` from inside the closure, which is declared
-  // later with `const` and would be a TDZ hazard if any session's prompt
-  // were built before social wiring completes.
-  let socialToolsWired = false
-  const buildInstructions = (providerId: ProviderId, tierProfile: TierProfile, chatId: string, model?: string): string => {
-    const p = deps.personaFor?.(chatId)
-    // owner-onboarding design §C2, fix round 2: the empty-library variant
-    // nudges `save_sticker` — a memory_write-gated write, same posture as
-    // careEnabled/personaCultivate/newRelationship above (see their
-    // comments below) — so it must be suppressed for non-memory_write
-    // tiers too. NON-empty sticker behavior is deliberately unchanged
-    // (pre-existing, no tier gate there); this only downgrades an EMPTY
-    // array to `null` (pref-off shape) when the tier can't call
-    // save_sticker anyway.
-    const rawStickerTags = deps.stickerTagsFor?.(chatId) ?? null
-    const stickerTags = rawStickerTags !== null && rawStickerTags.length === 0 && !tierProfile.allow.has('memory_write')
-      ? null
-      : rawStickerTags
-    return buildSystemPrompt({
-      providerId,
-      // 让 bot 知道自己此刻跑的是哪个模型(session-manager 按 spawn 解析后
-      // 传进来;claude 的解析见下面 currentModelFor 的 claude 分支)。
-      model,
-      // Unused when delegateAvailable is false; fall back to the daemon default.
-      peerProviderId: capabilitiesFor(providerId).defaultPeer ?? defaultProviderId,
-      companionEnabled: deps.ilink.companion.status().enabled,
-      delegateAvailable: !!delegateStdioByProvider[providerId],
-      daemonOpsAvailable: tierProfile.allow.has('daemon_introspect'),
-      fileLocateAvailable: tierProfile.allow.has('file_locate'),
-      // Tracks tool registration exactly, same posture as fileLocateAvailable:
-      // `social_act` is ADMIN_ONLY (user-tier.ts), matching wechat-mcp/main.ts's
-      // SESSION_IS_ADMIN gate on registerSocialTools; `socialToolsWired` says
-      // the daemon's social layer actually came up (otherwise every tool 503s).
-      // `adminMcpTools` (ProviderCapabilities) additionally gates out agy: its
-      // MCP child's WECHAT_SESSION_TIER is pinned to 'trusted' in a static
-      // config (agy-mcp-config.ts), so SESSION_IS_ADMIN is never true there and
-      // registerSocialTools never runs — advertising the section anyway would
-      // send the model to call tools that don't exist. cursor is per-session now
-      // (acp-cursor-chat.ts threads WECHAT_SESSION_TIER through session/new
-      // each call), so its adminMcpTools tracks the real tier like claude/codex.
-      socialAvailable: socialToolsWired && tierProfile.allow.has('social_act') && capabilitiesFor(providerId).adminMcpTools,
-      careEnabled: (deps.careLevelFor?.(chatId) ?? 'off') !== 'off' && tierProfile.allow.has('memory_write'),
-      // Tri-state (owner-onboarding design §C2) — absent thunk defaults to
-      // `null` (pref-off shape), NOT `[]`, so an unwired bootstrap stays
-      // byte-identical to before this feature existed (the old `[]` default
-      // would now incorrectly render the cold-start unlock variant).
-      // memory_write-tier-downgrade computed above (`stickerTags` local).
-      stickerTags,
-      persona: p?.content,
-      // Like careEnabled: cultivation guidance tells the agent to WRITE
-      // persona.md via memory_write, so it must also be tier-gated — a
-      // guest-tier owner chat would otherwise be prompted to make writes
-      // its tier profile denies (burned turns on denied tool calls, and a
-      // standing invitation to probe the memory surface).
-      personaCultivate: p?.cultivate === true && tierProfile.allow.has('memory_write'),
-      newRelationship: (deps.newRelationshipFor?.(chatId) ?? false) && tierProfile.allow.has('memory_write'),
-      // companion-offer mirrors `deps.companionOfferFor` the same way —
-      // absent thunk ⇒ section never included (owner-onboarding design §C1).
-      // Deliberately NO tier gate here (unlike careEnabled/newRelationship,
-      // which nudge memory_write-gated writes): `companion_enable` is
-      // registered for every session regardless of tier (see
-      // wechat/main.ts's registerCompanionTools call — not behind the
-      // SESSION_IS_ADMIN block), so there's no denied-tool-call risk. The
-      // real thunk (main.ts) delegates to `companionOfferEligible`, which
-      // resolves "owner" via `resolveAdminChatId` — admins-membership-based
-      // — so a guest chat can NEVER match (even a guest that set
-      // `companion.default_chat_id` to itself via the ungated
-      // `companion_enable` tool and later disabled it: that stale value is
-      // only trusted when it's also in `access.admins` — see
-      // companion/resolve-admin.ts). That's what makes skipping a tier gate
-      // here structurally safe, not just true "in practice".
-      companionOffer: deps.companionOfferFor?.(chatId) ?? false,
-      personaEmpty: !(p?.content && p.content.trim().length > 0),
-      // core-memory-injection design §2 — this chat's OWN profile.md
-      // excerpt (not the owner's). No tier gate: it's a read-only context
-      // block, unlike personaCultivate/newRelationship which nudge writes.
-      coreMemory: deps.coreMemoryFor?.(chatId),
-      // nightly memory tidy design, Task 8 — when present, prompt-builder
-      // injects this INSTEAD of coreMemory's profile excerpt.
-      curatedMemory: deps.curatedMemoryFor?.(chatId),
-      knowledgeMemory: deps.knowledgeMemoryFor?.(chatId),
-      // bubbleReplies mirrors `deps.bubbleRepliesFor` the same way — absent
-      // thunk ⇒ section never included. Deliberately NO tier gate here
-      // (unlike careEnabled/newRelationship/personaCultivate): `reply` is
-      // guest-allowed, not memory_write-gated, so there's no denied-tool-call
-      // risk in giving a guest chat the same bubbling guidance.
-      bubbleReplies: deps.bubbleRepliesFor?.(chatId) ?? false,
-      // knowledge-orchestration design Task 2 — daemon-global (loaded once at
-      // boot, not per-chat), so this is the captured const, not a `*For`
-      // thunk. buildSystemPrompt only surfaces the section when at least one
-      // name is a KNOWN_KNOWLEDGE_PLUGINS entry, so this is inert when no
-      // knowledge plugin is loaded/enabled.
-      knowledgePlugins: knowledgePluginNames,
-      // Agent-facing Search (Task 5) — advertise `knowledge_search` in the
-      // prompt ONLY when it will actually work for THIS session:
-      //   - `knowledge?.embedQuery` is present iff `knowledge_enabled` AND
-      //     an embed script resolved (see the `embedder` construction
-      //     above + internal-api/types.ts's doc comment: "`knowledge_enabled`
-      //     alone doesn't guarantee an embed script resolved"). Without a
-      //     resolved embedder the /v1/knowledge/search route 400s on every
-      //     call from the tool (it never receives a pre-embedded
-      //     queryVector), so gating on `knowledge_enabled` alone would tell
-      //     the agent about a tool that's registered but non-functional.
-      //   - `tierProfile.allow.has('knowledge_search')` mirrors
-      //     daemonOpsAvailable/fileLocateAvailable above: true only for
-      //     admin (user-tier.ts's ADMIN_ONLY), matching exactly the
-      //     predicate wechat-mcp/main.ts gates `registerKnowledgeSearchTool`
-      //     on (SESSION_IS_ADMIN) — so this flag tracks tool registration
-      //     precisely, non-admin/knowledge-off sessions unaffected (both
-      //     default away from true).
-      knowledgeSearchAvailable: !!knowledge?.embedQuery && tierProfile.allow.has('knowledge_search'),
-      // Knowledge Graph inproc (Task 5) — same shape as knowledgeSearchAvailable
-      // above, but keyed on `knowledge?.graph` (unconditional whenever
-      // knowledge_enabled is on, no embed script required) and the
-      // `graph_query` tier kind, which exactly matches the SESSION_IS_ADMIN
-      // gate wechat-mcp/main.ts registers `registerGraphTools` under.
-      graphAvailable: !!knowledge?.graph && tierProfile.allow.has('graph_query'),
-      // Knowledge Facts/Person inproc (Task 5) — same shape as
-      // graphAvailable above, keyed on `knowledge?.facts`/`.person`
-      // (unconditional whenever knowledge_enabled is on, no embed script
-      // required) and the `facts_query`/`person_query` tier kinds, which
-      // exactly match the SESSION_IS_ADMIN gate wechat-mcp/main.ts registers
-      // `registerFactsTools`/`registerPersonTools` under.
-      factsAvailable: !!knowledge?.facts && tierProfile.allow.has('facts_query'),
-      personAvailable: !!knowledge?.person && tierProfile.allow.has('person_query'),
-    })
-  }
+  // 系统提示组装 — ./wire-instructions.ts(2026-09-27 拆分)。socialWired 在下面 social 接线完成后 set。
+  const socialWired = new Ref<boolean>('socialWired')
+  const buildInstructions = wireInstructions(deps, { plugins: { delegateStdioByProvider, knowledgePluginNames }, defaultProviderId, knowledge, socialWired })
 
   const sessionManager = new SessionManager({
     maxConcurrent: 6,
@@ -939,124 +271,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   }, 60_000)
   idleSweepTimer.unref()
 
-  // Per-chat conversation mode (RFC 03 P2). Default for new chats =
-  // `conversationStore` is created earlier in this function (hoisted so
-  // the canUseTool closure has a live reference). `/cc` `/codex` `/solo`
-  // commands flip individual chats; persisted in `wechat-cc.db`'s
-  // `conversations` table (migrated from the legacy conversations.json
-  // in PR7). Caller may inject a shared instance so internal-api
-  // (which needs to look up modes for reply-prefixing in P3 parallel
-  // mode) sees the same flips. When absent, we own one rooted at <stateDir>.
-
-  // Extracted as a named variable so routeA2ANotify can also call it.
-  // v0.5.3 — extracted to fallback-reply.ts so the failure paths log
-  // [FALLBACK_REPLY_FAIL] / success path logs [FALLBACK_REPLY_SENT].
-  const sendAssistantText = makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log, capture: deps.replySinks?.capture, observe: deps.outboundTaps?.observe })
-
-  // (turnTimeoutMs is resolved earlier now — see the block just above
-  // registerProviders() — so the agy provider's `--print-timeout` can be
-  // constructed with the same value the coordinator uses below.)
-
-  // recordTurn — emit the structured TurnRecord as a fields-bearing log line
-  // AND persist it via the optional onTurnRecord sink. deps.log routes the
-  // third arg into channel.log.jsonl, so every turn's outcome (completed /
-  // timeout / auth_failed / error) is greppable there; onTurnRecord (wired in
-  // main.ts to the SQLite turn_records store) makes it *queryable* on
-  // internal-api and survives the restart a hang/crash triggers — the
-  // AI-legible answer to "why did this chat stop replying", post-mortem-safe.
-  const recordTurn = (record: TurnRecord): void => {
-    // tools=… 只列**名字**,不含参数(参数里是搜索词、文件路径、消息正文)。
-    // 有了这一栏,回头看一条回答时能一眼分清「查来的」和「想出来的」——
-    // 2026-09-02 之前完全看不出:agy 联网搜了 3.7 秒,日志里只有 chunks=3。
-    const toolsPart = record.toolCalls?.length
-      ? ` tools=${[...new Set(record.toolCalls)].join(',')}`
-      : ''
-    deps.log('TURN', `chat=${record.chatId} provider=${record.provider} outcome=${record.outcome} dur=${record.durationMs}ms reply=${record.replyToolCalled} chunks=${record.textChunks}${toolsPart}${record.error ? ` error=${JSON.stringify(record.error.slice(0, 160))}` : ''}`, {
-      event: 'turn_record',
-      ...record,
-    })
-    // Persistence is best-effort: a store write must never break dispatch.
-    try { deps.onTurnRecord?.(record) } catch (err) {
-      deps.log('TURN', `onTurnRecord sink threw: ${err instanceof Error ? err.message : String(err)}`)
-    }
-    // Connection-health (Task 9) — this is the narrowest point that sees
-    // BOTH a completed and a failed LLM round: it fires once per solo
-    // dispatch and once per participant in parallel/chatroom (see
-    // TurnRecord's doc comment), covering every provider call the
-    // coordinator makes. The outcome→failure-kind mapping (why 'unknown'
-    // business failures like step-budget/max_turns must NOT count as an
-    // 'llm' connectivity failure) lives in reportLlmTurnOutcome
-    // (./wire-health.ts) — extracted so it's unit-testable against a real
-    // health runtime without constructing a full Bootstrap.
-    reportLlmTurnOutcome(health, record.outcome, record.error)
-    // 桌宠(spec 2026-09-05-cc-desktop-pet §5.1)—— 回合结束的那一刻。recordTurn
-    // 是唯一一处**每种结局都会经过**的窄点,所以「刚忙完」用它的 endedAt,而不是
-    // 任何一条成功路径上的时间。但不是每条记录都算一次「忙完」:哪些算,判据写在
-    // shouldNoteTurnEnd 里(只认 completed;chatroom 每participant每拍一条,得排除)。
-    if (shouldNoteTurnEnd(record)) deps.petSignals?.noteTurnEnd(record.chatId, record.endedAt)
-  }
-
-  const handoffMessages = makeMessagesStore(deps.db)
-  const coordinator = createConversationCoordinator({
-    resolveProject: resolve,
-    manager: sessionManager,
-    conversationStore,
-    registry,
-    defaultProviderId,
-    format: formatInbound,
-    // 换 provider 交接的近况原文 — 消息库最近 n 条(text 类为主,升序)。
-    // 非管理员可用的 provider 允许表(core/provider-policy.ts),mtime 缓存读。
-    trustedProviders: () => readAgentConfig().trusted_providers,
-    // 连续走 fallback 的 provider:≥3 轮就是「流格式变了」的形状,记进 /mode
-    // 并打一条 [PROVIDER_ANOMALY](每 10 轮再提醒一次,别刷屏)。
-    onFallbackStreak: (providerId, streak) => {
-      if (streak === 0) { anomalyNotes.delete(providerId); return }
-      if (streak < 3) return
-      anomalyNotes.set(providerId, `最近 ${streak} 轮连续走 fallback(有文字、零 reply 工具)—— 像是流格式变了,看 channel.log 的 tools=`)
-      if (streak === 3 || streak % 10 === 0) deps.log('PROVIDER_ANOMALY', `provider=${providerId} fallback streak=${streak}: 有文字、零 reply 工具,像是流格式变了(tool_call 解析不出来);见 TURN 行的 tools=`, { event: 'fallback_streak', provider: providerId, streak })
-    },
-    recentTurns: async (chatId, n) => {
-      const rows = await handoffMessages.listRange(chatId, { limit: n })
-      return rows.filter(r => r.text.trim().length > 0)
-        .map(r => ({ dir: r.direction === 'in' ? 'in' as const : 'out' as const, text: r.text, ts: r.ts }))
-    },
-    permissionMode,
-    turnTimeoutMs,
-    recordTurn,
-    // 桌宠「在干活」的证据(spec §5.1):只认 tool_call —— 起飞由
-    // sessionManager.isInFlight 判定,起飞时刻由 pipeline-deps 的入站分发处
-    // noteTurnStart 记(见 pet-signals.ts 的头注释)。钩子抛错不影响回合:
-    // collectTurn 的 onEvent 已经把它围起来了,这里也只做一次 Map.set。
-    onTurnEvent: (chatId, ev) => { if (ev.kind === 'tool_call') deps.petSignals?.noteToolCall(chatId) },
-    // sendAssistantText fallback path: same fall-through the legacy
-    // routeInbound used to take when the agent didn't call a reply tool.
-    // main.ts injects a real ilink.sendMessage closure; bootstrap.ts only
-    // wires the structural piece.
-    sendAssistantText,
-    // Task 10 — coordinator resolves per-chat tier on every dispatch.
-    // loadAccess() reads access.json with a 5s in-process TTL cache, so
-    // this is cheap to call per inbound. Admin/trusted/guest classification
-    // determines which TierProfile the session is spawned under.
-    loadAccess,
-    log: deps.log,
-    // PR F — chatroom moderator now resolves a provider-agnostic cheap
-    // eval via ProviderRegistry.getCheapEval(). Each registered provider
-    // implements its own cheapest one-shot LLM call (claude → haiku via
-    // SDK query(); codex → ephemeral Thread.run with minimal reasoning).
-    // The auth-failed sentinel detection that lived in the prior
-    // ./haiku-eval helper moves to a shared agent-provider helper
-    // applied at the callsite — so stale creds throw a structured
-    // error and the moderator's existing catch branch falls back to
-    // forced alternation. Codex-only users no longer hard-fail here.
-    haikuEval: wrapCheapEvalWithAuthFailCheck(registry.getCheapEval(), deps.log),
-    // /chat beat ③ verdict — the DEFAULT provider's STRONG model (not haiku).
-    // Falls back to the cheap eval if that provider has no strongEval, so
-    // codex-default deployments still get a verdict.
-    verdictEval: wrapCheapEvalWithAuthFailCheck(
-      registry.getStrongEval(defaultProviderId) ?? registry.getCheapEval(),
-      deps.log,
-    ),
-  })
+  // fallback 回复 / recordTurn / coordinator — ./wire-coordinator.ts(2026-09-27 拆分)。
+  const { anomalyNotes, sendAssistantText, coordinator } = wireCoordinator(deps, ctxBase, { health, resolve, sessionManager, conversationStore, registry, defaultProviderId, readAgentConfig, permissionMode, turnTimeoutMs })
 
   // RFC 03 P4 — bare delegate providers + one-shot dispatcher.
   // See ./delegate.ts for why these are constructed separately from the
@@ -1079,37 +295,8 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     },
   })
 
-  // ── A2A wiring ────────────────────────────────────────────────────────
-  // Instantiate registry, client, events store. These are cheap objects
-  // that don't require a2a_listen to be configured — they're also used
-  // by POST /v1/a2a/send (outbound calls from the MCP tool).
-  const a2aRegistry = createA2ARegistry({ stateDir: deps.stateDir })
-  const a2aClient = createA2AClient()
-  const a2aEventsStore = makeA2AEventsStore(deps.db)
-
-  // Helper: resolve operator chat. v1 = earliest-updated_at conversation
-  // row (first chat the operator ever used; most stable identity).
-  //
-  // Cache only POSITIVE hits: on a fresh install the conversations table
-  // is empty until the operator sends their first WeChat message. If we
-  // also cached `null`, every A2A notify that arrived before that first
-  // message would be permanently dropped as `dropped_no_operator_chat`
-  // — even after the operator binds — until daemon restart.
-  let cachedOperatorChatId: string | null = null
-  function resolveOperatorChatId(): string | null {
-    if (cachedOperatorChatId) return cachedOperatorChatId
-    const row = deps.db.query<{ chat_id: string }, []>(
-      'SELECT chat_id FROM conversations ORDER BY updated_at ASC LIMIT 1',
-    ).get()
-    if (row?.chat_id) cachedOperatorChatId = row.chat_id
-    return cachedOperatorChatId
-  }
-
-  // Single server holder — assigned once wireA2aServer builds it below.
-  // (曾经有一条注释说 wireSocial 的 getServerBaseUrl thunk 闭包在这上面、
-  // 所以顺序要紧。那个 dep 从头到尾没被 wireSocial 用过,注释比死代码更贵
-  // —— 它会让后来的人以为这里的顺序是有约束的。一并删掉。)
-  let a2aServer: import('../../core/a2a-server').A2AServer | null = null
+  // A2A registry / client / events + resolveOperatorChatId — ./wire-a2a.ts(2026-09-27 拆分)。
+  const { a2aRegistry, a2aClient, a2aEventsStore, resolveOperatorChatId } = wireA2a(ctxBase)
 
   // 降级兜底:social 抛错时的 inert wiring — 与 wireSocial 未配置时的内部
   // 状态同形(全 handler undefined),下游 a2a/mailbox/return 的门原样生效。
@@ -1139,7 +326,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     // ⇒ 映射为 null ⇒ supervisor 记 off。
     return w.social ? w : null
   })) ?? inertSocialWiring
-  socialToolsWired = !!socialWiring.social
+  socialWired.set(!!socialWiring.social)
 
   const a2aWiring = await sup.start('a2a-server', () => wireA2aServer({
     log: deps.log,
@@ -1154,7 +341,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     onLetter: socialWiring.onLetter,
   }))
   const a2aDeps = a2aWiring?.a2aDeps
-  a2aServer = a2aWiring?.a2aServer ?? null
+  const a2aServer = a2aWiring?.a2aServer ?? null
 
   // 配对码 (pairing-code design §7) — the daemon-side pairing engine. Gated
   // ONLY on mailbox_relays (rendezvous needs a relay); independent of
@@ -1175,59 +362,11 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     log: deps.log,
   }))
 
-  // Content-blind mailbox transport (sub-project B, Task 8) — the poller's
-  // deps, constructed only when social wiring is live AND at least one relay
-  // is configured. main.ts mounts `registerMailboxPoller(mailboxPollerDeps)`
-  // on the companion scheduler iff this is present; otherwise the feature
-  // stays fully inert (no poll timer, no relay traffic). I1: `onMailboxLetter`
-  // is `socialWiring.onMailboxLetter` (own-channel-only) — the only inbound
-  // arm a bearer-less mailbox drop may reach.
-  const mailboxRelays = configuredAgent.mailbox_relays ?? []
-  const mailboxPollerDeps = (configuredAgent.social_enabled && mailboxRelays.length > 0 && socialWiring.onMailboxLetter)
-    ? {
-        stateDir: deps.stateDir,
-        a2aRegistry,
-        onMailboxLetter: socialWiring.onMailboxLetter,
-        relays: mailboxRelays,
-        // Re-checked at every tick (mtime-cached read) so a `/set` toggle of
-        // social_enabled takes effect without a daemon restart, same posture
-        // as the companion schedulers' shouldRun gates.
-        shouldRun: () => readAgentConfig().social_enabled === true,
-        log: deps.log,
-      }
-    : undefined
+  // mailbox 轮询器 deps — ./wire-mailbox-deps.ts(2026-09-27 拆分)。
+  const mailboxPollerDeps = wireMailboxDeps(ctx, { a2aRegistry, onMailboxLetter: socialWiring.onMailboxLetter, readAgentConfig })
 
-  // ── 乙 v2 wiring (guarded — no-op when config absent) ────────────────────
-  // BRAIN side: start a WebSocket rendezvous that hands connect to.
-  let yiHub: YiHub | undefined
-  if ((configuredAgent as { yi_hub_listen?: { host: string; port: number } }).yi_hub_listen) {
-    const cfg = (configuredAgent as { yi_hub_listen: { host: string; port: number } }).yi_hub_listen
-    yiHub = createYiHub()
-    const yiServer = createYiWsServer({
-      host: cfg.host,
-      port: cfg.port,
-      hub: yiHub,
-      verify: (id, tok) => !!a2aRegistry.verifyBearer(id, tok),
-    })
-    await yiServer.start()
-    deps.log('YI', `hub listening on ws://${cfg.host}:${yiServer.port()}`)
-  }
-
-  // HAND side: connect outbound to a brain's rendezvous.
-  if ((configuredAgent as { yi_brain?: { url: string; handId: string; authToken: string } }).yi_brain) {
-    const cfg = (configuredAgent as { yi_brain: { url: string; handId: string; authToken: string } }).yi_brain
-    const { createYiWsClient } = await import('../yi-ws-client')
-    const yiClient = createYiWsClient({
-      brainUrl: cfg.url,
-      handId: cfg.handId,
-      authToken: cfg.authToken,
-      capabilities: ['exec'],
-      onExec: (t) => dispatchDelegate(t.peer, t.prompt, t.cwd),
-      log: (m) => deps.log('YI', m),
-    })
-    yiClient.start()
-    deps.log('YI', `hand connecting to brain at ${cfg.url}`)
-  }
+  // 乙 v2 — ./wire-yi.ts(2026-09-27 拆分);经 sup.start('yi')。
+  const yiHub = await wireYi(ctx, { a2aRegistry, dispatchDelegate })
 
   return {
     sessionManager,

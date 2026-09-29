@@ -95,6 +95,9 @@ it('keeps archive writes behind explicit host write access while passing literal
 })
 
 const liveRoutes = [
+ ['GET', '/v1/workbench/entry-options'],
+ ['POST', '/v1/workbench/create-entry'],
+ ['GET', '/v1/workbench/entry-receipt'],
  ['POST', '/v1/workbench/prepare-continuation'],
  ['GET', '/v1/workbench/models'],
  ['POST', '/v1/workbench/attachment'],
@@ -125,6 +128,7 @@ it.each(liveRoutes)('refuses the wrong method and extended paths around %s %s',a
   ...(path==='/v1/workbench/attachment'?[]:[[method==='GET'?'POST':'GET',path]]),
   ['DELETE',path],
   [method,path+'/extra'],
+  [method,path+'-extra'],
   [method,path+'/'],
  ])expect((await proxy(req(candidatePath!,candidateMethod!)))?.status).toBe(405)
  expect(upstream).not.toHaveBeenCalled()

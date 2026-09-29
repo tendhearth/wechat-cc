@@ -71,6 +71,7 @@
 #m-controls .more{display:inline-block;min-height:44px;margin:8px 0 0 8px;padding:9px 16px;border-radius:var(--r-s);color:var(--ink)}
 .m-option textarea{border:1px solid var(--line);border-radius:var(--r-s);background:var(--card);color:var(--ink)}
 #m-controls :focus-visible,#m-send:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.m-tool-events{margin:12px 0}.m-tool-events>summary{cursor:pointer;color:var(--soft);font-size:13px;min-height:44px;padding:12px 0}.m-tool-events .m-description{margin:0 0 8px;font-size:13px}.m-tool-events small{color:var(--soft);font-size:11.5px}
 </style>
 <div class="pane" id="p-you">
   <button id="you-back" class="you-back" type="button">← 回去</button>
@@ -88,8 +89,9 @@
     <div id="m-notice" role="status" aria-live="polite"></div>
     <div id="m-controls"><div id="m-permissions"></div><div id="m-questions"></div></div>
     <div id="m-artifacts"></div><div id="m-artifact-preview"></div><div id="m-inputs"></div>
-    <details><summary>对话与执行记录</summary><div id="m-events"></div></details>
+    <section aria-label="对话与执行记录"><div id="m-events"></div></section>
     <div class="card" id="m-say-box"><textarea id="m-say" rows="2" placeholder="接着说…" style="width:100%;font:inherit;border:1px solid var(--line);border-radius:var(--r-s);padding:8px;box-sizing:border-box"></textarea>
+      <div id="m-say-materials"></div>
       <button id="m-send" class="done-btn" type="button" style="margin-top:6px">发送</button></div>
   </div>
 </div>
@@ -99,9 +101,12 @@
   <button data-p="memory">回忆</button>
 </nav>
 <style>{{>presence.css}}</style>
+<style>{{>attachments.css}}</style>
+<style>{{>entry.css}}</style>
 <style>{{>you.css}}</style>
 <div id="toast"></div>
 <script>
 var T = {{TOKEN_JSON}}
 var REMOTE = {{REMOTE_JSON}}{{>boot.js}}{{>transport.js}}{{>nav.js}}{{>workbench.js}}
+{{>attachments.js}}{{>entry.js}}
 {{>presence.js}}{{>you.js}}{{>home.js}}</script></body></html>

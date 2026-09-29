@@ -1,7 +1,7 @@
-import { constants, closeSync, lstatSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
-import { O_NONBLOCK, openAnchored, readBounded } from './anchored-fs'
+import { readAnchoredFile } from './anchored-fs'
 import type { WorkbenchStore } from './store'
 
 export const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024
@@ -41,12 +41,7 @@ function noSymlinks(root: string, file: string) {
  */
 export function readAnchoredRegular(root: string, relativeName: string, maxBytes = MAX_ARTIFACT_BYTES): Buffer {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_ARTIFACT_BYTES) throw new Error('invalid_artifact_size')
-  if (!isAbsolute(root) || isAbsolute(relativeName)) throw new Error('invalid_artifact_path')
-  const parts = relativeName.split(/[\\/]/)
-  if (!parts.length || parts.some(part => !part || part === '.' || part === '..')) throw new Error('invalid_artifact_path')
-  const fd = openAnchored(root, parts, constants.O_RDONLY | O_NONBLOCK, 0, 'invalid_artifact_path')
-  try { return readBounded(fd, maxBytes, 'invalid_artifact_size', 'artifact_changed').bytes }
-  finally { closeSync(fd) }
+  return readAnchoredFile(root,relativeName,maxBytes,{path:'invalid_artifact_path',size:'invalid_artifact_size',changed:'artifact_changed'})
 }
 export function outputDirectory(project: string, id: string) {
   const base = join(project,'.cc-workbench')

@@ -9,6 +9,9 @@
 
 pub mod daemon_mode;
 
+#[cfg(test)]
+mod workbench_folder_tests;
+
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -987,6 +990,9 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
     matches!(
         (method, route),
         ("GET", "/v1/workbench")
+            | ("GET", "/v1/workbench/entry-options")
+            | ("POST", "/v1/workbench/create-entry")
+            | ("GET", "/v1/workbench/entry-receipt")
             | ("GET", "/v1/workbench/models")
             | ("GET", "/v1/workbench/sessions")
             | ("GET", "/v1/workbench/session")
@@ -1107,6 +1113,92 @@ fn choose_workbench_folder() -> Result<Option<String>, String> {
     }
     #[cfg(not(target_os = "macos"))]
     Ok(None)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn workbench_folder_path(task_id: &str, response: &str) -> Result<PathBuf, String> {
+    let invalid = || "invalid_task_directory".to_string();
+    let value: Value = serde_json::from_str(response).map_err(|_| invalid())?;
+    let task = value.get("task").ok_or_else(invalid)?;
+    if task.get("id").and_then(Value::as_str) != Some(task_id) { return Err(invalid()); }
+    let path = PathBuf::from(task.get("path").and_then(Value::as_str).ok_or_else(invalid)?);
+    if !path.is_absolute() || path.components().any(|part| matches!(part, std::path::Component::ParentDir | std::path::Component::CurDir)) {
+        return Err(invalid());
+    }
+    Ok(path)
+}
+
+#[cfg(target_os = "macos")]
+struct WorkbenchFolder {
+    path: PathBuf,
+    directory: std::fs::File,
+    chain: Vec<(PathBuf, u64, u64)>,
+}
+
+#[cfg(target_os = "macos")]
+fn workbench_folder_chain(path: &std::path::Path) -> Result<Vec<(PathBuf, u64, u64)>, String> {
+    use std::os::unix::fs::MetadataExt;
+    let invalid = || "invalid_task_directory".to_string();
+    if !path.is_absolute() { return Err(invalid()); }
+    let mut cursor = PathBuf::new();
+    let mut chain = Vec::new();
+    for component in path.components() {
+        if matches!(component, std::path::Component::ParentDir | std::path::Component::CurDir) { return Err(invalid()); }
+        cursor.push(component.as_os_str());
+        let metadata = std::fs::symlink_metadata(&cursor).map_err(|_| invalid())?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() { return Err(invalid()); }
+        chain.push((cursor.clone(), metadata.dev(), metadata.ino()));
+    }
+    Ok(chain)
+}
+
+#[cfg(target_os = "macos")]
+fn inspect_workbench_folder(path: &std::path::Path) -> Result<WorkbenchFolder, String> {
+    use std::os::unix::fs::MetadataExt;
+    let chain = workbench_folder_chain(path)?;
+    let directory = std::fs::File::open(path).map_err(|_| "invalid_task_directory".to_string())?;
+    let opened = directory.metadata().map_err(|_| "invalid_task_directory".to_string())?;
+    let last = chain.last().ok_or_else(|| "invalid_task_directory".to_string())?;
+    if !opened.is_dir() || (opened.dev(), opened.ino()) != (last.1, last.2) || workbench_folder_chain(path)? != chain {
+        return Err("task_directory_changed".into());
+    }
+    Ok(WorkbenchFolder { path: path.into(), directory, chain })
+}
+
+#[cfg(target_os = "macos")]
+fn launch_workbench_folder(folder: &WorkbenchFolder, launch: impl FnOnce(&std::path::Path) -> Result<(), String>) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    let current = workbench_folder_chain(&folder.path)?;
+    let opened = folder.directory.metadata().map_err(|_| "task_directory_changed".to_string())?;
+    let last = current.last().ok_or_else(|| "invalid_task_directory".to_string())?;
+    if current != folder.chain || !opened.is_dir() || (opened.dev(), opened.ino()) != (last.1, last.2) {
+        return Err("task_directory_changed".into());
+    }
+    // This protects the current inspection/launch boundary. The task detail
+    // does not expose its original inode, and the OS launcher resolves a path.
+    launch(&folder.path)
+}
+
+/// Only a task ID crosses the webview boundary; the existing operator-authenticated
+/// daemon request supplies the directory. This never extends open_url's schemes.
+#[tauri::command]
+async fn open_workbench_folder(task_id: String) -> Result<(), String> {
+    if task_id.len() != 8 || !task_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("invalid_task_id".into());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let response = workbench_api("GET".into(), format!("/v1/workbench/task?id={task_id}"), None).await?;
+        let path = workbench_folder_path(&task_id, &response)?;
+        let folder = inspect_workbench_folder(&path)?;
+        launch_workbench_folder(&folder, |path| {
+            std::process::Command::new("/usr/bin/open").arg(path).status()
+                .map_err(|_| "open_task_directory_failed".to_string())
+                .and_then(|status| if status.success() { Ok(()) } else { Err("open_task_directory_failed".into()) })
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    Err("open_workbench_folder_unsupported".into())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1266,7 +1358,8 @@ pub fn run() {
             agent_transcribe,
             customer_review_api,
             workbench_api,
-            choose_workbench_folder
+            choose_workbench_folder,
+            open_workbench_folder
         ])
         .build(tauri::generate_context!())
         .expect("error while building wechat-cc desktop")
@@ -1375,6 +1468,9 @@ mod workbench_proxy_tests {
     #[test]
     fn allows_only_the_exact_workbench_method_route_pairs() {
         for (method, path) in [
+            ("GET", "/v1/workbench/entry-options"),
+            ("POST", "/v1/workbench/create-entry"),
+            ("GET", "/v1/workbench/entry-receipt?requestId=123e4567-e89b-42d3-a456-426614174000"),
             ("GET", "/v1/workbench"),
             ("GET", "/v1/workbench/task?id=A1B2C3D4"),
             ("GET", "/v1/workbench/sessions?providerId=claude"),
@@ -1410,6 +1506,18 @@ mod workbench_proxy_tests {
             assert!(workbench_request_allowed(method, path), "expected {method} {path} to be allowed");
         }
         for (method, path) in [
+            ("POST", "/v1/workbench/entry-options"),
+            ("GET", "/v1/workbench/create-entry"),
+            ("POST", "/v1/workbench/entry-receipt"),
+            ("GET", "/v1/workbench/entry-options/extra"),
+            ("POST", "/v1/workbench/create-entry/extra"),
+            ("GET", "/v1/workbench/entry-receipt/extra"),
+            ("GET", "/v1/workbench/entry-options-extra"),
+            ("POST", "/v1/workbench/create-entry-extra"),
+            ("GET", "/v1/workbench/entry-receipt-extra"),
+            ("GET", "/v1/workbench/entry-options/"),
+            ("POST", "/v1/workbench/create-entry/"),
+            ("GET", "/v1/workbench/entry-receipt/"),
             ("DELETE", "/v1/workbench/attachment"),
             ("GET", "/v1/workbench/discard-attachment"),
             ("POST", "/v1/workbench/attachment/extra"),

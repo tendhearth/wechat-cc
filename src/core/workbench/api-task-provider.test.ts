@@ -5,7 +5,9 @@ import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../lib/db'
 import {makeWorkbenchStore} from './store'
 import {makeApiSessionStore} from './api-sessions'
-import {createApiTaskProvider} from './api-task-provider'
+import * as apiTaskProvider from './api-task-provider'
+import {createProviderRegistry} from '../provider-registry'
+import {registerWorkbenchApi} from '../../daemon/bootstrap/workbench-api'
 import type {APIModel,ChatMessage} from './api-model'
 import type {AgentEvent,SpawnContext} from '../agent-provider'
 import {TIER_PROFILES} from '../user-tier'
@@ -23,7 +25,50 @@ function scripted(turns:Array<{text?:string;call?:{id:string;name:string;input:u
     return{deltas:(async function*(){if(turn.text)yield{kind:'text' as const,text:turn.text};for(const c of calls)yield{kind:'tool_call' as const,...c}})(),finished:Promise.resolve(result)}
   }};return{model,seen}
 }
-const provider=(model:APIModel,extra={})=>createApiTaskProvider({sessions:makeApiSessionStore(db),model,configHash:'a'.repeat(64),configuredModel:'fixture',...extra})
+const provider=(model:APIModel,extra={})=>apiTaskProvider.createApiTaskProvider({sessions:makeApiSessionStore(db),model,configHash:'a'.repeat(64),configuredModel:'fixture',...extra})
+
+it('validates API task text and attachment count synchronously before a session exists',()=>{
+  expect(()=>apiTaskProvider.validateApiTaskInput({text:'x'.repeat(100_000),attachments:[]})).not.toThrow()
+  expect(()=>apiTaskProvider.validateApiTaskInput({text:'x'.repeat(100_001),attachments:[]})).toThrow('api_task_input_invalid')
+  expect(()=>apiTaskProvider.validateApiTaskInput({text:'',attachments:Array.from({length:8},()=>({mime:'text/plain',size:1_048_576}))})).not.toThrow()
+  expect(()=>apiTaskProvider.validateApiTaskInput({text:'',attachments:Array.from({length:9},()=>({mime:'text/plain',size:1}))})).toThrow('api_task_input_invalid')
+  expect(db.query('SELECT * FROM workbench_api_sessions').all()).toHaveLength(0)
+})
+
+it.each(['text/plain','text/markdown','text/csv','application/json','image/png','image/jpeg','image/webp'])('accepts supported %s attachment metadata without accessing its content',mime=>{
+  expect(()=>apiTaskProvider.validateApiTaskInput({text:'summarize',attachments:[{mime,size:1}]})).not.toThrow()
+})
+
+it.each(['application/pdf','image/gif','application/octet-stream','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','application/vnd.openxmlformats-officedocument.presentationml.presentation'])('rejects %s before a task or session is accepted',mime=>{
+  expect(()=>apiTaskProvider.validateApiTaskInput({text:'summarize',attachments:[{mime,size:1}]})).toThrow('api_task_attachment_unsupported')
+})
+
+it.each([
+  ['text/plain',1_048_576],['text/markdown',1_048_576],['text/csv',1_048_576],['application/json',1_048_576],
+  ['image/png',4_718_592],['image/jpeg',4_718_592],['image/webp',4_718_592],
+] as const)('accepts exactly the %s byte limit and refuses the next byte', (mime,size)=>{
+  expect(()=>apiTaskProvider.validateApiTaskInput({text:'',attachments:[{mime,size}]})).not.toThrow()
+  expect(()=>apiTaskProvider.validateApiTaskInput({text:'',attachments:[{mime,size:size+1}]})).toThrow('api_task_attachment_invalid')
+})
+
+it.each([-1,0.5,NaN,Infinity,Number.MAX_SAFE_INTEGER+1])('rejects invalid attachment byte size %s',size=>{
+  expect(()=>apiTaskProvider.validateApiTaskInput({text:'',attachments:[{mime:'image/png',size}]})).toThrow('api_task_attachment_invalid')
+})
+
+it('limits combined decoded attachment bytes independently of individual image limits',()=>{
+  const attachments=[{mime:'image/png',size:4_194_304},{mime:'image/jpeg',size:4_194_304}]
+  expect(()=>apiTaskProvider.validateApiTaskInput({text:'',attachments})).not.toThrow()
+  expect(()=>apiTaskProvider.validateApiTaskInput({text:'',attachments:[...attachments,{mime:'text/plain',size:1}]})).toThrow('api_task_attachment_invalid')
+})
+
+it('registers API input preflight on the real workbench provider without creating an API session',()=>{
+  const registry=createProviderRegistry()
+  expect(registerWorkbenchApi(registry,db,root,{openaiBaseUrl:'https://gateway.example/v1',openaiModel:'fixture'},{WECHAT_OPENAI_API_KEY:'fixture-secret'})).toBe(true)
+  const validate=registry.get('openai')!.opts.validateWorkbenchInput
+  expect(typeof validate).toBe('function')
+  expect(()=>validate!({text:'review',attachments:[{mime:'application/pdf',size:8}]})).toThrow('api_task_attachment_unsupported')
+  expect(db.query('SELECT * FROM workbench_api_sessions').all()).toHaveLength(0)
+})
 
 it('streams progress, requests the exact artifact permission, delivers and resumes full tool context',async()=>{
   const fixture=scripted([{text:'I will save the report.',call:{id:'write-1',name:'SaveArtifact',input:{name:'report.md',content:'# Result\n42'}}},{text:'Saved report.md.'},{text:'The prior report contains 42.'}]),p=provider(fixture.model)

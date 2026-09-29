@@ -15,6 +15,9 @@ interface Options {
 }
 const TEXT_MIMES=new Set(['text/plain','text/markdown','text/csv','application/json'])
 const IMAGE_MIMES=new Set(['image/png','image/jpeg','image/webp'])
+const MAX_TEXT_ATTACHMENT_BYTES=1024*1024
+const MAX_IMAGE_BASE64_BYTES=6*1024*1024
+const MAX_INPUT_ATTACHMENT_BYTES=8*1024*1024
 const hash=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex')
 
 /** Opaque binding includes the credential identity, never the credential itself. */
@@ -32,6 +35,28 @@ function identity(path:string):string {
 function fail(code:string):never{throw Error(code)}
 function check(signal:AbortSignal){if(signal.aborted)fail('api_task_cancelled')}
 
+function validateInputShape(text:string,count:number){
+  if(typeof text!=='string'||text.length>100_000||count>8)fail('api_task_input_invalid')
+}
+function validateAttachmentMime(mime:string){
+  if(!TEXT_MIMES.has(mime)&&!IMAGE_MIMES.has(mime))fail('api_task_attachment_unsupported')
+}
+function validateAttachmentBytes(mime:string,size:number,total:number){
+  if(!Number.isSafeInteger(size)||size<0||total>MAX_INPUT_ATTACHMENT_BYTES)fail('api_task_attachment_invalid')
+  if(TEXT_MIMES.has(mime)?size>MAX_TEXT_ATTACHMENT_BYTES:4*Math.ceil(size/3)>MAX_IMAGE_BASE64_BYTES)fail('api_task_attachment_invalid')
+}
+
+/** Metadata is already verified by the attachment store; preflight never opens its files. */
+export function validateApiTaskInput(input:{text:string;attachments:readonly {mime:string;size:number}[]}):void {
+  validateInputShape(input.text,input.attachments.length)
+  let total=0
+  for(const attachment of input.attachments){
+    validateAttachmentMime(attachment.mime)
+    total+=attachment.size
+    validateAttachmentBytes(attachment.mime,attachment.size,total)
+  }
+}
+
 /** The callback may not honour cancellation. Race its result, never its effect. */
 function withAbort<T>(promise:Promise<T>,signal:AbortSignal):Promise<T> {
   return new Promise((resolve,reject)=>{
@@ -43,23 +68,24 @@ function withAbort<T>(promise:Promise<T>,signal:AbortSignal):Promise<T> {
 }
 
 function requestMessage(text:string,attachments:readonly AgentAttachment[],binding:ApiSessionBinding):ChatMessage {
-  if(typeof text!=='string'||text.length>100_000||attachments.length>8)fail('api_task_input_invalid')
+  validateInputShape(text,attachments.length)
   const content:Exclude<Extract<ChatMessage,{role:'user'}>['content'],string>=[{type:'text',text}]
   let total=0
   for(const attachment of attachments){
-    if(!TEXT_MIMES.has(attachment.mime)&&!IMAGE_MIMES.has(attachment.mime))fail('api_task_attachment_unsupported')
+    validateAttachmentMime(attachment.mime)
     let bytes:Buffer
     if(IMAGE_MIMES.has(attachment.mime)){
-      if(typeof attachment.data!=='string'||attachment.data.length>6*1024*1024)fail('api_task_attachment_invalid')
+      if(typeof attachment.data!=='string'||attachment.data.length>MAX_IMAGE_BASE64_BYTES)fail('api_task_attachment_invalid')
       bytes=Buffer.from(attachment.data,'base64')
       if(bytes.toString('base64')!==attachment.data)fail('api_task_attachment_invalid')
     }else{
       const name=relative(binding.path,attachment.path)
       if(!name.startsWith(`.cc-workbench-inputs/${binding.taskId}/`)||name.split('/').length!==4)fail('api_task_attachment_invalid')
-      bytes=readAnchoredRegular(binding.path,name,1024*1024)
+      bytes=readAnchoredRegular(binding.path,name,MAX_TEXT_ATTACHMENT_BYTES)
     }
     total+=bytes.length
-    if(total>8*1024*1024||hash(bytes)!==attachment.sha256)fail('api_task_attachment_invalid')
+    validateAttachmentBytes(attachment.mime,bytes.length,total)
+    if(hash(bytes)!==attachment.sha256)fail('api_task_attachment_invalid')
     if(IMAGE_MIMES.has(attachment.mime)){
       // Data URL survives SQLite JSON round trips without typed-array coercion.
       content.push({type:'image',image:`data:${attachment.mime};base64,${bytes.toString('base64')}`,mediaType:attachment.mime})

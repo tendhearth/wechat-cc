@@ -25,10 +25,11 @@
 | 发版(tag → 三平台构建 → Publish → R2 更新源) | [maintainer/release.md](maintainer/release.md) | — |
 | 自维护(部署 / 自检 / CI 闸门) | [maintainer/](maintainer/README.md) | `superpowers/specs/2026-09-18-{self-maintenance,ci-triage}-design.md` |
 | 自改流水线(`self change`) | [maintainer/self-change.md](maintainer/self-change.md) | `superpowers/specs/2026-09-18-self-change-pipeline-design.md` |
-| 「一件事」matter 原语与任务入口 | [工作台现状](cc-workbench.md) | `superpowers/specs/2026-09-13-cc-unified-task-entry.md` 那一批(09-12/09-13)；[陪伴交办与手机验收记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md) |
+| 「一件事」matter 原语与任务入口 | [工作台现状](cc-workbench.md) | `superpowers/specs/2026-09-13-cc-unified-task-entry.md` 那一批(09-12/09-13)；[陪伴交办与手机验收记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md)；[统一交办开发分支验证](superpowers/plans/2026-09-26-task-entry-validation.md) |
 | 交办后的回报(形状已定,细节未完) | — | `superpowers/specs/2026-09-23-delegation-report-design.md` |
 | Windows 进程树清理(**已落地** dev 2026-09-24,`src/lib/jobspawn.ts`) | [superpowers/reports/2026-09-24-windows-process-tree-landing.md](superpowers/reports/2026-09-24-windows-process-tree-landing.md) | `superpowers/specs/2026-09-23-windows-process-tree-spike.md` |
 | 终端会话 ↔ 微信(`wechat-cc hook`) | [reference/features.md §10](reference/features.md) | `superpowers/specs/2026-09-09-cli-hook-push-design.md` |
+| 多agent分工、消息与交接（调研，未实现协调层） | [现有协作约定](maintainer/README.md#多-agent-协作) | [业内模式与CC建议](superpowers/reports/2026-09-27-agent-coordination-research.md)；[后续交付计划](superpowers/plans/2026-09-27-cc-coordination-delivery.md)；[本次双方分工](superpowers/plans/2026-09-26-cc-agent-coordination.md) |
 | 模型与后端管理 | [reference/model-management.md](reference/model-management.md) | `superpowers/specs/2026-09-08-model-management-design.md` |
 | 每晚整理记忆 / 记忆视图 | [architecture.md §2.4](architecture.md) | `superpowers/specs/2026-09-25-memory-nightly-design.md` + `2026-09-26-memory-view-design.md` |
 | 网页设计统一(手机 `tokens.css` 唯一色板) | [../apps/mobile/README.md](../apps/mobile/README.md) | `superpowers/specs/2026-09-26-web-design-unify.md` |

@@ -20,7 +20,7 @@
 - 断线 / 网络不稳时停掉外发与 LLM 轮次,重试退避必须是**指数级**(微信风控)。
 - **测试的超时预算按「满载套件里」算,不是按单跑算。** `bun run test` 自己就把机器吃满(614 个文件 / 18 worker,`tests` 累计 770s 挤进 113s 墙钟),而自改流水线的 tests 闸门跑在主人那台**同时还在干别的活**的真机上,实测放大 5~10 倍:单跑 1.0s 的用例在套件里 5.6s。所以「单跑 1s、预算 5s」看着很宽也照样假红,而且**每次受害者都不一样**(2026-09-19 两次连跑换了三个受害者,全是 `Test timed out`)。平台默认已统一抬到 20s(`vitest.config.ts`),真启一遍 daemon 那种重活自己再宽一档;别用「给这一条 +2s」打地鼠。
 - **刚写出来的可执行夹具,第一次 exec 要付一笔一次性校验开销 —— 别让产线的短 deadline 替它付。** macOS 上新文件首跑实测 210 / 329 / 400ms,满载套件里涨到 **3002ms 和 4886ms**;同一个文件第二次起 4ms,`/bin/echo` 这种早跑过的系统二进制一直 4ms —— **按文件算,不按进程算**。而 `probeBinaryVersion` 硬顶 3s、`agyVersionOk` 缺省 5s,于是 bootstrap / providers 里「装上假 CLI ⇒ provider 注册成功」那几条随机红成 `expected false to be true`(探测超时 ⇒ 不注册,**不是** `Test timed out`,从报错看不出病因)。写这种夹具一律用 `writeWarmExecFixture`(`src/lib/test-temp.ts`),它写完先空跑一次把开销付在断言之前。真机上被探测的是早就跑过的稳定二进制(4ms),所以**别去放宽产线的 deadline**。
-- **同一个道理:别用 `await new Promise(r => setTimeout(r, 5))` 当同步手段。** 「睡一小会儿,异步链应该推进到那儿了」在空机器上成立,在满载套件里就是假红(2026-09-19 routes-workbench 的长轮询用例:睡 5ms 之后 `detail` 还是 0 次)。等**条件**:`await vi.waitFor(() => expect(x).toHaveBeenCalled(), { timeout: 5_000 })`,断言本身一个字都不用动。
+- **同一个道理:别用 `await new Promise(r => setTimeout(r, 5))` 当同步手段。** 「睡一小会儿,异步链应该推进到那儿了」在空机器上成立,在满载套件里就是假红(2026-09-19 routes-workbench 的长轮询用例:睡 5ms 之后 `detail` 还是 0 次)。等**条件**:`await vi.waitFor(() => expect(x).toHaveBeenCalled(), { timeout: 5_000 })`,断言本身一个字都不用动。`expect.poll` 的缺省超时同样在 `vitest.config.ts` 里统一抬到 10s(2026-09-27,windows-latest 上 `Matcher did not succeed in time` 两连红),别逐处写 `{ timeout }`。
 
 ## 路由登记
 
@@ -34,9 +34,17 @@
 - 2026-09-27 起四份白名单的包含关系(`lib.rs ⊆ workbench-proxy ⊆ routeAllow ⊆ ROUTE_MIN_TIER`)由 `scripts/route-registry.guard.test.ts` 钉住;漏登记会在本地就红,不用等打包版。鉴权模型现状见 [reference/internal-api-auth.md](../reference/internal-api-auth.md)。
 - 同类守卫:`scripts/provider-registry.guard.test.ts`(加一家 provider 要改的名单)、`scripts/cli-ratchet.guard.test.ts`(`cli.ts` 只许变小)。
 
+## 加 CLI 命令(2026-09-27 起)
+
+- 建 `src/cli/commands/<family>.ts`,`export const <family>Cmd = defineCommand(…)`;`cli.ts` 只加一行 import + `SUBCOMMANDS` 一行。`cli.ts` 有行数棘轮(`scripts/cli-ratchet.guard.test.ts`),往里塞命令体会红。
+- `src/cli/help.ts` 的 `HELP_TEXT` 加一行(`src/cli/help.test.ts` 守着「SUBCOMMANDS 每个键都出现在 HELP 里」)。
+- `scripts/cli-help.guard.test.ts` 给每个子命令的 `--help` 存了快照:改文案后 `bun --bun vitest run scripts/cli-help.guard.test.ts -u`,把快照 diff 贴进 PR。
+- 命令体里需要仓库根 / `cli.ts` 路径,从 `src/cli/repo-root.ts` 取 `SOURCE_REPO_ROOT` / `CLI_ENTRY`,别再写 `import.meta.url`(搬进 commands/ 后它指向别处;打包版先判 `compiledRepoRoot()`)。
+- 命令体动态 import `src/daemon` 是 depcruise 的 warn 不是许可,总数由棘轮第二把尺钉住只降不升。
+
 ## 承重但此前只写在代码注释里的规矩(2026-09-27 抄出来)
 
-- **新接线进 `src/daemon/bootstrap/wire-*.ts`,别再往 `bootstrap/index.ts` 里加**(`index.ts` 头注释)。`index.ts` 已 1100 多行、7 月以来改了 84 次。
+- **新接线进 `src/daemon/bootstrap/wire-*.ts`,`index.ts` 只组装**(spec `docs/superpowers/specs/2026-09-27-bootstrap-split-design.md`;守卫 `scripts/bootstrap-ratchet.guard.test.ts` 钉住行数与 `let x | null = null` 个数只降不升,`bootstrap/boot-order.test.ts` 钉住 `sup.start` 名字序列)。晚绑定用 `src/lib/lifecycle.ts` 的 `Ref`(没 wire 就读会抛);可能失败 / 可能未配置的块经 `deps.supervisor.start(name)`,名字别重复(重复直接 throw)。2026-09-27 之前 `index.ts` 1321 行、7 月以来改了 84 次,拆完 460。
 - **STATE_DIR 两个环境变量名的优先级是 `WECHAT_STATE_DIR` > `WECHAT_CC_STATE_DIR`**(`src/daemon/resolve-state-dir.ts` 头注释);`src/lib/config.ts` 只认前者。e2e harness 两个都设,所以测试发现不了漂移 —— 改 state-dir 相关代码时手动只设一个名试。
 - **入站链开了意图路由后,每个在场消费者必须交探针,漏一个 boot 即抛**(`src/daemon/inbound/build.ts` 注释);探针要看的字段(附件、语音转文字)必须在路由之前就绪。
 - **A2A `proto_version` 现在是 3**(`src/core/a2a-intent.ts`);改信封形状要升它,两台真机都得重新配对。

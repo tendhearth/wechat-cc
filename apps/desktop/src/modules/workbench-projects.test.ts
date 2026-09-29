@@ -17,3 +17,23 @@ it('starts a conversation inside the project without asking for its folder again
  expect(html).not.toContain('data-action="choose-folder"')
  expect(html).toContain('新对话')
 })
+
+it('groups managed tasks together without exposing their UUID folders as projects',()=>{
+ const task=(id:string,path:string)=>({id,path,title:id,workspaceKind:'managed' as const,providerId:'codex',status:'completed',createdAt:1,updatedAt:1,error:null})
+ const tasks=[task('one','/Tasks/uuid-one'),task('two','/Tasks/uuid-two')]
+ const groups=groupWorkbenchTasks(tasks,[project])
+ expect(groups).toEqual([{path:'',label:'随手交办',workspaceKind:'managed',tasks},{path:project.path,label:project.name,tasks:[]}])
+ const html=renderWorkbench({...state,tasks})
+ expect(html).toContain('随手交办')
+ expect(html).toContain('data-action="task-entry"')
+ expect(html).not.toContain('data-project-path="/Tasks/')
+ expect(html).not.toContain('uuid-one')
+})
+it('allows a first managed entry without adding a project or knowing a local folder',()=>{
+ const html=renderWorkbench({...state,projects:[]})
+ expect(html).toContain('data-action="task-entry"')
+ expect(html).toContain('交给 CC 做')
+ expect(html).not.toContain('id="wb-project-form"')
+ expect(html).not.toContain('id="wb-path"')
+ expect(renderWorkbench({...state,projects:[],newScope:'new:add-project'})).toContain('id="wb-project-form"')
+})

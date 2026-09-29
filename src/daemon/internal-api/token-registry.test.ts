@@ -49,6 +49,9 @@ describe('token-registry', () => {
       'POST /v1/reminders/schedule',
       'POST /v1/permissions/resolve',
       'POST /v1/federation/mint',
+      'GET /v1/workbench/entry-options',
+      'POST /v1/workbench/create-entry',
+      'GET /v1/workbench/entry-receipt',
       'POST /v1/workbench/attachment',
       'GET /v1/workbench/attachment',
       'POST /v1/workbench/discard-attachment',
@@ -96,6 +99,9 @@ describe('token-registry', () => {
     const session = r.mint('trusted', 'codex/default/contact')
     const workbenchRoutes = [...(r.resolve('dd'.repeat(32))?.routeAllow ?? [])].filter(route => route.includes('/v1/workbench'))
     expect(workbenchRoutes).toEqual([
+      'GET /v1/workbench/entry-options',
+      'POST /v1/workbench/create-entry',
+      'GET /v1/workbench/entry-receipt',
       'POST /v1/workbench/attachment',
       'GET /v1/workbench/attachment',
       'POST /v1/workbench/discard-attachment',
@@ -130,6 +136,7 @@ describe('token-registry', () => {
     expect(r.resolve('cc'.repeat(32))?.routeAllow).toBeUndefined()
     expect(r.resolve(session)?.routeAllow).toBeUndefined()
     expect(r.resolve(session)?.tier).toBe('trusted')
+    for(const route of ['POST /v1/workbench/entry-options','GET /v1/workbench/create-entry','POST /v1/workbench/entry-receipt','GET /v1/workbench/entry-options/extra','POST /v1/workbench/create-entry-extra','GET /v1/workbench/entry-receipt/'])expect(r.resolve('dd'.repeat(32))?.routeAllow?.has(route)).toBe(false)
     expect(r.resolve('dd'.repeat(32))?.routeAllow?.has('POST /v1/workbench/models')).toBe(false)
     expect(r.resolve('dd'.repeat(32))?.routeAllow?.has('GET /v1/workbench/models/extra')).toBe(false)
     expect(r.resolve('dd'.repeat(32))?.routeAllow?.has('GET /v1/workbench/prepare-continuation')).toBe(false)

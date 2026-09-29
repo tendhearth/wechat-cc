@@ -474,3 +474,16 @@ export interface Bootstrap {
    */
   markInboundActivity?: () => void
 }
+
+/**
+ * bootstrap 拆分(spec 2026-09-27-bootstrap-split §2)—— index 在前几步造好、
+ * 多个 wire-* 共用的东西。每个 wireX(deps, ctx) 的第二个参数;各 wire 只 Pick
+ * 自己要的键。`configuredAgent` 在 index 里是第 5 步才有的,前面的 wire 拿不到它。
+ */
+export interface BootstrapCtx {
+  sup: import('../subsystems').SubsystemSupervisor
+  log: BootstrapDeps['log']
+  stateDir: string
+  db: Db
+  configuredAgent: AgentConfig
+}

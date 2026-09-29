@@ -1403,6 +1403,46 @@ export const migrations: Migration[] = [
     if(!columns.some(column=>column.name==='matter_id'))db.exec('ALTER TABLE journal ADD COLUMN matter_id TEXT')
   },
 
+  // v68 — channel-independent creation receipts and trusted attachment ownership.
+  (db) => {
+    const tasks=db.query<{name:string},[]>('PRAGMA table_info(workbench_tasks)').all()
+    if(!tasks.some(column=>column.name==='workspace_kind'))db.exec("ALTER TABLE workbench_tasks ADD COLUMN workspace_kind TEXT NOT NULL DEFAULT 'project' CHECK(workspace_kind IN ('project','managed'))")
+    const attachments=db.query<{name:string},[]>('PRAGMA table_info(workbench_attachments)').all()
+    if(!attachments.some(column=>column.name==='owner_key'))db.exec('ALTER TABLE workbench_attachments ADD COLUMN owner_key TEXT')
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS workbench_entry_requests (
+        owner_key TEXT NOT NULL, request_id TEXT NOT NULL,
+        canonical_request_hash TEXT NOT NULL,
+        frozen_json TEXT NOT NULL CHECK(json_valid(frozen_json)),
+        phase TEXT NOT NULL CHECK(phase IN ('reserved','accepted')),
+        workspace_id TEXT UNIQUE, resolved_path TEXT, directory_identity TEXT,
+        task_id TEXT REFERENCES workbench_tasks(id), matter_id TEXT REFERENCES matters(id),
+        run_id TEXT, accepted_at INTEGER, created_at INTEGER NOT NULL,
+        PRIMARY KEY(owner_key, request_id),
+        CHECK((phase='reserved' AND task_id IS NULL AND matter_id IS NULL AND run_id IS NULL AND accepted_at IS NULL)
+          OR (phase='accepted' AND task_id IS NOT NULL AND matter_id IS NOT NULL AND matter_id=task_id
+            AND run_id IS NOT NULL AND length(run_id)>0 AND accepted_at IS NOT NULL AND accepted_at>0
+            AND resolved_path IS NOT NULL AND length(resolved_path)>0
+            AND directory_identity IS NOT NULL AND length(directory_identity)>0))
+      ) STRICT;
+    `)
+  },
+
+  // v69 — durable bounded upload reservations shared by desktop and phone.
+  (db) => {
+    db.exec(`CREATE TABLE IF NOT EXISTS workbench_attachment_uploads (
+      id TEXT PRIMARY KEY, owner_key TEXT NOT NULL, draft_id TEXT NOT NULL, task_id TEXT,
+      name TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL CHECK(size>0), sha256 TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('uploading','finalizing','ready','discarded','expired')),
+      next_offset INTEGER NOT NULL DEFAULT 0 CHECK(next_offset>=0 AND next_offset<=size),
+      chunks_json TEXT NOT NULL DEFAULT '[]', part_identity TEXT,
+      reserved_bytes INTEGER NOT NULL CHECK(reserved_bytes>=0),
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS uploads_owner_status ON workbench_attachment_uploads(owner_key,status);
+    CREATE INDEX IF NOT EXISTS uploads_expiry ON workbench_attachment_uploads(status,expires_at);`)
+  },
+
 ]
 
 /**

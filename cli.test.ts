@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { runCommand } from 'citty'
-import { cittyRoot, computeProviderSetOutcome, parseBudgetUsdFlag, parseTimeoutMsFlag } from './cli'
+import { cittyRoot } from './cli'
+import { computeProviderSetOutcome } from './src/cli/commands/provider'
+import { parseBudgetUsdFlag, parseTimeoutMsFlag } from './src/cli/flags'
 import { activeModel, type AgentConfig } from './src/lib/agent-config'
 
 // PR4 batch 3c removed parseCliArgs — every subcommand now flows through
@@ -728,7 +730,7 @@ describe('connection probe CLI — integration (empty state dir)', () => {
 
 describe('computeProviderSetOutcome — 名单跟 lib/provider-ids 走', () => {
   it('accepts agy (the desktop 大脑 menu lists it; `provider set agy` used to be refused)', async () => {
-    const { computeProviderSetOutcome } = await import('./cli')
+    const { computeProviderSetOutcome } = await import('./src/cli/commands/provider')
     const existing = { provider: 'claude' as const, dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }
     const r = computeProviderSetOutcome({ provider: 'agy' }, existing as never)
     expect(r.ok).toBe(true)
