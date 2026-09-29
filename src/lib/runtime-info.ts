@@ -45,6 +45,14 @@ export const __testInternals = {
   resolveCompiledRepoRoot(isCompiled: boolean, execPath: string): string | null {
     return isCompiled ? dirname(execPath) : null
   },
+  /** 主二进制的两个名字:新包 `wechat_cc_desktop`(Cargo 包名),老包 `wechat-cc`。新名字优先。 */
+  resolveAppMainBinary(macosDir: string, isFile: (p: string) => boolean): string | null {
+    for (const name of ['wechat_cc_desktop', 'wechat-cc']) {
+      const p = join(macosDir, name)
+      if (isFile(p)) return p
+    }
+    return null
+  },
 }
 
 /** True when this process is the `wechat-cc-cli` sidecar inside a desktop bundle. */
@@ -67,7 +75,7 @@ export function compiledBinaryPath(): string | null {
 }
 
 /**
- * 打包版里 app 的主二进制(`…/Contents/MacOS/wechat-cc`),和 sidecar 并排。
+ * 打包版里 app 的主二进制(`…/Contents/MacOS/wechat_cc_desktop`,老包叫 `wechat-cc`),和 sidecar 并排。
  *
  * WHY(2026-09-04):LaunchAgent 该指向**它**而不是 sidecar —— macOS 把隐私
  * 权限(TCC)记在「责任进程」上:主二进制在签了名的 bundle 里、带 Info.plist
@@ -81,8 +89,7 @@ export function compiledBinaryPath(): string | null {
 export function appMainBinaryPath(): string | null {
   const side = compiledBinaryPath()
   if (!side || process.platform !== 'darwin') return null
-  const main = join(dirname(side), 'wechat-cc')
-  try { return statSync(main).isFile() ? main : null } catch { return null }
+  return __testInternals.resolveAppMainBinary(dirname(side), p => { try { return statSync(p).isFile() } catch { return false } })
 }
 
 /**
