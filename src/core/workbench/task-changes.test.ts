@@ -64,6 +64,53 @@ describe('TaskChangeHub', () => {
     await expect(stale).resolves.toBe(3)
     await expect(b).resolves.toBe(3)
   })
+  it('onChange:前进的 publish 才回调,携带 taskId 与新 seq', async () => {
+    const hub = makeTaskChangeHub()
+    const calls: Array<[string, number]> = []
+    hub.onChange((taskId, seq) => calls.push([taskId, seq]))
+    hub.publish('t1', 1)
+    expect(calls).toEqual([['t1', 1]])
+    hub.publish('t2', 5)
+    expect(calls).toEqual([['t1', 1], ['t2', 5]])
+  })
+  it('onChange:不前进(相等)或回落(变小)都不回调', async () => {
+    const hub = makeTaskChangeHub()
+    const calls: Array<[string, number]> = []
+    hub.publish('t1', 3)
+    hub.onChange((taskId, seq) => calls.push([taskId, seq]))
+    hub.publish('t1', 3)   // 相等,不前进
+    hub.publish('t1', 2)   // 回落
+    expect(calls).toEqual([])
+    hub.publish('t1', 4)   // 真前进
+    expect(calls).toEqual([['t1', 4]])
+  })
+  it('onChange 退订后不再收到回调', async () => {
+    const hub = makeTaskChangeHub()
+    const calls: number[] = []
+    const off = hub.onChange((_taskId, seq) => calls.push(seq))
+    hub.publish('t1', 1)
+    off()
+    hub.publish('t1', 2)
+    expect(calls).toEqual([1])
+  })
+  it('onChange 一个回调抛错不影响 publish 本身与其他回调', async () => {
+    const hub = makeTaskChangeHub()
+    const calls: number[] = []
+    hub.onChange(() => { throw new Error('boom') })
+    hub.onChange((_taskId, seq) => calls.push(seq))
+    expect(() => hub.publish('t1', 1)).not.toThrow()
+    expect(calls).toEqual([1])
+    expect(hub.seq('t1')).toBe(1)
+  })
+  it('dispose 清空 onChange 回调', async () => {
+    const hub = makeTaskChangeHub()
+    const calls: number[] = []
+    hub.onChange((_taskId, seq) => calls.push(seq))
+    hub.publish('t1', 1)
+    hub.dispose()
+    hub.publish('t1', 2)
+    expect(calls).toEqual([1])
+  })
   it('超时 waiter 被剪枝,不占用上限配额', async () => {
     vi.useFakeTimers()
     const hub = makeTaskChangeHub({ maxWaitersPerTask: 8 })
