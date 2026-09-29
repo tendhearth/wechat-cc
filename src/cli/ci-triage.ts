@@ -36,6 +36,8 @@ export interface ParsedJobLog {
   failures: Failure[]
   stepErrors: string[]
   hasSummary: boolean
+  /** 每条 `Hook timed out` 行的时间戳(epoch ms,来自 gh 日志行前缀);判 runner 卡死用。 */
+  hookTimeoutAt: number[]
 }
 
 export type Classified =
@@ -49,6 +51,8 @@ export interface ClassifyCtx {
   changedFiles: ReadonlySet<string>
   registry: FlakeRegistry
   secondRun?: boolean
+  /** 同一次运行里,除这条作业外的 `build · *` 作业都绿(且至少有一条)。runner 卡死判定要它。 */
+  siblingBuildsGreen?: boolean
 }
 
 export interface TriageReport {
@@ -101,7 +105,15 @@ const DIVIDER_RE = /^\s*⎯{5,}/
 /** Parse a job's failed-step log into FAIL blocks + step-level `##[error]`
  * lines + whether a `Test Files` summary line was present at all. */
 export function parseJobLog(raw: string, jobName: string): ParsedJobLog {
-  const lines = stripAnsi(raw).split('\n').map(stripLogPrefix)
+  const rawLines = stripAnsi(raw).split('\n')
+  const hookTimeoutAt: number[] = []
+  for (const l of rawLines) {
+    if (!/Hook timed out in \d+ms/.test(l)) continue
+    const m = /\t(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/.exec(l)
+    const t = m ? Date.parse(m[1]!) : NaN
+    if (Number.isFinite(t)) hookTimeoutAt.push(t)
+  }
+  const lines = rawLines.map(stripLogPrefix)
   const failures: Failure[] = []
   const seen = new Set<string>()
   const stepErrors: string[] = []
@@ -138,7 +150,7 @@ export function parseJobLog(raw: string, jobName: string): ParsedJobLog {
     i++
   }
 
-  return { failures, stepErrors, hasSummary }
+  return { failures, stepErrors, hasSummary, hookTimeoutAt }
 }
 
 /** `x.test.ts` also depends on `x.ts` — a failure in the test is "real" if
@@ -265,6 +277,21 @@ export function classifyFailure(f: Failure, ctx: ClassifyCtx): Classified {
   return { kind: 'unknown', failure: f, excerpt: f.excerpt.split('\n').slice(0, 12).join('\n') }
 }
 
+const STALL_MIN_TIMEOUTS = 3
+const STALL_WINDOW_MS = 2000
+
+/**
+ * 一批 hook 超时挤在两秒之内(2026-09-28 #142、#145:六条 `Hook timed out in 40000ms` 同一秒,
+ * 连纯文档 PR 都红)。单看这个不够判 runner 卡死 —— 见 classifyJob 里另外两个条件。
+ */
+export function isRunnerStall(parsed: ParsedJobLog): boolean {
+  const ts = [...parsed.hookTimeoutAt].sort((a, b) => a - b)
+  for (let i = 0; i + STALL_MIN_TIMEOUTS - 1 < ts.length; i++) {
+    if (ts[i + STALL_MIN_TIMEOUTS - 1]! - ts[i]! <= STALL_WINDOW_MS) return true
+  }
+  return false
+}
+
 /** Classify an entire job's outcome. A non-test failed step (typecheck,
  * build, …) is real with no per-test breakdown. A test step with no parsed
  * failures and no summary line is the `NO_SUMMARY` case — flake only if the
@@ -280,6 +307,14 @@ export function classifyJob(
       reason += `\n${parsed.stepErrors.slice(0, 3).join('\n')}`
     }
     return [{ kind: 'real', failure: null, reason }]
+  }
+
+  // Windows runner 卡死:整条作业一个 flake,**先于**「重跑后仍红 / 动过相关文件 ⇒ real」。
+  // 三个条件同时成立才算:Windows 作业、同一运行里别的构建都绿、一批 hook 超时挤在两秒内。
+  // 只看批量超时不够 —— 一个改动让公共 setup 卡住,几个并行文件也会同一刻超时,但那样
+  // Linux / macOS 也会红。
+  if (/windows/i.test(job.name) && ctx.siblingBuildsGreen && isRunnerStall(parsed)) {
+    return [{ kind: 'flake', failure: null, id: 'runner-stall' }]
   }
 
   if (parsed.failures.length > 0) {

@@ -6,6 +6,7 @@ import {
   globToRegExp,
   classifyFailure,
   classifyJob,
+  isRunnerStall,
   verdictOf,
   pickBaseSha,
   formatTriage,
@@ -161,21 +162,21 @@ describe('classifyFailure', () => {
 describe('classifyJob', () => {
   it('a non-test failed step is real with no failure, reason includes stepErrors', () => {
     const job = { name: 'build · windows-latest', failedStep: 'Typecheck' }
-    const parsed = { failures: [], stepErrors: ['##[error]TS2345: bad arg'], hasSummary: false }
+    const parsed = { failures: [], stepErrors: ['##[error]TS2345: bad arg'], hasSummary: false, hookTimeoutAt: [] }
     const result = classifyJob(job, parsed, ctxWith({}))
     expect(result).toEqual([{ kind: 'real', failure: null, reason: 'step Typecheck failed\n##[error]TS2345: bad arg' }])
   })
 
   it('Run tests + empty failures + no summary + a job the registry names ⇒ flake:node-no-summary', () => {
     const job = { name: 'node · core suite', failedStep: 'Run tests' }
-    const parsed = { failures: [], stepErrors: [], hasSummary: false }
+    const parsed = { failures: [], stepErrors: [], hasSummary: false, hookTimeoutAt: [] }
     const result = classifyJob(job, parsed, ctxWith({}))
     expect(result).toEqual([{ kind: 'flake', failure: null, id: 'node-no-summary' }])
   })
 
   it('same shape but a job the registry does not name ⇒ unknown', () => {
     const job = { name: 'build · ubuntu-latest', failedStep: 'Run tests' }
-    const parsed = { failures: [], stepErrors: [], hasSummary: false }
+    const parsed = { failures: [], stepErrors: [], hasSummary: false, hookTimeoutAt: [] }
     const result = classifyJob(job, parsed, ctxWith({}))
     expect(result).toEqual([{ kind: 'unknown', failure: null, excerpt: '' }])
   })
@@ -282,5 +283,42 @@ describe('globToRegExp escapes ? literally', () => {
     const re = globToRegExp('src/a?.test.ts')
     expect(re.test('src/a?.test.ts')).toBe(true)
     expect(re.test('src/ab.test.ts')).toBe(false)
+  })
+})
+
+// 2026-09-29:Windows runner 卡死(#142、#145 两次,连纯文档 PR 都红)。签名是同一两秒里一批
+// `Hook timed out`,而同一次运行里 Linux / macOS 的构建都绿。只有三条同时成立才判 runner 卡死:
+// 光看「同一秒批量超时」不够 —— 一个改动让公共 setup 卡住,几个并行文件也会同一刻超时。
+describe('runner 卡死(runner-stall)', () => {
+  const WIN = 'build · windows-latest'
+  const stamp = (sec: number, ms: number) => `2026-09-28T17:27:${String(sec).padStart(2, '0')}.${String(ms).padStart(3, '0')}Z`
+  const log = (stamps: string[]) => [
+    `${WIN}\tRun tests\t${stamp(10, 0)}  FAIL  src/core/workbench/service.test.ts > persistent workbench > x`,
+    ...stamps.map(s => `${WIN}\tRun tests\t${s} ##[error]Error: Hook timed out in 40000ms.`),
+    `${WIN}\tRun tests\t${stamp(59, 0)}  Test Files  3 failed | 700 passed`,
+  ].join('\n')
+  const burst = log([stamp(53, 961), stamp(53, 994), stamp(53, 997), stamp(54, 900)])
+  const empty: FlakeRegistry = { entries: [] }
+  const ctx = (over: Partial<ClassifyCtx> = {}): ClassifyCtx => ({ changedFiles: new Set(['src/core/workbench/service.ts']), registry: empty, secondRun: true, siblingBuildsGreen: true, ...over })
+
+  it('parseJobLog 记下每条 Hook timed out 的时间戳', () => {
+    expect(parseJobLog(burst, WIN).hookTimeoutAt).toHaveLength(4)
+  })
+  it('isRunnerStall:≥ 3 条落在 2 秒内才算;稀稀拉拉的不算', () => {
+    expect(isRunnerStall(parseJobLog(burst, WIN))).toBe(true)
+    expect(isRunnerStall(parseJobLog(log([stamp(53, 0), stamp(53, 500)]), WIN))).toBe(false)
+    expect(isRunnerStall(parseJobLog(log([stamp(10, 0), stamp(30, 0), stamp(50, 0)]), WIN))).toBe(false)
+  })
+  it('Windows + 兄弟构建都绿 + 批量超时 ⇒ 整条作业 flake:runner-stall,哪怕是重跑后、哪怕动过相关文件', () => {
+    expect(classifyJob({ name: WIN, failedStep: 'Run tests' }, parseJobLog(burst, WIN), ctx())).toEqual([{ kind: 'flake', failure: null, id: 'runner-stall' }])
+  })
+  it('兄弟构建没绿 ⇒ 不是 runner 的锅,照旧按测试逐条判', () => {
+    const out = classifyJob({ name: WIN, failedStep: 'Run tests' }, parseJobLog(burst, WIN), ctx({ siblingBuildsGreen: false }))
+    expect(out.every(c => c.kind === 'real')).toBe(true)
+  })
+  it('不是 Windows 作业 ⇒ 不走这条', () => {
+    const J = 'build · ubuntu-latest'
+    const out = classifyJob({ name: J, failedStep: 'Run tests' }, parseJobLog(burst.replaceAll(WIN, J), J), ctx())
+    expect(out.every(c => c.kind === 'real')).toBe(true)
   })
 })
