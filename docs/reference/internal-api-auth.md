@@ -34,6 +34,7 @@ daemon 的内部 HTTP API 只监听 127.0.0.1,地址与 token 文件路径写在
 ## 这套鉴权之外的门(要知道)
 
 - **手机的链接 / 设备令牌**(2026-09-29 起进了同一个 token-registry,见上表 `link` / `device`):面板经内部 API 的 `panelTokens` 窄接口登记与撤销,只认这两种 origin(内部 API 的 session / file / operator 令牌打不开面板)。路由门是 `PHONE_ROUTES`,不在册的路径 403 `route_not_allowed`;新加手机路由要登记在 `phone-routes.ts`,`scripts/phone-routes.guard.test.ts` 对着源码双向核对。经隧道(`_via=tunnel`)一律拒的操作是 `LAN_ONLY_OPS`:`set_remote`、`revoke_device`、`forget_devices`。面板仍监听 `0.0.0.0`(手机局域网直连,有意);`runtime/http.ts` 的 `serve()` 缺省改成 `127.0.0.1`。`/m/api/*` **没有**并进内部 API dispatcher(设计稿范围 B,未做)。
+  - **协议 v2(2026-09-29)**:隧道握手 `{hs, v:[1,2]}` 协商,老后台/老页面仍走 v1;v2 两方向各一把密钥、计数器 nonce、拒绝重放。v2 上可 `sub` 订阅,主题白名单是 `PHONE_TOPICS`(`src/daemon/phone-routes.ts`:`home` / `approvals` / `agents` / `matter/<id>`),`phoneTopicAllowed` 判定;不在册的主题回 `err`。订阅与 `/m/api/*` 用同一枚令牌、同一套 origin 门。协议包见 `packages/protocol/README.md`。
 - **admin session token 无 routeAllow**:主人 chat 的 MCP 子进程持有能调 `daemon/restart` 等全部 admin 路由的 token,只靠 LLM 侧的工具分类拦。已知、接受、待改。
 - **file token 的 trusted 档约 90 条路由**,含 `memory/write`、`plugins/install`、`a2a/send`。
 - **插件工具**:未知的 `mcp__*` 一律按 `plugin_tool` ⇒ admin-only(`user-tier.ts`;wxvault 那次修复就是这条)。

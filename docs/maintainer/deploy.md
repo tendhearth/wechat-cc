@@ -91,3 +91,7 @@ LaunchAgent 的 `ProgramArguments[0]` 是 `…/wechat-cc.app/Contents/MacOS/wech
 主二进制 `--daemon` 只干一件事:把 sidecar 拉起来(`apps/desktop/src-tauri/src/daemon_mode.rs`)。claude / codex / agy / wxvault 都是它的后代,继承授权。来源与细节见 `src/lib/runtime-info.ts` 里 `appMainBinaryPath` 上面那段注释。
 
 改 plist 之前先读那段注释;把它改回指 sidecar 会让主人每次部署都重新授权,并且间歇性掉 TCC 权限。
+
+## 中继壳页 `relay/pset.html` 是生成物(2026-09-29)
+
+它由 `relay/pset.src.html` + 协议包的 IIFE 生成:改源文件后跑 `bun run build:mobile`,不要手改。它**不随 daemon 发布**,合并后仍要手动拷到 VPS 静态目录,步骤与哈希核对见 [relay/README.md](../../relay/README.md) 的「壳页 pset」。手机协议 v2 这一轮没有改中继代码(`relay/*.ts`),中继本体不用重新部署。
