@@ -1,0 +1,249 @@
+/**
+ * phone-api-schema.test.ts — 手机协议第 12 步:`/m/api/*`、`/set/api/*` 每条路由
+ * 都有一份 zod schema(`packages/protocol/src/api.ts`),对着真实面板返回 `parse`。
+ *
+ * 两层:
+ *   1. 守卫 —— `PHONE_ROUTES`(phone-routes.ts)与 `PHONE_API_SCHEMAS` +
+ *      `PHONE_HTML_ROUTES`(协议包)双向核对,新路由忘了配 schema、或 schema
+ *      配错了键,这里先红。
+ *   2. 真实返回 —— 用真 workbench / matters / settings-panel 搭出的面板发真
+ *      请求,拿真实 JSON 对着 schema `parse`(不是手写 fixture)。少一个必需字段
+ *      或类型不对,`parse` 会抛,测试就红。
+ */
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createHash, randomUUID } from 'node:crypto'
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { PHONE_API_SCHEMAS, PHONE_HTML_ROUTES } from '@wechat-cc/protocol'
+import { removeTempDir } from '../lib/test-temp'
+import { openDb, type Db } from '../lib/db'
+import { createProviderRegistry } from '../core/provider-registry'
+import { makeMatterStore } from '../core/matters/store'
+import { makeMattersService } from '../core/matters/service'
+import { makeWorkbenchStore } from '../core/workbench/store'
+import { makeWorkbenchService, type WorkbenchService } from '../core/workbench/service'
+import { MANAGED_NATIVE_CAPABILITIES } from '../core/workbench/executor-capabilities'
+import { saveArtifactSnapshot } from '../core/workbench/artifacts'
+import { makeSettingsPanel, type SettingsPanel } from './settings-panel'
+import { PHONE_ROUTES } from './phone-routes'
+
+// ── 1) 守卫:PHONE_ROUTES ↔ (PHONE_API_SCHEMAS ∪ PHONE_HTML_ROUTES) 双向核对 ──
+
+describe('手机接口 schema 守卫', () => {
+  it('PHONE_ROUTES 每条要么是 HTML(登记在 PHONE_HTML_ROUTES 并带理由)要么有 schema', () => {
+    for (const route of PHONE_ROUTES) {
+      const isHtml = PHONE_HTML_ROUTES.has(route)
+      const hasSchema = Object.hasOwn(PHONE_API_SCHEMAS, route)
+      expect(isHtml || hasSchema, `${route} 既不在 PHONE_HTML_ROUTES 也没有 schema`).toBe(true)
+      expect(isHtml && hasSchema, `${route} 不能同时是 HTML 又有 JSON schema`).toBe(false)
+      if (isHtml) expect(PHONE_HTML_ROUTES.get(route)!.length, `${route} 的 HTML 排除理由不能是空串`).toBeGreaterThan(0)
+    }
+  })
+
+  it('反向:PHONE_API_SCHEMAS 与 PHONE_HTML_ROUTES 的每个键都在 PHONE_ROUTES 里(没有登记漂移)', () => {
+    for (const key of Object.keys(PHONE_API_SCHEMAS)) expect(PHONE_ROUTES.has(key), `${key} 有 schema 但不在 PHONE_ROUTES 里`).toBe(true)
+    for (const key of PHONE_HTML_ROUTES.keys()) expect(PHONE_ROUTES.has(key), `${key} 在 PHONE_HTML_ROUTES 里但不在 PHONE_ROUTES 里`).toBe(true)
+  })
+})
+
+// ── 2) 真实返回:workbench + matters(entry / attachment / permission / answer / artifact / say / matter 详情）──
+
+describe('真实返回校验 — workbench + matters', () => {
+  let root: string, managedRoot: string, db: Db, workbench: WorkbenchService, panel: SettingsPanel, base: string, token: string
+  let store: ReturnType<typeof makeWorkbenchStore>, matters: ReturnType<typeof makeMatterStore>
+
+  beforeEach(async () => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'phone-schema-workbench-')))
+    managedRoot = realpathSync(mkdtempSync(join(tmpdir(), 'phone-schema-managed-')))
+    db = openDb({ path: join(root, 'state.db') })
+    matters = makeMatterStore(db)
+    store = makeWorkbenchStore(db)
+    const registry = createProviderRegistry()
+    registry.register('claude', {
+      async spawn(project, ctx) {
+        return {
+          async *dispatch() {
+            yield { kind: 'init' as const, sessionId: 'phone-schema-native' }
+            const allowed = await ctx.requestPermission!({ tool: 'Bash', description: '清一个临时探测文件' })
+            const answers = await ctx.requestUserInput!({
+              questions: [{ id: 'format', header: '格式', question: '保存成哪种？', options: [{ label: '文字', description: '纯文本' }], allowOther: true }],
+            })
+            yield { kind: 'text' as const, text: `已保存(允许=${allowed} 答=${JSON.stringify(answers)})` }
+          },
+          async steer() {},
+          async close() {},
+        }
+      },
+    }, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
+    workbench = makeWorkbenchService({ store, registry, stateDir: root, managedWorkspaceRoot: managedRoot, ownerChatId: () => 'owner', defaultProvider: 'claude', matters })
+    const service = makeMattersService({ store: matters, workbench })
+    panel = makeSettingsPanel({
+      stateDir: root, ownerChatId: () => 'owner', chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {},
+      uploads: {
+        chunk: input => workbench.uploadAttachmentChunk(input, { ownerKey: 'owner', surface: 'phone' }),
+        status: input => workbench.attachmentUploadStatus(input, { ownerKey: 'owner', surface: 'phone' }),
+        discard: input => workbench.discardAttachmentUpload(input, { ownerKey: 'owner', surface: 'phone' }),
+      },
+      entry: {
+        entryOptions: () => workbench.entryOptions({ ownerKey: 'owner', surface: 'phone' }),
+        createEntry: input => workbench.createEntry(input, { ownerKey: 'owner', surface: 'phone' }),
+        entryReceipt: id => workbench.entryReceipt(id, { ownerKey: 'owner', surface: 'phone' }),
+      },
+      matters: { ...service, say: (id, text, input) => service.say(id, text, 'phone', input), seenOnPhone: id => { matters.bind(id, 'phone', 'pwa') } },
+    })
+    const started = await panel.start(0)
+    base = `http://127.0.0.1:${started.port}`
+    token = panel.issueToken()
+  })
+  afterEach(async () => { await panel?.stop(); await workbench?.shutdown(); db?.close(); removeTempDir(root); removeTempDir(managedRoot) })
+
+  function create(name: string) { const path = join(root, name); mkdirSync(path); return workbench.create({ path, providerId: 'claude', text: name }) }
+  function request(path: string, body?: unknown, auth = token) {
+    return fetch(base + path + (path.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(auth), body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  }
+  async function ready(id: string) { await expect.poll(() => workbench.detail(id).permissions.length).toBe(1); return workbench.detail(id) }
+  /** key 用响应自己的 method+path 拼(不带查询串),跟 PHONE_API_SCHEMAS 同一套键。 */
+  function parseAs(key: string, body: unknown) {
+    const schema = PHONE_API_SCHEMAS[key]
+    expect(schema, `${key} 没有登记 schema`).toBeDefined()
+    return schema!.parse(body)
+  }
+
+  it('entry/options 真实返回符合 schema', async () => {
+    const res = await request('/m/api/entry/options')
+    parseAs('GET /m/api/entry/options', await res.json())
+  })
+
+  it('matter/create 与 matter/create-receipt 真实返回符合 schema', async () => {
+    const body = { requestId: randomUUID(), text: '从手机开始', target: { kind: 'managed' } }
+    const created = await request('/m/api/matter/create', body)
+    expect(created.status).toBe(202)
+    parseAs('POST /m/api/matter/create', await created.json())
+    const receipt = await request('/m/api/matter/create-receipt?requestId=' + body.requestId)
+    parseAs('GET /m/api/matter/create-receipt', await receipt.json())
+  })
+
+  it('attachment/chunk、attachment/upload(status)、attachment/discard 真实返回符合 schema', async () => {
+    const bytes = Buffer.from('phone schema material')
+    const id = randomUUID(), draftId = randomUUID()
+    const chunkBody = { id, draftId, name: 'material.txt', mime: 'text/plain', size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), offset: 0, contentBase64: bytes.toString('base64') }
+    const chunked = await request('/m/api/attachment/chunk', chunkBody)
+    parseAs('POST /m/api/attachment/chunk', await chunked.json())
+    const status = await request(`/m/api/attachment/upload?id=${id}&draftId=${draftId}`)
+    parseAs('GET /m/api/attachment/upload', await status.json())
+    const discarded = await request('/m/api/attachment/discard', { id, draftId })
+    parseAs('POST /m/api/attachment/discard', await discarded.json())
+  })
+
+  it('matter/permission、matter/answer、matter/say(task)、GET matter 详情 真实返回符合 schema', async () => {
+    const task = create('c'), live = await ready(task.id)
+    const permission = live.permissions[0]!
+    const decided = await request('/m/api/matter/permission', { id: task.id, runId: live.runId, requestId: permission.id, decision: 'allow' })
+    parseAs('POST /m/api/matter/permission', await decided.json())
+    await expect.poll(() => workbench.detail(task.id).questions.length).toBe(1)
+    const question = workbench.detail(task.id).questions[0]!
+    const answered = await request('/m/api/matter/answer', { id: task.id, runId: live.runId, requestId: question.id, answers: { format: ['文字'] } })
+    parseAs('POST /m/api/matter/answer', await answered.json())
+    const said = await request('/m/api/matter/say', { id: task.id, runId: live.runId, requestId: randomUUID(), text: '补充条件' })
+    parseAs('POST /m/api/matter/say', await said.json())
+    const detail = await request('/m/api/matter?id=' + task.id)
+    parseAs('GET /m/api/matter', await detail.json())
+  })
+
+  it('matter/artifact 与 matters 列表 真实返回符合 schema', async () => {
+    const task = create('art'); await ready(task.id)
+    const bytes = Buffer.from('small artifact bytes, well under one chunk')
+    saveArtifactSnapshot(store, task.id, { name: 'note.txt', mime: 'text/plain', bytes }, root)
+    const artifact = store.artifacts(task.id)[0]!
+    const chunk = await request(`/m/api/matter/artifact?id=${task.id}&artifactId=${artifact.id}&sha256=${artifact.sha256}&offset=0`)
+    parseAs('GET /m/api/matter/artifact', await chunk.json())
+    const list = await request('/m/api/matters?kind=task')
+    parseAs('GET /m/api/matters', await list.json())
+  })
+})
+
+// ── 3) 真实返回:随身 CC 首页 / 设置页 / 记忆 / 贴纸(settings-panel.ts 自带的 deps 分支）──
+
+describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
+  const OWNER = 'owner_schema@im.wechat'
+  let dir: string, panel: SettingsPanel, base: string, token: string
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'phone-schema-panel-'))
+    mkdirSync(join(dir, 'memory', OWNER), { recursive: true })
+    mkdirSync(join(dir, 'stickers'), { recursive: true })
+    writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ provider: 'claude', bot_name: 'CC' }))
+    writeFileSync(join(dir, 'memory', OWNER, 'portrait.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320"><circle cx="1" cy="1" r="1" fill="none" stroke="#5a3f2d"/></svg>')
+    writeFileSync(join(dir, 'stickers', 'bear.png'), 'png-bytes')
+    panel = makeSettingsPanel({
+      stateDir: dir, ownerChatId: () => OWNER,
+      chatPrefs: { get: () => ({}), set: (_c, p) => p },
+      getUserName: () => '大人', setUserName: async () => {}, log: () => {},
+      remote: { isEnabled: () => false, setEnabled: () => {}, requestRestart: () => {} },
+      todos: {
+        facts: {
+          findFacts: (_k, _p, _q, status) => ({ results: status === 'active' ? [{ id: 7, contact: 'wx_f', predicate: '还书', value: '答应还《三体》', time_ref: null, updated_at: 100 }] : [] }),
+          setFactStatus: () => ({ ok: true }),
+        },
+        names: () => [{ username: 'wx_f', display: '小飞' }],
+      },
+      stickers: { list: () => [{ file: 'bear.png', tags: ['开心'] }], dir: join(dir, 'stickers') },
+      feed: {
+        journal: { list: () => [{ id: 'j1', ts: '2026-09-06T02:43:36.412Z', chat_id: OWNER, title: '好玩的东西', url: 'https://x', note: '', status: 'new', kind: 'hunt', image_svg: null, matter_id: null }] },
+        planLogDays: () => [{ at: '2026-09-06T03:03:55.347Z', chatId: OWNER, candidates: ['visit'], decision: 'none', why: '没朋友,在家歇着。', source: 'model' }],
+        turnsRecent: () => [{ chatId: OWNER, endedAt: Date.parse('2026-09-05T01:00:00.000Z'), outcome: 'completed', mode: 'solo', startedAt: Date.parse('2026-09-05T01:00:00.000Z') }],
+        timezone: () => 'Asia/Shanghai',
+      },
+      presence: async () => ({ presence: 'ok' as const, activity: { kind: 'idle' as const, label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }),
+      seen: { read: () => null, write: () => {} },
+      curatedMemory: () => ({
+        updated_at: '2026-09-25T04:05:00.000Z', when_label: '今天凌晨 4 点', mood: 'changed' as const, failures: 0,
+        changes: [{ kind: 'add' as const, label: '新记下' as const, section: '承诺' as const, text: '周五回话' }],
+        sections: [{ name: '偏好' as const, items: [{ id: 'b1', text: '回复直接', display: '回复直接', due: null, due_label: null, person: null, changed: true }] }],
+      }),
+      now: () => Date.parse('2026-09-06T08:00:00.000Z'),
+    })
+    const started = await panel.start(0)
+    base = `http://127.0.0.1:${started.port}`
+    token = panel.issueToken()
+  })
+  afterEach(async () => { await panel.stop(); removeTempDir(dir) })
+
+  function get(path: string, tok = token) { return fetch(`${base}${path}${path.includes('?') ? '&' : '?'}t=${tok}`) }
+  function post(path: string, body: unknown, tok = token) {
+    return fetch(`${base}${path}${path.includes('?') ? '&' : '?'}t=${tok}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  }
+  function parseAs(key: string, body: unknown) {
+    const schema = PHONE_API_SCHEMAS[key]
+    expect(schema, `${key} 没有登记 schema`).toBeDefined()
+    return schema!.parse(body)
+  }
+
+  it('set/api/state(含配对后的设备列表)、set/api/apply、set/api/pair 真实返回符合 schema', async () => {
+    const paired = await (await post('/set/api/pair', {})).json()
+    parseAs('POST /set/api/pair', paired)
+    const state = await get('/set/api/state')
+    parseAs('GET /set/api/state', await state.json())
+    const applied = await post('/set/api/apply', { op: 'set_pref', key: 'split', value: true })
+    parseAs('POST /set/api/apply', await applied.json())
+  })
+
+  it('m/api/state、art/blink、art/presence 真实返回符合 schema', async () => {
+    parseAs('GET /m/api/state', await (await get('/m/api/state')).json())
+    parseAs('GET /m/api/art/blink', await (await get('/m/api/art/blink')).json())
+    parseAs('GET /m/api/art/presence', await (await get('/m/api/art/presence')).json())
+  })
+
+  it('m/api/home、m/api/feed、m/api/seen 真实返回符合 schema', async () => {
+    parseAs('GET /m/api/home', await (await get('/m/api/home')).json())
+    parseAs('GET /m/api/feed', await (await get('/m/api/feed')).json())
+    parseAs('POST /m/api/seen', await (await post('/m/api/seen', { until: '2026-09-06T07:00:00.000Z' })).json())
+  })
+
+  it('m/api/memory、m/api/todo、m/api/sticker(b64) 真实返回符合 schema', async () => {
+    parseAs('GET /m/api/memory', await (await get('/m/api/memory')).json())
+    parseAs('POST /m/api/todo', await (await post('/m/api/todo', { id: 7, status: 'resolved' })).json())
+    parseAs('GET /m/api/sticker/', await (await get('/m/api/sticker/bear.png?b64=1')).json())
+  })
+})

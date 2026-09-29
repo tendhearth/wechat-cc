@@ -18,3 +18,10 @@ export type {
 } from './messages'
 export type { ProtocolSocket, ClientOpts, ProtocolClient, ProtocolRequest, ProtocolResponse, EventMeta } from './client'
 export { makeProtocolClient } from './client'
+export {
+  PhoneErrorResponse, PhonePlainError, PHONE_HTML_ROUTES, PHONE_API_SCHEMAS,
+  Attachment, Matter, MatterBinding, MatterSession, MatterTaskView, MatterEvent, MatterInput,
+  MatterPermission, MatterQuestion, MatterArtifact, MatterDetail,
+  ProjectCatalogEntry, EntryOptions, WorkbenchTaskView, EntryReceipt, EntryResult,
+  UploadState, MatterArtifactChunk, FeedEvent, Presence, HomeWork,
+} from './api'
