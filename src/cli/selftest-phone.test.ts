@@ -77,6 +77,32 @@ function assertNoTokenLeak(report: PhoneSelftestReport): void {
   for (const token of SECRET_TOKENS) expect(text, `report leaked a credential: ${token}`).not.toContain(token)
 }
 
+/** Simulates a bubbled fetch/relay/WebSocket error whose message embeds a
+ *  raw token — the shape Bun/undici errors commonly take for a failed
+ *  request ("Failed to parse URL from <url>", connection-refused messages
+ *  that echo the URL, and so on). Fix round 2: these must come out
+ *  redacted no matter which call site they bubble up from. */
+function tokenLeakingError(token: string): Error {
+  return new Error(`Failed to parse URL from http://192.168.1.5:51234/set/api/apply?t=${token}`)
+}
+
+/** A device client whose `/set/api/state` request over the relay always
+ *  rejects — e.g. a flaky tunnel right after pairing. `deviceId` never gets
+ *  established this way, so cleanup has to fall back to a LAN lookup. */
+function connectWithFailingRelayState(opts: { error?: () => Error } = {}): PhoneSelftestDeps['connect'] {
+  return (_url, token) => {
+    if (token === 'link-tok') {
+      const { client } = fakeClient({ onRequest: (req) => {
+        if (req.path === '/set/api/pair') return makeResponse(200, { ok: true, device_token: 'device-tok' })
+        throw new Error(`unexpected: ${req.path}`)
+      } })
+      return client
+    }
+    const { client } = fakeClient({ onRequest: () => { throw opts.error ? opts.error() : new Error('relay_timeout') } })
+    return client
+  }
+}
+
 function baseDeps(overrides: Partial<PhoneSelftestDeps> = {}): PhoneSelftestDeps {
   const dirs = new Set<string>()
   return {
@@ -495,22 +521,6 @@ describe('device id unknown at cleanup (relay state call failed)', () => {
     }) as unknown as typeof fetch
   }
 
-  function connectWithFailingRelayState(): PhoneSelftestDeps['connect'] {
-    return (_url, token) => {
-      if (token === 'link-tok') {
-        const { client } = fakeClient({ onRequest: (req) => {
-          if (req.path === '/set/api/pair') return makeResponse(200, { ok: true, device_token: 'device-tok' })
-          throw new Error(`unexpected: ${req.path}`)
-        } })
-        return client
-      }
-      // The relay device connection can never reach /set/api/state — e.g. a
-      // flaky tunnel right after pairing.
-      const { client } = fakeClient({ onRequest: () => { throw new Error('relay_timeout') } })
-      return client
-    }
-  }
-
   it('LAN /set/api/state recovers the id ⇒ LAN revoke attempted and reported ✓', async () => {
     const fetchCalls: RecordedCall[] = []
     const deps = baseDeps({
@@ -544,6 +554,123 @@ describe('device id unknown at cleanup (relay state call failed)', () => {
     // No device id was ever found — identify by pairing time instead.
     expect(revoked?.detail).toContain(new Date(1000).toISOString())
     expect(fetchCalls.some((c) => c.path === '/set/api/apply')).toBe(false)
+    assertNoTokenLeak(report)
+  })
+})
+
+// ── fix round 2: a token reachable only via a bubbled fetch/relay error ──
+//
+// Ruling: `jsonCall`'s catch sets `json.error = err.message`, and runtime
+// fetch errors (Bun/undici) commonly embed the full request URL — which,
+// for every LAN call in this module, carries the device token as `t=`.
+// The earlier fix (round 1) redacted the specific strings we constructed
+// ourselves (the curl command, the raw link URL) but missed that an
+// *error message* can carry the same token through the exact same
+// checks-detail plumbing. The fix is one central sanitizer applied at the
+// single point every check is recorded (`makeCheckRecorder`/`rec.push`),
+// not per call site — these tests exercise every fetch/relay call that can
+// throw with a URL/token-embedding message and confirm nothing leaks.
+
+describe('token reachable via a bubbled fetch/relay error (fix round 2)', () => {
+  it('LAN /set/api/apply revoke fetch rejects with a URL-embedding error ⇒ redacted in the revoked check', async () => {
+    const fetchImpl = (async (url: string | URL) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/v1/settings/link') return jsonResponse(200, { url: REMOTE_LINK_URL })
+      if (u.pathname === '/set/api/apply') throw tokenLeakingError('device-tok')
+      throw new Error(`unexpected fetch: ${u.pathname}`)
+    }) as unknown as typeof fetch
+    const deps = baseDeps({
+      fetch: fetchImpl,
+      connect: (_url, token) => {
+        if (token === 'link-tok') {
+          const { client } = fakeClient({ onRequest: (req) => {
+            if (req.path === '/set/api/pair') return makeResponse(200, { ok: true, device_token: 'device-tok' })
+            throw new Error(`unexpected: ${req.path}`)
+          } })
+          return client
+        }
+        // device_v2 fails ⇒ cleanup revokes using the id it already has
+        // (from this same relay call), reaching the vulnerable /set/api/apply
+        // fetch directly, no LAN id-recovery detour needed.
+        const { client } = fakeClient({
+          version: 1,
+          onRequest: (req) => {
+            if (req.path === '/set/api/state') return makeResponse(200, { remote: { devices: [{ id: 'dev-42', current: true }] } })
+            throw new Error(`unexpected: ${req.path}`)
+          },
+        })
+        return client
+      },
+    })
+    const report = await runPhoneSelftest(deps, { executor: 'claude' })
+    const revoked = report.checks.find((c) => c.name === 'revoked')
+    expect(revoked?.ok).toBe(false)
+    expect(revoked?.detail).not.toContain('device-tok')
+    expect(revoked?.detail).toContain('<redacted>')
+    assertNoTokenLeak(report)
+  })
+
+  it('LAN /set/api/state (id-recovery fallback) fetch rejects with a URL-embedding error ⇒ no leak', async () => {
+    const fetchImpl = (async (url: string | URL) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/v1/settings/link') return jsonResponse(200, { url: REMOTE_LINK_URL })
+      if (u.pathname === '/set/api/state') throw tokenLeakingError('device-tok')
+      throw new Error(`unexpected fetch: ${u.pathname}`)
+    }) as unknown as typeof fetch
+    const deps = baseDeps({
+      fetch: fetchImpl,
+      connect: connectWithFailingRelayState(),
+    })
+    const report = await runPhoneSelftest(deps, { executor: 'claude' })
+    const revoked = report.checks.find((c) => c.name === 'revoked')
+    expect(revoked?.ok).toBe(false)
+    assertNoTokenLeak(report)
+  })
+
+  it('relay pairing request rejects with a token-embedding error message ⇒ redacted in the paired check', async () => {
+    const fetchImpl = (async (url: string | URL) => {
+      const u = new URL(String(url))
+      if (u.pathname === '/v1/settings/link') return jsonResponse(200, { url: REMOTE_LINK_URL })
+      throw new Error(`unexpected fetch: ${u.pathname}`)
+    }) as unknown as typeof fetch
+    const deps = baseDeps({
+      fetch: fetchImpl,
+      connect: () => ({
+        version: () => null,
+        request: async () => { throw new Error('connect ECONNRESET, retried with token=link-tok') },
+        subscribe: () => () => {},
+        close: () => {},
+      }),
+    })
+    const report = await runPhoneSelftest(deps, { executor: 'claude' })
+    const paired = report.checks.find((c) => c.name === 'paired')
+    expect(paired?.ok).toBe(false)
+    expect(paired?.detail).not.toContain('link-tok')
+    expect(paired?.detail).toContain('<redacted>')
+    assertNoTokenLeak(report)
+  })
+
+  it('relay device-state request rejects with a token-embedding error message ⇒ redacted, LAN fallback still runs and revokes', async () => {
+    const fetchCalls: RecordedCall[] = []
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      const u = new URL(String(url))
+      fetchCalls.push({ method: init?.method ?? 'GET', path: u.pathname, body: init?.body ? JSON.parse(init.body as string) : undefined })
+      if (u.pathname === '/v1/settings/link') return jsonResponse(200, { url: REMOTE_LINK_URL })
+      if (u.pathname === '/set/api/state') return jsonResponse(200, { remote: { devices: [{ id: 'dev-77', current: true }] } })
+      if (u.pathname === '/set/api/apply') return jsonResponse(200, { ok: true })
+      throw new Error(`unexpected fetch: ${u.pathname}`)
+    }) as unknown as typeof fetch
+    const deps = baseDeps({
+      fetch: fetchImpl,
+      connect: connectWithFailingRelayState({ error: () => new Error('read ECONNRESET (token device-tok)') }),
+    })
+    const report = await runPhoneSelftest(deps, { executor: 'claude' })
+    const deviceConnected = report.checks.find((c) => c.name === 'device_connected')
+    expect(deviceConnected?.ok).toBe(false)
+    expect(deviceConnected?.detail).not.toContain('device-tok')
+    expect(report.checks.find((c) => c.name === 'revoked')).toEqual({ name: 'revoked', ok: true })
+    const revokeCall = fetchCalls.find((c) => c.path === '/set/api/apply')
+    expect(revokeCall?.body).toEqual({ op: 'revoke_device', id: 'dev-77' })
     assertNoTokenLeak(report)
   })
 })

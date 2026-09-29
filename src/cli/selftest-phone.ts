@@ -128,6 +128,51 @@ function manualRevokeInstruction(who: { id?: string; pairedAt?: number }): strin
   return `open the settings page (/set, e.g. via 「设置」 in WeChat or the desktop QR) → 已配对设备 → 忘掉 ${target}`
 }
 
+// ── central redaction: the one place every check detail passes through ──
+
+/**
+ * Removes every known secret plus any `t=`/`d=` query value from `text`.
+ *
+ * Fix round 2 ruling: a bubbled fetch/WebSocket/protocol-client error can
+ * legitimately embed the full request URL (Bun/undici commonly do this —
+ * "Failed to parse URL from <url>", connection-refused messages, and so
+ * on), and every LAN call in this module puts the device token in that
+ * URL's `t=` query param. Redacting only at the few call sites we thought
+ * of is exactly the failure mode that missed this the first time; instead
+ * every string is swept for (a) every token value this run has learned
+ * about so far and (b) any `t=`/`d=` query value at all, even for a token
+ * this run hasn't registered — belt-and-suspenders for a token embedded in
+ * a URL we didn't anticipate.
+ */
+function sanitize(secrets: ReadonlySet<string>, text: string | undefined): string | undefined {
+  if (text === undefined) return undefined
+  let out = text
+  for (const secret of secrets) if (secret) out = out.split(secret).join('<redacted>')
+  out = out.replace(/([?&](?:t|d)=)[^&\s'"]+/g, '$1<redacted>')
+  return out
+}
+
+/**
+ * The single point every check detail is recorded through — sanitizing
+ * here (rather than at each call site: `jsonCall`, `httpErrorDetail`, the
+ * protocol client's rejection messages, …) is what makes the "no token
+ * ever reaches output" guarantee hold regardless of which helper built the
+ * string or which future call site starts surfacing a new kind of error.
+ */
+function makeCheckRecorder(checks: PhoneSelftestCheck[]) {
+  const secrets = new Set<string>()
+  return {
+    /** Registers a credential value as soon as it's known, so any check
+     *  recorded from this point on has it redacted. */
+    knownSecret(value: string | undefined): void {
+      if (value) secrets.add(value)
+    },
+    push(name: string, ok: boolean, detail?: string): void {
+      checks.push({ name, ok, detail: sanitize(secrets, detail) })
+    },
+  }
+}
+
 // ── link URL parsing (settings-panel.ts's two shapes) ─────────────────
 
 interface RemoteLink { relayWsUrl: string; linkToken: string; lanBase: string }
@@ -191,6 +236,9 @@ export async function runPhoneSelftest(
   if (!api) throw new Error('daemon_not_running')
 
   const checks: PhoneSelftestCheck[] = []
+  const rec = makeCheckRecorder(checks)
+  rec.knownSecret(api.token)
+  rec.knownSecret(api.operatorToken)
   const report: PhoneSelftestReport = { ok: false, kind: 'phone', target: opts.executor, checks, durationMs: 0 }
   const deadline = start + (opts.timeoutMs ?? DEFAULT_PHONE_TIMEOUT_MS)
 
@@ -211,21 +259,22 @@ export async function runPhoneSelftest(
     // ── link URL + relay address ─────────────────────────────────────
     const linkRes = await jsonCall(deps, `${api.baseUrl}/v1/settings/link`, api.token, 'GET')
     const url = linkRes.ok && typeof linkRes.json?.url === 'string' ? linkRes.json.url as string : undefined
-    checks.push({ name: 'link_url', ok: !!url, detail: url ? redactLinkUrl(url) : httpErrorDetail(linkRes) })
+    rec.push('link_url', !!url, url ? redactLinkUrl(url) : httpErrorDetail(linkRes))
     if (!url) stop()
 
     const cls = classifyLink(url)
     if (cls.kind === 'lan_only') {
-      checks.push({ name: 'remote_enabled', ok: false, detail: 'remote access is off — enable 出门也能用 in settings' })
+      rec.push('remote_enabled', false, 'remote access is off — enable 出门也能用 in settings')
       stop()
     }
     if (cls.kind === 'invalid') {
-      checks.push({ name: 'link_url_shape', ok: false, detail: cls.detail })
+      rec.push('link_url_shape', false, cls.detail)
       stop()
     }
-    checks.push({ name: 'remote_enabled', ok: true })
+    rec.push('remote_enabled', true)
     relayWsUrl = cls.link.relayWsUrl
     lanBase = cls.link.lanBase
+    rec.knownSecret(cls.link.linkToken)
 
     // ── pair with the link token over the real relay ───────────────────
     linkClient = deps.connect(relayWsUrl, cls.link.linkToken)
@@ -234,15 +283,16 @@ export async function runPhoneSelftest(
       const pairRes = await linkClient.request({ method: 'POST', path: '/set/api/pair', body: '{}' })
       try { pairJson = pairRes.json() } catch { pairJson = {} }
     } catch (err) {
-      checks.push({ name: 'paired', ok: false, detail: `relay unreachable: ${err instanceof Error ? err.message : String(err)}` })
+      rec.push('paired', false, `relay unreachable: ${err instanceof Error ? err.message : String(err)}`)
       stop()
     }
     if (!pairJson.ok || !pairJson.device_token) {
-      checks.push({ name: 'paired', ok: false, detail: pairJson.error ?? 'pair failed' })
+      rec.push('paired', false, pairJson.error ?? 'pair failed')
       stop()
     }
-    checks.push({ name: 'paired', ok: true })
+    rec.push('paired', true)
     deviceToken = pairJson.device_token
+    rec.knownSecret(deviceToken)
     pairedAt = deps.now()
 
     // ── connect with the device token; confirm v2, fetch its device id ─
@@ -252,20 +302,20 @@ export async function runPhoneSelftest(
       const stateRes = await deviceClient.request({ method: 'GET', path: '/set/api/state' })
       try { stateJson = stateRes.json() } catch { stateJson = {} }
     } catch (err) {
-      checks.push({ name: 'device_connected', ok: false, detail: err instanceof Error ? err.message : String(err) })
+      rec.push('device_connected', false, err instanceof Error ? err.message : String(err))
       stop()
     }
     const version = deviceClient.version()
-    checks.push({ name: 'device_v2', ok: version === 2, detail: version === 2 ? undefined : 'daemon is not v2' })
+    rec.push('device_v2', version === 2, version === 2 ? undefined : 'daemon is not v2')
     const current = stateJson.remote?.devices?.find((d) => d.current)
     deviceId = typeof current?.id === 'string' ? current.id : undefined
-    checks.push({ name: 'device_id', ok: !!deviceId, detail: deviceId ?? 'no current device in remote.devices' })
+    rec.push('device_id', !!deviceId, deviceId ?? 'no current device in remote.devices')
     if (version !== 2 || !deviceId) stop()
 
     // ── subscribe agents, drive one minimal task, watch it arrive+finish ─
     unsubscribe = deviceClient.subscribe('agents', (data, meta) => { agentEvents.push({ data, epoch: meta.epoch, seq: meta.seq }) })
     const gotSnapshot = await waitUntil(deps, deadline, () => agentEvents.length > 0)
-    checks.push({ name: 'agents_subscribed', ok: gotSnapshot, detail: gotSnapshot ? undefined : 'timeout waiting for initial agents snapshot' })
+    rec.push('agents_subscribed', gotSnapshot, gotSnapshot ? undefined : 'timeout waiting for initial agents snapshot')
     if (!gotSnapshot) stop()
 
     scratchPath = join(deps.scratchRoot, `phone-${deps.now()}`)
@@ -274,24 +324,25 @@ export async function runPhoneSelftest(
       path: scratchPath, providerId: opts.executor, title: 'selftest-phone', text: MINIMAL_TASK_TEXT,
     })
     taskId = createRes.ok && createRes.json?.task?.id ? String(createRes.json.task.id) : undefined
-    checks.push({ name: 'task_created', ok: !!taskId, detail: taskId ?? httpErrorDetail(createRes) })
+    rec.push('task_created', !!taskId, taskId ?? httpErrorDetail(createRes))
     if (!taskId) stop()
 
     const seen = await waitUntil(deps, deadline, () => hasTask(agentEvents.at(-1), taskId!))
-    checks.push({ name: 'agents_task_seen', ok: seen, detail: seen ? undefined : 'timeout waiting for the task in the agents feed' })
+    rec.push('agents_task_seen', seen, seen ? undefined : 'timeout waiting for the task in the agents feed')
     if (!seen) stop()
 
     const done = await waitUntil(deps, deadline, () => !hasTask(agentEvents.at(-1), taskId!))
-    checks.push({ name: 'agents_task_terminal', ok: done, detail: done ? undefined : 'timeout waiting for the task to leave the agents feed' })
+    rec.push('agents_task_terminal', done, done ? undefined : 'timeout waiting for the task to leave the agents feed')
 
-    checks.push({ name: 'agents_event_order', ok: agentsEventOrderOk(agentEvents), detail: agentsEventOrderOk(agentEvents) ? undefined : 'out-of-order agents event (seq did not increase within an epoch)' })
+    const ordered = agentsEventOrderOk(agentEvents)
+    rec.push('agents_event_order', ordered, ordered ? undefined : 'out-of-order agents event (seq did not increase within an epoch)')
   } catch (err) {
-    if (!(err instanceof PhoneSelftestStop)) checks.push({ name: 'internal_error', ok: false, detail: err instanceof Error ? err.message : String(err) })
+    if (!(err instanceof PhoneSelftestStop)) rec.push('internal_error', false, err instanceof Error ? err.message : String(err))
   } finally {
     if (unsubscribe) { try { unsubscribe() } catch { /* best-effort */ } }
     if (taskId) {
       const archiveRes = await jsonCall(deps, `${api.baseUrl}/v1/workbench/archive`, api.operatorToken, 'POST', { id: taskId, archived: true })
-      checks.push({ name: 'archived', ok: archiveRes.ok, detail: archiveRes.ok ? undefined : httpErrorDetail(archiveRes) })
+      rec.push('archived', archiveRes.ok, archiveRes.ok ? undefined : httpErrorDetail(archiveRes))
     }
     if (scratchPath) { try { deps.fs.rm(scratchPath) } catch { /* best-effort */ } }
 
@@ -313,18 +364,18 @@ export async function runPhoneSelftest(
         const revokeRes = await jsonCall(deps, `${lanBase}/set/api/apply?t=${encodeURIComponent(deviceToken)}`, null, 'POST', { op: 'revoke_device', id: idToRevoke })
         revoked = !!revokeRes.json?.ok
         if (revoked) {
-          checks.push({ name: 'revoked', ok: true })
+          rec.push('revoked', true)
         } else {
-          checks.push({ name: 'revoked', ok: false, detail: `${revokeRes.json?.error ?? httpErrorDetail(revokeRes)} — ${manualRevokeInstruction({ id: idToRevoke, pairedAt })}` })
+          rec.push('revoked', false, `${revokeRes.json?.error ?? httpErrorDetail(revokeRes)} — ${manualRevokeInstruction({ id: idToRevoke, pairedAt })}`)
         }
       } else {
-        checks.push({ name: 'revoked', ok: false, detail: `could not determine the device id to revoke (relay and LAN /set/api/state both failed) — ${manualRevokeInstruction({ pairedAt })}` })
+        rec.push('revoked', false, `could not determine the device id to revoke (relay and LAN /set/api/state both failed) — ${manualRevokeInstruction({ pairedAt })}`)
       }
     } else if (deviceToken) {
       // Defensive fallback — `lanBase` is always set alongside `deviceToken`
       // (both come from the same successful 'remote' link classification
       // that precedes pairing), so this branch shouldn't be reachable.
-      checks.push({ name: 'revoked', ok: false, detail: manualRevokeInstruction({ pairedAt }) })
+      rec.push('revoked', false, manualRevokeInstruction({ pairedAt }))
     }
 
     if (revoked && relayWsUrl && deviceToken) {
@@ -339,7 +390,7 @@ export async function runPhoneSelftest(
       } finally {
         try { freshClient.close() } catch { /* best-effort */ }
       }
-      checks.push({ name: 'revoked_auth_failed', ok: authFailed, detail })
+      rec.push('revoked_auth_failed', authFailed, detail)
     }
 
     if (deviceClient) { try { deviceClient.close() } catch { /* best-effort */ } }
