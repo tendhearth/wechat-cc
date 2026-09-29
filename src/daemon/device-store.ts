@@ -10,7 +10,7 @@
  * token-registry 的同步只在 `makeDeviceCredentials` 一处:面板与隧道都只认它。
  */
 import { createHash, randomBytes } from 'node:crypto'
-import { writeFileSync } from 'node:fs'
+import { renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { readJsonFile } from '../lib/read-json-file'
 import type { PanelTokens } from './internal-api/token-registry'
@@ -61,8 +61,12 @@ export function makeDeviceStore(stateDir: string, now: () => number = () => Date
     if (upgraded) write(raw)
     return raw
   }
+  // 原子写(临时文件 + rename):touch 每台每 5 分钟就要重写一次,写到一半断电留下半截
+  // JSON,下一次读就是「没有设备」—— 评审 2026-09-29。
   const write = (rows: Record<string, Stored>) => {
-    writeFileSync(path, JSON.stringify(rows, null, 2), { mode: 0o600 })
+    const tmp = `${path}.tmp`
+    writeFileSync(tmp, JSON.stringify(rows, null, 2), { mode: 0o600 })
+    renameSync(tmp, path)
   }
   const toRow = (r: Stored): DeviceRow => {
     const row: DeviceRow = { id: r.id!, created_at: r.created_at, last_seen_at: r.last_seen_at! }
@@ -154,16 +158,20 @@ export function makeDeviceCredentials(deps: { store: DeviceStore; tokens: PanelT
       if (got) register(got.token, got.id)
       return got
     },
+    // 撤销以注册表为准(评审 2026-09-29):文件被截断 / 手改后与注册表对不上时,内存里的
+    // 令牌在局域网上会一直活到重启。文件里有没有这一行都去注册表撤一遍。
     revoke(id) {
-      const tok = store.revoke(id)
-      if (!tok) return false
-      tokens.invalidateSession(deviceSessionKey(id))
-      return true
+      const key = deviceSessionKey(id)
+      const live = tokens.listSessions('device').some(s => s.sessionKey === key)
+      const inFile = store.revoke(id) !== null
+      tokens.invalidateSession(key)
+      return live || inFile
     },
     forgetAll() {
-      const ids = store.list().map(r => r.id)
+      const keys = new Set(store.list().map(r => deviceSessionKey(r.id)))
+      for (const s of tokens.listSessions('device')) keys.add(s.sessionKey)
       store.forgetAll()
-      for (const id of ids) tokens.invalidateSession(deviceSessionKey(id))
+      for (const key of keys) tokens.invalidateSession(key)
     },
     touch: (id) => store.touch(id),
     label: (id, text) => store.label(id, text),

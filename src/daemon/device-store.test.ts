@@ -100,6 +100,33 @@ describe('makeDeviceCredentials', () => {
     expect(creds.revoke(a.id)).toBe(false)
   })
 
+  // 评审(2026-09-29,Important):文件与注册表一旦对不上(文件被截断 / 手改),撤销必须以注册表为准,
+  // 否则登记在内存里的令牌在局域网上一直活到重启,主人还找不到它来撤。
+  it('文件坏了之后 forgetAll 仍让注册表里每台都失效', () => {
+    const { d, tokens, creds } = setup()
+    const a = creds.pair()!, b = creds.pair()!
+    writeFileSync(file(d), '{truncated')
+    creds.forgetAll()
+    expect(tokens.resolve(a.token)).toBeNull()
+    expect(tokens.resolve(b.token)).toBeNull()
+  })
+
+  it('文件里没这一行、注册表里有 ⇒ revoke 照样撤掉并报成功', () => {
+    const { d, tokens, creds } = setup()
+    const a = creds.pair()!
+    writeFileSync(file(d), '{}')
+    expect(creds.revoke(a.id)).toBe(true)
+    expect(tokens.resolve(a.token)).toBeNull()
+  })
+
+  it('写盘是原子的:不留临时文件,权限仍 0600', () => {
+    const { d, creds } = setup()
+    creds.pair()
+    const { readdirSync } = require('node:fs') as typeof import('node:fs')
+    expect(readdirSync(d)).toEqual(['settings-devices.json'])
+    if (process.platform !== 'win32') expect(statSync(file(d)).mode & 0o777).toBe(0o600)
+  })
+
   it('forgetAll:文件清空、注册表里每台都失效', () => {
     const { tokens, creds } = setup()
     const a = creds.pair()!, b = creds.pair()!
