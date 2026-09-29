@@ -11,6 +11,9 @@
  *      计数器 nonce 复用)。
  *
  * 可靠性语义:
+ *   - 每次尝试的超时只在真正发出后才计;等连接/握手的时间不耗重试次数,但受总
+ *     期限约束(见 `ClientOpts.requestDeadlineMs`):到期仍没发出 ⇒ `unreachable`,
+ *     到期时在途 ⇒ 这次超时后不再重试。
  *   - 请求超时 ⇒ 只有可重试的请求(GET/HEAD,或显式 `retry: true`)以**同一个
  *     rid** 重发(`retries` 次,缺省 1),用完以 `timeout` 拒绝;同一 rid 的
  *     回复先到先得,后到的忽略。超时时若该连接自请求发出后什么都没收到
@@ -69,7 +72,12 @@ interface Pending {
   /** 本次尝试发在哪条连接上、当时那条连接已收到几帧。 */
   sentOn?: Conn
   recvAtSend: number
+  /** 本次尝试的超时:只在真正发出去之后才开始计。 */
   timer?: Timer
+  /** 整个请求的总期限(见 ClientOpts.requestDeadlineMs,从 request() 起算)。 */
+  deadline?: Timer
+  /** 总期限已过、但当时请求在途:这次尝试超时后不再重试。 */
+  overdue: boolean
   resolve(r: ProtocolResponse): void
   reject(e: Error): void
 }
@@ -98,6 +106,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
   const timeoutMs = opts.requestTimeoutMs ?? DEFAULT_TIMEOUT_MS
   const retries = opts.retries ?? 1
   const hsTimeoutMs = opts.handshakeTimeoutMs ?? timeoutMs
+  const deadlineMs = opts.requestDeadlineMs
   const now = opts.now ?? (() => Date.now())
   const protoErr = (reason: string, detail?: unknown) => { try { opts.onProtocolError?.(reason, detail) } catch { /* 钩子自己的错不关我们的事 */ } }
   const subErr = (topic: string, code: string) => { try { opts.onSubscriptionError?.(topic, code) } catch { /* 同上 */ } }
@@ -275,6 +284,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     if (!p) return // 迟到的旧 rid,或者根本不是我们的
     byRid.delete(rid)
     if (p.timer) clearTimeout(p.timer)
+    if (p.deadline) clearTimeout(p.deadline)
     fn(p)
   }
 
@@ -286,23 +296,33 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     p.sent = false
     p.sentOn = undefined
     byRid.set(p.rid, p)
-    p.timer = setTimeout(() => onTimeout(p), timeoutMs)
     ensureConnected()
     if (conn && conn.version !== null) sendReq(conn, p)
   }
 
+  /**
+   * 总期限:还没发出去(一直在等连接/握手)⇒ 以 unreachable 拒绝;在途 ⇒ 让这次
+   * 尝试自己超时,但不再重试。等连接的时间从不消耗重试次数。
+   */
+  function onDeadline(p: Pending): void {
+    p.deadline = undefined
+    if (byRid.get(p.rid) !== p) return
+    if (p.sent) { p.overdue = true; return }
+    settle(p.rid, q => q.reject(new Error('unreachable')))
+  }
+
   function onTimeout(p: Pending): void {
+    p.timer = undefined
     if (byRid.get(p.rid) !== p) return
     // 发出后这条连接一帧都没再收到 ⇒ 多半是悄悄死掉的连接,换一条再说。
     const dead = p.sentOn !== undefined && p.sentOn === conn && p.sentOn.recv === p.recvAtSend
-    if (p.retriesLeft > 0) {
+    if (p.retriesLeft > 0 && !p.overdue) {
       p.retriesLeft -= 1
       if (dead) dropConn(p.sentOn!)
       startAttempt(p)
       return
     }
-    byRid.delete(p.rid)
-    p.reject(new Error('timeout'))
+    settle(p.rid, q => q.reject(new Error('timeout')))
     if (dead) dropConn(p.sentOn!)
   }
 
@@ -328,6 +348,8 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     p.sent = true
     p.sentOn = c
     p.recvAtSend = c.recv
+    if (p.timer) clearTimeout(p.timer)
+    p.timer = setTimeout(() => onTimeout(p), timeoutMs)
   }
 
   // ── 订阅 ────────────────────────────────────────────────────────────
@@ -347,7 +369,10 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
       return new Promise<ProtocolResponse>((resolve, reject) => {
         const m = req.method.toUpperCase()
         const retryable = req.retry ?? (m === 'GET' || m === 'HEAD')
-        startAttempt({ req, retriesLeft: retryable ? retries : 0, rid: `r${++ridSeq}`, sent: false, recvAtSend: 0, resolve, reject })
+        const retriesLeft = retryable ? retries : 0
+        const p: Pending = { req, retriesLeft, rid: `r${++ridSeq}`, sent: false, recvAtSend: 0, overdue: false, resolve, reject }
+        p.deadline = setTimeout(() => onDeadline(p), deadlineMs ?? (timeoutMs + hsTimeoutMs + BACKOFF_CAP_MS) * (retriesLeft + 1))
+        startAttempt(p)
       })
     },
 

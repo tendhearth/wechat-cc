@@ -327,7 +327,8 @@ describe('请求 / 响应', () => {
     const { c } = client(daemon, { retries: 1 })
     const p = c.request({ method: 'GET', path: '/slow' })
     const assertion = expect(p).rejects.toThrow('timeout')
-    await vi.advanceTimersByTimeAsync(2000)
+    // 0 发出、1000 超时丢连接、1500 重连后重发、2500 再超时
+    await vi.advanceTimersByTimeAsync(2500)
     await assertion
     expect(daemon.d.reqs).toHaveLength(2)
     c.close()
@@ -521,9 +522,9 @@ describe('断线、退避与致命错误', () => {
   it('后台收到 hs 却一直不回 ⇒ 握手期限(= requestTimeoutMs)到就断开,退避后新握手(新公钥)', async () => {
     const daemon = makeFakeDaemon({ version: 2 })
     daemon.d.silentHellos = 1
-    const { c } = client(daemon, { retries: 0 })
+    const { c } = client(daemon, { retries: 0, requestDeadlineMs: 1000 })
     const p = c.request({ method: 'GET', path: '/x' })
-    const assertion = expect(p).rejects.toThrow('timeout')
+    const assertion = expect(p).rejects.toThrow('unreachable')
     await vi.advanceTimersByTimeAsync(999)
     expect(daemon.d.conns).toHaveLength(1)
     expect(daemon.d.conns[0]!.closed).toBe(false)
@@ -538,6 +539,50 @@ describe('断线、退避与致命错误', () => {
     expect(h1.hs).not.toBe(h0.hs)
     expect(c.version()).toBe(2)
     c.close()
+  })
+
+  it('缺省选项:后台不理第一次 hello ⇒ 等连接的时间不耗重试次数,真正的那次重试照样可用', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    daemon.d.silentHellos = 1
+    daemon.d.dropNextReqs = 1
+    const { c } = client(daemon) // requestTimeoutMs 1000;retries、handshakeTimeoutMs 都用缺省
+    const p = c.request({ method: 'GET', path: '/x' })
+    // 1000:握手期限到 ⇒ 断开;1500:重连并发出第一次(被吞);2500:超时 ⇒ 丢死连接;
+    // 3500:第二次重连(退避已涨到 1 s)并重试
+    await vi.advanceTimersByTimeAsync(3500)
+    expect((await p).status).toBe(200)
+    expect(daemon.d.reqs).toHaveLength(2)
+    expect(daemon.d.reqs[1]!.rid).toBe(daemon.d.reqs[0]!.rid)
+    c.close()
+  })
+
+  it('一直连不上 ⇒ 到缺省总期限((timeout + 握手 + 15 s) × (retries + 1))以 unreachable 拒绝;close 后不留计时器', async () => {
+    const daemon = makeFakeDaemon({ version: 2, offline: true })
+    const { c } = client(daemon)
+    const p = c.request({ method: 'GET', path: '/x' })
+    let settled = false
+    const assertion = expect(p.finally(() => { settled = true })).rejects.toThrow('unreachable')
+    await vi.advanceTimersByTimeAsync((1000 + 1000 + 15_000) * 2 - 1)
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    await assertion
+    c.close()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('总期限到时请求在途 ⇒ 不再重试,本次超时即以 timeout 拒绝', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    daemon.d.silentHellos = 1
+    daemon.d.dropNextReqs = 5
+    const { c } = client(daemon, { requestDeadlineMs: 2000 })
+    const p = c.request({ method: 'GET', path: '/x' })
+    const assertion = expect(p).rejects.toThrow('timeout')
+    // 1000 握手期限断开、1500 重连后发出、2000 总期限(在途 ⇒ 不再重试)、2500 超时
+    await vi.advanceTimersByTimeAsync(2500)
+    await assertion
+    expect(daemon.d.reqs).toHaveLength(1)
+    c.close()
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('后台不回 hs、请求可重试 ⇒ 重试在新连接的新握手上成功', async () => {

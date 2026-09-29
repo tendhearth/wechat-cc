@@ -38,6 +38,13 @@ export interface ClientOpts {
    * 超时时若这条连接自请求发出后什么都没收到,先丢掉连接,重试走新握手。
    */
   retries?: number
+  /**
+   * 一个请求从 `request()` 起的总期限。到期时还没发出去(一直连不上/握不上手)⇒
+   * 以 `unreachable` 拒绝;到期时在途 ⇒ 这次超时后不再重试。等连接的时间不耗
+   * 重试次数。缺省 = (requestTimeoutMs + handshakeTimeoutMs + 15 s 退避封顶) ×
+   * (该请求可用的重试次数 + 1):每次尝试都够一整轮「退避 → 握手 → 等回复」。
+   */
+  requestDeadlineMs?: number
   /** 时钟(毫秒),缺省 Date.now。用于判断连接是否稳定到可以清零退避。 */
   now?: () => number
   /** 丢弃了一条畸形/无法解密的线上消息,或 hello 畸形(只做记录)。 */
