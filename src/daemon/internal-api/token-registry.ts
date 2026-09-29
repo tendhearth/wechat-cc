@@ -66,9 +66,12 @@ import type { UserTier } from '../../core/user-tier'
  *     app. Session and file tokens leave routeAllow unset (unrestricted by
  *     route, tier gate only, as before).
  */
+/** `device` / `link`:手机设置面板的长期设备令牌与 10 分钟链接令牌(梳理第 6 步,2026-09-29)。 */
+export type TokenOrigin = 'file' | 'session' | 'operator' | 'device' | 'link'
+
 export type TokenInfo = {
   tier: UserTier
-  origin: 'file' | 'session' | 'operator'
+  origin: TokenOrigin
   sessionKey?: string
   /** When set, this token may ONLY call routes in this set — see the
    *  ROUTE-SCOPING note above. Absent ⇒ no route restriction (tier gate only). */
@@ -102,15 +105,42 @@ export interface MintTokenOpts {
   ttlMs?: number
 }
 
-export interface TokenRegistry {
+/**
+ * 手机令牌的登记参数。秘钥由面板在外面生成(手机页按首字母认种类:`d…` 设备、
+ * `t…` 链接),所以不能走 `mint` 的 randomHex。
+ */
+export interface RegisterInfo {
+  tier: UserTier
+  origin: 'device' | 'link'
+  sessionKey: string
+  routeAllow: ReadonlySet<string>
+  /** 链接令牌 10 分钟;设备令牌不传(永不过期,导图 [定])。 */
+  ttlMs?: number
+}
+
+/**
+ * 设置面板拿到的窄接口:只能登记 device / link 两种、查、撤、列,
+ * 碰不到 `mint` 与 file / operator 令牌的登记。
+ */
+export interface PanelTokens {
+  register(tokenHex: string, info: RegisterInfo): void
+  resolve(tokenHex: string): TokenInfo | null
+  invalidateSession(sessionKey: string): void
+  /** 当前仍有效的某一种手机令牌(过期的顺手驱逐)。 */
+  listSessions(origin: 'device' | 'link'): Array<{ token: string; sessionKey: string }>
+}
+
+export interface TokenRegistry extends PanelTokens {
   registerFileToken(tokenHex: string): void
   registerOperatorToken(tokenHex: string): void
   mint(tier: UserTier, sessionKey: string, opts?: MintTokenOpts): string
-  resolve(tokenHex: string): TokenInfo | null
-  invalidateSession(sessionKey: string): void
 }
 
-export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32).toString('hex')): TokenRegistry {
+export function makeTokenRegistry(
+  randomHex: () => string = () => randomBytes(32).toString('hex'),
+  /** 可注入时钟(面板测试要拨表);缺省 `Date.now`。 */
+  now: () => number = () => Date.now(),
+): TokenRegistry {
   // Keyed on the full high-entropy hex secret: a Map.get leaks no useful
   // timing oracle (an attacker must already hold a complete valid token to
   // get a hit). This replaces the old timingSafeEqual-against-one-token check,
@@ -227,7 +257,7 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
       const tok = randomHex()
       const info: TokenInfo = { tier, origin: 'session', sessionKey }
       if (opts?.routeAllow) info.routeAllow = opts.routeAllow
-      if (opts?.ttlMs !== undefined) info.expiresAt = Date.now() + opts.ttlMs
+      if (opts?.ttlMs !== undefined) info.expiresAt = now() + opts.ttlMs
       map.set(tok, info)
       return tok
     },
@@ -241,16 +271,32 @@ export function makeTokenRegistry(randomHex: () => string = () => randomBytes(32
       // daemon restart"). Every resolve() call already goes through this
       // one function, so this is the single chokepoint for expiry — no
       // separate sweep/timer needed.
-      if (info.expiresAt !== undefined && Date.now() >= info.expiresAt) {
+      if (info.expiresAt !== undefined && now() >= info.expiresAt) {
         map.delete(tokenHex)
         return null
       }
       return info
     },
+    register(tokenHex, reg) {
+      const info: TokenInfo = { tier: reg.tier, origin: reg.origin, sessionKey: reg.sessionKey, routeAllow: reg.routeAllow }
+      if (reg.ttlMs !== undefined) info.expiresAt = now() + reg.ttlMs
+      map.set(tokenHex, info)
+    },
     invalidateSession(sessionKey) {
+      // 按 sessionKey 撤,不再限 origin === 'session':设备(`device:<id>`)与
+      // 链接(`link`)也走这一条。file / operator 令牌没有 sessionKey,碰不到。
       for (const [tok, info] of map) {
-        if (info.origin === 'session' && info.sessionKey === sessionKey) map.delete(tok)
+        if (info.sessionKey !== undefined && info.sessionKey === sessionKey) map.delete(tok)
       }
+    },
+    listSessions(origin) {
+      const out: Array<{ token: string; sessionKey: string }> = []
+      for (const [tok, info] of map) {
+        if (info.origin !== origin) continue
+        if (info.expiresAt !== undefined && now() >= info.expiresAt) { map.delete(tok); continue }
+        out.push({ token: tok, sessionKey: info.sessionKey! })
+      }
+      return out
     },
   }
 }

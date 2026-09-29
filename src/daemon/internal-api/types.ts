@@ -672,6 +672,8 @@ export interface InternalApi {
   ): string
   /** Revoke every token minted for a session (called on release/evict/close). */
   invalidateSession(sessionKey: string): void
+  /** 手机设置面板的窄接口:同一个注册表,只能登记 / 查 / 撤 / 列 device 与 link 令牌(梳理第 6 步)。 */
+  panelTokens: import('./token-registry').PanelTokens
 }
 
 /**
