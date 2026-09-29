@@ -115,6 +115,16 @@ describe('真实返回校验 — workbench + matters', () => {
     parseAs('GET /m/api/entry/options', await res.json())
   })
 
+  // apps/mobile/src/entry.js:80 读 provider.capabilities.features.attachments 来决定
+  // 能不能带材料交办 —— schema 必须收得住这个字段的类型漂移,不能是 z.unknown()。
+  it('entry/options 的 capabilities.features.attachments 类型漂移会被 schema 挡住', async () => {
+    const body = await (await request('/m/api/entry/options')).json() as { providers: Array<{ capabilities: { features: { attachments: boolean } } }> }
+    expect(body.providers[0]!.capabilities.features.attachments).toBe(true)
+    const mutated = structuredClone(body)
+    mutated.providers[0]!.capabilities.features.attachments = 'nope' as unknown as boolean
+    expect(() => parseAs('GET /m/api/entry/options', mutated)).toThrow()
+  })
+
   it('matter/create 与 matter/create-receipt 真实返回符合 schema', async () => {
     const body = { requestId: randomUUID(), text: '从手机开始', target: { kind: 'managed' } }
     const created = await request('/m/api/matter/create', body)
@@ -233,6 +243,17 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
     parseAs('GET /m/api/state', await (await get('/m/api/state')).json())
     parseAs('GET /m/api/art/blink', await (await get('/m/api/art/blink')).json())
     parseAs('GET /m/api/art/presence', await (await get('/m/api/art/presence')).json())
+  })
+
+  // apps/mobile/src/home.js:10 直接把 r.time_ref 拼进 innerHTML —— schema 必须收得住
+  // 这个字段的类型漂移(真实类型是 string|null,src/core/knowledge/store.ts 的 FactRow),
+  // 不能是 z.unknown()。
+  it('m/api/state 的 todos.active[].time_ref 类型漂移会被 schema 挡住', async () => {
+    const body = await (await get('/m/api/state')).json() as { todos: { active: Array<{ time_ref: unknown }> } }
+    expect(body.todos.active[0]!.time_ref).toBeNull()
+    const mutated = structuredClone(body)
+    mutated.todos.active[0]!.time_ref = { not: 'a string' }
+    expect(() => parseAs('GET /m/api/state', mutated)).toThrow()
   })
 
   it('m/api/home、m/api/feed、m/api/seen 真实返回符合 schema', async () => {

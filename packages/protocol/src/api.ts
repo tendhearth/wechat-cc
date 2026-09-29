@@ -117,6 +117,25 @@ export const ProjectCatalogEntry = z.object({
 
 const Reason = z.object({ code: z.string(), message: z.string() })
 
+/** workbench/executor-capabilities.ts 的 `WorkbenchExecutorCapabilities`——
+ * apps/mobile/src/entry.js:80 真读 `provider.capabilities.features.attachments`
+ * 来决定材料能不能带着交办,不是只透传展示,类型漂移(比如变成字符串)必须被挡住。 */
+export const WorkbenchExecutorCapabilities = z.object({
+  version: z.literal(1),
+  permissions: z.enum(['task', 'unattended']),
+  configuration: z.literal('task-policy'),
+  completion: z.literal('native'),
+  stop: z.literal('confirmed'),
+  background: z.enum(['tracked', 'disabled']),
+  features: z.object({
+    nativeResume: z.boolean(),
+    managedResume: z.boolean().optional(),
+    attachments: z.boolean(),
+    executionSettings: z.boolean(),
+    modelCatalog: z.boolean(),
+  }),
+})
+
 export const EntryOptions = z.object({
   status: z.enum(['ready', 'needs_connection']),
   reason: Reason.optional(),
@@ -124,8 +143,7 @@ export const EntryOptions = z.object({
   providers: z.array(z.object({
     id: z.string(), displayName: z.string(), available: z.boolean(),
     unavailableReason: Reason.optional(),
-    // WorkbenchExecutorCapabilities 是执行者能力位图——手机端只透传展示,不解读细节。
-    capabilities: z.unknown(),
+    capabilities: WorkbenchExecutorCapabilities,
   })),
   projects: z.array(ProjectCatalogEntry),
 })
@@ -257,7 +275,9 @@ const SetStateSuccess = z.object({
 
 const TodoRow = z.object({
   id: z.number(), contact: z.string(), predicate: z.string(), value: z.string(),
-  time_ref: z.unknown(), updated_at: z.number(), display: z.string(),
+  // FactRow.time_ref(src/core/knowledge/store.ts):string|null —— apps/mobile/src/home.js:10
+  // 直接把它拼进 innerHTML,真读,不是透传。
+  time_ref: z.string().nullable(), updated_at: z.number(), display: z.string(),
 })
 
 const PhoneStateSuccess = z.object({
