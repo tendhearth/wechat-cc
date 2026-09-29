@@ -1,7 +1,13 @@
 /**
- * gen-tunnel-vectors.ts — 一次性脚本,用**现有** `src/lib/tunnel-crypto.ts`
- * (node:crypto.webcrypto,daemon 真机在跑的那份)生成手机隧道 v1 协议的跨
- * 实现测试向量,写到 `packages/protocol/vectors/v1.json`。
+ * gen-tunnel-vectors.ts — 一次性脚本,用 `./legacy-webcrypto-v1.ts`(手机隧道
+ * v1 协议最早的 WebCrypto 实现,冻结副本)生成跨实现测试向量,写到
+ * `packages/protocol/vectors/v1.json`。
+ *
+ * 2026-09-29(Task 3):`src/lib/tunnel-crypto.ts` 本身已经从 WebCrypto 换成
+ * `@wechat-cc/protocol` 的 noble 版了 —— 如果这份脚本还去调它,生成的向量就
+ * 是 noble 验证 noble,自己证自己,毫无意义。所以向量的锚点搬进了
+ * `legacy-webcrypto-v1.ts`(原 `tunnel-crypto.ts` 的原样冻结副本,只给这份脚
+ * 本和 `src/lib/tunnel-crypto-webcrypto-interop.test.ts` 用)。
  *
  * `packages/protocol/src/v1.ts` 是同一协议的 noble 版(给不能用 node:crypto
  * 的运行时,比如手机网页)。两份实现必须字节级兼容 —— 已配对的手机在真机上
@@ -9,7 +15,7 @@
  * `v1.test.ts` 拿它们喂 noble 版,断言算出来的每一步都跟 WebCrypto 算出来
  * 的完全一样。
  *
- * 保留在仓库里以便复核(改了 tunnel-crypto.ts 或怀疑向量过期时重跑一遍):
+ * 保留在仓库里以便复核(改了 legacy-webcrypto-v1.ts 或怀疑向量过期时重跑一遍):
  *   bun scripts/gen-tunnel-vectors.ts
  *
  * 8 组向量覆盖:
@@ -26,7 +32,7 @@ import { webcrypto } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { deriveSharedBits, hkdfAesKey } from '../src/lib/tunnel-crypto'
+import { legacyDeriveSharedBits as deriveSharedBits, legacyHkdfAesKey as hkdfAesKey } from './legacy-webcrypto-v1'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const OUT = join(ROOT, 'packages', 'protocol', 'vectors', 'v1.json')
