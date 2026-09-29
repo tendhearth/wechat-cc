@@ -114,6 +114,27 @@ describe('makeV2Channel:往返、方向、计数器', () => {
     }
   })
 
+  it('帧形状不对(c 是数字/数组、缺 c、ct 是数字、整帧是 null/字符串)⇒ 抛 auth,不是 TypeError,也不推进计数器', () => {
+    const { client, server } = pair()
+    const sealed = client.seal(new TextEncoder().encode('shape-guard'))
+
+    const malformed: unknown[] = [
+      { c: 0, ct: sealed.ct }, // c 是 number,不是 string
+      { c: [5], ct: sealed.ct }, // c 是数组
+      { ct: sealed.ct }, // 缺 c
+      { c: sealed.c, ct: 12345 }, // ct 是 number
+      null, // 整帧是 null
+      'not-a-frame', // 整帧是字符串
+    ]
+
+    for (const bad of malformed) {
+      expect(() => server.open(bad as unknown as SealedFrameV2)).toThrow('auth')
+    }
+
+    // 上面几帧全没被“接受”:合法帧的 c 之后还能正常开,没被畸形输入偷跑计数器。
+    expect(server.open(sealed)).toBeDefined()
+  })
+
   it('ct 被篡改 ⇒ 抛 auth,且不推进接收计数器(后续合法帧仍能开)', () => {
     const { client, server } = pair()
     const sealed = client.seal(new TextEncoder().encode('tamper me'))

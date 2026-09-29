@@ -56,6 +56,24 @@ function buildNonce(marker: number, counter: number): Uint8Array {
   return nonce
 }
 
+/**
+ * `open` 收到的帧是从线上(JSON.parse 之后)来的,类型不可信 —— 光靠
+ * `SealedFrameV2` 的编译期类型标注挡不住运行时传来 `c: 0`(number)、
+ * `c: [5]`、缺字段、整帧是 `null`/字符串这类畸形输入。逐字段检查形状,
+ * 在碰 `c`/`ct` 的任何值之前就拒绝,不让它们有机会被隐式转换后蒙混过
+ * `COUNTER_RE.test()`(正则的 `.test()` 会把非字符串参数强转成字符串,
+ * `0` 会变成 `"0"` 从而“合法”通过 —— 这正是这个校验要堵的洞)。
+ */
+function assertFrameShape(f: unknown): asserts f is SealedFrameV2 {
+  if (typeof f !== 'object' || f === null || Array.isArray(f)) {
+    throw new Error('auth')
+  }
+  const rec = f as Record<string, unknown>
+  if (typeof rec.c !== 'string' || typeof rec.ct !== 'string') {
+    throw new Error('auth')
+  }
+}
+
 /** 解析 `c`:格式不对或超出安全整数范围 ⇒ 抛 'auth'(畸形输入,不是重放)。 */
 function parseCounter(c: string): number {
   if (!COUNTER_RE.test(c)) {
@@ -99,6 +117,7 @@ export function makeV2Channel(
     },
 
     open(f: SealedFrameV2): Uint8Array {
+      assertFrameShape(f)
       const c = parseCounter(f.c)
       if (c <= lastAccepted) {
         throw new Error('replay')
