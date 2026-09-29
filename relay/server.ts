@@ -9,7 +9,7 @@ import { openSqlite, type SqlDatabase as Database } from '../src/lib/runtime/sql
 import { makeMailboxStore } from './mailbox-store'
 import { verifyFetchSig, verifyAckSig } from './mailbox-auth'
 import { makeRateLimiter } from './rate-limit'
-import { makeTunnelHub, type TunnelSocket } from './tunnel'
+import { makeTunnelHub, DEFAULT_MAX_FRAME, type TunnelSocket } from './tunnel'
 
 export interface RelayServer { fetchHandler(req: Request, ip: string): Promise<Response>; sweep(now: number): number }
 
@@ -98,7 +98,10 @@ export function startRelay(opts: { port?: number; dbPath?: string } = {}): { sto
       return relay.fetchHandler(req, ip)
     },
     websocket: {
-      maxPayloadLength: 512 * 1024,
+      // Bun's WS layer enforces this BEFORE a frame reaches the hub — must stay
+      // ≥ makeTunnelHub()'s own maxFrameBytes (default DEFAULT_MAX_FRAME below),
+      // so both caps come from the one export instead of two literals drifting apart.
+      maxPayloadLength: DEFAULT_MAX_FRAME,
       idleTimeout: 120,   // seconds; daemon sends app-level pings under this
       open(ws) {
         const d = ws.data

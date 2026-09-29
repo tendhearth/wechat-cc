@@ -1,0 +1,95 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CC</title>
+<!--
+  pset — 公网引导壳 (2026-08-26)。部署在中继 VPS 的静态目录,解决
+  「手机走流量扫不开 LAN 二维码」:壳从公网加载,真正的页面通过 E2E
+  隧道取回注入。锚点携带 id/令牌 —— # 后的内容不发给服务器,中继
+  连令牌都看不到;页面数据全程密文,中继盲转。
+  流程:解析 hash → 隧道握手(HKDF salt=令牌)→ 密文取页 →
+  注入 window.__CC_SHELL__ 后 document.write(页面自身的传输层看到
+  壳标记即强制走隧道)。
+  2026-09-24 删掉「先探 LAN」:家里直接用电脑,手机网页只在外面用;
+  而且 https 页里探 http 私网地址会被现代浏览器拦,探测几乎总失败,白等 2s。
+  链接里的 lan= 参数保留但不再使用。
+  2026-09-29(手机协议包 v2 Task 4):v1 密封帧改由 packages/protocol 的
+  CCP(noble 实现,构建期由 apps/mobile/build.ts 打包塞进下面 script 顶部
+  那处占位注释)算,跟 daemon(同一个包)字节级兼容;这里不再手写
+  crypto.subtle —— 本页运行的沙箱可以没有它(只要有
+  crypto.getRandomValues / TextEncoder / TextDecoder / atob / btoa)。改的
+  是 relay/pset.src.html 这份源码;relay/pset.html 是
+  `bun run build:mobile` 写出的生成物,别手改。占位注释的确切写法只在
+  script 里出现这一处,别在别的注释里重复打(build.ts 用字符串
+  replace,认第一处)。
+-->
+<style>
+  /* 色值与 apps/mobile/src/tokens.css 保持一致(壳页单独部署,不能引用它;src/daemon/design-tokens.test.ts 守着) */
+  body { margin:0; font-family:system-ui,-apple-system,"PingFang SC",sans-serif; background:#f9f7f1; color:#483f35; display:grid; place-items:center; min-height:100vh }
+  .box { text-align:center; padding:24px; max-width:300px }
+  .box .b { width:64px; height:64px; margin:0 auto 14px; border-radius:50%; background:radial-gradient(circle at 45% 40%,#fffefa 0%,#efd9bd 70%); box-shadow:0 0 36px 10px rgba(255,236,205,.95) }
+  .box .hand { font-family:"Kaiti SC","STKaiti",serif; color:#8a7a66; font-size:15px; margin:0 0 6px }
+  .box p { color:#7e7365; font-size:14px; line-height:1.7; margin:0 }
+</style></head><body>
+<div class="box"><div class="b" aria-hidden="true"></div><p class="hand">随身 CC</p><p id="msg">正在找回家的路…</p></div>
+<script>
+/*@@CCP@@*/
+var P = {}
+location.hash.slice(1).split("&").forEach(function(kv){ var i = kv.indexOf("="); if (i > 0) P[kv.slice(0,i)] = decodeURIComponent(kv.slice(i+1)) })
+var ID = P.id, LINK_T = P.t, T = P.t, PATH = P.p || "/m"
+// 配对过的手机:设备令牌存在本域 localStorage(注入页写的),永不过期 ——
+// 优先于 hash 里可能已过期的 10 分钟短令牌。加主屏后重开因此总能进。
+try { var dt = localStorage.getItem("deviceToken"); if (dt) T = dt } catch (e) {}
+var msg = document.getElementById("msg")
+if (!ID || !T) { msg.textContent = "链接不完整,回微信跟 CC 再要一个" }
+
+// hs 握手交换的裸公钥不是 v1 密封帧,CCP 管不着,还是手写这份 base64url。
+var b64u = { enc: function(b){ return btoa(String.fromCharCode.apply(null, new Uint8Array(b))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"") },
+  dec: function(s){ s = s.replace(/-/g,"+").replace(/_/g,"/"); var bin = atob(s); var a = new Uint8Array(bin.length); for (var i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return a } }
+
+function viaTunnel() {
+  msg.textContent = "从远处连回你的电脑…(加密直达)"
+  var relay = "wss://" + location.host + "/tunnel/phone"
+  var ws = new WebSocket(relay + "?id=" + encodeURIComponent(ID))
+  var key = null, kp = null
+  var timer = setTimeout(function(){ msg.textContent = "连不上家里的电脑 — 看看它开着没、CC 在跑没" }, 20000)
+  ws.onopen = function() {
+    kp = CCP.x25519KeyPair()
+    ws.send(JSON.stringify({ hs: b64u.enc(kp.pub) }))
+  }
+  ws.onmessage = function(ev) {
+    var f = JSON.parse(ev.data)
+    if (f.error) {
+      clearTimeout(timer); try { ws.close() } catch (e) {}
+      if (f.error === "auth_failed") {
+        // 本域存的设备令牌不被认了(解除配对 / 换了电脑):丢掉它,用链接里的短令牌重来一次。
+        if (T !== LINK_T && LINK_T) { try { localStorage.removeItem("deviceToken") } catch (e) {}; T = LINK_T; viaTunnel(); return }
+        msg.textContent = "链接过期啦,回微信跟 CC 再要一个"; return
+      }
+      msg.textContent = f.error === "daemon_offline" ? "家里的 CC 不在线 — 电脑开着吗?" : ("连接出错:" + f.error); return
+    }
+    if (f.hs) {
+      // Key BOUND to the device token — proves to the daemon we hold it,
+      // without ever putting it on the wire; defeats a MITM relay.
+      var shared = CCP.x25519Shared(kp.priv, b64u.dec(f.hs))
+      key = CCP.deriveV1Key(shared, T)
+      var body = JSON.stringify({ path: PATH + "?t=" + T, method: "GET", rid: "shell" })
+      var frame = CCP.sealV1(key, new TextEncoder().encode(body))
+      ws.send(JSON.stringify({ iv: frame.iv, ct: frame.ct }))
+      return
+    }
+    if (!key || !f.iv) return
+    var pt = CCP.openV1(key, { iv: f.iv, ct: f.ct })
+    var r = JSON.parse(new TextDecoder().decode(pt))
+    clearTimeout(timer)
+    ws.close()
+    if (r.status === 401) { msg.textContent = "链接过期啦,回微信跟 CC 再要一个" ; return }
+    if (r.status !== 200) { msg.textContent = "打开失败(" + r.status + "),稍后再试" ; return }
+    var shell = { relay: relay, id: ID }
+    var html = r.body.replace(/<script>/, "<scr" + "ipt>window.__CC_SHELL__=" + JSON.stringify(shell) + ";</scr" + "ipt><scr" + "ipt>")
+    document.open(); document.write(html); document.close()
+  }
+  ws.onerror = function(){ clearTimeout(timer); msg.textContent = "网络不给力,稍后再试" }
+}
+
+if (ID && T) viaTunnel()
+</script></body></html>

@@ -4,6 +4,7 @@ import {MOBILE_PRESENCE_JS} from './mobile-page'
 import art from './mobile-presence-art.json'
 import {readFileSync} from 'node:fs'
 import {createHash} from 'node:crypto'
+import {DEFAULT_MAX_FRAME} from '../../relay/tunnel'
 
 describe('production phone presence',()=>{
   it('bundles exact frozen character bytes for compiled and tunnel delivery',()=>{
@@ -23,9 +24,9 @@ describe('production phone presence',()=>{
     for(const id of ['todos','portrait','stickers'])expect(html).toContain(`id="${id}"`)
     expect(html).not.toContain('<span class="i">🌤</span>')
   })
-  it('leaves room for the relay envelope inside a 512KB frame',()=>{
+  it('leaves room for the relay envelope inside a tunnel frame (relay/tunnel.ts DEFAULT_MAX_FRAME — 2026-09-29 手机协议包 v2 Task 4 bumped this to 1MB, the /m page now ships its own v1 crypto inlined, ~44KB minified)',()=>{
     const html=phoneHtml('d'.repeat(128),{relay:'wss://relay.example',id:'test-device'})
-    expect(Math.ceil(Buffer.byteLength(html)*4/3)+4096).toBeLessThan(512*1024)
+    expect(Math.ceil(Buffer.byteLength(html)*4/3)+4096).toBeLessThan(DEFAULT_MAX_FRAME)
   })
   it('embeds syntax-valid scripts and escapes a hostile token',()=>{
     const html=phoneHtml('</script><script>evil()</script>',null)
