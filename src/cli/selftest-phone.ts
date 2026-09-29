@@ -88,6 +88,46 @@ function httpErrorDetail(res: HttpResult): string {
   return parts.join(' ')
 }
 
+/** Strips the `t=` credential from a link URL before it's ever put in a
+ *  check's detail. Both link shapes carry it — as a fragment param on the
+ *  remote/relay shape, as a query param on the LAN-only shape — and it's a
+ *  live, never-expiring token: it must never land in normal CLI output
+ *  (ruling, fix round 1 item 1). Keeps everything else (host, daemon id,
+ *  LAN address) for debugging. */
+function redactLinkUrl(raw: string): string {
+  try {
+    const u = new URL(raw)
+    if (u.searchParams.has('t')) u.searchParams.set('t', '<redacted>')
+    if (u.hash) {
+      const frag = new URLSearchParams(u.hash.slice(1))
+      if (frag.has('t')) { frag.set('t', '<redacted>'); u.hash = frag.toString() }
+    }
+    return u.toString()
+  } catch {
+    return raw
+  }
+}
+
+/**
+ * The only manual-recovery instruction this module ever prints — it must
+ * never embed a token (ruling, fix round 1 item 1: not even in a ready-to-
+ * paste curl command). It identifies the throwaway paired device by id
+ * when known, falling back to its pairing time (item 2's "both LAN and
+ * relay lookups failed" case) — the device token itself never appears.
+ */
+function manualRevokeInstruction(who: { id?: string; pairedAt?: number }): string {
+  let target: string
+  if (who.id) {
+    target = `the device with id ${who.id}`
+    if (who.pairedAt !== undefined) target += ` (paired ${new Date(who.pairedAt).toISOString()})`
+  } else if (who.pairedAt !== undefined) {
+    target = `the device paired at ${new Date(who.pairedAt).toISOString()}`
+  } else {
+    target = 'the throwaway paired device'
+  }
+  return `open the settings page (/set, e.g. via 「设置」 in WeChat or the desktop QR) → 已配对设备 → 忘掉 ${target}`
+}
+
 // ── link URL parsing (settings-panel.ts's two shapes) ─────────────────
 
 interface RemoteLink { relayWsUrl: string; linkToken: string; lanBase: string }
@@ -160,6 +200,7 @@ export async function runPhoneSelftest(
   let relayWsUrl: string | undefined
   let deviceToken: string | undefined
   let deviceId: string | undefined
+  let pairedAt: number | undefined
   let lanBase: string | undefined
   let taskId: string | undefined
   let scratchPath: string | undefined
@@ -170,7 +211,7 @@ export async function runPhoneSelftest(
     // ── link URL + relay address ─────────────────────────────────────
     const linkRes = await jsonCall(deps, `${api.baseUrl}/v1/settings/link`, api.token, 'GET')
     const url = linkRes.ok && typeof linkRes.json?.url === 'string' ? linkRes.json.url as string : undefined
-    checks.push({ name: 'link_url', ok: !!url, detail: url ?? httpErrorDetail(linkRes) })
+    checks.push({ name: 'link_url', ok: !!url, detail: url ? redactLinkUrl(url) : httpErrorDetail(linkRes) })
     if (!url) stop()
 
     const cls = classifyLink(url)
@@ -202,6 +243,7 @@ export async function runPhoneSelftest(
     }
     checks.push({ name: 'paired', ok: true })
     deviceToken = pairJson.device_token
+    pairedAt = deps.now()
 
     // ── connect with the device token; confirm v2, fetch its device id ─
     deviceClient = deps.connect(relayWsUrl, deviceToken!)
@@ -253,19 +295,36 @@ export async function runPhoneSelftest(
     }
     if (scratchPath) { try { deps.fs.rm(scratchPath) } catch { /* best-effort */ } }
 
-    if (deviceToken && lanBase && deviceId) {
-      const revokeUrl = `${lanBase}/set/api/apply?t=${encodeURIComponent(deviceToken)}`
-      const revokeBody = { op: 'revoke_device', id: deviceId }
-      const revokeRes = await jsonCall(deps, revokeUrl, null, 'POST', revokeBody)
-      revoked = !!revokeRes.json?.ok
-      if (revoked) {
-        checks.push({ name: 'revoked', ok: true })
+    if (deviceToken && lanBase) {
+      // The relay-based probe (above) may have failed to establish a
+      // device id at all (e.g. `/set/api/state` over the relay threw) —
+      // ruling, fix round 1 item 2: don't just print prose, try to recover
+      // it over the LAN first, then revoke there as usual. Only if THAT
+      // also fails do we fall back to the manual settings-page instruction.
+      let idToRevoke = deviceId
+      if (!idToRevoke) {
+        const lanStateRes = await jsonCall(deps, `${lanBase}/set/api/state?t=${encodeURIComponent(deviceToken)}`, null, 'GET')
+        const lanState = lanStateRes.json as { remote?: { devices?: Array<{ id?: string; current?: boolean }> } } | null
+        const lanCurrent = lanState?.remote?.devices?.find((d) => d?.current)
+        if (typeof lanCurrent?.id === 'string') idToRevoke = lanCurrent.id
+      }
+      if (idToRevoke) {
+        deviceId = idToRevoke
+        const revokeRes = await jsonCall(deps, `${lanBase}/set/api/apply?t=${encodeURIComponent(deviceToken)}`, null, 'POST', { op: 'revoke_device', id: idToRevoke })
+        revoked = !!revokeRes.json?.ok
+        if (revoked) {
+          checks.push({ name: 'revoked', ok: true })
+        } else {
+          checks.push({ name: 'revoked', ok: false, detail: `${revokeRes.json?.error ?? httpErrorDetail(revokeRes)} — ${manualRevokeInstruction({ id: idToRevoke, pairedAt })}` })
+        }
       } else {
-        const manualCmd = `curl -X POST '${revokeUrl}' -H 'content-type: application/json' -d '${JSON.stringify(revokeBody)}'`
-        checks.push({ name: 'revoked', ok: false, detail: `${revokeRes.json?.error ?? httpErrorDetail(revokeRes)} — manual revoke: ${manualCmd}` })
+        checks.push({ name: 'revoked', ok: false, detail: `could not determine the device id to revoke (relay and LAN /set/api/state both failed) — ${manualRevokeInstruction({ pairedAt })}` })
       }
     } else if (deviceToken) {
-      checks.push({ name: 'revoked', ok: false, detail: 'no device id — could not revoke the paired throwaway device; check remote.devices on /set and revoke it by hand' })
+      // Defensive fallback — `lanBase` is always set alongside `deviceToken`
+      // (both come from the same successful 'remote' link classification
+      // that precedes pairing), so this branch shouldn't be reachable.
+      checks.push({ name: 'revoked', ok: false, detail: manualRevokeInstruction({ pairedAt }) })
     }
 
     if (revoked && relayWsUrl && deviceToken) {

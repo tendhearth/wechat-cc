@@ -66,6 +66,17 @@ function fakeClient(opts: {
   }
 }
 
+/** Every secret credential used across these tests. No check/report may
+ *  ever contain any of these substrings — see the "no token in output"
+ *  suite below, and every scenario test's trailing `assertNoTokenLeak`
+ *  call. */
+const SECRET_TOKENS = ['link-tok', 'device-tok', 'file-token', 'op-token']
+
+function assertNoTokenLeak(report: PhoneSelftestReport): void {
+  const text = JSON.stringify(report)
+  for (const token of SECRET_TOKENS) expect(text, `report leaked a credential: ${token}`).not.toContain(token)
+}
+
 function baseDeps(overrides: Partial<PhoneSelftestDeps> = {}): PhoneSelftestDeps {
   const dirs = new Set<string>()
   return {
@@ -130,6 +141,7 @@ describe('remote access off', () => {
     expect(report.ok).toBe(false)
     const remote = report.checks.find((c) => c.name === 'remote_enabled')
     expect(remote).toEqual({ name: 'remote_enabled', ok: false, detail: 'remote access is off — enable 出门也能用 in settings' })
+    assertNoTokenLeak(report)
   })
 })
 
@@ -141,6 +153,7 @@ it('settings/link route errors ⇒ FAIL with the http error, no relay attempted'
   const report = await runPhoneSelftest(deps, { executor: 'claude' })
   expect(report.ok).toBe(false)
   expect(report.checks[0]).toEqual({ name: 'link_url', ok: false, detail: 'http_403 route_not_allowed' })
+  assertNoTokenLeak(report)
 })
 
 // ── relay unreachable ────────────────────────────────────────────────
@@ -174,6 +187,7 @@ describe('relay unreachable', () => {
     expect(paired?.detail).toContain('relay unreachable')
     expect(paired?.detail).toContain('unreachable')
     expect(connectCalls).toBe(1)
+    assertNoTokenLeak(report)
   })
 })
 
@@ -206,6 +220,7 @@ describe('pairing limit', () => {
     expect(report.checks.find((c) => c.name === 'paired')).toEqual({ name: 'paired', ok: false, detail: 'device_limit' })
     expect(deviceConnectAttempted).toBe(false)
     expect(report.checks.find((c) => c.name === 'revoked')).toBeUndefined()
+    assertNoTokenLeak(report)
   })
 })
 
@@ -254,6 +269,7 @@ describe('device negotiates v1 (not v2)', () => {
     expect(apply?.body).toEqual({ op: 'revoke_device', id: 'dev-42' })
     expect(report.checks.find((c) => c.name === 'revoked')?.ok).toBe(true)
     expect(deviceClientConnectCount).toBeGreaterThanOrEqual(1)
+    assertNoTokenLeak(report)
   })
 })
 
@@ -300,13 +316,14 @@ describe('agents event timeout', () => {
     expect(fetchCalls.some((c) => c.path === '/v1/workbench/create')).toBe(false)
     // Cleanup still revoked the paired throwaway device.
     expect(report.checks.find((c) => c.name === 'revoked')?.ok).toBe(true)
+    assertNoTokenLeak(report)
   })
 })
 
 // ── revoke failure ─────────────────────────────────────────────────────
 
 describe('revoke failure', () => {
-  it('LAN /set/api/apply revoke_device fails ⇒ revoked ✗ with the exact manual curl command, overall FAIL', async () => {
+  it('LAN /set/api/apply revoke_device fails ⇒ revoked ✗ with a settings-page instruction (no token), overall FAIL', async () => {
     const fetchCalls: RecordedCall[] = []
     const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
       const u = new URL(String(url))
@@ -340,12 +357,17 @@ describe('revoke failure', () => {
     const revoked = report.checks.find((c) => c.name === 'revoked')
     expect(revoked?.ok).toBe(false)
     expect(revoked?.detail).toContain('unknown_device')
-    expect(revoked?.detail).toContain('manual revoke:')
-    expect(revoked?.detail).toContain("curl -X POST 'http://192.168.1.5:51234/set/api/apply?t=device-tok'")
-    expect(revoked?.detail).toContain('"op":"revoke_device"')
-    expect(revoked?.detail).toContain('"id":"dev-7"')
+    // Ruling: never print a token. The manual fallback must point at the
+    // settings page and identify the device by id (never by a curl command
+    // embedding the live device token).
+    expect(revoked?.detail).toContain('/set')
+    expect(revoked?.detail).toContain('已配对设备')
+    expect(revoked?.detail).toContain('忘掉')
+    expect(revoked?.detail).toContain('dev-7')
+    expect(revoked?.detail).not.toContain('curl')
     // A failed revoke must not claim the follow-up auth_failed check passed.
     expect(report.checks.find((c) => c.name === 'revoked_auth_failed')).toBeUndefined()
+    assertNoTokenLeak(report)
   })
 })
 
@@ -441,5 +463,103 @@ describe('success path', () => {
     const revokeCall = fetchCalls.find((c) => c.path === '/set/api/apply')
     expect(revokeCall?.body).toEqual({ op: 'revoke_device', id: 'dev-1' })
     expect(report.durationMs).toBeGreaterThanOrEqual(0)
+    assertNoTokenLeak(report)
   })
+})
+
+// ── device id unknown at cleanup time (relay /set/api/state failed) ────
+//
+// Ruling (fix round 1, item 2): if `/set/api/state` over the relay fails
+// after pairing, cleanup must not just print vague prose — it must first
+// try to recover the device id over the LAN (`GET .../set/api/state?t=`)
+// and revoke it there. Only if THAT also fails does it fall back to the
+// settings-page instruction, identifying the device by its pairing time
+// (never by id, since the id was never found — and never by token).
+
+describe('device id unknown at cleanup (relay state call failed)', () => {
+  function baseFetchImpl(opts: { lanState?: 'ok' | 'fail'; lanRevoke?: 'ok' | 'fail' }, fetchCalls: RecordedCall[]) {
+    return (async (url: string | URL, init?: RequestInit) => {
+      const u = new URL(String(url))
+      const method = init?.method ?? 'GET'
+      fetchCalls.push({ method, path: u.pathname, body: init?.body ? JSON.parse(init.body as string) : undefined })
+      if (u.pathname === '/v1/settings/link') return jsonResponse(200, { url: REMOTE_LINK_URL })
+      if (u.pathname === '/set/api/state' && method === 'GET') {
+        if (opts.lanState === 'fail') return jsonResponse(500, { error: 'lan_unreachable' })
+        return jsonResponse(200, { remote: { devices: [{ id: 'dev-55', current: true }] } })
+      }
+      if (u.pathname === '/set/api/apply') {
+        if (opts.lanRevoke === 'fail') return jsonResponse(200, { ok: false, error: 'unknown_device' })
+        return jsonResponse(200, { ok: true })
+      }
+      throw new Error(`unexpected fetch: ${u.pathname}`)
+    }) as unknown as typeof fetch
+  }
+
+  function connectWithFailingRelayState(): PhoneSelftestDeps['connect'] {
+    return (_url, token) => {
+      if (token === 'link-tok') {
+        const { client } = fakeClient({ onRequest: (req) => {
+          if (req.path === '/set/api/pair') return makeResponse(200, { ok: true, device_token: 'device-tok' })
+          throw new Error(`unexpected: ${req.path}`)
+        } })
+        return client
+      }
+      // The relay device connection can never reach /set/api/state — e.g. a
+      // flaky tunnel right after pairing.
+      const { client } = fakeClient({ onRequest: () => { throw new Error('relay_timeout') } })
+      return client
+    }
+  }
+
+  it('LAN /set/api/state recovers the id ⇒ LAN revoke attempted and reported ✓', async () => {
+    const fetchCalls: RecordedCall[] = []
+    const deps = baseDeps({
+      fetch: baseFetchImpl({ lanState: 'ok', lanRevoke: 'ok' }, fetchCalls),
+      connect: connectWithFailingRelayState(),
+    })
+    const report = await runPhoneSelftest(deps, { executor: 'claude' })
+    expect(report.checks.find((c) => c.name === 'device_connected')).toMatchObject({ ok: false })
+    expect(report.checks.find((c) => c.name === 'revoked')).toEqual({ name: 'revoked', ok: true })
+    const lanState = fetchCalls.find((c) => c.path === '/set/api/state')
+    expect(lanState?.method).toBe('GET')
+    const revokeCall = fetchCalls.find((c) => c.path === '/set/api/apply')
+    expect(revokeCall?.body).toEqual({ op: 'revoke_device', id: 'dev-55' })
+    assertNoTokenLeak(report)
+  })
+
+  it('LAN /set/api/state also fails ⇒ revoked ✗ with the settings-page instruction identified by pairing time, no token', async () => {
+    const fetchCalls: RecordedCall[] = []
+    const deps = baseDeps({
+      fetch: baseFetchImpl({ lanState: 'fail' }, fetchCalls),
+      connect: connectWithFailingRelayState(),
+      now: () => 1_000,
+    })
+    const report = await runPhoneSelftest(deps, { executor: 'claude' })
+    expect(report.ok).toBe(false)
+    const revoked = report.checks.find((c) => c.name === 'revoked')
+    expect(revoked?.ok).toBe(false)
+    expect(revoked?.detail).toContain('/set')
+    expect(revoked?.detail).toContain('已配对设备')
+    expect(revoked?.detail).toContain('忘掉')
+    // No device id was ever found — identify by pairing time instead.
+    expect(revoked?.detail).toContain(new Date(1000).toISOString())
+    expect(fetchCalls.some((c) => c.path === '/set/api/apply')).toBe(false)
+    assertNoTokenLeak(report)
+  })
+})
+
+// ── no token ever appears in output, on every path ──────────────────────
+//
+// Ruling (fix round 1, item 1): the report/checks are normal CLI output —
+// they must never contain a live, never-expiring credential (link, device,
+// file, or operator token), on any path. `assertNoTokenLeak` is exercised
+// after every scenario above; this section is the single place documenting
+// that contract for anyone adding a new check later.
+it('no check on any path ever contains a raw token value', () => {
+  // Documented by `assertNoTokenLeak`, called at the end of every scenario
+  // test above (remote off, link failure, relay unreachable, pairing
+  // limit, v1 device, event timeout, revoke failure — both variants —, and
+  // the success path). This assertion just pins the credential list itself
+  // so a future rename doesn't silently stop checking anything.
+  expect(SECRET_TOKENS).toEqual(['link-tok', 'device-tok', 'file-token', 'op-token'])
 })
