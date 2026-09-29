@@ -62,7 +62,9 @@ export function makePhoneTopicSources(deps: PhoneTopicSourceDeps): TopicSource[]
       if (!id || !m) return { found: false }
       if (m.kind === 'task') {
         if (!deps.workbench) return { found: false }
-        const d = deps.workbench.detail(id)
+        // 事项还在、任务已被清掉:detail 抛。与 /m/api/matter 同一待遇 —— 当不存在,别让集线器每轮记错跳过。
+        let d: ReturnType<PhoneWorkbench['detail']>
+        try { d = deps.workbench.detail(id) } catch { return { found: false } }
         return { found: true, kind: 'task', version: d.version, phase: d.task.phase }
       }
       return { found: true, kind: m.kind, version: m.updatedAt, phase: m.status }
