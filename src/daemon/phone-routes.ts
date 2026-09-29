@@ -20,6 +20,7 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'GET /m',
   'GET /m/api/state',
   'GET /m/api/art/blink',
+  'GET /m/api/art/presence',
   'GET /m/api/memory',
   'GET /m/api/home',
   'GET /m/api/feed',
@@ -64,5 +65,27 @@ export function phoneRouteAllowed(allow: ReadonlySet<string>, method: string, pa
     const p = k.slice(k.indexOf(' ') + 1)
     if (p.endsWith('/') ? path.startsWith(p) && path.length > p.length && k.startsWith(`${method} `) : p === path) return true
   }
+  return false
+}
+
+/**
+ * 手机能订阅的事件主题(第 9 步,phone-events.ts 的 `subscribe`)。`matter/` 以 `/` 结尾
+ * 是前缀标记,跟 PHONE_ROUTES 同一个约定 —— 真正允许的是 `matter/<id>`,`phoneTopicAllowed`
+ * 负责把前缀展开成"后面必须是合法 id"这条规矩。
+ *
+ * `scripts/phone-routes.guard.test.ts` 双向核对两件事:`PHONE_TOPICS` 与 `phoneTopicAllowed`
+ * (哪个主题名允许、哪个不允许);每个主题恰好一个来源、每个来源都对得上主题
+ * (`phone-topic-sources.ts`,第 11 步)。
+ */
+export const PHONE_TOPICS: ReadonlySet<string> = new Set(['home', 'approvals', 'agents', 'matter/'])
+
+const MATTER_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
+
+/** 主题名合法性:精确命中三个固定主题,或 `matter/<id>`(id 只能是 `[A-Za-z0-9_-]{1,64}`)。 */
+export function phoneTopicAllowed(topic: string): boolean {
+  // 'matter/' 本身只是登记表里的前缀标记(跟 PHONE_ROUTES 同一个约定),不是可订阅的
+  // 主题名 —— 精确命中要排除它,否则 `matter/` 这个裸前缀会被误判成合法主题。
+  if (PHONE_TOPICS.has(topic) && topic !== 'matter/') return true
+  if (topic.startsWith('matter/')) return MATTER_ID_RE.test(topic.slice('matter/'.length))
   return false
 }

@@ -15,6 +15,7 @@ wechat-cc ci triage --wait --rerun
 ```bash
 wechat-cc selftest workbench --executor cursor [--image] [--resume] [--json] [--timeout-ms N] [--keep]
 wechat-cc selftest chat --provider cursor [--text "…"] [--resume] [--json] [--timeout-ms N]
+wechat-cc selftest phone [--json] [--timeout-ms N]
 ```
 
 **workbench**:在 `<tmpdir>/wechat-cc-selftest/wb-<ts>` 建一个 scratch 项目(mkdir + README + `git init` 一次提交),`POST /v1/workbench/create`,长轮询 `GET /v1/workbench/task`,碰到权限卡就 `POST /v1/workbench/permission` 放行;跑完(或超时)时任务状态还没到终态就先 `POST /v1/workbench/cancel` 并最多等 20s,再 `POST /v1/workbench/archive`。检查项:`created`、`replied`、`text_seen`、`activity_seen`、`permission_roundtrip`、`permission_executed`、`file_written`(`--image` 时换成 `answer_mentions_red`)、`resume_replied`(带 `--resume` 时)、`no_error_event`、`archived`(归档那一下的 HTTP 结果本身也是一项)。
@@ -30,6 +31,13 @@ scratch 项目**不在 STATE_DIR 底下**(它跟 token / account.json 同级,而
 刚 `self deploy` 完就跑 `selftest chat` 是**正常用法**:端口和 info 文件比 bootstrap 接线早,那个窗口里路由会答 503 `selftest_not_wired`,CLI 每 2s 重试、最多等 60s,等到了就在 `replied` 的 detail 里写一句 `waited …ms for selftest wiring`。
 
 输出:逐行 `✓ / ✗ name — detail`,末行 `PASS` / `FAIL`;`--json` 给 `{ ok, kind, target, checks, taskId?, sessionId?, durationMs, scratchPath? }`。退出码 0 通过 / 1 有检查项失败 / 2 daemon 没在跑。
+
+**phone**(手机协议 v2 真机闭环,`src/cli/selftest-phone.ts`):读 `GET /v1/settings/link` 拿链接令牌 → 连**真中继** → 配对一台一次性设备 → 用设备令牌重连并确认协商到 v2 → 订阅 `agents` 主题 → 经 operator(内部)API 派一个最小工作台任务,确认它的生命周期出现在订阅上 → 局域网撤销这台设备,确认被撤的令牌再也连不上。
+
+- **前提**:设置页「出门也能用」(远程中继)已开;daemon 在跑;本机连得上中继。没开会当场 FAIL,不会悄悄跳过。
+- 它会**配对一台一次性设备再撤销**。正常结束时不留痕迹。
+- FAIL 时中途没撤成功的话,输出里会写怎么手动清理:设置页 → 已配对设备 → 按 id / 配对时间「忘掉」那台。**任何输出都不打印令牌**(设备令牌是永不过期的活凭据);不知道 id 时先走局域网取列表再撤销。
+- 刚 `self deploy` 完跑也是正常用法(接线窗口的 503 由 CLI 自己等)。
 
 ## 两种 token 分别够得着什么
 

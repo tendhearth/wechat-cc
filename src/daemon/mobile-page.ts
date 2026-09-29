@@ -4,17 +4,21 @@
  * 编译后的 sidecar 没有源码树,生成物与冻结图一样随 JSON 编进二进制。
  */
 import page from './mobile-page.generated.json'
-import art from './mobile-presence-art.json'
 import { MOBILE_BRAND_ICON_VERSION } from './mobile-brand-icon'
 import { fillMobileTemplate, inlineScriptJson } from './mobile-page-template'
 
-/** 随身 CC 手机页 —— 此刻 / 一起做 / 回忆,自包含无 CDN,PWA 可加主屏。 */
+/**
+ * 随身 CC 手机页 —— 此刻 / 一起做 / 回忆,自包含无 CDN,PWA 可加主屏。
+ * 「此刻」形象画不再内联(手机协议包 v2 Task 4 fix round 1,2026-09-29):两张
+ * PNG base64 加起来 ~257KB,是页面撑爆中继 512KB 帧预算的大头。手机页 JS
+ * (apps/mobile/src/presence.js 的 loadPresenceArt)按需从
+ * GET /m/api/art/presence(settings-panel.ts,同一份 mobile-presence-art.json)
+ * 拉,不再走这里的运行时键填充。
+ */
 export function mobilePhoneHtml(token: string, remote: { relay: string; id: string } | null): string {
   return fillMobileTemplate(page.phone, {
     TOKEN_JSON: inlineScriptJson(token),
     REMOTE_JSON: inlineScriptJson(remote),
-    ART_UNLIT_B64: art.unlit.base64,
-    ART_LIT_B64: art.lit.base64,
   })
 }
 

@@ -12,3 +12,8 @@ src/daemon/mobile-page.generated.json text eol=lf
 
 # 「CC 眼中的你」眨眼帧:二进制原样进出(同 pet 资产)。
 apps/mobile/art/** -text
+
+# 公网中继壳页(手机协议包 v2 Task 4):relay/pset.html 是从 relay/pset.src.html
+# 生成的,apps/mobile/build.test.ts 同理按整份文本比对,同上理由钉死 LF。
+relay/pset.src.html text eol=lf
+relay/pset.html text eol=lf

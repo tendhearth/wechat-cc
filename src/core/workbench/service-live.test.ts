@@ -24,7 +24,7 @@ function setup(opts: { registerCodex?: boolean } = {}) {
   }
   const service = makeWorkbenchService({ store, registry, stateDir, ownerChatId: () => 'owner', changes: hub })
   const task = store.create({ title: 't', path: stateDir, providerId: 'codex', ownerChatId: 'owner' })
-  return { store, service, hub, id: task.id }
+  return { store, service, hub, id: task.id, stateDir }
 }
 
 describe('service 实时流面', () => {
@@ -120,5 +120,14 @@ describe('service 实时流面 · shutdown 与并发 wait', () => {
     const second = await service.changes.wait(id, v, 1000)   // 这一次的 wait 立刻发现 persisted>since
     expect(second).toBeGreaterThan(v)
     await expect(parked).resolves.toBe(second)   // 之前挂起的那位也该醒了,不用耗到超时
+  })
+  it('service.changes.onChange:create 落库 activate() 同步 touched,回调该任务的新 seq', () => {
+    const { service, stateDir } = setup({ registerCodex: true })
+    const calls: Array<[string, number]> = []
+    const off = service.changes.onChange((taskId, seq) => calls.push([taskId, seq]))
+    const created = service.create({ path: stateDir, providerId: 'codex', text: '新任务' })
+    expect(calls.length).toBeGreaterThan(0)
+    expect(calls.some(([taskId]) => taskId === created.id)).toBe(true)
+    off()
   })
 })

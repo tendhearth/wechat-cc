@@ -27,8 +27,8 @@ describe('assembleMobilePage', () => {
     const js = "s.replace(/x/, '$&$1$$$`')"
     expect(assembleMobilePage(files({ 'a.js': js })).phone).toBe(`<script>${js}</script>`)
   })
-  it('accepts digits in runtime marker names', () => {
-    expect(assembleMobilePage(files({ 'a.js': 'src="{{ART_LIT_B64}}"' })).phone).toContain('{{ART_LIT_B64}}')
+  it('leaves a registered runtime marker untouched for the daemon to fill later', () => {
+    expect(assembleMobilePage(files({ 'a.js': 'id="{{BRAND_ICON_VERSION}}"' })).phone).toContain('{{BRAND_ICON_VERSION}}')
   })
   it('refuses include cycles', () => {
     expect(() => assembleMobilePage(files({ 'a.js': '{{>phone.html}}' }))).toThrow(/include cycle phone\.html → a\.js → phone\.html/)

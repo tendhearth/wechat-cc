@@ -1,0 +1,24 @@
+{
+  "_generatedBy": "packages/protocol/src/v2.ts 自己生成的回归钉子(不是跨实现兼容向量):固定 shared(32 字节 0x00..0x1f)+ bind,推出 c2s/s2c 两把密钥,client 端顺序 seal 三帧(counter 0,1,2)记录密文。",
+  "shared": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "bind": "vector-bind-token-v2",
+  "c2s": "ZrHlccPBBoIqYu4gXtwli3eqTr9w-hu2-cXtkEN2puU",
+  "s2c": "lVu0rvevf6kGvjndp2Of7wMC-5Ytm8fbKorhsb1DFPg",
+  "frames": [
+    {
+      "c": "0",
+      "plaintext": "",
+      "ct": "FqFfArt6H9kEBV3-PiVRsw"
+    },
+    {
+      "c": "1",
+      "plaintext": "aGVsbG8gdjI",
+      "ct": "WEIvszg6rzSk1J7JZhNdfb4Srdxm116z"
+    },
+    {
+      "c": "2",
+      "plaintext": "eyJ0eXBlIjoicGluZyIsInNlcSI6MX0",
+      "ct": "kEHxfbjbpvkFEuq6AcGDW3RQcvyI_XW-2t4HLUXGBzPO8uJD3rTO"
+    }
+  ]
+}

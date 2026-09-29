@@ -1,0 +1,12 @@
+{
+  "_generatedBy": "packages/protocol/src/push.ts 自己生成的回归钉子(不是跨实现兼容向量):固定 deviceToken 推出推送密钥,再用固定 iv 对固定载荷 sealPush,记录密钥与密文。以后改动这份代码如果悄悄改变了输出,这里就会红。",
+  "deviceToken": "push-device-token-abc123",
+  "key": "YzTEfEY47mMXk4AOGQg5YBQrSdqsc6gWXNGyD_gXouQ",
+  "iv": "AAECAwQFBgcICQoL",
+  "payload": {
+    "ts": 1700000000000,
+    "kind": "approval_needed",
+    "taskId": "t-42"
+  },
+  "ct": "S-s6jx2-YxFMZAwS8NJgK6Wgl64DQffBhYCsU3GTVFj80ko27N-m4JrcJqUqSHiHEWA4Do5DfMwkuSjhG0u4akgIslJ0vMxhcBqh8CU"
+}

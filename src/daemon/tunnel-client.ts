@@ -12,15 +12,26 @@
  *      settings-panel uses (so /m/* and /set/* behave identically), seals the
  *      `{status,headers,body}` back under that stream.
  *
+ * Protocol v2 (2026-09-29): a phone whose handshake carries `v:[…,2]` gets
+ * `{hs, v:2}` back and speaks v2 on that stream — per-direction keys, counter
+ * nonces + replay rejection, `req`/`res` with headers + binary bodies, and
+ * `sub`/`unsub` onto the PhoneEvents hub. That per-stream logic lives in
+ * tunnel-v2-stream.ts; this file only negotiates, identifies the device and
+ * routes frames. v1 streams behave exactly as before (fully concurrent). Only
+ * the ordering-sensitive part is serialized per stream (one promise chain):
+ * handshakes, v2 device identification and v2 `channel.open` — the counter
+ * check needs frames OPENED in arrival order. A v2 `req` is dispatched off the
+ * chain once opened, so a slow request (a chat `say` awaiting a model turn)
+ * never head-of-line-blocks the requests behind it.
+ *
  * The relay never sees plaintext (tunnel.ts is content-blind); confidentiality
  * lives entirely here + on the phone. Device-token auth still applies: the
  * synthesized request carries the phone's `d=` token in its URL, so an
  * un-paired phone's requests 401 exactly as on the LAN.
  */
-import { deriveSharedBits, hkdfAesKey, generateTunnelKeypair, exportPublicKeyB64, importPublicKeyB64, sealFrame, openFrame, type TunnelKeypair } from '../lib/tunnel-crypto'
-import type { webcrypto } from 'node:crypto'
-
-type CryptoKey = webcrypto.CryptoKey
+import { deriveSharedBits, hkdfAesKey, generateTunnelKeypair, exportPublicKeyB64, importPublicKeyB64, sealFrame, openFrame, type TunnelKeypair, type TunnelSharedKey } from '../lib/tunnel-crypto'
+import type { PhoneEvents } from './phone-events'
+import { identifyV2, makeV2Stream, tunnelRequestUrl, type V2Stream } from './tunnel-v2-stream'
 
 /** Minimal WS surface (browser-style events) both Bun's WebSocket and a fake satisfy. */
 export interface TunnelWS {
@@ -52,6 +63,14 @@ export interface TunnelClientDeps {
   /** Injected clock (tests). Backoff/down-time accounting only. */
   now?: () => number
   log?: (tag: string, line: string) => void
+  /** v2 订阅的事件集线器。没有 ⇒ v2 的 `sub` 一律回 `err subscriptions_unavailable`。 */
+  events?: PhoneEvents
+}
+
+/** Does this handshake ask for v2? (`v` is an array containing 2; anything else ⇒ v1.) */
+function wantsV2(frame: unknown): boolean {
+  const v = (frame as { v?: unknown }).v
+  return Array.isArray(v) && v.includes(2)
 }
 
 /** Read a plaintext handshake control frame → the peer's pubkey b64, or null. */
@@ -76,7 +95,25 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   let now = deps.now ?? (() => Date.now())
   // Per-stream ephemeral state: our keypair, the raw ECDH bits, and — once the
   // first frame identifies the device — the token-bound key + that device token.
-  const streams = new Map<string, { kp: TunnelKeypair; bits: ArrayBuffer; key?: CryptoKey; device?: string }>()
+  // v2 streams also carry `v2: true` from the handshake and, once identified, their V2Stream.
+  type StreamState = { kp: TunnelKeypair; bits: ArrayBuffer; key?: TunnelSharedKey; device?: string; v2?: boolean; v2s?: V2Stream }
+  const streams = new Map<string, StreamState>()
+  // One promise chain per stream for the ordering-sensitive work (handshake, v2
+  // identification + open). v2 req handling is dispatched off it; v1 never uses it
+  // once its handshake is done.
+  const chains = new Map<string, Promise<void>>()
+  function enqueue(stream: string, task: () => Promise<void>): void {
+    const next = (chains.get(stream) ?? Promise.resolve())
+      .then(task)
+      .catch(e => log('TUNNEL', `stream ${stream} handler threw: ${String(e)}`))
+    chains.set(stream, next)
+    void next.then(() => { if (chains.get(stream) === next) chains.delete(stream) })
+  }
+  /** Forget a stream: drop its keys and unsubscribe everything it held. */
+  function forgetStream(stream: string): void {
+    streams.get(stream)?.v2s?.close()
+    streams.delete(stream)
+  }
   let ws: TunnelWS | null = null
   let stopped = false
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -105,6 +142,26 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     if (typeof (pingTimer as unknown as { unref?: () => void }).unref === 'function') (pingTimer as unknown as { unref: () => void }).unref()
   }
 
+  // 认不出的流(2026-09-29 终审):心跳判死重连后 streams 清空了,但中继 registerDaemon 让手机
+  // 的旧流原样挂到新 socket 上 —— 手机那头 WebSocket 不断,它再发的密封帧在这里一律找不到
+  // 状态。以前只记一行就丢,只挂订阅的客户端永远察觉不到(Live Activity / 角标冻住)。现在
+  // 明文回 `{error:'stream_unknown'}`,客户端据此断开重握手。握手进行中的流不会走到这里:
+  // hs 进了这条流的串行链,后面的帧排在它后面,轮到时状态已经在了。每条流每 5 s 最多回一次,
+  // 防止跟一个坏客户端来回打乒乓。
+  const STREAM_UNKNOWN_EVERY_MS = 5_000
+  const unknownNotified = new Map<string, number>()
+  function notifyStreamUnknown(stream: string, frame: unknown): void {
+    const ct = (frame as { ct?: unknown } | null)?.ct
+    if (typeof ct !== 'string') { log('TUNNEL', `non-sealed frame on unknown stream ${stream} — dropped`); return }
+    const t = now()
+    const last = unknownNotified.get(stream)
+    if (last !== undefined && t - last < STREAM_UNKNOWN_EVERY_MS) return
+    for (const [s, at] of unknownNotified) if (t - at >= STREAM_UNKNOWN_EVERY_MS) unknownNotified.delete(s)
+    unknownNotified.set(stream, t)
+    log('TUNNEL', `sealed frame on unknown stream ${stream} (relay reconnect / before handshake) — told phone stream_unknown`)
+    sendToStream(stream, { error: 'stream_unknown' })
+  }
+
   const defaultConnect = (url: string): TunnelWS => new (globalThis as unknown as { WebSocket: new (u: string) => TunnelWS }).WebSocket(url)
   const connect = deps.connect ?? defaultConnect
 
@@ -119,10 +176,17 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       // bits, reply with our pubkey. The FINAL key isn't derivable yet — it's
       // HKDF-bound to the device token, which we learn by trial-decrypting the
       // first sealed frame below.
+      // A re-handshake on the same stream id drops the old keys + subscriptions.
+      streams.get(stream)?.v2s?.close()
       const kp = await generateTunnelKeypair()
       let bits: ArrayBuffer
       try { bits = await deriveSharedBits(kp.privateKey, await importPublicKeyB64(hsPub)) }
       catch { log('TUNNEL', `bad handshake pubkey on ${stream}`); return }
+      if (wantsV2(frame)) {
+        streams.set(stream, { kp, bits, v2: true })
+        sendToStream(stream, { hs: await exportPublicKeyB64(kp.publicKey), v: 2 })
+        return
+      }
       streams.set(stream, { kp, bits })
       sendToStream(stream, { hs: await exportPublicKeyB64(kp.publicKey) })
       return
@@ -131,7 +195,8 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     // the paired token whose HKDF(bits, token) key decrypts it. A MITM relay
     // knows no token, so no candidate authenticates → dropped.
     const st = streams.get(stream)
-    if (!st) { log('TUNNEL', `sealed frame before handshake on ${stream} — dropped`); return }
+    if (!st) { notifyStreamUnknown(stream, frame); return }
+    if (st.v2) { await onV2Frame(stream, st, frame); return }
     let reqBytes: Uint8Array | null = null
     if (st.key) {
       try { reqBytes = await openFrame(st.key, frame as { iv: string; ct: string }) } catch { reqBytes = null }
@@ -172,14 +237,9 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     // 它拼进 authority(host 被污染 → 误路由到别的 pathname);畸形路径(如裸 %、
     // 带空格)还会让 new URL 直接抛 —— 而 onStreamFrame 是 void 调用,抛出即变成
     // 未捕获的 promise rejection。两种都干净丢弃,不路由、不 reject。
-    if (!parsed.path.startsWith('/')) { log('TUNNEL', `non-absolute path on ${stream} — dropped`); return }
-    let synthUrl: URL
-    try { synthUrl = new URL(`http://127.0.0.1${parsed.path}`) }
-    catch { log('TUNNEL', `unparseable path on ${stream} — dropped`); return }
-    synthUrl.searchParams.delete('d'); synthUrl.searchParams.delete('t')
-    if (st.device) synthUrl.searchParams.set('d', st.device)
-    // Mark tunnel-origin so mutating/dangerous ops can refuse over remote.
-    synthUrl.searchParams.set('_via', 'tunnel')
+    // tunnelRequestUrl also marks tunnel-origin (_via=tunnel) so mutating/dangerous ops can refuse over remote.
+    const synthUrl = tunnelRequestUrl(parsed.path, st.device)
+    if (typeof synthUrl === 'string') { log('TUNNEL', `${synthUrl} path on ${stream} — dropped`); return }
     let res: Response
     try { res = await deps.handleRequest(new Request(synthUrl.toString(), init)) }
     catch (e) { log('TUNNEL', `handleRequest threw on ${stream}: ${String(e)}`); return }
@@ -191,6 +251,39 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       body: bodyText,
     }))
     if (st.key) sendToStream(stream, await sealFrame(st.key, replyBytes))
+  }
+
+  /** Token list the tunnel accepts right now: paired devices + the active /set link token. */
+  function candidateTokens(): string[] {
+    const link = deps.activeLinkToken?.() ?? null
+    return link ? [...deps.knownDeviceTokens(), link] : deps.knownDeviceTokens()
+  }
+
+  async function onV2Frame(stream: string, st: StreamState, frame: unknown): Promise<void> {
+    if (st.v2s) { await st.v2s.onFrame(frame); return }
+    // First sealed frame: identify the device by which token's channel opens it.
+    const hit = identifyV2(new Uint8Array(st.bits), candidateTokens(), frame)
+    if (!hit) {
+      log('TUNNEL', `frame auth failed on ${stream} (no paired device / expired link / MITM) — dropped`)
+      sendToStream(stream, { error: 'auth_failed' })
+      return
+    }
+    const token = hit.token
+    st.device = token
+    st.v2s = makeV2Stream({
+      stream, channel: hit.channel, token,
+      send: (f) => { if (streams.get(stream) === st) sendToStream(stream, f) },
+      handleRequest: deps.handleRequest,
+      events: deps.events,
+      tokenValid: () => deps.knownDeviceTokens().includes(token) || (deps.activeLinkToken?.() ?? null) === token,
+      onRevoked: () => {
+        if (streams.get(stream) !== st) return
+        streams.delete(stream)
+        sendToStream(stream, { error: 'auth_failed' })
+      },
+      log,
+    })
+    await st.v2s.onPlaintext(hit.plaintext)
   }
 
   function open(): void {
@@ -216,12 +309,18 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       awaitingPong = false
       if (msg.pong !== undefined) return   // 纯心跳回执,不是数据帧
       if (typeof msg.stream !== 'string') return
-      if (msg.closed === true) { streams.delete(msg.stream); return }   // relay 通知手机断开 — 释放该 stream 的密钥条目
-      void onStreamFrame(msg.stream, msg.frame)
+      if (msg.closed === true) { forgetStream(msg.stream); return }   // relay 通知手机断开 — 释放该 stream 的密钥条目与订阅
+      const stream = msg.stream, frame = msg.frame
+      // Handshakes, v2 streams, and anything queued behind a pending handshake go
+      // through the per-stream chain; an established v1 stream stays fully concurrent.
+      if (handshakePlaintext(frame) || streams.get(stream)?.v2 || chains.has(stream)) enqueue(stream, () => onStreamFrame(stream, frame))
+      else void onStreamFrame(stream, frame)
     })
     ws.addEventListener('close', () => {
       stopHeartbeat()
+      for (const st of streams.values()) st.v2s?.close()
       streams.clear()
+      chains.clear()
       ws = null
       if (stopped) return
       // 指数退避:min·2^n,封顶 max。只在首次断开记一条,后续静默重试
@@ -240,6 +339,8 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       stopped = true
       stopHeartbeat()
       if (reconnectTimer) clearTimeout(reconnectTimer)
+      for (const st of streams.values()) st.v2s?.close()
+      streams.clear()
       try { ws?.close() } catch { /* noop */ }
       ws = null
     },

@@ -38,6 +38,7 @@ import type { InboundCtx } from '../inbound/types'
 import type { AppTurn } from '../inbound/build'
 import { basename as pathBasename } from 'node:path'
 import { makeSettingsPanel } from '../settings-panel'
+import { makePhoneEventsWiring } from '../phone-topic-sources'
 import { makeCommandRouter } from './command-router'
 import { makeEventsStore } from '../events/store'
 import { makeGuestRequestStore } from '../guest-requests'
@@ -640,9 +641,19 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   if (remoteTunnel) {
     const daemonId = remoteTunnel.id
     const daemonRelay = (remoteCfg.remote_relay_url ?? 'wss://cc.tendhearth.com/tunnel/phone').replace('/tunnel/phone', '/tunnel/daemon')
+    // 手机协议 v2 的订阅(第 11 步):四路来源(home / matter/<id> / approvals / agents)+ 集线器;
+    // 工作台一变就 poke(回调里只许 poke,见 makePhoneEventsWiring)。推送出口 onNotify 先是空的 ——
+    // 真正发推送是子项目 2。随 daemon 常驻,不 dispose(轮询定时器 unref,且只在有订阅时跑)。
+    const phone = makePhoneEventsWiring({
+      ...(opts.workbench ? { workbench: opts.workbench, changes: opts.workbench.changes } : {}),
+      ...(opts.matters ? { matters: opts.matters } : {}),
+      home: (limit, o) => settingsPanel.home(limit, o),
+      log: (tag, line) => log(tag, line),
+    })
     import('../tunnel-client').then(({ makeTunnelClient }) => {
       makeTunnelClient({
         daemonId,
+        events: phone.events,
         handleRequest: (req) => settingsPanel.handleRequest(req),
         // 设备令牌从面板取(梳理第 6 步:不再裸读 settings-devices.json,文件只有 device-store 一个读者)。
         knownDeviceTokens: () => settingsPanel.deviceTokens(),

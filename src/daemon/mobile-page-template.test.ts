@@ -3,10 +3,10 @@ import { fillMobileTemplate, inlineScriptJson } from './mobile-page-template'
 
 describe('fillMobileTemplate', () => {
   it('fills every runtime key', () => {
-    expect(fillMobileTemplate('a{{TOKEN_JSON}}b{{ART_LIT_B64}}', { TOKEN_JSON: '"x"', ART_LIT_B64: 'QQ==' })).toBe('a"x"bQQ==')
+    expect(fillMobileTemplate('a{{TOKEN_JSON}}b{{BRAND_ICON_VERSION}}', { TOKEN_JSON: '"x"', BRAND_ICON_VERSION: 'abc123' })).toBe('a"x"babc123')
   })
   it('is single-pass: a value that looks like a marker is not rescanned', () => {
-    expect(fillMobileTemplate('{{TOKEN_JSON}}|{{ART_LIT_B64}}', { TOKEN_JSON: '{{ART_LIT_B64}}', ART_LIT_B64: 'IMG' })).toBe('{{ART_LIT_B64}}|IMG')
+    expect(fillMobileTemplate('{{TOKEN_JSON}}|{{BRAND_ICON_VERSION}}', { TOKEN_JSON: '{{BRAND_ICON_VERSION}}', BRAND_ICON_VERSION: 'IMG' })).toBe('{{BRAND_ICON_VERSION}}|IMG')
   })
   it('inserts $-patterns literally', () => {
     expect(fillMobileTemplate('[{{TOKEN_JSON}}]', { TOKEN_JSON: "$&$'$`$$" })).toBe("[$&$'$`$$]")

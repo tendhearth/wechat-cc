@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { LAN_ONLY_OPS, LINK_ROUTES, PHONE_ROUTES, phoneRouteAllowed } from './phone-routes'
+import { LAN_ONLY_OPS, LINK_ROUTES, PHONE_ROUTES, PHONE_TOPICS, phoneRouteAllowed, phoneTopicAllowed } from './phone-routes'
 
 describe('phoneRouteAllowed', () => {
   it('精确键命中', () => {
@@ -20,5 +20,30 @@ describe('phoneRouteAllowed', () => {
   it('链接令牌与设备令牌同一套(裁决 1);只允局域网的三条', () => {
     expect([...LINK_ROUTES].sort()).toEqual([...PHONE_ROUTES].sort())
     expect([...LAN_ONLY_OPS].sort()).toEqual(['forget_devices', 'revoke_device', 'set_remote'])
+  })
+})
+
+describe('phoneTopicAllowed', () => {
+  it('三个固定主题精确命中', () => {
+    expect(phoneTopicAllowed('home')).toBe(true)
+    expect(phoneTopicAllowed('approvals')).toBe(true)
+    expect(phoneTopicAllowed('agents')).toBe(true)
+  })
+  it('matter/<id>:id 合法就放行', () => {
+    expect(phoneTopicAllowed('matter/abc123')).toBe(true)
+    expect(phoneTopicAllowed('matter/a')).toBe(true)
+    expect(phoneTopicAllowed(`matter/${'a'.repeat(64)}`)).toBe(true)
+  })
+  it('matter/ 前缀本身、id 超长、id 里有非法字符、路径穿越 ⇒ 拒', () => {
+    expect(phoneTopicAllowed('matter/')).toBe(false)
+    expect(phoneTopicAllowed(`matter/${'a'.repeat(65)}`)).toBe(false)
+    expect(phoneTopicAllowed('matter/../x')).toBe(false)
+    expect(phoneTopicAllowed('matter/a b')).toBe(false)
+    expect(phoneTopicAllowed('matter/a/b')).toBe(false)
+  })
+  it('未知主题 ⇒ 拒', () => {
+    expect(phoneTopicAllowed('unknown')).toBe(false)
+    expect(phoneTopicAllowed('')).toBe(false)
+    expect(phoneTopicAllowed('Home')).toBe(false)
   })
 })

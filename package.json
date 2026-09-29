@@ -21,7 +21,8 @@
   "license": "MIT",
   "type": "module",
   "workspaces": [
-    "apps/*"
+    "apps/*",
+    "packages/*"
   ],
   "bin": {
     "wechat-cc": "./cli.ts"
@@ -46,6 +47,7 @@
     "@huggingface/transformers": "^4.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@openai/codex-sdk": "0.144.4",
+    "@wechat-cc/protocol": "workspace:*",
     "ai": "^5",
     "marked": "^18.0.0",
     "qrcode-terminal": "^0.12.0",

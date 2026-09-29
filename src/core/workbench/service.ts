@@ -160,7 +160,7 @@ export function makeWorkbenchService(opts: Options) {
     resolvePermission:inputsDomain.resolvePermission,
     async handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>{return wechatControl(chatId,text,identity)},
     shutdown:lifecycleDomain.shutdown,
-    changes: {
+    changes: { onChange: (cb: (taskId: string, seq: number) => void) => changes.onChange(cb),
       /** store.version 才是权威:hub 缓存可能因为一笔回滚的事务而"幻影提前",落库的 seq 从不会。
        * 提前发现(persisted>since)时也顺手 publish 一下,把挂在旧值上的 waiter 一并叫醒,
        * 不用等它们各自超时。 */

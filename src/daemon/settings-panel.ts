@@ -34,6 +34,7 @@ import { capabilitiesFor } from '../core/capability-matrix'
 import { PROVIDER_IDS } from '../lib/provider-ids'
 import { buildFeed, decodeCursor, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
 import blinkArt from './mobile-blink-art.json'
+import presenceArt from './mobile-presence-art.json'
 import { MOBILE_BRAND_ICON_PNG, MOBILE_BRAND_ICON_SIZES } from './mobile-brand-icon'
 import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions,type MobileUploadActions} from './mobile-workbench'
 import {mobileMatterDetailResponse} from './mobile-matter-response'
@@ -157,6 +158,23 @@ export interface SettingsPanel {
   /** Route one request — shared by the LAN Bun.serve and the remote tunnel
    *  client, so /m/* and /set/* behave identically over both transports. */
   handleRequest(req: Request): Promise<Response>
+  /** `/m/api/home` 的载荷,不经 HTTP(手机事件集线器的 `home` 主题用)。`work: false` 跳过「手头这件事」。 */
+  home(limit: number, opts?: { work?: boolean }): Promise<HomePayload>
+}
+
+/** `/m/api/home` 的回包形状。 */
+export interface HomePayload {
+  ok: true
+  synced_at: string
+  today: string
+  presence: Presence | null
+  work?: Awaited<ReturnType<typeof mobileHomeFocus>>
+  presence_error?: 'unavailable'
+  unread: number
+  seen_until: string | null
+  events: ReturnType<typeof buildFeed>['events']
+  next_cursor: ReturnType<typeof buildFeed>['next_cursor']
+  sources_degraded: ReturnType<typeof buildFeed>['sources_degraded']
 }
 
 /** First non-internal IPv4 address (en0 preferred). Re-exported from
@@ -293,6 +311,33 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       todos: { active, settled },
       portrait,
       stickers: deps.stickers?.list() ?? [],
+    }
+  }
+
+  /**
+   * `/m/api/home` 的载荷(手机协议 v2 第 11 步抽出来):路由与手机事件集线器的 `home` 主题
+   * 共用这一个构建函数,不经 HTTP。`work: false` 跳过「手头这件事」(要逐个读任务详情,
+   * 集线器每 2 s 轮询一次时不该付这个钱;主题只取未读 / CC 状态 / 最新动态游标)。
+   */
+  const home = async (limit: number, opts: { work?: boolean } = {}): Promise<HomePayload> => {
+    let presence: Presence | null = null
+    let presenceFailed = false
+    try { presence = (await deps.presence?.()) ?? null } catch (e) { presenceFailed = true; deps.log('SETTINGS', `presence 读不到: ${e instanceof Error ? e.message : e}`) }
+    const tz = feedTimezone()
+    const seenUntil = readSeen()
+    const r = buildFeed(collectSources(), { ownerChatId: deps.ownerChatId(), timezone: tz, limit, seenUntil })
+    return {
+      ok: true,
+      synced_at: new Date(now()).toISOString(),
+      today: dayKey(now(), tz),
+      presence,
+      ...(opts.work === false ? {} : { work: await mobileHomeFocus(deps.matters) }),
+      ...(presenceFailed ? { presence_error: 'unavailable' as const } : {}),
+      unread: r.unread,
+      seen_until: seenUntil,
+      events: r.events,
+      next_cursor: r.next_cursor,
+      sources_degraded: r.sources_degraded,
     }
   }
 
@@ -463,6 +508,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     },
 
     handleRequest,
+    home,
     async start(port = 0) {
       if (server) return { port: server.port! }
       server = serve({
@@ -574,31 +620,19 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           if (url.pathname === '/m/api/art/blink' && req.method === 'GET') {
             return json({ ok: true, mime: 'image/png', half: blinkArt.half.base64, closed: blinkArt.closed.base64 })
           }
+          // 「此刻」形象画(手机协议包 v2 Task 4 fix round 1,2026-09-29):按需拉,
+          // 不再内联进 /m 页 —— 两张 PNG base64 加起来 ~257KB,是页面撑爆中继
+          // 512KB 帧预算的大头。apps/mobile/src/presence.js 的 loadPresenceArt() 调这个。
+          if (url.pathname === '/m/api/art/presence' && req.method === 'GET') {
+            return json({ ok: true, mime: 'image/png', unlit: presenceArt.unlit.base64, lit: presenceArt.lit.base64 })
+          }
           if (url.pathname === '/m/api/memory' && req.method === 'GET') {
             if (!deps.curatedMemory) return json({ ok: false, error: 'memory_not_wired' }, 503)
             // 经隧道时 handleRequest 抛出不会回包,手机会一直等 —— 这里兜住,让页面走「暂时读不到」。
             try { return json({ ok: true, ...deps.curatedMemory() }) } catch { return json({ ok: false, error: 'unavailable' }, 500) }
           }
           if (url.pathname === '/m/api/home' && req.method === 'GET') {
-            let presence: Presence | null = null
-            let presenceFailed = false
-            try { presence = (await deps.presence?.()) ?? null } catch (e) { presenceFailed = true; deps.log('SETTINGS', `presence 读不到: ${e instanceof Error ? e.message : e}`) }
-            const tz = feedTimezone()
-            const seenUntil = readSeen()
-            const r = buildFeed(collectSources(), { ownerChatId: deps.ownerChatId(), timezone: tz, limit: parseLimit(url), seenUntil })
-            return json({
-              ok: true,
-              synced_at: new Date(now()).toISOString(),
-              today: dayKey(now(), tz),
-              presence,
-              work: await mobileHomeFocus(deps.matters),
-              ...(presenceFailed ? { presence_error: 'unavailable' } : {}),
-              unread: r.unread,
-              seen_until: seenUntil,
-              events: r.events,
-              next_cursor: r.next_cursor,
-              sources_degraded: r.sources_degraded,
-            })
+            return json(await home(parseLimit(url)))
           }
           if (url.pathname === '/m/api/feed' && req.method === 'GET') {
             const cursor = url.searchParams.get('cursor')

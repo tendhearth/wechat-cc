@@ -34,6 +34,7 @@ wechat-cc self deploy                # 换 inode + kickstart + 健康门,不过�
 # 3. 真机自检(daemon 在跑的前提下)
 wechat-cc selftest workbench --executor cursor --image --resume   # 加 --keep 保留 scratch 项目
 wechat-cc selftest chat --provider cursor --resume
+wechat-cc selftest phone                # 手机协议 v2 真机闭环(需开「出门也能用」)
 
 # 4. 推 dev,看 CI
 git push origin dev
@@ -63,12 +64,16 @@ wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resum
 | --- | --- |
 | [deploy.md](deploy.md) | sidecar 构建、`self deploy`、inode 陷阱、launchd 崩溃循环怎么看、plist 为什么指主二进制 |
 | [release.md](release.md) | 给用户发版:四个人工步骤、两道 `release-signing` 批准、tag 镜像、R2 更新源;和 `self deploy` 的区别 |
-| [verify.md](verify.md) | `selftest` 两种用法、两种 token 分别够得着什么、必须主人在场的检查清单 |
+| [verify.md](verify.md) | `selftest` 三种用法(workbench / chat / phone)、两种 token 分别够得着什么、必须主人在场的检查清单 |
 | [mobile-presence.md](mobile-presence.md) | 手机此刻、待处理入口、成果与回忆,断线提交和冻结资产的接线边界 |
 | [ci-and-flakes.md](ci-and-flakes.md) | 三平台作业、Windows 排除清单的规矩、`ci triage` 与 flake 登记表、PR 与合并纪律 |
 | [self-change.md](self-change.md) | 让 CC 自己改自己:五道闸门、修复轮上限、退出码、停机与 `--unhalt`、微信不通时怎么拍板(`--approve` / 桌面卡)、禁改清单、费用、微信「自改」 |
 | [migrations.md](migrations.md) | `user_version` 是计数、新迁移要改的三处测试、指纹与 `foreign_keys` 坑 |
 | [rules-from-real-machines.md](rules-from-real-machines.md) | 真机(而不是单测)抓到的规矩清单 —— 写代码前先扫一眼 |
+
+## 协议包在哪
+
+手机 ↔ 中继 ↔ 后台的加密与消息在 `packages/protocol`(`@wechat-cc/protocol`),API、向量再生、纯净规则见它的 [README](../../packages/protocol/README.md)。**新运行时接入(比如 RN app)一句话:实现 `ProtocolSocket` 五个方法(含 `onOpen`),把它交给 `makeProtocolClient`,自己别碰加密。**
 
 ## 为什么有这份手册
 
