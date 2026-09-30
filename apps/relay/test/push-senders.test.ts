@@ -130,4 +130,20 @@ describe('fix round 1', () => {
     const r = await sendFcm({ serviceAccount: sa, host: 'https://h', tokenUrl: 'https://oauth.test', token: 't'.repeat(30), sealed: SEALED, now: 1, fetch: f as never })
     expect(r).toEqual({ ok: false, code: 'oauth_failed', invalid: false })
   })
+
+  // e2e(Task 14)抓到的:workerd 的全局 fetch 被当成 `o.fetch(...)` 方法调用会抛 Illegal invocation,
+  // 被 catch 吞成 `network` —— 默认路径(sendPush 传全局 fetch)推送全挂。这里用一个跟 workerd 一样挑 this 的 fetch。
+  it('注入的 fetch 不带 this 调用(workerd 全局 fetch 挑 this)', async () => {
+    const calls: string[] = []
+    const strict = async function (this: unknown, url: string) {
+      if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation')
+      calls.push(String(url))
+      return String(url).includes('oauth') ? Response.json({ access_token: 'at', expires_in: 3600 }) : new Response(null, { status: 200 })
+    }
+    const keyP8 = await p256Pem()
+    expect(await sendApns({ keyP8, keyId: 'KTHIS', teamId: 'T', topic: 'x', host: 'https://h', token: 'ab'.repeat(32), sealed: SEALED, now: 1, fetch: strict as never })).toEqual({ ok: true, code: 'ok' })
+    const sa = JSON.stringify({ project_id: 'pthis', client_email: 'c@pthis.iam.gserviceaccount.com', private_key: await rsaPem() })
+    expect(await sendFcm({ serviceAccount: sa, host: 'https://h', tokenUrl: 'https://oauth.test', token: 't'.repeat(30), sealed: SEALED, now: 1, fetch: strict as never })).toEqual({ ok: true, code: 'ok' })
+    expect(calls).toHaveLength(3)
+  })
 })

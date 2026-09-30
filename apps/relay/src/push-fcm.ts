@@ -43,7 +43,8 @@ export async function sendFcm(o: {
     const at = await accessToken(sa, o.tokenUrl, o.now, o.fetch)
     const android: Record<string, string> = { priority: 'HIGH', ttl: '3600s' }
     if (o.collapseId) android.collapse_key = o.collapseId
-    res = await o.fetch(`${o.host}/v1/projects/${sa.project_id}/messages:send`, {
+    const f = o.fetch   // 不带 this 调(workerd 全局 fetch 挑 this,见 push-apns)
+    res = await f(`${o.host}/v1/projects/${sa.project_id}/messages:send`, {
       method: 'POST',
       headers: { authorization: `Bearer ${at}`, 'content-type': 'application/json' },
       body: JSON.stringify({ message: { token: o.token, data: { wcc: JSON.stringify(o.sealed) }, android } }),

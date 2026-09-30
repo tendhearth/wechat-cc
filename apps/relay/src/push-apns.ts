@@ -70,7 +70,9 @@ export async function sendApns(o: {
     }
     if (o.collapseId) headers['apns-collapse-id'] = truncUtf8(o.collapseId.replace(/[^\x20-\x7e]/g, '_'), 64)   // 头值必须是 ASCII
     const body = JSON.stringify({ aps: { alert: { title: 'CC', body: 'CC 有新动态' }, 'mutable-content': 1, sound: 'default' }, wcc: o.sealed })
-    res = await o.fetch(`${o.host}/3/device/${o.token}`, { method: 'POST', headers, body })
+    // 解构出来再调:workerd 的全局 fetch 被当 `o.fetch(…)` 方法调用会抛 Illegal invocation(this 不对)。
+    const f = o.fetch
+    res = await f(`${o.host}/3/device/${o.token}`, { method: 'POST', headers, body })
   } catch {
     return { ok: false, code: 'network', invalid: false }
   }
