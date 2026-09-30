@@ -217,6 +217,80 @@ describe('随身 CC (phone PWA + device pairing)', () => {
     expect((await fetch(`${base}/m/api/state?t=${t}`)).status).toBe(401)                // short token dead
   })
 
+  describe('推送路由', () => {
+    const TOK = 'ab'.repeat(32)
+    function mkPanel(push?: unknown) {
+      return makeSettingsPanel({
+        stateDir, ownerChatId: () => OWNER,
+        chatPrefs: { get: () => ({}), set: (_c, p) => p },
+        getUserName: () => '大人', setUserName: async () => {}, log: () => {}, now: () => nowMs,
+        remote: { isEnabled: () => false, setEnabled: () => {}, requestRestart: () => {} },
+        push: push as never,
+      })
+    }
+    async function up(p: SettingsPanel) {
+      const { port } = await p.start(0)
+      const base = `http://127.0.0.1:${port}`
+      const link = p.issueToken()
+      const r = await (await fetch(`${base}/set/api/pair?t=${link}`, { method: 'POST' })).json() as { device_token: string }
+      const id = (p.state() as { remote: { devices: Array<{ id: string }> } }).remote.devices[0]!.id
+      const call = (path: string, tok: string, body: unknown) =>
+        fetch(`${base}${path}?t=${tok}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      return { link, token: r.device_token, id, call }
+    }
+    const mkPush = (over: Record<string, unknown> = {}) => ({ register: vi.fn(() => true), test: vi.fn(), unregister: vi.fn(), forgetAll: vi.fn(), ...over })
+
+    it('设备令牌登记 APNs token ⇒ 交给 push.register(按设备 id)', async () => {
+      const push = mkPush()
+      const p = mkPanel(push)
+      const { token, id, call } = await up(p)
+      const r = await call('/m/api/push/register', token, { platform: 'apns', token: TOK })
+      expect(r.status).toBe(200)
+      expect(await r.json()).toEqual({ ok: true })
+      expect(push.register).toHaveBeenCalledWith(id, 'apns', TOK)
+      await p.stop()
+    })
+    it('链接令牌不许登记 ⇒ 403 device_only', async () => {
+      const push = mkPush()
+      const p = mkPanel(push)
+      const { link, call } = await up(p)
+      const r = await call('/m/api/push/register', link, { platform: 'apns', token: TOK })
+      expect(r.status).toBe(403)
+      expect(await r.json()).toEqual({ ok: false, error: 'device_only' })
+      await p.stop()
+    })
+    it('平台 / token 不合法 ⇒ 400 invalid;没接线 ⇒ 503', async () => {
+      const p = mkPanel(mkPush())
+      const { token, call } = await up(p)
+      expect((await call('/m/api/push/register', token, { platform: 'sms', token: 'x' })).status).toBe(400)
+      expect((await call('/m/api/push/register', token, { platform: 'apns', token: 'zz' })).status).toBe(400)
+      await p.stop()
+      const bare = mkPanel(undefined)
+      const b = await up(bare)
+      expect((await b.call('/m/api/push/register', b.token, { platform: 'apns', token: TOK })).status).toBe(503)
+      await bare.stop()
+    })
+    it('测试通知 ⇒ 回中继结果', async () => {
+      const push = mkPush({ test: vi.fn(async () => ({ ok: false, code: 'BadDeviceToken' })) })
+      const p = mkPanel(push)
+      const { token, id, call } = await up(p)
+      const r = await call('/m/api/push/test', token, {})
+      expect(await r.json()).toEqual({ ok: true, result: { ok: false, code: 'BadDeviceToken' } })
+      expect(push.test).toHaveBeenCalledWith(id)
+      await p.stop()
+    })
+    it('撤销 / 全忘设备 ⇒ 同时退推送登记', async () => {
+      const push = mkPush()
+      const p = mkPanel(push)
+      const { id } = await up(p)
+      await p.apply({ op: 'revoke_device', id })
+      expect(push.unregister).toHaveBeenCalledWith(id)
+      await p.apply({ op: 'forget_devices' })
+      expect(push.forgetAll).toHaveBeenCalled()
+      await p.stop()
+    })
+  })
+
   it('/m without token serves the localStorage bootstrap (200), API stays 401', async () => {
     const { port } = await panel.start(0)
     const base = `http://127.0.0.1:${port}`
