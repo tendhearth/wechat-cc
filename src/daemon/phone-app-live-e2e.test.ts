@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { makeProtocolClient, type ProtocolSocket } from '@wechat-cc/protocol'
 import { openDb, type Db } from '../lib/db'
 import { removeTempDir } from '../lib/test-temp'
@@ -272,7 +273,7 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
     const task = createTask('after-revoke')     // 有变化 ⇒ 集线器发事件前核对令牌 ⇒ 明文 auth_failed
     await expect.poll(() => b.connection().state, P).toBe('revoked')
     const out = phoneOut, before = handled.length
-    await expect(b.say(task.id, 'hi')).rejects.toMatchObject({ code: 'revoked' })
+    await expect(b.say(task.id, 'hi', randomUUID())).rejects.toMatchObject({ code: 'revoked' })
     await expect(b.matters('en')).rejects.toMatchObject({ code: 'revoked' })
     await new Promise(r => setTimeout(r, 100))   // 推迟到微任务 / 定时器里的发送也要被看见
     expect(phoneOut).toBe(out)
@@ -294,7 +295,7 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
     expect(await settled).toMatchObject({ code: 'revoked' })
     expect(b.connection().state).toBe('revoked')
     const out = phoneOut, before = handled.length
-    await expect(b.say(task.id, 'hi')).rejects.toMatchObject({ code: 'revoked' })
+    await expect(b.say(task.id, 'hi', randomUUID())).rejects.toMatchObject({ code: 'revoked' })
     await expect(b.matters('en')).rejects.toMatchObject({ code: 'revoked' })
     await new Promise(r => setTimeout(r, 100))   // 同上
     expect(phoneOut).toBe(out)
@@ -316,10 +317,10 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
     await release(first)
     await expect.poll(async () => (await b.matter(first.id, 'en')).task?.status, P).not.toBe('running')
     // 一句成功的 say
-    await b.say(first.id, 'first words')
+    await b.say(first.id, 'first words', randomUUID())
     // 一句超时的 say:面板扣住不回(协议客户端对 retry:true 的请求同 rid 重发一次,都在拒绝之前)
     const go = hold('POST /m/api/matter/say')
-    await expect(b.say(first.id, 'lost words')).rejects.toMatchObject({ code: 'timeout' })
+    await expect(b.say(first.id, 'lost words', randomUUID())).rejects.toMatchObject({ code: 'timeout' })
     go()
     await expect.poll(() => b.connection().state, P).toBe('online')
     const sayCount = () => handled.filter(h => h === 'POST /m/api/matter/say').length
@@ -338,6 +339,22 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
     expect(posts()).toBe(p0)
     expect(sayCount()).toBe(says0)
     await release(first); await release(task)
+  })
+
+  it('说一句「不确定」后用同一个 requestId 重发 ⇒ daemon 按 requestId 去重:不起第二轮;换一个 requestId 才被当成新话(这一轮在跑 ⇒ busy)', async () => {
+    const b = live()
+    const task = createTask('say-dedupe')
+    await release(task)
+    await expect.poll(async () => (await b.matter(task.id, 'en')).task?.status, P).not.toBe('running')
+    const rid = randomUUID()
+    await b.say(task.id, 'only once', rid)
+    await expect.poll(() => gates.some(g => g.path === task.path), P).toBe(true)   // 这句起了新一轮
+    const runs = gates.length
+    await b.say(task.id, 'only once', rid)                                          // 重发:同一张回执,不报 busy
+    await expect(b.say(task.id, 'only once', randomUUID())).rejects.toMatchObject({ code: 'busy' })
+    await new Promise(r => setTimeout(r, 100))
+    expect(gates.length).toBe(runs)
+    await release(task)
   })
 
   it('前后台:setActive(false) 关连接;setActive(true) 新握手、订阅重挂', async () => {

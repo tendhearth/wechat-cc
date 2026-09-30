@@ -14,7 +14,7 @@ import { serifFamily } from '../ui/fonts'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { useTheme } from '../ui/useTheme'
-import { composeTooLong } from '../view/compose'
+import { composeOutcome, composeTooLong } from '../view/compose'
 import { canSubmit } from '../view/connection'
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)
@@ -33,7 +33,7 @@ export default function Compose() {
   const [note, setNote] = useState(false)
   const [adjust, setAdjust] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [outcome, setOutcome] = useState<null | 'failed' | 'uncertain' | 'busy' | 'ccBusy' | 'tooLong'>(null)
+  const [outcome, setOutcome] = useState<null | 'failed' | 'uncertain' | 'busy' | 'ccBusy' | 'tooLong' | 'revoked'>(null)
   const [projectId, setProjectId] = useState<string | null>(null)
   const [providerId, setProviderId] = useState<string | null>(null)
   const sending = useRef(false)
@@ -54,8 +54,10 @@ export default function Compose() {
     setBusy(true); setOutcome(null)
     let newId: string | null = null
     const r = await submit(`compose:${draftKey}`, async () => {
-      if (matter) await backend.say(matter, body)
-      else newId = (await backend.create({ requestId: requestIdFor(draftKey, body), text: body, projectId: project?.id, providerId: provider?.id })).matterId
+      // 同一份草稿、同样正文重发(「不确定」之后再点)⇒ 同一个 requestId,daemon 去重,不会说两遍。
+      const requestId = requestIdFor(draftKey, body)
+      if (matter) await backend.say(matter, body, requestId)
+      else newId = (await backend.create({ requestId, text: body, projectId: project?.id, providerId: provider?.id })).matterId
     })
     sending.current = false
     setBusy(false)
@@ -66,7 +68,7 @@ export default function Compose() {
       if (matter) router.back()
       else router.replace(`/matter/${encodeURIComponent(newId ?? '')}`)
     } else {
-      setOutcome(r.error === 'uncertain' ? 'uncertain' : r.error === 'busy' ? 'ccBusy' : 'failed')
+      setOutcome(composeOutcome(r.error))
     }
   }
 
@@ -114,7 +116,7 @@ export default function Compose() {
           )}
           <Button kind="primary" testID="compose-send" label={t(lang, 'compose.send')} onPress={send} disabled={!text.trim() || !online} busy={busy} />
           <ConnectionNotice />
-          {outcome ? <Text testID={`compose-${outcome}`} accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14 }}>{t(lang, outcome === 'uncertain' ? 'compose.uncertain' : outcome === 'busy' ? 'compose.busy' : outcome === 'ccBusy' ? 'common.ccBusy' : outcome === 'tooLong' ? 'compose.tooLong' : 'compose.failed')}</Text> : null}
+          {outcome ? <Text testID={`compose-${outcome}`} accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14 }}>{t(lang, outcome === 'uncertain' ? 'compose.uncertain' : outcome === 'busy' ? 'compose.busy' : outcome === 'ccBusy' ? 'common.ccBusy' : outcome === 'tooLong' ? 'compose.tooLong' : outcome === 'revoked' ? 'conn.revokedTitle' : 'compose.failed')}</Text> : null}
           <Text style={{ color: c.muted, fontSize: 13, textAlign: 'center' }}>{t(lang, 'compose.willAskYou')}</Text>
           {matter ? null : (
             <Pressable accessibilityRole="button" onPress={() => setText(text.trim() ? `${text}\n${t(lang, 'compose.placeholder')}` : t(lang, 'compose.placeholder'))}>

@@ -31,7 +31,8 @@ export interface Backend {
   decide(p: { id: string; runId: string; requestId: string; decision: 'allow' | 'deny' }): Promise<void>
   /** answers 形状与 daemon validateUserInputAnswers 一致:每题一个 string[](单选 1 个;多选 1–8 个、不重复;每条 ≤ 4000 字)。null = 不回答。 */
   answer(p: { id: string; runId: string; requestId: string; answers: Record<string, string[]> | null }): Promise<void>
-  say(id: string, text: string): Promise<void>
+  /** requestId:同一份草稿、同样的正文重发用同一个(daemon 对工作台任务按它去重),正文改了才换。 */
+  say(id: string, text: string, requestId: string): Promise<void>
   entryOptions(lang: Lang): Promise<EntryOptionsT>
   /** requestId:同一份草稿、同样的正文重发用同一个(daemon 据此去重、超时后查回执)。projectId 缺省 ⇒ 由 CC 安排(managed)。 */
   create(p: { requestId: string; text: string; projectId?: string; providerId?: string }): Promise<{ matterId: string }>

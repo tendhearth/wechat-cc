@@ -16,7 +16,6 @@ import {
 } from '@wechat-cc/protocol'
 import { INITIAL_CONNECTION, reduceConnection, type ConnEvent } from '../net/connection'
 import { mapPhoneError, transportErrorCode } from '../net/errors'
-import { uuid as makeUuid } from '../net/uuid'
 import {
   BackendError,
   type ApprovalExplanationT, type Backend, type Connection, type DeviceRowT, type EntryOptionsT,
@@ -32,7 +31,6 @@ export type LiveDeps = {
   token: string
   now?: () => number
   log?: (line: string) => void
-  uuid?: () => string
   makeClient?: (o: ClientOpts) => ProtocolClient
   clientOpts?: Partial<Pick<ClientOpts, 'requestTimeoutMs' | 'handshakeTimeoutMs' | 'keepaliveMs' | 'requestDeadlineMs'>>
 }
@@ -45,7 +43,6 @@ type Reg = { topic: Topic; cbs: Set<(d: unknown) => void>; off: (() => void) | n
 export function makeLiveBackend(d: LiveDeps): Backend {
   const now = d.now ?? (() => Date.now())
   const log = d.log ?? (() => {})
-  const newId = d.uuid ?? (() => makeUuid())
   const mk = d.makeClient ?? makeProtocolClient
   let conn: Connection = INITIAL_CONNECTION
   const connLs = new Set<(c: Connection) => void>()
@@ -70,8 +67,12 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     const next = reduceConnection(conn, e)
     if (next === conn) return
     conn = next
-    for (const cb of [...connLs]) cb(conn)
+    // 一个监听者抛错不能打断别的监听者,更不能打断 revoke() 后面的 closeClient()。
+    for (const cb of [...connLs]) {
+      try { cb(conn) } catch (e) { log(`connection listener threw (${e instanceof Error ? e.name : 'unknown'})`) }
+    }
   }
+  const connection = (): Connection => conn
   function closeClient(): void {
     gen++ // 旧客户端之后的回调一律作废
     const c = client
@@ -130,15 +131,25 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     if (hookDepth > 0) await new Promise<void>(r => queueMicrotask(r))
     if (conn.state === 'revoked') throw new BackendError('revoked')
     if (!client) throw new BackendError('offline')
+    const c = client
+    const my = gen
     const method = key.slice(0, key.indexOf(' '))
     let res: Awaited<ReturnType<ProtocolClient['request']>>
     try {
-      res = await client.request({
+      res = await c.request({
         method, path,
         ...(init.body !== undefined ? { body: JSON.stringify(init.body), headers: { 'content-type': 'application/json' } } : {}),
         ...(init.retry !== undefined ? { retry: init.retry } : {}),
       })
     } catch (e) {
+      // 这条可能已经送到电脑上,是我们自己把连接关了(进后台 / dispose / 撤销):不能说「没送到」。
+      // 撤销了 ⇒ revoked;否则 ⇒ timeout,store 译成「不确定」,页面去重拉。
+      if (e instanceof Error && e.message === 'closed' && (my !== gen || disposed)) {
+        // (await 期间 revoke() 可能已改了 conn;TS 按 await 之前的收窄判断,这里重新读一次。)
+        if (connection().state === 'revoked') throw new BackendError('revoked')
+        log(`${key}: closed locally while in flight`)
+        throw new BackendError('timeout')
+      }
       const code = transportErrorCode(e)
       if (code === 'revoked') revoke()
       else log(`${key}: ${code}`)
@@ -208,9 +219,9 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       if (p.answers !== null && JSON.stringify(p.answers).length > PHONE_ANSWER_MAX_JSON) throw new BackendError('invalid')
       await call('POST /m/api/matter/answer', '/m/api/matter/answer', { body: { id: p.id, runId: p.runId, requestId: p.requestId, answers: p.answers } })
     },
-    async say(id, text) {
+    async say(id, text, requestId) {
       if (text.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
-      await call('POST /m/api/matter/say', '/m/api/matter/say', { body: { id, text, requestId: newId() }, retry: true })
+      await call('POST /m/api/matter/say', '/m/api/matter/say', { body: { id, text, requestId }, retry: true })
     },
     async entryOptions() {
       return strip(await call<{ ok: true } & EntryOptionsT>('GET /m/api/entry/options', '/m/api/entry/options'))
@@ -230,7 +241,11 @@ export function makeLiveBackend(d: LiveDeps): Backend {
         try {
           const r = await call<{ receipt: { matterId: string } }>('GET /m/api/matter/create-receipt', `/m/api/matter/create-receipt?requestId=${encodeURIComponent(p.requestId)}`)
           return { matterId: r.receipt.matterId }
-        } catch { throw e }
+        } catch (e2) {
+          // 查回执时发现被撤销:如实报 revoked,别让原来的超时盖掉。
+          if (e2 instanceof BackendError && e2.code === 'revoked') throw e2
+          throw e
+        }
       }
     },
     async devices() {

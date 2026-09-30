@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { answersTooLong, approvalView, buildAnswers, pinnedRequest, togglePick, multiLimitReached, ANSWER_MAX_CHARS, ANSWER_MAX_MULTI } from './approval'
+import { answersTooLong, approvalOutcome, approvalView, buildAnswers, pinnedRequest, togglePick, multiLimitReached, ANSWER_MAX_CHARS, ANSWER_MAX_MULTI } from './approval'
 
 const base = {
   matter: { id: 'ab12cd34', kind: 'task', title: 'x', projectPath: '/p', status: 'open', ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: 1, updatedAt: 1 },
@@ -152,5 +152,19 @@ describe('answersTooLong(与 daemon 的 20 000 字 JSON 上限一致)', () => {
     expect(answersTooLong({ q: ['ok'] })).toBe(false)
     expect(answersTooLong({ q: ['x'.repeat(19_980)] })).toBe(false)
     expect(answersTooLong({ q: ['x'.repeat(20_000)] })).toBe(true)
+  })
+})
+
+describe('approvalOutcome:提交失败码 ⇒ 页内提示', () => {
+  it('stale ⇒ handled;busy ⇒ ccBusy;uncertain ⇒ uncertain', () => {
+    expect(approvalOutcome('stale')).toBe('handled')
+    expect(approvalOutcome('busy')).toBe('ccBusy')
+    expect(approvalOutcome('uncertain')).toBe('uncertain')
+  })
+  it('revoked ⇒ revoked(不是「请稍后再试」)', () => {
+    expect(approvalOutcome('revoked')).toBe('revoked')
+  })
+  it('其余 ⇒ failed', () => {
+    for (const e of ['offline', 'unknown', 'invalid', 'not_found']) expect(approvalOutcome(e)).toBe('failed')
   })
 })

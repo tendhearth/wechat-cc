@@ -99,3 +99,12 @@ export function pinnedRequest(param: string | undefined, pinned: string | undefi
 export function answersTooLong(answers: Record<string, string[]> | null): boolean {
   return answers !== null && JSON.stringify(answers).length > PHONE_ANSWER_MAX_JSON
 }
+
+/** 批准 / 回答提交失败码 ⇒ 页内提示。revoked 单列:手机已不再配对,「稍后再试」是错的(横幅由 ConnectionNotice 讲)。 */
+export function approvalOutcome(error: string): 'handled' | 'ccBusy' | 'uncertain' | 'revoked' | 'failed' {
+  if (error === 'stale') return 'handled'
+  if (error === 'busy') return 'ccBusy'
+  if (error === 'uncertain') return 'uncertain'
+  if (error === 'revoked') return 'revoked'
+  return 'failed'
+}

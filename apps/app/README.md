@@ -62,7 +62,8 @@ src/ui/           组件与色板(tokens.ts,明暗两套;明暗只是外观,不�
 
 - **只走中继**:`r…` daemon id ⇒ `wss://<中继主机>/v2/phone?id=<id>`;`t…` id ⇒ `wss://<中继主机>/tunnel/phone?id=<id>`。链接里的 `lan=` 解析并记下,但**不使用**(daemon 的局域网口没有 v2 订阅,见计划裁决 1)。
 - 所有接口返回都过 `PHONE_API_SCHEMAS` 的 zod schema,主题事件过各自的 Topic schema;解析失败 ⇒ 事件丢弃并记日志,请求抛 `BackendError('unknown')`。
-- 错误映射只在 `src/net/errors.ts` 一处:`permission_stale / question_stale / input_stale` ⇒ `stale`;`auth_failed` 或 HTTP 401 ⇒ `revoked`;`timeout` ⇒ `timeout`(界面当「不确定」);`unreachable / daemon_offline / closed / stream_unknown / rate_limited / quota_exceeded / too_many_streams` 及未知传输错误 ⇒ `offline`;`matter_not_found` ⇒ `not_found`;`invalid` 与 `invalid_*`(含 `invalid_answer`)⇒ `invalid`;其余 ⇒ `unknown`。
+- 错误映射只在 `src/net/errors.ts` 一处:`permission_stale / question_stale / input_stale` ⇒ `stale`;`auth_failed` 或 HTTP 401 ⇒ `revoked`;`timeout` ⇒ `timeout`(界面当「不确定」);`unreachable / daemon_offline / closed / stream_unknown / rate_limited / quota_exceeded / too_many_streams` 及未知传输错误 ⇒ `offline`(例外:请求在飞时是本机自己关的连接——进后台 / dispose / 撤销——`live.ts` 报 `timeout`,撤销了则报 `revoked`:那一条可能已经送到);`matter_not_found` ⇒ `not_found`;`invalid` 与 `invalid_*`(含 `invalid_answer`)⇒ `invalid`;其余 ⇒ `unknown`。
+- 说一句与交办的 `requestId` 按草稿稳定(`state/drafts.ts` `requestIdFor`:同一份草稿、同样正文重发用同一个,正文改了才换,发成功删草稿时一起丢)。
 - 上限:回答 `JSON.stringify(answers).length > 20_000`、说一句正文 `> 20_000` 字,在手机上就拦下,不发(协议包常量 `PHONE_ANSWER_MAX_JSON` / `PHONE_SAY_MAX_CHARS`)。
 - **撤销 ≠ 离线**:撤销 ⇒ 停止提交、清掉钥匙串里的设备令牌、显示「重新配对」;暂时离线 ⇒ 显示上次同步时间、草稿照写、发送 / 批准 / 拒绝锁住。两者文案与 testID 都不同。
 - **草稿永不自动发送**:重连后只重拉读,不重放写;不做乐观成功。

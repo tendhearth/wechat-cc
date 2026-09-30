@@ -17,9 +17,9 @@ import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { useTheme } from '../../ui/useTheme'
 import { canSubmit } from '../../view/connection'
-import { ANSWER_MAX_CHARS, ANSWER_MAX_MULTI, answersTooLong, approvalView, buildAnswers, multiLimitReached, pinnedRequest, togglePick, type ApprovalView } from '../../view/approval'
+import { ANSWER_MAX_CHARS, ANSWER_MAX_MULTI, answersTooLong, approvalOutcome, approvalView, buildAnswers, multiLimitReached, pinnedRequest, togglePick, type ApprovalView } from '../../view/approval'
 
-type Outcome = null | { requestId: string; kind: 'handled' | 'uncertain' | 'failed' | 'ccBusy' | 'tooLong' }
+type Outcome = null | { requestId: string; kind: 'handled' | 'uncertain' | 'failed' | 'ccBusy' | 'tooLong' | 'revoked' }
 type CardView = Extract<ApprovalView, { kind: 'card' }>
 type QuestionView = Extract<ApprovalView, { kind: 'question' }>
 
@@ -87,18 +87,14 @@ export default function Approval() {
     }
     inflight.current = false
     setPending(null)
-    if (r.error === 'stale') {
-      setOutcome({ requestId, kind: 'handled' })
+    const shown = approvalOutcome(r.error)
+    setOutcome({ requestId, kind: shown })
+    if (shown === 'handled') {
       void refreshDetail()
-    } else if (r.error === 'busy') {
-      setOutcome({ requestId, kind: 'ccBusy' })
-    } else if (r.error === 'uncertain') {
-      setOutcome({ requestId, kind: 'uncertain' })
+    } else if (shown === 'uncertain') {
       setRefreshing(true)
       await Promise.all([refreshDetail(), refreshInsight()])
       if (alive.current) setRefreshing(false)
-    } else {
-      setOutcome({ requestId, kind: 'failed' })
     }
   }
 
@@ -193,6 +189,7 @@ export default function Approval() {
       {shownOutcome === 'uncertain' ? <Text testID="approval-uncertain" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'approval.uncertain')}</Text> : null}
       {shownOutcome === 'tooLong' ? <Text testID="approval-too-long" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'approval.answerTooLong')}</Text> : null}
       {shownOutcome === 'ccBusy' ? <Text testID="approval-cc-busy" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'common.ccBusy')}</Text> : null}
+      {shownOutcome === 'revoked' ? <Text testID="approval-revoked" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'conn.revokedTitle')}</Text> : null}
       {shownOutcome === 'failed' ? <Text testID="approval-failed" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'approval.failed')}</Text> : null}
     </>
   )

@@ -19,6 +19,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   let epoch = 0 // reset() 之后让旧定时器失效
   let seq = 0
   let createdBy = new Map<string, string>()
+  let saidBy = new Set<string>()
   let deviceLabel = ''
   const subs = new Map<Topic, Set<(d: any) => void>>()
 
@@ -181,8 +182,11 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       ev(e, 'progress', 'evAnswered', text); e.stage = 'answered'; touch(e, { phase: 'working' }); publish([id])
       later(2000, () => { e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id]) })
     },
-    async say(id, text) {
+    async say(id, text, requestId) {
       const e = get(id)
+      // 与 daemon 一致:同一个 requestId 重发 ⇒ 当作已收到,不重复记。
+      if (saidBy.has(requestId)) return
+      saidBy.add(requestId)
       evText(e, 'user', text); touch(e, {}); publish([id])
       later(2000, () => { ev(e, 'assistant', 'ccReply'); touch(e, {}); publish([id]) })
     },
@@ -214,6 +218,6 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async unpair() {},
     setActive() {},
     dispose() {},
-    reset() { epoch++; seq = 0; createdBy = new Map(); deviceLabel = ''; seed(); publish([...order]) },
+    reset() { epoch++; seq = 0; createdBy = new Map(); saidBy = new Set(); deviceLabel = ''; seed(); publish([...order]) },
   }
 }

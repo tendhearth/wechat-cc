@@ -3,21 +3,25 @@ import { PHONE_API_SCHEMAS, type ClientOpts, type ProtocolClient, type ProtocolR
 import { makeLiveBackend } from './live'
 import type { Connection } from './types'
 import { ID, RUN, REQ, MATTER, DETAIL, OPTIONS, WB_TASK, RECEIPT, DEVICES, STATE, PROGRESS } from './fixtures'
+const SAY_REQ = '5a7e0000-0000-4000-8000-000000000001'
+const SAY_REQ2 = '5a7e0000-0000-4000-8000-000000000002'
 
 // 真 schema 的夹具在 fixtures.ts(第一条用例先证明它们本身过 PHONE_API_SCHEMAS)。
 
-type Reply = { status: number; json: unknown } | Error
+/** HANG:请求已发出、一直不回;客户端 close() 时按协议客户端的 failAll 以 Error('closed') 拒掉。 */
+const HANG = Symbol('hang')
+type Reply = { status: number; json: unknown } | Error | typeof HANG
 type Handler = (req: { path: string; body: any }) => Reply
 
 /** 假协议客户端:按「METHOD /path」回夹具;每次 makeClient 都是一个新客户端(模拟重连 / 前后台)。 */
 function harness(routes: Record<string, Handler | Reply> = {}) {
-  const clients: Array<{ opts: ClientOpts; subs: Map<string, (d: unknown) => void>; closed: boolean }> = []
+  const clients: Array<{ opts: ClientOpts; subs: Map<string, (d: unknown) => void>; closed: boolean; hanging: Array<(e: Error) => void> }> = []
   const reqs: Array<{ key: string; path: string; body: any; retry?: boolean; inHook: boolean }> = []
   /** 正在协议客户端的 onStatus 钩子里:这时回头调客户端可能开出第二条连接(Task 1 的已知坑)。 */
   let inHook = false
   const hookCalls: string[] = []
   const makeClient = (opts: ClientOpts): ProtocolClient => {
-    const me = { opts, subs: new Map<string, (d: unknown) => void>(), closed: false }
+    const me = { opts, subs: new Map<string, (d: unknown) => void>(), closed: false, hanging: [] as Array<(e: Error) => void> }
     clients.push(me)
     return {
       version: () => 2,
@@ -29,17 +33,22 @@ function harness(routes: Record<string, Handler | Reply> = {}) {
         const h = routes[key]
         const out = typeof h === 'function' ? h({ path: r.path, body }) : h
         if (!out) throw new Error('timeout')
+        if (out === HANG) return new Promise<never>((_, rej) => { me.hanging.push(rej) })
         if (out instanceof Error) throw out
         const text = JSON.stringify(out.json)
         return { status: out.status, headers: {}, body: new TextEncoder().encode(text), text: () => text, json: <T,>() => JSON.parse(text) as T }
       },
       subscribe(topic, cb) { if (inHook) hookCalls.push(`subscribe ${topic}`); me.subs.set(topic, d => cb(d, { epoch: 'e', seq: 1 })); return () => { me.subs.delete(topic) } },
-      close() { if (inHook) hookCalls.push('close'); me.closed = true },
+      close() {
+        if (inHook) hookCalls.push('close')
+        me.closed = true
+        for (const rej of me.hanging.splice(0)) rej(new Error('closed'))
+      },
     }
   }
   const last = () => clients.at(-1)!
   const logs: string[] = []
-  const b = makeLiveBackend({ open: () => { throw new Error('unused') }, token: 'd-secret-token', makeClient, now: () => 1_000_000, uuid: () => REQ, log: l => logs.push(l) })
+  const b = makeLiveBackend({ open: () => { throw new Error('unused') }, token: 'd-secret-token', makeClient, now: () => 1_000_000, log: l => logs.push(l) })
   const status = (s: 'connecting' | 'ready' | 'down' | 'auth_failed') => {
     inHook = true
     try { last().opts.onStatus?.(s) } finally { inHook = false }
@@ -111,12 +120,14 @@ describe('LiveBackend 提交', () => {
     await b.answer({ id: ID, runId: RUN, requestId: REQ, answers: { q: ['short'] } })
     expect(reqs[0]?.body).toEqual({ id: ID, runId: RUN, requestId: REQ, answers: { q: ['short'] } })
   })
-  it('说一句:带 uuid requestId、可重试;超长 ⇒ invalid 不发', async () => {
+  it('说一句:带调用方给的 requestId(同一份草稿重发同一个,daemon 去重)、可重试;超长 ⇒ invalid 不发', async () => {
     const { b, reqs } = harness({ 'POST /m/api/matter/say': ok({ ok: true, result: { kind: 'chat', reply: 'ok' } }) })
-    await b.say(ID, 'hi')
-    expect(reqs[0]).toMatchObject({ body: { id: ID, text: 'hi', requestId: REQ }, retry: true })
-    await expect(b.say(ID, 'x'.repeat(20_001))).rejects.toMatchObject({ code: 'invalid' })
-    expect(reqs).toHaveLength(1)
+    await b.say(ID, 'hi', SAY_REQ)
+    await b.say(ID, 'hi', SAY_REQ)
+    expect(reqs[0]).toMatchObject({ body: { id: ID, text: 'hi', requestId: SAY_REQ }, retry: true })
+    expect(reqs[1]?.body.requestId).toBe(SAY_REQ)
+    await expect(b.say(ID, 'x'.repeat(20_001), SAY_REQ)).rejects.toMatchObject({ code: 'invalid' })
+    expect(reqs).toHaveLength(2)
   })
   it('交办:有项目 ⇒ target project;没有 ⇒ managed;返回回执里的 matterId', async () => {
     const { b, reqs } = harness({ 'POST /m/api/matter/create': ok({ ok: true, receipt: RECEIPT, task: WB_TASK }, 202) })
@@ -132,6 +143,49 @@ describe('LiveBackend 提交', () => {
     const missing = harness({ 'POST /m/api/matter/create': new Error('timeout'), 'GET /m/api/matter/create-receipt': ok({ ok: false, error: 'matter_not_found' }, 404) })
     await expect(missing.b.create({ requestId: REQ, text: 't' })).rejects.toMatchObject({ code: 'timeout' })
   })
+  it('交办超时后查回执时发现被撤销 ⇒ revoked(不被超时盖掉)', async () => {
+    const h = harness({ 'POST /m/api/matter/create': new Error('timeout'), 'GET /m/api/matter/create-receipt': ok({ error: 'unauthorized' }, 401) })
+    await expect(h.b.create({ requestId: REQ, text: 't' })).rejects.toMatchObject({ code: 'revoked' })
+    expect(h.b.connection().state).toBe('revoked')
+  })
+})
+
+describe('LiveBackend 自己关掉连接时还在飞的提交', () => {
+  const PERM = { id: ID, runId: RUN, requestId: REQ, decision: 'allow' as const }
+  it('批准已发出、App 进后台(setActive(false))⇒ timeout(store 译成「不确定」),不是 offline', async () => {
+    const h = harness({ 'POST /m/api/matter/permission': HANG })
+    h.status('ready')
+    const p = h.b.decide(PERM)
+    await new Promise(r => setTimeout(r, 0))
+    expect(h.reqs).toHaveLength(1)
+    h.b.setActive(false)
+    await expect(p).rejects.toMatchObject({ code: 'timeout' })
+  })
+  it('说一句已发出、后端被 dispose ⇒ timeout', async () => {
+    const h = harness({ 'POST /m/api/matter/say': HANG })
+    const p = h.b.say(ID, 'hi', SAY_REQ)
+    await new Promise(r => setTimeout(r, 0))
+    h.b.dispose()
+    await expect(p).rejects.toMatchObject({ code: 'timeout' })
+  })
+  it('批准在飞时另一条请求撞上撤销 ⇒ 在飞的这条也是 revoked', async () => {
+    const h = harness({ 'POST /m/api/matter/permission': HANG, 'GET /m/api/matters': new Error('auth_failed') })
+    const p = h.b.decide(PERM)
+    await new Promise(r => setTimeout(r, 0))
+    await expect(h.b.matters('en')).rejects.toMatchObject({ code: 'revoked' })
+    await expect(p).rejects.toMatchObject({ code: 'revoked' })
+  })
+  it('交办在飞时进后台 ⇒ 查回执也没连接,结果仍是 timeout(不确定)', async () => {
+    const h = harness({ 'POST /m/api/matter/create': HANG })
+    const p = h.b.create({ requestId: REQ, text: 't' })
+    await new Promise(r => setTimeout(r, 0))
+    h.b.setActive(false)
+    await expect(p).rejects.toMatchObject({ code: 'timeout' })
+  })
+  it('不是自己关的(电脑那边断了,daemon_offline)⇒ 仍是 offline', async () => {
+    const h = harness({ 'POST /m/api/matter/permission': new Error('daemon_offline') })
+    await expect(h.b.decide(PERM)).rejects.toMatchObject({ code: 'offline' })
+  })
 })
 
 describe('LiveBackend 撤销', () => {
@@ -142,7 +196,7 @@ describe('LiveBackend 撤销', () => {
     expect(h.last().closed).toBe(true)
     const n = h.reqs.length
     await expect(h.b.matters('en')).rejects.toMatchObject({ code: 'revoked' })
-    await expect(h.b.say(ID, 'x')).rejects.toMatchObject({ code: 'revoked' })
+    await expect(h.b.say(ID, 'x', SAY_REQ)).rejects.toMatchObject({ code: 'revoked' })
     expect(h.reqs.length).toBe(n)
   })
   it('协议客户端报 auth_failed 状态 ⇒ revoked;HTTP 401 ⇒ revoked', async () => {
@@ -152,6 +206,24 @@ describe('LiveBackend 撤销', () => {
     const c = harness({ 'GET /m/api/matters': ok({ error: 'unauthorized' }, 401) })
     await expect(c.b.matters('en')).rejects.toMatchObject({ code: 'revoked' })
     expect(c.b.connection().state).toBe('revoked')
+  })
+  it('订阅被拒 auth_failed ⇒ revoked,客户端关掉', async () => {
+    const h = harness()
+    h.last().opts.onSubscriptionError?.('approvals', 'auth_failed')
+    expect(h.b.connection().state).toBe('revoked')
+    await Promise.resolve()
+    expect(h.last().closed).toBe(true)
+  })
+  it('一个连接监听者抛错,撤销照样完成、其他监听者照样收到', async () => {
+    const h = harness()
+    const seen: string[] = []
+    h.b.onConnection(c => { if (c.state === 'revoked') throw new Error('boom') })
+    h.b.onConnection(c => { seen.push(c.state) })
+    expect(() => h.status('auth_failed')).not.toThrow()
+    expect(h.b.connection().state).toBe('revoked')
+    expect(seen.at(-1)).toBe('revoked')
+    await Promise.resolve()
+    expect(h.last().closed).toBe(true)
   })
   it('revoked 之后 setActive(true) 不再连', () => {
     const h = harness()
@@ -211,8 +283,8 @@ describe('LiveBackend 连接与订阅', () => {
     let n = 0
     const h = harness({ 'POST /m/api/matter/say': () => (n++ === 0 ? ok({ ok: true, result: { kind: 'chat', reply: 'ok' } }) : new Error('timeout')) })
     h.status('ready')
-    await h.b.say(ID, 'first')
-    await expect(h.b.say(ID, 'second')).rejects.toMatchObject({ code: 'timeout' })
+    await h.b.say(ID, 'first', SAY_REQ)
+    await expect(h.b.say(ID, 'second', SAY_REQ2)).rejects.toMatchObject({ code: 'timeout' })
     const posts = () => h.reqs.filter(r => r.key.startsWith('POST')).length
     expect(posts()).toBe(2)
     h.status('down')
@@ -221,6 +293,23 @@ describe('LiveBackend 连接与订阅', () => {
     expect(h.b.connection()).toMatchObject({ state: 'online', epoch: 2 })
     expect(posts()).toBe(2)
     expect(h.clients).toHaveLength(2)
+  })
+  it('订阅因非授权原因被拒:这一连接里不重挂;回前台新连接时重挂', async () => {
+    const h = harness()
+    h.b.subscribe('agents', () => {})
+    const first = h.last()
+    first.subs.delete('agents')
+    first.opts.onSubscriptionError?.('agents', 'forbidden')
+    await Promise.resolve()
+    expect(h.b.connection().state).not.toBe('revoked')
+    expect(h.logs.join('\n')).toContain('topic agents: forbidden')
+    h.b.subscribe('agents', () => {})
+    await Promise.resolve()
+    expect(first.subs.has('agents')).toBe(false)
+    h.b.setActive(false); h.b.setActive(true)
+    await Promise.resolve()
+    expect(h.clients).toHaveLength(2)
+    expect([...h.last().subs.keys()].sort()).toEqual(['agents', 'approvals'])
   })
   it('onStatus 钩子里从不同步回调协议客户端:监听者在钩子里读 / 订阅,推到微任务之后才发', async () => {
     const h = harness({ 'GET /m/api/matters': ok({ ok: true, matters: [] }) })

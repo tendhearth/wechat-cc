@@ -54,7 +54,10 @@ describe('演示后端', () => {
     vi.useFakeTimers()
     try {
       const b = makeDemoBackend()
-      await b.say('e5f6a7b8', 'hi')
+      await b.say('e5f6a7b8', 'hi', 'say-1')
+      expect((await b.matter('e5f6a7b8', 'en')).events.length).toBe(1)
+      // 同一个 requestId 重发(超时后重试)⇒ 不重复记
+      await b.say('e5f6a7b8', 'hi', 'say-1')
       expect((await b.matter('e5f6a7b8', 'en')).events.length).toBe(1)
       await vi.advanceTimersByTimeAsync(2000)
       expect((await b.matter('e5f6a7b8', 'en')).events.length).toBe(2)
