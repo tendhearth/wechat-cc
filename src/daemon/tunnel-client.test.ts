@@ -402,4 +402,54 @@ describe('tunnel-client:中继 v2 登录与控制帧', () => {
       client.stop()
     } finally { vi.useRealTimers() }
   })
+
+  it('v2 被拒(open 后 login_failed 再 close)⇒ 退避翻倍,不卡在 2s', () => {
+    vi.useFakeTimers()
+    try {
+      const socks = [fakeSocket(), fakeSocket(), fakeSocket()]
+      let n = 0
+      const connect = vi.fn((_u: string, _p?: string[]) => socks[n++]!.ws as never)
+      const client = makeTunnelClient({
+        daemonId: 'rabc', knownDeviceTokens: () => [], handleRequest: async () => new Response(''),
+        connect, log: () => {}, relayUrl: 'wss://relay.test/v2/daemon',
+        login: { sign: () => ({ pub: 'P', sig: 'S' }) },
+      })
+      client.start()
+      for (let i = 0; i < 2; i++) {
+        socks[i]!.emitOpen()
+        socks[i]!.emitMessage(JSON.stringify({ challenge: 'C', ts: 1 }))
+        socks[i]!.emitMessage(JSON.stringify({ error: 'login_failed' }))
+        socks[i]!.emitClose()
+      }
+      expect(connect).toHaveBeenCalledTimes(1)
+      vi.advanceTimersByTime(1999); expect(connect).toHaveBeenCalledTimes(1)
+      vi.advanceTimersByTime(1); expect(connect).toHaveBeenCalledTimes(2)   // 第一次 2s
+      socks[1]!.emitOpen(); socks[1]!.emitMessage(JSON.stringify({ error: 'login_failed' })); socks[1]!.emitClose()
+      vi.advanceTimersByTime(3999); expect(connect).toHaveBeenCalledTimes(2)
+      vi.advanceTimersByTime(1); expect(connect).toHaveBeenCalledTimes(3)   // 第二次 4s
+      client.stop()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('v2 login_ok 清零退避:之后断线又是 2s', () => {
+    vi.useFakeTimers()
+    try {
+      const socks = [fakeSocket(), fakeSocket(), fakeSocket()]
+      let n = 0
+      const connect = vi.fn((_u: string, _p?: string[]) => socks[n++]!.ws as never)
+      const client = makeTunnelClient({
+        daemonId: 'rabc', knownDeviceTokens: () => [], handleRequest: async () => new Response(''),
+        connect, log: () => {}, relayUrl: 'wss://relay.test/v2/daemon',
+        login: { sign: () => ({ pub: 'P', sig: 'S' }) },
+      })
+      client.start()
+      socks[0]!.emitOpen(); socks[0]!.emitClose()               // 被拒:attempts=1
+      vi.advanceTimersByTime(2000)
+      socks[1]!.emitOpen(); socks[1]!.emitMessage(JSON.stringify({ login_ok: true }))
+      socks[1]!.emitClose()                                      // 登录成功后断线 ⇒ 重新从 2s 起
+      vi.advanceTimersByTime(1999); expect(connect).toHaveBeenCalledTimes(2)
+      vi.advanceTimersByTime(1); expect(connect).toHaveBeenCalledTimes(3)
+      client.stop()
+    } finally { vi.useRealTimers() }
+  })
 })

@@ -310,7 +310,9 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     ws = deps.login
       ? connect(relayUrl, [RELAY_SUBPROTOCOL, relayIdProtocol(deps.daemonId)])
       : connect(`${relayUrl}?id=${encodeURIComponent(deps.daemonId)}`, undefined)
-    ws.addEventListener('open', () => {
+    // 连上后的总账:摘要日志 + 退避清零。v2 模式中继在 open 之后才可能拒绝(login_failed 4001 /
+    // rate_limited 4008 / replaced 4000),所以 v2 只在 login_ok 时清零,否则被拒会永远 2s 重连成风暴。
+    function markConnected(): void {
       if (reconnectAttempts > 0) {
         // 从一段断连中恢复 —— 一条摘要代替刷屏(N 次尝试 / 下线 Xs)。
         log('TUNNEL', `reconnected to relay after ${reconnectAttempts} attempt(s), down ${Math.round((now() - downSince) / 1000)}s`)
@@ -318,6 +320,9 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
         log('TUNNEL', `connected to relay as ${deps.daemonId}`)
       }
       reconnectAttempts = 0
+    }
+    ws.addEventListener('open', () => {
+      if (!deps.login) markConnected()
       if (ws) startHeartbeat(ws)
     })
     ws.addEventListener('message', (ev) => {
@@ -334,6 +339,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       }
       if ((msg as { login_ok?: unknown }).login_ok === true) {
         loggedIn = true
+        markConnected()
         log('TUNNEL', 'relay v2 login ok')
         try { deps.onLogin?.() } catch (e) { log('TUNNEL', `onLogin threw: ${String(e)}`) }
         return
