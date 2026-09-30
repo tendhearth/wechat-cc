@@ -14,6 +14,7 @@ import { serifFamily } from '../ui/fonts'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { useTheme } from '../ui/useTheme'
+import { sayTooLong } from '../view/compose'
 import { canSubmit } from '../view/connection'
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)
@@ -32,7 +33,7 @@ export default function Compose() {
   const [note, setNote] = useState(false)
   const [adjust, setAdjust] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [outcome, setOutcome] = useState<null | 'failed' | 'uncertain' | 'busy' | 'ccBusy'>(null)
+  const [outcome, setOutcome] = useState<null | 'failed' | 'uncertain' | 'busy' | 'ccBusy' | 'tooLong'>(null)
   const [projectId, setProjectId] = useState<string | null>(null)
   const [providerId, setProviderId] = useState<string | null>(null)
   const sending = useRef(false)
@@ -42,11 +43,13 @@ export default function Compose() {
   const provider = providerId ? opt?.providers.find((p) => p.id === providerId) : null
 
   // 不在线(连接中 / 离线 / 撤销)⇒ 草稿照写,「交给 CC」锁住,ConnectionNotice 说明原因。
-  // busy = 同一份草稿已在发(本机);ccBusy = CC 这一轮还在跑(daemon 409),草稿留着,等这一轮做完再发。
+  // busy = 同一份草稿已在发(本机);ccBusy = CC 这一轮还在跑(daemon 409),草稿留着,等这一轮做完再发;tooLong = 说一句超过上限。
   const online = canSubmit(conn)
   const send = async () => {
     const body = text.trim()
     if (!body || sending.current || !online) return
+    // 说一句超过 20 000 字:必然被拒,就在手机上拦下,请求不发、草稿留着
+    if (matter && sayTooLong(body)) { setOutcome('tooLong'); return }
     sending.current = true
     setBusy(true); setOutcome(null)
     let newId: string | null = null
@@ -111,7 +114,7 @@ export default function Compose() {
           )}
           <Button kind="primary" testID="compose-send" label={t(lang, 'compose.send')} onPress={send} disabled={!text.trim() || !online} busy={busy} />
           <ConnectionNotice />
-          {outcome ? <Text testID={`compose-${outcome}`} accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14 }}>{t(lang, outcome === 'uncertain' ? 'compose.uncertain' : outcome === 'busy' ? 'compose.busy' : outcome === 'ccBusy' ? 'common.ccBusy' : 'compose.failed')}</Text> : null}
+          {outcome ? <Text testID={`compose-${outcome}`} accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14 }}>{t(lang, outcome === 'uncertain' ? 'compose.uncertain' : outcome === 'busy' ? 'compose.busy' : outcome === 'ccBusy' ? 'common.ccBusy' : outcome === 'tooLong' ? 'compose.tooLong' : 'compose.failed')}</Text> : null}
           <Text style={{ color: c.muted, fontSize: 13, textAlign: 'center' }}>{t(lang, 'compose.willAskYou')}</Text>
           {matter ? null : (
             <Pressable accessibilityRole="button" onPress={() => setText(text.trim() ? `${text}\n${t(lang, 'compose.placeholder')}` : t(lang, 'compose.placeholder'))}>

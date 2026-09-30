@@ -160,6 +160,7 @@ const zh: Record<keyof typeof en, string> = {
   'conn.revokedBody': '电脑那边移除了这台手机,这里发不出任何东西了。重新配对就能继续。',
   'conn.repair': '重新配对',
   'approval.answerTooLong': '这个回答太长了,发不出去。请删短一些。',
+  'compose.tooLong': '这段话太长了,发不出去。请删短一些。',
   'common.ccBusy': 'CC 还在忙这件事,等这一轮做完再说。',
 }
 

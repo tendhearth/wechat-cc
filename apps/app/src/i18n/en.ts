@@ -158,6 +158,7 @@ const en = {
   'conn.revokedBody': 'Your computer removed this phone, so nothing can be sent from here. Pair again to keep going.',
   'conn.repair': 'Pair again',
   'approval.answerTooLong': 'This answer is too long to send. Please shorten it.',
+  'compose.tooLong': 'This message is too long to send. Please shorten it.',
   'common.ccBusy': 'CC is still working on this — try again when this round finishes.',
 } as const
 

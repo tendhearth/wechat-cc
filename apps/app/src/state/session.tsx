@@ -3,6 +3,7 @@ import type { Lang } from '../i18n'
 import { LangOverrideCtx } from '../i18n/useLang'
 import type { CredentialStore } from '../net/credentials'
 import type { PairingRecord } from '../net/pairing'
+import { loadSession, quietly } from './session-store'
 
 // 会话:配对记录与语言偏好落钥匙串;「已看过欢迎页」= 已配对,或这次打开点过「先看看」。
 type Session = {
@@ -29,20 +30,21 @@ export function SessionProvider({ children, store }: { children: ReactNode; stor
   const [langOverride, setLang] = useState<Lang | null>(null)
   useEffect(() => {
     let alive = true
-    Promise.all([store.load(), store.loadPrefs()]).then(
-      ([p, prefs]) => { if (!alive) return; setPairing(p); setSeen(p !== null); setLang(prefs.lang); setReady(true) },
-      () => { if (alive) setReady(true) }, // 钥匙串读不出来 ⇒ 当没配对
-    )
+    // loadSession 不会拒绝:配对与偏好各读各的,读不出来的那样当空
+    void loadSession(store).then(({ pairing: p, lang }) => {
+      if (!alive) return
+      setPairing(p); setSeen(p !== null); setLang(lang); setReady(true)
+    })
     return () => { alive = false }
   }, [store])
   const value = useMemo<Session>(() => ({
     ready, pairing,
     async setPaired(r) { await store.save(r); setPairing(r); setSeen(true) },
-    dropStoredPairing() { void store.clear() },
+    dropStoredPairing() { quietly(store.clear(), 'clear') },
     async forgetPairing() { await store.clear(); setPairing(null); setSeen(false) },
     seenWelcome, markWelcomeSeen: () => setSeen(true), setSeenWelcome: setSeen,
     langOverride,
-    setLangOverride(l) { setLang(l); void store.savePrefs({ lang: l }) },
+    setLangOverride(l) { setLang(l); quietly(store.savePrefs({ lang: l }), 'savePrefs') },
   }), [ready, pairing, seenWelcome, langOverride, store])
   return (
     <SessionCtx.Provider value={value}>
