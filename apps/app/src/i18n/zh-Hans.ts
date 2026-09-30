@@ -97,6 +97,8 @@ const zh: Record<keyof typeof en, string> = {
   'progress.stepWaiting': '等你决定',
   'progress.loading': '加载中…',
   'progress.loadFailed': '这件事没能加载。',
+  'progress.notReviewed': "这份文件没有展开差异。",
+  'progress.summaryUnavailable': "暂时拿不到概括，点一下重试。",
 }
 
 export default zh

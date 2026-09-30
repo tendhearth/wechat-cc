@@ -9,7 +9,11 @@ export interface Query<T> {
   get(): QueryState<T>
   subscribe(cb: Listener): Unsubscribe
   refresh(): Promise<void>
+  /** 挂载时调用:没数据、没在飞、且最近 30 秒内没失败过才加载;手动 refresh() 不受限。 */
+  mount(): Promise<void>
 }
+
+export const ERROR_BACKOFF_MS = 30_000
 
 function listeners() {
   const set = new Set<Listener>()
@@ -29,6 +33,7 @@ export function makeStore(backend: Backend) {
     if (hit) return hit as Query<T>
     let state: QueryState<T> = { loading: false }
     let inflight: Promise<void> | null = null
+    let failedAt = 0
     const ls = listeners()
     const set = (s: QueryState<T>) => { state = s; ls.emit() }
     const q: Query<T> = {
@@ -39,9 +44,14 @@ export function makeStore(backend: Backend) {
         set({ ...state, loading: true })
         inflight = Promise.resolve().then(load).then(
           data => set({ data, loading: false, syncedAt: Date.now() }),
-          e => set({ ...state, loading: false, error: e instanceof BackendError ? e.code : 'unknown' }),
+          e => { failedAt = Date.now(); set({ ...state, loading: false, error: e instanceof BackendError ? e.code : 'unknown' }) },
         ).finally(() => { inflight = null })
         return inflight
+      },
+      mount() {
+        if (state.data !== undefined || state.loading) return Promise.resolve()
+        if (failedAt && Date.now() - failedAt < ERROR_BACKOFF_MS) return Promise.resolve()
+        return q.refresh()
       },
     }
     queries.set(key, q)

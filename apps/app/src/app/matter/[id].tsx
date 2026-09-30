@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { ScrollView, Text, View } from 'react-native'
+import { Pressable, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
@@ -8,7 +8,7 @@ import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery, useTopic } from '../../state/hooks'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
-import { serifFamily } from '../../ui/fonts'
+import { monoFamily, serifFamily } from '../../ui/fonts'
 import { SayBar } from '../../ui/SayBar'
 import { Sheet } from '../../ui/Sheet'
 import { StatusPill } from '../../ui/StatusPill'
@@ -17,7 +17,7 @@ import { TopBar } from '../../ui/TopBar'
 import { useTheme } from '../../ui/useTheme'
 import { progressView } from '../../view/progress'
 
-const mono = 'Menlo'
+const mono = monoFamily
 
 // 进展页:状态标签在「CC 的进展」概括之上;概括没到时用骨架占位。
 export default function Matter() {
@@ -71,7 +71,11 @@ export default function Matter() {
 
         <Card style={{ gap: space.m }}>
           <Text style={{ color: c.muted, fontSize: 12, fontWeight: '600' }}>{t(lang, 'progress.ccProgress')}</Text>
-          {v.summary === null ? (
+          {v.summary === null && insight.error && !insight.data ? (
+            <Pressable testID="progress-summary" accessibilityRole="button" accessibilityLabel={t(lang, 'progress.summaryUnavailable')} onPress={() => void insight.refresh()}>
+              <Text style={{ color: c.muted, fontSize: 15, lineHeight: 22 }}>{t(lang, 'progress.summaryUnavailable')}</Text>
+            </Pressable>
+          ) : v.summary === null ? (
             <View testID="progress-summary" accessibilityLabel={t(lang, 'progress.loading')} style={{ gap: space.s }}>
               <View style={{ height: 14, borderRadius: 7, backgroundColor: c.line, width: '92%' }} />
               <View style={{ height: 14, borderRadius: 7, backgroundColor: c.line, width: '70%' }} />
@@ -96,26 +100,30 @@ export default function Matter() {
           <Button kind="primary" testID="progress-view-approval" label={t(lang, 'progress.viewApproval')} onPress={() => router.push(`/approval/${encodeURIComponent(d.task?.id ?? id)}`)} />
         ) : null}
 
-        <View testID="progress-changes">
-          <Sheet title={t(lang, 'progress.viewChangesN', { n: v.changedFiles })}>
+        <Sheet testID="progress-changes" title={t(lang, 'progress.viewChangesN', { n: v.changedFiles })}>
             {files.length === 0 ? <Text style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'progress.noChanges')}</Text> : null}
             {files.map((f, i) => (
               <View key={i} style={{ paddingVertical: space.s, gap: space.xs }}>
                 <Text style={{ color: c.ink, fontSize: 13, fontFamily: mono }}>{f.path}</Text>
-                {f.truncated ? (
+                {f.kind === 'not_reviewed' ? (
+                  <>
+                    <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'progress.notReviewed')}</Text>
+                    {f.reason ? <Text style={{ color: c.muted, fontSize: 12 }}>{f.reason}</Text> : null}
+                  </>
+                ) : f.truncated ? (
                   <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'progress.tooBig')}</Text>
                 ) : f.diff ? (
-                  <Text style={{ color: c.muted, fontSize: 12, lineHeight: 17, fontFamily: mono }}>{f.diff}</Text>
+                  <ScrollView nestedScrollEnabled style={{ maxHeight: 320 }}>
+                    <Text style={{ color: c.muted, fontSize: 12, lineHeight: 17, fontFamily: mono }}>{f.diff}</Text>
+                  </ScrollView>
                 ) : f.reason ? (
                   <Text style={{ color: c.muted, fontSize: 13 }}>{f.reason}</Text>
                 ) : null}
               </View>
             ))}
           </Sheet>
-        </View>
 
-        <View testID="progress-process">
-          <Sheet title={t(lang, 'progress.viewProcess')}>
+        <Sheet testID="progress-process" title={t(lang, 'progress.viewProcess')}>
             <View style={{ gap: space.s }}>
               {d.task ? (
                 <>
@@ -130,7 +138,6 @@ export default function Matter() {
               ))}
             </View>
           </Sheet>
-        </View>
       </ScrollView>
       <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m }}>
         <SayBar testID="progress-say" placeholder={t(lang, 'progress.continueSay')} onPress={() => router.push(`/compose?matter=${encodeURIComponent(id)}`)} />

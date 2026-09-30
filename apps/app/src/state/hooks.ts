@@ -5,11 +5,12 @@ import type { QueryState } from './store'
 
 type TopicName = Parameters<ReturnType<typeof useBackendCtx>['backend']['subscribe']>[0]
 
-export function useQuery<T>(key: string, load: () => Promise<T>): QueryState<T> & { refresh(): Promise<void> } {
+export function useQuery<T>(key: string, load: () => Promise<T>, opts?: { enabled?: boolean }): QueryState<T> & { refresh(): Promise<void> } {
   const { store } = useBackendCtx()
   const q = store.query<T>(key, load)
   const state = useSyncExternalStore(q.subscribe, q.get, q.get)
-  useEffect(() => { if (q.get().data === undefined && !q.get().loading) void q.refresh() }, [q])
+  const enabled = opts?.enabled !== false
+  useEffect(() => { if (enabled) void q.mount() }, [q, enabled])
   return { ...state, refresh: q.refresh }
 }
 

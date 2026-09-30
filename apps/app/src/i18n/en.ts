@@ -95,6 +95,8 @@ const en = {
   'progress.stepWaiting': 'Waiting for you',
   'progress.loading': 'Loading…',
   'progress.loadFailed': 'Couldn’t load this task.',
+  'progress.notReviewed': "No diff shown for this file.",
+  'progress.summaryUnavailable': "Couldn’t get the summary right now. Tap to retry.",
 } as const
 
 export default en

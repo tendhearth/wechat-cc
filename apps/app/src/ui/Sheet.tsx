@@ -4,13 +4,14 @@ import { radius, space } from './tokens'
 import { useTheme } from './useTheme'
 
 // 可展开区块:标题一行,点开看内容。
-export function Sheet({ title, children, defaultOpen = false }: { title: string; children: ReactNode; defaultOpen?: boolean }) {
+export function Sheet({ title, children, defaultOpen = false, testID }: { title: string; children: ReactNode; defaultOpen?: boolean; testID?: string }) {
   const { c } = useTheme()
   const [open, setOpen] = useState(defaultOpen)
   return (
     <View style={{ borderRadius: radius.card, borderWidth: 1, borderColor: c.line, backgroundColor: c.card, overflow: 'hidden' }}>
       <Pressable
         accessibilityRole="button"
+        testID={testID}
         accessibilityState={{ expanded: open }}
         accessibilityLabel={title}
         onPress={() => setOpen((v) => !v)}

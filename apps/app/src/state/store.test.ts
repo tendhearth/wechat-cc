@@ -111,4 +111,23 @@ describe('store', () => {
     expect(q.get().loading).toBe(false)
     expect(q.get().error).toBe('offline')
   })
+  it('失败后 30 秒内重新挂载不重载;之后可以;手动 refresh 不受限', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(1000)
+    try {
+      const s = makeStore({} as any)
+      const load = vi.fn(async () => { throw new BackendError('offline') })
+      const q = s.query('bo', load)
+      await q.mount()
+      expect(load).toHaveBeenCalledTimes(1)
+      await q.mount()
+      expect(load).toHaveBeenCalledTimes(1)
+      vi.setSystemTime(1000 + 31_000)
+      await q.mount()
+      expect(load).toHaveBeenCalledTimes(2)
+      await q.mount()
+      expect(load).toHaveBeenCalledTimes(2)
+      await q.refresh()
+      expect(load).toHaveBeenCalledTimes(3)
+    } finally { vi.useRealTimers() }
+  })
 })
