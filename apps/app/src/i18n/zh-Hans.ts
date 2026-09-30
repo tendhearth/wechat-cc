@@ -93,7 +93,7 @@ const zh: Record<keyof typeof en, string> = {
   'settings.demo': '体验设计样稿',
   'settings.exitDemo': '退出样稿',
   'settings.privacy': '隐私',
-  'settings.privacyBody': '查看待批准的说明时，命令文本会发给你电脑上配置的便宜模型服务商，用来翻译成通俗的话。其余内容都加密传输，只在这台手机和你的电脑之间。',
+  'settings.privacyBody': '打开此刻、进展或批准页时，待批准的命令文本和任务的进展事件会从你自己的电脑发给那里配置的便宜模型服务商，写成通俗的话。其余内容都加密传输，只在这台手机和你的电脑之间。',
   'settings.about': '关于',
   'demo.banner': '你正在体验设计样稿。所有任务与通知都是示例，操作只在这里演示。',
   'progress.breadcrumb': '一起做 / 事项',
@@ -125,9 +125,16 @@ const zh: Record<keyof typeof en, string> = {
   'settings.languageZh': '简体中文',
   'settings.demoBody': '你正在体验设计样稿。这里的一切都是示例，退出后回到起点。',
   'settings.version': '版本',
-  'settings.company': 'Nate Gu & Co.',
   'compose.uncertain': "不确定是否已发出。重试前先看看列表。",
   'compose.busy': "上一条还在发送，稍等一下。",
+  'now.togetherCount': '{n} 件',
+  'now.togetherCount.one': '{n} 件',
+  'common.computerOfflineShort': '离线',
+  'approval.maxChoices': '最多选 {n} 项',
+  'approval.moreLines': '(还有 {n} 行)',
+  'approval.moreLines.one': '(还有 {n} 行)',
+  'approval.refreshFailed': '没拿到电脑上的最新状态。点这里再试一次。',
+  'settings.copyright': '© Nate Gu & Co LLC',
 }
 
 export default zh

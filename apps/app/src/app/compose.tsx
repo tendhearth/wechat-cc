@@ -39,9 +39,11 @@ export default function Compose() {
   const project = opt?.projects.find((p) => p.id === projectId) ?? opt?.projects[0]
   const provider = providerId ? opt?.providers.find((p) => p.id === providerId) : null
 
+  // 电脑不在线 ⇒ 草稿照写,「交给 CC」锁住。TODO(计划 3):撤销(revoked)与暂时离线分开表达,并显示上次同步时间。
+  const online = conn.state === 'online'
   const send = async () => {
     const body = text.trim()
-    if (!body || sending.current) return
+    if (!body || sending.current || !online) return
     sending.current = true
     setBusy(true); setOutcome(null)
     let newId: string | null = null
@@ -104,7 +106,8 @@ export default function Compose() {
               </Pressable>
             </View>
           )}
-          <Button kind="primary" testID="compose-send" label={t(lang, 'compose.send')} onPress={send} disabled={!text.trim()} busy={busy} />
+          <Button kind="primary" testID="compose-send" label={t(lang, 'compose.send')} onPress={send} disabled={!text.trim() || !online} busy={busy} />
+          {!online ? <Text testID="compose-offline" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, textAlign: 'center' }}>{t(lang, 'common.computerOffline')}</Text> : null}
           {outcome ? <Text testID={`compose-${outcome}`} accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14 }}>{t(lang, outcome === 'uncertain' ? 'compose.uncertain' : outcome === 'busy' ? 'compose.busy' : 'compose.failed')}</Text> : null}
           <Text style={{ color: c.muted, fontSize: 13, textAlign: 'center' }}>{t(lang, 'compose.willAskYou')}</Text>
           {matter ? null : (
@@ -135,7 +138,7 @@ function Choice({ label, on, onPress }: { label: string; on: boolean; onPress: (
   return (
     <Pressable
       accessibilityRole="radio"
-      accessibilityState={{ selected: on }}
+      accessibilityState={{ checked: on }}
       accessibilityLabel={label}
       onPress={onPress}
       style={{ minHeight: 44, paddingHorizontal: space.m, borderRadius: radius.pill, justifyContent: 'center', backgroundColor: on ? c.navOnBg : 'transparent' }}

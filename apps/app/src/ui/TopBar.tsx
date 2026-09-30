@@ -15,11 +15,14 @@ export function TopBar({
   title,
   onBack,
   connection,
+  showConnection = true,
   onAvatar,
 }: {
   title?: string
   onBack?: () => void
   connection: Connection
+  /** 欢迎 / 配对页还没有「家里的电脑」可言 ⇒ 传 false 不显示状态点。 */
+  showConnection?: boolean
   onAvatar?: () => void
 }) {
   const { c, scheme } = useTheme()
@@ -35,15 +38,17 @@ export function TopBar({
       <Text numberOfLines={1} style={{ flex: 1, color: c.ink, fontSize: 20, fontFamily: serifFamily }}>
         {title ?? ''}
       </Text>
-      <View
-        accessible
-        testID="topbar-connection"
-        accessibilityLabel={`${t(lang, 'common.computerHome')}, ${online ? t(lang, 'common.computerOnline') : t(lang, 'common.computerOffline')}`}
-        style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs + 2 }}
-      >
-        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: online ? c.ok : c.muted }} />
-        <Text style={{ color: c.muted, fontSize: 12 }}>{t(lang, 'common.computerHome')}</Text>
-      </View>
+      {showConnection ? (
+        <View
+          accessible
+          testID="topbar-connection"
+          accessibilityLabel={`${t(lang, 'common.computerHome')}, ${online ? t(lang, 'common.computerOnline') : t(lang, 'common.computerOfflineShort')}`}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs + 2 }}
+        >
+          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: online ? c.ok : c.muted }} />
+          <Text style={{ color: c.muted, fontSize: 12 }}>{t(lang, 'common.computerHome')}</Text>
+        </View>
+      ) : null}
       <Pressable
         accessibilityRole="button"
         testID="topbar-settings"

@@ -20,7 +20,7 @@ export default function Pair() {
   const steps = ['pair.step1', 'pair.step2', 'pair.step3'] as const
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
-      <TopBar onBack={() => (router.canGoBack() ? router.back() : router.replace('/welcome'))} connection={conn.state === 'online' ? 'online' : 'offline'} onAvatar={() => router.push('/settings')} />
+      <TopBar onBack={() => (router.canGoBack() ? router.back() : router.replace('/welcome'))} connection={conn.state === 'online' ? 'online' : 'offline'} showConnection={false} onAvatar={() => router.push('/settings')} />
       <ScrollView contentContainerStyle={{ padding: space.xl, gap: space.l, alignItems: 'stretch' }}>
         <View style={{ alignItems: 'center' }}><CCFigure size={120} /></View>
         <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 28, lineHeight: 36, fontFamily: serifFamily }}>{t(lang, 'pair.title')}</Text>

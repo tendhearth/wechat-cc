@@ -10,7 +10,7 @@
 ```bash
 bun install                      # 仓库根目录,一次
 cd apps/app
-bunx expo start                  # 开发服务器(Expo Go / 已装的 development build)
+bunx expo start                  # 开发服务器(连已装的 development build)
 bunx expo run:ios                # 首次:生成 ios/ 并在模拟器装 development build
 bun run test                     # vitest(纯逻辑,node 环境)
 bun run typecheck                # tsc --noEmit(本工程自己的 tsconfig)
@@ -60,6 +60,6 @@ src/ui/           组件与色板(tokens.ts,明暗两套;明暗只是外观,不�
 - **状态词**只用:正在整理 / 等你决定 / 这一轮已回复 / 事情完成 / 没做成 / 已停下(Working on it / Waiting for you / Replied this round / Done / Didn't finish / Stopped),不显示百分比。
 - **导航**:底部「此刻 / 一起做」;右上角头像进设置,旁边是「家里的电脑」状态点;说一句的入口随处可见。
 - **语言**:`en` 与 `zh-Hans`,跟随系统、设置里可改;所有面向用户的字符串进文案表。
-- **隐私页**要说明:查看待批准说明时,命令文本会发给电脑上配置的便宜模型服务商。
+- **隐私页**要说明:打开此刻、进展或批准页时,待批准的命令文本和任务的进展事件会从主人自己的电脑发给那里配置的便宜模型服务商;其余只在手机与电脑之间加密传输(`i18n.test.ts` 钉住)。
 - 系统「减少动态效果」时关掉 CC 动作;所有状态都有文字。
 - CC 形象只用 `apps/desktop/src/assets/pet/cc-v1/canonical/{lit,unlit}/front.png`,不重画。

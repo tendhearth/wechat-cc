@@ -23,6 +23,12 @@ appId: com.tendhearth.app
 # 硬要求:说明来自模型时,原始命令首行与工作目录不折叠、直接可见。
 - assertVisible:
     id: approval-raw-inline
+# 打开就拉新:拿到挂载之后的详情前按钮是锁的,等它可点。
+- extendedWaitUntil:
+    visible:
+      id: approval-allow
+      enabled: true
+    timeout: 10000
 - tapOn:
     id: approval-allow
 - extendedWaitUntil:

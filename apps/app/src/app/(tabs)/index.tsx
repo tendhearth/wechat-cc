@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { t, type Lang } from '../../i18n'
+import { t, tCount, type Lang } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
 import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery } from '../../state/hooks'
@@ -104,7 +104,7 @@ export default function Now() {
           <View>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingBottom: space.m, borderBottomWidth: 1, borderBottomColor: c.line }}>
               <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'now.togetherTitle')}</Text>
-              <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'now.needsYouCount', { n: v.together.length })}</Text>
+              <Text style={{ color: c.muted, fontSize: 13 }}>{tCount(lang, 'now.togetherCount', v.together.length)}</Text>
             </View>
             {v.together.map((m) => (
               <Pressable

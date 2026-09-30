@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makeStore } from './store'
+import { isFresh, makeStore } from './store'
 import { BackendError } from '../backend/types'
 
 describe('store', () => {
@@ -129,5 +129,98 @@ describe('store', () => {
       await q.refresh()
       expect(load).toHaveBeenCalledTimes(3)
     } finally { vi.useRealTimers() }
+  })
+  describe('打开页面必拉新(revalidate / isFresh)', () => {
+    it('syncedAt 记的是这次加载发出的时刻(store 时钟,严格递增)', async () => {
+      const s = makeStore({} as any)
+      const q = s.query('t1', async () => 1)
+      const before = s.clock()
+      await q.refresh()
+      const after = s.clock()
+      expect(q.get().syncedAt).toBeGreaterThan(before)
+      expect(q.get().syncedAt).toBeLessThan(after)
+    })
+    it('isFresh:syncedAt ≥ 挂载时刻才算新', () => {
+      expect(isFresh({ loading: false }, 5)).toBe(false)
+      expect(isFresh({ loading: false, data: 1, syncedAt: 4 }, 5)).toBe(false)
+      expect(isFresh({ loading: false, data: 1, syncedAt: 5 }, 5)).toBe(true)
+      expect(isFresh({ loading: false, data: 1, syncedAt: 6 }, 5)).toBe(true)
+    })
+    it('已有缓存也要重拉:缓存早于挂载 ⇒ 加载;之后再 revalidate 同一时刻 ⇒ 不重复加载', async () => {
+      const s = makeStore({} as any)
+      let n = 0
+      const load = vi.fn(async () => ++n)
+      const q = s.query('t2', load)
+      await q.refresh()
+      const mountedAt = s.clock()
+      expect(isFresh(q.get(), mountedAt)).toBe(false)
+      await q.revalidate(mountedAt)
+      expect(load).toHaveBeenCalledTimes(2)
+      expect(q.get().data).toBe(2)
+      expect(isFresh(q.get(), mountedAt)).toBe(true)
+      await q.revalidate(mountedAt)
+      expect(load).toHaveBeenCalledTimes(2)
+    })
+    it('挂载前就在飞的加载不算新:等它落地后再拉一次', async () => {
+      const s = makeStore({} as any)
+      let release!: () => void
+      let n = 0
+      const load = vi.fn(() => { n++; return n === 1 ? new Promise<number>(r => { release = () => r(1) }) : Promise.resolve(n) })
+      const q = s.query('t3', load)
+      const old = q.refresh()
+      const mountedAt = s.clock()
+      const p = q.revalidate(mountedAt)
+      await Promise.resolve() // load 在下一个微任务里才被调用
+      release()
+      await old; await p
+      expect(load).toHaveBeenCalledTimes(2)
+      expect(q.get().data).toBe(2)
+      expect(isFresh(q.get(), mountedAt)).toBe(true)
+    })
+    it('挂载后发出的在飞加载直接复用', async () => {
+      const s = makeStore({} as any)
+      const load = vi.fn(async () => 7)
+      const q = s.query('t4', load)
+      const mountedAt = s.clock()
+      const a = q.refresh()
+      const b = q.revalidate(mountedAt)
+      await Promise.all([a, b])
+      expect(load).toHaveBeenCalledTimes(1)
+      expect(isFresh(q.get(), mountedAt)).toBe(true)
+    })
+    it('打开页面的拉新不受失败退避限制;自动 mount() 仍退避;失败时保留旧数据但不算新', async () => {
+      vi.useFakeTimers(); vi.setSystemTime(1000)
+      try {
+        const s = makeStore({} as any)
+        let fail = false
+        const load = vi.fn(async () => { if (fail) throw new BackendError('offline'); return 'old' })
+        const q = s.query('t5', load)
+        await q.refresh()
+        fail = true
+        await q.refresh() // 失败,进入退避
+        expect(load).toHaveBeenCalledTimes(2)
+        const m1 = s.clock()
+        await q.revalidate(m1)
+        expect(load).toHaveBeenCalledTimes(3)
+        expect(q.get().data).toBe('old')
+        expect(q.get().error).toBe('offline')
+        expect(isFresh(q.get(), m1)).toBe(false)
+        // 自动路径:有数据 ⇒ mount 不加载;没数据的 key 失败后 30 秒内 mount 也不加载
+        const e = s.query('t5e', load)
+        await e.mount(); await e.mount()
+        expect(load).toHaveBeenCalledTimes(4)
+      } finally { vi.useRealTimers() }
+    })
+    it('拉新成功后清掉旧错误', async () => {
+      const s = makeStore({} as any)
+      let fail = true
+      const q = s.query('t6', async () => { if (fail) throw new BackendError('offline'); return 1 })
+      await q.refresh()
+      fail = false
+      const m = s.clock()
+      await q.revalidate(m)
+      expect(q.get().error).toBeUndefined()
+      expect(isFresh(q.get(), m)).toBe(true)
+    })
   })
 })

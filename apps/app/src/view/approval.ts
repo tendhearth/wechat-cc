@@ -6,7 +6,9 @@ export type ApprovalView =
   | { kind: 'question'; requestId: string; runId: string
       items: Array<{ id: string; header: string; question: string; options: Array<{ label: string; description: string }>; multiSelect: boolean; allowOther: boolean }> }
   | { kind: 'card'; requestId: string; runId: string; title: string; what: string; scope: string; effect: string
-      aiSummary: boolean; rawFirstLine: string; rawFull: string; workingDir: string; showRawInline: boolean }
+      aiSummary: boolean; rawFirstLine: string; rawFull: string; workingDir: string; showRawInline: boolean
+      /** 首行之后还有几行(结尾空行不算);首行是否被截到 120 字。 */
+      rawMoreLines: number; rawFirstLineCut: boolean }
 
 const firstLine = (s: string, max: number) => (s.split('\n')[0] ?? '').slice(0, max)
 
@@ -24,10 +26,12 @@ export function approvalView(detail: MatterDetailT, explanations: Record<string,
     const ex = explanations[p.id]
     const workingDir = detail.task?.path ?? ''
     const aiSummary = ex?.source === 'model'
+    const lines = p.description.replace(/\n+$/, '').split('\n')
     return {
       kind: 'card', requestId: p.id, runId,
       title: ex?.title ?? p.tool, what: ex?.what ?? p.description, scope: ex?.scope ?? workingDir, effect: ex?.effect ?? '',
       aiSummary, rawFirstLine: firstLine(p.description, 120), rawFull: p.description, workingDir, showRawInline: aiSummary,
+      rawMoreLines: lines.length - 1, rawFirstLineCut: (lines[0] ?? '').length > 120,
     }
   }
 
@@ -69,6 +73,18 @@ export function buildAnswers(items: QuestionItem[], picked: Record<string, strin
     out[it.id] = uniq
   }
   return out
+}
+
+/** 点一个选项:单选互斥、再点取消;多选增删,已满 8 项时原样返回(不再加)。 */
+export function togglePick(cur: string[], label: string, multi: boolean): string[] {
+  if (!multi) return cur[0] === label ? [] : [label]
+  if (cur.includes(label)) return cur.filter(x => x !== label)
+  return cur.length >= ANSWER_MAX_MULTI ? cur : [...cur, label]
+}
+
+/** 多选已选满 8 项 ⇒ 显示「最多选 8 项」(这时再填「其他」也会超,提交按钮不可用)。 */
+export function multiLimitReached(multi: boolean, chosen: string[]): boolean {
+  return multi && chosen.length >= ANSWER_MAX_MULTI
 }
 
 /** 页面第一次解析出具体请求时把它钉住;之后只认这一个,它不在了 ⇒ none(已处理),绝不换成别的请求。 */

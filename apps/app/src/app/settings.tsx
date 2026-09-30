@@ -42,7 +42,7 @@ export default function Settings() {
                 key={o.id}
                 testID={`settings-language-${o.id}`}
                 accessibilityRole="radio"
-                accessibilityState={{ selected: on }}
+                accessibilityState={{ checked: on }}
                 accessibilityLabel={o.label}
                 onPress={() => setLangOverride(o.v)}
                 style={{ minHeight: 48, paddingHorizontal: space.l, borderRadius: radius.pill, justifyContent: 'center', backgroundColor: on ? c.navOnBg : 'transparent' }}
@@ -69,7 +69,7 @@ export default function Settings() {
         {heading('settings.privacy')}
         <Card testID="settings-privacy"><Text style={{ color: c.ink, fontSize: 15, lineHeight: 23 }}>{t(lang, 'settings.privacyBody')}</Text></Card>
         {heading('settings.about')}
-        <Text style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'settings.version')} {Constants.expoConfig?.version ?? '—'} · {t(lang, 'settings.company')}</Text>
+        <Text style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'settings.version')} {Constants.expoConfig?.version ?? '—'} · {t(lang, 'settings.copyright')}</Text>
       </ScrollView>
     </SafeAreaView>
   )

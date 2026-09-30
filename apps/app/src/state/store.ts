@@ -1,6 +1,7 @@
 // 纯 TS,不引 react / react-native,node 下可测。
 import { BackendError, type Backend, type Connection, type Unsubscribe } from '../backend/types'
 
+/** syncedAt:产出这份 data 的那次加载**发出**的时刻(store 时钟)。按发出时刻记,才能判断「是不是挂载之后拉的」。 */
 export type QueryState<T> = { data?: T; error?: string; loading: boolean; syncedAt?: number }
 export type SubmitResult = 'ok' | 'busy' | { error: string }
 type Listener = () => void
@@ -11,6 +12,16 @@ export interface Query<T> {
   refresh(): Promise<void>
   /** 挂载时调用:没数据、没在飞、且最近 30 秒内没失败过才加载;手动 refresh() 不受限。 */
   mount(): Promise<void>
+  /**
+   * 打开页面必拉新(批准页、进展页):data 不是 since 之后发出的加载拿到的 ⇒ 重拉;
+   * since 之前就在飞的加载不算,等它落地后再拉一次。不受失败退避限制(退避只管自动的 mount())。
+   */
+  revalidate(since: number): Promise<void>
+}
+
+/** data 是不是 since(页面挂载时刻,取自 store.clock())之后发出的加载拿到的。 */
+export function isFresh(s: QueryState<unknown>, since: number): boolean {
+  return s.data !== undefined && s.syncedAt !== undefined && s.syncedAt >= since
 }
 
 export const ERROR_BACKOFF_MS = 30_000
@@ -25,6 +36,10 @@ function listeners() {
 }
 
 export function makeStore(backend: Backend) {
+  // 严格递增的时钟(毫秒,同一毫秒内 +1),挂载时刻与加载发出时刻比先后不会打平。
+  let last = 0
+  const clock = () => (last = Math.max(Date.now(), last + 1))
+
   // ── 查询缓存:同 key 共用一份,refresh 在飞复用 ──
   // 注意:key 必须编码 load 的全部输入;已存在的 key 再传入的 load 会被忽略。
   const queries = new Map<string, Query<any>>()
@@ -33,6 +48,7 @@ export function makeStore(backend: Backend) {
     if (hit) return hit as Query<T>
     let state: QueryState<T> = { loading: false }
     let inflight: Promise<void> | null = null
+    let inflightAt = 0
     let failedAt = 0
     const ls = listeners()
     const set = (s: QueryState<T>) => { state = s; ls.emit() }
@@ -42,8 +58,9 @@ export function makeStore(backend: Backend) {
       refresh() {
         if (inflight) return inflight
         set({ ...state, loading: true })
+        const at = (inflightAt = clock())
         inflight = Promise.resolve().then(load).then(
-          data => set({ data, loading: false, syncedAt: Date.now() }),
+          data => set({ data, loading: false, syncedAt: at }),
           e => { failedAt = Date.now(); set({ ...state, loading: false, error: e instanceof BackendError ? e.code : 'unknown' }) },
         ).finally(() => { inflight = null })
         return inflight
@@ -51,6 +68,12 @@ export function makeStore(backend: Backend) {
       mount() {
         if (state.data !== undefined || state.loading) return Promise.resolve()
         if (failedAt && Date.now() - failedAt < ERROR_BACKOFF_MS) return Promise.resolve()
+        return q.refresh()
+      },
+      revalidate(since) {
+        if (isFresh(state, since)) return Promise.resolve()
+        if (inflight && inflightAt >= since) return inflight
+        if (inflight) return inflight.then(() => q.revalidate(since))
         return q.refresh()
       },
     }
@@ -132,7 +155,7 @@ export function makeStore(backend: Backend) {
   }
   const connection = () => connHandle
 
-  return { query, submit, topic, connection }
+  return { query, submit, topic, connection, clock }
 }
 
 export type Store = ReturnType<typeof makeStore>

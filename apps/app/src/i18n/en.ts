@@ -91,7 +91,7 @@ const en = {
   'settings.demo': 'Explore the design preview',
   'settings.exitDemo': 'Leave the preview',
   'settings.privacy': 'Privacy',
-  'settings.privacyBody': 'When you review an approval, the command text is sent to the cheap model provider configured on your computer so it can be summarized in plain words. Everything else travels encrypted, only between this phone and your computer.',
+  'settings.privacyBody': "When the Now, progress or approval pages load, the command text of pending approvals and the task’s progress events are sent — from your own computer — to the cheap model provider configured there, to put them in plain words. Everything else travels encrypted, only between this phone and your computer.",
   'settings.about': 'About',
   'demo.banner': 'You’re exploring a design preview. Tasks and notifications are examples; actions stay inside this preview.',
   'progress.breadcrumb': 'Together / Tasks',
@@ -123,9 +123,16 @@ const en = {
   'settings.languageZh': "简体中文",
   'settings.demoBody': "You’re in the design preview. Everything here is an example; leaving takes you back to the start.",
   'settings.version': "Version",
-  'settings.company': "Nate Gu & Co.",
   'compose.uncertain': "Not sure this was sent. Check the list before trying again.",
   'compose.busy': "Still sending the last one. Hold on a moment.",
+  'now.togetherCount': "{n} things",
+  'now.togetherCount.one': "1 thing",
+  'common.computerOfflineShort': "offline",
+  'approval.maxChoices': "Up to {n} choices",
+  'approval.moreLines': "(+{n} more lines)",
+  'approval.moreLines.one': "(+1 more line)",
+  'approval.refreshFailed': "Couldn’t get the latest from your computer. Tap to try again.",
+  'settings.copyright': "© Nate Gu & Co LLC",
 } as const
 
 export default en

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { approvalView, buildAnswers, pinnedRequest, ANSWER_MAX_CHARS } from './approval'
+import { approvalView, buildAnswers, pinnedRequest, togglePick, multiLimitReached, ANSWER_MAX_CHARS, ANSWER_MAX_MULTI } from './approval'
 
 const base = {
   matter: { id: 'ab12cd34', kind: 'task', title: 'x', projectPath: '/p', status: 'open', ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: 1, updatedAt: 1 },
@@ -111,5 +111,37 @@ describe('pinnedRequest:钉住后刷新不换成别的请求', () => {
     expect(approvalView(refetched, {}, pin)).toEqual({ kind: 'none' })
     // 对照:不传钉住的 id 时会落到 p2 —— 这正是页面必须一直传 pin 的原因
     expect(approvalView(refetched, {})).toMatchObject({ kind: 'card', requestId: 'p2' })
+  })
+})
+
+describe('原始命令直接可见:多出来的行数', () => {
+  it('两行命令 ⇒ 首行 + 还有 1 行;首行没截', () => {
+    expect(approvalView(base, { p1: model })).toMatchObject({ rawFirstLine: 'rm -rf ~/Documents/old', rawMoreLines: 1, rawFirstLineCut: false })
+  })
+  it('一行命令 ⇒ 0 行;结尾换行不算一行', () => {
+    const d = { ...base, permissions: [{ ...base.permissions[0], description: 'ls -la\n\n' }] }
+    expect(approvalView(d, { p1: model })).toMatchObject({ rawFirstLine: 'ls -la', rawMoreLines: 0, rawFirstLineCut: false })
+  })
+  it('首行超过 120 字 ⇒ 截断标记;四行 ⇒ 还有 3 行', () => {
+    const d = { ...base, permissions: [{ ...base.permissions[0], description: `${'x'.repeat(130)}\na\nb\nc` }] }
+    expect(approvalView(d, { p1: model })).toMatchObject({ rawMoreLines: 3, rawFirstLineCut: true })
+  })
+})
+
+describe('问答多选:至多 8 项', () => {
+  const eight = Array.from({ length: ANSWER_MAX_MULTI }, (_, i) => `o${i}`)
+  it('togglePick:单选互斥、再点取消;多选增删;满 8 项不再加', () => {
+    expect(togglePick([], 'A', false)).toEqual(['A'])
+    expect(togglePick(['A'], 'B', false)).toEqual(['B'])
+    expect(togglePick(['A'], 'A', false)).toEqual([])
+    expect(togglePick(['A'], 'B', true)).toEqual(['A', 'B'])
+    expect(togglePick(['A', 'B'], 'A', true)).toEqual(['B'])
+    expect(togglePick(eight, 'o9', true)).toBe(eight)
+    expect(togglePick(eight, 'o0', true)).toHaveLength(7)
+  })
+  it('multiLimitReached:多选选满 8 项 ⇒ true(不管有没有填「其他」);单选永远 false', () => {
+    expect(multiLimitReached(true, eight)).toBe(true)
+    expect(multiLimitReached(true, eight.slice(1))).toBe(false)
+    expect(multiLimitReached(false, eight)).toBe(false)
   })
 })
