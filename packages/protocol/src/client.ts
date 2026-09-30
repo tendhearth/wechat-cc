@@ -23,7 +23,7 @@
  *     没事可做时不重连,下次用到再连。
  *   - 订阅重连后带最后见过的 `{epoch, seq}` 重新 `sub`;事件是状态快照,
  *     不保证每条中间事件都到,同 epoch 下 seq 不更新的一律丢(去重)。
- *   - 明文 `auth_failed` ⇒ 所有挂起请求以它拒绝,永不再连;明文 `stream_unknown`
+ *   - 明文 `auth_failed` ⇒ 所有挂起请求以它拒绝,永不再连;订阅者收到 onSubscriptionError(topic,'auth_failed');明文 `stream_unknown`
  *     (后台跟中继重连过、忘了这条流)⇒ 断开按退避重连,这条连接上在途的可重试请求耗一次
  *     重试以同一 rid 重发,不可重试的以 `stream_unknown` 拒绝,订阅带 since 重新 sub;其它
  *     明文错误(中继的 `daemon_offline` 等)⇒ 挂起请求以该 code 拒绝,断开后按退避重连。
@@ -242,6 +242,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     if (code === 'auth_failed') {
       fatal = new Error('auth_failed')
       failAll(fatal)
+      for (const sub of [...subs.values()]) { subs.delete(sub.sid); subErr(sub.topic, 'auth_failed') }
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
       dropConn(c)
       return

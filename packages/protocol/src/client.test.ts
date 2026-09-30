@@ -440,6 +440,20 @@ describe('订阅', () => {
     expect(cb).not.toHaveBeenCalled()
     c.close()
   })
+
+  it('auth_failed ⇒ 每个订阅都收到 onSubscriptionError(topic, "auth_failed"),之后不再推给它们', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    const errs: Array<[string, string]> = []
+    const { c } = client(daemon, { onSubscriptionError: (t: string, code: string) => errs.push([t, code]) })
+    const seen: unknown[] = []
+    c.subscribe('agents', d => seen.push(d))
+    c.subscribe('approvals', d => seen.push(d))
+    await flush()
+    daemon.d.live().raw(JSON.stringify({ error: 'auth_failed' }))
+    await flush()
+    expect(errs.sort()).toEqual([['agents', 'auth_failed'], ['approvals', 'auth_failed']])
+    c.close()
+  })
 })
 
 describe('断线、退避与致命错误', () => {
