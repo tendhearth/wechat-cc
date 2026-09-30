@@ -123,6 +123,22 @@ describe('ci.yml —— 中继作业', () => {
   })
 })
 
+describe('ci.yml —— Tendhearth 手机 app 作业', () => {
+  it('changes 算出 app 输出(apps/app 与协议包),app 作业依赖它', () => {
+    const changes = jobs.changes!
+    expect(changes.outputs?.app).toBe('${{ steps.filter.outputs.app }}')
+    const filter = parse(changes.steps?.find(s => s.id === 'filter')?.with?.filters as string) as Record<string, string[]>
+    expect(filter.app).toEqual(expect.arrayContaining(['apps/app/**', 'packages/protocol/**']))
+    const app = jobs.app!
+    expect(app.needs).toContain('changes')
+    expect(app.if).toContain("needs.changes.outputs.app == 'true'")
+  })
+  it('app 作业的 setup-bun 也钉 1.3.14', () => {
+    const bun = jobs.app!.steps?.find(s => s.uses?.startsWith('oven-sh/setup-bun'))
+    expect(bun?.with?.['bun-version']).toBe('1.3.14')
+  })
+})
+
 describe('中继工作流 —— 未配置 Cloudflare 时整体跳过', () => {
   const load = (f: string) => parse(readFileSync(join(HERE, '..', '.github', 'workflows', f), 'utf8')) as { jobs: Record<string, { if?: string }>; on?: { schedule?: Array<{ cron: string }> } }
   it('relay.yml 的部署作业受 RELAY_DEPLOY 开关控制', () => {
