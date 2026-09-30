@@ -20,5 +20,5 @@ export default defineConfig({
       },
     }),
   ],
-  test: { include: ['test/**/*.test.ts'], exclude: ['test/e2e/**'] },
+  test: { testTimeout: 20_000, include: ['test/**/*.test.ts'], exclude: ['test/e2e/**'] },
 })

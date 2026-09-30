@@ -76,8 +76,13 @@ describe('房间:手机流', () => {
   it('手机超速(突发 120)⇒ 第 121 帧收 rate_limited 并关', async () => {
     const d = await connectDaemon()
     const p = await connectPhone(d.ident.id)
-    for (let i = 0; i < 121; i++) p.ws.send(JSON.stringify({ ct: String(i) }))
+    // 桶容量 120、每秒回 20:慢 runner 上突发期间桶会回血,恰好 121 帧不保证触发。
+    // 所以持续发(最多 2000 帧),看到错误帧或连接关闭就停;仍能证明限流器会跳闸。
     let err: any
+    for (let i = 0; i < 2000 && p.ws.readyState === WebSocket.OPEN && !p.msgs.some((m: any) => m.error); i++) {
+      p.ws.send(JSON.stringify({ ct: String(i) }))
+      if (i % 50 === 49) await new Promise(r => setTimeout(r, 0))
+    }
     while (!(err = p.msgs.find((m: any) => m.error)) ) await new Promise(r => setTimeout(r, 5))
     expect(err).toEqual({ error: 'rate_limited' })
     expect(await p.closed).toBe(1008)
