@@ -122,3 +122,16 @@ describe('ci.yml —— 中继作业', () => {
     expect(bun?.with?.['bun-version']).toBe('1.3.14')
   })
 })
+
+describe('中继工作流 —— 未配置 Cloudflare 时整体跳过', () => {
+  const load = (f: string) => parse(readFileSync(join(HERE, '..', '.github', 'workflows', f), 'utf8')) as { jobs: Record<string, { if?: string }>; on?: { schedule?: Array<{ cron: string }> } }
+  it('relay.yml 的部署作业受 RELAY_DEPLOY 开关控制', () => {
+    expect(load('relay.yml').jobs.deploy!.if).toContain("vars.RELAY_DEPLOY == 'on'")
+  })
+  it('relay-watch.yml 受 RELAY_WATCH 开关控制,且每小时一次', () => {
+    const wf = load('relay-watch.yml')
+    expect(wf.jobs.watch!.if).toContain("vars.RELAY_WATCH == 'on'")
+    const on = (wf.on ?? (wf as Record<string, unknown>)[true as unknown as string]) as { schedule: Array<{ cron: string }> }
+    expect(on.schedule[0]!.cron).toBe('0 * * * *')
+  })
+})

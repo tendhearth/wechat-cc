@@ -28,7 +28,7 @@ wrangler 会在 `apps/relay/.wrangler/` 留临时目录,已在 `.gitignore`。
 - 生产:GitHub Actions → Relay deploy → Run workflow → `target: production` → 在 `relay-production` 环境批准。
 - 部署前跑 typecheck + 单测;部署后轮询 `https://<host>/healthz`,直到返回的 `version` 等于本次提交前 8 位(`RELAY_VERSION`)。
 - 回滚:`cd apps/relay && bunx wrangler rollback --env production`。
-- 巡检:`Relay watch` 每 15 分钟查生产 `/healthz`(非 200 或 `ok!=true` 即失败,GitHub 发失败邮件),并用 Analytics Engine SQL API 查过去 1 小时 `push_ok` / `push_fail`:`fail ≥ 20` 且 `fail/(ok+fail) > 0.5` 即失败。没设 `CF_ANALYTICS_TOKEN` 时只跳过后一步并打印提示。
+- 巡检:`Relay watch` 每小时查生产 `/healthz`(非 200 或 `ok!=true` 即失败,GitHub 发失败邮件),并用 Analytics Engine SQL API 查过去 1 小时 `push_ok` / `push_fail`:`fail ≥ 20` 且 `fail/(ok+fail) > 0.5` 即失败。没设 `CF_ANALYTICS_TOKEN` 时只跳过后一步并打印提示。
 
 ## 4. Secrets(只列名字)
 
@@ -73,3 +73,4 @@ daemon 同时连老中继与 v2(双连)。想让某台 daemon 先走 staging:在
 - **自建中继**:通过 `remote_relay_url` 自建中继的主人,还要同时设 `relay_v2_url`,否则新链接会指向 relay.tendhearth.com。
 - **身份文件损坏**:`relay-identity.json` 损坏的 daemon 只跑老中继(日志 `relay v2 disabled this boot: relay_identity_corrupt`)。修好它,或有意删掉(= 新身份,手机要重新配对)。
 - **不要双开**:绝不要让两个 daemon 用同一份 `relay-identity.json`——它们会互相顶掉(关闭码 4000,带退避)。
+- **开关(首次运行前做完)**:先在 GitHub 建好环境 `relay-staging` 和 `relay-production`(后者要设 required reviewer = 主人,并把 deployment branch policy 限制为 dev / master),再设仓库变量 `RELAY_DEPLOY=on`(打开部署工作流);中继上线后再设 `RELAY_WATCH=on`(打开每小时巡检)。变量没设时两个工作流的作业是跳过状态,不会红、不会发邮件。

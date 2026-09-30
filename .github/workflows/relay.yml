@@ -19,6 +19,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: vars.RELAY_DEPLOY == 'on'
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.target == 'production' && 'relay-production' || 'relay-staging' }}
     env:
