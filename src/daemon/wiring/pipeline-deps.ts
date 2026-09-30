@@ -642,8 +642,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     const daemonId = remoteTunnel.id
     const daemonRelay = (remoteCfg.remote_relay_url ?? 'wss://cc.tendhearth.com/tunnel/phone').replace('/tunnel/phone', '/tunnel/daemon')
     // 手机协议 v2 的订阅(第 11 步):四路来源(home / matter/<id> / approvals / agents)+ 集线器;
-    // 工作台一变就 poke(回调里只许 poke,见 makePhoneEventsWiring)。推送出口 onNotify 先是空的 ——
-    // 真正发推送是子项目 2。随 daemon 常驻,不 dispose(轮询定时器 unref,且只在有订阅时跑)。
+    // 工作台一变就 poke(回调里只许 poke,见 makePhoneEventsWiring)。推送判定在 phone-notifier.ts。随 daemon 常驻,不 dispose(轮询定时器 unref,且只在有订阅时跑)。
     const phone = makePhoneEventsWiring({
       ...(opts.workbench ? { workbench: opts.workbench, changes: opts.workbench.changes } : {}),
       ...(opts.matters ? { matters: opts.matters } : {}),
