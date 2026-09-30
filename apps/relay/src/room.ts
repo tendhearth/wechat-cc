@@ -14,7 +14,7 @@ import { limitsFrom, makeBucket, utcDay, utf8Len, type Limits, type TokenBucket 
 import { count } from './metrics'
 
 export type DaemonAtt = { role: 'daemon'; id: string; challenge: string; openedAt: number; authed: boolean; authedAt: number; replaced: boolean }
-export type PhoneAtt = { role: 'phone'; stream: string }
+export type PhoneAtt = { role: 'phone'; stream: string; rejected?: boolean }
 export type Att = DaemonAtt | PhoneAtt
 
 export function expiredLogins(atts: readonly DaemonAtt[], now: number, timeoutMs: number): DaemonAtt[] {
@@ -72,7 +72,7 @@ export class Room extends DurableObject<Env> {
     const pendingCount = this.ctx.getWebSockets('daemon').filter(w => { const x = this.att(w); return x?.role === 'daemon' && !x.authed }).length
     this.ctx.acceptWebSocket(server, ['daemon'])
     if (pendingCount >= this.limits.maxPendingLogins) {
-      this.fail(server, 'login_failed', 4001)
+      this.fail(server, 'rate_limited', 4008)
       return new Response(null, { status: 101, webSocket: pair[0], headers: { 'Sec-WebSocket-Protocol': RELAY_SUBPROTOCOL } })
     }
     const challenge = b64uEncode(crypto.getRandomValues(new Uint8Array(32)))
@@ -198,16 +198,20 @@ export class Room extends DurableObject<Env> {
     const pair = new WebSocketPair()
     const server = pair[1]
     const stream = `s${Date.now().toString(36)}${(this.streamSeq++).toString(36)}${b64uEncode(crypto.getRandomValues(new Uint8Array(3)))}`
+    const others = this.ctx.getWebSockets('phone').filter(w => { const x = this.att(w); return x?.role === 'phone' && !x.rejected }).length
+    let reject: RelayError | null = null
+    let closeCode = 1013
+    if (!this.currentDaemon()) { reject = 'daemon_offline'; closeCode = 1011 }
+    else if (others >= this.limits.maxPhoneStreams) reject = 'too_many_streams'
+    else if ((await this.usage()).bytes >= this.limits.dailyBytes) reject = 'quota_exceeded'
     this.ctx.acceptWebSocket(server, ['phone', stream])
-    server.serializeAttachment({ role: 'phone', stream } satisfies PhoneAtt)
-    const others = this.ctx.getWebSockets('phone').filter(w => w !== server).length
-    if (!this.currentDaemon()) this.fail(server, 'daemon_offline', 1011)
-    else if (others >= this.limits.maxPhoneStreams) this.fail(server, 'too_many_streams', 1013)
-    else if ((await this.usage()).bytes >= this.limits.dailyBytes) this.fail(server, 'quota_exceeded', 1013)
+    server.serializeAttachment(reject ? { role: 'phone', stream, rejected: true } satisfies PhoneAtt : { role: 'phone', stream } satisfies PhoneAtt)
+    if (reject) this.fail(server, reject, closeCode)
     return new Response(null, { status: 101, webSocket: pair[0] })
   }
 
   protected async onPhoneMessage(ws: WebSocket, a: PhoneAtt, raw: string): Promise<void> {
+    if (a.rejected) return
     const size = utf8Len(raw)
     if (size > this.limits.maxFrameBytes) { this.fail(ws, 'frame_too_large', 1009); return }
     if (!this.bucket(`p:${a.stream}`, this.limits.phoneRate).take(Date.now())) { this.fail(ws, 'rate_limited', 1008); return }
@@ -220,6 +224,7 @@ export class Room extends DurableObject<Env> {
   }
 
   protected onPhoneClose(_ws: WebSocket, a: PhoneAtt): void {
+    if (a.rejected) return
     this.buckets.delete(`p:${a.stream}`)
     const daemon = this.currentDaemon()
     if (daemon) this.sendJson(daemon, { stream: a.stream, closed: true })
@@ -241,8 +246,12 @@ export class Room extends DurableObject<Env> {
     try { msg = JSON.parse(raw) as Record<string, unknown> } catch { return }
     if (msg.ping !== undefined) { this.sendJson(ws, { pong: msg.ping }); return }   // 非固定串的老式 ping
     if (typeof msg.stream === 'string') {
-      const phone = this.ctx.getWebSockets(msg.stream)[0]
-      if (!phone) return   // 未知 / 已关的流 —— 丢
+      // tag 名('daemon' / 'phone')也能被 getWebSockets 命中 —— 必须核对 attachment。
+      const phone = this.ctx.getWebSockets(msg.stream).find(w => {
+        const x = this.att(w)
+        return x?.role === 'phone' && x.stream === msg.stream && !x.rejected
+      })
+      if (!phone) return   // 未知 / 已关 / 被拒的流 —— 丢
       this.sendJson(phone, msg.frame ?? {})
       await this.addBytes(size)
       return

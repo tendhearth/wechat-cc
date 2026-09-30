@@ -54,7 +54,7 @@ describe('房间:daemon 登录', () => {
     expect(expiredLogins([{ ...a, authed: true }], 99_999, 10_000)).toEqual([])
   })
 
-  it('未登录 socket 每房间最多 4 条:第 5 条 login_failed(4001),已认证 daemon 不受影响', async () => {
+  it('未登录 socket 每房间最多 4 条:第 5 条 rate_limited(4008),已认证 daemon 不受影响', async () => {
     const d = await connectDaemon()
     const pending = []
     for (let i = 0; i < 4; i++) {
@@ -63,8 +63,8 @@ describe('房间:daemon 登录', () => {
       pending.push(s)
     }
     const fifth = await openDaemonSocket(d.ident.id)
-    expect(await fifth.next()).toEqual({ error: 'login_failed' })
-    expect(await fifth.closed).toBe(4001)
+    expect(await fifth.next()).toEqual({ error: 'rate_limited' })
+    expect(await fifth.closed).toBe(4008)
     const p = await connectPhone(d.ident.id)
     p.ws.send(JSON.stringify({ hs: 'z' }))
     expect(await d.next()).toMatchObject({ frame: { hs: 'z' } })

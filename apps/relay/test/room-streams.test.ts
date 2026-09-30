@@ -110,4 +110,30 @@ describe('房间:手机流', () => {
     d.ws.send(JSON.stringify({ stream: up.stream, frame: { ok: 1 } }))
     expect(await p.next()).toEqual({ ok: 1 })
   })
+
+  it('被拒的第 17 条手机流:随后发的帧不转给 daemon,也不占名额', async () => {
+    const d = await connectDaemon()
+    for (let i = 0; i < 16; i++) await connectPhone(d.ident.id)
+    const extra = await connectPhone(d.ident.id)
+    expect(await extra.next()).toEqual({ error: 'too_many_streams' })
+    extra.ws.send(JSON.stringify({ leak: 1 }))
+    await extra.closed
+    d.ws.send('{"ping":7}')
+    expect(await d.next()).toEqual({ pong: 7 })   // 先到的若是 {stream,frame} 就会在这里暴露
+    expect(d.msgs).toEqual([])
+  })
+
+  it('daemon 用 tag 名当 stream(daemon / phone)⇒ 丢,不串到别的 socket', async () => {
+    const d = await connectDaemon()
+    const p = await connectPhone(d.ident.id)
+    d.ws.send(JSON.stringify({ stream: 'daemon', frame: { x: 1 } }))
+    d.ws.send(JSON.stringify({ stream: 'phone', frame: { x: 2 } }))
+    d.ws.send('{"ping":9}')
+    expect(await d.next()).toEqual({ pong: 9 })
+    p.ws.send(JSON.stringify({ hs: 'q' }))
+    const up = await d.next()
+    d.ws.send(JSON.stringify({ stream: up.stream, frame: { legit: 1 } }))
+    expect(await p.next()).toEqual({ legit: 1 })
+    expect(d.msgs).toEqual([])
+  })
 })
