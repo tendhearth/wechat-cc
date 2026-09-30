@@ -1,4 +1,5 @@
-name = "wechat-cc-relay"
+# 顶层是本地 / 裸 `wrangler deploy` 用的名字 —— 故意不同于生产,裸部署覆盖不了生产。部署一律带 --env。
+name = "wechat-cc-relay-dev"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
 # 手机壳页与中继同一份源码(relay/pset.src.html → apps/mobile/build.ts 生成 relay/pset.html)。

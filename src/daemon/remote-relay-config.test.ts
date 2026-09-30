@@ -12,10 +12,23 @@ describe('resolveRemoteRelays', () => {
   it('远程访问关 ⇒ null', () => {
     expect(resolveRemoteRelays(dir, {}, () => {})).toBeNull()
   })
-  it('开:老中继照旧 + 新中继缺省生产;remoteInfo 用新的', () => {
+  it('开但没设 relay_v2_url ⇒ 只连老中继(v2 默认关,上线前不碰生产域名)', () => {
     const r = resolveRemoteRelays(dir, { remote_tunnel: true }, () => {})!
     expect(r.legacy.id).toMatch(/^t[0-9a-f]{36}$/)
     expect(r.legacy.daemonUrl).toBe('wss://cc.tendhearth.com/tunnel/daemon')
+    expect(r.v2).toBeNull()
+    expect(r.remoteInfo).toEqual({ id: r.legacy.id, relay: 'wss://cc.tendhearth.com/tunnel/phone' })
+  })
+  it('只设 remote_relay_url(自建老中继)⇒ v2 关,remoteInfo 指自建的', () => {
+    const r = resolveRemoteRelays(dir, { remote_tunnel: true, remote_relay_url: 'wss://my.example/tunnel/phone' }, () => {})!
+    expect(r.v2).toBeNull()
+    expect(r.remoteInfo).toEqual({ id: r.legacy.id, relay: 'wss://my.example/tunnel/phone' })
+  })
+  it('relay_v2_url 空串 ⇒ v2 关', () => {
+    expect(resolveRemoteRelays(dir, { remote_tunnel: true, relay_v2_url: '' }, () => {})!.v2).toBeNull()
+  })
+  it('显式设 relay_v2_url ⇒ 两条都连;remoteInfo 用新的', () => {
+    const r = resolveRemoteRelays(dir, { remote_tunnel: true, relay_v2_url: 'wss://relay.tendhearth.com' }, () => {})!
     expect(r.v2!.daemonUrl).toBe('wss://relay.tendhearth.com/v2/daemon')
     expect(r.remoteInfo).toEqual({ id: r.v2!.identity.id, relay: 'wss://relay.tendhearth.com/v2/phone' })
   })
@@ -26,14 +39,15 @@ describe('resolveRemoteRelays', () => {
   it('身份文件坏 ⇒ 只连老中继,remoteInfo 回老的,记日志', () => {
     writeFileSync(join(dir, 'relay-identity.json'), 'garbage')
     const log = vi.fn()
-    const r = resolveRemoteRelays(dir, { remote_tunnel: true }, log)!
+    const r = resolveRemoteRelays(dir, { remote_tunnel: true, relay_v2_url: 'wss://relay.tendhearth.com' }, log)!
     expect(r.v2).toBeNull()
     expect(r.remoteInfo).toEqual({ id: r.legacy.id, relay: 'wss://cc.tendhearth.com/tunnel/phone' })
     expect(log).toHaveBeenCalledWith('TUNNEL', expect.stringContaining('relay_identity_corrupt'))
   })
   it('老 id 稳定(第二次读同一个)', () => {
-    const a = resolveRemoteRelays(dir, { remote_tunnel: true }, () => {})!
-    const b = resolveRemoteRelays(dir, { remote_tunnel: true }, () => {})!
+    const cfg = { remote_tunnel: true, relay_v2_url: 'wss://relay.tendhearth.com' }
+    const a = resolveRemoteRelays(dir, cfg, () => {})!
+    const b = resolveRemoteRelays(dir, cfg, () => {})!
     expect(b.legacy.id).toBe(a.legacy.id)
     expect(b.v2!.identity.id).toBe(a.v2!.identity.id)
   })

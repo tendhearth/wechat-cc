@@ -40,7 +40,8 @@ export interface AgentConfig {
    *  可访问。默认关。`remote_relay_url` 可覆盖默认 relay。 */
   remote_tunnel?: boolean
   remote_relay_url?: string
-  /** 官方中继 v2 的地址(wss 源,不带路径);缺省生产 wss://relay.tendhearth.com。 */
+  /** 官方中继 v2 的地址(wss 源,不带路径)。**不设(或空串)⇒ v2 关**,只连老中继;没有隐式缺省。
+   *  上线步骤:生产中继 /healthz 正常后设 `"relay_v2_url": "wss://relay.tendhearth.com"`(docs/maintainer/relay.md)。 */
   relay_v2_url?: string
   /** cheapEval 显式指定(外部集成反馈 #2):设定后内部一次性评估只走
    *  该 provider,openai 注册不再静默劫持。 */

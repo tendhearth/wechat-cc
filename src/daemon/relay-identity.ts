@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { b64uDecode, b64uEncode, relayIdFromPub, relayKeyPair, signRelayLogin } from '@wechat-cc/protocol'
 import { readJsonFile } from '../lib/read-json-file'
 
+/** 生产中继地址 —— 只供文档 / 上线步骤引用;不是隐式缺省(v2 要显式设 relay_v2_url 才开)。 */
 export const DEFAULT_RELAY_V2_URL = 'wss://relay.tendhearth.com'
 const FILE = 'relay-identity.json'
 
