@@ -8,9 +8,10 @@ export type ButtonProps = {
   onPress: () => void
   disabled?: boolean
   busy?: boolean
+  testID?: string
 }
 
-export function Button({ kind, label, onPress, disabled, busy }: ButtonProps) {
+export function Button({ kind, label, onPress, disabled, busy, testID }: ButtonProps) {
   const { c } = useTheme()
   const inactive = !!disabled || !!busy
   const primary = kind === 'primary'
@@ -18,6 +19,7 @@ export function Button({ kind, label, onPress, disabled, busy }: ButtonProps) {
   return (
     <Pressable
       accessibilityRole="button"
+      testID={testID}
       accessibilityLabel={label}
       accessibilityState={{ disabled: inactive, busy: !!busy }}
       disabled={inactive}

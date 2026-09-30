@@ -3,11 +3,12 @@ import { radius, space } from './tokens'
 import { useTheme } from './useTheme'
 
 // 随处可见的输入入口:点开才进入写作页,所以这里只是一个长得像输入框的按钮。
-export function SayBar({ placeholder, onPress }: { placeholder: string; onPress: () => void }) {
+export function SayBar({ placeholder, onPress, testID }: { placeholder: string; onPress: () => void; testID?: string }) {
   const { c } = useTheme()
   return (
     <Pressable
       accessibilityRole="button"
+      testID={testID}
       accessibilityLabel={placeholder}
       onPress={onPress}
       style={{

@@ -1,4 +1,4 @@
-import { Pressable, Text, View } from 'react-native'
+import { Image, Pressable, Text, View } from 'react-native'
 import { useLang } from '../i18n/useLang'
 import { t } from '../i18n'
 import { serifFamily } from './fonts'
@@ -6,6 +6,9 @@ import { space } from './tokens'
 import { useTheme } from './useTheme'
 
 export type Connection = 'online' | 'offline'
+
+const lit = require('../../assets/cc/lit.png')
+const unlit = require('../../assets/cc/unlit.png')
 
 // 右上:「家里的电脑」状态点 + 头像(进设置,由调用方经 onAvatar 接线)。
 export function TopBar({
@@ -19,7 +22,7 @@ export function TopBar({
   connection: Connection
   onAvatar?: () => void
 }) {
-  const { c } = useTheme()
+  const { c, scheme } = useTheme()
   const lang = useLang()
   const online = connection === 'online'
   return (
@@ -34,7 +37,8 @@ export function TopBar({
       </Text>
       <View
         accessible
-        accessibilityLabel={`${t(lang, 'common.computerHome')}, ${online ? 'online' : t(lang, 'common.computerOffline')}`}
+        testID="topbar-connection"
+        accessibilityLabel={`${t(lang, 'common.computerHome')}, ${online ? t(lang, 'common.computerOnline') : t(lang, 'common.computerOffline')}`}
         style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs + 2 }}
       >
         <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: online ? c.ok : c.muted }} />
@@ -42,12 +46,14 @@ export function TopBar({
       </View>
       <Pressable
         accessibilityRole="button"
+        testID="topbar-settings"
         accessibilityLabel={t(lang, 'settings.title')}
         onPress={onAvatar}
         hitSlop={8}
-        style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: c.navOnBg, alignItems: 'center', justifyContent: 'center' }}
+        style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: c.navOnBg, alignItems: 'center', justifyContent: 'center' }}
       >
-        <Text style={{ color: c.navOnInk, fontSize: 14, fontWeight: '600' }}>N</Text>
+        {/* 还没有主人的名字可用,头像先放一个小 CC,不写死字母。 */}
+        <Image source={scheme === 'dark' ? unlit : lit} style={{ width: 24, height: 24 }} resizeMode="contain" />
       </Pressable>
     </View>
   )
