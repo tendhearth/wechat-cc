@@ -67,6 +67,13 @@ final class VectorTests: XCTestCase {
     }
   }
 
+  func testDedupeKeyCases() throws {
+    let v = try loadJSON("packages/protocol/vectors/push.json")
+    for c in v["dedupeKeyCases"] as! [[String: Any]] {
+      XCTAssertEqual(PushDedupe.key(ts: (c["ts"] as! NSNumber).doubleValue, ct: c["ct"] as! String), c["key"] as? String, c["note"] as? String ?? "")
+    }
+  }
+
   func testDedupeEvictsOldestWhenFull() {
     var store = PushDedupe()
     for i in 0..<PushDedupe.capacity { _ = store.seen(String(format: "k%03d", i), nowMs: Int64(1000 + i)) }

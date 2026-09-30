@@ -297,6 +297,17 @@ describe('去重(spec §5.5:每台设备按 ts + 密文哈希记住最近的推�
       expect(d.seen(s.key, s.now) ? 'duplicate' : 'new', s.note).toBe(s.expect)
     }
     expect((v.dedupe.steps as Array<{ expect: string }>).map(s => s.expect)).toContain('duplicate')
+    expect(typeof v.dedupe.rules).toBe('string')
+    // 容量步骤真的触发过挤出:某个曾记下的键在 65 条之后又算 new(k000)
+    const steps = v.dedupe.steps as Array<{ key: string; expect: string }>
+    const firstK000 = steps.findIndex(s => s.key === 'k000')
+    expect(steps.slice(firstK000 + 1).some(s => s.key === 'k000' && s.expect === 'new')).toBe(true)
+  })
+  it('向量文件的 dedupeKeyCases 与 pushDedupeKey 一致(含小数 ts)', () => {
+    const v = JSON.parse(readFileSync(new URL('../vectors/push.json', import.meta.url), 'utf8'))
+    const cs = v.dedupeKeyCases as Array<{ ts: number; ct: string; key: string }>
+    expect(cs.some(c => !Number.isInteger(c.ts))).toBe(true)
+    for (const c of cs) expect(pushDedupeKey(c.ts, c.ct)).toBe(c.key)
   })
   it('从 index 导出', () => {
     expect(index.pushDedupeKey).toBe(pushDedupeKey)
