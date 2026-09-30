@@ -301,6 +301,12 @@ const MatterSayResult = z.union([
   z.object({ kind: z.literal('chat'), reply: z.string() }),
 ])
 
+export const PhoneChangesTurn = z.object({
+  createdAt: z.number(), status: z.enum(['complete', 'partial', 'unavailable']),
+  files: z.array(z.object({ path: z.string(), kind: z.enum(['added', 'deleted', 'modified', 'not_reviewed']), diff: z.string().optional(), truncated: z.boolean() })),
+  omittedFiles: z.number(),
+})
+
 // ── 汇总:`"METHOD /path"` → schema(反向由 daemon 守卫测试核对）───────────
 
 export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
@@ -322,6 +328,7 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
     z.object({ ok: z.literal(true), explanations: z.record(z.string(), ApprovalExplanation), progress: ProgressSummary.nullable() }),
     PhoneErrorResponse,
   ]),
+  'GET /m/api/matter/changes': z.union([z.object({ ok: z.literal(true), turn: PhoneChangesTurn.nullable() }), PhoneErrorResponse]),
   'GET /m/api/matter': z.union([z.object({ ok: z.literal(true) }).extend(MatterDetail.shape), PhoneErrorResponse]),
   'POST /m/api/matter/say': z.union([z.object({ ok: z.literal(true), result: MatterSayResult }), PhoneErrorResponse]),
   'POST /m/api/todo': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),

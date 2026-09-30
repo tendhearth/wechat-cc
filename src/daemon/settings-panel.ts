@@ -97,9 +97,11 @@ export interface SettingsPanelDeps {
   }
   /** 三轴 presence,经 internal-api lifecycle.getPresence 共用。缺省/抛 ⇒ 手机页显示「不知道」。 */
   presence?: () => Promise<Presence | null>
-  /** 「一件事」(2026-09-16):手机看同一份 matter 列表 / 详情,并能往里说话。seenOnPhone 记「在手机露过面」。 */
   /** 手机洞察(批准说明 + 进展概括,spec 2026-09-30-tendhearth-app-v1 §5)。缺省 ⇒ /m/api/matter/insight 503。 */
   insight?: import('./phone-insight').PhoneInsight
+  /** 手机看改动(§5.3):一件事的复盘轮次(工作台 reviewList);未知任务应抛。缺省 ⇒ /m/api/matter/changes 503。 */
+  changes?: (id: string) => readonly import('./phone-changes').ReviewTurnLike[]
+  /** 「一件事」(2026-09-16):手机看同一份 matter 列表 / 详情,并能往里说话。seenOnPhone 记「在手机露过面」。 */
   matters?: MobileMatterActions & {
     list(filter: { kind?: 'chat' | 'task' | 'companion'; statuses?: Array<'open' | 'replied' | 'done' | 'archived'>; limit?: number }): unknown[]
     detail(id: string): Promise<unknown> | unknown
@@ -196,6 +198,7 @@ import { serve, type Server } from '../lib/runtime/http'
 import { makeTokenRegistry, type PanelTokens } from './internal-api/token-registry'
 import { makeDeviceCredentials, makeDeviceStore, type DeviceRow } from './device-store'
 import { normalizeLang } from './phone-insight-llm'
+import { latestChanges } from './phone-changes'
 import { LAN_ONLY_OPS, LINK_ROUTES, PHONE_ROUTES, phoneRouteAllowed } from './phone-routes'
 
 export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
@@ -709,6 +712,13 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
               const msg = e instanceof Error ? e.message : ''
               return json({ ok: false, error: msg === 'matter_not_found' ? msg : 'unavailable' }, msg === 'matter_not_found' ? 404 : 500)
             }
+          }
+          if (url.pathname === '/m/api/matter/changes' && req.method === 'GET') {
+            if (!deps.changes) return json({ ok: false, error: 'changes_not_wired' }, 503)
+            const id = url.searchParams.get('id')
+            if (!id || !/^[a-f0-9]{8}$/.test(id)) return json({ ok: false, error: 'invalid' }, 400)
+            try { return json({ ok: true, turn: latestChanges(deps.changes(id)) }) }
+            catch { return json({ ok: false, error: 'matter_not_found' }, 404) }
           }
           if (url.pathname === '/m/api/matter/say' && req.method === 'POST') {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)

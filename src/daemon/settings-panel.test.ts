@@ -726,6 +726,35 @@ describe('GET /m/api/matter/insight', () => {
   })
 })
 
+describe('GET /m/api/matter/changes', () => {
+  async function panelWith(changes?: unknown) {
+    const panel = makeSettingsPanel({ stateDir: seedStateDir(), ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {}, ...(changes ? { changes } : {}) } as never)
+    const { port } = await panel.start(0)
+    return { panel, base: `http://127.0.0.1:${port}`, t: panel.issueToken() }
+  }
+  const T = (createdAt: number) => ({ createdAt, status: 'complete' as const, files: [{ path: 'a.ts', kind: 'modified' as const, diff: '+x' }] })
+  it('没接线 ⇒ 503;id 不合法 ⇒ 400', async () => {
+    const a = await panelWith()
+    expect((await fetch(`${a.base}/m/api/matter/changes?id=deadbeef&t=${a.t}`)).status).toBe(503)
+    await a.panel.stop()
+    const b = await panelWith(vi.fn())
+    expect((await fetch(`${b.base}/m/api/matter/changes?id=nope&t=${b.t}`)).status).toBe(400)
+    await b.panel.stop()
+  })
+  it('两轮 ⇒ 最近一轮;空 ⇒ turn:null;抛 ⇒ 404', async () => {
+    const changes = vi.fn(() => [T(1), T(9)])
+    const p = await panelWith(changes)
+    const r = await (await fetch(`${p.base}/m/api/matter/changes?id=deadbeef&t=${p.t}`)).json() as { ok: boolean; turn: { createdAt: number } }
+    expect(r.ok).toBe(true)
+    expect(r.turn.createdAt).toBe(9)
+    changes.mockReturnValueOnce([])
+    expect(await (await fetch(`${p.base}/m/api/matter/changes?id=deadbeef&t=${p.t}`)).json()).toEqual({ ok: true, turn: null })
+    changes.mockImplementationOnce(() => { throw new Error('task_not_found') })
+    expect((await fetch(`${p.base}/m/api/matter/changes?id=deadbeef&t=${p.t}`)).status).toBe(404)
+    await p.panel.stop()
+  })
+})
+
 describe('phone curated memory', () => {
   it('a throwing memory view answers 500 instead of leaving the phone waiting', async () => {
     const p = makeSettingsPanel({

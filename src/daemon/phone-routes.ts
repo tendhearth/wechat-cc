@@ -28,6 +28,7 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'GET /m/api/matters',
   'GET /m/api/matter',
   'GET /m/api/matter/insight',
+  'GET /m/api/matter/changes',
   'POST /m/api/matter/say',
   'POST /m/api/todo',
   'GET /m/api/sticker/',

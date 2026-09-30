@@ -23,7 +23,7 @@ export {
   Attachment, Matter, MatterBinding, MatterSession, MatterTaskView, MatterEvent, MatterInput,
   ApprovalExplanation, ProgressSummary, MatterPermission, MatterQuestion, MatterArtifact, MatterDetail,
   ProjectCatalogEntry, EntryOptions, WorkbenchExecutorCapabilities, WorkbenchTaskView, EntryReceipt, EntryResult,
-  UploadState, MatterArtifactChunk, FeedEvent, Presence, HomeWork,
+  UploadState, MatterArtifactChunk, FeedEvent, Presence, HomeWork, PhoneChangesTurn,
 } from './api'
 export {
   base32Lower, RELAY_ID_RE, RELAY_SUBPROTOCOL, relayIdProtocol, relayIdFromPub, relayKeyPair, relayLoginMessage,

@@ -93,7 +93,8 @@ describe('真实返回校验 — workbench + matters', () => {
         createEntry: input => workbench.createEntry(input, { ownerKey: 'owner', surface: 'phone' }),
         entryReceipt: id => workbench.entryReceipt(id, { ownerKey: 'owner', surface: 'phone' }),
       },
-      insight: makePhoneInsight({ detail: id => service.detail(id), explainer: makeApprovalExplainer({ cheapEval: () => null, budgetMs: () => 1000, log: () => {} } as never), summarizer: makeProgressSummarizer({ cheapEval: () => null, budgetMs: () => 1000, now: () => Date.now(), log: () => {} } as never) }),
+      insight: makePhoneInsight({ detail: id => service.detail(id), explainer: makeApprovalExplainer({ cheapEval: () => null, budgetMs: () => 1000, log: () => {} }), summarizer: makeProgressSummarizer({ cheapEval: () => null, budgetMs: () => 1000, now: () => Date.now(), log: () => {} }) }),
+      changes: id => workbench.reviewList(id),
       matters: { ...service, say: (id, text, input) => service.say(id, text, 'phone', input), seenOnPhone: id => { matters.bind(id, 'phone', 'pwa') } },
     })
     const started = await panel.start(0)
@@ -182,6 +183,16 @@ describe('真实返回校验 — workbench + matters', () => {
     const body = parseAs('GET /m/api/matter/insight', await res.json()) as { ok: boolean; explanations: Record<string, { source: string }> }
     expect(body.ok).toBe(true)
     expect(body.explanations[live.permissions[0]!.id]?.source).toBe('raw')
+  })
+
+  it('matter/changes 真实返回符合 schema(无改动 ⇒ turn:null;未知任务 ⇒ 404)', async () => {
+    const task = create('chg')
+    const res = await request(`/m/api/matter/changes?id=${task.id}`)
+    const body = parseAs('GET /m/api/matter/changes', await res.json()) as { ok: boolean; turn: unknown }
+    expect(body).toEqual({ ok: true, turn: null })
+    const missing = await request('/m/api/matter/changes?id=deadbeef')
+    expect(missing.status).toBe(404)
+    parseAs('GET /m/api/matter/changes', await missing.json())
   })
 })
 
