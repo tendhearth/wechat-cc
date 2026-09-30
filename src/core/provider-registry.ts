@@ -226,8 +226,10 @@ export function createProviderRegistry(opts?: {
     getCheapEvalBudgetMs() {
       // 与 getCheapEval 同一套候选解析(钉死优先,再偏好序,再其余),
       // 否则超时会按一批「其实不会被调用的 provider」来定。
-      if (opts?.cheapEvalProvider) {
-        const pinned = entries.get(opts.cheapEvalProvider as ProviderId)
+      // cheapEvalProvider 可能是 getter(bootstrap 就这么传),与 getCheapEval 同一种解析。
+      const pinnedId = typeof opts?.cheapEvalProvider === 'function' ? opts.cheapEvalProvider() : opts?.cheapEvalProvider
+      if (pinnedId) {
+        const pinned = entries.get(pinnedId as ProviderId)
         if (pinned?.provider.cheapEval) return pinned.provider.cheapEvalBudgetMs ?? DEFAULT_CHEAP_EVAL_BUDGET_MS
       }
       let budget = DEFAULT_CHEAP_EVAL_BUDGET_MS
