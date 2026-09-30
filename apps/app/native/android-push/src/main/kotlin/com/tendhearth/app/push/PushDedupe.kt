@@ -1,5 +1,6 @@
 package com.tendhearth.app.push
 
+import org.json.JSONObject
 import java.security.MessageDigest
 import kotlin.math.floor
 
@@ -8,6 +9,9 @@ class PushDedupe(initial: Map<String, Long> = emptyMap()) {
   private val entries = LinkedHashMap(initial)
 
   fun snapshot(): Map<String, Long> = HashMap(entries)
+
+  /** 存进 SharedPreferences 的形状:{"<key>": 记下时刻(ms)}。 */
+  fun toJson(): String = JSONObject(entries as Map<*, *>).toString()
 
   /** true = 见过(重复,不再提醒);false = 新的,已记下。 */
   fun seen(key: String, nowMs: Long): Boolean {
@@ -24,6 +28,14 @@ class PushDedupe(initial: Map<String, Long> = emptyMap()) {
   companion object {
     const val CAPACITY = 64
     const val TTL_MS = PushCrypto.MAX_AGE_MS + PushCrypto.MAX_SKEW_MS
+
+    /** toJson 的逆;坏数据 ⇒ 空表(最多多提醒一次),非数字的值跳过。不抛。 */
+    fun fromJson(s: String?): PushDedupe {
+      val o = try { JSONObject(s ?: "") } catch (e: Exception) { return PushDedupe() }
+      val m = LinkedHashMap<String, Long>()
+      for (k in o.keys()) (o.opt(k) as? Number)?.let { m[k] = it.toLong() }
+      return PushDedupe(m)
+    }
 
     /** 记下时刻升序,平局按键名的码点升序(String.compareTo 比的是 UTF-16 码元,代理对会排错,所以不用它)。 */
     private val OLDEST_FIRST = Comparator<Map.Entry<String, Long>> { a, b ->

@@ -46,6 +46,13 @@ describe('app.config.js', () => {
     expect(c.plugins).toContainEqual(['expo-notifications', expect.objectContaining({ mode: 'production' })])
     expect(c.android.googleServicesFile).toBe('/tmp/gs.json')
   })
+  it('本地有 apps/app/google-services.json(主人放的,不进 git)⇒ 用它;环境变量优先', () => {
+    for (const k of envKeys) delete process.env[k]
+    vi.mocked(fs.existsSync).mockImplementation(p => (String(p).endsWith('google-services.json') ? true : realExists(p)))
+    expect(load()({ config: base.expo }).android.googleServicesFile).toBe('./google-services.json')
+    process.env.GOOGLE_SERVICES_JSON = '/tmp/gs.json'
+    expect(load()({ config: base.expo }).android.googleServicesFile).toBe('/tmp/gs.json')
+  })
   it('APPLE_TEAM_ID 换团队 ⇒ 共享组与插件参数跟着换', () => {
     process.env.APPLE_TEAM_ID = 'ABCDE12345'
     const c = load()({ config: base.expo })
