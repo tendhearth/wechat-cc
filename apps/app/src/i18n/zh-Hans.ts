@@ -85,6 +85,18 @@ const zh: Record<keyof typeof en, string> = {
   'settings.privacyBody': '查看待批准的说明时，命令文本会发给你电脑上配置的便宜模型服务商，用来翻译成通俗的话。其余内容都加密传输，只在这台手机和你的电脑之间。',
   'settings.about': '关于',
   'demo.banner': '你正在体验设计样稿。所有任务与通知都是示例，操作只在这里演示。',
+  'progress.breadcrumb': '一起做 / 事项',
+  'progress.viewChangesN': '查看改动 · {n} 个文件',
+  'progress.tooBig': '太大了，回电脑上看。',
+  'progress.noChanges': '还没有文件改动。',
+  'progress.executor': '执行者',
+  'progress.path': '路径',
+  'progress.recentEvents': '最近事件',
+  'progress.noEvents': '还没有。',
+  'progress.stepDone': '已完成',
+  'progress.stepWaiting': '等你决定',
+  'progress.loading': '加载中…',
+  'progress.loadFailed': '这件事没能加载。',
 }
 
 export default zh

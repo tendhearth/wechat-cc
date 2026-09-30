@@ -83,6 +83,18 @@ const en = {
   'settings.privacyBody': 'When you review an approval, the command text is sent to the cheap model provider configured on your computer so it can be summarized in plain words. Everything else travels encrypted, only between this phone and your computer.',
   'settings.about': 'About',
   'demo.banner': 'You’re exploring a design preview. Tasks and notifications are examples; actions stay inside this preview.',
+  'progress.breadcrumb': 'Together / Tasks',
+  'progress.viewChangesN': 'See changes · {n} files',
+  'progress.tooBig': 'Too large to show here. Check it on your computer.',
+  'progress.noChanges': 'No file changes yet.',
+  'progress.executor': 'Agent',
+  'progress.path': 'Folder',
+  'progress.recentEvents': 'Recent events',
+  'progress.noEvents': 'Nothing yet.',
+  'progress.stepDone': 'Done',
+  'progress.stepWaiting': 'Waiting for you',
+  'progress.loading': 'Loading…',
+  'progress.loadFailed': 'Couldn’t load this task.',
 } as const
 
 export default en

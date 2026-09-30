@@ -3,7 +3,8 @@ import { Pressable, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t, type Lang } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
-import { useConnection } from '../../state/hooks'
+import { useBackendCtx } from '../../state/BackendProvider'
+import { useConnection, useQuery } from '../../state/hooks'
 import { useWork } from '../../state/useWork'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
@@ -15,6 +16,16 @@ import { space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { useTheme } from '../../ui/useTheme'
 import { nowView } from '../../view/now'
+
+// 决定卡标题:优先用后端给的说明标题(按任务缓存),没有就退回原始概括。
+function NeedsYouTitle({ taskId, requestId, fallback }: { taskId: string; requestId: string | undefined; fallback: string }) {
+  const { c } = useTheme()
+  const lang = useLang()
+  const { backend } = useBackendCtx()
+  const insight = useQuery(`insight:${taskId}:${lang}`, () => backend.insight(taskId, lang))
+  const title = requestId ? insight.data?.explanations[requestId]?.title : undefined
+  return <Text style={{ color: c.ink, fontSize: 18, lineHeight: 25, fontWeight: '600' }}>{title || fallback}</Text>
+}
 
 function weekday(lang: Lang, d: Date): string {
   try {
@@ -66,7 +77,7 @@ export default function Now() {
               {t(lang, 'now.needsYouEyebrow')}
               {g.count > 1 ? ` · ${t(lang, 'now.needsYouCount', { n: g.count })}` : ''}
             </Text>
-            <Text style={{ color: c.ink, fontSize: 18, lineHeight: 25, fontWeight: '600' }}>{g.firstSummary}</Text>
+            <NeedsYouTitle taskId={g.taskId} requestId={approvals.find((a) => a.taskId === g.taskId)?.id} fallback={g.firstSummary} />
             {titleOf(g.taskId) ? <Text style={{ color: c.muted, fontSize: 14 }}>{titleOf(g.taskId)}</Text> : null}
             <View style={{ alignSelf: 'flex-start', marginTop: space.s }}>
               <Button
