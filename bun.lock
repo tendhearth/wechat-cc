@@ -52,12 +52,12 @@
         "react-native": "0.86.3",
         "react-native-safe-area-context": "~5.7.0",
         "react-native-screens": "~4.26.0",
+        "zod": "^4.0.0",
       },
       "devDependencies": {
         "@types/react": "~19.2.2",
         "typescript": "~6.0.3",
         "vitest": "^4.1.4",
-        "zod": "^4.0.0",
       },
     },
     "apps/desktop": {
