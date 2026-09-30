@@ -18,7 +18,7 @@ import { derivePushKey, pushTokenValid, sealPush, type PushPlatformT } from '@we
 import { readJsonFile } from '../lib/read-json-file'
 
 export type PushKind = 'permission' | 'question' | 'task_done' | 'task_failed' | 'test'
-export interface PushPayload { kind: PushKind; title: string; body: string; taskId?: string }
+export interface PushPayload { kind: PushKind; title: string; body: string; taskId?: string; requestId?: string }
 
 export interface PhonePush {
   register(deviceId: string, platform: PushPlatformT, token: string): boolean
@@ -76,7 +76,7 @@ export function makePhonePush(deps: {
     if (!read()[deviceId]) return null
     const token = deps.deviceToken(deviceId)
     if (!token) { drop(deviceId, true); return null }
-    const payload = { ts: now(), kind: p.kind, title: clip(p.title, TITLE_MAX), body: clip(p.body, BODY_MAX), ...(p.taskId ? { taskId: p.taskId } : {}) }
+    const payload = { ts: now(), kind: p.kind, title: clip(p.title, TITLE_MAX), body: clip(p.body, BODY_MAX), ...(p.taskId ? { taskId: p.taskId } : {}), ...(p.requestId ? { requestId: p.requestId } : {}) }
     const ref = `p${(refSeq++).toString(36)}${randomBytes(3).toString('hex')}`
     const ok = deps.send({ push: { device: deviceId, sealed: sealPush(derivePushKey(token), payload), collapseId: p.taskId ?? p.kind, ref } })
     return ok ? ref : ''

@@ -43,7 +43,15 @@ describe('phone-notifier', () => {
       { taskId: 'ab12cd34', kind: 'question', id: 'q1', summary: '用哪个分支?' },
     ])
     expect(h.notify).toHaveBeenCalledTimes(1)
-    expect(h.notify).toHaveBeenCalledWith('dev1', { kind: 'question', title: 'CC 有问题问你', body: '修登录:用哪个分支?', taskId: 'ab12cd34' })
+    expect(h.notify).toHaveBeenCalledWith('dev1', { kind: 'question', title: 'CC 有问题问你', body: '修登录:用哪个分支?', taskId: 'ab12cd34', requestId: 'q1' })
+  })
+
+  it('新的待批准权限 ⇒ requestId 是那条权限的 id', () => {
+    const h = harness({ registered: ['dev1'], tasks: { t1: { title: 'A', status: 'running' } } })
+    h.n.refresh()
+    h.emit('approvals', [])
+    h.emit('approvals', [{ taskId: 't1', kind: 'permission', id: 'perm-9', summary: 'Bash: ls' }])
+    expect(h.notify).toHaveBeenCalledWith('dev1', expect.objectContaining({ kind: 'permission', taskId: 't1', requestId: 'perm-9' }))
   })
 
   it('working → replied ⇒ task_done;离开列表且 failed ⇒ task_failed;cancelled 不推', () => {

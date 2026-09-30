@@ -122,4 +122,15 @@ describe('phone-push', () => {
     expect(push.registered()).toEqual([])
     expect(existsSync(join(dir, 'phone-push.json'))).toBe(true)
   })
+
+  it('notify 带 requestId ⇒ 封进明文;不带 ⇒ 明文里没有这个键', () => {
+    const { push, sent } = setup()
+    push.register('dev1', 'apns', APNS)
+    push.notify('dev1', { kind: 'permission', title: 't', body: 'b', taskId: 'ab12cd34', requestId: 'req-1' })
+    const a = openPush(derivePushKey('dtok-1'), sent.at(-1).push.sealed, 1_700_000_000_000)
+    expect(a.requestId).toBe('req-1')
+    push.notify('dev1', { kind: 'task_done', title: 't', body: 'b', taskId: 'ab12cd34' })
+    const b = openPush(derivePushKey('dtok-1'), sent.at(-1).push.sealed, 1_700_000_000_000)
+    expect('requestId' in b).toBe(false)
+  })
 })
