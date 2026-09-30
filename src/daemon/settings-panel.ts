@@ -40,6 +40,7 @@ import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterA
 import {mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileHomeFocus} from './mobile-home-focus'
 import type {MatterSayInput} from '../core/matters/service'
+import { PushPlatform, pushTokenValid, type PushPlatformT } from '@wechat-cc/protocol'
 import type { Presence } from '../core/companion-presence'
 import type { CatchRow } from '../core/journal-store'
 import type { PlanLogEntry } from '../core/companion-plan'
@@ -105,6 +106,13 @@ export interface SettingsPanelDeps {
   }
   /** 主人「看到哪了」的水位,与桌面觅食台同一个文件(一个主人一个水位)。缺省 ⇒ POST /m/api/seen 503。 */
   seen?: { read: () => string | null; write: (iso: string) => void }
+  /** 推送(中继 v2,spec 2026-09-30 §5)。缺省 ⇒ /m/api/push/* 503。按设备 id,不是令牌。 */
+  push?: {
+    register(deviceId: string, platform: PushPlatformT, token: string): boolean
+    test(deviceId: string): Promise<{ ok: boolean; code: string }>
+    unregister(deviceId: string): void
+    forgetAll(): void
+  }
   /** 手机「CC 记得你」(2026-09-25,memory/nightly-runtime)。 */
   curatedMemory?: () => import('./memory/nightly-runtime').CuratedView
   /** 远程隧道信息(启用时):relay wss + 本机 daemon id。手机页出门时用它
@@ -434,12 +442,14 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           // 安全 review HIGH 收尾 (2026-08-26):设备令牌长期有效是产品决策
           // (加主屏永不过期),但必须可撤销。一键全忘,手机重新配对即可。
           devices.forgetAll()
+          deps.push?.forgetAll()
           deps.audit?.('随身 CC:忘掉所有已配对设备 — 设置面板')
           return { ok: true }
         }
         if (b.op === 'revoke_device') {
           // 按台撤销(梳理第 6 步):丢了一台手机不必让所有设备重新配对。
           if (typeof b.id !== 'string' || !devices.revoke(b.id)) return { ok: false, error: 'unknown_device' }
+          deps.push?.unregister(b.id)
           deps.audit?.(`随身 CC:忘掉设备 ${b.id} — 设置面板`)
           return { ok: true }
         }
@@ -535,7 +545,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       // 锚点不上服务器,中继看不到;壳先探 LAN(在家秒开),不通走隧道。
       const remote = deps.remoteInfo?.()
       if (remote) {
-        const base = remote.relay.replace(/^wss:/, 'https:').replace(/\/tunnel\/phone$/, '')
+        const base = remote.relay.replace(/^wss:/, 'https:').replace(/\/(tunnel|v2)\/phone$/, '')
         return `${base}/pset/#id=${encodeURIComponent(remote.id)}&t=${token}&p=${encodeURIComponent('/set')}&lan=${ip}:${port}`
       }
       return `http://${ip}:${port}/set?t=${token}`
@@ -653,6 +663,19 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             if (cur !== null && clamped <= cur) return json({ ok: true, seen_until: cur })
             deps.seen.write(clamped)
             return json({ ok: true, seen_until: clamped })
+          }
+          if ((url.pathname === '/m/api/push/register' || url.pathname === '/m/api/push/test') && req.method === 'POST') {
+            if (!deps.push) return json({ ok: false, error: 'push_not_wired' }, 503)
+            if (caller.origin !== 'device' || !deviceId) return json({ ok: false, error: 'device_only' }, 403)
+            if (url.pathname === '/m/api/push/test') return json({ ok: true, result: await deps.push.test(deviceId) })
+            let body: unknown
+            try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
+            const b = (body ?? {}) as { platform?: unknown; token?: unknown }
+            const platform = PushPlatform.safeParse(b.platform)
+            if (!platform.success || typeof b.token !== 'string' || !pushTokenValid(platform.data, b.token)) return json({ ok: false, error: 'invalid' }, 400)
+            if (!deps.push.register(deviceId, platform.data, b.token)) return json({ ok: false, error: 'invalid' }, 400)
+            deps.log('SETTINGS', `push registered for device ${deviceId} (${platform.data})`)
+            return json({ ok: true })
           }
           // ── 「一件事」:与桌面同一份数据,同一套语义 ──────────────────
           const mobileResponse=await mobileWorkbenchRoute(deps.matters,url,req,deps.entry,deps.uploads)

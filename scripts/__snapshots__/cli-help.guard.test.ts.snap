@@ -2019,6 +2019,7 @@ OPTIONS
       --executor=<executor>    执行者 provider id(claude / codex / cursor / agy / …),给自检建的最小工作台任务用 (Required)
                      --json    JSON 输出(SelftestReport),不输出人读版                                             
   --timeout-ms=<timeout_ms>    总超时,毫秒(缺省 90000)                                                           
+            --relay=<relay>    只认 v2:核对链接指向官方中继 v2、healthz、APNs 认可推送凭据                                    
 
 
 "

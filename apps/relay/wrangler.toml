@@ -1,0 +1,37 @@
+# 顶层是本地 / 裸 `wrangler deploy` 用的名字 —— 故意不同于生产,裸部署覆盖不了生产。部署一律带 --env。
+name = "wechat-cc-relay-dev"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+# 手机壳页与中继同一份源码(relay/pset.src.html → apps/mobile/build.ts 生成 relay/pset.html)。
+rules = [{ type = "Text", globs = ["**/*.html"], fallthrough = true }]
+
+[observability]
+enabled = true
+[observability.logs]
+# spec §7:手机 URL 带 ?id=,Workers 的请求日志一律不留 —— 只留我们自己打的(不含 id 的)console 行。
+invocation_logs = false
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
+
+[vars]
+RELAY_ENV = "local"
+
+[env.staging]
+name = "wechat-cc-relay-staging"
+routes = [{ pattern = "relay-staging.tendhearth.com", custom_domain = true }]
+vars = { RELAY_ENV = "staging" }
+durable_objects.bindings = [{ name = "ROOM", class_name = "Room" }]
+analytics_engine_datasets = [{ binding = "METRICS", dataset = "wechat_cc_relay_staging" }]
+
+[env.production]
+name = "wechat-cc-relay"
+routes = [{ pattern = "relay.tendhearth.com", custom_domain = true }]
+vars = { RELAY_ENV = "production" }
+durable_objects.bindings = [{ name = "ROOM", class_name = "Room" }]
+analytics_engine_datasets = [{ binding = "METRICS", dataset = "wechat_cc_relay" }]

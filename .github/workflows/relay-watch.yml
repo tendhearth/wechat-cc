@@ -1,0 +1,30 @@
+name: Relay watch
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  watch:
+    if: vars.RELAY_WATCH == 'on'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Production healthz
+        run: |
+          body=$(curl -fsS --max-time 15 https://relay.tendhearth.com/healthz)
+          echo "$body"
+          echo "$body" | grep -q '"ok":true'
+      - name: Push failure rate (last hour)
+        env:
+          TOKEN: ${{ secrets.CF_ANALYTICS_TOKEN }}
+          ACCOUNT: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$TOKEN" ]; then echo "CF_ANALYTICS_TOKEN not set — skipping push-rate check"; exit 0; fi
+          q="SELECT blob1 AS ev, SUM(_sample_interval) AS n FROM wechat_cc_relay WHERE timestamp > NOW() - INTERVAL '1' HOUR AND blob1 IN ('push_ok','push_fail') GROUP BY ev FORMAT JSON"
+          out=$(curl -fsS -H "Authorization: Bearer $TOKEN" --data "$q" "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/analytics_engine/sql")
+          echo "$out"
+          ok=$(echo "$out" | jq '[.data[] | select(.ev=="push_ok") | .n|tonumber] | add // 0')
+          fail=$(echo "$out" | jq '[.data[] | select(.ev=="push_fail") | .n|tonumber] | add // 0')
+          echo "push ok=$ok fail=$fail"
+          if [ "$fail" -ge 20 ] && [ $((fail * 2)) -gt $((ok + fail)) ]; then echo "push failure spike"; exit 1; fi

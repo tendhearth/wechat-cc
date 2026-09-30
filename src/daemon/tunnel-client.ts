@@ -28,7 +28,10 @@
  * lives entirely here + on the phone. Device-token auth still applies: the
  * synthesized request carries the phone's `d=` token in its URL, so an
  * un-paired phone's requests 401 exactly as on the LAN.
+ *
+ * 中继 v2(2026-09-30):给了 `login` ⇒ id 走子协议、socket 里挑战登录;登录后才发控制帧(推送登记 / 发送)。
  */
+import { RELAY_SUBPROTOCOL, relayIdProtocol } from '@wechat-cc/protocol'
 import { deriveSharedBits, hkdfAesKey, generateTunnelKeypair, exportPublicKeyB64, importPublicKeyB64, sealFrame, openFrame, type TunnelKeypair, type TunnelSharedKey } from '../lib/tunnel-crypto'
 import type { PhoneEvents } from './phone-events'
 import { identifyV2, makeV2Stream, tunnelRequestUrl, type V2Stream } from './tunnel-v2-stream'
@@ -55,7 +58,7 @@ export interface TunnelClientDeps {
    *  与设备令牌同一套 HKDF 绑定:令牌只在链接的 # 里,不上中继。 */
   activeLinkToken?: () => string | null
   /** Opens the outbound WS. Default dials the relay via Bun's WebSocket. */
-  connect?: (url: string) => TunnelWS
+  connect?: (url: string, protocols?: string[]) => TunnelWS
   relayUrl?: string
   reconnectMs?: number
   /** 心跳间隔(ms)。默认 20s。一轮 ping 没等到 pong 就判连接已死、强制重连。 */
@@ -65,6 +68,12 @@ export interface TunnelClientDeps {
   log?: (tag: string, line: string) => void
   /** v2 订阅的事件集线器。没有 ⇒ v2 的 `sub` 一律回 `err subscriptions_unavailable`。 */
   events?: PhoneEvents
+  /** 给了 ⇒ 走官方中继 v2:id 放子协议,收到 {challenge} 用它签名回复。 */
+  login?: { sign(challenge: string): { pub: string; sig: string } }
+  /** v2 非流控制帧:push_result / push_invalid / error。 */
+  onControl?: (msg: Record<string, unknown>) => void
+  /** v2 登录成功(每次重连后都会再来一次)。 */
+  onLogin?: () => void
 }
 
 /** Does this handshake ask for v2? (`v` is an array containing 2; anything else ⇒ v1.) */
@@ -81,7 +90,14 @@ export function handshakePlaintext(frame: unknown): string | null {
   return null
 }
 
-export interface TunnelClient { start(): void; stop(): void }
+export interface TunnelClient {
+  start(): void
+  stop(): void
+  /** 发一条控制帧;v2 模式要已登录,否则 false。 */
+  sendControl(msg: object): boolean
+  /** 有活订阅的已识别流对应的设备令牌(= 在线设备)。 */
+  subscribedDeviceTokens(): Set<string>
+}
 
 export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   const relayUrl = deps.relayUrl ?? 'wss://cc.tendhearth.com/tunnel/daemon'
@@ -90,7 +106,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   const maxReconnectMs = deps.reconnectMs ?? 15_000
   const minReconnectMs = 2_000
   const log = deps.log ?? (() => {})
-  let reconnectAttempts = 0     // 连续失败计数(open 成功清零)
+  let reconnectAttempts = 0     // 连续失败计数(老中继 open 成功清零;v2 要等 login_ok 才清零,见 markConnected)
   let downSince = 0             // 首次断开时刻(重连成功时算下线时长)
   let now = deps.now ?? (() => Date.now())
   // Per-stream ephemeral state: our keypair, the raw ECDH bits, and — once the
@@ -116,6 +132,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   }
   let ws: TunnelWS | null = null
   let stopped = false
+  let loggedIn = false
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   // 心跳(2026-08-28 实测:过公司安全代理时,长连 WS 会被静默掐断 —— TCP 壳
   // 还在、close 帧不来,于是 daemon 以为还连着、relay 却早把它踢了,手机报
@@ -137,7 +154,8 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
         return
       }
       awaitingPong = true
-      try { sock.send(JSON.stringify({ ping: now() })) } catch { /* onclose 会接手 */ }
+      // 固定串:新中继的边缘直接回 pong 不唤醒房间
+      try { sock.send('{"ping":1}') } catch { /* onclose 会接手 */ }
     }, PING_INTERVAL_MS)
     if (typeof (pingTimer as unknown as { unref?: () => void }).unref === 'function') (pingTimer as unknown as { unref: () => void }).unref()
   }
@@ -162,11 +180,21 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     sendToStream(stream, { error: 'stream_unknown' })
   }
 
-  const defaultConnect = (url: string): TunnelWS => new (globalThis as unknown as { WebSocket: new (u: string) => TunnelWS }).WebSocket(url)
+  const defaultConnect = (url: string, protocols?: string[]): TunnelWS => new (globalThis as unknown as { WebSocket: new (u: string, p?: string[]) => TunnelWS }).WebSocket(url, protocols)
   const connect = deps.connect ?? defaultConnect
 
   function sendToStream(stream: string, frame: unknown): void {
     ws?.send(JSON.stringify({ stream, frame }))
+  }
+
+  /** 明文告诉手机「没认出你」。中继 v2 模式下紧跟 `{stream, close:true}`:房间关掉这条流、立刻腾名额
+   *  (否则知道 id 的人能用认不出的流占满 16 个名额)。房间关流时不再回 `closed`,这里自己忘掉它。
+   *  老中继不认 close,会把没有 frame 的消息当 `{}` 转给手机 —— 所以只在 `deps.login` 时发。 */
+  function rejectStream(stream: string): void {
+    sendToStream(stream, { error: 'auth_failed' })
+    if (!deps.login) return
+    try { ws?.send(JSON.stringify({ stream, close: true })) } catch { /* close 会接手 */ }
+    forgetStream(stream)
   }
 
   async function onStreamFrame(stream: string, frame: unknown): Promise<void> {
@@ -213,7 +241,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     if (!reqBytes) {
       log('TUNNEL', `frame auth failed on ${stream} (no paired device / expired link / MITM) — dropped`)
       // 明文告诉手机「没认出你」,别让页面永远卡在「连回你的电脑…」。不带任何令牌或密文信息。
-      sendToStream(stream, { error: 'auth_failed' })
+      rejectStream(stream)
       return
     }
     let parsed: { path?: unknown; method?: unknown; body?: unknown; rid?: unknown }
@@ -265,7 +293,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     const hit = identifyV2(new Uint8Array(st.bits), candidateTokens(), frame)
     if (!hit) {
       log('TUNNEL', `frame auth failed on ${stream} (no paired device / expired link / MITM) — dropped`)
-      sendToStream(stream, { error: 'auth_failed' })
+      rejectStream(stream)
       return
     }
     const token = hit.token
@@ -279,7 +307,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       onRevoked: () => {
         if (streams.get(stream) !== st) return
         streams.delete(stream)
-        sendToStream(stream, { error: 'auth_failed' })
+        rejectStream(stream)
       },
       log,
     })
@@ -288,9 +316,13 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
 
   function open(): void {
     if (stopped) return
-    const url = `${relayUrl}?id=${encodeURIComponent(deps.daemonId)}`
-    ws = connect(url)
-    ws.addEventListener('open', () => {
+    loggedIn = false
+    ws = deps.login
+      ? connect(relayUrl, [RELAY_SUBPROTOCOL, relayIdProtocol(deps.daemonId)])
+      : connect(`${relayUrl}?id=${encodeURIComponent(deps.daemonId)}`, undefined)
+    // 连上后的总账:摘要日志 + 退避清零。v2 模式中继在 open 之后才可能拒绝(login_failed 4001 /
+    // rate_limited 4008 / replaced 4000),所以 v2 只在 login_ok 时清零,否则被拒会永远 2s 重连成风暴。
+    function markConnected(): void {
       if (reconnectAttempts > 0) {
         // 从一段断连中恢复 —— 一条摘要代替刷屏(N 次尝试 / 下线 Xs)。
         log('TUNNEL', `reconnected to relay after ${reconnectAttempts} attempt(s), down ${Math.round((now() - downSince) / 1000)}s`)
@@ -298,6 +330,9 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
         log('TUNNEL', `connected to relay as ${deps.daemonId}`)
       }
       reconnectAttempts = 0
+    }
+    ws.addEventListener('open', () => {
+      if (!deps.login) markConnected()
       if (ws) startHeartbeat(ws)
     })
     ws.addEventListener('message', (ev) => {
@@ -308,7 +343,25 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       // 被代理拖慢、但数据帧在流)误杀健康连接。ping/pong 只是空闲时的兜底。
       awaitingPong = false
       if (msg.pong !== undefined) return   // 纯心跳回执,不是数据帧
-      if (typeof msg.stream !== 'string') return
+      if (deps.login && typeof (msg as { challenge?: unknown }).challenge === 'string') {
+        try { ws?.send(JSON.stringify(deps.login.sign((msg as { challenge: string }).challenge))) } catch { /* close 会接手 */ }
+        return
+      }
+      if ((msg as { login_ok?: unknown }).login_ok === true) {
+        loggedIn = true
+        markConnected()
+        log('TUNNEL', 'relay v2 login ok')
+        try { deps.onLogin?.() } catch (e) { log('TUNNEL', `onLogin threw: ${String(e)}`) }
+        return
+      }
+      if (typeof msg.stream !== 'string') {
+        const m = msg as Record<string, unknown>
+        if (typeof m.error === 'string') log('TUNNEL', `relay error ${m.error}`)
+        if (m.push_result !== undefined || m.push_invalid !== undefined || typeof m.error === 'string') {
+          try { deps.onControl?.(m) } catch (e) { log('TUNNEL', `onControl threw: ${String(e)}`) }
+        }
+        return
+      }
       if (msg.closed === true) { forgetStream(msg.stream); return }   // relay 通知手机断开 — 释放该 stream 的密钥条目与订阅
       const stream = msg.stream, frame = msg.frame
       // Handshakes, v2 streams, and anything queued behind a pending handshake go
@@ -321,10 +374,12 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       for (const st of streams.values()) st.v2s?.close()
       streams.clear()
       chains.clear()
+      loggedIn = false
       ws = null
       if (stopped) return
       // 指数退避:min·2^n,封顶 max。只在首次断开记一条,后续静默重试
-      // (避免网络抖动时每 15s 刷一行)—— 恢复时的 open 摘要报清总账。
+      // (避免网络抖动时每 15s 刷一行)—— 恢复时 markConnected 的摘要报清总账
+      // (老中继在 open 时,v2 在 login_ok 时)。
       if (reconnectAttempts === 0) { downSince = now(); log('TUNNEL', 'relay socket closed — reconnecting…') }
       const delay = Math.min(maxReconnectMs, minReconnectMs * 2 ** reconnectAttempts)
       reconnectAttempts++
@@ -335,6 +390,15 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
 
   return {
     start() { stopped = false; open() },
+    sendControl(msg) {
+      if (!ws || (deps.login && !loggedIn)) return false
+      try { ws.send(JSON.stringify(msg)); return true } catch { return false }
+    },
+    subscribedDeviceTokens() {
+      const out = new Set<string>()
+      for (const st of streams.values()) if (st.device && st.v2s && st.v2s.subscriptionCount() > 0) out.add(st.device)
+      return out
+    },
     stop() {
       stopped = true
       stopHeartbeat()

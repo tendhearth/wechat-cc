@@ -21,7 +21,7 @@ const EMPTY_SALT = new Uint8Array(0)
 
 function randomBytes(len: number): Uint8Array {
   const out = new Uint8Array(len)
-  globalThis.crypto.getRandomValues(out)
+  crypto.getRandomValues(out)
   return out
 }
 

@@ -10,7 +10,7 @@ import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import type { Ref } from '../../lib/lifecycle'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap'
@@ -39,6 +39,10 @@ import type { AppTurn } from '../inbound/build'
 import { basename as pathBasename } from 'node:path'
 import { makeSettingsPanel } from '../settings-panel'
 import { makePhoneEventsWiring } from '../phone-topic-sources'
+import { resolveRemoteRelays, mergeOnlineDevices } from '../remote-relay-config'
+import { makePhonePush } from '../phone-push'
+import { makePhoneNotifier } from '../phone-notifier'
+import { deviceIdOf } from '../device-store'
 import { makeCommandRouter } from './command-router'
 import { makeEventsStore } from '../events/store'
 import { makeGuestRequestStore } from '../guest-requests'
@@ -66,7 +70,6 @@ import { DEFAULT_DELEGATE_TIMEOUT_MS } from '../../core/a2a-delegate'
 import type { YiHub, YiDispatch } from '../../core/yi-hub'
 import type { ExecResult } from '../../core/a2a-server'
 import type { Mode, ProviderId } from '../../core/conversation'
-import { readJsonFile } from '../../lib/read-json-file'
 import { makeMattersService } from '../../core/matters/service'
 
 export interface DelegateDeps {
@@ -531,15 +534,24 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // admin appends the link. See settings-panel.ts's security posture.
   // Remote tunnel opt-in (随身 CC out-of-home) — resolve id/relay BEFORE the
   // panel so its /m page can bake them in for out-of-home phones.
-  const remoteCfg = loadAgentConfig(stateDir) as { remote_tunnel?: boolean; remote_relay_url?: string }
-  let remoteTunnel: { id: string; relay: string } | null = null
-  if (remoteCfg.remote_tunnel === true) {
-    const idPath = join(stateDir, 'tunnel-id.json')
-    let did: string
-    try { did = (readJsonFile(idPath) as { id: string }).id }
-    catch { did = 't' + randomBytes(18).toString('hex'); try { writeFileSync(idPath, JSON.stringify({ id: did }), { mode: 0o600 }) } catch { /* best effort */ } }
-    remoteTunnel = { id: did, relay: remoteCfg.remote_relay_url ?? 'wss://cc.tendhearth.com/tunnel/phone' }
-  }
+  const remoteCfg = loadAgentConfig(stateDir) as { remote_tunnel?: boolean; remote_relay_url?: string; relay_v2_url?: string }
+  // 过渡期双中继(spec 2026-09-30 §8):老 VPS 中继 + 官方中继 v2;remoteInfo 优先 v2。
+  const relays = resolveRemoteRelays(stateDir, remoteCfg, (tag, line) => log(tag, line))
+  const remoteTunnel = relays?.remoteInfo ?? null
+  // 推送(中继 v2):先建,面板与隧道都要它;发送走 v2 隧道客户端(稍后才建 —— 懒绑定)。
+  let v2Tunnel: import('../tunnel-client').TunnelClient | null = null
+  let legacyTunnel: import('../tunnel-client').TunnelClient | null = null
+  let notifier: { refresh(): void } | null = null
+  // settingsPanel 在下面才定义;deviceToken / deviceIds 两个闭包只在运行时(推送登记 / 发送 / resync)
+  // 才被调用,那时它早已建好 —— 与 companionConverse 的写法同一姿势。
+  const phonePush = relays?.v2 ? makePhonePush({
+    stateDir,
+    send: (m) => v2Tunnel?.sendControl(m) ?? false,
+    deviceToken: (id) => settingsPanel.deviceTokens().find(t => deviceIdOf(t) === id) ?? null,
+    deviceIds: () => settingsPanel.deviceTokens().map(deviceIdOf),
+    onChange: () => notifier?.refresh(),
+    log: (tag, line) => log(tag, line),
+  }) : null
 
   // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
   const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
@@ -570,6 +582,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     curatedMemory: () => memoryNightly.curatedView(),
     ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,artifactChunk:mattersService.artifactChunk,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
+    ...(phonePush ? { push: phonePush } : {}),
     // 「默认大脑」改完自己重启(与远程开关同一条路)。
     ...(opts.requestRestart ? { requestRestart: (reason: string) => opts.requestRestart!(reason) } : {}),
     ...(opts.requestRestart ? {
@@ -635,15 +648,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     ...(opts.panelTokens ? { tokens: opts.panelTokens } : {}),
   })
 
-  // 远程中继隧道 daemon leg — dials /tunnel/daemon out (NAT-piercing); phone
+  // 远程中继隧道 daemon leg — dials the relay out (NAT-piercing); phone
   // reaches it via the SAME settingsPanel.handleRequest. OFF unless
-  // remote_tunnel:true (resolved into remoteTunnel above).
-  if (remoteTunnel) {
-    const daemonId = remoteTunnel.id
-    const daemonRelay = (remoteCfg.remote_relay_url ?? 'wss://cc.tendhearth.com/tunnel/phone').replace('/tunnel/phone', '/tunnel/daemon')
+  // remote_tunnel:true (resolved into relays above). 过渡期两条:老中继 + v2。
+  if (relays) {
     // 手机协议 v2 的订阅(第 11 步):四路来源(home / matter/<id> / approvals / agents)+ 集线器;
-    // 工作台一变就 poke(回调里只许 poke,见 makePhoneEventsWiring)。推送出口 onNotify 先是空的 ——
-    // 真正发推送是子项目 2。随 daemon 常驻,不 dispose(轮询定时器 unref,且只在有订阅时跑)。
+    // 工作台一变就 poke(回调里只许 poke,见 makePhoneEventsWiring)。推送判定在 phone-notifier.ts。随 daemon 常驻,不 dispose(轮询定时器 unref,且只在有订阅时跑)。
     const phone = makePhoneEventsWiring({
       ...(opts.workbench ? { workbench: opts.workbench, changes: opts.workbench.changes } : {}),
       ...(opts.matters ? { matters: opts.matters } : {}),
@@ -651,17 +661,42 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       log: (tag, line) => log(tag, line),
     })
     import('../tunnel-client').then(({ makeTunnelClient }) => {
-      makeTunnelClient({
-        daemonId,
+      const common = {
         events: phone.events,
-        handleRequest: (req) => settingsPanel.handleRequest(req),
+        handleRequest: (req: Request) => settingsPanel.handleRequest(req),
         // 设备令牌从面板取(梳理第 6 步:不再裸读 settings-devices.json,文件只有 device-store 一个读者)。
         knownDeviceTokens: () => settingsPanel.deviceTokens(),
         activeLinkToken: () => settingsPanel.activeLinkToken(),
-        relayUrl: daemonRelay,
-        log: (tag, line) => log(tag, line),
-      }).start()
-      log('TUNNEL', `remote tunnel enabled — dialing relay as ${daemonId.slice(0, 8)}…`)
+        log: (tag: string, line: string) => log(tag, line),
+      }
+      // 过渡期(spec §8):老中继照连,已配对的手机网页还指着它。
+      legacyTunnel = makeTunnelClient({ ...common, daemonId: relays.legacy.id, relayUrl: relays.legacy.daemonUrl })
+      legacyTunnel.start()
+      if (relays.v2) {
+        v2Tunnel = makeTunnelClient({
+          ...common,
+          daemonId: relays.v2.identity.id,
+          relayUrl: relays.v2.daemonUrl,
+          login: relays.v2.identity,
+          onLogin: () => phonePush?.resync(),
+          onControl: (m) => phonePush?.onControl(m),
+        })
+        v2Tunnel.start()
+      }
+      if (phonePush && opts.workbench) {
+        const wb = opts.workbench
+        const n = makePhoneNotifier({
+          events: phone.events,
+          push: phonePush,
+          // 两条隧道合并(Review Focus 4):同一台手机从哪条连着都算在线。
+          subscribedDevices: () => mergeOnlineDevices([legacyTunnel?.subscribedDeviceTokens() ?? [], v2Tunnel?.subscribedDeviceTokens() ?? []], deviceIdOf),
+          taskInfo: (id) => { try { const d = wb.detail(id); return { title: d.task.title, status: d.task.status } } catch { return null } },
+          log: (tag, line) => log(tag, line),
+        })
+        notifier = n
+        n.refresh()
+      }
+      log('TUNNEL', `remote tunnel enabled — legacy ${relays.legacy.id.slice(0, 8)}…${relays.v2 ? `, v2 ${relays.v2.identity.id.slice(0, 8)}…` : ''}`)
     }).catch(err => log('TUNNEL', `tunnel client load failed: ${err instanceof Error ? err.message : err}`))
   }
 

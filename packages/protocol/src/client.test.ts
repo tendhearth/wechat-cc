@@ -474,6 +474,72 @@ describe('断线、退避与致命错误', () => {
     c.close()
   })
 
+  it('中继明文 frame_too_large ⇒ 已发出的请求立刻失败、不重试;订阅照常重连', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    const { c, open } = client(daemon)
+    c.subscribe('now', () => {})
+    daemon.d.dropNextReqs = 1
+    const p = c.request({ method: 'GET', path: '/big' })
+    const assertion = expect(p).rejects.toThrow('frame_too_large')
+    await flush()
+    daemon.d.live().raw(JSON.stringify({ error: 'frame_too_large' }))
+    await flush()
+    await assertion
+    await vi.advanceTimersByTimeAsync(500)
+    expect(open).toHaveBeenCalledTimes(2)
+    c.close()
+  })
+
+  it('中继明文 frame_too_large ⇒ 只拒这条连接上已发出的;别的连接上发的、还没发的请求不受牵连', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    const { c, open } = client(daemon)
+    await c.request({ method: 'GET', path: '/warm' })
+    // other:发在第一条连接上(后台丢了没回),随后那条连接断了 ⇒ 它还挂着,等自己的超时重试。
+    daemon.d.dropNextReqs = 1
+    const other = c.request({ method: 'GET', path: '/other' })
+    let otherSettled = false
+    other.then(() => { otherSettled = true }, () => { otherSettled = true })
+    await flush()
+    daemon.d.conns[0]!.serverClose()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(open).toHaveBeenCalledTimes(2)
+    // big:发在第二条连接上,中继回 frame_too_large。
+    daemon.d.dropNextReqs = 1
+    const big = c.request({ method: 'GET', path: '/big' })
+    const bigAssertion = expect(big).rejects.toThrow('frame_too_large')
+    await flush()
+    daemon.d.live().raw(JSON.stringify({ error: 'frame_too_large' }))
+    await flush()
+    await bigAssertion
+    // 若退回 failAll,other 此刻也会被同一个错误拒掉。
+    expect(otherSettled).toBe(false)
+    // 它的超时重试在新连接上重发,最终成功;big 只发过一次(没重试)。
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect((await other).status).toBe(200)
+    expect(daemon.d.reqs.filter(r => r.path === '/big')).toHaveLength(1)
+    c.close()
+  })
+
+  for (const code of ['rate_limited', 'quota_exceeded', 'too_many_streams']) {
+    it(`中继明文 ${code} ⇒ 挂起请求以它拒绝,至少 30 s 后才重连`, async () => {
+      const daemon = makeFakeDaemon({ version: 2 })
+      const { c, open } = client(daemon)
+      c.subscribe('now', () => {})
+      daemon.d.dropNextReqs = 1
+      const p = c.request({ method: 'GET', path: '/x' })
+      const assertion = expect(p).rejects.toThrow(code)
+      await flush()
+      daemon.d.live().raw(JSON.stringify({ error: code }))
+      await flush()
+      await assertion
+      await vi.advanceTimersByTimeAsync(29_000)
+      expect(open).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1_500)
+      expect(open).toHaveBeenCalledTimes(2)
+      c.close()
+    })
+  }
+
   it('指数退避封顶 15 s', async () => {
     const daemon = makeFakeDaemon({ version: 2, offline: true })
     const { c, open } = client(daemon)

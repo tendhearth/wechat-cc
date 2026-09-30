@@ -81,6 +81,8 @@ export interface V2Stream {
   onPlaintext(pt: Uint8Array): Promise<void>
   /** 退订这条流的全部订阅,之后什么都不再发。幂等。 */
   close(): void
+  /** 当前活着的订阅数(在线设备判定用)。 */
+  subscriptionCount(): number
 }
 
 export function makeV2Stream(deps: V2StreamDeps): V2Stream {
@@ -203,5 +205,6 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
     },
     onPlaintext,
     close,
+    subscriptionCount: () => subs.size,
   }
 }

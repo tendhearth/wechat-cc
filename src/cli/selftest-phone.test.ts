@@ -690,3 +690,117 @@ it('no check on any path ever contains a raw token value', () => {
   // so a future rename doesn't silently stop checking anything.
   expect(SECRET_TOKENS).toEqual(['link-tok', 'device-tok', 'file-token', 'op-token'])
 })
+
+// ── --relay v2 (push + new Cloudflare relay) ───────────────────────────
+
+interface Harness {
+  deps: PhoneSelftestDeps
+  /** Extra fetch responses keyed by full URL (e.g. the relay's /healthz). */
+  fetchRoutes: Record<string, unknown>
+  /** Device-client responses keyed `METHOD /path`. */
+  deviceRoutes: Record<string, unknown>
+  connectedUrls: string[]
+}
+
+function makeHarness(opts: { linkUrl: string }): Harness {
+  const fetchRoutes: Record<string, unknown> = {}
+  const deviceRoutes: Record<string, unknown> = {}
+  const connectedUrls: string[] = []
+  let agentsCb: ((data: unknown, meta: { epoch: string; seq: number }) => void) | undefined
+  let seq = 0
+  const emitAgents = (tasks: Array<{ id: string; title: string; phase: string }>) => {
+    seq += 1
+    agentsCb?.({ running: tasks.length, waiting: 0, tasks }, { epoch: 'e1', seq })
+  }
+  const fetchImpl = (async (url: string | URL) => {
+    const key = String(url)
+    if (key in fetchRoutes) return jsonResponse(200, fetchRoutes[key])
+    const u = new URL(key)
+    if (u.pathname === '/v1/settings/link') return jsonResponse(200, { url: opts.linkUrl })
+    if (u.pathname === '/v1/workbench/create') {
+      emitAgents([{ id: 'task-1', title: 'selftest-phone', phase: 'working' }])
+      return jsonResponse(202, { task: { id: 'task-1' } })
+    }
+    if (u.pathname === '/v1/workbench/archive') return jsonResponse(200, { task: { id: 'task-1' } })
+    if (u.pathname === '/set/api/apply') return jsonResponse(200, { ok: true })
+    throw new Error(`unexpected fetch: ${key}`)
+  }) as unknown as typeof fetch
+  let deviceClients = 0
+  const deps = baseDeps({
+    fetch: fetchImpl,
+    sleep: async () => { emitAgents([]) },
+    connect: (url, token) => {
+      connectedUrls.push(url)
+      if (token === 'link-tok') {
+        return fakeClient({ onRequest: (req) => makeResponse(200, req.path === '/set/api/pair' ? { ok: true, device_token: 'device-tok' } : {}) }).client
+      }
+      deviceClients++
+      if (deviceClients > 1) {
+        return { version: () => null, request: async () => { throw new Error('auth_failed') }, subscribe: () => () => {}, close: () => {} }
+      }
+      return {
+        version: () => 2,
+        async request(req) {
+          if (req.path === '/set/api/state') return makeResponse(200, { remote: { devices: [{ id: 'dev-1', current: true }] } })
+          const route = deviceRoutes[`${req.method} ${req.path}`]
+          if (route === undefined) throw new Error(`unexpected: ${req.method} ${req.path}`)
+          return makeResponse(200, route)
+        },
+        subscribe(topic, cb) {
+          if (topic === 'agents') { agentsCb = cb; emitAgents([]) }
+          return () => { agentsCb = undefined }
+        },
+        close() {},
+      }
+    },
+  })
+  return { deps, fetchRoutes, deviceRoutes, connectedUrls }
+}
+
+const V2_LINK = 'https://relay.tendhearth.com/pset/#id=rabcdefghijklmnopqrstuvwxyz&t=link-tok&p=%2Fset&lan=192.168.1.2:8080'
+const V1_LINK = 'https://cc.tendhearth.com/pset/#id=tdeadbeef&t=link-tok&p=%2Fset&lan=192.168.1.2:8080'
+
+describe('selftest phone --relay v2', () => {
+  it('r… id link ⇒ connects /v2/phone, healthz, registers fake APNs token, Apple accepting the JWT is PASS', async () => {
+    const h = makeHarness({ linkUrl: V2_LINK })
+    h.fetchRoutes['https://relay.tendhearth.com/healthz'] = { ok: true, version: 'x', env: 'production', apns: true, fcm: false }
+    h.deviceRoutes['POST /m/api/push/register'] = { ok: true }
+    h.deviceRoutes['POST /m/api/push/test'] = { ok: true, result: { ok: false, code: 'BadDeviceToken' } }
+    const r = await runPhoneSelftest(h.deps, { executor: 'cursor', relay: 'v2', timeoutMs: 5000 })
+    expect(h.connectedUrls[0]).toBe('wss://relay.tendhearth.com/v2/phone?id=rabcdefghijklmnopqrstuvwxyz')
+    for (const n of ['relay_v2_link', 'relay_healthz', 'push_registered', 'apns_auth_accepted']) {
+      expect(r.checks.find((c) => c.name === n)?.ok, `${n}: ${JSON.stringify(r.checks)}`).toBe(true)
+    }
+    expect(r.ok).toBe(true)
+    assertNoTokenLeak(r)
+  })
+  it('legacy t… id with --relay v2 ⇒ relay_v2_link FAIL and stops', async () => {
+    const h = makeHarness({ linkUrl: V1_LINK })
+    const r = await runPhoneSelftest(h.deps, { executor: 'cursor', relay: 'v2' })
+    expect(r.checks.find((c) => c.name === 'relay_v2_link')?.ok).toBe(false)
+    expect(r.ok).toBe(false)
+    expect(h.connectedUrls).toEqual([])
+  })
+  it('InvalidProviderToken ⇒ apns_auth_accepted FAIL with the code in detail', async () => {
+    const h = makeHarness({ linkUrl: V2_LINK })
+    h.fetchRoutes['https://relay.tendhearth.com/healthz'] = { ok: true, apns: true }
+    h.deviceRoutes['POST /m/api/push/register'] = { ok: true }
+    h.deviceRoutes['POST /m/api/push/test'] = { ok: true, result: { ok: false, code: 'InvalidProviderToken' } }
+    const r = await runPhoneSelftest(h.deps, { executor: 'cursor', relay: 'v2', timeoutMs: 5000 })
+    expect(r.checks.find((c) => c.name === 'apns_auth_accepted')).toMatchObject({ ok: false, detail: expect.stringContaining('InvalidProviderToken') })
+  })
+  it('healthz without apns ⇒ relay_healthz FAIL', async () => {
+    const h = makeHarness({ linkUrl: V2_LINK })
+    h.fetchRoutes['https://relay.tendhearth.com/healthz'] = { ok: true, apns: false }
+    h.deviceRoutes['POST /m/api/push/register'] = { ok: true }
+    h.deviceRoutes['POST /m/api/push/test'] = { ok: true, result: { ok: false, code: 'BadDeviceToken' } }
+    const r = await runPhoneSelftest(h.deps, { executor: 'cursor', relay: 'v2', timeoutMs: 5000 })
+    expect(r.checks.find((c) => c.name === 'relay_healthz')?.ok).toBe(false)
+  })
+  it('without --relay: legacy link still uses /tunnel/phone and runs no push checks', async () => {
+    const h = makeHarness({ linkUrl: V1_LINK })
+    const r = await runPhoneSelftest(h.deps, { executor: 'cursor', timeoutMs: 5000 })
+    expect(h.connectedUrls[0]).toBe('wss://cc.tendhearth.com/tunnel/phone?id=tdeadbeef')
+    expect(r.checks.some((c) => c.name === 'push_registered' || c.name === 'relay_healthz')).toBe(false)
+  })
+})

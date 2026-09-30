@@ -207,6 +207,7 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
       },
       presence: async () => ({ presence: 'ok' as const, activity: { kind: 'idle' as const, label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }),
       seen: { read: () => null, write: () => {} },
+      push: { register: () => true, test: async () => ({ ok: true, code: 'ok' }), unregister: () => {}, forgetAll: () => {} },
       curatedMemory: () => ({
         updated_at: '2026-09-25T04:05:00.000Z', when_label: '今天凌晨 4 点', mood: 'changed' as const, failures: 0,
         changes: [{ kind: 'add' as const, label: '新记下' as const, section: '承诺' as const, text: '周五回话' }],
@@ -260,6 +261,16 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
     parseAs('GET /m/api/home', await (await get('/m/api/home')).json())
     parseAs('GET /m/api/feed', await (await get('/m/api/feed')).json())
     parseAs('POST /m/api/seen', await (await post('/m/api/seen', { until: '2026-09-06T07:00:00.000Z' })).json())
+  })
+
+  it('m/api/push/register、m/api/push/test 真实返回符合 schema', async () => {
+    const paired = await (await post('/set/api/pair', {})).json() as { device_token: string }
+    const dt = paired.device_token
+    parseAs('POST /m/api/push/register', await (await post('/m/api/push/register', { platform: 'apns', token: 'ab'.repeat(32) }, dt)).json())
+    parseAs('POST /m/api/push/register', await (await post('/m/api/push/register', { platform: 'apns', token: 'ab'.repeat(32) })).json())   // 链接令牌 ⇒ device_only
+    const t = await (await post('/m/api/push/test', {}, dt)).json()
+    expect(t).toEqual({ ok: true, result: { ok: true, code: 'ok' } })
+    parseAs('POST /m/api/push/test', t)
   })
 
   it('m/api/memory、m/api/todo、m/api/sticker(b64) 真实返回符合 schema', async () => {

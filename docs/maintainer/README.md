@@ -26,6 +26,7 @@ bun run test                         # bun --bun vitest run
 npm run test:node                    # 同一套源码在 node 下再跑一遍(见 ci-and-flakes.md)
 bun run typecheck                    # tsc --noEmit
 bun run depcheck                     # 模块边界
+cd apps/relay && bun run test        # 改了中继 / 协议包时(另有 test:e2e,见 relay.md)
 
 # 2. 以下由整合者串行执行:构建已验证 dev 的 sidecar 并原子换进 .app(macOS)
 cd apps/desktop && bun run build-sidecar && cd -

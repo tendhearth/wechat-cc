@@ -48,7 +48,7 @@ var b64u = { enc: function(b){ return btoa(String.fromCharCode.apply(null, new U
 
 function viaTunnel() {
   msg.textContent = "从远处连回你的电脑…(加密直达)"
-  var relay = "wss://" + location.host + "/tunnel/phone"
+  var relay = "wss://" + location.host + (ID.charAt(0) === "r" ? "/v2/phone" : "/tunnel/phone")
   var ws = new WebSocket(relay + "?id=" + encodeURIComponent(ID))
   var key = null, kp = null
   var timer = setTimeout(function(){ msg.textContent = "连不上家里的电脑 — 看看它开着没、CC 在跑没" }, 20000)

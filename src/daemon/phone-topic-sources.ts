@@ -105,12 +105,7 @@ export function makePhoneTopicSources(deps: PhoneTopicSourceDeps): TopicSource[]
   return [home, matter, approvals, agents]
 }
 
-/**
- * 推送出口(spec §3.5):app 不在线、又有值得通知的事时,后台把用设备推送密钥封好的载荷交给
- * 这里。**真正发推送是子项目 2(中继转 APNs / FCM)**;这一版出口什么也不做。
- */
-export type PhoneNotify = (deviceId: string, sealed: unknown) => void
-export const noopPhoneNotify: PhoneNotify = () => { /* 子项目 2:推送发送 */ }
+// 推送判定在 phone-notifier.ts。
 
 /**
  * daemon 用的完整接线:四路来源 + 集线器 + 工作台变更 ⇒ poke。
@@ -122,8 +117,7 @@ export function makePhoneEventsWiring(deps: PhoneTopicSourceDeps & {
   changes?: Pick<WorkbenchService['changes'], 'onChange'>
   pollMs?: number
   log?: (tag: string, line: string) => void
-  onNotify?: PhoneNotify
-}): { events: PhoneEvents; onNotify: PhoneNotify; dispose(): void } {
+}): { events: PhoneEvents; dispose(): void } {
   const events = makePhoneEvents({
     sources: makePhoneTopicSources(deps),
     ...(deps.pollMs !== undefined ? { pollMs: deps.pollMs } : {}),
@@ -132,7 +126,6 @@ export function makePhoneEventsWiring(deps: PhoneTopicSourceDeps & {
   const off = deps.changes?.onChange(() => events.poke())
   return {
     events,
-    onNotify: deps.onNotify ?? noopPhoneNotify,
     dispose() { off?.(); events.dispose() },
   }
 }

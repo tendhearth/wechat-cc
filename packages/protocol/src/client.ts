@@ -27,6 +27,8 @@
  *     (后台跟中继重连过、忘了这条流)⇒ 断开按退避重连,这条连接上在途的可重试请求耗一次
  *     重试以同一 rid 重发,不可重试的以 `stream_unknown` 拒绝,订阅带 since 重新 sub;其它
  *     明文错误(中继的 `daemon_offline` 等)⇒ 挂起请求以该 code 拒绝,断开后按退避重连。
+ *     `frame_too_large` ⇒ 已发出的请求失败不重试;`rate_limited` / `quota_exceeded` /
+ *     `too_many_streams` ⇒ 至少 30 s 后才重连。
  *   - 保活:v2 连接上只挂订阅、没有挂起请求时,空闲 `keepaliveMs`(缺省 30 s)就发 `ping`,
  *     `requestTimeoutMs` 内一帧都没回 ⇒ 当死连接丢掉重连。v1 连接从不发。
  *   - 线上来的一切先过 zod;不合形状就丢并报 `onProtocolError`,永不从
@@ -52,6 +54,8 @@ export type { ProtocolSocket, ClientOpts, ProtocolRequest, ProtocolResponse, Eve
 const DEFAULT_TIMEOUT_MS = 15_000
 const BACKOFF_BASE_MS = 500
 const BACKOFF_CAP_MS = 15_000
+/** 中继说「你太快了 / 今天用超了 / 流太多」:至少这么久之后才重连,别把房间打爆(spec §6)。 */
+const RELAY_BUSY_BACKOFF_MS = 30_000
 const STABLE_MS = 10_000
 const DEFAULT_KEEPALIVE_MS = 30_000
 
@@ -127,6 +131,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
   let fatal: Error | null = null
   let reconnectTimer: Timer | null = null
   let backoffAttempt = 0
+  let busyUntil = 0
   let ridSeq = 0
   let sidSeq = 0
   let pingSeq = 0
@@ -179,7 +184,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
 
   function scheduleReconnect(): void {
     if (reconnectTimer || closed || fatal) return
-    const delay = Math.min(BACKOFF_BASE_MS * 2 ** backoffAttempt, BACKOFF_CAP_MS)
+    const delay = Math.max(Math.min(BACKOFF_BASE_MS * 2 ** backoffAttempt, BACKOFF_CAP_MS), busyUntil - now())
     backoffAttempt += 1
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null
@@ -253,6 +258,19 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
       }
       dropConn(c)
       return
+    }
+    if (code === 'frame_too_large') {
+      // 中继拒了一帧(太大)。是哪一条请求中继不知道(密文),但重发同一帧只会再被拒:
+      // 这条连接上已发出的请求一律以它失败,不重试;没发出去的留给新连接。
+      for (const p of [...byRid.values()]) {
+        if (!p.sent || p.sentOn !== c) continue
+        settle(p.rid, q => q.reject(new Error(code)))
+      }
+      dropConn(c)
+      return
+    }
+    if (code === 'rate_limited' || code === 'quota_exceeded' || code === 'too_many_streams') {
+      busyUntil = now() + RELAY_BUSY_BACKOFF_MS
     }
     failAll(new Error(code))
     dropConn(c)
