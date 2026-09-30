@@ -29,15 +29,19 @@ export function targetFromPlaintext(p: PushPlaintextT): PushTarget | null {
   return cleanTarget({ kind: p.kind, taskId: p.taskId, requestId: p.requestId })
 }
 
+export type Resolved = { target: PushTarget; via: 'extension' | 'decrypted'; title?: string; body?: string }
+
 /**
- * expo-notifications 的通知对象 → 目标。先找扩展写好的 `tendhearth` 路由(content.data 或 trigger.payload);
- * 扩展没解开(锁屏后首次解锁前、超时)⇒ 用兜底密钥在 app 里解 `wcc`,时间用通知送达时刻(点开时可能已过 1 小时)。
+ * expo-notifications 的通知对象 → 目标(+来源)。先找扩展写好的 `tendhearth` 路由(content.data 或 trigger.payload),
+ * 存在但畸形 ⇒ 落到兜底;扩展没解开 ⇒ 用兜底密钥在 app 里解 `wcc`,时间用通知送达时刻(点开时可能已过 1 小时)。
  */
-export function targetFromNotification(n: unknown, fallback?: { key: Uint8Array; now: number }): PushTarget | null {
+export function resolveNotification(n: unknown, fallback?: { key: Uint8Array; now: number }): Resolved | null {
   const req = obj(obj(n)?.request)
   const sources = [obj(obj(req?.content)?.data), obj(obj(req?.trigger)?.payload)]
   for (const s of sources) {
-    if (s?.tendhearth !== undefined) return cleanTarget(s.tendhearth)
+    if (s?.tendhearth === undefined) continue
+    const target = cleanTarget(s.tendhearth)
+    if (target) return { target, via: 'extension' }
   }
   if (!fallback) return null
   for (const s of sources) {
@@ -46,8 +50,14 @@ export function targetFromNotification(n: unknown, fallback?: { key: Uint8Array;
     if (typeof w === 'string') { try { w = JSON.parse(w) } catch { continue } }
     try {
       const p = PushPlaintext.safeParse(openPush(fallback.key, w as SealedPush, fallback.now))
-      if (p.success) return targetFromPlaintext(p.data)
+      if (!p.success) continue
+      const target = targetFromPlaintext(p.data)
+      if (target) return { target, via: 'decrypted', title: p.data.title, body: p.data.body }
     } catch { /* 错钥 / 篡改 / 过期:当没目标 */ }
   }
   return null
+}
+
+export function targetFromNotification(n: unknown, fallback?: { key: Uint8Array; now: number }): PushTarget | null {
+  return resolveNotification(n, fallback)?.target ?? null
 }

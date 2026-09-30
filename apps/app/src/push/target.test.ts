@@ -57,6 +57,13 @@ describe('targetFromNotification(iOS:expo-notifications 的通知对象)', () =>
     expect(targetFromNotification(n('payload', { wcc: sealed }), { key: derivePushKey('other'), now })).toBeNull()
     expect(targetFromNotification(n('payload', { wcc: sealed }), { key, now: now + 2 * 3_600_000 })).toBeNull()
   })
+  it('tendhearth 存在但畸形 ⇒ 落到 wcc 兜底而不是 null', () => {
+    const key = derivePushKey('d' + '0f'.repeat(24))
+    const now = 1_700_000_000_000
+    const sealed = sealPush(key, { ts: now, kind: 'question', title: 't', body: 'b', taskId: 'ab12cd34' })
+    expect(targetFromNotification(n('data', { tendhearth: 'junk', wcc: sealed }), { key, now })).toEqual({ kind: 'question', taskId: 'ab12cd34' })
+    expect(targetFromNotification(n('data', { tendhearth: 'junk', wcc: sealed }))).toBeNull()
+  })
   it('什么都没有 / 不是对象 ⇒ null', () => {
     expect(targetFromNotification(n('data', {}))).toBeNull()
     expect(targetFromNotification(undefined)).toBeNull()
