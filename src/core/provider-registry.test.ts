@@ -324,6 +324,16 @@ describe('getCheapEvalBudgetMs —— 延迟预算由 provider 声明', () => {
     expect(r.getCheapEvalBudgetMs()).toBe(DEFAULT_CHEAP_EVAL_BUDGET_MS)
   })
 
+  it('钉死的是 getter(bootstrap 就这么传)⇒ 同样只看它的,且每次重读', () => {
+    let pin: string | undefined = 'claude'
+    const r = createProviderRegistry({ cheapEvalProvider: () => pin })
+    r.register('claude', bare(true, 12_000), { displayName: 'P', canResume: () => false })
+    r.register('agy', bare(true, 30_000), { displayName: 'P', canResume: () => false })
+    expect(r.getCheapEvalBudgetMs()).toBe(12_000)
+    pin = undefined
+    expect(r.getCheapEvalBudgetMs()).toBe(30_000)
+  })
+
   it('钉的那个没注册 → 回落偏好序的最大值(与 getCheapEval 的回落一致)', () => {
     const r = createProviderRegistry({ cheapEvalProvider: 'nope' })
     r.register('agy', bare(true, 30_000), { displayName: 'P', canResume: () => false })

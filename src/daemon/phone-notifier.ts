@@ -57,6 +57,7 @@ export function makePhoneNotifier(deps: {
           title: a.kind === 'permission' ? '需要你批准' : 'CC 有问题问你',
           body: title ? `${title}:${a.summary}` : a.summary,
           taskId: a.taskId,
+          requestId: a.id,
         }
       })
     }

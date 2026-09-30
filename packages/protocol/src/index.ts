@@ -5,8 +5,8 @@ export type { SealedFrameV1 } from './v1'
 export { deriveV1Key, sealV1, openV1 } from './v1'
 export type { SealedFrameV2, V2Channel } from './v2'
 export { deriveV2Keys, makeV2Channel } from './v2'
-export type { SealedPush } from './push'
-export { derivePushKey, sealPush, openPush } from './push'
+export type { SealedPush, PushKindT, PushPlaintextT } from './push'
+export { derivePushKey, sealPush, openPush, PUSH_MAX_AGE_MS, PUSH_MAX_SKEW_MS, PushKind, PushPlaintext } from './push'
 export {
   ClientHello, ServerHello, ErrorFrame, SealedV1Frame, SealedV2Frame, V1Request, V1Response,
   ReqMsg, ResMsg, SubMsg, UnsubMsg, EvMsg, ErrMsg, PingMsg, PongMsg, V2Message, V2ClientMessage, V2ServerMessage,
@@ -21,9 +21,9 @@ export { makeProtocolClient } from './client'
 export {
   PhoneErrorResponse, PhonePlainError, PHONE_HTML_ROUTES, PHONE_API_SCHEMAS,
   Attachment, Matter, MatterBinding, MatterSession, MatterTaskView, MatterEvent, MatterInput,
-  MatterPermission, MatterQuestion, MatterArtifact, MatterDetail,
+  ApprovalExplanation, ProgressSummary, MatterPermission, MatterQuestion, MatterArtifact, MatterDetail,
   ProjectCatalogEntry, EntryOptions, WorkbenchExecutorCapabilities, WorkbenchTaskView, EntryReceipt, EntryResult,
-  UploadState, MatterArtifactChunk, FeedEvent, Presence, HomeWork,
+  UploadState, MatterArtifactChunk, FeedEvent, Presence, HomeWork, PhoneChangesTurn,
 } from './api'
 export {
   base32Lower, RELAY_ID_RE, RELAY_SUBPROTOCOL, relayIdProtocol, relayIdFromPub, relayKeyPair, relayLoginMessage,

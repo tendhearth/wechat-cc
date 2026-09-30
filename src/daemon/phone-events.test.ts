@@ -173,7 +173,7 @@ describe('makePhoneEvents', () => {
     spy.mockRestore()
   })
 
-  it('轮询定时器随订阅者数量起停(用假时钟数「当前挂着的定时器数」)', () => {
+  it('轮询定时器随订阅者数量起停(用假时钟数「当前挂着的定时器数」)', async () => {
     vi.useFakeTimers()
     try {
       const source: TopicSource = { match: t => t === 'home', snapshot: async () => ({ ok: true }) }
@@ -181,6 +181,7 @@ describe('makePhoneEvents', () => {
       expect(vi.getTimerCount()).toBe(0) // 修 5:零订阅者时不该有定时器在跑
 
       const unsub = hub.subscribe('home', undefined, () => {})
+      await vi.advanceTimersByTimeAsync(0) // 让在飞的一轮快照落地(它的超时定时器随之清掉)
       expect(vi.getTimerCount()).toBe(1) // 来了一个订阅者,定时器起了
 
       unsub()
@@ -436,5 +437,53 @@ describe('makePhoneEvents', () => {
     expect(received).toHaveLength(2)
 
     hub.dispose()
+  })
+
+  it('来源永不返回 ⇒ 超时后这一轮跳过,之后的 poke 能重新算并推送', async () => {
+    vi.useFakeTimers()
+    try {
+      let hang = true
+      const value = 1
+      const src = { match: (t: string) => t === 'agents', snapshot: () => hang ? new Promise<unknown>(() => {}) : Promise.resolve({ v: value }) }
+      const log = vi.fn()
+      const hub = makePhoneEvents({ sources: [src], snapshotTimeoutMs: 1000, log })
+      const got: unknown[] = []
+      hub.subscribe('agents', undefined, ev => { got.push(ev.data) })
+      await vi.advanceTimersByTimeAsync(1001)
+      expect(log).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('timeout'))
+      hang = false
+      // 那次调用永远不回:放弃期(缺省 6× 超时)过了才另起一次调用
+      await vi.advanceTimersByTimeAsync(6_000)
+      hub.poke()
+      await vi.advanceTimersByTimeAsync(1_010)
+      expect(got).toEqual([{ v: 1 }])
+      hub.dispose()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('来源挂住期间:超时、poke、轮询都不再另起 snapshot(),复用那一次在飞的调用;它一回来就发布', async () => {
+    vi.useFakeTimers()
+    try {
+      let release: ((v: unknown) => void) | undefined
+      const snapshot = vi.fn((_t: string) => release === undefined
+        ? new Promise<unknown>(res => { release = res })
+        : Promise.resolve({ v: 'fresh' }))
+      const log = vi.fn()
+      const hub = makePhoneEvents({ sources: [{ match: t => t === 'agents', snapshot }], snapshotTimeoutMs: 1000, pollMs: 500, log })
+      const got: unknown[] = []
+      hub.subscribe('agents', undefined, ev => { got.push(ev.data) })
+      for (let i = 0; i < 4; i++) {
+        await vi.advanceTimersByTimeAsync(1001)
+        hub.poke()
+      }
+      expect(log.mock.calls.filter(c => String(c[1]).includes('timeout')).length).toBeGreaterThanOrEqual(2)
+      expect(snapshot).toHaveBeenCalledTimes(1)
+      expect(got).toEqual([])
+      release!({ v: 'late' })
+      await vi.advanceTimersByTimeAsync(1001)
+      expect(got.length).toBeGreaterThanOrEqual(1)
+      expect(got[0]).toEqual({ v: 'late' })
+      hub.dispose()
+    } finally { vi.useRealTimers() }
   })
 })

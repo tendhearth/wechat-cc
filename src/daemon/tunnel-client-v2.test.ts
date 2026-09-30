@@ -9,6 +9,7 @@ import {
 } from '@wechat-cc/protocol'
 import type { V2ClientMessageT, V2ServerMessageT, SealedFrameV2 } from '@wechat-cc/protocol'
 import { makeTunnelClient } from './tunnel-client'
+import { MAX_SUBS_PER_STREAM, MAX_INFLIGHT_REQS_PER_STREAM } from './tunnel-v2-stream'
 import { generateTunnelKeypair, exportPublicKeyB64, importPublicKeyB64, deriveSharedKey, sealFrame, openFrame } from '../lib/tunnel-crypto'
 import { makePhoneEvents, type PhoneEvents, type TopicSource } from './phone-events'
 
@@ -357,6 +358,42 @@ describe('tunnel-client v2', () => {
     expect(await p.next()).toMatchObject({ t: 'ev', sid: 'x', data: { t: 'agents' } })
     expect(live()).toBe(1)
     hub.dispose()
+  })
+
+  it('订阅数上限:第 33 个新 sid ⇒ err too_many_subscriptions;同 sid 替换不受限', async () => {
+    const { hub, live } = countedHub([{ match: () => true, snapshot: async (t) => ({ t }) }])
+    const sock = fakeSocket()
+    client(sock, { events: hub })
+    const p = await v2Phone(sock, 'sL')
+    for (let i = 0; i < MAX_SUBS_PER_STREAM; i++) p.send({ t: 'sub', sid: `s${i}`, topic: 'agents' })
+    await settle()
+    p.send({ t: 'sub', sid: 's-extra', topic: 'agents' })
+    expect(await p.next(m => 'code' in m)).toEqual({ t: 'err', sid: 's-extra', code: 'too_many_subscriptions' })
+    expect(live()).toBe(MAX_SUBS_PER_STREAM)
+    p.send({ t: 'sub', sid: 's0', topic: 'approvals' })    // 替换已有 sid:不报错
+    await settle()
+    expect(p.drain().filter(m => 't' in m && m.t === 'err')).toHaveLength(0)
+    expect(live()).toBe(MAX_SUBS_PER_STREAM)
+    hub.dispose()
+  })
+
+  it('在飞请求上限:第 17 个 ⇒ err busy,不进 handleRequest;结束一个后又能进', async () => {
+    const release: Array<() => void> = []
+    const handleRequest = vi.fn(() => new Promise<Response>(r => release.push(() => r(new Response('{}')))))
+    const sock = fakeSocket()
+    client(sock, { handleRequest })
+    const p = await v2Phone(sock, 'sB')
+    for (let i = 0; i < MAX_INFLIGHT_REQS_PER_STREAM; i++) p.send({ t: 'req', rid: `r${i}`, method: 'GET', path: '/m/api/home' })
+    await settle()
+    p.send({ t: 'req', rid: 'r-extra', method: 'GET', path: '/m/api/home' })
+    expect(await p.next(m => 'code' in m)).toEqual({ t: 'err', rid: 'r-extra', code: 'busy' })
+    expect(handleRequest).toHaveBeenCalledTimes(MAX_INFLIGHT_REQS_PER_STREAM)
+    release[0]!()
+    await p.next(m => 't' in m && m.t === 'res')
+    await settle()
+    p.send({ t: 'req', rid: 'r-after', method: 'GET', path: '/m/api/home' })
+    await settle()
+    expect(handleRequest).toHaveBeenCalledTimes(MAX_INFLIGHT_REQS_PER_STREAM + 1)
   })
 
   it('不在册主题 ⇒ err topic_not_allowed;没有集线器 ⇒ err subscriptions_unavailable', async () => {

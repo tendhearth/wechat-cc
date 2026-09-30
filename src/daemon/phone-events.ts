@@ -20,6 +20,14 @@
  * `recomputeTopic` 的 computing/dirty 两个标记:进行中再来一次就只标脏,轮到 finally
  * 里再补一轮,不会并发起两个 snapshot() 调用。
  *
+ * 来源超时:source.snapshot() 超过 snapshotTimeoutMs(缺省 10s)还没返回 ⇒ 当抛错处理
+ * (记日志、本轮跳过、computing 复位),永不返回的来源不会把主题永远卡在 computing。
+ * 超时只是不等了,那次调用还在飞:之后的重算(poke / 轮询)复用同一个在飞的 promise
+ * (`pendingSnapshots`,按主题,跨 TopicState 重建)再等一个超时,不再另起 snapshot() ——
+ * 否则每 2 秒一轮就会给一个已经卡住的来源再堆一个调用。它一落定就从表里摘掉;落定时
+ * 正好有一轮在等就直接用它的结果。真的永不返回的调用,挂满 snapshotAbandonMs(缺省
+ * 6× 超时)就放弃,下一轮重新调用,免得一次泄漏的 promise 让主题永远算不出来。
+ *
  * 评审第一轮(2026-09-29)修的五处:
  *  1. 主题没人订阅了就把它的内部状态(TopicState)从 `topics` 表里摘掉,不然常驻
  *     daemon 里每个来过一次的 `matter/<id>` 都会永远占一份内存、每 2s 还被 poke 扫一遍。
@@ -42,6 +50,9 @@
  *     起,最后一个订阅者走了就停(还是 unref 的)。
  */
 import { randomUUID } from 'node:crypto'
+
+const DEFAULT_SNAPSHOT_TIMEOUT_MS = 10_000
+const ABANDON_TIMEOUTS = 6
 
 export interface TopicSource {
   match(topic: string): boolean
@@ -116,14 +127,23 @@ interface TopicState {
 export function makePhoneEvents(opts: {
   sources: TopicSource[]
   pollMs?: number
+  /** 单次 source.snapshot() 的超时(缺省 10s);超时按「来源抛错」处理。 */
+  snapshotTimeoutMs?: number
+  /** 一次挂住的 snapshot() 被复用多久后放弃、允许另起调用(缺省 6× snapshotTimeoutMs)。 */
+  snapshotAbandonMs?: number
   now?: () => number
   log?: (tag: string, line: string) => void
 }): PhoneEvents {
   const epoch = randomUUID()
   const now = opts.now ?? (() => Date.now())
+  const clock = () => Date.now() // 放弃期按真实(可被假定时器驱动的)时钟算,跟 setTimeout 同源
   const log = opts.log ?? (() => {})
   const pollMs = opts.pollMs ?? 2000
+  const snapshotTimeoutMs = opts.snapshotTimeoutMs ?? DEFAULT_SNAPSHOT_TIMEOUT_MS
+  const snapshotAbandonMs = opts.snapshotAbandonMs ?? snapshotTimeoutMs * ABANDON_TIMEOUTS
   const topics = new Map<string, TopicState>()
+  /** 每个主题至多一个在飞的 source.snapshot();超时后还没落定的留着给下一轮复用。 */
+  const pendingSnapshots = new Map<string, { promise: Promise<unknown>; startedAt: number }>()
   let nextSubId = 1
   let disposed = false
   let pokeScheduled = false
@@ -206,8 +226,30 @@ export function makePhoneEvents(opts: {
         return
       }
       let data: unknown
+      let snapTimer: ReturnType<typeof setTimeout> | undefined
       try {
-        data = await source.snapshot(topic)
+        let pending = pendingSnapshots.get(topic)
+        if (pending && clock() - pending.startedAt >= snapshotAbandonMs) {
+          log('phone-events', `t=${now()} 主题 ${topic} 的来源挂了 ${snapshotAbandonMs}ms 仍未返回,放弃那次调用`)
+          pendingSnapshots.delete(topic)
+          pending = undefined
+        }
+        if (!pending) {
+          let promise: Promise<unknown>
+          try { promise = Promise.resolve(source.snapshot(topic)) } catch (e) { promise = Promise.reject(e) }
+          const entry = { promise, startedAt: clock() }
+          pendingSnapshots.set(topic, entry)
+          const clear = () => { if (pendingSnapshots.get(topic) === entry) pendingSnapshots.delete(topic) }
+          promise.then(clear, clear)
+          pending = entry
+        }
+        data = await Promise.race([
+          pending.promise,
+          new Promise<never>((_, reject) => {
+            snapTimer = setTimeout(() => reject(new Error('snapshot timeout')), snapshotTimeoutMs)
+            if (typeof snapTimer.unref === 'function') snapTimer.unref()
+          }),
+        ]).finally(() => { if (snapTimer) clearTimeout(snapTimer) })
       } catch (err) {
         if (disposed) return // 修 2
         log('phone-events', `t=${now()} 主题 ${topic} 的来源抛错,本轮跳过:${String(err)}`)
@@ -281,6 +323,7 @@ export function makePhoneEvents(opts: {
     // 引用在 await 来源,它 await 完之后 flush 到的还是这同一个 Map,自然发不出去。
     for (const state of topics.values()) state.subs.clear()
     topics.clear()
+    pendingSnapshots.clear()
   }
 
   // `topicCount` 不在 PHONE_TOPICS interface 里(公开契约就是三个方法,跟需求原样一致);

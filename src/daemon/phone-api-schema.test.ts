@@ -27,6 +27,9 @@ import { MANAGED_NATIVE_CAPABILITIES } from '../core/workbench/executor-capabili
 import { saveArtifactSnapshot } from '../core/workbench/artifacts'
 import { makeSettingsPanel, type SettingsPanel } from './settings-panel'
 import { PHONE_ROUTES } from './phone-routes'
+import { makePhoneInsight } from './phone-insight'
+import { makeApprovalExplainer } from './phone-explain'
+import { makeProgressSummarizer } from './phone-progress'
 
 // ── 1) 守卫:PHONE_ROUTES ↔ (PHONE_API_SCHEMAS ∪ PHONE_HTML_ROUTES) 双向核对 ──
 
@@ -90,6 +93,8 @@ describe('真实返回校验 — workbench + matters', () => {
         createEntry: input => workbench.createEntry(input, { ownerKey: 'owner', surface: 'phone' }),
         entryReceipt: id => workbench.entryReceipt(id, { ownerKey: 'owner', surface: 'phone' }),
       },
+      insight: makePhoneInsight({ detail: id => service.detail(id), explainer: makeApprovalExplainer({ cheapEval: () => null, budgetMs: () => 1000, log: () => {} }), summarizer: makeProgressSummarizer({ cheapEval: () => null, budgetMs: () => 1000, now: () => Date.now(), log: () => {} }) }),
+      changes: id => workbench.reviewList(id),
       matters: { ...service, say: (id, text, input) => service.say(id, text, 'phone', input), seenOnPhone: id => { matters.bind(id, 'phone', 'pwa') } },
     })
     const started = await panel.start(0)
@@ -170,6 +175,24 @@ describe('真实返回校验 — workbench + matters', () => {
     parseAs('GET /m/api/matter/artifact', await chunk.json())
     const list = await request('/m/api/matters?kind=task')
     parseAs('GET /m/api/matters', await list.json())
+  })
+
+  it('matter/insight 真实返回符合 schema(无模型 ⇒ raw)', async () => {
+    const task = create('ins'), live = await ready(task.id)
+    const res = await request(`/m/api/matter/insight?id=${task.id}&lang=zh-Hans`)
+    const body = parseAs('GET /m/api/matter/insight', await res.json()) as { ok: boolean; explanations: Record<string, { source: string }> }
+    expect(body.ok).toBe(true)
+    expect(body.explanations[live.permissions[0]!.id]?.source).toBe('raw')
+  })
+
+  it('matter/changes 真实返回符合 schema(无改动 ⇒ turn:null;未知任务 ⇒ 404)', async () => {
+    const task = create('chg')
+    const res = await request(`/m/api/matter/changes?id=${task.id}`)
+    const body = parseAs('GET /m/api/matter/changes', await res.json()) as { ok: boolean; turn: unknown }
+    expect(body).toEqual({ ok: true, turn: null })
+    const missing = await request('/m/api/matter/changes?id=deadbeef')
+    expect(missing.status).toBe(404)
+    parseAs('GET /m/api/matter/changes', await missing.json())
   })
 })
 

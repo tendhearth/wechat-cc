@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { derivePushKey, openPush } from '@wechat-cc/protocol'
+import { derivePushKey, openPush, PushPlaintext } from '@wechat-cc/protocol'
 import { makePhonePush } from './phone-push'
 
 const APNS = 'ab'.repeat(32)
@@ -42,6 +42,7 @@ describe('phone-push', () => {
     expect(m.collapseId).toBe('ab12cd34')
     const pt = openPush(derivePushKey('dtok-1'), m.sealed, 1_700_000_000_000)
     expect(pt).toMatchObject({ kind: 'permission', taskId: 'ab12cd34' })
+    expect(PushPlaintext.parse(pt)).toEqual(pt)
     expect([...(pt.title as string)].length).toBe(60)
     expect([...(pt.body as string)].length).toBe(300)
     expect(JSON.stringify(m.sealed).length).toBeLessThan(3500)
@@ -121,5 +122,16 @@ describe('phone-push', () => {
     expect(sent).toContainEqual({ push_unreg: { device: 'dev2' } })
     expect(push.registered()).toEqual([])
     expect(existsSync(join(dir, 'phone-push.json'))).toBe(true)
+  })
+
+  it('notify 带 requestId ⇒ 封进明文;不带 ⇒ 明文里没有这个键', () => {
+    const { push, sent } = setup()
+    push.register('dev1', 'apns', APNS)
+    push.notify('dev1', { kind: 'permission', title: 't', body: 'b', taskId: 'ab12cd34', requestId: 'req-1' })
+    const a = openPush(derivePushKey('dtok-1'), sent.at(-1).push.sealed, 1_700_000_000_000)
+    expect(a.requestId).toBe('req-1')
+    push.notify('dev1', { kind: 'task_done', title: 't', body: 'b', taskId: 'ab12cd34' })
+    const b = openPush(derivePushKey('dtok-1'), sent.at(-1).push.sealed, 1_700_000_000_000)
+    expect('requestId' in b).toBe(false)
   })
 })
