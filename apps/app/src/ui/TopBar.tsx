@@ -28,7 +28,7 @@ export function TopBar({
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', minHeight: 56, paddingHorizontal: space.l, gap: space.m }}>
       {onBack ? (
-        <Pressable accessibilityRole="button" accessibilityLabel={t(lang, 'common.back')} onPress={onBack} hitSlop={12}>
+        <Pressable accessibilityRole="button" testID="topbar-back" accessibilityLabel={t(lang, 'common.back')} onPress={onBack} hitSlop={12}>
           <Text style={{ color: c.ink, fontSize: 22 }}>‹</Text>
         </Pressable>
       ) : null}
