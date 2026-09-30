@@ -1,13 +1,9 @@
 import type { ApprovalItemT, AgentsTopicT, MatterT } from '../backend/types'
-import { statusOf, type StatusKey } from './status'
+import { statusOfMatter, type StatusKey } from './status'
 
 export function matterStatus(m: MatterT, agents: AgentsTopicT, pending: number): StatusKey {
   const t = agents.tasks.find(x => x.id === m.id)
-  if (t) return statusOf({ status: 'running', phase: t.phase }, pending)
-  if (pending > 0) return 'waiting'
-  if (m.status === 'replied') return 'replied'
-  if (m.status === 'done' || m.status === 'archived') return 'done'
-  return 'working'
+  return statusOfMatter(m, t ? { status: 'running', phase: t.phase } : null, pending)
 }
 
 export function nowView(input: { approvals: ApprovalItemT[]; agents: AgentsTopicT; matters: MatterT[]; hour: number }): {

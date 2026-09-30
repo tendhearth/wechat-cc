@@ -1,5 +1,5 @@
 import type { MatterDetailT, ProgressSummaryT, PhoneChangesTurnT } from '../backend/types'
-import { statusOf, type StatusKey } from './status'
+import { statusOfMatter, type StatusKey } from './status'
 
 export function progressView(detail: MatterDetailT, insight: { progress: ProgressSummaryT | null } | null, changes: PhoneChangesTurnT | null): {
   status: StatusKey; title: string; summary: string | null
@@ -7,11 +7,7 @@ export function progressView(detail: MatterDetailT, insight: { progress: Progres
 } {
   const pendingCount = detail.permissions.length + detail.questions.length
   const t = detail.task
-  const status = t
-    ? statusOf(t, pendingCount)
-    : pendingCount > 0 ? 'waiting'
-    : detail.matter.status === 'replied' ? 'replied'
-    : detail.matter.status === 'done' || detail.matter.status === 'archived' ? 'done' : 'working'
+  const status = statusOfMatter(detail.matter, t, pendingCount)
   const p = insight?.progress ?? null
   const steps = (p?.steps ?? []).map((s, i, arr) => ({
     title: s.title, detail: s.detail, done: !(status === 'waiting' && i === arr.length - 1),

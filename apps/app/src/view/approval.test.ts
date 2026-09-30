@@ -25,7 +25,7 @@ describe('approvalView', () => {
   })
   it('同一件事两条、没指定 ⇒ 让用户选', () => {
     const d = { ...base, permissions: [...base.permissions, { id: 'p2', taskId: 'ab12cd34', tool: 'Bash', description: 'ls', createdAt: 2 }] }
-    expect(approvalView(d, {})).toEqual({ kind: 'choose', items: [{ requestId: 'p1', summary: 'Bash: rm -rf ~/Documents/old' }, { requestId: 'p2', summary: 'Bash: ls' }] })
+    expect(approvalView(d, {})).toEqual({ kind: 'choose', items: [{ requestId: 'p1', kind: 'permission', summary: 'Bash: rm -rf ~/Documents/old' }, { requestId: 'p2', kind: 'permission', summary: 'Bash: ls' }] })
   })
   it('多条但指定了 ⇒ 那一条', () => {
     const d = { ...base, permissions: [...base.permissions, { id: 'p2', taskId: 'ab12cd34', tool: 'Bash', description: 'ls', createdAt: 2 }] }
@@ -42,5 +42,24 @@ describe('approvalView', () => {
     expect((approvalView(d, {}) as any).rawFirstLine).toHaveLength(120)
     const d2 = { ...base, permissions: [d.permissions[0], { ...d.permissions[0], id: 'p2' }] }
     expect((approvalView(d2, {}) as any).items[0].summary).toHaveLength(80)
+  })
+
+  describe('questions', () => {
+    const q = { id: 'q1', taskId: 'ab12cd34', createdAt: 1, questions: [{ id: 'a', header: '方案', question: '用哪个?', options: [{ label: 'A', description: 'da' }], multiSelect: false, allowOther: true }] }
+    const onlyQ = { ...base, permissions: [], questions: [q] }
+    it('只有问题 ⇒ question,不是 none', () => {
+      expect(approvalView(onlyQ, {})).toEqual({ kind: 'question', requestId: 'q1', runId: 'run-1', items: [{ id: 'a', header: '方案', question: '用哪个?', options: [{ label: 'A', description: 'da' }], multiSelect: false, allowOther: true }] })
+    })
+    it('一条批准 + 一个问题、没指定 ⇒ choose 含两种 kind', () => {
+      const v = approvalView({ ...base, questions: [q] }, {}) as any
+      expect(v.kind).toBe('choose')
+      expect(v.items.map((i: any) => [i.requestId, i.kind])).toEqual([['p1', 'permission'], ['q1', 'question']])
+    })
+    it('requestId 指向问题 ⇒ question', () => {
+      expect(approvalView({ ...base, questions: [q] }, {}, 'q1')).toMatchObject({ kind: 'question', requestId: 'q1' })
+    })
+    it('问题没有 runId ⇒ none', () => {
+      expect(approvalView({ ...onlyQ, runId: undefined }, {})).toEqual({ kind: 'none' })
+    })
   })
 })
