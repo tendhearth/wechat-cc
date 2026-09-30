@@ -40,7 +40,7 @@ export function relayIdFromPub(pub: Uint8Array): string {
 }
 
 export function relayKeyPair(seed?: Uint8Array): { seed: Uint8Array; pub: Uint8Array } {
-  const s = seed ?? globalThis.crypto.getRandomValues(new Uint8Array(32))
+  const s = seed ?? crypto.getRandomValues(new Uint8Array(32))
   return { seed: s, pub: ed25519.getPublicKey(s) }
 }
 

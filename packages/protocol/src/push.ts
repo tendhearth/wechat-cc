@@ -32,7 +32,7 @@ const STALE_WINDOW_MS = 600_000 // 10 分钟,过去和未来两个方向都按�
 
 function randomBytes(len: number): Uint8Array {
   const out = new Uint8Array(len)
-  globalThis.crypto.getRandomValues(out)
+  crypto.getRandomValues(out)
   return out
 }
 
