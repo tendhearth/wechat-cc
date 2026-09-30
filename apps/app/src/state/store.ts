@@ -67,7 +67,7 @@ export function makeStore(backend: Backend, opts: { lang?: Lang } = {}) {
         const g = gen, l = lang
         inflight = Promise.resolve().then(() => load(l)).then(
           data => { freshGen = g; failedAt = 0; set({ data, loading: false, syncedAt: at }) },
-          e => { failedAt = Date.now(); set({ ...state, loading: false, error: e instanceof BackendError ? e.code : 'unknown' }) },
+          e => { if (g === gen) failedAt = Date.now(); set({ ...state, loading: false, error: e instanceof BackendError ? e.code : 'unknown' }) },
         ).finally(() => {
           inflight = null
           // 在飞期间被判过期(换语言 / 重连):有人在看就再拉一次

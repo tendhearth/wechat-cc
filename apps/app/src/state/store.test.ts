@@ -286,4 +286,20 @@ describe('store', () => {
     resolvers[1]!()
     await vi.waitFor(() => expect(q.get().data).toBe('zh-Hans'))
   })
+  it('在飞期间被判过期、随后失败:不记退避,没人在看时下次 mount 照样重拉', async () => {
+    const s = makeStore({} as any)
+    const rejecters: Array<() => void> = []
+    const load = vi.fn(() => new Promise<number>((_, rej) => { rejecters.push(() => rej(new BackendError('offline'))) }))
+    const q = s.query('k', load)
+    const off = q.subscribe(() => {})
+    const p = q.refresh()
+    await vi.waitFor(() => expect(rejecters.length).toBe(1))
+    s.revalidateAll()
+    off()
+    rejecters[0]!()
+    await p
+    expect(q.get().error).toBe('offline')
+    void q.mount()
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+  })
 })
