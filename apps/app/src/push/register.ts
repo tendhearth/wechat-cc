@@ -1,5 +1,5 @@
 import { pushTokenValid, type PushPlatformT } from '@wechat-cc/protocol'
-import { BackendError } from '../backend/types'
+import { BackendError, type ConnState } from '../backend/types'
 import type { Lang } from '../i18n'
 import type { PushKeyStore } from './key-store'
 
@@ -84,4 +84,100 @@ export async function syncPush(d: PushDeps, opts: { force?: boolean } = {}): Pro
   }
   await d.keys.saveReg({ fp, at: d.now() })
   return 'registered'
+}
+
+export type SyncTrigger = 'online' | 'foreground' | 'token'
+export type SyncAction = 'none' | 'sync' | 'force' | 'recheck'
+
+/**
+ * PushProvider 的调度(纯函数)。只在真连接、在线时登记;token 变了强制重登。
+ * - online:每条连接(epoch)只同步一次 —— 已登记也同步(裁决 C3,去重交给 syncPush 的指纹);
+ *   同一 epoch 上重复的「上线」(依赖变了引起的重渲染)不再跑,unavailable / failed 不会反复 POST。
+ * - foreground:在线就跑;还没连上且之前被拒 ⇒ recheck(只在本机重查权限,设置页状态跟着变,Review Focus 3)。
+ * - 撤销后什么都不做。
+ */
+export function nextSyncAction(s: {
+  live: boolean; conn: ConnState; status: PushStatus; trigger: SyncTrigger; epoch: number; lastEpoch: number | null
+}): SyncAction {
+  if (!s.live || s.conn === 'revoked') return 'none'
+  if (s.conn !== 'online') return s.trigger === 'foreground' && s.status === 'denied' ? 'recheck' : 'none'
+  if (!shouldSync(s.status, s.trigger)) return 'none'
+  if (s.trigger === 'token') return 'force'
+  if (s.trigger === 'online' && s.lastEpoch === s.epoch) return 'none'
+  return 'sync'
+}
+
+export type PushRunner = {
+  /** 按 nextSyncAction 决定跑不跑;跑着的时候来的触发排队,跑完补一次(token 优先)。从不拒绝。 */
+  trigger(t: SyncTrigger): Promise<void>
+  /** 配对换了 / 解除:状态回 idle,正在跑的那次结果作废。 */
+  reset(): void
+  /** 等正在跑的(连同排队补跑的)都结束 —— 清推送密钥前先等它,免得它刚清完又被 syncPush 写回。 */
+  idle(): Promise<void>
+  status(): PushStatus
+}
+
+const RANK: Record<SyncTrigger, number> = { online: 0, foreground: 1, token: 2 }
+
+/** 单飞:同一时刻最多一次 syncPush;syncPush 抛了(钥匙串首次解锁前读不了、存指纹失败)⇒ failed,只记错误类名。 */
+export function makePushRunner(o: {
+  ctx(): { live: boolean; conn: ConnState; epoch: number }
+  sync(force: boolean): Promise<PushStatus>
+  recheck(): Promise<PermissionState>
+  onStatus(s: PushStatus): void
+  log(line: string): void
+}): PushRunner {
+  let gen = 0
+  let status: PushStatus = 'idle'
+  let lastEpoch: number | null = null
+  let running: Promise<void> | null = null
+  let queued: SyncTrigger | null = null
+
+  const settle = (my: number, next: PushStatus) => {
+    if (my !== gen) return
+    status = next
+    o.onStatus(next)
+  }
+
+  function trigger(t: SyncTrigger): Promise<void> {
+    const c = o.ctx()
+    const action = nextSyncAction({ ...c, status, trigger: t, lastEpoch })
+    if (action === 'none') return running ?? Promise.resolve()
+    if (running) {
+      if (queued === null || RANK[t] > RANK[queued]) queued = t
+      return running
+    }
+    const my = gen
+    if (action !== 'recheck') lastEpoch = c.epoch
+    const job = async () => {
+      try {
+        if (action === 'recheck') settle(my, (await o.recheck()) === 'granted' ? 'offline' : 'denied')
+        else settle(my, await o.sync(action === 'force'))
+      } catch (e) {
+        o.log(`push: ${action === 'recheck' ? 'recheck' : 'sync'} threw (${errName(e)})`)
+        settle(my, 'failed')
+      }
+    }
+    const p: Promise<void> = job().then(() => {
+      running = null
+      const q = queued
+      queued = null
+      if (q !== null && my === gen) return trigger(q)
+    })
+    running = p
+    return p
+  }
+
+  return {
+    trigger,
+    reset() {
+      gen++
+      queued = null
+      lastEpoch = null
+      status = 'idle'
+      o.onStatus('idle')
+    },
+    async idle() { while (running) await running },
+    status: () => status,
+  }
 }

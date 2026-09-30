@@ -38,3 +38,27 @@ describe('quietly(钥匙串写失败不抛未处理的拒绝,日志只有操作�
     expect(log).not.toHaveBeenCalled()
   })
 })
+
+import { clearStored, leftoverPushKey } from './session-store'
+
+describe('撤销 / 解除配对:推送密钥一起清(spec §3「设备被撤销」、§4)', () => {
+  it('两条都清;推送那条清失败只记一行、不连累配对', async () => {
+    const calls: string[] = []
+    const logs: string[] = []
+    const store = { clear: async () => { calls.push('pairing') } } as any
+    await clearStored(store, { clear: async () => { calls.push('push'); throw Object.assign(new Error('x'), { code: 'E_KEYCHAIN' }) } }, l => logs.push(l))
+    expect(calls.sort()).toEqual(['pairing', 'push'])
+    expect(logs).toEqual(['pushClear failed (E_KEYCHAIN)'])
+  })
+  it('配对那条清失败 ⇒ 抛(设置页据此提示「没能清掉」),推送那条照样清', async () => {
+    const calls: string[] = []
+    const store = { clear: async () => { throw new Error('nope') } } as any
+    await expect(clearStored(store, { clear: async () => { calls.push('push') } }, () => {})).rejects.toThrow('nope')
+    expect(calls).toEqual(['push'])
+  })
+  it('leftoverPushKey:会话读完、没有配对 ⇒ 该清(上次清失败 / 从老版本升级)', () => {
+    expect(leftoverPushKey(true, null)).toBe(true)
+    expect(leftoverPushKey(false, null)).toBe(false)
+    expect(leftoverPushKey(true, { deviceId: 'ab12cd34' } as any)).toBe(false)
+  })
+})

@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import type { Lang } from '../i18n'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
+import { usePush } from '../push/PushProvider'
 import { useBackendCtx } from '../state/BackendProvider'
 import { useConnection } from '../state/hooks'
 import { useSession } from '../state/session'
@@ -15,6 +16,7 @@ import { serifFamily } from '../ui/fonts'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { useTheme } from '../ui/useTheme'
+import { notificationNoticeKey } from '../view/notifications'
 import { unpairNotice } from '../view/unpair'
 
 export default function Settings() {
@@ -25,6 +27,8 @@ export default function Settings() {
   const { backend, resetDemo } = useBackendCtx()
   const { langOverride, setLangOverride, setSeenWelcome, forgetPairing } = useSession()
   const [unpairing, setUnpairing] = useState(false)
+  const push = usePush()
+  const [testing, setTesting] = useState(false)
   const unpairingRef = useRef(false)
   const demo = backend.mode === 'demo'
   const choices: Array<{ v: Lang | null; label: string; id: string }> = [
@@ -51,6 +55,18 @@ export default function Settings() {
     else if (n === 'neutral') Alert.alert(t(lang, 'settings.unpairNeutral'))
     router.dismissAll?.()
     router.replace('/welcome')
+  }
+  const sendTest = async () => {
+    if (testing) return
+    setTesting(true)
+    try {
+      const r = await push.sendTest()
+      Alert.alert(r.ok ? t(lang, 'settings.notifTestSent') : t(lang, 'settings.notifTestFailed', { code: r.code }))
+    } catch (e) {
+      // 只显示错误码(BackendError.code),不显示错误文本
+      const code = typeof e === 'object' && e !== null && typeof (e as { code?: unknown }).code === 'string' ? (e as { code: string }).code : 'unknown'
+      Alert.alert(t(lang, 'settings.notifTestFailed', { code }))
+    } finally { setTesting(false) }
   }
   const confirmUnpair = () =>
     Alert.alert(t(lang, 'settings.unpairConfirmTitle'), t(lang, 'settings.unpairConfirmBody'), [
@@ -81,6 +97,20 @@ export default function Settings() {
             )
           })}
         </View>
+        {!demo && conn.state !== 'revoked' ? (
+          <>
+            {heading('settings.notifications')}
+            <Card testID="settings-notifications" style={{ gap: space.m }}>
+              <Text testID={`settings-notif-${push.status}`} style={{ color: c.muted, fontSize: 14, lineHeight: 21 }}>{t(lang, notificationNoticeKey(push.status))}</Text>
+              {push.status === 'denied' ? (
+                <Button kind="secondary" testID="settings-notif-open" label={t(lang, 'settings.notifOpenSettings')} onPress={push.openSettings} />
+              ) : null}
+              {push.status === 'registered' ? (
+                <Button kind="secondary" testID="settings-notif-test" label={t(lang, 'settings.notifTest')} busy={testing} onPress={sendTest} />
+              ) : null}
+            </Card>
+          </>
+        ) : null}
         {!demo ? (
           <>
             {heading('settings.thisPhone')}

@@ -24,3 +24,14 @@ export async function loadSession(store: CredentialStore, log: Log = devLog): Pr
 export function quietly(p: Promise<unknown>, op: string, log: Log = devLog): void {
   p.catch(e => log(`${op} failed (${kind(e)})`))
 }
+
+/** 撤销 / 解除配对:配对记录与推送密钥一起清(spec §3)。推送那条失败只记一行;配对那条失败照样抛给调用方。 */
+export async function clearStored(store: CredentialStore, push: { clear(): Promise<void> }, log: Log = devLog): Promise<void> {
+  const [p] = await Promise.allSettled([store.clear(), push.clear().catch(e => log(`pushClear failed (${kind(e)})`))])
+  if (p.status === 'rejected') throw p.reason
+}
+
+/** 会话读完却没有配对 ⇒ 钥匙串里若还留着推送密钥就该清(上次清失败 / 老版本升级上来)。 */
+export function leftoverPushKey(ready: boolean, pairing: PairingRecord | null): boolean {
+  return ready && pairing === null
+}

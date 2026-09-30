@@ -3,16 +3,16 @@ import type { Lang } from '../i18n'
 import { LangOverrideCtx } from '../i18n/useLang'
 import type { CredentialStore } from '../net/credentials'
 import type { PairingRecord } from '../net/pairing'
-import { loadSession, quietly } from './session-store'
+import { clearStored, loadSession, quietly } from './session-store'
 
 // 会话:配对记录与语言偏好落钥匙串;「已看过欢迎页」= 已配对,或这次打开点过「先看看」。
 type Session = {
   ready: boolean
   pairing: PairingRecord | null
   setPaired(r: PairingRecord): Promise<void>
-  /** 被电脑撤销:只清钥匙串;内存里的配对留着,后端停在 revoked,页面显示最后同步的内容 + 重新配对。 */
+  /** 被电脑撤销:只清钥匙串(配对记录 + 推送密钥);内存里的配对留着,后端停在 revoked,页面显示最后同步的内容 + 重新配对。 */
   dropStoredPairing(): void
-  /** 用户解除配对:钥匙串与内存都清,回欢迎页。 */
+  /** 用户解除配对:钥匙串(配对记录 + 推送密钥)与内存都清,回欢迎页。 */
   forgetPairing(): Promise<void>
   seenWelcome: boolean
   markWelcomeSeen(): void
@@ -23,7 +23,8 @@ type Session = {
 
 const SessionCtx = createContext<Session | null>(null)
 
-export function SessionProvider({ children, store }: { children: ReactNode; store: CredentialStore }) {
+/** push:撤销 / 解除配对时一起清推送密钥(并注销本机推送)的那一方;失败只记一行,不连累配对的清除。 */
+export function SessionProvider({ children, store, push }: { children: ReactNode; store: CredentialStore; push: { clear(): Promise<void> } }) {
   const [ready, setReady] = useState(false)
   const [pairing, setPairing] = useState<PairingRecord | null>(null)
   const [seenWelcome, setSeen] = useState(false)
@@ -40,12 +41,12 @@ export function SessionProvider({ children, store }: { children: ReactNode; stor
   const value = useMemo<Session>(() => ({
     ready, pairing,
     async setPaired(r) { await store.save(r); setPairing(r); setSeen(true) },
-    dropStoredPairing() { quietly(store.clear(), 'clear') },
-    async forgetPairing() { await store.clear(); setPairing(null); setSeen(false) },
+    dropStoredPairing() { quietly(clearStored(store, push), 'clear') },
+    async forgetPairing() { await clearStored(store, push); setPairing(null); setSeen(false) },
     seenWelcome, markWelcomeSeen: () => setSeen(true), setSeenWelcome: setSeen,
     langOverride,
     setLangOverride(l) { setLang(l); quietly(store.savePrefs({ lang: l }), 'savePrefs') },
-  }), [ready, pairing, seenWelcome, langOverride, store])
+  }), [ready, pairing, seenWelcome, langOverride, store, push])
   return (
     <SessionCtx.Provider value={value}>
       <LangOverrideCtx.Provider value={langOverride}>{children}</LangOverrideCtx.Provider>
