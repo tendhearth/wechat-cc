@@ -14,11 +14,12 @@
 import { randomBytes } from 'node:crypto'
 import { renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { derivePushKey, pushTokenValid, sealPush, type PushPlatformT } from '@wechat-cc/protocol'
+import { derivePushKey, pushTokenValid, sealPush, type PushKindT, type PushPlaintextT, type PushPlatformT } from '@wechat-cc/protocol'
 import { readJsonFile } from '../lib/read-json-file'
 
-export type PushKind = 'permission' | 'question' | 'task_done' | 'task_failed' | 'test'
-export interface PushPayload { kind: PushKind; title: string; body: string; taskId?: string; requestId?: string }
+/** 形状以协议包的 PushPlaintext 为准(原生端按它解析);这里只是去掉 daemon 自己填的 ts。 */
+export type PushKind = PushKindT
+export type PushPayload = Omit<PushPlaintextT, 'ts'>
 
 export interface PhonePush {
   register(deviceId: string, platform: PushPlatformT, token: string): boolean
@@ -76,7 +77,7 @@ export function makePhonePush(deps: {
     if (!read()[deviceId]) return null
     const token = deps.deviceToken(deviceId)
     if (!token) { drop(deviceId, true); return null }
-    const payload = { ts: now(), kind: p.kind, title: clip(p.title, TITLE_MAX), body: clip(p.body, BODY_MAX), ...(p.taskId ? { taskId: p.taskId } : {}), ...(p.requestId ? { requestId: p.requestId } : {}) }
+    const payload: PushPlaintextT = { ts: now(), kind: p.kind, title: clip(p.title, TITLE_MAX), body: clip(p.body, BODY_MAX), ...(p.taskId ? { taskId: p.taskId } : {}), ...(p.requestId ? { requestId: p.requestId } : {}) }
     const ref = `p${(refSeq++).toString(36)}${randomBytes(3).toString('hex')}`
     const ok = deps.send({ push: { device: deviceId, sealed: sealPush(derivePushKey(token), payload), collapseId: p.taskId ?? p.kind, ref } })
     return ok ? ref : ''

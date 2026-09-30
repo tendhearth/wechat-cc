@@ -16,12 +16,12 @@
       "sealed": {
         "v": 1,
         "iv": "AQIDBAUGBwgJCgsM",
-        "ct": "CZ5zncyYtCfQieHgGawga8jShLeXT82eC1siWiDpFbJe1Fcoy7Pv4v_ca7Rs0JOIGN4jCoHJrfZ6M23AbWn6i_ccWyMy5OQLEVEq0iLqve2-fbJrS9uKxQMGCQyapW1i0jI_u82rnEvWDzfUW2m21FYRAEiG4AyWNcD50U4hpGeFl68YFVMytn8Hd8-fNFyaORIay33YlMm9phD9jyre24NU0TKCvcLlHBj-GAQQ_8wrHVB5FLDp9Yo"
+        "ct": "CZ5zncyYtCfQieHgGawga8jShLeXT82eC1siWjH8F61Y0UUt-7Ooq7nNZuIsl8XbTlvaqFNNxY5Hey3IMDHd61yJnMbborELSRyqELs1FajmRtsHf4zt2WN3BWDinjQ8z11mvZ3YvxaOOV-WYTnQ0Bd6EiLr_2TRJIWkwBVYviY2BmnX0AJ13W9EPoaifUqSOUoVjSqLzY68tyjsyGOI4MpByW1sHegmaVrmpwDsBflsm6mj"
       },
       "expect": "ok",
       "payload": {
         "ts": 1699999999000,
-        "kind": "approval_needed",
+        "kind": "permission",
         "title": "需要你批准",
         "body": "任务「整理下载文件夹」想执行一条命令",
         "taskId": "t-42",
@@ -34,12 +34,14 @@
       "sealed": {
         "v": 1,
         "iv": "AgMEBQYHCAkKCwwN",
-        "ct": "Po4dm1SPcr9jOZV0KM_LVUkPkNXodzPMbvsW7g2Sg9T_3zdlo9mmUf3dEMhVMx0MGhYSaqG6_Z_XVu4"
+        "ct": "Po4dm1SPcr9jOZV0KM_LVUkPkNXodzPMbvsW7g2Sg9T_3TFlr4jiFu2WGYEF0nfJ0F57G-EZt_yBZcX0F4x3ErKHdJCfINog1GqNVQb7bVhwfCrYNaJvSfetK2aS00ggzuAQ7052QAqum1S7cct2OA"
       },
       "expect": "ok",
       "payload": {
         "ts": 1699997000000,
-        "kind": "task_finished"
+        "kind": "task_done",
+        "title": "任务完成了",
+        "body": "整理下载文件夹"
       }
     },
     {

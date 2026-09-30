@@ -25,7 +25,26 @@
 import { hkdf } from '@noble/hashes/hkdf.js'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { gcm } from '@noble/ciphers/aes.js'
+import z from 'zod'
 import { b64uEncode, b64uDecode } from './b64u'
+
+/** 推送的种类 —— daemon 发什么、原生端认什么,都以这里为准。 */
+export const PushKind = z.enum(['permission', 'question', 'task_done', 'task_failed', 'test'])
+export type PushKindT = z.infer<typeof PushKind>
+
+/**
+ * `openPush` 解开之后的明文形状。`openPush` 只校验 `ts`(时间窗),其余字段由
+ * 收方再过一遍这个 schema;daemon 这头也按它组装(src/daemon/phone-push.ts)。
+ */
+export const PushPlaintext = z.object({
+  ts: z.number(),
+  kind: PushKind,
+  title: z.string(),
+  body: z.string(),
+  taskId: z.string().optional(),
+  requestId: z.string().optional(),
+})
+export type PushPlaintextT = z.infer<typeof PushPlaintext>
 
 const HKDF_INFO = new TextEncoder().encode('wechat-cc/push/v1')
 const EMPTY_SALT = new Uint8Array(0)

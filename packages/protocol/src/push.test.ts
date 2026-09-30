@@ -9,10 +9,11 @@ import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 import { gcm } from '@noble/ciphers/aes.js'
 import { b64uEncode, b64uDecode } from './b64u'
-import { derivePushKey, sealPush, openPush } from './push'
+import { derivePushKey, sealPush, openPush, PushPlaintext, PushKind } from './push'
 import type { SealedPush } from './push'
 import { deriveV1Key } from './v1'
 import { deriveV2Keys } from './v2'
+import * as index from './index'
 import vectorsFile from '../vectors/push.json'
 
 interface VectorFile {
@@ -228,6 +229,36 @@ describe('openPush:过期与时钟偏差', () => {
       else expect(() => openPush(k, c.sealed, c.now), c.name).toThrow()
     }
     expect((v.cases as unknown[]).length).toBeGreaterThanOrEqual(6)
+  })
+})
+
+describe('PushPlaintext —— 解开之后的明文形状(daemon 与原生端的契约)', () => {
+  it('从 index 导出', () => {
+    expect(index.PushPlaintext).toBe(PushPlaintext)
+    expect(index.PushKind).toBe(PushKind)
+  })
+  it('kind 只有五种', () => {
+    expect(PushKind.options).toEqual(['permission', 'question', 'task_done', 'task_failed', 'test'])
+  })
+  it('合法载荷 seal → open → parse 通过;缺 title / 未知 kind / ts 非数字 ⇒ 拒', () => {
+    const key = derivePushKey('schema-token')
+    const now = 1_700_000_000_000
+    const payload = { ts: now, kind: 'permission', title: '需要你批准', body: '想执行 npm i', taskId: 'ab12cd34', requestId: 'perm-1' }
+    expect(PushPlaintext.parse(openPush(key, sealPush(key, payload), now))).toEqual(payload)
+    expect(PushPlaintext.safeParse({ ts: now, kind: 'test', title: 't' }).success).toBe(false)
+    expect(PushPlaintext.safeParse({ ts: now, kind: 'approval_needed', title: 't', body: 'b' }).success).toBe(false)
+    expect(PushPlaintext.safeParse({ ts: 'x', kind: 'test', title: 't', body: 'b' }).success).toBe(false)
+  })
+  it('向量文件里每个 expect=ok 的 case,解开后都过 PushPlaintext(原生端照着它写解析)', () => {
+    const v = JSON.parse(readFileSync(new URL('../vectors/push.json', import.meta.url), 'utf8'))
+    const key = derivePushKey(v.deviceToken)
+    const oks = (v.cases as Array<{ name: string; now: number; sealed: SealedPush; expect: string; payload?: unknown }>).filter(c => c.expect === 'ok')
+    expect(oks.map(c => c.name)).toContain('ok')
+    for (const c of oks) {
+      const r = PushPlaintext.safeParse(openPush(key, c.sealed, c.now))
+      expect(r.success, c.name).toBe(true)
+      expect(PushPlaintext.parse(c.payload), c.name).toEqual(c.payload)
+    }
   })
 })
 
