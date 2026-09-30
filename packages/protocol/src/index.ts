@@ -30,3 +30,5 @@ export {
   signRelayLogin, verifyRelayLogin, RELAY_ERRORS, PushPlatform, pushTokenValid, PUSH_SEALED_MAX_CHARS, DaemonControl, RoomControl,
 } from './relay'
 export type { RelayError, PushPlatformT, DaemonControlT, RoomControlT } from './relay'
+export { HomeTopic, ApprovalItem, ApprovalsTopic, AgentsTopic, MatterTopic } from './topics'
+export type { HomeTopicT, ApprovalItemT, AgentsTopicT, MatterTopicT } from './topics'
