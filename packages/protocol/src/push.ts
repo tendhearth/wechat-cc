@@ -53,6 +53,39 @@ export const PUSH_MAX_AGE_MS = 3_600_000
 /** 未来方向只容忍时钟偏差。 */
 export const PUSH_MAX_SKEW_MS = 600_000
 
+/** 每台设备记住最近见过的推送(spec §5.5):条数上限与每条保留时长。原生两端(Swift / Kotlin)用同样的数。 */
+export const PUSH_DEDUPE_CAPACITY = 64
+export const PUSH_DEDUPE_TTL_MS = PUSH_MAX_AGE_MS + PUSH_MAX_SKEW_MS
+
+const hex = (b: Uint8Array) => Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
+
+/** 去重键 = floor(ts) + ":" + sha256(ct 原文的 UTF-8)前 32 位 hex。ct 是线上的 base64url 字符串本身。 */
+export function pushDedupeKey(ts: number, ct: string): string {
+  return `${Math.floor(ts)}:${hex(sha256(new TextEncoder().encode(ct))).slice(0, 32)}`
+}
+
+/**
+ * 去重的参考实现(原生端照它写;向量文件的 dedupe.steps 钉住)。seen:先修剪 now - 记下时刻 > TTL 的条目;
+ * 已有 ⇒ true(重复);否则记下,超出容量就挤掉记下时刻最早的(同一时刻按键名升序)⇒ false。
+ */
+export function makePushDedupe(initial: Record<string, number> = {}): { seen(key: string, now: number): boolean; entries(): Record<string, number> } {
+  const m = new Map(Object.entries(initial))
+  return {
+    seen(key, now) {
+      for (const [k, at] of m) if (now - at > PUSH_DEDUPE_TTL_MS) m.delete(k)
+      if (m.has(key)) return true
+      m.set(key, now)
+      while (m.size > PUSH_DEDUPE_CAPACITY) {
+        let oldest: [string, number] | null = null
+        for (const e of m) if (!oldest || e[1] < oldest[1] || (e[1] === oldest[1] && e[0] < oldest[0])) oldest = e
+        m.delete(oldest![0])
+      }
+      return false
+    },
+    entries: () => Object.fromEntries(m),
+  }
+}
+
 function randomBytes(len: number): Uint8Array {
   const out = new Uint8Array(len)
   crypto.getRandomValues(out)

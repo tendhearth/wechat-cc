@@ -1,5 +1,5 @@
 {
-  "_generatedBy": "packages/protocol/src/push.ts 自己生成的回归钉子(不是跨实现兼容向量):固定 deviceToken 推出推送密钥,再用固定 iv 对固定载荷 sealPush,记录密钥与密文。以后改动这份代码如果悄悄改变了输出,这里就会红。 cases 是 Swift / Kotlin 解密实现的验收用例(wrongKey 用 deviceToken+\"x\" 推导的密钥)。",
+  "_generatedBy": "packages/protocol/src/push.ts 自己生成的回归钉子(不是跨实现兼容向量):固定 deviceToken 推出推送密钥,再用固定 iv 对固定载荷 sealPush,记录密钥与密文。以后改动这份代码如果悄悄改变了输出,这里就会红。 cases 与 dedupe 是 Swift / Kotlin 解密实现的验收用例(wrongKey 用 deviceToken+\"x\" 推导的密钥;expect=invalid ⇒ 能解开但明文不合 PushPlaintext)。",
   "deviceToken": "push-device-token-abc123",
   "key": "YzTEfEY47mMXk4AOGQg5YBQrSdqsc6gWXNGyD_gXouQ",
   "iv": "AAECAwQFBgcICQoL",
@@ -26,7 +26,8 @@
         "body": "任务「整理下载文件夹」想执行一条命令",
         "taskId": "t-42",
         "requestId": "r-7"
-      }
+      },
+      "dedupeKey": "1699999999000:3314a46bd160644b212a9f8839b86b00"
     },
     {
       "name": "ok-late-50min",
@@ -42,7 +43,8 @@
         "kind": "task_done",
         "title": "任务完成了",
         "body": "整理下载文件夹"
-      }
+      },
+      "dedupeKey": "1699997000000:3cc0321e7cd97fd25ce25c2b9e24149e"
     },
     {
       "name": "stale-past-61min",
@@ -94,6 +96,46 @@
         "ct": "47Me0zObfro7q8CC-3AhLRwnVE9RPEwaOWW6LoxuNirdIi8x"
       },
       "expect": "malformed"
+    },
+    {
+      "name": "invalid-kind",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "BwgJCgsMDQ4PEBES",
+        "ct": "4Uc2ztOwl3oxaKMStEmbAyL6By1_YUihtUy4258AUoAJ2s_0LNEciW4rd8KMpyg-S3sn_To6eAWf_a7kR5ynHy_ZFC9YMiymUx-36CNExdS0IgFx"
+      },
+      "expect": "invalid"
     }
-  ]
+  ],
+  "dedupe": {
+    "capacity": 64,
+    "ttlMs": 4200000,
+    "steps": [
+      {
+        "key": "1699999999000:3314a46bd160644b212a9f8839b86b00",
+        "now": 1700000000000,
+        "expect": "new",
+        "note": "第一次见到 ok"
+      },
+      {
+        "key": "1699997000000:3cc0321e7cd97fd25ce25c2b9e24149e",
+        "now": 1700000000000,
+        "expect": "new",
+        "note": "另一条"
+      },
+      {
+        "key": "1699999999000:3314a46bd160644b212a9f8839b86b00",
+        "now": 1700000001000,
+        "expect": "duplicate",
+        "note": "APNs / FCM 重投同一条"
+      },
+      {
+        "key": "1699999999000:3314a46bd160644b212a9f8839b86b00",
+        "now": 1700004200001,
+        "expect": "new",
+        "note": "超过保留时长后被修剪"
+      }
+    ]
+  }
 }
