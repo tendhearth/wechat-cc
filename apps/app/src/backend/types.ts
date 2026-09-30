@@ -12,7 +12,11 @@ export type PhoneChangesTurnT = z.infer<typeof PhoneChangesTurn>
 export type EntryOptionsT = z.infer<typeof EntryOptions>
 export type { HomeTopicT, ApprovalItemT, AgentsTopicT, MatterTopicT } from '@wechat-cc/protocol'
 
-export type Connection = { state: 'online' | 'offline' | 'revoked'; lastSyncedAt: number | null }
+export type ConnState = 'connecting' | 'online' | 'offline' | 'revoked'
+/** epoch:每次握手成功 +1。store 看它前进就重新验证全部查询(首次连上、重连、回到前台)。 */
+export type Connection = { state: ConnState; lastSyncedAt: number | null; epoch: number }
+/** BackendError.code 的全集(映射见 src/net/errors.ts)。 */
+export type BackendCode = 'stale' | 'offline' | 'revoked' | 'timeout' | 'not_found' | 'invalid' | 'unknown'
 export type Unsubscribe = () => void
 
 export interface Backend {
@@ -32,7 +36,7 @@ export interface Backend {
   create(p: { text: string; projectPath?: string; providerId?: string }): Promise<{ matterId: string }>
 }
 
-/** code: 'stale' | 'offline' | 'revoked' | 'timeout' | 'unknown' */
+/** code 见 BackendCode;store 把 timeout 映射成「不确定」。 */
 export class BackendError extends Error {
   constructor(public code: string) { super(code) }
 }

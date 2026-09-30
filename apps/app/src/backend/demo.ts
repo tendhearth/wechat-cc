@@ -109,7 +109,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const evText = (e: Entry, kind: string, text: string) => { e.evs = [...e.evs, { kind, text, createdAt: now() }]; renderEvents(e) }
   const get = (id: string) => { const e = entries.get(id); if (!e) throw new BackendError('unknown'); return e }
 
-  const conn: Connection = { state: 'online', lastSyncedAt: null }
+  const conn: Connection = { state: 'online', lastSyncedAt: null, epoch: 0 }
   const clone = <T,>(v: T): T => structuredClone(v)
 
   return {

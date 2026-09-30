@@ -128,7 +128,7 @@ export function makeStore(backend: Backend) {
   let conn: Connection | null = null
   let offConn: Unsubscribe | null = null
   const connLs = listeners()
-  const same = (a: Connection, b: Connection) => a.state === b.state && a.lastSyncedAt === b.lastSyncedAt
+  const same = (a: Connection, b: Connection) => a.state === b.state && a.lastSyncedAt === b.lastSyncedAt && a.epoch === b.epoch
   const connHandle = {
     get(): Connection {
       if (!conn) conn = backend.connection() // 只初始化一次
