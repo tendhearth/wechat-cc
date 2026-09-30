@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { approvalView } from './approval'
+import { approvalView, buildAnswers } from './approval'
 
 const base = {
   matter: { id: 'ab12cd34', kind: 'task', title: 'x', projectPath: '/p', status: 'open', ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: 1, updatedAt: 1 },
@@ -61,5 +61,24 @@ describe('approvalView', () => {
     it('问题没有 runId ⇒ none', () => {
       expect(approvalView({ ...onlyQ, runId: undefined }, {})).toEqual({ kind: 'none' })
     })
+  })
+})
+
+describe('buildAnswers', () => {
+  const single = { id: 'a', header: 'H', question: 'Q', options: [{ label: 'x', description: '' }, { label: 'y', description: '' }], multiSelect: false, allowOther: true }
+  const multi = { ...single, id: 'b', multiSelect: true, allowOther: false }
+  it('单选取选中项;其他填字时顶替', () => {
+    expect(buildAnswers([single], { a: ['x'] }, {})).toEqual({ a: 'x' })
+    expect(buildAnswers([single], { a: ['x'] }, { a: '  周三 ' })).toEqual({ a: '周三' })
+  })
+  it('多选给数组;不允许其他时忽略其他文本', () => {
+    expect(buildAnswers([multi], { b: ['x', 'y'] }, { b: 'z' })).toEqual({ b: ['x', 'y'] })
+  })
+  it('有一题没答 ⇒ null;空白其他不算答', () => {
+    expect(buildAnswers([single, multi], { a: ['x'] }, {})).toBeNull()
+    expect(buildAnswers([single], {}, { a: '   ' })).toBeNull()
+  })
+  it('不在选项里的标签不算', () => {
+    expect(buildAnswers([single], { a: ['nope'] }, {})).toBeNull()
   })
 })

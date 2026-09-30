@@ -46,3 +46,27 @@ export function approvalView(detail: MatterDetailT, explanations: Record<string,
     ],
   }
 }
+
+type QuestionItem = Extract<ApprovalView, { kind: 'question' }>['items'][number]
+
+/**
+ * 把问答表单的选择拼成 answers:单选 ⇒ string,多选 ⇒ string[];「其他」填了字就算一个回答
+ * (单选时它顶替选项)。有任何一题没答 ⇒ null(提交按钮不可用)。
+ */
+export function buildAnswers(items: QuestionItem[], picked: Record<string, string[]>, other: Record<string, string>): Record<string, string | string[]> | null {
+  const out: Record<string, string | string[]> = {}
+  for (const it of items) {
+    const chosen = (picked[it.id] ?? []).filter(l => it.options.some(o => o.label === l))
+    const extra = it.allowOther ? (other[it.id] ?? '').trim() : ''
+    if (it.multiSelect) {
+      const all = extra ? [...chosen, extra] : chosen
+      if (all.length === 0) return null
+      out[it.id] = all
+    } else {
+      const one = extra || chosen[0]
+      if (!one) return null
+      out[it.id] = one
+    }
+  }
+  return out
+}
