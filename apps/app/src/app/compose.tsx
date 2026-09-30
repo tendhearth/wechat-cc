@@ -14,7 +14,7 @@ import { serifFamily } from '../ui/fonts'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { useTheme } from '../ui/useTheme'
-import { sayTooLong } from '../view/compose'
+import { composeTooLong } from '../view/compose'
 import { canSubmit } from '../view/connection'
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)
@@ -43,13 +43,13 @@ export default function Compose() {
   const provider = providerId ? opt?.providers.find((p) => p.id === providerId) : null
 
   // 不在线(连接中 / 离线 / 撤销)⇒ 草稿照写,「交给 CC」锁住,ConnectionNotice 说明原因。
-  // busy = 同一份草稿已在发(本机);ccBusy = CC 这一轮还在跑(daemon 409),草稿留着,等这一轮做完再发;tooLong = 说一句超过上限。
+  // busy = 同一份草稿已在发(本机);ccBusy = CC 这一轮还在跑(daemon 409),草稿留着,等这一轮做完再发;tooLong = 正文超过上限(说一句与交办同一上限)。
   const online = canSubmit(conn)
   const send = async () => {
     const body = text.trim()
     if (!body || sending.current || !online) return
-    // 说一句超过 20 000 字:必然被拒,就在手机上拦下,请求不发、草稿留着
-    if (matter && sayTooLong(body)) { setOutcome('tooLong'); return }
+    // 说一句 / 交办超过 20 000 字:必然被拒,就在手机上拦下,请求不发、草稿留着
+    if (composeTooLong(body)) { setOutcome('tooLong'); return }
     sending.current = true
     setBusy(true); setOutcome(null)
     let newId: string | null = null
