@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { normalizeLang, runCheap, extractJsonObject, JUDGEMENT_WORDS } from './phone-insight-llm'
+import { normalizeLang, runCheap, extractJsonObject, JUDGEMENT_WORDS, hasJudgement } from './phone-insight-llm'
 
 describe('phone-insight-llm', () => {
   it('normalizeLang:只认 en / zh-Hans,其它都当 en', () => {
@@ -27,5 +27,10 @@ describe('phone-insight-llm', () => {
   it('JUDGEMENT_WORDS 认得中英文的判断词', () => {
     for (const s of ['这很安全', '建议允许', 'This is safe', 'I recommend allowing', 'harmless']) expect(JUDGEMENT_WORDS.test(s), s).toBe(true)
     expect(JUDGEMENT_WORDS.test('安装 sharp 图片处理组件')).toBe(false)
+  })
+  it('hasJudgement:扩展词与全角归一', () => {
+    for (const s of ['safely', 'safety first', 'benign', 'innocuous', 'risk-free', 'no risk', 'fine to run', 'you should approve', '无风险', '没问题', '建议同意', '可以批准', 'ｓａｆｅ']) expect(hasJudgement(s), s).toBe(true)
+    expect(hasJudgement('安装 sharp 图片处理组件')).toBe(false)
+    expect(hasJudgement('Download packages and update lockfile')).toBe(false)
   })
 })

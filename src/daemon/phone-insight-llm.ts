@@ -47,8 +47,16 @@ export function extractJsonObject(raw: string): Record<string, unknown> | null {
   return null
 }
 
-/** 说明里不许出现替用户下判断的词 —— 命令描述里的注入最想骗出的就是这些。 */
-export const JUDGEMENT_WORDS = /安全|放心|建议(你)?(允许|批准)|推荐|无害|\bsafe\b|harmless|recommend|you should (allow|approve)/i
+/**
+ * 说明里不许出现替用户下判断的词 —— 命令描述里的注入最想骗出的就是这些。
+ * 这只是礼貌性过滤,不是安全边界:App 永远会原样展示原始命令。
+ */
+export const JUDGEMENT_WORDS = /安全|放心|无风险|没问题|建议(你)?(允许|批准|同意)|可以批准|推荐|无害|\bsafe(ly|ty)?\b|harmless|benign|innocuous|risk-free|no risk|fine to|recommend|should (allow|approve)/i
+
+/** 先 NFKC 归一(全角 ｓａｆｅ 等)再判断。 */
+export function hasJudgement(s: string): boolean {
+  return JUDGEMENT_WORDS.test(s) || JUDGEMENT_WORDS.test(s.normalize('NFKC'))
+}
 
 export const clipChars = (s: string, n: number): string => {
   const cs = [...s.replace(/\s+/g, ' ').trim()]
