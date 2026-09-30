@@ -5,6 +5,7 @@
  * 生成的回归钉子**(固定 deviceToken/iv/载荷 ⇒ 固定密钥与密文),不是跨实现
  * 兼容向量。
  */
+import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 import { gcm } from '@noble/ciphers/aes.js'
 import { b64uEncode, b64uDecode } from './b64u'
@@ -195,32 +196,38 @@ describe('openPush:篡改与畸形输入 ⇒ 抛错', () => {
 })
 
 describe('openPush:过期与时钟偏差', () => {
-  it('ts 早于 now - 10min ⇒ 抛 Error("stale")', () => {
+  it('ts 早于 now - 1h ⇒ 抛 Error("stale")', () => {
     const key = derivePushKey('stale-token')
     const now = 1_700_000_000_000
-    const sealed = sealPush(key, { ts: now - 600_001 })
-    expect(() => openPush(key, sealed, now)).toThrow('stale')
+    expect(() => openPush(key, sealPush(key, { ts: now - 3_600_001 }), now)).toThrow('stale')
   })
-
-  it('ts 恰好等于 now - 10min ⇒ 不算过期', () => {
-    const key = derivePushKey('boundary-token')
+  it('迟到 50 分钟仍能解开(APNs / FCM TTL 是 1 小时)', () => {
+    const key = derivePushKey('late-token')
     const now = 1_700_000_000_000
-    const sealed = sealPush(key, { ts: now - 600_000 })
-    expect(openPush(key, sealed, now)).toEqual({ ts: now - 600_000 })
+    expect(openPush(key, sealPush(key, { ts: now - 50 * 60_000 }), now)).toEqual({ ts: now - 50 * 60_000 })
   })
-
-  it('ts 晚于 now + 10min(未来太远,时钟偏差)⇒ 抛 Error("stale")', () => {
+  it('正好 1 小时前 ⇒ 仍接受', () => {
+    const key = derivePushKey('edge-token')
+    const now = 1_700_000_000_000
+    expect(openPush(key, sealPush(key, { ts: now - 3_600_000 }), now)).toEqual({ ts: now - 3_600_000 })
+  })
+  it('ts 晚于 now + 10min ⇒ 抛 Error("stale");正好 10 分钟 ⇒ 接受', () => {
     const key = derivePushKey('future-token')
     const now = 1_700_000_000_000
-    const sealed = sealPush(key, { ts: now + 600_001 })
-    expect(() => openPush(key, sealed, now)).toThrow('stale')
+    expect(() => openPush(key, sealPush(key, { ts: now + 600_001 }), now)).toThrow('stale')
+    expect(openPush(key, sealPush(key, { ts: now + 600_000 }), now)).toEqual({ ts: now + 600_000 })
   })
-
-  it('ts 恰好等于 now + 10min ⇒ 不算过期', () => {
-    const key = derivePushKey('future-boundary-token')
-    const now = 1_700_000_000_000
-    const sealed = sealPush(key, { ts: now + 600_000 })
-    expect(openPush(key, sealed, now)).toEqual({ ts: now + 600_000 })
+  it('向量文件的每个 case 与实现一致', () => {
+    const v = JSON.parse(readFileSync(new URL('../vectors/push.json', import.meta.url), 'utf8'))
+    const key = derivePushKey(v.deviceToken)
+    const wrong = derivePushKey(v.deviceToken + 'x')
+    for (const c of v.cases as Array<{ name: string; now: number; sealed: SealedPush; expect: string; wrongKey?: boolean; payload?: unknown }>) {
+      const k = c.wrongKey ? wrong : key
+      if (c.expect === 'ok') expect(openPush(k, c.sealed, c.now), c.name).toEqual(c.payload)
+      else if (c.expect === 'stale') expect(() => openPush(k, c.sealed, c.now), c.name).toThrow('stale')
+      else expect(() => openPush(k, c.sealed, c.now), c.name).toThrow()
+    }
+    expect((v.cases as unknown[]).length).toBeGreaterThanOrEqual(6)
   })
 })
 

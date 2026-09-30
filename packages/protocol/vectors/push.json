@@ -1,5 +1,5 @@
 {
-  "_generatedBy": "packages/protocol/src/push.ts 自己生成的回归钉子(不是跨实现兼容向量):固定 deviceToken 推出推送密钥,再用固定 iv 对固定载荷 sealPush,记录密钥与密文。以后改动这份代码如果悄悄改变了输出,这里就会红。",
+  "_generatedBy": "packages/protocol/src/push.ts 自己生成的回归钉子(不是跨实现兼容向量):固定 deviceToken 推出推送密钥,再用固定 iv 对固定载荷 sealPush,记录密钥与密文。以后改动这份代码如果悄悄改变了输出,这里就会红。 cases 是 Swift / Kotlin 解密实现的验收用例(wrongKey 用 deviceToken+\"x\" 推导的密钥)。",
   "deviceToken": "push-device-token-abc123",
   "key": "YzTEfEY47mMXk4AOGQg5YBQrSdqsc6gWXNGyD_gXouQ",
   "iv": "AAECAwQFBgcICQoL",
@@ -8,5 +8,90 @@
     "kind": "approval_needed",
     "taskId": "t-42"
   },
-  "ct": "S-s6jx2-YxFMZAwS8NJgK6Wgl64DQffBhYCsU3GTVFj80ko27N-m4JrcJqUqSHiHEWA4Do5DfMwkuSjhG0u4akgIslJ0vMxhcBqh8CU"
+  "ct": "S-s6jx2-YxFMZAwS8NJgK6Wgl64DQffBhYCsU3GTVFj80ko27N-m4JrcJqUqSHiHEWA4Do5DfMwkuSjhG0u4akgIslJ0vMxhcBqh8CU",
+  "cases": [
+    {
+      "name": "ok",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "AQIDBAUGBwgJCgsM",
+        "ct": "CZ5zncyYtCfQieHgGawga8jShLeXT82eC1siWiDpFbJe1Fcoy7Pv4v_ca7Rs0JOIGN4jCoHJrfZ6M23AbWn6i_ccWyMy5OQLEVEq0iLqve2-fbJrS9uKxQMGCQyapW1i0jI_u82rnEvWDzfUW2m21FYRAEiG4AyWNcD50U4hpGeFl68YFVMytn8Hd8-fNFyaORIay33YlMm9phD9jyre24NU0TKCvcLlHBj-GAQQ_8wrHVB5FLDp9Yo"
+      },
+      "expect": "ok",
+      "payload": {
+        "ts": 1699999999000,
+        "kind": "approval_needed",
+        "title": "需要你批准",
+        "body": "任务「整理下载文件夹」想执行一条命令",
+        "taskId": "t-42",
+        "requestId": "r-7"
+      }
+    },
+    {
+      "name": "ok-late-50min",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "AgMEBQYHCAkKCwwN",
+        "ct": "Po4dm1SPcr9jOZV0KM_LVUkPkNXodzPMbvsW7g2Sg9T_3zdlo9mmUf3dEMhVMx0MGhYSaqG6_Z_XVu4"
+      },
+      "expect": "ok",
+      "payload": {
+        "ts": 1699997000000,
+        "kind": "task_finished"
+      }
+    },
+    {
+      "name": "stale-past-61min",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "AwQFBgcICQoLDA0O",
+        "ct": "t7iXKu66fth7L5Rw5nRnPzTMKsbTCzn56OGY2qTZFL4wcCEP"
+      },
+      "expect": "stale"
+    },
+    {
+      "name": "stale-future-11min",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "BAUGBwgJCgsMDQ4P",
+        "ct": "OY9PaDDYyhhM8Zjh5U8gvB6p-r9MRQMc9nSQC3P0REqmOXnn"
+      },
+      "expect": "stale"
+    },
+    {
+      "name": "auth-wrong-key",
+      "wrongKey": true,
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "BQYHCAkKCwwNDg8Q",
+        "ct": "Vvyka361hmjfvLxOhu4WJjLclhFQt_OzD02CpafbTI6tFrm_"
+      },
+      "expect": "auth"
+    },
+    {
+      "name": "auth-tampered",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "BQYHCAkKCwwNDg8Q",
+        "ct": "V_yka361hmjfvLxOhu4WJjLclhFQt_OzD02CpafbTI6tFrm_"
+      },
+      "expect": "auth"
+    },
+    {
+      "name": "malformed-v2",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 2,
+        "iv": "BgcICQoLDA0ODxAR",
+        "ct": "47Me0zObfro7q8CC-3AhLRwnVE9RPEwaOWW6LoxuNirdIi8x"
+      },
+      "expect": "malformed"
+    }
+  ]
 }

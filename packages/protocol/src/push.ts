@@ -18,8 +18,9 @@
  * `openPush` 对着不可信的线上输入(relay 转发、可能被篡改或重放),逐层拒绝:
  * 不是对象、v 不是 1、iv/ct 不是字符串、base64 解不出来、GCM 认证失败、解出来
  * 的明文不是 JSON 对象、`ts` 缺失或不是有限数字 ⇒ 一律抛 `Error`;`ts` 早于
- * `now - 10min` 或晚于 `now + 10min`(时钟偏差也按过期算,双向都不给太宽的窗口)
- * ⇒ 抛 `Error('stale')`。
+ * `now - 1 小时` 或晚于 `now + 10 分钟` ⇒ 抛 `Error('stale')`。窗口:过去 1 小时
+ * (APNs/FCM 的 TTL)/ 未来 10 分钟(只容忍时钟偏差);通知只显示不执行,所以放宽
+ * 过去方向不引入权限风险;去重在手机端按 ts + 密文哈希做。
  */
 import { hkdf } from '@noble/hashes/hkdf.js'
 import { sha256 } from '@noble/hashes/sha2.js'
@@ -28,7 +29,10 @@ import { b64uEncode, b64uDecode } from './b64u'
 
 const HKDF_INFO = new TextEncoder().encode('wechat-cc/push/v1')
 const EMPTY_SALT = new Uint8Array(0)
-const STALE_WINDOW_MS = 600_000 // 10 分钟,过去和未来两个方向都按这个窗口拒绝
+/** APNs / FCM 的 TTL 是 1 小时:比它更早的通知本来就不会送达。 */
+export const PUSH_MAX_AGE_MS = 3_600_000
+/** 未来方向只容忍时钟偏差。 */
+export const PUSH_MAX_SKEW_MS = 600_000
 
 function randomBytes(len: number): Uint8Array {
   const out = new Uint8Array(len)
@@ -95,7 +99,7 @@ export function openPush(key: Uint8Array, sealed: SealedPush, now: number): Reco
   if (typeof ts !== 'number' || !Number.isFinite(ts)) {
     throw new Error('malformed push payload: ts')
   }
-  if (ts < now - STALE_WINDOW_MS || ts > now + STALE_WINDOW_MS) {
+  if (ts < now - PUSH_MAX_AGE_MS || ts > now + PUSH_MAX_SKEW_MS) {
     throw new Error('stale')
   }
 
