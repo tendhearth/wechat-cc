@@ -37,6 +37,7 @@
 | 社交层(信封 / 关系 / 觅食台 / 串门 / 明信片 / 介绍) | — | `superpowers/specs/2026-09-04-social-architecture-rethink.md`(重构定案)+ `2026-09-04-{wish-postcard,introduction}-design.md` |
 | 伙伴状态与日程判断 | — | `superpowers/specs/2026-09-03-companion-presence-design.md` + `2026-09-05-companion-plan-design.md` |
 | 手机协议 v2 与协议包 | [../packages/protocol/README.md](../packages/protocol/README.md) | `superpowers/specs/2026-09-29-phone-protocol-v2-design.md` + `superpowers/plans/2026-09-29-phone-protocol-v2.md` |
+| 官方中继 v2(Cloudflare Workers + 推送) | [maintainer/relay.md](maintainer/relay.md) | `superpowers/specs/2026-09-30-relay-cloudflare-push-design.md` + `superpowers/plans/2026-09-30-relay-cloudflare-push.md` |
 | 手机版 | [任务衔接现状](cc-workbench.md)；[手机页源码与规矩](../apps/mobile/README.md) | `superpowers/specs/2026-09-06-mobile-home-feed-design.md`；[手机任务验证记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md) |
 | provider(agy / cursor / openai 兼容 / 去重) | [reference/model-management.md](reference/model-management.md) | `superpowers/specs/2026-08-17-{agy-provider,provider-runtime-dedup}-design.md` |
 | 可靠性(降级启动 / 自动重启 / 忙登记处) | — | `superpowers/specs/2026-08-17-subsystem-degraded-boot-design.md` + `2026-08-11-daemon-busy-registry-design.md` + `2026-08-03-daemon-self-restart-on-stale-code-design.md` |

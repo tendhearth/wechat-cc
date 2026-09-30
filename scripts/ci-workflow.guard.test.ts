@@ -89,9 +89,9 @@ describe('ci.yml —— e2e 作业要装 Playwright chromium', () => {
 })
 
 describe('三个 workflow —— bun 版本钉死', () => {
-  it('ci.yml / desktop.yml / publish-update.yml 每一处 setup-bun 都是 1.3.14(2026-09-15 bun 1.4.2 把 CI 弄红;发版链此前仍是 latest,2026-09-27 一并钉住)', () => {
+  it('ci.yml / desktop.yml / publish-update.yml / relay.yml 每一处 setup-bun 都是 1.3.14(2026-09-15 bun 1.4.2 把 CI 弄红;发版链此前仍是 latest,2026-09-27 一并钉住)', () => {
     const pins: string[] = []
-    for (const file of ['ci.yml', 'desktop.yml', 'publish-update.yml']) {
+    for (const file of ['ci.yml', 'desktop.yml', 'publish-update.yml', 'relay.yml']) {
       const wf = parse(readFileSync(join(HERE, '..', '.github', 'workflows', file), 'utf8')) as { jobs: Record<string, { steps?: Array<{ uses?: string; with?: Record<string, unknown> }> }> }
       for (const job of Object.values(wf.jobs)) {
         for (const step of job.steps ?? []) {
@@ -103,5 +103,22 @@ describe('三个 workflow —— bun 版本钉死', () => {
     }
     expect(pins.length).toBeGreaterThanOrEqual(6)
     for (const p of pins) expect(p, p).toMatch(/:1\.3\.14$/)
+  })
+})
+
+describe('ci.yml —— 中继作业', () => {
+  it('changes 算出 relay 输出,relay 作业依赖它', () => {
+    const changes = jobs.changes!
+    expect(changes.outputs?.relay).toBeDefined()
+    const filter = changes.steps?.find(s => s.id === 'filter')?.with?.filters as string
+    expect(filter).toContain('apps/relay/**')
+    expect(filter).toContain('packages/protocol/**')
+    const relay = jobs.relay!
+    expect(relay.needs).toContain('changes')
+    expect(relay.if).toContain("needs.changes.outputs.relay == 'true'")
+  })
+  it('relay 作业的 setup-bun 也钉 1.3.14', () => {
+    const bun = jobs.relay!.steps?.find(s => s.uses?.startsWith('oven-sh/setup-bun'))
+    expect(bun?.with?.['bun-version']).toBe('1.3.14')
   })
 })
