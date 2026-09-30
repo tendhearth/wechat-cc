@@ -1,3 +1,4 @@
+import { PHONE_ANSWER_MAX_JSON } from '@wechat-cc/protocol'
 import type { MatterDetailT, ApprovalExplanationT } from '../backend/types'
 
 export type ApprovalView =
@@ -92,4 +93,18 @@ export function pinnedRequest(param: string | undefined, pinned: string | undefi
   if (param) return param
   if (pinned) return pinned
   return v.kind === 'card' || v.kind === 'question' ? v.requestId : undefined
+}
+
+/** 与 daemon POST /m/api/matter/answer 的上限一致:超了就在手机上拦下,不发。 */
+export function answersTooLong(answers: Record<string, string[]> | null): boolean {
+  return answers !== null && JSON.stringify(answers).length > PHONE_ANSWER_MAX_JSON
+}
+
+/** 批准 / 回答提交失败码 ⇒ 页内提示。revoked 单列:手机已不再配对,「稍后再试」是错的(横幅由 ConnectionNotice 讲)。 */
+export function approvalOutcome(error: string): 'handled' | 'ccBusy' | 'uncertain' | 'revoked' | 'failed' {
+  if (error === 'stale') return 'handled'
+  if (error === 'busy') return 'ccBusy'
+  if (error === 'uncertain') return 'uncertain'
+  if (error === 'revoked') return 'revoked'
+  return 'failed'
 }

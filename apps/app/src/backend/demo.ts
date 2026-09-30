@@ -4,20 +4,23 @@ import { copy, IDS, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, cha
 
 type Topic = 'home' | 'approvals' | 'agents' | `matter/${string}`
 type Copy = keyof typeof copy
-/** 事件记录:带 key 的在换语言时按新语言重新生成文案;text 是用户自己的字,原样保留。 */
+/** 事件记录:带 key 的在读时按请求的语言生成文案;text 是用户自己的字,原样保留。 */
 type EvRec = { kind: string; createdAt: number; key?: Copy; extra?: string; text?: string }
-type Entry = { detail: MatterDetailT; stage: Stage; version: number; evs: EvRec[]; seeded: boolean }
+type Entry = { detail: MatterDetailT; stage: Stage; version: number; evs: EvRec[]; seeded: boolean; titleKey?: Copy }
 const DAY = 86_400_000
 
-export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof setTimeout; lang?: Lang } = {}): Backend & { reset(): void; setLang(l: Lang, o?: { silent?: boolean }): void; republish(): void } {
+export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof setTimeout; lang?: Lang } = {}): Backend & { reset(): void } {
   const now = opts.now ?? (() => Date.now())
-  let lang: Lang = opts.lang ?? 'en' // setLang 只改之后生成的文案,不动已有状态
+  let lastLang: Lang = opts.lang ?? 'en' // 主题快照(approvals 摘要、agents 标题)用最近一次读的语言;读本身按参数给文案
   const schedule = (fn: () => void, ms: number) => (opts.setTimeout ?? globalThis.setTimeout)(fn, ms)
 
   let entries = new Map<string, Entry>()
   let order: string[] = []
   let epoch = 0 // reset() 之后让旧定时器失效
   let seq = 0
+  let createdBy = new Map<string, string>()
+  let saidBy = new Set<string>()
+  let deviceLabel = ''
   const subs = new Map<Topic, Set<(d: any) => void>>()
 
   function mkMatter(id: string, kind: MatterT['kind'], title: string, status: MatterT['status'], path: string | null, ts: number): MatterT {
@@ -29,14 +32,23 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const taskOf = (id: string, title: string, path: string, phase: string, ts: number) =>
     ({ id, title, status: phase === 'working' ? 'running' : 'completed', phase, providerId: 'claude', path, error: null, updatedAt: ts })
 
+  const tripQuestion = (l: Lang, createdAt: number): MatterDetailT['questions'][number] => ({
+    id: QUESTION_ID, taskId: IDS.trip, createdAt,
+    questions: [{
+      id: 'depart', header: t(l, 'qHeader'), question: t(l, 'qText'),
+      options: [{ label: t(l, 'optMon'), description: '' }, { label: t(l, 'optTue'), description: '' }],
+      multiSelect: false, allowOther: true,
+    }],
+  })
+
   function buildSeed(): { map: Map<string, Entry>; ids: string[] } {
     const map = new Map<string, Entry>(); const ids: string[] = []
     const n = now()
-    const add = (d: MatterDetailT, stage: Stage, evs: EvRec[] = []) => {
-      const e: Entry = { detail: d, stage, version: 1, evs, seeded: true }
-      renderEvents(e); map.set(d.matter.id, e); ids.push(d.matter.id)
+    const add = (d: MatterDetailT, stage: Stage, evs: EvRec[] = [], titleKey?: Copy) => {
+      const e: Entry = { detail: d, stage, version: 1, evs, seeded: true, titleKey }
+      map.set(d.matter.id, e); ids.push(d.matter.id)
     }
-    const pTitle = t(lang, 'portfolioTitle')
+    const pTitle = t(lastLang, 'portfolioTitle')
     add(mkDetail(mkMatter(IDS.portfolio, 'task', pTitle, 'open', '~/Projects/portfolio', n - 600_000),
       taskOf(IDS.portfolio, pTitle, '~/Projects/portfolio', 'working', n - 60_000), {
         runId: RUN_IDS[IDS.portfolio], inputMode: 'steer',
@@ -44,26 +56,33 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       }), 'pending', [
       { kind: 'progress', key: 'ev1', createdAt: n - 500_000 },
       { kind: 'progress', key: 'ev2', createdAt: n - 300_000 },
-    ])
-    const tTitle = t(lang, 'tripTitle')
+    ], 'portfolioTitle')
+    const tTitle = t(lastLang, 'tripTitle')
     add(mkDetail(mkMatter(IDS.trip, 'task', tTitle, 'open', '~/Projects/trip', n - 400_000),
       taskOf(IDS.trip, tTitle, '~/Projects/trip', 'working', n - 30_000), {
         runId: RUN_IDS[IDS.trip], inputMode: 'steer',
-        questions: [{
-          id: QUESTION_ID, taskId: IDS.trip, createdAt: n - 30_000,
-          questions: [{
-            id: 'depart', header: t(lang, 'qHeader'), question: t(lang, 'qText'),
-            options: [{ label: t(lang, 'optMon'), description: '' }, { label: t(lang, 'optTue'), description: '' }],
-            multiSelect: false, allowOther: true,
-          }],
-        }],
-      }), 'ask', [{ kind: 'progress', key: 'stepTrip1', createdAt: n - 200_000 }])
-    add(mkDetail(mkMatter(IDS.notes, 'chat', t(lang, 'notesTitle'), 'replied', null, n - DAY), null), 'replied')
+        questions: [tripQuestion(lastLang, n - 30_000)],
+      }), 'ask', [{ kind: 'progress', key: 'stepTrip1', createdAt: n - 200_000 }], 'tripTitle')
+    add(mkDetail(mkMatter(IDS.notes, 'chat', t(lastLang, 'notesTitle'), 'replied', null, n - DAY), null), 'replied', [], 'notesTitle')
     return { map, ids }
   }
   function seed() { const b = buildSeed(); entries = b.map; order = b.ids }
-  function renderEvents(e: Entry) {
-    e.detail.events = e.evs.map(r => ({ kind: r.kind, createdAt: r.createdAt, text: r.key ? t(lang, r.key) + (r.extra ?? '') : (r.text ?? '') }))
+  const titleOf = (e: Entry, l: Lang) => (e.titleKey ? t(l, e.titleKey) : e.detail.matter.title)
+  /** 读时按请求的语言出一份拷贝:标题、事件、未处理的种子问题都换成 l。状态(已批准 / 已回答 / 阶段)在 e 里,不因语言变。 */
+  function localize(e: Entry, l: Lang): MatterDetailT {
+    const d = structuredClone(e.detail)
+    d.events = e.evs.map(r => ({ kind: r.kind, createdAt: r.createdAt, text: r.key ? t(l, r.key) + (r.extra ?? '') : (r.text ?? '') }))
+    const title = titleOf(e, l)
+    d.matter.title = title
+    if (d.task) d.task.title = title
+    d.questions = d.questions.map(q => (q.id === QUESTION_ID ? tripQuestion(l, q.createdAt) : q))
+    return d
+  }
+  /** 读的语言变了 ⇒ 记下,并在当前调用之后把非 matter 主题按新语言补推一次。 */
+  function noteLang(l: Lang) {
+    if (l === lastLang) return
+    lastLang = l
+    queueMicrotask(() => publish([]))
   }
   seed()
 
@@ -74,11 +93,14 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     if (topic === 'approvals') {
       return list().flatMap(e => [
         ...e.detail.permissions.map(p => ({ taskId: e.detail.matter.id, kind: 'permission' as const, id: p.id, summary: `${p.tool}: ${p.description}`.slice(0, 80) })),
-        ...e.detail.questions.map(q => ({ taskId: e.detail.matter.id, kind: 'question' as const, id: q.id, summary: `${q.questions[0]?.header ?? ''}: ${q.questions[0]?.question ?? ''}`.slice(0, 80) })),
+        ...e.detail.questions.map(q => {
+          const first = (q.id === QUESTION_ID ? tripQuestion(lastLang, q.createdAt) : q).questions[0]
+          return { taskId: e.detail.matter.id, kind: 'question' as const, id: q.id, summary: `${first?.header ?? ''}: ${first?.question ?? ''}`.slice(0, 80) }
+        }),
       ])
     }
     if (topic === 'agents') {
-      const tasks = list().filter(e => e.detail.task).map(e => ({ id: e.detail.matter.id, title: e.detail.matter.title, phase: phaseOf(e) }))
+      const tasks = list().filter(e => e.detail.task).map(e => ({ id: e.detail.matter.id, title: titleOf(e, lastLang), phase: phaseOf(e) }))
       const waiting = list().filter(e => e.detail.permissions.length + e.detail.questions.length > 0).length
       return { running: tasks.filter(x => x.phase === 'working').length, waiting, tasks }
     }
@@ -105,12 +127,11 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     }
   }
   const later = (ms: number, fn: () => void) => { const ep = epoch; schedule(() => { if (ep === epoch) fn() }, ms) }
-  const ev = (e: Entry, kind: string, key: Copy, extra?: string) => { e.evs = [...e.evs, { kind, key, extra, createdAt: now() }]; renderEvents(e) }
-  const evText = (e: Entry, kind: string, text: string) => { e.evs = [...e.evs, { kind, text, createdAt: now() }]; renderEvents(e) }
+  const ev = (e: Entry, kind: string, key: Copy, extra?: string) => { e.evs = [...e.evs, { kind, key, extra, createdAt: now() }] }
+  const evText = (e: Entry, kind: string, text: string) => { e.evs = [...e.evs, { kind, text, createdAt: now() }] }
   const get = (id: string) => { const e = entries.get(id); if (!e) throw new BackendError('unknown'); return e }
 
-  const conn: Connection = { state: 'online', lastSyncedAt: null }
-  const clone = <T,>(v: T): T => structuredClone(v)
+  const conn: Connection = { state: 'online', lastSyncedAt: null, epoch: 0 }
 
   return {
     mode: 'demo',
@@ -123,9 +144,10 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       cb(snapshot(topic as Topic) as never)
       return () => { set!.delete(cb) }
     },
-    async matters() { return list().map(e => clone(e.detail.matter)).sort((a, b) => b.updatedAt - a.updatedAt) },
-    async matter(id) { return clone(get(id).detail) },
+    async matters(l) { noteLang(l); return list().map(e => localize(e, l).matter).sort((a, b) => b.updatedAt - a.updatedAt) },
+    async matter(id, l) { noteLang(l); return localize(get(id), l) },
     async insight(id, l) {
+      noteLang(l)
       const e = get(id)
       const explanations: Record<string, ApprovalExplanationT> = e.detail.permissions.some(p => p.id === PERM_ID) ? { [PERM_ID]: explanation(l) } : {}
       return { explanations, progress: progress(l, id, e.stage) }
@@ -160,14 +182,21 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       ev(e, 'progress', 'evAnswered', text); e.stage = 'answered'; touch(e, { phase: 'working' }); publish([id])
       later(2000, () => { e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id]) })
     },
-    async say(id, text) {
+    async say(id, text, requestId) {
       const e = get(id)
+      // 与 daemon 一致:同一个 requestId 重发 ⇒ 当作已收到,不重复记。
+      if (saidBy.has(requestId)) return
+      saidBy.add(requestId)
       evText(e, 'user', text); touch(e, {}); publish([id])
       later(2000, () => { ev(e, 'assistant', 'ccReply'); touch(e, {}); publish([id]) })
     },
-    async entryOptions() { return entryOptions(lang) },
-    async create({ text, projectPath }) {
+    async entryOptions(l) { noteLang(l); return entryOptions(l) },
+    async create({ requestId, text, projectId }) {
+      const dup = createdBy.get(requestId)
+      if (dup) return { matterId: dup }
+      const projectPath = projectId ? entryOptions(lastLang).projects.find(p => p.id === projectId)?.path ?? null : null
       const matterId = `demo${(++seq).toString(16).padStart(4, '0')}`
+      createdBy.set(requestId, matterId)
       const ts = now()
       const title = text.trim().slice(0, 40) || text
       const e: Entry = {
@@ -177,29 +206,18 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
           taskOf(matterId, title, projectPath ?? '~/Projects/portfolio', 'working', ts),
           { runId: `run-${matterId}`, inputMode: 'steer' }),
       }
-      renderEvents(e)
       entries.set(matterId, e); order.unshift(matterId); publish([matterId])
       later(2000, () => { ev(e, 'assistant', 'created'); e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([matterId]) })
       return { matterId }
     },
-    setLang(l, o) {
-      if (l === lang) return
-      lang = l
-      // 种子事项按新语言重建文案,再把状态(已决定的批准/已答的问题/阶段/追加事件)留在原处;用户自己创建的事项只重渲染带 key 的事件。
-      const fresh = buildSeed().map
-      for (const [id, e] of entries) {
-        const f = fresh.get(id)
-        if (e.seeded && f) {
-          e.detail.matter = { ...e.detail.matter, title: f.detail.matter.title }
-          if (e.detail.task) e.detail.task = { ...e.detail.task, title: f.detail.matter.title }
-          const qIds = new Set(e.detail.questions.map(q => q.id))
-          e.detail.questions = f.detail.questions.filter(q => qIds.has(q.id))
-        }
-        renderEvents(e)
-      }
-      if (!o?.silent) publish([...order])
+    async devices() {
+      const at = new Date(now()).toISOString()
+      return [{ id: 'demo0001', created_at: at, last_seen_at: at, ...(deviceLabel ? { label: deviceLabel } : {}), current: true }]
     },
-    republish() { publish([...order]) },
-    reset() { epoch++; seq = 0; seed(); publish([...order]) },
+    async renameDevice(label) { deviceLabel = label.trim().slice(0, 24) },
+    async unpair() {},
+    setActive() {},
+    dispose() {},
+    reset() { epoch++; seq = 0; createdBy = new Map(); saidBy = new Set(); deviceLabel = ''; seed(); publish([...order]) },
   }
 }

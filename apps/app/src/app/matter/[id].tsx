@@ -6,6 +6,7 @@ import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
 import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery, useTopic } from '../../state/hooks'
+import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { monoFamily, serifFamily } from '../../ui/fonts'
@@ -29,8 +30,8 @@ export default function Matter() {
   const params = useLocalSearchParams<{ id: string }>()
   const id = Array.isArray(params.id) ? params.id[0] : params.id
   // 打开就拉新:有缓存也重拉详情与概括(旧缓存先摆着,拿到新的再换)。
-  const detail = useQuery(`matter:${id}:${lang}`, () => backend.matter(id), { refreshOnMount: true })
-  const insight = useQuery(`insight:${id}:${lang}`, () => backend.insight(id, lang), { refreshOnMount: true })
+  const detail = useQuery(`matter:${id}`, l => backend.matter(id, l), { refreshOnMount: true })
+  const insight = useQuery(`insight:${id}`, l => backend.insight(id, l), { refreshOnMount: true })
   const changes = useQuery(`changes:${id}`, () => backend.changes(id))
   const ver = useTopic<{ version?: unknown }>(`matter/${id}`)
   const seen = useRef<unknown>(undefined)
@@ -47,7 +48,10 @@ export default function Matter() {
   }, [verKey, refreshDetail, refreshInsight, refreshChanges])
 
   const header = (
-    <TopBar title={t(lang, 'common.wordmark')} onBack={() => router.back()} connection={conn.state === 'online' ? 'online' : 'offline'} onAvatar={() => router.push('/settings')} />
+    <>
+      <TopBar title={t(lang, 'common.wordmark')} onBack={() => router.back()} connection={conn.state === 'online' ? 'online' : 'offline'} onAvatar={() => router.push('/settings')} />
+      <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
+    </>
   )
   if (!detail.data) {
     return (

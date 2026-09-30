@@ -47,9 +47,9 @@ import {
 } from './messages'
 import type { V1RequestT, ReqMsgT, V2ClientMessageT, V2ServerMessageT } from './messages'
 
-import type { ProtocolSocket, ClientOpts, ProtocolRequest, ProtocolResponse, EventMeta, ProtocolClient } from './client-types'
+import type { ProtocolSocket, ClientOpts, ProtocolRequest, ProtocolResponse, EventMeta, ProtocolClient, ClientStatus } from './client-types'
 
-export type { ProtocolSocket, ClientOpts, ProtocolRequest, ProtocolResponse, EventMeta, ProtocolClient } from './client-types'
+export type { ProtocolSocket, ClientOpts, ProtocolRequest, ProtocolResponse, EventMeta, ProtocolClient, ClientStatus } from './client-types'
 
 const DEFAULT_TIMEOUT_MS = 15_000
 const BACKOFF_BASE_MS = 500
@@ -124,6 +124,10 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
   const now = opts.now ?? (() => Date.now())
   const protoErr = (reason: string, detail?: unknown) => { try { opts.onProtocolError?.(reason, detail) } catch { /* 钩子自己的错不关我们的事 */ } }
   const subErr = (topic: string, code: string) => { try { opts.onSubscriptionError?.(topic, code) } catch { /* 同上 */ } }
+  function status(s: ClientStatus): void {
+    if (closed) return
+    try { opts.onStatus?.(s) } catch { /* 钩子自己的错不关我们的事 */ }
+  }
 
   let conn: Conn | null = null
   let negotiated: 1 | 2 | null = null
@@ -148,9 +152,10 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
   }
 
   function connect(): void {
+    status('connecting')
     const kp = x25519KeyPair()
     let sock: ProtocolSocket
-    try { sock = opts.open() } catch (e) { protoErr('open_failed', e); scheduleReconnect(); return }
+    try { sock = opts.open() } catch (e) { protoErr('open_failed', e); status('down'); scheduleReconnect(); return }
     const c: Conn = { sock, priv: kp.priv, version: null, recv: 0 }
     conn = c
     // 握手期限从 open 起算:连不上、连上了后台不回 hs,都走同一条断开+退避。
@@ -179,6 +184,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     if (c.pingTimer) { clearTimeout(c.pingTimer); c.pingTimer = undefined }
     try { c.sock.close() } catch { /* 已经关了 */ }
     if (c.readyAt !== undefined && now() - c.readyAt >= STABLE_MS) backoffAttempt = 0
+    if (!fatal) status('down')
     if (!closed && !fatal && needsConnection()) scheduleReconnect()
   }
 
@@ -245,6 +251,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
       for (const sub of [...subs.values()]) { subs.delete(sub.sid); subErr(sub.topic, 'auth_failed') }
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
       dropConn(c)
+      status('auth_failed')
       return
     }
     if (code === 'stream_unknown') {
@@ -295,6 +302,7 @@ export function makeProtocolClient(opts: ClientOpts): ProtocolClient {
     }
     negotiated = c.version
     c.readyAt = now()
+    status('ready')
     if (c.hsTimer) { clearTimeout(c.hsTimer); c.hsTimer = undefined }
     armKeepalive(c)
     if (c.version === 1) {

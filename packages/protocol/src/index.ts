@@ -16,15 +16,16 @@ export type {
   ClientHelloT, ServerHelloT, V1RequestT, V1ResponseT, ReqMsgT, ResMsgT, SubMsgT, UnsubMsgT, EvMsgT, ErrMsgT, PingMsgT, PongMsgT,
   V2MessageT, V2ClientMessageT, V2ServerMessageT,
 } from './messages'
-export type { ProtocolSocket, ClientOpts, ProtocolClient, ProtocolRequest, ProtocolResponse, EventMeta } from './client'
+export type { ProtocolSocket, ClientOpts, ClientStatus, ProtocolClient, ProtocolRequest, ProtocolResponse, EventMeta } from './client'
 export { makeProtocolClient } from './client'
 export {
-  PhoneErrorResponse, PhonePlainError, PHONE_HTML_ROUTES, PHONE_API_SCHEMAS,
+  PhoneErrorResponse, PhonePlainError, DeviceRow, PHONE_SAY_MAX_CHARS, PHONE_ANSWER_MAX_JSON, PHONE_HTML_ROUTES, PHONE_API_SCHEMAS,
   Attachment, Matter, MatterBinding, MatterSession, MatterTaskView, MatterEvent, MatterInput,
   ApprovalExplanation, ProgressSummary, MatterPermission, MatterQuestion, MatterArtifact, MatterDetail,
   ProjectCatalogEntry, EntryOptions, WorkbenchExecutorCapabilities, WorkbenchTaskView, EntryReceipt, EntryResult,
   UploadState, MatterArtifactChunk, FeedEvent, Presence, HomeWork, PhoneChangesTurn,
 } from './api'
+export type { DeviceRowT } from './api'
 export {
   base32Lower, RELAY_ID_RE, RELAY_SUBPROTOCOL, relayIdProtocol, relayIdFromPub, relayKeyPair, relayLoginMessage,
   signRelayLogin, verifyRelayLogin, RELAY_ERRORS, PushPlatform, pushTokenValid, PUSH_SEALED_MAX_CHARS, DaemonControl, RoomControl,

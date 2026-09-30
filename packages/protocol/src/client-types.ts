@@ -23,6 +23,9 @@ export interface ProtocolSocket {
   onClose(cb: () => void): void
 }
 
+/** 连接状态(给 app 的连接状态机用,见 apps/app/src/net/connection.ts)。 */
+export type ClientStatus = 'connecting' | 'ready' | 'down' | 'auth_failed'
+
 export interface ClientOpts {
   /** 新建一条连接(每次重连调一次)。 */
   open: () => ProtocolSocket
@@ -57,6 +60,12 @@ export interface ClientOpts {
   onProtocolError?: (reason: string, detail?: unknown) => void
   /** 订阅被后台拒绝(`err{sid}`)或老后台不支持订阅;该订阅随即作废。 */
   onSubscriptionError?: (topic: string, code: string) => void
+  /**
+   * 连接状态变化:开始一条新连接 `connecting`;握手完成 `ready`;这条连接作废 `down`(之后按退避重连,
+   * 或没事可做就不连);明文 `auth_failed` ⇒ `auth_failed`(致命,不会再连,之后不再报)。`close()` 之后不再报。
+   * 钩子抛错被吞掉。
+   */
+  onStatus?: (s: ClientStatus) => void
 }
 
 export interface ProtocolRequest {

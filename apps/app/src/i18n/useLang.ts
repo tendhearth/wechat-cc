@@ -2,7 +2,7 @@ import { createContext, useContext } from 'react'
 import { getLocales } from 'expo-localization'
 import { pickLang, type Lang } from './index'
 
-/** 设置里手动选的语言;null = 跟随系统。由 SessionProvider 提供(本计划只存内存,下一份计划落盘)。 */
+/** 设置里手动选的语言;null = 跟随系统。由 SessionProvider 提供(偏好落钥匙串)。 */
 export const LangOverrideCtx = createContext<Lang | null>(null)
 
 export function systemLang(): Lang {

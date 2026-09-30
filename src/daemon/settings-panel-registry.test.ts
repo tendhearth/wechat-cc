@@ -144,3 +144,22 @@ describe('路由门与只允局域网', () => {
     expect(await (await post('/set/api/apply?_via=tunnel', dev, { op: 'label_device', id, label: '外面也能改名' })).json()).toEqual({ ok: true })
   })
 })
+
+describe('unpair_self:手机 app 解除本机配对', () => {
+  it('经隧道只撤调用者自己:它随即 401,另一台照常', async () => {
+    const a = await pair(), b = await pair()
+    expect(await (await post('/set/api/apply?_via=tunnel', a, { op: 'unpair_self' })).json()).toEqual({ ok: true })
+    expect(panel.validToken(a)).toBe(false)
+    expect((await get('/set/api/state', a)).status).toBe(401)
+    expect(panel.validToken(b)).toBe(true)
+    expect((await devices(b)).map(d => d.current)).toEqual([true])
+  })
+
+  it('链接令牌 ⇒ 403 device_only,什么都不撤', async () => {
+    const dev = await pair()
+    const r = await post('/set/api/apply?_via=tunnel', panel.issueToken(), { op: 'unpair_self' })
+    expect(r.status).toBe(403)
+    expect(await r.json()).toEqual({ ok: false, error: 'device_only' })
+    expect(panel.validToken(dev)).toBe(true)
+  })
+})
