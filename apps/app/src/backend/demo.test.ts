@@ -34,12 +34,14 @@ describe('演示后端', () => {
     expect((await b.matter('a1b2c3d4')).task?.phase).toBe('replied')
     await expect(b.decide({ id: 'a1b2c3d4', runId, requestId: 'perm-demo-1', decision: 'allow' })).rejects.toThrow('stale')
   })
-  it('回答问题 ⇒ 问题移除、继续整理、2 秒后回复;再答 ⇒ stale', async () => {
+  it('回答问题(形状不对 ⇒ 拒绝)⇒ 问题移除、继续整理、2 秒后回复;再答 ⇒ stale', async () => {
     vi.useFakeTimers()
     try {
       const b = makeDemoBackend()
       const d = await b.matter('c9d0e1f2')
-      const p = { id: 'c9d0e1f2', runId: d.runId!, requestId: d.questions[0]!.id, answers: { depart: '周一' } }
+      const p = { id: 'c9d0e1f2', runId: d.runId!, requestId: d.questions[0]!.id, answers: { depart: ['周一'] } }
+      await expect(b.answer({ ...p, answers: { depart: '周一' } as any })).rejects.toThrow('unknown')
+      await expect(b.answer({ ...p, answers: { depart: ['周一', '周二'] } })).rejects.toThrow('unknown')
       await b.answer(p)
       const after = await b.matter('c9d0e1f2')
       expect(after.questions).toEqual([]); expect(after.task?.phase).toBe('working')

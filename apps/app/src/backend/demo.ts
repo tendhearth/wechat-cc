@@ -134,9 +134,19 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     async answer({ id, requestId, answers }) {
       const e = get(id)
-      if (!e.detail.questions.some(q => q.id === requestId)) throw new BackendError('stale')
+      const req = e.detail.questions.find(q => q.id === requestId)
+      if (!req) throw new BackendError('stale')
+      // 与 daemon validateUserInputAnswers 同样严格:每题 string[],单选 1 个、多选 1–8 个不重复、每条非空且 ≤ 4000 字。
+      if (answers !== null) {
+        const ok = Object.keys(answers).length === req.questions.length && req.questions.every(q => {
+          const a = answers[q.id]
+          return Array.isArray(a) && a.length >= 1 && a.length <= (q.multiSelect ? 8 : 1) && new Set(a).size === a.length
+            && a.every(x => typeof x === 'string' && x.trim() !== '' && x.length <= 4000 && (q.allowOther || q.options.some(o => o.label === x)))
+        })
+        if (!ok) throw new BackendError('unknown')
+      }
       e.detail.questions = e.detail.questions.filter(q => q.id !== requestId)
-      const text = answers ? Object.values(answers).map(v => (Array.isArray(v) ? v.join(', ') : String(v))).join('; ') : ''
+      const text = answers ? Object.values(answers).map(v => v.join(', ')).join('; ') : ''
       ev(e, 'progress', t(lang, 'evAnswered') + text); e.stage = 'answered'; touch(e, { phase: 'working' }); publish([id])
       later(2000, () => { e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id]) })
     },

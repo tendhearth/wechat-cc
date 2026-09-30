@@ -41,7 +41,7 @@ const en = {
   'progress.viewChanges': 'See changes',
   'progress.viewProcess': 'Process and execution details',
   'progress.continueSay': 'Continue with CC',
-  'approval.eyebrow': 'CC HAS A STEP FOR YOU TO REVIEW',
+  'approval.eyebrow': 'A check-in from CC',
   'approval.what': 'What CC wants to do',
   'approval.scope': 'Where it applies',
   'approval.effect': 'What will happen',

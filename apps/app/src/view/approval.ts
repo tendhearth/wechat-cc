@@ -49,24 +49,31 @@ export function approvalView(detail: MatterDetailT, explanations: Record<string,
 
 type QuestionItem = Extract<ApprovalView, { kind: 'question' }>['items'][number]
 
+/** 与 daemon validateUserInputAnswers 一致:每条回答 ≤ 4000 字、多选至多 8 个。 */
+export const ANSWER_MAX_CHARS = 4000
+export const ANSWER_MAX_MULTI = 8
+
 /**
- * 把问答表单的选择拼成 answers:单选 ⇒ string,多选 ⇒ string[];「其他」填了字就算一个回答
- * (单选时它顶替选项)。有任何一题没答 ⇒ null(提交按钮不可用)。
+ * 把问答表单的选择拼成 answers。形状跟 daemon 一致:每题都是 string[](单选 ⇒ [x],多选 ⇒ 1–8 个且不重复)。
+ * 「其他」填了字就算一个回答(单选时它顶替选项,多选时追加,与已选标签相同则去重);超过 4000 字截断。
+ * 有任何一题没答或多选超过 8 个 ⇒ null(提交按钮不可用)。
  */
-export function buildAnswers(items: QuestionItem[], picked: Record<string, string[]>, other: Record<string, string>): Record<string, string | string[]> | null {
-  const out: Record<string, string | string[]> = {}
+export function buildAnswers(items: QuestionItem[], picked: Record<string, string[]>, other: Record<string, string>): Record<string, string[]> | null {
+  const out: Record<string, string[]> = {}
   for (const it of items) {
     const chosen = (picked[it.id] ?? []).filter(l => it.options.some(o => o.label === l))
-    const extra = it.allowOther ? (other[it.id] ?? '').trim() : ''
-    if (it.multiSelect) {
-      const all = extra ? [...chosen, extra] : chosen
-      if (all.length === 0) return null
-      out[it.id] = all
-    } else {
-      const one = extra || chosen[0]
-      if (!one) return null
-      out[it.id] = one
-    }
+    const extra = it.allowOther ? (other[it.id] ?? '').trim().slice(0, ANSWER_MAX_CHARS) : ''
+    const all = it.multiSelect ? [...chosen, ...(extra ? [extra] : [])] : [extra || chosen[0] || '']
+    const uniq = [...new Set(all.filter(a => a.trim() !== ''))]
+    if (uniq.length === 0 || uniq.length > (it.multiSelect ? ANSWER_MAX_MULTI : 1)) return null
+    out[it.id] = uniq
   }
   return out
+}
+
+/** 页面第一次解析出具体请求时把它钉住;之后只认这一个,它不在了 ⇒ none(已处理),绝不换成别的请求。 */
+export function pinnedRequest(param: string | undefined, pinned: string | undefined, v: ApprovalView): string | undefined {
+  if (param) return param
+  if (pinned) return pinned
+  return v.kind === 'card' || v.kind === 'question' ? v.requestId : undefined
 }

@@ -15,9 +15,9 @@ import { Sheet } from '../../ui/Sheet'
 import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { useTheme } from '../../ui/useTheme'
-import { approvalView, buildAnswers, type ApprovalView } from '../../view/approval'
+import { ANSWER_MAX_CHARS, ANSWER_MAX_MULTI, approvalView, buildAnswers, pinnedRequest, type ApprovalView } from '../../view/approval'
 
-type Outcome = null | 'handled' | 'uncertain' | 'failed'
+type Outcome = null | { requestId: string; kind: 'handled' | 'uncertain' | 'failed' }
 type CardView = Extract<ApprovalView, { kind: 'card' }>
 type QuestionView = Extract<ApprovalView, { kind: 'question' }>
 
@@ -55,11 +55,16 @@ export default function Approval() {
   const [refreshing, setRefreshing] = useState(false)
   const alive = useRef(true)
   useEffect(() => () => { alive.current = false }, [])
+  // 同步锁:连点两下时 React state 还没更新,靠 ref 挡住第二次。
+  const inflight = useRef(false)
+  // 钉住的请求:第一次解析出具体一条后,之后的重拉(主题版本、不确定后刷新)只认这一条。
+  const pin = useRef<string | undefined>(undefined)
 
   const backToMatter = () => router.dismissTo(`/matter/${encodeURIComponent(id)}`)
 
-  async function send(key: string, kind: 'allow' | 'deny' | 'answer', run: () => Promise<void>) {
-    if (pending || refreshing) return
+  async function send(requestId: string, key: string, kind: 'allow' | 'deny' | 'answer', run: () => Promise<void>) {
+    if (inflight.current || pending || refreshing) return
+    inflight.current = true
     setPending(kind)
     setOutcome(null)
     const r: SubmitResult = await submit(key, run)
@@ -69,18 +74,23 @@ export default function Approval() {
       backToMatter()
       return
     }
+    if (r === 'busy') {
+      // 同一条已有提交在飞(别处发起的):保持锁定,结果以重拉为准(处理掉了就变「已处理」)。
+      void refreshDetail(); void refreshInsight()
+      return
+    }
+    inflight.current = false
     setPending(null)
-    if (r === 'busy') return
     if (r.error === 'stale') {
-      setOutcome('handled')
+      setOutcome({ requestId, kind: 'handled' })
       void refreshDetail()
     } else if (r.error === 'uncertain') {
-      setOutcome('uncertain')
+      setOutcome({ requestId, kind: 'uncertain' })
       setRefreshing(true)
       await Promise.all([refreshDetail(), refreshInsight()])
       if (alive.current) setRefreshing(false)
     } else {
-      setOutcome('failed')
+      setOutcome({ requestId, kind: 'failed' })
     }
   }
 
@@ -104,10 +114,14 @@ export default function Approval() {
   }
 
   const d = detail.data
-  const v = approvalView(d, insight.data?.explanations ?? {}, requestParam)
+  const explanations = insight.data?.explanations ?? {}
+  const v = approvalView(d, explanations, requestParam ?? pin.current)
+  // 第一次解析出具体一条就钉住(幂等:只在还没钉时写一次)。钉住的不在了 ⇒ approvalView 给 none,不会落到别的请求。
+  if (!requestParam && !pin.current) pin.current = pinnedRequest(undefined, undefined, v)
   const matterTitle = d.matter.title
+  const shownOutcome = outcome && (v.kind === 'card' || v.kind === 'question') && outcome.requestId === v.requestId ? outcome.kind : null
 
-  if (outcome === 'handled' || v.kind === 'none') {
+  if (shownOutcome === 'handled' || v.kind === 'none') {
     return shell(
       <View testID="approval-handled" style={{ gap: space.l, paddingTop: space.xl, alignItems: 'flex-start' }}>
         <CCFigure size={72} />
@@ -146,8 +160,8 @@ export default function Approval() {
   const status = (
     <>
       {pending ? <Text accessibilityLiveRegion="polite" style={{ color: c.muted, fontSize: 13, textAlign: 'center' }}>{t(lang, 'approval.submitting')}</Text> : null}
-      {outcome === 'uncertain' ? <Text testID="approval-uncertain" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'approval.uncertain')}</Text> : null}
-      {outcome === 'failed' ? <Text testID="approval-failed" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'approval.failed')}</Text> : null}
+      {shownOutcome === 'uncertain' ? <Text testID="approval-uncertain" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'approval.uncertain')}</Text> : null}
+      {shownOutcome === 'failed' ? <Text testID="approval-failed" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'approval.failed')}</Text> : null}
     </>
   )
 
@@ -162,17 +176,17 @@ export default function Approval() {
         busy={pending === 'answer'}
         status={status}
         onSkip={() => (router.canGoBack() ? router.back() : backToMatter())}
-        onSubmit={answers => void send(`answer:${v.requestId}`, 'answer', () => backend.answer({ id, runId: v.runId, requestId: v.requestId, answers }))}
+        onSubmit={answers => void send(v.requestId, `answer:${v.requestId}`, 'answer', () => backend.answer({ id, runId: v.runId, requestId: v.requestId, answers }))}
       />
     )
   }
 
   const decide = (decision: 'allow' | 'deny') =>
-    void send(`approve:${v.requestId}`, decision, () => backend.decide({ id, runId: v.runId, requestId: v.requestId, decision }))
+    void send(v.requestId, `approve:${v.requestId}`, decision, () => backend.decide({ id, runId: v.runId, requestId: v.requestId, decision }))
 
   return shell(
-    <PermissionCard v={v} matterTitle={matterTitle} />,
-    <>
+    <PermissionCard key={v.requestId} v={v} matterTitle={matterTitle} />,
+    <View key={v.requestId} style={{ gap: space.s }}>
       {status}
       <View style={{ flexDirection: 'row', gap: space.m }}>
         <View style={{ flex: 1 }}>
@@ -183,7 +197,7 @@ export default function Approval() {
         </View>
       </View>
       <Text style={{ color: c.muted, fontSize: 13, textAlign: 'center' }}>{t(lang, 'approval.onlyThisRequest')}</Text>
-    </>,
+    </View>,
   )
 }
 
@@ -203,10 +217,11 @@ function Eyebrow({ eyebrow, title }: { eyebrow: string; title: string }) {
 function PermissionCard({ v, matterTitle }: { v: CardView; matterTitle: string }) {
   const { c } = useTheme()
   const lang = useLang()
-  const rows: Array<[string, string]> = [
-    [t(lang, 'approval.what'), v.what],
-    [t(lang, 'approval.scope'), v.scope],
-    [t(lang, 'approval.effect'), v.effect],
+  // 没有模型说明时 what 就是原始命令:等宽、最多 4 行,完整内容在「查看具体操作」里。
+  const rows: Array<[string, string, boolean]> = [
+    [t(lang, 'approval.what'), v.what, !v.aiSummary],
+    [t(lang, 'approval.scope'), v.scope, false],
+    [t(lang, 'approval.effect'), v.effect, false],
   ]
   const shown = rows.filter(([, body]) => body.trim() !== '')
   const truncated = v.rawFull.length > v.rawFirstLine.length
@@ -227,10 +242,14 @@ function PermissionCard({ v, matterTitle }: { v: CardView; matterTitle: string }
 
       {shown.length > 0 ? (
         <Card style={{ gap: 0, paddingVertical: space.s }}>
-          {shown.map(([label, body], i) => (
+          {shown.map(([label, body, raw], i) => (
             <View key={label} style={{ paddingVertical: space.m, gap: space.xs, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: c.line }}>
               <Text style={{ color: c.ink, fontSize: 14, fontWeight: '600' }}>{label}</Text>
-              <Text style={{ color: c.ink, fontSize: 15, lineHeight: 22 }}>{body}</Text>
+              {raw ? (
+                <Text numberOfLines={4} style={{ color: c.ink, fontSize: 13, lineHeight: 19, fontFamily: monoFamily }}>{body}</Text>
+              ) : (
+                <Text style={{ color: c.ink, fontSize: 15, lineHeight: 22 }}>{body}</Text>
+              )}
             </View>
           ))}
         </Card>
@@ -268,7 +287,7 @@ function QuestionForm({ v, matterTitle, shell, locked, busy, status, onSkip, onS
   busy: boolean
   status: ReactNode
   onSkip: () => void
-  onSubmit: (answers: Record<string, string | string[]>) => void
+  onSubmit: (answers: Record<string, string[]>) => void
 }) {
   const { c } = useTheme()
   const lang = useLang()
@@ -280,7 +299,8 @@ function QuestionForm({ v, matterTitle, shell, locked, busy, status, onSkip, onS
     setPicked(p => {
       const cur = p[itemId] ?? []
       if (!multi) return { ...p, [itemId]: cur[0] === label ? [] : [label] }
-      return { ...p, [itemId]: cur.includes(label) ? cur.filter(x => x !== label) : [...cur, label] }
+      if (cur.includes(label)) return { ...p, [itemId]: cur.filter(x => x !== label) }
+      return cur.length >= ANSWER_MAX_MULTI ? p : { ...p, [itemId]: [...cur, label] }
     })
     if (!multi) setOther(o => ({ ...o, [itemId]: '' })) // 单选:点了选项就不再用「其他」
   }
@@ -336,6 +356,7 @@ function QuestionForm({ v, matterTitle, shell, locked, busy, status, onSkip, onS
                   placeholder={t(lang, 'approval.otherPlaceholder')}
                   placeholderTextColor={c.muted}
                   multiline
+                  maxLength={ANSWER_MAX_CHARS}
                   style={{ minHeight: 44, color: c.ink, fontSize: 15, paddingHorizontal: space.l, paddingVertical: space.m, borderRadius: radius.button, borderWidth: 1, borderColor: c.line, backgroundColor: c.card }}
                 />
               </View>

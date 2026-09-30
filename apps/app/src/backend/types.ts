@@ -25,7 +25,8 @@ export interface Backend {
   insight(id: string, lang: Lang): Promise<{ explanations: Record<string, ApprovalExplanationT>; progress: ProgressSummaryT | null }>
   changes(id: string): Promise<PhoneChangesTurnT | null>
   decide(p: { id: string; runId: string; requestId: string; decision: 'allow' | 'deny' }): Promise<void>
-  answer(p: { id: string; runId: string; requestId: string; answers: Record<string, unknown> | null }): Promise<void>
+  /** answers 形状与 daemon validateUserInputAnswers 一致:每题一个 string[](单选 1 个;多选 1–8 个、不重复;每条 ≤ 4000 字)。null = 不回答。 */
+  answer(p: { id: string; runId: string; requestId: string; answers: Record<string, string[]> | null }): Promise<void>
   say(id: string, text: string): Promise<void>
   entryOptions(): Promise<EntryOptionsT>
   create(p: { text: string; projectPath?: string; providerId?: string }): Promise<{ matterId: string }>

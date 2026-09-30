@@ -43,7 +43,7 @@ const zh: Record<keyof typeof en, string> = {
   'progress.viewChanges': '查看改动',
   'progress.viewProcess': '查看过程与执行信息',
   'progress.continueSay': '接着跟 CC 说一句',
-  'approval.eyebrow': 'CC 有一步想请你决定',
+  'approval.eyebrow': 'CC 想和你确认',
   'approval.what': '要做的事',
   'approval.scope': '作用范围',
   'approval.effect': '这一步会发生什么',

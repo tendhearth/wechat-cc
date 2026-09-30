@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { approvalView, buildAnswers } from './approval'
+import { approvalView, buildAnswers, pinnedRequest, ANSWER_MAX_CHARS } from './approval'
 
 const base = {
   matter: { id: 'ab12cd34', kind: 'task', title: 'x', projectPath: '/p', status: 'open', ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: 1, updatedAt: 1 },
@@ -64,21 +64,52 @@ describe('approvalView', () => {
   })
 })
 
-describe('buildAnswers', () => {
+describe('buildAnswers(形状与 daemon validateUserInputAnswers 一致:每题 string[])', () => {
   const single = { id: 'a', header: 'H', question: 'Q', options: [{ label: 'x', description: '' }, { label: 'y', description: '' }], multiSelect: false, allowOther: true }
-  const multi = { ...single, id: 'b', multiSelect: true, allowOther: false }
-  it('单选取选中项;其他填字时顶替', () => {
-    expect(buildAnswers([single], { a: ['x'] }, {})).toEqual({ a: 'x' })
-    expect(buildAnswers([single], { a: ['x'] }, { a: '  周三 ' })).toEqual({ a: '周三' })
+  const multi = { ...single, id: 'b', multiSelect: true }
+  const multiNoOther = { ...multi, allowOther: false }
+  it('单选 ⇒ 一个元素的数组;其他填字时顶替', () => {
+    expect(buildAnswers([single], { a: ['x'] }, {})).toEqual({ a: ['x'] })
+    expect(buildAnswers([single], { a: ['x'] }, { a: '  周三 ' })).toEqual({ a: ['周三'] })
   })
-  it('多选给数组;不允许其他时忽略其他文本', () => {
-    expect(buildAnswers([multi], { b: ['x', 'y'] }, { b: 'z' })).toEqual({ b: ['x', 'y'] })
+  it('多选 ⇒ 数组;其他追加;与已选标签相同则去重', () => {
+    expect(buildAnswers([multi], { b: ['x', 'y'] }, { b: 'z' })).toEqual({ b: ['x', 'y', 'z'] })
+    expect(buildAnswers([multi], { b: ['x'] }, { b: ' x ' })).toEqual({ b: ['x'] })
   })
-  it('有一题没答 ⇒ null;空白其他不算答', () => {
+  it('不允许其他时忽略其他文本', () => {
+    expect(buildAnswers([multiNoOther], { b: ['x'] }, { b: 'z' })).toEqual({ b: ['x'] })
+  })
+  it('多选超过 8 个 ⇒ null', () => {
+    const many = { ...multi, options: Array.from({ length: 9 }, (_, i) => ({ label: `o${i}`, description: '' })) }
+    expect(buildAnswers([many], { b: many.options.map(o => o.label) }, {})).toBeNull()
+    expect(buildAnswers([many], { b: many.options.slice(0, 8).map(o => o.label) }, {})!.b).toHaveLength(8)
+  })
+  it('其他文本截到 4000 字', () => {
+    expect(buildAnswers([single], {}, { a: 'z'.repeat(5000) })!.a[0]).toHaveLength(ANSWER_MAX_CHARS)
+  })
+  it('有一题没答 ⇒ null;空白其他不算答;不在选项里的标签不算', () => {
     expect(buildAnswers([single, multi], { a: ['x'] }, {})).toBeNull()
     expect(buildAnswers([single], {}, { a: '   ' })).toBeNull()
-  })
-  it('不在选项里的标签不算', () => {
     expect(buildAnswers([single], { a: ['nope'] }, {})).toBeNull()
+  })
+})
+
+describe('pinnedRequest:钉住后刷新不换成别的请求', () => {
+  const p2 = { id: 'p2', taskId: 'ab12cd34', tool: 'Bash', description: 'ls', createdAt: 2 }
+  it('首次解析出卡片 ⇒ 钉它的 requestId;choose / none 不钉', () => {
+    expect(pinnedRequest(undefined, undefined, approvalView(base, {}))).toBe('p1')
+    expect(pinnedRequest(undefined, undefined, approvalView({ ...base, permissions: [...base.permissions, p2] }, {}))).toBeUndefined()
+    expect(pinnedRequest(undefined, undefined, { kind: 'none' })).toBeUndefined()
+  })
+  it('路由参数优先,其次已钉的', () => {
+    expect(pinnedRequest('q', 'p1', { kind: 'none' })).toBe('q')
+    expect(pinnedRequest(undefined, 'p1', { kind: 'none' })).toBe('p1')
+  })
+  it('钉住的 p1 被处理、只剩 p2 ⇒ none(已处理),不会落到 p2', () => {
+    const refetched = { ...base, permissions: [p2] }
+    const pin = pinnedRequest(undefined, undefined, approvalView(base, {}))
+    expect(approvalView(refetched, {}, pin)).toEqual({ kind: 'none' })
+    // 对照:不传钉住的 id 时会落到 p2 —— 这正是页面必须一直传 pin 的原因
+    expect(approvalView(refetched, {})).toMatchObject({ kind: 'card', requestId: 'p2' })
   })
 })
