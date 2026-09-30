@@ -26,13 +26,23 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#faf8f3",
-          "dark": { "backgroundColor": "#221f1b" },
+          "dark": {
+            "backgroundColor": "#221f1b"
+          },
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
       ],
       "expo-localization",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Tendhearth uses the camera only to scan the pairing code shown on your computer.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ]
     ],
     "experiments": {
       "reactCompiler": true
