@@ -37,8 +37,11 @@ let workbench: WorkbenchService, panel: SettingsPanel, hub: TunnelHub, tunnel: T
 let wiring: ReturnType<typeof makePhoneEventsWiring>
 let deviceToken: string
 let handled: string[]
-/** 按「METHOD /path」扣住下一次到达面板的请求,直到测试放行(在飞期间撤销 / 让提交超时)。 */
-let holds: Map<string, Promise<void>>
+/** 按「METHOD /path」扣住到达面板的请求,直到测试放行(在飞期间撤销 / 让提交超时)。 */
+let holds: Map<string, { wait: Promise<void>; go: () => void }>
+/** 手机这头往外的一切:开 socket 次数 + 发出的帧数(不管 socket 死活都算)。撤销后该一直不动 ——
+ *  隧道对撤销的令牌在面板之前就拒了,光数面板收到的请求看不出手机还在不在发。 */
+let phoneOut = 0
 const gates: Array<{ path: string; finish: () => void }> = []
 const backends: Backend[] = []
 /** LiveBackend 的日志(只有错误码与路由键),失败时帮着看。 */
@@ -52,7 +55,7 @@ beforeEach(async () => {
   managedRoot = realpathSync(mkdtempSync(join(tmpdir(), 'cc-app-live-managed-')))
   db = openDb({ path: join(root, 'state.db') })
   const matters = makeMatterStore(db), store = makeWorkbenchStore(db)
-  gates.length = 0; handled = []; holds = new Map(); logs = []; skewMs = 0
+  gates.length = 0; handled = []; holds = new Map(); logs = []; skewMs = 0; phoneOut = 0
   const registry = createProviderRegistry()
   // 假执行者:init ⇒(路径以 ask 结尾先要一次权限)⇒ 等闸门 ⇒ 一段文字 ⇒ 收工。与 phone-e2e.test.ts 相同。
   registry.register('claude', { async spawn(project, ctx) {
@@ -102,7 +105,7 @@ beforeEach(async () => {
       const key = `${req.method} ${new URL(req.url).pathname}`
       handled.push(key)
       const hold = holds.get(key)
-      if (hold) await hold
+      if (hold) await hold.wait
       return panel.handleRequest(req)
     },
     connect: () => daemonSocket,
@@ -114,6 +117,8 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  for (const h of [...holds.values()]) h.go()   // 断言失败时别把扣住的请求留在半空
+  holds.clear()
   for (const b of backends.splice(0)) b.dispose()
   tunnel?.stop()
   wiring?.dispose()
@@ -128,12 +133,13 @@ function phoneSocket(): ProtocolSocket {
   let onMsg: ((s: string) => void) | undefined, onClose: (() => void) | undefined, onOpen: (() => void) | undefined
   let dead = false
   let streamId = ''
+  phoneOut++
   const kill = () => { if (dead) return; dead = true; phones.delete(kill); hub.dropPhone(streamId); onClose?.() }
   streamId = hub.attachPhone(DAEMON, { readyState: 1, send(raw) { if (!dead) onMsg?.(raw) }, close() { kill() } }).streamId!
   phones.add(kill)
   setTimeout(() => { if (!dead) onOpen?.() }, 0)
   return {
-    send(s) { if (!dead) hub.onPhoneFrame(streamId, s) },
+    send(s) { phoneOut++; if (!dead) hub.onPhoneFrame(streamId, s) },
     close: kill,
     onOpen(cb) { onOpen = cb },
     onMessage(cb) { onMsg = cb },
@@ -153,16 +159,19 @@ function createTask(name: string) {
 }
 /** 放行任务的执行者(spawn 是异步的:建完任务那一刻闸门未必已登记)。 */
 async function release(task: { path: string }): Promise<void> {
-  await expect.poll(() => gates.some(g => g.path === task.path)).toBe(true)
+  await expect.poll(() => gates.some(g => g.path === task.path), P).toBe(true)
   const i = gates.findIndex(g => g.path === task.path)
   gates.splice(i, 1)[0]!.finish()
 }
 /** 扣住到达面板的每一次 key 请求(含协议客户端同 rid 的重试),直到调用返回的放行函数。 */
 function hold(key: string): () => void {
   let go!: () => void
-  holds.set(key, new Promise<void>(r => { go = r }))
+  const wait = new Promise<void>(r => { go = r })
+  holds.set(key, { wait, go })
   return () => { holds.delete(key); go() }
 }
+/** 等出生 / 握手 / 事件的 poll 一律给足 5 s(三平台 runner 会饿)。 */
+const P = { timeout: 5000 }
 const posts = () => handled.filter(h => h.startsWith('POST')).length
 
 /** 内存钥匙串 + 真 CredentialStore;pairAndStore 是会话的调用方式:配对成功才存。 */
@@ -192,10 +201,10 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
     const b = live()
     const agents: unknown[] = []
     b.subscribe('agents', d => agents.push(d))
-    await expect.poll(() => b.connection().state).toBe('online')
-    await expect.poll(() => agents.length).toBeGreaterThan(0)
+    await expect.poll(() => b.connection().state, P).toBe('online')
+    await expect.poll(() => agents.length, P).toBeGreaterThan(0)
     const task = createTask('read-me')
-    await expect.poll(async () => (await b.matters('en')).map(m => m.id)).toContain(task.id)
+    await expect.poll(async () => (await b.matters('en')).map(m => m.id), P).toContain(task.id)
     expect((await b.matter(task.id, 'en')).task?.id).toBe(task.id)
     expect(await b.insight(task.id, 'zh-Hans')).toEqual({ explanations: {}, progress: { summary: 'summary-zh-Hans', steps: [], source: 'raw' } })
     expect(await b.changes(task.id)).toBeNull()
@@ -206,7 +215,7 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
   it('批准:允许一次成功;同一条再提交 ⇒ stale', async () => {
     const b = live()
     const task = createTask('needs-ask')
-    await expect.poll(async () => (await b.matter(task.id, 'en')).permissions.length).toBe(1)
+    await expect.poll(async () => (await b.matter(task.id, 'en')).permissions.length, P).toBe(1)
     const d = await b.matter(task.id, 'en')
     const p = { id: task.id, runId: d.runId!, requestId: d.permissions[0]!.id, decision: 'allow' as const }
     await b.decide(p)
@@ -258,12 +267,15 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
   it('电脑上忘掉所有设备 ⇒ 连接变 revoked,之后的提交一条都不发出', async () => {
     const b = live()
     b.subscribe('agents', () => {})
-    await expect.poll(() => b.connection().state).toBe('online')
+    await expect.poll(() => b.connection().state, P).toBe('online')
     expect((await panel.apply({ op: 'forget_devices' })).ok).toBe(true)
     const task = createTask('after-revoke')     // 有变化 ⇒ 集线器发事件前核对令牌 ⇒ 明文 auth_failed
-    await expect.poll(() => b.connection().state, { timeout: 5000 }).toBe('revoked')
-    const before = handled.length
+    await expect.poll(() => b.connection().state, P).toBe('revoked')
+    const out = phoneOut, before = handled.length
     await expect(b.say(task.id, 'hi')).rejects.toMatchObject({ code: 'revoked' })
+    await expect(b.matters('en')).rejects.toMatchObject({ code: 'revoked' })
+    await new Promise(r => setTimeout(r, 100))   // 推迟到微任务 / 定时器里的发送也要被看见
+    expect(phoneOut).toBe(out)
     expect(handled.length).toBe(before)
     await release(task)
   })
@@ -271,43 +283,45 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
   it('批准在飞时电脑撤销了这台手机 ⇒ 这次提交 revoked(不是 timeout/unknown),连接 revoked,之后不再发请求', async () => {
     const b = live()
     const task = createTask('revoke-ask')
-    await expect.poll(async () => (await b.matter(task.id, 'en')).permissions.length).toBe(1)
+    await expect.poll(async () => (await b.matter(task.id, 'en')).permissions.length, P).toBe(1)
     const d = await b.matter(task.id, 'en')
     const go = hold('POST /m/api/matter/permission')
     const pending = b.decide({ id: task.id, runId: d.runId!, requestId: d.permissions[0]!.id, decision: 'allow' })
     const settled = pending.catch(e => e as unknown)
-    await expect.poll(() => handled.includes('POST /m/api/matter/permission')).toBe(true)   // 已过隧道令牌核对、到了面板门口
+    await expect.poll(() => handled.includes('POST /m/api/matter/permission'), P).toBe(true)   // 已过隧道令牌核对、到了面板门口
     expect((await panel.apply({ op: 'forget_devices' })).ok).toBe(true)
     go()
     expect(await settled).toMatchObject({ code: 'revoked' })
     expect(b.connection().state).toBe('revoked')
-    const before = handled.length
+    const out = phoneOut, before = handled.length
     await expect(b.say(task.id, 'hi')).rejects.toMatchObject({ code: 'revoked' })
     await expect(b.matters('en')).rejects.toMatchObject({ code: 'revoked' })
+    await new Promise(r => setTimeout(r, 100))   // 同上
+    expect(phoneOut).toBe(out)
     expect(handled.length).toBe(before)
     await release(task)
   })
 
   it('中继断了手机这条 ⇒ offline → online(epoch 前进),订阅续上;重连前成功与超时的 say 都不被重发', async () => {
-    const b = live(deviceToken, 400)
+    const b = live(deviceToken, 1500)   // 超时那句要等两轮 1.5 s(同 rid 重试一次);别压太短,CI runner 会饿
     const states: ConnState[] = []
     b.onConnection(c => states.push(c.state))
     const got: Array<{ tasks: Array<{ id: string }> }> = []
     b.subscribe<{ tasks: Array<{ id: string }> }>('agents', d => got.push(d))
-    await expect.poll(() => b.connection().epoch).toBe(1)
+    await expect.poll(() => b.connection().epoch, P).toBe(1)
     const first = createTask('before-drop')
-    await expect.poll(() => got.at(-1)?.tasks.map(t => t.id)).toContain(first.id)
+    await expect.poll(() => got.at(-1)?.tasks.map(t => t.id), P).toContain(first.id)
 
     // 跑着的任务不收话(workbench_busy):先让这一轮收工
     await release(first)
-    await expect.poll(async () => (await b.matter(first.id, 'en')).task?.status).not.toBe('running')
+    await expect.poll(async () => (await b.matter(first.id, 'en')).task?.status, P).not.toBe('running')
     // 一句成功的 say
     await b.say(first.id, 'first words')
     // 一句超时的 say:面板扣住不回(协议客户端对 retry:true 的请求同 rid 重发一次,都在拒绝之前)
     const go = hold('POST /m/api/matter/say')
     await expect(b.say(first.id, 'lost words')).rejects.toMatchObject({ code: 'timeout' })
     go()
-    await expect.poll(() => b.connection().state, { timeout: 5000 }).toBe('online')
+    await expect.poll(() => b.connection().state, P).toBe('online')
     const sayCount = () => handled.filter(h => h === 'POST /m/api/matter/say').length
     const says0 = sayCount()
     expect(says0).toBeGreaterThanOrEqual(2)
@@ -315,11 +329,12 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
     const e0 = b.connection().epoch
 
     dropAllPhones()
-    await expect.poll(() => b.connection().epoch, { timeout: 5000 }).toBeGreaterThan(e0)
+    await expect.poll(() => b.connection().epoch, P).toBeGreaterThan(e0)
     expect(states).toContain('offline')
     const task = createTask('after-drop')
-    await expect.poll(() => got.at(-1)?.tasks.map(t => t.id)).toContain(task.id)
-    await new Promise(r => setTimeout(r, 200))   // 给「重连后补发」留出时间 —— 不该有
+    await expect.poll(() => got.at(-1)?.tasks.map(t => t.id), P).toContain(task.id)
+    // 上面的 poll 已见到新 epoch 下的订阅事件 ⇒ 重连与重挂都完成了;再等 200 ms 看有没有迟到的补发 —— 不该有。
+    await new Promise(r => setTimeout(r, 200))
     expect(posts()).toBe(p0)
     expect(sayCount()).toBe(says0)
     await release(first); await release(task)
@@ -329,13 +344,13 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
     const b = live()
     const got: unknown[] = []
     b.subscribe('agents', d => got.push(d))
-    await expect.poll(() => b.connection().epoch).toBe(1)
+    await expect.poll(() => b.connection().epoch, P).toBe(1)
     b.setActive(false)
-    await expect.poll(() => phones.size).toBe(0)
+    await expect.poll(() => phones.size, P).toBe(0)
     b.setActive(true)
-    await expect.poll(() => b.connection().epoch).toBe(2)
+    await expect.poll(() => b.connection().epoch, P).toBe(2)
     const task = createTask('after-resume')
-    await expect.poll(() => (got.at(-1) as { tasks: Array<{ id: string }> }).tasks.map(t => t.id)).toEqual([task.id])
+    await expect.poll(() => (got.at(-1) as { tasks: Array<{ id: string }> }).tasks.map(t => t.id), P).toEqual([task.id])
     await release(task)
   })
 })
