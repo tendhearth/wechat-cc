@@ -14,7 +14,7 @@ export function BackendProvider({ children, backend, lang }: { children: ReactNo
   const value = useMemo<Ctx>(() => {
     const demo = backend ? null : makeDemoBackend({ lang })
     const b = backend ?? demo!
-    return { backend: b, store: makeStore(b), resetDemo: () => { clearDrafts(); demo?.reset() } }
+    return { backend: b, store: makeStore(b, { lang }), resetDemo: () => { clearDrafts(); demo?.reset() } }
     // lang 只用于初次创建;后续变化走下面的 setLang
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backend])
@@ -27,6 +27,7 @@ export function BackendProvider({ children, backend, lang }: { children: ReactNo
     pushed.current = lang
     demo.republish?.()
   }, [demo, lang])
+  useEffect(() => { if (lang) value.store.setLang(lang) }, [value, lang])
   return <BackendCtx.Provider value={value}>{children}</BackendCtx.Provider>
 }
 

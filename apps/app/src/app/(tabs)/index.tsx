@@ -20,9 +20,8 @@ import { nowView } from '../../view/now'
 // 决定卡标题:只有第一张卡会主动请求说明(可能触发电脑上的便宜模型),其余只读已缓存的;优先用后端给的说明标题(按任务缓存),没有就退回原始概括。
 function NeedsYouTitle({ taskId, requestId, fallback, fetch }: { taskId: string; requestId: string | undefined; fallback: string; fetch: boolean }) {
   const { c } = useTheme()
-  const lang = useLang()
   const { backend } = useBackendCtx()
-  const insight = useQuery(`insight:${taskId}:${lang}`, () => backend.insight(taskId, lang), { enabled: fetch })
+  const insight = useQuery(`insight:${taskId}`, l => backend.insight(taskId, l), { enabled: fetch })
   const title = requestId ? insight.data?.explanations[requestId]?.title : undefined
   return <Text style={{ color: c.ink, fontSize: 18, lineHeight: 25, fontWeight: '600' }}>{title || fallback}</Text>
 }

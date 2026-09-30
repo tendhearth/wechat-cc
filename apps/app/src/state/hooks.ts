@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import type { Connection } from '../backend/types'
+import type { Lang } from '../i18n'
 import { useBackendCtx } from './BackendProvider'
 import { isFresh, type QueryState } from './store'
 
@@ -11,7 +12,7 @@ type TopicName = Parameters<ReturnType<typeof useBackendCtx>['backend']['subscri
  */
 export function useQuery<T>(
   key: string,
-  load: () => Promise<T>,
+  load: (lang: Lang) => Promise<T>,
   opts?: { enabled?: boolean; refreshOnMount?: boolean },
 ): QueryState<T> & { refresh(): Promise<void>; fresh: boolean } {
   const { store } = useBackendCtx()

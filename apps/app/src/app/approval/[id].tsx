@@ -37,8 +37,8 @@ export default function Approval() {
   const params = useLocalSearchParams<{ id: string; request?: string }>()
   const id = one(params.id) ?? ''
   const requestParam = one(params.request) || undefined
-  const detail = useQuery(`matter:${id}:${lang}`, () => backend.matter(id), { refreshOnMount: true })
-  const insight = useQuery(`insight:${id}:${lang}`, () => backend.insight(id, lang), { refreshOnMount: true })
+  const detail = useQuery(`matter:${id}`, () => backend.matter(id), { refreshOnMount: true })
+  const insight = useQuery(`insight:${id}`, l => backend.insight(id, l), { refreshOnMount: true })
   const online = conn.state === 'online'
   const { refresh: refreshDetail } = detail
   const { refresh: refreshInsight } = insight

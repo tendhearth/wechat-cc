@@ -34,7 +34,7 @@ export default function Compose() {
   const [projectId, setProjectId] = useState<string | null>(null)
   const [providerId, setProviderId] = useState<string | null>(null)
   const sending = useRef(false)
-  const options = useQuery(`entryOptions:${lang}`, () => backend.entryOptions(), { enabled: !matter })
+  const options = useQuery('entryOptions', () => backend.entryOptions(), { enabled: !matter })
   const opt = options.data
   const project = opt?.projects.find((p) => p.id === projectId) ?? opt?.projects[0]
   const provider = providerId ? opt?.providers.find((p) => p.id === providerId) : null
