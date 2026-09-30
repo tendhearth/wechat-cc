@@ -56,6 +56,7 @@ export const LINK_ROUTES: ReadonlySet<string> = PHONE_ROUTES
 /**
  * 经隧道(`_via=tunnel`)一律拒的 `/set/api/apply` 操作:开关远程访问会重启 daemon,
  * 撤销 / 全忘设备会把人锁在门外 —— 只在家(同一局域网)做。泄露的设备令牌在外面够不着这些。
+ * `unpair_self`(只撤调用者自己)不在这里:撤自己不会把别人锁在门外,手机 app 在外面也要能解除配对。
  */
 export const LAN_ONLY_OPS: ReadonlySet<string> = new Set(['set_remote', 'revoke_device', 'forget_devices'])
 
