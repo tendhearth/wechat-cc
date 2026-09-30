@@ -718,7 +718,10 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             const id = url.searchParams.get('id')
             if (!id || !/^[a-f0-9]{8}$/.test(id)) return json({ ok: false, error: 'invalid' }, 400)
             try { return json({ ok: true, turn: latestChanges(deps.changes(id)) }) }
-            catch { return json({ ok: false, error: 'matter_not_found' }, 404) }
+            catch (e) {
+              const notFound = e instanceof Error && e.message === 'not_found'
+              return json({ ok: false, error: notFound ? 'matter_not_found' : 'unavailable' }, notFound ? 404 : 500)
+            }
           }
           if (url.pathname === '/m/api/matter/say' && req.method === 'POST') {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)

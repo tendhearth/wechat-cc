@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { latestChanges, CHANGES_FILE_DIFF_MAX, CHANGES_TOTAL_DIFF_MAX, CHANGES_MAX_FILES } from './phone-changes'
+import { latestChanges, CHANGES_FILE_DIFF_MAX, CHANGES_TOTAL_DIFF_MAX, CHANGES_MAX_FILES, CHANGES_PATH_MAX } from './phone-changes'
 
 const turn = (createdAt: number, files: Array<{ path: string; kind: 'added' | 'deleted' | 'modified' | 'not_reviewed'; diff?: string }>) =>
   ({ artifactId: `a${createdAt}`, sha256: 's', name: 'n', createdAt, status: 'complete' as const, headBefore: null, headAfter: null, preexistingPaths: [], notes: [], files: files.map(f => ({ preexisting: false, ...f })) })
@@ -39,5 +39,16 @@ describe('latestChanges', () => {
     const r = latestChanges([turn(1, files)])!
     expect(r.files).toHaveLength(CHANGES_MAX_FILES)
     expect(r.omittedFiles).toBe(7)
+  })
+  it('最坏输入:长路径 + 引号/换行密集的 diff ⇒ 序列化后 < 400 KiB,路径留尾', () => {
+    const files = Array.from({ length: CHANGES_MAX_FILES + 20 }, (_, i) => ({ path: `${'d/'.repeat(2048)}file${i}.ts`, kind: 'modified' as const, diff: '"\n'.repeat(Math.floor(CHANGES_FILE_DIFF_MAX / 4)) }))
+    const r = latestChanges([turn(1, files)])!
+    expect(Buffer.byteLength(JSON.stringify(r))).toBeLessThan(400 * 1024)
+    for (const [i, f] of r.files.entries()) {
+      expect(f.path.length).toBeLessThanOrEqual(CHANGES_PATH_MAX)
+      expect(f.path.startsWith('…')).toBe(true)
+      expect(f.path.endsWith(`file${i}.ts`)).toBe(true)
+    }
+    expect(latestChanges([turn(1, [{ path: 'short.ts', kind: 'added', diff: '+1' }])])!.files[0]!.path).toBe('short.ts')
   })
 })

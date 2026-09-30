@@ -741,7 +741,7 @@ describe('GET /m/api/matter/changes', () => {
     expect((await fetch(`${b.base}/m/api/matter/changes?id=nope&t=${b.t}`)).status).toBe(400)
     await b.panel.stop()
   })
-  it('两轮 ⇒ 最近一轮;空 ⇒ turn:null;抛 ⇒ 404', async () => {
+  it('两轮 ⇒ 最近一轮;空 ⇒ turn:null;not_found ⇒ 404;其它 ⇒ 500', async () => {
     const changes = vi.fn(() => [T(1), T(9)])
     const p = await panelWith(changes)
     const r = await (await fetch(`${p.base}/m/api/matter/changes?id=deadbeef&t=${p.t}`)).json() as { ok: boolean; turn: { createdAt: number } }
@@ -749,8 +749,10 @@ describe('GET /m/api/matter/changes', () => {
     expect(r.turn.createdAt).toBe(9)
     changes.mockReturnValueOnce([])
     expect(await (await fetch(`${p.base}/m/api/matter/changes?id=deadbeef&t=${p.t}`)).json()).toEqual({ ok: true, turn: null })
-    changes.mockImplementationOnce(() => { throw new Error('task_not_found') })
+    changes.mockImplementationOnce(() => { throw new Error('not_found') })
     expect((await fetch(`${p.base}/m/api/matter/changes?id=deadbeef&t=${p.t}`)).status).toBe(404)
+    changes.mockImplementationOnce(() => { throw new Error('boom') })
+    expect((await fetch(`${p.base}/m/api/matter/changes?id=deadbeef&t=${p.t}`)).status).toBe(500)
     await p.panel.stop()
   })
 })
