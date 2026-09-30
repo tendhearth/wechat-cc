@@ -40,6 +40,8 @@ export interface AgentConfig {
    *  可访问。默认关。`remote_relay_url` 可覆盖默认 relay。 */
   remote_tunnel?: boolean
   remote_relay_url?: string
+  /** 官方中继 v2 的地址(wss 源,不带路径);缺省生产 wss://relay.tendhearth.com。 */
+  relay_v2_url?: string
   /** cheapEval 显式指定(外部集成反馈 #2):设定后内部一次性评估只走
    *  该 provider,openai 注册不再静默劫持。 */
   cheapEvalProvider?: string
@@ -291,6 +293,7 @@ const AgentConfigSchema = z.object({
   cursorAgentBin: z.string().optional(),
   remote_tunnel: z.boolean().optional(),
   remote_relay_url: z.string().optional(),
+  relay_v2_url: z.string().optional(),
   cheapEvalProvider: z.string().optional(),
   trusted_providers: z.array(z.string()).optional(),
   delegateOpenai: z.boolean().optional(),
@@ -397,6 +400,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.cursorAgentBin === 'string' ? { cursorAgentBin: parsed.cursorAgentBin } : {}),
       ...(typeof parsed.remote_tunnel === 'boolean' ? { remote_tunnel: parsed.remote_tunnel } : {}),
       ...(typeof parsed.remote_relay_url === 'string' ? { remote_relay_url: parsed.remote_relay_url } : {}),
+      ...(typeof parsed.relay_v2_url === 'string' ? { relay_v2_url: parsed.relay_v2_url } : {}),
       ...(typeof parsed.cheapEvalProvider === 'string' ? { cheapEvalProvider: parsed.cheapEvalProvider } : {}),
       ...(Array.isArray(parsed.trusted_providers) ? { trusted_providers: parsed.trusted_providers } : {}),
       ...(typeof parsed.delegateOpenai === 'boolean' ? { delegateOpenai: parsed.delegateOpenai } : {}),

@@ -11,7 +11,7 @@ describe('入口 Worker', () => {
     const r = await SELF.fetch('https://relay.test/pset/')
     expect(r.status).toBe(200)
     expect(r.headers.get('content-type')).toContain('text/html')
-    expect(await r.text()).toContain('new WebSocket(')   // Task 13 改成断言 '/v2/phone'
+    expect(await r.text()).toContain('/v2/phone')
   })
   it('未知路径 404', async () => {
     expect((await SELF.fetch('https://relay.test/tunnel/phone?id=x')).status).toBe(404)

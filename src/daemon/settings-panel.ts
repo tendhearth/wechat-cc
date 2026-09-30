@@ -545,7 +545,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       // 锚点不上服务器,中继看不到;壳先探 LAN(在家秒开),不通走隧道。
       const remote = deps.remoteInfo?.()
       if (remote) {
-        const base = remote.relay.replace(/^wss:/, 'https:').replace(/\/tunnel\/phone$/, '')
+        const base = remote.relay.replace(/^wss:/, 'https:').replace(/\/(tunnel|v2)\/phone$/, '')
         return `${base}/pset/#id=${encodeURIComponent(remote.id)}&t=${token}&p=${encodeURIComponent('/set')}&lan=${ip}:${port}`
       }
       return `http://${ip}:${port}/set?t=${token}`
