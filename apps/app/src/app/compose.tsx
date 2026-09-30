@@ -4,7 +4,7 @@ import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, Tex
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
-import { deleteDraft, getDraft, setDraft } from '../state/drafts'
+import { deleteDraft, getDraft, requestIdFor, setDraft } from '../state/drafts'
 import { useConnection, useQuery, useSubmit } from '../state/hooks'
 import { useBackendCtx } from '../state/BackendProvider'
 import { Button } from '../ui/Button'
@@ -34,7 +34,7 @@ export default function Compose() {
   const [projectId, setProjectId] = useState<string | null>(null)
   const [providerId, setProviderId] = useState<string | null>(null)
   const sending = useRef(false)
-  const options = useQuery('entryOptions', () => backend.entryOptions(), { enabled: !matter })
+  const options = useQuery('entryOptions', l => backend.entryOptions(l), { enabled: !matter })
   const opt = options.data
   const project = opt?.projects.find((p) => p.id === projectId) ?? opt?.projects[0]
   const provider = providerId ? opt?.providers.find((p) => p.id === providerId) : null
@@ -49,7 +49,7 @@ export default function Compose() {
     let newId: string | null = null
     const r = await submit(`compose:${draftKey}`, async () => {
       if (matter) await backend.say(matter, body)
-      else newId = (await backend.create({ text: body, projectPath: project?.path, providerId: provider?.id })).matterId
+      else newId = (await backend.create({ requestId: requestIdFor(draftKey, body), text: body, projectId: project?.id, providerId: provider?.id })).matterId
     })
     sending.current = false
     setBusy(false)

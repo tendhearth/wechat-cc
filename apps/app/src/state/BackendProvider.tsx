@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react'
 import type { Backend } from '../backend/types'
 import type { Lang } from '../i18n'
 import { makeDemoBackend } from '../backend/demo'
@@ -9,24 +9,15 @@ type Ctx = { backend: Backend; store: Store; resetDemo(): void }
 const BackendCtx = createContext<Ctx | null>(null)
 
 // v1 只有演示后端;下一份计划在这里切换真后端。
-// 演示后端只建一次(不随语言重建,否则已批准的事项会复活);语言变化只调 setLang 改之后生成的文案。
+// 演示后端只建一次(不随语言重建,否则已批准的事项会复活);语言由每次读带上(store 按自己的语言加载),演示后端不再持有语言状态。
 export function BackendProvider({ children, backend, lang }: { children: ReactNode; backend?: Backend; lang?: Lang }) {
   const value = useMemo<Ctx>(() => {
     const demo = backend ? null : makeDemoBackend({ lang })
     const b = backend ?? demo!
     return { backend: b, store: makeStore(b, { lang }), resetDemo: () => { clearDrafts(); demo?.reset() } }
-    // lang 只用于初次创建;后续变化走下面的 setLang
+    // lang 只用于初次创建;后续变化走下面的 store.setLang
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backend])
-  // 渲染期就静默换语言,这样按语言分键的查询一挂载就拿到新文案;订阅者的推送放到 effect 里补发。
-  const demo = value.backend as Partial<ReturnType<typeof makeDemoBackend>>
-  if (lang && demo.setLang) demo.setLang(lang, { silent: true })
-  const pushed = useRef(lang)
-  useEffect(() => {
-    if (pushed.current === lang) return
-    pushed.current = lang
-    demo.republish?.()
-  }, [demo, lang])
   useEffect(() => { if (lang) value.store.setLang(lang) }, [value, lang])
   return <BackendCtx.Provider value={value}>{children}</BackendCtx.Provider>
 }

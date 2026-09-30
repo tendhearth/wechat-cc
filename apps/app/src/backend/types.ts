@@ -1,6 +1,6 @@
 import type { z } from 'zod'
 import type {
-  Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions,
+  Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
 
@@ -10,7 +10,7 @@ export type ApprovalExplanationT = z.infer<typeof ApprovalExplanation>
 export type ProgressSummaryT = z.infer<typeof ProgressSummary>
 export type PhoneChangesTurnT = z.infer<typeof PhoneChangesTurn>
 export type EntryOptionsT = z.infer<typeof EntryOptions>
-export type { HomeTopicT, ApprovalItemT, AgentsTopicT, MatterTopicT } from '@wechat-cc/protocol'
+export type { HomeTopicT, ApprovalItemT, AgentsTopicT, MatterTopicT, DeviceRowT } from '@wechat-cc/protocol'
 
 export type ConnState = 'connecting' | 'online' | 'offline' | 'revoked'
 /** epoch:每次握手成功 +1。store 看它前进就重新验证全部查询(首次连上、重连、回到前台)。 */
@@ -24,16 +24,24 @@ export interface Backend {
   connection(): Connection
   onConnection(cb: (c: Connection) => void): Unsubscribe
   subscribe<T>(topic: 'home' | 'approvals' | 'agents' | `matter/${string}`, cb: (data: T) => void): Unsubscribe
-  matters(): Promise<MatterT[]>
-  matter(id: string): Promise<MatterDetailT>
+  matters(lang: Lang): Promise<MatterT[]>
+  matter(id: string, lang: Lang): Promise<MatterDetailT>
   insight(id: string, lang: Lang): Promise<{ explanations: Record<string, ApprovalExplanationT>; progress: ProgressSummaryT | null }>
   changes(id: string): Promise<PhoneChangesTurnT | null>
   decide(p: { id: string; runId: string; requestId: string; decision: 'allow' | 'deny' }): Promise<void>
   /** answers 形状与 daemon validateUserInputAnswers 一致:每题一个 string[](单选 1 个;多选 1–8 个、不重复;每条 ≤ 4000 字)。null = 不回答。 */
   answer(p: { id: string; runId: string; requestId: string; answers: Record<string, string[]> | null }): Promise<void>
   say(id: string, text: string): Promise<void>
-  entryOptions(): Promise<EntryOptionsT>
-  create(p: { text: string; projectPath?: string; providerId?: string }): Promise<{ matterId: string }>
+  entryOptions(lang: Lang): Promise<EntryOptionsT>
+  /** requestId:同一份草稿、同样的正文重发用同一个(daemon 据此去重、超时后查回执)。projectId 缺省 ⇒ 由 CC 安排(managed)。 */
+  create(p: { requestId: string; text: string; projectId?: string; providerId?: string }): Promise<{ matterId: string }>
+  devices(): Promise<DeviceRowT[]>
+  renameDevice(label: string): Promise<void>
+  /** 解除本机配对(daemon 撤掉本机令牌)。失败抛 BackendError;调用方无论成败都清本地令牌。 */
+  unpair(): Promise<void>
+  /** 前台 true / 后台 false:false 关连接;true 立刻新握手、订阅全部重挂。演示后端空操作。 */
+  setActive(active: boolean): void
+  dispose(): void
 }
 
 /** code 见 BackendCode;store 把 timeout 映射成「不确定」。 */

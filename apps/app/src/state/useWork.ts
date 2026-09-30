@@ -13,7 +13,7 @@ export function useWork() {
   const { backend } = useBackendCtx()
   const approvals = useTopic<ApprovalItemT[]>('approvals') ?? NO_APPROVALS
   const agents = useTopic<AgentsTopicT>('agents') ?? NO_AGENTS
-  const matters = useQuery<MatterT[]>('matters', () => backend.matters())
+  const matters = useQuery<MatterT[]>('matters', l => backend.matters(l))
   const { refresh } = matters
   useFocusEffect(useCallback(() => { void refresh() }, [refresh]))
   return { approvals, agents, matters: matters.data ?? NO_MATTERS, mattersError: matters.error, demo: backend.mode === 'demo' }
