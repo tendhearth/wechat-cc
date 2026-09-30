@@ -28,6 +28,10 @@ export const PhoneErrorResponse = z.object({ ok: z.literal(false), error: z.stri
 
 /** 少数路由(令牌门、贴纸 404)不带 `ok`,只有裸 `{error}`。 */
 export const PhonePlainError = z.object({ error: z.string() })
+/** 手机「说一句」正文上限(settings-panel.ts 的 POST /m/api/matter/say)。app 在手机上就拦。 */
+export const PHONE_SAY_MAX_CHARS = 20_000
+/** 回答问题:answers 的 JSON 序列化长度上限(mobile-workbench.ts 的 POST /m/api/matter/answer)。app 在手机上就拦。 */
+export const PHONE_ANSWER_MAX_JSON = 20_000
 
 // ── 手机端 HTML 页(没有 JSON 形状,守卫要显式排除)───────────────────────
 
@@ -242,9 +246,10 @@ const MemorySuccess = z.object({
 
 // ── 设置页(/set/api/*,settings-panel.ts state()）───────────────────────
 
-const DeviceRow = z.object({
+export const DeviceRow = z.object({
   id: z.string(), created_at: z.string(), last_seen_at: z.string(), label: z.string().optional(), current: z.boolean(),
 })
+export type DeviceRowT = z.infer<typeof DeviceRow>
 
 /** atelier-model-provision.ts 的 `ModelProvisionStatus`(判别联合,`state` 判别)。 */
 const ModelProvisionStatus = z.discriminatedUnion('state', [

@@ -40,7 +40,7 @@ import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterA
 import {mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileHomeFocus} from './mobile-home-focus'
 import type {MatterSayInput} from '../core/matters/service'
-import { PushPlatform, pushTokenValid, type PushPlatformT } from '@wechat-cc/protocol'
+import { PushPlatform, PHONE_SAY_MAX_CHARS, pushTokenValid, type PushPlatformT } from '@wechat-cc/protocol'
 import type { Presence } from '../core/companion-presence'
 import type { CatchRow } from '../core/journal-store'
 import type { PlanLogEntry } from '../core/companion-plan'
@@ -728,7 +728,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             let body: unknown
             try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
             const b = (body ?? {}) as Record<string,unknown>
-            if (typeof b.id !== 'string' || !/^[a-f0-9]{8}$/.test(b.id) || typeof b.text !== 'string' || (!b.text.trim()&&(!Array.isArray(b.attachmentIds)||!b.attachmentIds.length)) || b.text.length > 20_000) return json({ ok: false, error: 'invalid' }, 400)
+            if (typeof b.id !== 'string' || !/^[a-f0-9]{8}$/.test(b.id) || typeof b.text !== 'string' || (!b.text.trim()&&(!Array.isArray(b.attachmentIds)||!b.attachmentIds.length)) || b.text.length > PHONE_SAY_MAX_CHARS) return json({ ok: false, error: 'invalid' }, 400)
             try { const input=mobileSayInput(b);return json({ ok: true, result: input?await deps.matters.say(b.id,b.text,input):await deps.matters.say(b.id,b.text) }) }
             catch (e) {
               return mobileMatterError(e)

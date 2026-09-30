@@ -911,3 +911,70 @@ describe('保活(只挂订阅时)', () => {
     c.close()
   })
 })
+
+describe('onStatus(给 app 的连接状态机)', () => {
+  it('握手完成 ⇒ connecting → ready;后台关连接 ⇒ down,退避后 connecting → ready', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    const seen: string[] = []
+    const { c } = client(daemon, { onStatus: s => seen.push(s) })
+    c.subscribe('agents', () => {})
+    await flush()
+    expect(seen).toEqual(['connecting', 'ready'])
+    daemon.d.live().serverClose()
+    await flush()
+    expect(seen.at(-1)).toBe('down')
+    await vi.advanceTimersByTimeAsync(600)
+    expect(seen.slice(-2)).toEqual(['connecting', 'ready'])
+    c.close()
+  })
+
+  it('auth_failed ⇒ 最后一条是 auth_failed,之后不再有 down / connecting', async () => {
+    const daemon = makeFakeDaemon({ version: 2, token: 'some-other-token' })
+    const seen: string[] = []
+    const { c } = client(daemon, { onStatus: s => seen.push(s) })
+    c.subscribe('agents', () => {})
+    await flush()
+    expect(seen.at(-1)).toBe('auth_failed')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(seen.filter(s => s === 'auth_failed')).toHaveLength(1)
+    expect(seen.at(-1)).toBe('auth_failed')
+    c.close()
+  })
+
+  it('close() 之后不再报任何状态', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    const seen: string[] = []
+    const { c } = client(daemon, { onStatus: s => seen.push(s) })
+    c.subscribe('agents', () => {})
+    await flush()
+    const n = seen.length
+    c.close()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(seen).toHaveLength(n)
+  })
+
+  it('open() 抛错 ⇒ connecting → down,退避后再连成功', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    const seen: string[] = []
+    let n = 0
+    const c = makeProtocolClient({
+      open: () => { if (n++ === 0) throw new Error('boom'); return daemon.d.open() },
+      token: TOKEN, requestTimeoutMs: 1000, onStatus: s => seen.push(s),
+    })
+    c.subscribe('agents', () => {})
+    await flush()
+    expect(seen).toEqual(['connecting', 'down'])
+    await vi.advanceTimersByTimeAsync(600)
+    expect(seen.slice(-2)).toEqual(['connecting', 'ready'])
+    c.close()
+  })
+
+  it('钩子自己抛错不影响连接与请求', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    const { c } = client(daemon, { onStatus: () => { throw new Error('hook') } })
+    const p = c.request({ method: 'GET', path: '/x' })
+    await flush()
+    expect((await p).status).toBe(200)
+    c.close()
+  })
+})

@@ -1,3 +1,4 @@
+import {PHONE_ANSWER_MAX_JSON} from '@wechat-cc/protocol'
 import type {EntryResult} from '../core/workbench/service'
 import type {UploadChunk,UploadState} from '../core/workbench/attachment-uploads'
 import type {MattersService,MatterSayInput} from '../core/matters/service'
@@ -96,7 +97,7 @@ export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined
       if(!actions?.permission)throw Error('workbench_not_wired')
       actions.permission(b.id,b.runId,b.requestId,b.decision)
     }else{
-      if((b.answers!==null&&!object(b.answers))||JSON.stringify(b.answers).length>20_000)throw Error('invalid_answer')
+      if((b.answers!==null&&!object(b.answers))||JSON.stringify(b.answers).length>PHONE_ANSWER_MAX_JSON)throw Error('invalid_answer')
       if(!actions?.answer)throw Error('workbench_not_wired')
       actions.answer(b.id,b.runId,b.requestId,b.answers)
     }
