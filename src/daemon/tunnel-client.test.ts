@@ -329,3 +329,77 @@ async function importDaemonPub(b64: string) {
   const { importPublicKeyB64 } = await import('../lib/tunnel-crypto')
   return importPublicKeyB64(b64)
 }
+
+describe('tunnel-client:中继 v2 登录与控制帧', () => {
+  function v2Client(extra: Partial<Parameters<typeof makeTunnelClient>[0]> = {}) {
+    const sock = fakeSocket()
+    const connect = vi.fn((_url: string, _protocols?: string[]) => sock.ws as never)
+    const client = makeTunnelClient({
+      daemonId: 'rabc', knownDeviceTokens: () => [DTOK],
+      handleRequest: async () => new Response('x'),
+      connect, log: () => {}, relayUrl: 'wss://relay.test/v2/daemon',
+      login: { sign: (c: string) => ({ pub: 'P', sig: `S(${c})` }) },
+      ...extra,
+    })
+    return { sock, connect, client }
+  }
+
+  it('URL 不带 id,id 走子协议', () => {
+    const { connect, client } = v2Client()
+    client.start()
+    expect(connect).toHaveBeenCalledWith('wss://relay.test/v2/daemon', ['wcc.relay.v2', 'id.rabc'])
+    client.stop()
+  })
+
+  it('收到挑战 ⇒ 回签名;login_ok ⇒ onLogin,之后 sendControl 才发得出去', () => {
+    const onLogin = vi.fn()
+    const { sock, client } = v2Client({ onLogin })
+    client.start(); sock.emitOpen()
+    expect(client.sendControl({ push_unreg: { device: 'd1' } })).toBe(false)
+    sock.emitMessage(JSON.stringify({ challenge: 'CH', ts: 1 }))
+    expect(JSON.parse(sock.sent.at(-1)!)).toEqual({ pub: 'P', sig: 'S(CH)' })
+    sock.emitMessage(JSON.stringify({ login_ok: true }))
+    expect(onLogin).toHaveBeenCalledTimes(1)
+    expect(client.sendControl({ push_unreg: { device: 'd1' } })).toBe(true)
+    expect(JSON.parse(sock.sent.at(-1)!)).toEqual({ push_unreg: { device: 'd1' } })
+    client.stop()
+  })
+
+  it('push_result / push_invalid / error ⇒ onControl', () => {
+    const onControl = vi.fn()
+    const { sock, client } = v2Client({ onControl })
+    client.start(); sock.emitOpen()
+    sock.emitMessage(JSON.stringify({ push_result: { device: 'd', ok: true, code: 'ok', ref: 'r' } }))
+    sock.emitMessage(JSON.stringify({ push_invalid: { device: 'd' } }))
+    sock.emitMessage(JSON.stringify({ error: 'rate_limited' }))
+    expect(onControl.mock.calls.map(c => Object.keys(c[0])[0])).toEqual(['push_result', 'push_invalid', 'error'])
+    client.stop()
+  })
+
+  it('断线重连后要重新登录:sendControl 回到 false', () => {
+    vi.useFakeTimers()
+    try {
+      const { sock, client } = v2Client()
+      client.start(); sock.emitOpen()
+      sock.emitMessage(JSON.stringify({ challenge: 'C', ts: 1 }))
+      sock.emitMessage(JSON.stringify({ login_ok: true }))
+      sock.emitClose()
+      expect(client.sendControl({ x: 1 })).toBe(false)
+      client.stop()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('老模式(无 login):URL 带 ?id=,不传子协议;心跳是固定的 {"ping":1}', () => {
+    vi.useFakeTimers()
+    try {
+      const sock = fakeSocket()
+      const connect = vi.fn((_u: string, _p?: string[]) => sock.ws as never)
+      const client = makeTunnelClient({ daemonId: 'tabc', knownDeviceTokens: () => [], handleRequest: async () => new Response(''), connect, log: () => {}, relayUrl: 'wss://old/tunnel/daemon', pingIntervalMs: 100 })
+      client.start(); sock.emitOpen()
+      expect(connect).toHaveBeenCalledWith('wss://old/tunnel/daemon?id=tabc', undefined)
+      vi.advanceTimersByTime(100)
+      expect(sock.sent).toContain('{"ping":1}')
+      client.stop()
+    } finally { vi.useRealTimers() }
+  })
+})

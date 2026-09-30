@@ -305,6 +305,25 @@ describe('tunnel-client v2', () => {
     hub.dispose()
   })
 
+  it('subscribedDeviceTokens:有订阅的已识别流才算在线', async () => {
+    const { hub } = countedHub([{ match: () => true, snapshot: async () => ({}) }])
+    const sock = fakeSocket()
+    const c = client(sock, { events: hub })
+    const p = await v2Phone(sock, 'sO')
+    expect(c.subscribedDeviceTokens().has(DTOK)).toBe(false)     // 握手了但还没识别 / 没订阅
+    p.send({ t: 'sub', sid: 's1', topic: 'agents' })
+    await p.next()
+    expect(c.subscribedDeviceTokens().has(DTOK)).toBe(true)
+    p.send({ t: 'unsub', sid: 's1' })
+    await waitFor(() => !c.subscribedDeviceTokens().has(DTOK), 'unsub')
+    p.send({ t: 'sub', sid: 's2', topic: 'home' })
+    await p.next()
+    expect(c.subscribedDeviceTokens().has(DTOK)).toBe(true)
+    sock.emit({ stream: 'sO', closed: true })
+    await waitFor(() => !c.subscribedDeviceTokens().has(DTOK), 'stream closed')
+    hub.dispose()
+  })
+
   it('同一流上重复的 sid ⇒ 替换旧订阅', async () => {
     const { hub, live } = countedHub([{ match: () => true, snapshot: async (t) => ({ t }) }])
     const sock = fakeSocket()
