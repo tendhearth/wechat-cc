@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { latestChanges, CHANGES_FILE_DIFF_MAX, CHANGES_TOTAL_DIFF_MAX, CHANGES_MAX_FILES, CHANGES_PATH_MAX } from './phone-changes'
+import { PhoneChangesTurn } from '@wechat-cc/protocol'
+import { latestChanges, CHANGES_TEXT_MAX, CHANGES_MAX_NOTES, CHANGES_FILE_DIFF_MAX, CHANGES_TOTAL_DIFF_MAX, CHANGES_MAX_FILES, CHANGES_PATH_MAX } from './phone-changes'
 
-const turn = (createdAt: number, files: Array<{ path: string; kind: 'added' | 'deleted' | 'modified' | 'not_reviewed'; diff?: string }>) =>
-  ({ artifactId: `a${createdAt}`, sha256: 's', name: 'n', createdAt, status: 'complete' as const, headBefore: null, headAfter: null, preexistingPaths: [], notes: [], files: files.map(f => ({ preexisting: false, ...f })) })
+const turn = (createdAt: number, files: Array<{ path: string; kind: 'added' | 'deleted' | 'modified' | 'not_reviewed'; diff?: string; reason?: string }>, notes: string[] = []) =>
+  ({ artifactId: `a${createdAt}`, sha256: 's', name: 'n', createdAt, status: 'complete' as const, headBefore: null, headAfter: null, preexistingPaths: [], notes, files: files.map(f => ({ preexisting: false, ...f })) })
 
 describe('latestChanges', () => {
   it('没有轮次 ⇒ null', () => { expect(latestChanges([])).toBeNull() })
@@ -17,6 +18,26 @@ describe('latestChanges', () => {
       { path: 'big.bin', kind: 'not_reviewed', truncated: false },
     ])
     expect(r.omittedFiles).toBe(0)
+    expect(r.notes).toEqual([])
+  })
+  it('带上文件的 reason(为什么没审/被截)与本轮 notes;各自裁到 200 字、notes 至多 10 条;符合协议 schema', () => {
+    const long = '因'.repeat(CHANGES_TEXT_MAX + 50)
+    const r = latestChanges([turn(1, [
+      { path: 'big.bin', kind: 'not_reviewed', reason: 'binary file' },
+      { path: 'huge.txt', kind: 'not_reviewed', reason: long },
+      { path: 'a.ts', kind: 'modified', diff: '+1' },
+    ], [...Array.from({ length: CHANGES_MAX_NOTES + 3 }, (_, i) => `note ${i}`), long])])!
+    expect(CHANGES_TEXT_MAX).toBe(200)
+    expect(CHANGES_MAX_NOTES).toBe(10)
+    expect(r.files[0]).toEqual({ path: 'big.bin', kind: 'not_reviewed', reason: 'binary file', truncated: false })
+    expect([...r.files[1]!.reason!].length).toBeLessThanOrEqual(CHANGES_TEXT_MAX)
+    expect(r.files[2]).toEqual({ path: 'a.ts', kind: 'modified', diff: '+1', truncated: false })
+    expect(r.notes).toHaveLength(CHANGES_MAX_NOTES)
+    expect(r.notes[0]).toBe('note 0')
+    const r2 = latestChanges([turn(1, [], [long])])!
+    expect([...r2.notes[0]!].length).toBeLessThanOrEqual(CHANGES_TEXT_MAX)
+    expect(PhoneChangesTurn.parse(r)).toEqual(r)
+    expect(PhoneChangesTurn.safeParse({ ...r, notes: undefined }).success).toBe(false)
   })
   it('单文件超上限 ⇒ 不给 diff、truncated;按 UTF-8 字节算', () => {
     const cjk = '中'.repeat(Math.ceil(CHANGES_FILE_DIFF_MAX / 3) + 10)

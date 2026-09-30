@@ -303,8 +303,10 @@ const MatterSayResult = z.union([
 
 export const PhoneChangesTurn = z.object({
   createdAt: z.number(), status: z.enum(['complete', 'partial', 'unavailable']),
-  files: z.array(z.object({ path: z.string(), kind: z.enum(['added', 'deleted', 'modified', 'not_reviewed']), diff: z.string().optional(), truncated: z.boolean() })),
+  files: z.array(z.object({ path: z.string(), kind: z.enum(['added', 'deleted', 'modified', 'not_reviewed']), diff: z.string().optional(), reason: z.string().optional(), truncated: z.boolean() })),
   omittedFiles: z.number(),
+  /** 本轮审阅的说明(为什么是 partial 等),至多 10 条、每条 ≤ 200 字。 */
+  notes: z.array(z.string()),
 })
 
 // ── 汇总:`"METHOD /path"` → schema(反向由 daemon 守卫测试核对）───────────

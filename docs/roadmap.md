@@ -39,7 +39,7 @@
 - **模型与后端统一管理** —— 提示词报模型、按对话钉模型、`provider_switch`、面板「模型与后端」。
 - **陪伴与任务衔接、手机版** —— 此刻可把要求带入项目草稿，点 CC 查看正在照看的事；手机首屏保留 feed，任务详情支持权限处理、问题回答、同任务补充和成果查看。浏览器与加密通道检查通过，真人手机和 Tauri 验收待补，见[验证记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md)。
 - **手机 app 子项目 1(协议包 + 实时通道)已完成**(2026-09-29,`packages/protocol/README.md`;设计 `docs/superpowers/specs/2026-09-29-phone-protocol-v2-design.md`)—— 子项目 2(中继升级成对外服务 + 推送发送,`apps/relay`,`docs/maintainer/relay.md`):代码完成,等上线(凭据 / 付费计划 / 域名);之后子项目 3 才是 Expo app 第一版。
-- **手机 app 子项目 3(TendHearth app v1)后端补全已完成**(2026-09-30,`app-v1` 分支;设计 `docs/superpowers/specs/2026-09-30-tendhearth-app-v1-design.md`,计划 `docs/superpowers/plans/2026-09-30-tendhearth-app-backend.md`)—— 批准说明 / 进展概括(`/m/api/matter/insight`,便宜模型 + 原文回退)、改动路由(`/m/api/matter/changes`)、推送定位与时间窗、子项目 1 三个遗留;接线在 `src/daemon/wiring/pipeline-deps.ts`。**下一份计划 = app 骨架与演示模式**(设计稿 `docs/design/tendhearth-app-v1/`)。
+- **手机 app 子项目 3(TendHearth app v1)后端补全:代码完成,单测/自检绿,真机待验**(2026-09-30,`app-v1` 分支;设计 `docs/superpowers/specs/2026-09-30-tendhearth-app-v1-design.md`,计划 `docs/superpowers/plans/2026-09-30-tendhearth-app-backend.md`)—— 批准说明 / 进展概括(`/m/api/matter/insight`,便宜模型 + 原文回退)、改动路由(`/m/api/matter/changes`)、推送定位与时间窗、子项目 1 三个遗留;接线在 `src/daemon/wiring/pipeline-deps.ts`。**下一份计划 = app 骨架与演示模式**(设计稿 `docs/design/tendhearth-app-v1/`)。
 - **每晚整理长期记忆(B 看得见)** 已上线（`docs/superpowers/specs/2026-09-25-memory-nightly-design.md`）—— 下一步 A:手机上逐条标不对 / 过时 / 删掉；C:第二天偶尔说一句我注意到…;09-26 界面改版:手机「CC 眼中的你」、微信信件排版、一条一件事
 
 ## 欠的真机账(发版前该销掉)
