@@ -38,6 +38,10 @@ import type { InboundCtx } from '../inbound/types'
 import type { AppTurn } from '../inbound/build'
 import { basename as pathBasename } from 'node:path'
 import { makeSettingsPanel } from '../settings-panel'
+import { makePhoneInsight } from '../phone-insight'
+import { makeApprovalExplainer } from '../phone-explain'
+import { makeProgressSummarizer } from '../phone-progress'
+import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
 import { makePhoneEventsWiring } from '../phone-topic-sources'
 import { resolveRemoteRelays, mergeOnlineDevices } from '../remote-relay-config'
 import { makePhonePush } from '../phone-push'
@@ -569,6 +573,17 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const settingsPanel = makeSettingsPanel({
     stateDir,
     ownerChatId,
+    // 手机洞察(批准说明 + 进展概括):explainer / summarizer 各建一个实例(内含缓存),不是每请求一建。
+    ...(mattersService ? (() => {
+      const cheap = () => wrapCheapEvalWithAuthFailCheck(boot.registry.getCheapEval(), (tag, line) => log(tag, line)) ?? null
+      const budgetMs = () => boot.registry.getCheapEvalBudgetMs()
+      return { insight: makePhoneInsight({
+        detail: (id: string) => mattersService.detail(id),
+        explainer: makeApprovalExplainer({ cheapEval: cheap, budgetMs, log: (tag, line) => log(tag, line) }),
+        summarizer: makeProgressSummarizer({ cheapEval: cheap, budgetMs, now: () => Date.now(), log: (tag, line) => log(tag, line) }),
+      }) }
+    })() : {}),
+    ...(opts.workbench ? { changes: (id: string) => opts.workbench!.reviewList(id) } : {}),
     ...(opts.workbench?{uploads:{
       chunk:(input:Parameters<typeof opts.workbench.uploadAttachmentChunk>[0])=>opts.workbench!.uploadAttachmentChunk(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
       status:(input:{id:string;draftId:string})=>opts.workbench!.attachmentUploadStatus(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
