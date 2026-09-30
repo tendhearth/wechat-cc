@@ -69,7 +69,7 @@ export default function Settings() {
         {heading('settings.privacy')}
         <Card testID="settings-privacy"><Text style={{ color: c.ink, fontSize: 15, lineHeight: 23 }}>{t(lang, 'settings.privacyBody')}</Text></Card>
         {heading('settings.about')}
-        <Text style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'settings.version')} {Constants.expoConfig?.version ?? '1.0.0'} · {t(lang, 'settings.company')}</Text>
+        <Text style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'settings.version')} {Constants.expoConfig?.version ?? '—'} · {t(lang, 'settings.company')}</Text>
       </ScrollView>
     </SafeAreaView>
   )

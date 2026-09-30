@@ -15,6 +15,7 @@ export const palette = {
     accentSoft: '#eef0e6',
     warn: '#a4632a',
     ok: '#58654c',
+    scrim: 'rgba(34,31,27,0.4)',
   },
   dark: {
     bg: '#221f1b',
@@ -29,6 +30,7 @@ export const palette = {
     accentSoft: '#34382c',
     warn: '#e0a66a',
     ok: '#b9c5a5',
+    scrim: 'rgba(0,0,0,0.6)',
   },
 } as const
 

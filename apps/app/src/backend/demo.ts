@@ -1,12 +1,15 @@
 import type { Lang } from '../i18n'
 import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT } from './types'
-import { IDS, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions, type Stage } from './demo-data'
+import { copy, IDS, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions, type Stage } from './demo-data'
 
 type Topic = 'home' | 'approvals' | 'agents' | `matter/${string}`
-type Entry = { detail: MatterDetailT; stage: Stage; version: number }
+type Copy = keyof typeof copy
+/** 事件记录:带 key 的在换语言时按新语言重新生成文案;text 是用户自己的字,原样保留。 */
+type EvRec = { kind: string; createdAt: number; key?: Copy; extra?: string; text?: string }
+type Entry = { detail: MatterDetailT; stage: Stage; version: number; evs: EvRec[]; seeded: boolean }
 const DAY = 86_400_000
 
-export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof setTimeout; lang?: Lang } = {}): Backend & { reset(): void; setLang(l: Lang): void } {
+export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof setTimeout; lang?: Lang } = {}): Backend & { reset(): void; setLang(l: Lang, o?: { silent?: boolean }): void; republish(): void } {
   const now = opts.now ?? (() => Date.now())
   let lang: Lang = opts.lang ?? 'en' // setLang 只改之后生成的文案,不动已有状态
   const schedule = (fn: () => void, ms: number) => (opts.setTimeout ?? globalThis.setTimeout)(fn, ms)
@@ -26,25 +29,26 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const taskOf = (id: string, title: string, path: string, phase: string, ts: number) =>
     ({ id, title, status: phase === 'working' ? 'running' : 'completed', phase, providerId: 'claude', path, error: null, updatedAt: ts })
 
-  function seed() {
-    entries = new Map(); order = []
+  function buildSeed(): { map: Map<string, Entry>; ids: string[] } {
+    const map = new Map<string, Entry>(); const ids: string[] = []
     const n = now()
-    const add = (d: MatterDetailT, stage: Stage) => { entries.set(d.matter.id, { detail: d, stage, version: 1 }); order.push(d.matter.id) }
+    const add = (d: MatterDetailT, stage: Stage, evs: EvRec[] = []) => {
+      const e: Entry = { detail: d, stage, version: 1, evs, seeded: true }
+      renderEvents(e); map.set(d.matter.id, e); ids.push(d.matter.id)
+    }
     const pTitle = t(lang, 'portfolioTitle')
     add(mkDetail(mkMatter(IDS.portfolio, 'task', pTitle, 'open', '~/Projects/portfolio', n - 600_000),
       taskOf(IDS.portfolio, pTitle, '~/Projects/portfolio', 'working', n - 60_000), {
         runId: RUN_IDS[IDS.portfolio], inputMode: 'steer',
-        events: [
-          { kind: 'progress', text: t(lang, 'ev1'), createdAt: n - 500_000 },
-          { kind: 'progress', text: t(lang, 'ev2'), createdAt: n - 300_000 },
-        ],
         permissions: [{ id: PERM_ID, taskId: IDS.portfolio, tool: 'Bash', description: 'npm install sharp', createdAt: n - 60_000 }],
-      }), 'pending')
+      }), 'pending', [
+      { kind: 'progress', key: 'ev1', createdAt: n - 500_000 },
+      { kind: 'progress', key: 'ev2', createdAt: n - 300_000 },
+    ])
     const tTitle = t(lang, 'tripTitle')
     add(mkDetail(mkMatter(IDS.trip, 'task', tTitle, 'open', '~/Projects/trip', n - 400_000),
       taskOf(IDS.trip, tTitle, '~/Projects/trip', 'working', n - 30_000), {
         runId: RUN_IDS[IDS.trip], inputMode: 'steer',
-        events: [{ kind: 'progress', text: t(lang, 'stepTrip1'), createdAt: n - 200_000 }],
         questions: [{
           id: QUESTION_ID, taskId: IDS.trip, createdAt: n - 30_000,
           questions: [{
@@ -53,8 +57,13 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
             multiSelect: false, allowOther: true,
           }],
         }],
-      }), 'ask')
+      }), 'ask', [{ kind: 'progress', key: 'stepTrip1', createdAt: n - 200_000 }])
     add(mkDetail(mkMatter(IDS.notes, 'chat', t(lang, 'notesTitle'), 'replied', null, n - DAY), null), 'replied')
+    return { map, ids }
+  }
+  function seed() { const b = buildSeed(); entries = b.map; order = b.ids }
+  function renderEvents(e: Entry) {
+    e.detail.events = e.evs.map(r => ({ kind: r.kind, createdAt: r.createdAt, text: r.key ? t(lang, r.key) + (r.extra ?? '') : (r.text ?? '') }))
   }
   seed()
 
@@ -96,7 +105,8 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     }
   }
   const later = (ms: number, fn: () => void) => { const ep = epoch; schedule(() => { if (ep === epoch) fn() }, ms) }
-  const ev = (e: Entry, kind: string, text: string) => { e.detail.events = [...e.detail.events, { kind, text, createdAt: now() }] }
+  const ev = (e: Entry, kind: string, key: Copy, extra?: string) => { e.evs = [...e.evs, { kind, key, extra, createdAt: now() }]; renderEvents(e) }
+  const evText = (e: Entry, kind: string, text: string) => { e.evs = [...e.evs, { kind, text, createdAt: now() }]; renderEvents(e) }
   const get = (id: string) => { const e = entries.get(id); if (!e) throw new BackendError('unknown'); return e }
 
   const conn: Connection = { state: 'online', lastSyncedAt: null }
@@ -126,10 +136,10 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       if (!e.detail.permissions.some(p => p.id === requestId)) throw new BackendError('stale')
       e.detail.permissions = e.detail.permissions.filter(p => p.id !== requestId)
       if (decision === 'allow') {
-        ev(e, 'progress', t(lang, 'evAllowed')); e.stage = 'working'; touch(e, { phase: 'working' }); publish([id])
-        later(2000, () => { ev(e, 'progress', t(lang, 'evDone')); e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id]) })
+        ev(e, 'progress', 'evAllowed'); e.stage = 'working'; touch(e, { phase: 'working' }); publish([id])
+        later(2000, () => { ev(e, 'progress', 'evDone'); e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id]) })
       } else {
-        ev(e, 'progress', t(lang, 'evDenied')); e.stage = 'denied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id])
+        ev(e, 'progress', 'evDenied'); e.stage = 'denied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id])
       }
     },
     async answer({ id, requestId, answers }) {
@@ -147,13 +157,13 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       }
       e.detail.questions = e.detail.questions.filter(q => q.id !== requestId)
       const text = answers ? Object.values(answers).map(v => v.join(', ')).join('; ') : ''
-      ev(e, 'progress', t(lang, 'evAnswered') + text); e.stage = 'answered'; touch(e, { phase: 'working' }); publish([id])
+      ev(e, 'progress', 'evAnswered', text); e.stage = 'answered'; touch(e, { phase: 'working' }); publish([id])
       later(2000, () => { e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id]) })
     },
     async say(id, text) {
       const e = get(id)
-      ev(e, 'user', text); touch(e, {}); publish([id])
-      later(2000, () => { ev(e, 'assistant', t(lang, 'ccReply')); touch(e, {}); publish([id]) })
+      evText(e, 'user', text); touch(e, {}); publish([id])
+      later(2000, () => { ev(e, 'assistant', 'ccReply'); touch(e, {}); publish([id]) })
     },
     async entryOptions() { return entryOptions(lang) },
     async create({ text, projectPath }) {
@@ -161,16 +171,35 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       const ts = now()
       const title = text.trim().slice(0, 40) || text
       const e: Entry = {
-        stage: 'working', version: 1,
+        stage: 'working', version: 1, seeded: false,
+        evs: [{ kind: 'user', text, createdAt: ts }, { kind: 'progress', key: 'creating', createdAt: ts }],
         detail: mkDetail(mkMatter(matterId, 'task', title, 'open', projectPath ?? null, ts),
           taskOf(matterId, title, projectPath ?? '~/Projects/portfolio', 'working', ts),
-          { runId: `run-${matterId}`, inputMode: 'steer', events: [{ kind: 'user', text, createdAt: ts }, { kind: 'progress', text: t(lang, 'creating'), createdAt: ts }] }),
+          { runId: `run-${matterId}`, inputMode: 'steer' }),
       }
+      renderEvents(e)
       entries.set(matterId, e); order.unshift(matterId); publish([matterId])
-      later(2000, () => { ev(e, 'assistant', t(lang, 'created')); e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([matterId]) })
+      later(2000, () => { ev(e, 'assistant', 'created'); e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([matterId]) })
       return { matterId }
     },
-    setLang(l) { if (l === lang) return; lang = l; publish([...order]) },
+    setLang(l, o) {
+      if (l === lang) return
+      lang = l
+      // 种子事项按新语言重建文案,再把状态(已决定的批准/已答的问题/阶段/追加事件)留在原处;用户自己创建的事项只重渲染带 key 的事件。
+      const fresh = buildSeed().map
+      for (const [id, e] of entries) {
+        const f = fresh.get(id)
+        if (e.seeded && f) {
+          e.detail.matter = { ...e.detail.matter, title: f.detail.matter.title }
+          if (e.detail.task) e.detail.task = { ...e.detail.task, title: f.detail.matter.title }
+          const qIds = new Set(e.detail.questions.map(q => q.id))
+          e.detail.questions = f.detail.questions.filter(q => qIds.has(q.id))
+        }
+        renderEvents(e)
+      }
+      if (!o?.silent) publish([...order])
+    },
+    republish() { publish([...order]) },
     reset() { epoch++; seq = 0; seed(); publish([...order]) },
   }
 }

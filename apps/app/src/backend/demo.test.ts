@@ -105,4 +105,31 @@ describe('演示后端', () => {
     expect((await b.matter('a1b2c3d4')).permissions.length).toBe(0)
     expect((await b.matters()).length).toBe(3)
   })
+  it('换语言:种子文案换成新语言,状态留着;用户自己的字不变', async () => {
+    const b = makeDemoBackend({ lang: 'zh-Hans' })
+    const runId = (await b.matter('a1b2c3d4')).runId!
+    await b.decide({ id: 'a1b2c3d4', runId, requestId: 'perm-demo-1', decision: 'deny' })
+    await b.answer({ id: 'c9d0e1f2', runId: (await b.matter('c9d0e1f2')).runId!, requestId: 'q-demo-1', answers: { depart: ['周一'] } })
+    const { matterId } = await b.create({ text: '我自己的话' })
+    b.setLang('en')
+    const d = await b.matter('a1b2c3d4')
+    expect(d.matter.title).toBe('A better portfolio on mobile')
+    expect(d.task?.title).toBe('A better portfolio on mobile')
+    expect(d.permissions.length).toBe(0)
+    expect(d.events.map(e => e.text)).toEqual(['Reviewed the current homepage', 'Refined the mobile layout', 'Not now'])
+    expect((await b.matter('c9d0e1f2')).questions.length).toBe(0)
+    expect((await b.matter('c9d0e1f2')).events.at(-1)?.text).toBe('Answered: 周一')
+    const c = await b.matter(matterId)
+    expect(c.matter.title).toBe('我自己的话')
+    expect(c.events[0]?.text).toBe('我自己的话')
+    expect(c.events[1]?.text).toBe('Got it, working on it.')
+  })
+  it('语言没变不重推', () => {
+    const b = makeDemoBackend({ lang: 'en' })
+    let n = 0
+    b.subscribe('home', () => n++)
+    const before = n
+    b.setLang('en')
+    expect(n).toBe(before)
+  })
 })

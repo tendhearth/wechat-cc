@@ -4,6 +4,7 @@ import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, Tex
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
+import { deleteDraft, getDraft, setDraft } from '../state/drafts'
 import { useConnection, useQuery, useSubmit } from '../state/hooks'
 import { useBackendCtx } from '../state/BackendProvider'
 import { Button } from '../ui/Button'
@@ -13,8 +14,6 @@ import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { useTheme } from '../ui/useTheme'
 
-// 草稿只存内存,按 matter 参数分开('new' = 新事项)。
-const drafts = new Map<string, string>()
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)
 
 export default function Compose() {
@@ -26,16 +25,16 @@ export default function Compose() {
   const { backend } = useBackendCtx()
   const matter = one(useLocalSearchParams<{ matter?: string }>().matter) || undefined
   const draftKey = matter ?? 'new'
-  const [text, setTextState] = useState(() => drafts.get(draftKey) ?? '')
-  const setText = (v: string) => { drafts.set(draftKey, v); setTextState(v) }
+  const [text, setTextState] = useState(() => getDraft(draftKey))
+  const setText = (v: string) => { setDraft(draftKey, v); setTextState(v) }
   const [note, setNote] = useState(false)
   const [adjust, setAdjust] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [failed, setFailed] = useState(false)
+  const [outcome, setOutcome] = useState<null | 'failed' | 'uncertain' | 'busy'>(null)
   const [projectId, setProjectId] = useState<string | null>(null)
   const [providerId, setProviderId] = useState<string | null>(null)
   const sending = useRef(false)
-  const options = useQuery('entryOptions', () => backend.entryOptions(), { enabled: !matter })
+  const options = useQuery(`entryOptions:${lang}`, () => backend.entryOptions(), { enabled: !matter })
   const opt = options.data
   const project = opt?.projects.find((p) => p.id === projectId) ?? opt?.projects[0]
   const provider = providerId ? opt?.providers.find((p) => p.id === providerId) : null
@@ -44,7 +43,7 @@ export default function Compose() {
     const body = text.trim()
     if (!body || sending.current) return
     sending.current = true
-    setBusy(true); setFailed(false)
+    setBusy(true); setOutcome(null)
     let newId: string | null = null
     const r = await submit(`compose:${draftKey}`, async () => {
       if (matter) await backend.say(matter, body)
@@ -52,12 +51,14 @@ export default function Compose() {
     })
     sending.current = false
     setBusy(false)
-    if (r === 'ok') {
-      drafts.delete(draftKey)
+    if (r === 'busy') {
+      setOutcome('busy')
+    } else if (r === 'ok') {
+      deleteDraft(draftKey)
       if (matter) router.back()
       else router.replace(`/matter/${encodeURIComponent(newId ?? '')}`)
     } else {
-      setFailed(true)
+      setOutcome(r.error === 'uncertain' ? 'uncertain' : 'failed')
     }
   }
 
@@ -80,7 +81,7 @@ export default function Compose() {
           <Card>
             <TextInput
               testID="compose-input"
-              accessibilityLabel={t(lang, 'compose.title')}
+              accessibilityLabel={matter ? t(lang, 'compose.continueHint') : t(lang, 'compose.title')}
               value={text}
               onChangeText={setText}
               multiline
@@ -104,17 +105,17 @@ export default function Compose() {
             </View>
           )}
           <Button kind="primary" testID="compose-send" label={t(lang, 'compose.send')} onPress={send} disabled={!text.trim()} busy={busy} />
-          {failed ? <Text testID="compose-failed" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14 }}>{t(lang, 'compose.failed')}</Text> : null}
+          {outcome ? <Text testID={`compose-${outcome}`} accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14 }}>{t(lang, outcome === 'uncertain' ? 'compose.uncertain' : outcome === 'busy' ? 'compose.busy' : 'compose.failed')}</Text> : null}
           <Text style={{ color: c.muted, fontSize: 13, textAlign: 'center' }}>{t(lang, 'compose.willAskYou')}</Text>
           {matter ? null : (
-            <Pressable accessibilityRole="button" onPress={() => setText(t(lang, 'compose.placeholder'))}>
+            <Pressable accessibilityRole="button" onPress={() => setText(text.trim() ? `${text}\n${t(lang, 'compose.placeholder')}` : t(lang, 'compose.placeholder'))}>
               <Text style={{ color: c.muted, fontSize: 13, textAlign: 'center', textDecorationLine: 'underline' }}>{t(lang, 'compose.orSay')}</Text>
             </Pressable>
           )}
         </ScrollView>
       </KeyboardAvoidingView>
       <Modal visible={adjust} transparent animationType="slide" onRequestClose={() => setAdjust(false)}>
-        <Pressable accessibilityLabel={t(lang, 'common.cancel')} style={{ flex: 1, backgroundColor: '#0006' }} onPress={() => setAdjust(false)} />
+        <Pressable accessibilityLabel={t(lang, 'common.cancel')} style={{ flex: 1, backgroundColor: c.scrim }} onPress={() => setAdjust(false)} />
         <View testID="compose-adjust-sheet" style={{ backgroundColor: c.card, padding: space.xl, gap: space.m, borderTopLeftRadius: radius.card, borderTopRightRadius: radius.card }}>
           <Text style={{ color: c.ink, fontSize: 18, fontFamily: serifFamily }}>{t(lang, 'compose.adjustTitle')}</Text>
           <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'compose.project')}</Text>

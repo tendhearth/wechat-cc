@@ -73,7 +73,6 @@ const en = {
   'compose.hint': 'Start with a thought. We can work out the details together.',
   'compose.placeholder': 'Help me think this through: ',
   'compose.addImage': 'Add an image',
-  'compose.draft': 'Draft',
   'compose.usingContext': 'Using: ',
   'compose.adjust': 'Adjust',
   'compose.send': 'Give it to CC',
@@ -117,7 +116,6 @@ const en = {
   'compose.continueHint': "Say one more thing",
   'compose.done': "Done",
   'compose.failed': "This didn’t reach your computer. Please try again in a moment.",
-  'compose.sending': "Sending…",
   'pair.step1': "Open Tendhearth on your computer",
   'pair.step2': "Choose “Use on phone”",
   'pair.step3': "Scan the code with this phone",
@@ -126,6 +124,8 @@ const en = {
   'settings.demoBody': "You’re in the design preview. Everything here is an example; leaving takes you back to the start.",
   'settings.version': "Version",
   'settings.company': "Nate Gu & Co.",
+  'compose.uncertain': "Not sure this was sent. Check the list before trying again.",
+  'compose.busy': "Still sending the last one. Hold on a moment.",
 } as const
 
 export default en

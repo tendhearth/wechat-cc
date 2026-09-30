@@ -28,7 +28,7 @@ export default function Matter() {
   const { backend } = useBackendCtx()
   const params = useLocalSearchParams<{ id: string }>()
   const id = Array.isArray(params.id) ? params.id[0] : params.id
-  const detail = useQuery(`matter:${id}`, () => backend.matter(id))
+  const detail = useQuery(`matter:${id}:${lang}`, () => backend.matter(id))
   const insight = useQuery(`insight:${id}:${lang}`, () => backend.insight(id, lang))
   const changes = useQuery(`changes:${id}`, () => backend.changes(id))
   const ver = useTopic<{ version?: unknown }>(`matter/${id}`)
