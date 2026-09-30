@@ -22,6 +22,7 @@ function listeners() {
 
 export function makeStore(backend: Backend) {
   // ── 查询缓存:同 key 共用一份,refresh 在飞复用 ──
+  // 注意:key 必须编码 load 的全部输入;已存在的 key 再传入的 load 会被忽略。
   const queries = new Map<string, Query<any>>()
   function query<T>(key: string, load: () => Promise<T>): Query<T> {
     const hit = queries.get(key)
@@ -36,7 +37,7 @@ export function makeStore(backend: Backend) {
       refresh() {
         if (inflight) return inflight
         set({ ...state, loading: true })
-        inflight = load().then(
+        inflight = Promise.resolve().then(load).then(
           data => set({ data, loading: false, syncedAt: Date.now() }),
           e => set({ ...state, loading: false, error: e instanceof BackendError ? e.code : 'unknown' }),
         ).finally(() => { inflight = null })
@@ -90,36 +91,36 @@ export function makeStore(backend: Backend) {
     return t
   }
 
-  // ── 连接状态 ──
+  // ── 连接状态:句柄整个 store 只建一次;快照只由 onConnection 回调更新 ──
   let conn: Connection | null = null
   let offConn: Unsubscribe | null = null
   const connLs = listeners()
   const same = (a: Connection, b: Connection) => a.state === b.state && a.lastSyncedAt === b.lastSyncedAt
-  function connection() {
-    return {
-      get(): Connection {
-        if (!offConn) {
-          const cur = backend.connection()
-          if (!conn || !same(conn, cur)) conn = cur // 保持快照引用稳定(useSyncExternalStore)
-        }
-        return conn!
-      },
-      subscribe(cb: Listener): Unsubscribe {
-        const removeListener = connLs.add(cb)
-        if (!offConn) {
-          offConn = backend.onConnection(c => { conn = c; connLs.emit() })
-          conn = conn ?? backend.connection()
-        }
-        let done = false
-        return () => {
-          if (done) return
-          done = true
-          removeListener()
-          if (connLs.size === 0 && offConn) { const o = offConn; offConn = null; o() }
-        }
-      },
-    }
+  const connHandle = {
+    get(): Connection {
+      if (!conn) conn = backend.connection() // 只初始化一次
+      return conn
+    },
+    subscribe(cb: Listener): Unsubscribe {
+      const removeListener = connLs.add(cb)
+      if (!offConn) {
+        conn = conn ?? backend.connection()
+        offConn = backend.onConnection(c => {
+          if (conn && same(conn, c)) return // 相同值不通知、不换引用
+          conn = c
+          connLs.emit()
+        })
+      }
+      let done = false
+      return () => {
+        if (done) return
+        done = true
+        removeListener()
+        if (connLs.size === 0 && offConn) { const o = offConn; offConn = null; o() }
+      }
+    },
   }
+  const connection = () => connHandle
 
   return { query, submit, topic, connection }
 }

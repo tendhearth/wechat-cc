@@ -72,4 +72,43 @@ describe('store', () => {
     expect(c.get().state).toBe('offline')
     expect(seen).toHaveBeenCalled()
   })
+  it('connection 句柄稳定;get() 引用稳定,不随 backend.connection() 新对象漂移', () => {
+    const backend = { connection: () => ({ state: 'online', lastSyncedAt: Date.now() }), onConnection: () => () => {} } as any
+    const s = makeStore(backend)
+    expect(s.connection()).toBe(s.connection())
+    const c = s.connection()
+    const a = c.get()
+    expect(c.get()).toBe(a)
+    const off = c.subscribe(() => {})
+    expect(c.get()).toBe(a)
+    off()
+  })
+  it('onConnection 订阅期间同步回调相等值 ⇒ 不通知', () => {
+    const backend = {
+      connection: () => ({ state: 'online', lastSyncedAt: 5 }),
+      onConnection: (f: any) => { f({ state: 'online', lastSyncedAt: 5 }); return () => {} },
+    } as any
+    const s = makeStore(backend)
+    const c = s.connection()
+    const before = c.get()
+    const seen = vi.fn()
+    c.subscribe(seen)
+    expect(seen).not.toHaveBeenCalled()
+    expect(c.get()).toBe(before)
+  })
+  it('topic / query 句柄跨调用相同', () => {
+    const backend = { subscribe: () => () => {} } as any
+    const s = makeStore(backend)
+    expect(s.topic('home')).toBe(s.topic('home'))
+    expect(s.query('k', async () => 1)).toBe(s.query('k', async () => 2))
+    const q = s.query('k', async () => 1)
+    expect(q.get()).toBe(q.get())
+  })
+  it('load 同步抛错 ⇒ 状态仍落定', async () => {
+    const s = makeStore({} as any)
+    const q = s.query('sync', (() => { throw new BackendError('offline') }) as any)
+    await q.refresh()
+    expect(q.get().loading).toBe(false)
+    expect(q.get().error).toBe('offline')
+  })
 })
