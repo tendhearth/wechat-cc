@@ -70,6 +70,18 @@ src/ui/           组件与色板(tokens.ts,明暗两套;明暗只是外观,不�
 - **令牌不进日志**、错误文案或 `console`:`LiveBackend` 的 `log` 只写错误码与路由键。
 - **被根测试 import 的文件必须纯 TS 且过根 tsconfig**:`src/backend/{live,types}.ts`、`src/net/{connection,errors,uuid,link,pairing}.ts`、`src/i18n/{index,en,zh-Hans}.ts` 不 import `react` / `react-native` / `expo-*`;类型用 `import type`,数组下标取值带 `!` 或判空(根有 `noUncheckedIndexedAccess`、`verbatimModuleSyntax`)。
 
+## 推送(原生通知)
+
+计划:`docs/superpowers/plans/2026-09-30-tendhearth-app-push.md`。
+
+### 本机能验证什么(2026-09-30 探路,Xcode 27 / iOS 27.0 模拟器 `th-push`)
+
+- `xcrun simctl push` 会不会运行通知服务扩展:**no**(`NSE_UNDER_SIMCTL=no`。app 在后台、已 `registerForRemoteNotifications` 拿到令牌、扩展已被 PlugInKit 登记,横幅仍是原样的 `CC / CC 有新动态`,日志里没有 `nse ran`、没有扩展进程;`simctl push` 走 CoreSimulatorBridge 直接把请求交给 SpringBoard,不经过 apsd 的 mutable-content 管线)。
+- 模拟器上 app 与扩展共享钥匙串组:**yes**(`SHARED_KEYCHAIN_ON_SIM=yes`。主 app 往 `9Y6JAPDP7A.<…>.shared` 写 `SecItemAdd = 0`;另一个只带共享组 entitlement 的 bundle 不指定 access group 读到 `0` / 原值;反证:它往没授权的组写得 `-34018`,即模拟器真的按 entitlement 管。扩展进程本身在模拟器上跑不起来,所以「扩展读」是用同样 entitlement 形状的第二个 bundle 代测的)。
+- 模拟器构建的签名参数:`无需额外参数`(`DEVELOPMENT_TEAM=9Y6JAPDP7A` 时 Xcode 用「Sign to Run Locally」,entitlements 以 simulated entitlements 嵌进二进制,`$(AppIdentifierPrefix)` 展开成 `9Y6JAPDP7A.`)。另:扩展 bundle id 必须以主 app 的为前缀,否则构建报 `Embedded binary's bundle identifier is not prefixed with the parent app's bundle identifier`。
+- 因此扩展的解密 / 展示逻辑在本机只能靠 `native/ios-notify` 的 `swift test` 与直接调 `didReceive` 的单测验;模拟器上 `simctl push` 只能验「app 收到原样推送 + 点开路由」。
+- 真 APNs / FCM 投递、锁屏、进程被杀后的送达:只能真机 + 主人的 APNs 密钥 / Firebase 项目(见文末「主人要做的」)。
+
 ## 硬要求(改界面前先对一遍)
 
 - **批准页**:说明来自模型(`source === 'model'`)时,原始命令第一行与工作目录**不折叠、直接可见**(`approval-raw-inline`,Maestro 断言它);完整原始命令在「查看具体操作」里;提交中锁定按钮;以返回结果为准,不做乐观成功;超时 ⇒ 当「不确定」并重新拉详情。
