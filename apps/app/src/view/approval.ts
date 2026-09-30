@@ -1,3 +1,4 @@
+import { PHONE_ANSWER_MAX_JSON } from '@wechat-cc/protocol'
 import type { MatterDetailT, ApprovalExplanationT } from '../backend/types'
 
 export type ApprovalView =
@@ -92,4 +93,9 @@ export function pinnedRequest(param: string | undefined, pinned: string | undefi
   if (param) return param
   if (pinned) return pinned
   return v.kind === 'card' || v.kind === 'question' ? v.requestId : undefined
+}
+
+/** 与 daemon POST /m/api/matter/answer 的上限一致:超了就在手机上拦下,不发。 */
+export function answersTooLong(answers: Record<string, string[]> | null): boolean {
+  return answers !== null && JSON.stringify(answers).length > PHONE_ANSWER_MAX_JSON
 }

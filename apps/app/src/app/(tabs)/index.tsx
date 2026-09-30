@@ -9,6 +9,7 @@ import { useWork } from '../../state/useWork'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { CCFigure } from '../../ui/CCFigure'
+import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { DemoBanner } from '../../ui/DemoBanner'
 import { serifFamily } from '../../ui/fonts'
 import { SayBar } from '../../ui/SayBar'
@@ -59,6 +60,7 @@ export default function Now() {
         connection={conn.state === 'online' ? 'online' : 'offline'}
         onAvatar={() => router.push('/settings')}
       />
+      <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.xl }}>
         {demo ? <DemoBanner /> : null}
 

@@ -10,14 +10,16 @@ import type { SubmitResult } from '../../state/store'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { CCFigure } from '../../ui/CCFigure'
+import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { monoFamily, serifFamily } from '../../ui/fonts'
 import { Sheet } from '../../ui/Sheet'
 import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { useTheme } from '../../ui/useTheme'
-import { ANSWER_MAX_CHARS, ANSWER_MAX_MULTI, approvalView, buildAnswers, multiLimitReached, pinnedRequest, togglePick, type ApprovalView } from '../../view/approval'
+import { canSubmit } from '../../view/connection'
+import { ANSWER_MAX_CHARS, ANSWER_MAX_MULTI, answersTooLong, approvalView, buildAnswers, multiLimitReached, pinnedRequest, togglePick, type ApprovalView } from '../../view/approval'
 
-type Outcome = null | { requestId: string; kind: 'handled' | 'uncertain' | 'failed' }
+type Outcome = null | { requestId: string; kind: 'handled' | 'uncertain' | 'failed' | 'ccBusy' | 'tooLong' }
 type CardView = Extract<ApprovalView, { kind: 'card' }>
 type QuestionView = Extract<ApprovalView, { kind: 'question' }>
 
@@ -26,7 +28,8 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)
 // 批准页。硬要求:说明来自模型时,原始命令首行 + 工作目录直接可见、不折叠;
 // 提交中两个按钮都锁;以返回结果为准(不做乐观成功);超时 ⇒「不确定」并重新拉详情。
 // 打开就拉新(有缓存也拉):拿到挂载之后发出的详情之前按钮一直锁,钉住的请求也只从新详情里取。
-// 电脑不在线 ⇒ 按钮锁 + 离线提示。TODO(计划 3):撤销(revoked)与暂时离线分开表达,并显示上次同步时间。
+// 不在线(连接中 / 离线 / 撤销)⇒ 按钮锁 + ConnectionNotice(离线带上次同步时间,撤销给「重新配对」)。
+// 回答 JSON 超过 20 000 字 ⇒ 手机上就拦下,请求不发。CC 这一轮还在跑(busy)⇒ 专门的一句,不算失败。
 export default function Approval() {
   const { c } = useTheme()
   const lang = useLang()
@@ -39,7 +42,7 @@ export default function Approval() {
   const requestParam = one(params.request) || undefined
   const detail = useQuery(`matter:${id}`, l => backend.matter(id, l), { refreshOnMount: true })
   const insight = useQuery(`insight:${id}`, l => backend.insight(id, l), { refreshOnMount: true })
-  const online = conn.state === 'online'
+  const online = canSubmit(conn)
   const { refresh: refreshDetail } = detail
   const { refresh: refreshInsight } = insight
 
@@ -87,6 +90,8 @@ export default function Approval() {
     if (r.error === 'stale') {
       setOutcome({ requestId, kind: 'handled' })
       void refreshDetail()
+    } else if (r.error === 'busy') {
+      setOutcome({ requestId, kind: 'ccBusy' })
     } else if (r.error === 'uncertain') {
       setOutcome({ requestId, kind: 'uncertain' })
       setRefreshing(true)
@@ -174,7 +179,7 @@ export default function Approval() {
   const locked = editing || !detail.fresh || !online
   const status = (
     <>
-      {!online ? <Text testID="approval-offline" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20, textAlign: 'center' }}>{t(lang, 'common.computerOffline')}</Text> : null}
+      <ConnectionNotice />
       {online && !detail.fresh && !pending && !refreshing ? (
         detail.error && !detail.loading ? (
           <Pressable testID="approval-refresh-failed" accessibilityRole="button" onPress={() => void refreshDetail()}>
@@ -186,6 +191,8 @@ export default function Approval() {
       ) : null}
       {pending ? <Text accessibilityLiveRegion="polite" style={{ color: c.muted, fontSize: 13, textAlign: 'center' }}>{t(lang, 'approval.submitting')}</Text> : null}
       {shownOutcome === 'uncertain' ? <Text testID="approval-uncertain" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'approval.uncertain')}</Text> : null}
+      {shownOutcome === 'tooLong' ? <Text testID="approval-too-long" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'approval.answerTooLong')}</Text> : null}
+      {shownOutcome === 'ccBusy' ? <Text testID="approval-cc-busy" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'common.ccBusy')}</Text> : null}
       {shownOutcome === 'failed' ? <Text testID="approval-failed" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'approval.failed')}</Text> : null}
     </>
   )
@@ -202,7 +209,10 @@ export default function Approval() {
         busy={pending === 'answer'}
         status={status}
         onSkip={() => (router.canGoBack() ? router.back() : backToMatter())}
-        onSubmit={answers => void send(v.requestId, `answer:${v.requestId}`, 'answer', () => backend.answer({ id, runId: v.runId, requestId: v.requestId, answers }))}
+        onSubmit={answers => {
+          if (answersTooLong(answers)) { setOutcome({ requestId: v.requestId, kind: 'tooLong' }); return }
+          void send(v.requestId, `answer:${v.requestId}`, 'answer', () => backend.answer({ id, runId: v.runId, requestId: v.requestId, answers }))
+        }}
       />
     )
   }

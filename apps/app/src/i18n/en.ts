@@ -17,7 +17,6 @@ const en = {
   'now.ccWorking': 'I’m working on “{title}”.',
   'now.ccIdle': 'Whenever a thought comes along, just tell me.',
   'matter.title': 'This task',
-  'common.computerOffline': 'Your home computer is away for now.',
   'common.lastSynced': 'Your computer is offline. These are your last synced records. You can still write a draft.',
   'now.greetingMorning': 'Good morning.',
   'now.greetingAfternoon': 'Good afternoon.',
@@ -133,6 +132,15 @@ const en = {
   'approval.moreLines.one': "(+1 more line)",
   'approval.refreshFailed': "Couldn’t get the latest from your computer. Tap to try again.",
   'settings.copyright': "© Nate Gu & Co LLC",
+  'conn.connecting': 'Connecting to your home computer…',
+  'conn.offline': 'Your home computer is offline. Showing what was synced at {time}. You can still write a draft.',
+  'conn.offlineNever': 'Can’t reach your home computer right now. You can still write a draft.',
+  'conn.justNow': 'just now',
+  'conn.revokedTitle': 'This phone is no longer paired',
+  'conn.revokedBody': 'Your computer removed this phone, so nothing can be sent from here. Pair again to keep going.',
+  'conn.repair': 'Pair again',
+  'approval.answerTooLong': 'This answer is too long to send. Please shorten it.',
+  'common.ccBusy': 'CC is still working on this — try again when this round finishes.',
 } as const
 
 export default en

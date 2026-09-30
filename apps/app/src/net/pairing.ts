@@ -8,7 +8,7 @@ export class PairError extends Error {
   constructor(public code: PairErrorCode) { super(code) }
 }
 
-/** phase:链接令牌阶段的 auth_failed = 码过期/已用,绝不是「已撤销」;设备令牌阶段刚发的令牌被拒属于异常 ⇒ unknown。 */
+/** phase:链接令牌阶段的 auth_failed = 码过期 / 已被电脑换新,绝不是「已撤销」;设备令牌阶段刚发的令牌被拒属于异常 ⇒ unknown。 */
 function asPairError(e: unknown, phase: 'link' | 'device'): PairError {
   if (e instanceof PairError) return e
   // 只有协议客户端的传输错误(snake_case 错误码)才走 transportErrorCode;SyntaxError 等其它异常 ⇒ unknown
@@ -21,7 +21,7 @@ function asPairError(e: unknown, phase: 'link' | 'device'): PairError {
 const JSON_HEADERS = { 'content-type': 'application/json' }
 
 /**
- * spec §6:链接令牌(10 分钟、一次性)建连 ⇒ POST /set/api/pair 拿长期设备令牌 ⇒ 换设备令牌重连,
+ * spec §6:链接令牌(10 分钟内有效;电脑发了新码,旧码即作废)建连 ⇒ POST /set/api/pair 拿长期设备令牌 ⇒ 换设备令牌重连,
  * 确认协商出 v2(订阅要 v2)并拿到本机设备 id ⇒ 给本机起名(失败不要紧)。两条连接用完都关。
  * 不存任何东西 —— 存钥匙串是调用方(会话)的事,失败的配对不留痕。
  */
@@ -60,7 +60,7 @@ export async function pairWithLink(
     } catch { /* 名字只是锦上添花 */ }
     return { v: 1, daemonId: link.daemonId, relayHost: link.relayHost, relayUrl: link.relayUrl, deviceToken, deviceId: me.id, pairedAt: now() }
   } catch (e) {
-    // 设备令牌已发出却没配成 —— 尽力把这个设备位还给电脑(单次二维码不能重试);失败吞掉,不记令牌
+    // 设备令牌已发出却没配成 —— 尽力把这个设备位还给电脑(否则白占一个设备位);失败吞掉,不记令牌
     try {
       await dev.request({ method: 'POST', path: '/set/api/apply', body: JSON.stringify({ op: 'unpair_self' }), headers: JSON_HEADERS })
     } catch { /* best-effort */ }

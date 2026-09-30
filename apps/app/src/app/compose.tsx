@@ -9,10 +9,12 @@ import { useConnection, useQuery, useSubmit } from '../state/hooks'
 import { useBackendCtx } from '../state/BackendProvider'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
+import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { serifFamily } from '../ui/fonts'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { useTheme } from '../ui/useTheme'
+import { canSubmit } from '../view/connection'
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)
 
@@ -30,7 +32,7 @@ export default function Compose() {
   const [note, setNote] = useState(false)
   const [adjust, setAdjust] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [outcome, setOutcome] = useState<null | 'failed' | 'uncertain' | 'busy'>(null)
+  const [outcome, setOutcome] = useState<null | 'failed' | 'uncertain' | 'busy' | 'ccBusy'>(null)
   const [projectId, setProjectId] = useState<string | null>(null)
   const [providerId, setProviderId] = useState<string | null>(null)
   const sending = useRef(false)
@@ -39,8 +41,9 @@ export default function Compose() {
   const project = opt?.projects.find((p) => p.id === projectId) ?? opt?.projects[0]
   const provider = providerId ? opt?.providers.find((p) => p.id === providerId) : null
 
-  // 电脑不在线 ⇒ 草稿照写,「交给 CC」锁住。TODO(计划 3):撤销(revoked)与暂时离线分开表达,并显示上次同步时间。
-  const online = conn.state === 'online'
+  // 不在线(连接中 / 离线 / 撤销)⇒ 草稿照写,「交给 CC」锁住,ConnectionNotice 说明原因。
+  // busy = 同一份草稿已在发(本机);ccBusy = CC 这一轮还在跑(daemon 409),草稿留着,等这一轮做完再发。
+  const online = canSubmit(conn)
   const send = async () => {
     const body = text.trim()
     if (!body || sending.current || !online) return
@@ -60,7 +63,7 @@ export default function Compose() {
       if (matter) router.back()
       else router.replace(`/matter/${encodeURIComponent(newId ?? '')}`)
     } else {
-      setOutcome(r.error === 'uncertain' ? 'uncertain' : 'failed')
+      setOutcome(r.error === 'uncertain' ? 'uncertain' : r.error === 'busy' ? 'ccBusy' : 'failed')
     }
   }
 
@@ -107,8 +110,8 @@ export default function Compose() {
             </View>
           )}
           <Button kind="primary" testID="compose-send" label={t(lang, 'compose.send')} onPress={send} disabled={!text.trim() || !online} busy={busy} />
-          {!online ? <Text testID="compose-offline" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, textAlign: 'center' }}>{t(lang, 'common.computerOffline')}</Text> : null}
-          {outcome ? <Text testID={`compose-${outcome}`} accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14 }}>{t(lang, outcome === 'uncertain' ? 'compose.uncertain' : outcome === 'busy' ? 'compose.busy' : 'compose.failed')}</Text> : null}
+          <ConnectionNotice />
+          {outcome ? <Text testID={`compose-${outcome}`} accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14 }}>{t(lang, outcome === 'uncertain' ? 'compose.uncertain' : outcome === 'busy' ? 'compose.busy' : outcome === 'ccBusy' ? 'common.ccBusy' : 'compose.failed')}</Text> : null}
           <Text style={{ color: c.muted, fontSize: 13, textAlign: 'center' }}>{t(lang, 'compose.willAskYou')}</Text>
           {matter ? null : (
             <Pressable accessibilityRole="button" onPress={() => setText(text.trim() ? `${text}\n${t(lang, 'compose.placeholder')}` : t(lang, 'compose.placeholder'))}>

@@ -16,7 +16,7 @@ export type ConnState = 'connecting' | 'online' | 'offline' | 'revoked'
 /** epoch:每次握手成功 +1。store 看它前进就重新验证全部查询(首次连上、重连、回到前台)。 */
 export type Connection = { state: ConnState; lastSyncedAt: number | null; epoch: number }
 /** BackendError.code 的全集(映射见 src/net/errors.ts)。 */
-export type BackendCode = 'stale' | 'offline' | 'revoked' | 'timeout' | 'not_found' | 'invalid' | 'unknown'
+export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' | 'not_found' | 'invalid' | 'unknown'
 export type Unsubscribe = () => void
 
 export interface Backend {

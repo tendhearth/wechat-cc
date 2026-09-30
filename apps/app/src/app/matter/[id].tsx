@@ -6,6 +6,7 @@ import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
 import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery, useTopic } from '../../state/hooks'
+import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { monoFamily, serifFamily } from '../../ui/fonts'
@@ -47,7 +48,10 @@ export default function Matter() {
   }, [verKey, refreshDetail, refreshInsight, refreshChanges])
 
   const header = (
-    <TopBar title={t(lang, 'common.wordmark')} onBack={() => router.back()} connection={conn.state === 'online' ? 'online' : 'offline'} onAvatar={() => router.push('/settings')} />
+    <>
+      <TopBar title={t(lang, 'common.wordmark')} onBack={() => router.back()} connection={conn.state === 'online' ? 'online' : 'offline'} onAvatar={() => router.push('/settings')} />
+      <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
+    </>
   )
   if (!detail.data) {
     return (

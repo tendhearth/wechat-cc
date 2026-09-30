@@ -19,7 +19,6 @@ const zh: Record<keyof typeof en, string> = {
   'now.ccWorking': '我正在忙「{title}」。',
   'now.ccIdle': '想起什么，随时跟我说。',
   'matter.title': '这件事',
-  'common.computerOffline': '家里的电脑暂时不在线。',
   'common.lastSynced': '电脑现在不在线。这里是上次同步的记录；草稿可以继续写。',
   'now.greetingMorning': '早上好。',
   'now.greetingAfternoon': '下午好。',
@@ -135,6 +134,15 @@ const zh: Record<keyof typeof en, string> = {
   'approval.moreLines.one': '(还有 {n} 行)',
   'approval.refreshFailed': '没拿到电脑上的最新状态。点这里再试一次。',
   'settings.copyright': '© Nate Gu & Co LLC',
+  'conn.connecting': '正在连接家里的电脑…',
+  'conn.offline': '家里的电脑暂时不在线。这里是 {time} 同步的内容,你仍可以先写草稿。',
+  'conn.offlineNever': '暂时连不上家里的电脑。你仍可以先写草稿。',
+  'conn.justNow': '刚刚',
+  'conn.revokedTitle': '这台手机已不再配对',
+  'conn.revokedBody': '电脑那边移除了这台手机,这里发不出任何东西了。重新配对就能继续。',
+  'conn.repair': '重新配对',
+  'approval.answerTooLong': '这个回答太长了,发不出去。请删短一些。',
+  'common.ccBusy': 'CC 还在忙这件事,等这一轮做完再说。',
 }
 
 export default zh

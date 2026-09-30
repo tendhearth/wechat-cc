@@ -5,6 +5,7 @@ import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
 import { useConnection } from '../../state/hooks'
 import { useWork } from '../../state/useWork'
+import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { SayBar } from '../../ui/SayBar'
 import { StatusPill } from '../../ui/StatusPill'
 import { space } from '../../ui/tokens'
@@ -28,6 +29,7 @@ export default function Together() {
         connection={conn.state === 'online' ? 'online' : 'offline'}
         onAvatar={() => router.push('/settings')}
       />
+      <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <FlatList
         data={rows}
         keyExtractor={(r) => r.id}

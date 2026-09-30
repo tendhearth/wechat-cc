@@ -65,7 +65,7 @@ describe('pairWithLink', () => {
     const f = fakeConnect({ [LINK.linkToken]: { script: { 'POST /set/api/pair': { status: 200, json: { ok: true, device_token: DEV } } } }, [DEV]: { script: { 'GET /set/api/state': { status: 200, json: STATE }, 'POST /set/api/apply': new Error('timeout') } } })
     expect((await pairWithLink(LINK, { connect: f.connect, label: 'x' })).deviceToken).toBe(DEV)
   })
-  it('过期/已用的链接令牌 ⇒ expired(不是 revoked),错误文案不含令牌', async () => {
+  it('过期 / 被电脑换新的链接令牌 ⇒ expired(不是 revoked),错误文案不含令牌', async () => {
     for (const script of [{ 'POST /set/api/pair': new Error('auth_failed') }, { 'POST /set/api/pair': { status: 401, json: { ok: false, error: 'unauthorized' } } }] as Script[]) {
       const f = fakeConnect({ [LINK.linkToken]: { script } })
       let err: any
