@@ -21,7 +21,7 @@ export { makeProtocolClient } from './client'
 export {
   PhoneErrorResponse, PhonePlainError, PHONE_HTML_ROUTES, PHONE_API_SCHEMAS,
   Attachment, Matter, MatterBinding, MatterSession, MatterTaskView, MatterEvent, MatterInput,
-  MatterPermission, MatterQuestion, MatterArtifact, MatterDetail,
+  ApprovalExplanation, ProgressSummary, MatterPermission, MatterQuestion, MatterArtifact, MatterDetail,
   ProjectCatalogEntry, EntryOptions, WorkbenchExecutorCapabilities, WorkbenchTaskView, EntryReceipt, EntryResult,
   UploadState, MatterArtifactChunk, FeedEvent, Presence, HomeWork,
 } from './api'

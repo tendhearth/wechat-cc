@@ -698,6 +698,34 @@ describe('「一件事」手机路由(2026-09-16)', () => {
   })
 })
 
+describe('GET /m/api/matter/insight', () => {
+  async function panelWith(insight?: unknown) {
+    const panel = makeSettingsPanel({ stateDir: seedStateDir(), ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {}, ...(insight ? { insight } : {}) } as never)
+    const { port } = await panel.start(0)
+    return { panel, base: `http://127.0.0.1:${port}`, t: panel.issueToken() }
+  }
+  it('没接线 ⇒ 503;id 不合法 ⇒ 400', async () => {
+    const a = await panelWith()
+    expect((await fetch(`${a.base}/m/api/matter/insight?id=deadbeef&t=${a.t}`)).status).toBe(503)
+    await a.panel.stop()
+    const b = await panelWith({ forMatter: vi.fn() })
+    expect((await fetch(`${b.base}/m/api/matter/insight?id=nope&t=${b.t}`)).status).toBe(400)
+    await b.panel.stop()
+  })
+  it('成功 ⇒ 透传;lang 归一;未找到 ⇒ 404;其它异常 ⇒ 500', async () => {
+    const forMatter = vi.fn(async () => ({ explanations: {}, progress: null }))
+    const p = await panelWith({ forMatter })
+    const r = await fetch(`${p.base}/m/api/matter/insight?id=deadbeef&lang=fr&t=${p.t}`)
+    expect(await r.json()).toEqual({ ok: true, explanations: {}, progress: null })
+    expect(forMatter).toHaveBeenCalledWith('deadbeef', 'en')
+    forMatter.mockRejectedValueOnce(new Error('matter_not_found'))
+    expect((await fetch(`${p.base}/m/api/matter/insight?id=deadbeef&t=${p.t}`)).status).toBe(404)
+    forMatter.mockRejectedValueOnce(new Error('boom'))
+    expect((await fetch(`${p.base}/m/api/matter/insight?id=deadbeef&t=${p.t}`)).status).toBe(500)
+    await p.panel.stop()
+  })
+})
+
 describe('phone curated memory', () => {
   it('a throwing memory view answers 500 instead of leaving the phone waiting', async () => {
     const p = makeSettingsPanel({

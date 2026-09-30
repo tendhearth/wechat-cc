@@ -96,6 +96,13 @@ export const MatterQuestion = z.object({
   })),
 })
 
+export const ApprovalExplanation = z.object({
+  title: z.string(), what: z.string(), scope: z.string(), effect: z.string(), source: z.enum(['model', 'raw']),
+})
+export const ProgressSummary = z.object({
+  summary: z.string(), steps: z.array(z.object({ title: z.string(), detail: z.string() })), source: z.enum(['model', 'raw']),
+})
+
 export const MatterArtifact = z.object({
   id: z.string(), taskId: z.string(), name: z.string(), mime: z.string(), size: z.number(),
   sha256: z.string(), createdAt: z.number(), approvedAt: z.number().nullable(),
@@ -311,6 +318,10 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/feed': z.union([FeedSuccess, PhoneErrorResponse]),
   'POST /m/api/seen': z.union([z.object({ ok: z.literal(true), seen_until: z.string() }), PhoneErrorResponse]),
   'GET /m/api/matters': z.union([z.object({ ok: z.literal(true), matters: z.array(Matter) }), PhoneErrorResponse]),
+  'GET /m/api/matter/insight': z.union([
+    z.object({ ok: z.literal(true), explanations: z.record(z.string(), ApprovalExplanation), progress: ProgressSummary.nullable() }),
+    PhoneErrorResponse,
+  ]),
   'GET /m/api/matter': z.union([z.object({ ok: z.literal(true) }).extend(MatterDetail.shape), PhoneErrorResponse]),
   'POST /m/api/matter/say': z.union([z.object({ ok: z.literal(true), result: MatterSayResult }), PhoneErrorResponse]),
   'POST /m/api/todo': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
