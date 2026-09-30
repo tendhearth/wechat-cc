@@ -81,10 +81,21 @@ const Device = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
 const Ref = z.string().max(64)
 const SealedPushShape = z.object({ v: z.literal(1), iv: z.string().max(64), ct: z.string().max(PUSH_SEALED_MAX_CHARS) })
 
+/** 推送权威清单的上限(房间自己最多存 20 个登记;留余量给「本地比房间多」的情形)。 */
+export const PUSH_SYNC_MAX_DEVICES = 64
+
+/**
+ * daemon → 房间的控制帧(没有 `stream` 字段的那些)。
+ *
+ * 流帧不在这里:`{stream, frame}` 转给那条手机流;`{stream, close:true}` 请房间关掉那条手机流、
+ * 立刻腾出名额(daemon 认证失败并已把 `{error:'auth_failed'}` 作为帧发过去之后发)。
+ * `push_sync`:daemon 每次登录后先发的权威设备清单 —— 房间删掉不在单子上的所有 `reg:*`,再逐个 push_reg。
+ */
 export const DaemonControl = z.union([
   z.object({ pub: z.string().max(128), sig: z.string().max(256) }),
   z.object({ push_reg: z.object({ device: Device, platform: PushPlatform, token: z.string().max(4096) }) }),
   z.object({ push_unreg: z.object({ device: Device }) }),
+  z.object({ push_sync: z.object({ devices: z.array(Device).max(PUSH_SYNC_MAX_DEVICES) }) }),
   z.object({ push: z.object({ device: Device, sealed: SealedPushShape, collapseId: z.string().max(64).optional(), ref: Ref.optional() }) }),
 ])
 export type DaemonControlT = z.infer<typeof DaemonControl>

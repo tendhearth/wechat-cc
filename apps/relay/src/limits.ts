@@ -45,7 +45,7 @@ export function makeBucket(capacity: number, refillPerSec: number): TokenBucket 
 export const utcDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10)
 
 const enc = new TextEncoder()
-/** 字符串 UTF-8 字节数;明显远低于上限时走快路(每个 UTF-16 单元最多 3 字节)。 */
+/** 字符串的 UTF-8 字节数(直接编码一遍量;帧上限 512 KiB,这点开销可以接受)。 */
 export function utf8Len(s: string): number {
   return enc.encode(s).byteLength
 }

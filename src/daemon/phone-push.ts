@@ -3,7 +3,8 @@
  *
  * 登记:手机经端到端隧道 POST /m/api/push/register 把 APNs / FCM token 交给自己的 daemon;这里落盘
  * `<stateDir>/phone-push.json`(0600)并经已登录的中继 socket 发 `{push_reg}`。每次登录(onLogin)
- * 都 resync 一遍:中继换过(staging → 生产)、或房间存储丢了也能自愈;顺手修剪已撤销的设备。
+ * 都 resync 一遍:先发 `{push_sync}` 权威清单(房间删掉单子外的登记),再逐个 push_reg —— 中继换过
+ * (staging → 生产)、房间存储丢了、离线时撤销的设备没 unreg 到,都能自愈;顺手修剪本地已撤销的设备。
  *
  * 发送:用该设备的推送密钥(derivePushKey(设备令牌),子项目 1)把 `{ts,kind,title,body,taskId}`
  * sealPush,交给房间转 APNs / FCM。中继与苹果谷歌只看得到密文。
@@ -102,6 +103,8 @@ export function makePhonePush(deps: {
     resync() {
       const live = new Set(deps.deviceIds())
       const rows = read()
+      // 权威清单先发:房间删掉不在单子上的所有登记(daemon 离线时撤销、没来得及 unreg 的设备也能自愈)。
+      deps.send({ push_sync: { devices: Object.keys(rows).filter(id => live.has(id)) } })
       let pruned = false
       for (const id of Object.keys(rows)) {
         if (live.has(id)) continue

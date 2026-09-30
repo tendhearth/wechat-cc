@@ -98,10 +98,17 @@ describe('phone-push', () => {
     sent.length = 0
     push.resync()
     expect(sent).toEqual([
+      { push_sync: { devices: ['dev2'] } },   // 权威清单先发:房间里不在单子上的登记全删(漏掉的 unreg 也能自愈)
       { push_unreg: { device: 'dev1' } },
       { push_reg: { device: 'dev2', platform: 'fcm', token: 'f'.repeat(30) } },
     ])
     expect(push.registered()).toEqual(['dev2'])
+  })
+
+  it('resync:本地没有登记也发空的 push_sync(清掉房间里残留的)', () => {
+    const { push, sent } = setup()
+    push.resync()
+    expect(sent).toEqual([{ push_sync: { devices: [] } }])
   })
 
   it('unregister / forgetAll 发 push_unreg;文件跟着清', () => {

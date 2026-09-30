@@ -106,7 +106,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   const maxReconnectMs = deps.reconnectMs ?? 15_000
   const minReconnectMs = 2_000
   const log = deps.log ?? (() => {})
-  let reconnectAttempts = 0     // 连续失败计数(open 成功清零)
+  let reconnectAttempts = 0     // 连续失败计数(老中继 open 成功清零;v2 要等 login_ok 才清零,见 markConnected)
   let downSince = 0             // 首次断开时刻(重连成功时算下线时长)
   let now = deps.now ?? (() => Date.now())
   // Per-stream ephemeral state: our keypair, the raw ECDH bits, and — once the
@@ -187,6 +187,16 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     ws?.send(JSON.stringify({ stream, frame }))
   }
 
+  /** 明文告诉手机「没认出你」。中继 v2 模式下紧跟 `{stream, close:true}`:房间关掉这条流、立刻腾名额
+   *  (否则知道 id 的人能用认不出的流占满 16 个名额)。房间关流时不再回 `closed`,这里自己忘掉它。
+   *  老中继不认 close,会把没有 frame 的消息当 `{}` 转给手机 —— 所以只在 `deps.login` 时发。 */
+  function rejectStream(stream: string): void {
+    sendToStream(stream, { error: 'auth_failed' })
+    if (!deps.login) return
+    try { ws?.send(JSON.stringify({ stream, close: true })) } catch { /* close 会接手 */ }
+    forgetStream(stream)
+  }
+
   async function onStreamFrame(stream: string, frame: unknown): Promise<void> {
     const hsPub = handshakePlaintext(frame)
     if (hsPub) {
@@ -231,7 +241,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     if (!reqBytes) {
       log('TUNNEL', `frame auth failed on ${stream} (no paired device / expired link / MITM) — dropped`)
       // 明文告诉手机「没认出你」,别让页面永远卡在「连回你的电脑…」。不带任何令牌或密文信息。
-      sendToStream(stream, { error: 'auth_failed' })
+      rejectStream(stream)
       return
     }
     let parsed: { path?: unknown; method?: unknown; body?: unknown; rid?: unknown }
@@ -283,7 +293,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
     const hit = identifyV2(new Uint8Array(st.bits), candidateTokens(), frame)
     if (!hit) {
       log('TUNNEL', `frame auth failed on ${stream} (no paired device / expired link / MITM) — dropped`)
-      sendToStream(stream, { error: 'auth_failed' })
+      rejectStream(stream)
       return
     }
     const token = hit.token
@@ -297,7 +307,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       onRevoked: () => {
         if (streams.get(stream) !== st) return
         streams.delete(stream)
-        sendToStream(stream, { error: 'auth_failed' })
+        rejectStream(stream)
       },
       log,
     })
@@ -368,7 +378,8 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       ws = null
       if (stopped) return
       // 指数退避:min·2^n,封顶 max。只在首次断开记一条,后续静默重试
-      // (避免网络抖动时每 15s 刷一行)—— 恢复时的 open 摘要报清总账。
+      // (避免网络抖动时每 15s 刷一行)—— 恢复时 markConnected 的摘要报清总账
+      // (老中继在 open 时,v2 在 login_ok 时)。
       if (reconnectAttempts === 0) { downSince = now(); log('TUNNEL', 'relay socket closed — reconnecting…') }
       const delay = Math.min(maxReconnectMs, minReconnectMs * 2 ** reconnectAttempts)
       reconnectAttempts++

@@ -216,6 +216,47 @@ describe('tunnel-client (daemon side)', () => {
     expect(JSON.parse(sock.sent.at(-1)!)).toEqual({ stream: 'sB', frame: { error: 'auth_failed' } })
   })
 
+  it('中继 v2 模式:认证失败 ⇒ 先发明文 auth_failed,紧跟 {stream, close:true} 让房间关流腾名额', async () => {
+    const phone = await generateTunnelKeypair()
+    const sock = fakeSocket()
+    const client = makeTunnelClient({
+      daemonId: 'rabc', knownDeviceTokens: () => ['dsomeother'],
+      handleRequest: async () => new Response('x'),
+      connect: () => sock.ws as never, log: () => {}, relayUrl: 'wss://relay.test/v2/daemon',
+      login: { sign: () => ({ pub: 'P', sig: 'S' }) },
+    })
+    client.start()
+    sock.emitMessage(JSON.stringify({ login_ok: true }))
+    sock.emitMessage(JSON.stringify({ stream: 'sC', frame: { hs: await exportPublicKeyB64(phone.publicKey) } }))
+    for (let i = 0; i < 20 && sock.sent.length < 1; i++) await new Promise(r => setTimeout(r, 5))
+    const daemonPub = JSON.parse(sock.sent.at(-1)!).frame.hs
+    const key = await deriveSharedKey(phone.privateKey, await importDaemonPub(daemonPub), new TextEncoder().encode('dmine'))
+    sock.emitMessage(JSON.stringify({ stream: 'sC', frame: await sealFrame(key, new TextEncoder().encode('{"path":"/m"}')) }))
+    for (let i = 0; i < 20 && sock.sent.length < 3; i++) await new Promise(r => setTimeout(r, 5))
+    expect(sock.sent.slice(1).map(s => JSON.parse(s))).toEqual([
+      { stream: 'sC', frame: { error: 'auth_failed' } },
+      { stream: 'sC', close: true },
+    ])
+  })
+
+  it('老中继模式(无 login):认证失败只发 auth_failed,不发 close(老中继会把它当空帧转给手机)', async () => {
+    const phone = await generateTunnelKeypair()
+    const sock = fakeSocket()
+    const client = makeTunnelClient({
+      daemonId: 'tabc', knownDeviceTokens: () => ['dsomeother'],
+      handleRequest: async () => new Response('x'),
+      connect: () => sock.ws as never, log: () => {},
+    })
+    client.start()
+    sock.emitMessage(JSON.stringify({ stream: 'sD', frame: { hs: await exportPublicKeyB64(phone.publicKey) } }))
+    for (let i = 0; i < 20 && sock.sent.length < 1; i++) await new Promise(r => setTimeout(r, 5))
+    const daemonPub = JSON.parse(sock.sent.at(-1)!).frame.hs
+    const key = await deriveSharedKey(phone.privateKey, await importDaemonPub(daemonPub), new TextEncoder().encode('dmine'))
+    sock.emitMessage(JSON.stringify({ stream: 'sD', frame: await sealFrame(key, new TextEncoder().encode('{"path":"/m"}')) }))
+    await new Promise(r => setTimeout(r, 40))
+    expect(sock.sent.slice(1).map(s => JSON.parse(s))).toEqual([{ stream: 'sD', frame: { error: 'auth_failed' } }])
+  })
+
   it('accepts the active /set link token, so an unpaired phone can open the link from outside', async () => {
     const LINK = 'tlink0000'
     const phone = await generateTunnelKeypair()

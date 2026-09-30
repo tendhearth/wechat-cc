@@ -78,6 +78,12 @@ describe('控制帧 schema', () => {
     expect(DaemonControl.safeParse({ push: { device: 'ab12cd34', sealed: { v: 1, iv: 'i', ct: 'c' }, collapseId: 't1', ref: 'r1' } }).success).toBe(true)
     expect(DaemonControl.safeParse({ push: { device: '../x', sealed: { v: 1, iv: 'i', ct: 'c' } } }).success).toBe(false)
     expect(DaemonControl.safeParse({ push: { device: 'ab12cd34', sealed: { v: 1, iv: 'i', ct: 'c'.repeat(3501) } } }).success).toBe(false)
+    expect(DaemonControl.safeParse({ push_sync: { devices: [] } }).success).toBe(true)
+    expect(DaemonControl.safeParse({ push_sync: { devices: ['ab12cd34', 'dev_2'] } }).success).toBe(true)
+    expect(DaemonControl.safeParse({ push_sync: { devices: ['../x'] } }).success).toBe(false)
+    expect(DaemonControl.safeParse({ push_sync: { devices: Array.from({ length: 64 }, (_, i) => `d${i}`) } }).success).toBe(true)
+    expect(DaemonControl.safeParse({ push_sync: { devices: Array.from({ length: 65 }, (_, i) => `d${i}`) } }).success).toBe(false)
+    expect(DaemonControl.safeParse({ push_sync: {} }).success).toBe(false)
   })
   it('房间 → daemon', () => {
     expect(RoomControl.safeParse({ challenge: 'c', ts: 1 }).success).toBe(true)

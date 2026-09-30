@@ -54,7 +54,7 @@ describe('房间:daemon 登录', () => {
     expect(expiredLogins([{ ...a, authed: true }], 99_999, 10_000)).toEqual([])
   })
 
-  it('未登录 socket 每房间最多 4 条:第 5 条 rate_limited(4008),已认证 daemon 不受影响', async () => {
+  it('未登录 socket 每房间最多 4 条:第 5 条挤掉最老的(rate_limited 4008),新来的照常拿挑战并能登录', async () => {
     const d = await connectDaemon()
     const pending = []
     for (let i = 0; i < 4; i++) {
@@ -63,10 +63,17 @@ describe('房间:daemon 登录', () => {
       pending.push(s)
     }
     const fifth = await openDaemonSocket(d.ident.id)
-    expect(await fifth.next()).toEqual({ error: 'rate_limited' })
-    expect(await fifth.closed).toBe(4008)
+    expect(await pending[0]!.next()).toEqual({ error: 'rate_limited' })
+    expect(await pending[0]!.closed).toBe(4008)
+    const ch = await fifth.next()
+    expect(ch).toHaveProperty('challenge')
+    for (const s of pending.slice(1)) expect(s.msgs).toEqual([])
+    // 攻击者占满名额也锁不住真 daemon:新来的签对就登录(并替换旧的已认证连接)。
+    fifth.ws.send(JSON.stringify(signRelayLogin(d.ident.seed, ch.challenge, d.ident.id)))
+    expect(await fifth.next()).toEqual({ login_ok: true })
+    expect(await d.closed).toBe(4000)
     const p = await connectPhone(d.ident.id)
     p.ws.send(JSON.stringify({ hs: 'z' }))
-    expect(await d.next()).toMatchObject({ frame: { hs: 'z' } })
+    expect(await fifth.next()).toMatchObject({ frame: { hs: 'z' } })
   })
 })

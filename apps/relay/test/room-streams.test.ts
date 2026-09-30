@@ -91,11 +91,24 @@ describe('房间:手机流', () => {
     expect(await d.next()).toEqual({ pong: 1 })
   })
 
-  it('当天流量超额(测试上限 200000 字节)⇒ 新手机流 quota_exceeded', async () => {
+  it('当天流量只计 daemon→手机:手机上行再多也不耗配额(知道 id 的人刷不爆主人的额度)', async () => {
     const d = await connectDaemon()
     const p = await connectPhone(d.ident.id)
     const chunk = JSON.stringify({ ct: 'x'.repeat(60_000) })
     for (let i = 0; i < 4; i++) { p.ws.send(chunk); await d.next() }
+    const late = await connectPhone(d.ident.id)
+    late.ws.send(JSON.stringify({ hs: 'ok' }))
+    expect(await d.next()).toMatchObject({ frame: { hs: 'ok' } })
+    expect(late.msgs).toEqual([])
+  })
+
+  it('当天流量超额(测试上限 200000 字节,daemon→手机)⇒ 新手机流 quota_exceeded', async () => {
+    const d = await connectDaemon()
+    const p = await connectPhone(d.ident.id)
+    p.ws.send(JSON.stringify({ hs: 'h' }))
+    const up = await d.next()
+    const ct = 'x'.repeat(60_000)
+    for (let i = 0; i < 4; i++) { d.ws.send(JSON.stringify({ stream: up.stream, frame: { ct } })); await p.next() }
     const late = await connectPhone(d.ident.id)
     expect(await late.next()).toEqual({ error: 'quota_exceeded' })
   })
@@ -135,5 +148,34 @@ describe('房间:手机流', () => {
     d.ws.send(JSON.stringify({ stream: up.stream, frame: { legit: 1 } }))
     expect(await p.next()).toEqual({ legit: 1 })
     expect(d.msgs).toEqual([])
+  })
+
+  it('daemon 发 {stream, close:true} ⇒ 房间关掉那条手机流并立刻腾出名额', async () => {
+    const d = await connectDaemon()
+    const phones = []
+    for (let i = 0; i < 16; i++) phones.push(await connectPhone(d.ident.id))
+    phones[3]!.ws.send(JSON.stringify({ hs: 'bad' }))
+    const up = await d.next()
+    d.ws.send(JSON.stringify({ stream: up.stream, frame: { error: 'auth_failed' } }))
+    d.ws.send(JSON.stringify({ stream: up.stream, close: true }))
+    expect(await phones[3]!.next()).toEqual({ error: 'auth_failed' })
+    expect(await phones[3]!.closed).toBe(1008)
+    const again = await connectPhone(d.ident.id)
+    again.ws.send(JSON.stringify({ hs: 'fresh' }))
+    expect(await d.next()).toMatchObject({ frame: { hs: 'fresh' } })
+    expect(again.msgs).toEqual([])
+  })
+
+  it('close 控制帧:tag 名 / 不存在的流 ⇒ 忽略,不关 daemon 也不关别的手机', async () => {
+    const d = await connectDaemon()
+    const p = await connectPhone(d.ident.id)
+    d.ws.send(JSON.stringify({ stream: 'daemon', close: true }))
+    d.ws.send(JSON.stringify({ stream: 'phone', close: true }))
+    d.ws.send(JSON.stringify({ stream: 'nope', close: true }))
+    d.ws.send('{"ping":3}')
+    expect(await d.next()).toEqual({ pong: 3 })
+    p.ws.send(JSON.stringify({ hs: 'still' }))
+    expect(await d.next()).toMatchObject({ frame: { hs: 'still' } })
+    expect(p.msgs).toEqual([])
   })
 })

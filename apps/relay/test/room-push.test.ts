@@ -50,6 +50,18 @@ describe('房间:推送', () => {
     expect(await d.next()).toMatchObject({ push_result: { code: 'not_registered' } })
   })
 
+  it('push_sync 是权威清单:不在单子上的登记全删,单子上的保留', async () => {
+    const d = await connectDaemon()
+    await withApns(d.ident.id, 200)
+    d.ws.send(JSON.stringify({ push_reg: { device: 'devA', platform: 'apns', token: TOKEN } }))
+    d.ws.send(JSON.stringify({ push_reg: { device: 'devB', platform: 'apns', token: TOKEN } }))
+    d.ws.send(JSON.stringify({ push_sync: { devices: ['devB'] } }))
+    d.ws.send(JSON.stringify({ push: { device: 'devA', sealed: SEALED, ref: 'a' } }))
+    expect(await d.next()).toEqual({ push_result: { device: 'devA', ok: false, code: 'not_registered', ref: 'a' } })
+    d.ws.send(JSON.stringify({ push: { device: 'devB', sealed: SEALED, ref: 'b' } }))
+    expect(await d.next()).toEqual({ push_result: { device: 'devB', ok: true, code: 'ok', ref: 'b' } })
+  })
+
   it('token 不合法 ⇒ invalid_token', async () => {
     const d = await connectDaemon()
     d.ws.send(JSON.stringify({ push_reg: { device: 'dev3', platform: 'apns', token: 'zz' } }))

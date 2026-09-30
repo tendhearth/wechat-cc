@@ -5,6 +5,9 @@
  * 执行限额;存推送登记并调 APNs / FCM。休眠 API:内存状态随时会丢,一切路由都能从 socket
  * attachment 重建 —— daemon socket 的 attachment 记着 authed / authedAt / replaced,手机的记着 stream。
  *
+ * daemon 发 `{stream, close:true}`(认证失败之后)⇒ 房间关掉那条手机流、立刻腾名额。日流量配额只计
+ * daemon→手机方向:只知道 id 的人刷上行耗不掉主人的额度。未登录 socket 满了挤最老的,不拒新来的。
+ *
  * 僵尸 socket(老中继的 bug,spec §2 #2):关闭处理只在「关掉的正是当前 daemon、且没有别的当前 daemon」
  * 时才清手机流;被替换的、没登录的 socket 断开什么也不动。
  */
@@ -70,12 +73,19 @@ export class Room extends DurableObject<Env> {
   private async openDaemon(id: string): Promise<Response> {
     const pair = new WebSocketPair()
     const server = pair[1]
-    const pendingCount = this.ctx.getWebSockets('daemon').filter(w => { const x = this.att(w); return x?.role === 'daemon' && !x.authed }).length
-    this.ctx.acceptWebSocket(server, ['daemon'])
-    if (pendingCount >= this.limits.maxPendingLogins) {
-      this.fail(server, 'rate_limited', 4008)
-      return new Response(null, { status: 101, webSocket: pair[0], headers: { 'Sec-WebSocket-Protocol': RELAY_SUBPROTOCOL } })
+    // 未登录名额满了 ⇒ 挤掉最老的那条,新来的照常走挑战。拒新来的会让知道 id 的人占满 4 个名额、
+    // 把真 daemon 的重连永远挡在外面;挤最老的则攻击者得不停开新连接,真 daemon 总能插进来签名登录。
+    const pending: Array<[WebSocket, DaemonAtt]> = []
+    for (const w of this.ctx.getWebSockets('daemon')) { const x = this.att(w); if (x?.role === 'daemon' && !x.authed && !x.replaced) pending.push([w, x]) }
+    while (pending.length >= this.limits.maxPendingLogins) {
+      let oldest = 0   // openedAt 相同(workerd 的时钟在 I/O 之间不走)时取先接受的那条
+      for (let i = 1; i < pending.length; i++) if (pending[i]![1].openedAt < pending[oldest]![1].openedAt) oldest = i
+      const [victim, va] = pending.splice(oldest, 1)[0]!
+      // 标 replaced:关闭握手完成前它还在 getWebSockets 里,别再算进名额;challenge 清空 ⇒ 迟到的签名也登不上。
+      victim.serializeAttachment({ ...va, challenge: '', replaced: true })
+      this.fail(victim, 'rate_limited', 4008)
     }
+    this.ctx.acceptWebSocket(server, ['daemon'])
     const challenge = b64uEncode(crypto.getRandomValues(new Uint8Array(32)))
     const a: DaemonAtt = { role: 'daemon', id, challenge, openedAt: Date.now(), authed: false, authedAt: 0, replaced: false }
     server.serializeAttachment(a)
@@ -90,7 +100,7 @@ export class Room extends DurableObject<Env> {
     const now = Date.now()
     const socks = this.ctx.getWebSockets('daemon')
     const pending: Array<[WebSocket, DaemonAtt]> = []
-    for (const ws of socks) { const a = this.att(ws); if (a?.role === 'daemon' && !a.authed) pending.push([ws, a]) }
+    for (const ws of socks) { const a = this.att(ws); if (a?.role === 'daemon' && !a.authed && !a.replaced) pending.push([ws, a]) }
     const expired = new Set(expiredLogins(pending.map(p => p[1]), now, this.limits.loginTimeoutMs))
     let next: number | null = null
     for (const [ws, a] of pending) {
@@ -105,7 +115,7 @@ export class Room extends DurableObject<Env> {
     const a = this.att(ws)
     if (!a) return
     if (a.role === 'phone') { await this.onPhoneMessage(ws, a, message); return }
-    if (!a.authed) { this.onLogin(ws, a, message); return }
+    if (!a.authed) { if (!a.replaced) this.onLogin(ws, a, message); return }   // 被挤掉的未登录 socket:什么也不做
     await this.onDaemonData(ws, message)
   }
 
@@ -178,7 +188,7 @@ export class Room extends DurableObject<Env> {
     await this.ctx.storage.put(`usage:${u.day}`, { bytes: u.bytes, pushes: u.pushes })
   }
 
-  /** 字节计数:内存累加,每多 1 MiB 落一次盘(休眠丢掉的最多 1 MiB,可接受)。 */
+  /** daemon→手机字节计数:内存累加,每多 1 MiB 落一次盘(休眠丢掉的最多 1 MiB,可接受)。 */
   protected async addBytes(n: number): Promise<void> {
     const u = await this.usage()
     ;(u as { bytes: number }).bytes += n
@@ -221,7 +231,8 @@ export class Room extends DurableObject<Env> {
     let frame: unknown
     try { frame = JSON.parse(raw) } catch { return }   // 必须是 JSON 信封,内容不透明
     this.sendJson(daemon, { stream: a.stream, frame })
-    await this.addBytes(size)
+    // 上行不计日流量配额:只知道 id 的人能开手机流,若上行也计,他刷满配额就能把主人的手机全挡在外面。
+    // 上行已有每流速率 + 帧大小 + 流数上限;配额只管 daemon 主动下发的量。
   }
 
   protected onPhoneClose(_ws: WebSocket, a: PhoneAtt): void {
@@ -253,6 +264,15 @@ export class Room extends DurableObject<Env> {
         return x?.role === 'phone' && x.stream === msg.stream && !x.rejected
       })
       if (!phone) return   // 未知 / 已关 / 被拒的流 —— 丢
+      if (msg.close === true) {
+        // daemon 认不出这条流(auth_failed 已作为帧发过去了)⇒ 关掉它、立刻腾名额。标 rejected:关闭握手
+        // 完成前它还在 getWebSockets 里,别占名额;它的 close 回调也就不再回头通知 daemon。
+        phone.serializeAttachment({ role: 'phone', stream: msg.stream, rejected: true } satisfies PhoneAtt)
+        this.buckets.delete(`p:${msg.stream}`)
+        count(this.env, 'stream_closed_by_daemon')
+        try { phone.close(1008, 'closed_by_daemon') } catch { /* 已经关了 */ }
+        return
+      }
       this.sendJson(phone, msg.frame ?? {})
       await this.addBytes(size)
       return
@@ -280,6 +300,13 @@ export class Room extends DurableObject<Env> {
       return
     }
     if ('push_unreg' in c) { await this.ctx.storage.delete(`reg:${c.push_unreg.device}`); return }
+    if ('push_sync' in c) {
+      // 权威清单:daemon 漏发过的 unreg(离线时撤销的设备)在下次登录时一并清掉。
+      const keep = new Set(c.push_sync.devices.map(d => `reg:${d}`))
+      const stale = [...(await this.ctx.storage.list({ prefix: 'reg:' })).keys()].filter(k => !keep.has(k))
+      if (stale.length) await this.ctx.storage.delete(stale)
+      return
+    }
     if ('push' in c) {
       const { device, sealed, collapseId, ref } = c.push
       const reply = (ok: boolean, code: string) => this.sendJson(ws, { push_result: { device, ok, code, ...(ref !== undefined ? { ref } : {}) } })

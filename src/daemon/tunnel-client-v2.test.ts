@@ -65,7 +65,7 @@ async function v2Phone(sock: Sock, stream: string, token = DTOK) {
     drain(): Inbound[] {
       for (; cursor < sock.sent.length; cursor++) {
         const env = JSON.parse(sock.sent[cursor]!)
-        if (env.stream !== stream) continue
+        if (env.stream !== stream || env.close === true) continue   // {stream, close} 是给中继的,不是给手机的帧
         if (typeof env.frame?.error === 'string') { inbox.push({ error: env.frame.error }); continue }
         const sealed = SealedV2Frame.parse(env.frame)
         inbox.push(V2ServerMessage.parse(JSON.parse(new TextDecoder().decode(chan.open(sealed)))))
@@ -200,6 +200,28 @@ describe('tunnel-client v2', () => {
     p.send({ t: 'req', rid: 'r1', method: 'GET', path: '/m/api/x' })
     expect(await p.next()).toEqual({ error: 'auth_failed' })
     expect(calls).toBe(0)
+  })
+
+  it('中继 v2 模式(有 login):v2 流未知令牌 ⇒ auth_failed 后紧跟 {stream, close:true}', async () => {
+    const sock = fakeSocket()
+    client(sock, { knownDeviceTokens: () => ['dother'], login: { sign: () => ({ pub: 'P', sig: 'S' }) } })
+    sock.emit({ login_ok: true })
+    const p = await v2Phone(sock, 'sK', 'dmine')
+    p.send({ t: 'req', rid: 'r1', method: 'GET', path: '/m/api/x' })
+    expect(await p.next()).toEqual({ error: 'auth_failed' })
+    await waitFor(() => sock.sent.some(s => JSON.parse(s).close === true), 'close')
+    const tail = sock.sent.map(s => JSON.parse(s)).filter(m => m.stream === 'sK').slice(-2)
+    expect(tail).toEqual([{ stream: 'sK', frame: { error: 'auth_failed' } }, { stream: 'sK', close: true }])
+  })
+
+  it('没 login(老中继):v2 流未知令牌只发 auth_failed,不发 close', async () => {
+    const sock = fakeSocket()
+    client(sock, { knownDeviceTokens: () => ['dother'] })
+    const p = await v2Phone(sock, 'sJ', 'dmine')
+    p.send({ t: 'req', rid: 'r1', method: 'GET', path: '/m/api/x' })
+    expect(await p.next()).toEqual({ error: 'auth_failed' })
+    await settle()
+    expect(sock.sent.some(s => 'close' in JSON.parse(s))).toBe(false)
   })
 
   it('链接令牌也能握 v2', async () => {
@@ -380,6 +402,21 @@ describe('tunnel-client v2', () => {
     await settle()
     expect(calls).toBe(0)
     hub.dispose()
+  })
+
+  it('中继 v2 模式:撤销设备(onRevoked)⇒ auth_failed 后紧跟 {stream, close:true}', async () => {
+    let tokens = [DTOK]
+    const sock = fakeSocket()
+    client(sock, { knownDeviceTokens: () => tokens, login: { sign: () => ({ pub: 'P', sig: 'S' }) } })
+    sock.emit({ login_ok: true })
+    const p = await v2Phone(sock, 'sR')
+    p.send({ t: 'req', rid: 'r1', method: 'GET', path: '/m/api/x' })
+    await p.next()
+    tokens = []
+    p.send({ t: 'req', rid: 'r2', method: 'GET', path: '/m/api/x' })
+    expect(await p.next()).toEqual({ error: 'auth_failed' })
+    await waitFor(() => sock.sent.some(s => JSON.parse(s).close === true), 'close')
+    expect(JSON.parse(sock.sent.at(-1)!)).toEqual({ stream: 'sR', close: true })
   })
 
   it('撤销设备:下一个 req 之前关流', async () => {
