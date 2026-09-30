@@ -9,9 +9,10 @@
  * 时才清手机流;被替换的、没登录的 socket 断开什么也不动。
  */
 import { DurableObject } from 'cloudflare:workers'
-import { b64uEncode, DaemonControl, RELAY_SUBPROTOCOL, verifyRelayLogin, type RelayError } from '@wechat-cc/protocol'
+import { b64uEncode, DaemonControl, pushTokenValid, RELAY_SUBPROTOCOL, verifyRelayLogin, type PushPlatformT, type RelayError, type SealedPush } from '@wechat-cc/protocol'
 import { limitsFrom, makeBucket, utcDay, utf8Len, type Limits, type TokenBucket } from './limits'
 import { count } from './metrics'
+import { sendPush, type PushOutcome } from './push'
 
 export type DaemonAtt = { role: 'daemon'; id: string; challenge: string; openedAt: number; authed: boolean; authedAt: number; replaced: boolean }
 export type PhoneAtt = { role: 'phone'; stream: string; rejected?: boolean }
@@ -259,6 +260,40 @@ export class Room extends DurableObject<Env> {
     await this.onDaemonControl(ws, msg)
   }
 
-  /** Task 7:push_reg / push_unreg / push。 */
-  protected async onDaemonControl(_ws: WebSocket, _msg: Record<string, unknown>): Promise<void> { /* Task 7 */ }
+  /** 测试替换点:真实现是 sendPush(env, …)。 */
+  protected pushSend = (reg: { platform: PushPlatformT; token: string }, sealed: SealedPush, collapseId: string | undefined): Promise<PushOutcome> =>
+    sendPush(this.env, reg, sealed, collapseId)
+
+  protected async onDaemonControl(ws: WebSocket, msg: Record<string, unknown>): Promise<void> {
+    const m = DaemonControl.safeParse(msg)
+    if (!m.success) return
+    const c = m.data
+    if ('push_reg' in c) {
+      const { device, platform, token } = c.push_reg
+      if (!pushTokenValid(platform, token)) { this.sendJson(ws, { push_result: { device, ok: false, code: 'invalid_token' } }); return }
+      const existing = await this.ctx.storage.get(`reg:${device}`)
+      if (!existing) {
+        const n = (await this.ctx.storage.list({ prefix: 'reg:' })).size
+        if (n >= this.limits.maxPushRegistrations) { this.sendJson(ws, { push_result: { device, ok: false, code: 'too_many_devices' } }); return }
+      }
+      await this.ctx.storage.put(`reg:${device}`, { platform, token, at: Date.now() })
+      return
+    }
+    if ('push_unreg' in c) { await this.ctx.storage.delete(`reg:${c.push_unreg.device}`); return }
+    if ('push' in c) {
+      const { device, sealed, collapseId, ref } = c.push
+      const reply = (ok: boolean, code: string) => this.sendJson(ws, { push_result: { device, ok, code, ...(ref !== undefined ? { ref } : {}) } })
+      const reg = await this.ctx.storage.get<{ platform: PushPlatformT; token: string }>(`reg:${device}`)
+      if (!reg) { reply(false, 'not_registered'); return }
+      if (!(await this.bumpPushes())) { count(this.env, 'push_quota'); reply(false, 'quota_exceeded'); return }
+      const r = await this.pushSend(reg, sealed as SealedPush, collapseId)
+      count(this.env, r.ok ? 'push_ok' : 'push_fail')
+      if (!r.ok && r.invalid) {
+        await this.ctx.storage.delete(`reg:${device}`)
+        this.sendJson(ws, { push_invalid: { device } })
+      }
+      reply(r.ok, r.code)
+    }
+    // 登录帧({pub,sig})在已认证之后再来:忽略。
+  }
 }

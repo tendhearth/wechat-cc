@@ -114,15 +114,15 @@ describe('fix round 1', () => {
     await sendFcm(o)
     expect(f.mock.calls.filter(c => String(c[0]).includes('oauth'))).toHaveLength(2)
   })
-  it('apns-collapse-id 超 64 字节被截断', async () => {
+  it('apns-collapse-id 超 64 字节被截断;非 ASCII 换成 _', async () => {
     const keyP8 = await p256Pem()
     const f = vi.fn(async () => new Response(null, { status: 200 }))
     await sendApns({ keyP8, keyId: 'KCOL', teamId: 'T', topic: 'x', host: 'https://h', token: 'ab'.repeat(32), sealed: SEALED, collapseId: 'a'.repeat(100), now: 1, fetch: f as never })
-    await sendApns({ keyP8, keyId: 'KCOL', teamId: 'T', topic: 'x', host: 'https://h', token: 'ab'.repeat(32), sealed: SEALED, collapseId: '中'.repeat(50), now: 1, fetch: f as never })
+    await sendApns({ keyP8, keyId: 'KCOL', teamId: 'T', topic: 'x', host: 'https://h', token: 'ab'.repeat(32), sealed: SEALED, collapseId: 'é中x', now: 1, fetch: f as never })
     const ids = f.mock.calls.map(c => new Headers((c as unknown as [string, RequestInit])[1].headers).get('apns-collapse-id')!)
     expect(ids[0]).toBe('a'.repeat(64))
-    expect(new TextEncoder().encode(ids[1]).length).toBeLessThanOrEqual(64)
-    expect(ids[1]!.length).toBe(21)
+    expect(ids[1]).toBe('__x')
+    expect(ids[1]).toMatch(/^[\x20-\x7e]*$/)
   })
   it('FCM OAuth 失败 ⇒ oauth_failed', async () => {
     const sa = JSON.stringify({ project_id: 'p5', client_email: 'c@p5.iam.gserviceaccount.com', private_key: await rsaPem() })

@@ -68,7 +68,7 @@ export async function sendApns(o: {
       'apns-expiration': String(Math.floor(o.now / 1000) + 3600),
       'content-type': 'application/json',
     }
-    if (o.collapseId) headers['apns-collapse-id'] = truncUtf8(o.collapseId, 64)
+    if (o.collapseId) headers['apns-collapse-id'] = truncUtf8(o.collapseId.replace(/[^\x20-\x7e]/g, '_'), 64)   // 头值必须是 ASCII
     const body = JSON.stringify({ aps: { alert: { title: 'CC', body: 'CC 有新动态' }, 'mutable-content': 1, sound: 'default' }, wcc: o.sealed })
     res = await o.fetch(`${o.host}/3/device/${o.token}`, { method: 'POST', headers, body })
   } catch {
