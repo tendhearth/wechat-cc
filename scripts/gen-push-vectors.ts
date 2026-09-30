@@ -4,7 +4,7 @@
  * 解密实现的验收用例。运行:bun scripts/gen-push-vectors.ts
  */
 import { readFileSync, writeFileSync } from 'node:fs'
-import { derivePushKey, sealPush, b64uEncode, b64uDecode, PushPlaintext, pushDedupeKey, PUSH_DEDUPE_CAPACITY, PUSH_DEDUPE_TTL_MS } from '../packages/protocol/src/index'
+import { derivePushKey, sealPush, b64uEncode, b64uDecode, PushPlaintext, pushDedupeKey, PUSH_DEDUPE_CAPACITY, PUSH_DEDUPE_TTL_MS, PUSH_MAX_AGE_MS, PUSH_MAX_SKEW_MS } from '../packages/protocol/src/index'
 
 const path = new URL('../packages/protocol/vectors/push.json', import.meta.url)
 const old = JSON.parse(readFileSync(path, 'utf8'))
@@ -28,6 +28,13 @@ const tampered = seal({ ts: NOW }, 5)
 const ctBytes = b64uDecode(tampered.ct)
 ctBytes[0] = ctBytes[0]! ^ 0x01
 
+// 边界 ok 用例的载荷同样必须过 PushPlaintext
+const edgePastP = { ts: NOW - PUSH_MAX_AGE_MS, kind: 'task_done', title: '边界', body: '过去 1 小时整' }
+const edgeFutureP = { ts: NOW + PUSH_MAX_SKEW_MS, kind: 'task_done', title: '边界', body: '未来 10 分钟整' }
+PushPlaintext.parse(edgePastP)
+PushPlaintext.parse(edgeFutureP)
+const edgePast = seal(edgePastP, 8)
+const edgeFuture = seal(edgeFutureP, 10)
 const okFull = seal(full, 1)
 const okLate = seal(late, 2)
 const cases = [
@@ -39,6 +46,11 @@ const cases = [
   { name: 'auth-tampered', now: NOW, sealed: { ...tampered, ct: b64uEncode(ctBytes) }, expect: 'auth' },
   { name: 'malformed-v2', now: NOW, sealed: { ...seal({ ts: NOW }, 6), v: 2 }, expect: 'malformed' },
   { name: 'invalid-kind', now: NOW, sealed: seal(badKind, 7), expect: 'invalid' },
+  // 窗口边界(过去 PUSH_MAX_AGE_MS、未来 PUSH_MAX_SKEW_MS):正好在边上接受,再多 1 毫秒拒绝
+  { name: 'ok-edge-past-exact', now: NOW, sealed: edgePast, expect: 'ok', payload: edgePastP, dedupeKey: pushDedupeKey(NOW - PUSH_MAX_AGE_MS, edgePast.ct) },
+  { name: 'stale-edge-past-plus1ms', now: NOW, sealed: seal({ ts: NOW - PUSH_MAX_AGE_MS - 1 }, 9), expect: 'stale' },
+  { name: 'ok-edge-future-exact', now: NOW, sealed: edgeFuture, expect: 'ok', payload: edgeFutureP, dedupeKey: pushDedupeKey(NOW + PUSH_MAX_SKEW_MS, edgeFuture.ct) },
+  { name: 'stale-edge-future-plus1ms', now: NOW, sealed: seal({ ts: NOW + PUSH_MAX_SKEW_MS + 1 }, 11), expect: 'stale' },
 ]
 const k1 = pushDedupeKey(full.ts, okFull.ct)
 const k2 = pushDedupeKey(late.ts, okLate.ct)

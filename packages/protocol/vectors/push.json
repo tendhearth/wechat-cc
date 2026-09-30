@@ -106,6 +106,60 @@
         "ct": "4Uc2ztOwl3oxaKMStEmbAyL6By1_YUihtUy4258AUoAJ2s_0LNEciW4rd8KMpyg-S3sn_To6eAWf_a7kR5ynHy_ZFC9YMiymUx-36CNExdS0IgFx"
       },
       "expect": "invalid"
+    },
+    {
+      "name": "ok-edge-past-exact",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "CAkKCwwNDg8QERIT",
+        "ct": "pBYcBQjGZRAANllg195y_M3iR1S_mClOP-VhRscWK3nGETrTze7ZfzfPQXyYltyS8UYhZLB1lasRAkEbrPdmOEEAZhlimftDkernHqA6Fa0UZQhsYNWZFjDS5aWBkkdP8AmdSw"
+      },
+      "expect": "ok",
+      "payload": {
+        "ts": 1699996400000,
+        "kind": "task_done",
+        "title": "边界",
+        "body": "过去 1 小时整"
+      },
+      "dedupeKey": "1699996400000:6ddd3744fb5a680996e750e254717ea0"
+    },
+    {
+      "name": "stale-edge-past-plus1ms",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "CQoLDA0ODxAREhMU",
+        "ct": "4d5jlNJHV4JiG25zsvVAoWMWGcyaiipqtzEj518WdQc1vya4"
+      },
+      "expect": "stale"
+    },
+    {
+      "name": "ok-edge-future-exact",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "CgsMDQ4PEBESExQV",
+        "ct": "W1JozopDD9S5lA00-lwdC6Q1IiugX1RZIR_hW2V4a55Ayh-vfdS8-UnT9WhP0dKjSpVn2fW3OA-yn6Xlt3fLWULDGAMMIfYYu0ckXL7ftMXawJp9KILOw1lc3l-gYbRxheDk_3U"
+      },
+      "expect": "ok",
+      "payload": {
+        "ts": 1700000600000,
+        "kind": "task_done",
+        "title": "边界",
+        "body": "未来 10 分钟整"
+      },
+      "dedupeKey": "1700000600000:11a8443d84e5aae31349e000330bc25a"
+    },
+    {
+      "name": "stale-edge-future-plus1ms",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "CwwNDg8QERITFBUW",
+        "ct": "_O8lp6dMFs5Hb8Di_DeH41z_py9p62S5DCjFtmaYzGRe3Ww7"
+      },
+      "expect": "stale"
     }
   ],
   "dedupe": {
