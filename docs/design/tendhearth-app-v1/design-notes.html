@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tendhearth 手机体验 · 第一版设计说明</title><style>
+:root{color-scheme:light dark;--bg:light-dark(#faf8f3,#221f1b);--paper:light-dark(#fffdf9,#2c2823);--ink:light-dark(#493e32,#f1e9dc);--muted:light-dark(#796f63,#beb2a1);--line:light-dark(#e4ddd2,#4c4237);--accent:light-dark(#58654c,#b9c5a5)}*{box-sizing:border-box}body{background:var(--bg);color:var(--ink);font:16px/1.85 system-ui,-apple-system,"PingFang SC",sans-serif;margin:0 auto;max-width:950px;padding:48px 26px 80px}h1{font:500 36px/1.3 Georgia,"Songti SC",serif;letter-spacing:-.04em;margin:18px 0}h2{font-size:21px;font-weight:500;margin-top:40px}h3{font-size:16px;font-weight:600;margin-top:24px}p{margin:10px 0}small,.meta{color:var(--muted);font-size:13px}.lead{font-size:20px;max-width:680px}a{color:var(--accent);text-underline-offset:4px}code{font-size:13px;background:var(--paper);padding:2px 5px;border-radius:5px;overflow-wrap:anywhere}table{border-collapse:collapse;width:100%;font-size:14px}td,th{text-align:left;vertical-align:top;padding:14px 12px;border-bottom:1px solid var(--line)}th{font-weight:500;color:var(--muted)}ol,ul{padding-left:22px}li{margin:9px 0}.note{background:var(--paper);padding:18px 22px;border:1px solid var(--line);border-radius:16px;margin:22px 0}.label{font-size:12px;letter-spacing:.12em;color:var(--muted)}@media(max-width:600px){body{padding:28px 18px}h1{font-size:29px}table{font-size:13px}td,th{padding:12px 5px}}
+</style></head><body>
+<div class="label">NATE GU & CO. / TENDHEARTH</div>
+<h1>出门以后，<br>也能回到自己的炉火边。</h1>
+<p class="lead">用户找 CC 交代事情；CC 组织执行，在需要用户决定时回来确认。</p>
+<p class="meta">2026-09-30 · 第一版核心体验设计 · 核对代码：origin/dev@6527ba2f · 交互预览使用本地示例数据</p>
+<div class="note"><strong>这次交付的边界</strong><p>四个核心画面及其可点击流程，中英文、浅深色、离线和已处理状态。它用于评审设计，不连接电脑，不发送真实请求，不创建 Expo 工程，也没有完成双平台真机推送验收。</p></div>
+<h2>1 / 导航与主线</h2>
+<p>底部固定「此刻 / 一起做」。此刻聚焦需要决定的事及 CC 的简短近况；一起做承载聊天、任务和产出。设置通过右上角头像进入。输入入口始终容易找到，进入事项后变为「接着跟 CC 说一句」。</p>
+<table><thead><tr><th>画面</th><th>用户看到什么</th><th>主要操作</th></tr></thead><tbody>
+<tr><td>01 此刻</td><td>需要决定的请求放在角色与动态之前。CC 的话只占一两句。活动按事情组织。</td><td>查看上下文；跟 CC 说一句；进入事项。</td></tr>
+<tr><td>02 交办</td><td>自然语言输入、图片入口、可展开的项目与执行者设置。默认沿用合理上下文。</td><td>发送；保留草稿；调整项目。</td></tr>
+<tr><td>03 进展</td><td>CC 对当前进展的概括、已发生的步骤、待决定事项。按需展开代码改动与执行信息。</td><td>批准前查看；继续交流；检查成果。</td></tr>
+<tr><td>04 批准</td><td>动作、目的、作用范围和影响。完整请求上下文与具体操作并存。</td><td>允许这一步或先不做；已处理时返回事项。</td></tr>
+</tbody></table>
+<p>示例情境：整理作品集的手机首页。CC 完成布局调整，需要安装图片处理组件 <code>sharp</code>；用户查看下载、安装脚本和依赖更新的影响后决定。该操作仅为原型演示。</p>
+<p>状态使用「正在整理 / 等你决定 / 这一轮已回复 / 事情完成」。不用虚构百分比，不将工具返回或本轮答完等同整件事完成。</p>
+<h2>2 / 视觉与 CC</h2>
+<ul><li>按用户确认，以桌面作为颜色基准：浅色底 #faf8f3、卡片 #fffdf9、木棕正文 #493e32、辅助文字 #796f63、边线 #e4ddd2，直接沿用桌面 cc-life.css / cc-surfaces.css；主按钮采用事项页 #58654c，导航选中采用桌面 #f7ead2 / #674c2d。大面积灰绿色已移除。深色以暖炭黑 #221f1b、暖灰卡片 #2c2823 和象牙文字 #f1e9dc 延展；桌面尚无深色界面，这部分是手机设计的同色系延展。明暗是外观选择，不表示在线或离线。</li><li>角色保留 C 形尾巴、竖条眼睛、安静而有分量的身体。原型直接复用桌面与现有手机版共同使用、已经验收的 canonical/lit/front.png 与 canonical/unlit/front.png，不再重画角色。静态素材保持原始像素；动效留待使用同一资产体系时设计。</li><li>角色回应以尾巴角度、轻微姿态为主。所有工作状态同时有文字；减少动态设置下禁用动作。失败和离线不用责备或失落表情向用户施压。</li><li>批准卡片是阅读焦点。装饰不抢占上下文，批准与拒绝都能直接找到。</li></ul>
+<h2>3 / 状态约定</h2>
+<table><thead><tr><th>情形</th><th>界面行为</th></tr></thead><tbody>
+<tr><td>电脑离线</td><td>显示上次同步记录；仍可写草稿。发送、批准、拒绝均不可提交。重连后重新拉取状态；草稿由用户主动发送。</td></tr>
+<tr><td>另一端已经处理</td><td>保留请求上下文，显示已处理，移除可提交按钮。提供返回事项入口。</td></tr>
+<tr><td>重复点击</td><td>提交期间锁定操作；服务端的请求身份和最终结果决定状态，避免仅用客户端乐观成功。</td></tr>
+<tr><td>收到旧通知</td><td>先定位事项并拉最新详情，再展示当前请求。没有待处理请求则显示已处理或最新事项状态。</td></tr>
+<tr><td>同事项有多个请求</td><td>展示待处理请求列表让用户选。现有通知不能可靠定位其中某一个请求。</td></tr>
+<tr><td>设备撤销或配对失效</td><td>停止提交，提示重新配对；清理可用密钥和令牌。与暂时离线分开表达。</td></tr>
+<tr><td>通知解密失败或超时</td><td>保留中性提示，打开应用后重新同步。通知不直接执行允许操作。</td></tr>
+</tbody></table>
+<p>原型中的离线、已处理、通知均是手动切换的演示状态；正式客户端须由真实连接状态和最新 API 响应驱动。</p>
+<h2>4 / 已有接口与接入缺口</h2>
+<p>基线为本地远端引用 <code>origin/dev@6527ba2f</code>，不是当前检出的旧 master。没有修改任何仓库分支或共享服务。</p>
+<table><thead><tr><th>已有事实</th><th>原生客户端需要完成</th></tr></thead><tbody>
+<tr><td><code>@wechat-cc/protocol</code>：纯 TypeScript、noble、zod；请求、订阅、加密和推送向量。</td><td>React Native WebSocket 适配；Hermes 中随机数、TextEncoder/Decoder、BigInt 与 DataView 验证；按 API schema 解析业务响应。</td></tr>
+<tr><td>订阅发送摘要/版本号。</td><td>收到变化后拉取详情、重连补同步、处理多设备同时操作。</td></tr>
+<tr><td>通知业务载荷为 <code>ts/kind/title/body/taskId?</code>。</td><td>冷启动后调用 <code>GET /m/api/matter?id=…</code>，从最新详情选定请求。不能由 taskId 推断唯一批准项。</td></tr>
+<tr><td>批准请求需要 <code>id/runId/requestId/decision</code>。</td><td>提交准确身份；覆盖已失效、重复提交、断网和设备撤销。</td></tr>
+<tr><td>APNs：中性 alert、mutable-content、密文。FCM：HIGH priority、data-only 密文。</td><td>Swift 通知扩展与 Kotlin messaging service、安全密钥访问、后台展示、平台通知外观。</td></tr>
+<tr><td><code>POST /m/api/push/register</code> 接受设备的 platform/token。</td><td>通知权限状态、推送 token 获取和刷新、重装后的恢复。</td></tr>
+<tr><td>手机端尚无完整代码 diff 路由。</td><td>补路由及对应鉴权登记。当前原型中 diff 明确标为示例，不承诺接口已完成。</td></tr>
+</tbody></table>
+<div class="note"><strong>需要处理的通知时间窗口</strong><p>APNs/FCM 的 TTL 为 1 小时，<code>openPush</code> 接受前后 10 分钟的时间窗口。迟到消息可能无法显示解密正文。正式验收必须覆盖中性提示与打开刷新；时间窗口是否调整应由协议维护者决定，不能由 UI 层绕过。</p></div>
+<h2>5 / 原生验证准备与顺序</h2>
+<p>当前机器有 <code>xcrun</code> 及 iOS 26.5 / 27.0 模拟器运行时。PATH 与标准 Android SDK 路径未找到 adb，因此尚未确认 Android 设备连通。没有读取凭据、安装 App 或发送推送。</p>
+<ol><li><strong>对齐固定向量：</strong>Swift / Kotlin 分别通过已有 push.json，覆盖正常内容、错密钥、篡改、过期与未来时间。</li><li><strong>验证密钥边界：</strong>配对后保存设备令牌和派生推送密钥；验证 App 与 iOS 扩展能按预定锁屏策略访问，撤销后清理。</li><li><strong>登记推送令牌：</strong>覆盖首次授权、拒绝授权、token 刷新与重新安装。</li><li><strong>真机收取：</strong>在前台、后台和进程不运行时验证 APNs / FCM 展示；覆盖解密失败、延迟和扩展超时。</li><li><strong>冷启动定位：</strong>点通知进入事项，拉新状态，分别处理单条、多条、已处理和已失效请求。</li><li><strong>完成一次批准：</strong>手机提交后观察电脑实际行为与两端状态更新，覆盖断网和重复点击。</li></ol>
+<p>模拟器与浏览器预览只能用于界面和部分链路检查，不能替代 iPhone/Android 的真实后台通知验收。</p>
+<h2>6 / 后续交付顺序</h2>
+<ol><li>根据这版四画面预览确定角色比例、文案、导航和批准阅读顺序。</li><li>补齐配对、设备管理、空状态、多请求选择和各类通知的设计；统一中英文与两种外观。</li><li>形成 Expo 工程实施计划：界面与演示数据、协议适配、iOS 原生通知、Android 原生通知分别分工，明确共享契约。</li><li>在独立工程里实现，再按上面的真机顺序验收。EAS 构建、商店提交和线上部署另有独立交付状态。</li></ol>
+<p class="meta">参考：<a href="https://docs.expo.dev/build-reference/app-extensions/">Expo App Extensions</a> · <a href="https://developer.apple.com/library/archive/documentation/NetworkingInternet/Conceptual/RemoteNotificationsPG/ModifyingNotifications.html">Apple 通知扩展</a> · <a href="https://firebase.google.com/docs/cloud-messaging/android/receive-messages">FCM Android 收取消息</a></p>
+</body></html>
