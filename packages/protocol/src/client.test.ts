@@ -487,7 +487,36 @@ describe('断线、退避与致命错误', () => {
     await assertion
     await vi.advanceTimersByTimeAsync(500)
     expect(open).toHaveBeenCalledTimes(2)
-    // 被拒本身就证明没进重试(重试的请求会继续挂着等新连接)。
+    c.close()
+  })
+
+  it('中继明文 frame_too_large ⇒ 只拒这条连接上已发出的;别的连接上发的、还没发的请求不受牵连', async () => {
+    const daemon = makeFakeDaemon({ version: 2 })
+    const { c, open } = client(daemon)
+    await c.request({ method: 'GET', path: '/warm' })
+    // other:发在第一条连接上(后台丢了没回),随后那条连接断了 ⇒ 它还挂着,等自己的超时重试。
+    daemon.d.dropNextReqs = 1
+    const other = c.request({ method: 'GET', path: '/other' })
+    let otherSettled = false
+    other.then(() => { otherSettled = true }, () => { otherSettled = true })
+    await flush()
+    daemon.d.conns[0]!.serverClose()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(open).toHaveBeenCalledTimes(2)
+    // big:发在第二条连接上,中继回 frame_too_large。
+    daemon.d.dropNextReqs = 1
+    const big = c.request({ method: 'GET', path: '/big' })
+    const bigAssertion = expect(big).rejects.toThrow('frame_too_large')
+    await flush()
+    daemon.d.live().raw(JSON.stringify({ error: 'frame_too_large' }))
+    await flush()
+    await bigAssertion
+    // 若退回 failAll,other 此刻也会被同一个错误拒掉。
+    expect(otherSettled).toBe(false)
+    // 它的超时重试在新连接上重发,最终成功;big 只发过一次(没重试)。
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect((await other).status).toBe(200)
+    expect(daemon.d.reqs.filter(r => r.path === '/big')).toHaveLength(1)
     c.close()
   })
 
