@@ -2,7 +2,7 @@
  * daemon 真 makePhonePush 封的推送 ↔ 手机 app 从设备令牌推出、存进共享钥匙串的推送密钥:两边对得上(spec §7、§9.3)。
  * 不起中继:send 直接收下 daemon 要发给房间的控制消息。
  * 手机这头只用 apps/app/src/push/key-store.ts(纯 TS)与内存钥匙串 —— 读回的正是扩展 / 消息服务会读的那条记录。
- * (Task 6 在这里接上点开通知后的路由。)
+ * 解开后的明文再走点通知的目标解析与路由决定(apps/app/src/push/{target,route}.ts,纯 TS)。
  */
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -10,6 +10,8 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { b64uDecode, openPush, PushPlaintext, type SealedPush } from '@wechat-cc/protocol'
 import { makePhonePush } from './phone-push'
+import { resolvePushRoute, hrefFor, pushOpenHref } from '../../apps/app/src/push/route'
+import { targetFromParams, targetFromPlaintext } from '../../apps/app/src/push/target'
 import { makePushKeyStore, PUSH_KEY_ITEM, PUSH_KEY_SERVICE } from '../../apps/app/src/push/key-store'
 
 const dirs: string[] = []
@@ -51,9 +53,26 @@ describe('daemon 推送 → app 解开', () => {
     const plain = PushPlaintext.parse(openPush(b64uDecode(rec.key), msg!.push.sealed, Date.now()))
     expect(plain).toMatchObject({ kind: 'permission', title: '需要你批准', taskId: 'ab12cd34', requestId: 'perm-1' })
 
+    // 点开:明文 → 目标 → 先拉详情 → 批准页并钉住那条请求;安卓走 push-open 深链往返
+    const target = targetFromPlaintext(plain)
+    expect(target).toEqual({ kind: 'permission', taskId: 'ab12cd34', requestId: 'perm-1' })
+    const fetched: string[] = []
+    const route = await resolvePushRoute(target, async id => { fetched.push(id); return {} })
+    expect(route).toEqual({ kind: 'approval', id: 'ab12cd34', request: 'perm-1' })
+    expect(hrefFor(route)).toBe('/approval/ab12cd34?request=perm-1')
+    expect(fetched).toEqual(['ab12cd34'])
+    expect(targetFromParams(Object.fromEntries(new URLSearchParams(pushOpenHref(target!).split('?')[1])))).toEqual(target)
+
     const { m: m2, ss: ss2 } = memKeychain()
     await makePushKeyStore(ss2, { shared: { keychainService: PUSH_KEY_SERVICE }, local: {} }).ensure('d' + 'ee'.repeat(24), null)
     const other = JSON.parse(m2.get(`${PUSH_KEY_SERVICE}/${PUSH_KEY_ITEM}`)!) as { key: string }
     expect(() => openPush(b64uDecode(other.key), msg!.push.sealed, Date.now())).toThrow()
+  })
+
+  it('伪造的 push-open 深链:坏 taskId / 巨长 requestId 被丢,回此刻,不发请求', async () => {
+    const t = targetFromParams(Object.fromEntries(new URLSearchParams('kind=permission&taskId=../../x&requestId=' + 'q'.repeat(4000))))
+    let calls = 0
+    expect(await resolvePushRoute(t, async () => { calls++ })).toEqual({ kind: 'home' })
+    expect(calls).toBe(0)
   })
 })

@@ -180,6 +180,8 @@ const en = {
   'approval.answerTooLong': 'This answer is too long to send. Please shorten it.',
   'compose.tooLong': 'This message is too long to send. Please shorten it.',
   'common.ccBusy': 'CC is still working on this — try again when this round finishes.',
+  'push.placeholderTitle': 'CC',
+  'push.placeholder': 'CC has news',
 } as const
 
 export default en

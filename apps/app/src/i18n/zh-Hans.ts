@@ -182,6 +182,8 @@ const zh: Record<keyof typeof en, string> = {
   'approval.answerTooLong': '这个回答太长了,发不出去。请删短一些。',
   'compose.tooLong': '这段话太长了,发不出去。请删短一些。',
   'common.ccBusy': 'CC 还在忙这件事,等这一轮做完再说。',
+  'push.placeholderTitle': 'CC',
+  'push.placeholder': 'CC 有新动态',
 }
 
 export default zh
