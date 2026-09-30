@@ -27,46 +27,67 @@ export function makePhoneNotifier(deps: {
     const online = deps.subscribedDevices()
     for (const id of deps.push.registered()) {
       if (online.has(id)) continue
-      if (!deps.push.notify(id, p)) deps.log('PUSH', `notify ${p.kind} → ${id} not sent (relay offline / unregistered)`)
+      try {
+        if (!deps.push.notify(id, p)) deps.log('PUSH', `notify ${p.kind} → ${id} not sent (relay offline / unregistered)`)
+      } catch (e) {
+        deps.log('PUSH', `notify ${p.kind} → ${id} threw: ${e instanceof Error ? e.message : String(e)}`)
+      }
     }
   }
 
+  // 一条事件失败不连累其余;整个 fanout(registered / subscribedDevices 抛)也不许冒出去。
+  function safeFanout(mk: () => PushPayload | null): void {
+    try { const p = mk(); if (p) fanout(p) } catch (e) { deps.log('PUSH', `fanout threw: ${e instanceof Error ? e.message : String(e)}`) }
+  }
+
   function onApprovals(data: unknown): void {
-    const list = Array.isArray(data) ? data as ApprovalSummary[] : []
+    const list = (Array.isArray(data) ? data : []).filter((a): a is ApprovalSummary =>
+      !!a && typeof a === 'object' && typeof (a as ApprovalSummary).taskId === 'string' && typeof (a as ApprovalSummary).id === 'string'
+      && ((a as ApprovalSummary).kind === 'permission' || (a as ApprovalSummary).kind === 'question'))
     const keys = new Map(list.map(a => [`${a.taskId}:${a.kind}:${a.id}`, a]))
     const prev = approvalsSeen
     approvalsSeen = new Set(keys.keys())
     if (!prev) return
     for (const [k, a] of keys) {
       if (prev.has(k)) continue
-      const title = deps.taskInfo(a.taskId)?.title ?? ''
-      fanout({
-        kind: a.kind,
-        title: a.kind === 'permission' ? '需要你批准' : 'CC 有问题问你',
-        body: title ? `${title}:${a.summary}` : a.summary,
-        taskId: a.taskId,
+      safeFanout(() => {
+        const title = deps.taskInfo(a.taskId)?.title ?? ''
+        return {
+          kind: a.kind,
+          title: a.kind === 'permission' ? '需要你批准' : 'CC 有问题问你',
+          body: title ? `${title}:${a.summary}` : a.summary,
+          taskId: a.taskId,
+        }
       })
     }
   }
 
   function onAgents(data: unknown): void {
-    const tasks = (data as AgentsSnap | null)?.tasks ?? []
+    const raw = (data as AgentsSnap | null)?.tasks
+    const tasks = (Array.isArray(raw) ? raw : []).filter(t => !!t && typeof t === 'object' && typeof t.id === 'string')
     const cur = new Map(tasks.map(t => [t.id, { title: t.title, phase: t.phase }]))
     const prev = agentsPrev
     agentsPrev = cur
     if (!prev) return
     for (const [id, t] of cur) {
       const was = prev.get(id)?.phase
-      if (t.phase === 'replied' && (was === 'working' || was === 'queued')) fanout({ kind: 'task_done', title: '做完了', body: t.title, taskId: id })
-      else if ((t.phase === 'failed' || t.phase === 'interrupted') && was !== t.phase) fanout({ kind: 'task_failed', title: '没做成', body: t.title, taskId: id })
+      if (t.phase === 'replied' && (was === 'working' || was === 'queued')) safeFanout(() => ({ kind: 'task_done', title: '做完了', body: t.title, taskId: id }))
+      else if ((t.phase === 'failed' || t.phase === 'interrupted') && was !== t.phase) safeFanout(() => ({ kind: 'task_failed', title: '没做成', body: t.title, taskId: id }))
     }
     for (const [id, was] of prev) {
       if (cur.has(id)) continue
-      const info = deps.taskInfo(id)
-      if (!info) continue
-      if (info.status === 'completed' && was.phase !== 'replied') fanout({ kind: 'task_done', title: '做完了', body: info.title, taskId: id })
-      else if (info.status === 'failed' || info.status === 'interrupted') fanout({ kind: 'task_failed', title: '没做成', body: info.title, taskId: id })
+      safeFanout(() => {
+        const info = deps.taskInfo(id)
+        if (!info) return null
+        if (info.status === 'completed' && was.phase !== 'replied') return { kind: 'task_done', title: '做完了', body: info.title, taskId: id }
+        if (info.status === 'failed' || info.status === 'interrupted') return { kind: 'task_failed', title: '没做成', body: info.title, taskId: id }
+        return null
+      })
     }
+  }
+
+  function guard(topic: string, f: () => void): void {
+    try { f() } catch (e) { deps.log('PUSH', `${topic} handler threw: ${e instanceof Error ? e.message : String(e)}`) }
   }
 
   function stop(): void {
@@ -81,8 +102,8 @@ export function makePhoneNotifier(deps: {
       const want = deps.push.registered().length > 0
       if (want && offs.length === 0) {
         offs = [
-          deps.events.subscribe('approvals', undefined, ev => onApprovals(ev.data)),
-          deps.events.subscribe('agents', undefined, ev => onAgents(ev.data)),
+          deps.events.subscribe('approvals', undefined, ev => guard('approvals', () => onApprovals(ev.data))),
+          deps.events.subscribe('agents', undefined, ev => guard('agents', () => onAgents(ev.data))),
         ]
       } else if (!want && offs.length > 0) {
         stop()

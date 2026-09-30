@@ -1,18 +1,18 @@
 import { describe, it, expect, vi } from 'vitest'
 import { makePhoneNotifier } from './phone-notifier'
 
-function harness(opts: { registered?: string[]; online?: string[]; tasks?: Record<string, { title: string; status: string }> } = {}) {
+function harness(opts: { registered?: string[]; online?: string[]; tasks?: Record<string, { title: string; status: string }>; throwTask?: string; notifyThrowsFor?: string } = {}) {
   const handlers = new Map<string, (ev: { epoch: string; seq: number; data: unknown }) => void>()
   const unsubs: string[] = []
   const events = {
     subscribe: vi.fn((topic: string, _since: unknown, send: (ev: any) => void) => { handlers.set(topic, send); return () => { unsubs.push(topic); handlers.delete(topic) } }),
   }
   let registered = opts.registered ?? ['dev1', 'dev2']
-  const notify = vi.fn((_id: string, _p: unknown) => true)
+  const notify = vi.fn((id: string, _p: unknown) => { if (id === opts.notifyThrowsFor) throw new Error('down'); return true })
   const n = makePhoneNotifier({
     events, push: { registered: () => registered, notify },
     subscribedDevices: () => new Set(opts.online ?? []),
-    taskInfo: (id) => opts.tasks?.[id] ?? null,
+    taskInfo: (id) => { if (opts.throwTask === id) throw new Error('boom'); return opts.tasks?.[id] ?? null },
     log: () => {},
   })
   let seq = 0
@@ -70,5 +70,37 @@ describe('phone-notifier', () => {
     h.emit('approvals', [])
     h.emit('approvals', [{ taskId: 'x', kind: 'permission', id: 'p', summary: 's' }])
     expect(h.notify).not.toHaveBeenCalled()
+  })
+
+  it('taskInfo 抛错:handler 不抛,后续新事件照推', () => {
+    const h = harness({ registered: ['dev1'], throwTask: 'bad', tasks: { good: { title: 'G', status: 'running' } } })
+    h.n.refresh()
+    h.emit('approvals', [])
+    expect(() => h.emit('approvals', [{ taskId: 'bad', kind: 'permission', id: 'p', summary: 's' }])).not.toThrow()
+    h.emit('approvals', [{ taskId: 'good', kind: 'permission', id: 'p2', summary: 's2' }])
+    expect(h.notify).toHaveBeenCalledTimes(1)
+    expect(h.notify).toHaveBeenCalledWith('dev1', expect.objectContaining({ taskId: 'good' }))
+  })
+
+  it('畸形数据(null 元素 / 非数组)不抛,后续合法事件照推', () => {
+    const h = harness({ registered: ['dev1'] })
+    h.n.refresh()
+    expect(() => h.emit('approvals', [])).not.toThrow()
+    expect(() => h.emit('approvals', [null, 3, { taskId: 'x' }])).not.toThrow()
+    expect(() => h.emit('approvals', 'nope')).not.toThrow()
+    expect(() => h.emit('agents', { tasks: 'x' })).not.toThrow()
+    expect(() => h.emit('agents', null)).not.toThrow()
+    expect(() => h.emit('agents', { tasks: [null, { id: 't', title: 'T', phase: 'working' }] })).not.toThrow()
+    h.emit('agents', { tasks: [{ id: 't', title: 'T', phase: 'replied' }] })
+    h.emit('approvals', [{ taskId: 'y', kind: 'permission', id: 'p', summary: 's' }])
+    expect(h.notify.mock.calls.map(c => (c[1] as any).kind).sort()).toEqual(['permission', 'task_done'])
+  })
+
+  it('一台设备 notify 抛错,另一台照样收到', () => {
+    const h = harness({ registered: ['dev1', 'dev2'], notifyThrowsFor: 'dev1' })
+    h.n.refresh()
+    h.emit('approvals', [])
+    expect(() => h.emit('approvals', [{ taskId: 'x', kind: 'permission', id: 'p', summary: 's' }])).not.toThrow()
+    expect(h.notify.mock.calls.map(c => c[0])).toEqual(['dev1', 'dev2'])
   })
 })
