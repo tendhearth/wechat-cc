@@ -13,9 +13,8 @@
     "android": {
       "package": "com.tendhearth.app",
       "adaptiveIcon": {
-        "backgroundColor": "#faf8f3",
+        "backgroundColor": "#f7ead2",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false
@@ -25,7 +24,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#faf8f3",
+          "backgroundColor": "#f7ead2",
           "dark": {
             "backgroundColor": "#221f1b"
           },
