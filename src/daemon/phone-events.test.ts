@@ -452,9 +452,37 @@ describe('makePhoneEvents', () => {
       await vi.advanceTimersByTimeAsync(1001)
       expect(log).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('timeout'))
       hang = false
+      // 那次调用永远不回:放弃期(缺省 6× 超时)过了才另起一次调用
+      await vi.advanceTimersByTimeAsync(6_000)
       hub.poke()
-      await vi.advanceTimersByTimeAsync(10)
+      await vi.advanceTimersByTimeAsync(1_010)
       expect(got).toEqual([{ v: 1 }])
+      hub.dispose()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('来源挂住期间:超时、poke、轮询都不再另起 snapshot(),复用那一次在飞的调用;它一回来就发布', async () => {
+    vi.useFakeTimers()
+    try {
+      let release: ((v: unknown) => void) | undefined
+      const snapshot = vi.fn((_t: string) => release === undefined
+        ? new Promise<unknown>(res => { release = res })
+        : Promise.resolve({ v: 'fresh' }))
+      const log = vi.fn()
+      const hub = makePhoneEvents({ sources: [{ match: t => t === 'agents', snapshot }], snapshotTimeoutMs: 1000, pollMs: 500, log })
+      const got: unknown[] = []
+      hub.subscribe('agents', undefined, ev => { got.push(ev.data) })
+      for (let i = 0; i < 4; i++) {
+        await vi.advanceTimersByTimeAsync(1001)
+        hub.poke()
+      }
+      expect(log.mock.calls.filter(c => String(c[1]).includes('timeout')).length).toBeGreaterThanOrEqual(2)
+      expect(snapshot).toHaveBeenCalledTimes(1)
+      expect(got).toEqual([])
+      release!({ v: 'late' })
+      await vi.advanceTimersByTimeAsync(1001)
+      expect(got.length).toBeGreaterThanOrEqual(1)
+      expect(got[0]).toEqual({ v: 'late' })
       hub.dispose()
     } finally { vi.useRealTimers() }
   })
