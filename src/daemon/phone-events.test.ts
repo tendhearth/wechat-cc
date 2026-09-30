@@ -173,7 +173,7 @@ describe('makePhoneEvents', () => {
     spy.mockRestore()
   })
 
-  it('轮询定时器随订阅者数量起停(用假时钟数「当前挂着的定时器数」)', () => {
+  it('轮询定时器随订阅者数量起停(用假时钟数「当前挂着的定时器数」)', async () => {
     vi.useFakeTimers()
     try {
       const source: TopicSource = { match: t => t === 'home', snapshot: async () => ({ ok: true }) }
@@ -181,6 +181,7 @@ describe('makePhoneEvents', () => {
       expect(vi.getTimerCount()).toBe(0) // 修 5:零订阅者时不该有定时器在跑
 
       const unsub = hub.subscribe('home', undefined, () => {})
+      await vi.advanceTimersByTimeAsync(0) // 让在飞的一轮快照落地(它的超时定时器随之清掉)
       expect(vi.getTimerCount()).toBe(1) // 来了一个订阅者,定时器起了
 
       unsub()
@@ -436,5 +437,25 @@ describe('makePhoneEvents', () => {
     expect(received).toHaveLength(2)
 
     hub.dispose()
+  })
+
+  it('来源永不返回 ⇒ 超时后这一轮跳过,之后的 poke 能重新算并推送', async () => {
+    vi.useFakeTimers()
+    try {
+      let hang = true
+      const value = 1
+      const src = { match: (t: string) => t === 'agents', snapshot: () => hang ? new Promise<unknown>(() => {}) : Promise.resolve({ v: value }) }
+      const log = vi.fn()
+      const hub = makePhoneEvents({ sources: [src], snapshotTimeoutMs: 1000, log })
+      const got: unknown[] = []
+      hub.subscribe('agents', undefined, ev => { got.push(ev.data) })
+      await vi.advanceTimersByTimeAsync(1001)
+      expect(log).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('timeout'))
+      hang = false
+      hub.poke()
+      await vi.advanceTimersByTimeAsync(10)
+      expect(got).toEqual([{ v: 1 }])
+      hub.dispose()
+    } finally { vi.useRealTimers() }
   })
 })

@@ -20,6 +20,9 @@
  * `recomputeTopic` 的 computing/dirty 两个标记:进行中再来一次就只标脏,轮到 finally
  * 里再补一轮,不会并发起两个 snapshot() 调用。
  *
+ * 来源超时:source.snapshot() 超过 snapshotTimeoutMs(缺省 10s)还没返回 ⇒ 当抛错处理
+ * (记日志、本轮跳过、computing 复位),永不返回的来源不会把主题永远卡在 computing。
+ *
  * 评审第一轮(2026-09-29)修的五处:
  *  1. 主题没人订阅了就把它的内部状态(TopicState)从 `topics` 表里摘掉,不然常驻
  *     daemon 里每个来过一次的 `matter/<id>` 都会永远占一份内存、每 2s 还被 poke 扫一遍。
@@ -42,6 +45,8 @@
  *     起,最后一个订阅者走了就停(还是 unref 的)。
  */
 import { randomUUID } from 'node:crypto'
+
+const DEFAULT_SNAPSHOT_TIMEOUT_MS = 10_000
 
 export interface TopicSource {
   match(topic: string): boolean
@@ -116,6 +121,8 @@ interface TopicState {
 export function makePhoneEvents(opts: {
   sources: TopicSource[]
   pollMs?: number
+  /** 单次 source.snapshot() 的超时(缺省 10s);超时按「来源抛错」处理。 */
+  snapshotTimeoutMs?: number
   now?: () => number
   log?: (tag: string, line: string) => void
 }): PhoneEvents {
@@ -123,6 +130,7 @@ export function makePhoneEvents(opts: {
   const now = opts.now ?? (() => Date.now())
   const log = opts.log ?? (() => {})
   const pollMs = opts.pollMs ?? 2000
+  const snapshotTimeoutMs = opts.snapshotTimeoutMs ?? DEFAULT_SNAPSHOT_TIMEOUT_MS
   const topics = new Map<string, TopicState>()
   let nextSubId = 1
   let disposed = false
@@ -206,8 +214,15 @@ export function makePhoneEvents(opts: {
         return
       }
       let data: unknown
+      let snapTimer: ReturnType<typeof setTimeout> | undefined
       try {
-        data = await source.snapshot(topic)
+        data = await Promise.race([
+          source.snapshot(topic),
+          new Promise<never>((_, reject) => {
+            snapTimer = setTimeout(() => reject(new Error('snapshot timeout')), snapshotTimeoutMs)
+            if (typeof snapTimer.unref === 'function') snapTimer.unref()
+          }),
+        ]).finally(() => { if (snapTimer) clearTimeout(snapTimer) })
       } catch (err) {
         if (disposed) return // 修 2
         log('phone-events', `t=${now()} 主题 ${topic} 的来源抛错,本轮跳过:${String(err)}`)
