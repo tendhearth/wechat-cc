@@ -5,9 +5,10 @@
  * 丢了私钥 = 换了一台新「电脑」:新 id,手机要重新配对。所以文件在但读不出时**抛出**而不是重生成 ——
  * 上层记一条日志、这次不连 v2,老中继照常;修文件(或主人明确删掉它)之后重启即恢复。
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { b64uDecode, b64uEncode, relayIdFromPub, relayKeyPair, signRelayLogin } from '@wechat-cc/protocol'
+import { readJsonFile } from '../lib/read-json-file'
 
 export const DEFAULT_RELAY_V2_URL = 'wss://relay.tendhearth.com'
 const FILE = 'relay-identity.json'
@@ -19,7 +20,7 @@ export interface RelayIdentity {
 
 function readSeed(path: string): Uint8Array {
   try {
-    const raw = JSON.parse(readFileSync(path, 'utf8')) as { v?: unknown; seed?: unknown }
+    const raw = readJsonFile<{ v?: unknown; seed?: unknown }>(path)
     if (raw.v === 1 && typeof raw.seed === 'string') {
       const s = b64uDecode(raw.seed)
       if (s.length === 32) return s
