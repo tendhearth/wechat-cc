@@ -14,3 +14,13 @@ export function pairErrorKey(e: PairErrorCode): MessageKey {
     default: return 'pair.errUnknown'
   }
 }
+
+/** 同步单飞闸:不等重渲染,同一帧里的第二次点击也进不来。 */
+export function makeGate() {
+  let on = false
+  return {
+    enter(): boolean { if (on) return false; on = true; return true },
+    leave(): void { on = false },
+    busy(): boolean { return on },
+  }
+}

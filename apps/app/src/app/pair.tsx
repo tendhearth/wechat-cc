@@ -1,7 +1,7 @@
 import { CameraView, useCameraPermissions } from 'expo-camera'
 import { useRouter } from 'expo-router'
 import { useEffect, useRef, useState } from 'react'
-import { Linking, Platform, ScrollView, Text, TextInput, View } from 'react-native'
+import { BackHandler, Linking, Platform, ScrollView, Text, TextInput, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t, type MessageKey } from '../i18n'
 import { useLang } from '../i18n/useLang'
@@ -17,7 +17,7 @@ import { serifFamily } from '../ui/fonts'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { useTheme } from '../ui/useTheme'
-import { linkErrorKey, pairErrorKey } from '../view/pair'
+import { linkErrorKey, makeGate, pairErrorKey } from '../view/pair'
 
 type Phase =
   | { k: 'intro' }
@@ -39,6 +39,12 @@ export default function Pair() {
   const scanned = useRef(false)
   const alive = useRef(true)
   useEffect(() => () => { alive.current = false }, [])
+  const gate = useRef(makeGate()).current
+  // 配对进行中吞掉安卓返回键;TopBar 返回在 back() 里同样忽略
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => gate.busy())
+    return () => sub.remove()
+  }, [gate])
 
   const accept = (raw: string) => {
     const r = parsePairLink(raw)
@@ -51,6 +57,7 @@ export default function Pair() {
     else setPhase({ k: 'error', key: 'pair.cameraDenied', camera: true })
   }
   const connect = async (link: ParsedLink) => {
+    if (!gate.enter()) return
     setPhase({ k: 'working', link })
     try {
       await pairAndSave(
@@ -61,9 +68,12 @@ export default function Pair() {
       router.replace('/')
     } catch (e) {
       if (alive.current) setPhase({ k: 'error', key: pairErrorKey(e instanceof PairError ? e.code : 'unknown') })
+    } finally {
+      gate.leave()
     }
   }
   const back = () => {
+    if (gate.busy()) return
     if (phase.k === 'confirm' || phase.k === 'error') { setPhase({ k: 'intro' }); return }
     if (router.canGoBack()) router.back()
     else router.replace('/welcome')
