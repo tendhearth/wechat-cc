@@ -1,0 +1,276 @@
+import { describe, it, expect } from 'vitest'
+import { PHONE_API_SCHEMAS, type ClientOpts, type ProtocolClient, type ProtocolRequest } from '@wechat-cc/protocol'
+import { makeLiveBackend } from './live'
+import type { Connection } from './types'
+import { ID, RUN, REQ, MATTER, DETAIL, OPTIONS, WB_TASK, RECEIPT, DEVICES, STATE, PROGRESS } from './fixtures'
+
+// 真 schema 的夹具在 fixtures.ts(第一条用例先证明它们本身过 PHONE_API_SCHEMAS)。
+
+type Reply = { status: number; json: unknown } | Error
+type Handler = (req: { path: string; body: any }) => Reply
+
+/** 假协议客户端:按「METHOD /path」回夹具;每次 makeClient 都是一个新客户端(模拟重连 / 前后台)。 */
+function harness(routes: Record<string, Handler | Reply> = {}) {
+  const clients: Array<{ opts: ClientOpts; subs: Map<string, (d: unknown) => void>; closed: boolean }> = []
+  const reqs: Array<{ key: string; path: string; body: any; retry?: boolean; inHook: boolean }> = []
+  /** 正在协议客户端的 onStatus 钩子里:这时回头调客户端可能开出第二条连接(Task 1 的已知坑)。 */
+  let inHook = false
+  const hookCalls: string[] = []
+  const makeClient = (opts: ClientOpts): ProtocolClient => {
+    const me = { opts, subs: new Map<string, (d: unknown) => void>(), closed: false }
+    clients.push(me)
+    return {
+      version: () => 2,
+      async request(r: ProtocolRequest) {
+        const key = `${r.method} ${r.path.split('?')[0]}`
+        const body = typeof r.body === 'string' ? JSON.parse(r.body) : undefined
+        reqs.push({ key, path: r.path, body, retry: r.retry, inHook })
+        if (inHook) hookCalls.push(`request ${key}`)
+        const h = routes[key]
+        const out = typeof h === 'function' ? h({ path: r.path, body }) : h
+        if (!out) throw new Error('timeout')
+        if (out instanceof Error) throw out
+        const text = JSON.stringify(out.json)
+        return { status: out.status, headers: {}, body: new TextEncoder().encode(text), text: () => text, json: <T,>() => JSON.parse(text) as T }
+      },
+      subscribe(topic, cb) { if (inHook) hookCalls.push(`subscribe ${topic}`); me.subs.set(topic, d => cb(d, { epoch: 'e', seq: 1 })); return () => { me.subs.delete(topic) } },
+      close() { if (inHook) hookCalls.push('close'); me.closed = true },
+    }
+  }
+  const last = () => clients.at(-1)!
+  const logs: string[] = []
+  const b = makeLiveBackend({ open: () => { throw new Error('unused') }, token: 'd-secret-token', makeClient, now: () => 1_000_000, uuid: () => REQ, log: l => logs.push(l) })
+  const status = (s: 'connecting' | 'ready' | 'down' | 'auth_failed') => {
+    inHook = true
+    try { last().opts.onStatus?.(s) } finally { inHook = false }
+  }
+  return { b, clients, last, reqs, logs, hookCalls, status }
+}
+const ok = (json: unknown, status = 200): Reply => ({ status, json })
+
+describe('夹具本身是真形状', () => {
+  it.each([
+    ['GET /m/api/matters', { ok: true, matters: [MATTER] }],
+    ['GET /m/api/matter', { ok: true, ...DETAIL }],
+    ['GET /m/api/matter/insight', { ok: true, explanations: {}, progress: PROGRESS }],
+    ['GET /m/api/matter/changes', { ok: true, turn: null }],
+    ['GET /m/api/entry/options', { ok: true, ...OPTIONS }],
+    ['POST /m/api/matter/create', { ok: true, receipt: RECEIPT, task: WB_TASK }],
+    ['GET /set/api/state', STATE],
+  ])('%s', (key, json) => { expect(PHONE_API_SCHEMAS[key]!.safeParse(json).success).toBe(true) })
+})
+
+describe('LiveBackend 读', () => {
+  it('列表 / 详情 / 说明(带 lang)/ 改动 / 交办选项:路径对、返回去掉 ok', async () => {
+    const { b, reqs } = harness({
+      'GET /m/api/matters': ok({ ok: true, matters: [MATTER] }),
+      'GET /m/api/matter': ok({ ok: true, ...DETAIL }),
+      'GET /m/api/matter/insight': ok({ ok: true, explanations: {}, progress: PROGRESS }),
+      'GET /m/api/matter/changes': ok({ ok: true, turn: null }),
+      'GET /m/api/entry/options': ok({ ok: true, ...OPTIONS }),
+    })
+    expect(await b.matters('en')).toEqual([MATTER])
+    expect(await b.matter(ID, 'en')).toEqual(DETAIL)
+    expect(await b.insight(ID, 'zh-Hans')).toEqual({ explanations: {}, progress: PROGRESS })
+    expect(await b.changes(ID)).toBeNull()
+    expect(await b.entryOptions('en')).toEqual(OPTIONS)
+    expect(reqs.map(r => r.path)).toEqual(['/m/api/matters', `/m/api/matter?id=${ID}`, `/m/api/matter/insight?id=${ID}&lang=zh-Hans`, `/m/api/matter/changes?id=${ID}`, '/m/api/entry/options'])
+  })
+  it('返回不合 schema ⇒ BackendError(unknown),记日志(不含令牌)', async () => {
+    const { b, logs } = harness({ 'GET /m/api/matters': ok({ ok: true, matters: [{ id: 1 }] }) })
+    await expect(b.matters('en')).rejects.toMatchObject({ code: 'unknown' })
+    expect(logs.join('\n')).toContain('GET /m/api/matters')
+    expect(logs.join('\n')).not.toContain('d-secret-token')
+  })
+  it('成功的读更新最近同步时间', async () => {
+    const { b } = harness({ 'GET /m/api/matters': ok({ ok: true, matters: [] }) })
+    expect(b.connection().lastSyncedAt).toBeNull()
+    await b.matters('en')
+    expect(b.connection().lastSyncedAt).toBe(1_000_000)
+  })
+  it('传输错误:daemon_offline ⇒ offline;timeout ⇒ timeout', async () => {
+    const h = harness({ 'GET /m/api/matters': new Error('daemon_offline'), 'GET /m/api/matter': new Error('timeout') })
+    await expect(h.b.matters('en')).rejects.toMatchObject({ code: 'offline' })
+    await expect(h.b.matter(ID, 'en')).rejects.toMatchObject({ code: 'timeout' })
+  })
+})
+
+describe('LiveBackend 提交', () => {
+  it('批准:正文形状对、不自动重试;已被处理 ⇒ stale', async () => {
+    let n = 0
+    const { b, reqs } = harness({ 'POST /m/api/matter/permission': () => (n++ === 0 ? ok({ ok: true }) : ok({ ok: false, error: 'permission_stale' }, 409)) })
+    const p = { id: ID, runId: RUN, requestId: REQ, decision: 'allow' as const }
+    await b.decide(p)
+    await expect(b.decide(p)).rejects.toMatchObject({ code: 'stale' })
+    expect(reqs[0]).toMatchObject({ body: p, retry: undefined })
+  })
+  it('回答:JSON 超过 20 000 字 ⇒ invalid,请求根本不发', async () => {
+    const { b, reqs } = harness({ 'POST /m/api/matter/answer': ok({ ok: true }) })
+    await expect(b.answer({ id: ID, runId: RUN, requestId: REQ, answers: { q: ['x'.repeat(20_000)] } })).rejects.toMatchObject({ code: 'invalid' })
+    expect(reqs).toHaveLength(0)
+    await b.answer({ id: ID, runId: RUN, requestId: REQ, answers: { q: ['short'] } })
+    expect(reqs[0]?.body).toEqual({ id: ID, runId: RUN, requestId: REQ, answers: { q: ['short'] } })
+  })
+  it('说一句:带 uuid requestId、可重试;超长 ⇒ invalid 不发', async () => {
+    const { b, reqs } = harness({ 'POST /m/api/matter/say': ok({ ok: true, result: { kind: 'chat', reply: 'ok' } }) })
+    await b.say(ID, 'hi')
+    expect(reqs[0]).toMatchObject({ body: { id: ID, text: 'hi', requestId: REQ }, retry: true })
+    await expect(b.say(ID, 'x'.repeat(20_001))).rejects.toMatchObject({ code: 'invalid' })
+    expect(reqs).toHaveLength(1)
+  })
+  it('交办:有项目 ⇒ target project;没有 ⇒ managed;返回回执里的 matterId', async () => {
+    const { b, reqs } = harness({ 'POST /m/api/matter/create': ok({ ok: true, receipt: RECEIPT, task: WB_TASK }, 202) })
+    expect(await b.create({ requestId: REQ, text: 't', projectId: 'p-0123456789abcdef0123', providerId: 'claude' })).toEqual({ matterId: ID })
+    await b.create({ requestId: REQ, text: 't' })
+    expect(reqs[0]).toMatchObject({ retry: true, body: { requestId: REQ, text: 't', target: { kind: 'project', projectId: 'p-0123456789abcdef0123' }, providerId: 'claude' } })
+    expect(reqs[1]?.body.target).toEqual({ kind: 'managed' })
+  })
+  it('交办超时 ⇒ 按 requestId 查一次回执:查到当成功,查不到仍是 timeout', async () => {
+    const found = harness({ 'POST /m/api/matter/create': new Error('timeout'), 'GET /m/api/matter/create-receipt': ok({ ok: true, receipt: RECEIPT, task: WB_TASK }) })
+    expect(await found.b.create({ requestId: REQ, text: 't' })).toEqual({ matterId: ID })
+    expect(found.reqs[1]?.path).toBe(`/m/api/matter/create-receipt?requestId=${REQ}`)
+    const missing = harness({ 'POST /m/api/matter/create': new Error('timeout'), 'GET /m/api/matter/create-receipt': ok({ ok: false, error: 'matter_not_found' }, 404) })
+    await expect(missing.b.create({ requestId: REQ, text: 't' })).rejects.toMatchObject({ code: 'timeout' })
+  })
+})
+
+describe('LiveBackend 撤销', () => {
+  it('提交途中被撤销(auth_failed)⇒ 这次是 revoked,连接变 revoked,客户端关掉,之后一条请求都不发', async () => {
+    const h = harness({ 'POST /m/api/matter/permission': new Error('auth_failed') })
+    await expect(h.b.decide({ id: ID, runId: RUN, requestId: REQ, decision: 'allow' })).rejects.toMatchObject({ code: 'revoked' })
+    expect(h.b.connection().state).toBe('revoked')
+    expect(h.last().closed).toBe(true)
+    const n = h.reqs.length
+    await expect(h.b.matters('en')).rejects.toMatchObject({ code: 'revoked' })
+    await expect(h.b.say(ID, 'x')).rejects.toMatchObject({ code: 'revoked' })
+    expect(h.reqs.length).toBe(n)
+  })
+  it('协议客户端报 auth_failed 状态 ⇒ revoked;HTTP 401 ⇒ revoked', async () => {
+    const a = harness()
+    a.status('auth_failed')
+    expect(a.b.connection().state).toBe('revoked')
+    const c = harness({ 'GET /m/api/matters': ok({ error: 'unauthorized' }, 401) })
+    await expect(c.b.matters('en')).rejects.toMatchObject({ code: 'revoked' })
+    expect(c.b.connection().state).toBe('revoked')
+  })
+  it('revoked 之后 setActive(true) 不再连', () => {
+    const h = harness()
+    h.status('auth_failed')
+    const n = h.clients.length
+    h.b.setActive(false); h.b.setActive(true)
+    expect(h.clients.length).toBe(n)
+  })
+})
+
+describe('LiveBackend 连接与订阅', () => {
+  it('onConnection 立刻回调当前值;ready ⇒ online epoch 1;down ⇒ offline', () => {
+    const h = harness()
+    const seen: Connection[] = []
+    h.b.onConnection(c => seen.push(c))
+    expect(seen[0]?.state).toBe('connecting')
+    h.status('ready'); h.status('down')
+    expect(seen.map(c => c.state)).toEqual(['connecting', 'online', 'offline'])
+    expect(seen[1]?.epoch).toBe(1)
+  })
+  it('构造即常驻订阅 approvals(让协议客户端一直连着,状态机才知道电脑在不在)', () => {
+    const h = harness()
+    expect([...h.last().subs.keys()]).toEqual(['approvals'])
+  })
+  it('主题事件过 schema 才转交;坏的丢掉;后来的订阅者立刻拿到最近一份', () => {
+    const h = harness()
+    const got: unknown[] = []
+    h.b.subscribe('agents', d => got.push(d))
+    h.last().subs.get('agents')!({ running: 'many' })
+    h.last().subs.get('agents')!({ running: 1, waiting: 0, tasks: [] })
+    expect(got).toEqual([{ running: 1, waiting: 0, tasks: [] }])
+    const late: unknown[] = []
+    h.b.subscribe('agents', d => late.push(d))
+    expect(late).toEqual([{ running: 1, waiting: 0, tasks: [] }])
+  })
+  it('最后一个订阅者退订 ⇒ 退订协议客户端;常驻的 approvals 不退', () => {
+    const h = harness()
+    const off1 = h.b.subscribe('agents', () => {}), off2 = h.b.subscribe('approvals', () => {})
+    off1(); off2()
+    expect([...h.last().subs.keys()]).toEqual(['approvals'])
+  })
+  it('后台 setActive(false) 关连接;回前台 setActive(true) 新客户端、全部主题重挂、旧客户端的状态被忽略', () => {
+    const h = harness()
+    h.b.subscribe('agents', () => {})
+    const first = h.last()
+    h.b.setActive(false)
+    expect(first.closed).toBe(true)
+    h.b.setActive(true)
+    expect(h.clients.length).toBe(2)
+    expect([...h.last().subs.keys()].sort()).toEqual(['agents', 'approvals'])
+    first.opts.onStatus?.('down')
+    expect(h.b.connection().state).toBe('connecting')
+    h.status('ready')
+    expect(h.b.connection()).toMatchObject({ state: 'online', epoch: 1 })
+  })
+  it('重连只重挂订阅,不重发任何提交(之前一句成功、一句超时,重连后都不会被自动重发)', async () => {
+    let n = 0
+    const h = harness({ 'POST /m/api/matter/say': () => (n++ === 0 ? ok({ ok: true, result: { kind: 'chat', reply: 'ok' } }) : new Error('timeout')) })
+    h.status('ready')
+    await h.b.say(ID, 'first')
+    await expect(h.b.say(ID, 'second')).rejects.toMatchObject({ code: 'timeout' })
+    const posts = () => h.reqs.filter(r => r.key.startsWith('POST')).length
+    expect(posts()).toBe(2)
+    h.status('down')
+    h.b.setActive(false); h.b.setActive(true); h.status('ready')
+    await new Promise(r => setTimeout(r, 0))
+    expect(h.b.connection()).toMatchObject({ state: 'online', epoch: 2 })
+    expect(posts()).toBe(2)
+    expect(h.clients).toHaveLength(2)
+  })
+  it('onStatus 钩子里从不同步回调协议客户端:监听者在钩子里读 / 订阅,推到微任务之后才发', async () => {
+    const h = harness({ 'GET /m/api/matters': ok({ ok: true, matters: [] }) })
+    const reads: Array<Promise<unknown>> = []
+    let prev = h.b.connection().state
+    h.b.onConnection(c => {
+      const changed = c.state !== prev
+      prev = c.state
+      if (changed && (c.state === 'online' || c.state === 'offline')) {
+        reads.push(h.b.matters('en').catch(() => null))
+        h.b.subscribe(`matter/${ID}`, () => {})
+      }
+    })
+    h.status('ready')
+    h.status('down')
+    h.status('connecting')
+    expect(h.hookCalls).toEqual([])
+    await Promise.all(reads)
+    await new Promise(r => setTimeout(r, 0))
+    expect(h.hookCalls).toEqual([])
+    expect(h.reqs.filter(r => r.key === 'GET /m/api/matters')).toHaveLength(2)
+    expect([...h.last().subs.keys()].sort()).toEqual(['approvals', `matter/${ID}`])
+  })
+  it('钩子报 auth_failed:状态立刻 revoked,关客户端推到钩子之后', async () => {
+    const h = harness()
+    h.status('auth_failed')
+    expect(h.b.connection().state).toBe('revoked')
+    expect(h.hookCalls).toEqual([])
+    await Promise.resolve()
+    expect(h.last().closed).toBe(true)
+    expect(h.hookCalls).toEqual([])
+  })
+})
+
+describe('LiveBackend 设备', () => {
+  it('列表来自 /set/api/state;给本机改名用 current 那台的 id', async () => {
+    const { b, reqs } = harness({ 'GET /set/api/state': ok(STATE), 'POST /set/api/apply': ok({ ok: true }) })
+    expect(await b.devices()).toEqual(DEVICES)
+    await b.renameDevice('My phone')
+    expect(reqs.at(-1)?.body).toEqual({ op: 'label_device', id: 'aa11bb22', label: 'My phone' })
+  })
+  it('改名被拒(ok:false invalid_value)⇒ invalid', async () => {
+    const { b } = harness({ 'GET /set/api/state': ok(STATE), 'POST /set/api/apply': ok({ ok: false, error: 'invalid_value' }) })
+    await expect(b.renameDevice('')).rejects.toMatchObject({ code: 'invalid' })
+  })
+  it('解除配对:发 unpair_self,成功后关连接', async () => {
+    const h = harness({ 'POST /set/api/apply': ok({ ok: true }) })
+    await h.b.unpair()
+    expect(h.reqs[0]?.body).toEqual({ op: 'unpair_self' })
+    expect(h.last().closed).toBe(true)
+    await expect(h.b.matters('en')).rejects.toMatchObject({ code: 'offline' })
+  })
+})
