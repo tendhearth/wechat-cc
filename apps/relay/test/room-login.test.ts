@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { env, runDurableObjectAlarm, SELF } from 'cloudflare:test'
 import { signRelayLogin } from '@wechat-cc/protocol'
 import { expiredLogins } from '../src/room'
-import { connectDaemon, newIdentity, openDaemonSocket } from './helpers'
+import { connectDaemon, connectPhone, newIdentity, openDaemonSocket } from './helpers'
 
 describe('房间:daemon 登录', () => {
   it('升级回包带选中的子协议;先发挑战,签对了回 login_ok', async () => {
@@ -52,5 +52,21 @@ describe('房间:daemon 登录', () => {
     expect(expiredLogins([a], 9_999, 10_000)).toEqual([])
     expect(expiredLogins([a], 10_000, 10_000)).toEqual([a])
     expect(expiredLogins([{ ...a, authed: true }], 99_999, 10_000)).toEqual([])
+  })
+
+  it('未登录 socket 每房间最多 4 条:第 5 条 login_failed(4001),已认证 daemon 不受影响', async () => {
+    const d = await connectDaemon()
+    const pending = []
+    for (let i = 0; i < 4; i++) {
+      const s = await openDaemonSocket(d.ident.id)
+      expect(await s.next()).toHaveProperty('challenge')
+      pending.push(s)
+    }
+    const fifth = await openDaemonSocket(d.ident.id)
+    expect(await fifth.next()).toEqual({ error: 'login_failed' })
+    expect(await fifth.closed).toBe(4001)
+    const p = await connectPhone(d.ident.id)
+    p.ws.send(JSON.stringify({ hs: 'z' }))
+    expect(await d.next()).toMatchObject({ frame: { hs: 'z' } })
   })
 })

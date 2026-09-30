@@ -8,6 +8,7 @@ export const LIMITS = {
   dailyBytes: 1_000_000_000,
   loginTimeoutMs: 10_000,
   maxPushRegistrations: 20,
+  maxPendingLogins: 4,
 }
 export type Limits = typeof LIMITS
 
