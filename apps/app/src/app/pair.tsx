@@ -1,5 +1,5 @@
 import { CameraView, useCameraPermissions } from 'expo-camera'
-import { useRouter } from 'expo-router'
+import { Stack, useRouter } from 'expo-router'
 import { useEffect, useRef, useState } from 'react'
 import { BackHandler, Linking, Platform, ScrollView, Text, TextInput, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
@@ -82,6 +82,7 @@ export default function Pair() {
   if (phase.k === 'scan') {
     return (
       <View testID="pair-camera" style={{ flex: 1, backgroundColor: '#000' }}>
+        <Stack.Screen options={{ gestureEnabled: true }} />
         <CameraView
           style={{ flex: 1 }}
           facing="back"
@@ -98,6 +99,8 @@ export default function Pair() {
   const steps = ['pair.step1', 'pair.step2', 'pair.step3'] as const
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
+      {/* 配对进行中关掉 iOS 侧滑返回(安卓返回键由 BackHandler 吞掉) */}
+      <Stack.Screen options={{ gestureEnabled: phase.k !== 'working' }} />
       <TopBar onBack={back} connection="offline" showConnection={false} onAvatar={() => router.push('/settings')} />
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.xl, gap: space.l }}>
         <View style={{ alignItems: 'center' }}><CCFigure size={120} /></View>
