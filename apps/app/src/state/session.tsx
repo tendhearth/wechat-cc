@@ -6,6 +6,7 @@ import { LangOverrideCtx } from '../i18n/useLang'
 type Session = {
   seenWelcome: boolean
   markWelcomeSeen(): void
+  setSeenWelcome(v: boolean): void
   langOverride: Lang | null
   setLangOverride(l: Lang | null): void
 }
@@ -16,7 +17,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [seenWelcome, setSeen] = useState(false)
   const [langOverride, setLangOverride] = useState<Lang | null>(null)
   const value = useMemo<Session>(
-    () => ({ seenWelcome, markWelcomeSeen: () => setSeen(true), langOverride, setLangOverride }),
+    () => ({ seenWelcome, markWelcomeSeen: () => setSeen(true), setSeenWelcome: setSeen, langOverride, setLangOverride }),
     [seenWelcome, langOverride],
   )
   return (

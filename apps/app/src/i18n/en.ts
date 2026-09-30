@@ -109,6 +109,23 @@ const en = {
   'progress.loadFailed': 'Couldn’t load this task.',
   'progress.notReviewed': "No diff shown for this file.",
   'progress.summaryUnavailable': "Couldn’t get the summary right now. Tap to retry.",
+  'compose.noImage': "Image attachments arrive in the next version.",
+  'compose.ccArranges': "CC picks the agent",
+  'compose.adjustTitle': "Where to work",
+  'compose.project': "Project",
+  'compose.executor': "Agent",
+  'compose.continueHint': "Say one more thing",
+  'compose.done': "Done",
+  'compose.failed': "This didn’t reach your computer. Please try again in a moment.",
+  'compose.sending': "Sending…",
+  'pair.step1': "Open Tendhearth on your computer",
+  'pair.step2': "Choose “Use on phone”",
+  'pair.step3': "Scan the code with this phone",
+  'settings.languageEn': "English",
+  'settings.languageZh': "简体中文",
+  'settings.demoBody': "You’re in the design preview. Everything here is an example; leaving takes you back to the start.",
+  'settings.version': "Version",
+  'settings.company': "Nate Gu & Co.",
 } as const
 
 export default en

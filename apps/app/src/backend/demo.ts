@@ -6,9 +6,9 @@ type Topic = 'home' | 'approvals' | 'agents' | `matter/${string}`
 type Entry = { detail: MatterDetailT; stage: Stage; version: number }
 const DAY = 86_400_000
 
-export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof setTimeout; lang?: Lang } = {}): Backend & { reset(): void } {
+export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof setTimeout; lang?: Lang } = {}): Backend & { reset(): void; setLang(l: Lang): void } {
   const now = opts.now ?? (() => Date.now())
-  const lang: Lang = opts.lang ?? 'en'
+  let lang: Lang = opts.lang ?? 'en' // setLang 只改之后生成的文案,不动已有状态
   const schedule = (fn: () => void, ms: number) => (opts.setTimeout ?? globalThis.setTimeout)(fn, ms)
 
   let entries = new Map<string, Entry>()
@@ -170,6 +170,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       later(2000, () => { ev(e, 'assistant', t(lang, 'created')); e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([matterId]) })
       return { matterId }
     },
+    setLang(l) { if (l === lang) return; lang = l; publish([...order]) },
     reset() { epoch++; seq = 0; seed(); publish([...order]) },
   }
 }

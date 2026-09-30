@@ -97,4 +97,12 @@ describe('演示后端', () => {
     expect(() => ApprovalExplanation.parse(ins.explanations['perm-demo-1'])).not.toThrow()
     expect(() => ProgressSummary.parse(ins.progress)).not.toThrow()
   })
+  it('换语言不重建:已做的决定保留', async () => {
+    const b = makeDemoBackend({ lang: 'en' })
+    const runId = (await b.matter('a1b2c3d4')).runId!
+    await b.decide({ id: 'a1b2c3d4', runId, requestId: 'perm-demo-1', decision: 'deny' })
+    b.setLang('zh-Hans')
+    expect((await b.matter('a1b2c3d4')).permissions.length).toBe(0)
+    expect((await b.matters()).length).toBe(3)
+  })
 })

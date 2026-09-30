@@ -111,6 +111,23 @@ const zh: Record<keyof typeof en, string> = {
   'progress.loadFailed': '这件事没能加载。',
   'progress.notReviewed': "这份文件没有展开差异。",
   'progress.summaryUnavailable': "暂时拿不到概括，点一下重试。",
+  'compose.noImage': '图片附件下一版支持。',
+  'compose.ccArranges': 'CC 安排执行',
+  'compose.adjustTitle': '在哪里做',
+  'compose.project': '项目',
+  'compose.executor': '执行者',
+  'compose.continueHint': '接着说一句',
+  'compose.done': '完成',
+  'compose.failed': '没有送到电脑上，请稍后再试。',
+  'compose.sending': '正在发送…',
+  'pair.step1': '打开电脑上的 Tendhearth',
+  'pair.step2': '选择「手机上用」',
+  'pair.step3': '用这台手机扫描二维码',
+  'settings.languageEn': 'English',
+  'settings.languageZh': '简体中文',
+  'settings.demoBody': '你正在体验设计样稿。这里的一切都是示例，退出后回到起点。',
+  'settings.version': '版本',
+  'settings.company': 'Nate Gu & Co.',
 }
 
 export default zh
