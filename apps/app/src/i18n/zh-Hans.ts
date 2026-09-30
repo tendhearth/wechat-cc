@@ -126,6 +126,8 @@ const zh: Record<keyof typeof en, string> = {
   'settings.unpairConfirmTitle': '解除配对?',
   'settings.unpairConfirmBody': '这台手机将不再连到你的电脑。之后随时可以重新配对。',
   'settings.unpairLocalOnly': '这台手机已经忘掉配对,但没连上电脑。回家后请在电脑的设备列表里把它移除。',
+  'settings.unpairNeutral': '这台手机已经忘掉配对。如果电脑上还列着它,请在电脑上移除。',
+  'settings.unpairFailed': '这台手机没能清掉配对信息。再试一次。',
   'settings.pairNow': '和我的电脑配对',
   'settings.privacy': '隐私',
   'settings.privacyBody': '打开此刻、进展或批准页时，待批准的命令文本和任务的进展事件会从你自己的电脑发给那里配置的便宜模型服务商，写成通俗的话。其余内容都加密传输，只在这台手机和你的电脑之间。',

@@ -124,6 +124,8 @@ const en = {
   'settings.unpairConfirmTitle': 'Unpair this phone?',
   'settings.unpairConfirmBody': 'This phone will stop reaching your computer. You can pair again any time.',
   'settings.unpairLocalOnly': 'This phone forgot the pairing, but your computer couldn’t be reached. Remove it from the device list on your computer when you’re home.',
+  'settings.unpairNeutral': 'This phone forgot the pairing. If it still appears on your computer, remove it there.',
+  'settings.unpairFailed': 'Couldn’t remove the pairing from this phone. Try again.',
   'settings.pairNow': 'Pair with my computer',
   'settings.privacy': 'Privacy',
   'settings.privacyBody': "When the Now, progress or approval pages load, the command text of pending approvals and the task’s progress events are sent — from your own computer — to the cheap model provider configured there, to put them in plain words. Everything else travels encrypted, only between this phone and your computer.",
