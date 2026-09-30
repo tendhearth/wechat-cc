@@ -30,6 +30,7 @@ jobs:
     outputs:
       desktop: ${{ steps.filter.outputs.desktop }}
       relay: ${{ steps.filter.outputs.relay }}
+      app: ${{ steps.filter.outputs.app }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -42,6 +43,9 @@ jobs:
               - 'apps/relay/**'
               - 'packages/protocol/**'
               - 'relay/pset.src.html'
+            app:
+              - 'apps/app/**'
+              - 'packages/protocol/**'
 
   build:
     name: build · ${{ matrix.os }}
@@ -169,6 +173,28 @@ jobs:
       - name: End-to-end (local workerd + daemon modules)
         working-directory: apps/relay
         run: bun run test:e2e
+
+  # Tendhearth 手机 app(apps/app,Expo)。只做类型检查、纯逻辑测试与 JS 打包检查;原生构建走 EAS,不进每次 CI。
+  app:
+    name: app · expo
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: Typecheck
+        working-directory: apps/app
+        run: bun run typecheck
+      - name: Unit
+        working-directory: apps/app
+        run: bun run test
+      - name: Bundle check
+        working-directory: apps/app
+        run: bun run export:check
 
   e2e:
     # Heavy suite — skip on direct dev pushes; still runs on master pushes and

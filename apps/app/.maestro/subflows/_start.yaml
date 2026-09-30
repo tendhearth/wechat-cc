@@ -1,0 +1,14 @@
+# 共用开头:干净状态启动,收掉开发构建可能弹的系统框「Open in "Tendhearth"?」,等到欢迎页。
+appId: com.tendhearth.app
+---
+- launchApp:
+    clearState: true
+- runFlow:
+    when:
+      visible: "Open in “Tendhearth”\\?"
+    commands:
+      - tapOn: "Cancel"
+- extendedWaitUntil:
+    visible:
+      id: welcome-look-first
+    timeout: 30000

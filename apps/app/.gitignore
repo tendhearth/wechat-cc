@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+.expo-export-check/
+dist/
+web-build/
+expo-env.d.ts
+
+# generated native folders(原生构建走 EAS / prebuild,不进仓库)
+ios/
+android/
+
+# Native secrets
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.pem
+
+# Metro
+.metro-health-check*
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo

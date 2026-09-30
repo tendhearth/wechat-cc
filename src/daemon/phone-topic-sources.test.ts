@@ -2,6 +2,7 @@
  * phone-topic-sources.test.ts — 真实来源的边角(端到端的主路径在 phone-e2e.test.ts)。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { HomeTopic, ApprovalsTopic, AgentsTopic, MatterTopic } from '@wechat-cc/protocol'
 import { makePhoneEventsWiring, makePhoneTopicSources, type PhoneWorkbench } from './phone-topic-sources'
 
 afterEach(() => { vi.useRealTimers() })
@@ -37,5 +38,29 @@ describe('matter/<id> 来源', () => {
     expect(got).toEqual([{ found: false }])
     expect(log).not.toHaveBeenCalled()
     wiring.dispose()
+  })
+})
+
+describe('真实来源的快照符合协议包的主题形状', () => {
+  it('home / approvals / agents / matter 四路都能 parse', async () => {
+    const workbench = {
+      list: () => ({ tasks: [{ id: 'ab12cd34', title: 'fix  bug', status: 'running', phase: 'working', createdAt: 1, pendingPermissionCount: 0, pendingQuestionCount: 0 }] }),
+      attention: () => ({ tasks: [{ id: 'ab12cd34' }] }),
+      detail: () => ({
+        version: 3, task: { phase: 'working' },
+        permissions: [{ id: 'p1', tool: 'Bash', description: 'ls' }],
+        questions: [{ id: 'q1', questions: [{ question: 'which?' }] }],
+      }),
+    } as unknown as PhoneWorkbench
+    const matters = { get: (id: string) => (id === 'deadbeef' ? { id, kind: 'task', status: 'open', updatedAt: 1 } : id === 'cafe0001' ? { id, kind: 'chat', status: 'open', updatedAt: 99 } : null) }
+    const richHome = async () => ({ unread: 2, presence: { presence: 'ok', activity: { kind: 'working' } }, next_cursor: 'abc' }) as never
+    const [h, m, a, g] = makePhoneTopicSources({ workbench, matters: matters as never, home: richHome })
+    HomeTopic.parse(await h!.snapshot('home'))
+    HomeTopic.parse(await makePhoneTopicSources({ home })[0]!.snapshot('home'))
+    const apr = ApprovalsTopic.parse(await a!.snapshot('approvals'))
+    expect(apr).toHaveLength(2)
+    const ag = AgentsTopic.parse(await g!.snapshot('agents'))
+    expect(ag.running).toBe(1)
+    for (const t of ['matter/deadbeef', 'matter/cafe0001', 'matter/00000000']) MatterTopic.parse(await m!.snapshot(t))
   })
 })

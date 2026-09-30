@@ -1,0 +1,42 @@
+# 交办:此刻 → 跟 CC 说一句 → 输入 → 交给 CC → 进展页 2 秒后「这一轮已回复」→ 一起做里出现这件新事。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: now-say
+    timeout: 10000
+- tapOn:
+    id: now-say
+- tapOn:
+    id: compose-input
+- inputText: "Maestro demo task"
+# 点一下说明文字收起键盘(iOS 没有标准收键盘动作),交给 CC 按钮才露出来。
+- tapOn: "Start with a thought.*|一句话就好.*"
+- waitForAnimationToEnd
+- tapOn:
+    id: compose-send
+# 新事项建好后直接进它的进展页。
+- extendedWaitUntil:
+    visible:
+      id: progress-status
+    timeout: 10000
+- assertVisible: "Maestro demo task"
+- extendedWaitUntil:
+    visible: "这一轮已回复|Replied this round"
+    timeout: 8000
+- tapOn:
+    id: topbar-back
+# 行的无障碍标签 = 「标题, 状态词」。点标签同 demo-walkthrough:没切过去就再点一次。
+- retry:
+    maxRetries: 2
+    commands:
+      - tapOn:
+          id: tab-together
+      - extendedWaitUntil:
+          visible:
+            id: together-item-demo0001
+          timeout: 3000
+- assertVisible: "Maestro demo task, (这一轮已回复|Replied this round)"

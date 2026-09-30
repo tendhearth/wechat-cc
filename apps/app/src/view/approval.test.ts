@@ -1,0 +1,147 @@
+import { describe, it, expect } from 'vitest'
+import { approvalView, buildAnswers, pinnedRequest, togglePick, multiLimitReached, ANSWER_MAX_CHARS, ANSWER_MAX_MULTI } from './approval'
+
+const base = {
+  matter: { id: 'ab12cd34', kind: 'task', title: 'x', projectPath: '/p', status: 'open', ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: 1, updatedAt: 1 },
+  bindings: [], sessions: [], events: [], artifacts: [], inputs: [], questions: [],
+  task: { id: 'ab12cd34', title: '作品集', status: 'running', phase: 'working', providerId: 'claude', path: '/Users/me/portfolio', error: null, updatedAt: 1 },
+  runId: 'run-1',
+  permissions: [{ id: 'p1', taskId: 'ab12cd34', tool: 'Bash', description: 'rm -rf ~/Documents/old\n# cleanup', createdAt: 1 }],
+} as any
+const model = { title: '可以清理旧文件吗?', what: '清理临时缓存', scope: '作品集', effect: '删除一些文件', source: 'model' as const }
+
+describe('approvalView', () => {
+  it('模型说明 ⇒ 原始命令首行与目录直接可见(aiSummary + showRawInline)', () => {
+    const v = approvalView(base, { p1: model })
+    expect(v).toMatchObject({ kind: 'card', requestId: 'p1', runId: 'run-1', aiSummary: true, showRawInline: true, rawFirstLine: 'rm -rf ~/Documents/old', workingDir: '/Users/me/portfolio', rawFull: 'rm -rf ~/Documents/old\n# cleanup', title: '可以清理旧文件吗?' })
+  })
+  it('没有说明 ⇒ 用原文,不是 AI 概括', () => {
+    const v = approvalView(base, {})
+    expect(v).toMatchObject({ kind: 'card', title: 'Bash', what: 'rm -rf ~/Documents/old\n# cleanup', scope: '/Users/me/portfolio', effect: '', aiSummary: false, showRawInline: false })
+  })
+  it('raw 来源的说明不算 AI 概括', () => {
+    const v = approvalView(base, { p1: { ...model, source: 'raw' } })
+    expect(v).toMatchObject({ aiSummary: false, showRawInline: false })
+  })
+  it('同一件事两条、没指定 ⇒ 让用户选', () => {
+    const d = { ...base, permissions: [...base.permissions, { id: 'p2', taskId: 'ab12cd34', tool: 'Bash', description: 'ls', createdAt: 2 }] }
+    expect(approvalView(d, {})).toEqual({ kind: 'choose', items: [{ requestId: 'p1', kind: 'permission', summary: 'Bash: rm -rf ~/Documents/old' }, { requestId: 'p2', kind: 'permission', summary: 'Bash: ls' }] })
+  })
+  it('多条但指定了 ⇒ 那一条', () => {
+    const d = { ...base, permissions: [...base.permissions, { id: 'p2', taskId: 'ab12cd34', tool: 'Bash', description: 'ls', createdAt: 2 }] }
+    expect(approvalView(d, {}, 'p2')).toMatchObject({ kind: 'card', requestId: 'p2', rawFirstLine: 'ls' })
+  })
+  it('指定了但已不存在 / 没有待处理 / 没有 runId ⇒ none', () => {
+    expect(approvalView(base, {}, 'gone')).toEqual({ kind: 'none' })
+    expect(approvalView({ ...base, permissions: [] }, {})).toEqual({ kind: 'none' })
+    expect(approvalView({ ...base, runId: undefined }, {})).toEqual({ kind: 'none' })
+  })
+  it('首行最多 120 字,choose 摘要最多 80 字', () => {
+    const long = 'x'.repeat(300)
+    const d = { ...base, permissions: [{ ...base.permissions[0], description: long }] }
+    expect((approvalView(d, {}) as any).rawFirstLine).toHaveLength(120)
+    const d2 = { ...base, permissions: [d.permissions[0], { ...d.permissions[0], id: 'p2' }] }
+    expect((approvalView(d2, {}) as any).items[0].summary).toHaveLength(80)
+  })
+
+  describe('questions', () => {
+    const q = { id: 'q1', taskId: 'ab12cd34', createdAt: 1, questions: [{ id: 'a', header: '方案', question: '用哪个?', options: [{ label: 'A', description: 'da' }], multiSelect: false, allowOther: true }] }
+    const onlyQ = { ...base, permissions: [], questions: [q] }
+    it('只有问题 ⇒ question,不是 none', () => {
+      expect(approvalView(onlyQ, {})).toEqual({ kind: 'question', requestId: 'q1', runId: 'run-1', items: [{ id: 'a', header: '方案', question: '用哪个?', options: [{ label: 'A', description: 'da' }], multiSelect: false, allowOther: true }] })
+    })
+    it('一条批准 + 一个问题、没指定 ⇒ choose 含两种 kind', () => {
+      const v = approvalView({ ...base, questions: [q] }, {}) as any
+      expect(v.kind).toBe('choose')
+      expect(v.items.map((i: any) => [i.requestId, i.kind])).toEqual([['p1', 'permission'], ['q1', 'question']])
+    })
+    it('requestId 指向问题 ⇒ question', () => {
+      expect(approvalView({ ...base, questions: [q] }, {}, 'q1')).toMatchObject({ kind: 'question', requestId: 'q1' })
+    })
+    it('问题没有 runId ⇒ none', () => {
+      expect(approvalView({ ...onlyQ, runId: undefined }, {})).toEqual({ kind: 'none' })
+    })
+  })
+})
+
+describe('buildAnswers(形状与 daemon validateUserInputAnswers 一致:每题 string[])', () => {
+  const single = { id: 'a', header: 'H', question: 'Q', options: [{ label: 'x', description: '' }, { label: 'y', description: '' }], multiSelect: false, allowOther: true }
+  const multi = { ...single, id: 'b', multiSelect: true }
+  const multiNoOther = { ...multi, allowOther: false }
+  it('单选 ⇒ 一个元素的数组;其他填字时顶替', () => {
+    expect(buildAnswers([single], { a: ['x'] }, {})).toEqual({ a: ['x'] })
+    expect(buildAnswers([single], { a: ['x'] }, { a: '  周三 ' })).toEqual({ a: ['周三'] })
+  })
+  it('多选 ⇒ 数组;其他追加;与已选标签相同则去重', () => {
+    expect(buildAnswers([multi], { b: ['x', 'y'] }, { b: 'z' })).toEqual({ b: ['x', 'y', 'z'] })
+    expect(buildAnswers([multi], { b: ['x'] }, { b: ' x ' })).toEqual({ b: ['x'] })
+  })
+  it('不允许其他时忽略其他文本', () => {
+    expect(buildAnswers([multiNoOther], { b: ['x'] }, { b: 'z' })).toEqual({ b: ['x'] })
+  })
+  it('多选超过 8 个 ⇒ null', () => {
+    const many = { ...multi, options: Array.from({ length: 9 }, (_, i) => ({ label: `o${i}`, description: '' })) }
+    expect(buildAnswers([many], { b: many.options.map(o => o.label) }, {})).toBeNull()
+    expect(buildAnswers([many], { b: many.options.slice(0, 8).map(o => o.label) }, {})!.b).toHaveLength(8)
+  })
+  it('其他文本截到 4000 字', () => {
+    expect(buildAnswers([single], {}, { a: 'z'.repeat(5000) })!.a[0]).toHaveLength(ANSWER_MAX_CHARS)
+  })
+  it('有一题没答 ⇒ null;空白其他不算答;不在选项里的标签不算', () => {
+    expect(buildAnswers([single, multi], { a: ['x'] }, {})).toBeNull()
+    expect(buildAnswers([single], {}, { a: '   ' })).toBeNull()
+    expect(buildAnswers([single], { a: ['nope'] }, {})).toBeNull()
+  })
+})
+
+describe('pinnedRequest:钉住后刷新不换成别的请求', () => {
+  const p2 = { id: 'p2', taskId: 'ab12cd34', tool: 'Bash', description: 'ls', createdAt: 2 }
+  it('首次解析出卡片 ⇒ 钉它的 requestId;choose / none 不钉', () => {
+    expect(pinnedRequest(undefined, undefined, approvalView(base, {}))).toBe('p1')
+    expect(pinnedRequest(undefined, undefined, approvalView({ ...base, permissions: [...base.permissions, p2] }, {}))).toBeUndefined()
+    expect(pinnedRequest(undefined, undefined, { kind: 'none' })).toBeUndefined()
+  })
+  it('路由参数优先,其次已钉的', () => {
+    expect(pinnedRequest('q', 'p1', { kind: 'none' })).toBe('q')
+    expect(pinnedRequest(undefined, 'p1', { kind: 'none' })).toBe('p1')
+  })
+  it('钉住的 p1 被处理、只剩 p2 ⇒ none(已处理),不会落到 p2', () => {
+    const refetched = { ...base, permissions: [p2] }
+    const pin = pinnedRequest(undefined, undefined, approvalView(base, {}))
+    expect(approvalView(refetched, {}, pin)).toEqual({ kind: 'none' })
+    // 对照:不传钉住的 id 时会落到 p2 —— 这正是页面必须一直传 pin 的原因
+    expect(approvalView(refetched, {})).toMatchObject({ kind: 'card', requestId: 'p2' })
+  })
+})
+
+describe('原始命令直接可见:多出来的行数', () => {
+  it('两行命令 ⇒ 首行 + 还有 1 行;首行没截', () => {
+    expect(approvalView(base, { p1: model })).toMatchObject({ rawFirstLine: 'rm -rf ~/Documents/old', rawMoreLines: 1, rawFirstLineCut: false })
+  })
+  it('一行命令 ⇒ 0 行;结尾换行不算一行', () => {
+    const d = { ...base, permissions: [{ ...base.permissions[0], description: 'ls -la\n\n' }] }
+    expect(approvalView(d, { p1: model })).toMatchObject({ rawFirstLine: 'ls -la', rawMoreLines: 0, rawFirstLineCut: false })
+  })
+  it('首行超过 120 字 ⇒ 截断标记;四行 ⇒ 还有 3 行', () => {
+    const d = { ...base, permissions: [{ ...base.permissions[0], description: `${'x'.repeat(130)}\na\nb\nc` }] }
+    expect(approvalView(d, { p1: model })).toMatchObject({ rawMoreLines: 3, rawFirstLineCut: true })
+  })
+})
+
+describe('问答多选:至多 8 项', () => {
+  const eight = Array.from({ length: ANSWER_MAX_MULTI }, (_, i) => `o${i}`)
+  it('togglePick:单选互斥、再点取消;多选增删;满 8 项不再加', () => {
+    expect(togglePick([], 'A', false)).toEqual(['A'])
+    expect(togglePick(['A'], 'B', false)).toEqual(['B'])
+    expect(togglePick(['A'], 'A', false)).toEqual([])
+    expect(togglePick(['A'], 'B', true)).toEqual(['A', 'B'])
+    expect(togglePick(['A', 'B'], 'A', true)).toEqual(['B'])
+    expect(togglePick(eight, 'o9', true)).toBe(eight)
+    expect(togglePick(eight, 'o0', true)).toHaveLength(7)
+  })
+  it('multiLimitReached:多选选满 8 项 ⇒ true(不管有没有填「其他」);单选永远 false', () => {
+    expect(multiLimitReached(true, eight)).toBe(true)
+    expect(multiLimitReached(true, eight.slice(1))).toBe(false)
+    expect(multiLimitReached(false, eight)).toBe(false)
+  })
+})
