@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest'
 import type { ProtocolClient, ProtocolRequest } from '@wechat-cc/protocol'
 import { pairWithLink, PairError } from './pairing'
 import { parsePairLink, type ParsedLink } from './link'
-import { makeCredentialStore, type SecureStoreLike } from './credentials'
 import { STATE } from './../backend/fixtures'
 
 const LINK: ParsedLink = { daemonId: 'r' + 'a'.repeat(26), linkToken: 't' + '0'.repeat(32), relayHost: 'relay.tendhearth.com', relayUrl: 'wss://relay.tendhearth.com/v2/phone?id=r' + 'a'.repeat(26), lan: null }
@@ -66,10 +65,7 @@ describe('pairWithLink', () => {
     const f = fakeConnect({ [LINK.linkToken]: { script: { 'POST /set/api/pair': { status: 200, json: { ok: true, device_token: DEV } } } }, [DEV]: { script: { 'GET /set/api/state': { status: 200, json: STATE }, 'POST /set/api/apply': new Error('timeout') } } })
     expect((await pairWithLink(LINK, { connect: f.connect, label: 'x' })).deviceToken).toBe(DEV)
   })
-  it('过期/已用的链接令牌 ⇒ expired(不是 revoked),不写钥匙串,错误文案不含令牌', async () => {
-    const writes: string[] = []
-    const ss: SecureStoreLike = { async getItemAsync() { return null }, async setItemAsync(k) { writes.push(k) }, async deleteItemAsync() {} }
-    const store = makeCredentialStore(ss)
+  it('过期/已用的链接令牌 ⇒ expired(不是 revoked),错误文案不含令牌', async () => {
     for (const script of [{ 'POST /set/api/pair': new Error('auth_failed') }, { 'POST /set/api/pair': { status: 401, json: { ok: false, error: 'unauthorized' } } }] as Script[]) {
       const f = fakeConnect({ [LINK.linkToken]: { script } })
       let err: any
@@ -80,11 +76,30 @@ describe('pairWithLink', () => {
       expect(String(err.message) + String(err.stack)).not.toContain(LINK.linkToken)
       expect(f.log.every(l => l.token === LINK.linkToken)).toBe(true)
     }
-    expect(writes).toEqual([])
-    expect(await store.load()).toBeNull()
   })
-  it('局域网 http://…/set?t= 链接 ⇒ remote_off,根本不建连、不写钥匙串', () => {
+  it('局域网 http://…/set?t= 链接 ⇒ remote_off,根本不建连', () => {
     expect(parsePairLink('http://192.168.1.5:8080/set?t=' + 't' + '0'.repeat(32))).toEqual({ ok: false, error: 'remote_off' })
+  })
+  it('设备阶段失败(state 形状坏)⇒ 用设备令牌 best-effort unpair_self,抛出原错误', async () => {
+    const f = fakeConnect({ [LINK.linkToken]: { script: { 'POST /set/api/pair': { status: 200, json: { ok: true, device_token: DEV } } } }, [DEV]: { script: { 'GET /set/api/state': { status: 200, json: { nope: 1 } }, 'POST /set/api/apply': { status: 200, json: { ok: true } } } } })
+    await expect(pairWithLink(LINK, { connect: f.connect, label: 'x' })).rejects.toMatchObject({ code: 'unknown' })
+    const un = f.log.find(l => l.token === DEV && l.key === 'POST /set/api/apply')
+    expect(un?.body).toEqual({ op: 'unpair_self' })
+    expect(f.closed).toContain(DEV)
+  })
+  it('too_old 同样回收设备位;unpair_self 失败不改变抛出的错误', async () => {
+    const f = fakeConnect({ [LINK.linkToken]: { script: { 'POST /set/api/pair': { status: 200, json: { ok: true, device_token: DEV } } } }, [DEV]: { ...happyDevice, script: { 'GET /set/api/state': { status: 200, json: STATE }, 'POST /set/api/apply': new Error('boom') }, version: 1 } })
+    await expect(pairWithLink(LINK, { connect: f.connect, label: 'x' })).rejects.toMatchObject({ code: 'too_old', message: 'too_old' })
+    expect(f.log.some(l => l.token === DEV && l.body?.op === 'unpair_self')).toBe(true)
+  })
+  it('链接阶段失败不发 unpair_self(还没有设备令牌)', async () => {
+    const f = fakeConnect({ [LINK.linkToken]: { script: { 'POST /set/api/pair': { status: 200, json: { ok: false, error: 'device_limit' } } } } })
+    await expect(pairWithLink(LINK, { connect: f.connect, label: 'x' })).rejects.toMatchObject({ code: 'device_limit' })
+    expect(f.log.every(l => l.key === 'POST /set/api/pair')).toBe(true)
+  })
+  it('非传输层异常(响应体不是 JSON)⇒ unknown,不是 offline', async () => {
+    const connect = (): ProtocolClient => ({ version: () => 2, async request() { return { status: 200, headers: {}, body: new Uint8Array(), text: () => 'x', json: () => JSON.parse('<html>') } }, subscribe: () => () => {}, close() {} })
+    await expect(pairWithLink(LINK, { connect, label: 'x' })).rejects.toMatchObject({ code: 'unknown' })
   })
   it('PairError 带 code', () => { expect(new PairError('expired').code).toBe('expired') })
 })

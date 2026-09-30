@@ -11,6 +11,8 @@ export class PairError extends Error {
 /** phase:链接令牌阶段的 auth_failed = 码过期/已用,绝不是「已撤销」;设备令牌阶段刚发的令牌被拒属于异常 ⇒ unknown。 */
 function asPairError(e: unknown, phase: 'link' | 'device'): PairError {
   if (e instanceof PairError) return e
+  // 只有协议客户端的传输错误(snake_case 错误码)才走 transportErrorCode;SyntaxError 等其它异常 ⇒ unknown
+  if (!(e instanceof Error) || !/^[a-z][a-z_]*$/.test(e.message)) return new PairError('unknown')
   const c = transportErrorCode(e)
   if (c === 'revoked') return new PairError(phase === 'link' ? 'expired' : 'unknown')
   if (c === 'offline' || c === 'timeout') return new PairError('offline')
@@ -58,6 +60,10 @@ export async function pairWithLink(
     } catch { /* 名字只是锦上添花 */ }
     return { v: 1, daemonId: link.daemonId, relayHost: link.relayHost, relayUrl: link.relayUrl, deviceToken, deviceId: me.id, pairedAt: now() }
   } catch (e) {
+    // 设备令牌已发出却没配成 —— 尽力把这个设备位还给电脑(单次二维码不能重试);失败吞掉,不记令牌
+    try {
+      await dev.request({ method: 'POST', path: '/set/api/apply', body: JSON.stringify({ op: 'unpair_self' }), headers: JSON_HEADERS })
+    } catch { /* best-effort */ }
     throw asPairError(e, 'device')
   } finally {
     dev.close()
