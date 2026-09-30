@@ -78,3 +78,56 @@ describe('FCM', () => {
     expect(r).toEqual({ ok: false, code: 'UNREGISTERED', invalid: true })
   })
 })
+
+describe('fix round 1', () => {
+  it('FCM 裸 404 不算 invalid', async () => {
+    const sa = JSON.stringify({ project_id: 'p3', client_email: 'c@p3.iam.gserviceaccount.com', private_key: await rsaPem() })
+    const f = vi.fn(async (url: string) => url.includes('oauth')
+      ? Response.json({ access_token: 'AT', expires_in: 3600 })
+      : Response.json({ error: { status: 'NOT_FOUND' } }, { status: 404 }))
+    const r = await sendFcm({ serviceAccount: sa, host: 'https://h', tokenUrl: 'https://oauth.test', token: 't'.repeat(30), sealed: SEALED, now: 1, fetch: f as never })
+    expect(r).toEqual({ ok: false, code: 'NOT_FOUND', invalid: false })
+  })
+  it('APNs 403 清掉缓存 JWT', async () => {
+    const keyP8 = await p256Pem()
+    const base = { keyP8, keyId: 'K403', teamId: 'T', topic: 'x', host: 'https://h', token: 'ab'.repeat(32), sealed: SEALED }
+    const auths: string[] = []
+    let status = 403
+    const f = vi.fn(async (_u: string, init: RequestInit) => {
+      auths.push(new Headers(init.headers).get('authorization')!)
+      return new Response(status === 403 ? JSON.stringify({ reason: 'ExpiredProviderToken' }) : null, { status })
+    })
+    await sendApns({ ...base, now: 1_700_000_000_000, fetch: f as never })
+    status = 200
+    await sendApns({ ...base, now: 1_700_000_005_000, fetch: f as never })  // 仍在 50 分钟内
+    expect(auths[1]).not.toBe(auths[0])
+  })
+  it('FCM 401 清掉缓存 access token', async () => {
+    const sa = JSON.stringify({ project_id: 'p4', client_email: 'c@p4.iam.gserviceaccount.com', private_key: await rsaPem() })
+    let sendStatus = 401
+    const f = vi.fn(async (url: string) => url.includes('oauth')
+      ? Response.json({ access_token: 'AT', expires_in: 3600 })
+      : new Response('{}', { status: sendStatus }))
+    const o = { serviceAccount: sa, host: 'https://h', tokenUrl: 'https://oauth.test', token: 't'.repeat(30), sealed: SEALED, now: 1_700_000_000_000, fetch: f as never }
+    await sendFcm(o)
+    sendStatus = 200
+    await sendFcm(o)
+    expect(f.mock.calls.filter(c => String(c[0]).includes('oauth'))).toHaveLength(2)
+  })
+  it('apns-collapse-id 超 64 字节被截断', async () => {
+    const keyP8 = await p256Pem()
+    const f = vi.fn(async () => new Response(null, { status: 200 }))
+    await sendApns({ keyP8, keyId: 'KCOL', teamId: 'T', topic: 'x', host: 'https://h', token: 'ab'.repeat(32), sealed: SEALED, collapseId: 'a'.repeat(100), now: 1, fetch: f as never })
+    await sendApns({ keyP8, keyId: 'KCOL', teamId: 'T', topic: 'x', host: 'https://h', token: 'ab'.repeat(32), sealed: SEALED, collapseId: '中'.repeat(50), now: 1, fetch: f as never })
+    const ids = f.mock.calls.map(c => new Headers((c as unknown as [string, RequestInit])[1].headers).get('apns-collapse-id')!)
+    expect(ids[0]).toBe('a'.repeat(64))
+    expect(new TextEncoder().encode(ids[1]).length).toBeLessThanOrEqual(64)
+    expect(ids[1]!.length).toBe(21)
+  })
+  it('FCM OAuth 失败 ⇒ oauth_failed', async () => {
+    const sa = JSON.stringify({ project_id: 'p5', client_email: 'c@p5.iam.gserviceaccount.com', private_key: await rsaPem() })
+    const f = vi.fn(async () => new Response('{}', { status: 400 }))
+    const r = await sendFcm({ serviceAccount: sa, host: 'https://h', tokenUrl: 'https://oauth.test', token: 't'.repeat(30), sealed: SEALED, now: 1, fetch: f as never })
+    expect(r).toEqual({ ok: false, code: 'oauth_failed', invalid: false })
+  })
+})

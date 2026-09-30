@@ -38,6 +38,19 @@ async function apnsJwt(keyP8: string, keyId: string, teamId: string, nowMs: numb
   return jwt
 }
 
+/** apns-collapse-id 最长 64 字节:按字符截到 UTF-8 ≤ 64。 */
+function truncUtf8(str: string, max: number): string {
+  const enc = new TextEncoder()
+  let out = ''
+  let n = 0
+  for (const ch of str) {
+    const l = enc.encode(ch).length
+    if (n + l > max) break
+    out += ch; n += l
+  }
+  return out
+}
+
 const INVALID_REASONS = new Set(['BadDeviceToken', 'DeviceTokenNotForTopic', 'Unregistered'])
 
 export async function sendApns(o: {
@@ -55,13 +68,14 @@ export async function sendApns(o: {
       'apns-expiration': String(Math.floor(o.now / 1000) + 3600),
       'content-type': 'application/json',
     }
-    if (o.collapseId) headers['apns-collapse-id'] = o.collapseId
+    if (o.collapseId) headers['apns-collapse-id'] = truncUtf8(o.collapseId, 64)
     const body = JSON.stringify({ aps: { alert: { title: 'CC', body: 'CC 有新动态' }, 'mutable-content': 1, sound: 'default' }, wcc: o.sealed })
     res = await o.fetch(`${o.host}/3/device/${o.token}`, { method: 'POST', headers, body })
   } catch {
     return { ok: false, code: 'network', invalid: false }
   }
   if (res.status === 200) return { ok: true, code: 'ok' }
+  if (res.status === 403) jwtCache.delete(o.keyId)   // 令牌被拒:别再复用缓存的 JWT
   let reason = `http_${res.status}`
   try { const j = await res.json() as { reason?: unknown }; if (typeof j.reason === 'string') reason = j.reason } catch { /* 没体 */ }
   return { ok: false, code: reason, invalid: res.status === 410 || (res.status === 400 && INVALID_REASONS.has(reason)) }

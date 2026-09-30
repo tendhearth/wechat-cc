@@ -8,6 +8,8 @@ import { pemToDer, type PushOutcome } from './push-apns'
 const b64uText = (s: string) => btoa(String.fromCharCode(...new TextEncoder().encode(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 const b64u = (bytes: Uint8Array) => { let s = ''; for (const b of bytes) s += String.fromCharCode(b); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') }
 
+class OauthError extends Error {}
+
 const tokenCache = new Map<string, { token: string; exp: number }>()
 
 async function accessToken(sa: { client_email: string; private_key: string }, tokenUrl: string, nowMs: number, f: typeof fetch): Promise<string> {
@@ -23,7 +25,7 @@ async function accessToken(sa: { client_email: string; private_key: string }, to
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: `grant_type=${encodeURIComponent('urn:ietf:params:oauth:grant-type:jwt-bearer')}&assertion=${input}.${b64u(sig)}`,
   })
-  if (!res.ok) throw new Error(`oauth_${res.status}`)
+  if (!res.ok) throw new OauthError()
   const j = await res.json() as { access_token: string; expires_in: number }
   tokenCache.set(sa.client_email, { token: j.access_token, exp: nowMs + (j.expires_in - 60) * 1000 })
   return j.access_token
@@ -34,8 +36,10 @@ export async function sendFcm(o: {
   token: string; sealed: SealedPush; collapseId?: string; now: number; fetch: typeof fetch
 }): Promise<PushOutcome> {
   let res: Response
+  let email = ''
   try {
     const sa = JSON.parse(o.serviceAccount) as { project_id: string; client_email: string; private_key: string }
+    email = sa.client_email
     const at = await accessToken(sa, o.tokenUrl, o.now, o.fetch)
     const android: Record<string, string> = { priority: 'HIGH', ttl: '3600s' }
     if (o.collapseId) android.collapse_key = o.collapseId
@@ -44,14 +48,18 @@ export async function sendFcm(o: {
       headers: { authorization: `Bearer ${at}`, 'content-type': 'application/json' },
       body: JSON.stringify({ message: { token: o.token, data: { wcc: JSON.stringify(o.sealed) }, android } }),
     })
-  } catch {
+  } catch (e) {
+    if (e instanceof OauthError) return { ok: false, code: 'oauth_failed', invalid: false }
     return { ok: false, code: 'network', invalid: false }
   }
   if (res.ok) return { ok: true, code: 'ok' }
+  if (res.status === 401) tokenCache.delete(email)
   let code = `http_${res.status}`
+  let unregistered = false
   try {
     const j = await res.json() as { error?: { status?: string; details?: Array<{ errorCode?: string }> } }
     code = j.error?.details?.find(d => d.errorCode)?.errorCode ?? j.error?.status ?? code
+    unregistered = !!j.error?.details?.some(d => d.errorCode === 'UNREGISTERED')
   } catch { /* 没体 */ }
-  return { ok: false, code, invalid: code === 'UNREGISTERED' || res.status === 404 }
+  return { ok: false, code, invalid: unregistered }
 }
