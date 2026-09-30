@@ -101,6 +101,7 @@ const selftestPhoneCmd = defineCommand({
     executor: { type: 'string', required: true, description: '执行者 provider id(claude / codex / cursor / agy / …),给自检建的最小工作台任务用' },
     json: { type: 'boolean', description: 'JSON 输出(SelftestReport),不输出人读版' },
     'timeout-ms': { type: 'string', description: '总超时,毫秒(缺省 90000)' },
+    relay: { type: 'string', description: '只认 v2:核对链接指向官方中继 v2、healthz、APNs 认可推送凭据' },
   },
   async run({ args }) {
     const json = Boolean(args.json)
@@ -113,9 +114,17 @@ const selftestPhoneCmd = defineCommand({
       process.exit(PHONE_SELFTEST_EXIT.failed)
       return
     }
+    if (args.relay !== undefined && args.relay !== 'v2') {
+      const message = `--relay 只认 v2(收到 ${JSON.stringify(args.relay)})`
+      if (json) console.log(JSON.stringify({ ok: false, error: 'invalid_relay', message }, null, 2))
+      else console.error(`selftest phone: ${message}`)
+      process.exit(PHONE_SELFTEST_EXIT.failed)
+      return
+    }
     try {
       const report = await runPhoneSelftest(defaultPhoneSelftestDeps(STATE_DIR), {
         executor: args.executor,
+        ...(args.relay === 'v2' ? { relay: 'v2' as const } : {}),
         ...(timeout.value !== undefined ? { timeoutMs: timeout.value } : {}),
       })
       if (json) console.log(JSON.stringify(report, null, 2))

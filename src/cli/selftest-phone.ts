@@ -59,6 +59,7 @@ export const PHONE_SELFTEST_EXIT = { ok: 0, failed: 1, noDaemon: 2 } as const
 const DEFAULT_PHONE_TIMEOUT_MS = 90_000
 const FETCH_TIMEOUT_MS = 15_000
 const POLL_INTERVAL_MS = 200
+const SYNTHETIC_APNS_TOKEN = '0'.repeat(64)
 const MINIMAL_TASK_TEXT = '这是 wechat-cc 手机自检的最小工作台任务：不要使用任何工具，直接回复一句「已收到」然后结束。'
 
 // ── plain HTTP calls (internal API + the LAN-only revoke) ─────────────
@@ -175,7 +176,7 @@ function makeCheckRecorder(checks: PhoneSelftestCheck[]) {
 
 // ── link URL parsing (settings-panel.ts's two shapes) ─────────────────
 
-interface RemoteLink { relayWsUrl: string; linkToken: string; lanBase: string }
+interface RemoteLink { relayWsUrl: string; linkToken: string; lanBase: string; host: string; daemonId: string }
 
 /**
  * `GET /v1/settings/link`'s `url` comes in two shapes (settings-panel.ts
@@ -192,7 +193,9 @@ function classifyLink(raw: string): { kind: 'remote'; link: RemoteLink } | { kin
     const linkToken = frag.get('t')
     const lan = frag.get('lan')
     if (daemonId && linkToken && lan) {
-      return { kind: 'remote', link: { relayWsUrl: `wss://${u.host}/tunnel/phone?id=${encodeURIComponent(daemonId)}`, linkToken, lanBase: `http://${lan}` } }
+      // `r…` ids belong to the Cloudflare relay v2; `t…` to the legacy relay.
+      const path = daemonId.startsWith('r') ? '/v2/phone' : '/tunnel/phone'
+      return { kind: 'remote', link: { relayWsUrl: `wss://${u.host}${path}?id=${encodeURIComponent(daemonId)}`, linkToken, lanBase: `http://${lan}`, host: u.host, daemonId } }
     }
   }
   if (u.protocol === 'http:' && u.searchParams.get('t')) return { kind: 'lan_only' }
@@ -229,7 +232,7 @@ function hasTask(ev: AgentsEvent | undefined, taskId: string): boolean {
 
 export async function runPhoneSelftest(
   deps: PhoneSelftestDeps,
-  opts: { executor: string; timeoutMs?: number },
+  opts: { executor: string; timeoutMs?: number; relay?: 'v2' },
 ): Promise<PhoneSelftestReport> {
   const start = deps.now()
   const api = deps.readApiInfo()
@@ -272,6 +275,14 @@ export async function runPhoneSelftest(
       stop()
     }
     rec.push('remote_enabled', true)
+    if (opts.relay === 'v2') {
+      const isV2 = cls.link.daemonId.startsWith('r')
+      rec.push('relay_v2_link', isV2, isV2 ? undefined : 'link still points at the legacy relay (t… id) — is relay_v2_url set and the daemon redeployed?')
+      if (!isV2) stop()
+      const hz = await jsonCall(deps, `https://${cls.link.host}/healthz`, null, 'GET')
+      const hzOk = hz.ok && hz.json?.ok === true && hz.json?.apns === true
+      rec.push('relay_healthz', hzOk, hzOk ? undefined : `healthz: ${JSON.stringify(hz.json ?? httpErrorDetail(hz))}`)
+    }
     relayWsUrl = cls.link.relayWsUrl
     lanBase = cls.link.lanBase
     rec.knownSecret(cls.link.linkToken)
@@ -311,6 +322,26 @@ export async function runPhoneSelftest(
     deviceId = typeof current?.id === 'string' ? current.id : undefined
     rec.push('device_id', !!deviceId, deviceId ?? 'no current device in remote.devices')
     if (version !== 2 || !deviceId) stop()
+
+    if (opts.relay === 'v2') {
+      let regOk = false, code = 'no_response'
+      rec.knownSecret(SYNTHETIC_APNS_TOKEN)
+      try {
+        const reg = await deviceClient.request({ method: 'POST', path: '/m/api/push/register', body: JSON.stringify({ platform: 'apns', token: SYNTHETIC_APNS_TOKEN }) })
+        regOk = reg.json<{ ok?: boolean }>().ok === true
+        rec.push('push_registered', regOk, regOk ? undefined : reg.text())
+        if (regOk) {
+          const t = await deviceClient.request({ method: 'POST', path: '/m/api/push/test', body: '{}' })
+          code = t.json<{ result?: { code?: string } }>().result?.code ?? 'no_result'
+        }
+      } catch (err) {
+        rec.push('push_registered', false, err instanceof Error ? err.message : String(err))
+      }
+      if (regOk) {
+        const accepted = code === 'BadDeviceToken' || code === 'DeviceTokenNotForTopic'
+        rec.push('apns_auth_accepted', accepted, accepted ? `APNs rejected the synthetic token with ${code} — auth OK` : `APNs said ${code}`)
+      }
+    }
 
     // ── subscribe agents, drive one minimal task, watch it arrive+finish ─
     unsubscribe = deviceClient.subscribe('agents', (data, meta) => { agentEvents.push({ data, epoch: meta.epoch, seq: meta.seq }) })
