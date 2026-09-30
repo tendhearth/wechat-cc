@@ -10,10 +10,11 @@ public struct OpenedPush {
 }
 
 /// 与 packages/protocol/src/push.ts 的 derivePushKey / openPush 同一算法、同一拒绝顺序:
-/// 形状 → base64 → GCM 认证 → 明文是 JSON 对象 → ts 是有限数字 → 时间窗(过去 1 小时 / 未来 10 分钟)。
+/// 形状 → base64 → 钥匙长度 / GCM 认证 → 明文是 JSON 对象 → ts 是有限数字 → 时间窗(过去 1 小时 / 未来 10 分钟)。
 public enum PushCrypto {
   public static let maxAgeMs: Int64 = 3_600_000
   public static let maxSkewMs: Int64 = 600_000
+  public static let keyBytes = 32
   static let info = Data("wechat-cc/push/v1".utf8)
 
   /// HKDF-SHA256(ikm = utf8(deviceToken), salt = 空, info = "wechat-cc/push/v1") → 32 字节。
@@ -36,6 +37,8 @@ public enum PushCrypto {
           let iv = Base64URL.decode(ivS), let ct = Base64URL.decode(ctS),
           iv.count == 12, ct.count >= 16,
           let nonce = try? AES.GCM.Nonce(data: iv) else { return .failure(.malformed) }
+    // 钥匙不是 32 字节 ⇒ 按认证失败处理(CryptoKit 会把 16 / 24 字节当 AES-128 / 192 碰巧解开)。
+    guard key.count == keyBytes else { return .failure(.auth) }
     let plain: Data
     do {
       let box = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ct.prefix(ct.count - 16), tag: ct.suffix(16))
