@@ -1,6 +1,6 @@
 import type { z } from 'zod'
 import type {
-  Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT,
+  Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
 
@@ -16,7 +16,7 @@ export type ConnState = 'connecting' | 'online' | 'offline' | 'revoked'
 /** epoch:每次握手成功 +1。store 看它前进就重新验证全部查询(首次连上、重连、回到前台)。 */
 export type Connection = { state: ConnState; lastSyncedAt: number | null; epoch: number }
 /** BackendError.code 的全集(映射见 src/net/errors.ts)。 */
-export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' | 'not_found' | 'invalid' | 'unknown'
+export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' | 'not_found' | 'invalid' | 'unavailable' | 'unknown'
 export type Unsubscribe = () => void
 
 export interface Backend {
@@ -38,6 +38,10 @@ export interface Backend {
   create(p: { requestId: string; text: string; projectId?: string; providerId?: string }): Promise<{ matterId: string }>
   devices(): Promise<DeviceRowT[]>
   renameDevice(label: string): Promise<void>
+  /** 登记本机的 APNs / FCM token(POST /m/api/push/register)。daemon 没接推送(还没上 v2 中继)⇒ BackendError('unavailable')。 */
+  registerPush(platform: PushPlatformT, token: string): Promise<void>
+  /** 让电脑发一条测试通知(POST /m/api/push/test);code 是中继 / APNs / FCM 的结果码。 */
+  testPush(): Promise<{ ok: boolean; code: string }>
   /** 解除本机配对(daemon 撤掉本机令牌)。失败抛 BackendError;调用方无论成败都清本地令牌。 */
   unpair(): Promise<void>
   /** 前台 true / 后台 false:false 关连接;true 立刻新握手、订阅全部重挂。演示后端空操作。 */

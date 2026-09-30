@@ -156,4 +156,14 @@ describe('演示后端', () => {
     expect((await b.devices())[0]?.label).toBe('我的手机')
     b.setActive(false); b.setActive(true); await b.unpair(); b.dispose()
   })
+  it('按 id 取的读找不到 ⇒ not_found(与真后端 matter_not_found 对齐)', async () => {
+    const b = makeDemoBackend()
+    await expect(b.matter('ffffffff', 'en')).rejects.toMatchObject({ code: 'not_found' })
+    await expect(b.insight('ffffffff', 'en')).rejects.toMatchObject({ code: 'not_found' })
+  })
+  it('推送:登记是空操作;测试通知回 demo', async () => {
+    const b = makeDemoBackend()
+    await expect(b.registerPush('apns_sandbox', 'a1'.repeat(32))).resolves.toBeUndefined()
+    expect(await b.testPush()).toEqual({ ok: false, code: 'demo' })
+  })
 })

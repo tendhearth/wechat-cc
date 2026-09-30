@@ -17,6 +17,7 @@ export function mapPhoneError(status: number, body: unknown): BackendCode | null
   if (!okFalse && status < 400) return null
   if (err && STALE.has(err)) return 'stale'
   if (err && BUSY.has(err)) return 'busy'
+  if (err === 'push_not_wired') return 'unavailable'
   if (err === 'matter_not_found') return 'not_found'
   if (err === 'invalid' || (err !== null && err.startsWith('invalid_'))) return 'invalid'
   return 'unknown'

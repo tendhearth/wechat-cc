@@ -129,7 +129,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const later = (ms: number, fn: () => void) => { const ep = epoch; schedule(() => { if (ep === epoch) fn() }, ms) }
   const ev = (e: Entry, kind: string, key: Copy, extra?: string) => { e.evs = [...e.evs, { kind, key, extra, createdAt: now() }] }
   const evText = (e: Entry, kind: string, text: string) => { e.evs = [...e.evs, { kind, text, createdAt: now() }] }
-  const get = (id: string) => { const e = entries.get(id); if (!e) throw new BackendError('unknown'); return e }
+  const get = (id: string) => { const e = entries.get(id); if (!e) throw new BackendError('not_found'); return e }
 
   const conn: Connection = { state: 'online', lastSyncedAt: null, epoch: 0 }
 
@@ -215,6 +215,8 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return [{ id: 'demo0001', created_at: at, last_seen_at: at, ...(deviceLabel ? { label: deviceLabel } : {}), current: true }]
     },
     async renameDevice(label) { deviceLabel = label.trim().slice(0, 24) },
+    async registerPush() {},
+    async testPush() { return { ok: false, code: 'demo' } },
     async unpair() {},
     setActive() {},
     dispose() {},
