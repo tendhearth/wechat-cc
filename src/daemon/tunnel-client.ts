@@ -99,6 +99,9 @@ export interface TunnelClient {
   subscribedDeviceTokens(): Set<string>
 }
 
+/** 一条流的串行链上最多排多少帧;超了丢新帧(每流每 5 秒至多记一行)。 */
+export const MAX_QUEUED_FRAMES_PER_STREAM = 64
+
 export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   const relayUrl = deps.relayUrl ?? 'wss://cc.tendhearth.com/tunnel/daemon'
   // 指数退避重连(2026-08-27 日志:网络抖动时固定 15s 重连,恢复慢 + 日志
@@ -118,10 +121,20 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   // identification + open). v2 req handling is dispatched off it; v1 never uses it
   // once its handshake is done.
   const chains = new Map<string, Promise<void>>()
+  const queued = new Map<string, number>()
+  const queueWarnedAt = new Map<string, number>()
   function enqueue(stream: string, task: () => Promise<void>): void {
+    const n = queued.get(stream) ?? 0
+    if (n >= MAX_QUEUED_FRAMES_PER_STREAM) {
+      const t = now(), last = queueWarnedAt.get(stream)
+      if (last === undefined || t - last >= 5_000) { queueWarnedAt.set(stream, t); log('TUNNEL', `stream ${stream} queue full — dropping frames`) }
+      return
+    }
+    queued.set(stream, n + 1)
     const next = (chains.get(stream) ?? Promise.resolve())
       .then(task)
       .catch(e => log('TUNNEL', `stream ${stream} handler threw: ${String(e)}`))
+      .finally(() => { const m = (queued.get(stream) ?? 1) - 1; if (m <= 0) queued.delete(stream); else queued.set(stream, m) })
     chains.set(stream, next)
     void next.then(() => { if (chains.get(stream) === next) chains.delete(stream) })
   }
@@ -129,6 +142,7 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
   function forgetStream(stream: string): void {
     streams.get(stream)?.v2s?.close()
     streams.delete(stream)
+    queueWarnedAt.delete(stream)
   }
   let ws: TunnelWS | null = null
   let stopped = false
@@ -374,6 +388,8 @@ export function makeTunnelClient(deps: TunnelClientDeps): TunnelClient {
       for (const st of streams.values()) st.v2s?.close()
       streams.clear()
       chains.clear()
+      queued.clear()
+      queueWarnedAt.clear()
       loggedIn = false
       ws = null
       if (stopped) return

@@ -19,6 +19,11 @@ import type { V2Channel, V2ServerMessageT, ReqMsgT, SubMsgT } from '@wechat-cc/p
 import type { PhoneEvents } from './phone-events'
 import { phoneTopicAllowed } from './phone-routes'
 
+/** 一条流上最多同时挂多少个订阅(同 sid 替换不算新增)。 */
+export const MAX_SUBS_PER_STREAM = 32
+/** 一条流上最多同时在处理多少个 req;超了立刻回 err busy。 */
+export const MAX_INFLIGHT_REQS_PER_STREAM = 16
+
 const utf8 = new TextEncoder()
 const utf8d = new TextDecoder()
 
@@ -90,6 +95,7 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
   const subs = new Map<string, { unsub: (() => void) | null }>()
   let dead = false
   let warnedOpen = false
+  let inflight = 0
 
   function sendMsg(m: V2ServerMessageT): void {
     if (dead) return
@@ -161,6 +167,7 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
   function onSub(m: SubMsgT): void {
     if (!deps.events) { sendMsg({ t: 'err', sid: m.sid, code: 'subscriptions_unavailable' }); return }
     if (!phoneTopicAllowed(m.topic)) { sendMsg({ t: 'err', sid: m.sid, code: 'topic_not_allowed' }); return }
+    if (!subs.has(m.sid) && subs.size >= MAX_SUBS_PER_STREAM) { sendMsg({ t: 'err', sid: m.sid, code: 'too_many_subscriptions' }); return }
     unsubscribe(m.sid)                                   // 同 sid ⇒ 替换
     const entry: { unsub: (() => void) | null } = { unsub: null }
     subs.set(m.sid, entry)
@@ -182,7 +189,11 @@ export function makeV2Stream(deps: V2StreamDeps): V2Stream {
     const m = parsed.data
     // req 不在链上等:开帧已按序完成,处理并发(慢的 say 不挡后面的请求)。onReq 自己把
     // 失败回成密封 err;这里只兜住意外(比如 seal 计数器溢出)。
-    if (m.t === 'req') void onReq(m).catch(e => log('TUNNEL', `v2 req handler threw on ${stream}: ${String(e)}`))
+    if (m.t === 'req') {
+      if (inflight >= MAX_INFLIGHT_REQS_PER_STREAM) { sendMsg({ t: 'err', rid: m.rid, code: 'busy' }); return }
+      inflight++
+      void onReq(m).catch(e => log('TUNNEL', `v2 req handler threw on ${stream}: ${String(e)}`)).finally(() => { inflight-- })
+    }
     else if (m.t === 'sub') { if (checkToken()) onSub(m) }
     else if (m.t === 'ping') { if (checkToken()) sendMsg({ t: 'pong', rid: m.rid }) }   // 保活;令牌被撤销的话这里就关流
     else unsubscribe(m.sid)

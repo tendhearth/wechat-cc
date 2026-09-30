@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { generateTunnelKeypair, deriveSharedKey, sealFrame, openFrame, exportPublicKeyB64 } from '../lib/tunnel-crypto'
 const DTOK = 'dtest0000'
-import { makeTunnelClient, handshakePlaintext } from './tunnel-client'
+import { makeTunnelClient, handshakePlaintext, MAX_QUEUED_FRAMES_PER_STREAM } from './tunnel-client'
 
 // A fake WS pair: daemon-side socket the client drives; test plays the relay+phone.
 function fakeSocket() {
@@ -177,6 +177,19 @@ describe('tunnel-client (daemon side)', () => {
       for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 5))
       expect(calls).toBe(0)   // 畸形路径 → handleRequest 从没被调用,也没崩
     }
+  })
+
+  it('排队帧上限:握手未完时同一流连发 70 帧 ⇒ 超出 64 的丢弃,只记一行 queue full', async () => {
+    const sock = fakeSocket()
+    const logs: string[] = []
+    const client = makeTunnelClient({ daemonId: 'cc-1', knownDeviceTokens: () => [DTOK], handleRequest: async () => new Response('x'), connect: () => sock.ws as never, log: (_t, l) => { logs.push(l) }, now: () => 0 })
+    client.start()
+    const kp = await generateTunnelKeypair()
+    sock.emitMessage(JSON.stringify({ stream: 'sQ', frame: { hs: await exportPublicKeyB64(kp.publicKey) } }))
+    for (let i = 0; i < 69; i++) sock.emitMessage(JSON.stringify({ stream: 'sQ', frame: { iv: 'aa', ct: 'bb' } }))
+    await new Promise(r => setTimeout(r, 50))
+    expect(MAX_QUEUED_FRAMES_PER_STREAM).toBe(64)
+    expect(logs.filter(l => l.includes('queue full'))).toHaveLength(1)
   })
 
   it('a sealed request before handshake is dropped (no key yet)', async () => {
