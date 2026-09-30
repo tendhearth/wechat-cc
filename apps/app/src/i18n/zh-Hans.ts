@@ -184,6 +184,8 @@ const zh: Record<keyof typeof en, string> = {
   'common.ccBusy': 'CC 还在忙这件事,等这一轮做完再说。',
   'push.placeholderTitle': 'CC',
   'push.placeholder': 'CC 有新动态',
+  'push.channelDecide': '需要你决定',
+  'push.channelUpdates': '完成与失败',
 }
 
 export default zh

@@ -13,6 +13,8 @@ expo-env.d.ts
 /android/
 
 # Native secrets
+google-services.json
+GoogleService-Info.plist
 .kotlin/
 *.orig.*
 *.jks

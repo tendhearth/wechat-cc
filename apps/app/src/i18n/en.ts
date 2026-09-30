@@ -182,6 +182,8 @@ const en = {
   'common.ccBusy': 'CC is still working on this — try again when this round finishes.',
   'push.placeholderTitle': 'CC',
   'push.placeholder': 'CC has news',
+  'push.channelDecide': 'Needs your decision',
+  'push.channelUpdates': 'Done and didn’t finish',
 } as const
 
 export default en
