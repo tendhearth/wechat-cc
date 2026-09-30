@@ -1,6 +1,7 @@
 import Constants from 'expo-constants'
 import { useRouter } from 'expo-router'
-import { Pressable, ScrollView, Text, View } from 'react-native'
+import { useState } from 'react'
+import { Alert, Pressable, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import type { Lang } from '../i18n'
 import { t } from '../i18n'
@@ -21,13 +22,28 @@ export default function Settings() {
   const router = useRouter()
   const conn = useConnection()
   const { backend, resetDemo } = useBackendCtx()
-  const { langOverride, setLangOverride, setSeenWelcome } = useSession()
+  const { langOverride, setLangOverride, setSeenWelcome, forgetPairing } = useSession()
+  const [unpairing, setUnpairing] = useState(false)
   const demo = backend.mode === 'demo'
   const choices: Array<{ v: Lang | null; label: string; id: string }> = [
     { v: null, label: t(lang, 'settings.languageSystem'), id: 'system' },
     { v: 'en', label: t(lang, 'settings.languageEn'), id: 'en' },
     { v: 'zh-Hans', label: t(lang, 'settings.languageZh'), id: 'zh-Hans' },
   ]
+  const unpair = async () => {
+    setUnpairing(true)
+    let remote = true
+    try { await backend.unpair() } catch { remote = false } // 撤销后 / 离线时 daemon 那边做不了,本机照样清
+    await forgetPairing()
+    if (!remote) Alert.alert(t(lang, 'settings.unpairLocalOnly'))
+    router.dismissAll?.()
+    router.replace('/welcome')
+  }
+  const confirmUnpair = () =>
+    Alert.alert(t(lang, 'settings.unpairConfirmTitle'), t(lang, 'settings.unpairConfirmBody'), [
+      { text: t(lang, 'common.cancel'), style: 'cancel' },
+      { text: t(lang, 'settings.unpair'), style: 'destructive', onPress: () => void unpair() },
+    ])
   const heading = (k: Parameters<typeof t>[1]) => <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 18, fontFamily: serifFamily }}>{t(lang, k)}</Text>
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
@@ -52,11 +68,21 @@ export default function Settings() {
             )
           })}
         </View>
+        {!demo ? (
+          <>
+            {heading('settings.thisPhone')}
+            <Card style={{ gap: space.m }}>
+              <Button kind="secondary" testID="settings-devices" label={t(lang, 'settings.devices')} onPress={() => router.push('/devices')} />
+              <Button kind="secondary" testID="settings-unpair" label={t(lang, 'settings.unpair')} busy={unpairing} onPress={confirmUnpair} />
+            </Card>
+          </>
+        ) : null}
         {demo ? (
           <>
             {heading('settings.demo')}
             <Card style={{ gap: space.m }}>
               <Text style={{ color: c.muted, fontSize: 14, lineHeight: 21 }}>{t(lang, 'settings.demoBody')}</Text>
+              <Button kind="primary" testID="settings-pair-now" label={t(lang, 'settings.pairNow')} onPress={() => { resetDemo(); router.push('/pair') }} />
               <Button
                 kind="secondary"
                 testID="settings-exit-demo"
