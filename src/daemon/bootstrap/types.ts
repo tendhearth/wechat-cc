@@ -271,6 +271,8 @@ export interface Bootstrap {
   providerNotes?: () => Partial<Record<ProviderId, string>>
   /** 启动时加载的 git commit;打包版 / 非仓库为 null。health.version 用。可选:测试里的假 boot 没有它。 */
   codeHead?: string | null
+  /** 启动时实际加载的插件快照(GET /v1/health.plugins)。可选:测试里的假 boot 没有它。 */
+  pluginsHealth?: import('../plugins/health').PluginsHealth
   /** Backward-compat alias for defaultProviderId. Pre-P2 callers expected this name. */
   agentProviderKind: ProviderId
   /**

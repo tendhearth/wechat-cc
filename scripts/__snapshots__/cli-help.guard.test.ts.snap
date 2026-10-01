@@ -1612,6 +1612,23 @@ USAGE plugin setup-status
 "
 `;
 
+exports[`cli.ts --help 快照(逐字节) > plugin --help > plugin source --help 1`] = `
+"Show or set where the daemon loads first-party (bundled) plugins from (plugin source)
+
+USAGE plugin source [OPTIONS] [DIR]
+
+ARGUMENTS
+
+  DIR=<dir>    Plugins dir to register (e.g. <checkout>/plugins)
+
+OPTIONS
+
+  --json    JSON output
+
+
+"
+`;
+
 exports[`cli.ts --help 快照(逐字节) > plugin --help > plugin sync --help 1`] = `
 "Run a plugin's repeatable local refresh action (plugin sync)
 
@@ -1645,7 +1662,7 @@ OPTIONS
 exports[`cli.ts --help 快照(逐字节) > plugin --help 1`] = `
 "Manage plugins (MCP tool providers) (wechat-cc plugin v1.7.1 (dev))
 
-USAGE wechat-cc plugin list|search|install|upgrade|setup|sync|setup-status|enable|disable
+USAGE wechat-cc plugin list|search|install|upgrade|setup|sync|setup-status|enable|disable|source
 
 COMMANDS
 
@@ -1658,6 +1675,7 @@ COMMANDS
   setup-status    Emit the last plugin-setup progress (JSON) — polled by the desktop wizard         
         enable    Enable a plugin (agent gets its tools after a daemon restart)                     
        disable    Disable a plugin                                                                  
+        source    Show or set where the daemon loads first-party (bundled) plugins from             
 
 Use wechat-cc plugin <command> --help for more information about a command.
 
@@ -1969,6 +1987,7 @@ OPTIONS
                         --binary=<binary>    新 sidecar 二进制路径(源码模式缺省按 repoRoot + 架构推导;打包模式下必填)  
                               --app=<app>    .app 包路径,覆盖从 LaunchAgent plist 推导的部署目标            
                             --no-rollback    健康门失败时不自动回滚（默认会回滚）                                
+                  --allow-missing-plugins    插件门红了也放行(记日志);给本来就没有插件的机器,不必永久 plugin disable     
                                 --no-sign    不用本机钥匙串里的 Developer ID 重签 sidecar 与 .app(缺省:有证书就签)
   --health-timeout-ms=<health_timeout_ms>    健康门超时,毫秒(缺省 60000)                                
                                    --json    JSON 输出（SelfDeployResult）                         

@@ -11,7 +11,8 @@ import type { ProviderId } from '../../core/conversation'
 import { capabilitiesFor, capabilityProviderIds } from '../../core/capability-matrix'
 import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
 import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
-import { bundledPluginsDir } from '../plugins/paths'
+import { resolveBundledPlugins, type BundledPluginsResolution } from '../plugins/paths'
+import { buildPluginsHealth, pluginsHealthWarning, type PluginsHealth } from '../plugins/health'
 // JSON import — version field is read at module init. resolveJsonModule is
 // on in tsconfig, and `with { type: 'json' }` is the spec'd syntax.
 import selfPkg from '../../../package.json' with { type: 'json' }
@@ -33,11 +34,15 @@ export interface PluginsSlice {
   pluginMcp: ReturnType<typeof pluginMcpSpecs>
   knowledgePluginNames: string[]
   pluginMcpForClaude: Record<string, { type: 'stdio' } & McpStdioSpec>
+  /** GET /v1/health.plugins — what was actually loaded at boot (src/daemon/plugins/health.ts). */
+  pluginsHealth: PluginsHealth
 }
 
 export function wirePlugins(
   deps: Pick<BootstrapDeps, 'internalApi'>,
   ctx: Pick<BootstrapCtx, 'stateDir' | 'log'>,
+  /** Injectable for tests: the live resolver reads env + the real repo's plugins/. */
+  resolve: (stateDir: string) => BundledPluginsResolution | null = resolveBundledPlugins,
 ): PluginsSlice {
   // RFC 03 §5 — standalone wechat-mcp stdio server. When deps.internalApi is
   // wired, both providers receive a `wechat` MCP server spec that spawns
@@ -76,12 +81,21 @@ export function wirePlugins(
   // = arbitrary code; enable via dashboard / plugins.json); BUNDLED default
   // ENABLED. Unlike installUserMcp (which pollutes the human's global
   // ~/.claude.json), this injects only into the daemon-spawned providers.
+  // Where the bundled plugins come from is logged on EVERY boot (2026-09-30):
+  // from 09-11 the packaged daemon found none and said nothing for three weeks.
+  const bundled = resolve(ctx.stateDir)
+  ctx.log('BOOT', bundled
+    ? `plugin: bundled plugins dir ${bundled.dir} (via ${bundled.via})`
+    : 'plugin: no bundled plugins dir found (env / `wechat-cc plugin source` pointer / app resources / repo all empty)')
   const loadedPlugins = loadPlugins({
     stateDir: ctx.stateDir,
-    bundledDir: bundledPluginsDir(),
+    bundledDir: bundled?.dir ?? null,
     hostVersion: selfPkg.version,
     log: (m) => ctx.log('BOOT', `plugin: ${m}`),
   })
+  const pluginsHealth = buildPluginsHealth({ stateDir: ctx.stateDir, resolution: bundled, loaded: loadedPlugins })
+  const pluginsWarning = pluginsHealthWarning(pluginsHealth)
+  if (pluginsWarning) ctx.log('BOOT', `plugin: ${pluginsWarning}`)
   const pluginMcp = pluginMcpSpecs(loadedPlugins)
   // Names of ACTUALLY-registered plugins (enabled AND ready — same gate
   // pluginMcpSpecs applies above), daemon-global (computed once at boot, NOT
@@ -104,6 +118,6 @@ export function wirePlugins(
   return {
     wechatStdioForClaude, wechatStdioForCodex, wechatStdioForCursor, wechatStdioForOpenai, wechatStdioForGemini, wechatStdioForAgy,
     delegateStdioByProvider, delegateStdioForClaude, delegateStdioForCodex, delegateStdioForCursor, delegateStdioForOpenai,
-    loadedPlugins, pluginMcp, knowledgePluginNames, pluginMcpForClaude,
+    loadedPlugins, pluginMcp, knowledgePluginNames, pluginMcpForClaude, pluginsHealth,
   }
 }

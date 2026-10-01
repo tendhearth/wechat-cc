@@ -351,6 +351,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // Subsystem degraded-boot (spec 2026-08-17) — sup 在本调用之前创建,
       // 直接传引用,无需 thunk-over-bootRef 姿势。
       subsystems: () => sup.statuses(),
+      // 插件快照(2026-09-30):bootstrap 之前是 null,self deploy 的健康门会等它。
+      plugins: () => bootRef?.pluginsHealth ?? null,
       outbound: () => ilink.outboundHealth(),
       // Admin remediation hooks (POST /v1/sessions/release, /v1/daemon/restart).
       releaseSession: (k) => bootRef?.sessionManager?.release(k) ?? Promise.resolve(),

@@ -93,7 +93,7 @@ async function startCustomerReviewRuntimeInner(
 
   const specs = options.loadSpecs?.() ?? pluginMcpSpecs(loadPlugins({
     stateDir: deps.stateDir,
-    bundledDir: bundledPluginsDir(),
+    bundledDir: bundledPluginsDir(deps.stateDir),
     hostVersion: selfPkg.version,
   }))
   const wxvault = specs.wxvault

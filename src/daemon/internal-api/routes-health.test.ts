@@ -42,6 +42,29 @@ describe('GET /v1/health', () => {
     const r2 = await without['GET /v1/health']!({} as any, undefined)
     expect((r2.body as any).outbound).toBeUndefined()
   })
+
+  it('GET /v1/health renders the plugins snapshot per tier (null while bootstrap is still wiring) and omits it when unwired', async () => {
+    const snap = {
+      bundled_dir: '/Users/owner/plugins', via: 'pointer' as const, pointer_dir: '/Users/owner/plugins', pointer_broken: false,
+      plugins: [{ name: 'wxvault', source: 'bundled' as const, enabled: true, ready: false, reason: 'missing /Users/owner/x' }],
+      expected_missing: ['wxsearch'],
+    }
+    const routes = makeRoutesUnderTest({ plugins: () => snap })
+    // guest / trusted (the file token self deploy uses): counts + names only
+    const trusted = await routes['GET /v1/health']!({} as any, undefined, { tier: 'trusted', origin: 'file' } as any)
+    expect((trusted.body as any).plugins).toEqual({ via: 'pointer', count: 1, ready_count: 0, expected_missing: ['wxsearch'], pointer_broken: false })
+    expect(JSON.stringify((trusted.body as any).plugins)).not.toContain('/Users/owner')
+    const anon = await routes['GET /v1/health']!({} as any, undefined)
+    expect((anon.body as any).plugins.bundled_dir).toBeUndefined()
+    // admin keeps the detail
+    const admin = await routes['GET /v1/health']!({} as any, undefined, { tier: 'admin', origin: 'operator' } as any)
+    expect((admin.body as any).plugins.bundled_dir).toBe('/Users/owner/plugins')
+    expect((admin.body as any).plugins.plugins[0].reason).toContain('/Users/owner/x')
+    const wiring = await makeRoutesUnderTest({ plugins: () => null })['GET /v1/health']!({} as any, undefined)
+    expect((wiring.body as any).plugins).toBeNull()
+    const without = await makeRoutesUnderTest({})['GET /v1/health']!({} as any, undefined)
+    expect('plugins' in (without.body as any)).toBe(false)
+  })
 })
 
 describe('GET /v1/health/incidents', () => {

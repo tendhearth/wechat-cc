@@ -266,15 +266,12 @@ fn resize_companion_window(app: AppHandle, direction: String) -> Result<(), Stri
 // unset and the daemon falls back to its execPath logic (graceful, not a crash).
 // Passed to the sidecar as WECHAT_CC_BUNDLED_PLUGINS_DIR (read by paths.ts)
 // because the daemon can't portably derive the platform-specific resource path.
+// Only a dir that really holds plugins counts (2026-09-30): the published
+// installer ships README-only by design, and passing that empty shell used to
+// stop the sidecar from looking anywhere else.
 fn bundled_plugins_dir(app: &AppHandle) -> Option<PathBuf> {
     let base = app.path().resource_dir().ok()?;
-    for rel in ["_up_/_up_/_up_/plugins", "plugins"] {
-        let p = base.join(rel);
-        if p.is_dir() {
-            return Some(p);
-        }
-    }
-    None
+    daemon_mode::find_plugins_in_resources(&base)
 }
 
 async fn run_sidecar(app: &AppHandle, args: Vec<String>) -> Result<String, String> {

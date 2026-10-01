@@ -10,7 +10,7 @@ const pluginListCmd = defineCommand({
   async run({ args }) {
     const { loadPlugins } = await import('../../daemon/plugins/registry')
     const { bundledPluginsDir } = await import('../../daemon/plugins/paths')
-    const loaded = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir(), hostVersion: selfPkg.version })
+    const loaded = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir(STATE_DIR), hostVersion: selfPkg.version })
     if (args.json) {
       console.log(JSON.stringify(loaded.map(p => ({
         name: p.name, source: p.source, version: p.manifest.version ?? null,
@@ -61,7 +61,7 @@ const pluginSearchCmd = defineCommand({
     const { fetchCatalog, updateAvailable } = await import('../../daemon/plugins/catalog')
     const { loadPlugins } = await import('../../daemon/plugins/registry')
     const { bundledPluginsDir } = await import('../../daemon/plugins/paths')
-    const installed = new Map(loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir() }).map(p => [p.name, p.manifest.version]))
+    const installed = new Map(loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir(STATE_DIR) }).map(p => [p.name, p.manifest.version]))
     let catalog
     try { catalog = await fetchCatalog() } catch (err) {
       console.error(`registry unavailable: ${err instanceof Error ? err.message : String(err)}`)
@@ -114,7 +114,7 @@ const pluginUpgradeCmd = defineCommand({
     const byName = new Map(catalog.plugins.map(p => [p.name, p]))
     let targets: import('../../daemon/plugins/catalog').CatalogEntry[] = []
     if (args.all) {
-      const installed = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir() })
+      const installed = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir(STATE_DIR) })
       for (const p of installed) {
         const e = byName.get(p.name)
         if (e && updateAvailable(p.manifest.version, e)) targets.push(e)
@@ -147,7 +147,7 @@ const pluginSetupCmd = defineCommand({
     const { spawn } = await import('node:child_process')
     const { writeFileSync, mkdirSync } = await import('node:fs')
     const { join } = await import('node:path')
-    const p = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir() }).find(x => x.name === args.name)
+    const p = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir(STATE_DIR) }).find(x => x.name === args.name)
     if (!p) { console.error(`plugin "${args.name}" not found`); process.exit(1) }
     if (!p.manifest.setup) { console.error(`plugin "${args.name}" declares no runnable setup`); process.exit(1) }
     // ${dataDir} = the plugin's writable data dir; create it so setup can write
@@ -211,7 +211,7 @@ const pluginSyncCmd = defineCommand({
     const { bundledPluginsDir, pluginDataDir } = await import('../../daemon/plugins/paths')
     const { spawn } = await import('node:child_process')
     const { mkdirSync } = await import('node:fs')
-    const p = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir() }).find(x => x.name === args.name)
+    const p = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir(STATE_DIR) }).find(x => x.name === args.name)
     if (!p) { console.error(`plugin "${args.name}" not found`); process.exit(1) }
     if (!p.enabled || !p.ready) { console.error(`plugin "${args.name}" is not enabled + ready`); process.exit(1) }
     if (!p.manifest.sync) { console.error(`plugin "${args.name}" declares no runnable sync action`); process.exit(1) }
@@ -232,7 +232,33 @@ const pluginSyncCmd = defineCommand({
   },
 })
 
+// 内置插件来源(2026-09-30):安装包不带一等插件(1747de09),打包版 daemon 靠状态目录里
+// 登记的来源找到它们。`self deploy` 从源码 checkout 部署时会自动登记;这里是手动入口。
+const pluginSourceCmd = defineCommand({
+  meta: { name: 'source', description: 'Show or set where the daemon loads first-party (bundled) plugins from' },
+  args: {
+    dir: { type: 'positional', required: false, description: 'Plugins dir to register (e.g. <checkout>/plugins)', valueHint: 'dir' },
+    json: { type: 'boolean', description: 'JSON output' },
+  },
+  async run({ args }) {
+    const { registerPluginsSource, readPluginsSourcePointer, resolveBundledPlugins } = await import('../../lib/plugins-source')
+    if (args.dir) {
+      const r = registerPluginsSource(STATE_DIR, args.dir)
+      if (args.json) console.log(JSON.stringify(r, null, 2))
+      else if (r.ok) console.log(`registered ${r.dir} (${r.plugins.join(', ')}) — restart the daemon to load them`)
+      else console.error(`plugin source: ${r.error}`)
+      if (!r.ok) process.exit(1)
+      return
+    }
+    const pointer = readPluginsSourcePointer(STATE_DIR)
+    const resolved = resolveBundledPlugins(STATE_DIR)
+    if (args.json) { console.log(JSON.stringify({ pointer, resolved }, null, 2)); return }
+    console.log(`registered source: ${pointer ?? '(none)'}`)
+    console.log(resolved ? `this process resolves: ${resolved.dir} (via ${resolved.via})` : 'this process resolves: no bundled plugins dir')
+  },
+})
+
 export const pluginCmd = defineCommand({
   meta: { name: 'plugin', description: 'Manage plugins (MCP tool providers)' },
-  subCommands: { list: pluginListCmd, search: pluginSearchCmd, install: pluginInstallCmd, upgrade: pluginUpgradeCmd, setup: pluginSetupCmd, sync: pluginSyncCmd, 'setup-status': pluginSetupStatusCmd, enable: pluginEnableCmd, disable: pluginDisableCmd },
+  subCommands: { list: pluginListCmd, search: pluginSearchCmd, install: pluginInstallCmd, upgrade: pluginUpgradeCmd, setup: pluginSetupCmd, sync: pluginSyncCmd, 'setup-status': pluginSetupStatusCmd, enable: pluginEnableCmd, disable: pluginDisableCmd, source: pluginSourceCmd },
 })

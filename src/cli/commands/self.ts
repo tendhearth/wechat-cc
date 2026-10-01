@@ -21,6 +21,7 @@ const selfDeployCmd = defineCommand({
     binary: { type: 'string', description: '新 sidecar 二进制路径(源码模式缺省按 repoRoot + 架构推导;打包模式下必填)' },
     app: { type: 'string', description: '.app 包路径,覆盖从 LaunchAgent plist 推导的部署目标' },
     'no-rollback': { type: 'boolean', description: '健康门失败时不自动回滚（默认会回滚）' },
+    'allow-missing-plugins': { type: 'boolean', description: '插件门红了也放行(记日志);给本来就没有插件的机器,不必永久 plugin disable' },
     'no-sign': { type: 'boolean', description: '不用本机钥匙串里的 Developer ID 重签 sidecar 与 .app(缺省:有证书就签)' },
     'health-timeout-ms': { type: 'string', description: '健康门超时,毫秒(缺省 60000)' },
     json: { type: 'boolean', description: 'JSON 输出（SelfDeployResult）' },
@@ -35,7 +36,7 @@ const selfDeployCmd = defineCommand({
       return
     }
 
-    const { planSelfDeploy, executeSelfDeploy, defaultSelfDeployDeps, resolveSigningInputs } = await import('../self-deploy.ts')
+    const { planSelfDeploy, executeSelfDeploy, defaultSelfDeployDeps, resolveSigningInputs, pluginSourceCandidates } = await import('../self-deploy.ts')
     const { homedir } = await import('node:os')
     const { existsSync, readFileSync } = await import('node:fs')
 
@@ -88,6 +89,9 @@ const selfDeployCmd = defineCommand({
         // rollback still armed. Accept both spellings.
         rollback: !((args as Record<string, unknown>)['no-rollback'] === true || (args as Record<string, unknown>).rollback === false),
         ...signing,
+        // 插件来源登记(2026-09-30):只在源码模式下有 checkout 可登记;打包版保留已有指针。
+        pluginSourceCandidates: compiled ? [] : pluginSourceCandidates(repoRoot, deps.spawnSync),
+        allowMissingPlugins: (args as Record<string, unknown>)['allow-missing-plugins'] === true || (args as Record<string, unknown>).allowMissingPlugins === true,
       })
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err)

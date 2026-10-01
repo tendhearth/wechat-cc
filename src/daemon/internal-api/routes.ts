@@ -17,6 +17,7 @@ import { splitReply, paceMs } from '../reply-split'
 import { lookup } from '../../core/capability-matrix'
 import { normalizeUserName } from '../../lib/user-name'
 import type { Mode } from '../../core/conversation'
+import { pluginsHealthForTier } from '../plugins/health'
 import type { UserTier } from '../../core/user-tier'
 import { makeEventsStore } from '../events/store'
 import { readModelStatus } from '../atelier-provision'
@@ -133,7 +134,7 @@ const onlineStickerCursor = new Map<string, number>()
   return {
     ...workbenchRoutes(deps),
     ...mattersRoutes(deps),
-    'GET /v1/health': () => ({
+    'GET /v1/health': (_q, _body, caller) => ({
       status: 200,
       body: {
         ok: true,
@@ -147,6 +148,10 @@ const onlineStickerCursor = new Map<string, number>()
         ...(deps.version ? { version: deps.version() } : {}),
         subsystems: deps.subsystems?.() ?? [],
         ...(deps.outbound ? { outbound: toWireOutbound(deps.outbound()) } : {}),
+        // 启动时实际加载的插件(2026-09-30)。null = bootstrap 还在接线;`self deploy`
+        // 的健康门等它变成对象,再看 expected_missing / pointer_broken。这条路由是 guest
+        // 档:admin 以下只给计数和缺了哪些名字,不给绝对路径与 not-ready 原因。
+        ...(deps.plugins ? { plugins: (() => { const h = deps.plugins!(); return h ? pluginsHealthForTier(h, caller?.tier === 'admin') : null })() } : {}),
         // 在 daemon 进程里探(权限记在责任进程上,CLI 能读不代表 daemon 能读)。
         // 三次 readdir,便宜;每次 health 都重探,这样勾完权限刷新就变绿。
         fs_access: (() => {
