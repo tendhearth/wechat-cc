@@ -93,11 +93,12 @@ export function continueErrorDot(code: string): 'bad' | 'warn' | 'unknown' {
   return 'bad'
 }
 
-/** 接过来、还没发第一句的那件事(进展页 / 说一句页顶上):第一句会怎样 + 先让原来那个停下。 */
+/** 接过来、还没发第一句的那件事(进展页 / 说一句页顶上):第一句会怎样 + 先让原来那个停下。
+ *  Codex 那一句是接手那一刻查的,不是现在 ⇒ 用过去时(final fix M3);Claude Code 那句本来就不说看没看到,照旧。 */
 export function nativeStartLines(n: { mode: 'native_resume' | 'fresh_context'; providerId: string }, lang: Lang): string[] {
   const provider = providerName(n.providerId, lang)
   return [
     t(lang, n.mode === 'fresh_context' ? 'continue.firstFresh' : 'continue.firstResume', { provider }),
-    stopLine(n.providerId, lang),
+    runSeen(n.providerId) ? t(lang, 'continue.notSeenRunningAtPickup', { provider }) : stopLine(n.providerId, lang),
   ]
 }

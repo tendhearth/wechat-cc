@@ -37,6 +37,9 @@ describe('mapPhoneError(HTTP 状态 + 正文 → BackendCode)', () => {
     [409, { ok: false, error: 'native_history_changed' }, 'session_changed'],
     [409, { ok: false, error: 'native_history_empty' }, 'session_empty'],
     [409, { ok: false, error: 'native_session_already_managed' }, 'session_managed'],
+    // 第一句时电脑那边的记录变了(终端里的 Claude Code 还在写)/ 原会话已不能直接接上:都是「会话刚变」,不是「没送到」
+    [409, { ok: false, error: 'external_close_confirmation_stale' }, 'session_changed'],
+    [409, { ok: false, error: 'restart_confirmation_required' }, 'session_changed'],
     [400, { ok: false, error: 'invalid_text' }, 'invalid'],
   ] as const)('接着做电脑会话的码(spec D11):%s %j ⇒ %s', (status, body, want) => {
     expect(mapPhoneError(status, body)).toBe(want)

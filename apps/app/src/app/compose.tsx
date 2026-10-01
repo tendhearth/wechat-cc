@@ -132,7 +132,7 @@ export default function Compose() {
           {outcome ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
               <Dot kind={composeOutcomeDot(outcome)} size={8} />
-              <Txt testID={`compose-${outcome}`} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flex: 1 }}>{composeOutcomeText(outcome, lang, matter ? detail.data?.task?.providerId ?? null : provider?.id ?? null)}</Txt>
+              <Txt testID={`compose-${outcome}`} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flex: 1 }}>{composeOutcomeText(outcome, lang, matter ? detail.data?.task?.providerId ?? null : provider?.id ?? null, !!matter)}</Txt>
             </View>
           ) : null}
           <Txt role="small" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'compose.willAskYou')}</Txt>

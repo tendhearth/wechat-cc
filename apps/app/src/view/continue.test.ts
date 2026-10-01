@@ -90,7 +90,9 @@ describe('continueErrorText / continueErrorDot / CONTINUE_RECHECK:提交失败',
 describe('nativeStartLines / providerName', () => {
   it('第一句会怎样 + 先让原来那个停下(Claude Code 照 D3 说 CC 没法确认;Codex 说没看到在跑)', () => {
     expect(nativeStartLines({ mode: 'native_resume', providerId: 'claude' }, 'zh-Hans')).toEqual(['你发的第一句会接着电脑上原来的 Claude Code 会话。', '先让电脑上原来那个 Claude Code 停下。CC 没法替你确认它停了。'])
-    expect(nativeStartLines({ mode: 'native_resume', providerId: 'codex' }, 'zh-Hans')).toEqual(['你发的第一句会接着电脑上原来的 Codex 会话。', 'CC 没看到原来那个 Codex 在跑；要是你在别处开着它，先让它停下。'])
+    expect(nativeStartLines({ mode: 'native_resume', providerId: 'codex' }, 'zh-Hans')).toEqual(['你发的第一句会接着电脑上原来的 Codex 会话。', '接手时 CC 没看到原来那个 Codex 在跑；要是你在别处开着它，先让它停下。'])
+    // 那是接手那一刻的检查,不是现在:用过去时(final fix M3)
+    expect(nativeStartLines({ mode: 'native_resume', providerId: 'codex' }, 'en')[1]).toBe('When this was picked up, CC didn’t see the original Codex running. If you have it open somewhere, stop it first.')
     expect(nativeStartLines({ mode: 'fresh_context', providerId: 'claude' }, 'en')[0]).toBe('Your first message starts a new round with the earlier conversation attached.')
   })
   it('只认 claude / codex,别的原样', () => {
