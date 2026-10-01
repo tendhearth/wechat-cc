@@ -104,4 +104,13 @@ describe('安卓原生源码不打日志、不回退到原始数据', () => {
     expect(s).toContain('"decide"')
     expect(s).toContain('"updates"')
   })
+  it('post() 整段兜住任何异常(构造 / 资源 / notify 失败 ⇒ 这条不显示,不让后台进程崩)', () => {
+    const s = src('TendhearthMessagingService.kt')
+    const post = s.slice(s.indexOf('private fun post('), s.indexOf('private companion object'))
+    expect(post).toMatch(/catch \(e: Exception\)/)
+    expect(post).not.toMatch(/catch \(e: SecurityException\)/)
+    // try 包住整个函数体:try 出现在取 NotificationManager 之前
+    expect(post.indexOf('try {')).toBeGreaterThan(-1)
+    expect(post.indexOf('try {')).toBeLessThan(post.indexOf('getSystemService('))
+  })
 })

@@ -25,3 +25,14 @@ export function buildSimPush(o: { token: string; mode: SimMode; kind: PushKindT;
   }
   return { aps: { alert: { title: 'CC', body: RELAY_PLACEHOLDER_BODY }, 'mutable-content': 1, sound: 'default' }, wcc }
 }
+
+/** 发 n 次(--repeat ⇒ 2);两次之间 wait();返回第一个非零退出码(都成功 ⇒ 0)。 */
+export function sendTimes(n: number, send: (i: number) => number, wait: () => void): number {
+  let code = 0
+  for (let i = 0; i < n; i++) {
+    if (i > 0) wait()
+    const c = send(i)
+    if (code === 0 && c !== 0) code = c
+  }
+  return code
+}

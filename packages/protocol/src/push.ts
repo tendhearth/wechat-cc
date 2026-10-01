@@ -64,6 +64,16 @@ export function pushDedupeKey(ts: number, ct: string): string {
   return `${Math.floor(ts)}:${hex(sha256(new TextEncoder().encode(ct))).slice(0, 32)}`
 }
 
+/** 按 Unicode 码点比较(不是 JS 默认的 UTF-16 码元):与向量 rules、Swift 的 unicodeScalars、Kotlin 的 codePoints 一致。 */
+function codePointLess(a: string, b: string): boolean {
+  const x = Array.from(a), y = Array.from(b)
+  for (let i = 0; i < x.length && i < y.length; i++) {
+    const p = x[i]!.codePointAt(0)!, q = y[i]!.codePointAt(0)!
+    if (p !== q) return p < q
+  }
+  return x.length < y.length
+}
+
 /**
  * 去重的参考实现(原生端照它写;向量文件的 dedupe.steps 钉住)。seen:先修剪 now - 记下时刻 > TTL 的条目;
  * 已有 ⇒ true(重复);否则记下,超出容量就挤掉记下时刻最早的(同一时刻按键名升序)⇒ false。
@@ -77,7 +87,7 @@ export function makePushDedupe(initial: Record<string, number> = {}): { seen(key
       m.set(key, now)
       while (m.size > PUSH_DEDUPE_CAPACITY) {
         let oldest: [string, number] | null = null
-        for (const e of m) if (!oldest || e[1] < oldest[1] || (e[1] === oldest[1] && e[0] < oldest[0])) oldest = e
+        for (const e of m) if (!oldest || e[1] < oldest[1] || (e[1] === oldest[1] && codePointLess(e[0], oldest[0]))) oldest = e
         m.delete(oldest![0])
       }
       return false

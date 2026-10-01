@@ -22,9 +22,13 @@ enum PushKeyStore {
 }
 
 /// 去重记录放在扩展自己容器的 UserDefaults(不需要 App Group:只有扩展读写它)。只存去重键(时间 + 密文哈希前缀)。
+/// 同一进程里可能有多个扩展实例并发 didReceive:读-改-写整段在一把静态锁里,免得两条重复都判成「新」。
 enum DedupeStore {
   static let key = "tendhearth.push.dedupe"
+  static let lock = NSLock()
   static func seen(_ k: String, nowMs: Int64) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
     let d = UserDefaults.standard
     let raw = d.dictionary(forKey: key) as? [String: NSNumber] ?? [:]
     var store = PushDedupe(entries: raw.mapValues { $0.int64Value })

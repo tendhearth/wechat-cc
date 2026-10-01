@@ -46,6 +46,54 @@ appId: com.tendhearth.app
     timeout: 10000
 - assertNotVisible:
     id: push-opening
+# 连点两条通知不叠「此刻」(最终评审 I1):先切到「一起」标签,再连开两条推送深链、每次返回此刻;
+# 之后从左缘右滑两次 —— 栈里若还压着旧的 (tabs)(replace 的老毛病),就会露出停在「一起」的那一层。
+- tapOn:
+    id: tab-together
+- extendedWaitUntil:
+    visible:
+      id: together-say
+    timeout: 10000
+- openLink: tendhearth://push-open?kind=permission&taskId=a1b2c3d4&requestId=perm-demo-1
+- runFlow: subflows/_open-link-guard.yaml
+- extendedWaitUntil:
+    visible:
+      id: approval-title
+    timeout: 10000
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: now-needs-you-card
+    timeout: 10000
+- openLink: tendhearth://push-open?kind=permission&taskId=a1b2c3d4&requestId=perm-demo-1
+- runFlow: subflows/_open-link-guard.yaml
+- extendedWaitUntil:
+    visible:
+      id: approval-title
+    timeout: 10000
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: now-needs-you-card
+    timeout: 10000
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - swipe:
+          start: 1%, 50%
+          end: 85%, 50%
+          duration: 400
+      - swipe:
+          start: 1%, 50%
+          end: 85%, 50%
+          duration: 400
+- assertVisible:
+    id: now-needs-you-card
+- assertNotVisible:
+    id: together-say
 # 旧通知对应的请求已经处理掉:先在批准页允许,再点同一条旧通知 ⇒ 批准页拉新详情后显示「已处理」,没有「允许」。
 - openLink: tendhearth://push-open?kind=permission&taskId=a1b2c3d4&requestId=perm-demo-1
 - runFlow: subflows/_open-link-guard.yaml

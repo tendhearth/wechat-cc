@@ -46,6 +46,7 @@ export function PushRouter() {
   }, [last, key, router, os])
 
   useEffect(() => {
+    if (os !== 'ios') return   // 安卓没有 app 内横幅:前台也由 Kotlin 发系统通知
     const sub = Notifications.addNotificationReceivedListener(n => {
       if (!banners.current.first(bannerKey(n, os))) return
       const now = notificationTimeMs(n.date, os)

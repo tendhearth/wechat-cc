@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { fallbackPushToken, makeDevPushToken } from './dev-token'
+import { devPushKeyAction, fallbackPushToken, makeDevPushToken } from './dev-token'
 
 const DEV = 'dev' + 'a'.repeat(48)
 const REAL = 'd' + 'b'.repeat(48)
@@ -28,5 +28,22 @@ describe('点通知的兜底令牌', () => {
     off()
     s.set('dev' + 'c'.repeat(48))
     expect(fn).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('/dev-push-key 该不该动钥匙串', () => {
+  it('发布构建 ⇒ 什么都不做', () => {
+    expect(devPushKeyAction(false, DEV, false)).toBe('none')
+    expect(devPushKeyAction(false, DEV, true)).toBe('none')
+  })
+  it('形状不对 ⇒ rejected', () => {
+    expect(devPushKeyAction(true, REAL, false)).toBe('rejected')
+    expect(devPushKeyAction(true, undefined, false)).toBe('rejected')
+  })
+  it('已配对的开发构建 ⇒ paired(不写共享钥匙串:那里放着真配对推出的推送密钥)', () => {
+    expect(devPushKeyAction(true, DEV, true)).toBe('paired')
+  })
+  it('没配对的开发构建 + 开发令牌 ⇒ apply', () => {
+    expect(devPushKeyAction(true, DEV, false)).toBe('apply')
   })
 })

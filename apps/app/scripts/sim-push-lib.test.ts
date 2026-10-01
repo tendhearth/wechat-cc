@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 import { derivePushKey, openPush, PushPlaintext } from '@wechat-cc/protocol'
-import { buildSimPush, devToken } from './sim-push-lib'
+import { buildSimPush, devToken, sendTimes } from './sim-push-lib'
 import { isDevPushToken } from '../src/push/key-store'
 
 const NOW = 1_700_000_000_000
@@ -26,5 +26,22 @@ describe('sim-push', () => {
     expect(() => openPush(key, buildSimPush({ ...base, token: tok, mode: 'stale' }).wcc, NOW)).toThrow('stale')
     expect(() => openPush(key, buildSimPush({ ...base, token: tok, mode: 'tamper' }).wcc, NOW)).toThrow()
     expect(() => openPush(key, buildSimPush({ ...base, token: tok, mode: 'wrong-key' }).wcc, NOW)).toThrow()
+  })
+})
+
+describe('sendTimes(--repeat)', () => {
+  it('全成功 ⇒ 0;每次都发', () => {
+    const calls: number[] = []
+    expect(sendTimes(2, i => { calls.push(i); return 0 }, () => {})).toBe(0)
+    expect(calls).toEqual([0, 1])
+  })
+  it('第一次失败、第二次成功 ⇒ 返回第一次的非零码(不被后面的 0 盖掉)', () => {
+    const codes = [3, 0]
+    expect(sendTimes(2, i => codes[i]!, () => {})).toBe(3)
+  })
+  it('两次都失败 ⇒ 第一次的码;两次之间等一下(第一次之前不等)', () => {
+    const waits: number[] = []
+    expect(sendTimes(2, i => (i === 0 ? 4 : 5), () => waits.push(1))).toBe(4)
+    expect(waits).toEqual([1])
   })
 })

@@ -288,6 +288,17 @@ describe('去重(spec §5.5:每台设备按 ts + 密文哈希记住最近的推�
     expect(d.entries()['k000']).toBeUndefined()
     expect(d.seen('k001', 5001)).toBe(true)
   })
+  it('同一时刻按 Unicode 码点比较键名(不是 UTF-16 码元;与向量 rules、Swift / Kotlin 一致)', () => {
+    // U+FFFF < U+1F600 按码点;按 UTF-16 码元 U+1F600 的高代理 0xD83D < 0xFFFF,顺序相反
+    const bmp = '\uFFFF', astral = '\u{1F600}'
+    const d = makePushDedupe()
+    d.seen(astral, 1000)
+    d.seen(bmp, 1000)
+    for (let i = 0; i < PUSH_DEDUPE_CAPACITY - 2; i++) d.seen(`k${String(i).padStart(3, '0')}`, 2000 + i)
+    expect(d.seen('new', 9000)).toBe(false)
+    expect(d.entries()[bmp]).toBeUndefined()
+    expect(d.entries()[astral]).toBe(1000)
+  })
   it('向量文件的 dedupe.steps 与参考实现一致(原生两端照同一份跑)', () => {
     const v = JSON.parse(readFileSync(new URL('../vectors/push.json', import.meta.url), 'utf8'))
     expect(v.dedupe.capacity).toBe(PUSH_DEDUPE_CAPACITY)

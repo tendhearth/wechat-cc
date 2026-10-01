@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { PushKind } from '@wechat-cc/protocol'
-import { buildSimPush, devToken, type SimMode } from './sim-push-lib'
+import { buildSimPush, devToken, sendTimes, type SimMode } from './sim-push-lib'
 
 const { values: v } = parseArgs({
   options: {
@@ -34,15 +34,16 @@ if (v['print-link']) { console.log(`tendhearth://dev-push-key?token=${token}`); 
 const mode = v.mode as SimMode
 if (!['ok', 'stale', 'tamper', 'wrong-key'].includes(mode)) { console.error(`unknown --mode ${mode}`); process.exit(2) }
 const payload = buildSimPush({ token, mode, kind: PushKind.parse(v.kind), taskId: v.task || undefined, requestId: v.request || undefined, body: v.body!, now: Date.now() })
-const file = join(tmpdir(), `th-sim-push-${process.pid}.apns`)
-writeFileSync(file, JSON.stringify(payload))
-let code = 0
 const gap = Number(v.gap)
 if (!Number.isFinite(gap) || gap < 0) { console.error(`bad --gap ${v.gap}`); process.exit(2) }
-for (let i = 0; i < (v.repeat ? 2 : 1); i++) {
-  if (i > 0 && gap > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, gap)
-  const r = spawnSync('xcrun', ['simctl', 'push', v.udid!, 'com.tendhearth.app', file], { stdio: 'inherit' })
-  code = r.status ?? 1
+const file = join(tmpdir(), `th-sim-push-${process.pid}.apns`)
+let code = 1
+try {
+  writeFileSync(file, JSON.stringify(payload))
+  code = sendTimes(v.repeat ? 2 : 1,
+    () => spawnSync('xcrun', ['simctl', 'push', v.udid!, 'com.tendhearth.app', file], { stdio: 'inherit' }).status ?? 1,
+    () => { if (gap > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, gap) })
+} finally {
+  rmSync(file, { force: true })
 }
-rmSync(file, { force: true })
 process.exit(code)

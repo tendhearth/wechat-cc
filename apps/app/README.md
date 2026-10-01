@@ -91,7 +91,7 @@ scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl 
 
 模拟器用 iOS 26.5 的 `th-push`(`xcrun simctl create th-push com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro com.apple.CoreSimulator.SimRuntime.iOS-26-5`;iOS 27 的启动崩溃已由 with-ios-scene 修掉,`th-push-27` 验过),装开发构建、`bunx expo start --clear --dev-client` 在跑。
 
-1. app 开着、点「先看看」进了演示:`bun apps/app/scripts/sim-push.ts --print-link | xargs xcrun simctl openurl <udid>`(系统问「在 Tendhearth 中打开?」点 Open)⇒ 页面出现 `dev-push-key-ok`。这一步:把开发令牌推出的推送密钥写进共享钥匙串、要一次通知权限(演示不配对,登记流程不会去要)、并把开发令牌记在内存里给 app 兜底解密(`src/push/dev-token.ts`;只在开发构建、且没配对时用;app 被杀就忘)。
+1. app 开着、点「先看看」进了演示:`bun apps/app/scripts/sim-push.ts --print-link | xargs xcrun simctl openurl <udid>`(系统问「在 Tendhearth 中打开?」点 Open)⇒ 页面出现 `dev-push-key-ok`。这一步:把开发令牌推出的推送密钥写进共享钥匙串、要一次通知权限(演示不配对,登记流程不会去要)、并把开发令牌记在内存里给 app 兜底解密(`src/push/dev-token.ts`;只在开发构建、且没配对时用;app 被杀就忘)。注意:只有开发令牌本身在内存里,它推出的推送密钥写进了共享钥匙串、会留下来(直到下次冷启动没配对时清掉)。已配对的开发构建里这个链接什么都不写(页面显示 `dev-push-key-paired`),免得顶掉真配对的推送密钥。
 2. 发:`bun apps/app/scripts/sim-push.ts --udid <udid> [--mode ok|stale|tamper|wrong-key] [--repeat [--gap <ms>]]`。载荷与中继发给 APNs 的同形(占位 alert + mutable-content + `wcc` 真密文,用协议包 `sealPush` 封)。
 3. 点系统横幅:Maestro 点不开通知中心 / 锁屏里的通知,但能点正在显示的横幅 —— 先在后台起一个反复点 `point: 50%,9%`、直到 app 里出现目标 testID 的流程,再发推送。
 
@@ -105,7 +105,7 @@ scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl 
 | 7 | app 在前台,`--mode ok` | 不弹系统横幅;app 顶部 `push-banner` 显示解开的「CC / 整理作品集:npm i sharp」;点它 ⇒ 批准页 |
 | 7' | 前台,`stale` / `tamper` / `wrong-key` | `push-banner` 只显示中性「CC / CC has news」(英文系统);点它 ⇒ 此刻(从批准页出发也一样) |
 | 5 | 前台,`--repeat --gap 9000`(同一份密文送两次) | 第一份弹横幅、6 秒自动收起;第二份到达后不再弹(按密文去重)。系统通知中心里每条都单独列出 —— simctl 不带 apns-collapse-id,不合并 |
-| 8 | 杀掉 app 后发 `ok`、点横幅 | 冷启动到欢迎页:演示模式下「看过欢迎页」与开发令牌都只在内存里,冷启动都没了(已配对的用户两样都在钥匙串里,但这条只能真机验) |
+| 8 | 杀掉 app 后发 `ok`、点横幅 | 冷启动到欢迎页:演示模式下「看过欢迎页」与开发令牌都只在内存里,冷启动都没了(钥匙串里那把开发推送密钥冷启动时也因为没配对被清掉)(已配对的用户两样都在钥匙串里,但这条只能真机验) |
 
 只能真机验的:扩展解密后的系统横幅标题 / 正文与本地化、扩展里的去重与 passive、collapse-id 合并、已配对时冷启动点通知直达批准页、锁屏与进程被杀后的送达。扩展的逻辑本机只由 `swift test`(`native/ios-notify`)覆盖。
 

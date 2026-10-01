@@ -56,24 +56,32 @@ class TendhearthMessagingService : FirebaseMessagingService() {
     nm.createNotificationChannel(NotificationChannel("updates", s.getValue("channel.updates"), NotificationManager.IMPORTANCE_DEFAULT))
   }
 
+  /**
+   * 任何失败(安卓 13+ 没给通知权限的 SecurityException、构造器 / 资源出错……)⇒ 这条不显示,不让后台进程崩;
+   * 不记录任何内容。没权限时 app 设置页会提示。
+   */
   private fun post(d: PushDisplay, lang: String) {
-    val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    ensureChannels(nm, lang)
-    val intent = if (d.deepLink != null) Intent(Intent.ACTION_VIEW, Uri.parse(d.deepLink)).setPackage(packageName)
-      else packageManager.getLaunchIntentForPackage(packageName) ?: Intent().setPackage(packageName)
-    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-    val pi = PendingIntent.getActivity(this, d.notificationId, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-    @Suppress("DEPRECATION")
-    val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, d.channel) else Notification.Builder(this)
-    val n = b.setSmallIcon(R.drawable.notification_icon)
-      .setColor(resources.getColor(R.color.notification_icon_color, theme))
-      .setContentTitle(d.title)
-      .setContentText(d.body)
-      .setStyle(Notification.BigTextStyle().bigText(d.body))
-      .setAutoCancel(true)
-      .setContentIntent(pi)
-      .build()
-    try { nm.notify(d.notificationId, n) } catch (e: SecurityException) { /* 安卓 13+ 没给通知权限:系统不显示,app 设置页会提示 */ }
+    try {
+      val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+      ensureChannels(nm, lang)
+      val intent = if (d.deepLink != null) Intent(Intent.ACTION_VIEW, Uri.parse(d.deepLink)).setPackage(packageName)
+        else packageManager.getLaunchIntentForPackage(packageName) ?: Intent().setPackage(packageName)
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+      val pi = PendingIntent.getActivity(this, d.notificationId, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+      @Suppress("DEPRECATION")
+      val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, d.channel) else Notification.Builder(this)
+      val n = b.setSmallIcon(R.drawable.notification_icon)
+        .setColor(resources.getColor(R.color.notification_icon_color, theme))
+        .setContentTitle(d.title)
+        .setContentText(d.body)
+        .setStyle(Notification.BigTextStyle().bigText(d.body))
+        .setAutoCancel(true)
+        .setContentIntent(pi)
+        .build()
+      nm.notify(d.notificationId, n)
+    } catch (e: Exception) {
+      // 不显示这一条;不打日志
+    }
   }
 
   private companion object {

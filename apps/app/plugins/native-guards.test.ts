@@ -25,6 +25,13 @@ describe('expo-secure-store 的 iOS 钥匙串属性(扩展按它查推送密钥)
     expect(ext).toContain(`"${PUSH_KEY_SERVICE}:no-auth"`)
     expect(ext).toContain(`"${PUSH_KEY_ITEM}"`)
   })
+  it('扩展的去重读-改-写在一把静态 NSLock 里(并发的扩展实例不会都漏掉重复)', () => {
+    const ext = read(here, '..', 'native', 'ios-notify', 'Extension', 'ExtensionStores.swift')
+    const dedupe = ext.slice(ext.indexOf('enum DedupeStore'))
+    expect(dedupe).toMatch(/static let lock = NSLock\(\)/)
+    expect(dedupe).toMatch(/lock\.lock\(\)\s*\n\s*defer \{ lock\.unlock\(\) \}/)
+    expect(dedupe.indexOf('lock.lock()')).toBeLessThan(dedupe.indexOf('d.dictionary(forKey:'))
+  })
 })
 
 describe('中继的 APNs 占位', () => {
