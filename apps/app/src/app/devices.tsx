@@ -40,30 +40,30 @@ export default function Devices() {
     if (r === 'ok') void q.refresh()
   }
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar title={t(lang, 'devices.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/settings'))} />
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.xl, gap: space.l }}>
         <ConnectionNotice />
         {!v ? (
           q.error ? (
             <Pressable testID="devices-load-failed" accessibilityRole="button" onPress={() => void q.refresh()}>
-              <Text style={{ color: c.warn }}>{t(lang, 'devices.loadFailed')}</Text>
+              <Text style={{ color: c.bad }}>{t(lang, 'devices.loadFailed')}</Text>
             </Pressable>
-          ) : <Text style={{ color: c.muted }}>{t(lang, 'progress.loading')}</Text>
+          ) : <Text style={{ color: c.inkSoft }}>{t(lang, 'progress.loading')}</Text>
         ) : (
           <View testID="devices-list" style={{ gap: space.l }}>
             <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 18 }}>{t(lang, 'devices.thisPhone')}</Text>
             <Card style={{ gap: space.s }}>
-              <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'devices.nameLabel')}</Text>
+              <Text style={{ color: c.inkSoft, fontSize: 13 }}>{t(lang, 'devices.nameLabel')}</Text>
               <TextInput
                 testID="devices-name-input"
                 value={name ?? ''}
                 onChangeText={x => { setName(x); setMsg(null) }}
                 maxLength={24}
-                style={{ minHeight: 48, borderWidth: 1, borderColor: c.line, borderRadius: radius.button, paddingHorizontal: space.m, color: c.ink, backgroundColor: c.card }}
+                style={{ minHeight: 48, borderWidth: 1, borderColor: c.hair, borderRadius: radius.control, paddingHorizontal: space.m, color: c.ink, backgroundColor: c.paper }}
               />
               <Button kind="primary" testID="devices-save" label={t(lang, 'devices.save')} busy={busy} disabled={!online || !(name ?? '').trim()} onPress={() => void save()} />
-              {msg ? <Text accessibilityLiveRegion="polite" style={{ color: msg === 'saved' ? c.muted : c.warn, fontSize: 14 }}>{t(lang, msg === 'saved' ? 'devices.saved' : 'devices.saveFailed')}</Text> : null}
+              {msg ? <Text accessibilityLiveRegion="polite" style={{ color: msg === 'saved' ? c.inkSoft : c.bad, fontSize: 14 }}>{t(lang, msg === 'saved' ? 'devices.saved' : 'devices.saveFailed')}</Text> : null}
             </Card>
             {v.others.length > 0 ? (
               <>
@@ -72,8 +72,8 @@ export default function Devices() {
                   <Pressable key={o.id} testID={`devices-other-${o.id}`} accessibilityRole="button" accessibilityLabel={o.label} onPress={() => setHint(o.id)}>
                     <Card style={{ gap: space.xs }}>
                       <Text style={{ color: c.ink, fontSize: 16 }}>{o.label}</Text>
-                      {o.lastSeen ? <Text style={{ color: c.muted, fontSize: 13 }}>{o.lastSeen}</Text> : null}
-                      {hint === o.id ? <Text testID="devices-other-hint" accessibilityLiveRegion="polite" style={{ color: c.muted, fontSize: 14, lineHeight: 20 }}>{t(lang, 'devices.otherHint')}</Text> : null}
+                      {o.lastSeen ? <Text style={{ color: c.inkSoft, fontSize: 13 }}>{o.lastSeen}</Text> : null}
+                      {hint === o.id ? <Text testID="devices-other-hint" accessibilityLiveRegion="polite" style={{ color: c.inkSoft, fontSize: 14, lineHeight: 20 }}>{t(lang, 'devices.otherHint')}</Text> : null}
                     </Card>
                   </Pressable>
                 ))}

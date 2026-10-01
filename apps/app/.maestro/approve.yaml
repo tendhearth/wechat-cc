@@ -17,7 +17,7 @@ appId: com.tendhearth.app
       id: approval-title
     timeout: 10000
 - assertVisible:
-    text: "可以安装图片处理组件吗?|May I add an image-processing package\\?"
+    text: "可以安装图片处理组件吗\\?|May I add an image-processing package\\?"
 - assertVisible:
     id: approval-ai-summary
 # 硬要求:说明来自模型时,原始命令首行与工作目录不折叠、直接可见。

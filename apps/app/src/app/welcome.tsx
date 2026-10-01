@@ -19,13 +19,13 @@ export default function Welcome() {
   const conn = useConnection()
   const { markWelcomeSeen } = useSession()
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: c.bg }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: c.paper }}>
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: space.xl, gap: space.l }}>
         <CCFigure size={160} presence={ccPresence(conn)} />
         <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 28, lineHeight: 36, textAlign: 'center' }}>
           {t(lang, 'welcome.title')}
         </Text>
-        <Text style={{ color: c.muted, fontSize: 16, lineHeight: 24, textAlign: 'center' }}>{t(lang, 'welcome.body')}</Text>
+        <Text style={{ color: c.inkSoft, fontSize: 16, lineHeight: 24, textAlign: 'center' }}>{t(lang, 'welcome.body')}</Text>
       </View>
       <View style={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.m }}>
         <Button kind="primary" testID="welcome-pair" label={t(lang, 'welcome.pair')} onPress={() => router.push('/pair')} />

@@ -100,7 +100,7 @@ export default function Pair() {
 
   const steps = ['pair.step1', 'pair.step2', 'pair.step3'] as const
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       {/* 配对进行中关掉 iOS 侧滑返回(安卓返回键由 BackHandler 吞掉) */}
       <Stack.Screen options={{ gestureEnabled: phase.k !== 'working' }} />
       <TopBar onBack={back} showConnection={false} onAvatar={() => router.push('/settings')} />
@@ -110,7 +110,7 @@ export default function Pair() {
         {phase.k === 'confirm' || phase.k === 'working' ? (
           <Card testID="pair-confirm" style={{ gap: space.m }}>
             <Text style={{ color: c.ink, fontSize: 18 }}>{t(lang, 'pair.confirmTitle')}</Text>
-            <Text style={{ color: c.muted, fontSize: 15, lineHeight: 22 }}>{t(lang, 'pair.confirmBody', { host: phase.link.relayHost })}</Text>
+            <Text style={{ color: c.inkSoft, fontSize: 15, lineHeight: 22 }}>{t(lang, 'pair.confirmBody', { host: phase.link.relayHost })}</Text>
             <Button
               kind="primary"
               testID="pair-connect"
@@ -123,31 +123,31 @@ export default function Pair() {
           <>
             {phase.k === 'error' ? (
               <Card testID="pair-error" style={{ gap: space.s }}>
-                <Text accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 15, lineHeight: 22 }}>{t(lang, phase.key)}</Text>
+                <Text accessibilityLiveRegion="polite" style={{ color: c.bad, fontSize: 15, lineHeight: 22 }}>{t(lang, phase.key)}</Text>
                 {phase.camera ? <Button kind="secondary" testID="pair-open-settings" label={t(lang, 'pair.openSettings')} onPress={() => void Linking.openSettings()} /> : null}
               </Card>
             ) : null}
             <View testID="pair-steps" style={{ gap: space.m }}>
               {steps.map((k, i) => (
                 <Card key={k} style={{ flexDirection: 'row', alignItems: 'center', gap: space.m }}>
-                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: c.navOnBg, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ color: c.navOnInk }}>{i + 1}</Text>
+                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: c.rail, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ color: c.ink }}>{i + 1}</Text>
                   </View>
                   <Text style={{ flex: 1, color: c.ink, fontSize: 16, lineHeight: 22 }}>{t(lang, k)}</Text>
                 </Card>
               ))}
             </View>
             <Button kind="primary" testID="pair-scan" label={t(lang, 'pair.scan')} onPress={() => void startScan()} />
-            <Text style={{ color: c.muted, fontSize: 14, lineHeight: 20 }}>{t(lang, 'pair.pasteHint')}</Text>
+            <Text style={{ color: c.inkSoft, fontSize: 14, lineHeight: 20 }}>{t(lang, 'pair.pasteHint')}</Text>
             <TextInput
               testID="pair-paste-input"
               value={pasted}
               onChangeText={setPasted}
               placeholder={t(lang, 'pair.pastePlaceholder')}
-              placeholderTextColor={c.muted}
+              placeholderTextColor={c.inkSoft}
               autoCapitalize="none"
               autoCorrect={false}
-              style={{ minHeight: 48, borderWidth: 1, borderColor: c.line, borderRadius: radius.button, paddingHorizontal: space.m, color: c.ink, backgroundColor: c.card }}
+              style={{ minHeight: 48, borderWidth: 1, borderColor: c.hair, borderRadius: radius.control, paddingHorizontal: space.m, color: c.ink, backgroundColor: c.paper }}
             />
             <Button kind="secondary" testID="pair-use-pasted" label={t(lang, 'pair.usePasted')} disabled={!pasted.trim()} onPress={() => accept(pasted)} />
           </>

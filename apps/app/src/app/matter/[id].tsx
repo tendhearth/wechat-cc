@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router'
-import { Pressable, ScrollView, Text, View } from 'react-native'
+import { Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
@@ -9,18 +9,17 @@ import { useConnection, useQuery, useTopic } from '../../state/hooks'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
-import { monoFamily } from '../../ui/fonts'
+import { Dot } from '../../ui/Dot'
 import { SayBar } from '../../ui/SayBar'
 import { Sheet } from '../../ui/Sheet'
 import { StatusPill } from '../../ui/StatusPill'
 import { space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
+import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
 import { isOwnerChatMatter } from '../../view/chat'
 import { conversationView } from '../../view/conversation'
 import { progressView } from '../../view/progress'
-
-const mono = monoFamily
 
 // 进展页:状态标签在「CC 的进展」概括之上;概括没到时用骨架占位;下面是这件事的真对话。
 // 主人自己那条聊天(只认它,Ruling 9)改道去 /chat;访客的聊天照常显示。
@@ -65,9 +64,9 @@ export default function Matter() {
   const decidingChat = isChat && ownerChatId === null && !ownerChat.error
   if (!detail.data || decidingChat) {
     return (
-      <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.bg }}>
+      <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.paper }}>
         {header}
-        <Text style={{ color: c.muted, padding: space.xl }}>{detail.error && !detail.data ? t(lang, 'progress.loadFailed') : t(lang, 'progress.loading')}</Text>
+        <Txt tone="inkSoft" style={{ padding: space.xl }}>{detail.error && !detail.data ? t(lang, 'progress.loadFailed') : t(lang, 'progress.loading')}</Txt>
       </SafeAreaView>
     )
   }
@@ -77,60 +76,60 @@ export default function Matter() {
   const conv = conversationView(d.events)
 
   return (
-    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.bg }}>
+    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.paper }}>
       {header}
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
-        <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'progress.breadcrumb')}</Text>
-        <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 28, lineHeight: 36 }}>{v.title}</Text>
+        <Txt role="small" tone="inkSoft">{t(lang, 'progress.breadcrumb')}</Txt>
+        <Txt role="display" content="user" accessibilityRole="header">{v.title}</Txt>
         <View testID="progress-status"><StatusPill status={v.status} /></View>
 
         <Card style={{ gap: space.m }}>
-          <Text style={{ color: c.muted, fontSize: 12 }}>{t(lang, 'progress.ccProgress')}</Text>
+          <Txt role="caption" tone="inkSoft" accessibilityRole="header">{t(lang, 'progress.ccProgress')}</Txt>
           {v.summaryState === 'failed' ? (
             <Pressable testID="progress-summary" accessibilityRole="button" accessibilityLabel={t(lang, 'progress.summaryUnavailable')} onPress={() => void insight.refresh()}>
-              <Text style={{ color: c.muted, fontSize: 15, lineHeight: 22 }}>{t(lang, 'progress.summaryUnavailable')}</Text>
+              <Txt role="bubble" tone="inkSoft">{t(lang, 'progress.summaryUnavailable')}</Txt>
             </Pressable>
           ) : v.summaryState === 'loading' ? (
             <View testID="progress-summary" accessibilityLabel={t(lang, 'progress.loading')} style={{ gap: space.s }}>
-              <View style={{ height: 14, borderRadius: 7, backgroundColor: c.line, width: '92%' }} />
-              <View style={{ height: 14, borderRadius: 7, backgroundColor: c.line, width: '70%' }} />
+              <View style={{ height: 14, borderRadius: 7, backgroundColor: c.hair, width: '92%' }} />
+              <View style={{ height: 14, borderRadius: 7, backgroundColor: c.hair, width: '70%' }} />
             </View>
           ) : v.summaryState === 'none' ? (
-            <Text testID="progress-summary" style={{ color: c.muted, fontSize: 15, lineHeight: 22 }}>{t(lang, 'progress.noSummary')}</Text>
+            <Txt testID="progress-summary" role="bubble" tone="inkSoft">{t(lang, 'progress.noSummary')}</Txt>
           ) : (
-            <Text testID="progress-summary" style={{ color: c.ink, fontSize: 16, lineHeight: 24 }}>{v.summary}</Text>
+            <Txt testID="progress-summary" role="body" content="user">{v.summary}</Txt>
           )}
           {v.steps.map((s, i) => (
-            <View key={i} style={{ flexDirection: 'row', gap: space.m }}>
-              <Text accessibilityLabel={s.done ? t(lang, 'progress.stepDone') : t(lang, 'progress.stepWaiting')} style={{ color: s.done ? c.ok : c.warn, fontSize: 16, width: 20 }}>
-                {s.done ? '✓' : '⏸'}
-              </Text>
+            <View key={i} accessible accessibilityLabel={`${s.done ? t(lang, 'progress.stepDone') : t(lang, 'progress.stepWaiting')}: ${s.title}${s.detail ? `, ${s.detail}` : ''}`}
+              style={{ flexDirection: 'row', gap: space.m, alignItems: 'flex-start', paddingTop: space.m, borderTopWidth: 1, borderTopColor: c.hair }}>
+              {/* 状态色只上点:做完 = 绿点,等你 = 琥珀点 */}
+              <View style={{ paddingTop: space.s }}><Dot kind={s.done ? 'ok' : 'warn'} size={8} /></View>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: c.ink, fontSize: 15 }}>{s.title}</Text>
-                {s.detail ? <Text style={{ color: c.muted, fontSize: 14, lineHeight: 20 }}>{s.detail}</Text> : null}
+                <Txt role="bubble" content="user">{s.title}</Txt>
+                {s.detail ? <Txt role="meta" tone="inkSoft" content="user">{s.detail}</Txt> : null}
               </View>
             </View>
           ))}
         </Card>
 
         <Card testID="progress-conversation" style={{ gap: space.m }}>
-          <Text accessibilityRole="header" style={{ color: c.muted, fontSize: 12 }}>{t(lang, 'progress.conversation')}</Text>
-          {conv.length === 0 ? <Text style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'progress.noEvents')}</Text> : null}
+          <Txt role="caption" tone="inkSoft" accessibilityRole="header">{t(lang, 'progress.conversation')}</Txt>
+          {conv.length === 0 ? <Txt role="meta" tone="inkSoft">{t(lang, 'progress.noEvents')}</Txt> : null}
           {conv.map((e, i) =>
             e.kind === 'steps' ? (
-              <Text key={i} numberOfLines={1} style={{ color: c.muted, fontSize: 13 }}>
+              <Txt key={i} role="small" tone="inkSoft" numberOfLines={1}>
                 {t(lang, 'progress.stepsN', { n: e.count ?? 1 })} · {e.text}
-              </Text>
+              </Txt>
             ) : e.kind === 'error' ? (
-              <Text key={i} style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{e.text}</Text>
+              <View key={i} style={{ flexDirection: 'row', gap: space.s, alignItems: 'flex-start' }}>
+                <View style={{ paddingTop: space.s }}><Dot kind="warn" size={8} /></View>
+                <Txt role="meta" tone="inkSoft" content="user" style={{ flex: 1 }}>{e.text}</Txt>
+              </View>
             ) : (
               <View key={i} style={{ alignItems: e.kind === 'me' ? 'flex-end' : 'flex-start' }}>
-                <View
-                  accessible
-                  accessibilityLabel={`${e.kind === 'me' ? t(lang, 'chat.me') : t(lang, 'cc.label')}: ${e.text}`}
-                  style={{ maxWidth: '88%', paddingHorizontal: space.m, paddingVertical: space.s, borderRadius: 14, backgroundColor: e.kind === 'me' ? c.accentSoft : c.bg }}
-                >
-                  <Text selectable style={{ color: c.ink, fontSize: 15, lineHeight: 22 }}>{e.text}</Text>
+                {/* 卡里不再套底色块:「我」靠右、CC 靠左,只靠位置区分 */}
+                <View accessible accessibilityLabel={`${e.kind === 'me' ? t(lang, 'chat.me') : t(lang, 'cc.label')}: ${e.text}`} style={{ maxWidth: '88%' }}>
+                  <Txt selectable role="bubble" content="user" style={{ textAlign: e.kind === 'me' ? 'right' : 'left' }}>{e.text}</Txt>
                 </View>
               </View>
             ),
@@ -142,23 +141,23 @@ export default function Matter() {
         ) : null}
 
         <Sheet testID="progress-changes" title={t(lang, 'progress.viewChangesN', { n: v.changedFiles })}>
-            {files.length === 0 ? <Text style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'progress.noChanges')}</Text> : null}
+            {files.length === 0 ? <Txt role="meta" tone="inkSoft">{t(lang, 'progress.noChanges')}</Txt> : null}
             {files.map((f, i) => (
               <View key={i} style={{ paddingVertical: space.s, gap: space.xs }}>
-                <Text style={{ color: c.ink, fontSize: 13, fontFamily: mono }}>{f.path}</Text>
+                <Txt role="code">{f.path}</Txt>
                 {f.kind === 'not_reviewed' ? (
                   <>
-                    <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'progress.notReviewed')}</Text>
-                    {f.reason ? <Text style={{ color: c.muted, fontSize: 12 }}>{f.reason}</Text> : null}
+                    <Txt role="small" tone="inkSoft">{t(lang, 'progress.notReviewed')}</Txt>
+                    {f.reason ? <Txt role="caption" tone="inkSoft">{f.reason}</Txt> : null}
                   </>
                 ) : f.truncated ? (
-                  <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'progress.tooBig')}</Text>
+                  <Txt role="small" tone="inkSoft">{t(lang, 'progress.tooBig')}</Txt>
                 ) : f.diff ? (
                   <ScrollView nestedScrollEnabled style={{ maxHeight: 320 }}>
-                    <Text style={{ color: c.muted, fontSize: 12, lineHeight: 17, fontFamily: mono }}>{f.diff}</Text>
+                    <Txt role="code" tone="inkSoft">{f.diff}</Txt>
                   </ScrollView>
                 ) : f.reason ? (
-                  <Text style={{ color: c.muted, fontSize: 13 }}>{f.reason}</Text>
+                  <Txt role="small" tone="inkSoft">{f.reason}</Txt>
                 ) : null}
               </View>
             ))}
@@ -168,10 +167,10 @@ export default function Matter() {
             <View style={{ gap: space.s }}>
               {d.task ? (
                 <>
-                  <Text style={{ color: c.ink, fontSize: 14 }}>{t(lang, 'progress.executor')}: {d.task.providerId}</Text>
-                  <Text style={{ color: c.ink, fontSize: 13, fontFamily: mono }}>{t(lang, 'progress.path')}: {d.task.path}</Text>
+                  <Txt role="meta">{t(lang, 'progress.executor')}: {d.task.providerId}</Txt>
+                  <Txt role="code">{t(lang, 'progress.path')}: {d.task.path}</Txt>
                 </>
-              ) : <Text style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'progress.noEvents')}</Text>}
+              ) : <Txt role="meta" tone="inkSoft">{t(lang, 'progress.noEvents')}</Txt>}
             </View>
           </Sheet>
       </ScrollView>

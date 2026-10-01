@@ -45,7 +45,7 @@ export default function PushOpen() {
   }, [key, backend, seenWelcome, router])
 
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       <View style={{ flex: 1, padding: space.xl, gap: space.l, justifyContent: 'center' }}>
         {gone ? (
           <>
@@ -53,7 +53,7 @@ export default function PushOpen() {
             <Button kind="primary" testID="push-go-now" label={t(lang, 'push.goNow')} onPress={() => router.dismissTo('/')} />
           </>
         ) : (
-          <Text testID="push-opening" style={{ color: c.muted, fontSize: 16 }}>{t(lang, 'push.opening')}</Text>
+          <Text testID="push-opening" style={{ color: c.inkSoft, fontSize: 16 }}>{t(lang, 'push.opening')}</Text>
         )}
       </View>
     </SafeAreaView>

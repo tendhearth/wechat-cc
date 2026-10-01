@@ -76,7 +76,7 @@ export default function Settings() {
     ])
   const heading = (k: Parameters<typeof t>[1]) => <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 18 }}>{t(lang, k)}</Text>
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar title={t(lang, 'settings.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
       <ScrollView contentContainerStyle={{ padding: space.xl, gap: space.l }}>
         {heading('settings.language')}
@@ -91,9 +91,9 @@ export default function Settings() {
                 accessibilityState={{ checked: on }}
                 accessibilityLabel={o.label}
                 onPress={() => setLangOverride(o.v)}
-                style={{ minHeight: 48, paddingHorizontal: space.l, borderRadius: radius.pill, justifyContent: 'center', backgroundColor: on ? c.navOnBg : 'transparent' }}
+                style={{ minHeight: 48, paddingHorizontal: space.l, borderRadius: radius.nav, justifyContent: 'center', backgroundColor: on ? c.rail : 'transparent' }}
               >
-                <Text style={{ color: on ? c.navOnInk : c.ink, fontSize: 16 }}>{o.label}</Text>
+                <Text style={{ color: c.ink, fontSize: 16 }}>{o.label}</Text>
               </Pressable>
             )
           })}
@@ -102,7 +102,7 @@ export default function Settings() {
           <>
             {heading('settings.notifications')}
             <Card testID="settings-notifications" style={{ gap: space.m }}>
-              <Text testID={`settings-notif-${push.status}`} style={{ color: c.muted, fontSize: 14, lineHeight: 21 }}>{t(lang, notificationNoticeKey(push.status))}</Text>
+              <Text testID={`settings-notif-${push.status}`} style={{ color: c.inkSoft, fontSize: 14, lineHeight: 21 }}>{t(lang, notificationNoticeKey(push.status))}</Text>
               {push.status === 'denied' ? (
                 <Button kind="secondary" testID="settings-notif-open" label={t(lang, 'settings.notifOpenSettings')} onPress={push.openSettings} />
               ) : null}
@@ -131,7 +131,7 @@ export default function Settings() {
           <>
             {heading('settings.demo')}
             <Card style={{ gap: space.m }}>
-              <Text style={{ color: c.muted, fontSize: 14, lineHeight: 21 }}>{t(lang, 'settings.demoBody')}</Text>
+              <Text style={{ color: c.inkSoft, fontSize: 14, lineHeight: 21 }}>{t(lang, 'settings.demoBody')}</Text>
               <Button kind="primary" testID="settings-pair-now" label={t(lang, 'settings.pairNow')} onPress={() => { resetDemo(); router.push('/pair') }} />
               <Button
                 kind="secondary"
@@ -145,7 +145,7 @@ export default function Settings() {
         {heading('settings.privacy')}
         <Card testID="settings-privacy"><Text style={{ color: c.ink, fontSize: 15, lineHeight: 23 }}>{t(lang, 'settings.privacyBody')}</Text></Card>
         {heading('settings.about')}
-        <Text style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'settings.version')} {Constants.expoConfig?.version ?? '—'} · {t(lang, 'settings.copyright')}</Text>
+        <Text style={{ color: c.inkSoft, fontSize: 14 }}>{t(lang, 'settings.version')} {Constants.expoConfig?.version ?? '—'} · {t(lang, 'settings.copyright')}</Text>
       </ScrollView>
     </SafeAreaView>
   )

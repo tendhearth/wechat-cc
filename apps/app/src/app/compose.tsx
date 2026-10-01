@@ -72,18 +72,18 @@ export default function Compose() {
   }
 
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar
         onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))}
         onAvatar={() => router.push('/settings')}
       />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.xl, gap: space.l }}>
-          <Text style={{ color: c.muted, fontSize: 12, letterSpacing: 1 }}>{matter ? t(lang, 'compose.continueHint') : t(lang, 'compose.handoffEyebrow')}</Text>
+          <Text style={{ color: c.inkSoft, fontSize: 12, letterSpacing: 1 }}>{matter ? t(lang, 'compose.continueHint') : t(lang, 'compose.handoffEyebrow')}</Text>
           {matter ? null : (
             <>
               <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 30, lineHeight: 38 }}>{t(lang, 'compose.handoffTitle')}</Text>
-              <Text style={{ color: c.muted, fontSize: 15, lineHeight: 22 }}>{t(lang, 'compose.handoffHint')}</Text>
+              <Text style={{ color: c.inkSoft, fontSize: 15, lineHeight: 22 }}>{t(lang, 'compose.handoffHint')}</Text>
             </>
           )}
           <Card>
@@ -94,17 +94,17 @@ export default function Compose() {
               onChangeText={setText}
               multiline
               placeholder={t(lang, 'compose.placeholder')}
-              placeholderTextColor={c.muted}
+              placeholderTextColor={c.inkSoft}
               style={{ color: c.ink, fontSize: 17, lineHeight: 24, minHeight: 140, textAlignVertical: 'top' }}
             />
             <Pressable accessibilityRole="button" testID="compose-add-image" onPress={() => setNote(true)} style={{ minHeight: 44, justifyContent: 'center' }}>
-              <Text style={{ color: c.muted, fontSize: 14 }}>＋ {t(lang, 'compose.addImage')}</Text>
+              <Text style={{ color: c.inkSoft, fontSize: 14 }}>＋ {t(lang, 'compose.addImage')}</Text>
             </Pressable>
-            {note ? <Text testID="compose-image-note" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 13 }}>{t(lang, 'compose.noImage')}</Text> : null}
+            {note ? <Text testID="compose-image-note" accessibilityLiveRegion="polite" style={{ color: c.inkSoft, fontSize: 13 }}>{t(lang, 'compose.noImage')}</Text> : null}
           </Card>
           {matter ? null : (
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.m }}>
-              <Text numberOfLines={2} style={{ flex: 1, color: c.muted, fontSize: 14 }}>
+              <Text numberOfLines={2} style={{ flex: 1, color: c.inkSoft, fontSize: 14 }}>
                 {t(lang, 'compose.usingContext')}{project?.name ?? '…'} · {provider?.displayName ?? t(lang, 'compose.ccArranges')}
               </Text>
               <Pressable accessibilityRole="button" testID="compose-adjust" onPress={() => setAdjust(true)} style={{ minHeight: 44, justifyContent: 'center' }} disabled={!opt}>
@@ -114,22 +114,22 @@ export default function Compose() {
           )}
           <Button kind="primary" testID="compose-send" label={t(lang, 'compose.send')} onPress={send} disabled={!text.trim() || !online} busy={busy} />
           <ConnectionNotice />
-          {outcome ? <Text testID={`compose-${outcome}`} accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14 }}>{t(lang, outcome === 'uncertain' ? 'compose.uncertain' : outcome === 'busy' ? 'compose.busy' : outcome === 'ccBusy' ? 'common.ccBusy' : outcome === 'tooLong' ? 'compose.tooLong' : outcome === 'revoked' ? 'conn.revokedTitle' : 'compose.failed')}</Text> : null}
-          <Text style={{ color: c.muted, fontSize: 13, textAlign: 'center' }}>{t(lang, 'compose.willAskYou')}</Text>
+          {outcome ? <Text testID={`compose-${outcome}`} accessibilityLiveRegion="polite" style={{ color: c.inkSoft, fontSize: 14 }}>{t(lang, outcome === 'uncertain' ? 'compose.uncertain' : outcome === 'busy' ? 'compose.busy' : outcome === 'ccBusy' ? 'common.ccBusy' : outcome === 'tooLong' ? 'compose.tooLong' : outcome === 'revoked' ? 'conn.revokedTitle' : 'compose.failed')}</Text> : null}
+          <Text style={{ color: c.inkSoft, fontSize: 13, textAlign: 'center' }}>{t(lang, 'compose.willAskYou')}</Text>
           {matter ? null : (
             <Pressable accessibilityRole="button" onPress={() => setText(text.trim() ? `${text}\n${t(lang, 'compose.placeholder')}` : t(lang, 'compose.placeholder'))}>
-              <Text style={{ color: c.muted, fontSize: 13, textAlign: 'center', textDecorationLine: 'underline' }}>{t(lang, 'compose.orSay')}</Text>
+              <Text style={{ color: c.inkSoft, fontSize: 13, textAlign: 'center', textDecorationLine: 'underline' }}>{t(lang, 'compose.orSay')}</Text>
             </Pressable>
           )}
         </ScrollView>
       </KeyboardAvoidingView>
       <Modal visible={adjust} transparent animationType="slide" onRequestClose={() => setAdjust(false)}>
         <Pressable accessibilityLabel={t(lang, 'common.cancel')} style={{ flex: 1, backgroundColor: c.scrim }} onPress={() => setAdjust(false)} />
-        <View testID="compose-adjust-sheet" style={{ backgroundColor: c.card, padding: space.xl, gap: space.m, borderTopLeftRadius: radius.card, borderTopRightRadius: radius.card }}>
+        <View testID="compose-adjust-sheet" style={{ backgroundColor: c.paper, padding: space.xl, gap: space.m, borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet }}>
           <Text style={{ color: c.ink, fontSize: 18 }}>{t(lang, 'compose.adjustTitle')}</Text>
-          <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'compose.project')}</Text>
+          <Text style={{ color: c.inkSoft, fontSize: 13 }}>{t(lang, 'compose.project')}</Text>
           {opt?.projects.map((p) => <Choice key={p.id} label={p.name} on={p.id === project?.id} onPress={() => setProjectId(p.id)} />)}
-          <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'compose.executor')}</Text>
+          <Text style={{ color: c.inkSoft, fontSize: 13 }}>{t(lang, 'compose.executor')}</Text>
           <Choice label={t(lang, 'compose.ccArranges')} on={!provider} onPress={() => setProviderId(null)} />
           {opt?.providers.filter((p) => p.available).map((p) => <Choice key={p.id} label={p.displayName} on={p.id === provider?.id} onPress={() => setProviderId(p.id)} />)}
           <Button kind="secondary" label={t(lang, 'compose.done')} onPress={() => setAdjust(false)} />
@@ -147,9 +147,9 @@ function Choice({ label, on, onPress }: { label: string; on: boolean; onPress: (
       accessibilityState={{ checked: on }}
       accessibilityLabel={label}
       onPress={onPress}
-      style={{ minHeight: 44, paddingHorizontal: space.m, borderRadius: radius.pill, justifyContent: 'center', backgroundColor: on ? c.navOnBg : 'transparent' }}
+      style={{ minHeight: 44, paddingHorizontal: space.m, borderRadius: radius.nav, justifyContent: 'center', backgroundColor: on ? c.rail : 'transparent' }}
     >
-      <Text style={{ color: on ? c.navOnInk : c.ink, fontSize: 15 }}>{label}</Text>
+      <Text style={{ color: c.ink, fontSize: 15 }}>{label}</Text>
     </Pressable>
   )
 }

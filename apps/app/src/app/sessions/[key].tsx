@@ -59,16 +59,16 @@ export default function SessionReader() {
   }, [key]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar title={title || t(lang, 'sessions.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/sessions'))} onAvatar={() => router.push('/settings')} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.m }}>
-        <Text testID="session-readonly" style={{ color: c.muted, fontSize: 13, lineHeight: 19 }}>{t(lang, 'sessions.readOnly')}</Text>
-        {state === 'loading' ? <Text style={{ color: c.muted, fontSize: 15 }}>{t(lang, 'sessions.loading')}</Text> : null}
-        {state === 'missing' ? <Text testID="sessions-unsupported" style={{ color: c.muted, fontSize: 15 }}>{t(lang, 'sessions.unsupported')}</Text> : null}
+        <Text testID="session-readonly" style={{ color: c.inkSoft, fontSize: 13, lineHeight: 19 }}>{t(lang, 'sessions.readOnly')}</Text>
+        {state === 'loading' ? <Text style={{ color: c.inkSoft, fontSize: 15 }}>{t(lang, 'sessions.loading')}</Text> : null}
+        {state === 'missing' ? <Text testID="sessions-unsupported" style={{ color: c.inkSoft, fontSize: 15 }}>{t(lang, 'sessions.unsupported')}</Text> : null}
         {state === 'slow' ? (
           <View style={{ gap: space.m }}>
-            <Text testID="sessions-slow" style={{ color: c.muted, fontSize: 15 }}>{t(lang, 'sessions.slow')}</Text>
+            <Text testID="sessions-slow" style={{ color: c.inkSoft, fontSize: 15 }}>{t(lang, 'sessions.slow')}</Text>
             <Button kind="secondary" testID="session-retry" label={t(lang, 'common.retry')} onPress={() => void load()} />
           </View>
         ) : null}
@@ -78,16 +78,16 @@ export default function SessionReader() {
             <View
               key={`${m.id}:${i}`}
               testID={`session-message-${i}`}
-              style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '85%', backgroundColor: mine ? c.accentSoft : c.card, borderColor: c.line, borderWidth: 1, borderRadius: radius.card, padding: space.m, gap: space.xs }}
+              style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '85%', backgroundColor: c.paper, borderColor: c.hair, borderWidth: 1, borderRadius: radius.sheet, padding: space.m, gap: space.xs }}
             >
               <Text selectable style={{ color: c.ink, fontSize: 15, lineHeight: 22 }}>{m.text}</Text>
-              {m.truncated ? <Text style={{ color: c.muted, fontSize: 12 }}>{t(lang, 'chat.truncated')}</Text> : null}
+              {m.truncated ? <Text style={{ color: c.inkSoft, fontSize: 12 }}>{t(lang, 'chat.truncated')}</Text> : null}
             </View>
           )
         })}
         {state === 'ok' && next ? (
           <View style={{ gap: space.s }}>
-            {moreFailed ? <Text testID="sessions-slow" style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'sessions.slow')}</Text> : null}
+            {moreFailed ? <Text testID="sessions-slow" style={{ color: c.inkSoft, fontSize: 14 }}>{t(lang, 'sessions.slow')}</Text> : null}
             <Button kind="secondary" testID="session-more" label={t(lang, 'sessions.readMore')} busy={busy} onPress={() => void load(next)} />
           </View>
         ) : null}

@@ -40,25 +40,25 @@ export default function Connections() {
       {dot ? <Dot kind={dot} /> : null}
       <View style={{ flex: 1 }}>
         <Text numberOfLines={1} style={{ color: c.ink, fontSize: 16 }}>{name}</Text>
-        <Text style={{ color: c.muted, fontSize: 13 }}>{label}</Text>
+        <Text style={{ color: c.inkSoft, fontSize: 13 }}>{label}</Text>
       </View>
-      {onPress ? <Text style={{ color: c.muted, fontSize: 22 }}>›</Text> : null}
+      {onPress ? <Text style={{ color: c.inkSoft, fontSize: 22 }}>›</Text> : null}
     </Pressable>
   )
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar title={t(lang, 'links.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} onAvatar={() => router.push('/settings')} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <ScrollView contentContainerStyle={{ padding: space.xl, gap: space.l }}>
         {!v ? (
           <View style={{ gap: space.m }}>
-            <Text testID="connections-unknown" style={{ color: c.muted, fontSize: 15 }}>{t(lang, q.error ? 'links.unknown' : 'sessions.loading')}</Text>
+            <Text testID="connections-unknown" style={{ color: c.inkSoft, fontSize: 15 }}>{t(lang, q.error ? 'links.unknown' : 'sessions.loading')}</Text>
             {q.error ? <Button kind="secondary" testID="connections-retry" label={t(lang, 'common.retry')} onPress={() => void q.refresh()} /> : null}
           </View>
         ) : (
           <>
             {trust === 'stale' ? (
-              <Text testID="connections-stale" accessibilityLiveRegion="polite" style={{ color: c.muted, fontSize: 14, lineHeight: 20 }}>
+              <Text testID="connections-stale" accessibilityLiveRegion="polite" style={{ color: c.inkSoft, fontSize: 14, lineHeight: 20 }}>
                 {q.syncedAt === undefined ? t(lang, 'links.unknown') : t(lang, 'links.staleAt', { time: formatSynced(q.syncedAt, Date.now(), lang) })}
               </Text>
             ) : null}
