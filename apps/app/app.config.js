@@ -22,6 +22,8 @@ module.exports = ({ config }) => {
       ['expo-notifications', { mode: apnsEnv, icon: './assets/images/notification-icon.png', color: '#58654c' }],
       ['./plugins/with-ios-notify', { teamId: team }],
       './plugins/with-android-push',
+      // iOS 27 要求 UIScene 生命周期(否则启动即崩);接上 expo 自带的场景委托
+      './plugins/with-ios-scene',
     ],
     extra: {
       ...(config.extra || {}),

@@ -32,6 +32,7 @@ describe('app.config.js', () => {
     expect(c.plugins).toContainEqual(['expo-notifications', expect.objectContaining({ mode: 'development' })])
     expect(c.plugins).toContainEqual(['./plugins/with-ios-notify', { teamId: '9Y6JAPDP7A' }])
     expect(c.plugins).toContain('./plugins/with-android-push')
+    expect(c.plugins).toContain('./plugins/with-ios-scene')
     expect(c.android.googleServicesFile).toBeUndefined()
     expect(c.extra.eas.build.experimental.ios.appExtensions).toEqual([{
       targetName: 'TendhearthNotify', bundleIdentifier: 'com.tendhearth.app.notify',
