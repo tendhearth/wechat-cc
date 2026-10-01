@@ -1,4 +1,4 @@
-# 跟 CC 说:此刻 → 跟 CC 说一句 → 对话页 → 发一句 → 「在想…」→ 回复出现;一起做第一行进对话页。
+# 跟 CC 说:此刻 → 点 CC 进对话再回来 → 跟 CC 说一句 → 对话页 → 发一句 → 「在想…」→ 回复出现;一起做第一行进对话页。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
@@ -8,6 +8,19 @@ appId: com.tendhearth.app
     visible:
       id: now-say
     timeout: 10000
+# 点 CC 也能进对话
+- tapOn:
+    id: now-cc
+- extendedWaitUntil:
+    visible:
+      id: chat-input
+    timeout: 5000
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: now-say
+    timeout: 5000
 - tapOn:
     id: now-say
 - extendedWaitUntil:

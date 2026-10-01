@@ -1,4 +1,5 @@
 import { PHONE_ANSWER_MAX_JSON } from '@wechat-cc/protocol'
+import { labelJoin } from '../i18n'
 import type { MatterDetailT, ApprovalExplanationT } from '../backend/types'
 
 export type ApprovalView =
@@ -47,7 +48,7 @@ export function approvalView(detail: MatterDetailT, explanations: Record<string,
     kind: 'choose',
     items: [
       ...perms.map(x => ({ requestId: x.id, kind: 'permission' as const, summary: `${x.tool}: ${firstLine(x.description, 80)}`.slice(0, 80) })),
-      ...questions.map(x => ({ requestId: x.id, kind: 'question' as const, summary: `${x.questions[0]?.header ?? ''}: ${x.questions[0]?.question ?? ''}`.slice(0, 80) })),
+      ...questions.map(x => ({ requestId: x.id, kind: 'question' as const, summary: labelJoin(x.questions[0]?.header ?? '', x.questions[0]?.question ?? '').slice(0, 80) })),
     ],
   }
 }

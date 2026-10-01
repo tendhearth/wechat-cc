@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router'
 import { useEffect, useRef, useState } from 'react'
-import { AccessibilityInfo, ActivityIndicator, Animated, Easing, FlatList, KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View } from 'react-native'
+import { AccessibilityInfo, ActivityIndicator, Animated, Easing, FlatList, KeyboardAvoidingView, Platform, Pressable, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t, type Lang } from '../i18n'
 import { useLang } from '../i18n/useLang'
@@ -8,8 +8,11 @@ import { getDraft, setDraft } from '../state/drafts'
 import { useConnection } from '../state/hooks'
 import { useChat, type ChatSendOutcome } from '../state/useChat'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
+import { Dot } from '../ui/Dot'
+import { TextField } from '../ui/TextField'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
+import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 import { textAfterSend, type Bubble } from '../view/chat'
 import { canSubmit } from '../view/connection'
@@ -58,11 +61,10 @@ export default function Chat() {
   const loadFailed = !chat.page && chat.error !== undefined && !chat.noOwner
 
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar
         title={t(lang, 'chat.title')}
         onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))}
-        connection={conn.state === 'online' ? 'online' : 'offline'}
         onAvatar={() => router.push('/settings')}
       />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
@@ -78,20 +80,20 @@ export default function Chat() {
           onEndReachedThreshold={0.2}
           ListFooterComponent={
             chat.canLoadOlder ? (
-              <Text testID="chat-load-older" style={{ color: c.muted, fontSize: 12, textAlign: 'center', paddingVertical: space.s }}>
+              <Txt testID="chat-load-older" role="caption" tone="inkSoft" style={{ textAlign: 'center', paddingVertical: space.s }}>
                 {t(lang, chat.loadingOlder ? 'chat.loadingOlder' : 'chat.olderHint')}
-              </Text>
+              </Txt>
             ) : null
           }
           ListEmptyComponent={
             // inverted 列表的空态会倒过来,再转一次摆正
             <View style={{ flex: 1, justifyContent: 'center', transform: [{ scaleY: -1 }] }}>
               {chat.noOwner ? (
-                <Text testID="chat-no-owner" style={{ color: c.muted, fontSize: 15, lineHeight: 22, textAlign: 'center' }}>{t(lang, 'chat.noOwner')}</Text>
+                <Txt testID="chat-no-owner" role="bubble" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'chat.noOwner')}</Txt>
               ) : loadFailed ? (
-                <Text testID="chat-load-failed" style={{ color: c.muted, fontSize: 15, lineHeight: 22, textAlign: 'center' }}>{t(lang, 'chat.loadFailed')}</Text>
+                <Txt testID="chat-load-failed" role="bubble" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'chat.loadFailed')}</Txt>
               ) : !chat.page ? (
-                <ActivityIndicator accessibilityLabel={t(lang, 'progress.loading')} color={c.muted} />
+                <ActivityIndicator accessibilityLabel={t(lang, 'progress.loading')} color={c.inkSoft} />
               ) : null}
             </View>
           }
@@ -101,7 +103,10 @@ export default function Chat() {
         />
         <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m, gap: space.s }}>
           {outcome ? (
-            <Text testID={`chat-outcome-${outcome}`} accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14 }}>{t(lang, OUTCOME_KEY[outcome])}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+              <Dot kind="warn" size={8} />
+              <Txt testID={`chat-outcome-${outcome}`} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flex: 1 }}>{t(lang, OUTCOME_KEY[outcome])}</Txt>
+            </View>
           ) : null}
           <Pressable
             testID="chat-handoff"
@@ -109,20 +114,19 @@ export default function Chat() {
             accessibilityLabel={t(lang, 'chat.handoff')}
             onPress={() => router.push('/compose')}
             hitSlop={6}
-            style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.pill, borderWidth: 1, borderColor: c.line, opacity: pressed ? 0.7 : 1 })}
+            style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', paddingHorizontal: space.m, borderRadius: radius.control, borderWidth: 1, borderColor: c.hair, opacity: pressed ? 0.7 : 1 })}
           >
-            <Text style={{ color: c.ink, fontSize: 14 }}>{t(lang, 'chat.handoff')} ›</Text>
+            <Txt role="meta">{t(lang, 'chat.handoff')} ›</Txt>
           </Pressable>
           <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.s }}>
-            <TextInput
+            <TextField
               testID="chat-input"
               accessibilityLabel={t(lang, 'chat.placeholder')}
               value={text}
               onChangeText={setText}
               multiline
               placeholder={t(lang, 'chat.placeholder')}
-              placeholderTextColor={c.muted}
-              style={{ flex: 1, minHeight: 48, maxHeight: 140, paddingHorizontal: space.l, paddingTop: 13, paddingBottom: 13, borderRadius: radius.card, borderWidth: 1, borderColor: c.line, backgroundColor: c.card, color: c.ink, fontSize: 16, lineHeight: 22 }}
+              style={{ flex: 1, minHeight: 48, maxHeight: 140, paddingHorizontal: space.l, paddingTop: space.m, paddingBottom: space.m, borderRadius: radius.sheet, borderWidth: 1, borderColor: c.hair, backgroundColor: c.paper }}
             />
             <Pressable
               testID="chat-send"
@@ -131,9 +135,9 @@ export default function Chat() {
               accessibilityState={{ disabled: !online || !text.trim() || sending, busy: sending }}
               disabled={!online || !text.trim() || sending}
               onPress={send}
-              style={({ pressed }) => ({ minHeight: 48, paddingHorizontal: space.l, borderRadius: radius.button, justifyContent: 'center', backgroundColor: c.primary, opacity: !online || !text.trim() || sending ? 0.55 : pressed ? 0.85 : 1 })}
+              style={({ pressed }) => ({ minHeight: 48, paddingHorizontal: space.l, borderRadius: radius.control, justifyContent: 'center', backgroundColor: c.accent, opacity: !online || !text.trim() || sending ? 0.55 : pressed ? 0.85 : 1 })}
             >
-              {sending ? <ActivityIndicator color={c.primaryInk} /> : <Text style={{ color: c.primaryInk, fontSize: 16, fontWeight: '600' }}>{t(lang, 'chat.send')}</Text>}
+              {sending ? <ActivityIndicator color={c.onAccent} /> : <Txt role="body" tone="onAccent">{t(lang, 'chat.send')}</Txt>}
             </Pressable>
           </View>
         </View>
@@ -141,6 +145,12 @@ export default function Chat() {
     </SafeAreaView>
   )
 }
+
+// 气泡照稿(此刻页 CC 那句):纸色 + 细线,说话人那一侧的下角收成小尾巴;「我」与 CC 只靠左右与尾巴区分,不上色块。
+const bubbleShape = (me: boolean) => ({
+  borderTopLeftRadius: radius.bubble, borderTopRightRadius: radius.bubble,
+  borderBottomLeftRadius: me ? radius.bubble : 4, borderBottomRightRadius: me ? 4 : radius.bubble,
+})
 
 function ChatBubble({ b, lang, canRetry, onRetry, onDismiss }: { b: Bubble; lang: Lang; canRetry: boolean; onRetry(): void; onDismiss(): void }) {
   const { c } = useTheme()
@@ -154,27 +164,30 @@ function ChatBubble({ b, lang, canRetry, onRetry, onDismiss }: { b: Bubble; lang
         accessible
         accessibilityLabel={`${me ? t(lang, 'chat.me') : t(lang, 'cc.label')}: ${b.text}${b.truncated ? ` ${t(lang, 'chat.truncated')}` : ''}`}
         style={{
-          maxWidth: '85%', paddingHorizontal: space.l, paddingVertical: space.m, borderRadius: radius.card,
-          backgroundColor: me ? c.accentSoft : c.card, borderWidth: me ? 0 : 1, borderColor: c.line,
+          maxWidth: '85%', paddingHorizontal: space.l, paddingVertical: space.m, ...bubbleShape(me),
+          backgroundColor: c.paper, borderWidth: 1, borderColor: c.hair,
           opacity: b.state === 'failed' ? 0.8 : 1,
         }}
       >
-        <Text selectable style={{ color: c.ink, fontSize: 16, lineHeight: 23 }}>
+        <Txt selectable role="body" content="user">
           {b.text}{b.truncated ? t(lang, 'chat.truncated') : ''}
-        </Text>
+        </Txt>
       </View>
-      <Text style={{ color: c.muted, fontSize: 11 }}>{from} · {hhmm(b.at)}</Text>
+      <Txt role="caption" tone="inkSoft">{from} · {hhmm(b.at)}</Txt>
       {b.state === 'failed' && b.failedKind ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.m }}>
-          <Text testID={`chat-failed-${b.failedKind}`} accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 13 }}>{t(lang, FAILED_KEY[b.failedKind])}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s, flexShrink: 1 }}>
+            <Dot kind="warn" size={8} />
+            <Txt testID={`chat-failed-${b.failedKind}`} role="small" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flexShrink: 1 }}>{t(lang, FAILED_KEY[b.failedKind])}</Txt>
+          </View>
           {b.requestId ? (
             <Pressable testID="chat-retry" accessibilityRole="button" accessibilityLabel={t(lang, 'chat.retry')} accessibilityState={{ disabled: !canRetry }} disabled={!canRetry} onPress={onRetry} hitSlop={10} style={{ opacity: canRetry ? 1 : 0.5 }}>
-              <Text style={{ color: c.ink, fontSize: 13, fontWeight: '600', textDecorationLine: 'underline' }}>{t(lang, 'chat.retry')}</Text>
+              <Txt role="small" style={{ textDecorationLine: 'underline' }}>{t(lang, 'chat.retry')}</Txt>
             </Pressable>
           ) : null}
           {b.failedKind === 'notConfirmed' ? (
             <Pressable testID="chat-dismiss" accessibilityRole="button" accessibilityLabel={t(lang, 'chat.dismiss')} onPress={onDismiss} hitSlop={10}>
-              <Text style={{ color: c.muted, fontSize: 13, textDecorationLine: 'underline' }}>{t(lang, 'chat.dismiss')}</Text>
+              <Txt role="small" tone="inkSoft" style={{ textDecorationLine: 'underline' }}>{t(lang, 'chat.dismiss')}</Txt>
             </Pressable>
           ) : null}
         </View>
@@ -210,9 +223,9 @@ function Thinking({ lang }: { lang: Lang }) {
         accessible
         accessibilityLabel={t(lang, 'chat.thinking')}
         accessibilityLiveRegion="polite"
-        style={{ opacity, paddingHorizontal: space.l, paddingVertical: space.m, borderRadius: radius.card, backgroundColor: c.card, borderWidth: 1, borderColor: c.line }}
+        style={{ opacity, paddingHorizontal: space.l, paddingVertical: space.m, ...bubbleShape(false), backgroundColor: c.paper, borderWidth: 1, borderColor: c.hair }}
       >
-        <Text style={{ color: c.muted, fontSize: 15 }}>{t(lang, 'chat.thinking')}</Text>
+        <Txt role="bubble" tone="inkSoft">{t(lang, 'chat.thinking')}</Txt>
       </Animated.View>
     </View>
   )

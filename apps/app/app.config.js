@@ -19,7 +19,7 @@ module.exports = ({ config }) => {
     android: { ...config.android, ...(gs ? { googleServicesFile: gs } : {}) },
     plugins: [
       ...config.plugins,
-      ['expo-notifications', { mode: apnsEnv, icon: './assets/images/notification-icon.png', color: '#58654c' }],
+      ['expo-notifications', { mode: apnsEnv, icon: './assets/images/notification-icon.png', color: '#4f6b4f' }],
       ['./plugins/with-ios-notify', { teamId: team }],
       './plugins/with-android-push',
       // iOS 27 要求 UIScene 生命周期(否则启动即崩);接上 expo 自带的场景委托

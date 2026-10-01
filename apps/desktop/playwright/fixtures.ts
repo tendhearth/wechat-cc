@@ -94,11 +94,17 @@ export async function clickNav(page: import('@playwright/test').Page, pane: stri
 }
 
 /**
- * 点一个可能藏在折叠 `<details>` 里的元素(09-13 起「此刻」页把连接 / 重启 / 切换后端收进了
- * `<details class="cc-home-details">`「鱼缸与连接」)。先把它所有 <details> 祖先展开再点。
+ * 点一个可能藏在折叠 `<details>` 或「连接与设置」抽屉里的元素:先把它所有 <details> 祖先展开,
+ * 在抽屉里就先点开抽屉,再点。
  */
 export async function reveal(page: import('@playwright/test').Page, selector: string): Promise<void> {
   await page.locator(selector).first().evaluate(el => { for (let d = el.closest('details'); d; d = d.parentElement?.closest('details') ?? null) d.setAttribute('open', '') })
+  // 2026-10-01 起重连 / 测试 / 状态自检与用户卡片住在「连接与设置」抽屉的「连接」段:和用户一样先点开抽屉。
+  const inDrawer = await page.locator(selector).first().evaluate(el => !!el.closest('#settings-drawer'))
+  if (inDrawer && !(await page.locator('#settings-drawer').evaluate(el => el.classList.contains('is-open')))) {
+    await page.locator('#settings-open').click()
+    await expect(page.locator('#settings-drawer')).toHaveClass(/is-open/)
+  }
 }
 export async function clickRevealed(page: import('@playwright/test').Page, selector: string): Promise<void> {
   await reveal(page, selector)

@@ -22,7 +22,7 @@ type HeadlineKey = (typeof HEADLINE)[Dot] | 'links.headlineOffline' | 'links.hea
  * 「电脑还在启动」只在 daemon 自己说 starting 时用;别的不知道用中性措辞。
  * 来源行的日期是最新一条消息的时间(不是同步时间),文案照此标。
  */
-export function connectionsView(s: ConnectionsT, _now: number, lang: Lang, opts: { stale?: boolean } = {}): {
+export function connectionsView(s: ConnectionsT, _now: number, lang: Lang, opts: { stale?: boolean; demo?: boolean } = {}): {
   headline: { dot: Dot; key: HeadlineKey; n: number }
   sources: Array<{ id: string; name: string; dot: Dot; label: string }>
   computers: Array<{ id: string; label: string; dot: Dot; detail: string }>
@@ -44,7 +44,8 @@ export function connectionsView(s: ConnectionsT, _now: number, lang: Lang, opts:
   const headline: { dot: Dot; key: HeadlineKey; n: number } = worst === 'bad' && badSources === 0
     ? { dot: 'bad', key: 'links.headlineOffline', n: offline }
     : { dot: worst, key: worst === 'unknown' && s.starting === true ? 'links.headlineStarting' : HEADLINE[worst], n: sources.filter(x => x.dot === worst).length }
-  const computers = s.computers.map(c => ({
+  // 演示:根本没有电脑 ⇒ 不说「在线」,写明是演示(与顶栏「演示 · 没有连电脑」一致);圆点由 connectionsPage 压灰
+  const computers = opts.demo ? s.computers.map(c => ({ id: c.id, label: t(lang, 'links.demoComputer'), dot: 'unknown' as Dot, detail: t(lang, 'links.demoComputerDetail') })) : s.computers.map(c => ({
     id: c.id, label: c.label, dot: (c.online ? 'ok' : 'bad') as Dot,
     detail: !c.online ? t(lang, 'links.computerOffline') : opts.stale ? t(lang, 'links.computerLastKnownOnline') : c.since === null ? t(lang, 'links.computerOnlineNow') : t(lang, 'links.computerOnline', { date: shortDate(c.since, lang) }),
   }))
@@ -72,4 +73,16 @@ export function muteDots<V extends { headline: { dot: Dot }; sources: Array<{ do
     sources: v.sources.map(x => ({ ...x, dot: 'unknown' as Dot })),
     computers: v.computers.map(x => ({ ...x, dot: 'unknown' as Dot })),
   }
+}
+
+/**
+ * 连接页要显示的全部:信任度、视图(stale 或演示 ⇒ 所有圆点灰)、顶上一行(与桌面连接卡同一套 headline key,终审 M8)。
+ * 演示永远不画绿:演示后端说自己在线,但没有电脑(终审 I1)。
+ */
+export function connectionsPage(q: { data?: ConnectionsT; error?: string }, connState: string, now: number, lang: Lang, opts: { demo?: boolean } = {}) {
+  const trust = connectionsTrust(q, connState)
+  if (!q.data) return { trust, view: null, headline: null }
+  const base = connectionsView(q.data, now, lang, { stale: trust === 'stale', demo: opts.demo })
+  const view = trust === 'stale' || opts.demo ? muteDots(base) : base
+  return { trust, view, headline: { dot: view.headline.dot, text: t(lang, view.headline.key, { n: view.headline.n }) } }
 }

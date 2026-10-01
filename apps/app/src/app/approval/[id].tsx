@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native'
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t, tCount } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
@@ -11,12 +11,15 @@ import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { CCFigure } from '../../ui/CCFigure'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
-import { monoFamily, serifFamily } from '../../ui/fonts'
+import { Dot } from '../../ui/Dot'
 import { Sheet } from '../../ui/Sheet'
+import { TextField } from '../../ui/TextField'
 import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
+import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
 import { canSubmit } from '../../view/connection'
+import { ccPresence } from '../../view/presence'
 import { ANSWER_MAX_CHARS, ANSWER_MAX_MULTI, answersTooLong, approvalOutcome, approvalView, buildAnswers, multiLimitReached, pinnedRequest, togglePick, type ApprovalView } from '../../view/approval'
 
 type Outcome = null | { requestId: string; kind: 'handled' | 'uncertain' | 'failed' | 'ccBusy' | 'tooLong' | 'revoked' }
@@ -99,10 +102,10 @@ export default function Approval() {
   }
 
   const header = (
-    <TopBar title={t(lang, 'common.wordmark')} onBack={() => router.back()} connection={conn.state === 'online' ? 'online' : 'offline'} onAvatar={() => router.push('/settings')} />
+    <TopBar title={t(lang, 'common.wordmark')} onBack={() => router.back()} onAvatar={() => router.push('/settings')} />
   )
   const shell = (body: ReactNode, footer?: ReactNode) => (
-    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       {header}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
@@ -119,10 +122,10 @@ export default function Approval() {
     return shell(
       detail.error && !detail.loading ? (
         <Pressable testID="approval-load-failed" accessibilityRole="button" onPress={() => void refreshDetail()} style={{ paddingTop: space.xl }}>
-          <Text style={{ color: c.muted }}>{t(lang, 'approval.refreshFailed')}</Text>
+          <Txt tone="inkSoft">{t(lang, 'approval.refreshFailed')}</Txt>
         </Pressable>
       ) : (
-        <Text style={{ color: c.muted, paddingTop: space.xl }}>{t(lang, 'progress.loading')}</Text>
+        <Txt tone="inkSoft" style={{ paddingTop: space.xl }}>{t(lang, 'progress.loading')}</Txt>
       ),
     )
   }
@@ -138,9 +141,9 @@ export default function Approval() {
   if (shownOutcome === 'handled' || v.kind === 'none') {
     return shell(
       <View testID="approval-handled" style={{ gap: space.l, paddingTop: space.xl, alignItems: 'flex-start' }}>
-        <CCFigure size={72} />
-        <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 24, lineHeight: 32, fontFamily: serifFamily, fontWeight: '600' }}>{t(lang, 'approval.handled')}</Text>
-        <Text style={{ color: c.muted, fontSize: 15 }}>{matterTitle}</Text>
+        <CCFigure size={72} presence={ccPresence(conn)} />
+        <Txt role="title" accessibilityRole="header">{t(lang, 'approval.handled')}</Txt>
+        <Txt role="bubble" tone="inkSoft" content="user">{matterTitle}</Txt>
       </View>,
       <Button kind="primary" testID="approval-back" label={t(lang, 'approval.backToMatter')} onPress={backToMatter} />,
     )
@@ -150,8 +153,8 @@ export default function Approval() {
     return shell(
       <>
         <Eyebrow title={matterTitle} eyebrow={t(lang, 'approval.eyebrow')} />
-        <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 28, lineHeight: 36, fontFamily: serifFamily, fontWeight: '600' }}>{t(lang, 'approval.chooseTitle')}</Text>
-        <Text style={{ color: c.muted, fontSize: 15 }}>{t(lang, 'approval.chooseOne')}</Text>
+        <Txt role="title" accessibilityRole="header">{t(lang, 'approval.chooseTitle')}</Txt>
+        <Txt role="bubble" tone="inkSoft">{t(lang, 'approval.chooseOne')}</Txt>
         {v.items.map(item => (
           <Pressable
             key={item.requestId}
@@ -161,8 +164,11 @@ export default function Approval() {
             onPress={() => router.push(`/approval/${encodeURIComponent(id)}?request=${encodeURIComponent(item.requestId)}`)}
           >
             <Card style={{ gap: space.s }}>
-              <Text style={{ color: c.warn, fontSize: 12, fontWeight: '600' }}>{item.kind === 'permission' ? t(lang, 'approval.kindPermission') : t(lang, 'approval.kindQuestion')}</Text>
-              <Text style={{ color: c.ink, fontSize: 14, lineHeight: 20, fontFamily: item.kind === 'permission' ? monoFamily : undefined }}>{item.summary}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+                <Dot kind="warn" size={8} />
+                <Txt role="caption" tone="inkSoft">{item.kind === 'permission' ? t(lang, 'approval.kindPermission') : t(lang, 'approval.kindQuestion')}</Txt>
+              </View>
+              {item.kind === 'permission' ? <Txt role="code">{item.summary}</Txt> : <Txt role="meta" content="user">{item.summary}</Txt>}
             </Card>
           </Pressable>
         ))}
@@ -179,18 +185,18 @@ export default function Approval() {
       {online && !detail.fresh && !pending && !refreshing ? (
         detail.error && !detail.loading ? (
           <Pressable testID="approval-refresh-failed" accessibilityRole="button" onPress={() => void refreshDetail()}>
-            <Text style={{ color: c.warn, fontSize: 14, lineHeight: 20, textAlign: 'center' }}>{t(lang, 'approval.refreshFailed')}</Text>
+            <Notice text={t(lang, 'approval.refreshFailed')} center />
           </Pressable>
         ) : (
-          <Text accessibilityLiveRegion="polite" style={{ color: c.muted, fontSize: 13, textAlign: 'center' }}>{t(lang, 'progress.loading')}</Text>
+          <Txt role="small" tone="inkSoft" accessibilityLiveRegion="polite" style={{ textAlign: 'center' }}>{t(lang, 'progress.loading')}</Txt>
         )
       ) : null}
-      {pending ? <Text accessibilityLiveRegion="polite" style={{ color: c.muted, fontSize: 13, textAlign: 'center' }}>{t(lang, 'approval.submitting')}</Text> : null}
-      {shownOutcome === 'uncertain' ? <Text testID="approval-uncertain" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'approval.uncertain')}</Text> : null}
-      {shownOutcome === 'tooLong' ? <Text testID="approval-too-long" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'approval.answerTooLong')}</Text> : null}
-      {shownOutcome === 'ccBusy' ? <Text testID="approval-cc-busy" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'common.ccBusy')}</Text> : null}
-      {shownOutcome === 'revoked' ? <Text testID="approval-revoked" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'conn.revokedTitle')}</Text> : null}
-      {shownOutcome === 'failed' ? <Text testID="approval-failed" accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{t(lang, 'approval.failed')}</Text> : null}
+      {pending ? <Txt role="small" tone="inkSoft" accessibilityLiveRegion="polite" style={{ textAlign: 'center' }}>{t(lang, 'approval.submitting')}</Txt> : null}
+      {shownOutcome === 'uncertain' ? <Notice testID="approval-uncertain" text={t(lang, 'approval.uncertain')} /> : null}
+      {shownOutcome === 'tooLong' ? <Notice testID="approval-too-long" text={t(lang, 'approval.answerTooLong')} /> : null}
+      {shownOutcome === 'ccBusy' ? <Notice testID="approval-cc-busy" text={t(lang, 'common.ccBusy')} /> : null}
+      {shownOutcome === 'revoked' ? <Notice testID="approval-revoked" text={t(lang, 'conn.revokedTitle')} /> : null}
+      {shownOutcome === 'failed' ? <Notice testID="approval-failed" text={t(lang, 'approval.failed')} /> : null}
     </>
   )
 
@@ -229,19 +235,29 @@ export default function Approval() {
           <Button kind="primary" testID="approval-allow" label={t(lang, 'approval.allow')} onPress={() => decide('allow')} disabled={locked} busy={pending === 'allow'} />
         </View>
       </View>
-      <Text style={{ color: c.muted, fontSize: 13, textAlign: 'center' }}>{t(lang, 'approval.onlyThisRequest')}</Text>
+      <Txt role="small" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'approval.onlyThisRequest')}</Txt>
     </View>,
   )
 }
 
+// 提示一句:状态色只上点(琥珀点 + 灰字),字不上色。
+function Notice({ text, testID, center }: { text: string; testID?: string; center?: boolean }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s, justifyContent: center ? 'center' : 'flex-start' }}>
+      <Dot kind="warn" size={8} />
+      <Txt testID={testID} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flexShrink: 1 }}>{text}</Txt>
+    </View>
+  )
+}
+
 function Eyebrow({ eyebrow, title }: { eyebrow: string; title: string }) {
-  const { c } = useTheme()
+  const conn = useConnection()
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.m, paddingTop: space.s }}>
-      <CCFigure size={44} />
+      <CCFigure size={44} presence={ccPresence(conn)} />
       <View style={{ flex: 1, gap: 2 }}>
-        <Text style={{ color: c.muted, fontSize: 12 }}>{eyebrow}</Text>
-        <Text numberOfLines={2} style={{ color: c.ink, fontSize: 14 }}>{title}</Text>
+        <Txt role="caption" tone="inkSoft">{eyebrow}</Txt>
+        <Txt role="meta" content="user" numberOfLines={2}>{title}</Txt>
       </View>
     </View>
   )
@@ -261,13 +277,11 @@ function PermissionCard({ v, matterTitle }: { v: CardView; matterTitle: string }
     <>
       <Eyebrow eyebrow={t(lang, 'approval.eyebrow')} title={matterTitle} />
       <View style={{ gap: space.s }}>
-        <Text testID="approval-title" accessibilityRole="header" style={{ color: c.ink, fontSize: 30, lineHeight: 38, fontFamily: serifFamily, fontWeight: '600' }}>{v.title}</Text>
+        <Txt testID="approval-title" role="title" content="user" accessibilityRole="header">{v.title}</Txt>
         {v.aiSummary ? (
           <View testID="approval-ai-summary" accessible accessibilityLabel={`${t(lang, 'approval.aiTag')}. ${t(lang, 'approval.aiSummary')}`} style={{ gap: space.xs }}>
-            <View style={{ alignSelf: 'flex-start', backgroundColor: c.navOnBg, borderRadius: radius.pill, paddingHorizontal: space.s, paddingVertical: 2 }}>
-              <Text style={{ color: c.navOnInk, fontSize: 12, fontWeight: '600' }}>{t(lang, 'approval.aiTag')}</Text>
-            </View>
-            <Text style={{ color: c.muted, fontSize: 13, lineHeight: 18 }}>{t(lang, 'approval.aiSummary')}</Text>
+            <Txt role="caption">{t(lang, 'approval.aiTag')}</Txt>
+            <Txt role="small" tone="inkSoft">{t(lang, 'approval.aiSummary')}</Txt>
           </View>
         ) : null}
       </View>
@@ -275,12 +289,12 @@ function PermissionCard({ v, matterTitle }: { v: CardView; matterTitle: string }
       {shown.length > 0 ? (
         <Card style={{ gap: 0, paddingVertical: space.s }}>
           {shown.map(([label, body, raw], i) => (
-            <View key={label} style={{ paddingVertical: space.m, gap: space.xs, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: c.line }}>
-              <Text style={{ color: c.ink, fontSize: 14, fontWeight: '600' }}>{label}</Text>
+            <View key={label} style={{ paddingVertical: space.m, gap: space.xs, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: c.hair }}>
+              <Txt role="meta" tone="inkSoft">{label}</Txt>
               {raw ? (
-                <Text numberOfLines={4} style={{ color: c.ink, fontSize: 13, lineHeight: 19, fontFamily: monoFamily }}>{body}</Text>
+                <Txt role="code" numberOfLines={4}>{body}</Txt>
               ) : (
-                <Text style={{ color: c.ink, fontSize: 15, lineHeight: 22 }}>{body}</Text>
+                <Txt role="bubble" content="user">{body}</Txt>
               )}
             </View>
           ))}
@@ -289,23 +303,23 @@ function PermissionCard({ v, matterTitle }: { v: CardView; matterTitle: string }
 
       {/* 模型写的说明可能不准:原始命令首行与工作目录直接摆出来,不折叠。 */}
       {v.showRawInline ? (
-        <View testID="approval-raw-inline" style={{ gap: space.s, padding: space.l, borderRadius: radius.card, borderWidth: 1, borderColor: c.line, backgroundColor: c.accentSoft }}>
-          <Text style={{ color: c.muted, fontSize: 12, fontWeight: '600' }}>{t(lang, 'approval.rawCommand')}</Text>
-          <Text selectable style={{ color: c.ink, fontSize: 13, lineHeight: 19, fontFamily: monoFamily }}>{v.rawFirstLine}{v.rawFirstLineCut ? '…' : ''}</Text>
-          {v.rawMoreLines > 0 ? <Text testID="approval-raw-more" style={{ color: c.muted, fontSize: 12 }}>{tCount(lang, 'approval.moreLines', v.rawMoreLines)}</Text> : null}
-          <Text style={{ color: c.muted, fontSize: 12, fontWeight: '600' }}>{t(lang, 'approval.workingDir')}</Text>
-          <Text selectable style={{ color: c.ink, fontSize: 13, lineHeight: 19, fontFamily: monoFamily }}>{v.workingDir || '—'}</Text>
+        <View testID="approval-raw-inline" style={{ gap: space.s, padding: space.l, borderRadius: radius.sheet, borderWidth: 1, borderColor: c.hair }}>
+          <Txt role="caption" tone="inkSoft">{t(lang, 'approval.rawCommand')}</Txt>
+          <Txt selectable role="code">{v.rawFirstLine}{v.rawFirstLineCut ? '…' : ''}</Txt>
+          {v.rawMoreLines > 0 ? <Txt testID="approval-raw-more" role="caption" tone="inkSoft">{tCount(lang, 'approval.moreLines', v.rawMoreLines)}</Txt> : null}
+          <Txt role="caption" tone="inkSoft">{t(lang, 'approval.workingDir')}</Txt>
+          <Txt selectable role="code">{v.workingDir || '—'}</Txt>
         </View>
       ) : null}
 
       <Sheet testID="approval-view-exact" title={t(lang, 'approval.viewExact')}>
         <ScrollView nestedScrollEnabled style={{ maxHeight: 320 }}>
-          <Text selectable style={{ color: c.ink, fontSize: 12, lineHeight: 17, fontFamily: monoFamily }}>{v.rawFull}</Text>
+          <Txt selectable role="code">{v.rawFull}</Txt>
         </ScrollView>
         {v.workingDir ? (
-          <Text selectable style={{ color: c.muted, fontSize: 12, lineHeight: 17, fontFamily: monoFamily, marginTop: space.s }}>
+          <Txt selectable role="code" tone="inkSoft" style={{ marginTop: space.s }}>
             {t(lang, 'approval.workingDir')}: {v.workingDir}
-          </Text>
+          </Txt>
         ) : null}
       </Sheet>
     </>
@@ -352,9 +366,9 @@ function QuestionForm({ v, matterTitle, shell, locked, submitLocked, busy, statu
         const full = multiLimitReached(item.multiSelect, cur)
         return (
           <View key={item.id} style={{ gap: space.m }}>
-            {item.header ? <Text style={{ color: c.muted, fontSize: 13, fontWeight: '600' }}>{item.header}</Text> : null}
-            <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 26, lineHeight: 34, fontFamily: serifFamily, fontWeight: '600' }}>{item.question}</Text>
-            {item.multiSelect ? <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'approval.multiHint')}</Text> : null}
+            {item.header ? <Txt role="small" tone="inkSoft" content="user">{item.header}</Txt> : null}
+            <Txt role="title" content="user" accessibilityRole="header">{item.question}</Txt>
+            {item.multiSelect ? <Txt role="small" tone="inkSoft">{t(lang, 'approval.multiHint')}</Txt> : null}
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.s }}>
               {item.options.map((o, i) => {
                 const on = cur.includes(o.label)
@@ -370,32 +384,32 @@ function QuestionForm({ v, matterTitle, shell, locked, submitLocked, busy, statu
                     onPress={() => toggle(item.id, o.label, item.multiSelect)}
                     style={{
                       minHeight: 44, justifyContent: 'center', paddingHorizontal: space.l, paddingVertical: space.s,
-                      borderRadius: radius.button, borderWidth: 1,
-                      borderColor: on ? c.primary : c.line, backgroundColor: on ? c.accentSoft : c.card,
+                      borderRadius: radius.control, borderWidth: 1,
+                      borderColor: on ? c.accent : c.hair, backgroundColor: c.paper,
                       opacity: blocked ? 0.55 : 1,
                     }}
                   >
-                    <Text style={{ color: c.ink, fontSize: 15, fontWeight: on ? '600' : '400' }}>{on ? '✓ ' : ''}{o.label}</Text>
-                    {o.description ? <Text style={{ color: c.muted, fontSize: 12, lineHeight: 16 }}>{o.description}</Text> : null}
+                    <Txt role="bubble" content="user" tone={on ? 'accent' : 'ink'}>{on ? '✓ ' : ''}{o.label}</Txt>
+                    {o.description ? <Txt role="caption" tone="inkSoft" content="user">{o.description}</Txt> : null}
                   </Pressable>
                 )
               })}
             </View>
-            {full ? <Text testID={`answer-max-${item.id}`} accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 13 }}>{t(lang, 'approval.maxChoices', { n: ANSWER_MAX_MULTI })}</Text> : null}
+            {full ? <Notice testID={`answer-max-${item.id}`} text={t(lang, 'approval.maxChoices', { n: ANSWER_MAX_MULTI })} /> : null}
             {item.allowOther ? (
               <View style={{ gap: space.xs }}>
-                <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'approval.otherLabel')}</Text>
-                <TextInput
+                <Txt role="small" tone="inkSoft">{t(lang, 'approval.otherLabel')}</Txt>
+                <TextField
                   testID={`answer-other-${item.id}`}
                   accessibilityLabel={`${item.question} ${t(lang, 'approval.otherLabel')}`}
                   editable={!locked}
                   value={other[item.id] ?? ''}
                   onChangeText={text => typeOther(item.id, text, item.multiSelect)}
                   placeholder={t(lang, 'approval.otherPlaceholder')}
-                  placeholderTextColor={c.muted}
                   multiline
                   maxLength={ANSWER_MAX_CHARS}
-                  style={{ minHeight: 44, color: c.ink, fontSize: 15, paddingHorizontal: space.l, paddingVertical: space.m, borderRadius: radius.button, borderWidth: 1, borderColor: c.line, backgroundColor: c.card }}
+                  role="bubble"
+                  style={{ minHeight: 44, paddingHorizontal: space.l, paddingVertical: space.m, borderRadius: radius.sheet, borderWidth: 1, borderColor: c.hair, backgroundColor: c.paper }}
                 />
               </View>
             ) : null}

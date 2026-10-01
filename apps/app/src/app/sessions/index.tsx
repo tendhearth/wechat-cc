@@ -1,16 +1,18 @@
 import { useRouter } from 'expo-router'
 import { useRef, useState } from 'react'
-import { Pressable, ScrollView, Text, View } from 'react-native'
+import { Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import type { NativeSessionRowT } from '../../backend/types'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
 import { useBackendCtx } from '../../state/BackendProvider'
-import { useConnection, useQuery } from '../../state/hooks'
+import { useQuery } from '../../state/hooks'
 import { Button } from '../../ui/Button'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
-import { radius, space } from '../../ui/tokens'
+import { Dot } from '../../ui/Dot'
+import { space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
+import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
 import { mergeSessionPages, sessionRows } from '../../view/sessions'
 
@@ -21,7 +23,6 @@ export default function Sessions() {
   const { c } = useTheme()
   const lang = useLang()
   const router = useRouter()
-  const conn = useConnection()
   const { backend } = useBackendCtx()
   const [provider, setProvider] = useState<Provider>('claude')
   // 追加页只对「第一页的那一次加载」有效:第一页重新拉过(syncedAt 变了)或换了标签 ⇒ 追加页作废,避免重复 / 漏行。
@@ -58,30 +59,30 @@ export default function Sessions() {
         accessibilityRole="tab"
         accessibilityState={{ selected: on }}
         onPress={() => setProvider(p)}
-        style={{ flex: 1, minHeight: 44, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: on ? c.navOnBg : 'transparent' }}
+        style={{ flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderBottomWidth: 1, borderBottomColor: on ? c.ink : c.hair }}
       >
-        <Text style={{ color: on ? c.navOnInk : c.ink, fontSize: 15, fontWeight: '600' }}>{t(lang, `sessions.${p}`)}</Text>
+        <Txt role="bubble" tone={on ? 'ink' : 'inkSoft'}>{t(lang, `sessions.${p}`)}</Txt>
       </Pressable>
     )
   }
 
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
-      <TopBar title={t(lang, 'sessions.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} connection={conn.state === 'online' ? 'online' : 'offline'} onAvatar={() => router.push('/settings')} />
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
+      <TopBar title={t(lang, 'sessions.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} onAvatar={() => router.push('/settings')} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
-      <View accessibilityRole="tablist" style={{ flexDirection: 'row', gap: space.s, paddingHorizontal: space.xl, paddingBottom: space.s }}>{(['claude', 'codex'] as const).map(tab)}</View>
+      <View accessibilityRole="tablist" style={{ flexDirection: 'row', paddingHorizontal: space.xl, paddingBottom: space.s }}>{(['claude', 'codex'] as const).map(tab)}</View>
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl }}>
         {!q.data && q.error === 'not_found' ? (
-          <Text testID="sessions-unsupported" style={{ color: c.muted, fontSize: 15, paddingVertical: space.l }}>{t(lang, 'sessions.unsupported')}</Text>
+          <Txt testID="sessions-unsupported" role="bubble" tone="inkSoft" style={{ paddingVertical: space.l }}>{t(lang, 'sessions.unsupported')}</Txt>
         ) : !q.data && q.error ? (
           <View style={{ gap: space.m, paddingVertical: space.l }}>
-            <Text testID="sessions-slow" style={{ color: c.muted, fontSize: 15 }}>{t(lang, 'sessions.slow')}</Text>
+            <Txt testID="sessions-slow" role="bubble" tone="inkSoft">{t(lang, 'sessions.slow')}</Txt>
             <Button kind="secondary" testID="sessions-retry" label={t(lang, 'common.retry')} onPress={() => void q.refresh()} />
           </View>
         ) : !q.data ? (
-          <Text style={{ color: c.muted, fontSize: 15, paddingVertical: space.l }}>{t(lang, 'sessions.loading')}</Text>
+          <Txt role="bubble" tone="inkSoft" style={{ paddingVertical: space.l }}>{t(lang, 'sessions.loading')}</Txt>
         ) : rows.length === 0 ? (
-          <Text testID="sessions-empty" style={{ color: c.muted, fontSize: 15, paddingVertical: space.l }}>{t(lang, 'sessions.empty')}</Text>
+          <Txt testID="sessions-empty" role="bubble" tone="inkSoft" style={{ paddingVertical: space.l }}>{t(lang, 'sessions.empty')}</Txt>
         ) : (
           rows.map(r => (
             <Pressable
@@ -90,20 +91,25 @@ export default function Sessions() {
               accessibilityRole="button"
               accessibilityLabel={`${r.title}, ${r.meta}${r.active ? `, ${t(lang, 'sessions.active')}` : ''}`}
               onPress={() => router.push(`/sessions/${encodeURIComponent(r.key)}`)}
-              style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', minHeight: 64, paddingVertical: space.m, borderBottomWidth: 1, borderBottomColor: c.line, opacity: pressed ? 0.7 : 1 })}
+              style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', minHeight: 64, paddingVertical: space.m, borderBottomWidth: 1, borderBottomColor: c.hair, opacity: pressed ? 0.7 : 1 })}
             >
               <View style={{ flex: 1, gap: 2 }}>
-                <Text numberOfLines={2} style={{ color: c.ink, fontSize: 16, fontWeight: '600' }}>{r.title}</Text>
-                <Text numberOfLines={1} style={{ color: c.muted, fontSize: 13 }}>{r.meta}</Text>
-                {r.active ? <Text style={{ color: c.warn, fontSize: 12 }}>{t(lang, 'sessions.active')}</Text> : null}
+                <Txt role="body" content="user" numberOfLines={2}>{r.title}</Txt>
+                <Txt role="small" tone="inkSoft" numberOfLines={1}>{r.meta}</Txt>
+                {r.active ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs + 2 }}>
+                    <Dot kind="ok" size={8} />
+                    <Txt role="caption" tone="inkSoft">{t(lang, 'sessions.active')}</Txt>
+                  </View>
+                ) : null}
               </View>
-              <Text style={{ color: c.muted, fontSize: 22 }}>›</Text>
+              <Txt role="title" tone="inkSoft">›</Txt>
             </Pressable>
           ))
         )}
         {q.data && next ? (
           <View style={{ paddingTop: space.l, gap: space.s }}>
-            {more?.failed ? <Text testID="sessions-slow" style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'sessions.slow')}</Text> : null}
+            {more?.failed ? <Txt testID="sessions-slow" role="meta" tone="inkSoft">{t(lang, 'sessions.slow')}</Txt> : null}
             <Button kind="secondary" testID="sessions-more" label={t(lang, 'sessions.more')} busy={loadingMore} onPress={() => void loadMore()} />
           </View>
         ) : null}

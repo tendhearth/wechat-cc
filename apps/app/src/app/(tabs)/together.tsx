@@ -1,6 +1,6 @@
 import { useFocusEffect, useRouter } from 'expo-router'
 import { useCallback } from 'react'
-import { FlatList, Pressable, Text, View } from 'react-native'
+import { FlatList, Pressable, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
@@ -8,11 +8,13 @@ import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery } from '../../state/hooks'
 import { useWork } from '../../state/useWork'
 import { CCFigure } from '../../ui/CCFigure'
+import { ccPresence } from '../../view/presence'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { SayBar } from '../../ui/SayBar'
 import { StatusPill } from '../../ui/StatusPill'
 import { space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
+import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
 import { togetherView } from '../../view/together'
 
@@ -42,24 +44,24 @@ export default function Together() {
         gap: space.m,
         paddingVertical: space.l,
         borderBottomWidth: 1,
-        borderBottomColor: c.line,
+        borderBottomColor: c.hair,
         opacity: pressed ? 0.7 : 1,
       })}
     >
-      <CCFigure size={44} />
+      <CCFigure size={44} presence={ccPresence(conn)} />
       <View style={{ flex: 1, gap: space.xs }}>
-        <Text numberOfLines={1} style={{ color: c.ink, fontSize: 16, fontWeight: '600' }}>{t(lang, 'chat.pinnedTitle')}</Text>
-        {lastLine ? <Text numberOfLines={1} style={{ color: c.muted, fontSize: 13 }}>{lastLine}</Text> : null}
+        <Txt role="body" numberOfLines={1}>{t(lang, 'chat.pinnedTitle')}</Txt>
+        {lastLine ? <Txt role="small" tone="inkSoft" content="user" numberOfLines={1}>{lastLine}</Txt> : null}
       </View>
-      <Text style={{ color: c.muted, fontSize: 22 }}>›</Text>
+      <Txt role="title" tone="inkSoft">›</Txt>
     </Pressable>
   ) : null
 
   return (
-    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.bg }}>
+    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar
         title={t(lang, 'together.title')}
-        connection={conn.state === 'online' ? 'online' : 'offline'}
+        showStatus
         onAvatar={() => router.push('/settings')}
       />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
@@ -70,9 +72,9 @@ export default function Together() {
         ListHeaderComponent={pinned}
         ListEmptyComponent={
           <View style={{ flex: 1, justifyContent: 'center', paddingVertical: space.xxl }}>
-            <Text testID="together-empty" style={{ color: c.muted, fontSize: 15, lineHeight: 22, textAlign: 'center' }}>
+            <Txt testID="together-empty" role="bubble" tone="inkSoft" style={{ textAlign: 'center' }}>
               {t(lang, 'together.empty')}
-            </Text>
+            </Txt>
           </View>
         }
         renderItem={({ item }) => (
@@ -87,16 +89,16 @@ export default function Together() {
               gap: space.m,
               paddingVertical: space.l,
               borderBottomWidth: 1,
-              borderBottomColor: c.line,
+              borderBottomColor: c.hair,
               opacity: pressed ? 0.7 : 1,
             })}
           >
             <View style={{ flex: 1, gap: space.s }}>
-              <Text numberOfLines={2} style={{ color: c.ink, fontSize: 16, lineHeight: 22, fontWeight: '600' }}>{item.title}</Text>
+              <Txt role="item" content="user" numberOfLines={2}>{item.title}</Txt>
               <StatusPill status={item.status} />
-              {item.subtitle ? <Text numberOfLines={1} style={{ color: c.muted, fontSize: 13 }}>{item.subtitle}</Text> : null}
+              {item.subtitle ? <Txt role="small" tone="inkSoft" content="user" numberOfLines={1}>{item.subtitle}</Txt> : null}
             </View>
-            <Text style={{ color: c.muted, fontSize: 22 }}>›</Text>
+            <Txt role="title" tone="inkSoft">›</Txt>
           </Pressable>
         )}
       />

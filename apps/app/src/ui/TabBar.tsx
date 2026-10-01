@@ -1,10 +1,11 @@
 import type { BottomTabBarProps } from 'expo-router/js-tabs'
-import { Pressable, Text, View } from 'react-native'
+import { Pressable, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { radius, space } from './tokens'
+import { space } from './tokens'
+import { Txt } from './Txt'
 import { useTheme } from './useTheme'
 
-// 底部两个标签「此刻 / 一起做」:选中的是一块暖色底(Codex 稿 navOnBg / navOnInk)。
+// 底部两个标签「此刻 / 一起做」:不画色块,选中只把字变成墨色(未选中 inkSoft)。
 export function TabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const { c } = useTheme()
   const insets = useSafeAreaInsets()
@@ -17,9 +18,9 @@ export function TabBar({ state, descriptors, navigation }: BottomTabBarProps) {
         paddingHorizontal: space.xl,
         paddingTop: space.s,
         paddingBottom: Math.max(insets.bottom, space.s),
-        backgroundColor: c.bg,
+        backgroundColor: c.rail,
         borderTopWidth: 1,
-        borderTopColor: c.line,
+        borderTopColor: c.hair,
       }}
     >
       {state.routes.map((route, i) => {
@@ -40,13 +41,11 @@ export function TabBar({ state, descriptors, navigation }: BottomTabBarProps) {
             style={{
               flex: 1,
               minHeight: 44,
-              borderRadius: radius.button,
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundColor: focused ? c.navOnBg : 'transparent',
             }}
           >
-            <Text style={{ color: focused ? c.navOnInk : c.muted, fontSize: 15, fontWeight: focused ? '600' : '400' }}>{label}</Text>
+            <Txt role="body" tone={focused ? 'ink' : 'inkSoft'}>{label}</Txt>
           </Pressable>
         )
       })}

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { answersTooLong, approvalOutcome, approvalView, buildAnswers, pinnedRequest, togglePick, multiLimitReached, ANSWER_MAX_CHARS, ANSWER_MAX_MULTI } from './approval'
+import { labelJoin } from '../i18n'
 
 const base = {
   matter: { id: 'ab12cd34', kind: 'task', title: 'x', projectPath: '/p', status: 'open', ownerChatId: null, originMatterId: null, originMessageId: null, createdAt: 1, updatedAt: 1 },
@@ -166,5 +167,12 @@ describe('approvalOutcome:提交失败码 ⇒ 页内提示', () => {
   })
   it('其余 ⇒ failed', () => {
     for (const e of ['offline', 'unknown', 'invalid', 'not_found']) expect(approvalOutcome(e)).toBe('failed')
+  })
+})
+
+describe('labelJoin', () => {
+  it('中文小标题用全角冒号,英文用「: 」', () => {
+    expect(labelJoin('出发时间', '去哪天出发？')).toBe('出发时间：去哪天出发？')
+    expect(labelJoin('Departure', 'Which day?')).toBe('Departure: Which day?')
   })
 })

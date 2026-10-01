@@ -146,7 +146,7 @@ expect(retainedNewDraft).toBe('再补一份要求')
 ~~~
 - [x] 运行 `bun run test apps/desktop/src/modules/task-entry.test.ts apps/desktop/src/modules/converse.test.ts apps/desktop/src/modules/workbench-entry.test.ts`，确认新交办路径失败。
 - [x] 实现独立预览模块和此刻/无项目空态入口。完整展示最终要求与材料；更多收起项目/执行设置；默认不可用保留草稿并显示原因。成功只按匹配回执清对应稿、打开原matter；详情可查看并打开受管位置。
-- [x] 重跑本任务测试；运行 `bun scripts/workbench-companion-browser-smoke.ts`，检查宽/窄窗口、键盘焦点、取消返回、真实公开摘录，保存截图和结果于验收记录。
+- [x] 重跑本任务测试；运行 `bun scripts/workbench-companion-browser-smoke.ts`，检查宽/窄窗口、键盘焦点、取消返回、真实公开摘录，保存截图和结果于验收记录。(该脚本已于 plan 6 设计统一时退役,2026-10-01:它挂载的 mountCurrentActivity 与 .cc-care-avatar 已删除;桌面验收改由 apps/desktop 的 Playwright e2e 覆盖。)
 - [x] 提交：`feat: hand off owner requests from desktop`。
 
 ### Task 6: 手机文字交办与回执恢复

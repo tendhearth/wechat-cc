@@ -1,4 +1,4 @@
-import { test, expect, reveal } from './fixtures'
+import { test, expect, clickNav } from './fixtures'
 
 test('inline companion animation replaces the overview illustration', async ({ page, shimUrl, shim }) => {
   // 场景里要有 CC 才能测悬停问候:presence 由 shim 的 /v1/companion/presence 提供,默认在线空闲。
@@ -6,8 +6,10 @@ test('inline companion animation replaces the overview illustration', async ({ p
   await page.goto(shimUrl)
   await page.waitForFunction(() => document.documentElement.dataset.mode === 'dashboard')
 
-  // 09-13 起鱼缸收进「鱼缸与连接」折叠区,先展开再看画布。
-  await reveal(page, '#companion-stage')
+  // 2026-10-01 起鱼缸是「生活与工具 › 鱼缸」里的一页(此刻只留 CC)。
+  await expect(page.locator('article[data-pane="overview"] #companion-stage')).toHaveCount(0)
+  await clickNav(page, 'aquarium')
+  await expect(page.locator('article[data-pane="aquarium"]')).toBeVisible()
   const canvas = page.locator('#companion-stage')
   await expect(canvas).toBeVisible()
   const box = await canvas.boundingBox()
@@ -48,24 +50,26 @@ test('inline companion animation replaces the overview illustration', async ({ p
 
   await page.locator('#companion-immersive-start').click()
   await expect(page.locator('.moment-body')).toHaveClass(/is-companion-immersive/)
-  await page.locator('#companion-users-toggle').click()
-  await expect(page.locator('.moment-body')).toHaveClass(/is-companion-users-open/)
+  // 2026-10-01 起用户与连接住在「连接与设置」:沉浸模式的「用户」打开那个抽屉的「连接」段,点抽屉外收起,沉浸不受影响。
+  const drawer = page.locator('#settings-drawer')
   await expect(page.locator('#companion-users-toggle')).toHaveText('用户')
   await page.locator('#companion-users-toggle').click()
-  await expect(page.locator('.moment-body')).not.toHaveClass(/is-companion-users-open/)
-  await page.locator('#companion-users-toggle').click()
-  // 09-13 起左侧全局侧栏(#dash-global-rail)叠在遮罩之上,(120,180) 点到的是侧栏不是遮罩;
-  // 在遮罩上找一个真正露出来的点再点 —— 要验的是「点遮罩收起抽屉」,不是某个像素。
+  await expect(drawer).toHaveClass(/is-open/)
+  await expect(drawer.locator('.drawer-connection')).toBeVisible()
+  await expect(drawer.locator('#accounts-current')).toBeVisible()
+  // 在抽屉外找一个真正露出来的点(不是侧栏、不是抽屉)再点 —— 要验的是「点外面收起抽屉」,不是某个像素。
   const spot = await page.evaluate(() => {
-    const scrim = document.querySelector('#companion-users-scrim')
-    for (const [x, y] of [[640, 700], [640, 360], [1000, 700], [400, 700], [1200, 400]]) {
-      if (document.elementFromPoint(x, y) === scrim) return { x, y }
+    const d = document.querySelector('#settings-drawer'), rail = document.querySelector('#dash-global-rail')
+    for (const [x, y] of [[640, 700], [640, 360], [400, 700], [500, 200], [300, 500], [250, 690], [850, 690], [600, 60]]) {
+      const hit = document.elementFromPoint(x, y)
+      if (hit && !d?.contains(hit) && !rail?.contains(hit) && !hit.closest('button, a')) return { x, y }
     }
     return null
   })
-  if (!spot) throw new Error('no exposed point on the users scrim')
+  if (!spot) throw new Error('no exposed point outside the settings drawer')
   await page.mouse.click(spot.x, spot.y)
-  await expect(page.locator('.moment-body')).not.toHaveClass(/is-companion-users-open/)
+  await expect(drawer).not.toHaveClass(/is-open/)
+  await expect(page.locator('.moment-body')).toHaveClass(/is-companion-immersive/)
   await page.locator('#companion-immersive-exit').click()
   await expect(page.locator('.moment-body')).not.toHaveClass(/is-companion-immersive/)
 

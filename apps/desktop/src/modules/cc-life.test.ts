@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { currentActivity, createLifeArchive, mountCurrentActivity } from './cc-life.js'
+import { currentActivity, createLifeArchive } from './cc-life.js'
 
 describe('CC current activity', () => {
   const sample = (kind: string) => ({ presence: 'ok', activity: {kind, label: '', since: null}, news: {latest_title:'昨天画了一只猫', unread:9} })
@@ -14,17 +14,6 @@ describe('CC current activity', () => {
     expect(currentActivity({presence:'ok'}).kind).toBe('unknown')
     expect(currentActivity(sample('working')).title).toBe('在忙一件事。')
     expect(currentActivity({...sample('visiting'), activity:{kind:'visiting',label:'去阿柚家串门了'}}).title).toBe('去阿柚家串门了')
-  })
-  it('opens the care sheet from the CC avatar without changing the current page', () => {
-    let click!:(event:any)=>void
-    const host={innerHTML:'',addEventListener:(_name:string,cb:any)=>{click=cb}}
-    const navigate=vi.fn(),openCare=vi.fn()
-    const stop=mountCurrentActivity(host,{subscribe:()=>()=>{}},navigate,openCare)
-    expect(host.innerHTML).toContain('data-life-care')
-    expect(host.innerHTML).toContain('aria-label="看看 CC 正在照看什么"')
-    click({target:{closest:(selector:string)=>selector==='[data-life-care]'?{}:null}})
-    expect(openCare).toHaveBeenCalledOnce();expect(navigate).not.toHaveBeenCalled()
-    stop()
   })
 })
 
@@ -70,19 +59,4 @@ describe('life archive read lifecycle', () => {
     finish({items:[]});await old
     expect(h.innerHTML).toBe('elsewhere')
   })
-})
-
-it('expires a stale live signal instead of claiming CC is still visiting', () => {
-  vi.useFakeTimers()
-  try {
-    let update!: (p:any)=>void
-    const host={innerHTML:'',addEventListener:vi.fn()}, unsubscribe=vi.fn()
-    const stop=mountCurrentActivity(host,{subscribe:(cb:any)=>{update=cb;return unsubscribe}},vi.fn())
-    update({presence:'ok',activity:{kind:'visiting',label:'去朋友家串门了'}})
-    expect(host.innerHTML).toContain('去朋友家串门了')
-    vi.advanceTimersByTime(60000)
-    expect(host.innerHTML).toContain('暂时不知道')
-    expect(host.innerHTML).not.toContain('去朋友家串门了')
-    stop();expect(unsubscribe).toHaveBeenCalledOnce()
-  } finally {vi.useRealTimers()}
 })

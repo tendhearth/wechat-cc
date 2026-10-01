@@ -19,7 +19,7 @@ describe('native QA packaging', () => {
         expect(existsSync(join(desktop,'src',name))).toBe(false)
         expect(readFileSync(join(dir,name))).toEqual(readFileSync(join(desktop,'art/cc-v1/native-qa',name)))
       }
-      for (const path of ['pet/pet.js','companion-window.css','fonts/geist-variable-latin.woff2','assets/pet/cc-v1/manifest.json','assets/pet/cc-v1/transitions/light-to-dark/007.png']) expect(readFileSync(join(dir,path))).toEqual(readFileSync(join(desktop,'src',path)))
+      for (const path of ['pet/pet.js','companion-window.css','assets/pet/cc-v1/manifest.json','assets/pet/cc-v1/transitions/light-to-dark/007.png']) expect(readFileSync(join(dir,path))).toEqual(readFileSync(join(desktop,'src',path)))
       for (const path of ['CC_MASTER_V1.png','CC_DESIGN_SHEET_V1.png']) expect(existsSync(join(dir,'assets/pet/cc-v1',path))).toBe(false)
       expect(existsSync(join(desktop,'src/pet-lab.html'))).toBe(true)
     } finally { rmSync(dir,{recursive:true,force:true}) }

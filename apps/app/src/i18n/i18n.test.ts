@@ -16,9 +16,19 @@ describe('文案表', () => {
     expect(pickLang(['fr-FR', 'zh-CN'])).toBe('en')
     expect(pickLang([])).toBe('en')
   })
+  it('问候不带句号(照稿)', () => {
+    for (const k of ['now.greetingMorning', 'now.greetingAfternoon', 'now.greetingEvening'] as const) for (const l of ['en', 'zh-Hans'] as const) expect(t(l, k)).not.toMatch(/[.。]$/)
+    expect(t('zh-Hans', 'now.greetingEvening')).toBe('晚上好')
+    expect(t('en', 'now.greetingEvening')).toBe('Good evening')
+  })
+  it('演示横幅是一句短话', () => {
+    expect(en['demo.banner'].length).toBeLessThanOrEqual(40)
+    expect(zh['demo.banner'].length).toBeLessThanOrEqual(20)
+  })
   it('插值', () => {
-    expect(t('en', 'now.needsYouCount', { n: 2 })).toContain('2')
-    expect(t('zh-Hans', 'now.needsYouCount', { n: 2 })).toContain('2')
+    expect(tCount('en', 'now.waiting', 2)).toBe('2 things waiting for you')
+    expect(tCount('en', 'now.waiting', 1)).toBe('1 thing waiting for you')
+    expect(tCount('zh-Hans', 'now.waiting', 2)).toBe('2 件事等你')
   })
   it('隐私文案:命令文本与任务进展事件从主人自己的电脑发给那里配置的便宜模型服务商;其余只在手机与电脑之间加密传输', () => {
     const e = en['settings.privacyBody']
@@ -37,16 +47,10 @@ describe('文案表', () => {
     expect(z).toContain('批准')
     expect(z).toContain('加密')
   })
-  it('一起做的计数:英文单复数,中文不变', () => {
-    expect(tCount('en', 'now.togetherCount', 1)).toBe('1 thing')
-    expect(tCount('en', 'now.togetherCount', 3)).toBe('3 things')
-    expect(tCount('zh-Hans', 'now.togetherCount', 1)).toBe('1 件')
-    expect(tCount('zh-Hans', 'now.togetherCount', 3)).toBe('3 件')
-  })
   it('原始命令多出来的行数:英文单复数', () => {
     expect(tCount('en', 'approval.moreLines', 1)).toBe('(+1 more line)')
     expect(tCount('en', 'approval.moreLines', 4)).toBe('(+4 more lines)')
-    expect(tCount('zh-Hans', 'approval.moreLines', 4)).toBe('(还有 4 行)')
+    expect(tCount('zh-Hans', 'approval.moreLines', 4)).toBe('（还有 4 行）')
   })
   it('新增短词:离线、多选上限、版权', () => {
     expect(en['common.computerOfflineShort']).toBe('offline')

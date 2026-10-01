@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { Text, View } from 'react-native'
+import { View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
@@ -10,6 +10,7 @@ import { useBackendCtx } from '../state/BackendProvider'
 import { useSession } from '../state/session'
 import { Button } from '../ui/Button'
 import { space } from '../ui/tokens'
+import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 
 // 点通知 / 深链进来的中转页(spec §7「点通知」、§3「旧通知」)。系统深链已被 +native-intent 洗过一遍,这里再按不可信输入清一次。
@@ -45,15 +46,15 @@ export default function PushOpen() {
   }, [key, backend, seenWelcome, router])
 
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       <View style={{ flex: 1, padding: space.xl, gap: space.l, justifyContent: 'center' }}>
         {gone ? (
           <>
-            <Text testID="push-gone" accessibilityLiveRegion="polite" style={{ color: c.ink, fontSize: 18, lineHeight: 26 }}>{t(lang, 'push.gone')}</Text>
+            <Txt testID="push-gone" role="item" accessibilityLiveRegion="polite">{t(lang, 'push.gone')}</Txt>
             <Button kind="primary" testID="push-go-now" label={t(lang, 'push.goNow')} onPress={() => router.dismissTo('/')} />
           </>
         ) : (
-          <Text testID="push-opening" style={{ color: c.muted, fontSize: 16 }}>{t(lang, 'push.opening')}</Text>
+          <Txt testID="push-opening" role="body" tone="inkSoft">{t(lang, 'push.opening')}</Txt>
         )}
       </View>
     </SafeAreaView>

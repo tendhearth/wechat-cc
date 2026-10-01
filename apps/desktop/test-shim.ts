@@ -143,6 +143,10 @@ const __mockState: {
   // (sign 「离线」) — which is why the hover-greeting spec could never pass.
   // Seed with demo.seed { presence: {...} }; default = daemon up, WeChat ok, idle.
   presence: { presence: 'ok' | 'degraded' | 'offline'; activity: { kind: string; label: string; since: string | null }; news: { unread: number; latest_kind: string | null; latest_title: string | null } }
+  // demo.seed { presenceDown: true } ⇒ presence 路由回 503,poller 发布 DOWN(「此刻」的 CC 变暗)。
+  presenceDown?: boolean
+  // GET /v1/connections 的演示快照(「此刻」右上角的连接浮层)。demo.seed { connections: null } ⇒ 503。
+  connections?: unknown
   // A2A mock state — seeded by `a2a.seed` test-control command.
   a2aAgents: A2AAgent[]
   a2aEvents: A2AEvent[]
@@ -589,9 +593,13 @@ Bun.serve({
             withSessions?: boolean
             oneContact?: boolean
             presence?: typeof __mockState.presence
+            presenceDown?: boolean
+            connections?: unknown
           } | undefined
           const chatId = args?.chat_id ?? 'test_chat'
           __mockState.daemonAlive = args?.daemonAlive ?? true
+          __mockState.presenceDown = args?.presenceDown ?? false
+          __mockState.connections = args && 'connections' in args ? args.connections : undefined
           __mockState.presence = args?.presence ?? { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }
           __mockState.chats = [{ id: chatId, name: 'Test User', last_active: Date.now() }]
           // Seeding = known state. The shim process outlives individual
@@ -1460,7 +1468,23 @@ Bun.serve({
     // and token=A2A_TOKEN, so api.js routes all fetch() here.
     // Companion presence (dry-run): the dashboard scene and the pet window both
     // poll this; serve the seeded state instead of 404 (= DOWN).
+    if (dryRun && url.pathname === '/v1/connections' && req.method === 'GET') {
+      if (__mockState.connections === null) return Response.json({ error: 'unavailable' }, { status: 503 })
+      if (__mockState.connections !== undefined) return Response.json(__mockState.connections)
+      const now = Date.now(), hour = 3_600_000
+      return Response.json({
+        generatedAt: now, starting: false,
+        sources: [
+          { id: 'wechat_history', kind: 'wechat_history', name: 'wechat_history', state: 'ready', latestAt: now - hour, syncedAt: now - hour },
+          { id: 'knowledge', kind: 'knowledge', name: 'knowledge', state: 'ready', latestAt: now - 26 * hour, syncedAt: now - 26 * hour },
+          { id: 'wxsearch', kind: 'plugin', name: 'wxsearch', state: 'ready', latestAt: null, syncedAt: null },
+        ],
+        computers: [{ id: 'home', label: '这台电脑', online: true, since: now - 5 * 24 * hour, version: '1.7.1' }],
+        recent: [], outputs: [],
+      })
+    }
     if (dryRun && url.pathname === '/v1/companion/presence' && req.method === 'GET') {
+      if (__mockState.presenceDown) return Response.json({ error: 'journal_not_wired' }, { status: 503 })
       return Response.json(__mockState.presence)
     }
     // 切换后端的下拉菜单从这里拿「已配置的 AI 服务」(dashboard.js refreshServiceChoices,

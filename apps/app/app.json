@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "tendhearth",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "locales": {
       "en": "./locales/en.json",
       "zh-Hans": "./locales/zh-Hans.json"
@@ -28,10 +28,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#f7ead2",
-          "dark": {
-            "backgroundColor": "#221f1b"
-          },
+          "backgroundColor": "#faf7f2",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }

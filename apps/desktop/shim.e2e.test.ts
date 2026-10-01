@@ -127,7 +127,9 @@ describe('apps/desktop shim — HTML structure', () => {
       'memory-editor', 'memory-status',
       'memory-edit-btn', 'memory-save-btn', 'memory-cancel-btn',
       'dash-stop', 'dash-restart', 'dash-refresh',
-      'dash-rail-clock', 'dash-rail-text',
+      'dash-rail-dot', 'dash-rail-text',
+      // 此刻页(2026-10-01 照稿重排)
+      'now-greeting', 'now-cc', 'now-cc-bubble', 'now-waiting', 'now-back',
       'dev-banner',
       // sessions pane — Task 10 replaced the static HTML scaffold with a
       // single dynamic mount point rendered by dialogue-page.js. The old

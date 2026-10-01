@@ -168,7 +168,7 @@ function renderServerBanner(info, banner) {
     banner.innerHTML = '<span class="dot off"></span> 觅食网还没开通 — 在 <code>agent-config.json</code> 加 <code>"a2a_listen": { "port": 8717 }</code> 后重启 daemon'
   } else {
     const url = String(info.base_url ?? '')
-    banner.innerHTML = `<span class="dot on"></span> 你的 bot 在线，朋友的 bot 能找到它
+    banner.innerHTML = `<span class="dot on"></span> 你的 CC 在线，朋友的 CC 能找到它
       <details class="a2a-tech"><summary>接入地址</summary><code class="a2a-base-url">${escapeHtml(url)}/a2a/notify</code></details>`
   }
 }
@@ -183,7 +183,7 @@ function renderServerBanner(info, banner) {
 function renderAgents(agents, list) {
   list.innerHTML = ''
   if (agents.length === 0) {
-    list.innerHTML = '<li class="empty">还没连上朋友的 bot — 生成一个配对码念给朋友，就能连上。</li>'
+    list.innerHTML = '<li class="empty">还没连上朋友的 CC — 生成一个配对码念给朋友，就能连上。</li>'
     return
   }
   for (const a of agents) {
@@ -249,12 +249,12 @@ export function renderForageDesk(data) {
     const n = agents.length
     status.innerHTML =
       icon('user-group', { size: 24, className: 'fd-status-icon' }) +
-      `<span class="fd-status-line"><span>连着 <b>${n} 位</b>朋友的 bot</span></span>`
+      `<span class="fd-status-line"><span>连着 <b>${n} 位</b>朋友的 CC</span></span>`
   }
   const note = document.getElementById('fd-social-note')
   if (note) {
     if (socialWired) { note.hidden = true; note.textContent = '' }
-    else { note.hidden = false; note.textContent = '社交功能尚未开启。展开下方「你的觅食网」，开启「让朋友的 bot 能找到我」，再重新连接 CC。' }
+    else { note.hidden = false; note.textContent = '社交功能尚未开启。展开下方「你的觅食网」，开启「让朋友的 CC 能找到我」，再重新连接 CC。' }
   }
 
   // ── ✉️ mailbox ───────────────────────────────────────────────────────
@@ -297,7 +297,7 @@ export function renderForageDesk(data) {
     if (agents.length > 4) html += `<span class="fd-peer">+${agents.length - 4}</span>`
     peers.innerHTML = html
   }
-  if (peersCount) peersCount.textContent = `连着 ${agents.length} 位朋友的 bot`
+  if (peersCount) peersCount.textContent = `连着 ${agents.length} 位朋友的 CC`
 
   // preserved agent-management surface
   const list = document.getElementById('a2a-agents-list')
@@ -401,7 +401,7 @@ let openMailThreadEl = null
 const MAIL_FAIL_COPY = /** @type {Record<string, string>} */ ({
   channel_not_open: '这条信道还没打开 —— 双方都揭晓后才能通信',
   no_route: '找不到通往对方的路 —— 稍后再试',
-  send_failed: '寄出失败 —— 对方的 bot 暂时联系不上，稍后再试',
+  send_failed: '寄出失败 —— 对方的 CC 暂时联系不上，稍后再试',
   unknown_letter: '找不到要重寄的那封信 —— 重新写一封吧',
 })
 
@@ -472,7 +472,7 @@ async function sendMailReply(target) {
       if (note) { note.hidden = true; note.textContent = '' }
     } else if (r?.error === 'send_failed' && typeof r?.letter_id === 'string') {
       mailRetry[id] = { letterId: r.letter_id, text }
-      if (note) { note.hidden = false; note.textContent = '寄出失败 —— 对方的 bot 暂时联系不上，再点一次「寄出」会重试同一封' }
+      if (note) { note.hidden = false; note.textContent = '寄出失败 —— 对方的 CC 暂时联系不上，再点一次「寄出」会重试同一封' }
     } else {
       if (note) { note.hidden = false; note.textContent = MAIL_FAIL_COPY[String(r?.error)] ?? `寄出失败：${String(r?.error ?? '未知错误')}` }
     }
@@ -812,7 +812,7 @@ async function onPreviewSubmit(e) {
       if (idInput) idInput.value = slugify(String(resp.name ?? ''))
     }
   } catch (err) {
-    showToast(`没找到对方 bot：${err instanceof Error ? err.message : String(err)}`)
+    showToast(`没找到对方的 CC：${err instanceof Error ? err.message : String(err)}`)
   } finally {
     if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '看看是谁 →' }
   }

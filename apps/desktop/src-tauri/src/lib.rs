@@ -1021,6 +1021,8 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("GET", "/v1/matter")
             | ("GET", "/v1/matter/owner-chat")
             | ("POST", "/v1/matter/say")
+            // 「CC 的连接」(2026-10-01):此刻右上角的连接浮层,只读。
+            | ("GET", "/v1/connections")
             | ("POST", "/v1/workbench/input")
             | ("POST", "/v1/workbench/answer")
             | ("POST", "/v1/workbench/withdraw-input")
@@ -1499,6 +1501,7 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/withdraw-input"),
             ("POST", "/v1/workbench/answer"),
             ("GET", "/v1/workbench?q=..&archived=all"),
+            ("GET", "/v1/connections"),
         ] {
             assert!(workbench_request_allowed(method, path), "expected {method} {path} to be allowed");
         }
@@ -1554,6 +1557,7 @@ mod workbench_proxy_tests {
             ("GET", "/v1/workbench/../companion/presence"),
             ("DELETE", "/v1/workbench/task?id=A1B2C3D4"),
             ("GET", "/v1/customer-review"),
+            ("POST", "/v1/connections"),
         ] {
             assert!(!workbench_request_allowed(method, path), "expected {method} {path} to be refused");
         }

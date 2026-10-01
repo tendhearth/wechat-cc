@@ -1,0 +1,67 @@
+/* 「跟 CC 说」:CC 的话无底,我的话 rail 底;输入是一条胶囊,只有发送用 accent。零字面色值,无阴影。 */
+.converse-page { display: flex; flex-direction: column; flex: 1; min-height: 0; background: var(--th-paper); color: var(--th-ink); }
+.converse-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: var(--th-space-xl); padding: 28px max(24px, calc((100% - 780px) / 2)); }
+.converse-scroll .empty-state { padding: 40px; text-align: center; color: var(--th-ink-soft); font-size: var(--th-size-small); }
+
+.converse-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 320px; padding: 20px 0; text-align: center; }
+.converse-empty-art { width: min(190px, 45vw); height: auto; max-height: 190px; margin-bottom: 10px; object-fit: contain; user-select: none; pointer-events: none; }
+.converse-empty h2 { margin: 0; color: var(--th-ink); font-size: var(--th-size-title); font-weight: 400; }
+.converse-empty p { margin: 2px 0 16px; color: var(--th-ink-soft); font-size: var(--th-size-body); }
+.converse-starters { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; max-width: 560px; }
+.converse-starter { display: inline-flex; align-items: center; min-height: 40px; padding: 8px 16px; border: 1px solid var(--th-hair); border-radius: var(--th-radius-control); background: transparent; color: var(--th-ink); font: inherit; font-size: var(--th-size-small); cursor: pointer; }
+.converse-starter:hover { background: var(--th-rail); }
+.converse-starter:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 2px; }
+
+.converse-msg { display: flex; align-items: flex-end; gap: 6px; }
+.converse-msg-user { justify-content: flex-end; }
+.converse-msg-cc { justify-content: flex-start; }
+.converse-avatar { width: 32px; height: 32px; object-fit: contain; align-self: flex-start; margin-top: 8px; flex: none; }
+.converse-bubble { max-width: 85%; padding: 4px 0; font-size: var(--th-size-bubble); line-height: var(--th-lh-bubble); white-space: pre-wrap; word-break: break-word; }
+.converse-msg-cc .converse-bubble { background: transparent; color: var(--th-ink); }
+.converse-msg-user .converse-bubble { padding: 12px 16px; border-radius: var(--th-radius-bubble); background: var(--th-rail); color: var(--th-ink); }
+.converse-msg-cc.is-pending .converse-bubble { color: var(--th-ink-soft); }
+.converse-error-line, .converse-system-line { align-self: center; max-width: 80%; padding: 4px 12px; font-size: var(--th-size-caption); text-align: center; }
+.converse-error-line { color: var(--th-bad); }
+.converse-system-line { color: var(--th-ink-soft); font-style: italic; }
+.voice-replay-btn { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 1px solid var(--th-hair); border-radius: 50%; background: transparent; color: var(--th-ink-soft); cursor: pointer; opacity: .35; }
+.voice-replay-btn svg { width: 14px; height: 14px; }
+.voice-replay-btn:hover { background: var(--th-rail); }
+.converse-msg:hover .voice-replay-btn, .voice-replay-btn:focus-visible { opacity: 1; }
+
+/* 输入:一条胶囊,输入 + 工具条。「一起做」之外只有此刻的聊天页会用到;此刻页再按 data-now 收放。 */
+.converse-compose { display: flex; flex-direction: row; flex-wrap: wrap; gap: 10px; align-items: center; box-sizing: border-box; flex: none; width: min(780px, calc(100% - 48px)); margin: 12px auto 24px; padding: 8px 8px 8px 22px; border: 1px solid var(--th-hair); border-radius: var(--th-radius-control); background: var(--th-paper); }
+.converse-compose:focus-within { border-color: var(--th-accent); }
+.converse-compose [hidden] { display: none !important; }
+.converse-textarea { flex: 1 1 240px; min-width: 0; min-height: 40px; max-height: 180px; padding: 8px 0; border: 0; border-radius: 0; background: transparent; color: var(--th-ink); font: inherit; font-size: var(--th-size-body); line-height: var(--th-lh-body); resize: vertical; box-sizing: border-box; }
+.converse-textarea::placeholder { color: var(--th-ink-soft); }
+.converse-textarea:focus, .converse-textarea:focus-visible { border: 0; outline: none; }
+.converse-textarea:disabled { opacity: .6; }
+.converse-toolbar { display: flex; align-items: center; gap: 8px; }
+.converse-toolbar button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 8px 12px; border: 1px solid var(--th-hair); border-radius: var(--th-radius-control); background: transparent; color: var(--th-ink); font: inherit; font-size: var(--th-size-small); cursor: pointer; }
+.converse-toolbar button:hover { background: var(--th-rail); }
+.converse-toolbar button:disabled { opacity: .45; cursor: default; }
+.converse-toolbar svg { width: 18px; height: 18px; }
+.converse-toolbar .converse-voice-toggle.is-on { border-color: var(--th-accent); }
+.converse-mic.is-recording { border-color: var(--th-bad); }
+/* 发送:圆形 accent,文字只给读屏 */
+#converse-send, .converse-toolbar #converse-send { width: 40px; height: 40px; min-width: 40px; padding: 0; border: 0; border-radius: 50%; background: var(--th-accent); color: var(--th-on-accent); }
+#converse-send:hover, .converse-toolbar #converse-send:hover { background: var(--th-accent); opacity: .92; }
+#converse-send span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.converse-switch { position: relative; width: 24px; height: 14px; border-radius: 10px; background: var(--th-hair); }
+.converse-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--th-paper); }
+.is-on .converse-switch { background: var(--th-accent); }
+.is-on .converse-switch::after { left: 12px; }
+.converse-recording { flex: 1 1 240px; display: flex; align-items: center; gap: 12px; min-height: 40px; color: var(--th-ink-soft); }
+.converse-recording button { padding: 8px 14px; border: 1px solid var(--th-hair); border-radius: var(--th-radius-control); background: transparent; color: var(--th-ink); cursor: pointer; }
+.converse-recording-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--th-bad); }
+#converse-recording-time { margin-left: auto; font-variant-numeric: tabular-nums; }
+.converse-recording-hint { flex-basis: 100%; margin: 0; text-align: center; color: var(--th-ink-soft); font-size: var(--th-size-caption); }
+.converse-page button:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 3px; }
+@media (max-width: 600px) {
+  .converse-scroll { padding: 18px 16px; }
+  .converse-compose { width: calc(100% - 24px); margin-bottom: 12px; }
+  .converse-empty-art { width: 140px; }
+  .converse-starters { flex-direction: column; }
+  .converse-toolbar { gap: 4px; }
+  .converse-toolbar button { padding: 8px; font-size: var(--th-size-caption); }
+}
