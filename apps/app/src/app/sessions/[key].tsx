@@ -16,6 +16,7 @@ import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
 import { canSubmit } from '../../view/connection'
 import { CONTINUE_RECHECK, continueBlock, continueConfirmLabel, continueErrorDot, continueErrorText, continueSheetLines } from '../../view/continue'
+import { adoptStep, previewTracker } from '../../view/continue-flow'
 
 type Msg = NativeSessionPageT['messages'][number]
 type Cont = SessionContinueT | 'loading' | 'failed'
@@ -45,7 +46,12 @@ export default function SessionReader() {
   const [sheet, setSheet] = useState(false)
   const [sending, setSending] = useState(false)
   const [failure, setFailure] = useState<{ text: string; dot: 'bad' | 'warn' | 'unknown' } | null>(null)
-  const contReq = useRef(0)
+  // 正在重问预览(点开确认卡 / 重连之后):问到之前确认按钮不能点,免得按着旧的「能接」提交(Q1)
+  const [checking, setChecking] = useState(false)
+  const [tracker] = useState(() => previewTracker(setChecking))
+  // POST 回来时页面还是不是那个会话(Q3):换了 key 就不跳
+  const keyRef = useRef(key)
+  keyRef.current = key
   const online = canSubmit(conn)
 
   const load = async (cursor?: string) => {
@@ -69,12 +75,10 @@ export default function SessionReader() {
   }
   /** 问电脑这条能不能接。重连(epoch 前进)、点开确认卡、状态类失败之后都重问。返回问到的(过期的 / 问不到 ⇒ null)。 */
   const check = async (): Promise<SessionContinueT | null> => {
-    const my = ++contReq.current
-    try {
-      const p = await backend.continuePreview(key)
-      if (my !== contReq.current) return null
-      setCont(p); return p
-    } catch { if (my === contReq.current) setCont('failed'); return null }
+    const r = await tracker.run(() => backend.continuePreview(key))
+    if (!r.current) return null
+    if (r.ok) { setCont(r.value); return r.value }
+    setCont('failed'); return null
   }
   useEffect(() => {
     busyRef.current = false; setBusy(false)
@@ -85,7 +89,7 @@ export default function SessionReader() {
   }, [key]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     void check()
-    return () => { contReq.current++ }
+    return () => tracker.cancel()
   }, [key, conn.epoch]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 执行者的名字只来自电脑(预览 / 会话行),从不假定是 Claude(裁决 R5);都还没有 ⇒ null,失败句说「这个执行者」。
@@ -93,21 +97,25 @@ export default function SessionReader() {
   // 会话本身读不了(missing)⇒ 底部不画:那一页已经说了读不了,不再另说「确认不了能不能接」
   const block = state === 'missing' ? { kind: 'none' as const } : continueBlock(cont, lang)
 
-  /** 「接着做」与「打开这件事」都走同一个幂等 POST;daemon 回成功之前页面上不出现任何「在跑」。 */
-  const adopt = async (then: (matterId: string) => void) => {
+  /** 「接着做」与「打开这件事」都走同一个幂等 POST;daemon 回成功之前页面上不出现任何「在跑」。
+   *  redirected:这一次是「已经接过了 ⇒ 打开」绕过来的,再说接过了就不再绕(Q2)。 */
+  const adopt = async (then: (matterId: string) => void, redirected = false) => {
     if (sending) return
+    const myKey = key
     setSending(true); setFailure(null)
     const box: { id: string | null } = { id: null }
-    const r = await submit(`continue:${key}`, async () => { box.id = (await backend.continueSession(key)).matterId })
+    const r = await submit(`continue:${myKey}`, async () => { box.id = (await backend.continueSession(myKey)).matterId })
     setSending(false)
-    if (r === 'ok' && box.id) { then(box.id); return }
-    if (r === 'busy') return // 同一个请求还在路上(本机)
-    const code = r === 'ok' ? 'unknown' : r.error
-    if (code === 'session_managed') {
-      // 不是错:别处(桌面 / 另一台手机)刚接过。重问预览,接过了就打开那件事(POST 幂等,走「打开」那一路)。
+    const step = adoptStep(r, box.id, { keyStillCurrent: keyRef.current === myKey, redirected })
+    if (step.kind === 'stay') return
+    if (step.kind === 'navigate') { then(step.matterId); return }
+    let code = 'session_managed'
+    if (step.kind === 'reopen') {
+      // 不是错:别处(桌面 / 另一台手机)刚接过。重问预览,接过了就打开那件事(POST 幂等,走「打开」那一路,只绕这一次)。
       const p = await check()
-      if (p?.state === 'managed') { setSheet(false); void openExisting(); return }
-    }
+      if (keyRef.current !== myKey) return
+      if (p?.state === 'managed') { setSheet(false); void adopt(openThen, true); return }
+    } else code = step.code
     setFailure({ text: continueErrorText(code, provider, lang), dot: continueErrorDot(code) })
     if (CONTINUE_RECHECK.has(code)) void check()
   }
@@ -117,7 +125,8 @@ export default function SessionReader() {
     router.replace(`/matter/${encodeURIComponent(id)}`)
     router.push(`/compose?matter=${encodeURIComponent(id)}&focus=1`)
   })
-  const openExisting = (): Promise<void> => adopt(id => { setSheet(false); router.push(`/matter/${encodeURIComponent(id)}`) })
+  const openThen = (id: string) => { setSheet(false); router.push(`/matter/${encodeURIComponent(id)}`) }
+  const openExisting = (): Promise<void> => adopt(openThen)
   const openSheet = () => { setFailure(null); setSheet(true); void check() }
 
   const failureRow = (testID: string) => failure ? (
@@ -186,7 +195,7 @@ export default function SessionReader() {
             <>
               {continueSheetLines(cont, lang).map((line, i) => <Txt key={i} testID={`continue-line-${i}`} role="bubble">{line}</Txt>)}
               {failureRow('continue-error')}
-              <Button kind="primary" testID="continue-confirm" label={continueConfirmLabel(cont, lang)} onPress={() => void confirm()} disabled={!online} busy={sending} />
+              <Button kind="primary" testID="continue-confirm" label={continueConfirmLabel(cont, lang)} onPress={() => void confirm()} disabled={!online || checking} busy={sending || checking} />
             </>
           ) : block.kind === 'open' ? (
             // 点开时重问,发现别处刚接过:直接给「打开这件事」

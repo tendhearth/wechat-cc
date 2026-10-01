@@ -80,6 +80,12 @@ appId: com.tendhearth.app
 - assertVisible:
     id: continue-confirm
     text: "已经停了，接着做|It.s stopped — continue"
+# 点开时重问的预览回来之后,按钮才可点(问着的时候转圈、不能点)
+- extendedWaitUntil:
+    visible:
+      id: continue-confirm
+      enabled: true
+    timeout: 5000
 - tapOn:
     id: continue-confirm
 - extendedWaitUntil:
