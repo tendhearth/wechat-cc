@@ -112,12 +112,15 @@ export const MatterArtifact = z.object({
   sha256: z.string(), createdAt: z.number(), approvedAt: z.number().nullable(),
 })
 
+/** 接过来、还没发第一句的电脑会话(spec 2026-10-01-tendhearth-continue-sessions D12);发过第一句就不再出现。 */
+export const MatterNativeStart = z.object({ mode: z.enum(['native_resume', 'fresh_context']), providerId: z.string() })
 export const MatterDetail = z.object({
   matter: Matter, bindings: z.array(MatterBinding), sessions: z.array(MatterSession),
   task: MatterTaskView.nullable(), events: z.array(MatterEvent),
   runId: z.string().optional(), inputMode: z.enum(['steer', 'send', 'queue']).optional(),
   permissions: z.array(MatterPermission), questions: z.array(MatterQuestion),
   artifacts: z.array(MatterArtifact), inputs: z.array(MatterInput),
+  nativeStart: MatterNativeStart.optional(),
 })
 
 // ── 交办入口(entry/create/create-receipt,mobile-workbench.ts)───────────
@@ -344,6 +347,15 @@ export const NativeSessionPage = z.object({ session: NativeSessionRow, messages:
 export type NativeSessionRowT = z.infer<typeof NativeSessionRow>
 export type NativeSessionPageT = z.infer<typeof NativeSessionPage>
 
+// ── 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions §4.3):只给目录名,matterId 只在 managed 有 ──
+export const SESSION_CONTINUE_STATES = ['ready', 'managed', 'busy_session', 'busy_folder', 'provider_missing', 'folder_missing', 'quota', 'empty'] as const
+export const SessionContinue = z.object({
+  state: z.enum(SESSION_CONTINUE_STATES), provider: z.enum(['claude', 'codex']), project: z.string().nullable(),
+  mode: z.enum(['native_resume', 'fresh_context']).nullable(), matterId: z.string().nullable(),
+})
+export type SessionContinueT = z.infer<typeof SessionContinue>
+export const SessionContinueResult = z.object({ matterId: z.string(), created: z.boolean() })
+
 // ── 汇总:`"METHOD /path"` → schema(反向由 daemon 守卫测试核对）───────────
 
 export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
@@ -375,6 +387,8 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/connections': z.union([z.object({ ok: z.literal(true) }).extend(Connections.shape), PhoneErrorResponse]),
   'GET /m/api/sessions': z.union([z.object({ ok: z.literal(true), items: z.array(NativeSessionRow), nextCursor: z.string().nullable() }), PhoneErrorResponse]),
   'GET /m/api/session': z.union([z.object({ ok: z.literal(true) }).extend(NativeSessionPage.shape), PhoneErrorResponse]),
+  'GET /m/api/session/continue': z.union([z.object({ ok: z.literal(true) }).extend(SessionContinue.shape), PhoneErrorResponse]),
+  'POST /m/api/session/continue': z.union([z.object({ ok: z.literal(true) }).extend(SessionContinueResult.shape), PhoneErrorResponse]),
   'POST /m/api/todo': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/sticker/': z.union([z.object({ ok: z.literal(true), mime: z.string(), data: z.string() }), PhonePlainError]),
   'POST /m/api/attachment/chunk': z.union([z.object({ ok: z.literal(true) }).extend(UploadState.shape), PhoneErrorResponse]),

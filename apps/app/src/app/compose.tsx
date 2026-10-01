@@ -17,7 +17,8 @@ import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
-import { composeOutcome, composeOutcomeDot, composeTooLong, type ComposeOutcome } from '../view/compose'
+import { composeOutcome, composeOutcomeDot, composeOutcomeText, composeTooLong, type ComposeOutcome } from '../view/compose'
+import { nativeStartLines } from '../view/continue'
 import { canSubmit } from '../view/connection'
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)
@@ -29,7 +30,10 @@ export default function Compose() {
   const conn = useConnection()
   const submit = useSubmit()
   const { backend } = useBackendCtx()
-  const matter = one(useLocalSearchParams<{ matter?: string }>().matter) || undefined
+  const params = useLocalSearchParams<{ matter?: string; focus?: string }>()
+  const matter = one(params.matter) || undefined
+  // 从「接着做」进来:输入框直接聚焦,主人接着打字(spec §4.4)
+  const focus = one(params.focus) === '1'
   const draftKey = matter ?? 'new'
   const [text, setTextState] = useState(() => getDraft(draftKey))
   const setText = (v: string) => { setDraft(draftKey, v); setTextState(v) }
@@ -40,6 +44,9 @@ export default function Compose() {
   const [providerId, setProviderId] = useState<string | null>(null)
   const sending = useRef(false)
   const options = useQuery('entryOptions', l => backend.entryOptions(l), { enabled: !matter })
+  // 说的是一件事:读它的详情(与进展页共用缓存)—— 接过来还没发第一句的,顶上说清第一句会怎样;失败句要知道执行者叫什么
+  const detail = useQuery(`matter:${matter ?? ''}`, l => backend.matter(matter ?? '', l), { enabled: !!matter })
+  const nativeStart = matter ? detail.data?.nativeStart : undefined
   const opt = options.data
   const project = opt?.projects.find((p) => p.id === projectId) ?? opt?.projects[0]
   const provider = providerId ? opt?.providers.find((p) => p.id === providerId) : null
@@ -83,7 +90,14 @@ export default function Compose() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.xl, gap: space.l }}>
           {matter ? (
-            <Txt role="caption" tone="inkSoft">{t(lang, 'compose.continueHint')}</Txt>
+            <>
+              <Txt role="caption" tone="inkSoft">{t(lang, 'compose.continueHint')}</Txt>
+              {nativeStart ? (
+                <View testID="compose-native-start" style={{ gap: space.xs }}>
+                  {nativeStartLines(nativeStart, lang).map((line, i) => <Txt key={i} role="meta" tone="inkSoft">{line}</Txt>)}
+                </View>
+              ) : null}
+            </>
           ) : (
             <>
               <Txt role="title" accessibilityRole="header">{t(lang, 'compose.handoffTitle')}</Txt>
@@ -93,6 +107,7 @@ export default function Compose() {
           <Card>
             <TextField
               testID="compose-input"
+              autoFocus={focus}
               accessibilityLabel={matter ? t(lang, 'compose.continueHint') : t(lang, 'compose.handoffTitle')}
               value={text}
               onChangeText={setText}
@@ -117,7 +132,7 @@ export default function Compose() {
           {outcome ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
               <Dot kind={composeOutcomeDot(outcome)} size={8} />
-              <Txt testID={`compose-${outcome}`} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flex: 1 }}>{t(lang, outcome === 'uncertain' ? 'compose.uncertain' : outcome === 'busy' ? 'compose.busy' : outcome === 'ccBusy' ? 'common.ccBusy' : outcome === 'tooLong' ? 'compose.tooLong' : outcome === 'revoked' ? 'conn.revokedTitle' : 'compose.failed')}</Txt>
+              <Txt testID={`compose-${outcome}`} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flex: 1 }}>{composeOutcomeText(outcome, lang, matter ? detail.data?.task?.providerId ?? null : provider?.id ?? null, !!matter)}</Txt>
             </View>
           ) : null}
           <Txt role="small" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'compose.willAskYou')}</Txt>

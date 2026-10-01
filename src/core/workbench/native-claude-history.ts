@@ -72,6 +72,16 @@ export function createClaudeHistoryReader(options:ClaudeHistoryOptions={}):Nativ
       return historyPreview(session,info,messages,rows.length===page.limit?historyCursor(scope,nativeOffset+rows.length):null,page)
     },
     async currentFingerprint(key,input={limit:100}){return (await reader.read(key,input)).sourceFingerprint},
+    // 一次读全量只为数条数(与 read 同一口径:includeSystemMessages:false),offset 就是 read 的 cursor 位置。
+    async tailCursor(key,rows){
+      const call=historyDeadline(options.timeoutMs)
+      const {nativeId}=decodeNativeHistoryKey(key,'claude')
+      if(!Number.isSafeInteger(rows)||rows<1)throw new Error('invalid_request')
+      const all=await call(()=>sdk.getSessionMessages(nativeId,{includeSystemMessages:false}))
+      if(!Array.isArray(all))throw new Error('native_history_unavailable')
+      const start=all.length-rows
+      return start>0?historyCursor({providerId:'claude',kind:'read',nativeId},start):null
+    },
   }
   return reader
 }

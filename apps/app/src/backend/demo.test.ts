@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { Connections, NativeSessionPage, ChatPage, ChatJob, MatterTopic, Matter } from '@wechat-cc/protocol'
+import { Connections, NativeSessionPage, ChatPage, ChatJob, MatterTopic, Matter, MatterDetail, SessionContinue } from '@wechat-cc/protocol'
 import { DEMO_CHAT_REPLY_MS, makeDemoBackend } from './demo'
 
 describe('演示后端', () => {
@@ -249,4 +249,56 @@ describe('演示后端', () => {
       }
     } finally { vi.useRealTimers() }
   })
+  it('接着做(演示):进行中的那条 ⇒ busy;另两条 ready(恢复 / 新开);接成一件事带 nativeStart,再点回同一件;第一句后 nativeStart 消失;reset 清掉', async () => {
+    vi.useFakeTimers()
+    try {
+      const b = makeDemoBackend({ lang: 'zh-Hans' })
+      expect(SessionContinue.parse(await b.continuePreview('demo-claude-1'))).toMatchObject({ state: 'busy_session', provider: 'claude', matterId: null })
+      expect(await b.continuePreview('demo-claude-2')).toMatchObject({ state: 'ready', mode: 'native_resume', project: 'notes' })
+      expect(await b.continuePreview('demo-codex-1')).toMatchObject({ state: 'ready', mode: 'fresh_context', provider: 'codex' })
+      await expect(b.continueSession('demo-claude-1')).rejects.toMatchObject({ code: 'session_busy' })
+      await expect(b.continuePreview('nope')).rejects.toMatchObject({ code: 'not_found' })
+      const { matterId } = await b.continueSession('demo-claude-2')
+      expect((await b.continueSession('demo-claude-2')).matterId).toBe(matterId)
+      expect(await b.continuePreview('demo-claude-2')).toMatchObject({ state: 'managed', matterId })
+      expect((await b.session('demo-claude-2')).managed).toBe(true)
+      const d = MatterDetail.parse(await b.matter(matterId, 'zh-Hans'))
+      expect(d.nativeStart).toEqual({ mode: 'native_resume', providerId: 'claude' })
+      expect(d.task?.status).toBe('interrupted')
+      expect(d.events.map(e => e.kind)).toEqual(['user', 'text', 'user'])
+      expect((await b.matters('zh-Hans')).some(m => m.id === matterId)).toBe(true)
+      await b.say(matterId, '接着把首页改完', 'r-continue')
+      expect((await b.matter(matterId, 'zh-Hans')).nativeStart).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(2000)
+      b.reset()
+      expect(await b.continuePreview('demo-claude-2')).toMatchObject({ state: 'ready', matterId: null })
+    } finally { vi.useRealTimers() }
+  })
+  it('接着做(演示):Codex 那条接成「带记录新开」;不认识的 key ⇒ not_found;不是 ready ⇒ 对应的码、什么都不建', async () => {
+    const b = makeDemoBackend({ lang: 'en' })
+    const before = (await b.matters('en')).length
+    await expect(b.continueSession('nope')).rejects.toMatchObject({ code: 'not_found' })
+    await expect(b.continueSession('demo-claude-1')).rejects.toMatchObject({ code: 'session_busy' })
+    expect((await b.matters('en')).length).toBe(before)
+    const { matterId } = await b.continueSession('demo-codex-1')
+    expect((await b.matter(matterId, 'en')).nativeStart).toEqual({ mode: 'fresh_context', providerId: 'codex' })
+  })
+  it('接着做(演示):第一句后在跑,CC 回话后停下(不会一直「在跑」);标题与带过来的记录随语言变', async () => {
+    vi.useFakeTimers()
+    try {
+      const b = makeDemoBackend({ lang: 'zh-Hans' })
+      const { matterId } = await b.continueSession('demo-claude-2')
+      const en = await b.matter(matterId, 'en')
+      const zh = await b.matter(matterId, 'zh-Hans')
+      expect(en.matter.title).not.toBe(zh.matter.title)
+      expect(en.events[0]!.text).not.toBe(zh.events[0]!.text)
+      await b.say(matterId, 'keep going', 'r-first')
+      expect((await b.matter(matterId, 'en')).task?.status).toBe('running')
+      await vi.advanceTimersByTimeAsync(2000)
+      const after = await b.matter(matterId, 'en')
+      expect(after.task?.status).not.toBe('running')
+      expect(after.task?.phase).not.toBe('working')
+    } finally { vi.useRealTimers() }
+  })
+
 })

@@ -15,7 +15,7 @@ const src = readFileSync(join(WB, 'service.ts'), 'utf8')
 
 // 拆分已完成(PR 1–10,2026-09-28):service.ts 只剩 Options、组装、public 对象、actions.set。这两个数只许降;
 // 新逻辑一律进 src/core/workbench/service/<domain>.ts,别再往 makeWorkbenchService 里加内函数。
-const MAX_LINES = 179
+const MAX_LINES = 171
 const MAX_INNER_FUNCTIONS = 3
 
 const lineCount = (s: string) => s.split('\n').length - (s.endsWith('\n') ? 1 : 0)

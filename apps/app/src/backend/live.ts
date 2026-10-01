@@ -20,7 +20,7 @@ import {
   BackendError,
   type ApprovalExplanationT, type Backend, type Connection, type DeviceRowT, type EntryOptionsT,
   type MatterDetailT, type MatterT, type PhoneChangesTurnT, type ProgressSummaryT, type Unsubscribe,
-  type ChatPageT, type ChatJobT, type ConnectionsT, type NativeSessionRowT, type NativeSessionPageT,
+  type ChatPageT, type ChatJobT, type ConnectionsT, type NativeSessionRowT, type NativeSessionPageT, type SessionContinueT,
 } from './types'
 
 type Topic = Parameters<Backend['subscribe']>[0]
@@ -232,6 +232,14 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async session(key, cursor) {
       return strip(await call<{ ok: true } & NativeSessionPageT>(
         'GET /m/api/session', `/m/api/session?key=${encodeURIComponent(key)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`))
+    },
+    async continuePreview(key) {
+      return strip(await call<{ ok: true } & SessionContinueT>('GET /m/api/session/continue', `/m/api/session/continue?key=${encodeURIComponent(key)}`))
+    },
+    async continueSession(key) {
+      // 幂等(spec D9):超时后协议客户端可以原样重发,daemon 回同一件事。
+      const r = await call<{ matterId: string; created: boolean }>('POST /m/api/session/continue', '/m/api/session/continue', { body: { key }, retry: true })
+      return { matterId: r.matterId }
     },
     async decide(p) {
       await call('POST /m/api/matter/permission', '/m/api/matter/permission', { body: { id: p.id, runId: p.runId, requestId: p.requestId, decision: p.decision } })

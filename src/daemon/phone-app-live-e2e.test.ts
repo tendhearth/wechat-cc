@@ -21,6 +21,7 @@ import { makeMessagesStore, type MessagesStore } from '../lib/messages-store'
 import { makeMattersService } from '../core/matters/service'
 import { makeWorkbenchStore } from '../core/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from '../core/workbench/service'
+import { encodeNativeHistoryKey, historyPreview, type NativeHistoryItem, type NativeHistoryReader } from '../core/workbench/native-history'
 import { MANAGED_NATIVE_CAPABILITIES } from '../core/workbench/executor-capabilities'
 import { makeSettingsPanel, SETTINGS_LINK_TTL_MS, type SettingsPanel } from './settings-panel'
 import { makeTunnelHub, type TunnelHub } from '../../relay/tunnel'
@@ -38,6 +39,7 @@ import { makeCredentialStore, type CredentialStore } from '../../apps/app/src/ne
 const DAEMON = 't' + 'a'.repeat(36)   // 老中继 id 的形状,好让 parsePairLink 认;内存中继只拿它当键
 
 let root: string, managedRoot: string, db: Db
+let nativeDir: string
 let matters: MatterStore, messages: MessagesStore
 /** 跟 CC 说:假 converse 收到的每句正文;releaseConverse(reply) 放行最早那句,并像 persistAppTurn 那样把一问一答写进 messages。 */
 let conversed: string[]
@@ -67,6 +69,17 @@ beforeEach(async () => {
   const store = makeWorkbenchStore(db)
   conversed = []; converseGates = []
   gates.length = 0; handled = []; holds = new Map(); logs = []; skewMs = 0; phoneOut = 0
+  // 电脑上的原生会话(spec 2026-10-01-tendhearth-continue-sessions):e2e-native 能接(nativeId 与假执行者 init 报的一致);
+  // e2e-busy 看得见正在跑(observedState active)。两条都在 native 目录。
+  nativeDir = join(root, 'native'); mkdirSync(nativeDir, { recursive: true })
+  const nativeItem = (nativeId: string): NativeHistoryItem => ({ key: encodeNativeHistoryKey('claude', nativeId), providerId: 'claude', nativeId, title: `原会话 ${nativeId}`, titleSource: 'native_custom', cwd: nativeDir, updatedAt: 1, remote: false, observedState: nativeId === 'e2e-busy' ? 'active' : 'unknown' })
+  const nativeItems = [nativeItem('e2e-native'), nativeItem('e2e-busy')]
+  const nativeRead: NativeHistoryReader['read'] = async (key, page) => {
+    const item = nativeItems.find(i => i.key === key)
+    if (!item) throw new Error('native_history_unavailable')
+    return historyPreview(item, 1, [{ id: 'u', role: 'user', text: '原来的要求', truncated: false }, { id: 'a', role: 'assistant', text: '原来的回答', truncated: false }], null, page)
+  }
+  const nativeReader: NativeHistoryReader = { list: async () => ({ items: nativeItems, nextCursor: null, coverage: 'native_supported_history' }), read: nativeRead, currentFingerprint: async (key, page = { limit: 100 }) => (await nativeRead(key, page)).sourceFingerprint }
   const registry = createProviderRegistry()
   // 假执行者:init ⇒(路径以 ask 结尾先要一次权限)⇒ 等闸门 ⇒ 一段文字 ⇒ 收工。与 phone-e2e.test.ts 相同。
   registry.register('claude', { async spawn(project, ctx) {
@@ -84,7 +97,7 @@ beforeEach(async () => {
       async close() { finish() },
     }
   } }, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
-  workbench = makeWorkbenchService({ store, registry, stateDir: root, managedWorkspaceRoot: managedRoot, ownerChatId: () => 'owner', defaultProvider: 'claude', matters, retainedIdleCloseMs: 0, handoffGraceMs: 0 })
+  workbench = makeWorkbenchService({ store, registry, stateDir: root, managedWorkspaceRoot: managedRoot, ownerChatId: () => 'owner', defaultProvider: 'claude', matters, retainedIdleCloseMs: 0, handoffGraceMs: 0, nativeHistory: { claude: nativeReader } })
   const service = makeMattersService({ store: matters, workbench })
   // 跟 CC 说:真 makePhoneChat + 真 messages store;converse 是可放行的闸门(生产里是 companionConverse)。
   const phoneOwner = makePhoneOwner({ ownerChatId: () => 'owner', matters })
@@ -114,6 +127,7 @@ beforeEach(async () => {
     insight: { forMatter: async (_id, lang) => ({ explanations: {}, progress: { summary: `summary-${lang}`, steps: [], source: 'raw' as const } }) },
     changes: () => [],
     matters: { ...service, say: (id, text, input) => service.say(id, text, 'phone', input), seenOnPhone: id => { matters.bind(id, 'phone', 'pwa') } },
+    sessionContinue: { preview: k => workbench.previewNativeContinue(k), adopt: k => workbench.adoptNativeSession(k) },
     chat: { owner: () => phoneOwner.peek(), history: (chatId, o) => messages.listRange(chatId, o), chat: phoneChat },
     // 连接:真 buildConnections(插件快照还没出来 ⇒ unknown;知识库没开 ⇒ 不出现)+ 真工作台;detail 只在 admin 视图里有,手机路由去掉。
     connections: () => buildConnections({
@@ -474,5 +488,24 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
     await expect(b.sessions('claude')).rejects.toMatchObject({ code: 'unavailable' })
     await expect(b.session('a2V5')).rejects.toMatchObject({ code: 'unavailable' })
     await release(task)
+  })
+
+  it('接着做电脑上的会话:预览 ready → 接成一件事(再点同一件)→ managed → 详情 nativeStart → 第一句接着原会话跑完 → nativeStart 消失;正在跑的会话 ⇒ busy', async () => {
+    const b = live()
+    await expect.poll(() => b.connection().state, P).toBe('online')
+    const key = encodeNativeHistoryKey('claude', 'e2e-native')
+    expect(await b.continuePreview(key)).toEqual({ state: 'ready', provider: 'claude', project: 'native', mode: 'native_resume', matterId: null })
+    const { matterId } = await b.continueSession(key)
+    expect((await b.continueSession(key)).matterId).toBe(matterId)
+    expect(await b.continuePreview(key)).toMatchObject({ state: 'managed', matterId })
+    expect((await b.matter(matterId, 'zh-Hans')).nativeStart).toEqual({ mode: 'native_resume', providerId: 'claude' })
+    expect((await b.matters('zh-Hans')).some(m => m.id === matterId)).toBe(true)
+    await b.say(matterId, '接着做', randomUUID())
+    await release({ path: nativeDir })
+    await expect.poll(async () => (await b.matter(matterId, 'zh-Hans')).events.some(e => e.text === '做完了'), P).toBe(true)
+    expect((await b.matter(matterId, 'zh-Hans')).nativeStart).toBeUndefined()
+    const busy = encodeNativeHistoryKey('claude', 'e2e-busy')
+    expect(await b.continuePreview(busy)).toMatchObject({ state: 'busy_session', matterId: null })
+    await expect(b.continueSession(busy)).rejects.toMatchObject({ code: 'session_busy' })
   })
 })

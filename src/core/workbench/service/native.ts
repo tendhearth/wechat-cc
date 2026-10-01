@@ -5,21 +5,31 @@
  * 工厂体里不取。决策 Map(nativeDecisions / handoffDecisions)在 state 上,与 execute 共享同一实例。
  */
 import { randomUUID } from 'node:crypto'
+import { basename } from 'node:path'
 import { canonicalProject } from '../artifacts'
 import { restartPreview, type Continuation } from '../continuation'
 import { normalizeExecutionChoice, PROVIDER_EXECUTION_CHOICE, sameExecutionChoice } from '../execution-settings'
 import { handoffArtifactText, handoffContext, handoffToken, handoffTokenHash, validateHandoffInput, type ArtifactSelection, type AttachmentSelection, type HandoffInput, type HandoffPreview } from '../handoff'
-import { decodeNativeHistoryKey, historyDeadline, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryListInput, type NativeHistoryProvider, type NativeHistoryReadInput } from '../native-history'
-import { nativeImportInput, nativeResumeToken, pageInput, publicSource, readNativeImport, snapshotHash, type AcceptedNativeResume, type ImportPage, type NativeImportInput, type NativeResumeDecision } from '../native-adoption'
+import { decodeNativeHistoryKey, historyDeadline, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryListInput, type NativeHistoryPreview, type NativeHistoryProvider, type NativeHistoryReadInput } from '../native-history'
+import { NATIVE_CONTINUE_REFUSAL, nativeImportInput, nativeResumeToken, pageInput, publicSource, readNativeImport, selectNativeImportMessages, snapshotHash, type AcceptedNativeResume, type ImportPage, type NativeContinuePreview, type NativeContinueState, type NativeImportInput, type NativeResumeDecision } from '../native-adoption'
 import { pathsConflict } from '../scheduler'
 import type { AgentExecutionChoice } from '../../agent-provider'
 import { publicTask, TERMINAL_TASK_STATUSES, type StoredTask } from '../store'
+import { normalizeInputRequestId } from '../live-inputs'
 import { checkedText } from './checked-text'
 import { directoryIdentity } from './directory-identity'
 import type { ServiceCtx } from './ctx'
 import type { AcceptedContinuation } from './state'
 import type { InputMaterials, WorkbenchTaskView } from './types'
 
+/** 翻到最后一页最多读几次(每页 100 条):超了说读不了,而不是悄悄带开头。 */
+const NATIVE_TAIL_MAX_READS=400
+/** 读取器不能 seek 时一页页翻到尾的总预算(每页仍各有 NATIVE_HISTORY_TIMEOUT_MS 的单次时限,不共用那 15 秒)。 */
+export const NATIVE_TAIL_WALK_MS=60_000
+/** 能 seek 时从离结尾几条处开始读:5 页 × 100 正好装下且最后一页不满(nextCursor 为 null),不多一次空读。 */
+const NATIVE_TAIL_ROWS=499
+/** 本进程记住的第一句 requestId 上限;只淘汰已落定的,在途的永不淘汰。 */
+const FIRST_INPUTS_MAX=500
 export function makeNativeDomain(ctx:ServiceCtx) {
   const { store, state } = ctx
   const act=()=>ctx.actions.deref('native')
@@ -188,8 +198,8 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     state.nativeDecisions.set(decision.token,decision)
     const {pages:_pages,taskVersion:_version,directoryIdentity:_identity,restartToken:_restart,...result}=decision;return structuredClone(result)
   }
-  async function continueNativeTask(id:string,text:string,sourceClosedToken:string,restartToken?:string,materials:InputMaterials={}):Promise<WorkbenchTaskView> {
-    ctx.ensureAccepting();const task=store.get(id),decision=state.nativeDecisions.get(sourceClosedToken),attachments=act().selectAttachments(materials,id),request=checkedText(text,attachments)
+  async function continueNativeTask(id:string,text:string,sourceClosedToken:string,restartToken?:string,materials:InputMaterials={},extra:{inputRequestId?:string;attachmentPolicy?:'owner'}={}):Promise<WorkbenchTaskView> {
+    ctx.ensureAccepting();const task=store.get(id),decision=state.nativeDecisions.get(sourceClosedToken),attachments=act().selectAttachments(materials,id,extra.attachmentPolicy),request=checkedText(text,attachments)
     if(!decision)throw new Error('external_close_confirmation_stale')
     const execution=normalizeExecutionChoice(materials.execution,store.execution.choice(id))
     if(!sameExecutionChoice(execution,decision.execution))throw Error('external_close_confirmation_stale')
@@ -201,7 +211,68 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     if(accepted.mode==='restart'&&(restartToken!==accepted.preview.token||restartToken!==decision.restartToken))throw new Error('restart_confirmation_stale')
     act().requireInput(task.providerId,act().combinedAttachments(attachments,accepted.mode==='restart'?accepted.preview.attachments:[]),execution,accepted.mode==='resume')
     state.nativeDecisions.delete(sourceClosedToken)
-    return act().start(task,request,decision.directoryIdentity,accepted,decision,undefined,undefined,undefined,attachments,materials.draftId,execution)
+    // extra.inputRequestId 进 start 的 queuedInputId:与 continueTask 同一张回执表(spec D6);内部 API 不带尾参,行为不变。
+    return act().start(task,request,decision.directoryIdentity,accepted,decision,undefined,undefined,extra.inputRequestId,attachments,materials.draftId,execution,undefined,extra.attachmentPolicy)
+  }
+  type ImportedOptions={inputRequestId?:string;draftId?:string;attachmentIds?:string[]}
+  /**
+   * 同一 requestId 的去重只算本进程(裁决 R10):回执表在库里,可上一进程的执行者已经随进程死了 ——
+   * 重启时 store.recover 把那一轮记成 interrupted、回执记成 held,新进程里没有在跑的轮次,重新派发不会变成两轮。
+   * 值是本进程里那次调用本身:同时来的重发直接等同一个结果(只起一次);失败的从表里拿掉,停了终端之后同一 id 能再发。
+   */
+  const firstInputs=new Map<string,{taskId:string;text:string;attachments:string;result:Promise<WorkbenchTaskView>;settled:boolean}>()
+  /**
+   * 手机说的第一句(spec 2026-10-01-tendhearth-continue-sessions D2/D3/D6):确认卡上主人已声明原程序停了;
+   * 模式按桌面同一判法(能恢复 ⇒ native_resume,否则 fresh_context);决定令牌与 restartToken 只在这一次调用里活,
+   * 从不离开 daemon。同一 requestId 重发 ⇒ 不起第二轮;正文 / 任务 / 材料不同 ⇒ input_conflict。
+   */
+  async function continueImported(id:string,text:string,options:ImportedOptions={},attachmentPolicy?:'owner'):Promise<WorkbenchTaskView> {
+    ctx.ensureAccepting()
+    if(options.inputRequestId===undefined)return firstImported(id,text,options,undefined,attachmentPolicy)
+    const requestId=normalizeInputRequestId(options.inputRequestId)
+    if(typeof text!=='string')throw new Error('invalid_text')
+    const same=(taskId:string,body:string,ids:readonly string[])=>taskId===id&&body===text.trim()&&JSON.stringify([...ids].sort())===JSON.stringify([...(options.attachmentIds??[])].sort())
+    const mine=firstInputs.get(requestId)
+    if(mine){
+      if(!same(mine.taskId,mine.text,JSON.parse(mine.attachments) as string[]))throw new Error('input_conflict')
+      // 等同一次调用落定(它失败,这里也失败);成功则给此刻的任务视图,不是第一次调用时那份过期的。
+      await mine.result
+      return act().taskView(publicTask(store.get(id)))
+    }
+    const prior=store.liveInputs.get(requestId)
+    if(prior){
+      if(!same(prior.taskId,prior.text,(prior.attachments??[]).map(a=>a.id)))throw new Error('input_conflict')
+      // 上一进程留下的回执:那句话已经派发给执行者 ⇒ 原样返回;还没派发(重启前没起来)⇒ 往下重新派发。
+      const source=store.source(id)
+      if(!source||source.firstDispatchedAt!==null)return act().taskView(publicTask(store.get(id)))
+    }
+    const result=firstImported(id,text,{...options,inputRequestId:requestId},prior?requestId:undefined,attachmentPolicy)
+    const entry={taskId:id,text:text.trim(),attachments:JSON.stringify(options.attachmentIds??[]),result,settled:false}
+    firstInputs.set(requestId,entry)
+    if(firstInputs.size>FIRST_INPUTS_MAX)for(const [k,v] of firstInputs)if(v.settled){firstInputs.delete(k);break}
+    result.then(()=>{entry.settled=true},()=>{entry.settled=true;if(firstInputs.get(requestId)===entry)firstInputs.delete(requestId)})
+    return result
+  }
+  async function firstImported(id:string,text:string,options:ImportedOptions,redispatch:string|undefined,attachmentPolicy?:'owner'):Promise<WorkbenchTaskView> {
+    const task=store.get(id),source=store.source(id)
+    if(!source||source.firstDispatchedAt!==null)throw new Error('invalid_request')
+    const mode=act().canResume(task)?'native_resume':'fresh_context'
+    // 不接管活着的会话:native_resume 的 prepare 会重读全部页;带记录新开一轮不重读,这里补读最后一页查「在跑」。
+    if(mode==='fresh_context')await currentNativePages(task,(JSON.parse(source.pagesJson) as ImportPage[]).slice(-1))
+    const prepared=await prepareNativeResume(id,mode)
+    const decision=state.nativeDecisions.get(prepared.token)
+    if(!decision)throw new Error('external_close_confirmation_stale')
+    const materials:InputMaterials={...(options.draftId!==undefined?{draftId:options.draftId}:{}),...(options.attachmentIds!==undefined?{attachmentIds:options.attachmentIds}:{})}
+    const view=await continueNativeTask(id,text,prepared.token,decision.restartToken,materials,{...(options.inputRequestId!==undefined?{inputRequestId:options.inputRequestId}:{}),...(attachmentPolicy?{attachmentPolicy}:{})})
+    // 重新派发沿用上一进程的回执:start 只在回执不存在时才写,所以 run_id 仍是那轮死掉的 —— 无妨,送达是按
+    // running.queuedInputId(就是这个 requestId)认的,不看 run_id。held ⇒ sending,送到后照常变 delivered。
+    // 再记一行,把第二条同样的「用户」事件说清楚。
+    if(redispatch){
+      store.liveInputs.set(redispatch,'sending')
+      store.addEvent(id,'system','CC 重启后按同一请求重发了一次。')
+      ctx.hub.touched(id)
+    }
+    return view
   }
   async function listNativeHistory(providerId:NativeHistoryProvider,input:NativeHistoryListInput) {
     const reader=ctx.deps.nativeHistory?.[providerId]
@@ -216,6 +287,101 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     return {...preview,...(managedTaskId?{managedTaskId}:{})}
   }
 
-  return { nativeReader,currentNativePages,validateNativeDecision, previewHandoff,handoff,handoffRecord,conflictsExternal,importNativeHistory,prepareNativeResume,continueNativeTask,listNativeHistory,readNativeHistory }
+  /**
+   * 手机「接着做」:这条电脑上的会话现在能不能接、接的话是哪种(spec 2026-10-01-tendhearth-continue-sessions §4.1)。
+   * 只读;page 留给 adoptNativeSession 用(省一次读)。判定顺序就是 spec 里的 1–9,别调换:
+   * 「已有任务管着」先于一切(接过的永远能打开),「忙」先于「额度」(先说能不能碰,再说碰了会怎样)。
+   */
+  async function inspectNativeSession(key:string):Promise<{preview:NativeContinuePreview;page:NativeHistoryPreview|null}> {
+    const {providerId,nativeId}=decodeNativeHistoryKey(key)
+    const managedId=store.sourceByIdentity(providerId,nativeId)?.taskId??store.taskByNativeIdentity(providerId,nativeId)?.id
+    if(managedId)return{preview:{state:'managed',providerId,project:basename(store.get(managedId).path),mode:null,taskId:managedId},page:null}
+    const page=await historyDeadline()(()=>nativeReader(providerId).read(key,{limit:100}))
+    if(page.session.key!==key)throw new Error('native_history_changed')
+    const cwd=page.session.cwd,project=cwd?basename(cwd):null
+    const out=(state:NativeContinueState,mode:NativeContinuePreview['mode']=null)=>({preview:{state,providerId,project,mode,taskId:null},page})
+    let path:string
+    try{path=canonicalProject(cwd??'')}catch{return out('folder_missing')}
+    if(path!==cwd)return out('folder_missing')
+    try{act().provider(providerId)}catch{return out('provider_missing')}
+    // 看得见的「在跑」(Codex 的 active / 远程会话)与 CC 自己占着的;普通终端里的 Claude Code 看不见,靠确认卡上的声明(spec D3)。
+    if(page.session.remote||page.session.observedState==='active')return out('busy_session')
+    if(ctx.deps.executionConflict?.(path,providerId,null))return out('busy_folder')
+    if(ctx.deps.executionConflict?.(path,providerId,nativeId))return out('busy_session')
+    if(act().quotaExhausted(providerId))return out('quota')
+    if(!selectNativeImportMessages(page.messages).length)return out('empty')
+    // 还没有任务:用将要建的任务的三样(执行者、会话 id、目录)问能不能恢复 —— 与 prepareNativeResume 的判法一致(spec D2)。
+    const resumable=act().canResume({providerId,sessionId:nativeId,path} as StoredTask)
+    return out('ready',resumable?'native_resume':'fresh_context')
+  }
+  async function previewNativeContinue(key:string):Promise<NativeContinuePreview> {
+    return (await inspectNativeSession(key)).preview
+  }
+  /** 导入的任务补一行 matter(spec D4):与 execute.createTask 的登记一致。没接 matters ⇒ 手机进不去,直说。 */
+  function ensureTaskMatter(task:StoredTask):void {
+    const m=ctx.deps.matters
+    if(!m)throw new Error('matters_not_wired')
+    // 三步同一事务;且只有 create 看「已有」—— linkTask / bind 都幂等,每次都跑:哪一步中途失败,下次再点都能补齐。
+    // 状态与 execute 的终态登记一致:完成 / 失败 / 取消 ⇒ done;interrupted 与仍在跑的 ⇒ open。
+    store.atomic(()=>{
+      if(!m.get(task.id))m.create({id:task.id,kind:'task',title:task.title,projectPath:task.path,ownerChatId:task.ownerChatId??null,status:task.status==='completed'||task.status==='failed'||task.status==='cancelled'?'done':'open'})
+      m.linkTask(task.id)
+      if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)
+    })
+  }
+  /**
+   * 带过来的要是最近的,不是开头 100 条(裁决 R2):拿到会话尾部最后 ≤5 页 —— 与桌面「继续读取原对话」同一个窗口
+   * (state.pages.slice(-5)),也正是 importNativeHistory 收的页数上限。能 seek 的读取器(Claude)直接从离结尾
+   * NATIVE_TAIL_ROWS 条处读:每次 read 都要重新解析整份记录,一页页翻是平方级的。不能 seek 的(Codex)才一页页翻,
+   * 每页各自一个单次时限,整趟另有 NATIVE_TAIL_WALK_MS 的总预算。
+   */
+  async function tailPages(key:string,first:NativeHistoryPreview):Promise<NativeHistoryPreview[]> {
+    const reader=nativeReader(first.session.providerId),started=Date.now()
+    const read=async(cursor:string)=>{
+      if(Date.now()-started>NATIVE_TAIL_WALK_MS)throw new Error('native_history_unavailable')
+      const next=await historyDeadline()(()=>reader.read(key,{limit:100,cursor}))
+      if(next.session.key!==key||next.session.cwd!==first.session.cwd)throw new Error('native_history_changed')
+      return next
+    }
+    const seek=first.nextCursor!==null&&reader.tailCursor?await historyDeadline()(()=>reader.tailCursor!(key,NATIVE_TAIL_ROWS)):null
+    let pages=[seek===null?first:await read(seek)]
+    for(let reads=1;pages.at(-1)!.nextCursor!==null;reads++){
+      if(reads>=NATIVE_TAIL_MAX_READS)throw new Error('native_history_unavailable')
+      pages=[...pages,await read(pages.at(-1)!.nextCursor!)].slice(-5)
+    }
+    return pages
+  }
+  /**
+   * 手机「接着做」/「打开这件事」:幂等。已有任务 ⇒ 只补 matter 行;能接 ⇒ 按桌面同一规则挑消息、走现有导入、补 matter 行;
+   * 其余 ⇒ NATIVE_CONTINUE_REFUSAL 里的错误码。读与导入之间会话变了 ⇒ 重来一次。matter 行补建失败不回滚导入:
+   * 下次再点走 managed 再补(自愈)。不起执行者、不碰电脑上的原会话。
+   */
+  async function adoptNativeSession(key:string):Promise<{taskId:string;created:boolean}> {
+    ctx.ensureAccepting()
+    for(let attempt=0;;attempt++){
+      const {preview,page}=await inspectNativeSession(key)
+      if(preview.state==='managed'){ensureTaskMatter(store.get(preview.taskId!));return{taskId:preview.taskId!,created:false}}
+      if(preview.state!=='ready')throw new Error(NATIVE_CONTINUE_REFUSAL[preview.state])
+      try{
+        const pages=await tailPages(key,page!)
+        // 与桌面同一挑法:窗口里按 id 去重、至多 500 条,再从最新往前挑(selectNativeImportMessages)。
+        const messages=selectNativeImportMessages([...new Map(pages.flatMap(p=>p.messages).map(m=>[m.id,m])).values()].slice(-500))
+        if(!messages.length)throw new Error('native_history_empty')
+        const result=await importNativeHistory({key,pages:pages.map(p=>({...p.page,sourceFingerprint:p.sourceFingerprint})),messageIds:messages.map(m=>m.id)})
+        ensureTaskMatter(store.get(result.task.id))
+        return{taskId:result.task.id,created:result.created}
+      }catch(error){
+        if(attempt===0&&error instanceof Error&&error.message==='native_history_changed')continue
+        throw error
+      }
+    }
+  }
+  /** 门面(service.ts)整块展开的公开面;nativeReader / currentNativePages / validateNativeDecision 是域内与 execute 用的,不进门面。 */
+  const api={ previewHandoff,handoff,handoffRecord,conflictsExternal,importNativeHistory,prepareNativeResume,continueNativeTask,listNativeHistory,readNativeHistory,
+    /** 手机「接着做」(spec 2026-10-01-tendhearth-continue-sessions):只读预览 / 幂等地接成一件事。 */
+    previewNativeContinue,adoptNativeSession,
+    /** 手机说的第一句给「导入了、还没发过第一句」的任务(spec D5):令牌不出 daemon、按 requestId 幂等。 */
+    continueImported }
+  return { nativeReader,currentNativePages,validateNativeDecision, previewHandoff,handoff,handoffRecord,conflictsExternal,importNativeHistory,prepareNativeResume,continueNativeTask,continueImported,listNativeHistory,readNativeHistory,previewNativeContinue,adoptNativeSession, api }
 }
 export type NativeDomain = ReturnType<typeof makeNativeDomain>

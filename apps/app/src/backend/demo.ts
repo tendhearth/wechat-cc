@@ -1,9 +1,9 @@
 import { PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
-import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT } from './types'
+import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT } from './types'
 import {
   copy, IDS, CHAT_ID, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
-  demoConnections, demoSessions, demoSessionMessages, type Stage,
+  demoConnections, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
 } from './demo-data'
 
 type Topic = 'home' | 'approvals' | 'agents' | `matter/${string}`
@@ -31,6 +31,8 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   let createdBy = new Map<string, string>()
   let saidBy = new Set<string>()
   let deviceLabel = ''
+  // 接着做(演示):会话 key → 接成的那件事
+  let adopted = new Map<string, string>()
   // 主人那条对话(与 daemon 一致:说一句收下即回,回复落地后经 matter/<CHAT_ID> 主题唤醒)
   let chatMsgs: ChatRec[] = []
   let chatPending: ChatJobT | null = null
@@ -164,6 +166,14 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   const evText = (e: Entry, kind: string, text: string) => { e.evs = [...e.evs, { kind, text, createdAt: now() }] }
   const get = (id: string) => { const e = entries.get(id); if (!e) throw new BackendError('not_found'); return e }
 
+  /** 演示里三条会话能不能接:进行中的那条看得见在跑;另两条一条能恢复、一条只能带记录新开。 */
+  const DEMO_CONTINUE: Record<string, { state: SessionContinueT['state']; mode: SessionContinueT['mode'] }> = {
+    'demo-claude-1': { state: 'busy_session', mode: null },
+    'demo-claude-2': { state: 'ready', mode: 'native_resume' },
+    'demo-codex-1': { state: 'ready', mode: 'fresh_context' },
+  }
+  const sessionRow = (key: string) => { const row = demoSessions(lastLang, now()).find(r => r.key === key); if (!row) throw new BackendError('not_found'); return row }
+
   const conn: Connection = { state: 'online', lastSyncedAt: null, epoch: 0 }
 
   return {
@@ -221,7 +231,32 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async session(key) {
       const row = demoSessions(lastLang, now()).find(r => r.key === key)
       if (!row) throw new BackendError('not_found')
-      return { session: row, managed: false, nextCursor: null, messages: demoSessionMessages(lastLang) }
+      return { session: row, managed: adopted.has(key), nextCursor: null, messages: demoSessionMessages(lastLang) }
+    },
+    async continuePreview(key) {
+      const row = sessionRow(key), matterId = adopted.get(key) ?? null
+      if (matterId) return { state: 'managed', provider: row.provider, project: row.project, mode: null, matterId }
+      const c = DEMO_CONTINUE[key] ?? { state: 'empty' as const, mode: null }
+      return { state: c.state, provider: row.provider, project: row.project, mode: c.mode, matterId: null }
+    },
+    async continueSession(key) {
+      const dup = adopted.get(key)
+      if (dup) return { matterId: dup }
+      const row = sessionRow(key), c = DEMO_CONTINUE[key]
+      if (!c || c.state !== 'ready' || !c.mode) throw new BackendError(c?.state === 'busy_session' ? 'session_busy' : 'unknown')
+      const matterId = `demo${(++seq).toString(16).padStart(4, '0')}`
+      adopted.set(key, matterId)
+      const ts = now(), path = `~/Projects/${row.project ?? 'demo'}`
+      const e: Entry = {
+        stage: 'replied', version: 1, seeded: false, titleKey: demoSessionTitleKey(key),
+        // 导入的原记录:与 daemon 一致,user ⇒ user、assistant ⇒ text;存文案键,读时按语言出
+        evs: DEMO_SESSION_MESSAGES.map((m, i) => ({ kind: m.role === 'user' ? 'user' : 'text', key: m.key, createdAt: ts - 1000 + i })),
+        detail: mkDetail(mkMatter(matterId, 'task', row.title, 'open', path, ts),
+          { id: matterId, title: row.title, status: 'interrupted', providerId: row.provider, path, error: null, updatedAt: ts },
+          { nativeStart: { mode: c.mode, providerId: row.provider } }),
+      }
+      entries.set(matterId, e); order.unshift(matterId); publish([matterId])
+      return { matterId }
     },
     async decide({ id, requestId, decision }) {
       const e = get(id)
@@ -257,8 +292,13 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       // 与 daemon 一致:同一个 requestId 重发 ⇒ 当作已收到,不重复记。
       if (saidBy.has(requestId)) return
       saidBy.add(requestId)
-      evText(e, 'user', text); touch(e, {}); publish([id])
-      later(2000, () => { ev(e, 'text', 'ccReply'); touch(e, {}); publish([id]) })
+      evText(e, 'user', text)
+      // 接过来的那件事:第一句一发,「第一句会怎样」的说明就该消失,执行者开始跑(与 daemon 一致);回话后这一轮结束
+      const started = !!e.detail.nativeStart
+      if (started) { const { nativeStart: _sent, ...rest } = e.detail; e.detail = rest; touch(e, { phase: 'working' }) }
+      else touch(e, {})
+      publish([id])
+      later(2000, () => { ev(e, 'text', 'ccReply'); touch(e, started ? { phase: 'replied' } : {}); publish([id]) })
     },
     async entryOptions(l) { noteLang(l); return entryOptions(l) },
     async create({ requestId, text, projectId }) {
@@ -290,6 +330,6 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async unpair() {},
     setActive() {},
     dispose() {},
-    reset() { epoch++; seq = 0; createdBy = new Map(); saidBy = new Set(); deviceLabel = ''; seed(); publish([...order]) },
+    reset() { epoch++; seq = 0; createdBy = new Map(); saidBy = new Set(); adopted = new Map(); deviceLabel = ''; seed(); publish([...order]) },
   }
 }

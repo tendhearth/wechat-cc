@@ -1,0 +1,112 @@
+# 设置 → 电脑上的会话 → 正在跑的那条只有灰字、没有按钮 → Codex 那条:确认卡如实说「没看到在跑」,按钮只写「接着做」
+# → Claude Code 那条:确认卡(先让原来那个停下),按钮写「已经停了，接着做」
+# → 进这件事、说一句页输入框已聚焦(直接打字,不点输入框)→ 发出 → 回到这件事,话在对话里,「第一句」说明消失。演示模式。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: now-connections
+    timeout: 10000
+- tapOn:
+    id: topbar-settings
+- scrollUntilVisible:
+    element:
+      id: settings-sessions
+- tapOn:
+    id: settings-sessions
+- extendedWaitUntil:
+    visible:
+      id: sessions-row-demo-claude-1
+    timeout: 5000
+- tapOn:
+    id: sessions-row-demo-claude-1
+- extendedWaitUntil:
+    visible:
+      id: session-continue-note
+    timeout: 5000
+- assertVisible: ".*(正在电脑上跑|running on your computer).*"
+- assertNotVisible:
+    id: session-continue
+- tapOn:
+    id: topbar-back
+# Codex:CC 看不到它在不在跑,卡上如实说;按钮只写「接着做」。看完取消,不真接。
+- tapOn: "Codex"
+- extendedWaitUntil:
+    visible:
+      id: sessions-row-demo-codex-1
+    timeout: 5000
+- tapOn:
+    id: sessions-row-demo-codex-1
+- extendedWaitUntil:
+    visible:
+      id: session-continue
+    timeout: 5000
+- tapOn:
+    id: session-continue
+- extendedWaitUntil:
+    visible:
+      id: continue-sheet
+    timeout: 5000
+- assertVisible: ".*(没看到原来那个 Codex|didn.t see the original Codex).*"
+- assertVisible:
+    id: continue-confirm
+    text: "接着做|Continue here"
+- tapOn:
+    id: continue-cancel
+- tapOn:
+    id: topbar-back
+# Claude Code
+- tapOn: "Claude Code"
+- extendedWaitUntil:
+    visible:
+      id: sessions-row-demo-claude-2
+    timeout: 5000
+- tapOn:
+    id: sessions-row-demo-claude-2
+- extendedWaitUntil:
+    visible:
+      id: session-continue
+    timeout: 5000
+- tapOn:
+    id: session-continue
+- extendedWaitUntil:
+    visible:
+      id: continue-sheet
+    timeout: 5000
+- assertVisible: ".*(先让电脑上原来那个|First stop the original).*"
+- assertVisible:
+    id: continue-confirm
+    text: "已经停了，接着做|It.s stopped — continue"
+# 点开时重问的预览回来之后,按钮才可点(问着的时候转圈、不能点)
+- extendedWaitUntil:
+    visible:
+      id: continue-confirm
+      enabled: true
+    timeout: 5000
+- tapOn:
+    id: continue-confirm
+- extendedWaitUntil:
+    visible:
+      id: compose-input
+    timeout: 5000
+- assertVisible:
+    id: compose-native-start
+- inputText: "finish the homepage"
+# 点一下说明文字收起键盘(同 compose.yaml),发出按钮才露出来。
+- tapOn:
+    id: compose-native-start
+- waitForAnimationToEnd
+- tapOn:
+    id: compose-send
+- extendedWaitUntil:
+    visible:
+      id: progress-conversation
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      text: ".*finish the homepage.*"
+- assertNotVisible:
+    id: progress-native-start

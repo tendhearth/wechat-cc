@@ -145,7 +145,7 @@ export function makeWorkbenchStore(db: Db) {
         return this.handoffRecord(task.id,input.id)
       })()
     },
-    taskByNativeIdentity:(providerId:string,nativeId:string)=>db.query<StoredTask,[string,string]>(TASK_SELECT+' WHERE provider_id=? AND session_id=? LIMIT 1').get(providerId,nativeId),
+    taskByNativeIdentity:(providerId:string,nativeId:string)=>db.query<StoredTask,[string,string]>(TASK_SELECT+' WHERE provider_id=? AND session_id=? ORDER BY updated_at DESC,id DESC LIMIT 1').get(providerId,nativeId),
     markSourceDispatched(id:string){db.query('UPDATE workbench_sources SET first_dispatched_at=COALESCE(first_dispatched_at,?) WHERE task_id=?').run(Date.now(),id)},
     importSource(input:Omit<StoredNativeSource,'id'|'taskId'|'importedAt'|'firstDispatchedAt'|'selectedMessageCount'> & {title:string;ownerChatId:string|null;messages:NativeHistoryMessage[]}) {
       return db.transaction(()=>{

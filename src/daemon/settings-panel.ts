@@ -38,7 +38,7 @@ import presenceArt from './mobile-presence-art.json'
 import { MOBILE_BRAND_ICON_PNG, MOBILE_BRAND_ICON_SIZES } from './mobile-brand-icon'
 import { mobileChatRoute, type MobileChatDeps } from './mobile-chat'
 import { mobileReadsRoute } from './mobile-reads'
-import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions,type MobileUploadActions} from './mobile-workbench'
+import {mobileSessionContinueRoute,mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions,type MobileUploadActions,type MobileSessionContinueActions} from './mobile-workbench'
 import {mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileHomeFocus} from './mobile-home-focus'
 import type {MatterSayInput} from '../core/matters/service'
@@ -116,6 +116,8 @@ export interface SettingsPanelDeps {
   connections?: () => import('./connections').ConnectionsSnapshot
   /** 电脑上的原生会话(只读)。缺省 ⇒ /m/api/sessions 503。 */
   sessions?: import('./mobile-reads').MobileSessionsDeps
+  /** 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions)。缺省 ⇒ /m/api/session/continue 503。 */
+  sessionContinue?: MobileSessionContinueActions
   /** 主人「看到哪了」的水位,与桌面觅食台同一个文件(一个主人一个水位)。缺省 ⇒ POST /m/api/seen 503。 */
   seen?: { read: () => string | null; write: (iso: string) => void }
   /** 推送(中继 v2,spec 2026-09-30 §5)。缺省 ⇒ /m/api/push/* 503。按设备 id,不是令牌。 */
@@ -753,6 +755,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           // ── 「一件事」:与桌面同一份数据,同一套语义 ──────────────────
           const mobileResponse=await mobileWorkbenchRoute(deps.matters,url,req,deps.entry,deps.uploads)
           if(mobileResponse)return mobileResponse
+          const continueResponse=await mobileSessionContinueRoute(deps.sessionContinue,url,req,id=>deps.matters?.seenOnPhone(id))
+          if(continueResponse)return continueResponse
           // 跟 CC 说(spec 2026-10-01):主人对话一页 + 收下即回的说一句。
           const chatResponse = await mobileChatRoute(deps.chat, url, req)
           if (chatResponse) return chatResponse

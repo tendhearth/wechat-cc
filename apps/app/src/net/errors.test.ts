@@ -27,6 +27,23 @@ describe('mapPhoneError(HTTP 状态 + 正文 → BackendCode)', () => {
   ])('%s %j ⇒ %s', (status, body, want) => {
     expect(mapPhoneError(status, body)).toBe(want)
   })
+
+  it.each([
+    [409, { ok: false, error: 'native_session_busy' }, 'session_busy'],
+    [409, { ok: false, error: 'native_folder_busy' }, 'folder_busy'],
+    [503, { ok: false, error: 'unavailable_provider' }, 'provider_missing'],
+    [400, { ok: false, error: 'invalid_path' }, 'folder_missing'],
+    [503, { ok: false, error: 'provider_quota_exhausted' }, 'quota'],
+    [409, { ok: false, error: 'native_history_changed' }, 'session_changed'],
+    [409, { ok: false, error: 'native_history_empty' }, 'session_empty'],
+    [409, { ok: false, error: 'native_session_already_managed' }, 'session_managed'],
+    // 第一句时电脑那边的记录变了(终端里的 Claude Code 还在写)/ 原会话已不能直接接上:都是「会话刚变」,不是「没送到」
+    [409, { ok: false, error: 'external_close_confirmation_stale' }, 'session_changed'],
+    [409, { ok: false, error: 'restart_confirmation_required' }, 'session_changed'],
+    [400, { ok: false, error: 'invalid_text' }, 'invalid'],
+  ] as const)('接着做电脑会话的码(spec D11):%s %j ⇒ %s', (status, body, want) => {
+    expect(mapPhoneError(status, body)).toBe(want)
+  })
   it('daemon 没接推送(push_not_wired,503)⇒ unavailable', () => {
     expect(mapPhoneError(503, { ok: false, error: 'push_not_wired' })).toBe('unavailable')
   })

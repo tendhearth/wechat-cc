@@ -1,10 +1,12 @@
 import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
-  ChatPage, ChatJob, ChatMessage, Connections, NativeSessionRow, NativeSessionPage,
+  ChatPage, ChatJob, ChatMessage, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
 
+// 协议包已导出这个类型,不再重推一份(裁决 R12)
+export type { SessionContinueT }
 export type MatterT = z.infer<typeof Matter>
 export type MatterDetailT = z.infer<typeof MatterDetail>
 export type ApprovalExplanationT = z.infer<typeof ApprovalExplanation>
@@ -24,6 +26,7 @@ export type ConnState = 'connecting' | 'online' | 'offline' | 'revoked'
 export type Connection = { state: ConnState; lastSyncedAt: number | null; epoch: number }
 /** BackendError.code 的全集(映射见 src/net/errors.ts)。 */
 export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' | 'not_found' | 'invalid' | 'unavailable' | 'unknown'
+  | 'session_busy' | 'folder_busy' | 'provider_missing' | 'folder_missing' | 'quota' | 'session_changed' | 'session_empty' | 'session_managed'
 export type Unsubscribe = () => void
 
 export interface Backend {
@@ -60,6 +63,10 @@ export interface Backend {
   sessions(provider: 'claude' | 'codex', cursor?: string): Promise<{ items: NativeSessionRowT[]; nextCursor: string | null }>
   /** 一个原生会话的一页消息;读不了 ⇒ BackendError('not_found')。 */
   session(key: string, cursor?: string): Promise<NativeSessionPageT>
+  /** 这个电脑上的会话能不能在手机上接着做(不缓存,每次问电脑)。读不了 ⇒ BackendError('not_found')。 */
+  continuePreview(key: string): Promise<SessionContinueT>
+  /** 接成一件事并返回它的 matterId;幂等。拒绝 ⇒ session_busy / folder_busy / provider_missing / folder_missing / quota / session_changed / session_empty / session_managed。 */
+  continueSession(key: string): Promise<{ matterId: string }>
   /** 解除本机配对(daemon 撤掉本机令牌)。失败抛 BackendError;调用方无论成败都清本地令牌。 */
   unpair(): Promise<void>
   /** 前台 true / 后台 false:false 关连接;true 立刻新握手、订阅全部重挂。演示后端空操作。 */

@@ -621,6 +621,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const settingsPanel = makeSettingsPanel({
     connections,
     ...(phoneSessions ? { sessions: phoneSessions } : {}),
+    // 在手机上接着做电脑上的会话:预览不缓存(「正在跑」不能晚 15 秒才知道),接成一件事幂等。
+    ...(opts.workbench ? { sessionContinue: { preview: (k: string) => opts.workbench!.previewNativeContinue(k), adopt: (k: string) => opts.workbench!.adoptNativeSession(k) } } : {}),
     stateDir,
     ownerChatId,
     relayV2Configured: () => relayV2Configured(stateDir),

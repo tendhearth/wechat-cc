@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PHONE_API_SCHEMAS, PHONE_HTML_ROUTES } from '@wechat-cc/protocol'
 import { removeTempDir } from '../lib/test-temp'
+import { encodeNativeHistoryKey, historyPreview, type NativeHistoryItem, type NativeHistoryReader } from '../core/workbench/native-history'
 import { openDb, type Db } from '../lib/db'
 import { createProviderRegistry } from '../core/provider-registry'
 import { makeMatterStore } from '../core/matters/store'
@@ -57,7 +58,7 @@ describe('手机接口 schema 守卫', () => {
 // ── 2) 真实返回:workbench + matters(entry / attachment / permission / answer / artifact / say / matter 详情）──
 
 describe('真实返回校验 — workbench + matters', () => {
-  let root: string, managedRoot: string, db: Db, workbench: WorkbenchService, panel: SettingsPanel, base: string, token: string
+  let root: string, managedRoot: string, db: Db, workbench: WorkbenchService, panel: SettingsPanel, base: string, token: string, nativeDir: string
   let store: ReturnType<typeof makeWorkbenchStore>, matters: ReturnType<typeof makeMatterStore>
 
   beforeEach(async () => {
@@ -66,6 +67,11 @@ describe('真实返回校验 — workbench + matters', () => {
     db = openDb({ path: join(root, 'state.db') })
     matters = makeMatterStore(db)
     store = makeWorkbenchStore(db)
+    // 电脑上的一条原生会话(spec 2026-10-01-tendhearth-continue-sessions):nativeId 与假执行者 init 报的一致,恢复才对得上。
+    nativeDir = join(root, 'native'); mkdirSync(nativeDir)
+    const nativeItem: NativeHistoryItem = { key: encodeNativeHistoryKey('claude', 'phone-schema-native'), providerId: 'claude', nativeId: 'phone-schema-native', title: '原会话', titleSource: 'native_custom', cwd: nativeDir, updatedAt: 1, remote: false, observedState: 'unknown' }
+    const nativeRead: NativeHistoryReader['read'] = async (_key, page) => historyPreview(nativeItem, 1, [{ id: 'u', role: 'user', text: '原来的要求', truncated: false }], null, page)
+    const nativeReader: NativeHistoryReader = { list: async () => ({ items: [nativeItem], nextCursor: null, coverage: 'native_supported_history' }), read: nativeRead, currentFingerprint: async (key, page = { limit: 100 }) => (await nativeRead(key, page)).sourceFingerprint }
     const registry = createProviderRegistry()
     registry.register('claude', {
       async spawn(project, ctx) {
@@ -83,7 +89,7 @@ describe('真实返回校验 — workbench + matters', () => {
         }
       },
     }, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
-    workbench = makeWorkbenchService({ store, registry, stateDir: root, managedWorkspaceRoot: managedRoot, ownerChatId: () => 'owner', defaultProvider: 'claude', matters })
+    workbench = makeWorkbenchService({ store, registry, stateDir: root, managedWorkspaceRoot: managedRoot, ownerChatId: () => 'owner', defaultProvider: 'claude', matters, nativeHistory: { claude: nativeReader } })
     const service = makeMattersService({ store: matters, workbench })
     panel = makeSettingsPanel({
       stateDir: root, ownerChatId: () => 'owner', chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {},
@@ -102,6 +108,7 @@ describe('真实返回校验 — workbench + matters', () => {
       matters: { ...service, say: (id, text, input) => service.say(id, text, 'phone', input), seenOnPhone: id => { matters.bind(id, 'phone', 'pwa') } },
       connections: () => buildConnections({ plugins: () => null, wechatSyncedAt: () => null, knowledge: () => ({ enabled: false, built: false, latestAt: null, syncedAt: null }), computer: () => ({ label: 'test', since: null, version: null }), workbench }),
       sessions: { list: async () => ({ items: [], nextCursor: null, coverage: 'native_supported_history' as const }), read: async () => { throw new Error('native_history_unsupported') } },
+      sessionContinue: { preview: k => workbench.previewNativeContinue(k), adopt: k => workbench.adoptNativeSession(k) },
       chat: (() => {
         const owner = makePhoneOwner({ ownerChatId: () => 'owner', matters })
         return {
@@ -139,6 +146,23 @@ describe('真实返回校验 — workbench + matters', () => {
     const res = await request('/m/api/session?key=x')
     expect(res.status).toBe(404)
     parseAs('GET /m/api/session', await res.json())
+  })
+
+  it('session/continue:预览 → 接成一件事 → managed → 详情 nativeStart → 第一句 say,真实返回都符合 schema', async () => {
+    const key = encodeNativeHistoryKey('claude', 'phone-schema-native')
+    expect(parseAs('GET /m/api/session/continue', await (await request(`/m/api/session/continue?key=${key}`)).json()))
+      .toEqual({ ok: true, state: 'ready', provider: 'claude', project: 'native', mode: 'native_resume', matterId: null })
+    const post = parseAs('POST /m/api/session/continue', await (await request('/m/api/session/continue', { key })).json()) as { ok: true; matterId: string; created: boolean }
+    expect(post.created).toBe(true)
+    expect(parseAs('GET /m/api/session/continue', await (await request(`/m/api/session/continue?key=${key}`)).json())).toMatchObject({ state: 'managed', matterId: post.matterId })
+    expect(matters.bindings(post.matterId).map(b => b.surface).sort()).toEqual(['phone', 'wechat'])
+    expect(parseAs('GET /m/api/matter', await (await request(`/m/api/matter?id=${post.matterId}`)).json())).toMatchObject({ nativeStart: { mode: 'native_resume', providerId: 'claude' } })
+    const said = await request('/m/api/matter/say', { id: post.matterId, text: '接着做', requestId: randomUUID() })
+    expect(said.status).toBe(200)
+    parseAs('POST /m/api/matter/say', await said.json())
+    const bad = await request('/m/api/session/continue', { key, extra: 1 })
+    expect(bad.status).toBe(400)
+    parseAs('POST /m/api/session/continue', await bad.json())
   })
 
   it('entry/options 真实返回符合 schema', async () => {
