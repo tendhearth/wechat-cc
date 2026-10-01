@@ -294,7 +294,12 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
             const loaded = await connection.request('session/load', { sessionId, cwd: project.path, mcpServers })
             if (object(loaded) && loaded.sessionId !== undefined && loaded.sessionId !== sessionId) throw new Error('acp_resume_session_mismatch')
           } catch (error) {
-            if (options.resume !== 'fallback') throw error
+            if (options.resume !== 'fallback') {
+              // 上一轮被拒(额度)或从没落盘的会话,session/load 报 -32602 "Session … not found":给它自己的码,
+              // 别落进"acp 子命令不支持"那句误导的话。
+              if (error instanceof AcpRequestError && error.code === -32602 && /not found/i.test(`${error.message} ${JSON.stringify(error.data ?? '')}`)) throw new Error('acp_session_not_found')
+              throw error
+            }
             logOnce('resume', `session/load ${forLog(context.resumeSessionId)} failed (${error instanceof Error ? error.message.replace(CONTROL_CHARS, ' ').slice(0, 120) : String(error)}); opening a new session`)
             sessionId = ''
             created = await openNew()
@@ -349,10 +354,13 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
           const settle = (event: AgentEvent) => { if (active !== turn) return; for (const e of translator.endTurn()) turn.queue.push(e); finish(turn, event) }
           void connection.request('session/prompt', { sessionId, prompt: blocks }, 0).then(
             result => {
+              const refusal = translator.quotaRefusal()
               const reason = object(result) && typeof result.stopReason === 'string' ? result.stopReason : 'end_turn'
               // turn.cancelled(我们自己叫停的)优先于 reason 本身怎么说:agent 的回复完全可能在
               // session/cancel 生效前就已经在路上、报的是 end_turn —— 半截话不能因为这条race而漏发。
               if (turn.cancelled) finish(turn, { kind: 'error', message: 'acp_turn_cancelled' })
+              // Cursor 额度耗尽:回合照常 end_turn、文本就是催升级的话 ⇒ 当错误收尾,让额度登记/管家接得住,主人也收不到原文。
+              else if (refusal) settle(em.errorText(refusal))
               else if (reason === 'end_turn' || reason === 'cancelled') settle(em.finish({ sessionId, numTurns: 1, durationMs: Date.now() - turn.startedAt }))
               else settle({ kind: 'error', message: `acp_stop_${reason}` })
             },

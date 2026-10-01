@@ -1,11 +1,25 @@
 import { describe, it, expect } from 'vitest'
-import { classifyProviderError, makeQuotaRegistry, QUOTA_TTL_MS, RATE_LIMIT_TTL_MS } from './provider-quota'
+import { classifyProviderError, isQuotaRefusalText, makeQuotaRegistry, QUOTA_TTL_MS, RATE_LIMIT_TTL_MS } from './provider-quota'
 
 /**
  * 额度/限流识别(owner 2026-09-16):订阅类 CLI 没有可编程的用量口子(codex 只有
  * login/doctor,claude 的 /usage 只在交互 TUI 里),所以额度只能从失败里认出来、记住、
  * 再主动避开。分类器认原始错误文本;登记处按 provider 记"什么时候耗尽、说了什么",带 TTL。
  */
+describe('Cursor quota nag', () => {
+  it('classifies the upgrade nag as quota', () => {
+    expect(classifyProviderError('\n\nUpgrade your plan to continue')).toBe('quota')
+    expect(classifyProviderError("ActionRequiredError: You've hit your usage limit Get Cursor Pro")).toBe('quota')
+  })
+  it('isQuotaRefusalText only matches a whole-message nag, not a reply that mentions plans', () => {
+    expect(isQuotaRefusalText('\n\nUpgrade your plan to continue')).toBe(true)
+    expect(isQuotaRefusalText("  you've hit your usage limit. ")).toBe(true)
+    expect(isQuotaRefusalText('You can upgrade your plan to continue using the API; here is how pricing works...')).toBe(false)
+    expect(isQuotaRefusalText('好的。Upgrade your plan to continue')).toBe(false)
+    expect(isQuotaRefusalText('')).toBe(false)
+  })
+})
+
 describe('classifyProviderError', () => {
   it('Codex 订阅额度耗尽(真机 2026-09-16 原文)', () => {
     expect(classifyProviderError("You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits")).toBe('quota')

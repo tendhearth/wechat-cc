@@ -136,6 +136,8 @@ describe('ACP failure copy', () => {
     expect(executionFailureMessage('acp_stop_max_turn_requests')).toContain('单轮请求次数上限')
     expect(executionFailureMessage('acp_stop_refusal')).toContain('拒绝了这项要求')
     expect(executionFailureMessage('acp_resume_session_mismatch')).toContain('不是原会话')
+    expect(executionFailureMessage('acp_session_not_found')).toContain('原会话')
+    expect(executionFailureMessage('acp_session_not_found')).not.toContain('acp 子命令')
     expect(executionFailureMessage('acp_rpc_timeout: initialize')).toContain('长时间没有响应')
     expect(executionFailureMessage('acp_turn_already_running')).toContain('等它答复')
     expect(executionFailureMessage('acp_attachments_unsupported')).toContain('移除附件')

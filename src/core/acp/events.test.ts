@@ -145,3 +145,25 @@ describe('MCP identity on tool calls', () => {
     expect(isReplyToolCall(ev!)).toBe(true)
   })
 })
+
+describe('quota refusal detection', () => {
+  const nag = 'Upgrade your plan to continue'
+  it('flags a turn whose whole output is the nag and suppresses it in messages mode', () => {
+    const t = createAcpTranslator({ text: 'messages' }); t.beginTurn()
+    t.update(chunk('\n\n')); t.update(chunk(nag))
+    expect(t.quotaRefusal()).toBe(nag)
+    expect(t.endTurn()).toEqual([])
+  })
+  it('does not flag normal replies, or a nag after a tool call', () => {
+    const t = createAcpTranslator({ text: 'messages' }); t.beginTurn()
+    t.update(chunk('正常回复'))
+    expect(t.quotaRefusal()).toBeNull()
+    expect(t.endTurn()).toEqual([{ kind: 'text', text: '正常回复' }])
+    t.beginTurn(); t.update(call()); t.update(chunk(nag))
+    expect(t.quotaRefusal()).toBeNull()
+  })
+  it('flags in append mode too (text was already streamed)', () => {
+    const t = createAcpTranslator(); t.beginTurn(); t.update(chunk(nag))
+    expect(t.quotaRefusal()).toBe(nag)
+  })
+})
