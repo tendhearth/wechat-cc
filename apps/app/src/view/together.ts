@@ -10,7 +10,8 @@ export function togetherView(matters: MatterT[], approvals: ApprovalItemT[], age
     else first.set(a.taskId, { n: 1, summary: a.summary })
   }
   return matters
-    .filter(m => m.status !== 'archived')
+    // 主人对话在顶上单独置顶;访客的聊天是 CC 的社交,不是一起做的事(spec 2026-10-01 §2)
+    .filter(m => m.status !== 'archived' && m.kind !== 'chat')
     .map(m => {
       const f = first.get(m.id)
       return { m, status: matterStatus(m, agents, f?.n ?? 0), subtitle: f ? f.summary : (m.projectPath ?? '') }

@@ -21,7 +21,7 @@ export function nowView(input: { approvals: ApprovalItemT[]; agents: AgentsTopic
   }
   const pendingBy = (id: string) => groups.get(id)?.count ?? 0
   const together = matters
-    .filter(m => m.status !== 'archived')
+    .filter(m => m.status !== 'archived' && m.kind !== 'chat') // 聊天不算「一起做」(spec 2026-10-01 §2)
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 5)
     .map(m => ({ id: m.id, title: m.title, status: matterStatus(m, agents, pendingBy(m.id)), updatedAt: m.updatedAt }))
