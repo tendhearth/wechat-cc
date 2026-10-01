@@ -48,3 +48,5 @@ for D in "$APP" "$DESK"; do
   { printf -- '----- Noto Serif SC -----\n\n'; cat "$WORK/OFL-noto.txt"; printf '\n\n----- Source Serif 4 -----\n\n'; cat "$WORK/OFL-source.txt"; printf '\n\n----- Geist Mono -----\n\n'; cat "$WORK/OFL-geist.txt"; } > "$D/OFL.txt"
 done
 du -ch "$APP"/*.ttf "$DESK"/*-serif-*.woff2 | tail -1
+# 手机设置里「开源字体许可」显示的文本:同一份 OFL.txt 生成 TS 字符串(资源文件在运行时读不出文字;tokens.test 钉住两者一致)
+"$PY" -c "import json,sys;t=open('$APP/OFL.txt',encoding='utf-8').read();open('$ROOT/apps/app/src/ui/ofl-text.ts','w',encoding='utf-8').write('// 生成物(scripts/fonts/build-fonts.sh):assets/fonts/OFL.txt 原文,给设置里的「开源字体许可」页显示。别手改。\nexport const OFL_TEXT = '+json.dumps(t,ensure_ascii=False)+'\n')"

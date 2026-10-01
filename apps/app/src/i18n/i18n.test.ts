@@ -50,7 +50,7 @@ describe('文案表', () => {
   it('原始命令多出来的行数:英文单复数', () => {
     expect(tCount('en', 'approval.moreLines', 1)).toBe('(+1 more line)')
     expect(tCount('en', 'approval.moreLines', 4)).toBe('(+4 more lines)')
-    expect(tCount('zh-Hans', 'approval.moreLines', 4)).toBe('(还有 4 行)')
+    expect(tCount('zh-Hans', 'approval.moreLines', 4)).toBe('（还有 4 行）')
   })
   it('新增短词:离线、多选上限、版权', () => {
     expect(en['common.computerOfflineShort']).toBe('offline')

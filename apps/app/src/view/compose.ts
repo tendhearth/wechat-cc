@@ -16,3 +16,12 @@ export function composeOutcome(error: string): 'uncertain' | 'ccBusy' | 'revoked
   if (error === 'revoked') return 'revoked'
   return 'failed'
 }
+
+export type ComposeOutcome = 'failed' | 'uncertain' | 'busy' | 'ccBusy' | 'tooLong' | 'revoked'
+
+/** 页内提示前面的状态点:没送到 / 送不了 ⇒ 红;不知道送没送到 ⇒ 灰;只是要等一等 ⇒ 琥珀。文字本身一律 inkSoft。 */
+export function composeOutcomeDot(o: ComposeOutcome): 'bad' | 'unknown' | 'warn' {
+  if (o === 'uncertain') return 'unknown'
+  if (o === 'busy' || o === 'ccBusy') return 'warn'
+  return 'bad'
+}

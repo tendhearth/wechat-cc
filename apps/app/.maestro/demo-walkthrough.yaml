@@ -49,6 +49,8 @@ appId: com.tendhearth.app
     element:
       id: progress-changes
     direction: DOWN
+    centerElement: true
+# 标题改成 title 字号后这一行正好停在底边,紧挨着「接着跟 CC 说」;滚到中间再点,别点到说一句
 - tapOn:
     id: progress-changes
 # 展开后能看到改动的文件。
@@ -59,6 +61,7 @@ appId: com.tendhearth.app
     element:
       id: progress-process
     direction: DOWN
+    centerElement: true
 - tapOn:
     id: progress-process
 - scrollUntilVisible:

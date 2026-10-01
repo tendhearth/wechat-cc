@@ -153,7 +153,7 @@ export default function Approval() {
     return shell(
       <>
         <Eyebrow title={matterTitle} eyebrow={t(lang, 'approval.eyebrow')} />
-        <Txt role="display" accessibilityRole="header">{t(lang, 'approval.chooseTitle')}</Txt>
+        <Txt role="title" accessibilityRole="header">{t(lang, 'approval.chooseTitle')}</Txt>
         <Txt role="bubble" tone="inkSoft">{t(lang, 'approval.chooseOne')}</Txt>
         {v.items.map(item => (
           <Pressable
@@ -277,7 +277,7 @@ function PermissionCard({ v, matterTitle }: { v: CardView; matterTitle: string }
     <>
       <Eyebrow eyebrow={t(lang, 'approval.eyebrow')} title={matterTitle} />
       <View style={{ gap: space.s }}>
-        <Txt testID="approval-title" role="display" content="user" accessibilityRole="header">{v.title}</Txt>
+        <Txt testID="approval-title" role="title" content="user" accessibilityRole="header">{v.title}</Txt>
         {v.aiSummary ? (
           <View testID="approval-ai-summary" accessible accessibilityLabel={`${t(lang, 'approval.aiTag')}. ${t(lang, 'approval.aiSummary')}`} style={{ gap: space.xs }}>
             <Txt role="caption">{t(lang, 'approval.aiTag')}</Txt>
@@ -367,7 +367,7 @@ function QuestionForm({ v, matterTitle, shell, locked, submitLocked, busy, statu
         return (
           <View key={item.id} style={{ gap: space.m }}>
             {item.header ? <Txt role="small" tone="inkSoft" content="user">{item.header}</Txt> : null}
-            <Txt role="display" content="user" accessibilityRole="header">{item.question}</Txt>
+            <Txt role="title" content="user" accessibilityRole="header">{item.question}</Txt>
             {item.multiSelect ? <Txt role="small" tone="inkSoft">{t(lang, 'approval.multiHint')}</Txt> : null}
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.s }}>
               {item.options.map((o, i) => {

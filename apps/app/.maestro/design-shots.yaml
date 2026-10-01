@@ -1,0 +1,159 @@
+# 设计验收出图(spec §7):演示模式,跟着模拟器系统语言出图。不进 CI。
+# 中文:模拟器 AppleLanguages 设成 zh-Hans 后跑;英文:设成 en 后再跑一次(见计划 Task 7 Step 6)。
+# maestro test .maestro/design-shots.yaml --test-output-dir <out>/zh
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- takeScreenshot: p01-welcome
+# 配对页(不联网,只看介绍)
+- tapOn:
+    id: welcome-pair
+- extendedWaitUntil:
+    visible:
+      id: pair-steps
+    timeout: 5000
+- takeScreenshot: p02-pair
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: welcome-look-first
+    timeout: 5000
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: now-cc
+    timeout: 10000
+- waitForAnimationToEnd
+- takeScreenshot: p03-now
+- tapOn:
+    id: now-connections
+- extendedWaitUntil:
+    visible:
+      id: connections-computer-home
+    timeout: 5000
+- takeScreenshot: p04-connections
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: now-cc
+    timeout: 5000
+- tapOn:
+    id: now-cc
+- extendedWaitUntil:
+    visible:
+      id: chat-input
+    timeout: 5000
+- waitForAnimationToEnd
+- takeScreenshot: p05-chat
+# 交办:对话页 → 交给 CC 去做一件事 → 调整(在哪里做)
+- tapOn:
+    id: chat-handoff
+- extendedWaitUntil:
+    visible:
+      id: compose-input
+    timeout: 5000
+- waitForAnimationToEnd
+- takeScreenshot: p06-compose
+- tapOn:
+    id: compose-adjust
+- extendedWaitUntil:
+    visible:
+      id: compose-adjust-sheet
+    timeout: 5000
+- waitForAnimationToEnd
+- takeScreenshot: p07-compose-adjust
+- tapOn:
+    text: "完成|Done"
+- waitForAnimationToEnd
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: chat-input
+    timeout: 5000
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: now-cc
+    timeout: 5000
+- tapOn:
+    id: now-look-then-decide
+    index: 0
+- extendedWaitUntil:
+    visible:
+      id: approval-title
+    timeout: 10000
+- waitForAnimationToEnd
+- takeScreenshot: p08-approval
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: now-cc
+    timeout: 5000
+# 同 demo-walkthrough:第一下点标签偶尔没生效,没切过去就再点一次
+- retry:
+    maxRetries: 2
+    commands:
+      - tapOn:
+          id: tab-together
+      - extendedWaitUntil:
+          visible:
+            id: together-item-a1b2c3d4
+          timeout: 3000
+- takeScreenshot: p09-together
+- tapOn:
+    id: together-item-a1b2c3d4
+- extendedWaitUntil:
+    visible:
+      id: progress-status
+    timeout: 10000
+- waitForAnimationToEnd
+- takeScreenshot: p10-matter
+- tapOn:
+    id: topbar-settings
+- extendedWaitUntil:
+    visible:
+      id: settings-language
+    timeout: 5000
+- waitForAnimationToEnd
+- takeScreenshot: p11-settings
+- scrollUntilVisible:
+    element:
+      id: settings-font-licences
+    direction: DOWN
+- takeScreenshot: p12-settings-bottom
+- tapOn:
+    id: settings-font-licences
+- extendedWaitUntil:
+    visible:
+      id: licences-intro
+    timeout: 5000
+- waitForAnimationToEnd
+- takeScreenshot: p13-licences
+- tapOn:
+    id: topbar-back
+- scrollUntilVisible:
+    element:
+      id: settings-sessions
+    direction: UP
+- tapOn:
+    id: settings-sessions
+- extendedWaitUntil:
+    visible:
+      id: sessions-row-demo-claude-1
+    timeout: 5000
+- waitForAnimationToEnd
+- takeScreenshot: p14-sessions
+- tapOn:
+    id: sessions-row-demo-claude-1
+- extendedWaitUntil:
+    visible:
+      id: session-message-0
+    timeout: 5000
+- waitForAnimationToEnd
+- takeScreenshot: p15-session

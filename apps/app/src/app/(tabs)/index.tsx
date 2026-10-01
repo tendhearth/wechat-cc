@@ -60,7 +60,8 @@ export default function Now() {
           ) : null}
           {/* CC 图上方有透明留白:往上收一点,让气泡贴着 CC 的头 */}
           <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.m, marginTop: line ? -space.l : 0 }}>
-            <Txt role="display" accessibilityRole="header" style={{ flex: 1, paddingBottom: space.s }}>{t(lang, v.greetingKey)}</Txt>
+            {/* 问候一行放下:英文「Good evening」在 iPhone 17 Pro 上挨着 CC 会折行 ⇒ 允许缩到 0.7 倍,不换行 */}
+            <Txt role="display" accessibilityRole="header" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} style={{ flex: 1, paddingBottom: space.s }}>{t(lang, v.greetingKey)}</Txt>
             <Pressable testID="now-cc" accessibilityRole="button" accessibilityLabel={t(lang, 'now.openChat')} onPress={openChat} style={{ marginRight: space.s }}>
               <CCFigure size={120} presence={presence} />
             </Pressable>

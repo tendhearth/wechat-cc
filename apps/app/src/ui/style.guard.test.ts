@@ -10,13 +10,10 @@ const walk = (d: string, out: string[] = []): string[] => {
 }
 const TSX = walk(SRC).filter(f => f.endsWith('.tsx'))
 const rel = (f: string) => relative(SRC, f).split('\\').join('/')
-/** 还没换到 Txt / TextField 的文件(Task 3 时的真实快照:25 个)。Task 5 / 6 / 7 逐个删,Task 7 结束时必须为空;只许删不许加。 */
-export const NOT_YET_MIGRATED = new Set<string>([
-  'app/compose.tsx', 'app/connections.tsx', 'app/dev-push-key.tsx', 'app/devices.tsx', 'app/pair.tsx',
-  'app/push-open.tsx', 'app/sessions/[key].tsx', 'app/sessions/index.tsx', 'app/settings.tsx', 'app/welcome.tsx',
-])
-/** 棘轮上限:Task 6 之后剩 10 个;只许往下改(Task 7 改成 0)。 */
-const NOT_YET_MIGRATED_CAP = 10
+/** 还没换到 Txt / TextField 的文件。Task 7 起为空:所有页面都已迁移,不许再加。 */
+export const NOT_YET_MIGRATED = new Set<string>([])
+/** 棘轮上限:0。 */
+const NOT_YET_MIGRATED_CAP = 0
 const CONTAINERS = /<\/?(Card|Sheet)\b/g
 
 describe('phone style guard', () => {
@@ -36,6 +33,16 @@ describe('phone style guard', () => {
     expect(offenders.filter(f => !NOT_YET_MIGRATED.has(f))).toEqual([])
     expect([...NOT_YET_MIGRATED].filter(f => !offenders.includes(f)), '已迁移的页面请从 NOT_YET_MIGRATED 删掉').toEqual([])
     expect(NOT_YET_MIGRATED.size, 'NOT_YET_MIGRATED 只许变小').toBeLessThanOrEqual(NOT_YET_MIGRATED_CAP)
+  })
+  it('every screen is migrated', () => { expect([...NOT_YET_MIGRATED]).toEqual([]) })
+  it('no buttons for unshipped features (image attach / mic)', () => {
+    for (const f of TSX) expect(readFileSync(f, 'utf8'), rel(f)).not.toMatch(/compose-add-image|compose-image-note|testID="[^"]*mic[^"]*"/)
+  })
+  it('selected state is restrained (no rail colour block behind a chosen row / tab)', () => {
+    for (const f of TSX) expect(readFileSync(f, 'utf8').match(/on \? c\.rail|focused \? c\.rail|selected \? c\.rail/g) ?? [], rel(f)).toEqual([])
+  })
+  it('detail-page titles use the title size, not display (display only for the Now greeting and the welcome hero)', () => {
+    for (const f of TSX.filter(f => !['app/(tabs)/index.tsx', 'app/welcome.tsx'].includes(rel(f)))) expect(readFileSync(f, 'utf8'), rel(f)).not.toMatch(/role="display"/)
   })
   it('no legacy palette keys (bg/card/muted/line/primary/primaryInk/navOnBg/navOnInk/accentSoft/danger)', () => {
     for (const f of TSX) expect(readFileSync(f, 'utf8').match(/\bc\.(bg|card|muted|line|primary|primaryInk|navOnBg|navOnInk|accentSoft|danger)\b/g) ?? [], rel(f)).toEqual([])

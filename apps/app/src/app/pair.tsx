@@ -1,7 +1,7 @@
 import { CameraView, useCameraPermissions } from 'expo-camera'
 import { Stack, useRouter } from 'expo-router'
 import { useEffect, useRef, useState } from 'react'
-import { BackHandler, Linking, Platform, ScrollView, Text, TextInput, View } from 'react-native'
+import { BackHandler, Linking, Platform, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t, type MessageKey } from '../i18n'
 import { useLang } from '../i18n/useLang'
@@ -14,8 +14,10 @@ import { pairAndSave } from '../state/wiring'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { CCFigure } from '../ui/CCFigure'
+import { TextField } from '../ui/TextField'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
+import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 import { ccPresence } from '../view/presence'
 import { linkErrorKey, makeGate, pairErrorKey } from '../view/pair'
@@ -106,11 +108,11 @@ export default function Pair() {
       <TopBar onBack={back} showConnection={false} onAvatar={() => router.push('/settings')} />
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.xl, gap: space.l }}>
         <View style={{ alignItems: 'center' }}><CCFigure size={120} presence={ccPresence(conn)} /></View>
-        <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 28, lineHeight: 36 }}>{t(lang, 'pair.title')}</Text>
+        <Txt role="title" accessibilityRole="header" style={{ textAlign: 'center' }}>{t(lang, 'pair.title')}</Txt>
         {phase.k === 'confirm' || phase.k === 'working' ? (
           <Card testID="pair-confirm" style={{ gap: space.m }}>
-            <Text style={{ color: c.ink, fontSize: 18 }}>{t(lang, 'pair.confirmTitle')}</Text>
-            <Text style={{ color: c.inkSoft, fontSize: 15, lineHeight: 22 }}>{t(lang, 'pair.confirmBody', { host: phase.link.relayHost })}</Text>
+            <Txt role="item" accessibilityRole="header">{t(lang, 'pair.confirmTitle')}</Txt>
+            <Txt role="bubble" tone="inkSoft">{t(lang, 'pair.confirmBody', { host: phase.link.relayHost })}</Txt>
             <Button
               kind="primary"
               testID="pair-connect"
@@ -122,32 +124,32 @@ export default function Pair() {
         ) : (
           <>
             {phase.k === 'error' ? (
-              <Card testID="pair-error" style={{ gap: space.s }}>
-                <Text accessibilityLiveRegion="polite" style={{ color: c.bad, fontSize: 15, lineHeight: 22 }}>{t(lang, phase.key)}</Text>
+              <View testID="pair-error" style={{ gap: space.s }}>
+                <Txt role="bubble" tone="bad" accessibilityLiveRegion="polite">{t(lang, phase.key)}</Txt>
                 {phase.camera ? <Button kind="secondary" testID="pair-open-settings" label={t(lang, 'pair.openSettings')} onPress={() => void Linking.openSettings()} /> : null}
-              </Card>
+              </View>
             ) : null}
-            <View testID="pair-steps" style={{ gap: space.m }}>
+            {/* 三步:编号 + 一句,行间细线;不画圆圈色块 */}
+            <View testID="pair-steps" style={{ borderTopWidth: 1, borderTopColor: c.hair }}>
               {steps.map((k, i) => (
-                <Card key={k} style={{ flexDirection: 'row', alignItems: 'center', gap: space.m }}>
-                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: c.rail, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ color: c.ink }}>{i + 1}</Text>
-                  </View>
-                  <Text style={{ flex: 1, color: c.ink, fontSize: 16, lineHeight: 22 }}>{t(lang, k)}</Text>
-                </Card>
+                <View key={k} style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.m, paddingVertical: space.m, borderBottomWidth: 1, borderBottomColor: c.hair }}>
+                  <Txt role="meta" tone="inkSoft" style={{ width: 16 }}>{i + 1}</Txt>
+                  <Txt role="body" style={{ flex: 1 }}>{t(lang, k)}</Txt>
+                </View>
               ))}
             </View>
             <Button kind="primary" testID="pair-scan" label={t(lang, 'pair.scan')} onPress={() => void startScan()} />
-            <Text style={{ color: c.inkSoft, fontSize: 14, lineHeight: 20 }}>{t(lang, 'pair.pasteHint')}</Text>
-            <TextInput
+            <Txt role="meta" tone="inkSoft" style={{ marginTop: space.s }}>{t(lang, 'pair.pasteHint')}</Txt>
+            <TextField
               testID="pair-paste-input"
               value={pasted}
               onChangeText={setPasted}
               placeholder={t(lang, 'pair.pastePlaceholder')}
-              placeholderTextColor={c.inkSoft}
+              content="ui"
+              role="meta"
               autoCapitalize="none"
               autoCorrect={false}
-              style={{ minHeight: 48, borderWidth: 1, borderColor: c.hair, borderRadius: radius.control, paddingHorizontal: space.m, color: c.ink, backgroundColor: c.paper }}
+              style={{ minHeight: 48, borderWidth: 1, borderColor: c.hair, borderRadius: radius.control, paddingHorizontal: space.l, backgroundColor: c.paper }}
             />
             <Button kind="secondary" testID="pair-use-pasted" label={t(lang, 'pair.usePasted')} disabled={!pasted.trim()} onPress={() => accept(pasted)} />
           </>

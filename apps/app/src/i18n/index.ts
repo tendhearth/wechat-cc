@@ -21,3 +21,8 @@ export type CountKey = 'now.waiting' | 'approval.moreLines'
 export function tCount(lang: Lang, key: CountKey, n: number): string {
   return t(lang, n === 1 ? (`${key}.one` as MessageKey) : key, { n })
 }
+
+/** 「小标题：问题」:小标题以中文结尾 ⇒ 全角冒号不加空格;否则「Header: question」。 */
+export function labelJoin(head: string, rest: string): string {
+  return /[\u2E80-\u9FFF\uFF00-\uFFEF]$/.test(head) ? `${head}：${rest}` : `${head}: ${rest}`
+}

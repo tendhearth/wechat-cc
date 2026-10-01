@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { phoneFont, fontGate } from './type'
+import { phoneFont, fontGate, plainText } from './type'
 
 describe('phoneFont', () => {
   it('中文界面用 Noto Serif SC,英文界面用 Source Serif 4', () => {
@@ -22,7 +22,27 @@ describe('phoneFont', () => {
     expect(phoneFont('display', 'zh-Hans')).toMatchObject({ fontSize: 36, lineHeight: Math.round(36 * 1.15) })
     expect(phoneFont('meta', 'en').letterSpacing).toBeCloseTo(14 * 0.04)
   })
+  it('用户内容若一个中文字都没有 ⇒ 拉丁衬线(弯引号 ’ “ ” 不落到中文全角字形)', () => {
+    expect(phoneFont('item', 'en', 'user', 'Plan next week’s trip').fontFamily).toBe('SourceSerif4-Regular')
+    expect(phoneFont('item', 'zh-Hans', 'user', 'It’s colder today.').fontFamily).toBe('SourceSerif4-Regular')
+    expect(phoneFont('item', 'en', 'user', '整理下周出差安排').fontFamily).toBe('NotoSerifSC-Regular')
+    expect(phoneFont('item', 'en', 'user', 'Let’s 改一下').fontFamily).toBe('NotoSerifSC-Regular')
+    // 没给文本(不知道内容)⇒ 照旧 Noto(安全:中文永不落到无衬线)
+    expect(phoneFont('item', 'en', 'user').fontFamily).toBe('NotoSerifSC-Regular')
+  })
+  it('中文界面文案里的拉丁弯引号(没有中文字)同样走拉丁衬线', () => {
+    expect(phoneFont('body', 'zh-Hans', 'ui', 'Tendhearth’s').fontFamily).toBe('SourceSerif4-Regular')
+    expect(phoneFont('body', 'zh-Hans', 'ui', '设置').fontFamily).toBe('NotoSerifSC-Regular')
+  })
   it('代码用等宽', () => { expect(phoneFont('code', 'en').fontFamily).toBe('mono') })
+})
+
+describe('plainText', () => {
+  it('字符串 / 数字 / 数组拼起来;有元素节点 ⇒ 不知道', () => {
+    expect(plainText('a')).toBe('a')
+    expect(plainText(['✓ ', 'Plan', 3, null, false])).toBe('✓ Plan3')
+    expect(plainText(['a', { type: 'View' }])).toBeUndefined()
+  })
 })
 
 describe('fontGate', () => {

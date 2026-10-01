@@ -20,7 +20,7 @@ export function Placeholder({ title }: { title: string }) {
         onAvatar={() => router.push('/settings')}
       />
       <View style={{ padding: space.xl, gap: space.m }}>
-        <Txt role="display" accessibilityRole="header">{title}</Txt>
+        <Txt role="title" accessibilityRole="header">{title}</Txt>
         <Txt role="bubble" tone="inkSoft">{t(lang, 'common.comingSoon')}</Txt>
       </View>
     </SafeAreaView>

@@ -1,5 +1,5 @@
 import { PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
-import type { Lang } from '../i18n'
+import { labelJoin, type Lang } from '../i18n'
 import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT } from './types'
 import {
   copy, IDS, CHAT_ID, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
@@ -126,7 +126,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         ...e.detail.permissions.map(p => ({ taskId: e.detail.matter.id, kind: 'permission' as const, id: p.id, summary: `${p.tool}: ${p.description}`.slice(0, 80) })),
         ...e.detail.questions.map(q => {
           const first = (q.id === QUESTION_ID ? tripQuestion(lastLang, q.createdAt) : q).questions[0]
-          return { taskId: e.detail.matter.id, kind: 'question' as const, id: q.id, summary: `${first?.header ?? ''}: ${first?.question ?? ''}`.slice(0, 80) }
+          return { taskId: e.detail.matter.id, kind: 'question' as const, id: q.id, summary: labelJoin(first?.header ?? '', first?.question ?? '').slice(0, 80) }
         }),
       ])
     }

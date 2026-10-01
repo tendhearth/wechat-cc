@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import { Image, Pressable, View } from 'react-native'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
+import { useBackendCtx } from '../state/BackendProvider'
 import { useConnection } from '../state/hooks'
-import { ccPresence, statusLine } from '../view/presence'
+import { ccPresence, statusLine, statusLineTicks } from '../view/presence'
 import { Dot } from './Dot'
 import { space } from './tokens'
 import { Txt } from './Txt'
@@ -11,15 +12,23 @@ import { Txt } from './Txt'
 const lit = require('../../assets/cc/lit.png')
 const unlit = require('../../assets/cc/unlit.png')
 
-// 左:返回 / 标题(不截断);右:「● 家里的电脑 · 在线」(传了 onConnection 就是 CC 的连接入口)+ 头像(进设置)。
+// 左:返回 / 标题(不截断);右:「● 家里的电脑 · 在线」(演示:「● 演示 · 没有连电脑」灰点)(传了 onConnection 就是 CC 的连接入口)+ 头像(进设置)。
 export function TopBar({ title, onBack, showConnection = true, onAvatar, onConnection, connectionTestID }: {
   title?: string; onBack?: () => void; showConnection?: boolean; onAvatar?: () => void; onConnection?: () => void; connectionTestID?: string
 }) {
   const lang = useLang()
   const conn = useConnection()
+  const demo = useBackendCtx().backend.mode === 'demo'
   const [now, setNow] = useState(() => Date.now())
-  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(id) }, [])
-  const s = statusLine(conn, now, lang)
+  // 只有「HH:MM 同步」会随时间变:离线且同步过才走 30 秒的钟,别的时候不空转
+  const ticks = showConnection && statusLineTicks(conn, { demo })
+  useEffect(() => {
+    if (!ticks) return
+    setNow(Date.now())
+    const id = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(id)
+  }, [ticks])
+  const s = statusLine(conn, now, lang, { demo })
   const status = (
     <View accessible testID="topbar-connection" accessibilityLabel={s.label} style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs + 2, flexShrink: 1 }}>
       <Dot kind={s.dot} size={8} />

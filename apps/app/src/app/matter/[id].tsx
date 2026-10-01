@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
 import { useBackendCtx } from '../../state/BackendProvider'
-import { useConnection, useQuery, useTopic } from '../../state/hooks'
+import { useQuery, useTopic } from '../../state/hooks'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
@@ -27,7 +27,6 @@ export default function Matter() {
   const { c } = useTheme()
   const lang = useLang()
   const router = useRouter()
-  const conn = useConnection()
   const { backend } = useBackendCtx()
   const params = useLocalSearchParams<{ id: string }>()
   const id = Array.isArray(params.id) ? params.id[0] : params.id
@@ -80,7 +79,7 @@ export default function Matter() {
       {header}
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
         <Txt role="small" tone="inkSoft">{t(lang, 'progress.breadcrumb')}</Txt>
-        <Txt role="display" content="user" accessibilityRole="header">{v.title}</Txt>
+        <Txt role="title" content="user" accessibilityRole="header">{v.title}</Txt>
         <View testID="progress-status"><StatusPill status={v.status} /></View>
 
         <Card style={{ gap: space.m }}>

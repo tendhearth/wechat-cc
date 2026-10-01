@@ -1,7 +1,7 @@
 import Constants from 'expo-constants'
 import { useRouter } from 'expo-router'
 import { useRef, useState } from 'react'
-import { Alert, Pressable, ScrollView, Text, View } from 'react-native'
+import { Alert, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import type { Lang } from '../i18n'
 import { t } from '../i18n'
@@ -11,9 +11,10 @@ import { useBackendCtx } from '../state/BackendProvider'
 import { useConnection } from '../state/hooks'
 import { useSession } from '../state/session'
 import { Button } from '../ui/Button'
-import { Card } from '../ui/Card'
-import { radius, space } from '../ui/tokens'
+import { ChoiceRow, LinkRow } from '../ui/Rows'
+import { space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
+import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 import { notificationNoticeKey } from '../view/notifications'
 import { unpairNotice } from '../view/unpair'
@@ -74,64 +75,54 @@ export default function Settings() {
       { text: t(lang, 'common.cancel'), style: 'cancel' },
       { text: t(lang, 'settings.unpair'), style: 'destructive', onPress: () => void unpair() },
     ])
-  const heading = (k: Parameters<typeof t>[1]) => <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 18 }}>{t(lang, k)}</Text>
+  // 分组靠留白与 meta 小标题,不套卡;进下一页的是带 › 的行,真正的动作才是按钮。
+  const heading = (k: Parameters<typeof t>[1]) => <Txt role="meta" tone="inkSoft" accessibilityRole="header" style={{ marginTop: space.l, marginBottom: space.xs }}>{t(lang, k)}</Txt>
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar title={t(lang, 'settings.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
-      <ScrollView contentContainerStyle={{ padding: space.xl, gap: space.l }}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xxl }}>
         {heading('settings.language')}
-        <View testID="settings-language" accessibilityRole="radiogroup" style={{ gap: space.xs }}>
-          {choices.map((o) => {
-            const on = langOverride === o.v
-            return (
-              <Pressable
-                key={o.id}
-                testID={`settings-language-${o.id}`}
-                accessibilityRole="radio"
-                accessibilityState={{ checked: on }}
-                accessibilityLabel={o.label}
-                onPress={() => setLangOverride(o.v)}
-                style={{ minHeight: 48, paddingHorizontal: space.l, borderRadius: radius.nav, justifyContent: 'center', backgroundColor: on ? c.rail : 'transparent' }}
-              >
-                <Text style={{ color: c.ink, fontSize: 16 }}>{o.label}</Text>
-              </Pressable>
-            )
-          })}
+        <View testID="settings-language" accessibilityRole="radiogroup" style={{ borderTopWidth: 1, borderTopColor: c.hair }}>
+          {choices.map((o) => (
+            <ChoiceRow key={o.id} testID={`settings-language-${o.id}`} label={o.label} on={langOverride === o.v} onPress={() => setLangOverride(o.v)} />
+          ))}
         </View>
         {!demo && conn.state !== 'revoked' ? (
           <>
             {heading('settings.notifications')}
-            <Card testID="settings-notifications" style={{ gap: space.m }}>
-              <Text testID={`settings-notif-${push.status}`} style={{ color: c.inkSoft, fontSize: 14, lineHeight: 21 }}>{t(lang, notificationNoticeKey(push.status))}</Text>
+            <View testID="settings-notifications" style={{ gap: space.m }}>
+              <Txt testID={`settings-notif-${push.status}`} role="meta" tone="inkSoft">{t(lang, notificationNoticeKey(push.status))}</Txt>
               {push.status === 'denied' ? (
                 <Button kind="secondary" testID="settings-notif-open" label={t(lang, 'settings.notifOpenSettings')} onPress={push.openSettings} />
               ) : null}
               {push.status === 'registered' ? (
                 <Button kind="secondary" testID="settings-notif-test" label={t(lang, 'settings.notifTest')} busy={testing} disabled={testing} onPress={sendTest} />
               ) : null}
-            </Card>
+            </View>
           </>
         ) : null}
         {demo || conn.state !== 'revoked' ? (
-          <Card style={{ gap: space.m }}>
-            <Button kind="secondary" testID="settings-connections" label={t(lang, 'settings.connections')} onPress={() => router.push('/connections')} />
-            <Button kind="secondary" testID="settings-sessions" label={t(lang, 'settings.sessions')} onPress={() => router.push('/sessions')} />
-          </Card>
+          <View style={{ marginTop: space.xl, borderTopWidth: 1, borderTopColor: c.hair }}>
+            <LinkRow testID="settings-connections" label={t(lang, 'settings.connections')} onPress={() => router.push('/connections')} />
+            <LinkRow testID="settings-sessions" label={t(lang, 'settings.sessions')} onPress={() => router.push('/sessions')} />
+          </View>
         ) : null}
         {!demo ? (
           <>
             {heading('settings.thisPhone')}
-            <Card style={{ gap: space.m }}>
-              <Button kind="secondary" testID="settings-devices" label={t(lang, 'settings.devices')} onPress={() => router.push('/devices')} />
+            <View style={{ borderTopWidth: 1, borderTopColor: c.hair }}>
+              <LinkRow testID="settings-devices" label={t(lang, 'settings.devices')} onPress={() => router.push('/devices')} />
+            </View>
+            <View style={{ marginTop: space.l }}>
               <Button kind="secondary" testID="settings-unpair" label={t(lang, 'settings.unpair')} busy={unpairing} onPress={confirmUnpair} />
-            </Card>
+            </View>
           </>
         ) : null}
         {demo ? (
           <>
             {heading('settings.demo')}
-            <Card style={{ gap: space.m }}>
-              <Text style={{ color: c.inkSoft, fontSize: 14, lineHeight: 21 }}>{t(lang, 'settings.demoBody')}</Text>
+            <View style={{ gap: space.m }}>
+              <Txt role="meta" tone="inkSoft">{t(lang, 'settings.demoBody')}</Txt>
               <Button kind="primary" testID="settings-pair-now" label={t(lang, 'settings.pairNow')} onPress={() => { resetDemo(); router.push('/pair') }} />
               <Button
                 kind="secondary"
@@ -139,13 +130,16 @@ export default function Settings() {
                 label={t(lang, 'settings.exitDemo')}
                 onPress={() => { resetDemo(); setSeenWelcome(false); router.dismissAll?.(); router.replace('/welcome') }}
               />
-            </Card>
+            </View>
           </>
         ) : null}
         {heading('settings.privacy')}
-        <Card testID="settings-privacy"><Text style={{ color: c.ink, fontSize: 15, lineHeight: 23 }}>{t(lang, 'settings.privacyBody')}</Text></Card>
+        <Txt testID="settings-privacy" role="bubble">{t(lang, 'settings.privacyBody')}</Txt>
         {heading('settings.about')}
-        <Text style={{ color: c.inkSoft, fontSize: 14 }}>{t(lang, 'settings.version')} {Constants.expoConfig?.version ?? '—'} · {t(lang, 'settings.copyright')}</Text>
+        <View style={{ borderTopWidth: 1, borderTopColor: c.hair }}>
+          <LinkRow testID="settings-font-licences" label={t(lang, 'settings.fontLicences')} onPress={() => router.push('/licences')} />
+        </View>
+        <Txt role="small" tone="inkSoft" style={{ marginTop: space.m }}>{t(lang, 'settings.version')} {Constants.expoConfig?.version ?? '—'} · {t(lang, 'settings.copyright')}</Txt>
       </ScrollView>
     </SafeAreaView>
   )
