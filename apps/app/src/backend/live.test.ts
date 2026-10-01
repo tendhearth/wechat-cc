@@ -423,4 +423,17 @@ describe('跟 CC 说 / 连接 / 原生会话', () => {
     expect(reqs.at(-1)!.path).toBe('/m/api/session?key=a%2Fb&cursor=x%20y')
     await expect(b.session('gone')).rejects.toMatchObject({ code: 'not_found' })
   })
+
+  it('接着做:continuePreview / continueSession 走 /m/api/session/continue(POST 幂等可重发);会话忙 ⇒ session_busy', async () => {
+    const PRE = { ok: true, state: 'ready', provider: 'claude', project: 'proj', mode: 'native_resume', matterId: null }
+    const { b, reqs } = harness({
+      'GET /m/api/session/continue': ok(PRE),
+      'POST /m/api/session/continue': ({ body }) => body.key === 'busy' ? ok({ ok: false, error: 'native_session_busy' }, 409) : ok({ ok: true, matterId: 'deadbeef', created: true }),
+    })
+    expect(await b.continuePreview('a/b')).toEqual({ state: 'ready', provider: 'claude', project: 'proj', mode: 'native_resume', matterId: null })
+    expect(reqs.at(-1)!.path).toBe('/m/api/session/continue?key=a%2Fb')
+    expect(await b.continueSession('k')).toEqual({ matterId: 'deadbeef' })
+    expect(reqs.at(-1)).toMatchObject({ key: 'POST /m/api/session/continue', body: { key: 'k' }, retry: true })
+    await expect(b.continueSession('busy')).rejects.toMatchObject({ code: 'session_busy' })
+  })
 })

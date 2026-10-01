@@ -27,6 +27,20 @@ describe('mapPhoneError(HTTP 状态 + 正文 → BackendCode)', () => {
   ])('%s %j ⇒ %s', (status, body, want) => {
     expect(mapPhoneError(status, body)).toBe(want)
   })
+
+  it.each([
+    [409, { ok: false, error: 'native_session_busy' }, 'session_busy'],
+    [409, { ok: false, error: 'native_folder_busy' }, 'folder_busy'],
+    [503, { ok: false, error: 'unavailable_provider' }, 'provider_missing'],
+    [400, { ok: false, error: 'invalid_path' }, 'folder_missing'],
+    [503, { ok: false, error: 'provider_quota_exhausted' }, 'quota'],
+    [409, { ok: false, error: 'native_history_changed' }, 'unknown'],
+    [409, { ok: false, error: 'native_history_empty' }, 'unknown'],
+    [409, { ok: false, error: 'native_session_already_managed' }, 'unknown'],
+    [400, { ok: false, error: 'invalid_text' }, 'invalid'],
+  ] as const)('接着做电脑会话的码(spec D11):%s %j ⇒ %s', (status, body, want) => {
+    expect(mapPhoneError(status, body)).toBe(want)
+  })
   it('daemon 没接推送(push_not_wired,503)⇒ unavailable', () => {
     expect(mapPhoneError(503, { ok: false, error: 'push_not_wired' })).toBe('unavailable')
   })

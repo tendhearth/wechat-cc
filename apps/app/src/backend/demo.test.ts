@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { Connections, NativeSessionPage, ChatPage, ChatJob, MatterTopic, Matter } from '@wechat-cc/protocol'
+import { Connections, NativeSessionPage, ChatPage, ChatJob, MatterTopic, Matter, MatterDetail, SessionContinue } from '@wechat-cc/protocol'
 import { DEMO_CHAT_REPLY_MS, makeDemoBackend } from './demo'
 
 describe('演示后端', () => {
@@ -249,4 +249,30 @@ describe('演示后端', () => {
       }
     } finally { vi.useRealTimers() }
   })
+  it('接着做(演示):进行中的那条 ⇒ busy;另两条 ready(恢复 / 新开);接成一件事带 nativeStart,再点回同一件;第一句后 nativeStart 消失;reset 清掉', async () => {
+    vi.useFakeTimers()
+    try {
+      const b = makeDemoBackend({ lang: 'zh-Hans' })
+      expect(SessionContinue.parse(await b.continuePreview('demo-claude-1'))).toMatchObject({ state: 'busy_session', provider: 'claude', matterId: null })
+      expect(await b.continuePreview('demo-claude-2')).toMatchObject({ state: 'ready', mode: 'native_resume', project: 'notes' })
+      expect(await b.continuePreview('demo-codex-1')).toMatchObject({ state: 'ready', mode: 'fresh_context', provider: 'codex' })
+      await expect(b.continueSession('demo-claude-1')).rejects.toMatchObject({ code: 'session_busy' })
+      await expect(b.continuePreview('nope')).rejects.toMatchObject({ code: 'not_found' })
+      const { matterId } = await b.continueSession('demo-claude-2')
+      expect((await b.continueSession('demo-claude-2')).matterId).toBe(matterId)
+      expect(await b.continuePreview('demo-claude-2')).toMatchObject({ state: 'managed', matterId })
+      expect((await b.session('demo-claude-2')).managed).toBe(true)
+      const d = MatterDetail.parse(await b.matter(matterId, 'zh-Hans'))
+      expect(d.nativeStart).toEqual({ mode: 'native_resume', providerId: 'claude' })
+      expect(d.task?.status).toBe('interrupted')
+      expect(d.events.map(e => e.kind)).toEqual(['user', 'text', 'user'])
+      expect((await b.matters('zh-Hans')).some(m => m.id === matterId)).toBe(true)
+      await b.say(matterId, '接着把首页改完', 'r-continue')
+      expect((await b.matter(matterId, 'zh-Hans')).nativeStart).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(2000)
+      b.reset()
+      expect(await b.continuePreview('demo-claude-2')).toMatchObject({ state: 'ready', matterId: null })
+    } finally { vi.useRealTimers() }
+  })
+
 })
