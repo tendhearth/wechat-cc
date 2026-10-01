@@ -42,7 +42,7 @@ import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterA
 import {mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileHomeFocus} from './mobile-home-focus'
 import type {MatterSayInput} from '../core/matters/service'
-import { PushPlatform, PHONE_SAY_MAX_CHARS, pushTokenValid, type PushPlatformT } from '@wechat-cc/protocol'
+import { pairCheckCode, PushPlatform, PHONE_SAY_MAX_CHARS, pushTokenValid, type PushPlatformT } from '@wechat-cc/protocol'
 import type { Presence } from '../core/companion-presence'
 import type { CatchRow } from '../core/journal-store'
 import type { PlanLogEntry } from '../core/companion-plan'
@@ -130,6 +130,12 @@ export interface SettingsPanelDeps {
   /** 远程隧道信息(启用时):relay wss + 本机 daemon id。手机页出门时用它
    *  经中继访问。缺省 ⇒ 手机页只能在同一 Wi-Fi 直连。 */
   remoteInfo?: () => { relay: string; id: string } | null
+  /** agent-config.json 的 relay_v2_url 现在非空吗(桌面「连接手机」用;只读,主人事项)。缺省 ⇒ 当没开通。 */
+  relayV2Configured?: () => boolean
+  /** 这次启动时 relay_v2_url 就已非空吗(开机快照,pipeline-deps 传入)。为 true 时运行中仍是老 id
+   *  = v2 身份坏了(relay-identity.json 读不出等),重启也换不来 v2 ⇒ 不重启,直接 relay_unavailable
+   *  (否则每个新进程都会再重启一次,成了重启循环)。缺省 ⇒ false(当开机时没配)。 */
+  relayV2AtBoot?: boolean
   /** 远程访问一键开关(2026-08-26):读/写 remote_tunnel + 触发重启。
    *  缺省 ⇒ 设置页不显示远程访问开关。 */
   remote?: {
@@ -175,6 +181,10 @@ export interface SettingsPanel {
   /** Mint a fresh token and return the tappable URL (starts the server on
    *  first use). Null when no LAN address / no owner is resolvable. */
   linkUrl(): Promise<string | null>
+  /** 桌面「连接手机」(spec 2026-10-01-tendhearth-pairing-ux §4.1):按需打开远程隧道;只在 v2 中继就绪时铸码。 */
+  phoneLink(opts: { enableRemote: boolean }): Promise<PhoneLinkResult>
+  /** 已配对设备(不含令牌),桌面轮询「已连上」用。 */
+  phoneDevices(): DeviceRow[]
   /** Route one request — shared by the LAN Bun.serve and the remote tunnel
    *  client, so /m/* and /set/* behave identically over both transports. */
   handleRequest(req: Request): Promise<Response>
@@ -208,10 +218,12 @@ import { makeDeviceCredentials, makeDeviceStore, type DeviceRow } from './device
 import { normalizeLang } from './phone-insight-llm'
 import { latestChanges } from './phone-changes'
 import { LAN_ONLY_OPS, LINK_ROUTES, PHONE_ROUTES, phoneRouteAllowed } from './phone-routes'
+import { phoneLinkState, psetUrl, type PhoneLinkResult } from './phone-link'
 
 export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   const now = deps.now ?? (() => Date.now())
   let server: Server | null = null
+  let v2RestartRequested = false
 
   // 令牌都在内部 API 的 token-registry 里(梳理第 6 步):链接令牌 origin 'link'、
   // 10 分钟;长期设备令牌(随身 CC 配对)origin 'device'、永不过期但可按台撤销。
@@ -558,11 +570,44 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       // 电脑旁但手机走流量是常态,LAN 链接打不开)。令牌放 # 锚点 ——
       // 锚点不上服务器,中继看不到;壳先探 LAN(在家秒开),不通走隧道。
       const remote = deps.remoteInfo?.()
-      if (remote) {
-        const base = remote.relay.replace(/^wss:/, 'https:').replace(/\/(tunnel|v2)\/phone$/, '')
-        return `${base}/pset/#id=${encodeURIComponent(remote.id)}&t=${token}&p=${encodeURIComponent('/set')}&lan=${ip}:${port}`
-      }
+      if (remote) return psetUrl(remote, token, `${ip}:${port}`)
       return `http://${ip}:${port}/set?t=${token}`
+    },
+
+    async phoneLink(opts) {
+      const remote = deps.remoteInfo?.() ?? null
+      const state = phoneLinkState({
+        owner: !!deps.ownerChatId(),
+        v2Configured: deps.relayV2Configured?.() ?? false,
+        tunnelOn: deps.remote?.isEnabled() ?? false,
+        bootRemoteId: remote?.id ?? null,
+      })
+      if (state === 'remote_off' && opts.enableRemote && deps.remote) {
+        // 桌面就是主人自己的电脑(裁决 4):点「连接手机」= 打开远程隧道。只写 remote_tunnel,不碰 relay_v2_url。
+        deps.remote.setEnabled(true)
+        deps.audit?.('remote_tunnel: → true — 桌面「连接手机」')
+        deps.remote.requestRestart()
+        return { ok: false, state: 'starting' }
+      }
+      if (state === 'relay_unavailable' && opts.enableRemote && deps.remote && !deps.relayV2AtBoot && !v2RestartRequested) {
+        // 开机时隧道已开、relay_v2_url 是之后才配的:运行中的还是老 id,隧道不会自己换。重启一次让它按现在的配置连 v2。
+        // 只在运行中的中继与配置不符、且开机时还没配 v2 时触发;同进程只重启一次,免得点一下重启一下。
+        // 开机时就配了 v2 还是老 id ⇒ 身份坏了,重启无用(新进程照样是老 id),不重启。
+        v2RestartRequested = true
+        deps.audit?.('relay_v2_url 已配置但运行中的隧道仍是老中继 — 桌面「连接手机」触发重启')
+        deps.remote.requestRestart()
+        return { ok: false, state: 'starting' }
+      }
+      if (state !== 'ready' || !remote) return { ok: false, state: state === 'ready' ? 'starting' : state }
+      // 先把服务器与局域网地址弄好再铸码:start 抛错时不能留下一枚活的 10 分钟 admin 链接令牌(也不该先作废微信那条 /set 链接)。
+      const ip = lanIp()
+      const lan = ip ? `${ip}:${(await panel.start()).port}` : null
+      const token = panel.issueToken()
+      return { ok: true, state: 'ready', url: psetUrl(remote, token, lan), expires_at: now() + SETTINGS_LINK_TTL_MS, check_code: pairCheckCode(remote.id) }
+    },
+
+    phoneDevices() {
+      return devices.list()
     },
   }
 
@@ -639,9 +684,14 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             return json(await panel.apply(body))
           }
           if (url.pathname === '/set/api/pair' && req.method === 'POST') {
+            // 单次配对(spec 2026-10-01-tendhearth-pairing-ux §3):只有链接令牌能换设备令牌(D1),
+            // 换成功立刻作废这枚链接令牌 —— 一个码只配一台;设备满了不消耗。
+            // 从 panelToken(t) 到这里没有 await:校验、铸设备令牌、作废链接令牌同一拍完成,两个并发请求不可能都配上。
+            if (caller.origin !== 'link') return json({ ok: false, error: 'link_only' }, 403)
             const paired = devices.pair()
             if (!paired) return json({ ok: false, error: 'device_limit' })
-            deps.log('SETTINGS', `phone device paired (id ${paired.id})`)
+            tokens.invalidateSession('link')
+            deps.log('SETTINGS', `phone device paired (id ${paired.id}); link token consumed`)
             return json({ ok: true, device_token: paired.token })
           }
           if (url.pathname === '/m') {

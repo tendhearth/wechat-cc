@@ -14,6 +14,9 @@ type Session = {
   dropStoredPairing(): void
   /** 用户解除配对:钥匙串(配对记录 + 推送密钥)与内存都清,回欢迎页。 */
   forgetPairing(): Promise<void>
+  /** 启动核验发现配对已失效(恢复回来的旧记录,D8):清钥匙串与内存,回欢迎页并说明。 */
+  forgetStale(): void
+  staleNotice: boolean
   seenWelcome: boolean
   markWelcomeSeen(): void
   setSeenWelcome(v: boolean): void
@@ -27,6 +30,7 @@ const SessionCtx = createContext<Session | null>(null)
 export function SessionProvider({ children, store, push }: { children: ReactNode; store: CredentialStore; push: { clear(): Promise<void> } }) {
   const [ready, setReady] = useState(false)
   const [pairing, setPairing] = useState<PairingRecord | null>(null)
+  const [staleNotice, setStale] = useState(false)
   const [seenWelcome, setSeen] = useState(false)
   const [langOverride, setLang] = useState<Lang | null>(null)
   useEffect(() => {
@@ -40,13 +44,15 @@ export function SessionProvider({ children, store, push }: { children: ReactNode
   }, [store])
   const value = useMemo<Session>(() => ({
     ready, pairing,
-    async setPaired(r) { await store.save(r); setPairing(r); setSeen(true) },
+    async setPaired(r) { await store.save(r); setPairing(r); setSeen(true); setStale(false) },
     dropStoredPairing() { quietly(clearStored(store, push), 'clear') },
     async forgetPairing() { await clearStored(store, push); setPairing(null); setSeen(false) },
-    seenWelcome, markWelcomeSeen: () => setSeen(true), setSeenWelcome: setSeen,
+    forgetStale() { quietly(clearStored(store, push), 'clear'); setPairing(null); setSeen(false); setStale(true) },
+    staleNotice,
+    seenWelcome, markWelcomeSeen: () => { setSeen(true); setStale(false) }, setSeenWelcome: setSeen,
     langOverride,
     setLangOverride(l) { setLang(l); quietly(store.savePrefs({ lang: l }), 'savePrefs') },
-  }), [ready, pairing, seenWelcome, langOverride, store, push])
+  }), [ready, pairing, staleNotice, seenWelcome, langOverride, store, push])
   return (
     <SessionCtx.Provider value={value}>
       <LangOverrideCtx.Provider value={langOverride}>{children}</LangOverrideCtx.Provider>

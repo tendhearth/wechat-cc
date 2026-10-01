@@ -20,7 +20,7 @@ export const EXPIRED_HTML = `<!doctype html><meta charset="utf-8"><meta name="vi
 body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--paper);color:var(--ink);font-family:var(--font)}
 .box{text-align:center;max-width:300px;padding:24px}.box img{width:72px;height:72px;opacity:.9}
 .hand{font-family:var(--hand);color:var(--hand-ink);font-size:17px;margin:12px 0 4px}.msg{color:var(--soft);font-size:14px;line-height:1.7;margin:0}
-</style><body><div class="box"><img src="/m/icon.png" alt="CC"><p class="hand">链接过期啦</p><p class="msg">回微信跟 CC 说「/set」,再要一个新链接</p></div></body>`
+</style><body><div class="box"><img src="/m/icon.png" alt="CC"><p class="hand">这个链接已经用过或过期了，回微信跟 CC 再要一个</p><p class="msg">在微信里跟 CC 说「/set」就行</p></div></body>`
 
 /** The settings page — fully self-contained (WeChat's browser, no CDN). */
 export function pageHtml(token: string): string {
@@ -145,7 +145,7 @@ ${TUNNEL_CLIENT_JS}
 // sapi:设置页的 JSON 封装,底下走共享 api()(在家直连,壳/出门走隧道)。
 async function sapi(path, body) {
   const r = await api(path, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : undefined)
-  if (r.status === 401) { document.body.innerHTML = '<div style="text-align:center;padding-top:40vh">⏳ 链接过期啦,回微信跟 CC 再要一个~</div>'; throw new Error("expired") }
+  if (r.status === 401) { document.body.innerHTML = '<div style="text-align:center;padding-top:40vh">这个链接已经用过或过期了，回微信跟 CC 再要一个</div>'; throw new Error("expired") }
   return r.json()
 }
 async function apply(op, extra, okMsg) {

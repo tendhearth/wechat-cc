@@ -88,6 +88,11 @@ export interface InternalApiIlinkDep {
  */
 export type PetTurnDep = () => Promise<import('../../core/pet-turn').PetTurnPayload>
 
+export interface PhoneConnectDep {
+  link(opts: { enableRemote: boolean }): Promise<import('../phone-link').PhoneLinkResult>
+  devices(): import('../device-store').DeviceRow[]
+}
+
 export interface InternalApiDeps {
   /** State directory; the token file is written under here. */
   stateDir: string
@@ -103,6 +108,8 @@ export interface InternalApiDeps {
   matters?: import('../../core/matters/service').MattersService
   /** 「CC 的连接」(spec 2026-10-01);main.ts 在 pipeline 接好后 setConnections。 */
   connections?: () => import('../connections').ConnectionsSnapshot
+  /** 桌面「连接手机」(plan 7a);main.ts 在 pipeline 接好后 setPhoneConnect。 */
+  phoneConnect?: PhoneConnectDep
   /**
    * Sandbox FS for memory_read / memory_write / memory_list (RFC 03 P1.B
    * B2). The same MemoryFS instance is shared with the legacy in-process
@@ -596,6 +603,7 @@ export interface InternalApi {
   setLlmHealth(h: import('../llm-health').LlmHealth, registered?: () => string[], endpoints?: () => Record<string, string>): void
   setSettingsLink(fn: () => Promise<string | null>): void
   setConnections(fn: () => import('../connections').ConnectionsSnapshot): void
+  setPhoneConnect(p: PhoneConnectDep): void
   setMemoryNightly(r: { runNow(): Promise<unknown> }): void
   /**
    * Late-bind the conversation controller (coordinator.setMode) after

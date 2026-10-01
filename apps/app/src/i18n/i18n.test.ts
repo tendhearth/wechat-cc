@@ -60,4 +60,21 @@ describe('文案表', () => {
     expect(en['settings.copyright']).toBe('© Nate Gu & Co LLC')
     expect(zh['settings.copyright']).toBe('© Nate Gu & Co LLC')
   })
+  it('桌面入口统一叫「连接手机」(plan 7a):旧叫法一个不留', () => {
+    for (const [k, v] of Object.entries(zh)) expect(v, k).not.toMatch(/手机上用|配对手机|出门也能用/)
+    for (const [k, v] of Object.entries(en)) expect(v, k).not.toMatch(/Use on phone|Pair phone|Use when away/)
+    expect(zh['pair.step2']).toBe('选择「连接手机」')
+    expect(en['pair.step2']).toBe('Choose “Connect phone”')
+    expect(zh['pair.errExpired']).toContain('只能用一次')
+  })
+  it('确认卡核对码(Task 9 fix round 1):和电脑上「核对码 XXX-XXX」对得上', () => {
+    expect(t('zh-Hans', 'pair.checkCode', { code: 'USZ-YAY' })).toBe('核对码 USZ-YAY')
+    expect(t('en', 'pair.checkCode', { code: 'USZ-YAY' })).toBe('Check code USZ-YAY')
+  })
+  it('欢迎页的两句(plan 7a)', () => {
+    expect(zh['welcome.howTo']).toBe('在电脑上点「连接手机」，用相机扫一下。')
+    expect(en['welcome.howTo']).toBe('On your computer, choose “Connect phone” and scan with your camera.')
+    expect(zh['welcome.stale']).toBe('这台手机和电脑的配对已经失效了。')
+    expect(en['welcome.stale']).toBe('This phone is no longer paired with your computer.')
+  })
 })

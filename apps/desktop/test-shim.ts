@@ -147,6 +147,10 @@ const __mockState: {
   presenceDown?: boolean
   // GET /v1/connections 的演示快照(「此刻」右上角的连接浮层)。demo.seed { connections: null } ⇒ 503。
   connections?: unknown
+  // 「连接手机」(plan 7a):POST /v1/phone/link 依次回 phone.link 的项、GET /v1/phone/devices 依次回 phone.devices 的项
+  // (都是最后一项一直回);没 seed ⇒ ready 码 + 空列表。phoneCalls 记 link 的请求正文(mock.phone-calls 读)。
+  phone?: { link?: unknown[]; devices?: unknown[][] }
+  phoneCalls: unknown[]
   // A2A mock state — seeded by `a2a.seed` test-control command.
   a2aAgents: A2AAgent[]
   a2aEvents: A2AEvent[]
@@ -187,7 +191,7 @@ const __mockState: {
   //                         本机未连接 (exercisable without a real bot).
   //                         Valid values: 'taken_over' | 'connected' | 'inconclusive'
   connectionProbeState: 'taken_over' | 'connected' | 'inconclusive'
-} = { chats: [], observations: [], milestones: [], sessions: [], daemonAlive: true, installProgress: null, installSimulationStep: 0, conversations: null, presence: { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }, a2aAgents: [], a2aEvents: [], doctorOverride: null, doctorErrorOnce: false, serviceInvokes: [], healthProbeResult: true, logCalls: [], providerInvokes: [], dialogueMessages: [], dialogueThreads: [], dialoguePassphrase: '1234', dialogueUnlocked: false, connectionProbeState: 'taken_over' }
+} = { chats: [], observations: [], milestones: [], sessions: [], daemonAlive: true, installProgress: null, installSimulationStep: 0, conversations: null, presence: { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }, a2aAgents: [], a2aEvents: [], doctorOverride: null, doctorErrorOnce: false, serviceInvokes: [], healthProbeResult: true, logCalls: [], providerInvokes: [], dialogueMessages: [], dialogueThreads: [], dialoguePassphrase: '1234', dialogueUnlocked: false, connectionProbeState: 'taken_over', phoneCalls: [] }
 
 // ─── A2A mock credentials ─────────────────────────────────────────────────────
 // The A2A routes (/v1/a2a/*) are served by the SAME Bun.serve instance as the
@@ -521,6 +525,9 @@ Bun.serve({
         //   doctor --json poll returns. Lets reconnect-diagnose tests drive
         //   specific diagnosis codes (1, 4, 5, 0) without depending on
         //   the implicit __mockState.chats / daemonAlive shape.
+        if (body.command === 'mock.phone-calls') {
+          return Response.json({ result: { calls: __mockState.phoneCalls } })
+        }
         if (body.command === 'mock.doctor') {
           __mockState.doctorOverride = (body.args as { report?: object } | undefined)?.report ?? null
           return Response.json({ result: { ok: true } })
@@ -595,11 +602,14 @@ Bun.serve({
             presence?: typeof __mockState.presence
             presenceDown?: boolean
             connections?: unknown
+            phone?: { link?: unknown[]; devices?: unknown[][] }
           } | undefined
           const chatId = args?.chat_id ?? 'test_chat'
           __mockState.daemonAlive = args?.daemonAlive ?? true
           __mockState.presenceDown = args?.presenceDown ?? false
           __mockState.connections = args && 'connections' in args ? args.connections : undefined
+          __mockState.phone = args?.phone ? { link: [...(args.phone.link ?? [])], devices: [...(args.phone.devices ?? [])] } : undefined
+          __mockState.phoneCalls = []
           __mockState.presence = args?.presence ?? { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }
           __mockState.chats = [{ id: chatId, name: 'Test User', last_active: Date.now() }]
           // Seeding = known state. The shim process outlives individual
@@ -1468,6 +1478,19 @@ Bun.serve({
     // and token=A2A_TOKEN, so api.js routes all fetch() here.
     // Companion presence (dry-run): the dashboard scene and the pet window both
     // poll this; serve the seeded state instead of 404 (= DOWN).
+    if (dryRun && url.pathname === '/v1/phone/link' && req.method === 'POST') {
+      let body: unknown = {}
+      try { body = await req.json() } catch { body = {} }
+      __mockState.phoneCalls.push(body)
+      const q = __mockState.phone?.link
+      if (q && q.length > 0) return Response.json(q.length > 1 ? q.shift() : q[0])
+      return Response.json({ ok: true, state: 'ready', url: `https://relay.tendhearth.com/pset/#id=r${'a'.repeat(26)}&t=t${'0'.repeat(32)}&p=%2Fset`, expires_at: Date.now() + 600_000, check_code: 'USZ-YAY' })   // USZ-YAY = pairCheckCode('r' + 26×a),protocol pair-check.test.ts 钉住
+    }
+    if (dryRun && url.pathname === '/v1/phone/devices' && req.method === 'GET') {
+      const q = __mockState.phone?.devices
+      if (q && q.length > 0) return Response.json({ ok: true, devices: q.length > 1 ? q.shift() : q[0] })
+      return Response.json({ ok: true, devices: [] })
+    }
     if (dryRun && url.pathname === '/v1/connections' && req.method === 'GET') {
       if (__mockState.connections === null) return Response.json({ error: 'unavailable' }, { status: 503 })
       if (__mockState.connections !== undefined) return Response.json(__mockState.connections)

@@ -434,6 +434,7 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       deps.settingsLink = fn
     },
     setConnections(fn) { deps.connections = fn },
+    setPhoneConnect(p) { deps.phoneConnect = p },
     setMemoryNightly(r) {
       deps.memoryNightly = r
     },

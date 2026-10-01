@@ -8,6 +8,7 @@
 import { RELAY_ID_RE, RELAY_SUBPROTOCOL } from '@wechat-cc/protocol'
 import PSET_HTML from '../../../relay/pset.html'
 import { count } from './metrics'
+import { wellKnown } from './well-known'
 
 export { Room } from './room'
 
@@ -29,6 +30,8 @@ export default {
         fcm: !!env.FCM_SERVICE_ACCOUNT,
       })
     }
+    const wk = wellKnown(url.pathname, env)
+    if (wk) return wk
     if (url.pathname === '/pset/' || url.pathname === '/pset') {
       return new Response(PSET_HTML, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } })
     }

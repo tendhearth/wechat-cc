@@ -1,3 +1,4 @@
+import { setPendingLink, systemPairLink } from '../net/system-link'
 import { pushOpenHref } from './route'
 import { targetFromParams } from './target'
 
@@ -10,14 +11,24 @@ const obj = (x: unknown): Record<string, unknown> | null => (typeof x === 'objec
  * 系统交给 app 的深链(安卓的点通知、任何别的 app 发的 tendhearth://…)在进路由之前洗一遍(Review Focus 5):
  * push-open ⇒ 用 URLSearchParams 解析(安卓 Kotlin 把空格编成 +),字段过 targetFromParams,重新拼成规范的 /push-open;
  * 洗完没有 taskId(伪造、畸形、解码失败)⇒ 直接回此刻,中转页一个请求都不发。
- * dev-push-key 只在开发构建可达。其余路径原样放行。
+ * dev-push-key 只在开发构建可达。配对链接 ⇒ 原链接进暂存格、去 /pair?from=link;这个构建不认的 …/pset ⇒ 此刻;
+ * 外面来的 /pair ⇒ 去掉查询串的 /pair。其余路径原样放行。
  */
-export function rewriteSystemPath(path: string, dev: boolean): string {
+let pairSeq = 0
+export function rewriteSystemPath(path: string, dev: boolean, stash: (raw: string) => void = setPendingLink): string {
+  // 配对链接(plan 7a):原链接进暂存格(令牌不进路由参数),去配对页;序号让 app 已在配对页时也能重新触发。
+  const pair = systemPairLink(path, dev)
+  if (pair !== null) { stash(pair); pairSeq += 1; return `/pair?from=link&n=${pairSeq}` }
   const rest = path.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/^\/+/, '')
   const q = rest.indexOf('?')
   // 路由比较忽略大小写与结尾斜杠(路由器匹配也宽松,别让 Dev-Push-Key/ 绕过)。
   const route = (q < 0 ? rest : rest.slice(0, q)).split('#')[0]!.replace(/\/+$/, '').toLowerCase()
   if (route === 'dev-push-key') return dev ? path : '/'
+  const last = route.slice(route.lastIndexOf('/') + 1)
+  // 长得像配对链接、但这个构建不认(发布构建的自定义 scheme / staging、别的主机)⇒ 回此刻:带令牌锚点的原链接不进路由匹配。
+  if (last === 'pset') return '/'
+  // 外面来的 /pair 深链一律去掉查询串:from=link / n 只能由上面的 /pset 改写带上,别人不能拿它把确认卡换成「没带全」。
+  if (last === 'pair') return '/pair'
   if (route !== 'push-open') return path
   const query = q < 0 ? '' : rest.slice(q + 1).split('#')[0]!
   let target

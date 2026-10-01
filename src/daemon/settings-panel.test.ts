@@ -151,12 +151,21 @@ describe('settings panel', () => {
   it('HTTP: everything without a valid token is 401; with token the API round-trips', async () => {
     const { port } = await panel.start(0)
     const base = `http://127.0.0.1:${port}`
-    expect((await fetch(`${base}/set`)).status).toBe(401)
+    const expired = await fetch(`${base}/set`)
+    expect(expired.status).toBe(401)
+    // 单次配对(plan 7a):用过的码也落到这页 —— 文案得说「用过或过期」,不只是「过期」。
+    const expiredHtml = await expired.text()
+    expect(expiredHtml).toContain('这个链接已经用过或过期了，回微信跟 CC 再要一个')
+    expect(expiredHtml).not.toContain('链接过期啦')
     expect((await fetch(`${base}/set/api/state?t=wrong`)).status).toBe(401)
     const t = panel.issueToken()
     const page = await fetch(`${base}/set?t=${t}`)
     expect(page.status).toBe(200)
-    expect(await page.text()).toContain('陪伴方式')
+    const pageHtml = await page.text()
+    expect(pageHtml).toContain('陪伴方式')
+    // /set 页里 API 回 401 时的提示(sapi):同一句。
+    expect(pageHtml).toContain('这个链接已经用过或过期了，回微信跟 CC 再要一个')
+    expect(pageHtml).not.toContain('链接过期啦')
     const st = await (await fetch(`${base}/set/api/state?t=${t}`)).json() as { name: string }
     expect(st.name).toBe('大人')
     const ap = await fetch(`${base}/set/api/apply?t=${t}`, {
@@ -236,7 +245,8 @@ describe('随身 CC (phone PWA + device pairing)', () => {
       const id = (p.state() as { remote: { devices: Array<{ id: string }> } }).remote.devices[0]!.id
       const call = (path: string, tok: string, body: unknown) =>
         fetch(`${base}${path}?t=${tok}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-      return { link, token: r.device_token, id, call }
+      // 链接令牌一次性(plan 7a):配对后给一枚新码,「链接令牌不许登记」那条要的是一枚还活着的链接令牌。
+      return { link: p.issueToken(), token: r.device_token, id, call }
     }
     const mkPush = (over: Record<string, unknown> = {}) => ({ register: vi.fn(() => true), test: vi.fn(), unregister: vi.fn(), forgetAll: vi.fn(), ...over })
 

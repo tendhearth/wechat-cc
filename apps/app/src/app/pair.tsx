@@ -1,13 +1,15 @@
 import { CameraView, useCameraPermissions } from 'expo-camera'
-import { Stack, useRouter } from 'expo-router'
+import { clearInitialURL, getLinkingURL } from 'expo-linking'
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useRef, useState } from 'react'
 import { BackHandler, Linking, Platform, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t, type MessageKey } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { parsePairLink, type ParsedLink } from '../net/link'
-import { pairWithLink, PairError } from '../net/pairing'
+import { pairWithLink, PairError, retirePrevious } from '../net/pairing'
 import { rnConnect } from '../net/rn-connect'
+import { takePendingLink } from '../net/system-link'
 import { useConnection } from '../state/hooks'
 import { useSession } from '../state/session'
 import { pairAndSave } from '../state/wiring'
@@ -20,7 +22,7 @@ import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 import { ccPresence } from '../view/presence'
-import { linkErrorKey, makeGate, pairErrorKey } from '../view/pair'
+import { confirmCard, intakeIncomingLink, linkErrorKey, makeGate, pairErrorKey } from '../view/pair'
 
 type Phase =
   | { k: 'intro' }
@@ -36,7 +38,7 @@ export default function Pair() {
   const lang = useLang()
   const router = useRouter()
   const conn = useConnection()
-  const { setPaired } = useSession()
+  const { setPaired, pairing } = useSession()
   const [phase, setPhase] = useState<Phase>({ k: 'intro' })
   const [pasted, setPasted] = useState('')
   const [perm, requestPerm] = useCameraPermissions()
@@ -49,6 +51,18 @@ export default function Pair() {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => gate.busy())
     return () => sub.remove()
   }, [gate])
+
+  // 系统相机扫码 / 通用链接进来(spec §6.3):只到确认卡(显示中继主机与核对码),永不自动配对;正在配对时不打断。
+  // 暂存格与原生缓存无论接不接都清掉(见 intakeIncomingLink),令牌只在确认卡的内存状态里,不进路由参数、不进日志。
+  const { from, n } = useLocalSearchParams<{ from?: string; n?: string }>()
+  const phaseRef = useRef(phase.k)
+  phaseRef.current = phase.k
+  useEffect(() => {
+    if (from !== 'link') return
+    const r = intakeIncomingLink(phaseRef.current, gate.busy(), { take: takePendingLink, readNative: getLinkingURL, clearNative: clearInitialURL, dev: __DEV__ })
+    if (r.k === 'confirm') setPhase({ k: 'confirm', link: r.link })
+    else if (r.k === 'error') setPhase({ k: 'error', key: r.key })
+  }, [from, n, gate])
 
   const accept = (raw: string) => {
     const r = parsePairLink(raw)
@@ -64,10 +78,13 @@ export default function Pair() {
     if (!gate.enter()) return
     setPhase({ k: 'working', link })
     try {
-      await pairAndSave(
+      const prev = pairing
+      const rec = await pairAndSave(
         () => pairWithLink(link, { connect: rnConnect, label: Platform.OS === 'ios' ? 'Tendhearth · iPhone' : 'Tendhearth · Android' }),
         setPaired,
       )
+      // 新配对已存好之后才退旧位(D5);不等它,结果不影响这次配对。只试一次,日志只记结果。
+      void retirePrevious(prev, rec, { connect: rnConnect }).then(r => { if (__DEV__) console.log(`[pair] retire previous: ${r}`) })
       if (!alive.current) return
       router.replace('/')
     } catch (e) {
@@ -101,6 +118,7 @@ export default function Pair() {
   }
 
   const steps = ['pair.step1', 'pair.step2', 'pair.step3'] as const
+  const card = phase.k === 'confirm' || phase.k === 'working' ? confirmCard(phase.link, pairing) : null
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       {/* 配对进行中关掉 iOS 侧滑返回(安卓返回键由 BackHandler 吞掉) */}
@@ -109,10 +127,15 @@ export default function Pair() {
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.xl, gap: space.l }}>
         <View style={{ alignItems: 'center' }}><CCFigure size={120} presence={ccPresence(conn)} /></View>
         <Txt role="title" accessibilityRole="header" style={{ textAlign: 'center' }}>{t(lang, 'pair.title')}</Txt>
-        {phase.k === 'confirm' || phase.k === 'working' ? (
+        {card && (phase.k === 'confirm' || phase.k === 'working') ? (
           <Card testID="pair-confirm" style={{ gap: space.m }}>
             <Txt role="item" accessibilityRole="header">{t(lang, 'pair.confirmTitle')}</Txt>
             <Txt role="bubble" tone="inkSoft">{t(lang, 'pair.confirmBody', { host: phase.link.relayHost })}</Txt>
+            {/* 核对码:和电脑上「连接手机」那里显示的对一下(共用中继上分清是不是自己的电脑);链接谁都能铸,正文不断定是「你的电脑」 */}
+            <Txt role="item" testID="pair-check-code">{t(lang, 'pair.checkCode', { code: card.checkCode })}</Txt>
+            <Txt role="bubble" tone="inkSoft" testID="pair-check-first">{t(lang, 'pair.checkFirst')}</Txt>
+            {/* 已连着另一台电脑:明说会换掉(I2);只是一句话,不上色 */}
+            {card.replaces ? <Txt role="bubble" testID="pair-replaces">{t(lang, 'pair.replaces')}</Txt> : null}
             <Button
               kind="primary"
               testID="pair-connect"

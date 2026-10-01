@@ -37,8 +37,9 @@ export async function pairWithLink(
     if (res.status === 401) throw new PairError('expired')
     const p = PHONE_API_SCHEMAS['POST /set/api/pair']!.safeParse(res.json())
     if (!p.success) throw new PairError('unknown')
-    const data = p.data as { ok: true; device_token: string } | { ok: false; error: 'device_limit' }
-    if (!data.ok) throw new PairError('device_limit')
+    const data = p.data as { ok: true; device_token: string } | { ok: false; error: 'device_limit' | 'link_only' }
+    // link_only(plan 7a D1)只在拿设备令牌来配时出现 —— 这里用的是链接令牌,真碰到就是没想到的情况。
+    if (!data.ok) throw new PairError(data.error === 'device_limit' ? 'device_limit' : 'unknown')
     deviceToken = data.device_token
   } catch (e) {
     throw asPairError(e, 'link')
@@ -67,5 +68,31 @@ export async function pairWithLink(
     throw asPairError(e, 'device')
   } finally {
     dev.close()
+  }
+}
+
+/**
+ * 重新配对后退掉旧设备位(spec §8、D5):用**旧令牌**连旧电脑(旧记录里的中继地址,换了电脑也是去旧的那台),
+ * POST unpair_self(daemon 只撤调用者自己,并注销那台的推送登记)。证明就是那次加密握手(只有持有旧令牌的人握得上),
+ * 令牌从不进正文。没有旧记录 / 同一枚令牌 / 同一台电脑上同一个设备位 ⇒ skipped(绝不去撤新位);
+ * 任何失败(旧令牌早已失效、电脑不在线、回 ok:false)⇒ failed —— 只试一次、从不抛,调用方不等它。连接用完即关。
+ */
+export async function retirePrevious(
+  prev: PairingRecord | null,
+  next: PairingRecord,
+  deps: { connect(url: string, token: string): ProtocolClient },
+): Promise<'retired' | 'skipped' | 'failed'> {
+  if (!prev || prev.deviceToken === next.deviceToken) return 'skipped'
+  if (prev.daemonId === next.daemonId && prev.deviceId === next.deviceId) return 'skipped'
+  let old: ProtocolClient | null = null
+  try {
+    old = deps.connect(prev.relayUrl, prev.deviceToken)
+    const res = await old.request({ method: 'POST', path: '/set/api/apply', body: JSON.stringify({ op: 'unpair_self' }), headers: JSON_HEADERS })
+    const body = res.status === 200 ? (res.json() as { ok?: unknown } | null) : null
+    return body !== null && typeof body === 'object' && body.ok === true ? 'retired' : 'failed'
+  } catch {
+    return 'failed'
+  } finally {
+    try { old?.close() } catch { /* 关不掉也不要紧 */ }
   }
 }

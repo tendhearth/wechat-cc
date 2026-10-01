@@ -33,6 +33,9 @@ describe('app.config.js', () => {
     expect(c.plugins).toContainEqual(['./plugins/with-ios-notify', { teamId: '9Y6JAPDP7A' }])
     expect(c.plugins).toContain('./plugins/with-android-push')
     expect(c.plugins).toContain('./plugins/with-ios-scene')
+    expect(c.plugins).toContainEqual(['./plugins/with-app-links', { dev: true }])
+    expect(c.android.intentFilters).toEqual(require('./with-app-links.js').androidIntentFilters(true))
+    expect(c.ios.associatedDomains).toBeUndefined()   // 关联域名只由插件写(与钥匙串组同一约定)
     expect(c.android.googleServicesFile).toBeUndefined()
     expect(c.extra.eas.build.experimental.ios.appExtensions).toEqual([{
       targetName: 'TendhearthNotify', bundleIdentifier: 'com.tendhearth.app.notify',
@@ -46,6 +49,8 @@ describe('app.config.js', () => {
     expect(c.extra.apnsEnv).toBe('production')
     expect(c.plugins).toContainEqual(['expo-notifications', expect.objectContaining({ mode: 'production' })])
     expect(c.android.googleServicesFile).toBe('/tmp/gs.json')
+    expect(c.plugins).toContainEqual(['./plugins/with-app-links', { dev: false }])
+    expect(c.android.intentFilters).toEqual(require('./with-app-links.js').androidIntentFilters(false))
   })
   it('本地有 apps/app/google-services.json(主人放的,不进 git)⇒ 用它;环境变量优先', () => {
     for (const k of envKeys) delete process.env[k]

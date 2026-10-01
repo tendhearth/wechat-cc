@@ -20,4 +20,6 @@ interface Env {
   FCM_SERVICE_ACCOUNT?: string
   FCM_HOST?: string
   FCM_TOKEN_URL?: string
+  /** 安卓 App Links 的签名证书 SHA-256(逗号分隔;Play 应用签名密钥 + 上传 / 内部分发密钥)。secret。 */
+  ANDROID_CERT_SHA256?: string
 }

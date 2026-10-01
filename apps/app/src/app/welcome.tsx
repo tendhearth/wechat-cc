@@ -18,15 +18,17 @@ export default function Welcome() {
   const lang = useLang()
   const router = useRouter()
   const conn = useConnection()
-  const { markWelcomeSeen } = useSession()
+  const { markWelcomeSeen, staleNotice } = useSession()
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: c.paper }}>
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: space.xl, gap: space.l }}>
         <CCFigure size={160} presence={ccPresence(conn)} />
         <Txt role="display" accessibilityRole="header" style={{ textAlign: 'center' }}>{t(lang, 'welcome.title')}</Txt>
         <Txt role="body" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'welcome.body')}</Txt>
+        {staleNotice ? <Txt testID="welcome-stale" role="body" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'welcome.stale')}</Txt> : null}
       </View>
       <View style={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.m }}>
+        <Txt testID="welcome-how-to" role="meta" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'welcome.howTo')}</Txt>
         <Button kind="primary" testID="welcome-pair" label={t(lang, 'welcome.pair')} onPress={() => router.push('/pair')} />
         <Button
           kind="secondary"

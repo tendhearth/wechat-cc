@@ -39,6 +39,7 @@ import type { AppTurn } from '../inbound/build'
 import { basename as pathBasename } from 'node:path'
 import { makeSettingsPanel } from '../settings-panel'
 import { buildConnections, cacheConnections } from '../connections'
+import { makeRemoteToggle, relayV2Configured } from '../remote-toggle'
 import { cacheSessions } from '../mobile-reads'
 import { maxDecryptedMtime } from '../companion/ingest/cycle'
 import { hostname } from 'node:os'
@@ -215,12 +216,15 @@ const CLI_ENTRY = join(REPO_ROOT, 'cli.ts')
 export interface BuildPipelineDepsResult {
   pipelineDeps: InboundPipelineDeps
   /** Mint a fresh settings-panel URL (10-min single-active token) — the
-   *  desktop 「手机上改设置」 QR entry (GET /v1/settings/link). */
+   *  微信 /set(进程内)与 GET /v1/settings/link(admin 档,plan 7a;selftest phone 用)。
+   *  桌面「连接手机」走 phoneConnect / POST /v1/phone/link。 */
   settingsPanelLink: () => Promise<string | null>
   /** 手机「跟 CC 说」的任务表(收下即回,converse = companionConverse);没接 matters ⇒ null。 */
   phoneChat: import('../phone-chat').PhoneChat | null
   /** 「CC 的连接」快照(缓存 10 s);手机与 admin 路由共用。 */
   connections: () => import('../connections').ConnectionsSnapshot
+  /** 桌面「连接手机」(plan 7a)。 */
+  phoneConnect: import('../internal-api/types').PhoneConnectDep
   /** 「一件事」读写面(有 matters store 才有)。 */
   mattersService: import('../../core/matters/service').MattersService | null
   /**
@@ -619,6 +623,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     ...(phoneSessions ? { sessions: phoneSessions } : {}),
     stateDir,
     ownerChatId,
+    relayV2Configured: () => relayV2Configured(stateDir),
+    relayV2AtBoot: typeof remoteCfg.relay_v2_url === 'string' && remoteCfg.relay_v2_url.trim() !== '',
     // 手机洞察(批准说明 + 进展概括):explainer / summarizer 各建一个实例(内含缓存),不是每请求一建。
     ...(mattersService ? (() => {
       const cheap = () => wrapCheapEvalWithAuthFailCheck(boot.registry.getCheapEval(), (tag, line) => log(tag, line)) ?? null
@@ -647,16 +653,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     ...(phonePush ? { push: phonePush } : {}),
     // 「默认大脑」改完自己重启(与远程开关同一条路)。
     ...(opts.requestRestart ? { requestRestart: (reason: string) => opts.requestRestart!(reason) } : {}),
-    ...(opts.requestRestart ? {
-      remote: {
-        isEnabled: () => (loadAgentConfig(stateDir) as { remote_tunnel?: boolean }).remote_tunnel === true,
-        setEnabled: (on: boolean) => {
-          const cur = loadAgentConfig(stateDir)
-          saveAgentConfig(stateDir, { ...cur, remote_tunnel: on } as typeof cur)
-        },
-        requestRestart: () => opts.requestRestart!('remote-toggle'),
-      },
-    } : {}),
+    ...(opts.requestRestart ? { remote: makeRemoteToggle(stateDir, () => opts.requestRestart!('remote-toggle')) } : {}),
     // 随身 CC 数据面 — facts/graph 来自 boot.knowledge(缺则手机页对应区留白)
     ...(boot.knowledge?.facts ? {
       todos: {
@@ -1209,5 +1206,5 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     })
   }
 
-  return { pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections }
+  return { pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
 }

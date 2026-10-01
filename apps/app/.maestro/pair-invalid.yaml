@@ -1,4 +1,4 @@
-# 配对页(不联网):欢迎 → 配对 → 粘贴一个不是配对码的链接 → 看到对应提示;再贴局域网链接 → 「打开出门也能用」提示。
+# 配对页(不联网):欢迎 → 配对 → 粘贴一个不是配对码的链接 → 看到对应提示;再贴局域网链接 → 「扫新出来的码」提示。
 appId: com.tendhearth.app
 ---
 - runFlow: subflows/_start.yaml
@@ -27,5 +27,5 @@ appId: com.tendhearth.app
 - tapOn:
     id: pair-use-pasted
 - extendedWaitUntil:
-    visible: ".*出门也能用.*|.*Use when away.*"
+    visible: ".*同一 Wi-Fi 下用的旧链接.*|.*older Wi-Fi-only link.*"
     timeout: 5000

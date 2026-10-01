@@ -111,10 +111,16 @@ export function updateFooterStatus(daemon) {
 // a control panel that says "Daemon offline · press restart" — they came
 // from the wizard precisely to get the daemon UP. Disabled state with a
 // helper title gives them a clear reason instead of a dead-end click.
+//
+// 例外(plan 7a M1):引导页的「连接手机」块正在说「CC 会重启一下」时,daemon 掉线
+// 是那次自动重启,十来秒就回来 —— 不挡按钮,也不挂「先点安装并启动」这种误导的提示。
+// 块的状态由 phone-connect.js mountOnboardPhone 写在 #onboard-phone 的 data-phase 上。
 export function refreshEnterDashboardButton(report) {
   const btn = document.getElementById("enter-dashboard")
   if (!btn) return
-  const alive = !!report?.checks?.daemon?.alive
+  const phone = document.getElementById("onboard-phone")
+  const restarting = !!phone && !phone.hidden && phone.dataset.phase === "preparing"
+  const alive = !!report?.checks?.daemon?.alive || restarting
   btn.disabled = !alive
   if (alive) btn.removeAttribute("title")
   else btn.title = "daemon 还没启动 · 先点「安装并启动」"

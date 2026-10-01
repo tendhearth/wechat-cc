@@ -1,5 +1,5 @@
 import type { ProtocolSocket } from '@wechat-cc/protocol'
-import type { Backend, Unsubscribe } from '../backend/types'
+import type { Backend, Connection, Unsubscribe } from '../backend/types'
 import { makeDemoBackend } from '../backend/demo'
 import { makeLiveBackend } from '../backend/live'
 import type { Lang } from '../i18n'
@@ -24,16 +24,50 @@ export function backendFor(
 
 /**
  * 重连(epoch 前进)⇒ store 全部查询重新验证(只重拉读,草稿与提交从不自动发);撤销 ⇒ onRevoked(只一次)。
- * 回调里只做这两件:revalidateAll 触发的读由 LiveBackend 推迟到钩子之外,onRevoked 只碰钥匙串。
+ * 这次启动还没连上过就被拒(恢复回来的旧配对,D8)⇒ onStale(给了的话)。回调里只碰钥匙串 / 会话。
  */
-export function watchConnection(backend: Backend, store: { revalidateAll(): void }, onRevoked: () => void): Unsubscribe {
+export function watchConnection(backend: Backend, store: { revalidateAll(): void }, onRevoked: () => void, onStale?: () => void): Unsubscribe {
   let prev = backend.connection()
   let told = false
+  let synced = prev.lastSyncedAt !== null // 「连上过」= 这次启动成功同步过(令牌被认过);online 只是明文 hello,不算
   return backend.onConnection(c => {
     if (shouldRevalidate(prev, c)) store.revalidateAll()
-    if (c.state === 'revoked' && !told) { told = true; onRevoked() }
+    if (c.lastSyncedAt !== null) synced = true
+    if (c.state === 'revoked' && !told) {
+      told = true
+      if (!synced && onStale) onStale()
+      else onRevoked()
+    }
     prev = c
   })
+}
+
+/** 启动核验(spec §7、D8):「这台」的 id 必须就是记录里的 deviceId。对不上 / 没有「这台」⇒ stale;读失败 ⇒ unknown(不下结论)。 */
+export async function verifyLaunch(backend: Pick<Backend, 'devices'>, deviceId: string): Promise<'ok' | 'stale' | 'unknown'> {
+  let list
+  try { list = await backend.devices() } catch { return 'unknown' }
+  const me = list.find(d => d.current)
+  return me && me.id === deviceId ? 'ok' : 'stale'
+}
+
+/** 这次启动第一次 online 时核对一次;对不上 ⇒ onStale。电脑不在线不核对(分不清关机还是失效)。取消订阅后在飞的结果作废。 */
+export function watchLaunch(backend: Pick<Backend, 'connection' | 'onConnection' | 'devices'>, deviceId: string, onStale: () => void): Unsubscribe {
+  let checked = false
+  let cancelled = false
+  let inflight = false
+  const check = (c: Connection) => {
+    if (checked || inflight || c.state !== 'online') return
+    inflight = true
+    void verifyLaunch(backend, deviceId).then(v => {
+      inflight = false
+      if (cancelled) return
+      if (v !== 'unknown') checked = true // 读不出来(含令牌还没被认)⇒ 下次 online / 同步再核,什么也不清
+      if (v === 'stale') onStale()
+    })
+  }
+  check(backend.connection())
+  const off = backend.onConnection(check)
+  return () => { cancelled = true; off() }
 }
 
 /**

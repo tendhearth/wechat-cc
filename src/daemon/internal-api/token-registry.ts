@@ -214,6 +214,9 @@ export function makeTokenRegistry(
           'GET /v1/matters','GET /v1/matter','GET /v1/matter/owner-chat','POST /v1/matter/say',
           // 「CC 的连接」:桌面「此刻」右上角的连接浮层(2026-10-01)。
           'GET /v1/connections',
+          // 桌面「连接手机」(plan 7a):设置抽屉弹层与引导页的码、轮询「已连上」。
+          'POST /v1/phone/link',
+          'GET /v1/phone/devices',
           'GET /v1/workbench/models',
           'GET /v1/workbench/sessions','GET /v1/workbench/session','GET /v1/workbench/task',
           'POST /v1/workbench/project',
@@ -252,6 +255,9 @@ export function makeTokenRegistry(
           'POST /v1/self-change/notice',
           'POST /v1/self-change/ask',
           'GET /v1/self-change/decision',
+          // `wechat-cc selftest phone` 用这份 operator 凭据取配对链接 —— 路由 plan 7a 起是 admin 档
+          // (铸 admin 链接令牌),共享的 trusted 文件 token 够不着了。桌面不再调它(改走 /v1/phone/link)。
+          'GET /v1/settings/link',
         ]),
       })
     },

@@ -352,6 +352,8 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'POST /set/api/pair': z.union([
     z.object({ ok: z.literal(true), device_token: z.string() }),
     z.object({ ok: z.literal(false), error: z.literal('device_limit') }),
+    // 单次配对(plan 7a D1):只有链接令牌能配对,设备令牌来配 ⇒ 403 link_only。
+    z.object({ ok: z.literal(false), error: z.literal('link_only') }),
   ]),
   'GET /m/api/state': z.union([PhoneStateSuccess, PhoneErrorResponse]),
   'GET /m/api/art/blink': z.object({ ok: z.literal(true), mime: z.literal('image/png'), half: z.string(), closed: z.string() }),

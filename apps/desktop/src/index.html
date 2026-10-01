@@ -184,9 +184,9 @@
                   <button class="toggle" id="screen-autostart-toggle" data-toggle aria-pressed="false"></button>
                 </div>
 
-                <div class="toggle-row warn-edge">
+                <div class="toggle-row">
                   <div>
-                    <div class="lab">自动同意工具调用<span style="color: var(--green-ink); font-size: 10.5px; margin-left: 6px; font-weight: 500;">推荐</span></div>
+                    <div class="lab">自动同意工具调用<span style="color: var(--th-ink-soft); font-size: 10.5px; margin-left: 6px; font-weight: 500;">推荐</span></div>
                     <div class="sub">关闭后，每次工具调用都需要在微信里回 y / n（10 分钟超时即拒绝）。日常会被刷屏，建议保留勾选。</div>
                   </div>
                   <button class="toggle on" id="screen-unattended-toggle" data-toggle aria-pressed="true"></button>
@@ -219,6 +219,14 @@
               <button id="post-stop-kill" class="force-kill">强制 kill 进程</button>
             </div>
 
+            <div id="onboard-phone" class="onboard-phone" hidden>
+              <h3 id="onboard-phone-title"></h3>
+              <div id="onboard-phone-qr" class="qr-svg"></div>
+              <p id="onboard-phone-status" class="qr-note"></p>
+              <p id="onboard-phone-check" class="qr-check" hidden></p>
+              <button id="onboard-phone-renew" class="btn ghost" type="button" hidden></button>
+              <p id="onboard-phone-later" class="qr-sub"></p>
+            </div>
             <div class="wz-foot" style="border:0; padding: 4px 0 0;">
               <div class="left"></div>
               <div class="right">
@@ -294,7 +302,7 @@
               <p id="dash-health-history-detail"></p>
             </details>
             <div id="brain-health" class="brain-health" hidden></div>
-            <button id="open-phone-settings" class="phone-settings-btn" type="button" title="生成二维码,手机扫码打开设置页(10 分钟内有效)"><span aria-hidden="true">↗</span> 手机扫码改设置</button>
+            <button id="open-phone-settings" class="phone-settings-btn" type="button" title="用手机扫码连上这台电脑（码 10 分钟内有效，只能用一次）">连接手机</button>
             <div class="moment-subhead" id="accounts-subhead">
               <h2>子用户</h2>
               <span class="meta" id="accounts-meta">—</span>

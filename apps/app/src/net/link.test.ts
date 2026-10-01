@@ -24,7 +24,7 @@ describe('parsePairLink', () => {
   it('百分号编码的值会解码', () => {
     expect(parsePairLink(v2.replace(`id=${RID}`, `id=${encodeURIComponent(RID).replace('a', '%61')}`))).toMatchObject({ ok: true, link: { daemonId: RID } })
   })
-  it('电脑没开「出门也能用」时的局域网链接 ⇒ remote_off', () => {
+  it('只能在同一 Wi-Fi 下用的老链接 ⇒ remote_off', () => {
     expect(parsePairLink(`http://192.168.1.5:51234/set?t=${TOK}`)).toEqual({ ok: false, error: 'remote_off' })
   })
   it('不是配对链接 ⇒ not_a_link(随便的文字、别的网址、明文 http 的 pset)', () => {

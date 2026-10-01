@@ -58,3 +58,33 @@ describe('makeSeenOnce —— 本次运行里同一个键只算一次,有上限'
     expect(s.first('a')).toBe(true)
   })
 })
+
+describe('rewriteSystemPath —— 配对链接(plan 7a)', () => {
+  const FRAG = `#id=r${'a'.repeat(26)}&t=t${'0'.repeat(32)}&p=%2Fset`
+  it('通用链接 ⇒ 暂存原链接,去配对页(路由参数里没有令牌);每次序号不同', () => {
+    const got: string[] = []
+    const a = rewriteSystemPath(`https://relay.tendhearth.com/pset/${FRAG}`, false, r => got.push(r))
+    const b = rewriteSystemPath(`https://relay.tendhearth.com/pset/${FRAG}`, false, r => got.push(r))
+    expect(a).toMatch(/^\/pair\?from=link&n=\d+$/)
+    expect(b).not.toBe(a)
+    expect(a).not.toContain('t0000')
+    expect(got).toEqual([`https://relay.tendhearth.com/pset/${FRAG}`, `https://relay.tendhearth.com/pset/${FRAG}`])
+  })
+  it('发布构建不认 staging / 自定义 scheme 的配对链接 ⇒ 回此刻(带锚点的原链接不进路由匹配)', () => {
+    const got: string[] = []
+    expect(rewriteSystemPath(`tendhearth://relay.tendhearth.com/pset/${FRAG}`, false, r => got.push(r))).toBe('/')
+    expect(rewriteSystemPath(`https://relay-staging.tendhearth.com/pset/${FRAG}`, false, r => got.push(r))).toBe('/')
+    expect(rewriteSystemPath(`https://evil.example/pset/${FRAG}`, true, r => got.push(r))).toBe('/')
+    expect(rewriteSystemPath(`tendhearth://pset/${FRAG}`, true, r => got.push(r))).toBe('/')
+    expect(rewriteSystemPath(`/PSET/${FRAG}`, false, r => got.push(r))).toBe('/')
+    expect(got).toEqual([])
+  })
+  it('外面来的 /pair 深链去掉 from / n(只有 /pset 改写自己能带上;别人不能把确认卡换成「没带全」)', () => {
+    const got: string[] = []
+    expect(rewriteSystemPath('tendhearth://pair?from=link&n=99', true, r => got.push(r))).toBe('/pair')
+    expect(rewriteSystemPath('/pair?from=link&n=1', false, r => got.push(r))).toBe('/pair')
+    expect(rewriteSystemPath('tendhearth://Pair/?n=3&from=link#x', false, r => got.push(r))).toBe('/pair')
+    expect(rewriteSystemPath('tendhearth://pair', false, r => got.push(r))).toBe('/pair')
+    expect(got).toEqual([])
+  })
+})

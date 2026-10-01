@@ -1023,6 +1023,9 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("POST", "/v1/matter/say")
             // 「CC 的连接」(2026-10-01):此刻右上角的连接浮层,只读。
             | ("GET", "/v1/connections")
+            // 「连接手机」(plan 7a):出码(必要时打开远程隧道)与轮询已配对设备。
+            | ("POST", "/v1/phone/link")
+            | ("GET", "/v1/phone/devices")
             | ("POST", "/v1/workbench/input")
             | ("POST", "/v1/workbench/answer")
             | ("POST", "/v1/workbench/withdraw-input")
@@ -1502,6 +1505,7 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/answer"),
             ("GET", "/v1/workbench?q=..&archived=all"),
             ("GET", "/v1/connections"),
+            ("POST", "/v1/phone/link"), ("GET", "/v1/phone/devices"),
         ] {
             assert!(workbench_request_allowed(method, path), "expected {method} {path} to be allowed");
         }
@@ -1558,6 +1562,7 @@ mod workbench_proxy_tests {
             ("DELETE", "/v1/workbench/task?id=A1B2C3D4"),
             ("GET", "/v1/customer-review"),
             ("POST", "/v1/connections"),
+            ("GET", "/v1/phone/link"), ("POST", "/v1/phone/devices"), ("POST", "/v1/phone/link/extra"), ("GET", "/v1/phone/../connections"),
         ] {
             assert!(!workbench_request_allowed(method, path), "expected {method} {path} to be refused");
         }

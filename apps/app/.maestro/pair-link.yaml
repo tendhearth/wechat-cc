@@ -1,0 +1,31 @@
+# 系统链接进配对页(plan 7a,开发构建;D7 的自定义 scheme 走与通用链接同一条 JS 链路):
+# 打开配对链接 ⇒ 确认卡出现、显示中继主机、核对码与「一致再连」;没有自动配对(「连接」按钮还在,没进「正在连接」)。
+# 再开一个锚点丢了的链接 ⇒ 「没带全」提示。真机的 https 通用链接见计划 Task 12。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- openLink: "tendhearth://relay.tendhearth.com/pset/#id=raaaaaaaaaaaaaaaaaaaaaaaaaa&t=t00000000000000000000000000000000&p=%2Fset"
+- runFlow: subflows/_open-link-guard.yaml
+- extendedWaitUntil:
+    visible:
+      id: pair-confirm
+    timeout: 10000
+- assertVisible: ".*relay\\.tendhearth\\.com.*"
+# 核对码:USZ-YAY = pairCheckCode('r' + 26×a),与桌面「核对码 USZ-YAY」同一个(packages/protocol pair-check.test.ts 钉住)
+- assertVisible:
+    id: pair-check-code
+- assertVisible: ".*核对码 USZ-YAY.*|.*Check code USZ-YAY.*"
+# 正文不断定「你的电脑」,改成先核对(7a 终修 I2);这台手机还没配过 ⇒ 没有「这会换掉」那一句
+- assertVisible:
+    id: pair-check-first
+- assertVisible: ".*核对码和你电脑上显示的一致再连.*|.*Only connect if the check code matches.*"
+- assertNotVisible:
+    id: pair-replaces
+- assertVisible:
+    id: pair-connect
+- assertNotVisible: ".*正在连接.*|.*Connecting….*"
+- openLink: "tendhearth://relay.tendhearth.com/pset/"
+- runFlow: subflows/_open-link-guard.yaml
+- extendedWaitUntil:
+    visible: ".*没带全.*|.*arrived incomplete.*"
+    timeout: 10000

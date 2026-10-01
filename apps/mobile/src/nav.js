@@ -5,6 +5,7 @@ document.getElementById("pairbtn").addEventListener("click", function() {
     if (r.ok && r.device_token) {
       try { localStorage.setItem("deviceToken", r.device_token) } catch (e) {}
       T = r.device_token; isDevice = true
+      resetTunnel()
       document.getElementById("pairbar").hidden = true
       toast("配好了,这台手机以后点链接不会再过期")
       // 壳页优先读本域的 deviceToken:重开一次,隧道就用长期令牌重新握手(这条流还绑着 10 分钟短令牌)。

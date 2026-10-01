@@ -9,7 +9,7 @@ const PSET_RE = /^https:\/\/([a-z0-9.-]+(?::\d{1,5})?)\/pset\/?#(.*)$/i
 const LAN_ONLY_RE = /^http:\/\/[^/\s]+\/set\?(?:.*&)?t=/i
 
 /**
- * 解析桌面「手机上用」二维码里的链接(settings-panel.ts linkUrl() 的两种形状)。
+ * 解析桌面「连接手机」二维码里的链接(settings-panel.ts linkUrl() 的两种形状)。
  * 不用 URL 类:RN 的 URL 实现不全(hash / searchParams 在部分版本上直接抛)。
  * 中继规则与 selftest-phone.ts classifyLink 相同:r… ⇒ /v2/phone,t… ⇒ /tunnel/phone。
  * lan= 只记下,v1 不用(计划裁决 1)。

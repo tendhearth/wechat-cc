@@ -63,7 +63,7 @@ function viaTunnel() {
       if (f.error === "auth_failed") {
         // 本域存的设备令牌不被认了(解除配对 / 换了电脑):丢掉它,用链接里的短令牌重来一次。
         if (T !== LINK_T && LINK_T) { try { localStorage.removeItem("deviceToken") } catch (e) {}; T = LINK_T; viaTunnel(); return }
-        msg.textContent = "链接过期啦,回微信跟 CC 再要一个"; return
+        msg.textContent = "这个链接已经用过或过期了，回微信跟 CC 再要一个"; return
       }
       msg.textContent = f.error === "daemon_offline" ? "家里的 CC 不在线 — 电脑开着吗?" : ("连接出错:" + f.error); return
     }
@@ -82,7 +82,7 @@ function viaTunnel() {
     var r = JSON.parse(new TextDecoder().decode(pt))
     clearTimeout(timer)
     ws.close()
-    if (r.status === 401) { msg.textContent = "链接过期啦,回微信跟 CC 再要一个" ; return }
+    if (r.status === 401) { msg.textContent = "这个链接已经用过或过期了，回微信跟 CC 再要一个" ; return }
     if (r.status !== 200) { msg.textContent = "打开失败(" + r.status + "),稍后再试" ; return }
     var shell = { relay: relay, id: ID }
     var html = r.body.replace(/<script>/, "<scr" + "ipt>window.__CC_SHELL__=" + JSON.stringify(shell) + ";</scr" + "ipt><scr" + "ipt>")
