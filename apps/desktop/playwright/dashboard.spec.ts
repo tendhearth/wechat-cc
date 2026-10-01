@@ -577,7 +577,20 @@ test('此刻 home → chat via the CC, draft survives a workbench round-trip, on
 
 test('CC goes dark when the daemon cannot be reached', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat', presenceDown: true })
+  const down = page.waitForResponse(r => r.url().includes('/v1/companion/presence') && r.status() === 503, { timeout: 25_000 })
   await bootIntoDashboard(page, shimUrl)
-  await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-cc', 'away', { timeout: 25_000 })
+  await down
+  // index.html 默认就是 away,所以先证明 poller 真的跑过:状态行红点 + 不在身边由同一信号写入。
+  await expect(page.locator('#dash-rail-text')).toHaveText('CC 不在身边', { timeout: 10_000 })
+  await expect(page.locator('#dash-rail-dot')).toHaveClass(/bad/)
+  await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-cc', 'away')
   await expect(page.locator('.now-cc-light')).toBeHidden()
+})
+
+test('CC is lit and the status line is green when presence answers', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat' })
+  await bootIntoDashboard(page, shimUrl)
+  await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-cc', 'here', { timeout: 25_000 })
+  await expect(page.locator('.now-cc-light')).toBeVisible()
+  await expect(page.locator('#dash-rail-dot')).toHaveClass(/ok/, { timeout: 15_000 })
 })

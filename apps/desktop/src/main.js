@@ -23,7 +23,6 @@ import { createConversationsPoller } from "./conversations-poller.js"
 import {
   renderDoctorWizard,
   refreshEnterDashboardButton,
-  updateFooterStatus,
   showStep as wizardShowStep,
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
@@ -38,7 +37,7 @@ import { startAppUpdateChecks } from "./modules/app-update.js"
 import { initConversePage, subscribeConverse, setConverseMode } from "./modules/converse.js"
 import { mountNowPage } from "./modules/now-page.js"
 import { mountNowConnections } from "./modules/now-connections.js"
-import { latestCCLine } from "./modules/now-home.js"
+import { latestCCLine, nowStatusLine } from "./modules/now-home.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
 import { markJournalSeen } from "./modules/journal.js"
 import { initPluginsTab, refresh as refreshPlugins } from "./modules/plugins.js"
@@ -149,6 +148,15 @@ const nowPage = nowRoot ? mountNowPage({
   },
 }) : null
 if (nowPage) setConverseMode('home')
+// 右上角状态行 = doctor(daemon 跑没跑)∧ presence(够不够得着),与 CC 明暗同一信号。
+/** @type {{alive:boolean}|null} */ let lastDaemon = null
+/** @type {{presence:string}|null} */ let lastPresence = null
+function renderRail() {
+  const line = nowStatusLine(lastDaemon, lastPresence)
+  const dot = document.getElementById('dash-rail-dot'); if (dot) dot.className = `dot ${line.cls}`
+  const text = document.getElementById('dash-rail-text'); if (text) text.textContent = line.text
+}
+presencePoller.subscribe(p => { lastPresence = p; renderRail() })
 // 右上角状态行打开的「CC 的连接」(GET /v1/connections,admin,走原生宿主的 operator 凭据)。
 // 只在浮层打开时读:打开时立刻读一次,开着时每 30 秒再读。
 const nowConnectionsHost = document.getElementById('now-connections')
@@ -406,7 +414,7 @@ function showStep(name) {
 function wireDoctorSubscribers() {
   doctorPoller.subscribe(renderDoctorWizard)
   doctorPoller.subscribe(refreshEnterDashboardButton)
-  doctorPoller.subscribe(report => updateFooterStatus(report.checks.daemon))
+  doctorPoller.subscribe(report => { lastDaemon = report.checks.daemon; renderRail() })
   doctorPoller.subscribe(renderDashboardIfActive)
   doctorPoller.subscribe(renderRestartButtonIfActive)
   doctorPoller.subscribe(checkExpiredDiff)

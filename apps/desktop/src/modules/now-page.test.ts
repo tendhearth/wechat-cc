@@ -56,4 +56,12 @@ describe('mountNowPage', () => {
     page.setLatestLine({ text: '早', at: null })
     expect(document.querySelector('.now-bubble-time')!.textContent).toBe('')
   })
+  it('greeting follows the clock: recomputed on presence ticks and on mode change', () => {
+    const root = dom(); const pp = poller(); let h = 9
+    const page = mountNowPage({ root, presencePoller: pp, onOpenTask: vi.fn(), now: () => new Date(2026, 9, 1, h) })
+    const g = () => document.getElementById('now-greeting')!.textContent
+    expect(g()).toBe('早上好')
+    h = 14; pp.push({ presence: 'ok' }); expect(g()).toBe('下午好')
+    h = 20; page.setMode('chat'); expect(g()).toBe('晚上好')
+  })
 })

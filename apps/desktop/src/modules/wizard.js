@@ -77,11 +77,11 @@ function renderWslNotice(report) {
 
 export function updateFooterStatus(daemon) {
   const line = daemonStatusLine(daemon)
-  for (const id of ["wizard-foot-dot", "dash-rail-dot"]) {
+  for (const id of ["wizard-foot-dot"]) {
     const el = document.getElementById(id)
     if (el) el.className = `dot ${line.cls}`
   }
-  for (const id of ["wizard-foot-text", "dash-rail-text"]) {
+  for (const id of ["wizard-foot-text"]) {
     const el = document.getElementById(id)
     if (el) el.textContent = line.text
   }

@@ -13,10 +13,12 @@ function when(at, now) {
 /** @param {{root:HTMLElement,presencePoller:{subscribe:(cb:(p:any)=>void)=>()=>void},onOpenTask:(id:string)=>unknown,onModeChange?:(m:'home'|'chat')=>void,now?:()=>Date}} o */
 export function mountNowPage({ root, presencePoller, onOpenTask, onModeChange, now = () => new Date() }) {
   const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (root.querySelector(`#${id}`))
-  $('now-greeting').textContent = greetingFor(now().getHours())
-  const unsub = presencePoller.subscribe(p => { root.dataset.cc = ccPresence(p) })
+  // 问候随钟点变:挂载、presence 每一拍、切 home/chat 都重算(textContent 同值不动 DOM)。
+  const greet = () => { const g = greetingFor(now().getHours()); const el = $('now-greeting'); if (el.textContent !== g) el.textContent = g }
+  greet()
+  const unsub = presencePoller.subscribe(p => { root.dataset.cc = ccPresence(p); greet() })
   /** @param {'home'|'chat'} m */
-  function setMode(m) { root.dataset.now = m; $('now-back').hidden = m !== 'chat'; onModeChange?.(m) }
+  function setMode(m) { root.dataset.now = m; $('now-back').hidden = m !== 'chat'; greet(); onModeChange?.(m) }
   const toChat = () => setMode('chat')
   $('now-cc-bubble').addEventListener('click', toChat)
   $('now-cc').addEventListener('click', toChat)

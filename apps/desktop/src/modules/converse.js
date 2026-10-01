@@ -364,7 +364,7 @@ export function subscribeConverse(cb) {
 /** home 只露输入框与发送;chat 是完整对话。 @param {'home'|'chat'} mode */
 export function setConverseMode(mode) {
   const root = document.getElementById("converse-root")
-  if (root) root.dataset.mode = mode
+  if (root) root.dataset.converseMode = mode
 }
 
 // ── send ───────────────────────────────────────────────────────────────

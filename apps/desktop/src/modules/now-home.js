@@ -12,6 +12,14 @@ export function ccPresence(p) {
   return p && p.presence !== 'down' ? 'here' : 'away'
 }
 
+// 右上角状态行:与 CC 明暗同一个信号。daemon 没跑 ⇒ 红;够不着(presence down / 还没拉到)⇒ 也不是绿。
+/** @param {{alive:boolean}|null|undefined} daemon @param {{presence:string}|null} presence */
+export function nowStatusLine(daemon, presence) {
+  if (!daemon || !daemon.alive) return { cls: /** @type {'bad'} */ ('bad'), text: 'CC 没在运行' }
+  if (ccPresence(presence) === 'away') return { cls: /** @type {'bad'} */ ('bad'), text: 'CC 不在身边' }
+  return { cls: /** @type {'ok'} */ ('ok'), text: 'CC 在家 · 运行中' }
+}
+
 /** @param {Array<{role:string,text:string,at?:number,pending?:boolean}>} messages */
 export function latestCCLine(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {

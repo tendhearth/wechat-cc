@@ -103,3 +103,5 @@ body[data-pane="overview"] #workbench-attention { display: none !important; }
   .cc-now-pane[data-cc="here"] .now-figure img { animation: now-breathe 6s ease-in-out infinite; transform-origin: 50% 90%; }
   @keyframes now-breathe { 50% { transform: scaleY(1.015) translateY(-1px); } }
 }
+
+.now-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
