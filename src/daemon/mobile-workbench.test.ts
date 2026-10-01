@@ -74,14 +74,21 @@ describe('手机「接着做」路由(/m/api/session/continue)',()=>{
     expect(boom!.status).toBe(503);expect(await boom!.json()).toEqual({ok:false,error:'unavailable'})
     const unsupported=await mobileSessionContinueRoute(actions({preview:async()=>{throw new Error('native_history_unsupported')}}),url(`?key=${KEY}`),new Request(url(`?key=${KEY}`)))
     expect(unsupported!.status).toBe(404)
-    const spy=vi.fn(()=>new Promise<never>(()=>{}))
-    const slowActions=actions({preview:spy})
-    const slow=await mobileSessionContinueRoute(slowActions,url(`?key=${KEY}`),new Request(url(`?key=${KEY}`)),undefined,{budgetMs:5})
-    expect(slow!.status).toBe(503);expect(await slow!.json()).toEqual({ok:false,error:'unavailable'})
-    // 上面那次扫描仍悬着,占着一个名额;cap=1 ⇒ 同一 actions 再来立刻 busy
-    spy.mockClear()
-    const again=await mobileSessionContinueRoute(slowActions,url(`?key=${KEY}`),new Request(url(`?key=${KEY}`)),undefined,{budgetMs:5,maxInflight:1})
-    expect(again!.status).toBe(503);expect(spy).not.toHaveBeenCalled()
+  })
+  it('R9 修正:超时放名额;同键重试合并;迟到结果丢弃',async()=>{
+    const calls:string[]=[],late:Array<(v:unknown)=>void>=[]
+    const a=actions({preview:((key:string)=>{calls.push(key);return key==='hung'||key==='late'?new Promise(r=>late.push(r)):Promise.resolve(ready)}) as never})
+    const get=(k:string,o={budgetMs:5,maxInflight:1})=>mobileSessionContinueRoute(a,url(`?key=${k}`),new Request(url(`?key=${k}`)),undefined,o)
+    // 同键在途:两个并发请求只扫一次
+    const [r1,r2]=await Promise.all([get('hung',{budgetMs:5,maxInflight:1}),get('hung',{budgetMs:5,maxInflight:1})])
+    expect([r1!.status,r2!.status]).toEqual([503,503]);expect(calls.filter(k=>k==='hung')).toHaveLength(1)
+    // 挂住的那次超时后名额已放:另一个键(cap=1)立刻成功
+    const ok=await get('other');expect(ok!.status).toBe(200)
+    // 迟到结果:超时后才落定,不送达也不缓存(再来一次是新的扫描)
+    const l=await get('late');expect(l!.status).toBe(503)
+    late[late.length-1]!(ready)
+    await new Promise(r=>setTimeout(r,0))
+    const again=await get('late');expect(again!.status).toBe(503);expect(calls.filter(k=>k==='late')).toHaveLength(2)
   })
   it('POST:只认 {key};坏 JSON / 多余键 ⇒ 400;成功 ⇒ matterId + created,并登记手机露面',async()=>{
     const seen=vi.fn()
