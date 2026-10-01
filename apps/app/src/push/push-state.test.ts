@@ -134,6 +134,19 @@ describe('makePushRunner —— 单飞、接住异常、按连接代数去重', 
     await h.r.trigger('online')
     expect(h.sync).toHaveBeenCalledTimes(2)
   })
+  it('reset 时旧的那次还在跑:reset 之后来的触发排队,旧的跑完照样补跑(不因代数变了被丢)', async () => {
+    const d = deferred<PushStatus>()
+    let n = 0
+    const h = runner({ sync: () => (++n === 1 ? d.promise : Promise.resolve('registered')) })
+    void h.r.trigger('online')
+    h.r.reset()
+    void h.r.trigger('online')          // 新配对的第一次上线:旧的还在跑 ⇒ 排队
+    expect(h.sync).toHaveBeenCalledTimes(1)
+    d.resolve('unavailable')
+    await h.r.idle()
+    expect(h.sync).toHaveBeenCalledTimes(2)
+    expect(h.r.status()).toBe('registered')   // 旧结果作废,新结果生效
+  })
   it('拒过通知、在系统设置里打开、回来时电脑还连不上 ⇒ 本机重查权限,状态变成「等连上再设好」;连上后照常登记', async () => {
     const h = runner({ sync: async () => 'denied', recheck: async () => 'granted' })
     await h.r.trigger('online')

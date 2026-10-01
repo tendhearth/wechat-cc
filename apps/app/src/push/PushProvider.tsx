@@ -5,7 +5,7 @@ import { useLang } from '../i18n/useLang'
 import { useBackendCtx } from '../state/BackendProvider'
 import { useConnection } from '../state/hooks'
 import { useSession } from '../state/session'
-import { leftoverPushKey } from '../state/session-store'
+import { leftoverPushKey, stillClearPushKey } from '../state/session-store'
 import { apnsEnv, nativeToken, openSystemSettings, perms, prepareChannels, pushKeys, registerCategories } from './native'
 import { makePushRunner, syncPush, type PushStatus } from './register'
 
@@ -54,9 +54,14 @@ export function PushProvider({ children }: { children: ReactNode }) {
     log: devLog,
   }), [])
 
+  // 记下调用时的配对(撤销)或 null(没配对);等停下后若这期间重新配对了就不清(stillClearPushKey)。
   const clearAfterIdle = () => {
-    void Promise.all([runner.idle(), keyWrite.current]).then(() =>
-      pushKeys.clear().catch(e => devLog(`pushClear failed (${errName(e)})`)))
+    const captured = latest.current.pairing
+    void Promise.all([runner.idle(), keyWrite.current]).then(() => {
+      const L = latest.current
+      if (!stillClearPushKey(captured, { pairing: L.pairing, revoked: L.conn.state === 'revoked' })) return
+      return pushKeys.clear().catch(e => devLog(`pushClear failed (${errName(e)})`))
+    })
   }
 
   useEffect(() => { void registerCategories().catch(e => devLog(`categories failed (${errName(e)})`)) }, [])

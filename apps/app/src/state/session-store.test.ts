@@ -39,7 +39,7 @@ describe('quietly(钥匙串写失败不抛未处理的拒绝,日志只有操作�
   })
 })
 
-import { clearStored, leftoverPushKey } from './session-store'
+import { clearStored, leftoverPushKey, stillClearPushKey } from './session-store'
 
 describe('撤销 / 解除配对:推送密钥一起清(spec §3「设备被撤销」、§4)', () => {
   it('两条都清;推送那条清失败只记一行、不连累配对', async () => {
@@ -60,5 +60,23 @@ describe('撤销 / 解除配对:推送密钥一起清(spec §3「设备被撤销
     expect(leftoverPushKey(true, null)).toBe(true)
     expect(leftoverPushKey(false, null)).toBe(false)
     expect(leftoverPushKey(true, { deviceId: 'ab12cd34' } as any)).toBe(false)
+  })
+})
+
+describe('stillClearPushKey —— 等同步停下后再清,清之前再看一眼(别把刚重新配对的新密钥清掉)', () => {
+  const A = { deviceId: 'aa11bb22' } as any
+  const B = { deviceId: 'cc33dd44' } as any
+  it('撤销时记下的配对:还是它且仍撤销 ⇒ 清;已解除(null)⇒ 清', () => {
+    expect(stillClearPushKey(A, { pairing: A, revoked: true })).toBe(true)
+    expect(stillClearPushKey(A, { pairing: null, revoked: false })).toBe(true)
+  })
+  it('等的这会儿重新配对了(换成新配对,或同一条不再撤销)⇒ 不清', () => {
+    expect(stillClearPushKey(A, { pairing: B, revoked: false })).toBe(false)
+    expect(stillClearPushKey(A, { pairing: B, revoked: true })).toBe(false)
+    expect(stillClearPushKey(A, { pairing: A, revoked: false })).toBe(false)
+  })
+  it('冷启动 / 解除后没配对(记下的是 null):仍没配对 ⇒ 清;已配上 ⇒ 不清', () => {
+    expect(stillClearPushKey(null, { pairing: null, revoked: false })).toBe(true)
+    expect(stillClearPushKey(null, { pairing: A, revoked: false })).toBe(false)
   })
 })

@@ -35,3 +35,12 @@ export async function clearStored(store: CredentialStore, push: { clear(): Promi
 export function leftoverPushKey(ready: boolean, pairing: PairingRecord | null): boolean {
   return ready && pairing === null
 }
+
+/**
+ * 等在飞的同步 / 写停下之后、真正清推送密钥之前再判一次:记下的是当时的配对(撤销)或 null(没配对)。
+ * 现在没配对 ⇒ 清;还是那条配对且仍被撤销 ⇒ 清;其余(这期间重新配对了)⇒ 不清,免得清掉新配对的密钥与指纹。
+ */
+export function stillClearPushKey(captured: PairingRecord | null, now: { pairing: PairingRecord | null; revoked: boolean }): boolean {
+  if (now.pairing === null) return true
+  return captured !== null && now.pairing === captured && now.revoked
+}

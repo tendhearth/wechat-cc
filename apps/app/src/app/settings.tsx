@@ -29,6 +29,7 @@ export default function Settings() {
   const [unpairing, setUnpairing] = useState(false)
   const push = usePush()
   const [testing, setTesting] = useState(false)
+  const testingRef = useRef(false)
   const unpairingRef = useRef(false)
   const demo = backend.mode === 'demo'
   const choices: Array<{ v: Lang | null; label: string; id: string }> = [
@@ -57,7 +58,8 @@ export default function Settings() {
     router.replace('/welcome')
   }
   const sendTest = async () => {
-    if (testing) return
+    if (testingRef.current) return // 同一帧里连点两下:state 还没更新,靠 ref 拦
+    testingRef.current = true
     setTesting(true)
     try {
       const r = await push.sendTest()
@@ -66,7 +68,7 @@ export default function Settings() {
       // 只显示错误码(BackendError.code),不显示错误文本
       const code = typeof e === 'object' && e !== null && typeof (e as { code?: unknown }).code === 'string' ? (e as { code: string }).code : 'unknown'
       Alert.alert(t(lang, 'settings.notifTestFailed', { code }))
-    } finally { setTesting(false) }
+    } finally { testingRef.current = false; setTesting(false) }
   }
   const confirmUnpair = () =>
     Alert.alert(t(lang, 'settings.unpairConfirmTitle'), t(lang, 'settings.unpairConfirmBody'), [
@@ -106,7 +108,7 @@ export default function Settings() {
                 <Button kind="secondary" testID="settings-notif-open" label={t(lang, 'settings.notifOpenSettings')} onPress={push.openSettings} />
               ) : null}
               {push.status === 'registered' ? (
-                <Button kind="secondary" testID="settings-notif-test" label={t(lang, 'settings.notifTest')} busy={testing} onPress={sendTest} />
+                <Button kind="secondary" testID="settings-notif-test" label={t(lang, 'settings.notifTest')} busy={testing} disabled={testing} onPress={sendTest} />
               ) : null}
             </Card>
           </>

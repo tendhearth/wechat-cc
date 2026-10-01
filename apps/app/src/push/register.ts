@@ -162,7 +162,8 @@ export function makePushRunner(o: {
       running = null
       const q = queued
       queued = null
-      if (q !== null && my === gen) return trigger(q)
+      // reset 会清空队列,所以此刻还在队里的都是 reset 之后(当前代)来的:不论旧的这次属于哪一代都补跑。
+      if (q !== null) return trigger(q)
     })
     running = p
     return p
