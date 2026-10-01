@@ -97,6 +97,11 @@ export interface SelfDeployPlan {
    * 的目录登记上去。undefined/null ⇒ 不做这一步(老调用方 / 测试手搓的 plan)。
    */
   pluginsSource?: { stateDir: string; candidates: string[] } | null
+  /**
+   * `--allow-missing-plugins`:插件门红了也照样放行(记 detail + log),给本来就
+   * 没有插件的机器用 —— 不必为了部署去永久 `plugin disable`。
+   */
+  allowMissingPlugins?: boolean
 }
 
 export interface SelfDeploySigning {
@@ -141,6 +146,8 @@ export interface PlanSelfDeployInput {
   entitlementsPath?: string | null
   /** 可登记为插件来源的目录(源码 checkout 的 plugins/、主 checkout 的 plugins/),按优先级。 */
   pluginSourceCandidates?: string[]
+  /** `--allow-missing-plugins`. */
+  allowMissingPlugins?: boolean
 }
 
 /**
@@ -207,6 +214,7 @@ export function planSelfDeploy(input: PlanSelfDeployInput): SelfDeployPlan {
       ? { identity: input.signingIdentity.name, identityHash: input.signingIdentity.hash, entitlementsPath: input.entitlementsPath, appPath: posixDirname(posixDirname(macosDir)) }
       : null,
     pluginsSource: { stateDir: input.stateDir, candidates: input.pluginSourceCandidates ?? [] },
+    allowMissingPlugins: input.allowMissingPlugins ?? false,
   }
 }
 
@@ -487,6 +495,10 @@ export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDe
     // daemons, i.e. most rollback targets, don't have the field).
     if (health.ok && gate.plugins !== undefined) {
       pluginsStep = judgePlugins(gate.plugins)
+      if (!pluginsStep.ok && plan.allowMissingPlugins) {
+        deps.log(`--allow-missing-plugins: passing anyway — ${pluginsStep.detail}`)
+        pluginsStep = { name: 'plugins', ok: true, detail: `ALLOWED (--allow-missing-plugins): ${pluginsStep.detail}` }
+      }
       steps.push(pluginsStep)
     }
   }
@@ -590,12 +602,17 @@ interface HealthGate {
   plugins?: HealthPlugins
 }
 
-/** Wire shape of `GET /v1/health.plugins` (src/daemon/plugins/health.ts) — only what the gate reads. */
+/**
+ * Wire shape of `GET /v1/health.plugins` (src/daemon/plugins/health.ts
+ * `PluginsHealthWire`) — the summary every tier gets. The gate probes with the
+ * FILE token (below admin), so it never sees paths or plugin lists.
+ */
 interface HealthPlugins {
-  bundled_dir: string | null
   via: string | null
-  plugins: Array<{ name: string; enabled: boolean; ready: boolean }>
+  count: number
+  ready_count: number
   expected_missing: string[]
+  pointer_broken: boolean
 }
 
 async function waitForHealth(plan: SelfDeployPlan, deps: SelfDeployDeps, sinceMs: number, timeoutMs: number, expectedVersion: string): Promise<HealthGate> {
@@ -672,14 +689,20 @@ function ensurePluginsSource(src: { stateDir: string; candidates: string[] }): S
   }
 }
 
-/** Plugins enabled by the operator but not even discovered ⇒ red (and roll back). */
+/**
+ * Red (and roll back) when an expected plugin — registered with the source, or
+ * explicitly enabled — was not even discovered, or the registered source holds
+ * nothing any more.
+ */
 function judgePlugins(p: HealthPlugins): SelfDeployStep {
-  const live = p.plugins.filter((x) => x.enabled && x.ready).map((x) => x.name)
-  const from = p.bundled_dir ? `${p.bundled_dir} (via ${p.via ?? '?'})` : 'no bundled plugins dir'
-  if (p.expected_missing.length > 0) {
-    return { name: 'plugins', ok: false, detail: `enabled plugin(s) not loaded: ${p.expected_missing.join(', ')} — ${from}; fix with \`wechat-cc plugin source <dir>\`` }
+  const from = p.via ? `via ${p.via}` : 'no bundled plugins dir'
+  const problems: string[] = []
+  if (p.pointer_broken) problems.push('registered plugins source holds no plugins any more')
+  if (p.expected_missing.length > 0) problems.push(`expected plugin(s) not loaded: ${p.expected_missing.join(', ')}`)
+  if (problems.length > 0) {
+    return { name: 'plugins', ok: false, detail: `${problems.join('; ')} — ${from}; fix with \`wechat-cc plugin source <dir>\` (or --allow-missing-plugins)` }
   }
-  return { name: 'plugins', ok: true, detail: `${live.length} ready${live.length ? `: ${live.join(', ')}` : ''} — ${from}` }
+  return { name: 'plugins', ok: true, detail: `${p.ready_count}/${p.count} ready — ${from}` }
 }
 
 async function performRollback(plan: SelfDeployPlan, deps: SelfDeployDeps, expectedVersion: string): Promise<{ steps: SelfDeployStep[]; rolledBack: boolean; healthy: boolean }> {

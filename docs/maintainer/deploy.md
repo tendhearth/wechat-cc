@@ -10,7 +10,7 @@ wechat-cc self deploy            # 缺省:自动挑本机架构的二进制、�
 wechat-cc self deploy --json     # 机器可读
 ```
 
-可用开关(spec §3):`--binary <path>`(源码模式缺省 `apps/desktop/src-tauri/binaries/wechat-cc-cli-<arch>-apple-darwin`,`arm64→aarch64`、`x64→x86_64`;**打包版里必填**)、`--app <path>`(缺省从 LaunchAgent plist 的 `ProgramArguments[0]` 推)、`--no-rollback`、`--no-sign`(见下「签名」)、`--health-timeout-ms N`(缺省 60000)、`--json`。
+可用开关(spec §3):`--binary <path>`(源码模式缺省 `apps/desktop/src-tauri/binaries/wechat-cc-cli-<arch>-apple-darwin`,`arm64→aarch64`、`x64→x86_64`;**打包版里必填**)、`--app <path>`(缺省从 LaunchAgent plist 的 `ProgramArguments[0]` 推)、`--no-rollback`、`--no-sign`(见下「签名」)、`--allow-missing-plugins`(插件门红了也放行,记 detail + 日志;给本来就没插件的机器,不必永久 `plugin disable`)、`--health-timeout-ms N`(缺省 60000)、`--json`。
 
 它按顺序做六件事(钥匙串里有 Developer ID 时再多两步,见「签名」):
 
@@ -23,7 +23,7 @@ wechat-cc self deploy --json     # 机器可读
 5. **restart** —— `launchctl kickstart -k gui/$(id -u)/com.wechat-cc.daemon`。
 6. **health** —— 等 `~/.claude/channels/wechat/internal-api-info.json` 的 mtime 晚于 kickstart 时刻,再用 **file token** `GET /v1/health` 拿 200。`version.cli` 跟 preflight 那个版本串**对不上只记一条 detail 警告,不判失败**(daemon 报的构建元信息跟 sidecar 的 `--version` 串本来就可能不同形)。回滚那一次的健康门比对的是**旧版本**(backup 那步顺手探到的 `<sidecar> --version`),所以回滚成功不会冒出一条假的 version mismatch。
 
-另外两步(2026-09-30,见下「内置插件」):重启之前 **plugins_source**(登记插件来源,永不致命);健康 200 之后 **plugins**(daemon 报了 `health.plugins` 才有这一步:先等它从 `null` 变成对象,主人在 `plugins.json` 开着却没加载的插件 ⇒ 红,走回滚)。
+另外两步(2026-09-30,见下「内置插件」):重启之前 **plugins_source**(登记插件来源,永不致命);健康 200 之后 **plugins**(daemon 报了 `health.plugins` 才有这一步:先等它从 `null` 变成对象;「该在的」= 登记来源时记下的插件名 ∪ `plugins.json` 明确开着的 − 明确关掉的,其中有没被发现的,或登记的来源里已经一个插件都没有 ⇒ 红,走回滚;`--allow-missing-plugins` 放行)。
 
 健康门不过 ⇒ 自动回滚(同样 copy+rename 换 inode)+ 再 kickstart + 再等健康;无论回滚成不成,都会打印 `launchctl print` 里的 `last exit reason` / `runs` 和 `launchd.err.log` 尾 40 行。退出码:成功 0,失败(已回滚)1,回滚也失败 3,平台不对 2。
 
@@ -117,5 +117,7 @@ bun cli.ts self deploy                                             # 源码模�
 ```
 
 插件本身是主 checkout `plugins/` 下的本机软链(gitignore),指向 `~/Documents/tendhearth/wxvault`、`~/Documents/tendhearth/wechat-cc-plugins/packages/*`;新机器照 `plugins/README.md` 自己建。daemon 要能读 `~/Documents`(health 的 `fs_access`)。
+
+**信任口径**:登记的来源按「内置」算,默认开 —— 那个文件夹里新放进去的东西下次启动就会跑,不用 `plugin enable`。只登记自己掌控的目录;第三方插件放用户目录(默认关)。`/v1/health` 是 guest 档:admin 以下只看得到 `plugins` 的计数和缺了哪些名字,路径和 not-ready 原因只给 admin。
 
 **09-11 → 09-30 事故**:LaunchAgent 从 `bun cli.ts`(主 checkout,`<repo>/plugins` 找得到)换成 `.app` 之后,打包版 daemon 一个插件都没加载,三周里只有客户回顾那行 `disabled` 作旁证。现在每次启动都打 `[BOOT] plugin: bundled plugins dir … (via …)` 或 `no bundled plugins dir found`,开着却丢了的插件打 `WARNING`,`/v1/health.plugins` 给出快照,部署健康门据此判红。

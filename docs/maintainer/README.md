@@ -53,7 +53,7 @@ wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resum
 
 | 命令 | 开关 |
 | --- | --- |
-| `self deploy` | `--binary` `--app` `--no-rollback` `--health-timeout-ms` `--json` |
+| `self deploy` | `--binary` `--app` `--no-rollback` `--no-sign` `--allow-missing-plugins` `--health-timeout-ms` `--json` |
 | `selftest workbench` | `--executor`(必填) `--image` `--resume` `--json` `--timeout-ms` `--keep` |
 | `selftest chat` | `--provider`(必填) `--text` `--resume` `--json` `--timeout-ms` |
 | `ci triage` | `--sha` `--branch` `--wait` `--rerun` `--max-reruns` `--timeout-min` `--json` |

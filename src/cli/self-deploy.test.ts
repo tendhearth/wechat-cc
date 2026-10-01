@@ -875,7 +875,7 @@ describe('executeSelfDeploy — plugins', () => {
       calls++
       const body = h.kickstartCalls >= 2
         ? { ok: true, version: { cli: '9.9.8-old' } }
-        : { ok: true, version: { cli: '9.9.9-test' }, plugins: { bundled_dir: null, via: null, plugins: [], expected_missing: ['wxsearch'] } }
+        : { ok: true, version: { cli: '9.9.9-test' }, plugins: { via: null, count: 0, ready_count: 0, expected_missing: ['wxsearch'], pointer_broken: false } }
       return { ok: true, status: 200, json: async () => body }
     }) as unknown as typeof fetch
     const result = await executeSelfDeploy(h.plan, h.deps)
@@ -892,13 +892,43 @@ describe('executeSelfDeploy — plugins', () => {
 
   it('plugins: null (bootstrap still wiring) ⇒ keeps polling until the snapshot lands', async () => {
     const h = harness()
-    healthWithPlugins(h, [null, null, { bundled_dir: '/p', via: 'pointer', plugins: [{ name: 'wxvault', source: 'bundled', enabled: true, ready: true }], expected_missing: [] }])
+    healthWithPlugins(h, [null, null, { via: 'pointer', count: 6, ready_count: 6, expected_missing: [], pointer_broken: false }])
     const result = await executeSelfDeploy(h.plan, h.deps)
     expect(result.ok).toBe(true)
     const step = result.steps.find((s) => s.name === 'plugins')!
     expect(step.ok).toBe(true)
-    expect(step.detail).toContain('wxvault')
+    expect(step.detail).toContain('6/6 ready')
     expect(step.detail).toContain('pointer')
+  })
+
+  it('registered source that holds nothing any more ⇒ plugins step red, rolled back', async () => {
+    const h = harness()
+    h.deps.fetch = (async () => ({
+      ok: true, status: 200,
+      json: async () => h.kickstartCalls >= 2
+        ? { ok: true, version: { cli: '9.9.8-old' } }
+        : { ok: true, version: { cli: '9.9.9-test' }, plugins: { via: 'repo', count: 6, ready_count: 6, expected_missing: [], pointer_broken: true } },
+    })) as unknown as typeof fetch
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result.ok).toBe(false)
+    expect(result.rolledBack).toBe(true)
+    expect(result.steps.find((s) => s.name === 'plugins')).toMatchObject({ ok: false, detail: expect.stringContaining('registered plugins source') })
+  })
+
+  it('--allow-missing-plugins: same red snapshot passes, loudly (detail + log), no rollback', async () => {
+    const h = harness()
+    const logged: string[] = []
+    h.deps.log = (l) => { logged.push(l) }
+    h.plan.allowMissingPlugins = true
+    healthWithPlugins(h, [{ via: null, count: 0, ready_count: 0, expected_missing: ['wxvault'], pointer_broken: false }])
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result.ok).toBe(true)
+    expect(h.kickstartCalls).toBe(1)
+    const step = result.steps.find((s) => s.name === 'plugins')!
+    expect(step.ok).toBe(true)
+    expect(step.detail).toContain('ALLOWED')
+    expect(step.detail).toContain('wxvault')
+    expect(logged.some((l) => l.includes('--allow-missing-plugins') && l.includes('wxvault'))).toBe(true)
   })
 
   it('old daemons without the field: no plugins step at all (rollback targets stay green)', async () => {
@@ -914,6 +944,8 @@ describe('planSelfDeploy — plugins source candidates', () => {
     const xml = plistWith(['/Applications/wechat-cc.app/Contents/MacOS/wechat_cc_desktop', '--daemon', 'run'])
     const base = { platform: 'darwin' as NodeJS.Platform, homeDir: '/h', uid: 501, repoRoot: '/r', stateDir: '/s', arch: 'arm64', plistXml: xml }
     expect(planSelfDeploy(base).pluginsSource).toEqual({ stateDir: '/s', candidates: [] })
+    expect(planSelfDeploy(base).allowMissingPlugins).toBe(false)
+    expect(planSelfDeploy({ ...base, allowMissingPlugins: true }).allowMissingPlugins).toBe(true)
     expect(planSelfDeploy({ ...base, pluginSourceCandidates: ['/r/plugins', '/main/plugins'] }).pluginsSource)
       .toEqual({ stateDir: '/s', candidates: ['/r/plugins', '/main/plugins'] })
   })

@@ -45,6 +45,8 @@
 - **手机 app 子项目 3:原生通知完成**(2026-09-30,`app-push` 分支;计划 `docs/superpowers/plans/2026-09-30-tendhearth-app-push.md`,`apps/app/README.md`「推送(原生通知)」)—— 推送登记、iOS 通知服务扩展、安卓消息服务、点通知路由;Swift / Kotlin 跑协议包向量(CI `app · native push vectors`);iOS 27 启动崩溃已用 `with-ios-scene` 修掉;模拟器 simctl 验证见 apps/app/README(`simctl push` 不经过扩展,扩展在循环里是真机项)。**真投递待主人**:APNs 密钥 / Firebase / 中继上线(`relay_v2_url`)/ EAS 构建 / 安卓设备(本机没有 Android SDK,安卓未验)/ 两平台真机验收,清单见 README。计划 3 遗留仍开(配对码 10 分钟可复用;微信聊天那件事的说一句不去重)。**下一份计划 = 补齐页面**。
 - **每晚整理长期记忆(B 看得见)** 已上线（`docs/superpowers/specs/2026-09-25-memory-nightly-design.md`）—— 下一步 A:手机上逐条标不对 / 过时 / 删掉；C:第二天偶尔说一句我注意到…;09-26 界面改版:手机「CC 眼中的你」、微信信件排版、一条一件事
 
+- **内置插件回归修复**(2026-09-30,`fix-bundled-plugins`)—— 09-11 起 LaunchAgent 改拉 `.app`,打包版 daemon 一个插件都没加载(wxvault / 客户回顾 / wxsearch 全丢)且一声不吭。修法:状态目录里登记插件来源(`wechat-cc plugin source`,源码模式 `self deploy` 自动登记)、启动日志 + `/v1/health.plugins` + 部署插件门(`--allow-missing-plugins` 逃生口)。安装包仍按设计不带插件。**信任取舍**:登记的来源按内置算、默认开(放进去就跑)。**真机账**:部署后看 `[BOOT] plugin:` 与微信里一次 wxvault 调用。见 [maintainer/deploy.md「内置插件」](maintainer/deploy.md)。
+
 ## 欠的真机账(发版前该销掉)
 
 这三周的东西**单测和 selftest 绿 ≠ 用户能用**,以下都没在真机上走过:
@@ -80,6 +82,7 @@
 
 ## 修订记录
 
+- 2026-09-30:内置插件回归(09-11 → 09-30)修复入账,含「登记的来源按内置默认开」的信任口径。
 - 2026-09-29:1.7.1 已发(第一版 Developer ID 签名 + 公证包);第 6 步设备令牌进 token-registry 完成(#149),梳理七步全部落地;Developer ID 条目改成「到手,2027-02-01 到期」。
 
 - 2026-09-27(晚):1.7.0 已发,现状表与下一步改写;发版链五个坑与「全自动发版」入账;⑥⑦ 四份设计稿入下一步。

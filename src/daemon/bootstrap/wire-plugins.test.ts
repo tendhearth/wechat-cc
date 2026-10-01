@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { removeTempDir } from '../../lib/test-temp'
 import { setPluginEnabled } from '../plugins/registry'
-import { writePluginsSourcePointer } from '../plugins/paths'
+import { resolveBundledPluginsDir, writePluginsSourcePointer } from '../plugins/paths'
 import { wirePlugins } from './wire-plugins'
 
 const ctx = () => ({ stateDir: mkdtempSync(join(tmpdir(), 'wp-')), log: () => {} })
@@ -50,11 +50,24 @@ afterEach(() => {
   removeTempDir(root)
 })
 
-function run(stateDir: string) {
+function run(stateDir: string, resolve?: Parameters<typeof wirePlugins>[2]) {
   const lines: string[] = []
-  const slice = wirePlugins({ internalApi: undefined } as never, { stateDir, log: (tag: string, line: string) => { lines.push(`[${tag}] ${line}`) } } as never)
+  const slice = wirePlugins({ internalApi: undefined } as never, { stateDir, log: (tag: string, line: string) => { lines.push(`[${tag}] ${line}`) } } as never, resolve)
   return { slice, lines }
 }
+
+/** A fake source checkout whose `plugins/` really holds `names` — what the MAIN checkout looks like. */
+function fakeRepo(names: string[]): string {
+  const repo = join(root, 'repo')
+  for (const n of names) {
+    mkdirSync(join(repo, 'plugins', n), { recursive: true })
+    writeFileSync(join(repo, 'plugins', n, 'wechat-cc.plugin.json'), JSON.stringify({ name: n, kind: 'mcp', version: '1.0.0', spawn: { command: process.execPath } }))
+  }
+  return repo
+}
+/** Hermetic resolver: source mode against the fake repo, no env, real pointer lookup in `stateDir`. */
+const resolverFor = (repo: string) => (stateDir?: string) =>
+  resolveBundledPluginsDir({ env: undefined, stateDir, compiled: false, execPath: '/nowhere/bin', sourceRepoRoot: repo })
 
 describe('wirePlugins — 内置插件来源与「丢了要出声」(2026-09-30 回归)', () => {
   it('loads plugins from the owner pointer in the state dir (packaged daemon, empty bundle)', () => {
@@ -70,11 +83,33 @@ describe('wirePlugins — 内置插件来源与「丢了要出声」(2026-09-30 
     expect(lines.join('\n')).toContain(plugins)
   })
 
-  it('enabled-but-missing plugins are logged loudly and land in the health snapshot', () => {
+  // Hermetic (review fix round 1): with the live resolver this ran against the
+  // REAL <repo>/plugins — empty in a worktree/CI, full of symlinks in the main
+  // checkout, where it then failed. The resolver is injected; the fake repo
+  // is populated on purpose to prove a full plugins dir doesn't mask the miss.
+  it('enabled-but-missing plugins are logged loudly and land in the health snapshot — even next to a populated <repo>/plugins', () => {
     const stateDir = join(root, 'state')
     setPluginEnabled(stateDir, 'wxsearch', true)
-    const { slice, lines } = run(stateDir)
+    const { slice, lines } = run(stateDir, resolverFor(fakeRepo(['wxvault', 'wxmedia'])))
+    expect(slice.pluginsHealth.via).toBe('repo')
+    expect(slice.loadedPlugins.map(p => p.name).sort()).toEqual(['wxmedia', 'wxvault'])
     expect(slice.pluginsHealth.expected_missing).toEqual(['wxsearch'])
     expect(lines.some(l => l.includes('WARNING') && l.includes('wxsearch'))).toBe(true)
+  })
+
+  it('a populated <repo>/plugins with nothing expected missing stays quiet', () => {
+    const stateDir = join(root, 'state')
+    const { slice, lines } = run(stateDir, resolverFor(fakeRepo(['wxvault'])))
+    expect(slice.pluginsHealth.expected_missing).toEqual([])
+    expect(lines.some(l => l.includes('WARNING'))).toBe(false)
+  })
+
+  it('registered source that now holds nothing ⇒ boot WARNING naming it', () => {
+    const stateDir = join(root, 'state')
+    writePluginsSourcePointer(stateDir, join(root, 'gone'), ['wxvault'])
+    const { slice, lines } = run(stateDir, resolverFor(fakeRepo([])))
+    expect(slice.pluginsHealth.pointer_broken).toBe(true)
+    expect(slice.pluginsHealth.expected_missing).toEqual(['wxvault'])
+    expect(lines.some(l => l.includes('WARNING') && l.includes(join(root, 'gone')))).toBe(true)
   })
 })

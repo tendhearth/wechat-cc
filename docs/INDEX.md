@@ -48,7 +48,7 @@
 | 提醒 | — | `superpowers/specs/2026-08-20-reminders-port-design.md` |
 | 外发健康 | — | `superpowers/specs/2026-08-22-outbound-health-design.md` |
 | 功能全表 / 权限模式 / 微信命令 / 运行时目录 / 访问控制 / A2A / 常见问题 | [reference/](reference/) 下同名文件 | — |
-| 插件 | [plugins.md](plugins.md) | — |
+| 插件(含内置插件来源:不随包、`plugin source` 登记、按内置默认开) | [plugins.md](plugins.md);部署侧 [maintainer/deploy.md「内置插件」](maintainer/deploy.md) | `src/lib/plugins-source.ts` + `src/daemon/plugins/health.ts` |
 | 桌面安装器 | [installer/desktop-installer.md](installer/desktop-installer.md) | — |
 | 入站语音 STT(已通:网关形态,`stt-config.json` 门控) | [architecture.md §2.5 Voice](architecture.md) | `superpowers/specs/2026-07-23-inbound-voice-stt-design.md` |
 

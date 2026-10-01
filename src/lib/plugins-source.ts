@@ -13,7 +13,10 @@ export const MANIFEST_FILE = 'wechat-cc.plugin.json'
 /**
  * Where the owner's first-party plugins live when they are NOT inside the
  * running binary's own tree: `{stateDir}/plugins/bundled-source.json` =
- * `{ "dir": "/abs/path/to/plugins" }`. Written by `wechat-cc plugin source <dir>`
+ * `{ "dir": "/abs/path/to/plugins", "plugins": ["wxvault", …] }` — `plugins` is
+ * what the dir held when it was registered (folder names), so health can tell
+ * "this one vanished" apart from "never had it" (bundled plugins are
+ * default-on and never appear in plugins.json). Written by `wechat-cc plugin source <dir>`
  * and by `self deploy` (which knows the source checkout). Lives in the state
  * dir, so swapping the sidecar or rebuilding the .app never loses it.
  *
@@ -29,19 +32,28 @@ export function pluginsSourcePointerPath(stateDir: string): string {
   return join(stateDir, 'plugins', 'bundled-source.json')
 }
 
-export function readPluginsSourcePointer(stateDir: string): string | null {
+export interface PluginsSourceRecord { dir: string; plugins: string[] }
+
+export function readPluginsSourceRecord(stateDir: string): PluginsSourceRecord | null {
   try {
-    const parsed = readJsonFile(pluginsSourcePointerPath(stateDir))
-    const dir = parsed && typeof parsed === 'object' ? (parsed as { dir?: unknown }).dir : undefined
-    return typeof dir === 'string' && dir ? dir : null
+    const parsed = readJsonFile(pluginsSourcePointerPath(stateDir)) as { dir?: unknown; plugins?: unknown } | null
+    const dir = parsed && typeof parsed === 'object' ? parsed.dir : undefined
+    if (typeof dir !== 'string' || !dir) return null
+    const plugins = Array.isArray(parsed!.plugins) ? parsed!.plugins.filter((x): x is string => typeof x === 'string') : []
+    return { dir, plugins }
   } catch { return null }
 }
 
-export function writePluginsSourcePointer(stateDir: string, dir: string): void {
+export function readPluginsSourcePointer(stateDir: string): string | null {
+  return readPluginsSourceRecord(stateDir)?.dir ?? null
+}
+
+/** Persist the pointer; `plugins` defaults to what `dir` holds right now. */
+export function writePluginsSourcePointer(stateDir: string, dir: string, plugins: string[] = pluginNamesIn(dir)): void {
   const p = pluginsSourcePointerPath(stateDir)
   mkdirSync(dirname(p), { recursive: true })
   const tmp = `${p}.tmp`
-  writeFileSync(tmp, JSON.stringify({ dir }, null, 2) + '\n', { mode: 0o600 })
+  writeFileSync(tmp, JSON.stringify({ dir, plugins }, null, 2) + '\n', { mode: 0o600 })
   renameSync(tmp, p)
 }
 
@@ -70,7 +82,7 @@ export function registerPluginsSource(stateDir: string, dir: string): { ok: true
   const abs = resolve(dir)
   const plugins = pluginNamesIn(abs)
   if (plugins.length === 0) return { ok: false, error: `no plugins in ${abs} (expected <name>/${MANIFEST_FILE} subdirs)` }
-  writePluginsSourcePointer(stateDir, abs)
+  writePluginsSourcePointer(stateDir, abs, plugins)
   return { ok: true, dir: abs, plugins }
 }
 
