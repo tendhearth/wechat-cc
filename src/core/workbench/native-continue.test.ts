@@ -11,6 +11,7 @@ import {encodeNativeHistoryKey,historyPreview,type NativeHistoryItem,type Native
 import {selectNativeImportMessages} from './native-adoption'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
 import {removeTempDir} from '../../lib/test-temp'
+import {nativeImportMessages} from '../../../apps/desktop/src/modules/workbench-history.js'
 
 // spec 2026-10-01-tendhearth-continue-sessions §4.1:手机「接着做」的核心。真工作台 + 真 matters + 假原生历史读取器。
 let dir:string,db:Db,matters:MatterStore,service:WorkbenchService|undefined
@@ -25,19 +26,30 @@ function fixture(o:{provider?:NativeHistoryProvider;messages?:NativeHistoryMessa
   const store=makeWorkbenchStore(db),registry=createProviderRegistry()
   let version=1,reads=0,active=false,folderBusy=false,sessionBusy=false,resumable=true,quotaOut=false
   const changeOn=new Set<number>()
-  const spawn=vi.fn(async(_p:any,context:any)=>({async *dispatch(){const id=context.resumeSessionId??'fresh-native';yield{kind:'init' as const,sessionId:id};yield{kind:'text' as const,text:'continued'};yield{kind:'result' as const,sessionId:id,numTurns:1,durationMs:1}},async close(){}}))
+  // gate:不放行 ⇒ 执行者一直起不来(还没派发),用来模拟「在跑的时候 daemon 重启」。
+  let gate:Promise<void>|null=null
+  const spawn=vi.fn(async(_p:any,context:any)=>{if(gate)await gate;return{async *dispatch(){const id=context.resumeSessionId??'fresh-native';yield{kind:'init' as const,sessionId:id};yield{kind:'text' as const,text:'continued'};yield{kind:'result' as const,sessionId:id,numTurns:1,durationMs:1}},async close(){}}})
   // 只登记 claude:codex 的会话用来测「电脑上没装」。
   registry.register('claude',{spawn},{displayName:'Claude',canResume:()=>resumable,workbench:MANAGED_NATIVE_CAPABILITIES})
   const item:NativeHistoryItem={key:encodeNativeHistoryKey(providerId,'original'),providerId,nativeId:'original',title:'Original task',titleSource:'native_custom',cwd:project,updatedAt:1,remote:false,observedState:'unknown'}
-  const read=vi.fn(async(_key:string,page:any)=>{reads++;if(changeOn.has(reads))version++;return historyPreview({...item,observedState:active?'active':'unknown'},{version},o.messages??MESSAGES,null,page)})
+  // 按 cursor 分页(cursor = `c<起点>`),与真读取器一样从最早往新翻;两条消息的默认会话只有一页。
+  const read=vi.fn(async(_key:string,page:any)=>{
+    reads++;if(changeOn.has(reads))version++
+    const all=o.messages??MESSAGES,from=page.cursor?Number(String(page.cursor).slice(1)):0,to=from+page.limit
+    return historyPreview({...item,observedState:active?'active':'unknown'},{version},all.slice(from,to),to<all.length?`c${to}`:null,page)
+  })
   const reader:NativeHistoryReader={list:async()=>({items:[item],nextCursor:null,coverage:'native_supported_history'}),read,currentFingerprint:async(key,page={limit:100})=>(await read(key,page)).sourceFingerprint}
-  service=makeWorkbenchService({store,registry,stateDir:dir,ownerChatId:()=>'owner',
+  const make=(st=store)=>makeWorkbenchService({store:st,registry,stateDir:dir,ownerChatId:()=>'owner',
     nativeHistory:providerId==='codex'?{codex:reader}:{claude:reader},
     ...(o.matters===false?{}:{matters}),
     // nativeId 为 null 问的是「这个文件夹有没有人在用」;带 nativeId 问的是「这个会话有没有人在用」。
     executionConflict:(_path,_provider,nativeId)=>nativeId===null?folderBusy:(folderBusy||sessionBusy),
     usage:id=>quotaOut&&id==='claude'?({providerId:'claude',plan:null,windows:[],exhausted:true,fetchedAt:Date.now()} as never):null})
+  service=make()
   return {store,spawn,item,project,read,
+    hold:()=>{let open!:()=>void;gate=new Promise<void>(r=>{open=r});return ()=>open()},unhold:()=>{gate=null},
+    /** 模拟 daemon 重启:同一个库上起一个新服务(构造时 recover);旧服务原样留着,不 shutdown(进程是被杀的)。 */
+    restart:()=>{const old=service!;service=make(makeWorkbenchStore(db));return old},
     active:(v:boolean)=>{active=v},folderBusy:(v:boolean)=>{folderBusy=v},sessionBusy:(v:boolean)=>{sessionBusy=v},
     resumable:(v:boolean)=>{resumable=v},quotaOut:(v:boolean)=>{quotaOut=v},changeOnRead:(...n:number[])=>{for(const x of n)changeOn.add(x)}}
 }
@@ -209,5 +221,137 @@ describe('fix round 1:补建自愈、状态映射、挑法确定',()=>{
     expect(f.store.taskByNativeIdentity('claude','shared')?.id).toBe(a.id)
     db.query('UPDATE workbench_tasks SET updated_at=? WHERE id=?').run(3,b.id)
     expect(f.store.taskByNativeIdentity('claude','shared')?.id).toBe(b.id)
+  })
+})
+
+async function settled(id:string){await vi.waitFor(()=>expect(['running','queued','cancelling']).not.toContain(service!.detail(id).task.status))}
+
+describe('continueImported:手机说的第一句',()=>{
+  const R='5a7e0000-0000-4000-8000-000000000001'
+  it('能恢复 ⇒ 接着原会话跑(resumeSessionId = 原 id),记下声明;回执按 requestId',async()=>{
+    const f=fixture(),{taskId}=await service!.adoptNativeSession(f.item.key)
+    await service!.continueImported(taskId,'接着改',{inputRequestId:R});await settled(taskId)
+    expect(f.spawn).toHaveBeenCalledTimes(1);expect(f.spawn.mock.calls[0]?.[1].resumeSessionId).toBe('original')
+    expect(f.store.source(taskId)?.firstDispatchedAt).not.toBeNull()
+    const d=service!.detail(taskId)
+    expect(d.events.some(e=>e.kind==='system'&&e.text.includes('恢复原会话'))).toBe(true)
+    expect(d.events.some(e=>e.kind==='user'&&e.text==='接着改')).toBe(true)
+    expect(f.store.liveInputs.get(R)?.taskId).toBe(taskId)
+  })
+  it('原会话恢复不了 ⇒ 带记录新开一轮(没有 resumeSessionId)',async()=>{
+    const f=fixture(),{taskId}=await service!.adoptNativeSession(f.item.key);f.resumable(false)
+    await service!.continueImported(taskId,'接着改',{inputRequestId:R});await settled(taskId)
+    expect(f.spawn.mock.calls[0]?.[1].resumeSessionId).toBeUndefined()
+    expect(service!.detail(taskId).events.some(e=>e.kind==='system'&&e.text.includes('带已确认的记录新开一轮'))).toBe(true)
+  })
+  it('同一 requestId 重发 ⇒ 不起第二轮;同一 id 换了正文 ⇒ input_conflict',async()=>{
+    const f=fixture(),{taskId}=await service!.adoptNativeSession(f.item.key)
+    await service!.continueImported(taskId,'接着改',{inputRequestId:R});await settled(taskId)
+    await service!.continueImported(taskId,'接着改',{inputRequestId:R})
+    expect(f.spawn).toHaveBeenCalledTimes(1)
+    await expect(service!.continueImported(taskId,'别的话',{inputRequestId:R})).rejects.toThrow('input_conflict')
+  })
+  it('接过来之后会话又在电脑上跑了 ⇒ native_session_busy,什么都不记、不起执行者',async()=>{
+    const f=fixture(),{taskId}=await service!.adoptNativeSession(f.item.key),before=service!.detail(taskId).events.length
+    f.active(true)
+    await expect(service!.continueImported(taskId,'接着改',{inputRequestId:R})).rejects.toThrow('native_session_busy')
+    expect(f.spawn).not.toHaveBeenCalled();expect(service!.detail(taskId).events).toHaveLength(before)
+    expect(f.store.liveInputs.get(R)).toBeNull()
+  })
+  it('不是「导入了还没发过第一句」的任务 ⇒ invalid_request',async()=>{
+    const f=fixture(),{taskId}=await service!.adoptNativeSession(f.item.key)
+    await service!.continueImported(taskId,'接着改');await settled(taskId)
+    await expect(service!.continueImported(taskId,'再来')).rejects.toThrow('invalid_request')
+  })
+  it('内部 API 那条路不变:continueNativeTask 不带尾参照旧接着原会话',async()=>{
+    const f=fixture(),{taskId}=await service!.adoptNativeSession(f.item.key)
+    const p=await service!.prepareNativeResume(taskId);await service!.continueNativeTask(taskId,'go',p.token);await settled(taskId)
+    expect(f.spawn.mock.calls[0]?.[1].resumeSessionId).toBe('original')
+  })
+})
+
+describe('Task 2 裁决补充(R2 / R7 / R10)',()=>{
+  const R='5a7e0000-0000-4000-8000-000000000002'
+  const many=(n:number,len=1):NativeHistoryMessage[]=>Array.from({length:n},(_,i)=>({id:`m${i}`,role:i%2?'assistant':'user',text:`${i}`.padEnd(len,'x'),truncated:false}))
+  it('R2:超过 100 条的会话 ⇒ 翻到最后一页再挑,带过来的是最新的 200 条;第一句照样接着原会话',async()=>{
+    const f=fixture({messages:many(250)})
+    const {taskId}=await service!.adoptNativeSession(f.item.key)
+    const texts=service!.detail(taskId).events.map(e=>e.text)
+    expect(texts).toHaveLength(200);expect(texts[0]).toBe('50');expect(texts.at(-1)).toBe('249')
+    expect(f.store.source(taskId)?.truncated).toBe(true)
+    await service!.continueImported(taskId,'接着改',{inputRequestId:R});await settled(taskId)
+    expect(f.spawn).toHaveBeenCalledTimes(1);expect(f.spawn.mock.calls[0]?.[1].resumeSessionId).toBe('original')
+  })
+  it('R2:超过 500 条 ⇒ 翻五页以上照样到尾,最新的那条一定在',async()=>{
+    const f=fixture({messages:many(730,150)})
+    const {taskId}=await service!.adoptNativeSession(f.item.key)
+    const texts=service!.detail(taskId).events.map(e=>e.text)
+    expect(texts.at(-1)?.startsWith('729')).toBe(true)
+    expect(texts.length).toBe(160) // 24 000 / 150
+    expect(texts[0]?.startsWith('570')).toBe(true)
+  })
+  it('R7:selectNativeImportMessages 与桌面 nativeImportMessages 逐条一致',()=>{
+    let seed=7;const rnd=()=>(seed=(seed*1103515245+12345)%2147483648)/2147483648
+    for(let run=0;run<200;run++){
+      const n=Math.floor(rnd()*320),msgs=Array.from({length:n},(_,i)=>({id:`r${run}-${i}`,role:'user' as const,text:'x'.repeat(Math.floor(rnd()**3*30_000)),truncated:false}))
+      expect(selectNativeImportMessages(msgs).map(m=>m.id)).toEqual(nativeImportMessages({messages:msgs} as never).map((m:NativeHistoryMessage)=>m.id))
+    }
+    expect(selectNativeImportMessages([])).toEqual(nativeImportMessages(null))
+  })
+  it('不接管活着的会话:恢复不了(带记录新开一轮)也在第一句时重查「在跑」⇒ native_session_busy,不起执行者',async()=>{
+    const f=fixture(),{taskId}=await service!.adoptNativeSession(f.item.key);f.resumable(false);f.active(true)
+    await expect(service!.continueImported(taskId,'接着改',{inputRequestId:R})).rejects.toThrow('native_session_busy')
+    f.active(false);f.sessionBusy(true)
+    await expect(service!.continueImported(taskId,'接着改',{inputRequestId:R})).rejects.toThrow('native_session_busy')
+    expect(f.spawn).not.toHaveBeenCalled();expect(f.store.liveInputs.get(R)).toBeNull()
+  })
+  it('R10:同一 requestId 两次同时来 ⇒ 只起一次执行者,两边都拿到同一个结果',async()=>{
+    const f=fixture(),{taskId}=await service!.adoptNativeSession(f.item.key)
+    const [a,b]=await Promise.all([service!.continueImported(taskId,'接着改',{inputRequestId:R}),service!.continueImported(taskId,'接着改',{inputRequestId:R})])
+    expect(a.id).toBe(taskId);expect(b.id).toBe(taskId)
+    await settled(taskId)
+    expect(f.spawn).toHaveBeenCalledTimes(1)
+    expect(service!.detail(taskId).events.filter(e=>e.kind==='user'&&e.text==='接着改')).toHaveLength(1)
+  })
+  it('R10:同时来、正文不同 ⇒ 后来的 input_conflict,只起一次',async()=>{
+    const f=fixture(),{taskId}=await service!.adoptNativeSession(f.item.key)
+    const results=await Promise.allSettled([service!.continueImported(taskId,'接着改',{inputRequestId:R}),service!.continueImported(taskId,'别的话',{inputRequestId:R})])
+    expect(results[0].status).toBe('fulfilled');expect(results[1].status==='rejected'&&String(results[1].reason)).toContain('input_conflict')
+    await settled(taskId);expect(f.spawn).toHaveBeenCalledTimes(1)
+  })
+  it('R10:第一次失败(会话又在跑)⇒ 同一 requestId 停了之后再发可以接着发',async()=>{
+    const f=fixture(),{taskId}=await service!.adoptNativeSession(f.item.key)
+    f.active(true);await expect(service!.continueImported(taskId,'接着改',{inputRequestId:R})).rejects.toThrow('native_session_busy')
+    f.active(false);await service!.continueImported(taskId,'接着改',{inputRequestId:R});await settled(taskId)
+    expect(f.spawn).toHaveBeenCalledTimes(1)
+  })
+  it('R10:还没派发 daemon 就重启 ⇒ 那一轮记成 interrupted;同一 requestId 重发 ⇒ 重新派发一次(不是两轮)',async()=>{
+    const f=fixture(),{taskId}=await service!.adoptNativeSession(f.item.key)
+    const release=f.hold()
+    await service!.continueImported(taskId,'接着改',{inputRequestId:R})
+    await vi.waitFor(()=>expect(f.spawn).toHaveBeenCalledTimes(1))
+    expect(f.store.source(taskId)?.firstDispatchedAt).toBeNull()
+    const old=f.restart()
+    // 重启后:在跑的那一轮记成中断,回执 held;新进程里没有在跑的轮次。
+    expect(f.store.get(taskId)).toMatchObject({status:'interrupted',error:'daemon_restarted'})
+    expect(f.store.liveInputs.get(R)?.status).toBe('held')
+    // 旧进程那次 spawn 永远不回来(进程已死);新进程的 spawn 照常。
+    const releaseOld=release;f.unhold()
+    await service!.continueImported(taskId,'接着改',{inputRequestId:R})
+    await service!.continueImported(taskId,'接着改',{inputRequestId:R}) // 同一进程里再重发 ⇒ 不再派发
+    await settled(taskId)
+    expect(f.spawn).toHaveBeenCalledTimes(2) // 旧进程那次(被杀)+ 新进程这一次
+    expect(f.spawn.mock.calls[1]?.[1].resumeSessionId).toBe('original')
+    expect(f.store.source(taskId)?.firstDispatchedAt).not.toBeNull()
+    expect(service!.detail(taskId).events.filter(e=>e.kind==='user'&&e.text==='接着改')).toHaveLength(2)
+    await service!.shutdown();service=undefined;const closing=old.shutdown();releaseOld();await closing
+  })
+  it('R10:已经派发过、daemon 才重启 ⇒ 同一 requestId 重发不再派发(那句话执行者已经收到)',async()=>{
+    const f=fixture(),{taskId}=await service!.adoptNativeSession(f.item.key)
+    await service!.continueImported(taskId,'接着改',{inputRequestId:R});await settled(taskId)
+    const old=f.restart();await old.shutdown()
+    const view=await service!.continueImported(taskId,'接着改',{inputRequestId:R})
+    expect(view.id).toBe(taskId);expect(f.spawn).toHaveBeenCalledTimes(1)
+    await expect(service!.continueImported(taskId,'别的话',{inputRequestId:R})).rejects.toThrow('input_conflict')
   })
 })
