@@ -40,8 +40,8 @@ for W in 400 500; do
   INST "$WORK/source.ttf" wght=$W opsz=16 -o "$WORK/source-$W.ttf" >/dev/null
   SUB "$WORK/source-$W.ttf" --unicodes="$LATIN" --layout-features='*' --output-file="$WORK/ss-$W.ttf"
   "$PY" "$ROOT/scripts/fonts/rename-source.py" "$WORK/ss-$W.ttf" "$NAME" "TH Serif 4" THSerif4   # RFN 'Source'
-  cp "$WORK/ss-$W.ttf" "$APP/SourceSerif4-$NAME.ttf"
-  "$PY" -c "from fontTools.ttLib import TTFont;f=TTFont('$WORK/ss-$W.ttf');f.flavor='woff2';f.save('$DESK/source-serif-4-$W.woff2')"
+  cp "$WORK/ss-$W.ttf" "$APP/THSerif4-$NAME.ttf"
+  "$PY" -c "from fontTools.ttLib import TTFont;f=TTFont('$WORK/ss-$W.ttf');f.flavor='woff2';f.save('$DESK/th-serif-4-$W.woff2')"
 done
 # 三份 OFL 合成一份(各自版权行保留);Geist Mono 仍在桌面,所以桌面与手机同一份
 for D in "$APP" "$DESK"; do

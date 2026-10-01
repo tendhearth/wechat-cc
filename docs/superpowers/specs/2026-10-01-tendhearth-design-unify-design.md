@@ -51,7 +51,7 @@
 
 ### 2.2 字
 
-- 家族:`serifLatin = Source Serif 4`、`serifCJK = Noto Serif SC`、`mono = Geist Mono`(**只给代码、路径、diff、日志**;不再用于时间、标签)。
+- 家族:`serifLatin = TH Serif 4`(Source Serif 4 的拉丁子集;OFL 保留字体名 "Source",被修改版不得沿用,所以家族名、文件名一律 TH Serif 4 / `THSerif4-*` / `th-serif-4-*`)、`serifCJK = Noto Serif SC`、`mono = Geist Mono`(**只给代码、路径、diff、日志**;不再用于时间、标签)。
 - 字重:`regular 400`、`medium 500`。别的都不许。
 - 字号(px)与行高:
 

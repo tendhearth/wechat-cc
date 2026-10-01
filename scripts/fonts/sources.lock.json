@@ -11,10 +11,17 @@
     "commit": "08dc85da6bca7ae308a6f1d38d0b137465646071",
     "sha256": "97b2d4da6e3cb494b5a1e66ae176914d852ccabef49e0c02c0df25f3e39aca0b",
     "oflSha256": "5f94c3fd3a23131a417ab5a0c8452de57e70c3cfb9f604d88241f7065ebf9fd9",
-    "reservedFontName": "Source (internal names renamed to 'TH Serif 4' in subset files)"
+    "reservedFontName": "Source (internal names renamed to 'TH Serif 4' in subset files)",
+    "outputs": [
+      "apps/app/assets/fonts/THSerif4-Regular.ttf",
+      "apps/app/assets/fonts/THSerif4-Medium.ttf",
+      "apps/desktop/src/fonts/th-serif-4-400.woff2",
+      "apps/desktop/src/fonts/th-serif-4-500.woff2"
+    ]
   },
   "geistMonoLicense": {
-    "url": "https://raw.githubusercontent.com/vercel/geist-font/main/OFL.txt",
+    "url": "https://raw.githubusercontent.com/vercel/geist-font/c40c1aec7e72b9ebdce65a4fccd03cb3950a359b/OFL.txt",
+    "commit": "c40c1aec7e72b9ebdce65a4fccd03cb3950a359b",
     "sha256": "c683bfbcc7e087f5d37a54ef628f10387c451a83ddc459b151403a164ac46c90"
   }
 }

@@ -13,7 +13,7 @@ export const color = {
 
 export type TypeRole = 'display' | 'wordmark' | 'title' | 'item' | 'body' | 'bubble' | 'meta' | 'small' | 'caption'
 // 只打包 Noto Serif SC Regular(无 CJK Medium):凡可能出现中文的角色一律 regular,层级靠字号与留白。
-// 仅 wordmark("Tendhearth",纯拉丁)用 Source Serif 4 Medium。
+// 仅 wordmark("Tendhearth",纯拉丁)用 TH Serif 4 Medium(Source Serif 4 子集,因 OFL 保留字体名 'Source' 改名)。
 export const typeScale: Record<TypeRole, { desktop: number; phone: number; lineHeight: number; weight: 'regular' | 'medium'; tracking: number }> = {
   display:  { desktop: 48, phone: 36, lineHeight: 1.15, weight: 'regular', tracking: 0 },
   wordmark: { desktop: 24, phone: 20, lineHeight: 1.2,  weight: 'medium',  tracking: 0.01 },
@@ -25,7 +25,7 @@ export const typeScale: Record<TypeRole, { desktop: number; phone: number; lineH
   small:    { desktop: 13, phone: 13, lineHeight: 1.5,  weight: 'regular', tracking: 0 },
   caption:  { desktop: 12, phone: 12, lineHeight: 1.4,  weight: 'regular', tracking: 0 },
 }
-export const fontFamily = { serifLatin: 'Source Serif 4', serifCJK: 'Noto Serif SC', mono: 'Geist Mono' } as const
+export const fontFamily = { serifLatin: 'TH Serif 4', serifCJK: 'Noto Serif SC', mono: 'Geist Mono' } as const
 export const fontWeight = { regular: 400, medium: 500 } as const
 export const radius = { nav: 8, bubble: 14, sheet: 14, control: 28 } as const
 export const space = { xs: 4, s: 8, m: 12, l: 16, xl: 24, xxl: 36 } as const
