@@ -130,6 +130,8 @@ export interface WiredDeps {
   /** Mint a fresh graphical-settings-panel URL (10-min token). Null when no
    *  LAN/owner. Wired to GET /v1/settings/link for the desktop QR entry. */
   settingsPanelLink: () => Promise<string | null>
+  /** 「CC 的连接」快照(缓存 10 s);main.ts setConnections 到 internal-api。 */
+  connections: () => import('../connections').ConnectionsSnapshot
   /** 每晚记忆整理运行时(pipeline-deps 造);main.ts 挂定时器 + setMemoryNightly。 */
   memoryNightly: import('../memory/nightly-runtime').MemoryNightlyRuntime
   mattersService: import('../../core/matters/service').MattersService | null
@@ -239,13 +241,14 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     health: opts.boot.health.health,
     runAtelierTick,
   })
-  const { pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly } = buildPipelineDeps(opts, refs)
+  const { pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly, connections } = buildPipelineDeps(opts, refs)
   const lifecycleDeps = buildLifecycleDeps(opts, ticks)
   return {
     pipelineDeps,
     companionConverse,
     petTurn,
     settingsPanelLink,
+    connections,
     mattersService,
     memoryNightly,
     ...lifecycleDeps,

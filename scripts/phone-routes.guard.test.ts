@@ -33,7 +33,7 @@ const TOKENLESS = new Set(['/m/icon.png', '/m/manifest.json', '/m/sw.js'])
 
 function sourcePaths(): Set<string> {
   const panel = body(read('src', 'daemon', 'settings-panel.ts'), 'async function routeRequest(')
-  const extra = ['mobile-workbench.ts', 'mobile-chat.ts'].map(f => read('src', 'daemon', f))
+  const extra = ['mobile-workbench.ts', 'mobile-chat.ts', 'mobile-reads.ts'].map(f => read('src', 'daemon', f))
   const out = new Set<string>()
   for (const src of [panel, ...extra]) {
     for (const m of src.matchAll(/pathname\s*===\s*'(\/[^']*)'/g)) if (!TOKENLESS.has(m[1]!)) out.add(m[1]!)

@@ -88,3 +88,14 @@ export function buildConnections(d: ConnectionsDeps): ConnectionsSnapshot {
 export function redactConnections(s: ConnectionsSnapshot): ConnectionsSnapshot {
   return { ...s, sources: s.sources.map(({ detail: _detail, ...rest }) => rest) }
 }
+
+/** 裁定 8:快照缓存 ttlMs(默认 10 s)。抛错不缓存(下一次重算);fn 在 ttl 内只跑一次。 */
+export function cacheConnections(fn: () => ConnectionsSnapshot, ttlMs = 10_000, now: () => number = Date.now): () => ConnectionsSnapshot {
+  let at = 0, snap: ConnectionsSnapshot | null = null
+  return () => {
+    const t = now()
+    if (snap && t - at < ttlMs) return snap
+    snap = fn(); at = t
+    return snap
+  }
+}

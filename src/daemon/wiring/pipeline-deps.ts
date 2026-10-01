@@ -38,6 +38,10 @@ import type { InboundCtx } from '../inbound/types'
 import type { AppTurn } from '../inbound/build'
 import { basename as pathBasename } from 'node:path'
 import { makeSettingsPanel } from '../settings-panel'
+import { buildConnections, cacheConnections } from '../connections'
+import { maxDecryptedMtime } from '../companion/ingest/cycle'
+import { hostname } from 'node:os'
+import { APP_VERSION } from '../../lib/app-version'
 import { makePhoneOwner } from '../mobile-chat'
 import { makePhoneChat } from '../phone-chat'
 import { makePhoneInsight } from '../phone-insight'
@@ -214,6 +218,8 @@ export interface BuildPipelineDepsResult {
   settingsPanelLink: () => Promise<string | null>
   /** 手机「跟 CC 说」的任务表(收下即回,converse = companionConverse);没接 matters ⇒ null。 */
   phoneChat: import('../phone-chat').PhoneChat | null
+  /** 「CC 的连接」快照(缓存 10 s);手机与 admin 路由共用。 */
+  connections: () => import('../connections').ConnectionsSnapshot
   /** 「一件事」读写面(有 matters store 才有)。 */
   mattersService: import('../../core/matters/service').MattersService | null
   /**
@@ -598,7 +604,19 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     onSettled: id => { matterActivity?.note(id); phoneEvents?.poke() },
     log: (tag, line) => log(tag, line),
   }) : null
+  // 「CC 的连接」(spec 2026-10-01):插件快照 / 解密库时间 / 知识库 / 工作台。裁定 8:缓存 10 s、最多 3 次 detail()。
+  // wechatSyncedAt = wxvault 解密库的最近落盘时间(同步时间),不是最新微信消息时间。
+  const startedAt = Date.now() - Math.round(process.uptime() * 1000)
+  const connections = cacheConnections(() => buildConnections({
+    plugins: () => boot.pluginsHealth ?? null,
+    wechatSyncedAt: () => { const m = maxDecryptedMtime(stateDir); return m > 0 ? m : null },
+    knowledge: () => ({ enabled: (loadAgentConfig(stateDir) as { knowledge_enabled?: boolean }).knowledge_enabled === true, built: !!boot.knowledge, latestAt: boot.knowledge?.store.latestMessageAtMs() ?? null }),
+    computer: () => ({ label: hostname().replace(/\.local$/, ''), since: startedAt, version: APP_VERSION }),
+    detailLimit: 3,
+    ...(opts.workbench ? { workbench: opts.workbench } : {}),
+  }))
   const settingsPanel = makeSettingsPanel({
+    connections,
     stateDir,
     ownerChatId,
     // 手机洞察(批准说明 + 进展概括):explainer / summarizer 各建一个实例(内含缓存),不是每请求一建。
@@ -1191,5 +1209,5 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     })
   }
 
-  return { pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat }
+  return { pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections }
 }

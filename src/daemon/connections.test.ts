@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildConnections, redactConnections, KNOWLEDGE_STALE_MS, WECHAT_SYNC_STALE_MS, type ConnectionsDeps } from './connections'
+import { buildConnections, redactConnections, cacheConnections, KNOWLEDGE_STALE_MS, WECHAT_SYNC_STALE_MS, type ConnectionsDeps } from './connections'
 import type { PluginsHealth } from './plugins/health'
 
 const NOW = Date.UTC(2026, 9, 1, 12)
@@ -73,5 +73,15 @@ describe('buildConnections', () => {
     const s = buildConnections(deps({ detailLimit: 3, workbench: { list: () => ({ tasks }), detail: () => { calls++; return { artifacts: [] } } } }))
     expect(calls).toBe(3)
     expect(s.recent[0]!.phase).toBe('working')
+  })
+})
+
+describe('cacheConnections', () => {
+  it('ttl 内只算一次;过期重算;抛错不缓存', () => {
+    let t = 0, calls = 0, boom = false
+    const c = cacheConnections(() => { calls++; if (boom) throw new Error('x'); return { generatedAt: calls, sources: [], computers: [], recent: [], outputs: [] } }, 10_000, () => t)
+    expect(c().generatedAt).toBe(1); t = 9_999; expect(c().generatedAt).toBe(1); expect(calls).toBe(1)
+    t = 10_000; expect(c().generatedAt).toBe(2)
+    t = 25_000; boom = true; expect(() => c()).toThrow(); boom = false; expect(c().generatedAt).toBe(4)
   })
 })

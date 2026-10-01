@@ -33,6 +33,8 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   // 跟 CC 说(spec 2026-10-01,mobile-chat.ts):主人对话一页 + 收下即回的说一句
   'GET /m/api/chat',
   'POST /m/api/chat/say',
+  // CC 的连接(spec 2026-10-01,mobile-reads.ts),去掉 detail
+  'GET /m/api/connections',
   'POST /m/api/todo',
   'GET /m/api/sticker/',
   // 交办与材料(mobile-workbench.ts,#129)

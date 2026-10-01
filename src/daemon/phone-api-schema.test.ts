@@ -21,6 +21,7 @@ import { openDb, type Db } from '../lib/db'
 import { createProviderRegistry } from '../core/provider-registry'
 import { makeMatterStore } from '../core/matters/store'
 import { makeMattersService } from '../core/matters/service'
+import { buildConnections } from './connections'
 import { makeWorkbenchStore } from '../core/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from '../core/workbench/service'
 import { MANAGED_NATIVE_CAPABILITIES } from '../core/workbench/executor-capabilities'
@@ -99,6 +100,7 @@ describe('真实返回校验 — workbench + matters', () => {
       insight: makePhoneInsight({ detail: id => service.detail(id), explainer: makeApprovalExplainer({ cheapEval: () => null, budgetMs: () => 1000, log: () => {} }), summarizer: makeProgressSummarizer({ cheapEval: () => null, budgetMs: () => 1000, now: () => Date.now(), log: () => {} }) }),
       changes: id => workbench.reviewList(id),
       matters: { ...service, say: (id, text, input) => service.say(id, text, 'phone', input), seenOnPhone: id => { matters.bind(id, 'phone', 'pwa') } },
+      connections: () => buildConnections({ plugins: () => null, wechatSyncedAt: () => null, knowledge: () => ({ enabled: false, built: false, latestAt: null }), computer: () => ({ label: 'test', since: null, version: null }), workbench }),
       chat: (() => {
         const owner = makePhoneOwner({ ownerChatId: () => 'owner', matters })
         return {
@@ -125,6 +127,11 @@ describe('真实返回校验 — workbench + matters', () => {
     expect(schema, `${key} 没有登记 schema`).toBeDefined()
     return schema!.parse(body)
   }
+
+  it('connections 真实返回符合 schema', async () => {
+    create('conn')
+    parseAs('GET /m/api/connections', await (await request('/m/api/connections')).json())
+  })
 
   it('entry/options 真实返回符合 schema', async () => {
     const res = await request('/m/api/entry/options')

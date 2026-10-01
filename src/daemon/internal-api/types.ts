@@ -101,6 +101,8 @@ export interface InternalApiDeps {
   workbench?: WorkbenchService
   /** 「一件事」读写面(routes-matters);与 workbench 一样晚绑定。 */
   matters?: import('../../core/matters/service').MattersService
+  /** 「CC 的连接」(spec 2026-10-01);main.ts 在 pipeline 接好后 setConnections。 */
+  connections?: () => import('../connections').ConnectionsSnapshot
   /**
    * Sandbox FS for memory_read / memory_write / memory_list (RFC 03 P1.B
    * B2). The same MemoryFS instance is shared with the legacy in-process
@@ -593,6 +595,7 @@ export interface InternalApi {
   setDelegate(d: InternalApiDelegateDep): void
   setLlmHealth(h: import('../llm-health').LlmHealth, registered?: () => string[], endpoints?: () => Record<string, string>): void
   setSettingsLink(fn: () => Promise<string | null>): void
+  setConnections(fn: () => import('../connections').ConnectionsSnapshot): void
   setMemoryNightly(r: { runNow(): Promise<unknown> }): void
   /**
    * Late-bind the conversation controller (coordinator.setMode) after
