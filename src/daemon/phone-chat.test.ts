@@ -93,7 +93,7 @@ describe('makePhoneChat', () => {
     expect(r.chat.pendingMatter()).toBeNull()
     expect(() => r.chat.say(RID(2), 'b')).not.toThrow()
   })
-  it('converse 挂住超过 10 分钟 ⇒ failed unavailable;之后迟到的回复不翻案', async () => {
+  it('converse 挂住超过 10 分钟 ⇒ failed unavailable;之后迟到的成功回复把它翻成 replied(终审 I2)', async () => {
     vi.useFakeTimers()
     try {
       const r = rig()
@@ -105,8 +105,11 @@ describe('makePhoneChat', () => {
       expect(r.chat.state()).toMatchObject({ pending: null, failed: { requestId: RID(1), error: 'unavailable' } })
       expect(r.settled).toEqual(['c0ffee01'])
       r.calls[0]!.resolve({ reply: 'late' }); await vi.advanceTimersByTimeAsync(0)
-      expect(r.chat.state().failed?.status).toBe('failed')
+      // 回复已经落进对话:不再挂 failed,同一 requestId 重试去重成 replied,不起第二轮
+      expect(r.chat.state()).toEqual({ pending: null, failed: null })
       expect(r.settled).toEqual(['c0ffee01', 'c0ffee01']) // 迟到的回复再唤醒一次(fix round 1)
+      expect(r.chat.say(RID(1), 'a')).toMatchObject({ status: 'replied' })
+      expect(r.calls).toHaveLength(1)
     } finally { vi.useRealTimers() }
   })
   it('failed 过了 TTL 就不再显示', async () => {
@@ -142,7 +145,7 @@ describe('makePhoneChat', () => {
         expect(r.settled).toEqual(['c0ffee01'])
       } finally { vi.useRealTimers() }
     })
-    it('超时后迟到的成功回复 ⇒ 仍 failed,但再发一次 onSettled(只一次);迟到的失败不发', async () => {
+    it('超时后迟到的成功回复 ⇒ 翻成 replied,再发一次 onSettled(只一次);迟到的失败不发', async () => {
       vi.useFakeTimers()
       try {
         const r = rig()
@@ -152,7 +155,7 @@ describe('makePhoneChat', () => {
         r.calls[0]!.resolve({ reply: 'late' }); await vi.advanceTimersByTimeAsync(0)
         r.calls[0]!.resolve({ reply: 'again' }); await vi.advanceTimersByTimeAsync(0)
         expect(r.settled).toEqual(['c0ffee01', 'c0ffee01'])
-        expect(r.chat.state().failed?.status).toBe('failed')
+        expect(r.chat.state().failed).toBeNull()
         r.chat.say(RID(2), 'b'); await vi.advanceTimersByTimeAsync(0)
         await vi.advanceTimersByTimeAsync(PHONE_CHAT_TIMEOUT_MS)
         r.calls[1]!.reject(new Error('late boom')); await vi.advanceTimersByTimeAsync(0)
@@ -193,5 +196,19 @@ describe('makePhoneChat', () => {
       expect(r.chat.say(RID(1), 'a').status).toBe('replied')
       expect(r.chat.say(RID(2), 'a').status).toBe('pending')
     })
+  })
+  it('超时后起了另一句才迟到成功 ⇒ 只翻自己那条(不清掉别人的 failed),重试它去重成 replied', async () => {
+    vi.useFakeTimers()
+    try {
+      const r = rig()
+      r.chat.say(RID(1), 'a'); await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(PHONE_CHAT_TIMEOUT_MS)
+      r.chat.say(RID(2), 'b'); await vi.advanceTimersByTimeAsync(0)
+      r.calls[1]!.reject(new Error('reply_sink_busy')); await vi.advanceTimersByTimeAsync(0)
+      r.calls[0]!.resolve({ reply: 'late' }); await vi.advanceTimersByTimeAsync(0)
+      expect(r.chat.state().failed).toMatchObject({ requestId: RID(2), error: 'busy' })
+      expect(r.chat.say(RID(1), 'a')).toMatchObject({ status: 'replied' })
+      expect(r.calls).toHaveLength(2)
+    } finally { vi.useRealTimers() }
   })
 })

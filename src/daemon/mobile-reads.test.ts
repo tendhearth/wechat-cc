@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
 import { mobileReadsRoute, cacheSessions, type MobileSessionsDeps } from './mobile-reads'
 import type { ConnectionsSnapshot } from './connections'
+import { deriveSharedKey, generateTunnelKeypair, sealFrame } from '../lib/tunnel-crypto'
 
 const SNAP: ConnectionsSnapshot = {
   generatedAt: 1, computers: [{ id: 'home', label: 'Mac', online: true, since: 0, version: '1.7.1' }], recent: [], outputs: [],
@@ -93,4 +94,40 @@ describe('cacheSessions(单飞 + 短缓存,裁定 8)', () => {
     await expect(c.read('c', { limit: 20 })).rejects.toThrow('busy')
     expect(calls).toBe(2)
   })
+})
+
+/** 旧中继线上真实大小:tunnel-client 的 {rid,status,body} 再 JSON 一次、封帧(base64url)、套 {stream,frame}。 */
+async function legacyWireBytes(status: number, bodyText: string): Promise<number> {
+  const a = await generateTunnelKeypair(), b = await generateTunnelKeypair()
+  const key = await deriveSharedKey(a.privateKey, b.publicKey, new TextEncoder().encode('t'.repeat(43)))
+  const reply = new TextEncoder().encode(JSON.stringify({ rid: 'r'.repeat(64), status, body: bodyText }))
+  return Buffer.byteLength(JSON.stringify({ stream: 's'.repeat(64), frame: await sealFrame(key, reply) }), 'utf8')
+}
+const RELAY_FRAME_MAX = 512 * 1024
+
+describe('旧中继帧大小(终审 M1):会话页 / 会话列表最坏情况也不超 512 KiB,不 413 整页', () => {
+  for (const [name, ch] of [['汉字', '汉'], ['控制字符', '\u0001'], ['引号', '"']] as const) {
+    it(`读一页 20 条 × 4000 个${name} ⇒ 服务端再截短(truncated),条数不少,线上 < 512 KiB`, async () => {
+      const msgs = Array.from({ length: 20 }, (_, i) => ({ id: `m${i}`, role: 'assistant' as const, text: ch.repeat(4000), truncated: false }))
+      const d = sessions({ read: async () => ({ session: ITEM, messages: msgs, nextCursor: 'n', sourceFingerprint: 'f', page: { limit: 20, cursor: null }, truncated: false }) })
+      const r = (await mobileReadsRoute({ sessions: d }, new URL('http://x/m/api/session?key=k1'), new Request('http://x/m/api/session?key=k1')))!
+      expect(r.status).toBe(200)
+      const text = await r.text()
+      const body = JSON.parse(text)
+      expect(body.messages).toHaveLength(20)
+      expect(body.nextCursor).toBe('n')
+      if (ch !== '汉') expect(body.messages.every((m: { truncated: boolean }) => m.truncated)).toBe(true)
+      expect(await legacyWireBytes(200, text)).toBeLessThan(RELAY_FRAME_MAX)
+      PHONE_API_SCHEMAS['GET /m/api/session']!.parse(body)
+    })
+    it(`列表 30 行,标题与目录名全是${name} ⇒ 线上 < 512 KiB`, async () => {
+      const items = Array.from({ length: 30 }, (_, i) => ({ ...ITEM, key: `k${i}`, title: ch.repeat(300), cwd: '/w/' + ch.repeat(4000) }))
+      const d = sessions({ list: async () => ({ items, nextCursor: 'c', coverage: 'native_supported_history' }) })
+      const r = (await mobileReadsRoute({ sessions: d }, new URL('http://x/m/api/sessions?provider=claude'), new Request('http://x/m/api/sessions?provider=claude')))!
+      expect(r.status).toBe(200)
+      const text = await r.text()
+      expect(JSON.parse(text).items).toHaveLength(30)
+      expect(await legacyWireBytes(200, text)).toBeLessThan(RELAY_FRAME_MAX)
+    })
+  }
 })

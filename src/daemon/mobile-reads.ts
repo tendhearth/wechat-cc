@@ -1,5 +1,6 @@
 import { basename } from 'node:path'
 import { redactConnections, type ConnectionsSnapshot } from './connections'
+import { framedTooLarge } from './mobile-matter-response'
 import type { NativeHistoryItem, NativeHistoryListInput, NativeHistoryPage, NativeHistoryPreview, NativeHistoryReadInput } from '../core/workbench/native-history'
 
 /**
@@ -18,7 +19,16 @@ export interface MobileSessionsDeps {
 export interface MobileReadsDeps { connections?: () => ConnectionsSnapshot; sessions?: MobileSessionsDeps }
 const json = (body: object, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
 
-const row = (i: NativeHistoryItem) => ({ key: i.key, provider: i.providerId, title: i.title.slice(0, 200), project: i.cwd ? basename(i.cwd) : null, updatedAt: i.updatedAt, active: i.observedState === 'active' })
+const row = (i: NativeHistoryItem, max = 200) => ({ key: i.key, provider: i.providerId, title: i.title.slice(0, max), project: i.cwd ? basename(i.cwd).slice(0, max) : null, updatedAt: i.updatedAt, active: i.observedState === 'active' })
+/**
+ * 旧中继一帧 512 KiB(终审 M1):body 由 build(max) 生成,太大就把每段正文的上限减半再生成(不删条目、不动 cursor),
+ * 绝不 413 整页。max 降到 64 仍超(条目本身就多到离谱)也照发 —— 那是中继的事,不是吞掉整页。
+ */
+function fitted(build: (max: number) => object, max: number): Response {
+  let body = JSON.stringify(build(max))
+  while (max > 64 && framedTooLarge(body)) { max = Math.floor(max / 2); body = JSON.stringify(build(max)) }
+  return new Response(body, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
+}
 async function withBudget<T>(p: Promise<T>, ms: number): Promise<T> {
   let h: ReturnType<typeof setTimeout> | undefined
   try { return await Promise.race([p, new Promise<never>((_, rej) => { h = setTimeout(() => rej(new Error('budget_exceeded')), ms) })]) }
@@ -81,7 +91,7 @@ export async function mobileReadsRoute(deps: MobileReadsDeps, url: URL, req: Req
     if ((provider !== 'claude' && provider !== 'codex') || url.searchParams.getAll('provider').length !== 1 || cursor === null) return json({ ok: false, error: 'invalid' }, 400)
     try {
       const page = await withBudget(deps.sessions.list(provider, { q: '', limit: PHONE_SESSIONS_PAGE, ...(cursor ? { cursor } : {}) }), opts.budgetMs ?? PHONE_SESSIONS_BUDGET_MS)
-      return json({ ok: true, items: page.items.map(row), nextCursor: page.nextCursor })
+      return fitted(max => ({ ok: true, items: page.items.map(i => row(i, max)), nextCursor: page.nextCursor }), 200)
     } catch (e) { return sessionError(e) }
   }
   if (url.pathname === '/m/api/session') {
@@ -91,10 +101,10 @@ export async function mobileReadsRoute(deps: MobileReadsDeps, url: URL, req: Req
     if (!key || key.length > 2048 || url.searchParams.getAll('key').length !== 1 || cursor === null) return json({ ok: false, error: 'invalid' }, 400)
     try {
       const p = await withBudget(deps.sessions.read(key, { limit: PHONE_SESSION_PAGE, ...(cursor ? { cursor } : {}) }), opts.budgetMs ?? PHONE_SESSIONS_BUDGET_MS)
-      return json({
+      return fitted(max => ({
         ok: true, session: row(p.session), nextCursor: p.nextCursor, managed: !!p.managedTaskId,
-        messages: p.messages.map(m => ({ id: m.id, role: m.role, text: m.text.slice(0, PHONE_SESSION_TEXT_MAX), truncated: m.truncated || m.text.length > PHONE_SESSION_TEXT_MAX })),
-      })
+        messages: p.messages.map(m => ({ id: m.id, role: m.role, text: m.text.slice(0, max), truncated: m.truncated || m.text.length > max })),
+      }), PHONE_SESSION_TEXT_MAX)
     } catch (e) { return sessionError(e) }
   }
   return null

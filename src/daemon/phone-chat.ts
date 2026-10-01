@@ -5,6 +5,7 @@
  *
  * `converse` 由接线方给,必须走既有的回合串行入口(和微信 / 桌面「跟 CC 说」同一条),
  * 这里不管串行,只管:一次一句、按 requestId 去重、失败不自动重发(重试 = 同一 requestId 再发)。
+ * 超时判了 failed 之后回复才到 ⇒ 翻成 replied(重试不会再跑一轮)。
  */
 export type ChatJobStatus = 'pending' | 'replied' | 'failed'
 export type ChatJobError = 'busy' | 'unavailable' | 'not_configured'
@@ -74,8 +75,12 @@ export function makePhoneChat(d: {
     Promise.resolve().then(() => d.converse(job.text)).then(
       () => {
         if (!done) return finish(null)
-        // 超时后才回来的回复:状态仍是 failed(不翻案),但回复已落进对话,再唤醒一次手机去拉,
-        // 免得主人以为没回、点重试起第二轮。promise 只会 resolve 一次,所以至多多发这一次。
+        // 超时后才回来的成功(终审 I2):这句其实办成了、回复已落进对话 ⇒ 翻成 replied,
+        // 同一 requestId 的重试去重成 replied、不起第二轮;它若还挂在 failed 上就撤掉(别人的 failed 不动)。
+        // 再唤醒一次手机去拉。promise 只会 resolve 一次,所以至多多发这一次。
+        job.status = 'replied'; delete job.error
+        settledAt.set(job, now())
+        if (failed === job) failed = null
         log(`say ${job.requestId.slice(0, 8)} late reply`)
         wake(job)
       },

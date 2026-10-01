@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
-import { makePhoneOwner, mobileChatRoute, type MobileChatDeps } from './mobile-chat'
+import { makePhoneChatId, makePhoneOwner, mobileChatRoute, type MobileChatDeps } from './mobile-chat'
+import { deriveSharedKey, generateTunnelKeypair, sealFrame } from '../lib/tunnel-crypto'
 import type { MessageRecord } from '../lib/messages-store'
 import { openTestDb } from '../lib/db'
 import { makeMatterStore } from '../core/matters/store'
@@ -97,5 +98,64 @@ describe('makePhoneOwner(Ruling 3:读只查不写,说才登记)', () => {
     expect(makePhoneOwner({ ownerChatId: () => null, matters: store }).ensure()).toBeNull()
     const id = makePhoneOwner({ ownerChatId: () => 'wx', matters: store }).ensure()!
     expect(store.bindings(id).map(b => b.surface).sort()).toEqual(['phone', 'wechat'])
+  })
+})
+
+/** 旧中继线上真实大小:tunnel-client 的 {rid,status,body} 再 JSON 一次、封帧(base64url)、套 {stream,frame}。 */
+async function legacyWireBytes(res: Response): Promise<number> {
+  const a = await generateTunnelKeypair(), b = await generateTunnelKeypair()
+  const key = await deriveSharedKey(a.privateKey, b.publicKey, new TextEncoder().encode('t'.repeat(43)))
+  const reply = new TextEncoder().encode(JSON.stringify({ rid: 'r'.repeat(64), status: res.status, body: await res.text() }))
+  return Buffer.byteLength(JSON.stringify({ stream: 's'.repeat(64), frame: await sealFrame(key, reply) }), 'utf8')
+}
+const RELAY_FRAME_MAX = 512 * 1024
+
+describe('旧中继帧大小(终审 M1):一页整页不能超过 512 KiB,也不能 413 整页', () => {
+  const worst = (text: string) => vi.fn(async (_c: string, o: { limit: number }) => Array.from({ length: o.limit }, (_, i) => rec(i, { text })))
+  for (const [name, text] of [['4000 个汉字', '汉'.repeat(4000)], ['控制字符(转义两次最胀)', '\u0001'.repeat(4000)], ['引号', '"'.repeat(4000)]] as const) {
+    it(`每条 ${name} ⇒ 少给几条(hasMore、nextBefore 指向本页最旧那条),线上 < 512 KiB`, async () => {
+      const d = deps({ history: worst(text) })
+      const res = (await mobileChatRoute(d, new URL('http://x/m/api/chat'), get()))!
+      expect(res.status).toBe(200)
+      const body = await res.clone().json() as any
+      expect(body.messages.length).toBeGreaterThan(0)
+      expect(body.messages.length).toBeLessThan(30)
+      expect(body.hasMore).toBe(true)
+      // 下一页从本页最旧那条往前接:不留洞
+      expect(body.nextBefore).toBe(rec(31 - body.messages.length).ts)
+      expect(body.messages[0].id).toBe(`m${31 - body.messages.length}`)
+      expect(await legacyWireBytes(res)).toBeLessThan(RELAY_FRAME_MAX)
+      PHONE_API_SCHEMAS['GET /m/api/chat']!.parse(body)
+    })
+  }
+  it('普通大小的一页照旧 30 条', async () => {
+    const r = await call(deps(), get())
+    expect(r.body.messages).toHaveLength(30)
+  })
+})
+
+describe('makePhoneChatId(Task 4:default_chat_id 不是主人 ⇒ 手机对话停用,且日志说一声)', () => {
+  it('不一致 ⇒ null,只在状态切换时各记一行', () => {
+    const logs: string[] = []
+    let conv: string | null = 'other'
+    const id = makePhoneChatId({ ownerChatId: () => 'wx', converseChatId: () => conv, log: (_t, l) => logs.push(l) })
+    expect(id()).toBeNull(); expect(id()).toBeNull()
+    expect(logs).toHaveLength(1)
+    expect(logs[0]).toContain('default_chat_id')
+    expect(logs[0]).not.toContain('other')   // 不记 chat id
+    conv = 'wx'
+    expect(id()).toBe('wx'); expect(id()).toBe('wx')
+    expect(logs).toHaveLength(2)
+    conv = null
+    expect(id()).toBe('wx')
+    expect(logs).toHaveLength(2)
+    conv = 'other'
+    expect(id()).toBeNull()
+    expect(logs).toHaveLength(3)
+  })
+  it('没主人 ⇒ null,不记日志', () => {
+    const logs: string[] = []
+    expect(makePhoneChatId({ ownerChatId: () => null, converseChatId: () => 'x', log: (_t, l) => logs.push(l) })()).toBeNull()
+    expect(logs).toEqual([])
   })
 })

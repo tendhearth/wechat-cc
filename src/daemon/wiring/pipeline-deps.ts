@@ -43,7 +43,7 @@ import { cacheSessions } from '../mobile-reads'
 import { maxDecryptedMtime } from '../companion/ingest/cycle'
 import { hostname } from 'node:os'
 import { APP_VERSION } from '../../lib/app-version'
-import { makePhoneOwner } from '../mobile-chat'
+import { makePhoneChatId, makePhoneOwner } from '../mobile-chat'
 import { makePhoneChat } from '../phone-chat'
 import { makePhoneInsight } from '../phone-insight'
 import { makeApprovalExplainer } from '../phone-explain'
@@ -589,11 +589,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // 手机「跟 CC 说」(spec 2026-10-01):主人对话一页(只读)+ 收下即回的说一句。
   // 对话 chat 必须就是 companionConverse 写进去的那条(它认 companion 的 default_chat_id):
   // 两者不一致(default_chat_id 不是 admin)⇒ 当作没有主人对话,免得手机看 A 却说进 B。
-  const phoneChatId = () => {
-    const id = ownerChatId()
-    const converseChat = loadCompanionConfig(stateDir).default_chat_id
-    return id && (!converseChat || converseChat === id) ? id : null
-  }
+  const phoneChatId = makePhoneChatId({ ownerChatId, converseChatId: () => loadCompanionConfig(stateDir).default_chat_id ?? null, log: (tag, line) => log(tag, line) })
   const phoneOwner = opts.matters ? makePhoneOwner({ ownerChatId: phoneChatId, matters: opts.matters }) : null
   let phoneEvents: import('../phone-events').PhoneEvents | null = null
   // converse 必须是回合串行入口 companionConverse(与微信 / 桌面「跟 CC 说」同一条:

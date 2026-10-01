@@ -55,6 +55,10 @@ describe('buildConnections', () => {
     expect(byId(s, 'wechat_history')!.state).toBe('unknown')
     expect(s.sources.filter(x => x.kind === 'plugin')).toEqual([])
     expect(byId(s, 'knowledge')!.state).toBe('unknown')
+    // 只有这种情况才算「电脑还在启动」(终审 M3);其它 unknown(没解密库、空知识库)不是启动中
+    expect(s.starting).toBe(true)
+    expect(buildConnections(deps()).starting).toBe(false)
+    expect(buildConnections(deps({ wechatSyncedAt: () => null })).starting).toBe(false)
   })
   it('最近在做 / 成果:按时间取前 3;某件详情抛错就跳过', () => {
     const tasks = [1, 2, 3, 4].map(i => ({ id: `0000000${i}`, title: `t${i}`, phase: 'working', updatedAt: i }))

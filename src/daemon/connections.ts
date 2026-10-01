@@ -9,6 +9,8 @@ export type SourceState = 'ready' | 'behind' | 'not_loaded' | 'unknown'
 export interface ConnectionSource { id: string; kind: 'wechat_history' | 'knowledge' | 'plugin'; name: string; state: SourceState; latestAt: number | null; syncedAt: number | null; detail?: { reason?: string; dir?: string | null } }
 export interface ConnectionsSnapshot {
   generatedAt: number
+  /** 插件快照还没出来 = daemon 真的还在启动(手机只在这时说「电脑还在启动」;别的 unknown 用中性措辞)。 */
+  starting?: boolean
   sources: ConnectionSource[]
   computers: Array<{ id: string; label: string; online: boolean; since: number | null; version: string | null }>
   recent: Array<{ matterId: string; title: string; phase: string; at: number }>
@@ -83,7 +85,7 @@ export function buildConnections(d: ConnectionsDeps): ConnectionsSnapshot {
     outputs = all.sort((a, b) => b.at - a.at).slice(0, 3)
   }
 
-  return { generatedAt: now, sources, computers: [{ id: 'home', online: true, ...d.computer() }], recent, outputs }
+  return { generatedAt: now, starting: !h, sources, computers: [{ id: 'home', online: true, ...d.computer() }], recent, outputs }
 }
 
 export function redactConnections(s: ConnectionsSnapshot): ConnectionsSnapshot {

@@ -2,6 +2,7 @@ import { CHAT_PAGE_MAX, CHAT_TEXT_MAX, PHONE_SAY_MAX_CHARS } from '@wechat-cc/pr
 import type { MessageRecord } from '../lib/messages-store'
 import type { MatterStore } from '../core/matters/store'
 import type { ChatJob, PhoneChat } from './phone-chat'
+import { framedTooLarge } from './mobile-matter-response'
 
 /**
  * mobile-chat.ts — 手机「跟 CC 说」的两条路由(spec 2026-10-01 §3)。路由字面量被
@@ -42,6 +43,27 @@ export function makePhoneOwner(d: {
   }
 }
 
+/**
+ * 手机对话认的主人 chat:必须就是 companionConverse 写进去的那条(它认 companion 的 default_chat_id)。
+ * 两者不一致(default_chat_id 不是 admin)⇒ 当作没有主人对话,免得手机看 A 却说进 B;
+ * 这种停用在状态切换时记一行日志(不记 chat id),否则手机只显示「还没设好主人对话」、日志里毫无线索。
+ */
+export function makePhoneChatId(d: { ownerChatId(): string | null; converseChatId(): string | null; log?: (tag: string, line: string) => void }): () => string | null {
+  let mismatched = false
+  const note = (line: string) => { try { d.log?.('PHONE_CHAT', line) } catch { /* 日志坏了不影响结果 */ } }
+  return () => {
+    const id = d.ownerChatId()
+    if (!id) return null
+    const conv = d.converseChatId()
+    const bad = !!conv && conv !== id
+    if (bad !== mismatched) {
+      mismatched = bad
+      note(bad ? 'companion default_chat_id is not the admin chat — phone chat disabled' : 'companion default_chat_id matches the admin chat again — phone chat enabled')
+    }
+    return bad ? null : id
+  }
+}
+
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
 const json = (body: object, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
 const err = (error: string, status: number) => json({ ok: false, error }, status)
@@ -69,15 +91,24 @@ export async function mobileChatRoute(deps: MobileChatDeps | undefined, url: URL
     // 多取一条判 hasMore。listRange 是严格 `<` beforeTs:同一毫秒的两条恰好跨页边界时会漏一条(可接受,见 preflight B7)。
     try { rows = await deps.history(owner.chatId, { ...(before !== null ? { beforeTs: before } : {}), limit: limit + 1 }) }
     catch { return err('unavailable', 503) }
-    const hasMore = rows.length > limit
-    const page = hasMore ? rows.slice(rows.length - limit) : rows   // rows 升序:多出来的是最旧那条
+    let hasMore = rows.length > limit
+    let page = hasMore ? rows.slice(rows.length - limit) : rows   // rows 升序:多出来的是最旧那条
     const st = deps.chat.state()
-    return json({
-      ok: true, matterId: owner.matterId, title: owner.title, messages: page.map(message), hasMore,
+    const build = () => JSON.stringify({
+      ok: true, matterId: owner!.matterId, title: owner!.title, messages: page.map(message), hasMore,
       // 原始 ts 字符串,不重新格式化 —— 下一页原样当 before 传回来。
       nextBefore: hasMore && page.length ? page[0]!.ts : null,
       pending: st.pending ? wireJob(st.pending) : null, failed: st.failed ? wireJob(st.failed) : null,
     })
+    // 旧中继一帧 512 KiB(终审 M1):整页太大就从最旧那头少给几条(hasMore + nextBefore 接着翻,不留洞),绝不 413 整页。
+    // 单条至多 CHAT_TEXT_MAX 字,最坏转义后也远小于预算,所以总留得下最新那条。
+    let body = build()
+    while (page.length > 1 && framedTooLarge(body)) {
+      page = page.slice(Math.max(1, Math.floor(page.length / 8)))
+      hasMore = true
+      body = build()
+    }
+    return new Response(body, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
   }
   if (url.pathname === '/m/api/chat/say') {
     if (req.method !== 'POST') return err('method_not_allowed', 405)
