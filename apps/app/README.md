@@ -54,7 +54,7 @@ src/net/          真连接:connection.ts(连接状态机)、errors.ts(错误映
 src/state/        BackendProvider、会话(语言覆盖、已看过欢迎页;配对记录与偏好落钥匙串 `tendhearth.pairing.v1` / `tendhearth.prefs.v1`)、订阅 store、查询 hooks、草稿
 src/view/         纯函数视图模型(此刻 / 一起做 / 进展 / 批准 / 状态词),vitest 覆盖
 src/i18n/         en 与 zh-Hans 文案表(两份键一致有测试)+ useLang(设置覆盖 ?? 系统)
-src/ui/           组件与色板(tokens.ts,明暗两套;明暗只是外观,不表示在线离线)
+src/ui/           组件与色板(tokens.ts,复用共享 design-tokens;固定暖纸,CC 明暗由真实信号决定)
 src/push/         推送:key-store(钥匙串里的推送密钥记录)、target / route(点通知去哪)、register(登记生命周期)、PushProvider / PushRouter、前台横幅、开发用 dev-token
 native/           原生通知核心:ios-notify(Swift 通知服务扩展 + `swift test`)、android-push(Kotlin 消息服务 + JVM 单测 `test.sh`)、push-strings.json(原生端标题文案)
 plugins/          Expo config plugin:with-ios-notify(扩展 target + 共享钥匙串)、with-android-push(FCM 服务 + 读 expo-secure-store)、with-ios-scene(iOS 27 场景委托)及其测试
@@ -77,7 +77,7 @@ scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl 
 - 上限:回答 `JSON.stringify(answers).length > 20_000`、说一句正文 `> 20_000` 字,在手机上就拦下,不发(协议包常量 `PHONE_ANSWER_MAX_JSON` / `PHONE_SAY_MAX_CHARS`)。
 - **跟 CC 说走 `/m/api/chat*`,收下即回**:`/m/api/chat/say` 立刻返回(走 companion 路径,与微信同一个主人会话),回复靠 `matter/<聊天>` 主题唤醒后拉取;一次只等一句(上一句在等 ⇒ 409 `chat_busy`,草稿留着),10 分钟超时。`requestId` 用 `requestIdFor('chat', 正文)`。老网页壳 `/m/api/matter/say` 的同步语义不动。主人的对话在「一起做」里置顶;访客的聊天不出现在手机上。
 - **「可能没送到」**:本机收过回执,但 daemon 那边既不 pending 也没历史 ⇒ 显示未确认气泡(可重试、可忽略);重试用同一个 `requestId`,daemon 去重,所以即使其实已落在历史别页也安全。原因:任务表只在内存,daemon 重启会丢正在等的那句。不自动重发(不重试风暴)。
-- **连接卡与会话页拿到的都是 admin 以下的投影:没有路径**(无插件目录、无 cwd / nativeId)。连接卡「不知道」永不显示成绿;知识库没开不是故障(不显示红),开了没建起来才红;知识库陈旧按最近一次同步判,微信聊天记录的日期按 wxvault 解密时间。电脑上的会话只读,只给目录名。
+- **连接卡与会话页拿到的都是 admin 以下的投影:没有路径**(无插件目录、无 cwd / nativeId)。连接卡「不知道」永不显示成绿;知识库没开不是故障(不显示红),开了没建起来才红;知识库陈旧按最近一次同步判,微信聊天记录的日期按 wxvault 解密时间。会话列表查询只读、只给目录名；#166 另提供确认后「接着做」的写入入口，查询投影与续接授权分别验收。
 - **撤销 ≠ 离线**:撤销 ⇒ 停止提交、清掉钥匙串里的设备令牌、显示「重新配对」;暂时离线 ⇒ 显示上次同步时间、草稿照写、发送 / 批准 / 拒绝锁住。两者文案与 testID 都不同。
 - **草稿永不自动发送**:重连后只重拉读,不重放写;不做乐观成功。
 - **令牌不进日志**、错误文案或 `console`:`LiveBackend` 的 `log` 只写错误码与路由键。
@@ -175,7 +175,7 @@ CI:`app · native push vectors`(`.github/workflows/ci.yml`,仅 `apps/app/native/
 
 ## 跟 CC 说话计划(2026-10-01)的状态与真机验收
 
-状态:`app-chat` 分支,代码完成、待合 dev、待主人真机。**设计规矩尚未统一**:主人 2026-10-01 的设计规则(全站衬线、单一强调色、不做暗色模式、CC Light/Dark 只表示在线)**还没应用**——本计划的屏按现有 token 落地,之后单开「设计统一」计划(计划 6),再做配对体验(计划 7)。
+状态：手机聊天已通过 #162 合入 dev，设计统一已通过 #163 合入。两端暖纸、衬线、单一强调色、无深色模式；CC 明暗来自真实连接 / 在场信号，见[设计统一 spec](../../docs/superpowers/specs/2026-10-01-tendhearth-design-unify-design.md)。配对体验 #165、手机续接会话 #166 和发送拒绝文案 #167 已合入；以下主人真机验收仍待完成。
 
 延后的次要项摘要见 `docs/roadmap.md`。主人真机验收(iOS;安卓有设备再补):
 

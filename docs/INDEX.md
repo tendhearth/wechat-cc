@@ -6,6 +6,8 @@
 
 产品名、角色称呼与兼容标识见[产品命名规范](reference/product-naming.md)。原生手机工程见 [apps/app](../apps/app/README.md)，浏览器/PWA 见 [apps/mobile](../apps/mobile/README.md)。
 
+从整个 `tendhearth` 工作区或长期方向入手，先看[项目总览：项目关系、4 月以来的演变与当前交付边界](project-overview.md)。这是带基线的整理快照；持续的进展仍看 roadmap，各领域现状仍看下面的权威文档。
+
 ## 三份总图,先读这三份
 
 | 想知道 | 读 |
@@ -28,7 +30,7 @@
 | 自维护(部署 / 自检 / CI 闸门) | [maintainer/](maintainer/README.md) | `superpowers/specs/2026-09-18-{self-maintenance,ci-triage}-design.md` |
 | 自改流水线(`self change`) | [maintainer/self-change.md](maintainer/self-change.md) | `superpowers/specs/2026-09-18-self-change-pipeline-design.md` |
 | 「一件事」matter 原语与任务入口 | [工作台现状](cc-workbench.md) | `superpowers/specs/2026-09-13-cc-unified-task-entry.md` 那一批(09-12/09-13)；[陪伴交办与手机验收记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md)；[统一交办开发分支验证](superpowers/plans/2026-09-26-task-entry-validation.md) |
-| 手机 app v1(TendHearth,Expo 原生;后端补全代码完成、单测/自检绿、真机待验;app 骨架 + 演示模式完成;真连接与配对完成、进程内端到端通过、真机配对待验;原生通知完成、真投递待主人;跟 CC 说话 / 真历史 / 连接卡 / 原生会话完成、待真机,下一份=设计统一) | [roadmap.md](roadmap.md);[app 怎么跑与硬要求](../apps/app/README.md) | spec `superpowers/specs/2026-09-30-tendhearth-app-v1-design.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-backend.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-skeleton.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-live.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-push.md` + spec `superpowers/specs/2026-10-01-tendhearth-app-chat-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-app-chat.md` + 设计稿 `design/tendhearth-app-v1/` |
+| 手机 app v1(TendHearth,Expo 原生;后端补全代码完成、单测/自检绿、真机待验;app 骨架 + 演示模式完成;真连接与配对完成、进程内端到端通过、真机配对待验;原生通知完成、真投递待主人;跟 CC 说话 / 真历史 / 连接卡 / 原生会话完成、待真机,聊天 #162 与设计统一 #163 已合 dev;配对体验 #165 与手机续接 #166 已合 dev) | [roadmap.md](roadmap.md);[app 怎么跑与硬要求](../apps/app/README.md) | spec `superpowers/specs/2026-09-30-tendhearth-app-v1-design.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-backend.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-skeleton.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-live.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-push.md` + spec `superpowers/specs/2026-10-01-tendhearth-app-chat-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-app-chat.md` + 设计稿 `design/tendhearth-app-v1/` |
 | 设计统一(plan 6:两端同一套 token、衬线、无深色、CC 明暗来自真实信号) | [roadmap.md](roadmap.md) | spec `superpowers/specs/2026-10-01-tendhearth-design-unify-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-design-unify.md`;验收截图与对稿记录在仓库外 `~/Documents/tendhearth/cc-screens-2026-10-01-design/` |
 | 配对体验(plan 7a:单次配对、桌面「连接手机」、引导页给码、通用链接 / App Links、恢复核验、退旧位) | [roadmap.md](roadmap.md);[中继 §9 通用链接](maintainer/relay.md) | spec `superpowers/specs/2026-10-01-tendhearth-pairing-ux-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-pairing-ux.md` |
 | 手机接着做电脑上的会话(plan 7b:预览 / 接成一件事 / 第一句、确认卡即声明、忙与额度各说各的) | [roadmap.md](roadmap.md) | spec `superpowers/specs/2026-10-01-tendhearth-continue-sessions-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-continue-sessions.md` |
