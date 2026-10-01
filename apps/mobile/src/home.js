@@ -132,8 +132,9 @@ function loadHome() {
   var seq=++homeSeq
   var cached = readCache()
   if (cached&&!homeState) { homeState = cached; renderFeed(cached, true); showBanner("上次同步 " + ago(cached.synced_at)) }
+  var sent = T
   api("/m/api/home").then(function(r) {
-    if (r.status === 401) { try { localStorage.removeItem("deviceToken") } catch (e) {}; location.replace("/m"); return null }
+    if (r.status === 401) { onUnauthorized(sent); return null }
     return r.json()
   }).then(function(s) {
     if(seq!==homeSeq)return
@@ -167,8 +168,9 @@ document.getElementById("feed").addEventListener("click", function(ev) {
 document.getElementById("refresh").addEventListener("click", loadHome)
 document.addEventListener("visibilitychange", function(){ if (document.visibilityState === "visible") loadHome() })
 function load() {
+  var sent = T
   api("/m/api/state").then(function(r) {
-    if (r.status === 401) { try { localStorage.removeItem("deviceToken") } catch (e) {}; location.replace("/m"); return null }
+    if (r.status === 401) { onUnauthorized(sent); return null }
     return r.json()
   }).then(function(s){ if (s && s.ok) render(s) }).catch(function(){ toast("连不上家里的电脑 — 看看它开着没") })
 }

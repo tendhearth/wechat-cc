@@ -236,7 +236,8 @@ describe('随身 CC (phone PWA + device pairing)', () => {
       const id = (p.state() as { remote: { devices: Array<{ id: string }> } }).remote.devices[0]!.id
       const call = (path: string, tok: string, body: unknown) =>
         fetch(`${base}${path}?t=${tok}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-      return { link, token: r.device_token, id, call }
+      // 链接令牌一次性(plan 7a):配对后给一枚新码,「链接令牌不许登记」那条要的是一枚还活着的链接令牌。
+      return { link: p.issueToken(), token: r.device_token, id, call }
     }
     const mkPush = (over: Record<string, unknown> = {}) => ({ register: vi.fn(() => true), test: vi.fn(), unregister: vi.fn(), forgetAll: vi.fn(), ...over })
 

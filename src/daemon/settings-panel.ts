@@ -639,9 +639,14 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             return json(await panel.apply(body))
           }
           if (url.pathname === '/set/api/pair' && req.method === 'POST') {
+            // 单次配对(spec 2026-10-01-tendhearth-pairing-ux §3):只有链接令牌能换设备令牌(D1),
+            // 换成功立刻作废这枚链接令牌 —— 一个码只配一台;设备满了不消耗。
+            // 从 panelToken(t) 到这里没有 await:校验、铸设备令牌、作废链接令牌同一拍完成,两个并发请求不可能都配上。
+            if (caller.origin !== 'link') return json({ ok: false, error: 'link_only' }, 403)
             const paired = devices.pair()
             if (!paired) return json({ ok: false, error: 'device_limit' })
-            deps.log('SETTINGS', `phone device paired (id ${paired.id})`)
+            tokens.invalidateSession('link')
+            deps.log('SETTINGS', `phone device paired (id ${paired.id}); link token consumed`)
             return json({ ok: true, device_token: paired.token })
           }
           if (url.pathname === '/m') {

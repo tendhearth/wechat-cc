@@ -16,11 +16,13 @@
 var b64u = { enc: function(b){ var bytes=new Uint8Array(b),parts=[];for(var i=0;i<bytes.length;i+=0x8000)parts.push(String.fromCharCode.apply(null,bytes.subarray(i,i+0x8000)));return btoa(parts.join("")).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"") },
   dec: function(s){ s = s.replace(/-/g,"+").replace(/_/g,"/"); var bin = atob(s); var a = new Uint8Array(bin.length); for (var i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return a } }
 var tun = null
+var tunWs = null
 function tunnel() {
   if (tun) return tun
   tun = new Promise(function(resolve, reject) {
     if (!REMOTE) { reject(new Error("no_remote")); return }
     var ws = new WebSocket(REMOTE.relay + "?id=" + encodeURIComponent(REMOTE.id))
+    tunWs = ws
     // relay tags streams itself — the phone sends/receives BARE frames.
     var key = null, kp = null, pending = {}
     var ready = false
@@ -48,7 +50,8 @@ function tunnel() {
       if (cb) cb(r)
     }
     ws.onerror = function(){ reject(new Error("ws_error")) }
-    ws.onclose = function(){ tun = null; failAllPending(new Error("closed")); if (!ready) reject(new Error("ws_closed")) }
+    // 只清自己那条:resetTunnel() 之后旧 socket 的 close 事件是异步晚到的,那时 tun 可能已是新开的隧道(plan 7a)。
+    ws.onclose = function(){ if (tunWs === ws) { tun = null; tunWs = null } failAllPending(new Error("closed")); if (!ready) reject(new Error("ws_closed")) }
     var ridSeq = 0
     function send(path, opts) {
       var rid = "r" + (ridSeq++)
@@ -63,6 +66,19 @@ function tunnel() {
     }
   })
   return tun
+}
+// 配对换了令牌(nav.js)之后,绑着旧短令牌的隧道作废:关掉,下一次 api() 用新令牌重新握手(plan 7a)。
+function resetTunnel() {
+  var w = tunWs
+  tunWs = null; tun = null
+  if (w) { try { w.close() } catch (e) {} }
+}
+// 401:只有「发请求时用的令牌」就是现在这枚,才说明本机令牌失效;刚配对换令牌时在飞的旧请求回 401 不算(plan 7a)。
+/** @param {string} sentAs */
+function onUnauthorized(sentAs) {
+  if (sentAs !== T) return
+  try { localStorage.removeItem("deviceToken") } catch (e) {}
+  location.replace("/m")
 }
 // api():在家直连,出门走隧道。一旦直连失败一次就记住"在外面",后续
 // 直接走隧道,不再每次白等 2.5s。返回 {status, json(), text()}。

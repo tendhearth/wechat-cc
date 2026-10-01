@@ -59,6 +59,6 @@ describe('pset shell', () => {
     const { sockets, msg } = runShell('#id=D1&t=tLINK&p=%2Fset', null)
     sockets[0]!.onmessage!({ data: JSON.stringify({ error: 'auth_failed' }) })
     expect(sockets).toHaveLength(1)
-    expect(msg.textContent).toBe('链接过期啦,回微信跟 CC 再要一个')
+    expect(msg.textContent).toBe('这个链接已经用过或过期了，回微信跟 CC 再要一个')
   })
 })

@@ -215,6 +215,7 @@ describe('phone task controls keep the existing execution boundary',()=>{
   it('completes decisions and a large file through the encrypted relay cap with a paired device, then rejects its revocation',async()=>{
     const task=create('tunnel'),live=await ready(task.id)
     const paired=await (await request('/set/api/pair',{})).json() as {device_token:string}
+    token=panel.issueToken() // 链接令牌一次性(plan 7a)
     const bytes=Buffer.alloc(710_123,73)
     saveArtifactSnapshot(store,task.id,{name:'large.txt',mime:'text/plain',bytes},root)
     const artifact=store.artifacts(task.id)[0]!,hub=makeTunnelHub(),received:string[]=[],frames:string[]=[]
@@ -286,6 +287,7 @@ describe('phone task controls keep the existing execution boundary',()=>{
 describe('attachment upload status accepts device tokens and tunnel marker',()=>{
   it('d= and _via do not make the status query invalid',async()=>{
     const pair=await(await request('/set/api/pair',{})).json() as {device_token:string}
+    token=panel.issueToken() // 链接令牌一次性(plan 7a)
     const d=pair.device_token
     const r=await fetch(`${base}/m/api/attachment/upload?id=${randomUUID()}&draftId=${randomUUID()}&d=${d}&_via=tunnel`)
     const body=await r.json() as {error?:string}

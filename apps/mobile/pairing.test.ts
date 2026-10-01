@@ -21,7 +21,7 @@ function runNav(opts: { shell: boolean }) {
     document: { getElementById: (id: string) => els[id], querySelectorAll: () => [] },
     api: vi.fn(async () => ({ json: async () => ({ ok: true, device_token: 'dNEW' }) })),
     fetch: vi.fn(async () => { throw new Error('bare fetch must not be used for pairing') }),
-    toast: vi.fn(), ccNav: vi.fn(),
+    toast: vi.fn(), ccNav: vi.fn(), resetTunnel: vi.fn(),
     localStorage: { setItem: (k: string, v: string) => store.set(k, v) },
     location: { reload: vi.fn() },
     window: opts.shell ? { __CC_SHELL__: { relay: 'wss://r', id: 'x' } } : {},
@@ -43,6 +43,7 @@ describe('pair button', () => {
     expect(state.isDevice).toBe(true)
     expect(els.pairbar!.hidden).toBe(true)
     expect(env.location.reload).not.toHaveBeenCalled()
+    expect(env.resetTunnel).toHaveBeenCalledTimes(1)
   })
 
   it('in the relay shell, reloads so the shell re-handshakes with the new device token', async () => {
@@ -108,5 +109,74 @@ describe('transport error frame after the handshake', () => {
     void api('/m/api/home').catch(() => {})
     await vi.waitFor(() => expect(socks[1]?.sent.length).toBe(1))                              // new socket, new hs
     expect(JSON.parse(socks[1]!.sent[0]!)).toHaveProperty('hs')
+  })
+})
+
+describe('配对换令牌之后的 401(plan 7a 单次配对)', () => {
+  function runTransport(T0: string) {
+    const store = new Map<string, string>([['deviceToken', 'dNEW']])
+    const env = {
+      WebSocket: class {}, crypto: globalThis.crypto, TextEncoder, TextDecoder, btoa, atob,
+      T: T0, REMOTE: null, q: (p: string) => p, window: {}, fetch: vi.fn(),
+      localStorage: { removeItem: (k: string) => { store.delete(k) } },
+      location: { replace: vi.fn() },
+    }
+    const api = new Function(...Object.keys(env), `${readMobileSource('transport.js')}\nreturn { onUnauthorized, resetTunnel }`)(...Object.values(env)) as
+      { onUnauthorized(sentAs: string): void; resetTunnel(): void }
+    return { api, env, store }
+  }
+  it('发请求时的令牌就是现在的令牌 ⇒ 本机令牌失效:清掉、回 /m', () => {
+    const { api, env, store } = runTransport('dNEW')
+    api.onUnauthorized('dNEW')
+    expect(store.has('deviceToken')).toBe(false)
+    expect(env.location.replace).toHaveBeenCalledWith('/m')
+  })
+  it('刚配对换了令牌,在飞的旧短令牌请求回 401 ⇒ 什么都不动', () => {
+    const { api, env, store } = runTransport('dNEW')
+    api.onUnauthorized('tLINK')
+    expect(store.get('deviceToken')).toBe('dNEW')
+    expect(env.location.replace).not.toHaveBeenCalled()
+  })
+  it('resetTunnel 之后旧 socket 的 close 是异步到的:不许把已经开好的新隧道清掉(真 WebSocket 的 onclose 晚到)', async () => {
+    const socks: Array<{ onopen?: () => void; onmessage?: (ev: { data: string }) => void; onclose?: () => void; sent: string[]; closed: boolean }> = []
+    class FakeWS {
+      onopen?: () => void; onmessage?: (ev: { data: string }) => void; onclose?: () => void; onerror?: () => void
+      sent: string[] = []; closed = false
+      constructor() { socks.push(this); setTimeout(() => this.onopen?.(), 0) }
+      send(s: string) { this.sent.push(s) }
+      close() { this.closed = true; setTimeout(() => this.onclose?.(), 20) }   // 浏览器里 close 事件晚一拍
+    }
+    const env = {
+      WebSocket: FakeWS, crypto: globalThis.crypto, TextEncoder, TextDecoder, btoa, atob,
+      T: 'tLINK', REMOTE: { relay: 'wss://r', id: 'x' }, q: (p: string) => p,
+      window: { __CC_SHELL__: { relay: 'wss://r', id: 'x' } }, location: {},
+      fetch: vi.fn(async () => { throw new Error('offline') }),
+    }
+    const t = new Function(...Object.keys(env), `${readMobileSource('transport.js')}\nreturn { api, resetTunnel }`)(...Object.values(env)) as
+      { api(path: string, opts?: object): Promise<unknown>; resetTunnel(): void }
+    const daemon = await generateTunnelKeypair()
+    const hs = JSON.stringify({ hs: await exportPublicKeyB64(daemon.publicKey) })
+    void t.api('/m/api/home').catch(() => {})
+    await vi.waitFor(() => expect(socks[0]?.sent.length).toBe(1))
+    socks[0]!.onmessage!({ data: hs })
+    await vi.waitFor(() => expect(socks[0]!.sent.length).toBe(2))
+    t.resetTunnel()
+    expect(socks[0]!.closed).toBe(true)
+    void t.api('/m/api/home').catch(() => {})                                                   // 新隧道,旧 close 还没到
+    await vi.waitFor(() => expect(socks[1]?.sent.length).toBe(1))
+    socks[1]!.onmessage!({ data: hs })
+    await vi.waitFor(() => expect(socks[1]!.sent.length).toBe(2))
+    await new Promise((r) => setTimeout(r, 40))                                                  // 旧 socket 的 onclose 这时才到
+    void t.api('/m/api/home').catch(() => {})
+    await vi.waitFor(() => expect(socks[1]!.sent.length).toBe(3))                                // 还走新隧道
+    expect(socks).toHaveLength(2)                                                                // 没有第三次握手
+  })
+  it('没有隧道时 resetTunnel 不抛', () => {
+    expect(() => runTransport('dNEW').api.resetTunnel()).not.toThrow()
+  })
+  it('home.js 的 401 一律走 onUnauthorized,不再直接删令牌', () => {
+    const src = readMobileSource('home.js')
+    expect(src).not.toContain('localStorage.removeItem("deviceToken")')
+    expect(src.match(/onUnauthorized\(sent\)/g)?.length).toBe(2)
   })
 })
