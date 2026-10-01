@@ -51,6 +51,7 @@
 - **手机 app 子项目 3:原生通知完成**(2026-09-30,`app-push` 分支;计划 `docs/superpowers/plans/2026-09-30-tendhearth-app-push.md`,`apps/app/README.md`「推送(原生通知)」)—— 推送登记、iOS 通知服务扩展、安卓消息服务、点通知路由;Swift / Kotlin 跑协议包向量(CI `app · native push vectors`);iOS 27 启动崩溃已用 `with-ios-scene` 修掉;模拟器 simctl 验证见 apps/app/README(`simctl push` 不经过扩展,扩展在循环里是真机项)。**真投递待主人**:APNs 密钥 / Firebase / 中继上线(`relay_v2_url`)/ EAS 构建 / 安卓设备(本机没有 Android SDK,安卓未验)/ 两平台真机验收,清单见 README。计划 3 遗留仍开(配对码 10 分钟可复用;微信聊天那件事的说一句不去重)。**下一份计划 = 补齐页面**。
 - **手机 app:跟 CC 说话 + 真历史 + CC 的连接 + 原生会话完成**(2026-10-01,`app-chat` 分支,状态:代码完成、单测 / Maestro 绿,待合 dev、待主人真机;计划 `docs/superpowers/plans/2026-10-01-tendhearth-app-chat.md`,spec `docs/superpowers/specs/2026-10-01-tendhearth-app-chat-design.md`)—— 手机的主动作改为**跟 CC 说**:`/m/api/chat*` 走 companion 路径,收下即回、回复靠主题唤醒,一次一句、10 分钟超时,「可能没送到」气泡可重试 / 忽略(同 requestId,daemon 去重);主人对话置顶、访客聊天永不上手机;交办改为显式选项。连接卡语义:未知永不绿、知识库陈旧按最近同步、微信记录日期按 wxvault 解密时间;电脑上的 Claude Code / Codex 会话只读。**设计规则(2026-10-01:衬线、单一强调色、无暗色模式、CC Light/Dark=在线)尚未应用**——后续「设计统一」计划(计划 6),再配对体验(计划 7)。**主人真机验收**:从手机跟 CC 说一句(回复用到 wxvault)→ 往上翻旧对话 → 未确认气泡重试 → 连接卡各值 → 会话列表 → 输入框在真机聚焦。**延后的次要项**:说一句失败重试不比较正文;重试与别的 pending 并存、被挤出的早期重试项缺测试;matterActivity 的 dispose / 取消订阅未接 shutdown;主人聊天很久不动会掉出 200 窗口(app 经 `/m/api/chat` 钉住,无影响);`since` 时钟回拨未夹;`default_chat_id` 非 admin 时静默禁用手机聊天(应记一次日志);分页同时间戳漏项(实测 0 例);连接快照按引用返回、`generatedAt` 最多旧 10 秒、`budgetMs` 占位;会话 done-map 无软上限、会话 not-found 映射 503;演示 `chat()` 不返回 not_found / 不分页、live `chat()` 丢 `limit:0`;输入中发送成功会清掉新键入的文字、早先丢失的一句渲染在新问答之后、已加载旧页时新消息 >30 条会有缝、60 秒内同样的短句被误判已落地、`chat.yaml` 里 "2 秒" 过期注释。
 - **设计统一(plan 6)**:两端同一套 token、衬线、无深色、CC 明暗来自真实信号 —— 截图与对稿记录在 `~/Documents/tendhearth/cc-screens-2026-10-01-design/`(README 列了跟稿差异与待主人定的六条);桌面出图用例 `WECHAT_CC_DESIGN_SHOTS=<目录> bun x playwright test design-shots`(apps/desktop);spec `docs/superpowers/specs/2026-10-01-tendhearth-design-unify-design.md`。
+- **配对体验(plan 7a)**(2026-10-01,`pairing-ux` 分支):一个码只配一台(配上即作废、设备令牌不能再铸)、桌面「手机扫码改设置」改名「连接手机」并按需打开远程隧道(中继没开通就直说)、引导页最后一步直接给码、配对后双方显示简短核对码、中继发 AASA / assetlinks、app 声明关联域名 / App Links 且链接只到确认卡(iOS 模拟器开发 scheme 已验锚点保留)、恢复回来的配对先核对、重新配对退旧位(旧电脑离线时旧位留到主人在桌面设备列表移除,占 20 台名额)。`GET /v1/settings/link` 已由 trusted 升 admin。spec `docs/superpowers/specs/2026-10-01-tendhearth-pairing-ux-design.md`。下一份 = 7b(手机上接着电脑上的会话)。
 - **每晚整理长期记忆(B 看得见)** 已上线（`docs/superpowers/specs/2026-09-25-memory-nightly-design.md`）—— 下一步 A:手机上逐条标不对 / 过时 / 删掉；C:第二天偶尔说一句我注意到…;09-26 界面改版:手机「CC 眼中的你」、微信信件排版、一条一件事
 
 - **内置插件回归修复**(2026-09-30,`fix-bundled-plugins`)—— 09-11 起 LaunchAgent 改拉 `.app`,打包版 daemon 一个插件都没加载(wxvault / 客户回顾 / wxsearch 全丢)且一声不吭。修法:状态目录里登记插件来源(`wechat-cc plugin source`,源码模式 `self deploy` 自动登记)、启动日志 + `/v1/health.plugins` + 部署插件门(`--allow-missing-plugins` 逃生口)。安装包仍按设计不带插件。**信任取舍**:登记的来源按内置算、默认开(放进去就跑)。**真机账**:部署后看 `[BOOT] plugin:` 与微信里一次 wxvault 调用。见 [maintainer/deploy.md「内置插件」](maintainer/deploy.md)。
@@ -65,10 +66,21 @@
 - 介绍 2 跳的完整链路(需要第三台真机)。
 - 社交层两台真机重新配对后的 wish / postcard 信道。
 - `@码 resume` 与「脑手转发」全链(CLI hook)。
+- 配对体验真机(计划 7a Task 12 Step 3),其中 iOS 备份恢复与安卓指纹是主人的:
+  1. 部署中继 Worker(`docs/maintainer/relay.md` §9),设 `ANDROID_CERT_SHA256`;`curl -sI https://relay-staging.tendhearth.com/.well-known/apple-app-site-association` ⇒ 200 `application/json`。
+  2. 本机 `relay_v2_url` 必须已设,桌面「连接手机」才出二维码;没设时应显示「手机连接服务还没开通」。
+  3. iPhone 系统相机扫码(通用链接)⇒ 直进确认卡(主机名对、有核对码)⇒「连接」⇒ 回此刻、CC 变 Light、桌面弹层变「已连上」。
+  4. 同一个码再扫 ⇒「这个码已经用过或过期了…」。
+  5. 安卓 App Link(设了指纹后);没设时打开网页壳属预期。
+  6. 重新配对:旧位消失(旧电脑离线则旧位留着,需在桌面设备列表手动移除)。
+  7. iOS 加密备份恢复到另一台 ⇒ 配对仍在、启动核验通过;电脑上撤掉后再恢复 ⇒ 回欢迎页「这台手机和电脑的配对已经失效了。」。
+  8. pset 中继壳 401 → /m 404(主人事项 8)。
 
 ## 已定未做(按价值排)
 
 - **发版节奏本身要有纪律** —— 三周不发版是这轮最大的结构性问题,不是某个功能的问题。
+- 安卓凭据恢复走 Google Block Store(配对体验 7a 之后)。
+- iCloud 钥匙串同步(`kSecAttrSynchronizable`)—— 待主人定。
 - **e2e 只在 master 相关的分支跑**(`.github/workflows/ci.yml:152` 的分支条件)—— dev 上推送不跑 e2e,于是积压的 e2e 红会在开 PR 那一刻一次性砸下来(这次砸了 8 条)。要不要让 dev 也跑是成本取舍。
 - **自改的工作树回收缺一个显式入口** —— 现在只回收 `done`/`declined` 的运行,可 resume 的和被 kill 的永不回收(磁盘单调增长)。缺的是「这条我不接了」这个动作。
 - ~~**设备 token 进 token-registry、http 默认 loopback**(梳理第 6 步)~~ **2026-09-29 完成(#149)**:链接 / 设备令牌进内部 API 同一个注册表(origin `link` / `device` + routeAllow `PHONE_ROUTES`),按台撤销,只允局域网的操作收成 `LAN_ONLY_OPS`,`serve()` 缺省 127.0.0.1。**没做的范围 B**:`/m/api/*` 并进内部 API dispatcher。现状见 [reference/internal-api-auth.md](reference/internal-api-auth.md)。

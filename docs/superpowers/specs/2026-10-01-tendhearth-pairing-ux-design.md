@@ -124,6 +124,9 @@
 | expo-router → `redirectSystemPath` 拿到原样 URL | 保留(源码,expo-router 57.0.24) | `plugins/link-fragment.guard.test.ts` |
 | iOS 通用链接 → JS 保留锚点 | 保留(源码:场景委托转发 + `webpageURL.absoluteString`);真机见 Task 12 | 同上 |
 | 安卓 App Link → JS 保留锚点 | 保留(源码:`uri.toString()` 冷 / 热两路);真机见 Task 12 | 同上 |
+| iOS 模拟器,开发 scheme(`tendhearth://<主机>/pset/#…`)→ 确认卡 | 保留:锚点到达 app,确认卡显示中继主机名(Maestro pair-link PASS,Task 1 + Task 9) | `apps/app` Maestro pair-link |
+| iOS 真机 https 通用链接(相机扫码) | 待真机(主人) | 验收清单第 2 项 |
+| 安卓真机 App Link | 待真机(主人;需先设 `ANDROID_CERT_SHA256`) | 验收清单第 4 项 |
 
 - 微信内置浏览器不走通用链接 —— 微信里点的 `/set` 链接照旧开网页壳。装了 app 的手机用系统相机扫码一律进 app(网页设置从 app 外打不开,app 自己有设置),可接受。
 
@@ -144,6 +147,9 @@
 
 - `pairing.ts` 新增 `retirePrevious(prev, next, { connect })`:`prev` 为空或令牌相同 ⇒ `skipped`;否则用 `prev.deviceToken` 连 `prev.relayUrl`,`POST /set/api/apply { op: 'unpair_self' }`,成功 ⇒ `retired`,任何失败 ⇒ `failed`(吞掉,不抛)。连接用完即关。
 - 配对页:`pairAndSave` 成功之后 `void retirePrevious(session.pairing, rec, …)`,不等它就回此刻。
+- 已知限制(Task 11):重新配对时若旧电脑离线,旧设备位会留着,直到主人在桌面设备列表里手动移除它(期间仍占 20 台上限的名额)。
+- 核对码:配对成功后 daemon 回一个简短的核对码(`check_code`,`packages/protocol/src/pair-check.ts`),桌面弹层、引导页和手机确认卡都显示,供主人肉眼核对是同一次配对。
+- §11.7 已在 7a 修掉:`GET /v1/settings/link` 升为 admin 档。
 - daemon 不改(`unpair_self` 只撤调用者自己、经隧道可用,已有);加一条 daemon 单测钉住「A、B 两台,A 的令牌 `unpair_self` ⇒ 只剩 B」。
 
 ## 9. 文案
