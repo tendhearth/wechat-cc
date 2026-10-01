@@ -3,7 +3,7 @@
  * daemon (src/daemon/plugins/paths.ts re-exports it) and `self deploy` (cli).
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 export const MANIFEST_FILE = 'wechat-cc.plugin.json'
 
@@ -49,10 +49,24 @@ export function writePluginsSourcePointer(stateDir: string, dir: string): void {
  * as one is exactly what hid the other candidates in the 09-11 regression.
  */
 export function dirHasPlugins(dir: string): boolean {
-  let entries: string[]
-  try { entries = readdirSync(dir) } catch { return false }
-  return entries.some(e => {
-    try { return statSync(join(dir, e)).isDirectory() && existsSync(join(dir, e, MANIFEST_FILE)) } catch { return false }
-  })
+  return pluginNamesIn(dir).length > 0
 }
 
+
+/** Names of the plugin subdirs in `dir` (those with a manifest), sorted. */
+export function pluginNamesIn(dir: string): string[] {
+  let entries: string[]
+  try { entries = readdirSync(dir) } catch { return [] }
+  return entries.filter(e => {
+    try { return statSync(join(dir, e)).isDirectory() && existsSync(join(dir, e, MANIFEST_FILE)) } catch { return false }
+  }).sort()
+}
+
+/** `wechat-cc plugin source <dir>`: validate (must hold plugins) then persist as an absolute path. */
+export function registerPluginsSource(stateDir: string, dir: string): { ok: true; dir: string; plugins: string[] } | { ok: false; error: string } {
+  const abs = resolve(dir)
+  const plugins = pluginNamesIn(abs)
+  if (plugins.length === 0) return { ok: false, error: `no plugins in ${abs} (expected <name>/${MANIFEST_FILE} subdirs)` }
+  writePluginsSourcePointer(stateDir, abs)
+  return { ok: true, dir: abs, plugins }
+}

@@ -9,9 +9,11 @@ import {
   resolveSigningInputs,
   parseLaunchAgentPlist,
   planSelfDeploy,
+  pluginSourceCandidates,
   type SelfDeployDeps,
   type SelfDeployPlan,
 } from './self-deploy'
+import { readPluginsSourcePointer, writePluginsSourcePointer } from '../lib/plugins-source'
 
 // ── parseLaunchAgentPlist ────────────────────────────────────────────
 
@@ -806,5 +808,130 @@ describe('executeSelfDeploy', () => {
     expect(h.kickstartCalls).toBe(2)
     // rollback still restored the old binary even though health couldn't be confirmed
     expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+  })
+})
+
+// ── 内置插件(2026-09-30 回归)────────────────────────────────────────
+// 09-11 起打包版 daemon 一个插件都没加载,self deploy 照样一路绿。两件事:
+// ① 部署顺手把源码 checkout 里的插件目录登记成状态目录里的来源(换 sidecar /
+//   重打 .app 都不丢);② 健康门看 /v1/health.plugins,主人开着的插件丢了 ⇒ 红 + 回滚。
+describe('executeSelfDeploy — plugins', () => {
+  function pluginsDir(h: Harness, name: string, plugins: string[]): string {
+    const d = join(h.dir, name)
+    mkdirSync(d, { recursive: true })
+    writeFileSync(join(d, 'README.md'), 'x')
+    for (const p of plugins) {
+      mkdirSync(join(d, p), { recursive: true })
+      writeFileSync(join(d, p, 'wechat-cc.plugin.json'), '{}')
+    }
+    return d
+  }
+  const stateDirOf = (h: Harness) => join(h.dir, 'state')
+  function healthWithPlugins(h: Harness, sequence: unknown[]): void {
+    let i = 0
+    h.deps.fetch = (async () => {
+      const plugins = sequence[Math.min(i++, sequence.length - 1)]
+      return { ok: true, status: 200, json: async () => ({ ok: true, version: { cli: '9.9.9-test', head: null }, plugins }) }
+    }) as unknown as typeof fetch
+  }
+
+  it('registers the first candidate that really holds plugins as the source pointer, before the restart', async () => {
+    const h = harness()
+    const worktree = pluginsDir(h, 'worktree-plugins', [])          // README-only (a worktree)
+    const main = pluginsDir(h, 'main-plugins', ['wxvault'])          // the main checkout's symlinks
+    h.plan.pluginsSource = { stateDir: stateDirOf(h), candidates: [worktree, main] }
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result.ok).toBe(true)
+    expect(readPluginsSourcePointer(stateDirOf(h))).toBe(main)
+    const names = result.steps.map((s) => s.name)
+    expect(names.indexOf('plugins_source')).toBeLessThan(names.indexOf('restart'))
+    expect(result.steps.find((s) => s.name === 'plugins_source')!.detail).toContain(main)
+  })
+
+  it('keeps an existing working pointer (explicit operator choice) instead of overwriting it', async () => {
+    const h = harness()
+    const chosen = pluginsDir(h, 'chosen', ['wxvault'])
+    const other = pluginsDir(h, 'other', ['wxvault'])
+    writePluginsSourcePointer(stateDirOf(h), chosen)
+    h.plan.pluginsSource = { stateDir: stateDirOf(h), candidates: [other] }
+    await executeSelfDeploy(h.plan, h.deps)
+    expect(readPluginsSourcePointer(stateDirOf(h))).toBe(chosen)
+  })
+
+  it('no candidate and no pointer ⇒ step is a non-fatal note (the health gate decides)', async () => {
+    const h = harness()
+    h.plan.pluginsSource = { stateDir: stateDirOf(h), candidates: [pluginsDir(h, 'empty', [])] }
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result.ok).toBe(true)
+    expect(result.steps.find((s) => s.name === 'plugins_source')).toMatchObject({ ok: true, detail: expect.stringContaining('none') })
+    expect(readPluginsSourcePointer(stateDirOf(h))).toBeNull()
+  })
+
+  it('health reports enabled plugins missing ⇒ plugins step fails and the deploy rolls back', async () => {
+    const h = harness()
+    // new daemon: plugins gone; after rollback the OLD daemon doesn't report the field.
+    let calls = 0
+    h.deps.fetch = (async () => {
+      calls++
+      const body = h.kickstartCalls >= 2
+        ? { ok: true, version: { cli: '9.9.8-old' } }
+        : { ok: true, version: { cli: '9.9.9-test' }, plugins: { bundled_dir: null, via: null, plugins: [], expected_missing: ['wxsearch'] } }
+      return { ok: true, status: 200, json: async () => body }
+    }) as unknown as typeof fetch
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(calls).toBeGreaterThan(0)
+    expect(result.ok).toBe(false)
+    expect(result.exitCode).toBe(1)
+    expect(result.rolledBack).toBe(true)
+    const step = result.steps.find((s) => s.name === 'plugins')!
+    expect(step.ok).toBe(false)
+    expect(step.detail).toContain('wxsearch')
+    expect(step.detail).toContain('plugin source')
+    expect(readFileSync(h.plan.sidecarPath, 'utf8')).toBe('OLD_BINARY_CONTENT')
+  })
+
+  it('plugins: null (bootstrap still wiring) ⇒ keeps polling until the snapshot lands', async () => {
+    const h = harness()
+    healthWithPlugins(h, [null, null, { bundled_dir: '/p', via: 'pointer', plugins: [{ name: 'wxvault', source: 'bundled', enabled: true, ready: true }], expected_missing: [] }])
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result.ok).toBe(true)
+    const step = result.steps.find((s) => s.name === 'plugins')!
+    expect(step.ok).toBe(true)
+    expect(step.detail).toContain('wxvault')
+    expect(step.detail).toContain('pointer')
+  })
+
+  it('old daemons without the field: no plugins step at all (rollback targets stay green)', async () => {
+    const h = harness()
+    const result = await executeSelfDeploy(h.plan, h.deps)
+    expect(result.ok).toBe(true)
+    expect(result.steps.find((s) => s.name === 'plugins')).toBeUndefined()
+  })
+})
+
+describe('planSelfDeploy — plugins source candidates', () => {
+  it('carries the state dir + candidates through, empty by default', () => {
+    const xml = plistWith(['/Applications/wechat-cc.app/Contents/MacOS/wechat_cc_desktop', '--daemon', 'run'])
+    const base = { platform: 'darwin' as NodeJS.Platform, homeDir: '/h', uid: 501, repoRoot: '/r', stateDir: '/s', arch: 'arm64', plistXml: xml }
+    expect(planSelfDeploy(base).pluginsSource).toEqual({ stateDir: '/s', candidates: [] })
+    expect(planSelfDeploy({ ...base, pluginSourceCandidates: ['/r/plugins', '/main/plugins'] }).pluginsSource)
+      .toEqual({ stateDir: '/s', candidates: ['/r/plugins', '/main/plugins'] })
+  })
+})
+
+describe('pluginSourceCandidates', () => {
+  it('source checkout first, then the main checkout behind a worktree (git common dir)', () => {
+    const spawn = ((cmd: string, args: string[]) => {
+      expect(cmd).toBe('git')
+      expect(args).toEqual(['-C', '/main/.claude/worktrees/x', 'rev-parse', '--path-format=absolute', '--git-common-dir'])
+      return { status: 0, stdout: '/main/.git\n', stderr: '' }
+    }) as SelfDeployDeps['spawnSync']
+    expect(pluginSourceCandidates('/main/.claude/worktrees/x', spawn)).toEqual(['/main/.claude/worktrees/x/plugins', '/main/plugins'])
+  })
+  it('main checkout itself ⇒ no duplicate; git failure ⇒ just the repo', () => {
+    const ok = (() => ({ status: 0, stdout: '/main/.git\n', stderr: '' })) as SelfDeployDeps['spawnSync']
+    expect(pluginSourceCandidates('/main', ok)).toEqual(['/main/plugins'])
+    const bad = (() => ({ status: 128, stdout: '', stderr: 'not a git repository' })) as SelfDeployDeps['spawnSync']
+    expect(pluginSourceCandidates('/r', bad)).toEqual(['/r/plugins'])
   })
 })

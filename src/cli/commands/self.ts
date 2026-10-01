@@ -35,7 +35,7 @@ const selfDeployCmd = defineCommand({
       return
     }
 
-    const { planSelfDeploy, executeSelfDeploy, defaultSelfDeployDeps, resolveSigningInputs } = await import('../self-deploy.ts')
+    const { planSelfDeploy, executeSelfDeploy, defaultSelfDeployDeps, resolveSigningInputs, pluginSourceCandidates } = await import('../self-deploy.ts')
     const { homedir } = await import('node:os')
     const { existsSync, readFileSync } = await import('node:fs')
 
@@ -88,6 +88,8 @@ const selfDeployCmd = defineCommand({
         // rollback still armed. Accept both spellings.
         rollback: !((args as Record<string, unknown>)['no-rollback'] === true || (args as Record<string, unknown>).rollback === false),
         ...signing,
+        // 插件来源登记(2026-09-30):只在源码模式下有 checkout 可登记;打包版保留已有指针。
+        pluginSourceCandidates: compiled ? [] : pluginSourceCandidates(repoRoot, deps.spawnSync),
       })
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err)

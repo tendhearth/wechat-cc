@@ -232,7 +232,34 @@ const pluginSyncCmd = defineCommand({
   },
 })
 
+// 内置插件来源(2026-09-30):安装包不带一等插件(1747de09),打包版 daemon 靠状态目录里
+// 登记的来源找到它们。`self deploy` 从源码 checkout 部署时会自动登记;这里是手动入口。
+const pluginSourceCmd = defineCommand({
+  meta: { name: 'source', description: 'Show or set where the daemon loads first-party (bundled) plugins from' },
+  args: {
+    dir: { type: 'positional', required: false, description: 'Plugins dir to register (e.g. <checkout>/plugins)', valueHint: 'dir' },
+    json: { type: 'boolean', description: 'JSON output' },
+  },
+  async run({ args }) {
+    const { registerPluginsSource, readPluginsSourcePointer } = await import('../../lib/plugins-source')
+    const { resolveBundledPlugins } = await import('../../daemon/plugins/paths')
+    if (args.dir) {
+      const r = registerPluginsSource(STATE_DIR, args.dir)
+      if (args.json) console.log(JSON.stringify(r, null, 2))
+      else if (r.ok) console.log(`registered ${r.dir} (${r.plugins.join(', ')}) — restart the daemon to load them`)
+      else console.error(`plugin source: ${r.error}`)
+      if (!r.ok) process.exit(1)
+      return
+    }
+    const pointer = readPluginsSourcePointer(STATE_DIR)
+    const resolved = resolveBundledPlugins(STATE_DIR)
+    if (args.json) { console.log(JSON.stringify({ pointer, resolved }, null, 2)); return }
+    console.log(`registered source: ${pointer ?? '(none)'}`)
+    console.log(resolved ? `this process resolves: ${resolved.dir} (via ${resolved.via})` : 'this process resolves: no bundled plugins dir')
+  },
+})
+
 export const pluginCmd = defineCommand({
   meta: { name: 'plugin', description: 'Manage plugins (MCP tool providers)' },
-  subCommands: { list: pluginListCmd, search: pluginSearchCmd, install: pluginInstallCmd, upgrade: pluginUpgradeCmd, setup: pluginSetupCmd, sync: pluginSyncCmd, 'setup-status': pluginSetupStatusCmd, enable: pluginEnableCmd, disable: pluginDisableCmd },
+  subCommands: { list: pluginListCmd, search: pluginSearchCmd, install: pluginInstallCmd, upgrade: pluginUpgradeCmd, setup: pluginSetupCmd, sync: pluginSyncCmd, 'setup-status': pluginSetupStatusCmd, enable: pluginEnableCmd, disable: pluginDisableCmd, source: pluginSourceCmd },
 })

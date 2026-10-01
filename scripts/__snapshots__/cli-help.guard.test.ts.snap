@@ -1612,6 +1612,23 @@ USAGE plugin setup-status
 "
 `;
 
+exports[`cli.ts --help 快照(逐字节) > plugin --help > plugin source --help 1`] = `
+"Show or set where the daemon loads first-party (bundled) plugins from (plugin source)
+
+USAGE plugin source [OPTIONS] [DIR]
+
+ARGUMENTS
+
+  DIR=<dir>    Plugins dir to register (e.g. <checkout>/plugins)
+
+OPTIONS
+
+  --json    JSON output
+
+
+"
+`;
+
 exports[`cli.ts --help 快照(逐字节) > plugin --help > plugin sync --help 1`] = `
 "Run a plugin's repeatable local refresh action (plugin sync)
 
@@ -1645,7 +1662,7 @@ OPTIONS
 exports[`cli.ts --help 快照(逐字节) > plugin --help 1`] = `
 "Manage plugins (MCP tool providers) (wechat-cc plugin v1.7.1 (dev))
 
-USAGE wechat-cc plugin list|search|install|upgrade|setup|sync|setup-status|enable|disable
+USAGE wechat-cc plugin list|search|install|upgrade|setup|sync|setup-status|enable|disable|source
 
 COMMANDS
 
@@ -1658,6 +1675,7 @@ COMMANDS
   setup-status    Emit the last plugin-setup progress (JSON) — polled by the desktop wizard         
         enable    Enable a plugin (agent gets its tools after a daemon restart)                     
        disable    Disable a plugin                                                                  
+        source    Show or set where the daemon loads first-party (bundled) plugins from             
 
 Use wechat-cc plugin <command> --help for more information about a command.
 
