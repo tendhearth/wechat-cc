@@ -1,0 +1,141 @@
+// @vitest-environment happy-dom
+import { readFileSync, readdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { describe, it, expect, vi } from 'vitest'
+import { PHONE_COPY } from './phone-connect-copy.js'
+import { linkView, makePhoneLinkFlow, mountPhoneConnect, newDevice, pairedLine } from './phone-connect.js'
+
+const SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
+const URL1 = `https://relay.tendhearth.com/pset/#id=r${'a'.repeat(26)}&t=t${'0'.repeat(32)}&p=%2Fset`
+const dev = (id: string, label?: string, at = '2026-10-01T10:00:00.000Z') => ({ id, created_at: at, last_seen_at: at, ...(label ? { label } : {}) })
+
+/** 假时钟 + 立即返回的 sleep;call 按脚本回。 */
+function harness(script: { link: Array<object | Error>; devices: Array<object[] | Error> }) {
+  let clock = 1_000_000
+  const views: Array<{ kind: string; [k: string]: unknown }> = []
+  const link = [...script.link], devices = [...script.devices]
+  const next = <T,>(q: T[]) => (q.length > 1 ? q.shift()! : q[0]!)
+  const call = vi.fn(async (method: string, path: string) => {
+    if (method === 'POST' && path === '/v1/phone/link') { const r = next(link); if (r instanceof Error) throw r; return r }
+    if (method === 'GET' && path === '/v1/phone/devices') { const r = next(devices); if (r instanceof Error) throw r; return { ok: true, devices: r } }
+    throw new Error(`unexpected ${method} ${path}`)
+  })
+  const flow = makePhoneLinkFlow({ call, onView: v => views.push(v as never), now: () => clock, sleep: async ms => { clock += ms }, pollMs: 2000, startTimeoutMs: 45_000 })
+  return { flow, views, call, tick: (ms: number) => { clock += ms } }
+}
+const ready = (expiresIn = 600_000) => ({ ok: true, state: 'ready', url: URL1, expires_at: 1_000_000 + expiresIn })
+
+describe('文案(D6)', () => {
+  it('zh / en 键一致、没有空串;中文不用半角逗号句号', () => {
+    expect(Object.keys(PHONE_COPY.zh).sort()).toEqual(Object.keys(PHONE_COPY.en).sort())
+    for (const v of [...Object.values(PHONE_COPY.zh), ...Object.values(PHONE_COPY.en)]) expect(v.trim()).not.toBe('')
+    for (const [k, v] of Object.entries(PHONE_COPY.zh)) expect(v, k).not.toMatch(/[一-鿿][,.:?]|[,.:?][一-鿿]/)
+  })
+  it('桌面面向用户处不再有「手机扫码改设置」', () => {
+    const files = ['index.html', 'main.js', ...readdirSync(join(SRC, 'modules')).filter(f => f.endsWith('.js')).map(f => join('modules', f))]
+    for (const f of files) expect(readFileSync(join(SRC, f), 'utf8'), f).not.toContain('手机扫码改设置')
+    expect(readFileSync(join(SRC, 'index.html'), 'utf8')).toMatch(/id="open-phone-settings"[^>]*>\s*连接手机\s*</)
+  })
+})
+
+describe('linkView', () => {
+  it('每个 state 一种画法;中继没开通不出码', () => {
+    expect(linkView(ready() as never)).toEqual({ kind: 'qr', url: URL1, expiresAt: 1_600_000 })
+    expect(linkView({ ok: false, state: 'starting' })).toEqual({ kind: 'starting' })
+    expect(linkView({ ok: false, state: 'relay_not_configured' })).toEqual({ kind: 'notice', title: '手机连接服务还没开通', body: '开通之后，这里会出现二维码。' })
+    expect(linkView({ ok: false, state: 'relay_unavailable' })).toMatchObject({ kind: 'notice', title: '手机连接服务这次没启动起来' })
+    expect(linkView({ ok: false, state: 'remote_off' })).toMatchObject({ kind: 'notice', title: '手机连接没打开' })
+    expect(linkView({ ok: false, state: 'no_owner' })).toEqual({ kind: 'notice', title: '先用微信扫码登录，再来连接手机。', body: '' })
+  })
+})
+
+describe('newDevice / pairedLine', () => {
+  it('出码前没有的 id 才算新;多台取最新', () => {
+    expect(newDevice(new Set(['a']), [dev('a')])).toBeNull()
+    expect(newDevice(new Set(['a']), [dev('a'), dev('b', 'x', '2026-10-01T10:00:00.000Z'), dev('c', 'y', '2026-10-01T11:00:00.000Z')])?.id).toBe('c')
+  })
+  it('有名字说名字,没有说「已连上手机」', () => {
+    expect(pairedLine(dev('b', 'Tendhearth · iPhone'))).toBe('已连上 Tendhearth · iPhone')
+    expect(pairedLine(dev('b'))).toBe('已连上手机')
+  })
+})
+
+describe('makePhoneLinkFlow', () => {
+  it('ready ⇒ 出码 ⇒ 新设备出现 ⇒ 已连上;请求带 enable_remote: true', async () => {
+    const h = harness({ link: [ready()], devices: [[dev('old')], [dev('old')], [dev('old'), dev('new1', 'Tendhearth · iPhone')]] })
+    await h.flow.start()
+    expect(h.views.map(v => v.kind)).toEqual(['loading', 'qr', 'paired'])
+    expect(h.views.at(-1)).toEqual({ kind: 'paired', line: '已连上 Tendhearth · iPhone' })
+    expect(h.call).toHaveBeenCalledWith('POST', '/v1/phone/link', { enable_remote: true })
+  })
+  it('starting ⇒ 重试;重启中请求抛错也继续等(Review Focus 2)⇒ ready', async () => {
+    const h = harness({ link: [{ ok: false, state: 'starting' }, new Error('workbench_connection_unavailable'), ready()], devices: [[], [dev('n', 'Tendhearth · Android')]] })
+    await h.flow.start()
+    expect(h.views.map(v => v.kind)).toEqual(['loading', 'starting', 'starting', 'qr', 'paired'])
+  })
+  it('一上来就抛错(不是重启中)⇒ 报错,不重试', async () => {
+    const h = harness({ link: [new Error('boom')], devices: [[]] })
+    await h.flow.start()
+    expect(h.views.at(-1)).toEqual({ kind: 'error', text: '生成不了二维码：boom' })
+    expect(h.call.mock.calls.filter(c => c[0] === 'POST')).toHaveLength(1)
+  })
+  it('45 秒还在 starting ⇒ 「还没打开」', async () => {
+    const h = harness({ link: [{ ok: false, state: 'starting' }], devices: [[]] })
+    await h.flow.start()
+    expect(h.views.at(-1)).toEqual({ kind: 'notice', title: '手机连接还没打开。稍后再点一次「连接手机」。', body: '' })
+  })
+  it('到期没人扫 ⇒ 过期', async () => {
+    const h = harness({ link: [ready(5_000)], devices: [[]] })
+    await h.flow.start()
+    expect(h.views.at(-1)).toEqual({ kind: 'expired' })
+  })
+  it('新设备还没名字 ⇒ 再等两轮;仍没有 ⇒ 「已连上手机」', async () => {
+    const h = harness({ link: [ready()], devices: [[], [dev('n')]] })
+    await h.flow.start()
+    expect(h.views.at(-1)).toEqual({ kind: 'paired', line: '已连上手机' })
+    expect(h.call.mock.calls.filter(c => c[0] === 'GET').length).toBe(4)   // 出码前快照 + 3 轮(看到没名字、再等、放弃等)
+  })
+  it('出码之后轮询只 GET 设备列表,绝不再 POST(每次 POST 都会作废上一个码)', async () => {
+    const h = harness({ link: [ready()], devices: [[], [], [], [], [dev('n', 'x')]] })
+    await h.flow.start()
+    expect(h.call.mock.calls.filter(c => c[0] === 'POST')).toHaveLength(1)
+    expect(h.call.mock.calls.filter(c => c[0] === 'GET').length).toBeGreaterThan(3)
+  })
+  it('stop 之后不再回调', async () => {
+    const h = harness({ link: [{ ok: false, state: 'starting' }], devices: [[]] })
+    const p = h.flow.start()
+    h.flow.stop()
+    await p
+    expect(h.views.map(v => v.kind)).toEqual(['loading'])
+  })
+})
+
+describe('mountPhoneConnect(弹层)', () => {
+  it('出码、可复制;连上后按钮变「完成」;设备名按文字渲染(Review Focus 3)', async () => {
+    document.body.innerHTML = ''
+    const h = harness({ link: [ready()], devices: [[], [dev('x', '<img src=x onerror=alert(1)>')]] })
+    const writeClipboard = vi.fn(async () => {})
+    const m = mountPhoneConnect({ call: h.call, renderQr: async t => `<svg data-text="${t.length}"></svg>`, writeClipboard, flowDeps: { now: () => 1_000_000, sleep: async () => {}, labelWaits: 0 } })
+    m.open()
+    await vi.waitFor(() => expect(document.querySelector('#phone-connect-paired')).not.toBeNull())
+    expect(document.querySelector('#phone-connect-paired')!.textContent).toBe('已连上 <img src=x onerror=alert(1)>')
+    expect(document.querySelector('#phone-settings-modal img')).toBeNull()
+    expect(document.querySelector('#phone-connect-close')!.textContent).toBe('完成')
+    expect(document.querySelector('#phone-connect-title')!.textContent).toBe('连接手机')
+    m.close()
+    expect(document.querySelector('#phone-settings-modal')).toBeNull()
+  })
+  it('Esc 关闭并停轮询', async () => {
+    document.body.innerHTML = ''
+    const h = harness({ link: [ready()], devices: [[]] })
+    const m = mountPhoneConnect({ call: h.call, renderQr: async () => '<svg></svg>', flowDeps: { now: () => 1_000_000, sleep: () => new Promise(r => setTimeout(r, 5)) } })
+    m.open()
+    await vi.waitFor(() => expect(document.querySelector('#phone-connect-qr')).not.toBeNull())
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    expect(document.querySelector('#phone-settings-modal')).toBeNull()
+    const n = h.call.mock.calls.length
+    await new Promise(r => setTimeout(r, 30))
+    expect(h.call.mock.calls.length).toBeLessThanOrEqual(n + 1)
+  })
+})

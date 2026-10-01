@@ -26,6 +26,7 @@ import {
   showStep as wizardShowStep,
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
+import { mountPhoneConnect } from "./modules/phone-connect.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
 import { renderDashboard, renderRestartButton, setPending, setLastProbe, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkFsAccessOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
@@ -675,30 +676,12 @@ function wireEvents() {
     if (category) void loadLifeCategory(category.getAttribute("data-life-category") || "postcards")
   })
 
-  // 手机上改设置 — 拿一条新鲜的面板链接,渲染成二维码弹层(手机扫码直开)
-  document.getElementById("open-phone-settings")?.addEventListener("click", async () => {
-    try {
-      const r = /** @type {{ ok?: boolean, url?: string, error?: string }} */ (await deps.invokeApi("GET", "/v1/settings/link"))
-      if (!r || !r.ok || !r.url) {
-        const why = r && r.error === "no_lan_or_owner" ? "拿不到局域网地址(检查 Wi-Fi)或还没绑定微信" : (r && r.error) || "未知原因"
-        showToast(`生成不了设置链接:${why}`)
-        return
-      }
-      const svg = /** @type {string} */ (await deps.invoke("render_qr_svg", { text: r.url }))
-      const modal = document.createElement("div")
-      modal.id = "phone-settings-modal"
-      // https 链接 = 走公网壳页(远程隧道开着),任何网络都能扫开;
-      // http = 纯 LAN 链接,才需要同一 Wi-Fi 的提示。
-      const note = r.url.startsWith("https")
-        ? "手机扫码打开设置 · 10 分钟内有效<br>流量或任何 Wi-Fi 都能打开"
-        : "手机扫码打开设置 · 10 分钟内有效<br>手机和电脑要在同一个 Wi-Fi"
-      modal.innerHTML = `<div class="qr-card">${svg}<div class="qr-note">${note}</div></div>`
-      modal.addEventListener("click", () => modal.remove())
-      document.body.appendChild(modal)
-    } catch (err) {
-      showToast(`生成设置二维码失败:${err instanceof Error ? err.message : err}`)
-    }
+  // 连接手机(spec 2026-10-01-tendhearth-pairing-ux §4.3):admin 路由走原生宿主(invokeWorkbenchApi),渲染进程拿不到令牌。
+  const phoneConnect = mountPhoneConnect({
+    call: (method, path, body) => invokeWorkbenchApi(method, path, body),
+    renderQr: text => /** @type {Promise<string>} */ (deps.invoke("render_qr_svg", { text })),
   })
+  document.getElementById("open-phone-settings")?.addEventListener("click", () => phoneConnect.open())
 
   // 大脑卡交互:测试连接(唯一的真实拨号入口)/ 接入表单 / 复制命令 / 保存 key / 重启
   document.getElementById("brain-selfcheck")?.addEventListener("click", () => {

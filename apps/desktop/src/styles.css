@@ -2287,7 +2287,6 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .companion-desktop-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
   min-height: 30px;
   margin: 0;
   padding: 5px 9px 5px 7px;
@@ -5623,7 +5622,7 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
   display: flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, var(--th-accent) 35%, transparent);
+  background: var(--th-scrim);
 }
 #phone-settings-modal .qr-card {
   background: var(--th-paper);
@@ -5635,6 +5634,10 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 }
 #phone-settings-modal .qr-card svg { width: 220px; height: 220px; }
 #phone-settings-modal .qr-note { margin-top: 10px; color: var(--th-ink-soft); font-size: 12.5px; }
+#phone-settings-modal .qr-card { display: flex; flex-direction: column; align-items: center; gap: var(--th-space-m); max-width: 360px; }
+#phone-settings-modal #phone-connect-title { margin: 0; font-size: var(--th-size-title); line-height: var(--th-lh-title); font-weight: 500; color: var(--th-ink); }
+#phone-settings-modal .qr-notice, #phone-settings-modal .qr-paired { margin: 0; font-size: var(--th-size-item); line-height: var(--th-lh-item); color: var(--th-ink); }
+#phone-settings-modal .qr-sub { margin: 0; font-size: var(--th-size-small); color: var(--th-ink-soft); }
 
 /* ─── 应用更新横幅 ─────────────────────────────────────────── */
 #app-update-banner {

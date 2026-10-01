@@ -28,7 +28,7 @@ async function apiGet(deps, path) {
 
 export function atelierEmptyState(data) {
   if (!data) return { title: "暂时无法确认画室状态", detail: "请检查首页连接后重试。已有作品仍保存在这台 Mac。", action: "retry" }
-  if (data.mode === "off") return { title: "画室尚未开启", detail: "到首页点击「手机扫码改设置」，开启「让 CC 自己画画」。首次需下载约 5GB 的画笔。", action: "home" }
+  if (data.mode === "off") return { title: "画室尚未开启", detail: "在设置里点「连接手机」，用手机打开设置，开启「让 CC 自己画画」。首次需下载约 5GB 的画笔。", action: "home" }
   const state = data.status?.state
   if (state === "checking" || state === "downloading") return { title: "正在准备画笔", detail: "准备完成后，CC 才能开始创作。下载进度会在这里更新。", action: "retry" }
   if (state === "failed") return { title: "画笔暂时没准备好", detail: "请检查网络，稍后刷新状态；也可以到手机设置中重新准备画笔。", action: "retry" }
