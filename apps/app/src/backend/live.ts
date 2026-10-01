@@ -256,6 +256,12 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       if (!me) throw new BackendError('unknown')
       await call('POST /set/api/apply', '/set/api/apply', { body: { op: 'label_device', id: me.id, label } })
     },
+    async registerPush(platform, token) {
+      await call('POST /m/api/push/register', '/m/api/push/register', { body: { platform, token } })
+    },
+    async testPush() {
+      return (await call<{ result: { ok: boolean; code: string } }>('POST /m/api/push/test', '/m/api/push/test', { body: {} })).result
+    },
     async unpair() {
       await call('POST /set/api/apply', '/set/api/apply', { body: { op: 'unpair_self' } })
       backend.dispose()

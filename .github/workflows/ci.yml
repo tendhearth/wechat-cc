@@ -31,6 +31,7 @@ jobs:
       desktop: ${{ steps.filter.outputs.desktop }}
       relay: ${{ steps.filter.outputs.relay }}
       app: ${{ steps.filter.outputs.app }}
+      app_native: ${{ steps.filter.outputs.app_native }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -45,6 +46,9 @@ jobs:
               - 'relay/pset.src.html'
             app:
               - 'apps/app/**'
+              - 'packages/protocol/**'
+            app_native:
+              - 'apps/app/native/**'
               - 'packages/protocol/**'
 
   build:
@@ -195,6 +199,28 @@ jobs:
       - name: Bundle check
         working-directory: apps/app
         run: bun run export:check
+
+  # 推送解密的原生两端跑协议包的同一份向量(spec §9.3)。只在 apps/app/native/** 或协议包动过时跑。
+  # macOS runner 自带 Swift / Xcode;Kotlin 走 JVM(test.sh 用 PATH 上的 gradle 与 JAVA_HOME)。
+  app-native:
+    name: app · native push vectors
+    needs: changes
+    if: needs.changes.outputs.app_native == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift (CryptoKit)
+        working-directory: apps/app/native/ios-notify
+        run: swift test
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.1.0'
+      - name: Kotlin (JVM)
+        run: apps/app/native/android-push/test.sh
 
   e2e:
     # Heavy suite — skip on direct dev pushes; still runs on master pushes and

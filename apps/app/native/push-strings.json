@@ -1,0 +1,26 @@
+{
+  "en": {
+    "placeholder.title": "CC",
+    "placeholder.body": "CC has news",
+    "title.permission": "Needs your approval",
+    "title.question": "CC has a question",
+    "title.task_done": "Done",
+    "title.task_failed": "Didn’t finish",
+    "title.test": "Test notification",
+    "body.test": "Notifications reach this phone.",
+    "channel.decide": "Needs your decision",
+    "channel.updates": "Done and didn’t finish"
+  },
+  "zh-Hans": {
+    "placeholder.title": "CC",
+    "placeholder.body": "CC 有新动态",
+    "title.permission": "需要你批准",
+    "title.question": "CC 有问题问你",
+    "title.task_done": "做完了",
+    "title.task_failed": "没做成",
+    "title.test": "测试通知",
+    "body.test": "通知能送到这台手机。",
+    "channel.decide": "需要你决定",
+    "channel.updates": "完成与失败"
+  }
+}

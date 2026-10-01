@@ -6,7 +6,7 @@ export { deriveV1Key, sealV1, openV1 } from './v1'
 export type { SealedFrameV2, V2Channel } from './v2'
 export { deriveV2Keys, makeV2Channel } from './v2'
 export type { SealedPush, PushKindT, PushPlaintextT } from './push'
-export { derivePushKey, sealPush, openPush, PUSH_MAX_AGE_MS, PUSH_MAX_SKEW_MS, PushKind, PushPlaintext } from './push'
+export { derivePushKey, sealPush, openPush, PUSH_MAX_AGE_MS, PUSH_MAX_SKEW_MS, PushKind, PushPlaintext, pushDedupeKey, makePushDedupe, PUSH_DEDUPE_CAPACITY, PUSH_DEDUPE_TTL_MS } from './push'
 export {
   ClientHello, ServerHello, ErrorFrame, SealedV1Frame, SealedV2Frame, V1Request, V1Response,
   ReqMsg, ResMsg, SubMsg, UnsubMsg, EvMsg, ErrMsg, PingMsg, PongMsg, V2Message, V2ClientMessage, V2ServerMessage,

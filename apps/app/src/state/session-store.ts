@@ -24,3 +24,23 @@ export async function loadSession(store: CredentialStore, log: Log = devLog): Pr
 export function quietly(p: Promise<unknown>, op: string, log: Log = devLog): void {
   p.catch(e => log(`${op} failed (${kind(e)})`))
 }
+
+/** 撤销 / 解除配对:配对记录与推送密钥一起清(spec §3)。推送那条失败只记一行;配对那条失败照样抛给调用方。 */
+export async function clearStored(store: CredentialStore, push: { clear(): Promise<void> }, log: Log = devLog): Promise<void> {
+  const [p] = await Promise.allSettled([store.clear(), push.clear().catch(e => log(`pushClear failed (${kind(e)})`))])
+  if (p.status === 'rejected') throw p.reason
+}
+
+/** 会话读完却没有配对 ⇒ 钥匙串里若还留着推送密钥就该清(上次清失败 / 老版本升级上来)。 */
+export function leftoverPushKey(ready: boolean, pairing: PairingRecord | null): boolean {
+  return ready && pairing === null
+}
+
+/**
+ * 等在飞的同步 / 写停下之后、真正清推送密钥之前再判一次:记下的是当时的配对(撤销)或 null(没配对)。
+ * 现在没配对 ⇒ 清;还是那条配对且仍被撤销 ⇒ 清;其余(这期间重新配对了)⇒ 不清,免得清掉新配对的密钥与指纹。
+ */
+export function stillClearPushKey(captured: PairingRecord | null, now: { pairing: PairingRecord | null; revoked: boolean }): boolean {
+  if (now.pairing === null) return true
+  return captured !== null && now.pairing === captured && now.revoked
+}

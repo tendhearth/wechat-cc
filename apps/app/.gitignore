@@ -9,10 +9,12 @@ web-build/
 expo-env.d.ts
 
 # generated native folders(原生构建走 EAS / prebuild,不进仓库)
-ios/
-android/
+/ios/
+/android/
 
 # Native secrets
+google-services.json
+GoogleService-Info.plist
 .kotlin/
 *.orig.*
 *.jks
@@ -30,3 +32,10 @@ android/
 
 # typescript
 *.tsbuildinfo
+
+# 原生单测的构建目录
+native/ios-notify/.build/
+native/ios-notify/.swiftpm/
+native/android-push/build/
+native/android-push/.gradle/
+native/android-push/.kotlin/

@@ -7,6 +7,10 @@
     "icon": "./assets/images/icon.png",
     "scheme": "tendhearth",
     "userInterfaceStyle": "automatic",
+    "locales": {
+      "en": "./locales/en.json",
+      "zh-Hans": "./locales/zh-Hans.json"
+    },
     "ios": {
       "bundleIdentifier": "com.tendhearth.app"
     },

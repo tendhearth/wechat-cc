@@ -38,3 +38,45 @@ describe('quietly(钥匙串写失败不抛未处理的拒绝,日志只有操作�
     expect(log).not.toHaveBeenCalled()
   })
 })
+
+import { clearStored, leftoverPushKey, stillClearPushKey } from './session-store'
+
+describe('撤销 / 解除配对:推送密钥一起清(spec §3「设备被撤销」、§4)', () => {
+  it('两条都清;推送那条清失败只记一行、不连累配对', async () => {
+    const calls: string[] = []
+    const logs: string[] = []
+    const store = { clear: async () => { calls.push('pairing') } } as any
+    await clearStored(store, { clear: async () => { calls.push('push'); throw Object.assign(new Error('x'), { code: 'E_KEYCHAIN' }) } }, l => logs.push(l))
+    expect(calls.sort()).toEqual(['pairing', 'push'])
+    expect(logs).toEqual(['pushClear failed (E_KEYCHAIN)'])
+  })
+  it('配对那条清失败 ⇒ 抛(设置页据此提示「没能清掉」),推送那条照样清', async () => {
+    const calls: string[] = []
+    const store = { clear: async () => { throw new Error('nope') } } as any
+    await expect(clearStored(store, { clear: async () => { calls.push('push') } }, () => {})).rejects.toThrow('nope')
+    expect(calls).toEqual(['push'])
+  })
+  it('leftoverPushKey:会话读完、没有配对 ⇒ 该清(上次清失败 / 从老版本升级)', () => {
+    expect(leftoverPushKey(true, null)).toBe(true)
+    expect(leftoverPushKey(false, null)).toBe(false)
+    expect(leftoverPushKey(true, { deviceId: 'ab12cd34' } as any)).toBe(false)
+  })
+})
+
+describe('stillClearPushKey —— 等同步停下后再清,清之前再看一眼(别把刚重新配对的新密钥清掉)', () => {
+  const A = { deviceId: 'aa11bb22' } as any
+  const B = { deviceId: 'cc33dd44' } as any
+  it('撤销时记下的配对:还是它且仍撤销 ⇒ 清;已解除(null)⇒ 清', () => {
+    expect(stillClearPushKey(A, { pairing: A, revoked: true })).toBe(true)
+    expect(stillClearPushKey(A, { pairing: null, revoked: false })).toBe(true)
+  })
+  it('等的这会儿重新配对了(换成新配对,或同一条不再撤销)⇒ 不清', () => {
+    expect(stillClearPushKey(A, { pairing: B, revoked: false })).toBe(false)
+    expect(stillClearPushKey(A, { pairing: B, revoked: true })).toBe(false)
+    expect(stillClearPushKey(A, { pairing: A, revoked: false })).toBe(false)
+  })
+  it('冷启动 / 解除后没配对(记下的是 null):仍没配对 ⇒ 清;已配上 ⇒ 不清', () => {
+    expect(stillClearPushKey(null, { pairing: null, revoked: false })).toBe(true)
+    expect(stillClearPushKey(null, { pairing: A, revoked: false })).toBe(false)
+  })
+})

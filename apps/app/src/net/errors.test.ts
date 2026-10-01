@@ -27,6 +27,9 @@ describe('mapPhoneError(HTTP 状态 + 正文 → BackendCode)', () => {
   ])('%s %j ⇒ %s', (status, body, want) => {
     expect(mapPhoneError(status, body)).toBe(want)
   })
+  it('daemon 没接推送(push_not_wired,503)⇒ unavailable', () => {
+    expect(mapPhoneError(503, { ok: false, error: 'push_not_wired' })).toBe('unavailable')
+  })
 })
 
 describe('transportErrorCode(协议客户端拒绝的原因 → BackendCode)', () => {

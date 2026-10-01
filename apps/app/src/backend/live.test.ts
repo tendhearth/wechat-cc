@@ -363,3 +363,20 @@ describe('LiveBackend 设备', () => {
     await expect(h.b.matters('en')).rejects.toMatchObject({ code: 'offline' })
   })
 })
+
+describe('推送登记 / 测试通知', () => {
+  it('registerPush 发 POST /m/api/push/register {platform, token};testPush 返回 daemon 的结果', async () => {
+    const { b, reqs, logs } = harness({
+      'POST /m/api/push/register': ok({ ok: true }),
+      'POST /m/api/push/test': ok({ ok: true, result: { ok: false, code: 'relay_offline' } }),
+    })
+    await b.registerPush('apns_sandbox', 'a1'.repeat(32))
+    expect(reqs.find(r => r.key === 'POST /m/api/push/register')?.body).toEqual({ platform: 'apns_sandbox', token: 'a1'.repeat(32) })
+    expect(await b.testPush()).toEqual({ ok: false, code: 'relay_offline' })
+    expect(logs.join('\n')).not.toContain('a1'.repeat(32))
+  })
+  it('daemon 没接推送 ⇒ BackendError(unavailable)', async () => {
+    const { b } = harness({ 'POST /m/api/push/register': ok({ ok: false, error: 'push_not_wired' }, 503) })
+    await expect(b.registerPush('fcm', 'x'.repeat(40))).rejects.toMatchObject({ code: 'unavailable' })
+  })
+})

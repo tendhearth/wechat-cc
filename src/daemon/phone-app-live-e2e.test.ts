@@ -370,4 +370,9 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
     await expect.poll(() => (got.at(-1) as { tasks: Array<{ id: string }> }).tasks.map(t => t.id), P).toEqual([task.id])
     await release(task)
   })
+  it('这台 daemon 没接推送(还没上 v2 中继)⇒ registerPush 报 unavailable(不是 unknown / revoked),连接照常 online', async () => {
+    const b = live()
+    await expect(b.registerPush('apns_sandbox', 'a1'.repeat(32))).rejects.toMatchObject({ code: 'unavailable' })
+    await expect.poll(() => b.connection().state, P).toBe('online')
+  })
 })

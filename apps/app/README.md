@@ -1,9 +1,9 @@
 # apps/app —— Tendhearth 手机 app(Expo 原生)
 
-「自己电脑上的个人 AI + 指挥编码 agent」的手机端。这一版有**演示模式**与**真连接**:没配对时是演示后端;扫码配对后换成 `src/backend/live.ts`,经中继连回家里的电脑。
+「自己电脑上的个人 AI + 指挥编码 agent」的手机端。这一版有**演示模式**与**真连接**:没配对时是演示后端;扫码配对后换成 `src/backend/live.ts`,经中继连回家里的电脑。配对后收系统通知:iOS 通知服务扩展与安卓消息服务在本机解密(`native/`),由 `plugins/` 在 prebuild 时接进构建。
 
 - 设计:`docs/superpowers/specs/2026-09-30-tendhearth-app-v1-design.md`,设计稿 `docs/design/tendhearth-app-v1/`
-- 计划:`docs/superpowers/plans/2026-09-30-tendhearth-app-skeleton.md`(骨架 + 演示)、`docs/superpowers/plans/2026-09-30-tendhearth-app-live.md`(真连接与配对)
+- 计划:`docs/superpowers/plans/2026-09-30-tendhearth-app-skeleton.md`(骨架 + 演示)、`docs/superpowers/plans/2026-09-30-tendhearth-app-live.md`(真连接与配对)、`docs/superpowers/plans/2026-09-30-tendhearth-app-push.md`(原生通知)
 
 ## 怎么跑
 
@@ -50,6 +50,11 @@ src/state/        BackendProvider、会话(语言覆盖、已看过欢迎页;配
 src/view/         纯函数视图模型(此刻 / 一起做 / 进展 / 批准 / 状态词),vitest 覆盖
 src/i18n/         en 与 zh-Hans 文案表(两份键一致有测试)+ useLang(设置覆盖 ?? 系统)
 src/ui/           组件与色板(tokens.ts,明暗两套;明暗只是外观,不表示在线离线)
+src/push/         推送:key-store(钥匙串里的推送密钥记录)、target / route(点通知去哪)、register(登记生命周期)、PushProvider / PushRouter、前台横幅、开发用 dev-token
+native/           原生通知核心:ios-notify(Swift 通知服务扩展 + `swift test`)、android-push(Kotlin 消息服务 + JVM 单测 `test.sh`)、push-strings.json(原生端标题文案)
+plugins/          Expo config plugin:with-ios-notify(扩展 target + 共享钥匙串)、with-android-push(FCM 服务 + 读 expo-secure-store)、with-ios-scene(iOS 27 场景委托)及其测试
+locales/          iOS InfoPlist 本地化(相机说明 + 显示名,en 与 zh-Hans)
+scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl push)
 .maestro/         模拟器演示流程
 ```
 
@@ -68,7 +73,85 @@ src/ui/           组件与色板(tokens.ts,明暗两套;明暗只是外观,不�
 - **撤销 ≠ 离线**:撤销 ⇒ 停止提交、清掉钥匙串里的设备令牌、显示「重新配对」;暂时离线 ⇒ 显示上次同步时间、草稿照写、发送 / 批准 / 拒绝锁住。两者文案与 testID 都不同。
 - **草稿永不自动发送**:重连后只重拉读,不重放写;不做乐观成功。
 - **令牌不进日志**、错误文案或 `console`:`LiveBackend` 的 `log` 只写错误码与路由键。
-- **被根测试 import 的文件必须纯 TS 且过根 tsconfig**:`src/backend/{live,types}.ts`、`src/net/{connection,errors,uuid,link,pairing}.ts`、`src/i18n/{index,en,zh-Hans}.ts` 不 import `react` / `react-native` / `expo-*`;类型用 `import type`,数组下标取值带 `!` 或判空(根有 `noUncheckedIndexedAccess`、`verbatimModuleSyntax`)。
+- **被根测试 import 的文件必须纯 TS 且过根 tsconfig**:`src/backend/{live,types}.ts`、`src/net/{connection,errors,uuid,link,pairing}.ts`、`src/push/{key-store,target,route,register}.ts`、`src/i18n/{index,en,zh-Hans}.ts` 不 import `react` / `react-native` / `expo-*`;类型用 `import type`,数组下标取值带 `!` 或判空(根有 `noUncheckedIndexedAccess`、`verbatimModuleSyntax`)。
+
+## 推送(原生通知)
+
+计划:`docs/superpowers/plans/2026-09-30-tendhearth-app-push.md`。
+
+### 本机能验证什么(2026-09-30 探路,Xcode 27 / iOS 27.0 模拟器)
+
+- `xcrun simctl push` 会不会运行通知服务扩展:**no**(`NSE_UNDER_SIMCTL=no`。app 在后台、已 `registerForRemoteNotifications` 拿到令牌、扩展已被 PlugInKit 登记,横幅仍是原样的 `CC / CC 有新动态`,日志里没有 `nse ran`、没有扩展进程;`simctl push` 走 CoreSimulatorBridge 直接把请求交给 SpringBoard,不经过 apsd 的 mutable-content 管线)。
+- 模拟器上 app 与扩展共享钥匙串组:**yes**(`SHARED_KEYCHAIN_ON_SIM=yes`。主 app 往 `9Y6JAPDP7A.<…>.shared` 写 `SecItemAdd = 0`;另一个只带共享组 entitlement 的 bundle 不指定 access group 读到 `0` / 原值;反证:它往没授权的组写得 `-34018`,即模拟器真的按 entitlement 管。扩展进程本身在模拟器上跑不起来,所以「扩展读」是用同样 entitlement 形状的第二个 bundle 代测的)。
+- 模拟器构建的签名参数:`无需额外参数`(`DEVELOPMENT_TEAM=9Y6JAPDP7A` 时 Xcode 用「Sign to Run Locally」,entitlements 以 simulated entitlements 嵌进二进制,`$(AppIdentifierPrefix)` 展开成 `9Y6JAPDP7A.`)。另:扩展 bundle id 必须以主 app 的为前缀,否则构建报 `Embedded binary's bundle identifier is not prefixed with the parent app's bundle identifier`。
+- 因此扩展的解密 / 展示逻辑在本机只能靠 `native/ios-notify` 的 `swift test` 与直接调 `didReceive` 的单测验;模拟器上 `simctl push` 只能验「app 收到原样推送 + 点开路由」。
+- 真 APNs / FCM 投递、锁屏、进程被杀后的送达:只能真机 + 主人的 APNs 密钥 / Firebase 项目(见文末「主人要做的」)。
+
+### 在模拟器上验通知(scripts/sim-push.ts)
+
+模拟器用 iOS 26.5 的 `th-push`(`xcrun simctl create th-push com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro com.apple.CoreSimulator.SimRuntime.iOS-26-5`;iOS 27 的启动崩溃已由 with-ios-scene 修掉,`th-push-27` 验过),装开发构建、`bunx expo start --clear --dev-client` 在跑。
+
+1. app 开着、点「先看看」进了演示:`bun apps/app/scripts/sim-push.ts --print-link | xargs xcrun simctl openurl <udid>`(系统问「在 Tendhearth 中打开?」点 Open)⇒ 页面出现 `dev-push-key-ok`。这一步:把开发令牌推出的推送密钥写进共享钥匙串、要一次通知权限(演示不配对,登记流程不会去要)、并把开发令牌记在内存里给 app 兜底解密(`src/push/dev-token.ts`;只在开发构建、且没配对时用;app 被杀就忘)。注意:只有开发令牌本身在内存里,它推出的推送密钥写进了共享钥匙串、会留下来(直到下次冷启动没配对时清掉)。已配对的开发构建里这个链接什么都不写(页面显示 `dev-push-key-paired`),免得顶掉真配对的推送密钥。
+2. 发:`bun apps/app/scripts/sim-push.ts --udid <udid> [--mode ok|stale|tamper|wrong-key] [--repeat [--gap <ms>]]`。载荷与中继发给 APNs 的同形(占位 alert + mutable-content + `wcc` 真密文,用协议包 `sealPush` 封)。
+3. 点系统横幅:Maestro 点不开通知中心 / 锁屏里的通知,但能点正在显示的横幅 —— 先在后台起一个反复点 `point: 50%,9%`、直到 app 里出现目标 testID 的流程,再发推送。
+
+2026-09-30 的结果(th-push,iOS 26.5;`NSE_UNDER_SIMCTL=no` ⇒ 分支 B,扩展不跑):
+
+| # | 场景 | 观察 |
+|---|---|---|
+| 1 | app 在后台,`--mode ok` | 系统横幅是中继原样的「CC / CC 有新动态」(扩展没跑) |
+| 6 | 点 #1 的横幅 | app 回前台 → 中转页 → 批准页 `approval-title`,原始命令 `npm install sharp` 可见(app 用兜底密钥在 app 里解开 `wcc`) |
+| 2–4 | 后台,`--mode stale` / `tamper` / `wrong-key`,先停在批准页再点横幅 | 横幅同样是占位;点开 ⇒ 此刻(`now-needs-you-card`),没进中转页 |
+| 7 | app 在前台,`--mode ok` | 不弹系统横幅;app 顶部 `push-banner` 显示解开的「CC / 整理作品集:npm i sharp」;点它 ⇒ 批准页 |
+| 7' | 前台,`stale` / `tamper` / `wrong-key` | `push-banner` 只显示中性「CC / CC has news」(英文系统);点它 ⇒ 此刻(从批准页出发也一样) |
+| 5 | 前台,`--repeat --gap 9000`(同一份密文送两次) | 第一份弹横幅、6 秒自动收起;第二份到达后不再弹(按密文去重)。系统通知中心里每条都单独列出 —— simctl 不带 apns-collapse-id,不合并 |
+| 8 | 杀掉 app 后发 `ok`、点横幅 | 冷启动到欢迎页:演示模式下「看过欢迎页」与开发令牌都只在内存里,冷启动都没了(钥匙串里那把开发推送密钥冷启动时也因为没配对被清掉)(已配对的用户两样都在钥匙串里,但这条只能真机验) |
+
+只能真机验的:扩展解密后的系统横幅标题 / 正文与本地化、扩展里的去重与 passive、collapse-id 合并、已配对时冷启动点通知直达批准页、锁屏与进程被杀后的送达。扩展的逻辑本机只由 `swift test`(`native/ios-notify`)覆盖。
+
+开发令牌是合成的(`dev` + 48 位 hex),不是任何真设备的令牌;`/dev-push-key` 在发布构建里不生效(深链改回此刻、页面本身也重定向),dev-token 兜底在发布构建里不用。
+
+### 规矩
+
+- 通知从不执行操作(category 无动作):点开只进 app,批准在批准页里做。
+- 扩展 / 消息服务**只拿推送密钥记录** `{v,key,lang}`,拿不到设备令牌(令牌能以这台手机的身份操作电脑,扩展只需要解密)。主 app 的 `keychain-access-groups` 把自己的组排第一,保证不带 accessGroup 的写入(配对记录)不落进共享组。
+- 令牌、推送密钥、token 不进日志。解不开 ⇒ 中性占位(「CC / CC 有新动态」);标题按 `kind` 在原生端本地化(`native/push-strings.json`,改文案两种语言一起改),正文是用户自己的数据原样显示。
+- 重复推送 iOS 只能静音(`interruptionLevel = .passive`,丢弃要 Apple 特批权限),中继的 `apns-collapse-id`(= taskId)让同一件事只留最新一条;安卓服务直接不发。
+- 改钥匙串键名 / service / 格式 ⇒ `src/push/key-store.ts`、`native/ios-notify/Extension/ExtensionStores.swift`、`native/android-push/android/SecureStoreReader.kt` 一起改(`plugins/native-guards.test.ts` 对着 `node_modules` 里 expo-secure-store 的源码钉住,升级时先红)。
+- iOS 27 要求 UIScene 生命周期,否则启动即崩;Expo SDK 57 的模板没接,`plugins/with-ios-scene.js` 把 expo 自带的 `EXExpoAppSceneDelegate` 接上。**哪个 Expo SDK 的模板自己采用场景委托了,就删这个 plugin**(它找不到锚点会在 prebuild 时直接报错,不会悄悄产出会崩的包)。
+- 开发专用:`tendhearth://dev-push-key` 页与开发令牌兜底(`src/push/dev-token.ts`)只在 `__DEV__` 生效,发布构建里深链改回此刻;开发令牌(`dev…`)形状刻意区别于真设备令牌(`d…`)。
+
+### 怎么跑
+
+```bash
+cd apps/app/native/ios-notify && swift test        # Swift(CryptoKit)跑协议包同一份向量
+apps/app/native/android-push/test.sh               # Kotlin JVM 单测;第一次联网,之后加 --offline
+cd apps/app && bunx expo prebuild --platform ios --clean && (cd ios && pod install) && bunx expo run:ios
+```
+
+CI:`app · native push vectors`(`.github/workflows/ci.yml`,仅 `apps/app/native/**` 或 `packages/protocol/**` 变动时跑,macOS runner)。
+
+### 构建环境变量
+
+`TENDHEARTH_APNS_ENV`(development / production,决定 `aps-environment` 与登记平台 `apns_sandbox` / `apns`;`eas.json` 三个 profile 各自设好)、`APPLE_TEAM_ID`(默认 9Y6JAPDP7A)、`GOOGLE_SERVICES_JSON`(EAS 文件型环境变量,或本地 `apps/app/google-services.json`,不进 git)。详见 `app.config.js` 头注释。`eas.json` 已加但**没运行过**;`extra.eas.projectId` 等主人 `eas init` 后提交。
+
+### 模拟器
+
+- `th-push`(iOS 26.5,UDID `8471AD7D-4D54-44E6-8D21-1B4DCBF40CA5`):本计划的模拟器验证与 Maestro 全套都跑它。
+- `th-push-27`(iOS 27.0):验证 with-ios-scene 之后 iOS 27 能启动(之前启动即崩),Maestro 5/5。
+- Maestro 前 `xcrun simctl keychain <udid> reset`;`export JAVA_HOME=/opt/homebrew/opt/openjdk@21`。
+
+### 没验过的 / 主人要做的
+
+- **安卓在这台 Mac 上没验过**:没有 Android SDK / adb。Kotlin 服务只有 JVM 单测(`test.sh`),编译进 APK 与运行都要等 EAS 构建 + 真机或模拟器。
+- **主人清单**:
+  1. Apple:`com.tendhearth.app` 开 Push Notifications 能力;建 App ID `com.tendhearth.app.notify`(或让 EAS 自动建);建 APNs 认证密钥(.p8),按 `docs/maintainer/relay.md` 第 4 节把 `APNS_KEY_P8` / `APNS_KEY_ID` / `APNS_TEAM_ID=9Y6JAPDP7A` / `APNS_TOPIC=com.tendhearth.app` 设进 Worker;App Store Connect 建 app 记录(API 建不了,手动)。
+  2. Firebase:建项目、加安卓应用 `com.tendhearth.app`,`google-services.json` 本地放 `apps/app/` 并在 EAS 建文件型变量 `GOOGLE_SERVICES_JSON`;服务账号 JSON 设进 Worker 的 `FCM_SERVICE_ACCOUNT`。
+  3. 中继上线:按 `docs/maintainer/relay.md` 第 8 节,daemon 的 `agent-config.json` 设 `relay_v2_url` 并重启。
+  4. EAS:`cd apps/app && eas init`(提交 projectId)、`eas build --profile development --platform ios`(真机开发构建)、TestFlight 用 `--profile production` + `eas submit`、Google Play 开发者账号后安卓 `--profile production`。
+  5. 一台安卓手机或模拟器。
+  6. 真机验收(两个平台各一遍):配对 → 通知权限框 → 设置里「已开启」→「发一条测试通知」→ 电脑上交办要批准的事 → 前台 / 后台 / 进程被杀三种都收到并点开进批准页(含**已配对的冷启动点通知**)→ 允许 → 做完收到「做完了」;**锁屏上看解密后的文字**;**扩展真的在循环里**(模拟器的 `simctl push` 不经过扩展);**经系统设置拒绝再打开权限的往返**;电脑上撤销这台手机后再触发 ⇒ 只显示「CC 有新动态」。
+- 计划 3 遗留、仍开着:配对链接令牌 10 分钟内可重复使用(被拍下的二维码 10 分钟内能配第二台手机);对微信聊天那件事的「说一句」daemon 不按 `requestId` 去重(「不确定」后重发可能说两遍)。
 
 ## 硬要求(改界面前先对一遍)
 

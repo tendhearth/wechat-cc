@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 import { gcm } from '@noble/ciphers/aes.js'
 import { b64uEncode, b64uDecode } from './b64u'
-import { derivePushKey, sealPush, openPush, PushPlaintext, PushKind } from './push'
+import { derivePushKey, sealPush, openPush, PushPlaintext, PushKind, pushDedupeKey, makePushDedupe, PUSH_DEDUPE_CAPACITY, PUSH_DEDUPE_TTL_MS } from './push'
 import type { SealedPush } from './push'
 import { deriveV1Key } from './v1'
 import { deriveV2Keys } from './v2'
@@ -222,13 +222,17 @@ describe('openPush:过期与时钟偏差', () => {
     const v = JSON.parse(readFileSync(new URL('../vectors/push.json', import.meta.url), 'utf8'))
     const key = derivePushKey(v.deviceToken)
     const wrong = derivePushKey(v.deviceToken + 'x')
-    for (const c of v.cases as Array<{ name: string; now: number; sealed: SealedPush; expect: string; wrongKey?: boolean; payload?: unknown }>) {
+    for (const c of v.cases as Array<{ name: string; now: number; sealed: SealedPush; expect: string; wrongKey?: boolean; payload?: unknown; dedupeKey?: string }>) {
       const k = c.wrongKey ? wrong : key
-      if (c.expect === 'ok') expect(openPush(k, c.sealed, c.now), c.name).toEqual(c.payload)
-      else if (c.expect === 'stale') expect(() => openPush(k, c.sealed, c.now), c.name).toThrow('stale')
+      if (c.expect === 'ok') {
+        expect(openPush(k, c.sealed, c.now), c.name).toEqual(c.payload)
+        expect(pushDedupeKey((c.payload as { ts: number }).ts, c.sealed.ct), c.name).toBe(c.dedupeKey)
+      } else if (c.expect === 'invalid') {
+        expect(PushPlaintext.safeParse(openPush(k, c.sealed, c.now)).success, c.name).toBe(false)
+      } else if (c.expect === 'stale') expect(() => openPush(k, c.sealed, c.now), c.name).toThrow('stale')
       else expect(() => openPush(k, c.sealed, c.now), c.name).toThrow()
     }
-    expect((v.cases as unknown[]).length).toBeGreaterThanOrEqual(6)
+    expect((v.cases as Array<{ expect: string }>).map(c => c.expect)).toEqual(expect.arrayContaining(['ok', 'invalid', 'stale', 'auth', 'malformed']))
   })
 })
 
@@ -259,6 +263,66 @@ describe('PushPlaintext —— 解开之后的明文形状(daemon 与原生端�
       expect(r.success, c.name).toBe(true)
       expect(PushPlaintext.parse(c.payload), c.name).toEqual(c.payload)
     }
+  })
+})
+
+describe('去重(spec §5.5:每台设备按 ts + 密文哈希记住最近的推送)', () => {
+  it('pushDedupeKey:floor(ts) + ":" + sha256(ct) 前 32 位 hex;ts 的小数部分不影响', () => {
+    const k = pushDedupeKey(1_700_000_000_123.9, 'abc')
+    expect(k).toBe('1700000000123:ba7816bf8f01cfea414140de5dae2223')   // sha256("abc")
+    expect(pushDedupeKey(1_700_000_000_123, 'abc')).toBe(k)
+    expect(pushDedupeKey(1_700_000_000_123, 'abd')).not.toBe(k)
+  })
+  it('makePushDedupe:第一次 new、第二次 duplicate;超过 TTL 的条目被修剪后又算 new', () => {
+    const d = makePushDedupe()
+    expect(d.seen('a', 1000)).toBe(false)
+    expect(d.seen('a', 2000)).toBe(true)
+    expect(d.seen('a', 1000 + PUSH_DEDUPE_TTL_MS)).toBe(true)          // 正好 TTL:还留着
+    expect(d.seen('a', 1000 + PUSH_DEDUPE_TTL_MS + 1)).toBe(false)     // 超过 TTL:修剪后重新记下
+  })
+  it('容量满了挤掉最早见到的那条(同一时刻按键名排序,确定性)', () => {
+    const d = makePushDedupe()
+    for (let i = 0; i < PUSH_DEDUPE_CAPACITY; i++) d.seen(`k${String(i).padStart(3, '0')}`, 1000 + i)
+    expect(d.seen('new', 5000)).toBe(false)
+    expect(Object.keys(d.entries())).toHaveLength(PUSH_DEDUPE_CAPACITY)
+    expect(d.entries()['k000']).toBeUndefined()
+    expect(d.seen('k001', 5001)).toBe(true)
+  })
+  it('同一时刻按 Unicode 码点比较键名(不是 UTF-16 码元;与向量 rules、Swift / Kotlin 一致)', () => {
+    // U+FFFF < U+1F600 按码点;按 UTF-16 码元 U+1F600 的高代理 0xD83D < 0xFFFF,顺序相反
+    const bmp = '\uFFFF', astral = '\u{1F600}'
+    const d = makePushDedupe()
+    d.seen(astral, 1000)
+    d.seen(bmp, 1000)
+    for (let i = 0; i < PUSH_DEDUPE_CAPACITY - 2; i++) d.seen(`k${String(i).padStart(3, '0')}`, 2000 + i)
+    expect(d.seen('new', 9000)).toBe(false)
+    expect(d.entries()[bmp]).toBeUndefined()
+    expect(d.entries()[astral]).toBe(1000)
+  })
+  it('向量文件的 dedupe.steps 与参考实现一致(原生两端照同一份跑)', () => {
+    const v = JSON.parse(readFileSync(new URL('../vectors/push.json', import.meta.url), 'utf8'))
+    expect(v.dedupe.capacity).toBe(PUSH_DEDUPE_CAPACITY)
+    expect(v.dedupe.ttlMs).toBe(PUSH_DEDUPE_TTL_MS)
+    const d = makePushDedupe()
+    for (const s of v.dedupe.steps as Array<{ key: string; now: number; expect: string; note: string }>) {
+      expect(d.seen(s.key, s.now) ? 'duplicate' : 'new', s.note).toBe(s.expect)
+    }
+    expect((v.dedupe.steps as Array<{ expect: string }>).map(s => s.expect)).toContain('duplicate')
+    expect(typeof v.dedupe.rules).toBe('string')
+    // 容量步骤真的触发过挤出:某个曾记下的键在 65 条之后又算 new(k000)
+    const steps = v.dedupe.steps as Array<{ key: string; expect: string }>
+    const firstK000 = steps.findIndex(s => s.key === 'k000')
+    expect(steps.slice(firstK000 + 1).some(s => s.key === 'k000' && s.expect === 'new')).toBe(true)
+  })
+  it('向量文件的 dedupeKeyCases 与 pushDedupeKey 一致(含小数 ts)', () => {
+    const v = JSON.parse(readFileSync(new URL('../vectors/push.json', import.meta.url), 'utf8'))
+    const cs = v.dedupeKeyCases as Array<{ ts: number; ct: string; key: string }>
+    expect(cs.some(c => !Number.isInteger(c.ts))).toBe(true)
+    for (const c of cs) expect(pushDedupeKey(c.ts, c.ct)).toBe(c.key)
+  })
+  it('从 index 导出', () => {
+    expect(index.pushDedupeKey).toBe(pushDedupeKey)
+    expect(index.makePushDedupe).toBe(makePushDedupe)
   })
 })
 
