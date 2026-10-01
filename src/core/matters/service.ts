@@ -24,7 +24,9 @@ export interface MatterTaskControls {
   runId?:string;inputMode?:'steer'|'send'|'queue'
   permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];artifacts:Artifact[];inputs:MatterInput[]
 }
-export interface MatterDetail extends MatterTaskControls {matter:Matter;bindings:MatterBinding[];sessions:MatterSession[];task:MatterTaskView|null;events:MatterEvent[]}
+/** 接过来、还没发第一句的电脑会话:第一句会怎样(spec 2026-10-01-tendhearth-continue-sessions D12)。 */
+export interface MatterNativeStart {mode:'native_resume'|'fresh_context';providerId:string}
+export interface MatterDetail extends MatterTaskControls {matter:Matter;bindings:MatterBinding[];sessions:MatterSession[];task:MatterTaskView|null;events:MatterEvent[];nativeStart?:MatterNativeStart}
 export interface MatterSayInput {requestId:string;runId?:string;draftId?:string;attachmentIds?:string[]}
 type MatterMaterials=Pick<MatterSayInput,'draftId'|'attachmentIds'>
 export interface MatterArtifactInput {artifactId:string;sha256:string;offset:number;length?:number}
@@ -33,7 +35,9 @@ export interface MatterArtifactChunk {taskId:string;artifactId:string;name:strin
 export interface MattersServiceDeps {
   store:MatterStore
   workbench?:{
-    detail(id:string):{task:MatterTaskView;events:MatterEvent[]}&Partial<MatterTaskControls>
+    detail(id:string):{task:MatterTaskView;events:MatterEvent[]}&Partial<MatterTaskControls>&{requiresExternalClose?:boolean;continuation?:{mode:string}}
+    /** 手机说第一句给「导入了、还没发过第一句」的任务(spec D5);没接 ⇒ 手机也走 continueTask(409)。 */
+    continueImported?(id:string,text:string,options:{inputRequestId?:string}&MatterMaterials,attachmentPolicy?:'owner'):Promise<MatterTaskView>
     continueTask(id:string,text:string,options?:{inputRequestId?:string}&MatterMaterials,attachmentPolicy?:'owner'):MatterTaskView
     submitInput?(id:string,input:{runId:string;requestId:string;text:string}&MatterMaterials,attachmentPolicy?:'owner'):Promise<LiveInput>
     resolvePermission?(id:string,requestId:string,decision:PermissionDecision):void
@@ -84,6 +88,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       const matter=require(id)
       let task:MatterTaskView|null=null,events:MatterEvent[]=[]
       let controls:MatterTaskControls={permissions:[],questions:[],artifacts:[],inputs:[]}
+      let nativeStart:MatterNativeStart|undefined
       if(matter.kind==='chat'&&deps.chat?.recent){
         const chatId=deps.store.bindings(id).find(b=>b.surface==='wechat')?.surfaceKey
         if(chatId){try{events=(await deps.chat.recent(chatId,50)).sort((a,b)=>a.createdAt-b.createdAt).map(publicEvent)}catch{/* 读不到消息流,详情本身还在 */}}
@@ -97,10 +102,11 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
             artifacts:(d.artifacts??[]).filter(a=>a.taskId===id).map(({id,taskId,name,mime,size,sha256,createdAt,approvedAt})=>({id,taskId,name,mime,size,sha256,createdAt,approvedAt})),
             inputs:(d.inputs??[]).filter(input=>input.taskId===id).map(publicInput),
           }
+          if(d.requiresExternalClose)nativeStart={mode:d.continuation?.mode==='restart_required'?'fresh_context':'native_resume',providerId:d.task.providerId}
         }
         catch{/* 任务记录不在了也不让详情整个失败:matter 本身还在 */}
       }
-      return {matter,bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls}
+      return {matter,bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...(nativeStart?{nativeStart}:{})}
     },
     async ownerChat(surface){
       const owner=deps.chat?.ownerChatId();if(!owner)return null
@@ -117,6 +123,13 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
         const materials:MatterMaterials={...(input?.draftId!==undefined?{draftId:input.draftId}:{}),...(input?.attachmentIds!==undefined?{attachmentIds:input.attachmentIds}:{})}
         // 策略来自可信调用表面，Workbench 再解析当前主人；不从请求体接受 owner 或策略。
         const attachmentPolicy=surface==='phone'?'owner':undefined
+        // 手机接过来的电脑会话,第一句(spec D5):确认卡就是「原程序已关闭」的声明,令牌在 daemon 里一闪而过。
+        // 只认手机(R8):桌面 / 内部 API 照旧拿 409 external_close_confirmation_required,桌面自己的声明按钮不被绕过。
+        if(surface==='phone'&&d.requiresExternalClose&&deps.workbench.continueImported){
+          await deps.workbench.continueImported(matter.id,text,{...(requestId!==undefined?{inputRequestId:requestId}:{}),...materials},'owner')
+          const task=syncTask(id),receipt=requestId?taskDetail(id).inputs?.find(r=>r.taskId===id&&r.id===requestId):undefined
+          return {kind:'task',task,...(receipt?{input:publicInput(receipt)}:{})}
+        }
         // A retry of a terminal continuation must keep using continueTask's durable
         // input receipt, even when that accepted continuation is now a live run.
         if(input?.runId){
