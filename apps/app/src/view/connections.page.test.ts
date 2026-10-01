@@ -41,6 +41,6 @@ describe('连接页(终审 I1 / M8):演示不冒充真电脑;顶上一行与桌�
 describe('演示里 CC 是暗的(只有真信号才亮)', () => {
   it('demo ⇒ away,哪怕演示后端说在线', () => {
     expect(ccPresence({ state: 'online', lastSyncedAt: null, epoch: 1 }, { demo: true })).toBe('away')
-    expect(ccPresence({ state: 'online', lastSyncedAt: null, epoch: 1 })).toBe('here')
+    expect(ccPresence({ state: 'online', lastSyncedAt: 1, epoch: 1 })).toBe('here')
   })
 })

@@ -202,8 +202,29 @@ describe('启动核验(spec §7、D8)', () => {
     const b = fakeBackend(async () => [])
     const r2 = vi.fn(), s2 = vi.fn()
     watchConnection(b as never, store, r2, s2)
-    b.emit({ state: 'online', epoch: 1 })
+    b.emit({ state: 'online', epoch: 1, lastSyncedAt: 1000 })
     b.emit({ state: 'revoked' })
     expect([r2.mock.calls.length, s2.mock.calls.length]).toEqual([1, 0])
+  })
+  it('watchConnection:明文 hello 已 online 但没同步成功过就被拒(令牌失效)⇒ 仍是 onStale', () => {
+    const store = { revalidateAll: vi.fn() }
+    const a = fakeBackend(async () => [])
+    const r = vi.fn(), s = vi.fn()
+    watchConnection(a as never, store, r, s)
+    a.emit({ state: 'online', epoch: 1 })
+    a.emit({ state: 'revoked' })
+    expect([r.mock.calls.length, s.mock.calls.length]).toEqual([0, 1])
+  })
+  it('watchLaunch:读设备失败(unknown)不算核对过,下次连接变化再核对', async () => {
+    let fail = true
+    const b = fakeBackend(async () => { if (fail) throw new Error('timeout'); return [row('ffffffff', true)] })
+    const onStale = vi.fn()
+    watchLaunch(b as never, 'aa11bb22', onStale)
+    b.emit({ state: 'online', epoch: 1 })
+    await new Promise(r => setTimeout(r, 0))
+    expect(onStale).not.toHaveBeenCalled()
+    fail = false
+    b.emit({ state: 'online', lastSyncedAt: 5 })
+    await vi.waitFor(() => expect(onStale).toHaveBeenCalledTimes(1))
   })
 })

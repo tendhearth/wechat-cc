@@ -29,13 +29,13 @@ export function backendFor(
 export function watchConnection(backend: Backend, store: { revalidateAll(): void }, onRevoked: () => void, onStale?: () => void): Unsubscribe {
   let prev = backend.connection()
   let told = false
-  let everOnline = prev.state === 'online'
+  let synced = prev.lastSyncedAt !== null // 「连上过」= 这次启动成功同步过(令牌被认过);online 只是明文 hello,不算
   return backend.onConnection(c => {
     if (shouldRevalidate(prev, c)) store.revalidateAll()
-    if (c.state === 'online') everOnline = true
+    if (c.lastSyncedAt !== null) synced = true
     if (c.state === 'revoked' && !told) {
       told = true
-      if (!everOnline && onStale) onStale()
+      if (!synced && onStale) onStale()
       else onRevoked()
     }
     prev = c
@@ -54,10 +54,16 @@ export async function verifyLaunch(backend: Pick<Backend, 'devices'>, deviceId: 
 export function watchLaunch(backend: Pick<Backend, 'connection' | 'onConnection' | 'devices'>, deviceId: string, onStale: () => void): Unsubscribe {
   let checked = false
   let cancelled = false
+  let inflight = false
   const check = (c: Connection) => {
-    if (checked || c.state !== 'online') return
-    checked = true
-    void verifyLaunch(backend, deviceId).then(v => { if (v === 'stale' && !cancelled) onStale() })
+    if (checked || inflight || c.state !== 'online') return
+    inflight = true
+    void verifyLaunch(backend, deviceId).then(v => {
+      inflight = false
+      if (cancelled) return
+      if (v !== 'unknown') checked = true // 读不出来(含令牌还没被认)⇒ 下次 online / 同步再核,什么也不清
+      if (v === 'stale') onStale()
+    })
   }
   check(backend.connection())
   const off = backend.onConnection(check)

@@ -49,7 +49,7 @@ export function SessionProvider({ children, store, push }: { children: ReactNode
     async forgetPairing() { await clearStored(store, push); setPairing(null); setSeen(false) },
     forgetStale() { quietly(clearStored(store, push), 'clear'); setPairing(null); setSeen(false); setStale(true) },
     staleNotice,
-    seenWelcome, markWelcomeSeen: () => setSeen(true), setSeenWelcome: setSeen,
+    seenWelcome, markWelcomeSeen: () => { setSeen(true); setStale(false) }, setSeenWelcome: setSeen,
     langOverride,
     setLangOverride(l) { setLang(l); quietly(store.savePrefs({ lang: l }), 'savePrefs') },
   }), [ready, pairing, staleNotice, seenWelcome, langOverride, store, push])

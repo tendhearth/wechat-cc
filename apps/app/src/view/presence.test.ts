@@ -6,17 +6,19 @@ const conn = (state: 'online' | 'connecting' | 'offline' | 'revoked', lastSynced
 
 describe('CC 的明暗只看够不够得着家里的电脑', () => {
   it('online ⇒ here;其他一律 away', () => {
-    expect(ccPresence(conn('online'))).toBe('here')
+    expect(ccPresence(conn('online', 1))).toBe('here')
+    expect(ccPresence(conn('online'))).toBe('away') // 握手了但还没成功同步过:不知道令牌认不认
     for (const s of ['connecting', 'offline', 'revoked'] as const) expect(ccPresence(conn(s))).toBe('away')
   })
 })
 
 describe('顶栏状态行', () => {
   const now = at(21, 0)
-  it('在线:绿点', () => expect(statusLine(conn('online'), now, 'zh-Hans')).toEqual({ dot: 'ok', text: '家里的电脑 · 在线', label: '家里的电脑 · 在线' }))
+  it('在线:绿点', () => expect(statusLine(conn('online', 1), now, 'zh-Hans')).toEqual({ dot: 'ok', text: '家里的电脑 · 在线', label: '家里的电脑 · 在线' }))
   it('离线:红点;顶栏只写短句,上次同步时间只进无障碍标签(连接页另有完整时间)', () =>
     expect(statusLine(conn('offline', at(20, 34)), now, 'zh-Hans')).toEqual({ dot: 'bad', text: '家里的电脑 · 不在线', label: '家里的电脑 · 不在线 · 20:34 同步' }))
   it('离线且从没同步过:不编时间', () => expect(statusLine(conn('offline'), now, 'zh-Hans')).toEqual({ dot: 'bad', text: '家里的电脑 · 不在线', label: '家里的电脑 · 不在线' }))
+  it('握手了但这次还没同步成功:灰点「正在连接」,不绿(恢复回来的配对可能已失效)', () => expect(statusLine(conn('online'), now, 'en')).toEqual({ dot: 'unknown', text: 'Home computer · connecting', label: 'Home computer · connecting' }))
   it('连接中:灰点(不知道),绝不绿', () => expect(statusLine(conn('connecting'), now, 'en')).toEqual({ dot: 'unknown', text: 'Home computer · connecting', label: 'Home computer · connecting' }))
   it('已撤销:红点', () => expect(statusLine(conn('revoked'), now, 'zh-Hans')).toEqual({ dot: 'bad', text: '家里的电脑 · 已解除配对', label: '家里的电脑 · 已解除配对' }))
 })
