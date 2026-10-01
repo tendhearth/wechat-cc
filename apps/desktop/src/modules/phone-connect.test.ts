@@ -50,6 +50,17 @@ describe('linkView', () => {
   })
 })
 
+describe('出码前设备快照失败', () => {
+  it('缝隙里配上的手机也认得(按创建时间),出码前就有的旧设备不算', async () => {
+    // 假时钟起点 1_000_000ms = 1970-01-01T00:16:40Z
+    const oldD = dev('old', 'Old phone', '1970-01-01T00:10:00.000Z')
+    const newD = dev('new', 'Tendhearth · iPhone', '1970-01-01T00:20:00.000Z')
+    const t = harness({ link: [ready()], devices: [new Error('down'), [oldD, newD]] })
+    await t.flow.start()
+    expect(t.views.at(-1)).toEqual({ kind: 'paired', line: '已连上 Tendhearth · iPhone' })
+  })
+})
+
 describe('newDevice / pairedLine', () => {
   it('出码前没有的 id 才算新;多台取最新', () => {
     expect(newDevice(new Set(['a']), [dev('a')])).toBeNull()

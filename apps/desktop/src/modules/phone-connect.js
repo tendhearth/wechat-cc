@@ -92,6 +92,7 @@ export function makePhoneLinkFlow(deps) {
     }
     if (!ready || !alive()) return
     show(linkView(ready))
+    const issuedAt = now()
     let labelWaits = deps.labelWaits ?? 2
     while (alive()) {
       if (now() >= ready.expires_at) { show({ kind: 'expired' }); return }
@@ -99,8 +100,9 @@ export function makePhoneLinkFlow(deps) {
       if (!alive()) return
       const list = await devices()
       if (!list) continue
-      if (!baseline) { baseline = new Set(list.map(d => d.id)); continue }
-      const d = newDevice(baseline, list)
+      // 出码前的快照没拿到 ⇒ 不能把「出码后第一次轮询」当基线(那会漏掉缝隙里配上的手机):
+      // 改认「创建时间不早于出码时刻」的设备(同一台机器的时钟,守护进程与桌面一致)。
+      const d = baseline ? newDevice(baseline, list) : newDevice(new Set(), list.filter(x => Date.parse(x.created_at) >= issuedAt))
       if (!d) continue
       if (!d.label && labelWaits-- > 0) continue
       show({ kind: 'paired', line: pairedLine(d) })
