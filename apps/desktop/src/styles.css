@@ -1053,7 +1053,9 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 }
 .qr-raw-toggle:hover { color: var(--ink); }
 
-/* (bg-body / bg-actions removed in single-page refactor) */
+/* 后台服务卡的内容区:按钮不贴卡边 */
+.bg-body { display: flex; flex-direction: column; gap: var(--th-space-s); padding: var(--th-space-m); }
+.bg-actions { display: flex; gap: var(--th-space-s); }
 
 .toggle-row {
   display: grid;
@@ -1068,7 +1070,6 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .toggle-row .sub { font-size: 11.5px; color: var(--ink-3); margin-top: 3px; line-height: 1.45; }
 .toggle-row .sub code { font-family: var(--mono); background: var(--paper-2); padding: 1px 5px; border-radius: 3px; font-size: 11px; color: var(--ink); }
 
-.toggle-row.warn-edge { border-left: 3px solid var(--amber); background: var(--th-paper); }
 
 .toggle {
   width: 36px; height: 20px;

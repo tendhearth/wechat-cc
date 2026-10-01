@@ -3,10 +3,14 @@ import { test, expect, reveal } from './fixtures'
 import { REPORTS } from './reports'
 
 import { mkdirSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
-const SHOTS = join(homedir(), 'Documents/tendhearth/cc-screens-2026-10-01-pairing/desktop')
-mkdirSync(SHOTS, { recursive: true })
+// 截图只在设了 WECHAT_CC_PAIRING_SHOTS=<目录> 时写;没设就不碰磁盘
+const SHOTS = process.env.WECHAT_CC_PAIRING_SHOTS
+async function shot(page: import('@playwright/test').Page, name: string) {
+  if (!SHOTS) return
+  mkdirSync(SHOTS, { recursive: true })
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.screenshot({ path: `${SHOTS}/${name}.png` })
+}
 
 const URL1 = `https://relay.tendhearth.com/pset/#id=r${'a'.repeat(26)}&t=t${'0'.repeat(32)}&p=%2Fset`
 const ready = () => ({ ok: true, state: 'ready', url: URL1, expires_at: Date.now() + 600_000 })
@@ -76,19 +80,18 @@ test.describe('引导页最后一步', () => {
     await expect(page.locator('#onboard-phone-qr > *').first()).toBeVisible()
     await expect(page.locator('#onboard-phone-later')).toHaveText('之后再连也可以：在设置里点「连接手机」。')
     await expect(page.locator('#enter-dashboard')).toBeEnabled()
-    await page.setViewportSize({ width: 1440, height: 1000 })
-    await page.screenshot({ path: `${SHOTS}/onboarding-ready.png` })
+    await shot(page, 'onboarding-ready')
   })
 
-  test('正在打开隧道 ⇒ 整块先藏着,出码后出现', async ({ page, shimUrl, shim }) => {
+  test('正在打开隧道 ⇒ 整块亮出来说一声会重启,出码后换成码', async ({ page, shimUrl, shim }) => {
     await shim.invoke('demo.seed', { chat_id: 'test_chat', phone: { link: [{ ok: false, state: 'starting' }, { ok: false, state: 'starting' }, { ok: false, state: 'starting' }, ready()], devices: [[]] } })
     await shim.invoke('mock.doctor', { report: SERVICE_STEP_REPORT })
     await page.goto(shimUrl)
     await expect(page.locator('#screen-service')).toHaveClass(/active/, { timeout: 15_000 })
-    await expect(page.locator('#onboard-phone')).toBeHidden()
-    await page.setViewportSize({ width: 1440, height: 1000 })
-    await page.screenshot({ path: `${SHOTS}/onboarding-starting.png` })
-    await expect(page.locator('#onboard-phone')).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('#onboard-phone-status')).toHaveText('正在准备连接手机的二维码，CC 会重启一下……', { timeout: 10_000 })
+    await expect(page.locator('#onboard-phone')).toBeVisible()
+    await shot(page, 'onboarding-starting')
+    await expect(page.locator('#onboard-phone-status')).toHaveText('用手机相机扫一下。10 分钟内有效，只能用一次。', { timeout: 15_000 })
   })
 
   test('中继没开通 ⇒ 整块不出现', async ({ page, shimUrl, shim }) => {
@@ -99,7 +102,6 @@ test.describe('引导页最后一步', () => {
     await expect.poll(async () => ((await shim.invoke('mock.phone-calls')) as { result: { calls: unknown[] } }).result.calls.length).toBeGreaterThan(0)
     await expect(page.locator('#onboard-phone')).toBeHidden()
     await expect(page.locator('#enter-dashboard')).toBeEnabled()
-    await page.setViewportSize({ width: 1440, height: 1000 })
-    await page.screenshot({ path: `${SHOTS}/onboarding-not-configured.png` })
+    await shot(page, 'onboarding-not-configured')
   })
 })

@@ -210,9 +210,15 @@ export function mountOnboardPhone(deps) {
   /** @type {ReturnType<typeof setInterval> | null} */ let timer = null
   /** @param {View} v */
   async function show(v) {
+    if (!started) return   // 离开这一步之后迟到的视图不能再把整块亮出来
     const mine = ++seq
     needsRetry = v.kind === 'error' || v.kind === 'notice'
-    if (v.kind === 'loading' || v.kind === 'starting') return   // 藏着就继续藏着,出码再出现
+    if (v.kind === 'loading') return   // 还不知道有没有码:藏着,不闪
+    if (v.kind === 'starting') {       // 自动打开手机连接会让 CC 重启一次:说出来(D4)
+      $('onboard-phone-qr').replaceChildren(); $('onboard-phone-status').textContent = c.preparing
+      renew.hidden = true; host.hidden = false
+      return
+    }
     if (v.kind === 'qr') {
       let svg
       try { svg = await deps.renderQr(v.url) } catch { needsRetry = true; return }

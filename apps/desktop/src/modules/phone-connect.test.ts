@@ -170,6 +170,20 @@ describe('mountOnboardPhone(引导页,裁决 3)', () => {
     expect(document.getElementById('onboard-phone-later')!.textContent).toBe('之后再连也可以：在设置里点「连接手机」。')
     m.sync({ active: false, alive: true })
   })
+  it('starting ⇒ 亮出整块并说 CC 会重启一下;出码后换成码;离开后迟到的视图不能亮出来', async () => {
+    const h = host()
+    const t = harness({ link: [{ ok: false, state: 'starting' }, ready()], devices: [[]] })
+    const m = mountOnboardPhone({ host: h, call: t.call, renderQr: async () => '<svg></svg>', flowDeps: { now: () => 1_000_000, sleep: () => new Promise(r => setTimeout(r, 300)) } })
+    m.sync({ active: true, alive: true })
+    const st = document.getElementById('onboard-phone-status')!
+    await vi.waitFor(() => expect(st.textContent).toBe('正在准备连接手机的二维码，CC 会重启一下……'))
+    expect(h.hidden).toBe(false)
+    await vi.waitFor(() => expect(st.textContent).toBe('用手机相机扫一下。10 分钟内有效，只能用一次。'))
+    m.sync({ active: false, alive: true })
+    expect(h.hidden).toBe(true)
+    await new Promise(r => setTimeout(r, 80))
+    expect(h.hidden).toBe(true)
+  })
   it('中继没开通 ⇒ 整块一直藏着', async () => {
     const h = host()
     const t = harness({ link: [{ ok: false, state: 'relay_not_configured' }], devices: [[]] })

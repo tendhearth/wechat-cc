@@ -28,7 +28,7 @@
 - **D1 只有链接令牌能换设备令牌**:`POST /set/api/pair` 的调用者不是链接令牌(`origin !== 'link'`)⇒ `403 { ok: false, error: 'link_only' }`。否则一枚泄露的设备令牌能不停地多铸长期令牌,撤销后还留后门;「一次性」也就名存实亡。今天没有任何调用方用设备令牌配对。
 - **D2 第二次用同一个码配对的回包**:daemon 侧是 `401 { error: 'unauthorized' }`(与其它失效令牌同一形状,不新增错误码);app 早已把链接阶段的 401 / `auth_failed` 映射成 `PairError('expired')`,文案改成「用过或过期」。裁决 1 里说的「401 `expired`」就是这条链路。
 - **D3 桌面用一个新的 admin 路由,不复用 trusted 的 `GET /v1/settings/link`**:`POST /v1/phone/link`(必要时打开远程隧道并重启 daemon、只在 v2 中继就绪时出码)+ `GET /v1/phone/devices`(轮询「已连上」)。走原生宿主的 operator 凭据,四处白名单照 plan 6 `/v1/connections` 的样子登记。`GET /v1/settings/link` 留着(`selftest phone` 用),但在 7a 升到 **admin**(§11.7):它铸的是 admin 档链接令牌,trusted 的普通聊天会话不能够着;`selftest phone` 改用 operator 凭据,operator `routeAllow` 加上它;微信 `/set` 走进程内 `settingsPanelLink()`(`isAdmin` 门),不经 HTTP,不受影响。
-- **D4 引导页也自动打开远程隧道**:引导页的码用同一个 `POST /v1/phone/link { enable_remote: true }`。全新安装的 `remote_tunnel` 默认关,所以第一次会让刚启动的 daemon 重启一下(约 10 秒,显示「正在打开手机连接」);中继没开通时整块不出现(裁决 3)。主人要的是「引导页直接给码」,多一个「打开」按钮就不是直接给了。
+- **D4 引导页也自动打开远程隧道**:引导页的码用同一个 `POST /v1/phone/link { enable_remote: true }`。全新安装的 `remote_tunnel` 默认关,所以第一次会让刚启动的 daemon 重启一下(约 10 秒,显示「正在打开手机连接」);中继没开通时整块不出现(裁决 3)。到引导页最后一步就会打开手机连接,CC 因此重启一次,这一步会明说(「正在准备连接手机的二维码，CC 会重启一下……」)。主人要的是「引导页直接给码」,多一个「打开」按钮就不是直接给了。
 - **D5 旧设备位用「旧令牌自己解除配对」退掉**(裁决 7 的机制选择):新配对存进钥匙串之后,app 用**旧令牌**连旧电脑发 `unpair_self`。凭据证明就是那次加密握手本身(只有持有旧令牌的人握得上),令牌从不进请求正文,daemon 不加新接口;旧令牌已失效 ⇒ 握手失败、静默跳过。比「配对请求里带上旧 id + 旧令牌」好在顺序:新令牌确认可用、已存好之后才退旧的,新配对失败时旧的还在。换到另一台电脑时同样退掉旧电脑上的那个位(旧令牌本地已被覆盖,留着只是死位)。
 - **D6 桌面新文案也写 zh + en**:桌面今天只有中文界面,新字符串集中在 `apps/desktop/src/modules/phone-connect-copy.js` 的 `{ zh, en }` 两份(键一致,单测钉住),界面渲染 `zh`;等桌面有语言切换时直接用。
 - **D7 自定义 scheme 的配对链接只在开发构建可达**:`tendhearth://relay.tendhearth.com/pset/#…` 只给模拟器 / Maestro 走同一条 JS 链路用;发布构建只认 `https://relay.tendhearth.com/pset/…`(以及开发构建的 staging 主机)。任何入口都只到确认卡。
@@ -93,7 +93,7 @@
 ## 5. 引导页直接给码(裁决 3)
 
 - 放在 `#screen-service` 最后、`#enter-dashboard` 之前的 `#onboard-phone`(不加第五步,`STEP_ORDER` / 「step n of 4」不变)。
-- 进入这一步且 daemon 活着 ⇒ 跑 §4.3 同一个流程(`enable_remote: true`,D4)。**只有拿到 `ready` 的码才显示整块**;`starting` 时先不显示、拿到码再出现;其余状态整块不出现。
+- 进入这一步且 daemon 活着 ⇒ 跑 §4.3 同一个流程(`enable_remote: true`,D4)。**只有拿到 `ready` 的码才显示码**;`starting` 时整块亮出并说明 CC 会重启一下,拿到码换成码;其余状态整块不出现。
 - 文案(§9):标题 `title`、出码 `readyNote`、末行 `later`;连上 ⇒ `paired`。
 - 永不挡「进入控制台」;离开这一步(进控制台)即停轮询。已配置好的老用户扫码后直接进控制台(`afterScanTarget`),看不到这一块 —— 他们用设置里的按钮。
 
