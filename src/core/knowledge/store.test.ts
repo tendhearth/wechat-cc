@@ -237,6 +237,12 @@ describe('knowledge store', () => {
   })
 
   describe('schema migration (pre-existing source.db from Phase 0/1)', () => {
+    it('latestMessageAtMs: empty store null; with messages MAX(time) seconds -> ms', () => {
+      expect(store.latestMessageAtMs()).toBeNull()
+      store.putSourceMessages([msg('a', { time: 1_758_000_000 }), msg('b', { time: 1_759_000_000 })])
+      expect(store.latestMessageAtMs()).toBe(1_759_000_000_000)
+    })
+
     it('openKnowledge migrates an old 8-column messages table in place (ADD COLUMN), does not throw, and preserves the pre-existing row', () => {
       const migDir = mkdtempSync(join(tmpdir(), 'kk-store-migrate-'))
       try {
