@@ -2017,7 +2017,6 @@ i18n(两份同时加,键一致):
 | `links.sources` | 来源 | Sources |
 | `sessions.unknownTime` | 时间不明 | Time unknown |
 
-> 注:`conn.*` 这一组若与已有的连接状态文案(`conn.revokedTitle` 等)同名前缀冲突,改用 `links.*` 前缀并同步上面测试里的键名;先 `grep -n "'conn\." src/i18n/en.ts` 确认。
 
 - [ ] **Step 4: 跑,确认通过**
 
