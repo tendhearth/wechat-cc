@@ -699,7 +699,9 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
             const kind = url.searchParams.get('kind'), status = url.searchParams.get('status')
             if ((kind !== null && !['chat', 'task', 'companion'].includes(kind)) || (status !== null && status.split(',').some(s => !['open', 'replied', 'done', 'archived'].includes(s)))) return json({ ok: false, error: 'invalid' }, 400)
-            const matters = deps.matters.list({ ...(kind ? { kind: kind as 'chat' | 'task' | 'companion' } : {}), ...(status ? { statuses: status.split(',') as Array<'open' | 'replied' | 'done' | 'archived'> } : {}), limit: 50 })
+            // 不带 status ⇒ 不含归档(真机 2026-09-30:前 50 条里 49 条是归档的自检任务,「一起做」只剩一条)。
+            const statuses = (status ? status.split(',') : ['open', 'replied', 'done']) as Array<'open' | 'replied' | 'done' | 'archived'>
+            const matters = deps.matters.list({ ...(kind ? { kind: kind as 'chat' | 'task' | 'companion' } : {}), statuses, limit: 50 })
             for (const m of matters) { const id = (m as { id?: unknown }).id; if (typeof id === 'string') { try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } } }
             return json({ ok: true, matters })
           }

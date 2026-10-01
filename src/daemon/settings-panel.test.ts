@@ -684,6 +684,16 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     expect((await fetch(`${base}/m/api/matter/say?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: ' ' }) })).status).toBe(400)
     expect((await fetch(`${base}/m/api/matters`)).status).toBe(401)
   })
+  it('不带 status ⇒ 默认只要 open / replied / done(归档的自检噪声不占前 50)', async () => {
+    panel = make(true)
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    await fetch(`${base}/m/api/matters?t=${t}`)
+    expect(matters.list).toHaveBeenLastCalledWith({ statuses: ['open', 'replied', 'done'], limit: 50 })
+    await fetch(`${base}/m/api/matters?kind=task&t=${t}`)
+    expect(matters.list).toHaveBeenLastCalledWith({ kind: 'task', statuses: ['open', 'replied', 'done'], limit: 50 })
+    await fetch(`${base}/m/api/matters?status=archived&t=${t}`)
+    expect(matters.list).toHaveBeenLastCalledWith({ statuses: ['archived'], limit: 50 })
+  })
   it('is 503 when the matter registry is not wired, and maps not-found / busy', async () => {
     panel = make(false)
     const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
