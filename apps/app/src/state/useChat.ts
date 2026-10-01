@@ -6,7 +6,7 @@ import { useBackendCtx } from './BackendProvider'
 import { deleteDraft, dropReceipt, getDraft, isReplied, listReceipts, markReplied, pairingGen, putReceipt, requestIdFor, subscribeReceipts } from './drafts'
 import { useQuery, useSubmit, useTopic } from './hooks'
 
-export type ChatSendOutcome = 'ok' | 'busy' | 'ccBusy' | 'uncertain' | 'revoked' | 'failed' | 'tooLong'
+export type ChatSendOutcome = 'ok' | 'busy' | 'ccBusy' | 'uncertain' | 'revoked' | 'failed' | 'refused' | 'tooLong'
 const NO_JOB = { pending: null, failed: null } as const
 
 /**
