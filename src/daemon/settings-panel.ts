@@ -701,7 +701,11 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             if ((kind !== null && !['chat', 'task', 'companion'].includes(kind)) || (status !== null && status.split(',').some(s => !['open', 'replied', 'done', 'archived'].includes(s)))) return json({ ok: false, error: 'invalid' }, 400)
             // 不带 status ⇒ 不含归档(真机 2026-09-30:前 50 条里 49 条是归档的自检任务,「一起做」只剩一条)。
             const statuses = (status ? status.split(',') : ['open', 'replied', 'done']) as Array<'open' | 'replied' | 'done' | 'archived'>
-            const matters = deps.matters.list({ ...(kind ? { kind: kind as 'chat' | 'task' | 'companion' } : {}), statuses, limit: 50 })
+            // 多取一些再筛:别人的聊天 matter(updated_at 现在会被微信入站推高)不给手机,也不挤掉任务。
+            const owner = deps.ownerChatId()
+            const matters = deps.matters.list({ ...(kind ? { kind: kind as 'chat' | 'task' | 'companion' } : {}), statuses, limit: 200 })
+              .filter(m => (m as { kind?: unknown }).kind !== 'chat' || (owner !== null && (m as { ownerChatId?: unknown }).ownerChatId === owner))
+              .slice(0, 50)
             for (const m of matters) { const id = (m as { id?: unknown }).id; if (typeof id === 'string') { try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } } }
             return json({ ok: true, matters })
           }

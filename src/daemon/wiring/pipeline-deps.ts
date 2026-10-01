@@ -48,6 +48,7 @@ import { makePhonePush } from '../phone-push'
 import { makePhoneNotifier } from '../phone-notifier'
 import { deviceIdOf } from '../device-store'
 import { makeCommandRouter } from './command-router'
+import { ensureChatAndNote, makeMatterActivity } from '../matter-activity'
 import { makeEventsStore } from '../events/store'
 import { makeGuestRequestStore } from '../guest-requests'
 import { makeForwardBudget } from '../../core/forward-budget'
@@ -559,6 +560,10 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
 
   // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
   const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+  // 「一件事」的活动时间(spec 2026-10-01 §3):微信入站与工作台事件节流地推 updated_at。随 daemon 常驻。
+  const matterActivity = opts.matters ? makeMatterActivity({ touch: id => opts.matters!.touch(id), log: (tag, line) => log(tag, line) }) : null
+  // 回调里只记一笔(note 不同步写库,见 matter-activity.ts 头注释)。
+  opts.workbench?.changes.onChange(taskId => matterActivity?.note(taskId))
   // 「一件事」读写面:工作台续接 + 对主人 chat 的 app 通道;手机页与内部 API 共用这一个实例。
   const mattersService = opts.matters ? makeMattersService({
     store: opts.matters,
@@ -825,7 +830,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       onContextAvailable:(c,a)=>opts.workbench?.contextAvailable(c,a),
     },
     typing: { sendTyping: (c, a) => ilink.sendTyping(c, a) },
-    ...(opts.matters?{matter:{ensureChat:(c:string)=>opts.matters!.ensureChat(c),log:(t:string,l:string)=>log(t,l)}}:{}),
+    ...(opts.matters?{matter:{ensureChat:ensureChatAndNote((c:string)=>opts.matters!.ensureChat(c),matterActivity),log:(t:string,l:string)=>log(t,l)}}:{}),
     ...(opts.workbench?{taskReference:{
       ownerChatId,
       // 可指称的候选:七天内动过、未归档的任务,包括失败 / 中断的 —— 主人问"那件怎么了"
