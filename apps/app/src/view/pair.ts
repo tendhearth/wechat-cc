@@ -1,7 +1,7 @@
 import { pairCheckCode } from '@wechat-cc/protocol'
 import type { MessageKey } from '../i18n'
 import { parsePairLink, type LinkError, type ParsedLink } from '../net/link'
-import type { PairErrorCode } from '../net/pairing'
+import type { PairErrorCode, PairingRecord } from '../net/pairing'
 import { systemPairLink } from '../net/system-link'
 
 export function linkErrorKey(e: LinkError): MessageKey {
@@ -80,4 +80,13 @@ export function intakeIncomingLink(phase: 'intro' | 'scan' | 'confirm' | 'workin
  */
 export function confirmCheckCode(link: ParsedLink): string {
   return pairCheckCode(link.daemonId)
+}
+
+/**
+ * 确认卡要显示什么(7a 终修 I2):核对码,以及「这会换掉现在连着的那台电脑」要不要出。
+ * 链接谁都能铸(官方中继共用),从聊天 / Safari 点开就到这张卡 —— 已经连着另一台电脑时必须明说会换掉,
+ * 免得点一下就把现在的配对顶掉。同一台电脑(daemon id 相同)重配不算换。
+ */
+export function confirmCard(link: ParsedLink, pairing: PairingRecord | null): { checkCode: string; replaces: boolean } {
+  return { checkCode: confirmCheckCode(link), replaces: !!pairing && pairing.daemonId !== link.daemonId }
 }

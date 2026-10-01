@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import en from '../i18n/en'
-import { acceptsIncomingLink, confirmCheckCode, intakeIncomingLink, linkErrorKey, linkIntake, makeGate, pairErrorKey } from './pair'
+import zh from '../i18n/zh-Hans'
+import type { PairingRecord } from '../net/pairing'
+import { acceptsIncomingLink, confirmCard, confirmCheckCode, intakeIncomingLink, linkErrorKey, linkIntake, makeGate, pairErrorKey } from './pair'
 
 describe('配对错误 → 文案键', () => {
   it('每种链接错误、配对错误都有自己的一句话,键都在文案表里', () => {
@@ -100,5 +102,34 @@ describe('confirmCheckCode(确认卡核对码;与桌面同一个派生)', () => 
     const r = linkIntake([`https://relay.tendhearth.com/pset/#id=r${'a'.repeat(26)}&t=t${'0'.repeat(32)}&p=%2Fset`])
     if (!r.ok) throw new Error('expected ok')
     expect(confirmCheckCode(r.link)).toBe('USZ-YAY')
+  })
+})
+
+describe('confirmCard(I2:点开的链接不能一下就换掉现在连着的电脑)', () => {
+  const linkOf = (id: string) => {
+    const r = linkIntake([`https://relay.tendhearth.com/pset/#id=${id}&t=t${'0'.repeat(32)}&p=%2Fset`])
+    if (!r.ok) throw new Error('expected ok')
+    return r.link
+  }
+  const A = `r${'a'.repeat(26)}`, B = `r${'b'.repeat(26)}`
+  const paired = (daemonId: string): PairingRecord => ({ v: 1, daemonId, relayHost: 'relay.tendhearth.com', relayUrl: 'wss://relay.tendhearth.com/v2/phone', deviceToken: 'x', deviceId: 'd', pairedAt: 1 })
+  it('没配过 ⇒ 不提示「换掉」;核对码照显示', () => {
+    expect(confirmCard(linkOf(A), null)).toEqual({ checkCode: 'USZ-YAY', replaces: false })
+  })
+  it('已连着同一台电脑 ⇒ 不提示', () => {
+    expect(confirmCard(linkOf(A), paired(A)).replaces).toBe(false)
+  })
+  it('已连着另一台电脑 ⇒ 提示「这会换掉现在连着的那台电脑」', () => {
+    expect(confirmCard(linkOf(B), paired(A))).toEqual({ checkCode: 'VH9-L6H', replaces: true })
+    expect(zh['pair.replaces']).toBe('这会换掉现在连着的那台电脑')
+    expect(en['pair.replaces']).toBe('This replaces the computer this phone is connected to')
+  })
+  it('卡片正文不再断定「你的电脑」:改成先核对', () => {
+    expect(zh['pair.checkFirst']).toBe('核对码和你电脑上显示的一致再连')
+    expect(en['pair.checkFirst']).toBe('Only connect if the check code matches the one shown on your computer')
+    for (const k of ['pair.confirmTitle', 'pair.confirmBody'] as const) {
+      expect(zh[k], k).not.toMatch(/连到你的电脑|连接你的电脑/)
+      expect(en[k], k).not.toMatch(/your computer/)
+    }
   })
 })

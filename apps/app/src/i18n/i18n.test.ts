@@ -68,8 +68,8 @@ describe('文案表', () => {
     expect(zh['pair.errExpired']).toContain('只能用一次')
   })
   it('确认卡核对码(Task 9 fix round 1):和电脑上「核对码 XXX-XXX」对得上', () => {
-    expect(t('zh-Hans', 'pair.checkCode', { code: 'USZ-YAY' })).toBe('核对码 USZ-YAY，和电脑上的一致再连')
-    expect(t('en', 'pair.checkCode', { code: 'USZ-YAY' })).toBe('Check code USZ-YAY — make sure it matches your computer')
+    expect(t('zh-Hans', 'pair.checkCode', { code: 'USZ-YAY' })).toBe('核对码 USZ-YAY')
+    expect(t('en', 'pair.checkCode', { code: 'USZ-YAY' })).toBe('Check code USZ-YAY')
   })
   it('欢迎页的两句(plan 7a)', () => {
     expect(zh['welcome.howTo']).toBe('在电脑上点「连接手机」，用相机扫一下。')

@@ -22,7 +22,7 @@ import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 import { ccPresence } from '../view/presence'
-import { confirmCheckCode, intakeIncomingLink, linkErrorKey, makeGate, pairErrorKey } from '../view/pair'
+import { confirmCard, intakeIncomingLink, linkErrorKey, makeGate, pairErrorKey } from '../view/pair'
 
 type Phase =
   | { k: 'intro' }
@@ -118,6 +118,7 @@ export default function Pair() {
   }
 
   const steps = ['pair.step1', 'pair.step2', 'pair.step3'] as const
+  const card = phase.k === 'confirm' || phase.k === 'working' ? confirmCard(phase.link, pairing) : null
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       {/* 配对进行中关掉 iOS 侧滑返回(安卓返回键由 BackHandler 吞掉) */}
@@ -126,12 +127,15 @@ export default function Pair() {
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.xl, gap: space.l }}>
         <View style={{ alignItems: 'center' }}><CCFigure size={120} presence={ccPresence(conn)} /></View>
         <Txt role="title" accessibilityRole="header" style={{ textAlign: 'center' }}>{t(lang, 'pair.title')}</Txt>
-        {phase.k === 'confirm' || phase.k === 'working' ? (
+        {card && (phase.k === 'confirm' || phase.k === 'working') ? (
           <Card testID="pair-confirm" style={{ gap: space.m }}>
             <Txt role="item" accessibilityRole="header">{t(lang, 'pair.confirmTitle')}</Txt>
             <Txt role="bubble" tone="inkSoft">{t(lang, 'pair.confirmBody', { host: phase.link.relayHost })}</Txt>
-            {/* 核对码:和电脑上「连接手机」那里显示的对一下(共用中继上分清是不是自己的电脑) */}
-            <Txt role="item" testID="pair-check-code">{t(lang, 'pair.checkCode', { code: confirmCheckCode(phase.link) })}</Txt>
+            {/* 核对码:和电脑上「连接手机」那里显示的对一下(共用中继上分清是不是自己的电脑);链接谁都能铸,正文不断定是「你的电脑」 */}
+            <Txt role="item" testID="pair-check-code">{t(lang, 'pair.checkCode', { code: card.checkCode })}</Txt>
+            <Txt role="bubble" tone="inkSoft" testID="pair-check-first">{t(lang, 'pair.checkFirst')}</Txt>
+            {/* 已连着另一台电脑:明说会换掉(I2);只是一句话,不上色 */}
+            {card.replaces ? <Txt role="bubble" testID="pair-replaces">{t(lang, 'pair.replaces')}</Txt> : null}
             <Button
               kind="primary"
               testID="pair-connect"
