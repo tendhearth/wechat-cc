@@ -6,11 +6,16 @@ appId: com.tendhearth.app
     id: welcome-pair
 - tapOn:
     id: welcome-look-first
-# 此刻:两张「等你决定」卡(作品集的批准 + 出差的问题)与一起做的事。
+# 此刻:CC(带它最近一句真话)+「2 件事等你」两行(作品集的批准 + 出差的问题);没有「慢慢来」一类的填充话。
 - extendedWaitUntil:
     visible:
       id: now-needs-you-card
     timeout: 10000
+- assertVisible:
+    id: now-cc
+- assertVisible:
+    id: now-waiting-title
+- assertNotVisible: ".*(慢慢来|take it slow).*"
 - assertVisible:
     id: now-say
 - assertVisible:

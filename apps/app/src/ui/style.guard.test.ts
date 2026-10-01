@@ -12,11 +12,11 @@ const TSX = walk(SRC).filter(f => f.endsWith('.tsx'))
 const rel = (f: string) => relative(SRC, f).split('\\').join('/')
 /** 还没换到 Txt / TextField 的文件(Task 3 时的真实快照:25 个)。Task 5 / 6 / 7 逐个删,Task 7 结束时必须为空;只许删不许加。 */
 export const NOT_YET_MIGRATED = new Set<string>([
-  'app/(tabs)/index.tsx', 'app/(tabs)/together.tsx', 'app/approval/[id].tsx', 'app/chat.tsx', 'app/compose.tsx',
+  'app/(tabs)/together.tsx', 'app/approval/[id].tsx', 'app/chat.tsx', 'app/compose.tsx',
   'app/connections.tsx', 'app/dev-push-key.tsx', 'app/devices.tsx', 'app/matter/[id].tsx', 'app/pair.tsx',
   'app/push-open.tsx', 'app/sessions/[key].tsx', 'app/sessions/index.tsx', 'app/settings.tsx', 'app/welcome.tsx',
-  'ui/Button.tsx', 'ui/ConnectionNotice.tsx', 'ui/DemoBanner.tsx', 'ui/Placeholder.tsx', 'ui/PushBanner.tsx',
-  'ui/SayBar.tsx', 'ui/Sheet.tsx', 'ui/StatusPill.tsx', 'ui/TabBar.tsx',
+  'ui/Button.tsx', 'ui/DemoBanner.tsx', 'ui/Placeholder.tsx', 'ui/PushBanner.tsx',
+  'ui/Sheet.tsx', 'ui/StatusPill.tsx', 'ui/TabBar.tsx',
 ])
 
 describe('phone style guard', () => {
