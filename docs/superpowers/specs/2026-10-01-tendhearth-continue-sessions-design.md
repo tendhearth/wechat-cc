@@ -23,17 +23,17 @@
 
 下面是裁决没覆盖、本 spec 补上的决定(实施以此为准,交主人过目):
 
-- **D1 手机只传会话 key,导入的页与消息由 daemon 挑**。桌面导入要客户端带 `pages` + 每页指纹 + `messageIds`(`POST /v1/workbench/import`);手机不该拼这些。daemon 读第一页(`limit: 100`),按桌面 `nativeImportMessages` 同一条规则挑消息(从最新往前,至多 200 条、合计 ≤ 24 000 字,单条放不下就跳过),规则搬进核心 `selectNativeImportMessages`(桌面那份不动)。读与导入之间会话变了(`native_history_changed`)⇒ 重读重导一次,再变就如实报错。
+- **D1 手机只传会话 key,导入的页与消息由 daemon 挑**。桌面导入要客户端带 `pages` + 每页指纹 + `messageIds`(`POST /v1/workbench/import`);手机不该拼这些。daemon 先读第一页(`limit: 100`)做预览判定;接的时候读会话**尾部**(裁决 R2:带过来的要是最近的,不是开头 100 条)—— Claude 能 seek,经 `tailCursor` 直接从离结尾 499 条处读;Codex 不能 seek,一页页往后翻,整趟 60 秒总预算(`NATIVE_TAIL_WALK_MS`)—— 留最后 ≤5 页(与桌面「继续读取原对话」同一窗口,也是 `importNativeHistory` 收的页数上限),按 id 去重后取最新 500 条,再按桌面 `nativeImportMessages` 同一条规则挑消息(从最新往前,至多 200 条、合计 ≤ 24 000 字,单条放不下就跳过),规则搬进核心 `selectNativeImportMessages`(桌面那份不动)。读与导入之间会话变了(`native_history_changed`)⇒ 重读重导一次,再变就如实报错。
 - **D2 不让人选模式**。裁决 2 说「两种都可以时才给选」;核心里这两种是互斥的:`native_resume` 要求执行者能恢复这个会话(`canResume`),`fresh_context` 只在**不能**恢复(`continuation.mode === 'restart_required'`)时才被 `prepareNativeResume` 接受 —— 两者从不同时成立。所以确认卡不出选择,只如实说是哪一种;第一句话到达时按同一条规则再判一次(与桌面 `workbench.js` 的 `native-prepare` 同一判法)。
 - **D3 确认卡就是「原程序已关闭」的声明**。CC 看不见普通终端里跑着的 Claude Code:Claude 原生历史的 `observedState` 永远是 `unknown`,只有 Codex 的 `active`、CC 自己占着的会话(含 CC 派出去、带 `origin_agent` 的 CLI hook 会话)能被看见。主人自己在终端里开、装了 hook 的会话**目前也看不见**:`executionConflict`(`main.ts:722-725`)只认带 `origin_agent` 的 hook 会话(见 §7 第 2 条)。所以「正在跑 ⇒ 灰字」只能覆盖看得见的那部分;看不见的那部分靠主人自己声明 —— 与桌面「原程序已关闭，继续」同一个语义。卡上明说「先让电脑上原来那个 {provider} 停下。CC 没法替你确认它停了。」,确认按钮写「已经停了，接着做」。核心的 5 分钟决定令牌(`state.nativeDecisions`)**从不离开 daemon**:第一句话到达时,daemon 在同一次调用里 `prepareNativeResume` + `continueNativeTask`,令牌只在内存里活几毫秒。审计照旧:`start()` 记一行「用户声明原 {provider} 执行程序已关闭,选择恢复原会话 / 带已确认的记录新开一轮」。
 - **D4 matter 绑定的真缺口是「导入不建 matter」**。调查:`matter/say` 对 `kind: 'task'` 没有主人校验(`matter_say_unsupported` 只在 chat 分支),但 `store.importSource` 只建工作台任务、**不建 matter 行** ⇒ 手机 `GET /m/api/matter?id=` 直接 404。修法:新的 `adoptNativeSession` 在导入后补建 matter(id = 任务 id,与 `createTask` 的登记一致:`create` + `linkTask` + 有主人则 `bind('wechat', owner)`),并登记手机露面;桌面早先导入过的(managed)走同一个补建。桌面导入路径不改(桌面不需要 matter 行,别让桌面行为在这一份里漂)。
 - **D5 matter/say 的新分支只对手机生效**。`say(id, text, 'phone', input)` 碰到「导入了、还没发过第一句」(`requiresExternalClose`)的任务 ⇒ 走 `workbench.continueImported`;桌面 / 内部 API 的 `say` 照旧拿到 `409 external_close_confirmation_required`,桌面的声明按钮不被绕过。
 - **D6 第一句话也按 requestId 幂等**。手机「说一句」超时会用同一个 `requestId` 重发;导入任务的第一句原本不进回执表(`continueNativeTask` 不收 `inputRequestId`)⇒ 重发会起第二轮。给 `continueNativeTask` 加一个可选尾参 `{ inputRequestId?, attachmentPolicy? }`,交给 `start()` 的 `queuedInputId` —— 与 `continueTask` 同一张回执表;重发时先查回执,命中就原样返回。内部 API 调用不变。
-- **D7 「忙」分两种,各说各的**:会话本身在跑(看得见的 `active` / 远程 / `executionConflict(path, provider, nativeId)`)⇒ `busy_session`,用裁决 4 的原话;CC 正在这个文件夹里做别的事(`executionConflict(path, provider, null)`,比如微信那边的 CC 会话占着这个项目)⇒ `busy_folder`,另一句。两种都不给按钮。
+- **D7 「忙」分两种,各说各的**:会话本身在跑(看得见的 `active` / 远程 / `executionConflict(path, provider, nativeId)`)⇒ `busy_session`,用裁决 4 的原话;CC 正在这个文件夹里做别的事(`executionConflict(path, provider, null)`,比如微信那边的 CC 会话占着这个项目)⇒ `busy_folder`,另一句。两种都不给按钮。**第一句分不出这两种**:到第一句时(`start()`、`continueImported` 的各道守门)冲突判定是一个布尔值、带着会话 id 问的,抛的都是 `native_session_busy`,错误本身不带「是文件夹忙还是会话忙」;所以接过来的事第一句碰到这两种都说 `busySession`(final fix M4,已知限制)。预览分得开,是因为它先用 `null` 问一次文件夹、再用 nativeId 问会话。
 - **D8 能不能接是一条单独、不缓存的 GET**。`GET /m/api/session` 有 15 秒单飞缓存(裁定 8),「正在跑」不能晚 15 秒才知道;所以新开 `GET /m/api/session/continue?key=`,读页打开时、重连后(连接 epoch 前进)、点开确认卡时各问一次。`POST` 里 daemon 再判一遍(状态在两次之间变了 ⇒ 对应错误码,卡里换成那句话)。
 - **D9 「打开这件事」也走 `POST`**。它幂等:已接过 ⇒ 不再导入,只补 matter 行(桌面导入过但没有 matter 行的那种)、登记手机露面,回同一个 matterId。
 - **D10 额度**:预览时执行者额度已耗尽(`quotaExhausted`)⇒ 不给按钮,一行灰字。文案用桌面现成那句(`workbench-execution.js` 的 `provider_quota_exhausted`),去掉「交给另一位执行者继续」那半句(手机这一版没有换执行者)。说一句页碰到 `provider_quota_exhausted` 也说这句。
-- **D11 手机错误码细分**:`BackendCode` 加 `session_busy`(`native_session_busy`)、`folder_busy`(`native_folder_busy`)、`provider_missing`(`unavailable_provider`)、`folder_missing`(`invalid_path`)、`quota`(`provider_quota_exhausted`)。这是全局映射:交办新事项碰到同样的码也会说同样的话(更准,不是更坏)。另加三个(控制者裁决 R5):`session_changed`(`native_history_changed`,可重问预览再接)、`session_empty`(`native_history_empty`)、`session_managed`(`native_session_already_managed`,不是错:重问预览、打开那件事)。三个都不说「没送到电脑上」。
+- **D11 手机错误码细分**:`BackendCode` 加 `session_busy`(`native_session_busy`)、`folder_busy`(`native_folder_busy`)、`provider_missing`(`unavailable_provider`)、`folder_missing`(`invalid_path`)、`quota`(`provider_quota_exhausted`)。这是全局映射,但交办新事项那一页没有「会话」:`createTask` 在 CC 占着那个文件夹时也回 `native_session_busy`(它用 `nativeId = null` 问冲突),`invalid_path` 说的是项目文件夹 —— 所以说一句页按「有没有一件事」分:没有一件事时 `session_busy` 说 `continue.busyFolder`、`folder_missing` 说 `compose.projectFolderMissing`(「电脑上找不到这个项目的文件夹了。」),有一件事时才说会话那两句(final fix I2)。第一句(`continueImported`)时记录在确认后又变了(`external_close_confirmation_stale`,比如终端里的 Claude Code 还在写)、原会话已不能直接接上(`restart_confirmation_required`)⇒ 都映射成 `session_changed`(final fix I1)。说一句页的「没有送到电脑上」只给真没送到的(离线 / 那一块没接上);电脑答了、但没接下的其它码 ⇒ 中性的 `compose.notTaken`(「电脑那边这次没接下，请再试一次。」),与 `continueErrorText` 同一条规矩。另加三个(控制者裁决 R5):`session_changed`(`native_history_changed`,可重问预览再接)、`session_empty`(`native_history_empty`)、`session_managed`(`native_session_already_managed`,不是错:重问预览、打开那件事)。三个都不说「没送到电脑上」。
 - **D12 接过来、还没发第一句的那件事,页面上说清楚第一句会怎样**:`MatterDetail` 加可选 `nativeStart: { mode, providerId }`(仅在 `requiresExternalClose` 时出现),进展页与说一句页顶上显示「你发的第一句会接着电脑上原来的 {provider} 会话。」或「…会新开一轮，带上之前的对话记录。」,再加「先让电脑上原来那个 {provider} 停下…」。发过第一句后字段消失。
 - **D13 项目只给目录名**:预览里的 `project` 与会话列表一样是 `basename(cwd)`,手机永远拿不到完整路径与 nativeId。
 - **D14 权限档不变**:设备令牌与链接令牌共用 `PHONE_ROUTES`(`LINK_ROUTES = PHONE_ROUTES`,admin 档),新两条随之而来;不是 `LAN_ONLY_OPS`,在外面也能用。微信 `/set` 链接 10 分钟内同样能接着做 —— 与「交办新事项」同权,没有放宽。
@@ -62,15 +62,15 @@
 - `inspectNativeSession(key)`(域内):按顺序判,返回 `{ preview, page }`:
   1. 解 key(坏 ⇒ `invalid_native_history_key`)。
   2. 已有任务管着这个 nativeId(导入过 / 工作台跑出来的)⇒ `managed`(带 `taskId`、目录名)。
-  3. 读第一页(`limit: 100`,经 `historyDeadline`);读不了 ⇒ 抛(`native_history_unsupported` 等)。
+  3. 读第一页(`limit: 100`,经 `historyDeadline`);读不了 ⇒ 抛(`native_history_unsupported` 等)。预览只看这一页;真接的时候 `adoptNativeSession` 另读尾部(见 D1:Claude 经 `tailCursor` seek 到离结尾 499 条处,Codex 一页页翻、60 秒总预算,留最后 ≤5 页、去重后最新 500 条)。
   4. 没有 cwd / 目录不在 / 不是规范路径 ⇒ `folder_missing`。
   5. 执行者没准入(`act().provider` 抛)⇒ `provider_missing`。
   6. `remote` 或 `active` ⇒ `busy_session`;`executionConflict(path, provider, null)` ⇒ `busy_folder`;`executionConflict(path, provider, nativeId)` ⇒ `busy_session`。
   7. 额度耗尽 ⇒ `quota`。
   8. 挑不出能带过来的消息 ⇒ `empty`。
-  9. 否则 `ready`,`mode` = 能恢复(`canResume`,用 `{ providerId, sessionId: nativeId, path }` 判)? `native_resume` : `fresh_context`。
+  9. 否则 `ready`(接的时候 `adopt` 对尾部窗口再挑一次,挑不出 ⇒ `native_history_empty`),`mode` = 能恢复(`canResume`,用 `{ providerId, sessionId: nativeId, path }` 判)? `native_resume` : `fresh_context`。
 - `previewNativeContinue(key) → NativeContinuePreview`:只读,不建任何东西、不起执行者。
-- `adoptNativeSession(key) → { taskId, created }`:`managed` ⇒ 补 matter 行、回原任务;`ready` ⇒ 用 `selectNativeImportMessages` 挑消息、走现有 `importNativeHistory`(同一套快照 / 指纹 / 截断规则)、补 matter 行;其余状态 ⇒ 抛对应错误码(`NATIVE_CONTINUE_REFUSAL`:`native_session_busy` / `native_folder_busy` / `unavailable_provider` / `invalid_path` / `provider_quota_exhausted` / `native_history_empty`)。`native_history_changed` 重来一次。matter 补建失败不回滚导入 —— 下次 `adopt` 走 `managed` 再补(自愈)。
+- `adoptNativeSession(key) → { taskId, created }`:`managed` ⇒ 补 matter 行、回原任务;`ready` ⇒ 读尾部(D1:最后 ≤5 页、去重后最新 500 条),再用 `selectNativeImportMessages` 挑消息、走现有 `importNativeHistory`(同一套快照 / 指纹 / 截断规则)、补 matter 行;其余状态 ⇒ 抛对应错误码(`NATIVE_CONTINUE_REFUSAL`:`native_session_busy` / `native_folder_busy` / `unavailable_provider` / `invalid_path` / `provider_quota_exhausted` / `native_history_empty`)。`native_history_changed` 重来一次。matter 补建失败不回滚导入 —— 下次 `adopt` 走 `managed` 再补(自愈)。
 - `continueImported(id, text, options, attachmentPolicy?)`:先查回执(D6);再确认这是「导入了、还没发过第一句」的任务(否则 `invalid_request`);按 D2 选模式,`prepareNativeResume` 拿决定,从服务端决定里取 `restartToken`,交给 `continueNativeTask(..., { inputRequestId, attachmentPolicy })`。所有既有的守门(目录身份、执行冲突、页指纹、恢复令牌)原样生效。
 - `continueNativeTask` 加可选尾参 `extra: { inputRequestId?, attachmentPolicy? }`(D6),只透传给 `selectAttachments` 与 `start`。
 
@@ -103,13 +103,13 @@
 - 后端接口 `Backend` 加 `continuePreview(key)`、`continueSession(key)`;`live.ts` 走两条路由(POST `retry: true`,幂等);`demo.ts`:`demo-claude-1` ⇒ `busy_session`,`demo-claude-2` ⇒ `ready` / `native_resume`,`demo-codex-1` ⇒ `ready` / `fresh_context`;接过 ⇒ `managed`;接成的事带 `nativeStart`,第一句后去掉。
 - `net/errors.ts`:D11 的五个码(在 `invalid_` 前缀规则之前判)。
 - 纯视图 `view/continue.ts`:`continueBlock`(读页底部那一块)、`continueSheetLines`(确认卡几行)、`continueErrorText`(卡里的失败句)、`nativeStartLines`(进展页 / 说一句页的第一句说明)、`providerName`。`view/compose.ts`:`composeOutcome` 认五个新码,`composeOutcomeText` 统一出一句话。
-- 确认卡的「先让原来那个停下」与主按钮按执行者分(D3,控制者裁决):Claude Code(CC 看不见普通终端里的它)⇒ `stopFirst` + 主按钮 `confirm`「已经停了，接着做」;Codex(CC 读得到它在不在跑,在跑的预览就是 `busy_session`)⇒ `notSeenRunning` + 主按钮 `action`「接着做」。进展页 / 说一句页的第一句说明同一条规则。
+- 确认卡的「先让原来那个停下」与主按钮按执行者分(D3,控制者裁决):Claude Code(CC 看不见普通终端里的它)⇒ `stopFirst` + 主按钮 `confirm`「已经停了，接着做」;Codex(CC 读得到它在不在跑,在跑的预览就是 `busy_session`)⇒ `notSeenRunning` + 主按钮 `action`「接着做」。进展页 / 说一句页的第一句说明同一条规则,但 Codex 那句用接手那一刻的过去时 `notSeenRunningAtPickup`(「接手时 CC 没看到原来那个 Codex 在跑；…」,final fix M3):那是接手时查的,不是现在。
 - 读页 `sessions/[key].tsx`:去掉「只读」一行;底部固定一块(像进展页的说一句):
   - 还在问 ⇒ 什么都不画(不先画一个可能用不了的按钮)。
   - `ready` ⇒ 唯一的强调按钮「接着做」(`session-continue`);离线 / 连接中 ⇒ 按钮锁住(`ConnectionNotice` 说为什么)。
   - `managed` ⇒ 强调按钮「打开这件事」(`session-open`)⇒ `POST`(幂等)⇒ `router.push('/matter/<id>')`。
   - 其余 ⇒ 一行灰字(`session-continue-note`),问不到 ⇒ 灰字 +「再试一次」。
-  - 确认卡(`Modal`,与说一句页「调整」同一个底部卡样式):标题 +§4.5 的几行 + 主按钮「已经停了，接着做」(`continue-confirm`)+ 次按钮「取消」;点开时重问一次预览,状态变了就换成那句灰字、收起主按钮。提交中按钮转圈;失败 ⇒ 卡里一行(`continue-error`,点 + 文字);成功 ⇒ `router.replace('/matter/<id>')` 再 `router.push('/compose?matter=<id>&focus=1')`。daemon 没回成功之前,页面上不出现任何「在跑」。
+  - 确认卡(`Modal`,与说一句页「调整」同一个底部卡样式):标题 +§4.5 的几行 + 主按钮「已经停了，接着做」(`continue-confirm`)+ 次按钮「取消」;点开时(以及重连后)重问一次预览,问到之前主按钮转圈、不能点(final fix Q1);状态变了就换成那句灰字、收起主按钮。POST 回来时页面已换成别的会话 ⇒ 不跳(Q3);「已经接过了 ⇒ 打开」只绕一次,打开那一次再说接过了 ⇒ 中性的 `continue.failed`(Q2)。提交中按钮转圈;失败 ⇒ 卡里一行(`continue-error`,点 + 文字);成功 ⇒ `router.replace('/matter/<id>')` 再 `router.push('/compose?matter=<id>&focus=1')`。daemon 没回成功之前,页面上不出现任何「在跑」。
 - 说一句页 `compose.tsx`:`focus=1` ⇒ 输入框 `autoFocus`;说的是一件事时读它的详情(与进展页共用 `matter:<id>` 缓存),有 `nativeStart` ⇒ 顶上两行说明(`compose-native-start`);失败句改用 `composeOutcomeText`。
 - 进展页 `matter/[id].tsx`:状态标签下,有 `nativeStart` ⇒ 同样两行(`progress-native-start`)。
 
@@ -150,6 +150,7 @@
 | `continue.quotaNote` | 会用掉 {provider} 的额度。 | This uses your {provider} quota. |
 | `continue.stopFirst` | 先让电脑上原来那个 {provider} 停下。CC 没法替你确认它停了。 | First stop the original {provider} on your computer. CC can’t check that for you. |
 | `continue.notSeenRunning` | CC 没看到原来那个 {provider} 在跑；要是你在别处开着它，先让它停下。 | CC didn’t see the original {provider} running. If you have it open somewhere, stop it first. |
+| `continue.notSeenRunningAtPickup` | 接手时 CC 没看到原来那个 {provider} 在跑；要是你在别处开着它，先让它停下。 | When this was picked up, CC didn’t see the original {provider} running. If you have it open somewhere, stop it first. |
 | `continue.confirm` | 已经停了，接着做 | It’s stopped — continue |
 | `continue.busySession` | 这个会话正在电脑上跑，停下后才能接着做 | This session is running on your computer. You can continue once it stops |
 | `continue.busyFolder` | CC 正在这个文件夹里做别的事，做完后才能接着做 | CC is busy with something else in this folder. You can continue once it’s done |
@@ -165,6 +166,8 @@
 | `continue.failed` | 这次没能接上，请再试一次。 | Couldn’t continue it this time. Please try again. |
 | `continue.firstResume` | 你发的第一句会接着电脑上原来的 {provider} 会话。 | Your first message continues the original {provider} session on your computer. |
 | `continue.firstFresh` | 你发的第一句会新开一轮，带上之前的对话记录。 | Your first message starts a new round with the earlier conversation attached. |
+| `compose.notTaken` | 电脑那边这次没接下，请再试一次。 | Your computer didn’t take it this time. Please try again. |
+| `compose.projectFolderMissing` | 电脑上找不到这个项目的文件夹了。 | Can’t find this project’s folder on your computer. |
 | (删除)`sessions.readOnly` | ~~只读；要接着做，请在电脑上打开~~ | ~~Read only. To keep going, open it on your computer.~~ |
 
 ## 6. 测试
@@ -183,6 +186,7 @@
 1. **真机验一次**(合并后):电脑上用 Claude Code 跑一个会话 → 退出 → 手机「接着做」→ 发一句 → 电脑上 `claude --resume` 看到同一个会话里多了这一轮;再验 Codex 一条。
 2. **看不见的「正在跑」**:普通终端里的 Claude Code CC 看不见,只能靠确认卡上的声明(D3)。连装了 hook 的也一样:`executionConflict`(`main.ts:722-725`)只把带 `origin_agent`(CC 派出去的)hook 会话算作占用,主人自己在终端开的 hook 会话不算 —— 要不要把它也算进去(改动面:`cliEvents.sessions()` 那一条去掉 `origin_agent` 条件,会同时影响工作台其它入口的忙判定),以及要不要以后让 hook 成为「接着做」的前提(更安全、但没装 hook 的人就用不了)—— 交主人。
 3. **额度耗尽时换执行者**:桌面能「交给另一位继续」,手机这一版只说额度用完(D10)。要不要做,交主人。
+4. **已经跑过的事再接着说,不重查原生会话**:接过来、已经发过第一句的事(managed),之后的话走 `continueTask`,不再检查它对应的 Codex 原生会话是不是又在终端里活了(桌面早就如此);手机现在给「打开这件事」,所以手机上也会走到这条路。要不要在 `continueTask` 前补查,交主人(final fix M2)。
 
 ## 8. 不做
 
