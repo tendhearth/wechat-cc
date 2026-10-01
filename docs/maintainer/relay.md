@@ -76,3 +76,4 @@ v2 **默认关**:daemon 只有在 `agent-config.json` 里显式设了 `relay_v2_
 - **身份文件损坏**:`relay-identity.json` 损坏的 daemon 只跑老中继(日志 `relay v2 disabled this boot: relay_identity_corrupt`)。修好它,或有意删掉(= 新身份,手机要重新配对)。
 - **不要双开**:绝不要让两个 daemon 用同一份 `relay-identity.json`——它们会互相顶掉(关闭码 4000,带退避)。
 - **开关(首次运行前做完)**:先在 GitHub 建好环境 `relay-staging` 和 `relay-production`(后者要设 required reviewer = 主人,并把 deployment branch policy 限制为 dev / master),再设仓库变量 `RELAY_DEPLOY=on`(打开部署工作流);中继上线后再设 `RELAY_WATCH=on`(打开每小时巡检)。变量没设时两个工作流的作业是跳过状态,不会红、不会发邮件。
+- **手机 app 的推送**需要:中继 v2 上线且 daemon 设了 `relay_v2_url`(否则 app 设置页显示「电脑还没用上 Tendhearth 中继」)、Worker 的 APNs / FCM secrets(第 4 节)。开发构建登记的是 `apns_sandbox`,TestFlight / 商店是 `apns`。

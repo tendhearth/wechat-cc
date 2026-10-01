@@ -51,7 +51,7 @@
 - **工程**:Expo SDK(最新稳定版)+ Expo Router(文件路由)+ TypeScript strict。EAS Build 云构建;开发用 development build(需要原生扩展,不用 Expo Go)。
 - **协议层**:`@wechat-cc/protocol` 的 `makeProtocolClient`(v2:订阅、请求、重连、错误码)。React Native 适配:WebSocket → `ProtocolSocket`;随机数用 `expo-crypto` 的 `getRandomValues` 装到 `globalThis.crypto`;`TextEncoder/Decoder` 在 Hermes 可用性要验证,缺就补 polyfill。接口返回一律用 `PHONE_API_SCHEMAS` 的 zod schema 解析,类型用 `z.infer`。
 - **数据流**:订阅 `home` / `approvals` / `agents` / `matter/<id>` 拿摘要与版本号;版本变了再 `req` 拉详情(与子项目 1 的约定一致)。本地用一个轻量查询缓存(按路由键存最近结果与同步时间),离线时展示它。
-- **身份与存储**:配对后拿到长期设备令牌;令牌与派生出的推送密钥存 `expo-secure-store`(iOS 钥匙串,access group 与通知扩展共享;安卓 EncryptedSharedPreferences / Keystore,与消息服务共享)。撤销 ⇒ 清掉两者。
+- **身份与存储**:配对后拿到长期设备令牌;设备令牌与配对记录存 `expo-secure-store` 的私有组(通知扩展 / 消息服务**拿不到**设备令牌);由令牌派生出的推送密钥另存一条 `{v,key,lang}` 记录,放进与扩展共享的位置(iOS 共享钥匙串组,主 app 的组排第一;安卓与消息服务共读)。扩展 / 服务只拿推送密钥,够解密、不能以这台手机的身份操作电脑。撤销 ⇒ 清掉两者。
 - **中继地址**:配对时从二维码链接得到 daemon id 与中继主机;`r…` id 走 `/v2/phone`,`t…` 走老 `/tunnel/phone`(与壳页同一规则)。在家同一 Wi-Fi 时可优先直连局域网(链接里有 `lan=`),连不上再走中继。
 - **国际化**:文案表 `en` / `zh-Hans`,跟随系统;所有面向用户的字符串都进文案表,测试检查两份键一致。
 - **目录**(拟):`app/`(路由:`(tabs)/now`、`(tabs)/together`、`matter/[id]`、`approval/[matterId]`、`compose`、`pair`、`settings`)、`src/net`(协议适配、连接状态)、`src/data`(查询缓存、订阅)、`src/demo`(演示数据与假后端)、`src/push`(注册、点通知路由)、`src/ui`(设计 token、组件、CC 形象)、`src/i18n`、`native/ios-notify`(Swift 扩展)、`native/android-push`(Kotlin 服务),通过 config plugin 接进构建。
@@ -74,11 +74,11 @@
 
 ## 7. 通知
 
-- **iOS**:APNs alert 推送,占位文字「CC 有新动态」,`mutable-content: 1`,密文在 `wcc`。通知服务扩展(Swift)从共享钥匙串取推送密钥,用与 `openPush` 相同的算法解密(HKDF-SHA256 + AES-256-GCM,CryptoKit),换成真实标题与正文;按 `kind` 设 category(批准类、问题类、完成、失败)。解不开 / 超时 ⇒ 保留占位文字。
+- **iOS**:APNs alert 推送,占位文字「CC 有新动态」,`mutable-content: 1`,密文在 `wcc`。通知服务扩展(Swift)从共享钥匙串取推送密钥(只有推送密钥,没有设备令牌),用与 `openPush` 相同的算法解密(HKDF-SHA256 + AES-256-GCM,CryptoKit),换成真实标题与正文;按 `kind` 设 category(批准类、问题类、完成、失败)。解不开 / 超时 ⇒ 保留占位文字。
 - **安卓**:FCM data message(HIGH priority),Kotlin `FirebaseMessagingService` 解密后自己发本地通知;渠道按类别分(需要你决定 / 完成与失败)。
 - **点通知**:按 `taskId` + `requestId` 路由到批准页或事项页;先拉最新详情再展示(§3)。
 - **token 生命周期**:首次授权、拒绝授权(设置里给出去系统设置的入口)、token 刷新、重装后重新登记。
-- **正在用 app 时**:app 在前台且订阅在线 ⇒ daemon 本来就不推(子项目 2 的规则);app 内用自己的横幅。
+- **正在用 app 时**:iOS 前台用 app 自己的横幅;daemon 本来就不给「前台且订阅在线」的手机推送(子项目 2 的规则)。安卓前台不做 app 内横幅:Kotlin 服务总是发系统通知(这种情况很少)。
 
 ## 8. 演示模式
 
