@@ -33,7 +33,7 @@ function syncStatus(stateDir: string, name: string): Record<string, unknown> | n
 export function pluginRoutes(deps: InternalApiDeps): RouteTable {
   return {
     'GET /v1/plugins/list': () => {
-      const loaded = loadPlugins({ stateDir: deps.stateDir, bundledDir: bundledPluginsDir(), hostVersion: selfPkg.version })
+      const loaded = loadPlugins({ stateDir: deps.stateDir, bundledDir: bundledPluginsDir(deps.stateDir), hostVersion: selfPkg.version })
       // Deliberately omit spec.env (could carry secrets a plugin declared) —
       // the dashboard only needs identity + state, not the spawn internals.
       // Hidden (infrastructure) plugins still load + run — just excluded
@@ -71,7 +71,7 @@ export function pluginRoutes(deps: InternalApiDeps): RouteTable {
     // installed + whether an update is available. Registry-unavailable is a
     // 200 with an `error` field (not a 500) so the dashboard shows a message.
     'GET /v1/plugins/registry': async () => {
-      const loaded = loadPlugins({ stateDir: deps.stateDir, bundledDir: bundledPluginsDir() })
+      const loaded = loadPlugins({ stateDir: deps.stateDir, bundledDir: bundledPluginsDir(deps.stateDir) })
       const installed = new Map(loaded.map(p => [p.name, p.manifest.version]))
       // Hidden (infrastructure) plugins are excluded from the marketplace
       // catalog too — the catalog entry itself carries no `hidden` (it's a

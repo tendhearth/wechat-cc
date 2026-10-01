@@ -1,7 +1,7 @@
-import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { compiledRepoRoot, isCompiledBundle } from '../../lib/runtime-info'
+import { isCompiledBundle } from '../../lib/runtime-info'
+import { dirHasPlugins, readPluginsSourcePointer } from '../../lib/plugins-source'
 
 /**
  * Plugin discovery paths.
@@ -11,14 +11,15 @@ import { compiledRepoRoot, isCompiledBundle } from '../../lib/runtime-info'
  *   - USER dir  `{stateDir}/plugins/<name>/`     — drop-in, survives upgrades,
  *     third-party. Default DISABLED until explicitly enabled (they spawn
  *     processes = arbitrary code, so discovery ≠ trust).
- *   - BUNDLED   `{repoRoot}/plugins/<name>/`      — first-party, ships & versions
- *     with wechat-cc, curated. Default ENABLED. Absent in compiled bundles
- *     (nothing writable inside a signed .app), hence optional.
+ *   - BUNDLED   first-party, curated, default ENABLED. Found via
+ *     `resolveBundledPluginsDir` below: env → owner pointer in the state dir →
+ *     next to the binary (`.app` resources) / `<repo>/plugins` in source mode.
+ *     The published installer ships NONE of them (WHY: src/lib/plugins-source.ts).
  *
  * Enable-state lives in `{stateDir}/plugins/plugins.json` so a dashboard
  * toggle survives restarts and upgrades.
  */
-export const MANIFEST_FILE = 'wechat-cc.plugin.json'
+export { MANIFEST_FILE } from '../../lib/plugins-source'
 
 export function userPluginsDir(stateDir: string): string {
   return join(stateDir, 'plugins')
@@ -38,23 +39,76 @@ export function pluginsConfigPath(stateDir: string): string {
   return join(stateDir, 'plugins', 'plugins.json')
 }
 
-/**
- * First-party bundled plugins dir `<repo>/plugins`, or null when it doesn't
- * exist (e.g. a compiled bundle ships no writable source tree). Shared by the
- * daemon bootstrap and the CLI so repo-root resolution lives in one place.
- */
-export function bundledPluginsDir(): string | null {
-  // Desktop app: Tauri knows where it bundled resources (platform-specific:
-  // Contents/Resources on macOS, next to the exe on Windows, usr/lib on Linux)
-  // and passes the resolved plugins dir via this env when spawning the sidecar.
-  // Trusted first because the daemon can't portably derive it from execPath.
-  const fromEnv = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-  if (fromEnv && existsSync(fromEnv)) return fromEnv
+// Pointer + `dirHasPlugins` live in src/lib so `self deploy` (cli) can use them
+// without importing the daemon. Re-exported here: this module stays the one
+// place daemon code asks "where are the plugins".
+export { dirHasPlugins, pluginsSourcePointerPath, readPluginsSourcePointer, writePluginsSourcePointer } from '../../lib/plugins-source'
+export type BundledPluginsVia = 'env' | 'pointer' | 'app' | 'repo'
+export interface BundledPluginsResolution { dir: string; via: BundledPluginsVia }
 
-  const root = isCompiledBundle()
-    ? compiledRepoRoot()                                                // compiled: plugins ride next to the binary
-    : join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')  // src/daemon/plugins → repo
-  if (!root) return null
-  const dir = join(root, 'plugins')
-  return existsSync(dir) ? dir : null
+export interface ResolveBundledPluginsInput {
+  /** `WECHAT_CC_BUNDLED_PLUGINS_DIR` (set by the desktop app / service unit). */
+  env?: string
+  /** State dir for the owner's pointer; omitted ⇒ pointer not consulted. */
+  stateDir?: string
+  /** Running as the compiled sidecar? */
+  compiled: boolean
+  /** process.execPath — the sidecar itself when compiled. */
+  execPath: string
+  /** Repo root in source mode. */
+  sourceRepoRoot: string
+}
+
+/**
+ * Pure-ish resolution (reads the fs, nothing else). First candidate that
+ * actually contains plugins wins:
+ *   1. env  — what the desktop app / service unit says;
+ *   2. pointer — the owner's explicit choice in the state dir;
+ *   3. app  — compiled: next to the sidecar (`<MacOS>/plugins`, legacy),
+ *             `Contents/Resources/plugins`, and Tauri's `_up_/_up_/_up_/plugins`
+ *             (`resources: ["../../../plugins/…"]` maps each `..` to `_up_`;
+ *             on Windows/Linux the resource dir is next to the exe);
+ *      repo — source mode: `<repo>/plugins`.
+ */
+export function resolveBundledPluginsDir(input: ResolveBundledPluginsInput): BundledPluginsResolution | null {
+  if (input.env && dirHasPlugins(input.env)) return { dir: input.env, via: 'env' }
+  if (input.stateDir) {
+    const pointer = readPluginsSourcePointer(input.stateDir)
+    if (pointer && dirHasPlugins(pointer)) return { dir: pointer, via: 'pointer' }
+  }
+  if (input.compiled) {
+    const exeDir = dirname(input.execPath)
+    const up = ['_up_', '_up_', '_up_', 'plugins'] as const
+    const candidates = [
+      join(exeDir, 'plugins'),
+      join(exeDir, '..', 'Resources', 'plugins'),
+      join(exeDir, '..', 'Resources', ...up),
+      join(exeDir, ...up),
+    ]
+    const hit = candidates.find(dirHasPlugins)
+    return hit ? { dir: hit, via: 'app' } : null
+  }
+  const dir = join(input.sourceRepoRoot, 'plugins')
+  return dirHasPlugins(dir) ? { dir, via: 'repo' } : null
+}
+
+/** Live-process wrapper around `resolveBundledPluginsDir`. */
+export function resolveBundledPlugins(stateDir?: string): BundledPluginsResolution | null {
+  return resolveBundledPluginsDir({
+    env: process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR || undefined,
+    stateDir,
+    compiled: isCompiledBundle(),
+    execPath: process.execPath,
+    sourceRepoRoot: join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..'), // src/daemon/plugins → repo
+  })
+}
+
+/**
+ * First-party bundled plugins dir, or null when none of the candidates holds
+ * any plugin. Shared by the daemon bootstrap, internal API and the CLI so the
+ * resolution lives in one place. Pass `stateDir` so the owner's pointer is
+ * honoured — every daemon/CLI caller has one.
+ */
+export function bundledPluginsDir(stateDir?: string): string | null {
+  return resolveBundledPlugins(stateDir)?.dir ?? null
 }

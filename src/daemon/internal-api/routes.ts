@@ -147,6 +147,9 @@ const onlineStickerCursor = new Map<string, number>()
         ...(deps.version ? { version: deps.version() } : {}),
         subsystems: deps.subsystems?.() ?? [],
         ...(deps.outbound ? { outbound: toWireOutbound(deps.outbound()) } : {}),
+        // 启动时实际加载的插件(2026-09-30)。null = bootstrap 还在接线;`self deploy`
+        // 的健康门等它变成对象,再看 expected_missing。
+        ...(deps.plugins ? { plugins: deps.plugins() } : {}),
         // 在 daemon 进程里探(权限记在责任进程上,CLI 能读不代表 daemon 能读)。
         // 三次 readdir,便宜;每次 health 都重探,这样勾完权限刷新就变绿。
         fs_access: (() => {

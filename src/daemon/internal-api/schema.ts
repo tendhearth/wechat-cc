@@ -42,6 +42,13 @@ export const HealthResponse = z.object({
     settings_url: z.string(),
     hint: z.string(),
   }).optional(),
+  // 启动时实际加载的插件(2026-09-30)。null = bootstrap 还在接线;老 daemon 没有这个字段。
+  plugins: z.object({
+    bundled_dir: z.string().nullable(),
+    via: z.enum(['env', 'pointer', 'app', 'repo']).nullable(),
+    plugins: z.array(z.object({ name: z.string(), source: z.enum(['bundled', 'user']), enabled: z.boolean(), ready: z.boolean(), reason: z.string().optional() })),
+    expected_missing: z.array(z.string()),
+  }).nullable().optional(),
   // Passive outbound link health (spec 2026-08-22-outbound-health) — sibling
   // of subsystems by design: subsystems is the supervisor's BOOT-time list,
   // outbound is a RUNTIME link signal. Optional for older daemons.

@@ -1,7 +1,10 @@
-import { describe, it, expect } from 'vitest'
-import { mkdtempSync } from 'node:fs'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { removeTempDir } from '../../lib/test-temp'
+import { setPluginEnabled } from '../plugins/registry'
+import { writePluginsSourcePointer } from '../plugins/paths'
 import { wirePlugins } from './wire-plugins'
 
 const ctx = () => ({ stateDir: mkdtempSync(join(tmpdir(), 'wp-')), log: () => {} })
@@ -31,5 +34,47 @@ describe('wirePlugins', () => {
     expect(s.delegateStdioForClaude).toBe(s.delegateStdioByProvider.claude ?? null)
     expect(s.delegateStdioForCodex).toBe(s.delegateStdioByProvider.codex ?? null)
     for (const v of Object.values(s.pluginMcpForClaude)) expect(v.type).toBe('stdio')
+  })
+})
+
+let root: string
+let savedEnv: string | undefined
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'wcc-wire-plugins-'))
+  savedEnv = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+  delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+})
+afterEach(() => {
+  if (savedEnv === undefined) delete process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
+  else process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR = savedEnv
+  removeTempDir(root)
+})
+
+function run(stateDir: string) {
+  const lines: string[] = []
+  const slice = wirePlugins({ internalApi: undefined } as never, { stateDir, log: (tag: string, line: string) => { lines.push(`[${tag}] ${line}`) } } as never)
+  return { slice, lines }
+}
+
+describe('wirePlugins — 内置插件来源与「丢了要出声」(2026-09-30 回归)', () => {
+  it('loads plugins from the owner pointer in the state dir (packaged daemon, empty bundle)', () => {
+    const stateDir = join(root, 'state')
+    const plugins = join(root, 'owner', 'plugins')
+    mkdirSync(join(plugins, 'demo'), { recursive: true })
+    writeFileSync(join(plugins, 'demo', 'wechat-cc.plugin.json'), JSON.stringify({ name: 'demo', kind: 'mcp', version: '1.0.0', spawn: { command: process.execPath } }))
+    writePluginsSourcePointer(stateDir, plugins)
+    const { slice, lines } = run(stateDir)
+    expect(slice.loadedPlugins.map(p => p.name)).toContain('demo')
+    expect(slice.pluginsHealth.via).toBe('pointer')
+    expect(slice.pluginsHealth.bundled_dir).toBe(plugins)
+    expect(lines.join('\n')).toContain(plugins)
+  })
+
+  it('enabled-but-missing plugins are logged loudly and land in the health snapshot', () => {
+    const stateDir = join(root, 'state')
+    setPluginEnabled(stateDir, 'wxsearch', true)
+    const { slice, lines } = run(stateDir)
+    expect(slice.pluginsHealth.expected_missing).toEqual(['wxsearch'])
+    expect(lines.some(l => l.includes('WARNING') && l.includes('wxsearch'))).toBe(true)
   })
 })

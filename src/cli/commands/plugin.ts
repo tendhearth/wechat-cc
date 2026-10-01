@@ -10,7 +10,7 @@ const pluginListCmd = defineCommand({
   async run({ args }) {
     const { loadPlugins } = await import('../../daemon/plugins/registry')
     const { bundledPluginsDir } = await import('../../daemon/plugins/paths')
-    const loaded = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir(), hostVersion: selfPkg.version })
+    const loaded = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir(STATE_DIR), hostVersion: selfPkg.version })
     if (args.json) {
       console.log(JSON.stringify(loaded.map(p => ({
         name: p.name, source: p.source, version: p.manifest.version ?? null,
@@ -61,7 +61,7 @@ const pluginSearchCmd = defineCommand({
     const { fetchCatalog, updateAvailable } = await import('../../daemon/plugins/catalog')
     const { loadPlugins } = await import('../../daemon/plugins/registry')
     const { bundledPluginsDir } = await import('../../daemon/plugins/paths')
-    const installed = new Map(loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir() }).map(p => [p.name, p.manifest.version]))
+    const installed = new Map(loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir(STATE_DIR) }).map(p => [p.name, p.manifest.version]))
     let catalog
     try { catalog = await fetchCatalog() } catch (err) {
       console.error(`registry unavailable: ${err instanceof Error ? err.message : String(err)}`)
@@ -114,7 +114,7 @@ const pluginUpgradeCmd = defineCommand({
     const byName = new Map(catalog.plugins.map(p => [p.name, p]))
     let targets: import('../../daemon/plugins/catalog').CatalogEntry[] = []
     if (args.all) {
-      const installed = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir() })
+      const installed = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir(STATE_DIR) })
       for (const p of installed) {
         const e = byName.get(p.name)
         if (e && updateAvailable(p.manifest.version, e)) targets.push(e)
@@ -147,7 +147,7 @@ const pluginSetupCmd = defineCommand({
     const { spawn } = await import('node:child_process')
     const { writeFileSync, mkdirSync } = await import('node:fs')
     const { join } = await import('node:path')
-    const p = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir() }).find(x => x.name === args.name)
+    const p = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir(STATE_DIR) }).find(x => x.name === args.name)
     if (!p) { console.error(`plugin "${args.name}" not found`); process.exit(1) }
     if (!p.manifest.setup) { console.error(`plugin "${args.name}" declares no runnable setup`); process.exit(1) }
     // ${dataDir} = the plugin's writable data dir; create it so setup can write
@@ -211,7 +211,7 @@ const pluginSyncCmd = defineCommand({
     const { bundledPluginsDir, pluginDataDir } = await import('../../daemon/plugins/paths')
     const { spawn } = await import('node:child_process')
     const { mkdirSync } = await import('node:fs')
-    const p = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir() }).find(x => x.name === args.name)
+    const p = loadPlugins({ stateDir: STATE_DIR, bundledDir: bundledPluginsDir(STATE_DIR) }).find(x => x.name === args.name)
     if (!p) { console.error(`plugin "${args.name}" not found`); process.exit(1) }
     if (!p.enabled || !p.ready) { console.error(`plugin "${args.name}" is not enabled + ready`); process.exit(1) }
     if (!p.manifest.sync) { console.error(`plugin "${args.name}" declares no runnable sync action`); process.exit(1) }

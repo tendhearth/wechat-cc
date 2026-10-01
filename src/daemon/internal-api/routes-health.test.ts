@@ -42,6 +42,16 @@ describe('GET /v1/health', () => {
     const r2 = await without['GET /v1/health']!({} as any, undefined)
     expect((r2.body as any).outbound).toBeUndefined()
   })
+
+  it('GET /v1/health renders the plugins snapshot (null while bootstrap is still wiring) and omits it when unwired', async () => {
+    const snap = { bundled_dir: '/owner/plugins', via: 'pointer' as const, plugins: [], expected_missing: ['wxvault'] }
+    const r = await makeRoutesUnderTest({ plugins: () => snap })['GET /v1/health']!({} as any, undefined)
+    expect((r.body as any).plugins).toEqual(snap)
+    const wiring = await makeRoutesUnderTest({ plugins: () => null })['GET /v1/health']!({} as any, undefined)
+    expect((wiring.body as any).plugins).toBeNull()
+    const without = await makeRoutesUnderTest({})['GET /v1/health']!({} as any, undefined)
+    expect('plugins' in (without.body as any)).toBe(false)
+  })
 })
 
 describe('GET /v1/health/incidents', () => {

@@ -503,6 +503,12 @@ export interface InternalApiDeps {
    * (minimal-deps 测试路径)。
    */
   subsystems?: () => import('../subsystems').SubsystemStatus[]
+  /**
+   * GET /v1/health 的 `plugins` 字段:启动时实际加载的插件快照
+   * (src/daemon/plugins/health.ts)。null ⇒ bootstrap 还没接线完;
+   * undefined ⇒ 字段不输出(老 daemon / minimal-deps 测试路径)。
+   */
+  plugins?: () => import('../plugins/health').PluginsHealth | null
   /** Passive outbound link health from ilink-glue (spec 2026-08-22-outbound-health). */
   outbound?: () => import('../ilink/outbound-health').OutboundHealth
   /**
