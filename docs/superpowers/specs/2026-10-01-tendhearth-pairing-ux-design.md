@@ -121,9 +121,9 @@
 
 | 环节 | 结论 | 证据 |
 |---|---|---|
-| expo-router → `redirectSystemPath` 拿到原样 URL | (Task 1 填) | `plugins/link-fragment.guard.test.ts` |
-| iOS 通用链接 → JS 保留锚点 | (Task 1 填源码结论;真机见 Task 12) | 同上 |
-| 安卓 App Link → JS 保留锚点 | (Task 1 填源码结论;真机见 Task 12) | 同上 |
+| expo-router → `redirectSystemPath` 拿到原样 URL | 保留(源码,expo-router 57.0.24) | `plugins/link-fragment.guard.test.ts` |
+| iOS 通用链接 → JS 保留锚点 | 保留(源码:场景委托转发 + `webpageURL.absoluteString`);真机见 Task 12 | 同上 |
+| 安卓 App Link → JS 保留锚点 | 保留(源码:`uri.toString()` 冷 / 热两路);真机见 Task 12 | 同上 |
 
 - 微信内置浏览器不走通用链接 —— 微信里点的 `/set` 链接照旧开网页壳。装了 app 的手机用系统相机扫码一律进 app(网页设置从 app 外打不开,app 自己有设置),可接受。
 
