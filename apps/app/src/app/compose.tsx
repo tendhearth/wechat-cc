@@ -10,7 +10,6 @@ import { useBackendCtx } from '../state/BackendProvider'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
-import { serifFamily } from '../ui/fonts'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { useTheme } from '../ui/useTheme'
@@ -84,7 +83,7 @@ export default function Compose() {
           <Text style={{ color: c.muted, fontSize: 12, letterSpacing: 1 }}>{matter ? t(lang, 'compose.continueHint') : t(lang, 'compose.handoffEyebrow')}</Text>
           {matter ? null : (
             <>
-              <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 30, lineHeight: 38, fontFamily: serifFamily }}>{t(lang, 'compose.handoffTitle')}</Text>
+              <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 30, lineHeight: 38 }}>{t(lang, 'compose.handoffTitle')}</Text>
               <Text style={{ color: c.muted, fontSize: 15, lineHeight: 22 }}>{t(lang, 'compose.handoffHint')}</Text>
             </>
           )}
@@ -110,7 +109,7 @@ export default function Compose() {
                 {t(lang, 'compose.usingContext')}{project?.name ?? '…'} · {provider?.displayName ?? t(lang, 'compose.ccArranges')}
               </Text>
               <Pressable accessibilityRole="button" testID="compose-adjust" onPress={() => setAdjust(true)} style={{ minHeight: 44, justifyContent: 'center' }} disabled={!opt}>
-                <Text style={{ color: c.ink, fontSize: 14, fontWeight: '600' }}>{t(lang, 'compose.adjust')}</Text>
+                <Text style={{ color: c.ink, fontSize: 14 }}>{t(lang, 'compose.adjust')}</Text>
               </Pressable>
             </View>
           )}
@@ -128,7 +127,7 @@ export default function Compose() {
       <Modal visible={adjust} transparent animationType="slide" onRequestClose={() => setAdjust(false)}>
         <Pressable accessibilityLabel={t(lang, 'common.cancel')} style={{ flex: 1, backgroundColor: c.scrim }} onPress={() => setAdjust(false)} />
         <View testID="compose-adjust-sheet" style={{ backgroundColor: c.card, padding: space.xl, gap: space.m, borderTopLeftRadius: radius.card, borderTopRightRadius: radius.card }}>
-          <Text style={{ color: c.ink, fontSize: 18, fontFamily: serifFamily }}>{t(lang, 'compose.adjustTitle')}</Text>
+          <Text style={{ color: c.ink, fontSize: 18 }}>{t(lang, 'compose.adjustTitle')}</Text>
           <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'compose.project')}</Text>
           {opt?.projects.map((p) => <Choice key={p.id} label={p.name} on={p.id === project?.id} onPress={() => setProjectId(p.id)} />)}
           <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'compose.executor')}</Text>

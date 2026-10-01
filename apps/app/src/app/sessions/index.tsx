@@ -60,7 +60,7 @@ export default function Sessions() {
         onPress={() => setProvider(p)}
         style={{ flex: 1, minHeight: 44, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: on ? c.navOnBg : 'transparent' }}
       >
-        <Text style={{ color: on ? c.navOnInk : c.ink, fontSize: 15, fontWeight: '600' }}>{t(lang, `sessions.${p}`)}</Text>
+        <Text style={{ color: on ? c.navOnInk : c.ink, fontSize: 15 }}>{t(lang, `sessions.${p}`)}</Text>
       </Pressable>
     )
   }
@@ -93,7 +93,7 @@ export default function Sessions() {
               style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', minHeight: 64, paddingVertical: space.m, borderBottomWidth: 1, borderBottomColor: c.line, opacity: pressed ? 0.7 : 1 })}
             >
               <View style={{ flex: 1, gap: 2 }}>
-                <Text numberOfLines={2} style={{ color: c.ink, fontSize: 16, fontWeight: '600' }}>{r.title}</Text>
+                <Text numberOfLines={2} style={{ color: c.ink, fontSize: 16 }}>{r.title}</Text>
                 <Text numberOfLines={1} style={{ color: c.muted, fontSize: 13 }}>{r.meta}</Text>
                 {r.active ? <Text style={{ color: c.warn, fontSize: 12 }}>{t(lang, 'sessions.active')}</Text> : null}
               </View>

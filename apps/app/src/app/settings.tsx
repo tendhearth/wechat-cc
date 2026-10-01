@@ -12,7 +12,6 @@ import { useConnection } from '../state/hooks'
 import { useSession } from '../state/session'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
-import { serifFamily } from '../ui/fonts'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { useTheme } from '../ui/useTheme'
@@ -75,7 +74,7 @@ export default function Settings() {
       { text: t(lang, 'common.cancel'), style: 'cancel' },
       { text: t(lang, 'settings.unpair'), style: 'destructive', onPress: () => void unpair() },
     ])
-  const heading = (k: Parameters<typeof t>[1]) => <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 18, fontFamily: serifFamily }}>{t(lang, k)}</Text>
+  const heading = (k: Parameters<typeof t>[1]) => <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 18 }}>{t(lang, k)}</Text>
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
       <TopBar title={t(lang, 'settings.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} connection={conn.state === 'online' ? 'online' : 'offline'} />

@@ -14,7 +14,7 @@ export function PushBanner({ banner, onOpen, onClose, openLabel }: { banner: Ban
     <Pressable testID="push-banner" accessibilityRole="button" accessibilityLabel={`${banner.title}. ${banner.body}. ${openLabel}`} onPress={onOpen}
       style={{ position: 'absolute', top: insets.top + space.s, left: space.l, right: space.l, padding: space.l, gap: space.xs,
         borderRadius: radius.card, borderWidth: 1, borderColor: c.line, backgroundColor: c.card }}>
-      <Text style={{ color: c.ink, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>{banner.title}</Text>
+      <Text style={{ color: c.ink, fontSize: 15 }} numberOfLines={1}>{banner.title}</Text>
       <Text style={{ color: c.muted, fontSize: 14, lineHeight: 20 }} numberOfLines={2}>{banner.body}</Text>
     </Pressable>
   )

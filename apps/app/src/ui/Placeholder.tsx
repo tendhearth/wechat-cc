@@ -4,7 +4,6 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { useConnection } from '../state/hooks'
-import { serifFamily } from './fonts'
 import { space } from './tokens'
 import { TopBar } from './TopBar'
 import { useTheme } from './useTheme'
@@ -23,7 +22,7 @@ export function Placeholder({ title }: { title: string }) {
         onAvatar={() => router.push('/settings')}
       />
       <View style={{ padding: space.xl, gap: space.m }}>
-        <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 28, fontFamily: serifFamily }}>{title}</Text>
+        <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 28 }}>{title}</Text>
         <Text style={{ color: c.muted, fontSize: 15 }}>{t(lang, 'common.comingSoon')}</Text>
       </View>
     </SafeAreaView>

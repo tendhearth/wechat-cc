@@ -9,7 +9,6 @@ import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { Dot } from '../ui/Dot'
-import { serifFamily } from '../ui/fonts'
 import { space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { useTheme } from '../ui/useTheme'
@@ -27,7 +26,7 @@ export default function Connections() {
   const trust = connectionsTrust(q, conn.state)
   const base = q.data ? connectionsView(q.data, Date.now(), lang, { stale: trust === 'stale' }) : null
   const v = base && trust === 'stale' ? muteDots(base) : base
-  const heading = (k: Parameters<typeof t>[1]) => <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 18, fontFamily: serifFamily }}>{t(lang, k)}</Text>
+  const heading = (k: Parameters<typeof t>[1]) => <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 18 }}>{t(lang, k)}</Text>
   const row = (testID: string, key: string, dot: Parameters<typeof Dot>[0]['kind'] | null, name: string, label: string, onPress?: () => void) => (
     <Pressable
       key={key}

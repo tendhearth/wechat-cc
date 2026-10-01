@@ -11,7 +11,7 @@ import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { CCFigure } from '../../ui/CCFigure'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
-import { monoFamily, serifFamily } from '../../ui/fonts'
+import { monoFamily } from '../../ui/fonts'
 import { Sheet } from '../../ui/Sheet'
 import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
@@ -139,7 +139,7 @@ export default function Approval() {
     return shell(
       <View testID="approval-handled" style={{ gap: space.l, paddingTop: space.xl, alignItems: 'flex-start' }}>
         <CCFigure size={72} />
-        <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 24, lineHeight: 32, fontFamily: serifFamily, fontWeight: '600' }}>{t(lang, 'approval.handled')}</Text>
+        <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 24, lineHeight: 32 }}>{t(lang, 'approval.handled')}</Text>
         <Text style={{ color: c.muted, fontSize: 15 }}>{matterTitle}</Text>
       </View>,
       <Button kind="primary" testID="approval-back" label={t(lang, 'approval.backToMatter')} onPress={backToMatter} />,
@@ -150,7 +150,7 @@ export default function Approval() {
     return shell(
       <>
         <Eyebrow title={matterTitle} eyebrow={t(lang, 'approval.eyebrow')} />
-        <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 28, lineHeight: 36, fontFamily: serifFamily, fontWeight: '600' }}>{t(lang, 'approval.chooseTitle')}</Text>
+        <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 28, lineHeight: 36 }}>{t(lang, 'approval.chooseTitle')}</Text>
         <Text style={{ color: c.muted, fontSize: 15 }}>{t(lang, 'approval.chooseOne')}</Text>
         {v.items.map(item => (
           <Pressable
@@ -161,7 +161,7 @@ export default function Approval() {
             onPress={() => router.push(`/approval/${encodeURIComponent(id)}?request=${encodeURIComponent(item.requestId)}`)}
           >
             <Card style={{ gap: space.s }}>
-              <Text style={{ color: c.warn, fontSize: 12, fontWeight: '600' }}>{item.kind === 'permission' ? t(lang, 'approval.kindPermission') : t(lang, 'approval.kindQuestion')}</Text>
+              <Text style={{ color: c.warn, fontSize: 12 }}>{item.kind === 'permission' ? t(lang, 'approval.kindPermission') : t(lang, 'approval.kindQuestion')}</Text>
               <Text style={{ color: c.ink, fontSize: 14, lineHeight: 20, fontFamily: item.kind === 'permission' ? monoFamily : undefined }}>{item.summary}</Text>
             </Card>
           </Pressable>
@@ -261,11 +261,11 @@ function PermissionCard({ v, matterTitle }: { v: CardView; matterTitle: string }
     <>
       <Eyebrow eyebrow={t(lang, 'approval.eyebrow')} title={matterTitle} />
       <View style={{ gap: space.s }}>
-        <Text testID="approval-title" accessibilityRole="header" style={{ color: c.ink, fontSize: 30, lineHeight: 38, fontFamily: serifFamily, fontWeight: '600' }}>{v.title}</Text>
+        <Text testID="approval-title" accessibilityRole="header" style={{ color: c.ink, fontSize: 30, lineHeight: 38 }}>{v.title}</Text>
         {v.aiSummary ? (
           <View testID="approval-ai-summary" accessible accessibilityLabel={`${t(lang, 'approval.aiTag')}. ${t(lang, 'approval.aiSummary')}`} style={{ gap: space.xs }}>
             <View style={{ alignSelf: 'flex-start', backgroundColor: c.navOnBg, borderRadius: radius.pill, paddingHorizontal: space.s, paddingVertical: 2 }}>
-              <Text style={{ color: c.navOnInk, fontSize: 12, fontWeight: '600' }}>{t(lang, 'approval.aiTag')}</Text>
+              <Text style={{ color: c.navOnInk, fontSize: 12 }}>{t(lang, 'approval.aiTag')}</Text>
             </View>
             <Text style={{ color: c.muted, fontSize: 13, lineHeight: 18 }}>{t(lang, 'approval.aiSummary')}</Text>
           </View>
@@ -276,7 +276,7 @@ function PermissionCard({ v, matterTitle }: { v: CardView; matterTitle: string }
         <Card style={{ gap: 0, paddingVertical: space.s }}>
           {shown.map(([label, body, raw], i) => (
             <View key={label} style={{ paddingVertical: space.m, gap: space.xs, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: c.line }}>
-              <Text style={{ color: c.ink, fontSize: 14, fontWeight: '600' }}>{label}</Text>
+              <Text style={{ color: c.ink, fontSize: 14 }}>{label}</Text>
               {raw ? (
                 <Text numberOfLines={4} style={{ color: c.ink, fontSize: 13, lineHeight: 19, fontFamily: monoFamily }}>{body}</Text>
               ) : (
@@ -290,10 +290,10 @@ function PermissionCard({ v, matterTitle }: { v: CardView; matterTitle: string }
       {/* 模型写的说明可能不准:原始命令首行与工作目录直接摆出来,不折叠。 */}
       {v.showRawInline ? (
         <View testID="approval-raw-inline" style={{ gap: space.s, padding: space.l, borderRadius: radius.card, borderWidth: 1, borderColor: c.line, backgroundColor: c.accentSoft }}>
-          <Text style={{ color: c.muted, fontSize: 12, fontWeight: '600' }}>{t(lang, 'approval.rawCommand')}</Text>
+          <Text style={{ color: c.muted, fontSize: 12 }}>{t(lang, 'approval.rawCommand')}</Text>
           <Text selectable style={{ color: c.ink, fontSize: 13, lineHeight: 19, fontFamily: monoFamily }}>{v.rawFirstLine}{v.rawFirstLineCut ? '…' : ''}</Text>
           {v.rawMoreLines > 0 ? <Text testID="approval-raw-more" style={{ color: c.muted, fontSize: 12 }}>{tCount(lang, 'approval.moreLines', v.rawMoreLines)}</Text> : null}
-          <Text style={{ color: c.muted, fontSize: 12, fontWeight: '600' }}>{t(lang, 'approval.workingDir')}</Text>
+          <Text style={{ color: c.muted, fontSize: 12 }}>{t(lang, 'approval.workingDir')}</Text>
           <Text selectable style={{ color: c.ink, fontSize: 13, lineHeight: 19, fontFamily: monoFamily }}>{v.workingDir || '—'}</Text>
         </View>
       ) : null}
@@ -352,8 +352,8 @@ function QuestionForm({ v, matterTitle, shell, locked, submitLocked, busy, statu
         const full = multiLimitReached(item.multiSelect, cur)
         return (
           <View key={item.id} style={{ gap: space.m }}>
-            {item.header ? <Text style={{ color: c.muted, fontSize: 13, fontWeight: '600' }}>{item.header}</Text> : null}
-            <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 26, lineHeight: 34, fontFamily: serifFamily, fontWeight: '600' }}>{item.question}</Text>
+            {item.header ? <Text style={{ color: c.muted, fontSize: 13 }}>{item.header}</Text> : null}
+            <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 26, lineHeight: 34 }}>{item.question}</Text>
             {item.multiSelect ? <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'approval.multiHint')}</Text> : null}
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.s }}>
               {item.options.map((o, i) => {
@@ -375,7 +375,7 @@ function QuestionForm({ v, matterTitle, shell, locked, submitLocked, busy, statu
                       opacity: blocked ? 0.55 : 1,
                     }}
                   >
-                    <Text style={{ color: c.ink, fontSize: 15, fontWeight: on ? '600' : '400' }}>{on ? '✓ ' : ''}{o.label}</Text>
+                    <Text style={{ color: c.ink, fontSize: 15 }}>{on ? '✓ ' : ''}{o.label}</Text>
                     {o.description ? <Text style={{ color: c.muted, fontSize: 12, lineHeight: 16 }}>{o.description}</Text> : null}
                   </Pressable>
                 )

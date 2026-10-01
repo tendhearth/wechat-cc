@@ -17,7 +17,7 @@ export function Sheet({ title, children, defaultOpen = false, testID }: { title:
         onPress={() => setOpen((v) => !v)}
         style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space.l }}
       >
-        <Text style={{ color: c.ink, fontSize: 15, fontWeight: '600' }}>{title}</Text>
+        <Text style={{ color: c.ink, fontSize: 15 }}>{title}</Text>
         <Text style={{ color: c.muted, fontSize: 16 }}>{open ? '–' : '+'}</Text>
       </Pressable>
       {open ? <View style={{ padding: space.l, paddingTop: 0 }}>{children}</View> : null}

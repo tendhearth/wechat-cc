@@ -9,7 +9,6 @@ import { useConnection, useQuery, useSubmit } from '../state/hooks'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
-import { serifFamily } from '../ui/fonts'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { useTheme } from '../ui/useTheme'
@@ -53,7 +52,7 @@ export default function Devices() {
           ) : <Text style={{ color: c.muted }}>{t(lang, 'progress.loading')}</Text>
         ) : (
           <View testID="devices-list" style={{ gap: space.l }}>
-            <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 18, fontFamily: serifFamily }}>{t(lang, 'devices.thisPhone')}</Text>
+            <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 18 }}>{t(lang, 'devices.thisPhone')}</Text>
             <Card style={{ gap: space.s }}>
               <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'devices.nameLabel')}</Text>
               <TextInput
@@ -68,7 +67,7 @@ export default function Devices() {
             </Card>
             {v.others.length > 0 ? (
               <>
-                <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 18, fontFamily: serifFamily }}>{t(lang, 'devices.others')}</Text>
+                <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 18 }}>{t(lang, 'devices.others')}</Text>
                 {v.others.map(o => (
                   <Pressable key={o.id} testID={`devices-other-${o.id}`} accessibilityRole="button" accessibilityLabel={o.label} onPress={() => setHint(o.id)}>
                     <Card style={{ gap: space.xs }}>

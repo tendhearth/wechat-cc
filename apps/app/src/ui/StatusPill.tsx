@@ -26,7 +26,7 @@ export function StatusPill({ status }: { status: StatusKey }) {
       }}
     >
       <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: tone }} />
-      <Text style={{ color: c.ink, fontSize: 13, fontWeight: '600' }}>{t(lang, `status.${status}` as MessageKey)}</Text>
+      <Text style={{ color: c.ink, fontSize: 13 }}>{t(lang, `status.${status}` as MessageKey)}</Text>
     </View>
   )
 }

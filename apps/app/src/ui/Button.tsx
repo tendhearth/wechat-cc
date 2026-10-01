@@ -39,7 +39,7 @@ export function Button({ kind, label, onPress, disabled, busy, testID }: ButtonP
       })}
     >
       {busy ? <ActivityIndicator color={fg} /> : null}
-      <Text style={{ color: fg, fontSize: 16, fontWeight: '600' }}>{label}</Text>
+      <Text style={{ color: fg, fontSize: 16 }}>{label}</Text>
     </Pressable>
   )
 }

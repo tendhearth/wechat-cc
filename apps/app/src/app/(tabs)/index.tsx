@@ -12,7 +12,6 @@ import { CCFigure } from '../../ui/CCFigure'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { Dot } from '../../ui/Dot'
 import { DemoBanner } from '../../ui/DemoBanner'
-import { serifFamily } from '../../ui/fonts'
 import { SayBar } from '../../ui/SayBar'
 import { space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
@@ -26,7 +25,7 @@ function NeedsYouTitle({ taskId, requestId, fallback, fetch }: { taskId: string;
   const { backend } = useBackendCtx()
   const insight = useQuery(`insight:${taskId}`, l => backend.insight(taskId, l), { enabled: fetch })
   const title = requestId ? insight.data?.explanations[requestId]?.title : undefined
-  return <Text style={{ color: c.ink, fontSize: 18, lineHeight: 25, fontWeight: '600' }}>{title || fallback}</Text>
+  return <Text style={{ color: c.ink, fontSize: 18, lineHeight: 25 }}>{title || fallback}</Text>
 }
 
 function weekday(lang: Lang, d: Date): string {
@@ -73,7 +72,7 @@ export default function Now() {
 
         <View style={{ gap: space.s }}>
           <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'now.dateLine', { weekday: weekday(lang, date) })}</Text>
-          <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 32, lineHeight: 40, fontFamily: serifFamily, fontWeight: '600' }}>
+          <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 32, lineHeight: 40 }}>
             {t(lang, v.greetingKey)}
           </Text>
           <Text style={{ color: c.muted, fontSize: 15 }}>{summary}</Text>
@@ -81,7 +80,7 @@ export default function Now() {
 
         {v.needsYou.map((g, i) => (
           <Card key={g.taskId} testID="now-needs-you-card" style={{ gap: space.s }}>
-            <Text style={{ color: c.warn, fontSize: 13, fontWeight: '600' }}>
+            <Text style={{ color: c.warn, fontSize: 13 }}>
               {t(lang, 'now.needsYouEyebrow')}
               {g.count > 1 ? ` · ${t(lang, 'now.needsYouCount', { n: g.count })}` : ''}
             </Text>
@@ -101,7 +100,7 @@ export default function Now() {
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.l }}>
           <CCFigure size={112} />
           <View style={{ flex: 1, gap: space.xs }}>
-            <Text style={{ color: c.ink, fontSize: 16, fontWeight: '600' }}>{t(lang, 'now.ccLine.default')}</Text>
+            <Text style={{ color: c.ink, fontSize: 16 }}>{t(lang, 'now.ccLine.default')}</Text>
             <Text style={{ color: c.muted, fontSize: 14, lineHeight: 21 }}>
               {working ? t(lang, 'now.ccWorking', { title: working.title }) : t(lang, 'now.ccIdle')}
             </Text>
@@ -145,7 +144,7 @@ export default function Now() {
                 })}
               >
                 <View style={{ flex: 1, gap: 2 }}>
-                  <Text numberOfLines={1} style={{ color: c.ink, fontSize: 16, fontWeight: '600' }}>{m.title}</Text>
+                  <Text numberOfLines={1} style={{ color: c.ink, fontSize: 16 }}>{m.title}</Text>
                   <Text style={{ color: m.status === 'waiting' ? c.warn : c.muted, fontSize: 13 }}>{t(lang, `status.${m.status}`)}</Text>
                 </View>
                 <Text style={{ color: c.muted, fontSize: 22 }}>›</Text>

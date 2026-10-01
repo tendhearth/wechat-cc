@@ -48,7 +48,7 @@ export default function Together() {
     >
       <CCFigure size={44} />
       <View style={{ flex: 1, gap: space.xs }}>
-        <Text numberOfLines={1} style={{ color: c.ink, fontSize: 16, fontWeight: '600' }}>{t(lang, 'chat.pinnedTitle')}</Text>
+        <Text numberOfLines={1} style={{ color: c.ink, fontSize: 16 }}>{t(lang, 'chat.pinnedTitle')}</Text>
         {lastLine ? <Text numberOfLines={1} style={{ color: c.muted, fontSize: 13 }}>{lastLine}</Text> : null}
       </View>
       <Text style={{ color: c.muted, fontSize: 22 }}>›</Text>
@@ -92,7 +92,7 @@ export default function Together() {
             })}
           >
             <View style={{ flex: 1, gap: space.s }}>
-              <Text numberOfLines={2} style={{ color: c.ink, fontSize: 16, lineHeight: 22, fontWeight: '600' }}>{item.title}</Text>
+              <Text numberOfLines={2} style={{ color: c.ink, fontSize: 16, lineHeight: 22 }}>{item.title}</Text>
               <StatusPill status={item.status} />
               {item.subtitle ? <Text numberOfLines={1} style={{ color: c.muted, fontSize: 13 }}>{item.subtitle}</Text> : null}
             </View>

@@ -133,7 +133,7 @@ export default function Chat() {
               onPress={send}
               style={({ pressed }) => ({ minHeight: 48, paddingHorizontal: space.l, borderRadius: radius.button, justifyContent: 'center', backgroundColor: c.primary, opacity: !online || !text.trim() || sending ? 0.55 : pressed ? 0.85 : 1 })}
             >
-              {sending ? <ActivityIndicator color={c.primaryInk} /> : <Text style={{ color: c.primaryInk, fontSize: 16, fontWeight: '600' }}>{t(lang, 'chat.send')}</Text>}
+              {sending ? <ActivityIndicator color={c.primaryInk} /> : <Text style={{ color: c.primaryInk, fontSize: 16 }}>{t(lang, 'chat.send')}</Text>}
             </Pressable>
           </View>
         </View>
@@ -169,7 +169,7 @@ function ChatBubble({ b, lang, canRetry, onRetry, onDismiss }: { b: Bubble; lang
           <Text testID={`chat-failed-${b.failedKind}`} accessibilityLiveRegion="polite" style={{ color: c.warn, fontSize: 13 }}>{t(lang, FAILED_KEY[b.failedKind])}</Text>
           {b.requestId ? (
             <Pressable testID="chat-retry" accessibilityRole="button" accessibilityLabel={t(lang, 'chat.retry')} accessibilityState={{ disabled: !canRetry }} disabled={!canRetry} onPress={onRetry} hitSlop={10} style={{ opacity: canRetry ? 1 : 0.5 }}>
-              <Text style={{ color: c.ink, fontSize: 13, fontWeight: '600', textDecorationLine: 'underline' }}>{t(lang, 'chat.retry')}</Text>
+              <Text style={{ color: c.ink, fontSize: 13, textDecorationLine: 'underline' }}>{t(lang, 'chat.retry')}</Text>
             </Pressable>
           ) : null}
           {b.failedKind === 'notConfirmed' ? (

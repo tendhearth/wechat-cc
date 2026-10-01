@@ -1,14 +1,12 @@
 import { Image, Pressable, Text, View } from 'react-native'
 import { useLang } from '../i18n/useLang'
 import { t } from '../i18n'
-import { serifFamily } from './fonts'
 import { space } from './tokens'
 import { useTheme } from './useTheme'
 
 export type Connection = 'online' | 'offline'
 
 const lit = require('../../assets/cc/lit.png')
-const unlit = require('../../assets/cc/unlit.png')
 
 // 右上:「家里的电脑」状态点 + 头像(进设置,由调用方经 onAvatar 接线)。
 export function TopBar({
@@ -25,7 +23,7 @@ export function TopBar({
   showConnection?: boolean
   onAvatar?: () => void
 }) {
-  const { c, scheme } = useTheme()
+  const { c } = useTheme()
   const lang = useLang()
   const online = connection === 'online'
   return (
@@ -35,7 +33,7 @@ export function TopBar({
           <Text style={{ color: c.ink, fontSize: 22 }}>‹</Text>
         </Pressable>
       ) : null}
-      <Text numberOfLines={1} style={{ flex: 1, color: c.ink, fontSize: 20, fontFamily: serifFamily }}>
+      <Text numberOfLines={1} style={{ flex: 1, color: c.ink, fontSize: 20 }}>
         {title ?? ''}
       </Text>
       {showConnection ? (
@@ -58,7 +56,7 @@ export function TopBar({
         style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: c.navOnBg, alignItems: 'center', justifyContent: 'center' }}
       >
         {/* 还没有主人的名字可用,头像先放一个小 CC,不写死字母。 */}
-        <Image source={scheme === 'dark' ? unlit : lit} style={{ width: 24, height: 24 }} resizeMode="contain" />
+        <Image source={lit} style={{ width: 24, height: 24 }} resizeMode="contain" />
       </Pressable>
     </View>
   )

@@ -46,7 +46,7 @@ export function TabBar({ state, descriptors, navigation }: BottomTabBarProps) {
               backgroundColor: focused ? c.navOnBg : 'transparent',
             }}
           >
-            <Text style={{ color: focused ? c.navOnInk : c.muted, fontSize: 15, fontWeight: focused ? '600' : '400' }}>{label}</Text>
+            <Text style={{ color: focused ? c.navOnInk : c.muted, fontSize: 15 }}>{label}</Text>
           </Pressable>
         )
       })}

@@ -23,7 +23,7 @@ export function ConnectionNotice() {
   if (n.kind === 'revoked') {
     return (
       <Card testID="conn-notice-revoked" style={{ gap: space.s }}>
-        <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 16, fontWeight: '600' }}>{t(lang, 'conn.revokedTitle')}</Text>
+        <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 16 }}>{t(lang, 'conn.revokedTitle')}</Text>
         <Text accessibilityLiveRegion="polite" style={{ color: c.muted, fontSize: 14, lineHeight: 20 }}>{n.text}</Text>
         <Button kind="primary" testID="conn-repair" label={t(lang, 'conn.repair')} onPress={() => router.push('/pair')} />
       </Card>

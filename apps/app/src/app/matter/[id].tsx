@@ -9,7 +9,7 @@ import { useConnection, useQuery, useTopic } from '../../state/hooks'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
-import { monoFamily, serifFamily } from '../../ui/fonts'
+import { monoFamily } from '../../ui/fonts'
 import { SayBar } from '../../ui/SayBar'
 import { Sheet } from '../../ui/Sheet'
 import { StatusPill } from '../../ui/StatusPill'
@@ -81,11 +81,11 @@ export default function Matter() {
       {header}
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.l }}>
         <Text style={{ color: c.muted, fontSize: 13 }}>{t(lang, 'progress.breadcrumb')}</Text>
-        <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 28, lineHeight: 36, fontFamily: serifFamily, fontWeight: '600' }}>{v.title}</Text>
+        <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 28, lineHeight: 36 }}>{v.title}</Text>
         <View testID="progress-status"><StatusPill status={v.status} /></View>
 
         <Card style={{ gap: space.m }}>
-          <Text style={{ color: c.muted, fontSize: 12, fontWeight: '600' }}>{t(lang, 'progress.ccProgress')}</Text>
+          <Text style={{ color: c.muted, fontSize: 12 }}>{t(lang, 'progress.ccProgress')}</Text>
           {v.summaryState === 'failed' ? (
             <Pressable testID="progress-summary" accessibilityRole="button" accessibilityLabel={t(lang, 'progress.summaryUnavailable')} onPress={() => void insight.refresh()}>
               <Text style={{ color: c.muted, fontSize: 15, lineHeight: 22 }}>{t(lang, 'progress.summaryUnavailable')}</Text>
@@ -106,7 +106,7 @@ export default function Matter() {
                 {s.done ? '✓' : '⏸'}
               </Text>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: c.ink, fontSize: 15, fontWeight: '600' }}>{s.title}</Text>
+                <Text style={{ color: c.ink, fontSize: 15 }}>{s.title}</Text>
                 {s.detail ? <Text style={{ color: c.muted, fontSize: 14, lineHeight: 20 }}>{s.detail}</Text> : null}
               </View>
             </View>
@@ -114,7 +114,7 @@ export default function Matter() {
         </Card>
 
         <Card testID="progress-conversation" style={{ gap: space.m }}>
-          <Text accessibilityRole="header" style={{ color: c.muted, fontSize: 12, fontWeight: '600' }}>{t(lang, 'progress.conversation')}</Text>
+          <Text accessibilityRole="header" style={{ color: c.muted, fontSize: 12 }}>{t(lang, 'progress.conversation')}</Text>
           {conv.length === 0 ? <Text style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'progress.noEvents')}</Text> : null}
           {conv.map((e, i) =>
             e.kind === 'steps' ? (

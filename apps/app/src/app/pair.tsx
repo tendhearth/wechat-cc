@@ -13,7 +13,6 @@ import { pairAndSave } from '../state/wiring'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { CCFigure } from '../ui/CCFigure'
-import { serifFamily } from '../ui/fonts'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { useTheme } from '../ui/useTheme'
@@ -81,7 +80,7 @@ export default function Pair() {
 
   if (phase.k === 'scan') {
     return (
-      <View testID="pair-camera" style={{ flex: 1, backgroundColor: '#000' }}>
+      <View testID="pair-camera" style={{ flex: 1, backgroundColor: c.ink }}>
         <Stack.Screen options={{ gestureEnabled: true }} />
         <CameraView
           style={{ flex: 1 }}
@@ -104,10 +103,10 @@ export default function Pair() {
       <TopBar onBack={back} connection="offline" showConnection={false} onAvatar={() => router.push('/settings')} />
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.xl, gap: space.l }}>
         <View style={{ alignItems: 'center' }}><CCFigure size={120} /></View>
-        <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 28, lineHeight: 36, fontFamily: serifFamily }}>{t(lang, 'pair.title')}</Text>
+        <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 28, lineHeight: 36 }}>{t(lang, 'pair.title')}</Text>
         {phase.k === 'confirm' || phase.k === 'working' ? (
           <Card testID="pair-confirm" style={{ gap: space.m }}>
-            <Text style={{ color: c.ink, fontSize: 18, fontWeight: '600' }}>{t(lang, 'pair.confirmTitle')}</Text>
+            <Text style={{ color: c.ink, fontSize: 18 }}>{t(lang, 'pair.confirmTitle')}</Text>
             <Text style={{ color: c.muted, fontSize: 15, lineHeight: 22 }}>{t(lang, 'pair.confirmBody', { host: phase.link.relayHost })}</Text>
             <Button
               kind="primary"
@@ -129,7 +128,7 @@ export default function Pair() {
               {steps.map((k, i) => (
                 <Card key={k} style={{ flexDirection: 'row', alignItems: 'center', gap: space.m }}>
                   <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: c.navOnBg, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ color: c.navOnInk, fontWeight: '700' }}>{i + 1}</Text>
+                    <Text style={{ color: c.navOnInk }}>{i + 1}</Text>
                   </View>
                   <Text style={{ flex: 1, color: c.ink, fontSize: 16, lineHeight: 22 }}>{t(lang, k)}</Text>
                 </Card>
