@@ -5,12 +5,13 @@
  * 工厂体里不取。决策 Map(nativeDecisions / handoffDecisions)在 state 上,与 execute 共享同一实例。
  */
 import { randomUUID } from 'node:crypto'
+import { basename } from 'node:path'
 import { canonicalProject } from '../artifacts'
 import { restartPreview, type Continuation } from '../continuation'
 import { normalizeExecutionChoice, PROVIDER_EXECUTION_CHOICE, sameExecutionChoice } from '../execution-settings'
 import { handoffArtifactText, handoffContext, handoffToken, handoffTokenHash, validateHandoffInput, type ArtifactSelection, type AttachmentSelection, type HandoffInput, type HandoffPreview } from '../handoff'
-import { decodeNativeHistoryKey, historyDeadline, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryListInput, type NativeHistoryProvider, type NativeHistoryReadInput } from '../native-history'
-import { nativeImportInput, nativeResumeToken, pageInput, publicSource, readNativeImport, snapshotHash, type AcceptedNativeResume, type ImportPage, type NativeImportInput, type NativeResumeDecision } from '../native-adoption'
+import { decodeNativeHistoryKey, historyDeadline, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryListInput, type NativeHistoryPreview, type NativeHistoryProvider, type NativeHistoryReadInput } from '../native-history'
+import { NATIVE_CONTINUE_REFUSAL, nativeImportInput, nativeResumeToken, pageInput, publicSource, readNativeImport, selectNativeImportMessages, snapshotHash, type AcceptedNativeResume, type ImportPage, type NativeContinuePreview, type NativeContinueState, type NativeImportInput, type NativeResumeDecision } from '../native-adoption'
 import { pathsConflict } from '../scheduler'
 import type { AgentExecutionChoice } from '../../agent-provider'
 import { publicTask, TERMINAL_TASK_STATUSES, type StoredTask } from '../store'
@@ -216,6 +217,67 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     return {...preview,...(managedTaskId?{managedTaskId}:{})}
   }
 
-  return { nativeReader,currentNativePages,validateNativeDecision, previewHandoff,handoff,handoffRecord,conflictsExternal,importNativeHistory,prepareNativeResume,continueNativeTask,listNativeHistory,readNativeHistory }
+  /**
+   * 手机「接着做」:这条电脑上的会话现在能不能接、接的话是哪种(spec 2026-10-01-tendhearth-continue-sessions §4.1)。
+   * 只读;page 留给 adoptNativeSession 用(省一次读)。判定顺序就是 spec 里的 1–9,别调换:
+   * 「已有任务管着」先于一切(接过的永远能打开),「忙」先于「额度」(先说能不能碰,再说碰了会怎样)。
+   */
+  async function inspectNativeSession(key:string):Promise<{preview:NativeContinuePreview;page:NativeHistoryPreview|null}> {
+    const {providerId,nativeId}=decodeNativeHistoryKey(key)
+    const managedId=store.sourceByIdentity(providerId,nativeId)?.taskId??store.taskByNativeIdentity(providerId,nativeId)?.id
+    if(managedId)return{preview:{state:'managed',providerId,project:basename(store.get(managedId).path),mode:null,taskId:managedId},page:null}
+    const page=await historyDeadline()(()=>nativeReader(providerId).read(key,{limit:100}))
+    if(page.session.key!==key)throw new Error('native_history_changed')
+    const cwd=page.session.cwd,project=cwd?basename(cwd):null
+    const out=(state:NativeContinueState,mode:NativeContinuePreview['mode']=null)=>({preview:{state,providerId,project,mode,taskId:null},page})
+    let path:string
+    try{path=canonicalProject(cwd??'')}catch{return out('folder_missing')}
+    if(path!==cwd)return out('folder_missing')
+    try{act().provider(providerId)}catch{return out('provider_missing')}
+    // 看得见的「在跑」(Codex 的 active / 远程会话)与 CC 自己占着的;普通终端里的 Claude Code 看不见,靠确认卡上的声明(spec D3)。
+    if(page.session.remote||page.session.observedState==='active')return out('busy_session')
+    if(ctx.deps.executionConflict?.(path,providerId,null))return out('busy_folder')
+    if(ctx.deps.executionConflict?.(path,providerId,nativeId))return out('busy_session')
+    if(act().quotaExhausted(providerId))return out('quota')
+    if(!selectNativeImportMessages(page.messages).length)return out('empty')
+    // 还没有任务:用将要建的任务的三样(执行者、会话 id、目录)问能不能恢复 —— 与 prepareNativeResume 的判法一致(spec D2)。
+    const resumable=act().canResume({providerId,sessionId:nativeId,path} as StoredTask)
+    return out('ready',resumable?'native_resume':'fresh_context')
+  }
+  async function previewNativeContinue(key:string):Promise<NativeContinuePreview> {
+    return (await inspectNativeSession(key)).preview
+  }
+  /** 导入的任务补一行 matter(spec D4):与 execute.createTask 的登记一致。没接 matters ⇒ 手机进不去,直说。 */
+  function ensureTaskMatter(task:StoredTask):void {
+    const m=ctx.deps.matters
+    if(!m)throw new Error('matters_not_wired')
+    if(m.get(task.id))return
+    m.create({id:task.id,kind:'task',title:task.title,projectPath:task.path,ownerChatId:task.ownerChatId??null})
+    m.linkTask(task.id)
+    if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)
+  }
+  /**
+   * 手机「接着做」/「打开这件事」:幂等。已有任务 ⇒ 只补 matter 行;能接 ⇒ 按桌面同一规则挑消息、走现有导入、补 matter 行;
+   * 其余 ⇒ NATIVE_CONTINUE_REFUSAL 里的错误码。读与导入之间会话变了 ⇒ 重来一次。matter 行补建失败不回滚导入:
+   * 下次再点走 managed 再补(自愈)。不起执行者、不碰电脑上的原会话。
+   */
+  async function adoptNativeSession(key:string):Promise<{taskId:string;created:boolean}> {
+    ctx.ensureAccepting()
+    for(let attempt=0;;attempt++){
+      const {preview,page}=await inspectNativeSession(key)
+      if(preview.state==='managed'){ensureTaskMatter(store.get(preview.taskId!));return{taskId:preview.taskId!,created:false}}
+      if(preview.state!=='ready')throw new Error(NATIVE_CONTINUE_REFUSAL[preview.state])
+      const messages=selectNativeImportMessages(page!.messages)
+      try{
+        const result=await importNativeHistory({key,pages:[{...page!.page,sourceFingerprint:page!.sourceFingerprint}],messageIds:messages.map(m=>m.id)})
+        ensureTaskMatter(store.get(result.task.id))
+        return{taskId:result.task.id,created:result.created}
+      }catch(error){
+        if(attempt===0&&error instanceof Error&&error.message==='native_history_changed')continue
+        throw error
+      }
+    }
+  }
+  return { nativeReader,currentNativePages,validateNativeDecision, previewHandoff,handoff,handoffRecord,conflictsExternal,importNativeHistory,prepareNativeResume,continueNativeTask,listNativeHistory,readNativeHistory,previewNativeContinue,adoptNativeSession }
 }
 export type NativeDomain = ReturnType<typeof makeNativeDomain>

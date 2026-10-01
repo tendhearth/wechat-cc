@@ -45,3 +45,28 @@ export interface AcceptedNativeResume extends NativeResumeDecision {pages:Import
 /** An opaque approval is kept server-side, bound to the displayed decision and short lived. */
 export const nativeResumeToken=()=>randomBytes(32).toString('hex')
 export const pageInput=(p:ImportPage):NativeHistoryReadInput=>({limit:p.limit,...(p.cursor===null?{}:{cursor:p.cursor})})
+/**
+ * 手机「接着做」由 daemon 自己挑要带过来的消息(spec 2026-10-01-tendhearth-continue-sessions D1),与桌面
+ * apps/desktop/src/modules/workbench-history.js 的 nativeImportMessages 同一条规则:从最新往前,至多 200 条、
+ * 合计 ≤ 24 000 字(readNativeImport 的上限),单条放不下就跳过。桌面那份不动。
+ */
+export const NATIVE_IMPORT_MAX_MESSAGES=200
+export const NATIVE_IMPORT_MAX_CHARS=24_000
+export function selectNativeImportMessages(messages:readonly NativeHistoryMessage[]):NativeHistoryMessage[] {
+  let budget=NATIVE_IMPORT_MAX_CHARS
+  const out:NativeHistoryMessage[]=[]
+  for(const m of [...messages].reverse()){
+    if(out.length===NATIVE_IMPORT_MAX_MESSAGES)break
+    if(m.text.length>budget)continue
+    out.unshift(m);budget-=m.text.length
+  }
+  return out
+}
+/** 手机「接着做」的预览(spec §4.1、§4.5)。project 只给目录名;taskId 只在 managed 有。 */
+export type NativeContinueState='ready'|'managed'|'busy_session'|'busy_folder'|'provider_missing'|'folder_missing'|'quota'|'empty'
+export interface NativeContinuePreview {state:NativeContinueState;providerId:NativeHistoryProvider;project:string|null;mode:'native_resume'|'fresh_context'|null;taskId:string|null}
+/** 不能接的状态 ⇒ adoptNativeSession 抛的错误码(与工作台其它入口同一套)。 */
+export const NATIVE_CONTINUE_REFUSAL:Readonly<Record<Exclude<NativeContinueState,'ready'|'managed'>,string>>={
+  busy_session:'native_session_busy',busy_folder:'native_folder_busy',provider_missing:'unavailable_provider',
+  folder_missing:'invalid_path',quota:'provider_quota_exhausted',empty:'native_history_empty',
+}

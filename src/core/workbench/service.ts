@@ -134,7 +134,7 @@ export function makeWorkbenchService(opts: Options) {
     prepareNativeResume:nativeDomain.prepareNativeResume,
     continueNativeTask:nativeDomain.continueNativeTask,
     listNativeHistory:nativeDomain.listNativeHistory,
-    readNativeHistory:nativeDomain.readNativeHistory,
+    readNativeHistory:nativeDomain.readNativeHistory,previewNativeContinue:nativeDomain.previewNativeContinue,adoptNativeSession:nativeDomain.adoptNativeSession, // 手机「接着做」:只读预览 / 幂等地接成一件事
     addProject:viewDomain.addProject,
     list:viewDomain.list,
     modelCatalog:admissionDomain.modelCatalog,
