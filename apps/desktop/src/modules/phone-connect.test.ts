@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it, expect, vi } from 'vitest'
 import { PHONE_COPY } from './phone-connect-copy.js'
+import { refreshEnterDashboardButton } from './wizard.js'
 import { linkView, makePhoneLinkFlow, mountOnboardPhone, mountPhoneConnect, newDevice, pairedLine } from './phone-connect.js'
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -195,6 +196,29 @@ describe('mountOnboardPhone(引导页,裁决 3)', () => {
     expect(h.hidden).toBe(true)
     await new Promise(r => setTimeout(r, 80))
     expect(h.hidden).toBe(true)
+  })
+  it('M1:「正在准备…CC 会重启一下」时 daemon 掉线 ⇒「进入控制台」不被挡、不挂「先点安装并启动」;准备完就恢复按 daemon 判', async () => {
+    const h = host()
+    h.insertAdjacentHTML('afterend', '<button id="enter-dashboard"></button>')
+    const btn = document.getElementById('enter-dashboard') as HTMLButtonElement
+    const down = { checks: { daemon: { alive: false } } }
+    refreshEnterDashboardButton(down)
+    expect(btn.disabled).toBe(true)
+    expect(btn.title).toContain('安装并启动')
+    const t = harness({ link: [{ ok: false, state: 'starting' }, ready()], devices: [[]] })
+    let release!: () => void, released = false
+    const gate = new Promise<void>(r => { release = () => { released = true; r() } })
+    const m = mountOnboardPhone({ host: h, call: t.call, renderQr: async () => '<svg></svg>', flowDeps: { now: () => 1_000_000, sleep: () => (released ? new Promise(r => setTimeout(r, 5)) : gate) } })
+    m.sync({ active: true, alive: true })
+    await vi.waitFor(() => expect(document.getElementById('onboard-phone-status')!.textContent).toContain('CC 会重启一下'))
+    refreshEnterDashboardButton(down)
+    expect(btn.disabled).toBe(false)
+    expect(btn.hasAttribute('title')).toBe(false)
+    release()
+    await vi.waitFor(() => expect(document.getElementById('onboard-phone-status')!.textContent).toContain('10 分钟内有效'))
+    refreshEnterDashboardButton(down)
+    expect(btn.disabled).toBe(true)
+    m.sync({ active: false, alive: true })
   })
   it('中继没开通 ⇒ 整块一直藏着', async () => {
     const h = host()

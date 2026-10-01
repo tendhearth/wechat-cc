@@ -230,6 +230,9 @@ export function mountOnboardPhone(deps) {
   async function show(v) {
     if (!started) return   // 离开这一步之后迟到的视图不能再把整块亮出来
     const mine = ++seq
+    // 「进入控制台」读这个:正在准备(CC 自动重启那十来秒)时 daemon 掉线是预期的,不挡按钮(M1,见 wizard.js)
+    if (v.kind === 'starting') host.dataset.phase = 'preparing'
+    else delete host.dataset.phase
     needsRetry = v.kind === 'error' || v.kind === 'notice'
     if (v.kind === 'loading') return   // 还不知道有没有码:藏着,不闪
     if (v.kind !== 'qr') setCheck(null)
@@ -263,6 +266,7 @@ export function mountOnboardPhone(deps) {
       if (!s.active) {
         if (started) {
           started = false; needsRetry = false; seq++
+          delete host.dataset.phase
           flow.stop()
           window.removeEventListener('focus', retry)
           if (timer) clearInterval(timer)
