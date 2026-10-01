@@ -34,6 +34,16 @@ describe('matters',()=>{
     expect(store.ensureChat('chat-2').id).not.toBe(a.id)
   })
 
+  it('findChat is the read-only half of ensureChat: no matter created, no last_seen bump, tasks bound to the chat ignored',()=>{
+    expect(store.findChat('chat-1')).toBeNull()
+    expect(store.list()).toEqual([])
+    const t=store.create({id:'cafecafe',kind:'task',title:'t'});store.bind(t.id,'wechat','chat-1')
+    expect(store.findChat('chat-1')).toBeNull()
+    const a=store.ensureChat('chat-1');clock=9_000
+    expect(store.findChat('chat-1')?.id).toBe(a.id)
+    expect(store.bindings(a.id)).toEqual([{matterId:a.id,surface:'wechat',surfaceKey:'chat-1',lastSeenAt:1_000}])
+  })
+
   it('binds several surfaces to one matter and refreshes last_seen',()=>{
     const m=store.create({id:'aaaaaaaa',kind:'task',title:'t'})
     store.bind(m.id,'wechat','chat-1');clock=5;store.bind(m.id,'desktop','app-1');clock=9;store.bind(m.id,'wechat','chat-1')

@@ -4,7 +4,7 @@
  * 面板的令牌登记在内部 API 同一个 token-registry 里,带 routeAllow = 这里的集合。
  * 形状与内部 API 的 routeAllow 一致:`"METHOD /path"` 精确键;以 `/` 结尾的键是前缀
  * (贴纸一族)。新加手机路由要登记在这里,`scripts/phone-routes.guard.test.ts` 会对着
- * `settings-panel.ts` 的 routeRequest 与 `mobile-workbench.ts` 双向核对。
+ * `settings-panel.ts` 的 routeRequest 与 `mobile-workbench.ts` / `mobile-chat.ts` 双向核对。
  *
  * 设计稿:docs/superpowers/specs/2026-09-27-device-token-registry-design.md;与之不同的
  * 两条裁决见 docs/superpowers/plans/2026-09-29-device-token-registry.md。
@@ -30,6 +30,9 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'GET /m/api/matter/insight',
   'GET /m/api/matter/changes',
   'POST /m/api/matter/say',
+  // 跟 CC 说(spec 2026-10-01,mobile-chat.ts):主人对话一页 + 收下即回的说一句
+  'GET /m/api/chat',
+  'POST /m/api/chat/say',
   'POST /m/api/todo',
   'GET /m/api/sticker/',
   // 交办与材料(mobile-workbench.ts,#129)

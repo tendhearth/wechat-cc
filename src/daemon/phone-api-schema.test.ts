@@ -30,6 +30,9 @@ import { PHONE_ROUTES } from './phone-routes'
 import { makePhoneInsight } from './phone-insight'
 import { makeApprovalExplainer } from './phone-explain'
 import { makeProgressSummarizer } from './phone-progress'
+import { makePhoneOwner } from './mobile-chat'
+import { makePhoneChat } from './phone-chat'
+import { makeMessagesStore } from '../lib/messages-store'
 
 // ── 1) 守卫:PHONE_ROUTES ↔ (PHONE_API_SCHEMAS ∪ PHONE_HTML_ROUTES) 双向核对 ──
 
@@ -96,6 +99,14 @@ describe('真实返回校验 — workbench + matters', () => {
       insight: makePhoneInsight({ detail: id => service.detail(id), explainer: makeApprovalExplainer({ cheapEval: () => null, budgetMs: () => 1000, log: () => {} }), summarizer: makeProgressSummarizer({ cheapEval: () => null, budgetMs: () => 1000, now: () => Date.now(), log: () => {} }) }),
       changes: id => workbench.reviewList(id),
       matters: { ...service, say: (id, text, input) => service.say(id, text, 'phone', input), seenOnPhone: id => { matters.bind(id, 'phone', 'pwa') } },
+      chat: (() => {
+        const owner = makePhoneOwner({ ownerChatId: () => 'owner', matters })
+        return {
+          owner: () => owner.peek(),
+          history: (chatId: string, o: { beforeTs?: string; limit: number }) => makeMessagesStore(db).listRange(chatId, o),
+          chat: makePhoneChat({ converse: async () => ({ reply: 'ok' }), ownerMatterId: () => owner.ensure() }),
+        }
+      })(),
     })
     const started = await panel.start(0)
     base = `http://127.0.0.1:${started.port}`
@@ -183,6 +194,18 @@ describe('真实返回校验 — workbench + matters', () => {
     const body = parseAs('GET /m/api/matter/insight', await res.json()) as { ok: boolean; explanations: Record<string, { source: string }> }
     expect(body.ok).toBe(true)
     expect(body.explanations[live.permissions[0]!.id]?.source).toBe('raw')
+  })
+
+  it('chat 一页与 chat/say 真实返回符合 schema(读前没有主人对话 ⇒ 404 也过 schema)', async () => {
+    parseAs('GET /m/api/chat', await (await request('/m/api/chat')).json())
+    const ms = makeMessagesStore(db)
+    for (let i = 0; i < 3; i++) await ms.append({ id: `x${i}`, chatId: 'owner', ts: new Date(Date.UTC(2026, 8, 30, 0, 0, i)).toISOString(), direction: i % 2 ? 'out' : 'in', kind: 'text', text: `t${i}`, source: 'live' })
+    const said = await request('/m/api/chat/say', { requestId: randomUUID(), text: '你好' })
+    expect(said.status).toBe(200)
+    parseAs('POST /m/api/chat/say', await said.json())
+    const page = parseAs('GET /m/api/chat', await (await request('/m/api/chat?limit=2')).json()) as { hasMore: boolean; messages: unknown[] }
+    expect(page).toMatchObject({ hasMore: true })
+    expect(page.messages).toHaveLength(2)
   })
 
   it('matter/changes 真实返回符合 schema(无改动 ⇒ turn:null;未知任务 ⇒ 404)', async () => {

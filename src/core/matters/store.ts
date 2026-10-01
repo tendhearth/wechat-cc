@@ -37,6 +37,8 @@ export interface MatterStore {
   findBySurface(surface:MatterSurface,surfaceKey:string):Matter|null
   addSession(id:string,providerId:string,sessionId:string,role:MatterSessionRole):void
   sessions(id:string):MatterSession[]
+  /** ensureChat 的只读半边:只查这个微信 chat 的 kind='chat' matter,不建、不刷新露面时间(读路径用)。 */
+  findChat(chatId:string):Matter|null
   /** 一个微信 chat 对应一条 kind='chat' 的 matter:有就刷新露面时间,没有就建。 */
   ensureChat(chatId:string,title?:string):Matter
   /** 工作台任务与 matter 一对一、id 相同:把 workbench_tasks.matter_id 补上(新任务;存量靠 v60 回填)。 */
@@ -64,6 +66,10 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
     const limit=Math.min(Math.max(1,filter.limit??100),500)
     return db.query<Row,(string|number)[]>(`${SELECT}${where.length?' WHERE '+where.join(' AND '):''} ORDER BY updated_at DESC, id LIMIT ${limit}`).all(...params).map(toMatter)
   }
+  const findChat=(chatId:string):Matter|null=>{
+    const r=db.query<Row,[string]>(`${SELECT} WHERE kind='chat' AND id IN (SELECT matter_id FROM matter_bindings WHERE surface='wechat' AND surface_key=?) ORDER BY updated_at DESC LIMIT 1`).get(chatId)
+    return r?toMatter(r):null
+  }
   const bump=(id:string)=>db.query('UPDATE matters SET updated_at=? WHERE id=?').run(now(),id)
   return {
     create,get,list,
@@ -85,9 +91,9 @@ export function makeMatterStore(db:Db,now:()=>number=()=>Date.now()):MatterStore
     },
     sessions:id=>db.query<{matter_id:string;provider_id:string;session_id:string;role:MatterSessionRole;created_at:number},[string]>('SELECT matter_id,provider_id,session_id,role,created_at FROM matter_sessions WHERE matter_id=? ORDER BY created_at, provider_id, session_id').all(id).map(s=>({matterId:s.matter_id,providerId:s.provider_id,sessionId:s.session_id,role:s.role,createdAt:s.created_at})),
     linkTask(taskId){require(taskId);db.query('UPDATE workbench_tasks SET matter_id=? WHERE id=? AND matter_id IS NULL').run(taskId,taskId)},
+    findChat,
     ensureChat(chatId,title){
-      const existing=db.query<Row,[string]>(`${SELECT} WHERE kind='chat' AND id IN (SELECT matter_id FROM matter_bindings WHERE surface='wechat' AND surface_key=?) ORDER BY updated_at DESC LIMIT 1`).get(chatId)
-      const matter=existing?toMatter(existing):create({kind:'chat',title:title??'聊天',ownerChatId:chatId})
+      const matter=findChat(chatId)??create({kind:'chat',title:title??'聊天',ownerChatId:chatId})
       db.query('INSERT INTO matter_bindings(matter_id,surface,surface_key,last_seen_at) VALUES(?,?,?,?) ON CONFLICT(matter_id,surface,surface_key) DO UPDATE SET last_seen_at=excluded.last_seen_at').run(matter.id,'wechat',chatId,now())
       return matter
     },

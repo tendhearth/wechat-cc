@@ -314,6 +314,16 @@ export const PhoneChangesTurn = z.object({
   notes: z.array(z.string()),
 })
 
+// ── 跟 CC 说(spec 2026-10-01):主人对话一页 + 收下即回的说一句 ──────────
+
+/** 对话一页至多这么多条(回包大小,见 plan Global Constraints)。 */
+export const CHAT_PAGE_MAX = 30
+/** 每条正文至多这么多字,超了截断并标 `truncated: true`。 */
+export const CHAT_TEXT_MAX = 4000
+export const ChatMessage = z.object({ id: z.string(), role: z.enum(['me', 'cc']), kind: z.string(), text: z.string(), truncated: z.boolean(), at: z.number(), source: z.enum(['wechat', 'desktop', 'phone']) })
+export const ChatJob = z.object({ requestId: z.string(), text: z.string(), status: z.enum(['pending', 'replied', 'failed']), since: z.number(), error: z.enum(['busy', 'unavailable', 'not_configured']).optional() })
+export const ChatPage = z.object({ matterId: z.string(), title: z.string(), messages: z.array(ChatMessage), hasMore: z.boolean(), nextBefore: z.string().nullable(), pending: ChatJob.nullable(), failed: ChatJob.nullable() })
+
 // ── 汇总:`"METHOD /path"` → schema(反向由 daemon 守卫测试核对）───────────
 
 export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
@@ -338,6 +348,8 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/matter/changes': z.union([z.object({ ok: z.literal(true), turn: PhoneChangesTurn.nullable() }), PhoneErrorResponse]),
   'GET /m/api/matter': z.union([z.object({ ok: z.literal(true) }).extend(MatterDetail.shape), PhoneErrorResponse]),
   'POST /m/api/matter/say': z.union([z.object({ ok: z.literal(true), result: MatterSayResult }), PhoneErrorResponse]),
+  'GET /m/api/chat': z.union([z.object({ ok: z.literal(true) }).extend(ChatPage.shape), PhoneErrorResponse]),
+  'POST /m/api/chat/say': z.union([z.object({ ok: z.literal(true), matterId: z.string(), job: ChatJob }), PhoneErrorResponse]),
   'POST /m/api/todo': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/sticker/': z.union([z.object({ ok: z.literal(true), mime: z.string(), data: z.string() }), PhonePlainError]),
   'POST /m/api/attachment/chunk': z.union([z.object({ ok: z.literal(true) }).extend(UploadState.shape), PhoneErrorResponse]),

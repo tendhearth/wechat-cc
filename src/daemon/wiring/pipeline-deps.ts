@@ -38,6 +38,8 @@ import type { InboundCtx } from '../inbound/types'
 import type { AppTurn } from '../inbound/build'
 import { basename as pathBasename } from 'node:path'
 import { makeSettingsPanel } from '../settings-panel'
+import { makePhoneOwner } from '../mobile-chat'
+import { makePhoneChat } from '../phone-chat'
 import { makePhoneInsight } from '../phone-insight'
 import { makeApprovalExplainer } from '../phone-explain'
 import { makeProgressSummarizer } from '../phone-progress'
@@ -210,6 +212,8 @@ export interface BuildPipelineDepsResult {
   /** Mint a fresh settings-panel URL (10-min single-active token) — the
    *  desktop 「手机上改设置」 QR entry (GET /v1/settings/link). */
   settingsPanelLink: () => Promise<string | null>
+  /** 手机「跟 CC 说」的任务表(收下即回,converse = companionConverse);没接 matters ⇒ null。 */
+  phoneChat: import('../phone-chat').PhoneChat | null
   /** 「一件事」读写面(有 matters store 才有)。 */
   mattersService: import('../../core/matters/service').MattersService | null
   /**
@@ -575,6 +579,25 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       recent: async (chatId: string, limit: number) => (await messagesStore.listRange(chatId, { limit })).map(r => ({ kind: r.direction === 'in' ? 'user' : 'text', text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
     },
   }) : null
+  // 手机「跟 CC 说」(spec 2026-10-01):主人对话一页(只读)+ 收下即回的说一句。
+  // 对话 chat 必须就是 companionConverse 写进去的那条(它认 companion 的 default_chat_id):
+  // 两者不一致(default_chat_id 不是 admin)⇒ 当作没有主人对话,免得手机看 A 却说进 B。
+  const phoneChatId = () => {
+    const id = ownerChatId()
+    const converseChat = loadCompanionConfig(stateDir).default_chat_id
+    return id && (!converseChat || converseChat === id) ? id : null
+  }
+  const phoneOwner = opts.matters ? makePhoneOwner({ ownerChatId: phoneChatId, matters: opts.matters }) : null
+  let phoneEvents: import('../phone-events').PhoneEvents | null = null
+  // converse 必须是回合串行入口 companionConverse(与微信 / 桌面「跟 CC 说」同一条:
+  // isInFlight 前置拒 + coordinator.submitTurn 持每 chat 锁),手机一句不会和微信一轮在主人会话上并跑。
+  // companionConverse 在下面才定义;这里只捕获引用,调用发生在请求到来时(与 mattersService 同一姿势)。
+  const phoneChat = phoneOwner ? makePhoneChat({
+    converse: text => companionConverse(text, 'phone'),
+    ownerMatterId: () => phoneOwner.ensure(),
+    onSettled: id => { matterActivity?.note(id); phoneEvents?.poke() },
+    log: (tag, line) => log(tag, line),
+  }) : null
   const settingsPanel = makeSettingsPanel({
     stateDir,
     ownerChatId,
@@ -601,6 +624,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     }}:{}),
     curatedMemory: () => memoryNightly.curatedView(),
     ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,artifactChunk:mattersService.artifactChunk,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
+    ...(phoneOwner && phoneChat ? { chat: { owner: () => phoneOwner.peek(), history: (chatId: string, o: { beforeTs?: string; limit: number }) => messagesStore.listRange(chatId, o), chat: phoneChat } } : {}),
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
     ...(phonePush ? { push: phonePush } : {}),
     // 「默认大脑」改完自己重启(与远程开关同一条路)。
@@ -680,6 +704,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       home: (limit, o) => settingsPanel.home(limit, o),
       log: (tag, line) => log(tag, line),
     })
+    phoneEvents = phone.events
     import('../tunnel-client').then(({ makeTunnelClient }) => {
       const common = {
         events: phone.events,
@@ -1162,5 +1187,5 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     })
   }
 
-  return { pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, settingsPanelLink: () => settingsPanel.linkUrl() }
+  return { pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat }
 }

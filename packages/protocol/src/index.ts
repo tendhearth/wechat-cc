@@ -24,6 +24,7 @@ export {
   ApprovalExplanation, ProgressSummary, MatterPermission, MatterQuestion, MatterArtifact, MatterDetail,
   ProjectCatalogEntry, EntryOptions, WorkbenchExecutorCapabilities, WorkbenchTaskView, EntryReceipt, EntryResult,
   UploadState, MatterArtifactChunk, FeedEvent, Presence, HomeWork, PhoneChangesTurn,
+  ChatMessage, ChatJob, ChatPage, CHAT_PAGE_MAX, CHAT_TEXT_MAX,
 } from './api'
 export type { DeviceRowT } from './api'
 export {

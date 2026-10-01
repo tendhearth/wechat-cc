@@ -36,6 +36,7 @@ import { buildFeed, decodeCursor, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, 
 import blinkArt from './mobile-blink-art.json'
 import presenceArt from './mobile-presence-art.json'
 import { MOBILE_BRAND_ICON_PNG, MOBILE_BRAND_ICON_SIZES } from './mobile-brand-icon'
+import { mobileChatRoute, type MobileChatDeps } from './mobile-chat'
 import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions,type MobileUploadActions} from './mobile-workbench'
 import {mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileHomeFocus} from './mobile-home-focus'
@@ -108,6 +109,8 @@ export interface SettingsPanelDeps {
     say(id: string, text: string, input?:MatterSayInput): Promise<unknown>
     seenOnPhone(id: string): void
   }
+  /** 跟 CC 说(spec 2026-10-01):主人对话一页 + 说一句。缺省 ⇒ /m/api/chat* 503。 */
+  chat?: MobileChatDeps
   /** 主人「看到哪了」的水位,与桌面觅食台同一个文件(一个主人一个水位)。缺省 ⇒ POST /m/api/seen 503。 */
   seen?: { read: () => string | null; write: (iso: string) => void }
   /** 推送(中继 v2,spec 2026-09-30 §5)。缺省 ⇒ /m/api/push/* 503。按设备 id,不是令牌。 */
@@ -695,6 +698,9 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           // ── 「一件事」:与桌面同一份数据,同一套语义 ──────────────────
           const mobileResponse=await mobileWorkbenchRoute(deps.matters,url,req,deps.entry,deps.uploads)
           if(mobileResponse)return mobileResponse
+          // 跟 CC 说(spec 2026-10-01):主人对话一页 + 收下即回的说一句。
+          const chatResponse = await mobileChatRoute(deps.chat, url, req)
+          if (chatResponse) return chatResponse
           if (url.pathname === '/m/api/matters' && req.method === 'GET') {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
             const kind = url.searchParams.get('kind'), status = url.searchParams.get('status')
