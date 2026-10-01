@@ -322,6 +322,9 @@ input { font: inherit; color: inherit; }
   display: flex; flex-direction: column;
   min-height: 100vh;
 }
+/* 开发横幅占着顶上 32px 时,窗口别再多出一屏把页脚顶出去。 */
+body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32px); }
+.wz-wordmark { font-size: 24px; }
 
 .wz-top {
   display: flex; align-items: center;
@@ -356,6 +359,7 @@ input { font: inherit; color: inherit; }
   color: var(--th-ink);
 }
 .wz-top .wz-back {
+  position: static;
   margin-left: auto;
   width: 36px;
   height: 36px;
@@ -548,11 +552,21 @@ input { font: inherit; color: inherit; }
   letter-spacing: 0;
 }
 .provider-status-name b {
-  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 10px;
+  color: var(--th-ink);
+  font-size: 0.8em;
 }
-.provider-status-card.is-ok .provider-status-name b {
-  color: var(--green-ink);
+.provider-status-name b::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--th-unknown);
 }
+.provider-status-card.is-ok .provider-status-name b::before { background: var(--th-ok); }
 .provider-install-btn {
   min-width: 94px;
   height: 34px;
@@ -570,8 +584,8 @@ input { font: inherit; color: inherit; }
   white-space: nowrap;
 }
 .provider-install-btn:hover {
-  background: var(--th-ink);
-  color: var(--th-paper);
+  background: var(--th-rail);
+  border-color: var(--th-ink-soft);
 }
 .provider-status-card.is-ok .provider-install-btn {
   display: none;
@@ -579,8 +593,8 @@ input { font: inherit; color: inherit; }
 .launch-primary-btn {
   width: 100%;
   height: 68px;
-  margin-top: 52px;
-  border: 2px solid var(--th-hair);
+  margin-top: 36px;
+  border: 1px solid var(--th-hair);
   border-radius: 8px;
   background: var(--th-paper);
   color: var(--th-ink);
@@ -588,11 +602,11 @@ input { font: inherit; color: inherit; }
   font-weight: 500;
 }
 .launch-primary-btn:hover {
-  background: var(--th-ink);
-  color: var(--th-paper);
+  background: var(--th-rail);
+  border-color: var(--th-ink-soft);
 }
 .launch-details {
-  margin-top: -32px;
+  margin-top: 18px;
   color: var(--ink-3);
 }
 .launch-details summary {
@@ -820,7 +834,7 @@ input { font: inherit; color: inherit; }
 .env-row.bad .ic { color: var(--rouge); }
 .env-row .ic svg { width: 14px; height: 14px; }
 .env-row .nm { color: var(--ink); font-weight: 500; }
-.env-row .val { color: var(--ink-3); font-size: 11.5px; word-break: break-all; max-width: 320px; text-align: right; }
+.env-row .val { font-family: var(--mono); color: var(--ink-3); font-size: 11.5px; word-break: break-all; max-width: 320px; text-align: right; }
 .env-row.bad .val { color: var(--rouge); }
 /* Fix hint sits on a second row inside the env-row grid; the column
  * span keeps it under `nm + val` so it indents under the check name. */
@@ -1013,6 +1027,7 @@ input { font: inherit; color: inherit; }
 }
 
 #qr-raw {
+  font-family: var(--mono);
   display: none;
   margin-top: 12px;
   background: var(--th-ink);
@@ -1246,17 +1261,12 @@ input { font: inherit; color: inherit; }
 .drawer-close:hover { color: var(--th-ink); }
 .drawer-body { padding: 20px 22px; overflow-y: auto; flex: 1; }
 .drawer-section { margin-bottom: 30px; }
-/* Section headers wear the same wooden tag as the memory panels
-   (memory-section-title-bg.png) at drawer scale — the drawer's one
-   signature element; everything else stays quiet paper + warm ink. */
+/* 抽屉分段标题:纯文字,不加底图。 */
 .drawer-section h3 {
   display: inline-flex;
   align-items: center;
-  min-height: 30px;
-  margin: 0 0 12px -4px;
-  padding: 0 14px;
-  border: 11px solid transparent;
-  border-image: none;
+  margin: 0 0 12px;
+  padding: 0;
   color: var(--th-ink-soft);
   font-size: 13px;
   font-weight: 500;
@@ -1297,6 +1307,7 @@ input { font: inherit; color: inherit; }
 }
 .settings-drawer .btn:hover { border-color: var(--th-hair); color: var(--th-ink); }
 .settings-drawer .license-row input {
+  font-family: var(--mono);
   border-color: color-mix(in srgb, var(--th-hair) 20%, transparent);
   background: var(--th-paper);
   color: var(--th-ink);
@@ -1424,11 +1435,8 @@ input { font: inherit; color: inherit; }
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 30px;
-  margin: 0 0 10px -4px;
-  padding: 0 14px;
-  border: 11px solid transparent;
-  border-image: none;
+  margin: 0 0 10px;
+  padding: 0;
   color: var(--th-ink-soft);
   font-size: 13.5px;
   font-weight: 500;
@@ -1508,8 +1516,9 @@ input { font: inherit; color: inherit; }
   position: absolute;
   z-index: 8;
   top: 0;
-  right: 0;
-  left: 0;
+  /* 只盖中间那一列(工作区标签所在),别把左边的搜索和右上的导出 / 刷新也罩住。 */
+  right: 240px;
+  left: 300px;
   /* Tall enough to cover the floating workspace-tabs zone below (top:16 +
      ~32px pill) — at 22px, scrolling text passed almost un-faded behind the
      semi-transparent toggle and read as overlapped garbage. */
@@ -2489,31 +2498,27 @@ input { font: inherit; color: inherit; }
 }
 .moment-connect-btn {
   width: 100%;
-  height: 58px;
+  height: 40px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 9px;
-  border: 0;
-  border-radius: 4px;
+  border: 1px solid var(--th-hair);
+  border-radius: var(--th-radius-nav);
   background: transparent;
   color: var(--th-ink-soft);
   font-size: 13px;
   font-weight: 500;
 }
 .moment-connect-btn:hover {
+  border-color: var(--th-ink-soft);
   background: transparent;
-  color: var(--th-ink-soft);
+  color: var(--th-ink);
 }
 #dash-stop.moment-connect-btn,
 #dash-stop.moment-connect-btn:hover {
   background: transparent;
   color: var(--th-ink-soft);
-  font-size: 19px;
-  position: relative;
-  top: -30px;
-  transform: scale(.9);
-  transform-origin: top center;
 }
 .moment-connect-btn:disabled {
   cursor: wait;
@@ -2540,8 +2545,8 @@ input { font: inherit; color: inherit; }
 }
 #dash-stop.moment-connect-btn .ic,
 #dash-stop.moment-connect-btn .ic svg {
-  width: 20px;
-  height: 20px;
+  width: 14px;
+  height: 14px;
 }
 
 .moment-ai.warn .moment-illustration-online {
@@ -2661,8 +2666,8 @@ input { font: inherit; color: inherit; }
   grid-template-columns: 34px 1fr auto auto;
   gap: 9px;
   align-items: center;
-  border: 0;
-  border-radius: 9px;
+  border: 1px solid var(--th-hair);
+  border-radius: var(--th-radius-nav);
   background: transparent;
   box-shadow: none;
   transition: transform 160ms ease-out, filter 160ms ease-out, box-shadow 160ms ease-out;
@@ -2745,8 +2750,8 @@ input { font: inherit; color: inherit; }
   grid-template-columns: 34px 1fr;
   gap: 8px;
   align-items: center;
-  border: 0;
-  border-radius: 6px;
+  border: 1px solid var(--th-hair);
+  border-radius: var(--th-radius-nav);
   background: transparent;
   transition: transform 160ms ease-out, filter 160ms ease-out, box-shadow 160ms ease-out;
 }
@@ -2894,8 +2899,8 @@ input { font: inherit; color: inherit; }
   display: flex;
   align-items: center;
   gap: 10px;
-  border: 0;
-  border-radius: 7px;
+  border: 1px solid var(--th-hair);
+  border-radius: var(--th-radius-nav);
   background: transparent;
   color: var(--th-ink);
   font-size: 14px;
@@ -3193,7 +3198,6 @@ input { font: inherit; color: inherit; }
 #memory-profile-content {
   min-height: 0;
   width: 100%;
-  margin-top: -70px;
   display: block;
   position: relative;
   overflow: visible;
@@ -3226,8 +3230,8 @@ input { font: inherit; color: inherit; }
   display: grid;
   grid-template-columns: minmax(0, 860px) minmax(0, 1fr);
   gap: 56px;
-  align-items: center;
-  min-height: 560px;
+  align-items: start;
+  min-height: 0;
   /* auto, not a fixed 560px basis: overflow (extra tag rows, long summary)
      must push the grid below down rather than paint over its headers. */
   flex: 0 0 auto;
@@ -3261,17 +3265,16 @@ input { font: inherit; color: inherit; }
   gap: 18px;
 }
 .cc-portrait-frame {
-  width: 480px;
-  height: 480px;
+  width: 360px;
+  height: 360px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 28px;
   background: var(--th-paper);
-  border: 3px solid color-mix(in srgb, var(--th-hair) 35%, transparent);
-  border-radius: 18px 22px 16px 24px / 22px 16px 24px 18px;
+  border: 1px solid var(--th-hair);
+  border-radius: var(--th-radius-sheet);
   box-shadow: none;
-  transform: rotate(-1.2deg);
 }
 .cc-portrait-frame svg {
   width: 100%;
@@ -3286,7 +3289,6 @@ input { font: inherit; color: inherit; }
   color: var(--th-ink-soft);
   font-size: 22px;
   font-weight: 500;
-  transform: rotate(-0.6deg);
 }
 .memory-profile-kicker {
   display: inline-flex;
@@ -3294,9 +3296,7 @@ input { font: inherit; color: inherit; }
   gap: 8px;
   width: auto;
   max-width: 100%;
-  min-height: 84px;
-  padding: 0 56px 0 72px;
-  transform: translateY(10px);
+  padding: 0;
   border-radius: 0;
   color: var(--th-ink-soft);
   background: transparent;
@@ -3354,11 +3354,9 @@ input { font: inherit; color: inherit; }
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  min-height: 40px;
-  padding: 0 25px;
-  border: 12px solid transparent;
-  border-image: none;
-  border-radius: 0;
+  padding: 4px 12px;
+  border: 1px solid var(--th-hair);
+  border-radius: 999px;
   background: transparent;
   color: var(--th-ink-soft);
   font-size: 22px;
@@ -3636,7 +3634,6 @@ input { font: inherit; color: inherit; }
   align-items: start;
   gap: 34px;
   width: 100%;
-  margin-top: -32px;
   flex: 0 0 auto;
   min-height: 0;
 }
@@ -3652,65 +3649,33 @@ input { font: inherit; color: inherit; }
   min-height: 0;
   overflow: visible;
   background: transparent;
-  border: 2px solid color-mix(in srgb, var(--th-hair) 52%, transparent);
-  border-radius: 30px;
-  padding: 72px 32px 28px;
+  border: 1px solid var(--th-hair);
+  border-radius: var(--th-radius-sheet);
+  padding: 24px 28px;
   box-shadow: none;
 }
 .profile-panel-tall {
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  padding-bottom: 48px;
-}
-.profile-panel-tall .profile-insight,
-.profile-panel-tall .profile-trait {
-  background: var(--th-paper);
+  padding-bottom: 24px;
 }
 .profile-panel-preferences {
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
+  /* 同一张发丝线框,见 .profile-panel */
 }
 .profile-panel-snippets {
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
+  /* 同一张发丝线框,见 .profile-panel */
 }
 .profile-panel h2 {
-  position: absolute;
-  left: 44px;
-  top: -28px;
-  z-index: 2;
-  transform: scale(1.2);
-  transform-origin: left center;
-  display: inline-flex;
-  align-items: center;
-  margin: 0;
-  min-height: 55px;
-  padding: 0 34px;
+  margin: 0 0 14px;
   color: var(--th-ink-soft);
   font-size: 28px;
   line-height: 1.3;
   font-weight: 500;
   letter-spacing: 0;
-  background: transparent;
-  border: 18px solid transparent;
-  border-image: none;
-  border-radius: 0;
-  box-shadow: none;
 }
 .profile-insight {
   display: grid;
   grid-template-columns: 62px 1fr;
   gap: 22px;
-  padding: 28px 30px;
-  border: 1.5px solid color-mix(in srgb, var(--th-hair) 32%, transparent);
-  border-radius: 22px;
-  background: transparent;
+  padding: 8px 0;
 }
 .quote-mark {
   color: var(--th-ink-soft);
@@ -3753,11 +3718,7 @@ input { font: inherit; color: inherit; }
   grid-template-columns: 62px 1fr;
   gap: 22px;
   align-items: center;
-  min-height: 102px;
-  padding: 22px 26px;
-  border: 1.5px solid color-mix(in srgb, var(--th-hair) 28%, transparent);
-  border-radius: 18px;
-  background: transparent;
+  padding: 8px 0;
 }
 .trait-icon {
   display: grid;
@@ -3772,17 +3733,14 @@ input { font: inherit; color: inherit; }
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
-  height: 100%;
 }
 .preference-grid article,
 .memory-snippet-grid article {
   position: relative;
   z-index: 0;
   min-height: 0;
-  padding: 24px 28px;
-  border: 1.5px solid color-mix(in srgb, var(--th-hair) 28%, transparent);
-  border-radius: 16px;
-  background: var(--th-paper);
+  padding: 8px 0;
+  background: transparent;
 }
 .preference-grid article:hover,
 .memory-snippet-grid article:hover {
@@ -3802,12 +3760,12 @@ input { font: inherit; color: inherit; }
 }
 .preference-grid article {
   position: relative;
-  padding-left: 74px;
+  padding-left: 46px;
 }
 .preference-icon {
   position: absolute;
-  top: 26px;
-  left: 28px;
+  top: 10px;
+  left: 4px;
   color: var(--th-ink-soft);
   display: grid;
   place-items: center;
@@ -4010,6 +3968,7 @@ input { font: inherit; color: inherit; }
   letter-spacing: .04em;
 }
 .mem-file {
+  font-family: var(--mono);
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: baseline;
@@ -4040,6 +3999,7 @@ input { font: inherit; color: inherit; }
 .mem-proj-head .count { font-size: 26px; color: var(--ink-4); font-weight: 400; }
 .mem-proj-file { border-top: 1px solid var(--line, var(--th-hair)); }
 .mem-proj-file > summary {
+  font-family: var(--mono);
   list-style: none; cursor: pointer;
   padding: 6px 10px; font-size: 26px; color: var(--ink-2);
 }
@@ -4062,6 +4022,7 @@ input { font: inherit; color: inherit; }
   flex: 1;
 }
 .mem-doc .crumb {
+  font-family: var(--mono);
   font-size: 26px;
   color: var(--ink-3);
   letter-spacing: .04em;
@@ -4173,6 +4134,7 @@ input { font: inherit; color: inherit; }
 .mem-doc .crumb .mem-actions { margin-left: auto; display: inline-flex; gap: 6px; }
 .mem-doc .crumb .mem-actions .btn { font-size: 26px; padding: 4px 10px; }
 .memory-editor {
+  font-family: var(--mono);
   width: calc(100% - 36px);
   margin: 18px;
   padding: 14px 16px;
@@ -5105,8 +5067,12 @@ input { font: inherit; color: inherit; }
 .fd-empty { background:var(--fd-card); border:1px dashed var(--fd-line); border-radius:var(--fd-radius); padding:26px 20px; text-align:center; color:var(--fd-ink-faint); font-size:13.5px; }
 
 /* 📮 心愿(wishes.js)—— 输入 → 预览 → 派;没有匿名觅食网、没有揭晓牵线仪式 */
-.wsh-compose { display:flex; gap:8px; }
-.wsh-compose input { flex:1; }
+.wsh-compose { display:flex; gap:8px; margin-bottom:14px; }
+.wsh-compose input { flex:1; height:36px; padding:0 12px; border:1px solid var(--th-hair); border-radius:var(--th-radius-nav); background:var(--th-paper); color:var(--th-ink); font:inherit; font-size:14px; outline:none; }
+.wsh-compose input::placeholder { color:var(--th-ink-soft); }
+.wsh-compose input:focus { border-color:var(--th-accent); }
+.wsh-compose button { height:36px; padding:0 14px; border:1px solid var(--th-hair); border-radius:var(--th-radius-nav); background:transparent; color:var(--th-ink); font:inherit; font-size:14px; cursor:pointer; }
+.wsh-compose button:hover { border-color:var(--th-ink-soft); }
 .wsh-draft { margin:8px 0; padding:8px 10px; border: 1px dashed var(--fd-line,var(--th-hair)); border-radius:8px; }
 .wsh-list .wsh-row { display:flex; justify-content:space-between; gap:8px; padding:6px 0; border-bottom: 1px solid var(--fd-line,var(--th-hair)); }
 .wsh-meta { opacity:.7; font-size:.9em; }
@@ -5244,6 +5210,7 @@ input { font: inherit; color: inherit; }
   color: var(--ink-3);
 }
 .plugin-ver {
+  font-family: var(--mono);
   font-size: 10.5px;
   color: var(--ink-3);
   background: var(--paper-3);
@@ -5905,15 +5872,4 @@ input { font: inherit; color: inherit; }
   .memory-evidence-reader textarea { min-height:220px; }
 }
 
-/* ─── Task 13:去掉手绘纸片底图后的平面收口(发丝线框、不上色块) ───────────── */
-.drawer-section h3, .todo-group > h2 { border: 0; margin-left: 0; padding: 0; min-height: 0; }
-.moment-connect-btn { height: 40px; border: 1px solid var(--th-hair); border-radius: var(--th-radius-nav); background: transparent; }
-.moment-connect-btn:hover { border-color: var(--th-ink-soft); background: transparent; color: var(--th-ink); }
-#dash-stop.moment-connect-btn, #dash-stop.moment-connect-btn:hover { top: 0; transform: none; font-size: 13px; border: 1px solid var(--th-hair); background: transparent; }
-#dash-stop.moment-connect-btn .ic, #dash-stop.moment-connect-btn .ic svg { width: 14px; height: 14px; }
-.current-user-card, .sub-user-card, .add-user-card { border: 1px solid var(--th-hair); border-radius: var(--th-radius-nav); background: transparent; }
-.profile-panel-tall, .profile-panel-preferences, .profile-panel-snippets { border: 1px solid var(--th-hair); border-radius: var(--th-radius-sheet); background: transparent; }
-.profile-panel h2 { position: static; transform: none; min-height: 0; padding: 0; border: 0; margin: 0 0 8px; font-size: 16px; }
-.memory-profile-kicker { min-height: 0; padding: 0; transform: none; font-size: 14px; }
-.memory-profile-tags span { min-height: 0; padding: 4px 12px; border: 1px solid var(--th-hair); border-radius: 999px; font-size: 13px; }
 b, strong { font-weight: 500; }

@@ -4,6 +4,7 @@
 .workbench-pane .workbench-topline-start { gap:10px; color:var(--th-ink); font-size:12px; }
 .workbench-pane .workbench-nav-toggle { width:auto; height:auto; padding:2px 6px; border-color:transparent; background:transparent; color:var(--th-ink); }
 .workbench-pane .workbench-nav-toggle:hover { background:var(--th-ground); }
+.workbench-pane .workbench-nav-toggle .dash-wordmark { font-size:18px; }
 .dashboard .workbench-root { flex:1; height:auto; min-height:0; }
 .workbench-shell {
   --wb-surface:var(--th-paper); --wb-sidebar:var(--th-rail); --wb-text:var(--th-ink); --wb-secondary:var(--th-ink-soft);

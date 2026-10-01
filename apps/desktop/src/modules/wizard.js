@@ -49,9 +49,28 @@ export function renderDoctorWizard(report) {
       : !c?.sdkInstalled ? "缺少 @cursor/sdk"
       : "未检测到"
   }
+  renderDoctorHeadline(report)
   renderProviderStatus("claude", report.checks.claude)
   renderProviderStatus("codex", report.checks.codex)
   updateFooterStatus(report.checks.daemon)
+}
+
+/** 第一步的标题与说明跟「当前状态」两行同一个信号:Claude 或 Codex 任一已链接就算就绪。 */
+export function doctorHeadline(report) {
+  const ready = !!(report?.checks?.claude?.ok || report?.checks?.codex?.ok)
+  return ready
+    ? { ready, title: "已经能见面了", note: "Claude Code 或 Codex 已就绪，可以继续。" }
+    : { ready, title: "还差一步就能见面了", note: "还没检测到 Claude Code 或 Codex，安装任意一个就能继续。" }
+}
+
+function renderDoctorHeadline(report) {
+  const h = doctorHeadline(report)
+  const title = document.getElementById("doctor-headline")
+  const note = document.getElementById("doctor-note")
+  if (title) title.textContent = h.title
+  if (note) note.textContent = h.note
+  const illus = document.querySelector("#screen-doctor .launch-illus")
+  if (illus) { illus.classList.toggle("launch-illus-missing", !h.ready); illus.classList.toggle("launch-illus-ready", h.ready) }
 }
 
 function renderProviderStatus(provider, check) {

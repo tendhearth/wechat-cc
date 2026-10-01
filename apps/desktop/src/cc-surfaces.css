@@ -77,7 +77,7 @@
 .fd-sec-head .ic svg, .wechat-voice-stub svg, .jsonl-turn > svg { width: 19px; height: 19px; vertical-align: middle; }
 .cc-portrait-placeholder svg { width: 32px; height: 32px; color: var(--cc-muted); }
 .profile-panel h2 { border: 0; padding: 8px 12px; min-height: 40px; top: -22px; background: var(--cc-surface); border-radius: 8px; }
-.memory-profile-tags span { border-image: none; border: 1px solid var(--cc-line); border-radius: 12px; padding: 6px 16px; background: var(--cc-surface-soft); }
+.memory-profile-tags span { border-image: none; border: 1px solid var(--cc-line); border-radius: 12px; padding: 6px 16px; background: transparent; }
 
 /* Deep-link dialogs use the same paper and controls as the main pages. */
 .a2a-modal, .privacy-card, #phone-settings-modal .qr-card {
