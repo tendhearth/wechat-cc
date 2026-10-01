@@ -61,6 +61,7 @@ export default function Together() {
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar
         title={t(lang, 'together.title')}
+        showStatus
         onAvatar={() => router.push('/settings')}
       />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>

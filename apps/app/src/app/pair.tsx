@@ -105,7 +105,7 @@ export default function Pair() {
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
       {/* 配对进行中关掉 iOS 侧滑返回(安卓返回键由 BackHandler 吞掉) */}
       <Stack.Screen options={{ gestureEnabled: phase.k !== 'working' }} />
-      <TopBar onBack={back} showConnection={false} onAvatar={() => router.push('/settings')} />
+      <TopBar onBack={back} onAvatar={() => router.push('/settings')} />
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.xl, gap: space.l }}>
         <View style={{ alignItems: 'center' }}><CCFigure size={120} presence={ccPresence(conn)} /></View>
         <Txt role="title" accessibilityRole="header" style={{ textAlign: 'center' }}>{t(lang, 'pair.title')}</Txt>

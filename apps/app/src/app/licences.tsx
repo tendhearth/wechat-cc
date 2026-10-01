@@ -17,7 +17,7 @@ export default function Licences() {
   const router = useRouter()
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
-      <TopBar title={t(lang, 'settings.fontLicences')} showConnection={false} onBack={() => (router.canGoBack() ? router.back() : router.replace('/settings'))} onAvatar={() => router.push('/settings')} />
+      <TopBar title={t(lang, 'settings.fontLicences')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/settings'))} onAvatar={() => router.push('/settings')} />
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xxl, gap: space.l }}>
         <Txt testID="licences-intro" role="meta" tone="inkSoft">{t(lang, 'licences.intro')}</Txt>
         <Txt testID="licences-text" role="small" selectable>{reflowLicence(OFL_TEXT)}</Txt>

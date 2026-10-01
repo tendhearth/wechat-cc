@@ -43,7 +43,7 @@ export default function Now() {
 
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.paper }}>
-      <TopBar title={t(lang, 'common.wordmark')} onAvatar={() => router.push('/settings')}
+      <TopBar title={t(lang, 'common.wordmark')} showStatus onAvatar={() => router.push('/settings')}
         onConnection={() => router.push('/connections')} connectionTestID="now-connections" />
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.xl }}>
         <ConnectionNotice only="revoked" />
