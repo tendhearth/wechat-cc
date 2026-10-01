@@ -16,12 +16,13 @@ export const HEX_BUDGET: Record<string, number> = {
   // 2026-10-01 实测基线(Task 8,机械替换旧色板之后)。companion-window / animation-lab 不在换皮范围(spec §8)。
   'animation-lab.css': 32,
   'cc-life.css': 0,
-  'cc-page-art.css': 5,
-  'cc-surfaces.css': 23,
+  'cc-page-art.css': 0,
+  'cc-surfaces.css': 0,
   'companion-window.css': 16,
   'fonts.css': 0,
-  'postcard-album.css': 23,
-  'styles.css': 648,
+  'postcard-album.css': 0,
+  // styles.css 剩下的全是「复刻微信聊天」那一段(iPhone 框、绿气泡)的内容色,见该段上方注释。
+  'styles.css': 36,
 }
 /** Task 10 加 cc-life.css、cc-now.css;Task 12 加工作台三份(styles/workbench*.css、styles/task-entry.css);converse.css 新建即零。 */
 const ZERO_HEX: string[] = ['cc-life.css', 'cc-now.css', 'styles/workbench.css', 'styles/workbench-attention.css', 'styles/task-entry.css', 'styles/converse.css']

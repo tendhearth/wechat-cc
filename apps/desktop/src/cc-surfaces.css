@@ -1,22 +1,22 @@
 /* Shared paper surfaces. Status colors and artwork retain their own meaning. */
 :root {
-  --app-bg: #faf8f3;
-  --cc-surface: #fffdf9;
-  --cc-surface-soft: #f2e8d7;
-  --cc-line: #e4ddd2;
-  --cc-line-strong: #b99463;
-  --cc-muted: #796f63;
-  --cc-focus: #a77b40;
-  --cc-action: #66513b;
+  --app-bg: var(--th-paper);
+  --cc-surface: var(--th-paper);
+  --cc-surface-soft: var(--th-rail);
+  --cc-line: var(--th-hair);
+  --cc-line-strong: var(--th-hair);
+  --cc-muted: var(--th-ink-soft);
+  --cc-focus: var(--th-accent);
+  --cc-action: var(--th-accent);
   --cc-control-radius: 10px;
   --cc-dialog-radius: 16px;
   --paper: var(--cc-surface);
   --paper-2: var(--cc-surface-soft);
-  --paper-3: #efe2cd;
-  --hair: #e8dccb;
+  --paper-3: var(--th-rail);
+  --hair: var(--th-hair);
   --hair-2: var(--cc-line);
   --ink-3: var(--cc-muted);
-  --ink-4: #9b8771;
+  --ink-4: var(--th-ink-soft);
 }
 [data-pane="a2a-agents"] {
   --fd-ground: var(--app-bg);
@@ -25,13 +25,13 @@
   --fd-ink: var(--ink);
   --fd-ink-soft: var(--cc-muted);
   --fd-line: var(--cc-line);
-  --fd-line-soft: #e8dccb;
+  --fd-line-soft: var(--th-rail);
 }
 .atelier-work, .todo-item:not(.todo-item-settled) {
   background: var(--cc-surface);
   border: 1px solid var(--cc-line);
   border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(89,63,44,.045);
+  box-shadow: none;
 }
 .atelier-empty, .todos-empty {
   padding: 28px 20px;
@@ -67,11 +67,11 @@
 .drawer-section h3 { border: 0; padding: 0 0 10px; min-height: 0; height: auto; }
 .memory-profile-kicker { padding: 12px 0; min-height: 0; border: 0; }
 .profile-panel-tall, .profile-panel-preferences, .profile-panel-snippets { background: var(--cc-surface); border: 1px solid var(--cc-line); border-radius: 16px; }
-:is(.settings-drawer, .todos-page, .fd-wrap, .atelier-gallery-panel) :is(input:not([type=checkbox]):not([type=radio]), textarea, select) { border: 1px solid var(--cc-line); border-radius: 10px; background: var(--cc-surface); color: #39332c; }
+:is(.settings-drawer, .todos-page, .fd-wrap, .atelier-gallery-panel) :is(input:not([type=checkbox]):not([type=radio]), textarea, select) { border: 1px solid var(--cc-line); border-radius: 10px; background: var(--cc-surface); color: var(--th-ink-soft); }
 .atelier-empty, .todos-empty, .cc-page-status { border: 1px solid var(--cc-line); border-radius: 14px; padding: 28px; background: var(--cc-surface); color: var(--cc-muted); }
-.cc-page-status h2 { margin: 0 0 10px; color: #39332c; font-size: 18px; line-height: 1.4; }
+.cc-page-status h2 { margin: 0 0 10px; color: var(--th-ink-soft); font-size: 18px; line-height: 1.4; }
 .cc-page-status p { margin: 0 0 16px; font-size: 14px; line-height: 1.65; }
-.cc-page-status button { padding: 9px 14px; min-height: 40px; border: 1px solid var(--cc-line-strong); border-radius: 10px; color: #705b43; background: var(--cc-surface); cursor: pointer; }
+.cc-page-status button { padding: 9px 14px; min-height: 40px; border: 1px solid var(--cc-line-strong); border-radius: 10px; color: var(--th-ink-soft); background: var(--cc-surface); cursor: pointer; }
 .cc-page-status button:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 3px; }
 .fd-sec-head h2 { display: inline-flex; align-items: center; gap: 8px; }
 .fd-sec-head .ic svg, .wechat-voice-stub svg, .jsonl-turn > svg { width: 19px; height: 19px; vertical-align: middle; }
@@ -87,7 +87,7 @@
   border-radius: var(--cc-dialog-radius);
   background: var(--cc-surface);
   color: var(--ink);
-  box-shadow: 0 18px 56px rgba(66, 49, 30, .16);
+  box-shadow: none;
   font-family: var(--sans);
 }
 .a2a-modal { width: min(520px, calc(100vw - 32px)); max-width: 520px; max-height: calc(100dvh - 32px); overflow-y: auto; }
@@ -120,14 +120,14 @@
   font: 500 14px/1.5 var(--sans);
   cursor: pointer;
 }
-.a2a-modal .btn.primary, .privacy-submit { background: var(--cc-action); border-color: var(--cc-action); color: #fffdf9; }
+.a2a-modal .btn.primary, .privacy-submit { background: var(--cc-action); border-color: var(--cc-action); color: var(--th-on-accent); }
 .a2a-modal .btn:hover:not(:disabled), .cc-page-status button:hover:not(:disabled) { background: var(--cc-surface-soft); }
-.a2a-modal .btn.primary:hover:not(:disabled), .privacy-submit:hover:not(:disabled) { background: #51412f; border-color: #51412f; }
+.a2a-modal .btn.primary:hover:not(:disabled), .privacy-submit:hover:not(:disabled) { background: var(--th-accent); border-color: var(--th-hair); }
 :is(.a2a-modal, .privacy-card) button:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 3px; }
 :is(.a2a-modal, .privacy-card, .cc-page-status) button:disabled { opacity: .55; cursor: wait; }
 .a2a-modal-x, .privacy-close { width: 32px; height: 32px; border-radius: 8px; color: var(--cc-muted); }
 .a2a-modal-x:hover, .privacy-close:hover { background: var(--cc-surface-soft); color: var(--ink); }
-.privacy-dialog { background: rgba(55, 45, 31, .24); }
+.privacy-dialog { background: color-mix(in srgb, var(--th-accent) 24%, transparent); }
 .privacy-card p, .privacy-hint { color: var(--cc-muted); }
 .privacy-lock-mark { background: var(--cc-surface-soft); color: var(--cc-action); }
 
@@ -140,7 +140,7 @@
 .hb-kind-icon, .plugin-status-icon { display: inline-block; flex-shrink: 0; margin-right: 5px; vertical-align: -.2em; }
 :is(.decision-row, .observation, .milestone-card) .glyph > .hg-icon { display: block; }
 .status-success { color: var(--green); }
-.status-error { color: var(--red, #a54836); }
+.status-error { color: var(--red, var(--th-ink-soft)); }
 .a2a-modal p.status-success { color: var(--green); }
 
 @media (max-width: 600px) {

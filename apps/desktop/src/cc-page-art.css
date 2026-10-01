@@ -3,7 +3,7 @@
 .cc-page-art > .cc-page-background { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
 .cc-page-art > .cc-page-character { position: absolute; width: 40%; height: auto; left: 5%; top: 26.922%; display: block; }
 .cc-page-light { mask: url('./assets/pet/cc-v1/masks/front.png') center / contain no-repeat; -webkit-mask: url('./assets/pet/cc-v1/masks/front.png') center / contain no-repeat; }
-.cc-page-ground { position: absolute; left: 12.2%; top: 79.8%; width: 25.6%; height: 5.4%; background: radial-gradient(ellipse,rgba(91,66,43,.20),rgba(91,66,43,.12) 45%,transparent 72%); }
+.cc-page-ground { position: absolute; left: 12.2%; top: 79.8%; width: 25.6%; height: 5.4%; background: radial-gradient(ellipse,color-mix(in srgb, var(--th-ink-soft) 20%, transparent),color-mix(in srgb, var(--th-ink-soft) 12%, transparent) 45%,transparent 72%); }
 .cc-page-art > .cc-page-prop { position: absolute; width: 22%; height: auto; left: 65%; top: 54%; }
 .cc-page-art-chat { width: min(230px,55vw); margin: 0 auto 10px; }
 .cc-page-art-chat > .cc-page-character { width: 64%; left: 12%; top: -6.125%; }
@@ -16,5 +16,5 @@
 .memory-embryo-illustration:hover > .cc-page-art, .memory-embryo-illustration:focus-visible > .cc-page-art { transform: translateY(-3px); }
 @media (prefers-reduced-motion: reduce) { .memory-embryo-illustration > .cc-page-art { transition: none; } }
 /* Bring the first-run shell onto the same paper surface as the main app. */
-.wizard-window { background: #fffaf0; }
-.qr-login-card { border: 1px solid #d9c4a7; background: rgba(255,253,247,.65); }
+.wizard-window { background: var(--th-paper); }
+.qr-login-card { border: 1px solid var(--th-hair); background: color-mix(in srgb, var(--th-paper) 65%, transparent); }
