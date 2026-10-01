@@ -65,7 +65,8 @@
 
 `settingsPanel.phoneLink({ enableRemote })`:
 - `remote_off` 且 `enableRemote` 且接了 `deps.remote` ⇒ `setEnabled(true)` + 审计一行 + `requestRestart()`,回 `{ ok: false, state: 'starting' }`。**不碰 `relay_v2_url`**(主人事项)。
-- `ready` ⇒ 铸链接令牌,回 `{ ok: true, state: 'ready', url, expires_at }`;`url` 与 `linkUrl()` 同形:`https://<中继主机>/pset/#id=<r…>&t=<令牌>&p=%2Fset[&lan=<ip:port>]`(有局域网地址才带 `lan=`)。URL 由同一个 `psetUrl()` 拼(`linkUrl()` 也改用它)。
+- `relay_unavailable` 且 `enableRemote` 且接了 `deps.remote` 且**开机时 `relay_v2_url` 还没配**(`relayV2AtBoot`,pipeline-deps 开机快照)⇒ 同进程重启一次,回 `starting`(开机后才配 v2,运行中的老隧道不会自己换)。开机时就配了 v2 还是老 id ⇒ v2 身份坏了(`relay-identity.json` 读不出等),重启也换不来 ⇒ 直接回 `relay_unavailable`,不重启(否则每个新进程再重启一次,成了循环)。桌面流程每轮只有第一次 POST 带 `enable_remote: true`,之后的轮询不带。
+- `ready` ⇒ 铸链接令牌,回 `{ ok: true, state: 'ready', url, expires_at, check_code }`(`check_code` 见 §8 核对码);`url` 与 `linkUrl()` 同形:`https://<中继主机>/pset/#id=<r…>&t=<令牌>&p=%2Fset[&lan=<ip:port>]`(有局域网地址才带 `lan=`)。URL 由同一个 `psetUrl()` 拼(`linkUrl()` 也改用它)。
 - 其余 ⇒ `{ ok: false, state }`,不铸令牌。
 
 路由(新文件 `src/daemon/internal-api/routes-phone.ts`,两条都是 **admin**):
@@ -148,7 +149,8 @@
 - `pairing.ts` 新增 `retirePrevious(prev, next, { connect })`:`prev` 为空或令牌相同 ⇒ `skipped`;否则用 `prev.deviceToken` 连 `prev.relayUrl`,`POST /set/api/apply { op: 'unpair_self' }`,成功 ⇒ `retired`,任何失败 ⇒ `failed`(吞掉,不抛)。连接用完即关。
 - 配对页:`pairAndSave` 成功之后 `void retirePrevious(session.pairing, rec, …)`,不等它就回此刻。
 - 已知限制(Task 11):重新配对时若旧电脑离线,旧设备位会留着,直到主人在桌面设备列表里手动移除它(期间仍占 20 台上限的名额)。
-- 核对码:配对成功后 daemon 回一个简短的核对码(`check_code`,`packages/protocol/src/pair-check.ts`),桌面弹层、引导页和手机确认卡都显示,供主人肉眼核对是同一次配对。
+- 核对码:`check_code` 随 `POST /v1/phone/link` 的 ready 回应一起给 —— 在**配对之前**,由码里的 daemon id 派生(`packages/protocol/src/pair-check.ts`,v2:`sha256("wechat-cc/pair-check/v2:<daemonId>")` 的前 30 位,32 字母表,6 个字符显示成 `XXX-XXX`)。桌面弹层、引导页显示它,手机确认卡从链接里的 id 算出同一个。它标识的是**哪台电脑**,不是哪一次配对:共用中继上谁都能铸出像样的链接,主人对一下就知道是不是自己的电脑。这是人眼交叉核对(30 位 ≈ 10 亿种),**不是认证** —— 绑定靠的是链接里的一次性令牌。
+- 确认卡(7a 终修 I2):正文不断定「你的电脑」(「连到出这个码的那台电脑」),并说「核对码和你电脑上显示的一致再连」;手机已连着另一台电脑(daemon id 不同)时多一句「这会换掉现在连着的那台电脑」—— 从聊天 / Safari 点开的链接不能一下就顶掉现有配对而不提示。
 - §11.7 已在 7a 修掉:`GET /v1/settings/link` 升为 admin 档。
 - daemon 不改(`unpair_self` 只撤调用者自己、经隧道可用,已有);加一条 daemon 单测钉住「A、B 两台,A 的令牌 `unpair_self` ⇒ 只剩 B」。
 
@@ -175,6 +177,8 @@
 | 连上 | `paired` / `pairedNoLabel` / `done` | 已连上 {label} / 已连上手机 / 完成 | Connected: {label} / Phone connected / Done |
 | 出错 | `error` | 生成不了二维码：{why} | Couldn’t make a code: {why} |
 | 关闭 | `close` | 关闭 | Close |
+| 核对码(弹层 / 引导) | `checkCode` | 核对码 {code} | Check code {code} |
+| 引导页准备中(会重启) | `preparing` | 正在准备连接手机的二维码，CC 会重启一下…… | Getting the phone QR ready — CC will restart once… |
 | 引导末行 | `later` | 之后再连也可以：在设置里点「连接手机」。 | You can do this later: in Settings, choose “Connect phone”. |
 | 画室空状态 | (atelier-gallery.js) | 画室尚未开启 / 在设置里点「连接手机」，用手机打开设置，开启「让 CC 自己画画」。首次需下载约 5GB 的画笔。 | — (桌面画室文案只有中文,沿用) |
 | 手机欢迎页 | `welcome.howTo` | 在电脑上点「连接手机」，用相机扫一下。 | On your computer, choose “Connect phone” and scan with your camera. |
@@ -185,6 +189,11 @@
 | 老局域网链接 | `pair.errRemoteOff` | 这是只能在同一 Wi-Fi 下用的旧链接。请在电脑上点「连接手机」，扫新出来的码。 | This is an older Wi-Fi-only link. On your computer choose “Connect phone” and scan the new code. |
 | 用过 / 过期 | `pair.errExpired` | 这个码已经用过或过期了（每个码只能用一次，10 分钟内有效）。请在电脑上点「连接手机」换一个。 | This code was already used or has expired (each code works once, for 10 minutes). Choose “Connect phone” on your computer for a new one. |
 | 锚点丢了 | `pair.errLinkIncomplete` | 这个链接没带全。请在电脑上点「连接手机」，用相机再扫一次。 | This link arrived incomplete. Choose “Connect phone” on your computer and scan again. |
+| 确认卡标题 | `pair.confirmTitle` | 连接这台电脑？ | Connect to this computer? |
+| 确认卡正文 | `pair.confirmBody` | 这台手机会经 {host} 连到出这个码的那台电脑。全程端到端加密，中继看不到内容。 | This phone will reach the computer that showed this code, through {host}. Everything is end-to-end encrypted; the relay can’t read it. |
+| 确认卡核对码 | `pair.checkCode` | 核对码 {code} | Check code {code} |
+| 确认卡先核对 | `pair.checkFirst` | 核对码和你电脑上显示的一致再连 | Only connect if the check code matches the one shown on your computer |
+| 确认卡换掉现有配对 | `pair.replaces` | 这会换掉现在连着的那台电脑 | This replaces the computer this phone is connected to |
 | 网页壳失效 | (pset.src.html) | 这个链接已经用过或过期了，回微信跟 CC 再要一个 | — (网页壳只有中文,沿用) |
 
 ## 10. 测试
@@ -207,6 +216,7 @@
 6. Apple 开发者后台:`com.tendhearth.app` 的 Associated Domains 能力(EAS 构建会同步;核对一次)。
 7. 顺带发现,**已在 7a 修**(Task 3):`GET /v1/settings/link` 原是 trusted 档,而普通聊天会话也是 trusted —— 一个 trusted 会话能铸出 admin 链接令牌。现在升到 admin;`selftest phone` 改用 operator 令牌(operator `routeAllow` 加上这条,`token-registry.test.ts` 精确集合同步);微信 `/set` 走进程内调用,不受影响。桌面旧按钮在 Task 3 到 Task 5 之间会 403(同一未部署分支,Task 5 换成 `/v1/phone/link`)。
 8. 顺带发现,**7a 不修**(Task 2 评审):中继壳模式(`relay/pset.html` 注入 `__CC_SHELL__`)下,`apps/mobile/src/transport.js` 的 `onUnauthorized()` 在本机令牌真失效时 `location.replace("/m")` —— 中继域上没有 `/m`,落到 404。旧代码就是这样(7a 前 `home.js` 内联的同一句),单次配对没让它更糟。以后修:壳模式改走 `ccNav` / 回 `/pset/` 重进,或者原地显示一句「这台手机的连接已失效，回微信跟 CC 再要一个」。
+9. 已知限制,**7a 不修**(终审 M2):微信 `/set` 链接与桌面「连接手机」共用同一种 `link` 会话、同一时刻只有一枚活的链接令牌 —— 桌面出码后,主人(或 CC)在微信里再要一条 `/set` 链接,桌面上的二维码会静默作废(扫了回「用过或过期」)。重新点「连接手机」/「换一个」即可。以后修:两处分开令牌槽,或作废时通知桌面弹层。
 
 ## 12. 不做
 
