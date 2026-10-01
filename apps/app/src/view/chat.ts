@@ -96,11 +96,12 @@ export function acceptedSettled(accepted: Accepted | null, msgs: ChatMessageT[],
 }
 
 /** 提交结果 ⇒ 对话页输入框上方那一行提示的种类。 */
-export function chatSendOutcome(r: 'ok' | 'busy' | { error: string }): 'ok' | 'busy' | 'ccBusy' | 'uncertain' | 'revoked' | 'failed' {
+export function chatSendOutcome(r: 'ok' | 'busy' | { error: string }): 'ok' | 'busy' | 'ccBusy' | 'uncertain' | 'revoked' | 'failed' | 'refused' {
   if (r === 'ok' || r === 'busy') return r
   const o = composeOutcome(r.error)
-  // 接着做电脑会话细分出来的那几种只在「一件事」上出现;跟 CC 说照旧只有这几种提示
-  return o === 'ccBusy' || o === 'uncertain' || o === 'revoked' ? o : 'failed'
+  // 接着做电脑会话细分出来的那几种只在「一件事」上出现;跟 CC 说只分:没送到(离线 / daemon 没接上)与电脑答了但没接下(中性一句)
+  if (o === 'ccBusy' || o === 'uncertain' || o === 'revoked' || o === 'failed') return o
+  return 'refused'
 }
 
 /** 只有主人的那条聊天才改道去 /chat(Ruling 9);ownerChatMatterId 来自 GET chat 的 matterId,没主人 ⇒ null。 */

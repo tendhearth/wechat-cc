@@ -100,6 +100,12 @@ describe('chat 视图', () => {
     expect(chatSendOutcome({ error: 'uncertain' })).toBe('uncertain')
     expect(chatSendOutcome({ error: 'revoked' })).toBe('revoked')
     expect(chatSendOutcome({ error: 'offline' })).toBe('failed')
+    expect(chatSendOutcome({ error: 'unavailable' })).toBe('failed')
+  })
+  it('电脑答了、但没接下 ⇒ refused(中性的一句),不说「没有送到」', () => {
+    for (const error of ['unknown', 'invalid', 'not_found', 'quota', 'session_busy', 'provider_missing']) {
+      expect(chatSendOutcome({ error }), error).toBe('refused')
+    }
   })
   it('先发的那句没确认、又说了一句 ⇒ 两个本机回执各自成气泡,前一句不会被后一句顶掉', () => {
     const a = { requestId: 'a', text: '第一句', at: 1000 }, b = { requestId: 'b', text: '第二句', at: 5000 }
