@@ -24,7 +24,7 @@ function harness(script: { link: Array<object | Error>; devices: Array<object[] 
   const flow = makePhoneLinkFlow({ call, onView: v => views.push(v as never), now: () => clock, sleep: async ms => { clock += ms }, pollMs: 2000, startTimeoutMs: 45_000 })
   return { flow, views, call, tick: (ms: number) => { clock += ms } }
 }
-const ready = (expiresIn = 600_000) => ({ ok: true, state: 'ready', url: URL1, expires_at: 1_000_000 + expiresIn, check_code: 'FHWL' })
+const ready = (expiresIn = 600_000) => ({ ok: true, state: 'ready', url: URL1, expires_at: 1_000_000 + expiresIn, check_code: 'USZ-YAY' })
 
 describe('文案(D6)', () => {
   it('zh / en 键一致、没有空串;中文不用半角逗号句号', () => {
@@ -41,7 +41,7 @@ describe('文案(D6)', () => {
 
 describe('linkView', () => {
   it('每个 state 一种画法;中继没开通不出码', () => {
-    expect(linkView(ready() as never)).toEqual({ kind: 'qr', url: URL1, expiresAt: 1_600_000, checkCode: 'FHWL' })
+    expect(linkView(ready() as never)).toEqual({ kind: 'qr', url: URL1, expiresAt: 1_600_000, checkCode: 'USZ-YAY' })
     expect(linkView({ ok: false, state: 'starting' })).toEqual({ kind: 'starting' })
     expect(linkView({ ok: false, state: 'relay_not_configured' })).toEqual({ kind: 'notice', title: '手机连接服务还没开通', body: '开通之后，这里会出现二维码。' })
     expect(linkView({ ok: false, state: 'relay_unavailable' })).toMatchObject({ kind: 'notice', title: '手机连接服务这次没启动起来' })
@@ -263,20 +263,22 @@ describe('mountOnboardPhone(引导页,裁决 3)', () => {
 describe('核对码(Task 9 fix round 1:共用中继上分清「我的电脑」)', () => {
   it('linkView:daemon 给的 check_code 合格才用;缺了 / 畸形 ⇒ null(不显示,不瞎编)', () => {
     expect(linkView({ ...ready(), check_code: undefined } as never)).toMatchObject({ kind: 'qr', checkCode: null })
-    expect(linkView({ ...ready(), check_code: 'fhwl' } as never)).toMatchObject({ checkCode: null })
+    expect(linkView({ ...ready(), check_code: 'usz-yay' } as never)).toMatchObject({ checkCode: null })
+    expect(linkView({ ...ready(), check_code: 'FHWL' } as never)).toMatchObject({ checkCode: null })   // v1 的 4 位码不再认
+    expect(linkView({ ...ready(), check_code: 'USZYAY' } as never)).toMatchObject({ checkCode: null })
     expect(linkView({ ...ready(), check_code: 'O0I1' } as never)).toMatchObject({ checkCode: null })
     expect(linkView({ ...ready(), check_code: '<b>X' } as never)).toMatchObject({ checkCode: null })
   })
-  it('文案:zh「核对码 XXXX」/ en「Check code XXXX」', () => {
-    expect(PHONE_COPY.zh.checkCode.replace('{code}', 'FHWL')).toBe('核对码 FHWL')
-    expect(PHONE_COPY.en.checkCode.replace('{code}', 'FHWL')).toBe('Check code FHWL')
+  it('文案:zh「核对码 XXX-XXX」/ en「Check code XXX-XXX」', () => {
+    expect(PHONE_COPY.zh.checkCode.replace('{code}', 'USZ-YAY')).toBe('核对码 USZ-YAY')
+    expect(PHONE_COPY.en.checkCode.replace('{code}', 'USZ-YAY')).toBe('Check code USZ-YAY')
   })
   it('弹层:码下面显示核对码;没有核对码就不出那一行', async () => {
     document.body.innerHTML = ''
     const h = harness({ link: [ready()], devices: [[]] })
     const m = mountPhoneConnect({ call: h.call, renderQr: async () => '<svg></svg>', flowDeps: { now: () => 1_000_000, sleep: () => new Promise(r => setTimeout(r, 5)) } })
     m.open()
-    await vi.waitFor(() => expect(document.querySelector('#phone-connect-check')?.textContent).toBe('核对码 FHWL'))
+    await vi.waitFor(() => expect(document.querySelector('#phone-connect-check')?.textContent).toBe('核对码 USZ-YAY'))
     m.close()
     const h2 = harness({ link: [{ ...ready(), check_code: undefined }], devices: [[]] })
     const m2 = mountPhoneConnect({ call: h2.call, renderQr: async () => '<svg></svg>', flowDeps: { now: () => 1_000_000, sleep: () => new Promise(r => setTimeout(r, 5)) } })
@@ -293,7 +295,7 @@ describe('核对码(Task 9 fix round 1:共用中继上分清「我的电脑」)'
     m.sync({ active: true, alive: true })
     const check = document.getElementById('onboard-phone-check')!
     await vi.waitFor(() => expect(check.hidden).toBe(false))
-    expect(check.textContent).toBe('核对码 FHWL')
+    expect(check.textContent).toBe('核对码 USZ-YAY')
     await vi.waitFor(() => expect(document.getElementById('onboard-phone-status')!.textContent).toBe('已连上 Tendhearth · iPhone'))
     expect(check.hidden).toBe(true)
     m.sync({ active: false, alive: true })

@@ -136,7 +136,7 @@ describe('settingsPanel.phoneLink(spec §4.1)', () => {
     expect(r.url).toContain(`t=${panel.activeLinkToken()}`)
     // 核对码(Task 9 fix round 1):由码里的 daemon id 派生,桌面显示、手机确认卡显示同一个
     expect(r.check_code).toBe(pairCheckCode(RID))
-    expect(r.check_code).toMatch(/^[2-9A-HJ-NP-Z]{4}$/)
+    expect(r.check_code).toMatch(/^[2-9A-HJ-NP-Z]{3}-[2-9A-HJ-NP-Z]{3}$/)
   })
   it('phoneDevices:配对后列出,不带令牌', async () => {
     const { panel } = mk({ tunnel: true, remote: V2 })

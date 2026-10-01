@@ -11,10 +11,10 @@ appId: com.tendhearth.app
       id: pair-confirm
     timeout: 10000
 - assertVisible: ".*relay\\.tendhearth\\.com.*"
-# 核对码:FHWL = pairCheckCode('r' + 26×a),与桌面「核对码 FHWL」同一个(packages/protocol pair-check.test.ts 钉住)
+# 核对码:USZ-YAY = pairCheckCode('r' + 26×a),与桌面「核对码 USZ-YAY」同一个(packages/protocol pair-check.test.ts 钉住)
 - assertVisible:
     id: pair-check-code
-- assertVisible: ".*核对码 FHWL.*|.*Check code FHWL.*"
+- assertVisible: ".*核对码 USZ-YAY.*|.*Check code USZ-YAY.*"
 - assertVisible:
     id: pair-connect
 - assertNotVisible: ".*正在连接.*|.*Connecting….*"

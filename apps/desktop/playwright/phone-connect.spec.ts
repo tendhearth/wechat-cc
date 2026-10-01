@@ -13,8 +13,8 @@ async function shot(page: import('@playwright/test').Page, name: string) {
 }
 
 const URL1 = `https://relay.tendhearth.com/pset/#id=r${'a'.repeat(26)}&t=t${'0'.repeat(32)}&p=%2Fset`
-// FHWL = pairCheckCode('r' + 26×a)(packages/protocol pair-check.test.ts 钉住的向量);手机确认卡上显示同一个
-const ready = () => ({ ok: true, state: 'ready', url: URL1, expires_at: Date.now() + 600_000, check_code: 'FHWL' })
+// USZ-YAY = pairCheckCode('r' + 26×a)(packages/protocol pair-check.test.ts 钉住的向量);手机确认卡上显示同一个
+const ready = () => ({ ok: true, state: 'ready', url: URL1, expires_at: Date.now() + 600_000, check_code: 'USZ-YAY' })
 const dev = (id: string, label?: string) => ({ id, created_at: new Date().toISOString(), last_seen_at: new Date().toISOString(), ...(label ? { label } : {}) })
 
 async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl: string) {
@@ -35,7 +35,7 @@ test('出码 → 手机配上 → 「已连上 Tendhearth · iPhone」;请求带
   await openConnect(page)
   await expect(page.locator('#phone-connect-qr')).toBeVisible()
   await expect(page.locator('#phone-connect-note')).toHaveText('用手机相机扫一下。10 分钟内有效，只能用一次。')
-  await expect(page.locator('#phone-connect-check')).toHaveText('核对码 FHWL')
+  await expect(page.locator('#phone-connect-check')).toHaveText('核对码 USZ-YAY')
   await expect(page.locator('#phone-connect-paired')).toHaveText('已连上 Tendhearth · iPhone', { timeout: 15_000 })
   await expect(page.locator('#phone-connect-close')).toHaveText('完成')
   const calls = await shim.invoke('mock.phone-calls') as { result: { calls: unknown[] } }
@@ -80,7 +80,7 @@ test.describe('引导页最后一步', () => {
     await expect(page.locator('#onboard-phone')).toBeVisible({ timeout: 10_000 })
     await expect(page.locator('#onboard-phone-title')).toHaveText('连接手机')
     await expect(page.locator('#onboard-phone-qr > *').first()).toBeVisible()
-    await expect(page.locator('#onboard-phone-check')).toHaveText('核对码 FHWL')
+    await expect(page.locator('#onboard-phone-check')).toHaveText('核对码 USZ-YAY')
     await expect(page.locator('#onboard-phone-check')).toBeVisible()
     await expect(page.locator('#onboard-phone-later')).toHaveText('之后再连也可以：在设置里点「连接手机」。')
     await expect(page.locator('#enter-dashboard')).toBeEnabled()

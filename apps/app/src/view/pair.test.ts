@@ -99,6 +99,6 @@ describe('confirmCheckCode(确认卡核对码;与桌面同一个派生)', () => 
   it('由链接里的 daemon id 算:与桌面 / daemon 用的 protocol pairCheckCode 一致', () => {
     const r = linkIntake([`https://relay.tendhearth.com/pset/#id=r${'a'.repeat(26)}&t=t${'0'.repeat(32)}&p=%2Fset`])
     if (!r.ok) throw new Error('expected ok')
-    expect(confirmCheckCode(r.link)).toBe('FHWL')
+    expect(confirmCheckCode(r.link)).toBe('USZ-YAY')
   })
 })

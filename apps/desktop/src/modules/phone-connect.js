@@ -30,11 +30,11 @@ export function linkView(r) {
 /**
  * 核对码(Task 9 fix round 1):daemon 用 @wechat-cc/protocol 的 pairCheckCode(daemon id) 算好随码一起给;
  * 手机确认卡上显示同一个。官方中继是大家共用的,只看主机名分不清「我的电脑」和「别人的码」。
- * 只认 4 个不易看错的字符(与 protocol PAIR_CHECK_RE 相同);缺了或畸形 ⇒ null,不显示。
+ * 只认 XXX-XXX 形式的 6 个不易看错的字符(与 protocol PAIR_CHECK_RE 相同);缺了或畸形 ⇒ null,不显示。
  * @param {unknown} v @returns {string | null}
  */
 export function checkCodeOf(v) {
-  return typeof v === 'string' && /^[2-9A-HJ-NP-Z]{4}$/.test(v) ? v : null
+  return typeof v === 'string' && /^[2-9A-HJ-NP-Z]{3}-[2-9A-HJ-NP-Z]{3}$/.test(v) ? v : null
 }
 
 /** 出码前快照里没有的 id 才算新;多台取最新创建的。 @param {Set<string>} before @param {Device[]} now @returns {Device | null} */
