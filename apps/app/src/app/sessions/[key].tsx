@@ -30,25 +30,33 @@ export default function SessionReader() {
   const [state, setState] = useState<'loading' | 'ok' | 'missing' | 'slow'>('loading')
   const [moreFailed, setMoreFailed] = useState(false)
   const [busy, setBusy] = useState(false)
-  const lock = useRef(false)
+  const req = useRef(0) // 每次换 key / 发新请求 +1;返回时对不上就丢弃,换 key 后新的加载不会被旧的锁挡掉
+  const busyRef = useRef(false)
 
   const load = async (cursor?: string) => {
-    if (lock.current) return
-    lock.current = true
-    setBusy(true)
+    if (cursor && busyRef.current) return
+    const my = ++req.current
+    if (cursor) { busyRef.current = true; setBusy(true) }
     try {
       const p = await backend.session(key, cursor)
+      if (my !== req.current) return
       setTitle(p.session.title)
       setMsgs(m => (cursor ? [...m, ...p.messages] : p.messages))
       setNext(p.nextCursor)
       setState('ok'); setMoreFailed(false)
     } catch (e) {
+      if (my !== req.current) return
       const code = typeof e === 'object' && e !== null ? (e as { code?: unknown }).code : undefined
       if (cursor) setMoreFailed(true)
       else setState(code === 'not_found' ? 'missing' : 'slow')
-    } finally { lock.current = false; setBusy(false) }
+    } finally { if (cursor && my === req.current) { busyRef.current = false; setBusy(false) } }
   }
-  useEffect(() => { void load() }, [key]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    busyRef.current = false; setBusy(false)
+    setTitle(''); setMsgs([]); setNext(null); setMoreFailed(false); setState('loading')
+    void load()
+    return () => { req.current++ }
+  }, [key]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>

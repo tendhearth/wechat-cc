@@ -49,3 +49,22 @@ export function connectionsView(s: ConnectionsT, _now: number, lang: Lang): {
     outputs: s.outputs.map(o => ({ matterId: o.matterId, name: o.name, when: shortDate(o.at, lang) })),
   }
 }
+
+/**
+ * 这份连接快照还能不能当「现在」看:没有数据 ⇒ none;有数据但最近一次拉取失败、或手机和电脑断着 ⇒ stale(只当「上次所知」,
+ * 不显示任何绿点);否则 live。绝不拿缓存的 ready 冒充现状。
+ */
+export function connectionsTrust(q: { data?: unknown; error?: string }, connState: string): 'none' | 'stale' | 'live' {
+  if (q.data === undefined) return 'none'
+  return q.error !== undefined || connState !== 'online' ? 'stale' : 'live'
+}
+
+/** stale 时把所有圆点压成 unknown(灰),文字照旧当作「上次所知」。 */
+export function muteDots<V extends { headline: { dot: Dot }; sources: Array<{ dot: Dot }>; computers: Array<{ dot: Dot }> }>(v: V): V {
+  return {
+    ...v,
+    headline: { ...v.headline, dot: 'unknown' as Dot },
+    sources: v.sources.map(x => ({ ...x, dot: 'unknown' as Dot })),
+    computers: v.computers.map(x => ({ ...x, dot: 'unknown' as Dot })),
+  }
+}

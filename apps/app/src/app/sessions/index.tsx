@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import type { NativeSessionRowT } from '../../backend/types'
@@ -12,7 +12,7 @@ import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { useTheme } from '../../ui/useTheme'
-import { sessionRows } from '../../view/sessions'
+import { mergeSessionPages, sessionRows } from '../../view/sessions'
 
 type Provider = 'claude' | 'codex'
 
@@ -24,23 +24,29 @@ export default function Sessions() {
   const conn = useConnection()
   const { backend } = useBackendCtx()
   const [provider, setProvider] = useState<Provider>('claude')
-  const [extra, setExtra] = useState<{ provider: Provider; items: NativeSessionRowT[]; next: string | null | undefined; failed: boolean }>({ provider: 'claude', items: [], next: undefined, failed: false })
-  const [loadingMore, setLoadingMore] = useState(false)
+  // 追加页只对「第一页的那一次加载」有效:第一页重新拉过(syncedAt 变了)或换了标签 ⇒ 追加页作废,避免重复 / 漏行。
+  const [extra, setExtra] = useState<{ provider: Provider; base: number | undefined; items: NativeSessionRowT[]; next: string | null; failed: boolean } | null>(null)
+  const [loadingFor, setLoadingFor] = useState<Provider | null>(null)
   const q = useQuery(`sessions:${provider}`, () => backend.sessions(provider), { refreshOnMount: true })
-  const more = extra.provider === provider ? extra : { provider, items: [] as NativeSessionRowT[], next: undefined, failed: false }
-  const items = [...(q.data?.items ?? []), ...more.items]
-  const next = more.next !== undefined ? more.next : q.data?.nextCursor ?? null
+  const cur = useRef({ provider, base: q.syncedAt })
+  cur.current = { provider, base: q.syncedAt }
+  const more = extra && extra.provider === provider && extra.base === q.syncedAt ? extra : null
+  const items = mergeSessionPages(q.data?.items ?? [], more?.items ?? [])
+  const next = more ? more.next : q.data?.nextCursor ?? null
   const rows = sessionRows(items, Date.now(), lang)
+  const loadingMore = loadingFor === provider
 
   const loadMore = async () => {
     if (!next || loadingMore) return
-    setLoadingMore(true)
+    const reqProvider = provider, reqBase = q.syncedAt, prior = more?.items ?? []
+    setLoadingFor(reqProvider)
     try {
-      const r = await backend.sessions(provider, next)
-      setExtra({ provider, items: [...more.items, ...r.items], next: r.nextCursor, failed: false })
+      const r = await backend.sessions(reqProvider, next)
+      if (cur.current.provider !== reqProvider || cur.current.base !== reqBase) return // 期间换了标签 / 第一页刷新过 ⇒ 丢弃
+      setExtra({ provider: reqProvider, base: reqBase, items: [...prior, ...r.items], next: r.nextCursor, failed: false })
     } catch {
-      setExtra({ ...more, provider, failed: true })
-    } finally { setLoadingMore(false) }
+      if (cur.current.provider === reqProvider && cur.current.base === reqBase) setExtra({ provider: reqProvider, base: reqBase, items: prior, next, failed: true })
+    } finally { setLoadingFor(p => (p === reqProvider ? null : p)) }
   }
 
   const tab = (p: Provider) => {
@@ -97,7 +103,7 @@ export default function Sessions() {
         )}
         {q.data && next ? (
           <View style={{ paddingTop: space.l, gap: space.s }}>
-            {more.failed ? <Text testID="sessions-slow" style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'sessions.slow')}</Text> : null}
+            {more?.failed ? <Text testID="sessions-slow" style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'sessions.slow')}</Text> : null}
             <Button kind="secondary" testID="sessions-more" label={t(lang, 'sessions.more')} busy={loadingMore} onPress={() => void loadMore()} />
           </View>
         ) : null}

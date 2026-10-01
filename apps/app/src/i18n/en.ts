@@ -229,6 +229,8 @@ const en = {
   'sessions.readOnly': 'Read only. To keep going, open it on your computer.',
   'sessions.empty': 'No sessions yet',
   'sessions.loading': 'Loading…',
+  'links.staleAt': "Can’t reach your computer now. Last known at {time}.",
+  'settings.connections': "CC’s connections",
   'chat.title': 'Talk to CC',
   'chat.pinnedTitle': 'You & CC',
   'chat.placeholder': 'Say something…',

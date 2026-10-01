@@ -17,7 +17,7 @@ import { SayBar } from '../../ui/SayBar'
 import { space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { useTheme } from '../../ui/useTheme'
-import { connectionsView } from '../../view/connections'
+import { connectionsTrust, connectionsView } from '../../view/connections'
 import { nowView } from '../../view/now'
 
 // 决定卡标题:只有第一张卡会主动请求说明(可能触发电脑上的便宜模型),其余只读已缓存的;优先用后端给的说明标题(按任务缓存),没有就退回原始概括。
@@ -49,7 +49,8 @@ export default function Now() {
   const v = nowView({ approvals, agents, matters, hour: date.getHours() })
   const links = useQuery('connections', () => backend.connections())
   // 读不到 ⇒ 说「不知道」,不报错、不画绿
-  const lv = links.data ? connectionsView(links.data, Date.now(), lang).headline : null
+  const trust = connectionsTrust(links, conn.state)
+  const lv = links.data && trust === 'live' ? connectionsView(links.data, Date.now(), lang).headline : null
   const titleOf = (id: string) => matters.find((m) => m.id === id)?.title ?? ''
   const working = agents.tasks.find((x) => x.phase === 'working')
   const summary =

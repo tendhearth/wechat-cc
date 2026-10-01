@@ -13,7 +13,8 @@ import { serifFamily } from '../ui/fonts'
 import { space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { useTheme } from '../ui/useTheme'
-import { connectionsView } from '../view/connections'
+import { formatSynced } from '../view/connection'
+import { connectionsTrust, connectionsView, muteDots } from '../view/connections'
 
 // CC 的连接:来源 / 家里的电脑 / 最近在做 / 成果。圆点旁一定有文字;读不到 ⇒ 说「不知道」,不画绿。
 export default function Connections() {
@@ -23,7 +24,9 @@ export default function Connections() {
   const conn = useConnection()
   const { backend } = useBackendCtx()
   const q = useQuery('connections', () => backend.connections(), { refreshOnMount: true })
-  const v = q.data ? connectionsView(q.data, Date.now(), lang) : null
+  const trust = connectionsTrust(q, conn.state)
+  const base = q.data ? connectionsView(q.data, Date.now(), lang) : null
+  const v = base && trust === 'stale' ? muteDots(base) : base
   const heading = (k: Parameters<typeof t>[1]) => <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 18, fontFamily: serifFamily }}>{t(lang, k)}</Text>
   const row = (testID: string, key: string, dot: Parameters<typeof Dot>[0]['kind'] | null, name: string, label: string, onPress?: () => void) => (
     <Pressable
@@ -55,6 +58,11 @@ export default function Connections() {
           </View>
         ) : (
           <>
+            {trust === 'stale' ? (
+              <Text testID="connections-stale" accessibilityLiveRegion="polite" style={{ color: c.muted, fontSize: 14, lineHeight: 20 }}>
+                {q.syncedAt === undefined ? t(lang, 'links.unknown') : t(lang, 'links.staleAt', { time: formatSynced(q.syncedAt, Date.now(), lang) })}
+              </Text>
+            ) : null}
             {heading('links.sources')}
             <Card style={{ gap: space.xs }}>
               {v.sources.map(s => row(`connections-source-${s.id}`, s.id, s.dot, s.name, s.label))}

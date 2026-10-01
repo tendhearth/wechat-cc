@@ -231,6 +231,8 @@ const zh: Record<keyof typeof en, string> = {
   'sessions.readOnly': '只读;要接着做,请在电脑上打开',
   'sessions.empty': '还没有会话',
   'sessions.loading': '读取中…',
+  'links.staleAt': "现在连不上电脑,下面是 {time} 时的情况",
+  'settings.connections': "CC 的连接",
   'chat.title': '跟 CC 说',
   'chat.pinnedTitle': '和 CC 的对话',
   'chat.placeholder': '说点什么…',

@@ -40,3 +40,17 @@ appId: com.tendhearth.app
     visible:
       id: session-message-0
     timeout: 5000
+# 设置里也能直接进「CC 的连接」(会话读页 → 列表 → 设置)
+- tapOn:
+    id: topbar-back
+- tapOn:
+    id: topbar-back
+- scrollUntilVisible:
+    element:
+      id: settings-connections
+- tapOn:
+    id: settings-connections
+- extendedWaitUntil:
+    visible:
+      id: connections-computer-home
+    timeout: 5000
