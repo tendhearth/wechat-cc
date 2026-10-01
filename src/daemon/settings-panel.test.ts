@@ -673,7 +673,7 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
     const list = await (await fetch(`${base}/m/api/matters?status=open,replied&t=${t}`)).json() as { ok: boolean; matters: unknown[] }
     expect(list).toEqual({ ok: true, matters: [MATTER] })
-    expect(matters.list).toHaveBeenCalledWith({ statuses: ['open', 'replied'], limit: 50 })
+    expect(matters.list).toHaveBeenCalledWith({ statuses: ['open', 'replied'], limit: 200 })
     expect(matters.seenOnPhone).toHaveBeenCalledWith('deadbeef')
     const detail = await (await fetch(`${base}/m/api/matter?id=deadbeef&t=${t}`)).json() as { ok: boolean; matter: { id: string }; events: unknown[] }
     expect(detail.ok).toBe(true); expect(detail.matter.id).toBe('deadbeef'); expect(detail.events).toHaveLength(1)
@@ -683,6 +683,30 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     expect((await fetch(`${base}/m/api/matter?id=nope&t=${t}`)).status).toBe(400)
     expect((await fetch(`${base}/m/api/matter/say?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: ' ' }) })).status).toBe(400)
     expect((await fetch(`${base}/m/api/matters`)).status).toBe(401)
+  })
+  it('不带 status ⇒ 默认只要 open / replied / done(归档的自检噪声不占前 50)', async () => {
+    panel = make(true)
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    await fetch(`${base}/m/api/matters?t=${t}`)
+    expect(matters.list).toHaveBeenLastCalledWith({ statuses: ['open', 'replied', 'done'], limit: 200 })
+    await fetch(`${base}/m/api/matters?kind=task&t=${t}`)
+    expect(matters.list).toHaveBeenLastCalledWith({ kind: 'task', statuses: ['open', 'replied', 'done'], limit: 200 })
+    await fetch(`${base}/m/api/matters?status=archived&t=${t}`)
+    expect(matters.list).toHaveBeenLastCalledWith({ statuses: ['archived'], limit: 200 })
+  })
+  it('聊天 matter 只留主人的;筛完再截 50(别人的聊天不到手机、也不挤掉任务)', async () => {
+    const chat = (id: string, owner: string) => ({ ...MATTER, id, kind: 'chat', ownerChatId: owner })
+    const guests = Array.from({ length: 60 }, (_, i) => chat(`aa${String(i).padStart(6, '0')}`, 'guest@im.wechat'))
+    const tasks = Array.from({ length: 55 }, (_, i) => ({ ...MATTER, id: `bb${String(i).padStart(6, '0')}` }))
+    const mine = chat('cccccccc', OWNER)
+    matters.list.mockReturnValueOnce([...guests, mine, ...tasks] as never)
+    panel = make(true)
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    const r = await (await fetch(`${base}/m/api/matters?t=${t}`)).json() as { matters: Array<{ id: string; kind: string }> }
+    expect(r.matters).toHaveLength(50)
+    expect(r.matters.some(m => m.id.startsWith('aa'))).toBe(false)
+    expect(r.matters[0]!.id).toBe('cccccccc')
+    expect(r.matters.slice(1).every(m => m.kind === 'task')).toBe(true)
   })
   it('is 503 when the matter registry is not wired, and maps not-found / busy', async () => {
     panel = make(false)

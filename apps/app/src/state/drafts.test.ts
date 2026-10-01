@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { clearDrafts, deleteDraft, requestIdFor } from './drafts'
+import { clearDrafts, deleteDraft, dropReceipt, getDraft, isReplied, listReceipts, markReplied, pairingGen, pairingScopeKey, putReceipt, RECEIPTS_MAX, requestIdFor, setDraft, setPairingScope, subscribeReceipts } from './drafts'
 
 let n = 0
 const mk = () => `id-${++n}`
@@ -19,5 +19,80 @@ describe('requestIdFor', () => {
     expect(requestIdFor('m1', 'a', mk)).toBe('id-2')
     deleteDraft('new')
     expect(requestIdFor('new', 'a', mk)).toBe('id-3')
+  })
+  it('已知有回复的 requestId 永不再用:同样正文再发 ⇒ 换新 id;清草稿时一起忘掉', () => {
+    expect(requestIdFor('chat', '在吗', mk)).toBe('id-1')
+    markReplied('id-1')
+    expect(isReplied('id-1')).toBe(true)
+    expect(requestIdFor('chat', '在吗', mk)).toBe('id-2')
+    clearDrafts()
+    expect(isReplied('id-1')).toBe(false)
+  })
+})
+
+describe('本机回执(终审 I1:离开 /chat 也不丢)', () => {
+  const r = (id: string, at = 1) => ({ requestId: id, text: id, at, localAt: at })
+  it('放进去就在模块里,屏幕卸载不影响;同 id 再放 ⇒ 替换并挪到最后', () => {
+    putReceipt(r('a')); putReceipt(r('b')); putReceipt({ ...r('a'), text: 'a2' })
+    expect(listReceipts().map(x => [x.requestId, x.text])).toEqual([['b', 'b'], ['a', 'a2']])
+  })
+  it('有上限:最旧的先挤掉', () => {
+    for (let i = 0; i < RECEIPTS_MAX + 3; i++) putReceipt(r(`r${i}`))
+    expect(listReceipts()).toHaveLength(RECEIPTS_MAX)
+    expect(listReceipts()[0]!.requestId).toBe('r3')
+  })
+  it('落地 / 回复 / 不管它 ⇒ dropReceipt 清掉;快照引用只在变时换(给 useSyncExternalStore)', () => {
+    putReceipt(r('a'))
+    const snap = listReceipts()
+    expect(listReceipts()).toBe(snap)
+    dropReceipt('zzz')
+    expect(listReceipts()).toBe(snap)
+    dropReceipt('a')
+    expect(listReceipts()).toEqual([])
+  })
+  it('订阅:变了就通知;退订后不再通知;清草稿(解除配对)一起清', () => {
+    let n = 0
+    const off = subscribeReceipts(() => { n++ })
+    putReceipt(r('a')); dropReceipt('a')
+    expect(n).toBe(2)
+    putReceipt(r('b'))
+    clearDrafts()
+    expect(listReceipts()).toEqual([])
+    expect(n).toBe(4)
+    off(); putReceipt(r('c'))
+    expect(n).toBe(4)
+  })
+})
+
+describe('换配对就清(复评:A 电脑的「可能没送到」不能带到 B 去重试)', () => {
+  const rec = (id: string) => ({ requestId: id, text: id, at: 1, localAt: 1 })
+  it('配对身份变了(配上 / 解除 / 换电脑 / 演示↔真连)⇒ 草稿、回执、已回复集合都清;同一身份不清', () => {
+    setPairingScope('live:A')
+    setDraft('chat', '在吗'); putReceipt(rec('a')); markReplied('x')
+    setPairingScope('live:A')
+    expect([getDraft('chat'), listReceipts().length, isReplied('x')]).toEqual(['在吗', 1, true])
+    setPairingScope('live:B')
+    expect([getDraft('chat'), listReceipts().length, isReplied('x')]).toEqual(['', 0, false])
+    putReceipt(rec('b')); setPairingScope('demo')
+    expect(listReceipts()).toEqual([])
+  })
+  it('换配对之前发出、之后才回来的 putReceipt / markReplied ⇒ 不落(按配对代)', () => {
+    setPairingScope('live:A')
+    const gen = pairingGen()
+    setPairingScope('none')
+    putReceipt(rec('late'), gen); markReplied('late', gen)
+    expect(listReceipts()).toEqual([])
+    expect(isReplied('late')).toBe(false)
+    putReceipt(rec('now'), pairingGen()); markReplied('now', pairingGen())
+    expect(listReceipts().map(r => r.requestId)).toEqual(['now'])
+    expect(isReplied('now')).toBe(true)
+  })
+  it('pairingScopeKey:没配对 ⇒ none;不同电脑 / 不同设备令牌 ⇒ 不同', () => {
+    const p = { v: 1 as const, daemonId: 'd1', relayHost: 'h', relayUrl: 'u', deviceToken: 't1', deviceId: 'i1', pairedAt: 1 }
+    expect(pairingScopeKey(null)).toBe('none')
+    expect(pairingScopeKey(p)).toBe(pairingScopeKey({ ...p, pairedAt: 2 }))
+    expect(pairingScopeKey(p)).not.toBe(pairingScopeKey({ ...p, daemonId: 'd2' }))
+    expect(pairingScopeKey(p)).not.toBe(pairingScopeKey({ ...p, deviceId: 'i2' }))
+    expect(pairingScopeKey(p)).not.toContain('t1')   // 不拿令牌当键
   })
 })

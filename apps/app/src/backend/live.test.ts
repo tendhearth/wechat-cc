@@ -380,3 +380,47 @@ describe('推送登记 / 测试通知', () => {
     await expect(b.registerPush('fcm', 'x'.repeat(40))).rejects.toMatchObject({ code: 'unavailable' })
   })
 })
+
+describe('跟 CC 说 / 连接 / 原生会话', () => {
+  const PAGE = { ok: true, matterId: 'c0ffee01', title: '聊天', messages: [], hasMore: false, nextBefore: null, pending: null, failed: null }
+  it('chat:before / limit 拼进查询串;返回过 schema、去掉 ok', async () => {
+    const { b, reqs } = harness({ 'GET /m/api/chat': ok(PAGE) })
+    const page = await b.chat({ before: '2026-09-30T00:00:05.000Z', limit: 10 })
+    expect(page.matterId).toBe('c0ffee01')
+    expect('ok' in page).toBe(false)
+    expect(reqs.at(-1)!.path).toBe('/m/api/chat?before=2026-09-30T00%3A00%3A05.000Z&limit=10')
+    await b.chat({}); expect(reqs.at(-1)!.path).toBe('/m/api/chat')
+  })
+  it('chat:还没有主人对话(404 no_owner_chat)⇒ not_found', async () => {
+    const { b } = harness({ 'GET /m/api/chat': ok({ ok: false, error: 'no_owner_chat' }, 404) })
+    await expect(b.chat({})).rejects.toMatchObject({ code: 'not_found' })
+  })
+  it('chatSay:超长在手机上就拦;正常带 requestId,retry 打开;上一句在等 ⇒ busy', async () => {
+    const { b, reqs } = harness({ 'POST /m/api/chat/say': ok({ ok: true, matterId: 'c0ffee01', job: { requestId: SAY_REQ, text: 'hi', status: 'pending', since: 1 } }, 202) })
+    await expect(b.chatSay('x'.repeat(20_001), SAY_REQ)).rejects.toMatchObject({ code: 'invalid' })
+    expect(reqs).toHaveLength(0)
+    expect((await b.chatSay('hi', SAY_REQ)).status).toBe('pending')
+    expect(reqs.at(-1)).toMatchObject({ body: { requestId: SAY_REQ, text: 'hi' }, retry: true })
+    const busy = harness({ 'POST /m/api/chat/say': ok({ ok: false, error: 'chat_busy' }, 409) })
+    await expect(busy.b.chatSay('hi', SAY_REQ2)).rejects.toMatchObject({ code: 'busy' })
+    const down = harness({ 'POST /m/api/chat/say': ok({ ok: false, error: 'unavailable' }, 503) })
+    await expect(down.b.chatSay('hi', SAY_REQ2)).rejects.toMatchObject({ code: 'unavailable' })
+  })
+  it('connections / sessions / session 走对应路由', async () => {
+    const CONN = { ok: true, generatedAt: 1, sources: [{ id: 'wxvault', kind: 'plugin', name: 'wxvault', state: 'ready', latestAt: null, syncedAt: null }], computers: [], recent: [], outputs: [] }
+    const ROW = { key: 'k', provider: 'codex', title: 't', project: 'p', updatedAt: 1, active: false }
+    const { b, reqs } = harness({
+      'GET /m/api/connections': ok(CONN),
+      'GET /m/api/sessions': ok({ ok: true, items: [ROW], nextCursor: 'n' }),
+      'GET /m/api/session': ({ path }) => path.includes('key=gone') ? ok({ ok: false, error: 'unsupported' }, 404) : ok({ ok: true, session: ROW, messages: [], nextCursor: null, managed: false }),
+    })
+    expect((await b.connections()).sources[0]!.state).toBe('ready')
+    expect(reqs.at(-1)!.path).toBe('/m/api/connections')
+    expect(await b.sessions('codex', 'c 1')).toEqual({ items: [ROW], nextCursor: 'n' })
+    expect(reqs.at(-1)!.path).toBe('/m/api/sessions?provider=codex&cursor=c%201')
+    await b.sessions('claude'); expect(reqs.at(-1)!.path).toBe('/m/api/sessions?provider=claude')
+    expect((await b.session('a/b', 'x y')).session.key).toBe('k')
+    expect(reqs.at(-1)!.path).toBe('/m/api/session?key=a%2Fb&cursor=x%20y')
+    await expect(b.session('gone')).rejects.toMatchObject({ code: 'not_found' })
+  })
+})

@@ -2,7 +2,11 @@ import type { BackendCode } from '../backend/types'
 
 const STALE = new Set(['permission_stale', 'question_stale', 'input_stale'])
 /** daemon 的 409:这件事这一轮还在跑 / 上一条补充还没交付 / 会话正在回话 / 同一个请求 id 撞上不同内容。都是「等这一轮做完再说」。 */
-const BUSY = new Set(['workbench_busy', 'input_delivery_busy', 'reply_sink_busy', 'input_conflict'])
+const BUSY = new Set(['workbench_busy', 'input_delivery_busy', 'reply_sink_busy', 'input_conflict', 'chat_busy'])
+/** 找不到:事项不在 / 还没有主人那条对话(页面当空对话)/ 原生会话读不了。 */
+const NOT_FOUND = new Set(['matter_not_found', 'no_owner_chat', 'unsupported'])
+/** daemon 这一块没接上(503):推送 / 跟 CC 说 / 连接 / 原生会话。 */
+const UNAVAILABLE = new Set(['push_not_wired', 'chat_not_wired', 'connections_not_wired', 'sessions_not_wired'])
 const errOf = (body: unknown): string | null => {
   if (typeof body !== 'object' || body === null) return null
   const e = (body as { error?: unknown }).error
@@ -17,8 +21,9 @@ export function mapPhoneError(status: number, body: unknown): BackendCode | null
   if (!okFalse && status < 400) return null
   if (err && STALE.has(err)) return 'stale'
   if (err && BUSY.has(err)) return 'busy'
-  if (err === 'push_not_wired') return 'unavailable'
-  if (err === 'matter_not_found') return 'not_found'
+  if (err && UNAVAILABLE.has(err)) return 'unavailable'
+  if (status === 503 && err === 'unavailable') return 'unavailable'
+  if (err && NOT_FOUND.has(err)) return 'not_found'
   if (err === 'invalid' || (err !== null && err.startsWith('invalid_'))) return 'invalid'
   return 'unknown'
 }

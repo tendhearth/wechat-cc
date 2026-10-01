@@ -314,6 +314,36 @@ export const PhoneChangesTurn = z.object({
   notes: z.array(z.string()),
 })
 
+// ── 跟 CC 说(spec 2026-10-01):主人对话一页 + 收下即回的说一句 ──────────
+
+/** 对话一页至多这么多条(回包大小,见 plan Global Constraints)。 */
+export const CHAT_PAGE_MAX = 30
+/** 每条正文至多这么多字,超了截断并标 `truncated: true`。 */
+export const CHAT_TEXT_MAX = 4000
+export const ChatMessage = z.object({ id: z.string(), role: z.enum(['me', 'cc']), kind: z.string(), text: z.string(), truncated: z.boolean(), at: z.number(), source: z.enum(['wechat', 'desktop', 'phone']) })
+export const ChatJob = z.object({ requestId: z.string(), text: z.string(), status: z.enum(['pending', 'replied', 'failed']), since: z.number(), error: z.enum(['busy', 'unavailable', 'not_configured']).optional() })
+export const ChatPage = z.object({ matterId: z.string(), title: z.string(), messages: z.array(ChatMessage), hasMore: z.boolean(), nextBefore: z.string().nullable(), pending: ChatJob.nullable(), failed: ChatJob.nullable() })
+
+// ── CC 的连接(spec 2026-10-01):手机拿到的是去掉 detail 的快照 ──────────
+
+export const ConnectionSource = z.object({ id: z.string(), kind: z.enum(['wechat_history', 'knowledge', 'plugin']), name: z.string(), state: z.enum(['ready', 'behind', 'not_loaded', 'unknown']), latestAt: z.number().nullable(), syncedAt: z.number().nullable() })
+export const Connections = z.object({
+  generatedAt: z.number(), sources: z.array(ConnectionSource),
+  // 插件快照还没出来 ⇒ daemon 真的还在启动。可选:老 daemon 不带(手机当不知道是否在启动)。
+  starting: z.boolean().optional(),
+  computers: z.array(z.object({ id: z.string(), label: z.string(), online: z.boolean(), since: z.number().nullable(), version: z.string().nullable() })),
+  recent: z.array(z.object({ matterId: z.string(), title: z.string(), phase: z.string(), at: z.number() })),
+  outputs: z.array(z.object({ matterId: z.string(), name: z.string(), mime: z.string(), at: z.number() })),
+})
+export type ConnectionsT = z.infer<typeof Connections>
+
+// ── 电脑上的原生会话(只读,spec 2026-10-01):key 是 base64url{providerId,nativeId},不给 cwd / nativeId ──
+export const NativeSessionRow = z.object({ key: z.string(), provider: z.enum(['claude', 'codex']), title: z.string(), project: z.string().nullable(), updatedAt: z.number().nullable(), active: z.boolean() })
+export const NativeSessionMessage = z.object({ id: z.string(), role: z.enum(['user', 'assistant']), text: z.string(), truncated: z.boolean() })
+export const NativeSessionPage = z.object({ session: NativeSessionRow, messages: z.array(NativeSessionMessage), nextCursor: z.string().nullable(), managed: z.boolean() })
+export type NativeSessionRowT = z.infer<typeof NativeSessionRow>
+export type NativeSessionPageT = z.infer<typeof NativeSessionPage>
+
 // ── 汇总:`"METHOD /path"` → schema(反向由 daemon 守卫测试核对）───────────
 
 export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
@@ -338,6 +368,11 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'GET /m/api/matter/changes': z.union([z.object({ ok: z.literal(true), turn: PhoneChangesTurn.nullable() }), PhoneErrorResponse]),
   'GET /m/api/matter': z.union([z.object({ ok: z.literal(true) }).extend(MatterDetail.shape), PhoneErrorResponse]),
   'POST /m/api/matter/say': z.union([z.object({ ok: z.literal(true), result: MatterSayResult }), PhoneErrorResponse]),
+  'GET /m/api/chat': z.union([z.object({ ok: z.literal(true) }).extend(ChatPage.shape), PhoneErrorResponse]),
+  'POST /m/api/chat/say': z.union([z.object({ ok: z.literal(true), matterId: z.string(), job: ChatJob }), PhoneErrorResponse]),
+  'GET /m/api/connections': z.union([z.object({ ok: z.literal(true) }).extend(Connections.shape), PhoneErrorResponse]),
+  'GET /m/api/sessions': z.union([z.object({ ok: z.literal(true), items: z.array(NativeSessionRow), nextCursor: z.string().nullable() }), PhoneErrorResponse]),
+  'GET /m/api/session': z.union([z.object({ ok: z.literal(true) }).extend(NativeSessionPage.shape), PhoneErrorResponse]),
   'POST /m/api/todo': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/sticker/': z.union([z.object({ ok: z.literal(true), mime: z.string(), data: z.string() }), PhonePlainError]),
   'POST /m/api/attachment/chunk': z.union([z.object({ ok: z.literal(true) }).extend(UploadState.shape), PhoneErrorResponse]),

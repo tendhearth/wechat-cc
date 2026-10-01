@@ -16,7 +16,8 @@ import { makeProtocolClient, type ProtocolSocket } from '@wechat-cc/protocol'
 import { openDb, type Db } from '../lib/db'
 import { removeTempDir } from '../lib/test-temp'
 import { createProviderRegistry } from '../core/provider-registry'
-import { makeMatterStore } from '../core/matters/store'
+import { makeMatterStore, type MatterStore } from '../core/matters/store'
+import { makeMessagesStore, type MessagesStore } from '../lib/messages-store'
 import { makeMattersService } from '../core/matters/service'
 import { makeWorkbenchStore } from '../core/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from '../core/workbench/service'
@@ -25,6 +26,9 @@ import { makeSettingsPanel, SETTINGS_LINK_TTL_MS, type SettingsPanel } from './s
 import { makeTunnelHub, type TunnelHub } from '../../relay/tunnel'
 import { makeTunnelClient, type TunnelClient, type TunnelWS } from './tunnel-client'
 import { makePhoneEventsWiring } from './phone-topic-sources'
+import { makePhoneOwner } from './mobile-chat'
+import { makePhoneChat } from './phone-chat'
+import { buildConnections } from './connections'
 import { makeLiveBackend } from '../../apps/app/src/backend/live'
 import type { Backend, ConnState } from '../../apps/app/src/backend/types'
 import { parsePairLink, type ParsedLink } from '../../apps/app/src/net/link'
@@ -34,6 +38,10 @@ import { makeCredentialStore, type CredentialStore } from '../../apps/app/src/ne
 const DAEMON = 't' + 'a'.repeat(36)   // 老中继 id 的形状,好让 parsePairLink 认;内存中继只拿它当键
 
 let root: string, managedRoot: string, db: Db
+let matters: MatterStore, messages: MessagesStore
+/** 跟 CC 说:假 converse 收到的每句正文;releaseConverse(reply) 放行最早那句,并像 persistAppTurn 那样把一问一答写进 messages。 */
+let conversed: string[]
+let converseGates: Array<{ text: string; go: (reply: string) => void }>
 let workbench: WorkbenchService, panel: SettingsPanel, hub: TunnelHub, tunnel: TunnelClient
 let wiring: ReturnType<typeof makePhoneEventsWiring>
 let deviceToken: string
@@ -55,7 +63,9 @@ beforeEach(async () => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'cc-app-live-')))
   managedRoot = realpathSync(mkdtempSync(join(tmpdir(), 'cc-app-live-managed-')))
   db = openDb({ path: join(root, 'state.db') })
-  const matters = makeMatterStore(db), store = makeWorkbenchStore(db)
+  matters = makeMatterStore(db); messages = makeMessagesStore(db)
+  const store = makeWorkbenchStore(db)
+  conversed = []; converseGates = []
   gates.length = 0; handled = []; holds = new Map(); logs = []; skewMs = 0; phoneOut = 0
   const registry = createProviderRegistry()
   // 假执行者:init ⇒(路径以 ask 结尾先要一次权限)⇒ 等闸门 ⇒ 一段文字 ⇒ 收工。与 phone-e2e.test.ts 相同。
@@ -76,6 +86,27 @@ beforeEach(async () => {
   } }, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   workbench = makeWorkbenchService({ store, registry, stateDir: root, managedWorkspaceRoot: managedRoot, ownerChatId: () => 'owner', defaultProvider: 'claude', matters, retainedIdleCloseMs: 0, handoffGraceMs: 0 })
   const service = makeMattersService({ store: matters, workbench })
+  // 跟 CC 说:真 makePhoneChat + 真 messages store;converse 是可放行的闸门(生产里是 companionConverse)。
+  const phoneOwner = makePhoneOwner({ ownerChatId: () => 'owner', matters })
+  let turn = 0
+  const phoneChat = makePhoneChat({
+    converse: text => {
+      conversed.push(text)
+      return new Promise<{ reply: string }>((resolve, reject) => {
+        converseGates.push({ text, go: reply => {
+          if (!reply) { reject(new Error('released_by_teardown')); return }
+          const t0 = Date.now() + turn++ * 2
+          void (async () => {
+            await messages.append({ id: `app:phone:${t0}:in`, chatId: 'owner', ts: new Date(t0).toISOString(), direction: 'in', kind: 'text', text, source: 'phone' })
+            await messages.append({ id: `app:phone:${t0}:out`, chatId: 'owner', ts: new Date(t0 + 1).toISOString(), direction: 'out', kind: 'text', text: reply, source: 'phone' })
+            resolve({ reply })
+          })().catch(reject)
+        } })
+      })
+    },
+    ownerMatterId: () => phoneOwner.ensure(),
+    onSettled: () => { wiring?.events.poke() },
+  })
   panel = makeSettingsPanel({
     stateDir: root, now: () => Date.now() + skewMs, ownerChatId: () => 'owner', chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {},
     // 设备列表只在接了 remote 时返回(settings-panel.ts state())。
@@ -83,12 +114,26 @@ beforeEach(async () => {
     insight: { forMatter: async (_id, lang) => ({ explanations: {}, progress: { summary: `summary-${lang}`, steps: [], source: 'raw' as const } }) },
     changes: () => [],
     matters: { ...service, say: (id, text, input) => service.say(id, text, 'phone', input), seenOnPhone: id => { matters.bind(id, 'phone', 'pwa') } },
+    chat: { owner: () => phoneOwner.peek(), history: (chatId, o) => messages.listRange(chatId, o), chat: phoneChat },
+    // 连接:真 buildConnections(插件快照还没出来 ⇒ unknown;知识库没开 ⇒ 不出现)+ 真工作台;detail 只在 admin 视图里有,手机路由去掉。
+    connections: () => buildConnections({
+      plugins: () => null, wechatSyncedAt: () => null,
+      knowledge: () => ({ enabled: false, built: false, latestAt: null, syncedAt: null }),
+      computer: () => ({ label: 'e2e-mac', since: 1, version: null }),
+      workbench, detailLimit: 3,
+    }),
   })
   const link = panel.issueToken()
   const paired = await (await panel.handleRequest(new Request(`http://127.0.0.1/set/api/pair?t=${link}`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }))).json() as { device_token: string }
   deviceToken = paired.device_token
 
-  wiring = makePhoneEventsWiring({ workbench, matters, home: panel.home, changes: workbench.changes, pollMs: 40 })
+  wiring = makePhoneEventsWiring({
+    workbench, matters, home: panel.home, changes: workbench.changes, pollMs: 40,
+    chat: {
+      latestAt: async chatId => { const ts = await messages.latestTs(chatId); return ts ? Date.parse(ts) : null },
+      pendingMatter: () => phoneChat.pendingMatter(),
+    },
+  })
   hub = makeTunnelHub()
   let incoming: ((ev: { data?: unknown }) => void) | undefined
   const daemonSocket: TunnelWS = {
@@ -124,6 +169,7 @@ afterEach(async () => {
   tunnel?.stop()
   wiring?.dispose()
   for (const g of gates) g.finish()
+  for (const g of converseGates.splice(0)) g.go('')
   await workbench?.shutdown()
   db?.close()
   removeTempDir(root); removeTempDir(managedRoot)
@@ -170,6 +216,11 @@ function hold(key: string): () => void {
   const wait = new Promise<void>(r => { go = r })
   holds.set(key, { wait, go })
   return () => { holds.delete(key); go() }
+}
+/** 放行最早那句还在等的 converse(先等它到:say 收下即回,converse 在后台起)。 */
+async function releaseConverse(reply: string): Promise<void> {
+  await expect.poll(() => converseGates.length, P).toBeGreaterThan(0)
+  converseGates.shift()!.go(reply)
 }
 /** 等出生 / 握手 / 事件的 poll 一律给足 5 s(三平台 runner 会饿)。 */
 const P = { timeout: 5000 }
@@ -374,5 +425,54 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
     const b = live()
     await expect(b.registerPush('apns_sandbox', 'a1'.repeat(32))).rejects.toMatchObject({ code: 'unavailable' })
     await expect.poll(() => b.connection().state, P).toBe('online')
+  })
+
+  it('跟 CC 说:收下即回 pending → 主题唤醒 → 拉到回复;同一 requestId 重发不说两遍', async () => {
+    matters.ensureChat('owner')                       // 主人在微信里说过话:对话已经在了
+    const b = live()
+    await expect.poll(() => b.connection().state, P).toBe('online')
+    const first = await b.chat({})
+    expect(first).toMatchObject({ messages: [], pending: null, failed: null, hasMore: false })
+    const versions: Array<{ phase?: string }> = []
+    b.subscribe<{ phase?: string }>(`matter/${first.matterId}`, d => versions.push(d))
+    await expect.poll(() => versions.length, P).toBeGreaterThan(0)
+    const rid = randomUUID()
+    const job = await b.chatSay('你好', rid)
+    expect(job).toMatchObject({ requestId: rid, status: 'pending' })
+    expect((await b.chatSay('你好', rid)).status).toBe('pending')   // 同一 requestId:同一张回执
+    await expect(b.chatSay('另一句', randomUUID())).rejects.toMatchObject({ code: 'busy' })
+    await expect.poll(() => conversed.length, P).toBe(1)
+    expect(conversed).toEqual(['你好'])
+    expect((await b.chat({})).pending?.requestId).toBe(rid)
+    await expect.poll(() => versions.at(-1)?.phase, P).toBe('working')
+    await releaseConverse('在呢')
+    await expect.poll(async () => (await b.chat({})).messages.at(-1)?.text, P).toBe('在呢')
+    const page = await b.chat({})
+    expect(page.pending).toBeNull()
+    expect(page.messages.map(m => [m.role, m.text, m.source])).toEqual([['me', '你好', 'phone'], ['cc', '在呢', 'phone']])
+    await expect.poll(() => versions.at(-1)?.phase, P).not.toBe('working')
+    expect(versions.length).toBeGreaterThan(1)
+    expect(conversed).toHaveLength(1)
+  })
+
+  it('还没有主人对话 ⇒ chat() not_found(页面当空对话);照样能说,第一句建出对话', async () => {
+    const b = live()
+    await expect(b.chat({})).rejects.toMatchObject({ code: 'not_found' })
+    expect((await b.chatSay('第一句', randomUUID())).status).toBe('pending')
+    await releaseConverse('你好呀')
+    await expect.poll(async () => (await b.chat({}).catch(() => null))?.messages.at(-1)?.text, P).toBe('你好呀')
+    expect((await b.chat({})).matterId).toBe(matters.findChat('owner')?.id)
+  })
+
+  it('连接:真快照过 schema(插件快照没出来 ⇒ 不知道,不撒谎);原生会话没接上 ⇒ unavailable(不是 unknown)', async () => {
+    const b = live()
+    const task = createTask('linked')
+    const c = await b.connections()
+    expect(c.sources).toEqual([{ id: 'wechat_history', kind: 'wechat_history', name: 'wxvault', state: 'unknown', latestAt: null, syncedAt: null }])
+    expect(c.computers).toEqual([{ id: 'home', online: true, label: 'e2e-mac', since: 1, version: null }])
+    expect(c.recent.map(r => r.matterId)).toEqual([task.id])
+    await expect(b.sessions('claude')).rejects.toMatchObject({ code: 'unavailable' })
+    await expect(b.session('a2V5')).rejects.toMatchObject({ code: 'unavailable' })
+    await release(task)
   })
 })

@@ -1,4 +1,5 @@
 import { mattersRoutes } from './routes-matters'
+import { connectionsRoutes } from './routes-connections'
 /**
  * Route table for internal-api. Returns the full Record<"METHOD /path", handler>
  * given a deps closure + a `getDelegate` accessor (for late-binding via
@@ -134,6 +135,7 @@ const onlineStickerCursor = new Map<string, number>()
   return {
     ...workbenchRoutes(deps),
     ...mattersRoutes(deps),
+    ...connectionsRoutes(deps),
     'GET /v1/health': (_q, _body, caller) => ({
       status: 200,
       body: {

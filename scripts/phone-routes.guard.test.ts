@@ -2,7 +2,7 @@
  * 手机面板路由的**接缝守卫**(梳理第 6 步,2026-09-29)。
  *
  * 面板的令牌带 routeAllow(`src/daemon/phone-routes.ts` 的 PHONE_ROUTES);路由本身写在
- * `settings-panel.ts` 的 routeRequest 与 `mobile-workbench.ts` 里。两边各写各的,漏登记的
+ * `settings-panel.ts` 的 routeRequest 与 `mobile-workbench.ts` / `mobile-chat.ts` 里。两边各写各的,漏登记的
  * 症状是「新加的手机功能一律 403 route_not_allowed」。这里从源码抓 `url.pathname === '…'`
  * 与 `startsWith('…')` 字面量,和集合的路径双向比对。
  */
@@ -33,9 +33,9 @@ const TOKENLESS = new Set(['/m/icon.png', '/m/manifest.json', '/m/sw.js'])
 
 function sourcePaths(): Set<string> {
   const panel = body(read('src', 'daemon', 'settings-panel.ts'), 'async function routeRequest(')
-  const mobile = read('src', 'daemon', 'mobile-workbench.ts')
+  const extra = ['mobile-workbench.ts', 'mobile-chat.ts', 'mobile-reads.ts'].map(f => read('src', 'daemon', f))
   const out = new Set<string>()
-  for (const src of [panel, mobile]) {
+  for (const src of [panel, ...extra]) {
     for (const m of src.matchAll(/pathname\s*===\s*'(\/[^']*)'/g)) if (!TOKENLESS.has(m[1]!)) out.add(m[1]!)
     for (const m of src.matchAll(/pathname\.startsWith\(\s*'(\/[^']*)'\s*\)/g)) out.add(m[1]!)
   }

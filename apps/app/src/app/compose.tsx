@@ -81,17 +81,17 @@ export default function Compose() {
       />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.xl, gap: space.l }}>
-          <Text style={{ color: c.muted, fontSize: 12, letterSpacing: 1 }}>{matter ? t(lang, 'compose.continueHint') : t(lang, 'compose.eyebrow')}</Text>
+          <Text style={{ color: c.muted, fontSize: 12, letterSpacing: 1 }}>{matter ? t(lang, 'compose.continueHint') : t(lang, 'compose.handoffEyebrow')}</Text>
           {matter ? null : (
             <>
-              <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 30, lineHeight: 38, fontFamily: serifFamily }}>{t(lang, 'compose.title')}</Text>
-              <Text style={{ color: c.muted, fontSize: 15, lineHeight: 22 }}>{t(lang, 'compose.hint')}</Text>
+              <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 30, lineHeight: 38, fontFamily: serifFamily }}>{t(lang, 'compose.handoffTitle')}</Text>
+              <Text style={{ color: c.muted, fontSize: 15, lineHeight: 22 }}>{t(lang, 'compose.handoffHint')}</Text>
             </>
           )}
           <Card>
             <TextInput
               testID="compose-input"
-              accessibilityLabel={matter ? t(lang, 'compose.continueHint') : t(lang, 'compose.title')}
+              accessibilityLabel={matter ? t(lang, 'compose.continueHint') : t(lang, 'compose.handoffTitle')}
               value={text}
               onChangeText={setText}
               multiline

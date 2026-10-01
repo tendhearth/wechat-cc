@@ -220,6 +220,20 @@ describe('runSourceAdapter', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
+  it('no stamp when no database was read (empty/missing decryptedDir is not a sync)', () => {
+    runSourceAdapter({ decryptedDir, store })
+    runSourceAdapter({ decryptedDir: join(dir, 'nope'), store })
+    expect(store.lastSyncAtMs()).toBeNull()
+  })
+
+  it('stamps when a db was read successfully, even if it yielded nothing new', () => {
+    buildFixtureDb(decryptedDir)
+    runSourceAdapter({ decryptedDir, store })
+    store.markSynced(1)
+    expect(runSourceAdapter({ decryptedDir, store }).ingested).toBe(0)
+    expect(store.lastSyncAtMs()).toBeGreaterThan(1)
+  })
+
   it('normalizes plain text, zstd (content-size-less frame), and prefix-stripped rows', () => {
     const { table } = buildFixtureDb(decryptedDir)
 

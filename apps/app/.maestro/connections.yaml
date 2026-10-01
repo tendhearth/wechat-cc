@@ -1,0 +1,56 @@
+# 此刻 → CC 的连接(红 / 琥珀都有文字)→ 返回 → 设置 → 电脑上的会话 → 读一条
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: now-connections
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: now-connections
+    centerElement: true
+- tapOn:
+    id: now-connections
+- extendedWaitUntil:
+    visible:
+      id: connections-source-wechat_history
+    timeout: 5000
+- assertVisible: ".*(没加载|Not loaded).*"
+- assertVisible:
+    id: connections-computer-home
+- tapOn:
+    id: topbar-back
+- tapOn:
+    id: topbar-settings
+- scrollUntilVisible:
+    element:
+      id: settings-sessions
+- tapOn:
+    id: settings-sessions
+- extendedWaitUntil:
+    visible:
+      id: sessions-row-demo-claude-1
+    timeout: 5000
+- tapOn:
+    id: sessions-row-demo-claude-1
+- extendedWaitUntil:
+    visible:
+      id: session-message-0
+    timeout: 5000
+# 设置里也能直接进「CC 的连接」(会话读页 → 列表 → 设置)
+- tapOn:
+    id: topbar-back
+- tapOn:
+    id: topbar-back
+- scrollUntilVisible:
+    element:
+      id: settings-connections
+- tapOn:
+    id: settings-connections
+- extendedWaitUntil:
+    visible:
+      id: connections-computer-home
+    timeout: 5000

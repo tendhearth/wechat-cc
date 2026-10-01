@@ -20,6 +20,7 @@ import {
   BackendError,
   type ApprovalExplanationT, type Backend, type Connection, type DeviceRowT, type EntryOptionsT,
   type MatterDetailT, type MatterT, type PhoneChangesTurnT, type ProgressSummaryT, type Unsubscribe,
+  type ChatPageT, type ChatJobT, type ConnectionsT, type NativeSessionRowT, type NativeSessionPageT,
 } from './types'
 
 type Topic = Parameters<Backend['subscribe']>[0]
@@ -211,6 +212,26 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     },
     async changes(id) {
       return (await call<{ turn: PhoneChangesTurnT | null }>('GET /m/api/matter/changes', `/m/api/matter/changes?${idq(id)}`)).turn
+    },
+    async chat(p) {
+      const q = [p.before ? `before=${encodeURIComponent(p.before)}` : '', p.limit ? `limit=${p.limit}` : ''].filter(Boolean).join('&')
+      return strip(await call<{ ok: true } & ChatPageT>('GET /m/api/chat', `/m/api/chat${q ? '?' + q : ''}`))
+    },
+    async chatSay(text, requestId) {
+      if (text.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
+      return (await call<{ job: ChatJobT }>('POST /m/api/chat/say', '/m/api/chat/say', { body: { requestId, text }, retry: true })).job
+    },
+    async connections() {
+      return strip(await call<{ ok: true } & ConnectionsT>('GET /m/api/connections', '/m/api/connections'))
+    },
+    async sessions(provider, cursor) {
+      const r = await call<{ items: NativeSessionRowT[]; nextCursor: string | null }>(
+        'GET /m/api/sessions', `/m/api/sessions?provider=${provider}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)
+      return { items: r.items, nextCursor: r.nextCursor }
+    },
+    async session(key, cursor) {
+      return strip(await call<{ ok: true } & NativeSessionPageT>(
+        'GET /m/api/session', `/m/api/session?key=${encodeURIComponent(key)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`))
     },
     async decide(p) {
       await call('POST /m/api/matter/permission', '/m/api/matter/permission', { body: { id: p.id, runId: p.runId, requestId: p.requestId, decision: p.decision } })

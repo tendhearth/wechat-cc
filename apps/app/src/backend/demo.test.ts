@@ -1,10 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makeDemoBackend } from './demo'
+import { Connections, NativeSessionPage, ChatPage, ChatJob, MatterTopic, Matter } from '@wechat-cc/protocol'
+import { DEMO_CHAT_REPLY_MS, makeDemoBackend } from './demo'
 
 describe('演示后端', () => {
-  it('初始:一条待批准、一个待回答,三件事', async () => {
+  it('初始:一条待批准、一个待回答,三件事 + 主人那条对话(chat matter)', async () => {
     const b = makeDemoBackend()
-    expect((await b.matters('en')).length).toBe(3)
+    const ms = await b.matters('en')
+    expect(ms.filter(m => m.kind !== 'chat').length).toBe(3)
+    expect(ms.filter(m => m.kind === 'chat').map(m => m.id)).toEqual(['c0ffee01'])
     const d = await b.matter('a1b2c3d4', 'en')
     expect(d.permissions.map(p => p.id)).toEqual(['perm-demo-1'])
     expect((await b.insight('a1b2c3d4', 'zh-Hans')).explanations['perm-demo-1']?.source).toBe('model')
@@ -68,7 +71,7 @@ describe('演示后端', () => {
     try {
       const b = makeDemoBackend()
       const { matterId } = await b.create({ requestId: 'req-1', text: '把周报整理一下' })
-      expect((await b.matters('en')).length).toBe(4)
+      expect((await b.matters('en')).filter(m => m.kind !== 'chat').length).toBe(4)
       expect((await b.matter(matterId, 'en')).task?.phase).toBe('working')
       await vi.advanceTimersByTimeAsync(2000)
       expect((await b.matter(matterId, 'en')).task?.phase).toBe('replied')
@@ -119,7 +122,7 @@ describe('演示后端', () => {
     expect(c.matter.title).toBe('我自己的话')
     expect(c.events[0]?.text).toBe('我自己的话')
     expect(c.events[1]?.text).toBe('Got it, working on it.')
-    expect((await b.matters('en')).length).toBe(4)
+    expect((await b.matters('en')).filter(m => m.kind !== 'chat').length).toBe(4)
   })
   it('未处理的问题按读的语言出题', async () => {
     const b = makeDemoBackend({ lang: 'en' })
@@ -141,7 +144,7 @@ describe('演示后端', () => {
     const a = await b.create({ requestId: 'same', text: 'x' })
     const c = await b.create({ requestId: 'same', text: 'x' })
     expect(c.matterId).toBe(a.matterId)
-    expect((await b.matters('en')).length).toBe(4)
+    expect((await b.matters('en')).filter(m => m.kind !== 'chat').length).toBe(4)
   })
   it('交办带 projectId ⇒ 事项的项目路径来自演示的项目目录', async () => {
     const b = makeDemoBackend()
@@ -165,5 +168,85 @@ describe('演示后端', () => {
     const b = makeDemoBackend()
     await expect(b.registerPush('apns_sandbox', 'a1'.repeat(32))).resolves.toBeUndefined()
     expect(await b.testPush()).toEqual({ ok: false, code: 'demo' })
+  })
+  it('演示聊天:说一句 ⇒ pending;几秒后主题唤醒、历史里多了一问一答;同一 requestId 不重复', async () => {
+    vi.useFakeTimers()
+    try {
+      const b = makeDemoBackend({ lang: 'zh-Hans' })
+      const first = await b.chat({})
+      const before = first.messages.length
+      expect(before).toBe(4)
+      expect(first.messages.map(m => m.source)).toEqual(['wechat', 'wechat', 'desktop', 'phone'])
+      const seen: any[] = []
+      b.subscribe('matter/c0ffee01', d => seen.push(d))
+      expect(seen.at(-1)).toMatchObject({ found: true, kind: 'chat', phase: 'open' })
+      expect((await b.chatSay('你好', 'r1')).status).toBe('pending')
+      expect(seen.at(-1)).toMatchObject({ phase: 'working' })
+      await b.chatSay('你好', 'r1')
+      await expect(b.chatSay('再说一句', 'r2')).rejects.toMatchObject({ code: 'busy' })
+      expect((await b.chat({})).pending?.requestId).toBe('r1')
+      // 「在想…」要留得够久,模拟器上的 UI 测试(一次点击要 2 秒多)才看得到
+      expect(DEMO_CHAT_REPLY_MS).toBeGreaterThanOrEqual(4000)
+      await vi.advanceTimersByTimeAsync(2500)
+      expect((await b.chat({})).pending?.requestId).toBe('r1')
+      await vi.advanceTimersByTimeAsync(DEMO_CHAT_REPLY_MS)
+      const after = await b.chat({})
+      expect(after.messages.length).toBe(before + 2)
+      expect(after.messages.at(-2)).toMatchObject({ role: 'me', text: '你好', source: 'phone' })
+      expect(after.messages.at(-1)!.role).toBe('cc')
+      expect(after.pending).toBeNull()
+      expect(seen.at(-1)).toMatchObject({ phase: 'open' })
+      expect(seen.at(-1).version).toBeGreaterThan(seen[0].version)
+      expect((await b.chatSay('你好', 'r1')).status).toBe('replied')
+      expect((await b.chat({})).messages.length).toBe(before + 2)
+      ChatPage.parse(after)
+      expect(() => MatterTopic.parse(seen.at(-1))).not.toThrow()
+    } finally { vi.useRealTimers() }
+  })
+  it('演示聊天:按读的语言给种子文案;reset 回到 4 条、在等的那句作废', async () => {
+    vi.useFakeTimers()
+    try {
+      const b = makeDemoBackend({ lang: 'zh-Hans' })
+      ChatJob.parse(await b.chatSay('hi', 'r1'))
+      b.reset()
+      await vi.advanceTimersByTimeAsync(DEMO_CHAT_REPLY_MS)
+      const zh = await b.chat({})
+      expect(zh.messages.length).toBe(4)
+      expect(zh.pending).toBeNull()
+      expect(zh.title).toBe('和 CC 的对话')
+      await b.matters('en')
+      expect((await b.chat({})).title).toBe('You & CC')
+      expect((await b.chatSay('hi', 'r1')).status).toBe('pending')
+    } finally { vi.useRealTimers() }
+  })
+  it('主人对话也是一件 chat matter:按 id 读得到,过 schema', async () => {
+    const { MatterDetail } = await import('@wechat-cc/protocol')
+    const b = makeDemoBackend()
+    const d = await b.matter('c0ffee01', 'en')
+    expect(() => MatterDetail.parse(d)).not.toThrow()
+    expect(d.matter.kind).toBe('chat')
+    expect(() => Matter.parse(d.matter)).not.toThrow()
+  })
+  it('演示连接与会话有数据且过 schema', async () => {
+    const b = makeDemoBackend()
+    const c = Connections.parse(await b.connections())
+    expect(c.sources.map(s => [s.id, s.state])).toEqual([['wechat_history', 'ready'], ['knowledge', 'behind'], ['plugin:wxmedia', 'not_loaded'], ['plugin:wxsearch', 'ready']])
+    const list = await b.sessions('claude')
+    expect(list.items.length).toBe(2)
+    expect((await b.sessions('codex')).items.length).toBe(1)
+    const page = NativeSessionPage.parse(await b.session(list.items[0]!.key))
+    expect(page.messages.map(m => m.role)).toEqual(['user', 'assistant', 'user'])
+    await expect(b.session('nope')).rejects.toMatchObject({ code: 'not_found' })
+  })
+  it('演示事项的事件种类与 daemon 一致(user / text / tool_call / error),进展页「对话」卡才显示得出来', async () => {
+    vi.useFakeTimers()
+    try {
+      const b = makeDemoBackend()
+      await b.say('a1b2c3d4', '再看看', 'r-say')
+      await vi.advanceTimersByTimeAsync(DEMO_CHAT_REPLY_MS)
+      for (const m of await b.matters('en')) {
+        for (const e of (await b.matter(m.id, 'en')).events) expect(['user', 'text', 'tool_call', 'error'], `${m.id}:${e.kind}`).toContain(e.kind)
+      }
+    } finally { vi.useRealTimers() }
   })
 })

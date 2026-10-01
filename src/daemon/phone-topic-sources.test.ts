@@ -64,3 +64,27 @@ describe('真实来源的快照符合协议包的主题形状', () => {
     for (const t of ['matter/deadbeef', 'matter/cafe0001', 'matter/00000000']) MatterTopic.parse(await m!.snapshot(t))
   })
 })
+
+describe('matter/<聊天> 主题', () => {
+  const chatMatter = { id: 'c0ffee01', kind: 'chat' as const, title: '聊天', projectPath: null, status: 'open' as const, ownerChatId: 'wx', originMatterId: null, originMessageId: null, createdAt: 1, updatedAt: 100 }
+  const src = (chat?: { latestAt(c: string): Promise<number | null>; pendingMatter(): string | null }) =>
+    makePhoneTopicSources({ home: async () => { throw new Error('no') }, matters: { get: () => chatMatter }, ...(chat ? { chat } : {}) } as never).find(s => s.match('matter/c0ffee01'))!
+  it('版本 = max(updatedAt, 最新消息时间):微信那边一来一回也会变', async () => {
+    let latest: number | null = 50
+    const s = src({ latestAt: async () => latest, pendingMatter: () => null })
+    expect(await s.snapshot('matter/c0ffee01')).toEqual({ found: true, kind: 'chat', version: 100, phase: 'open' })
+    latest = 500
+    expect(await s.snapshot('matter/c0ffee01')).toMatchObject({ version: 500 })
+  })
+  it('手机那句在等回复 ⇒ phase working', async () => {
+    const s = src({ latestAt: async () => null, pendingMatter: () => 'c0ffee01' })
+    expect(await s.snapshot('matter/c0ffee01')).toMatchObject({ phase: 'working', version: 100 })
+  })
+  it('读最新消息抛错 ⇒ 退回 updatedAt;没接 chat ⇒ 原行为', async () => {
+    expect(await src({ latestAt: async () => { throw new Error('db') }, pendingMatter: () => null }).snapshot('matter/c0ffee01')).toMatchObject({ version: 100 })
+    expect(await src().snapshot('matter/c0ffee01')).toEqual({ found: true, kind: 'chat', version: 100, phase: 'open' })
+  })
+  it('快照形状仍过 MatterTopic', async () => {
+    MatterTopic.parse(await src({ latestAt: async () => 7, pendingMatter: () => 'c0ffee01' }).snapshot('matter/c0ffee01'))
+  })
+})

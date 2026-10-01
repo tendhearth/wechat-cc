@@ -18,4 +18,7 @@ describe('togetherView', () => {
     expect(togetherView(input, [], agents).map(x => x.id)).toEqual(['a'])
     expect(input.map(x => x.id)).toEqual(['a', 'b'])
   })
+  it('聊天类不列(主人对话单独置顶,访客聊天不进一起做)', () => {
+    expect(togetherView([m('a', 1), { ...m('c', 2), kind: 'chat' }], [], agents).map(x => x.id)).toEqual(['a'])
+  })
 })

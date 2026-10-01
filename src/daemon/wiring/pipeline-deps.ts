@@ -38,6 +38,13 @@ import type { InboundCtx } from '../inbound/types'
 import type { AppTurn } from '../inbound/build'
 import { basename as pathBasename } from 'node:path'
 import { makeSettingsPanel } from '../settings-panel'
+import { buildConnections, cacheConnections } from '../connections'
+import { cacheSessions } from '../mobile-reads'
+import { maxDecryptedMtime } from '../companion/ingest/cycle'
+import { hostname } from 'node:os'
+import { APP_VERSION } from '../../lib/app-version'
+import { makePhoneChatId, makePhoneOwner } from '../mobile-chat'
+import { makePhoneChat } from '../phone-chat'
 import { makePhoneInsight } from '../phone-insight'
 import { makeApprovalExplainer } from '../phone-explain'
 import { makeProgressSummarizer } from '../phone-progress'
@@ -48,6 +55,7 @@ import { makePhonePush } from '../phone-push'
 import { makePhoneNotifier } from '../phone-notifier'
 import { deviceIdOf } from '../device-store'
 import { makeCommandRouter } from './command-router'
+import { ensureChatAndNote, makeMatterActivity } from '../matter-activity'
 import { makeEventsStore } from '../events/store'
 import { makeGuestRequestStore } from '../guest-requests'
 import { makeForwardBudget } from '../../core/forward-budget'
@@ -209,6 +217,10 @@ export interface BuildPipelineDepsResult {
   /** Mint a fresh settings-panel URL (10-min single-active token) — the
    *  desktop 「手机上改设置」 QR entry (GET /v1/settings/link). */
   settingsPanelLink: () => Promise<string | null>
+  /** 手机「跟 CC 说」的任务表(收下即回,converse = companionConverse);没接 matters ⇒ null。 */
+  phoneChat: import('../phone-chat').PhoneChat | null
+  /** 「CC 的连接」快照(缓存 10 s);手机与 admin 路由共用。 */
+  connections: () => import('../connections').ConnectionsSnapshot
   /** 「一件事」读写面(有 matters store 才有)。 */
   mattersService: import('../../core/matters/service').MattersService | null
   /**
@@ -559,6 +571,10 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
 
   // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
   const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+  // 「一件事」的活动时间(spec 2026-10-01 §3):微信入站与工作台事件节流地推 updated_at。随 daemon 常驻。
+  const matterActivity = opts.matters ? makeMatterActivity({ touch: id => opts.matters!.touch(id), log: (tag, line) => log(tag, line) }) : null
+  // 回调里只记一笔(note 不同步写库,见 matter-activity.ts 头注释)。
+  opts.workbench?.changes.onChange(taskId => matterActivity?.note(taskId))
   // 「一件事」读写面:工作台续接 + 对主人 chat 的 app 通道;手机页与内部 API 共用这一个实例。
   const mattersService = opts.matters ? makeMattersService({
     store: opts.matters,
@@ -570,7 +586,37 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       recent: async (chatId: string, limit: number) => (await messagesStore.listRange(chatId, { limit })).map(r => ({ kind: r.direction === 'in' ? 'user' : 'text', text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
     },
   }) : null
+  // 手机「跟 CC 说」(spec 2026-10-01):主人对话一页(只读)+ 收下即回的说一句。
+  // 对话 chat 必须就是 companionConverse 写进去的那条(它认 companion 的 default_chat_id):
+  // 两者不一致(default_chat_id 不是 admin)⇒ 当作没有主人对话,免得手机看 A 却说进 B。
+  const phoneChatId = makePhoneChatId({ ownerChatId, converseChatId: () => loadCompanionConfig(stateDir).default_chat_id ?? null, log: (tag, line) => log(tag, line) })
+  const phoneOwner = opts.matters ? makePhoneOwner({ ownerChatId: phoneChatId, matters: opts.matters }) : null
+  let phoneEvents: import('../phone-events').PhoneEvents | null = null
+  // converse 必须是回合串行入口 companionConverse(与微信 / 桌面「跟 CC 说」同一条:
+  // isInFlight 前置拒 + coordinator.submitTurn 持每 chat 锁),手机一句不会和微信一轮在主人会话上并跑。
+  // companionConverse 在下面才定义;这里只捕获引用,调用发生在请求到来时(与 mattersService 同一姿势)。
+  const phoneChat = phoneOwner ? makePhoneChat({
+    converse: text => companionConverse(text, 'phone'),
+    ownerMatterId: () => phoneOwner.ensure(),
+    onSettled: id => { matterActivity?.note(id); phoneEvents?.poke() },
+    log: (tag, line) => log(tag, line),
+  }) : null
+  // 「CC 的连接」(spec 2026-10-01):插件快照 / 解密库时间 / 知识库 / 工作台。裁定 8:缓存 10 s、最多 3 次 detail()。
+  // wechatSyncedAt = wxvault 解密库的最近落盘时间(同步时间),不是最新微信消息时间。
+  const startedAt = Date.now() - Math.round(process.uptime() * 1000)
+  const connections = cacheConnections(() => buildConnections({
+    plugins: () => boot.pluginsHealth ?? null,
+    wechatSyncedAt: () => { const m = maxDecryptedMtime(stateDir); return m > 0 ? m : null },
+    knowledge: () => ({ enabled: (loadAgentConfig(stateDir) as { knowledge_enabled?: boolean }).knowledge_enabled === true, built: !!boot.knowledge, latestAt: boot.knowledge?.store.latestMessageAtMs() ?? null, syncedAt: boot.knowledge?.store.lastSyncAtMs() ?? null }),
+    computer: () => ({ label: hostname().replace(/\.local$/, ''), since: startedAt, version: APP_VERSION }),
+    detailLimit: 3,
+    ...(opts.workbench ? { workbench: opts.workbench } : {}),
+  }))
+  // 原生会话读:单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
+  const phoneSessions = opts.workbench ? cacheSessions({ list: (p, i) => opts.workbench!.listNativeHistory(p, i), read: (k, i) => opts.workbench!.readNativeHistory(k, i) }) : null
   const settingsPanel = makeSettingsPanel({
+    connections,
+    ...(phoneSessions ? { sessions: phoneSessions } : {}),
     stateDir,
     ownerChatId,
     // 手机洞察(批准说明 + 进展概括):explainer / summarizer 各建一个实例(内含缓存),不是每请求一建。
@@ -596,6 +642,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     }}:{}),
     curatedMemory: () => memoryNightly.curatedView(),
     ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,artifactChunk:mattersService.artifactChunk,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
+    ...(phoneOwner && phoneChat ? { chat: { owner: () => phoneOwner.peek(), history: (chatId: string, o: { beforeTs?: string; limit: number }) => messagesStore.listRange(chatId, o), chat: phoneChat } } : {}),
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
     ...(phonePush ? { push: phonePush } : {}),
     // 「默认大脑」改完自己重启(与远程开关同一条路)。
@@ -673,8 +720,13 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       ...(opts.workbench ? { workbench: opts.workbench, changes: opts.workbench.changes } : {}),
       ...(opts.matters ? { matters: opts.matters } : {}),
       home: (limit, o) => settingsPanel.home(limit, o),
+      ...(phoneChat ? { chat: {
+        latestAt: async (chatId: string) => { const ts = await messagesStore.latestTs(chatId); return ts ? Date.parse(ts) : null },
+        pendingMatter: () => phoneChat.pendingMatter(),
+      } } : {}),
       log: (tag, line) => log(tag, line),
     })
+    phoneEvents = phone.events
     import('../tunnel-client').then(({ makeTunnelClient }) => {
       const common = {
         events: phone.events,
@@ -825,7 +877,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       onContextAvailable:(c,a)=>opts.workbench?.contextAvailable(c,a),
     },
     typing: { sendTyping: (c, a) => ilink.sendTyping(c, a) },
-    ...(opts.matters?{matter:{ensureChat:(c:string)=>opts.matters!.ensureChat(c),log:(t:string,l:string)=>log(t,l)}}:{}),
+    ...(opts.matters?{matter:{ensureChat:ensureChatAndNote((c:string)=>opts.matters!.ensureChat(c),matterActivity),log:(t:string,l:string)=>log(t,l)}}:{}),
     ...(opts.workbench?{taskReference:{
       ownerChatId,
       // 可指称的候选:七天内动过、未归档的任务,包括失败 / 中断的 —— 主人问"那件怎么了"
@@ -1157,5 +1209,5 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     })
   }
 
-  return { pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, settingsPanelLink: () => settingsPanel.linkUrl() }
+  return { pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections }
 }

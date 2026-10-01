@@ -756,6 +756,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setPetTurn(wired.petTurn)
     ticksRef = wired.ticks
     internalApi.setSettingsLink(wired.settingsPanelLink)
+    internalApi.setConnections(wired.connections)
     const pipeline = buildInboundPipeline(wired.pipelineDeps)
     wireRef(wired.refs.pipeline, pipeline)
     wireRef(wired.refs.appTurn, pipeline.appTurn)

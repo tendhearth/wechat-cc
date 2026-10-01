@@ -10,12 +10,14 @@ import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { CCFigure } from '../../ui/CCFigure'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
+import { Dot } from '../../ui/Dot'
 import { DemoBanner } from '../../ui/DemoBanner'
 import { serifFamily } from '../../ui/fonts'
 import { SayBar } from '../../ui/SayBar'
 import { space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { useTheme } from '../../ui/useTheme'
+import { connectionsTrust, connectionsView } from '../../view/connections'
 import { nowView } from '../../view/now'
 
 // 决定卡标题:只有第一张卡会主动请求说明(可能触发电脑上的便宜模型),其余只读已缓存的;优先用后端给的说明标题(按任务缓存),没有就退回原始概括。
@@ -41,9 +43,14 @@ export default function Now() {
   const lang = useLang()
   const router = useRouter()
   const conn = useConnection()
+  const { backend } = useBackendCtx()
   const { approvals, agents, matters, demo } = useWork()
   const date = new Date()
   const v = nowView({ approvals, agents, matters, hour: date.getHours() })
+  const links = useQuery('connections', () => backend.connections())
+  // 读不到 ⇒ 说「不知道」,不报错、不画绿
+  const trust = connectionsTrust(links, conn.state)
+  const lv = links.data && trust === 'live' ? connectionsView(links.data, Date.now(), lang).headline : null
   const titleOf = (id: string) => matters.find((m) => m.id === id)?.title ?? ''
   const working = agents.tasks.find((x) => x.phase === 'working')
   const summary =
@@ -101,6 +108,19 @@ export default function Now() {
           </View>
         </View>
 
+        <Pressable
+          testID="now-connections"
+          accessibilityRole="button"
+          accessibilityLabel={`${t(lang, 'links.title')}, ${lv ? t(lang, lv.key, { n: lv.n }) : t(lang, 'links.unknown')}`}
+          onPress={() => router.push('/connections')}
+          style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.m, minHeight: 48, opacity: pressed ? 0.7 : 1 })}
+        >
+          <Dot kind={lv ? lv.dot : 'unknown'} />
+          <Text style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'links.title')}</Text>
+          <Text numberOfLines={1} style={{ flex: 1, color: c.ink, fontSize: 14 }}>{lv ? t(lang, lv.key, { n: lv.n }) : t(lang, 'links.unknown')}</Text>
+          <Text style={{ color: c.muted, fontSize: 22 }}>›</Text>
+        </Pressable>
+
         {v.together.length > 0 ? (
           <View>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingBottom: space.m, borderBottomWidth: 1, borderBottomColor: c.line }}>
@@ -135,7 +155,7 @@ export default function Now() {
         ) : null}
       </ScrollView>
       <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m }}>
-        <SayBar testID="now-say" placeholder={t(lang, 'now.sayToCC')} onPress={() => router.push('/compose')} />
+        <SayBar testID="now-say" placeholder={t(lang, 'now.sayToCC')} onPress={() => router.push('/chat')} />
       </View>
     </SafeAreaView>
   )

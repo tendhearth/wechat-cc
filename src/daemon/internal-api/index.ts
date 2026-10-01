@@ -433,6 +433,7 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     setSettingsLink(fn) {
       deps.settingsLink = fn
     },
+    setConnections(fn) { deps.connections = fn },
     setMemoryNightly(r) {
       deps.memoryNightly = r
     },

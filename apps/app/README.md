@@ -5,7 +5,7 @@
 「自己电脑上的个人 AI + 指挥编码 agent」的手机端。这一版有**演示模式**与**真连接**:没配对时是演示后端;扫码配对后换成 `src/backend/live.ts`,经中继连回家里的电脑。配对后收系统通知:iOS 通知服务扩展与安卓消息服务在本机解密(`native/`),由 `plugins/` 在 prebuild 时接进构建。
 
 - 设计:`docs/superpowers/specs/2026-09-30-tendhearth-app-v1-design.md`,设计稿 `docs/design/tendhearth-app-v1/`
-- 计划:`docs/superpowers/plans/2026-09-30-tendhearth-app-skeleton.md`(骨架 + 演示)、`docs/superpowers/plans/2026-09-30-tendhearth-app-live.md`(真连接与配对)、`docs/superpowers/plans/2026-09-30-tendhearth-app-push.md`(原生通知)
+- 计划:`docs/superpowers/plans/2026-09-30-tendhearth-app-skeleton.md`(骨架 + 演示)、`docs/superpowers/plans/2026-09-30-tendhearth-app-live.md`(真连接与配对)、`docs/superpowers/plans/2026-09-30-tendhearth-app-push.md`(原生通知)、`docs/superpowers/plans/2026-10-01-tendhearth-app-chat.md`(跟 CC 说话 + 真历史 + CC 的连接 + 原生会话;spec `docs/superpowers/specs/2026-10-01-tendhearth-app-chat-design.md`)
 
 ## 怎么跑
 
@@ -34,7 +34,9 @@ maestro test .maestro/           # 模拟器上跑演示流程(要先有 develop
 | 流程 | 走什么 |
 |---|---|
 | `.maestro/approve.yaml` | 先看看 → 此刻第一张「等你决定」卡 → 批准页**原始命令直接可见** → 允许 → 进展页 → 2 秒后「这一轮已回复」 |
-| `.maestro/compose.yaml` | 此刻 → 跟 CC 说一句 → 输入 → 交给 CC → 新事项的进展页 → 「一起做」里出现它 |
+| `.maestro/chat.yaml` | 此刻 → 跟 CC 说一句 → 对话页 → 发一句 → 「在想…」→ 演示回复出现 → 一起做的置顶「和 CC 的对话」回到对话页 |
+| `.maestro/connections.yaml` | 设置 → CC 的连接卡(演示数据)→ 各项状态词 → 电脑上的会话列表(只读) |
+| `.maestro/compose.yaml` | 此刻 → 跟 CC 说 → 显式选「交给 CC 去做一件事」→ 输入 → 交给 CC → 新事项的进展页 → 「一起做」里出现它(交办不再是默认动作) |
 | `.maestro/demo-walkthrough.yaml` | 欢迎 → 先看看 → 此刻 → 一起做 → 某件事 → 展开改动 / 过程 → 设置 → 切语言 → 退出演示回欢迎页 |
 | `.maestro/pair-invalid.yaml` | 欢迎 → 配对 → 粘贴无效链接 / 局域网链接 → 各自的提示(不联网;真配对是主人真机验收) |
 | `.maestro/subflows/_start.yaml` | 共用开头:`clearState` 启动、收掉开发构建偶尔弹的系统框「Open in "Tendhearth"?」、等欢迎页 |
@@ -72,6 +74,9 @@ scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl 
 - 错误映射只在 `src/net/errors.ts` 一处:`permission_stale / question_stale / input_stale` ⇒ `stale`;`auth_failed` 或 HTTP 401 ⇒ `revoked`;`timeout` ⇒ `timeout`(界面当「不确定」);`unreachable / daemon_offline / closed / stream_unknown / rate_limited / quota_exceeded / too_many_streams` 及未知传输错误 ⇒ `offline`(例外:请求在飞时是本机自己关的连接——进后台 / dispose / 撤销——`live.ts` 报 `timeout`,撤销了则报 `revoked`:那一条可能已经送到);`matter_not_found` ⇒ `not_found`;`invalid` 与 `invalid_*`(含 `invalid_answer`)⇒ `invalid`;其余 ⇒ `unknown`。
 - 说一句与交办的 `requestId` 按草稿稳定(`state/drafts.ts` `requestIdFor`:同一份草稿、同样正文重发用同一个,正文改了才换,发成功删草稿时一起丢)。
 - 上限:回答 `JSON.stringify(answers).length > 20_000`、说一句正文 `> 20_000` 字,在手机上就拦下,不发(协议包常量 `PHONE_ANSWER_MAX_JSON` / `PHONE_SAY_MAX_CHARS`)。
+- **跟 CC 说走 `/m/api/chat*`,收下即回**:`/m/api/chat/say` 立刻返回(走 companion 路径,与微信同一个主人会话),回复靠 `matter/<聊天>` 主题唤醒后拉取;一次只等一句(上一句在等 ⇒ 409 `chat_busy`,草稿留着),10 分钟超时。`requestId` 用 `requestIdFor('chat', 正文)`。老网页壳 `/m/api/matter/say` 的同步语义不动。主人的对话在「一起做」里置顶;访客的聊天不出现在手机上。
+- **「可能没送到」**:本机收过回执,但 daemon 那边既不 pending 也没历史 ⇒ 显示未确认气泡(可重试、可忽略);重试用同一个 `requestId`,daemon 去重,所以即使其实已落在历史别页也安全。原因:任务表只在内存,daemon 重启会丢正在等的那句。不自动重发(不重试风暴)。
+- **连接卡与会话页拿到的都是 admin 以下的投影:没有路径**(无插件目录、无 cwd / nativeId)。连接卡「不知道」永不显示成绿;知识库没开不是故障(不显示红),开了没建起来才红;知识库陈旧按最近一次同步判,微信聊天记录的日期按 wxvault 解密时间。电脑上的会话只读,只给目录名。
 - **撤销 ≠ 离线**:撤销 ⇒ 停止提交、清掉钥匙串里的设备令牌、显示「重新配对」;暂时离线 ⇒ 显示上次同步时间、草稿照写、发送 / 批准 / 拒绝锁住。两者文案与 testID 都不同。
 - **草稿永不自动发送**:重连后只重拉读,不重放写;不做乐观成功。
 - **令牌不进日志**、错误文案或 `console`:`LiveBackend` 的 `log` 只写错误码与路由键。
@@ -160,8 +165,23 @@ CI:`app · native push vectors`(`.github/workflows/ci.yml`,仅 `apps/app/native/
 - **批准页**:说明来自模型(`source === 'model'`)时,原始命令第一行与工作目录**不折叠、直接可见**(`approval-raw-inline`,Maestro 断言它);完整原始命令在「查看具体操作」里;提交中锁定按钮;以返回结果为准,不做乐观成功;超时 ⇒ 当「不确定」并重新拉详情。
 - **进展页**:状态标签在「CC 的进展」概括之上。
 - **状态词**只用:正在整理 / 等你决定 / 这一轮已回复 / 事情完成 / 没做成 / 已停下(Working on it / Waiting for you / Replied this round / Done / Didn't finish / Stopped),不显示百分比。
+- **主动作是跟 CC 说**,交办是显式选项(此刻页入口、发送框默认都是说一句,不是建任务;一次一句,等回复时发送锁住并保留草稿)。
 - **导航**:底部「此刻 / 一起做」;右上角头像进设置,旁边是「家里的电脑」状态点;说一句的入口随处可见。
 - **语言**:`en` 与 `zh-Hans`,跟随系统、设置里可改;所有面向用户的字符串进文案表。
 - **隐私页**要说明:打开此刻、进展或批准页时,待批准的命令文本和任务的进展事件会从主人自己的电脑发给那里配置的便宜模型服务商;其余只在手机与电脑之间加密传输(`i18n.test.ts` 钉住)。
 - 系统「减少动态效果」时关掉 CC 动作;所有状态都有文字。
 - CC 形象只用 `apps/desktop/src/assets/pet/cc-v1/canonical/{lit,unlit}/front.png`,不重画。
+
+## 跟 CC 说话计划(2026-10-01)的状态与真机验收
+
+状态:`app-chat` 分支,代码完成、待合 dev、待主人真机。**设计规矩尚未统一**:主人 2026-10-01 的设计规则(全站衬线、单一强调色、不做暗色模式、CC Light/Dark 只表示在线)**还没应用**——本计划的屏按现有 token 落地,之后单开「设计统一」计划(计划 6),再做配对体验(计划 7)。
+
+延后的次要项摘要见 `docs/roadmap.md`。主人真机验收(iOS;安卓有设备再补):
+
+1. 此刻 →「跟 CC 说一句」,问需要微信聊天记录的事 ⇒ 立刻出现自己的气泡 +「在想…」⇒ 回复到达(锁屏切回来也在),回复用到了 wxvault。
+2. 微信里跟 CC 聊一句 ⇒ 手机对话页出现那一问一答(标「微信」);往上滑能翻到更早的对话。
+3. 等回复时到微信发一句 ⇒ 手机那句显示「正在回微信那边」,**未确认气泡的重试 / 忽略**可用。
+4. 「一起做」第一行是「和 CC 的对话」,其下是真实最近在动的任务。
+5. CC 的连接卡:微信聊天记录日期与 wxvault 同步时间一致;关掉某个插件后变红;不知道的项不是绿。
+6. 设置 → 电脑上的会话:能看到 Claude Code / Codex 会话并读几页(只读)。
+7. **对话输入框在真机上能聚焦、键盘不遮挡**(模拟器验不出)。

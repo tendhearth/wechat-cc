@@ -36,4 +36,14 @@ describe('progressView', () => {
     expect(v).toMatchObject({ title: 'mt', status: 'working' })
     expect(progressView(detail({ task: null, matter: { ...detail().matter, status: 'done' } }), null, null).status).toBe('done')
   })
+  it('聊天类 / 没有任务 ⇒ summaryState none(不再永远转骨架屏)', () => {
+    expect(progressView(detail({ task: null }), { progress: null }, null).summaryState).toBe('none')
+    expect(progressView(detail({ task: null }), null, null).summaryState).toBe('none')
+  })
+  it('任务:还没拉到 loading;拉到 ready;失败 failed;拉到但没有 none', () => {
+    expect(progressView(detail(), null, null).summaryState).toBe('loading')
+    expect(progressView(detail(), null, null, true).summaryState).toBe('failed')
+    expect(progressView(detail(), { progress: { summary: 's', steps: [], source: 'raw' } }, null).summaryState).toBe('ready')
+    expect(progressView(detail(), { progress: null }, null).summaryState).toBe('none')
+  })
 })

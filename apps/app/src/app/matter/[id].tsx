@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { useLocalSearchParams, useRouter } from 'expo-router'
+import { Redirect, useLocalSearchParams, useRouter } from 'expo-router'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../../i18n'
@@ -16,11 +16,14 @@ import { StatusPill } from '../../ui/StatusPill'
 import { space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { useTheme } from '../../ui/useTheme'
+import { isOwnerChatMatter } from '../../view/chat'
+import { conversationView } from '../../view/conversation'
 import { progressView } from '../../view/progress'
 
 const mono = monoFamily
 
-// 进展页:状态标签在「CC 的进展」概括之上;概括没到时用骨架占位。
+// 进展页:状态标签在「CC 的进展」概括之上;概括没到时用骨架占位;下面是这件事的真对话。
+// 主人自己那条聊天(只认它,Ruling 9)改道去 /chat;访客的聊天照常显示。
 export default function Matter() {
   const { c } = useTheme()
   const lang = useLang()
@@ -33,6 +36,9 @@ export default function Matter() {
   const detail = useQuery(`matter:${id}`, l => backend.matter(id, l), { refreshOnMount: true })
   const insight = useQuery(`insight:${id}`, l => backend.insight(id, l), { refreshOnMount: true })
   const changes = useQuery(`changes:${id}`, () => backend.changes(id))
+  const isChat = detail.data?.matter.kind === 'chat'
+  // 只有聊天类才需要知道主人对话是哪一件;与 /chat、一起做共用同一份缓存
+  const ownerChat = useQuery('chat:latest', () => backend.chat({}), { enabled: isChat })
   const ver = useTopic<{ version?: unknown }>(`matter/${id}`)
   const seen = useRef<unknown>(undefined)
   const verKey = ver === undefined ? undefined : JSON.stringify(ver)
@@ -53,18 +59,22 @@ export default function Matter() {
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
     </>
   )
-  if (!detail.data) {
+  const ownerChatId = ownerChat.data?.matterId ?? null
+  if (detail.data && isOwnerChatMatter(detail.data.matter, ownerChatId)) return <Redirect href="/chat" />
+  // 聊天类但还不知道主人对话是哪件:等一下再决定改不改道(读失败 / 没主人 ⇒ 当普通的事显示)
+  const decidingChat = isChat && ownerChatId === null && !ownerChat.error
+  if (!detail.data || decidingChat) {
     return (
       <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.bg }}>
         {header}
-        <Text style={{ color: c.muted, padding: space.xl }}>{detail.error ? t(lang, 'progress.loadFailed') : t(lang, 'progress.loading')}</Text>
+        <Text style={{ color: c.muted, padding: space.xl }}>{detail.error && !detail.data ? t(lang, 'progress.loadFailed') : t(lang, 'progress.loading')}</Text>
       </SafeAreaView>
     )
   }
   const d = detail.data
-  const v = progressView(d, insight.data ?? null, changes.data ?? null)
+  const v = progressView(d, insight.data ?? null, changes.data ?? null, !!insight.error && !insight.data)
   const files = changes.data?.files ?? []
-  const events = d.events.slice(-5).reverse()
+  const conv = conversationView(d.events)
 
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.bg }}>
@@ -76,15 +86,17 @@ export default function Matter() {
 
         <Card style={{ gap: space.m }}>
           <Text style={{ color: c.muted, fontSize: 12, fontWeight: '600' }}>{t(lang, 'progress.ccProgress')}</Text>
-          {v.summary === null && insight.error && !insight.data ? (
+          {v.summaryState === 'failed' ? (
             <Pressable testID="progress-summary" accessibilityRole="button" accessibilityLabel={t(lang, 'progress.summaryUnavailable')} onPress={() => void insight.refresh()}>
               <Text style={{ color: c.muted, fontSize: 15, lineHeight: 22 }}>{t(lang, 'progress.summaryUnavailable')}</Text>
             </Pressable>
-          ) : v.summary === null ? (
+          ) : v.summaryState === 'loading' ? (
             <View testID="progress-summary" accessibilityLabel={t(lang, 'progress.loading')} style={{ gap: space.s }}>
               <View style={{ height: 14, borderRadius: 7, backgroundColor: c.line, width: '92%' }} />
               <View style={{ height: 14, borderRadius: 7, backgroundColor: c.line, width: '70%' }} />
             </View>
+          ) : v.summaryState === 'none' ? (
+            <Text testID="progress-summary" style={{ color: c.muted, fontSize: 15, lineHeight: 22 }}>{t(lang, 'progress.noSummary')}</Text>
           ) : (
             <Text testID="progress-summary" style={{ color: c.ink, fontSize: 16, lineHeight: 24 }}>{v.summary}</Text>
           )}
@@ -99,6 +111,30 @@ export default function Matter() {
               </View>
             </View>
           ))}
+        </Card>
+
+        <Card testID="progress-conversation" style={{ gap: space.m }}>
+          <Text accessibilityRole="header" style={{ color: c.muted, fontSize: 12, fontWeight: '600' }}>{t(lang, 'progress.conversation')}</Text>
+          {conv.length === 0 ? <Text style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'progress.noEvents')}</Text> : null}
+          {conv.map((e, i) =>
+            e.kind === 'steps' ? (
+              <Text key={i} numberOfLines={1} style={{ color: c.muted, fontSize: 13 }}>
+                {t(lang, 'progress.stepsN', { n: e.count ?? 1 })} · {e.text}
+              </Text>
+            ) : e.kind === 'error' ? (
+              <Text key={i} style={{ color: c.warn, fontSize: 14, lineHeight: 20 }}>{e.text}</Text>
+            ) : (
+              <View key={i} style={{ alignItems: e.kind === 'me' ? 'flex-end' : 'flex-start' }}>
+                <View
+                  accessible
+                  accessibilityLabel={`${e.kind === 'me' ? t(lang, 'chat.me') : t(lang, 'cc.label')}: ${e.text}`}
+                  style={{ maxWidth: '88%', paddingHorizontal: space.m, paddingVertical: space.s, borderRadius: 14, backgroundColor: e.kind === 'me' ? c.accentSoft : c.bg }}
+                >
+                  <Text selectable style={{ color: c.ink, fontSize: 15, lineHeight: 22 }}>{e.text}</Text>
+                </View>
+              </View>
+            ),
+          )}
         </Card>
 
         {v.pendingCount > 0 ? (
@@ -135,12 +171,7 @@ export default function Matter() {
                   <Text style={{ color: c.ink, fontSize: 14 }}>{t(lang, 'progress.executor')}: {d.task.providerId}</Text>
                   <Text style={{ color: c.ink, fontSize: 13, fontFamily: mono }}>{t(lang, 'progress.path')}: {d.task.path}</Text>
                 </>
-              ) : null}
-              <Text style={{ color: c.muted, fontSize: 13, fontWeight: '600' }}>{t(lang, 'progress.recentEvents')}</Text>
-              {events.length === 0 ? <Text style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'progress.noEvents')}</Text> : null}
-              {events.map((e, i) => (
-                <Text key={i} style={{ color: c.ink, fontSize: 14, lineHeight: 20 }}>{e.text}</Text>
-              ))}
+              ) : <Text style={{ color: c.muted, fontSize: 14 }}>{t(lang, 'progress.noEvents')}</Text>}
             </View>
           </Sheet>
       </ScrollView>

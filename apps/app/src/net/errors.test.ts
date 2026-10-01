@@ -30,6 +30,14 @@ describe('mapPhoneError(HTTP 状态 + 正文 → BackendCode)', () => {
   it('daemon 没接推送(push_not_wired,503)⇒ unavailable', () => {
     expect(mapPhoneError(503, { ok: false, error: 'push_not_wired' })).toBe('unavailable')
   })
+  it('跟 CC 说 / 连接 / 会话的错误码', () => {
+    expect(mapPhoneError(409, { ok: false, error: 'chat_busy' })).toBe('busy')
+    expect(mapPhoneError(404, { ok: false, error: 'no_owner_chat' })).toBe('not_found')
+    expect(mapPhoneError(404, { ok: false, error: 'unsupported' })).toBe('not_found')
+    for (const e of ['chat_not_wired', 'connections_not_wired', 'sessions_not_wired']) expect(mapPhoneError(503, { ok: false, error: e })).toBe('unavailable')
+    expect(mapPhoneError(503, { ok: false, error: 'unavailable' })).toBe('unavailable')
+    expect(mapPhoneError(500, { ok: false, error: 'unavailable' })).toBe('unknown')
+  })
 })
 
 describe('transportErrorCode(协议客户端拒绝的原因 → BackendCode)', () => {

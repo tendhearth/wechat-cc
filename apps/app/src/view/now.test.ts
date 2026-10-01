@@ -40,4 +40,7 @@ describe('nowView', () => {
     expect(g(18)).toBe('now.greetingEvening')
     expect(g(0)).toBe('now.greetingEvening')
   })
+  it('聊天类不列(主人对话单独置顶,访客聊天不进一起做)', () => {
+    expect(run({ matters: [m('a', 1), { ...m('c', 2), kind: 'chat' }] }).together.map(x => x.id)).toEqual(['a'])
+  })
 })

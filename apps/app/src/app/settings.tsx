@@ -113,6 +113,12 @@ export default function Settings() {
             </Card>
           </>
         ) : null}
+        {demo || conn.state !== 'revoked' ? (
+          <Card style={{ gap: space.m }}>
+            <Button kind="secondary" testID="settings-connections" label={t(lang, 'settings.connections')} onPress={() => router.push('/connections')} />
+            <Button kind="secondary" testID="settings-sessions" label={t(lang, 'settings.sessions')} onPress={() => router.push('/sessions')} />
+          </Card>
+        ) : null}
         {!demo ? (
           <>
             {heading('settings.thisPhone')}
