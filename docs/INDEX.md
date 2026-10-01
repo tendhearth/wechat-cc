@@ -1,8 +1,10 @@
-# 文档索引 · 去哪找什么
+# Tendhearth CC 文档索引 · 去哪找什么
 
 > v1 · 2026-09-22 · **这份只回答「某件事的文档在哪、哪一份还可信」。**
 > 「定了什么 / 为什么」在 [全景导图](全景导图.md);「往哪走 / 卡在哪」在 [roadmap](roadmap.md)。
 > `docs/` 下有 300+ 份计划与设计,按日期命名。**不要按日期猜文件名——从这份索引进。**
+
+产品名、角色称呼与兼容标识见[产品命名规范](reference/product-naming.md)。原生手机工程见 [apps/app](../apps/app/README.md)，浏览器/PWA 见 [apps/mobile](../apps/mobile/README.md)。
 
 ## 三份总图,先读这三份
 

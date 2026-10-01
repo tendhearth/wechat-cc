@@ -1,8 +1,10 @@
-# wechat-cc 现行 roadmap
+# Tendhearth CC 现行 roadmap
 
 > v1 · 2026-09-22 · **这份只说「往哪走 / 卡在哪」。**
 > 「定了什么 / 为什么这样定」在 [全景导图](全景导图.md);「某件事的文档在哪」在 [文档索引](INDEX.md);
 > `docs/rfc/02-post-v1.1-roadmap.md` 是 2026-04 的历史版本(v1.2 时代),已被本文取代。
+
+命名已统一为 **Tendhearth CC**，角色称呼为 **CC**；技术兼容边界见[产品命名规范](reference/product-naming.md)。手机端的实现、真机验收和商店发布是不同交付状态，以 [apps/app](../apps/app/README.md) 及各批验证记录为准。
 
 ## 现状:1.7.1 已发(2026-09-29)
 
@@ -17,6 +19,10 @@
 版本号已统一(2026-09-22):此前四处各说各话(发版认 `tauri.conf.json` 的 1.6.6、`--version` 报根 `package.json` 的 0.6.4、`apps/desktop/package.json` 写 0.5.18、ACP 的 clientInfo 还硬编码 `'0.6.4'`),现在四处 + `Cargo.toml` 都是 **1.7.0**,由 `scripts/version-consistency.guard.test.ts` 钉住;`--version` 同时带构建的 git 短 sha(`1.7.0 (a1b2c3d)`),否则 `self deploy` 的健康门打出来的数字两次发版之间永远一样、看不出新构建起没起来。发版说明:`docs/releases/desktop-v1.7.0.md`。
 
 **⇒ 发版节奏的教训:三周不发、发版链改了不真跑,代价是一天修五个坑。** 之后每合一批就发一版 patch。
+
+## 命名统一的后续交付
+
+本批统一 README、维护入口、手机说明与全景导图。后续桌面与手机批次应按[产品命名规范](reference/product-naming.md)检查应用显示名、窗口标题、关于页、权限说明和商店素材，统一为 **Tendhearth CC**；对话仍称 **CC**。这项文案验收纳入各端原有交付，不新增底层标识迁移，不阻塞正在进行的手机功能开发。
 
 ## 下一步(按顺序)
 

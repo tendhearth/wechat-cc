@@ -1,6 +1,6 @@
-# wechat-cc
+# Tendhearth CC
 
-wechat-cc 是一个把 Claude Code / Codex / cursor 一类的编码 agent 接到主人微信与桌面 app 上的常驻服务:daemon 管会话、执行者与权限,桌面「工作台」和微信是它的两个操作面。
+Tendhearth CC 是住在用户自己电脑上的个人 AI,日常称呼为 CC。daemon 管会话、执行者与权限;桌面、手机和微信是同一个 CC 的操作入口。原生手机 app 在 `apps/app`,浏览器/PWA 在 `apps/mobile`。对外文案遵守[产品命名规范](docs/reference/product-naming.md);`wechat-cc` CLI、仓库地址与持久化标识继续保留。
 
 **维护者(包括 LLM)从这里开始:[`docs/maintainer/README.md`](docs/maintainer/README.md)。**
 

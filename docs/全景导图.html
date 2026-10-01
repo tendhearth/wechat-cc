@@ -1,11 +1,11 @@
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>wechat-cc 全景导图</title>
+<title>Tendhearth CC 全景导图</title>
 <style>
   :root { --paper:#f5ead8; --ink:#5a3f2d; --soft:#8b5e3c; --accent:#b0563a; --card:#fffdf8; --line:rgba(89,63,44,.25); }
   * { box-sizing:border-box }
   body { margin:0; font-family:system-ui,-apple-system,"PingFang SC",sans-serif; background:var(--paper); color:var(--ink); padding:22px 16px 60px; max-width:860px; margin-inline:auto; line-height:1.75 }
-  h1 { font-size:24px; margin:0 0 6px } h1::before { content:"🐻 " }
+  h1 { font-size:24px; margin:0 0 6px }
   .meta { color:var(--soft); font-size:12.5px; border-left:3px solid var(--line); padding-left:10px; margin-bottom:18px }
   .meta p { margin:2px 0 }
   details.sec { background:var(--card); border:1.5px solid var(--line); border-radius:14px 18px 12px 20px; margin-bottom:12px; padding:2px 16px }
@@ -21,25 +21,27 @@
   del { color:var(--soft); opacity:.7 }
   footer { color:var(--soft); font-size:12px; text-align:center; margin-top:28px }
 </style></head><body>
-<h1>wechat-cc 全景导图</h1>
+<h1>Tendhearth CC 全景导图</h1>
 <div class="meta"><p>v2.1 · 2026-09-27 · 唯一事实源。标记:<span class="badge done">定</span> 已拍板 · <span class="badge todo">待</span> 待决 · <del>删除线</del> 已否决留痕(附原因)</p><p>分界纪律:本图只记「想过什么 / 定了什么 / 还欠什么」。实现细节在代码和 commit message 里,不在这里。</p><p>用法:节点只写<b>结论</b>,原因写在 <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden> </span> 里。交互版把 <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden> </span> 折成点击展开;读 MD 时它就是完整的一句话。</p><p>分类原则:<b>有替代做法的写成「做 A · 不做 B」对照;没有替代、纯禁止的进「绝对不做」;过程性收获进「教训」。</b></p><p>另两份总图:[roadmap](roadmap.md) 说「往哪走 / 卡在哪」,[文档索引](INDEX.md) 说「某件事的文档在哪」。</p></div>
 
 <details class="sec" open>
-  <summary>定位 <span class="count">5</span></summary>
-  <ul><li>做 <b>陪伴者 CC(有人格的熊)</b> · 不做 <b>工具型 bot</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>全部产品决策的总开关:兜底话术要像 CC 在说话、表情包要成长、画像是 CC 画的用户——每一处都在强化「这是一个活物」而不是一个命令行。工具可以被替代,伙伴不会</span></li>
+  <summary>定位 <span class="count">6</span></summary>
+  <ul><li><span class="badge done">定</span> <b>产品名 Tendhearth CC · 角色与日常称呼 CC</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>2026-09-30 主人确认统一命名。wechat-cc 命令、仓库地址、数据目录和平台标识保留兼容;视觉沿用桌面的暖纸色与正式 CC 资产</span></li>
+<li>做 <b>陪伴者 CC(有人格的 C 形附肢团子)</b> · 不做 <b>工具型 bot</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>全部产品决策的总开关:兜底话术要像 CC 在说话、表情包要成长、画像是 CC 画的用户——每一处都在强化「这是一个活物」而不是一个命令行。工具可以被替代,伙伴不会</span></li>
 <li>做 <b>数据不出厂(本地 daemon)</b> · 不做 <b>云端托管</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>记忆、消息、画像全在用户自己电脑的 state 目录里。这是信任的底座,也是后面每一个技术选型(中继盲转、E2E 加密)的约束来源——不是功能,是原则</span></li>
-<li>做 <b>微信 + 桌面工作台两个操作面</b> · 不做 <b>只做聊天</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>陪伴住在微信里,但「把一件事交出去做完」需要能看见进度、改动和权限请求——微信给不了这些。工作台不是第二个产品,是同一只 CC 的另一只手:daemon 管会话、执行者与权限,两个面只是入口</span></li>
+<li>做 <b>桌面 + 手机 + 微信三个操作入口</b> · 不做 <b>只做聊天</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>陪伴住在微信里,但「把一件事交出去做完」需要能看见进度、改动和权限请求——微信给不了这些。工作台不是第二个产品,是同一只 CC 的另一只手:daemon 管会话、执行者与权限,各个面只是入口</span></li>
 <li>做 <b>记忆外置于 daemon,provider 只是过路的大脑</b> · 不做 <b>记忆绑死在某家 LLM 会话里</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>persona/profile/knowledge/facts 全在 daemon,每次 spawn 现读注入。所以换 provider 长期记忆一分不丢。字节 OpenViking(13K star)的核心论点与此一致:记忆库独立于 harness,Claude Code/Codex/Cursor 共用——我们无意中先做对了这层</span></li>
 <li>做 <b>每晚整理的长期记忆 memory.md(五栏、每条隐藏编号、模型只报改动)</b> <span class="badge done">定</span> · 不做 <b>整份重写的 _overview / JSON 记忆库</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>2026-09-25,借鉴 Meta Muse 的 MEMORY.md:每次对话都读,主人能看能改,只在「新承诺 / 偏好被推翻 / 模型删除」时告诉主人。整份重写说不清改了什么;JSON 推翻「记忆保留 .md」。profile.md 退回白天草稿,_overview.md 不再更新。下一步 A 逐条纠错、C 第二天「我注意到…」</span></li></ul>
 </details>
 
 <details class="sec" open>
-  <summary>移动路线 <span class="count">6</span></summary>
-  <ul><li>做 <b>微信当手机聊天面</b> · 不做 <b>自建手机聊天界面</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>CC 本来就住在用户微信里,自建聊天界面等于跟微信打架,必输。手机 app 的价值只在微信给不了的三样:陪伴的可视化随身(待办/画像/表情)、独立推送(daemon 挂了微信恰好发不出「我病了」)、远程掌控</span></li>
-<li>做 <b>台阶 A:PWA 先行</b> <span class="badge done">定</span> · 不做 <b>直接上原生 app</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>零商店、零审核、零新代码栈,先验证「人们到底会不会在手机上看 CC」。台阶 B(Tauri v2 移动壳 + 桌面 Widget + 原生推送)挂在 A 验证有人用之后——Apple $99/年正好和 macOS 签名公证同一笔钱,一鱼两吃</span></li>
-<li><span class="badge todo">待</span> <b>台阶 B:手机桌面 Widget</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>CC 小熊住在手机桌面:今天画了新表情就换上、有逾期待办就举牌子。最贴 CC 人设的一击,也是微信永远给不了的。解锁条件:台阶 A 验证 + 决定掏 $99</span></li>
+  <summary>移动路线 <span class="count">7</span></summary>
+  <ul><li><span class="badge done">定</span> <b>原生手机路线更新为 Expo / React Native</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>2026-09-30:apps/app 已有演示模式和配对真连接;apps/mobile 继续保留浏览器/PWA。复用协议包与既有加密中继。下面早期台阶路线保留为决策历史;真机通知验收、Widget 与商店发布不由工程目录存在来代表</span></li>
+<li><b>[历史决策;原生路线已由 2026-09-30 条目更新]</b> 做 <b>微信当手机聊天面</b> · 不做 <b>自建手机聊天界面</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>CC 本来就住在用户微信里,自建聊天界面等于跟微信打架,必输。手机 app 的价值只在微信给不了的三样:陪伴的可视化随身(待办/画像/表情)、独立推送(daemon 挂了微信恰好发不出「我病了」)、远程掌控</span></li>
+<li><b>[历史决策;原生路线已由 2026-09-30 条目更新]</b> 做 <b>台阶 A:PWA 先行</b> <span class="badge done">定</span> · 不做 <b>直接上原生 app</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>零商店、零审核、零新代码栈,先验证「人们到底会不会在手机上看 CC」。台阶 B(Tauri v2 移动壳 + 桌面 Widget + 原生推送)挂在 A 验证有人用之后——Apple $99/年正好和 macOS 签名公证同一笔钱,一鱼两吃</span></li>
+<li><span class="badge todo">待</span> <b>台阶 B:手机桌面 Widget</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>CC 住在手机桌面:今天画了新表情就换上、有逾期待办就举牌子。最贴 CC 人设的一击,也是微信永远给不了的。解锁条件:台阶 A 验证 + 决定掏 $99</span></li>
 <li><del>台阶 C:微信小程序</del> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>owner 2026-08-26 拍板:暂时不用。原始顾虑仍在(AI/远控类目审核敏感、个人主体限制多),且 PWA + 微信内置浏览器已覆盖手机场景,没有它非做不可的理由。将来若重提,从这里捡起</span></li>
-<li>做 <b>手机前端独立成 `apps/mobile`(同仓库)</b> <span class="badge done">定</span> · 不做 <b>拆仓库 / 拆发版</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>2026-09-24:手机页没有自己的后端,`/m/api/*` 契约跟 daemon 同步演进,拆仓库等于给一个人维护的项目加跨仓库版本对账。要拆的是代码位置:页面曾是 daemon 里无类型的字符串模板。生成物进仓库、daemon 不 import 源码树(编译后的 sidecar 没有它);台阶 B 的 Tauri 手机壳到时加在 `apps/mobile/src-tauri`</span></li>
+<li><b>[历史决策;原生路线已由 2026-09-30 条目更新]</b> 做 <b>手机前端独立成 `apps/mobile`(同仓库)</b> <span class="badge done">定</span> · 不做 <b>拆仓库 / 拆发版</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>2026-09-24:手机页没有自己的后端,`/m/api/*` 契约跟 daemon 同步演进,拆仓库等于给一个人维护的项目加跨仓库版本对账。要拆的是代码位置:页面曾是 daemon 里无类型的字符串模板。生成物进仓库、daemon 不 import 源码树(编译后的 sidecar 没有它);台阶 B 的 Tauri 手机壳到时加在 `apps/mobile/src-tauri`</span></li>
 <li>做 <b>设备配对长期令牌(在家扫码换一枚,加主屏永不过期)</b> · 不做 <b>每次回微信要新链接</b> <button class="why" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">why</button><span class="why-body" hidden>10 分钟短令牌对「加到主屏随时打开」是致命摩擦。长期令牌落盘 0600、上限 20 台,后来它还成了隧道认证的绑定秘密——一个机制吃两份饭</span></li></ul>
 </details>
 

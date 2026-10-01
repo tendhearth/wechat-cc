@@ -1,7 +1,7 @@
-<h1 align="center">wechat-cc</h1>
+<h1 align="center">Tendhearth CC</h1>
 
 <p align="center">
-  <b>An AI companion and one place to work with Claude, Codex and API models — on desktop and WeChat.</b>
+  <b>Your personal AI companion, at home on your own computer. Talk to CC, follow your work, and make decisions across desktop, mobile and WeChat.</b>
 </p>
 
 <p align="center">
@@ -24,7 +24,9 @@
 
 ## What is this?
 
-**CC is an AI companion with a shared workspace for getting things done.** It brings Claude Code, Codex and configured API models into one desktop entry, with WeChat access to the same tasks when you step away.
+The product name is **Tendhearth CC**. The repository, command-line executable and existing technical identifiers retain their current names for compatibility: `wechat-cc`, `claude-channel-wechat`, and the existing state directories. See [product naming](docs/reference/product-naming.md).
+
+**Tendhearth CC is your personal AI companion, running on your own computer. Call your companion CC.** It brings Claude Code, Codex and configured API models into one desktop entry, with WeChat access to the same tasks when you step away.
 
 - **Now:** see what CC is doing, with room for quiet companionship.
 - **Together:** start tasks, read the full conversation, handle questions and permissions, inspect results, and continue work without juggling separate agent windows.
@@ -35,6 +37,8 @@ Projects have separate task records, drafts, conversations and artifacts. Confli
 **Current scope:** Claude and Codex use native adapters; Cursor joins through `cursor-agent acp` (commands go through permission cards, in-workspace edits do not); agy joins as an unattended executor after a one-time desktop acknowledgement; the configured API adapter handles text/image materials and new text artifacts with a narrower tool set. The executor table with exact boundaries is in [docs/cc-workbench.md](docs/cc-workbench.md#执行者覆盖). CC does not claim feature parity with every CLI or app, or live-process transfer between computers.
 
 > This describes the current **dev branch**, not a newly released installer. Start with the [workspace guide and capability boundaries](docs/cc-workbench.md), the [reference projects and sources](docs/research/2026-09-14-cc-agent-workbench-references.md), and the [batch delivery record](docs/superpowers/reports/2026-09-14-cc-workbench-wrapup.md). These three documents are written in Chinese.
+
+**Mobile:** the native Expo app lives in [apps/app](apps/app/README.md); the existing browser/PWA client lives in [apps/mobile](apps/mobile/README.md). The dev branch includes demo mode and a paired live connection. App Store availability and real-device notification acceptance are separate milestones; an implementation in dev does not imply a public mobile release.
 
 Task records are stored locally. Material needed for a task is sent to the AI service you select; local storage does not mean local inference.
 
