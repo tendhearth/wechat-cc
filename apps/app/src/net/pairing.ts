@@ -70,3 +70,29 @@ export async function pairWithLink(
     dev.close()
   }
 }
+
+/**
+ * 重新配对后退掉旧设备位(spec §8、D5):用**旧令牌**连旧电脑(旧记录里的中继地址,换了电脑也是去旧的那台),
+ * POST unpair_self(daemon 只撤调用者自己,并注销那台的推送登记)。证明就是那次加密握手(只有持有旧令牌的人握得上),
+ * 令牌从不进正文。没有旧记录 / 同一枚令牌 / 同一台电脑上同一个设备位 ⇒ skipped(绝不去撤新位);
+ * 任何失败(旧令牌早已失效、电脑不在线、回 ok:false)⇒ failed —— 只试一次、从不抛,调用方不等它。连接用完即关。
+ */
+export async function retirePrevious(
+  prev: PairingRecord | null,
+  next: PairingRecord,
+  deps: { connect(url: string, token: string): ProtocolClient },
+): Promise<'retired' | 'skipped' | 'failed'> {
+  if (!prev || prev.deviceToken === next.deviceToken) return 'skipped'
+  if (prev.daemonId === next.daemonId && prev.deviceId === next.deviceId) return 'skipped'
+  let old: ProtocolClient | null = null
+  try {
+    old = deps.connect(prev.relayUrl, prev.deviceToken)
+    const res = await old.request({ method: 'POST', path: '/set/api/apply', body: JSON.stringify({ op: 'unpair_self' }), headers: JSON_HEADERS })
+    const body = res.status === 200 ? (res.json() as { ok?: unknown } | null) : null
+    return body !== null && typeof body === 'object' && body.ok === true ? 'retired' : 'failed'
+  } catch {
+    return 'failed'
+  } finally {
+    try { old?.close() } catch { /* 关不掉也不要紧 */ }
+  }
+}

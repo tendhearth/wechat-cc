@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { t, type MessageKey } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { parsePairLink, type ParsedLink } from '../net/link'
-import { pairWithLink, PairError } from '../net/pairing'
+import { pairWithLink, PairError, retirePrevious } from '../net/pairing'
 import { rnConnect } from '../net/rn-connect'
 import { systemPairLink, takePendingLink } from '../net/system-link'
 import { useConnection } from '../state/hooks'
@@ -38,7 +38,7 @@ export default function Pair() {
   const lang = useLang()
   const router = useRouter()
   const conn = useConnection()
-  const { setPaired } = useSession()
+  const { setPaired, pairing } = useSession()
   const [phase, setPhase] = useState<Phase>({ k: 'intro' })
   const [pasted, setPasted] = useState('')
   const [perm, requestPerm] = useCameraPermissions()
@@ -84,10 +84,13 @@ export default function Pair() {
     if (!gate.enter()) return
     setPhase({ k: 'working', link })
     try {
-      await pairAndSave(
+      const prev = pairing
+      const rec = await pairAndSave(
         () => pairWithLink(link, { connect: rnConnect, label: Platform.OS === 'ios' ? 'Tendhearth · iPhone' : 'Tendhearth · Android' }),
         setPaired,
       )
+      // 新配对已存好之后才退旧位(D5);不等它,结果不影响这次配对。只试一次,日志只记结果。
+      void retirePrevious(prev, rec, { connect: rnConnect }).then(r => { if (__DEV__) console.log(`[pair] retire previous: ${r}`) })
       if (!alive.current) return
       router.replace('/')
     } catch (e) {
