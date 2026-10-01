@@ -1777,7 +1777,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   // connections.ts
   export type Dot = 'ok' | 'warn' | 'bad' | 'unknown'
   export function connectionsView(s: ConnectionsT, now: number, lang: Lang): {
-    headline: { dot: Dot; key: 'conn.headlineOk' | 'conn.headlineWarn' | 'conn.headlineBad' | 'conn.headlineUnknown'; n: number }
+    headline: { dot: Dot; key: 'links.headlineOk' | 'links.headlineWarn' | 'links.headlineBad' | 'links.headlineUnknown'; n: number }
     sources: Array<{ id: string; name: string; dot: Dot; label: string }>
     computers: Array<{ id: string; label: string; dot: Dot; detail: string }>
     recent: Array<{ matterId: string; title: string; when: string }>
@@ -1789,7 +1789,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   ```
 - `chatBubbles` 规则:历史消息 ⇒ `sent`;`pending` ⇒ 末尾追加「我」气泡(`state:'sent'`)+ CC 的 `thinking` 气泡;`failed` ⇒ 「我」气泡 `state:'failed'`、`failedKind = failed.error === 'busy' ? 'busy' : 'unavailable'`、带 `requestId`;`accepted`(本机刚收到回执)若既不是 pending、也不在 failed、历史里也没有同样正文的「我」消息(at ≥ accepted.at - 60 秒,来源 phone)⇒ 「我」气泡 `failed` + `failedKind:'maybeLost'`(Review Focus 1)。
 - `conversationView` 规则:`user` ⇒ me、`text` ⇒ cc、连续 `tool_call` 合成一个 `steps`(`count` = 条数,`text` = 最后一条)、`error` ⇒ error、`system` 与其它 ⇒ 不显示;正文超过 4000 字截断加「…」。
-- `connectionsView` 规则:`ready` ⇒ ok,`behind` ⇒ warn,`not_loaded` ⇒ bad,`unknown` ⇒ unknown;headline 取最坏(bad > warn > unknown > ok),`n` = 该级别条数;label:ready 且有 `latestAt` ⇒ `t('conn.latestOn',{date})`,ready 无 ⇒ `t('conn.ready')`,behind 有 `latestAt` ⇒ `t('conn.behindSince',{date})`、无 ⇒ `t('conn.behind')`,not_loaded ⇒ `t('conn.notLoaded')`,unknown ⇒ `t('conn.unknown')`;名称:`wechat_history` ⇒ `t('conn.src.wechat')`,`knowledge` ⇒ `t('conn.src.knowledge')`,插件原名。电脑:online ⇒ ok + `t('conn.computerOnline',{date: shortDate(since)})`。
+- `connectionsView` 规则:`ready` ⇒ ok,`behind` ⇒ warn,`not_loaded` ⇒ bad,`unknown` ⇒ unknown;headline 取最坏(bad > warn > unknown > ok),`n` = 该级别条数;label:ready 且有 `latestAt` ⇒ `t('links.latestOn',{date})`,ready 无 ⇒ `t('links.ready')`,behind 有 `latestAt` ⇒ `t('links.behindSince',{date})`、无 ⇒ `t('links.behind')`,not_loaded ⇒ `t('links.notLoaded')`,unknown ⇒ `t('links.unknown')`;名称:`wechat_history` ⇒ `t('links.src.wechat')`,`knowledge` ⇒ `t('links.src.knowledge')`,插件原名。电脑:online ⇒ ok + `t('links.computerOnline',{date: shortDate(since)})`。
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -1882,16 +1882,16 @@ describe('connectionsView', () => {
     const v = connectionsView(snap([src('wechat_history', 'behind', new Date(2026, 8, 8, 12).getTime(), 'wechat_history'), src('wxsearch', 'ready'), src('wxmedia', 'not_loaded'), src('x', 'unknown')]), NOW, 'zh-Hans')
     expect(v.sources.map(s => [s.dot, s.label])).toEqual([['warn', '数据最新到 9月8日'], ['ok', '已连上'], ['bad', '没加载'], ['unknown', '不知道']])
     expect(v.sources[0]!.name).toBe('微信聊天记录')
-    expect(v.headline).toEqual({ dot: 'bad', key: 'conn.headlineBad', n: 1 })
+    expect(v.headline).toEqual({ dot: 'bad', key: 'links.headlineBad', n: 1 })
   })
   it('全绿 ⇒ headline ok;英文日期', () => {
-    expect(connectionsView(snap([src('a', 'ready')]), NOW, 'en').headline).toEqual({ dot: 'ok', key: 'conn.headlineOk', n: 1 })
+    expect(connectionsView(snap([src('a', 'ready')]), NOW, 'en').headline).toEqual({ dot: 'ok', key: 'links.headlineOk', n: 1 })
     expect(shortDate(new Date(2026, 8, 8, 12).getTime(), 'en')).toBe('Sep 8')
   })
 })
 ```
 
-(文案以 Step 3 加进 i18n 的为准:`conn.behindSince` 中文「数据最新到 {date}」、`conn.ready`「已连上」、`conn.notLoaded`「没加载」、`conn.unknown`「不知道」、`conn.src.wechat`「微信聊天记录」。)
+(文案以 Step 3 加进 i18n 的为准:`links.behindSince` 中文「数据最新到 {date}」、`links.ready`「已连上」、`links.notLoaded`「没加载」、`links.unknown`「不知道」、`links.src.wechat`「微信聊天记录」。)
 
 `sessions.test.ts`:
 
@@ -1997,24 +1997,24 @@ i18n(两份同时加,键一致):
 
 | 键 | zh-Hans | en |
 |---|---|---|
-| `conn.title` | CC 的连接 | CC’s connections |
-| `conn.src.wechat` | 微信聊天记录 | WeChat history |
-| `conn.src.knowledge` | 知识库 | Knowledge base |
-| `conn.ready` | 已连上 | Connected |
-| `conn.latestOn` | 数据最新到 {date} | Up to {date} |
-| `conn.behind` | 有一阵没更新了 | Not updated lately |
-| `conn.behindSince` | 数据最新到 {date} | Only up to {date} |
-| `conn.notLoaded` | 没加载 | Not loaded |
-| `conn.unknown` | 不知道 | Unknown |
-| `conn.headlineOk` | 都连着 | All connected |
-| `conn.headlineWarn` | {n} 项有点旧 | {n} running behind |
-| `conn.headlineBad` | {n} 项没加载 | {n} not loaded |
-| `conn.headlineUnknown` | 电脑还在启动,暂时不知道 | Still starting up |
-| `conn.computers` | 家里的电脑 | Home computer |
-| `conn.computerOnline` | 在线 · 自 {date} | Online since {date} |
-| `conn.recent` | 最近在做 | Recently |
-| `conn.outputs` | 成果 | Outputs |
-| `conn.sources` | 来源 | Sources |
+| `links.title` | CC 的连接 | CC’s connections |
+| `links.src.wechat` | 微信聊天记录 | WeChat history |
+| `links.src.knowledge` | 知识库 | Knowledge base |
+| `links.ready` | 已连上 | Connected |
+| `links.latestOn` | 数据最新到 {date} | Up to {date} |
+| `links.behind` | 有一阵没更新了 | Not updated lately |
+| `links.behindSince` | 数据最新到 {date} | Only up to {date} |
+| `links.notLoaded` | 没加载 | Not loaded |
+| `links.unknown` | 不知道 | Unknown |
+| `links.headlineOk` | 都连着 | All connected |
+| `links.headlineWarn` | {n} 项有点旧 | {n} running behind |
+| `links.headlineBad` | {n} 项没加载 | {n} not loaded |
+| `links.headlineUnknown` | 电脑还在启动,暂时不知道 | Still starting up |
+| `links.computers` | 家里的电脑 | Home computer |
+| `links.computerOnline` | 在线 · 自 {date} | Online since {date} |
+| `links.recent` | 最近在做 | Recently |
+| `links.outputs` | 成果 | Outputs |
+| `links.sources` | 来源 | Sources |
 | `sessions.unknownTime` | 时间不明 | Time unknown |
 
 > 注:`conn.*` 这一组若与已有的连接状态文案(`conn.revokedTitle` 等)同名前缀冲突,改用 `links.*` 前缀并同步上面测试里的键名;先 `grep -n "'conn\." src/i18n/en.ts` 确认。
@@ -2235,8 +2235,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 - [ ] **Step 1: 连接页与此刻入口**
 
-- 此刻页「CC 一两句近况」卡下面加一行 `now-connections`:圆点(按 `headline.dot` 着色)+ `t('conn.title')` + `t(headline.key, { n })` + `›`,点 ⇒ `/connections`。数据 `useQuery('connections', () => backend.connections())`;失败 ⇒ 这一行显示 `conn.unknown`,不报错。
-- `connections.tsx`:`useQuery('connections', …, { refreshOnMount: true })`;四段卡片:来源(每行 `connections-source-<id>`:圆点 + 名称 + label;圆点旁一定有文字)、家里的电脑(`connections-computer-home`:label + `conn.computerOnline`)、最近在做(点 ⇒ `/matter/<id>`)、成果(只列名字 + 日期,点 ⇒ 对应进展页)。圆点颜色:ok = `c.ok`、warn = `c.warn`、bad = `c.danger`(没有就加到 `ui/tokens.ts` 两套色板,浅 `#b5533c` / 深 `#e08a74`)、unknown = `c.muted`。
+- 此刻页「CC 一两句近况」卡下面加一行 `now-connections`:圆点(按 `headline.dot` 着色)+ `t('links.title')` + `t(headline.key, { n })` + `›`,点 ⇒ `/connections`。数据 `useQuery('connections', () => backend.connections())`;失败 ⇒ 这一行显示 `links.unknown`,不报错。
+- `connections.tsx`:`useQuery('connections', …, { refreshOnMount: true })`;四段卡片:来源(每行 `connections-source-<id>`:圆点 + 名称 + label;圆点旁一定有文字)、家里的电脑(`connections-computer-home`:label + `links.computerOnline`)、最近在做(点 ⇒ `/matter/<id>`)、成果(只列名字 + 日期,点 ⇒ 对应进展页)。圆点颜色:ok = `c.ok`、warn = `c.warn`、bad = `c.danger`(没有就加到 `ui/tokens.ts` 两套色板,浅 `#b5533c` / 深 `#e08a74`)、unknown = `c.muted`。
 
 - [ ] **Step 2: 会话页与设置入口**
 
