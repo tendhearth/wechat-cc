@@ -44,7 +44,11 @@ describe('nowStatusLine', () => {
   const p = (presence: string) => ({ presence })
   it('presence 够不着 ⇒ 红点 + 不在身边,即使 doctor 说 daemon 活着(与 CC 变暗同一信号)', () => {
     expect(nowStatusLine({ alive: true }, p('down'))).toEqual({ cls: 'bad', text: 'CC 不在身边' })
-    expect(nowStatusLine({ alive: true }, null)).toEqual({ cls: 'bad', text: 'CC 不在身边' })
+  })
+  it('还没拉到(doctor 或 presence 尚未第一拍)⇒ 灰点「正在连接…」,既不报绿也不报红', () => {
+    expect(nowStatusLine(null, null)).toEqual({ cls: 'unknown', text: '正在连接…' })
+    expect(nowStatusLine({ alive: true }, null)).toEqual({ cls: 'unknown', text: '正在连接…' })
+    expect(nowStatusLine(null, p('ok'))).toEqual({ cls: 'unknown', text: '正在连接…' })
   })
   it('daemon 没跑 ⇒ 红', () => { expect(nowStatusLine({ alive: false }, p('ok'))).toEqual({ cls: 'bad', text: 'CC 没在运行' }) })
   it('两边都通才绿', () => { expect(nowStatusLine({ alive: true }, p('ok'))).toEqual({ cls: 'ok', text: 'CC 在家 · 运行中' }) })

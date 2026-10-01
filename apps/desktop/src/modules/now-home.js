@@ -12,10 +12,12 @@ export function ccPresence(p) {
   return p && p.presence !== 'down' ? 'here' : 'away'
 }
 
-// 右上角状态行:与 CC 明暗同一个信号。daemon 没跑 ⇒ 红;够不着(presence down / 还没拉到)⇒ 也不是绿。
+// 右上角状态行:与 CC 明暗同一个信号。还没拉到第一拍 ⇒ 灰「正在连接…」(poller 失败时发的是 presence:'down',不是 null);
+// daemon 没跑 ⇒ 红;presence down ⇒ 红;两边都通才绿。
 /** @param {{alive:boolean}|null|undefined} daemon @param {{presence:string}|null} presence */
 export function nowStatusLine(daemon, presence) {
-  if (!daemon || !daemon.alive) return { cls: /** @type {'bad'} */ ('bad'), text: 'CC 没在运行' }
+  if (!daemon || !presence) return { cls: /** @type {'unknown'} */ ('unknown'), text: '正在连接…' }
+  if (!daemon.alive) return { cls: /** @type {'bad'} */ ('bad'), text: 'CC 没在运行' }
   if (ccPresence(presence) === 'away') return { cls: /** @type {'bad'} */ ('bad'), text: 'CC 不在身边' }
   return { cls: /** @type {'ok'} */ ('ok'), text: 'CC 在家 · 运行中' }
 }
