@@ -16,7 +16,7 @@ function harness(script: { link: Array<object | Error>; devices: Array<object[] 
   const views: Array<{ kind: string; [k: string]: unknown }> = []
   const link = [...script.link], devices = [...script.devices]
   const next = <T,>(q: T[]) => (q.length > 1 ? q.shift()! : q[0]!)
-  const call = vi.fn(async (method: string, path: string) => {
+  const call = vi.fn(async (method: string, path: string, _body?: unknown) => {
     if (method === 'POST' && path === '/v1/phone/link') { const r = next(link); if (r instanceof Error) throw r; return r }
     if (method === 'GET' && path === '/v1/phone/devices') { const r = next(devices); if (r instanceof Error) throw r; return { ok: true, devices: r } }
     throw new Error(`unexpected ${method} ${path}`)
@@ -84,6 +84,18 @@ describe('makePhoneLinkFlow', () => {
     const h = harness({ link: [{ ok: false, state: 'starting' }, new Error('workbench_connection_unavailable'), ready()], devices: [[], [dev('n', 'Tendhearth · Android')]] })
     await h.flow.start()
     expect(h.views.map(v => v.kind)).toEqual(['loading', 'starting', 'starting', 'qr', 'paired'])
+  })
+  it('I1:每次 start() 只有第一次 POST 带 enable_remote: true,之后的轮询不带(免得反复触发重启)', async () => {
+    const h = harness({ link: [{ ok: false, state: 'starting' }, { ok: false, state: 'starting' }, ready()], devices: [[], [dev('n', 'x')]] })
+    await h.flow.start()
+    const posts = h.call.mock.calls.filter(c => c[0] === 'POST')
+    expect(posts.length).toBe(3)
+    expect(posts[0]![2]).toEqual({ enable_remote: true })
+    for (const p of posts.slice(1)) expect(p[2]).toEqual({})
+    // 再来一轮 start():第一次又带上
+    h.call.mockClear()
+    await h.flow.start()
+    expect(h.call.mock.calls.filter(c => c[0] === 'POST')[0]![2]).toEqual({ enable_remote: true })
   })
   it('一上来就抛错(不是重启中)⇒ 报错,不重试', async () => {
     const h = harness({ link: [new Error('boom')], devices: [[]] })

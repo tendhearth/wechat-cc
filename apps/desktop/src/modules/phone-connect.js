@@ -83,11 +83,15 @@ export function makePhoneLinkFlow(deps) {
     let sawStarting = false
     /** @type {{ ok: true, state: 'ready', url: string, expires_at: number, check_code?: string } | null} */
     let ready = null
+    // 只有每轮 start() 的第一次 POST 带 enable_remote:之后的轮询只是问状态,不能每 2 秒再要求一次开隧道 / 重启(I1)。
+    let firstPost = true
     while (alive()) {
       /** @type {LinkResult} */
       let r
       try {
-        r = /** @type {LinkResult} */ (await deps.call('POST', '/v1/phone/link', { enable_remote: true }))
+        const body = firstPost ? { enable_remote: true } : {}
+        firstPost = false
+        r = /** @type {LinkResult} */ (await deps.call('POST', '/v1/phone/link', body))
       } catch (err) {
         if (!sawStarting) { show({ kind: 'error', text: c.error.replace('{why}', why(err)) }); return }
         r = { ok: false, state: 'starting' }   // daemon 正在重启:连不上是预期的(Review Focus 2)

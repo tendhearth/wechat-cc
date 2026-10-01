@@ -22,7 +22,7 @@ beforeEach(() => {
 })
 afterEach(async () => { for (const p of panels.splice(0)) await p.stop(); rmSync(dir, { recursive: true, force: true }) })
 
-function mk(o: { v2?: boolean; tunnel?: boolean; remote?: { relay: string; id: string } | null; owner?: string | null; wired?: boolean } = {}) {
+function mk(o: { v2?: boolean; v2AtBoot?: boolean; tunnel?: boolean; remote?: { relay: string; id: string } | null; owner?: string | null; wired?: boolean } = {}) {
   const calls = { enabled: [] as boolean[], restarts: 0, audit: [] as string[] }
   let tunnel = o.tunnel ?? false
   const panel = makeSettingsPanel({
@@ -31,6 +31,7 @@ function mk(o: { v2?: boolean; tunnel?: boolean; remote?: { relay: string; id: s
     getUserName: () => '大人', setUserName: async () => {}, log: () => {}, now: () => 1_000_000,
     audit: s => { calls.audit.push(s) },
     relayV2Configured: () => o.v2 ?? true,
+    ...(o.v2AtBoot !== undefined ? { relayV2AtBoot: o.v2AtBoot } : {}),
     ...(o.remote ? { remoteInfo: () => o.remote! } : {}),
     ...(o.wired === false ? {} : { remote: { isEnabled: () => tunnel, setEnabled: (on: boolean) => { tunnel = on; calls.enabled.push(on) }, requestRestart: () => { calls.restarts++ } } }),
   })
@@ -97,6 +98,19 @@ describe('settingsPanel.phoneLink(spec §4.1)', () => {
     expect(calls.restarts).toBe(1)
     expect(calls.enabled).toEqual([])
     expect(await panel.phoneLink({ enableRemote: true })).toEqual({ ok: false, state: 'relay_unavailable' })
+    expect(calls.restarts).toBe(1)
+  })
+  it('I1:开机时 relay_v2_url 就已配置、运行中仍是老 id(v2 身份坏了)⇒ relay_unavailable,不重启;换一个进程(新面板)也不重启', async () => {
+    const legacy = { relay: 'wss://cc.tendhearth.com/tunnel/phone', id: 't' + '0'.repeat(36) }
+    for (let proc = 0; proc < 2; proc++) {
+      const { panel, calls } = mk({ tunnel: true, v2AtBoot: true, remote: legacy })
+      expect(await panel.phoneLink({ enableRemote: true })).toEqual({ ok: false, state: 'relay_unavailable' })
+      expect(calls.restarts).toBe(0)
+    }
+  })
+  it('I1:开机时没配 v2(之后才配)⇒ 仍重启一次', async () => {
+    const { panel, calls } = mk({ tunnel: true, v2AtBoot: false, remote: { relay: 'wss://cc.tendhearth.com/tunnel/phone', id: 't' + '0'.repeat(36) } })
+    expect(await panel.phoneLink({ enableRemote: true })).toEqual({ ok: false, state: 'starting' })
     expect(calls.restarts).toBe(1)
   })
   it('M3:运行中已是 v2 id ⇒ 不重启', async () => {
