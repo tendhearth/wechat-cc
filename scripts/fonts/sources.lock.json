@@ -1,0 +1,20 @@
+{
+  "fetched": "2026-10-01",
+  "notoSerifSC": {
+    "url": "https://raw.githubusercontent.com/google/fonts/8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5/ofl/notoserifsc/NotoSerifSC[wght].ttf",
+    "commit": "8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5",
+    "sha256": "050080d9255a86808f2945bffac582b31ef32bc36411ce29563b4961670c66f9",
+    "oflSha256": "5e0da210fb04058a8c0087985d2d456b931c2579811a49655721d3cf0c36b6d6"
+  },
+  "sourceSerif4": {
+    "url": "https://raw.githubusercontent.com/google/fonts/08dc85da6bca7ae308a6f1d38d0b137465646071/ofl/sourceserif4/SourceSerif4[opsz,wght].ttf",
+    "commit": "08dc85da6bca7ae308a6f1d38d0b137465646071",
+    "sha256": "97b2d4da6e3cb494b5a1e66ae176914d852ccabef49e0c02c0df25f3e39aca0b",
+    "oflSha256": "5f94c3fd3a23131a417ab5a0c8452de57e70c3cfb9f604d88241f7065ebf9fd9",
+    "reservedFontName": "Source (internal names renamed to 'TH Serif 4' in subset files)"
+  },
+  "geistMonoLicense": {
+    "url": "https://raw.githubusercontent.com/vercel/geist-font/main/OFL.txt",
+    "sha256": "c683bfbcc7e087f5d37a54ef628f10387c451a83ddc459b151403a164ac46c90"
+  }
+}
