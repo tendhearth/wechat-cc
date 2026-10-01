@@ -14,7 +14,7 @@
 ## 1. 主人的决定(逐条照抄成规矩)
 
 1. 屏上只留 CC 形象和功能;同一信息只出现一次;没有客套话;只放能用的按钮(没上线的语音 / 附件不出现)。
-2. 一套衬线体到底:中文 Noto Serif SC,西文 / 数字 Source Serif 4。**两个 app 都本地打包字体,运行时不走 CDN**(桌面 Tauri、Expo 都是)。授权 SIL OFL 1.1,随字体放 `OFL.txt`。
+2. 一套衬线体到底:中文 Noto Serif SC,西文 / 数字 Source Serif 4 的子集(因 OFL 保留字体名,打包后改名 TH Serif 4)。**两个 app 都本地打包字体,运行时不走 CDN**(桌面 Tauri、Expo 都是)。授权 SIL OFL 1.1,随字体放 `OFL.txt`。
 3. 层级靠字号与留白,不靠粗细:只用 400(常规)与 500(中等);不用 600 及以上。
 4. 一个强调色(深绿,只给动作)+ 灰阶 + 暖白底。状态色只用在状态点上(绿 在线 / 正常、琥珀 落后、红 没连上、灰 不知道);**不默认绿**。
 5. 不套卡片(最多一层)、不要图标圆圈、彩色块、渐变按钮、阴影堆叠;装饰只剩 CC 的光、极淡纸感、细分隔线。
@@ -75,10 +75,10 @@
 
 - 来源:google/fonts 仓库 `ofl/notoserifsc/NotoSerifSC[wght].ttf` 与 `ofl/sourceserif4/SourceSerif4[opsz,wght].ttf`(都带 `OFL.txt`)。脚本 `scripts/fonts/build-fonts.sh` 用 fonttools(`varLib.instancer` 切出 400 / 500 静态字重,Source Serif 4 的 opsz 钉在 16;`pyftsubset` 按下面的范围裁剪),**生成物入库**,运行时不下载。脚本只在维护者要换字体时跑,来源的 sha256 写进 `scripts/fonts/sources.lock.json`。
 - 范围:Noto Serif SC 保留 Basic Latin、Latin-1、常用标点(U+2000–206F)、CJK 符号与标点(U+3000–303F)、全角(U+FF00–FFEF)、CJK 统一表意文字基本区(U+4E00–9FFF);扩展区的字退回系统字体(主人聊天里极少见)。Source Serif 4 保留 Latin 子集。
-- 手机:`apps/app/assets/fonts/` 下 4 个 TTF(`NotoSerifSC-Regular/Medium`、`SourceSerif4-Regular/Medium`)+ `OFL.txt`,用 `expo-font` 的 `useFonts` 在根布局加载;加载失败也不挡页面(退回系统衬线)。
-- 桌面:`apps/desktop/src/fonts/` 下 4 个 woff2 + `OFL.txt`,`@font-face` 用 `unicode-range` 把西文交给 Source Serif 4、中文交给 Noto Serif SC。删掉 Geist(无衬线);Geist Mono 留给代码。CSP 本来就是 `font-src 'self'`。
+- 手机:`apps/app/assets/fonts/` 下 4 个 TTF(`NotoSerifSC-Regular/Medium`、`THSerif4-Regular/Medium`)+ `OFL.txt`,用 `expo-font` 的 `useFonts` 在根布局加载;加载失败也不挡页面(退回系统衬线)。
+- 桌面:`apps/desktop/src/fonts/` 下 4 个 woff2 + `OFL.txt`,`@font-face` 用 `unicode-range` 把西文交给 TH Serif 4、中文交给 Noto Serif SC。删掉 Geist(无衬线);Geist Mono 留给代码。CSP 本来就是 `font-src 'self'`。
 - 体积预算(守卫测试):手机字体合计 ≤ 30 MB,桌面字体合计 ≤ 20 MB。超了 ⇒ 先砍 CJK Medium(层级本来就靠字号),仍超则停下问主人。
-- 手机上 RN 一个 `Text` 只能指定一个字体家族,缺字会退回系统**无衬线**。所以手机按「这段字是什么」选家族:界面文案按语言(`zh-Hans` ⇒ Noto Serif SC,`en` ⇒ Source Serif 4);用户内容(聊天、事项标题、命令说明)一律 Noto Serif SC(它的西文字形本来就出自 Source Serif 一脉)。字重靠换家族名(`…-Medium`),**永不设 `fontWeight`**(安卓上自定义字体设 fontWeight 会退回系统字)。
+- 手机上 RN 一个 `Text` 只能指定一个字体家族,缺字会退回系统**无衬线**。所以手机按「这段字是什么」选家族:界面文案按语言(`zh-Hans` ⇒ Noto Serif SC,`en` ⇒ TH Serif 4);用户内容(聊天、事项标题、命令说明)一律 Noto Serif SC(它的西文字形本来就出自 Source Serif 一脉)。字重靠换家族名(`…-Medium`),**永不设 `fontWeight`**(安卓上自定义字体设 fontWeight 会退回系统字)。
 
 ## 4. CC 的明暗(真实信号)
 
