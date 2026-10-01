@@ -25,7 +25,7 @@
 
 - **D1 手机只传会话 key,导入的页与消息由 daemon 挑**。桌面导入要客户端带 `pages` + 每页指纹 + `messageIds`(`POST /v1/workbench/import`);手机不该拼这些。daemon 读第一页(`limit: 100`),按桌面 `nativeImportMessages` 同一条规则挑消息(从最新往前,至多 200 条、合计 ≤ 24 000 字,单条放不下就跳过),规则搬进核心 `selectNativeImportMessages`(桌面那份不动)。读与导入之间会话变了(`native_history_changed`)⇒ 重读重导一次,再变就如实报错。
 - **D2 不让人选模式**。裁决 2 说「两种都可以时才给选」;核心里这两种是互斥的:`native_resume` 要求执行者能恢复这个会话(`canResume`),`fresh_context` 只在**不能**恢复(`continuation.mode === 'restart_required'`)时才被 `prepareNativeResume` 接受 —— 两者从不同时成立。所以确认卡不出选择,只如实说是哪一种;第一句话到达时按同一条规则再判一次(与桌面 `workbench.js` 的 `native-prepare` 同一判法)。
-- **D3 确认卡就是「原程序已关闭」的声明**。CC 看不见普通终端里跑着的 Claude Code:Claude 原生历史的 `observedState` 永远是 `unknown`,只有 Codex 的 `active`、装了 hook 的终端会话、CC 自己占着的会话能被看见。所以「正在跑 ⇒ 灰字」只能覆盖看得见的那部分;看不见的那部分靠主人自己声明 —— 与桌面「原程序已关闭，继续」同一个语义。卡上明说「先让电脑上原来那个 {provider} 停下。CC 没法替你确认它停了。」,确认按钮写「已经停了，接着做」。核心的 5 分钟决定令牌(`state.nativeDecisions`)**从不离开 daemon**:第一句话到达时,daemon 在同一次调用里 `prepareNativeResume` + `continueNativeTask`,令牌只在内存里活几毫秒。审计照旧:`start()` 记一行「用户声明原 {provider} 执行程序已关闭,选择恢复原会话 / 带已确认的记录新开一轮」。
+- **D3 确认卡就是「原程序已关闭」的声明**。CC 看不见普通终端里跑着的 Claude Code:Claude 原生历史的 `observedState` 永远是 `unknown`,只有 Codex 的 `active`、CC 自己占着的会话(含 CC 派出去、带 `origin_agent` 的 CLI hook 会话)能被看见。主人自己在终端里开、装了 hook 的会话**目前也看不见**:`executionConflict`(`main.ts:722-725`)只认带 `origin_agent` 的 hook 会话(见 §7 第 2 条)。所以「正在跑 ⇒ 灰字」只能覆盖看得见的那部分;看不见的那部分靠主人自己声明 —— 与桌面「原程序已关闭，继续」同一个语义。卡上明说「先让电脑上原来那个 {provider} 停下。CC 没法替你确认它停了。」,确认按钮写「已经停了，接着做」。核心的 5 分钟决定令牌(`state.nativeDecisions`)**从不离开 daemon**:第一句话到达时,daemon 在同一次调用里 `prepareNativeResume` + `continueNativeTask`,令牌只在内存里活几毫秒。审计照旧:`start()` 记一行「用户声明原 {provider} 执行程序已关闭,选择恢复原会话 / 带已确认的记录新开一轮」。
 - **D4 matter 绑定的真缺口是「导入不建 matter」**。调查:`matter/say` 对 `kind: 'task'` 没有主人校验(`matter_say_unsupported` 只在 chat 分支),但 `store.importSource` 只建工作台任务、**不建 matter 行** ⇒ 手机 `GET /m/api/matter?id=` 直接 404。修法:新的 `adoptNativeSession` 在导入后补建 matter(id = 任务 id,与 `createTask` 的登记一致:`create` + `linkTask` + 有主人则 `bind('wechat', owner)`),并登记手机露面;桌面早先导入过的(managed)走同一个补建。桌面导入路径不改(桌面不需要 matter 行,别让桌面行为在这一份里漂)。
 - **D5 matter/say 的新分支只对手机生效**。`say(id, text, 'phone', input)` 碰到「导入了、还没发过第一句」(`requiresExternalClose`)的任务 ⇒ 走 `workbench.continueImported`;桌面 / 内部 API 的 `say` 照旧拿到 `409 external_close_confirmation_required`,桌面的声明按钮不被绕过。
 - **D6 第一句话也按 requestId 幂等**。手机「说一句」超时会用同一个 `requestId` 重发;导入任务的第一句原本不进回执表(`continueNativeTask` 不收 `inputRequestId`)⇒ 重发会起第二轮。给 `continueNativeTask` 加一个可选尾参 `{ inputRequestId?, attachmentPolicy? }`,交给 `start()` 的 `queuedInputId` —— 与 `continueTask` 同一张回执表;重发时先查回执,命中就原样返回。内部 API 调用不变。
@@ -172,7 +172,7 @@
 ## 7. 主人事项(不挡执行)
 
 1. **真机验一次**(合并后):电脑上用 Claude Code 跑一个会话 → 退出 → 手机「接着做」→ 发一句 → 电脑上 `claude --resume` 看到同一个会话里多了这一轮;再验 Codex 一条。
-2. **看不见的「正在跑」**:普通终端里的 Claude Code(没装 hook)CC 看不见,只能靠确认卡上的声明(D3)。要不要以后让 hook 成为「接着做」的前提(更安全、但没装 hook 的人就用不了)—— 交主人。
+2. **看不见的「正在跑」**:普通终端里的 Claude Code CC 看不见,只能靠确认卡上的声明(D3)。连装了 hook 的也一样:`executionConflict`(`main.ts:722-725`)只把带 `origin_agent`(CC 派出去的)hook 会话算作占用,主人自己在终端开的 hook 会话不算 —— 要不要把它也算进去(改动面:`cliEvents.sessions()` 那一条去掉 `origin_agent` 条件,会同时影响工作台其它入口的忙判定),以及要不要以后让 hook 成为「接着做」的前提(更安全、但没装 hook 的人就用不了)—— 交主人。
 3. **额度耗尽时换执行者**:桌面能「交给另一位继续」,手机这一版只说额度用完(D10)。要不要做,交主人。
 
 ## 8. 不做

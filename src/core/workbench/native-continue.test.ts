@@ -143,7 +143,7 @@ describe('adoptNativeSession:接成一件事',()=>{
 describe('幂等与无副作用(补充)',()=>{
   it('预览不写库:前后各表行数不变',async()=>{
     const f=fixture()
-    const count=()=>['workbench_tasks','workbench_sources','workbench_events','matters'].map(t=>db.query<{n:number},[]>(`SELECT COUNT(*) AS n FROM ${t}`).get()!.n)
+    const count=()=>['workbench_tasks','workbench_sources','workbench_events','workbench_projects','matters','matter_bindings'].map(t=>db.query<{n:number},[]>(`SELECT COUNT(*) AS n FROM ${t}`).get()!.n)
     const before=count()
     await service!.previewNativeContinue(f.item.key)
     f.resumable(false);await service!.previewNativeContinue(f.item.key)
@@ -167,5 +167,47 @@ describe('幂等与无副作用(补充)',()=>{
     const p=await f.read(f.item.key,{limit:100})
     const desk=await service!.importNativeHistory({key:f.item.key,pages:[{...p.page,sourceFingerprint:p.sourceFingerprint}],messageIds:['u','a']})
     expect(desk.created).toBe(true);expect(matters.list()).toEqual([])
+  })
+})
+
+describe('fix round 1:补建自愈、状态映射、挑法确定',()=>{
+  it('matter 行建好了、bind 中途抛 ⇒ 整笔回滚;再点一次补齐(create + linkTask + bind)',async()=>{
+    const f=fixture()
+    const bind=vi.spyOn(matters,'bind').mockImplementationOnce(()=>{throw new Error('boom')})
+    await expect(service!.adoptNativeSession(f.item.key)).rejects.toThrow('boom')
+    const id=service!.list().tasks[0]!.id
+    expect(matters.get(id)).toBeNull()
+    expect(await service!.adoptNativeSession(f.item.key)).toEqual({taskId:id,created:false})
+    expect(matters.get(id)?.kind).toBe('task');expect(f.store.taskMatterId(id)).toBe(id)
+    expect(matters.bindings(id).map(b=>[b.surface,b.surfaceKey])).toEqual([['wechat','owner']])
+    bind.mockRestore()
+  })
+  it('matter 行已在、但 linkTask / bind 缺 ⇒ 下次照样补上(只有 create 看「已有」)',async()=>{
+    const f=fixture()
+    const p=await f.read(f.item.key,{limit:100})
+    const desk=await service!.importNativeHistory({key:f.item.key,pages:[{...p.page,sourceFingerprint:p.sourceFingerprint}],messageIds:['u','a']})
+    matters.create({id:desk.task.id,kind:'task',title:'half',projectPath:f.project,ownerChatId:'owner'})
+    await service!.adoptNativeSession(f.item.key)
+    expect(f.store.taskMatterId(desk.task.id)).toBe(desk.task.id)
+    expect(matters.bindings(desk.task.id).map(b=>[b.surface,b.surfaceKey])).toEqual([['wechat','owner']])
+  })
+  it('补建的状态跟任务走:completed / failed / cancelled ⇒ done;interrupted ⇒ open',async()=>{
+    const f=fixture()
+    const p=await f.read(f.item.key,{limit:100})
+    const desk=await service!.importNativeHistory({key:f.item.key,pages:[{...p.page,sourceFingerprint:p.sourceFingerprint}],messageIds:['u','a']})
+    f.store.update(desk.task.id,'completed')
+    await service!.adoptNativeSession(f.item.key)
+    expect(matters.get(desk.task.id)?.status).toBe('done')
+  })
+  it('同一 nativeId 有两个工作台任务 ⇒ taskByNativeIdentity 取最近更新的那个(确定)',()=>{
+    const f=fixture()
+    const a=f.store.create({title:'a',path:f.project,providerId:'claude',ownerChatId:'owner'})
+    const b=f.store.create({title:'b',path:f.project,providerId:'claude',ownerChatId:'owner'})
+    f.store.session(a.id,'shared');f.store.session(b.id,'shared')
+    db.query('UPDATE workbench_tasks SET updated_at=? WHERE id=?').run(1,b.id)
+    db.query('UPDATE workbench_tasks SET updated_at=? WHERE id=?').run(2,a.id)
+    expect(f.store.taskByNativeIdentity('claude','shared')?.id).toBe(a.id)
+    db.query('UPDATE workbench_tasks SET updated_at=? WHERE id=?').run(3,b.id)
+    expect(f.store.taskByNativeIdentity('claude','shared')?.id).toBe(b.id)
   })
 })

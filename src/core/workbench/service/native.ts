@@ -251,10 +251,13 @@ export function makeNativeDomain(ctx:ServiceCtx) {
   function ensureTaskMatter(task:StoredTask):void {
     const m=ctx.deps.matters
     if(!m)throw new Error('matters_not_wired')
-    if(m.get(task.id))return
-    m.create({id:task.id,kind:'task',title:task.title,projectPath:task.path,ownerChatId:task.ownerChatId??null})
-    m.linkTask(task.id)
-    if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)
+    // 三步同一事务;且只有 create 看「已有」—— linkTask / bind 都幂等,每次都跑:哪一步中途失败,下次再点都能补齐。
+    // 状态与 execute 的终态登记一致:完成 / 失败 / 取消 ⇒ done;interrupted 与仍在跑的 ⇒ open。
+    store.atomic(()=>{
+      if(!m.get(task.id))m.create({id:task.id,kind:'task',title:task.title,projectPath:task.path,ownerChatId:task.ownerChatId??null,status:task.status==='completed'||task.status==='failed'||task.status==='cancelled'?'done':'open'})
+      m.linkTask(task.id)
+      if(task.ownerChatId)m.bind(task.id,'wechat',task.ownerChatId)
+    })
   }
   /**
    * 手机「接着做」/「打开这件事」:幂等。已有任务 ⇒ 只补 matter 行;能接 ⇒ 按桌面同一规则挑消息、走现有导入、补 matter 行;
@@ -278,6 +281,10 @@ export function makeNativeDomain(ctx:ServiceCtx) {
       }
     }
   }
-  return { nativeReader,currentNativePages,validateNativeDecision, previewHandoff,handoff,handoffRecord,conflictsExternal,importNativeHistory,prepareNativeResume,continueNativeTask,listNativeHistory,readNativeHistory,previewNativeContinue,adoptNativeSession }
+  /** 门面(service.ts)整块展开的公开面;nativeReader / currentNativePages / validateNativeDecision 是域内与 execute 用的,不进门面。 */
+  const api={ previewHandoff,handoff,handoffRecord,conflictsExternal,importNativeHistory,prepareNativeResume,continueNativeTask,listNativeHistory,readNativeHistory,
+    /** 手机「接着做」(spec 2026-10-01-tendhearth-continue-sessions):只读预览 / 幂等地接成一件事。 */
+    previewNativeContinue,adoptNativeSession }
+  return { nativeReader,currentNativePages,validateNativeDecision, previewHandoff,handoff,handoffRecord,conflictsExternal,importNativeHistory,prepareNativeResume,continueNativeTask,listNativeHistory,readNativeHistory,previewNativeContinue,adoptNativeSession, api }
 }
 export type NativeDomain = ReturnType<typeof makeNativeDomain>
