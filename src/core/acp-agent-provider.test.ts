@@ -3,6 +3,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentEvent, AgentSession, SpawnContext } from './agent-provider'
 import { TIER_PROFILES } from './user-tier'
+import { classifyProviderError } from './provider-quota'
 import { acpPromptBlocks, createAcpProvider, type AcpProviderOptions } from './acp-agent-provider'
 import { APP_VERSION } from '../lib/app-version'
 
@@ -162,6 +163,29 @@ describe('ACP provider — chat-side options', () => {
     expect(events.at(-1)).toMatchObject({ kind: 'result', sessionId: 'sess-fresh' })
     const noLoad = await start({ resumeSessionId: 'x' }, c => { c.initializeResult = { protocolVersion: 1, agentCapabilities: {} }; c.newResult = { sessionId: 'sess-n' } }, { resume: 'fallback' })
     expect(noLoad.child.sent.some(m => m.method === 'session/new')).toBe(true)
+  })
+  it('strict resume maps "Session not found" to acp_session_not_found, not the generic session failure', async () => {
+    const provider = createAcpProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor', rpcTimeoutMs: 200, closeTimeoutMs: 250, permissions: 'bridge', text: 'append' })
+    const p = provider.spawn({ alias: 'a', path: '/project' }, context({ resumeSessionId: 'gone' }))
+    await expect.poll(() => children.length).toBe(1)
+    children[0]!.loadResult = { error: { code: -32602, message: 'Invalid params', data: { message: 'Session "gone" not found' } } }
+    await expect(p).rejects.toThrow(/^acp_session_not_found$/)
+  })
+  it('a turn whose only output is the Cursor upgrade nag ends as a quota error with no reply text (chat)', async () => {
+    const { session, child } = await start()
+    const { events, done } = collect(session); await prompted(child)
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '\n\nUpgrade your plan to continue' } })
+    child.finishPrompt(); await done
+    expect(events.map(e => e.kind)).toEqual(['init', 'error'])
+    expect(classifyProviderError((events[1] as { message: string }).message)).toBe('quota')
+  })
+  it('the same nag in workbench (append) mode also ends as an error, not a result', async () => {
+    const { session, child } = await start({}, undefined, { text: 'append', permissions: 'bridge' })
+    const { events, done } = collect(session); await prompted(child)
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Upgrade your plan to continue' } })
+    child.finishPrompt(); await done
+    expect(events.at(-1)).toMatchObject({ kind: 'error' })
+    expect(events.some(e => e.kind === 'result')).toBe(false)
   })
   it('strict resume (default) still rejects on load failure', async () => {
     const provider = createAcpProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor', rpcTimeoutMs: 200, closeTimeoutMs: 250, permissions: 'bridge', text: 'append' })

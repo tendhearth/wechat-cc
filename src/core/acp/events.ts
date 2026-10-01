@@ -1,5 +1,6 @@
 import type { AgentActivity, AgentEvent } from '../agent-provider'
 import { normalizeWechatMcpServer } from '../agent-provider'
+import { isQuotaRefusalText } from '../provider-quota'
 
 /**
  * ACP `session/update` → `AgentEvent` 的纯翻译。不碰进程、不碰 RPC。
@@ -20,6 +21,8 @@ export interface AcpTranslator {
   beginTurn(): void
   /** messages 模式:把攒着的助理文本吐成一条 text 事件(空白不吐);append 模式恒空。 */
   endTurn(): AgentEvent[]
+  /** 本轮整条输出(无工具调用)就是 Cursor 的额度催升级话 ⇒ 返回该文本,否则 null。 */
+  quotaRefusal(): string | null
 }
 
 type Obj = Record<string, unknown>
@@ -47,7 +50,7 @@ interface Remembered { kind: string; title: string; name: string; status: AgentA
 
 export function createAcpTranslator(options: AcpTranslatorOptions = {}): AcpTranslator {
   const messages = options.text === 'messages'
-  let turn = 0, message = 0, textSeen = false, buffer = ''
+  let turn = 0, message = 0, textSeen = false, buffer = '', turnText = '', sawCall = false
   const calls = new Map<string, Remembered>()
   const flushBuffer = (): AgentEvent[] => {
     const text = buffer; buffer = ''
@@ -68,13 +71,14 @@ export function createAcpTranslator(options: AcpTranslatorOptions = {}): AcpTran
     return { kind: 'tool_call', tool: call.name || call.kind || 'tool', activity }
   }
   return {
-    beginTurn() { turn++; message = 0; textSeen = false; buffer = ''; calls.clear() },
-    endTurn() { return messages ? flushBuffer() : [] },
+    beginTurn() { turn++; message = 0; textSeen = false; buffer = ''; turnText = ''; sawCall = false; calls.clear() },
+    quotaRefusal() { return !sawCall && isQuotaRefusalText(turnText) ? turnText.trim() : null },
+    endTurn() { return messages && !(!sawCall && isQuotaRefusalText(turnText)) ? flushBuffer() : [] },
     update(update) {
       if (!object(update) || typeof update.sessionUpdate !== 'string') return []
       if (update.sessionUpdate === 'agent_message_chunk') {
         if (!object(update.content) || update.content.type !== 'text' || typeof update.content.text !== 'string') return []
-        textSeen = true
+        textSeen = true; turnText += update.content.text
         if (messages) { buffer += update.content.text; return [] }
         const itemId = typeof update.messageId === 'string' && update.messageId ? `acp:msg:${acpActivityId(update.messageId)}` : `acp:turn:${turn}:${message}`
         return [{ kind: 'text', text: update.content.text, itemId, textMode: 'append' }]
@@ -82,6 +86,7 @@ export function createAcpTranslator(options: AcpTranslatorOptions = {}): AcpTran
       if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') return []
       if (typeof update.toolCallId !== 'string' || !update.toolCallId) return []
       const id = acpActivityId(update.toolCallId)
+      sawCall = true
       const previous = calls.get(id) ?? { kind: '', title: '', name: '', status: 'running' as const, paths: [] }
       const raw = object(update.rawInput) ? update.rawInput : undefined
       const identity = raw && typeof raw.providerIdentifier === 'string' && typeof raw.toolName === 'string'
