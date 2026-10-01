@@ -8,15 +8,15 @@
 import { phoneCopy as c } from './phone-connect-copy.js'
 
 /** @typedef {'ready'|'starting'|'remote_off'|'relay_not_configured'|'relay_unavailable'|'no_owner'} LinkState */
-/** @typedef {{ ok: true, state: 'ready', url: string, expires_at: number } | { ok: false, state: Exclude<LinkState, 'ready'> }} LinkResult */
+/** @typedef {{ ok: true, state: 'ready', url: string, expires_at: number, check_code?: string } | { ok: false, state: Exclude<LinkState, 'ready'> }} LinkResult */
 /** @typedef {{ id: string, label?: string, created_at: string, last_seen_at: string }} Device */
-/** @typedef {{ kind: 'loading' } | { kind: 'qr', url: string, expiresAt: number } | { kind: 'starting' } | { kind: 'notice', title: string, body: string } | { kind: 'expired' } | { kind: 'paired', line: string } | { kind: 'error', text: string }} View */
+/** @typedef {{ kind: 'loading' } | { kind: 'qr', url: string, expiresAt: number, checkCode: string | null } | { kind: 'starting' } | { kind: 'notice', title: string, body: string } | { kind: 'expired' } | { kind: 'paired', line: string } | { kind: 'error', text: string }} View */
 /** @typedef {(method: 'GET' | 'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>} Call */
 /** @typedef {{ now?: () => number, sleep?: (ms: number) => Promise<void>, pollMs?: number, startTimeoutMs?: number, labelWaits?: number }} FlowTuning */
 
 /** @param {LinkResult} r @returns {View} */
 export function linkView(r) {
-  if (r.ok) return { kind: 'qr', url: r.url, expiresAt: r.expires_at }
+  if (r.ok) return { kind: 'qr', url: r.url, expiresAt: r.expires_at, checkCode: checkCodeOf(r.check_code) }
   switch (r.state) {
     case 'starting': return { kind: 'starting' }
     case 'relay_not_configured': return { kind: 'notice', title: c.relayNotConfiguredTitle, body: c.relayNotConfiguredBody }
@@ -25,6 +25,16 @@ export function linkView(r) {
     case 'no_owner': return { kind: 'notice', title: c.noOwnerTitle, body: '' }
     default: return { kind: 'error', text: c.error.replace('{why}', 'unknown_state') }
   }
+}
+
+/**
+ * 核对码(Task 9 fix round 1):daemon 用 @wechat-cc/protocol 的 pairCheckCode(daemon id) 算好随码一起给;
+ * 手机确认卡上显示同一个。官方中继是大家共用的,只看主机名分不清「我的电脑」和「别人的码」。
+ * 只认 4 个不易看错的字符(与 protocol PAIR_CHECK_RE 相同);缺了或畸形 ⇒ null,不显示。
+ * @param {unknown} v @returns {string | null}
+ */
+export function checkCodeOf(v) {
+  return typeof v === 'string' && /^[2-9A-HJ-NP-Z]{4}$/.test(v) ? v : null
 }
 
 /** 出码前快照里没有的 id 才算新;多台取最新创建的。 @param {Set<string>} before @param {Device[]} now @returns {Device | null} */
@@ -71,7 +81,7 @@ export function makePhoneLinkFlow(deps) {
     let baseline = first ? new Set(first.map(d => d.id)) : null
     const t0 = now()
     let sawStarting = false
-    /** @type {{ ok: true, state: 'ready', url: string, expires_at: number } | null} */
+    /** @type {{ ok: true, state: 'ready', url: string, expires_at: number, check_code?: string } | null} */
     let ready = null
     while (alive()) {
       /** @type {LinkResult} */
@@ -156,7 +166,8 @@ export function mountPhoneConnect(deps) {
       copy.addEventListener('click', async () => {
         try { await (deps.writeClipboard ?? (t => navigator.clipboard.writeText(t)))(v.url); copy.textContent = c.copied } catch { /* 复制不了就不改字 */ }
       })
-      body.replaceChildren(qr, el(doc, 'p', { class: 'qr-note', id: 'phone-connect-note' }, c.readyNote), el(doc, 'p', { class: 'qr-sub' }, c.readySub), copy)
+      const check = v.checkCode ? [el(doc, 'p', { class: 'qr-check', id: 'phone-connect-check' }, c.checkCode.replace('{code}', v.checkCode))] : []
+      body.replaceChildren(qr, ...check, el(doc, 'p', { class: 'qr-note', id: 'phone-connect-note' }, c.readyNote), el(doc, 'p', { class: 'qr-sub' }, c.readySub), copy)
       return
     }
     if (v.kind === 'loading') body.replaceChildren(el(doc, 'p', { class: 'qr-note' }, c.loading))
@@ -204,6 +215,9 @@ export function mountOnboardPhone(deps) {
   $('onboard-phone-later').textContent = c.later
   const renew = $('onboard-phone-renew')
   renew.textContent = c.renew
+  const check = /** @type {HTMLElement | null} */ (host.querySelector('#onboard-phone-check'))
+  /** @param {string | null} code */
+  const setCheck = code => { if (!check) return; check.textContent = code ? c.checkCode.replace('{code}', code) : ''; check.hidden = !code }
   let started = false
   let needsRetry = false
   let seq = 0
@@ -214,6 +228,7 @@ export function mountOnboardPhone(deps) {
     const mine = ++seq
     needsRetry = v.kind === 'error' || v.kind === 'notice'
     if (v.kind === 'loading') return   // 还不知道有没有码:藏着,不闪
+    if (v.kind !== 'qr') setCheck(null)
     if (v.kind === 'starting') {       // 自动打开手机连接会让 CC 重启一次:说出来(D4)
       $('onboard-phone-qr').replaceChildren(); $('onboard-phone-status').textContent = c.preparing
       renew.hidden = true; host.hidden = false
@@ -225,6 +240,7 @@ export function mountOnboardPhone(deps) {
       if (mine !== seq || !started) return
       $('onboard-phone-qr').innerHTML = svg   // render_qr_svg 的产物,不含用户内容
       $('onboard-phone-status').textContent = c.readyNote
+      setCheck(v.checkCode)
       renew.hidden = true
       host.hidden = false
       return

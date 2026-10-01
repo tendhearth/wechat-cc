@@ -90,6 +90,7 @@ const en = {
   'pair.usePasted': 'Use this link',
   'pair.confirmTitle': 'Connect to your computer?',
   'pair.confirmBody': 'This phone will reach your computer through {host}. Everything is end-to-end encrypted; the relay can’t read it.',
+  'pair.checkCode': 'Check code {code} — make sure it matches your computer',
   'pair.connect': 'Connect',
   'pair.working': 'Connecting…',
   'pair.cameraDenied': 'Tendhearth uses the camera only to scan the pairing code. Allow it in Settings, or paste the link instead.',

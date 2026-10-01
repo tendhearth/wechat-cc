@@ -42,7 +42,7 @@ import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterA
 import {mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileHomeFocus} from './mobile-home-focus'
 import type {MatterSayInput} from '../core/matters/service'
-import { PushPlatform, PHONE_SAY_MAX_CHARS, pushTokenValid, type PushPlatformT } from '@wechat-cc/protocol'
+import { pairCheckCode, PushPlatform, PHONE_SAY_MAX_CHARS, pushTokenValid, type PushPlatformT } from '@wechat-cc/protocol'
 import type { Presence } from '../core/companion-presence'
 import type { CatchRow } from '../core/journal-store'
 import type { PlanLogEntry } from '../core/companion-plan'
@@ -598,7 +598,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       const ip = lanIp()
       const lan = ip ? `${ip}:${(await panel.start()).port}` : null
       const token = panel.issueToken()
-      return { ok: true, state: 'ready', url: psetUrl(remote, token, lan), expires_at: now() + SETTINGS_LINK_TTL_MS }
+      return { ok: true, state: 'ready', url: psetUrl(remote, token, lan), expires_at: now() + SETTINGS_LINK_TTL_MS, check_code: pairCheckCode(remote.id) }
     },
 
     phoneDevices() {

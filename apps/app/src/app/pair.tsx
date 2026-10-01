@@ -22,7 +22,7 @@ import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 import { ccPresence } from '../view/presence'
-import { intakeIncomingLink, linkErrorKey, makeGate, pairErrorKey } from '../view/pair'
+import { confirmCheckCode, intakeIncomingLink, linkErrorKey, makeGate, pairErrorKey } from '../view/pair'
 
 type Phase =
   | { k: 'intro' }
@@ -130,6 +130,8 @@ export default function Pair() {
           <Card testID="pair-confirm" style={{ gap: space.m }}>
             <Txt role="item" accessibilityRole="header">{t(lang, 'pair.confirmTitle')}</Txt>
             <Txt role="bubble" tone="inkSoft">{t(lang, 'pair.confirmBody', { host: phase.link.relayHost })}</Txt>
+            {/* 核对码:和电脑上「连接手机」那里显示的对一下(共用中继上分清是不是自己的电脑) */}
+            <Txt role="item" testID="pair-check-code">{t(lang, 'pair.checkCode', { code: confirmCheckCode(phase.link) })}</Txt>
             <Button
               kind="primary"
               testID="pair-connect"

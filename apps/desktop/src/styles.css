@@ -5639,6 +5639,9 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 #phone-settings-modal #phone-connect-title { margin: 0; font-size: var(--th-size-title); line-height: var(--th-lh-title); font-weight: 500; color: var(--th-ink); }
 #phone-settings-modal .qr-notice, #phone-settings-modal .qr-paired { margin: 0; font-size: var(--th-size-item); line-height: var(--th-lh-item); color: var(--th-ink); }
 #phone-settings-modal .qr-sub { margin: 0; font-size: var(--th-size-small); color: var(--th-ink-soft); }
+/* 核对码:和手机确认卡上的对一下;墨色、字距稍开,不用强调色(强调色只给动作) */
+#phone-settings-modal .qr-check, .onboard-phone .qr-check { margin: 0; font-size: var(--th-size-item); line-height: var(--th-lh-item); color: var(--th-ink); letter-spacing: 0.06em; font-variant-numeric: tabular-nums; }
+.onboard-phone .qr-check[hidden] { display: none; }
 
 /* ─── 应用更新横幅 ─────────────────────────────────────────── */
 #app-update-banner {

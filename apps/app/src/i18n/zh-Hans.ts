@@ -92,6 +92,7 @@ const zh: Record<keyof typeof en, string> = {
   'pair.usePasted': '用这个链接',
   'pair.confirmTitle': '连接你的电脑？',
   'pair.confirmBody': '这台手机会经 {host} 连到你的电脑。全程端到端加密，中继看不到内容。',
+  'pair.checkCode': '核对码 {code}，和电脑上的一致再连',
   'pair.connect': '连接',
   'pair.working': '正在连接…',
   'pair.cameraDenied': 'Tendhearth 只用相机扫配对码。可以在系统设置里允许，或者直接粘贴链接。',

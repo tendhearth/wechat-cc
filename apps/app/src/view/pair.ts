@@ -1,3 +1,4 @@
+import { pairCheckCode } from '@wechat-cc/protocol'
 import type { MessageKey } from '../i18n'
 import { parsePairLink, type LinkError, type ParsedLink } from '../net/link'
 import type { PairErrorCode } from '../net/pairing'
@@ -71,4 +72,12 @@ export function intakeIncomingLink(phase: 'intro' | 'scan' | 'confirm' | 'workin
   if (!accept) return { k: 'ignore' }
   const r = linkIntake([pending, native ? systemPairLink(native, d.dev) : null])
   return r.ok ? { k: 'confirm', link: r.link } : { k: 'error', key: r.key }
+}
+
+/**
+ * 确认卡上的核对码(Task 9 fix round 1):官方中继是大家共用的,主机名分不清「我的电脑」和「别人的码」;
+ * 由码里的 daemon id 派生(protocol pairCheckCode),桌面出码处显示同一个。
+ */
+export function confirmCheckCode(link: ParsedLink): string {
+  return pairCheckCode(link.daemonId)
 }

@@ -6,7 +6,8 @@ import { RELAY_ID_RE } from '@wechat-cc/protocol'
 
 export type PhoneLinkState = 'ready' | 'starting' | 'remote_off' | 'relay_not_configured' | 'relay_unavailable' | 'no_owner'
 export type PhoneLinkResult =
-  | { ok: true; state: 'ready'; url: string; expires_at: number }
+  /** check_code:核对码(protocol pairCheckCode(daemon id)),桌面在码旁显示,手机确认卡显示同一个。 */
+  | { ok: true; state: 'ready'; url: string; expires_at: number; check_code: string }
   | { ok: false; state: Exclude<PhoneLinkState, 'ready'> }
 
 export interface PhoneLinkInputs {

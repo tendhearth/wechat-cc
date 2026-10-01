@@ -39,7 +39,7 @@ maestro test .maestro/           # 模拟器上跑演示流程(要先有 develop
 | `.maestro/compose.yaml` | 此刻 → 跟 CC 说 → 显式选「交给 CC 去做一件事」→ 输入 → 交给 CC → 新事项的进展页 → 「一起做」里出现它(交办不再是默认动作) |
 | `.maestro/demo-walkthrough.yaml` | 欢迎 → 先看看 → 此刻 → 一起做 → 某件事 → 展开改动 / 过程 → 设置 → 切语言 → 退出演示回欢迎页 |
 | `.maestro/pair-invalid.yaml` | 欢迎 → 配对 → 粘贴无效链接 / 局域网链接 → 各自的提示(不联网;真配对是主人真机验收) |
-| `.maestro/pair-link.yaml` | 开发构建用自定义 scheme 打开配对链接 ⇒ 确认卡出现、显示中继主机、没有自动配对;再开一个锚点丢了的链接 ⇒ 「没带全」提示 |
+| `.maestro/pair-link.yaml` | 开发构建用自定义 scheme 打开配对链接 ⇒ 确认卡出现、显示中继主机与核对码、没有自动配对;再开一个锚点丢了的链接 ⇒ 「没带全」提示 |
 | `.maestro/subflows/_start.yaml` | 共用开头:`clearState` 启动、收掉开发构建偶尔弹的系统框「Open in "Tendhearth"?」、等欢迎页 |
 
 同时开着多台模拟器时加 `--device <UDID>`。流程只认 `testID` 和中英两份文案(正则 `中|英`),不依赖系统语言。

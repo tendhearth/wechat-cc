@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pairCheckCode } from '@wechat-cc/protocol'
 import { makeSettingsPanel, SETTINGS_LINK_TTL_MS, type SettingsPanel } from './settings-panel'
 import { makeRemoteToggle, relayV2Configured } from './remote-toggle'
 
@@ -119,6 +120,9 @@ describe('settingsPanel.phoneLink(spec §4.1)', () => {
     expect(r.url).toMatch(new RegExp(`^https://relay\\.tendhearth\\.com/pset/#id=${RID}&t=t[0-9a-f]{32}&p=%2Fset(&lan=[^&]+)?$`))
     expect(r.expires_at).toBe(1_000_000 + SETTINGS_LINK_TTL_MS)
     expect(r.url).toContain(`t=${panel.activeLinkToken()}`)
+    // 核对码(Task 9 fix round 1):由码里的 daemon id 派生,桌面显示、手机确认卡显示同一个
+    expect(r.check_code).toBe(pairCheckCode(RID))
+    expect(r.check_code).toMatch(/^[2-9A-HJ-NP-Z]{4}$/)
   })
   it('phoneDevices:配对后列出,不带令牌', async () => {
     const { panel } = mk({ tunnel: true, remote: V2 })

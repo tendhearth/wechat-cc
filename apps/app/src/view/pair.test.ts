@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import en from '../i18n/en'
-import { acceptsIncomingLink, intakeIncomingLink, linkErrorKey, linkIntake, makeGate, pairErrorKey } from './pair'
+import { acceptsIncomingLink, confirmCheckCode, intakeIncomingLink, linkErrorKey, linkIntake, makeGate, pairErrorKey } from './pair'
 
 describe('配对错误 → 文案键', () => {
   it('每种链接错误、配对错误都有自己的一句话,键都在文案表里', () => {
@@ -92,5 +92,13 @@ describe('intakeIncomingLink(配对页收到系统链接;Task 9 fix round 1)', (
   it('读 / 清原生缓存抛错不影响结果', () => {
     const r = intakeIncomingLink('scan', false, { take: () => OK, readNative: () => { throw new Error('x') }, clearNative: () => { throw new Error('y') }, dev: false })
     expect(r.k).toBe('confirm')
+  })
+})
+
+describe('confirmCheckCode(确认卡核对码;与桌面同一个派生)', () => {
+  it('由链接里的 daemon id 算:与桌面 / daemon 用的 protocol pairCheckCode 一致', () => {
+    const r = linkIntake([`https://relay.tendhearth.com/pset/#id=r${'a'.repeat(26)}&t=t${'0'.repeat(32)}&p=%2Fset`])
+    if (!r.ok) throw new Error('expected ok')
+    expect(confirmCheckCode(r.link)).toBe('FHWL')
   })
 })

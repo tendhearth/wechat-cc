@@ -1484,7 +1484,7 @@ Bun.serve({
       __mockState.phoneCalls.push(body)
       const q = __mockState.phone?.link
       if (q && q.length > 0) return Response.json(q.length > 1 ? q.shift() : q[0])
-      return Response.json({ ok: true, state: 'ready', url: `https://relay.tendhearth.com/pset/#id=r${'a'.repeat(26)}&t=t${'0'.repeat(32)}&p=%2Fset`, expires_at: Date.now() + 600_000 })
+      return Response.json({ ok: true, state: 'ready', url: `https://relay.tendhearth.com/pset/#id=r${'a'.repeat(26)}&t=t${'0'.repeat(32)}&p=%2Fset`, expires_at: Date.now() + 600_000, check_code: 'FHWL' })   // FHWL = pairCheckCode('r' + 26×a),protocol pair-check.test.ts 钉住
     }
     if (dryRun && url.pathname === '/v1/phone/devices' && req.method === 'GET') {
       const q = __mockState.phone?.devices
