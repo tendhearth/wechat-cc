@@ -2,21 +2,23 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeSettingsPanel, type SettingsPanel } from './settings-panel'
+import { makeSettingsPanel, SETTINGS_LINK_TTL_MS, type SettingsPanel } from './settings-panel'
 
 // 单次配对(spec 2026-10-01-tendhearth-pairing-ux §3、D1、D2)。
 const OWNER = 'owner_chat@im.wechat'
 let dir: string
 let panel: SettingsPanel
+let nowMs: number
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'pair-once-'))
+  nowMs = Date.parse('2026-10-01T08:00:00.000Z')
   mkdirSync(join(dir, 'memory', OWNER), { recursive: true })
   writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ provider: 'claude' }))
   panel = makeSettingsPanel({
     stateDir: dir, ownerChatId: () => OWNER,
     chatPrefs: { get: () => ({}), set: (_c, p) => p },
-    getUserName: () => '大人', setUserName: async () => {}, log: () => {},
+    getUserName: () => '大人', setUserName: async () => {}, log: () => {}, now: () => nowMs,
   })
 })
 afterEach(async () => { await panel.stop(); rmSync(dir, { recursive: true, force: true }) })
@@ -36,6 +38,14 @@ describe('一个码只能配一台(裁决 1)', () => {
     const second = await post(`t=${link}`)
     expect(second.status).toBe(401)
     expect(await second.json()).toEqual({ error: 'unauthorized' })
+  })
+  it('过期的码(没用过)⇒ 401 unauthorized,不铸设备令牌', async () => {
+    const link = panel.issueToken()
+    nowMs += SETTINGS_LINK_TTL_MS + 1
+    const r = await post(`t=${link}`)
+    expect(r.status).toBe(401)
+    expect(await r.json()).toEqual({ error: 'unauthorized' })
+    expect(panel.deviceTokens()).toHaveLength(0)
   })
   it('重发码作废旧码(不变)', async () => {
     const old = panel.issueToken()

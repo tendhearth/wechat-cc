@@ -180,3 +180,64 @@ describe('配对换令牌之后的 401(plan 7a 单次配对)', () => {
     expect(src.match(/onUnauthorized\(sent\)/g)?.length).toBe(2)
   })
 })
+
+describe('配对换令牌后,旧令牌那一趟的失败不是「连不上」(plan 7a fix round 1)', () => {
+  type Resp = { status: number; json: () => Promise<unknown> }
+  function runHome(api: (path: string) => Promise<Resp>) {
+    const els: Record<string, { innerHTML: string; textContent: string; hidden: boolean; classList: { contains: () => boolean }; addEventListener: () => void }> = {}
+    const get = (id: string) => (els[id] ??= { innerHTML: '', textContent: '', hidden: true, classList: { contains: () => true }, addEventListener: () => {} })
+    const env = {
+      document: { getElementById: get, querySelector: () => ({ addEventListener: () => {} }), addEventListener: () => {}, hidden: false, visibilityState: 'hidden' },
+      api: vi.fn(api), toast: vi.fn(), esc: (s: unknown) => String(s), q: (p: string) => p, preferTunnel: false,
+      REMOTE: null, location: { host: 'h', replace: vi.fn() }, setInterval: () => 0,
+      localStorage: { getItem: () => null, setItem: () => {}, removeItem: vi.fn() },
+      renderPresenceHome: () => {}, restoreEntry: async () => {},
+    }
+    const src = `var T = "tLINK"\nfunction onUnauthorized(sentAs) { if (sentAs !== T) return; localStorage.removeItem("deviceToken"); location.replace("/m") }\n${readMobileSource('home.js')}
+      return { setT: function(v){ T = v }, banner: function(){ return document.getElementById("banner").textContent } }`
+    const page = new Function(...Object.keys(env), src)(...Object.values(env)) as { setT(v: string): void; banner(): string }
+    return { env, page }
+  }
+  const okHome = { ok: true, events: [], synced_at: '2026-10-01T00:00:00.000Z', today: '2026-10-01' }
+  const okState = { ok: true, todos: { active: [], settled: [] }, portrait: null, stickers: [] }
+
+  it('旧令牌的 401 在飞时换了令牌 ⇒ 不出「连不上」横幅、不删令牌,用新令牌重拉一次', async () => {
+    let swap!: () => void
+    const gate = new Promise<void>((r) => { swap = r })
+    let calls = 0
+    const { env, page } = runHome(async (path) => {
+      calls++
+      if (calls <= 2) { await gate; return { status: 401, json: async () => ({ error: 'unauthorized' }) } }
+      return { status: 200, json: async () => (path === '/m/api/home' ? okHome : okState) }
+    })
+    page.setT('dNEW'); swap()
+    await vi.waitFor(() => expect(env.api).toHaveBeenCalledTimes(4))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(page.banner()).toBe('')
+    expect(env.toast).not.toHaveBeenCalled()
+    expect(env.localStorage.removeItem).not.toHaveBeenCalled()
+    expect(env.location.replace).not.toHaveBeenCalled()
+  })
+
+  it('resetTunnel 把旧隧道上的请求以 closed 失败 ⇒ 同样不出「连不上」,用新令牌重拉', async () => {
+    let swap!: () => void
+    const gate = new Promise<void>((r) => { swap = r })
+    let calls = 0
+    const { env, page } = runHome(async (path) => {
+      calls++
+      if (calls <= 2) { await gate; throw new Error('closed') }
+      return { status: 200, json: async () => (path === '/m/api/home' ? okHome : okState) }
+    })
+    page.setT('dNEW'); swap()
+    await vi.waitFor(() => expect(env.api).toHaveBeenCalledTimes(4))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(page.banner()).toBe('')
+    expect(env.toast).not.toHaveBeenCalled()
+  })
+
+  it('令牌没换时真连不上 ⇒ 照旧出横幅(不吞真故障)', async () => {
+    const { env, page } = runHome(async () => { throw new Error('closed') })
+    await vi.waitFor(() => expect(page.banner()).toContain('连不上'))
+    expect(env.api).toHaveBeenCalledTimes(2)
+  })
+})

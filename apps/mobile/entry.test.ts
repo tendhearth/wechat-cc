@@ -35,7 +35,7 @@ function load(api: Api, storage = new Map<string, string>(), transport?: { fetch
   const doc = { getElementById: get, querySelectorAll: () => [nav], hidden: false,
     addEventListener: (name: string, fn: () => void) => { documentEvents[name] = fn } }
   const mobilePane = vi.fn(), openMatter = vi.fn()
-  const env = { document: doc, window: { addEventListener: (name: string, fn: () => void) => { windowEvents[name] = fn } },
+  const env = { T: 'dNOW', document: doc, window: { addEventListener: (name: string, fn: () => void) => { windowEvents[name] = fn } },
     REMOTE: { id: 'test-daemon', relay: 'wss://example.invalid' }, location: { host: 'localhost' },
     localStorage: { getItem: (k: string) => storage.get(k) ?? null,
       setItem: (k: string, v: string) => { storage.set(k, v) }, removeItem: (k: string) => { storage.delete(k) } },
@@ -46,8 +46,9 @@ function load(api: Api, storage = new Map<string, string>(), transport?: { fetch
   }
   const transportSource = transport ? readMobileSource('transport.js') + '\ntunnel = function(){ return Promise.resolve(tunnelSend) }\n' : ''
   const fns = new Function(...Object.keys(env), `var mCurrent = null, mSeq = 0;\n${transportSource}\n${readMobileSource('attachments.js')}\n${readMobileSource('entry.js')}
-    return {openEntry, submitEntry, restoreEntry, leave: function(){mCurrent='12345678';mSeq++}, state:function(){return JSON.parse(JSON.stringify(eState))}, materials:function(){return eAttachments}}`)(...Object.values(env)) as {
+    return {openEntry, submitEntry, restoreEntry, setT: function(v){T=v}, leave: function(){mCurrent='12345678';mSeq++}, state:function(){return JSON.parse(JSON.stringify(eState))}, materials:function(){return eAttachments}}`)(...Object.values(env)) as {
       openEntry: () => Promise<void>; submitEntry: () => Promise<void>; restoreEntry: () => Promise<void>;
+      setT: (v: string) => void;
       leave: () => void; state: () => any; materials: () => {select: (files: File[]) => Promise<void>; readyIds: () => string[]; items: () => any[]; remove: (id: string) => Promise<void>};
     }
   const edit = (text: string) => { get('entry-text').value = text; get('entry-text').handlers.input!() }
@@ -576,5 +577,27 @@ describe('phone task entry', () => {
     expect(api.mock.calls.some(([p])=>p.endsWith('/create'))).toBe(false)
     expect(phone.materials().readyIds()).toHaveLength(1)
     expect(phone.get('entry-notice').textContent).toContain('不能接收材料')
+  })
+})
+
+// 单次配对(plan 7a fix round 1):配对换令牌时,旧短令牌那一趟交办回 401/403 不是「手机连接已失效」。
+describe('stale 401/403 from the token used before pairing', () => {
+  it.each([401, 403])('HTTP %s on a request sent with the old token does not claim the phone connection is dead', async status => {
+    let phone!: ReturnType<typeof load>
+    const api: Api = async path => {
+      if (path.endsWith('/options')) return response(ready)
+      phone.setT('dNEW')   // 这一趟在飞时配上了,T 换成了设备令牌
+      return response({ error: 'unauthorized' }, status)
+    }
+    phone = load(api)
+    await phone.openEntry(); phone.edit('整理清单'); await phone.submitEntry()
+    expect(phone.get('entry-notice').textContent).not.toContain('手机连接已失效')
+    expect(phone.state().pending).toHaveLength(1)
+  })
+  it('HTTP 401 with the current token still says the phone connection is dead', async () => {
+    const api: Api = async path => path.endsWith('/options') ? response(ready) : response({ error: 'unauthorized' }, 401)
+    const phone = load(api)
+    await phone.openEntry(); phone.edit('整理清单'); await phone.submitEntry()
+    expect(phone.get('entry-notice').textContent).toContain('手机连接已失效')
   })
 })

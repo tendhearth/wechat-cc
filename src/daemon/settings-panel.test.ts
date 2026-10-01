@@ -151,12 +151,21 @@ describe('settings panel', () => {
   it('HTTP: everything without a valid token is 401; with token the API round-trips', async () => {
     const { port } = await panel.start(0)
     const base = `http://127.0.0.1:${port}`
-    expect((await fetch(`${base}/set`)).status).toBe(401)
+    const expired = await fetch(`${base}/set`)
+    expect(expired.status).toBe(401)
+    // 单次配对(plan 7a):用过的码也落到这页 —— 文案得说「用过或过期」,不只是「过期」。
+    const expiredHtml = await expired.text()
+    expect(expiredHtml).toContain('这个链接已经用过或过期了，回微信跟 CC 再要一个')
+    expect(expiredHtml).not.toContain('链接过期啦')
     expect((await fetch(`${base}/set/api/state?t=wrong`)).status).toBe(401)
     const t = panel.issueToken()
     const page = await fetch(`${base}/set?t=${t}`)
     expect(page.status).toBe(200)
-    expect(await page.text()).toContain('陪伴方式')
+    const pageHtml = await page.text()
+    expect(pageHtml).toContain('陪伴方式')
+    // /set 页里 API 回 401 时的提示(sapi):同一句。
+    expect(pageHtml).toContain('这个链接已经用过或过期了，回微信跟 CC 再要一个')
+    expect(pageHtml).not.toContain('链接过期啦')
     const st = await (await fetch(`${base}/set/api/state?t=${t}`)).json() as { name: string }
     expect(st.name).toBe('大人')
     const ap = await fetch(`${base}/set/api/apply?t=${t}`, {

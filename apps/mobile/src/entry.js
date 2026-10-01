@@ -204,7 +204,8 @@ function eRejectionMessage(code) {
   if (code === "unattended_ack_required") return "请先在桌面确认这位执行者的运行方式，再回来交办。"
   return "请调整要求或更多选择，再交给 CC。"
 }
-function eFailure(record, error, creating) {
+/** @param {string} [sentAs] 发这一趟时用的令牌 */
+function eFailure(record, error, creating, sentAs) {
   var kind = eContract.entryFailureKind(error.message, {surface:"phone", method:creating ? "POST" : "GET", status:error.status})
   var expired = kind === "expired", rejected = kind === "rejected"
   if (expired || rejected) {
@@ -222,7 +223,8 @@ function eFailure(record, error, creating) {
   }
   var message = "正在确认是否收到。原文已保留，连接恢复后点“确认是否收到”，会继续核对同一件事。"
   if (error.message === "draft_storage") message = "这台手机暂时无法保存草稿，请先留好原文，恢复存储后再交办。"
-  else if (error.status === 401 || error.status === 403) message = "手机连接已失效，请从微信重新打开随身 CC。草稿与待确认交办已保留。"
+  // 单次配对(plan 7a):这一趟在飞时刚配上、换了令牌,旧短令牌回 401/403 不说明连接失效 —— 保持「正在确认」,下一次核对用新令牌。
+  else if (error.status === 401 || error.status === 403) { if (sentAs === T) message = "手机连接已失效，请从微信重新打开随身 CC。草稿与待确认交办已保留。" }
   else if (error.message === "creation_conflict") message = "这件交办的内容与先前不同，请先确认原交办；原文已保留。"
   else if (error.status >= 400 && error.status < 500) message = "这次交办尚未确认。请检查要求和更多选择，原文已保留。"
   record.error = message; eSave(); eNotice(message); eHistory()
@@ -231,6 +233,7 @@ function eSend(record, retry, navigate) {
   if (eBusy[record.input.requestId]) return Promise.resolve()
   var navigation = navigate ? { epoch: eViewEpoch, matter: mCurrent, seq: mSeq } : null
   eBusy[record.input.requestId] = true; eUpdate(); eHistory(); eNotice("正在确认是否收到…")
+  var sentAs = T
   var creating = false, lookup = retry ? eCheck(record) : Promise.resolve(null)
   return lookup.then(function(result){
     if (result) return result
@@ -240,7 +243,7 @@ function eSend(record, retry, navigate) {
     creating = true
     return eRequest("/m/api/matter/create", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(record.input) })
   }).then(function(result){ eReceipt(record, result, navigation) })
-    .catch(function(error){ eFailure(record, error, creating) })
+    .catch(function(error){ eFailure(record, error, creating, sentAs) })
     .finally(function(){ delete eBusy[record.input.requestId]; eUpdate(); eHistory() })
 }
 function openEntry() {
@@ -272,10 +275,11 @@ function restoreEntry() {
   var checks = eState.pending.slice().map(function(record){
     if (eBusy[record.input.requestId]) return Promise.resolve()
     eBusy[record.input.requestId] = true
+    var sentAs = T
     return eCheck(record).then(function(result){
       if (result) eReceipt(record, result, null)
       else eNotice("正在确认是否收到。原文还在，点“确认这一件”会用原请求再试。")
-    }).catch(function(error){ eFailure(record, error) })
+    }).catch(function(error){ eFailure(record, error, false, sentAs) })
       .finally(function(){ delete eBusy[record.input.requestId]; eUpdate(); eHistory() })
   })
   eUpdate(); eHistory()

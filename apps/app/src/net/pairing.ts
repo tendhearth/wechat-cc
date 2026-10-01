@@ -37,8 +37,9 @@ export async function pairWithLink(
     if (res.status === 401) throw new PairError('expired')
     const p = PHONE_API_SCHEMAS['POST /set/api/pair']!.safeParse(res.json())
     if (!p.success) throw new PairError('unknown')
-    const data = p.data as { ok: true; device_token: string } | { ok: false; error: 'device_limit' }
-    if (!data.ok) throw new PairError('device_limit')
+    const data = p.data as { ok: true; device_token: string } | { ok: false; error: 'device_limit' | 'link_only' }
+    // link_only(plan 7a D1)只在拿设备令牌来配时出现 —— 这里用的是链接令牌,真碰到就是没想到的情况。
+    if (!data.ok) throw new PairError(data.error === 'device_limit' ? 'device_limit' : 'unknown')
     deviceToken = data.device_token
   } catch (e) {
     throw asPairError(e, 'link')

@@ -296,6 +296,10 @@ describe('真实返回校验 — 首页 / 设置页 / 记忆 / 贴纸', () => {
     const paired = await (await post('/set/api/pair', {})).json()
     token = panel.issueToken()   // 链接令牌一次性(plan 7a):配对后用新码继续
     parseAs('POST /set/api/pair', paired)
+    // 设备令牌不能再铸设备令牌(plan 7a D1):403 的回包也在 schema 里。
+    const again = await post('/set/api/pair', {}, (paired as { device_token: string }).device_token)
+    expect(again.status).toBe(403)
+    expect(parseAs('POST /set/api/pair', await again.json())).toEqual({ ok: false, error: 'link_only' })
     const state = await get('/set/api/state')
     parseAs('GET /set/api/state', await state.json())
     const applied = await post('/set/api/apply', { op: 'set_pref', key: 'split', value: true })

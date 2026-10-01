@@ -51,6 +51,10 @@ describe('pairWithLink', () => {
     const f = fakeConnect({ [LINK.linkToken]: { script: { 'POST /set/api/pair': { status: 200, json: { ok: false, error: 'device_limit' } } } } })
     await expect(pairWithLink(LINK, { connect: f.connect, label: 'x' })).rejects.toMatchObject({ code: 'device_limit' })
   })
+  it('403 link_only(daemon 只认链接令牌配对)⇒ unknown,不冒充「设备满了」', async () => {
+    const f = fakeConnect({ [LINK.linkToken]: { script: { 'POST /set/api/pair': { status: 403, json: { ok: false, error: 'link_only' } } } } })
+    await expect(pairWithLink(LINK, { connect: f.connect, label: 'x' })).rejects.toMatchObject({ code: 'unknown' })
+  })
   it('电脑不在线(daemon_offline / timeout)⇒ offline', async () => {
     for (const err of ['daemon_offline', 'timeout', 'unreachable']) {
       const f = fakeConnect({ [LINK.linkToken]: { script: { 'POST /set/api/pair': new Error(err) } } })

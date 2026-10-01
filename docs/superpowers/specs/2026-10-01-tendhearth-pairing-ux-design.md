@@ -200,6 +200,7 @@
 5. **开通中继**:`relay_v2_url` 仍由主人按 `docs/maintainer/relay.md` §8 设;没设时桌面诚实显示「手机连接服务还没开通」,引导页不出码。
 6. Apple 开发者后台:`com.tendhearth.app` 的 Associated Domains 能力(EAS 构建会同步;核对一次)。
 7. 顺带发现,**已在 7a 修**(Task 3):`GET /v1/settings/link` 原是 trusted 档,而普通聊天会话也是 trusted —— 一个 trusted 会话能铸出 admin 链接令牌。现在升到 admin;`selftest phone` 改用 operator 令牌(operator `routeAllow` 加上这条,`token-registry.test.ts` 精确集合同步);微信 `/set` 走进程内调用,不受影响。桌面旧按钮在 Task 3 到 Task 5 之间会 403(同一未部署分支,Task 5 换成 `/v1/phone/link`)。
+8. 顺带发现,**7a 不修**(Task 2 评审):中继壳模式(`relay/pset.html` 注入 `__CC_SHELL__`)下,`apps/mobile/src/transport.js` 的 `onUnauthorized()` 在本机令牌真失效时 `location.replace("/m")` —— 中继域上没有 `/m`,落到 404。旧代码就是这样(7a 前 `home.js` 内联的同一句),单次配对没让它更糟。以后修:壳模式改走 `ccNav` / 回 `/pset/` 重进,或者原地显示一句「这台手机的连接已失效，回微信跟 CC 再要一个」。
 
 ## 12. 不做
 
