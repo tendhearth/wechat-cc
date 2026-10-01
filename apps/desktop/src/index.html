@@ -374,59 +374,26 @@
       <div class="dash-window">
 
         <aside id="dash-global-rail" class="dash-rail">
-          <div class="dash-brand">
-            <span class="cc-brand-lockup"><img class="cc-brand-mark" src="./assets/brand/cc-mark.svg" alt="" /><span class="name">CC</span></span>
-            <span class="cc-brand-note">一起生活，也一起做事</span>
-            <span class="ver" id="dash-version">v0.6.2</span>
-          </div>
+          <p class="dash-wordmark">tendhearth</p>
 
           <nav class="dash-nav" aria-label="主导航">
-            <button class="dash-nav-link active" data-pane="overview">
-              <span class="ic" data-hg-icon="heart-check" data-hg-size="16"></span><span>此刻</span>
-            </button>
-            <button class="dash-nav-link" data-pane="workbench">
-              <span class="ic" data-hg-icon="archive" data-hg-size="16"></span><span>一起做</span>
-            </button>
-            <button class="dash-nav-link" data-pane="recollections">
-              <span class="ic" data-hg-icon="time-02" data-hg-size="16"></span><span>回忆</span>
-            </button>
-
+            <button class="dash-nav-link active" data-pane="overview">此刻</button>
+            <button class="dash-nav-link" data-pane="workbench">一起做</button>
+            <button class="dash-nav-link" data-pane="recollections">回忆</button>
           </nav>
 
-          <!-- Settings gear: master wires the click handler via
-               getElementById('settings-open'); we keep that id so the
-               settings drawer opens. moxiuwen's [data-action='open-wizard']
-               hook is unused here but main.js handles it elsewhere
-               (e.g. on the add-user card). -->
           <details class="cc-life-nav-more">
-              <summary>生活与工具</summary>
-              <div>
-                <button class="dash-nav-link" aria-label="画室" data-pane="atelier">
-                  <span class="ic" data-hg-icon="brush" data-hg-size="16"></span><span>画室</span>
-                </button>
-                <button class="dash-nav-link" aria-label="鱼缸" data-pane="aquarium">
-                  <span class="ic" data-hg-icon="smile" data-hg-size="16"></span><span>鱼缸</span>
-                </button>
-                <button class="dash-nav-link" aria-label="记忆" data-pane="memory">
-                  <span class="ic" data-hg-icon="archive" data-hg-size="16"></span><span>记忆</span><span class="count" id="memory-count"></span>
-                </button>
-                <button class="dash-nav-link" aria-label="待办" data-pane="todos">
-                  <span class="ic" data-hg-icon="checkmark-circle-02" data-hg-size="16"></span><span>待办</span>
-                </button>
-                <button class="dash-nav-link" aria-label="觅食" data-pane="a2a-agents">
-                  <span class="ic" data-hg-icon="settings-01" data-hg-size="16"></span><span>觅食</span>
-                </button>
-                <button class="dash-nav-link" aria-label="后厨" data-pane="sessions" data-backstage-entry="true">
-                  <span class="ic" data-hg-icon="plug-01" data-hg-size="16"></span><span>后厨</span><span class="count" id="sessions-count"></span>
-                </button>
-              </div>
-            </details>
-          <div class="dash-utilities">
-            <button id="settings-open" class="rail-gear" type="button" title="设置" aria-label="设置" data-tooltip="设置">
-              <span class="ic" data-hg-icon="settings-01" data-hg-size="18"></span>
-              <span>连接与设置</span>
-            </button>
-          </div>
+            <summary>生活与工具</summary>
+            <div>
+              <button class="dash-nav-link" aria-label="画室" data-pane="atelier">画室</button>
+              <button class="dash-nav-link" aria-label="鱼缸" data-pane="aquarium">鱼缸</button>
+              <button class="dash-nav-link" aria-label="记忆" data-pane="memory">记忆<span class="count" id="memory-count"></span></button>
+              <button class="dash-nav-link" aria-label="待办" data-pane="todos">待办</button>
+              <button class="dash-nav-link" aria-label="觅食" data-pane="a2a-agents">觅食</button>
+              <button class="dash-nav-link" aria-label="后厨" data-pane="sessions" data-backstage-entry="true">后厨<span class="count" id="sessions-count"></span></button>
+            </div>
+          </details>
+          <div class="dash-utilities"><button id="settings-open" class="rail-gear" type="button" aria-label="设置">设置</button></div>
         </aside>
 
         <div id="workbench-nav-scrim" class="workbench-nav-scrim" aria-hidden="true" hidden></div>

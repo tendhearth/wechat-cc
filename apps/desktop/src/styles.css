@@ -1354,281 +1354,45 @@ input { font: inherit; color: inherit; }
 }
 [data-mode="dashboard"] .dashboard { flex: 1; min-height: 0; }
 
+/* 侧栏只放导航(2026-10-01):tendhearth 字标 + 此刻/一起做/回忆 + 生活与工具 + 设置。
+   几何与层级在 cc-life.css 的 ".dashboard .dash-rail" 一组里,这里只放基础。 */
 .dash-rail {
   position: relative;
-  border-right: 0;
-  border-bottom: 0;
-  box-shadow: none;
-  padding: 27px 24px 0;
   display: flex;
-  align-items: flex-start;
-  background: var(--app-bg);
-  gap: 0;
+  flex-direction: column;
   min-width: 0;
-  overflow: hidden;
+  background: var(--th-rail);
 }
-.dash-rail::before {
-  content: "";
-  position: absolute;
-  z-index: 0;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 86px;
-  pointer-events: none;
-  background: url("./assets/menu-bar-bg.png") left bottom / 100% auto no-repeat;
-}
-.dash-brand,
-.dash-nav,
-.dash-utilities,
-.dash-rail-foot {
-  z-index: 1;
-}
-
-/* macOS overlay title bar — push rail content below the traffic-light area
-   (~28px tall, anchored top-left of the window). On Windows/Linux the OS
-   draws its own title bar above the webview, so no extra padding is needed. */
-[data-platform="macos"] .dash-rail { padding-top: 42px; }
-
-.dash-brand {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 0;
-  font-size: 0;
-  font-weight: 500;
-  letter-spacing: 0;
-  transform: translateY(-10px) scale(.81);
-  transform-origin: left center;
-}
-.dash-brand .mark {
-  width: 41px;
-  height: 41px;
-  border-radius: 6px;
-  display: inline-grid; place-items: center;
-  overflow: hidden;
-  flex: 0 0 auto;
-}
-.dash-brand .mark img {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: contain;
-}
-.dash-brand .name {
-  color: var(--th-ink);
-  font-size: 22px;
-  line-height: 1;
-  font-weight: 500;
-  letter-spacing: 0;
-}
-.dash-brand .ver {
-  display: none;
-  margin-left: auto;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--ink-3);
-  font-weight: 400;
-}
-
-.dash-nav {
-  position: absolute;
-  left: 50%;
-  top: 18px;
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: clamp(14px, 3vw, 37px);
-  max-width: max(260px, calc(100% - 430px));
-  min-width: 0;
-  /* Scroll, never clip: between ~900-1400px the 100%-430px budget shrinks
-     faster than the clamped item widths, and hidden overflow silently
-     amputated the last tabs (觅食/插件 unreachable at 1243px — well above
-     the 760px window minimum). */
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-.dash-nav::-webkit-scrollbar { display: none; }
-[data-platform="macos"] .dash-nav { top: 33px; }
+.dash-wordmark { margin: 0; font-family: var(--th-font-serif); font-size: var(--th-size-wordmark); font-weight: 500; color: var(--th-ink); letter-spacing: .01em; line-height: 1.2; white-space: nowrap; }
+.dash-nav { display: flex; flex-direction: column; gap: 4px; }
 .dash-nav-link {
-  position: relative;
-  z-index: 0;
-  min-width: clamp(62px, 9vw, 84px);
-  flex: 0 0 auto;
-  height: 35px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0;
-  padding: 0 clamp(8px, 1.5vw, 15px);
-  border-radius: 4px;
-  color: var(--th-ink);
-  font-size: 15px;
-  font-weight: 500;
+  display: block;
+  padding: 9px 12px;
+  border-radius: var(--th-radius-nav);
+  color: var(--th-ink-soft);
+  font-size: var(--th-size-body);
+  font-weight: 400;
   background: none; border: 0;
-  text-align: center;
+  text-align: left;
   white-space: nowrap;
   cursor: pointer;
 }
-.dash-nav-link > span {
-  position: relative;
-  z-index: 1;
-}
-.dash-nav-link::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: 4px;
-  background: transparent;
-  transform: scale(.9);
-  transform-origin: center;
-}
-.dash-nav-link .ic { display: none; }
-.dash-nav-link .ic svg { width: 14px; height: 14px; }
-.dash-nav-link .count {
-  display: none;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--ink-4);
-  letter-spacing: .04em;
-}
-.dash-nav-link:hover { background: none; color: var(--th-ink); }
-.dash-nav-link:hover::before { background: #F8EAD3; }
-.dash-nav-link.active {
-  background: url("./assets/nav-tab-active.png") center / 100% 100% no-repeat;
-  color: var(--th-ink);
-  font-weight: 500;
-}
-.dash-nav-link.active:hover::before { background: transparent; }
-.dash-nav-link.active .ic { color: var(--th-ink); }
-.dash-nav-link.disabled { color: var(--ink-4); cursor: not-allowed; }
-.dash-nav-link.disabled:hover { background: transparent; color: var(--ink-4); }
-.dash-nav-link.disabled:hover::before { background: transparent; }
-
-/* Keep navigation labels on one line. On narrower desktop windows, preserve
-   the text size while letting the spacing and the unselected hover surface
-   tighten before the navigation can feel crowded. */
-@media (max-width: 1180px) {
-  .dash-nav { gap: clamp(8px, 1.4vw, 14px); }
-  .dash-nav-link::before { transform: scale(.78); }
-}
-
-@media (max-width: 980px) {
-  .dash-nav { gap: 8px; }
-  .dash-nav-link::before { transform: scale(.7); }
-}
-
-.dash-rail-foot {
-  display: none;
-  margin-top: auto;
-  padding: 12px 6px 4px;
-  border-top: 1px solid var(--hair);
-  align-items: center; gap: 8px;
-  font-size: 11.5px;
-  color: var(--ink-2);
-}
-.dash-rail-foot #dash-rail-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.dash-rail-foot .clock {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--ink-4);
-  flex-shrink: 0;
-  letter-spacing: .02em;
-}
-.dash-utilities {
-  position: absolute;
-  right: clamp(16px, 3vw, 46px);
-  top: 27px;
-  display: flex;
-  align-items: center;
-  gap: clamp(12px, 2vw, 28px);
-  max-width: 180px;
-  overflow: visible;
-}
-[data-platform="macos"] .dash-utilities { top: 42px; }
-.rail-gear,
-.dash-utility-link {
-  position: relative;
-  flex-shrink: 0;
-  width: auto;
-  height: 18px;
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  border-radius: 4px;
-  background: none; border: 0; padding: 0;
-  color: var(--th-ink);
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: color .12s;
-}
-.rail-gear:hover,
-.dash-utility-link:hover,
-.dash-utility-link.active {
-  color: var(--th-ink);
+.dash-nav-link .count { margin-left: 6px; font-size: var(--th-size-meta); color: var(--th-ink-soft); }
+.dash-nav-link .count:empty { display: none; }
+.dash-nav-link:hover { color: var(--th-ink); }
+.dash-nav-link.active { color: var(--th-ink); background: var(--th-paper); }
+.dash-utilities { margin-top: 8px; }
+.rail-gear {
+  display: block; width: 100%;
+  padding: 9px 12px;
+  border: 0; border-radius: var(--th-radius-nav);
   background: none;
+  color: var(--th-ink-soft);
+  font-size: var(--th-size-meta);
+  text-align: left;
+  cursor: pointer;
 }
-.dash-utility-link::before { display: none; }
-.rail-gear > span:not(.ic),
-.dash-utility-link > span:not(.ic):not(.count) {
-  display: none;
-}
-.rail-gear::after,
-.dash-utility-link::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  top: calc(100% + 3px);
-  left: 50%;
-  z-index: 2;
-  padding: 5px 8px;
-  transform: translate(-50%, -4px);
-  border-radius: 4px;
-  background: #F8EAD3;
-  color: var(--th-ink);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1;
-  opacity: 0;
-  pointer-events: none;
-  white-space: nowrap;
-  transition: opacity .12s ease, transform .12s ease;
-}
-.rail-gear:hover::after,
-.rail-gear:focus-visible::after,
-.dash-utility-link:hover::after,
-.dash-utility-link:focus-visible::after {
-  transform: translate(-50%, 0);
-  opacity: 1;
-}
-.rail-gear .ic,
-.dash-utility-link .ic {
-  width: 17px;
-  height: 17px;
-  display: inline-grid;
-  place-items: center;
-}
-.rail-gear svg,
-.dash-utility-link svg {
-  width: 17px;
-  height: 17px;
-}
-.dash-utility-link {
-  min-width: 0;
-  padding: 0;
-  border-radius: 0;
-  font-size: 14px;
-}
-.dash-utility-link .ic { display: inline-grid; }
+.rail-gear:hover { color: var(--th-ink); }
 
 .dash-main {
   display: flex; flex-direction: column;
@@ -4389,7 +4153,6 @@ input { font: inherit; color: inherit; }
 @media (max-width: 880px) {
   .dash-window { grid-template-columns: 1fr; }
   .dash-rail { border-right: 0; border-bottom: 0; }
-  .dash-rail-foot { border-top: 0; padding-top: 0; }
   .memory-profile-overview { padding: 22px 16px 16px; }
   .memory-profile-hero,
   .memory-profile-grid,

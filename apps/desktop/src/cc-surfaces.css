@@ -62,9 +62,6 @@
 }
 
 /* Shared controls aligned with the CC chat sample. */
-.dash-rail::before { background: none; height: 1px; background-color: var(--cc-line); }
-.dash-nav-link.active { background: var(--cc-surface-soft); border-radius: 10px; box-shadow: none; }
-.dash-nav-link:hover { background-color: #f5efe4; border-radius: 10px; }
 .dash-nav-link:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 3px; }
 :is(.drawer-section h3, .memory-profile-kicker, .profile-panel h2) { border-image: none; background: none; transform: none; }
 .drawer-section h3 { border: 0; padding: 0 0 10px; min-height: 0; height: auto; }
