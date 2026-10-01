@@ -36,6 +36,7 @@ test('出码 → 手机配上 → 「已连上 Tendhearth · iPhone」;请求带
   await expect(page.locator('#phone-connect-qr')).toBeVisible()
   await expect(page.locator('#phone-connect-note')).toHaveText('用手机相机扫一下。10 分钟内有效，只能用一次。')
   await expect(page.locator('#phone-connect-check')).toHaveText('核对码 USZ-YAY')
+  await shot(page, 'phone-connect-qr')
   await expect(page.locator('#phone-connect-paired')).toHaveText('已连上 Tendhearth · iPhone', { timeout: 15_000 })
   await expect(page.locator('#phone-connect-close')).toHaveText('完成')
   const calls = await shim.invoke('mock.phone-calls') as { result: { calls: unknown[] } }
