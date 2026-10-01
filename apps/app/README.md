@@ -82,6 +82,30 @@ src/ui/           组件与色板(tokens.ts,明暗两套;明暗只是外观,不�
 - 因此扩展的解密 / 展示逻辑在本机只能靠 `native/ios-notify` 的 `swift test` 与直接调 `didReceive` 的单测验;模拟器上 `simctl push` 只能验「app 收到原样推送 + 点开路由」。
 - 真 APNs / FCM 投递、锁屏、进程被杀后的送达:只能真机 + 主人的 APNs 密钥 / Firebase 项目(见文末「主人要做的」)。
 
+### 在模拟器上验通知(scripts/sim-push.ts)
+
+模拟器用 iOS 26.5 的 `th-push`(`xcrun simctl create th-push com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro com.apple.CoreSimulator.SimRuntime.iOS-26-5`;iOS 27 上 app 启动即崩,另案跟踪),装开发构建、`bunx expo start --clear --dev-client` 在跑。
+
+1. app 开着、点「先看看」进了演示:`bun apps/app/scripts/sim-push.ts --print-link | xargs xcrun simctl openurl <udid>`(系统问「在 Tendhearth 中打开?」点 Open)⇒ 页面出现 `dev-push-key-ok`。这一步:把开发令牌推出的推送密钥写进共享钥匙串、要一次通知权限(演示不配对,登记流程不会去要)、并把开发令牌记在内存里给 app 兜底解密(`src/push/dev-token.ts`;只在开发构建、且没配对时用;app 被杀就忘)。
+2. 发:`bun apps/app/scripts/sim-push.ts --udid <udid> [--mode ok|stale|tamper|wrong-key] [--repeat [--gap <ms>]]`。载荷与中继发给 APNs 的同形(占位 alert + mutable-content + `wcc` 真密文,用协议包 `sealPush` 封)。
+3. 点系统横幅:Maestro 点不开通知中心 / 锁屏里的通知,但能点正在显示的横幅 —— 先在后台起一个反复点 `point: 50%,9%`、直到 app 里出现目标 testID 的流程,再发推送。
+
+2026-09-30 的结果(th-push,iOS 26.5;`NSE_UNDER_SIMCTL=no` ⇒ 分支 B,扩展不跑):
+
+| # | 场景 | 观察 |
+|---|---|---|
+| 1 | app 在后台,`--mode ok` | 系统横幅是中继原样的「CC / CC 有新动态」(扩展没跑) |
+| 6 | 点 #1 的横幅 | app 回前台 → 中转页 → 批准页 `approval-title`,原始命令 `npm install sharp` 可见(app 用兜底密钥在 app 里解开 `wcc`) |
+| 2–4 | 后台,`--mode stale` / `tamper` / `wrong-key`,先停在批准页再点横幅 | 横幅同样是占位;点开 ⇒ 此刻(`now-needs-you-card`),没进中转页 |
+| 7 | app 在前台,`--mode ok` | 不弹系统横幅;app 顶部 `push-banner` 显示解开的「CC / 整理作品集:npm i sharp」;点它 ⇒ 批准页 |
+| 7' | 前台,`stale` / `tamper` / `wrong-key` | `push-banner` 只显示中性「CC / CC has news」(英文系统);点它 ⇒ 此刻(从批准页出发也一样) |
+| 5 | 前台,`--repeat --gap 9000`(同一份密文送两次) | 第一份弹横幅、6 秒自动收起;第二份到达后不再弹(按密文去重)。系统通知中心里每条都单独列出 —— simctl 不带 apns-collapse-id,不合并 |
+| 8 | 杀掉 app 后发 `ok`、点横幅 | 冷启动到欢迎页:演示模式下「看过欢迎页」与开发令牌都只在内存里,冷启动都没了(已配对的用户两样都在钥匙串里,但这条只能真机验) |
+
+只能真机验的:扩展解密后的系统横幅标题 / 正文与本地化、扩展里的去重与 passive、collapse-id 合并、已配对时冷启动点通知直达批准页、锁屏与进程被杀后的送达。扩展的逻辑本机只由 `swift test`(`native/ios-notify`)覆盖。
+
+开发令牌是合成的(`dev` + 48 位 hex),不是任何真设备的令牌;`/dev-push-key` 在发布构建里不生效(深链改回此刻、页面本身也重定向),dev-token 兜底在发布构建里不用。
+
 ## 硬要求(改界面前先对一遍)
 
 - **批准页**:说明来自模型(`source === 'model'`)时,原始命令第一行与工作目录**不折叠、直接可见**(`approval-raw-inline`,Maestro 断言它);完整原始命令在「查看具体操作」里;提交中锁定按钮;以返回结果为准,不做乐观成功;超时 ⇒ 当「不确定」并重新拉详情。

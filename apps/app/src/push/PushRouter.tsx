@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useRouter } from 'expo-router'
 import * as Notifications from 'expo-notifications'
 import { Platform } from 'react-native'
@@ -8,6 +8,7 @@ import { useLang } from '../i18n/useLang'
 import { useSession } from '../state/session'
 import { PushBanner } from '../ui/PushBanner'
 import { bannerFrom, type Banner } from './banner'
+import { devPushToken, fallbackPushToken } from './dev-token'
 import { bannerKey, makeSeenOnce, notificationTimeMs, tapKey } from './open'
 import { pushOpenHref } from './route'
 import { targetFromNotification } from './target'
@@ -17,6 +18,7 @@ import { targetFromNotification } from './target'
  * 安卓:expo 的 JS 通知监听对我们自己的消息服务发的通知不触发 —— 点击只走 Kotlin 发的 tendhearth://push-open 深链
  * (+native-intent 洗过再进中转页),安卓没有 app 内横幅。
  * 扩展没解开时,用配对记录里的设备令牌在 app 里兜底解一次(时间用通知送达时刻;Notification.date 在 iOS 是秒 ⇒ 换成毫秒)。
+ * 没配对时(演示),开发构建里用 /dev-push-key 记下的合成开发令牌兜底(dev-token.ts,只为模拟器验证;发布构建不用)。
  * 去重:同一次点击(identifier + 送达时刻,裁决 C5)只路由一次;同一份推送(扩展把重复静默交来时不带标记)本次运行只弹一次横幅。
  */
 export function PushRouter() {
@@ -27,7 +29,11 @@ export function PushRouter() {
   const taps = useRef(makeSeenOnce())
   const banners = useRef(makeSeenOnce())
   const [banner, setBanner] = useState<Banner | null>(null)
-  const key = useMemo(() => (pairing ? derivePushKey(pairing.deviceToken) : null), [pairing])
+  const devTok = useSyncExternalStore(devPushToken.subscribe, devPushToken.get)
+  const key = useMemo(() => {
+    const tok = fallbackPushToken(pairing?.deviceToken, devTok, __DEV__)
+    return tok ? derivePushKey(tok) : null
+  }, [pairing, devTok])
   const os = Platform.OS === 'ios' ? 'ios' : 'android'
 
   useEffect(() => {
