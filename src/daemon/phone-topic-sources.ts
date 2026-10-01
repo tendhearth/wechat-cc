@@ -29,6 +29,8 @@ export interface PhoneTopicSourceDeps {
   matters?: Pick<MatterStore, 'get'>
   /** 面板的 home 构建函数(SettingsPanel.home)。 */
   home: (limit: number, opts?: { work?: boolean }) => Promise<HomePayload>
+  /** 聊天类 matter 的真实活动:最新一条消息时间 + 手机那句是否在等回复(spec 2026-10-01 §3)。缺省 ⇒ 只看 updatedAt。 */
+  chat?: { latestAt(chatId: string): Promise<number | null>; pendingMatter(): string | null }
 }
 
 const MATTER_TOPIC = /^matter\/([a-f0-9]{8})$/
@@ -66,6 +68,12 @@ export function makePhoneTopicSources(deps: PhoneTopicSourceDeps): TopicSource[]
         let d: ReturnType<PhoneWorkbench['detail']>
         try { d = deps.workbench.detail(id) } catch { return { found: false } }
         return { found: true, kind: 'task', version: d.version, phase: d.task.phase }
+      }
+      if (m.kind === 'chat' && deps.chat) {
+        let latest: number | null = null
+        if (m.ownerChatId) { try { latest = await deps.chat.latestAt(m.ownerChatId) } catch { latest = null } }
+        const version = Math.max(m.updatedAt, latest !== null && Number.isFinite(latest) ? latest : 0)
+        return { found: true, kind: m.kind, version, phase: deps.chat.pendingMatter() === id ? 'working' : m.status }
       }
       return { found: true, kind: m.kind, version: m.updatedAt, phase: m.status }
     },

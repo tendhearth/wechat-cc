@@ -702,6 +702,10 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       ...(opts.workbench ? { workbench: opts.workbench, changes: opts.workbench.changes } : {}),
       ...(opts.matters ? { matters: opts.matters } : {}),
       home: (limit, o) => settingsPanel.home(limit, o),
+      ...(phoneChat ? { chat: {
+        latestAt: async (chatId: string) => { const ts = await messagesStore.latestTs(chatId); return ts ? Date.parse(ts) : null },
+        pendingMatter: () => phoneChat.pendingMatter(),
+      } } : {}),
       log: (tag, line) => log(tag, line),
     })
     phoneEvents = phone.events
