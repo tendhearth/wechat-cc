@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const art = resolve(desktop, 'art/cc-brand')
-const mark = await readFile(resolve(desktop, 'src/assets/brand/cc-mark.svg'), 'utf8')
+const mark = await readFile(resolve(desktop, 'art/cc-brand/cc-mark.svg'), 'utf8')
 const path = mark.match(/<path\b[\s\S]*?\/>/)?.[0]
 if (!path) throw new Error('CC mark must contain its compound silhouette path')
 await mkdir(art, { recursive: true })
