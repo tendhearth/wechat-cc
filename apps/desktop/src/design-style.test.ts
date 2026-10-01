@@ -22,12 +22,9 @@ export const HEX_BUDGET: Record<string, number> = {
   'fonts.css': 0,
   'postcard-album.css': 23,
   'styles.css': 648,
-  'styles/task-entry.css': 28,
-  'styles/workbench-attention.css': 12,
-  'styles/workbench.css': 152,
 }
 /** Task 10 加 cc-life.css、cc-now.css;Task 12 加工作台三份(styles/workbench*.css、styles/task-entry.css);converse.css 新建即零。 */
-const ZERO_HEX: string[] = ['cc-life.css', 'cc-now.css']
+const ZERO_HEX: string[] = ['cc-life.css', 'cc-now.css', 'styles/workbench.css', 'styles/workbench-attention.css', 'styles/task-entry.css', 'styles/converse.css']
 
 describe('desktop design style', () => {
   it('no dark mode', () => { for (const f of CSS) expect(readFileSync(f, 'utf8'), rel(f)).not.toMatch(/prefers-color-scheme:\s*dark/) })
@@ -46,6 +43,12 @@ describe('desktop design style', () => {
     const css = readFileSync(join(ROOT, 'styles.css'), 'utf8')
     expect(css).toMatch(/--sans:\s*var\(--th-font-serif\)/)
     expect(css).not.toMatch(/font-family:\s*"Geist"/)
+  })
+  it('workbench status chips are dot + text (no tinted chip backgrounds)', () => {
+    const css = readFileSync(join(ROOT, 'styles/workbench.css'), 'utf8')
+    expect(css.match(/background(-color)?:\s*var\(--(green|amber|rouge)-soft\)/g) ?? []).toEqual([])
+    expect(css).toMatch(/\.wb-status::before/)
+    for (const f of ['styles/workbench.css', 'styles/workbench-attention.css', 'styles/task-entry.css', 'styles/converse.css']) expect(readFileSync(join(ROOT, f), 'utf8'), f).not.toMatch(/box-shadow:\s*(?!none)/)
   })
   it('literal colours: ratchet', () => {
     for (const f of CSS) {

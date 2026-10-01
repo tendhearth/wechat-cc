@@ -62,16 +62,6 @@
 
 /* 输入框:一条胶囊,输入 + 圆形发送(稿里的 composer)。这一份 converse 也会被搬进「一起做」的会话面。 */
 .dashboard .cc-now-pane #converse-root { background: transparent; color: var(--th-ink); }
-.converse-compose { display: flex; flex-direction: row; flex-wrap: wrap; gap: 10px; align-items: center; border: 1px solid var(--th-hair); border-radius: var(--th-radius-control); padding: 8px 8px 8px 22px; background: var(--th-paper); box-shadow: none; }
-.converse-compose:focus-within { border-color: var(--th-accent); }
-.converse-compose .converse-textarea { flex: 1 1 240px; min-width: 0; width: auto; color: var(--th-ink); font-size: var(--th-size-body); }
-.converse-compose .converse-textarea::placeholder { color: var(--th-ink-soft); }
-.converse-compose .converse-recording { flex: 1 1 240px; }
-.converse-compose .converse-recording-hint { flex-basis: 100%; }
-#converse-send { width: 40px; height: 40px; min-width: 40px; min-height: 40px; padding: 0; border-radius: 50%; background: var(--th-accent); color: var(--th-on-accent); }
-#converse-send:hover { background: var(--th-accent); color: var(--th-on-accent); }
-#converse-send:focus-visible { outline: 2px solid var(--th-ink); outline-offset: 2px; }
-#converse-send span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .cc-now-pane .converse-compose { width: auto; margin: 0; }
 
 /* home:对话记录收起,composer 只露输入框 + 发送 */
@@ -80,13 +70,10 @@
 .cc-now-pane[data-now="home"] #converse-root { flex: none; margin-top: auto; }
 .cc-now-pane[data-now="home"] .converse-textarea { flex: 1 1 0; height: 40px; min-height: 40px; padding: 8px 0; resize: none; }
 .cc-now-pane[data-now="home"] .converse-toolbar { flex: none; }
-.cc-now-pane[data-now="home"] #converse-send span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .cc-now-pane[data-now="chat"] .now-hero, .cc-now-pane[data-now="chat"] .now-waiting { display: none; }
 .cc-now-pane[data-now="chat"] #converse-root { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .cc-now-pane[data-now="chat"] .converse-scroll { flex: 1; min-height: 0; overflow: auto; padding: 8px 0 16px; }
 .cc-now-pane[data-now="chat"] { gap: var(--th-space-l); }
-.cc-now-pane .converse-msg-cc .converse-bubble { background: var(--th-paper); color: var(--th-ink); border-color: var(--th-hair); }
-.cc-now-pane .converse-msg-user .converse-bubble { background: var(--th-ground); color: var(--th-ink); }
 body[data-pane="overview"] #workbench-attention { display: none !important; }
 
 @media (max-width: 760px) {
