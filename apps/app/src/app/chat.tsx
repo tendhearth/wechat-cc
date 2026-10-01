@@ -11,13 +11,13 @@ import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { useTheme } from '../ui/useTheme'
-import type { Bubble } from '../view/chat'
+import { textAfterSend, type Bubble } from '../view/chat'
 import { canSubmit } from '../view/connection'
 
 const pad = (n: number) => String(n).padStart(2, '0')
 const hhmm = (ms: number) => { const d = new Date(ms); return `${pad(d.getHours())}:${pad(d.getMinutes())}` }
 
-const FAILED_KEY = { busy: 'chat.failedBusy', unavailable: 'chat.failedUnavailable', maybeLost: 'chat.maybeLost', notConfirmed: 'chat.notConfirmed' } as const
+const FAILED_KEY = { busy: 'chat.failedBusy', unavailable: 'chat.failedUnavailable', notConfigured: 'chat.failedNotConfigured', maybeLost: 'chat.maybeLost', notConfirmed: 'chat.notConfirmed' } as const
 const OUTCOME_KEY = { busy: 'compose.busy', ccBusy: 'chat.ccBusy', uncertain: 'compose.uncertain', tooLong: 'compose.tooLong', revoked: 'conn.revokedTitle', failed: 'compose.failed' } as const
 
 // 跟 CC 说:主人那条对话(微信 / 电脑 / 手机说的都在),往上滑看更早的;回复异步到,等回复时显示「在想…」。
@@ -29,25 +29,30 @@ export default function Chat() {
   const online = canSubmit(conn)
   const chat = useChat()
   const [text, setTextState] = useState(() => getDraft('chat'))
-  const setText = (v: string) => { setDraft('chat', v); setTextState(v) }
+  // 发送是异步的:成功回来时比的是「现在」输入框里的字,不是点发送时闭包里的那份
+  const textRef = useRef(text)
+  const setText = (v: string) => { setDraft('chat', v); textRef.current = v; setTextState(v) }
   const [sending, setSending] = useState(false)
   const [outcome, setOutcome] = useState<Exclude<ChatSendOutcome, 'ok'> | null>(null)
   const lock = useRef(false)
 
-  const run = async (go: () => Promise<ChatSendOutcome>, clearOnOk: boolean) => {
+  const run = async (go: () => Promise<ChatSendOutcome>, sent: string | null) => {
     if (lock.current || !online) return
     lock.current = true
     setSending(true); setOutcome(null)
     try {
       const r = await go()
-      if (r === 'ok') { if (clearOnOk) setTextState('') } else setOutcome(r)
+      if (r === 'ok') {
+        // 只在输入框还是发出去那句时清空(Task 11 a);草稿由 useChat.send 按同一规则删
+        if (sent !== null) { const left = textAfterSend(textRef.current, sent); textRef.current = left; setTextState(left) }
+      } else setOutcome(r)
     } finally {
       lock.current = false
       setSending(false)
     }
   }
-  const send = () => { if (text.trim()) void run(() => chat.send(text), true) }
-  const retry = (b: Bubble) => { if (b.requestId) void run(() => chat.retry(b.requestId!, b.text), false) }
+  const send = () => { const sent = text; if (sent.trim()) void run(() => chat.send(sent), sent) }
+  const retry = (b: Bubble) => { if (b.requestId) void run(() => chat.retry(b.requestId!, b.text), null) }
 
   const data = [...chat.bubbles].reverse()
   const loadFailed = !chat.page && chat.error !== undefined && !chat.noOwner

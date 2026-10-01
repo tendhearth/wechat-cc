@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ChatJobT, ChatPageT } from '../backend/types'
-import { ACCEPTED_TTL_MS, acceptedSettled, chatBubbles, chatSendOutcome, mergeChatPages, olderCursor, type Accepted, type Bubble } from '../view/chat'
+import { ACCEPTED_TTL_MS, acceptedSettled, chatBubbles, chatSendOutcome, mergeChatPages, olderCursor, rebaseOlder, type Bubble } from '../view/chat'
 import { composeTooLong } from '../view/compose'
 import { useBackendCtx } from './BackendProvider'
-import { deleteDraft, isReplied, markReplied, requestIdFor } from './drafts'
+import { deleteDraft, dropReceipt, getDraft, isReplied, listReceipts, markReplied, putReceipt, requestIdFor, subscribeReceipts } from './drafts'
 import { useQuery, useSubmit, useTopic } from './hooks'
 
 export type ChatSendOutcome = 'ok' | 'busy' | 'ccBusy' | 'uncertain' | 'revoked' | 'failed' | 'tooLong'
@@ -30,11 +30,26 @@ export function useChat(): {
   const noOwner = latest.error === 'not_found'
   const [older, setOlder] = useState<ChatPageT[]>([])
   const [loadingOlder, setLoadingOlder] = useState(false)
-  // 本机回执(可以几句):at 是 daemon 的钟(job.since,用来比消息时间);localAt 是本机收到回执的时刻,
+  // 本机回执(可以几句)放在模块里(drafts.ts,终审 I1):离开 /chat 再回来、daemon 中间重启,那句照样显示「可能没送到」。
+  // at 是 daemon 的钟(job.since,用来比消息时间);localAt 是本机收到回执的时刻,
   // 过没过 TTL 按本机计时换算成 daemon 的钟,两边钟不对也不怕。
-  const [accepted, setAccepted] = useState<Array<Accepted & { localAt: number }>>([])
+  const accepted = useSyncExternalStore(subscribeReceipts, listReceipts, listReceipts)
   const [nowLocal, setNowLocal] = useState(() => Date.now())
-  const drop = useCallback((requestId: string) => setAccepted(l => (l.some(a => a.requestId === requestId) ? l.filter(a => a.requestId !== requestId) : l)), [])
+  const drop = dropReceipt
+  // 旧页的「代」:最新页刷新后旧页被清掉(接不上了),在途的往上翻结果就作废。
+  const olderGen = useRef(0)
+  const prevLatest = useRef<ChatPageT | undefined>(undefined)
+  useEffect(() => {
+    const next = latest.data
+    if (!next) return
+    const prev = prevLatest.current
+    prevLatest.current = next
+    setOlder(o => {
+      const r = rebaseOlder(prev, next, o)
+      if (r.length === 0 && o.length > 0) olderGen.current++
+      return r
+    })
+  }, [latest.data])
 
   const topicName = latest.data ? (`matter/${latest.data.matterId}` as const) : ('home' as const)
   const topic = useTopic<{ version?: unknown; phase?: unknown }>(topicName)
@@ -54,9 +69,7 @@ export function useChat(): {
   // 修订 Ruling 5:只有看到落地才清回执;过了 TTL 气泡改成「没确认送到」,等重试或「不管它」。
   useEffect(() => {
     const done = accepted.filter(a => acceptedSettled(a, msgs, page))
-    if (!done.length) return
-    for (const a of done) markReplied(a.requestId)
-    setAccepted(l => l.filter(a => !done.includes(a)))
+    for (const a of done) { markReplied(a.requestId); dropReceipt(a.requestId) }
   }, [accepted, msgs, page])
   useEffect(() => {
     // 只在到点时更新 nowLocal(不在这里同步设,否则自己触发自己)
@@ -77,7 +90,8 @@ export function useChat(): {
   const loadOlder = useCallback(async () => {
     if (!cursor || loadingOlder) return
     setLoadingOlder(true)
-    try { const p = await backend.chat({ before: cursor }); setOlder(o => [...o, p]) } catch { /* 翻不动就停在这;下次滑到顶再试 */ }
+    const gen = olderGen.current
+    try { const p = await backend.chat({ before: cursor }); if (gen === olderGen.current) setOlder(o => [...o, p]) } catch { /* 翻不动就停在这;下次滑到顶再试 */ }
     finally { setLoadingOlder(false) }
   }, [backend, cursor, loadingOlder])
 
@@ -96,7 +110,7 @@ export function useChat(): {
       // 先拉一页(带 pending)再挂回执,免得旧页上闪一下「可能没送到」
       await refresh()
       const localAt = Date.now()
-      setAccepted(l => [...l.filter(a => a.requestId !== requestId), { requestId, text, at: j?.since ?? localAt, localAt }])
+      putReceipt({ requestId, text, at: j?.since ?? localAt, localAt })
     }
     return 'ok'
   }, [backend, submit, refresh, drop])
@@ -107,7 +121,8 @@ export function useChat(): {
     if (composeTooLong(text)) return 'tooLong'
     // requestIdFor 不会交出已知有回复的 id;失败 / 不确定时草稿留着,同样正文再点 ⇒ 同一个 id
     const r = await say(text, requestIdFor('chat', text))
-    if (r === 'ok') deleteDraft('chat')
+    // 发送途中主人又改了草稿 ⇒ 留着新打的字(Task 11 a)
+    if (r === 'ok' && getDraft('chat') === raw) deleteDraft('chat')
     return r
   }, [say])
 

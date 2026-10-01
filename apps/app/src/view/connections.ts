@@ -15,9 +15,14 @@ const DOT: Record<State, Dot> = { ready: 'ok', behind: 'warn', not_loaded: 'bad'
 // 最坏的在前:headline 取最坏;没有任何来源 ⇒ unknown(绝不默认绿)
 const SEVERITY: Dot[] = ['bad', 'warn', 'unknown', 'ok']
 const HEADLINE = { ok: 'links.headlineOk', warn: 'links.headlineWarn', bad: 'links.headlineBad', unknown: 'links.headlineUnknown' } as const
-type HeadlineKey = (typeof HEADLINE)[Dot] | 'links.headlineOffline'
+type HeadlineKey = (typeof HEADLINE)[Dot] | 'links.headlineOffline' | 'links.headlineStarting'
 
-export function connectionsView(s: ConnectionsT, _now: number, lang: Lang): {
+/**
+ * opts.stale:这份快照只是「上次所知」(见 connectionsTrust)⇒ 电脑那行不说「在线」。
+ * 「电脑还在启动」只在 daemon 自己说 starting 时用;别的不知道用中性措辞。
+ * 来源行的日期是最新一条消息的时间(不是同步时间),文案照此标。
+ */
+export function connectionsView(s: ConnectionsT, _now: number, lang: Lang, opts: { stale?: boolean } = {}): {
   headline: { dot: Dot; key: HeadlineKey; n: number }
   sources: Array<{ id: string; name: string; dot: Dot; label: string }>
   computers: Array<{ id: string; label: string; dot: Dot; detail: string }>
@@ -38,10 +43,10 @@ export function connectionsView(s: ConnectionsT, _now: number, lang: Lang): {
   const badSources = sources.filter(x => x.dot === 'bad').length
   const headline: { dot: Dot; key: HeadlineKey; n: number } = worst === 'bad' && badSources === 0
     ? { dot: 'bad', key: 'links.headlineOffline', n: offline }
-    : { dot: worst, key: HEADLINE[worst], n: sources.filter(x => x.dot === worst).length }
+    : { dot: worst, key: worst === 'unknown' && s.starting === true ? 'links.headlineStarting' : HEADLINE[worst], n: sources.filter(x => x.dot === worst).length }
   const computers = s.computers.map(c => ({
     id: c.id, label: c.label, dot: (c.online ? 'ok' : 'bad') as Dot,
-    detail: !c.online ? t(lang, 'links.computerOffline') : c.since === null ? t(lang, 'links.computerOnlineNow') : t(lang, 'links.computerOnline', { date: shortDate(c.since, lang) }),
+    detail: !c.online ? t(lang, 'links.computerOffline') : opts.stale ? t(lang, 'links.computerLastKnownOnline') : c.since === null ? t(lang, 'links.computerOnlineNow') : t(lang, 'links.computerOnline', { date: shortDate(c.since, lang) }),
   }))
   return {
     headline, sources, computers,

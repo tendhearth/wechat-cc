@@ -25,7 +25,7 @@ export default function Connections() {
   const { backend } = useBackendCtx()
   const q = useQuery('connections', () => backend.connections(), { refreshOnMount: true })
   const trust = connectionsTrust(q, conn.state)
-  const base = q.data ? connectionsView(q.data, Date.now(), lang) : null
+  const base = q.data ? connectionsView(q.data, Date.now(), lang, { stale: trust === 'stale' }) : null
   const v = base && trust === 'stale' ? muteDots(base) : base
   const heading = (k: Parameters<typeof t>[1]) => <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 18, fontFamily: serifFamily }}>{t(lang, k)}</Text>
   const row = (testID: string, key: string, dot: Parameters<typeof Dot>[0]['kind'] | null, name: string, label: string, onPress?: () => void) => (

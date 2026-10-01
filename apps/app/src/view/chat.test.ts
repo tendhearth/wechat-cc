@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { CHAT_TEXT_MAX } from '@wechat-cc/protocol'
-import { ACCEPTED_TTL_MS, acceptedSettled, chatBubbles, chatSendOutcome, isOwnerChatMatter, mergeChatPages, olderCursor } from './chat'
+import { ACCEPTED_TTL_MS, acceptedSettled, chatBubbles, chatSendOutcome, isOwnerChatMatter, mergeChatPages, olderCursor, rebaseOlder, textAfterSend } from './chat'
+import { t } from '../i18n'
 import type { ChatMessageT, ChatPageT } from '../backend/types'
 
 const msg = (id: string, at: number, role: 'me' | 'cc' = 'me', text = id, source: ChatMessageT['source'] = 'wechat'): ChatMessageT => ({ id, role, kind: 'text', text, truncated: false, at, source })
@@ -22,9 +23,22 @@ describe('chat 视图', () => {
     const b = chatBubbles([], { pending: null, failed: { requestId: 'r', text: 'hi', status: 'failed', since: 5, error: 'busy' } }, null, 5)
     expect(b).toEqual([expect.objectContaining({ side: 'me', state: 'failed', failedKind: 'busy', requestId: 'r', text: 'hi' })])
   })
-  it('failed 其它原因 ⇒ unavailable', () => {
-    const b = chatBubbles([], { pending: null, failed: { requestId: 'r', text: 'hi', status: 'failed', since: 5, error: 'not_configured' } }, null, 5)
+  it('failed 其它原因 ⇒ unavailable;not_configured ⇒ notConfigured', () => {
+    const b = chatBubbles([], { pending: null, failed: { requestId: 'r', text: 'hi', status: 'failed', since: 5, error: 'unavailable' } }, null, 5)
     expect(b[0]).toMatchObject({ failedKind: 'unavailable' })
+    const c = chatBubbles([], { pending: null, failed: { requestId: 'r', text: 'hi', status: 'failed', since: 5, error: 'not_configured' } }, null, 5)
+    expect(c[0]).toMatchObject({ failedKind: 'notConfigured' })
+  })
+  it('unavailable 的措辞不能说「没送到电脑上」—— 可能已经到了电脑、是那边没办成(终审 I2)', () => {
+    for (const lang of ['zh-Hans', 'en'] as const) expect(t(lang, 'chat.failedUnavailable')).not.toBe(lang === 'zh-Hans' ? '没送到电脑上' : 'Didn’t reach your computer')
+    expect(t('zh-Hans', 'chat.failedUnavailable')).not.toContain('没送到')
+  })
+  it('daemon 的 failed 那句其实已经落进对话(超时后才回来)⇒ 不再画失败气泡(终审 I2)', () => {
+    const failed = { requestId: 'r', text: '在吗', status: 'failed' as const, since: 1000, error: 'unavailable' as const }
+    const b = chatBubbles([msg('x', 1200, 'me', '在吗', 'phone'), msg('y', 700_000, 'cc', '在的')], { pending: null, failed }, null, 800_000)
+    expect(b.filter(x => x.state === 'failed')).toEqual([])
+    // 没落地 ⇒ 照旧可重试
+    expect(chatBubbles([], { pending: null, failed }, null, 800_000).map(x => x.failedKind)).toEqual(['unavailable'])
   })
   it('本机收过回执,daemon 却既没 pending 也没历史(重启丢了)⇒ 可能没送到', () => {
     const acc = { requestId: 'r', text: '在吗', at: 1000 }
@@ -90,6 +104,46 @@ describe('chat 视图', () => {
   it('先发的那句没确认、又说了一句 ⇒ 两个本机回执各自成气泡,前一句不会被后一句顶掉', () => {
     const a = { requestId: 'a', text: '第一句', at: 1000 }, b = { requestId: 'b', text: '第二句', at: 5000 }
     const out = chatBubbles([], { pending: { requestId: 'b', text: '第二句', status: 'pending', since: 5000 }, failed: null }, [a, b], 5000)
-    expect(out.map(x => [x.key, x.state, x.failedKind])).toEqual([['p:b', 'sent', undefined], ['t:b', 'thinking', undefined], ['l:a', 'failed', 'maybeLost']])
+    // 按时间排:前一句(早)在后一句的 pending 之前(Task 11 b)
+    expect(out.map(x => [x.key, x.state, x.failedKind])).toEqual([['l:a', 'failed', 'maybeLost'], ['p:b', 'sent', undefined], ['t:b', 'thinking', undefined]])
+  })
+  it('丢了的 / 失败的气泡按时间插回对话里,不堆在最后(Task 11 b)', () => {
+    const lost = { requestId: 'a', text: '第一句', at: 1000 }
+    const out = chatBubbles([msg('w1', 500, 'cc', '早'), msg('w2', 2000, 'cc', '晚')], { pending: null, failed: null }, [lost], 3000)
+    expect(out.map(x => x.key)).toEqual(['w1', 'l:a', 'w2'])
+    const failed = { requestId: 'f', text: '失败', status: 'failed' as const, since: 1500, error: 'busy' as const }
+    expect(chatBubbles([msg('w1', 500, 'cc'), msg('w2', 2000, 'cc')], { pending: null, failed }, null, 3000).map(x => x.key)).toEqual(['w1', 'f:f', 'w2'])
+  })
+  it('一样的短句(「好」)前一分钟说过一次 ⇒ 不能冒充这一句落地;只留 1 秒钟取整余量(Task 11 d)', () => {
+    const acc = { requestId: 'r', text: '好', at: 100_000 }
+    const none = { pending: null, failed: null }
+    expect(acceptedSettled(acc, [msg('old', 100_000 - 30_000, 'me', '好', 'phone')], none)).toBe(false)
+    expect(acceptedSettled(acc, [msg('now', 100_000 - 500, 'me', '好', 'phone')], none)).toBe(true)
+    expect(acceptedSettled(acc, [msg('now', 100_000 + 2_000, 'me', '好', 'phone')], none)).toBe(true)
+  })
+  it('发送成功只在输入框还是发出去那句时才清空(Task 11 a)', () => {
+    expect(textAfterSend('在吗', '在吗')).toBe('')
+    expect(textAfterSend('在吗,顺便', '在吗')).toBe('在吗,顺便')
+    expect(textAfterSend('', '在吗')).toBe('')
+  })
+  describe('rebaseOlder:最新页刷新后旧页还接得上吗(Task 11 c)', () => {
+    const p1 = page([msg('m3', 3), msg('m4', 4)], { hasMore: true, nextBefore: 't3' })
+    const old = [page([msg('m1', 1), msg('m2', 2)], { hasMore: false, nextBefore: null })]
+    it('来了一条新的:新最新页与上一份最新页重叠 ⇒ 上一份并进旧页,不在边界上漏掉 m3', () => {
+      const p2 = page([msg('m4', 4), msg('m5', 5)], { hasMore: true, nextBefore: 't4' })
+      const next = rebaseOlder(p1, p2, old)
+      expect(mergeChatPages(p2, next).map(m => m.id)).toEqual(['m1', 'm2', 'm3', 'm4', 'm5'])
+      expect(olderCursor(p2, next)).toBeNull()   // 最旧那页的游标不变
+    })
+    it('来了一大批(一页都盖不住)⇒ 旧页清掉,从新最新页重新往上翻,不留洞', () => {
+      const p2 = page([msg('m9', 9), msg('m10', 10)], { hasMore: true, nextBefore: 't9' })
+      expect(rebaseOlder(p1, p2, old)).toEqual([])
+      expect(olderCursor(p2, [])).toBe('t9')
+    })
+    it('没翻过旧页 / 同一页 ⇒ 原样', () => {
+      expect(rebaseOlder(p1, page([msg('m9', 9)], { hasMore: true, nextBefore: 't9' }), [])).toEqual([])
+      expect(rebaseOlder(p1, p1, old)).toBe(old)
+      expect(rebaseOlder(undefined, p1, old)).toBe(old)
+    })
   })
 })
