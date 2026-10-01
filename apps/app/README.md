@@ -34,7 +34,8 @@ maestro test .maestro/           # 模拟器上跑演示流程(要先有 develop
 | 流程 | 走什么 |
 |---|---|
 | `.maestro/approve.yaml` | 先看看 → 此刻第一张「等你决定」卡 → 批准页**原始命令直接可见** → 允许 → 进展页 → 2 秒后「这一轮已回复」 |
-| `.maestro/compose.yaml` | 此刻 → 跟 CC 说一句 → 输入 → 交给 CC → 新事项的进展页 → 「一起做」里出现它 |
+| `.maestro/chat.yaml` | 此刻 → 跟 CC 说一句 → 对话页 → 发一句 → 「在想…」→ 演示回复出现 → 一起做的置顶「和 CC 的对话」回到对话页 |
+| `.maestro/compose.yaml` | 此刻 → 跟 CC 说 → 交给 CC 去做一件事 → 输入 → 交给 CC → 新事项的进展页 → 「一起做」里出现它 |
 | `.maestro/demo-walkthrough.yaml` | 欢迎 → 先看看 → 此刻 → 一起做 → 某件事 → 展开改动 / 过程 → 设置 → 切语言 → 退出演示回欢迎页 |
 | `.maestro/pair-invalid.yaml` | 欢迎 → 配对 → 粘贴无效链接 / 局域网链接 → 各自的提示(不联网;真配对是主人真机验收) |
 | `.maestro/subflows/_start.yaml` | 共用开头:`clearState` 启动、收掉开发构建偶尔弹的系统框「Open in "Tendhearth"?」、等欢迎页 |

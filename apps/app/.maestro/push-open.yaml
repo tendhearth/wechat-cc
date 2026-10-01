@@ -48,12 +48,16 @@ appId: com.tendhearth.app
     id: push-opening
 # 连点两条通知不叠「此刻」(最终评审 I1):先切到「一起」标签,再连开两条推送深链、每次返回此刻;
 # 之后从左缘右滑两次 —— 栈里若还压着旧的 (tabs)(replace 的老毛病),就会露出停在「一起」的那一层。
-- tapOn:
-    id: tab-together
-- extendedWaitUntil:
-    visible:
-      id: together-say
-    timeout: 10000
+# 标签第一下偶尔没生效(同 demo-walkthrough):没切过去就再点一次。
+- retry:
+    maxRetries: 2
+    commands:
+      - tapOn:
+          id: tab-together
+      - extendedWaitUntil:
+          visible:
+            id: together-say
+          timeout: 4000
 - openLink: tendhearth://push-open?kind=permission&taskId=a1b2c3d4&requestId=perm-demo-1
 - runFlow: subflows/_open-link-guard.yaml
 - extendedWaitUntil:

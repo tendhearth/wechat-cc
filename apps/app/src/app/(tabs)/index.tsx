@@ -135,7 +135,7 @@ export default function Now() {
         ) : null}
       </ScrollView>
       <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m }}>
-        <SayBar testID="now-say" placeholder={t(lang, 'now.sayToCC')} onPress={() => router.push('/compose')} />
+        <SayBar testID="now-say" placeholder={t(lang, 'now.sayToCC')} onPress={() => router.push('/chat')} />
       </View>
     </SafeAreaView>
   )

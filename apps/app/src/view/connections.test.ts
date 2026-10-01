@@ -30,4 +30,14 @@ describe('connectionsView', () => {
     expect(v.recent).toEqual([{ matterId: 'm1', title: '作品集', when: '9月29日' }])
     expect(v.outputs).toEqual([{ matterId: 'm1', name: 'a.png', when: '9月28日' }])
   })
+  it('电脑不在线 ⇒ headline 不能说「都连上了」:并进最坏的严重度', () => {
+    const s = { ...snap([src('a', 'ready')]), computers: [{ id: 'home', label: 'Mac', online: false, since: null, version: null }] }
+    expect(connectionsView(s, NOW, 'en').headline).toEqual({ dot: 'bad', key: 'links.headlineOffline', n: 1 })
+    // 来源本身就有红的 ⇒ 仍按来源的红说
+    const s2 = { ...snap([src('a', 'not_loaded')]), computers: [{ id: 'home', label: 'Mac', online: false, since: null, version: null }] }
+    expect(connectionsView(s2, NOW, 'en').headline).toEqual({ dot: 'bad', key: 'links.headlineBad', n: 1 })
+    // 没有任何来源、电脑也不在线 ⇒ 红,不是「还在启动」
+    const s3 = { ...snap([]), computers: [{ id: 'home', label: 'Mac', online: false, since: null, version: null }] }
+    expect(connectionsView(s3, NOW, 'zh-Hans').headline).toEqual({ dot: 'bad', key: 'links.headlineOffline', n: 1 })
+  })
 })

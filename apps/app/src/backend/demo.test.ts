@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Connections, NativeSessionPage, ChatPage, ChatJob, MatterTopic, Matter } from '@wechat-cc/protocol'
-import { makeDemoBackend } from './demo'
+import { DEMO_CHAT_REPLY_MS, makeDemoBackend } from './demo'
 
 describe('演示后端', () => {
   it('初始:一条待批准、一个待回答,三件事 + 主人那条对话(chat matter)', async () => {
@@ -169,7 +169,7 @@ describe('演示后端', () => {
     await expect(b.registerPush('apns_sandbox', 'a1'.repeat(32))).resolves.toBeUndefined()
     expect(await b.testPush()).toEqual({ ok: false, code: 'demo' })
   })
-  it('演示聊天:说一句 ⇒ pending;2 秒后主题唤醒、历史里多了一问一答;同一 requestId 不重复', async () => {
+  it('演示聊天:说一句 ⇒ pending;几秒后主题唤醒、历史里多了一问一答;同一 requestId 不重复', async () => {
     vi.useFakeTimers()
     try {
       const b = makeDemoBackend({ lang: 'zh-Hans' })
@@ -185,7 +185,11 @@ describe('演示后端', () => {
       await b.chatSay('你好', 'r1')
       await expect(b.chatSay('再说一句', 'r2')).rejects.toMatchObject({ code: 'busy' })
       expect((await b.chat({})).pending?.requestId).toBe('r1')
-      await vi.advanceTimersByTimeAsync(2000)
+      // 「在想…」要留得够久,模拟器上的 UI 测试(一次点击要 2 秒多)才看得到
+      expect(DEMO_CHAT_REPLY_MS).toBeGreaterThanOrEqual(4000)
+      await vi.advanceTimersByTimeAsync(2500)
+      expect((await b.chat({})).pending?.requestId).toBe('r1')
+      await vi.advanceTimersByTimeAsync(DEMO_CHAT_REPLY_MS)
       const after = await b.chat({})
       expect(after.messages.length).toBe(before + 2)
       expect(after.messages.at(-2)).toMatchObject({ role: 'me', text: '你好', source: 'phone' })
@@ -205,7 +209,7 @@ describe('演示后端', () => {
       const b = makeDemoBackend({ lang: 'zh-Hans' })
       ChatJob.parse(await b.chatSay('hi', 'r1'))
       b.reset()
-      await vi.advanceTimersByTimeAsync(2000)
+      await vi.advanceTimersByTimeAsync(DEMO_CHAT_REPLY_MS)
       const zh = await b.chat({})
       expect(zh.messages.length).toBe(4)
       expect(zh.pending).toBeNull()
@@ -233,5 +237,16 @@ describe('演示后端', () => {
     const page = NativeSessionPage.parse(await b.session(list.items[0]!.key))
     expect(page.messages.map(m => m.role)).toEqual(['user', 'assistant', 'user'])
     await expect(b.session('nope')).rejects.toMatchObject({ code: 'not_found' })
+  })
+  it('演示事项的事件种类与 daemon 一致(user / text / tool_call / error),进展页「对话」卡才显示得出来', async () => {
+    vi.useFakeTimers()
+    try {
+      const b = makeDemoBackend()
+      await b.say('a1b2c3d4', '再看看', 'r-say')
+      await vi.advanceTimersByTimeAsync(DEMO_CHAT_REPLY_MS)
+      for (const m of await b.matters('en')) {
+        for (const e of (await b.matter(m.id, 'en')).events) expect(['user', 'text', 'tool_call', 'error'], `${m.id}:${e.kind}`).toContain(e.kind)
+      }
+    } finally { vi.useRealTimers() }
   })
 })

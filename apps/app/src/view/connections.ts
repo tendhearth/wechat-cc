@@ -15,9 +15,10 @@ const DOT: Record<State, Dot> = { ready: 'ok', behind: 'warn', not_loaded: 'bad'
 // 最坏的在前:headline 取最坏;没有任何来源 ⇒ unknown(绝不默认绿)
 const SEVERITY: Dot[] = ['bad', 'warn', 'unknown', 'ok']
 const HEADLINE = { ok: 'links.headlineOk', warn: 'links.headlineWarn', bad: 'links.headlineBad', unknown: 'links.headlineUnknown' } as const
+type HeadlineKey = (typeof HEADLINE)[Dot] | 'links.headlineOffline'
 
 export function connectionsView(s: ConnectionsT, _now: number, lang: Lang): {
-  headline: { dot: Dot; key: 'links.headlineOk' | 'links.headlineWarn' | 'links.headlineBad' | 'links.headlineUnknown'; n: number }
+  headline: { dot: Dot; key: HeadlineKey; n: number }
   sources: Array<{ id: string; name: string; dot: Dot; label: string }>
   computers: Array<{ id: string; label: string; dot: Dot; detail: string }>
   recent: Array<{ matterId: string; title: string; when: string }>
@@ -31,8 +32,13 @@ export function connectionsView(s: ConnectionsT, _now: number, lang: Lang): {
     const name = x.kind === 'wechat_history' ? t(lang, 'links.src.wechat') : x.kind === 'knowledge' ? t(lang, 'links.src.knowledge') : x.name
     return { id: x.id, name, dot: DOT[x.state], label }
   })
-  const worst = SEVERITY.find(d => sources.some(x => x.dot === d)) ?? 'unknown'
-  const headline = { dot: worst, key: HEADLINE[worst], n: sources.filter(x => x.dot === worst).length }
+  // 电脑不在线也并进最坏的严重度(红):不能一边电脑掉线一边说「都连上了」。来源本身有红 ⇒ 按来源说;否则说几台不在线。
+  const offline = s.computers.filter(c => !c.online).length
+  const worst = SEVERITY.find(d => sources.some(x => x.dot === d) || (d === 'bad' && offline > 0)) ?? 'unknown'
+  const badSources = sources.filter(x => x.dot === 'bad').length
+  const headline: { dot: Dot; key: HeadlineKey; n: number } = worst === 'bad' && badSources === 0
+    ? { dot: 'bad', key: 'links.headlineOffline', n: offline }
+    : { dot: worst, key: HEADLINE[worst], n: sources.filter(x => x.dot === worst).length }
   const computers = s.computers.map(c => ({
     id: c.id, label: c.label, dot: (c.online ? 'ok' : 'bad') as Dot,
     detail: !c.online ? t(lang, 'links.computerOffline') : c.since === null ? t(lang, 'links.computerOnlineNow') : t(lang, 'links.computerOnline', { date: shortDate(c.since, lang) }),

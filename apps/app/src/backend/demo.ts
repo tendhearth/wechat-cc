@@ -16,6 +16,9 @@ const HOUR = 3_600_000
 /** 主人对话里的一条:key 的在读时按语言出文案;text 是用户自己的字。 */
 type ChatRec = { id: string; role: 'me' | 'cc'; key?: Copy; text?: string; at: number; source: ChatMessageT['source'] }
 
+/** 演示里 CC 回一句要多久:「在想…」留得够久,主人看得见,模拟器 UI 测试(一次点击 2 秒多)也看得见。 */
+export const DEMO_CHAT_REPLY_MS = 5000
+
 export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof setTimeout; lang?: Lang } = {}): Backend & { reset(): void } {
   const now = opts.now ?? (() => Date.now())
   let lastLang: Lang = opts.lang ?? 'en' // 主题快照(approvals 摘要、agents 标题)用最近一次读的语言;读本身按参数给文案
@@ -65,15 +68,15 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         runId: RUN_IDS[IDS.portfolio], inputMode: 'steer',
         permissions: [{ id: PERM_ID, taskId: IDS.portfolio, tool: 'Bash', description: 'npm install sharp', createdAt: n - 60_000 }],
       }), 'pending', [
-      { kind: 'progress', key: 'ev1', createdAt: n - 500_000 },
-      { kind: 'progress', key: 'ev2', createdAt: n - 300_000 },
+      { kind: 'tool_call', key: 'ev1', createdAt: n - 500_000 },
+      { kind: 'tool_call', key: 'ev2', createdAt: n - 300_000 },
     ], 'portfolioTitle')
     const tTitle = t(lastLang, 'tripTitle')
     add(mkDetail(mkMatter(IDS.trip, 'task', tTitle, 'open', '~/Projects/trip', n - 400_000),
       taskOf(IDS.trip, tTitle, '~/Projects/trip', 'working', n - 30_000), {
         runId: RUN_IDS[IDS.trip], inputMode: 'steer',
         questions: [tripQuestion(lastLang, n - 30_000)],
-      }), 'ask', [{ kind: 'progress', key: 'stepTrip1', createdAt: n - 200_000 }], 'tripTitle')
+      }), 'ask', [{ kind: 'tool_call', key: 'stepTrip1', createdAt: n - 200_000 }], 'tripTitle')
     const nTitle = t(lastLang, 'notesTitle')
     add(mkDetail(mkMatter(IDS.notes, 'task', nTitle, 'replied', '~/Projects/notes', n - DAY),
       taskOf(IDS.notes, nTitle, '~/Projects/notes', 'replied', n - DAY)), 'replied', [], 'notesTitle')
@@ -103,7 +106,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     d.matter.title = title
     if (d.task) d.task.title = title
     d.questions = d.questions.map(q => (q.id === QUESTION_ID ? tripQuestion(l, q.createdAt) : q))
-    if (d.matter.id === CHAT_ID) d.events = chatMsgs.map(m => ({ kind: m.role === 'me' ? 'user' : 'assistant', createdAt: m.at, text: chatText(m, l) }))
+    if (d.matter.id === CHAT_ID) d.events = chatMsgs.map(m => ({ kind: m.role === 'me' ? 'user' : 'text', createdAt: m.at, text: chatText(m, l) }))
     return d
   }
   /** 读的语言变了 ⇒ 记下,并在当前调用之后把非 matter 主题按新语言补推一次。 */
@@ -200,7 +203,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       const job: ChatJobT = { requestId, text, status: 'pending', since: now() }
       chatJobs.set(requestId, job); chatPending = job
       publish([CHAT_ID])
-      later(2000, () => {
+      later(DEMO_CHAT_REPLY_MS, () => {
         const ts = now()
         chatMsgs.push(
           { id: `demo-${requestId}-in`, role: 'me', text, at: ts, source: 'phone' },
@@ -225,10 +228,10 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       if (!e.detail.permissions.some(p => p.id === requestId)) throw new BackendError('stale')
       e.detail.permissions = e.detail.permissions.filter(p => p.id !== requestId)
       if (decision === 'allow') {
-        ev(e, 'progress', 'evAllowed'); e.stage = 'working'; touch(e, { phase: 'working' }); publish([id])
-        later(2000, () => { ev(e, 'progress', 'evDone'); e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id]) })
+        ev(e, 'tool_call', 'evAllowed'); e.stage = 'working'; touch(e, { phase: 'working' }); publish([id])
+        later(2000, () => { ev(e, 'tool_call', 'evDone'); e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id]) })
       } else {
-        ev(e, 'progress', 'evDenied'); e.stage = 'denied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id])
+        ev(e, 'tool_call', 'evDenied'); e.stage = 'denied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id])
       }
     },
     async answer({ id, requestId, answers }) {
@@ -246,7 +249,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       }
       e.detail.questions = e.detail.questions.filter(q => q.id !== requestId)
       const text = answers ? Object.values(answers).map(v => v.join(', ')).join('; ') : ''
-      ev(e, 'progress', 'evAnswered', text); e.stage = 'answered'; touch(e, { phase: 'working' }); publish([id])
+      ev(e, 'tool_call', 'evAnswered', text); e.stage = 'answered'; touch(e, { phase: 'working' }); publish([id])
       later(2000, () => { e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id]) })
     },
     async say(id, text, requestId) {
@@ -255,7 +258,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       if (saidBy.has(requestId)) return
       saidBy.add(requestId)
       evText(e, 'user', text); touch(e, {}); publish([id])
-      later(2000, () => { ev(e, 'assistant', 'ccReply'); touch(e, {}); publish([id]) })
+      later(2000, () => { ev(e, 'text', 'ccReply'); touch(e, {}); publish([id]) })
     },
     async entryOptions(l) { noteLang(l); return entryOptions(l) },
     async create({ requestId, text, projectId }) {
@@ -268,13 +271,13 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       const title = text.trim().slice(0, 40) || text
       const e: Entry = {
         stage: 'working', version: 1, seeded: false,
-        evs: [{ kind: 'user', text, createdAt: ts }, { kind: 'progress', key: 'creating', createdAt: ts }],
+        evs: [{ kind: 'user', text, createdAt: ts }, { kind: 'tool_call', key: 'creating', createdAt: ts }],
         detail: mkDetail(mkMatter(matterId, 'task', title, 'open', projectPath ?? null, ts),
           taskOf(matterId, title, projectPath ?? '~/Projects/portfolio', 'working', ts),
           { runId: `run-${matterId}`, inputMode: 'steer' }),
       }
       entries.set(matterId, e); order.unshift(matterId); publish([matterId])
-      later(2000, () => { ev(e, 'assistant', 'created'); e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([matterId]) })
+      later(2000, () => { ev(e, 'text', 'created'); e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([matterId]) })
       return { matterId }
     },
     async devices() {

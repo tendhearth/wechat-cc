@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { clearDrafts, deleteDraft, requestIdFor } from './drafts'
+import { clearDrafts, deleteDraft, isReplied, markReplied, requestIdFor } from './drafts'
 
 let n = 0
 const mk = () => `id-${++n}`
@@ -19,5 +19,13 @@ describe('requestIdFor', () => {
     expect(requestIdFor('m1', 'a', mk)).toBe('id-2')
     deleteDraft('new')
     expect(requestIdFor('new', 'a', mk)).toBe('id-3')
+  })
+  it('已知有回复的 requestId 永不再用:同样正文再发 ⇒ 换新 id;清草稿时一起忘掉', () => {
+    expect(requestIdFor('chat', '在吗', mk)).toBe('id-1')
+    markReplied('id-1')
+    expect(isReplied('id-1')).toBe(true)
+    expect(requestIdFor('chat', '在吗', mk)).toBe('id-2')
+    clearDrafts()
+    expect(isReplied('id-1')).toBe(false)
   })
 })
