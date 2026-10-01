@@ -35,6 +35,9 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'POST /m/api/chat/say',
   // CC 的连接(spec 2026-10-01,mobile-reads.ts),去掉 detail
   'GET /m/api/connections',
+  // 电脑上的原生会话(只读,spec 2026-10-01),项目只给目录名
+  'GET /m/api/sessions',
+  'GET /m/api/session',
   'POST /m/api/todo',
   'GET /m/api/sticker/',
   // 交办与材料(mobile-workbench.ts,#129)

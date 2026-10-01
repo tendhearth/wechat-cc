@@ -101,6 +101,7 @@ describe('真实返回校验 — workbench + matters', () => {
       changes: id => workbench.reviewList(id),
       matters: { ...service, say: (id, text, input) => service.say(id, text, 'phone', input), seenOnPhone: id => { matters.bind(id, 'phone', 'pwa') } },
       connections: () => buildConnections({ plugins: () => null, wechatSyncedAt: () => null, knowledge: () => ({ enabled: false, built: false, latestAt: null, syncedAt: null }), computer: () => ({ label: 'test', since: null, version: null }), workbench }),
+      sessions: { list: async () => ({ items: [], nextCursor: null, coverage: 'native_supported_history' as const }), read: async () => { throw new Error('native_history_unsupported') } },
       chat: (() => {
         const owner = makePhoneOwner({ ownerChatId: () => 'owner', matters })
         return {
@@ -131,6 +132,13 @@ describe('真实返回校验 — workbench + matters', () => {
   it('connections 真实返回符合 schema', async () => {
     create('conn')
     parseAs('GET /m/api/connections', await (await request('/m/api/connections')).json())
+  })
+
+  it('sessions / session 真实返回符合 schema', async () => {
+    parseAs('GET /m/api/sessions', await (await request('/m/api/sessions?provider=claude')).json())
+    const res = await request('/m/api/session?key=x')
+    expect(res.status).toBe(404)
+    parseAs('GET /m/api/session', await res.json())
   })
 
   it('entry/options 真实返回符合 schema', async () => {

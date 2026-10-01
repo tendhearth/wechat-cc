@@ -39,6 +39,7 @@ import type { AppTurn } from '../inbound/build'
 import { basename as pathBasename } from 'node:path'
 import { makeSettingsPanel } from '../settings-panel'
 import { buildConnections, cacheConnections } from '../connections'
+import { cacheSessions } from '../mobile-reads'
 import { maxDecryptedMtime } from '../companion/ingest/cycle'
 import { hostname } from 'node:os'
 import { APP_VERSION } from '../../lib/app-version'
@@ -615,8 +616,11 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     detailLimit: 3,
     ...(opts.workbench ? { workbench: opts.workbench } : {}),
   }))
+  // 原生会话读:单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
+  const phoneSessions = opts.workbench ? cacheSessions({ list: (p, i) => opts.workbench!.listNativeHistory(p, i), read: (k, i) => opts.workbench!.readNativeHistory(k, i) }) : null
   const settingsPanel = makeSettingsPanel({
     connections,
+    ...(phoneSessions ? { sessions: phoneSessions } : {}),
     stateDir,
     ownerChatId,
     // 手机洞察(批准说明 + 进展概括):explainer / summarizer 各建一个实例(内含缓存),不是每请求一建。
