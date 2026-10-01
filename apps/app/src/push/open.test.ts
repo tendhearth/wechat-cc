@@ -70,9 +70,21 @@ describe('rewriteSystemPath —— 配对链接(plan 7a)', () => {
     expect(a).not.toContain('t0000')
     expect(got).toEqual([`https://relay.tendhearth.com/pset/${FRAG}`, `https://relay.tendhearth.com/pset/${FRAG}`])
   })
-  it('发布构建不认 staging / 自定义 scheme 的配对链接(原样放行给路由)', () => {
+  it('发布构建不认 staging / 自定义 scheme 的配对链接 ⇒ 回此刻(带锚点的原链接不进路由匹配)', () => {
     const got: string[] = []
-    expect(rewriteSystemPath(`tendhearth://relay.tendhearth.com/pset/${FRAG}`, false, r => got.push(r))).not.toMatch(/^\/pair/)
+    expect(rewriteSystemPath(`tendhearth://relay.tendhearth.com/pset/${FRAG}`, false, r => got.push(r))).toBe('/')
+    expect(rewriteSystemPath(`https://relay-staging.tendhearth.com/pset/${FRAG}`, false, r => got.push(r))).toBe('/')
+    expect(rewriteSystemPath(`https://evil.example/pset/${FRAG}`, true, r => got.push(r))).toBe('/')
+    expect(rewriteSystemPath(`tendhearth://pset/${FRAG}`, true, r => got.push(r))).toBe('/')
+    expect(rewriteSystemPath(`/PSET/${FRAG}`, false, r => got.push(r))).toBe('/')
+    expect(got).toEqual([])
+  })
+  it('外面来的 /pair 深链去掉 from / n(只有 /pset 改写自己能带上;别人不能把确认卡换成「没带全」)', () => {
+    const got: string[] = []
+    expect(rewriteSystemPath('tendhearth://pair?from=link&n=99', true, r => got.push(r))).toBe('/pair')
+    expect(rewriteSystemPath('/pair?from=link&n=1', false, r => got.push(r))).toBe('/pair')
+    expect(rewriteSystemPath('tendhearth://Pair/?n=3&from=link#x', false, r => got.push(r))).toBe('/pair')
+    expect(rewriteSystemPath('tendhearth://pair', false, r => got.push(r))).toBe('/pair')
     expect(got).toEqual([])
   })
 })

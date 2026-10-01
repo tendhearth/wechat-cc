@@ -9,7 +9,7 @@ import { useLang } from '../i18n/useLang'
 import { parsePairLink, type ParsedLink } from '../net/link'
 import { pairWithLink, PairError, retirePrevious } from '../net/pairing'
 import { rnConnect } from '../net/rn-connect'
-import { systemPairLink, takePendingLink } from '../net/system-link'
+import { takePendingLink } from '../net/system-link'
 import { useConnection } from '../state/hooks'
 import { useSession } from '../state/session'
 import { pairAndSave } from '../state/wiring'
@@ -22,7 +22,7 @@ import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 import { ccPresence } from '../view/presence'
-import { acceptsIncomingLink, linkErrorKey, linkIntake, makeGate, pairErrorKey } from '../view/pair'
+import { intakeIncomingLink, linkErrorKey, makeGate, pairErrorKey } from '../view/pair'
 
 type Phase =
   | { k: 'intro' }
@@ -52,22 +52,16 @@ export default function Pair() {
     return () => sub.remove()
   }, [gate])
 
-  // 系统相机扫码 / 通用链接进来(spec §6.3):只到确认卡(显示中继主机),永不自动配对;正在配对时不打断。
-  // 暂存格无论接不接都先取走(取后即焚),令牌只在确认卡的内存状态里,不进路由参数、不进日志。
+  // 系统相机扫码 / 通用链接进来(spec §6.3):只到确认卡(显示中继主机与核对码),永不自动配对;正在配对时不打断。
+  // 暂存格与原生缓存无论接不接都清掉(见 intakeIncomingLink),令牌只在确认卡的内存状态里,不进路由参数、不进日志。
   const { from, n } = useLocalSearchParams<{ from?: string; n?: string }>()
   const phaseRef = useRef(phase.k)
   phaseRef.current = phase.k
   useEffect(() => {
     if (from !== 'link') return
-    const pending = takePendingLink()
-    if (gate.busy() || !acceptsIncomingLink(phaseRef.current)) return
-    let fallback: string | null = null
-    // 兜底读原生缓存的链接,读完就清:iOS 热启动的通用链接只在缓存为空时才写入,不清会一直拿到第一条旧链接;也免得令牌在缓存里久留。
-    // (路由只在启动时读一次这份缓存,到配对页时早读过了。)
-    try { const u = getLinkingURL(); fallback = u ? systemPairLink(u, __DEV__) : null } catch { fallback = null }
-    try { clearInitialURL() } catch { /* 网页端是空操作 */ }
-    const r = linkIntake([pending, fallback])
-    setPhase(r.ok ? { k: 'confirm', link: r.link } : { k: 'error', key: r.key })
+    const r = intakeIncomingLink(phaseRef.current, gate.busy(), { take: takePendingLink, readNative: getLinkingURL, clearNative: clearInitialURL, dev: __DEV__ })
+    if (r.k === 'confirm') setPhase({ k: 'confirm', link: r.link })
+    else if (r.k === 'error') setPhase({ k: 'error', key: r.key })
   }, [from, n, gate])
 
   const accept = (raw: string) => {
