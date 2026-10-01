@@ -2,8 +2,11 @@
  * plugins-source — the owner's first-party plugins location, shared by the
  * daemon (src/daemon/plugins/paths.ts re-exports it) and `self deploy` (cli).
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { readJsonFile } from './read-json-file'
+import { isCompiledBundle } from './runtime-info'
 
 export const MANIFEST_FILE = 'wechat-cc.plugin.json'
 
@@ -28,7 +31,7 @@ export function pluginsSourcePointerPath(stateDir: string): string {
 
 export function readPluginsSourcePointer(stateDir: string): string | null {
   try {
-    const parsed = JSON.parse(readFileSync(pluginsSourcePointerPath(stateDir), 'utf8')) as unknown
+    const parsed = readJsonFile(pluginsSourcePointerPath(stateDir))
     const dir = parsed && typeof parsed === 'object' ? (parsed as { dir?: unknown }).dir : undefined
     return typeof dir === 'string' && dir ? dir : null
   } catch { return null }
@@ -70,3 +73,64 @@ export function registerPluginsSource(stateDir: string, dir: string): { ok: true
   writePluginsSourcePointer(stateDir, abs)
   return { ok: true, dir: abs, plugins }
 }
+
+export type BundledPluginsVia = 'env' | 'pointer' | 'app' | 'repo'
+export interface BundledPluginsResolution { dir: string; via: BundledPluginsVia }
+
+export interface ResolveBundledPluginsInput {
+  /** `WECHAT_CC_BUNDLED_PLUGINS_DIR` (set by the desktop app / service unit). */
+  env?: string
+  /** State dir for the owner's pointer; omitted ⇒ pointer not consulted. */
+  stateDir?: string
+  /** Running as the compiled sidecar? */
+  compiled: boolean
+  /** process.execPath — the sidecar itself when compiled. */
+  execPath: string
+  /** Repo root in source mode. */
+  sourceRepoRoot: string
+}
+
+/**
+ * Pure-ish resolution (reads the fs, nothing else). First candidate that
+ * actually contains plugins wins:
+ *   1. env  — what the desktop app / service unit says;
+ *   2. pointer — the owner's explicit choice in the state dir;
+ *   3. app  — compiled: next to the sidecar (`<MacOS>/plugins`, legacy),
+ *             `Contents/Resources/plugins`, and Tauri's `_up_/_up_/_up_/plugins`
+ *             (`resources: ["../../../plugins/…"]` maps each `..` to `_up_`;
+ *             on Windows/Linux the resource dir is next to the exe);
+ *      repo — source mode: `<repo>/plugins`.
+ */
+export function resolveBundledPluginsDir(input: ResolveBundledPluginsInput): BundledPluginsResolution | null {
+  if (input.env && dirHasPlugins(input.env)) return { dir: input.env, via: 'env' }
+  if (input.stateDir) {
+    const pointer = readPluginsSourcePointer(input.stateDir)
+    if (pointer && dirHasPlugins(pointer)) return { dir: pointer, via: 'pointer' }
+  }
+  if (input.compiled) {
+    const exeDir = dirname(input.execPath)
+    const up = ['_up_', '_up_', '_up_', 'plugins'] as const
+    const candidates = [
+      join(exeDir, 'plugins'),
+      join(exeDir, '..', 'Resources', 'plugins'),
+      join(exeDir, '..', 'Resources', ...up),
+      join(exeDir, ...up),
+    ]
+    const hit = candidates.find(dirHasPlugins)
+    return hit ? { dir: hit, via: 'app' } : null
+  }
+  const dir = join(input.sourceRepoRoot, 'plugins')
+  return dirHasPlugins(dir) ? { dir, via: 'repo' } : null
+}
+
+/** Live-process wrapper around `resolveBundledPluginsDir`. */
+export function resolveBundledPlugins(stateDir?: string): BundledPluginsResolution | null {
+  return resolveBundledPluginsDir({
+    env: process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR || undefined,
+    stateDir,
+    compiled: isCompiledBundle(),
+    execPath: process.execPath,
+    sourceRepoRoot: join(dirname(fileURLToPath(import.meta.url)), '..', '..'), // src/lib → repo
+  })
+}
+

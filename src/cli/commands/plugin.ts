@@ -241,8 +241,7 @@ const pluginSourceCmd = defineCommand({
     json: { type: 'boolean', description: 'JSON output' },
   },
   async run({ args }) {
-    const { registerPluginsSource, readPluginsSourcePointer } = await import('../../lib/plugins-source')
-    const { resolveBundledPlugins } = await import('../../daemon/plugins/paths')
+    const { registerPluginsSource, readPluginsSourcePointer, resolveBundledPlugins } = await import('../../lib/plugins-source')
     if (args.dir) {
       const r = registerPluginsSource(STATE_DIR, args.dir)
       if (args.json) console.log(JSON.stringify(r, null, 2))

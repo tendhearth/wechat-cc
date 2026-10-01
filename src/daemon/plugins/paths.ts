@@ -1,7 +1,5 @@
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { isCompiledBundle } from '../../lib/runtime-info'
-import { dirHasPlugins, readPluginsSourcePointer } from '../../lib/plugins-source'
+import { join } from 'node:path'
+import { resolveBundledPlugins } from '../../lib/plugins-source'
 
 /**
  * Plugin discovery paths.
@@ -39,70 +37,15 @@ export function pluginsConfigPath(stateDir: string): string {
   return join(stateDir, 'plugins', 'plugins.json')
 }
 
-// Pointer + `dirHasPlugins` live in src/lib so `self deploy` (cli) can use them
-// without importing the daemon. Re-exported here: this module stays the one
-// place daemon code asks "where are the plugins".
-export { dirHasPlugins, pluginsSourcePointerPath, readPluginsSourcePointer, writePluginsSourcePointer } from '../../lib/plugins-source'
-export type BundledPluginsVia = 'env' | 'pointer' | 'app' | 'repo'
-export interface BundledPluginsResolution { dir: string; via: BundledPluginsVia }
-
-export interface ResolveBundledPluginsInput {
-  /** `WECHAT_CC_BUNDLED_PLUGINS_DIR` (set by the desktop app / service unit). */
-  env?: string
-  /** State dir for the owner's pointer; omitted ⇒ pointer not consulted. */
-  stateDir?: string
-  /** Running as the compiled sidecar? */
-  compiled: boolean
-  /** process.execPath — the sidecar itself when compiled. */
-  execPath: string
-  /** Repo root in source mode. */
-  sourceRepoRoot: string
-}
-
-/**
- * Pure-ish resolution (reads the fs, nothing else). First candidate that
- * actually contains plugins wins:
- *   1. env  — what the desktop app / service unit says;
- *   2. pointer — the owner's explicit choice in the state dir;
- *   3. app  — compiled: next to the sidecar (`<MacOS>/plugins`, legacy),
- *             `Contents/Resources/plugins`, and Tauri's `_up_/_up_/_up_/plugins`
- *             (`resources: ["../../../plugins/…"]` maps each `..` to `_up_`;
- *             on Windows/Linux the resource dir is next to the exe);
- *      repo — source mode: `<repo>/plugins`.
- */
-export function resolveBundledPluginsDir(input: ResolveBundledPluginsInput): BundledPluginsResolution | null {
-  if (input.env && dirHasPlugins(input.env)) return { dir: input.env, via: 'env' }
-  if (input.stateDir) {
-    const pointer = readPluginsSourcePointer(input.stateDir)
-    if (pointer && dirHasPlugins(pointer)) return { dir: pointer, via: 'pointer' }
-  }
-  if (input.compiled) {
-    const exeDir = dirname(input.execPath)
-    const up = ['_up_', '_up_', '_up_', 'plugins'] as const
-    const candidates = [
-      join(exeDir, 'plugins'),
-      join(exeDir, '..', 'Resources', 'plugins'),
-      join(exeDir, '..', 'Resources', ...up),
-      join(exeDir, ...up),
-    ]
-    const hit = candidates.find(dirHasPlugins)
-    return hit ? { dir: hit, via: 'app' } : null
-  }
-  const dir = join(input.sourceRepoRoot, 'plugins')
-  return dirHasPlugins(dir) ? { dir, via: 'repo' } : null
-}
-
-/** Live-process wrapper around `resolveBundledPluginsDir`. */
-export function resolveBundledPlugins(stateDir?: string): BundledPluginsResolution | null {
-  return resolveBundledPluginsDir({
-    env: process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR || undefined,
-    stateDir,
-    compiled: isCompiledBundle(),
-    execPath: process.execPath,
-    sourceRepoRoot: join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..'), // src/daemon/plugins → repo
-  })
-}
-
+// The resolution itself lives in src/lib/plugins-source.ts so the CLI
+// (`self deploy`, `plugin source`) can use it without linking the daemon
+// (scripts/cli-ratchet.guard.test.ts). Re-exported here: daemon code keeps
+// asking this module "where are the plugins".
+export {
+  dirHasPlugins, pluginsSourcePointerPath, readPluginsSourcePointer, writePluginsSourcePointer,
+  resolveBundledPluginsDir, resolveBundledPlugins,
+  type BundledPluginsVia, type BundledPluginsResolution, type ResolveBundledPluginsInput,
+} from '../../lib/plugins-source'
 /**
  * First-party bundled plugins dir, or null when none of the candidates holds
  * any plugin. Shared by the daemon bootstrap, internal API and the CLI so the
