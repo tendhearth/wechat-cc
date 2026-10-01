@@ -34,6 +34,7 @@
       "name": "@wechat-cc/app",
       "version": "1.0.0",
       "dependencies": {
+        "@wechat-cc/design-tokens": "workspace:*",
         "@wechat-cc/protocol": "workspace:*",
         "expo": "~57.0.26",
         "expo-camera": "~57.0.6",
@@ -84,6 +85,10 @@
         "@cloudflare/workers-types": "^5.20260930.1",
         "wrangler": "4.144.0",
       },
+    },
+    "packages/design-tokens": {
+      "name": "@wechat-cc/design-tokens",
+      "version": "0.0.1",
     },
     "packages/protocol": {
       "name": "@wechat-cc/protocol",
@@ -792,6 +797,8 @@
     "@vitest/utils": ["@vitest/utils@4.1.10", "", { "dependencies": { "@vitest/pretty-format": "4.1.10", "convert-source-map": "^2.0.0", "tinyrainbow": "^3.1.0" } }, "sha512-fy9am/HWxbaGt/Sawrp90vt6Y6jQwf1RX77cz3uwoJwJVMli/e1IEwRPnMNJ7vKfPTwo0diXifkpPvwH9v7nGA=="],
 
     "@wechat-cc/app": ["@wechat-cc/app@workspace:apps/app"],
+
+    "@wechat-cc/design-tokens": ["@wechat-cc/design-tokens@workspace:packages/design-tokens"],
 
     "@wechat-cc/protocol": ["@wechat-cc/protocol@workspace:packages/protocol"],
 

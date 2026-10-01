@@ -12,6 +12,7 @@
     "export:check": "expo export --platform ios --platform android --output-dir .expo-export-check && rm -rf .expo-export-check"
   },
   "dependencies": {
+    "@wechat-cc/design-tokens": "workspace:*",
     "@wechat-cc/protocol": "workspace:*",
     "expo": "~57.0.26",
     "expo-camera": "~57.0.6",
