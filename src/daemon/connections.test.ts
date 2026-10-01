@@ -15,7 +15,7 @@ const health = (over: Partial<PluginsHealth> = {}): PluginsHealth => ({
 const deps = (over: Partial<ConnectionsDeps> = {}): ConnectionsDeps => ({
   plugins: () => health(),
   wechatSyncedAt: () => NOW - 3_600_000,
-  knowledge: () => ({ enabled: true, built: true, latestAt: NOW - 3_600_000 }),
+  knowledge: () => ({ enabled: true, built: true, latestAt: NOW - 3_600_000, syncedAt: NOW - 3_600_000 }),
   computer: () => ({ label: 'Nate-Mac', since: NOW - 7_200_000, version: '1.7.1' }),
   now: () => NOW,
   ...over,
@@ -31,9 +31,9 @@ describe('buildConnections', () => {
     expect(byId(s, 'wechat_history')).toMatchObject({ syncedAt: NOW - 3_600_000, latestAt: NOW - 3_600_000 })
     expect(s.computers).toEqual([{ id: 'home', label: 'Nate-Mac', online: true, since: NOW - 7_200_000, version: '1.7.1' }])
   })
-  it('解密库超过 24 小时没动 ⇒ 微信历史 behind;从没解密过也 behind', () => {
+  it('解密库超过 24 小时没动 ⇒ 微信历史 behind;读不到解密库时间 ⇒ unknown', () => {
     expect(byId(buildConnections(deps({ wechatSyncedAt: () => NOW - WECHAT_SYNC_STALE_MS - 1 })), 'wechat_history')!.state).toBe('behind')
-    expect(byId(buildConnections(deps({ wechatSyncedAt: () => null })), 'wechat_history')!.state).toBe('behind')
+    expect(byId(buildConnections(deps({ wechatSyncedAt: () => null })), 'wechat_history')!.state).toBe('unknown')
   })
   it('wxvault 没加载(真机 09-11 起)⇒ 红,并带原因 / 目录(只在 detail 里)', () => {
     const s = buildConnections(deps({ plugins: () => health({ plugins: [], expected_missing: ['wxvault', 'wxsearch'] }) }))
@@ -41,10 +41,14 @@ describe('buildConnections', () => {
     expect(byId(s, 'plugin:wxsearch')).toMatchObject({ state: 'not_loaded' })
   })
   it('知识库:没开 ⇒ 不出现;开了没建起来 ⇒ 红;超过 72 小时 / 空 ⇒ 琥珀', () => {
-    expect(byId(buildConnections(deps({ knowledge: () => ({ enabled: false, built: false, latestAt: null }) })), 'knowledge')).toBeUndefined()
-    expect(byId(buildConnections(deps({ knowledge: () => ({ enabled: true, built: false, latestAt: null }) })), 'knowledge')!.state).toBe('not_loaded')
-    expect(byId(buildConnections(deps({ knowledge: () => ({ enabled: true, built: true, latestAt: NOW - KNOWLEDGE_STALE_MS - 1 }) })), 'knowledge')!.state).toBe('behind')
-    expect(byId(buildConnections(deps({ knowledge: () => ({ enabled: true, built: true, latestAt: null }) })), 'knowledge')!.state).toBe('behind')
+    expect(byId(buildConnections(deps({ knowledge: () => ({ enabled: false, built: false, latestAt: null, syncedAt: null }) })), 'knowledge')).toBeUndefined()
+    expect(byId(buildConnections(deps({ knowledge: () => ({ enabled: true, built: false, latestAt: null, syncedAt: null }) })), 'knowledge')!.state).toBe('not_loaded')
+    expect(byId(buildConnections(deps({ knowledge: () => ({ enabled: true, built: true, latestAt: NOW - 3_600_000, syncedAt: NOW - KNOWLEDGE_STALE_MS - 1 }) })), 'knowledge')!.state).toBe('behind')
+    // 安静周末:最新消息很旧,但刚同步过 ⇒ 仍然绿(按同步时间判,不按消息时间)
+    expect(byId(buildConnections(deps({ knowledge: () => ({ enabled: true, built: true, latestAt: NOW - 10 * 86_400_000, syncedAt: NOW - 3_600_000 }) })), 'knowledge')!.state).toBe('ready')
+    // 空库 / 从没记录过同步时间 ⇒ 不知道,不是琥珀
+    expect(byId(buildConnections(deps({ knowledge: () => ({ enabled: true, built: true, latestAt: null, syncedAt: NOW - 3_600_000 }) })), 'knowledge')!.state).toBe('unknown')
+    expect(byId(buildConnections(deps({ knowledge: () => ({ enabled: true, built: true, latestAt: NOW - 3_600_000, syncedAt: null }) })), 'knowledge')!.state).toBe('unknown')
   })
   it('插件快照还没出来 ⇒ 不知道(不是绿也不是红)', () => {
     const s = buildConnections(deps({ plugins: () => null }))

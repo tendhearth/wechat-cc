@@ -19,7 +19,8 @@ export const KNOWLEDGE_STALE_MS = 72 * 3_600_000
 export interface ConnectionsDeps {
   plugins(): PluginsHealth | null
   wechatSyncedAt(): number | null
-  knowledge(): { enabled: boolean; built: boolean; latestAt: number | null }
+  /** latestAt = newest message (informational); syncedAt = last clean ingest pass (what staleness is judged on). */
+  knowledge(): { enabled: boolean; built: boolean; latestAt: number | null; syncedAt: number | null }
   computer(): { label: string; since: number | null; version: string | null }
   workbench?: {
     list(q: { archived: 'exclude'; limit: number }): { tasks: Array<{ id: string; title: string; phase?: string; updatedAt: number }> }
@@ -44,7 +45,7 @@ export function buildConnections(d: ConnectionsDeps): ConnectionsSnapshot {
     const latestAt = k.enabled && k.built ? k.latestAt : null
     if (vault?.enabled && vault.ready) {
       const syncedAt = d.wechatSyncedAt()
-      sources.push({ id: 'wechat_history', kind: 'wechat_history', name: WXVAULT, state: syncedAt === null || now - syncedAt > WECHAT_SYNC_STALE_MS ? 'behind' : 'ready', latestAt, syncedAt })
+      sources.push({ id: 'wechat_history', kind: 'wechat_history', name: WXVAULT, state: syncedAt === null ? 'unknown' : now - syncedAt > WECHAT_SYNC_STALE_MS ? 'behind' : 'ready', latestAt, syncedAt })
     } else {
       sources.push({ id: 'wechat_history', kind: 'wechat_history', name: WXVAULT, state: 'not_loaded', latestAt, syncedAt: null, detail: { reason: vault?.reason ?? 'missing', dir: h.bundled_dir } })
     }
@@ -52,8 +53,8 @@ export function buildConnections(d: ConnectionsDeps): ConnectionsSnapshot {
 
   // 知识库(只在开了时出现)
   if (k.enabled) {
-    const state: SourceState = !h ? 'unknown' : !k.built ? 'not_loaded' : k.latestAt === null || now - k.latestAt > KNOWLEDGE_STALE_MS ? 'behind' : 'ready'
-    sources.push({ id: 'knowledge', kind: 'knowledge', name: 'knowledge', state, latestAt: k.built ? k.latestAt : null, syncedAt: null })
+    const state: SourceState = !h ? 'unknown' : !k.built ? 'not_loaded' : k.latestAt === null || k.syncedAt === null ? 'unknown' : now - k.syncedAt > KNOWLEDGE_STALE_MS ? 'behind' : 'ready'
+    sources.push({ id: 'knowledge', kind: 'knowledge', name: 'knowledge', state, latestAt: k.built ? k.latestAt : null, syncedAt: k.built ? k.syncedAt : null })
   }
 
   // 其它插件

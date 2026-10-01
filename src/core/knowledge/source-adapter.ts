@@ -323,6 +323,7 @@ export function runSourceAdapter(opts: {
   const { decryptedDir, store } = opts
   const batchSize = opts.batch && opts.batch > 0 ? opts.batch : DEFAULT_BATCH
   let ingested = 0
+  let failedDbs = 0
 
   ingestContacts(decryptedDir, store)
 
@@ -337,6 +338,7 @@ export function runSourceAdapter(opts: {
       db = openSqlite(`file:${dbPath}?mode=ro&immutable=1`, IMMUTABLE_RO)
     } catch (err) {
       console.error(`[source-adapter] skipping unreadable db ${dbFile}:`, err)
+      failedDbs++
       continue
     }
 
@@ -462,10 +464,13 @@ export function runSourceAdapter(opts: {
       // flushed for this db stay ingested (accumulated in `ingested`); skip
       // the rest of this db and move on rather than aborting the whole run.
       console.error(`[source-adapter] skipping db ${dbFile} after error mid-processing:`, err)
+      failedDbs++
     } finally {
       db.close()
     }
   }
 
+  // 只有一轮干净跑完才记同步时间(「CC 的连接」据此判知识库新旧;读不了的库不能算同步过)。
+  if (failedDbs === 0) store.markSynced()
   return { ingested }
 }

@@ -243,6 +243,18 @@ describe('knowledge store', () => {
       expect(store.latestMessageAtMs()).toBe(1_759_000_000_000)
     })
 
+    it('lastSyncAtMs: null until recorded; markSynced stamps it; messages_time index exists', () => {
+      expect(store.lastSyncAtMs()).toBeNull()
+      store.markSynced(1_760_000_000_000)
+      expect(store.lastSyncAtMs()).toBe(1_760_000_000_000)
+      const raw = openSqlite(join(dir, 'source.db'))
+      const idx = raw.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='index' AND name='messages_time'").all()
+      raw.close()
+      expect(idx).toHaveLength(1)
+      store.putSourceMessages([msg('z', { time: 5 }), msg('y', { time: 9 })])
+      expect(store.latestMessageAtMs()).toBe(9000)
+    })
+
     it('openKnowledge migrates an old 8-column messages table in place (ADD COLUMN), does not throw, and preserves the pre-existing row', () => {
       const migDir = mkdtempSync(join(tmpdir(), 'kk-store-migrate-'))
       try {

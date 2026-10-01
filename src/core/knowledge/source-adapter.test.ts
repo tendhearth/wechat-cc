@@ -220,6 +220,13 @@ describe('runSourceAdapter', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
+  it('stamps the store sync time after a pass (even one that ingests nothing)', () => {
+    expect(store.lastSyncAtMs()).toBeNull()
+    const before = Date.now()
+    runSourceAdapter({ decryptedDir, store })
+    expect(store.lastSyncAtMs()).toBeGreaterThanOrEqual(before)
+  })
+
   it('normalizes plain text, zstd (content-size-less frame), and prefix-stripped rows', () => {
     const { table } = buildFixtureDb(decryptedDir)
 
