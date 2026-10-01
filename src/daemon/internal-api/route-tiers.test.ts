@@ -20,6 +20,11 @@ describe('route-tiers', () => {
     expect(minTierFor('GET /v1/model')).toBe('admin')
   })
 
+  it('settings/link 铸 admin 档链接令牌 ⇒ 自己也得 admin(spec 2026-10-01-tendhearth-pairing-ux §11.7,plan 7a 修)', () => {
+    expect(ROUTE_MIN_TIER['GET /v1/settings/link']).toBe('admin')
+    expect(minTierFor('GET /v1/settings/link')).toBe('admin')
+  })
+
   it('selftest converse requires admin (2026-09-18-self-maintenance §1)', () => {
     expect(minTierFor('POST /v1/selftest/converse')).toBe('admin')
   })

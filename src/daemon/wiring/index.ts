@@ -128,10 +128,13 @@ export interface WiredDeps {
    */
   petTurn: import('../internal-api/types').PetTurnDep
   /** Mint a fresh graphical-settings-panel URL (10-min token). Null when no
-   *  LAN/owner. Wired to GET /v1/settings/link for the desktop QR entry. */
+   *  LAN/owner. Wired to 微信 /set (in-process) and GET /v1/settings/link
+   *  (admin tier since plan 7a; selftest phone). */
   settingsPanelLink: () => Promise<string | null>
   /** 「CC 的连接」快照(缓存 10 s);main.ts setConnections 到 internal-api。 */
   connections: () => import('../connections').ConnectionsSnapshot
+  /** 桌面「连接手机」;main.ts setPhoneConnect 到 internal-api。 */
+  phoneConnect: import('../internal-api/types').PhoneConnectDep
   /** 每晚记忆整理运行时(pipeline-deps 造);main.ts 挂定时器 + setMemoryNightly。 */
   memoryNightly: import('../memory/nightly-runtime').MemoryNightlyRuntime
   mattersService: import('../../core/matters/service').MattersService | null
@@ -241,7 +244,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     health: opts.boot.health.health,
     runAtelierTick,
   })
-  const { pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly, connections } = buildPipelineDeps(opts, refs)
+  const { pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly, connections, phoneConnect } = buildPipelineDeps(opts, refs)
   const lifecycleDeps = buildLifecycleDeps(opts, ticks)
   return {
     pipelineDeps,
@@ -249,6 +252,7 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     petTurn,
     settingsPanelLink,
     connections,
+    phoneConnect,
     mattersService,
     memoryNightly,
     ...lifecycleDeps,

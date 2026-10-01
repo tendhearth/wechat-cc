@@ -32,7 +32,7 @@ scratch 项目**不在 STATE_DIR 底下**(它跟 token / account.json 同级,而
 
 输出:逐行 `✓ / ✗ name — detail`,末行 `PASS` / `FAIL`;`--json` 给 `{ ok, kind, target, checks, taskId?, sessionId?, durationMs, scratchPath? }`。退出码 0 通过 / 1 有检查项失败 / 2 daemon 没在跑。
 
-**phone**(手机协议 v2 真机闭环,`src/cli/selftest-phone.ts`):读 `GET /v1/settings/link` 拿链接令牌 → 连**真中继** → 配对一台一次性设备 → 用设备令牌重连并确认协商到 v2 → 订阅 `agents` 主题 → 经 operator(内部)API 派一个最小工作台任务,确认它的生命周期出现在订阅上 → 局域网撤销这台设备,确认被撤的令牌再也连不上。
+**phone**(手机协议 v2 真机闭环,`src/cli/selftest-phone.ts`):用 operator 凭据读 `GET /v1/settings/link`(admin 档,计划 7a 起)拿链接令牌 → 连**真中继** → 配对一台一次性设备 → 用设备令牌重连并确认协商到 v2 → 订阅 `agents` 主题 → 经 operator(内部)API 派一个最小工作台任务,确认它的生命周期出现在订阅上 → 局域网撤销这台设备,确认被撤的令牌再也连不上。
 
 - **前提**:设置页「出门也能用」(远程中继)已开;daemon 在跑;本机连得上中继。没开会当场 FAIL,不会悄悄跳过。
 - 它会**配对一台一次性设备再撤销**。正常结束时不留痕迹。

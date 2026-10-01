@@ -88,6 +88,7 @@ describe('token-registry', () => {
       'POST /v1/self-change/notice',
       'POST /v1/self-change/ask',
       'GET /v1/self-change/decision',
+      'GET /v1/settings/link',
     ]))
     expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })

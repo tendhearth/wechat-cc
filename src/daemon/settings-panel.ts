@@ -130,6 +130,8 @@ export interface SettingsPanelDeps {
   /** 远程隧道信息(启用时):relay wss + 本机 daemon id。手机页出门时用它
    *  经中继访问。缺省 ⇒ 手机页只能在同一 Wi-Fi 直连。 */
   remoteInfo?: () => { relay: string; id: string } | null
+  /** agent-config.json 的 relay_v2_url 现在非空吗(桌面「连接手机」用;只读,主人事项)。缺省 ⇒ 当没开通。 */
+  relayV2Configured?: () => boolean
   /** 远程访问一键开关(2026-08-26):读/写 remote_tunnel + 触发重启。
    *  缺省 ⇒ 设置页不显示远程访问开关。 */
   remote?: {
@@ -175,6 +177,10 @@ export interface SettingsPanel {
   /** Mint a fresh token and return the tappable URL (starts the server on
    *  first use). Null when no LAN address / no owner is resolvable. */
   linkUrl(): Promise<string | null>
+  /** 桌面「连接手机」(spec 2026-10-01-tendhearth-pairing-ux §4.1):按需打开远程隧道;只在 v2 中继就绪时铸码。 */
+  phoneLink(opts: { enableRemote: boolean }): Promise<PhoneLinkResult>
+  /** 已配对设备(不含令牌),桌面轮询「已连上」用。 */
+  phoneDevices(): DeviceRow[]
   /** Route one request — shared by the LAN Bun.serve and the remote tunnel
    *  client, so /m/* and /set/* behave identically over both transports. */
   handleRequest(req: Request): Promise<Response>
@@ -208,6 +214,7 @@ import { makeDeviceCredentials, makeDeviceStore, type DeviceRow } from './device
 import { normalizeLang } from './phone-insight-llm'
 import { latestChanges } from './phone-changes'
 import { LAN_ONLY_OPS, LINK_ROUTES, PHONE_ROUTES, phoneRouteAllowed } from './phone-routes'
+import { phoneLinkState, psetUrl, type PhoneLinkResult } from './phone-link'
 
 export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   const now = deps.now ?? (() => Date.now())
@@ -558,11 +565,34 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       // 电脑旁但手机走流量是常态,LAN 链接打不开)。令牌放 # 锚点 ——
       // 锚点不上服务器,中继看不到;壳先探 LAN(在家秒开),不通走隧道。
       const remote = deps.remoteInfo?.()
-      if (remote) {
-        const base = remote.relay.replace(/^wss:/, 'https:').replace(/\/(tunnel|v2)\/phone$/, '')
-        return `${base}/pset/#id=${encodeURIComponent(remote.id)}&t=${token}&p=${encodeURIComponent('/set')}&lan=${ip}:${port}`
-      }
+      if (remote) return psetUrl(remote, token, `${ip}:${port}`)
       return `http://${ip}:${port}/set?t=${token}`
+    },
+
+    async phoneLink(opts) {
+      const remote = deps.remoteInfo?.() ?? null
+      const state = phoneLinkState({
+        owner: !!deps.ownerChatId(),
+        v2Configured: deps.relayV2Configured?.() ?? false,
+        tunnelOn: deps.remote?.isEnabled() ?? false,
+        bootRemoteId: remote?.id ?? null,
+      })
+      if (state === 'remote_off' && opts.enableRemote && deps.remote) {
+        // 桌面就是主人自己的电脑(裁决 4):点「连接手机」= 打开远程隧道。只写 remote_tunnel,不碰 relay_v2_url。
+        deps.remote.setEnabled(true)
+        deps.audit?.('remote_tunnel: → true — 桌面「连接手机」')
+        deps.remote.requestRestart()
+        return { ok: false, state: 'starting' }
+      }
+      if (state !== 'ready' || !remote) return { ok: false, state: state === 'ready' ? 'starting' : state }
+      const token = panel.issueToken()
+      const ip = lanIp()
+      const lan = ip ? `${ip}:${(await panel.start()).port}` : null
+      return { ok: true, state: 'ready', url: psetUrl(remote, token, lan), expires_at: now() + SETTINGS_LINK_TTL_MS }
+    },
+
+    phoneDevices() {
+      return devices.list()
     },
   }
 

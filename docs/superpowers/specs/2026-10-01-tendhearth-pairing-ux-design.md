@@ -27,7 +27,7 @@
 
 - **D1 只有链接令牌能换设备令牌**:`POST /set/api/pair` 的调用者不是链接令牌(`origin !== 'link'`)⇒ `403 { ok: false, error: 'link_only' }`。否则一枚泄露的设备令牌能不停地多铸长期令牌,撤销后还留后门;「一次性」也就名存实亡。今天没有任何调用方用设备令牌配对。
 - **D2 第二次用同一个码配对的回包**:daemon 侧是 `401 { error: 'unauthorized' }`(与其它失效令牌同一形状,不新增错误码);app 早已把链接阶段的 401 / `auth_failed` 映射成 `PairError('expired')`,文案改成「用过或过期」。裁决 1 里说的「401 `expired`」就是这条链路。
-- **D3 桌面用一个新的 admin 路由,不复用 trusted 的 `GET /v1/settings/link`**:`POST /v1/phone/link`(必要时打开远程隧道并重启 daemon、只在 v2 中继就绪时出码)+ `GET /v1/phone/devices`(轮询「已连上」)。走原生宿主的 operator 凭据,四处白名单照 plan 6 `/v1/connections` 的样子登记。`GET /v1/settings/link` 不动(`selftest phone` 与微信 `/set` 还在用)。
+- **D3 桌面用一个新的 admin 路由,不复用 trusted 的 `GET /v1/settings/link`**:`POST /v1/phone/link`(必要时打开远程隧道并重启 daemon、只在 v2 中继就绪时出码)+ `GET /v1/phone/devices`(轮询「已连上」)。走原生宿主的 operator 凭据,四处白名单照 plan 6 `/v1/connections` 的样子登记。`GET /v1/settings/link` 留着(`selftest phone` 用),但在 7a 升到 **admin**(§11.7):它铸的是 admin 档链接令牌,trusted 的普通聊天会话不能够着;`selftest phone` 改用 operator 凭据,operator `routeAllow` 加上它;微信 `/set` 走进程内 `settingsPanelLink()`(`isAdmin` 门),不经 HTTP,不受影响。
 - **D4 引导页也自动打开远程隧道**:引导页的码用同一个 `POST /v1/phone/link { enable_remote: true }`。全新安装的 `remote_tunnel` 默认关,所以第一次会让刚启动的 daemon 重启一下(约 10 秒,显示「正在打开手机连接」);中继没开通时整块不出现(裁决 3)。主人要的是「引导页直接给码」,多一个「打开」按钮就不是直接给了。
 - **D5 旧设备位用「旧令牌自己解除配对」退掉**(裁决 7 的机制选择):新配对存进钥匙串之后,app 用**旧令牌**连旧电脑发 `unpair_self`。凭据证明就是那次加密握手本身(只有持有旧令牌的人握得上),令牌从不进请求正文,daemon 不加新接口;旧令牌已失效 ⇒ 握手失败、静默跳过。比「配对请求里带上旧 id + 旧令牌」好在顺序:新令牌确认可用、已存好之后才退旧的,新配对失败时旧的还在。换到另一台电脑时同样退掉旧电脑上的那个位(旧令牌本地已被覆盖,留着只是死位)。
 - **D6 桌面新文案也写 zh + en**:桌面今天只有中文界面,新字符串集中在 `apps/desktop/src/modules/phone-connect-copy.js` 的 `{ zh, en }` 两份(键一致,单测钉住),界面渲染 `zh`;等桌面有语言切换时直接用。
@@ -72,7 +72,7 @@
 - `POST /v1/phone/link` 正文 `{ enable_remote?: boolean }`(别的类型 ⇒ 400 `invalid_request`);没接 ⇒ 503 `phone_not_wired`;抛 ⇒ 503 `unavailable`。
 - `GET /v1/phone/devices` ⇒ `{ ok: true, devices: DeviceRow[] }`(`id / created_at / last_seen_at / label?`,不含令牌)。
 
-接线:`InternalApiDeps.phone`(`PhoneDep`)、`setPhone`、`lifecycle.ts`、`wiring/index.ts`、`pipeline-deps.ts`(`relayV2Configured` 读 agent-config,`phone` 包 `settingsPanel.phoneLink / phoneDevices`)、`main.ts`。
+接线:`InternalApiDeps.phoneConnect`(`PhoneConnectDep`)、`setPhoneConnect`、`lifecycle.ts`、`wiring/index.ts`、`pipeline-deps.ts`(`relayV2Configured` 读 agent-config,`phoneConnect` 包 `settingsPanel.phoneLink / phoneDevices`)、`main.ts`。远程开关的真实读写抽在 `src/daemon/remote-toggle.ts`(`makeRemoteToggle` 只翻 `remote_tunnel`,`relayV2Configured` 只读),测试走真实写盘那一路钉住 `relay_v2_url` 原样。
 
 ### 4.2 桌面可达:四处白名单(plan 6 模式)
 
@@ -199,11 +199,10 @@
 4. **安卓 Block Store**:以后的恢复路径,7a 不做。
 5. **开通中继**:`relay_v2_url` 仍由主人按 `docs/maintainer/relay.md` §8 设;没设时桌面诚实显示「手机连接服务还没开通」,引导页不出码。
 6. Apple 开发者后台:`com.tendhearth.app` 的 Associated Domains 能力(EAS 构建会同步;核对一次)。
-7. 顺带发现(不在 7a):`GET /v1/settings/link` 是 trusted 档,而普通聊天会话也是 trusted —— 理论上一个 trusted 会话能铸出 admin 链接令牌。桌面改走 admin 的 `POST /v1/phone/link` 之后,只剩 `selftest phone`(文件令牌)与它有关;要不要把它升 admin(selftest 改用 operator 令牌)交主人定。
+7. 顺带发现,**已在 7a 修**(Task 3):`GET /v1/settings/link` 原是 trusted 档,而普通聊天会话也是 trusted —— 一个 trusted 会话能铸出 admin 链接令牌。现在升到 admin;`selftest phone` 改用 operator 令牌(operator `routeAllow` 加上这条,`token-registry.test.ts` 精确集合同步);微信 `/set` 走进程内调用,不受影响。桌面旧按钮在 Task 3 到 Task 5 之间会 403(同一未部署分支,Task 5 换成 `/v1/phone/link`)。
 
 ## 12. 不做
 
 - 7b(手机上接着电脑上的会话)、中继上线(`relay_v2_url` 切换)、APNs / Firebase、商店记录。
 - iCloud 钥匙串同步、安卓凭据备份。
 - 老 VPS 中继 `relay/`(只改它的网页壳文案 `relay/pset.src.html` 与生成物)。
-- 改 `GET /v1/settings/link` 的档位(§11.7)。

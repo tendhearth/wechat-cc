@@ -3,7 +3,7 @@
  * docs/superpowers/plans/2026-09-29-phone-protocol-v2.md Task 13).
  *
  * A real-machine closed loop for the phone protocol: read the daemon's
- * link URL (`GET /v1/settings/link`), connect to the real relay with the
+ * link URL (`GET /v1/settings/link`, admin tier ⇒ operator token), connect to the real relay with the
  * link token, pair a throwaway device, connect with the device token and
  * confirm it negotiates protocol v2, subscribe to the `agents` topic, drive
  * one minimal workbench task through the operator (internal) API and
@@ -260,7 +260,8 @@ export async function runPhoneSelftest(
 
   try {
     // ── link URL + relay address ─────────────────────────────────────
-    const linkRes = await jsonCall(deps, `${api.baseUrl}/v1/settings/link`, api.token, 'GET')
+    // admin 档(plan 7a):铸 admin 链接令牌,共享的 trusted 文件 token 够不着 ⇒ 用 operator 凭据。
+    const linkRes = await jsonCall(deps, `${api.baseUrl}/v1/settings/link`, api.operatorToken, 'GET')
     const url = linkRes.ok && typeof linkRes.json?.url === 'string' ? linkRes.json.url as string : undefined
     rec.push('link_url', !!url, url ? redactLinkUrl(url) : httpErrorDetail(linkRes))
     if (!url) stop()

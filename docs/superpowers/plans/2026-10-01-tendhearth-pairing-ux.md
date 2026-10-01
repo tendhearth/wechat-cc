@@ -2675,7 +2675,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 12: 全量回路、真机验收清单与文档登记
 
 **Files:**
-- Modify: `docs/roadmap.md`(「下一步」或现状段落里加一条 plan 7a;「欠的真机账」加配对验收;「已定未做」加 Block Store / iCloud 钥匙串同步 / `/v1/settings/link` 升档)
+- Modify: `docs/roadmap.md`(「下一步」或现状段落里加一条 plan 7a;「欠的真机账」加配对验收;「已定未做」加 Block Store / iCloud 钥匙串同步;`/v1/settings/link` 升档已在 Task 3 做完)
 - Modify: `docs/INDEX.md`(加一行 plan 7a)
 - Modify: `docs/superpowers/specs/2026-10-01-tendhearth-pairing-ux-design.md`(§6.3 结论表的真机列,只在跑了真机时填)
 
@@ -2706,7 +2706,7 @@ wechat-cc self deploy
 wechat-cc selftest phone --executor cursor --relay v2
 ```
 
-Expected:`self deploy` 健康门通过;若本机已设 `relay_v2_url`,`selftest phone` PASS(它用 `GET /v1/settings/link` 配一次,单次配对不影响);没设 ⇒ 记下「中继未开通,selftest phone 跳过」,桌面点「连接手机」应显示「手机连接服务还没开通」(截图存仓库外 `~/Documents/tendhearth/cc-screens-2026-10-01-pairing/`)。
+Expected:`self deploy` 健康门通过;若本机已设 `relay_v2_url`,`selftest phone` PASS(它用 operator 令牌调 `GET /v1/settings/link`(Task 3 起 admin 档)配一次,单次配对不影响);没设 ⇒ 记下「中继未开通,selftest phone 跳过」,桌面点「连接手机」应显示「手机连接服务还没开通」(截图存仓库外 `~/Documents/tendhearth/cc-screens-2026-10-01-pairing/`)。
 
 - [ ] **Step 3: 真机验收清单(有设备就跑,没有就原样写进 roadmap 的「欠的真机账」)**
 
@@ -2731,7 +2731,7 @@ Expected:`self deploy` 健康门通过;若本机已设 `relay_v2_url`,`selftest 
 - **配对体验(plan 7a)**(2026-10-01,`pairing-ux` 分支):一个码只配一台(配上即作废、设备令牌不能再铸)、桌面「手机扫码改设置」改名「连接手机」并按需打开远程隧道(中继没开通就直说)、引导页最后一步直接给码、中继发 AASA / assetlinks、app 声明关联域名 / App Links 且链接只到确认卡、恢复回来的配对先核对、重新配对退旧位。spec `docs/superpowers/specs/2026-10-01-tendhearth-pairing-ux-design.md`。下一份 = 7b(手机上接着电脑上的会话)。
 ```
 
-「欠的真机账」段加一条:「配对体验真机六项(计划 7a Task 12 Step 3),其中 iOS 备份恢复与安卓指纹是主人的」。「已定未做」段加三条:「安卓凭据恢复走 Google Block Store」「iCloud 钥匙串同步(kSecAttrSynchronizable)—— 待主人定」「`GET /v1/settings/link` 由 trusted 升 admin(selftest phone 改用 operator 令牌)—— 待主人定」。
+「欠的真机账」段加一条:「配对体验真机六项(计划 7a Task 12 Step 3),其中 iOS 备份恢复与安卓指纹是主人的」。「已定未做」段加两条:「安卓凭据恢复走 Google Block Store」「iCloud 钥匙串同步(kSecAttrSynchronizable)—— 待主人定」。`GET /v1/settings/link` 由 trusted 升 admin 已在 7a Task 3 做完(selftest phone 改用 operator 令牌;微信 `/set` 是进程内调用,查过不受影响),不进「已定未做」;要写就写进 plan 7a 的已完成条目。
 
 - [ ] **Step 5: Commit**
 

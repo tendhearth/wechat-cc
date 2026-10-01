@@ -157,13 +157,19 @@ it('daemon not running: readApiInfo() null ⇒ throws daemon_not_running before 
 
 describe('remote access off', () => {
   it('LAN-only link shape ⇒ FAIL immediately with the exact guidance, no relay/pairing attempted', async () => {
-    const fetchImpl = (async (url: string | URL) => {
+    const bearers: Array<string | undefined> = []
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
       const u = new URL(String(url))
-      if (u.pathname === '/v1/settings/link') return jsonResponse(200, { url: LAN_ONLY_URL })
+      if (u.pathname === '/v1/settings/link') {
+        bearers.push((init?.headers as Record<string, string> | undefined)?.authorization)
+        return jsonResponse(200, { url: LAN_ONLY_URL })
+      }
       throw new Error(`unexpected fetch: ${u.pathname}`)
     }) as unknown as typeof fetch
     const deps = baseDeps({ fetch: fetchImpl, connect: () => { throw new Error('must not connect when remote is off') } })
     const report = await runPhoneSelftest(deps, { executor: 'claude' })
+    // settings/link 是 admin 档(plan 7a,spec §11.7):必须用 operator 凭据,不是共享的 trusted 文件 token。
+    expect(bearers).toEqual(['Bearer op-token'])
     expect(report.ok).toBe(false)
     const remote = report.checks.find((c) => c.name === 'remote_enabled')
     expect(remote).toEqual({ name: 'remote_enabled', ok: false, detail: 'remote access is off — enable 出门也能用 in settings' })
