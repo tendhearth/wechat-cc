@@ -2831,9 +2831,6 @@ input { font: inherit; color: inherit; }
   justify-self: end;
 }
 .atelier-gallery-panel { align-self: stretch; margin-top: 42px; }
-.companion-users-scrim {
-  display: none;
-}
 
 /* Optional immersive companion mode. The normal dashboard remains the
    default; this temporarily elevates the aquarium without losing user data. */
@@ -2887,34 +2884,6 @@ input { font: inherit; color: inherit; }
   font-weight: 500;
   cursor: pointer;
   backdrop-filter: blur(8px);
-}
-.moment-body.is-companion-immersive .moment-users {
-  position: fixed;
-  z-index: 60;
-  top: 0;
-  right: 0;
-  box-sizing: border-box;
-  width: min(340px, 88vw);
-  height: 100vh;
-  max-width: none;
-  padding: 72px 26px 28px;
-  overflow-y: auto;
-  background: rgba(255, 253, 247, .98);
-  box-shadow: -18px 0 48px rgba(76, 53, 32, .16);
-  transform: translateX(105%);
-  transition: transform 260ms ease;
-}
-.moment-body.is-companion-immersive.is-companion-users-open .companion-users-scrim {
-  position: fixed;
-  z-index: 55;
-  inset: 0;
-  display: block;
-  border: 0;
-  background: rgba(92, 69, 45, .10);
-  cursor: pointer;
-}
-.moment-body.is-companion-immersive.is-companion-users-open .moment-users {
-  transform: translateX(0);
 }
 @media (max-width: 720px) {
   .moment-body.is-companion-immersive .ai-orbit-visual {

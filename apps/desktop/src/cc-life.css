@@ -6,6 +6,7 @@
 .cc-life-nav-more>div{position:absolute;right:0;top:100%;width:190px;background:var(--th-paper);z-index:60;border:1px solid var(--th-hair);border-radius:14px;padding:8px;box-shadow:0 12px 30px color-mix(in srgb,var(--th-ink) 12%,transparent)}
 .cc-life-nav-more .dash-nav-link{display:flex;width:100%;justify-content:flex-start;min-width:0;margin:2px 0}
 .cc-recollections button,.cc-life-redirect button{font:inherit;cursor:pointer;color:var(--th-accent);background:var(--th-paper);border:1px solid var(--th-hair);border-radius:12px;padding:10px 16px}
+.cc-life-kicker{font-size:12px;letter-spacing:.12em;color:var(--th-ink-soft)}
 .cc-recollections{padding:40px clamp(22px,6vw,100px);color:var(--th-ink)}
 .cc-recollections header h1{font-size:30px;margin:12px 0}
 .cc-recollections header p,.cc-life-note{font-size:14px;color:var(--th-ink-soft);line-height:1.8}
@@ -128,3 +129,16 @@
 .cc-recollections .fd-section-head{font-size:12px;gap:10px}
 .cc-recollections .fd-section-head h2{font-size:14px;font-weight:500}
 @media(max-width:740px){.cc-recollections .pc-card{grid-template-columns:minmax(0,1fr) 105px;gap:10px 16px}.cc-recollections .pc-card time{grid-column:1;grid-row:1}.cc-recollections .pc-card h3{grid-column:1;grid-row:2;font-size:15px;margin:0}.cc-recollections .pc-card p{grid-column:1;grid-row:3;font-size:12px;margin:0}.cc-recollections .pc-cover{grid-column:2;grid-row:2/4}.cc-recollections .pc-cover img{height:85px}.cc-recollections .pc-favorite{grid-column:1;grid-row:4}}
+
+
+/* 鱼缸(生活与工具,2026-10-01 从「此刻」搬来):整页只放鱼缸,一列居中。 */
+.dashboard .aquarium-pane{overflow:auto}
+.aquarium-pane .moment-body{grid-template-columns:minmax(0,1fr);justify-items:center}
+.aquarium-pane .moment-body:not(.is-companion-immersive) :is(.companion-intro,.ai-orbit-visual){transform:none}
+/* 「连接与设置」抽屉的「连接」段:重新连接 / 测试 / 状态自检,当前用户与子用户。 */
+.drawer-connection .moment-actions{width:auto;display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 18px}
+.drawer-connection .moment-actions .pending{flex-basis:100%;min-height:0;margin:0}
+.drawer-connection .moment-actions .pending:empty{display:none}
+.drawer-connection .moment-connect-btn{width:auto}
+.drawer-connection .moment-side{display:flex;flex-direction:column;gap:18px}
+.drawer-connection .moment-users{max-width:none;width:100%}

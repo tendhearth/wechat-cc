@@ -37,6 +37,7 @@ import { initTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
 import { initConversePage, subscribeConverse, setConverseMode } from "./modules/converse.js"
 import { mountNowPage } from "./modules/now-page.js"
+import { mountNowConnections } from "./modules/now-connections.js"
 import { latestCCLine } from "./modules/now-home.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
 import { markJournalSeen } from "./modules/journal.js"
@@ -148,6 +149,20 @@ const nowPage = nowRoot ? mountNowPage({
   },
 }) : null
 if (nowPage) setConverseMode('home')
+// 右上角状态行打开的「CC 的连接」(GET /v1/connections,admin,走原生宿主的 operator 凭据)。
+// 只在浮层打开时读:打开时立刻读一次,开着时每 30 秒再读。
+const nowConnectionsHost = document.getElementById('now-connections')
+const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConnectionsHost, call: (method, path) => invokeWorkbenchApi(method, path) }) : null
+{
+  const details = /** @type {HTMLDetailsElement|null} */ (document.querySelector('.cc-home-details'))
+  /** @type {ReturnType<typeof setInterval>|null} */ let timer = null
+  details?.addEventListener('toggle', () => {
+    if (timer) { clearInterval(timer); timer = null }
+    if (!details.open || !nowConnections) return
+    void nowConnections.refresh()
+    timer = setInterval(() => { void nowConnections.refresh() }, 30_000)
+  })
+}
 subscribeConverse(msgs => nowPage?.setLatestLine(latestCCLine(msgs)))
 window.addEventListener('pagehide', () => careSheet.close())
 const memoryRecordsHost = document.getElementById("cc-memory-records")
@@ -543,6 +558,7 @@ function switchPane(name) {
   }
   document.querySelector(".cc-life-nav-more")?.removeAttribute("open")
   const overviewWasHidden = name === "overview" && !!(/** @type {HTMLElement | null} */ (document.querySelector('.dash-pane[data-pane="overview"]')))?.hidden
+  const aquariumWasHidden = name === "aquarium" && !!(/** @type {HTMLElement | null} */ (document.querySelector('.dash-pane[data-pane="aquarium"]')))?.hidden
   const backstagePanes = new Set(["sessions", "plugins", "logs"])
   document.querySelectorAll(".dash-nav-link[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
@@ -557,7 +573,7 @@ function switchPane(name) {
   })
   // The destination must be visible before navigation transfers keyboard focus.
   workbenchNavigation?.setWorkbenchActive(name === "workbench")
-  if (overviewWasHidden) {
+  if (aquariumWasHidden) {
     advanceCompanionHeroCopy()
     if (doctorPoller.current) renderDashboardIfActive(doctorPoller.current)
   }
@@ -1135,9 +1151,9 @@ function wireEvents() {
 
   // Provider-switch dropdown. The .provider-switch button lives inside
   // #accounts-current which is re-rendered on every doctor poll, so we
-  // use event delegation on the overview pane instead of a direct listener.
+  // use event delegation on its container (2026-10-01 起在「连接与设置」抽屉的「连接」段)。
   // Escape-key and outside-click are handled inside toggleProviderMenu itself.
-  document.querySelector('.dash-pane[data-pane="overview"]')?.addEventListener("click", ev => {
+  document.querySelector('#settings-drawer .drawer-connection')?.addEventListener("click", ev => {
     const target = ev.target instanceof HTMLElement ? ev.target : null
     const addSubUser = target?.closest("[data-action='add-sub-user']")
     if (addSubUser) {
@@ -1163,18 +1179,10 @@ function wireEvents() {
   const companionDesktopStart = /** @type {HTMLButtonElement | null} */ (document.getElementById("companion-desktop-start"))
   const companionImmersiveExit = document.getElementById("companion-immersive-exit")
   const companionUsersToggle = document.getElementById("companion-users-toggle")
-  const companionUsersScrim = document.getElementById("companion-users-scrim")
-  /** @param {boolean} open */
-  const setCompanionUsersOpen = (open) => {
-    if (!companionBody) return
-    companionBody.classList.toggle("is-companion-users-open", open)
-    companionUsersToggle?.setAttribute("aria-expanded", String(open))
-  }
   /** @param {boolean} active */
   const setCompanionImmersive = (active) => {
     if (!companionBody) return
     companionBody.classList.toggle("is-companion-immersive", active)
-    setCompanionUsersOpen(false)
     companionImmersiveStart?.setAttribute("aria-pressed", String(active))
   }
   companionImmersiveStart?.addEventListener("click", () => setCompanionImmersive(true))
@@ -1196,11 +1204,12 @@ function wireEvents() {
     }
   })
   companionImmersiveExit?.addEventListener("click", () => setCompanionImmersive(false))
-  companionUsersToggle?.addEventListener("click", () => {
-    if (!companionBody?.classList.contains("is-companion-immersive")) return
-    setCompanionUsersOpen(!companionBody.classList.contains("is-companion-users-open"))
+  // 用户与连接 2026-10-01 起住在「连接与设置」里:沉浸模式的「用户」直接打开那个抽屉的「连接」段。
+  companionUsersToggle?.addEventListener("click", ev => {
+    ev.stopPropagation()
+    openSettingsDrawer()
+    document.querySelector("#settings-drawer .drawer-connection")?.scrollIntoView?.({ block: "start" })
   })
-  companionUsersScrim?.addEventListener("click", () => setCompanionUsersOpen(false))
   document.addEventListener("keydown", event => {
     if (event.key === "Escape") setCompanionImmersive(false)
   })

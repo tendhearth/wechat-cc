@@ -21,11 +21,13 @@ import { test, expect } from './fixtures'
 // actually runs (it bails when state.mode !== 'dashboard' even if the
 // DOM data-mode attr says otherwise).
 
+// 2026-10-01 起连接、重连、用户卡片都在「连接与设置」抽屉的「连接」段;鱼缸(hero)在「生活与工具 › 鱼缸」。
 async function openConnections(page: import('@playwright/test').Page) {
-  const panel = page.locator('.cc-home-details')
-  await expect(panel).not.toHaveAttribute('open', '')
-  await panel.locator(':scope > summary').click()
-  await expect(panel).toHaveAttribute('open', '')
+  const drawer = page.locator('#settings-drawer')
+  await expect(drawer).not.toHaveClass(/is-open/)
+  await page.locator('#settings-open').click()
+  await expect(drawer).toHaveClass(/is-open/)
+  await expect(drawer.locator('.drawer-connection')).toBeVisible()
 }
 
 // ── Hero tone (daemon alive vs dead) ────────────────────────────────────

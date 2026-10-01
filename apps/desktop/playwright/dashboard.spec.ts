@@ -29,7 +29,7 @@ async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl:
 
 // 顶层导航项(2026-08-24 导航重构后):待办升到一级,日志/插件收进后厨
 // —— 它们仍有 pane,但不再有顶层导航按钮,所以分成两张表校验。
-const NAV_PANES = ['overview', 'workbench', 'recollections', 'memory', 'todos', 'sessions', 'a2a-agents'] as const
+const NAV_PANES = ['overview', 'workbench', 'recollections', 'aquarium', 'memory', 'todos', 'sessions', 'a2a-agents'] as const
 /** 有 pane、但入口在后厨标签页里(见 logs.spec.ts 的 bootAndOpenLogs)。 */
 const BACKSTAGE_PANES = ['logs', 'plugins'] as const
 
@@ -94,17 +94,49 @@ test('round-trip: overview → memory → overview restores initial state', asyn
 
 // ── Per-pane DOM contract ───────────────────────────────────────────────
 
-test('overview pane has hero + current-user + sub-user grid', async ({ page, shimUrl, shim }) => {
+test('此刻 has the connections card; aquarium hero in 鱼缸; users + reconnect in 连接与设置', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  const pane = page.locator('article.dash-pane[data-pane="overview"]')
-  // moxiuwen's redesign — hero card + current user + sub-user grid
-  await expect(pane.locator('#hero-card')).toBeAttached()
-  await expect(pane.locator('#hero-headline')).toBeAttached()
-  await expect(pane.locator('#accounts-current')).toBeAttached()
-  await expect(pane.locator('#accounts-body')).toBeAttached()
-  await expect(pane.locator('#dash-restart')).toBeAttached()
-  await expect(pane.locator('#dash-stop')).toBeAttached()
+  const now = page.locator('article.dash-pane[data-pane="overview"]')
+  await expect(now.locator('.cc-home-details #now-connections')).toBeAttached()
+  await expect(now.locator('#hero-card')).toHaveCount(0)
+  // 2026-10-01:鱼缸(hero card)搬到「生活与工具 › 鱼缸」
+  const aquarium = page.locator('article.dash-pane[data-pane="aquarium"]')
+  await expect(aquarium.locator('#hero-card')).toBeAttached()
+  await expect(aquarium.locator('#hero-headline')).toBeAttached()
+  await expect(aquarium.locator('#companion-stage')).toBeAttached()
+  // 当前用户 + 子用户 + 重连 / 断开 在「连接与设置」抽屉的「连接」段
+  const conn = page.locator('#settings-drawer .drawer-connection')
+  await expect(conn.locator('#accounts-current')).toBeAttached()
+  await expect(conn.locator('#accounts-body')).toBeAttached()
+  await expect(conn.locator('#dash-restart')).toBeAttached()
+  await expect(conn.locator('#dash-stop')).toBeAttached()
+  await expect(conn.locator('#brain-selfcheck')).toBeAttached()
+})
+
+test('此刻 status line opens CC 的连接: headline + one row per source + the computer', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat' })
+  await bootIntoDashboard(page, shimUrl)
+  await page.locator('.cc-home-details > summary').click()
+  const card = page.locator('#now-connections')
+  await expect(card).toBeVisible()
+  await expect(card.locator('.nc-headline')).toHaveText('都连着')
+  await expect(card.locator('.nc-source')).toHaveCount(3)
+  await expect(card.locator('.nc-source').first()).toContainText('微信聊天记录')
+  await expect(card.locator('.nc-source').first()).toContainText('最新消息')
+  await expect(card.locator('.nc-computer')).toContainText('在线')
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.cc-home-details')).not.toHaveAttribute('open')
+})
+
+test('CC 的连接 never shows green when it cannot be read', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', connections: null })
+  await bootIntoDashboard(page, shimUrl)
+  await page.locator('.cc-home-details > summary').click()
+  const card = page.locator('#now-connections')
+  await expect(card.locator('.nc-headline')).toHaveText('暂时不知道连接情况')
+  await expect(card.locator('.nc-headline .dot')).toHaveClass(/unknown/)
+  await expect(card.locator('.dot.ok')).toHaveCount(0)
 })
 
 test('memory pane has sidebar + observations + milestones + content viewer', async ({ page, shimUrl, shim }) => {

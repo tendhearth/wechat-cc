@@ -57,6 +57,7 @@ describe('token-registry', () => {
       'POST /v1/workbench/discard-attachment',
       'GET /v1/workbench',
       'GET /v1/matters','GET /v1/matter','GET /v1/matter/owner-chat','POST /v1/matter/say',
+      'GET /v1/connections',
       'GET /v1/workbench/models',
       'GET /v1/workbench/sessions',
       'GET /v1/workbench/session',

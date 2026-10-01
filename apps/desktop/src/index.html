@@ -256,6 +256,53 @@
         <button id="settings-close" class="drawer-close" type="button" aria-label="关闭"><span data-hg-icon="cancel-01" data-hg-size="18"></span></button>
       </header>
       <div class="drawer-body">
+        <section class="drawer-section drawer-connection" aria-label="连接">
+          <h3>连接</h3>
+          <div class="moment-actions">
+            <span class="pending" id="dash-pending"></span>
+            <button id="dash-restart" class="moment-connect-btn">
+              <span class="ic" data-hg-icon="refresh"></span>
+              重新连接
+            </button>
+            <button id="dash-view-details" class="moment-reconnect-details" type="button" hidden>
+              查看详情
+            </button>
+            <button id="dash-refresh" class="btn ghost" hidden>刷新</button>
+            <button id="dash-test-conn" class="btn ghost">测试本机连接</button>
+            <button id="brain-selfcheck" class="btn ghost" type="button" title="网络 + 大脑逐项检查(只在你点的时候测)">状态自检</button>
+            <button id="dash-rebind" class="btn" hidden>重新扫码绑定</button>
+          </div>
+          <aside class="moment-side" aria-label="连接状态">
+          <section class="moment-users" aria-label="用户连接状态">
+            <!-- Ongoing incidents stay prominent; recovered records remain
+                 expandable below the account, regardless of read status. -->
+            <p id="dash-health-banner" class="dash-health-banner" hidden></p>
+            <!-- 文件访问(macOS TCC,2026-09-04):daemon 自己读不到主人的文件夹时在这儿说,
+                 并带去系统设置。权限缺失此前是静默的 —— 主人只会觉得 bot 变笨了。 -->
+            <div id="dash-fs-access" class="dash-fs-access" hidden>
+              <span id="dash-fs-access-text"></span>
+              <button id="dash-fs-access-open" class="btn" type="button">打开系统设置</button>
+            </div>
+            <h2>当前连接中的用户</h2>
+            <div id="accounts-current" class="current-user-card"></div>
+            <details id="dash-connection-options" class="connection-options" hidden>
+              <summary>连接选项</summary>
+              <button id="dash-stop" class="btn ghost" type="button">断开连接</button>
+            </details>
+            <details id="dash-health-history" class="connection-history" hidden>
+              <summary>上次连接中断已恢复</summary>
+              <p id="dash-health-history-detail"></p>
+            </details>
+            <div id="brain-health" class="brain-health" hidden></div>
+            <button id="open-phone-settings" class="phone-settings-btn" type="button" title="生成二维码,手机扫码打开设置页(10 分钟内有效)"><span aria-hidden="true">↗</span> 手机扫码改设置</button>
+            <div class="moment-subhead" id="accounts-subhead">
+              <h2>子用户</h2>
+              <span class="meta" id="accounts-meta">—</span>
+            </div>
+            <div id="accounts-body" class="sub-user-grid"></div>
+          </section>
+          </aside>
+        </section>
         <section class="drawer-section">
           <h3>Pro 会员</h3>
           <div id="license-status" class="license-status">加载中…</div>
@@ -357,6 +404,9 @@
                 <button class="dash-nav-link" aria-label="画室" data-pane="atelier">
                   <span class="ic" data-hg-icon="brush" data-hg-size="16"></span><span>画室</span>
                 </button>
+                <button class="dash-nav-link" aria-label="鱼缸" data-pane="aquarium">
+                  <span class="ic" data-hg-icon="smile" data-hg-size="16"></span><span>鱼缸</span>
+                </button>
                 <button class="dash-nav-link" aria-label="记忆" data-pane="memory">
                   <span class="ic" data-hg-icon="archive" data-hg-size="16"></span><span>记忆</span><span class="count" id="memory-count"></span>
                 </button>
@@ -387,107 +437,7 @@
           <article class="dash-pane cc-now-pane" data-pane="overview" data-now="home" data-cc="away">
             <details class="cc-home-details">
             <summary aria-label="CC 的连接"><span id="dash-rail-dot" class="dot"></span><span id="dash-rail-text">未运行</span></summary>
-            <div class="moment-body">
-              <section class="moment-ai" id="hero-card" aria-live="polite">
-                <div class="companion-intro">
-                  <h1 id="hero-headline">此刻，陪你一起看鱼</h1>
-                  <p id="hero-meta">把鼠标轻轻移进鱼缸，看看谁会先回应你</p>
-                </div>
-                <div class="ai-orbit-visual">
-                  <div class="companion-mode-actions" aria-label="陪伴显示方式">
-                    <button id="companion-immersive-start" class="companion-immersive-trigger" type="button" aria-pressed="false">
-                      <span class="companion-immersive-icon" aria-hidden="true">⤢</span>
-                      <span>进入这一刻</span>
-                    </button>
-                    <button id="companion-desktop-start" class="companion-desktop-trigger" type="button" title="在桌面打开可拖动的陪伴鱼缸">
-                      <span aria-hidden="true">↗</span>
-                      <span>浮到桌面</span>
-                    </button>
-                  </div>
-                  <div class="moment-animation-stage moment-illustration-online" aria-label="可交互的陪伴鱼缸">
-                    <canvas id="companion-stage"></canvas>
-                    <div class="stage-hint" id="stage-hint">把鼠标轻轻移进鱼缸水面下方</div>
-                    <div class="bear-message" id="bear-message" aria-live="polite">你好呀，今天也在陪你。</div>
-                  </div>
-                  <div class="moment-illustration moment-illustration-offline" role="img" aria-label="CC 安静地坐在鱼缸旁，连接暂时离线">
-                    <img class="offline-aquarium" src="./assets/home-cc-aquarium-base.png" alt="" />
-                    <span class="offline-fish offline-fish-gold" aria-hidden="true"></span>
-                    <span class="offline-fish offline-fish-coral" aria-hidden="true"></span>
-                    <span class="offline-fish offline-fish-blue" aria-hidden="true"></span>
-                    <span class="offline-cc-shadow" aria-hidden="true"></span>
-                    <img class="offline-cc" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" />
-                  </div>
-                </div>
-                <div class="moment-actions">
-                  <span class="pending" id="dash-pending"></span>
-                  <button id="dash-restart" class="moment-connect-btn">
-                    <span class="ic" data-hg-icon="refresh"></span>
-                    重新连接
-                  </button>
-                  <button id="dash-view-details" class="moment-reconnect-details" type="button" hidden>
-                    查看详情
-                  </button>
-                  <button id="dash-refresh" class="btn ghost" hidden>刷新</button>
-                  <button id="dash-test-conn" class="btn ghost">测试本机连接</button>
-                  <button id="brain-selfcheck" class="btn ghost" type="button" title="网络 + 大脑逐项检查(只在你点的时候测)">状态自检</button>
-                  <button id="dash-rebind" class="btn" hidden>重新扫码绑定</button>
-                </div>
-              </section>
-
-              <aside class="moment-side" aria-label="连接状态">
-              <section class="moment-users" aria-label="用户连接状态">
-                <!-- Ongoing incidents stay prominent; recovered records remain
-                     expandable below the account, regardless of read status. -->
-                <p id="dash-health-banner" class="dash-health-banner" hidden></p>
-                <!-- 文件访问(macOS TCC,2026-09-04):daemon 自己读不到主人的文件夹时在这儿说,
-                     并带去系统设置。权限缺失此前是静默的 —— 主人只会觉得 bot 变笨了。 -->
-                <div id="dash-fs-access" class="dash-fs-access" hidden>
-                  <span id="dash-fs-access-text"></span>
-                  <button id="dash-fs-access-open" class="btn" type="button">打开系统设置</button>
-                </div>
-                <h2>当前连接中的用户</h2>
-                <div id="accounts-current" class="current-user-card"></div>
-                <details id="dash-connection-options" class="connection-options" hidden>
-                  <summary>连接选项</summary>
-                  <button id="dash-stop" class="btn ghost" type="button">断开连接</button>
-                </details>
-                <details id="dash-health-history" class="connection-history" hidden>
-                  <summary>上次连接中断已恢复</summary>
-                  <p id="dash-health-history-detail"></p>
-                </details>
-                <div id="brain-health" class="brain-health" hidden></div>
-                <button id="open-phone-settings" class="phone-settings-btn" type="button" title="生成二维码,手机扫码打开设置页(10 分钟内有效)"><span aria-hidden="true">↗</span> 手机扫码改设置</button>
-                <div class="moment-subhead" id="accounts-subhead">
-                  <h2>子用户</h2>
-                  <span class="meta" id="accounts-meta">—</span>
-                </div>
-                <div id="accounts-body" class="sub-user-grid"></div>
-              </section>
-              </aside>
-              <button id="companion-users-scrim" class="companion-users-scrim" type="button" aria-label="收起用户抽屉"></button>
-              <div class="companion-immersive-tools" aria-label="陪伴模式工具">
-                <button id="companion-immersive-exit" type="button">退出陪伴</button>
-                <button id="companion-users-toggle" type="button" aria-expanded="false">用户</button>
-              </div>
-
-              <!-- Hidden shim: keeps the IDs that JS modules
-                   (conversations.js, update.js, main.js) look up so
-                   nothing throws even though moxiuwen retired the
-                   visible cards. Do not delete unless those modules
-                   are refactored to tolerate missing nodes. -->
-              <div class="overview-support" hidden>
-                <span id="conversations-meta">—</span>
-                <table id="conversations-table"><tbody id="conversations-body"></tbody></table>
-                <div id="update-card" data-tone="info">
-                  <span id="update-meta"></span>
-                  <span id="update-dot"></span>
-                  <span id="update-headline"></span>
-                  <span id="update-body"></span>
-                  <button id="update-check-btn"></button>
-                  <button id="update-apply-btn" hidden></button>
-                </div>
-              </div>
-            </div>
+            <div id="now-connections" class="now-connections" aria-live="polite"></div>
             </details>
             <button id="now-back" class="now-back" type="button" hidden>‹ 此刻</button>
             <section class="now-hero">
@@ -505,6 +455,67 @@
               <ul id="now-waiting-list"></ul>
             </section>
             <div id="converse-root" class="converse-page"></div>
+          </article>
+
+          <!-- ── pane: aquarium(鱼缸,生活与工具)──────────────────────
+               2026-10-01:原来「此刻」页的鱼缸搬到这里;连接与用户在「连接与设置」里。 -->
+          <article class="dash-pane aquarium-pane" data-pane="aquarium" hidden>
+              <div class="moment-body">
+                <section class="moment-ai" id="hero-card" aria-live="polite">
+                  <div class="companion-intro">
+                    <h1 id="hero-headline">此刻，陪你一起看鱼</h1>
+                    <p id="hero-meta">把鼠标轻轻移进鱼缸，看看谁会先回应你</p>
+                  </div>
+                  <div class="ai-orbit-visual">
+                    <div class="companion-mode-actions" aria-label="陪伴显示方式">
+                      <button id="companion-immersive-start" class="companion-immersive-trigger" type="button" aria-pressed="false">
+                        <span class="companion-immersive-icon" aria-hidden="true">⤢</span>
+                        <span>进入这一刻</span>
+                      </button>
+                      <button id="companion-desktop-start" class="companion-desktop-trigger" type="button" title="在桌面打开可拖动的陪伴鱼缸">
+                        <span aria-hidden="true">↗</span>
+                        <span>浮到桌面</span>
+                      </button>
+                    </div>
+                    <div class="moment-animation-stage moment-illustration-online" aria-label="可交互的陪伴鱼缸">
+                      <canvas id="companion-stage"></canvas>
+                      <div class="stage-hint" id="stage-hint">把鼠标轻轻移进鱼缸水面下方</div>
+                      <div class="bear-message" id="bear-message" aria-live="polite">你好呀，今天也在陪你。</div>
+                    </div>
+                    <div class="moment-illustration moment-illustration-offline" role="img" aria-label="CC 安静地坐在鱼缸旁，连接暂时离线">
+                      <img class="offline-aquarium" src="./assets/home-cc-aquarium-base.png" alt="" />
+                      <span class="offline-fish offline-fish-gold" aria-hidden="true"></span>
+                      <span class="offline-fish offline-fish-coral" aria-hidden="true"></span>
+                      <span class="offline-fish offline-fish-blue" aria-hidden="true"></span>
+                      <span class="offline-cc-shadow" aria-hidden="true"></span>
+                      <img class="offline-cc" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" />
+                    </div>
+                  </div>
+                </section>
+
+                <div class="companion-immersive-tools" aria-label="陪伴模式工具">
+                  <button id="companion-immersive-exit" type="button">退出陪伴</button>
+                  <button id="companion-users-toggle" type="button" aria-controls="settings-drawer" title="在「连接与设置」里看用户">用户</button>
+                </div>
+
+                <!-- Hidden shim: keeps the IDs that JS modules
+                     (conversations.js, update.js, main.js) look up so
+                     nothing throws even though moxiuwen retired the
+                     visible cards. Do not delete unless those modules
+                     are refactored to tolerate missing nodes. -->
+                <div class="overview-support" hidden>
+                  <span id="conversations-meta">—</span>
+                  <table id="conversations-table"><tbody id="conversations-body"></tbody></table>
+                  <div id="update-card" data-tone="info">
+                    <span id="update-meta"></span>
+                    <span id="update-dot"></span>
+                    <span id="update-headline"></span>
+                    <span id="update-body"></span>
+                    <button id="update-check-btn"></button>
+                    <button id="update-apply-btn" hidden></button>
+                  </div>
+                </div>
+              </div>
           </article>
 
 
