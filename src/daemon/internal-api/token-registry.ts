@@ -214,6 +214,9 @@ export function makeTokenRegistry(
           'GET /v1/matters','GET /v1/matter','GET /v1/matter/owner-chat','POST /v1/matter/say',
           // 「CC 的连接」:桌面「此刻」右上角的连接浮层(2026-10-01)。
           'GET /v1/connections',
+          // 桌面「连接手机」(plan 7a):设置抽屉弹层与引导页的码、轮询「已连上」。
+          'POST /v1/phone/link',
+          'GET /v1/phone/devices',
           'GET /v1/workbench/models',
           'GET /v1/workbench/sessions','GET /v1/workbench/session','GET /v1/workbench/task',
           'POST /v1/workbench/project',

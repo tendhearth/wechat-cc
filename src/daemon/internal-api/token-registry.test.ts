@@ -58,6 +58,8 @@ describe('token-registry', () => {
       'GET /v1/workbench',
       'GET /v1/matters','GET /v1/matter','GET /v1/matter/owner-chat','POST /v1/matter/say',
       'GET /v1/connections',
+      'POST /v1/phone/link',
+      'GET /v1/phone/devices',
       'GET /v1/workbench/models',
       'GET /v1/workbench/sessions',
       'GET /v1/workbench/session',
