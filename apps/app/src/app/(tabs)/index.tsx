@@ -45,22 +45,26 @@ export default function Now() {
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.paper }}>
       <TopBar title={t(lang, 'common.wordmark')} onAvatar={() => router.push('/settings')}
         onConnection={() => router.push('/connections')} connectionTestID="now-connections" />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.xxl }}>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.xl }}>
         <ConnectionNotice only="revoked" />
         {demo ? <DemoBanner /> : null}
-        <Txt role="display" accessibilityRole="header">{t(lang, v.greetingKey)}</Txt>
-        <View style={{ alignItems: 'flex-end', gap: space.s }}>
+        {/* 照稿:CC 最近一句贴在 CC 头上(小尾巴朝 CC);问候在左、CC 在右同一行 */}
+        <View style={{ gap: space.xs }}>
           {line ? (
             <Pressable testID="now-cc-bubble" accessibilityRole="button" accessibilityLabel={`${t(lang, 'now.ccBubble')}: ${line.text}`} onPress={openChat}
-              style={({ pressed }) => ({ maxWidth: 280, paddingHorizontal: space.l, paddingVertical: space.m, borderWidth: 1, borderColor: pressed ? c.accent : c.hair,
+              style={({ pressed }) => ({ alignSelf: 'flex-end', maxWidth: '70%', paddingHorizontal: space.l, paddingVertical: space.s, borderWidth: 1, borderColor: pressed ? c.accent : c.hair, backgroundColor: c.paper,
                 borderTopLeftRadius: radius.bubble, borderTopRightRadius: radius.bubble, borderBottomLeftRadius: radius.bubble, borderBottomRightRadius: 4 })}>
               <Txt role="bubble" content="user" numberOfLines={3}>{line.text}</Txt>
-              <Txt role="caption" tone="inkSoft" style={{ marginTop: space.xs }}>{formatSynced(line.at, Date.now(), lang)}</Txt>
+              <Txt role="caption" tone="inkSoft">{formatSynced(line.at, Date.now(), lang)}</Txt>
             </Pressable>
           ) : null}
-          <Pressable testID="now-cc" accessibilityRole="button" accessibilityLabel={t(lang, 'now.openChat')} onPress={openChat} style={{ marginRight: space.s }}>
-            <CCFigure size={120} presence={presence} />
-          </Pressable>
+          {/* CC 图上方有透明留白:往上收一点,让气泡贴着 CC 的头 */}
+          <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.m, marginTop: line ? -space.l : 0 }}>
+            <Txt role="display" accessibilityRole="header" style={{ flex: 1, paddingBottom: space.s }}>{t(lang, v.greetingKey)}</Txt>
+            <Pressable testID="now-cc" accessibilityRole="button" accessibilityLabel={t(lang, 'now.openChat')} onPress={openChat} style={{ marginRight: space.s }}>
+              <CCFigure size={120} presence={presence} />
+            </Pressable>
+          </View>
         </View>
         {v.waiting.length > 0 ? (
           <View>

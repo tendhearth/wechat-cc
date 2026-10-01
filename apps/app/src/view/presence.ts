@@ -10,11 +10,14 @@ export function ccPresence(c: Connection): CCPresence {
   return c.state === 'online' ? 'here' : 'away'
 }
 
-export function statusLine(c: Connection, now: number, lang: Lang): { dot: 'ok' | 'bad' | 'unknown'; text: string } {
+/** 顶栏状态行:`text` 是看得见的短句(窄屏放得下);`label` 给读屏,离线时带上次同步时间(连接页也写着)。 */
+export function statusLine(c: Connection, now: number, lang: Lang): { dot: 'ok' | 'bad' | 'unknown'; text: string; label: string } {
   const home = t(lang, 'common.computerHome')
-  if (c.state === 'online') return { dot: 'ok', text: `${home} · ${t(lang, 'common.computerOnline')}` }
-  if (c.state === 'connecting') return { dot: 'unknown', text: `${home} · ${t(lang, 'common.computerConnecting')}` }
-  if (c.state === 'revoked') return { dot: 'bad', text: `${home} · ${t(lang, 'common.computerRevoked')}` }
+  const same = (dot: 'ok' | 'bad' | 'unknown', text: string) => ({ dot, text, label: text })
+  if (c.state === 'online') return same('ok', `${home} · ${t(lang, 'common.computerOnline')}`)
+  if (c.state === 'connecting') return same('unknown', `${home} · ${t(lang, 'common.computerConnecting')}`)
+  if (c.state === 'revoked') return same('bad', `${home} · ${t(lang, 'common.computerRevoked')}`)
+  const text = `${home} · ${t(lang, 'common.computerOffline')}`
   const synced = c.lastSyncedAt === null ? '' : ` · ${t(lang, 'common.syncedAt', { time: formatSynced(c.lastSyncedAt, now, lang) })}`
-  return { dot: 'bad', text: `${home} · ${t(lang, 'common.computerOffline')}${synced}` }
+  return { dot: 'bad', text, label: text + synced }
 }
