@@ -41,7 +41,7 @@ cd apps/relay
 bunx wrangler secret put <NAME> --env staging      # 或 production
 ```
 
-`APNS_KEY_P8`、`APNS_KEY_ID`、`APNS_TEAM_ID`(`9Y6JAPDP7A`)、`APNS_TOPIC`、`FCM_SERVICE_ACCOUNT`。
+`APNS_KEY_P8`、`APNS_KEY_ID`、`APNS_TEAM_ID`(`9Y6JAPDP7A`)、`APNS_TOPIC`、`FCM_SERVICE_ACCOUNT`、`ANDROID_CERT_SHA256`(可选;逗号分隔的安卓签名 SHA-256,见第 9 节)。
 
 GitHub:
 - secret `CLOUDFLARE_API_TOKEN`(Workers Scripts Edit + Workers Routes Edit + Account Read;两个环境各一份或共用)
@@ -77,3 +77,9 @@ v2 **默认关**:daemon 只有在 `agent-config.json` 里显式设了 `relay_v2_
 - **不要双开**:绝不要让两个 daemon 用同一份 `relay-identity.json`——它们会互相顶掉(关闭码 4000,带退避)。
 - **开关(首次运行前做完)**:先在 GitHub 建好环境 `relay-staging` 和 `relay-production`(后者要设 required reviewer = 主人,并把 deployment branch policy 限制为 dev / master),再设仓库变量 `RELAY_DEPLOY=on`(打开部署工作流);中继上线后再设 `RELAY_WATCH=on`(打开每小时巡检)。变量没设时两个工作流的作业是跳过状态,不会红、不会发邮件。
 - **手机 app 的推送**需要:中继 v2 上线且 daemon 设了 `relay_v2_url`(否则 app 设置页显示「电脑还没用上 Tendhearth 中继」)、Worker 的 APNs / FCM secrets(第 4 节)。开发构建登记的是 `apns_sandbox`,TestFlight / 商店是 `apns`。
+
+## 9. 通用链接 / App Links(plan 7a)
+
+- Worker 在两个主机上都发 `/.well-known/apple-app-site-association`(appID `9Y6JAPDP7A.com.tendhearth.app`,只覆盖 `/pset`、`/pset/*`)与 `/.well-known/assetlinks.json`(`com.tendhearth.app`)。代码 `apps/relay/src/well-known.ts`。
+- 安卓指纹:Play Console → 应用完整性 → 应用签名密钥证书的 SHA-256(EAS / 上传密钥的也加上),逗号分隔:`bunx wrangler secret put ANDROID_CERT_SHA256 --env staging`(production 同理)。格式必须是冒号分隔的 32 字节大写十六进制,畸形项会被丢掉。没设时 assetlinks 是 `[]`,安卓扫码照旧开网页壳。
+- 自查:`curl -sI https://relay.tendhearth.com/.well-known/apple-app-site-association`(200、`application/json`、无重定向);`curl -s https://relay.tendhearth.com/.well-known/assetlinks.json`。Apple 走自己的 CDN 缓存 AASA,改完可能要等;开发构建可在设备「开发者 → 关联域名开发」里绕过。
