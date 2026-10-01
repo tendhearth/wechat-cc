@@ -1,6 +1,10 @@
+import { PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
-import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT } from './types'
-import { copy, IDS, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions, type Stage } from './demo-data'
+import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT } from './types'
+import {
+  copy, IDS, CHAT_ID, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
+  demoConnections, demoSessions, demoSessionMessages, type Stage,
+} from './demo-data'
 
 type Topic = 'home' | 'approvals' | 'agents' | `matter/${string}`
 type Copy = keyof typeof copy
@@ -8,6 +12,9 @@ type Copy = keyof typeof copy
 type EvRec = { kind: string; createdAt: number; key?: Copy; extra?: string; text?: string }
 type Entry = { detail: MatterDetailT; stage: Stage; version: number; evs: EvRec[]; seeded: boolean; titleKey?: Copy }
 const DAY = 86_400_000
+const HOUR = 3_600_000
+/** 主人对话里的一条:key 的在读时按语言出文案;text 是用户自己的字。 */
+type ChatRec = { id: string; role: 'me' | 'cc'; key?: Copy; text?: string; at: number; source: ChatMessageT['source'] }
 
 export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof setTimeout; lang?: Lang } = {}): Backend & { reset(): void } {
   const now = opts.now ?? (() => Date.now())
@@ -21,6 +28,10 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   let createdBy = new Map<string, string>()
   let saidBy = new Set<string>()
   let deviceLabel = ''
+  // 主人那条对话(与 daemon 一致:说一句收下即回,回复落地后经 matter/<CHAT_ID> 主题唤醒)
+  let chatMsgs: ChatRec[] = []
+  let chatPending: ChatJobT | null = null
+  let chatJobs = new Map<string, ChatJobT>()
   const subs = new Map<Topic, Set<(d: any) => void>>()
 
   function mkMatter(id: string, kind: MatterT['kind'], title: string, status: MatterT['status'], path: string | null, ts: number): MatterT {
@@ -63,10 +74,26 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         runId: RUN_IDS[IDS.trip], inputMode: 'steer',
         questions: [tripQuestion(lastLang, n - 30_000)],
       }), 'ask', [{ kind: 'progress', key: 'stepTrip1', createdAt: n - 200_000 }], 'tripTitle')
-    add(mkDetail(mkMatter(IDS.notes, 'chat', t(lastLang, 'notesTitle'), 'replied', null, n - DAY), null), 'replied', [], 'notesTitle')
+    const nTitle = t(lastLang, 'notesTitle')
+    add(mkDetail(mkMatter(IDS.notes, 'task', nTitle, 'replied', '~/Projects/notes', n - DAY),
+      taskOf(IDS.notes, nTitle, '~/Projects/notes', 'replied', n - DAY)), 'replied', [], 'notesTitle')
+    // 主人和 CC 的那条对话:也是一件 chat matter(daemon 的 /m/api/matters 也会列它),内容走 chat()。
+    add(mkDetail({ ...mkMatter(CHAT_ID, 'chat', t(lastLang, 'chatTitle'), 'open', null, n - HOUR), ownerChatId: 'demo-owner' }, null), 'replied', [], 'chatTitle')
     return { map, ids }
   }
-  function seed() { const b = buildSeed(); entries = b.map; order = b.ids }
+  function seedChat() {
+    const n = now()
+    chatMsgs = [
+      { id: 'demo-chat-1', role: 'cc', key: 'chatSeed1', at: n - 3 * HOUR, source: 'wechat' },
+      { id: 'demo-chat-2', role: 'me', key: 'chatSeed2', at: n - 3 * HOUR + 120_000, source: 'wechat' },
+      { id: 'demo-chat-3', role: 'cc', key: 'chatSeed3', at: n - 2 * HOUR, source: 'desktop' },
+      { id: 'demo-chat-4', role: 'me', key: 'chatSeed4', at: n - HOUR, source: 'phone' },
+    ]
+    chatPending = null
+    chatJobs = new Map()
+  }
+  function seed() { const b = buildSeed(); entries = b.map; order = b.ids; seedChat() }
+  const chatText = (m: ChatRec, l: Lang) => (m.key ? t(l, m.key) : m.text ?? '')
   const titleOf = (e: Entry, l: Lang) => (e.titleKey ? t(l, e.titleKey) : e.detail.matter.title)
   /** 读时按请求的语言出一份拷贝:标题、事件、未处理的种子问题都换成 l。状态(已批准 / 已回答 / 阶段)在 e 里,不因语言变。 */
   function localize(e: Entry, l: Lang): MatterDetailT {
@@ -76,6 +103,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     d.matter.title = title
     if (d.task) d.task.title = title
     d.questions = d.questions.map(q => (q.id === QUESTION_ID ? tripQuestion(l, q.createdAt) : q))
+    if (d.matter.id === CHAT_ID) d.events = chatMsgs.map(m => ({ kind: m.role === 'me' ? 'user' : 'assistant', createdAt: m.at, text: chatText(m, l) }))
     return d
   }
   /** 读的语言变了 ⇒ 记下,并在当前调用之后把非 matter 主题按新语言补推一次。 */
@@ -108,7 +136,9 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       const unread = list().reduce((s, e) => s + e.detail.permissions.length + e.detail.questions.length, 0)
       return { unread, presenceState: { level: 'present', activity: unread > 0 ? 'waiting' : 'idle' }, nextCursor: null }
     }
-    const e = entries.get(topic.slice('matter/'.length))
+    const id = topic.slice('matter/'.length)
+    const e = entries.get(id)
+    if (e && id === CHAT_ID) return { found: true, kind: 'chat', version: e.version, phase: chatPending ? 'working' : e.detail.matter.status }
     return e ? { found: true, kind: e.detail.matter.kind, version: e.version, phase: phaseOf(e) } : { found: false }
   }
   function publish(ids: string[]) {
@@ -153,6 +183,43 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return { explanations, progress: progress(l, id, e.stage) }
     },
     async changes(id) { get(id); return id === IDS.portfolio ? changesTurn(now()) : null },
+    async chat(_p) {
+      const l = lastLang
+      return {
+        matterId: CHAT_ID, title: t(l, 'chatTitle'), hasMore: false, nextBefore: null, failed: null,
+        pending: chatPending ? { ...chatPending } : null,
+        messages: chatMsgs.map(m => ({ id: m.id, role: m.role, kind: 'text', text: chatText(m, l), truncated: false, at: m.at, source: m.source })),
+      }
+    },
+    async chatSay(text, requestId) {
+      // 与 daemon 一致:同一 requestId ⇒ 回原来那张回执,不说两遍;上一句还在等 ⇒ busy。
+      const seen = chatJobs.get(requestId)
+      if (seen) return { ...seen }
+      if (!text.trim() || text.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
+      if (chatPending) throw new BackendError('busy')
+      const job: ChatJobT = { requestId, text, status: 'pending', since: now() }
+      chatJobs.set(requestId, job); chatPending = job
+      publish([CHAT_ID])
+      later(2000, () => {
+        const ts = now()
+        chatMsgs.push(
+          { id: `demo-${requestId}-in`, role: 'me', text, at: ts, source: 'phone' },
+          { id: `demo-${requestId}-out`, role: 'cc', key: 'chatDemoReply', at: ts + 1, source: 'phone' },
+        )
+        job.status = 'replied'; chatPending = null
+        const e = entries.get(CHAT_ID)
+        if (e) touch(e, {})
+        publish([CHAT_ID])
+      })
+      return { ...job }
+    },
+    async connections() { return demoConnections(lastLang, now()) },
+    async sessions(provider) { return { items: demoSessions(lastLang, now(), provider), nextCursor: null } },
+    async session(key) {
+      const row = demoSessions(lastLang, now()).find(r => r.key === key)
+      if (!row) throw new BackendError('not_found')
+      return { session: row, managed: false, nextCursor: null, messages: demoSessionMessages(lastLang) }
+    },
     async decide({ id, requestId, decision }) {
       const e = get(id)
       if (!e.detail.permissions.some(p => p.id === requestId)) throw new BackendError('stale')

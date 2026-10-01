@@ -1,11 +1,13 @@
 import type { Lang } from '../i18n'
-import type { ApprovalExplanationT, ProgressSummaryT, PhoneChangesTurnT, EntryOptionsT } from './types'
+import type { ApprovalExplanationT, ProgressSummaryT, PhoneChangesTurnT, EntryOptionsT, ConnectionsT, NativeSessionRowT, NativeSessionPageT } from './types'
 
 /** 演示情境的文案(中英两份,照设计样稿 tendhearth-phone.html 的 tr('中','英'))。 */
 type Pair = readonly [zh: string, en: string]
 const pick = (lang: Lang, p: Pair) => (lang === 'zh-Hans' ? p[0] : p[1])
 
 export const IDS = { portfolio: 'a1b2c3d4', notes: 'e5f6a7b8', trip: 'c9d0e1f2' } as const
+/** 主人和 CC 的那条对话(chat matter;Task 10 起不进「一起做」,单独置顶)。 */
+export const CHAT_ID = 'c0ffee01'
 export const PERM_ID = 'perm-demo-1'
 export const QUESTION_ID = 'q-demo-1'
 export const RUN_IDS = { [IDS.portfolio]: 'run-demo-1', [IDS.trip]: 'run-demo-3' } as Record<string, string>
@@ -53,6 +55,18 @@ export const copy = {
   projPortfolio: ['作品集', 'Portfolio'],
   auto: ['由 CC 安排', 'Let CC choose'],
   home: ['家里的电脑', 'Home computer'],
+  chatTitle: ['和 CC 的对话', 'You & CC'],
+  chatSeed1: ['今天降温了,出门记得加件外套。', 'It’s colder today. Take a jacket.'],
+  chatSeed2: ['好,谢谢提醒', 'Will do, thanks'],
+  chatSeed3: ['作品集那件我先放着,明天接着看?', 'Shall I park the portfolio and pick it up tomorrow?'],
+  chatSeed4: ['可以', 'Sounds good'],
+  chatDemoReply: ['收到。这是演示模式,真连上你的电脑后,这里就是 CC 本人在回你。', 'Got it. This is the demo; once you pair with your computer, CC itself replies here.'],
+  sessPortfolio: ['首页在手机上排版乱了', 'Homepage layout breaks on mobile'],
+  sessNotes: ['把笔记按主题归一下', 'Group my notes by topic'],
+  sessTrip: ['给出差行程加个打包清单', 'Add a packing list to the trip planner'],
+  sessQ1: ['帮我看看为什么手机上会横向滚动。', 'Can you see why it scrolls sideways on a phone?'],
+  sessA1: ['是首屏图片的固定宽度撑出来的,我改成了按屏幕宽度缩放。', 'The hero image had a fixed width; I made it scale with the screen.'],
+  sessQ2: ['好,顺便把标题字号也调小一点。', 'Great, make the heading a little smaller too.'],
 } satisfies Record<string, Pair>
 
 export const t = (lang: Lang, k: keyof typeof copy) => pick(lang, copy[k])
@@ -106,4 +120,47 @@ export function entryOptions(lang: Lang): EntryOptionsT {
     })),
     projects: [{ id: 'portfolio', name: t(lang, 'projPortfolio'), path: '~/Projects/portfolio', providerId: 'claude' }],
   }
+}
+
+const HOUR = 3_600_000
+const DAY = 24 * HOUR
+
+/** 演示的「CC 的连接」:微信历史就绪(最新到昨天)、知识库落后(4 天前)、wxsearch 就绪、wxmedia 没加载;形状与 daemon buildConnections 一致(插件按名排序)。 */
+export function demoConnections(lang: Lang, now: number): ConnectionsT {
+  return {
+    generatedAt: now,
+    sources: [
+      { id: 'wechat_history', kind: 'wechat_history', name: 'wxvault', state: 'ready', latestAt: now - DAY, syncedAt: now - 2 * HOUR },
+      { id: 'knowledge', kind: 'knowledge', name: 'knowledge', state: 'behind', latestAt: now - 4 * DAY, syncedAt: now - 4 * DAY },
+      { id: 'plugin:wxmedia', kind: 'plugin', name: 'wxmedia', state: 'not_loaded', latestAt: null, syncedAt: null },
+      { id: 'plugin:wxsearch', kind: 'plugin', name: 'wxsearch', state: 'ready', latestAt: null, syncedAt: null },
+    ],
+    computers: [{ id: 'home', label: 'Mac', online: true, since: now - 3 * DAY, version: null }],
+    recent: [
+      { matterId: IDS.portfolio, title: t(lang, 'portfolioTitle'), phase: 'working', at: now - 60_000 },
+      { matterId: IDS.trip, title: t(lang, 'tripTitle'), phase: 'working', at: now - 30_000 },
+    ],
+    outputs: [],
+  }
+}
+
+const SESSIONS: Array<{ key: string; provider: 'claude' | 'codex'; title: keyof typeof copy; project: string; ago: number; active: boolean }> = [
+  { key: 'demo-claude-1', provider: 'claude', title: 'sessPortfolio', project: 'portfolio', ago: 20 * 60_000, active: true },
+  { key: 'demo-claude-2', provider: 'claude', title: 'sessNotes', project: 'notes', ago: DAY, active: false },
+  { key: 'demo-codex-1', provider: 'codex', title: 'sessTrip', project: 'trip-planner', ago: 2 * DAY, active: false },
+]
+
+/** 演示的电脑上原生会话(claude 2 条、codex 1 条);provider 省略 ⇒ 全部。 */
+export function demoSessions(lang: Lang, now: number, provider?: 'claude' | 'codex'): NativeSessionRowT[] {
+  return SESSIONS.filter(x => !provider || x.provider === provider)
+    .map(x => ({ key: x.key, provider: x.provider, title: t(lang, x.title), project: x.project, updatedAt: now - x.ago, active: x.active }))
+}
+
+/** 每个演示会话一页三句(user / assistant / user)。 */
+export function demoSessionMessages(lang: Lang): NativeSessionPageT['messages'] {
+  return [
+    { id: 'm1', role: 'user', text: t(lang, 'sessQ1'), truncated: false },
+    { id: 'm2', role: 'assistant', text: t(lang, 'sessA1'), truncated: false },
+    { id: 'm3', role: 'user', text: t(lang, 'sessQ2'), truncated: false },
+  ]
 }
