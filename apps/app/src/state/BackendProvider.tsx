@@ -4,7 +4,7 @@ import type { Backend } from '../backend/types'
 import type { Lang } from '../i18n'
 import type { PairingRecord } from '../net/pairing'
 import { rnSocket } from '../net/rn-connect'
-import { clearDrafts } from './drafts'
+import { clearDrafts, pairingScopeKey, setPairingScope } from './drafts'
 import { makeStore, type Store } from './store'
 import { backendFor, watchConnection } from './wiring'
 
@@ -19,6 +19,8 @@ export function BackendProvider({ children, backend: injected, lang, pairing, on
   children: ReactNode; backend?: Backend; lang: Lang; pairing: PairingRecord | null; onRevoked(): void
 }) {
   const value = useMemo<Ctx>(() => {
+    // 换配对 ⇒ 草稿 / 本机回执 / 已回复集合全清(复评:A 电脑的那句不能带到 B 上重试)。同步做,新后端的第一帧就干净。
+    setPairingScope(pairingScopeKey(pairing))
     const { backend: b, demo } = backendFor(pairing, { lang, open: rnSocket, log: devLog, ...(injected ? { injected } : {}) })
     return { backend: b, store: makeStore(b, { lang }), resetDemo: () => { clearDrafts(); demo?.reset() } }
     // lang 只用于初次创建;之后走 store.setLang

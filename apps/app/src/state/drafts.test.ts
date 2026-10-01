@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { clearDrafts, deleteDraft, dropReceipt, isReplied, listReceipts, markReplied, putReceipt, RECEIPTS_MAX, requestIdFor, subscribeReceipts } from './drafts'
+import { clearDrafts, deleteDraft, dropReceipt, getDraft, isReplied, listReceipts, markReplied, pairingGen, pairingScopeKey, putReceipt, RECEIPTS_MAX, requestIdFor, setDraft, setPairingScope, subscribeReceipts } from './drafts'
 
 let n = 0
 const mk = () => `id-${++n}`
@@ -61,5 +61,38 @@ describe('本机回执(终审 I1:离开 /chat 也不丢)', () => {
     expect(n).toBe(4)
     off(); putReceipt(r('c'))
     expect(n).toBe(4)
+  })
+})
+
+describe('换配对就清(复评:A 电脑的「可能没送到」不能带到 B 去重试)', () => {
+  const rec = (id: string) => ({ requestId: id, text: id, at: 1, localAt: 1 })
+  it('配对身份变了(配上 / 解除 / 换电脑 / 演示↔真连)⇒ 草稿、回执、已回复集合都清;同一身份不清', () => {
+    setPairingScope('live:A')
+    setDraft('chat', '在吗'); putReceipt(rec('a')); markReplied('x')
+    setPairingScope('live:A')
+    expect([getDraft('chat'), listReceipts().length, isReplied('x')]).toEqual(['在吗', 1, true])
+    setPairingScope('live:B')
+    expect([getDraft('chat'), listReceipts().length, isReplied('x')]).toEqual(['', 0, false])
+    putReceipt(rec('b')); setPairingScope('demo')
+    expect(listReceipts()).toEqual([])
+  })
+  it('换配对之前发出、之后才回来的 putReceipt / markReplied ⇒ 不落(按配对代)', () => {
+    setPairingScope('live:A')
+    const gen = pairingGen()
+    setPairingScope('none')
+    putReceipt(rec('late'), gen); markReplied('late', gen)
+    expect(listReceipts()).toEqual([])
+    expect(isReplied('late')).toBe(false)
+    putReceipt(rec('now'), pairingGen()); markReplied('now', pairingGen())
+    expect(listReceipts().map(r => r.requestId)).toEqual(['now'])
+    expect(isReplied('now')).toBe(true)
+  })
+  it('pairingScopeKey:没配对 ⇒ none;不同电脑 / 不同设备令牌 ⇒ 不同', () => {
+    const p = { v: 1 as const, daemonId: 'd1', relayHost: 'h', relayUrl: 'u', deviceToken: 't1', deviceId: 'i1', pairedAt: 1 }
+    expect(pairingScopeKey(null)).toBe('none')
+    expect(pairingScopeKey(p)).toBe(pairingScopeKey({ ...p, pairedAt: 2 }))
+    expect(pairingScopeKey(p)).not.toBe(pairingScopeKey({ ...p, daemonId: 'd2' }))
+    expect(pairingScopeKey(p)).not.toBe(pairingScopeKey({ ...p, deviceId: 'i2' }))
+    expect(pairingScopeKey(p)).not.toContain('t1')   // 不拿令牌当键
   })
 })

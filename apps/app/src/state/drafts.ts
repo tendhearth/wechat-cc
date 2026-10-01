@@ -1,3 +1,4 @@
+import type { PairingRecord } from '../net/pairing'
 import { uuid } from '../net/uuid'
 
 // 交办草稿只存内存,按 matter 参数分开('new' = 新事项)。
@@ -6,13 +7,34 @@ const requestIds = new Map<string, { text: string; id: string }>()
 export const getDraft = (key: string) => drafts.get(key) ?? ''
 export const setDraft = (key: string, v: string) => { drafts.set(key, v) }
 export const deleteDraft = (key: string) => { drafts.delete(key); requestIds.delete(key) }
-export const clearDrafts = () => { drafts.clear(); requestIds.clear(); replied.clear(); clearReceipts() }
+export const clearDrafts = () => { gen++; drafts.clear(); requestIds.clear(); replied.clear(); clearReceipts() }
+
+/**
+ * 这些都只对「当前这台电脑」有意义(复评):换配对(配上 / 解除 / 换电脑 / 演示↔真连)⇒ 全清,配对代 +1。
+ * 换配对前发出、之后才回来的 putReceipt / markReplied 带着旧代 ⇒ 不落 —— A 电脑的「可能没送到」不能带到 B 上重试。
+ */
+let gen = 0
+let scope: string | undefined
+export const pairingGen = () => gen
+/** 配对身份(不含令牌):同一台电脑、同一台设备 ⇒ 同一个键。 */
+export const pairingScopeKey = (p: PairingRecord | null): string => (p ? `live:${p.daemonId}:${p.deviceId}` : 'none')
+/** BackendProvider 在建后端时同步调用(可能在 render 里):清是同步的,通知订阅者推到微任务,不在别人 render 中途 setState。 */
+export function setPairingScope(key: string): void {
+  if (scope === key) return
+  const first = scope === undefined
+  scope = key
+  if (first) return
+  gen++
+  drafts.clear(); requestIds.clear(); replied.clear()
+  if (receipts.length) { receipts = []; queueMicrotask(notifyReceipts) }
+}
 
 // 已知 daemon 回复过的 requestId(对话页):永不再拿它重发 —— daemon 的去重表会过期,过期后同一个 id 会再说一遍。
 const replied = new Set<string>()
 const REPLIED_MAX = 200
 export const isReplied = (id: string) => replied.has(id)
-export function markReplied(id: string): void {
+export function markReplied(id: string, atGen: number = gen): void {
+  if (atGen !== gen) return
   replied.delete(id); replied.add(id)
   if (replied.size > REPLIED_MAX) replied.delete(replied.values().next().value!)
 }
@@ -35,14 +57,16 @@ export type Receipt = { requestId: string; text: string; at: number; localAt: nu
 export const RECEIPTS_MAX = 20
 let receipts: readonly Receipt[] = []
 const receiptListeners = new Set<() => void>()
-const setReceipts = (next: readonly Receipt[]) => { receipts = next; for (const l of [...receiptListeners]) l() }
+const notifyReceipts = () => { for (const l of [...receiptListeners]) l() }
+const setReceipts = (next: readonly Receipt[]) => { receipts = next; notifyReceipts() }
 /** 快照:引用只在内容变时换(useSyncExternalStore 要求)。 */
 export const listReceipts = (): readonly Receipt[] => receipts
 export function subscribeReceipts(l: () => void): () => void {
   receiptListeners.add(l)
   return () => { receiptListeners.delete(l) }
 }
-export function putReceipt(r: Receipt): void {
+export function putReceipt(r: Receipt, atGen: number = gen): void {
+  if (atGen !== gen) return
   const next = [...receipts.filter(x => x.requestId !== r.requestId), r]
   setReceipts(next.length > RECEIPTS_MAX ? next.slice(next.length - RECEIPTS_MAX) : next)
 }

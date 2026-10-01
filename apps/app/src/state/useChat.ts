@@ -3,7 +3,7 @@ import type { ChatJobT, ChatPageT } from '../backend/types'
 import { ACCEPTED_TTL_MS, acceptedSettled, chatBubbles, chatSendOutcome, mergeChatPages, olderCursor, rebaseOlder, type Bubble } from '../view/chat'
 import { composeTooLong } from '../view/compose'
 import { useBackendCtx } from './BackendProvider'
-import { deleteDraft, dropReceipt, getDraft, isReplied, listReceipts, markReplied, putReceipt, requestIdFor, subscribeReceipts } from './drafts'
+import { deleteDraft, dropReceipt, getDraft, isReplied, listReceipts, markReplied, pairingGen, putReceipt, requestIdFor, subscribeReceipts } from './drafts'
 import { useQuery, useSubmit, useTopic } from './hooks'
 
 export type ChatSendOutcome = 'ok' | 'busy' | 'ccBusy' | 'uncertain' | 'revoked' | 'failed' | 'tooLong'
@@ -97,20 +97,22 @@ export function useChat(): {
 
   const say = useCallback(async (text: string, requestId: string): Promise<ChatSendOutcome> => {
     let job: ChatJobT | null = null
+    // 配对代:回执回来时若已换了配对(解除 / 换电脑),putReceipt / markReplied 不落
+    const gen = pairingGen()
     const r = await submit('chat:say', async () => { job = await backend.chatSay(text, requestId) })
     const out = chatSendOutcome(r)
     if (out !== 'ok') return out
     const j = job as ChatJobT | null
     if (j?.status === 'replied') {
       // daemon 去重表认得它且已回复:不再挂回执,只把新历史拉下来
-      markReplied(requestId)
+      markReplied(requestId, gen)
       drop(requestId)
       await refresh()
     } else {
       // 先拉一页(带 pending)再挂回执,免得旧页上闪一下「可能没送到」
       await refresh()
       const localAt = Date.now()
-      putReceipt({ requestId, text, at: j?.since ?? localAt, localAt })
+      putReceipt({ requestId, text, at: j?.since ?? localAt, localAt }, gen)
     }
     return 'ok'
   }, [backend, submit, refresh, drop])
