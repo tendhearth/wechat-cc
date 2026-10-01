@@ -62,19 +62,19 @@ describe('bundled fonts (spec §3)', () => {
   it('desktop never presents the subset under the Reserved Font Name (CSS, tokens, file names)', () => {
     expect(fontFamily.serifLatin).not.toMatch(/Source Serif/i)
     const cssDir = new URL('../apps/desktop/src/', import.meta.url)
-    const cssFiles: string[] = []
+    const cssFiles: URL[] = []
     const walk = (dir: URL) => {
       for (const e of readdirSync(dir, { withFileTypes: true })) {
         if (e.isDirectory()) { if (e.name !== 'node_modules') walk(new URL(e.name + '/', dir)); continue }
-        if (/\.(css|html|js|ts)$/.test(e.name)) cssFiles.push(new URL(e.name, dir).pathname)
+        if (/\.(css|html|js|ts)$/.test(e.name)) cssFiles.push(new URL(e.name, dir))
       }
     }
     walk(cssDir)
     expect(cssFiles.length).toBeGreaterThan(0)
     for (const f of cssFiles) {
       const src = readFileSync(f, 'utf8')
-      expect(/font-family\s*:[^;}]*Source Serif/i.test(src), f).toBe(false)
-      expect(/--th-font-[a-z-]+\s*:[^;}]*Source Serif/i.test(src), f).toBe(false)
+      expect(/font-family\s*:[^;}]*Source Serif/i.test(src), f.href).toBe(false)
+      expect(/--th-font-[a-z-]+\s*:[^;}]*Source Serif/i.test(src), f.href).toBe(false)
     }
     const serifWoff2 = readdirSync(desk).filter(f => /serif/i.test(f) && !/noto/i.test(f) && f.endsWith('.woff2'))
     expect(serifWoff2.sort()).toEqual(['th-serif-4-400.woff2', 'th-serif-4-500.woff2'])

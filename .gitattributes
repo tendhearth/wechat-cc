@@ -17,3 +17,5 @@ apps/mobile/art/** -text
 # 生成的,apps/mobile/build.test.ts 同理按整份文本比对,同上理由钉死 LF。
 relay/pset.src.html text eol=lf
 relay/pset.html text eol=lf
+# 生成物:scripts/design-tokens.guard.test.ts 按整份文本比对 renderTokensCss(),autocrlf 改成 CRLF 后必红(windows-latest)。
+apps/desktop/src/tokens.css text eol=lf
