@@ -28,14 +28,16 @@ import {
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
-import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkFsAccessOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
+import { renderDashboard, renderRestartButton, setPending, setLastProbe, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkFsAccessOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
-import { initConversePage } from "./modules/converse.js"
+import { initConversePage, subscribeConverse, setConverseMode } from "./modules/converse.js"
+import { mountNowPage } from "./modules/now-page.js"
+import { latestCCLine } from "./modules/now-home.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
 import { markJournalSeen } from "./modules/journal.js"
 import { initPluginsTab, refresh as refreshPlugins } from "./modules/plugins.js"
@@ -46,7 +48,7 @@ import { mountHugeicons } from "./modules/icons.js"
 import { pingHealth, fetchDaemonVersion } from "./health-probe.js"
 import { refreshWxvaultOnAppStart } from "./modules/wxvault-refresh.js"
 import { loadAtelierGallery } from "./modules/atelier-gallery.js"
-import { mountCurrentActivity, createLifeArchive } from "./modules/cc-life.js"
+import { createLifeArchive } from "./modules/cc-life.js"
 import { mountCareSheet } from "./modules/cc-care.js"
 import { createTaskEntry } from "./modules/task-entry.js"
 import { refreshPostcardAlbum } from "./modules/postcard-album.js"
@@ -67,7 +69,6 @@ const state = {
   qrTimer: /** @type {ReturnType<typeof setTimeout> | null} */ (null),
   qrConfirmTimer: /** @type {ReturnType<typeof setTimeout> | null} */ (null),
   qrErrors: 0,
-  clockTimer: /** @type {ReturnType<typeof setInterval> | null} */ (null),
   mode: "loading",
   currentStep: "doctor",
   updateProbed: false,
@@ -136,8 +137,18 @@ const careSheet = mountCareSheet({
   openWorkbench: () => switchPane('workbench'),
   openTask: async (/** @type {string} */ id) => { switchPane('workbench'); await openWorkbenchTask(id) },
 })
-const currentActivityHost = document.getElementById("cc-current-activity")
-if (currentActivityHost) mountCurrentActivity(currentActivityHost, presencePoller, switchPane, () => careSheet.open())
+// 「此刻」(spec 2026-10-01 §6.3):CC 的气泡就是对话入口,careSheet 不再从这里打开(只喂 attention)。
+const nowRoot = /** @type {HTMLElement|null} */ (document.querySelector('.cc-now-pane'))
+const nowPage = nowRoot ? mountNowPage({
+  root: nowRoot, presencePoller,
+  onOpenTask: async (/** @type {string} */ id) => { switchPane('workbench'); await openWorkbenchTask(id) },
+  onModeChange: m => {
+    setConverseMode(m)
+    if (m === 'chat') document.getElementById('converse-input')?.focus()
+  },
+}) : null
+if (nowPage) setConverseMode('home')
+subscribeConverse(msgs => nowPage?.setLatestLine(latestCCLine(msgs)))
 window.addEventListener('pagehide', () => careSheet.close())
 const memoryRecordsHost = document.getElementById("cc-memory-records")
 const lifeArchive = memoryRecordsHost ? createLifeArchive(memoryRecordsHost, { call: invokeApi }) : null
@@ -163,7 +174,7 @@ function startWorkbenchAttention() {
   if (!host || workbenchAttention) return
   workbenchAttention = mountWorkbenchAttention({
     host, invokeWorkbenchApi, invoke,
-    onChange: snapshot => careSheet.setAttention(snapshot),
+    onChange: snapshot => { careSheet.setAttention(snapshot); nowPage?.setAttention(snapshot) },
     getContext: () => ({
       taskId: state.mode === 'dashboard' ? getActiveWorkbenchTaskId() : null,
       focused: document.visibilityState === 'visible' && document.hasFocus(),
@@ -212,6 +223,7 @@ const deps = {
   invokeWorkbenchApi,
   mountConverse,
   unmountConverse,
+  onSend: () => { if (document.querySelector('.cc-now-pane #converse-root')) nowPage?.setMode('chat') },
   onDelegate: async (/** @type {import('./modules/task-entry.js').Draft} */ draft) => {
     const result = await taskEntry.open(draft)
     if (result) await openAcceptedEntry(result)
@@ -342,8 +354,6 @@ function setMode(mode) {
   if (mode === "dashboard") {
     doctorPoller.start()
     conversationsPoller.start()
-    if (!state.clockTimer) state.clockTimer = setInterval(updateClock, 1000)
-    updateClock()
     if (!state.updateProbed) {
       state.updateProbed = true
       loadUpdateProbe(deps).catch(err => console.error("update probe failed", err))
@@ -356,7 +366,6 @@ function setMode(mode) {
   } else {
     doctorPoller.stop()
     conversationsPoller.stop()
-    if (state.clockTimer) { clearInterval(state.clockTimer); state.clockTimer = null }
   }
 }
 
@@ -523,10 +532,10 @@ function setToggle(id, on) {
 /** @param {string} name */
 function switchPane(name) {
   const focusConversation = name === "converse"
-  if (focusConversation) {
-    name = "overview"
-    document.querySelector(".cc-home-details")?.removeAttribute("open")
-  }
+  document.body.dataset.pane = focusConversation ? "overview" : name
+  if (focusConversation) name = "overview"
+  // 连接浮层只在原地看一眼:任何一次导航都把它收起。
+  document.querySelector(".cc-home-details")?.removeAttribute("open")
   const currentPane = /** @type {HTMLElement|null} */ (document.querySelector('.dash-pane[data-pane]:not([hidden])'))
   if (isCurrentWorkbenchPane(name, currentPane)) {
     workbenchNavigation?.setWorkbenchActive(true)
@@ -590,6 +599,9 @@ function switchPane(name) {
     stopDialogueAutoRefresh()
   }
   if (name === "overview") {
+    // 「跟 CC 说」⇒ chat;已经在此刻时再点「此刻」⇒ 回 home;从别处回来保持原来那一态(草稿与对话都还在)。
+    if (focusConversation) nowPage?.setMode("chat")
+    else if (!overviewWasHidden) nowPage?.setMode("home")
     initConversePage(deps, { focus: focusConversation })
   }
   if (name === "a2a-agents") {
@@ -614,6 +626,20 @@ function activateDialogueWorkspace() {
 // ─── DOM event wiring ────────────────────────────────────────────────
 
 function wireEvents() {
+  // 连接浮层:点此刻页的空白处或按 Esc 收起(浮层外的别处不管,免得误关从浮层里打开的对话框)。
+  document.addEventListener("click", ev => {
+    const details = document.querySelector(".cc-home-details[open]")
+    const target = ev.target instanceof Element ? ev.target : null
+    if (details && target && !details.contains(target) && target.closest(".cc-now-pane")) details.removeAttribute("open")
+  })
+  document.addEventListener("keydown", ev => {
+    if (ev.key !== "Escape") return
+    const details = document.querySelector(".cc-home-details[open]")
+    if (!details || document.querySelector("dialog[open]")) return
+    const summary = /** @type {HTMLElement|null} */ (details.querySelector("summary"))
+    details.removeAttribute("open")
+    summary?.focus()
+  })
   document.addEventListener("click", ev => {
     const target = ev.target instanceof Element ? ev.target : null
     const go = target?.closest("[data-life-pane]")

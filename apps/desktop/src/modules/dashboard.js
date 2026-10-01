@@ -4,7 +4,7 @@
 //
 // Owns: #hero-card, #hero-headline, #hero-meta, #accounts-body,
 //       #accounts-meta, #dash-pending, #dash-restart,
-//       #dash-refresh, #dash-rail-clock (rail-foot wall clock)
+//       #dash-refresh
 // Subscribes to: doctorPoller (renderDashboard + renderRestartButton fire
 // on every successful poll automatically).
 
@@ -381,13 +381,6 @@ function setReconnectPhase(phase, message = "暂时无法恢复，请稍后再�
     if (meta) meta.textContent = message
   }
   syncReconnectControls({ state: phase === "idle" ? "connected" : "recovering" })
-}
-
-export function updateClock() {
-  const el = document.getElementById("dash-rail-clock")
-  if (!el) return
-  const now = new Date()
-  el.textContent = now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })
 }
 
 // Stop the daemon via `service stop` + residual-kill. Mirrors restartDaemon's

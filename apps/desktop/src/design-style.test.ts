@@ -15,7 +15,7 @@ const hexCount = (s: string) => (s.match(/#[0-9a-fA-F]{3,8}\b|rgba?\(\s*\d/g) ??
 export const HEX_BUDGET: Record<string, number> = {
   // 2026-10-01 实测基线(Task 8,机械替换旧色板之后)。companion-window / animation-lab 不在换皮范围(spec §8)。
   'animation-lab.css': 32,
-  'cc-life.css': 99,
+  'cc-life.css': 0,
   'cc-page-art.css': 5,
   'cc-surfaces.css': 23,
   'companion-window.css': 16,
@@ -27,7 +27,7 @@ export const HEX_BUDGET: Record<string, number> = {
   'styles/workbench.css': 152,
 }
 /** Task 10 加 cc-life.css、cc-now.css;Task 12 加工作台三份(styles/workbench*.css、styles/task-entry.css);converse.css 新建即零。 */
-const ZERO_HEX: string[] = []
+const ZERO_HEX: string[] = ['cc-life.css', 'cc-now.css']
 
 describe('desktop design style', () => {
   it('no dark mode', () => { for (const f of CSS) expect(readFileSync(f, 'utf8'), rel(f)).not.toMatch(/prefers-color-scheme:\s*dark/) })

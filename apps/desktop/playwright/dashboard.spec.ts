@@ -46,7 +46,9 @@ test('dashboard renders nav + panes (all attached)', async ({ page, shimUrl, shi
   }
   await expect(page.locator('#converse-root')).toHaveCount(1)
   await expect(page.locator('article[data-pane="overview"] #converse-root')).toBeAttached()
-  await expect(page.locator('button[data-pane="converse"]')).toBeAttached()
+  // 「跟 CC 说」不再是侧栏按钮(spec §6.5):此刻页的 CC 与它的气泡就是入口。
+  await expect(page.locator('#now-cc')).toBeAttached()
+  await expect(page.locator('button[data-pane="converse"]')).toHaveCount(0)
   // Settings gear (opens drawer, not wizard — moxiuwen's gear was repurposed
   // when master's wizard refactor landed; #settings-open is the live id).
   await expect(page.locator('#settings-open')).toBeAttached()
@@ -502,9 +504,10 @@ test('presence shell keeps one home composer and its draft through navigation', 
   await page.locator('.cc-home-details > summary').click()
   await clickNav(page, 'recollections')
   await expect(page.locator('article[data-pane="recollections"]')).toBeVisible()
-  await page.locator('.cc-life-nav-more > summary').click()
-  await clickNav(page, 'converse')
+  await clickNav(page, 'overview')
   await expect(page.locator('article[data-pane="overview"]')).toBeVisible()
+  await page.locator('#now-cc').click()
+  await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-now', 'chat')
   await expect(page.locator('.cc-home-details')).not.toHaveAttribute('open')
   await expect(page.locator('#converse-input')).toHaveValue('只检查草稿，不发送')
   await expect(page.locator('#converse-input')).toBeFocused()
@@ -513,4 +516,36 @@ test('presence shell keeps one home composer and its draft through navigation', 
   const main=await page.locator('.dash-main').boundingBox()
   expect(rail!.x+rail!.width).toBeLessThanOrEqual(main!.x+1)
   expect(rail!.height).toBeGreaterThan(500)
+})
+
+test('此刻 home → chat via the CC, draft survives a workbench round-trip, one converse root', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat' })
+  await bootIntoDashboard(page, shimUrl)
+  const pane = page.locator('.cc-now-pane')
+  await expect(pane).toHaveAttribute('data-now', 'home')
+  // shim 默认 presence ok ⇒ 够得着 ⇒ 亮着的 CC。
+  await expect(pane).toHaveAttribute('data-cc', 'here')
+  await expect(page.locator('.now-cc-light')).toBeVisible()
+  await expect(page.locator('.now-cc-dark')).toBeHidden()
+  await expect(page.locator('#converse-scroll')).toBeHidden()
+  await page.locator('#converse-input').fill('草稿不丢')
+  await page.locator('#now-cc').click()
+  await expect(pane).toHaveAttribute('data-now', 'chat')
+  await expect(page.locator('#converse-scroll')).toBeVisible()
+  await clickNav(page, 'workbench')
+  // 「一起做」里全局侧栏收起,和用户一样先点左上角的 CC 打开主导航再回「此刻」。
+  await page.locator('#workbench-nav-toggle').click()
+  await clickNav(page, 'overview')
+  await expect(pane).toHaveAttribute('data-now', 'chat')
+  await expect(page.locator('#converse-input')).toHaveValue('草稿不丢')
+  await expect(page.locator('#converse-root')).toHaveCount(1)
+  await page.locator('#now-back').click()
+  await expect(pane).toHaveAttribute('data-now', 'home')
+})
+
+test('CC goes dark when the daemon cannot be reached', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', presenceDown: true })
+  await bootIntoDashboard(page, shimUrl)
+  await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-cc', 'away', { timeout: 25_000 })
+  await expect(page.locator('.now-cc-light')).toBeHidden()
 })

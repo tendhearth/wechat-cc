@@ -1,0 +1,93 @@
+/* 「此刻」(spec 2026-10-01 §6.3,稿 desktop-redesign-now.html):问候 + CC(明暗只来自 presence,
+   光晕是唯一装饰)+ 最近一句气泡(对话入口)+ 等你的事 + 输入框;右上角状态行打开连接浮层。
+   只用 tokens.css 的变量 —— 本文件零字面色值(design-style.test.ts 守着)。 */
+.dashboard .cc-now-pane { display: flex; flex-direction: column; gap: var(--th-space-xxl); padding: 22px 48px 32px; min-height: 100%; position: relative; background: var(--th-paper); color: var(--th-ink); }
+.cc-home-details { position: absolute; top: 18px; right: 48px; z-index: 5; }
+.cc-home-details > summary { list-style: none; display: flex; gap: 8px; align-items: center; font-size: var(--th-size-small); color: var(--th-ink-soft); cursor: pointer; padding: 6px 0; }
+.cc-home-details > summary::-webkit-details-marker { display: none; }
+.cc-home-details > summary:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 2px; }
+.cc-home-details > summary:hover { color: var(--th-ink); }
+.cc-home-details[open] > .moment-body { position: absolute; right: 0; top: 32px; width: min(720px, calc(100vw - 280px)); max-height: 70vh; overflow: auto; background: var(--th-paper); border: 1px solid var(--th-hair); border-radius: var(--th-radius-sheet); padding: var(--th-space-xl); }
+/* 浮层里装的是原来整页的鱼缸 + 连接:改成单列,画布要完整露出来(dashboard-animation.spec 要看得见它)。 */
+.cc-home-details[open] > .moment-body { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; min-height: 0; gap: var(--th-space-xl); box-shadow: 0 18px 40px -24px var(--th-scrim); }
+.cc-home-details[open] > .moment-body > .moment-side { grid-column: 1; grid-row: auto; }
+.cc-home-details[open] > .moment-body .moment-users { max-width: none; justify-self: stretch; }
+.cc-home-details[open] > .moment-body:not(.is-companion-immersive) :is(.companion-intro, .moment-actions, .ai-orbit-visual) { transform: none; }
+.cc-home-details[open] > .moment-body:not(.is-companion-immersive) :is(.companion-intro, .ai-orbit-visual) { width: min(500px, 100%); }
+/* 状态点:≤10px,只有它带状态色;不知道 = 灰。 */
+#dash-rail-dot { width: 8px; height: 8px; background: var(--th-unknown); }
+#dash-rail-dot.ok { background: var(--th-ok); }
+#dash-rail-dot.warn { background: var(--th-warn); }
+#dash-rail-dot.bad { background: var(--th-bad); }
+.now-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: var(--th-space-xl); margin-top: 28px; }
+.now-greeting { font-size: var(--th-size-display); line-height: var(--th-lh-display); font-weight: 400; margin: 0; color: var(--th-ink); }
+.now-cc-col { display: grid; justify-items: end; gap: 6px; }
+.now-bubble { appearance: none; font: inherit; border: 1px solid var(--th-hair); background: var(--th-paper); color: var(--th-ink); font-size: var(--th-size-bubble); line-height: var(--th-lh-bubble); text-align: left; padding: 12px 16px; border-radius: 14px 14px 4px 14px; max-width: 280px; cursor: pointer; }
+.now-bubble[hidden] { display: none; }
+.now-bubble:hover, .now-bubble:focus-visible { border-color: var(--th-accent); outline: none; }
+.now-bubble .now-bubble-text { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
+.now-bubble small { display: block; color: var(--th-ink-soft); font-size: var(--th-size-caption); margin-top: 4px; }
+.now-bubble small:empty { display: none; }
+.now-figure { appearance: none; border: 0; padding: 0; background: transparent; cursor: pointer; width: 150px; height: 150px; position: relative; margin-right: 8px; border-radius: 50%; }
+.now-figure:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 4px; }
+.now-figure::before { content: ""; position: absolute; inset: 18% 8% 0; background: radial-gradient(closest-side, var(--th-glow), transparent); transition: opacity .6s; }
+.now-figure img { position: relative; display: block; width: 100%; height: 100%; object-fit: contain; }
+.cc-now-pane[data-cc="here"] .now-cc-dark, .cc-now-pane[data-cc="away"] .now-cc-light { display: none; }
+.cc-now-pane[data-cc="away"] .now-figure::before { opacity: 0; }
+.now-waiting[hidden] { display: none; }
+.now-waiting h2 { font-size: var(--th-size-meta); font-weight: 500; color: var(--th-ink-soft); margin: 0 0 6px; letter-spacing: var(--th-tracking-meta); }
+.now-waiting ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--th-hair); }
+.now-waiting-row { appearance: none; font: inherit; color: var(--th-ink); background: transparent; border: 0; cursor: pointer; width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 16px 4px; border-bottom: 1px solid var(--th-hair); text-align: left; }
+.now-waiting-row .t { font-size: var(--th-size-item); margin: 0; overflow-wrap: anywhere; }
+.now-waiting-row .d { font-size: var(--th-size-meta); color: var(--th-ink-soft); margin: 2px 0 0; }
+.now-waiting-row .d:empty { display: none; }
+.now-waiting-row .go { color: var(--th-ink-soft); font-size: var(--th-size-bubble); white-space: nowrap; }
+.now-waiting-row:hover .t, .now-waiting-row:focus-visible .t { color: var(--th-accent); }
+.now-waiting-row:focus-visible { outline: none; }
+.now-back { appearance: none; border: 0; background: transparent; padding: 6px 0; font: inherit; cursor: pointer; align-self: flex-start; color: var(--th-ink-soft); font-size: var(--th-size-meta); }
+.now-back[hidden] { display: none; }
+.now-back:hover, .now-back:focus-visible { color: var(--th-ink); }
+
+/* 输入框:一条胶囊,输入 + 圆形发送(稿里的 composer)。这一份 converse 也会被搬进「一起做」的会话面。 */
+.dashboard .cc-now-pane #converse-root { background: transparent; color: var(--th-ink); }
+.converse-compose { display: flex; flex-direction: row; flex-wrap: wrap; gap: 10px; align-items: center; border: 1px solid var(--th-hair); border-radius: var(--th-radius-control); padding: 8px 8px 8px 22px; background: var(--th-paper); box-shadow: none; }
+.converse-compose:focus-within { border-color: var(--th-accent); }
+.converse-compose .converse-textarea { flex: 1 1 240px; min-width: 0; width: auto; color: var(--th-ink); font-size: var(--th-size-body); }
+.converse-compose .converse-textarea::placeholder { color: var(--th-ink-soft); }
+.converse-compose .converse-recording { flex: 1 1 240px; }
+.converse-compose .converse-recording-hint { flex-basis: 100%; }
+#converse-send { width: 40px; height: 40px; min-width: 40px; min-height: 40px; padding: 0; border-radius: 50%; background: var(--th-accent); color: var(--th-on-accent); }
+#converse-send:hover { background: var(--th-accent); color: var(--th-on-accent); }
+#converse-send:focus-visible { outline: 2px solid var(--th-ink); outline-offset: 2px; }
+#converse-send span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.cc-now-pane .converse-compose { width: auto; margin: 0; }
+
+/* home:对话记录收起,composer 只露输入框 + 发送 */
+.cc-now-pane[data-now="home"] #converse-scroll,
+.cc-now-pane[data-now="home"] .converse-toolbar > :not(#converse-send) { display: none; }
+.cc-now-pane[data-now="home"] #converse-root { flex: none; margin-top: auto; }
+.cc-now-pane[data-now="home"] .converse-textarea { flex: 1 1 0; height: 40px; min-height: 40px; padding: 8px 0; resize: none; }
+.cc-now-pane[data-now="home"] .converse-toolbar { flex: none; }
+.cc-now-pane[data-now="home"] #converse-send span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.cc-now-pane[data-now="chat"] .now-hero, .cc-now-pane[data-now="chat"] .now-waiting { display: none; }
+.cc-now-pane[data-now="chat"] #converse-root { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.cc-now-pane[data-now="chat"] .converse-scroll { flex: 1; min-height: 0; overflow: auto; padding: 8px 0 16px; }
+.cc-now-pane[data-now="chat"] { gap: var(--th-space-l); }
+.cc-now-pane .converse-msg-cc .converse-bubble { background: var(--th-paper); color: var(--th-ink); border-color: var(--th-hair); }
+.cc-now-pane .converse-msg-user .converse-bubble { background: var(--th-ground); color: var(--th-ink); }
+body[data-pane="overview"] #workbench-attention { display: none !important; }
+
+@media (max-width: 760px) {
+  .dashboard .cc-now-pane { padding: 8px 18px 20px; gap: 28px; }
+  .now-hero { grid-template-columns: 1fr; margin-top: 40px; }
+  .now-cc-col { justify-items: end; }
+  .now-figure { width: 120px; height: 120px; }
+  .cc-home-details { right: 18px; top: 8px; }
+  .cc-home-details[open] > .moment-body { width: min(720px, calc(100vw - 110px)); }
+  .converse-compose .converse-toolbar { flex: 1 1 100%; flex-wrap: wrap; justify-content: flex-end; }
+  .cc-now-pane[data-now="home"] .converse-compose .converse-toolbar { flex: none; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cc-now-pane[data-cc="here"] .now-figure img { animation: now-breathe 6s ease-in-out infinite; transform-origin: 50% 90%; }
+  @keyframes now-breathe { 50% { transform: scaleY(1.015) translateY(-1px); } }
+}

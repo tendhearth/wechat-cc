@@ -143,6 +143,8 @@ const __mockState: {
   // (sign 「离线」) — which is why the hover-greeting spec could never pass.
   // Seed with demo.seed { presence: {...} }; default = daemon up, WeChat ok, idle.
   presence: { presence: 'ok' | 'degraded' | 'offline'; activity: { kind: string; label: string; since: string | null }; news: { unread: number; latest_kind: string | null; latest_title: string | null } }
+  // demo.seed { presenceDown: true } ⇒ presence 路由回 503,poller 发布 DOWN(「此刻」的 CC 变暗)。
+  presenceDown?: boolean
   // A2A mock state — seeded by `a2a.seed` test-control command.
   a2aAgents: A2AAgent[]
   a2aEvents: A2AEvent[]
@@ -589,9 +591,11 @@ Bun.serve({
             withSessions?: boolean
             oneContact?: boolean
             presence?: typeof __mockState.presence
+            presenceDown?: boolean
           } | undefined
           const chatId = args?.chat_id ?? 'test_chat'
           __mockState.daemonAlive = args?.daemonAlive ?? true
+          __mockState.presenceDown = args?.presenceDown ?? false
           __mockState.presence = args?.presence ?? { presence: 'ok', activity: { kind: 'idle', label: '', since: null }, news: { unread: 0, latest_kind: null, latest_title: null } }
           __mockState.chats = [{ id: chatId, name: 'Test User', last_active: Date.now() }]
           // Seeding = known state. The shim process outlives individual
@@ -1461,6 +1465,7 @@ Bun.serve({
     // Companion presence (dry-run): the dashboard scene and the pet window both
     // poll this; serve the seeded state instead of 404 (= DOWN).
     if (dryRun && url.pathname === '/v1/companion/presence' && req.method === 'GET') {
+      if (__mockState.presenceDown) return Response.json({ error: 'journal_not_wired' }, { status: 503 })
       return Response.json(__mockState.presence)
     }
     // 切换后端的下拉菜单从这里拿「已配置的 AI 服务」(dashboard.js refreshServiceChoices,

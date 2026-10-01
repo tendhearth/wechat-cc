@@ -12,11 +12,12 @@
     <link rel="stylesheet" href="./cc-surfaces.css" />
     <link rel="stylesheet" href="./postcard-album.css" />
     <link rel="stylesheet" href="./cc-life.css" />
+    <link rel="stylesheet" href="./cc-now.css" />
     <link rel="stylesheet" href="./styles/workbench.css" />
     <link rel="stylesheet" href="./styles/task-entry.css" />
     <link rel="stylesheet" href="./styles/workbench-attention.css" />
   </head>
-  <body>
+  <body data-pane="overview">
 
     <div id="dev-banner" class="dev-banner" hidden></div>
     <div id="workbench-attention" class="workbench-attention" role="region" aria-label="一起做待处理" hidden></div>
@@ -345,12 +346,6 @@
 
           </nav>
 
-          <div class="dash-rail-foot">
-            <span id="dash-rail-dot" class="dot"></span>
-            <span id="dash-rail-text">未运行</span>
-            <span id="dash-rail-clock" class="clock"></span>
-          </div>
-
           <!-- Settings gear: master wires the click handler via
                getElementById('settings-open'); we keep that id so the
                settings drawer opens. moxiuwen's [data-action='open-wizard']
@@ -364,9 +359,6 @@
                 </button>
                 <button class="dash-nav-link" aria-label="记忆" data-pane="memory">
                   <span class="ic" data-hg-icon="archive" data-hg-size="16"></span><span>记忆</span><span class="count" id="memory-count"></span>
-                </button>
-                <button class="dash-nav-link" aria-label="跟 CC 说" data-pane="converse">
-                  <span class="ic" data-hg-icon="smile" data-hg-size="16"></span><span>跟 CC 说</span>
                 </button>
                 <button class="dash-nav-link" aria-label="待办" data-pane="todos">
                   <span class="ic" data-hg-icon="checkmark-circle-02" data-hg-size="16"></span><span>待办</span>
@@ -392,11 +384,9 @@
         <section class="dash-main">
 
           <!-- ── pane: overview ─────────────────────────────────────── -->
-          <article class="dash-pane cc-now-pane" data-pane="overview">
-            <header class="cc-life-topline"><span>此刻</span><span>CC 的小空间</span></header>
-            <section id="cc-current-activity" class="cc-current-activity" aria-live="polite"></section>
-            <div id="converse-root" class="converse-page"></div>
-            <details class="cc-home-details"><summary>鱼缸与连接</summary>
+          <article class="dash-pane cc-now-pane" data-pane="overview" data-now="home" data-cc="away">
+            <details class="cc-home-details">
+            <summary aria-label="CC 的连接"><span id="dash-rail-dot" class="dot"></span><span id="dash-rail-text">未运行</span></summary>
             <div class="moment-body">
               <section class="moment-ai" id="hero-card" aria-live="polite">
                 <div class="companion-intro">
@@ -499,6 +489,22 @@
               </div>
             </div>
             </details>
+            <button id="now-back" class="now-back" type="button" hidden>‹ 此刻</button>
+            <section class="now-hero">
+              <h1 id="now-greeting" class="now-greeting">晚上好</h1>
+              <div class="now-cc-col">
+                <button id="now-cc-bubble" class="now-bubble" type="button" hidden aria-label="CC 最近说的话，点开进对话"><span class="now-bubble-text"></span><small class="now-bubble-time"></small></button>
+                <button id="now-cc" class="now-figure" type="button" aria-label="跟 CC 说">
+                  <img class="now-cc-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" />
+                  <img class="now-cc-dark" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" />
+                </button>
+              </div>
+            </section>
+            <section id="now-waiting" class="now-waiting" aria-labelledby="now-waiting-title" hidden>
+              <h2 id="now-waiting-title"></h2>
+              <ul id="now-waiting-list"></ul>
+            </section>
+            <div id="converse-root" class="converse-page"></div>
           </article>
 
 
