@@ -81,6 +81,8 @@ const zh: Record<keyof typeof en, string> = {
   'welcome.body': '想起什么，随时说一句。',
   'welcome.pair': '连接我的电脑',
   'welcome.lookFirst': '先看看示例',
+  'welcome.howTo': '在电脑上点「连接手机」，用相机扫一下。',
+  'welcome.stale': '这台手机和电脑的配对已经失效了。',
   'pair.title': '连接你的电脑',
   'pair.steps': '在电脑上打开 Tendhearth，点「连接手机」，然后扫描那里显示的码。',
   'pair.scan': '扫码',

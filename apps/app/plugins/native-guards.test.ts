@@ -79,3 +79,16 @@ describe('expo-secure-store 的安卓存储格式(TendhearthMessagingService 按
     expect(reader).toContain('"$SERVICE-$ITEM"')
   })
 })
+
+describe('恢复配对的前提(spec §7)', () => {
+  it('iOS:配对记录用 AFTER_FIRST_UNLOCK(随加密备份 / 设备迁移走),不是 THIS_DEVICE_ONLY', () => {
+    const src = read(here, '..', 'src', 'net', 'secure-store.ts')
+    expect(src).toContain('keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK }')
+    expect(src).not.toContain('THIS_DEVICE_ONLY')
+  })
+  it('安卓:expo-secure-store 的备份规则把 SecureStore 排除在外 ⇒ 7a 不承诺安卓恢复(以后走 Block Store)', () => {
+    const xml = join(pkgDir('expo-secure-store'), 'android', 'src', 'main', 'res', 'xml')
+    expect(read(xml, 'secure_store_backup_rules.xml')).toContain('<exclude domain="sharedpref" path="SecureStore"/>')
+    expect(read(xml, 'secure_store_data_extraction_rules.xml')).toContain('<exclude domain="sharedpref" path="SecureStore"/>')
+  })
+})

@@ -79,6 +79,8 @@ const en = {
   'welcome.body': 'Whenever a thought comes along, I’m here.',
   'welcome.pair': 'Connect my computer',
   'welcome.lookFirst': 'Explore a preview first',
+  'welcome.howTo': 'On your computer, choose “Connect phone” and scan with your camera.',
+  'welcome.stale': 'This phone is no longer paired with your computer.',
   'pair.title': 'Connect your computer',
   'pair.steps': 'Open Tendhearth on your computer, choose “Connect phone”, then scan the code shown there.',
   'pair.scan': 'Scan the code',

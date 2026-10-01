@@ -67,4 +67,10 @@ describe('文案表', () => {
     expect(en['pair.step2']).toBe('Choose “Connect phone”')
     expect(zh['pair.errExpired']).toContain('只能用一次')
   })
+  it('欢迎页的两句(plan 7a)', () => {
+    expect(zh['welcome.howTo']).toBe('在电脑上点「连接手机」，用相机扫一下。')
+    expect(en['welcome.howTo']).toBe('On your computer, choose “Connect phone” and scan with your camera.')
+    expect(zh['welcome.stale']).toBe('这台手机和电脑的配对已经失效了。')
+    expect(en['welcome.stale']).toBe('This phone is no longer paired with your computer.')
+  })
 })

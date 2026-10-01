@@ -7,7 +7,8 @@ import { pairWithLink, PairError, type PairingRecord } from '../net/pairing'
 import { canSubmit, connectionNotice } from '../view/connection'
 import { getDraft, setDraft, clearDrafts } from './drafts'
 import { makeStore } from './store'
-import { backendFor, pairAndSave, watchConnection } from './wiring'
+import { INITIAL_CONNECTION } from '../net/connection'
+import { backendFor, pairAndSave, verifyLaunch, watchConnection, watchLaunch } from './wiring'
 
 const LINK: ParsedLink = { daemonId: 'r' + 'a'.repeat(26), linkToken: 't' + '0'.repeat(32), relayHost: 'relay.tendhearth.com', relayUrl: 'wss://relay.tendhearth.com/v2/phone?id=r' + 'a'.repeat(26), lan: null }
 const REC: PairingRecord = { v: 1, daemonId: LINK.daemonId, relayHost: LINK.relayHost, relayUrl: LINK.relayUrl, deviceToken: 'd' + '1'.repeat(48), deviceId: 'aa11bb22', pairedAt: 1 }
@@ -137,5 +138,72 @@ describe('watchConnection', () => {
     expect(b.answer).not.toHaveBeenCalled()
     off()
     clearDrafts()
+  })
+})
+
+describe('启动核验(spec §7、D8)', () => {
+  type Conn = { state: 'connecting' | 'online' | 'offline' | 'revoked'; lastSyncedAt: number | null; epoch: number }
+  function fakeBackend(devices: () => Promise<Array<{ id: string; current: boolean; created_at: string; last_seen_at: string }>>) {
+    let c: Conn = { state: 'connecting', lastSyncedAt: null, epoch: 0 }
+    const subs = new Set<(c: Conn) => void>()
+    return {
+      connection: () => c,
+      onConnection: (cb: (c: Conn) => void) => { subs.add(cb); return () => { subs.delete(cb) } },
+      devices,
+      emit(next: Partial<Conn>) { c = { ...c, ...next }; for (const s of subs) s(c) },
+      subs,
+    }
+  }
+  const row = (id: string, current: boolean) => ({ id, current, created_at: 'x', last_seen_at: 'x' })
+
+  it('启动时从不先画「在线」', () => {
+    expect(INITIAL_CONNECTION.state).toBe('connecting')
+  })
+  it('verifyLaunch:这台的 id 对上 ⇒ ok;对不上 / 没有这台 ⇒ stale;读失败 ⇒ unknown', async () => {
+    expect(await verifyLaunch({ devices: async () => [row('aa11bb22', true)] } as never, 'aa11bb22')).toBe('ok')
+    expect(await verifyLaunch({ devices: async () => [row('ffffffff', true)] } as never, 'aa11bb22')).toBe('stale')
+    expect(await verifyLaunch({ devices: async () => [row('aa11bb22', false)] } as never, 'aa11bb22')).toBe('stale')
+    expect(await verifyLaunch({ devices: async () => { throw new Error('timeout') } } as never, 'aa11bb22')).toBe('unknown')
+  })
+  it('watchLaunch:第一次 online 才核对,只核对一次;对不上 ⇒ onStale', async () => {
+    const b = fakeBackend(async () => [row('ffffffff', true)])
+    const onStale = vi.fn()
+    watchLaunch(b as never, 'aa11bb22', onStale)
+    b.emit({ state: 'offline' })
+    expect(onStale).not.toHaveBeenCalled()
+    b.emit({ state: 'online', epoch: 1 })
+    b.emit({ state: 'online', epoch: 2 })
+    await vi.waitFor(() => expect(onStale).toHaveBeenCalledTimes(1))
+  })
+  it('watchLaunch:电脑不在线 / 读设备失败 ⇒ 不清(Review Focus 4);取消订阅后结果作废', async () => {
+    const onStale = vi.fn()
+    const offline = fakeBackend(async () => [row('aa11bb22', true)])
+    watchLaunch(offline as never, 'aa11bb22', onStale)
+    offline.emit({ state: 'offline' })
+    const failing = fakeBackend(async () => { throw new Error('timeout') })
+    watchLaunch(failing as never, 'aa11bb22', onStale)
+    failing.emit({ state: 'online', epoch: 1 })
+    let release!: () => void
+    const slow = fakeBackend(() => new Promise(r => { release = () => r([row('ffffffff', true)]) }))
+    const off = watchLaunch(slow as never, 'aa11bb22', onStale)
+    slow.emit({ state: 'online', epoch: 1 })
+    off()
+    release()
+    await new Promise(r => setTimeout(r, 0))
+    expect(onStale).not.toHaveBeenCalled()
+  })
+  it('watchConnection:还没连上过就被拒 ⇒ onStale;连上过之后被拒 ⇒ onRevoked(维持现状)', () => {
+    const store = { revalidateAll: vi.fn() }
+    const a = fakeBackend(async () => [])
+    const r1 = vi.fn(), s1 = vi.fn()
+    watchConnection(a as never, store, r1, s1)
+    a.emit({ state: 'revoked' })
+    expect([r1.mock.calls.length, s1.mock.calls.length]).toEqual([0, 1])
+    const b = fakeBackend(async () => [])
+    const r2 = vi.fn(), s2 = vi.fn()
+    watchConnection(b as never, store, r2, s2)
+    b.emit({ state: 'online', epoch: 1 })
+    b.emit({ state: 'revoked' })
+    expect([r2.mock.calls.length, s2.mock.calls.length]).toEqual([1, 0])
   })
 })
