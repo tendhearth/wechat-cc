@@ -17,8 +17,6 @@ export function prepareNativeQA(destination = join(qa, 'dist')) {
     recursive: true,
     filter: path => !['CC_MASTER_V1.png', 'CC_DESIGN_SHEET_V1.png'].includes(basename(path)),
   })
-  mkdirSync(join(destination, 'fonts'), { recursive: true })
-  cpSync(join(desktop, 'src/fonts/geist-variable-latin.woff2'), join(destination, 'fonts/geist-variable-latin.woff2'))
   return destination
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) console.log(prepareNativeQA())
