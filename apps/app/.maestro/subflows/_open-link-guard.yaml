@@ -1,0 +1,8 @@
+# openLink 之后必跟(裁决 C9):iOS 对自定义 scheme 可能弹「Open in “Tendhearth”?」,点「打开」放行。
+appId: com.tendhearth.app
+---
+- runFlow:
+    when:
+      visible: "Open in “Tendhearth”\\?"
+    commands:
+      - tapOn: "Open"

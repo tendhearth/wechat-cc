@@ -5,13 +5,14 @@ import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { credentials } from '../net/secure-store'
 import { pushForget } from '../push/native'
 import { PushProvider } from '../push/PushProvider'
+import { PushRouter } from '../push/PushRouter'
 import { BackendProvider } from '../state/BackendProvider'
 import { SessionProvider, useSession } from '../state/session'
 import { useLang } from '../i18n/useLang'
 import { palette } from '../ui/tokens'
 
 // 根布局:语言 = 设置覆盖 ?? 系统(SessionProvider + useLang);主题跟 useColorScheme();
-// 有配对 ⇒ 真后端,否则演示后端,包住全部页面;推送登记(PushProvider)跟着后端走;钥匙串读完之前只画底色。首次打开跳 /welcome 的判断在 (tabs)/_layout 里做。
+// 有配对 ⇒ 真后端,否则演示后端,包住全部页面;推送登记(PushProvider)跟着后端走;点通知 / 前台横幅(PushRouter)叠在页面之上;钥匙串读完之前只画底色。首次打开跳 /welcome 的判断在 (tabs)/_layout 里做。
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
@@ -38,7 +39,9 @@ function Themed() {
           <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: c.bg } }}>
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="welcome" options={{ gestureEnabled: false }} />
+            <Stack.Screen name="push-open" options={{ gestureEnabled: false }} />
           </Stack>
+          <PushRouter />
         </ThemeProvider>
       </PushProvider>
     </BackendProvider>

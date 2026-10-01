@@ -195,6 +195,10 @@ const en = {
   'push.placeholder': 'CC has news',
   'push.channelDecide': 'Needs your decision',
   'push.channelUpdates': 'Done and didn’t finish',
+  'push.opening': 'Opening…',
+  'push.gone': 'That item is no longer on your computer.',
+  'push.goNow': 'Go to Now',
+  'push.bannerOpen': 'Open',
 } as const
 
 export default en
