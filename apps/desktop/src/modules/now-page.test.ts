@@ -32,6 +32,17 @@ describe('mountNowPage', () => {
     expect(open).toHaveBeenCalledWith('a')
     page.setAttention({ stale: false, tasks: [] }); expect(document.getElementById('now-waiting')!.hidden).toBe(true)
   })
+  it('attention unreadable ⇒ grey「暂时不知道有没有等你的事」, no stale rows (M3)', () => {
+    const root = dom(); const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn() })
+    page.setAttention({ stale: true, tasks: [{ id: 'a', title: '作品集', providerId: 'c', pendingPermissionCount: 1, pendingQuestionCount: 0, attentionKey: '["r"]' }] } as any)
+    expect(document.getElementById('now-waiting')!.hidden).toBe(false)
+    expect(document.getElementById('now-waiting')!.dataset.state).toBe('unknown')
+    expect(document.getElementById('now-waiting-title')!.textContent).toBe('暂时不知道有没有等你的事')
+    expect(document.querySelectorAll('.now-waiting-row').length).toBe(0)
+    page.setAttention({ stale: false, tasks: [] })
+    expect(document.getElementById('now-waiting')!.hidden).toBe(true)
+    expect(document.getElementById('now-waiting')!.dataset.state).toBeUndefined()
+  })
   it('escapes task titles', () => {
     const root = dom(); const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn() })
     page.setAttention({ stale: false, tasks: [{ id: 'x', title: '<img src=x onerror=1>', providerId: 'c', pendingPermissionCount: 1, pendingQuestionCount: 0, attentionKey: '["r"]' }] } as any)

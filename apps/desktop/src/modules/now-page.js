@@ -1,6 +1,6 @@
 // @ts-check
 // now-page.js — 「此刻」页(spec 2026-10-01 §6.3):问候、CC(明暗来自 presence)、最近一句真话的气泡、等你的事、home/chat 两态。
-import { greetingFor, ccPresence, waitingRows } from './now-home.js'
+import { greetingFor, ccPresence, waitingRows, waitingHeader } from './now-home.js'
 
 const pad = (/** @type {number} */ n) => String(n).padStart(2, '0')
 /** @param {number} at @param {Date} now */
@@ -43,8 +43,11 @@ export function mountNowPage({ root, presencePoller, onOpenTask, onModeChange, n
     /** @param {any} state */
     setAttention(state) {
       const rows = waitingRows(state)
-      $('now-waiting').hidden = rows.length === 0
-      $('now-waiting-title').textContent = `${rows.length} 件事等你`
+      const head = waitingHeader(state)
+      const box = $('now-waiting')
+      box.hidden = head.hidden
+      if (head.unknown) box.dataset.state = 'unknown'; else delete box.dataset.state
+      $('now-waiting-title').textContent = head.title
       list.replaceChildren(...rows.map(r => {
         const li = document.createElement('li')
         const btn = document.createElement('button')

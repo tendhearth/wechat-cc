@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { greetingFor, ccPresence, nowStatusLine, latestCCLine, waitingRows } from './now-home.js'
+import { greetingFor, ccPresence, nowStatusLine, latestCCLine, waitingRows, waitingHeader } from './now-home.js'
 
 describe('greetingFor', () => {
   it('三档,与手机同一套钟点', () => {
@@ -37,6 +37,19 @@ describe('waitingRows', () => {
   it('读不到 / 过期 ⇒ 空(不显示旧的「等你」)', () => {
     expect(waitingRows(null)).toEqual([])
     expect(waitingRows({ tasks: [task('a', 1, 0)], stale: true })).toEqual([])
+  })
+})
+
+describe('waitingHeader(终审 M3:读不到不等于没有)', () => {
+  const task = { id: 'a', title: 't', providerId: 'claude', pendingPermissionCount: 1, pendingQuestionCount: 0, attentionKey: '[]' }
+  it('有事 ⇒ 「N 件事等你」;没有 ⇒ 不显示;还没拉到第一拍 ⇒ 不显示', () => {
+    expect(waitingHeader({ tasks: [task, { ...task, id: 'b' }], stale: false })).toEqual({ hidden: false, unknown: false, title: '2 件事等你' })
+    expect(waitingHeader({ tasks: [], stale: false })).toEqual({ hidden: true, unknown: false, title: '' })
+    expect(waitingHeader(null)).toEqual({ hidden: true, unknown: false, title: '' })
+  })
+  it('读不到 / 过期 ⇒ 灰字「暂时不知道有没有等你的事」,不能悄悄消失', () => {
+    expect(waitingHeader({ tasks: [task], stale: true })).toEqual({ hidden: false, unknown: true, title: '暂时不知道有没有等你的事' })
+    expect(waitingHeader({ tasks: [], stale: true })).toEqual({ hidden: false, unknown: true, title: '暂时不知道有没有等你的事' })
   })
 })
 

@@ -5,9 +5,10 @@ import { formatSynced } from './connection'
 
 export type CCPresence = 'here' | 'away'
 
-/** 隧道握手成功、daemon 在答话 ⇒ 在身边。电脑合盖 / 关机 / daemon 没跑都落到「够不着」。 */
-export function ccPresence(c: Connection): CCPresence {
-  return c.state === 'online' ? 'here' : 'away'
+/** 隧道握手成功、daemon 在答话 ⇒ 在身边。电脑合盖 / 关机 / daemon 没跑都落到「够不着」。
+ * 演示:演示后端永远「在线」,但那不是真信号 ⇒ 暗(主人规矩:只有真信号才亮)。 */
+export function ccPresence(c: Connection, opts?: { demo?: boolean }): CCPresence {
+  return !opts?.demo && c.state === 'online' ? 'here' : 'away'
 }
 
 /** 顶栏状态行:`text` 是看得见的短句(窄屏放得下);`label` 给读屏,离线时带上次同步时间(连接页也写着)。

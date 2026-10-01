@@ -48,6 +48,8 @@
 .cc-now-pane[data-cc="away"] .now-figure::before { opacity: 0; }
 .now-waiting[hidden] { display: none; }
 .now-waiting h2 { font-size: var(--th-size-meta); font-weight: 500; color: var(--th-ink-soft); margin: 0 0 6px; letter-spacing: var(--th-tracking-meta); }
+.now-waiting[data-state="unknown"] h2 { font-weight: 400; margin: 0; }
+.now-waiting[data-state="unknown"] ul { display: none; }
 .now-waiting ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--th-hair); }
 .now-waiting-row { appearance: none; font: inherit; color: var(--th-ink); background: transparent; border: 0; cursor: pointer; width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 16px 4px; border-bottom: 1px solid var(--th-hair); text-align: left; }
 .now-waiting-row .t { font-size: var(--th-size-item); margin: 0; overflow-wrap: anywhere; }

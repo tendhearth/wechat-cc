@@ -13,7 +13,7 @@ import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 import { formatSynced } from '../view/connection'
-import { connectionsTrust, connectionsView, muteDots } from '../view/connections'
+import { connectionsPage } from '../view/connections'
 
 // CC 的连接:来源 / 家里的电脑 / 最近在做 / 成果。圆点旁一定有文字;读不到 ⇒ 说「不知道」,不画绿。
 // 不套卡:每组 = meta 小标题 + 行(点 + 名称 + 一行字),行间细线。
@@ -24,9 +24,8 @@ export default function Connections() {
   const conn = useConnection()
   const { backend } = useBackendCtx()
   const q = useQuery('connections', () => backend.connections(), { refreshOnMount: true })
-  const trust = connectionsTrust(q, conn.state)
-  const base = q.data ? connectionsView(q.data, Date.now(), lang, { stale: trust === 'stale' }) : null
-  const v = base && trust === 'stale' ? muteDots(base) : base
+  // stale 或演示 ⇒ 所有圆点灰(演示没有电脑,不画绿);顶上一行与桌面连接卡同义
+  const { trust, view: v, headline } = connectionsPage(q, conn.state, Date.now(), lang, { demo: backend.mode === 'demo' })
   const heading = (k: Parameters<typeof t>[1]) => <Txt role="meta" tone="inkSoft" accessibilityRole="header" style={{ marginTop: space.m }}>{t(lang, k)}</Txt>
   const row = (testID: string, key: string, dot: Parameters<typeof Dot>[0]['kind'] | null, name: string, label: string, onPress?: () => void, user = false) => (
     <Pressable
@@ -58,6 +57,12 @@ export default function Connections() {
           </View>
         ) : (
           <>
+            {headline ? (
+              <View testID="connections-headline" accessible accessibilityRole="header" accessibilityLabel={headline.text} style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+                <Dot kind={headline.dot} size={8} />
+                <Txt role="title">{headline.text}</Txt>
+              </View>
+            ) : null}
             {trust === 'stale' ? (
               <Txt testID="connections-stale" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">
                 {q.syncedAt === undefined ? t(lang, 'links.unknown') : t(lang, 'links.staleAt', { time: formatSynced(q.syncedAt, Date.now(), lang) })}

@@ -51,7 +51,7 @@ export function TopBar({ title, onBack, showStatus = false, onAvatar, onConnecti
       ) : status) : null}
       <Pressable accessibilityRole="button" testID="topbar-settings" accessibilityLabel={t(lang, 'settings.title')} onPress={onAvatar} hitSlop={8}
         style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}>
-        <Image source={ccPresence(conn) === 'here' ? lit : unlit} style={{ width: 28, height: 28 }} resizeMode="contain" />
+        <Image source={ccPresence(conn, { demo }) === 'here' ? lit : unlit} style={{ width: 28, height: 28 }} resizeMode="contain" />
       </Pressable>
     </View>
   )

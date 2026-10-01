@@ -41,3 +41,11 @@ export function waitingRows(state) {
     go: /** @type {'看清楚'|'回答'} */ (t.pendingPermissionCount > 0 ? '看清楚' : '回答'),
   }))
 }
+
+// 「N 件事等你」那一行:读不到(stale)不等于没有 ⇒ 灰字说不知道,而不是悄悄消失(终审 M3)。还没拉到第一拍(null)不说话。
+/** @param {{tasks:Array<any>,stale:boolean}|null} state */
+export function waitingHeader(state) {
+  if (state?.stale) return { hidden: false, unknown: true, title: '暂时不知道有没有等你的事' }
+  const n = waitingRows(state).length
+  return n === 0 ? { hidden: true, unknown: false, title: '' } : { hidden: false, unknown: false, title: `${n} 件事等你` }
+}

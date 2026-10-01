@@ -35,10 +35,10 @@ export default function Now() {
   const conn = useConnection()
   const { backend } = useBackendCtx()
   const { approvals, matters, demo } = useWork()
-  const v = nowView({ approvals, matters, hour: new Date().getHours() })
+  const v = nowView({ approvals, matters, hour: new Date().getHours(), known: demo || conn.state === 'online' })
   const chat = useQuery('chat:latest', () => backend.chat({})) // 与 /chat 同一个键、同一份缓存
   const line = latestCCLine(chat.data)
-  const presence = ccPresence(conn)
+  const presence = ccPresence(conn, { demo }) // 演示:暗(不是真信号)
   const openChat = () => router.push('/chat')
 
   return (
@@ -67,6 +67,9 @@ export default function Now() {
             </Pressable>
           </View>
         </View>
+        {v.waitingUnknown ? (
+          <Txt testID="now-waiting-unknown" role="meta" tone="inkSoft">{t(lang, 'now.waitingUnknown')}</Txt>
+        ) : null}
         {v.waiting.length > 0 ? (
           <View>
             <Txt testID="now-waiting-title" role="meta" tone="inkSoft" accessibilityRole="header" style={{ marginBottom: space.s }}>{tCount(lang, 'now.waiting', v.waiting.length)}</Txt>

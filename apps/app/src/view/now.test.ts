@@ -18,6 +18,13 @@ describe('nowView', () => {
   it('事项标题拿不到就给空串(行上只剩标题一行),不编', () => {
     expect(nowView({ hour: 9, matters: [], approvals: [a('x', 'permission', 'p', 's')] }).waiting[0]!.matterTitle).toBe('')
   })
+  it('够不着电脑(读不到等你的事)⇒ 不显示旧行,改说「不知道」;够得着才按真数据(终审 M3)', () => {
+    const ap = [a('t1', 'permission', 'p1', 's')]
+    expect(nowView({ hour: 9, matters: [], approvals: ap, known: false })).toMatchObject({ waiting: [], waitingUnknown: true })
+    expect(nowView({ hour: 9, matters: [], approvals: [], known: false })).toMatchObject({ waiting: [], waitingUnknown: true })
+    expect(nowView({ hour: 9, matters: [], approvals: ap, known: true }).waitingUnknown).toBe(false)
+    expect(nowView({ hour: 9, matters: [], approvals: [] }).waitingUnknown).toBe(false)
+  })
   it('三档问候', () => {
     expect(nowView({ hour: 5, matters: [], approvals: [] }).greetingKey).toBe('now.greetingMorning')
     expect(nowView({ hour: 12, matters: [], approvals: [] }).greetingKey).toBe('now.greetingAfternoon')
