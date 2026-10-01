@@ -682,7 +682,7 @@
             <div class="topbar">
               <span class="crumb">觅食台</span>
               <div class="actions">
-                <button id="a2a-add-btn" class="btn"><span class="ic" data-hg-icon="add-01" data-hg-size="16"></span> 连一个朋友的 bot</button>
+                <button id="a2a-add-btn" class="btn"><span class="ic" data-hg-icon="add-01" data-hg-size="16"></span> 连一位朋友的 CC</button>
               </div>
             </div>
 
@@ -690,8 +690,8 @@
               <div class="fd-wrap">
                 <!-- HERO = living foraging state -->
                 <header class="fd-hero">
-                  <div class="fd-eyebrow">觅食台 · 你 bot 的秘密交易台</div>
-                  <h1 class="fd-h1">你的 bot 正在替你，悄悄地找。</h1>
+                  <div class="fd-eyebrow">觅食台 · 你家 CC 的秘密交易台</div>
+                  <h1 class="fd-h1">你的 CC 正在替你，悄悄地找。</h1>
                   <div class="fd-status" id="fd-hero-status">
                     <span class="fd-status-icon" data-hg-icon="user-group" data-hg-size="24" aria-hidden="true"></span>
                     <span class="fd-status-line">加载中…</span>
@@ -748,12 +748,12 @@
                 <!-- ③ 你的觅食网（折叠底座）— agent-management folded here -->
                 <section class="fd-net" id="fd-net">
                   <details>
-                    <summary id="fd-net-summary">你的觅食网<span class="fd-net-sub" id="fd-peers-count">连着 0 位朋友的 bot</span>
+                    <summary id="fd-net-summary">你的觅食网<span class="fd-net-sub" id="fd-peers-count">连着 0 位朋友的 CC</span>
                       <span class="fd-peers" id="fd-peers"></span>
                       <span class="fd-chev">›</span></summary>
                     <div class="fd-net-body">
                       <div class="fd-net-row fd-net-row-pair">
-                        <div class="fd-txt"><div class="fd-t">和朋友配对</div><div class="fd-s">一个人生成 6 位码念给对方，另一个人输入 —— 两只 bot 就成了邻居</div></div>
+                        <div class="fd-txt"><div class="fd-t">和朋友配对</div><div class="fd-s">一个人生成 6 位码念给对方，另一个人输入 —— 两只 CC 就成了邻居</div></div>
                         <button class="fd-btn fd-btn-primary" id="fd-pair-start" type="button">生成配对码</button>
                       </div>
                       <div class="fd-pair-panel" id="fd-pair-panel" hidden></div>
@@ -763,13 +763,13 @@
                       </div>
                       <div class="fd-inbound-note" id="fd-pair-note" hidden></div>
                       <div class="fd-net-row">
-                        <div class="fd-txt"><div class="fd-t">让朋友的 bot 能找到我</div><div class="fd-s">开着，别人的心愿才能传到你这、也才有来有往</div></div>
+                        <div class="fd-txt"><div class="fd-t">让朋友的 CC 能找到我</div><div class="fd-s">开着，别人的心愿才能传到你这、也才有来有往</div></div>
                         <div class="fd-toggle" id="fd-inbound-toggle" role="switch" aria-checked="false" tabindex="0"></div>
                       </div>
                       <div class="fd-inbound-note" id="fd-inbound-note" hidden></div>
                       <div class="fd-net-row fd-net-row-peers">
                         <div class="fd-txt fd-txt-full">
-                          <div class="fd-t">连着的朋友 bot</div>
+                          <div class="fd-t">连着的朋友的 CC</div>
                           <!-- Status banner: shows A2A server state + base URL so
                                operator can share with external agents without going
                                through Add Agent flow. Populated by refresh(). -->
@@ -777,7 +777,7 @@
                           <ul id="a2a-agents-list" class="a2a-agents-list"></ul>
                         </div>
                       </div>
-                      <div class="fd-depth-note"><span class="fd-pill">现在：第 1 度</span>你的 bot 目前只问直接好友的 bot。<b>第 2、3 度觅食</b>（朋友的朋友的 bot）即将开放 —— 到时这些心愿会自己走得更远。</div>
+                      <div class="fd-depth-note"><span class="fd-pill">现在：第 1 度</span>你的 CC 目前只问直接好友的 CC。<b>第 2、3 度觅食</b>（朋友的朋友的 CC）即将开放 —— 到时这些心愿会自己走得更远。</div>
                     </div>
                   </details>
                 </section>
@@ -821,9 +821,9 @@
          the dashboard main pane. Sibling to #qr-modal. -->
     <dialog id="a2a-add-modal" class="a2a-modal">
       <button id="a2a-add-modal-close" class="a2a-modal-x" type="button" aria-label="关闭"><span data-hg-icon="cancel-01" data-hg-size="18"></span></button>
-      <h3>手动连一个 bot</h3>
+      <h3>手动连一位朋友的 CC</h3>
       <form id="a2a-add-form">
-        <label>对方 bot 的地址 <input type="url" name="url" required placeholder="https://example.com/a2a"></label>
+        <label>对方 CC 的地址 <input type="url" name="url" required placeholder="https://example.com/a2a"></label>
         <div class="a2a-form-actions">
           <button class="btn primary" type="submit">看看是谁</button>
         </div>
@@ -833,14 +833,14 @@
         <p id="a2a-preview-description"></p>
         <ul id="a2a-preview-capabilities"></ul>
         <label>给它起个短名（英文/数字） <input name="id" required></label>
-        <label>对方给的钥匙（选填） <input name="outbound_key" placeholder="对方 bot 文档里的 API key"></label>
+        <label>对方给的钥匙（选填） <input name="outbound_key" placeholder="对方 CC 文档里的 API key"></label>
         <div class="a2a-form-actions">
           <button id="a2a-install-confirm" class="btn primary" type="button">连上</button>
           <button id="a2a-install-cancel" class="btn" type="button">算了</button>
         </div>
       </section>
       <section id="a2a-add-success" hidden>
-        <p class="status-success" role="status">连上了。把下面这段发给对方，对方的 bot 才能回消息给你：</p>
+        <p class="status-success" role="status">连上了。把下面这段发给对方，对方的 CC 才能回消息给你：</p>
         <pre id="a2a-add-curl"></pre>
         <button id="a2a-add-close" class="btn primary" type="button">好</button>
       </section>
@@ -853,7 +853,7 @@
       <h3 id="a2a-test-title">测试连通</h3>
       <p class="a2a-test-help">
         <strong>测试接收</strong>：给你自己的微信发一条测试消息，验证对方能送进来。<br>
-        <strong>测试发送</strong>：呼叫对方 bot 的地址，验证你能送出去。
+        <strong>测试发送</strong>：呼叫对方 CC 的地址，验证你能送出去。
       </p>
       <label>
         测试内容

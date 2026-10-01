@@ -12,6 +12,7 @@
 /** @typedef {{id:string,kind:string,name:string,state:State,latestAt:number|null,syncedAt:number|null}} Source */
 /** @typedef {{generatedAt:number,sources:Source[],starting?:boolean,computers:Array<{id:string,label:string,online:boolean,since:number|null,version:string|null}>,recent:Array<{matterId:string,title:string,phase:string,at:number}>,outputs:Array<{matterId:string,name:string,mime:string,at:number}>}} Connections */
 
+const STALE_AFTER_MS = 30_000
 /** @param {number} ms */
 const shortDate = ms => { const d = new Date(ms); return `${d.getMonth() + 1}月${d.getDate()}日` }
 const pad = (/** @type {number} */ n) => String(n).padStart(2, '0')
@@ -93,10 +94,11 @@ export function mountNowConnections({ host, call, now = () => Date.now() }) {
   /** @type {Connections|null} */ let data = null
   /** @type {number|null} */ let fetchedAt = null
   let failed = false
+  let aging = false // 浮层重新打开、上次拉取已超过 30 秒:新结果回来前只当「上次所知」
   let ticket = 0
 
   function render() {
-    const stale = failed && data !== null
+    const stale = (failed || aging) && data !== null
     const v = data ? connectionsView(data, { stale }) : null
     const head = el('p', 'nc-headline')
     head.append(dot(v ? v.headline.dot : 'unknown'), el('span', 'nc-headline-text', v ? v.headline.text : '暂时不知道连接情况'))
@@ -104,7 +106,8 @@ export function mountNowConnections({ host, call, now = () => Date.now() }) {
     const parts = [el('h2', 'nc-title', 'CC 的连接'), head]
     if (stale && fetchedAt !== null) {
       const d = new Date(fetchedAt)
-      parts.push(el('p', 'nc-stale', `现在读不到连接情况，下面是 ${pad(d.getHours())}:${pad(d.getMinutes())} 时的情况`))
+      const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+      parts.push(el('p', 'nc-stale', failed ? `现在读不到连接情况，下面是 ${hm} 时的情况` : `正在更新，下面是 ${hm} 时的情况`))
     }
     if (v) {
       if (v.sources.length) parts.push(section('来源', v.sources.map(x => row('nc-source', x.dot, x.name, x.label))))
@@ -124,6 +127,7 @@ export function mountNowConnections({ host, call, now = () => Date.now() }) {
       data = { ...r, recent: Array.isArray(r.recent) ? r.recent : [], outputs: Array.isArray(r.outputs) ? r.outputs : [] }
       fetchedAt = now()
       failed = false
+      aging = false
     } catch {
       if (mine !== ticket) return
       failed = true
@@ -131,6 +135,12 @@ export function mountNowConnections({ host, call, now = () => Date.now() }) {
     render()
   }
 
+  /** 浮层打开时调:上次拉取超过 30 秒 ⇒ 先压灰再拉(终审 M2:别让上次的绿冒充现在)。 */
+  function open() {
+    if (data !== null && fetchedAt !== null && now() - fetchedAt > STALE_AFTER_MS) { aging = true; render() }
+    return refresh()
+  }
+
   render()
-  return { refresh }
+  return { refresh, open }
 }

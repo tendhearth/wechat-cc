@@ -5,7 +5,7 @@ import { useTheme } from './useTheme'
 
 // 列表行:不画色块,行间一条细线。
 
-// 单选的一行:不画色块。选中 = 字变墨色 + 行尾一个强调色的 ✓;没选中 = inkSoft。行间一条细线。
+// 单选的一行:不画色块。字一律墨色(没选中不能读成「不可用」);选中 = 行尾一个墨色 ✓(强调色只给动作,终审 M7)。行间一条细线。
 export function ChoiceRow({ label, on, onPress, testID, content = 'ui' }: { label: string; on: boolean; onPress: () => void; testID?: string; content?: 'ui' | 'user' }) {
   const { c } = useTheme()
   return (
@@ -17,8 +17,8 @@ export function ChoiceRow({ label, on, onPress, testID, content = 'ui' }: { labe
       onPress={onPress}
       style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.m, minHeight: 48, borderBottomWidth: 1, borderBottomColor: c.hair, opacity: pressed ? 0.7 : 1 })}
     >
-      <Txt role="body" tone={on ? 'ink' : 'inkSoft'} content={content} numberOfLines={1} style={{ flex: 1 }}>{label}</Txt>
-      <View style={{ width: 20, alignItems: 'flex-end' }}>{on ? <Txt role="body" tone="accent">✓</Txt> : null}</View>
+      <Txt role="body" tone="ink" content={content} numberOfLines={1} style={{ flex: 1 }}>{label}</Txt>
+      <View style={{ width: 20, alignItems: 'flex-end' }}>{on ? <Txt role="body" tone="ink">✓</Txt> : null}</View>
     </Pressable>
   )
 }

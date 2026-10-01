@@ -5,7 +5,8 @@
 //   #checks (env-check list), #claude-meta, #codex-meta
 //   .wizard .screen + .steps .step (step 1-4 nav)
 //   #enter-dashboard (gated on daemon.alive)
-//   #wizard-foot-dot/text + #dash-rail-dot/text (footer status pills)
+//   #wizard-foot-dot/text (wizard footer status pill). The 此刻 status line
+//   (#dash-rail-dot/text) is not ours: main.js renders it from nowStatusLine.
 // Subscribes to: doctorPoller (renders env list on each successful poll)
 
 import { doctorRows, daemonStatusLine, escapeHtml } from "../view.js"

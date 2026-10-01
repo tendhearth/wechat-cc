@@ -76,6 +76,7 @@ export default function Settings() {
       { text: t(lang, 'settings.unpair'), style: 'destructive', onPress: () => void unpair() },
     ])
   // 分组靠留白与 meta 小标题,不套卡;进下一页的是带 › 的行,真正的动作才是按钮。
+  const showNotif = !demo && conn.state !== 'revoked'
   const heading = (k: Parameters<typeof t>[1]) => <Txt role="meta" tone="inkSoft" accessibilityRole="header" style={{ marginTop: space.l, marginBottom: space.xs }}>{t(lang, k)}</Txt>
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.paper }}>
@@ -87,7 +88,7 @@ export default function Settings() {
             <ChoiceRow key={o.id} testID={`settings-language-${o.id}`} label={o.label} on={langOverride === o.v} onPress={() => setLangOverride(o.v)} />
           ))}
         </View>
-        {!demo && conn.state !== 'revoked' ? (
+        {showNotif ? (
           <>
             {heading('settings.notifications')}
             <View testID="settings-notifications" style={{ gap: space.m }}>
@@ -102,7 +103,8 @@ export default function Settings() {
           </>
         ) : null}
         {demo || conn.state !== 'revoked' ? (
-          <View style={{ marginTop: space.xl, borderTopWidth: 1, borderTopColor: c.hair }}>
+          // 紧跟语言列表时(没有通知段)接着那张表往下排:不留空白、不再画第二条线(终审 M7)
+          <View style={showNotif ? { marginTop: space.xl, borderTopWidth: 1, borderTopColor: c.hair } : undefined}>
             <LinkRow testID="settings-connections" label={t(lang, 'settings.connections')} onPress={() => router.push('/connections')} />
             <LinkRow testID="settings-sessions" label={t(lang, 'settings.sessions')} onPress={() => router.push('/sessions')} />
           </View>

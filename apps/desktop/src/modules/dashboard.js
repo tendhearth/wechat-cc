@@ -141,7 +141,6 @@ export function renderDashboard(report) {
   if (!hasOpenConfirm && current) {
     if (!currentRow) {
       current.innerHTML = `
-        <div class="user-avatar avatar-admin">?</div>
         <div class="user-copy">
           <div class="user-name">还没有连接用户</div>
           <div class="user-sub">打开设置添加微信账号</div>
@@ -162,7 +161,6 @@ export function renderDashboard(report) {
           ? `连接正常 · 上次活动 ${formatRelativeTime(hb)}`
           : "已连接"
       current.innerHTML = `
-        <div class="user-avatar avatar-admin">${avatarSvg("admin", currentRow.name)}</div>
         <div class="user-copy">
           <div class="user-name">${escapeHtml(currentRow.name)} <span class="role-pill">管理员</span></div>
           <div class="user-sub">微信私聊，${currentSub}</div>
@@ -189,7 +187,7 @@ export function renderDashboard(report) {
         </button>
       `
     } else {
-      tbody.innerHTML = subRows.map((row, index) => {
+      tbody.innerHTML = subRows.map((row) => {
       const expEntry = expiredById[row.id]
       // Active: honest "已连接" — daemon has no last-active heartbeat for
       // real accounts, so we don't fake a last-active time.
@@ -211,7 +209,6 @@ export function renderDashboard(report) {
       return `
         <div class="sub-user-card" data-bot-id="${escapeHtml(row.id)}" data-chat-id="${escapeHtml(chatId)}" data-current-provider="${escapeHtml(currentProvider)}" data-name="${escapeHtml(row.name)}">
           <button class="card-menu" aria-haspopup="true" aria-label="选择 Agent">${icon("more-horizontal", { size: 18 })}</button>
-          <div class="user-avatar">${avatarSvg(row.avatar ?? index, row.name)}</div>
           <div class="user-copy">
             <div class="user-name">${escapeHtml(row.name)}</div>
             <div class="user-sub">${escapeHtml(expCell)}</div>
@@ -244,27 +241,6 @@ function providerFromMode(mode) {
   if (Array.isArray(mode.providers)) return mode.providers[0] || null
   if (Array.isArray(mode.participants)) return mode.participants[0] || null
   return null
-}
-
-const AVATAR_LINE_ICONS = [
-  `<path d="M24 33c-5 0-9-4-9-10s4-10 9-10 9 4 9 10-4 10-9 10Z"/><path d="M18 21c3-1 5-3 6-6 2 3 4 5 7 6"/><path d="M20 25h.1M28 25h.1"/><path d="M21 29c2 1 4 1 6 0"/>`,
-  `<path d="M24 12l3.6 7.1 7.9 1.2-5.7 5.6 1.3 7.9L24 30l-7.1 3.8 1.3-7.9-5.7-5.6 7.9-1.2L24 12Z"/><path d="M18 16l-1.5-3M31 17l2-2.3M34 29l3 1.1M13 29l-3 1.2"/>`,
-  `<path d="M16 20l-2-6 6 3M32 20l2-6-6 3"/><path d="M16 22c0-5 4-8 8-8s8 3 8 8v4c0 5-4 8-8 8s-8-3-8-8v-4Z"/><path d="M20 24h.1M28 24h.1M24 27v2M20 30c2 2 6 2 8 0"/>`,
-  `<rect x="15" y="17" width="18" height="15" rx="5"/><path d="M24 17v-5M20 12h8"/><path d="M20 24h.1M28 24h.1"/><path d="M20 29h8"/><path d="M12 24h3M33 24h3"/>`,
-  `<path d="M16 19h16c1 0 2 1 2 2v8c0 3-3 5-10 5s-10-2-10-5v-8c0-1 1-2 2-2Z"/><path d="M16 19c2-4 14-4 16 0"/><path d="M20 27c3-3 6-3 9 0-3 3-6 3-9 0Z"/><path d="M29 27l3-2v4l-3-2Z"/><path d="M19 15c0-2 2-3 5-3s5 1 5 3"/>`,
-  `<path d="M16 30h17c3 0 5-2 5-5s-2-5-5-5c-1-5-5-8-10-8-6 0-10 4-10 10-3 1-5 3-5 6s3 5 8 5"/><path d="M20 25h.1M28 25h.1"/><path d="M22 29c2 1 4 1 6 0"/><path d="M34 13l1.4-2.4M37 17l2.6-.7"/>`,
-]
-
-// Hand-drawn default avatars. Real WeChat avatars can replace this later,
-// but the fallback should already match the current illustrated UI.
-function avatarSvg(seed, label) {
-  const seedNum = Number(seed)
-  const index = String(seed) === "admin"
-    ? 0
-    : Number.isFinite(seedNum)
-      ? Math.abs(Math.trunc(seedNum)) % AVATAR_LINE_ICONS.length
-      : Math.abs(String(label || seed).split("").reduce((h, ch) => ((h * 31 + ch.charCodeAt(0)) | 0), 7)) % AVATAR_LINE_ICONS.length
-  return `<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="22.5" fill="#f8f4ea" stroke="#ebe1d2" stroke-width="1"/><g fill="none" stroke="#593F2C" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">${AVATAR_LINE_ICONS[index]}</g></svg>`
 }
 
 // Mutate the dashboard's restart + stop buttons to reflect daemon+service

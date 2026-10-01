@@ -45,8 +45,9 @@
 .wb-status::before { content:''; flex:none; width:6px; height:6px; border-radius:50%; background:var(--th-unknown); }
 .wb-status[data-status=running]::before,.wb-status[data-status=completed]::before { background:var(--th-ok); }
 .wb-runtime-note { margin:0 0 8px; color:var(--wb-secondary); font-size:12px; line-height:1.6; }
-.wb-status[data-status=queued]::before,.wb-status[data-status=cancelling]::before { background:var(--th-warn); }
-.wb-status[data-status=failed]::before,.wb-status[data-status=interrupted]::before { background:var(--th-bad); }
+/* 被打断 = 停下来等人(琥珀),与操作行的 interrupted 同色;只有真的失败才红(终审 M4) */
+.wb-status[data-status=queued]::before,.wb-status[data-status=cancelling]::before,.wb-status[data-status=interrupted]::before { background:var(--th-warn); }
+.wb-status[data-status=failed]::before { background:var(--th-bad); }
 .wb-task-attention { display:inline-flex; align-items:center; gap:6px; flex:none; color:var(--th-ink); font-size:var(--th-size-caption); white-space:nowrap; }
 .wb-task-attention::before { content:''; flex:none; width:6px; height:6px; border-radius:50%; background:var(--th-warn); }
 

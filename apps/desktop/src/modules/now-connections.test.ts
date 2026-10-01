@@ -71,4 +71,29 @@ describe('mountNowConnections', () => {
     expect(h.querySelector('.nc-stale')!.textContent).toContain('12:00')
     expect(h.textContent).toContain('微信聊天记录')
   })
+  it('重新打开时上次拉取超过 30 秒 ⇒ 先压灰(不显示旧的绿),拉到新的再按真数据(终审 M2)', async () => {
+    const h = host()
+    let t = NOW
+    let release: (v: unknown) => void = () => {}
+    const call = vi.fn()
+      .mockResolvedValueOnce(snap([src('a', 'ready')]))
+      .mockImplementationOnce(() => new Promise(r => { release = r }))
+      .mockResolvedValueOnce(snap([src('a', 'ready')]))
+    const c = mountNowConnections({ host: h, call, now: () => t })
+    await c.open()
+    expect(h.querySelectorAll('.dot.ok').length).toBeGreaterThan(0)
+    t = NOW + 31_000
+    const pending = c.open()
+    expect(h.querySelectorAll('.dot.ok')).toHaveLength(0)
+    expect(h.querySelector('.nc-stale')!.textContent).toContain('正在更新')
+    release(snap([src('a', 'ready')]))
+    await pending
+    expect(h.querySelectorAll('.dot.ok').length).toBeGreaterThan(0)
+    expect(h.querySelector('.nc-stale')).toBeNull()
+    // 30 秒内再打开:直接按刚拿到的显示
+    t = NOW + 40_000
+    const again = c.open()
+    expect(h.querySelectorAll('.dot.ok').length).toBeGreaterThan(0)
+    await again
+  })
 })

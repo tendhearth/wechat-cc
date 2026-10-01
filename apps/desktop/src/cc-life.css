@@ -20,8 +20,10 @@
 .cc-recollections header h1{font-size:30px;margin:12px 0}
 .cc-recollections header p,.cc-life-note{font-size:14px;color:var(--th-ink-soft);line-height:1.8}
 .cc-memory-tabs{display:flex;flex-wrap:wrap;gap:10px;margin:30px 0}
-.cc-memory-tabs button{background:transparent;border-color:transparent}
-.cc-memory-tabs button[aria-pressed=true]{background:var(--th-ground);color:var(--th-ink)}
+/* 回忆里的两排选择(分类标签 + 明信片筛选)只用一种选中样子:墨色字 + rail 底;没选中 = 浅墨字、无框无底(终审 R3,与侧栏、工作台历史筛选同一套) */
+.cc-memory-tabs button,.cc-recollections .pc-toolbar button{background:transparent;border-color:transparent;color:var(--th-ink-soft)}
+.cc-memory-tabs button[aria-pressed=true],.cc-recollections .pc-toolbar button[aria-pressed=true]{background:var(--th-rail);border-color:transparent;color:var(--th-ink)}
+.cc-memory-tabs button:hover,.cc-recollections .pc-toolbar button:hover{color:var(--th-ink)}
 .cc-memory-entry{display:grid;grid-template-columns:100px 1fr 160px;gap:26px;padding:30px 0;border-top:1px solid var(--th-hair)}
 .cc-memory-entry time,.cc-memory-entry small{font-size:12px;color:var(--th-ink-soft)}
 .cc-memory-entry h2{font-size:18px;font-weight:500;margin:0 0 14px}

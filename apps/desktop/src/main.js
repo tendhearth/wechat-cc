@@ -167,7 +167,7 @@ const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConne
   details?.addEventListener('toggle', () => {
     if (timer) { clearInterval(timer); timer = null }
     if (!details.open || !nowConnections) return
-    void nowConnections.refresh()
+    void nowConnections.open()
     timer = setInterval(() => { void nowConnections.refresh() }, 30_000)
   })
 }

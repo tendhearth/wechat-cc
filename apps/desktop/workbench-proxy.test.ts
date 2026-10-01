@@ -147,3 +147,11 @@ it.each(liveRoutes)('keeps %s %s isolated from mock previews and foreign pages',
  }
  expect(upstream).not.toHaveBeenCalled()
 })
+it('GET /v1/connections goes to the real daemon in live preview, and is left to the shim\'s demo route in mock mode (M6)',async()=>{
+ const upstream=vi.fn(async(_url:string,_init?:RequestInit)=>Response.json({sources:[]}))
+ const live=await createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:false,fetch:upstream})(req('/v1/connections'))
+ expect(live?.status).toBe(200);expect(upstream.mock.calls[0]?.[0]).toBe('http://127.0.0.1:9001/v1/connections')
+ expect(await createWorkbenchProxy({stateDir:dir,dryRun:true,allowWrites:false,fetch:upstream})(req('/v1/connections'))).toBeNull()
+ expect((await createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})(req('/v1/connections','POST')))?.status).toBe(405)
+ expect(await createWorkbenchProxy({stateDir:dir,dryRun:false,allowWrites:true,fetch:upstream})(req('/v1/connectionsx'))).toBeNull()
+})

@@ -78,8 +78,8 @@ describe('桌面可达路由四份白名单对得上', () => {
   it('lib.rs 放行的每一条,dev 代理也放行(打包版能调的,浏览器预览也得能调)', () => {
     // matter 四条与 workbench 走的是同一个 Rust 命令,但 dev 代理只管 /v1/workbench*:
     // 它们经 test-shim 另一条路,不在 workbench-proxy.ROUTES 里。这是已知形状,不是漏登记。
-    // GET /v1/connections(此刻的连接浮层,2026-10-01)同理:test-shim 有自己的演示路由。
-    const onlyRust = diff(rust, proxy).filter(k => !k.includes('/v1/matter') && k !== 'GET /v1/connections')
+    // GET /v1/connections 已登记进 dev 代理(终审 M6),不再豁免。
+    const onlyRust = diff(rust, proxy).filter(k => !k.includes('/v1/matter'))
     expect(onlyRust, '在 lib.rs 里但不在 apps/desktop/workbench-proxy.ts:ROUTES').toEqual([])
   })
 
