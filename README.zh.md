@@ -1,7 +1,7 @@
-<h1 align="center">wechat-cc</h1>
+<h1 align="center">Tendhearth CC</h1>
 
 <p align="center">
-  <b>陪你生活，也陪你做事。用一个 CC 管理 Claude、Codex 和 API 模型，桌面与微信接着做。</b>
+  <b>住在你自己电脑上的个人 AI。找 CC 说一句话，在桌面、手机和微信里接着做。</b>
 </p>
 
 <p align="center">
@@ -24,7 +24,11 @@
 
 ## 这是什么
 
-**CC 是一个有陪伴感的 AI，也是管理多种执行者的统一工作入口。** 它把 Claude Code、Codex 和已配置的 API 模型接到同一个桌面工作台；离开电脑后，可以从微信继续同一件事。
+对外产品名统一为 **Tendhearth CC**，角色与日常称呼为 **CC**。仓库、命令和已有技术标识继续保留 `wechat-cc`、`claude-channel-wechat` 及现有数据目录，避免影响安装、升级和历史数据。见[产品命名规范](docs/reference/product-naming.md)。
+
+**Tendhearth CC 是住在你自己电脑上的个人 AI，日常叫它 CC。** 它陪你生活，也陪你做事，把 Claude Code、Codex 和已配置的 API 模型接到同一个桌面工作台；离开电脑后，可以从微信继续同一件事。
+
+**手机入口：** 原生 Expo app 在 [apps/app](apps/app/README.md)，浏览器/PWA 在 [apps/mobile](apps/mobile/README.md)。dev 已有演示模式与配对后的真连接；商店上架和真机通知验收分别记录，不能把开发分支的实现写成已经公开发布。
 
 - **此刻**：看看 CC 正在做什么，留一点安静相处的空间。
 - **一起做**：交代任务、补充要求、处理权限和问题，查看完整对话与成果，不用来回打开多个 agent 窗口。

@@ -1,4 +1,6 @@
-# apps/app —— Tendhearth 手机 app(Expo 原生)
+# apps/app —— Tendhearth CC 手机 app(Expo 原生)
+
+产品文案统一为 **Tendhearth CC**，对话中称 **CC**，见[命名规范](../../docs/reference/product-naming.md)。现有 `app.json` 的显示名、原生权限说明与截图另作一致性检查；scheme、bundle ID、钥匙串键和推送凭据不随文档改名。
 
 「自己电脑上的个人 AI + 指挥编码 agent」的手机端。这一版有**演示模式**与**真连接**:没配对时是演示后端;扫码配对后换成 `src/backend/live.ts`,经中继连回家里的电脑。配对后收系统通知:iOS 通知服务扩展与安卓消息服务在本机解密(`native/`),由 `plugins/` 在 prebuild 时接进构建。
 

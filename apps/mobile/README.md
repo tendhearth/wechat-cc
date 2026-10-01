@@ -1,4 +1,6 @@
-# apps/mobile —— 随身 CC 手机页(/m)
+# apps/mobile —— Tendhearth CC 浏览器手机页(/m)
+
+这是浏览器/PWA 入口；原生 Expo app 在 [apps/app](../app/README.md)。产品名与技术标识遵守[命名规范](../../docs/reference/product-naming.md)。
 
 daemon 在 `/m` 服务的 PWA。源码在 `src/`,构建期组装成 `src/daemon/mobile-page.generated.json`(提交进仓库),daemon 只读这份生成物。
 

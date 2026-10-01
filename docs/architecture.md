@@ -1,4 +1,6 @@
-# wechat-cc — System Architecture
+# Tendhearth CC — System Architecture
+
+Product: **Tendhearth CC**; companion: **CC**. Existing command, package, repository and storage identifiers remain unchanged; see [product naming](reference/product-naming.md). The native mobile app is in `apps/app`, and the browser/PWA client is in `apps/mobile`.
 
 > Companion architecture baseline: 2026-07-11, with dated amendments below. The managed
 > workbench path was added on 2026-09-14. Older line anchors and provider tables describe the

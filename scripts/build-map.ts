@@ -32,7 +32,7 @@ function inline(s: string): string {
 }
 
 const lines = md.split('\n')
-let title = 'wechat-cc 全景导图'
+let title = 'Tendhearth CC 全景导图'
 const metaLines: string[] = []
 interface Section { name: string; items: string[] }
 const sections: Section[] = []
@@ -59,7 +59,7 @@ const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
   :root { --paper:#f5ead8; --ink:#5a3f2d; --soft:#8b5e3c; --accent:#b0563a; --card:#fffdf8; --line:rgba(89,63,44,.25); }
   * { box-sizing:border-box }
   body { margin:0; font-family:system-ui,-apple-system,"PingFang SC",sans-serif; background:var(--paper); color:var(--ink); padding:22px 16px 60px; max-width:860px; margin-inline:auto; line-height:1.75 }
-  h1 { font-size:24px; margin:0 0 6px } h1::before { content:"🐻 " }
+  h1 { font-size:24px; margin:0 0 6px }
   .meta { color:var(--soft); font-size:12.5px; border-left:3px solid var(--line); padding-left:10px; margin-bottom:18px }
   .meta p { margin:2px 0 }
   details.sec { background:var(--card); border:1.5px solid var(--line); border-radius:14px 18px 12px 20px; margin-bottom:12px; padding:2px 16px }
