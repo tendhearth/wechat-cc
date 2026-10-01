@@ -26,7 +26,7 @@ import {
   showStep as wizardShowStep,
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
-import { mountPhoneConnect } from "./modules/phone-connect.js"
+import { mountPhoneConnect, mountOnboardPhone } from "./modules/phone-connect.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
 import { renderDashboard, renderRestartButton, setPending, setLastProbe, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkFsAccessOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
@@ -375,6 +375,7 @@ async function refreshGuardStatus() {
 function setMode(mode) {
   state.mode = mode
   document.documentElement.dataset.mode = mode
+  syncOnboardPhone()
   if (mode === "dashboard") {
     doctorPoller.start()
     conversationsPoller.start()
@@ -393,9 +394,17 @@ function setMode(mode) {
   }
 }
 
+// 引导页最后一步的码(spec 2026-10-01-tendhearth-pairing-ux §5):在 #screen-service 且 daemon 活着才要码。
+/** @type {ReturnType<typeof mountOnboardPhone> | null} */ let onboardPhone = null
+function syncOnboardPhone(report = doctorPoller.current) {
+  const active = document.documentElement.dataset.mode === "wizard" && !!document.getElementById("screen-service")?.classList.contains("active")
+  onboardPhone?.sync({ active, alive: !!report?.checks?.daemon?.alive })
+}
+
 /** @param {string} name */
 function showStep(name) {
   wizardShowStep(state, name)
+  syncOnboardPhone()
   // Service step has the guard toggle — refresh status when entering so
   // the line shows current IP + reachability without waiting for a click.
   if (name === "service") refreshGuardStatus()
@@ -414,6 +423,7 @@ function showStep(name) {
 
 function wireDoctorSubscribers() {
   doctorPoller.subscribe(renderDoctorWizard)
+  doctorPoller.subscribe(report => syncOnboardPhone(report))
   doctorPoller.subscribe(refreshEnterDashboardButton)
   doctorPoller.subscribe(report => { lastDaemon = report.checks.daemon; renderRail() })
   doctorPoller.subscribe(renderDashboardIfActive)
@@ -682,6 +692,12 @@ function wireEvents() {
     renderQr: text => /** @type {Promise<string>} */ (deps.invoke("render_qr_svg", { text })),
   })
   document.getElementById("open-phone-settings")?.addEventListener("click", () => phoneConnect.open())
+  const onboardHost = document.getElementById("onboard-phone")
+  if (onboardHost) onboardPhone = mountOnboardPhone({
+    host: onboardHost,
+    call: (method, path, body) => invokeWorkbenchApi(method, path, body),
+    renderQr: text => /** @type {Promise<string>} */ (deps.invoke("render_qr_svg", { text })),
+  })
 
   // 大脑卡交互:测试连接(唯一的真实拨号入口)/ 接入表单 / 复制命令 / 保存 key / 重启
   document.getElementById("brain-selfcheck")?.addEventListener("click", () => {

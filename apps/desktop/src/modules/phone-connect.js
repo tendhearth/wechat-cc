@@ -186,3 +186,69 @@ export function mountPhoneConnect(deps) {
     close,
   }
 }
+
+/**
+ * 引导页最后一步(#screen-service)的码(spec §5):只有拿到 ready 的码才显示整块;别的状态整块藏着;永不挡「进入控制台」。
+ * sync({ active, alive }):在这一步且 daemon 活着 ⇒ 开始(只开一次);离开这一步 ⇒ 停、藏。
+ * 第一次没拿到码(出错 / 中继没就绪 / 等超时)⇒ 在这一步里有界重试:窗口重新聚焦、以及每 retryMs 一次;
+ * 码一旦在显示(或已连上 / 已过期等用户点「换一个」),就不再重试——每次 POST 都会作废上一个码,之后只轮询设备列表。
+ * @param {{ host: HTMLElement, call: Call, renderQr: (text: string) => Promise<string>, flowDeps?: FlowTuning, retryMs?: number }} deps
+ */
+export function mountOnboardPhone(deps) {
+  const { host } = deps
+  const retryMs = deps.retryMs ?? 30_000
+  const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (host.querySelector(`#${id}`))
+  $('onboard-phone-title').textContent = c.title
+  $('onboard-phone-later').textContent = c.later
+  const renew = $('onboard-phone-renew')
+  renew.textContent = c.renew
+  let started = false
+  let needsRetry = false
+  let seq = 0
+  /** @type {ReturnType<typeof setInterval> | null} */ let timer = null
+  /** @param {View} v */
+  async function show(v) {
+    const mine = ++seq
+    needsRetry = v.kind === 'error' || v.kind === 'notice'
+    if (v.kind === 'loading' || v.kind === 'starting') return   // 藏着就继续藏着,出码再出现
+    if (v.kind === 'qr') {
+      let svg
+      try { svg = await deps.renderQr(v.url) } catch { needsRetry = true; return }
+      if (mine !== seq || !started) return
+      $('onboard-phone-qr').innerHTML = svg   // render_qr_svg 的产物,不含用户内容
+      $('onboard-phone-status').textContent = c.readyNote
+      renew.hidden = true
+      host.hidden = false
+      return
+    }
+    // 连上 / 过期只会发生在出过码之后
+    if (v.kind === 'paired') { $('onboard-phone-qr').replaceChildren(); $('onboard-phone-status').textContent = v.line; renew.hidden = true; host.hidden = false; return }
+    if (v.kind === 'expired') { $('onboard-phone-qr').replaceChildren(); $('onboard-phone-status').textContent = c.expired; renew.hidden = false; host.hidden = false; return }
+    host.hidden = true
+  }
+  const flow = makePhoneLinkFlow({ ...(deps.flowDeps ?? {}), call: deps.call, onView: v => { void show(v) } })
+  renew.addEventListener('click', () => { void flow.start() })
+  const retry = () => { if (started && needsRetry) { needsRetry = false; void flow.start() } }
+  return {
+    /** @param {{ active: boolean, alive: boolean }} s */
+    sync(s) {
+      if (!s.active) {
+        if (started) {
+          started = false; needsRetry = false; seq++
+          flow.stop()
+          window.removeEventListener('focus', retry)
+          if (timer) clearInterval(timer)
+          timer = null
+        }
+        host.hidden = true
+        return
+      }
+      if (s.alive && !started) {
+        started = true
+        window.addEventListener('focus', retry)
+        timer = setInterval(retry, retryMs)
+        void flow.start()
+      }
+    },
+  }
+}

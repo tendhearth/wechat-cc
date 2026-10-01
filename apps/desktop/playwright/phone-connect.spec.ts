@@ -1,5 +1,12 @@
 // 「连接手机」(plan 7a):设置抽屉的弹层。驱动 test-shim(DRY_RUN)的 /v1/phone/* 演示路由。
 import { test, expect, reveal } from './fixtures'
+import { REPORTS } from './reports'
+
+import { mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+const SHOTS = join(homedir(), 'Documents/tendhearth/cc-screens-2026-10-01-pairing/desktop')
+mkdirSync(SHOTS, { recursive: true })
 
 const URL1 = `https://relay.tendhearth.com/pset/#id=r${'a'.repeat(26)}&t=t${'0'.repeat(32)}&p=%2Fset`
 const ready = () => ({ ok: true, state: 'ready', url: URL1, expires_at: Date.now() + 600_000 })
@@ -51,4 +58,48 @@ test('页面上再也没有「手机扫码改设置」', async ({ page, shimUrl,
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
   expect(await page.content()).not.toContain('手机扫码改设置')
+})
+
+// ── 引导页最后一步:不是装好后台服务的机器才会停在这一步 ──
+const SERVICE_STEP_REPORT = { ...REPORTS.allGreen, ready: false, checks: { ...REPORTS.allGreen.checks, service: { installed: false, kind: 'launchagent' } } }
+
+test.describe('引导页最后一步', () => {
+  test.afterEach(async ({ shim }) => { await shim.invoke('mock.doctor', { report: null }) })
+
+  test('中继就绪 ⇒ 码直接出现;「进入控制台」照样能点', async ({ page, shimUrl, shim }) => {
+    await shim.invoke('demo.seed', { chat_id: 'test_chat', phone: { link: [ready()], devices: [[]] } })
+    await shim.invoke('mock.doctor', { report: SERVICE_STEP_REPORT })
+    await page.goto(shimUrl)
+    await expect(page.locator('#screen-service')).toHaveClass(/active/, { timeout: 15_000 })
+    await expect(page.locator('#onboard-phone')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('#onboard-phone-title')).toHaveText('连接手机')
+    await expect(page.locator('#onboard-phone-qr > *').first()).toBeVisible()
+    await expect(page.locator('#onboard-phone-later')).toHaveText('之后再连也可以：在设置里点「连接手机」。')
+    await expect(page.locator('#enter-dashboard')).toBeEnabled()
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    await page.screenshot({ path: `${SHOTS}/onboarding-ready.png` })
+  })
+
+  test('正在打开隧道 ⇒ 整块先藏着,出码后出现', async ({ page, shimUrl, shim }) => {
+    await shim.invoke('demo.seed', { chat_id: 'test_chat', phone: { link: [{ ok: false, state: 'starting' }, { ok: false, state: 'starting' }, { ok: false, state: 'starting' }, ready()], devices: [[]] } })
+    await shim.invoke('mock.doctor', { report: SERVICE_STEP_REPORT })
+    await page.goto(shimUrl)
+    await expect(page.locator('#screen-service')).toHaveClass(/active/, { timeout: 15_000 })
+    await expect(page.locator('#onboard-phone')).toBeHidden()
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    await page.screenshot({ path: `${SHOTS}/onboarding-starting.png` })
+    await expect(page.locator('#onboard-phone')).toBeVisible({ timeout: 15_000 })
+  })
+
+  test('中继没开通 ⇒ 整块不出现', async ({ page, shimUrl, shim }) => {
+    await shim.invoke('demo.seed', { chat_id: 'test_chat', phone: { link: [{ ok: false, state: 'relay_not_configured' }], devices: [[]] } })
+    await shim.invoke('mock.doctor', { report: SERVICE_STEP_REPORT })
+    await page.goto(shimUrl)
+    await expect(page.locator('#screen-service')).toHaveClass(/active/, { timeout: 15_000 })
+    await expect.poll(async () => ((await shim.invoke('mock.phone-calls')) as { result: { calls: unknown[] } }).result.calls.length).toBeGreaterThan(0)
+    await expect(page.locator('#onboard-phone')).toBeHidden()
+    await expect(page.locator('#enter-dashboard')).toBeEnabled()
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    await page.screenshot({ path: `${SHOTS}/onboarding-not-configured.png` })
+  })
 })

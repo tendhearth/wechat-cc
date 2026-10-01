@@ -5875,3 +5875,11 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 }
 
 b, strong { font-weight: 500; }
+
+/* 引导页最后一步的「连接手机」码(spec 2026-10-01-tendhearth-pairing-ux §5):无阴影、无图标、只在拿到码时出现 */
+.onboard-phone { display: flex; flex-direction: column; align-items: center; gap: var(--th-space-s); padding: var(--th-space-l) 0; border-top: 1px solid var(--th-hair); }
+.onboard-phone[hidden] { display: none; }
+.onboard-phone h3 { margin: 0; font-size: var(--th-size-item); line-height: var(--th-lh-item); font-weight: 500; color: var(--th-ink); }
+.onboard-phone .qr-svg svg { width: 180px; height: 180px; }
+.onboard-phone .qr-note { margin: 0; color: var(--th-ink); }
+.onboard-phone .qr-sub { margin: 0; font-size: var(--th-size-small); color: var(--th-ink-soft); }

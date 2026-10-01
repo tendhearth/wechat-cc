@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it, expect, vi } from 'vitest'
 import { PHONE_COPY } from './phone-connect-copy.js'
-import { linkView, makePhoneLinkFlow, mountPhoneConnect, newDevice, pairedLine } from './phone-connect.js'
+import { linkView, makePhoneLinkFlow, mountOnboardPhone, mountPhoneConnect, newDevice, pairedLine } from './phone-connect.js'
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
 const URL1 = `https://relay.tendhearth.com/pset/#id=r${'a'.repeat(26)}&t=t${'0'.repeat(32)}&p=%2Fset`
@@ -137,5 +137,88 @@ describe('mountPhoneConnect(弹层)', () => {
     const n = h.call.mock.calls.length
     await new Promise(r => setTimeout(r, 30))
     expect(h.call.mock.calls.length).toBeLessThanOrEqual(n + 1)
+  })
+})
+
+describe('mountOnboardPhone(引导页,裁决 3)', () => {
+  function host() {
+    document.body.innerHTML = `<div id="onboard-phone" hidden><h3 id="onboard-phone-title"></h3><div id="onboard-phone-qr"></div><p id="onboard-phone-status"></p><button id="onboard-phone-renew" hidden></button><p id="onboard-phone-later"></p></div>`
+    return document.getElementById('onboard-phone')!
+  }
+  const fast = { now: () => 1_000_000, sleep: async () => {} }
+  const posts = (t: { call: { mock: { calls: unknown[][] } } }) => t.call.mock.calls.filter(c => c[0] === 'POST').length
+  it('拿到 ready 才显示整块;文案来自文案模块', async () => {
+    const h = host()
+    const t = harness({ link: [ready()], devices: [[], [dev('n', 'Tendhearth · iPhone')]] })
+    const m = mountOnboardPhone({ host: h, call: t.call, renderQr: async () => '<svg id="q"></svg>', flowDeps: fast })
+    expect(h.hidden).toBe(true)
+    m.sync({ active: true, alive: true })
+    await vi.waitFor(() => expect(document.getElementById('onboard-phone-status')!.textContent).toBe('已连上 Tendhearth · iPhone'))
+    expect(h.hidden).toBe(false)
+    expect(document.getElementById('onboard-phone-title')!.textContent).toBe('连接手机')
+    expect(document.getElementById('onboard-phone-later')!.textContent).toBe('之后再连也可以：在设置里点「连接手机」。')
+    m.sync({ active: false, alive: true })
+  })
+  it('中继没开通 ⇒ 整块一直藏着', async () => {
+    const h = host()
+    const t = harness({ link: [{ ok: false, state: 'relay_not_configured' }], devices: [[]] })
+    const m = mountOnboardPhone({ host: h, call: t.call, renderQr: async () => '<svg></svg>', flowDeps: fast, retryMs: 100_000 })
+    m.sync({ active: true, alive: true })
+    await vi.waitFor(() => expect(t.call).toHaveBeenCalledWith('POST', '/v1/phone/link', { enable_remote: true }))
+    await new Promise(r => setTimeout(r, 10))
+    expect(h.hidden).toBe(true)
+    m.sync({ active: false, alive: true })
+  })
+  it('daemon 没活 ⇒ 不请求;离开这一步 ⇒ 停、藏;同一步里重复 sync 不重开;出码后只轮询设备、不再 POST', async () => {
+    const h = host()
+    const t = harness({ link: [ready()], devices: [[]] })
+    const m = mountOnboardPhone({ host: h, call: t.call, renderQr: async () => '<svg></svg>', flowDeps: { now: () => 1_000_000, sleep: () => new Promise(r => setTimeout(r, 5)) } })
+    m.sync({ active: true, alive: false })
+    expect(t.call).not.toHaveBeenCalled()
+    m.sync({ active: true, alive: true })
+    m.sync({ active: true, alive: true })
+    await vi.waitFor(() => expect(h.hidden).toBe(false))
+    await new Promise(r => setTimeout(r, 40))
+    expect(posts(t)).toBe(1)
+    expect(t.call.mock.calls.filter(c => c[0] === 'GET').length).toBeGreaterThan(1)
+    m.sync({ active: false, alive: true })
+    expect(h.hidden).toBe(true)
+  })
+  it('第一次失败(非 starting)⇒ 窗口重新聚焦时重试,出码', async () => {
+    const h = host()
+    const t = harness({ link: [new Error('boom'), ready()], devices: [[]] })
+    const m = mountOnboardPhone({ host: h, call: t.call, renderQr: async () => '<svg></svg>', flowDeps: { now: () => 1_000_000, sleep: () => new Promise(r => setTimeout(r, 5)) }, retryMs: 100_000 })
+    m.sync({ active: true, alive: true })
+    await vi.waitFor(() => expect(posts(t)).toBe(1))
+    await new Promise(r => setTimeout(r, 10))
+    expect(h.hidden).toBe(true)
+    window.dispatchEvent(new Event('focus'))
+    await vi.waitFor(() => expect(h.hidden).toBe(false))
+    expect(posts(t)).toBe(2)
+    m.sync({ active: false, alive: true })
+  })
+  it('第一次是 notice ⇒ 每隔 retryMs 重试;离开这一步 ⇒ 不再重试', async () => {
+    const h = host()
+    const t = harness({ link: [{ ok: false, state: 'relay_unavailable' }, ready()], devices: [[]] })
+    const m = mountOnboardPhone({ host: h, call: t.call, renderQr: async () => '<svg></svg>', flowDeps: { now: () => 1_000_000, sleep: () => new Promise(r => setTimeout(r, 5)) }, retryMs: 20 })
+    m.sync({ active: true, alive: true })
+    await vi.waitFor(() => expect(h.hidden).toBe(false))
+    expect(posts(t)).toBe(2)
+    m.sync({ active: false, alive: true })
+    const n = t.call.mock.calls.length
+    window.dispatchEvent(new Event('focus'))
+    await new Promise(r => setTimeout(r, 60))
+    expect(t.call.mock.calls.length).toBe(n)
+  })
+  it('码在显示时 ⇒ 聚焦 / 定时都不再 POST(每次 POST 会作废上一个码)', async () => {
+    const h = host()
+    const t = harness({ link: [ready()], devices: [[]] })
+    const m = mountOnboardPhone({ host: h, call: t.call, renderQr: async () => '<svg></svg>', flowDeps: { now: () => 1_000_000, sleep: () => new Promise(r => setTimeout(r, 5)) }, retryMs: 10 })
+    m.sync({ active: true, alive: true })
+    await vi.waitFor(() => expect(h.hidden).toBe(false))
+    window.dispatchEvent(new Event('focus'))
+    await new Promise(r => setTimeout(r, 50))
+    expect(posts(t)).toBe(1)
+    m.sync({ active: false, alive: true })
   })
 })

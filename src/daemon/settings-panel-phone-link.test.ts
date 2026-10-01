@@ -1,9 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeSettingsPanel, SETTINGS_LINK_TTL_MS, type SettingsPanel } from './settings-panel'
 import { makeRemoteToggle, relayV2Configured } from './remote-toggle'
+
+// 不依赖这台机器有没有私网网卡(CI 可能没有):lanIp 固定
+vi.mock('../lib/local-address', async (orig) => ({ ...(await orig<typeof import('../lib/local-address')>()), lanIp: () => '192.168.1.2' }))
 
 const OWNER = 'owner_chat@im.wechat'
 const RID = 'r' + 'a'.repeat(26)

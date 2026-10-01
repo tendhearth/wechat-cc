@@ -29,7 +29,10 @@ describe('POST /v1/phone/link · GET /v1/phone/devices(spec §4.1)', () => {
     expect((await r['POST /v1/phone/link']!(q, {})).status).toBe(503)
     expect((await r['GET /v1/phone/devices']!(q, undefined)).status).toBe(503)
     expect(log).toHaveBeenCalledTimes(2)
-    expect(log.mock.calls.every(c => c[0] === 'INTERNAL_API')).toBe(true)
+    expect(log.mock.calls).toEqual([
+      ['INTERNAL_API', 'phone_link_failed: boom tabc'],
+      ['INTERNAL_API', 'phone_devices_failed: boom2'],
+    ])
   })
   it('devices:列表原样;没接 503', async () => {
     const r = phoneRoutes({ phoneConnect: { link: vi.fn(), devices: () => [DEV] } } as unknown as InternalApiDeps)
