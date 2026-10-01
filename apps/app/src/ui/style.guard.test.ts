@@ -16,7 +16,7 @@ export const NOT_YET_MIGRATED = new Set<string>([
   'app/connections.tsx', 'app/dev-push-key.tsx', 'app/devices.tsx', 'app/matter/[id].tsx', 'app/pair.tsx',
   'app/push-open.tsx', 'app/sessions/[key].tsx', 'app/sessions/index.tsx', 'app/settings.tsx', 'app/welcome.tsx',
   'ui/Button.tsx', 'ui/ConnectionNotice.tsx', 'ui/DemoBanner.tsx', 'ui/Placeholder.tsx', 'ui/PushBanner.tsx',
-  'ui/SayBar.tsx', 'ui/Sheet.tsx', 'ui/StatusPill.tsx', 'ui/TabBar.tsx', 'ui/TopBar.tsx',
+  'ui/SayBar.tsx', 'ui/Sheet.tsx', 'ui/StatusPill.tsx', 'ui/TabBar.tsx',
 ])
 
 describe('phone style guard', () => {

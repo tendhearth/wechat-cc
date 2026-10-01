@@ -47,7 +47,7 @@ export default function Connections() {
   )
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
-      <TopBar title={t(lang, 'links.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} connection={conn.state === 'online' ? 'online' : 'offline'} onAvatar={() => router.push('/settings')} />
+      <TopBar title={t(lang, 'links.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} onAvatar={() => router.push('/settings')} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <ScrollView contentContainerStyle={{ padding: space.xl, gap: space.l }}>
         {!v ? (

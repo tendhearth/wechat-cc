@@ -55,7 +55,7 @@ export default function Matter() {
 
   const header = (
     <>
-      <TopBar title={t(lang, 'common.wordmark')} onBack={() => router.back()} connection={conn.state === 'online' ? 'online' : 'offline'} onAvatar={() => router.push('/settings')} />
+      <TopBar title={t(lang, 'common.wordmark')} onBack={() => router.back()} onAvatar={() => router.push('/settings')} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
     </>
   )

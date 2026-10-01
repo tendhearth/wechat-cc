@@ -62,7 +62,6 @@ export default function Chat() {
       <TopBar
         title={t(lang, 'chat.title')}
         onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))}
-        connection={conn.state === 'online' ? 'online' : 'offline'}
         onAvatar={() => router.push('/settings')}
       />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>

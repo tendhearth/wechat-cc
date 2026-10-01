@@ -75,7 +75,6 @@ export default function Compose() {
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
       <TopBar
         onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))}
-        connection={conn.state === 'online' ? 'online' : 'offline'}
         onAvatar={() => router.push('/settings')}
       />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>

@@ -67,7 +67,7 @@ export default function Sessions() {
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
-      <TopBar title={t(lang, 'sessions.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} connection={conn.state === 'online' ? 'online' : 'offline'} onAvatar={() => router.push('/settings')} />
+      <TopBar title={t(lang, 'sessions.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} onAvatar={() => router.push('/settings')} />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <View accessibilityRole="tablist" style={{ flexDirection: 'row', gap: space.s, paddingHorizontal: space.xl, paddingBottom: space.s }}>{(['claude', 'codex'] as const).map(tab)}</View>
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl }}>

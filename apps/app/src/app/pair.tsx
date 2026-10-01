@@ -8,6 +8,7 @@ import { useLang } from '../i18n/useLang'
 import { parsePairLink, type ParsedLink } from '../net/link'
 import { pairWithLink, PairError } from '../net/pairing'
 import { rnConnect } from '../net/rn-connect'
+import { useConnection } from '../state/hooks'
 import { useSession } from '../state/session'
 import { pairAndSave } from '../state/wiring'
 import { Button } from '../ui/Button'
@@ -16,6 +17,7 @@ import { CCFigure } from '../ui/CCFigure'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { useTheme } from '../ui/useTheme'
+import { ccPresence } from '../view/presence'
 import { linkErrorKey, makeGate, pairErrorKey } from '../view/pair'
 
 type Phase =
@@ -31,6 +33,7 @@ export default function Pair() {
   const { c } = useTheme()
   const lang = useLang()
   const router = useRouter()
+  const conn = useConnection()
   const { setPaired } = useSession()
   const [phase, setPhase] = useState<Phase>({ k: 'intro' })
   const [pasted, setPasted] = useState('')
@@ -100,9 +103,9 @@ export default function Pair() {
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
       {/* 配对进行中关掉 iOS 侧滑返回(安卓返回键由 BackHandler 吞掉) */}
       <Stack.Screen options={{ gestureEnabled: phase.k !== 'working' }} />
-      <TopBar onBack={back} connection="offline" showConnection={false} onAvatar={() => router.push('/settings')} />
+      <TopBar onBack={back} showConnection={false} onAvatar={() => router.push('/settings')} />
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.xl, gap: space.l }}>
-        <View style={{ alignItems: 'center' }}><CCFigure size={120} /></View>
+        <View style={{ alignItems: 'center' }}><CCFigure size={120} presence={ccPresence(conn)} /></View>
         <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 28, lineHeight: 36 }}>{t(lang, 'pair.title')}</Text>
         {phase.k === 'confirm' || phase.k === 'working' ? (
           <Card testID="pair-confirm" style={{ gap: space.m }}>

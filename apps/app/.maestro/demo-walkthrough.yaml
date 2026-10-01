@@ -14,7 +14,7 @@ appId: com.tendhearth.app
 - assertVisible:
     id: now-say
 - assertVisible:
-    id: topbar-connection
+    id: now-connections
 # 欢迎页 replace 回此刻的转场里,第一下点标签偶尔没生效(可能是被原生栈吞掉;真机手点不会这么快);没切过去就再点一次。
 - retry:
     maxRetries: 2

@@ -9,6 +9,7 @@ import { useWork } from '../../state/useWork'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { CCFigure } from '../../ui/CCFigure'
+import { ccPresence } from '../../view/presence'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { Dot } from '../../ui/Dot'
 import { DemoBanner } from '../../ui/DemoBanner'
@@ -63,8 +64,9 @@ export default function Now() {
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.bg }}>
       <TopBar
         title={t(lang, 'common.wordmark')}
-        connection={conn.state === 'online' ? 'online' : 'offline'}
         onAvatar={() => router.push('/settings')}
+        onConnection={() => router.push('/connections')}
+        connectionTestID="now-connections"
       />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.xl }}>
@@ -98,7 +100,7 @@ export default function Now() {
         ))}
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.l }}>
-          <CCFigure size={112} />
+          <CCFigure size={112} presence={ccPresence(conn)} />
           <View style={{ flex: 1, gap: space.xs }}>
             <Text style={{ color: c.ink, fontSize: 16 }}>{t(lang, 'now.ccLine.default')}</Text>
             <Text style={{ color: c.muted, fontSize: 14, lineHeight: 21 }}>
@@ -108,7 +110,7 @@ export default function Now() {
         </View>
 
         <Pressable
-          testID="now-connections"
+          testID="now-connections-row"
           accessibilityRole="button"
           accessibilityLabel={`${t(lang, 'links.title')}, ${lv ? t(lang, lv.key, { n: lv.n }) : t(lang, 'links.unknown')}`}
           onPress={() => router.push('/connections')}

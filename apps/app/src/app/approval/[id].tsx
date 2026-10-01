@@ -17,6 +17,7 @@ import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { useTheme } from '../../ui/useTheme'
 import { canSubmit } from '../../view/connection'
+import { ccPresence } from '../../view/presence'
 import { ANSWER_MAX_CHARS, ANSWER_MAX_MULTI, answersTooLong, approvalOutcome, approvalView, buildAnswers, multiLimitReached, pinnedRequest, togglePick, type ApprovalView } from '../../view/approval'
 
 type Outcome = null | { requestId: string; kind: 'handled' | 'uncertain' | 'failed' | 'ccBusy' | 'tooLong' | 'revoked' }
@@ -99,7 +100,7 @@ export default function Approval() {
   }
 
   const header = (
-    <TopBar title={t(lang, 'common.wordmark')} onBack={() => router.back()} connection={conn.state === 'online' ? 'online' : 'offline'} onAvatar={() => router.push('/settings')} />
+    <TopBar title={t(lang, 'common.wordmark')} onBack={() => router.back()} onAvatar={() => router.push('/settings')} />
   )
   const shell = (body: ReactNode, footer?: ReactNode) => (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
@@ -138,7 +139,7 @@ export default function Approval() {
   if (shownOutcome === 'handled' || v.kind === 'none') {
     return shell(
       <View testID="approval-handled" style={{ gap: space.l, paddingTop: space.xl, alignItems: 'flex-start' }}>
-        <CCFigure size={72} />
+        <CCFigure size={72} presence={ccPresence(conn)} />
         <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 24, lineHeight: 32 }}>{t(lang, 'approval.handled')}</Text>
         <Text style={{ color: c.muted, fontSize: 15 }}>{matterTitle}</Text>
       </View>,
@@ -236,9 +237,10 @@ export default function Approval() {
 
 function Eyebrow({ eyebrow, title }: { eyebrow: string; title: string }) {
   const { c } = useTheme()
+  const conn = useConnection()
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.m, paddingTop: space.s }}>
-      <CCFigure size={44} />
+      <CCFigure size={44} presence={ccPresence(conn)} />
       <View style={{ flex: 1, gap: 2 }}>
         <Text style={{ color: c.muted, fontSize: 12 }}>{eyebrow}</Text>
         <Text numberOfLines={2} style={{ color: c.ink, fontSize: 14 }}>{title}</Text>

@@ -77,7 +77,7 @@ export default function Settings() {
   const heading = (k: Parameters<typeof t>[1]) => <Text accessibilityRole="header" style={{ color: c.ink, fontSize: 18 }}>{t(lang, k)}</Text>
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
-      <TopBar title={t(lang, 'settings.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} connection={conn.state === 'online' ? 'online' : 'offline'} />
+      <TopBar title={t(lang, 'settings.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
       <ScrollView contentContainerStyle={{ padding: space.xl, gap: space.l }}>
         {heading('settings.language')}
         <View testID="settings-language" accessibilityRole="radiogroup" style={{ gap: space.xs }}>

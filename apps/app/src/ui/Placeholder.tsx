@@ -18,7 +18,6 @@ export function Placeholder({ title }: { title: string }) {
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.bg }}>
       <TopBar
         onBack={() => (router.canGoBack() ? router.back() : router.replace('/'))}
-        connection={conn.state === 'online' ? 'online' : 'offline'}
         onAvatar={() => router.push('/settings')}
       />
       <View style={{ padding: space.xl, gap: space.m }}>

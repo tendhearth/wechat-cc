@@ -41,7 +41,7 @@ export default function Devices() {
   }
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: c.bg }}>
-      <TopBar title={t(lang, 'devices.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/settings'))} connection={online ? 'online' : 'offline'} />
+      <TopBar title={t(lang, 'devices.title')} onBack={() => (router.canGoBack() ? router.back() : router.replace('/settings'))} />
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.xl, gap: space.l }}>
         <ConnectionNotice />
         {!v ? (

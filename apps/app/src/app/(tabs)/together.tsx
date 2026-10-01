@@ -8,6 +8,7 @@ import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery } from '../../state/hooks'
 import { useWork } from '../../state/useWork'
 import { CCFigure } from '../../ui/CCFigure'
+import { ccPresence } from '../../view/presence'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { SayBar } from '../../ui/SayBar'
 import { StatusPill } from '../../ui/StatusPill'
@@ -46,7 +47,7 @@ export default function Together() {
         opacity: pressed ? 0.7 : 1,
       })}
     >
-      <CCFigure size={44} />
+      <CCFigure size={44} presence={ccPresence(conn)} />
       <View style={{ flex: 1, gap: space.xs }}>
         <Text numberOfLines={1} style={{ color: c.ink, fontSize: 16 }}>{t(lang, 'chat.pinnedTitle')}</Text>
         {lastLine ? <Text numberOfLines={1} style={{ color: c.muted, fontSize: 13 }}>{lastLine}</Text> : null}
@@ -59,7 +60,6 @@ export default function Together() {
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.bg }}>
       <TopBar
         title={t(lang, 'together.title')}
-        connection={conn.state === 'online' ? 'online' : 'offline'}
         onAvatar={() => router.push('/settings')}
       />
       <View style={{ paddingHorizontal: space.xl }}><ConnectionNotice /></View>

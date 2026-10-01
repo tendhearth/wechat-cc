@@ -137,7 +137,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     }
     if (topic === 'home') {
       const unread = list().reduce((s, e) => s + e.detail.permissions.length + e.detail.questions.length, 0)
-      return { unread, presenceState: { level: 'present', activity: unread > 0 ? 'waiting' : 'idle' }, nextCursor: null }
+      return { unread, presenceState: { level: 'ok', activity: unread > 0 ? 'waiting' : 'idle' }, nextCursor: null }
     }
     const id = topic.slice('matter/'.length)
     const e = entries.get(id)
