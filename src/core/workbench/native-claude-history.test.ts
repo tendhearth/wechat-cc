@@ -56,6 +56,16 @@ describe('Claude supported history reader',()=>{
     expect(sdk.getSessionMessages).toHaveBeenCalledWith('claude-1',{limit:2,offset:0,includeSystemMessages:false})
     await expect(reader.read(encodeNativeHistoryKey('codex','claude-1'),{limit:2})).rejects.toThrow('invalid_native_history_key')
   })
+  it('tailCursor:数一次条数,直接给出离结尾 rows 条处的 read cursor;不足 rows 条 ⇒ null',async()=>{
+    const rows=Array.from({length:7},(_,i)=>msg(i))
+    const {sdk,reader}=fixture({getSessionMessages:vi.fn(async(_id,{offset=0,limit}={})=>rows.slice(offset,limit===undefined?undefined:offset+limit))})
+    const cursor=await reader.tailCursor!(key,3)
+    expect(sdk.getSessionMessages).toHaveBeenCalledWith('claude-1',{includeSystemMessages:false})
+    const tail=await reader.read(key,{limit:3,cursor:cursor!})
+    expect(tail.messages.map(x=>x.id)).toEqual(['msg-4','msg-5','msg-6']);expect(tail.page.cursor).toBe(cursor)
+    expect(await reader.tailCursor!(key,7)).toBeNull();expect(await reader.tailCursor!(key,100)).toBeNull()
+    await expect(reader.tailCursor!(key,0)).rejects.toThrow('invalid_request')
+  })
   it('fingerprints explicit pages without cross-client preview state and detects metadata or message changes',async()=>{
     let version=1,text='one'
     const rows=()=>[msg(0,text),msg(1,'two')]

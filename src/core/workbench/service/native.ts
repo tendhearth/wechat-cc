@@ -24,6 +24,12 @@ import type { InputMaterials, WorkbenchTaskView } from './types'
 
 /** 翻到最后一页最多读几次(每页 100 条):超了说读不了,而不是悄悄带开头。 */
 const NATIVE_TAIL_MAX_READS=400
+/** 读取器不能 seek 时一页页翻到尾的总预算(每页仍各有 NATIVE_HISTORY_TIMEOUT_MS 的单次时限,不共用那 15 秒)。 */
+export const NATIVE_TAIL_WALK_MS=60_000
+/** 能 seek 时从离结尾几条处开始读:5 页 × 100 正好装下且最后一页不满(nextCursor 为 null),不多一次空读。 */
+const NATIVE_TAIL_ROWS=499
+/** 本进程记住的第一句 requestId 上限;只淘汰已落定的,在途的永不淘汰。 */
+const FIRST_INPUTS_MAX=500
 export function makeNativeDomain(ctx:ServiceCtx) {
   const { store, state } = ctx
   const act=()=>ctx.actions.deref('native')
@@ -214,7 +220,7 @@ export function makeNativeDomain(ctx:ServiceCtx) {
    * 重启时 store.recover 把那一轮记成 interrupted、回执记成 held,新进程里没有在跑的轮次,重新派发不会变成两轮。
    * 值是本进程里那次调用本身:同时来的重发直接等同一个结果(只起一次);失败的从表里拿掉,停了终端之后同一 id 能再发。
    */
-  const firstInputs=new Map<string,{taskId:string;text:string;attachments:string;result:Promise<WorkbenchTaskView>}>()
+  const firstInputs=new Map<string,{taskId:string;text:string;attachments:string;result:Promise<WorkbenchTaskView>;settled:boolean}>()
   /**
    * 手机说的第一句(spec 2026-10-01-tendhearth-continue-sessions D2/D3/D6):确认卡上主人已声明原程序停了;
    * 模式按桌面同一判法(能恢复 ⇒ native_resume,否则 fresh_context);决定令牌与 restartToken 只在这一次调用里活,
@@ -227,7 +233,12 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     if(typeof text!=='string')throw new Error('invalid_text')
     const same=(taskId:string,body:string,ids:readonly string[])=>taskId===id&&body===text.trim()&&JSON.stringify([...ids].sort())===JSON.stringify([...(options.attachmentIds??[])].sort())
     const mine=firstInputs.get(requestId)
-    if(mine){if(!same(mine.taskId,mine.text,JSON.parse(mine.attachments) as string[]))throw new Error('input_conflict');return mine.result}
+    if(mine){
+      if(!same(mine.taskId,mine.text,JSON.parse(mine.attachments) as string[]))throw new Error('input_conflict')
+      // 等同一次调用落定(它失败,这里也失败);成功则给此刻的任务视图,不是第一次调用时那份过期的。
+      await mine.result
+      return act().taskView(publicTask(store.get(id)))
+    }
     const prior=store.liveInputs.get(requestId)
     if(prior){
       if(!same(prior.taskId,prior.text,(prior.attachments??[]).map(a=>a.id)))throw new Error('input_conflict')
@@ -236,9 +247,10 @@ export function makeNativeDomain(ctx:ServiceCtx) {
       if(!source||source.firstDispatchedAt!==null)return act().taskView(publicTask(store.get(id)))
     }
     const result=firstImported(id,text,{...options,inputRequestId:requestId},prior?requestId:undefined,attachmentPolicy)
-    firstInputs.set(requestId,{taskId:id,text:text.trim(),attachments:JSON.stringify(options.attachmentIds??[]),result})
-    if(firstInputs.size>500)firstInputs.delete(firstInputs.keys().next().value!)
-    result.catch(()=>{if(firstInputs.get(requestId)?.result===result)firstInputs.delete(requestId)})
+    const entry={taskId:id,text:text.trim(),attachments:JSON.stringify(options.attachmentIds??[]),result,settled:false}
+    firstInputs.set(requestId,entry)
+    if(firstInputs.size>FIRST_INPUTS_MAX)for(const [k,v] of firstInputs)if(v.settled){firstInputs.delete(k);break}
+    result.then(()=>{entry.settled=true},()=>{entry.settled=true;if(firstInputs.get(requestId)===entry)firstInputs.delete(requestId)})
     return result
   }
   async function firstImported(id:string,text:string,options:ImportedOptions,redispatch:string|undefined,attachmentPolicy?:'owner'):Promise<WorkbenchTaskView> {
@@ -252,8 +264,14 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     if(!decision)throw new Error('external_close_confirmation_stale')
     const materials:InputMaterials={...(options.draftId!==undefined?{draftId:options.draftId}:{}),...(options.attachmentIds!==undefined?{attachmentIds:options.attachmentIds}:{})}
     const view=await continueNativeTask(id,text,prepared.token,decision.restartToken,materials,{...(options.inputRequestId!==undefined?{inputRequestId:options.inputRequestId}:{}),...(attachmentPolicy?{attachmentPolicy}:{})})
-    // 重新派发沿用上一进程的回执(start 不重写已有回执):held ⇒ sending,送到后照常变 delivered。
-    if(redispatch){store.liveInputs.set(redispatch,'sending');ctx.hub.bumped(id)}
+    // 重新派发沿用上一进程的回执:start 只在回执不存在时才写,所以 run_id 仍是那轮死掉的 —— 无妨,送达是按
+    // running.queuedInputId(就是这个 requestId)认的,不看 run_id。held ⇒ sending,送到后照常变 delivered。
+    // 再记一行,把第二条同样的「用户」事件说清楚。
+    if(redispatch){
+      store.liveInputs.set(redispatch,'sending')
+      store.addEvent(id,'system','CC 重启后按同一请求重发了一次。')
+      ctx.hub.touched(id)
+    }
     return view
   }
   async function listNativeHistory(providerId:NativeHistoryProvider,input:NativeHistoryListInput) {
@@ -312,25 +330,32 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     })
   }
   /**
+   * 带过来的要是最近的,不是开头 100 条(裁决 R2):拿到会话尾部最后 ≤5 页 —— 与桌面「继续读取原对话」同一个窗口
+   * (state.pages.slice(-5)),也正是 importNativeHistory 收的页数上限。能 seek 的读取器(Claude)直接从离结尾
+   * NATIVE_TAIL_ROWS 条处读:每次 read 都要重新解析整份记录,一页页翻是平方级的。不能 seek 的(Codex)才一页页翻,
+   * 每页各自一个单次时限,整趟另有 NATIVE_TAIL_WALK_MS 的总预算。
+   */
+  async function tailPages(key:string,first:NativeHistoryPreview):Promise<NativeHistoryPreview[]> {
+    const reader=nativeReader(first.session.providerId),started=Date.now()
+    const read=async(cursor:string)=>{
+      if(Date.now()-started>NATIVE_TAIL_WALK_MS)throw new Error('native_history_unavailable')
+      const next=await historyDeadline()(()=>reader.read(key,{limit:100,cursor}))
+      if(next.session.key!==key||next.session.cwd!==first.session.cwd)throw new Error('native_history_changed')
+      return next
+    }
+    const seek=first.nextCursor!==null&&reader.tailCursor?await historyDeadline()(()=>reader.tailCursor!(key,NATIVE_TAIL_ROWS)):null
+    let pages=[seek===null?first:await read(seek)]
+    for(let reads=1;pages.at(-1)!.nextCursor!==null;reads++){
+      if(reads>=NATIVE_TAIL_MAX_READS)throw new Error('native_history_unavailable')
+      pages=[...pages,await read(pages.at(-1)!.nextCursor!)].slice(-5)
+    }
+    return pages
+  }
+  /**
    * 手机「接着做」/「打开这件事」:幂等。已有任务 ⇒ 只补 matter 行;能接 ⇒ 按桌面同一规则挑消息、走现有导入、补 matter 行;
    * 其余 ⇒ NATIVE_CONTINUE_REFUSAL 里的错误码。读与导入之间会话变了 ⇒ 重来一次。matter 行补建失败不回滚导入:
    * 下次再点走 managed 再补(自愈)。不起执行者、不碰电脑上的原会话。
    */
-  /**
-   * 从第一页顺着 cursor 翻到最后一页(裁决 R2:长会话要带的是最近的,不是开头 100 条),留最后 ≤5 页 ——
-   * 与桌面「继续读取原对话」同一个窗口(state.pages.slice(-5)),也正是 importNativeHistory 收的页数上限。整趟共用一个读历史时限。
-   */
-  async function tailPages(key:string,first:NativeHistoryPreview):Promise<NativeHistoryPreview[]> {
-    const call=historyDeadline(),reader=nativeReader(first.session.providerId)
-    let pages=[first]
-    for(let reads=1;pages.at(-1)!.nextCursor!==null;reads++){
-      if(reads>=NATIVE_TAIL_MAX_READS)throw new Error('native_history_unavailable')
-      const cursor=pages.at(-1)!.nextCursor!,next=await call(()=>reader.read(key,{limit:100,cursor}))
-      if(next.session.key!==key||next.session.cwd!==first.session.cwd)throw new Error('native_history_changed')
-      pages=[...pages,next].slice(-5)
-    }
-    return pages
-  }
   async function adoptNativeSession(key:string):Promise<{taskId:string;created:boolean}> {
     ctx.ensureAccepting()
     for(let attempt=0;;attempt++){

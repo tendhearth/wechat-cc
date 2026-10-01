@@ -20,6 +20,11 @@ export interface NativeHistoryReader {
   list(input:NativeHistoryListInput):Promise<NativeHistoryPage>
   read(key:string,input:NativeHistoryReadInput):Promise<NativeHistoryPreview>
   currentFingerprint(key:string,input?:NativeHistoryReadInput):Promise<string>
+  /**
+   * 可选:直接给出「离结尾还剩 rows 条」那一处的 read cursor(会话不足 rows 条 ⇒ null,从头读)。
+   * 能 seek 的读取器实现它,接长会话就不必一页页翻到尾(每页都要重新解析整份记录)。
+   */
+  tailCursor?(key:string,rows:number):Promise<string|null>
 }
 export const NATIVE_HISTORY_MAX_BYTES=2*1024*1024
 export const NATIVE_HISTORY_TIMEOUT_MS=15_000

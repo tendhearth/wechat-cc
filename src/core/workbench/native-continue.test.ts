@@ -1,6 +1,7 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
 import {mkdirSync,mkdtempSync,realpathSync,rmSync} from 'node:fs'
 import {join} from 'node:path'
+import {randomUUID} from 'node:crypto'
 import {tmpdir} from 'node:os'
 import {openDb,type Db} from '../../lib/db'
 import {createProviderRegistry} from '../provider-registry'
@@ -20,7 +21,7 @@ afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(dir)})
 
 const MESSAGES:NativeHistoryMessage[]=[{id:'u',role:'user',text:'original request',truncated:false},{id:'a',role:'assistant',text:'original answer',truncated:false}]
 
-function fixture(o:{provider?:NativeHistoryProvider;messages?:NativeHistoryMessage[];matters?:boolean}={}){
+function fixture(o:{provider?:NativeHistoryProvider;messages?:NativeHistoryMessage[];matters?:boolean;seek?:boolean;readClockMs?:number}={}){
   const providerId=o.provider??'claude'
   const project=join(dir,'proj');mkdirSync(project,{recursive:true})
   const store=makeWorkbenchStore(db),registry=createProviderRegistry()
@@ -33,12 +34,17 @@ function fixture(o:{provider?:NativeHistoryProvider;messages?:NativeHistoryMessa
   registry.register('claude',{spawn},{displayName:'Claude',canResume:()=>resumable,workbench:MANAGED_NATIVE_CAPABILITIES})
   const item:NativeHistoryItem={key:encodeNativeHistoryKey(providerId,'original'),providerId,nativeId:'original',title:'Original task',titleSource:'native_custom',cwd:project,updatedAt:1,remote:false,observedState:'unknown'}
   // 按 cursor 分页(cursor = `c<起点>`),与真读取器一样从最早往新翻;两条消息的默认会话只有一页。
+  let readGate:Promise<void>|null=null
   const read=vi.fn(async(_key:string,page:any)=>{
+    if(readGate)await readGate
+    if(o.readClockMs)vi.setSystemTime(Date.now()+o.readClockMs)
     reads++;if(changeOn.has(reads))version++
     const all=o.messages??MESSAGES,from=page.cursor?Number(String(page.cursor).slice(1)):0,to=from+page.limit
     return historyPreview({...item,observedState:active?'active':'unknown'},{version},all.slice(from,to),to<all.length?`c${to}`:null,page)
   })
-  const reader:NativeHistoryReader={list:async()=>({items:[item],nextCursor:null,coverage:'native_supported_history'}),read,currentFingerprint:async(key,page={limit:100})=>(await read(key,page)).sourceFingerprint}
+  // seek:像 Claude 读取器一样能直接给出离结尾 rows 条处的 cursor。
+  const tailCursor=vi.fn(async(_key:string,rows:number)=>{const start=(o.messages??MESSAGES).length-rows;return start>0?`c${start}`:null})
+  const reader:NativeHistoryReader={list:async()=>({items:[item],nextCursor:null,coverage:'native_supported_history'}),read,currentFingerprint:async(key,page={limit:100})=>(await read(key,page)).sourceFingerprint,...(o.seek?{tailCursor}:{})}
   const make=(st=store)=>makeWorkbenchService({store:st,registry,stateDir:dir,ownerChatId:()=>'owner',
     nativeHistory:providerId==='codex'?{codex:reader}:{claude:reader},
     ...(o.matters===false?{}:{matters}),
@@ -46,7 +52,8 @@ function fixture(o:{provider?:NativeHistoryProvider;messages?:NativeHistoryMessa
     executionConflict:(_path,_provider,nativeId)=>nativeId===null?folderBusy:(folderBusy||sessionBusy),
     usage:id=>quotaOut&&id==='claude'?({providerId:'claude',plan:null,windows:[],exhausted:true,fetchedAt:Date.now()} as never):null})
   service=make()
-  return {store,spawn,item,project,read,
+  return {store,spawn,item,project,read,tailCursor,
+    holdReads:()=>{let open!:()=>void;readGate=new Promise<void>(r=>{open=r});return ()=>{readGate=null;open()}},
     hold:()=>{let open!:()=>void;gate=new Promise<void>(r=>{open=r});return ()=>open()},unhold:()=>{gate=null},
     /** 模拟 daemon 重启:同一个库上起一个新服务(构造时 recover);旧服务原样留着,不 shutdown(进程是被杀的)。 */
     restart:()=>{const old=service!;service=make(makeWorkbenchStore(db));return old},
@@ -344,6 +351,8 @@ describe('Task 2 裁决补充(R2 / R7 / R10)',()=>{
     expect(f.spawn.mock.calls[1]?.[1].resumeSessionId).toBe('original')
     expect(f.store.source(taskId)?.firstDispatchedAt).not.toBeNull()
     expect(service!.detail(taskId).events.filter(e=>e.kind==='user'&&e.text==='接着改')).toHaveLength(2)
+    expect(service!.detail(taskId).events.filter(e=>e.kind==='system'&&e.text==='CC 重启后按同一请求重发了一次。')).toHaveLength(1)
+    expect(f.store.liveInputs.get(R)?.status).toBe('delivered')
     await service!.shutdown();service=undefined;const closing=old.shutdown();releaseOld();await closing
   })
   it('R10:已经派发过、daemon 才重启 ⇒ 同一 requestId 重发不再派发(那句话执行者已经收到)',async()=>{
@@ -353,5 +362,86 @@ describe('Task 2 裁决补充(R2 / R7 / R10)',()=>{
     const view=await service!.continueImported(taskId,'接着改',{inputRequestId:R})
     expect(view.id).toBe(taskId);expect(f.spawn).toHaveBeenCalledTimes(1)
     await expect(service!.continueImported(taskId,'别的话',{inputRequestId:R})).rejects.toThrow('input_conflict')
+  })
+})
+
+describe('Task 2 fix round 1',()=>{
+  const R='5a7e0000-0000-4000-8000-000000000003'
+  const many=(n:number,len=1):NativeHistoryMessage[]=>Array.from({length:n},(_,i)=>({id:`m${i}`,role:i%2?'assistant':'user',text:`${i}`.padEnd(len,'x'),truncated:false}))
+  afterEach(()=>{vi.useRealTimers()})
+  it('能 seek 的读取器 ⇒ 直接读尾部 5 页(不一页页翻),挑出来的与一页页翻的一样',async()=>{
+    const walk=fixture({messages:many(730,150)})
+    const before=walk.read.mock.calls.length
+    const a=await service!.adoptNativeSession(walk.item.key)
+    expect(walk.read.mock.calls.length-before).toBe(13) // 第一页 + 再翻 7 页 + 导入时重读窗口 5 页
+    const walked=service!.detail(a.taskId).events.map(e=>e.text)
+    await service!.shutdown();service=undefined;db.close();removeTempDir(dir)
+    dir=realpathSync(mkdtempSync(join(tmpdir(),'cc-native-continue-')));db=openDb({path:join(dir,'test.db')});matters=makeMatterStore(db)
+    const seek=fixture({messages:many(730,150),seek:true})
+    const b=await service!.adoptNativeSession(seek.item.key)
+    expect(seek.tailCursor).toHaveBeenCalledWith(seek.item.key,499)
+    const tail=['c231','c331','c431','c531','c631'] // 730 − 499 = 231;最后一页 99 条,不多一次空读
+    expect(seek.read.mock.calls.map(c=>c[1].cursor??null)).toEqual([null,...tail,...tail]) // 第一页 + 尾部 5 页 + 导入时重读
+    expect(service!.detail(b.taskId).events.map(e=>e.text)).toEqual(walked)
+    // 第一句照样能接着原会话(prepare 重读这 5 页,指纹对得上)。
+    await service!.continueImported(b.taskId,'接着改',{inputRequestId:R});await settled(b.taskId)
+    expect(seek.spawn.mock.calls[0]?.[1].resumeSessionId).toBe('original')
+  })
+  it('能 seek 但会话只有一页 ⇒ 不问 tailCursor,也不多读',async()=>{
+    const f=fixture({seek:true})
+    await service!.adoptNativeSession(f.item.key)
+    expect(f.tailCursor).not.toHaveBeenCalled();expect(f.read).toHaveBeenCalledTimes(2) // inspect + importNativeHistory 重读
+  })
+  it('不能 seek ⇒ 一页页翻,每页各有单次时限、不共用那 15 秒:每页 2.5 秒、翻 9 页(22.5 秒)照样成功',async()=>{
+    vi.useFakeTimers({toFake:['Date']})
+    const f=fixture({messages:many(1000),readClockMs:2_500})
+    const {taskId}=await service!.adoptNativeSession(f.item.key)
+    expect(service!.detail(taskId).events).toHaveLength(200)
+  })
+  it('不能 seek、翻到尾超过 60 秒总预算(每页 12 秒)⇒ native_history_unavailable,什么都不建',async()=>{
+    vi.useFakeTimers({toFake:['Date']})
+    const f=fixture({messages:many(900),readClockMs:12_000})
+    await expect(service!.adoptNativeSession(f.item.key)).rejects.toThrow('native_history_unavailable')
+    expect(service!.list().tasks).toEqual([])
+  })
+  it('去重表满了只淘汰已落定的:在途的同一 requestId 再来 ⇒ 仍等那一次,不重新开始',async()=>{
+    const f=fixture(),{taskId}=await service!.adoptNativeSession(f.item.key)
+    const id=(i:number)=>`5a7e0000-0000-4000-8000-${i.toString(16).padStart(12,'0')}`
+    const before=f.read.mock.calls.length,release=f.holdReads()
+    const calls=Array.from({length:501},(_,i)=>service!.continueImported(taskId,'接着改',{inputRequestId:id(i)}))
+    await vi.waitFor(()=>expect(f.read.mock.calls.length).toBe(before+501))
+    const retry=service!.continueImported(taskId,'接着改',{inputRequestId:id(0)})
+    await new Promise(r=>setTimeout(r,20))
+    expect(f.read.mock.calls.length).toBe(before+501)
+    release()
+    await Promise.allSettled([...calls,retry])
+    await settled(taskId)
+    expect(f.spawn).toHaveBeenCalledTimes(1)
+  })
+  it('同一进程里晚来的重发 ⇒ 给此刻的任务视图,不是第一次那份过期的',async()=>{
+    const f=fixture(),{taskId}=await service!.adoptNativeSession(f.item.key)
+    const first=await service!.continueImported(taskId,'接着改',{inputRequestId:R})
+    expect(first.status).toBe('queued')
+    await settled(taskId)
+    const late=await service!.continueImported(taskId,'接着改',{inputRequestId:R})
+    expect(late.status).toBe(service!.detail(taskId).task.status);expect(late.status).not.toBe('queued')
+    expect(f.spawn).toHaveBeenCalledTimes(1)
+  })
+  it('带附件、还没派发 daemon 就重启 ⇒ 同一 requestId 重发保留同一份附件,不报 invalid_attachment_changed',async()=>{
+    const f=fixture(),{taskId}=await service!.adoptNativeSession(f.item.key)
+    const draftId=randomUUID(),aid=randomUUID()
+    service!.uploadAttachment({id:aid,draftId,taskId,name:'brief.txt',mime:'text/plain',base64:Buffer.from('看这个').toString('base64')})
+    f.hold()
+    await service!.continueImported(taskId,'看附件',{inputRequestId:R,draftId,attachmentIds:[aid]},'owner')
+    await vi.waitFor(()=>expect(f.spawn).toHaveBeenCalledTimes(1))
+    const old=f.restart();f.unhold()
+    await service!.continueImported(taskId,'看附件',{inputRequestId:R,draftId,attachmentIds:[aid]},'owner')
+    await settled(taskId)
+    expect(f.spawn).toHaveBeenCalledTimes(2);expect(service!.detail(taskId).task.status).toBe('completed')
+    expect(f.store.liveInputs.get(R)?.attachments?.map(a=>a.id)).toEqual([aid])
+    const users=service!.detail(taskId).events.filter(e=>e.kind==='user'&&e.text==='看附件')
+    expect(users).toHaveLength(2);expect(users[1]?.attachments?.map(a=>a.id)).toEqual([aid])
+    await expect(service!.continueImported(taskId,'看附件',{inputRequestId:R,draftId,attachmentIds:[]},'owner')).rejects.toThrow('input_conflict')
+    await service!.shutdown();service=undefined;void old.shutdown()
   })
 })

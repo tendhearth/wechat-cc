@@ -31,6 +31,23 @@ describe('「一件事」· 接过来的电脑会话',()=>{
     expect(r).toEqual({kind:'task',task:{...TASK,status:'queued'},input:{id:REQ,taskId:ID,runId:RUN,text:'接着改',status:'sending'}})
     expect(store.get(ID)?.status).toBe('open')
   })
+  it('第一句之后:第二句(新 requestId)走 continueTask;continueImported 只调一次',async()=>{
+    const {workbench,continueImported,service}=imported()
+    const REQ2='5a7e0000-0000-4000-8000-000000000002'
+    workbench.continueTask=vi.fn(()=>({...TASK,status:'queued'}) as never)
+    await service.say(ID,'接着改','phone',{requestId:REQ})
+    await service.say(ID,'再改一处','phone',{requestId:REQ2})
+    expect(continueImported).toHaveBeenCalledTimes(1)
+    expect(workbench.continueTask).toHaveBeenCalledTimes(1)
+    expect(workbench.continueTask).toHaveBeenCalledWith(ID,'再改一处',expect.objectContaining({inputRequestId:REQ2}),'owner')
+  })
+  it('手机第一句不带 requestId ⇒ 照样 continueImported(选项为空),回包没有 input',async()=>{
+    const {workbench,continueImported,service}=imported()
+    const r=await service.say(ID,'接着改','phone')
+    expect(continueImported).toHaveBeenCalledWith(ID,'接着改',{},'owner')
+    expect(workbench.continueTask).not.toHaveBeenCalled()
+    expect(r).toEqual({kind:'task',task:{...TASK,status:'queued'}})
+  })
   it('桌面 / 没有 surface ⇒ 照旧 continueTask(409 external_close_confirmation_required 不被绕过)',async()=>{
     const {continueImported,service}=imported()
     await expect(service.say(ID,'接着改','desktop')).rejects.toThrow('external_close_confirmation_required')
