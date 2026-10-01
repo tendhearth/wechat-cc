@@ -114,6 +114,8 @@ export interface MobileSessionContinueActions {
 export const PHONE_CONTINUE_BUDGET_MS=10_000
 export const PHONE_CONTINUE_MAX_INFLIGHT=4
 const previewInflight=new WeakMap<object,Map<string,Promise<NativeContinuePreview>>>()
+// 已超出预算、但底层扫描还没落定的键:仍留在 previewInflight 里供同键合并(不另起扫描),只是不再占名额。
+const previewExpired=new WeakMap<object,Set<string>>()
 const sessionKey=(v:unknown):string|null=>typeof v==='string'&&v.length>0&&v.length<=2048?v:null
 /** 预览是读:未知失败一律 503 unavailable(不是 500 → 客户端的 unknown)。 */
 function previewError(error:unknown):Response {
@@ -131,7 +133,7 @@ function adoptError(error:unknown):Response {
 }
 /**
  * GET ?key= 只看能不能接(不缓存:「正在跑」不能晚知道;10 秒预算数值同 /m/api/session,但在途池是这条路由自己的、不共用,R9);
- * 同键在途合并成一次扫描,超时即放名额(迟到结果丢弃)。POST 接管不设预算:它幂等,中途切断反而丢结果。
+ * 同键在途合并成一次扫描(超时后、扫描落定前也合并,挂住的扫描不会越堆越多),超时即放名额(迟到结果丢弃)。POST 接管不设预算:它幂等,中途切断反而丢结果。
  * POST {key} 幂等地接成一件事,成功后登记手机露面。回包不含文件夹路径与原生 id(D13)。
  * 路径字面量必须写成 `url.pathname === '…'`:scripts/phone-routes.guard.test.ts 只抓这个形状。
  */
@@ -145,20 +147,22 @@ export async function mobileSessionContinueRoute(actions:MobileSessionContinueAc
     if(!key)return json({ok:false,error:'invalid'},400)
     let flights=previewInflight.get(actions)
     if(!flights){flights=new Map();previewInflight.set(actions,flights)}
-    // 同键在途 ⇒ 加入同一次扫描,不占新名额;名额 = 在途键数。
+    let expired=previewExpired.get(actions)
+    if(!expired){expired=new Set();previewExpired.set(actions,expired)}
+    // 同键在途(含已超时还挂着的)⇒ 加入同一次扫描,不另起;名额 = 还在预算内的在途键数。
     let work=flights.get(key)
     if(!work){
-      if(flights.size>=(opts.maxInflight??PHONE_CONTINUE_MAX_INFLIGHT))return json({ok:false,error:'unavailable'},503)
+      if(flights.size-expired.size>=(opts.maxInflight??PHONE_CONTINUE_MAX_INFLIGHT))return json({ok:false,error:'unavailable'},503)
       const mine:Promise<NativeContinuePreview>=Promise.resolve().then(()=>actions.preview(key))
       work=mine;flights.set(key,mine)
-      const drop=()=>{if(flights!.get(key)===mine)flights!.delete(key)}
+      const drop=()=>{if(flights!.get(key)===mine){flights!.delete(key);expired!.delete(key)}}
       mine.then(drop,drop)
     }
-    const shared=work,fl=flights
+    const shared=work,ex=expired
     let timer:ReturnType<typeof setTimeout>|undefined
     try{
-      // 超时:预览只读,放掉名额,迟到的结果丢弃(不缓存、不送达)。
-      const p=await Promise.race([shared,new Promise<never>((_,rej)=>{timer=setTimeout(()=>{if(fl.get(key)===shared)fl.delete(key);rej(new Error('budget_exceeded'))},opts.budgetMs??PHONE_CONTINUE_BUDGET_MS)})])
+      // 超时:预览只读,放掉名额(记为已超时,扫描落定前同键重试仍并进来),迟到的结果丢弃(不缓存、不送达)。
+      const p=await Promise.race([shared,new Promise<never>((_,rej)=>{timer=setTimeout(()=>{ex.add(key);rej(new Error('budget_exceeded'))},opts.budgetMs??PHONE_CONTINUE_BUDGET_MS)})])
       return json({ok:true,state:p.state,provider:p.providerId,project:p.project,mode:p.mode,matterId:p.taskId})
     }catch(error){return previewError(error)}
     finally{if(timer)clearTimeout(timer)}

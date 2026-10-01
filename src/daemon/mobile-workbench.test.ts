@@ -90,6 +90,24 @@ describe('手机「接着做」路由(/m/api/session/continue)',()=>{
     await new Promise(r=>setTimeout(r,0))
     const again=await get('late');expect(again!.status).toBe(503);expect(calls.filter(k=>k==='late')).toHaveLength(2)
   })
+  it('超时后同键重试:并进还挂着的那次扫描,不另起(挂住的扫描不会越堆越多)',async()=>{
+    const calls:string[]=[],hang:Array<(v:unknown)=>void>=[]
+    const a=actions({preview:((key:string)=>{calls.push(key);return new Promise(r=>hang.push(r))}) as never})
+    const get=()=>mobileSessionContinueRoute(a,url('?key=stuck'),new Request(url('?key=stuck')),undefined,{budgetMs:5,maxInflight:4})
+    for(let i=0;i<3;i++)expect((await get())!.status).toBe(503)
+    expect(calls).toHaveLength(1)
+    hang[0]!(ready);await new Promise(r=>setTimeout(r,0))
+    expect((await get())!.status).toBe(503);expect(calls).toHaveLength(2)
+  })
+  it('名额满:不同键都还在预算内 ⇒ 新键 503,不起扫描',async()=>{
+    const calls:string[]=[],hang:Array<(v:unknown)=>void>=[]
+    const a=actions({preview:((key:string)=>{calls.push(key);return new Promise(r=>hang.push(r))}) as never})
+    const first=mobileSessionContinueRoute(a,url('?key=k1'),new Request(url('?key=k1')),undefined,{budgetMs:1000,maxInflight:1})
+    await new Promise(r=>setTimeout(r,0))
+    const second=await mobileSessionContinueRoute(a,url('?key=k2'),new Request(url('?key=k2')),undefined,{budgetMs:1000,maxInflight:1})
+    expect(second!.status).toBe(503);expect(calls).toEqual(['k1'])
+    hang[0]!(ready);expect((await first)!.status).toBe(200)
+  })
   it('POST:只认 {key};坏 JSON / 多余键 ⇒ 400;成功 ⇒ matterId + created,并登记手机露面',async()=>{
     const seen=vi.fn()
     expect((await mobileSessionContinueRoute(actions(),url(),post({key:KEY,x:1}),seen))!.status).toBe(400)
