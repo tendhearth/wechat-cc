@@ -58,3 +58,21 @@ describe('makeSeenOnce —— 本次运行里同一个键只算一次,有上限'
     expect(s.first('a')).toBe(true)
   })
 })
+
+describe('rewriteSystemPath —— 配对链接(plan 7a)', () => {
+  const FRAG = `#id=r${'a'.repeat(26)}&t=t${'0'.repeat(32)}&p=%2Fset`
+  it('通用链接 ⇒ 暂存原链接,去配对页(路由参数里没有令牌);每次序号不同', () => {
+    const got: string[] = []
+    const a = rewriteSystemPath(`https://relay.tendhearth.com/pset/${FRAG}`, false, r => got.push(r))
+    const b = rewriteSystemPath(`https://relay.tendhearth.com/pset/${FRAG}`, false, r => got.push(r))
+    expect(a).toMatch(/^\/pair\?from=link&n=\d+$/)
+    expect(b).not.toBe(a)
+    expect(a).not.toContain('t0000')
+    expect(got).toEqual([`https://relay.tendhearth.com/pset/${FRAG}`, `https://relay.tendhearth.com/pset/${FRAG}`])
+  })
+  it('发布构建不认 staging / 自定义 scheme 的配对链接(原样放行给路由)', () => {
+    const got: string[] = []
+    expect(rewriteSystemPath(`tendhearth://relay.tendhearth.com/pset/${FRAG}`, false, r => got.push(r))).not.toMatch(/^\/pair/)
+    expect(got).toEqual([])
+  })
+})

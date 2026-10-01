@@ -60,4 +60,11 @@ describe('文案表', () => {
     expect(en['settings.copyright']).toBe('© Nate Gu & Co LLC')
     expect(zh['settings.copyright']).toBe('© Nate Gu & Co LLC')
   })
+  it('桌面入口统一叫「连接手机」(plan 7a):旧叫法一个不留', () => {
+    for (const [k, v] of Object.entries(zh)) expect(v, k).not.toMatch(/手机上用|配对手机|出门也能用/)
+    for (const [k, v] of Object.entries(en)) expect(v, k).not.toMatch(/Use on phone|Pair phone|Use when away/)
+    expect(zh['pair.step2']).toBe('选择「连接手机」')
+    expect(en['pair.step2']).toBe('Choose “Connect phone”')
+    expect(zh['pair.errExpired']).toContain('只能用一次')
+  })
 })

@@ -1,0 +1,21 @@
+# 系统链接进配对页(plan 7a,开发构建;D7 的自定义 scheme 走与通用链接同一条 JS 链路):
+# 打开配对链接 ⇒ 确认卡出现、显示中继主机;没有自动配对(「连接」按钮还在,没进「正在连接」)。
+# 再开一个锚点丢了的链接 ⇒ 「没带全」提示。真机的 https 通用链接见计划 Task 12。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- openLink: "tendhearth://relay.tendhearth.com/pset/#id=raaaaaaaaaaaaaaaaaaaaaaaaaa&t=t00000000000000000000000000000000&p=%2Fset"
+- runFlow: subflows/_open-link-guard.yaml
+- extendedWaitUntil:
+    visible:
+      id: pair-confirm
+    timeout: 10000
+- assertVisible: ".*relay\\.tendhearth\\.com.*"
+- assertVisible:
+    id: pair-connect
+- assertNotVisible: ".*正在连接.*|.*Connecting….*"
+- openLink: "tendhearth://relay.tendhearth.com/pset/"
+- runFlow: subflows/_open-link-guard.yaml
+- extendedWaitUntil:
+    visible: ".*没带全.*|.*arrived incomplete.*"
+    timeout: 10000
