@@ -219,6 +219,7 @@ import { phoneLinkState, psetUrl, type PhoneLinkResult } from './phone-link'
 export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   const now = deps.now ?? (() => Date.now())
   let server: Server | null = null
+  let v2RestartRequested = false
 
   // 令牌都在内部 API 的 token-registry 里(梳理第 6 步):链接令牌 origin 'link'、
   // 10 分钟;长期设备令牌(随身 CC 配对)origin 'device'、永不过期但可按台撤销。
@@ -584,10 +585,19 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         deps.remote.requestRestart()
         return { ok: false, state: 'starting' }
       }
+      if (state === 'relay_unavailable' && opts.enableRemote && deps.remote && !v2RestartRequested) {
+        // 开机时隧道已开、relay_v2_url 是之后才配的:运行中的还是老 id,隧道不会自己换。重启一次让它按现在的配置连 v2。
+        // 只在运行中的中继与配置不符时触发;同进程只重启一次,免得点一下重启一下。
+        v2RestartRequested = true
+        deps.audit?.('relay_v2_url 已配置但运行中的隧道仍是老中继 — 桌面「连接手机」触发重启')
+        deps.remote.requestRestart()
+        return { ok: false, state: 'starting' }
+      }
       if (state !== 'ready' || !remote) return { ok: false, state: state === 'ready' ? 'starting' : state }
-      const token = panel.issueToken()
+      // 先把服务器与局域网地址弄好再铸码:start 抛错时不能留下一枚活的 10 分钟 admin 链接令牌(也不该先作废微信那条 /set 链接)。
       const ip = lanIp()
       const lan = ip ? `${ip}:${(await panel.start()).port}` : null
+      const token = panel.issueToken()
       return { ok: true, state: 'ready', url: psetUrl(remote, token, lan), expires_at: now() + SETTINGS_LINK_TTL_MS }
     },
 

@@ -84,8 +84,27 @@ describe('settingsPanel.phoneLink(spec §4.1)', () => {
   })
   it('配置已开、这次启动还没隧道 ⇒ starting;隧道是老中继 id ⇒ relay_unavailable', async () => {
     expect(await mk({ tunnel: true }).panel.phoneLink({ enableRemote: true })).toEqual({ ok: false, state: 'starting' })
-    expect(await mk({ tunnel: true, remote: { relay: 'wss://cc.tendhearth.com/tunnel/phone', id: 't' + '0'.repeat(36) } }).panel.phoneLink({ enableRemote: true }))
+    expect(await mk({ tunnel: true, remote: { relay: 'wss://cc.tendhearth.com/tunnel/phone', id: 't' + '0'.repeat(36) } }).panel.phoneLink({ enableRemote: false }))
       .toEqual({ ok: false, state: 'relay_unavailable' })
+  })
+  it('M3:开机时隧道已开、之后才配 relay_v2_url(运行中是老 id)+ enableRemote ⇒ 重启一次、回 starting;同进程再点不再重启', async () => {
+    const { panel, calls } = mk({ tunnel: true, remote: { relay: 'wss://cc.tendhearth.com/tunnel/phone', id: 't' + '0'.repeat(36) } })
+    expect(await panel.phoneLink({ enableRemote: true })).toEqual({ ok: false, state: 'starting' })
+    expect(calls.restarts).toBe(1)
+    expect(calls.enabled).toEqual([])
+    expect(await panel.phoneLink({ enableRemote: true })).toEqual({ ok: false, state: 'relay_unavailable' })
+    expect(calls.restarts).toBe(1)
+  })
+  it('M3:运行中已是 v2 id ⇒ 不重启', async () => {
+    const { panel, calls } = mk({ tunnel: true, remote: V2 })
+    await panel.phoneLink({ enableRemote: true })
+    expect(calls.restarts).toBe(0)
+  })
+  it('M1:面板起不来 ⇒ 抛错,且没有留下活的链接令牌', async () => {
+    const { panel } = mk({ tunnel: true, remote: V2 })
+    panel.start = async () => { throw new Error('bind failed') }
+    await expect(panel.phoneLink({ enableRemote: true })).rejects.toThrow('bind failed')
+    expect(panel.activeLinkToken()).toBeNull()
   })
   it('没主人 ⇒ no_owner', async () => {
     expect(await mk({ owner: null, tunnel: true, remote: V2 }).panel.phoneLink({ enableRemote: true })).toEqual({ ok: false, state: 'no_owner' })

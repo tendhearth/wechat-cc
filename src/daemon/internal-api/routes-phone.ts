@@ -11,12 +11,12 @@ export function phoneRoutes(deps: InternalApiDeps): RouteTable {
       const b = (body ?? {}) as { enable_remote?: unknown }
       if (b.enable_remote !== undefined && typeof b.enable_remote !== 'boolean') return { status: 400, body: { error: 'invalid_request' } }
       try { return { status: 200, body: await deps.phoneConnect.link({ enableRemote: b.enable_remote === true }) } }
-      catch { return { status: 503, body: { error: 'unavailable' } } }
+      catch (e) { deps.log?.('INTERNAL_API', `phone_link_failed: ${e instanceof Error ? e.message : 'error'}`); return { status: 503, body: { error: 'unavailable' } } }
     },
     'GET /v1/phone/devices': async () => {
       if (!deps.phoneConnect) return { status: 503, body: { error: 'phone_not_wired' } }
       try { return { status: 200, body: { ok: true, devices: deps.phoneConnect.devices() } } }
-      catch { return { status: 503, body: { error: 'unavailable' } } }
+      catch (e) { deps.log?.('INTERNAL_API', `phone_devices_failed: ${e instanceof Error ? e.message : 'error'}`); return { status: 503, body: { error: 'unavailable' } } }
     },
   }
 }
