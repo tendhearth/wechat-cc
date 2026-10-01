@@ -19,6 +19,7 @@ import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
 import { isOwnerChatMatter } from '../../view/chat'
 import { conversationView } from '../../view/conversation'
+import { nativeStartLines } from '../../view/continue'
 import { progressView } from '../../view/progress'
 
 // 进展页:状态标签在「CC 的进展」概括之上;概括没到时用骨架占位;下面是这件事的真对话。
@@ -81,6 +82,12 @@ export default function Matter() {
         <Txt role="small" tone="inkSoft">{t(lang, 'progress.breadcrumb')}</Txt>
         <Txt role="title" content="user" accessibilityRole="header">{v.title}</Txt>
         <View testID="progress-status"><StatusPill status={v.status} /></View>
+        {d.nativeStart ? (
+          // 接过来、还没发第一句的电脑会话(spec D12):第一句会怎样 + 先让原来那个停下;发过第一句就没有了
+          <View testID="progress-native-start" style={{ gap: space.xs }}>
+            {nativeStartLines(d.nativeStart, lang).map((line, i) => <Txt key={i} role="meta" tone="inkSoft">{line}</Txt>)}
+          </View>
+        ) : null}
 
         <Card style={{ gap: space.m }}>
           <Txt role="caption" tone="inkSoft" accessibilityRole="header">{t(lang, 'progress.ccProgress')}</Txt>

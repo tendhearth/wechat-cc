@@ -33,7 +33,7 @@
 - **D8 能不能接是一条单独、不缓存的 GET**。`GET /m/api/session` 有 15 秒单飞缓存(裁定 8),「正在跑」不能晚 15 秒才知道;所以新开 `GET /m/api/session/continue?key=`,读页打开时、重连后(连接 epoch 前进)、点开确认卡时各问一次。`POST` 里 daemon 再判一遍(状态在两次之间变了 ⇒ 对应错误码,卡里换成那句话)。
 - **D9 「打开这件事」也走 `POST`**。它幂等:已接过 ⇒ 不再导入,只补 matter 行(桌面导入过但没有 matter 行的那种)、登记手机露面,回同一个 matterId。
 - **D10 额度**:预览时执行者额度已耗尽(`quotaExhausted`)⇒ 不给按钮,一行灰字。文案用桌面现成那句(`workbench-execution.js` 的 `provider_quota_exhausted`),去掉「交给另一位执行者继续」那半句(手机这一版没有换执行者)。说一句页碰到 `provider_quota_exhausted` 也说这句。
-- **D11 手机错误码细分**:`BackendCode` 加 `session_busy`(`native_session_busy`)、`folder_busy`(`native_folder_busy`)、`provider_missing`(`unavailable_provider`)、`folder_missing`(`invalid_path`)、`quota`(`provider_quota_exhausted`)。这是全局映射:交办新事项碰到同样的码也会说同样的话(更准,不是更坏)。
+- **D11 手机错误码细分**:`BackendCode` 加 `session_busy`(`native_session_busy`)、`folder_busy`(`native_folder_busy`)、`provider_missing`(`unavailable_provider`)、`folder_missing`(`invalid_path`)、`quota`(`provider_quota_exhausted`)。这是全局映射:交办新事项碰到同样的码也会说同样的话(更准,不是更坏)。另加三个(控制者裁决 R5):`session_changed`(`native_history_changed`,可重问预览再接)、`session_empty`(`native_history_empty`)、`session_managed`(`native_session_already_managed`,不是错:重问预览、打开那件事)。三个都不说「没送到电脑上」。
 - **D12 接过来、还没发第一句的那件事,页面上说清楚第一句会怎样**:`MatterDetail` 加可选 `nativeStart: { mode, providerId }`(仅在 `requiresExternalClose` 时出现),进展页与说一句页顶上显示「你发的第一句会接着电脑上原来的 {provider} 会话。」或「…会新开一轮，带上之前的对话记录。」,再加「先让电脑上原来那个 {provider} 停下…」。发过第一句后字段消失。
 - **D13 项目只给目录名**:预览里的 `project` 与会话列表一样是 `basename(cwd)`,手机永远拿不到完整路径与 nativeId。
 - **D14 权限档不变**:设备令牌与链接令牌共用 `PHONE_ROUTES`(`LINK_ROUTES = PHONE_ROUTES`,admin 档),新两条随之而来;不是 `LAN_ONLY_OPS`,在外面也能用。微信 `/set` 链接 10 分钟内同样能接着做 —— 与「交办新事项」同权,没有放宽。
@@ -103,6 +103,7 @@
 - 后端接口 `Backend` 加 `continuePreview(key)`、`continueSession(key)`;`live.ts` 走两条路由(POST `retry: true`,幂等);`demo.ts`:`demo-claude-1` ⇒ `busy_session`,`demo-claude-2` ⇒ `ready` / `native_resume`,`demo-codex-1` ⇒ `ready` / `fresh_context`;接过 ⇒ `managed`;接成的事带 `nativeStart`,第一句后去掉。
 - `net/errors.ts`:D11 的五个码(在 `invalid_` 前缀规则之前判)。
 - 纯视图 `view/continue.ts`:`continueBlock`(读页底部那一块)、`continueSheetLines`(确认卡几行)、`continueErrorText`(卡里的失败句)、`nativeStartLines`(进展页 / 说一句页的第一句说明)、`providerName`。`view/compose.ts`:`composeOutcome` 认五个新码,`composeOutcomeText` 统一出一句话。
+- 确认卡的「先让原来那个停下」与主按钮按执行者分(D3,控制者裁决):Claude Code(CC 看不见普通终端里的它)⇒ `stopFirst` + 主按钮 `confirm`「已经停了，接着做」;Codex(CC 读得到它在不在跑,在跑的预览就是 `busy_session`)⇒ `notSeenRunning` + 主按钮 `action`「接着做」。进展页 / 说一句页的第一句说明同一条规则。
 - 读页 `sessions/[key].tsx`:去掉「只读」一行;底部固定一块(像进展页的说一句):
   - 还在问 ⇒ 什么都不画(不先画一个可能用不了的按钮)。
   - `ready` ⇒ 唯一的强调按钮「接着做」(`session-continue`);离线 / 连接中 ⇒ 按钮锁住(`ConnectionNotice` 说为什么)。
@@ -127,7 +128,11 @@
 | `quota` | `quota` | `quota` ⇒ 同一句 |
 | `empty` | `empty` | — |
 | 提交「不确定」 | — | `uncertain`(再点不会重复:POST 幂等) |
-| 其它失败 | — | `compose.failed` |
+| 提交时会话刚变(`native_history_changed` ⇒ 手机 `session_changed`) | — | `changed`;重问预览,还能接就照旧给确认按钮 |
+| 提交时没内容(`native_history_empty` ⇒ `session_empty`) | — | `emptyNow`;重问预览 |
+| 提交时别处刚接过(`native_session_already_managed` ⇒ `session_managed`) | — | 不是错:重问预览,`managed` ⇒ 走「打开这件事」 |
+| 没送到(离线 / 那一块没接上) | — | `compose.failed` |
+| 其它失败(电脑答了、但没接上) | — | `failed`(中性,不说「没送到」,裁决 R5) |
 
 ## 5. 文案
 
@@ -144,6 +149,7 @@
 | `continue.modeFresh` | 原来的会话没法直接接上，会新开一轮，把之前的对话记录一起带上。 | The original session can’t be resumed, so it starts a new round and brings the earlier conversation along. |
 | `continue.quotaNote` | 会用掉 {provider} 的额度。 | This uses your {provider} quota. |
 | `continue.stopFirst` | 先让电脑上原来那个 {provider} 停下。CC 没法替你确认它停了。 | First stop the original {provider} on your computer. CC can’t check that for you. |
+| `continue.notSeenRunning` | CC 没看到原来那个 {provider} 在跑；要是你在别处开着它，先让它停下。 | CC didn’t see the original {provider} running. If you have it open somewhere, stop it first. |
 | `continue.confirm` | 已经停了，接着做 | It’s stopped — continue |
 | `continue.busySession` | 这个会话正在电脑上跑，停下后才能接着做 | This session is running on your computer. You can continue once it stops |
 | `continue.busyFolder` | CC 正在这个文件夹里做别的事，做完后才能接着做 | CC is busy with something else in this folder. You can continue once it’s done |
@@ -154,6 +160,9 @@
 | `continue.empty` | 这个会话里没有能带过来的内容 | There’s nothing in this session to bring along |
 | `continue.unknown` | 现在确认不了能不能接着做 | Can’t check right now whether this can continue |
 | `continue.uncertain` | 不确定电脑收到没有。再点一次不会重复。 | Not sure your computer got it. Tapping again won’t do it twice. |
+| `continue.changed` | 这个会话刚有新动静，再看一眼再接。 | This session just changed — take another look, then continue. |
+| `continue.emptyNow` | 这个会话里没有能接着做的内容。 | There’s nothing in this session to continue. |
+| `continue.failed` | 这次没能接上，请再试一次。 | Couldn’t continue it this time. Please try again. |
 | `continue.firstResume` | 你发的第一句会接着电脑上原来的 {provider} 会话。 | Your first message continues the original {provider} session on your computer. |
 | `continue.firstFresh` | 你发的第一句会新开一轮，带上之前的对话记录。 | Your first message starts a new round with the earlier conversation attached. |
 | (删除)`sessions.readOnly` | ~~只读；要接着做，请在电脑上打开~~ | ~~Read only. To keep going, open it on your computer.~~ |

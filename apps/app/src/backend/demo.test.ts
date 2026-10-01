@@ -274,5 +274,31 @@ describe('演示后端', () => {
       expect(await b.continuePreview('demo-claude-2')).toMatchObject({ state: 'ready', matterId: null })
     } finally { vi.useRealTimers() }
   })
+  it('接着做(演示):Codex 那条接成「带记录新开」;不认识的 key ⇒ not_found;不是 ready ⇒ 对应的码、什么都不建', async () => {
+    const b = makeDemoBackend({ lang: 'en' })
+    const before = (await b.matters('en')).length
+    await expect(b.continueSession('nope')).rejects.toMatchObject({ code: 'not_found' })
+    await expect(b.continueSession('demo-claude-1')).rejects.toMatchObject({ code: 'session_busy' })
+    expect((await b.matters('en')).length).toBe(before)
+    const { matterId } = await b.continueSession('demo-codex-1')
+    expect((await b.matter(matterId, 'en')).nativeStart).toEqual({ mode: 'fresh_context', providerId: 'codex' })
+  })
+  it('接着做(演示):第一句后在跑,CC 回话后停下(不会一直「在跑」);标题与带过来的记录随语言变', async () => {
+    vi.useFakeTimers()
+    try {
+      const b = makeDemoBackend({ lang: 'zh-Hans' })
+      const { matterId } = await b.continueSession('demo-claude-2')
+      const en = await b.matter(matterId, 'en')
+      const zh = await b.matter(matterId, 'zh-Hans')
+      expect(en.matter.title).not.toBe(zh.matter.title)
+      expect(en.events[0]!.text).not.toBe(zh.events[0]!.text)
+      await b.say(matterId, 'keep going', 'r-first')
+      expect((await b.matter(matterId, 'en')).task?.status).toBe('running')
+      await vi.advanceTimersByTimeAsync(2000)
+      const after = await b.matter(matterId, 'en')
+      expect(after.task?.status).not.toBe('running')
+      expect(after.task?.phase).not.toBe('working')
+    } finally { vi.useRealTimers() }
+  })
 
 })

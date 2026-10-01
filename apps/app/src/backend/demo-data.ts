@@ -156,11 +156,17 @@ export function demoSessions(lang: Lang, now: number, provider?: 'claude' | 'cod
     .map(x => ({ key: x.key, provider: x.provider, title: t(lang, x.title), project: x.project, updatedAt: now - x.ago, active: x.active }))
 }
 
+/** 演示会话标题的文案键(接成一件事后,标题跟着语言变)。 */
+export const demoSessionTitleKey = (key: string): keyof typeof copy | undefined => SESSIONS.find(x => x.key === key)?.title
+
+/** 每个演示会话一页三句(user / assistant / user)的文案键;接成一件事后带过来的记录也用它,跟着语言变。 */
+export const DEMO_SESSION_MESSAGES: ReadonlyArray<{ id: string; role: 'user' | 'assistant'; key: keyof typeof copy }> = [
+  { id: 'm1', role: 'user', key: 'sessQ1' },
+  { id: 'm2', role: 'assistant', key: 'sessA1' },
+  { id: 'm3', role: 'user', key: 'sessQ2' },
+]
+
 /** 每个演示会话一页三句(user / assistant / user)。 */
 export function demoSessionMessages(lang: Lang): NativeSessionPageT['messages'] {
-  return [
-    { id: 'm1', role: 'user', text: t(lang, 'sessQ1'), truncated: false },
-    { id: 'm2', role: 'assistant', text: t(lang, 'sessA1'), truncated: false },
-    { id: 'm3', role: 'user', text: t(lang, 'sessQ2'), truncated: false },
-  ]
+  return DEMO_SESSION_MESSAGES.map(m => ({ id: m.id, role: m.role, text: t(lang, m.key), truncated: false }))
 }

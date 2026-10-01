@@ -3,7 +3,7 @@ import { labelJoin, type Lang } from '../i18n'
 import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT } from './types'
 import {
   copy, IDS, CHAT_ID, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
-  demoConnections, demoSessions, demoSessionMessages, type Stage,
+  demoConnections, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
 } from './demo-data'
 
 type Topic = 'home' | 'approvals' | 'agents' | `matter/${string}`
@@ -248,9 +248,9 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       adopted.set(key, matterId)
       const ts = now(), path = `~/Projects/${row.project ?? 'demo'}`
       const e: Entry = {
-        stage: 'replied', version: 1, seeded: false,
-        // 导入的原记录:与 daemon 一致,user ⇒ user、assistant ⇒ text
-        evs: demoSessionMessages(lastLang).map((m, i) => ({ kind: m.role === 'user' ? 'user' : 'text', text: m.text, createdAt: ts - 1000 + i })),
+        stage: 'replied', version: 1, seeded: false, titleKey: demoSessionTitleKey(key),
+        // 导入的原记录:与 daemon 一致,user ⇒ user、assistant ⇒ text;存文案键,读时按语言出
+        evs: DEMO_SESSION_MESSAGES.map((m, i) => ({ kind: m.role === 'user' ? 'user' : 'text', key: m.key, createdAt: ts - 1000 + i })),
         detail: mkDetail(mkMatter(matterId, 'task', row.title, 'open', path, ts),
           { id: matterId, title: row.title, status: 'interrupted', providerId: row.provider, path, error: null, updatedAt: ts },
           { nativeStart: { mode: c.mode, providerId: row.provider } }),
@@ -293,11 +293,12 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       if (saidBy.has(requestId)) return
       saidBy.add(requestId)
       evText(e, 'user', text)
-      // 接过来的那件事:第一句一发,「第一句会怎样」的说明就该消失(与 daemon 一致)
-      if (e.detail.nativeStart) { const { nativeStart: _sent, ...rest } = e.detail; e.detail = rest; touch(e, { phase: 'working' }) }
+      // 接过来的那件事:第一句一发,「第一句会怎样」的说明就该消失,执行者开始跑(与 daemon 一致);回话后这一轮结束
+      const started = !!e.detail.nativeStart
+      if (started) { const { nativeStart: _sent, ...rest } = e.detail; e.detail = rest; touch(e, { phase: 'working' }) }
       else touch(e, {})
       publish([id])
-      later(2000, () => { ev(e, 'text', 'ccReply'); touch(e, {}); publish([id]) })
+      later(2000, () => { ev(e, 'text', 'ccReply'); touch(e, started ? { phase: 'replied' } : {}); publish([id]) })
     },
     async entryOptions(l) { noteLang(l); return entryOptions(l) },
     async create({ requestId, text, projectId }) {

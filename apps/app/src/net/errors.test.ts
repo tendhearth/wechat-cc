@@ -34,9 +34,9 @@ describe('mapPhoneError(HTTP 状态 + 正文 → BackendCode)', () => {
     [503, { ok: false, error: 'unavailable_provider' }, 'provider_missing'],
     [400, { ok: false, error: 'invalid_path' }, 'folder_missing'],
     [503, { ok: false, error: 'provider_quota_exhausted' }, 'quota'],
-    [409, { ok: false, error: 'native_history_changed' }, 'unknown'],
-    [409, { ok: false, error: 'native_history_empty' }, 'unknown'],
-    [409, { ok: false, error: 'native_session_already_managed' }, 'unknown'],
+    [409, { ok: false, error: 'native_history_changed' }, 'session_changed'],
+    [409, { ok: false, error: 'native_history_empty' }, 'session_empty'],
+    [409, { ok: false, error: 'native_session_already_managed' }, 'session_managed'],
     [400, { ok: false, error: 'invalid_text' }, 'invalid'],
   ] as const)('接着做电脑会话的码(spec D11):%s %j ⇒ %s', (status, body, want) => {
     expect(mapPhoneError(status, body)).toBe(want)
