@@ -39,13 +39,18 @@ export function makePhoneChat(d: {
   const jobs = new Map<string, ChatJob>()
   let pending: ChatJob | null = null
   let failed: ChatJob | null = null
+  /** 结束时刻(只内部用,不进回包):过期按它算,不按收下时刻。 */
+  const settledAt = new WeakMap<ChatJob, number>()
+  const ageFrom = (j: ChatJob) => settledAt.get(j) ?? j.since
   const sweep = () => {
     const cutoff = now() - PHONE_CHAT_JOB_TTL_MS
-    for (const [k, j] of jobs) if (j.status !== 'pending' && (j.since < cutoff || jobs.size > MAX_JOBS)) jobs.delete(k)
+    for (const [k, j] of jobs) if (j.status !== 'pending' && (ageFrom(j) < cutoff || jobs.size > MAX_JOBS)) jobs.delete(k)
   }
-  const settle = (job: ChatJob) => {
-    if (pending === job) pending = null
+  const wake = (job: ChatJob) => {
     try { d.onSettled?.(job.matterId) } catch { /* 唤醒失败不影响结果 */ }
+  }
+  const log = (line: string) => {
+    try { d.log?.('PHONE_CHAT', line) } catch { /* 日志坏了不影响结果 */ }
   }
   const run = (job: ChatJob) => {
     pending = job; failed = null
@@ -55,17 +60,29 @@ export function makePhoneChat(d: {
       if (done) return
       done = true
       if (timer) clearTimeout(timer)
-      if (e === null) { job.status = 'replied'; settle(job); return }
-      job.status = 'failed'; job.error = errorOf(e); failed = job
-      d.log?.('PHONE_CHAT', `say ${job.requestId.slice(0, 8)} failed: ${job.error}`)
-      settle(job)
+      settledAt.set(job, now())
+      if (e === null) job.status = 'replied'
+      else { job.status = 'failed'; job.error = errorOf(e); failed = job }
+      // 先放开 pending 再做任何可能抛的事:主人对话不能被卡成永远 busy。
+      if (pending === job) pending = null
+      wake(job)
+      if (e !== null) log(`say ${job.requestId.slice(0, 8)} failed: ${job.error}`)
     }
     timer = setTimeout(() => finish(new Error('phone_chat_timeout')), PHONE_CHAT_TIMEOUT_MS)
     ;(timer as { unref?: () => void }).unref?.()
     // Promise.resolve().then:converse 同步抛错也落成 failed,不会让 pending 卡死。
-    Promise.resolve().then(() => d.converse(job.text)).then(() => finish(null), e => finish(e))
+    Promise.resolve().then(() => d.converse(job.text)).then(
+      () => {
+        if (!done) return finish(null)
+        // 超时后才回来的回复:状态仍是 failed(不翻案),但回复已落进对话,再唤醒一次手机去拉,
+        // 免得主人以为没回、点重试起第二轮。promise 只会 resolve 一次,所以至多多发这一次。
+        log(`say ${job.requestId.slice(0, 8)} late reply`)
+        wake(job)
+      },
+      e => finish(e),
+    )
   }
-  const visibleFailed = () => (failed && failed.since >= now() - PHONE_CHAT_JOB_TTL_MS ? failed : null)
+  const visibleFailed = () => (failed && ageFrom(failed) >= now() - PHONE_CHAT_JOB_TTL_MS ? failed : null)
   return {
     say(requestId, text) {
       const seen = jobs.get(requestId)
@@ -74,7 +91,8 @@ export function makePhoneChat(d: {
       const matterId = d.ownerMatterId()
       if (!matterId) throw new Error('no_owner_chat')
       const job: ChatJob = { requestId, matterId, text, status: 'pending', since: now() }
-      jobs.set(requestId, job); sweep()
+      // 先删再放:重试的那条挪到队尾,不会因为第一次收下得早而被当成最旧的挤掉。
+      jobs.delete(requestId); jobs.set(requestId, job); sweep()
       run(job)
       return { ...job }
     },

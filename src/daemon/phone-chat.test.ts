@@ -106,7 +106,7 @@ describe('makePhoneChat', () => {
       expect(r.settled).toEqual(['c0ffee01'])
       r.calls[0]!.resolve({ reply: 'late' }); await vi.advanceTimersByTimeAsync(0)
       expect(r.chat.state().failed?.status).toBe('failed')
-      expect(r.settled).toEqual(['c0ffee01'])
+      expect(r.settled).toEqual(['c0ffee01', 'c0ffee01']) // 迟到的回复再唤醒一次(fix round 1)
     } finally { vi.useRealTimers() }
   })
   it('failed 过了 TTL 就不再显示', async () => {
@@ -123,5 +123,75 @@ describe('makePhoneChat', () => {
     r.chat.say(RID(52), 'a'); await tick(); r.calls[51]!.resolve({ reply: 'y' }); await tick()
     expect(r.chat.say(RID(1), 'a').status).toBe('pending')
     expect(r.chat.say(RID(52), 'a').status).toBe('replied')
+  })
+  describe('fix round 1', () => {
+    it('日志抛错(promise 路径)⇒ 仍结束、不卡 pending、onSettled 照发', async () => {
+      const r = rig({ log: () => { throw new Error('log down') } })
+      r.chat.say(RID(1), 'a'); await tick(); r.calls[0]!.reject(new Error('boom')); await tick()
+      expect(r.chat.state()).toMatchObject({ pending: null, failed: { error: 'unavailable' } })
+      expect(r.settled).toEqual(['c0ffee01'])
+      expect(() => r.chat.say(RID(2), 'b')).not.toThrow()
+    })
+    it('日志抛错(超时路径)⇒ 定时器回调不抛、不卡 pending', async () => {
+      vi.useFakeTimers()
+      try {
+        const r = rig({ log: () => { throw new Error('log down') } })
+        r.chat.say(RID(1), 'a'); await vi.advanceTimersByTimeAsync(0)
+        await vi.advanceTimersByTimeAsync(PHONE_CHAT_TIMEOUT_MS)
+        expect(r.chat.state()).toMatchObject({ pending: null, failed: { error: 'unavailable' } })
+        expect(r.settled).toEqual(['c0ffee01'])
+      } finally { vi.useRealTimers() }
+    })
+    it('超时后迟到的成功回复 ⇒ 仍 failed,但再发一次 onSettled(只一次);迟到的失败不发', async () => {
+      vi.useFakeTimers()
+      try {
+        const r = rig()
+        r.chat.say(RID(1), 'a'); await vi.advanceTimersByTimeAsync(0)
+        await vi.advanceTimersByTimeAsync(PHONE_CHAT_TIMEOUT_MS)
+        expect(r.settled).toEqual(['c0ffee01'])
+        r.calls[0]!.resolve({ reply: 'late' }); await vi.advanceTimersByTimeAsync(0)
+        r.calls[0]!.resolve({ reply: 'again' }); await vi.advanceTimersByTimeAsync(0)
+        expect(r.settled).toEqual(['c0ffee01', 'c0ffee01'])
+        expect(r.chat.state().failed?.status).toBe('failed')
+        r.chat.say(RID(2), 'b'); await vi.advanceTimersByTimeAsync(0)
+        await vi.advanceTimersByTimeAsync(PHONE_CHAT_TIMEOUT_MS)
+        r.calls[1]!.reject(new Error('late boom')); await vi.advanceTimersByTimeAsync(0)
+        expect(r.settled).toHaveLength(3)
+      } finally { vi.useRealTimers() }
+    })
+    it('failed 的 TTL 从结束时刻算,不是收下时刻', async () => {
+      let t = 1000
+      const r = rig({ now: () => t })
+      r.chat.say(RID(1), 'a'); await tick()
+      t += PHONE_CHAT_JOB_TTL_MS - 10
+      r.calls[0]!.reject(new Error('boom')); await tick()
+      t += 20
+      expect(r.chat.state().failed).not.toBeNull()
+      t += PHONE_CHAT_JOB_TTL_MS
+      expect(r.chat.state().failed).toBeNull()
+    })
+    it('另一句在等时重试失败的那句 ⇒ chat_busy', async () => {
+      const r = rig()
+      r.chat.say(RID(1), 'a'); await tick(); r.calls[0]!.reject(new Error('boom')); await tick()
+      r.chat.say(RID(2), 'b')
+      expect(() => r.chat.say(RID(1), 'a')).toThrow('chat_busy')
+    })
+    it('早先失败、后来重试成功的那条不会被当成最旧的挤掉', async () => {
+      const r = rig()
+      let n = 0
+      const once = async (i: number, ok = true) => {
+        r.chat.say(RID(i), 'a'); await tick()
+        const c = r.calls[n++]!
+        if (ok) c.resolve({ reply: 'y' }); else c.reject(new Error('boom'))
+        await tick()
+      }
+      await once(1, false)
+      for (let i = 2; i <= 50; i++) await once(i)
+      await once(1)
+      await once(51)
+      await once(52)
+      expect(r.chat.say(RID(1), 'a').status).toBe('replied')
+      expect(r.chat.say(RID(2), 'a').status).toBe('pending')
+    })
   })
 })
