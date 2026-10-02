@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createNetworkGate, type NetworkGateDeps } from './gate'
 import { initialState, type GuardState } from './scheduler'
-import { assertNetworkSafe, isNetworkUnprotectedError, unprotectedMessage } from '../../lib/network-gate'
+import { assertCallAllowed, isNetworkUnprotectedError, unprotectedMessage } from '../../lib/network-gate'
 
 const SAFE_BX = { safe: true, protection: 'protected', tunnelHealthy: true, detail: 'bx 保护中' }
 const DOWN_BX = { safe: false, protection: null, tunnelHealthy: null, detail: 'bx 没在运行或读不出状态(exit 1)' }
@@ -58,32 +58,59 @@ describe('createNetworkGate', () => {
     expect(readBx).toHaveBeenCalledTimes(1)
   })
 
-  it('bx not installed → legacy probe semantics (reachable)', async () => {
+  it('bx not installed → probe semantics (reachable); no bx fallback', async () => {
     const readBx = vi.fn(async () => DOWN_BX)
-    const g = createNetworkGate(deps({ findBx: () => null, readBx, current: () => ({ ...initialState(), reachable: false, safe: false, detail: '探测失败' }) }))
+    const g = createNetworkGate(deps({ findBx: () => null, readBx, current: () => ({ ...initialState(), reachable: false, safe: false, detail: '探测失败', lastChecked: new Date(1_000_000).toISOString() }) }))
     expect(await g.check()).toEqual({ safe: false, source: 'probe', detail: '探测失败' })
-    const g2 = createNetworkGate(deps({ findBx: () => null, readBx }))
-    expect((await g2.check()).safe).toBe(true)  // 没装 bx、调度器未起:与旧行为一致(初始放行)
     expect(readBx).not.toHaveBeenCalled()
+  })
+
+  it('fail-open fixed: no bx + no probe result yet → waits (bounded) then UNSAFE — never the v1 initial "reachable"', async () => {
+    const g = createNetworkGate(deps({ findBx: () => null, firstProbeWaitMs: 20 }))
+    const v = await g.check()
+    expect(v).toMatchObject({ safe: false, source: 'probe' })
+    expect(v.detail).toContain('还没拿到')
+    // 调度器刚起、头一拍还没探:等它那一拍
+    let resolve!: (s: GuardState) => void
+    const tick = new Promise<GuardState>(r => { resolve = r })
+    const g2 = createNetworkGate(deps({ findBx: () => null, current: () => initialState(), pokeNow: () => tick, firstProbeWaitMs: 1_000 }))
+    const p = g2.check()
+    resolve({ ...initialState(), source: 'probe', reachable: true, safe: true, detail: '探测可达', lastChecked: new Date().toISOString() })
+    expect((await p).safe).toBe(true)
+  })
+
+  it('first-probe waits are single-flight (no probe storm)', async () => {
+    const probeOnce = vi.fn(async () => ({ reachable: true }))
+    const g = createNetworkGate(deps({ findBx: () => null, probeOnce }))
+    await Promise.all([g.check(), g.check(), g.check()])
+    await g.check()
+    expect(probeOnce).toHaveBeenCalledTimes(1)
   })
 })
 
-describe('assertNetworkSafe', () => {
-  it('throws NetworkUnprotectedError carrying the uniform message', async () => {
+describe('assertCallAllowed', () => {
+  const CLAUDE = { provider: 'claude', purpose: 'turn' as const }
+  it('protected call + unsafe → NetworkUnprotectedError naming what was paused (one consistent text)', async () => {
     const g = createNetworkGate(deps({ readBx: async () => DOWN_BX }))
-    const err = await assertNetworkSafe(g).catch(e => e)
+    const err = await assertCallAllowed(g, CLAUDE).catch((e: unknown) => e) as Error
     expect(isNetworkUnprotectedError(err)).toBe(true)
-    expect(err.message).toBe(unprotectedMessage({ source: 'bx' }))
-    expect(err.message).toBe('网络未受保护(bx 未连上),CC 先暂停，恢复后再试。')
+    expect(err.message).toBe(unprotectedMessage({ source: 'bx' }, 'Claude'))
+    expect(err.message).toBe('网络未受保护(bx 未连上),用到 Claude 的这一步先暂停，恢复后再试。')
   })
 
-  it('a throwing gate is treated as unsafe', async () => {
-    const err = await assertNetworkSafe({ check: async () => { throw new Error('x') } }).catch(e => e)
+  it('a throwing gate is treated as unsafe for protected calls', async () => {
+    const err = await assertCallAllowed({ check: async () => { throw new Error('x') } }, CLAUDE).catch((e: unknown) => e)
     expect(isNetworkUnprotectedError(err)).toBe(true)
+  })
+
+  it('unprotected call never reads the signal, even from a throwing gate', async () => {
+    const check = vi.fn(async () => { throw new Error('x') })
+    await expect(assertCallAllowed({ check }, { provider: 'openai', baseUrl: 'https://api.deepseek.com' })).resolves.toBeUndefined()
+    expect(check).not.toHaveBeenCalled()
   })
 
   it('no gate / safe gate → resolves', async () => {
-    await expect(assertNetworkSafe(undefined)).resolves.toBeUndefined()
-    await expect(assertNetworkSafe(createNetworkGate(deps()))).resolves.toBeUndefined()
+    await expect(assertCallAllowed(undefined, CLAUDE)).resolves.toBeUndefined()
+    await expect(assertCallAllowed(createNetworkGate(deps()), CLAUDE)).resolves.toBeUndefined()
   })
 })

@@ -15,23 +15,32 @@ import type { AgentProvider, CheapEval } from './agent-provider'
 import type { WorkbenchExecutorCapabilities } from './workbench/executor-capabilities'
 import type { ProviderId } from './conversation'
 import { hasAuthCode } from '../lib/auth-failure'
-import { assertNetworkSafe, isNetworkUnprotectedError, type NetworkGate } from '../lib/network-gate'
+import { assertCallAllowed, decideCall, isNetworkUnprotectedError, NetworkUnprotectedError, type CallTarget, type NetworkGate } from '../lib/network-gate'
+
+/** 一次 provider 调用的分类目标(守护 v2):spawn 带上这次钉的模型(会话的 ctx.model / 工作台的 execution.model)。 */
+export function callTargetFor(providerId: string, method: 'spawn' | 'cheapEval' | 'strongEval' | 'modelCatalog', args: readonly unknown[] = []): CallTarget {
+  if (method === 'modelCatalog') return { provider: providerId, purpose: 'catalog' }
+  if (method !== 'spawn') return { provider: providerId, purpose: 'eval' }
+  const ctx = (args[1] ?? {}) as { model?: unknown; execution?: { model?: unknown } }
+  const model = typeof ctx.model === 'string' ? ctx.model : typeof ctx.execution?.model === 'string' ? ctx.execution.model : null
+  return { provider: providerId, model, purpose: 'turn' }
+}
 
 /**
- * 网络闸门包装(2026-10-02):spawn / cheapEval / strongEval / modelCatalog 出发前
- * 先问闸门,不安全就抛 NetworkUnprotectedError —— 不起子进程、不发请求。用 Proxy
- * 而不是展开:有的 provider 带额外方法(probeStatus 等),展开会丢原型方法和 this。
- * 注册进 registry 的每一个 provider 都套这一层,所以凡是从 registry 拿 provider 的
- * 调用方(会话、委派、自检、后台评估、llm-health 拨测、工作台执行者)都被覆盖。
+ * 网络闸门包装(守护 v2,2026-10-02):spawn / cheapEval / strongEval / modelCatalog 出发前
+ * 按**这一次调用**分类 —— 需要保护且网络不安全才抛 NetworkUnprotectedError(不起子进程、
+ * 不发请求);不需要保护的(国内 / 自建 / Cursor auto / 自定义网关)照常走,不看信号。
+ * 用 Proxy 而不是展开:有的 provider 带额外方法(probeStatus 等),展开会丢原型方法和 this。
+ * 注册进 registry 的每一个 provider 都套这一层。
  */
-export function withNetworkGate<P extends AgentProvider>(inner: P, gate: NetworkGate): P {
+export function withNetworkGate<P extends AgentProvider>(inner: P, gate: NetworkGate, providerId: string): P {
   const gated = new Set<PropertyKey>(['spawn', 'cheapEval', 'strongEval', 'modelCatalog'])
   return new Proxy(inner, {
     get(target, prop, receiver) {
       const v = Reflect.get(target, prop, receiver)
       if (!gated.has(prop) || typeof v !== 'function') return v
       return async (...args: unknown[]) => {
-        await assertNetworkSafe(gate)
+        await assertCallAllowed(gate, callTargetFor(providerId, prop as 'spawn', args))
         return (v as (...a: unknown[]) => unknown).apply(target, args)
       }
     },
@@ -142,9 +151,9 @@ export function createProviderRegistry(opts?: {
   onProviderFailure?: (info: { provider: string; op: 'cheap_eval'; errorCode: string | null; message: string }) => void
   log?: (line: string) => void
   /**
-   * 网络闸门(2026-10-02)。给了就把注册进来的每个 provider 套上 withNetworkGate;
-   * cheapEval 故障转移在挑候选之前先问一次,不安全直接抛,**不**给任何候选记冷却
-   * (网络恢复那一刻就该能用)。缺省 = 不拦。
+   * 网络闸门(守护 v2)。给了就把注册进来的每个 provider 套上 withNetworkGate;
+   * cheapEval 故障转移**逐个候选**判:需要保护且不安全的候选跳过(**不**记冷却,网络
+   * 恢复那一刻就该能用),不需要保护的照常试;一个能试的都没有才抛。缺省 = 不拦。
    */
   networkGate?: NetworkGate
 }): ProviderRegistry {
@@ -156,7 +165,7 @@ export function createProviderRegistry(opts?: {
   const registry: ProviderRegistry = {
     register(id, provider, opts) {
       if (entries.has(id)) throw new Error(`provider already registered: ${id}`)
-      entries.set(id, { provider: networkGate ? withNetworkGate(provider, networkGate) : provider, opts })
+      entries.set(id, { provider: networkGate ? withNetworkGate(provider, networkGate, id) : provider, opts })
     },
     get(id) {
       return entries.get(id) ?? null
@@ -200,14 +209,23 @@ export function createProviderRegistry(opts?: {
       // error propagate (callers' watermark-preserving retry semantics rely
       // on that).
       return async (prompt: string) => {
-        // 网络不安全:整次评估不出发,也不让任何候选入冷却。
-        await assertNetworkSafe(networkGate)
         let lastErr: unknown = new Error('no cheapEval provider available')
         let attempted = 0
         let preflightSkipped = 0
+        // 守护 v2:需要保护且网络不安全的候选跳过(不入冷却);不需要保护的照常试。
+        let guardRefusal: NetworkUnprotectedError | null = null
+        const coolingEligible: typeof candidates = []
         for (const c of candidates) {
+          if (networkGate) {
+            const d = await decideCall(networkGate, callTargetFor(c.id, 'cheapEval'))
+            if (!d.allowed) {
+              guardRefusal ??= new NetworkUnprotectedError(d.verdict!, d.cls.label)
+              opts?.log?.(`cheapEval: ${c.id} 需要网络保护、此刻不安全 — 跳过(不入冷却)`)
+              continue
+            }
+          }
           const until = cheapEvalCooldownUntil.get(c.id) ?? 0
-          if (until > now()) continue
+          if (until > now()) { coolingEligible.push(c); continue }
           if (opts?.cheapEvalPreflight) {
             let reachable = true
             try {
@@ -225,8 +243,8 @@ export function createProviderRegistry(opts?: {
           try {
             return await c.fn(prompt)
           } catch (err) {
-            // 评估途中网络掉了(闸门在候选里拦下):原样抛,不记冷却。
-            if (isNetworkUnprotectedError(err)) throw err
+            // 评估途中网络掉了(闸门在这个候选里拦下):不记冷却,换下一个候选。
+            if (isNetworkUnprotectedError(err)) { attempted--; guardRefusal ??= err as NetworkUnprotectedError; continue }
             const cd = isAuthError(err) ? CHEAP_EVAL_AUTH_COOLDOWN_MS : CHEAP_EVAL_COOLDOWN_MS
             cheapEvalCooldownUntil.set(c.id, now() + cd)
             lastErr = err
@@ -245,10 +263,15 @@ export function createProviderRegistry(opts?: {
           if (preflightSkipped > 0) {
             throw new Error('no reachable cheapEval provider (network preflight)')
           }
-          // Everyone is cooling down — try the first candidate anyway rather
-          // than failing on a stale blacklist.
-          cheapEvalCooldownUntil.delete(candidates[0]!.id)
-          return candidates[0]!.fn(prompt)
+          // Everyone (still eligible under the network guard) is cooling down —
+          // try the first one anyway rather than failing on a stale blacklist.
+          const first = coolingEligible[0]
+          if (first) {
+            cheapEvalCooldownUntil.delete(first.id)
+            return first.fn(prompt)
+          }
+          // 能试的候选全被守护挡下:一个都不出门,抛统一的「网络未受保护」。
+          if (guardRefusal) throw guardRefusal
         }
         throw lastErr
       }

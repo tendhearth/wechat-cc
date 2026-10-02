@@ -11,7 +11,6 @@ import { makeMwMode, type ModeMwDeps } from './mw-mode'
 import { makeMwOnboarding, type OnboardingMwDeps } from './mw-onboarding'
 import { makeMwPermissionReply, type PermissionReplyMwDeps } from './mw-permission-reply'
 import { makeMwCliReply, type CliReplyMwDeps } from './mw-cli-reply'
-import { makeMwGuard, type GuardMwDeps } from './mw-guard'
 import { makeMwAttachments, type AttachmentsMwDeps } from './mw-attachments'
 import { makeMwTranscribeVoice, type TranscribeVoiceMwDeps } from './mw-transcribe-voice'
 import { makeMwMessages, type MessagesMwDeps } from './mw-messages'
@@ -25,7 +24,7 @@ import {makeMwWorkbench,type WorkbenchMwDeps} from './mw-workbench'
 import { makeMwTaskReference, type TaskReferenceMwDeps } from './mw-task-reference'
 import { makeMwMatter, type MatterMwDeps } from './mw-matter'
 import { makeMwRoute, type RouteMwDeps } from './mw-route'
-import { makeMwConsume, skipFor, skipWhen } from './mw-consume'
+import { makeMwConsume, skipWhen } from './mw-consume'
 import type { IntentKind } from './intent'
 import { isWechatTaskCommand } from '../../core/workbench/wechat-control'
 
@@ -49,7 +48,6 @@ export interface InboundPipelineDeps {
   permissionReply: PermissionReplyMwDeps
   /** 「看 码」「@码 文本」;缺席 ⇒ 不挂(测试 / 最小嵌入)。 */
   cliReply?: CliReplyMwDeps
-  guard: GuardMwDeps
   attachments: AttachmentsMwDeps
   transcribeVoice: TranscribeVoiceMwDeps
   messages: MessagesMwDeps
@@ -82,7 +80,8 @@ export function buildInboundPipeline(d: InboundPipelineDeps): InboundPipeline {
   const route = d.route ? makeMwRoute({ ...d.route, probes }) : null
   // 第三步(c):消费者收成一张表(mw-consume);原链里夹在消费者中间的副作用站按意图跳过,语义不变:
   //   打字中 —— 原来在工作台命令之后,所以任务命令不发;
-  //   guard —— 原来在 admin / mode / onboarding 之后、权限回话之前(断网时先看到 🛑 而不是把 y/n 吞进去);
+  //   (网络守护 v2,2026-10-02:原来这里有个 guard 站,断网时连 y/n、取消、换模型都一并吞掉。
+  //    现在不在入站拦 —— 命令和控制回话照常;真要调需要保护的模型时,由协调器 / provider 闸门按调用拦。)
   //   附件 / 语音转文字 —— 提到路由之前,探针才看得到转出来的文字(4b 曾让语音里的指称永远判成 chat)。
   const consume = makeMwConsume({ handlers: {
     ...(d.workbench ? { 'task-command': makeMwWorkbench(d.workbench) } : {}),
@@ -122,7 +121,6 @@ export function buildInboundPipeline(d: InboundPipelineDeps): InboundPipeline {
     makeMwAttachments(d.attachments),
     makeMwTranscribeVoice(d.transcribeVoice),
     ...(route?[route]:[]),
-    skipFor(['task-command', 'admin', 'mode', 'onboarding'], makeMwGuard(d.guard)),
     // 三个都是 next() 之后才动、且只在没人消费时动的记账站;放在消费之前才包得住消费者。
     makeMwActivity(d.activity),
     makeMwMilestone(d.milestone),

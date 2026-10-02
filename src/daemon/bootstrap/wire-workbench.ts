@@ -1,4 +1,5 @@
 import {createClaudeHistoryReader} from '../../core/workbench/native-claude-history'
+import { decideCall } from '../../lib/network-gate'
 import {createCodexHistoryReader} from '../../core/workbench/native-codex-history'
 import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk'
 import type { Db } from '../../lib/db'
@@ -123,12 +124,13 @@ export function wireWorkbench(opts: {
   /** 网络闸门(2026-10-02):执行者 registry、起执行者 / 投补充、额度查询都过它。 */
   networkGate?: import('../../lib/network-gate').NetworkGate
 }) {
-  // 网络不安全时额度查询直接不出门(两条都带着账号凭据直连供应商)。
-  const gatedUsage=<T>(fn:()=>Promise<T|null>)=>async():Promise<T|null>=>opts.networkGate&&!(await opts.networkGate.check()).safe?null:fn()
+  // 额度查询带着账号凭据直连供应商(守护 v2:按真正连到的端点分类 —— Claude 的 usage 接口永远是
+  // api.anthropic.com,哪怕会话走的是自定义网关);需要保护且不安全就不出门。
+  const gatedUsage=<T>(target:import('../../lib/network-gate').CallTarget,fn:()=>Promise<T|null>)=>async():Promise<T|null>=>!(await decideCall(opts.networkGate,target)).allowed?null:fn()
   // 订阅额度监视器:Codex 问 app-server,Claude 用 Claude Code 自己的 OAuth 凭据问 usage 接口(subscription-usage.ts)。
   const usageMonitor=makeUsageMonitor({sources:{
-    ...(opts.boot.registry.has('codex')&&findCodexBinary()?{codex:gatedUsage(async()=>{const r=await readCodexRateLimits({codexPathOverride:findCodexBinary()!});return r?parseCodexRateLimits(r,Date.now()):null})}:{}),
-    ...(opts.boot.registry.has('claude')?{claude:gatedUsage(async()=>{
+    ...(opts.boot.registry.has('codex')&&findCodexBinary()?{codex:gatedUsage({provider:'codex',purpose:'usage'},async()=>{const r=await readCodexRateLimits({codexPathOverride:findCodexBinary()!});return r?parseCodexRateLimits(r,Date.now()):null})}:{}),
+    ...(opts.boot.registry.has('claude')?{claude:gatedUsage({provider:'claude',baseUrl:'https://api.anthropic.com',purpose:'usage'},async()=>{
       const cred=readClaudeOAuthToken({platform:process.platform,keychain:()=>spawnSync(['security','find-generic-password','-s','Claude Code-credentials','-w']).stdout.toString(),readFile:()=>readFileSync(join(homedir(),'.claude','.credentials.json'),'utf8'),now:Date.now})
       if(!cred)return null
       const r=await fetch('https://api.anthropic.com/api/oauth/usage',{headers:{authorization:`Bearer ${cred.token}`,'anthropic-beta':'oauth-2025-04-20'},signal:AbortSignal.timeout(8_000)})

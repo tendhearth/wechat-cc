@@ -1,6 +1,6 @@
 import type { ProviderId, SessionStore } from './session-store'
 import type { AgentEvent, AgentSession } from './agent-provider'
-import { assertNetworkSafe, type NetworkGate } from '../lib/network-gate'
+import { assertCallAllowed, classifyWith, type NetworkGate } from '../lib/network-gate'
 import type { ProviderRegistry } from './provider-registry'
 import { tierNameFromProfile, sessionAuthEnv, type TierProfile, type UserTier } from './user-tier'
 import type { PermissionMode } from './capability-matrix'
@@ -62,9 +62,10 @@ export interface SessionManagerOptions {
    */
   currentModelFor?: (providerId: ProviderId) => string | undefined
   /**
-   * 网络闸门(2026-10-02)。spawn 与每次 dispatch 之前都问一次;不安全就抛
-   * NetworkUnprotectedError,不起子进程、不发请求。这是所有对话类调用的兜底
-   * (协调器在更前面已经拦过并给了用户一句话)。缺省 = 不拦(测试 / 嵌入)。
+   * 网络闸门(守护 v2)。spawn 与每次 dispatch 之前按 (provider, 这条会话的模型) 分类:
+   * 需要保护且不安全才抛 NetworkUnprotectedError,不起子进程、不发请求;不需要保护的
+   * 照常。这是所有对话类调用的兜底(协调器在更前面已经拦过并给了用户一句话)。
+   * 缺省 = 不拦(测试 / 嵌入)。
    */
   networkGate?: NetworkGate
 }
@@ -113,6 +114,8 @@ export interface SessionHandle {
   readonly alias: string
   readonly path: string
   readonly providerId: ProviderId
+  /** spawn 时钉的模型(守护 v2 按它给这条会话的每一轮分类);undefined = provider 默认。 */
+  readonly model?: string
   lastUsedAt: number
   dispatch(text: string): AsyncIterable<AgentEvent>
   /**
@@ -200,7 +203,8 @@ export class SessionManager {
   }
 
   private async spawn(req: AcquireRequest): Promise<SessionHandle> {
-    await assertNetworkSafe(this.opts.networkGate)
+    const model = req.model ?? this.opts.currentModelFor?.(req.providerId)
+    await assertCallAllowed(this.opts.networkGate, { provider: req.providerId, model: model ?? null, purpose: 'turn' })
     const entry = this.opts.registry.get(req.providerId)
     if (!entry) throw new Error(`unknown provider: ${req.providerId} (registered: ${this.opts.registry.list().join(', ')})`)
     const { provider, opts: regOpts } = entry
@@ -242,7 +246,6 @@ export class SessionManager {
     // Model first, then the prompt: the prompt states the model so the agent
     // can answer「你是哪个模型」truthfully instead of guessing (or calling an
     // admin-only tool a trusted user can't reach).
-    const model = req.model ?? this.opts.currentModelFor?.(req.providerId)
     const appendInstructions = this.opts.buildInstructions?.(req.providerId, req.tierProfile, req.chatId, model)
     let session: AgentSession
     try {
@@ -272,6 +275,7 @@ export class SessionManager {
       alias: req.alias,
       path: req.path,
       providerId: req.providerId,
+      ...(model !== undefined ? { model } : {}),
       lastUsedAt: Date.now(),
       dispatch(text: string): AsyncIterable<AgentEvent> {
         checkExecution()
@@ -285,7 +289,7 @@ export class SessionManager {
           async *[Symbol.asyncIterator]() {
             checkExecution()
             // 先过网络闸门再碰 provider:session.dispatch 本身可能就立刻发请求。
-            await assertNetworkSafe(networkGate)
+            await assertCallAllowed(networkGate, { provider: req.providerId, model: model ?? null, purpose: 'turn' })
             const inner = session.dispatch(text)
             inFlight.set(k, (inFlight.get(k) ?? 0) + 1)
             try {
@@ -401,7 +405,20 @@ export class SessionManager {
       providerId: s.handle.providerId,
       chatId: s.chatId,
       lastUsedAt: s.handle.lastUsedAt,
+      ...(s.handle.model !== undefined ? { model: s.handle.model } : {}),
     }))
+  }
+
+  /**
+   * 守护 v2:网络翻到不安全时只关**需要保护**的对话会话(按 provider + 这条会话的模型分类),
+   * 不需要保护的(国内 / 自建 / Cursor auto)照常留着。返回关了几个。
+   */
+  async shutdownProtected(): Promise<number> {
+    const gate = this.opts.networkGate
+    const entries = Array.from(this.sessions.values())
+      .filter(s => classifyWith(gate, { provider: s.handle.providerId, model: s.handle.model ?? null, purpose: 'turn' }).protected)
+    await Promise.all(entries.map(s => this.release({ alias: s.handle.alias, providerId: s.handle.providerId, chatId: s.chatId })))
+    return entries.length
   }
 
   async shutdown(): Promise<void> {

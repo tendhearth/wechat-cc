@@ -59,3 +59,31 @@ it('pauseForNetwork stops a running executor and records why',async()=>{
   expect(service.detail(task.id).task.status).toBe('cancelled')
   expect(JSON.stringify(service.detail(task.id))).toContain('已停止本轮')
 })
+
+// 守护 v2:按执行者 + 这一轮的模型分类;不需要保护的执行者(Cursor auto)网络不安全时照常起、永远不停。
+function setupCursor(provider:AgentProvider){
+  const registry=createProviderRegistry({networkGate:gate})
+  registry.register('cursor',provider,{displayName:'cursor',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:root,ownerChatId:()=>null,networkGate:gate})
+}
+
+it('unsafe → a Cursor(auto) executor still starts (not protected); the signal decides nothing for it',async()=>{
+  const spawn=vi.fn(async()=>({async *dispatch(){yield {kind:'result' as const,sessionId:'s',numTurns:1,durationMs:1}},async close(){}}))
+  setupCursor({spawn} as unknown as AgentProvider)
+  net.safe=false
+  const task=service.create({path:project,providerId:'cursor',text:'do it'});await settled(task.id)
+  expect(spawn).toHaveBeenCalledTimes(1)
+  expect(service.detail(task.id).task.error).not.toBe('network_unprotected')
+})
+
+it('pauseForNetwork(select) only stops runs the selector marks protected; unprotected runs keep going',async()=>{
+  const hold=gateOpen()
+  setupCursor({async spawn(){return{async *dispatch(){yield {kind:'init' as const,sessionId:'s'};await hold.promise;yield {kind:'result' as const,sessionId:'s',numTurns:1,durationMs:1}},async close(){hold.resolve()},async cancel(){hold.resolve()}}}} as unknown as AgentProvider)
+  const task=service.create({path:project,providerId:'cursor',text:'start'})
+  await expect.poll(()=>service.detail(task.id).task.status).toBe('running')
+  const seen:Array<{providerId:string;model:string|null}>=[]
+  expect(service.pauseForNetwork(run=>{seen.push(run);return null})).toBe(0)
+  expect(seen).toEqual([{providerId:'cursor',model:null}])
+  expect(service.detail(task.id).task.status).toBe('running')
+  hold.resolve();await settled(task.id)
+})

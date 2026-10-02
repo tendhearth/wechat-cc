@@ -546,6 +546,17 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       supervisor: sup,
     })
     bootRef = boot
+    // 守护 v2:health / 后台任务判断要知道「此刻配置 / 在用的 provider 是哪些、各用什么模型」。
+    {
+      const { makeMtimeCachedConfigReader } = await import('../lib/agent-config')
+      const { providersInUse } = await import('./guard/targets')
+      const readCfg = makeMtimeCachedConfigReader(stateDir)
+      guardRt.setProvidersInUse(() => providersInUse(
+        (() => { try { return readCfg() } catch { return null } })(),
+        boot.registry.list(),
+        boot.sessionManager.list().map(s => ({ id: s.providerId, model: s.model ?? null })),
+      ))
+    }
     internalApi.setDelegate({ dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() })
     // Wire conversation dep now that coordinator is available. Routes access
     // deps.conversation at request time, so this late assignment is safe.

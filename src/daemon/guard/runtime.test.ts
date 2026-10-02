@@ -61,7 +61,32 @@ describe('makeGuardRuntime', () => {
   it('health mirrors the scheduler state once it has run', () => {
     const { r } = rt()
     r.ref.set(lifecycleWith({ ...initialState(), source: 'bx', safe: false, reachable: false, detail: 'bx 隧道不健康(tunnel_healthy=false)', ip: '9.9.9.9', lastChecked: '2026-10-02T10:00:00.000Z' }))
-    expect(r.health()).toEqual({ enabled: true, source: 'bx', safe: false, detail: 'bx 隧道不健康(tunnel_healthy=false)', ip: '9.9.9.9', checked_at: '2026-10-02T10:00:00.000Z' })
+    expect(r.health()).toMatchObject({ enabled: true, source: 'bx', safe: false, detail: 'bx 隧道不健康(tunnel_healthy=false)', ip: '9.9.9.9', checked_at: '2026-10-02T10:00:00.000Z' })
+  })
+
+  // 守护 v2:Claude 聊天暂停不该连累 DeepSeek / Cursor auto 的后台判断。
+  it('skipWhenUnsafe: unsafe but an unprotected provider is in use → the job still runs; protected refusals inside are swallowed with ONE log line', async () => {
+    const { r, log } = rt({ read: DOWN_BX })
+    r.setProvidersInUse(() => [{ id: 'claude', model: null }, { id: 'cursor', model: 'auto' }])
+    const { NetworkUnprotectedError } = await import('../../lib/network-gate')
+    const job = vi.fn(async () => { throw new NetworkUnprotectedError({ safe: false, source: 'bx', detail: 'x' }, 'Claude') })
+    const wrapped = r.skipWhenUnsafe('companion.introspect', job)
+    await wrapped(); await wrapped()
+    expect(job).toHaveBeenCalledTimes(2)
+    expect(log.mock.calls.filter(c => String(c[1]).includes('companion.introspect'))).toHaveLength(1)
+  })
+
+  it('skipWhenUnsafe: unsafe and everything in use is protected → skipped quietly', async () => {
+    const { r } = rt({ read: DOWN_BX })
+    r.setProvidersInUse(() => [{ id: 'claude', model: null }, { id: 'agy', model: null }])
+    const job = vi.fn(async () => {})
+    await r.skipWhenUnsafe('companion.push', job)()
+    expect(job).not.toHaveBeenCalled()
+  })
+
+  it('skipWhenUnsafe: ordinary errors still propagate (domestic failures are not relabelled)', async () => {
+    const { r } = rt({ read: SAFE_BX })
+    await expect(r.skipWhenUnsafe('x', async () => { throw new Error('ECONNREFUSED') })()).rejects.toThrow('ECONNREFUSED')
   })
 
   it('health before the scheduler ran falls back to the last gate verdict (fail-closed reading visible)', async () => {

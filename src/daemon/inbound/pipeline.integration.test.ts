@@ -4,7 +4,7 @@ import type { InboundCtx } from './types'
 
 function fakeDeps(over: Partial<{
   adminConsumes: boolean; modeConsumes: boolean; onboardingConsumes: boolean;
-  permConsumes: boolean; guardEnabled: boolean; guardReachable: boolean;
+  permConsumes: boolean;
 }> = {}): { deps: InboundPipelineDeps; spy: { dispatch: ReturnType<typeof vi.fn>; activity: ReturnType<typeof vi.fn>; milestone: ReturnType<typeof vi.fn>; welcome: ReturnType<typeof vi.fn> } } {
   const dispatch = vi.fn(async () => {})
   const activity = vi.fn(async () => {})
@@ -32,12 +32,6 @@ function fakeDeps(over: Partial<{
     mode: { modeHandler: { handle: async () => over.modeConsumes ?? false } },
     onboarding: { onboardingHandler: { handle: async () => over.onboardingConsumes ?? false } },
     permissionReply: { handlePermissionReply: () => over.permConsumes ?? false, log },
-    guard: {
-      guardEnabled: () => over.guardEnabled ?? false,
-      guardState: () => ({ reachable: over.guardReachable ?? true, ip: '1.2.3.4' }),
-      sendMessage: async () => ({ msgId: 'm1' }),
-      log,
-    },
     attachments: { materializeAttachments: async () => {}, inboxDir: '/tmp', log },
     transcribeVoice: { log },
     messages: { append: async () => 1, log },
@@ -169,26 +163,18 @@ describe('inbound pipeline (integration)', () => {
     expect(spy.dispatch).not.toHaveBeenCalled()
   })
 
-  it('guard short-circuit when enabled and unreachable', async () => {
-    const { deps, spy } = fakeDeps({ guardEnabled: true, guardReachable: false })
-    await buildInboundPipeline(deps)(mkCtx())
-    expect(spy.dispatch).not.toHaveBeenCalled()
-  })
-
-  it('guard runs BEFORE permission-reply: network-down drops a y/n reply', async () => {
-    // Network is down AND the inbound looks like a permission reply. The
-    // user-visible expectation is the guard's "🛑 出口 IP" notice, NOT a
-    // silent forwarding of the approval to an in-flight Claude tool call
-    // that probably needs network. Asserts the build.ts ordering.
-    const { deps, spy } = fakeDeps({
-      guardEnabled: true,
-      guardReachable: false,
-      permConsumes: true,
-    })
+  // 守护 v2(2026-10-02):入站不再有 guard 站。网络未受保护时 y/n、取消、换模型、/set 这些控制
+  // 照常;只有真要调需要保护的模型的那一步(协调器 / provider 闸门)才被拦。
+  it('no inbound guard stage: a y/n permission reply is consumed, chat reaches dispatch (gated per call there)', async () => {
+    const { deps, spy } = fakeDeps({ permConsumes: true })
     const ctx = mkCtx()
     await buildInboundPipeline(deps)(ctx)
-    expect(ctx.consumedBy).toBe('guard')
+    expect(ctx.consumedBy).toBe('permission-reply')
+    const { deps: d2, spy: s2 } = fakeDeps()
+    await buildInboundPipeline(d2)(mkCtx())
+    expect(s2.dispatch).toHaveBeenCalledOnce()
     expect(spy.dispatch).not.toHaveBeenCalled()
+    expect(Object.keys(deps)).not.toContain('guard')
   })
 
   it('dispatch error is caught by trace; pipeline does not reject', async () => {
@@ -238,21 +224,21 @@ describe('意图路由(第三步:一站消费 + 语音先转文字再路由)', (
     await buildInboundPipeline(deps)(ctx)
     expect(ctx.msg.text).toBe('[语音] /帮助'); expect(ctx.intent?.kind).toBe('mode'); expect(ctx.consumedBy).toBe('mode'); expect(spy.dispatch).not.toHaveBeenCalled()
   })
-  it('断网时:管理 / 模式命令照常执行(guard 在它们后面),权限回话与闲聊被 guard 拦下', async () => {
+  it('网络未受保护时:管理 / 模式命令、权限回话照常执行(入站不拦,守护 v2)', async () => {
     const adminHandle = vi.fn(async () => true)
-    const { deps: a } = fakeDeps({ guardEnabled: true, guardReachable: false })
+    const { deps: a } = fakeDeps()
     a.admin = { adminHandler: { handle: adminHandle } }
     a.route = { probes: { admin: () => true, mode: () => false, onboarding: () => false, 'permission-reply': () => false }, log: () => {} }
     const ctx = mkCtx(); ctx.msg.text = '/health'
     await buildInboundPipeline(a)(ctx)
     expect(ctx.consumedBy).toBe('admin'); expect(adminHandle).toHaveBeenCalledOnce()
     const perm = vi.fn(() => true)
-    const { deps: b } = fakeDeps({ guardEnabled: true, guardReachable: false })
+    const { deps: b } = fakeDeps()
     b.permissionReply = { handlePermissionReply: perm, log: () => {} }
     b.route = { probes: { admin: () => false, mode: () => false, onboarding: () => false, 'permission-reply': () => true }, log: () => {} }
     const y = mkCtx(); y.msg.text = 'y'
     await buildInboundPipeline(b)(y)
-    expect(y.consumedBy).toBe('guard'); expect(perm).not.toHaveBeenCalled()
+    expect(y.consumedBy).toBe('permission-reply'); expect(perm).toHaveBeenCalledOnce()
   })
   it('任务命令不发"打字中",别的都发', async () => {
     const typing = vi.fn(async () => {})

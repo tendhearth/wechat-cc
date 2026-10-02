@@ -15,7 +15,7 @@ import { loadCompanionConfig } from '../companion/config'
 import { loadGuardConfig } from '../guard/store'
 import { findBx } from '../guard/bx'
 import { makeExecutorPausePolicy } from '../guard/pause-policy'
-import { unprotectedMessage } from '../../lib/network-gate'
+import { classifyWith, unprotectedMessage } from '../../lib/network-gate'
 import { parseUpdates } from '../poll-loop'
 import { writeHeartbeat, HEARTBEAT_FILE } from '../single-instance'
 import { join } from 'node:path'
@@ -100,25 +100,31 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
       isEnabled: () => loadGuardConfig(stateDir).enabled,
       probeUrl: () => loadGuardConfig(stateDir).probe_url,
       ipifyUrl: () => loadGuardConfig(stateDir).ipify_url,
-      // 装了 bx 就以 bx 为准(2026-10-02);没装走旧的 ipify+探测。
-      findBx: () => findBx(),
+      // 装了 bx 就只认 bx(2026-10-02);没装走 ipify+探测。guard.json signal_source='probe'
+      // (装着 bx、实际在用别的 VPN)⇒ 装了也走探测。
+      findBx: () => (loadGuardConfig(stateDir).signal_source === 'probe' ? null : findBx()),
       log,
       // 已经在跑的工作台执行者:bx 来源永远不停(fail-closed,出不去也就漏不了);
-      // 老的 probe 来源连续两次不安全才停(pause-policy.ts)。新的启动 / 续接 / 补充一律由闸门拦。
+      // probe 来源连续两次不安全才停(pause-policy.ts)—— 守护 v2:**只停需要保护的执行者**,
+      // 不需要保护的(Cursor auto、国内 / 自建网关)永远不停。新的启动 / 续接 / 补充由闸门按调用拦。
       onReading: (s) => {
         if (!pausePolicy.observe(s)) return
         try {
-          const n = opts.workbench?.pauseForNetwork(`${unprotectedMessage(s)}已停止本轮,恢复后可以继续。`) ?? 0
-          log('GUARD', `network unprotected [probe, 2 reads] — paused ${n} workbench run(s)`)
+          const gate = opts.guardRuntime?.gate
+          const n = opts.workbench?.pauseForNetwork((run) => {
+            const cls = classifyWith(gate, { provider: run.providerId, model: run.model, purpose: 'turn' })
+            return cls.protected ? `${unprotectedMessage(s, cls.label)}已停止本轮,恢复后可以继续。` : null
+          }) ?? 0
+          log('GUARD', `network unprotected [probe, 2 reads] — paused ${n} protected workbench run(s)`)
         } catch (err) { log('GUARD', `workbench pause failed: ${err instanceof Error ? err.message : String(err)}`) }
       },
       onStateChange: async (prev, next) => {
         if (prev.reachable && !next.reachable) {
-          log('GUARD', `network DOWN — shutting down all sessions (was ${prev.ip}, now ${next.ip})`)
+          // 守护 v2:只关需要保护的对话会话(按 provider + 会话模型分类);国内 / 自建 / Cursor auto 的照常。
+          log('GUARD', `network DOWN — closing protected chat sessions (was ${prev.ip}, now ${next.ip})`)
           try {
-            log('GUARD', 'sessionManager.shutdown start')
-            await boot.sessionManager.shutdown()
-            log('GUARD', 'sessionManager.shutdown complete')
+            const n = await boot.sessionManager.shutdownProtected()
+            log('GUARD', `closed ${n} protected chat session(s)`)
           } catch (err) {
             log('GUARD', `sessionManager.shutdown failed: ${err instanceof Error ? err.stack || err.message : String(err)}`)
             throw err

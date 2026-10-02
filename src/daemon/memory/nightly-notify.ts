@@ -41,6 +41,6 @@ export function formatNightlyReply(r: NightlyRunResult): string {
   if (r.reason === 'no_new_material') return '没有新东西要整理,记忆保持原样。'
   if (r.reason === 'owner_edited') return '你刚好在改记忆,我先不动,稍后再整理。'
   if (r.reason === 'no_owner') return '还没认出主人,没法整理。'
-  if (r.reason === 'network_unprotected') return '网络未受保护(bx 未连上或 VPN 探测失败),CC 先暂停，这次没有整理。恢复后再试。'
+  if (r.reason === 'network_unprotected') return '网络未受保护(bx 未连上或 VPN 探测失败),整理记忆要用到的接口需要保护，这一步先暂停，这次没有整理。恢复后再试。'
   return `这次没有整理(${r.reason})。`
 }

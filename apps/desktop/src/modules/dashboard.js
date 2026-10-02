@@ -1227,7 +1227,7 @@ export async function loadFsAccess(deps) {
 }
 
 /**
- * 网络守护一行(2026-10-02):读 /v1/health.guard。不安全时 CC 暂停所有模型调用 ——
+ * 网络守护一行(守护 v2):读 /v1/health.guard。不安全时只暂停需要保护的调用 ——
  * 这一行让主人在此刻页一眼看到「为什么 CC 不说话了」。
  * @param {any} deps
  */
