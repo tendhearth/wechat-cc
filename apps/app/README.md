@@ -73,7 +73,7 @@ scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl 
 - **只走中继**:`r…` daemon id ⇒ `wss://<中继主机>/v2/phone?id=<id>`;`t…` id ⇒ `wss://<中继主机>/tunnel/phone?id=<id>`。链接里的 `lan=` 解析并记下,但**不使用**(daemon 的局域网口没有 v2 订阅,见计划裁决 1)。
 - 所有接口返回都过 `PHONE_API_SCHEMAS` 的 zod schema,主题事件过各自的 Topic schema;解析失败 ⇒ 事件丢弃并记日志,请求抛 `BackendError('unknown')`。
 - 错误映射只在 `src/net/errors.ts` 一处:`permission_stale / question_stale / input_stale` ⇒ `stale`;`auth_failed` 或 HTTP 401 ⇒ `revoked`;`timeout` ⇒ `timeout`(界面当「不确定」);`unreachable / daemon_offline / closed / stream_unknown / rate_limited / quota_exceeded / too_many_streams` 及未知传输错误 ⇒ `offline`(例外:请求在飞时是本机自己关的连接——进后台 / dispose / 撤销——`live.ts` 报 `timeout`,撤销了则报 `revoked`:那一条可能已经送到);`matter_not_found` ⇒ `not_found`;`invalid` 与 `invalid_*`(含 `invalid_answer`)⇒ `invalid`;其余 ⇒ `unknown`。
-- 说一句与交办的 `requestId` 按草稿稳定(`state/drafts.ts` `requestIdFor`:同一份草稿、同样正文重发用同一个,正文改了才换,发成功删草稿时一起丢)。
+- 说一句与交办的 `requestId` 按草稿稳定(`state/drafts.ts` `requestIdFor`:同一份草稿、同样正文重发用同一个,正文改了才换,发成功删草稿时一起丢)。daemon 两条说一句都按它去重:工作台任务走工作台输入回执;微信聊天那件事走 `matter_say_receipts`(2026-10-01,v70)——同 id 同文重发拿回原来的回复(在跑就跟上同一轮),同 id 异文 ⇒ 409 `input_conflict`,那一轮失败不留回执(重发 = 重试),daemon 重启打断的那句当已收下、不再说。
 - 上限:回答 `JSON.stringify(answers).length > 20_000`、说一句正文 `> 20_000` 字,在手机上就拦下,不发(协议包常量 `PHONE_ANSWER_MAX_JSON` / `PHONE_SAY_MAX_CHARS`)。
 - **跟 CC 说走 `/m/api/chat*`,收下即回**:`/m/api/chat/say` 立刻返回(走 companion 路径,与微信同一个主人会话),回复靠 `matter/<聊天>` 主题唤醒后拉取;一次只等一句(上一句在等 ⇒ 409 `chat_busy`,草稿留着),10 分钟超时。`requestId` 用 `requestIdFor('chat', 正文)`。老网页壳 `/m/api/matter/say` 的同步语义不动。主人的对话在「一起做」里置顶;访客的聊天不出现在手机上。
 - **「可能没送到」**:本机收过回执,但 daemon 那边既不 pending 也没历史 ⇒ 显示未确认气泡(可重试、可忽略);重试用同一个 `requestId`,daemon 去重,所以即使其实已落在历史别页也安全。原因:任务表只在内存,daemon 重启会丢正在等的那句。不自动重发(不重试风暴)。
@@ -159,7 +159,7 @@ CI:`app · native push vectors`(`.github/workflows/ci.yml`,仅 `apps/app/native/
   4. EAS:`cd apps/app && eas init`(提交 projectId)、`eas build --profile development --platform ios`(真机开发构建)、TestFlight 用 `--profile production` + `eas submit`、Google Play 开发者账号后安卓 `--profile production`。
   5. 一台安卓手机或模拟器。
   6. 真机验收(两个平台各一遍):配对 → 通知权限框 → 设置里「已开启」→「发一条测试通知」→ 电脑上交办要批准的事 → 前台 / 后台 / 进程被杀三种都收到并点开进批准页(含**已配对的冷启动点通知**)→ 允许 → 做完收到「做完了」;**锁屏上看解密后的文字**;**扩展真的在循环里**(模拟器的 `simctl push` 不经过扩展);**经系统设置拒绝再打开权限的往返**;电脑上撤销这台手机后再触发 ⇒ 只显示「CC 有新动态」。
-- 计划 3 遗留、仍开着:配对链接令牌 10 分钟内可重复使用(被拍下的二维码 10 分钟内能配第二台手机);对微信聊天那件事的「说一句」daemon 不按 `requestId` 去重(「不确定」后重发可能说两遍)。
+- 计划 3 遗留、仍开着:配对链接令牌 10 分钟内可重复使用(被拍下的二维码 10 分钟内能配第二台手机)。(对微信聊天那件事的「说一句」不按 `requestId` 去重的欠账已在 2026-10-01 收掉:daemon 回执表 `matter_say_receipts`,同 id 同文重发拿回原来的回复、不说第二遍,同 id 异文 ⇒ 409 `input_conflict`(手机当 busy)。)
 
 ## 硬要求(改界面前先对一遍)
 

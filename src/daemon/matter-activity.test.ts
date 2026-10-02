@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ensureChatAndNote, makeMatterActivity, MATTER_TOUCH_MIN_MS } from './matter-activity'
+import { ensureChatAndNote, makeMatterActivity, MATTER_TOUCH_MIN_MS, wireMatterActivity } from './matter-activity'
 
 function rig() {
   let t = 1_000_000
@@ -16,7 +16,8 @@ function rig() {
   })
   const flush = () => { for (const f of deferred.splice(0)) f() }
   const advance = (ms: number) => { t += ms; for (const h of timers) if (!h.dead && h.at <= t) { h.dead = true; h.fn() } }
-  return { a, touch, flush, advance, timers, logs }
+  const rewind = (ms: number) => { t -= ms }
+  return { a, touch, flush, advance, rewind, timers, logs }
 }
 
 describe('makeMatterActivity', () => {
@@ -55,6 +56,31 @@ describe('makeMatterActivity', () => {
     r.a.note('aaaaaaaa'); r.flush(); r.a.note('aaaaaaaa')
     r.a.dispose(); r.advance(MATTER_TOUCH_MIN_MS * 2); r.a.note('cccccccc'); r.flush()
     expect(r.touch).toHaveBeenCalledTimes(1)
+  })
+  it('时钟回拨(系统改时间)⇒ trailing 定时器至多等 MATTER_TOUCH_MIN_MS,不会按回拨的量等上几个小时', () => {
+    const r = rig()
+    r.a.note('aaaaaaaa'); r.flush()
+    r.rewind(3 * 3_600_000)
+    r.a.note('aaaaaaaa')
+    const live = r.timers.filter(h => !h.dead)
+    expect(live).toHaveLength(1)
+    r.advance(MATTER_TOUCH_MIN_MS)
+    expect(r.touch).toHaveBeenCalledTimes(2)
+  })
+  it('wireMatterActivity:工作台事件 ⇒ note;stop ⇒ 退订 + dispose(接到 shutdown),可重复调用', () => {
+    let cb: ((id: string) => void) | null = null
+    const off = vi.fn(() => { cb = null })
+    const note = vi.fn(), dispose = vi.fn()
+    const stop = wireMatterActivity({ note, dispose }, { onChange: f => { cb = f; return off } })
+    cb!('deadbeef')
+    expect(note).toHaveBeenCalledWith('deadbeef')
+    stop(); stop()
+    expect(off).toHaveBeenCalledTimes(1)
+    expect(dispose).toHaveBeenCalledTimes(1)
+    expect(cb).toBeNull()
+    // 没有工作台 / 没有 activity 也能用
+    expect(() => wireMatterActivity({ note, dispose }, undefined)()).not.toThrow()
+    expect(() => wireMatterActivity(null, { onChange: () => off })()).not.toThrow()
   })
   it('ensureChatAndNote:原样返回 ensureChat 的结果并记一笔;activity 为 null 也能用', () => {
     const note = vi.fn()

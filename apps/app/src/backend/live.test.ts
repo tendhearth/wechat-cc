@@ -390,6 +390,8 @@ describe('跟 CC 说 / 连接 / 原生会话', () => {
     expect('ok' in page).toBe(false)
     expect(reqs.at(-1)!.path).toBe('/m/api/chat?before=2026-09-30T00%3A00%3A05.000Z&limit=10')
     await b.chat({}); expect(reqs.at(-1)!.path).toBe('/m/api/chat')
+    // limit: 0 不能被当成「没给」悄悄丢掉:原样带上,由 daemon 判 400 invalid
+    await b.chat({ limit: 0 }); expect(reqs.at(-1)!.path).toBe('/m/api/chat?limit=0')
   })
   it('chat:还没有主人对话(404 no_owner_chat)⇒ not_found', async () => {
     const { b } = harness({ 'GET /m/api/chat': ok({ ok: false, error: 'no_owner_chat' }, 404) })

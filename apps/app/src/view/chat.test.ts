@@ -127,9 +127,13 @@ describe('chat 视图', () => {
     expect(acceptedSettled(acc, [msg('now', 100_000 - 500, 'me', '好', 'phone')], none)).toBe(true)
     expect(acceptedSettled(acc, [msg('now', 100_000 + 2_000, 'me', '好', 'phone')], none)).toBe(true)
   })
-  it('发送成功只在输入框还是发出去那句时才清空(Task 11 a)', () => {
+  it('发送成功只清掉发出去的那段,发送途中新打的字留着(Task 11 a)', () => {
     expect(textAfterSend('在吗', '在吗')).toBe('')
-    expect(textAfterSend('在吗,顺便', '在吗')).toBe('在吗,顺便')
+    // 接着往后打 ⇒ 只去掉已发出的前缀(连带它与新字之间的空白)
+    expect(textAfterSend('在吗 顺便问下', '在吗')).toBe('顺便问下')
+    expect(textAfterSend('在吗\n还有', '在吗')).toBe('还有')
+    // 改了发出去那句本身(不再以它开头)⇒ 原样留着,不猜
+    expect(textAfterSend('在不在', '在吗')).toBe('在不在')
     expect(textAfterSend('', '在吗')).toBe('')
   })
   describe('rebaseOlder:最新页刷新后旧页还接得上吗(Task 11 c)', () => {

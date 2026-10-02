@@ -11,7 +11,7 @@ export type ChatJobStatus = 'pending' | 'replied' | 'failed'
 export type ChatJobError = 'busy' | 'unavailable' | 'not_configured'
 export interface ChatJob { requestId: string; matterId: string; text: string; status: ChatJobStatus; since: number; error?: ChatJobError }
 export interface PhoneChat {
-  /** 收下即回。抛 'no_owner_chat' | 'chat_busy'。 */
+  /** 收下即回。抛 'no_owner_chat' | 'chat_busy' | 'input_conflict'(同一 requestId 换了正文)。 */
   say(requestId: string, text: string): ChatJob
   state(): { pending: ChatJob | null; failed: ChatJob | null }
   /** 正在等回复的那件事的 matterId(给主题来源)。 */
@@ -91,6 +91,8 @@ export function makePhoneChat(d: {
   return {
     say(requestId, text) {
       const seen = jobs.get(requestId)
+      // 同一 requestId 换了正文 = 客户端的 bug(app 正文一改就换 id):不当成重试 / 去重,409 说清楚(与工作台补充同一个码)。
+      if (seen && seen.text !== text) throw new Error('input_conflict')
       if (seen && seen.status !== 'failed') return { ...seen }
       if (pending && pending.requestId !== requestId) throw new Error('chat_busy')
       const matterId = d.ownerMatterId()

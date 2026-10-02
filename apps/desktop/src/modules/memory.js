@@ -316,7 +316,7 @@ async function saveCurrent(deps) {
 // instead of a raw fetch/JSON error the user can't act on.
 /**
  * @param {unknown} err
- * @param {string} action e.g. "重新整理记忆" / "刷新画像"
+ * @param {string} action e.g. "更新项目地图" / "刷新画像"
  */
 function daemonRequiredMessage(err, action) {
   const name = err instanceof Error ? err.name : ""
@@ -352,12 +352,12 @@ export async function synthesizeMemory(deps) {
       await deps.invokeApi("POST", "/v1/memory/synthesize", undefined, { timeoutMs: 60_000 })
     )
   } catch (err) {
-    const message = daemonRequiredMessage(err, "重新整理记忆")
+    const message = daemonRequiredMessage(err, "更新项目地图")
     setStatus(message, "bad")
     throw new Error(message)
   }
   if (result && result.ok === false) {
-    setStatus(`重新整理记忆失败：${result.error || "unknown"}`, "bad")
+    setStatus(`更新项目地图失败：${result.error || "unknown"}`, "bad")
     throw new Error(result.error || "synthesize failed")
   }
   // Surface the freshly written _overview.md (and any list changes).
@@ -591,7 +591,7 @@ export function renderMemoryProfileOverview(deps) {
     .at(-1)
   const latestObservation = memoryState.observations[0]?.ts
   // Whichever source moved LAST. `latestObservation || latestFileMtime`
-  // short-circuited on any observation at all, so 重新整理 rewrote
+  // short-circuited on any observation at all, so 更新项目地图 (then 重新整理) rewrote
   // _overview.md and the kicker still said 更新于 5 天前 — the newest
   // observation's age — no matter how many times it was clicked.
   const updatedAt = newestTimestamp(latestObservation, latestFileMtime)

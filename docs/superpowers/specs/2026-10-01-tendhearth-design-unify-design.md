@@ -74,10 +74,12 @@
 ## 3. 字体打包
 
 - 来源:google/fonts 仓库 `ofl/notoserifsc/NotoSerifSC[wght].ttf` 与 `ofl/sourceserif4/SourceSerif4[opsz,wght].ttf`(都带 `OFL.txt`)。脚本 `scripts/fonts/build-fonts.sh` 用 fonttools(`varLib.instancer` 切出 400 / 500 静态字重,Source Serif 4 的 opsz 钉在 16;`pyftsubset` 按下面的范围裁剪),**生成物入库**,运行时不下载。脚本只在维护者要换字体时跑,来源的 sha256 写进 `scripts/fonts/sources.lock.json`。
-- 范围:Noto Serif SC 保留 Basic Latin、Latin-1、常用标点(U+2000–206F)、CJK 符号与标点(U+3000–303F)、全角(U+FF00–FFEF)、CJK 统一表意文字基本区(U+4E00–9FFF);扩展区的字退回系统字体(主人聊天里极少见)。Source Serif 4 保留 Latin 子集。
+- 范围(2026-10-01 主人拍板收窄,§9-5):Noto Serif SC 保留 Basic Latin、Latin-1、常用标点(U+2000–206F)、箭头、CJK 符号与标点(U+3000–303F)、全角(U+FF00–FFEF),汉字只留 **GB2312 ∪《通用规范汉字表》一级 + 二级**(`scripts/fonts/cjk-common-chars.py` 生成:GB2312 用 Python 自带编解码器枚举,通用规范字表入库为 `scripts/fonts/tgscc-level-1-2.txt`,来源提交与 sha256 在 `sources.lock.json`;共 7635 个码位,汉字 6953)。子集外的字(生僻字、繁体、扩展区)不在包里:桌面 `--th-font-serif` 逐字退回系统衬线(Songti SC / STSong / Noto Serif CJK SC / Source Han Serif SC / SimSun);手机 RN 由系统逐字退回系统中文字体(iOS / Android 没有可指定的系统中文衬线,所以那几个字会是系统字形,但不会是豆腐块)。Source Serif 4 保留 Latin 子集。
+- 重新生成:`python3 -m venv /tmp/fontenv && /tmp/fontenv/bin/pip install fonttools brotli`,然后 `PYTHON=/tmp/fontenv/bin/python scripts/fonts/build-fonts.sh`(脚本头部有同样的说明;`SOURCE_DATE_EPOCH` 钉住时间戳,同版本工具两次输出逐字节相同,已验证)。结束时打印每个文件的字节数;再跑 `bun --bun vitest run scripts/design-tokens.guard.test.ts`。
+- 实测(fonttools 4.60.2):手机 `NotoSerifSC-Regular.ttf` 10,550,096 → 3,573,568 字节;桌面 `noto-serif-sc-400.woff2` 4,258,508 → 1,486,280 字节。两端字体合计:手机 10,760,980 → 3,784,452,桌面 4,325,876 → 1,553,656(Latin 两款不变,只是时间戳钉住后重出)。
 - 手机:`apps/app/assets/fonts/` 下 4 个 TTF(`NotoSerifSC-Regular/Medium`、`THSerif4-Regular/Medium`)+ `OFL.txt`,用 `expo-font` 的 `useFonts` 在根布局加载;加载失败也不挡页面(退回系统衬线)。
 - 桌面:`apps/desktop/src/fonts/` 下 4 个 woff2 + `OFL.txt`,`@font-face` 用 `unicode-range` 把西文交给 TH Serif 4、中文交给 Noto Serif SC。删掉 Geist(无衬线);Geist Mono 留给代码。CSP 本来就是 `font-src 'self'`。
-- 体积预算(守卫测试):手机字体合计 ≤ 30 MB,桌面字体合计 ≤ 20 MB。超了 ⇒ 先砍 CJK Medium(层级本来就靠字号),仍超则停下问主人。
+- 体积预算(守卫测试):子集化后收紧为手机字体合计 ≤ 4.5 MB、桌面 ≤ 2 MB(原 30 / 20 MB);守卫还钉住字表 sha256、子集覆盖全部 6500 个通用规范字、生僻 / 繁体字确实不在包里。
 - 手机上 RN 一个 `Text` 只能指定一个字体家族,缺字会退回系统**无衬线**。所以手机按「这段字是什么」选家族:界面文案按语言(`zh-Hans` ⇒ Noto Serif SC,`en` ⇒ TH Serif 4);用户内容(聊天、事项标题、命令说明)一律 Noto Serif SC(它的西文字形本来就出自 Source Serif 一脉)。字重靠换家族名(`…-Medium`),**永不设 `fontWeight`**(安卓上自定义字体设 fontWeight 会退回系统字)。
 
 ## 4. CC 的明暗(真实信号)

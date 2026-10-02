@@ -71,6 +71,9 @@ describe('mobileChatRoute', () => {
     for (const b of [{ requestId: 'x', text: 'hi' }, { requestId: RID, text: '  ' }, { requestId: RID, text: 'x'.repeat(20_001) }, { requestId: RID, text: 'hi', extra: 1 }, null, [], 'hi']) expect((await call(d, post(b))).status).toBe(400)
     const busy = deps({ chat: { ...deps().chat, say: () => { throw new Error('chat_busy') } } })
     expect((await call(busy, post({ requestId: RID, text: 'hi' }))).status).toBe(409)
+    const conflict = await call(deps({ chat: { ...deps().chat, say: () => { throw new Error('input_conflict') } } }), post({ requestId: RID, text: 'hi' }))
+    expect(conflict.status).toBe(409)
+    expect(conflict.body.error).toBe('input_conflict')
     expect((await call(d, new Request('http://x/m/api/chat/say'))).status).toBe(405)
   })
   it('say:没主人 404;没接 503;内部意外 ⇒ 503 unavailable(Ruling 7,不是 500)', async () => {

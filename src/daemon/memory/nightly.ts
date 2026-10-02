@@ -3,7 +3,7 @@
  * 素材 → 指纹(没新东西不调模型)→ 便宜模型出改动清单 → 程序校验执行 → 修订检查(主人正在改就作废)
  * → 备份旧版、原子写、追加日志、更新状态。任何失败都不写文件;同一天不再自动重试。
  */
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
@@ -11,6 +11,7 @@ import { MEMORY_FILENAME, assignMissingIds, parseMemoryDoc, serializeMemoryDoc }
 import { applyNightly, parseOps } from './nightly-ops'
 import { composeNotice, noticeItems, type NightlyRunResult } from './nightly-notify'
 import { isDue, localParts } from './nightly-schedule'
+import { TODAY_DRAFT_FILENAME, consumeDraft } from './today-draft'
 
 export interface NightlySources {
   observationsSince(sinceIso: string | null): Promise<string[]>
@@ -80,6 +81,27 @@ export function ownerMemoryRoot(stateDir: string, owner: string): string | null 
 }
 
 const readIf = (p: string): string => (existsSync(p) ? readFileSync(p, 'utf8') : '')
+
+export const DRAFT_BLOCK = '今天的草稿 today-draft.md(白天 CC 刚记下的新情况,优先整理进来)'
+
+/**
+ * 整理读过草稿后,去掉读过的那几行(整理途中新记的留着)。草稿是辅助素材:清理失败只记日志,
+ * 不让整次整理失败 —— 留着的行明晚再读一次而已。
+ */
+function consumeDraftFile(root: string, consumed: string, log: NightlyRunDeps['log']): void {
+  if (!consumed.trim()) return
+  const p = join(root, TODAY_DRAFT_FILENAME)
+  try {
+    const rest = consumeDraft(readIf(p), consumed)
+    if (rest) {
+      const tmp = `${p}.tmp-${process.pid}`
+      writeFileSync(tmp, rest)
+      renameSync(tmp, p)
+    } else rmSync(p, { force: true })
+  } catch (e) {
+    log('MEMORY_NIGHTLY', `today-draft cleanup failed (kept for tomorrow): ${e instanceof Error ? e.message : String(e)}`)
+  }
+}
 
 export const MATERIAL_BUDGET = 30_000
 const CHAT_BLOCK = '这段时间的聊天'
@@ -175,11 +197,17 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   const memPath = join(root, MEMORY_FILENAME)
   const firstRun = !existsSync(memPath)
   const currentText = readIf(memPath)
-  const { text: material, truncated } = await gatherMaterial(root, deps.sources, state.lastRunIso, firstRun)
+  const { text: rest, truncated } = await gatherMaterial(root, deps.sources, state.lastRunIso, firstRun)
   if (truncated) deps.log('MEMORY_NIGHTLY', `material over budget (${MATERIAL_BUDGET} chars) — lower-priority blocks dropped/truncated`)
-  const fingerprint = createHash('sha256').update(material).digest('hex')
+  // 今天的草稿(同日失忆修复,2026-10-01):放最前面,不占素材预算(本身封顶 600 字)。它的每一行都
+  // 来自 profile.md 的新增,profile 变了指纹自然会变 —— 所以指纹不算草稿,否则清掉草稿第二晚就会
+  // 白白多调一次模型。
+  const draft = readIf(join(root, TODAY_DRAFT_FILENAME))
+  const material = draft.trim() ? `### ${DRAFT_BLOCK}\n${draft.trim()}${rest ? `\n\n${rest}` : ''}` : rest
+  const fingerprint = createHash('sha256').update(rest).digest('hex')
   if (!firstRun && fingerprint === state.fingerprint) {
     mergeRunState(deps.stateDir, { lastRunDay: day })
+    consumeDraftFile(root, draft, deps.log)
     return { status: 'skipped', reason: 'no_new_material' }
   }
 
@@ -241,6 +269,8 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   } catch (e) {
     return fail(`write_error:${e instanceof Error ? e.message : String(e)}`)
   }
+
+  consumeDraftFile(root, draft, deps.log)
 
   const notice = composeNotice(noticeItems(res.applied), !state.firstRunDone)
   mergeRunState(deps.stateDir, {
