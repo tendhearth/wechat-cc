@@ -16,6 +16,7 @@
  */
 import { makeHealthRuntime, type HealthRuntime } from '../health'
 import { classifyFailure } from '../health/classify'
+import { errorWithProviderCode } from '../../lib/provider-error-code'
 
 export interface HealthWireDeps {
   stateDir: string
@@ -51,7 +52,7 @@ export function wireHealth(deps: HealthWireDeps): HealthRuntime {
  * layer) importing core/conversation-coordinator's TurnRecord type just for
  * a string literal union.
  */
-export function reportLlmTurnOutcome(health: HealthRuntime, outcome: string, error: string | undefined): void {
+export function reportLlmTurnOutcome(health: HealthRuntime, outcome: string, error: string | undefined, errorCode?: string): void {
   if (outcome === 'completed') {
     health.onSuccess('llm')
     return
@@ -82,8 +83,13 @@ export function reportLlmTurnOutcome(health: HealthRuntime, outcome: string, err
   // as an unrecognized error string (worst case: no alert) than to
   // misclassify a business failure as a connection failure (worst case:
   // silences every chat's real replies).
-  const kind = classifyFailure(error ?? outcome).kind
+  //
+  // 带 provider 码的回合(lib/provider-error-code;第一片只有 Claude 会话)把码
+  // 挂在抛出物上一起交下去:classify 有码就只看码,不再扫文本 —— 也就保住了
+  // 红线 A(`auth_rejected` 不会被厂商散文「403 / authentication」带成「登录已失效」)。
+  const failure = errorWithProviderCode(error ?? outcome, errorCode)
+  const kind = classifyFailure(failure).kind
   if (kind === 'network' || kind === 'llm_auth') {
-    health.onFailure('llm', error ?? outcome)
+    health.onFailure('llm', failure)
   }
 }

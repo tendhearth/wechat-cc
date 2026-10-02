@@ -13,6 +13,9 @@ import { describe, expect, it } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { currentVerdicts, type ProviderErrorSample } from './provider-error-verdicts'
+import { classifyFailure } from '../health/classify'
+import { errorWithProviderCode } from '../../lib/provider-error-code'
+import { authFailNotice } from '../../core/conversation-coordinator'
 
 const DIR = join(__dirname, '__fixtures__', 'provider-errors')
 const files = readdirSync(DIR).filter(f => f.endsWith('.json')).sort()
@@ -56,6 +59,39 @@ describe('provider 失败样本 —— 两条 owner 红线今天守住了没有'
   it('claude 会话路径只在双哨兵上产出 auth_failed 码', () => {
     for (const s of samples.filter(x => x.provider === 'claude' && x.path === 'session')) {
       expect(s.errorCode === 'auth_failed', s.id).toBe(s.current.claudeSentinel)
+    }
+  })
+
+  // 红线 A 的 owner 细化(2026-10-02):SDK 标了 authentication_failed 但哨兵没中
+  // ⇒ 仍判认证失败(要主人动手),但给人看的话**不说**登录过期 / 重新登录。
+  it('claude 非哨兵的认证失败:码 auth_rejected,判 llm_auth,但通知与微信提示都不说登录过期', () => {
+    const rejected = samples.filter(x => x.provider === 'claude' && x.path === 'session' && x.truth === 'auth' && !x.current.claudeSentinel)
+    expect(rejected.map(s => s.id).sort()).toEqual(['claude.bad_key.session', 'claude.forbidden_403.session'])
+    for (const s of rejected) {
+      expect(s.errorCode, s.id).toBe('auth_rejected')
+      const klass = classifyFailure(errorWithProviderCode(s.message, s.errorCode ?? undefined))
+      expect(klass.kind, s.id).toBe('llm_auth')
+      expect(klass.actionable, s.id).toBe(true)
+      expect(`${klass.title}${klass.body}`, s.id).not.toMatch(/登录|过期/)
+      expect(authFailNotice('claude', s.errorCode ?? undefined), s.id).not.toMatch(/登录|过期|login/)
+    }
+  })
+
+  it('claude 哨兵:登录过期的文案只出在这里', () => {
+    const s = samples.find(x => x.id === 'claude.not_logged_in.session')!
+    const klass = classifyFailure(errorWithProviderCode(s.message, s.errorCode ?? undefined))
+    expect(klass.title).toBe('模型登录已失效')
+    expect(authFailNotice('claude', s.errorCode ?? undefined)).toMatch(/登录已过期/)
+  })
+
+  it('claude 会话路径不再有「当成正文的错误」(text_event 通道清零)', () => {
+    expect(samples.filter(x => x.provider === 'claude' && x.channel === 'text_event').map(s => s.id)).toEqual([])
+  })
+
+  it('claude 会话的网络 / 超时样本按码判网络,不是认证', () => {
+    for (const s of samples.filter(x => x.provider === 'claude' && x.path === 'session' && (x.truth === 'network' || x.truth === 'timeout'))) {
+      expect(s.errorCode, s.id).toBe('network')
+      expect(s.current.healthKind, s.id).toBe('network')
     }
   })
 })

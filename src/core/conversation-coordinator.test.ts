@@ -20,6 +20,14 @@ describe('authFailNotice', () => {
     expect(cur).toContain('cursor-agent login')
     expect(cur).not.toContain('claude login')
   })
+
+  it('auth_rejected(凭证被拒,非哨兵):不说登录过期,不给 login 命令(红线 A,owner 2026-10-02)', () => {
+    const t = authFailNotice('claude', 'auth_rejected')
+    expect(t).toContain('认证没通过(API 返回 401/403)')
+    expect(t).toContain('账号或密钥')
+    expect(t).not.toMatch(/登录|过期|login/)
+    expect(authFailNotice('claude', 'auth_failed')).toBe(authFailNotice('claude'))
+  })
 })
 
 /**
