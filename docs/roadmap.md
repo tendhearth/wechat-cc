@@ -121,6 +121,7 @@
 
 ## 修订记录
 
+- 2026-10-01:中继 v2「按 IP 限连接尝试」改在 Worker 内做(Workers Rate Limiting 绑定 `IP_LIMIT`,60 次 / 10 秒,只管 `/v2/`):Free 计划的唯一一条 WAF 限速规则已给 dl.tendhearth.com;relay.md 补「首次部署前先开 Analytics Engine(否则 10089)」。
 - 2026-10-01:7b 已知限制「cwd 是符号链接 ⇒ 找不到文件夹」修掉(共用导入规则先 realpath,经链接的只带记录新开)。
 - 2026-10-01:加入项目组合与方向演变入口；把手机主线从 1.7.0 发布清单中分出，更新已过期的等待顺序与 Widget / 通知边界。
 - 2026-10-01:「自改的工作树回收缺一个显式入口」完成(`self change --abandon <id>` + `--list` 标出可回收的树)。
