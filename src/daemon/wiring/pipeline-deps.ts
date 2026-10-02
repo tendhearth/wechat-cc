@@ -56,7 +56,7 @@ import { makePhonePush } from '../phone-push'
 import { makePhoneNotifier } from '../phone-notifier'
 import { deviceIdOf } from '../device-store'
 import { makeCommandRouter } from './command-router'
-import { ensureChatAndNote, makeMatterActivity } from '../matter-activity'
+import { ensureChatAndNote, makeMatterActivity, wireMatterActivity } from '../matter-activity'
 import { makeEventsStore } from '../events/store'
 import { makeGuestRequestStore } from '../guest-requests'
 import { makeForwardBudget } from '../../core/forward-budget'
@@ -227,6 +227,8 @@ export interface BuildPipelineDepsResult {
   phoneConnect: import('../internal-api/types').PhoneConnectDep
   /** 「一件事」读写面(有 matters store 才有)。 */
   mattersService: import('../../core/matters/service').MattersService | null
+  /** 退订工作台事件 + 清「一件事」活动时间的节流定时器;main.ts 登记进 shutdown。可重复调用。 */
+  stopMatterActivity: () => void
   /**
    * App-conversation-channel converse closure (voice arc Stage 0, Task 2).
    * Late-bound onto internal-api by main.ts via setCompanionConverse()
@@ -577,8 +579,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
   // 「一件事」的活动时间(spec 2026-10-01 §3):微信入站与工作台事件节流地推 updated_at。随 daemon 常驻。
   const matterActivity = opts.matters ? makeMatterActivity({ touch: id => opts.matters!.touch(id), log: (tag, line) => log(tag, line) }) : null
-  // 回调里只记一笔(note 不同步写库,见 matter-activity.ts 头注释)。
-  opts.workbench?.changes.onChange(taskId => matterActivity?.note(taskId))
+  // 回调里只记一笔(note 不同步写库,见 matter-activity.ts 头注释)。stop 退订 + 清定时器,main.ts 登记进 shutdown。
+  const stopMatterActivity = wireMatterActivity(matterActivity, opts.workbench?.changes)
   // 「一件事」读写面:工作台续接 + 对主人 chat 的 app 通道;手机页与内部 API 共用这一个实例。
   const mattersService = opts.matters ? makeMattersService({
     store: opts.matters,
@@ -1208,5 +1210,5 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     })
   }
 
-  return { pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
+  return { pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
 }

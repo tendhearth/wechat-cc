@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { PHONE_API_SCHEMAS } from '@wechat-cc/protocol'
-import { mobileReadsRoute, cacheSessions, type MobileSessionsDeps } from './mobile-reads'
+import { mobileReadsRoute, cacheSessions, SESSIONS_DONE_MAX, type MobileSessionsDeps } from './mobile-reads'
 import type { ConnectionsSnapshot } from './connections'
 import { deriveSharedKey, generateTunnelKeypair, sealFrame } from '../lib/tunnel-crypto'
 
@@ -83,6 +83,17 @@ describe('cacheSessions(单飞 + 短缓存,裁定 8)', () => {
     t = 2000; fail = true
     await expect(c.list('claude', { q: '', limit: 30 })).rejects.toThrow(); expect(calls).toBe(3)
     await expect(c.list('claude', { q: '', limit: 30 })).rejects.toThrow(); expect(calls).toBe(4)
+  })
+  it('结果表有软上限:TTL 内一下来了很多不同的键 ⇒ 挤掉最旧的,不无限长;最近的仍命中', async () => {
+    const loads: string[] = []
+    const inner = sessions({ read: async key => { loads.push(key); return { session: { key, providerId: 'claude', title: 't', cwd: null, updatedAt: 0, observedState: 'idle' }, messages: [], nextCursor: null } as any } })
+    const c = cacheSessions(inner, { ttlMs: 60_000, now: () => 0 })
+    for (let i = 0; i < SESSIONS_DONE_MAX + 10; i++) await c.read(`k${i}`, { limit: 20 })
+    expect(loads).toHaveLength(SESSIONS_DONE_MAX + 10)
+    await c.read(`k${SESSIONS_DONE_MAX + 9}`, { limit: 20 })
+    expect(loads).toHaveLength(SESSIONS_DONE_MAX + 10)   // 最近的还在
+    await c.read('k0', { limit: 20 })
+    expect(loads).toHaveLength(SESSIONS_DONE_MAX + 11)   // 最旧的被挤掉了 ⇒ 重扫
   })
   it('超预算后慢扫仍在跑:再来同键请求加入同一次扫描,不叠新的;总在途有上限', async () => {
     let calls = 0
