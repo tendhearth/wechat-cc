@@ -1,4 +1,5 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
+import {Window} from 'happy-dom'
 
 class El {
   dataset: Record<string, string> = {}
@@ -72,7 +73,7 @@ it('offers only visible public messages and clears its unchanged source draft af
   expect(els['converse-scroll']!.innerHTML).toContain('私人聊天内容')
 })
 
-it('renders CC Markdown while preserving the user message and the original discussion payload', async () => {
+it('renders both sides as Markdown while preserving original user source and discussion payload', async () => {
   const userText = '**原样要求**\n\n    保留缩进'
   const replyText = '## 完成\n\n**已整理**\n\n- 一项\n- 另一项\n\n```js\nconst value = 1\n```\n\n| 项目 | 状态 |\n| --- | --- |\n| 文档 | 好了 |'
   invoke.mockResolvedValue(replyText)
@@ -80,7 +81,12 @@ it('renders CC Markdown while preserving the user message and the original discu
   els['converse-send']!.handlers.click!()
   await settle()
   const html = els['converse-scroll']!.innerHTML
-  expect(html).toContain(`<div class="converse-bubble">${userText}</div>`)
+  const document=new Window().document;document.body.innerHTML=html
+  const user=document.querySelector('.converse-msg-user')!
+  expect(user.querySelector('.cc-readable-markdown strong')?.textContent).toBe('原样要求')
+  const source=user.querySelector('details')!;source.open=true
+  expect(source.querySelector('pre code')?.textContent).toBe(userText)
+  expect(invoke).toHaveBeenCalledWith('agent_converse',{text:userText})
   expect(html).toContain('cc-readable-markdown wb-markdown')
   expect(html).toContain('<h2>完成</h2>')
   expect(html).toContain('<strong>已整理</strong>')

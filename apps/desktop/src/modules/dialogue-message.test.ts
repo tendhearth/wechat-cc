@@ -25,16 +25,22 @@ it('renders assistant history as structured Markdown without modifying the sourc
   expect(original.text).toBe(text)
 })
 
-it('preserves exact user text, blank lines and indentation, and does not interpret commands or media as Markdown', () => {
-  const text = '**保留字面符号**\n\n    带缩进 <script>'
-  const user = rendered(text,'in').querySelector('.dialogue-message-plain')!
-  expect(user.textContent).toBe(text)
-  expect(user.querySelector('strong')).toBeNull()
+it('renders user Markdown with exact source inspection and leaves commands and media literal', () => {
+  const text = '\n\n**保留字面符号**\r\n\r\n    带缩进 <script>'
+  const user = rendered(text,'in').querySelector('.dialogue-message-text')!
+  expect(user.querySelector('.cc-readable-markdown strong')?.textContent).toBe('保留字面符号')
+  const source=user.querySelector('details')!;source.open=true
+  expect(source.querySelector('pre code')?.textContent).toBe(text)
   expect(user.querySelector('script')).toBeNull()
-  const command = rendered(text,'out','command')
-  expect(command.querySelector('.dialogue-cmd')?.textContent).toBe(text)
+  const commandText='**命令原文**\n\n    带缩进 <script>'
+  const command = rendered(commandText,'out','command')
+  expect(command.querySelector('.dialogue-cmd')?.textContent).toBe(commandText)
   expect(command.querySelector('strong')).toBeNull()
-  expect(rendered(text,'out','file').querySelector('.dialogue-message-plain')?.textContent).toBe(text)
+  expect(rendered(commandText,'out','file').querySelector('.dialogue-message-plain')?.textContent).toBe(commandText)
+  const plain='普通消息\n\n空行\n  两个空格'
+  const plainBody=rendered(plain,'in')
+  expect(plainBody.querySelector('.cc-user-plain')?.textContent).toBe(plain)
+  expect(plainBody.querySelector('details')).toBeNull()
 })
 
 it('escapes assistant HTML and renders only safe web links without loading remote images', () => {

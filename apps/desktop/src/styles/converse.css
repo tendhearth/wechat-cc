@@ -18,6 +18,7 @@
 .converse-avatar { width: 32px; height: 32px; object-fit: contain; align-self: flex-start; margin-top: 8px; flex: none; }
 .converse-bubble { min-width:0; max-width: 85%; padding: 4px 0; font-size: var(--th-size-bubble); line-height: var(--th-lh-bubble); white-space: pre-wrap; word-break: break-word; }
 .converse-msg-cc .converse-bubble.cc-readable-markdown { max-width:min(70ch,calc(100% - 74px)); }
+.converse-msg-user .converse-bubble.cc-user-bubble { max-width:min(70ch,85%); white-space:normal; }
 .converse-msg-cc .converse-bubble { background: transparent; color: var(--th-ink); }
 .converse-msg-user .converse-bubble { padding: 12px 16px; border-radius: var(--th-radius-bubble); background: var(--th-rail); color: var(--th-ink); }
 .converse-msg-cc.is-pending .converse-bubble { color: var(--th-ink-soft); }

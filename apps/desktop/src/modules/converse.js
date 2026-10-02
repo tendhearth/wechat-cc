@@ -15,7 +15,7 @@ import { icon } from "./icons.js"
 
 import { escapeHtml } from "../view.js"
 import { formatInvokeError } from "../ipc.js"
-import { renderWorkbenchMarkdown } from "./workbench-markdown.js"
+import { renderWorkbenchMarkdown, renderWorkbenchUserText, captureUserSources, restoreUserSources } from "./workbench-markdown.js"
 
 /**
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
@@ -115,7 +115,7 @@ function messageHtml(m) {
   const markdown = m.role === "cc" && !m.pending
   return `<div class="converse-msg ${roleCls}${pendingCls}">
     ${m.role === "cc" ? '<img class="converse-avatar" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="CC" width="32" height="32" />' : ""}
-    <div class="converse-bubble${markdown ? ' cc-readable-markdown wb-markdown' : ''}">${markdown ? renderWorkbenchMarkdown(m.text) : escapeHtml(m.text)}</div>
+    <div class="converse-bubble${markdown ? ' cc-readable-markdown wb-markdown' : m.role==='user' ? ' cc-user-bubble' : ''}">${markdown ? renderWorkbenchMarkdown(m.text) : m.role==='user' ? renderWorkbenchUserText(m.text,`converse:${m.id}`) : escapeHtml(m.text)}</div>
     ${replayBtn}
   </div>`
 }
@@ -346,9 +346,11 @@ async function loadSharedHistory(deps) {
 function renderMessages() {
   const scroll = document.getElementById("converse-scroll")
   if (scroll) {
+    const open=captureUserSources(scroll)
     scroll.innerHTML = messages.length === 0
       ? emptyStateHtml()
       : messages.map(messageHtml).join("")
+    restoreUserSources(scroll,open)
     requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight })
   }
   for (const cb of listeners) {

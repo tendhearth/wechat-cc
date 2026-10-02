@@ -22,7 +22,6 @@
 .task-entry-excerpt-content { min-width:0; flex:1; }
 .task-entry-excerpt-author { display:block; margin-bottom:6px; font-size:12px; color:var(--th-ink-soft); cursor:pointer; }
 .task-entry-excerpt-body { font-size:var(--th-size-body); line-height:1.8; overflow-wrap:anywhere; }
-.task-entry-excerpt-plain { white-space:pre-wrap; }
 .task-entry-hint,.task-entry-destination { color:var(--th-ink-soft); font-size:12px; }
 .task-entry-more { margin-top:20px; padding:14px 0; border-block:1px solid var(--th-hair); }
 .task-entry-more summary { cursor:pointer; color:var(--th-ink-soft); }

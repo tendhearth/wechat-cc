@@ -1,4 +1,5 @@
 import {afterEach, beforeEach, expect, it, vi} from 'vitest'
+import {Window} from 'happy-dom'
 
 // The existing dialog tests use this small DOM surface; events drive the real module.
 class Dialog {
@@ -74,16 +75,20 @@ it('only submits selected real recent messages, with cc mapped to assistant', as
   expect(dialog.innerHTML).not.toContain('尚未完成')
 })
 
-it('shows formatted CC discussion and literal user text, but submits the original selected excerpts', async () => {
+it('shows formatted discussion with inspectable user source, but submits original selected excerpts', async () => {
   const {createTaskEntry} = await import('./task-entry.js')
   const messages = [
-    {role:'user' as const,text:'**原样要求**\n\n    原样缩进'},
+    {role:'user' as const,text:'\n\n**原样要求**\r\n\r\n    原样缩进'},
     {role:'cc' as const,text:'## 完成\n\n**已整理**\n\n- 文档\n\n```js\nconst value = 1\n```\n\n| 项目 | 状态 |\n| --- | --- |\n| 文档 | 好了 |\n\n<script>alert(1)</script>\n\n[坏链接](javascript:alert(1))\n\n![外部图片](https://example.test/image.png)'},
   ]
   const entry = createTaskEntry({invokeWorkbenchApi:api(),storage})
   const pending = entry.open({text:'继续做',visibleMessages:messages})
   await settle()
-  expect(dialog.innerHTML).toContain('task-entry-excerpt-plain">**原样要求**\n\n    原样缩进</div>')
+  const document=new Window().document;document.body.innerHTML=dialog.innerHTML
+  const user=document.querySelector('.task-entry-excerpt')!
+  expect(user.querySelector('.cc-readable-markdown strong')?.textContent).toBe('原样要求')
+  const source=user.querySelector('details')!;source.open=true
+  expect(source.querySelector('pre code')?.textContent).toBe(messages[0]!.text)
   expect(dialog.innerHTML).toContain('<h2>完成</h2>')
   expect(dialog.innerHTML).toContain('<strong>已整理</strong>')
   expect(dialog.innerHTML).toContain('<ul>')

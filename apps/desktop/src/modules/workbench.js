@@ -13,7 +13,7 @@ export { createWorkbenchDraftStore } from './workbench-window-state.js'
 import { mountHandoffDialog, mountHandoffRecord, defaultReviewArtifacts } from './workbench-handoff.js'
 import { mountHistoryDialog } from './workbench-history.js'
 import { isAckRequiredError, isUnattendedProvider, mountUnattendedDialog, unattendedLabelSuffix } from './workbench-unattended.js'
-import { escapeWorkbenchHtml, renderWorkbenchMarkdown } from './workbench-markdown.js'
+import { escapeWorkbenchHtml, renderWorkbenchMarkdown, renderWorkbenchUserText } from './workbench-markdown.js'
 export { escapeWorkbenchHtml, renderWorkbenchMarkdown } from './workbench-markdown.js'
 import { WORKBENCH_CODE_REVIEW_MIME, createReviewDiffBudget, renderReviewFileDiff, renderWorkbenchCodeReview } from './workbench-code-review.js'
 import { renderReviewPanel, reviewsSignature } from './workbench-review-panel.js'
@@ -221,13 +221,18 @@ export function workbenchMessageContext(state) {
 
 /** @param {MessageContext} context @returns {(event:WorkbenchEvent)=>string} */
 export function renderMessageFor({ detail, helper, handoffs, actionable, lastReply, otherProvider, origin }) {
-  return event => `<article class="wb-message" id="${workbenchTimelineEventId(event)}" data-timeline-anchor data-kind="${escapeWorkbenchHtml(event.kind)}">
+  return event => {
+    const handoff=handoffs.find(h=>h.requestEventId===Number(event.id))
+    const text=handoff?.request??event.text
+    const body=event.kind==='user'?renderWorkbenchUserText(text,`task:${event.taskId}:${event.id}`):event.kind==='text'?renderWorkbenchMarkdown(text):escapeWorkbenchHtml(text)
+    return `<article class="wb-message" id="${workbenchTimelineEventId(event)}" data-timeline-anchor data-kind="${escapeWorkbenchHtml(event.kind)}">
     <header><span>${event.kind === 'user' ? '你' : `<span class="wb-provider-badge">${escapeWorkbenchHtml(helper)}</span>`}</span><time>${escapeWorkbenchHtml((event.sourceId?'原会话记录':time(event.createdAt)))}</time></header>
-    ${handoffs.some(h=>h.requestEventId===Number(event.id))?`<div class="wb-message-body"><p>${escapeWorkbenchHtml(handoffs.find(h=>h.requestEventId===Number(event.id))?.request)}</p><button class="wb-new" data-action="handoff-record" data-handoff-id="${escapeWorkbenchHtml(handoffs.find(h=>h.requestEventId===Number(event.id))?.id)}">查看随附的交接内容</button></div>`:event.kind === 'text' ? `<div class="wb-message-body wb-markdown">${renderWorkbenchMarkdown(event.text)}</div>` : `<p class="wb-message-body">${escapeWorkbenchHtml(event.text)}</p>`}
+    <div class="wb-message-body${event.kind==='text'?' wb-markdown':''}">${body}${handoff?`<button class="wb-new" data-action="handoff-record" data-handoff-id="${escapeWorkbenchHtml(handoff.id)}">查看随附的交接内容</button>`:''}</div>
     ${renderMessageAttachments(detail?.task.id??'',event.attachments)}
     ${event.kind==='text'&&detail?renderImageArtifacts(detail.task.id,(detail.artifacts??[]).filter(a=>detail.events.filter(message=>message.kind==='text'&&message.createdAt<=a.createdAt).at(-1)?.id===event.id)):''}
     ${actionable&&event.kind==='text'&&(origin||(event===lastReply&&otherProvider))?`<button type="button" class="wb-new wb-handoff-action" data-action="${origin?'handoff-revision':'handoff-review'}" data-event-id="${event.id}">${origin?'选择意见，交回原任务':`交给 ${escapeWorkbenchHtml(otherProvider?.displayName)} 检查`}</button>`:''}
   </article>`
+  }
 }
 
 /** @param {{catalog?:import('./workbench-execution.js').CatalogState,restartPreview?:import('./workbench-execution.js').ContinuationPreviewState,busy?:boolean}} [executionView] @param {WorkbenchState} state @param {import('./workbench-interaction.js').Interactions} [interactions] @param {Draft} [draft] @param {string} [attachmentError] */
@@ -718,6 +723,7 @@ export function initWorkbenchPage(deps) {
     if (root.querySelector('#wb-inputs')) openState.set('wb-inputs', !!root.querySelector('#wb-inputs[open]'))
     for (const disclosure of root.querySelectorAll?.('[data-review-disclosure]') ?? []) openState.set(disclosure.id, disclosure.hasAttribute('open'))
     for (const disclosure of root.querySelectorAll?.('[data-timeline-disclosure]') ?? []) openState.set(disclosure.id, disclosure.hasAttribute('open'))
+    for (const disclosure of root.querySelectorAll?.('[data-user-source]') ?? []) openState.set(disclosure.id, disclosure.hasAttribute('open'))
     disclosures.set(renderedScope, openState)
     const oldContent = root.querySelector('.wb-content')
     const contentScroll = oldContent?.scrollTop ?? 0

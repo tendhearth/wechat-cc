@@ -335,7 +335,6 @@
 .wb-history-message-author { margin-bottom:8px; color:var(--th-ink-soft); font-size:var(--th-size-small); font-weight:500; line-height:var(--th-lh-small); }
 .wb-history-message-user .wb-history-message-author { color:var(--th-ink); }
 .wb-history-message-body { min-width:0; color:var(--th-ink); overflow-wrap:anywhere; }
-.wb-history-message-plain { white-space:pre-wrap; }
 .wb-history-message-body.wb-markdown { white-space:normal; }
 .wb-history-message-body strong { color:inherit; font-size:inherit; font-weight:500; }
 .wb-history-message-body.wb-markdown :is(h1,h2,h3,h4,h5,h6) { font-weight:500; overflow-wrap:anywhere; }

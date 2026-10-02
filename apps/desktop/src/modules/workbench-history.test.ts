@@ -28,10 +28,11 @@ it('escapes history data and distinguishes unknown activity from confirmed exit'
  const detail=renderHistoryPanel(controller.state)
  expect(detail).toContain('&lt;img');expect(detail).toContain('运行状态未确认');expect(detail).not.toContain('已退出')
 })
-it('renders assistant Markdown in both previews while preserving the original user text',()=>{
+it('renders both sides in both previews while preserving exact inspectable user source',()=>{
  const controller=createHistoryController(async()=>null,()=>{},['codex'])
  const text='## 接着做\n\n**沿用上下文**，打开 [功能说明](/Users/example/project/docs/cc-workbench.md:13)。\n\n- 查看记录\n- 输入 `补充要求`\n\n```ts\nconst answer = 42\n```\n\n[官网](https://example.com/docs)'
- controller.state.preview={session:{...item,providerId:'codex'},messages:[{id:'u',role:'user',text:'保留 **原样**\n<example>',truncated:false},{id:'a',role:'assistant',text,truncated:false}],nextCursor:null,sourceFingerprint:'h',page:{limit:100,cursor:null},truncated:false}
+ const userText='\n\n保留 **原样**\r\n<example>'
+ controller.state.preview={session:{...item,providerId:'codex'},messages:[{id:'u',role:'user',text:userText,truncated:false},{id:'a',role:'assistant',text,truncated:false}],nextCursor:null,sourceFingerprint:'h',page:{limit:100,cursor:null},truncated:false}
  const window=new Window(),document=window.document
  document.body.innerHTML=renderHistoryPanel(controller.state)
  const replies=document.querySelectorAll('.wb-history-message-body.wb-markdown')
@@ -45,10 +46,15 @@ it('renders assistant Markdown in both previews while preserving the original us
   expect(reply.textContent).toContain('功能说明')
   expect(reply.textContent).not.toContain('/Users/example')
  }
- const requests=document.querySelectorAll('.wb-history-message-plain')
+ const requests=document.querySelectorAll('.wb-history-message-user .cc-user-reading')
  expect(requests).toHaveLength(2)
- expect(requests[0]?.textContent).toBe('保留 **原样**\n<example>')
- expect(requests[0]?.querySelector('strong')).toBeNull()
+ for(const request of requests){
+  expect(request.querySelector('.cc-readable-markdown strong')?.textContent).toBe('原样')
+  const source=request.querySelector('details')!;source.open=true
+  expect(source.querySelector('pre code')?.textContent).toBe(userText)
+ }
+ expect(requests[0]?.querySelector('details')?.id).not.toBe(requests[1]?.querySelector('details')?.id)
+ expect(controller.state.preview.messages[0]?.text).toBe(userText)
  expect(controller.state.preview.messages[1]?.text).toBe(text)
  window.close()
 })

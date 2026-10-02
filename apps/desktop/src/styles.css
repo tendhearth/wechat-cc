@@ -1954,6 +1954,16 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .cc-readable-markdown.wb-markdown pre code { white-space:inherit; overflow-wrap:inherit; word-break:inherit; }
 .cc-readable-markdown.wb-markdown table { max-width:100%; font-size:.875em; overflow-wrap:normal; word-break:normal; }
 .cc-readable-markdown.wb-markdown :is(th,td) { min-width:6em; }
+.cc-user-reading { min-width:0; max-width:100%; white-space:normal; }
+.cc-user-plain { white-space:pre-wrap; overflow-wrap:anywhere; }
+.cc-message-source { margin-top:8px; font-size:12px; line-height:1.6; color:var(--th-ink-soft); white-space:normal; }
+.cc-message-source>summary { width:fit-content; cursor:pointer; list-style:none; }
+.cc-message-source>summary::before { content:'›'; display:inline-block; margin-right:5px; }
+.cc-message-source[open]>summary::before { transform:rotate(90deg); }
+.cc-message-source>summary::-webkit-details-marker { display:none; }
+.cc-message-source>summary:focus-visible { outline:2px solid var(--th-accent); outline-offset:3px; }
+.cc-message-source>pre { max-width:100%; margin:8px 0 0; padding:10px; overflow:auto; border:1px solid var(--th-hair); border-radius:var(--th-radius-control); background:var(--th-paper); color:var(--th-ink); white-space:pre; overflow-wrap:normal; word-break:normal; font:12px/1.7 var(--mono); }
+.cc-message-source>pre>code { white-space:inherit; font:inherit; }
 .privacy-submit {
   height: 36px;
   padding: 0 18px;

@@ -20,7 +20,7 @@
 // the user has unlocked private threads this session).
 
 import { escapeHtml } from "../view.js"
-import { renderWorkbenchMarkdown } from "./workbench-markdown.js"
+import { renderWorkbenchMarkdown, renderWorkbenchUserText, captureUserSources, restoreUserSources } from "./workbench-markdown.js"
 import { formatRelativeTimeShort } from "./observations.js"
 import { icon } from "./icons.js"
 import { showPageError } from "./page-status.js"
@@ -197,8 +197,8 @@ async function loadChats(deps) {
 // ── timeline ───────────────────────────────────────────────────────────
 
 /**
- * Render assistant text as a readable document; user and other messages
- * keep their exact text. Commands use a muted dialogue-cmd row.
+ * Render sent user and assistant text as readable documents. Formatted user
+ * text includes the original source; commands and media keep literal text.
  * @param {Message} m
  * @param {{ userName: string, userAvatar?: string|null, botAvatar?: string|null, userAvatarKey?: string|null, botAvatarKey?: string|null }} ctx
  */
@@ -217,7 +217,8 @@ export function renderDialogueMessage(m, ctx) {
   const time = formatTurnTime(m.ts)
   const author = `<div class="dialogue-author">${escapeHtml(name)}${time ? `<span class="dialogue-time">${escapeHtml(time)}</span>` : ""}</div>`
   const markdown = !isUser && m.kind === "text"
-  const body = `<div class="dialogue-message-text ${markdown ? 'cc-readable-markdown wb-markdown' : 'dialogue-message-plain'}">${markdown ? renderWorkbenchMarkdown(m.text) : escapeHtml(m.text)}</div>`
+  const userText=isUser&&m.kind==='text'
+  const body = `<div class="dialogue-message-text ${markdown ? 'cc-readable-markdown wb-markdown' : userText ? '' : 'dialogue-message-plain'}">${markdown ? renderWorkbenchMarkdown(m.text) : userText ? renderWorkbenchUserText(m.text,`dialogue:${m.chatId}:${m.id}`) : escapeHtml(m.text)}</div>`
   return `<div class="dialogue-turn" data-msg-id="${escapeHtml(m.id)}">
     ${avatar}
     <div class="dialogue-turn-body">${author}${body}</div>
@@ -250,6 +251,7 @@ async function loadTimeline(deps, opts = {}) {
   const seq = ++loadSeq
   const stage = document.getElementById("dialogue-timeline")
   if (!stage) return
+  const open=captureUserSources(stage)
   timelineShowsNewest = !opts.beforeTs
   timelineShowingSearchResults = false
   showTimelineView()
@@ -303,6 +305,7 @@ async function loadTimeline(deps, opts = {}) {
   }
 
   stage.innerHTML = messages.map(m => renderDialogueMessage(m, ctx)).join("")
+  restoreUserSources(stage,open)
   // Newest at bottom — jump there on initial load.
   requestAnimationFrame(() => {
     stage.scrollTop = stage.scrollHeight
@@ -594,6 +597,7 @@ async function openThreadDetail(deps, threadId) {
   const seq = ++loadSeq
   const detail = document.getElementById("dialogue-thread-detail")
   if (!detail) return
+  const open=captureUserSources(detail)
   showThreadDetailView()
   if (seq !== loadSeq) return
   detail.innerHTML = `<p class="empty-state">加载中…</p>`
@@ -656,6 +660,7 @@ async function openThreadDetail(deps, threadId) {
     </div>
     ${episodesHtml}
   `
+  restoreUserSources(detail,open)
 }
 
 // ── privacy unlock ─────────────────────────────────────────────────────
