@@ -1,7 +1,7 @@
 .m-markdown{font-size:var(--th-size-body,16px);line-height:1.65;color:var(--ink);overflow-wrap:anywhere}
 .m-markdown>:first-child{margin-top:0}.m-markdown>:last-child{margin-bottom:0}
 .m-markdown p,.ev .tx .m-markdown p{margin:0 0 10px;color:inherit;font-size:inherit;white-space:normal;word-break:normal}
-.m-markdown strong,.m-markdown b,.ev .tx .m-markdown b{display:inline;font-size:inherit;font-weight:500;color:inherit;background:var(--th-ground);-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.m-markdown strong,.m-markdown b,.ev .tx .m-markdown b{display:inline;font-size:inherit;font-weight:500;color:inherit;background:var(--th-hair);-webkit-box-decoration-break:clone;box-decoration-break:clone}
 .m-markdown h1,.m-markdown h2,.m-markdown h3,.m-markdown h4,.m-markdown h5,.m-markdown h6{font-size:1.1em;line-height:1.4;margin:16px 0 8px}
 .m-markdown h1{font-size:1.3em}.m-markdown h2{font-size:1.2em}
 .m-markdown ul,.m-markdown ol{padding-left:24px;margin:8px 0 12px}.m-markdown li{margin:4px 0}.m-markdown li>p{margin-bottom:4px}

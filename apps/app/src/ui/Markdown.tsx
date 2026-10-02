@@ -49,8 +49,8 @@ function Inline({ tokens, typeRole, tone = 'ink' }: { tokens: Token[]; typeRole:
     switch (token.type) {
       case 'checkbox': return null // 列表行的标记已经展示状态,宽松列表的段内 token 不再重复。
       case 'strong':
-        // 中文使用已打包的衬线家族,重点用轻底色;强调色只给可点击动作。
-        return <Txt key={i} role={typeRole} content="user" tone={tone} style={{ backgroundColor: c.ground }}>{nested()}</Txt>
+        // 中文使用已打包的衬线家族,中性底色也要能在用户气泡中辨认;强调色只给可点击动作。
+        return <Txt key={i} role={typeRole} content="user" tone={tone} style={{ backgroundColor: c.hair }}>{nested()}</Txt>
       case 'em':
         return <Txt key={i} role={typeRole} content="user" tone={tone} style={{ textDecorationLine: 'underline' }}>{nested()}</Txt>
       case 'del':
