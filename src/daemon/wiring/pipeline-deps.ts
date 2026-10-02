@@ -84,6 +84,7 @@ import type { YiHub, YiDispatch } from '../../core/yi-hub'
 import type { ExecResult } from '../../core/a2a-server'
 import type { Mode, ProviderId } from '../../core/conversation'
 import { makeMattersService } from '../../core/matters/service'
+import { makeSayReceipts } from '../../core/matters/say-receipts'
 
 export interface DelegateDeps {
   listHands: () => readonly A2AAgentRecord[]
@@ -589,6 +590,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       say: (text: string, surface?: 'desktop' | 'phone') => companionConverse(text, surface ?? 'desktop'),
       recent: async (chatId: string, limit: number) => (await messagesStore.listRange(chatId, { limit })).map(r => ({ kind: r.direction === 'in' ? 'user' : 'text', text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
     },
+    // 手机对聊天那件事「说一句」按 requestId 去重(v70,与工作台输入回执同一规矩)。
+    sayReceipts: makeSayReceipts(db),
   }) : null
   // 手机「跟 CC 说」(spec 2026-10-01):主人对话一页(只读)+ 收下即回的说一句。
   // 对话 chat 必须就是 companionConverse 写进去的那条(它认 companion 的 default_chat_id):
