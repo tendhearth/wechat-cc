@@ -15,6 +15,7 @@ import { icon } from "./icons.js"
 
 import { escapeHtml } from "../view.js"
 import { formatInvokeError } from "../ipc.js"
+import { renderWorkbenchMarkdown } from "./workbench-markdown.js"
 
 /**
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
@@ -111,9 +112,10 @@ function messageHtml(m) {
   const replayBtn = m.role === "cc" && !m.pending
     ? `<button class="voice-replay-btn" type="button" data-msg-id="${m.id}" aria-label="朗读这条回复" title="朗读">${icon("play")} </button>`
     : ""
+  const markdown = m.role === "cc" && !m.pending
   return `<div class="converse-msg ${roleCls}${pendingCls}">
     ${m.role === "cc" ? '<img class="converse-avatar" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="CC" width="32" height="32" />' : ""}
-    <div class="converse-bubble">${escapeHtml(m.text)}</div>
+    <div class="converse-bubble${markdown ? ' cc-readable-markdown wb-markdown' : ''}">${markdown ? renderWorkbenchMarkdown(m.text) : escapeHtml(m.text)}</div>
     ${replayBtn}
   </div>`
 }

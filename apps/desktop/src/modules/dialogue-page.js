@@ -20,6 +20,7 @@
 // the user has unlocked private threads this session).
 
 import { escapeHtml } from "../view.js"
+import { renderWorkbenchMarkdown } from "./workbench-markdown.js"
 import { formatRelativeTimeShort } from "./observations.js"
 import { icon } from "./icons.js"
 import { showPageError } from "./page-status.js"
@@ -196,13 +197,12 @@ async function loadChats(deps) {
 // ── timeline ───────────────────────────────────────────────────────────
 
 /**
- * Render a single message as a document-style turn block (reuses the
- * mockup's dialogue-turn markup). command-kind messages render as a muted
- * single-line dialogue-cmd row.
+ * Render assistant text as a readable document; user and other messages
+ * keep their exact text. Commands use a muted dialogue-cmd row.
  * @param {Message} m
  * @param {{ userName: string, userAvatar?: string|null, botAvatar?: string|null, userAvatarKey?: string|null, botAvatarKey?: string|null }} ctx
  */
-function messageHtml(m, ctx) {
+export function renderDialogueMessage(m, ctx) {
   if (m.kind === "command") {
     return `<div class="dialogue-cmd" data-msg-id="${escapeHtml(m.id)}">${escapeHtml(m.text)}</div>`
   }
@@ -216,11 +216,8 @@ function messageHtml(m, ctx) {
   })
   const time = formatTurnTime(m.ts)
   const author = `<div class="dialogue-author">${escapeHtml(name)}${time ? `<span class="dialogue-time">${escapeHtml(time)}</span>` : ""}</div>`
-  const body = m.text
-    .split("\n")
-    .filter(line => line.length > 0)
-    .map(line => `<p>${escapeHtml(line)}</p>`)
-    .join("") || "<p></p>"
+  const markdown = !isUser && m.kind === "text"
+  const body = `<div class="dialogue-message-text ${markdown ? 'cc-readable-markdown wb-markdown' : 'dialogue-message-plain'}">${markdown ? renderWorkbenchMarkdown(m.text) : escapeHtml(m.text)}</div>`
   return `<div class="dialogue-turn" data-msg-id="${escapeHtml(m.id)}">
     ${avatar}
     <div class="dialogue-turn-body">${author}${body}</div>
@@ -305,7 +302,7 @@ async function loadTimeline(deps, opts = {}) {
     botAvatarKey: "claude",
   }
 
-  stage.innerHTML = messages.map(m => messageHtml(m, ctx)).join("")
+  stage.innerHTML = messages.map(m => renderDialogueMessage(m, ctx)).join("")
   // Newest at bottom — jump there on initial load.
   requestAnimationFrame(() => {
     stage.scrollTop = stage.scrollHeight
@@ -339,7 +336,7 @@ function wireUpwardPaging(deps, stage, ctx) {
       if (older.length > 0) {
         oldestLoadedTs = older[0]?.ts ?? oldestLoadedTs
         loadedMessages = [...older, ...loadedMessages]
-        stage.insertAdjacentHTML("afterbegin", older.map(m => messageHtml(m, ctx)).join(""))
+        stage.insertAdjacentHTML("afterbegin", older.map(m => renderDialogueMessage(m, ctx)).join(""))
         // Preserve scroll position so the view doesn't jump, then release the
         // paging lock INSIDE the rAF — clearing it before the queued frame
         // ran let a rapid second scroll fire another fetch that mutated
@@ -637,7 +634,7 @@ async function openThreadDetail(deps, threadId) {
   const lastEpisode = data.episodes[data.episodes.length - 1] || null
   const anchorTs = lastEpisode ? lastEpisode.to_ts : ""
   const episodesHtml = data.episodes.map((ep, i) => {
-    const body = ep.messages.map(m => messageHtml(m, ctx)).join("") || `<p class="empty-state">（无消息）</p>`
+    const body = ep.messages.map(m => renderDialogueMessage(m, ctx)).join("") || `<p class="empty-state">（无消息）</p>`
     return `<section class="dialogue-episode">
       <div class="dialogue-episode-head">片段 ${i + 1}</div>
       ${body}

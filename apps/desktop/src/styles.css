@@ -1932,6 +1932,28 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .dialogue-turn ol { margin: 0 0 14px; padding-left: 20px; color: var(--th-ink); }
 .dialogue-turn li { margin-bottom: 4px; font-size: 13px; line-height: 1.7; }
 .dialogue-turn strong { color: var(--th-ink); font-weight: 500; }
+.dialogue-message-text { min-width:0; max-width:70ch; font-size:var(--th-size-body); line-height:1.8; overflow-wrap:anywhere; }
+.dialogue-message-plain,.dialogue-cmd { white-space:pre-wrap; }
+
+/* Full assistant replies and discussion excerpts share one reading layout. */
+.cc-readable-markdown.wb-markdown {
+  --wb-line:var(--th-hair); --wb-secondary:var(--th-ink-soft); --wb-muted:var(--th-ink-soft);
+  min-width:0; max-width:70ch; color:var(--th-ink); font-size:var(--th-size-body); line-height:1.8;
+  white-space:normal; overflow-wrap:anywhere;
+}
+.cc-readable-markdown.wb-markdown :is(p,ul,ol,blockquote,pre,table) { margin:.85em 0; }
+.cc-readable-markdown.wb-markdown :is(p,li) { font-size:inherit; line-height:inherit; }
+.cc-readable-markdown.wb-markdown :is(h1,h2,h3,h4,h5,h6) { margin:1.15em 0 .5em; font-size:1em; font-weight:500; line-height:1.5; }
+.cc-readable-markdown.wb-markdown h1 { font-size:1.2em; }
+.cc-readable-markdown.wb-markdown h2 { font-size:1.1em; }
+.cc-readable-markdown.wb-markdown strong { display:inline; color:var(--th-ink); font-size:inherit; font-weight:600; }
+.cc-readable-markdown.wb-markdown li+li { margin-top:.3em; }
+.cc-readable-markdown.wb-markdown>:first-child { margin-top:0; }
+.cc-readable-markdown.wb-markdown>:last-child { margin-bottom:0; }
+.cc-readable-markdown.wb-markdown pre { max-width:100%; white-space:pre; overflow-wrap:normal; word-break:normal; }
+.cc-readable-markdown.wb-markdown pre code { white-space:inherit; overflow-wrap:inherit; word-break:inherit; }
+.cc-readable-markdown.wb-markdown table { max-width:100%; font-size:.875em; overflow-wrap:normal; word-break:normal; }
+.cc-readable-markdown.wb-markdown :is(th,td) { min-width:6em; }
 .privacy-submit {
   height: 36px;
   padding: 0 18px;
