@@ -8,7 +8,12 @@
 .cc-home-details > summary:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 2px; }
 .cc-home-details > summary:hover { color: var(--th-ink); }
 /* 浮层:「CC 的连接」—— 一张纸,行与行之间只有细线;状态色只在点上(spec §6.3,规则同手机 /connections)。 */
-.cc-home-details[open] > .now-connections { position: absolute; right: 0; top: 32px; width: min(420px, calc(100vw - 120px)); max-height: 70vh; overflow: auto; background: var(--th-paper); border: 1px solid var(--th-hair); border-radius: var(--th-radius-sheet); padding: var(--th-space-l) var(--th-space-xl) var(--th-space-xl); box-shadow: 0 18px 40px -24px var(--th-scrim); color: var(--th-ink); }
+.cc-home-details[open] > .now-panel { position: absolute; right: 0; top: 32px; width: min(420px, calc(100vw - 120px)); max-height: 70vh; overflow: auto; background: var(--th-paper); border: 1px solid var(--th-hair); border-radius: var(--th-radius-sheet); padding: var(--th-space-l) var(--th-space-xl) var(--th-space-xl); box-shadow: 0 18px 40px -24px var(--th-scrim); color: var(--th-ink); }
+/* 浮窗桌宠的唯一入口(鱼缸画布 2026-10-01 退休):连接面板底部一个次要按钮。 */
+.now-float { margin-top: var(--th-space-l); padding: 6px 14px; border: 1px solid var(--th-hair); border-radius: var(--th-radius-control); background: transparent; color: var(--th-ink); font: inherit; font-size: var(--th-size-small); cursor: pointer; }
+.now-float:hover { border-color: var(--th-accent); color: var(--th-accent); }
+.now-float:focus-visible { outline: 2px solid var(--th-accent); outline-offset: 2px; }
+.now-float:disabled { cursor: wait; opacity: .6; }
 .now-connections .nc-title { font-size: var(--th-size-meta); font-weight: 500; letter-spacing: var(--th-tracking-meta); color: var(--th-ink-soft); margin: 0 0 var(--th-space-s); }
 .now-connections .nc-headline { display: flex; align-items: center; gap: 10px; font-size: var(--th-size-item); line-height: var(--th-lh-item); margin: 0 0 var(--th-space-s); }
 .now-connections .nc-stale { font-size: var(--th-size-small); color: var(--th-ink-soft); margin: 0 0 var(--th-space-s); }
@@ -84,7 +89,7 @@ body[data-pane="overview"] #workbench-attention { display: none !important; }
   .now-cc-col { justify-self: end; }
   .now-figure { width: 120px; height: 120px; }
   .cc-home-details { right: 18px; top: 8px; }
-  .cc-home-details[open] > .now-connections { width: min(420px, calc(100vw - 110px)); }
+  .cc-home-details[open] > .now-panel { width: min(420px, calc(100vw - 110px)); }
   .converse-compose .converse-toolbar { flex: 1 1 100%; flex-wrap: wrap; justify-content: flex-end; }
   .cc-now-pane[data-now="home"] .converse-compose .converse-toolbar { flex: none; }
 }

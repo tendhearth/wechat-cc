@@ -214,7 +214,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       return (await call<{ turn: PhoneChangesTurnT | null }>('GET /m/api/matter/changes', `/m/api/matter/changes?${idq(id)}`)).turn
     },
     async chat(p) {
-      const q = [p.before ? `before=${encodeURIComponent(p.before)}` : '', p.limit ? `limit=${p.limit}` : ''].filter(Boolean).join('&')
+      const q = [p.before ? `before=${encodeURIComponent(p.before)}` : '', p.limit !== undefined ? `limit=${p.limit}` : ''].filter(Boolean).join('&')
       return strip(await call<{ ok: true } & ChatPageT>('GET /m/api/chat', `/m/api/chat${q ? '?' + q : ''}`))
     },
     async chatSay(text, requestId) {
@@ -239,6 +239,11 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async continueSession(key) {
       // 幂等(spec D9):超时后协议客户端可以原样重发,daemon 回同一件事。
       const r = await call<{ matterId: string; created: boolean }>('POST /m/api/session/continue', '/m/api/session/continue', { body: { key }, retry: true })
+      return { matterId: r.matterId }
+    },
+    async handoff(p) {
+      // 幂等(requestId;一件事也只交一次):超时后协议客户端可以原样重发,daemon 回同一件。
+      const r = await call<{ matterId: string; created: boolean }>('POST /m/api/matter/handoff', '/m/api/matter/handoff', { body: { id: p.id, requestId: p.requestId, providerId: p.providerId }, retry: true })
       return { matterId: r.matterId }
     },
     async decide(p) {

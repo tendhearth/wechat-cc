@@ -10,7 +10,7 @@ import { MANAGED_NATIVE_CAPABILITIES } from '../executor-capabilities'
 import { removeTempDir } from '../../../lib/test-temp'
 import type { AgentProvider, AgentRuntimeSnapshot } from '../../agent-provider'
 import { makeRuntimeState, type Active } from './state'
-import { makeViewDomain } from './view'
+import { makeViewDomain, ATTENTION_TEXT_MAX } from './view'
 import type { ServiceActions, ServiceCtx } from './ctx'
 
 const dbs: Db[] = []; const dirs: string[] = []
@@ -81,6 +81,18 @@ describe('makeViewDomain · 进度', () => {
     expect(domain.attention().tasks).toEqual([])
     state.runsByTask.set(task.id, running({ permissions: { pending: () => [{ id: 'p1' }] } } as never))
     expect(domain.attention().tasks).toMatchObject([{ id: task.id, pendingPermissionCount: 1, pendingQuestionCount: 0 }])
+  })
+  it('attention:每条带第一件待决的原文(权限优先,与手机同一个格式),压成一行、有上限', () => {
+    const { domain, running, state, task } = setup()
+    const perm = (id: string, createdAt: number, description = '安装图片处理组件') => ({ id, taskId: task.id, tool: 'Bash', description, createdAt })
+    const ask = (id: string, question: string) => ({ id, taskId: task.id, createdAt: 1, questions: [{ id: 'q', header: 'h', question, options: [] }] })
+    state.runsByTask.set(task.id, running({ permissions: { pending: () => [perm('p2', 20, '第二件'), perm('p1', 10)] }, questions: { pending: () => [ask('q1', '要哪个?')] } } as never))
+    expect(domain.attention().tasks[0]!.first).toEqual({ kind: 'permission', text: 'Bash: 安装图片处理组件' })
+    state.runsByTask.set(task.id, running({ questions: { pending: () => [ask('q1', '  可以\n安装图片处理组件吗?  ')] } } as never))
+    expect(domain.attention().tasks[0]!.first).toEqual({ kind: 'question', text: '可以 安装图片处理组件吗?' })
+    state.runsByTask.set(task.id, running({ permissions: { pending: () => [perm('p1', 1, 'x'.repeat(500))] } } as never))
+    const text = domain.attention().tasks[0]!.first!.text
+    expect(text.length).toBe(ATTENTION_TEXT_MAX); expect(text.endsWith('…')).toBe(true)
   })
 })
 

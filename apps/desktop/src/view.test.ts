@@ -351,6 +351,7 @@ describe('dashboardHero 3-state', () => {
     const h = dashboardHero({ daemonAlive: true, accountCount: 1, expiredCount: 0 })
     expect(h.state).toBe('connected')
     expect(h.tone).toBe('ok')
+    expect(h).toMatchObject({ headline: '微信已连接', meta: '这台电脑在替 CC 收发微信' })
   })
   it('bound account but daemon NOT alive → recovering (was falsely "connected")', () => {
     const h = dashboardHero({ daemonAlive: false, accountCount: 1, expiredCount: 0 })

@@ -41,6 +41,16 @@ describe('本机回执(终审 I1:离开 /chat 也不丢)', () => {
     expect(listReceipts()).toHaveLength(RECEIPTS_MAX)
     expect(listReceipts()[0]!.requestId).toBe('r3')
   })
+  it('早先那句重试(同 id 再放)后挪到队尾:之后再来新回执,先挤掉的是别的最旧项,不是它', () => {
+    for (let i = 0; i < RECEIPTS_MAX; i++) putReceipt(r(`r${i}`))
+    putReceipt(r('r0', 99))   // r0 最早,重试拿到新回执
+    putReceipt(r('new'))
+    const ids = listReceipts().map(x => x.requestId)
+    expect(ids).toHaveLength(RECEIPTS_MAX)
+    expect(ids).toContain('r0')
+    expect(ids).not.toContain('r1')
+    expect(ids.slice(-2)).toEqual(['r0', 'new'])
+  })
   it('落地 / 回复 / 不管它 ⇒ dropReceipt 清掉;快照引用只在变时换(给 useSyncExternalStore)', () => {
     putReceipt(r('a'))
     const snap = listReceipts()

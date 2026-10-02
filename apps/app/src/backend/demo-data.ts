@@ -5,7 +5,7 @@ import type { ApprovalExplanationT, ProgressSummaryT, PhoneChangesTurnT, EntryOp
 type Pair = readonly [zh: string, en: string]
 const pick = (lang: Lang, p: Pair) => (lang === 'zh-Hans' ? p[0] : p[1])
 
-export const IDS = { portfolio: 'a1b2c3d4', notes: 'e5f6a7b8', trip: 'c9d0e1f2' } as const
+export const IDS = { portfolio: 'a1b2c3d4', notes: 'e5f6a7b8', trip: 'c9d0e1f2', report: 'f3a4b5c6' } as const
 /** 主人和 CC 的那条对话(chat matter;Task 10 起不进「一起做」,单独置顶)。 */
 export const CHAT_ID = 'c0ffee01'
 export const PERM_ID = 'perm-demo-1'
@@ -16,6 +16,12 @@ export const copy = {
   portfolioTitle: ['让作品集在手机上更好看', 'A better portfolio on mobile'],
   notesTitle: ['把零散想法收一收', 'A home for loose ideas'],
   tripTitle: ['整理下周出差安排', 'Plan next week’s trip'],
+  // 额度用完、等你决定交不交给另一位(spec continue-sessions §7-3)
+  reportTitle: ['把周报整理成一页', 'One-page weekly report'],
+  stepReport1: ['读过本周的提交记录', 'Read this week’s commits'],
+  evQuota: ['Claude Code 的额度用完了，这一轮没做完。', 'Claude Code ran out of quota; this round didn’t finish.'],
+  handoffFirst: ['接替 Claude Code（额度用完）继续这件事：把周报整理成一页', 'Taking over from Claude Code (out of quota): One-page weekly report'],
+  handoffDone: ['接着做完了，周报在 report.md。', 'Picked it up and finished. The report is in report.md.'],
   ev1: ['看过现有首页', 'Reviewed the current homepage'],
   ev2: ['调整手机上的布局', 'Refined the mobile layout'],
   evAllowed: ['已允许：安装图片处理组件', 'Allowed: add the image-processing package'],

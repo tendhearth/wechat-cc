@@ -15,6 +15,8 @@ export function makeCreationReceiptStore(db:Db) {
   const get=(id:string)=>db.query<CreationReceipt,[string]>(SELECT+' WHERE id=?').get(id)
   return {
     get,
+    /** 某个 projectId 下最早的一张回执(手机额度接管用 `quota-handoff:<源任务>` 作键:一件事只交出去一次)。 */
+    firstForProject:(projectId:string)=>db.query<CreationReceipt,[string]>(SELECT+' WHERE project_id=? ORDER BY created_at,rowid LIMIT 1').get(projectId),
     add(input:Omit<CreationReceipt,'createdAt'>):CreationReceipt {
       return db.transaction(()=>{
         const prior=get(input.id)

@@ -7,9 +7,10 @@
 //     拿它当基准会让下一次拉通时凭空播一次「收到信」;
 //  2. 一次性动作播完即清 —— pet 端点每 2 秒来一拍,不清的话 presence 那次的
 //     receive / error 会跟着每一拍重播;
-//  3. 轮询快慢档由合并结果决定(亮着 / 有轮次 / 有待决权限 → 快)。
+//  3. 轮询快慢档由合并结果决定(刚说过话 / 有轮次 / 有待决权限 → 快)。亮着不算:
+//     够得着就亮(spec 2026-10-01 §4),拿它当快档等于一直 2 秒一拉。
 import { presenceToPet } from './presence-map.js'
-import { initialBridgeState, mergeIntent } from './runtime-events.js'
+import { initialBridgeState, mergeIntent, recentContact } from './runtime-events.js'
 
 /** @typedef {import('../../presence-poller.js').Presence} Presence */
 /** @typedef {import('./presence-map.js').PetIntent} PetIntent */
@@ -34,10 +35,9 @@ export function createPetBridge({ now = () => Date.now() } = {}) {
     /**
      * `first` = 这是一次「初次观察」,调用方该跳过转场(spec §5.2:开窗时 CC 已经亮着,
      * 那是既成事实,不是「主人刚到」)。两种情况都算,因为两个轮询谁先回来都有可能:
-     *  - 开窗后的**第一拍**(常常是 presence 先回来,它自带 Phase A 的 3 分钟近似,
-     *    刚说过话的话那一拍就会算出 lit —— 不挡就是一段点到一半的点火);
-     *  - 第一次真拿到 pet 端点回答的那一拍(在那之前 form 只是 presence 的近似,
-     *    真答案落地时又会 setForm 一次)。
+     *  - 开窗后的**第一拍**(够得着就算出 lit —— 不挡就是一段点到一半的点火);
+     *  - 第一次真拿到 pet 端点回答的那一拍(保守起见仍算初次;明暗只看 presence,
+     *    这一拍通常不再改 form)。
      * 之后每一拍都是 false —— 那时候的变化是真变化,该演就演。
      * @param {PetTurn | null} turn
      * @returns {{ intent: PetIntent, permission: PetTurn['pending_permissions'][number] | null, permissionCount: number, fast: boolean, first: boolean }}
@@ -46,10 +46,11 @@ export function createPetBridge({ now = () => Date.now() } = {}) {
       const wasInitialized = state.initialized
       const wasTicked = ticked
       ticked = true
-      const r = mergeIntent({ presence: presenceIntent, turn, state, nowMs: now() })
+      const nowMs = now()
+      const r = mergeIntent({ presence: presenceIntent, turn, state, nowMs })
       state = r.state
       presenceIntent = { ...presenceIntent, oneShots: [] }
-      const fast = state.form === 'lit' || (turn?.turn?.phase ?? 'idle') !== 'idle' || r.permissionCount > 0
+      const fast = recentContact(state, nowMs) || (turn?.turn?.phase ?? 'idle') !== 'idle' || r.permissionCount > 0
       // 今天 bridge 不会重置 state;若将来加了重置(reset),同样应当在重置后的
       // 第一拍再报一次 first。
       const first = !wasTicked || (!wasInitialized && state.initialized)

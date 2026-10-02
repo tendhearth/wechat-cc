@@ -60,10 +60,10 @@ import { makeInputsDomain } from './service/inputs'
 import { makeLifecycleDomain } from './service/lifecycle'
 import { makeExecuteDomain } from './service/execute'
 import { makeEntryDomain } from './service/entry'
+import { makeQuotaHandoffDomain } from './service/quota-handoff'
 import type { ServiceActions, ServiceCtx } from './service/ctx'
 export type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
 export type { InputMaterials, CreateTask, WorkbenchPhase, WorkbenchTaskView, EntryResult } from './service/types'
-
 
 export function makeWorkbenchService(opts: Options) {
   const { store } = opts
@@ -94,7 +94,7 @@ export function makeWorkbenchService(opts: Options) {
   const artifactsDomain=makeArtifactsDomain(ctx)
   const {collect,collectTurnArtifacts,captureCodeChanges}=artifactsDomain
   const executeDomain=makeExecuteDomain(ctx,{admission:admissionDomain,attachments:attachmentsDomain,quota:quotaDomain,view:viewDomain,native:nativeDomain,inputs:inputsDomain,lifecycle:lifecycleDomain,notices:noticesDomain,artifacts:artifactsDomain})
-  const entryDomain=makeEntryDomain(ctx,{execute:executeDomain,view:viewDomain,admission:admissionDomain,quota:quotaDomain})
+  const entryDomain=makeEntryDomain(ctx,{execute:executeDomain,view:viewDomain,admission:admissionDomain,quota:quotaDomain}),quotaHandoffDomain=makeQuotaHandoffDomain(ctx,{execute:executeDomain,quota:quotaDomain})
   store.recover()
   store.liveInputs.recover()
 
@@ -112,8 +112,8 @@ export function makeWorkbenchService(opts: Options) {
     setNotificationWake:noticesDomain.setNotificationWake,
     providerQuota:quotaDomain.providerQuota,
     quotaExhausted:quotaDomain.quotaExhausted,
-    /** 额度耗尽时"交给谁继续"的默认人选;null = 没有可接的。 */
-    fallbackExecutor(exhaustedId:string):string|null{return fallbackExecutor(exhaustedId)},
+    /** 额度耗尽时"交给谁继续"的默认人选;null = 没有可接的。quotaHandoff / handOff:手机确认卡把一件事交出去(service/quota-handoff.ts)。 */
+    fallbackExecutor(exhaustedId:string):string|null{return fallbackExecutor(exhaustedId)},...quotaHandoffDomain.api,
     contextAvailable:noticesDomain.contextAvailable,
     notificationEligible:noticesDomain.notificationEligible,
     setWechatWatch:noticesDomain.setWechatWatch,

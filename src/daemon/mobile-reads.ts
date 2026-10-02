@@ -12,6 +12,8 @@ export const PHONE_SESSIONS_BUDGET_MS = 10_000
 export const PHONE_SESSIONS_PAGE = 30
 export const PHONE_SESSION_PAGE = 20
 export const PHONE_SESSION_TEXT_MAX = 4000
+/** 原生会话读的结果缓存至多留这么多键(软上限,超了先清过期、再挤最旧)。 */
+export const SESSIONS_DONE_MAX = 64
 export interface MobileSessionsDeps {
   list(provider: 'claude' | 'codex', input: NativeHistoryListInput): Promise<NativeHistoryPage>
   read(key: string, input: NativeHistoryReadInput): Promise<NativeHistoryPreview>
@@ -63,8 +65,12 @@ export function cacheSessions(inner: MobileSessionsDeps, o: { ttlMs?: number; ma
     if (cur) return cur as Promise<T>
     if (inflight.size >= maxInflight) return Promise.reject(new Error('busy'))
     const p = (() => { try { return load() } catch (e) { return Promise.reject(e) } })().then(v => {
-      done.set(key, { at: now(), v })
-      if (done.size > 64) for (const [k, e] of done) if (now() - e.at >= ttl) done.delete(k)
+      done.delete(key); done.set(key, { at: now(), v })   // 先删再放:Map 按插入序,最旧的在前
+      if (done.size > SESSIONS_DONE_MAX) {
+        for (const [k, e] of done) if (now() - e.at >= ttl) done.delete(k)
+        // 软上限:TTL 内也可能一下来很多不同的键(翻页 / 换会话),还超就从最旧的挤
+        for (const k of done.keys()) { if (done.size <= SESSIONS_DONE_MAX) break; done.delete(k) }
+      }
       return v
     }).finally(() => { inflight.delete(key) })
     inflight.set(key, p)

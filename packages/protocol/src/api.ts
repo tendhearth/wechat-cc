@@ -114,6 +114,14 @@ export const MatterArtifact = z.object({
 
 /** 接过来、还没发第一句的电脑会话(spec 2026-10-01-tendhearth-continue-sessions D12);发过第一句就不再出现。 */
 export const MatterNativeStart = z.object({ mode: z.enum(['native_resume', 'fresh_context']), providerId: z.string() })
+/** 执行者额度用完(spec 2026-10-01-tendhearth-continue-sessions §7-3):能交给谁 / 没人能接 / 已经交出去了(matterId = 新那件)。 */
+export const MatterQuotaHandoff = z.discriminatedUnion('state', [
+  z.object({ state: z.literal('offer'), from: z.string(), to: z.string(), kind: z.enum(['quota', 'rate_limit']), resetAt: z.number() }),
+  z.object({ state: z.literal('none'), from: z.string(), kind: z.enum(['quota', 'rate_limit']), resetAt: z.number() }),
+  z.object({ state: z.literal('handed'), from: z.string(), to: z.string(), matterId: z.string() }),
+])
+export type MatterQuotaHandoffT = z.infer<typeof MatterQuotaHandoff>
+export const MatterHandoffResult = z.object({ matterId: z.string(), created: z.boolean() })
 export const MatterDetail = z.object({
   matter: Matter, bindings: z.array(MatterBinding), sessions: z.array(MatterSession),
   task: MatterTaskView.nullable(), events: z.array(MatterEvent),
@@ -121,6 +129,7 @@ export const MatterDetail = z.object({
   permissions: z.array(MatterPermission), questions: z.array(MatterQuestion),
   artifacts: z.array(MatterArtifact), inputs: z.array(MatterInput),
   nativeStart: MatterNativeStart.optional(),
+  quotaHandoff: MatterQuotaHandoff.optional(),
 })
 
 // ── 交办入口(entry/create/create-receipt,mobile-workbench.ts)───────────
@@ -400,6 +409,7 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   'POST /m/api/matter/permission': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'POST /m/api/matter/answer': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'GET /m/api/matter/artifact': z.union([z.object({ ok: z.literal(true) }).extend(MatterArtifactChunk.shape), PhoneErrorResponse]),
+  'POST /m/api/matter/handoff': z.union([z.object({ ok: z.literal(true) }).extend(MatterHandoffResult.shape), PhoneErrorResponse]),
   'POST /m/api/push/register': z.union([z.object({ ok: z.literal(true) }), PhoneErrorResponse]),
   'POST /m/api/push/test': z.union([z.object({ ok: z.literal(true), result: z.object({ ok: z.boolean(), code: z.string() }) }), PhoneErrorResponse]),
 }

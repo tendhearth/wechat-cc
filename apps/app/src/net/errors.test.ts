@@ -44,6 +44,11 @@ describe('mapPhoneError(HTTP 状态 + 正文 → BackendCode)', () => {
   ] as const)('接着做电脑会话的码(spec D11):%s %j ⇒ %s', (status, body, want) => {
     expect(mapPhoneError(status, body)).toBe(want)
   })
+  it.each([
+    [409, 'quota_handoff_not_needed'], [409, 'quota_handoff_changed'], [503, 'quota_handoff_unavailable'],
+  ] as const)('额度交接(spec §7-3):%s %s ⇒ handoff_changed(重读详情,不说「没送到」)', (status, error) => {
+    expect(mapPhoneError(status, { ok: false, error })).toBe('handoff_changed')
+  })
   it('daemon 没接推送(push_not_wired,503)⇒ unavailable', () => {
     expect(mapPhoneError(503, { ok: false, error: 'push_not_wired' })).toBe('unavailable')
   })

@@ -43,6 +43,15 @@ describe('mountNowPage', () => {
     expect(document.getElementById('now-waiting')!.hidden).toBe(true)
     expect(document.getElementById('now-waiting')!.dataset.state).toBeUndefined()
   })
+  it('row shows the pending question / permission text itself, task title underneath (escaped)', () => {
+    const root = dom(); const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn() })
+    page.setAttention({ stale: false, tasks: [{ id: 'a', title: '作品集', providerId: 'c', pendingPermissionCount: 0, pendingQuestionCount: 1, attentionKey: '["q"]', first: { kind: 'question', text: '可以安装<b>图片</b>处理组件吗?' } }] } as any)
+    const row = document.querySelector('.now-waiting-row') as HTMLElement
+    expect(row.querySelector('.t')!.textContent).toBe('可以安装<b>图片</b>处理组件吗?')
+    expect(row.querySelector('b')).toBeNull()
+    expect(row.querySelector('.d')!.textContent).toBe('作品集')
+    expect(row.querySelector('.go')!.textContent).toBe('回答 ›')
+  })
   it('escapes task titles', () => {
     const root = dom(); const page = mountNowPage({ root, presencePoller: poller(), onOpenTask: vi.fn() })
     page.setAttention({ stale: false, tasks: [{ id: 'x', title: '<img src=x onerror=1>', providerId: 'c', pendingPermissionCount: 1, pendingQuestionCount: 0, attentionKey: '["r"]' }] } as any)

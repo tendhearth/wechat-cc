@@ -28,10 +28,26 @@ describe('latestCCLine', () => {
 })
 describe('waitingRows', () => {
   const task = (id: string, perm: number, q: number) => ({ id, title: `任务 ${id}`, providerId: 'claude', pendingPermissionCount: perm, pendingQuestionCount: q, attentionKey: '[]' })
-  it('有权限 ⇒ 看清楚;只有问题 ⇒ 回答;说明是计数', () => {
+  it('没带原文:有权限 ⇒ 看清楚;只有问题 ⇒ 回答;说明是计数', () => {
     expect(waitingRows({ tasks: [task('a', 1, 1), task('b', 0, 2)], stale: false })).toEqual([
       { id: 'a', title: '任务 a', detail: '1 项权限 · 1 个问题', go: '看清楚' },
       { id: 'b', title: '任务 b', detail: '2 个问题', go: '回答' },
+    ])
+  })
+  it('带原文(attention.first)⇒ 标题是问题 / 权限本身,说明是任务标题;多于一项时补「共 N 项」;按钮跟着第一件走', () => {
+    const withFirst = (t: any, kind: string, text: string) => ({ ...t, first: { kind, text } })
+    expect(waitingRows({ tasks: [
+      withFirst(task('a', 0, 1), 'question', '可以安装图片处理组件吗?'),
+      withFirst(task('b', 1, 1), 'permission', 'Bash: npm install sharp'),
+    ], stale: false })).toEqual([
+      { id: 'a', title: '可以安装图片处理组件吗?', detail: '任务 a', go: '回答' },
+      { id: 'b', title: 'Bash: npm install sharp', detail: '任务 b · 共 2 项', go: '看清楚' },
+    ])
+  })
+  it('原文缺失 / 空 ⇒ 退回任务标题 + 计数(旧 daemon 也能用)', () => {
+    expect(waitingRows({ tasks: [{ ...task('a', 1, 0), first: null }, { ...task('b', 1, 0), first: { kind: 'permission', text: ' ' } }] as any, stale: false })).toEqual([
+      { id: 'a', title: '任务 a', detail: '1 项权限', go: '看清楚' },
+      { id: 'b', title: '任务 b', detail: '1 项权限', go: '看清楚' },
     ])
   })
   it('读不到 / 过期 ⇒ 空(不显示旧的「等你」)', () => {

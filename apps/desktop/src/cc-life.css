@@ -118,12 +118,12 @@
 .cc-recollections .fd-section-head h2{font-size:14px;font-weight:500}
 @media(max-width:740px){.cc-recollections .pc-card{grid-template-columns:minmax(0,1fr) 105px;gap:10px 16px}.cc-recollections .pc-card time{grid-column:1;grid-row:1}.cc-recollections .pc-card h3{grid-column:1;grid-row:2;font-size:15px;margin:0}.cc-recollections .pc-card p{grid-column:1;grid-row:3;font-size:12px;margin:0}.cc-recollections .pc-cover{grid-column:2;grid-row:2/4}.cc-recollections .pc-cover img{height:85px}.cc-recollections .pc-favorite{grid-column:1;grid-row:4}}
 
-
-/* 鱼缸(生活与工具,2026-10-01 从「此刻」搬来):整页只放鱼缸,一列居中。 */
-.dashboard .aquarium-pane{overflow:auto}
-.aquarium-pane .moment-body{grid-template-columns:minmax(0,1fr);justify-items:center}
-.aquarium-pane .moment-body:not(.is-companion-immersive) :is(.companion-intro,.ai-orbit-visual){transform:none}
-/* 「连接与设置」抽屉的「连接」段:重新连接 / 测试 / 状态自检,当前用户与子用户。 */
+/* 「连接与设置」抽屉的「连接」段:连接结论两行,重新连接 / 测试 / 状态自检,当前用户与子用户。 */
+.conn-verdict{margin:0 0 14px}
+.conn-verdict p{margin:0}
+#hero-headline{font-size:16px;line-height:1.5;color:var(--th-ink)}
+#hero-meta{font-size:13px;line-height:1.5;color:var(--th-ink-soft)}
+.conn-verdict.warn #hero-headline{color:var(--th-bad)}
 .drawer-connection .moment-actions{width:auto;display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 18px}
 .drawer-connection .moment-actions .pending{flex-basis:100%;min-height:0;margin:0}
 .drawer-connection .moment-actions .pending:empty{display:none}
