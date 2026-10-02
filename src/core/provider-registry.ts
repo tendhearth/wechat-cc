@@ -11,11 +11,11 @@
  * The registry is intentionally not a singleton; it's constructed and
  * passed via deps. Tests can build their own with mock providers.
  */
-import type { AgentProvider, AgentSession, CallTargetKind, CheapEval, SpawnContext } from './agent-provider'
+import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession, AgentWorkbenchRuntime, CallTargetKind, CheapEval, SpawnContext } from './agent-provider'
 import type { WorkbenchExecutorCapabilities } from './workbench/executor-capabilities'
 import type { ProviderId } from './conversation'
 import { hasAuthCode } from '../lib/auth-failure'
-import { assertCallAllowed, decideCall, isNetworkUnprotectedError, NetworkUnprotectedError, unresolvedTarget, type CallTarget, type NetworkGate } from '../lib/network-gate'
+import { assertCallAllowed, decideCall, isNetworkUnprotectedError, NetworkUnprotectedError, sessionCallTarget, unprotectedMessage, unresolvedTarget, type CallTarget, type NetworkGate } from '../lib/network-gate'
 
 /**
  * 这一次调用**真正**连到哪里(评审 #193 P1-1):问 provider 自己 —— 它用构造时定下的端点、构造时的
@@ -36,7 +36,7 @@ export function providerCallTarget(provider: AgentProvider | null | undefined, p
  * modelCatalog 出发前按**这一次调用实际会连到的地方**分类(providerCallTarget)—— 需要保护且网络
  * 不安全才抛 NetworkUnprotectedError(不起子进程、不发请求);不需要保护的(国内 / 自建 / Cursor
  * auto / 自定义网关)照常走,不看信号。spawn 出来的会话若没自己报目标,就把 spawn 那一刻 provider
- * 报的目标钉在会话上(之后每一轮按它判,不按后来的配置判)。
+ * 报的目标钉在会话上(之后每一轮按它判,不按后来的配置判);会话的每一次发送都先过守护(guardSession)。
  * 用 Proxy 而不是展开:有的 provider 带额外方法(probeStatus 等),展开会丢原型方法和 this。
  * 注册进 registry 的每一个 provider 都套这一层。
  */
@@ -55,19 +55,82 @@ export function withNetworkGate<P extends AgentProvider>(inner: P, gate: Network
         const ctx = prop === 'spawn' ? (args[1] as Partial<SpawnContext> | undefined) : undefined
         await assertCallAllowed(gate, providerCallTarget(target, providerId, prop as CallTargetKind, ctx))
         const out = await (v as (...a: unknown[]) => unknown).apply(target, args)
-        if (prop === 'spawn') pinSpawnTarget(out as AgentSession, target, providerId, ctx)
+        if (prop === 'spawn') return guardSession(out as AgentSession, gate, target, providerId, ctx)
         return out
       }
     },
   })
 }
 
-/** 会话没自己报目标:把 spawn 这一刻 provider 报的(它就是按这份参数起的会话)钉上去。 */
-function pinSpawnTarget(session: AgentSession | null | undefined, provider: AgentProvider, providerId: string, ctx?: Partial<SpawnContext>): void {
-  if (!session || typeof session.callTarget === 'function' || typeof provider.callTarget !== 'function') return
+/**
+ * 第二轮评审 #194 P1:把守护装进**会话自己的发送方法**里。spawn 出来的会话不管落到谁手里
+ * (SessionManager、工作台、selftest、delegate……),每一次 dispatch / steer / 工作台 start / submit
+ * 之前都按这条会话**此刻的实际目标**判一次 —— 不靠调用方记得补。ACP 那种「先起会话、起来才知道
+ * 实际模型」的执行者尤其需要:spawn 只是 setup,真正的检查只能在发送时做。
+ *
+ * 目标:会话自报的(sessionCallTarget);会话不报,就是 spawn 那一刻 provider 报的(它就是按这份参数
+ * 起的会话);都没有 ⇒ unresolved ⇒ 按需要保护。
+ */
+export function guardSession(session: AgentSession, gate: NetworkGate, provider: AgentProvider, providerId: string, ctx?: Partial<SpawnContext>): AgentSession {
+  if (!session || typeof session !== 'object') return session
   const captured = providerCallTarget(provider, providerId, 'session', ctx)
-  if (captured.unresolved) return
-  try { Object.defineProperty(session, 'callTarget', { value: () => captured, configurable: true, enumerable: false }) } catch { /* 冻结的会话对象:按拿不准处理 */ }
+  const target = (): CallTarget => (typeof session.callTarget === 'function' ? sessionCallTarget(session, providerId) : captured)
+  const admit = () => assertCallAllowed(gate, target())
+  let runtime: AgentWorkbenchRuntime | undefined
+  return new Proxy(session, {
+    get(t, prop, receiver) {
+      if (prop === 'callTarget') return target
+      if (prop === 'dispatch') {
+        return (text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> => ({
+          async *[Symbol.asyncIterator]() {
+            await admit()
+            yield* t.dispatch(text, attachments)
+          },
+        })
+      }
+      if (prop === 'steer') {
+        const steer = t.steer
+        return typeof steer === 'function' ? async (text: string, attachments?: readonly AgentAttachment[]) => { await admit(); return steer.call(t, text, attachments) } : steer
+      }
+      if (prop === 'workbenchRuntime') {
+        const inner = t.workbenchRuntime
+        if (!inner) return inner
+        return (runtime ??= guardRuntime(inner, gate, target))
+      }
+      return Reflect.get(t, prop, receiver)
+    },
+  })
+}
+
+/**
+ * 工作台 runtime:`start` 是同步的(契约:一个 epoch 只发一次初始请求),所以先挂住,等守护答复
+ * 再真的 start;被拒 ⇒ 从不 start,事件流吐一条 network_unprotected 错误就结束。`submit` 直接先判。
+ */
+function guardRuntime(inner: AgentWorkbenchRuntime, gate: NetworkGate, target: () => CallTarget): AgentWorkbenchRuntime {
+  let resolveStart!: (v: Promise<string | null>) => void
+  const started = new Promise<Promise<string | null>>(r => { resolveStart = r })
+  const events: AsyncIterable<AgentEvent> = {
+    async *[Symbol.asyncIterator]() {
+      const refused = await (await started)
+      if (refused !== null) { yield { kind: 'error', message: refused, code: 'network_unprotected' }; return }
+      yield* inner.events
+    },
+  }
+  return {
+    events,
+    start(text, attachments) {
+      resolveStart(decideCall(gate, target()).then(d => {
+        if (!d.allowed) return unprotectedMessage(d.verdict!, d.cls.label)
+        inner.start(text, attachments)
+        return null
+      }))
+    },
+    async submit(requestId, text, attachments) {
+      await assertCallAllowed(gate, target())
+      return inner.submit(requestId, text, attachments)
+    },
+    snapshot: () => inner.snapshot(),
+  }
 }
 
 export interface ProviderRegistration {

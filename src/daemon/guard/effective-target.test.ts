@@ -18,6 +18,7 @@ import { createAcpCursorChatProvider } from '../../core/acp-cursor-chat'
 import type { AgentProvider } from '../../core/agent-provider'
 import { makeFakeSession } from '../../core/test-helpers'
 import { TIER_PROFILES } from '../../core/user-tier'
+import { runSelftestConverse } from '../selftest'
 
 function daemonGate(cfg: Partial<AgentConfig>, net: { safe: boolean }, env: NodeJS.ProcessEnv = {}) {
   const check = vi.fn()
@@ -110,5 +111,83 @@ describe('guard classifies the target the executor actually uses (review #193 P1
     await expect(registry.get('openai')!.provider.spawn({ alias: 'a', path: '/a' }, {} as never)).rejects.toMatchObject({ code: 'network_unprotected' })
     expect(spawn).not.toHaveBeenCalled()
     expect(cheapEval).not.toHaveBeenCalled()
+  })
+})
+
+// 第二轮评审 #194 P1:「先建会话再查实际模型」之后,谁拿到会话直接发都必须先过守护 —— 检查放在会话
+// 自己的发送方法里(registry 的代理包上),不靠调用方记得补。复现:Cursor 明确用 Claude、网络不安全,
+// selftest 照样发出了请求,守护检查 0 次。
+describe('every send on a session handed out by the gated registry passes the guard (review #194 P1)', () => {
+  function cursorOnClaude() {
+    const sent = vi.fn()
+    const steered = vi.fn(async () => {})
+    const submitted = vi.fn(async () => {})
+    const started = vi.fn()
+    const session = {
+      dispatch: (text: string) => { sent(text); return makeFakeSession({ events: [{ kind: 'result', sessionId: 's', numTurns: 1, durationMs: 0 }] }).dispatch(text) },
+      steer: steered,
+      workbenchRuntime: {
+        events: (async function* () { yield { kind: 'result' as const, sessionId: 's', numTurns: 1, durationMs: 0 } })(),
+        start: started, submit: submitted,
+        snapshot: () => ({ retained: false, foreground: 'idle' as const, backgroundCount: 0, input: 'send' as const }),
+      },
+      close: async () => {},
+      // cursor-agent 起会话后自报:当前模型是 Claude。
+      callTarget: () => ({ provider: 'cursor', model: 'claude-opus-5[thinking=true]' }),
+    }
+    // 起会话本身不发模型请求(ACP setup),所以 spawn 这一步不拦。
+    const provider = { spawn: vi.fn(async () => session), callTarget: (kind: string) => (kind === 'spawn' ? { provider: 'cursor', purpose: 'setup' as const } : null) } as unknown as AgentProvider
+    return { provider, sent, steered, submitted, started }
+  }
+
+  it('dispatch / steer / workbench submit on the raw session are refused while unsafe; nothing reaches the agent', async () => {
+    const { gate, check } = daemonGate({}, { safe: false })
+    const f = cursorOnClaude()
+    const registry = createProviderRegistry({ networkGate: gate })
+    registry.register('cursor' as never, f.provider, { displayName: 'Cursor', canResume: () => true })
+    const s = await registry.get('cursor' as never)!.provider.spawn({ alias: 'a', path: '/tmp' }, {} as never)
+    await expect(drain(s.dispatch('hi'))).rejects.toMatchObject({ code: 'network_unprotected' })
+    await expect(s.steer!('more')).rejects.toMatchObject({ code: 'network_unprotected' })
+    await expect(s.workbenchRuntime!.submit('r1', 'more')).rejects.toMatchObject({ code: 'network_unprotected' })
+    expect(f.sent).not.toHaveBeenCalled()
+    expect(f.steered).not.toHaveBeenCalled()
+    expect(f.submitted).not.toHaveBeenCalled()
+    expect(check.mock.calls.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('workbench runtime start (sync) is held until the guard answers; refused ⇒ never started, the stream reports network_unprotected', async () => {
+    const { gate } = daemonGate({}, { safe: false })
+    const f = cursorOnClaude()
+    const registry = createProviderRegistry({ networkGate: gate })
+    registry.register('cursor' as never, f.provider, { displayName: 'Cursor', canResume: () => true })
+    const s = await registry.get('cursor' as never)!.provider.spawn({ alias: 'a', path: '/tmp' }, {} as never)
+    const rt = s.workbenchRuntime!
+    rt.start('go')
+    const events: unknown[] = []
+    for await (const ev of rt.events) events.push(ev)
+    expect(f.started).not.toHaveBeenCalled()
+    expect(events).toEqual([expect.objectContaining({ kind: 'error', code: 'network_unprotected' })])
+  })
+
+  it('safe ⇒ the same session sends normally', async () => {
+    const { gate } = daemonGate({}, { safe: true })
+    const f = cursorOnClaude()
+    const registry = createProviderRegistry({ networkGate: gate })
+    registry.register('cursor' as never, f.provider, { displayName: 'Cursor', canResume: () => true })
+    const s = await registry.get('cursor' as never)!.provider.spawn({ alias: 'a', path: '/tmp' }, {} as never)
+    await drain(s.dispatch('hi'))
+    expect(f.sent).toHaveBeenCalledOnce()
+  })
+
+  it('selftest chat (POST /v1/selftest/converse) on Cursor+Claude while unsafe → refused, no request, guard consulted', async () => {
+    const { gate, check } = daemonGate({}, { safe: false })
+    const f = cursorOnClaude()
+    const registry = createProviderRegistry({ networkGate: gate })
+    registry.register('cursor' as never, f.provider, { displayName: 'Cursor', canResume: () => true })
+    const r = await runSelftestConverse({ registry, mintSessionToken: () => 't', invalidateSession: () => {}, log: () => {} }, { providerId: 'cursor', text: 'ping' })
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/网络未受保护/)
+    expect(f.sent).not.toHaveBeenCalled()
+    expect(check).toHaveBeenCalled()
   })
 })
