@@ -122,3 +122,40 @@ describe('care-ledger', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })
+
+// 第二轮评审 #194 P2:撤回只撤本次登记的那一项,保留等待期间的新活动(主人来信清零、新的记忆通知)。
+describe('care-ledger unclaim — targeted undo (review #194)', () => {
+  it('undoes only this claim: owner reply reset and a later memory claim survive', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ledger-'))
+    try {
+      const l = makeCareLedger(dir)
+      l.claim('c', '2026-05-01T00:00:00.000Z')                       // 早先一次问候,还没回
+      const claim = l.claimVisit('c', '2026-05-13T10:00:00.000Z')     // 串门登记
+      l.resetNoReply('c')                                             // 等待期间主人来信
+      l.claimMemory('c', '2026-05-13T10:01:00.000Z')                 // 又登记了一次记忆通知
+      l.unclaim('c', claim)                                           // 串门被守护拒了:只撤这一项
+      expect(l.get('c')).toEqual({ lastProactiveAtIso: '2026-05-01T00:00:00.000Z', lastMemoryAtIso: '2026-05-13T10:01:00.000Z', noReplyCount: 1 })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+  it('no activity in between → back to exactly the state before the claim', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ledger-'))
+    try {
+      const l = makeCareLedger(dir)
+      l.claimVisit('c', '2026-05-10T10:00:00.000Z')
+      const before = l.get('c')
+      const claim = l.claimVisit('c', '2026-05-13T10:00:00.000Z')
+      l.unclaim('c', claim)
+      expect(l.get('c')).toMatchObject(before)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+  it('a newer claim of the same kind is not rolled back by undoing the older one', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ledger-'))
+    try {
+      const l = makeCareLedger(dir)
+      const first = l.claimHunt('c', '2026-05-13T10:00:00.000Z')
+      l.claimHunt('c', '2026-05-13T11:00:00.000Z')
+      l.unclaim('c', first)
+      expect(l.get('c')).toMatchObject({ lastHuntAtIso: '2026-05-13T11:00:00.000Z', noReplyCount: 1 })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})

@@ -49,6 +49,18 @@ export function selectDue(items: AgendaItem[], today: string): AgendaItem[] {
  * longer present — so a concurrent agent edit can't be clobbered into a wrong
  * state.
  */
+/**
+ * markResolved 的逆操作(第二轮评审 #194):只把**本次**打勾的那一行放回原样,文件里别的改动都不碰。
+ * 那一行已经不在 / 被改过 ⇒ 原样返回(别人动过它,就不是我们能撤的了)。
+ */
+export function unmarkResolved(md: string, item: AgendaItem, date: string): string {
+  const lines = md.split(/\r?\n/)
+  const idx = lines.indexOf(`- [x] done:${date} ${item.body}`)
+  if (idx === -1) return md
+  lines[idx] = item.raw
+  return lines.join('\n')
+}
+
 export function markResolved(md: string, item: AgendaItem, date: string): string {
   const lines = md.split(/\r?\n/)
   const idx = lines.indexOf(item.raw)

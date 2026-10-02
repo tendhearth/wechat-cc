@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseAgenda, selectDue, markResolved } from './agenda'
+import { parseAgenda, selectDue, markResolved, unmarkResolved } from './agenda'
 
 const SAMPLE = `# agenda（我给自己记的待跟进）
 - [ ] due:2026-05-14 面试后轻轻问结果/感受
@@ -69,5 +69,21 @@ describe('markResolved', () => {
     const out = markResolved(crlf, item, '2026-05-20')
     expect(out).toContain('- [x] done:2026-05-20 面试后问')
     expect(out).not.toContain('- [ ] due:2026-05-14')
+  })
+})
+
+// 第二轮评审 #194 P2:撤回只把本次打勾的那一行放回去,保留文件里后来的改动。
+describe('unmarkResolved (review #194)', () => {
+  it('puts back only the line we resolved; other edits made meanwhile survive', () => {
+    const md = '- [ ] due:2026-05-13 ping me about the gym\n- [ ] due:2026-06-01 other'
+    const item = parseAgenda(md)[0]!
+    const resolved = markResolved(md, item, '2026-05-13')
+    const edited = resolved + '\n- [ ] due:2026-07-01 added meanwhile'
+    expect(unmarkResolved(edited, item, '2026-05-13')).toBe(md + '\n- [ ] due:2026-07-01 added meanwhile')
+  })
+  it('our line is gone or changed → leave the file alone', () => {
+    const md = '- [ ] due:2026-05-13 ping'
+    const item = parseAgenda(md)[0]!
+    expect(unmarkResolved('- [x] done:2026-05-13 ping (edited)', item, '2026-05-13')).toBe('- [x] done:2026-05-13 ping (edited)')
   })
 })

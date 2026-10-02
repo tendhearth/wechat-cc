@@ -132,7 +132,8 @@ export async function runStickerArtist(d: StickerArtistDeps): Promise<{ drawn: s
     const marker = JSON.parse(priorMarker) as { last_at?: number }
     if (typeof marker.last_at === 'number' && now() - marker.last_at < target.intervalMs) return { drawn: null }
   } catch { /* no marker yet */ }
-  writeFileSync(markerPath, JSON.stringify({ last_at: now() }))
+  const stamped = JSON.stringify({ last_at: now() })
+  writeFileSync(markerPath, stamped)
   const mood = target.mood
 
   const workDir = join(d.stateDir, 'tmp-sticker-artist')
@@ -160,7 +161,12 @@ export async function runStickerArtist(d: StickerArtistDeps): Promise<{ drawn: s
   } catch (e) {
     // 评审 #193 P2-3:被网络守护拒了 = 根本没试过(一个请求都没发),不吃掉这一期的机会。
     if (isNetworkUnprotectedError(e)) {
-      try { if (priorMarker === null) rmSync(markerPath, { force: true }); else writeFileSync(markerPath, priorMarker) } catch { /* 恢复不了就等下一期 */ }
+      // 只撤这一次的标记(第二轮评审 #194):标记已经不是我们写的那一份(期间别人又写过)就不动。
+      try {
+        if (readFileSync(markerPath, 'utf8') === stamped) {
+          if (priorMarker === null) rmSync(markerPath, { force: true }); else writeFileSync(markerPath, priorMarker)
+        }
+      } catch { /* 恢复不了就等下一期 */ }
       d.log('STICKERS', `artist: skipped 「${mood}」 — network unprotected; marker unchanged, next tick retries`)
       return { drawn: null }
     }

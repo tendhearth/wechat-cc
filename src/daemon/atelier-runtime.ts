@@ -149,7 +149,8 @@ export async function runAtelierCycle(d: AtelierRuntimeDeps): Promise<AtelierRun
   // Stamp the opportunity before invoking a provider: a thrown planner must
   // not create a hot loop on every daemon restart.
   const priorEvaluatedAt = cadence.lastEvaluatedAt
-  cadence.lastEvaluatedAt = nowDate.toISOString()
+  const stampedAt = nowDate.toISOString()
+  cadence.lastEvaluatedAt = stampedAt
   writeAtelierCadence(d.stateDir, cadence)
   let planned: ArtImpulse | unknown
   try {
@@ -157,10 +158,14 @@ export async function runAtelierCycle(d: AtelierRuntimeDeps): Promise<AtelierRun
   } catch (error) {
     // 评审 #193 P2-3:构思被网络守护拒了 = 没评估过(一个请求都没发),把这次机会还回去。
     if (isNetworkUnprotectedError(error)) {
+      // 只撤这一项(第二轮评审 #194):重新读一遍,别的字段(期间记下的成功等)原样保留;
+      // lastEvaluatedAt 也只在还是这次写的值时放回。
       const restored = readAtelierCadence(d.stateDir)
-      if (priorEvaluatedAt === undefined) delete restored.lastEvaluatedAt
-      else restored.lastEvaluatedAt = priorEvaluatedAt
-      writeAtelierCadence(d.stateDir, restored)
+      if (restored.lastEvaluatedAt === stampedAt) {
+        if (priorEvaluatedAt === undefined) delete restored.lastEvaluatedAt
+        else restored.lastEvaluatedAt = priorEvaluatedAt
+        writeAtelierCadence(d.stateDir, restored)
+      }
       log('ATELIER', 'skipped — network unprotected; cadence unchanged, next tick retries')
       return { status: 'skipped_network' }
     }

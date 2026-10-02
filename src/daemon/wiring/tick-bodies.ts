@@ -22,7 +22,7 @@ import { buildGuestVisitNarrationPrompt } from '../../core/visit'
 import type { Access } from '../../lib/access'
 import type { PermissionMode } from '../../core/capability-matrix'
 import { makeMemoryFS } from '../memory/fs-api'
-import { parseAgenda, selectDue, markResolved } from '../companion/agenda'
+import { parseAgenda, selectDue, markResolved, unmarkResolved } from '../companion/agenda'
 import { makeMessagesStore, type MessagesStore } from '../../lib/messages-store'
 import { recentInboundTexts } from './recent-inbound'
 import { makeThreadsStore } from '../../lib/threads-store'
@@ -534,14 +534,18 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       }
       await dispatchToChat(chatId, {
         claim: () => {
-          const before = deps.careLedger.get(chatId)
           const updated = markResolved(agendaMd, item, today)
           if (updated !== agendaMd) agendaFs.write('agenda.md', updated)
-          deps.careLedger.claim(chatId, nowIso)
-          // 撤回:只在 agenda.md 还是我们刚写的那样时放回原样(别盖掉别人的改动)。
+          const ticket = deps.careLedger.claim(chatId, nowIso)
+          // 撤回只撤这一次(第二轮评审 #194):只把我们打勾的那一行放回去,文件里期间的其他改动留着;
+          // 台账按回执定向撤。
           return () => {
-            if (updated !== agendaMd && agendaFs.read('agenda.md') === updated) agendaFs.write('agenda.md', agendaMd)
-            deps.careLedger.restore(chatId, before)
+            if (updated !== agendaMd) {
+              const cur = agendaFs.read('agenda.md') ?? ''
+              const back = unmarkResolved(cur, item, today)
+              if (back !== cur) agendaFs.write('agenda.md', back)
+            }
+            deps.careLedger.unclaim(chatId, ticket)
           }
         },
         buildText: () => buildPushTickText({ nowIso, defaultChatId: chatId, intention: item.body }),
@@ -568,7 +572,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       try { releaseHunt = (deps.boot as { holdBusy?: (l: string) => () => void }).holdBusy?.('hunt') } catch { releaseHunt = undefined }
       try {
         return await dispatchToChat(chatId, {
-          claim: () => { const before = deps.careLedger.get(chatId); deps.careLedger.claimHunt(chatId, nowIso); return () => deps.careLedger.restore(chatId, before) },
+          claim: () => { const ticket = deps.careLedger.claimHunt(chatId, nowIso); return () => deps.careLedger.unclaim(chatId, ticket) },
           buildText: () => buildHuntText({ nowIso }),
         })
       } finally {
@@ -595,12 +599,12 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       // 先登记再出门(at-most-once,同打猎):出门一半 daemon 重启,不该
       // 下一拍再出一次门 —— 两趟串门比一趟没出门的观感差得多。
       // 总有地方可去:没有真信道就去邻居家(core/neighbors.ts)。
-      const before = deps.careLedger.get(chatId)
-      deps.careLedger.claimVisit(chatId, nowIso)
+      const ticket = deps.careLedger.claimVisit(chatId, nowIso)
       const r = target === undefined ? await visit.startVisit() : await visit.startVisit(target)
-      // 评审 #193 P2-3:开场那句的模型调用被网络守护拒了 —— 没出门,这趟不算,台账放回去。
+      // 评审 #193 P2-3:开场那句的模型调用被网络守护拒了 —— 没出门,这趟不算。只撤这一次登记
+      // (第二轮 #194):期间主人来信清零、别的登记都留着。
       if (!r.ok && r.reason === NETWORK_UNPROTECTED_REASON) {
-        deps.careLedger.restore(chatId, before)
+        deps.careLedger.unclaim(chatId, ticket)
         return 'refused'
       }
       deps.log('VISIT', r.ok ? `tick: 出门了 visit=${r.id} → ${r.channel}` : `tick: 没出得了门 reason=${r.reason}`)
@@ -613,7 +617,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         ? Math.floor((Date.parse(nowIso) - Date.parse(lastInboundAtIso)) / 86_400_000)
         : 0
       return await dispatchToChat(chatId, {
-        claim: () => { const before = deps.careLedger.get(chatId); deps.careLedger.claim(chatId, nowIso); return () => deps.careLedger.restore(chatId, before) },
+        claim: () => { const ticket = deps.careLedger.claim(chatId, nowIso); return () => deps.careLedger.unclaim(chatId, ticket) },
         buildText: () => buildGapCheckinText({ nowIso, chatId, daysSinceContact }),
       })
     }
@@ -825,7 +829,6 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       if (!due) continue
       // 先记水位再讲:讲到一半 daemon 重启,不该下一拍再讲一遍。
       const priorMark = state.narrated[chatId]
-      const priorVisits = state.visits
       state.narrated[chatId] = latestInboundTs
       state.visits = { ...(state.visits ?? {}), [chatId]: ((state.visits ?? {})[chatId] ?? 0) + 1 }
       changed = true
@@ -846,8 +849,11 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         if (!isNetworkUnprotectedError(err)) throw err
         // 评审 #193 P2-3:讲述被网络守护拒了 —— 没讲过,这一位的水位放回去;这一拍到此为止
         // (前面已经讲完的几位照常落盘),下一拍再讲。
+        // 只撤这一位的水位和这一次的计数(第二轮评审 #194),前面几位这一拍讲完的照常保留。
         if (priorMark === undefined) delete state.narrated[chatId]; else state.narrated[chatId] = priorMark
-        state.visits = priorVisits
+        const n = (state.visits ?? {})[chatId] ?? 0
+        if (n > 1) state.visits = { ...state.visits, [chatId]: n - 1 }
+        else if (state.visits) { const { [chatId]: _drop, ...rest } = state.visits; state.visits = rest }
         deps.log('VISIT', `guest narration skipped: chat=${chatId} — network unprotected; watermark unchanged, next tick retries`)
         break
       }
