@@ -15,6 +15,7 @@ import { findBx, readBxStatus } from './bx'
 import { createNetworkGate } from './gate'
 import type { GuardLifecycle } from './lifecycle'
 import { probeReachable } from './probe'
+import { DEFAULT_PROBE_TTL_MS } from './scheduler'
 import { loadGuardConfig, type GuardConfig } from './store'
 import { makeResolveTarget, type ProviderInUse } from './targets'
 import type { GuardHealth } from '../internal-api/types'
@@ -100,7 +101,10 @@ export function makeGuardRuntime(deps: GuardRuntimeDeps): GuardRuntime {
     const extra = { signal_source: cfg?.signal_source ?? 'auto', protected_in_use: protectedInUse, providers } as const
     let base: Omit<GuardHealth, 'signal_source' | 'protected_in_use' | 'providers' | 'paused'>
     if (!enabled) base = { enabled: false, source: 'off', safe: true, detail: '网络守护未开启', ip: s?.ip ?? null, checked_at: s?.lastChecked ?? null }
-    else if (s && s.lastChecked) base = { enabled: true, source: s.source, safe: s.safe, detail: s.detail, ip: s.ip, checked_at: s.lastChecked }
+    else if (s && s.lastChecked && s.source === 'probe' && Date.now() - Date.parse(s.lastChecked) >= DEFAULT_PROBE_TTL_MS + 60_000) {
+      // 过期的探测结果 = 不知道(评审 #193 P1-2),和闸门同一口径。
+      base = { enabled: true, source: 'probe', safe: false, detail: '探测结果已过期,等待重新探测', ip: s.ip, checked_at: s.lastChecked }
+    } else if (s && s.lastChecked) base = { enabled: true, source: s.source, safe: s.safe, detail: s.detail, ip: s.ip, checked_at: s.lastChecked }
     else if (last && last.source !== 'off') base = { enabled: true, source: last.source, safe: last.safe, detail: last.detail, ip: null, checked_at: null }
     else base = { enabled: true, source: 'probe', safe: false, detail: '尚未探测', ip: null, checked_at: null }
     return { ...base, ...extra, paused: base.enabled && !base.safe && protectedInUse }
