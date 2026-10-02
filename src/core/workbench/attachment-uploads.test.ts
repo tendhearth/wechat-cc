@@ -8,7 +8,7 @@ import {removeTempDir} from '../../lib/test-temp'
 import {makeWorkbenchStore} from './store'
 import {createAttachmentUploads,type UploadChunk} from './attachment-uploads'
 
-const reads=vi.hoisted(()=>({bytes:0,fsyncs:0,observe:null as null|((fd:number,count:number,requested:number)=>void)}))
+const reads=vi.hoisted(()=>({bytes:0,fsyncs:0,coarseClock:false,observe:null as null|((fd:number,count:number,requested:number)=>void)}))
 vi.mock('node:fs',async importOriginal=>{
   const fs=await importOriginal<typeof import('node:fs')>()
   // fsync 换成只计数:这个文件测的是读放大、锁外校验、偏移/终态的提交顺序,没有一条测掉电持久性
@@ -18,7 +18,15 @@ vi.mock('node:fs',async importOriginal=>{
   // 即复现:一份上传 13s、两份上传的「another upload」25.8s 超时。每块都 fsync 这件事本身由
   // 「reads linear bytes」那条按次数断言,不会因为这里不真落盘就悄悄丢掉。同理 beforeEach 里
   // 把这个连接的 SQLite synchronous 关掉:WAL 每次提交的那一次 fsync 也不在任何断言里。
-  return{...fs,fsyncSync:(fd:number)=>{fs.fstatSync(fd);reads.fsyncs++},readSync:(...args:unknown[])=>{
+  // coarseClock:把 fstat 的 mtime/ctime 截到整秒,模拟粗时钟的文件系统(NTFS 的系统时钟一跳、
+  // HFS+/FAT/ext3 的 1~2s)。fsync 不真落盘之后,windows-latest 上「最后一块写入」和测试的
+  // 篡改落在同一跳里,大小/mtime/ctime 全一样,校验缓存就跳过了被改坏的前缀(PR #180 首跑)。
+  const fstatSync=((fd:number,options?:{bigint?:boolean})=>{
+    const stat=Reflect.apply(fs.fstatSync,fs,[fd,options]) as import('node:fs').BigIntStats
+    if(reads.coarseClock&&options?.bigint){const tick=1_000_000_000n;stat.mtimeNs-=stat.mtimeNs%tick;stat.ctimeNs-=stat.ctimeNs%tick}
+    return stat
+  }) as typeof fs.fstatSync
+  return{...fs,fstatSync,fsyncSync:(fd:number)=>{fs.fstatSync(fd);reads.fsyncs++},readSync:(...args:unknown[])=>{
     const count=Reflect.apply(fs.readSync,fs,args) as number
     reads.bytes+=count;reads.observe?.(args[0] as number,count,args[3] as number)
     return count
@@ -38,7 +46,7 @@ const instance=(database=db,attachmentStore=store.attachments,extra={})=>createA
 beforeEach(()=>{
   root=realpathSync(mkdtempSync(join(tmpdir(),'cc-chunks-')));db=openDb({path:join(root,'state.db')});db.exec('PRAGMA synchronous=OFF');store=makeWorkbenchStore(db);owner='owner';now=Date.now();uploads=instance()
 })
-afterEach(()=>{reads.observe=null;vi.restoreAllMocks();db.close();removeTempDir(root)})
+afterEach(()=>{reads.observe=null;reads.coarseClock=false;vi.restoreAllMocks();db.close();removeTempDir(root)})
 
 it('replays exact chunks and produces one existing Attachment with the original ID',()=>{
   const bytes=Buffer.alloc(CHUNK+7,97),m=meta(bytes),first=uploads.chunk(packet(m,bytes),context)
@@ -206,7 +214,8 @@ it.each(['another upload','exact replay'])('verifies a shared 8 MiB blob outside
   }finally{reads.observe=null;otherDb.close()}
 })
 
-it('checks an earlier committed block after restart or unexpected file modification',()=>{
+it.each([false,true])('checks an earlier committed block after restart or unexpected file modification (coarse clock: %s)',coarse=>{
+  reads.coarseClock=coarse
   const bytes=Buffer.alloc(CHUNK*4,97),m=meta(bytes)
   for(let offset=0;offset<CHUNK*3;offset+=CHUNK)uploads.chunk(packet(m,bytes,offset),context)
   const damaged=Buffer.alloc(CHUNK*3,97);damaged[0]=98;writeFileSync(part(m.id),damaged)
