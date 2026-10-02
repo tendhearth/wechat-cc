@@ -8,7 +8,6 @@ import {
   type SpawnContext,
   type ProviderCapabilities,
   assertNotAuthFailed,
-  isReplyToolCall,
 } from './agent-provider'
 import { isAuthFailError } from './auth-fail'
 import type { ChatModelClient, ChatMessage, ToolSpec, TurnDelta } from './openai-chat-model'
@@ -58,28 +57,6 @@ export interface OpenAiAgentProviderOptions {
 }
 
 const DEFAULT_MAX_STEPS = 25
-
-/**
- * reply 送达后的收手信号(2026-10-02 手机真机验收)。这个循环在每次工具结果之后都会再叫一次
- * 模型,唯一的结束方式是「这一步不调工具」。Qwen3.8 在同一会话里连续三轮 reply 完又 reply:
- * 「抱歉刚才多发了一条」「（停，不再发了 😅）」「（真的停了）」—— 连「停」都是用 reply 发的,
- * 它不知道不调工具就是结束。只在回复类工具**成功**时补这一句;失败回执原样交回,模型该重试。
- * 不设硬上限:气泡式回复(一轮 2-4 条)照常可以接着发。
- */
-export const REPLY_STOP_HINT = '\n(已送达。还有下一条要发就接着发;说完了就直接结束这一轮:不再调用任何工具,也不要再发「不再发了」之类的收尾消息。)'
-
-// 只认真正「发一条话」的两个工具:回复族里还有 search_online_sticker 这类查询,回执不是「已送达」。
-const STOP_HINT_TOOLS: ReadonlySet<string> = new Set(['reply', 'reply_voice'])
-
-function withReplyStopHint(tool: string, server: string, result: string): string {
-  if (!STOP_HINT_TOOLS.has(tool) || !isReplyToolCall({ kind: 'tool_call', tool, server })) return result
-  try {
-    const parsed = JSON.parse(result) as { ok?: unknown }
-    return parsed?.ok === true ? result + REPLY_STOP_HINT : result
-  } catch {
-    return result
-  }
-}
 
 /**
  * Build a live session's `dispatch` closure — the owned tool loop. Extracted
@@ -197,7 +174,7 @@ function makeOpenAiSession(args: {
               } else {
                 try {
                   if (mcpServer !== undefined) {
-                    result = withReplyStopHint(tc.name, mcpServer, await bridge.call(tc.name, tc.input))
+                    result = await bridge.call(tc.name, tc.input)
                   } else {
                     const builtin = builtinByName.get(tc.name)!
                     const input = (tc.input ?? {}) as Record<string, unknown>
