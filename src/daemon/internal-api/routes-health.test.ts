@@ -29,6 +29,16 @@ const SAMPLE_INCIDENT = {
 }
 
 describe('GET /v1/health', () => {
+  it('renders the network guard block (2026-10-02) and omits it when unwired; validates against HealthResponse', async () => {
+    const { HealthResponse } = await import('./schema')
+    const guard = { enabled: true, source: 'bx' as const, safe: false, detail: 'bx 未保护(protection_state=off)', ip: '1.2.3.4', checked_at: '2026-10-02T10:00:00.000Z' }
+    const r = await makeRoutesUnderTest({ guard: () => guard })['GET /v1/health']!({} as any, undefined)
+    expect((r.body as any).guard).toEqual(guard)
+    expect(HealthResponse.safeParse(r.body).success).toBe(true)
+    const r2 = await makeRoutesUnderTest({})['GET /v1/health']!({} as any, undefined)
+    expect((r2.body as any).guard).toBeUndefined()
+  })
+
   it('GET /v1/health renders outbound from the dep and omits it when unwired', async () => {
     const withDep = makeRoutesUnderTest({ outbound: () => ({
       state: 'degraded', consecutiveFailures: 2, lastOkAt: null,

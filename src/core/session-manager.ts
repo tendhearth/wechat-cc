@@ -1,5 +1,6 @@
 import type { ProviderId, SessionStore } from './session-store'
 import type { AgentEvent, AgentSession } from './agent-provider'
+import { assertNetworkSafe, type NetworkGate } from '../lib/network-gate'
 import type { ProviderRegistry } from './provider-registry'
 import { tierNameFromProfile, sessionAuthEnv, type TierProfile, type UserTier } from './user-tier'
 import type { PermissionMode } from './capability-matrix'
@@ -60,6 +61,12 @@ export interface SessionManagerOptions {
    * Same place + posture as `buildInstructions`.
    */
   currentModelFor?: (providerId: ProviderId) => string | undefined
+  /**
+   * 网络闸门(2026-10-02)。spawn 与每次 dispatch 之前都问一次;不安全就抛
+   * NetworkUnprotectedError,不起子进程、不发请求。这是所有对话类调用的兜底
+   * (协调器在更前面已经拦过并给了用户一句话)。缺省 = 不拦(测试 / 嵌入)。
+   */
+  networkGate?: NetworkGate
 }
 
 /**
@@ -193,6 +200,7 @@ export class SessionManager {
   }
 
   private async spawn(req: AcquireRequest): Promise<SessionHandle> {
+    await assertNetworkSafe(this.opts.networkGate)
     const entry = this.opts.registry.get(req.providerId)
     if (!entry) throw new Error(`unknown provider: ${req.providerId} (registered: ${this.opts.registry.list().join(', ')})`)
     const { provider, opts: regOpts } = entry
@@ -259,7 +267,7 @@ export class SessionManager {
 
     const sessionStore = this.opts.sessionStore
     const k = sessionKey({ alias: req.alias, providerId: req.providerId, chatId: req.chatId })
-    const inFlight = this.inFlight,checkExecution=()=>this.checkExecution(req)
+    const inFlight = this.inFlight,checkExecution=()=>this.checkExecution(req),networkGate=this.opts.networkGate
     const handle: SessionHandle = {
       alias: req.alias,
       path: req.path,
@@ -268,7 +276,6 @@ export class SessionManager {
       dispatch(text: string): AsyncIterable<AgentEvent> {
         checkExecution()
         handle.lastUsedAt = Date.now()
-        const inner = session.dispatch(text)
         // Track in-flight under (provider, alias, chatId) so sweepIdle
         // can skip busy sessions. Wrap unconditionally — even when
         // sessionStore is absent — otherwise an iterator started without
@@ -277,6 +284,9 @@ export class SessionManager {
         return {
           async *[Symbol.asyncIterator]() {
             checkExecution()
+            // 先过网络闸门再碰 provider:session.dispatch 本身可能就立刻发请求。
+            await assertNetworkSafe(networkGate)
+            const inner = session.dispatch(text)
             inFlight.set(k, (inFlight.get(k) ?? 0) + 1)
             try {
               for await (const ev of inner) {

@@ -119,4 +119,88 @@ describe('startGuardScheduler', () => {
     expect(ipFn).toHaveBeenCalledTimes(1)
     await sched.stop()
   })
+
+  describe('bx mode', () => {
+    const SAFE = { safe: true, protection: 'protected', tunnelHealthy: true, detail: 'bx 保护中' }
+    const DOWN = { safe: false, protection: 'off', tunnelHealthy: false, detail: 'bx 未保护(protection_state=off)' }
+
+    it('bx installed → reads bx every tick (not the google probe); safe mirrors bx', async () => {
+      const probeFn = vi.fn(async () => ({ reachable: true, ms: 1 }))
+      const readBx = vi.fn(async () => SAFE)
+      const sched = startGuardScheduler(makeDeps({
+        findBx: () => '/fake/bx',
+        readBx,
+        fetchPublicIp: async () => ({ ip: '1.2.3.4' }),
+        probeReachable: probeFn,
+      }))
+      await sched.pokeNow()
+      await sched.pokeNow()
+      expect(probeFn).not.toHaveBeenCalled()
+      expect(readBx).toHaveBeenCalledWith('/fake/bx')
+      expect(readBx.mock.calls.length).toBeGreaterThanOrEqual(2)
+      expect(sched.current()).toEqual(expect.objectContaining({ source: 'bx', safe: true, reachable: true, detail: 'bx 保护中' }))
+      await sched.stop()
+    })
+
+    it('bx unreadable / unprotected → unsafe and onStateChange fires (sessions get shut down)', async () => {
+      let v: typeof SAFE | typeof DOWN = SAFE
+      const changes: Array<[boolean, boolean]> = []
+      const sched = startGuardScheduler(makeDeps({
+        findBx: () => '/fake/bx',
+        readBx: async () => v,
+        fetchPublicIp: async () => ({ ip: '1.2.3.4' }),
+        probeReachable: async () => ({ reachable: true, ms: 1 }),
+        onStateChange: (p, n) => { changes.push([p.reachable, n.reachable]) },
+      }))
+      await sched.pokeNow()
+      v = DOWN
+      await sched.pokeNow()
+      expect(sched.current()).toEqual(expect.objectContaining({ source: 'bx', safe: false, reachable: false }))
+      expect(changes.at(-1)).toEqual([true, false])
+      await sched.stop()
+    })
+
+    it('ipify is throttled to pollMs while bx is read each tick', async () => {
+      let t = 0
+      const ipFn = vi.fn(async () => ({ ip: '1.2.3.4' }))
+      const readBx = vi.fn(async () => SAFE)
+      const sched = startGuardScheduler(makeDeps({
+        pollMs: 30_000,
+        now: () => t,
+        findBx: () => '/fake/bx',
+        readBx,
+        fetchPublicIp: ipFn,
+      }))
+      await sched.pokeNow()
+      t += 10_000; await sched.pokeNow()
+      t += 10_000; await sched.pokeNow()
+      expect(ipFn).toHaveBeenCalledTimes(1)
+      t += 15_000; await sched.pokeNow()
+      expect(ipFn).toHaveBeenCalledTimes(2)
+      expect(readBx.mock.calls.length).toBeGreaterThanOrEqual(4)
+      await sched.stop()
+    })
+
+    it('bx not installed → legacy ipify+probe path, source=probe', async () => {
+      const readBx = vi.fn(async () => SAFE)
+      const sched = startGuardScheduler(makeDeps({
+        findBx: () => null,
+        readBx,
+        fetchPublicIp: async () => ({ ip: '1.2.3.4' }),
+        probeReachable: async () => ({ reachable: false, ms: null, error: 'timeout' }),
+      }))
+      await sched.pokeNow()
+      expect(readBx).not.toHaveBeenCalled()
+      expect(sched.current()).toEqual(expect.objectContaining({ source: 'probe', safe: false, reachable: false }))
+      await sched.stop()
+    })
+
+    it('disabled → never reads bx', async () => {
+      const readBx = vi.fn(async () => SAFE)
+      const sched = startGuardScheduler(makeDeps({ isEnabled: () => false, findBx: () => '/fake/bx', readBx }))
+      await sched.pokeNow()
+      expect(readBx).not.toHaveBeenCalled()
+      await sched.stop()
+    })
+  })
 })

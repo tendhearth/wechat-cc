@@ -8,7 +8,7 @@
 // Subscribes to: doctorPoller (renderDashboard + renderRestartButton fire
 // on every successful poll automatically).
 
-import { dashboardHero, accountRows, formatRelativeTime, escapeHtml, restartButtonState, deleteAccountConfirmCopy, diagnose } from "../view.js"
+import { dashboardHero, accountRows, formatRelativeTime, escapeHtml, restartButtonState, deleteAccountConfirmCopy, diagnose, guardLine } from "../view.js"
 import { icon } from "./icons.js"
 
 // provider 菜单的数据源 = 大脑区已注册列表(/v1/llm/health registered),
@@ -1224,6 +1224,33 @@ export async function loadFsAccess(deps) {
       if (deps.ipcInvoke) deps.ipcInvoke("open_url", { url }).catch(() => {})
     })
   }
+}
+
+/**
+ * 网络守护一行(2026-10-02):读 /v1/health.guard。不安全时 CC 暂停所有模型调用 ——
+ * 这一行让主人在此刻页一眼看到「为什么 CC 不说话了」。
+ * @param {any} deps
+ */
+export async function loadGuardLine(deps) {
+  const el = document.getElementById("dash-guard-line")
+  if (!el) return
+  const h = await deps.invokeApi("GET", "/v1/health").catch(() => null)
+  const line = guardLine(h && h.guard)
+  if (!line) { el.hidden = true; return }
+  el.textContent = line.state === "down" && line.detail ? `${line.text}(${line.detail})` : line.text
+  el.dataset.state = line.state
+  el.title = line.state === "down" ? "恢复后会自动继续。想查是否已经漏过,在终端跑 bx leakcheck。" : line.detail
+  el.hidden = false
+}
+
+let _lastGuardCheckAt = 0
+const GUARD_POLL_INTERVAL_MS = 15_000
+/** 15 秒看一次:网络掉了 / 恢复了,这一行要跟着变。 @param {any} deps */
+export function checkGuardOnPoll(deps) {
+  const now = Date.now()
+  if (_lastGuardCheckAt !== 0 && now - _lastGuardCheckAt < GUARD_POLL_INTERVAL_MS) return Promise.resolve()
+  _lastGuardCheckAt = now
+  return loadGuardLine(deps).catch(err => console.warn("[guard] check failed:", err))
 }
 
 let _lastFsCheckAt = 0

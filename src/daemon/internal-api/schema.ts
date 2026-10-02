@@ -34,6 +34,15 @@ export const HealthResponse = z.object({
   version: z.object({ cli: z.string(), head: z.string().nullable(), boot_at: z.string() }).optional(),
   // Subsystem degraded-boot (spec 2026-08-17) — 启动降级状态表。
   subsystems: z.array(SubsystemStatusSchema).optional(),
+  // 网络守护(2026-10-02)—— bx 优先;safe=false ⇒ CC 暂停所有模型调用。老 daemon 没有。
+  guard: z.object({
+    enabled: z.boolean(),
+    source: z.enum(['bx', 'probe', 'off']),
+    safe: z.boolean(),
+    detail: z.string(),
+    ip: z.string().nullable(),
+    checked_at: z.string().nullable(),
+  }).optional(),
   // 文件访问(macOS TCC,2026-09-04)—— daemon 进程自己能不能读主人的文件夹。
   // 权限缺失此前是静默的;这里让它进 health / doctor / 桌面。
   fs_access: z.object({

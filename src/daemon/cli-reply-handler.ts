@@ -8,6 +8,7 @@
  *
  * 那边(别的机器)的会话:v1 先说明白「暂时只能看这台机的」,转发是下一步。
  */
+import { unprotectedMessage, type NetworkGate } from '../lib/network-gate'
 import { spawn } from 'node:child_process'
 import { wrapForProcessTree } from '../lib/jobspawn'
 import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs'
@@ -62,6 +63,8 @@ export interface CliReplyCoreDeps {
   log: (tag: string, line: string) => void
   dangerously: boolean
   readFile?: (path: string) => string
+  /** 网络闸门(2026-10-02):起 `claude -p --resume` / `codex exec resume` 之前问一次。 */
+  networkGate?: NetworkGate
 }
 
 export interface CliReplyHandlerDeps extends CliReplyCoreDeps {
@@ -94,6 +97,10 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
       catch (err) { return { ok: false, error: `读不到记录:${err instanceof Error ? err.message : String(err)}` } }
     },
     async resume(s, text) {
+      if (deps.networkGate) {
+        const v = await deps.networkGate.check()
+        if (!v.safe) { deps.log('CLI_REPLY', `resume ${s.source}/${s.session_id.slice(0, 6)} refused — network unprotected [${v.source}]`); return { kind: 'failed', text: unprotectedMessage(v) } }
+      }
       if(deps.executionConflict?.(s))return{kind:'failed',text:'这条会话或文件夹已由 CC 工作台管理，请在那里继续。'}
       let settle:((closed:boolean)=>void)|undefined,closed=false
       try{settle=deps.reserveExecution?.(s)}catch{return{kind:'failed',text:'这个文件夹有另一项任务正在执行，请稍后再试。'}}

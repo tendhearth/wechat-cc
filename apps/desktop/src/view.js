@@ -94,6 +94,16 @@ export function daemonStatusLine(daemon) {
   return daemon.alive ? { cls: "ok", text: "CC 在家 · 运行中" } : { cls: "bad", text: "CC 没在运行" }
 }
 
+// 网络守护一行(2026-10-02):/v1/health.guard 或 `guard status --json` 的 {enabled, source, safe, detail}。
+// 守护关着 / 老 daemon 没这个字段 → null(不显示,不制造假警报);不安全永远是红的,不默认绿。
+export function guardLine(guard) {
+  if (!guard || guard.enabled === false || !guard.source || guard.source === "off") return null
+  const detail = typeof guard.detail === "string" ? guard.detail : ""
+  if (guard.safe !== true) return { state: "down", text: "⚠ 网络未受保护，CC 暂停", detail }
+  if (guard.source === "bx") return { state: "ok", text: "bx 保护中", detail }
+  return { state: "ok", text: "网络守护 · 探测可达", detail }
+}
+
 export function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, ch => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;",

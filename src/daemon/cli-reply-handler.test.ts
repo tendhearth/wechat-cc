@@ -152,3 +152,10 @@ it('refuses workbench-owned native replies and only releases a positively closed
  await makeCliReplyCore(deps).resume(sess(),'go');expect(settle).toHaveBeenCalledWith(false)
  run.mockResolvedValueOnce({code:0,stdout:'done',stderr:'',timedOut:false,closed:true});await makeCliReplyCore(deps).resume(sess(),'go');expect(settle).toHaveBeenLastCalledWith(true)
 })
+
+it('network unprotected (2026-10-02) → resume never spawns the CLI; says why',async()=>{
+ const run=vi.fn(async()=>({code:0,stdout:'done',stderr:'',timedOut:false,closed:true})),reserveExecution=vi.fn(()=>()=>{})
+ const core=makeCliReplyCore({hub:{lookup:()=>sess(),sessions:()=>[sess()]},run,reserveExecution,log:()=>{},dangerously:false,networkGate:{check:async()=>({safe:false,source:'bx',detail:'bx 未保护'})}})
+ const r=await core.resume(sess(),'go')
+ expect(r.kind).toBe('failed');expect(r.text).toContain('网络未受保护');expect(run).not.toHaveBeenCalled();expect(reserveExecution).not.toHaveBeenCalled()
+})

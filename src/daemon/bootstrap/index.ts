@@ -167,7 +167,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   })()
 
   const { registry, defaultProviderId, codexBinary, codexVersionCheck, providerNotes: baseProviderNotes } = await registerProviders({
-    log: deps.log,
+    log: deps.log, networkGate: deps.networkGate,
     stateDir: deps.stateDir,
     ilink: deps.ilink,
     agentProviderKind: deps.agentProviderKind,
@@ -199,7 +199,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const sessionManager = new SessionManager({
     maxConcurrent: 6,
     idleEvictMs: 30 * 60_000,
-    registry,
+    registry, networkGate: deps.networkGate,
     sessionStore,
     resumeTTLMs: 7 * 24 * 60 * 60_000,
     // Per-session auth token lifecycle — minted once per spawn, revoked on
@@ -278,7 +278,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   // See ./delegate.ts for why these are constructed separately from the
   // registry's main providers (no mcpServers — recursion prevention).
   const dispatchDelegate = buildDelegateDispatch({
-    stateDir: deps.stateDir,
+    stateDir: deps.stateDir, networkGate: deps.networkGate,
     log: deps.log,
     ...(claudeBin ? { claudeBin } : {}),
     // 没有 claude 二进制就别把 claude 放进 delegate 名单 —— 与 codex/openai

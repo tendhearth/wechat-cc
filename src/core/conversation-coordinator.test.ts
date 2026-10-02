@@ -2876,3 +2876,58 @@ describe('fallback streak detector (onFallbackStreak)', () => {
     expect(streaks.at(-1)).toEqual(['agy', 1])
   })
 })
+
+describe('network gate (2026-10-02)', () => {
+  const UNSAFE = { check: async () => ({ safe: false, source: 'bx' as const, detail: 'bx 未保护' }) }
+  const SAFE = { check: async () => ({ safe: true, source: 'bx' as const, detail: 'bx 保护中' }) }
+
+  function make(gate: typeof UNSAFE | typeof SAFE, mode: Mode = { kind: 'solo', provider: 'claude' }) {
+    const store = makeMockStore()
+    store.set('chat-1', mode)
+    const registry = createProviderRegistry()
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+    const acquire = vi.fn(async (_req: AcquireRequest) => ({
+      alias: 'p', path: '/p', providerId: 'claude' as ProviderId, lastUsedAt: 0,
+      dispatch: () => makeFakeSession({ events: [{ kind: 'result', sessionId: 's', numTurns: 1, durationMs: 0 }] }).dispatch('x'),
+      cancel: async () => {}, close: async () => {},
+    }))
+    const sendAssistantText = vi.fn(async (_c: string, _t: string) => {})
+    const haikuEval = vi.fn(async () => 'x')
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'p', path: '/p' }),
+      manager: { acquire } as never,
+      conversationStore: store,
+      registry,
+      defaultProviderId: 'claude',
+      format: (m) => m.text,
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+      sendAssistantText,
+      haikuEval,
+      networkGate: gate,
+    })
+    return { c, acquire, sendAssistantText, haikuEval }
+  }
+
+  it.each<[string, Mode]>([
+    ['solo', { kind: 'solo', provider: 'claude' }],
+    ['parallel', { kind: 'parallel', participants: ['claude', 'codex'] }],
+    ['chatroom', { kind: 'chatroom', participants: ['claude', 'codex'] }],
+    ['primary_tool', { kind: 'primary_tool', primary: 'claude' }],
+  ])('unsafe → %s turn never acquires a session; one uniform notice, no retry', async (_n, mode) => {
+    const { c, acquire, sendAssistantText, haikuEval } = make(UNSAFE, mode)
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).not.toHaveBeenCalled()
+    expect(haikuEval).not.toHaveBeenCalled()
+    expect(sendAssistantText).toHaveBeenCalledTimes(1)
+    expect(sendAssistantText.mock.calls[0]?.[1]).toBe('网络未受保护(bx 未连上),CC 先暂停，恢复后再试。')
+  })
+
+  it('safe → dispatches normally', async () => {
+    const { c, acquire } = make(SAFE)
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).toHaveBeenCalledTimes(1)
+  })
+})

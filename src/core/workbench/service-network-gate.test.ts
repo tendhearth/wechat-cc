@@ -1,0 +1,61 @@
+import {afterEach,beforeEach,expect,it,vi} from 'vitest'
+import {mkdtempSync,mkdirSync,realpathSync} from 'node:fs'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
+import {randomUUID} from 'node:crypto'
+import {openDb,type Db} from '../../lib/db'
+import {createProviderRegistry} from '../provider-registry'
+import type {AgentProvider} from '../agent-provider'
+import type {NetworkGate} from '../../lib/network-gate'
+import {makeWorkbenchStore} from './store'
+import {makeWorkbenchService,type WorkbenchService} from './service'
+import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {removeTempDir} from '../../lib/test-temp'
+
+// 网络闸门(2026-10-02):工作台在起执行者 / 投补充之前问一次;不安全就不 spawn。
+let root:string,project:string,db:Db,service:WorkbenchService
+const net={safe:true}
+const gate:NetworkGate={check:async()=>({safe:net.safe,source:'bx',detail:net.safe?'bx 保护中':'bx 未保护'})}
+function gateOpen(){let resolve!:()=>void;const promise=new Promise<void>(r=>resolve=r);return{promise,resolve}}
+async function settled(id:string){await expect.poll(()=>service.detail(id).task.status).not.toMatch(/^(queued|running|cancelling)$/)}
+function setup(provider:AgentProvider){
+  const registry=createProviderRegistry({networkGate:gate})
+  registry.register('claude',provider,{displayName:'claude',canResume:()=>true,workbench:MANAGED_NATIVE_CAPABILITIES})
+  service=makeWorkbenchService({store:makeWorkbenchStore(db),registry,stateDir:root,ownerChatId:()=>null,networkGate:gate})
+}
+beforeEach(()=>{net.safe=true;root=realpathSync(mkdtempSync(join(tmpdir(),'cc-wb-netgate-')));project=join(root,'project');mkdirSync(project);db=openDb({path:join(root,'state.db')})})
+afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(root)})
+
+it('unsafe → the executor is never spawned; task fails with network_unprotected and an honest event',async()=>{
+  const spawn=vi.fn(async()=>({async *dispatch(){yield {kind:'result' as const,sessionId:'s',numTurns:1,durationMs:1}},async close(){}}))
+  setup({spawn} as unknown as AgentProvider)
+  net.safe=false
+  const task=service.create({path:project,providerId:'claude',text:'do it'});await settled(task.id)
+  expect(spawn).not.toHaveBeenCalled()
+  const d=service.detail(task.id)
+  expect(d.task.status).toBe('failed')
+  expect(d.task.error).toBe('network_unprotected')
+  expect(JSON.stringify(d)).toContain('网络未受保护')
+})
+
+it('unsafe → a supplement to a live run is refused (network_unprotected), nothing delivered',async()=>{
+  const hold=gateOpen()
+  const spawn=vi.fn(async()=>({async *dispatch(){yield {kind:'init' as const,sessionId:'s'};await hold.promise;yield {kind:'result' as const,sessionId:'s',numTurns:1,durationMs:1}},async close(){}}))
+  setup({spawn} as unknown as AgentProvider)
+  const task=service.create({path:project,providerId:'claude',text:'start'})
+  await expect.poll(()=>service.detail(task.id).runId).toBeTruthy()
+  net.safe=false
+  await expect(service.submitInput(task.id,{runId:service.detail(task.id).runId!,requestId:randomUUID(),text:'more'})).rejects.toThrow('network_unprotected')
+  hold.resolve();await settled(task.id)
+})
+
+it('pauseForNetwork stops a running executor and records why',async()=>{
+  const hold=gateOpen()
+  setup({async spawn(){return{async *dispatch(){yield {kind:'init' as const,sessionId:'s'};await hold.promise;yield {kind:'result' as const,sessionId:'s',numTurns:1,durationMs:1}},async close(){hold.resolve()},async cancel(){hold.resolve()}}}} as unknown as AgentProvider)
+  const task=service.create({path:project,providerId:'claude',text:'start'})
+  await expect.poll(()=>service.detail(task.id).task.status).toBe('running')
+  expect(service.pauseForNetwork('网络未受保护(bx 未连上),CC 先暂停，恢复后再试。已停止本轮。')).toBe(1)
+  await settled(task.id)
+  expect(service.detail(task.id).task.status).toBe('cancelled')
+  expect(JSON.stringify(service.detail(task.id))).toContain('已停止本轮')
+})

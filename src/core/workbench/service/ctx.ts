@@ -3,6 +3,7 @@
  * 显式、只读、不含 service 对象本身:域需要「别的域 / service 的动作」一律 ctx.actions.deref() 在**调用时**取
  * —— Ref 由 service.ts 在 public 对象建好后 set 一次;工厂体里不许 deref(那时还没 set)。
  */
+import type { NetworkGate } from '../../../lib/network-gate'
 import type { Ref } from '../../../lib/lifecycle'
 import type { ProviderRegistry } from '../../provider-registry'
 import type { UsageSnapshot } from '../../subscription-usage'
@@ -116,6 +117,8 @@ export interface ServiceDeps {
   holdBusy?: (label: string) => () => void
   /** 受管工作目录的根;不传 ⇒ entry 的 managed 目标一律 entry_not_wired。 */
   managedWorkspaceRoot?: string
+  /** 网络闸门(2026-10-02):起执行者 / 投补充之前问一次,不安全 ⇒ `network_unprotected`。不传 = 不拦。 */
+  networkGate?: NetworkGate
 }
 export interface ServiceCtx {
   store: WorkbenchStore

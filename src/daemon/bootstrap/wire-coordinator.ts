@@ -54,7 +54,7 @@ export interface CoordinatorSlice {
 }
 
 export function wireCoordinator(
-  deps: Pick<BootstrapDeps, 'ilink' | 'log' | 'onTurnRecord' | 'petSignals' | 'replySinks' | 'outboundTaps'>,
+  deps: Pick<BootstrapDeps, 'ilink' | 'log' | 'onTurnRecord' | 'petSignals' | 'replySinks' | 'outboundTaps' | 'networkGate'>,
   ctx: Pick<BootstrapCtx, 'db'>,
   parts: {
     health: HealthRuntime
@@ -171,6 +171,8 @@ export function wireCoordinator(
     // determines which TierProfile the session is spawned under.
     loadAccess,
     log: deps.log,
+    // 网络闸门(2026-10-02):每一轮先问,不安全就回一句统一的话、不出发。
+    ...(deps.networkGate ? { networkGate: deps.networkGate } : {}),
     // PR F — chatroom moderator now resolves a provider-agnostic cheap
     // eval via ProviderRegistry.getCheapEval(). Each registered provider
     // implements its own cheapest one-shot LLM call (claude → haiku via

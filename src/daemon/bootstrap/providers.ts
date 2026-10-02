@@ -103,6 +103,8 @@ export interface ProviderDeps {
    * defaulting to the operator's real home dir.
    */
   agyGeminiConfigDir?: string
+  /** 网络闸门(2026-10-02):注册进 registry 的每个 provider 都套一层,见 withNetworkGate。 */
+  networkGate?: import('../../lib/network-gate').NetworkGate
 }
 
 export interface ProviderWiring {
@@ -160,6 +162,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       }),
     }),
     log: (line) => deps.log('REGISTRY', line),
+    ...(deps.networkGate ? { networkGate: deps.networkGate } : {}),
     // 诊断采集:cheapEval 失败时把真实形状落到 failure-shapes.jsonl。
     // 这条路是 **agy 唯一真正跑的地方** —— 要修「四处判定各说各话」,
     // 得先有真机语料,而 turn_records 里 agy 是零行(它不走会话轮次)。

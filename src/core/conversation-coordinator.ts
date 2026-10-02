@@ -33,6 +33,7 @@ import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } fro
 import { isAuthErrorCode } from '../lib/provider-error-code'
 import { resolveEffectiveTier, resolveTier, TIER_PROFILES, type TierProfile } from './user-tier'
 import type { Access } from '../lib/access'
+import { unprotectedMessage, type NetworkGate } from '../lib/network-gate'
 import { makeChatMutex } from './async-mutex'
 
 /**
@@ -193,6 +194,12 @@ export interface ConversationCoordinatorDeps {
    * is cheap to call per message; tests can pass a constant lambda.
    */
   loadAccess: () => Access
+  /**
+   * 网络闸门(2026-10-02)。每一轮在碰任何 provider 之前问一次;不安全就不出发,
+   * 用 sendAssistantText 回一句统一的话(微信 / App / 手机都走这条,按 reply sink
+   * 落到发起的那一面),不重试。缺省 = 不拦。
+   */
+  networkGate?: NetworkGate
 }
 
 /** User-facing notice when a provider reports an auth failure.
@@ -1118,6 +1125,14 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
    * parallel/primary_tool, and calls it directly (no lock) for chatroom.
    */
   async function dispatchInner(msg: InboundMsg): Promise<void> {
+    if (deps.networkGate) {
+      const v = await deps.networkGate.check()
+      if (!v.safe) {
+        deps.log('GUARD', `chat=${msg.chatId} turn refused — network unprotected [${v.source}] ${v.detail}`, { event: 'network_unprotected', chat_id: msg.chatId })
+        await deps.sendAssistantText?.(msg.chatId, unprotectedMessage(v))
+        return
+      }
+    }
     const proj = deps.resolveProject(msg.chatId)
       if (!proj) {
         deps.log('COORDINATOR', `drop: no project for chat=${msg.chatId}`)

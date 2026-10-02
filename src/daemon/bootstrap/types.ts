@@ -17,6 +17,11 @@ import type { HealthRuntime } from '../health'
 
 export interface BootstrapDeps {
   stateDir: string
+  /**
+   * 网络闸门(2026-10-02,main.ts 建):provider registry / SessionManager / 协调器都接它。
+   * 缺省 = 不拦(测试 / 最小嵌入)。
+   */
+  networkGate?: import('../../lib/network-gate').NetworkGate
   ilink: {
     sendMessage: (chatId: string, text: string) => Promise<{ msgId: string }>
     sendFile: (chatId: string, path: string) => Promise<void>
