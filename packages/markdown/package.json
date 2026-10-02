@@ -1,0 +1,8 @@
+{
+  "name": "@wechat-cc/markdown",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "marked": "^18.0.0" }
+}

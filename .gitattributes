@@ -8,6 +8,7 @@ apps/desktop/art/** -text
 apps/mobile/src/** text eol=lf
 # 此共享源码也会原样内联进手机生成页。
 apps/desktop/src/shared/task-entry-contract.js text eol=lf
+apps/desktop/src/vendor/markdown.js text eol=lf
 src/daemon/mobile-page.generated.json text eol=lf
 
 # 「CC 眼中的你」眨眼帧:二进制原样进出(同 pet 资产)。
