@@ -5,6 +5,7 @@ import type {PendingUserInput} from '../workbench/user-input'
 import type {Artifact} from '../workbench/store'
 import {normalizeInputRequestId,type LiveInput} from '../workbench/live-inputs'
 import type {Attachment} from '../workbench/attachments'
+import {sayTextHash,type SayReceipts} from './say-receipts'
 
 /**
  * matters/service.ts — 各表面共用的"一件事"读写面:列表、详情、往一件事说话。
@@ -26,7 +27,12 @@ export interface MatterTaskControls {
 }
 /** 接过来、还没发第一句的电脑会话:第一句会怎样(spec 2026-10-01-tendhearth-continue-sessions D12)。 */
 export interface MatterNativeStart {mode:'native_resume'|'fresh_context';providerId:string}
-export interface MatterDetail extends MatterTaskControls {matter:Matter;bindings:MatterBinding[];sessions:MatterSession[];task:MatterTaskView|null;events:MatterEvent[];nativeStart?:MatterNativeStart}
+/** 执行者额度用完:能交给谁 / 没人能接 / 已经交出去了(spec 2026-10-01-tendhearth-continue-sessions §7-3;工作台 service/quota-handoff.ts 算)。 */
+export type MatterQuotaHandoff =
+  | {state:'offer';from:string;to:string;kind:'quota'|'rate_limit';resetAt:number}
+  | {state:'none';from:string;kind:'quota'|'rate_limit';resetAt:number}
+  | {state:'handed';from:string;to:string;matterId:string}
+export interface MatterDetail extends MatterTaskControls {matter:Matter;bindings:MatterBinding[];sessions:MatterSession[];task:MatterTaskView|null;events:MatterEvent[];nativeStart?:MatterNativeStart;quotaHandoff?:MatterQuotaHandoff}
 export interface MatterSayInput {requestId:string;runId?:string;draftId?:string;attachmentIds?:string[]}
 type MatterMaterials=Pick<MatterSayInput,'draftId'|'attachmentIds'>
 export interface MatterArtifactInput {artifactId:string;sha256:string;offset:number;length?:number}
@@ -43,9 +49,15 @@ export interface MattersServiceDeps {
     resolvePermission?(id:string,requestId:string,decision:PermissionDecision):void
     resolveAnswer?(id:string,requestId:string,answers:unknown):void
     artifact?(id:string,artifactId:string):{name:string;mime:string;size:number;sha256:string;contentBase64:string}
+    /** 额度用完时这件事能不能交给另一位;null = 不用打扰。没接 ⇒ 详情里没有这一块。 */
+    quotaHandoff?(id:string):MatterQuotaHandoff|null
+    /** 交出去(按 requestId 幂等、一件事只交一次);回新那件的任务 id。 */
+    handOff?(id:string,input:{requestId:string;providerId:string}):{taskId:string;created:boolean}
   }
   /** 对主人的 chat 说话(app 对话通道),surface 记这句是从哪个表面来的;recent 读该 chat 的消息流(微信 / 桌面 / 手机三处进同一条)。 */
   chat?:{ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterEvent[]>}
+  /** 聊天那件事「说一句」的 requestId 回执(v70);没接 ⇒ 不去重(老行为)。 */
+  sayReceipts?:SayReceipts
   now?:()=>number
 }
 export interface MattersService {
@@ -57,10 +69,14 @@ export interface MattersService {
   permission(id:string,runId:string,requestId:string,decision:PermissionDecision):void
   answer(id:string,runId:string,requestId:string,answers:unknown):void
   artifactChunk(id:string,input:MatterArtifactInput):MatterArtifactChunk
+  /** 额度用完 ⇒ 交给确认卡上那位继续(同一文件夹新开一件);从手机来的,新那件记手机露面。 */
+  handoff(id:string,input:{requestId:string;providerId:string},surface?:'desktop'|'phone'):Promise<{matterId:string;created:boolean}>
 }
 const ID=/^[a-f0-9]{8}$/
 
 export function makeMattersService(deps:MattersServiceDeps):MattersService {
+  /** 同一 requestId 还在说的那一轮:重发直接跟上它,不起第二轮(回执表只管跨重启与已说完的)。 */
+  const chatInFlight=new Map<string,Promise<{kind:'chat';reply:string}>>()
   const require=(id:string):Matter=>{if(!ID.test(id))throw new Error('invalid_matter_id');const m=deps.store.get(id);if(!m)throw new Error('matter_not_found');return m}
   const taskDetail=(id:string)=>{
     if(require(id).kind!=='task')throw Error('matter_task_required')
@@ -89,6 +105,7 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
       let task:MatterTaskView|null=null,events:MatterEvent[]=[]
       let controls:MatterTaskControls={permissions:[],questions:[],artifacts:[],inputs:[]}
       let nativeStart:MatterNativeStart|undefined
+      let quotaHandoff:MatterQuotaHandoff|undefined
       if(matter.kind==='chat'&&deps.chat?.recent){
         const chatId=deps.store.bindings(id).find(b=>b.surface==='wechat')?.surfaceKey
         if(chatId){try{events=(await deps.chat.recent(chatId,50)).sort((a,b)=>a.createdAt-b.createdAt).map(publicEvent)}catch{/* 读不到消息流,详情本身还在 */}}
@@ -105,8 +122,9 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
           if(d.requiresExternalClose)nativeStart={mode:d.continuation?.mode==='restart_required'?'fresh_context':'native_resume',providerId:d.task.providerId}
         }
         catch{/* 任务记录不在了也不让详情整个失败:matter 本身还在 */}
+        try{quotaHandoff=deps.workbench.quotaHandoff?.(matter.id)??undefined}catch{/* 算不出来就不给这一块,详情照旧 */}
       }
-      return {matter,bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...(nativeStart?{nativeStart}:{})}
+      return {matter,bindings:deps.store.bindings(id),sessions:deps.store.sessions(id),task,events,...controls,...(nativeStart?{nativeStart}:{}),...(quotaHandoff?{quotaHandoff}:{})}
     },
     async ownerChat(surface){
       const owner=deps.chat?.ownerChatId();if(!owner)return null
@@ -156,11 +174,42 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
         const owner=deps.chat.ownerChatId()
         const boundToOwner=!!owner&&deps.store.bindings(id).some(b=>b.surface==='wechat'&&b.surfaceKey===owner)
         if(!boundToOwner)throw new Error('matter_say_unsupported')
-        const {reply}=await deps.chat.say(text,surface)
-        deps.store.touch(id)
-        return {kind:'chat',reply}
+        const chat=deps.chat
+        const speak=async():Promise<{kind:'chat';reply:string}>=>{
+          const {reply}=await chat.say(text,surface)
+          deps.store.touch(id)
+          return {kind:'chat',reply}
+        }
+        // 与工作台输入回执同一规矩:带 requestId ⇒ 同 id 同文的重发拿原来的结果、不再说;同 id 异文 ⇒ input_conflict。
+        const receipts=deps.sayReceipts
+        if(!input||!receipts)return speak()
+        const requestId=normalizeInputRequestId(input.requestId)
+        const {fresh,receipt}=receipts.reserve({requestId,matterId:id,textHash:sayTextHash(text)})
+        if(!fresh){
+          if(receipt.matterId!==id||receipt.textHash!==sayTextHash(text))throw Error('input_conflict')
+          const flight=chatInFlight.get(requestId)
+          if(flight)return flight
+          // 说完了 ⇒ 原来的回复;还是 pending 却没人在说 ⇒ 那一轮被 daemon 重启打断了:这句已经收下、
+          // 可能已经进了 CC 的会话,不能再说一遍(同工作台被重启扣下的输入:回执在,重发不再派发)。
+          return {kind:'chat',reply:receipt.status==='replied'?receipt.reply??'':''}
+        }
+        const flight=speak().then(
+          result=>{chatInFlight.delete(requestId);try{receipts.settle(requestId,result.reply)}catch{/* 回执写不进不影响这次结果 */}return result},
+          error=>{chatInFlight.delete(requestId);try{receipts.drop(requestId)}catch{/* 同上 */}throw error},
+        )
+        chatInFlight.set(requestId,flight)
+        return flight
       }
       throw new Error('matter_say_unsupported')
+    },
+    async handoff(id,input,surface){
+      if(require(id).kind!=='task')throw Error('matter_task_required')
+      const requestId=normalizeInputRequestId(input.requestId)
+      if(!deps.workbench?.handOff)throw Error('workbench_not_wired')
+      const r=deps.workbench.handOff(id,{requestId,providerId:input.providerId})
+      const matterId=deps.store.get(r.taskId)?.id??r.taskId
+      if(surface==='phone'){try{deps.store.bind(matterId,'phone','pwa')}catch{/* 只是露面登记 */}}
+      return {matterId,created:r.created}
     },
     permission(id,runId,requestId,decision){
       if(decision!=='allow'&&decision!=='deny')throw Error('invalid_decision')

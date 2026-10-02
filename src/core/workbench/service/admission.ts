@@ -48,6 +48,10 @@ export function makeAdmissionDomain(ctx:ServiceCtx):AdmissionDomain {
   function canResume(task:StoredTask):boolean {
     try {
       const entry=provider(task.providerId)
+      // 导入了、还没发过第一句的任务:原会话记下的 cwd 经过符号链接(≠ 真目录)⇒ 不恢复原会话,只带记录新开。
+      // 原生恢复要求「在原会话那个文件夹里」(plan 2026-09-12 native-sessions),换了路径写法的不算,保守处理。
+      const source=task.id?store.source(task.id):null
+      if(source&&source.firstDispatchedAt===null&&source.cwd!==task.path)return false
       return !!task.sessionId&&canResumeWorkbenchExecutor(entry.opts.workbench)&&!!entry.opts.canResume(task.path,task.sessionId)
     }
     catch { return false }

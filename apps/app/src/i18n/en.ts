@@ -296,6 +296,18 @@ const en = {
   'continue.failed': 'Couldn’t continue it this time. Please try again.',
   'continue.firstResume': 'Your first message continues the original {provider} session on your computer.',
   'continue.firstFresh': 'Your first message starts a new round with the earlier conversation attached.',
+  'handoff.quotaNote': '{from} is out of quota. It resets in about {minutes} min',
+  'handoff.rateNote': '{from} is rate-limited for about {minutes} min',
+  'handoff.noneNote': 'No other helper can take over right now. Try again once the quota resets',
+  'handoff.action': 'Hand to {to}',
+  'handoff.title': 'Hand this to {to}?',
+  'handoff.where': 'On your computer, {to} starts a new task in the same folder to carry on. This one stays as it is.',
+  'handoff.context': '{to} can’t see {from}’s earlier conversation — it only gets this task’s title and “carry on with the original request.”',
+  'handoff.later': 'Not now',
+  'handoff.handed': 'Handed to {to}',
+  'handoff.open': 'Open that task',
+  'handoff.changed': 'Things just changed — take another look.',
+  'handoff.failed': 'Couldn’t hand it over this time. Please try again.',
 } as const
 
 export default en

@@ -1,6 +1,6 @@
 # Tendhearth 手机接着做电脑上的会话(Claude Code / Codex)· spec(plan 7b)
 
-日期:2026-10-01。状态:设计稿。基线 origin/dev 7757748d(#165 配对体验 7a)。增补 `2026-10-01-tendhearth-app-chat-design.md` 的「电脑上的会话(只读)」部分,以及工作台原生会话导入(`src/core/workbench/service/native.ts`)。plan 7 的第二份:7a = 配对(已合),**7b = 本 spec**。
+日期:2026-10-01。状态:已实施(#166);§7-1 已裁决、§7-3 已实施(`phone-quota-handoff` 分支),见文末修订记录。基线 origin/dev 7757748d(#165 配对体验 7a)。增补 `2026-10-01-tendhearth-app-chat-design.md` 的「电脑上的会话(只读)」部分,以及工作台原生会话导入(`src/core/workbench/service/native.ts`)。plan 7 的第二份:7a = 配对(已合),**7b = 本 spec**。
 
 依据(**有约束力**):
 - 主人 2026-10-01 的要求:「手机上能接着 Claude Code / Codex 的会话」(§1)
@@ -32,7 +32,7 @@
 - **D7 「忙」分两种,各说各的**:会话本身在跑(看得见的 `active` / 远程 / `executionConflict(path, provider, nativeId)`)⇒ `busy_session`,用裁决 4 的原话;CC 正在这个文件夹里做别的事(`executionConflict(path, provider, null)`,比如微信那边的 CC 会话占着这个项目)⇒ `busy_folder`,另一句。两种都不给按钮。**第一句分不出这两种**:到第一句时(`start()`、`continueImported` 的各道守门)冲突判定是一个布尔值、带着会话 id 问的,抛的都是 `native_session_busy`,错误本身不带「是文件夹忙还是会话忙」;所以接过来的事第一句碰到这两种都说 `busySession`(final fix M4,已知限制)。预览分得开,是因为它先用 `null` 问一次文件夹、再用 nativeId 问会话。
 - **D8 能不能接是一条单独、不缓存的 GET**。`GET /m/api/session` 有 15 秒单飞缓存(裁定 8),「正在跑」不能晚 15 秒才知道;所以新开 `GET /m/api/session/continue?key=`,读页打开时、重连后(连接 epoch 前进)、点开确认卡时各问一次。`POST` 里 daemon 再判一遍(状态在两次之间变了 ⇒ 对应错误码,卡里换成那句话)。
 - **D9 「打开这件事」也走 `POST`**。它幂等:已接过 ⇒ 不再导入,只补 matter 行(桌面导入过但没有 matter 行的那种)、登记手机露面,回同一个 matterId。
-- **D10 额度**:预览时执行者额度已耗尽(`quotaExhausted`)⇒ 不给按钮,一行灰字。文案用桌面现成那句(`workbench-execution.js` 的 `provider_quota_exhausted`),去掉「交给另一位执行者继续」那半句(手机这一版没有换执行者)。说一句页碰到 `provider_quota_exhausted` 也说这句。
+- **D10 额度**:预览时执行者额度已耗尽(`quotaExhausted`)⇒ 不给按钮,一行灰字。文案用桌面现成那句(`workbench-execution.js` 的 `provider_quota_exhausted`),去掉「交给另一位执行者继续」那半句(会话还没成为一件事,没有可交出去的东西)。说一句页碰到 `provider_quota_exhausted` 也说这句。**变更(2026-10-01,§7-3 主人裁决)**:成为一件事之后(含接过来的电脑会话),执行者额度用完 ⇒ 进展页给「交给 X 继续」,见 §7-3。
 - **D11 手机错误码细分**:`BackendCode` 加 `session_busy`(`native_session_busy`)、`folder_busy`(`native_folder_busy`)、`provider_missing`(`unavailable_provider`)、`folder_missing`(`invalid_path`)、`quota`(`provider_quota_exhausted`)。这是全局映射,但交办新事项那一页没有「会话」:`createTask` 在 CC 占着那个文件夹时也回 `native_session_busy`(它用 `nativeId = null` 问冲突),`invalid_path` 说的是项目文件夹 —— 所以说一句页按「有没有一件事」分:没有一件事时 `session_busy` 说 `continue.busyFolder`、`folder_missing` 说 `compose.projectFolderMissing`(「电脑上找不到这个项目的文件夹了。」),有一件事时才说会话那两句(final fix I2)。第一句(`continueImported`)时记录在确认后又变了(`external_close_confirmation_stale`,比如终端里的 Claude Code 还在写)、原会话已不能直接接上(`restart_confirmation_required`)⇒ 都映射成 `session_changed`(final fix I1)。说一句页的「没有送到电脑上」只给真没送到的(离线 / 那一块没接上);电脑答了、但没接下的其它码 ⇒ 中性的 `compose.notTaken`(「电脑那边这次没接下，请再试一次。」),与 `continueErrorText` 同一条规矩。另加三个(控制者裁决 R5):`session_changed`(`native_history_changed`,可重问预览再接)、`session_empty`(`native_history_empty`)、`session_managed`(`native_session_already_managed`,不是错:重问预览、打开那件事)。三个都不说「没送到电脑上」。
 - **D12 接过来、还没发第一句的那件事,页面上说清楚第一句会怎样**:`MatterDetail` 加可选 `nativeStart: { mode, providerId }`(仅在 `requiresExternalClose` 时出现),进展页与说一句页顶上显示「你发的第一句会接着电脑上原来的 {provider} 会话。」或「…会新开一轮，带上之前的对话记录。」,再加「先让电脑上原来那个 {provider} 停下…」。发过第一句后字段消失。
 - **D13 项目只给目录名**:预览里的 `project` 与会话列表一样是 `basename(cwd)`,手机永远拿不到完整路径与 nativeId。
@@ -185,7 +185,14 @@
 
 1. **真机验一次**(合并后):电脑上用 Claude Code 跑一个会话 → 退出 → 手机「接着做」→ 发一句 → 电脑上 `claude --resume` 看到同一个会话里多了这一轮;再验 Codex 一条。
 2. **看不见的「正在跑」**:普通终端里的 Claude Code CC 看不见,只能靠确认卡上的声明(D3)。连装了 hook 的也一样:`executionConflict`(`main.ts:722-725`)只把带 `origin_agent`(CC 派出去的)hook 会话算作占用,主人自己在终端开的 hook 会话不算 —— 要不要把它也算进去(改动面:`cliEvents.sessions()` 那一条去掉 `origin_agent` 条件,会同时影响工作台其它入口的忙判定),以及要不要以后让 hook 成为「接着做」的前提(更安全、但没装 hook 的人就用不了)—— 交主人。
-3. **额度耗尽时换执行者**:桌面能「交给另一位继续」,手机这一版只说额度用完(D10)。要不要做,交主人。
+   - **主人决定 §7-1(2026-10-01):「接着做」不以 hook 为前提**:不要求「CC 能经 hook 探测到它在不在跑」才出现「接着做」;保持现在的做法 —— 确认卡就是主人「原程序已关闭」的声明(D3),看得见在跑的(Codex、CC 自己占着的)照旧灰字。理由:没装 hook 的人也要能用;hook 只能让一部分会话看得见,不能替代声明。上面「要不要以后让 hook 成为前提」一问到此关闭;`executionConflict` 是否把主人自己的 hook 会话也算占用,仍是独立的开放问题。
+3. **(主人决定 §7-3,2026-10-01;已实施)额度耗尽时换执行者**:手机驱动的事(含接过来的电脑会话)执行者额度用完 ⇒ 手机问「交给 X 继续？」,与微信管家同一件事。实施:
+   - **信号与动作复用**:信号 = 工作台 quota 域的 `quotaExhausted(providerId)` + `fallbackExecutor(providerId)`(微信 `mw-task-reference` 用的同一对);动作 = 在同一个文件夹给接手的执行者新开一件(`createTask`,不带原会话),第一句 `quotaTakeoverText`(`src/core/workbench/quota-takeover.ts`,微信与手机共用:「接替 X（额度用完）继续这件事：<标题>\n主人刚才的要求：接着原来的要求做。」)。原来那件原样留着;新那件的 matter `originMatterId` 指回原来那件。
+   - **核心** `src/core/workbench/service/quota-handoff.ts`:`quotaHandoff(taskId)` 只读 ⇒ `offer {from,to,kind,resetAt}` / `none {from,kind,resetAt}`(没人能接)/ `handed {from,to,matterId}` / null(执行者还能用、正在跑、不是主人的);`handOff(taskId,{requestId,providerId})` ⇒ 按 `requestId` 幂等(回执落在 `workbench_creation_receipts`,`account_id='quota-handoff'`、`project_id='quota-handoff:<源任务>'`,重启也认),一件事只交一次(另一个 requestId 再交 ⇒ 回已交出的那件,`created:false`)。拒绝:额度已恢复 `quota_handoff_not_needed`(409)、确认卡上的接手人不是此刻的 `quota_handoff_changed`(409)、没人能接 `quota_handoff_unavailable`(503)、正在跑 `workbench_busy`、不是主人的 `invalid_entry_owner`;文件夹没了 / 被占沿用 `createTask` 的错误。
+   - **matters**:`MatterDetail` 加可选 `quotaHandoff`;`MattersService.handoff(id,{requestId,providerId},surface)`,从手机来的新那件记手机露面。
+   - **路由**:`POST /m/api/matter/handoff {id,requestId,providerId}`(恰好三键)⇒ `{ok,matterId,created}`;登记 `PHONE_ROUTES`、协议 `PHONE_API_SCHEMAS`(`MatterQuotaHandoff`、`MatterHandoffResult`);不加 `/v1/*`,桌面与 Rust 宿主不动。
+   - **手机**:进展页底部一块(`view/handoff.ts`):offer ⇒ 琥珀点 + 灰字「{from} 的额度已用完，约 N 分钟后恢复」+ 唯一强调按钮「交给 {to} 继续」;none ⇒ 两行灰字(谁用完、现在没人能接);handed ⇒「已经交给 {to} 继续」+「打开那件事」。确认卡(与「接着做」同一底部卡样式)四行:为什么 / 「会在你电脑上同一个文件夹里，让 {to} 新开一件事接着做；原来这件留着不动。」/ 「{to} 看不到 {from} 之前的对话，只拿到这件事的标题和「接着原来的要求做」。」/ 会用掉 {to} 的额度;主按钮「交给 {to} 继续」,次按钮「先放着」(微信「不用」的同义)。`requestId` 每次点开卡换一个、卡里重试沿用。失败:`quota_handoff_*` ⇒ `handoff_changed`「情况刚变了，再看一眼。」并重读详情;只有真没送到才说「没有送到电脑上」。成功 ⇒ 进新那件。
+   - **测试**:核心 `quota-handoff.test.ts`、matters `service-quota-handoff.test.ts`、路由 `mobile-workbench.test.ts`、真面板 + 真工作台 `phone-quota-handoff.test.ts`(执行者真报额度错误 ⇒ offer ⇒ 交出 ⇒ handed;同 / 异 requestId 不建第二件;回包过 schema)、协议 `api-quota-handoff.test.ts`;手机 `view/handoff`、`errors`、`live`、演示后端;Maestro `apps/app/.maestro/quota-handoff.yaml`(演示模式)。
 4. **已经跑过的事再接着说,不重查原生会话**:接过来、已经发过第一句的事(managed),之后的话走 `continueTask`,不再检查它对应的 Codex 原生会话是不是又在终端里活了(桌面早就如此);手机现在给「打开这件事」,所以手机上也会走到这条路。要不要在 `continueTask` 前补查,交主人(final fix M2)。
 
 ## 8. 不做
@@ -194,4 +201,9 @@
 - 终端实时画面 / 流式镜像;停掉或接管一个正在跑的终端会话。
 - 让人手选模式(D2:两种从不同时可选)、手动挑要带过来的消息(D1:与桌面同一自动规则)。
 - 第一句带附件的界面(说一句页今天没有附件按钮;核心已透传 `draftId` / `attachmentIds` 与 owner 策略,以后加界面即可)。
-- 浏览器 / PWA 版(`apps/mobile`)的同一功能。
+- 浏览器 / PWA 版(`apps/mobile`)的同一功能(含 §7-3 额度交接)。
+- 额度交接带原会话的记录过去(§7-3 与微信一致:新那件只拿标题和「接着原来的要求做」,卡上照实说)。
+
+## 修订记录
+
+- 2026-10-01:§7-1(第 2 条下)裁决「接着做」不以 hook 为前提(保留确认卡声明,只改 spec 文字);§7-3 裁决并实施额度用完交给另一位(手机确认卡,复用微信的信号与动作,`POST /m/api/matter/handoff`,按 requestId 幂等、一件事只交一次);D10 补一句变更指向 §7-3;状态行改为已实施。

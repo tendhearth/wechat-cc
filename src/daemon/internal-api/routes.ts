@@ -22,6 +22,7 @@ import type { Mode } from '../../core/conversation'
 import { pluginsHealthForTier } from '../plugins/health'
 import type { UserTier } from '../../core/user-tier'
 import { makeEventsStore } from '../events/store'
+import { chatOfProfilePath, recordProfileWrite } from '../memory/today-draft'
 import { readModelStatus } from '../atelier-provision'
 import { loadCompanionConfig } from '../companion/config'
 import { a2aRoutes } from './routes-a2a'
@@ -112,11 +113,13 @@ function memoryScopeDenied(path: string, caller?: { tier: UserTier; origin: stri
 function curatedMemoryDenied(path: string, caller?: { origin: string }): boolean {
   if (!caller || caller.origin !== 'session') return false
   const n = posix.normalize(path.replace(/\\/g, '/')).replace(/^(\.\/)+/, '').replace(/\/+$/, '')
-  return /^[^/]+\/memory\.md$/i.test(n)
+  // today-draft.md(今天的草稿,2026-10-01)同样只归 daemon:它由 profile.md 写入派生、每晚被整理消费,
+  // 会话手写进去会被每次对话当成「主人今天说过的话」注入。
+  return /^[^/]+\/(?:memory|today-draft)\.md$/i.test(n)
 }
 const CURATED_READONLY = {
   status: 200 as const,
-  body: { ok: false, error: 'curated_memory_readonly', hint: 'memory.md 每晚自动整理,白天别直接改:新情况记到 profile.md 或 notes/,今晚会整理进去。' },
+  body: { ok: false, error: 'curated_memory_readonly', hint: 'memory.md 和 today-draft.md 由后台维护,白天别直接改:新情况记到 profile.md(新增的行会自动进今天的草稿)或 notes/,今晚会整理进去。' },
 }
 
 function toWireOutbound(h: import('../ilink/outbound-health').OutboundHealth) {
@@ -261,7 +264,14 @@ const onlineStickerCursor = new Map<string, number>()
       if (memoryScopeDenied(path, caller)) return { status: 403, body: { error: 'memory_scope_denied' } }
       if (curatedMemoryDenied(path, caller)) return CURATED_READONLY
       try {
+        // 同日失忆(2026-10-01):CC 写 <chat>/profile.md 时,新冒出来的行进今天的草稿,别的会话马上看得到。
+        const draftChat = caller?.origin === 'session' ? chatOfProfilePath(path) : null
+        const before = draftChat ? deps.memory.read(path) : null
         deps.memory.write(path, content)
+        if (draftChat) {
+          try { recordProfileWrite(deps.memory, draftChat, before, content) }
+          catch (err) { deps.log?.('MEMORY', `today-draft append failed: ${errMsg(err)}`) }
+        }
         return { status: 200, body: { ok: true } }
       } catch (err) {
         return { status: 200, body: { ok: false, error: errMsg(err) } }

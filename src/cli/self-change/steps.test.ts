@@ -113,7 +113,7 @@ describe('repo', () => {
   // 是「这条运行还有没有人可能接着跑」**:`--resume` 从 state.step 起步,只有
   // deploy 会重开工作树 —— 扫掉一条停在 approval 的树,`--resume` 的第一条 git
   // 就在不存在的 cwd 里 spawn(ENOENT),而那轮实现已经花过钱了。
-  it('只扫不可恢复的终局(done / declined)且超过一天的;能 resume 的一律不碰', async () => {
+  it('只扫不可恢复的终局(done / declined / abandoned)且超过一天的;能 resume 的一律不碰', async () => {
     const now = 1_700_000_000_000
     const day = 25 * 60 * 60_000
     const { deps, rec } = makeFakeDeps({
@@ -122,6 +122,8 @@ describe('repo', () => {
       state: memoryStore([
         fakeState({ id: 'done1111', result: 'done', updatedAt: now - day }),
         fakeState({ id: 'deny1111', result: 'declined', updatedAt: now - day }),
+        // `--abandon` 删树失败时留下的那种:主人已经说了不接,下一条顺手补删。
+        fakeState({ id: 'aban1111', result: 'abandoned', updatedAt: now - day }),
         fakeState({ id: 'fresh111', result: 'done', updatedAt: now - 60_000 }),
         fakeState({ id: 'nores111', result: null, updatedAt: now - day }),
         // 下面这几条文档明说 `--resume` 能接着跑 —— 扫了就接不回来了。
@@ -137,6 +139,7 @@ describe('repo', () => {
     const removed = rec.git.filter(a => a[0] === 'worktree' && a[1] === 'remove').map(a => a[3])
     expect(removed).toContain(join(WORKDIR, 'runs', 'done1111'))
     expect(removed).toContain(join(WORKDIR, 'runs', 'deny1111'))
+    expect(removed).toContain(join(WORKDIR, 'runs', 'aban1111'))
     for (const kept of ['fresh111', 'nores111', 'timeo111', 'noci1111', 'confl111', 'exhau111', 'depfa111']) {
       expect(removed, kept).not.toContain(join(WORKDIR, 'runs', kept))
     }

@@ -937,7 +937,9 @@ function wireEvents() {
       await loadMemoryTopZone(deps)
     }),
   )
-  // "重新整理" — regenerate the overview memory from local Claude memory. This
+  // "更新项目地图" — regenerate the overview / project map (_overview.md) from local
+  // Claude memory. Renamed from "重新整理" (2026-10-01) so it no longer reads like
+  // WeChat「整理记忆」, which curates memory.md — different thing. This
   // is a slow LLM call (not a reload), so it gets its own progress labels
   // rather than withRefreshFeedback's "已刷新".
   document.getElementById("memory-synthesize-btn")?.addEventListener("click", async (e) => {
@@ -947,7 +949,7 @@ function wireEvents() {
     )
     const original = labelNode ? labelNode.textContent : null
     btn.disabled = true
-    if (labelNode) labelNode.textContent = " 整理中…"
+    if (labelNode) labelNode.textContent = " 更新中…"
     let ok = false
     try {
       const res = await synthesizeMemory(deps)
@@ -955,7 +957,7 @@ function wireEvents() {
     } catch (err) {
       console.error("memory synthesize failed", err)
     } finally {
-      if (labelNode) labelNode.textContent = ok ? " 已整理 ✓" : " 整理失败"
+      if (labelNode) labelNode.textContent = ok ? " 已更新 ✓" : " 更新失败"
       setTimeout(() => {
         if (labelNode && original !== null) labelNode.textContent = original
         btn.disabled = false

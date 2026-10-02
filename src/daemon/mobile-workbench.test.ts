@@ -38,6 +38,36 @@ describe('phone entry rejection wire contract',()=>{
   })
 })
 
+describe('手机「交给另一位继续」路由(POST /m/api/matter/handoff,spec continue-sessions §7-3)',()=>{
+  const url=new URL('http://phone.test/m/api/matter/handoff')
+  const REQ='5a7e0000-0000-4000-8000-000000000001'
+  const post=(body:unknown)=>new Request(url,{method:'POST',body:typeof body==='string'?body:JSON.stringify(body)})
+  it('成功 ⇒ {ok,matterId,created};按原样把 id / requestId / providerId 交给 handoff,surface = phone',async()=>{
+    const handoff=vi.fn(async()=>({matterId:'deadbeef',created:true}))
+    const r=await mobileWorkbenchRoute({handoff},url,post({id:'cafebabe',requestId:REQ,providerId:'codex'}))
+    expect(r?.status).toBe(200)
+    expect(await r!.json()).toEqual({ok:true,matterId:'deadbeef',created:true})
+    expect(handoff).toHaveBeenCalledWith('cafebabe',{requestId:REQ,providerId:'codex'},'phone')
+  })
+  it('GET ⇒ 405;没接 ⇒ 503 unavailable;坏正文 / 多余键 / 坏 id ⇒ 400',async()=>{
+    expect((await mobileWorkbenchRoute({},url,new Request(url)))?.status).toBe(405)
+    const unwired=await mobileWorkbenchRoute({},url,post({id:'cafebabe',requestId:REQ,providerId:'codex'}))
+    expect(unwired?.status).toBe(503);expect(await unwired!.json()).toEqual({ok:false,error:'unavailable'})
+    const handoff=vi.fn()
+    for(const body of ['{',{id:'cafebabe',requestId:REQ,providerId:'codex',extra:1},{id:'nope',requestId:REQ,providerId:'codex'},{id:'cafebabe',requestId:'x',providerId:'codex'},{id:'cafebabe',requestId:REQ}]){
+      expect((await mobileWorkbenchRoute({handoff},url,post(body)))?.status).toBe(400)
+    }
+    expect(handoff).not.toHaveBeenCalled()
+  })
+  it.each([
+    ['quota_handoff_not_needed',409],['quota_handoff_changed',409],['quota_handoff_unavailable',503],['workbench_busy',409],
+    ['creation_conflict',409],['invalid_entry_owner',403],['matter_not_found',404],['provider_quota_exhausted',503],['native_session_busy',409],
+  ] as const)('%s ⇒ HTTP %s,错误码原样',async(code,status)=>{
+    const r=await mobileWorkbenchRoute({handoff:async()=>{throw Error(code)}},url,post({id:'cafebabe',requestId:REQ,providerId:'codex'}))
+    expect(r?.status).toBe(status);expect(await r!.json()).toEqual({ok:false,error:code})
+  })
+})
+
 describe('手机「接着做」路由(/m/api/session/continue)',()=>{
   const KEY='eyJ2IjoxfQ'
   const url=(q='')=>new URL(`http://phone.test/m/api/session/continue${q}`)

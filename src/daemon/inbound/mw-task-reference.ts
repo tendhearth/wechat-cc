@@ -14,6 +14,7 @@ import { isWechatTaskCommand, type WechatMessageIdentity, type WechatWorkbenchRe
 import { resolveTaskReference, FOCUS_TTL_MS, type TaskCandidate, type TaskJudge, type FocusState } from '../../core/workbench/task-reference'
 import type { QuotaState } from '../../core/provider-quota'
 import { providerDisplayName } from '../provider-display-names'
+import { QUOTA_TAKEOVER_DEFAULT_REQUEST, quotaTakeoverText } from '../../core/workbench/quota-takeover'
 
 export interface TaskReferenceMwDeps {
   ownerChatId(): string | null
@@ -113,7 +114,7 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
     await deps.sendMessage(chatId, `${header(task)}\n${reason}，这一轮没送出去。\n交给 ${providerName(to)} 继续？回「是」我就把这件事交给它；回「不用」就先放着。`)
   }
   async function doTakeover(chatId: string, t: { task: TaskCandidate; to: string; request: string }): Promise<void> {
-    const text = `接替 ${providerName(t.task.providerId)}（额度用完）继续这件事：${t.task.title}\n主人刚才的要求：${t.request}`
+    const text = quotaTakeoverText(t.task.providerId, t.task.title, t.request)
     const created = await deps.createTask!({ path: t.task.path, providerId: t.to, text })
     const next: TaskCandidate = { ...t.task, id: created.id, providerId: t.to, phase: 'queued', updatedAt: now(), error: null }
     takenOver.set(t.task.id, next)
@@ -159,7 +160,7 @@ export function makeMwTaskReference(deps: TaskReferenceMwDeps): TaskReferenceMw 
     if (!offerLive && BARE_ACK.test(text) && deps.createTask) {
       const recent = candidates.filter(c => QUOTA_CODES.has(c.error ?? '') && c.updatedAt >= now() - TAKEOVER_TTL_MS && !takenOver.has(c.id))
       const to = recent.length === 1 ? deps.fallbackExecutor?.(recent[0]!.providerId) ?? null : null
-      if (recent.length === 1 && to) return { kind: 'takeover-bare', candidates, offer: { task: recent[0]!, to, request: '接着原来的要求做。', expiresAt: now() } }
+      if (recent.length === 1 && to) return { kind: 'takeover-bare', candidates, offer: { task: recent[0]!, to, request: QUOTA_TAKEOVER_DEFAULT_REQUEST, expiresAt: now() } }
     }
     // 一个孤零零的「是 / 不用」不是任何任务的要求:没有在等它的问题就当普通聊天。
     if (BARE_ACK.test(text) || NO.test(text)) return null
