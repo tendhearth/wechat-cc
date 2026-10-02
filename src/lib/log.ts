@@ -25,12 +25,17 @@
  * the fields object lands in the JSONL only.
  */
 
-import { appendFileSync, statSync, renameSync } from 'fs'
+import { appendFileSync, statSync, renameSync, copyFileSync, truncateSync } from 'fs'
 import { join } from 'path'
 import { STATE_DIR } from './config.ts'
 
 export const LOG_FILE = join(STATE_DIR, 'channel.log')
 export const LOG_FILE_JSONL = join(STATE_DIR, 'channel.log.jsonl')
+// launchd's StandardOutPath/StandardErrorPath (service-manager.ts writes the
+// plist with these names under STATE_DIR). Everything the daemon and its
+// plugin children print to stdio lands here, unbounded — 41 MB on a real
+// machine before this rotation existed.
+export const STDIO_LOG_FILES = [join(STATE_DIR, 'launchd.err.log'), join(STATE_DIR, 'launchd.out.log')]
 
 const LOG_ROTATE_SIZE = 10 * 1024 * 1024
 const LOG_ROTATE_CHECK_INTERVAL = 100
@@ -60,10 +65,30 @@ function maybeRotate(file: string): void {
   } catch {}
 }
 
+/**
+ * Rotation for a file someone ELSE holds open — launchd opened the daemon's
+ * stdout/stderr and handed it the fds, so renaming the file would just keep
+ * the daemon writing into the renamed inode forever. Copy it out, then
+ * truncate in place. Safe because launchd opens these O_APPEND (lsof shows
+ * `AP`): every later write lands at the new end-of-file, not at the old
+ * offset (which would leave a sparse hole the size of the old log). Lines
+ * written between the copy and the truncate are lost — acceptable for a
+ * diagnostics log, and the window is one copyFile long.
+ */
+export function maybeCopyTruncate(file: string, maxBytes = LOG_ROTATE_SIZE): void {
+  try {
+    if (statSync(file).size <= maxBytes) return
+    try { renameSync(`${file}.1`, `${file}.2`) } catch {}
+    copyFileSync(file, `${file}.1`)
+    truncateSync(file, 0)
+  } catch {}
+}
+
 function maybeRotateAll(): void {
   if (FILE_DISABLED) return
   maybeRotate(LOG_FILE)
   maybeRotate(LOG_FILE_JSONL)
+  for (const f of STDIO_LOG_FILES) maybeCopyTruncate(f)
 }
 
 maybeRotateAll()
