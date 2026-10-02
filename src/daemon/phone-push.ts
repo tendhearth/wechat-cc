@@ -87,6 +87,15 @@ export function makePhonePush(deps: {
     register(deviceId, platform, token) {
       if (!pushTokenValid(platform, token)) return false
       const rows = read()
+      // 同一个推送 token = 同一部手机上的同一个 app 安装。它的钥匙串里只有一份配对(推送密钥跟着那份走),
+      // 早先登记同一 token 的别的设备位收到的推送永远解不开 —— 同一件事会响两次、其中一条是「CC 有新动态」,
+      // 而且 collapse-id 相同,解不开的那条后到就把能解开的顶掉(2026-10-01 真机验收抓到)。新登记的接管这个 token。
+      for (const [id, r] of Object.entries(rows)) {
+        if (id === deviceId || r.platform !== platform || r.token !== token) continue
+        delete rows[id]
+        deps.send({ push_unreg: { device: id } })
+        deps.log('PUSH', `push token moved from device ${id} to ${deviceId} (same phone re-paired)`)
+      }
       rows[deviceId] = { platform, token, at: now() }
       write(rows)
       deps.send({ push_reg: { device: deviceId, platform, token } })

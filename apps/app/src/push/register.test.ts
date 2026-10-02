@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { BackendError } from '../backend/types'
 import { makePushKeyStore, PUSH_KEY_SERVICE } from './key-store'
 import { memSecureStore } from './mem-secure-store'
-import { syncPush, platformFor, permState, shouldSync, REREGISTER_MS, type PushDeps } from './register'
+import { makeTokenWatch, syncPush, platformFor, permState, shouldSync, REREGISTER_MS, type PushDeps } from './register'
 
 const TOKEN = 'd' + 'ab'.repeat(24)
 const APNS = 'a1'.repeat(32)
@@ -111,5 +111,22 @@ describe('小函数', () => {
     for (const s of ['idle', 'registered', 'denied', 'unavailable', 'offline', 'failed'] as const) {
       for (const tr of ['token', 'online', 'foreground'] as const) expect(shouldSync(s, tr), `${s}/${tr}`).toBe(true)
     }
+  })
+})
+
+describe('makeTokenWatch —— 自己拿 token 引起的监听回调不算刷新(真机重试风暴,2026-10-01)', () => {
+  it('同步里拿到的 token 记下后,监听再收到同一个 ⇒ 不触发;真换了才触发一次', () => {
+    const w = makeTokenWatch()
+    w.note('a'.repeat(64))
+    expect(w.changed('a'.repeat(64))).toBe(false)
+    expect(w.changed('b'.repeat(64))).toBe(true)
+    expect(w.changed('b'.repeat(64))).toBe(false)
+  })
+  it('第一次收到(还没自己拿过)算变化;形状不对的不算', () => {
+    const w = makeTokenWatch()
+    expect(w.changed(undefined)).toBe(false)
+    expect(w.changed('')).toBe(false)
+    expect(w.changed({ x: 1 })).toBe(false)
+    expect(w.changed('c'.repeat(64))).toBe(true)
   })
 })

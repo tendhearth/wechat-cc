@@ -182,3 +182,21 @@ export function makePushRunner(o: {
     status: () => status,
   }
 }
+
+/**
+ * 推送 token 监听的过滤(2026-10-01 真机验收抓到的重试风暴):iOS 上 getDevicePushTokenAsync 每调一次,
+ * expo-notifications 都会把拿到的 token 再广播给 addPushTokenListener —— 监听里无条件 trigger('token')(强制重登)
+ * ⇒ 同步里又调 getDevicePushTokenAsync ⇒ 又广播 ⇒ 每 0.6 秒一次 POST /m/api/push/register,停不下来。
+ * 只有 token 跟最近一次见到的(自己拿到的或监听收到的)不一样,才算「token 刷新」。
+ */
+export function makeTokenWatch(): { note(token: string): void; changed(token: unknown): boolean } {
+  let last: string | null = null
+  return {
+    note(token) { last = token },
+    changed(token) {
+      if (typeof token !== 'string' || token === '' || token === last) return false
+      last = token
+      return true
+    },
+  }
+}

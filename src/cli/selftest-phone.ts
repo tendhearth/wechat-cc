@@ -95,7 +95,7 @@ function httpErrorDetail(res: HttpResult): string {
  *  live, never-expiring token: it must never land in normal CLI output
  *  (ruling, fix round 1 item 1). Keeps everything else (host, daemon id,
  *  LAN address) for debugging. */
-function redactLinkUrl(raw: string): string {
+export function redactLinkUrl(raw: string): string {
   try {
     const u = new URL(raw)
     if (u.searchParams.has('t')) u.searchParams.set('t', '<redacted>')
@@ -176,7 +176,7 @@ function makeCheckRecorder(checks: PhoneSelftestCheck[]) {
 
 // ── link URL parsing (settings-panel.ts's two shapes) ─────────────────
 
-interface RemoteLink { relayWsUrl: string; linkToken: string; lanBase: string; host: string; daemonId: string }
+export interface RemoteLink { relayWsUrl: string; linkToken: string; lanBase: string; host: string; daemonId: string }
 
 /**
  * `GET /v1/settings/link`'s `url` comes in two shapes (settings-panel.ts
@@ -184,7 +184,8 @@ interface RemoteLink { relayWsUrl: string; linkToken: string; lanBase: string; h
  *   - remote enabled: `https://<relay-host>/pset/#id=<daemonId>&t=<linkToken>&p=/set&lan=<ip>:<port>`
  *   - remote disabled: `http://<ip>:<port>/set?t=<linkToken>` (no relay to test against)
  */
-function classifyLink(raw: string): { kind: 'remote'; link: RemoteLink } | { kind: 'lan_only' } | { kind: 'invalid'; detail: string } {
+/** 也给 scripts/device-e2e.ts(真机全自动验收)用:同一个链接形状判定,不再抄一份。 */
+export function classifyLink(raw: string): { kind: 'remote'; link: RemoteLink } | { kind: 'lan_only' } | { kind: 'invalid'; detail: string } {
   let u: URL
   try { u = new URL(raw) } catch { return { kind: 'invalid', detail: 'unparseable link url' } }
   if (u.hash) {

@@ -124,6 +124,7 @@
 
 ## 修订记录
 
+- 2026-10-01:手机 app 真机全自动验收 `bun run e2e:device`(XCUITest + devicectl,对着在跑的 daemon 与 staging 中继 v2):配对 / 同码重用被拒 / 跟 CC 说 / 真 APNs 横幅点开批准 / 撤销 / 收尾放回原配对,在 iPhone SE(iOS 27.0.1)上全过;顺手修了三处:推送 token 监听自激成每 0.6 秒一次登记的重试风暴、已配对的手机从系统链接进配对页点返回落到欢迎页、同一部手机两个设备位都登记推送 ⇒ 重复且解不开的通知(daemon 侧,待部署)。
 - 2026-10-01:中继 v2「按 IP 限连接尝试」改在 Worker 内做(Workers Rate Limiting 绑定 `IP_LIMIT`,60 次 / 10 秒,只管 `/v2/`):Free 计划的唯一一条 WAF 限速规则已给 dl.tendhearth.com;relay.md 补「首次部署前先开 Analytics Engine(否则 10089)」。
 - 2026-10-01:设计统一 §9 六条主人拍板入账(inkSoft、浮窗桌宠明暗、鱼缸画布退休、等你的事写原文、字体子集化、离线点红)。
 - 2026-10-01:plan 7b 主人事项两条落定 —— hook 不做「接着做」的前提(spec §7-1);额度用完从手机交给另一位继续已实施(spec §7-3)。

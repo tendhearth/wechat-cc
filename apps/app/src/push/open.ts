@@ -11,19 +11,22 @@ const obj = (x: unknown): Record<string, unknown> | null => (typeof x === 'objec
  * 系统交给 app 的深链(安卓的点通知、任何别的 app 发的 tendhearth://…)在进路由之前洗一遍(Review Focus 5):
  * push-open ⇒ 用 URLSearchParams 解析(安卓 Kotlin 把空格编成 +),字段过 targetFromParams,重新拼成规范的 /push-open;
  * 洗完没有 taskId(伪造、畸形、解码失败)⇒ 直接回此刻,中转页一个请求都不发。
- * dev-push-key 只在开发构建可达。配对链接 ⇒ 原链接进暂存格、去 /pair?from=link;这个构建不认的 …/pset ⇒ 此刻;
+ * dev-push-key 只在开发构建可达;dev-e2e 只在开发构建与真机验收构建可达。配对链接 ⇒ 原链接进暂存格、去 /pair?from=link;这个构建不认的 …/pset ⇒ 此刻;
  * 外面来的 /pair ⇒ 去掉查询串的 /pair。其余路径原样放行。
  */
 let pairSeq = 0
-export function rewriteSystemPath(path: string, dev: boolean, stash: (raw: string) => void = setPendingLink): string {
+export function rewriteSystemPath(path: string, dev: boolean, stash: (raw: string) => void = setPendingLink, e2e = false): string {
   // 配对链接(plan 7a):原链接进暂存格(令牌不进路由参数),去配对页;序号让 app 已在配对页时也能重新触发。
-  const pair = systemPairLink(path, dev)
+  // e2e:真机验收构建(src/e2e-build.ts)—— 配对链接与 dev-e2e 页按开发构建处理;dev-push-key 仍只认 __DEV__。
+  const pair = systemPairLink(path, dev || e2e)
   if (pair !== null) { stash(pair); pairSeq += 1; return `/pair?from=link&n=${pairSeq}` }
   const rest = path.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/^\/+/, '')
   const q = rest.indexOf('?')
   // 路由比较忽略大小写与结尾斜杠(路由器匹配也宽松,别让 Dev-Push-Key/ 绕过)。
   const route = (q < 0 ? rest : rest.slice(0, q)).split('#')[0]!.replace(/\/+$/, '').toLowerCase()
   if (route === 'dev-push-key') return dev ? path : '/'
+  // 真机验收的收起 / 放回配对页(state/e2e-stash.ts)同样只在开发构建可达。
+  if (route === 'dev-e2e') return dev || e2e ? path : '/'
   const last = route.slice(route.lastIndexOf('/') + 1)
   // 长得像配对链接、但这个构建不认(发布构建的自定义 scheme / staging、别的主机)⇒ 回此刻:带令牌锚点的原链接不进路由匹配。
   if (last === 'pset') return '/'
