@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { homedir } from 'node:os'
 import { customSchemeLink, humanBlocker, newDeviceIds, parseE2EOut, parseEnvFile, renderReport } from './device-e2e-lib'
 
 describe('device-e2e-lib', () => {
@@ -16,7 +17,7 @@ describe('device-e2e-lib', () => {
     expect(newDeviceIds([{ id: 'a' }, { id: 'b' }], [{ id: 'b' }, { id: 'c' }, { id: 'a' }])).toEqual(['c'])
   })
   it('parseEnvFile:export / 引号 / 注释 / ~ 展开', () => {
-    const home = process.env.HOME
+    const home = homedir()
     expect(parseEnvFile('# c\nexport ASC_KEY_ID=ABC\nASC_ISSUER_ID="x-y"\nASC_KEY_PATH=~/.private_keys/k.p8\nX="$HOME/a"\nY=${HOME}/b\nbad line\n'))
       .toEqual({ ASC_KEY_ID: 'ABC', ASC_ISSUER_ID: 'x-y', ASC_KEY_PATH: `${home}/.private_keys/k.p8`, X: `${home}/a`, Y: `${home}/b` })
   })

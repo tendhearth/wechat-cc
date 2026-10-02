@@ -1,3 +1,4 @@
+import { homedir } from 'node:os'
 /**
  * device-e2e-lib — `scripts/device-e2e.ts`(Tendhearth iPhone 真机全自动验收)的纯函数部分。无 IO,单测在旁边。
  */
@@ -36,7 +37,7 @@ export function parseEnvFile(text: string): Record<string, string> {
     if (!m) continue
     let v = m[2]!.trim()
     if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
-    const home = process.env.HOME ?? '~'
+    const home = homedir()
     out[m[1]!] = v.replace(/^~(?=\/)/, home).replace(/\$\{HOME\}|\$HOME\b/g, home)
   }
   return out
