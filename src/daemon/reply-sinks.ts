@@ -40,7 +40,9 @@ export function makeReplySinks(): ReplySinks {
     capture(chatId: string, text: string): boolean {
       const buf = sinks.get(chatId)
       if (!buf) return false
-      buf.push(text)
+      // 空白不是一条回复:照样认领(绝不能漏到微信),但不进拼接 —— 否则
+      // close() 拼出一行空行,App 那头看到的就是一条「空消息」(2026-10-02)。
+      if (text.trim()) buf.push(text)
       return true
     },
   }
