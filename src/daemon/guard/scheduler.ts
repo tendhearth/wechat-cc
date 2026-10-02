@@ -42,8 +42,12 @@ export interface GuardState {
   detail: string
 }
 
+/**
+ * 守护 v2:**初始不安全**(v1 是 reachable=true —— 开机头一拍之前一律放行,是 fail-open)。
+ * 还没有任何读数时,闸门会等一小会儿第一次结果(gate.ts),等不到按失败算。
+ */
 export function initialState(): GuardState {
-  return { ip: null, reachable: true, lastChecked: null, lastError: null, source: 'probe', safe: true, detail: '尚未探测' }
+  return { ip: null, reachable: false, lastChecked: null, lastError: null, source: 'probe', safe: false, detail: '尚未探测' }
 }
 
 /** 装了 bx 时每拍都读一次 bx(本机 socket,~70ms);公网 IP 仍按 pollMs 查。 */
@@ -144,14 +148,15 @@ export function startGuardScheduler(deps: SchedulerDeps): SchedulerHandle {
         // First successful poll after enable / restart counts as a change
         // so we always know reachable status before any inbound arrives.
         // Leaving bx mode (bx uninstalled) also forces a fresh probe.
-        const firstPoll = (state.lastChecked === null || state.source !== 'probe') && ipRes.ip !== null
+        // 守护 v2:ipify 失败也要探 —— 否则没有第一次结果,闸门会一直按失败算。
+        const firstPoll = state.lastChecked === null || state.source !== 'probe'
         // 不通的时候每拍都再探一次(只在不通期间):这样恢复不必等换 IP,停执行者的
         // 「连续两次不安全」防抖也才有第二次读数。
         const stillDown = !state.reachable && state.source === 'probe' && ipRes.ip !== null
         if (!ipChanged && !firstPoll && !stillDown) return state
         const probe = await fProbe(deps.probeUrl())
         return await commit({
-          ip: ipRes.ip,
+          ip: ipRes.ip ?? prevIp,
           reachable: probe.reachable,
           lastChecked: new Date(now()).toISOString(),
           lastError: probe.error ?? ipRes.error ?? null,

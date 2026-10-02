@@ -31,7 +31,10 @@ const SAMPLE_INCIDENT = {
 describe('GET /v1/health', () => {
   it('renders the network guard block (2026-10-02) and omits it when unwired; validates against HealthResponse', async () => {
     const { HealthResponse } = await import('./schema')
-    const guard = { enabled: true, source: 'bx' as const, safe: false, detail: 'bx 未保护(protection_state=off)', ip: '1.2.3.4', checked_at: '2026-10-02T10:00:00.000Z' }
+    const guard = { enabled: true, source: 'bx' as const, safe: false, detail: 'bx 未保护(protection_state=off)', ip: '1.2.3.4', checked_at: '2026-10-02T10:00:00.000Z',
+      // 守护 v2:按调用判的字段
+      signal_source: 'auto' as const, protected_in_use: true, paused: true,
+      providers: [{ id: 'claude', model: null, host: 'api.anthropic.com', protected: true, kind: 'official', label: 'Claude', reason: '官方端点' }] }
     const r = await makeRoutesUnderTest({ guard: () => guard })['GET /v1/health']!({} as any, undefined)
     expect((r.body as any).guard).toEqual(guard)
     expect(HealthResponse.safeParse(r.body).success).toBe(true)

@@ -15,6 +15,7 @@ import { directoryIdentity } from './directory-identity'
 import type { ServiceCtx } from './ctx'
 import type { Active } from './state'
 import type { InputMaterials } from './types'
+import { decideCall } from '../../../lib/network-gate'
 
 const INPUT_UNCONFIRMED='未确认执行者收到，请检查当前对话后再决定是否重发。'
 
@@ -111,8 +112,8 @@ export function makeInputsDomain(ctx:ServiceCtx) {
     const running=state.runsByTask.get(id)
     if(!running||running.identity!==input.runId||running.cancelled||running.finishing||running.uncertain)throw Error('input_stale')
     if(running.delivering)throw Error('input_delivery_busy')
-    // 网络闸门(2026-10-02):补充一投进去执行者就会调模型 —— 不安全就不投。
-    if(ctx.deps.networkGate&&!(await ctx.deps.networkGate.check()).safe)throw Error('network_unprotected')
+    // 网络闸门(守护 v2):补充一投进去执行者就会调模型 —— 这个执行者需要保护且不安全才不投。
+    if(ctx.deps.networkGate&&!(await decideCall(ctx.deps.networkGate,{provider:running.task.providerId,model:running.execution.model,purpose:'turn'})).allowed)throw Error('network_unprotected')
     if(store.liveInputs.count(id)>=10)throw Error('input_limit')
     act().requireInput(running.task.providerId,attachments,running.execution)
     // 一句补充就是一下互动:先把自动收工的计时取消掉,免得话在路上会话被关了。这一下要在

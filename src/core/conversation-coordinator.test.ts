@@ -2881,12 +2881,13 @@ describe('network gate (2026-10-02)', () => {
   const UNSAFE = { check: async () => ({ safe: false, source: 'bx' as const, detail: 'bx 未保护' }) }
   const SAFE = { check: async () => ({ safe: true, source: 'bx' as const, detail: 'bx 保护中' }) }
 
-  function make(gate: typeof UNSAFE | typeof SAFE, mode: Mode = { kind: 'solo', provider: 'claude' }) {
+  function make(gate: { check: () => Promise<{ safe: boolean; source: 'bx'; detail: string }> }, mode: Mode = { kind: 'solo', provider: 'claude' }) {
     const store = makeMockStore()
     store.set('chat-1', mode)
     const registry = createProviderRegistry()
     registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
     registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
+    registry.register('cursor' as ProviderId, dummyProvider, { displayName: 'Cursor', canResume: () => true })
     const acquire = vi.fn(async (_req: AcquireRequest) => ({
       alias: 'p', path: '/p', providerId: 'claude' as ProviderId, lastUsedAt: 0,
       dispatch: () => makeFakeSession({ events: [{ kind: 'result', sessionId: 's', numTurns: 1, durationMs: 0 }] }).dispatch('x'),
@@ -2916,13 +2917,44 @@ describe('network gate (2026-10-02)', () => {
     ['parallel', { kind: 'parallel', participants: ['claude', 'codex'] }],
     ['chatroom', { kind: 'chatroom', participants: ['claude', 'codex'] }],
     ['primary_tool', { kind: 'primary_tool', primary: 'claude' }],
-  ])('unsafe → %s turn never acquires a session; one uniform notice, no retry', async (_n, mode) => {
+  ])('unsafe + only protected providers → %s turn never acquires a session; one uniform notice, no retry', async (_n, mode) => {
     const { c, acquire, sendAssistantText, haikuEval } = make(UNSAFE, mode)
     await c.dispatch(inbound('chat-1', 'hi'))
     expect(acquire).not.toHaveBeenCalled()
     expect(haikuEval).not.toHaveBeenCalled()
     expect(sendAssistantText).toHaveBeenCalledTimes(1)
-    expect(sendAssistantText.mock.calls[0]?.[1]).toBe('网络未受保护(bx 未连上),CC 先暂停，恢复后再试。')
+    expect(sendAssistantText.mock.calls[0]?.[1]).toMatch(/^网络未受保护\(bx 未连上\),用到 .*Claude.* 的这一步先暂停，恢复后再试。$/)
+  })
+
+  it('solo Claude paused names Claude exactly', async () => {
+    const { c, sendAssistantText } = make(UNSAFE)
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(sendAssistantText.mock.calls[0]?.[1]).toBe('网络未受保护(bx 未连上),用到 Claude 的这一步先暂停，恢复后再试。')
+  })
+
+  // 守护 v2:只拒需要保护的那一次;不需要保护的照常。
+  it('unsafe + solo on an unprotected provider (Cursor auto) → dispatches normally, signal never read', async () => {
+    const check = vi.fn(UNSAFE.check)
+    const { c, acquire, sendAssistantText } = make({ check }, { kind: 'solo', provider: 'cursor' as ProviderId, model: 'auto' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).toHaveBeenCalledTimes(1)
+    expect(sendAssistantText).not.toHaveBeenCalled()
+    expect(check).not.toHaveBeenCalled()
+  })
+
+  it('unsafe + solo Cursor pinned to a Claude model → refused, naming that model', async () => {
+    const { c, acquire, sendAssistantText } = make(UNSAFE, { kind: 'solo', provider: 'cursor' as ProviderId, model: 'claude-4.5-sonnet' })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(acquire).not.toHaveBeenCalled()
+    expect(sendAssistantText.mock.calls[0]?.[1]).toBe('网络未受保护(bx 未连上),用到 Cursor(claude-4.5-sonnet) 的这一步先暂停，恢复后再试。')
+  })
+
+  it('unsafe + parallel Claude & Cursor(auto) → Claude dropped with one notice, Cursor still answers (degrades to solo)', async () => {
+    const { c, acquire, sendAssistantText } = make(UNSAFE, { kind: 'parallel', participants: ['claude', 'cursor' as ProviderId] })
+    await c.dispatch(inbound('chat-1', 'hi'))
+    expect(sendAssistantText.mock.calls[0]?.[1]).toBe('网络未受保护(bx 未连上),用到 Claude 的这一步先暂停，恢复后再试。')
+    expect(acquire).toHaveBeenCalledTimes(1)
+    expect(acquire.mock.calls[0]?.[0].providerId).toBe('cursor')
   })
 
   it('safe → dispatches normally', async () => {

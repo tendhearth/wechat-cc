@@ -8,7 +8,7 @@
  *
  * 那边(别的机器)的会话:v1 先说明白「暂时只能看这台机的」,转发是下一步。
  */
-import { unprotectedMessage, type NetworkGate } from '../lib/network-gate'
+import { decideCall, unprotectedMessage, type NetworkGate } from '../lib/network-gate'
 import { spawn } from 'node:child_process'
 import { wrapForProcessTree } from '../lib/jobspawn'
 import { readFileSync, statSync, openSync, readSync, closeSync } from 'node:fs'
@@ -97,9 +97,11 @@ export function makeCliReplyCore(deps: CliReplyCoreDeps): CliReplyCore {
       catch (err) { return { ok: false, error: `读不到记录:${err instanceof Error ? err.message : String(err)}` } }
     },
     async resume(s, text) {
+      // 守护 v2:按这条终端会话的来源分类(claude 看 ANTHROPIC_BASE_URL、codex 看 OPENAI_BASE_URL);
+      // 需要保护且网络不安全才不起 CLI。
       if (deps.networkGate) {
-        const v = await deps.networkGate.check()
-        if (!v.safe) { deps.log('CLI_REPLY', `resume ${s.source}/${s.session_id.slice(0, 6)} refused — network unprotected [${v.source}]`); return { kind: 'failed', text: unprotectedMessage(v) } }
+        const d = await decideCall(deps.networkGate, { provider: s.source, purpose: 'turn' })
+        if (!d.allowed) { deps.log('CLI_REPLY', `resume ${s.source}/${s.session_id.slice(0, 6)} refused — network unprotected [${d.verdict!.source}]`); return { kind: 'failed', text: unprotectedMessage(d.verdict!, d.cls.label) } }
       }
       if(deps.executionConflict?.(s))return{kind:'failed',text:'这条会话或文件夹已由 CC 工作台管理，请在那里继续。'}
       let settle:((closed:boolean)=>void)|undefined,closed=false

@@ -71,7 +71,6 @@ import { findOnPath } from '../../lib/util'
 import { isCompiledBundle } from '../../lib/runtime-info'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 import { materializeAttachments } from '../media'
-import { loadGuardConfig } from '../guard/store'
 import { makeFireMilestonesFor, makeRecordInbound, makeMaybeWriteWelcomeObservation } from './side-effects'
 import { makeMessagesStore } from '../../lib/messages-store'
 import { makeMemoryLlmOps, resolveCheapEval } from '../memory-llm-ops'
@@ -369,7 +368,6 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       const o = nightlyOwner()
       return o ? resolveCheapEval({ getMode: (c) => boot.coordinator.getMode(c), registry: boot.registry }, o) : boot.registry.getCheapEval()
     },
-    ...(opts.guardRuntime ? { networkSafe: async () => (await opts.guardRuntime!.gate.check()).safe } : {}),
     ownerRecentlyActive: async () => {
       const o = nightlyOwner()
       if (!o) return false
@@ -933,14 +931,6 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       log,
     },
     ...(opts.cliReply ? { cliReply: { handle: (t: string, c: string) => opts.cliReply!.handle(t, c), log } } : {}),
-    guard: {
-      guardEnabled: () => loadGuardConfig(stateDir).enabled,
-      guardState: () => refs.guard.current?.current() ?? { reachable: true, ip: null },
-      // 网络闸门(2026-10-02):给了就以它为准(bx 优先、读不出就拦)。
-      ...(opts.guardRuntime ? { gate: opts.guardRuntime.gate } : {}),
-      sendMessage: (c, t) => ilink.sendMessage(c, t).then(r => r as { msgId: string }),
-      log,
-    },
     attachments: { materializeAttachments, inboxDir, log },
     transcribeVoice: {
       // ilink.voice.transcribe loads STT config internally and throws

@@ -357,14 +357,15 @@ async function refreshGuardStatus() {
       return
     }
     // 2026-10-02:装了 bx 以 bx 为准(source=bx);老 CLI 没有 source 字段时退回 IP · google。
-    const line = r.source ? guardLine({ enabled: r.enabled, source: r.source, safe: r.safe ?? r.reachable, detail: r.detail ?? "" }) : null
+    // 守护 v2:带上 protected_in_use / providers —— 没用到需要保护的接口时不报红。
+    const line = r.source ? guardLine({ enabled: r.enabled, source: r.source, safe: r.safe ?? r.reachable, detail: r.detail ?? "", protected_in_use: r.protected_in_use, providers: r.providers }) : null
     const ipPart = r.ip ? `IP ${r.ip}` : "IP 未知"
     const text = line
       ? (r.source === "bx" ? (line.state === "down" && line.detail ? `${line.text}(${line.detail})` : line.text) : `${ipPart} · ${r.reachable ? "google ✓" : "google ✗"}${line.state === "down" ? ` · ${line.text}` : ""}`)
       : `${ipPart} · ${r.reachable ? "google ✓" : "google ✗"}`
     for (const el of statusEls) {
       el.textContent = text
-      el.dataset.state = (line ? line.state === "ok" : r.reachable) ? "ok" : "down"
+      el.dataset.state = line ? (line.state === "idle" ? "idle" : line.state === "ok" ? "ok" : "down") : (r.reachable ? "ok" : "down")
     }
   } catch (err) {
     for (const el of statusEls) {

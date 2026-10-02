@@ -1128,9 +1128,17 @@ describe('guardLine (网络守护,2026-10-02)', () => {
   it('bx protected → 「bx 保护中」 ok', () => {
     expect(guardLine({ enabled: true, source: 'bx', safe: true, detail: 'bx 保护中' })).toEqual({ state: 'ok', text: 'bx 保护中', detail: 'bx 保护中' })
   })
-  it('unsafe (bx or probe) → 「⚠ 网络未受保护，CC 暂停」 down, detail kept', () => {
-    expect(guardLine({ enabled: true, source: 'bx', safe: false, detail: 'bx 未保护(protection_state=off)' })).toEqual({ state: 'down', text: '⚠ 网络未受保护，CC 暂停', detail: 'bx 未保护(protection_state=off)' })
+  it('unsafe (bx or probe) with protected providers in use → 「⚠ 网络未受保护：用到 Claude 等的调用暂停」 down, detail kept', () => {
+    expect(guardLine({ enabled: true, source: 'bx', safe: false, detail: 'bx 未保护(protection_state=off)', protected_in_use: true, providers: [{ id: 'openai', protected: false, label: 'DeepSeek' }, { id: 'claude', protected: true, label: 'Claude' }] }))
+      .toEqual({ state: 'down', text: '⚠ 网络未受保护：用到 Claude 等的调用暂停', detail: 'bx 未保护(protection_state=off)' })
     expect(guardLine({ enabled: true, source: 'probe', safe: false, detail: '探测失败' })?.state).toBe('down')
+  })
+  it('unsafe but no protected interface in use → neutral line, no red warning (守护 v2)', () => {
+    expect(guardLine({ enabled: true, source: 'bx', safe: false, detail: 'bx 未保护', protected_in_use: false, providers: [] }))
+      .toEqual({ state: 'idle', text: '当前没有用到需要保护的接口', detail: 'bx 未保护' })
+  })
+  it('old daemon (no protected_in_use field) + unsafe → still red, never silently neutral', () => {
+    expect(guardLine({ enabled: true, source: 'bx', safe: false, detail: '' })?.text).toBe('⚠ 网络未受保护：用到 Claude 等的调用暂停')
   })
   it('missing safe is never green', () => {
     expect(guardLine({ enabled: true, source: 'bx', detail: '' })?.state).toBe('down')

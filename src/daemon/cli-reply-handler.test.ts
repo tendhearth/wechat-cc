@@ -157,5 +157,13 @@ it('network unprotected (2026-10-02) → resume never spawns the CLI; says why',
  const run=vi.fn(async()=>({code:0,stdout:'done',stderr:'',timedOut:false,closed:true})),reserveExecution=vi.fn(()=>()=>{})
  const core=makeCliReplyCore({hub:{lookup:()=>sess(),sessions:()=>[sess()]},run,reserveExecution,log:()=>{},dangerously:false,networkGate:{check:async()=>({safe:false,source:'bx',detail:'bx 未保护'})}})
  const r=await core.resume(sess(),'go')
- expect(r.kind).toBe('failed');expect(r.text).toContain('网络未受保护');expect(run).not.toHaveBeenCalled();expect(reserveExecution).not.toHaveBeenCalled()
+ expect(r.kind).toBe('failed');expect(r.text).toBe('网络未受保护(bx 未连上),用到 Claude 的这一步先暂停，恢复后再试。');expect(run).not.toHaveBeenCalled();expect(reserveExecution).not.toHaveBeenCalled()
+})
+
+it('守护 v2: a terminal Claude session behind a custom gateway (ANTHROPIC_BASE_URL) is not protected → resumes while unsafe',async()=>{
+ const run=vi.fn(async()=>({code:0,stdout:'done',stderr:'',timedOut:false,closed:true})),check=vi.fn(async()=>({safe:false,source:'bx' as const,detail:'bx 未保护'}))
+ const {classifyCall}=await import('../lib/call-classifier')
+ const core=makeCliReplyCore({hub:{lookup:()=>sess(),sessions:()=>[sess()]},run,reserveExecution:()=>()=>{},log:()=>{},dangerously:false,networkGate:{check,classify:t=>classifyCall({...t,baseUrl:'https://gw.example.com'})}})
+ const r=await core.resume(sess(),'go')
+ expect(r.kind).not.toBe('failed');expect(run).toHaveBeenCalled();expect(check).not.toHaveBeenCalled()
 })

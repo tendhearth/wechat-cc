@@ -801,6 +801,13 @@ export const GuardStatusOutput = z.object({
   safe: z.boolean().optional(),
   detail: z.string().optional(),
   bx_path: z.string().nullable().optional(),
+  // 守护 v2(按调用判):信号来源设置 + 已配置 provider 各自的分类。老 CLI 没有。
+  signal_source: z.enum(['auto', 'probe']).optional(),
+  protected_in_use: z.boolean().optional(),
+  providers: z.array(z.object({
+    id: z.string(), model: z.string().nullable(), host: z.string().nullable(),
+    protected: z.boolean(), kind: z.string(), label: z.string(), reason: z.string(),
+  })).optional(),
 })
 export type GuardStatusOutputT = z.infer<typeof GuardStatusOutput>
 

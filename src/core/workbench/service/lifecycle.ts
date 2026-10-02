@@ -242,14 +242,20 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     }
   }
   /**
-   * 网络从安全翻到不安全(2026-10-02):停下所有在跑 / 排队的执行者。已经起来的
-   * 执行者进程自己会继续调模型,闸门拦不到它们,只能停。每个任务记一条说明,
-   * 之后照常可以「继续」(那时会再过一次闸门)。返回停了几个。
+   * 网络不安全(probe 来源连续两次读数,见 daemon/guard/pause-policy.ts):停下在跑 / 排队的执行者。
+   * 已经起来的执行者进程自己会继续调模型,闸门拦不到它们,只能停。每个任务记一条说明,之后照常
+   * 可以「继续」(那时会再过一次闸门)。返回停了几个。
+   *
+   * 守护 v2:`select` 按 (执行者, 这一轮的模型) 决定停不停 —— 返回这条任务要记的说明,null = 不停
+   * (不需要保护的执行者永远不停)。传字符串 = 全停(老接法)。
    */
-  function pauseForNetwork(message:string):number {
+  function pauseForNetwork(select:string|((run:{providerId:string;model:string|null})=>string|null)):number {
     let n=0
     for (const running of [...state.runsByTask.values()]) {
       if (running.cancelled||running.finishing||running.state==='uncertain') continue
+      let message:string|null
+      try { message=typeof select==='string'?select:select({providerId:running.task.providerId,model:running.execution.model}) } catch { message=null }
+      if (message===null) continue
       try { store.addEvent(running.taskId,'system',message); ctx.hub.touched(running.taskId) } catch { /* 停仍然要停 */ }
       try { cancelRun(running); n++ } catch { /* 下一个照停 */ }
     }

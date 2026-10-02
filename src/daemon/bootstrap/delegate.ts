@@ -189,7 +189,7 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
   }
   const gate = deps.networkGate
   const providers: Partial<Record<ProviderId, AgentProvider>> = gate
-    ? Object.fromEntries(Object.entries(rawProviders).map(([id, p]) => [id, p ? withNetworkGate(p, gate) : p]))
+    ? Object.fromEntries(Object.entries(rawProviders).map(([id, p]) => [id, p ? withNetworkGate(p, gate, id) : p]))
     : rawProviders
 
   /**

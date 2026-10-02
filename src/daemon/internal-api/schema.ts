@@ -42,6 +42,14 @@ export const HealthResponse = z.object({
     detail: z.string(),
     ip: z.string().nullable(),
     checked_at: z.string().nullable(),
+    // 守护 v2(按调用判):老 daemon 没有这几项。
+    signal_source: z.enum(['auto', 'probe']).optional(),
+    protected_in_use: z.boolean().optional(),
+    paused: z.boolean().optional(),
+    providers: z.array(z.object({
+      id: z.string(), model: z.string().nullable(), host: z.string().nullable(),
+      protected: z.boolean(), kind: z.string(), label: z.string(), reason: z.string(),
+    })).optional(),
   }).optional(),
   // 文件访问(macOS TCC,2026-09-04)—— daemon 进程自己能不能读主人的文件夹。
   // 权限缺失此前是静默的;这里让它进 health / doctor / 桌面。

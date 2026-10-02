@@ -721,7 +721,10 @@ export function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-/** /v1/health 的 guard 块。source=off ⇒ 守护关着(不拦);safe=false ⇒ 模型调用全部暂停。 */
+/**
+ * /v1/health 的 guard 块(守护 v2)。source=off ⇒ 守护关着(不拦)。safe 只是**信号**:
+ * safe=false 时只有需要保护的调用暂停 —— `paused` 才说「此刻有需要保护的接口在用、被停了」。
+ */
 export interface GuardHealth {
   enabled: boolean
   source: 'bx' | 'probe' | 'off'
@@ -729,4 +732,12 @@ export interface GuardHealth {
   detail: string
   ip: string | null
   checked_at: string | null
+  /** guard.json 的信号来源设置:auto(装了 bx 只认 bx)/ probe(强制用探测)。 */
+  signal_source?: 'auto' | 'probe'
+  /** 已配置 / 在用的 provider 里有没有需要保护的。 */
+  protected_in_use?: boolean
+  /** = enabled && !safe && protected_in_use:有需要保护的调用此刻被暂停。 */
+  paused?: boolean
+  /** 已配置 / 在用的 provider 各自的分类。 */
+  providers?: Array<{ id: string; model: string | null; host: string | null; protected: boolean; kind: string; label: string; reason: string }>
 }

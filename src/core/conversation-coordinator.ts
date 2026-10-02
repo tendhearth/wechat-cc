@@ -33,7 +33,7 @@ import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } fro
 import { isAuthErrorCode } from '../lib/provider-error-code'
 import { resolveEffectiveTier, resolveTier, TIER_PROFILES, type TierProfile } from './user-tier'
 import type { Access } from '../lib/access'
-import { unprotectedMessage, type NetworkGate } from '../lib/network-gate'
+import { decideCall, unprotectedMessage, type NetworkGate } from '../lib/network-gate'
 import { makeChatMutex } from './async-mutex'
 
 /**
@@ -195,9 +195,10 @@ export interface ConversationCoordinatorDeps {
    */
   loadAccess: () => Access
   /**
-   * 网络闸门(2026-10-02)。每一轮在碰任何 provider 之前问一次;不安全就不出发,
-   * 用 sendAssistantText 回一句统一的话(微信 / App / 手机都走这条,按 reply sink
-   * 落到发起的那一面),不重试。缺省 = 不拦。
+   * 网络闸门(守护 v2)。每一轮在碰 provider 之前,按这一轮**要用的 provider + 模型**分类:
+   * 需要保护且网络不安全的不出发,用 sendAssistantText 回一句统一的话(微信 / App / 手机都
+   * 走这条,按 reply sink 落到发起的那一面),不重试;不需要保护的照常。多人模式里只拿掉
+   * 被挡的那几位,其余照常发言。缺省 = 不拦。
    */
   networkGate?: NetworkGate
 }
@@ -579,6 +580,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         return
       }
     }
+    if (deps.networkGate && (await admitProviders(msg, [providerId])).length === 0) return
     const tier = resolveEffectiveTier(msg.chatId, deps.loadAccess(), deps.permissionMode)
     const tierProfile = TIER_PROFILES[tier]
     deps.log('COORDINATOR', `solo chat=${msg.chatId} → project=${proj.alias} provider=${providerId} tier=${tier}`, {
@@ -1124,15 +1126,30 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
    * it wraps this in `mutex.runExclusive(msg.chatId, ...)` for solo/
    * parallel/primary_tool, and calls it directly (no lock) for chatroom.
    */
-  async function dispatchInner(msg: InboundMsg): Promise<void> {
-    if (deps.networkGate) {
-      const v = await deps.networkGate.check()
-      if (!v.safe) {
-        deps.log('GUARD', `chat=${msg.chatId} turn refused — network unprotected [${v.source}] ${v.detail}`, { event: 'network_unprotected', chat_id: msg.chatId })
-        await deps.sendAssistantText?.(msg.chatId, unprotectedMessage(v))
-        return
-      }
+  /**
+   * 守护 v2:这一轮要用的 provider 里,哪些此刻能出发。被挡下的(需要保护 + 网络不安全)
+   * 合并成一句统一的话回给发起的那一面(只说一次、不重试),返回剩下能用的。
+   */
+  async function admitProviders(msg: InboundMsg, providers: ProviderId[]): Promise<ProviderId[]> {
+    if (!deps.networkGate) return providers
+    const cur = getMode(msg.chatId)
+    const allowed: ProviderId[] = []
+    const refused: { label: string; source: 'bx' | 'probe' | 'off'; detail: string }[] = []
+    for (const p of providers) {
+      const model = cur.kind === 'solo' && cur.provider === p ? cur.model : undefined
+      const d = await decideCall(deps.networkGate, { provider: p, model: model ?? null, purpose: 'turn' })
+      if (d.allowed) allowed.push(p)
+      else refused.push({ label: d.cls.label, source: d.verdict!.source, detail: d.verdict!.detail })
     }
+    if (refused.length > 0) {
+      const labels = [...new Set(refused.map(r => r.label))].join('、')
+      deps.log('GUARD', `chat=${msg.chatId} protected call refused (${labels}) — network unprotected [${refused[0]!.source}] ${refused[0]!.detail}`, { event: 'network_unprotected', chat_id: msg.chatId })
+      await deps.sendAssistantText?.(msg.chatId, unprotectedMessage(refused[0]!, labels))
+    }
+    return allowed
+  }
+
+  async function dispatchInner(msg: InboundMsg): Promise<void> {
     const proj = deps.resolveProject(msg.chatId)
       if (!proj) {
         deps.log('COORDINATOR', `drop: no project for chat=${msg.chatId}`)
@@ -1146,6 +1163,11 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       let participants: ProviderId[] | null = null
       if (mode.kind === 'parallel' || mode.kind === 'chatroom') {
         participants = resolveParticipants(mode, msg.chatId)
+        // 守护 v2:先拿掉此刻不能出发的(需要保护 + 网络不安全),其余照常;全被挡下就到此为止。
+        if (participants.length > 0 && deps.networkGate) {
+          participants = await admitProviders(msg, participants)
+          if (participants.length === 0) return
+        }
         if (participants.length === 0) {
           deps.log('COORDINATOR', `chat=${msg.chatId} ${mode.kind} resolved to empty participants; falling back to solo+${deps.defaultProviderId}`)
           return dispatchSolo(msg, proj, deps.defaultProviderId, mode.kind)

@@ -26,7 +26,7 @@
 | ↑ 实时事件流 / 逐文件 diff 审阅 / 免审执行者 | 同上 | `superpowers/specs/2026-09-17-{workbench-live-stream,workbench-diff-review,unattended-executors}-design.md` |
 | ACP(Cursor 走 `cursor-agent acp`) | [cc-workbench.md](cc-workbench.md#免审执行者与-acp) | `superpowers/specs/2026-09-17-acp-evaluation.md`(定案)+ `2026-09-17-acp-cursor-executor-design.md` + `2026-09-18-acp-cursor-chat-design.md` |
 | 工作台文件锚定层的威胁模型(防什么 / 不防什么 / 从锚点开整条链) | [reference/workbench-file-guard.md](reference/workbench-file-guard.md) | 评审 #3 owner 定案(2026-10-01),见 roadmap 修订记录 |
-| 网络守护(bx 优先;网络未受保护时暂停所有模型调用、拦在哪、刻意不拦什么、怎么验) | [reference/network-guard.md](reference/network-guard.md) | 主人拍板(2026-10-02),见 roadmap 修订记录 |
+| 网络守护(守护 v2 按调用判:哪些调用需要保护、guard.json 覆盖、bx / 探测信号、拦在哪、刻意不拦什么、怎么验) | [reference/network-guard.md](reference/network-guard.md) | 主人拍板(2026-10-02 两次,第二次收窄),见 roadmap 修订记录 |
 | 内部 API 鉴权(tier / token / routeAllow / 登记几处) | [reference/internal-api-auth.md](reference/internal-api-auth.md) | `superpowers/specs/2026-06-21-internal-api-tier-authz-design.md` |
 | 发版(tag → 三平台构建 → Publish → R2 更新源) | [maintainer/release.md](maintainer/release.md) | — |
 | 自维护(部署 / 自检 / CI 闸门) | [maintainer/](maintainer/README.md) | `superpowers/specs/2026-09-18-{self-maintenance,ci-triage}-design.md` |
@@ -92,6 +92,7 @@
 ## 修订记录
 
 - 2026-10-02:新增 `reference/network-guard.md`(网络守护:bx 优先、全入口拦截、威胁模型与验证),入主题表与 reference 目录说明。
+- 2026-10-02:`reference/network-guard.md` 改写为守护 v2(按调用判;主人收窄的决定原样记录)。
 - 2026-10-01:新增 `reference/workbench-file-guard.md`(工作台文件锚定层威胁模型),入主题表与 reference 目录说明。
 - 2026-09-27 v2:计数去数字;09-24/25/26 五份 spec/report 入表;四个「README 对应章节」改成具体 reference 文件(README 09-22 已搬空);新增鉴权 / 发版 / 模型管理三份现状文档;research/handoffs 改标现行;STT 口径改「已通」。
 - 2026-09-22 v1:首份索引。此前 300+ 份 plan/spec 无索引,找一件事只能按日期猜文件名;老的 `docs/plans` / `docs/specs` 与现行的 `docs/superpowers/*` 两套并存且没有任何地方说明哪套还活着。
