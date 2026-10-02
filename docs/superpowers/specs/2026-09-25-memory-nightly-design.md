@@ -1,7 +1,7 @@
 # 每晚整理记忆 + 看得见(B)设计
 
 - 日期:2026-09-25
-- 状态:owner 已逐节认可(对话),待审本文
+- 状态:owner 已逐节认可(对话),待审本文;2026-10-01 补「今天的草稿」与桌面按钮改名(§1)
 - 来源:研究 Meta Muse(2026-09-08 上线,产品设计公开承认借鉴 OpenClaw)的 `MEMORY.md`:Facts / Preferences / Commitments、每晚整理、每次对话读、用户可改、改了会告诉你。
 
 ## 背景与问题
@@ -57,6 +57,20 @@ owner 要的是四件事,按 **B(看得见)→ A(准:逐条纠错)→ C(活:第�
 - `buildSystemPrompt` 的核心记忆段(`prompt-builder.ts:504` 附近)改注入 `memory.md` 正文(去尾注)。`memory.md` 不存在时回退注入 `profile.md`(旧行为),保证升级第一晚之前不空。
 - `profile.md` 不再每轮注入。
 - `knowledge.md` 照旧注入(本步不动;等 `承诺` / `身边的人` 稳定后另议撤掉)。
+
+**今天的草稿(2026-10-01 补,owner 拍板)**
+
+问题「同日失忆」:有了 `memory.md` 之后 `profile.md` 不再注入,主人早上跟 CC 说的事,别的会话要等 04:00 整理后才看得到。
+
+- 不另造抽取器,复用原来的信号:CC 白天用 `memory_write` 写 `<chat>/profile.md`(会话来源)时,daemon 在路由里比对新旧文本,新冒出来的行(去列表记号、跳过标题 / 注释 / 代码围栏 / 空行;只是挪位置不算)追加进 `<chat>/today-draft.md`(`src/daemon/memory/today-draft.ts`,接线在 `internal-api/routes.ts` 的 `POST /v1/memory/write`)。
+- 只在该 chat 已有 `memory.md` 时记 —— 没有时 `profile.md` 本身还在注入,草稿是重复的。
+- 上限 600 字(按字符),超了从最旧的行丢;单行 200 字封顶,免得一次大改把草稿冲光。
+- 注入:`buildSystemPrompt` 的长期记忆段末尾加「### 今天的草稿」(只随 `memory.md` 出现),并告诉 CC 冲突时以草稿为准。
+- 写入权:和 `memory.md` 同一道闸 —— 会话(任何 tier)写 / 删 `today-draft.md` 一律 `curated_memory_readonly`;只有 daemon 写。否则 CC 手写进去的东西会被每次对话当成「主人今天说过的」。
+- 每晚整理:草稿作为独立素材块放最前面(不占 30000 字预算);写入成功后去掉读过的那几行(整理途中新记的保留);失败则留到明晚;`no_new_material` 跳过时同样清掉(那些行已在 profile.md 里被整理过)。指纹**不算**草稿 —— 草稿每一行都来自 profile.md,清掉草稿不该触发多一次模型调用。
+- 已知局限:CC 整篇改写 profile.md 时,换了措辞的旧行也会被当成新行进草稿(600 字封顶兜底);写在 `notes/` 的不进草稿。
+
+**桌面「更新项目地图」(2026-10-01)**:桌面记忆面板原来的「重新整理」按钮跑的是 `POST /v1/memory/synthesize`,重算 `_overview.md`(项目地图),和微信「整理记忆」(跑本流程、整理 `memory.md`)撞名。按钮、提示、进度与失败文案改为「更新项目地图」,行为不变。
 
 **旧 `_overview.md`**:第一次整理时作为素材读入,之后不再更新;微信「查看记忆」改读 `memory.md`。旧文件保留不删。
 

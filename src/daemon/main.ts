@@ -19,6 +19,7 @@ import { makeMemoryFS } from './memory/fs-api'
 import { makeMemoryLlmOps } from './memory-llm-ops'
 import { CORE_MEMORY_MAX_CHARS, KNOWLEDGE_MEMORY_MAX_CHARS } from '../core/prompt-builder'
 import { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from './memory/curated-doc'
+import { readDraftForPrompt } from './memory/today-draft'
 import { makeConversationStore } from '../core/conversation-store'
 import { makeTurnRecordStore } from '../core/turn-record-store'
 import { providerDisplayName } from './provider-display-names'
@@ -502,6 +503,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         const raw = fs.read(MEMORY_FILENAME)
         return raw ? renderForPrompt(parseMemoryDoc(raw)) : ''
       },
+      // 今天的草稿(同日失忆修复,2026-10-01):CC 白天写进 profile.md 的新行,随 memory.md 一起注入。
+      todayDraftFor: (c) => { try { return readDraftForPrompt(memoryFS, c) } catch { return '' } },
       // knowledge-distillation §2 — THIS chat's daemon-distilled knowledge.md
       // (objective plugin facts), read fresh per spawn + capped. Written by the
       // ingest tick for the owner chat; absent for chats without it.
