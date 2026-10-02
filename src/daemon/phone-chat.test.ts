@@ -197,6 +197,18 @@ describe('makePhoneChat', () => {
       expect(r.chat.say(RID(2), 'a').status).toBe('pending')
     })
   })
+  it('同一 requestId 换了正文 ⇒ input_conflict(在飞 / 已回复 / 失败重试都比正文),不起新一轮、不改原来那条', async () => {
+    const r = rig()
+    r.chat.say(RID(1), 'a')
+    expect(() => r.chat.say(RID(1), 'b')).toThrow('input_conflict')
+    await tick(); r.calls[0]!.resolve({ reply: 'y' }); await tick()
+    expect(() => r.chat.say(RID(1), 'b')).toThrow('input_conflict')
+    r.chat.say(RID(2), 'c'); await tick(); r.calls[1]!.reject(new Error('boom')); await tick()
+    expect(() => r.chat.say(RID(2), 'd')).toThrow('input_conflict')
+    expect(r.calls).toHaveLength(2)
+    expect(r.chat.state().failed).toMatchObject({ requestId: RID(2), text: 'c' })
+    expect(r.chat.say(RID(2), 'c').status).toBe('pending')
+  })
   it('超时后起了另一句才迟到成功 ⇒ 只翻自己那条(不清掉别人的 failed),重试它去重成 replied', async () => {
     vi.useFakeTimers()
     try {

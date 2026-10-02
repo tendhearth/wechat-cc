@@ -70,11 +70,16 @@ function inferredMime(name:string,mime:unknown):string {
   return mime
 }
 
-/** Every created directory stays a real directory under its parent — a link at any level fails closed (anchored-fs.ts). */
-function withDirectory<T>(root:string,parts:string[],action:(dir:string)=>T):T {
+/** Where a directory is anchored: files under it are opened from `root` through the whole chain, never from the deep path. */
+interface Anchor {root:string;parts:string[]}
+/**
+ * Every created directory stays a real directory under its parent — a link at any level fails closed (anchored-fs.ts).
+ * `dir` is for listing only; writes go through `anchor` so the post-open re-check covers every level from the root.
+ */
+function withDirectory<T>(root:string,parts:string[],action:(dir:string,anchor:Anchor)=>T):T {
   if(!isAbsolute(root))throw Error('invalid_attachment_path')
   parts.forEach(part=>fileName(part))
-  return action(mkdirAnchored(root,parts,'invalid_attachment_path'))
+  return action(mkdirAnchored(root,parts,'invalid_attachment_path'),{root,parts})
 }
 function readFileDescriptor(fd:number):Buffer {
   const before=fstatSync(fd)
@@ -86,13 +91,13 @@ function readFileDescriptor(fd:number):Buffer {
   if(length>MAX_ATTACHMENT_BYTES||length!==before.size||after.size!==before.size||after.mtimeMs!==before.mtimeMs||after.ctimeMs!==before.ctimeMs)throw Error('attachment_changed')
   return bytes.subarray(0,length)
 }
-function writeImmutable(dir:string,name:string,bytes:Buffer,sha256:string,verifyExisting?:()=>void):void {
-  const leaf=fileName(name)
+function writeImmutable(anchor:Anchor,name:string,bytes:Buffer,sha256:string,verifyExisting?:()=>void):void {
+  const leaf=fileName(name),parts=[...anchor.parts,leaf]
   let created:number|undefined
-  try{created=openAnchored(dir,[leaf],constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL,0o600,'invalid_attachment_path')}catch{/* exists (or a link): compare below */}
+  try{created=openAnchored(anchor.root,parts,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL,0o600,'invalid_attachment_path')}catch{/* exists (or a link): compare below */}
   if(created!==undefined){try{writeFileSync(created,bytes)}finally{closeSync(created)};return}
   if(verifyExisting){verifyExisting();return}
-  const existing=openAnchored(dir,[leaf],constants.O_RDONLY|O_NONBLOCK,0,'invalid_attachment_path')
+  const existing=openAnchored(anchor.root,parts,constants.O_RDONLY|O_NONBLOCK,0,'invalid_attachment_path')
   try{if(hash(readFileDescriptor(existing))!==sha256)throw Error('attachment_changed')}finally{closeSync(existing)}
 }
 function snapshot(row:Pick<StoredAttachment,'sha256'|'storagePath'|'size'>,stateDir:string,onVerified?:(check:()=>void)=>void):Buffer {
@@ -288,10 +293,10 @@ export function makeTaskAttachmentStore(db:Db) {
         // referenced by any remaining draft, submitted task, or handoff copy.
         const staged=db.query<{count:number},[]>('SELECT COUNT(*) AS count FROM workbench_attachments WHERE task_id IS NULL').get()!
         if(staged.count>=512)throw Error('attachment_storage_limit')
-        withDirectory(resolve(stateDir),['workbench-attachments'],fd=>{
-          const blobs=collectUnusedBlobs(db,storageRoot,fd)
+        withDirectory(resolve(stateDir),['workbench-attachments'],(dir,anchor)=>{
+          const blobs=collectUnusedBlobs(db,storageRoot,dir)
           checkQuota({id,draftId,...(taskId?{taskId}:{}),size:bytes.length,sha256,kind:'staged'},stateDir,scope,blobs)
-          writeImmutable(fd,sha256,bytes,sha256,verifyExisting)
+          writeImmutable(anchor,sha256,bytes,sha256,verifyExisting)
         })
         db.query('INSERT INTO workbench_attachments(id,draft_id,task_id,upload_task_id,name,mime,size,sha256,storage_path,created_at,owner_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(id,draftId,null,taskId,name,mime,bytes.length,sha256,storagePath,Date.now(),scope?.ownerKey??null)
         return publicAttachment(get(id)!)
@@ -328,7 +333,7 @@ export function makeTaskAttachmentStore(db:Db) {
         const ref=refs[index]!
         if(row.name!==ref.name||row.mime!==ref.mime||row.size!==ref.size||row.sha256!==ref.sha256)throw Error('attachment_changed')
         const bytes=snapshot(row,stateDir),parts=['.cc-workbench-inputs',taskId,row.id],path=join(project,...parts,row.name)
-        withDirectory(project,parts,fd=>writeImmutable(fd,row.name,bytes,row.sha256))
+        withDirectory(project,parts,(_dir,anchor)=>writeImmutable(anchor,row.name,bytes,row.sha256))
         return{name:row.name,mime:row.mime,path,sha256:row.sha256,...(IMAGE_MIMES.has(row.mime)||row.mime==='application/pdf'?{data:bytes.toString('base64')}:{})}
       })
     },
@@ -356,7 +361,7 @@ export function makeTaskAttachmentStore(db:Db) {
         const root=dirname(row.storagePath)
         if(basename(root)!=='workbench-attachments'||basename(row.storagePath)!==row.sha256)throw Error('invalid_attachment_path')
         db.query('DELETE FROM workbench_attachments WHERE id=? AND task_id IS NULL').run(normalized)
-        withDirectory(dirname(root),[basename(root)],fd=>collectUnusedBlobs(db,root,fd))
+        withDirectory(dirname(root),[basename(root)],dir=>collectUnusedBlobs(db,root,dir))
       }).immediate()
     },
   }

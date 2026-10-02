@@ -517,6 +517,25 @@ describe('core-memory prompt section', () => {
     const p = buildSystemPrompt({ ...base, coreMemory: 'PROFILE 草稿', curatedMemory: '  ' })
     expect(p).toContain('PROFILE 草稿')
   })
+  it('injects today\'s draft right under the curated memory (同日失忆, 2026-10-01)', () => {
+    const p = buildSystemPrompt({ ...base, coreMemory: 'PROFILE 草稿', curatedMemory: '### 偏好\n- 回复直接', todayDraft: '- 下周三去上海出差' })
+    expect(p).toContain('今天的草稿')
+    expect(p).toContain('- 下周三去上海出差')
+    expect(p.indexOf('下周三去上海出差')).toBeGreaterThan(p.indexOf('回复直接'))
+    expect(p).not.toContain('PROFILE 草稿')
+  })
+  it('no draft / blank draft ⇒ no draft heading', () => {
+    expect(buildSystemPrompt({ ...base, curatedMemory: '- x' })).not.toContain('### 今天的草稿')
+    expect(buildSystemPrompt({ ...base, curatedMemory: '- x', todayDraft: '  \n' })).not.toContain('### 今天的草稿')
+  })
+  it('the draft rides only with curated memory — without memory.md, profile.md is injected and already has it', () => {
+    const p = buildSystemPrompt({ ...base, coreMemory: 'PROFILE 草稿', todayDraft: '- 下周三去上海出差' })
+    expect(p).not.toContain('### 今天的草稿')
+  })
+  it('caps an oversized draft as a belt-and-braces bound', () => {
+    const s = curatedMemorySection('- x', '- ' + '长'.repeat(5000))
+    expect(s.length).toBeLessThan(1500)
+  })
   it('curatedMemorySection tells CC where daytime notes go', () => {
     expect(curatedMemorySection('- x')).toContain('profile.md')
   })
