@@ -7,8 +7,7 @@
 
 ## 决定与待定
 
-> 评审 #193(2026-10-02)指出旧版把几条没定的事也写成了「主人的决定」。这一节按出处分三档,**只有第一档是主人拍板**。
-> 第二档主人在对话里同意过、但评审认为还没定,照此实现、等主人在评审里复核;第三档是没定的事,现在的行为只是临时缺省。
+> 评审 #193(2026-10-02)指出旧版把几条没定的事也写成了「主人的决定」。这一节按出处分两档:**主人已定**,和**待定**(待定的事现在的行为只是临时缺省,不是主人的决定)。
 
 ### 已决定(主人,2026-10-02 对话中)
 
@@ -22,10 +21,7 @@
 8. **Cursor:** `auto` 和 Cursor 自家模型(composer-\* 等)不需要保护;**明确选了 Claude / GPT / o 系列 / Gemini 模型**的需要保护。
 9. **cheapEval 继续钉在 agy**(主人在对话里说保持现状)。
 10. **`llm.youdamaster.cc` 是主人自建的 ⇒ 不需要保护**(按第 3 条,它本来就是缺省不保护的自定义网关;主人确认过不要纳入)。
-
-### 已按此实现，待主人在评审中复核
-
-- **装了 bx、但 bx 关着 / 恢复中 / 读不出 ⇒ 需要保护的调用暂停,不回落到 Google 探测;** guard.json 明确写 `signal_source: "probe"`(装着 bx、实际在用别的 VPN)时才改用探测。主人在 2026-10-02 的对话里同意过这一条,但评审认为还没定,所以单列在这里。实现见 `gate.ts` / `owner-table.test.ts`。
+11. **装了 bx、但 bx 关着 / 恢复中 / 读不出 ⇒ 暂停需要保护的调用,不回退到 Google 探测;** guard.json 里写 `signal_source: "probe"`(装着 bx、实际在用别的 VPN)可以显式改用 Google 探测。实现见 `gate.ts` / `owner-table.test.ts`。
 
 ### 待定(现在的行为只是临时缺省)
 
@@ -39,7 +35,9 @@
 - **判的是执行者真正连的目标,不是此刻的配置**(评审 #193 P1-1):执行者 / 会话自己报它用的端点 + 模型(构造或起会话那一刻定下的,和真正调用是同一份参数);配置后来改了,在用的会话不跟着改,守护也不跟着改。报不出来 ⇒ 按需要保护(fail closed)。
 - **探测结果会过期**(评审 #193 P1-2):过期 = 不知道 ⇒ 需要保护的调用先等一次新结果,等不到按不安全。探测不依赖公网 IP 查询成功。
 - **后台任务里被拒 = 这一拍跳过**(评审 #193 P2-3):不打勾、不登记、不前移时间戳,下一拍再来。
-- **多人模式被筛到只剩一位 = 按单人排队**(评审 #193 P2-4)。
+- **多人模式被筛到只剩一位 = 按单人排队**(评审 #193 P2-4);更一般地,**同一个底层会话同一时刻只有一个回合**(第二轮 #194):单模型队列和 `/chat` 抢占的每一次发送都落到按 (chat, project, provider) 的会话锁上,网络来回切换时两条路交接也不会在同一会话上撞车。
+- **守护装在会话自己的发送方法里**(第二轮 #194):registry 发出去的每个会话,dispatch / steer / 工作台 start / submit 之前都先判 —— 不管是 SessionManager、工作台、selftest 还是 delegate 拿到它,都不靠调用方记得补。
+- **被拒后的撤回只撤本次登记**(第二轮 #194):care 台账按登记回执定向撤(时间字段只在还是这次写的值时放回;未回复计数只在期间没被清零时减一),agenda.md 只放回本次打勾的那一行 —— 期间的新活动(主人来信、别的登记、文件里其他改动)都保留。
 - 文案:拒绝需要保护的调用统一一句老实话,说清停的是哪一步,例如「网络未受保护(bx 未连上),用到 Claude 的这一步先暂停，恢复后再试。」;不重试、不退避风暴;后台任务安静跳过,只记一行日志。
 - **看得见:** `/v1/health` 的 guard 块带上按调用的语义;桌面一行「bx 保护中」/「⚠ 网络未受保护：用到 Claude 等的调用暂停」/「当前没有用到需要保护的接口」(不报红);`wechat-cc guard status` 列出已配置 provider 的分类。
 
@@ -141,13 +139,14 @@
 | `ProviderRegistry` → `withNetworkGate`(`src/core/provider-registry.ts`) | provider 报的实际目标(`providerCallTarget`);会话不自己报目标的,把 spawn 那一刻 provider 报的钉在会话上;`modelCatalog` 不算模型回合(Cursor 列目录不保护) | 抛 `NetworkUnprotectedError`,不起子进程、不发请求 |
 | cheapEval 故障转移 | 逐个候选 | 跳过需要保护的候选(**不记冷却**),照常试不需要保护的;都被挡才抛。显式钉了 `cheap_eval_provider` 时只用它(不故障转移),它需要保护就照样暂停 |
 | `SessionManager.spawn` 与 `handle.dispatch` | 这条会话的实际目标(`handle.callTarget()`:会话自报,或 spawn 那一刻 provider 报的) | 抛错(在碰 provider 之前,一个字都没发);推送 / 打猎 / 议程的 `dispatchToChat` 走这里 |
+| 会话自己的发送方法(`provider-registry.ts` `guardSession`,第二轮 #194) | 同上(会话此刻的实际目标) | registry / delegate 发出去的每个会话:dispatch / steer / 工作台 submit 先判再发;工作台 `start` 是同步的,先挂住等守护答复,被拒就从不 start、事件流报 `network_unprotected`。selftest chat 与 `POST /v1/selftest/converse` 因此也过守护 |
 | delegate(`src/daemon/bootstrap/delegate.ts`) | 同 registry(带 provider id 包一层) | 同上 |
 | 工作台 `execute()` / `submitInput()` | spawn 前:执行者报的 `spawn` 目标;会话起来后、第一轮之前与每次补充:在用会话的实际目标(`workbench/service/call-target.ts`) | 任务以 `network_unprotected` 失败 / 补充返回 503;Cursor auto、国内网关的执行者照常起 |
 | 工作台额度查询(`wire-workbench.ts`) | Claude → `api.anthropic.com`;Codex → codex | 返回 null,不出门 |
 | `cli-reply-handler` resume(微信「@码 文本」、A2A `/a2a/cli/reply`) | 终端会话来源(claude / codex,各自的 base URL) | 不起 CLI,回统一的话 |
 | 语音 `gateVoice` | 这一次连到的端点 | 不出门;通义 / 自建 / 局域网照常 |
 | 后台 tick(companion push / introspect / ingest)`skipWhenUnsafe` | 已注册 provider 报的目标 + 在用会话的实际目标 | 信号不安全且**全都**需要保护 ⇒ 这一拍安静跳过;有不需要保护的 ⇒ 照跑,里面需要保护的那几次被各自的闸门拒掉。同一段不安全期同一个任务只记一行日志 |
-| 后台任务内部被拒的那一次(评审 #193 P2-3) | — | **这一拍跳过,什么进度都不记**(`NetworkUnprotectedError` / `NETWORK_UNPROTECTED_REASON` 一路传上来):议程 / 打猎 / 问候撤回「先登记再出门」的登记(agenda.md 只在还是刚写的样子时放回,care 台账 restore),不写 plan-log;日程判断被拒不走老顺序兜底、不退避;串门开场被拒台账放回;反思不记 `cron_eval_failed`、`last_introspect_at` 不动;画表情 / 画室不吃掉这一期;人类做客讲述被拒那一位水位放回;社交判官被拒原样抛出(不当成「不能」去转问)。摄入抽取、线索、概览、画像、园丁本来就只在成功后提交 |
+| 后台任务内部被拒的那一次(评审 #193 P2-3) | — | **这一拍跳过,什么进度都不记**(`NetworkUnprotectedError` / `NETWORK_UNPROTECTED_REASON` 一路传上来):议程 / 打猎 / 问候定向撤回「先登记再出门」的那一次登记(agenda.md 只放回本次打勾的那一行,care 台账按回执 `unclaim`,期间的新活动保留),不写 plan-log;日程判断被拒不走老顺序兜底、不退避;串门开场被拒台账放回;反思不记 `cron_eval_failed`、`last_introspect_at` 不动;画表情 / 画室不吃掉这一期;人类做客讲述被拒那一位水位放回;社交判官被拒原样抛出(不当成「不能」去转问)。摄入抽取、线索、概览、画像、园丁本来就只在成功后提交 |
 | 每晚整理记忆 | 它用的 cheapEval | 评估被守护拒 ⇒ `skipped: network_unprotected`,**不记** `failed_today` |
 | **已经在跑**的工作台执行者(`lifecycle-deps.ts` `onReading` + `pause-policy.ts`) | 在用会话的实际目标 | **待定,临时缺省沿用 #191:** bx 来源不停(bx fail-closed,出不去也就漏不了)。probe 来源连续两次不安全才停,**只停需要保护的执行者**,不需要保护的永远不停 |
 | 网络翻成不安全的那一刻(`onStateChange`) | 会话的实际目标 | `SessionManager.shutdownProtected()`:只关需要保护的对话会话(同上,临时缺省) |
