@@ -106,6 +106,15 @@ describe('workbench page interaction through actual controls',()=>{
   selection.removeAllRanges();document.dispatchEvent(new Event('selectionchange'));await settle()
   expect(f.root.querySelector('#'+id+' strong')?.textContent).toBe('选中文字');expect(f.root.textContent).toContain('最新版')
  })
+ it('restores selection extending from a message into the operation group summary after full paint',async()=>{
+  const f=await pageFixture();f.controller.state.detail.task={...f.controller.state.detail.task,status:'completed'}
+  f.controller.state.detail.events=[event('正文选区文本'),{...event('ls'),id:'2',kind:'tool_call',runId:'run'}];f.controller.paint(true)
+  const paragraph=f.root.querySelector('.wb-message p').firstChild,summary=f.root.querySelector('[data-timeline-group] > summary span').firstChild,selection=document.getSelection()
+  selection.setBaseAndExtent(paragraph,2,summary,2);const before=selection.toString()
+  f.controller.paint(true)
+  expect(selection.toString()).toBe(before);expect(selection.anchorNode).toBe(paragraph);expect(selection.focusNode.isConnected).toBe(true)
+  expect(selection.anchorOffset).toBe(2);expect(selection.focusOffset).toBe(2)
+ })
  it('gives distinct stable control identities to ambiguous task/request boundaries',()=>{
   expect(permissionControlId('a','bc','allow-permission')).not.toBe(permissionControlId('ab','c','allow-permission'))
  })
