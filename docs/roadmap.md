@@ -66,7 +66,7 @@
   - 要不要让「CC 能探测到它在不在跑(hook)」成为出现「接着做」的前提(spec §7)。
   - 额度耗尽时是否提示换另一个执行者接手(spec §7)。
   - 已知取舍(R4):桌面早先导入、从未派发过的事,点「打开这件事」直接进任务页、不经确认卡;任务页上显示的是灰字「先让原来那个停下」之类的提示。
-  - 已知限制:会话的 cwd 是符号链接时,显示「电脑上找不到这个会话的文件夹了」(与桌面导入同一条规则);后续:在共用的导入规则里先 realpath。
+  - ~~已知限制:会话的 cwd 是符号链接时显示「电脑上找不到这个会话的文件夹了」~~ 已修(2026-10-01,`import-realpath` 分支):共用导入规则(`nativeProjectPath`,桌面导入与手机接着做同一处)先 realpath,任务 / matter 用真目录,来源记下原样 cwd;之后目录身份、「在用」、路径冲突、私有目录等守卫一律只看真目录(链接不带来任何额外权限);导入后链接被改指 ⇒ 第一句 invalid_path。**取舍(待主人看)**:记下的 cwd ≠ 真目录时一律只「带记录新开」、不恢复原会话 —— 原生恢复要求在原会话那个文件夹(plan 2026-09-12),Claude 的会话文件按路径写法存、换写法本来就找不到;Codex 按真目录恢复未在真机验证,保守不开。
   - 已知缺口:主人自己装了 hook 的终端 Claude Code 会话不会被判成「正在跑」(spec §7 第 2 条)。
   - 已知缺口:已经跑过的事(managed)再接着说走 `continueTask`,不重查它对应的 Codex 原生会话是不是又在终端里跑了(桌面早就如此,手机「打开这件事」也会走到;spec §7 第 4 条)。
   - 已知限制:接过来的事第一句碰到「文件夹被 CC 占着」与「会话本身在跑」都说「这个会话正在电脑上跑」(第一句的冲突判定是一个布尔值,分不开;spec D7)。
@@ -101,7 +101,7 @@
 - 安卓凭据恢复走 Google Block Store(配对体验 7a 之后)。
 - iCloud 钥匙串同步(`kSecAttrSynchronizable`)—— 待主人定。
 - **e2e 只在 master 相关的分支跑**(`.github/workflows/ci.yml:152` 的分支条件)—— dev 上推送不跑 e2e,于是积压的 e2e 红会在开 PR 那一刻一次性砸下来(这次砸了 8 条)。要不要让 dev 也跑是成本取舍。
-- **自改的工作树回收缺一个显式入口** —— 现在只回收 `done`/`declined` 的运行,可 resume 的和被 kill 的永不回收(磁盘单调增长)。缺的是「这条我不接了」这个动作。
+- ~~**自改的工作树回收缺一个显式入口** —— 现在只回收 `done`/`declined` 的运行,可 resume 的和被 kill 的永不回收(磁盘单调增长)。缺的是「这条我不接了」这个动作。~~ **2026-10-01 完成**:`wechat-cc self change --abandon <id>` 把一条记成 `abandoned`(第三种不可恢复的终局,`--resume` 拒绝)并当场删它的工作树,正在跑的那条拒绝(锁里新记了 runId);`--list` 每条标出在跑 / 被杀 / 可 --resume / 已收场 / 已作废和盘上的树路径。微信「自改」没加作废口(理由见 [maintainer/self-change.md](maintainer/self-change.md) 已知限制)。
 - ~~**设备 token 进 token-registry、http 默认 loopback**(梳理第 6 步)~~ **2026-09-29 完成(#149)**:链接 / 设备令牌进内部 API 同一个注册表(origin `link` / `device` + routeAllow `PHONE_ROUTES`),按台撤销,只允局域网的操作收成 `LAN_ONLY_OPS`,`serve()` 缺省 127.0.0.1。**没做的范围 B**:`/m/api/*` 并进内部 API dispatcher。现状见 [reference/internal-api-auth.md](reference/internal-api-auth.md)。
 - ~~**拆三个大文件**(梳理第 7 步)—— `core/workbench/service.ts`(1622 行闭包,按 20 份 `service-*.test.ts` 的边界抽)、`bootstrap/index.ts`(剩余 8 个关注点进 `wire-*.ts`)、`cli.ts`(按命令族下沉;`scripts/cli-ratchet.guard.test.ts` 先钉住不再增长)。~~ **2026-09-28 三件全部完成**:`cli.ts` 4332→157(#128)、`bootstrap/index.ts` 1321→460(#131)、`core/workbench/service.ts` 1965→179 行 / 内函数 68→3(PR #132–#141 + PR 10,十个域进 `service/<domain>.ts`,棘轮守卫 `scripts/workbench-service-ratchet.guard.test.ts` 只降不升;19 份旧测试一行没改)。
 - **错误通道结构化**(arch backlog #4)—— 要 owner 参与定两条判定红线。
@@ -122,7 +122,9 @@
 ## 修订记录
 
 - 2026-10-01:「跟 CC 说话」延后次要项清掉九项(含两项其实已做只补划线 / 用例),相机权限双语文案确认 #158 已交付。
+- 2026-10-01:7b 已知限制「cwd 是符号链接 ⇒ 找不到文件夹」修掉(共用导入规则先 realpath,经链接的只带记录新开)。
 - 2026-10-01:加入项目组合与方向演变入口；把手机主线从 1.7.0 发布清单中分出，更新已过期的等待顺序与 Widget / 通知边界。
+- 2026-10-01:「自改的工作树回收缺一个显式入口」完成(`self change --abandon <id>` + `--list` 标出可回收的树)。
 
 - 2026-09-30:内置插件回归(09-11 → 09-30)修复入账,含「登记的来源按内置默认开」的信任口径。
 - 2026-09-29:1.7.1 已发(第一版 Developer ID 签名 + 公证包);第 6 步设备令牌进 token-registry 完成(#149),梳理七步全部落地;Developer ID 条目改成「到手,2027-02-01 到期」。

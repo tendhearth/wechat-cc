@@ -30,6 +30,16 @@ export const NATIVE_TAIL_WALK_MS=60_000
 const NATIVE_TAIL_ROWS=499
 /** 本进程记住的第一句 requestId 上限;只淘汰已落定的,在途的永不淘汰。 */
 const FIRST_INPUTS_MAX=500
+/**
+ * 原生会话记下的 cwd ⇒ 工作台用的项目路径:桌面导入与手机「接着做」共用这一条规则。
+ * 先 realpath(符号链接、Windows junction、macOS 的 /var → /private/var 都落到真目录),之后所有比较与守卫
+ * (目录身份、「在用」判断、路径冲突、私有目录)都只看这个解析后的路径 —— 链接指到哪,就按哪个真目录判,
+ * 链接本身不给任何额外的权限。悬空 / 不是目录 / 不是绝对路径 ⇒ invalid_path。
+ */
+export function nativeProjectPath(cwd:string|null|undefined):string {
+  if(!cwd)throw new Error('invalid_path')
+  return canonicalProject(cwd)
+}
 export function makeNativeDomain(ctx:ServiceCtx) {
   const { store, state } = ctx
   const act=()=>ctx.actions.deref('native')
@@ -39,7 +49,9 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     const current:ImportPage[]=[]
     for(const page of pages){
       const preview=await call(()=>nativeReader(task.providerId).read(key,pageInput(page)))
-      if(preview.session.key!==key||preview.session.cwd!==task.path)throw new Error('native_history_changed')
+      if(preview.session.key!==key||preview.session.cwd!==store.source(task.id)!.cwd)throw new Error('native_history_changed')
+      // 记下的路径没变、可它现在解析到的不再是任务的真目录(链接被改指)⇒ 不跟过去。
+      if(nativeProjectPath(preview.session.cwd)!==task.path)throw new Error('invalid_path')
       if(preview.session.remote||preview.session.observedState==='active'||ctx.deps.executionConflict?.(task.path,task.providerId,store.source(task.id)!.nativeId))throw new Error('native_session_busy')
       current.push({...page,sourceFingerprint:preview.sourceFingerprint})
     }
@@ -169,10 +181,9 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     if(managed)throw new Error('native_session_already_managed')
     const read=await readNativeImport(nativeReader(providerId),input)
     ctx.ensureAccepting()
-    if(!read.session.cwd)throw new Error('invalid_path')
-    const path=canonicalProject(read.session.cwd)
-    if(path!==read.session.cwd)throw new Error('invalid_path')
-    const result=store.importSource({providerId,nativeId,cwd:path,title:read.session.title.slice(0,120),ownerChatId:ctx.deps.ownerChatId(),messages:read.messages,snapshotJson:read.snapshotJson,snapshotSha256:read.snapshotSha256,pagesJson:read.pagesJson,observedFingerprint:read.observedFingerprint,truncated:read.truncated})
+    // 任务走真目录;来源记下原样的 cwd(与真目录不同 ⇒ 不恢复原会话,见 admission.canResume)。
+    const path=nativeProjectPath(read.session.cwd)
+    const result=store.importSource({providerId,nativeId,cwd:read.session.cwd!,path,title:read.session.title.slice(0,120),ownerChatId:ctx.deps.ownerChatId(),messages:read.messages,snapshotJson:read.snapshotJson,snapshotSha256:read.snapshotSha256,pagesJson:read.pagesJson,observedFingerprint:read.observedFingerprint,truncated:read.truncated})
     return{...result,task:act().taskView(publicTask(result.task))}
   }
   async function prepareNativeResume(id:string,mode:'native_resume'|'fresh_context'='native_resume',executionChoice?:unknown):Promise<NativeResumeDecision> {
@@ -298,11 +309,13 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     if(managedId)return{preview:{state:'managed',providerId,project:basename(store.get(managedId).path),mode:null,taskId:managedId},page:null}
     const page=await historyDeadline()(()=>nativeReader(providerId).read(key,{limit:100}))
     if(page.session.key!==key)throw new Error('native_history_changed')
-    const cwd=page.session.cwd,project=cwd?basename(cwd):null
+    const cwd=page.session.cwd
+    // 目录名:解析得到就给真目录的(与接过之后 managed 给的一致),解析不了就给记下的。
+    let project=cwd?basename(cwd):null
     const out=(state:NativeContinueState,mode:NativeContinuePreview['mode']=null)=>({preview:{state,providerId,project,mode,taskId:null},page})
     let path:string
-    try{path=canonicalProject(cwd??'')}catch{return out('folder_missing')}
-    if(path!==cwd)return out('folder_missing')
+    try{path=nativeProjectPath(cwd)}catch{return out('folder_missing')}
+    project=basename(path)
     try{act().provider(providerId)}catch{return out('provider_missing')}
     // 看得见的「在跑」(Codex 的 active / 远程会话)与 CC 自己占着的;普通终端里的 Claude Code 看不见,靠确认卡上的声明(spec D3)。
     if(page.session.remote||page.session.observedState==='active')return out('busy_session')
@@ -311,7 +324,8 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     if(act().quotaExhausted(providerId))return out('quota')
     if(!selectNativeImportMessages(page.messages).length)return out('empty')
     // 还没有任务:用将要建的任务的三样(执行者、会话 id、目录)问能不能恢复 —— 与 prepareNativeResume 的判法一致(spec D2)。
-    const resumable=act().canResume({providerId,sessionId:nativeId,path} as StoredTask)
+    // 记下的路径 ≠ 真路径(经过链接)⇒ 只带记录新开,与 admission.canResume 对导入任务的判法一致。
+    const resumable=path===cwd&&act().canResume({providerId,sessionId:nativeId,path} as StoredTask)
     return out('ready',resumable?'native_resume':'fresh_context')
   }
   async function previewNativeContinue(key:string):Promise<NativeContinuePreview> {

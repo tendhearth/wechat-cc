@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest'
-import {mkdirSync,mkdtempSync,realpathSync,rmSync} from 'node:fs'
+import {mkdirSync,mkdtempSync,realpathSync,rmSync,symlinkSync} from 'node:fs'
 import {join} from 'node:path'
 import {randomUUID} from 'node:crypto'
 import {tmpdir} from 'node:os'
@@ -11,7 +11,7 @@ import {makeWorkbenchService,type WorkbenchService} from './service'
 import {encodeNativeHistoryKey,historyPreview,type NativeHistoryItem,type NativeHistoryMessage,type NativeHistoryProvider,type NativeHistoryReader} from './native-history'
 import {selectNativeImportMessages} from './native-adoption'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
-import {removeTempDir} from '../../lib/test-temp'
+import {removeLink,removeTempDir} from '../../lib/test-temp'
 import {nativeImportMessages} from '../../../apps/desktop/src/modules/workbench-history.js'
 
 // spec 2026-10-01-tendhearth-continue-sessions §4.1:手机「接着做」的核心。真工作台 + 真 matters + 假原生历史读取器。
@@ -21,7 +21,8 @@ afterEach(async()=>{await service?.shutdown();db.close();removeTempDir(dir)})
 
 const MESSAGES:NativeHistoryMessage[]=[{id:'u',role:'user',text:'original request',truncated:false},{id:'a',role:'assistant',text:'original answer',truncated:false}]
 
-function fixture(o:{provider?:NativeHistoryProvider;messages?:NativeHistoryMessage[];matters?:boolean;seek?:boolean;readClockMs?:number}={}){
+// cwd:原会话记下的文件夹(缺省就是 proj);busyPath:CC 在用的那个真实文件夹(executionConflict 按路径判)。
+function fixture(o:{provider?:NativeHistoryProvider;messages?:NativeHistoryMessage[];matters?:boolean;seek?:boolean;readClockMs?:number;cwd?:string;busyPath?:string}={}){
   const providerId=o.provider??'claude'
   const project=join(dir,'proj');mkdirSync(project,{recursive:true})
   const store=makeWorkbenchStore(db),registry=createProviderRegistry()
@@ -32,7 +33,7 @@ function fixture(o:{provider?:NativeHistoryProvider;messages?:NativeHistoryMessa
   const spawn=vi.fn(async(_p:any,context:any)=>{if(gate)await gate;return{async *dispatch(){const id=context.resumeSessionId??'fresh-native';yield{kind:'init' as const,sessionId:id};yield{kind:'text' as const,text:'continued'};yield{kind:'result' as const,sessionId:id,numTurns:1,durationMs:1}},async close(){}}})
   // 只登记 claude:codex 的会话用来测「电脑上没装」。
   registry.register('claude',{spawn},{displayName:'Claude',canResume:()=>resumable,workbench:MANAGED_NATIVE_CAPABILITIES})
-  const item:NativeHistoryItem={key:encodeNativeHistoryKey(providerId,'original'),providerId,nativeId:'original',title:'Original task',titleSource:'native_custom',cwd:project,updatedAt:1,remote:false,observedState:'unknown'}
+  const item:NativeHistoryItem={key:encodeNativeHistoryKey(providerId,'original'),providerId,nativeId:'original',title:'Original task',titleSource:'native_custom',cwd:o.cwd??project,updatedAt:1,remote:false,observedState:'unknown'}
   // 按 cursor 分页(cursor = `c<起点>`),与真读取器一样从最早往新翻;两条消息的默认会话只有一页。
   let readGate:Promise<void>|null=null
   const read=vi.fn(async(_key:string,page:any)=>{
@@ -49,7 +50,7 @@ function fixture(o:{provider?:NativeHistoryProvider;messages?:NativeHistoryMessa
     nativeHistory:providerId==='codex'?{codex:reader}:{claude:reader},
     ...(o.matters===false?{}:{matters}),
     // nativeId 为 null 问的是「这个文件夹有没有人在用」;带 nativeId 问的是「这个会话有没有人在用」。
-    executionConflict:(_path,_provider,nativeId)=>nativeId===null?folderBusy:(folderBusy||sessionBusy),
+    executionConflict:(path,_provider,nativeId)=>{const busy=folderBusy||path===o.busyPath;return nativeId===null?busy:(busy||sessionBusy)},
     usage:id=>quotaOut&&id==='claude'?({providerId:'claude',plan:null,windows:[],exhausted:true,fetchedAt:Date.now()} as never):null})
   service=make()
   return {store,spawn,item,project,read,tailCursor,
@@ -443,5 +444,64 @@ describe('Task 2 fix round 1',()=>{
     expect(users).toHaveLength(2);expect(users[1]?.attachments?.map(a=>a.id)).toEqual([aid])
     await expect(service!.continueImported(taskId,'看附件',{inputRequestId:R,draftId,attachmentIds:[]},'owner')).rejects.toThrow('input_conflict')
     await service!.shutdown();service=undefined;void old.shutdown()
+  })
+})
+
+describe('cwd 是符号链接:共用导入规则先 realpath,之后一切比较与守卫只看解析后的真目录',()=>{
+  const R='5a7e0000-0000-4000-8000-0000000000aa'
+  // 链接的目标放在另一个临时目录:「指到外面去」的链接。Windows 上目录链接用 junction(不要管理员权限)。
+  let outside:string,links:string[]
+  beforeEach(()=>{outside=realpathSync(mkdtempSync(join(tmpdir(),'cc-native-outside-')));links=[]})
+  afterEach(()=>{for(const l of links.splice(0))try{removeLink(l)}catch{/* 已删 */};removeTempDir(outside)})
+  const link=(target:string,path:string)=>{symlinkSync(target,path,process.platform==='win32'?'junction':'dir');links.push(path);return path}
+  const setup=(o:{resumable?:boolean;busy?:boolean}={})=>{
+    const target=join(outside,'real-proj');mkdirSync(target)
+    const alias=link(target,join(dir,'proj-link'))
+    const f=fixture({cwd:alias,...(o.busy?{busyPath:target}:{})});if(o.resumable===false)f.resumable(false)
+    return {f,target,alias}
+  }
+
+  it('预览:能接;目录名是真目录的;记下的路径 ≠ 真路径 ⇒ 不恢复原会话,只带记录新开(即使执行者说能恢复)',async()=>{
+    const {f}=setup()
+    expect(await service!.previewNativeContinue(f.item.key)).toEqual({state:'ready',providerId:'claude',project:'real-proj',mode:'fresh_context',taskId:null})
+  })
+  it('「在用」的判断看真目录:CC 正占着链接指向的那个文件夹 ⇒ busy_folder',async()=>{
+    const {f}=setup({busy:true})
+    expect((await service!.previewNativeContinue(f.item.key)).state).toBe('busy_folder')
+    await expect(service!.adoptNativeSession(f.item.key)).rejects.toThrow('native_folder_busy')
+    expect(service!.list().tasks).toEqual([])
+  })
+  it('接成一件事:任务与 matter 用真目录,来源记下原样的 cwd;第一句在真目录里带记录新开',async()=>{
+    const {f,target,alias}=setup()
+    const {taskId}=await service!.adoptNativeSession(f.item.key)
+    expect(f.store.get(taskId).path).toBe(target)
+    expect(f.store.source(taskId)?.cwd).toBe(alias)
+    expect(matters.get(taskId)?.projectPath).toBe(target)
+    expect(await service!.previewNativeContinue(f.item.key)).toMatchObject({state:'managed',project:'real-proj',taskId})
+    await service!.continueImported(taskId,'接着改',{inputRequestId:R});await settled(taskId)
+    expect(f.spawn).toHaveBeenCalledTimes(1)
+    expect(f.spawn.mock.calls[0]?.[0].path).toBe(target)
+    expect(f.spawn.mock.calls[0]?.[1].resumeSessionId).toBeUndefined()
+  })
+  it('桌面导入同一条规则:prepareNativeResume 也不给恢复原会话(restart_confirmation_required)',async()=>{
+    const {f}=setup(),{taskId}=await service!.adoptNativeSession(f.item.key)
+    await expect(service!.prepareNativeResume(taskId,'native_resume')).rejects.toThrow('restart_confirmation_required')
+  })
+  it('导入之后链接被改指到别处 ⇒ 第一句 invalid_path,不起执行者、不记用户事件',async()=>{
+    const {f,alias}=setup(),{taskId}=await service!.adoptNativeSession(f.item.key),before=service!.detail(taskId).events.length
+    const elsewhere=join(outside,'elsewhere');mkdirSync(elsewhere)
+    removeLink(alias);link(elsewhere,alias)
+    await expect(service!.continueImported(taskId,'接着改',{inputRequestId:R})).rejects.toThrow('invalid_path')
+    expect(f.spawn).not.toHaveBeenCalled();expect(service!.detail(taskId).events).toHaveLength(before)
+  })
+  it('悬空链接(目标没了)⇒ folder_missing;接 ⇒ invalid_path,什么都不建',async()=>{
+    const {f,target}=setup();rmSync(target,{recursive:true})
+    expect(await service!.previewNativeContinue(f.item.key)).toMatchObject({state:'folder_missing',project:'proj-link',mode:null})
+    await expect(service!.adoptNativeSession(f.item.key)).rejects.toThrow('invalid_path')
+    expect(service!.list().tasks).toEqual([])
+  })
+  it('记下的路径就是真路径 ⇒ 照旧恢复原会话(不受影响)',async()=>{
+    const f=fixture()
+    expect((await service!.previewNativeContinue(f.item.key)).mode).toBe('native_resume')
   })
 })

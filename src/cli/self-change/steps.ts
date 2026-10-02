@@ -87,7 +87,7 @@ const REVIEW_MAX_TURNS = 100
  * 2026-09-21:以前这里就是干活的地方,所有自改共用一个目录 —— B 的 `repo` 步
  * (`checkout -B self/<id>` + `reset --hard`)会在 A 的树底下把文件换掉。
  */
-export function hubPath(config: SelfChangeConfig): string {
+export function hubPath(config: Pick<SelfChangeConfig, 'workdir'>): string {
   return join(config.workdir, 'repo')
 }
 
@@ -96,7 +96,7 @@ export function hubPath(config: SelfChangeConfig): string {
  *
  * 路径由 id 推出来(不进 state):恢复一条老自改时不需要盘上记过这一格。
  */
-export function runPath(config: SelfChangeConfig, id: string): string {
+export function runPath(config: Pick<SelfChangeConfig, 'workdir'>, id: string): string {
   return join(config.workdir, 'runs', id)
 }
 
@@ -244,10 +244,12 @@ async function intake(s: SelfChangeState, d: PipelineDeps): Promise<StepOutcome>
  * 一句 ENOENT;`refs/heads/self/<id>` 还在中枢里,但没有一条命令能把那轮花过钱的
  * 实现接回来(走 `repo` 步会重开分支,等于把它扔掉)。
  *
- * 代价是这些树会留在盘上(磁盘泄漏),这是**有意的取舍**:宁可占着盘,
- * 也不能把一轮已经付过钱的实现扫掉。回收它们的活记在 backlog 里。
+ * 代价是这些树会留在盘上,这是**有意的取舍**:宁可占着盘,也不能把一轮已经
+ * 付过钱的实现扫掉。回收它们走显式的那条路:主人 `self change --abandon <id>`
+ * (abandon.ts)把这条记成 `abandoned` 并当场删树 —— 那是第三种不可恢复的终局,
+ * 当场删失败的话,这里一天后顺手补删。
  */
-const SWEEPABLE_RESULTS: readonly string[] = ['done', 'declined']
+const SWEEPABLE_RESULTS: readonly string[] = ['done', 'declined', 'abandoned']
 
 /**
  * 顺手把老工作树扫掉。

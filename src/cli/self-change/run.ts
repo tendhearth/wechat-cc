@@ -113,6 +113,14 @@ export async function runSelfChange(
    *
    * 新起的一条停在 intake,由 intake 自己那道门挡(话说得更细,还带解除办法)。
    */
+  // 主人 `--abandon` 过的:这是他拍的终局,工作树已经删了。不跑、不存盘、不发通知,
+  // 原样退回 —— 下面那段「把上一次的结局清掉」会把它变回活的,所以必须排在最前面。
+  // (CLI 的 `--resume` 先挡一道,这里是第二道。)
+  if (s.result === 'abandoned') {
+    deps.log(`[self-change] #${s.id} 已作废(--abandon),不再恢复`)
+    return { state: s, exitCode: exitCodeFor(s.result) }
+  }
+
   const haltedAt = deps.config.haltedAt
   if (haltedAt && s.step !== 'intake') {
     const detail = `${new Date(haltedAt).toISOString()} 起停机:${deps.config.haltReason ?? '未记原因'} —— 停在 ${s.step} 的这条也不恢复(wechat-cc self change --unhalt 解除)`
