@@ -67,9 +67,15 @@ export function chatBubbles(msgs: ChatMessageT[], page: JobState, accepted: Acce
   return out
 }
 
-/** 发送成功后输入框该剩什么:还是发出去那句 ⇒ 清空;发送途中又改过 ⇒ 留着主人新打的字(Task 11 a)。 */
+/**
+ * 发送成功后输入框该剩什么(Task 11 a):只去掉发出去的那段。
+ * - 还是发出去那句 ⇒ 清空;
+ * - 发送途中接着往后打(仍以发出去那句开头)⇒ 去掉这段前缀和紧跟的空白,留下新打的字;
+ * - 改了发出去那句本身 ⇒ 原样留着,不猜哪些已经发过。
+ */
 export function textAfterSend(current: string, sent: string): string {
-  return current === sent ? '' : current
+  if (current === sent) return ''
+  return sent !== '' && current.startsWith(sent) ? current.slice(sent.length).trimStart() : current
 }
 
 /**

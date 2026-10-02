@@ -15,14 +15,16 @@ wechat-cc self change --resume 3f2a91bc                             # 接着跑(
 wechat-cc self change --unhalt                                      # 解除停机
 wechat-cc self change --approve 3f2a91bc                            # 在终端替它拍「放行」(微信卡没送到时)
 wechat-cc self change --deny 3f2a91bc                               # 在终端拍「拒绝」
+wechat-cc self change --abandon 3f2a91bc                            # 这条不接了:记成作废,删掉它的工作树
 ```
 
 | 开关 | 作用 |
 | --- | --- |
 | `<需求>`(位置参数) | 需求原文。新起一条时必填;`--resume` 时不要传(需求在存盘里) |
 | `--resume <id>` | 从存盘的 `step` 接着跑。id 来自 `--list`。没有这条 ⇒ 退 1 |
-| `--list` | 列最近 10 条:`id · 步骤 · 结果 · 起始时间`。`--json` 给数组 |
+| `--list` | 列最近 10 条:`id · 步骤 · 结果 · 起始时间 · 类别 · 工作树路径`。类别是 `在跑` / `被杀(没收场)` / `可 --resume` / `已收场` / `已作废`;树已经回收的写「工作树已回收」;末尾汇总还占着盘、又没人在跑的树有几棵。`--json` 给数组(多 `kind` / `tree` 两格,`kind` 取 `running` / `killed` / `resumable` / `settled` / `abandoned`,`tree` 没有就是 `null`) |
 | `--unhalt` | 清 `halted_at` / `halt_reason`,`fail_streak` 归零(见「停机」) |
+| `--abandon <id>` | 「这条我不接了」:记成 `abandoned`、当场删它的工作树,之后 `--resume` 一律拒绝。正在跑的那条拒绝(退 1)。和别的开关互斥。见「工作树回收与 `--abandon`」 |
 | `--approve <id>` / `--deny <id>` | 替停在 `approval` 的那条拍板(和微信「y / n」、桌面权限卡是同一个 consume)。和 `<需求>` / `--resume` / `--list` / `--unhalt` 互斥。拍成了退 0,hash 过期或已被拍过退 1。见「微信不通时怎么拍板」 |
 | `--from cli\|wechat` | 进件口,缺省 `cli`。daemon 从微信接单时传 `wechat`,只进存盘、不改行为 |
 | `--budget-usd N` | 这一条的**实现**预算上限,美元。覆盖 `self_change.implement_budget_usd` |
@@ -53,7 +55,29 @@ intake ─► repo ─► implement ─► guard ─► tests ─► review ─�
 
 门**不是「收场了没」**:`approval_timeout` / `ci_unavailable` / `merge_conflict` / `tests_exhausted` / `deploy_failed` 都有结局,但它们全是 `--resume` 能接着跑的。而 `--resume` 是从 `state.step` 起步的,只有 `deploy` 会重开工作树 —— 扫掉一条停在 `approval` 的树,`--resume` 的第一条 git 就在一个不存在的目录里 spawn,拿到的只是一句 ENOENT;`refs/heads/self/<id>` 还在中枢里,但没有一条命令能把那轮花过钱的实现接回来(走 `repo` 步会重开分支,等于把它扔掉)。所以只有 `done`(装上去了)和 `declined`(主人回了 n)这两种**不可恢复的终局**能扫。
 
-代价是别的失败码的树会留在盘上(磁盘泄漏),这是**有意的取舍**:宁可占着盘,也不能把一轮付过钱的实现扫掉;回收它们的活记在 backlog 里。清理失败只记一笔,绝不把新的一条判红。
+代价是别的失败码的树会留在盘上,这是**有意的取舍**:宁可占着盘,也不能把一轮付过钱的实现扫掉。回收它们要人说了算 —— 见下一节的 `--abandon`。清理失败只记一笔,绝不把新的一条判红。
+
+## 工作树回收与 `--abandon`
+
+顺手清理只扫 `done` / `declined`(以及下面的 `abandoned`),于是能 `--resume` 的失败和被 kill 的运行(`result` 永远是 `null`)的树不会自己消失。先看哪些还占着盘:
+
+```bash
+wechat-cc self change --list
+# 3f2a91bc · tests · 进行中 · 2026-09-30T… · 被杀(没收场) · ~/Library/Caches/wechat-cc/self-change/runs/3f2a91bc
+# 7c01d2aa · approval · approval_timeout · 2026-09-29T… · 可 --resume · ~/Library/Caches/…/runs/7c01d2aa
+#
+# 占着盘的工作树 2 棵(不在跑);不接了就 wechat-cc self change --abandon <id>
+```
+
+不接了就 `--abandon <id>`(`src/cli/self-change/abandon.ts`):
+
+* **记成 `abandoned`。** 这是第三种不可恢复的终局(和 `done` / `declined` 并列)。原来的步和结局写进 `error`(「主人作废:原来停在 tests,结局 …」),`step` 不动。之后 `--resume` 在 CLI 就被挡下(`self_change_abandoned`,退 1),`runSelfChange` 里还有第二道:作废的那条原样退回,不跑、不存盘、不发通知。`--resume` 在拿到锁之后会再从盘上读一遍,等锁期间刚被作废的也挡得住。
+* **删树和顺手清理完全一样**:中枢里 `worktree prune`,再 `worktree remove --force <workdir>/runs/<id>`。**分支 `self/<id>` 不删**(顺手清理也不删)—— 提交还留在中枢克隆里,话里会给出真要扔时的 `branch -D` 命令。远端如果推过 `self/<id>`(过了 CI 那一步),同样留着。
+* **正在跑的那条绝不能作废**(等于从它脚底下把树抽走)。「在跑」认的是「一次只跑一条」那把锁:锁文件现在除了 pid 还记着**在跑哪条**(`runId`)。`--abandon` 先去拿这把锁 —— 拿到了就在锁里作废(和 `--resume` 互斥);拿不到就看锁里的 `runId`:是这条 ⇒ 拒绝(`self_change_running`,话里带 pid);是别的一条 ⇒ 照样作废(这条要恢复也得先拿到那把锁,拿不到);老格式的锁没记 `runId`、分不清 ⇒ 宁可拒绝。被杀掉的那条锁里的 pid 已经死了,锁当没人持有,所以作废得了。
+* **幂等。** 已经作废过的再来一次:存盘不动,树还在就再删一次,退 0。`done` / `declined` 的也能 `--abandon`:结局**不改**,只把树提前回收(不用等 24 小时)。
+* **删树失败**(中枢克隆不在了、`worktree remove` 报错)⇒ 存盘照样记成作废,退 1(`self_change_reclaim_failed`),话里给出原文和「再跑一次 `--abandon <id>`」;不重跑的话,下一条自改的顺手清理在 24 小时后也会补删(`abandoned` 也在可扫的终局里)。
+
+停在 `approval` 的那条如果进程还活着(在轮询),它持着锁,作废不了;要么先结束那个进程再作废,要么直接在微信 / 桌面 / `--deny` 拍「拒绝」(那就是 `declined`)。
 
 **回滚之后盘上写的是「现在跑的是什么」。** 自检红、二进制换回 `.prev` ⇒ `deploy.ok=false`、`deploy.version=null`、`deploy.rolledBack=true`,并且**步退回 `deploy`**。老代码把步留在 `selftest`、`deploy.ok` 还留着 `true`,`--resume` 于是对着那个已经被换回去的旧二进制再跑一遍自检 —— 旧的当然绿,报告就写「部署:绿」、`fail_streak` 清零,而机器上根本没有这条改动(审查 #8)。恢复一条收在 `deploy_failed` / `selftest_failed_rolled_back` 的,一律重新构建、重新部署、再自检。
 
@@ -180,9 +204,9 @@ wechat-cc self change --unhalt     # 清 halted_at / halt_reason,fail_streak 归
 | 东西 | 位置 |
 | --- | --- |
 | 每条自改的存盘 | `$STATE_DIR/self-change/<id>.json`(缺省 `~/.claude/channels/wechat/self-change/`,0600 —— 里面有需求原文和会话 id) |
-| 「一次只跑一条」的锁 | `$STATE_DIR/self-change/lock`(写着持有者 pid;持有者死了会被下一条抢过来) |
+| 「一次只跑一条」的锁 | `$STATE_DIR/self-change/lock`(写着持有者 pid 和在跑哪条 `runId`;持有者死了会被下一条抢过来) |
 | 中枢克隆(只 fetch / 管工作树) | `<workdir>/repo`,缺省 `~/Library/Caches/wechat-cc/self-change/repo` |
-| 每条运行自己的工作树 | `<workdir>/runs/<id>`(终局满 24 小时后由下一条运行顺手删) |
+| 每条运行自己的工作树 | `<workdir>/runs/<id>`(`done` / `declined` / `abandoned` 满 24 小时后由下一条运行顺手删;`--abandon <id>` 当场删) |
 | 给执行者的那份交代 | `<workdir>/briefs/<id>.md` |
 
 这些**刻意不在 `STATE_DIR` 下面**:执行者在 `--dangerously-skip-permissions` 下跑,不能离 `access.json` 和钥匙只有一个 `..`;也不在 tmpdir(中枢克隆要跨次复用,不能被系统清掉)。
@@ -202,7 +226,8 @@ daemon 收到之后 spawn 一个 detached 的 `wechat-cc self change --from wech
 
 ## 已知限制
 
-- **工作树只回收两种终局:`done` 与 `declined`。** 其余的终局——`approval_timeout` / `ci_unavailable` / `merge_conflict` / `tests_exhausted` / `deploy_failed`,这些都还能 `--resume` 接着跑——以及压根没跑完就被杀掉的运行(`result` 永远是 `null`,比如进程被强杀、机器意外重启),它们的 `runs/<id>` 目前**永不回收**,磁盘随运行次数单调增长(`bun install` 的 `node_modules` 是 CoW 链接,占块不大,但目录数只增不减)。这是有意的取舍:宁可占着盘,也不能把一轮已经花过钱的实现扫掉;回收它们缺一个显式的"这条我不接了"的入口(比如一条主动作废某条运行的命令),目前还没有做。
+- **可恢复的和被杀的运行不会自动回收。** 顺手清理只扫 `done` / `declined` / `abandoned`;别的终局和被杀掉的运行要人用 `--abandon <id>` 明说不接了(见「工作树回收与 `--abandon`」)。没人去作废的话,它们的 `runs/<id>` 照样一直留着 —— 宁可占着盘,也不自动把一轮付过钱的实现扫掉。
+- **微信里没有作废口。** 「自改」只有下单和「状态」两个动作。加一个「自改 作废 <id>」要 daemon 再起一个子进程跑 `--abandon` 并把结果回给主人 —— 不算难,但作废会删掉一轮付过钱的实现,而微信那头看不到 `--list` 的类别和树路径,这次先只在终端做。要做的话:`self-change-spawn.ts` 起 `self change --abandon <id> --json`、按 `code` 回话即可。
 - **rebase 之后不重跑 CI。** 合入前会 `git rebase origin/dev`,动了 HEAD 也不重跑 —— `dev` 上并发提交少,重跑要主人再等一轮。代价是 `ci_sha ≠ merge_sha`,报告里会单独说一句。
 - **一次只跑一条。** 第二条进来直接 `self_change_busy` 退 2。
 - **只支持 macOS。** 最后两步踩的是 launchd(`self deploy`)和真机自检,其他平台在第一行就退 2。

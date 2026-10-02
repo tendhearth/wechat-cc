@@ -9,7 +9,7 @@ import { framedTooLarge } from './mobile-matter-response'
  * scripts/phone-routes.guard.test.ts 扫描,新增 / 改名要同步 PHONE_ROUTES 与 PHONE_API_SCHEMAS。
  *
  * - GET 只读(Ruling 3):`owner()` 只查主人那条 chat matter,不建、不登记露面。
- * - say 收下即回:`chat.say` 抛 'no_owner_chat' | 'chat_busy';回复由接线方给的
+ * - say 收下即回:`chat.say` 抛 'no_owner_chat' | 'chat_busy' | 'input_conflict';回复由接线方给的
  *   converse(companionConverse —— 与微信 / 桌面同一条回合串行入口)在后台跑。
  * - 正文不进日志。
  */
@@ -126,6 +126,7 @@ export async function mobileChatRoute(deps: MobileChatDeps | undefined, url: URL
     } catch (e) {
       const m = e instanceof Error ? e.message : ''
       if (m === 'chat_busy') return err('chat_busy', 409)
+      if (m === 'input_conflict') return err('input_conflict', 409)
       if (m === 'no_owner_chat') return err('no_owner_chat', 404)
       // Ruling 7:内部意外按「暂时不可用」回 503(手机映射成 unavailable),不是 500。
       return err('unavailable', 503)

@@ -757,3 +757,8 @@ it('creates durable resumable upload state without rewriting legacy material',()
   const db=openTestDb()
   try{expect(db.query('SELECT * FROM workbench_attachment_uploads').all()).toEqual([])}finally{db.close()}
 })
+
+it('v70 creates the chat-matter say receipts table empty (phone requestId dedupe)',()=>{
+  const db=openTestDb()
+  try{expect(db.query('SELECT * FROM matter_say_receipts').all()).toEqual([])}finally{db.close()}
+})
