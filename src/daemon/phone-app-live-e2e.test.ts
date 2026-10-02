@@ -425,7 +425,24 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
     await release(task)
   })
 
-  it('对微信聊天那件事说一句「不确定」后同一 requestId 重发 ⇒ daemon 按回执去重:只说一遍、拿回原来的回复;同 id 异文 ⇒ busy', async () => {
+  it('运行中的手机补充携带 runId ⇒ 真 daemon 排队并回回执;重复同文仍同一条,冲突可区分', async () => {
+    const b = live()
+    const task = createTask('live-supplement')
+    await expect.poll(async () => (await b.matter(task.id, 'en')).runId, P).toBeTruthy()
+    const detail = await b.matter(task.id, 'en')
+    expect(detail.inputMode).toBe('queue')
+    const requestId = randomUUID()
+    const result = await b.say(task.id, '**补充这一轮**', requestId, { runId: detail.runId! })
+    expect(result).toMatchObject({ kind: 'task', input: { id: requestId, taskId: task.id, runId: detail.runId, text: '**补充这一轮**', status: 'pending' } })
+    expect(await b.say(task.id, '**补充这一轮**', requestId, { runId: detail.runId! })).toMatchObject({ kind: 'task', input: { id: requestId, status: 'pending' } })
+    await expect(b.say(task.id, '不同的要求', requestId, { runId: detail.runId! })).rejects.toMatchObject({ code: 'input_conflict' })
+    const fresh = await b.matter(task.id, 'en')
+    expect(fresh.inputs.filter(input => input.id === requestId)).toHaveLength(1)
+    expect(fresh.inputs[0]).toMatchObject({ text: '**补充这一轮**', status: 'pending' })
+    await release(task)
+  })
+
+  it('对微信聊天那件事说一句「不确定」后同一 requestId 重发 ⇒ daemon 按回执去重:只说一遍、拿回原来的回复;同 id 异文 ⇒ input_conflict', async () => {
     const chat = matters.ensureChat('owner')
     const b = live(deviceToken, 400)
     const rid = randomUUID()
@@ -436,7 +453,7 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
     await expect.poll(async () => (await messages.listRange('owner', { limit: 10 })).at(-1)?.text, P).toBe('听到了')
     // 「不确定」之后用同一个 requestId 重发:成功、不起第二轮
     await b.say(chat.id, '只说一次', rid)
-    await expect(b.say(chat.id, '换了一句', rid)).rejects.toMatchObject({ code: 'busy' })   // input_conflict
+    await expect(b.say(chat.id, '换了一句', rid)).rejects.toMatchObject({ code: 'input_conflict' })
     await new Promise(r => setTimeout(r, 100))
     expect(conversed).toEqual(['只说一次'])
     // 换一个 requestId 才是新的一句

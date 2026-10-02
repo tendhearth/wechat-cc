@@ -2,15 +2,20 @@ import { useEffect, useRef, useState } from 'react'
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router'
 import { Modal, Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import type { MatterInputT } from '../../backend/types'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
 import { useBackendCtx } from '../../state/BackendProvider'
 import { useConnection, useQuery, useSubmit, useTopic } from '../../state/hooks'
+import { getDraft, setDraft } from '../../state/drafts'
+import { useMatterInputs } from '../../state/useMatterInputs'
+import type { InputSnapshot } from '../../state/matter-inputs'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { Dot } from '../../ui/Dot'
 import { MessageText } from '../../ui/Markdown'
+import { InputReceipts } from '../../ui/InputReceipts'
 import { SayBar } from '../../ui/SayBar'
 import { Sheet } from '../../ui/Sheet'
 import { StatusPill } from '../../ui/StatusPill'
@@ -25,6 +30,9 @@ import { canSubmit } from '../../view/connection'
 import { HANDOFF_RECHECK, handoffBlock, handoffErrorDot, handoffErrorText, handoffSheetLines } from '../../view/handoff'
 import { uuid } from '../../net/uuid'
 import { progressView } from '../../view/progress'
+import { inputRows } from '../../view/matter-input'
+
+const NO_INPUTS: readonly MatterInputT[] = []
 
 // 进展页:状态标签在「CC 的进展」概括之上;概括没到时用骨架占位;下面是这件事的真对话。
 // 主人自己那条聊天(只认它,Ruling 9)改道去 /chat;访客的聊天照常显示。
@@ -37,6 +45,8 @@ export default function Matter() {
   const id = Array.isArray(params.id) ? params.id[0] : params.id
   // 打开就拉新:有缓存也重拉详情与概括(旧缓存先摆着,拿到新的再换)。
   const detail = useQuery(`matter:${id}`, l => backend.matter(id, l), { refreshOnMount: true })
+  const localInputs = useMatterInputs(id, detail.data?.inputs ?? NO_INPUTS)
+  const inputReceipts = inputRows(detail.data?.inputs ?? NO_INPUTS, localInputs)
   const insight = useQuery(`insight:${id}`, l => backend.insight(id, l), { refreshOnMount: true })
   const changes = useQuery(`changes:${id}`, () => backend.changes(id))
   const isChat = detail.data?.matter.kind === 'chat'
@@ -52,10 +62,11 @@ export default function Matter() {
   const [sheet, setSheet] = useState(false)
   const [sending, setSending] = useState(false)
   const [failure, setFailure] = useState<{ text: string; dot: 'bad' | 'warn' | 'unknown' } | null>(null)
+  const [inputNotice, setInputNotice] = useState<string | null>(null)
   const handoffReq = useRef('')
   const idRef = useRef(id)
   idRef.current = id
-  useEffect(() => { setSheet(false); setFailure(null) }, [id])
+  useEffect(() => { setSheet(false); setFailure(null); setInputNotice(null) }, [id])
   const { refresh: refreshDetail } = detail
   const { refresh: refreshInsight } = insight
   const { refresh: refreshChanges } = changes
@@ -110,6 +121,12 @@ export default function Matter() {
     const code = r === 'ok' ? 'unknown' : r.error
     setFailure({ text: handoffErrorText(code, lang), dot: handoffErrorDot(code) })
     if (HANDOFF_RECHECK.has(code)) void refreshDetail()
+  }
+  const restoreInput = (row: InputSnapshot) => {
+    const draft = getDraft(id)
+    if (draft.trim() && draft !== row.rawText) { setInputNotice(t(lang, 'input.draftProtected')); return }
+    setDraft(id, row.rawText)
+    router.push(`/compose?matter=${encodeURIComponent(id)}`)
   }
   const failureRow = failure ? (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
@@ -186,6 +203,8 @@ export default function Matter() {
           )}
         </Card>
 
+        {inputReceipts.length ? <InputReceipts rows={inputReceipts} onRestore={restoreInput} /> : null}
+        {inputNotice ? <Txt role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{inputNotice}</Txt> : null}
         {v.pendingCount > 0 ? (
           <Button kind="primary" testID="progress-view-approval" label={t(lang, 'progress.viewApproval')} onPress={() => router.push(`/approval/${encodeURIComponent(d.task?.id ?? id)}`)} />
         ) : null}

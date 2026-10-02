@@ -105,6 +105,19 @@ describe('LiveBackend 读', () => {
 })
 
 describe('LiveBackend 提交', () => {
+  it('运行中补充带固定 runId,返回执行者的真实回执,旧聊天三参数调用仍兼容', async () => {
+    const input = { id: SAY_REQ, taskId: ID, runId: RUN, text: '**补充**', status: 'pending' }
+    const { b, reqs } = harness({ 'POST /m/api/matter/say': ({ body }) => body.runId ? ok({ ok: true, result: { kind: 'task', task: WB_TASK, input } }) : ok({ ok: true, result: { kind: 'chat', reply: 'reply' } }) })
+    expect(await b.say(ID, '**补充**', SAY_REQ, { runId: RUN })).toMatchObject({ kind: 'task', task: { id: ID, status: 'queued' }, input })
+    expect(reqs[0]).toMatchObject({ body: { id: ID, runId: RUN, text: '**补充**', requestId: SAY_REQ }, retry: true })
+    expect(reqs[0]!.body).not.toHaveProperty('mode')
+    expect(await b.say(ID, 'hi', SAY_REQ2)).toEqual({ kind: 'chat', reply: 'reply' })
+    expect(reqs[1]!.body).not.toHaveProperty('runId')
+  })
+  it.each(['input_stale', 'input_conflict'])('补充 %s 不是普通 busy,页面能如实区分', async code => {
+    const { b } = harness({ 'POST /m/api/matter/say': ok({ ok: false, error: code }, 409) })
+    await expect(b.say(ID, 'go', SAY_REQ, { runId: RUN })).rejects.toMatchObject({ code })
+  })
   it('批准:正文形状对、不自动重试;已被处理 ⇒ stale', async () => {
     let n = 0
     const { b, reqs } = harness({ 'POST /m/api/matter/permission': () => (n++ === 0 ? ok({ ok: true }) : ok({ ok: false, error: 'permission_stale' }, 409)) })

@@ -1,8 +1,8 @@
 import type { BackendCode } from '../backend/types'
 
-const STALE = new Set(['permission_stale', 'question_stale', 'input_stale'])
-/** daemon 的 409:这件事这一轮还在跑 / 上一条补充还没交付 / 会话正在回话 / 同一个请求 id 撞上不同内容。都是「等这一轮做完再说」。 */
-const BUSY = new Set(['workbench_busy', 'input_delivery_busy', 'reply_sink_busy', 'input_conflict', 'chat_busy'])
+const STALE = new Set(['permission_stale', 'question_stale'])
+/** daemon 的 409:这件事这一轮还在跑 / 上一条补充还没交付 / 会话正在回话。请求内容冲突另说,不能当排队。 */
+const BUSY = new Set(['workbench_busy', 'input_delivery_busy', 'reply_sink_busy', 'chat_busy'])
 /** 找不到:事项不在 / 还没有主人那条对话(页面当空对话)/ 原生会话读不了。 */
 const NOT_FOUND = new Set(['matter_not_found', 'no_owner_chat', 'unsupported'])
 /** daemon 这一块没接上(503):推送 / 跟 CC 说 / 连接 / 原生会话。 */
@@ -11,6 +11,7 @@ const UNAVAILABLE = new Set(['push_not_wired', 'chat_not_wired', 'connections_no
  *  必须在 `invalid_` 前缀规则之前判(invalid_path ⇒ folder_missing)。后三个(裁决 R5):会话刚变(可重问预览再接)、
  *  没内容可带、已经接过了(不是错:页面重问预览、打开那件事)。 */
 const SPECIFIC: ReadonlyMap<string, BackendCode> = new Map<string, BackendCode>([
+  ['input_stale', 'input_stale'], ['input_conflict', 'input_conflict'],
   ['native_session_busy', 'session_busy'], ['native_folder_busy', 'folder_busy'],
   ['unavailable_provider', 'provider_missing'], ['invalid_path', 'folder_missing'], ['provider_quota_exhausted', 'quota'],
   ['native_history_changed', 'session_changed'], ['native_history_empty', 'session_empty'], ['native_session_already_managed', 'session_managed'],

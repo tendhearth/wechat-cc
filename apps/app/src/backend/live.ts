@@ -21,6 +21,7 @@ import {
   type ApprovalExplanationT, type Backend, type Connection, type DeviceRowT, type EntryOptionsT,
   type MatterDetailT, type MatterT, type PhoneChangesTurnT, type ProgressSummaryT, type Unsubscribe,
   type ChatPageT, type ChatJobT, type ConnectionsT, type NativeSessionRowT, type NativeSessionPageT, type SessionContinueT,
+  type MatterSayResultT,
 } from './types'
 
 type Topic = Parameters<Backend['subscribe']>[0]
@@ -253,9 +254,9 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       if (p.answers !== null && JSON.stringify(p.answers).length > PHONE_ANSWER_MAX_JSON) throw new BackendError('invalid')
       await call('POST /m/api/matter/answer', '/m/api/matter/answer', { body: { id: p.id, runId: p.runId, requestId: p.requestId, answers: p.answers } })
     },
-    async say(id, text, requestId) {
+    async say(id, text, requestId, options) {
       if (text.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
-      await call('POST /m/api/matter/say', '/m/api/matter/say', { body: { id, text, requestId }, retry: true })
+      return (await call<{ ok: true; result: MatterSayResultT }>('POST /m/api/matter/say', '/m/api/matter/say', { body: { id, text, requestId, ...(options?.runId ? { runId: options.runId } : {}) }, retry: true })).result
     },
     async entryOptions() {
       return strip(await call<{ ok: true } & EntryOptionsT>('GET /m/api/entry/options', '/m/api/entry/options'))
