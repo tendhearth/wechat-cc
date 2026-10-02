@@ -323,6 +323,8 @@ export function runSourceAdapter(opts: {
   const { decryptedDir, store } = opts
   const batchSize = opts.batch && opts.batch > 0 ? opts.batch : DEFAULT_BATCH
   let ingested = 0
+  let failedDbs = 0
+  let readDbs = 0
 
   ingestContacts(decryptedDir, store)
 
@@ -337,6 +339,7 @@ export function runSourceAdapter(opts: {
       db = openSqlite(`file:${dbPath}?mode=ro&immutable=1`, IMMUTABLE_RO)
     } catch (err) {
       console.error(`[source-adapter] skipping unreadable db ${dbFile}:`, err)
+      failedDbs++
       continue
     }
 
@@ -456,16 +459,23 @@ export function runSourceAdapter(opts: {
           flush(lastRow.local_id)
         }
       }
+      readDbs++
     } catch (err) {
       // Corrupt/garbage db content discovered mid-read (e.g. sqlite_master
       // is readable but a table scan then fails). Whatever batches already
       // flushed for this db stay ingested (accumulated in `ingested`); skip
       // the rest of this db and move on rather than aborting the whole run.
       console.error(`[source-adapter] skipping db ${dbFile} after error mid-processing:`, err)
+      failedDbs++
     } finally {
       db.close()
     }
   }
 
+  // 只有一轮干净跑完才记同步时间(「CC 的连接」据此判知识库新旧;读不了的库不能算同步过)。
+  // 且至少真读过一个库(空目录 / 目录不存在不算同步)。打戳失败不能拖垮同步。
+  if (failedDbs === 0 && readDbs > 0) {
+    try { store.markSynced() } catch (err) { console.error('[source-adapter] markSynced failed:', err) }
+  }
   return { ingested }
 }

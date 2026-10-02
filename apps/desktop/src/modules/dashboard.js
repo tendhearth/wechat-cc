@@ -1,10 +1,10 @@
-// Dashboard module. Owns the overview pane: daemon hero, bound-accounts
+// Dashboard module. Owns the settings drawer's 连接 section: connection verdict (hero), bound-accounts
 // table (incl. inline two-step delete confirm), footer pid indicator,
 // and the smart restart-daemon button.
 //
 // Owns: #hero-card, #hero-headline, #hero-meta, #accounts-body,
 //       #accounts-meta, #dash-pending, #dash-restart,
-//       #dash-refresh, #dash-rail-clock (rail-foot wall clock)
+//       #dash-refresh
 // Subscribes to: doctorPoller (renderDashboard + renderRestartButton fire
 // on every successful poll automatically).
 
@@ -25,65 +25,9 @@ function serviceChoicesMarkup(current) {
     `<button class="${p === current ? "provider-menu-active" : ""}" data-provider="${escapeHtml(p)}">${escapeHtml(PROVIDER_LABELS[p] || p)}<small>${p === current ? "当前使用" : "切换使用"}</small></button>`
   ).join("") + `<p class="service-menu-note">已配置不代表已验证回复。</p><button type="button" data-action="connect-ai">＋ 连接其他 AI 服务</button>`
 }
-const COMPANION_HERO_COPIES = [
-  { headline: "此刻，陪你一起看鱼", meta: "把鼠标轻轻移进鱼缸，看看谁会先回应你" },
-  { headline: "给忙碌留一小片水光", meta: "在这里慢慢游一会儿，也没关系" },
-  { headline: "小鱼们正在等你靠近", meta: "把鼠标轻轻移进水面，看看谁先回应你" },
-  { headline: "有小鱼陪着，慢一点也没关系", meta: "点一点水草，或向 CC 打声招呼" },
-  { headline: "这里有一缸安静的陪伴", meta: "留一点时间给自己，也留一点给小鱼" },
-]
-let companionHeroCopy = null
-
-function saveCompanionHeroIndex(index) {
-  try { globalThis.localStorage?.setItem("wechat-cc.companion-hero-copy", String(index)) } catch {}
-}
-
-function currentCompanionHeroCopy() {
-  if (companionHeroCopy) return companionHeroCopy
-  let previousIndex = -1
-  try {
-    previousIndex = Number.parseInt(globalThis.localStorage?.getItem("wechat-cc.companion-hero-copy") || "-1", 10)
-  } catch {}
-  const nextIndex = Number.isInteger(previousIndex) && previousIndex >= 0
-    ? (previousIndex + 1) % COMPANION_HERO_COPIES.length
-    : 0
-  companionHeroCopy = COMPANION_HERO_COPIES[nextIndex]
-  saveCompanionHeroIndex(nextIndex)
-  return companionHeroCopy
-}
-
-// Called only when the user returns to the overview pane. Doctor-poll
-// rerenders deliberately keep the same copy so the title never flickers.
-export function advanceCompanionHeroCopy() {
-  const activeIndex = companionHeroCopy ? COMPANION_HERO_COPIES.indexOf(companionHeroCopy) : -1
-  const nextIndex = (activeIndex + 1 + COMPANION_HERO_COPIES.length) % COMPANION_HERO_COPIES.length
-  companionHeroCopy = COMPANION_HERO_COPIES[nextIndex]
-  saveCompanionHeroIndex(nextIndex)
-}
-
-function renderHeroHeadline(element, headline, fishable = false) {
-  if (!element) return
-  // Tests and non-browser contexts intentionally keep a plain text fallback.
-  if (!fishable || typeof document.createTextNode !== "function") {
-    element.textContent = headline
-    element.removeAttribute?.("aria-label")
-    return
-  }
-  element.textContent = ""
-  element.setAttribute("aria-label", headline)
-  let fishIndex = 0
-  for (const character of Array.from(headline)) {
-    const letter = document.createElement("span")
-    const canBecomeFish = /\p{Script=Han}/u.test(character)
-    letter.className = canBecomeFish ? "hero-letter" : "hero-letter-mark"
-    if (canBecomeFish) {
-      letter.dataset.fish = String(fishIndex % 3)
-      fishIndex += 1
-    }
-    letter.setAttribute("aria-hidden", "true")
-    letter.textContent = character
-    element.appendChild(letter)
-  }
+// 连接结论(设置抽屉「连接」段顶上那两行)。鱼缸画布 2026-10-01 退休后不再轮换暖场文案,只说事实。
+function renderHeroHeadline(element, headline) {
+  if (element) element.textContent = headline
 }
 
 export function renderDashboard(report) {
@@ -94,16 +38,11 @@ export function renderDashboard(report) {
     expiredCount,
     lastProbe: _lastProbe,
   })
-  const reconnectingHero = reconnectHero(baseHero)
-  // Connection health always wins. Only a confirmed, healthy connection gets
-  // the rotating warm copy, and it stays stable during the five-second polls.
-  const hero = reconnectingHero.state === "connected"
-    ? { ...reconnectingHero, ...currentCompanionHeroCopy() }
-    : reconnectingHero
+  const hero = reconnectHero(baseHero)
   const card = document.getElementById("hero-card")
   if (!card) return
   card.classList.toggle("warn", hero.tone !== "ok")
-  renderHeroHeadline(document.getElementById("hero-headline"), hero.headline, hero.state === "connected")
+  renderHeroHeadline(document.getElementById("hero-headline"), hero.headline)
   document.getElementById("hero-meta").textContent = hero.meta
   const stopBtn = document.getElementById("dash-stop")
   const restartBtn = document.getElementById("dash-restart")
@@ -141,7 +80,6 @@ export function renderDashboard(report) {
   if (!hasOpenConfirm && current) {
     if (!currentRow) {
       current.innerHTML = `
-        <div class="user-avatar avatar-admin">?</div>
         <div class="user-copy">
           <div class="user-name">还没有连接用户</div>
           <div class="user-sub">打开设置添加微信账号</div>
@@ -162,7 +100,6 @@ export function renderDashboard(report) {
           ? `连接正常 · 上次活动 ${formatRelativeTime(hb)}`
           : "已连接"
       current.innerHTML = `
-        <div class="user-avatar avatar-admin">${avatarSvg("admin", currentRow.name)}</div>
         <div class="user-copy">
           <div class="user-name">${escapeHtml(currentRow.name)} <span class="role-pill">管理员</span></div>
           <div class="user-sub">微信私聊，${currentSub}</div>
@@ -189,7 +126,7 @@ export function renderDashboard(report) {
         </button>
       `
     } else {
-      tbody.innerHTML = subRows.map((row, index) => {
+      tbody.innerHTML = subRows.map((row) => {
       const expEntry = expiredById[row.id]
       // Active: honest "已连接" — daemon has no last-active heartbeat for
       // real accounts, so we don't fake a last-active time.
@@ -211,7 +148,6 @@ export function renderDashboard(report) {
       return `
         <div class="sub-user-card" data-bot-id="${escapeHtml(row.id)}" data-chat-id="${escapeHtml(chatId)}" data-current-provider="${escapeHtml(currentProvider)}" data-name="${escapeHtml(row.name)}">
           <button class="card-menu" aria-haspopup="true" aria-label="选择 Agent">${icon("more-horizontal", { size: 18 })}</button>
-          <div class="user-avatar">${avatarSvg(row.avatar ?? index, row.name)}</div>
           <div class="user-copy">
             <div class="user-name">${escapeHtml(row.name)}</div>
             <div class="user-sub">${escapeHtml(expCell)}</div>
@@ -244,27 +180,6 @@ function providerFromMode(mode) {
   if (Array.isArray(mode.providers)) return mode.providers[0] || null
   if (Array.isArray(mode.participants)) return mode.participants[0] || null
   return null
-}
-
-const AVATAR_LINE_ICONS = [
-  `<path d="M24 33c-5 0-9-4-9-10s4-10 9-10 9 4 9 10-4 10-9 10Z"/><path d="M18 21c3-1 5-3 6-6 2 3 4 5 7 6"/><path d="M20 25h.1M28 25h.1"/><path d="M21 29c2 1 4 1 6 0"/>`,
-  `<path d="M24 12l3.6 7.1 7.9 1.2-5.7 5.6 1.3 7.9L24 30l-7.1 3.8 1.3-7.9-5.7-5.6 7.9-1.2L24 12Z"/><path d="M18 16l-1.5-3M31 17l2-2.3M34 29l3 1.1M13 29l-3 1.2"/>`,
-  `<path d="M16 20l-2-6 6 3M32 20l2-6-6 3"/><path d="M16 22c0-5 4-8 8-8s8 3 8 8v4c0 5-4 8-8 8s-8-3-8-8v-4Z"/><path d="M20 24h.1M28 24h.1M24 27v2M20 30c2 2 6 2 8 0"/>`,
-  `<rect x="15" y="17" width="18" height="15" rx="5"/><path d="M24 17v-5M20 12h8"/><path d="M20 24h.1M28 24h.1"/><path d="M20 29h8"/><path d="M12 24h3M33 24h3"/>`,
-  `<path d="M16 19h16c1 0 2 1 2 2v8c0 3-3 5-10 5s-10-2-10-5v-8c0-1 1-2 2-2Z"/><path d="M16 19c2-4 14-4 16 0"/><path d="M20 27c3-3 6-3 9 0-3 3-6 3-9 0Z"/><path d="M29 27l3-2v4l-3-2Z"/><path d="M19 15c0-2 2-3 5-3s5 1 5 3"/>`,
-  `<path d="M16 30h17c3 0 5-2 5-5s-2-5-5-5c-1-5-5-8-10-8-6 0-10 4-10 10-3 1-5 3-5 6s3 5 8 5"/><path d="M20 25h.1M28 25h.1"/><path d="M22 29c2 1 4 1 6 0"/><path d="M34 13l1.4-2.4M37 17l2.6-.7"/>`,
-]
-
-// Hand-drawn default avatars. Real WeChat avatars can replace this later,
-// but the fallback should already match the current illustrated UI.
-function avatarSvg(seed, label) {
-  const seedNum = Number(seed)
-  const index = String(seed) === "admin"
-    ? 0
-    : Number.isFinite(seedNum)
-      ? Math.abs(Math.trunc(seedNum)) % AVATAR_LINE_ICONS.length
-      : Math.abs(String(label || seed).split("").reduce((h, ch) => ((h * 31 + ch.charCodeAt(0)) | 0), 7)) % AVATAR_LINE_ICONS.length
-  return `<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="22.5" fill="#f8f4ea" stroke="#ebe1d2" stroke-width="1"/><g fill="none" stroke="#593F2C" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">${AVATAR_LINE_ICONS[index]}</g></svg>`
 }
 
 // Mutate the dashboard's restart + stop buttons to reflect daemon+service
@@ -381,13 +296,6 @@ function setReconnectPhase(phase, message = "暂时无法恢复，请稍后再�
     if (meta) meta.textContent = message
   }
   syncReconnectControls({ state: phase === "idle" ? "connected" : "recovering" })
-}
-
-export function updateClock() {
-  const el = document.getElementById("dash-rail-clock")
-  if (!el) return
-  const now = new Date()
-  el.textContent = now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })
 }
 
 // Stop the daemon via `service stop` + residual-kill. Mirrors restartDaemon's
@@ -527,7 +435,6 @@ let _lastIncidentsCheckAt = 0
  * TEST-ONLY: Reset all module-level dashboard state.
  */
 export function __resetDashboardState() {
-  companionHeroCopy = null
   _lastRestart = null
   _lastProbe = null
   _reconnectPhase = "idle"

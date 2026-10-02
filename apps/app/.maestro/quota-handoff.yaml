@@ -1,0 +1,58 @@
+# 额度用完 ⇒ 交给另一位继续(spec continue-sessions §7-3):一起做 → 周报那件(Claude Code 额度用完)→ 灰字说谁用完、约几分钟恢复
+# → 「交给 Codex 继续」→ 确认卡如实说(同一文件夹新开一件、原来那件不动、Codex 看不到之前的对话、会用 Codex 的额度)
+# → 交出去 → 进新那件(第一句说清接替谁)→ 返回 → 原来那件说「已经交给 Codex 继续」、按钮换成「打开那件事」。演示模式。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: now-connections
+    timeout: 10000
+- retry:
+    maxRetries: 2
+    commands:
+      - tapOn:
+          id: tab-together
+      - extendedWaitUntil:
+          visible:
+            id: together-item-a1b2c3d4
+          timeout: 3000
+- scrollUntilVisible:
+    element:
+      id: together-item-f3a4b5c6
+- tapOn:
+    id: together-item-f3a4b5c6
+- extendedWaitUntil:
+    visible:
+      id: progress-handoff-note
+    timeout: 10000
+- assertVisible: ".*(Claude Code 的额度已用完|Claude Code is out of quota).*"
+- tapOn:
+    id: progress-handoff-action
+- extendedWaitUntil:
+    visible:
+      id: handoff-sheet
+    timeout: 5000
+- assertVisible: ".*(同一个文件夹|same folder).*"
+- assertVisible: ".*(看不到 Claude Code 之前的对话|can.t see Claude Code.s earlier conversation).*"
+- assertVisible:
+    id: handoff-confirm
+    text: "交给 Codex 继续|Hand to Codex"
+- tapOn:
+    id: handoff-confirm
+- extendedWaitUntil:
+    visible:
+      id: progress-conversation
+    timeout: 10000
+- assertVisible: ".*(接替 Claude Code|Taking over from Claude Code).*"
+- assertNotVisible:
+    id: progress-handoff
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: progress-handoff-open
+    timeout: 10000
+- assertVisible: ".*(已经交给 Codex 继续|Handed to Codex).*"

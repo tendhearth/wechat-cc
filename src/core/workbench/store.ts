@@ -145,13 +145,13 @@ export function makeWorkbenchStore(db: Db) {
         return this.handoffRecord(task.id,input.id)
       })()
     },
-    taskByNativeIdentity:(providerId:string,nativeId:string)=>db.query<StoredTask,[string,string]>(TASK_SELECT+' WHERE provider_id=? AND session_id=? LIMIT 1').get(providerId,nativeId),
+    taskByNativeIdentity:(providerId:string,nativeId:string)=>db.query<StoredTask,[string,string]>(TASK_SELECT+' WHERE provider_id=? AND session_id=? ORDER BY updated_at DESC,id DESC LIMIT 1').get(providerId,nativeId),
     markSourceDispatched(id:string){db.query('UPDATE workbench_sources SET first_dispatched_at=COALESCE(first_dispatched_at,?) WHERE task_id=?').run(Date.now(),id)},
-    importSource(input:Omit<StoredNativeSource,'id'|'taskId'|'importedAt'|'firstDispatchedAt'|'selectedMessageCount'> & {title:string;ownerChatId:string|null;messages:NativeHistoryMessage[]}) {
+    importSource(input:Omit<StoredNativeSource,'id'|'taskId'|'importedAt'|'firstDispatchedAt'|'selectedMessageCount'> & {title:string;ownerChatId:string|null;messages:NativeHistoryMessage[];/** 任务的真目录(realpath 之后);cwd 是原会话记下的原样路径。 */path:string}) {
       return db.transaction(()=>{
         const existing=sourceByIdentity(input.providerId,input.nativeId)
         if(existing)return{task:get(existing.taskId),source:publicSource(existing),created:false}
-        const task=this.create({title:input.title,path:input.cwd,providerId:input.providerId,ownerChatId:input.ownerChatId}),id=randomUUID(),now=Date.now()
+        const task=this.create({title:input.title,path:input.path,providerId:input.providerId,ownerChatId:input.ownerChatId}),id=randomUUID(),now=Date.now()
         db.query('UPDATE workbench_tasks SET execution_choice_json=? WHERE id=?').run(JSON.stringify(NATIVE_EXECUTION_CHOICE),task.id)
         db.query('INSERT INTO workbench_sources(id,task_id,provider_id,native_id,cwd,imported_at,snapshot_sha256,observed_fingerprint,selected_message_count,truncated,snapshot_json,pages_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(id,task.id,input.providerId,input.nativeId,input.cwd,now,input.snapshotSha256,input.observedFingerprint,input.messages.length,input.truncated?1:0,input.snapshotJson,input.pagesJson)
         for(const message of input.messages)addEvent(task.id,message.role==='user'?'user':'text',message.text,id)

@@ -196,3 +196,16 @@ if (process.platform === 'darwin' && process.arch === 'arm64') {
   }
   console.log(`bundle.resources 安全检查通过(${resources.length} 项)`)
 }
+
+// ── 内置插件不进安装包(2026-09-30 说清楚) ──
+// 上面那道断言保证安装包里**没有**一等插件(wxvault 等:法律敏感 + 曾带出私密数据)。
+// 打包版 daemon 从状态目录里登记的来源加载它们(`wechat-cc plugin source <dir>`;
+// 从源码 checkout 跑 `self deploy` 会自动登记)。09-11 起正是这一环没人接,插件静默
+// 全丢了三周 —— 所以每次构建都把这件事打出来,而不是让人以为插件随包走。
+{
+  const { pluginNamesIn } = await import('../../../src/lib/plugins-source')
+  const here = pluginNamesIn(join(root, 'plugins'))
+  console.log(here.length
+    ? `内置插件不随包:本 checkout 的 plugins/ 有 ${here.join(', ')} —— daemon 经 \`wechat-cc plugin source\` 登记的来源加载(self deploy 会自动登记)`
+    : '内置插件不随包:本 checkout 的 plugins/ 里没有插件(工作树常态)—— daemon 从已登记的来源加载;确认:`wechat-cc plugin source`')
+}

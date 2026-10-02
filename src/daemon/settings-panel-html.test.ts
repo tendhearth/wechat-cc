@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { phoneHtml } from './settings-panel-html'
+import { pageHtml, phoneHtml } from './settings-panel-html'
 
 /**
  * fix round 1/5 M1(2026-09-23,评审点名):手机「一天」页的 KIND_ICON 表
@@ -12,5 +12,24 @@ import { phoneHtml } from './settings-panel-html'
 describe('phoneHtml 的 KIND_ICON', () => {
   it('recollection 有自己的图标,不退化成 •', () => {
     expect(phoneHtml('token', null)).toContain('recollection: "📖"')
+  })
+})
+
+// 梳理第 6 步(2026-09-29):「已配对设备」从一个数字变成逐台列表,能忘掉单台。
+describe('pageHtml 的设备列表', () => {
+  const html = pageHtml('token')
+  it('逐台渲染并能按台撤销(revoke_device)', () => {
+    expect(html).toContain('id="devices-list"')
+    expect(html).toContain('op: "revoke_device"')
+  })
+  it('不再把 devices 当数字拼字符串', () => {
+    expect(html).not.toContain('s.remote.devices + " 台')
+    expect(html).not.toContain('s.remote.devices > 0')
+  })
+  it('标签是用户输入,只走 textContent,不进 innerHTML', () => {
+    const js = html.slice(html.indexOf('function renderDevices'), html.indexOf('function renderDevices') + 1500)
+    expect(js.length).toBeGreaterThan(100)
+    expect(js).not.toMatch(/innerHTML/)
+    expect(js).toContain('textContent')
   })
 })

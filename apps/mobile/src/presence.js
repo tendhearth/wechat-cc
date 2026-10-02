@@ -1,5 +1,19 @@
 
 var homeFocus = null
+// 「此刻」形象画不再内联进页面(手机协议包 v2 Task 4 fix round 1,2026-09-29:
+// 两张 PNG base64 加起来 ~257KB,是页面撑爆中继 512KB 帧预算的大头,比这次同
+// 一批塞进来的协议 IIFE(~44KB)还重得多)—— 走 api() 按需拉取,跟 you.js 的
+// youLoadFrames() 同一个套路(经隧道也能拿到,直接 <img src="/m/api/…"> 拿不到)。
+// 拉不到就留空,不抛——首屏不能因为这一张图卡住。
+function loadPresenceArt() {
+  return api("/m/api/art/presence").then(function(r) { return r.json() }).then(function(f) {
+    if (!f || !f.ok) return
+    var dark = /** @type {HTMLImageElement} */ (document.querySelector(".home-dark")), light = /** @type {HTMLImageElement} */ (document.querySelector(".home-light"))
+    if (dark) dark.src = "data:" + f.mime + ";base64," + f.unlit
+    if (light) light.src = "data:" + f.mime + ";base64," + f.lit
+  }).catch(function() {})
+}
+loadPresenceArt()
 function mobilePane(name) {
   var button=/** @type {HTMLButtonElement} */ (document.querySelector('nav button[data-p="'+name+'"]'))
   if(button)button.click()

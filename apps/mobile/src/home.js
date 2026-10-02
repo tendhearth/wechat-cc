@@ -53,6 +53,9 @@ document.getElementById("todos").addEventListener("click", function(ev) {
 var HOME_KEY = "cc.home.v2:" + (REMOTE ? REMOTE.id : location.host) + ":" + T.slice(-12)
 var KIND_ICON = { hunt: "🎯", visit: "🏡", postcard: "💌", recollection: "📖", thought: "💭", chat_day: "💬" }
 var homeState = null, homeSeq = 0
+// 配对换了令牌(plan 7a):旧令牌那一趟的失败(在飞的 401、resetTunnel 关掉旧隧道的 closed)
+// 不是「连不上」,也不是本机令牌失效 —— 标成 HOME_STALE / 走 catch 里的 sent !== T,拿新令牌重拉一次。
+var HOME_STALE = { stale: true }
 // I5:presence 没有独立的过期机制 —— 页面一直开着,只有 load/visibilitychange/
 // 手动刷新才会重拉。这里给它记一个「拉到的时间」,过 TTL 就自己塌成「不知道」,
 // 而不是让一条越来越旧的「现在」一直挂在屏幕上。TTL 跟 companion-presence.ts
@@ -132,16 +135,19 @@ function loadHome() {
   var seq=++homeSeq
   var cached = readCache()
   if (cached&&!homeState) { homeState = cached; renderFeed(cached, true); showBanner("上次同步 " + ago(cached.synced_at)) }
+  var sent = T
   api("/m/api/home").then(function(r) {
-    if (r.status === 401) { try { localStorage.removeItem("deviceToken") } catch (e) {}; location.replace("/m"); return null }
+    if (r.status === 401) { if (sent !== T) return HOME_STALE; onUnauthorized(sent); return null }
     return r.json()
   }).then(function(s) {
     if(seq!==homeSeq)return
+    if (s === HOME_STALE) { loadHome(); return }
     if (!s || !s.ok) throw new Error('unavailable')
     homeState = s; renderFeed(s, false); showBanner(""); writeCache(s)
     markMemoriesSeen()
   }).catch(function() {
     if(seq!==homeSeq)return
+    if (sent !== T) { loadHome(); return }
     var previous=homeState||cached
     if (previous) {renderFeed(previous,true);showBanner("连不上家里的 CC · 上次更新 " + new Date(previous.synced_at).toLocaleString())}
     else {renderPresenceHome({work:{focus:null,partial:true}},true);showBanner('暂时连不上家里的 CC，请检查电脑连接。');document.getElementById("feed").innerHTML = '<div class="empty">连不上家里的 CC<br><small>看看电脑开着没</small></div>'; document.getElementById("pres-txt").textContent = "暂时不知道 CC 在做什么" }
@@ -167,10 +173,12 @@ document.getElementById("feed").addEventListener("click", function(ev) {
 document.getElementById("refresh").addEventListener("click", loadHome)
 document.addEventListener("visibilitychange", function(){ if (document.visibilityState === "visible") loadHome() })
 function load() {
+  var sent = T
   api("/m/api/state").then(function(r) {
-    if (r.status === 401) { try { localStorage.removeItem("deviceToken") } catch (e) {}; location.replace("/m"); return null }
+    if (r.status === 401) { if (sent !== T) return HOME_STALE; onUnauthorized(sent); return null }
     return r.json()
-  }).then(function(s){ if (s && s.ok) render(s) }).catch(function(){ toast("连不上家里的电脑 — 看看它开着没") })
+  }).then(function(s){ if (s === HOME_STALE) { load(); return } if (s && s.ok) render(s) })
+    .catch(function(){ if (sent !== T) { load(); return } toast("连不上家里的电脑 — 看看它开着没") })
 }
 loadHome()
 load()

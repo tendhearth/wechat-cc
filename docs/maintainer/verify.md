@@ -15,6 +15,7 @@ wechat-cc ci triage --wait --rerun
 ```bash
 wechat-cc selftest workbench --executor cursor [--image] [--resume] [--json] [--timeout-ms N] [--keep]
 wechat-cc selftest chat --provider cursor [--text "…"] [--resume] [--json] [--timeout-ms N]
+wechat-cc selftest phone [--json] [--timeout-ms N]
 ```
 
 **workbench**:在 `<tmpdir>/wechat-cc-selftest/wb-<ts>` 建一个 scratch 项目(mkdir + README + `git init` 一次提交),`POST /v1/workbench/create`,长轮询 `GET /v1/workbench/task`,碰到权限卡就 `POST /v1/workbench/permission` 放行;跑完(或超时)时任务状态还没到终态就先 `POST /v1/workbench/cancel` 并最多等 20s,再 `POST /v1/workbench/archive`。检查项:`created`、`replied`、`text_seen`、`activity_seen`、`permission_roundtrip`、`permission_executed`、`file_written`(`--image` 时换成 `answer_mentions_red`)、`resume_replied`(带 `--resume` 时)、`no_error_event`、`archived`(归档那一下的 HTTP 结果本身也是一项)。
@@ -30,6 +31,20 @@ scratch 项目**不在 STATE_DIR 底下**(它跟 token / account.json 同级,而
 刚 `self deploy` 完就跑 `selftest chat` 是**正常用法**:端口和 info 文件比 bootstrap 接线早,那个窗口里路由会答 503 `selftest_not_wired`,CLI 每 2s 重试、最多等 60s,等到了就在 `replied` 的 detail 里写一句 `waited …ms for selftest wiring`。
 
 输出:逐行 `✓ / ✗ name — detail`,末行 `PASS` / `FAIL`;`--json` 给 `{ ok, kind, target, checks, taskId?, sessionId?, durationMs, scratchPath? }`。退出码 0 通过 / 1 有检查项失败 / 2 daemon 没在跑。
+
+**phone**(手机协议 v2 真机闭环,`src/cli/selftest-phone.ts`):用 operator 凭据读 `GET /v1/settings/link`(admin 档,计划 7a 起)拿链接令牌 → 连**真中继** → 配对一台一次性设备 → 用设备令牌重连并确认协商到 v2 → 订阅 `agents` 主题 → 经 operator(内部)API 派一个最小工作台任务,确认它的生命周期出现在订阅上 → 局域网撤销这台设备,确认被撤的令牌再也连不上。
+
+- **前提**:设置页「出门也能用」(远程中继)已开;daemon 在跑;本机连得上中继。没开会当场 FAIL,不会悄悄跳过。
+- 它会**配对一台一次性设备再撤销**。正常结束时不留痕迹。
+- FAIL 时中途没撤成功的话,输出里会写怎么手动清理:设置页 → 已配对设备 → 按 id / 配对时间「忘掉」那台。**任何输出都不打印令牌**(设备令牌是永不过期的活凭据);不知道 id 时先走局域网取列表再撤销。
+- 刚 `self deploy` 完跑也是正常用法(接线窗口的 503 由 CLI 自己等)。
+
+**device**(Tendhearth iPhone 真机全自动验收,`bun run e2e:device` = `bun scripts/device-e2e.ts`,2026-10-01):USB 连着的 iPhone + 在跑的 daemon(中继 v2 已开),没人碰屏幕跑完:收起手机原有的配对 → 桌面「连接手机」同一条路铸码、经 `devicectl --payload-url` 送进 app、核对码一致、连接后此刻在线 → 同码重用被拒 → 跟 CC 说一句等回复 → app 退后台、派一个要删探针文件的工作台任务、点**扩展解密后**的真 APNs 横幅、批准页允许、daemon 那头任务答完探针被删 → 局域网撤销测试设备、app 显示「不再配对」→ 收尾归档任务、放回原配对。UI 步骤是 XCUITest(`apps/app/native/ios-e2e/`,Maestro 2.11 认不到 iOS 27 真机),构建是 Release + `e2eBuild` 标记(Expo SDK 57 的 Debug 包内嵌 JS 启动即红屏)。
+
+- 报告在 `<tmpdir>/tendhearth-device-e2e/<时间>/report.md`,失败步骤带截图;退出码 0 / 1 / 2(2 = 要主人在手机上动一下:解锁、开发者模式、手机重启后第一次跑时弹的「Enable UI Automation」触控 ID)。
+- 只撤销它自己配的那一台(配对前后设备列表的差);**不碰**主人手机原有的那台设备位(收起来再放回,见 `apps/app/README.md`「真机全自动验收」)。
+- 会往主人的 CC 对话里说一句 `device-e2e <随机串>: reply with one short sentence`(跟 CC 说走的就是主人会话);批准那一步默认用 claude 执行者(`--executor` 可换;cursor 额度用完会当场报)。
+- 期间会铸两枚 10 分钟链接令牌(配对、撤销各一),会作废桌面上正开着的那枚码。
 
 ## 两种 token 分别够得着什么
 

@@ -433,12 +433,21 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     setSettingsLink(fn) {
       deps.settingsLink = fn
     },
+    setConnections(fn) { deps.connections = fn },
+    setPhoneConnect(p) { deps.phoneConnect = p },
     setMemoryNightly(r) {
       deps.memoryNightly = r
     },
     mintSessionToken,
     invalidateSession(sessionKey: string) {
       registry.invalidateSession(sessionKey)
+    },
+    // 手机设置面板的窄接口(梳理第 6 步):同一个注册表,只给 device / link 的登记、查、撤、列。
+    panelTokens: {
+      register: (tokenHex, info) => registry.register(tokenHex, info),
+      resolve: (tokenHex) => registry.resolve(tokenHex),
+      invalidateSession: (sessionKey) => registry.invalidateSession(sessionKey),
+      listSessions: (origin) => registry.listSessions(origin),
     },
   }
 }

@@ -14,6 +14,21 @@ import type { TaskWaitingFor } from '../wechat-types'
 import type { WorkbenchPhase, WorkbenchTaskView } from './types'
 import type { Active } from './state'
 import type { ServiceCtx } from './ctx'
+import type { PendingWorkbenchPermission } from '../permissions'
+import type { PendingUserInput } from '../user-input'
+
+/** attention 里「第一件待决」原文的上限(字符)。桌面「N 件事等你」一行放得下的量;不在这里截就会把整段命令塞进轮询。 */
+export const ATTENTION_TEXT_MAX = 120
+const oneLine=(s:string):string=>{const t=s.replace(/\s+/g,' ').trim();return t.length>ATTENTION_TEXT_MAX?t.slice(0,ATTENTION_TEXT_MAX-1)+'…':t}
+export interface AttentionFirst { kind:'permission'|'question'; text:string }
+/** 第一件待决(权限优先、最早的那件),写法与手机 approvals 话题同一个:权限「工具: 说明」,提问取第一问。 */
+function firstPending(permissions:readonly PendingWorkbenchPermission[],questions:readonly PendingUserInput[]):AttentionFirst|null {
+  const p=[...permissions].sort((a,b)=>(a.createdAt??0)-(b.createdAt??0))[0]
+  if(p){const text=oneLine([p.tool,p.description].filter(x=>typeof x==='string'&&x.trim()).join(': '));if(text)return{kind:'permission',text}}
+  const q=[...questions].sort((a,b)=>(a.createdAt??0)-(b.createdAt??0))[0]
+  const text=q?oneLine(q.questions?.[0]?.question??''):''
+  return text?{kind:'question',text}:null
+}
 
 export function makeViewDomain(ctx:ServiceCtx) {
   const { store, state } = ctx
@@ -67,7 +82,7 @@ export function makeViewDomain(ctx:ServiceCtx) {
     const tasks=Array.from(state.runsByTask.values()).flatMap(run=>{
       const permissions=run.permissions.pending(),questions=run.questions.pending()
       if(!permissions.length&&!questions.length)return[]
-      return[{id:run.taskId,title:run.title,providerId:run.task.providerId,pendingPermissionCount:permissions.length,pendingQuestionCount:questions.length,attentionKey:JSON.stringify([...permissions,...questions].map(q=>q.id).sort())}]
+      return[{id:run.taskId,title:run.title,providerId:run.task.providerId,pendingPermissionCount:permissions.length,pendingQuestionCount:questions.length,first:firstPending(permissions,questions),attentionKey:JSON.stringify([...permissions,...questions].map(q=>q.id).sort())}]
     })
     return{tasks}
   }

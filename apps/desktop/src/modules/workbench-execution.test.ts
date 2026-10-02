@@ -92,6 +92,8 @@ it('mirrors the daemon acp failure copy, including prefixed codes',async()=>{
  expect(executionErrorMessage('acp_session_closed')).toContain('acp')
  expect(executionErrorMessage('acp_resume_unsupported')).toContain('重新开始')
  expect(executionErrorMessage('acp_resume_session_mismatch')).toContain('不是原会话')
+ expect(executionErrorMessage('acp_session_not_found')).toContain('原会话')
+ expect(executionErrorMessage('acp_session_not_found')).not.toContain('acp 子命令')
  expect(executionErrorMessage('acp_rpc_timeout: initialize')).toContain('长时间没有响应')
  expect(executionErrorMessage('acp_stop_max_tokens')).toContain('输出长度上限')
  expect(executionErrorMessage('acp_stop_max_turn_requests')).toContain('单轮请求次数上限')

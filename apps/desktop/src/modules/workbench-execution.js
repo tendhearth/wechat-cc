@@ -61,6 +61,7 @@ export function executionErrorMessage(error){
   ['acp_stop_max_tokens','Cursor 因输出长度上限停了下来，请缩小要求或分步进行。'],
   ['acp_stop_max_turn_requests','Cursor 因单轮请求次数上限停了下来，请缩小要求或分步进行。'],
   ['acp_stop_refusal','Cursor 拒绝了这项要求，没有继续。'],
+  ['acp_session_not_found','Cursor 找不到原会话（上一轮可能被额度拒绝、没有保存），请带记录重新开始。'],
   ['acp_resume_session_mismatch','Cursor 接上的不是原会话，已停止；请带记录重新开始。'],
   ['acp_rpc_timeout','Cursor 长时间没有响应，任务已停止；请检查 cursor-agent 是否正常后重试。'],
   ['acp_turn_already_running','Cursor 正在处理上一轮，请等它答复后再发。'],

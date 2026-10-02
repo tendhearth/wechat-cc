@@ -88,6 +88,11 @@ export interface InternalApiIlinkDep {
  */
 export type PetTurnDep = () => Promise<import('../../core/pet-turn').PetTurnPayload>
 
+export interface PhoneConnectDep {
+  link(opts: { enableRemote: boolean }): Promise<import('../phone-link').PhoneLinkResult>
+  devices(): import('../device-store').DeviceRow[]
+}
+
 export interface InternalApiDeps {
   /** State directory; the token file is written under here. */
   stateDir: string
@@ -101,6 +106,10 @@ export interface InternalApiDeps {
   workbench?: WorkbenchService
   /** 「一件事」读写面(routes-matters);与 workbench 一样晚绑定。 */
   matters?: import('../../core/matters/service').MattersService
+  /** 「CC 的连接」(spec 2026-10-01);main.ts 在 pipeline 接好后 setConnections。 */
+  connections?: () => import('../connections').ConnectionsSnapshot
+  /** 桌面「连接手机」(plan 7a);main.ts 在 pipeline 接好后 setPhoneConnect。 */
+  phoneConnect?: PhoneConnectDep
   /**
    * Sandbox FS for memory_read / memory_write / memory_list (RFC 03 P1.B
    * B2). The same MemoryFS instance is shared with the legacy in-process
@@ -503,6 +512,12 @@ export interface InternalApiDeps {
    * (minimal-deps 测试路径)。
    */
   subsystems?: () => import('../subsystems').SubsystemStatus[]
+  /**
+   * GET /v1/health 的 `plugins` 字段:启动时实际加载的插件快照
+   * (src/daemon/plugins/health.ts)。null ⇒ bootstrap 还没接线完;
+   * undefined ⇒ 字段不输出(老 daemon / minimal-deps 测试路径)。
+   */
+  plugins?: () => import('../plugins/health').PluginsHealth | null
   /** Passive outbound link health from ilink-glue (spec 2026-08-22-outbound-health). */
   outbound?: () => import('../ilink/outbound-health').OutboundHealth
   /**
@@ -587,6 +602,8 @@ export interface InternalApi {
   setDelegate(d: InternalApiDelegateDep): void
   setLlmHealth(h: import('../llm-health').LlmHealth, registered?: () => string[], endpoints?: () => Record<string, string>): void
   setSettingsLink(fn: () => Promise<string | null>): void
+  setConnections(fn: () => import('../connections').ConnectionsSnapshot): void
+  setPhoneConnect(p: PhoneConnectDep): void
   setMemoryNightly(r: { runNow(): Promise<unknown> }): void
   /**
    * Late-bind the conversation controller (coordinator.setMode) after
@@ -672,6 +689,8 @@ export interface InternalApi {
   ): string
   /** Revoke every token minted for a session (called on release/evict/close). */
   invalidateSession(sessionKey: string): void
+  /** 手机设置面板的窄接口:同一个注册表,只能登记 / 查 / 撤 / 列 device 与 link 令牌(梳理第 6 步)。 */
+  panelTokens: import('./token-registry').PanelTokens
 }
 
 /**
@@ -688,7 +707,7 @@ export interface InternalApi {
 export type RouteHandler = (
   query: URLSearchParams,
   body: unknown,
-  caller?: { tier: UserTier; origin: 'file' | 'session' | 'operator'; chatId?: string },
+  caller?: { tier: UserTier; origin: import('./token-registry').TokenOrigin; chatId?: string },
 ) => Promise<{ status: number; body: unknown }> | { status: number; body: unknown }
 
 export type RouteTable = Record<string, RouteHandler | undefined>

@@ -9,6 +9,7 @@
 // visible switch data-mode via page.evaluate.
 
 import { test, expect, clickNav, clickRevealed } from './fixtures'
+import { REPORTS } from './reports'
 
 async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl: string) {
   await page.goto(shimUrl)
@@ -46,7 +47,9 @@ test('dashboard renders nav + panes (all attached)', async ({ page, shimUrl, shi
   }
   await expect(page.locator('#converse-root')).toHaveCount(1)
   await expect(page.locator('article[data-pane="overview"] #converse-root')).toBeAttached()
-  await expect(page.locator('button[data-pane="converse"]')).toBeAttached()
+  // 「跟 CC 说」不再是侧栏按钮(spec §6.5):此刻页的 CC 与它的气泡就是入口。
+  await expect(page.locator('#now-cc')).toBeAttached()
+  await expect(page.locator('button[data-pane="converse"]')).toHaveCount(0)
   // Settings gear (opens drawer, not wizard — moxiuwen's gear was repurposed
   // when master's wizard refactor landed; #settings-open is the live id).
   await expect(page.locator('#settings-open')).toBeAttached()
@@ -92,17 +95,50 @@ test('round-trip: overview → memory → overview restores initial state', asyn
 
 // ── Per-pane DOM contract ───────────────────────────────────────────────
 
-test('overview pane has hero + current-user + sub-user grid', async ({ page, shimUrl, shim }) => {
+test('此刻 has the connections card + 浮到桌面; no aquarium anywhere; verdict + users + reconnect in 连接与设置', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
-  const pane = page.locator('article.dash-pane[data-pane="overview"]')
-  // moxiuwen's redesign — hero card + current user + sub-user grid
-  await expect(pane.locator('#hero-card')).toBeAttached()
-  await expect(pane.locator('#hero-headline')).toBeAttached()
-  await expect(pane.locator('#accounts-current')).toBeAttached()
-  await expect(pane.locator('#accounts-body')).toBeAttached()
-  await expect(pane.locator('#dash-restart')).toBeAttached()
-  await expect(pane.locator('#dash-stop')).toBeAttached()
+  const now = page.locator('article.dash-pane[data-pane="overview"]')
+  await expect(now.locator('.cc-home-details #now-connections')).toBeAttached()
+  await expect(now.locator('.cc-home-details #companion-desktop-start')).toBeAttached()
+  await expect(now.locator('#hero-card')).toHaveCount(0)
+  // 鱼缸画布 2026-10-01 退休(主人拍板):没有鱼缸页、没有画布、没有沉浸模式。
+  await expect(page.locator('[data-pane="aquarium"]')).toHaveCount(0)
+  await expect(page.locator('#companion-stage')).toHaveCount(0)
+  await expect(page.locator('#companion-immersive-start')).toHaveCount(0)
+  // 当前用户 + 子用户 + 重连 / 断开 在「连接与设置」抽屉的「连接」段
+  const conn = page.locator('#settings-drawer .drawer-connection')
+  await expect(conn.locator('#hero-card #hero-headline')).toBeAttached()
+  await expect(conn.locator('#accounts-current')).toBeAttached()
+  await expect(conn.locator('#accounts-body')).toBeAttached()
+  await expect(conn.locator('#dash-restart')).toBeAttached()
+  await expect(conn.locator('#dash-stop')).toBeAttached()
+  await expect(conn.locator('#brain-selfcheck')).toBeAttached()
+})
+
+test('此刻 status line opens CC 的连接: headline + one row per source + the computer', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat' })
+  await bootIntoDashboard(page, shimUrl)
+  await page.locator('.cc-home-details > summary').click()
+  const card = page.locator('#now-connections')
+  await expect(card).toBeVisible()
+  await expect(card.locator('.nc-headline')).toHaveText('都连着')
+  await expect(card.locator('.nc-source')).toHaveCount(3)
+  await expect(card.locator('.nc-source').first()).toContainText('微信聊天记录')
+  await expect(card.locator('.nc-source').first()).toContainText('最新消息')
+  await expect(card.locator('.nc-computer')).toContainText('在线')
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.cc-home-details')).not.toHaveAttribute('open')
+})
+
+test('CC 的连接 never shows green when it cannot be read', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', connections: null })
+  await bootIntoDashboard(page, shimUrl)
+  await page.locator('.cc-home-details > summary').click()
+  const card = page.locator('#now-connections')
+  await expect(card.locator('.nc-headline')).toHaveText('暂时不知道连接情况')
+  await expect(card.locator('.nc-headline .dot')).toHaveClass(/unknown/)
+  await expect(card.locator('.dot.ok')).toHaveCount(0)
 })
 
 test('memory pane has sidebar + observations + milestones + content viewer', async ({ page, shimUrl, shim }) => {
@@ -185,99 +221,6 @@ test('observations list reflects seeded data', async ({ shim }) => {
 
 // ── Reconnect diagnosis fixtures ──────────────────────────────────────────
 // Diagnosis stays internal; the overview hero is the only recovery surface.
-
-// Helper: build a minimal DoctorReport that produces a given diagnosis code.
-// These shapes must match what diagnose() in view.js expects.
-const REPORTS = {
-  // code-1: daemon dead + pid≠null + service installed → "后台服务挂了"
-  deadDaemon: {
-    ready: true,
-    stateDir: '/tmp/wechat-cc-shim',
-    runtime: 'source',
-    wslDetected: false,
-    checks: {
-      bun:      { ok: true, path: '/usr/local/bin/bun' },
-      git:      { ok: true, path: '/usr/bin/git' },
-      claude:   { ok: true, path: '/usr/local/bin/claude' },
-      codex:    { ok: true, path: '/usr/local/bin/codex' },
-      cursor:   { ok: false, apiKeySet: false, sdkInstalled: true },
-      accounts: { ok: true, count: 1, items: [{ id: 'bot1-im-bot', botId: 'bot1', userId: 'u1', baseUrl: '' }] },
-      access:   { ok: true, dmPolicy: 'allowlist', allowFromCount: 1 },
-      provider: { ok: true, provider: 'claude', binaryPath: '/usr/local/bin/claude' },
-      daemon:   { alive: false, pid: 9999 },
-      service:  { installed: true, kind: 'launchagent' },
-    },
-    userNames: { u1: 'Test User' },
-    expiredBots: [],
-    nextActions: [],
-  },
-  // code-5 (expired): daemon alive + expiredBots non-empty → "微信账号已过期"
-  accountExpired: {
-    ready: true,
-    stateDir: '/tmp/wechat-cc-shim',
-    runtime: 'source',
-    wslDetected: false,
-    checks: {
-      bun:      { ok: true, path: '/usr/local/bin/bun' },
-      git:      { ok: true, path: '/usr/bin/git' },
-      claude:   { ok: true, path: '/usr/local/bin/claude' },
-      codex:    { ok: true, path: '/usr/local/bin/codex' },
-      cursor:   { ok: false, apiKeySet: false, sdkInstalled: true },
-      accounts: { ok: true, count: 1, items: [{ id: 'bot1-im-bot', botId: 'bot1', userId: 'u1', baseUrl: '' }] },
-      access:   { ok: true, dmPolicy: 'allowlist', allowFromCount: 1 },
-      provider: { ok: true, provider: 'claude', binaryPath: '/usr/local/bin/claude' },
-      daemon:   { alive: true, pid: 12345 },
-      service:  { installed: true, kind: 'launchagent' },
-    },
-    userNames: { u1: 'Test User' },
-    expiredBots: [{ botId: 'bot1', firstSeenExpiredAt: Date.now() - 3600000 }],
-    nextActions: [],
-  },
-  // code-4: daemon alive + claude.severity='hard' → "AI 工具缺失"
-  providerMissing: {
-    ready: true,
-    stateDir: '/tmp/wechat-cc-shim',
-    runtime: 'source',
-    wslDetected: false,
-    checks: {
-      bun:      { ok: true, path: '/usr/local/bin/bun' },
-      git:      { ok: true, path: '/usr/bin/git' },
-      claude:   { severity: 'hard', fix: { command: 'npm install -g @anthropic-ai/claude-code' } },
-      codex:    { ok: true, path: '/usr/local/bin/codex' },
-      cursor:   { ok: false, apiKeySet: false, sdkInstalled: true },
-      accounts: { ok: true, count: 1, items: [{ id: 'bot1-im-bot', botId: 'bot1', userId: 'u1', baseUrl: '' }] },
-      access:   { ok: true, dmPolicy: 'allowlist', allowFromCount: 1 },
-      provider: { ok: false, provider: 'claude' },
-      daemon:   { alive: true, pid: 12345 },
-      service:  { installed: true, kind: 'launchagent' },
-    },
-    userNames: { u1: 'Test User' },
-    expiredBots: [],
-    nextActions: [],
-  },
-  // code-0: all green → brief "连接正常" feedback
-  allGreen: {
-    ready: true,
-    stateDir: '/tmp/wechat-cc-shim',
-    runtime: 'source',
-    wslDetected: false,
-    checks: {
-      bun:      { ok: true, path: '/usr/local/bin/bun' },
-      git:      { ok: true, path: '/usr/bin/git' },
-      claude:   { ok: true, path: '/usr/local/bin/claude' },
-      codex:    { ok: true, path: '/usr/local/bin/codex' },
-      cursor:   { ok: false, apiKeySet: false, sdkInstalled: true },
-      accounts: { ok: true, count: 1, items: [{ id: 'bot1-im-bot', botId: 'bot1', userId: 'u1', baseUrl: '' }] },
-      access:   { ok: true, dmPolicy: 'allowlist', allowFromCount: 1 },
-      provider: { ok: true, provider: 'claude', binaryPath: '/usr/local/bin/claude' },
-      daemon:   { alive: true, pid: 12345 },
-      service:  { installed: true, kind: 'launchagent' },
-    },
-    userNames: { u1: 'Test User' },
-    expiredBots: [],
-    nextActions: [],
-  },
-}
 
 test.describe('single-surface reconnect flow', () => {
   test('dead-daemon click starts recovery immediately without a second card', async ({ page, shimUrl, shim }) => {
@@ -502,9 +445,10 @@ test('presence shell keeps one home composer and its draft through navigation', 
   await page.locator('.cc-home-details > summary').click()
   await clickNav(page, 'recollections')
   await expect(page.locator('article[data-pane="recollections"]')).toBeVisible()
-  await page.locator('.cc-life-nav-more > summary').click()
-  await clickNav(page, 'converse')
+  await clickNav(page, 'overview')
   await expect(page.locator('article[data-pane="overview"]')).toBeVisible()
+  await page.locator('#now-cc').click()
+  await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-now', 'chat')
   await expect(page.locator('.cc-home-details')).not.toHaveAttribute('open')
   await expect(page.locator('#converse-input')).toHaveValue('只检查草稿，不发送')
   await expect(page.locator('#converse-input')).toBeFocused()
@@ -513,4 +457,49 @@ test('presence shell keeps one home composer and its draft through navigation', 
   const main=await page.locator('.dash-main').boundingBox()
   expect(rail!.x+rail!.width).toBeLessThanOrEqual(main!.x+1)
   expect(rail!.height).toBeGreaterThan(500)
+})
+
+test('此刻 home → chat via the CC, draft survives a workbench round-trip, one converse root', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat' })
+  await bootIntoDashboard(page, shimUrl)
+  const pane = page.locator('.cc-now-pane')
+  await expect(pane).toHaveAttribute('data-now', 'home')
+  // shim 默认 presence ok ⇒ 够得着 ⇒ 亮着的 CC。
+  await expect(pane).toHaveAttribute('data-cc', 'here')
+  await expect(page.locator('.now-cc-light')).toBeVisible()
+  await expect(page.locator('.now-cc-dark')).toBeHidden()
+  await expect(page.locator('#converse-scroll')).toBeHidden()
+  await page.locator('#converse-input').fill('草稿不丢')
+  await page.locator('#now-cc').click()
+  await expect(pane).toHaveAttribute('data-now', 'chat')
+  await expect(page.locator('#converse-scroll')).toBeVisible()
+  await clickNav(page, 'workbench')
+  // 「一起做」里全局侧栏收起,和用户一样先点左上角的 CC 打开主导航再回「此刻」。
+  await page.locator('#workbench-nav-toggle').click()
+  await clickNav(page, 'overview')
+  await expect(pane).toHaveAttribute('data-now', 'chat')
+  await expect(page.locator('#converse-input')).toHaveValue('草稿不丢')
+  await expect(page.locator('#converse-root')).toHaveCount(1)
+  await page.locator('#now-back').click()
+  await expect(pane).toHaveAttribute('data-now', 'home')
+})
+
+test('CC goes dark when the daemon cannot be reached', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat', presenceDown: true })
+  const down = page.waitForResponse(r => r.url().includes('/v1/companion/presence') && r.status() === 503, { timeout: 25_000 })
+  await bootIntoDashboard(page, shimUrl)
+  await down
+  // index.html 默认就是 away,所以先证明 poller 真的跑过:状态行红点 + 不在身边由同一信号写入。
+  await expect(page.locator('#dash-rail-text')).toHaveText('CC 不在身边', { timeout: 10_000 })
+  await expect(page.locator('#dash-rail-dot')).toHaveClass(/bad/)
+  await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-cc', 'away')
+  await expect(page.locator('.now-cc-light')).toBeHidden()
+})
+
+test('CC is lit and the status line is green when presence answers', async ({ page, shimUrl, shim }) => {
+  await shim.invoke('demo.seed', { chat_id: 'test_chat' })
+  await bootIntoDashboard(page, shimUrl)
+  await expect(page.locator('.cc-now-pane')).toHaveAttribute('data-cc', 'here', { timeout: 25_000 })
+  await expect(page.locator('.now-cc-light')).toBeVisible()
+  await expect(page.locator('#dash-rail-dot')).toHaveClass(/ok/, { timeout: 15_000 })
 })

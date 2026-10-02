@@ -1,0 +1,122 @@
+# 点通知路由(演示模式,不需要真推送):中转页先拉详情 → 批准页钉住那条请求 → 返回回到此刻;
+# 电脑上已经处理掉的请求再点旧通知 ⇒ 批准页显示「已处理」,没有可点的「允许」(Review Focus 1);
+# 事情不在 ⇒ 「这件事在电脑上已经不在了」+ 回到此刻;伪造的参数 ⇒ 回此刻。每个 openLink 后跟守卫子流程(裁决 C9)。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: now-needs-you-card
+    timeout: 10000
+- openLink: tendhearth://push-open?kind=permission&taskId=a1b2c3d4&requestId=perm-demo-1
+- runFlow: subflows/_open-link-guard.yaml
+- extendedWaitUntil:
+    visible:
+      id: approval-title
+    timeout: 10000
+- assertVisible:
+    id: approval-raw-inline
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: now-needs-you-card
+    timeout: 10000
+- openLink: tendhearth://push-open?kind=task_done&taskId=ffffffff
+- runFlow: subflows/_open-link-guard.yaml
+- extendedWaitUntil:
+    visible:
+      id: push-gone
+    timeout: 10000
+- assertVisible:
+    text: "这件事在电脑上已经不在了。|That item is no longer on your computer\\."
+- tapOn:
+    id: push-go-now
+- extendedWaitUntil:
+    visible:
+      id: now-needs-you-card
+    timeout: 10000
+- openLink: tendhearth://push-open?kind=permission&taskId=..%2F..%2Fx
+- runFlow: subflows/_open-link-guard.yaml
+- extendedWaitUntil:
+    visible:
+      id: now-needs-you-card
+    timeout: 10000
+- assertNotVisible:
+    id: push-opening
+# 连点两条通知不叠「此刻」(最终评审 I1):先切到「一起」标签,再连开两条推送深链、每次返回此刻;
+# 之后从左缘右滑两次 —— 栈里若还压着旧的 (tabs)(replace 的老毛病),就会露出停在「一起」的那一层。
+# 标签第一下偶尔没生效(同 demo-walkthrough):没切过去就再点一次。
+- retry:
+    maxRetries: 2
+    commands:
+      - tapOn:
+          id: tab-together
+      - extendedWaitUntil:
+          visible:
+            id: together-say
+          timeout: 4000
+- openLink: tendhearth://push-open?kind=permission&taskId=a1b2c3d4&requestId=perm-demo-1
+- runFlow: subflows/_open-link-guard.yaml
+- extendedWaitUntil:
+    visible:
+      id: approval-title
+    timeout: 10000
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: now-needs-you-card
+    timeout: 10000
+- openLink: tendhearth://push-open?kind=permission&taskId=a1b2c3d4&requestId=perm-demo-1
+- runFlow: subflows/_open-link-guard.yaml
+- extendedWaitUntil:
+    visible:
+      id: approval-title
+    timeout: 10000
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: now-needs-you-card
+    timeout: 10000
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - swipe:
+          start: 1%, 50%
+          end: 85%, 50%
+          duration: 400
+      - swipe:
+          start: 1%, 50%
+          end: 85%, 50%
+          duration: 400
+- assertVisible:
+    id: now-needs-you-card
+- assertNotVisible:
+    id: together-say
+# 旧通知对应的请求已经处理掉:先在批准页允许,再点同一条旧通知 ⇒ 批准页拉新详情后显示「已处理」,没有「允许」。
+- openLink: tendhearth://push-open?kind=permission&taskId=a1b2c3d4&requestId=perm-demo-1
+- runFlow: subflows/_open-link-guard.yaml
+- extendedWaitUntil:
+    visible:
+      id: approval-allow
+      enabled: true
+    timeout: 10000
+- tapOn:
+    id: approval-allow
+- extendedWaitUntil:
+    visible:
+      id: progress-status
+    timeout: 10000
+- openLink: tendhearth://push-open?kind=permission&taskId=a1b2c3d4&requestId=perm-demo-1
+- runFlow: subflows/_open-link-guard.yaml
+- extendedWaitUntil:
+    visible:
+      id: approval-handled
+    timeout: 10000
+- assertNotVisible:
+    id: approval-allow

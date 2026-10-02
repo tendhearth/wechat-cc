@@ -1,5 +1,7 @@
 # Mailbox relay — deploy runbook (v0, single relay)
 
+> 手机隧道已迁到官方中继 v2(`apps/relay`,见 docs/maintainer/relay.md);本目录的 `/tunnel/*` 只在过渡期服务老的已配对手机网页,mailbox 仍在这里。
+
 > Standalone content-blind mailbox relay for wechat-cc sub-project B. NOT part of
 > the daemon. Node-builtin-only (Bun + bun:sqlite). Manually verified on the VPS
 > (outside CI). See docs/superpowers/specs/2026-07-19-penpal-mailbox-transport-B-design.md.
@@ -62,7 +64,7 @@ Restart the daemon. On boot it generates `mailbox-key.json` (0600) in the state 
 
 ## 壳页 pset(`relay/pset.html`)
 
-微信里 `/set` 链接落地的公网引导壳,**不随 daemon 发布**,是 nginx 静态文件:`cc.tendhearth.com` 在 `195.133.192.92`(`ssh vps-195-133-192-92`,免密 sudo),vhost `/etc/nginx/conf.d/cc-tendhearth.conf`,文件 `/var/www/cc.tendhearth.com/pset/index.html`。改了 `relay/pset.html` 要手动上:
+微信里 `/set` 链接落地的公网引导壳,**不随 daemon 发布**,是 nginx 静态文件:`cc.tendhearth.com` 在 `195.133.192.92`(`ssh vps-195-133-192-92`,免密 sudo),vhost `/etc/nginx/conf.d/cc-tendhearth.conf`,文件 `/var/www/cc.tendhearth.com/pset/index.html`。**`relay/pset.html` 是生成物**(2026-09-29 起):改 `relay/pset.src.html`,跑 `bun run build:mobile`,协议包的加密由生成的 IIFE(`apps/mobile/src/protocol-generated.js`)内联进去;别手改 `pset.html`。合并后仍要**手动**拷到 VPS(中继代码 `relay/*.ts` 本次没有改动,不用重启中继)。改了 `relay/pset.html` 要手动上:
 
 ```bash
 scp relay/pset.html vps-195-133-192-92:/tmp/pset.html

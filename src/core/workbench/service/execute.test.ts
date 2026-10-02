@@ -79,6 +79,14 @@ describe('makeExecuteDomain · 创建与派发', () => {
     expect(() => execute.createTask({ path: project, providerId: 'claude', text: 'x' }, undefined, undefined, entry as never)).toThrow()
     expect(state.runsByTask.size).toBe(0); expect(store.listPage({}).tasks).toEqual([])
   })
+  // 评审 minor(2026-09-28):上一条在 beforeCreate 里抛,那时 run 还没进内存,测不到这条不变式。
+  // 这里在 onAccepted(start 里 persist 回调,run 已预留)抛:事务回滚后内存里也不能留下 run。
+  it('createTask:onAccepted 抛错 ⇒ 事务回滚,已预留的 run 也不留在内存里', () => {
+    const { execute, project, state, store } = setup()
+    expect(() => execute.createTask({ path: project, providerId: 'claude', text: 'x' }, () => { throw new Error('persist failed') })).toThrow('persist failed')
+    expect(state.runsByTask.size).toBe(0); expect(state.reservations.size).toBe(0)
+    expect(store.listPage({}).tasks).toEqual([])
+  })
   it('start:任务已在跑 ⇒ workbench_busy', async () => {
     const { execute, store, project, settled } = setup()
     const view = execute.create({ path: project, providerId: 'claude', text: '做点事' })

@@ -21,13 +21,12 @@
  *    conversational where CC can confirm context.
  */
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { normalizeUserName } from '../lib/user-name'
 import { writeConfigKey, readConfigSurface } from './config-surface'
 import { kickAtelierModelProvision, readModelStatus, shouldProvisionOnConfigChange } from './atelier-provision'
 import { safeSvgFile, EXPIRED_HTML, SW_JS, M_BOOTSTRAP_HTML, pageHtml, phoneHtml } from './settings-panel-html'
-import { readJsonFile } from '../lib/read-json-file'
 import { loadAgentConfig, saveAgentConfig, modelForProvider } from '../lib/agent-config'
 import { saveLlmKey } from './llm-keys'
 import { PROVIDER_SETUP_HINTS, type LlmHealthReport } from './llm-health'
@@ -35,11 +34,15 @@ import { capabilitiesFor } from '../core/capability-matrix'
 import { PROVIDER_IDS } from '../lib/provider-ids'
 import { buildFeed, decodeCursor, FEED_DEFAULT_LIMIT, dayKey, type FeedSources, type TurnLite } from './mobile-feed'
 import blinkArt from './mobile-blink-art.json'
+import presenceArt from './mobile-presence-art.json'
 import { MOBILE_BRAND_ICON_PNG, MOBILE_BRAND_ICON_SIZES } from './mobile-brand-icon'
-import {mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions,type MobileUploadActions} from './mobile-workbench'
+import { mobileChatRoute, type MobileChatDeps } from './mobile-chat'
+import { mobileReadsRoute } from './mobile-reads'
+import {mobileSessionContinueRoute,mobileWorkbenchRoute,mobileMatterError,mobileSayInput,type MobileMatterActions,type MobileEntryActions,type MobileUploadActions,type MobileSessionContinueActions} from './mobile-workbench'
 import {mobileMatterDetailResponse} from './mobile-matter-response'
 import {mobileHomeFocus} from './mobile-home-focus'
 import type {MatterSayInput} from '../core/matters/service'
+import { pairCheckCode, PushPlatform, PHONE_SAY_MAX_CHARS, pushTokenValid, type PushPlatformT } from '@wechat-cc/protocol'
 import type { Presence } from '../core/companion-presence'
 import type { CatchRow } from '../core/journal-store'
 import type { PlanLogEntry } from '../core/companion-plan'
@@ -96,6 +99,10 @@ export interface SettingsPanelDeps {
   }
   /** 三轴 presence,经 internal-api lifecycle.getPresence 共用。缺省/抛 ⇒ 手机页显示「不知道」。 */
   presence?: () => Promise<Presence | null>
+  /** 手机洞察(批准说明 + 进展概括,spec 2026-09-30-tendhearth-app-v1 §5)。缺省 ⇒ /m/api/matter/insight 503。 */
+  insight?: import('./phone-insight').PhoneInsight
+  /** 手机看改动(§5.3):一件事的复盘轮次(工作台 reviewList);未知任务应抛。缺省 ⇒ /m/api/matter/changes 503。 */
+  changes?: (id: string) => readonly import('./phone-changes').ReviewTurnLike[]
   /** 「一件事」(2026-09-16):手机看同一份 matter 列表 / 详情,并能往里说话。seenOnPhone 记「在手机露过面」。 */
   matters?: MobileMatterActions & {
     list(filter: { kind?: 'chat' | 'task' | 'companion'; statuses?: Array<'open' | 'replied' | 'done' | 'archived'>; limit?: number }): unknown[]
@@ -103,13 +110,34 @@ export interface SettingsPanelDeps {
     say(id: string, text: string, input?:MatterSayInput): Promise<unknown>
     seenOnPhone(id: string): void
   }
+  /** 跟 CC 说(spec 2026-10-01):主人对话一页 + 说一句。缺省 ⇒ /m/api/chat* 503。 */
+  chat?: MobileChatDeps
+  /** 「CC 的连接」快照(spec 2026-10-01)。缺省 ⇒ /m/api/connections 503。 */
+  connections?: () => import('./connections').ConnectionsSnapshot
+  /** 电脑上的原生会话(只读)。缺省 ⇒ /m/api/sessions 503。 */
+  sessions?: import('./mobile-reads').MobileSessionsDeps
+  /** 在手机上接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions)。缺省 ⇒ /m/api/session/continue 503。 */
+  sessionContinue?: MobileSessionContinueActions
   /** 主人「看到哪了」的水位,与桌面觅食台同一个文件(一个主人一个水位)。缺省 ⇒ POST /m/api/seen 503。 */
   seen?: { read: () => string | null; write: (iso: string) => void }
+  /** 推送(中继 v2,spec 2026-09-30 §5)。缺省 ⇒ /m/api/push/* 503。按设备 id,不是令牌。 */
+  push?: {
+    register(deviceId: string, platform: PushPlatformT, token: string): boolean
+    test(deviceId: string): Promise<{ ok: boolean; code: string }>
+    unregister(deviceId: string): void
+    forgetAll(): void
+  }
   /** 手机「CC 记得你」(2026-09-25,memory/nightly-runtime)。 */
   curatedMemory?: () => import('./memory/nightly-runtime').CuratedView
   /** 远程隧道信息(启用时):relay wss + 本机 daemon id。手机页出门时用它
    *  经中继访问。缺省 ⇒ 手机页只能在同一 Wi-Fi 直连。 */
   remoteInfo?: () => { relay: string; id: string } | null
+  /** agent-config.json 的 relay_v2_url 现在非空吗(桌面「连接手机」用;只读,主人事项)。缺省 ⇒ 当没开通。 */
+  relayV2Configured?: () => boolean
+  /** 这次启动时 relay_v2_url 就已非空吗(开机快照,pipeline-deps 传入)。为 true 时运行中仍是老 id
+   *  = v2 身份坏了(relay-identity.json 读不出等),重启也换不来 v2 ⇒ 不重启,直接 relay_unavailable
+   *  (否则每个新进程都会再重启一次,成了重启循环)。缺省 ⇒ false(当开机时没配)。 */
+  relayV2AtBoot?: boolean
   /** 远程访问一键开关(2026-08-26):读/写 remote_tunnel + 触发重启。
    *  缺省 ⇒ 设置页不显示远程访问开关。 */
   remote?: {
@@ -132,6 +160,11 @@ export interface SettingsPanelDeps {
   audit?: (reasoning: string) => void
   log: (tag: string, line: string) => void
   now?: () => number
+  /**
+   * 内部 API 的 token-registry 窄接口(梳理第 6 步):链接令牌与设备令牌登记在这里,
+   * 带 origin / routeAllow,撤销走 invalidateSession。缺省 ⇒ 面板自建一个(测试用)。
+   */
+  tokens?: PanelTokens
 }
 
 export interface SettingsPanel {
@@ -139,7 +172,10 @@ export interface SettingsPanel {
   validToken(t: string | null | undefined): boolean
   /** 当前还有效的链接令牌(没有或已过期就 null)—— 隧道只额外认这一个。 */
   activeLinkToken(): string | null
-  state(): object
+  /** 已配对设备的令牌 —— 隧道握手要逐个试(替代裸读 settings-devices.json)。 */
+  deviceTokens(): string[]
+  /** `currentToken`:调用者自己的令牌,用来在设备列表里标「这台」。 */
+  state(currentToken?: string | null): object
   apply(op: unknown): Promise<{ ok: boolean; error?: string; restart?: 'requested' | 'required' }>
   /** Start the HTTP server (idempotent). port 0 = ephemeral. */
   start(port?: number): Promise<{ port: number }>
@@ -147,9 +183,30 @@ export interface SettingsPanel {
   /** Mint a fresh token and return the tappable URL (starts the server on
    *  first use). Null when no LAN address / no owner is resolvable. */
   linkUrl(): Promise<string | null>
+  /** 桌面「连接手机」(spec 2026-10-01-tendhearth-pairing-ux §4.1):按需打开远程隧道;只在 v2 中继就绪时铸码。 */
+  phoneLink(opts: { enableRemote: boolean }): Promise<PhoneLinkResult>
+  /** 已配对设备(不含令牌),桌面轮询「已连上」用。 */
+  phoneDevices(): DeviceRow[]
   /** Route one request — shared by the LAN Bun.serve and the remote tunnel
    *  client, so /m/* and /set/* behave identically over both transports. */
   handleRequest(req: Request): Promise<Response>
+  /** `/m/api/home` 的载荷,不经 HTTP(手机事件集线器的 `home` 主题用)。`work: false` 跳过「手头这件事」。 */
+  home(limit: number, opts?: { work?: boolean }): Promise<HomePayload>
+}
+
+/** `/m/api/home` 的回包形状。 */
+export interface HomePayload {
+  ok: true
+  synced_at: string
+  today: string
+  presence: Presence | null
+  work?: Awaited<ReturnType<typeof mobileHomeFocus>>
+  presence_error?: 'unavailable'
+  unread: number
+  seen_until: string | null
+  events: ReturnType<typeof buildFeed>['events']
+  next_cursor: ReturnType<typeof buildFeed>['next_cursor']
+  sources_degraded: ReturnType<typeof buildFeed>['sources_degraded']
 }
 
 /** First non-internal IPv4 address (en0 preferred). Re-exported from
@@ -158,31 +215,36 @@ export interface SettingsPanel {
 export { lanIp } from '../lib/local-address'
 import { lanIp } from '../lib/local-address'
 import { serve, type Server } from '../lib/runtime/http'
-
-const DEVICES_FILE = 'settings-devices.json'
-const MAX_DEVICES = 20
+import { makeTokenRegistry, type PanelTokens } from './internal-api/token-registry'
+import { makeDeviceCredentials, makeDeviceStore, type DeviceRow } from './device-store'
+import { normalizeLang } from './phone-insight-llm'
+import { latestChanges } from './phone-changes'
+import { LAN_ONLY_OPS, LINK_ROUTES, PHONE_ROUTES, phoneRouteAllowed } from './phone-routes'
+import { phoneLinkState, psetUrl, type PhoneLinkResult } from './phone-link'
 
 export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   const now = deps.now ?? (() => Date.now())
-  let active: { token: string; expiresAt: number } | null = null
   let server: Server | null = null
+  let v2RestartRequested = false
 
-  // 长期设备令牌(随身 CC 配对):在家扫码用短令牌换一枚,加进主屏后
-  // 一直有效。落盘 JSON(0600 state dir),上限 MAX_DEVICES 防无限膨胀。
-  const devicesPath = () => join(deps.stateDir, DEVICES_FILE)
-  const readDevices = (): Record<string, { created_at: string }> => {
-    try { return readJsonFile(devicesPath()) as Record<string, { created_at: string }> } catch { return {} }
+  // 令牌都在内部 API 的 token-registry 里(梳理第 6 步):链接令牌 origin 'link'、
+  // 10 分钟;长期设备令牌(随身 CC 配对)origin 'device'、永不过期但可按台撤销。
+  // 设备的落盘与注册表同步只在 device-store.ts 的 makeDeviceCredentials 一处。
+  const tokens: PanelTokens = deps.tokens ?? makeTokenRegistry(undefined, now)
+  const devices = makeDeviceCredentials({ store: makeDeviceStore(deps.stateDir, now), tokens, routeAllow: PHONE_ROUTES })
+  devices.bootRegister()
+  /** 只认面板自己的两种令牌 —— 共享注册表后 session / file / operator 也能 resolve,必须挡住。 */
+  const panelToken = (t: string | null | undefined) => {
+    if (!t) return null
+    const info = tokens.resolve(t)
+    return info && (info.origin === 'device' || info.origin === 'link') ? info : null
   }
-  const issueDeviceToken = (): string | null => {
-    const devices = readDevices()
-    if (Object.keys(devices).length >= MAX_DEVICES) return null
-    const token = 'd' + randomBytes(24).toString('hex')
-    devices[token] = { created_at: new Date().toISOString() }
-    writeFileSync(devicesPath(), JSON.stringify(devices, null, 2), { mode: 0o600 })
-    return token
+  const deviceIdOfSession = (sessionKey: string | undefined) =>
+    sessionKey?.startsWith('device:') ? sessionKey.slice('device:'.length) : null
+  const deviceList = (currentToken: string | null | undefined): Array<DeviceRow & { current: boolean }> => {
+    const mine = deviceIdOfSession(panelToken(currentToken)?.sessionKey)
+    return devices.list().map(d => ({ ...d, current: d.id === mine }))
   }
-  const validDeviceToken = (t: string | null | undefined): boolean =>
-    !!t && t.startsWith('d') && t in readDevices()
 
   const personaPath = (): string | null => {
     const owner = deps.ownerChatId()
@@ -288,6 +350,33 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     }
   }
 
+  /**
+   * `/m/api/home` 的载荷(手机协议 v2 第 11 步抽出来):路由与手机事件集线器的 `home` 主题
+   * 共用这一个构建函数,不经 HTTP。`work: false` 跳过「手头这件事」(要逐个读任务详情,
+   * 集线器每 2 s 轮询一次时不该付这个钱;主题只取未读 / CC 状态 / 最新动态游标)。
+   */
+  const home = async (limit: number, opts: { work?: boolean } = {}): Promise<HomePayload> => {
+    let presence: Presence | null = null
+    let presenceFailed = false
+    try { presence = (await deps.presence?.()) ?? null } catch (e) { presenceFailed = true; deps.log('SETTINGS', `presence 读不到: ${e instanceof Error ? e.message : e}`) }
+    const tz = feedTimezone()
+    const seenUntil = readSeen()
+    const r = buildFeed(collectSources(), { ownerChatId: deps.ownerChatId(), timezone: tz, limit, seenUntil })
+    return {
+      ok: true,
+      synced_at: new Date(now()).toISOString(),
+      today: dayKey(now(), tz),
+      presence,
+      ...(opts.work === false ? {} : { work: await mobileHomeFocus(deps.matters) }),
+      ...(presenceFailed ? { presence_error: 'unavailable' as const } : {}),
+      unread: r.unread,
+      seen_until: seenUntil,
+      events: r.events,
+      next_cursor: r.next_cursor,
+      sources_degraded: r.sources_degraded,
+    }
+  }
+
   const json = (body: object, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8' } })
 
@@ -302,21 +391,26 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
   const panel: SettingsPanel = {
     issueToken() {
       // 't' 前缀:手机页按首字母 'd' 认长期设备令牌,裸 hex 有 1/16 会被误认。
+      // 同一时刻只一枚:发新的之前撤掉旧的。
+      tokens.invalidateSession('link')
       const token = 't' + randomBytes(16).toString('hex')
-      active = { token, expiresAt: now() + SETTINGS_LINK_TTL_MS }
+      tokens.register(token, { tier: 'admin', origin: 'link', sessionKey: 'link', routeAllow: LINK_ROUTES, ttlMs: SETTINGS_LINK_TTL_MS })
       return token
     },
 
     activeLinkToken() {
-      return active && now() < active.expiresAt ? active.token : null
+      return tokens.listSessions('link')[0]?.token ?? null
+    },
+
+    deviceTokens() {
+      return devices.tokens()
     },
 
     validToken(t) {
-      if (validDeviceToken(t)) return true
-      return !!t && !!active && t === active.token && now() < active.expiresAt
+      return panelToken(t) !== null
     },
 
-    state() {
+    state(currentToken) {
       const owner = deps.ownerChatId()
       if (!owner) return { ok: false, error: 'no_owner' }
       const pp = personaPath()
@@ -332,8 +426,8 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         prefs: deps.chatPrefs.get(owner),
         config,
         remote: deps.remote
-          ? { available: true, enabled: deps.remote.isEnabled(), devices: Object.keys(readDevices()).length }
-          : { available: false, enabled: false, devices: 0 },
+          ? { available: true, enabled: deps.remote.isEnabled(), devices: deviceList(currentToken) }
+          : { available: false, enabled: false, devices: [] },
         // Paint-set download progress so the phone can show "已开始 / 62%" right
         // after the owner flips the switch; the download itself runs on the Mac.
         atelier: { model_status: readModelStatus(deps.stateDir) },
@@ -375,8 +469,20 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
         if (b.op === 'forget_devices') {
           // 安全 review HIGH 收尾 (2026-08-26):设备令牌长期有效是产品决策
           // (加主屏永不过期),但必须可撤销。一键全忘,手机重新配对即可。
-          try { rmSync(devicesPath(), { force: true }) } catch { /* already gone */ }
+          devices.forgetAll()
+          deps.push?.forgetAll()
           deps.audit?.('随身 CC:忘掉所有已配对设备 — 设置面板')
+          return { ok: true }
+        }
+        if (b.op === 'revoke_device') {
+          // 按台撤销(梳理第 6 步):丢了一台手机不必让所有设备重新配对。
+          if (typeof b.id !== 'string' || !devices.revoke(b.id)) return { ok: false, error: 'unknown_device' }
+          deps.push?.unregister(b.id)
+          deps.audit?.(`随身 CC:忘掉设备 ${b.id} — 设置面板`)
+          return { ok: true }
+        }
+        if (b.op === 'label_device') {
+          if (typeof b.id !== 'string' || typeof b.label !== 'string' || !devices.label(b.id, b.label)) return { ok: false, error: 'invalid_value' }
           return { ok: true }
         }
         if (b.op === 'set_remote') {
@@ -440,6 +546,7 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
     },
 
     handleRequest,
+    home,
     async start(port = 0) {
       if (server) return { port: server.port! }
       server = serve({
@@ -465,11 +572,44 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
       // 电脑旁但手机走流量是常态,LAN 链接打不开)。令牌放 # 锚点 ——
       // 锚点不上服务器,中继看不到;壳先探 LAN(在家秒开),不通走隧道。
       const remote = deps.remoteInfo?.()
-      if (remote) {
-        const base = remote.relay.replace(/^wss:/, 'https:').replace(/\/tunnel\/phone$/, '')
-        return `${base}/pset/#id=${encodeURIComponent(remote.id)}&t=${token}&p=${encodeURIComponent('/set')}&lan=${ip}:${port}`
-      }
+      if (remote) return psetUrl(remote, token, `${ip}:${port}`)
       return `http://${ip}:${port}/set?t=${token}`
+    },
+
+    async phoneLink(opts) {
+      const remote = deps.remoteInfo?.() ?? null
+      const state = phoneLinkState({
+        owner: !!deps.ownerChatId(),
+        v2Configured: deps.relayV2Configured?.() ?? false,
+        tunnelOn: deps.remote?.isEnabled() ?? false,
+        bootRemoteId: remote?.id ?? null,
+      })
+      if (state === 'remote_off' && opts.enableRemote && deps.remote) {
+        // 桌面就是主人自己的电脑(裁决 4):点「连接手机」= 打开远程隧道。只写 remote_tunnel,不碰 relay_v2_url。
+        deps.remote.setEnabled(true)
+        deps.audit?.('remote_tunnel: → true — 桌面「连接手机」')
+        deps.remote.requestRestart()
+        return { ok: false, state: 'starting' }
+      }
+      if (state === 'relay_unavailable' && opts.enableRemote && deps.remote && !deps.relayV2AtBoot && !v2RestartRequested) {
+        // 开机时隧道已开、relay_v2_url 是之后才配的:运行中的还是老 id,隧道不会自己换。重启一次让它按现在的配置连 v2。
+        // 只在运行中的中继与配置不符、且开机时还没配 v2 时触发;同进程只重启一次,免得点一下重启一下。
+        // 开机时就配了 v2 还是老 id ⇒ 身份坏了,重启无用(新进程照样是老 id),不重启。
+        v2RestartRequested = true
+        deps.audit?.('relay_v2_url 已配置但运行中的隧道仍是老中继 — 桌面「连接手机」触发重启')
+        deps.remote.requestRestart()
+        return { ok: false, state: 'starting' }
+      }
+      if (state !== 'ready' || !remote) return { ok: false, state: state === 'ready' ? 'starting' : state }
+      // 先把服务器与局域网地址弄好再铸码:start 抛错时不能留下一枚活的 10 分钟 admin 链接令牌(也不该先作废微信那条 /set 链接)。
+      const ip = lanIp()
+      const lan = ip ? `${ip}:${(await panel.start()).port}` : null
+      const token = panel.issueToken()
+      return { ok: true, state: 'ready', url: psetUrl(remote, token, lan), expires_at: now() + SETTINGS_LINK_TTL_MS, check_code: pairCheckCode(remote.id) }
+    },
+
+    phoneDevices() {
+      return devices.list()
     },
   }
 
@@ -500,19 +640,27 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             return new Response(M_BOOTSTRAP_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } })
           }
 
-          if (!panel.validToken(t)) {
+          const caller = panelToken(t)
+          if (!caller) {
             if (url.pathname === '/set') {
               return new Response(EXPIRED_HTML, { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } })
             }
             return json({ error: 'unauthorized' }, 401)
           }
+          // routeAllow(phone-routes.ts):不在册的路径一律 403,与内部 API 同名的错误与日志字段。
+          if (!phoneRouteAllowed(caller.routeAllow ?? new Set(), req.method, url.pathname)) {
+            deps.log('SETTINGS', `route_not_allowed origin=${caller.origin} path=${req.method} ${url.pathname}`)
+            return json({ error: 'route_not_allowed' }, 403)
+          }
+          const deviceId = deviceIdOfSession(caller.sessionKey)
+          if (caller.origin === 'device' && deviceId) devices.touch(deviceId)
 
           // ── token-gated ────────────────────────────────────────────────
           if (url.pathname === '/set') {
             return new Response(pageHtml(t!), { headers: { 'content-type': 'text/html; charset=utf-8' } })
           }
           if (url.pathname === '/set/api/state' && req.method === 'GET') {
-            return json(panel.state())
+            return json(panel.state(t))
           }
           if (url.pathname === '/set/api/apply' && req.method === 'POST') {
             let body: unknown
@@ -521,16 +669,32 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             // flow-shaped op — refuse it over the tunnel; you only toggle remote
             // access from home anyway, and a leaked device token must not be
             // able to flip config + force restarts remotely.
-            if ((body as { op?: unknown })?.op === 'set_remote' && url.searchParams.get('_via') === 'tunnel') {
+            // LAN_ONLY_OPS(phone-routes.ts):开关远程访问、撤销 / 全忘设备 —— 只在家做。
+            const op = (body as { op?: unknown })?.op
+            if (typeof op === 'string' && LAN_ONLY_OPS.has(op) && url.searchParams.get('_via') === 'tunnel') {
               return json({ ok: false, error: 'lan_only' })
+            }
+            // 手机 app「解除配对」(spec 2026-09-30-tendhearth-app-v1 §6):只撤调用者自己这台,经隧道也行 ——
+            // 撤自己不会把别人锁在门外;撤别的设备仍是 LAN_ONLY 的 revoke_device。
+            if (op === 'unpair_self') {
+              if (caller.origin !== 'device' || !deviceId) return json({ ok: false, error: 'device_only' }, 403)
+              devices.revoke(deviceId)
+              deps.push?.unregister(deviceId)
+              deps.audit?.(`随身 CC:设备 ${deviceId} 自己解除配对 — 手机 app`)
+              return json({ ok: true })
             }
             return json(await panel.apply(body))
           }
           if (url.pathname === '/set/api/pair' && req.method === 'POST') {
-            const token = issueDeviceToken()
-            if (!token) return json({ ok: false, error: 'device_limit' })
-            deps.log('SETTINGS', 'phone device paired (token issued)')
-            return json({ ok: true, device_token: token })
+            // 单次配对(spec 2026-10-01-tendhearth-pairing-ux §3):只有链接令牌能换设备令牌(D1),
+            // 换成功立刻作废这枚链接令牌 —— 一个码只配一台;设备满了不消耗。
+            // 从 panelToken(t) 到这里没有 await:校验、铸设备令牌、作废链接令牌同一拍完成,两个并发请求不可能都配上。
+            if (caller.origin !== 'link') return json({ ok: false, error: 'link_only' }, 403)
+            const paired = devices.pair()
+            if (!paired) return json({ ok: false, error: 'device_limit' })
+            tokens.invalidateSession('link')
+            deps.log('SETTINGS', `phone device paired (id ${paired.id}); link token consumed`)
+            return json({ ok: true, device_token: paired.token })
           }
           if (url.pathname === '/m') {
             return new Response(phoneHtml(t!, deps.remoteInfo?.() ?? null), { headers: { 'content-type': 'text/html; charset=utf-8' } })
@@ -541,31 +705,19 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
           if (url.pathname === '/m/api/art/blink' && req.method === 'GET') {
             return json({ ok: true, mime: 'image/png', half: blinkArt.half.base64, closed: blinkArt.closed.base64 })
           }
+          // 「此刻」形象画(手机协议包 v2 Task 4 fix round 1,2026-09-29):按需拉,
+          // 不再内联进 /m 页 —— 两张 PNG base64 加起来 ~257KB,是页面撑爆中继
+          // 512KB 帧预算的大头。apps/mobile/src/presence.js 的 loadPresenceArt() 调这个。
+          if (url.pathname === '/m/api/art/presence' && req.method === 'GET') {
+            return json({ ok: true, mime: 'image/png', unlit: presenceArt.unlit.base64, lit: presenceArt.lit.base64 })
+          }
           if (url.pathname === '/m/api/memory' && req.method === 'GET') {
             if (!deps.curatedMemory) return json({ ok: false, error: 'memory_not_wired' }, 503)
             // 经隧道时 handleRequest 抛出不会回包,手机会一直等 —— 这里兜住,让页面走「暂时读不到」。
             try { return json({ ok: true, ...deps.curatedMemory() }) } catch { return json({ ok: false, error: 'unavailable' }, 500) }
           }
           if (url.pathname === '/m/api/home' && req.method === 'GET') {
-            let presence: Presence | null = null
-            let presenceFailed = false
-            try { presence = (await deps.presence?.()) ?? null } catch (e) { presenceFailed = true; deps.log('SETTINGS', `presence 读不到: ${e instanceof Error ? e.message : e}`) }
-            const tz = feedTimezone()
-            const seenUntil = readSeen()
-            const r = buildFeed(collectSources(), { ownerChatId: deps.ownerChatId(), timezone: tz, limit: parseLimit(url), seenUntil })
-            return json({
-              ok: true,
-              synced_at: new Date(now()).toISOString(),
-              today: dayKey(now(), tz),
-              presence,
-              work: await mobileHomeFocus(deps.matters),
-              ...(presenceFailed ? { presence_error: 'unavailable' } : {}),
-              unread: r.unread,
-              seen_until: seenUntil,
-              events: r.events,
-              next_cursor: r.next_cursor,
-              sources_degraded: r.sources_degraded,
-            })
+            return json(await home(parseLimit(url)))
           }
           if (url.pathname === '/m/api/feed' && req.method === 'GET') {
             const cursor = url.searchParams.get('cursor')
@@ -587,14 +739,40 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             deps.seen.write(clamped)
             return json({ ok: true, seen_until: clamped })
           }
+          if ((url.pathname === '/m/api/push/register' || url.pathname === '/m/api/push/test') && req.method === 'POST') {
+            if (!deps.push) return json({ ok: false, error: 'push_not_wired' }, 503)
+            if (caller.origin !== 'device' || !deviceId) return json({ ok: false, error: 'device_only' }, 403)
+            if (url.pathname === '/m/api/push/test') return json({ ok: true, result: await deps.push.test(deviceId) })
+            let body: unknown
+            try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
+            const b = (body ?? {}) as { platform?: unknown; token?: unknown }
+            const platform = PushPlatform.safeParse(b.platform)
+            if (!platform.success || typeof b.token !== 'string' || !pushTokenValid(platform.data, b.token)) return json({ ok: false, error: 'invalid' }, 400)
+            if (!deps.push.register(deviceId, platform.data, b.token)) return json({ ok: false, error: 'invalid' }, 400)
+            deps.log('SETTINGS', `push registered for device ${deviceId} (${platform.data})`)
+            return json({ ok: true })
+          }
           // ── 「一件事」:与桌面同一份数据,同一套语义 ──────────────────
           const mobileResponse=await mobileWorkbenchRoute(deps.matters,url,req,deps.entry,deps.uploads)
           if(mobileResponse)return mobileResponse
+          const continueResponse=await mobileSessionContinueRoute(deps.sessionContinue,url,req,id=>deps.matters?.seenOnPhone(id))
+          if(continueResponse)return continueResponse
+          // 跟 CC 说(spec 2026-10-01):主人对话一页 + 收下即回的说一句。
+          const chatResponse = await mobileChatRoute(deps.chat, url, req)
+          if (chatResponse) return chatResponse
+          const readResponse = await mobileReadsRoute({ ...(deps.connections ? { connections: deps.connections } : {}), ...(deps.sessions ? { sessions: deps.sessions } : {}) }, url, req)
+          if (readResponse) return readResponse
           if (url.pathname === '/m/api/matters' && req.method === 'GET') {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
             const kind = url.searchParams.get('kind'), status = url.searchParams.get('status')
             if ((kind !== null && !['chat', 'task', 'companion'].includes(kind)) || (status !== null && status.split(',').some(s => !['open', 'replied', 'done', 'archived'].includes(s)))) return json({ ok: false, error: 'invalid' }, 400)
-            const matters = deps.matters.list({ ...(kind ? { kind: kind as 'chat' | 'task' | 'companion' } : {}), ...(status ? { statuses: status.split(',') as Array<'open' | 'replied' | 'done' | 'archived'> } : {}), limit: 50 })
+            // 不带 status ⇒ 不含归档(真机 2026-09-30:前 50 条里 49 条是归档的自检任务,「一起做」只剩一条)。
+            const statuses = (status ? status.split(',') : ['open', 'replied', 'done']) as Array<'open' | 'replied' | 'done' | 'archived'>
+            // 多取一些再筛:别人的聊天 matter(updated_at 现在会被微信入站推高)不给手机,也不挤掉任务。
+            const owner = deps.ownerChatId()
+            const matters = deps.matters.list({ ...(kind ? { kind: kind as 'chat' | 'task' | 'companion' } : {}), statuses, limit: 200 })
+              .filter(m => (m as { kind?: unknown }).kind !== 'chat' || (owner !== null && (m as { ownerChatId?: unknown }).ownerChatId === owner))
+              .slice(0, 50)
             for (const m of matters) { const id = (m as { id?: unknown }).id; if (typeof id === 'string') { try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } } }
             return json({ ok: true, matters })
           }
@@ -605,12 +783,34 @@ export function makeSettingsPanel(deps: SettingsPanelDeps): SettingsPanel {
             try { const detail = await deps.matters.detail(id); try { deps.matters.seenOnPhone(id) } catch { /* 只是露面登记 */ } return mobileMatterDetailResponse(detail) }
             catch (e) { const msg = e instanceof Error ? e.message : 'internal'; return json({ ok: false, error: msg === 'matter_not_found' ? msg : 'unavailable' }, msg === 'matter_not_found' ? 404 : 500) }
           }
+          if (url.pathname === '/m/api/matter/insight' && req.method === 'GET') {
+            if (!deps.insight) return json({ ok: false, error: 'insight_not_wired' }, 503)
+            const id = url.searchParams.get('id')
+            if (!id || !/^[a-f0-9]{8}$/.test(id)) return json({ ok: false, error: 'invalid' }, 400)
+            try {
+              const r = await deps.insight.forMatter(id, normalizeLang(url.searchParams.get('lang')))
+              return json({ ok: true, ...r })
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : ''
+              return json({ ok: false, error: msg === 'matter_not_found' ? msg : 'unavailable' }, msg === 'matter_not_found' ? 404 : 500)
+            }
+          }
+          if (url.pathname === '/m/api/matter/changes' && req.method === 'GET') {
+            if (!deps.changes) return json({ ok: false, error: 'changes_not_wired' }, 503)
+            const id = url.searchParams.get('id')
+            if (!id || !/^[a-f0-9]{8}$/.test(id)) return json({ ok: false, error: 'invalid' }, 400)
+            try { return json({ ok: true, turn: latestChanges(deps.changes(id)) }) }
+            catch (e) {
+              const notFound = e instanceof Error && e.message === 'not_found'
+              return json({ ok: false, error: notFound ? 'matter_not_found' : 'unavailable' }, notFound ? 404 : 500)
+            }
+          }
           if (url.pathname === '/m/api/matter/say' && req.method === 'POST') {
             if (!deps.matters) return json({ ok: false, error: 'matters_not_wired' }, 503)
             let body: unknown
             try { body = await req.json() } catch { return json({ ok: false, error: 'bad_json' }, 400) }
             const b = (body ?? {}) as Record<string,unknown>
-            if (typeof b.id !== 'string' || !/^[a-f0-9]{8}$/.test(b.id) || typeof b.text !== 'string' || (!b.text.trim()&&(!Array.isArray(b.attachmentIds)||!b.attachmentIds.length)) || b.text.length > 20_000) return json({ ok: false, error: 'invalid' }, 400)
+            if (typeof b.id !== 'string' || !/^[a-f0-9]{8}$/.test(b.id) || typeof b.text !== 'string' || (!b.text.trim()&&(!Array.isArray(b.attachmentIds)||!b.attachmentIds.length)) || b.text.length > PHONE_SAY_MAX_CHARS) return json({ ok: false, error: 'invalid' }, 400)
             try { const input=mobileSayInput(b);return json({ ok: true, result: input?await deps.matters.say(b.id,b.text,input):await deps.matters.say(b.id,b.text) }) }
             catch (e) {
               return mobileMatterError(e)

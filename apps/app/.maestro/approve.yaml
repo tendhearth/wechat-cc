@@ -1,0 +1,40 @@
+# 批准:首次打开 → 先看看 → 此刻第一张「等你决定」卡(作品集,模型说明)→ 看一下再决定
+# → 原始命令直接可见(硬要求)→ 允许 → 回到进展页 → 2 秒后「这一轮已回复」。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: now-needs-you-card
+    timeout: 10000
+- tapOn:
+    id: now-look-then-decide
+    index: 0
+- extendedWaitUntil:
+    visible:
+      id: approval-title
+    timeout: 10000
+- assertVisible:
+    text: "可以安装图片处理组件吗？|May I add an image-processing package\\?"
+- assertVisible:
+    id: approval-ai-summary
+# 硬要求:说明来自模型时,原始命令首行与工作目录不折叠、直接可见。
+- assertVisible:
+    id: approval-raw-inline
+# 打开就拉新:拿到挂载之后的详情前按钮是锁的,等它可点。
+- extendedWaitUntil:
+    visible:
+      id: approval-allow
+      enabled: true
+    timeout: 10000
+- tapOn:
+    id: approval-allow
+- extendedWaitUntil:
+    visible:
+      id: progress-status
+    timeout: 10000
+- extendedWaitUntil:
+    visible: "这一轮已回复|Replied this round"
+    timeout: 8000

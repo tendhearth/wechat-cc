@@ -96,7 +96,16 @@ Two discovery roots, resolved by `src/daemon/plugins/registry.ts`:
 | Root | Path | Distribution | Default state |
 |------|------|--------------|---------------|
 | **User** | `~/.claude/channels/wechat/plugins/<name>/` | drop-in; **survives upgrades**; third-party | **disabled** |
-| **Bundled** | `<repo>/plugins/<name>/` | ships & versions with wechat-cc; first-party; absent in compiled bundles | **enabled** |
+| **Bundled** | first hit of: `WECHAT_CC_BUNDLED_PLUGINS_DIR` → the **registered source** (`wechat-cc plugin source <dir>`, stored in `~/.claude/channels/wechat/plugins/bundled-source.json`) → the `.app`'s own resources / `<repo>/plugins` | first-party; **not** shipped in the installer (see [maintainer/deploy.md](maintainer/deploy.md) 「内置插件」) | **enabled** |
+
+> **Trust note — the registered source is bundled, i.e. default-ON.** Whatever
+> folder you register with `plugin source` (or `self deploy` registers for you)
+> is treated exactly like first-party bundled plugins: **anything dropped into
+> that folder runs on the next daemon start without `plugin enable`**. Only
+> register a folder you control (your own checkout's `plugins/`); third-party
+> plugins belong in the user root, where discovery is not consent. To switch
+> one off, `wechat-cc plugin disable <name>` (an explicit OFF also removes it
+> from the deploy gate's expectations).
 
 User plugins default **disabled** on purpose: a manifest tells the daemon to
 `spawn` a process, so *discovery is not consent*. Enable is an explicit

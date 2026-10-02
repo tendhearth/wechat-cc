@@ -27,6 +27,11 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'GET /v1/matter': 'admin',
   'GET /v1/matter/owner-chat': 'admin',
   'POST /v1/matter/say': 'admin',
+  // 「CC 的连接」:带插件目录与原因,只给 admin。
+  'GET /v1/connections': 'admin',
+  // 桌面「连接手机」(plan 7a):铸 admin 链接令牌 / 打开远程隧道,只给 operator 凭据。
+  'POST /v1/phone/link': 'admin',
+  'GET /v1/phone/devices': 'admin',
   'GET /v1/workbench/models': 'admin',
   'POST /v1/workbench/attachment': 'admin',
   'GET /v1/workbench/attachment': 'admin',
@@ -239,7 +244,9 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'GET /v1/llm/health': 'trusted',
   'POST /v1/net/probe': 'trusted',
   'POST /v1/llm/keys': 'admin',
-  'GET /v1/settings/link': 'trusted',
+  // 铸的是 admin 档链接令牌(手机拿去配对),trusted 的普通聊天会话不能够着(spec 2026-10-01-tendhearth-pairing-ux §11.7,
+  // plan 7a 修)。调用方:selftest phone 用 operator 凭据;微信 /set 走进程内 settingsPanelLink(),不经 HTTP。
+  'GET /v1/settings/link': 'admin',
   'POST /v1/memory/portrait/generate': 'trusted',
   'GET /v1/memory/portrait': 'trusted',
   // 桌面读故障记录以显示"上次故障"横幅。trusted:桌面/CLI 的唯一凭据是

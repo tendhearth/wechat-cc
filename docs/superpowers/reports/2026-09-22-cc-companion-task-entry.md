@@ -19,7 +19,7 @@
 
 ## 验证范围
 
-桌面浏览器脚本：`bun scripts/workbench-companion-browser-smoke.ts`。使用生产前端模块、真实HTTP路由、任务服务和SQLite；执行者是受控夹具。检查交办取消、项目和执行者继承、旧草稿隔离、显式开始、头像查看与返回原任务，并保存1280px和740px截图。它不等于Tauri原生窗口或真实模型验收。
+桌面浏览器脚本：`bun scripts/workbench-companion-browser-smoke.ts`。使用生产前端模块、真实HTTP路由、任务服务和SQLite；执行者是受控夹具。检查交办取消、项目和执行者继承、旧草稿隔离、显式开始、头像查看与返回原任务，并保存1280px和740px截图。它不等于Tauri原生窗口或真实模型验收。(该脚本已于 plan 6 设计统一时退役,2026-10-01:它挂载的 mountCurrentActivity 与 .cc-care-avatar 已删除;桌面验收改由 apps/desktop 的 Playwright e2e 覆盖。)
 
 这条浏览器链路发现并修复了两处单测替身没暴露的问题：列表真实读取上限是100；原生HTML select在选项尚未加载时会把设置的值变成空串，不能再把这个空串保存回草稿，否则另一个项目的执行者会回落到全局默认值。补了真实路由／SQLite契约测试及模拟真实select约束的草稿回归。
 

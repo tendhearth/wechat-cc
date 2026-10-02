@@ -33,6 +33,13 @@ function runShell(hash: string, stored: string | null) {
 }
 
 describe('pset shell', () => {
+  it('按 daemon id 前缀选中继路径:r… ⇒ /v2/phone,其余 ⇒ /tunnel/phone', () => {
+    expect(SRC).toContain('ID.charAt(0) === "r" ? "/v2/phone" : "/tunnel/phone"')
+  })
+  it('真跑:r… id 连 /v2/phone,t… id 连 /tunnel/phone', () => {
+    expect(runShell('#id=rABC&t=tLINK', null).sockets[0]!.url).toBe('wss://cc.example/v2/phone?id=rABC')
+    expect(runShell('#id=tABC&t=tLINK', null).sockets[0]!.url).toBe('wss://cc.example/tunnel/phone?id=tABC')
+  })
   it('goes straight to the tunnel even when the link carries a LAN address (no home probe)', () => {
     const { sockets, images, env } = runShell('#id=D1&t=tLINK&p=%2Fset&lan=192.168.1.2:5000', null)
     expect(images).toHaveLength(0)
@@ -52,6 +59,6 @@ describe('pset shell', () => {
     const { sockets, msg } = runShell('#id=D1&t=tLINK&p=%2Fset', null)
     sockets[0]!.onmessage!({ data: JSON.stringify({ error: 'auth_failed' }) })
     expect(sockets).toHaveLength(1)
-    expect(msg.textContent).toBe('链接过期啦,回微信跟 CC 再要一个')
+    expect(msg.textContent).toBe('这个链接已经用过或过期了，回微信跟 CC 再要一个')
   })
 })

@@ -89,9 +89,9 @@ describe('ci.yml —— e2e 作业要装 Playwright chromium', () => {
 })
 
 describe('三个 workflow —— bun 版本钉死', () => {
-  it('ci.yml / desktop.yml / publish-update.yml 每一处 setup-bun 都是 1.3.14(2026-09-15 bun 1.4.2 把 CI 弄红;发版链此前仍是 latest,2026-09-27 一并钉住)', () => {
+  it('ci.yml / desktop.yml / publish-update.yml / relay.yml 每一处 setup-bun 都是 1.3.14(2026-09-15 bun 1.4.2 把 CI 弄红;发版链此前仍是 latest,2026-09-27 一并钉住)', () => {
     const pins: string[] = []
-    for (const file of ['ci.yml', 'desktop.yml', 'publish-update.yml']) {
+    for (const file of ['ci.yml', 'desktop.yml', 'publish-update.yml', 'relay.yml']) {
       const wf = parse(readFileSync(join(HERE, '..', '.github', 'workflows', file), 'utf8')) as { jobs: Record<string, { steps?: Array<{ uses?: string; with?: Record<string, unknown> }> }> }
       for (const job of Object.values(wf.jobs)) {
         for (const step of job.steps ?? []) {
@@ -103,5 +103,63 @@ describe('三个 workflow —— bun 版本钉死', () => {
     }
     expect(pins.length).toBeGreaterThanOrEqual(6)
     for (const p of pins) expect(p, p).toMatch(/:1\.3\.14$/)
+  })
+})
+
+describe('ci.yml —— 中继作业', () => {
+  it('changes 算出 relay 输出,relay 作业依赖它', () => {
+    const changes = jobs.changes!
+    expect(changes.outputs?.relay).toBeDefined()
+    const filter = changes.steps?.find(s => s.id === 'filter')?.with?.filters as string
+    expect(filter).toContain('apps/relay/**')
+    expect(filter).toContain('packages/protocol/**')
+    const relay = jobs.relay!
+    expect(relay.needs).toContain('changes')
+    expect(relay.if).toContain("needs.changes.outputs.relay == 'true'")
+  })
+  it('relay 作业的 setup-bun 也钉 1.3.14', () => {
+    const bun = jobs.relay!.steps?.find(s => s.uses?.startsWith('oven-sh/setup-bun'))
+    expect(bun?.with?.['bun-version']).toBe('1.3.14')
+  })
+})
+
+describe('ci.yml —— Tendhearth 手机 app 作业', () => {
+  it('changes 算出 app 输出(apps/app 与协议包),app 作业依赖它', () => {
+    const changes = jobs.changes!
+    expect(changes.outputs?.app).toBe('${{ steps.filter.outputs.app }}')
+    const filter = parse(changes.steps?.find(s => s.id === 'filter')?.with?.filters as string) as Record<string, string[]>
+    expect(filter.app).toEqual(expect.arrayContaining(['apps/app/**', 'packages/protocol/**']))
+    const app = jobs.app!
+    expect(app.needs).toContain('changes')
+    expect(app.if).toContain("needs.changes.outputs.app == 'true'")
+  })
+  it('app 作业的 setup-bun 也钉 1.3.14', () => {
+    const bun = jobs.app!.steps?.find(s => s.uses?.startsWith('oven-sh/setup-bun'))
+    expect(bun?.with?.['bun-version']).toBe('1.3.14')
+  })
+  it('app-native 作业只在 apps/app/native/** 或协议包动过时跑,且跑 Swift 与 Kotlin 两端', () => {
+    const changes = jobs.changes!
+    expect(changes.outputs?.app_native).toBe('${{ steps.filter.outputs.app_native }}')
+    const filter = parse(changes.steps?.find(s => s.id === 'filter')?.with?.filters as string) as Record<string, string[]>
+    expect(filter.app_native).toEqual(['apps/app/native/**', 'packages/protocol/**'])
+    const native = jobs['app-native']!
+    expect(native.needs).toContain('changes')
+    expect(native.if).toContain("needs.changes.outputs.app_native == 'true'")
+    const text = JSON.stringify(native)
+    expect(text).toContain('swift test')
+    expect(text).toContain('android-push/test.sh')
+  })
+})
+
+describe('中继工作流 —— 未配置 Cloudflare 时整体跳过', () => {
+  const load = (f: string) => parse(readFileSync(join(HERE, '..', '.github', 'workflows', f), 'utf8')) as { jobs: Record<string, { if?: string }>; on?: { schedule?: Array<{ cron: string }> } }
+  it('relay.yml 的部署作业受 RELAY_DEPLOY 开关控制', () => {
+    expect(load('relay.yml').jobs.deploy!.if).toContain("vars.RELAY_DEPLOY == 'on'")
+  })
+  it('relay-watch.yml 受 RELAY_WATCH 开关控制,且每小时一次', () => {
+    const wf = load('relay-watch.yml')
+    expect(wf.jobs.watch!.if).toContain("vars.RELAY_WATCH == 'on'")
+    const on = (wf.on ?? (wf as Record<string, unknown>)[true as unknown as string]) as { schedule: Array<{ cron: string }> }
+    expect(on.schedule[0]!.cron).toBe('0 * * * *')
   })
 })

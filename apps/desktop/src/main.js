@@ -18,24 +18,27 @@ import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
 import { invokeApi, invokeWorkbenchApi } from "./api.js"
 import { initialMode, restartButtonState, afterScanTarget , showToast } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
-import { startCompanionPresence } from "./companion-presence.js"
+import { createPresencePoller } from "./presence-poller.js"
 import { createConversationsPoller } from "./conversations-poller.js"
 import {
   renderDoctorWizard,
   refreshEnterDashboardButton,
-  updateFooterStatus,
   showStep as wizardShowStep,
 } from "./modules/wizard.js"
 import { refreshQr } from "./modules/qr.js"
+import { mountPhoneConnect, mountOnboardPhone } from "./modules/phone-connect.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
-import { renderDashboard, renderRestartButton, setPending, setLastProbe, updateClock, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkFsAccessOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
+import { renderDashboard, renderRestartButton, setPending, setLastProbe, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, checkIncidentsOnPoll, checkFsAccessOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
 import { initDialoguePage, stopDialogueAutoRefresh } from "./modules/dialogue-page.js"
 import { initTodosPage } from "./modules/todos.js"
 import { startAppUpdateChecks } from "./modules/app-update.js"
-import { initConversePage } from "./modules/converse.js"
+import { initConversePage, subscribeConverse, setConverseMode } from "./modules/converse.js"
+import { mountNowPage } from "./modules/now-page.js"
+import { mountNowConnections } from "./modules/now-connections.js"
+import { latestCCLine, nowStatusLine } from "./modules/now-home.js"
 import { initA2AAgentsTab, refresh as refreshA2AAgents } from "./modules/a2a-agents.js"
 import { markJournalSeen } from "./modules/journal.js"
 import { initPluginsTab, refresh as refreshPlugins } from "./modules/plugins.js"
@@ -46,7 +49,7 @@ import { mountHugeicons } from "./modules/icons.js"
 import { pingHealth, fetchDaemonVersion } from "./health-probe.js"
 import { refreshWxvaultOnAppStart } from "./modules/wxvault-refresh.js"
 import { loadAtelierGallery } from "./modules/atelier-gallery.js"
-import { mountCurrentActivity, createLifeArchive } from "./modules/cc-life.js"
+import { createLifeArchive } from "./modules/cc-life.js"
 import { mountCareSheet } from "./modules/cc-care.js"
 import { createTaskEntry } from "./modules/task-entry.js"
 import { refreshPostcardAlbum } from "./modules/postcard-album.js"
@@ -67,7 +70,6 @@ const state = {
   qrTimer: /** @type {ReturnType<typeof setTimeout> | null} */ (null),
   qrConfirmTimer: /** @type {ReturnType<typeof setTimeout> | null} */ (null),
   qrErrors: 0,
-  clockTimer: /** @type {ReturnType<typeof setInterval> | null} */ (null),
   mode: "loading",
   currentStep: "doctor",
   updateProbed: false,
@@ -128,16 +130,49 @@ async function withRefreshFeedback(button, fn) {
 const invoke = (cmd, args) => ipcInvoke(cmd, args, state)
 
 const doctorPoller = createDoctorPoller({ invoke, intervalMs: 5000 })
-// 桌宠状态(spec 2026-09-03-companion-presence):首页鱼缸跟浮窗共用一套推导。
-// 点脚边道具 → 切到觅食台(带回来的在那儿)。switchPane 是函数声明,提升可用。
-const presencePoller = startCompanionPresence({ onOpenJournal: () => switchPane("a2a-agents") })
+// CC 的处境(GET /v1/companion/presence):「此刻」的明暗与状态行都看它(spec 2026-10-01 §4)。
+const presencePoller = createPresencePoller({ invokeApi, intervalMs: 20_000 })
+presencePoller.start()
 const careSheet = mountCareSheet({
   call: invokeWorkbenchApi, presencePoller, navigate: switchPane,
   openWorkbench: () => switchPane('workbench'),
   openTask: async (/** @type {string} */ id) => { switchPane('workbench'); await openWorkbenchTask(id) },
 })
-const currentActivityHost = document.getElementById("cc-current-activity")
-if (currentActivityHost) mountCurrentActivity(currentActivityHost, presencePoller, switchPane, () => careSheet.open())
+// 「此刻」(spec 2026-10-01 §6.3):CC 的气泡就是对话入口,careSheet 不再从这里打开(只喂 attention)。
+const nowRoot = /** @type {HTMLElement|null} */ (document.querySelector('.cc-now-pane'))
+const nowPage = nowRoot ? mountNowPage({
+  root: nowRoot, presencePoller,
+  onOpenTask: async (/** @type {string} */ id) => { switchPane('workbench'); await openWorkbenchTask(id) },
+  onModeChange: m => {
+    setConverseMode(m)
+    if (m === 'chat') document.getElementById('converse-input')?.focus()
+  },
+}) : null
+if (nowPage) setConverseMode('home')
+// 右上角状态行 = doctor(daemon 跑没跑)∧ presence(够不够得着),与 CC 明暗同一信号。
+/** @type {{alive:boolean}|null} */ let lastDaemon = null
+/** @type {{presence:string}|null} */ let lastPresence = null
+function renderRail() {
+  const line = nowStatusLine(lastDaemon, lastPresence)
+  const dot = document.getElementById('dash-rail-dot'); if (dot) dot.className = `dot ${line.cls}`
+  const text = document.getElementById('dash-rail-text'); if (text) text.textContent = line.text
+}
+presencePoller.subscribe(p => { lastPresence = p; renderRail() })
+// 右上角状态行打开的「CC 的连接」(GET /v1/connections,admin,走原生宿主的 operator 凭据)。
+// 只在浮层打开时读:打开时立刻读一次,开着时每 30 秒再读。
+const nowConnectionsHost = document.getElementById('now-connections')
+const nowConnections = nowConnectionsHost ? mountNowConnections({ host: nowConnectionsHost, call: (method, path) => invokeWorkbenchApi(method, path) }) : null
+{
+  const details = /** @type {HTMLDetailsElement|null} */ (document.querySelector('.cc-home-details'))
+  /** @type {ReturnType<typeof setInterval>|null} */ let timer = null
+  details?.addEventListener('toggle', () => {
+    if (timer) { clearInterval(timer); timer = null }
+    if (!details.open || !nowConnections) return
+    void nowConnections.open()
+    timer = setInterval(() => { void nowConnections.refresh() }, 30_000)
+  })
+}
+subscribeConverse(msgs => nowPage?.setLatestLine(latestCCLine(msgs)))
 window.addEventListener('pagehide', () => careSheet.close())
 const memoryRecordsHost = document.getElementById("cc-memory-records")
 const lifeArchive = memoryRecordsHost ? createLifeArchive(memoryRecordsHost, { call: invokeApi }) : null
@@ -163,7 +198,7 @@ function startWorkbenchAttention() {
   if (!host || workbenchAttention) return
   workbenchAttention = mountWorkbenchAttention({
     host, invokeWorkbenchApi, invoke,
-    onChange: snapshot => careSheet.setAttention(snapshot),
+    onChange: snapshot => { careSheet.setAttention(snapshot); nowPage?.setAttention(snapshot) },
     getContext: () => ({
       taskId: state.mode === 'dashboard' ? getActiveWorkbenchTaskId() : null,
       focused: document.visibilityState === 'visible' && document.hasFocus(),
@@ -212,6 +247,7 @@ const deps = {
   invokeWorkbenchApi,
   mountConverse,
   unmountConverse,
+  onSend: () => { if (document.querySelector('.cc-now-pane #converse-root')) nowPage?.setMode('chat') },
   onDelegate: async (/** @type {import('./modules/task-entry.js').Draft} */ draft) => {
     const result = await taskEntry.open(draft)
     if (result) await openAcceptedEntry(result)
@@ -339,11 +375,10 @@ async function refreshGuardStatus() {
 function setMode(mode) {
   state.mode = mode
   document.documentElement.dataset.mode = mode
+  syncOnboardPhone()
   if (mode === "dashboard") {
     doctorPoller.start()
     conversationsPoller.start()
-    if (!state.clockTimer) state.clockTimer = setInterval(updateClock, 1000)
-    updateClock()
     if (!state.updateProbed) {
       state.updateProbed = true
       loadUpdateProbe(deps).catch(err => console.error("update probe failed", err))
@@ -356,13 +391,20 @@ function setMode(mode) {
   } else {
     doctorPoller.stop()
     conversationsPoller.stop()
-    if (state.clockTimer) { clearInterval(state.clockTimer); state.clockTimer = null }
   }
+}
+
+// 引导页最后一步的码(spec 2026-10-01-tendhearth-pairing-ux §5):在 #screen-service 且 daemon 活着才要码。
+/** @type {ReturnType<typeof mountOnboardPhone> | null} */ let onboardPhone = null
+function syncOnboardPhone(report = doctorPoller.current) {
+  const active = document.documentElement.dataset.mode === "wizard" && !!document.getElementById("screen-service")?.classList.contains("active")
+  onboardPhone?.sync({ active, alive: !!report?.checks?.daemon?.alive })
 }
 
 /** @param {string} name */
 function showStep(name) {
   wizardShowStep(state, name)
+  syncOnboardPhone()
   // Service step has the guard toggle — refresh status when entering so
   // the line shows current IP + reachability without waiting for a click.
   if (name === "service") refreshGuardStatus()
@@ -381,8 +423,9 @@ function showStep(name) {
 
 function wireDoctorSubscribers() {
   doctorPoller.subscribe(renderDoctorWizard)
+  doctorPoller.subscribe(report => syncOnboardPhone(report))
   doctorPoller.subscribe(refreshEnterDashboardButton)
-  doctorPoller.subscribe(report => updateFooterStatus(report.checks.daemon))
+  doctorPoller.subscribe(report => { lastDaemon = report.checks.daemon; renderRail() })
   doctorPoller.subscribe(renderDashboardIfActive)
   doctorPoller.subscribe(renderRestartButtonIfActive)
   doctorPoller.subscribe(checkExpiredDiff)
@@ -523,10 +566,10 @@ function setToggle(id, on) {
 /** @param {string} name */
 function switchPane(name) {
   const focusConversation = name === "converse"
-  if (focusConversation) {
-    name = "overview"
-    document.querySelector(".cc-home-details")?.removeAttribute("open")
-  }
+  document.body.dataset.pane = focusConversation ? "overview" : name
+  if (focusConversation) name = "overview"
+  // 连接浮层只在原地看一眼:任何一次导航都把它收起。
+  document.querySelector(".cc-home-details")?.removeAttribute("open")
   const currentPane = /** @type {HTMLElement|null} */ (document.querySelector('.dash-pane[data-pane]:not([hidden])'))
   if (isCurrentWorkbenchPane(name, currentPane)) {
     workbenchNavigation?.setWorkbenchActive(true)
@@ -548,10 +591,6 @@ function switchPane(name) {
   })
   // The destination must be visible before navigation transfers keyboard focus.
   workbenchNavigation?.setWorkbenchActive(name === "workbench")
-  if (overviewWasHidden) {
-    advanceCompanionHeroCopy()
-    if (doctorPoller.current) renderDashboardIfActive(doctorPoller.current)
-  }
   // Logs pane gets a 10s auto-refresh tick while active; stop it on
   // pane switch so we don't burn CPU tailing log files no one is reading.
   if (name === "logs") {
@@ -590,6 +629,9 @@ function switchPane(name) {
     stopDialogueAutoRefresh()
   }
   if (name === "overview") {
+    // 「跟 CC 说」⇒ chat;已经在此刻时再点「此刻」⇒ 回 home;从别处回来保持原来那一态(草稿与对话都还在)。
+    if (focusConversation) nowPage?.setMode("chat")
+    else if (!overviewWasHidden) nowPage?.setMode("home")
     initConversePage(deps, { focus: focusConversation })
   }
   if (name === "a2a-agents") {
@@ -614,6 +656,20 @@ function activateDialogueWorkspace() {
 // ─── DOM event wiring ────────────────────────────────────────────────
 
 function wireEvents() {
+  // 连接浮层:点此刻页的空白处或按 Esc 收起(浮层外的别处不管,免得误关从浮层里打开的对话框)。
+  document.addEventListener("click", ev => {
+    const details = document.querySelector(".cc-home-details[open]")
+    const target = ev.target instanceof Element ? ev.target : null
+    if (details && target && !details.contains(target) && target.closest(".cc-now-pane")) details.removeAttribute("open")
+  })
+  document.addEventListener("keydown", ev => {
+    if (ev.key !== "Escape") return
+    const details = document.querySelector(".cc-home-details[open]")
+    if (!details || document.querySelector("dialog[open]")) return
+    const summary = /** @type {HTMLElement|null} */ (details.querySelector("summary"))
+    details.removeAttribute("open")
+    summary?.focus()
+  })
   document.addEventListener("click", ev => {
     const target = ev.target instanceof Element ? ev.target : null
     const go = target?.closest("[data-life-pane]")
@@ -625,29 +681,17 @@ function wireEvents() {
     if (category) void loadLifeCategory(category.getAttribute("data-life-category") || "postcards")
   })
 
-  // 手机上改设置 — 拿一条新鲜的面板链接,渲染成二维码弹层(手机扫码直开)
-  document.getElementById("open-phone-settings")?.addEventListener("click", async () => {
-    try {
-      const r = /** @type {{ ok?: boolean, url?: string, error?: string }} */ (await deps.invokeApi("GET", "/v1/settings/link"))
-      if (!r || !r.ok || !r.url) {
-        const why = r && r.error === "no_lan_or_owner" ? "拿不到局域网地址(检查 Wi-Fi)或还没绑定微信" : (r && r.error) || "未知原因"
-        showToast(`生成不了设置链接:${why}`)
-        return
-      }
-      const svg = /** @type {string} */ (await deps.invoke("render_qr_svg", { text: r.url }))
-      const modal = document.createElement("div")
-      modal.id = "phone-settings-modal"
-      // https 链接 = 走公网壳页(远程隧道开着),任何网络都能扫开;
-      // http = 纯 LAN 链接,才需要同一 Wi-Fi 的提示。
-      const note = r.url.startsWith("https")
-        ? "手机扫码打开设置 · 10 分钟内有效<br>流量或任何 Wi-Fi 都能打开"
-        : "手机扫码打开设置 · 10 分钟内有效<br>手机和电脑要在同一个 Wi-Fi"
-      modal.innerHTML = `<div class="qr-card">${svg}<div class="qr-note">${note}</div></div>`
-      modal.addEventListener("click", () => modal.remove())
-      document.body.appendChild(modal)
-    } catch (err) {
-      showToast(`生成设置二维码失败:${err instanceof Error ? err.message : err}`)
-    }
+  // 连接手机(spec 2026-10-01-tendhearth-pairing-ux §4.3):admin 路由走原生宿主(invokeWorkbenchApi),渲染进程拿不到令牌。
+  const phoneConnect = mountPhoneConnect({
+    call: (method, path, body) => invokeWorkbenchApi(method, path, body),
+    renderQr: text => /** @type {Promise<string>} */ (deps.invoke("render_qr_svg", { text })),
+  })
+  document.getElementById("open-phone-settings")?.addEventListener("click", () => phoneConnect.open())
+  const onboardHost = document.getElementById("onboard-phone")
+  if (onboardHost) onboardPhone = mountOnboardPhone({
+    host: onboardHost,
+    call: (method, path, body) => invokeWorkbenchApi(method, path, body),
+    renderQr: text => /** @type {Promise<string>} */ (deps.invoke("render_qr_svg", { text })),
   })
 
   // 大脑卡交互:测试连接(唯一的真实拨号入口)/ 接入表单 / 复制命令 / 保存 key / 重启
@@ -893,7 +937,9 @@ function wireEvents() {
       await loadMemoryTopZone(deps)
     }),
   )
-  // "重新整理" — regenerate the overview memory from local Claude memory. This
+  // "更新项目地图" — regenerate the overview / project map (_overview.md) from local
+  // Claude memory. Renamed from "重新整理" (2026-10-01) so it no longer reads like
+  // WeChat「整理记忆」, which curates memory.md — different thing. This
   // is a slow LLM call (not a reload), so it gets its own progress labels
   // rather than withRefreshFeedback's "已刷新".
   document.getElementById("memory-synthesize-btn")?.addEventListener("click", async (e) => {
@@ -903,7 +949,7 @@ function wireEvents() {
     )
     const original = labelNode ? labelNode.textContent : null
     btn.disabled = true
-    if (labelNode) labelNode.textContent = " 整理中…"
+    if (labelNode) labelNode.textContent = " 更新中…"
     let ok = false
     try {
       const res = await synthesizeMemory(deps)
@@ -911,7 +957,7 @@ function wireEvents() {
     } catch (err) {
       console.error("memory synthesize failed", err)
     } finally {
-      if (labelNode) labelNode.textContent = ok ? " 已整理 ✓" : " 整理失败"
+      if (labelNode) labelNode.textContent = ok ? " 已更新 ✓" : " 更新失败"
       setTimeout(() => {
         if (labelNode && original !== null) labelNode.textContent = original
         btn.disabled = false
@@ -1109,9 +1155,9 @@ function wireEvents() {
 
   // Provider-switch dropdown. The .provider-switch button lives inside
   // #accounts-current which is re-rendered on every doctor poll, so we
-  // use event delegation on the overview pane instead of a direct listener.
+  // use event delegation on its container (2026-10-01 起在「连接与设置」抽屉的「连接」段)。
   // Escape-key and outside-click are handled inside toggleProviderMenu itself.
-  document.querySelector('.dash-pane[data-pane="overview"]')?.addEventListener("click", ev => {
+  document.querySelector('#settings-drawer .drawer-connection')?.addEventListener("click", ev => {
     const target = ev.target instanceof HTMLElement ? ev.target : null
     const addSubUser = target?.closest("[data-action='add-sub-user']")
     if (addSubUser) {
@@ -1132,26 +1178,8 @@ function wireEvents() {
     btn.addEventListener("click", () => setMode("dashboard"))
   )
 
-  const companionBody = document.querySelector(".moment-body")
-  const companionImmersiveStart = document.getElementById("companion-immersive-start")
+  // 「浮到桌面」(spec 2026-10-01 §9-3):鱼缸画布退休后,浮窗桌宠只剩这一个入口,住在此刻页右上的连接面板里。
   const companionDesktopStart = /** @type {HTMLButtonElement | null} */ (document.getElementById("companion-desktop-start"))
-  const companionImmersiveExit = document.getElementById("companion-immersive-exit")
-  const companionUsersToggle = document.getElementById("companion-users-toggle")
-  const companionUsersScrim = document.getElementById("companion-users-scrim")
-  /** @param {boolean} open */
-  const setCompanionUsersOpen = (open) => {
-    if (!companionBody) return
-    companionBody.classList.toggle("is-companion-users-open", open)
-    companionUsersToggle?.setAttribute("aria-expanded", String(open))
-  }
-  /** @param {boolean} active */
-  const setCompanionImmersive = (active) => {
-    if (!companionBody) return
-    companionBody.classList.toggle("is-companion-immersive", active)
-    setCompanionUsersOpen(false)
-    companionImmersiveStart?.setAttribute("aria-pressed", String(active))
-  }
-  companionImmersiveStart?.addEventListener("click", () => setCompanionImmersive(true))
   companionDesktopStart?.addEventListener("click", async () => {
     // The browser/dev shim cannot spawn a native Tauri window. Open the same
     // isolated scene in a popup there so visual work remains previewable.
@@ -1169,21 +1197,11 @@ function wireEvents() {
       companionDesktopStart.disabled = false
     }
   })
-  companionImmersiveExit?.addEventListener("click", () => setCompanionImmersive(false))
-  companionUsersToggle?.addEventListener("click", () => {
-    if (!companionBody?.classList.contains("is-companion-immersive")) return
-    setCompanionUsersOpen(!companionBody.classList.contains("is-companion-users-open"))
-  })
-  companionUsersScrim?.addEventListener("click", () => setCompanionUsersOpen(false))
-  document.addEventListener("keydown", event => {
-    if (event.key === "Escape") setCompanionImmersive(false)
-  })
 
   document.querySelectorAll(".dash-nav-link[data-pane]").forEach(btn => {
     const el = /** @type {HTMLElement} */ (btn)
     el.addEventListener("click", () => {
       if (el.classList.contains("disabled")) return
-      setCompanionImmersive(false)
       switchPane(el.dataset.pane ?? "")
     })
   })

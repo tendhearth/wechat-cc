@@ -29,6 +29,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       desktop: ${{ steps.filter.outputs.desktop }}
+      relay: ${{ steps.filter.outputs.relay }}
+      app: ${{ steps.filter.outputs.app }}
+      app_native: ${{ steps.filter.outputs.app_native }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -37,6 +40,16 @@ jobs:
           filters: |
             desktop:
               - 'apps/desktop/**'
+            relay:
+              - 'apps/relay/**'
+              - 'packages/protocol/**'
+              - 'relay/pset.src.html'
+            app:
+              - 'apps/app/**'
+              - 'packages/protocol/**'
+            app_native:
+              - 'apps/app/native/**'
+              - 'packages/protocol/**'
 
   build:
     name: build · ${{ matrix.os }}
@@ -141,6 +154,73 @@ jobs:
         # 走 npm script 而不是直接敲 node_modules/.bin/vitest:npm 会把 node_modules/.bin 加进 PATH,
         # bootstrap 的 codex 探测(find-codex-binary)靠它找到 SDK 自带的 codex —— bun run 也是这么做的。
         run: npm run test:node -- --reporter=dot
+
+  # 官方中继 v2(apps/relay,Cloudflare Workers)。测试跑在本地 workerd 里,只在 Linux 上跑一份;
+  # 只在中继、协议包或壳页源码动过时跑(跟 desktop-e2e 同一个 changes 输出机制)。
+  relay:
+    name: relay · workers
+    needs: changes
+    if: needs.changes.outputs.relay == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: Typecheck
+        working-directory: apps/relay
+        run: bun run typecheck
+      - name: Unit (workerd)
+        working-directory: apps/relay
+        run: bun run test
+      - name: End-to-end (local workerd + daemon modules)
+        working-directory: apps/relay
+        run: bun run test:e2e
+
+  # Tendhearth 手机 app(apps/app,Expo)。只做类型检查、纯逻辑测试与 JS 打包检查;原生构建走 EAS,不进每次 CI。
+  app:
+    name: app · expo
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: Typecheck
+        working-directory: apps/app
+        run: bun run typecheck
+      - name: Unit
+        working-directory: apps/app
+        run: bun run test
+      - name: Bundle check
+        working-directory: apps/app
+        run: bun run export:check
+
+  # 推送解密的原生两端跑协议包的同一份向量(spec §9.3)。只在 apps/app/native/** 或协议包动过时跑。
+  # macOS runner 自带 Swift / Xcode;Kotlin 走 JVM(test.sh 用 PATH 上的 gradle 与 JAVA_HOME)。
+  app-native:
+    name: app · native push vectors
+    needs: changes
+    if: needs.changes.outputs.app_native == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift (CryptoKit)
+        working-directory: apps/app/native/ios-notify
+        run: swift test
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.1.0'
+      - name: Kotlin (JVM)
+        run: apps/app/native/android-push/test.sh
 
   e2e:
     # Heavy suite — skip on direct dev pushes; still runs on master pushes and

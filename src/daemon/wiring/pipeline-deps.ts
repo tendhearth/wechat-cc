@@ -10,7 +10,7 @@ import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import type { Ref } from '../../lib/lifecycle'
 import type { IlinkAdapter } from '../ilink-glue'
 import type { Bootstrap } from '../bootstrap'
@@ -38,7 +38,25 @@ import type { InboundCtx } from '../inbound/types'
 import type { AppTurn } from '../inbound/build'
 import { basename as pathBasename } from 'node:path'
 import { makeSettingsPanel } from '../settings-panel'
+import { buildConnections, cacheConnections } from '../connections'
+import { makeRemoteToggle, relayV2Configured } from '../remote-toggle'
+import { cacheSessions } from '../mobile-reads'
+import { maxDecryptedMtime } from '../companion/ingest/cycle'
+import { hostname } from 'node:os'
+import { APP_VERSION } from '../../lib/app-version'
+import { makePhoneChatId, makePhoneOwner } from '../mobile-chat'
+import { makePhoneChat } from '../phone-chat'
+import { makePhoneInsight } from '../phone-insight'
+import { makeApprovalExplainer } from '../phone-explain'
+import { makeProgressSummarizer } from '../phone-progress'
+import { wrapCheapEvalWithAuthFailCheck } from '../bootstrap/wire-coordinator'
+import { makePhoneEventsWiring } from '../phone-topic-sources'
+import { resolveRemoteRelays, mergeOnlineDevices } from '../remote-relay-config'
+import { makePhonePush } from '../phone-push'
+import { makePhoneNotifier } from '../phone-notifier'
+import { deviceIdOf } from '../device-store'
 import { makeCommandRouter } from './command-router'
+import { ensureChatAndNote, makeMatterActivity, wireMatterActivity } from '../matter-activity'
 import { makeEventsStore } from '../events/store'
 import { makeGuestRequestStore } from '../guest-requests'
 import { makeForwardBudget } from '../../core/forward-budget'
@@ -65,8 +83,8 @@ import { DEFAULT_DELEGATE_TIMEOUT_MS } from '../../core/a2a-delegate'
 import type { YiHub, YiDispatch } from '../../core/yi-hub'
 import type { ExecResult } from '../../core/a2a-server'
 import type { Mode, ProviderId } from '../../core/conversation'
-import { readJsonFile } from '../../lib/read-json-file'
 import { makeMattersService } from '../../core/matters/service'
+import { makeSayReceipts } from '../../core/matters/say-receipts'
 
 export interface DelegateDeps {
   listHands: () => readonly A2AAgentRecord[]
@@ -130,6 +148,8 @@ export function makeDelegateToHand(deps: DelegateDeps) {
 
 export interface PipelineDepsOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
+  /** 内部 API 的 token-registry 窄接口,给手机设置面板登记链接 / 设备令牌(梳理第 6 步)。 */
+  panelTokens?: import('../internal-api/token-registry').PanelTokens
   matters?: import('../../core/matters/store').MatterStore
   stateDir: string
   db: import('../../lib/db').Db
@@ -197,10 +217,19 @@ const CLI_ENTRY = join(REPO_ROOT, 'cli.ts')
 export interface BuildPipelineDepsResult {
   pipelineDeps: InboundPipelineDeps
   /** Mint a fresh settings-panel URL (10-min single-active token) — the
-   *  desktop 「手机上改设置」 QR entry (GET /v1/settings/link). */
+   *  微信 /set(进程内)与 GET /v1/settings/link(admin 档,plan 7a;selftest phone 用)。
+   *  桌面「连接手机」走 phoneConnect / POST /v1/phone/link。 */
   settingsPanelLink: () => Promise<string | null>
+  /** 手机「跟 CC 说」的任务表(收下即回,converse = companionConverse);没接 matters ⇒ null。 */
+  phoneChat: import('../phone-chat').PhoneChat | null
+  /** 「CC 的连接」快照(缓存 10 s);手机与 admin 路由共用。 */
+  connections: () => import('../connections').ConnectionsSnapshot
+  /** 桌面「连接手机」(plan 7a)。 */
+  phoneConnect: import('../internal-api/types').PhoneConnectDep
   /** 「一件事」读写面(有 matters store 才有)。 */
   mattersService: import('../../core/matters/service').MattersService | null
+  /** 退订工作台事件 + 清「一件事」活动时间的节流定时器;main.ts 登记进 shutdown。可重复调用。 */
+  stopMatterActivity: () => void
   /**
    * App-conversation-channel converse closure (voice arc Stage 0, Task 2).
    * Late-bound onto internal-api by main.ts via setCompanionConverse()
@@ -528,18 +557,31 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // admin appends the link. See settings-panel.ts's security posture.
   // Remote tunnel opt-in (随身 CC out-of-home) — resolve id/relay BEFORE the
   // panel so its /m page can bake them in for out-of-home phones.
-  const remoteCfg = loadAgentConfig(stateDir) as { remote_tunnel?: boolean; remote_relay_url?: string }
-  let remoteTunnel: { id: string; relay: string } | null = null
-  if (remoteCfg.remote_tunnel === true) {
-    const idPath = join(stateDir, 'tunnel-id.json')
-    let did: string
-    try { did = (readJsonFile(idPath) as { id: string }).id }
-    catch { did = 't' + randomBytes(18).toString('hex'); try { writeFileSync(idPath, JSON.stringify({ id: did }), { mode: 0o600 }) } catch { /* best effort */ } }
-    remoteTunnel = { id: did, relay: remoteCfg.remote_relay_url ?? 'wss://cc.tendhearth.com/tunnel/phone' }
-  }
+  const remoteCfg = loadAgentConfig(stateDir) as { remote_tunnel?: boolean; remote_relay_url?: string; relay_v2_url?: string }
+  // 过渡期双中继(spec 2026-09-30 §8):老 VPS 中继 + 官方中继 v2;remoteInfo 优先 v2。
+  const relays = resolveRemoteRelays(stateDir, remoteCfg, (tag, line) => log(tag, line))
+  const remoteTunnel = relays?.remoteInfo ?? null
+  // 推送(中继 v2):先建,面板与隧道都要它;发送走 v2 隧道客户端(稍后才建 —— 懒绑定)。
+  let v2Tunnel: import('../tunnel-client').TunnelClient | null = null
+  let legacyTunnel: import('../tunnel-client').TunnelClient | null = null
+  let notifier: { refresh(): void } | null = null
+  // settingsPanel 在下面才定义;deviceToken / deviceIds 两个闭包只在运行时(推送登记 / 发送 / resync)
+  // 才被调用,那时它早已建好 —— 与 companionConverse 的写法同一姿势。
+  const phonePush = relays?.v2 ? makePhonePush({
+    stateDir,
+    send: (m) => v2Tunnel?.sendControl(m) ?? false,
+    deviceToken: (id) => settingsPanel.deviceTokens().find(t => deviceIdOf(t) === id) ?? null,
+    deviceIds: () => settingsPanel.deviceTokens().map(deviceIdOf),
+    onChange: () => notifier?.refresh(),
+    log: (tag, line) => log(tag, line),
+  }) : null
 
   // 主人的 chat:设置面板与微信管家都要,算一次(评审 2026-09-16 去重)。
   const ownerChatId = () => resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+  // 「一件事」的活动时间(spec 2026-10-01 §3):微信入站与工作台事件节流地推 updated_at。随 daemon 常驻。
+  const matterActivity = opts.matters ? makeMatterActivity({ touch: id => opts.matters!.touch(id), log: (tag, line) => log(tag, line) }) : null
+  // 回调里只记一笔(note 不同步写库,见 matter-activity.ts 头注释)。stop 退订 + 清定时器,main.ts 登记进 shutdown。
+  const stopMatterActivity = wireMatterActivity(matterActivity, opts.workbench?.changes)
   // 「一件事」读写面:工作台续接 + 对主人 chat 的 app 通道;手机页与内部 API 共用这一个实例。
   const mattersService = opts.matters ? makeMattersService({
     store: opts.matters,
@@ -550,10 +592,57 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       say: (text: string, surface?: 'desktop' | 'phone') => companionConverse(text, surface ?? 'desktop'),
       recent: async (chatId: string, limit: number) => (await messagesStore.listRange(chatId, { limit })).map(r => ({ kind: r.direction === 'in' ? 'user' : 'text', text: r.text, createdAt: Date.parse(r.ts), source: r.source })),
     },
+    // 手机对聊天那件事「说一句」按 requestId 去重(v70,与工作台输入回执同一规矩)。
+    sayReceipts: makeSayReceipts(db),
   }) : null
+  // 手机「跟 CC 说」(spec 2026-10-01):主人对话一页(只读)+ 收下即回的说一句。
+  // 对话 chat 必须就是 companionConverse 写进去的那条(它认 companion 的 default_chat_id):
+  // 两者不一致(default_chat_id 不是 admin)⇒ 当作没有主人对话,免得手机看 A 却说进 B。
+  const phoneChatId = makePhoneChatId({ ownerChatId, converseChatId: () => loadCompanionConfig(stateDir).default_chat_id ?? null, log: (tag, line) => log(tag, line) })
+  const phoneOwner = opts.matters ? makePhoneOwner({ ownerChatId: phoneChatId, matters: opts.matters }) : null
+  let phoneEvents: import('../phone-events').PhoneEvents | null = null
+  // converse 必须是回合串行入口 companionConverse(与微信 / 桌面「跟 CC 说」同一条:
+  // isInFlight 前置拒 + coordinator.submitTurn 持每 chat 锁),手机一句不会和微信一轮在主人会话上并跑。
+  // companionConverse 在下面才定义;这里只捕获引用,调用发生在请求到来时(与 mattersService 同一姿势)。
+  const phoneChat = phoneOwner ? makePhoneChat({
+    converse: text => companionConverse(text, 'phone'),
+    ownerMatterId: () => phoneOwner.ensure(),
+    onSettled: id => { matterActivity?.note(id); phoneEvents?.poke() },
+    log: (tag, line) => log(tag, line),
+  }) : null
+  // 「CC 的连接」(spec 2026-10-01):插件快照 / 解密库时间 / 知识库 / 工作台。裁定 8:缓存 10 s、最多 3 次 detail()。
+  // wechatSyncedAt = wxvault 解密库的最近落盘时间(同步时间),不是最新微信消息时间。
+  const startedAt = Date.now() - Math.round(process.uptime() * 1000)
+  const connections = cacheConnections(() => buildConnections({
+    plugins: () => boot.pluginsHealth ?? null,
+    wechatSyncedAt: () => { const m = maxDecryptedMtime(stateDir); return m > 0 ? m : null },
+    knowledge: () => ({ enabled: (loadAgentConfig(stateDir) as { knowledge_enabled?: boolean }).knowledge_enabled === true, built: !!boot.knowledge, latestAt: boot.knowledge?.store.latestMessageAtMs() ?? null, syncedAt: boot.knowledge?.store.lastSyncAtMs() ?? null }),
+    computer: () => ({ label: hostname().replace(/\.local$/, ''), since: startedAt, version: APP_VERSION }),
+    detailLimit: 3,
+    ...(opts.workbench ? { workbench: opts.workbench } : {}),
+  }))
+  // 原生会话读:单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
+  const phoneSessions = opts.workbench ? cacheSessions({ list: (p, i) => opts.workbench!.listNativeHistory(p, i), read: (k, i) => opts.workbench!.readNativeHistory(k, i) }) : null
   const settingsPanel = makeSettingsPanel({
+    connections,
+    ...(phoneSessions ? { sessions: phoneSessions } : {}),
+    // 在手机上接着做电脑上的会话:预览不缓存(「正在跑」不能晚 15 秒才知道),接成一件事幂等。
+    ...(opts.workbench ? { sessionContinue: { preview: (k: string) => opts.workbench!.previewNativeContinue(k), adopt: (k: string) => opts.workbench!.adoptNativeSession(k) } } : {}),
     stateDir,
     ownerChatId,
+    relayV2Configured: () => relayV2Configured(stateDir),
+    relayV2AtBoot: typeof remoteCfg.relay_v2_url === 'string' && remoteCfg.relay_v2_url.trim() !== '',
+    // 手机洞察(批准说明 + 进展概括):explainer / summarizer 各建一个实例(内含缓存),不是每请求一建。
+    ...(mattersService ? (() => {
+      const cheap = () => wrapCheapEvalWithAuthFailCheck(boot.registry.getCheapEval(), (tag, line) => log(tag, line)) ?? null
+      const budgetMs = () => boot.registry.getCheapEvalBudgetMs()
+      return { insight: makePhoneInsight({
+        detail: (id: string) => mattersService.detail(id),
+        explainer: makeApprovalExplainer({ cheapEval: cheap, budgetMs, log: (tag, line) => log(tag, line) }),
+        summarizer: makeProgressSummarizer({ cheapEval: cheap, budgetMs, now: () => Date.now(), log: (tag, line) => log(tag, line) }),
+      }) }
+    })() : {}),
+    ...(opts.workbench ? { changes: (id: string) => opts.workbench!.reviewList(id) } : {}),
     ...(opts.workbench?{uploads:{
       chunk:(input:Parameters<typeof opts.workbench.uploadAttachmentChunk>[0])=>opts.workbench!.uploadAttachmentChunk(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
       status:(input:{id:string;draftId:string})=>opts.workbench!.attachmentUploadStatus(input,{ownerKey:ownerChatId()??'',surface:'phone'}),
@@ -565,20 +654,13 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       entryReceipt:(requestId:string)=>opts.workbench!.entryReceipt(requestId,{ownerKey:ownerChatId()??'',surface:'phone'}),
     }}:{}),
     curatedMemory: () => memoryNightly.curatedView(),
-    ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,artifactChunk:mattersService.artifactChunk,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
+    ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
+    ...(phoneOwner && phoneChat ? { chat: { owner: () => phoneOwner.peek(), history: (chatId: string, o: { beforeTs?: string; limit: number }) => messagesStore.listRange(chatId, o), chat: phoneChat } } : {}),
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
+    ...(phonePush ? { push: phonePush } : {}),
     // 「默认大脑」改完自己重启(与远程开关同一条路)。
     ...(opts.requestRestart ? { requestRestart: (reason: string) => opts.requestRestart!(reason) } : {}),
-    ...(opts.requestRestart ? {
-      remote: {
-        isEnabled: () => (loadAgentConfig(stateDir) as { remote_tunnel?: boolean }).remote_tunnel === true,
-        setEnabled: (on: boolean) => {
-          const cur = loadAgentConfig(stateDir)
-          saveAgentConfig(stateDir, { ...cur, remote_tunnel: on } as typeof cur)
-        },
-        requestRestart: () => opts.requestRestart!('remote-toggle'),
-      },
-    } : {}),
+    ...(opts.requestRestart ? { remote: makeRemoteToggle(stateDir, () => opts.requestRestart!('remote-toggle')) } : {}),
     // 随身 CC 数据面 — facts/graph 来自 boot.knowledge(缺则手机页对应区留白)
     ...(boot.knowledge?.facts ? {
       todos: {
@@ -628,26 +710,64 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
         .catch(() => { /* audit is best-effort — same posture as routes-config */ })
     },
     log: (tag, line) => log(tag, line),
+    // 内部 API 同一个 token-registry(梳理第 6 步);没接上(测试)⇒ 面板自建。
+    ...(opts.panelTokens ? { tokens: opts.panelTokens } : {}),
   })
 
-  // 远程中继隧道 daemon leg — dials /tunnel/daemon out (NAT-piercing); phone
+  // 远程中继隧道 daemon leg — dials the relay out (NAT-piercing); phone
   // reaches it via the SAME settingsPanel.handleRequest. OFF unless
-  // remote_tunnel:true (resolved into remoteTunnel above).
-  if (remoteTunnel) {
-    const daemonId = remoteTunnel.id
-    const daemonRelay = (remoteCfg.remote_relay_url ?? 'wss://cc.tendhearth.com/tunnel/phone').replace('/tunnel/phone', '/tunnel/daemon')
+  // remote_tunnel:true (resolved into relays above). 过渡期两条:老中继 + v2。
+  if (relays) {
+    // 手机协议 v2 的订阅(第 11 步):四路来源(home / matter/<id> / approvals / agents)+ 集线器;
+    // 工作台一变就 poke(回调里只许 poke,见 makePhoneEventsWiring)。推送判定在 phone-notifier.ts。随 daemon 常驻,不 dispose(轮询定时器 unref,且只在有订阅时跑)。
+    const phone = makePhoneEventsWiring({
+      ...(opts.workbench ? { workbench: opts.workbench, changes: opts.workbench.changes } : {}),
+      ...(opts.matters ? { matters: opts.matters } : {}),
+      home: (limit, o) => settingsPanel.home(limit, o),
+      ...(phoneChat ? { chat: {
+        latestAt: async (chatId: string) => { const ts = await messagesStore.latestTs(chatId); return ts ? Date.parse(ts) : null },
+        pendingMatter: () => phoneChat.pendingMatter(),
+      } } : {}),
+      log: (tag, line) => log(tag, line),
+    })
+    phoneEvents = phone.events
     import('../tunnel-client').then(({ makeTunnelClient }) => {
-      makeTunnelClient({
-        daemonId,
-        handleRequest: (req) => settingsPanel.handleRequest(req),
-        knownDeviceTokens: () => {
-          try { return Object.keys(readJsonFile(join(stateDir, 'settings-devices.json'))) } catch { return [] }
-        },
+      const common = {
+        events: phone.events,
+        handleRequest: (req: Request) => settingsPanel.handleRequest(req),
+        // 设备令牌从面板取(梳理第 6 步:不再裸读 settings-devices.json,文件只有 device-store 一个读者)。
+        knownDeviceTokens: () => settingsPanel.deviceTokens(),
         activeLinkToken: () => settingsPanel.activeLinkToken(),
-        relayUrl: daemonRelay,
-        log: (tag, line) => log(tag, line),
-      }).start()
-      log('TUNNEL', `remote tunnel enabled — dialing relay as ${daemonId.slice(0, 8)}…`)
+        log: (tag: string, line: string) => log(tag, line),
+      }
+      // 过渡期(spec §8):老中继照连,已配对的手机网页还指着它。
+      legacyTunnel = makeTunnelClient({ ...common, daemonId: relays.legacy.id, relayUrl: relays.legacy.daemonUrl })
+      legacyTunnel.start()
+      if (relays.v2) {
+        v2Tunnel = makeTunnelClient({
+          ...common,
+          daemonId: relays.v2.identity.id,
+          relayUrl: relays.v2.daemonUrl,
+          login: relays.v2.identity,
+          onLogin: () => phonePush?.resync(),
+          onControl: (m) => phonePush?.onControl(m),
+        })
+        v2Tunnel.start()
+      }
+      if (phonePush && opts.workbench) {
+        const wb = opts.workbench
+        const n = makePhoneNotifier({
+          events: phone.events,
+          push: phonePush,
+          // 两条隧道合并(Review Focus 4):同一台手机从哪条连着都算在线。
+          subscribedDevices: () => mergeOnlineDevices([legacyTunnel?.subscribedDeviceTokens() ?? [], v2Tunnel?.subscribedDeviceTokens() ?? []], deviceIdOf),
+          taskInfo: (id) => { try { const d = wb.detail(id); return { title: d.task.title, status: d.task.status } } catch { return null } },
+          log: (tag, line) => log(tag, line),
+        })
+        notifier = n
+        n.refresh()
+      }
+      log('TUNNEL', `remote tunnel enabled — legacy ${relays.legacy.id.slice(0, 8)}…${relays.v2 ? `, v2 ${relays.v2.identity.id.slice(0, 8)}…` : ''}`)
     }).catch(err => log('TUNNEL', `tunnel client load failed: ${err instanceof Error ? err.message : err}`))
   }
 
@@ -761,7 +881,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       onContextAvailable:(c,a)=>opts.workbench?.contextAvailable(c,a),
     },
     typing: { sendTyping: (c, a) => ilink.sendTyping(c, a) },
-    ...(opts.matters?{matter:{ensureChat:(c:string)=>opts.matters!.ensureChat(c),log:(t:string,l:string)=>log(t,l)}}:{}),
+    ...(opts.matters?{matter:{ensureChat:ensureChatAndNote((c:string)=>opts.matters!.ensureChat(c),matterActivity),log:(t:string,l:string)=>log(t,l)}}:{}),
     ...(opts.workbench?{taskReference:{
       ownerChatId,
       // 可指称的候选:七天内动过、未归档的任务,包括失败 / 中断的 —— 主人问"那件怎么了"
@@ -1093,5 +1213,5 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     })
   }
 
-  return { pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, settingsPanelLink: () => settingsPanel.linkUrl() }
+  return { pipelineDeps, companionConverse, petTurn, mattersService, memoryNightly, stopMatterActivity, settingsPanelLink: () => settingsPanel.linkUrl(), phoneChat, connections, phoneConnect: { link: (o) => settingsPanel.phoneLink(o), devices: () => settingsPanel.phoneDevices() } }
 }

@@ -46,7 +46,7 @@ CC 的目标是：日常管理 Claude/Codex 工作时，只打开 CC 就够。�
 
 完整模型消息、工具调用与结果保存在任务数据库，称为 **CC 管理的会话延续**，不是云端原生会话。绑定任务、所有者、目录身份及连接指纹。中断工具回合不能静默重放；需要通过原有恢复确认重新开始。停止会中断本地请求、阻止后续文件操作；不承诺服务商物理终止远端推理或免收已发生费用。
 
-这些文件工具的锚定层 2026-09-16 起是纯 JS（`anchored-fs.ts`，有 win32 分支），不再依赖原生描述符。Windows 现状（2026-09-27 口径，与 roadmap 同）：文件层与进程树清理（`jobspawn`）已落地，但 Codex 执行者在 win32 仍显式拒绝（`codex-app-server.ts`），原生历史 win32 不支持，Claude 保留会话的 win32 真机验收欠。macOS 通过执行验证；Linux 尚未做本批实机验收，不能把平台分支存在当作实测通过。
+这些文件工具的锚定层 2026-09-16 起是纯 JS（`anchored-fs.ts`，有 win32 分支），不再依赖原生描述符；它防什么、不防什么见 [reference/workbench-file-guard.md](reference/workbench-file-guard.md)（2026-10-01 owner 定案）。Windows 现状（2026-09-27 口径，与 roadmap 同）：文件层与进程树清理（`jobspawn`）已落地，但 Codex 执行者在 win32 仍显式拒绝（`codex-app-server.ts`），原生历史 win32 不支持，Claude 保留会话的 win32 真机验收欠。macOS 通过执行验证；Linux 尚未做本批实机验收，不能把平台分支存在当作实测通过。
 
 ## 任务里能看到什么(实时事件流)
 

@@ -218,11 +218,11 @@ describe('pollAdvance', () => {
 })
 
 describe('daemonStatusLine', () => {
-  it('warn class + 未运行 when daemon dead', () => {
-    expect(daemonStatusLine({ alive: false, pid: null })).toEqual({ cls: 'warn', text: '未运行' })
+  it('bad class + CC 没在运行 when daemon dead (没跑 = 没连上 = 红,不默认绿)', () => {
+    expect(daemonStatusLine({ alive: false, pid: null })).toEqual({ cls: 'bad', text: 'CC 没在运行' })
   })
-  it('ok class + pid only when daemon alive (rail-foot is space-constrained, dot conveys liveness)', () => {
-    expect(daemonStatusLine({ alive: true, pid: 99 })).toEqual({ cls: 'ok', text: 'pid=99' })
+  it('ok class + CC 在家 · 运行中 when daemon alive', () => {
+    expect(daemonStatusLine({ alive: true, pid: 99 })).toEqual({ cls: 'ok', text: 'CC 在家 · 运行中' })
   })
 })
 
@@ -351,6 +351,7 @@ describe('dashboardHero 3-state', () => {
     const h = dashboardHero({ daemonAlive: true, accountCount: 1, expiredCount: 0 })
     expect(h.state).toBe('connected')
     expect(h.tone).toBe('ok')
+    expect(h).toMatchObject({ headline: '微信已连接', meta: '这台电脑在替 CC 收发微信' })
   })
   it('bound account but daemon NOT alive → recovering (was falsely "connected")', () => {
     const h = dashboardHero({ daemonAlive: false, accountCount: 1, expiredCount: 0 })

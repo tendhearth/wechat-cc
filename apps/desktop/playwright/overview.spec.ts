@@ -21,11 +21,13 @@ import { test, expect } from './fixtures'
 // actually runs (it bails when state.mode !== 'dashboard' even if the
 // DOM data-mode attr says otherwise).
 
+// 2026-10-01 起连接、重连、用户卡片都在「连接与设置」抽屉的「连接」段;连接结论(hero)也在那一段顶上;鱼缸画布 2026-10-01 退休。
 async function openConnections(page: import('@playwright/test').Page) {
-  const panel = page.locator('.cc-home-details')
-  await expect(panel).not.toHaveAttribute('open', '')
-  await panel.locator(':scope > summary').click()
-  await expect(panel).toHaveAttribute('open', '')
+  const drawer = page.locator('#settings-drawer')
+  await expect(drawer).not.toHaveClass(/is-open/)
+  await page.locator('#settings-open').click()
+  await expect(drawer).toHaveClass(/is-open/)
+  await expect(drawer.locator('.drawer-connection')).toBeVisible()
 }
 
 // ── Hero tone (daemon alive vs dead) ────────────────────────────────────
@@ -73,10 +75,10 @@ async function bootAndForceDashboardRender(page: import('@playwright/test').Page
 // daemonAlive=true  → connected  (#dash-stop visible, #dash-restart hidden)
 // daemonAlive=false → recovering (#dash-stop hidden,  #dash-restart visible)
 
-test('hero shows the companion headline with a bound account (daemon alive)', async ({ page, shimUrl, shim }) => {
+test('hero shows the connected verdict with a bound account (daemon alive)', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
   await bootAndForceDashboardRender(page, shimUrl)
-  await expect(page.locator('#hero-headline')).toHaveText(/此刻，陪你一起看鱼/, { timeout: 10_000 })
+  await expect(page.locator('#hero-headline')).toHaveText('微信已连接', { timeout: 10_000 })
   await expect(page.locator('#hero-card')).not.toHaveClass(/warn/)
 })
 
@@ -104,7 +106,7 @@ test('hero shows "CC 暂时失去连接" when daemon is dead (bound account, no 
 test('stop button visible + restart hidden when account bound and daemon alive', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
   await bootAndForceDashboardRender(page, shimUrl)
-  await expect(page.locator('#hero-headline')).toHaveText(/此刻，陪你一起看鱼/, { timeout: 10_000 })
+  await expect(page.locator('#hero-headline')).toHaveText('微信已连接', { timeout: 10_000 })
   // #109 起断开连接收进「连接选项」折叠里:连着时折叠可见、按钮要展开才露出来;重连按钮仍然藏着。
   const options = page.locator('#dash-connection-options')
   await expect(options).toBeVisible()
@@ -180,7 +182,7 @@ test('测试本机连接 is hidden when connected, shown when not connected', as
   // says 陪伴中, so the test button is redundant and hidden.
   await shim.invoke('demo.seed', { chat_id: 'test_chat', daemonAlive: true })
   await bootAndForceDashboardRender(page, shimUrl)
-  await expect(page.locator('#hero-headline')).toHaveText(/此刻，陪你一起看鱼/, { timeout: 10_000 })
+  await expect(page.locator('#hero-headline')).toHaveText('微信已连接', { timeout: 10_000 })
   await expect(page.locator('#dash-test-conn')).toBeHidden()
 })
 
@@ -215,6 +217,6 @@ test('probe verdict connected flips hero to 陪伴中 and hides the test button'
   await bootAndForceDashboardRender(page, shimUrl)
   await expect(page.locator('#hero-headline')).toHaveText('CC 暂时失去连接', { timeout: 10_000 })
   await page.locator('#dash-test-conn').click()
-  await expect(page.locator('#hero-headline')).toHaveText(/此刻，陪你一起看鱼/, { timeout: 10_000 })
+  await expect(page.locator('#hero-headline')).toHaveText('微信已连接', { timeout: 10_000 })
   await expect(page.locator('#dash-test-conn')).toBeHidden()
 })

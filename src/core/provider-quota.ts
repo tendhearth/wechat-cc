@@ -20,6 +20,7 @@ export const RATE_LIMIT_TTL_MS = 5 * 60_000
 const QUOTA = [
   /hit your usage limit/i, /reached your usage limit/i, /usage limit reached/i,
   /insufficient_quota/i, /exceeded your current quota/i, /quota exceeded/i, /out of credits/i, /credit balance is too low/i,
+  /upgrade your plan/i,
 ]
 const RATE = [/rate.?limit/i, /\b429\b/, /too many requests/i, /overloaded/i]
 
@@ -30,6 +31,13 @@ export function classifyProviderError(text: string): QuotaKind | null {
   if (RATE.some(re => re.test(t))) return 'rate_limit'
   return null
 }
+
+/**
+ * Cursor 额度耗尽时 `cursor-agent acp` 不报错:回合正常 end_turn,助理文本就是这句催升级的话
+ * (`-p` 模式则是 "You've hit your usage limit")。必须整条回复就是它才算 —— 普通回复里提到套餐不能误判。
+ */
+const REFUSAL = /^(?:upgrade your plan to continue|you['’]ve hit your usage limit)[.!]?$/i
+export function isQuotaRefusalText(text: string): boolean { return REFUSAL.test((text ?? '').trim()) }
 
 /** Claude Code 的额度错误形如 `Claude AI usage limit reached|<unix 秒>`;能读到就用它当重置时刻。 */
 export function parseResetAt(text: string): number | null {

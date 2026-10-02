@@ -1,7 +1,5 @@
-import { existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { compiledRepoRoot, isCompiledBundle } from '../../lib/runtime-info'
+import { join } from 'node:path'
+import { resolveBundledPlugins } from '../../lib/plugins-source'
 
 /**
  * Plugin discovery paths.
@@ -11,14 +9,15 @@ import { compiledRepoRoot, isCompiledBundle } from '../../lib/runtime-info'
  *   - USER dir  `{stateDir}/plugins/<name>/`     — drop-in, survives upgrades,
  *     third-party. Default DISABLED until explicitly enabled (they spawn
  *     processes = arbitrary code, so discovery ≠ trust).
- *   - BUNDLED   `{repoRoot}/plugins/<name>/`      — first-party, ships & versions
- *     with wechat-cc, curated. Default ENABLED. Absent in compiled bundles
- *     (nothing writable inside a signed .app), hence optional.
+ *   - BUNDLED   first-party, curated, default ENABLED. Found via
+ *     `resolveBundledPluginsDir` below: env → owner pointer in the state dir →
+ *     next to the binary (`.app` resources) / `<repo>/plugins` in source mode.
+ *     The published installer ships NONE of them (WHY: src/lib/plugins-source.ts).
  *
  * Enable-state lives in `{stateDir}/plugins/plugins.json` so a dashboard
  * toggle survives restarts and upgrades.
  */
-export const MANIFEST_FILE = 'wechat-cc.plugin.json'
+export { MANIFEST_FILE } from '../../lib/plugins-source'
 
 export function userPluginsDir(stateDir: string): string {
   return join(stateDir, 'plugins')
@@ -38,23 +37,21 @@ export function pluginsConfigPath(stateDir: string): string {
   return join(stateDir, 'plugins', 'plugins.json')
 }
 
+// The resolution itself lives in src/lib/plugins-source.ts so the CLI
+// (`self deploy`, `plugin source`) can use it without linking the daemon
+// (scripts/cli-ratchet.guard.test.ts). Re-exported here: daemon code keeps
+// asking this module "where are the plugins".
+export {
+  dirHasPlugins, pluginsSourcePointerPath, readPluginsSourcePointer, writePluginsSourcePointer,
+  resolveBundledPluginsDir, resolveBundledPlugins,
+  type BundledPluginsVia, type BundledPluginsResolution, type ResolveBundledPluginsInput,
+} from '../../lib/plugins-source'
 /**
- * First-party bundled plugins dir `<repo>/plugins`, or null when it doesn't
- * exist (e.g. a compiled bundle ships no writable source tree). Shared by the
- * daemon bootstrap and the CLI so repo-root resolution lives in one place.
+ * First-party bundled plugins dir, or null when none of the candidates holds
+ * any plugin. Shared by the daemon bootstrap, internal API and the CLI so the
+ * resolution lives in one place. Pass `stateDir` so the owner's pointer is
+ * honoured — every daemon/CLI caller has one.
  */
-export function bundledPluginsDir(): string | null {
-  // Desktop app: Tauri knows where it bundled resources (platform-specific:
-  // Contents/Resources on macOS, next to the exe on Windows, usr/lib on Linux)
-  // and passes the resolved plugins dir via this env when spawning the sidecar.
-  // Trusted first because the daemon can't portably derive it from execPath.
-  const fromEnv = process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR
-  if (fromEnv && existsSync(fromEnv)) return fromEnv
-
-  const root = isCompiledBundle()
-    ? compiledRepoRoot()                                                // compiled: plugins ride next to the binary
-    : join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')  // src/daemon/plugins → repo
-  if (!root) return null
-  const dir = join(root, 'plugins')
-  return existsSync(dir) ? dir : null
+export function bundledPluginsDir(stateDir?: string): string | null {
+  return resolveBundledPlugins(stateDir)?.dir ?? null
 }

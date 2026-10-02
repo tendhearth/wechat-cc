@@ -1,0 +1,31 @@
+# 配对页(不联网):欢迎 → 配对 → 粘贴一个不是配对码的链接 → 看到对应提示;再贴局域网链接 → 「扫新出来的码」提示。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-pair
+- assertVisible:
+    id: pair-steps
+- tapOn:
+    id: pair-paste-input
+- inputText: "https://example.com/"
+- hideKeyboard
+# 按钮可能被折在屏幕底边(只露一半),先滚到底再点。
+- scroll
+- tapOn:
+    id: pair-use-pasted
+- assertVisible:
+    id: pair-error
+- assertVisible: ".*Tendhearth.*配对码.*|.*isn’t a Tendhearth pairing code.*"
+- tapOn:
+    id: pair-paste-input
+- eraseText: 40
+- inputText: "http://192.168.1.5:51234/set?t=t0123456789abcdef0123456789abcdef"
+- hideKeyboard
+# 按钮可能被折在屏幕底边(只露一半),先滚到底再点。
+- scroll
+- tapOn:
+    id: pair-use-pasted
+- extendedWaitUntil:
+    visible: ".*同一 Wi-Fi 下用的旧链接.*|.*older Wi-Fi-only link.*"
+    timeout: 5000

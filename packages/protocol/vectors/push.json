@@ -1,0 +1,1074 @@
+{
+  "_generatedBy": "packages/protocol/src/push.ts 自己生成的回归钉子(不是跨实现兼容向量):固定 deviceToken 推出推送密钥,再用固定 iv 对固定载荷 sealPush,记录密钥与密文。以后改动这份代码如果悄悄改变了输出,这里就会红。 cases 与 dedupe 是 Swift / Kotlin 解密实现的验收用例(wrongKey 用 deviceToken+\"x\" 推导的密钥;expect=invalid ⇒ 能解开但明文不合 PushPlaintext)。",
+  "deviceToken": "push-device-token-abc123",
+  "key": "YzTEfEY47mMXk4AOGQg5YBQrSdqsc6gWXNGyD_gXouQ",
+  "iv": "AAECAwQFBgcICQoL",
+  "payload": {
+    "ts": 1700000000000,
+    "kind": "approval_needed",
+    "taskId": "t-42"
+  },
+  "ct": "S-s6jx2-YxFMZAwS8NJgK6Wgl64DQffBhYCsU3GTVFj80ko27N-m4JrcJqUqSHiHEWA4Do5DfMwkuSjhG0u4akgIslJ0vMxhcBqh8CU",
+  "cases": [
+    {
+      "name": "ok",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "AQIDBAUGBwgJCgsM",
+        "ct": "CZ5zncyYtCfQieHgGawga8jShLeXT82eC1siWjH8F61Y0UUt-7Ooq7nNZuIsl8XbTlvaqFNNxY5Hey3IMDHd61yJnMbborELSRyqELs1FajmRtsHf4zt2WN3BWDinjQ8z11mvZ3YvxaOOV-WYTnQ0Bd6EiLr_2TRJIWkwBVYviY2BmnX0AJ13W9EPoaifUqSOUoVjSqLzY68tyjsyGOI4MpByW1sHegmaVrmpwDsBflsm6mj"
+      },
+      "expect": "ok",
+      "payload": {
+        "ts": 1699999999000,
+        "kind": "permission",
+        "title": "需要你批准",
+        "body": "任务「整理下载文件夹」想执行一条命令",
+        "taskId": "t-42",
+        "requestId": "r-7"
+      },
+      "dedupeKey": "1699999999000:3314a46bd160644b212a9f8839b86b00"
+    },
+    {
+      "name": "ok-late-50min",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "AgMEBQYHCAkKCwwN",
+        "ct": "Po4dm1SPcr9jOZV0KM_LVUkPkNXodzPMbvsW7g2Sg9T_3TFlr4jiFu2WGYEF0nfJ0F57G-EZt_yBZcX0F4x3ErKHdJCfINog1GqNVQb7bVhwfCrYNaJvSfetK2aS00ggzuAQ7052QAqum1S7cct2OA"
+      },
+      "expect": "ok",
+      "payload": {
+        "ts": 1699997000000,
+        "kind": "task_done",
+        "title": "任务完成了",
+        "body": "整理下载文件夹"
+      },
+      "dedupeKey": "1699997000000:3cc0321e7cd97fd25ce25c2b9e24149e"
+    },
+    {
+      "name": "stale-past-61min",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "AwQFBgcICQoLDA0O",
+        "ct": "t7iXKu66fth7L5Rw5nRnPzTMKsbTCzn56OGY2qTZFL4wcCEP"
+      },
+      "expect": "stale"
+    },
+    {
+      "name": "stale-future-11min",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "BAUGBwgJCgsMDQ4P",
+        "ct": "OY9PaDDYyhhM8Zjh5U8gvB6p-r9MRQMc9nSQC3P0REqmOXnn"
+      },
+      "expect": "stale"
+    },
+    {
+      "name": "auth-wrong-key",
+      "wrongKey": true,
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "BQYHCAkKCwwNDg8Q",
+        "ct": "Vvyka361hmjfvLxOhu4WJjLclhFQt_OzD02CpafbTI6tFrm_"
+      },
+      "expect": "auth"
+    },
+    {
+      "name": "auth-tampered",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "BQYHCAkKCwwNDg8Q",
+        "ct": "V_yka361hmjfvLxOhu4WJjLclhFQt_OzD02CpafbTI6tFrm_"
+      },
+      "expect": "auth"
+    },
+    {
+      "name": "malformed-v2",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 2,
+        "iv": "BgcICQoLDA0ODxAR",
+        "ct": "47Me0zObfro7q8CC-3AhLRwnVE9RPEwaOWW6LoxuNirdIi8x"
+      },
+      "expect": "malformed"
+    },
+    {
+      "name": "invalid-kind",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "BwgJCgsMDQ4PEBES",
+        "ct": "4Uc2ztOwl3oxaKMStEmbAyL6By1_YUihtUy4258AUoAJ2s_0LNEciW4rd8KMpyg-S3sn_To6eAWf_a7kR5ynHy_ZFC9YMiymUx-36CNExdS0IgFx"
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "ok-edge-past-exact",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "CAkKCwwNDg8QERIT",
+        "ct": "pBYcBQjGZRAANllg195y_M3iR1S_mClOP-VhRscWK3nGETrTze7ZfzfPQXyYltyS8UYhZLB1lasRAkEbrPdmOEEAZhlimftDkernHqA6Fa0UZQhsYNWZFjDS5aWBkkdP8AmdSw"
+      },
+      "expect": "ok",
+      "payload": {
+        "ts": 1699996400000,
+        "kind": "task_done",
+        "title": "边界",
+        "body": "过去 1 小时整"
+      },
+      "dedupeKey": "1699996400000:6ddd3744fb5a680996e750e254717ea0"
+    },
+    {
+      "name": "stale-edge-past-plus1ms",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "CQoLDA0ODxAREhMU",
+        "ct": "4d5jlNJHV4JiG25zsvVAoWMWGcyaiipqtzEj518WdQc1vya4"
+      },
+      "expect": "stale"
+    },
+    {
+      "name": "ok-edge-future-exact",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "CgsMDQ4PEBESExQV",
+        "ct": "W1JozopDD9S5lA00-lwdC6Q1IiugX1RZIR_hW2V4a55Ayh-vfdS8-UnT9WhP0dKjSpVn2fW3OA-yn6Xlt3fLWULDGAMMIfYYu0ckXL7ftMXawJp9KILOw1lc3l-gYbRxheDk_3U"
+      },
+      "expect": "ok",
+      "payload": {
+        "ts": 1700000600000,
+        "kind": "task_done",
+        "title": "边界",
+        "body": "未来 10 分钟整"
+      },
+      "dedupeKey": "1700000600000:11a8443d84e5aae31349e000330bc25a"
+    },
+    {
+      "name": "stale-edge-future-plus1ms",
+      "now": 1700000000000,
+      "sealed": {
+        "v": 1,
+        "iv": "CwwNDg8QERITFBUW",
+        "ct": "_O8lp6dMFs5Hb8Di_DeH41z_py9p62S5DCjFtmaYzGRe3Ww7"
+      },
+      "expect": "stale"
+    }
+  ],
+  "dedupe": {
+    "capacity": 64,
+    "ttlMs": 4200000,
+    "rules": "seen(key, now):(1) 先修剪:记下时刻 at 满足 now - at > ttlMs(严格大于)的条目删除,正好等于 ttlMs 的保留;(2) 键已存在 ⇒ duplicate,且不刷新记下的时刻;(3) 否则以 now 记下,然后(插入之后)若条目数 > capacity,反复删除记下时刻最小的条目,时刻相同按键名(UTF-8 / 码点)升序先删——新键若恰是最老或键名最小的也会被立刻删掉,但本次仍返回 new。类型:now、ts、ttlMs、记下时刻都是 epoch 毫秒的 64 位整数(Swift Int64 / Kotlin Long),capacity 是 Int。dedupeKey 的 ts 先向下取整再按十进制整数格式化(不带小数点、不带指数)。",
+    "steps": [
+      {
+        "key": "1699999999000:3314a46bd160644b212a9f8839b86b00",
+        "now": 1700000000000,
+        "expect": "new",
+        "note": "第一次见到 ok"
+      },
+      {
+        "key": "1699997000000:3cc0321e7cd97fd25ce25c2b9e24149e",
+        "now": 1700000000000,
+        "expect": "new",
+        "note": "另一条"
+      },
+      {
+        "key": "1699999999000:3314a46bd160644b212a9f8839b86b00",
+        "now": 1700000001000,
+        "expect": "duplicate",
+        "note": "APNs / FCM 重投同一条"
+      },
+      {
+        "key": "1699999999000:3314a46bd160644b212a9f8839b86b00",
+        "now": 1700004200001,
+        "expect": "new",
+        "note": "超过保留时长后被修剪"
+      },
+      {
+        "key": "edge",
+        "now": 1700042000000,
+        "expect": "new",
+        "note": "边界:记下,at = T0(此前的条目都已被修剪)"
+      },
+      {
+        "key": "edge",
+        "now": 1700046200000,
+        "expect": "duplicate",
+        "note": "边界:正好 at + ttlMs ⇒ 还留着(修剪严格大于)"
+      },
+      {
+        "key": "edge",
+        "now": 1700046200001,
+        "expect": "new",
+        "note": "边界:重复命中不刷新 at,所以 at + ttlMs + 1 已被修剪 ⇒ new"
+      },
+      {
+        "key": "k000",
+        "now": 1700084000000,
+        "expect": "new",
+        "note": "容量:填满 64 条(k000 最早)"
+      },
+      {
+        "key": "k001",
+        "now": 1700084000001,
+        "expect": "new",
+        "note": "容量:第 2 条"
+      },
+      {
+        "key": "k002",
+        "now": 1700084000002,
+        "expect": "new",
+        "note": "容量:第 3 条"
+      },
+      {
+        "key": "k003",
+        "now": 1700084000003,
+        "expect": "new",
+        "note": "容量:第 4 条"
+      },
+      {
+        "key": "k004",
+        "now": 1700084000004,
+        "expect": "new",
+        "note": "容量:第 5 条"
+      },
+      {
+        "key": "k005",
+        "now": 1700084000005,
+        "expect": "new",
+        "note": "容量:第 6 条"
+      },
+      {
+        "key": "k006",
+        "now": 1700084000006,
+        "expect": "new",
+        "note": "容量:第 7 条"
+      },
+      {
+        "key": "k007",
+        "now": 1700084000007,
+        "expect": "new",
+        "note": "容量:第 8 条"
+      },
+      {
+        "key": "k008",
+        "now": 1700084000008,
+        "expect": "new",
+        "note": "容量:第 9 条"
+      },
+      {
+        "key": "k009",
+        "now": 1700084000009,
+        "expect": "new",
+        "note": "容量:第 10 条"
+      },
+      {
+        "key": "k010",
+        "now": 1700084000010,
+        "expect": "new",
+        "note": "容量:第 11 条"
+      },
+      {
+        "key": "k011",
+        "now": 1700084000011,
+        "expect": "new",
+        "note": "容量:第 12 条"
+      },
+      {
+        "key": "k012",
+        "now": 1700084000012,
+        "expect": "new",
+        "note": "容量:第 13 条"
+      },
+      {
+        "key": "k013",
+        "now": 1700084000013,
+        "expect": "new",
+        "note": "容量:第 14 条"
+      },
+      {
+        "key": "k014",
+        "now": 1700084000014,
+        "expect": "new",
+        "note": "容量:第 15 条"
+      },
+      {
+        "key": "k015",
+        "now": 1700084000015,
+        "expect": "new",
+        "note": "容量:第 16 条"
+      },
+      {
+        "key": "k016",
+        "now": 1700084000016,
+        "expect": "new",
+        "note": "容量:第 17 条"
+      },
+      {
+        "key": "k017",
+        "now": 1700084000017,
+        "expect": "new",
+        "note": "容量:第 18 条"
+      },
+      {
+        "key": "k018",
+        "now": 1700084000018,
+        "expect": "new",
+        "note": "容量:第 19 条"
+      },
+      {
+        "key": "k019",
+        "now": 1700084000019,
+        "expect": "new",
+        "note": "容量:第 20 条"
+      },
+      {
+        "key": "k020",
+        "now": 1700084000020,
+        "expect": "new",
+        "note": "容量:第 21 条"
+      },
+      {
+        "key": "k021",
+        "now": 1700084000021,
+        "expect": "new",
+        "note": "容量:第 22 条"
+      },
+      {
+        "key": "k022",
+        "now": 1700084000022,
+        "expect": "new",
+        "note": "容量:第 23 条"
+      },
+      {
+        "key": "k023",
+        "now": 1700084000023,
+        "expect": "new",
+        "note": "容量:第 24 条"
+      },
+      {
+        "key": "k024",
+        "now": 1700084000024,
+        "expect": "new",
+        "note": "容量:第 25 条"
+      },
+      {
+        "key": "k025",
+        "now": 1700084000025,
+        "expect": "new",
+        "note": "容量:第 26 条"
+      },
+      {
+        "key": "k026",
+        "now": 1700084000026,
+        "expect": "new",
+        "note": "容量:第 27 条"
+      },
+      {
+        "key": "k027",
+        "now": 1700084000027,
+        "expect": "new",
+        "note": "容量:第 28 条"
+      },
+      {
+        "key": "k028",
+        "now": 1700084000028,
+        "expect": "new",
+        "note": "容量:第 29 条"
+      },
+      {
+        "key": "k029",
+        "now": 1700084000029,
+        "expect": "new",
+        "note": "容量:第 30 条"
+      },
+      {
+        "key": "k030",
+        "now": 1700084000030,
+        "expect": "new",
+        "note": "容量:第 31 条"
+      },
+      {
+        "key": "k031",
+        "now": 1700084000031,
+        "expect": "new",
+        "note": "容量:第 32 条"
+      },
+      {
+        "key": "k032",
+        "now": 1700084000032,
+        "expect": "new",
+        "note": "容量:第 33 条"
+      },
+      {
+        "key": "k033",
+        "now": 1700084000033,
+        "expect": "new",
+        "note": "容量:第 34 条"
+      },
+      {
+        "key": "k034",
+        "now": 1700084000034,
+        "expect": "new",
+        "note": "容量:第 35 条"
+      },
+      {
+        "key": "k035",
+        "now": 1700084000035,
+        "expect": "new",
+        "note": "容量:第 36 条"
+      },
+      {
+        "key": "k036",
+        "now": 1700084000036,
+        "expect": "new",
+        "note": "容量:第 37 条"
+      },
+      {
+        "key": "k037",
+        "now": 1700084000037,
+        "expect": "new",
+        "note": "容量:第 38 条"
+      },
+      {
+        "key": "k038",
+        "now": 1700084000038,
+        "expect": "new",
+        "note": "容量:第 39 条"
+      },
+      {
+        "key": "k039",
+        "now": 1700084000039,
+        "expect": "new",
+        "note": "容量:第 40 条"
+      },
+      {
+        "key": "k040",
+        "now": 1700084000040,
+        "expect": "new",
+        "note": "容量:第 41 条"
+      },
+      {
+        "key": "k041",
+        "now": 1700084000041,
+        "expect": "new",
+        "note": "容量:第 42 条"
+      },
+      {
+        "key": "k042",
+        "now": 1700084000042,
+        "expect": "new",
+        "note": "容量:第 43 条"
+      },
+      {
+        "key": "k043",
+        "now": 1700084000043,
+        "expect": "new",
+        "note": "容量:第 44 条"
+      },
+      {
+        "key": "k044",
+        "now": 1700084000044,
+        "expect": "new",
+        "note": "容量:第 45 条"
+      },
+      {
+        "key": "k045",
+        "now": 1700084000045,
+        "expect": "new",
+        "note": "容量:第 46 条"
+      },
+      {
+        "key": "k046",
+        "now": 1700084000046,
+        "expect": "new",
+        "note": "容量:第 47 条"
+      },
+      {
+        "key": "k047",
+        "now": 1700084000047,
+        "expect": "new",
+        "note": "容量:第 48 条"
+      },
+      {
+        "key": "k048",
+        "now": 1700084000048,
+        "expect": "new",
+        "note": "容量:第 49 条"
+      },
+      {
+        "key": "k049",
+        "now": 1700084000049,
+        "expect": "new",
+        "note": "容量:第 50 条"
+      },
+      {
+        "key": "k050",
+        "now": 1700084000050,
+        "expect": "new",
+        "note": "容量:第 51 条"
+      },
+      {
+        "key": "k051",
+        "now": 1700084000051,
+        "expect": "new",
+        "note": "容量:第 52 条"
+      },
+      {
+        "key": "k052",
+        "now": 1700084000052,
+        "expect": "new",
+        "note": "容量:第 53 条"
+      },
+      {
+        "key": "k053",
+        "now": 1700084000053,
+        "expect": "new",
+        "note": "容量:第 54 条"
+      },
+      {
+        "key": "k054",
+        "now": 1700084000054,
+        "expect": "new",
+        "note": "容量:第 55 条"
+      },
+      {
+        "key": "k055",
+        "now": 1700084000055,
+        "expect": "new",
+        "note": "容量:第 56 条"
+      },
+      {
+        "key": "k056",
+        "now": 1700084000056,
+        "expect": "new",
+        "note": "容量:第 57 条"
+      },
+      {
+        "key": "k057",
+        "now": 1700084000057,
+        "expect": "new",
+        "note": "容量:第 58 条"
+      },
+      {
+        "key": "k058",
+        "now": 1700084000058,
+        "expect": "new",
+        "note": "容量:第 59 条"
+      },
+      {
+        "key": "k059",
+        "now": 1700084000059,
+        "expect": "new",
+        "note": "容量:第 60 条"
+      },
+      {
+        "key": "k060",
+        "now": 1700084000060,
+        "expect": "new",
+        "note": "容量:第 61 条"
+      },
+      {
+        "key": "k061",
+        "now": 1700084000061,
+        "expect": "new",
+        "note": "容量:第 62 条"
+      },
+      {
+        "key": "k062",
+        "now": 1700084000062,
+        "expect": "new",
+        "note": "容量:第 63 条"
+      },
+      {
+        "key": "k063",
+        "now": 1700084000063,
+        "expect": "new",
+        "note": "容量:第 64 条"
+      },
+      {
+        "key": "k-new",
+        "now": 1700084000100,
+        "expect": "new",
+        "note": "容量:第 65 条,k000(记下时刻最早)被挤掉"
+      },
+      {
+        "key": "k032",
+        "now": 1700084000101,
+        "expect": "duplicate",
+        "note": "容量:中段的键还在"
+      },
+      {
+        "key": "k000",
+        "now": 1700084000102,
+        "expect": "new",
+        "note": "容量:被挤掉的 k000 又算 new(它再入会挤掉 k001)"
+      },
+      {
+        "key": "k001",
+        "now": 1700084000103,
+        "expect": "new",
+        "note": "容量:k001 被上一步挤掉 ⇒ new"
+      },
+      {
+        "key": "t000",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:64 条同一时刻 T2"
+      },
+      {
+        "key": "t001",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 2 条"
+      },
+      {
+        "key": "t002",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 3 条"
+      },
+      {
+        "key": "t003",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 4 条"
+      },
+      {
+        "key": "t004",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 5 条"
+      },
+      {
+        "key": "t005",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 6 条"
+      },
+      {
+        "key": "t006",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 7 条"
+      },
+      {
+        "key": "t007",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 8 条"
+      },
+      {
+        "key": "t008",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 9 条"
+      },
+      {
+        "key": "t009",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 10 条"
+      },
+      {
+        "key": "t010",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 11 条"
+      },
+      {
+        "key": "t011",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 12 条"
+      },
+      {
+        "key": "t012",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 13 条"
+      },
+      {
+        "key": "t013",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 14 条"
+      },
+      {
+        "key": "t014",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 15 条"
+      },
+      {
+        "key": "t015",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 16 条"
+      },
+      {
+        "key": "t016",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 17 条"
+      },
+      {
+        "key": "t017",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 18 条"
+      },
+      {
+        "key": "t018",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 19 条"
+      },
+      {
+        "key": "t019",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 20 条"
+      },
+      {
+        "key": "t020",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 21 条"
+      },
+      {
+        "key": "t021",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 22 条"
+      },
+      {
+        "key": "t022",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 23 条"
+      },
+      {
+        "key": "t023",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 24 条"
+      },
+      {
+        "key": "t024",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 25 条"
+      },
+      {
+        "key": "t025",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 26 条"
+      },
+      {
+        "key": "t026",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 27 条"
+      },
+      {
+        "key": "t027",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 28 条"
+      },
+      {
+        "key": "t028",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 29 条"
+      },
+      {
+        "key": "t029",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 30 条"
+      },
+      {
+        "key": "t030",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 31 条"
+      },
+      {
+        "key": "t031",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 32 条"
+      },
+      {
+        "key": "t032",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 33 条"
+      },
+      {
+        "key": "t033",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 34 条"
+      },
+      {
+        "key": "t034",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 35 条"
+      },
+      {
+        "key": "t035",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 36 条"
+      },
+      {
+        "key": "t036",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 37 条"
+      },
+      {
+        "key": "t037",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 38 条"
+      },
+      {
+        "key": "t038",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 39 条"
+      },
+      {
+        "key": "t039",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 40 条"
+      },
+      {
+        "key": "t040",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 41 条"
+      },
+      {
+        "key": "t041",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 42 条"
+      },
+      {
+        "key": "t042",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 43 条"
+      },
+      {
+        "key": "t043",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 44 条"
+      },
+      {
+        "key": "t044",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 45 条"
+      },
+      {
+        "key": "t045",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 46 条"
+      },
+      {
+        "key": "t046",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 47 条"
+      },
+      {
+        "key": "t047",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 48 条"
+      },
+      {
+        "key": "t048",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 49 条"
+      },
+      {
+        "key": "t049",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 50 条"
+      },
+      {
+        "key": "t050",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 51 条"
+      },
+      {
+        "key": "t051",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 52 条"
+      },
+      {
+        "key": "t052",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 53 条"
+      },
+      {
+        "key": "t053",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 54 条"
+      },
+      {
+        "key": "t054",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 55 条"
+      },
+      {
+        "key": "t055",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 56 条"
+      },
+      {
+        "key": "t056",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 57 条"
+      },
+      {
+        "key": "t057",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 58 条"
+      },
+      {
+        "key": "t058",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 59 条"
+      },
+      {
+        "key": "t059",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 60 条"
+      },
+      {
+        "key": "t060",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 61 条"
+      },
+      {
+        "key": "t061",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 62 条"
+      },
+      {
+        "key": "t062",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 63 条"
+      },
+      {
+        "key": "t063",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 64 条"
+      },
+      {
+        "key": "t-new",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 65 条,键名 \"t-new\" < \"t000\"(按 UTF-8 / 码点升序,\"-\" < \"0\"),它自己被立刻挤掉但仍返回 new"
+      },
+      {
+        "key": "t-new",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:t-new 已不在 ⇒ 再来仍是 new(挤出在插入之后)"
+      },
+      {
+        "key": "t000",
+        "now": 1700126000000,
+        "expect": "duplicate",
+        "note": "平局:t000 没被挤掉"
+      },
+      {
+        "key": "old",
+        "now": 1700125999999,
+        "expect": "new",
+        "note": "比所有条目都老的新键:插入后立刻被挤掉,仍返回 new"
+      },
+      {
+        "key": "old",
+        "now": 1700125999999,
+        "expect": "new",
+        "note": "同上:再来仍是 new"
+      },
+      {
+        "key": "z-new",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:第 65 条,键名最大,挤掉键名最小的 t000"
+      },
+      {
+        "key": "t001",
+        "now": 1700126000000,
+        "expect": "duplicate",
+        "note": "平局:t001 还在"
+      },
+      {
+        "key": "t000",
+        "now": 1700126000000,
+        "expect": "new",
+        "note": "平局:t000 已被挤掉 ⇒ new(再入后它又是键名最小,又被挤掉)"
+      }
+    ]
+  },
+  "dedupeKeyCases": [
+    {
+      "ts": 1700000000123,
+      "ct": "abc",
+      "key": "1700000000123:ba7816bf8f01cfea414140de5dae2223",
+      "note": "整数 ts"
+    },
+    {
+      "ts": 1700000000123.9,
+      "ct": "abc",
+      "key": "1700000000123:ba7816bf8f01cfea414140de5dae2223",
+      "note": "小数 ts:先向下取整,格式化成普通整数,与整数 ts 同键"
+    },
+    {
+      "ts": 1700000000123,
+      "ct": "abd",
+      "key": "1700000000123:a52d159f262b2c6ddb724a61840befc3",
+      "note": "ct 不同 ⇒ 键不同"
+    }
+  ]
+}

@@ -215,6 +215,7 @@ describe('phone task controls keep the existing execution boundary',()=>{
   it('completes decisions and a large file through the encrypted relay cap with a paired device, then rejects its revocation',async()=>{
     const task=create('tunnel'),live=await ready(task.id)
     const paired=await (await request('/set/api/pair',{})).json() as {device_token:string}
+    token=panel.issueToken() // 链接令牌一次性(plan 7a)
     const bytes=Buffer.alloc(710_123,73)
     saveArtifactSnapshot(store,task.id,{name:'large.txt',mime:'text/plain',bytes},root)
     const artifact=store.artifacts(task.id)[0]!,hub=makeTunnelHub(),received:string[]=[],frames:string[]=[]
@@ -278,5 +279,18 @@ describe('phone task controls keep the existing execution boundary',()=>{
       expect((await remote('/m/api/matter/create-receipt?requestId='+randomUUID())).status).toBe(401)
       expect((await remote('/m/api/matter/answer',{id:task.id,runId:live.runId,requestId:question.id,answers:null})).status).toBe(401)
     }finally{client.stop();hub.dropPhone(phone.streamId!)}
+  })
+})
+
+// 评审(2026-09-29)顺带抓到的 #129 老 bug:上传状态查询只认 `t=` 与 id / draftId 三个键,
+// 配对过的手机用 `d=` 带令牌、走隧道还会多一个 `_via`,于是断点续传一律 invalid_upload_chunk。
+describe('attachment upload status accepts device tokens and tunnel marker',()=>{
+  it('d= and _via do not make the status query invalid',async()=>{
+    const pair=await(await request('/set/api/pair',{})).json() as {device_token:string}
+    token=panel.issueToken() // 链接令牌一次性(plan 7a)
+    const d=pair.device_token
+    const r=await fetch(`${base}/m/api/attachment/upload?id=${randomUUID()}&draftId=${randomUUID()}&d=${d}&_via=tunnel`)
+    const body=await r.json() as {error?:string}
+    expect(body.error).not.toBe('invalid_upload_chunk')
   })
 })

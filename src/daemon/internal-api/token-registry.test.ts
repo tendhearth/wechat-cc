@@ -57,6 +57,9 @@ describe('token-registry', () => {
       'POST /v1/workbench/discard-attachment',
       'GET /v1/workbench',
       'GET /v1/matters','GET /v1/matter','GET /v1/matter/owner-chat','POST /v1/matter/say',
+      'GET /v1/connections',
+      'POST /v1/phone/link',
+      'GET /v1/phone/devices',
       'GET /v1/workbench/models',
       'GET /v1/workbench/sessions',
       'GET /v1/workbench/session',
@@ -87,6 +90,7 @@ describe('token-registry', () => {
       'POST /v1/self-change/notice',
       'POST /v1/self-change/ask',
       'GET /v1/self-change/decision',
+      'GET /v1/settings/link',
     ]))
     expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })
@@ -214,6 +218,53 @@ describe('token-registry', () => {
       const t = r.mint('admin', 'claude/a/chat-1')
       vi.advanceTimersByTime(365 * 24 * 60 * 60 * 1000) // a year
       expect(r.resolve(t)?.tier).toBe('admin')
+    })
+  })
+
+  // 梳理第 6 步(2026-09-29):手机的链接令牌 / 设备令牌进同一个注册表。
+  describe('register / listSessions / 可注入时钟(手机令牌)', () => {
+    const ROUTES = new Set(['GET /m'])
+    it('register 外部生成的秘钥:resolve 得到 origin / tier / sessionKey / routeAllow', () => {
+      const r = makeTokenRegistry()
+      r.register('d' + 'a'.repeat(48), { tier: 'admin', origin: 'device', sessionKey: 'device:aaaa', routeAllow: ROUTES })
+      expect(r.resolve('d' + 'a'.repeat(48))).toEqual({ tier: 'admin', origin: 'device', sessionKey: 'device:aaaa', routeAllow: ROUTES })
+    })
+    it('ttlMs 按注入的 now 过期:过期后 resolve 为 null,listSessions 也不再列出', () => {
+      let t = 1_000
+      const r = makeTokenRegistry(undefined, () => t)
+      r.register('t1', { tier: 'admin', origin: 'link', sessionKey: 'link', routeAllow: ROUTES, ttlMs: 600_000 })
+      expect(r.listSessions('link')).toEqual([{ token: 't1', sessionKey: 'link' }])
+      t += 599_999
+      expect(r.resolve('t1')?.origin).toBe('link')
+      t += 1
+      expect(r.listSessions('link')).toEqual([])
+      expect(r.resolve('t1')).toBeNull()
+    })
+    it('invalidateSession 按 sessionKey 撤销一台设备,别的不动;session 令牌照旧能撤', () => {
+      const r = makeTokenRegistry()
+      r.register('dA', { tier: 'admin', origin: 'device', sessionKey: 'device:a', routeAllow: ROUTES })
+      r.register('dB', { tier: 'admin', origin: 'device', sessionKey: 'device:b', routeAllow: ROUTES })
+      const s = r.mint('admin', 'claude/x')
+      r.invalidateSession('device:a')
+      expect(r.resolve('dA')).toBeNull()
+      expect(r.resolve('dB')?.sessionKey).toBe('device:b')
+      r.invalidateSession('claude/x')
+      expect(r.resolve(s)).toBeNull()
+    })
+    it('listSessions 只列指定 origin', () => {
+      const r = makeTokenRegistry()
+      r.register('dA', { tier: 'admin', origin: 'device', sessionKey: 'device:a', routeAllow: ROUTES })
+      r.register('tL', { tier: 'admin', origin: 'link', sessionKey: 'link', routeAllow: ROUTES })
+      r.mint('admin', 'claude/x')
+      expect(r.listSessions('device')).toEqual([{ token: 'dA', sessionKey: 'device:a' }])
+      expect(r.listSessions('link')).toEqual([{ token: 'tL', sessionKey: 'link' }])
+    })
+    it('file / operator 令牌不会被任何 invalidateSession 误删', () => {
+      const r = makeTokenRegistry()
+      r.registerFileToken('ff'.repeat(32)); r.registerOperatorToken('00'.repeat(32))
+      r.invalidateSession('link'); r.invalidateSession('')
+      expect(r.resolve('ff'.repeat(32))?.origin).toBe('file')
+      expect(r.resolve('00'.repeat(32))?.origin).toBe('operator')
     })
   })
 })

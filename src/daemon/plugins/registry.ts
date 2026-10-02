@@ -62,7 +62,8 @@ interface EnabledConfig {
   enabled: Record<string, boolean>
 }
 
-function readEnabledMap(stateDir: string): Record<string, boolean> {
+/** Explicit operator enable/disable choices from `plugins.json` (empty when absent/malformed). */
+export function readEnabledMap(stateDir: string): Record<string, boolean> {
   const p = pluginsConfigPath(stateDir)
   if (!existsSync(p)) return {}
   try {

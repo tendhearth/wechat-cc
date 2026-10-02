@@ -3,18 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>wechat-cc</title>
+    <title>Tendhearth</title>
     <link rel="icon" href="./wechat-cc-logo.png" />
+    <link rel="stylesheet" href="./tokens.css" />
+    <link rel="stylesheet" href="./fonts.css" />
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./cc-page-art.css" />
     <link rel="stylesheet" href="./cc-surfaces.css" />
     <link rel="stylesheet" href="./postcard-album.css" />
     <link rel="stylesheet" href="./cc-life.css" />
+    <link rel="stylesheet" href="./styles/converse.css" />
+    <link rel="stylesheet" href="./cc-now.css" />
     <link rel="stylesheet" href="./styles/workbench.css" />
     <link rel="stylesheet" href="./styles/task-entry.css" />
     <link rel="stylesheet" href="./styles/workbench-attention.css" />
   </head>
-  <body>
+  <body data-pane="overview">
 
     <div id="dev-banner" class="dev-banner" hidden></div>
     <div id="workbench-attention" class="workbench-attention" role="region" aria-label="一起做待处理" hidden></div>
@@ -36,8 +40,7 @@
       <div class="wizard-window">
         <div class="wz-top">
           <div class="wz-brand">
-            <span class="cc-brand-lockup"><img class="cc-brand-mark" src="./assets/brand/cc-mark.svg" alt="" /><span class="name">CC</span></span>
-            <span class="cc-brand-note">一起生活，也一起做事</span>
+            <span class="dash-wordmark wz-wordmark">tendhearth</span>
           </div>
           <button class="wz-back" data-action="open-dashboard" title="关闭启动页" aria-label="关闭启动页"><span data-hg-icon="cancel-01" data-hg-size="18"></span></button>
         </div>
@@ -55,8 +58,8 @@
                     <img class="cc-page-character" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" />
                   </span>
                 </div>
-                <h2>还差一步就能见面了</h2>
-                <p>还没检测到 Claude Code 或 Codex，安装任意一个就能继续。</p>
+                <h2 id="doctor-headline">还差一步就能见面了</h2>
+                <p id="doctor-note">还没检测到 Claude Code 或 Codex，安装任意一个就能继续。</p>
               </div>
               <div class="launch-panel">
                 <div class="launch-panel-title">
@@ -181,9 +184,9 @@
                   <button class="toggle" id="screen-autostart-toggle" data-toggle aria-pressed="false"></button>
                 </div>
 
-                <div class="toggle-row warn-edge">
+                <div class="toggle-row">
                   <div>
-                    <div class="lab">自动同意工具调用<span style="color: var(--green-ink); font-size: 10.5px; margin-left: 6px; font-weight: 500;">推荐</span></div>
+                    <div class="lab">自动同意工具调用<span style="color: var(--th-ink-soft); font-size: 10.5px; margin-left: 6px; font-weight: 500;">推荐</span></div>
                     <div class="sub">关闭后，每次工具调用都需要在微信里回 y / n（10 分钟超时即拒绝）。日常会被刷屏，建议保留勾选。</div>
                   </div>
                   <button class="toggle on" id="screen-unattended-toggle" data-toggle aria-pressed="true"></button>
@@ -216,6 +219,14 @@
               <button id="post-stop-kill" class="force-kill">强制 kill 进程</button>
             </div>
 
+            <div id="onboard-phone" class="onboard-phone" hidden>
+              <h3 id="onboard-phone-title"></h3>
+              <div id="onboard-phone-qr" class="qr-svg"></div>
+              <p id="onboard-phone-status" class="qr-note"></p>
+              <p id="onboard-phone-check" class="qr-check" hidden></p>
+              <button id="onboard-phone-renew" class="btn ghost" type="button" hidden></button>
+              <p id="onboard-phone-later" class="qr-sub"></p>
+            </div>
             <div class="wz-foot" style="border:0; padding: 4px 0 0;">
               <div class="left"></div>
               <div class="right">
@@ -253,6 +264,57 @@
         <button id="settings-close" class="drawer-close" type="button" aria-label="关闭"><span data-hg-icon="cancel-01" data-hg-size="18"></span></button>
       </header>
       <div class="drawer-body">
+        <section class="drawer-section drawer-connection" aria-label="连接">
+          <h3>连接</h3>
+          <div id="hero-card" class="conn-verdict" aria-live="polite">
+            <p id="hero-headline"></p>
+            <p id="hero-meta"></p>
+          </div>
+          <div class="moment-actions">
+            <span class="pending" id="dash-pending"></span>
+            <button id="dash-restart" class="moment-connect-btn">
+              <span class="ic" data-hg-icon="refresh"></span>
+              重新连接
+            </button>
+            <button id="dash-view-details" class="moment-reconnect-details" type="button" hidden>
+              查看详情
+            </button>
+            <button id="dash-refresh" class="btn ghost" hidden>刷新</button>
+            <button id="dash-test-conn" class="btn ghost">测试本机连接</button>
+            <button id="brain-selfcheck" class="btn ghost" type="button" title="网络 + 大脑逐项检查(只在你点的时候测)">状态自检</button>
+            <button id="dash-rebind" class="btn" hidden>重新扫码绑定</button>
+          </div>
+          <aside class="moment-side" aria-label="连接状态">
+          <section class="moment-users" aria-label="用户连接状态">
+            <!-- Ongoing incidents stay prominent; recovered records remain
+                 expandable below the account, regardless of read status. -->
+            <p id="dash-health-banner" class="dash-health-banner" hidden></p>
+            <!-- 文件访问(macOS TCC,2026-09-04):daemon 自己读不到主人的文件夹时在这儿说,
+                 并带去系统设置。权限缺失此前是静默的 —— 主人只会觉得 bot 变笨了。 -->
+            <div id="dash-fs-access" class="dash-fs-access" hidden>
+              <span id="dash-fs-access-text"></span>
+              <button id="dash-fs-access-open" class="btn" type="button">打开系统设置</button>
+            </div>
+            <h2>当前连接中的用户</h2>
+            <div id="accounts-current" class="current-user-card"></div>
+            <details id="dash-connection-options" class="connection-options" hidden>
+              <summary>连接选项</summary>
+              <button id="dash-stop" class="btn ghost" type="button">断开连接</button>
+            </details>
+            <details id="dash-health-history" class="connection-history" hidden>
+              <summary>上次连接中断已恢复</summary>
+              <p id="dash-health-history-detail"></p>
+            </details>
+            <div id="brain-health" class="brain-health" hidden></div>
+            <button id="open-phone-settings" class="phone-settings-btn" type="button" title="用手机扫码连上这台电脑（码 10 分钟内有效，只能用一次）">连接手机</button>
+            <div class="moment-subhead" id="accounts-subhead">
+              <h2>子用户</h2>
+              <span class="meta" id="accounts-meta">—</span>
+            </div>
+            <div id="accounts-body" class="sub-user-grid"></div>
+          </section>
+          </aside>
+        </section>
         <section class="drawer-section">
           <h3>Pro 会员</h3>
           <div id="license-status" class="license-status">加载中…</div>
@@ -273,7 +335,7 @@
               <div class="lab">开机自启</div>
               <div class="sub">登录系统时自动启动 daemon。</div>
             </div>
-            <button class="toggle" id="autostart-toggle" type="button" data-toggle aria-pressed="false" aria-label="开机自启"></button>
+            <button class="toggle" id="autostart-toggle" type="button" data-toggle aria-pressed="false" aria-label="开机自启" aria-describedby="autostart-toggle-feedback"></button><span class="setting-feedback" id="autostart-toggle-feedback" role="status"></span>
           </div>
           <p class="drawer-section-help">默认配置：daemon 在系统启动时自动跑，关闭窗口不会影响接收消息。</p>
         </section>
@@ -284,14 +346,14 @@
               <div class="lab">自动同意工具调用</div>
               <div class="sub">关闭后，每次工具调用都需要在微信里回 y / n（10 分钟超时即拒绝）。</div>
             </div>
-            <button class="toggle on" id="unattended-toggle" type="button" data-toggle aria-pressed="true" aria-label="自动同意工具调用"></button>
+            <button class="toggle on" id="unattended-toggle" type="button" data-toggle aria-pressed="true" aria-label="自动同意工具调用" aria-describedby="unattended-toggle-feedback"></button><span class="setting-feedback" id="unattended-toggle-feedback" role="status"></span>
           </div>
           <div class="toggle-row">
             <div>
               <div class="lab">网络守护</div>
               <div class="sub">每 30 秒探活；网络掉了通知微信端。<span id="guard-status-line" class="guard-status-line">—</span></div>
             </div>
-            <button class="toggle" id="guard-toggle" type="button" data-toggle aria-pressed="false" aria-label="网络守护"></button>
+            <button class="toggle" id="guard-toggle" type="button" data-toggle aria-pressed="false" aria-label="网络守护" aria-describedby="guard-toggle-feedback"></button><span class="setting-feedback" id="guard-toggle-feedback" role="status"></span>
           </div>
         </section>
         <section class="drawer-section">
@@ -301,7 +363,7 @@
               <div class="lab">记忆胚胎</div>
               <div class="sub">在记忆页显示胚胎状态，并允许从吸收项直接跳回来源。</div>
             </div>
-            <button class="toggle on" id="memory-embryo-toggle" type="button" data-toggle aria-pressed="true" aria-label="记忆胚胎"></button>
+            <button class="toggle on" id="memory-embryo-toggle" type="button" data-toggle aria-pressed="true" aria-label="记忆胚胎" aria-describedby="memory-embryo-toggle-feedback"></button><span class="setting-feedback" id="memory-embryo-toggle-feedback" role="status"></span>
           </div>
         </section>
         <section class="drawer-section">
@@ -324,65 +386,25 @@
       <div class="dash-window">
 
         <aside id="dash-global-rail" class="dash-rail">
-          <div class="dash-brand">
-            <span class="cc-brand-lockup"><img class="cc-brand-mark" src="./assets/brand/cc-mark.svg" alt="" /><span class="name">CC</span></span>
-            <span class="cc-brand-note">一起生活，也一起做事</span>
-            <span class="ver" id="dash-version">v0.6.2</span>
-          </div>
+          <p class="dash-wordmark">tendhearth</p>
 
           <nav class="dash-nav" aria-label="主导航">
-            <button class="dash-nav-link active" data-pane="overview">
-              <span class="ic" data-hg-icon="heart-check" data-hg-size="16"></span><span>此刻</span>
-            </button>
-            <button class="dash-nav-link" data-pane="workbench">
-              <span class="ic" data-hg-icon="archive" data-hg-size="16"></span><span>一起做</span>
-            </button>
-            <button class="dash-nav-link" data-pane="recollections">
-              <span class="ic" data-hg-icon="time-02" data-hg-size="16"></span><span>回忆</span>
-            </button>
-
+            <button class="dash-nav-link active" data-pane="overview">此刻</button>
+            <button class="dash-nav-link" data-pane="workbench">一起做</button>
+            <button class="dash-nav-link" data-pane="recollections">回忆</button>
           </nav>
 
-          <div class="dash-rail-foot">
-            <span id="dash-rail-dot" class="dot"></span>
-            <span id="dash-rail-text">未运行</span>
-            <span id="dash-rail-clock" class="clock"></span>
-          </div>
-
-          <!-- Settings gear: master wires the click handler via
-               getElementById('settings-open'); we keep that id so the
-               settings drawer opens. moxiuwen's [data-action='open-wizard']
-               hook is unused here but main.js handles it elsewhere
-               (e.g. on the add-user card). -->
           <details class="cc-life-nav-more">
-              <summary>生活与工具</summary>
-              <div>
-                <button class="dash-nav-link" aria-label="画室" data-pane="atelier">
-                  <span class="ic" data-hg-icon="brush" data-hg-size="16"></span><span>画室</span>
-                </button>
-                <button class="dash-nav-link" aria-label="记忆" data-pane="memory">
-                  <span class="ic" data-hg-icon="archive" data-hg-size="16"></span><span>记忆</span><span class="count" id="memory-count"></span>
-                </button>
-                <button class="dash-nav-link" aria-label="跟 CC 说" data-pane="converse">
-                  <span class="ic" data-hg-icon="smile" data-hg-size="16"></span><span>跟 CC 说</span>
-                </button>
-                <button class="dash-nav-link" aria-label="待办" data-pane="todos">
-                  <span class="ic" data-hg-icon="checkmark-circle-02" data-hg-size="16"></span><span>待办</span>
-                </button>
-                <button class="dash-nav-link" aria-label="觅食" data-pane="a2a-agents">
-                  <span class="ic" data-hg-icon="settings-01" data-hg-size="16"></span><span>觅食</span>
-                </button>
-                <button class="dash-nav-link" aria-label="后厨" data-pane="sessions" data-backstage-entry="true">
-                  <span class="ic" data-hg-icon="plug-01" data-hg-size="16"></span><span>后厨</span><span class="count" id="sessions-count"></span>
-                </button>
-              </div>
-            </details>
-          <div class="dash-utilities">
-            <button id="settings-open" class="rail-gear" type="button" title="设置" aria-label="设置" data-tooltip="设置">
-              <span class="ic" data-hg-icon="settings-01" data-hg-size="18"></span>
-              <span>连接与设置</span>
-            </button>
-          </div>
+            <summary>生活与工具</summary>
+            <div>
+              <button class="dash-nav-link" aria-label="画室" data-pane="atelier">画室</button>
+              <button class="dash-nav-link" aria-label="记忆" data-pane="memory">记忆<span class="count" id="memory-count"></span></button>
+              <button class="dash-nav-link" aria-label="待办" data-pane="todos">待办</button>
+              <button class="dash-nav-link" aria-label="觅食" data-pane="a2a-agents">觅食</button>
+              <button class="dash-nav-link" aria-label="后厨" data-pane="sessions" data-backstage-entry="true">后厨<span class="count" id="sessions-count"></span></button>
+            </div>
+          </details>
+          <div class="dash-utilities"><button id="settings-open" class="rail-gear" type="button" aria-label="设置">设置</button></div>
         </aside>
 
         <div id="workbench-nav-scrim" class="workbench-nav-scrim" aria-hidden="true" hidden></div>
@@ -390,115 +412,49 @@
         <section class="dash-main">
 
           <!-- ── pane: overview ─────────────────────────────────────── -->
-          <article class="dash-pane cc-now-pane" data-pane="overview">
-            <header class="cc-life-topline"><span>此刻</span><span>CC 的小空间</span></header>
-            <section id="cc-current-activity" class="cc-current-activity" aria-live="polite"></section>
-            <div id="converse-root" class="converse-page"></div>
-            <details class="cc-home-details"><summary>鱼缸与连接</summary>
-            <div class="moment-body">
-              <section class="moment-ai" id="hero-card" aria-live="polite">
-                <div class="companion-intro">
-                  <h1 id="hero-headline">此刻，陪你一起看鱼</h1>
-                  <p id="hero-meta">把鼠标轻轻移进鱼缸，看看谁会先回应你</p>
-                </div>
-                <div class="ai-orbit-visual">
-                  <div class="companion-mode-actions" aria-label="陪伴显示方式">
-                    <button id="companion-immersive-start" class="companion-immersive-trigger" type="button" aria-pressed="false">
-                      <span class="companion-immersive-icon" aria-hidden="true">⤢</span>
-                      <span>进入这一刻</span>
-                    </button>
-                    <button id="companion-desktop-start" class="companion-desktop-trigger" type="button" title="在桌面打开可拖动的陪伴鱼缸">
-                      <span aria-hidden="true">↗</span>
-                      <span>浮到桌面</span>
-                    </button>
-                  </div>
-                  <div class="moment-animation-stage moment-illustration-online" aria-label="可交互的陪伴鱼缸">
-                    <canvas id="companion-stage"></canvas>
-                    <div class="stage-hint" id="stage-hint">把鼠标轻轻移进鱼缸水面下方</div>
-                    <div class="bear-message" id="bear-message" aria-live="polite">你好呀，今天也在陪你。</div>
-                  </div>
-                  <div class="moment-illustration moment-illustration-offline" role="img" aria-label="CC 安静地坐在鱼缸旁，连接暂时离线">
-                    <img class="offline-aquarium" src="./assets/home-cc-aquarium-base.png" alt="" />
-                    <span class="offline-fish offline-fish-gold" aria-hidden="true"></span>
-                    <span class="offline-fish offline-fish-coral" aria-hidden="true"></span>
-                    <span class="offline-fish offline-fish-blue" aria-hidden="true"></span>
-                    <span class="offline-cc-shadow" aria-hidden="true"></span>
-                    <img class="offline-cc" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" />
-                  </div>
-                </div>
-                <div class="moment-actions">
-                  <span class="pending" id="dash-pending"></span>
-                  <button id="dash-restart" class="moment-connect-btn">
-                    <span class="ic" data-hg-icon="refresh"></span>
-                    重新连接
-                  </button>
-                  <button id="dash-view-details" class="moment-reconnect-details" type="button" hidden>
-                    查看详情
-                  </button>
-                  <button id="dash-refresh" class="btn ghost" hidden>刷新</button>
-                  <button id="dash-test-conn" class="btn ghost">测试本机连接</button>
-                  <button id="brain-selfcheck" class="btn ghost" type="button" title="网络 + 大脑逐项检查(只在你点的时候测)">状态自检</button>
-                  <button id="dash-rebind" class="btn" hidden>重新扫码绑定</button>
-                </div>
-              </section>
-
-              <aside class="moment-side" aria-label="连接状态">
-              <section class="moment-users" aria-label="用户连接状态">
-                <!-- Ongoing incidents stay prominent; recovered records remain
-                     expandable below the account, regardless of read status. -->
-                <p id="dash-health-banner" class="dash-health-banner" hidden></p>
-                <!-- 文件访问(macOS TCC,2026-09-04):daemon 自己读不到主人的文件夹时在这儿说,
-                     并带去系统设置。权限缺失此前是静默的 —— 主人只会觉得 bot 变笨了。 -->
-                <div id="dash-fs-access" class="dash-fs-access" hidden>
-                  <span id="dash-fs-access-text"></span>
-                  <button id="dash-fs-access-open" class="btn" type="button">打开系统设置</button>
-                </div>
-                <h2>当前连接中的用户</h2>
-                <div id="accounts-current" class="current-user-card"></div>
-                <details id="dash-connection-options" class="connection-options" hidden>
-                  <summary>连接选项</summary>
-                  <button id="dash-stop" class="btn ghost" type="button">断开连接</button>
-                </details>
-                <details id="dash-health-history" class="connection-history" hidden>
-                  <summary>上次连接中断已恢复</summary>
-                  <p id="dash-health-history-detail"></p>
-                </details>
-                <div id="brain-health" class="brain-health" hidden></div>
-                <button id="open-phone-settings" class="phone-settings-btn" type="button" title="生成二维码,手机扫码打开设置页(10 分钟内有效)"><span aria-hidden="true">↗</span> 手机扫码改设置</button>
-                <div class="moment-subhead" id="accounts-subhead">
-                  <h2>子用户</h2>
-                  <span class="meta" id="accounts-meta">—</span>
-                </div>
-                <div id="accounts-body" class="sub-user-grid"></div>
-              </section>
-              </aside>
-              <button id="companion-users-scrim" class="companion-users-scrim" type="button" aria-label="收起用户抽屉"></button>
-              <div class="companion-immersive-tools" aria-label="陪伴模式工具">
-                <button id="companion-immersive-exit" type="button">退出陪伴</button>
-                <button id="companion-users-toggle" type="button" aria-expanded="false">用户</button>
-              </div>
-
-              <!-- Hidden shim: keeps the IDs that JS modules
-                   (conversations.js, update.js, main.js) look up so
-                   nothing throws even though moxiuwen retired the
-                   visible cards. Do not delete unless those modules
-                   are refactored to tolerate missing nodes. -->
-              <div class="overview-support" hidden>
-                <span id="conversations-meta">—</span>
-                <table id="conversations-table"><tbody id="conversations-body"></tbody></table>
-                <div id="update-card" data-tone="info">
-                  <span id="update-meta"></span>
-                  <span id="update-dot"></span>
-                  <span id="update-headline"></span>
-                  <span id="update-body"></span>
-                  <button id="update-check-btn"></button>
-                  <button id="update-apply-btn" hidden></button>
-                </div>
-              </div>
+          <article class="dash-pane cc-now-pane" data-pane="overview" data-now="home" data-cc="away">
+            <details class="cc-home-details">
+            <summary><span class="now-sr">CC 的连接:</span><span id="dash-rail-dot" class="dot"></span><span id="dash-rail-text">正在连接…</span></summary>
+            <div class="now-panel">
+              <div id="now-connections" class="now-connections"></div>
+              <button id="companion-desktop-start" class="now-float" type="button" title="在桌面打开可拖动的 CC">浮到桌面</button>
             </div>
             </details>
+            <button id="now-back" class="now-back" type="button" hidden>‹ 此刻</button>
+            <section class="now-hero">
+              <h1 id="now-greeting" class="now-greeting">晚上好</h1>
+              <div class="now-cc-col">
+                <button id="now-cc-bubble" class="now-bubble" type="button" hidden aria-label="CC 最近说的话，点开进对话"><span class="now-bubble-text"></span><small class="now-bubble-time"></small></button>
+                <button id="now-cc" class="now-figure" type="button" aria-label="跟 CC 说">
+                  <img class="now-cc-light" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="" />
+                  <img class="now-cc-dark" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" />
+                </button>
+              </div>
+            </section>
+            <section id="now-waiting" class="now-waiting" aria-labelledby="now-waiting-title" hidden>
+              <h2 id="now-waiting-title"></h2>
+              <ul id="now-waiting-list"></ul>
+            </section>
+            <div id="converse-root" class="converse-page"></div>
           </article>
 
+          <!-- Hidden shim: keeps the IDs that JS modules
+               (conversations.js, update.js, main.js) look up so
+               nothing throws even though moxiuwen retired the
+               visible cards. Do not delete unless those modules
+               are refactored to tolerate missing nodes. -->
+          <div class="overview-support" hidden>
+            <span id="conversations-meta">—</span>
+            <table id="conversations-table"><tbody id="conversations-body"></tbody></table>
+            <div id="update-card" data-tone="info">
+              <span id="update-meta"></span>
+              <span id="update-dot"></span>
+              <span id="update-headline"></span>
+              <span id="update-body"></span>
+              <button id="update-check-btn"></button>
+              <button id="update-apply-btn" hidden></button>
+            </div>
+          </div>
 
           <article class="dash-pane cc-recollections" data-pane="recollections" hidden>
             <header><span class="cc-life-kicker">回忆</span><h1>留下来的小事。</h1><p>画过的画、寄来的明信片，还有当时的想法。</p></header>
@@ -545,19 +501,31 @@
               <aside class="memory-sources-panel" id="memory-sources-panel" hidden>
                 <div class="memory-sources-head">
                   <span>记忆来源</span>
-                  <button id="memory-synthesize-btn" class="btn" title="读本机 Claude 各项目记忆，重新整理出「CC 眼中的你」总体记忆（供 bot 使用）">
-                    <span class="ic" data-hg-icon="star" data-hg-size="16"></span>
-                    重新整理
-                  </button>
-                  <button id="memory-profile-generate-btn" class="btn" title="根据长期记忆刷新用户画像">
-                    <span class="ic" data-hg-icon="refresh" data-hg-size="16"></span>
-                    刷新画像
-                  </button>
-                  <span id="memory-profile-status" class="memory-profile-status">检查中</span>
-                  <button id="memory-refresh" class="btn">
-                    <span class="ic" data-hg-icon="refresh" data-hg-size="16"></span>
-                    刷新
-                  </button>
+                  <span id="memory-profile-status" class="memory-profile-status" role="status">检查中</span>
+                </div>
+                <!-- 三个维护动作各说一句它做什么(2026-09-29,取代 Codex #116 的一半):按钮文字与 id 不动。 -->
+                <div class="memory-maintenance">
+                  <div class="memory-maintenance-item">
+                    <button id="memory-refresh" class="btn" type="button">
+                      <span class="ic" data-hg-icon="refresh" data-hg-size="16"></span>
+                      刷新
+                    </button>
+                    <p>重新读取已有记录,不生成新内容。</p>
+                  </div>
+                  <div class="memory-maintenance-item">
+                    <button id="memory-profile-generate-btn" class="btn" type="button" title="根据长期记忆刷新用户画像">
+                      <span class="ic" data-hg-icon="refresh" data-hg-size="16"></span>
+                      刷新画像
+                    </button>
+                    <p>根据已有的长期记忆,更新 CC 对你的理解。</p>
+                  </div>
+                  <div class="memory-maintenance-item">
+                    <button id="memory-synthesize-btn" class="btn" type="button" title="读本机 Claude 各项目的记忆，重新生成项目地图（不动每晚整理的长期记忆）">
+                      <span class="ic" data-hg-icon="star" data-hg-size="16"></span>
+                      更新项目地图
+                    </button>
+                    <p>从本机 Claude 各项目的记忆重新生成项目地图,要花一些时间。</p>
+                  </div>
                 </div>
 
                 <section class="memory-fold">
@@ -675,7 +643,7 @@
 
           <!-- ── pane: workbench ───────────────────────────────────── -->
           <article class="dash-pane workbench-pane" data-pane="workbench" hidden>
-            <header class="cc-life-topline"><span class="workbench-topline-start"><button id="workbench-nav-toggle" class="workbench-nav-toggle" type="button" aria-label="打开主导航" title="CC · 打开主导航" aria-controls="dash-global-rail" aria-expanded="false"><img src="./assets/brand/cc-mark.svg" alt="" /></button><span>一起做</span></span></header>
+            <header class="cc-life-topline"><span class="workbench-topline-start"><button id="workbench-nav-toggle" class="workbench-nav-toggle" type="button" aria-label="打开导航" title="打开导航" aria-controls="dash-global-rail" aria-expanded="false"><span class="dash-wordmark">tendhearth</span></button></span></header>
             <div id="workbench-root" class="workbench-root"><p class="empty-state">正在打开工作台…</p></div>
           </article>
 
@@ -684,7 +652,7 @@
             <div class="topbar">
               <span class="crumb">觅食台</span>
               <div class="actions">
-                <button id="a2a-add-btn" class="btn"><span class="ic" data-hg-icon="add-01" data-hg-size="16"></span> 连一个朋友的 bot</button>
+                <button id="a2a-add-btn" class="btn"><span class="ic" data-hg-icon="add-01" data-hg-size="16"></span> 连一位朋友的 CC</button>
               </div>
             </div>
 
@@ -692,8 +660,8 @@
               <div class="fd-wrap">
                 <!-- HERO = living foraging state -->
                 <header class="fd-hero">
-                  <div class="fd-eyebrow">觅食台 · 你 bot 的秘密交易台</div>
-                  <h1 class="fd-h1">你的 bot 正在替你，悄悄地找。</h1>
+                  <div class="fd-eyebrow">觅食台 · 你家 CC 的秘密交易台</div>
+                  <h1 class="fd-h1">你的 CC 正在替你，悄悄地找。</h1>
                   <div class="fd-status" id="fd-hero-status">
                     <span class="fd-status-icon" data-hg-icon="user-group" data-hg-size="24" aria-hidden="true"></span>
                     <span class="fd-status-line">加载中…</span>
@@ -750,12 +718,12 @@
                 <!-- ③ 你的觅食网（折叠底座）— agent-management folded here -->
                 <section class="fd-net" id="fd-net">
                   <details>
-                    <summary id="fd-net-summary">你的觅食网<span class="fd-net-sub" id="fd-peers-count">连着 0 位朋友的 bot</span>
+                    <summary id="fd-net-summary">你的觅食网<span class="fd-net-sub" id="fd-peers-count">连着 0 位朋友的 CC</span>
                       <span class="fd-peers" id="fd-peers"></span>
                       <span class="fd-chev">›</span></summary>
                     <div class="fd-net-body">
                       <div class="fd-net-row fd-net-row-pair">
-                        <div class="fd-txt"><div class="fd-t">和朋友配对</div><div class="fd-s">一个人生成 6 位码念给对方，另一个人输入 —— 两只 bot 就成了邻居</div></div>
+                        <div class="fd-txt"><div class="fd-t">和朋友配对</div><div class="fd-s">一个人生成 6 位码念给对方，另一个人输入 —— 两只 CC 就成了邻居</div></div>
                         <button class="fd-btn fd-btn-primary" id="fd-pair-start" type="button">生成配对码</button>
                       </div>
                       <div class="fd-pair-panel" id="fd-pair-panel" hidden></div>
@@ -765,13 +733,13 @@
                       </div>
                       <div class="fd-inbound-note" id="fd-pair-note" hidden></div>
                       <div class="fd-net-row">
-                        <div class="fd-txt"><div class="fd-t">让朋友的 bot 能找到我</div><div class="fd-s">开着，别人的心愿才能传到你这、也才有来有往</div></div>
+                        <div class="fd-txt"><div class="fd-t">让朋友的 CC 能找到我</div><div class="fd-s">开着，别人的心愿才能传到你这、也才有来有往</div></div>
                         <div class="fd-toggle" id="fd-inbound-toggle" role="switch" aria-checked="false" tabindex="0"></div>
                       </div>
                       <div class="fd-inbound-note" id="fd-inbound-note" hidden></div>
                       <div class="fd-net-row fd-net-row-peers">
                         <div class="fd-txt fd-txt-full">
-                          <div class="fd-t">连着的朋友 bot</div>
+                          <div class="fd-t">连着的朋友的 CC</div>
                           <!-- Status banner: shows A2A server state + base URL so
                                operator can share with external agents without going
                                through Add Agent flow. Populated by refresh(). -->
@@ -779,7 +747,7 @@
                           <ul id="a2a-agents-list" class="a2a-agents-list"></ul>
                         </div>
                       </div>
-                      <div class="fd-depth-note"><span class="fd-pill">现在：第 1 度</span>你的 bot 目前只问直接好友的 bot。<b>第 2、3 度觅食</b>（朋友的朋友的 bot）即将开放 —— 到时这些心愿会自己走得更远。</div>
+                      <div class="fd-depth-note"><span class="fd-pill">现在：第 1 度</span>你的 CC 目前只问直接好友的 CC。<b>第 2、3 度觅食</b>（朋友的朋友的 CC）即将开放 —— 到时这些心愿会自己走得更远。</div>
                     </div>
                   </details>
                 </section>
@@ -823,9 +791,9 @@
          the dashboard main pane. Sibling to #qr-modal. -->
     <dialog id="a2a-add-modal" class="a2a-modal">
       <button id="a2a-add-modal-close" class="a2a-modal-x" type="button" aria-label="关闭"><span data-hg-icon="cancel-01" data-hg-size="18"></span></button>
-      <h3>手动连一个 bot</h3>
+      <h3>手动连一位朋友的 CC</h3>
       <form id="a2a-add-form">
-        <label>对方 bot 的地址 <input type="url" name="url" required placeholder="https://example.com/a2a"></label>
+        <label>对方 CC 的地址 <input type="url" name="url" required placeholder="https://example.com/a2a"></label>
         <div class="a2a-form-actions">
           <button class="btn primary" type="submit">看看是谁</button>
         </div>
@@ -835,14 +803,14 @@
         <p id="a2a-preview-description"></p>
         <ul id="a2a-preview-capabilities"></ul>
         <label>给它起个短名（英文/数字） <input name="id" required></label>
-        <label>对方给的钥匙（选填） <input name="outbound_key" placeholder="对方 bot 文档里的 API key"></label>
+        <label>对方给的钥匙（选填） <input name="outbound_key" placeholder="对方 CC 文档里的 API key"></label>
         <div class="a2a-form-actions">
           <button id="a2a-install-confirm" class="btn primary" type="button">连上</button>
           <button id="a2a-install-cancel" class="btn" type="button">算了</button>
         </div>
       </section>
       <section id="a2a-add-success" hidden>
-        <p class="status-success" role="status">连上了。把下面这段发给对方，对方的 bot 才能回消息给你：</p>
+        <p class="status-success" role="status">连上了。把下面这段发给对方，对方的 CC 才能回消息给你：</p>
         <pre id="a2a-add-curl"></pre>
         <button id="a2a-add-close" class="btn primary" type="button">好</button>
       </section>
@@ -855,7 +823,7 @@
       <h3 id="a2a-test-title">测试连通</h3>
       <p class="a2a-test-help">
         <strong>测试接收</strong>：给你自己的微信发一条测试消息，验证对方能送进来。<br>
-        <strong>测试发送</strong>：呼叫对方 bot 的地址，验证你能送出去。
+        <strong>测试发送</strong>：呼叫对方 CC 的地址，验证你能送出去。
       </p>
       <label>
         测试内容
@@ -892,7 +860,6 @@
       </div>
 
     <img class="crab-escape" id="crab-escape" alt="" aria-hidden="true">
-    <script type="module" src="./animation-lab.js"></script>
     <script type="module" src="./main.js"></script>
   </body>
 </html>

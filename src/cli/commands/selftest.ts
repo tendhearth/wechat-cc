@@ -95,7 +95,52 @@ const selftestChatCmd = defineCommand({
   },
 })
 
+const selftestPhoneCmd = defineCommand({
+  meta: { name: 'phone', description: '真机闭环自检:配一台一次性设备经真中继连隧道,核对 v2 协议/agents 事件流,收尾撤销该设备(daemon 需在跑)' },
+  args: {
+    executor: { type: 'string', required: true, description: '执行者 provider id(claude / codex / cursor / agy / …),给自检建的最小工作台任务用' },
+    json: { type: 'boolean', description: 'JSON 输出(SelftestReport),不输出人读版' },
+    'timeout-ms': { type: 'string', description: '总超时,毫秒(缺省 90000)' },
+    relay: { type: 'string', description: '只认 v2:核对链接指向官方中继 v2、healthz、APNs 认可推送凭据' },
+  },
+  async run({ args }) {
+    const json = Boolean(args.json)
+    const { runPhoneSelftest, formatPhoneSelftestReport, defaultPhoneSelftestDeps, PHONE_SELFTEST_EXIT } = await import('../selftest-phone.ts')
+    const timeout = parseTimeoutMsFlag(args['timeout-ms'])
+    if (!timeout.ok) {
+      const message = `--timeout-ms ${timeout.error}`
+      if (json) console.log(JSON.stringify({ ok: false, error: 'invalid_timeout_ms', message }, null, 2))
+      else console.error(`selftest phone: ${message}`)
+      process.exit(PHONE_SELFTEST_EXIT.failed)
+      return
+    }
+    if (args.relay !== undefined && args.relay !== 'v2') {
+      const message = `--relay 只认 v2(收到 ${JSON.stringify(args.relay)})`
+      if (json) console.log(JSON.stringify({ ok: false, error: 'invalid_relay', message }, null, 2))
+      else console.error(`selftest phone: ${message}`)
+      process.exit(PHONE_SELFTEST_EXIT.failed)
+      return
+    }
+    try {
+      const report = await runPhoneSelftest(defaultPhoneSelftestDeps(STATE_DIR), {
+        executor: args.executor,
+        ...(args.relay === 'v2' ? { relay: 'v2' as const } : {}),
+        ...(timeout.value !== undefined ? { timeoutMs: timeout.value } : {}),
+      })
+      if (json) console.log(JSON.stringify(report, null, 2))
+      else console.log(formatPhoneSelftestReport(report))
+      process.exit(report.ok ? PHONE_SELFTEST_EXIT.ok : PHONE_SELFTEST_EXIT.failed)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      const noDaemon = message === 'daemon_not_running'
+      if (json) console.log(JSON.stringify({ ok: false, error: message }, null, 2))
+      else console.error(`selftest phone: ${noDaemon ? 'daemon 没在跑' : message}`)
+      process.exit(noDaemon ? PHONE_SELFTEST_EXIT.noDaemon : PHONE_SELFTEST_EXIT.failed)
+    }
+  },
+})
+
 export const selftestCmd = defineCommand({
   meta: { name: 'selftest', description: '自维护:真机闭环自检(daemon 需在跑);见 docs/maintainer/verify.md' },
-  subCommands: { workbench: selftestWorkbenchCmd, chat: selftestChatCmd },
+  subCommands: { workbench: selftestWorkbenchCmd, chat: selftestChatCmd, phone: selftestPhoneCmd },
 })

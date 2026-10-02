@@ -80,7 +80,7 @@ it('rolls accepted choice and run back with the surrounding input acceptance tra
 })
 
 it('imports original native sessions with native defaults and never resets a managed import on retry',()=>{
-  const input={providerId:'claude' as const,nativeId:'native-existing',cwd:'/owned/project',title:'import',ownerChatId:null,snapshotSha256:'a'.repeat(64),observedFingerprint:'b'.repeat(64),truncated:false,snapshotJson:'{}',pagesJson:'[]',messages:[]}
+  const input={providerId:'claude' as const,nativeId:'native-existing',cwd:'/owned/project',path:'/owned/project',title:'import',ownerChatId:null,snapshotSha256:'a'.repeat(64),observedFingerprint:'b'.repeat(64),truncated:false,snapshotJson:'{}',pagesJson:'[]',messages:[]}
   const first=store.importSource(input)
   expect(execution().choice(first.task.id)).toEqual(native)
   execution().accept(first.task.id,'run-native',{...native,model:'chosen-native'})
@@ -136,6 +136,8 @@ describe('ACP failure copy', () => {
     expect(executionFailureMessage('acp_stop_max_turn_requests')).toContain('单轮请求次数上限')
     expect(executionFailureMessage('acp_stop_refusal')).toContain('拒绝了这项要求')
     expect(executionFailureMessage('acp_resume_session_mismatch')).toContain('不是原会话')
+    expect(executionFailureMessage('acp_session_not_found')).toContain('原会话')
+    expect(executionFailureMessage('acp_session_not_found')).not.toContain('acp 子命令')
     expect(executionFailureMessage('acp_rpc_timeout: initialize')).toContain('长时间没有响应')
     expect(executionFailureMessage('acp_turn_already_running')).toContain('等它答复')
     expect(executionFailureMessage('acp_attachments_unsupported')).toContain('移除附件')

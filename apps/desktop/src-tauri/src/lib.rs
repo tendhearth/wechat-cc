@@ -266,15 +266,12 @@ fn resize_companion_window(app: AppHandle, direction: String) -> Result<(), Stri
 // unset and the daemon falls back to its execPath logic (graceful, not a crash).
 // Passed to the sidecar as WECHAT_CC_BUNDLED_PLUGINS_DIR (read by paths.ts)
 // because the daemon can't portably derive the platform-specific resource path.
+// Only a dir that really holds plugins counts (2026-09-30): the published
+// installer ships README-only by design, and passing that empty shell used to
+// stop the sidecar from looking anywhere else.
 fn bundled_plugins_dir(app: &AppHandle) -> Option<PathBuf> {
     let base = app.path().resource_dir().ok()?;
-    for rel in ["_up_/_up_/_up_/plugins", "plugins"] {
-        let p = base.join(rel);
-        if p.is_dir() {
-            return Some(p);
-        }
-    }
-    None
+    daemon_mode::find_plugins_in_resources(&base)
 }
 
 async fn run_sidecar(app: &AppHandle, args: Vec<String>) -> Result<String, String> {
@@ -1024,6 +1021,11 @@ fn workbench_request_allowed(method: &str, path: &str) -> bool {
             | ("GET", "/v1/matter")
             | ("GET", "/v1/matter/owner-chat")
             | ("POST", "/v1/matter/say")
+            // 「CC 的连接」(2026-10-01):此刻右上角的连接浮层,只读。
+            | ("GET", "/v1/connections")
+            // 「连接手机」(plan 7a):出码(必要时打开远程隧道)与轮询已配对设备。
+            | ("POST", "/v1/phone/link")
+            | ("GET", "/v1/phone/devices")
             | ("POST", "/v1/workbench/input")
             | ("POST", "/v1/workbench/answer")
             | ("POST", "/v1/workbench/withdraw-input")
@@ -1502,6 +1504,8 @@ mod workbench_proxy_tests {
             ("POST", "/v1/workbench/withdraw-input"),
             ("POST", "/v1/workbench/answer"),
             ("GET", "/v1/workbench?q=..&archived=all"),
+            ("GET", "/v1/connections"),
+            ("POST", "/v1/phone/link"), ("GET", "/v1/phone/devices"),
         ] {
             assert!(workbench_request_allowed(method, path), "expected {method} {path} to be allowed");
         }
@@ -1557,6 +1561,8 @@ mod workbench_proxy_tests {
             ("GET", "/v1/workbench/../companion/presence"),
             ("DELETE", "/v1/workbench/task?id=A1B2C3D4"),
             ("GET", "/v1/customer-review"),
+            ("POST", "/v1/connections"),
+            ("GET", "/v1/phone/link"), ("POST", "/v1/phone/devices"), ("POST", "/v1/phone/link/extra"), ("GET", "/v1/phone/../connections"),
         ] {
             assert!(!workbench_request_allowed(method, path), "expected {method} {path} to be refused");
         }

@@ -1,7 +1,7 @@
 // @ts-check
 /// <reference lib="dom" />
 
-/** @typedef {{id:string,title:string,providerId:string,pendingPermissionCount:number,pendingQuestionCount:number,attentionKey:string}} AttentionTask */
+/** @typedef {{id:string,title:string,providerId:string,pendingPermissionCount:number,pendingQuestionCount:number,attentionKey:string,first?:{kind:'permission'|'question',text:string}|null}} AttentionTask */
 /** @typedef {{tasks:AttentionTask[],stale:boolean}} AttentionState */
 /** @typedef {{invokeWorkbenchApi:(method:'GET',path:string)=>Promise<unknown>,invoke:(command:string,args:Record<string,unknown>)=>Promise<unknown>,onChange?:(state:AttentionState)=>void,getContext?:()=>{taskId:string|null,focused:boolean},intervalMs?:number,maxBackoffMs?:number,requestTimeoutMs?:number}} PollerOptions */
 

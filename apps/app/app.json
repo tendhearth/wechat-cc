@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "Tendhearth",
+    "slug": "tendhearth",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "tendhearth",
+    "userInterfaceStyle": "light",
+    "locales": {
+      "en": "./locales/en.json",
+      "zh-Hans": "./locales/zh-Hans.json"
+    },
+    "ios": {
+      "bundleIdentifier": "com.tendhearth.app"
+    },
+    "android": {
+      "package": "com.tendhearth.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#f7ead2",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#faf7f2",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 76
+        }
+      ],
+      "expo-localization",
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Tendhearth uses the camera only to scan the pairing code shown on your computer.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ]
+    ],
+    "experiments": {
+      "reactCompiler": true
+    }
+  }
+}

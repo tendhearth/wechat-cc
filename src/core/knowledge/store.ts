@@ -154,6 +154,11 @@ export interface KnowledgeStore {
    *  whether a full rebuild is worth doing WITHOUT paging through
    *  `listMessages` first. */
   sourceWatermark(): number
+  /** Latest WeChat message time in the store (ms); null when empty. Used by the 「CC 的连接」card. */
+  latestMessageAtMs(): number | null
+  /** When the source adapter last completed a clean pass (ms); null if never recorded. Staleness is judged on THIS, not on message time (a quiet weekend is not "behind"). */
+  lastSyncAtMs(): number | null
+  markSynced(atMs?: number): void
   /** Source-side display names (source.db's `contacts` table), populated by
    *  source-adapter.ts's contact.sqlite ingestion (GR T4.5). A username with
    *  no row here (contact.sqlite unreadable, or the contact simply isn't in
@@ -318,11 +323,13 @@ export function openKnowledge(root: string): KnowledgeStore {
   sourceDb.exec(`
     CREATE INDEX IF NOT EXISTS messages_watermark ON messages(ingested_watermark);
     CREATE INDEX IF NOT EXISTS messages_kind ON messages(kind);
+    CREATE INDEX IF NOT EXISTS messages_time ON messages(time);
   `)
 
   const stmtMaxWatermark = sourceDb.query<{ w: number | null }, []>(
     'SELECT MAX(ingested_watermark) AS w FROM messages',
   )
+  const stmtLatestTime = sourceDb.query<{ t: number | null }, []>('SELECT MAX(time) AS t FROM messages')
   const stmtGetSourceMeta = sourceDb.query<{ value: string }, [string]>(
     'SELECT value FROM source_meta WHERE key = ?',
   )
@@ -772,6 +779,20 @@ export function openKnowledge(root: string): KnowledgeStore {
 
     sourceWatermark() {
       return stmtMaxWatermark.get()?.w ?? 0
+    },
+
+    lastSyncAtMs() {
+      const n = Number(stmtGetSourceMeta.get('last_sync_at_ms')?.value)
+      return Number.isFinite(n) && n > 0 ? n : null
+    },
+
+    markSynced(atMs) {
+      stmtSetSourceMeta.run('last_sync_at_ms', String(atMs ?? Date.now()))
+    },
+
+    latestMessageAtMs() {
+      const t = stmtLatestTime.get()?.t ?? null
+      return t !== null && t > 0 ? t * 1000 : null
     },
 
     allSourceContacts() {

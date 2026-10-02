@@ -5,7 +5,8 @@
 //   #checks (env-check list), #claude-meta, #codex-meta
 //   .wizard .screen + .steps .step (step 1-4 nav)
 //   #enter-dashboard (gated on daemon.alive)
-//   #wizard-foot-dot/text + #dash-rail-dot/text (footer status pills)
+//   #wizard-foot-dot/text (wizard footer status pill). The 此刻 status line
+//   (#dash-rail-dot/text) is not ours: main.js renders it from nowStatusLine.
 // Subscribes to: doctorPoller (renders env list on each successful poll)
 
 import { doctorRows, daemonStatusLine, escapeHtml } from "../view.js"
@@ -49,9 +50,28 @@ export function renderDoctorWizard(report) {
       : !c?.sdkInstalled ? "缺少 @cursor/sdk"
       : "未检测到"
   }
+  renderDoctorHeadline(report)
   renderProviderStatus("claude", report.checks.claude)
   renderProviderStatus("codex", report.checks.codex)
   updateFooterStatus(report.checks.daemon)
+}
+
+/** 第一步的标题与说明跟「当前状态」两行同一个信号:Claude 或 Codex 任一已链接就算就绪。 */
+export function doctorHeadline(report) {
+  const ready = !!(report?.checks?.claude?.ok || report?.checks?.codex?.ok)
+  return ready
+    ? { ready, title: "已经能见面了", note: "Claude Code 或 Codex 已就绪，可以继续。" }
+    : { ready, title: "还差一步就能见面了", note: "还没检测到 Claude Code 或 Codex，安装任意一个就能继续。" }
+}
+
+function renderDoctorHeadline(report) {
+  const h = doctorHeadline(report)
+  const title = document.getElementById("doctor-headline")
+  const note = document.getElementById("doctor-note")
+  if (title) title.textContent = h.title
+  if (note) note.textContent = h.note
+  const illus = document.querySelector("#screen-doctor .launch-illus")
+  if (illus) { illus.classList.toggle("launch-illus-missing", !h.ready); illus.classList.toggle("launch-illus-ready", h.ready) }
 }
 
 function renderProviderStatus(provider, check) {
@@ -77,11 +97,11 @@ function renderWslNotice(report) {
 
 export function updateFooterStatus(daemon) {
   const line = daemonStatusLine(daemon)
-  for (const id of ["wizard-foot-dot", "dash-rail-dot"]) {
+  for (const id of ["wizard-foot-dot"]) {
     const el = document.getElementById(id)
     if (el) el.className = `dot ${line.cls}`
   }
-  for (const id of ["wizard-foot-text", "dash-rail-text"]) {
+  for (const id of ["wizard-foot-text"]) {
     const el = document.getElementById(id)
     if (el) el.textContent = line.text
   }
@@ -91,10 +111,16 @@ export function updateFooterStatus(daemon) {
 // a control panel that says "Daemon offline · press restart" — they came
 // from the wizard precisely to get the daemon UP. Disabled state with a
 // helper title gives them a clear reason instead of a dead-end click.
+//
+// 例外(plan 7a M1):引导页的「连接手机」块正在说「CC 会重启一下」时,daemon 掉线
+// 是那次自动重启,十来秒就回来 —— 不挡按钮,也不挂「先点安装并启动」这种误导的提示。
+// 块的状态由 phone-connect.js mountOnboardPhone 写在 #onboard-phone 的 data-phase 上。
 export function refreshEnterDashboardButton(report) {
   const btn = document.getElementById("enter-dashboard")
   if (!btn) return
-  const alive = !!report?.checks?.daemon?.alive
+  const phone = document.getElementById("onboard-phone")
+  const restarting = !!phone && !phone.hidden && phone.dataset.phase === "preparing"
+  const alive = !!report?.checks?.daemon?.alive || restarting
   btn.disabled = !alive
   if (alive) btn.removeAttribute("title")
   else btn.title = "daemon 还没启动 · 先点「安装并启动」"

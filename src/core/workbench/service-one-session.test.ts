@@ -379,7 +379,11 @@ it('自己醒来干的那一轮也有代码变更:醒来时重取基线',async()
   const second=reviews(a.id).find(shot=>shot.name.endsWith('-2.json'))!
   expect(second.files.some(path=>/^w\d+\.txt$/.test(path))).toBe(true)
   // 第一轮那份没有被重写:醒来的差异是独立的一份(序号后缀只从第二份起有)。
-  expect(reviews(a.id).find(shot=>!/-\d+\.json$/.test(shot.name))!.files).toEqual(['a1.txt'])
+  // 按全名找,别用「名字不以 -数字.json 结尾」去认:名字里是 runId(UUID)的前 8 个十六进制位,
+  // 这 8 位全是十进制数字的概率是 (10/16)^8 ≈ 2.3% —— 那时第一份自己就长得像带序号,一份都认不出来
+  // (CI 上的「偶发」红就是它,单跑 200 次稳定复现 5 次)。
+  const firstName=`代码变更-${service.detail(a.id).runId!.slice(0,8)}.json`
+  expect(reviews(a.id).find(shot=>shot.name===firstName)?.files).toEqual(['a1.txt'])
 })
 
 /**

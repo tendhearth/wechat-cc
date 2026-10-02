@@ -19,6 +19,7 @@ import { makeMemoryFS } from './memory/fs-api'
 import { makeMemoryLlmOps } from './memory-llm-ops'
 import { CORE_MEMORY_MAX_CHARS, KNOWLEDGE_MEMORY_MAX_CHARS } from '../core/prompt-builder'
 import { MEMORY_FILENAME, parseMemoryDoc, renderForPrompt } from './memory/curated-doc'
+import { readDraftForPrompt } from './memory/today-draft'
 import { makeConversationStore } from '../core/conversation-store'
 import { makeTurnRecordStore } from '../core/turn-record-store'
 import { providerDisplayName } from './provider-display-names'
@@ -351,6 +352,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // Subsystem degraded-boot (spec 2026-08-17) — sup 在本调用之前创建,
       // 直接传引用,无需 thunk-over-bootRef 姿势。
       subsystems: () => sup.statuses(),
+      // 插件快照(2026-09-30):bootstrap 之前是 null,self deploy 的健康门会等它。
+      plugins: () => bootRef?.pluginsHealth ?? null,
       outbound: () => ilink.outboundHealth(),
       // Admin remediation hooks (POST /v1/sessions/release, /v1/daemon/restart).
       releaseSession: (k) => bootRef?.sessionManager?.release(k) ?? Promise.resolve(),
@@ -500,6 +503,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
         const raw = fs.read(MEMORY_FILENAME)
         return raw ? renderForPrompt(parseMemoryDoc(raw)) : ''
       },
+      // 今天的草稿(同日失忆修复,2026-10-01):CC 白天写进 profile.md 的新行,随 memory.md 一起注入。
+      todayDraftFor: (c) => { try { return readDraftForPrompt(memoryFS, c) } catch { return '' } },
       // knowledge-distillation §2 — THIS chat's daemon-distilled knowledge.md
       // (objective plugin facts), read fresh per spawn + capped. Written by the
       // ingest tick for the owner chat; absent for chats without it.
@@ -726,6 +731,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     lc.register({ name: 'workbench', stop: () => workbench.shutdown() })
     const wired = wireMain({
       workbench, matters,
+      panelTokens: internalApi.panelTokens,
       cliReply: cliReplyHandler,
       stickers: stickerLib,
       requestRestart: (reason) => requestRestart(reason),
@@ -747,12 +753,16 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // the pipeline wiring are available. Routes access deps.companionConverse
     // at request time, so this late assignment is safe (mirrors setConversation).
     internalApi.setCompanionConverse(wired.companionConverse)
+    // 「一件事」活动时间:先于工作台停(LIFO),退订 changes + 清节流定时器。
+    lc.register({ name: 'matter-activity', stop: async () => wired.stopMatterActivity() })
     // 与手机页共用同一个「一件事」读写面(pipeline-deps 里建的那一个)。
     if (wired.mattersService) internalApi.setMatters(wired.mattersService)
     // 同上,桌宠的「在做什么」—— 组装闭包在 pipeline-deps(那里才有 boot)。
     internalApi.setPetTurn(wired.petTurn)
     ticksRef = wired.ticks
     internalApi.setSettingsLink(wired.settingsPanelLink)
+    internalApi.setConnections(wired.connections)
+    internalApi.setPhoneConnect(wired.phoneConnect)
     const pipeline = buildInboundPipeline(wired.pipelineDeps)
     wireRef(wired.refs.pipeline, pipeline)
     wireRef(wired.refs.appTurn, pipeline.appTurn)

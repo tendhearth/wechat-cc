@@ -1,7 +1,7 @@
-<h1 align="center">wechat-cc</h1>
+<h1 align="center">Tendhearth CC</h1>
 
 <p align="center">
-  <b>An AI companion and one place to work with Claude, Codex and API models — on desktop and WeChat.</b>
+  <b>Your personal AI companion, at home on your own computer. Talk to CC, follow your work, and make decisions across desktop, mobile and WeChat.</b>
 </p>
 
 <p align="center">
@@ -24,24 +24,22 @@
 
 ## What is this?
 
-**CC is an AI companion with a shared workspace for getting things done.** It brings Claude Code, Codex and configured API models into one desktop entry, with WeChat access to the same tasks when you step away.
+**Tendhearth CC is your personal AI companion, running on your own computer. Call it CC.** Talk, hand over work, and return when a decision is needed.
 
-- **Now:** see what CC is doing, with room for quiet companionship.
-- **Together:** start tasks, read the full conversation, handle questions and permissions, inspect results, and continue work without juggling separate agent windows.
-- **Memories:** return to earlier moments, drawings, journal entries and postcards. Personal companion memory stays separate from work-task context.
+- **Now:** see what needs your attention and what CC is doing.
+- **Together:** give instructions, handle questions and permissions, review results, and continue the same task.
+- **Memories:** revisit earlier moments; companion memory stays separate from work-task context.
 
-Projects have separate task records, drafts, conversations and artifacts. Conflicting work in the same directory queues; explicit Claude ↔ Codex handoffs preserve the selected context and result versions. WeChat can create tasks in known projects, supply input, handle requests, opt into notifications and retrieve saved results.
+Tasks keep their own conversations and results. Conflicting work in the same directory queues. Executor permissions and continuation differ; see the [workbench capability guide](docs/cc-workbench.md).
 
-**Current scope:** Claude and Codex use native adapters; Cursor joins through `cursor-agent acp` (commands go through permission cards, in-workspace edits do not); agy joins as an unattended executor after a one-time desktop acknowledgement; the configured API adapter handles text/image materials and new text artifacts with a narrower tool set. The executor table with exact boundaries is in [docs/cc-workbench.md](docs/cc-workbench.md#执行者覆盖). CC does not claim feature parity with every CLI or app, or live-process transfer between computers.
+**Mobile:** [native Expo app](apps/app/README.md) and [browser/PWA](apps/mobile/README.md). This README describes dev; real-device acceptance and public mobile release are separate milestones.
 
-> This describes the current **dev branch**, not a newly released installer. Start with the [workspace guide and capability boundaries](docs/cc-workbench.md), the [reference projects and sources](docs/research/2026-09-14-cc-agent-workbench-references.md), and the [batch delivery record](docs/superpowers/reports/2026-09-14-cc-workbench-wrapup.md). These three documents are written in Chinese.
-
-Task records are stored locally. Material needed for a task is sent to the AI service you select; local storage does not mean local inference.
+Records stay on your computer; selected task material is sent to your configured AI service. The CLI remains `wechat-cc` and the package `claude-channel-wechat`; see [product naming](docs/reference/product-naming.md).
 
 <p align="center">
-  <img alt="Dashboard sessions detail — WeChat-replica chat in iPhone 17 Pro frame, with file + image + quote-reply" src="docs/screenshots/chat-detail.png" width="380">
+  <img alt="Dashboard session detail, using mock data" src="docs/screenshots/chat-detail.png" width="380">
 </p>
-<p align="center"><sub>Desktop dashboard · session detail. Every WeChat × Claude conversation lives inside a 1:1 iPhone replica — text, images, files, quote-replies, all of it. <i>(mock data — not a real conversation)</i></sub></p>
+<p align="center"><sub>Desktop session detail · mock data</sub></p>
 
 ---
 
@@ -52,7 +50,7 @@ Task records are stored locally. Material needed for a task is sent to the AI se
 | Who | Anyone, including non-technical users | You're comfortable with bun + git |
 | What you get | A 4-step wizard (env check → agent → QR → service install with live `(M/N) <step>` progress) + a dashboard with bound accounts, memory, sessions (with mode dropdown to switch chat mode from console), logs, one-click upgrades | Same daemon, no GUI |
 | Path | Download a bundle from the [latest release](https://github.com/tendhearth/wechat-cc/releases/latest) | `git clone` + `bun install` + `wechat-cc setup` |
-| Caveats | Bundles are unsigned (Apple Dev ID + Windows EV cert not yet provisioned) — first launch needs a one-time OS-warning bypass. macOS Intel not supported (Apple Silicon only). The desktop app shells out to the source-mode CLI, so you also need the source somewhere (or set `WECHAT_CC_ROOT`). | Works everywhere bun runs. |
+| Runtime | The core runtime is included; no Bun or source checkout needed. macOS supports Apple Silicon; 1.7.1 is Developer ID signed and notarized. Install and authorize the external executors you choose. | Install Bun, Git and the external executors you choose. |
 
 Most people: grab the desktop bundle. Read on for the terminal path.
 
@@ -147,41 +145,9 @@ Beyond chat there is a **desktop workbench** — hand a folder to an executor an
 
 ## How it works
 
-```
-[your phone]                  [your desktop]
-                                                 ┌─► Claude Agent SDK ─► Claude
-   WeChat ──────► ilink ──► wechat-cc daemon ────┤
-       │         (long-poll)        │            └─► Codex SDK ─────────► Codex
-       │                            │
-       │                            └─► coordinator ── mode-aware dispatch
-       ▼                                              (solo / parallel /
-   share_page ◄── cloudflared ◄── Bun.serve(local)     primary_tool / chatroom)
-                                                ▲
-   stdio MCP ────────────────────► daemon internal HTTP (localhost-only,
-   (wechat tools + delegate)                            bearer token, 0o600)
-```
+Desktop, WeChat and mobile connect to the daemon on your computer. It stores memory and task records, then calls your configured conversation backend or task executor.
 
-- **Receive**: per-account long-polling `POST /ilink/bot/getupdates`
-- **Send**: `POST /ilink/bot/sendmessage` (requires the user's
-  `context_token` — they must message the bot first)
-- **Drivers**: `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk`, and
-  (optionally, via `optionalDependencies`) `@cursor/sdk`, registered
-  side-by-side via `ProviderRegistry`. Cursor runs through `cursor-agent acp`
-  (the SDK path is only a chat-side fallback when `CURSOR_API_KEY` is set).
-  Six provider ids are registered today — claude / codex / cursor / openai /
-  gemini / agy — see [docs/reference/model-management.md](docs/reference/model-management.md).
-  Adding one is a capability-matrix row plus a registration in
-  `src/daemon/bootstrap/providers.ts`; `scripts/provider-registry.guard.test.ts`
-  lists every enumeration that must agree. Background:
-  [`docs/rfc/03-multi-agent-architecture.md`](docs/rfc/03-multi-agent-architecture.md)
-- **Tools**: the MCP tools (reply / share_page / memory / companion / delegate /
-  …) live in stdio MCP servers under `src/mcp-servers/`. Every provider
-  reaches them through the daemon's localhost-only internal HTTP API
-  ([auth model](docs/reference/internal-api-auth.md))
-- **State**: everything under `~/.claude/channels/wechat/` (see [State layout](#state-layout))
-- **Companion**: three schedulers (push / introspect / ingest) with separate cadences;
-  isolated SDK evals for introspect / summary so the prompt style doesn't
-  leak into project sessions
+Implementation details: [architecture](docs/architecture.md), [models and backends](docs/reference/model-management.md), [internal API authentication](docs/reference/internal-api-auth.md).
 
 ---
 
@@ -256,8 +222,7 @@ A seeded demo state for screenshots and first-run demos: **[docs/reference/demo-
   least one message to the bot first (ilink requires their `context_token`).
 - **No group chat** — ilink is 1:1 only.
 - **macOS Intel desktop bundle** — not yet provided. Install via terminal.
-- **Desktop bundle unsigned** — first launch needs a one-time
-  Gatekeeper / SmartScreen bypass.
+- **Installer security prompts** — macOS 1.7.1 is signed and notarized; Windows may still show SmartScreen. See the [release notes](https://github.com/tendhearth/wechat-cc/releases/tag/desktop-v1.7.1).
 - **Conversation continuity across daemon restart** — the WeChat chat
   history stays on your phone, but Claude doesn't replay it on restart.
   Per-project session resume keeps the *current* working session warm; it
@@ -328,16 +293,7 @@ the OS package manager.
 
 ## Use cases
 
-- **Out and about with a long task running** — start a deploy / refactor on
-  your computer, lock the screen, keep nudging it from your phone.
-- **Forward a Claude-generated plan to your boss** — `share_page` produces
-  a clean URL with an Approve button; non-technical reviewers don't have to
-  read the chat.
-- **Multi-user**: share the bot with teammates via `access.json.allowFrom[]`.
-  Each person's messages route to your single Claude session.
-- **A Claude that remembers you** — Companion + memory pane build a small,
-  honest portrait over time. You can read it, correct it, archive things
-  you don't want remembered.
+Keep a task moving while away from your computer, review a result from your phone, or ask CC to recall something from your conversations. See the [full feature guide](docs/reference/features.md).
 
 ---
 

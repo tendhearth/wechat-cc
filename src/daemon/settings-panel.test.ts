@@ -76,8 +76,8 @@ describe('settings panel', () => {
     expect(panel.validToken(r.device_token)).toBe(true)
     expect((await panel.apply({ op: 'forget_devices' })).ok).toBe(true)
     expect(panel.validToken(r.device_token)).toBe(false)   // revoked immediately
-    const st = panel.state() as { remote?: { devices: number } }
-    expect(st.remote?.devices).toBe(0)
+    const st = panel.state() as { remote?: { devices: unknown[] } }
+    expect(st.remote?.devices).toEqual([])   // 2026-09-29 起是设备列表(按台撤销)
   })
 
   it('apply: set_remote toggles remote_tunnel in config and requests a restart', async () => {
@@ -151,12 +151,21 @@ describe('settings panel', () => {
   it('HTTP: everything without a valid token is 401; with token the API round-trips', async () => {
     const { port } = await panel.start(0)
     const base = `http://127.0.0.1:${port}`
-    expect((await fetch(`${base}/set`)).status).toBe(401)
+    const expired = await fetch(`${base}/set`)
+    expect(expired.status).toBe(401)
+    // 单次配对(plan 7a):用过的码也落到这页 —— 文案得说「用过或过期」,不只是「过期」。
+    const expiredHtml = await expired.text()
+    expect(expiredHtml).toContain('这个链接已经用过或过期了，回微信跟 CC 再要一个')
+    expect(expiredHtml).not.toContain('链接过期啦')
     expect((await fetch(`${base}/set/api/state?t=wrong`)).status).toBe(401)
     const t = panel.issueToken()
     const page = await fetch(`${base}/set?t=${t}`)
     expect(page.status).toBe(200)
-    expect(await page.text()).toContain('陪伴方式')
+    const pageHtml = await page.text()
+    expect(pageHtml).toContain('陪伴方式')
+    // /set 页里 API 回 401 时的提示(sapi):同一句。
+    expect(pageHtml).toContain('这个链接已经用过或过期了，回微信跟 CC 再要一个')
+    expect(pageHtml).not.toContain('链接过期啦')
     const st = await (await fetch(`${base}/set/api/state?t=${t}`)).json() as { name: string }
     expect(st.name).toBe('大人')
     const ap = await fetch(`${base}/set/api/apply?t=${t}`, {
@@ -215,6 +224,81 @@ describe('随身 CC (phone PWA + device pairing)', () => {
     nowMs += SETTINGS_LINK_TTL_MS + 1
     expect((await fetch(`${base}/m/api/state?d=${r.device_token}`)).status).toBe(200)   // device token still valid
     expect((await fetch(`${base}/m/api/state?t=${t}`)).status).toBe(401)                // short token dead
+  })
+
+  describe('推送路由', () => {
+    const TOK = 'ab'.repeat(32)
+    function mkPanel(push?: unknown) {
+      return makeSettingsPanel({
+        stateDir, ownerChatId: () => OWNER,
+        chatPrefs: { get: () => ({}), set: (_c, p) => p },
+        getUserName: () => '大人', setUserName: async () => {}, log: () => {}, now: () => nowMs,
+        remote: { isEnabled: () => false, setEnabled: () => {}, requestRestart: () => {} },
+        push: push as never,
+      })
+    }
+    async function up(p: SettingsPanel) {
+      const { port } = await p.start(0)
+      const base = `http://127.0.0.1:${port}`
+      const link = p.issueToken()
+      const r = await (await fetch(`${base}/set/api/pair?t=${link}`, { method: 'POST' })).json() as { device_token: string }
+      const id = (p.state() as { remote: { devices: Array<{ id: string }> } }).remote.devices[0]!.id
+      const call = (path: string, tok: string, body: unknown) =>
+        fetch(`${base}${path}?t=${tok}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      // 链接令牌一次性(plan 7a):配对后给一枚新码,「链接令牌不许登记」那条要的是一枚还活着的链接令牌。
+      return { link: p.issueToken(), token: r.device_token, id, call }
+    }
+    const mkPush = (over: Record<string, unknown> = {}) => ({ register: vi.fn(() => true), test: vi.fn(), unregister: vi.fn(), forgetAll: vi.fn(), ...over })
+
+    it('设备令牌登记 APNs token ⇒ 交给 push.register(按设备 id)', async () => {
+      const push = mkPush()
+      const p = mkPanel(push)
+      const { token, id, call } = await up(p)
+      const r = await call('/m/api/push/register', token, { platform: 'apns', token: TOK })
+      expect(r.status).toBe(200)
+      expect(await r.json()).toEqual({ ok: true })
+      expect(push.register).toHaveBeenCalledWith(id, 'apns', TOK)
+      await p.stop()
+    })
+    it('链接令牌不许登记 ⇒ 403 device_only', async () => {
+      const push = mkPush()
+      const p = mkPanel(push)
+      const { link, call } = await up(p)
+      const r = await call('/m/api/push/register', link, { platform: 'apns', token: TOK })
+      expect(r.status).toBe(403)
+      expect(await r.json()).toEqual({ ok: false, error: 'device_only' })
+      await p.stop()
+    })
+    it('平台 / token 不合法 ⇒ 400 invalid;没接线 ⇒ 503', async () => {
+      const p = mkPanel(mkPush())
+      const { token, call } = await up(p)
+      expect((await call('/m/api/push/register', token, { platform: 'sms', token: 'x' })).status).toBe(400)
+      expect((await call('/m/api/push/register', token, { platform: 'apns', token: 'zz' })).status).toBe(400)
+      await p.stop()
+      const bare = mkPanel(undefined)
+      const b = await up(bare)
+      expect((await b.call('/m/api/push/register', b.token, { platform: 'apns', token: TOK })).status).toBe(503)
+      await bare.stop()
+    })
+    it('测试通知 ⇒ 回中继结果', async () => {
+      const push = mkPush({ test: vi.fn(async () => ({ ok: false, code: 'BadDeviceToken' })) })
+      const p = mkPanel(push)
+      const { token, id, call } = await up(p)
+      const r = await call('/m/api/push/test', token, {})
+      expect(await r.json()).toEqual({ ok: true, result: { ok: false, code: 'BadDeviceToken' } })
+      expect(push.test).toHaveBeenCalledWith(id)
+      await p.stop()
+    })
+    it('撤销 / 全忘设备 ⇒ 同时退推送登记', async () => {
+      const push = mkPush()
+      const p = mkPanel(push)
+      const { id } = await up(p)
+      await p.apply({ op: 'revoke_device', id })
+      expect(push.unregister).toHaveBeenCalledWith(id)
+      await p.apply({ op: 'forget_devices' })
+      expect(push.forgetAll).toHaveBeenCalled()
+      await p.stop()
+    })
   })
 
   it('/m without token serves the localStorage bootstrap (200), API stays 401', async () => {
@@ -599,7 +683,7 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
     const list = await (await fetch(`${base}/m/api/matters?status=open,replied&t=${t}`)).json() as { ok: boolean; matters: unknown[] }
     expect(list).toEqual({ ok: true, matters: [MATTER] })
-    expect(matters.list).toHaveBeenCalledWith({ statuses: ['open', 'replied'], limit: 50 })
+    expect(matters.list).toHaveBeenCalledWith({ statuses: ['open', 'replied'], limit: 200 })
     expect(matters.seenOnPhone).toHaveBeenCalledWith('deadbeef')
     const detail = await (await fetch(`${base}/m/api/matter?id=deadbeef&t=${t}`)).json() as { ok: boolean; matter: { id: string }; events: unknown[] }
     expect(detail.ok).toBe(true); expect(detail.matter.id).toBe('deadbeef'); expect(detail.events).toHaveLength(1)
@@ -609,6 +693,30 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     expect((await fetch(`${base}/m/api/matter?id=nope&t=${t}`)).status).toBe(400)
     expect((await fetch(`${base}/m/api/matter/say?t=${t}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: ' ' }) })).status).toBe(400)
     expect((await fetch(`${base}/m/api/matters`)).status).toBe(401)
+  })
+  it('不带 status ⇒ 默认只要 open / replied / done(归档的自检噪声不占前 50)', async () => {
+    panel = make(true)
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    await fetch(`${base}/m/api/matters?t=${t}`)
+    expect(matters.list).toHaveBeenLastCalledWith({ statuses: ['open', 'replied', 'done'], limit: 200 })
+    await fetch(`${base}/m/api/matters?kind=task&t=${t}`)
+    expect(matters.list).toHaveBeenLastCalledWith({ kind: 'task', statuses: ['open', 'replied', 'done'], limit: 200 })
+    await fetch(`${base}/m/api/matters?status=archived&t=${t}`)
+    expect(matters.list).toHaveBeenLastCalledWith({ statuses: ['archived'], limit: 200 })
+  })
+  it('聊天 matter 只留主人的;筛完再截 50(别人的聊天不到手机、也不挤掉任务)', async () => {
+    const chat = (id: string, owner: string) => ({ ...MATTER, id, kind: 'chat', ownerChatId: owner })
+    const guests = Array.from({ length: 60 }, (_, i) => chat(`aa${String(i).padStart(6, '0')}`, 'guest@im.wechat'))
+    const tasks = Array.from({ length: 55 }, (_, i) => ({ ...MATTER, id: `bb${String(i).padStart(6, '0')}` }))
+    const mine = chat('cccccccc', OWNER)
+    matters.list.mockReturnValueOnce([...guests, mine, ...tasks] as never)
+    panel = make(true)
+    const { port } = await panel.start(0), base = `http://127.0.0.1:${port}`, t = panel.issueToken()
+    const r = await (await fetch(`${base}/m/api/matters?t=${t}`)).json() as { matters: Array<{ id: string; kind: string }> }
+    expect(r.matters).toHaveLength(50)
+    expect(r.matters.some(m => m.id.startsWith('aa'))).toBe(false)
+    expect(r.matters[0]!.id).toBe('cccccccc')
+    expect(r.matters.slice(1).every(m => m.kind === 'task')).toBe(true)
   })
   it('is 503 when the matter registry is not wired, and maps not-found / busy', async () => {
     panel = make(false)
@@ -621,6 +729,65 @@ describe('「一件事」手机路由(2026-09-16)', () => {
     expect((await fetch(`${b2}/m/api/matter?id=00000000&t=${t2}`)).status).toBe(404)
     matters.say.mockImplementationOnce(async () => { throw new Error('workbench_busy') })
     expect((await fetch(`${b2}/m/api/matter/say?t=${t2}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'deadbeef', text: 'x' }) })).status).toBe(409)
+  })
+})
+
+describe('GET /m/api/matter/insight', () => {
+  async function panelWith(insight?: unknown) {
+    const panel = makeSettingsPanel({ stateDir: seedStateDir(), ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {}, ...(insight ? { insight } : {}) } as never)
+    const { port } = await panel.start(0)
+    return { panel, base: `http://127.0.0.1:${port}`, t: panel.issueToken() }
+  }
+  it('没接线 ⇒ 503;id 不合法 ⇒ 400', async () => {
+    const a = await panelWith()
+    expect((await fetch(`${a.base}/m/api/matter/insight?id=deadbeef&t=${a.t}`)).status).toBe(503)
+    await a.panel.stop()
+    const b = await panelWith({ forMatter: vi.fn() })
+    expect((await fetch(`${b.base}/m/api/matter/insight?id=nope&t=${b.t}`)).status).toBe(400)
+    await b.panel.stop()
+  })
+  it('成功 ⇒ 透传;lang 归一;未找到 ⇒ 404;其它异常 ⇒ 500', async () => {
+    const forMatter = vi.fn(async () => ({ explanations: {}, progress: null }))
+    const p = await panelWith({ forMatter })
+    const r = await fetch(`${p.base}/m/api/matter/insight?id=deadbeef&lang=fr&t=${p.t}`)
+    expect(await r.json()).toEqual({ ok: true, explanations: {}, progress: null })
+    expect(forMatter).toHaveBeenCalledWith('deadbeef', 'en')
+    forMatter.mockRejectedValueOnce(new Error('matter_not_found'))
+    expect((await fetch(`${p.base}/m/api/matter/insight?id=deadbeef&t=${p.t}`)).status).toBe(404)
+    forMatter.mockRejectedValueOnce(new Error('boom'))
+    expect((await fetch(`${p.base}/m/api/matter/insight?id=deadbeef&t=${p.t}`)).status).toBe(500)
+    await p.panel.stop()
+  })
+})
+
+describe('GET /m/api/matter/changes', () => {
+  async function panelWith(changes?: unknown) {
+    const panel = makeSettingsPanel({ stateDir: seedStateDir(), ownerChatId: () => OWNER, chatPrefs: { get: () => ({}), set: () => ({}) }, getUserName: () => null, setUserName: async () => {}, log: () => {}, ...(changes ? { changes } : {}) } as never)
+    const { port } = await panel.start(0)
+    return { panel, base: `http://127.0.0.1:${port}`, t: panel.issueToken() }
+  }
+  const T = (createdAt: number) => ({ createdAt, status: 'complete' as const, files: [{ path: 'a.ts', kind: 'modified' as const, diff: '+x' }] })
+  it('没接线 ⇒ 503;id 不合法 ⇒ 400', async () => {
+    const a = await panelWith()
+    expect((await fetch(`${a.base}/m/api/matter/changes?id=deadbeef&t=${a.t}`)).status).toBe(503)
+    await a.panel.stop()
+    const b = await panelWith(vi.fn())
+    expect((await fetch(`${b.base}/m/api/matter/changes?id=nope&t=${b.t}`)).status).toBe(400)
+    await b.panel.stop()
+  })
+  it('两轮 ⇒ 最近一轮;空 ⇒ turn:null;not_found ⇒ 404;其它 ⇒ 500', async () => {
+    const changes = vi.fn(() => [T(1), T(9)])
+    const p = await panelWith(changes)
+    const r = await (await fetch(`${p.base}/m/api/matter/changes?id=deadbeef&t=${p.t}`)).json() as { ok: boolean; turn: { createdAt: number } }
+    expect(r.ok).toBe(true)
+    expect(r.turn.createdAt).toBe(9)
+    changes.mockReturnValueOnce([])
+    expect(await (await fetch(`${p.base}/m/api/matter/changes?id=deadbeef&t=${p.t}`)).json()).toEqual({ ok: true, turn: null })
+    changes.mockImplementationOnce(() => { throw new Error('not_found') })
+    expect((await fetch(`${p.base}/m/api/matter/changes?id=deadbeef&t=${p.t}`)).status).toBe(404)
+    changes.mockImplementationOnce(() => { throw new Error('boom') })
+    expect((await fetch(`${p.base}/m/api/matter/changes?id=deadbeef&t=${p.t}`)).status).toBe(500)
+    await p.panel.stop()
   })
 })
 
@@ -654,6 +821,26 @@ describe('phone curated memory', () => {
       expect(r.mime).toBe('image/png')
       expect(Buffer.from(r.half, 'base64').subarray(1, 4).toString()).toBe('PNG')
       expect(Buffer.from(r.closed, 'base64').subarray(1, 4).toString()).toBe('PNG')
+    } finally { await p.stop() }
+  })
+  it('serves the presence art (「此刻」形象画) behind the token — moved out of the inlined /m page, 手机协议包 v2 Task 4 fix round 1', async () => {
+    const p = makeSettingsPanel({
+      stateDir: mkdtempSync(join(tmpdir(), 'sp-art-presence-')), ownerChatId: () => null,
+      chatPrefs: { get: () => ({}), set: (_id, patch) => patch },
+      getUserName: () => null, setUserName: async () => {}, log: () => {},
+    })
+    const { port } = await p.start(0)
+    try {
+      const base = `http://127.0.0.1:${port}`
+      expect((await fetch(`${base}/m/api/art/presence`)).status).toBe(401)
+      const resp = await fetch(`${base}/m/api/art/presence?t=${p.issueToken()}`)
+      // 200,不是 403 route_not_allowed —— 证明路由确实登记在 PHONE_ROUTES(phone-routes.ts)里。
+      expect(resp.status).toBe(200)
+      const r = await resp.json() as { ok: boolean; mime: string; unlit: string; lit: string }
+      expect(r.ok).toBe(true)
+      expect(r.mime).toBe('image/png')
+      expect(Buffer.from(r.unlit, 'base64').subarray(1, 4).toString()).toBe('PNG')
+      expect(Buffer.from(r.lit, 'base64').subarray(1, 4).toString()).toBe('PNG')
     } finally { await p.stop() }
   })
   it('serves the curated memory view behind the token', async () => {

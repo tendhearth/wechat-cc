@@ -18,8 +18,8 @@ import { formatInvokeError } from "../ipc.js"
 
 /**
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
- * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, onDelegate?: (draft: import('./task-entry.js').Draft) => Promise<import('./task-entry.js').EntryResult|null> }} Deps
- * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean }} ConverseMsg
+ * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, onDelegate?: (draft: import('./task-entry.js').Draft) => Promise<import('./task-entry.js').EntryResult|null>, onSend?: () => void }} Deps
+ * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean, at?: number }} ConverseMsg
  */
 
 // ── module state ───────────────────────────────────────────────────────
@@ -31,6 +31,9 @@ let messages = []
 let nextId = 1
 let sending = false
 let delegating = false
+// 「此刻」页的气泡要显示 CC 最近一句真话:订阅者每次渲染都拿到当前消息表。
+/** @type {Set<(msgs: ConverseMsg[]) => void>} */
+const listeners = new Set()
 
 // Voice-out (Stage 1): 🔊 toggle persisted across app restarts, default OFF.
 // `no_voice_config` is expected to fire on every reply once the daemon has
@@ -333,18 +336,35 @@ async function loadSharedHistory(deps) {
     const detail = /** @type {{events?:Array<{kind:string,text:string,createdAt:number}>}|null} */ (await deps.invokeWorkbenchApi("GET", "/v1/matter/owner-chat"))
     const events = (detail?.events ?? []).filter(e => e.kind === "user" || e.kind === "text")
     if (!events.length || messages.length) return
-    for (const e of events) messages.push({ id: nextId++, role: e.kind === "user" ? "user" : "cc", text: e.text })
+    for (const e of events) messages.push({ id: nextId++, role: e.kind === "user" ? "user" : "cc", text: e.text, at: e.createdAt })
     renderMessages()
   } catch { /* 没有登记处或读不到:桌面照旧从空白开始 */ }
 }
 
 function renderMessages() {
   const scroll = document.getElementById("converse-scroll")
-  if (!scroll) return
-  scroll.innerHTML = messages.length === 0
-    ? emptyStateHtml()
-    : messages.map(messageHtml).join("")
-  requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight })
+  if (scroll) {
+    scroll.innerHTML = messages.length === 0
+      ? emptyStateHtml()
+      : messages.map(messageHtml).join("")
+    requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight })
+  }
+  for (const cb of listeners) {
+    try { cb(messages) } catch (err) { console.error("converse subscriber threw", err) }
+  }
+}
+
+/** 订阅消息表;订阅即回放当前。 @param {(msgs: ConverseMsg[]) => void} cb @returns {() => void} */
+export function subscribeConverse(cb) {
+  listeners.add(cb)
+  cb(messages)
+  return () => { listeners.delete(cb) }
+}
+
+/** home 只露输入框与发送;chat 是完整对话。 @param {'home'|'chat'} mode */
+export function setConverseMode(mode) {
+  const root = document.getElementById("converse-root")
+  if (root) root.dataset.converseMode = mode
 }
 
 // ── send ───────────────────────────────────────────────────────────────
@@ -357,8 +377,9 @@ async function sendMessage(deps) {
   if (!input || !sendBtn) return
   const text = input.value.trim()
   if (!text) return
+  deps.onSend?.()
 
-  messages.push({ id: nextId++, role: "user", text })
+  messages.push({ id: nextId++, role: "user", text, at: Date.now() })
   const pendingId = nextId++
   messages.push({ id: pendingId, role: "cc", text: "…", pending: true })
   sending = true
@@ -391,7 +412,7 @@ async function sendMessage(deps) {
       // blank CC bubble for that — show a muted system note instead.
       messages.push({ id: nextId++, role: "system", text: "（CC 这轮没有用文字回复）" })
     } else {
-      messages.push({ id: nextId++, role: "cc", text: replyText })
+      messages.push({ id: nextId++, role: "cc", text: replyText, at: Date.now() })
       // Fire-and-forget: autoplay must not block clearing the "sending"
       // state or the compose box. Errors are handled inside speakAndPlay.
       if (voiceOut) speakAndPlay(deps, replyText).catch(() => {})

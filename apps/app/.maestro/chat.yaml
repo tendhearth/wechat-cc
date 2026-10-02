@@ -1,0 +1,62 @@
+# 跟 CC 说:此刻 → 点 CC 进对话再回来 → 跟 CC 说一句 → 对话页 → 发一句 → 「在想…」→ 回复出现;一起做第一行进对话页。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: now-say
+    timeout: 10000
+# 点 CC 也能进对话
+- tapOn:
+    id: now-cc
+- extendedWaitUntil:
+    visible:
+      id: chat-input
+    timeout: 5000
+- tapOn:
+    id: topbar-back
+- extendedWaitUntil:
+    visible:
+      id: now-say
+    timeout: 5000
+- tapOn:
+    id: now-say
+- extendedWaitUntil:
+    visible:
+      id: chat-input
+    timeout: 5000
+# 等推入对话页的转场停下再点输入框,否则点在转场中途、键盘没起来
+- waitForAnimationToEnd
+# 模拟器上偶尔点了输入框却没聚焦、字没打进去(发送键仍是灰的):没打进去就再来一次。
+- retry:
+    maxRetries: 2
+    commands:
+      - tapOn:
+          id: chat-input
+      - inputText: "Maestro hello"
+      - assertVisible:
+          id: chat-send
+          enabled: true
+# 「在想…」会轻轻明暗(演示 5 秒后回复,见 src/backend/demo.ts 的 DEMO_CHAT_REPLY_MS);别让点击等画面静止,否则等到回复才返回、看不到「在想…」。
+- tapOn:
+    id: chat-send
+    waitToSettleTimeoutMs: 300
+- extendedWaitUntil:
+    visible:
+      id: chat-thinking
+    timeout: 3000
+- extendedWaitUntil:
+    visible: ".*(演示模式|This is the demo).*"
+    timeout: 8000
+- assertNotVisible:
+    id: chat-thinking
+- tapOn:
+    id: topbar-back
+- tapOn:
+    id: tab-together
+- tapOn:
+    id: together-pinned-chat
+- assertVisible:
+    id: chat-input

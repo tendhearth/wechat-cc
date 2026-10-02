@@ -111,7 +111,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
   const {
     wechatStdioForClaude, wechatStdioForCodex, wechatStdioForCursor, wechatStdioForOpenai, wechatStdioForGemini, wechatStdioForAgy,
     delegateStdioByProvider, delegateStdioForClaude, delegateStdioForCodex, delegateStdioForCursor, delegateStdioForOpenai,
-    loadedPlugins, pluginMcp, knowledgePluginNames, pluginMcpForClaude,
+    loadedPlugins, pluginMcp, knowledgePluginNames, pluginMcpForClaude, pluginsHealth,
   } = wirePlugins(deps, ctxBase)
 
   // Pin a Claude model from agent-config.json (or fall back to a stable
@@ -378,7 +378,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     formatInbound,
     sdkOptionsForProject,
     buildInstructions,
-    defaultProviderId,
+    defaultProviderId, pluginsHealth,
     codeHead: wiredSelfRestart?.loadedHead ?? null,
     providerNotes: () => {
       const out: Partial<Record<ProviderId, string>> = { ...baseProviderNotes() }

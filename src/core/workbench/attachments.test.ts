@@ -7,12 +7,13 @@ import {openDb,type Db} from '../../lib/db'
 import {makeWorkbenchStore} from './store'
 import {removeLink,removeTempDir} from '../../lib/test-temp'
 
-const quotaReads=vi.hoisted(()=>({directories:[] as string[],stats:[] as string[]}))
+const quotaReads=vi.hoisted(()=>({directories:[] as string[],stats:[] as string[],beforeOpen:null as null|((path:string)=>boolean)}))
 vi.mock('node:fs',async importOriginal=>{
   const fs=await importOriginal<typeof import('node:fs')>()
   return{...fs,
     readdirSync:(...args:unknown[])=>{quotaReads.directories.push(String(args[0]));return Reflect.apply(fs.readdirSync,fs,args)},
     lstatSync:(...args:unknown[])=>{quotaReads.stats.push(String(args[0]));return Reflect.apply(fs.lstatSync,fs,args)},
+    openSync:(...args:unknown[])=>{if(quotaReads.beforeOpen?.(String(args[0])))quotaReads.beforeOpen=null;return Reflect.apply(fs.openSync,fs,args)},
   }
 })
 
@@ -269,6 +270,22 @@ it('does not follow input-directory or materialized-file symlinks',()=>{
   rmSync(prepared.path);symlinkSync(secret,prepared.path)
   expect(()=>store.attachments.prepare(owner,[a],project,root)).toThrow('invalid_attachment_path')
   expect(readFileSync(secret,'utf8')).toBe('untouched')
+})
+
+// 威胁模型(docs/reference/workbench-file-guard.md):锚定的是项目目录,不是 mkdirAnchored 交回来的深层路径。
+// 目录建好之后、文件打开之前,中间一级被换成指出去的链接,打开后的复核必须从项目目录核到叶子才看得见。
+it.skipIf(process.platform==='win32')('re-verifies the whole chain from the project when an input directory is swapped for a link before the write',()=>{
+  const owner=task(),a=accepted(upload({taskId:owner})),outside=join(root,'outside')
+  mkdirSync(join(outside,owner,a.id),{recursive:true})
+  const inputs=join(project,'.cc-workbench-inputs')
+  quotaReads.beforeOpen=path=>{
+    if(!path.startsWith(inputs))return false
+    renameSync(inputs,`${inputs}-real`);symlinkSync(outside,inputs);return true
+  }
+  try{expect(()=>store.attachments.prepare(owner,[a],project,root)).toThrow('invalid_attachment_path')}
+  finally{quotaReads.beforeOpen=null}
+  // 内核已经穿过链接建出一个空文件(接受的残留),但我们拒绝往里写内容。
+  expect(existsSync(join(outside,owner,a.id,a.name))?readFileSync(join(outside,owner,a.id,a.name),'utf8'):'').toBe('')
 })
 
 const uploadReservation=(input:{id:string;draftId:string;size:number;sha256:string},status='uploading')=>{

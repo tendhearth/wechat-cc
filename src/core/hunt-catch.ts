@@ -30,13 +30,16 @@ const URL_RE = /https?:\/\/[^\s<>"'）)】」』，。；！？,;]+/g
 const BULLET_RE = /^\s*(?:[-*•]|\d+[.、)]|[①②③④⑤⑥⑦⑧⑨⑩])\s*/
 
 const TITLE_MAX = 32
+/** 推荐理由段的开头(容忍前面的 ** / # 与空白)。 */
+const REASON_RE = /^[*#\s]*(?:为什么你会感兴趣|推荐理由|为什么推荐|对你有什么用|适合你|怎么用)[*\s]*[:：\s]/
 
 /**
  * 从一段文本里挑出短标题:第一个句读之前的部分,截断到 TITLE_MAX。
  * 什么都挑不出来(整段就是个链接)时回落到域名。
  */
 export function deriveTitle(note: string, url: string | null): string {
-  const stripped = note.replace(URL_RE, ' ').replace(BULLET_RE, '').trim()
+  // Markdown 的 ** # ` 只是排版,留在标题里就成了列表里的一堆星号。
+  const stripped = note.replace(URL_RE, ' ').replace(/[*#`]/g, '').replace(BULLET_RE, '').trim()
   // 句读处断开;「——」「:」常被用来分隔「是什么」和「为什么」,也算断点。
   const head = stripped.split(/[。！？\n]|——|:|：/)[0]?.trim() ?? ''
   if (head.length > 0) return head.length > TITLE_MAX ? `${head.slice(0, TITLE_MAX)}…` : head
@@ -90,6 +93,13 @@ export function parseCatch(text: string): CatchItem[] {
     const url = urls[0] ?? null
     const note = unit.replace(BULLET_RE, '').trim()
     if (note === '') continue
+    // 「为什么你会感兴趣 / 推荐理由」这类段落常被模型单独成段;按空行拆会把理由和它的链接拆开。
+    // 没链接、紧跟在一条带链接的推荐后面 ⇒ 并进上一条。
+    const previous = items[items.length - 1]
+    if (!url && previous?.url && REASON_RE.test(note)) {
+      previous.note += `\n\n${note}`
+      continue
+    }
     items.push({ title: deriveTitle(note, url), url, note })
   }
   return items

@@ -36,6 +36,8 @@ import { existsSync, readFileSync } from 'node:fs'
 
 export interface WireMainOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
+  /** 内部 API 的 token-registry 窄接口 → 手机设置面板(梳理第 6 步)。 */
+  panelTokens?: import('../internal-api/token-registry').PanelTokens
   /** 「一件事」登记处(matters store);微信入站登记 chat、app 对话绑桌面表面、管家候选集都从这里来。 */
   matters?: import('../../core/matters/store').MatterStore
   stateDir: string
@@ -126,11 +128,18 @@ export interface WiredDeps {
    */
   petTurn: import('../internal-api/types').PetTurnDep
   /** Mint a fresh graphical-settings-panel URL (10-min token). Null when no
-   *  LAN/owner. Wired to GET /v1/settings/link for the desktop QR entry. */
+   *  LAN/owner. Wired to 微信 /set (in-process) and GET /v1/settings/link
+   *  (admin tier since plan 7a; selftest phone). */
   settingsPanelLink: () => Promise<string | null>
+  /** 「CC 的连接」快照(缓存 10 s);main.ts setConnections 到 internal-api。 */
+  connections: () => import('../connections').ConnectionsSnapshot
+  /** 桌面「连接手机」;main.ts setPhoneConnect 到 internal-api。 */
+  phoneConnect: import('../internal-api/types').PhoneConnectDep
   /** 每晚记忆整理运行时(pipeline-deps 造);main.ts 挂定时器 + setMemoryNightly。 */
   memoryNightly: import('../memory/nightly-runtime').MemoryNightlyRuntime
   mattersService: import('../../core/matters/service').MattersService | null
+  /** 「一件事」活动时间:退订工作台事件 + 清节流定时器;main.ts 登记进 shutdown。 */
+  stopMatterActivity: () => void
   companionPushDeps: CompanionPushDeps
   companionIntrospectDeps: CompanionIntrospectDeps
   companionIngestDeps: CompanionIngestDeps
@@ -237,15 +246,18 @@ export function wireMain(opts: WireMainOpts): WiredDeps {
     health: opts.boot.health.health,
     runAtelierTick,
   })
-  const { pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly } = buildPipelineDeps(opts, refs)
+  const { pipelineDeps, companionConverse, petTurn, settingsPanelLink, mattersService, memoryNightly, stopMatterActivity, connections, phoneConnect } = buildPipelineDeps(opts, refs)
   const lifecycleDeps = buildLifecycleDeps(opts, ticks)
   return {
     pipelineDeps,
     companionConverse,
     petTurn,
     settingsPanelLink,
+    connections,
+    phoneConnect,
     mattersService,
     memoryNightly,
+    stopMatterActivity,
     ...lifecycleDeps,
     ticks,
     refs,

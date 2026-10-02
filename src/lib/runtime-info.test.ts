@@ -86,3 +86,20 @@ describe('public API (live process state)', () => {
     if (!isCompiledBundle()) expect(compiledRepoRoot()).toBe(null)
   })
 })
+
+// 2026-09-29:打包版的主二进制现在叫 `wechat_cc_desktop`(Cargo 包名),老包里叫 `wechat-cc`。
+// 只找 `wechat-cc` ⇒ 新包上永远 null ⇒ `service install` 把 LaunchAgent 回落到 sidecar,
+// TCC 授权记到裸二进制上、每次重建就丢(见 appMainBinaryPath 的注释)。
+describe('resolveAppMainBinary', () => {
+  const macos = '/Applications/wechat-cc.app/Contents/MacOS'
+  it('新包:wechat_cc_desktop', () => {
+    expect(__testInternals.resolveAppMainBinary(macos, p => p === `${macos}/wechat_cc_desktop`)).toBe(`${macos}/wechat_cc_desktop`)
+  })
+  it('老包:wechat-cc', () => {
+    expect(__testInternals.resolveAppMainBinary(macos, p => p === `${macos}/wechat-cc`)).toBe(`${macos}/wechat-cc`)
+  })
+  it('两个都在 ⇒ 取新名字;都没有 ⇒ null', () => {
+    expect(__testInternals.resolveAppMainBinary(macos, () => true)).toBe(`${macos}/wechat_cc_desktop`)
+    expect(__testInternals.resolveAppMainBinary(macos, () => false)).toBeNull()
+  })
+})

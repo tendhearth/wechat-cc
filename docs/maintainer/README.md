@@ -1,4 +1,6 @@
-# 维护者手册
+# Tendhearth CC 维护者手册
+
+对外使用 **Tendhearth CC**，角色称呼为 **CC**。修改文案前先看[产品命名规范](../reference/product-naming.md)，不要把命令、包名、状态目录或发布标识一起替换。
 
 给**维护这个仓库的 LLM**(也包括 CC 自己)看的一页索引。目标:任何一个新来的模型不靠人类的口头知识,也能跑完「改 → 验 → 部署 → 再验 → 推 → 看 CI」。
 
@@ -26,6 +28,7 @@ bun run test                         # bun --bun vitest run
 npm run test:node                    # 同一套源码在 node 下再跑一遍(见 ci-and-flakes.md)
 bun run typecheck                    # tsc --noEmit
 bun run depcheck                     # 模块边界
+cd apps/relay && bun run test        # 改了中继 / 协议包时(另有 test:e2e,见 relay.md)
 
 # 2. 以下由整合者串行执行:构建已验证 dev 的 sidecar 并原子换进 .app(macOS)
 cd apps/desktop && bun run build-sidecar && cd -
@@ -34,6 +37,7 @@ wechat-cc self deploy                # 换 inode + kickstart + 健康门,不过�
 # 3. 真机自检(daemon 在跑的前提下)
 wechat-cc selftest workbench --executor cursor --image --resume   # 加 --keep 保留 scratch 项目
 wechat-cc selftest chat --provider cursor --resume
+wechat-cc selftest phone                # 手机协议 v2 真机闭环(需开「出门也能用」)
 
 # 4. 推 dev,看 CI
 git push origin dev
@@ -51,7 +55,7 @@ wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resum
 
 | 命令 | 开关 |
 | --- | --- |
-| `self deploy` | `--binary` `--app` `--no-rollback` `--health-timeout-ms` `--json` |
+| `self deploy` | `--binary` `--app` `--no-rollback` `--no-sign` `--allow-missing-plugins` `--health-timeout-ms` `--json` |
 | `selftest workbench` | `--executor`(必填) `--image` `--resume` `--json` `--timeout-ms` `--keep` |
 | `selftest chat` | `--provider`(必填) `--text` `--resume` `--json` `--timeout-ms` |
 | `ci triage` | `--sha` `--branch` `--wait` `--rerun` `--max-reruns` `--timeout-min` `--json` |
@@ -63,12 +67,16 @@ wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resum
 | --- | --- |
 | [deploy.md](deploy.md) | sidecar 构建、`self deploy`、inode 陷阱、launchd 崩溃循环怎么看、plist 为什么指主二进制 |
 | [release.md](release.md) | 给用户发版:四个人工步骤、两道 `release-signing` 批准、tag 镜像、R2 更新源;和 `self deploy` 的区别 |
-| [verify.md](verify.md) | `selftest` 两种用法、两种 token 分别够得着什么、必须主人在场的检查清单 |
+| [verify.md](verify.md) | `selftest` 三种用法(workbench / chat / phone)、两种 token 分别够得着什么、必须主人在场的检查清单 |
 | [mobile-presence.md](mobile-presence.md) | 手机此刻、待处理入口、成果与回忆,断线提交和冻结资产的接线边界 |
 | [ci-and-flakes.md](ci-and-flakes.md) | 三平台作业、Windows 排除清单的规矩、`ci triage` 与 flake 登记表、PR 与合并纪律 |
 | [self-change.md](self-change.md) | 让 CC 自己改自己:五道闸门、修复轮上限、退出码、停机与 `--unhalt`、微信不通时怎么拍板(`--approve` / 桌面卡)、禁改清单、费用、微信「自改」 |
 | [migrations.md](migrations.md) | `user_version` 是计数、新迁移要改的三处测试、指纹与 `foreign_keys` 坑 |
 | [rules-from-real-machines.md](rules-from-real-machines.md) | 真机(而不是单测)抓到的规矩清单 —— 写代码前先扫一眼 |
+
+## 协议包在哪
+
+手机 ↔ 中继 ↔ 后台的加密与消息在 `packages/protocol`(`@wechat-cc/protocol`),API、向量再生、纯净规则见它的 [README](../../packages/protocol/README.md)。**新运行时接入(比如 RN app)一句话:实现 `ProtocolSocket` 五个方法(含 `onOpen`),把它交给 `makeProtocolClient`,自己别碰加密。**
 
 ## 为什么有这份手册
 

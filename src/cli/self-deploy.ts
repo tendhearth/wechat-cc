@@ -29,6 +29,7 @@ import { spawnSync as nodeSpawnSync } from 'node:child_process'
 import { chmodSync, copyFileSync, existsSync, readFileSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { readApiInfo } from '../lib/api-info'
+import { dirHasPlugins, readPluginsSourcePointer, writePluginsSourcePointer } from '../lib/plugins-source'
 
 export interface LaunchAgentInfo {
   programArguments: string[]
@@ -90,6 +91,17 @@ export interface SelfDeployPlan {
   rollback: boolean
   /** null ⇒ 不重签(照旧 ad-hoc)。见文件头「签名」。 */
   signing: SelfDeploySigning | null
+  /**
+   * 内置插件来源登记(2026-09-30)。安装包按设计不带插件(1747de09),打包版 daemon
+   * 只能靠状态目录里的来源指针找到主人的插件;部署时顺手把源码 checkout 里真有插件
+   * 的目录登记上去。undefined/null ⇒ 不做这一步(老调用方 / 测试手搓的 plan)。
+   */
+  pluginsSource?: { stateDir: string; candidates: string[] } | null
+  /**
+   * `--allow-missing-plugins`:插件门红了也照样放行(记 detail + log),给本来就
+   * 没有插件的机器用 —— 不必为了部署去永久 `plugin disable`。
+   */
+  allowMissingPlugins?: boolean
 }
 
 export interface SelfDeploySigning {
@@ -132,6 +144,10 @@ export interface PlanSelfDeployInput {
   signingIdentity?: DeveloperIdIdentity | null
   /** entitlements.plist 的路径(调用方已确认存在);缺省 / null ⇒ 不签。 */
   entitlementsPath?: string | null
+  /** 可登记为插件来源的目录(源码 checkout 的 plugins/、主 checkout 的 plugins/),按优先级。 */
+  pluginSourceCandidates?: string[]
+  /** `--allow-missing-plugins`. */
+  allowMissingPlugins?: boolean
 }
 
 /**
@@ -197,6 +213,8 @@ export function planSelfDeploy(input: PlanSelfDeployInput): SelfDeployPlan {
     signing: input.signingIdentity && input.entitlementsPath
       ? { identity: input.signingIdentity.name, identityHash: input.signingIdentity.hash, entitlementsPath: input.entitlementsPath, appPath: posixDirname(posixDirname(macosDir)) }
       : null,
+    pluginsSource: { stateDir: input.stateDir, candidates: input.pluginSourceCandidates ?? [] },
+    allowMissingPlugins: input.allowMissingPlugins ?? false,
   }
 }
 
@@ -244,6 +262,24 @@ export function resolveSigningInputs(input: {
     signingIdentity: detectDeveloperIdIdentity(input.spawnSync),
     entitlementsPath: candidates.find((p) => input.exists(p)) ?? null,
   }
+}
+
+/**
+ * Where the owner's plugins can be registered from (source-mode deploy only):
+ * this checkout's `plugins/`, then the MAIN checkout's — the plugins are
+ * gitignored per-machine symlinks that exist only there, while deploys usually
+ * run from a worktree whose `plugins/` holds just the README. The main checkout
+ * is the parent of `git rev-parse --git-common-dir`.
+ */
+export function pluginSourceCandidates(repoRoot: string, spawnSync: SelfDeployDeps['spawnSync']): string[] {
+  const out = [posixJoin(repoRoot, 'plugins')]
+  const r = spawnSync('git', ['-C', repoRoot, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { timeoutMs: 5000, windowsHide: true })
+  const common = r.status === 0 ? r.stdout.trim() : ''
+  if (common) {
+    const main = posixJoin(posixDirname(common), 'plugins')
+    if (!out.includes(main)) out.push(main)
+  }
+  return out
 }
 
 // posix.join/dirname equivalents that don't pull in node:path just for two
@@ -438,6 +474,10 @@ export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDe
     }
   }
 
+  // 4c. plugins source — before the restart so the new daemon boots with it.
+  // Never fatal: the plugins gate after health is what judges the outcome.
+  if (plan.pluginsSource) steps.push(ensurePluginsSource(plan.pluginsSource))
+
   // 5 + 6. restart + health gate. Everything past this point runs with the
   // NEW binary already on disk, so every failure from here rolls back
   // (unless the caller opted out).
@@ -445,13 +485,25 @@ export async function executeSelfDeploy(plan: SelfDeployPlan, deps: SelfDeployDe
   const restart = kickstart(deps, plan.serviceTarget)
   steps.push(restart)
   let health: SelfDeployStep | null = null
+  let pluginsStep: SelfDeployStep | null = null
   if (restart.ok) {
     deps.log(`waiting for health check (up to ${plan.healthTimeoutMs}ms)...`)
-    health = await waitForHealth(plan, deps, kickstartAt, plan.healthTimeoutMs, version)
+    const gate = await waitForHealth(plan, deps, kickstartAt, plan.healthTimeoutMs, version)
+    health = gate.step
     steps.push(health)
+    // 6b. plugins gate — only when the daemon reports the snapshot (old
+    // daemons, i.e. most rollback targets, don't have the field).
+    if (health.ok && gate.plugins !== undefined) {
+      pluginsStep = judgePlugins(gate.plugins)
+      if (!pluginsStep.ok && plan.allowMissingPlugins) {
+        deps.log(`--allow-missing-plugins: passing anyway — ${pluginsStep.detail}`)
+        pluginsStep = { name: 'plugins', ok: true, detail: `ALLOWED (--allow-missing-plugins): ${pluginsStep.detail}` }
+      }
+      steps.push(pluginsStep)
+    }
   }
 
-  if (restart.ok && health?.ok) {
+  if (restart.ok && health?.ok && (pluginsStep === null || pluginsStep.ok)) {
     return { ok: true, exitCode: 0, steps, version }
   }
 
@@ -544,7 +596,26 @@ function kickstart(deps: SelfDeployDeps, serviceTarget: string): SelfDeployStep 
  * warning (e.g. the running daemon reports its own build metadata slightly
  * differently than the sidecar's --version string).
  */
-async function waitForHealth(plan: SelfDeployPlan, deps: SelfDeployDeps, sinceMs: number, timeoutMs: number, expectedVersion: string): Promise<SelfDeployStep> {
+interface HealthGate {
+  step: SelfDeployStep
+  /** `GET /v1/health.plugins` once it is an object; undefined when the daemon doesn't report it. */
+  plugins?: HealthPlugins
+}
+
+/**
+ * Wire shape of `GET /v1/health.plugins` (src/daemon/plugins/health.ts
+ * `PluginsHealthWire`) — the summary every tier gets. The gate probes with the
+ * FILE token (below admin), so it never sees paths or plugin lists.
+ */
+interface HealthPlugins {
+  via: string | null
+  count: number
+  ready_count: number
+  expected_missing: string[]
+  pointer_broken: boolean
+}
+
+async function waitForHealth(plan: SelfDeployPlan, deps: SelfDeployDeps, sinceMs: number, timeoutMs: number, expectedVersion: string): Promise<HealthGate> {
   const deadline = deps.now() + timeoutMs
   for (;;) {
     const mtime = deps.fs.mtimeMs(plan.infoPath)
@@ -564,10 +635,18 @@ async function waitForHealth(plan: SelfDeployPlan, deps: SelfDeployDeps, sinceMs
           if (res.ok) {
             let cliVersion: string | undefined
             let head: string | null | undefined
+            let body: { version?: { cli?: string; head?: string | null }; plugins?: HealthPlugins | null } = {}
             try {
-              const v = ((await res.json()) as { version?: { cli?: string; head?: string | null } }).version
-              cliVersion = v?.cli; head = v?.head
+              body = (await res.json()) as typeof body
+              cliVersion = body.version?.cli; head = body.version?.head
             } catch { /* body optional */ }
+            // `plugins: null` = the daemon is up but bootstrap hasn't wired the
+            // plugin lane yet — not a verdict; keep polling.
+            if (body.plugins === null) {
+              if (deps.now() >= deadline) return { step: { name: 'health', ok: false, detail: 'timed out waiting for bootstrap (health.plugins stayed null)' } }
+              await deps.sleep(HEALTH_POLL_INTERVAL_MS)
+              continue
+            }
             // `--version` 打的是一行 `1.7.0 (63edf14c)`,而健康接口分成 cli(纯 semver)
             // 与 head(构建 sha)两格 —— 必须拆开逐格比。2026-09-22 真踩过:版本号带上
             // 构建标识那天,这里整行相等的比较从此永远不成立,每次部署都打一行假的
@@ -581,14 +660,49 @@ async function waitForHealth(plan: SelfDeployPlan, deps: SelfDeployDeps, sinceMs
             // 源码跑出来的产物 sha 是 'dev',那种情况下不比 —— 比了永远不相等。
             const shaBad = !!wantSha && wantSha !== 'dev' && !!head && head !== wantSha
             const seen = `${cliVersion ?? '?'}${head ? ` (${head})` : ''}`
-            return { name: 'health', ok: true, detail: versionBad || shaBad ? `version mismatch: preflight=${expectedVersion} health=${seen}` : seen }
+            const step = { name: 'health', ok: true, detail: versionBad || shaBad ? `version mismatch: preflight=${expectedVersion} health=${seen}` : seen }
+            return body.plugins ? { step, plugins: body.plugins } : { step }
           }
         } catch { /* daemon may still be coming up — keep polling */ }
       }
     }
-    if (deps.now() >= deadline) return { name: 'health', ok: false, detail: 'timed out waiting for health check' }
+    if (deps.now() >= deadline) return { step: { name: 'health', ok: false, detail: 'timed out waiting for health check' } }
     await deps.sleep(HEALTH_POLL_INTERVAL_MS)
   }
+}
+
+/**
+ * Register the plugins source pointer: keep a pointer that still resolves to
+ * real plugins (explicit operator choice), otherwise take the first candidate
+ * that has any. Uses the real fs (state dir, outside the .app).
+ */
+function ensurePluginsSource(src: { stateDir: string; candidates: string[] }): SelfDeployStep {
+  try {
+    const current = readPluginsSourcePointer(src.stateDir)
+    if (current && dirHasPlugins(current)) return { name: 'plugins_source', ok: true, detail: `kept ${current}` }
+    const hit = src.candidates.find(dirHasPlugins)
+    if (!hit) return { name: 'plugins_source', ok: true, detail: `none registered: no plugins in ${src.candidates.join(', ') || '(no candidates)'}` }
+    writePluginsSourcePointer(src.stateDir, hit)
+    return { name: 'plugins_source', ok: true, detail: `registered ${hit}` }
+  } catch (err) {
+    return { name: 'plugins_source', ok: true, detail: `could not register: ${errMsg(err)}` }
+  }
+}
+
+/**
+ * Red (and roll back) when an expected plugin — registered with the source, or
+ * explicitly enabled — was not even discovered, or the registered source holds
+ * nothing any more.
+ */
+function judgePlugins(p: HealthPlugins): SelfDeployStep {
+  const from = p.via ? `via ${p.via}` : 'no bundled plugins dir'
+  const problems: string[] = []
+  if (p.pointer_broken) problems.push('registered plugins source holds no plugins any more')
+  if (p.expected_missing.length > 0) problems.push(`expected plugin(s) not loaded: ${p.expected_missing.join(', ')}`)
+  if (problems.length > 0) {
+    return { name: 'plugins', ok: false, detail: `${problems.join('; ')} — ${from}; fix with \`wechat-cc plugin source <dir>\` (or --allow-missing-plugins)` }
+  }
+  return { name: 'plugins', ok: true, detail: `${p.ready_count}/${p.count} ready — ${from}` }
 }
 
 async function performRollback(plan: SelfDeployPlan, deps: SelfDeployDeps, expectedVersion: string): Promise<{ steps: SelfDeployStep[]; rolledBack: boolean; healthy: boolean }> {
@@ -612,7 +726,7 @@ async function performRollback(plan: SelfDeployPlan, deps: SelfDeployDeps, expec
   steps.push({ ...restart, name: 'rollback_restart' })
   if (!restart.ok) return { steps, rolledBack: true, healthy: false }
 
-  const health = await waitForHealth(plan, deps, kickstartAt, plan.healthTimeoutMs, expectedVersion)
+  const health = (await waitForHealth(plan, deps, kickstartAt, plan.healthTimeoutMs, expectedVersion)).step
   steps.push({ ...health, name: 'rollback_health' })
   return { steps, rolledBack: true, healthy: health.ok }
 }

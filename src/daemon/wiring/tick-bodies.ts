@@ -297,7 +297,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
   async function ingestTick(): Promise<void> {
     const specs = pluginMcpSpecs(loadPlugins({
       stateDir: deps.stateDir,
-      bundledDir: bundledPluginsDir(),
+      bundledDir: bundledPluginsDir(deps.stateDir),
       hostVersion: selfPkg.version,
     }))
     // facts extraction now runs in-process (wxfacts plugin retired) — keep

@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto'
-import {closeSync,constants,existsSync,fsyncSync,fstatSync,ftruncateSync,readSync,unlinkSync,writeSync} from 'node:fs'
+import {closeSync,constants,existsSync,fsyncSync,fstatSync,ftruncateSync,futimesSync,readSync,unlinkSync,writeSync} from 'node:fs'
 import {join,resolve} from 'node:path'
 import type {Db} from '../../lib/db'
 import {MAX_ATTACHMENT_BYTES,MAX_IMAGE_ATTACHMENT_BYTES,type Attachment,type makeTaskAttachmentStore} from './attachments'
@@ -33,6 +33,8 @@ const MIMES=new Set(['text/plain','text/markdown','text/csv','application/json',
 const SELECT=`SELECT id,owner_key AS ownerKey,draft_id AS draftId,task_id AS taskId,name,mime,size,sha256,status,
   next_offset AS nextOffset,chunks_json AS chunksJson,part_identity AS partIdentity,reserved_bytes AS reservedBytes,
   created_at AS createdAt,updated_at AS updatedAt,expires_at AS expiresAt FROM workbench_attachment_uploads`
+/** 2000-01-01T00:00:00Z: whole seconds, so every filesystem clock (FAT's 2s included) stores it exactly. */
+const OWN_WRITE_MTIME_S=946_684_800,OWN_WRITE_MTIME_NS=BigInt(OWN_WRITE_MTIME_S)*1_000_000_000n
 const hash=(bytes:Buffer)=>createHash('sha256').update(bytes).digest('hex')
 const code=(error:unknown)=>error instanceof Error?error.message:String(error)
 function strictObject(value:unknown,keys:readonly string[]):Record<string,unknown> {
@@ -99,8 +101,16 @@ export function createAttachmentUploads(options:Options) {
     const s=fstatSync(fd,{bigint:true})
     return`${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}:${row.nextOffset}:${row.chunksJson}`
   }
+  // A stamp only proves "unchanged" if any later write would move it. With a coarse
+  // file clock (NTFS's system-time tick, 1-2s on HFS+/FAT/ext3) an unexpected same-size
+  // write landing in the same tick as our own last write keeps size/mtime/ctime equal, and
+  // the cache would skip the damaged prefix (seen on windows-latest 2026-10-01). So every
+  // committed write pins mtime to a fixed past instant, and only a part still carrying it
+  // is cached: anyone else's write sets mtime to "now", which can never equal it.
   function rememberPart(row:Row,fd:number):void {
-    verifiedParts.delete(row.id);verifiedParts.set(row.id,partStamp(row,fd))
+    verifiedParts.delete(row.id)
+    if(fstatSync(fd,{bigint:true}).mtimeNs!==OWN_WRITE_MTIME_NS)return
+    verifiedParts.set(row.id,partStamp(row,fd))
     if(verifiedParts.size>64)verifiedParts.delete(verifiedParts.keys().next().value!)
   }
   function readRange(fd:number,offset:number,size:number):Buffer {
@@ -279,6 +289,7 @@ export function createAttachmentUploads(options:Options) {
         try{
           let written=0
           while(written<bytes.length){const n=writeSync(part.fd,bytes,written,bytes.length-written,input.offset+written);if(!n)throw Error(CHANGED);written+=n}
+          futimesSync(part.fd,OWN_WRITE_MTIME_S,OWN_WRITE_MTIME_S)
           fsyncSync(part.fd);verifyOpened(part.fd,stateDir,[PARTS,partName(row)],PATH_ERROR)
           const offset=row.nextOffset+bytes.length
           committed.push({offset:input.offset,size:bytes.length,sha256:digest})

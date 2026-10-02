@@ -1,6 +1,6 @@
 {
   "name": "claude-channel-wechat",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "A local-first AI companion and unified task workspace for Claude, Codex and API models, with desktop and WeChat access.",
   "keywords": [
     "claude-code",
@@ -21,7 +21,8 @@
   "license": "MIT",
   "type": "module",
   "workspaces": [
-    "apps/*"
+    "apps/*",
+    "packages/*"
   ],
   "bin": {
     "wechat-cc": "./cli.ts"
@@ -36,7 +37,8 @@
     "spike:atelier-renderer": "bun scripts/atelier-renderer-spike.ts",
     "smoke:atelier-sidecar": "bun scripts/atelier-sidecar-smoke.ts",
     "build:mobile": "bun apps/mobile/build.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p apps/mobile",
+    "e2e:device": "bun scripts/device-e2e.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p apps/mobile && tsc --noEmit -p apps/relay && tsc --noEmit -p apps/app",
     "build:map": "bun scripts/build-map.ts",
     "depcheck": "depcruise --config .dependency-cruiser.cjs src cli.ts setup.ts docs.ts apps/mobile"
   },
@@ -46,6 +48,7 @@
     "@huggingface/transformers": "^4.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@openai/codex-sdk": "0.144.4",
+    "@wechat-cc/protocol": "workspace:*",
     "ai": "^5",
     "marked": "^18.0.0",
     "qrcode-terminal": "^0.12.0",
@@ -61,6 +64,7 @@
     "@types/bun": "^1.3.0",
     "citty": "^0.2.2",
     "dependency-cruiser": "^17.0.0",
+    "happy-dom": "^20.14.5",
     "typescript": "^6.0.3",
     "vitest": "^4.1.4"
   }

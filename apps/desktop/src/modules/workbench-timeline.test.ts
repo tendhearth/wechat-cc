@@ -14,6 +14,14 @@ const foldedGroups = (html:string) => [...html.matchAll(/<details\b[^>]*data-tim
 const visibleWithoutGroups = (html:string) => html.replace(/<details\b[^>]*data-timeline-group[^>]*>[\s\S]*?<\/details>/g, '')
 
 describe('workbench interleaved activity timeline', () => {
+  it('an activity-less error event renders an error row that the stylesheet marks with a red dot on the row itself', async () => {
+    const html = render([event('x', 'error', '执行失败')], 'failed', undefined)
+    expect(html).toMatch(/<article class="wb-operation"[^>]*data-kind="error"/)
+    expect(html).not.toContain('wb-operation-status')
+    const { readFileSync } = await import('node:fs')
+    const css = readFileSync(new URL('../styles/workbench.css', import.meta.url), 'utf8')
+    expect(css).toMatch(/\.wb-operation\[data-kind=error\] \.wb-operation-label::before\s*\{[^}]*var\(--th-bad\)/)
+  })
   it('anchors the readable reply rather than a short adjacent activity row, falling back to operations when no reply is visible', () => {
     const operation = { id:'operation', classList:{ contains:() => false }, getBoundingClientRect:() => ({ top:10, bottom:30, height:20 }) }
     const reply = { id:'reply', classList:{ contains:(name:string) => name === 'wb-message' }, getBoundingClientRect:() => ({ top:50, bottom:170, height:120 }) }

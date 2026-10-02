@@ -155,6 +155,11 @@ export interface BootstrapDeps {
    */
   curatedMemoryFor?: (chatId: string) => string
   /**
+   * 今天的草稿 today-draft.md(同日失忆修复,2026-10-01):CC 白天写进 profile.md 的新行,
+   * 由 internal-api 的 memory/write 路由派生。只随 curatedMemoryFor 注入。Absent ⇒ 不注入。
+   */
+  todayDraftFor?: (chatId: string) => string
+  /**
    * Daemon-distilled objective plugin knowledge for this chat (knowledge.md),
    * read fresh per spawn + capped. Injected right after core memory. Absent
    * thunk / empty ⇒ section omitted (knowledge-distillation design, D1).
@@ -271,6 +276,8 @@ export interface Bootstrap {
   providerNotes?: () => Partial<Record<ProviderId, string>>
   /** 启动时加载的 git commit;打包版 / 非仓库为 null。health.version 用。可选:测试里的假 boot 没有它。 */
   codeHead?: string | null
+  /** 启动时实际加载的插件快照(GET /v1/health.plugins)。可选:测试里的假 boot 没有它。 */
+  pluginsHealth?: import('../plugins/health').PluginsHealth
   /** Backward-compat alias for defaultProviderId. Pre-P2 callers expected this name. */
   agentProviderKind: ProviderId
   /**

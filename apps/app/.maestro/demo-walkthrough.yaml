@@ -1,0 +1,95 @@
+# 演示走一遍:首次打开 → 先看看 → 此刻 → 一起做 → 某件事(作品集)→ 展开改动 → 设置 → 切换语言 → 退出演示。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- assertVisible:
+    id: welcome-pair
+- tapOn:
+    id: welcome-look-first
+# 此刻:CC(带它最近一句真话)+「2 件事等你」两行(作品集的批准 + 出差的问题);没有「慢慢来」一类的填充话。
+- extendedWaitUntil:
+    visible:
+      id: now-needs-you-card
+    timeout: 10000
+- assertVisible:
+    id: now-cc
+- assertVisible:
+    id: now-waiting-title
+- assertNotVisible: ".*(慢慢来|take it slow).*"
+- assertVisible:
+    id: now-say
+- assertVisible:
+    id: now-connections
+# 欢迎页 replace 回此刻的转场里,第一下点标签偶尔没生效(可能是被原生栈吞掉;真机手点不会这么快);没切过去就再点一次。
+- retry:
+    maxRetries: 2
+    commands:
+      - tapOn:
+          id: tab-together
+      - extendedWaitUntil:
+          visible:
+            id: together-item-a1b2c3d4
+          timeout: 3000
+- assertVisible:
+    id: together-item-e5f6a7b8
+- assertVisible:
+    id: together-item-c9d0e1f2
+- tapOn:
+    id: together-item-a1b2c3d4
+# 进展页:状态标签在概括之上,有「去看待批准」。
+- extendedWaitUntil:
+    visible:
+      id: progress-status
+    timeout: 10000
+- assertVisible:
+    id: progress-summary
+- assertVisible:
+    id: progress-view-approval
+- scrollUntilVisible:
+    element:
+      id: progress-changes
+    direction: DOWN
+    centerElement: true
+# 标题改成 title 字号后这一行正好停在底边,紧挨着「接着跟 CC 说」;滚到中间再点,别点到说一句
+- tapOn:
+    id: progress-changes
+# 展开后能看到改动的文件。
+- extendedWaitUntil:
+    visible: "src/pages/home.css"
+    timeout: 5000
+- scrollUntilVisible:
+    element:
+      id: progress-process
+    direction: DOWN
+    centerElement: true
+- tapOn:
+    id: progress-process
+- scrollUntilVisible:
+    element: ".*Projects/portfolio"
+    direction: DOWN
+- tapOn:
+    id: topbar-settings
+- extendedWaitUntil:
+    visible:
+      id: settings-language
+    timeout: 5000
+- tapOn:
+    id: settings-language-en
+- assertVisible: "Settings"
+- tapOn:
+    id: settings-language-zh-Hans
+- assertVisible: "设置"
+- assertVisible:
+    id: settings-privacy
+- scrollUntilVisible:
+    element:
+      id: settings-exit-demo
+    direction: DOWN
+- tapOn:
+    id: settings-exit-demo
+- extendedWaitUntil:
+    visible:
+      id: welcome-look-first
+    timeout: 5000
+- assertVisible:
+    id: welcome-pair

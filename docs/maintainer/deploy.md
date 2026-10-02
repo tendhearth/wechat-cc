@@ -10,7 +10,7 @@ wechat-cc self deploy            # 缺省:自动挑本机架构的二进制、�
 wechat-cc self deploy --json     # 机器可读
 ```
 
-可用开关(spec §3):`--binary <path>`(源码模式缺省 `apps/desktop/src-tauri/binaries/wechat-cc-cli-<arch>-apple-darwin`,`arm64→aarch64`、`x64→x86_64`;**打包版里必填**)、`--app <path>`(缺省从 LaunchAgent plist 的 `ProgramArguments[0]` 推)、`--no-rollback`、`--no-sign`(见下「签名」)、`--health-timeout-ms N`(缺省 60000)、`--json`。
+可用开关(spec §3):`--binary <path>`(源码模式缺省 `apps/desktop/src-tauri/binaries/wechat-cc-cli-<arch>-apple-darwin`,`arm64→aarch64`、`x64→x86_64`;**打包版里必填**)、`--app <path>`(缺省从 LaunchAgent plist 的 `ProgramArguments[0]` 推)、`--no-rollback`、`--no-sign`(见下「签名」)、`--allow-missing-plugins`(插件门红了也放行,记 detail + 日志;给本来就没插件的机器,不必永久 `plugin disable`)、`--health-timeout-ms N`(缺省 60000)、`--json`。
 
 它按顺序做六件事(钥匙串里有 Developer ID 时再多两步,见「签名」):
 
@@ -22,6 +22,8 @@ wechat-cc self deploy --json     # 机器可读
 4. **swap** —— `rename(<sidecar>.new → sidecar)`。**必须换 inode**,见下。
 5. **restart** —— `launchctl kickstart -k gui/$(id -u)/com.wechat-cc.daemon`。
 6. **health** —— 等 `~/.claude/channels/wechat/internal-api-info.json` 的 mtime 晚于 kickstart 时刻,再用 **file token** `GET /v1/health` 拿 200。`version.cli` 跟 preflight 那个版本串**对不上只记一条 detail 警告,不判失败**(daemon 报的构建元信息跟 sidecar 的 `--version` 串本来就可能不同形)。回滚那一次的健康门比对的是**旧版本**(backup 那步顺手探到的 `<sidecar> --version`),所以回滚成功不会冒出一条假的 version mismatch。
+
+另外两步(2026-09-30,见下「内置插件」):重启之前 **plugins_source**(登记插件来源,永不致命);健康 200 之后 **plugins**(daemon 报了 `health.plugins` 才有这一步:先等它从 `null` 变成对象;「该在的」= 登记来源时记下的插件名 ∪ `plugins.json` 明确开着的 − 明确关掉的,其中有没被发现的,或登记的来源里已经一个插件都没有 ⇒ 红,走回滚;`--allow-missing-plugins` 放行)。
 
 健康门不过 ⇒ 自动回滚(同样 copy+rename 换 inode)+ 再 kickstart + 再等健康;无论回滚成不成,都会打印 `launchctl print` 里的 `last exit reason` / `runs` 和 `launchd.err.log` 尾 40 行。退出码:成功 0,失败(已回滚)1,回滚也失败 3,平台不对 2。
 
@@ -91,3 +93,31 @@ LaunchAgent 的 `ProgramArguments[0]` 是 `…/wechat-cc.app/Contents/MacOS/wech
 主二进制 `--daemon` 只干一件事:把 sidecar 拉起来(`apps/desktop/src-tauri/src/daemon_mode.rs`)。claude / codex / agy / wxvault 都是它的后代,继承授权。来源与细节见 `src/lib/runtime-info.ts` 里 `appMainBinaryPath` 上面那段注释。
 
 改 plist 之前先读那段注释;把它改回指 sidecar 会让主人每次部署都重新授权,并且间歇性掉 TCC 权限。
+
+## 中继壳页 `relay/pset.html` 是生成物(2026-09-29)
+
+它由 `relay/pset.src.html` + 协议包的 IIFE 生成:改源文件后跑 `bun run build:mobile`,不要手改。它**不随 daemon 发布**,合并后仍要手动拷到 VPS 静态目录,步骤与哈希核对见 [relay/README.md](../../relay/README.md) 的「壳页 pset」。手机协议 v2 这一轮没有改中继代码(`relay/*.ts`),中继本体不用重新部署。
+
+## 内置插件:不随包,靠登记的来源(2026-09-30)
+
+wxvault / wxsearch / wxmedia / wxperson / wxfacts / wxgraph 这些一等插件**按设计不进安装包**(1747de09:目录通配曾把 wxvault 软链后面 105MB 解密私人微信库打进安装包;解密代码也有法律风险)。`build-sidecar` 的资源断言守着这条,每次构建也会打一行「内置插件不随包」。**也不要把插件拷进 `.app`**:wxvault 目录里有 `keys.jsonl` 和 `out/decrypted/`,整包重封还会把几百 MB 的模型缓存一起哈希。
+
+打包版 daemon 找插件的顺序(`src/daemon/plugins/paths.ts`,只认真有 `<name>/wechat-cc.plugin.json` 的目录,只有 README 的空壳不算):
+
+1. `WECHAT_CC_BUNDLED_PLUGINS_DIR`(plist 里显式给的 / app 传的);
+2. **状态目录里登记的来源** `~/.claude/channels/wechat/plugins/bundled-source.json`;
+3. `.app` 自己:`<MacOS>/plugins`、`Resources/plugins`、`Resources/_up_/_up_/_up_/plugins`;源码模式是 `<repo>/plugins`。
+
+登记来源两种办法,都写在状态目录里(换 sidecar、重打 .app 都不丢):
+
+```bash
+wechat-cc plugin source ~/Documents/tendhearth/wechat-cc/plugins   # 手动;不带参数 = 查看当前解析结果
+bun cli.ts self deploy                                             # 源码模式部署时自动登记:本 checkout 的 plugins/,
+                                                                   # 没有就取主 checkout 的(git common dir 的上一级)
+```
+
+插件本身是主 checkout `plugins/` 下的本机软链(gitignore),指向 `~/Documents/tendhearth/wxvault`、`~/Documents/tendhearth/wechat-cc-plugins/packages/*`;新机器照 `plugins/README.md` 自己建。daemon 要能读 `~/Documents`(health 的 `fs_access`)。
+
+**信任口径**:登记的来源按「内置」算,默认开 —— 那个文件夹里新放进去的东西下次启动就会跑,不用 `plugin enable`。只登记自己掌控的目录;第三方插件放用户目录(默认关)。`/v1/health` 是 guest 档:admin 以下只看得到 `plugins` 的计数和缺了哪些名字,路径和 not-ready 原因只给 admin。
+
+**09-11 → 09-30 事故**:LaunchAgent 从 `bun cli.ts`(主 checkout,`<repo>/plugins` 找得到)换成 `.app` 之后,打包版 daemon 一个插件都没加载,三周里只有客户回顾那行 `disabled` 作旁证。现在每次启动都打 `[BOOT] plugin: bundled plugins dir … (via …)` 或 `no bundled plugins dir found`,开着却丢了的插件打 `WARNING`,`/v1/health.plugins` 给出快照,部署健康门据此判红。

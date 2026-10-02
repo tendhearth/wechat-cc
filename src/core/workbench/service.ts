@@ -60,10 +60,10 @@ import { makeInputsDomain } from './service/inputs'
 import { makeLifecycleDomain } from './service/lifecycle'
 import { makeExecuteDomain } from './service/execute'
 import { makeEntryDomain } from './service/entry'
+import { makeQuotaHandoffDomain } from './service/quota-handoff'
 import type { ServiceActions, ServiceCtx } from './service/ctx'
 export type { CreateWechatTask, SendWechatArtifact, TaskWaitingFor } from './wechat-types'
 export type { InputMaterials, CreateTask, WorkbenchPhase, WorkbenchTaskView, EntryResult } from './service/types'
-
 
 export function makeWorkbenchService(opts: Options) {
   const { store } = opts
@@ -94,7 +94,7 @@ export function makeWorkbenchService(opts: Options) {
   const artifactsDomain=makeArtifactsDomain(ctx)
   const {collect,collectTurnArtifacts,captureCodeChanges}=artifactsDomain
   const executeDomain=makeExecuteDomain(ctx,{admission:admissionDomain,attachments:attachmentsDomain,quota:quotaDomain,view:viewDomain,native:nativeDomain,inputs:inputsDomain,lifecycle:lifecycleDomain,notices:noticesDomain,artifacts:artifactsDomain})
-  const entryDomain=makeEntryDomain(ctx,{execute:executeDomain,view:viewDomain,admission:admissionDomain,quota:quotaDomain})
+  const entryDomain=makeEntryDomain(ctx,{execute:executeDomain,view:viewDomain,admission:admissionDomain,quota:quotaDomain}),quotaHandoffDomain=makeQuotaHandoffDomain(ctx,{execute:executeDomain,quota:quotaDomain})
   store.recover()
   store.liveInputs.recover()
 
@@ -112,8 +112,8 @@ export function makeWorkbenchService(opts: Options) {
     setNotificationWake:noticesDomain.setNotificationWake,
     providerQuota:quotaDomain.providerQuota,
     quotaExhausted:quotaDomain.quotaExhausted,
-    /** 额度耗尽时"交给谁继续"的默认人选;null = 没有可接的。 */
-    fallbackExecutor(exhaustedId:string):string|null{return fallbackExecutor(exhaustedId)},
+    /** 额度耗尽时"交给谁继续"的默认人选;null = 没有可接的。quotaHandoff / handOff:手机确认卡把一件事交出去(service/quota-handoff.ts)。 */
+    fallbackExecutor(exhaustedId:string):string|null{return fallbackExecutor(exhaustedId)},...quotaHandoffDomain.api,
     contextAvailable:noticesDomain.contextAvailable,
     notificationEligible:noticesDomain.notificationEligible,
     setWechatWatch:noticesDomain.setWechatWatch,
@@ -126,15 +126,7 @@ export function makeWorkbenchService(opts: Options) {
     resolveAnswer:inputsDomain.resolveAnswer,
     withdrawInput:inputsDomain.withdrawInput,
     submitInput:inputsDomain.submitInput,
-    previewHandoff:nativeDomain.previewHandoff,
-    handoff:nativeDomain.handoff,
-    handoffRecord:nativeDomain.handoffRecord,
-    conflictsExternal:nativeDomain.conflictsExternal,
-    importNativeHistory:nativeDomain.importNativeHistory,
-    prepareNativeResume:nativeDomain.prepareNativeResume,
-    continueNativeTask:nativeDomain.continueNativeTask,
-    listNativeHistory:nativeDomain.listNativeHistory,
-    readNativeHistory:nativeDomain.readNativeHistory,
+    ...nativeDomain.api,
     addProject:viewDomain.addProject,
     list:viewDomain.list,
     modelCatalog:admissionDomain.modelCatalog,
@@ -160,7 +152,7 @@ export function makeWorkbenchService(opts: Options) {
     resolvePermission:inputsDomain.resolvePermission,
     async handleWechat(chatId:string,text:string,identity?:WechatMessageIdentity):Promise<WechatWorkbenchReply|null>{return wechatControl(chatId,text,identity)},
     shutdown:lifecycleDomain.shutdown,
-    changes: {
+    changes: { onChange: (cb: (taskId: string, seq: number) => void) => changes.onChange(cb),
       /** store.version 才是权威:hub 缓存可能因为一笔回滚的事务而"幻影提前",落库的 seq 从不会。
        * 提前发现(persisted>since)时也顺手 publish 一下,把挂在旧值上的 waiter 一并叫醒,
        * 不用等它们各自超时。 */
