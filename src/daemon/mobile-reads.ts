@@ -9,6 +9,7 @@ import type { NativeHistoryItem, NativeHistoryListInput, NativeHistoryPage, Nati
  * 手机口径永远没有插件目录与未就绪原因(设备/链接令牌本身也是 admin 档)。
  */
 export const PHONE_SESSIONS_BUDGET_MS = 10_000
+export const PHONE_SESSION_RECENT_BUDGET_MS = 8_000
 export const PHONE_SESSIONS_PAGE = 30
 export const PHONE_SESSION_PAGE = 20
 export const PHONE_SESSION_TEXT_MAX = 4000
@@ -17,6 +18,7 @@ export const SESSIONS_DONE_MAX = 64
 export interface MobileSessionsDeps {
   list(provider: 'claude' | 'codex', input: NativeHistoryListInput): Promise<NativeHistoryPage>
   read(key: string, input: NativeHistoryReadInput): Promise<NativeHistoryPreview>
+  readRecent?(key: string, input: { limit: number }): Promise<NativeHistoryPreview>
 }
 export interface MobileReadsDeps { connections?: () => ConnectionsSnapshot; sessions?: MobileSessionsDeps }
 const json = (body: object, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
@@ -79,6 +81,7 @@ export function cacheSessions(inner: MobileSessionsDeps, o: { ttlMs?: number; ma
   return {
     list: (provider, input) => run(JSON.stringify(['l', provider, input.q, input.limit, input.cursor ?? null, input.cwd ?? null]), () => inner.list(provider, input)),
     read: (key, input) => run(JSON.stringify(['r', key, input.limit, input.cursor ?? null]), () => inner.read(key, input)),
+    ...(inner.readRecent ? { readRecent: (key: string, input: { limit: number }) => run(JSON.stringify(['recent', key, input.limit]), () => inner.readRecent!(key, input)) } : {}),
   }
 }
 
@@ -93,22 +96,23 @@ export async function mobileReadsRoute(deps: MobileReadsDeps, url: URL, req: Req
   if (url.pathname === '/m/api/sessions') {
     if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
     if (!deps.sessions) return json({ ok: false, error: 'sessions_not_wired' }, 503)
-    const provider = url.searchParams.get('provider'), cursor = cursorOf(url)
-    if ((provider !== 'claude' && provider !== 'codex') || url.searchParams.getAll('provider').length !== 1 || cursor === null) return json({ ok: false, error: 'invalid' }, 400)
+    const provider = url.searchParams.get('provider'), cursor = cursorOf(url), queries = url.searchParams.getAll('q'), query = queries[0] ?? ''
+    if ((provider !== 'claude' && provider !== 'codex') || url.searchParams.getAll('provider').length !== 1 || cursor === null || queries.length > 1 || query.length > 200 || query.includes('\0')) return json({ ok: false, error: 'invalid' }, 400)
     try {
-      const page = await withBudget(deps.sessions.list(provider, { q: '', limit: PHONE_SESSIONS_PAGE, ...(cursor ? { cursor } : {}) }), opts.budgetMs ?? PHONE_SESSIONS_BUDGET_MS)
+      const page = await withBudget(deps.sessions.list(provider, { q: query.trim(), limit: PHONE_SESSIONS_PAGE, ...(cursor ? { cursor } : {}) }), opts.budgetMs ?? PHONE_SESSIONS_BUDGET_MS)
       return fitted(max => ({ ok: true, items: page.items.map(i => row(i, max)), nextCursor: page.nextCursor }), 200)
     } catch (e) { return sessionError(e) }
   }
   if (url.pathname === '/m/api/session') {
     if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405)
     if (!deps.sessions) return json({ ok: false, error: 'sessions_not_wired' }, 503)
-    const key = url.searchParams.get('key'), cursor = cursorOf(url)
-    if (!key || key.length > 2048 || url.searchParams.getAll('key').length !== 1 || cursor === null) return json({ ok: false, error: 'invalid' }, 400)
+    const key = url.searchParams.get('key'), cursor = cursorOf(url), windows = url.searchParams.getAll('window'), window = windows[0] ?? 'start'
+    if (!key || key.length > 2048 || url.searchParams.getAll('key').length !== 1 || cursor === null || windows.length > 1 || !['start', 'recent'].includes(window) || (window === 'recent' && cursor !== undefined)) return json({ ok: false, error: 'invalid' }, 400)
+    if (window === 'recent' && !deps.sessions.readRecent) return json({ ok: false, error: 'unavailable' }, 503)
     try {
-      const p = await withBudget(deps.sessions.read(key, { limit: PHONE_SESSION_PAGE, ...(cursor ? { cursor } : {}) }), opts.budgetMs ?? PHONE_SESSIONS_BUDGET_MS)
+      const p = await withBudget(window === 'recent' ? deps.sessions.readRecent!(key, { limit: PHONE_SESSION_PAGE }) : deps.sessions.read(key, { limit: PHONE_SESSION_PAGE, ...(cursor ? { cursor } : {}) }), Math.min(opts.budgetMs ?? PHONE_SESSIONS_BUDGET_MS, window === 'recent' ? PHONE_SESSION_RECENT_BUDGET_MS : PHONE_SESSIONS_BUDGET_MS))
       return fitted(max => ({
-        ok: true, session: row(p.session), nextCursor: p.nextCursor, managed: !!p.managedTaskId,
+        ok: true, session: row(p.session), nextCursor: p.nextCursor, managed: !!p.managedTaskId, window,
         messages: p.messages.map(m => ({ id: m.id, role: m.role, text: m.text.slice(0, max), truncated: m.truncated || m.text.length > max })),
       }), PHONE_SESSION_TEXT_MAX)
     } catch (e) { return sessionError(e) }
