@@ -21,7 +21,7 @@ export { makeProtocolClient } from './client'
 export {
   PhoneErrorResponse, PhonePlainError, DeviceRow, PHONE_SAY_MAX_CHARS, PHONE_ANSWER_MAX_JSON, PHONE_HTML_ROUTES, PHONE_API_SCHEMAS,
   Attachment, Matter, MatterBinding, MatterSession, MatterTaskView, MatterEvent, MatterInput,
-  ApprovalExplanation, ProgressSummary, MatterPermission, MatterQuestion, MatterArtifact, MatterDetail,
+  ApprovalExplanation, ProgressSummary, MatterPermission, MatterQuestion, MatterArtifact, MatterDetail, MatterSayResult,
   ProjectCatalogEntry, EntryOptions, WorkbenchExecutorCapabilities, WorkbenchTaskView, EntryReceipt, EntryResult,
   UploadState, MatterArtifactChunk, FeedEvent, Presence, HomeWork, PhoneChangesTurn,
   ChatMessage, ChatJob, ChatPage, CHAT_PAGE_MAX, CHAT_TEXT_MAX, ConnectionSource, Connections,

@@ -313,7 +313,7 @@ const PhoneStateSuccess = z.object({
 
 // ── 每条路由的响应形状(与 mobileMatterError 的 say 结果联合体）──────────
 
-const MatterSayResult = z.union([
+export const MatterSayResult = z.union([
   z.object({ kind: z.literal('task'), task: MatterTaskView, input: MatterInput.optional() }),
   z.object({ kind: z.literal('chat'), reply: z.string() }),
 ])
