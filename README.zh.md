@@ -24,28 +24,22 @@
 
 ## 这是什么
 
-对外产品名统一为 **Tendhearth CC**，角色与日常称呼为 **CC**。仓库、命令和已有技术标识继续保留 `wechat-cc`、`claude-channel-wechat` 及现有数据目录，避免影响安装、升级和历史数据。见[产品命名规范](docs/reference/product-naming.md)。
+**Tendhearth CC 是住在你自己电脑上的个人 AI，日常叫它 CC。** 跟它说话、交办事情，需要决定时再回来拍板。
 
-**Tendhearth CC 是住在你自己电脑上的个人 AI，日常叫它 CC。** 它陪你生活，也陪你做事，把 Claude Code、Codex 和已配置的 API 模型接到同一个桌面工作台；离开电脑后，可以从微信继续同一件事。
+- **此刻**：看看有什么需要你处理，CC 正在做什么。
+- **一起做**：交代要求、处理权限和问题、查看成果，继续同一件事。
+- **回忆**：收好过去的片段；陪伴记忆与工作任务上下文分开。
 
-**手机入口：** 原生 Expo app 在 [apps/app](apps/app/README.md)，浏览器/PWA 在 [apps/mobile](apps/mobile/README.md)。dev 已有演示模式与配对后的真连接；商店上架和真机通知验收分别记录，不能把开发分支的实现写成已经公开发布。
+任务保留各自的对话和成果，同目录的冲突任务排队。不同执行者的权限与接续能力见[工作台能力说明](docs/cc-workbench.md)。
 
-- **此刻**：看看 CC 正在做什么，留一点安静相处的空间。
-- **一起做**：交代任务、补充要求、处理权限和问题，查看完整对话与成果，不用来回打开多个 agent 窗口。
-- **回忆**：收好过去的片段、画作、日记和明信片。陪伴记忆与工作任务上下文分开。
+**手机入口：** [原生 Expo app](apps/app/README.md)和[浏览器/PWA](apps/mobile/README.md)。本页描述 dev；真机验收与手机公开发布另有交付状态。
 
-多个项目保留各自的任务、草稿、对话和成果；同目录的冲突任务排队。需要另一位执行者检查时，明确交接选定的上下文和成果版本，再把意见交回原任务。微信也能在已知项目里新建任务、补充要求、处理请求、订阅提醒和获取保存的成果。
-
-**当前边界：** Claude/Codex 走专用原生适配器；Cursor 经 `cursor-agent acp` 进工作台（命令过权限卡、工作区内的文件编辑不过）；agy 在桌面确认一次后按免审执行者进；API 任务执行者用于文字/图片材料与新的文本成果，工具范围更小。执行者边界表见 [docs/cc-workbench.md](docs/cc-workbench.md#执行者覆盖)。这里不承诺完整覆盖各家 CLI/App，也不把本机会话恢复称为跨电脑接管。
-
-> 以上描述的是 **dev 分支当前能力**，不是已经发布的新安装包。先看[工作台使用与能力边界](docs/cc-workbench.md)、[对标项目与原始来源](docs/research/2026-09-14-cc-agent-workbench-references.md)、[本批交付记录](docs/superpowers/reports/2026-09-14-cc-workbench-wrapup.md)。
-
-任务记录保存在本机；执行所需材料会发送给你选择的 AI 服务。本地保存不代表模型在本地运行。
+记录保存在本机；执行所需材料会发送给你配置的 AI 服务。命令仍叫 `wechat-cc`，包名仍为 `claude-channel-wechat`，见[产品命名规范](docs/reference/product-naming.md)。
 
 <p align="center">
-  <img alt="dashboard sessions detail — WeChat-replica chat in iPhone 17 Pro frame, with file + image + quote-reply" src="docs/screenshots/chat-detail.png" width="380">
+  <img alt="桌面会话详情，使用演示数据" src="docs/screenshots/chat-detail.png" width="380">
 </p>
-<p align="center"><sub>桌面 dashboard · 会话详情。每段微信 × Claude 对话回到 1:1 iPhone 复刻里看——文本、图片、文件、引用回复都在。<i>(示意图，非真实对话)</i></sub></p>
+<p align="center"><sub>桌面会话详情 · 演示数据</sub></p>
 
 ---
 
@@ -56,7 +50,7 @@
 | 适合谁 | 任何人，包括非技术 | 你 OK 装 bun + git |
 | 拿到什么 | 4 步向导（环境检查 → 选 agent → 扫码 → 装服务）+ dashboard：绑定账号 / 记忆 / 会话 / 日志 / 一键升级 | 同样的 daemon，没有 GUI |
 | 怎么走 | 从 [最新 release](https://github.com/tendhearth/wechat-cc/releases/latest) 下 bundle | `git clone` + `bun install` + `wechat-cc setup` |
-| 注意点 | bundle 没签名（Apple Dev ID + Windows EV 证书未配齐）—— 第一次开需要绕一次 OS 警告。Intel Mac 暂不支持（仅 Apple Silicon）。桌面 app 是个壳，调底层的 source-mode CLI，所以源码也得装一份（或设 `WECHAT_CC_ROOT`）| Bun 跑得起来的地方都行 |
+| 运行环境 | 核心运行环境已内置，无需另装 Bun 或克隆源码。macOS 支持 Apple Silicon，1.7.1 已签名、公证；所选外部执行者仍需安装和授权 | 安装 Bun、Git 与所选外部执行者 |
 
 大多数人：抓桌面 bundle。下面是终端路径。
 
@@ -141,19 +135,9 @@ cd ~/.local/share/wechat-cc && bun install
 
 ## 它怎么工作
 
-```
-[你的手机]                       [你的电脑]
-   微信 ──────────► ilink ──► wechat-cc daemon ──► Claude Agent SDK ──► Claude
-       │            (long-poll)        │                                    │
-       ▼                                ▼                                    │
-   share_page ◄── cloudflared ◄── Bun.serve(本地) ◄────── reply 工具 ◄──────┘
-```
+桌面、微信与手机连接你电脑上的常驻后台。后台保存记忆和任务记录，再调用你配置的对话后端或任务执行者。
 
-- **接收**：每账号 long-poll `POST /ilink/bot/getupdates`
-- **发送**：`POST /ilink/bot/sendmessage`，要用户的 `context_token`（对方必须先发过消息）
-- **驱动**：`@anthropic-ai/claude-agent-sdk` 0.2.116 锁定。daemon 自己管 claude 子进程，不再注册成 Claude Code MCP channel
-- **状态**：全部在 `~/.claude/channels/wechat/`（见 [运行时目录](#运行时目录)）
-- **Companion**：三个 scheduler（push / introspect / ingest），不同节奏；introspect / 摘要走隔离 SDK eval，prompt 风格不污染项目对话
+实现细节见[系统架构](docs/architecture.md)、[模型与后端](docs/reference/model-management.md)和[内部 API 鉴权](docs/reference/internal-api-auth.md)。
 
 ---
 
@@ -205,35 +189,9 @@ wechat-cc update --check     # 仅探测，无副作用
 
 ## 运行时目录
 
-```
-~/.claude/channels/wechat/
-├── access.json            # 白名单
-├── context_tokens.json    # ilink context tokens (一 chat 一条)
-├── user_names.json        # chat_id → 显示名
-├── sessions.json          # 项目别名 → { session_id, last_used_at, summary? }
-├── session-state.json     # bot 健康 (errcode 跟踪)
-├── channel.log            # 滚动日志 (10MB rotate)
-├── server.pid             # 单实例锁
-├── docs/                  # share_page 内容 (7 天 TTL)
-├── bin/cloudflared        # 自动下载 (Windows 是 .exe)
-├── inbox/                 # 收到的媒体 (30 天 TTL)
-├── accounts/<bot_id>/     # 每账号凭据
-├── companion/
-│   └── config.json        # enabled / snooze / default_chat_id / last_introspect_at
-└── memory/<chat_id>/      # per-chat 内容
-    ├── profile.md         # 用户面的 markdown，可编辑
-    ├── observations.jsonl # Claude 最近观察 (TTL 30 天)
-    ├── milestones.jsonl   # 100 条 / 连续聊 等 (永久 + id 去重)
-    ├── events.jsonl       # cron 决策 (push/skip/failed/observation/milestone)
-    └── activity.jsonl     # 每日 UTC date + 消息计数 (streak detector 用)
-```
-
-所有状态都在 `~/.claude/`，不进 repo。
+状态默认保存在 `~/.claude/channels/wechat/`，不写入源码仓库。配置、凭据、日志与记忆的逐文件说明见[运行时目录](docs/reference/state-layout.md)。
 
 ---
-
-
-逐个文件的地图:**[docs/reference/state-layout.md](docs/reference/state-layout.md)**(英文)。
 
 ## 访问控制
 
@@ -266,55 +224,25 @@ chat)收到带 6 位码的通知,回码即批准/拒绝;或主动发「邀请码
 
 ## Demo 数据（截图 / 第一印象用）
 
-新装一片空——记忆 0 / 观察 0。要预览 dashboard 完整形态：
-
-```bash
-wechat-cc demo seed                   # 3 条观察 + 1 个里程碑 + 5 条事件
-wechat-cc demo unseed                 # 撤销
-wechat-cc demo seed --chat-id <id>    # 指定 chat 而非默认
-```
-
-稳定 id 前缀（`obs_demo_*` / `ms_demo_*`）保证 unseed 干净。
+用 `wechat-cc demo seed` 填入演示记录，`wechat-cc demo unseed` 撤销。指定对话与其他选项见[演示数据说明](docs/reference/demo-data.md)。
 
 ---
-
-
-**[docs/reference/demo-data.md](docs/reference/demo-data.md)**(英文)。
 
 ## 已知限制
 
 - **首次联系** —— 对方没先发过消息，你联系不了（ilink 需要他的 `context_token`）
 - **不支持群聊** —— ilink 1:1 only
 - **macOS Intel 桌面 bundle** —— 暂不提供。走终端路径
-- **桌面 bundle 未签名** —— 第一次开需要绕一次 Gatekeeper / SmartScreen
+- **安装安全提示** —— macOS 1.7.1 已签名、公证；Windows 首次启动仍可能出现 SmartScreen。见[发布记录](https://github.com/tendhearth/wechat-cc/releases/tag/desktop-v1.7.1)。
 - **daemon 重启后对话不续** —— 微信记录在你手机上，但 Claude 不会重放它。per-project session resume 让**当前**会话保持温的，不会重建之前的
 
 ---
 
 ## 常见问题
 
-**`bun` / `git` / `wechat-cc` 找不到**
-重开终端。`bun link` 或新装 Bun / Git 后，PATH 在当前 shell 不会自动刷新。
-
-**Windows 上读日志中文乱码**
-PowerShell 默认 ANSI（GBK）读文件。用：
-```powershell
-Get-Content "$env:USERPROFILE\.claude\channels\wechat\channel.log" -Tail 60 -Encoding UTF8
-```
-
-**首次 `share_page` 弹防火墙**
-v1.0 已修，`docs.ts` 绑 `127.0.0.1`。旧版本 `wechat-cc update` 升级后解决。
-
-**`wechat-cc update` 报 "git not found"**
-`update` 会 `git pull`，确认 Git 在 PATH。Windows: `winget install Git.Git`，重开终端。
-
-**Bot 不回了 (errcode=-14)**
-微信里跑 `/health` (admin)。过期 bot 列在那里，回 `清理 <bot-id>` 移除。重新扫码绑新 session。
+安装后找不到命令、Windows 日志乱码、升级失败或 bot 不回复时，按[排障指南](docs/reference/troubleshooting.md)处理。维护者的部署、自检和 CI 流程见[维护者手册](docs/maintainer/README.md)。
 
 ---
-
-
-每条对应的修法:**[docs/reference/troubleshooting.md](docs/reference/troubleshooting.md)**(英文)。维护者那一侧的回路(部署 / 自检 / CI)见 [docs/maintainer/README.md](docs/maintainer/README.md)。
 
 ## 卸载
 
@@ -336,10 +264,7 @@ Remove-Item "$env:USERPROFILE\.claude\channels\wechat" -Recurse -Force
 
 ## 用例
 
-- **出门有长任务在跑** —— 电脑上启 deploy / 重构，锁屏出门，从手机继续推
-- **把 Claude 写的 plan 转给老板** —— `share_page` 给的 URL + Approve 按钮，非技术人不用读对话
-- **多人协作** —— `access.json.allowFrom[]` 共享 bot，每人的消息都路由到你这一个 Claude
-- **会记得你的 Claude** —— Companion + 记忆 pane 慢慢长出一份关于你的小画像。你能读它，纠正它，archive 不想被记住的事
+出门后继续电脑上的任务、从手机查看成果，或请 CC 回忆对话里的事情。完整场景见[功能说明](docs/reference/features.md)。
 
 ---
 
