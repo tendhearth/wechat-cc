@@ -13,7 +13,8 @@ export { createWorkbenchDraftStore } from './workbench-window-state.js'
 import { mountHandoffDialog, mountHandoffRecord, defaultReviewArtifacts } from './workbench-handoff.js'
 import { mountHistoryDialog } from './workbench-history.js'
 import { isAckRequiredError, isUnattendedProvider, mountUnattendedDialog, unattendedLabelSuffix } from './workbench-unattended.js'
-import { Marked } from '../vendor/marked.js'
+import { escapeWorkbenchHtml, renderWorkbenchMarkdown } from './workbench-markdown.js'
+export { escapeWorkbenchHtml, renderWorkbenchMarkdown } from './workbench-markdown.js'
 import { WORKBENCH_CODE_REVIEW_MIME, createReviewDiffBudget, renderReviewFileDiff, renderWorkbenchCodeReview } from './workbench-code-review.js'
 import { renderReviewPanel, reviewsSignature } from './workbench-review-panel.js'
 /** @typedef {import('../../../../src/core/workbench/review').ReviewTurn} ReviewTurn */
@@ -79,32 +80,6 @@ const appendHandoverText = (existing, incoming) => !incoming ? existing : existi
 const pageDrafts = createWorkbenchDraftStore(windowStorage)
 /** @type {Map<string,import('./workbench-interaction.js').InputAttempt>} */
 const pageInputAttempts = new Map()
-
-/** @param {unknown} value */
-export function escapeWorkbenchHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c)
-}
-
-/** @type {import('marked').RendererObject} */
-const workbenchRenderer = {
-  html({ text }) { return escapeWorkbenchHtml(text) },
-  link({ href, title, tokens }) {
-    const label = this.parser.parseInline(tokens)
-    try {
-      const url = new URL(href)
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') return label
-      return `<a href="${escapeWorkbenchHtml(url.href)}"${title ? ` title="${escapeWorkbenchHtml(title)}"` : ''} target="_blank" rel="noopener noreferrer">${label}</a>`
-    } catch { return label }
-  },
-  image({ text }) { return `<span class="wb-markdown-image">${escapeWorkbenchHtml(text || '图片')}</span>` },
-}
-
-const workbenchMarkdown = new Marked({ gfm: true, breaks: true, renderer: workbenchRenderer })
-
-/** @param {string} value */
-export function renderWorkbenchMarkdown(value) {
-  return /** @type {string} */ (workbenchMarkdown.parse(String(value ?? '')))
-}
 
 /** @param {string} name @param {string} mime @param {string} text */
 export function renderWorkbenchArtifactText(name, mime, text) {

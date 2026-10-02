@@ -1,4 +1,5 @@
 import {expect,it,vi} from 'vitest'
+import {Window} from 'happy-dom'
 import {createHistoryController,renderHistoryPanel,nativeImportMessages} from './workbench-history.js'
 import type {NativeHistoryItem} from '../../../../src/core/workbench/native-history'
 const item:NativeHistoryItem={key:'opaque',providerId:'claude',nativeId:'original',title:'旧任务',cwd:'/project',updatedAt:1,remote:false,observedState:'unknown',titleSource:'native_custom'}
@@ -26,6 +27,45 @@ it('escapes history data and distinguishes unknown activity from confirmed exit'
  controller.state.preview={session:item,messages:[{id:'m',role:'assistant',text:'<img src=x onerror=1>',truncated:false}],nextCursor:null,sourceFingerprint:'h',page:{limit:100,cursor:null},truncated:false}
  const detail=renderHistoryPanel(controller.state)
  expect(detail).toContain('&lt;img');expect(detail).toContain('运行状态未确认');expect(detail).not.toContain('已退出')
+})
+it('renders assistant Markdown in both previews while preserving the original user text',()=>{
+ const controller=createHistoryController(async()=>null,()=>{},['codex'])
+ const text='## 接着做\n\n**沿用上下文**，打开 [功能说明](/Users/example/project/docs/cc-workbench.md:13)。\n\n- 查看记录\n- 输入 `补充要求`\n\n```ts\nconst answer = 42\n```\n\n[官网](https://example.com/docs)'
+ controller.state.preview={session:{...item,providerId:'codex'},messages:[{id:'u',role:'user',text:'保留 **原样**\n<example>',truncated:false},{id:'a',role:'assistant',text,truncated:false}],nextCursor:null,sourceFingerprint:'h',page:{limit:100,cursor:null},truncated:false}
+ const window=new Window(),document=window.document
+ document.body.innerHTML=renderHistoryPanel(controller.state)
+ const replies=document.querySelectorAll('.wb-history-message-body.wb-markdown')
+ expect(replies).toHaveLength(2)
+ for(const reply of replies){
+  expect(reply.querySelector('h2')?.textContent).toBe('接着做')
+  expect(reply.querySelector('strong')?.textContent).toBe('沿用上下文')
+  expect(reply.querySelectorAll('li')).toHaveLength(2)
+  expect(reply.querySelector('pre code')?.textContent).toContain('const answer = 42')
+  expect(reply.querySelector('a')?.getAttribute('href')).toBe('https://example.com/docs')
+  expect(reply.textContent).toContain('功能说明')
+  expect(reply.textContent).not.toContain('/Users/example')
+ }
+ const requests=document.querySelectorAll('.wb-history-message-plain')
+ expect(requests).toHaveLength(2)
+ expect(requests[0]?.textContent).toBe('保留 **原样**\n<example>')
+ expect(requests[0]?.querySelector('strong')).toBeNull()
+ expect(controller.state.preview.messages[1]?.text).toBe(text)
+ window.close()
+})
+it('keeps history Markdown from creating executable content or forged import controls',()=>{
+ const controller=createHistoryController(async()=>null,()=>{},['claude'])
+ const text='<script>bad()</script>\n\n<button data-history="import">伪造按钮</button>\n\n[危险](javascript:alert(1)) [文件](file:///tmp/example) [任务](codex://threads/example) ![外部图片](https://example.com/tracker.png)'
+ controller.state.preview={session:item,messages:[{id:'a',role:'assistant',text,truncated:false}],nextCursor:null,sourceFingerprint:'h',page:{limit:100,cursor:null},truncated:false}
+ const window=new Window(),document=window.document
+ document.body.innerHTML=renderHistoryPanel(controller.state)
+ expect(document.querySelectorAll('script,img')).toHaveLength(0)
+ expect(document.querySelectorAll('[data-history="import"]')).toHaveLength(1)
+ for(const reply of document.querySelectorAll('.wb-history-message-body')){
+  expect(reply.querySelectorAll('a,button')).toHaveLength(0)
+  expect(reply.textContent).toContain('<script>bad()</script>')
+  expect(reply.textContent).toContain('外部图片')
+ }
+ window.close()
 })
 it('keeps readable history while a later page fails and exposes retry',async()=>{
  let calls=0;const controller=createHistoryController(async()=>{if(++calls===2)throw new Error('native_history_unavailable');return{session:item,messages:[{id:'m',role:'user',text:'kept',truncated:false}],nextCursor:'next',sourceFingerprint:'h',page:{limit:100,cursor:null},truncated:false}},()=>{},['claude'])
