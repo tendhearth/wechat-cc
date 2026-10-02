@@ -43,7 +43,8 @@ export function makeMatterActivity(d: {
     note(id) {
       if (disposed || timers.has(id)) return
       const prev = last.get(id)
-      const since = prev === undefined ? Infinity : now() - prev
+      // 时钟回拨(系统改时间)⇒ now() - prev 是负数;夹到 0,trailing 至多等 min,不按回拨的量等上几个小时。
+      const since = prev === undefined ? Infinity : Math.max(0, now() - prev)
       if (since >= min) {
         last.set(id, now())          // 先占位:同一拍里后面的 note 走 trailing,不再排第二次 defer
         defer(() => write(id))
@@ -57,6 +58,22 @@ export function makeMatterActivity(d: {
       for (const h of timers.values()) clearTimer(h)
       timers.clear()
     },
+  }
+}
+
+/**
+ * 接线:工作台事件 ⇒ note;返回的 stop 退订 + dispose,由 main.ts 登记进 shutdown 的 LifecycleSet。可重复调用。
+ */
+export function wireMatterActivity(
+  activity: MatterActivity | null,
+  changes: { onChange(cb: (taskId: string) => void): () => void } | undefined,
+): () => void {
+  const off = activity && changes ? changes.onChange(id => activity.note(id)) : null
+  let stopped = false
+  return () => {
+    if (stopped) return
+    stopped = true
+    try { off?.() } finally { activity?.dispose() }
   }
 }
 
