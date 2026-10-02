@@ -20,7 +20,8 @@ import { renderReviewPanel, reviewsSignature } from './workbench-review-panel.js
 /** @typedef {import('../../../../src/core/workbench/review').ReviewTurn} ReviewTurn */
 import { createWorkbenchInteractions, captureWorkbenchQuestionDrafts, syncWorkbenchQuestionChoice, renderWorkbenchQuestions, renderWorkbenchInputs } from './workbench-interaction.js'
 import { renderWorkbenchTimeline, workbenchTimelineEventId, renderWorkbenchOperation, captureWorkbenchTimelineAnchor, restoreWorkbenchTimelineAnchor } from './workbench-timeline.js'
-import { mergeEvents, structuralSignature, patchLiveTimeline, createLongPoll } from './workbench-live.js'
+import { mergeEvents, structuralSignature, patchLiveTimeline, createLongPoll, clearLiveTimelinePatches, hasLiveTimelineInteraction } from './workbench-live.js'
+import {permissionControlId,capturePermissionFocus,restorePermissionFocus} from './workbench-permission-focus.js'
 
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed',holderWriting?:boolean,closeInMs?:number|null}} WaitingFor */
 /** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot}} Task */
@@ -283,7 +284,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
   }).join('')}</details>`:''
   const dialogueHtml = events.length ? renderWorkbenchTimeline(events, { status:detail?.task.status ?? '', runId:detail?.runId, runtime:detail?.runtime, renderMessage, escapeHtml:escapeWorkbenchHtml, formatTime:time })
     : `<p class="wb-empty-copy">${detail?.task.status === 'running' ? `${escapeWorkbenchHtml(helper)} 正在处理，有回复时会按顺序显示在这里。` : detail?.task.status === 'queued' ? queuedCopy : '这项任务还没有对话记录。'}</p>`
-  const permissionHtml = permissions.length ? `<section class="wb-permissions" aria-label="等待处理的权限请求"><header><h3>需要你的决定</h3><span>${permissions.length} 项</span></header>${permissions.map(permission => `<article class="wb-permission"><div><span class="wb-permission-tool">${escapeWorkbenchHtml(permission.tool)}</span><p>${escapeWorkbenchHtml(permission.description)}</p><time>${escapeWorkbenchHtml(time(permission.createdAt))}</time></div><div class="wb-permission-actions"><button class="wb-btn" type="button" data-action="deny-permission" data-request-id="${escapeWorkbenchHtml(permission.id)}">拒绝</button><button class="wb-btn wb-btn-primary" type="button" data-action="allow-permission" data-request-id="${escapeWorkbenchHtml(permission.id)}">允许</button></div></article>`).join('')}</section>` : ''
+  const permissionHtml = permissions.length ? `<section class="wb-permissions" aria-label="等待处理的权限请求"><header><h3>需要你的决定</h3><span>${permissions.length} 项</span></header>${permissions.map(permission => `<article class="wb-permission"><div><span class="wb-permission-tool">${escapeWorkbenchHtml(permission.tool)}</span><p>${escapeWorkbenchHtml(permission.description)}</p><time>${escapeWorkbenchHtml(time(permission.createdAt))}</time></div><div class="wb-permission-actions">${['deny-permission','allow-permission'].map(action=>`<button id="${permissionControlId(permission.taskId,permission.id,action)}" class="wb-btn${action==='allow-permission'?' wb-btn-primary':''}" type="button" data-action="${action}" data-owner-task="${escapeWorkbenchHtml(permission.taskId)}" data-request-id="${escapeWorkbenchHtml(permission.id)}">${action==='allow-permission'?'允许':'拒绝'}</button>`).join('')}</div></article>`).join('')}</section>` : ''
   const artifacts = detail?.artifacts?.length ? detail.artifacts.map(artifact => `<button type="button" class="wb-artifact ${artifact.id === state.selectedArtifactId ? 'is-selected' : ''}" data-artifact-id="${escapeWorkbenchHtml(artifact.id)}"><span>${escapeWorkbenchHtml(artifact.name)}</span><small>${escapeWorkbenchHtml((artifact.size / 1024).toFixed(1))} KB · ${artifact.approvedAt ? '已确认' : '待确认'}</small></button>`).join('') : ''
   const previewContent = selectedArtifact && state.preview?.artifactId === selectedArtifact.id ? state.preview.html : '<p class="wb-preview-hint">选择文件，查看保存的成果版本。</p>'
   // 「改动」在「成果」之前:主人先看这一轮改了什么,再去翻保存下来的成果。
@@ -623,7 +624,7 @@ export function initWorkbenchPage(deps) {
   /** @type {Map<string,number>} */
   const resultReturnPositions = new Map()
   // 正在看 diff 也算在翻结果:这时候流进来的新行不该把视线拽走。
-  const browsingResults = () => !!root.querySelector('#wb-artifacts[open]') || !!root.querySelector('#wb-review[open]') || !!root.querySelector('[data-timeline-disclosure][open]') || resultReturnPositions.has(renderedScope)
+  const browsingResults = () => !!root.querySelector('#wb-artifacts[open]') || !!root.querySelector('#wb-review[open]') || !!root.querySelector('[data-timeline-disclosure][open]') || resultReturnPositions.has(renderedScope) || hasLiveTimelineInteraction(root)
   const scopeFor = (/** @type {WorkbenchState} */ state) => state.selectedId ? `task:${state.selectedId}` : state.newScope ?? 'new'
   const readingSignatureFor = (/** @type {WorkbenchState} */ state) => state.detail ? JSON.stringify([state.detail.task.status, state.detail.task.error, state.detail.events, state.detail.artifacts.map(a => [a.id, a.sha256])]) : ''
   const permissionSignatureFor = (/** @type {WorkbenchState} */ state) => JSON.stringify((state.detail?.permissions ?? []).filter(permission => permission.taskId === state.detail?.task.id).map(permission => permission.id).sort())
@@ -688,7 +689,7 @@ export function initWorkbenchPage(deps) {
     if (current) {
       current.signature = readingSignatureFor(controller.state)
       current.following = following
-      current.unread = following ? false : current.unread || result.patched + result.appended > 0
+      current.unread = following ? false : current.unread || result.patched + result.appended + (result.deferred??0) > 0
     }
     if (following && content) content.scrollTop = content.scrollHeight
     thumbnails.mount(root)
@@ -708,6 +709,7 @@ export function initWorkbenchPage(deps) {
         if (renderedScope === taskScope && field?.value === acknowledged) field.value = ''
       }
     }
+    const permissionFocus=capturePermissionFocus(root)
     const activeField = document.activeElement instanceof Element && root.contains(document.activeElement) && 'value' in document.activeElement
       ? /** @type {HTMLInputElement|HTMLTextAreaElement|HTMLSelectElement} */ (document.activeElement)
       : null
@@ -791,7 +793,8 @@ export function initWorkbenchPage(deps) {
       summary?.focus({ preventScroll: true })
     }
     const nextFocus = focused && sameScope ? input(focused.id) : null
-    if (nextFocus) { nextFocus.focus({ preventScroll: true }); if (focused && focused.start !== null && focused.end !== null && 'setSelectionRange' in nextFocus) nextFocus.setSelectionRange(focused.start, focused.end) }
+    if(permissionFocus&&sameScope)restorePermissionFocus(root,permissionFocus)
+    else if (nextFocus) { nextFocus.focus({ preventScroll: true }); if (focused && focused.start !== null && focused.end !== null && 'setSelectionRange' in nextFocus) nextFocus.setSelectionRange(focused.start, focused.end) }
   } })
   /** @param {unknown} error */
   const recoveryCode = (/** @type {unknown} */ error) => String(error).match(/\brestart_confirmation_(required|stale)\b/)?.[1]
@@ -874,6 +877,9 @@ export function initWorkbenchPage(deps) {
   }
   /** @param {Event} event */
   const onClick = async event => {
+    // Capture before the summary's default toggle, including keyboard activation.
+    const summary=event.target instanceof Element?event.target.closest('#wb-artifacts > summary'):null
+    if(summary&&!summary.parentElement?.hasAttribute('open')&&!resultReturnPositions.has(renderedScope))resultReturnPositions.set(renderedScope,root.querySelector('.wb-content')?.scrollTop??0)
     const target = event.target instanceof Element ? event.target.closest('button') : null
     if (!target) return
     if (target.dataset.taskId) return openTask(target.dataset.taskId)
@@ -980,10 +986,16 @@ export function initWorkbenchPage(deps) {
     }
     if (action === 'back-to-dialogue') {
       const content = root.querySelector('.wb-content')
+      const returnPosition=resultReturnPositions.get(renderedScope)
+      root.querySelector('#wb-artifacts')?.removeAttribute('open')
       const results = /** @type {HTMLElement|null} */ (root.querySelector('[data-action="show-artifacts"]'))
       results?.focus({ preventScroll:true })
-      if (content) content.scrollTop = resultReturnPositions.get(renderedScope) ?? 0
+      if (content) content.scrollTop = returnPosition ?? 0
       resultReturnPositions.delete(renderedScope)
+      if(content)scrollPositions.set(renderedScope,content.scrollTop)
+      const current=reading.get(renderedScope)
+      if(current){current.following=atEnd(content)&&!browsingResults();if(current.following)current.unread=false}
+      showReadingNotice()
       return
     }
     if(action==='handoff-record'&&controller.state.selectedId&&target.dataset.handoffId){
@@ -1249,7 +1261,7 @@ export function initWorkbenchPage(deps) {
     if (event.target !== content || !content) return
     scrollPositions.set(renderedScope, content.scrollTop)
     const current = reading.get(renderedScope)
-    if (current && atEnd(content) && !browsingResults()) { current.unread = false; showReadingNotice() }
+    if(current){current.following=atEnd(content)&&!browsingResults();if(current.following){current.unread=false;showReadingNotice()}}
   }
   root.addEventListener('scroll', onScroll, true)
   const saveWindowState = () => {
@@ -1275,13 +1287,17 @@ export function initWorkbenchPage(deps) {
   const onPaste=(/** @type {ClipboardEvent} */ event)=>{if(!inComposer(event))return;const files=Array.from(event.clipboardData?.files??[]);if(files.length){event.preventDefault();addFiles(files)}}
   const onDrop=(/** @type {DragEvent} */ event)=>{if(!inComposer(event))return;event.preventDefault();addFiles(Array.from(event.dataTransfer?.files??[]))}
   const onDragOver=(/** @type {DragEvent} */ event)=>{if(inComposer(event)&&Array.from(event.dataTransfer?.types??[]).includes('Files'))event.preventDefault()}
-  const onToggle=(/** @type {Event} */event)=>{if(event.target instanceof Element&&['wb-options','wb-task-info'].includes(event.target.id))loadExecutionCatalog()}
+  const onToggle=(/** @type {Event} */event)=>{
+    if(!(event.target instanceof Element)||!root.contains(event.target))return
+    if(['wb-options','wb-task-info'].includes(event.target.id))loadExecutionCatalog()
+    if(event.target.id==='wb-artifacts'&&!event.target.hasAttribute('open'))resultReturnPositions.delete(renderedScope)
+  }
   root.addEventListener('toggle',onToggle,true)
   root.addEventListener('paste',onPaste);root.addEventListener('drop',onDrop);root.addEventListener('dragover',onDragOver)
   root.addEventListener('input', onInput)
   window.addEventListener?.('pagehide', saveWindowState)
   root.addEventListener('change', onChange)
-  root.addEventListener('click', onClick)
+  root.addEventListener('click', onClick, true)
   root.addEventListener('submit', onSubmit)
   controller.refresh().catch(fail)
   const timer = setInterval(() => {
@@ -1317,7 +1333,7 @@ export function initWorkbenchPage(deps) {
     resumeSearch = input('wb-search')?.value ?? searchDraft
     if (controller.state.selectedId) resumeScope = `task:${controller.state.selectedId}`
     else if (document.getElementById('wb-create-form')) resumeScope = scopeFor(controller.state)
-    thumbnails.destroy();recoveryPreviews.destroy();catalogs.destroy();root.removeEventListener('toggle',onToggle,true);handoffCleanup?.(); nativeHistoryCleanup?.();attachmentPreviewCleanup?.();root.removeEventListener('paste',onPaste);root.removeEventListener('drop',onDrop);root.removeEventListener('dragover',onDragOver); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', onInput); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
+    clearLiveTimelinePatches(root);thumbnails.destroy();recoveryPreviews.destroy();catalogs.destroy();root.removeEventListener('toggle',onToggle,true);handoffCleanup?.(); nativeHistoryCleanup?.();attachmentPreviewCleanup?.();root.removeEventListener('paste',onPaste);root.removeEventListener('drop',onDrop);root.removeEventListener('dragover',onDragOver); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', onInput); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick, true); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
   } }
   return controller
 }
