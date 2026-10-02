@@ -36,6 +36,7 @@
       "version": "1.0.0",
       "dependencies": {
         "@wechat-cc/design-tokens": "workspace:*",
+        "@wechat-cc/markdown": "workspace:*",
         "@wechat-cc/protocol": "workspace:*",
         "expo": "~57.0.26",
         "expo-camera": "~57.0.6",
