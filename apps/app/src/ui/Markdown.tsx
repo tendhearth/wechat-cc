@@ -25,6 +25,7 @@ function Inline({ tokens, typeRole, tone = 'ink' }: { tokens: Token[]; typeRole:
   return tokens.map((token, i) => {
     const nested = (nextTone = tone) => <Inline tokens={(token as { tokens?: Token[] }).tokens ?? []} typeRole={typeRole} tone={nextTone} />
     switch (token.type) {
+      case 'checkbox': return null // 列表行的标记已经展示状态,宽松列表的段内 token 不再重复。
       case 'strong':
         // 中文只有已打包的 Regular 家族,重点靠字色和轻底色表现,不会让字形回退。
         return <Txt key={i} role={typeRole} content="user" tone="accent" style={{ backgroundColor: c.rail }}>{nested('accent')}</Txt>

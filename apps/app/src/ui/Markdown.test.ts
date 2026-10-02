@@ -97,4 +97,15 @@ describe('native Markdown reader', () => {
     expect(html).toContain('子步骤')
     expect(html).not.toMatch(/\[x\]|\[ \]/)
   })
+
+  it('renders loose task-list state once when its checkbox token sits inside a paragraph', () => {
+    const html = render(createElement(Markdown, { text: '- [x] **done**\n\n  extra\n\n- [ ] pending' }))
+    expect(html.match(/☑/g)).toHaveLength(1)
+    expect(html.match(/☐/g)).toHaveLength(1)
+    expect(html).toContain('done')
+    expect(html).toContain('extra')
+    expect(html).toContain('pending')
+    expect(html).not.toMatch(/\[x\]|\[ \]|\*\*done\*\*/)
+    expect(native.textStyles).toContainEqual(expect.objectContaining({ color: palette.accent, backgroundColor: palette.rail }))
+  })
 })
