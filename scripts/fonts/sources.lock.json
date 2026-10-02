@@ -23,5 +23,17 @@
     "url": "https://raw.githubusercontent.com/vercel/geist-font/c40c1aec7e72b9ebdce65a4fccd03cb3950a359b/OFL.txt",
     "commit": "c40c1aec7e72b9ebdce65a4fccd03cb3950a359b",
     "sha256": "c683bfbcc7e087f5d37a54ef628f10387c451a83ddc459b151403a164ac46c90"
+  },
+  "tgscc": {
+    "what": "《通用规范汉字表》(国务院 2013)一级 3500 + 二级 3000 字,一行一字(level-1 后接 level-2);字表是国家标准,上游仓库只是转录",
+    "file": "scripts/fonts/tgscc-level-1-2.txt",
+    "urls": [
+      "https://raw.githubusercontent.com/shengdoushi/common-standard-chinese-characters-table/d9b599a9c9cc0dd2d58cad829e285bc780cd4451/level-1.txt",
+      "https://raw.githubusercontent.com/shengdoushi/common-standard-chinese-characters-table/d9b599a9c9cc0dd2d58cad829e285bc780cd4451/level-2.txt"
+    ],
+    "commit": "d9b599a9c9cc0dd2d58cad829e285bc780cd4451",
+    "level1Sha256": "79a6c710013cc86617d5db65871f59b2d67dee72415d380a2cc7145a51450fe4",
+    "level2Sha256": "d597a6e99ea7b8c41215081f824c6e8587bf1c9a3f45fb13086a826306789785",
+    "sha256": "9631d548834bca79f6db606483a92cc0bf6c2797bc95e5fe7d7d897e0f441dbf"
   }
 }
