@@ -53,6 +53,8 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'POST /m/api/matter/permission',
   'POST /m/api/matter/answer',
   'GET /m/api/matter/artifact',
+  // 额度用完 ⇒ 交给另一位执行者继续(spec 2026-10-01-tendhearth-continue-sessions §7-3,mobile-workbench.ts)
+  'POST /m/api/matter/handoff',
   // 推送(中继 v2,spec 2026-09-30 §5):登记 APNs / FCM token、发一条测试通知。只认设备令牌。
   'POST /m/api/push/register',
   'POST /m/api/push/test',

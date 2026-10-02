@@ -33,6 +33,8 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   let deviceLabel = ''
   // 接着做(演示):会话 key → 接成的那件事
   let adopted = new Map<string, string>()
+  // 交给另一位继续(演示):requestId → 新那件
+  let handedBy = new Map<string, string>()
   // 主人那条对话(与 daemon 一致:说一句收下即回,回复落地后经 matter/<CHAT_ID> 主题唤醒)
   let chatMsgs: ChatRec[] = []
   let chatPending: ChatJobT | null = null
@@ -82,6 +84,15 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     const nTitle = t(lastLang, 'notesTitle')
     add(mkDetail(mkMatter(IDS.notes, 'task', nTitle, 'replied', '~/Projects/notes', n - DAY),
       taskOf(IDS.notes, nTitle, '~/Projects/notes', 'replied', n - DAY)), 'replied', [], 'notesTitle')
+    // 额度用完的一件(spec continue-sessions §7-3):Claude Code 没做完,电脑说可以交给 Codex 继续
+    const rTitle = t(lastLang, 'reportTitle')
+    add(mkDetail(mkMatter(IDS.report, 'task', rTitle, 'done', '~/Projects/notes', n - 2 * HOUR),
+      { id: IDS.report, title: rTitle, status: 'failed', phase: 'failed', providerId: 'claude', path: '~/Projects/notes', error: 'provider_quota_exhausted', updatedAt: n - 2 * HOUR }, {
+        quotaHandoff: { state: 'offer', from: 'claude', to: 'codex', kind: 'quota', resetAt: n + 40 * 60_000 },
+      }), 'replied', [
+      { kind: 'tool_call', key: 'stepReport1', createdAt: n - 2 * HOUR - 60_000 },
+      { kind: 'error', key: 'evQuota', createdAt: n - 2 * HOUR },
+    ], 'reportTitle')
     // 主人和 CC 的那条对话:也是一件 chat matter(daemon 的 /m/api/matters 也会列它),内容走 chat()。
     add(mkDetail({ ...mkMatter(CHAT_ID, 'chat', t(lastLang, 'chatTitle'), 'open', null, n - HOUR), ownerChatId: 'demo-owner' }, null), 'replied', [], 'chatTitle')
     return { map, ids }
@@ -258,6 +269,28 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       entries.set(matterId, e); order.unshift(matterId); publish([matterId])
       return { matterId }
     },
+    async handoff({ id, requestId, providerId }) {
+      // 与 daemon 一致:同一 requestId ⇒ 同一件;已经交出去 ⇒ 回那一件;确认卡上的人不是此刻的接手人 ⇒ handoff_changed。
+      const dup = handedBy.get(requestId)
+      if (dup) return { matterId: dup }
+      const src = get(id), h = src.detail.quotaHandoff
+      if (h?.state === 'handed') return { matterId: h.matterId }
+      if (h?.state !== 'offer' || h.to !== providerId || !src.detail.task) throw new BackendError('handoff_changed')
+      const matterId = `demo${(++seq).toString(16).padStart(4, '0')}`
+      handedBy.set(requestId, matterId)
+      const ts = now(), task = src.detail.task
+      const e: Entry = {
+        stage: 'working', version: 1, seeded: false, titleKey: src.titleKey,
+        evs: [{ kind: 'user', key: 'handoffFirst', createdAt: ts }],
+        detail: mkDetail({ ...mkMatter(matterId, 'task', src.detail.matter.title, 'open', src.detail.matter.projectPath, ts), originMatterId: id },
+          { ...taskOf(matterId, task.title, task.path, 'working', ts), providerId: h.to }),
+      }
+      entries.set(matterId, e); order.unshift(matterId)
+      src.detail.quotaHandoff = { state: 'handed', from: h.from, to: h.to, matterId }
+      touch(src, {}); publish([id, matterId])
+      later(2000, () => { ev(e, 'text', 'handoffDone'); e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([matterId]) })
+      return { matterId }
+    },
     async decide({ id, requestId, decision }) {
       const e = get(id)
       if (!e.detail.permissions.some(p => p.id === requestId)) throw new BackendError('stale')
@@ -330,6 +363,6 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async unpair() {},
     setActive() {},
     dispose() {},
-    reset() { epoch++; seq = 0; createdBy = new Map(); saidBy = new Set(); adopted = new Map(); deviceLabel = ''; seed(); publish([...order]) },
+    reset() { epoch++; seq = 0; createdBy = new Map(); saidBy = new Set(); adopted = new Map(); handedBy = new Map(); deviceLabel = ''; seed(); publish([...order]) },
   }
 }
