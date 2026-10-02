@@ -4,6 +4,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useRef, useState } from 'react'
 import { BackHandler, Linking, Platform, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import { E2E_BUILD } from '../e2e-build'
 import { t, type MessageKey } from '../i18n'
 import { useLang } from '../i18n/useLang'
 import { parsePairLink, type ParsedLink } from '../net/link'
@@ -22,7 +23,7 @@ import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
 import { ccPresence } from '../view/presence'
-import { confirmCard, intakeIncomingLink, linkErrorKey, makeGate, pairErrorKey } from '../view/pair'
+import { confirmCard, intakeIncomingLink, linkErrorKey, makeGate, pairBackTarget, pairErrorKey } from '../view/pair'
 
 type Phase =
   | { k: 'intro' }
@@ -59,7 +60,7 @@ export default function Pair() {
   phaseRef.current = phase.k
   useEffect(() => {
     if (from !== 'link') return
-    const r = intakeIncomingLink(phaseRef.current, gate.busy(), { take: takePendingLink, readNative: getLinkingURL, clearNative: clearInitialURL, dev: __DEV__ })
+    const r = intakeIncomingLink(phaseRef.current, gate.busy(), { take: takePendingLink, readNative: getLinkingURL, clearNative: clearInitialURL, dev: __DEV__ || E2E_BUILD })
     if (r.k === 'confirm') setPhase({ k: 'confirm', link: r.link })
     else if (r.k === 'error') setPhase({ k: 'error', key: r.key })
   }, [from, n, gate])
@@ -97,7 +98,7 @@ export default function Pair() {
     if (gate.busy()) return
     if (phase.k === 'confirm' || phase.k === 'error') { setPhase({ k: 'intro' }); return }
     if (router.canGoBack()) router.back()
-    else router.replace('/welcome')
+    else router.replace(pairBackTarget(pairing !== null))
   }
 
   if (phase.k === 'scan') {

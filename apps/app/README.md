@@ -44,6 +44,42 @@ maestro test .maestro/           # 模拟器上跑演示流程(要先有 develop
 
 同时开着多台模拟器时加 `--device <UDID>`。流程只认 `testID` 和中英两份文案(正则 `中|英`),不依赖系统语言。
 
+### 真机全自动验收(scripts/device-e2e.ts,2026-10-01)
+
+USB 连着一台 iPhone、daemon 在跑并已连上中继 v2(`relay_v2_url`),一条命令跑完配对 → 跟 CC 说一句 → 真推送点开批准 → 撤销,没人碰屏幕:
+
+```bash
+bun run e2e:device                      # = bun scripts/device-e2e.ts;第一次会 prebuild + 构建(几分钟),之后增量
+bun scripts/device-e2e.ts --skip-build  # 包没变时只跑步骤
+bun scripts/device-e2e.ts --executor codex   # 批准那一步换执行者(默认 claude;cursor 额度用完时会直接报)
+bun scripts/device-e2e.ts --only chat,push   # 只跑部分(配对与收尾总是跑);--build-only 只构建 + 安装
+```
+
+报告:`<tmpdir>/tendhearth-device-e2e/<时间>/report.md`(+ `report.json`、失败步骤的截图、每步的 `xcresult/`、`logs/`),不进 git。退出码 0 全过 / 1 有步骤失败 / 2 要主人在手机上动一下(报告里写了是哪一件)。
+
+| 步骤 | 自动断言 |
+|---|---|
+| 收起主人的配对 | `tendhearth://dev-e2e?op=stash`:手机原有的配对搬进收纳格(见下「为什么要收起来」) |
+| a 配对 | `POST /v1/phone/link`(= 桌面「连接手机」)铸一次性码 → 自定义 scheme 链接经 `devicectl --payload-url` 送进 app(不用相机)→ 确认卡的核对码 = daemon 给的、显示中继主机 → 点连接 → 此刻顶栏「家里的电脑 · 在线」(与 CC 亮同一个判定)→ daemon 多出恰好一台设备 |
+| a' 重用 | 同一链接再开 → 连接 ⇒「已经用过或过期」,daemon 设备数不变;返回回到此刻且仍在线 |
+| a'' 推送登记 | 测试设备把 APNs 令牌登记到 daemon(`phone-push.json` 只读键名) |
+| b 跟 CC 说 | 此刻 → 说一句 → 打字发送 ⇒ 自己的气泡 ⇒ 一条发送前没有的 CC 气泡 |
+| c 真推送 + 批准 | app 退后台 → 派一个要删探针文件的工作台任务 → SpringBoard 上出现**扩展解密后**的横幅(标题「需要你批准」+ 任务名;占位「CC 有新动态」不算)→ 点开 → 批准页 → 允许 → 进展页;daemon 那头权限清空、任务答完、探针被删 |
+| d 撤销 | 局域网 `revoke_device`(设置页「忘掉」同一个 op)⇒ app 此刻页「这台手机已不再配对」 |
+| e 收尾(无论成败) | 取消 + 归档任务、删 scratch、测试设备还在就撤、`dev-e2e?op=restore` 放回主人的配对、冷启动确认主人那台重新在线 |
+
+**为什么用 XCUITest 不用 Maestro**:Maestro 2.11 对这台 iOS 27 真机直接报 `Device … is not connected`(它这版只认模拟器);XCUITest 能接管正在跑的 app(`XCUIApplication(bundleIdentifier:)`,步骤之间不重启)、能点 SpringBoard 的通知横幅 / 通知中心 / 权限框。UI 测试 target 由 `plugins/with-ios-uitests.js` 在 `TENDHEARTH_UITESTS=1` 的 prebuild 时加进工程(源码 `native/ios-e2e/`),平常的 prebuild / EAS 构建里没有它;每一步是一次 `xcodebuild test-without-building -only-testing:…`,参数走 `TEST_RUNNER_*` 环境变量,结果是 stdout 里的 `E2E_OUT 键=值`。
+
+**为什么是 Release 包 + `e2eBuild` 标记,不是开发构建**:Expo SDK 57 的 Debug 包把 JS 打进包里跑会启动即红屏(`Cannot create devtools websocket connections in embedded environments`),还会去局域网找 Metro(弹「查找本地网络中的设备」)。所以构建 Release(JS 在包里、沙盒 APNs),`app.config.js` 在 `TENDHEARTH_UITESTS=1` 时写 `extra.e2eBuild = true`(`src/e2e-build.ts`):只打开自定义 scheme / staging 主机的配对链接与 `dev-e2e` 页;`dev-push-key` 与开发令牌兜底仍只认 `__DEV__`。构建时也要带这个环境变量(expo-constants 在 xcodebuild 里再求一次 app.config),脚本会核对包里的 `EXConstants.bundle/app.config`。
+
+**为什么要收起来**:验收常在主人自己已配对的手机上跑。直接配一台测试设备,app 会去退掉旧设备位(`retirePrevious` ⇒ `unpair_self`)—— 就把主人的配对撤了;测完撤销测试设备又让 app 停在「不再配对」。`dev-e2e?op=stash` 把配对记录搬进钥匙串收纳格(`state/e2e-stash.ts`,已有一份就不覆盖),`op=restore` 原样搬回并删推送登记指纹(下次启动按原来那台重新登记推送)。令牌只在钥匙串里搬,不进日志。脚本中途被杀:报告最后一行写着怎么手动放回;重跑一次也会放回。
+
+**要主人做的(自动化做不了)**:手机解锁、亮屏(自动锁定设「永不」,跑完改回);开发者模式开着;每次手机重启后第一次跑 UI 测试,手机会弹「Enable UI Automation · 使用触控 ID 以继续使用 XCTest」,要验证一次触控 ID(没人验证 ⇒ runner 报 `认证已取消`,脚本退出码 2 并写明)。
+
+**已知**:主人原来那台设备位也登记着同一个 APNs token 时,没带 2026-10-01 修复的 daemon 会给同一部手机发两条(collapse-id 相同,后到的顶掉前一条;原来那台的推送密钥已收起,那条只能显示占位,点开落在此刻)。步骤会等横幅落定、只点解密后的那条;落在此刻会写 `landed_on_now`。daemon 部署了「同一 token 换设备位 ⇒ 旧设备位让出登记」(`src/daemon/phone-push.ts`)之后就不会再有第二条。
+
+**抓到并修掉的**(2026-10-01 首轮真机):① iOS 上 `getDevicePushTokenAsync` 每调一次都会回调 `addPushTokenListener`,监听无条件强制重登 ⇒ 每 0.6 秒一次 `POST /m/api/push/register` 的重试风暴(主人原来装的包也在刷,daemon 日志一小时近千行)—— `push/register.ts makeTokenWatch` 只认真变了的 token;② 已配对的手机从系统链接冷启动进配对页、点返回,落到欢迎页回不到此刻 —— `view/pair.ts pairBackTarget`;③ 同一部手机两个设备位都登记推送 ⇒ 重复通知(上一条)。
+
 ## 目录
 
 ```
@@ -57,7 +93,8 @@ src/i18n/         en 与 zh-Hans 文案表(两份键一致有测试)+ useLang(�
 src/ui/           组件与色板(tokens.ts,复用共享 design-tokens;固定暖纸,CC 明暗由真实信号决定)
 src/push/         推送:key-store(钥匙串里的推送密钥记录)、target / route(点通知去哪)、register(登记生命周期)、PushProvider / PushRouter、前台横幅、开发用 dev-token
 native/           原生通知核心:ios-notify(Swift 通知服务扩展 + `swift test`)、android-push(Kotlin 消息服务 + JVM 单测 `test.sh`)、push-strings.json(原生端标题文案)
-plugins/          Expo config plugin:with-ios-notify(扩展 target + 共享钥匙串)、with-android-push(FCM 服务 + 读 expo-secure-store)、with-ios-scene(iOS 27 场景委托)及其测试
+plugins/          Expo config plugin:with-ios-notify(扩展 target + 共享钥匙串)、with-android-push(FCM 服务 + 读 expo-secure-store)、with-ios-scene(iOS 27 场景委托)、with-ios-uitests(真机验收的 XCUITest target,只在 TENDHEARTH_UITESTS=1)及其测试
+native/ios-e2e/   真机验收的 XCUITest 步骤(scripts/device-e2e.ts 逐步调用)
 locales/          iOS InfoPlist 本地化(相机说明 + 显示名,en 与 zh-Hans)
 scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl push)
 .maestro/         模拟器演示流程
@@ -159,6 +196,7 @@ CI:`app · native push vectors`(`.github/workflows/ci.yml`,仅 `apps/app/native/
   4. EAS:`cd apps/app && eas init`(提交 projectId)、`eas build --profile development --platform ios`(真机开发构建)、TestFlight 用 `--profile production` + `eas submit`、Google Play 开发者账号后安卓 `--profile production`。
   5. 一台安卓手机或模拟器。
   6. 真机验收(两个平台各一遍):配对 → 通知权限框 → 设置里「已开启」→「发一条测试通知」→ 电脑上交办要批准的事 → 前台 / 后台 / 进程被杀三种都收到并点开进批准页(含**已配对的冷启动点通知**)→ 允许 → 做完收到「做完了」;**锁屏上看解密后的文字**;**扩展真的在循环里**(模拟器的 `simctl push` 不经过扩展);**经系统设置拒绝再打开权限的往返**;电脑上撤销这台手机后再触发 ⇒ 只显示「CC 有新动态」。
+     - 2026-10-01 起其中这些已由 `bun run e2e:device` 全自动覆盖(iOS):配对(系统链接进确认卡)、后台收到**扩展解密后**的横幅并点开进批准页、允许、电脑上撤销 ⇒「不再配对」。仍要人:锁屏上的文字、进程被杀后点通知冷启动、系统设置拒绝再打开权限的往返、撤销后再触发只显示占位。
 - 计划 3 遗留、仍开着:配对链接令牌 10 分钟内可重复使用(被拍下的二维码 10 分钟内能配第二台手机)。(对微信聊天那件事的「说一句」不按 `requestId` 去重的欠账已在 2026-10-01 收掉:daemon 回执表 `matter_say_receipts`,同 id 同文重发拿回原来的回复、不说第二遍,同 id 异文 ⇒ 409 `input_conflict`(手机当 busy)。)
 
 ## 硬要求(改界面前先对一遍)

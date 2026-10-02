@@ -33,6 +33,21 @@ describe('phone-push', () => {
     expect(onChange).toHaveBeenCalled()
   })
 
+  it('同一个推送 token 换了设备位(同一部手机重新配对)⇒ 旧设备位的登记让出来,并告诉中继;别的 token / 平台不动', () => {
+    const { push, sent } = setup()
+    push.register('dev1', 'apns', APNS)
+    push.register('dev3', 'apns', 'cd'.repeat(32))
+    push.register('dev4', 'apns_sandbox', APNS)
+    sent.length = 0
+    push.register('dev2', 'apns', APNS)
+    expect(push.registered().sort()).toEqual(['dev2', 'dev3', 'dev4'])
+    expect(sent).toEqual([{ push_unreg: { device: 'dev1' } }, { push_reg: { device: 'dev2', platform: 'apns', token: APNS } }])
+    // 同一设备位重登同一 token:不算换
+    sent.length = 0
+    push.register('dev2', 'apns', APNS)
+    expect(sent).toEqual([{ push_reg: { device: 'dev2', platform: 'apns', token: APNS } }])
+  })
+
   it('notify:用该设备的推送密钥封装,手机能解开;collapseId 按任务;超长标题正文被截', () => {
     const { push, sent } = setup()
     push.register('dev1', 'apns', APNS)

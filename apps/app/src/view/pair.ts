@@ -90,3 +90,12 @@ export function confirmCheckCode(link: ParsedLink): string {
 export function confirmCard(link: ParsedLink, pairing: PairingRecord | null): { checkCode: string; replaces: boolean } {
   return { checkCode: confirmCheckCode(link), replaces: !!pairing && pairing.daemonId !== link.daemonId }
 }
+
+/**
+ * 配对页「返回」没有上一页可回时去哪(系统链接冷启动直接落在配对页就是这样):
+ * 已配对 ⇒ 此刻(2026-10-01 真机验收抓到:已配对的手机扫了旧码、点返回,落到欢迎页「连接我的电脑 / 先看看示例」,回不到此刻);
+ * 没配对 ⇒ 欢迎页。
+ */
+export function pairBackTarget(paired: boolean): '/' | '/welcome' {
+  return paired ? '/' : '/welcome'
+}

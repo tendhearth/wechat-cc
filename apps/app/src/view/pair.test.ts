@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import en from '../i18n/en'
 import zh from '../i18n/zh-Hans'
 import type { PairingRecord } from '../net/pairing'
-import { acceptsIncomingLink, confirmCard, confirmCheckCode, intakeIncomingLink, linkErrorKey, linkIntake, makeGate, pairErrorKey } from './pair'
+import { acceptsIncomingLink, confirmCard, confirmCheckCode, intakeIncomingLink, linkErrorKey, linkIntake, makeGate, pairBackTarget, pairErrorKey } from './pair'
 
 describe('配对错误 → 文案键', () => {
   it('每种链接错误、配对错误都有自己的一句话,键都在文案表里', () => {
@@ -131,5 +131,12 @@ describe('confirmCard(I2:点开的链接不能一下就换掉现在连着的电�
       expect(zh[k], k).not.toMatch(/连到你的电脑|连接你的电脑/)
       expect(en[k], k).not.toMatch(/your computer/)
     }
+  })
+})
+
+describe('pairBackTarget —— 配对页没有上一页时的返回', () => {
+  it('已配对(系统链接冷启动进来的)⇒ 此刻;没配对 ⇒ 欢迎页', () => {
+    expect(pairBackTarget(true)).toBe('/')
+    expect(pairBackTarget(false)).toBe('/welcome')
   })
 })

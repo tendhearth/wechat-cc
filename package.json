@@ -37,6 +37,7 @@
     "spike:atelier-renderer": "bun scripts/atelier-renderer-spike.ts",
     "smoke:atelier-sidecar": "bun scripts/atelier-sidecar-smoke.ts",
     "build:mobile": "bun apps/mobile/build.ts",
+    "e2e:device": "bun scripts/device-e2e.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p apps/mobile && tsc --noEmit -p apps/relay && tsc --noEmit -p apps/app",
     "build:map": "bun scripts/build-map.ts",
     "depcheck": "depcruise --config .dependency-cruiser.cjs src cli.ts setup.ts docs.ts apps/mobile"

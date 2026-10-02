@@ -21,6 +21,17 @@ describe('rewriteSystemPath —— 深链进 app 之前先洗一遍(不可信输
     expect(rewriteSystemPath('tendhearth://Dev-Push-Key/?token=x', false)).toBe('/')
     expect(rewriteSystemPath('tendhearth://push-open/?kind=task_done&taskId=a1b2c3d4', false)).toBe('/push-open?kind=task_done&taskId=a1b2c3d4')
     expect(rewriteSystemPath('tendhearth://dev-push-key?token=dev' + '0'.repeat(48), true)).toBe('tendhearth://dev-push-key?token=dev' + '0'.repeat(48))
+    // 真机验收的收起 / 放回配对:发布构建一律回此刻(大小写、结尾斜杠都绕不过)
+    expect(rewriteSystemPath('tendhearth://dev-e2e?op=stash', false)).toBe('/')
+    expect(rewriteSystemPath('tendhearth://DEV-E2E/?op=restore', false)).toBe('/')
+    expect(rewriteSystemPath('tendhearth://dev-e2e?op=stash', true)).toBe('tendhearth://dev-e2e?op=stash')
+    // 真机验收构建(Release + e2eBuild):dev-e2e 与自定义 scheme / staging 配对链接可达,开发令牌页仍不可达
+    const stash: string[] = []
+    expect(rewriteSystemPath('tendhearth://dev-e2e?op=restore', false, s => stash.push(s), true)).toBe('tendhearth://dev-e2e?op=restore')
+    expect(rewriteSystemPath('tendhearth://dev-push-key?token=dev' + '0'.repeat(48), false, s => stash.push(s), true)).toBe('/')
+    expect(rewriteSystemPath('tendhearth://relay-staging.tendhearth.com/pset/#id=r1&t=t2', false, s => stash.push(s), true)).toMatch(/^\/pair\?from=link&n=\d+$/)
+    expect(stash).toEqual(['https://relay-staging.tendhearth.com/pset/#id=r1&t=t2'])
+    expect(rewriteSystemPath('tendhearth://relay-staging.tendhearth.com/pset/#id=r1&t=t2', false, s => stash.push(s), false)).toBe('/')
   })
   it('别的路径原样放行(交给路由自己)', () => {
     expect(rewriteSystemPath('tendhearth://settings', false)).toBe('tendhearth://settings')

@@ -39,6 +39,13 @@ scratch 项目**不在 STATE_DIR 底下**(它跟 token / account.json 同级,而
 - FAIL 时中途没撤成功的话,输出里会写怎么手动清理:设置页 → 已配对设备 → 按 id / 配对时间「忘掉」那台。**任何输出都不打印令牌**(设备令牌是永不过期的活凭据);不知道 id 时先走局域网取列表再撤销。
 - 刚 `self deploy` 完跑也是正常用法(接线窗口的 503 由 CLI 自己等)。
 
+**device**(Tendhearth iPhone 真机全自动验收,`bun run e2e:device` = `bun scripts/device-e2e.ts`,2026-10-01):USB 连着的 iPhone + 在跑的 daemon(中继 v2 已开),没人碰屏幕跑完:收起手机原有的配对 → 桌面「连接手机」同一条路铸码、经 `devicectl --payload-url` 送进 app、核对码一致、连接后此刻在线 → 同码重用被拒 → 跟 CC 说一句等回复 → app 退后台、派一个要删探针文件的工作台任务、点**扩展解密后**的真 APNs 横幅、批准页允许、daemon 那头任务答完探针被删 → 局域网撤销测试设备、app 显示「不再配对」→ 收尾归档任务、放回原配对。UI 步骤是 XCUITest(`apps/app/native/ios-e2e/`,Maestro 2.11 认不到 iOS 27 真机),构建是 Release + `e2eBuild` 标记(Expo SDK 57 的 Debug 包内嵌 JS 启动即红屏)。
+
+- 报告在 `<tmpdir>/tendhearth-device-e2e/<时间>/report.md`,失败步骤带截图;退出码 0 / 1 / 2(2 = 要主人在手机上动一下:解锁、开发者模式、手机重启后第一次跑时弹的「Enable UI Automation」触控 ID)。
+- 只撤销它自己配的那一台(配对前后设备列表的差);**不碰**主人手机原有的那台设备位(收起来再放回,见 `apps/app/README.md`「真机全自动验收」)。
+- 会往主人的 CC 对话里说一句 `device-e2e <随机串>: reply with one short sentence`(跟 CC 说走的就是主人会话);批准那一步默认用 claude 执行者(`--executor` 可换;cursor 额度用完会当场报)。
+- 期间会铸两枚 10 分钟链接令牌(配对、撤销各一),会作废桌面上正开着的那枚码。
+
 ## 两种 token 分别够得着什么
 
 daemon 起来后写 `~/.claude/channels/wechat/internal-api-info.json`,里面有 `baseUrl`、`tokenFilePath`、`operatorTokenFilePath`。**两把钥匙不通用**:

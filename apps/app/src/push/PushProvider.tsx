@@ -7,7 +7,7 @@ import { useConnection } from '../state/hooks'
 import { useSession } from '../state/session'
 import { leftoverPushKey, stillClearPushKey } from '../state/session-store'
 import { apnsEnv, nativeToken, openSystemSettings, perms, prepareChannels, pushKeys, registerCategories } from './native'
-import { makePushRunner, syncPush, type PushStatus } from './register'
+import { makePushRunner, makeTokenWatch, syncPush, type PushStatus } from './register'
 
 type PushCtx = { status: PushStatus; openSettings(): void; sendTest(): Promise<{ ok: boolean; code: string }> }
 const Ctx = createContext<PushCtx | null>(null)
@@ -35,6 +35,8 @@ export function PushProvider({ children }: { children: ReactNode }) {
   latest.current = { live, conn, pairing, backend, langOverride: session.langOverride, lang }
   /** 推送密钥的写(ensure)在飞时,清之前先等它。 */
   const keyWrite = useRef<Promise<unknown>>(Promise.resolve())
+  /** 自己拿 token 也会触发 token 监听(见 makeTokenWatch):只有真变了才算刷新。 */
+  const tokens = useRef(makeTokenWatch()).current
 
   const runner = useMemo(() => makePushRunner({
     ctx: () => ({ live: latest.current.live, conn: latest.current.conn.state, epoch: latest.current.conn.epoch }),
@@ -45,7 +47,7 @@ export function PushProvider({ children }: { children: ReactNode }) {
       return syncPush({
         os: Platform.OS === 'ios' ? 'ios' : 'android', apnsEnv, deviceId: L.pairing.deviceId, deviceToken: L.pairing.deviceToken,
         lang: L.langOverride, keys: pushKeys, permission: perms.get, requestPermission: perms.request,
-        prepare: () => prepareChannels(latest.current.lang), nativeToken, register: (p, tok) => b.registerPush(p, tok),
+        prepare: () => prepareChannels(latest.current.lang), nativeToken: () => nativeToken().then(t => { tokens.note(t); return t }), register: (p, tok) => b.registerPush(p, tok),
         now: Date.now, log: devLog,
       }, { force })
     },
@@ -83,9 +85,9 @@ export function PushProvider({ children }: { children: ReactNode }) {
     return () => sub.remove()
   }, [runner])
   useEffect(() => {
-    const sub = Notifications.addPushTokenListener(() => { void runner.trigger('token') })
+    const sub = Notifications.addPushTokenListener(t => { if (tokens.changed(t?.data)) void runner.trigger('token') })
     return () => sub.remove()
-  }, [runner])
+  }, [runner, tokens])
 
   const value = useMemo<PushCtx>(() => ({
     status,
