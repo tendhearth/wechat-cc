@@ -753,6 +753,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // the pipeline wiring are available. Routes access deps.companionConverse
     // at request time, so this late assignment is safe (mirrors setConversation).
     internalApi.setCompanionConverse(wired.companionConverse)
+    // 「一件事」活动时间:先于工作台停(LIFO),退订 changes + 清节流定时器。
+    lc.register({ name: 'matter-activity', stop: async () => wired.stopMatterActivity() })
     // 与手机页共用同一个「一件事」读写面(pipeline-deps 里建的那一个)。
     if (wired.mattersService) internalApi.setMatters(wired.mattersService)
     // 同上,桌宠的「在做什么」—— 组装闭包在 pipeline-deps(那里才有 boot)。

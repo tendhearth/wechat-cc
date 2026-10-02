@@ -80,7 +80,7 @@ it('rolls accepted choice and run back with the surrounding input acceptance tra
 })
 
 it('imports original native sessions with native defaults and never resets a managed import on retry',()=>{
-  const input={providerId:'claude' as const,nativeId:'native-existing',cwd:'/owned/project',title:'import',ownerChatId:null,snapshotSha256:'a'.repeat(64),observedFingerprint:'b'.repeat(64),truncated:false,snapshotJson:'{}',pagesJson:'[]',messages:[]}
+  const input={providerId:'claude' as const,nativeId:'native-existing',cwd:'/owned/project',path:'/owned/project',title:'import',ownerChatId:null,snapshotSha256:'a'.repeat(64),observedFingerprint:'b'.repeat(64),truncated:false,snapshotJson:'{}',pagesJson:'[]',messages:[]}
   const first=store.importSource(input)
   expect(execution().choice(first.task.id)).toEqual(native)
   execution().accept(first.task.id,'run-native',{...native,model:'chosen-native'})

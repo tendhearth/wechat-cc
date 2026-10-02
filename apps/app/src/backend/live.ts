@@ -214,7 +214,7 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       return (await call<{ turn: PhoneChangesTurnT | null }>('GET /m/api/matter/changes', `/m/api/matter/changes?${idq(id)}`)).turn
     },
     async chat(p) {
-      const q = [p.before ? `before=${encodeURIComponent(p.before)}` : '', p.limit ? `limit=${p.limit}` : ''].filter(Boolean).join('&')
+      const q = [p.before ? `before=${encodeURIComponent(p.before)}` : '', p.limit !== undefined ? `limit=${p.limit}` : ''].filter(Boolean).join('&')
       return strip(await call<{ ok: true } & ChatPageT>('GET /m/api/chat', `/m/api/chat${q ? '?' + q : ''}`))
     },
     async chatSay(text, requestId) {

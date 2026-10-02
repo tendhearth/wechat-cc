@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { removeTempDir } from '../../lib/test-temp'
-import { acquireLock, makeStateStore, newSelfChangeId, newState, type SelfChangeState } from './state'
+import { acquireLock, makeStateStore, newSelfChangeId, newState, readLockHolder, type SelfChangeState } from './state'
 
 const dirs: string[] = []
 function tempDir(): string {
@@ -185,6 +185,30 @@ describe('acquireLock', () => {
     if (!r.ok) return
     r.release()
     expect(() => r.release()).not.toThrow()
+  })
+
+  // 锁里记上「在跑哪条」:`--abandon` 要分清「持锁的就是这条」和「持锁的是别的
+  // 一条」—— 前者绝不能作废,后者可以(恢复这条也得先拿锁,拿不到)。
+  it('带 runId 拿锁 ⇒ readLockHolder 报出 pid 和 runId', () => {
+    const dir = tempDir()
+    const r = acquireLock(dir, 111, undefined, () => true, 'ab12cd34')
+    expect(r.ok).toBe(true)
+    expect(readLockHolder(dir, undefined, () => true)).toEqual({ pid: 111, runId: 'ab12cd34' })
+  })
+
+  it('老格式的锁(没记 runId)⇒ runId 是 null;持有者死了 / 没有锁 ⇒ null', () => {
+    const dir = tempDir()
+    expect(readLockHolder(dir, undefined, () => true)).toBeNull()
+    acquireLock(dir, 111, undefined, () => true)
+    expect(readLockHolder(dir, undefined, () => true)).toEqual({ pid: 111, runId: null })
+    expect(readLockHolder(dir, undefined, () => false)).toBeNull()
+  })
+
+  it('锁文件里的 runId 不是合法 id 形状 ⇒ 当成没记(null)', () => {
+    const dir = tempDir()
+    acquireLock(dir, 111, undefined, () => true)
+    writeFileSync(join(dir, 'self-change', 'lock'), JSON.stringify({ pid: 111, runId: '../..' }))
+    expect(readLockHolder(dir, undefined, () => true)).toEqual({ pid: 111, runId: null })
   })
 
   it('注入的 fs 就是它用的那个', () => {

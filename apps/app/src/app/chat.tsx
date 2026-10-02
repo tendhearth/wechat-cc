@@ -46,8 +46,11 @@ export default function Chat() {
     try {
       const r = await go()
       if (r === 'ok') {
-        // 只在输入框还是发出去那句时清空(Task 11 a);草稿由 useChat.send 按同一规则删
-        if (sent !== null) { const left = textAfterSend(textRef.current, sent); textRef.current = left; setTextState(left) }
+        // 只去掉发出去的那段(Task 11 a):原样那句的草稿由 useChat.send 删;接着打过的字同步回草稿
+        if (sent !== null) {
+          const cur = textRef.current, left = textAfterSend(cur, sent)
+          if (left !== cur) { if (cur !== sent) setDraft('chat', left); textRef.current = left; setTextState(left) }
+        }
       } else setOutcome(r)
     } finally {
       lock.current = false

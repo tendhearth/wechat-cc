@@ -39,7 +39,7 @@ appId: com.tendhearth.app
       - assertVisible:
           id: chat-send
           enabled: true
-# 「在想…」会轻轻明暗(演示 2 秒后回复);别让点击等画面静止,否则等到回复才返回、看不到「在想…」。
+# 「在想…」会轻轻明暗(演示 5 秒后回复,见 src/backend/demo.ts 的 DEMO_CHAT_REPLY_MS);别让点击等画面静止,否则等到回复才返回、看不到「在想…」。
 - tapOn:
     id: chat-send
     waitToSettleTimeoutMs: 300
