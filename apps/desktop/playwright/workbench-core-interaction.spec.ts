@@ -28,6 +28,7 @@ for(const width of [1000,390])test(`keeps core workbench interactions at ${width
  })
  await page.goto('http://workbench-core.test')
  await expect(page.locator('.wb-dialogue > .wb-message:last-child a')).toBeVisible()
+ await page.evaluate(async()=>{await document.fonts.ready})
  await page.evaluate(()=>{
   const row=document.querySelector('.wb-dialogue > .wb-message:last-child')!,link=row.querySelector('a')!,pre=row.querySelector('pre')!,paragraph=row.querySelector('p')!
   link.focus({preventScroll:true});const range=document.createRange();range.setStart(paragraph.firstChild!,2);range.setEnd(paragraph.firstChild!,4)
