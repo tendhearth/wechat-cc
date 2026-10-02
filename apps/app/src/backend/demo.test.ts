@@ -3,10 +3,10 @@ import { Connections, NativeSessionPage, ChatPage, ChatJob, MatterTopic, Matter,
 import { DEMO_CHAT_REPLY_MS, makeDemoBackend } from './demo'
 
 describe('演示后端', () => {
-  it('初始:一条待批准、一个待回答,三件事 + 主人那条对话(chat matter)', async () => {
+  it('初始:一条待批准、一个待回答,四件事(含一件额度用完) + 主人那条对话(chat matter)', async () => {
     const b = makeDemoBackend()
     const ms = await b.matters('en')
-    expect(ms.filter(m => m.kind !== 'chat').length).toBe(3)
+    expect(ms.filter(m => m.kind !== 'chat').length).toBe(4)
     expect(ms.filter(m => m.kind === 'chat').map(m => m.id)).toEqual(['c0ffee01'])
     const d = await b.matter('a1b2c3d4', 'en')
     expect(d.permissions.map(p => p.id)).toEqual(['perm-demo-1'])
@@ -71,7 +71,7 @@ describe('演示后端', () => {
     try {
       const b = makeDemoBackend()
       const { matterId } = await b.create({ requestId: 'req-1', text: '把周报整理一下' })
-      expect((await b.matters('en')).filter(m => m.kind !== 'chat').length).toBe(4)
+      expect((await b.matters('en')).filter(m => m.kind !== 'chat').length).toBe(5)
       expect((await b.matter(matterId, 'en')).task?.phase).toBe('working')
       await vi.advanceTimersByTimeAsync(2000)
       expect((await b.matter(matterId, 'en')).task?.phase).toBe('replied')
@@ -122,7 +122,7 @@ describe('演示后端', () => {
     expect(c.matter.title).toBe('我自己的话')
     expect(c.events[0]?.text).toBe('我自己的话')
     expect(c.events[1]?.text).toBe('Got it, working on it.')
-    expect((await b.matters('en')).filter(m => m.kind !== 'chat').length).toBe(4)
+    expect((await b.matters('en')).filter(m => m.kind !== 'chat').length).toBe(5)
   })
   it('未处理的问题按读的语言出题', async () => {
     const b = makeDemoBackend({ lang: 'en' })
@@ -144,7 +144,7 @@ describe('演示后端', () => {
     const a = await b.create({ requestId: 'same', text: 'x' })
     const c = await b.create({ requestId: 'same', text: 'x' })
     expect(c.matterId).toBe(a.matterId)
-    expect((await b.matters('en')).filter(m => m.kind !== 'chat').length).toBe(4)
+    expect((await b.matters('en')).filter(m => m.kind !== 'chat').length).toBe(5)
   })
   it('交办带 projectId ⇒ 事项的项目路径来自演示的项目目录', async () => {
     const b = makeDemoBackend()
@@ -301,4 +301,35 @@ describe('演示后端', () => {
     } finally { vi.useRealTimers() }
   })
 
+})
+
+describe('演示后端 · 额度用完交给另一位(spec continue-sessions §7-3)', () => {
+  const REQ = '5a7e0000-0000-4000-8000-000000000001'
+  it('种子里那件:Claude Code 额度用完、可交给 Codex;详情过协议 schema', async () => {
+    const d = await makeDemoBackend().matter('f3a4b5c6', 'zh-Hans')
+    expect(MatterDetail.parse(d).quotaHandoff).toMatchObject({ state: 'offer', from: 'claude', to: 'codex', kind: 'quota' })
+    expect(d.events.map(e => e.text)).toContain('Claude Code 的额度用完了，这一轮没做完。')
+  })
+  it('交出去 ⇒ 新一件(Codex、同一文件夹、第一句说清接替谁、正在做,2 秒后回复);原来那件变 handed;同 requestId / 另一个 requestId 都回同一件', async () => {
+    vi.useFakeTimers()
+    try {
+      const b = makeDemoBackend()
+      const { matterId } = await b.handoff({ id: 'f3a4b5c6', requestId: REQ, providerId: 'codex' })
+      const made = await b.matter(matterId, 'zh-Hans')
+      expect(made.task).toMatchObject({ providerId: 'codex', path: '~/Projects/notes', phase: 'working' })
+      expect(made.matter.originMatterId).toBe('f3a4b5c6')
+      expect(made.events[0]?.text).toBe('接替 Claude Code（额度用完）继续这件事：把周报整理成一页')
+      expect((await b.matter('f3a4b5c6', 'en')).quotaHandoff).toEqual({ state: 'handed', from: 'claude', to: 'codex', matterId })
+      expect(await b.handoff({ id: 'f3a4b5c6', requestId: REQ, providerId: 'codex' })).toEqual({ matterId })
+      expect(await b.handoff({ id: 'f3a4b5c6', requestId: 'other', providerId: 'codex' })).toEqual({ matterId })
+      expect((await b.matters('en')).filter(m => m.kind !== 'chat').length).toBe(5)
+      await vi.advanceTimersByTimeAsync(2000)
+      expect((await b.matter(matterId, 'en')).task?.phase).toBe('replied')
+    } finally { vi.useRealTimers() }
+  })
+  it('确认卡上的人不对 / 这件不缺额度 ⇒ handoff_changed', async () => {
+    const b = makeDemoBackend()
+    await expect(b.handoff({ id: 'f3a4b5c6', requestId: REQ, providerId: 'gemini' })).rejects.toMatchObject({ code: 'handoff_changed' })
+    await expect(b.handoff({ id: 'e5f6a7b8', requestId: REQ, providerId: 'codex' })).rejects.toMatchObject({ code: 'handoff_changed' })
+  })
 })

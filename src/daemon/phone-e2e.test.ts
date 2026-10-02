@@ -168,7 +168,17 @@ function createTask(name: string) {
   mkdirSync(path, { recursive: true })
   return workbench.create({ path, providerId: 'claude', text: name })
 }
-const release = (task: { path: string }) => { const i = gates.findIndex(g => g.path === task.path); gates.splice(i, 1)[0]!.finish() }
+/**
+ * 放行这个任务的执行者。任务出现在 agents 列表里(create 一返回就是 queued,甚至已经 working)
+ * ≠ 执行者已经 spawn 到闸门前:spawn 是异步的,慢机器(windows-latest runner)上用例走到这里时
+ * gates 里可能还没有它 —— 原来直接 findIndex 拿到 -1,`splice(-1, 1)` 要么是 undefined
+ * (TypeError: ...splice(i, 1)[0].finish),要么更糟:放走的是别人的闸门。先等它真的挂上。
+ */
+const release = async (task: { path: string }) => {
+  await expect.poll(() => gates.some(g => g.path === task.path)).toBe(true)
+  const i = gates.findIndex(g => g.path === task.path)
+  gates.splice(i, 1)[0]!.finish()
+}
 const utf8 = new TextEncoder()
 const pause = (ms: number) => new Promise(r => setTimeout(r, ms))
 
@@ -206,10 +216,10 @@ describe('手机协议 v2 进程内端到端', () => {
     expect(got.at(-1)!.data).toMatchObject({ running: 1, waiting: 1 })
     expect(got.at(-1)!.data.tasks.map((t: { title: string }) => t.title)).toEqual(['shared#a', 'shared#b'])
 
-    release(a)
+    await release(a)
     await expect.poll(() => phaseOf(b.id)).toBe('working')
     expect(phaseOf(a.id)).toBeUndefined()   // 做完 = 终态,离开 agents
-    release(b)
+    await release(b)
     await expect.poll(() => got.at(-1)!.data).toEqual({ running: 0, waiting: 0, tasks: [] })
     // 同一纪元、seq 单调递增。
     expect(new Set(got.map(e => e.epoch)).size).toBe(1)
@@ -268,7 +278,7 @@ describe('手机协议 v2 进程内端到端', () => {
     await expect.poll(() => got.at(-1)!.data.tasks.map((t: { id: string }) => t.id)).toEqual([task.id])
     expect(got.at(-1)!.epoch).toBe(got[0]!.epoch)
     expect(got.at(-1)!.seq).toBeGreaterThan(got[0]!.seq)
-    release(task)
+    await release(task)
   })
 
   it('断线期间主题被回收(唯一订阅者)⇒ 续上时补发一条当下状态:同纪元、seq 更大、内容不变', async () => {
@@ -294,7 +304,7 @@ describe('手机协议 v2 进程内端到端', () => {
     await expect.poll(() => line.handshakes(), { timeout: 2000 }).toBe(2)
     const task = createTask('after-relay-reconnect')
     await expect.poll(() => (got.at(-1)!.data.tasks as Array<{ id: string }>).map(t => t.id), { timeout: 5000 }).toEqual([task.id])
-    release(task)
+    await release(task)
   })
 
   it('重放旧帧被拒:同一个密封请求再注入一次,面板不会再处理,流照常可用', async () => {
@@ -336,7 +346,7 @@ describe('手机协议 v2 进程内端到端', () => {
     // 重新连一条也不行:令牌已不在册。
     const { client: fresh } = phone()
     await expect(fresh.request({ method: 'GET', path: '/m/api/home?limit=1' })).rejects.toThrow('auth_failed')
-    release(task)
+    await release(task)
   })
 
   it('同主题合并:快速连发多次变化,只到最新的一条', async () => {
@@ -353,6 +363,6 @@ describe('手机协议 v2 进程内端到端', () => {
     await expect.poll(() => got.at(-1)!.data.version).toBe(final)
     await pause(150)
     expect(got.length - settled).toBe(1)
-    release(task)
+    await release(task)
   })
 })

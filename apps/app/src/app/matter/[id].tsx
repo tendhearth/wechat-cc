@@ -1,11 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Redirect, useLocalSearchParams, useRouter } from 'expo-router'
-import { Pressable, ScrollView, View } from 'react-native'
+import { Modal, Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
 import { useBackendCtx } from '../../state/BackendProvider'
-import { useQuery, useTopic } from '../../state/hooks'
+import { useConnection, useQuery, useSubmit, useTopic } from '../../state/hooks'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
@@ -13,13 +13,16 @@ import { Dot } from '../../ui/Dot'
 import { SayBar } from '../../ui/SayBar'
 import { Sheet } from '../../ui/Sheet'
 import { StatusPill } from '../../ui/StatusPill'
-import { space } from '../../ui/tokens'
+import { radius, space } from '../../ui/tokens'
 import { TopBar } from '../../ui/TopBar'
 import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
 import { isOwnerChatMatter } from '../../view/chat'
 import { conversationView } from '../../view/conversation'
-import { nativeStartLines } from '../../view/continue'
+import { nativeStartLines, providerName } from '../../view/continue'
+import { canSubmit } from '../../view/connection'
+import { HANDOFF_RECHECK, handoffBlock, handoffErrorDot, handoffErrorText, handoffSheetLines } from '../../view/handoff'
+import { uuid } from '../../net/uuid'
 import { progressView } from '../../view/progress'
 
 // 进展页:状态标签在「CC 的进展」概括之上;概括没到时用骨架占位;下面是这件事的真对话。
@@ -41,6 +44,17 @@ export default function Matter() {
   const ver = useTopic<{ version?: unknown }>(`matter/${id}`)
   const seen = useRef<unknown>(undefined)
   const verKey = ver === undefined ? undefined : JSON.stringify(ver)
+  // 额度用完 ⇒ 交给另一位继续(spec continue-sessions §7-3):确认卡、提交、失败那一句。requestId 每次点开卡换一个,
+  // 卡里重试沿用同一个(daemon 按它去重;一件事也只交一次,换了 requestId 也回已交出的那件)。
+  const conn = useConnection()
+  const submit = useSubmit()
+  const [sheet, setSheet] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [failure, setFailure] = useState<{ text: string; dot: 'bad' | 'warn' | 'unknown' } | null>(null)
+  const handoffReq = useRef('')
+  const idRef = useRef(id)
+  idRef.current = id
+  useEffect(() => { setSheet(false); setFailure(null) }, [id])
   const { refresh: refreshDetail } = detail
   const { refresh: refreshInsight } = insight
   const { refresh: refreshChanges } = changes
@@ -74,6 +88,34 @@ export default function Matter() {
   const v = progressView(d, insight.data ?? null, changes.data ?? null, !!insight.error && !insight.data)
   const files = changes.data?.files ?? []
   const conv = conversationView(d.events)
+  const hb = handoffBlock(d.quotaHandoff, lang, Date.now())
+  const online = canSubmit(conn)
+  const openHandoff = () => { handoffReq.current = uuid(); setFailure(null); setSheet(true) }
+  const confirmHandoff = async () => {
+    const h = d.quotaHandoff
+    if (sending || h?.state !== 'offer') return
+    const myId = id
+    setSending(true); setFailure(null)
+    const box: { id: string | null } = { id: null }
+    const r = await submit(`handoff:${myId}`, async () => { box.id = (await backend.handoff({ id: myId, requestId: handoffReq.current, providerId: h.to })).matterId })
+    setSending(false)
+    if (idRef.current !== myId || r === 'busy') return
+    if (r === 'ok' && box.id) {
+      // daemon 回成功之前页面上不出现任何「在跑」;成了就进新那件,返回是原来这件(现在说「已经交给 X 继续」)
+      setSheet(false); void refreshDetail()
+      router.push(`/matter/${encodeURIComponent(box.id)}`)
+      return
+    }
+    const code = r === 'ok' ? 'unknown' : r.error
+    setFailure({ text: handoffErrorText(code, lang), dot: handoffErrorDot(code) })
+    if (HANDOFF_RECHECK.has(code)) void refreshDetail()
+  }
+  const failureRow = failure ? (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+      <Dot kind={failure.dot} size={8} />
+      <Txt testID="handoff-error" role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flex: 1 }}>{failure.text}</Txt>
+    </View>
+  ) : null
 
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: c.paper }}>
@@ -180,9 +222,49 @@ export default function Matter() {
             </View>
           </Sheet>
       </ScrollView>
+      {hb.kind === 'none' ? null : (
+        // 额度用完那一块:状态只上点(琥珀),文字一律 inkSoft;唯一的强调按钮是「交给 X 继续」
+        <View testID="progress-handoff" style={{ paddingHorizontal: space.xl, paddingBottom: space.s, gap: space.s }}>
+          {hb.kind === 'handed' ? (
+            <>
+              <Txt testID="progress-handoff-note" role="meta" tone="inkSoft">{hb.note}</Txt>
+              <Button kind="secondary" testID="progress-handoff-open" label={hb.open} onPress={() => router.push(`/matter/${encodeURIComponent(hb.matterId)}`)} />
+            </>
+          ) : (
+            <>
+              {(hb.kind === 'offer' ? [hb.note] : hb.lines).map((line, i) => (
+                <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
+                  {i === 0 ? <Dot kind="warn" size={8} /> : <View style={{ width: 8 }} />}
+                  <Txt testID={i === 0 ? 'progress-handoff-note' : undefined} role="meta" tone="inkSoft" style={{ flex: 1 }}>{line}</Txt>
+                </View>
+              ))}
+              {hb.kind === 'offer' ? <Button kind="primary" testID="progress-handoff-action" label={hb.action} onPress={openHandoff} disabled={!online} /> : null}
+              {sheet ? null : failureRow}
+            </>
+          )}
+        </View>
+      )}
       <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m }}>
         <SayBar testID="progress-say" placeholder={t(lang, 'progress.continueSay')} onPress={() => router.push(`/compose?matter=${encodeURIComponent(id)}`)} />
       </View>
+
+      <Modal visible={sheet} transparent animationType="slide" onRequestClose={() => setSheet(false)}>
+        <Pressable accessibilityLabel={t(lang, 'handoff.later')} style={{ flex: 1, backgroundColor: c.scrim }} onPress={() => setSheet(false)} />
+        <View testID="handoff-sheet" style={{ backgroundColor: c.paper, padding: space.xl, gap: space.m, borderTopLeftRadius: radius.sheet, borderTopRightRadius: radius.sheet }}>
+          {d.quotaHandoff?.state === 'offer' ? (
+            <>
+              <Txt role="item" accessibilityRole="header">{t(lang, 'handoff.title', { to: providerName(d.quotaHandoff.to, lang) })}</Txt>
+              {handoffSheetLines(d.quotaHandoff, lang, Date.now()).map((line, i) => <Txt key={i} testID={`handoff-line-${i}`} role="bubble">{line}</Txt>)}
+              {failureRow}
+              <Button kind="primary" testID="handoff-confirm" label={hb.kind === 'offer' ? hb.action : ''} onPress={() => void confirmHandoff()} disabled={!online} busy={sending} />
+            </>
+          ) : (
+            // 卡开着时电脑那边变了(额度恢复 / 已经交出去 / 没人能接):收起主按钮,只说为什么
+            <>{failureRow ?? <Txt testID="handoff-sheet-note" role="bubble" tone="inkSoft">{t(lang, 'handoff.changed')}</Txt>}</>
+          )}
+          <Button kind="secondary" testID="handoff-cancel" label={t(lang, 'handoff.later')} onPress={() => setSheet(false)} />
+        </View>
+      </Modal>
     </SafeAreaView>
   )
 }

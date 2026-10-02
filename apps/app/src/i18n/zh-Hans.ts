@@ -298,6 +298,19 @@ const zh: Record<keyof typeof en, string> = {
   'continue.failed': '这次没能接上，请再试一次。',
   'continue.firstResume': '你发的第一句会接着电脑上原来的 {provider} 会话。',
   'continue.firstFresh': '你发的第一句会新开一轮，带上之前的对话记录。',
+  // 额度用完 ⇒ 交给另一位执行者继续(spec 2026-10-01-tendhearth-continue-sessions §7-3;与微信「交给 X 继续？」同一件事)
+  'handoff.quotaNote': '{from} 的额度已用完，约 {minutes} 分钟后恢复',
+  'handoff.rateNote': '{from} 暂时被限流，约 {minutes} 分钟后恢复',
+  'handoff.noneNote': '现在没有能接手的执行者，等额度恢复后再接着说',
+  'handoff.action': '交给 {to} 继续',
+  'handoff.title': '交给 {to} 继续？',
+  'handoff.where': '会在你电脑上同一个文件夹里，让 {to} 新开一件事接着做；原来这件留着不动。',
+  'handoff.context': '{to} 看不到 {from} 之前的对话，只拿到这件事的标题和「接着原来的要求做」。',
+  'handoff.later': '先放着',
+  'handoff.handed': '已经交给 {to} 继续',
+  'handoff.open': '打开那件事',
+  'handoff.changed': '情况刚变了，再看一眼。',
+  'handoff.failed': '这次没能交出去，请再试一次。',
 }
 
 export default zh

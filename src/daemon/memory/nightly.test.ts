@@ -185,6 +185,42 @@ describe('runMemoryNightly', () => {
   })
 })
 
+describe('today-draft (同日失忆, 2026-10-01)', () => {
+  const draftPath = () => join(root, 'today-draft.md')
+  it('feeds the draft to the model as its own block and clears it after a successful write', async () => {
+    writeFileSync(draftPath(), '- 下周三去上海出差\n')
+    const r = await runMemoryNightly(deps(), { force: true })
+    expect(r.status).toBe('written')
+    expect(calls[0]).toContain('今天的草稿')
+    expect(calls[0]).toContain('下周三去上海出差')
+    expect(existsSync(draftPath())).toBe(false)
+  })
+  it('keeps lines that arrived while the model was thinking', async () => {
+    writeFileSync(draftPath(), '- 早上说的\n')
+    const d = deps({ cheapEval: () => async (p: string) => { calls.push(p); writeFileSync(draftPath(), '- 早上说的\n- 整理途中新记的\n'); return reply } })
+    expect((await runMemoryNightly(d, { force: true })).status).toBe('written')
+    expect(readFileSync(draftPath(), 'utf8')).toBe('- 整理途中新记的\n')
+  })
+  it('a failed run leaves the draft in place for tomorrow', async () => {
+    writeFileSync(draftPath(), '- 早上说的\n')
+    reply = 'not json'
+    expect((await runMemoryNightly(deps(), { force: true })).status).toBe('failed')
+    expect(readFileSync(draftPath(), 'utf8')).toBe('- 早上说的\n')
+  })
+  it('the draft does not count toward the fingerprint (its lines are already in profile.md), so clearing it never forces an extra model call', async () => {
+    writeFileSync(draftPath(), '- 早上说的\n')
+    await runMemoryNightly(deps(), { force: true })
+    expect(await runMemoryNightly(deps(), { force: true })).toEqual({ status: 'skipped', reason: 'no_new_material' })
+    expect(calls).toHaveLength(1)
+  })
+  it('a no-new-material skip still clears a draft that was already covered', async () => {
+    await runMemoryNightly(deps(), { force: true })
+    writeFileSync(draftPath(), '- 早上说的\n')
+    expect(await runMemoryNightly(deps(), { force: true })).toEqual({ status: 'skipped', reason: 'no_new_material' })
+    expect(existsSync(draftPath())).toBe(false)
+  })
+})
+
 describe('buildNightlyPrompt granularity rules', () => {
   it('asks for one fact per entry, commitments in 承诺, and splitting via update + add', () => {
     const p = buildNightlyPrompt({ today: '2026-09-26', current: '', material: '' })

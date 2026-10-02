@@ -19,3 +19,6 @@ relay/pset.src.html text eol=lf
 relay/pset.html text eol=lf
 # 生成物:scripts/design-tokens.guard.test.ts 按整份文本比对 renderTokensCss(),autocrlf 改成 CRLF 后必红(windows-latest)。
 apps/desktop/src/tokens.css text eol=lf
+
+# 通用规范汉字表(字体子集化的输入):sources.lock.json 按字节钉 sha256,autocrlf 改成 CRLF 后必红(windows-latest)。
+scripts/fonts/tgscc-level-1-2.txt -text

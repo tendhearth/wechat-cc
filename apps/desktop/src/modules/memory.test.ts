@@ -55,8 +55,8 @@ describe('synthesizeMemory', () => {
     const deps = makeDeps({
       invokeApi: vi.fn().mockRejectedValue(new Error('memory_not_wired')),
     })
-    await expect(synthesizeMemory(deps as any)).rejects.toThrow('需要守护进程运行后才能重新整理记忆')
-    expect(statusEl.textContent).toContain('需要守护进程运行后才能重新整理记忆')
+    await expect(synthesizeMemory(deps as any)).rejects.toThrow('需要守护进程运行后才能更新项目地图')
+    expect(statusEl.textContent).toContain('需要守护进程运行后才能更新项目地图')
     expect(statusEl.hidden).toBe(false)
   })
 
@@ -68,8 +68,8 @@ describe('synthesizeMemory', () => {
       const statusEl = fakeEl()
       ;(globalThis as any).document.getElementById = (id: string) => (id === 'memory-status' ? statusEl : null)
       const deps = makeDeps({ invokeApi: vi.fn().mockRejectedValue(err) })
-      await expect(synthesizeMemory(deps as any)).rejects.toThrow('需要守护进程运行后才能重新整理记忆')
-      expect(statusEl.textContent).toContain('需要守护进程运行后才能重新整理记忆')
+      await expect(synthesizeMemory(deps as any)).rejects.toThrow('需要守护进程运行后才能更新项目地图')
+      expect(statusEl.textContent).toContain('需要守护进程运行后才能更新项目地图')
     }
   })
 })

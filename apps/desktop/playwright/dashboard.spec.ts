@@ -30,7 +30,7 @@ async function bootIntoDashboard(page: import('@playwright/test').Page, shimUrl:
 
 // 顶层导航项(2026-08-24 导航重构后):待办升到一级,日志/插件收进后厨
 // —— 它们仍有 pane,但不再有顶层导航按钮,所以分成两张表校验。
-const NAV_PANES = ['overview', 'workbench', 'recollections', 'aquarium', 'memory', 'todos', 'sessions', 'a2a-agents'] as const
+const NAV_PANES = ['overview', 'workbench', 'recollections', 'memory', 'todos', 'sessions', 'a2a-agents'] as const
 /** 有 pane、但入口在后厨标签页里(见 logs.spec.ts 的 bootAndOpenLogs)。 */
 const BACKSTAGE_PANES = ['logs', 'plugins'] as const
 
@@ -95,19 +95,20 @@ test('round-trip: overview → memory → overview restores initial state', asyn
 
 // ── Per-pane DOM contract ───────────────────────────────────────────────
 
-test('此刻 has the connections card; aquarium hero in 鱼缸; users + reconnect in 连接与设置', async ({ page, shimUrl, shim }) => {
+test('此刻 has the connections card + 浮到桌面; no aquarium anywhere; verdict + users + reconnect in 连接与设置', async ({ page, shimUrl, shim }) => {
   await shim.invoke('demo.seed', { chat_id: 'test_chat' })
   await bootIntoDashboard(page, shimUrl)
   const now = page.locator('article.dash-pane[data-pane="overview"]')
   await expect(now.locator('.cc-home-details #now-connections')).toBeAttached()
+  await expect(now.locator('.cc-home-details #companion-desktop-start')).toBeAttached()
   await expect(now.locator('#hero-card')).toHaveCount(0)
-  // 2026-10-01:鱼缸(hero card)搬到「生活与工具 › 鱼缸」
-  const aquarium = page.locator('article.dash-pane[data-pane="aquarium"]')
-  await expect(aquarium.locator('#hero-card')).toBeAttached()
-  await expect(aquarium.locator('#hero-headline')).toBeAttached()
-  await expect(aquarium.locator('#companion-stage')).toBeAttached()
+  // 鱼缸画布 2026-10-01 退休(主人拍板):没有鱼缸页、没有画布、没有沉浸模式。
+  await expect(page.locator('[data-pane="aquarium"]')).toHaveCount(0)
+  await expect(page.locator('#companion-stage')).toHaveCount(0)
+  await expect(page.locator('#companion-immersive-start')).toHaveCount(0)
   // 当前用户 + 子用户 + 重连 / 断开 在「连接与设置」抽屉的「连接」段
   const conn = page.locator('#settings-drawer .drawer-connection')
+  await expect(conn.locator('#hero-card #hero-headline')).toBeAttached()
   await expect(conn.locator('#accounts-current')).toBeAttached()
   await expect(conn.locator('#accounts-body')).toBeAttached()
   await expect(conn.locator('#dash-restart')).toBeAttached()

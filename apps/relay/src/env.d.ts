@@ -6,6 +6,8 @@ declare module '*.html' {
 interface Env {
   ROOM: DurableObjectNamespace
   METRICS?: AnalyticsEngineDataset
+  /** 按 IP 限连接尝试(spec §6,src/ip-limit.ts)。只在 staging / production 绑定;没绑 ⇒ 不限。 */
+  IP_LIMIT?: RateLimit
   RELAY_VERSION?: string
   RELAY_ENV?: string
   RELAY_DAILY_BYTES?: string

@@ -438,4 +438,14 @@ describe('跟 CC 说 / 连接 / 原生会话', () => {
     expect(reqs.at(-1)).toMatchObject({ key: 'POST /m/api/session/continue', body: { key: 'k' }, retry: true })
     await expect(b.continueSession('busy')).rejects.toMatchObject({ code: 'session_busy' })
   })
+
+  it('交给另一位继续:POST /m/api/matter/handoff(三键、幂等可重发);情况变了 ⇒ handoff_changed', async () => {
+    const REQ = '5a7e0000-0000-4000-8000-000000000001'
+    const { b, reqs } = harness({
+      'POST /m/api/matter/handoff': ({ body }) => body.providerId === 'codex' ? ok({ ok: true, matterId: 'deadbeef', created: true }) : ok({ ok: false, error: 'quota_handoff_changed' }, 409),
+    })
+    expect(await b.handoff({ id: 'cafebabe', requestId: REQ, providerId: 'codex' })).toEqual({ matterId: 'deadbeef' })
+    expect(reqs.at(-1)).toMatchObject({ key: 'POST /m/api/matter/handoff', path: '/m/api/matter/handoff', body: { id: 'cafebabe', requestId: REQ, providerId: 'codex' }, retry: true })
+    await expect(b.handoff({ id: 'cafebabe', requestId: REQ, providerId: 'gemini' })).rejects.toMatchObject({ code: 'handoff_changed' })
+  })
 })

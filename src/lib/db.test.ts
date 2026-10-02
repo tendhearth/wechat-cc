@@ -77,6 +77,23 @@ describe('openDb', () => {
       removeTempDir(dir)
     }
   })
+
+  // Windows CI 上 db.test 这几条清理时 EBUSY、重试 21 轮也删不掉,直到撞 20s 超时:不是盘慢,
+  // 是 close() 根本没关上 —— 迁移跑了 30 来条不同的 SQL,挤出 bun:sqlite 查询缓存(20 条)的
+  // 语句没 finalize,close_v2 只把连接挂成僵尸,句柄留到 GC。严格关(sqlite3_close)在还有
+  // 未 finalize 的语句时会抛 "database is locked",所以这条在 macOS / Linux 上也能看出来。
+  it('close() really releases the file: no statement left unfinalized after migrations and many distinct queries', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'db-test-close-'))
+    try {
+      const db = openDb({ path: join(dir, 'close.db') })
+      for (let i = 0; i < 40; i++) db.query(`SELECT ${i} AS n`).get()
+      const kept = db.prepare('SELECT 1 AS one')
+      kept.get()
+      expect(() => db.close(true)).not.toThrow()
+    } finally {
+      removeTempDir(dir)
+    }
+  })
 })
 
 describe('renameMigrated', () => {

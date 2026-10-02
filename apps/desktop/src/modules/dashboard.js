@@ -1,4 +1,4 @@
-// Dashboard module. Owns the overview pane: daemon hero, bound-accounts
+// Dashboard module. Owns the settings drawer's 连接 section: connection verdict (hero), bound-accounts
 // table (incl. inline two-step delete confirm), footer pid indicator,
 // and the smart restart-daemon button.
 //
@@ -25,65 +25,9 @@ function serviceChoicesMarkup(current) {
     `<button class="${p === current ? "provider-menu-active" : ""}" data-provider="${escapeHtml(p)}">${escapeHtml(PROVIDER_LABELS[p] || p)}<small>${p === current ? "当前使用" : "切换使用"}</small></button>`
   ).join("") + `<p class="service-menu-note">已配置不代表已验证回复。</p><button type="button" data-action="connect-ai">＋ 连接其他 AI 服务</button>`
 }
-const COMPANION_HERO_COPIES = [
-  { headline: "此刻，陪你一起看鱼", meta: "把鼠标轻轻移进鱼缸，看看谁会先回应你" },
-  { headline: "给忙碌留一小片水光", meta: "在这里慢慢游一会儿，也没关系" },
-  { headline: "小鱼们正在等你靠近", meta: "把鼠标轻轻移进水面，看看谁先回应你" },
-  { headline: "有小鱼陪着，慢一点也没关系", meta: "点一点水草，或向 CC 打声招呼" },
-  { headline: "这里有一缸安静的陪伴", meta: "留一点时间给自己，也留一点给小鱼" },
-]
-let companionHeroCopy = null
-
-function saveCompanionHeroIndex(index) {
-  try { globalThis.localStorage?.setItem("wechat-cc.companion-hero-copy", String(index)) } catch {}
-}
-
-function currentCompanionHeroCopy() {
-  if (companionHeroCopy) return companionHeroCopy
-  let previousIndex = -1
-  try {
-    previousIndex = Number.parseInt(globalThis.localStorage?.getItem("wechat-cc.companion-hero-copy") || "-1", 10)
-  } catch {}
-  const nextIndex = Number.isInteger(previousIndex) && previousIndex >= 0
-    ? (previousIndex + 1) % COMPANION_HERO_COPIES.length
-    : 0
-  companionHeroCopy = COMPANION_HERO_COPIES[nextIndex]
-  saveCompanionHeroIndex(nextIndex)
-  return companionHeroCopy
-}
-
-// Called only when the user returns to the overview pane. Doctor-poll
-// rerenders deliberately keep the same copy so the title never flickers.
-export function advanceCompanionHeroCopy() {
-  const activeIndex = companionHeroCopy ? COMPANION_HERO_COPIES.indexOf(companionHeroCopy) : -1
-  const nextIndex = (activeIndex + 1 + COMPANION_HERO_COPIES.length) % COMPANION_HERO_COPIES.length
-  companionHeroCopy = COMPANION_HERO_COPIES[nextIndex]
-  saveCompanionHeroIndex(nextIndex)
-}
-
-function renderHeroHeadline(element, headline, fishable = false) {
-  if (!element) return
-  // Tests and non-browser contexts intentionally keep a plain text fallback.
-  if (!fishable || typeof document.createTextNode !== "function") {
-    element.textContent = headline
-    element.removeAttribute?.("aria-label")
-    return
-  }
-  element.textContent = ""
-  element.setAttribute("aria-label", headline)
-  let fishIndex = 0
-  for (const character of Array.from(headline)) {
-    const letter = document.createElement("span")
-    const canBecomeFish = /\p{Script=Han}/u.test(character)
-    letter.className = canBecomeFish ? "hero-letter" : "hero-letter-mark"
-    if (canBecomeFish) {
-      letter.dataset.fish = String(fishIndex % 3)
-      fishIndex += 1
-    }
-    letter.setAttribute("aria-hidden", "true")
-    letter.textContent = character
-    element.appendChild(letter)
-  }
+// 连接结论(设置抽屉「连接」段顶上那两行)。鱼缸画布 2026-10-01 退休后不再轮换暖场文案,只说事实。
+function renderHeroHeadline(element, headline) {
+  if (element) element.textContent = headline
 }
 
 export function renderDashboard(report) {
@@ -94,16 +38,11 @@ export function renderDashboard(report) {
     expiredCount,
     lastProbe: _lastProbe,
   })
-  const reconnectingHero = reconnectHero(baseHero)
-  // Connection health always wins. Only a confirmed, healthy connection gets
-  // the rotating warm copy, and it stays stable during the five-second polls.
-  const hero = reconnectingHero.state === "connected"
-    ? { ...reconnectingHero, ...currentCompanionHeroCopy() }
-    : reconnectingHero
+  const hero = reconnectHero(baseHero)
   const card = document.getElementById("hero-card")
   if (!card) return
   card.classList.toggle("warn", hero.tone !== "ok")
-  renderHeroHeadline(document.getElementById("hero-headline"), hero.headline, hero.state === "connected")
+  renderHeroHeadline(document.getElementById("hero-headline"), hero.headline)
   document.getElementById("hero-meta").textContent = hero.meta
   const stopBtn = document.getElementById("dash-stop")
   const restartBtn = document.getElementById("dash-restart")
@@ -496,7 +435,6 @@ let _lastIncidentsCheckAt = 0
  * TEST-ONLY: Reset all module-level dashboard state.
  */
 export function __resetDashboardState() {
-  companionHeroCopy = null
   _lastRestart = null
   _lastProbe = null
   _reconnectPhase = "idle"

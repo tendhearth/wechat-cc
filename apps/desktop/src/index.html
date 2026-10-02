@@ -266,6 +266,10 @@
       <div class="drawer-body">
         <section class="drawer-section drawer-connection" aria-label="连接">
           <h3>连接</h3>
+          <div id="hero-card" class="conn-verdict" aria-live="polite">
+            <p id="hero-headline"></p>
+            <p id="hero-meta"></p>
+          </div>
           <div class="moment-actions">
             <span class="pending" id="dash-pending"></span>
             <button id="dash-restart" class="moment-connect-btn">
@@ -394,7 +398,6 @@
             <summary>生活与工具</summary>
             <div>
               <button class="dash-nav-link" aria-label="画室" data-pane="atelier">画室</button>
-              <button class="dash-nav-link" aria-label="鱼缸" data-pane="aquarium">鱼缸</button>
               <button class="dash-nav-link" aria-label="记忆" data-pane="memory">记忆<span class="count" id="memory-count"></span></button>
               <button class="dash-nav-link" aria-label="待办" data-pane="todos">待办</button>
               <button class="dash-nav-link" aria-label="觅食" data-pane="a2a-agents">觅食</button>
@@ -412,7 +415,10 @@
           <article class="dash-pane cc-now-pane" data-pane="overview" data-now="home" data-cc="away">
             <details class="cc-home-details">
             <summary><span class="now-sr">CC 的连接:</span><span id="dash-rail-dot" class="dot"></span><span id="dash-rail-text">正在连接…</span></summary>
-            <div id="now-connections" class="now-connections"></div>
+            <div class="now-panel">
+              <div id="now-connections" class="now-connections"></div>
+              <button id="companion-desktop-start" class="now-float" type="button" title="在桌面打开可拖动的 CC">浮到桌面</button>
+            </div>
             </details>
             <button id="now-back" class="now-back" type="button" hidden>‹ 此刻</button>
             <section class="now-hero">
@@ -432,67 +438,23 @@
             <div id="converse-root" class="converse-page"></div>
           </article>
 
-          <!-- ── pane: aquarium(鱼缸,生活与工具)──────────────────────
-               2026-10-01:原来「此刻」页的鱼缸搬到这里;连接与用户在「连接与设置」里。 -->
-          <article class="dash-pane aquarium-pane" data-pane="aquarium" hidden>
-              <div class="moment-body">
-                <section class="moment-ai" id="hero-card" aria-live="polite">
-                  <div class="companion-intro">
-                    <h1 id="hero-headline">此刻，陪你一起看鱼</h1>
-                    <p id="hero-meta">把鼠标轻轻移进鱼缸，看看谁会先回应你</p>
-                  </div>
-                  <div class="ai-orbit-visual">
-                    <div class="companion-mode-actions" aria-label="陪伴显示方式">
-                      <button id="companion-immersive-start" class="companion-immersive-trigger" type="button" aria-pressed="false">
-                        <span class="companion-immersive-icon" aria-hidden="true">⤢</span>
-                        <span>进入这一刻</span>
-                      </button>
-                      <button id="companion-desktop-start" class="companion-desktop-trigger" type="button" title="在桌面打开可拖动的陪伴鱼缸">
-                        <span aria-hidden="true">↗</span>
-                        <span>浮到桌面</span>
-                      </button>
-                    </div>
-                    <div class="moment-animation-stage moment-illustration-online" aria-label="可交互的陪伴鱼缸">
-                      <canvas id="companion-stage"></canvas>
-                      <div class="stage-hint" id="stage-hint">把鼠标轻轻移进鱼缸水面下方</div>
-                      <div class="bear-message" id="bear-message" aria-live="polite">你好呀，今天也在陪你。</div>
-                    </div>
-                    <div class="moment-illustration moment-illustration-offline" role="img" aria-label="CC 安静地坐在鱼缸旁，连接暂时离线">
-                      <img class="offline-aquarium" src="./assets/home-cc-aquarium-base.png" alt="" />
-                      <span class="offline-fish offline-fish-gold" aria-hidden="true"></span>
-                      <span class="offline-fish offline-fish-coral" aria-hidden="true"></span>
-                      <span class="offline-fish offline-fish-blue" aria-hidden="true"></span>
-                      <span class="offline-cc-shadow" aria-hidden="true"></span>
-                      <img class="offline-cc" src="./assets/pet/cc-v1/canonical/unlit/front.png" alt="" />
-                    </div>
-                  </div>
-                </section>
-
-                <div class="companion-immersive-tools" aria-label="陪伴模式工具">
-                  <button id="companion-immersive-exit" type="button">退出陪伴</button>
-                  <button id="companion-users-toggle" type="button" aria-controls="settings-drawer" title="在「连接与设置」里看用户">用户</button>
-                </div>
-
-                <!-- Hidden shim: keeps the IDs that JS modules
-                     (conversations.js, update.js, main.js) look up so
-                     nothing throws even though moxiuwen retired the
-                     visible cards. Do not delete unless those modules
-                     are refactored to tolerate missing nodes. -->
-                <div class="overview-support" hidden>
-                  <span id="conversations-meta">—</span>
-                  <table id="conversations-table"><tbody id="conversations-body"></tbody></table>
-                  <div id="update-card" data-tone="info">
-                    <span id="update-meta"></span>
-                    <span id="update-dot"></span>
-                    <span id="update-headline"></span>
-                    <span id="update-body"></span>
-                    <button id="update-check-btn"></button>
-                    <button id="update-apply-btn" hidden></button>
-                  </div>
-                </div>
-              </div>
-          </article>
-
+          <!-- Hidden shim: keeps the IDs that JS modules
+               (conversations.js, update.js, main.js) look up so
+               nothing throws even though moxiuwen retired the
+               visible cards. Do not delete unless those modules
+               are refactored to tolerate missing nodes. -->
+          <div class="overview-support" hidden>
+            <span id="conversations-meta">—</span>
+            <table id="conversations-table"><tbody id="conversations-body"></tbody></table>
+            <div id="update-card" data-tone="info">
+              <span id="update-meta"></span>
+              <span id="update-dot"></span>
+              <span id="update-headline"></span>
+              <span id="update-body"></span>
+              <button id="update-check-btn"></button>
+              <button id="update-apply-btn" hidden></button>
+            </div>
+          </div>
 
           <article class="dash-pane cc-recollections" data-pane="recollections" hidden>
             <header><span class="cc-life-kicker">回忆</span><h1>留下来的小事。</h1><p>画过的画、寄来的明信片，还有当时的想法。</p></header>
@@ -558,11 +520,11 @@
                     <p>根据已有的长期记忆,更新 CC 对你的理解。</p>
                   </div>
                   <div class="memory-maintenance-item">
-                    <button id="memory-synthesize-btn" class="btn" type="button" title="读本机 Claude 各项目记忆，重新整理出「CC 眼中的你」总体记忆（供 bot 使用）">
+                    <button id="memory-synthesize-btn" class="btn" type="button" title="读本机 Claude 各项目的记忆，重新生成项目地图（不动每晚整理的长期记忆）">
                       <span class="ic" data-hg-icon="star" data-hg-size="16"></span>
-                      重新整理
+                      更新项目地图
                     </button>
-                    <p>从本机 Claude 各项目的记忆重新整理总体记忆,要花一些时间。</p>
+                    <p>从本机 Claude 各项目的记忆重新生成项目地图,要花一些时间。</p>
                   </div>
                 </div>
 
@@ -898,7 +860,6 @@
       </div>
 
     <img class="crab-escape" id="crab-escape" alt="" aria-hidden="true">
-    <script type="module" src="./animation-lab.js"></script>
     <script type="module" src="./main.js"></script>
   </body>
 </html>

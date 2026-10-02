@@ -7,6 +7,7 @@
  */
 import { RELAY_ID_RE, RELAY_SUBPROTOCOL } from '@wechat-cc/protocol'
 import PSET_HTML from '../../../relay/pset.html'
+import { ipLimited } from './ip-limit'
 import { count } from './metrics'
 import { wellKnown } from './well-known'
 
@@ -34,6 +35,10 @@ export default {
     if (wk) return wk
     if (url.pathname === '/pset/' || url.pathname === '/pset') {
       return new Response(PSET_HTML, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } })
+    }
+    if (url.pathname.startsWith('/v2/')) {
+      const limited = await ipLimited(req, env)
+      if (limited) return limited
     }
     const isUpgrade = req.headers.get('upgrade')?.toLowerCase() === 'websocket'
     if (url.pathname === '/v2/daemon') {

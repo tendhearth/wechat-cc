@@ -5,7 +5,7 @@ import type {MattersService,MatterSayInput} from '../core/matters/service'
 import {entryErrorStatus,parseEntryInput,type EntryInput,type EntryOptions} from '../core/workbench/task-entry'
 import type {NativeContinuePreview} from '../core/workbench/native-adoption'
 
-export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'>>
+export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'>>
 export interface MobileEntryActions {
   entryOptions():EntryOptions
   createEntry(input:EntryInput):EntryResult
@@ -29,8 +29,8 @@ export function mobileMatterError(error:unknown):Response {
   if(['upload_conflict','upload_changed','upload_offset','attachment_in_use'].includes(code))return json({ok:false,error:code},409)
   if(code==='invalid_entry_owner')return json({ok:false,error:code},403)
   if(['creation_conflict','managed_workspace_changed','attachment_scope','attachment_conflict'].includes(code))return json({ok:false,error:code},409)
-  if(['entry_not_wired','managed_workspace_unavailable','invalid_managed_workspace','workbench_stopping','unavailable_provider','provider_quota_exhausted'].includes(code))return json({ok:false,error:code},503)
-  if(['permission_stale','question_stale','input_stale','input_conflict','input_delivery_busy','workbench_busy','reply_sink_busy','workbench_archived','artifact_changed','restart_confirmation_required','restart_confirmation_stale','external_close_confirmation_required','external_close_confirmation_stale','native_session_busy','native_folder_busy','native_history_changed'].includes(code))return json({ok:false,error:code},409)
+  if(['entry_not_wired','managed_workspace_unavailable','invalid_managed_workspace','workbench_stopping','unavailable_provider','provider_quota_exhausted','quota_handoff_unavailable'].includes(code))return json({ok:false,error:code},503)
+  if(['permission_stale','question_stale','input_stale','input_conflict','input_delivery_busy','workbench_busy','reply_sink_busy','workbench_archived','artifact_changed','restart_confirmation_required','restart_confirmation_stale','external_close_confirmation_required','external_close_confirmation_stale','native_session_busy','native_folder_busy','native_history_changed','quota_handoff_not_needed','quota_handoff_changed'].includes(code))return json({ok:false,error:code},409)
   if(code.endsWith('_not_wired')||code==='input_storage_unavailable')return json({ok:false,error:'unavailable'},503)
   if(code.startsWith('invalid_')||['matter_task_required','matter_say_unsupported'].includes(code))return json({ok:false,error:code},400)
   return json({ok:false,error:'unavailable'},500)
@@ -78,6 +78,17 @@ export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined
       if(!requestId||!UUID.test(requestId)||url.searchParams.getAll('requestId').length!==1)throw Error('invalid_request_id')
       const result=entry.entryReceipt(requestId.toLowerCase());if(!result)throw Error('not_found')
       return json({ok:true,...result})
+    }catch(error){return mobileMatterError(error)}
+  }
+  // 额度用完 ⇒ 交给确认卡上那位继续(spec 2026-10-01-tendhearth-continue-sessions §7-3)。正文恰好三键;按 requestId 幂等。
+  if(url.pathname==='/m/api/matter/handoff'){
+    if(req.method!=='POST')return json({ok:false,error:'method_not_allowed'},405)
+    try{
+      let b:unknown
+      try{b=await req.json()}catch{throw Error('invalid_request')}
+      if(!object(b)||Object.keys(b).some(k=>!['id','requestId','providerId'].includes(k))||typeof b.id!=='string'||!ID.test(b.id)||typeof b.requestId!=='string'||!UUID.test(b.requestId)||typeof b.providerId!=='string'||!/^[a-z][a-z0-9._-]{0,63}$/.test(b.providerId))throw Error('invalid_request')
+      if(!actions?.handoff)throw Error('workbench_not_wired')
+      return json({ok:true,...await actions.handoff(b.id,{requestId:b.requestId,providerId:b.providerId},'phone')})
     }catch(error){return mobileMatterError(error)}
   }
   const operation=url.pathname==='/m/api/matter/permission'?'permission':url.pathname==='/m/api/matter/answer'?'answer':url.pathname==='/m/api/matter/artifact'?'artifact':null

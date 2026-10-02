@@ -241,6 +241,11 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       const r = await call<{ matterId: string; created: boolean }>('POST /m/api/session/continue', '/m/api/session/continue', { body: { key }, retry: true })
       return { matterId: r.matterId }
     },
+    async handoff(p) {
+      // 幂等(requestId;一件事也只交一次):超时后协议客户端可以原样重发,daemon 回同一件。
+      const r = await call<{ matterId: string; created: boolean }>('POST /m/api/matter/handoff', '/m/api/matter/handoff', { body: { id: p.id, requestId: p.requestId, providerId: p.providerId }, retry: true })
+      return { matterId: r.matterId }
+    },
     async decide(p) {
       await call('POST /m/api/matter/permission', '/m/api/matter/permission', { body: { id: p.id, runId: p.runId, requestId: p.requestId, decision: p.decision } })
     },
