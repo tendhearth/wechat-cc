@@ -36,6 +36,21 @@ export interface AcpProviderBaseOptions {
   spawn?: typeof nodeSpawn
   /** daemon 日志口(tag, line)。每个 session 每类最多一行,只记"悄悄丢掉了什么"。 */
   log?: (tag: string, line: string) => void
+  /**
+   * 守护(评审 #193 P1-1):这个 ACP agent 在网络闸门眼里是哪一家(cursor-agent ⇒ 'cursor')。
+   * 给了才报调用目标:会话的模型取 agent 起会话 / 续会话时**自己报的**当前模型(configOptions
+   * currentValue),而不是我们想钉的那个。不给 ⇒ 不报 ⇒ 闸门按需要保护。
+   */
+  targetProvider?: string
+}
+
+/** ACP session/new|load 应答里 agent 自报的当前模型:configOptions 里的 model 项,退而求其次 models.currentModelId。 */
+export function acpCurrentModel(result: unknown): string | null {
+  if (!object(result)) return null
+  const option = Array.isArray(result.configOptions) ? result.configOptions.find((item: unknown) => object(item) && (item.id === 'model' || item.category === 'model')) : undefined
+  if (object(option) && typeof option.currentValue === 'string' && option.currentValue) return option.currentValue
+  if (object(result.models) && typeof result.models.currentModelId === 'string' && result.models.currentModelId) return result.models.currentModelId
+  return null
 }
 
 export interface AcpMcpServer { name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> }
@@ -126,7 +141,19 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
   const spawn = options.spawn ?? nodeSpawn
   const rpcTimeoutMs = options.rpcTimeoutMs ?? 45_000, closeTimeoutMs = options.closeTimeoutMs ?? 2_500
   const permissionLimit = options.permissionLimit ?? 100
+  const targetProvider = options.targetProvider
   return {
+    // 守护(评审 #193 P1-1):起 ACP 会话(initialize + session/new|load)不发模型请求 ⇒ spawn 报 setup;
+    // 这一轮真正用哪个模型要等会话起来、agent 自己报(见下面 session.callTarget)。'session' 只是起来之前的
+    // 预测:钉了模型就按钉的,没钉就说不准(null)。
+    ...(targetProvider ? {
+      callTarget(kind: import('./agent-provider').CallTargetKind, ctx?: Partial<SpawnContext>) {
+        if (kind === 'spawn') return { provider: targetProvider, purpose: 'setup' as const }
+        if (kind !== 'session') return null
+        const wanted = options.model?.((ctx ?? {}) as SpawnContext)
+        return wanted ? { provider: targetProvider, model: wanted } : null
+      },
+    } : {}),
     async spawn(project, context: SpawnContext): Promise<AgentSession> {
       // 对话侧与工作台共用这一句:两边都靠 close() 杀进程组收尾,Windows 上那条路没验过。
       // 文案不提"工作台" —— 对话侧也会撞到它(bootstrap 那边另有一道门:win32 不注册 ACP 对话 provider)。
@@ -139,6 +166,8 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       const logOnce = (kind: string, line: string) => { if (!options.log || logged.has(kind)) return; logged.add(kind); options.log('ACP', line) }
       const translator = createAcpTranslator({ text: options.text })
       let sessionId = '', active: Turn | undefined, loading = true, imageOk = false
+      // agent 自报的当前模型(session/new|load 应答,或 set_config_option 成功之后);null = 没报。
+      let currentModel: string | null = null
       let closing = false, exited = false, broken: Error | undefined, closePromise: Promise<void> | undefined
       let resolveExit!: () => void
       const exit = new Promise<void>(resolve => { resolveExit = resolve })
@@ -293,6 +322,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
             sessionId = context.resumeSessionId
             const loaded = await connection.request('session/load', { sessionId, cwd: project.path, mcpServers })
             if (object(loaded) && loaded.sessionId !== undefined && loaded.sessionId !== sessionId) throw new Error('acp_resume_session_mismatch')
+            currentModel = acpCurrentModel(loaded)
           } catch (error) {
             if (options.resume !== 'fallback') {
               // 上一轮被拒(额度)或从没落盘的会话,session/load 报 -32602 "Session … not found":给它自己的码,
@@ -305,6 +335,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
             created = await openNew()
           }
         } else created = await openNew()
+        if (created) currentModel = acpCurrentModel(created)
         // 只在新会话上钉模型:session/load 沿用会话原状。失败只记日志,模型选错不该让整段对话起不来 ——
         // 但只吞 AcpRequestError(agent 明确拒绝了这个选项):任何别的拒绝(尤其是进程死掉时
         // connection.dispose() 甩出的那个)都必须原样上抛,让外层 catch 走 setupError + close(),
@@ -315,7 +346,10 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
           const offered = object(option) && Array.isArray(option.options) && option.options.some((item: unknown) => object(item) && item.value === wanted)
           const configId = offered && typeof (option as Record<string, unknown>).id === 'string' ? (option as Record<string, unknown>).id as string : undefined
           if (configId) {
-            await connection.request('session/set_config_option', { sessionId, configId, value: wanted }, rpcTimeoutMs).catch((error: unknown) => {
+            await connection.request('session/set_config_option', { sessionId, configId, value: wanted }, rpcTimeoutMs).then((result: unknown) => {
+              // agent 接受了:应答里带了 configOptions 就以它报的为准,否则就是我们钉的那个。
+              currentModel = acpCurrentModel(result) ?? wanted
+            }, (error: unknown) => {
               if (!(error instanceof AcpRequestError)) throw error
               logOnce('model', `session/set_config_option ${forLog(wanted)} failed: ${error.message.slice(0, 120)}`)
             })
@@ -331,6 +365,7 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       if (options.notice !== null) context.reportNotice?.(options.notice ?? acpNotice(options.displayName))
 
       return {
+        ...(targetProvider ? { callTarget: () => (currentModel ? { provider: targetProvider, model: currentModel } : null) } : {}),
         dispatch(text, attachments) {
           if (attachments?.length && options.attachments !== 'prompt') throw new Error('acp_attachments_unsupported')
           if (closing || broken || exited) throw new Error('acp_session_closed')

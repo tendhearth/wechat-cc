@@ -65,6 +65,23 @@ export function isNetworkUnprotectedError(err: unknown): err is NetworkUnprotect
     || (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'network_unprotected')
 }
 
+/** 拿不准实际目标时的占位:classify 一律判成需要保护(fail closed)。 */
+export function unresolvedTarget(provider: string, purpose: CallTarget['purpose'] = 'turn'): CallTarget {
+  return { provider, purpose, unresolved: true }
+}
+
+/**
+ * 一个**在用的**会话 / 执行者这一轮真正连到哪里(评审 #193 P1-1):它在起来那一刻定下的端点 + 模型,
+ * 而不是此刻配置里写的。会话没报(或报错)⇒ unresolved ⇒ 按需要保护。
+ */
+export function sessionCallTarget(session: { callTarget?: () => CallTarget | null } | null | undefined, provider: string): CallTarget {
+  try {
+    const t = session?.callTarget?.()
+    if (t) return { ...t, exact: true }
+  } catch { /* 报不出来就按拿不准处理 */ }
+  return unresolvedTarget(provider)
+}
+
 export function classifyWith(gate: NetworkGate | undefined, target: CallTarget): CallClass {
   try { return gate?.classify ? gate.classify(target) : classifyCall(target) }
   catch { return classifyCall(target) }

@@ -85,7 +85,7 @@ export function makeGuardRuntime(deps: GuardRuntimeDeps): GuardRuntime {
   function classifyInUse(): Array<ProviderInUse & { cls: CallClass }> {
     let list: ProviderInUse[] = []
     try { list = providersInUse() } catch { list = [] }
-    return list.map(p => ({ ...p, cls: gate.classify({ provider: p.id, model: p.model ?? null, ...(p.baseUrl ? { baseUrl: p.baseUrl } : {}), purpose: 'turn' }) }))
+    return list.map(p => ({ ...p, cls: gate.classify(p.target ?? { provider: p.id, model: p.model ?? null, ...(p.baseUrl ? { baseUrl: p.baseUrl } : {}), purpose: 'turn' }) }))
   }
 
   function health(): GuardHealth {

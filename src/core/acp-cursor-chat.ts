@@ -56,13 +56,16 @@ export function acpMcpServersFor(specs: AcpCursorChatOptions['mcpSpecs'], mcpEnv
 export function createAcpCursorChatProvider(options: AcpCursorChatOptions): AgentProvider {
   const evalSpawn = options.evalSpawn ?? defaultCursorSpawnFn(options.bin)
   const base = createAcpProvider({
-    command: options.bin, args: ['acp'], displayName: 'Cursor', log: options.log, spawn: options.spawn,
+    command: options.bin, args: ['acp'], displayName: 'Cursor', log: options.log, spawn: options.spawn, targetProvider: 'cursor',
     permissions: 'mode', text: 'messages', resume: 'fallback', notice: null,
     mcpServers: (context: SpawnContext) => acpMcpServersFor(options.mcpSpecs, context.mcpEnv),
     model: (context: SpawnContext) => context.model ?? options.model,
   })
   return {
     spawn: base.spawn,
+    // 守护(评审 #193 P1-1):一次性评估用的是构造时的 options.model(下面 cursorOneShotEval 的那个),
+    // 不是此刻配置里的;会话那一侧交给 ACP 自报的当前模型。
+    callTarget: (kind, ctx) => kind === 'cheapEval' || kind === 'strongEval' ? { provider: 'cursor', model: options.model } : base.callTarget?.(kind, ctx) ?? null,
     /** CLI 子进程一档,与 codex 同量级。 */
     cheapEvalBudgetMs: 20_000,
     async cheapEval(prompt: string): Promise<string> {

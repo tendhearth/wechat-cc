@@ -2885,9 +2885,11 @@ describe('network gate (2026-10-02)', () => {
     const store = makeMockStore()
     store.set('chat-1', mode)
     const registry = createProviderRegistry()
-    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
-    registry.register('codex', dummyProvider, { displayName: 'Codex', canResume: () => true })
-    registry.register('cursor' as ProviderId, dummyProvider, { displayName: 'Cursor', canResume: () => true })
+    // 评审 #193:provider 报自己实际连到哪里(官方端点 / cursor + 这次钉的模型);协调器按它判。
+    const reporting = (id: string): AgentProvider => ({ ...dummyProvider, callTarget: (_k, ctx) => ({ provider: id, model: ctx?.model ?? (id === 'cursor' ? 'auto' : null) }) })
+    registry.register('claude', reporting('claude'), { displayName: 'Claude', canResume: () => true })
+    registry.register('codex', reporting('codex'), { displayName: 'Codex', canResume: () => true })
+    registry.register('cursor' as ProviderId, reporting('cursor'), { displayName: 'Cursor', canResume: () => true })
     const acquire = vi.fn(async (_req: AcquireRequest) => ({
       alias: 'p', path: '/p', providerId: 'claude' as ProviderId, lastUsedAt: 0,
       dispatch: () => makeFakeSession({ events: [{ kind: 'result', sessionId: 's', numTurns: 1, durationMs: 0 }] }).dispatch('x'),

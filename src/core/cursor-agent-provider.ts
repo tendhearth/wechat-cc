@@ -257,6 +257,11 @@ export function createCursorAgentProvider(opts: CursorAgentProviderOptions): Age
   let firstToolNameLogged = false
 
   return {
+    // 守护(评审 #193 P1-1):SDK 路径的模型 = 会话钉的 ?? 构造时的(下面 spawn 同一条规则);没有就是 SDK 自选,拿不准。
+    callTarget: (kind, ctx) => {
+      const model = kind === 'session' || kind === 'spawn' ? ctx?.model ?? opts.model : opts.model
+      return model ? { provider: 'cursor', model } : null
+    },
     async spawn(project: AgentProject, spawnOpts) {
       const tierOpts = tierProfileToCursorSdkOpts(spawnOpts.tierProfile, spawnOpts.permissionMode)
       // Per-session internal-api auth — merge the env-only token + tier into

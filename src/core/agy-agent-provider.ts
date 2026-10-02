@@ -293,6 +293,8 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
   const turnTimeoutMs = opts.turnTimeoutMs && opts.turnTimeoutMs > 0 ? opts.turnTimeoutMs : DEFAULT_TURN_TIMEOUT_MS
 
   return {
+    // 守护(评审 #193 P1-1):agy 永远连 Google;模型和下面 spawn / oneShotEval 用的是同一份。
+    callTarget: (kind, ctx) => ({ provider: 'agy', model: kind === 'cheapEval' ? CHEAP_EVAL_MODEL : kind === 'strongEval' ? opts.model : ctx?.model ?? opts.model }),
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
       // resumeSessionId-seeded spawns already have a handle — their first
       // dispatch uses `--conversation`, never `--new-project` (RULING 1).

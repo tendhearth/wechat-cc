@@ -17,7 +17,7 @@
  */
 import type { SessionManager } from './session-manager'
 import type { ConversationStore } from './conversation-store'
-import type { ProviderRegistry } from './provider-registry'
+import { providerCallTarget, type ProviderRegistry } from './provider-registry'
 import type { Mode, ProviderId } from './conversation'
 import type { InboundMsg } from './prompt-format'
 import { makeHandoffLedger, buildHandoffBlock, buildColdStartBlock, type HandoffTurn } from './provider-handoff'
@@ -81,7 +81,7 @@ export interface TurnRecord {
 
 export interface ConversationCoordinatorDeps {
   resolveProject(chatId: string): { alias: string; path: string } | null
-  manager: Pick<SessionManager, 'acquire'> & Partial<Pick<SessionManager, 'release' | 'releaseFor' | 'has'>>
+  manager: Pick<SessionManager, 'acquire'> & Partial<Pick<SessionManager, 'release' | 'releaseFor' | 'has' | 'effectiveTarget'>>
   conversationStore: Pick<ConversationStore, 'get' | 'set' | 'setParticipants'>
   registry: Pick<ProviderRegistry, 'has' | 'list' | 'get'>
   /**
@@ -1137,7 +1137,13 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     const refused: { label: string; source: 'bx' | 'probe' | 'off'; detail: string }[] = []
     for (const p of providers) {
       const model = cur.kind === 'solo' && cur.provider === p ? cur.model : undefined
-      const d = await decideCall(deps.networkGate, { provider: p, model: model ?? null, purpose: 'turn' })
+      // 评审 #193 P1-1:按这一轮**实际**会连到的目标判 —— 有在用的会话就是它起来时定下的端点 + 模型,
+      // 没有就是 provider 按这次的模型报的;都报不出来 ⇒ 按需要保护。不按此刻的配置猜。
+      const proj = deps.resolveProject(msg.chatId)
+      const target = proj && deps.manager.effectiveTarget
+        ? deps.manager.effectiveTarget({ alias: proj.alias, providerId: p, chatId: msg.chatId }, model)
+        : providerCallTarget(deps.registry.get(p)?.provider, p, 'session', model !== undefined ? { model } : {})
+      const d = await decideCall(deps.networkGate, target)
       if (d.allowed) allowed.push(p)
       else refused.push({ label: d.cls.label, source: d.verdict!.source, detail: d.verdict!.detail })
     }

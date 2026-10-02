@@ -11,6 +11,8 @@ import type {ApiSession,ApiSessionBinding,makeApiSessionStore} from './api-sessi
 type SessionStore=ReturnType<typeof makeApiSessionStore>
 interface Options {
   sessions:SessionStore;model:APIModel;configHash:string;configuredModel:string
+  /** 守护(评审 #193 P1-1):`model` 实际连的 base URL(和建 APIModel 的是同一份)。不给 ⇒ 闸门按需要保护。 */
+  baseURL?:string
   maxSteps?:number;closeTimeoutMs?:number;privateStateDir?:string
 }
 const TEXT_MIMES=new Set(['text/plain','text/markdown','text/csv','application/json'])
@@ -113,6 +115,7 @@ export function createApiTaskProvider(options:Options):AgentProvider&{canResume(
     return value
   }
   return {
+    callTarget:()=>options.baseURL?{provider:'openai',baseUrl:options.baseURL,model:options.configuredModel}:null,
     canResume(path,id){try{return options.sessions.canResume(id,path,scopeIdentity(path),options.configHash)}catch{return false}},
     async spawn(project,ctx){
       const match=/^workbench:([a-f0-9]{8})$/.exec(project.alias)

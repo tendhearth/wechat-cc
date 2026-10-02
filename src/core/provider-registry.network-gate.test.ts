@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { callTargetFor, createProviderRegistry, withNetworkGate } from './provider-registry'
+import { createProviderRegistry, providerCallTarget, withNetworkGate } from './provider-registry'
 import type { AgentProvider } from './agent-provider'
 import { makeFakeSession } from './test-helpers'
 import type { NetworkGate } from '../lib/network-gate'
@@ -13,21 +13,28 @@ function gate(state: { safe: boolean }, resolve: (t: Parameters<typeof classifyC
 // 测试里 openai 指向 DeepSeek(国内,不需要保护)。
 const deepseekOpenai = (t: Parameters<typeof classifyCall>[0]) => (t.provider === 'openai' ? { ...t, baseUrl: 'https://api.deepseek.com/v1' } : t)
 
-function fakeProvider(tag = 'cheap') {
+/** id 给了 ⇒ provider 报自己的目标(和真的 provider 一样:id + 这次钉的模型);不给 ⇒ 不报(拿不准)。 */
+function fakeProvider(tag = 'cheap', id?: string) {
   const spawn = vi.fn(async () => makeFakeSession({ events: [] }))
   const cheapEval = vi.fn(async (_p: string) => tag)
   const strongEval = vi.fn(async (_p: string) => 'strong')
   const modelCatalog = vi.fn(async () => ({ models: [] }) as never)
-  const p = { spawn, cheapEval, strongEval, modelCatalog } as unknown as AgentProvider
+  const callTarget = id ? (_kind: string, ctx?: { model?: string; execution?: { model: string | null } }) => ({ provider: id, model: ctx?.model ?? ctx?.execution?.model ?? null }) : undefined
+  const p = { spawn, cheapEval, strongEval, modelCatalog, ...(callTarget ? { callTarget } : {}) } as unknown as AgentProvider
   return { p, spawn, cheapEval, strongEval, modelCatalog }
 }
 
-describe('callTargetFor', () => {
-  it('spawn carries the pinned model (chat ctx.model or workbench execution.model); catalog is not a turn', () => {
-    expect(callTargetFor('cursor', 'spawn', [{}, { model: 'gpt-5' }])).toEqual({ provider: 'cursor', model: 'gpt-5', purpose: 'turn' })
-    expect(callTargetFor('cursor', 'spawn', [{}, { execution: { model: 'claude-4.5-sonnet' } }])).toMatchObject({ model: 'claude-4.5-sonnet' })
-    expect(callTargetFor('cursor', 'spawn', [{}, {}])).toMatchObject({ model: null })
-    expect(callTargetFor('claude', 'modelCatalog')).toEqual({ provider: 'claude', purpose: 'catalog' })
+describe('providerCallTarget (review #193)', () => {
+  it('asks the provider; spawn falls back to its session target; marks the result exact', () => {
+    const f = fakeProvider('x', 'cursor')
+    expect(providerCallTarget(f.p, 'cursor', 'spawn', { model: 'gpt-5' })).toEqual({ provider: 'cursor', model: 'gpt-5', purpose: 'turn', exact: true })
+    expect(providerCallTarget(f.p, 'cursor', 'session', { execution: { defaults: 'provider', model: 'claude-4.5-sonnet', reasoningEffort: null } })).toMatchObject({ model: 'claude-4.5-sonnet', exact: true })
+    expect(providerCallTarget(f.p, 'cursor', 'cheapEval')).toMatchObject({ purpose: 'eval', exact: true })
+  })
+  it('a provider that reports nothing (or throws) → unresolved (fail closed)', () => {
+    expect(providerCallTarget(fakeProvider().p, 'openai', 'cheapEval')).toEqual({ provider: 'openai', purpose: 'eval', unresolved: true })
+    expect(providerCallTarget({ spawn: vi.fn(), callTarget: () => { throw new Error('x') } } as unknown as AgentProvider, 'cursor', 'spawn')).toMatchObject({ unresolved: true })
+    expect(classifyCall(providerCallTarget(null, 'cursor', 'session')).protected).toBe(true)
   })
 })
 
@@ -44,7 +51,7 @@ describe('withNetworkGate', () => {
   })
 
   it('unprotected call + unsafe → goes through and never even reads the signal', async () => {
-    const f = fakeProvider()
+    const f = fakeProvider('cheap', 'cursor')
     const st = { safe: false }
     const gt = gate(st)
     const cursor = withNetworkGate(f.p, gt, 'cursor')
@@ -85,7 +92,7 @@ describe('createProviderRegistry({ networkGate })', () => {
   it('cheapEval failover: unsafe → skips protected candidates (no cooldown), still uses the unprotected one', async () => {
     const state = { safe: false }
     const r = createProviderRegistry({ networkGate: gate(state) })
-    const agy = fakeProvider('agy'), cursor = fakeProvider('cursor-auto'), claude = fakeProvider('claude')
+    const agy = fakeProvider('agy', 'agy'), cursor = fakeProvider('cursor-auto', 'cursor'), claude = fakeProvider('claude', 'claude')
     // 偏好序 agy → claude,cursor 不在偏好序里排最后:前两个需要保护被跳过,落到 Cursor auto。
     r.register('agy', agy.p, { displayName: 'agy', canResume: () => false })
     r.register('claude', claude.p, { displayName: 'Claude', canResume: () => true })
@@ -129,7 +136,7 @@ describe('createProviderRegistry({ networkGate })', () => {
   it('mixed: Claude chat paused while a DeepSeek background judgement in the same registry proceeds', async () => {
     const state = { safe: false }
     const r = createProviderRegistry({ networkGate: gate(state, deepseekOpenai), cheapEvalProvider: 'openai' })
-    const claude = fakeProvider('claude'), ds = fakeProvider('deepseek')
+    const claude = fakeProvider('claude', 'claude'), ds = fakeProvider('deepseek', 'openai')
     r.register('claude', claude.p, { displayName: 'Claude', canResume: () => true })
     r.register('openai', ds.p, { displayName: 'DeepSeek', canResume: () => false })
     const [chat, judge] = await Promise.allSettled([
@@ -144,7 +151,7 @@ describe('createProviderRegistry({ networkGate })', () => {
   it('a domestic candidate that fails with an ordinary connection error is NOT labelled 网络未受保护', async () => {
     const state = { safe: false }
     const r = createProviderRegistry({ networkGate: gate(state, deepseekOpenai) })
-    const ds = fakeProvider(), claude = fakeProvider()
+    const ds = fakeProvider('cheap', 'openai'), claude = fakeProvider('cheap', 'claude')
     ds.cheapEval.mockRejectedValue(new Error('fetch failed: ECONNREFUSED'))
     r.register('openai', ds.p, { displayName: 'DeepSeek', canResume: () => false })
     r.register('claude', claude.p, { displayName: 'Claude', canResume: () => true })
