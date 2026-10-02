@@ -87,12 +87,12 @@ function harness(source = MOBILE_WORKBENCH_JS) {
     return Promise.resolve(response)
   }
 
-  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'URL', 'ago', source)
+  const boot = new Function('document', 'window', 'localStorage', 'REMOTE', 'api', 'esc', 'URL', 'ago', readMobileSource('markdown.js')+'\n'+source)
   boot(doc, win, {
     getItem: (k: string) => store.get(k) ?? null,
     setItem: (k: string, v: string) => { store.set(k, v) },
     removeItem: (k: string) => { store.delete(k) },
-  }, { relay: 'https://relay.example', id: 'phone1' }, api, (s: string) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'), { revokeObjectURL() {} }, () => '刚刚')
+  }, { relay: 'https://relay.example', id: 'phone1' }, api, (s: string) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'), class extends URL { static revokeObjectURL() {} }, () => '刚刚')
 
   return {
     els, doc, calls, navButton, docHandlers, winHandlers,

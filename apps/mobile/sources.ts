@@ -14,9 +14,15 @@ export const MOBILE_PAGE_OUT = new URL('../../src/daemon/mobile-page.generated.j
  * 替换前(仓库里存的样子)和替换后(真正执行的样子)都是合法 JS。
  */
 export const CCP_PLACEHOLDER = '/*@@CCP@@*/'
+export const CCM_PLACEHOLDER = '/*@@CCM@@*/'
 
 export function readMobileSource(name: string): string {
   const source = readFileSync(new URL(name, MOBILE_SRC), 'utf8')
+  if (name === 'markdown.js') {
+    if (source.split(CCM_PLACEHOLDER).length !== 2) throw Error('mobile page: markdown.js must have exactly one Markdown placeholder')
+    const markdownJs = readFileSync(new URL('markdown-generated.js', MOBILE_SRC), 'utf8')
+    return source.replace(CCM_PLACEHOLDER, () => `;${markdownJs};\n`)
+  }
   if (name === 'transport.js') {
     if (!source.includes(CCP_PLACEHOLDER)) throw Error(`mobile page: transport.js is missing the ${CCP_PLACEHOLDER} placeholder`)
     const protocolJs = readFileSync(new URL('protocol-generated.js', MOBILE_SRC), 'utf8')

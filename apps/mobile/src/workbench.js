@@ -164,7 +164,10 @@ function mSettleUnsure(d) {
 }
 function mRenderEvents(events) {
   var root=document.getElementById('m-events'),expanded=root.querySelectorAll('details.m-tool-events[open]').length>0
-  var dialogue=events.filter(function(e){return ['user','text','error','system'].indexOf(e.kind)>=0}).map(function(e){return '<div class="card ev"><div class="k">'+(e.kind==='user'?'你':e.kind==='text'?'CC':'·')+'</div><div class="tx"><p>'+esc(e.text)+'</p>'+mMaterialCards(e.attachments)+'<small>'+esc(ago(new Date(e.createdAt).toISOString()))+'</small></div></div>'}).join('')
+  var dialogue=events.filter(function(e){return ['user','text','error','system'].indexOf(e.kind)>=0}).map(function(e){
+    var body=e.kind==='text'?'<div class="m-markdown">'+CCM.renderMarkdown(e.text)+'</div>':'<p>'+esc(e.text)+'</p>'
+    return '<div class="card ev"><div class="k">'+(e.kind==='user'?'你':e.kind==='text'?'CC':'·')+'</div><div class="tx">'+body+mMaterialCards(e.attachments)+'<small>'+esc(ago(new Date(e.createdAt).toISOString()))+'</small></div></div>'
+  }).join('')
   var tools=events.filter(function(e){return e.kind==='tool_call'})
   var folded=tools.length?'<details class="m-tool-events"'+(expanded?' open':'')+'><summary>工具记录（'+tools.length+'）</summary>'+tools.map(function(e){return '<div class="card"><pre class="m-description">'+esc(e.text)+'</pre><small>'+esc(ago(new Date(e.createdAt).toISOString()))+'</small></div>'}).join('')+'</details>':''
   root.innerHTML=dialogue+folded||'<div class="empty">还没有对话记录</div>'
@@ -287,6 +290,16 @@ window.addEventListener('offline',function(){clearTimeout(mPoll);mOffline=true;m
 window.addEventListener('online',function(){mOffline=false;if(mActive){if(mCurrent)mRefresh();else loadMatters()}})
 window.addEventListener('pagehide',function(){clearTimeout(mPoll);mSeq++;mConnectionEpoch++;mDetailFresh=false;mSetButtons()})
 window.addEventListener('pageshow',function(){if(mActive){if(mCurrent)mRefresh();else loadMatters()}})
+// Markdown results retain an exact source preview alongside the reading view.
+function mRenderTextArtifact(preview,mime,text,truncated) {
+  var pre=document.createElement('pre');pre.className='m-description';pre.textContent=text
+  if(mime==='text/markdown'||mime==='text/x-markdown'){
+    var reading=document.createElement('div');reading.className='m-markdown';reading.innerHTML=CCM.renderMarkdown(text);preview.appendChild(reading)
+    var original=document.createElement('details');original.className='m-artifact-source'
+    var label=document.createElement('summary');label.textContent='查看原文';original.appendChild(label);original.appendChild(pre);preview.appendChild(original)
+  }else preview.appendChild(pre)
+  if(truncated){var notice=document.createElement('p');notice.textContent='预览已截断，下载可查看完整文件。';preview.appendChild(notice)}
+}
 // Web Crypto is unavailable on a LAN HTTP origin. The fallback verifies the same
 // SHA-256 bytes there, without loading third-party code or weakening verification.
 async function mSha256(bytes) {
@@ -325,7 +338,7 @@ async function mArtifact(artifact) {
     mClearPreview();var preview=document.getElementById('m-artifact-preview'),title=document.createElement('p');title.textContent=artifact.name;preview.appendChild(title)
     var imageMime=['image/png','image/jpeg','image/webp'].indexOf(artifact.mime)>=0
     if(imageMime){var imageUrl=URL.createObjectURL(new Blob([bytes],{type:artifact.mime}));mObjectUrls.push(imageUrl);var img=document.createElement('img');img.src=imageUrl;img.alt=artifact.name;img.style.maxWidth='100%';preview.appendChild(img)}
-    else if(/^text\//.test(artifact.mime)||artifact.mime==='application/json'){var pre=document.createElement('pre');pre.className='m-description';pre.textContent=new TextDecoder().decode(bytes.subarray(0,200000))+(bytes.length>200000?'\n（预览已截断，下载可查看完整文件）':'');preview.appendChild(pre)}
+    else if(/^text\//.test(artifact.mime)||artifact.mime==='application/json')mRenderTextArtifact(preview,artifact.mime,new TextDecoder().decode(bytes.subarray(0,200000)),bytes.length>200000)
     var download=URL.createObjectURL(new Blob([bytes],{type:'application/octet-stream'}));mObjectUrls.push(download);var link=document.createElement('a');link.href=download;link.download=artifact.name;link.textContent='下载 '+artifact.name;preview.appendChild(link);mNotice("文件已完整校验")
   }catch(e){if(mCurrent===id)mNotice(mError(e.message))}finally{delete mBusy[key]}
 }

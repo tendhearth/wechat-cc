@@ -16,7 +16,8 @@ daemon 在 `/m` 服务的 PWA。源码在 `src/`,构建期组装成 `src/daemon/
 
 - **整份内联。** 公网壳页 `relay/pset.html` 通过隧道取到页面后 `document.write` 整份写入,没有可用的相对路径 —— 不许外链脚本 / 样式表。
 - **第一个 `<script>` 保持裸标签并定义 `T`。** 壳页往第一个 `<script>` 里注入 `window.__CC_SHELL__`。
-- **经典脚本,不是 ES module。** `boot.js` → `transport.js` → `nav.js` → `workbench.js` → `presence.js` → `you.js` → `home.js` 按 `phone.html` 的包含顺序共享全局(`esc`、`api`、`toast`、`openMatter`…)。
+- **经典脚本,不是 ES module。** `boot.js` → `transport.js` → `nav.js` → `markdown.js` → `workbench.js` → `presence.js` → `you.js` → `home.js` 按 `phone.html` 的包含顺序共享全局(`esc`、`api`、`toast`、`openMatter`…)。
+- **安全 Markdown。** `markdown.js` 在工作台前内联 `packages/markdown/src/browser.ts` 的生成 IIFE(`globalThis.CCM`)。助手正文和 Markdown 成果使用它;用户输入、工具/权限原文、纯文本与 JSON 保留原样,摘要只去排版语法。成果同时保留折叠原文与完整下载;不加载正文里的外部图片。
 - **行首不许是 `(` 或 `[`。** 脚本不写分号,行首括号会被 ASI 接到上一行当调用 —— 类型转换 `/** @type {X} */ (el)` 放行首就中招,先绑到局部变量。
 - **两种标记。** `{{>file}}` 构建期包含;`{{UPPER_KEY}}` 运行时键,只认 `assemble.ts` 的 `RUNTIME_VARS`,由 `src/daemon/mobile-page.ts` 单趟填。
 - **只走 HTTP。** 本目录不 import `src/`,daemon 不 import 本目录(depcheck)。

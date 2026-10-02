@@ -3,6 +3,12 @@ declare var T: string
 declare var REMOTE: { relay: string; id: string } | null
 interface Window { __CC_SHELL__?: { relay: string; id: string } }
 
+/** Shared Markdown browser bundle; HTML and links are filtered before rendering. */
+declare var CCM: {
+  renderMarkdown(value: string): string
+  markdownPlainText(value: string): string
+}
+
 /**
  * packages/protocol 打包出的 IIFE(apps/mobile/src/protocol-generated.js,
  * sources.ts 的 readMobileSource 原地换进 transport.js 顶部的占位注释)挂的
