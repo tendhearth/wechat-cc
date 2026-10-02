@@ -18,7 +18,7 @@ import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
 import { invokeApi, invokeWorkbenchApi } from "./api.js"
 import { initialMode, restartButtonState, afterScanTarget , showToast } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
-import { startCompanionPresence } from "./companion-presence.js"
+import { createPresencePoller } from "./presence-poller.js"
 import { createConversationsPoller } from "./conversations-poller.js"
 import {
   renderDoctorWizard,
@@ -28,7 +28,7 @@ import {
 import { refreshQr } from "./modules/qr.js"
 import { mountPhoneConnect, mountOnboardPhone } from "./modules/phone-connect.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
-import { renderDashboard, renderRestartButton, setPending, setLastProbe, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, checkIncidentsOnPoll, checkFsAccessOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
+import { renderDashboard, renderRestartButton, setPending, setLastProbe, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, checkIncidentsOnPoll, checkFsAccessOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
@@ -130,9 +130,9 @@ async function withRefreshFeedback(button, fn) {
 const invoke = (cmd, args) => ipcInvoke(cmd, args, state)
 
 const doctorPoller = createDoctorPoller({ invoke, intervalMs: 5000 })
-// 桌宠状态(spec 2026-09-03-companion-presence):首页鱼缸跟浮窗共用一套推导。
-// 点脚边道具 → 切到觅食台(带回来的在那儿)。switchPane 是函数声明,提升可用。
-const presencePoller = startCompanionPresence({ onOpenJournal: () => switchPane("a2a-agents") })
+// CC 的处境(GET /v1/companion/presence):「此刻」的明暗与状态行都看它(spec 2026-10-01 §4)。
+const presencePoller = createPresencePoller({ invokeApi, intervalMs: 20_000 })
+presencePoller.start()
 const careSheet = mountCareSheet({
   call: invokeWorkbenchApi, presencePoller, navigate: switchPane,
   openWorkbench: () => switchPane('workbench'),
@@ -577,7 +577,6 @@ function switchPane(name) {
   }
   document.querySelector(".cc-life-nav-more")?.removeAttribute("open")
   const overviewWasHidden = name === "overview" && !!(/** @type {HTMLElement | null} */ (document.querySelector('.dash-pane[data-pane="overview"]')))?.hidden
-  const aquariumWasHidden = name === "aquarium" && !!(/** @type {HTMLElement | null} */ (document.querySelector('.dash-pane[data-pane="aquarium"]')))?.hidden
   const backstagePanes = new Set(["sessions", "plugins", "logs"])
   document.querySelectorAll(".dash-nav-link[data-pane]").forEach(el => {
     const htmlEl = /** @type {HTMLElement} */ (el)
@@ -592,10 +591,6 @@ function switchPane(name) {
   })
   // The destination must be visible before navigation transfers keyboard focus.
   workbenchNavigation?.setWorkbenchActive(name === "workbench")
-  if (aquariumWasHidden) {
-    advanceCompanionHeroCopy()
-    if (doctorPoller.current) renderDashboardIfActive(doctorPoller.current)
-  }
   // Logs pane gets a 10s auto-refresh tick while active; stop it on
   // pane switch so we don't burn CPU tailing log files no one is reading.
   if (name === "logs") {
@@ -1181,18 +1176,8 @@ function wireEvents() {
     btn.addEventListener("click", () => setMode("dashboard"))
   )
 
-  const companionBody = document.querySelector(".moment-body")
-  const companionImmersiveStart = document.getElementById("companion-immersive-start")
+  // 「浮到桌面」(spec 2026-10-01 §9-3):鱼缸画布退休后,浮窗桌宠只剩这一个入口,住在此刻页右上的连接面板里。
   const companionDesktopStart = /** @type {HTMLButtonElement | null} */ (document.getElementById("companion-desktop-start"))
-  const companionImmersiveExit = document.getElementById("companion-immersive-exit")
-  const companionUsersToggle = document.getElementById("companion-users-toggle")
-  /** @param {boolean} active */
-  const setCompanionImmersive = (active) => {
-    if (!companionBody) return
-    companionBody.classList.toggle("is-companion-immersive", active)
-    companionImmersiveStart?.setAttribute("aria-pressed", String(active))
-  }
-  companionImmersiveStart?.addEventListener("click", () => setCompanionImmersive(true))
   companionDesktopStart?.addEventListener("click", async () => {
     // The browser/dev shim cannot spawn a native Tauri window. Open the same
     // isolated scene in a popup there so visual work remains previewable.
@@ -1210,22 +1195,11 @@ function wireEvents() {
       companionDesktopStart.disabled = false
     }
   })
-  companionImmersiveExit?.addEventListener("click", () => setCompanionImmersive(false))
-  // 用户与连接 2026-10-01 起住在「连接与设置」里:沉浸模式的「用户」直接打开那个抽屉的「连接」段。
-  companionUsersToggle?.addEventListener("click", ev => {
-    ev.stopPropagation()
-    openSettingsDrawer()
-    document.querySelector("#settings-drawer .drawer-connection")?.scrollIntoView?.({ block: "start" })
-  })
-  document.addEventListener("keydown", event => {
-    if (event.key === "Escape") setCompanionImmersive(false)
-  })
 
   document.querySelectorAll(".dash-nav-link[data-pane]").forEach(btn => {
     const el = /** @type {HTMLElement} */ (btn)
     el.addEventListener("click", () => {
       if (el.classList.contains("disabled")) return
-      setCompanionImmersive(false)
       switchPane(el.dataset.pane ?? "")
     })
   })

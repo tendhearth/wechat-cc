@@ -11,7 +11,7 @@ describe('desktop rail', () => {
     expect(rail).not.toMatch(/一起生活|cc-brand|dash-version|data-hg-icon|dash-rail-foot|v\d+\.\d+/)
   })
   it('keeps every pane reachable and the e2e hooks', () => {
-    for (const p of ['overview', 'workbench', 'recollections', 'atelier', 'aquarium', 'memory', 'todos', 'a2a-agents', 'sessions']) expect(rail).toContain(`data-pane="${p}"`)
+    for (const p of ['overview', 'workbench', 'recollections', 'atelier', 'memory', 'todos', 'a2a-agents', 'sessions']) expect(rail).toContain(`data-pane="${p}"`)
     expect(rail).toContain('cc-life-nav-more')
     expect(rail).toContain('id="settings-open"')
     expect(rail).toContain('data-backstage-entry')
