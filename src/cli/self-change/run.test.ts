@@ -241,6 +241,24 @@ describe('结局', () => {
   })
 })
 
+// 作废(`--abandon`)是主人拍的终局:树已经删了,再跑等于在不存在的目录里 spawn。
+// CLI 那边会先挡一道,这里是第二道 —— 别的调用方不一定经过 CLI。
+describe('已作废的不再恢复', () => {
+  it('result=abandoned ⇒ 原样退回(退出码 1),不跑步骤、不碰仓库、不存盘、不发通知', async () => {
+    const { store, rows } = recordingStore()
+    const { deps, rec } = happy({ state: store })
+    const s = fakeState({ step: 'approval', result: 'abandoned', error: '主人作废' })
+    const { state, exitCode } = await runSelfChange(s, deps)
+    expect(exitCode).toBe(1)
+    expect(state.result).toBe('abandoned')
+    expect(state.step).toBe('approval')
+    expect(rec.git).toEqual([])
+    expect(rec.exec).toEqual([])
+    expect(rec.notices).toEqual([])
+    expect(rows).toEqual([])
+  })
+})
+
 describe('停机', () => {
   it('自检连着第二次红 ⇒ 写 halted_at,并告诉主人怎么解除', async () => {
     const { deps, rec } = happy({ config: { failStreak: 1 }, selftest: { workbench: false, chat: true } })

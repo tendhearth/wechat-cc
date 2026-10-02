@@ -109,13 +109,15 @@ Usage:
   wechat-cc self change "<需求>" [--from cli|wechat] [--budget-usd N]
                         [--no-deploy] [--json]
   wechat-cc self change --resume <id> | --list | --unhalt
-  wechat-cc self change --approve <id> | --deny <id>
+  wechat-cc self change --approve <id> | --deny <id> | --abandon <id>
                         自改:执行者在专用克隆里实现,依次过测试 / 评审 / CI /
                         主人微信拍板 / 合 dev 五道闸门,再部署 + 自检,不过就
                         回滚(仅 macOS)。退出码 0 完成 / 1 失败 / 2 停机·配额·
                         平台·daemon 没起 / 3 主人回了 n / 4 没等到拍板(可
                         --resume)。微信外发不通时用 --approve / --deny 在终端
-                        拍板(桌面权限卡也行)。见 docs/maintainer/self-change.md。
+                        拍板(桌面权限卡也行)。--abandon:这条不接了,记成作废
+                        并删掉它的工作树(--list 能看到哪些树还占着盘)。
+                        见 docs/maintainer/self-change.md。
   wechat-cc selftest workbench --executor <id> [--image] [--resume] [--json]
                         [--timeout-ms N] [--keep]
   wechat-cc selftest chat --provider <id> [--text "…"] [--resume] [--json]

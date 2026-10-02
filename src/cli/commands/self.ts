@@ -146,6 +146,7 @@ const selfChangeCmd = defineCommand({
     unhalt: { type: 'boolean', description: '解除停机(清 halted_at / halt_reason,fail_streak 归零)' },
     approve: { type: 'string', description: '替某条(`--list` 里的 id)拍「放行」—— 微信外发不通时的第二条拍板口', valueHint: 'id' },
     deny: { type: 'string', description: '替某条拍「拒绝」', valueHint: 'id' },
+    abandon: { type: 'string', description: '「这条我不接了」:把某条记成作废(不能再 --resume),当场删掉它的工作树;正在跑的那条拒绝', valueHint: 'id' },
     from: { type: 'string', default: 'cli', description: '进件口:cli | wechat(daemon 从微信接单时传 wechat)' },
     'budget-usd': { type: 'string', description: '这一条的实现预算上限,美元(覆盖 self_change.implement_budget_usd)' },
     deploy: { type: 'boolean', default: true, description: '合完 dev 之后部署 + 自检;`--no-deploy` 只合不部署' },
@@ -175,6 +176,42 @@ const selfChangeCmd = defineCommand({
     const { defaultPipelineDeps, formatSelfChangeSummary } = await import('../self-change/index.ts')
 
     const store = makeStateStore(STATE_DIR)
+
+    // `--abandon` / `--list` 只要知道工作树在哪儿,不需要 repo_url(打包版没配也能用)。
+    const { homedir } = await import('node:os')
+    const { defaultWorkdir } = await import('../self-change/policy.ts')
+    const workdir = loadAgentConfig(STATE_DIR).self_change?.workdir ?? defaultWorkdir(homedir(), process.platform)
+    const { readLockHolder } = await import('../self-change/state.ts')
+
+    // `--abandon <id>`:「这条我不接了」。顺手清理只敢扫 done / declined,能 --resume 的
+    // 和被杀的永不回收 —— 这是人说了算的那个出口(见 abandon.ts 文件头)。
+    if (args.abandon !== undefined) {
+      if (args.approve !== undefined || args.deny !== undefined || args.list || args.unhalt || args.resume !== undefined || (typeof args.request === 'string' && args.request.trim() !== '')) {
+        bail(1, 'invalid_flags', '--abandon 不能和 <需求> / --resume / --list / --unhalt / --approve / --deny 一起用')
+        return
+      }
+      const id = String(args.abandon)
+      const { runAbandon } = await import('../self-change/abandon.ts')
+      const { makeGit, nodeGitSpawnSync } = await import('../self-change/git.ts')
+      const { existsSync } = await import('node:fs')
+      const outcome = runAbandon({
+        store,
+        config: { workdir },
+        git: makeGit(nodeGitSpawnSync, workdir),
+        exists: p => existsSync(p),
+        now: () => Date.now(),
+        lock: () => acquireLock(STATE_DIR, process.pid, undefined, undefined, id),
+        liveHolder: () => readLockHolder(STATE_DIR),
+      }, id)
+      if (!outcome.ok) {
+        bail(1, outcome.code, outcome.message)
+        return
+      }
+      if (json) console.log(JSON.stringify({ ok: true, id, code: outcome.code, message: outcome.message }, null, 2))
+      else console.log(outcome.message)
+      process.exit(0)
+      return
+    }
 
     // `--approve <id>` / `--deny <id>`:微信外发不通时的第二条拍板口
     // (2026-09-18 真机:errcode=-2 让一条全绿的自改白等到 approval_timeout)。
@@ -217,18 +254,17 @@ const selfChangeCmd = defineCommand({
     }
 
     if (args.list) {
-      const rows = store.list().slice(0, 10)
+      // 每条带上「在跑 / 被杀 / 可 --resume / 已收场 / 已作废」和盘上的工作树路径:
+      // 哪些树还占着盘、哪些可以 --abandon,一眼看得出来。
+      const { describeRuns, formatRunRows } = await import('../self-change/abandon.ts')
+      const { existsSync } = await import('node:fs')
+      const rows = describeRuns(store.list().slice(0, 10), { config: { workdir }, exists: p => existsSync(p), live: readLockHolder(STATE_DIR) })
       if (json) {
-        console.log(JSON.stringify(rows.map(s => ({ id: s.id, step: s.step, result: s.result, startedAt: s.startedAt })), null, 2))
+        console.log(JSON.stringify(rows.map(r => ({ id: r.id, step: r.step, result: r.result, startedAt: r.startedAt, kind: r.kind, tree: r.tree })), null, 2))
       } else if (rows.length === 0) {
         console.log('还没有跑过自改。')
       } else {
-        for (const s of rows) {
-          // 停在 approval 的那条要一眼看得出来:它在等人,而不是在跑
-          // (微信卡可能根本没送到 —— 见 `--approve`)。
-          const status = s.result ?? (s.step === 'approval' ? '等拍板 ' + String(s.approval?.hash ?? '').slice(0, 8) : '进行中')
-          console.log(`${s.id} · ${s.step} · ${status} · ${new Date(s.startedAt).toISOString()}`)
-        }
+        console.log(formatRunRows(rows))
       }
       process.exit(0)
       return
@@ -252,6 +288,11 @@ const selfChangeCmd = defineCommand({
       bail(1, 'self_change_not_found', `没有这条自改:${String(args.resume)}(wechat-cc self change --list 看有哪些)`)
       return
     }
+    // 主人 `--abandon` 过的:树已经删了,这是他拍的终局。要做同样的事就重新下一条。
+    if (resumed && resumed.result === 'abandoned') {
+      bail(1, 'self_change_abandoned', `#${resumed.id} 已经作废了(--abandon),不能再接着跑;要做同样的事请重新下一条`)
+      return
+    }
     const request = typeof args.request === 'string' ? args.request.trim() : ''
     // `--resume` 又带了需求正文:照存盘里的跑,但得说一声 —— 人多半以为自己
     // 是在「接着跑并且顺手改一下要求」,闷着不响他会等一个永远不会发生的行为。
@@ -273,7 +314,6 @@ const selfChangeCmd = defineCommand({
       originUrl = r.code === 0 && r.stdout.trim() ? r.stdout.trim() : null
     }
 
-    const { homedir } = await import('node:os')
     const resolved = resolveSelfChangeConfig({
       agent: loadAgentConfig(STATE_DIR).self_change,
       homeDir: homedir(),
@@ -288,16 +328,20 @@ const selfChangeCmd = defineCommand({
       return
     }
 
-    // 一次只跑一条。锁文件里写着 pid,持有者死了会被抢过来(见 state.ts)。
-    const lock = acquireLock(STATE_DIR, process.pid)
+    // 一次只跑一条。锁文件里写着 pid 和**在跑哪条**(`--abandon` 靠它分清能不能作废),
+    // 持有者死了会被抢过来(见 state.ts)。id 因此要在拿锁之前定下来。
+    const runId = resumed?.id ?? newSelfChangeId()
+    const lock = acquireLock(STATE_DIR, process.pid, undefined, undefined, runId)
     if (!lock.ok) {
       const error = 'self_change_busy'
       bail(exitCodeFor(error), error, `已经有一条自改在跑(pid ${lock.holder});等它结束,或者先 wechat-cc self change --list 看看`)
       return
     }
 
-    const state = resumed ?? newState({
-      id: newSelfChangeId(),
+    // 恢复的那条在拿到锁之后再从盘上读一遍:等锁之前它可能刚被 `--abandon` 掉
+    // (那样的话 runSelfChange 会原样退回,不跑)。
+    const state = (resumed ? store.load(resumed.id) ?? resumed : null) ?? newState({
+      id: runId,
       request,
       from,
       noDeploy: args.deploy === false,
