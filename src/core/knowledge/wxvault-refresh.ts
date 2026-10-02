@@ -33,7 +33,10 @@ export interface WxvaultRefreshResult {
 
 export function makeWxvaultRefresh(opts: MakeWxvaultRefreshOpts): () => Promise<WxvaultRefreshResult> {
   const script = join(opts.pluginDir, 'sync.py')
-  const env = { ...process.env, WXVAULT_STATE_DIR: opts.stateDir }
+  // PYTHONIOENCODING: wxvault prints Chinese progress/errors; on Windows the
+  // default console codec (cp1252/GBK) can't encode them and the script dies
+  // mid-print (caught by CI) — force UTF-8, which is also how we decode it.
+  const env = { ...process.env, WXVAULT_STATE_DIR: opts.stateDir, PYTHONIOENCODING: 'utf-8' }
   return () => new Promise((resolve, reject) => {
     execFile(
       opts.pythonBin,
