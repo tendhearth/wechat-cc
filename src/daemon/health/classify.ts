@@ -9,6 +9,7 @@
  */
 import { isConnectFailure } from '../../lib/net-errors'
 import { looksLikeAuthFailure } from '../../lib/auth-failure'
+import { providerErrorCodeOf, type ProviderErrorCode } from '../../lib/provider-error-code'
 
 export type FailureKind = 'login_taken_over' | 'llm_auth' | 'network' | 'unknown'
 
@@ -41,6 +42,44 @@ function messageOf(err: unknown): string {
   }
 }
 
+const NETWORK: FailureClass = {
+  kind: 'network',
+  actionable: false,
+  title: '网络连接有问题',
+  body: '暂时连不上服务器,通常会自行恢复,你不需要做什么。',
+}
+const LLM_LOGIN_EXPIRED: FailureClass = {
+  kind: 'llm_auth',
+  actionable: true,
+  title: '模型登录已失效',
+  body: '消息还能收到,但暂时没法生成回复。重新登录一下模型账号即可恢复。',
+}
+/** 红线 A(owner 2026-10-02 细化):凭证被拒但不是哨兵确认的登录过期 ——
+ *  同样要主人动手,但**不说**登录过期 / 重新登录。 */
+const LLM_AUTH_REJECTED: FailureClass = {
+  kind: 'llm_auth',
+  actionable: true,
+  title: '模型认证没通过',
+  body: '消息还能收到,但模型服务拒绝了凭证(API 返回 401/403),暂时没法生成回复。请检查账号或密钥。',
+}
+const UNKNOWN: FailureClass = {
+  kind: 'unknown',
+  actionable: false,
+  title: '连接出现问题',
+  body: '暂时无法正常工作,恢复后会再通知你。',
+}
+
+/** provider 边界已经分好类的失败:只看码,不碰文本(arch backlog #4 第 2 步)。 */
+function classifyProviderCode(code: ProviderErrorCode): FailureClass {
+  switch (code) {
+    case 'auth_failed': return LLM_LOGIN_EXPIRED
+    case 'auth_rejected': return LLM_AUTH_REJECTED
+    case 'network': case 'server_error': return NETWORK
+    // 限流 / 额度 / 坏请求 / 未分类:不是连通性也不是凭证,不该把整条 LLM 链路判坏。
+    case 'rate_limited': case 'quota': case 'invalid_request': case 'provider_error': return UNKNOWN
+  }
+}
+
 export function classifyFailure(err: unknown): FailureClass {
   const msg = messageOf(err)
 
@@ -52,26 +91,11 @@ export function classifyFailure(err: unknown): FailureClass {
       body: '这个微信账号在别处被重新绑定了。打开 wechat-cc 桌面端重新扫码即可恢复。',
     }
   }
-  if (isNetworkish(msg)) {
-    return {
-      kind: 'network',
-      actionable: false,
-      title: '网络连接有问题',
-      body: '暂时连不上服务器,通常会自行恢复,你不需要做什么。',
-    }
-  }
-  if (looksLikeAuthFailure(msg)) {
-    return {
-      kind: 'llm_auth',
-      actionable: true,
-      title: '模型登录已失效',
-      body: '消息还能收到,但暂时没法生成回复。重新登录一下模型账号即可恢复。',
-    }
-  }
-  return {
-    kind: 'unknown',
-    actionable: false,
-    title: '连接出现问题',
-    body: '暂时无法正常工作,恢复后会再通知你。',
-  }
+  // 有码就只看码;码缺失(还没迁移的 provider)才回退到下面的文本判定。
+  const code = providerErrorCodeOf(err)
+  // 返回副本:常量是共享的,调用方改了它不该影响下一次判定。
+  if (code) return { ...classifyProviderCode(code) }
+  if (isNetworkish(msg)) return { ...NETWORK }
+  if (looksLikeAuthFailure(msg)) return { ...LLM_LOGIN_EXPIRED }
+  return { ...UNKNOWN }
 }

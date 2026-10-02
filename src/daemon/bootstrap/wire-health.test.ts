@@ -92,4 +92,23 @@ describe('reportLlmTurnOutcome (Task 9 review fix — business failures must not
     expect(rt.health.shouldSuspend('llm')).toBe(false)
     expect(rt.health.get('llm').consecutiveFailures).toBe(0)
   })
+
+  it('带 provider 码的回合按码判:auth_rejected 进 llm_auth,通知不说登录;rate_limited 不推进', () => {
+    const notes: Array<{ title: string; body: string }> = []
+    const t = { ms: 0 }
+    const rt = makeHealthRuntime({ stateDir: dir, now: () => t.ms, log: () => {}, notify: (n) => { notes.push(n) } })
+    const msg = 'Failed to authenticate. API Error: 403 Request not allowed'
+    reportLlmTurnOutcome(rt, 'error', 'API Error: 401 rate', 'rate_limited')
+    expect(rt.health.get('llm').consecutiveFailures).toBe(0)
+    reportLlmTurnOutcome(rt, 'auth_failed', msg, 'auth_rejected')
+    t.ms = 60_000
+    reportLlmTurnOutcome(rt, 'auth_failed', msg, 'auth_rejected')
+    expect(rt.health.shouldSuspend('llm')).toBe(true)
+    expect(rt.incidents.openOf('llm')?.kind).toBe('llm_auth')
+    t.ms = 10 * 60_000   // 过了可操作故障的通知阈值
+    reportLlmTurnOutcome(rt, 'auth_failed', msg, 'auth_rejected')
+    expect(notes.length).toBeGreaterThan(0)
+    expect(notes[0]!.title).toBe('模型认证没通过')
+    for (const n of notes) expect(`${n.title}${n.body}`).not.toMatch(/登录|过期/)
+  })
 })

@@ -1,12 +1,13 @@
 # Provider 失败的真实形状(arch backlog #4 · 第 1 步)
 
-> 2026-10-02 · 采集 + 沙箱诱发 · **只记录,不改判定**。
+> 2026-10-02 · 采集 + 沙箱诱发 · 第 1 步只记录,不改判定。
+> **第 2 步第一片(只 Claude 会话)2026-10-02 已落地**:§4.1 修掉,owner 决定与码闭集见 §6。表里 Claude 会话那几行已改成新形状。
 > 方向(owner 已定):每个 provider 边界产出结构化错误码,下游不再对错误文本跑正则。动手之前,先把每家**真实**失败长什么样、今天各判定处怎么判它们摸清楚。这一份就是那张底。
 > 样本(已脱敏)在 `src/daemon/diagnostics/__fixtures__/provider-errors/*.json`,`provider-error-shapes.test.ts` 把今天每一处判定对每条样本的回答钉住。第 2 步改判定时它会红,这是有意的:改 fixture 里那条的 `current`,再回这里划掉对应的错判。
 
 两条 owner 红线今天仍然有效,下文凡涉及处都标出来:
 
-- **红线 A**:Claude 只在两句哨兵(`Please run /login` / `Not logged in`)上报「登录过期」。
+- **红线 A**:Claude 只在两句哨兵(`Please run /login` / `Not logged in`)上报「登录过期」。2026-10-02 owner 细化:SDK 标了 `authentication_failed` 但哨兵没中 ⇒ **仍判认证失败**,但给人看的话不说「登录过期 / 重新登录」(见 §6)。
 - **红线 B**:agy 的歧义句(`authentication failed or timed out`)按瞬时处理。2026-09-02 起推广为通则:**像 auth 又像瞬时的,一律判瞬时**(`lib/auth-failure.ts` 顶部注释)。
 
 ## 1. 怎么采的
@@ -64,7 +65,7 @@
 | authFailError | `isAuthFailError`:`status === 401` 或宽集 | 同上 | openai 兼容 / turn-emitter |
 | llmHealthAuth | `looksLikeAuthFailure`:码 + 厂商散文 | `lib/auth-failure.ts`(`llm-health` 的 `AUTH_RE` 就是它) | 面板「测试连接」报 AUTH FAILED + 登录提示 |
 | registryAuthCode | `isAuthError`:只认 `auth_failed` 码 | `core/provider-registry.ts` | cheapEval 冷却 60 分钟 vs 短冷却 |
-| health/classify | `classifyFailure`:`errcode=-14` → **网络优先** → auth → unknown | `daemon/health/classify.ts` | 要不要通知主人、多快通知 |
+| health/classify | `classifyFailure`:`errcode=-14` → **provider 码(有就只看码,第 2 步起)** → 网络优先 → auth → unknown | `daemon/health/classify.ts` | 要不要通知主人、多快通知 |
 | 三档 | `classifyProviderFailure`(瞬时判定借 health/classify 的网络判定) | `lib/auth-failure.ts` | **今天没有调用方** |
 | quota / quotaRefusalText | `classifyProviderError` / `isQuotaRefusalText` | `core/provider-quota.ts` | 额度登记、工作台「交给另一位」 |
 | connectFailure | `isConnectFailure` | `lib/net-errors.ts` | health/classify 的网络判定、admin 命令 |
@@ -80,16 +81,16 @@
 | 样本 id | 真相 | 来源 | 路径 · 通道 | 原文(脱敏、截断) | provider 已给的码 / 被丢掉的结构 | health/classify | 三档 | 其余判为真的 |
 |---|---|---|---|---|---|---|---|---|
 | `claude.not_logged_in.cheap_eval` | auth | 诱发 | cheap_eval · thrown | `Claude Code returned an error result: Not logged in · Please run /login` | 丢:`assistant.error="authentication_failed"` `assistant.is_api_error_message=true` `result.is_error=true` `result.terminal_reason="api_error"` `result.api_error_status=null` | llm_auth | auth_failed | claudeSentinel, assistantText, sdkError, authFailError, llmHealthAuth |
-| `claude.not_logged_in.session` | auth | 诱发 | session · error_event | `claude reports not logged in: Not logged in · Please run /login` | code=`auth_failed` | llm_auth | auth_failed | claudeSentinel, assistantText, sdkError, authFailError, llmHealthAuth, registryAuthCode |
+| `claude.not_logged_in.session` | auth | 诱发 | session · error_event | `claude reports not logged in: Not logged in · Please run /login` | code=`auth_failed`(哨兵先判;SDK 也标了 `authentication_failed`) | llm_auth | auth_failed | claudeSentinel, assistantText, sdkError, authFailError, llmHealthAuth, registryAuthCode |
 | `claude.bad_key.cheap_eval` | auth | 诱发 | cheap_eval · thrown | `Claude Code returned an error result: Failed to authenticate. API Error: 401 API key is invalid.` | 丢:`assistant.error="authentication_failed"` `result.is_error=true` `result.terminal_reason="api_error"` `result.api_error_status=401` | llm_auth | auth_failed | llmHealthAuth |
-| `claude.bad_key.session` | auth | 诱发 | session · text_event | `Failed to authenticate. API Error: 401 API key is invalid.` | 丢:`assistant.error="authentication_failed"` `result.is_error=true` `result.api_error_status=401` | llm_auth | auth_failed | llmHealthAuth |
+| `claude.bad_key.session` | auth | 诱发 | session · ~~text_event~~ error_event | `Failed to authenticate. API Error: 401 API key is invalid.` | **第 2 步起** code=`auth_rejected`(读 `assistant.error="authentication_failed"`;哨兵没中) | llm_auth | auth_failed | llmHealthAuth |
 | `claude.forbidden_403.cheap_eval` | auth | 采集 | cheap_eval · thrown | `Claude Code returned an error result: Failed to authenticate. API Error: 403 Request not allowed` | — | llm_auth | auth_failed | llmHealthAuth |
-| `claude.forbidden_403.session` | auth | 采集 | session · text_event | `Failed to authenticate. API Error: 403 Request not allowed` | — | llm_auth | auth_failed | llmHealthAuth |
+| `claude.forbidden_403.session` | auth | 采集 | session · ~~text_event~~ error_event | `Failed to authenticate. API Error: 403 Request not allowed` | **第 2 步起** code=`auth_rejected`(SDK 结构按同模板诱发样本推定) | llm_auth | auth_failed | llmHealthAuth |
 | `claude.net_refused.cheap_eval` | network | 诱发 | cheap_eval · thrown | `Claude Code returned an error result: API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)` | 丢:`assistant.error="server_error"` `result.is_error=true` `result.terminal_reason="api_error"` | network | transient | connectFailure |
-| `claude.net_refused.session` | network | 诱发 | session · text_event | `API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)` | 丢:`assistant.error="server_error"` `result.is_error=true` | network | transient | connectFailure |
+| `claude.net_refused.session` | network | 诱发 | session · ~~text_event~~ error_event | `API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)` | **第 2 步起** code=`network`(`server_error` + 无 HTTP status) | network | transient | connectFailure |
 | `claude.net_dns.cheap_eval` | network | 诱发 | cheap_eval · thrown | `Claude Code returned an error result: API Error: Connection dropped (ECONNRESET)` | — | network | transient | connectFailure |
 | `claude.timeout.cheap_eval` | timeout | 诱发 | cheap_eval · thrown | `Claude Code returned an error result: Request timed out` | 丢:`assistant.error="server_error"` `result.is_error=true` `result.terminal_reason="api_error"` | network | transient | — |
-| `claude.timeout.session` | timeout | 诱发 | session · text_event | `Request timed out` | — | network | transient | — |
+| `claude.timeout.session` | timeout | 诱发 | session · ~~text_event~~ error_event | `Request timed out` | **第 2 步起** code=`network`(同上;结构取自 cheap_eval 原始层) | network | transient | — |
 | `claude.tls.cheap_eval` | network | 采集 | cheap_eval · thrown | `Claude Code returned an error result: API Error: Unable to connect to API (UNKNOWN_CERTIFICATE_VERIFICATION_ERROR)` | — | network | transient | connectFailure |
 | `claude.sleep.cheap_eval` | network | 采集 | cheap_eval · thrown | `Claude Code returned an error result: API Error: Your computer went to sleep mid-response. The response above may be incomplete.` | — | unknown **✗** | unknown | — |
 | `claude.turn_watchdog.session` | not_provider | 采集 | session · error_event | `turn timed out after 600000ms with no activity` | — | network | transient | — |
@@ -162,13 +163,15 @@
 | `gemini.net_refused.cheap_eval` | network | 诱发 | cheap_eval · thrown | `Unable to connect. Is the computer able to access the url?` | — | network | transient | connectFailure |
 ## 4. 错判与分歧(按代价排)
 
-### 4.1 Claude 会话路径:API 错误被当成正文,原样发给主人
+### 4.1 ~~Claude 会话路径:API 错误被当成正文,原样发给主人~~ —— 2026-10-02 已修(第 2 步第一片,见 §6)
 
 诱发结果:未登录以外的所有 API 失败(401 假 key、拒连、超时),在会话路径上都是 **一个 `text` 事件 + 一个正常的 `result` 事件**。回合记成 `completed`,没有任何判定看到它;主人没调 reply 工具时,coordinator 的 fallback 把这句原文当成回复发到微信。真机上发生过:`channel.log` 2026-07-28 `[FALLBACK_REPLY] provider=claude chunks=1 preview="Failed to authenticate. API Error: 403 Request not allowed"`。
 
 而 SDK 其实**给了**结构:助理消息上 `error: "authentication_failed" | "server_error"`、`is_api_error_message: true`,结果消息上 `is_error: true`、`terminal_reason: "api_error"`、`api_error_status: 401 | null`。`claude-agent-provider.ts` 把它们全丢了,只留正文给双哨兵去扫。一次性评估路径同理:SDK 抛的是 `Claude Code returned an error result: <正文>`,结构也没了。
 
-**红线 A 在这里的位置**:红线防的是「把模型正文里引用的 401 当成登录失效」。SDK 的 `error: "authentication_failed"` 不是正文,是 SDK 对一次 API 失败的标注 —— 用它不会误伤正文。但它会让 401 假 key / 403 `Request not allowed` 也报成 auth,这超出了「只在双哨兵上报登录过期」的字面。第 2 步要 owner 定:`authentication_failed` 是否可以报 auth,但提示文案不说「登录过期」(例如「Claude 拒绝了凭证」)。
+**红线 A 在这里的位置**:红线防的是「把模型正文里引用的 401 当成登录失效」。SDK 的 `error: "authentication_failed"` 不是正文,是 SDK 对一次 API 失败的标注 —— 用它不会误伤正文。但它会让 401 假 key / 403 `Request not allowed` 也报成 auth,这超出了「只在双哨兵上报登录过期」的字面。~~第 2 步要 owner 定~~ **owner 2026-10-02 已定**:可以报 auth,但文案不说「登录过期」—— 见 §6。
+
+**修复后(会话路径)**:SDK 标了 `error` 的助理消息不再发 text 事件;provider 等到同一轮的 result(拿 `api_error_status`)再发一个带码的 `error` 事件。回合不再是 `completed`,fallback 不外发,coordinator 按码走:认证码 ⇒ 释放会话 + 节流的认证提示;其余 ⇒ 通用「脑子卡了一下」提示。一次性评估路径(`cheapEval` 抛 `Claude Code returned an error result: …`)与工作台的 Claude 运行时**还没改**,留给下一片。
 
 ### 4.2 agy 歧义句:决定通知的那处守住了红线 B,「测试连接」没守住
 
@@ -229,7 +232,7 @@ agy(Go)`dial tcp: lookup …: no such host`、`…: EOF`、`There was a network 
 
 **每家怎么产**(从结构最多的开始):
 
-1. **claude**:读 SDK 助理消息的 `error` 字段与结果消息的 `is_error` / `api_error_status`,不再扫正文。会话路径上 `is_api_error_message: true` 的那条**不再作为 text 事件发出**,改发 `error` 事件(修掉 §4.1 的 fallback 外发)。**红线 A**:双哨兵仍是「登录过期」文案的唯一来源;`authentication_failed` 而非哨兵 → `auth_invalid`,文案不说登录过期 —— 这一条要 owner 拍板。
+1. **claude**(会话路径 2026-10-02 已做,§6;一次性评估 / 工作台待做):读 SDK 助理消息的 `error` 字段与结果消息的 `is_error` / `api_error_status`,不再扫正文。会话路径上 `is_api_error_message: true` 的那条**不再作为 text 事件发出**,改发 `error` 事件(修掉 §4.1 的 fallback 外发)。**红线 A**:双哨兵仍是「登录过期」文案的唯一来源;`authentication_failed` 而非哨兵 → `auth_invalid`,文案不说登录过期 —— 这一条要 owner 拍板。
 2. **openai 兼容 / gemini**:按 HTTP status 产码(401/403 → auth,400 + `API_KEY_INVALID` → auth,429 → rate_limit,5xx/524 → server),并从 `RetryError.errors[]` 取最后一个 status。给 AI SDK 调用加请求超时。
 3. **cursor**:ACP 按 JSON-RPC code(`-32000` → `auth_missing`,`-32603` → `ambiguous`);print 模式剥 ANSI 后匹配它自己的三句(这是**边界内**的正则,只认这一家 CLI 的固定输出,不外溢)。
 4. **codex**:codex 的错误文本里已有 `unexpected status <N>` 与 `auth error code: <code>` 这两个稳定的结构尾巴,在边界解析成码;非终止的 `Reconnecting…` 降成日志,不发 `error` 事件;给 `runStreamed` / 一次性评估一个边界超时。
@@ -238,3 +241,34 @@ agy(Go)`dial tcp: lookup …: no such host`、`…: EOF`、`There was a network 
 **下游怎么收**:`health/classify` 与 `llm-health` 改为先看码,码缺失时才回退到今天的文本判定(过渡期两条路并存,用本次 fixture 对拍:回退路径在全部样本上的答案不得变);`provider-registry` 冷却与 coordinator 的 `auth_failed` 分支只认码。迁移完成后删掉回退与 `AUTH_FAIL_SDK_ERROR` 宽集。
 
 **验证**:本 PR 的 fixture 就是第 2 步的回归语料 —— 每条样本加一个 `expectedCode`,测试同时钉「边界产的码」与「下游据码的结论」;§4 里每一条 ✗ 都应翻成 ✓,两条红线的断言(`provider-error-shapes.test.ts` 末尾那组)必须一直绿。
+
+## 6. 第 2 步第一片:Claude 会话(2026-10-02)
+
+**owner 决定(2026-10-02)**
+
+1. Claude 的 API 错误(401/403、拒连、超时……)**不许**再作为回复文本发给主人;回合是失败,走已有的错误通知路径。
+2. 红线 A 细化:「登录过期 / 请重新登录」的措辞**仍然只**属于两句哨兵。SDK 说 `authentication_failed` 而哨兵没中 ⇒ 归为认证失败,但措辞是「认证没通过(API 返回 401/403),请检查账号或密钥」。
+3. 红线 B 不动(agy 歧义句按瞬时)。
+4. 只做 Claude;其余 provider 不在这一片里重构,文本判定作为它们的回退保留。
+
+**码闭集**(`src/lib/provider-error-code.ts`;§5 的提议按这一片实际需要收窄过,命名对齐既有的 `auth_failed` 与 provider-quota 的 `quota`)
+
+| SDK 标注(助理消息 `error`) | `api_error_status` | 码 | coordinator | health/classify |
+|---|---|---|---|---|
+| 正文命中双哨兵(不论标注) | — | `auth_failed` | 回合 `auth_failed`;释放会话;节流提示「登录已过期 + `claude login`」 | `llm_auth` ·「模型登录已失效」 |
+| `authentication_failed`(哨兵没中) | 401 / 403 | `auth_rejected` | 回合 `auth_failed`;释放会话;节流提示「认证没通过(API 返回 401/403),检查账号或密钥」 | `llm_auth` ·「模型认证没通过」(不说登录) |
+| `server_error` | null / 缺 | `network` | 回合 `error`;「脑子卡了一下」 | `network` |
+| `server_error` | 有(5xx / 529) | `server_error` | 同上 | `network` |
+| `rate_limit` | — | `rate_limited` | 同上 | `unknown`(不判坏链路) |
+| `billing_error` | — | `quota` | 同上 | `unknown` |
+| `invalid_request` | — | `invalid_request` | 同上 | `unknown` |
+| `unknown` / 新标注 | — | `provider_error` | 同上 | `unknown` |
+| `max_output_tokens` | — | (不是失败) | 正文照常 | — |
+
+- 没有标注的正文**一律是正文**,哪怕它在复述 401 —— 这一片没有新增任何文本正则。
+- 码的流向:`AgentEvent.error.code` → `TurnSummary.errorCode` → `TurnRecord.errorCode`(新字段)→ `reportLlmTurnOutcome` 把码挂在抛出物的 `providerErrorCode` 上 → `classifyFailure` 有码只看码,没码才走旧的文本判定(其余 provider 全走这条回退,答案不变)。
+- `network` 与 `server_error` 的区分用的是 SDK 自己的约定(`api_error_status` 为 null = 没拿到 HTTP 响应),不是正文。
+- fixture:5 条 Claude 会话样本从 `text_event` 改成 `error_event` 并写上码与 `sdkStructure`(403 与超时两条的结构是按同模板诱发样本推定的,标了 `inferred`);今天各判定处的钉住答案一条没变 —— 变的是通道与给人看的话。
+- 测试:`src/core/claude-api-error.test.ts` 把这 5 条样本按真实 SDK 形状重放进真的 Claude provider 与真的 coordinator(含 07-28 那句 403:微信只收到认证提示,不收到原文);`provider-error-shapes.test.ts` 红线组新增 4 条断言。
+
+**还没做(下一片)**:Claude 的一次性评估(`cheapEval` 抛出时结构仍丢失)与工作台运行时(`claude-workbench-runtime.ts`)仍按旧路径;§4.2–§4.8 全部未动。

@@ -20,6 +20,7 @@ import { isAuthError } from '../../core/provider-registry'
 import { classifyProviderFailure, looksLikeAuthFailure, type ProviderFailureKind } from '../../lib/auth-failure'
 import { isConnectFailure } from '../../lib/net-errors'
 import { classifyFailure, type FailureKind } from '../health/classify'
+import { errorWithProviderCode } from '../../lib/provider-error-code'
 
 /** 这条样本**实际上**是什么失败 —— 人工按来龙去脉标注,不是任何判定器的输出。 */
 export type FailureTruth =
@@ -51,6 +52,13 @@ export interface ProviderErrorSample {
   message: string
   /** provider 层**丢掉了**的结构化信号(SDK 原本给了,我们没传下去)。 */
   droppedStructure?: Record<string, unknown>
+  /**
+   * provider 边界**现在读**的结构化信号(第 2 步起;只 claude 会话)。键沿用
+   * droppedStructure 的写法(`assistant.error` / `result.api_error_status`),
+   * `assistant.text` 缺省即 `message`;`inferred: true` = 采集样本只有正文,
+   * 结构按同模板的诱发样本推定。provider 级测试拿它重放 SDK 消息。
+   */
+  sdkStructure?: Record<string, unknown>
   note?: string
   /** 今天各判定处对它的回答 —— 测试钉住的就是这一块。 */
   current: CurrentVerdicts
@@ -89,7 +97,9 @@ function seenText(errorCode: string | null, message: string): string {
 export function currentVerdicts(sample: Pick<ProviderErrorSample, 'errorCode' | 'message' | 'status'>): CurrentVerdicts {
   const { errorCode, message, status } = sample
   const text = seenText(errorCode, message)
-  const asError = Object.assign(new Error(text), status !== undefined ? { statusCode: status } : {})
+  // 带码的样本把码也挂到抛出物上 —— 与 wire-health 交给 health 的形状一致
+  // (health/classify 有码只看码)。
+  const asError = Object.assign(errorWithProviderCode(text, errorCode ?? undefined), status !== undefined ? { statusCode: status } : {})
   const isTransient = (t: string) => classifyFailure(new Error(t)).kind === 'network'
   return {
     claudeSentinel: isAuthFail('claude-sentinel', message),
