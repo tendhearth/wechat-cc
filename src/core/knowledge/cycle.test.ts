@@ -31,6 +31,36 @@ describe('runKnowledgeCycle', () => {
     __resetKnowledgeCycleRunningForTests()
   })
 
+  it('refreshes the source BEFORE the adapter reads it', async () => {
+    const order: string[] = []
+    const { fn } = makeLogger()
+    await runKnowledgeCycle(
+      {
+        refreshSource: async () => { order.push('refresh') },
+        runAdapter: async () => { order.push('adapter'); return { ingested: 1 } },
+        log: fn,
+      },
+      { onBoot: false },
+    )
+    expect(order).toEqual(['refresh', 'adapter'])
+  })
+
+  it('a failing source refresh is logged and the adapter still runs on the existing snapshot', async () => {
+    const order: string[] = []
+    const { log, fn } = makeLogger()
+    const result = await runKnowledgeCycle(
+      {
+        refreshSource: async () => { throw new Error('boom') },
+        runAdapter: async () => { order.push('adapter'); return { ingested: 2 } },
+        log: fn,
+      },
+      { onBoot: false },
+    )
+    expect(order).toEqual(['adapter'])
+    expect(result).toEqual({ ingested: 2, skipped: false })
+    expect(log.some(l => l.line.includes('source refresh failed') && l.line.includes('boom'))).toBe(true)
+  })
+
   it('runs the indexer AFTER the adapter', async () => {
     const order: string[] = []
     const { fn } = makeLogger()
