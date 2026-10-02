@@ -66,6 +66,17 @@ describe('ilink-glue sendMessage → outboundHealth', () => {
     }finally{await adapter.flush();deps.db.close()}
   })
 
+  // 2026-10-02 真机:模型调 reply 时 text 只有空白,`!text` 拦不住,微信那头就是一条空气泡。
+  it('whitespace-only text never reaches the wire (no blank WeChat bubble)', async () => {
+    const a = newAdapter()
+    a.captureContextToken('chat-1', 'tok-1')
+    for (const t of ['', '   ', '\n', ' \n\t ']) {
+      const r = await a.sendMessage('chat-1', t)
+      expect(r.error).toBe('empty text')
+    }
+    expect(fake.outbox()).toHaveLength(0)
+  })
+
   it('a successful wire send flips state to ok', async () => {
     const a = newAdapter()
     a.captureContextToken('chat-1', 'tok-1')

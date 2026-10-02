@@ -2211,6 +2211,38 @@ describe('internal-api', () => {
       expect(handle.close()).toBe('hi')
     })
 
+    // 2026-10-02 手机真机验收(device-e2e efs3tq):模型调了一次 text 为空的 reply,
+    // 手机那头的回复里多出一行空行。空白回复在两个表面都不算一条消息:不截、不发,
+    // 明确告诉模型什么都没发出去(免得它再补一条「刚才那条空的是误发」)。
+    it('POST /v1/wechat/reply rejects whitespace-only text on both surfaces (no capture, no send)', async () => {
+      const sendReply = vi.fn(async () => ({ msgId: 'm-123' }))
+      const replySinks = makeReplySinks()
+      const handle = replySinks.open('c1')
+      api = createInternalApi({
+        stateDir, daemonPid: 1,
+        ilink: { sendReply, sendFile: async () => {}, editMessage: async () => {}, broadcast: async () => ({ ok: 0, failed: 0 }) },
+        replySinks,
+        getChatPrefs: () => ({}),
+      })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      for (const chat_id of ['c1', 'c2']) {
+        for (const text of ['', '  ', '\n\n']) {
+          const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+            body: JSON.stringify({ chat_id, text }),
+          })
+          expect(resp.status).toBe(200)
+          const body = await resp.json() as { ok: boolean; error?: string }
+          expect(body.ok).toBe(false)
+          expect(body.error).toMatch(/^empty_text/)
+        }
+      }
+      expect(sendReply).not.toHaveBeenCalled()
+      expect(handle.close()).toBe('')
+    })
+
     it('POST /v1/wechat/reply falls through to ilink when no sink is open for the chat', async () => {
       const sendReply = vi.fn(async () => ({ msgId: 'm-123' }))
       const replySinks = makeReplySinks()

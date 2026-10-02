@@ -531,6 +531,13 @@ const onlineStickerCursor = new Map<string, number>()
       if (!deps.ilink) return { status: 503, body: { error: 'ilink_not_wired' } }
       // Body is pre-validated by index.ts via WechatReplyRequest schema.
       const { chat_id, text, participant_tag } = body as WechatReplyRequestT
+      // 空白回复在任何表面都不是一条消息(2026-10-02 手机真机验收:模型调了一次
+      // text 为空的 reply,App 回复里多一行空行,模型自己还补一句「上面那条空的是
+      // 误发」)。不截、不发,并且明说什么都没发出去 —— 模型不必补发或道歉。
+      // 放在 sink 检查之前,两个表面给模型的回答一致。
+      if (!text.trim()) {
+        return { status: 200, body: { ok: false, error: 'empty_text: nothing was sent (text was empty or whitespace only); the user saw nothing, so do not apologize for it' } }
+      }
       // App-conversation-channel, Stage 0: when a reply sink is open for
       // this chat, capture the RAW text (whole, pre-split, pre-prefix — the
       // app shows the whole reply) instead of ilink-sending it.

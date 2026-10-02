@@ -206,7 +206,8 @@ export function makeIlinkAdapter(opts: {
 
   const adapter: IlinkAdapter = {
     async sendMessage(chatId, text, metadata) {
-      if (!text) return { msgId: `err:${Date.now()}`, error: 'empty text' }
+      // 只有空白也算空:ilink 会照发,微信那头就是一条空气泡(2026-10-02)。
+      if (!text.trim()) return { msgId: `err:${Date.now()}`, error: 'empty text' }
       let reachedWire = false
       try {
         // Use the in-memory ctxStore / acctStore directly — sendReplyOnce

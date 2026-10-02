@@ -17,6 +17,18 @@ describe('reply-sinks', () => {
     expect(handle.close()).toBe('foo\nbar')
   })
 
+  // 2026-10-02 手机真机验收:模型连调几次 reply,其中一次 text 为空,
+  // 收口时 join 出一行空行,模型自己还解释「上面那条空的是误发」。
+  it('blank captures are swallowed: claimed (not sent to WeChat) but never joined into the reply', () => {
+    const sinks = makeReplySinks()
+    const handle = sinks.open('c1')
+    expect(sinks.capture('c1', 'foo')).toBe(true)
+    expect(sinks.capture('c1', '')).toBe(true)
+    expect(sinks.capture('c1', '  \n ')).toBe(true)
+    expect(sinks.capture('c1', 'bar')).toBe(true)
+    expect(handle.close()).toBe('foo\nbar')
+  })
+
   it('capture with no open sink returns false', () => {
     const sinks = makeReplySinks()
     expect(sinks.capture('nope', 'text')).toBe(false)
