@@ -225,14 +225,16 @@ export function makeLiveBackend(d: LiveDeps): Backend {
     async connections() {
       return strip(await call<{ ok: true } & ConnectionsT>('GET /m/api/connections', '/m/api/connections'))
     },
-    async sessions(provider, cursor) {
+    async sessions(provider, cursor, q) {
+      if (q !== undefined && (q.length > 200 || q.includes('\0'))) throw new BackendError('invalid')
       const r = await call<{ items: NativeSessionRowT[]; nextCursor: string | null }>(
-        'GET /m/api/sessions', `/m/api/sessions?provider=${provider}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)
+        'GET /m/api/sessions', `/m/api/sessions?provider=${provider}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${q ? `&q=${encodeURIComponent(q.trim())}` : ''}`)
       return { items: r.items, nextCursor: r.nextCursor }
     },
-    async session(key, cursor) {
+    async session(key, cursor, window) {
+      if (window === 'recent' && cursor !== undefined) throw new BackendError('invalid')
       return strip(await call<{ ok: true } & NativeSessionPageT>(
-        'GET /m/api/session', `/m/api/session?key=${encodeURIComponent(key)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`))
+        'GET /m/api/session', `/m/api/session?key=${encodeURIComponent(key)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${window ? `&window=${window}` : ''}`))
     },
     async continuePreview(key) {
       return strip(await call<{ ok: true } & SessionContinueT>('GET /m/api/session/continue', `/m/api/session/continue?key=${encodeURIComponent(key)}`))

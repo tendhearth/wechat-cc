@@ -38,13 +38,13 @@ function refusalText(state: Refusal, provider: string, lang: Lang): string {
   }
 }
 
-/** 还在问 ⇒ 不画;能接 ⇒ 唯一的强调按钮;接过了 ⇒ 打开那件事;不能接 ⇒ 一句灰字说为什么(问不到才给「再试一次」)。 */
+/** 还在问 ⇒ 不画;能接 ⇒ 唯一的强调按钮;接过了 ⇒ 打开那件事;可变化的拒绝给同页重新检查。 */
 export function continueBlock(p: SessionContinueT | 'loading' | 'failed', lang: Lang): ContinueBlock {
   if (p === 'loading') return { kind: 'none' }
   if (p === 'failed') return { kind: 'note', text: t(lang, 'continue.unknown'), retry: true }
   if (p.state === 'ready') return { kind: 'continue', label: t(lang, 'continue.action') }
   if (p.state === 'managed') return { kind: 'open', label: t(lang, 'continue.open') }
-  return { kind: 'note', text: refusalText(p.state, p.provider, lang), retry: false }
+  return { kind: 'note', text: refusalText(p.state, p.provider, lang), retry: true }
 }
 
 /** 确认卡:在哪台电脑、用谁、哪个文件夹;接原会话还是带记录新开(从不让人选,spec D2);会用额度;先让原来那个停下(spec D3)。 */

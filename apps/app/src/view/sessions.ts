@@ -1,4 +1,4 @@
-import type { NativeSessionRowT } from '../backend/types'
+import type { NativeSessionPageT, NativeSessionRowT } from '../backend/types'
 import { t, type Lang } from '../i18n'
 import { shortDate } from './connections'
 
@@ -13,4 +13,13 @@ export function sessionRows(items: NativeSessionRowT[], _now: number, lang: Lang
 export function mergeSessionPages(first: NativeSessionRowT[], extra: NativeSessionRowT[]): NativeSessionRowT[] {
   const seen = new Set<string>()
   return [...first, ...extra].filter(r => (seen.has(r.key) ? false : (seen.add(r.key), true)))
+}
+
+export function mergeSessionMessages(first: NativeSessionPageT['messages'], extra: NativeSessionPageT['messages']): NativeSessionPageT['messages'] {
+  const seen = new Set<string>()
+  return [...first, ...extra].filter(message => (seen.has(message.id) ? false : (seen.add(message.id), true)))
+}
+
+export function sessionSearch(text: string): string | null {
+  return text.length > 200 || text.includes('\0') ? null : text.trim()
 }

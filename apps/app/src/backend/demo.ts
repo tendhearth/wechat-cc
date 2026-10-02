@@ -238,11 +238,17 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return { ...job }
     },
     async connections() { return demoConnections(lastLang, now()) },
-    async sessions(provider) { return { items: demoSessions(lastLang, now(), provider), nextCursor: null } },
-    async session(key) {
+    async sessions(provider, _cursor, q) {
+      if (q !== undefined && (q.length > 200 || q.includes('\0'))) throw new BackendError('invalid')
+      const needle = q?.trim().toLowerCase() ?? ''
+      return { items: demoSessions(lastLang, now(), provider).filter(row => !needle || `${row.title}\n${row.project ?? ''}`.toLowerCase().includes(needle)), nextCursor: null }
+    },
+    async session(key, cursor, window = 'start') {
+      if (window === 'recent' && cursor !== undefined) throw new BackendError('invalid')
       const row = demoSessions(lastLang, now()).find(r => r.key === key)
       if (!row) throw new BackendError('not_found')
-      return { session: row, managed: adopted.has(key), nextCursor: null, messages: demoSessionMessages(lastLang) }
+      const messages = demoSessionMessages(lastLang)
+      return { session: row, managed: adopted.has(key), window, nextCursor: null, messages: window === 'recent' ? messages.slice(-20) : messages }
     },
     async continuePreview(key) {
       const row = sessionRow(key), matterId = adopted.get(key) ?? null

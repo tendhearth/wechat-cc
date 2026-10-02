@@ -395,6 +395,28 @@ describe('推送登记 / 测试通知', () => {
 })
 
 describe('跟 CC 说 / 连接 / 原生会话', () => {
+  it('会话搜索q编码并贯穿追加页;窗口参数与旧调用保持独立', async () => {
+    const row = { key: 'a/b', provider: 'codex', title: '按钮', project: 'p', updatedAt: 1, active: false }
+    const { b, reqs } = harness({
+      'GET /m/api/sessions': ok({ ok: true, items: [row], nextCursor: null }),
+      'GET /m/api/session': ({ path }) => ok({ ok: true, session: row, messages: [], nextCursor: null, managed: false, ...(path.includes('window=') ? { window: path.includes('recent') ? 'recent' : 'start' } : {}) }),
+    })
+    await b.sessions('codex', 'page 2', ' 按钮 & view ')
+    expect(reqs.at(-1)!.path).toBe('/m/api/sessions?provider=codex&cursor=page%202&q=%E6%8C%89%E9%92%AE%20%26%20view')
+    expect((await b.session('a/b', undefined, 'recent')).window).toBe('recent')
+    expect(reqs.at(-1)!.path).toBe('/m/api/session?key=a%2Fb&window=recent')
+    expect((await b.session('a/b', 'next', 'start')).window).toBe('start')
+    expect(reqs.at(-1)!.path).toBe('/m/api/session?key=a%2Fb&cursor=next&window=start')
+    expect((await b.session('a/b')).window).toBeUndefined()
+    expect(reqs.at(-1)!.path).toBe('/m/api/session?key=a%2Fb')
+  })
+  it('搜索超过200字或包含NUL、近期窗口带cursor,在手机侧拦下且不发请求', async () => {
+    const { b, reqs } = harness()
+    await expect(b.sessions('claude', undefined, 'x'.repeat(201))).rejects.toMatchObject({ code: 'invalid' })
+    await expect(b.sessions('claude', undefined, 'a\0b')).rejects.toMatchObject({ code: 'invalid' })
+    await expect(b.session('k', 'page', 'recent')).rejects.toMatchObject({ code: 'invalid' })
+    expect(reqs).toHaveLength(0)
+  })
   const PAGE = { ok: true, matterId: 'c0ffee01', title: '聊天', messages: [], hasMore: false, nextBefore: null, pending: null, failed: null }
   it('chat:before / limit 拼进查询串;返回过 schema、去掉 ok', async () => {
     const { b, reqs } = harness({ 'GET /m/api/chat': ok(PAGE) })

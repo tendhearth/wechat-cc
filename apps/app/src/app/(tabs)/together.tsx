@@ -10,6 +10,7 @@ import { useWork } from '../../state/useWork'
 import { CCFigure } from '../../ui/CCFigure'
 import { ccPresence } from '../../view/presence'
 import { ConnectionNotice } from '../../ui/ConnectionNotice'
+import { LinkRow } from '../../ui/Rows'
 import { SayBar } from '../../ui/SayBar'
 import { StatusPill } from '../../ui/StatusPill'
 import { space } from '../../ui/tokens'
@@ -69,7 +70,7 @@ export default function Together() {
         data={rows}
         keyExtractor={(r) => r.id}
         contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, flexGrow: 1 }}
-        ListHeaderComponent={pinned}
+        ListHeaderComponent={<>{pinned}<LinkRow testID="together-sessions" label={t(lang, 'sessions.title')} onPress={() => router.push('/sessions')} /></>}
         ListEmptyComponent={
           <View style={{ flex: 1, justifyContent: 'center', paddingVertical: space.xxl }}>
             <Txt testID="together-empty" role="bubble" tone="inkSoft" style={{ textAlign: 'center' }}>
