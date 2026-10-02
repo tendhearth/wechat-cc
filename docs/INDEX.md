@@ -50,6 +50,7 @@
 | 官方中继 v2(Cloudflare Workers + 推送) | [maintainer/relay.md](maintainer/relay.md) | `superpowers/specs/2026-09-30-relay-cloudflare-push-design.md` + `superpowers/plans/2026-09-30-relay-cloudflare-push.md` |
 | 手机版 | [任务衔接现状](cc-workbench.md)；[手机页源码与规矩](../apps/mobile/README.md) | `superpowers/specs/2026-09-06-mobile-home-feed-design.md`；[手机任务验证记录](superpowers/reports/2026-09-22-cc-companion-task-entry.md) |
 | provider(agy / cursor / openai 兼容 / 去重) | [reference/model-management.md](reference/model-management.md) | `superpowers/specs/2026-08-17-{agy-provider,provider-runtime-dedup}-design.md` |
+| provider 失败的真实形状 / 各判定处怎么判(错误通道结构化 #4 第 1 步) | [reference/provider-error-shapes.md](reference/provider-error-shapes.md);样本 `src/daemon/diagnostics/__fixtures__/provider-errors/` | 第 2 步(边界产码)提议在该文档 §5 |
 | 可靠性(降级启动 / 自动重启 / 忙登记处) | — | `superpowers/specs/2026-08-17-subsystem-degraded-boot-design.md` + `2026-08-11-daemon-busy-registry-design.md` + `2026-08-03-daemon-self-restart-on-stale-code-design.md` |
 | 画像依据、来源改正与过时处理 | [`cc-memory-evidence.md`](cc-memory-evidence.md) | `src/lib/memory-synthesis.ts` + `src/daemon/internal-api/routes-memory-review.ts` |
 | 知识与记忆(图 / 人物事实 / hearth 联邦) | — | `superpowers/specs/2026-08-12-knowledge-{graph,facts-person}-inproc-design.md` + `2026-08-13-hearth-*` |

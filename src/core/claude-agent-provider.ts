@@ -7,6 +7,7 @@ import { isCompanionMcp, nativeMcpInputPreview } from './workbench/claude-native
 import { log } from '../lib/log'
 import { AsyncQueue } from './async-queue'
 import { isAuthFail } from './auth-fail'
+import type { ProviderErrorCode } from '../lib/provider-error-code'
 import { discoverClaudeModels } from './workbench/claude-model-catalog'
 import { executionModel, nativeModelId } from './workbench/native-model-catalog'
 import { createClaudeWorkbenchSession } from './claude-workbench-runtime'
@@ -267,7 +268,9 @@ const CLAUDE_CHEAP_MODEL_DEFAULT = 'claude-haiku-4-5'
 // to update.
 type AssistantBlock = { type?: string; text?: string; name?: string; id?: string }
 type AssistantContent = string | Array<AssistantBlock>
-type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: string | null; message?: { id?: string; model?: string; content?: AssistantContent } }
+// `error`: the SDK's own label for a synthetic "this API call failed" assistant
+// message (SDKAssistantMessageError). See claudeApiErrorCode below.
+type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: string | null; error?: string; message?: { id?: string; model?: string; content?: AssistantContent } }
 // SDKUserMessage.message is the Anthropic MessageParam. Its tool_result
 // blocks correlate to tool_use.id through tool_use_id; result content can
 // contain private file or command output and is deliberately not read here.
@@ -279,6 +282,9 @@ type ResultMsg = {
   num_turns?: number
   duration_ms?: number
   result?: unknown
+  is_error?: boolean
+  /** HTTP status of the failed API call; null = no HTTP response (refused / reset / timeout). */
+  api_error_status?: number | null
 }
 type SystemMsg = { type: 'system'; subtype?: string; session_id?: string; model?: string }
 type NarrowedMsg = AssistantMsg | UserMsg | ResultMsg | SystemMsg
@@ -317,6 +323,36 @@ function extractText(content: AssistantContent | undefined): string {
 // falsely releases the session and sends a "login expired" notice — for
 // zero true-positive gain, since the claude binary itself only ever
 // emits these two sentinel phrases.
+
+/**
+ * SDK 对一次 API 失败的结构化标注 → 本仓库的 provider 错误码(arch backlog #4
+ * 第 2 步,owner 2026-10-02)。
+ *
+ * WHY:会话路径上,Claude 的 401/403、拒连、超时以前是「一条正文 text 事件 +
+ * 一个正常的 result」—— 回合记成 completed,fallback 把错误原文当回复发到
+ * 微信(真机 2026-07-28:`Failed to authenticate. API Error: 403 Request not
+ * allowed`)。SDK 其实在助理消息上标了 `error`,结果消息上给了
+ * `api_error_status`,这里只读这两个结构字段,不扫正文。
+ *
+ *   · `authentication_failed` → `auth_rejected`。**不是** `auth_failed`:红线 A
+ *     规定「登录过期」只属于两句哨兵,哨兵由调用方先判(命中就仍是 auth_failed)。
+ *   · `server_error` 有 HTTP status → `server_error`;没有(null / 缺)→ `network`
+ *     —— SDK 自己的约定:status 为 null 表示连接层失败,没拿到响应(拒连、
+ *     重置、TLS、请求超时、睡眠断线)。
+ *   · `max_output_tokens` 不是失败(正文只是被截断),返回 null,正文照常发。
+ *   · 认不得的新标注 → `provider_error`:SDK 说了这是失败,就别当正文发出去。
+ */
+export function claudeApiErrorCode(sdkError: string | undefined, apiErrorStatus?: number | null): ProviderErrorCode | null {
+  switch (sdkError) {
+    case undefined: case '': case 'max_output_tokens': return null
+    case 'authentication_failed': return 'auth_rejected'
+    case 'billing_error': return 'quota'
+    case 'rate_limit': return 'rate_limited'
+    case 'invalid_request': return 'invalid_request'
+    case 'server_error': return typeof apiErrorStatus === 'number' ? 'server_error' : 'network'
+    default: return 'provider_error'
+  }
+}
 
 /**
  * Fire-and-forget invoker that survives both sync throws and async
@@ -478,6 +514,18 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       let droppedAssistantChunks = 0
       const activities = new Map<string, ActivityEvent>()
       let assistantSequence = 0
+      // A synthetic API-error assistant message (SDK `error` label) is held
+      // until the turn's `result` arrives, because the HTTP status that
+      // separates `network` from `server_error` only rides on the result.
+      let pendingApiError: { sdkError: string; text: string } | null = null
+      const flushApiError = (aq: AsyncQueue<AgentEvent>, apiErrorStatus?: number | null): void => {
+        if (!pendingApiError) return
+        const { sdkError, text } = pendingApiError
+        pendingApiError = null
+        const code = claudeApiErrorCode(sdkError, apiErrorStatus) ?? 'provider_error'
+        log('CLAUDE_API_ERROR', `alias=${project.alias} sdk_error=${sdkError} status=${apiErrorStatus ?? 'none'} code=${code} text=${JSON.stringify(text.slice(0, 200))}`)
+        aq.push({ kind: 'error', code, message: text.trim() ? text.slice(0, 400) : `claude api error: ${sdkError}` })
+      }
       let drainResolve: (() => void) | undefined
       const drainPromise = new Promise<void>(resolve => { drainResolve = resolve })
 
@@ -520,6 +568,19 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
             } else if (msg.type === 'assistant') {
               if (!msg.parent_tool_use_id && nativeModelId(msg.message?.model)) spawnOpts.reportExecution?.({model:msg.message.model,...(observedSessionId ? {sessionId:observedSessionId} : {}),source:'native_message'})
               const content = msg.message?.content
+              // The SDK labelled this message as a failed API call: its text is
+              // the error, never a reply. Sentinel first (red line A: only the
+              // two sentinels mean "login expired"); everything else is held for
+              // the result's HTTP status and becomes a coded error event there.
+              if (claudeApiErrorCode(msg.error) !== null) {
+                const text = extractText(content)
+                if (isAuthFail('claude-sentinel', text)) {
+                  aq.push({ kind: 'error', code: 'auth_failed', message: `claude reports not logged in: ${text.slice(0, 160)}` })
+                } else {
+                  pendingApiError = { sdkError: msg.error!, text }
+                }
+                continue
+              }
               if (spawnOpts.workbenchTimeline) {
                 const messageId = nativeTimelineId(msg.uuid) ?? nativeTimelineId(msg.message?.id) ?? `message-${++assistantSequence}`
                 const parentId = nativeTimelineId(msg.parent_tool_use_id)
@@ -593,6 +654,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
                 aq.push(event)
               }
             } else if (msg.type === 'result') {
+              flushApiError(aq, msg.api_error_status)
               if (msg.subtype && msg.subtype !== 'success') {
                 const summary = typeof msg.result === 'string'
                   ? msg.result.slice(0, 400)
@@ -615,6 +677,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const catchQueue = activeEventQueue as AsyncQueue<AgentEvent> | null
           if (catchQueue) {
+            flushApiError(catchQueue)
             const errMsg = e instanceof Error ? e.message : String(e)
             catchQueue.push({ kind: 'error', message: errMsg })
             catchQueue.end()
@@ -638,6 +701,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
           const queue = new AsyncQueue<AgentEvent>()
           activities.clear()
           assistantSequence = 0
+          pendingApiError = null
           activeEventQueue = queue
           sdkQueue.push({
             type: 'user',

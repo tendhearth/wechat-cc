@@ -120,7 +120,7 @@ export function wireCoordinator(
     // 'llm' connectivity failure) lives in reportLlmTurnOutcome
     // (./wire-health.ts) — extracted so it's unit-testable against a real
     // health runtime without constructing a full Bootstrap.
-    reportLlmTurnOutcome(parts.health, record.outcome, record.error)
+    reportLlmTurnOutcome(parts.health, record.outcome, record.error, record.errorCode)
     // 桌宠(spec 2026-09-05-cc-desktop-pet §5.1)—— 回合结束的那一刻。recordTurn
     // 是唯一一处**每种结局都会经过**的窄点,所以「刚忙完」用它的 endedAt,而不是
     // 任何一条成功路径上的时间。但不是每条记录都算一次「忙完」:哪些算,判据写在

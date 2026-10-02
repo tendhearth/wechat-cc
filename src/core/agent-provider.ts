@@ -75,6 +75,9 @@ export type AgentEvent =
   | { kind: 'tool_call'; server?: string; tool: string; activity?: AgentActivity }
   | { kind: 'init'; sessionId: string }
   | { kind: 'result'; sessionId: string; numTurns: number; durationMs: number }
+  /** `code`:provider 边界产的结构化码 —— lib/provider-error-code 的闭集(另有
+   *  collectTurn 自己的 `turn_timeout`)。下游有码就只看码;`message` 只给人/日志看,
+   *  **永远不当回复发出去**。 */
   | { kind: 'error'; message: string; code?: string }
 
 /** Validated task-owned immutable material; image/PDF data is exact base64 bytes. */
@@ -482,8 +485,9 @@ export interface TurnSummary {
   toolCalls: string[]
   result?: { sessionId: string; numTurns: number; durationMs: number }
   error?: string
-  /** Provider-emitted error code (e.g. 'auth_failed') — lets the coordinator
-   *  branch on failure category without string-matching the message. */
+  /** Provider-emitted error code (lib/provider-error-code, e.g. 'auth_failed' /
+   *  'auth_rejected' / 'network') — lets the coordinator branch on failure
+   *  category without string-matching the message. */
   errorCode?: string
 }
 

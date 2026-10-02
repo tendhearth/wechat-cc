@@ -1,0 +1,385 @@
+[
+  {
+    "id": "claude.not_logged_in.cheap_eval",
+    "provider": "claude",
+    "truth": "auth",
+    "source": "induced",
+    "path": "cheap_eval",
+    "channel": "thrown",
+    "errorCode": null,
+    "message": "Claude Code returned an error result: Not logged in · Please run /login",
+    "droppedStructure": {
+      "assistant.error": "authentication_failed",
+      "assistant.is_api_error_message": true,
+      "result.is_error": true,
+      "result.terminal_reason": "api_error",
+      "result.api_error_status": null
+    },
+    "note": "沙箱:空 CLAUDE_CONFIG_DIR + 临时 HOME,无 key。",
+    "current": {
+      "claudeSentinel": true,
+      "assistantText": true,
+      "sdkError": true,
+      "authFailError": true,
+      "llmHealthAuth": true,
+      "registryAuthCode": false,
+      "healthKind": "llm_auth",
+      "providerFailure": "auth_failed",
+      "quota": null,
+      "quotaRefusalText": false,
+      "connectFailure": false
+    }
+  },
+  {
+    "id": "claude.not_logged_in.session",
+    "provider": "claude",
+    "truth": "auth",
+    "source": "induced",
+    "path": "session",
+    "channel": "error_event",
+    "errorCode": "auth_failed",
+    "message": "claude reports not logged in: Not logged in · Please run /login",
+    "sdkStructure": {
+      "assistant.error": "authentication_failed",
+      "assistant.text": "Not logged in · Please run /login",
+      "result.api_error_status": null
+    },
+    "note": "会话路径唯一带结构化码的 claude 形状:双哨兵命中后 provider 自己造 code=auth_failed。 第 2 步(2026-10-02)起 provider 读 SDK 的 `error` 标注;双哨兵仍先判,所以码不变,仍是唯一「登录过期」的来源。SDK 结构取自同 case 的 cheap_eval 原始层。",
+    "current": {
+      "claudeSentinel": true,
+      "assistantText": true,
+      "sdkError": true,
+      "authFailError": true,
+      "llmHealthAuth": true,
+      "registryAuthCode": true,
+      "healthKind": "llm_auth",
+      "providerFailure": "auth_failed",
+      "quota": null,
+      "quotaRefusalText": false,
+      "connectFailure": false
+    }
+  },
+  {
+    "id": "claude.bad_key.cheap_eval",
+    "provider": "claude",
+    "truth": "auth",
+    "source": "induced",
+    "path": "cheap_eval",
+    "channel": "thrown",
+    "errorCode": null,
+    "message": "Claude Code returned an error result: Failed to authenticate. API Error: 401 API key is invalid.",
+    "droppedStructure": {
+      "assistant.error": "authentication_failed",
+      "result.is_error": true,
+      "result.terminal_reason": "api_error",
+      "result.api_error_status": 401
+    },
+    "note": "要 CLAUDE_CODE_MAX_RETRIES=0 才在 2s 内出来;默认重试下 90s 内什么都不返回。",
+    "current": {
+      "claudeSentinel": false,
+      "assistantText": false,
+      "sdkError": false,
+      "authFailError": false,
+      "llmHealthAuth": true,
+      "registryAuthCode": false,
+      "healthKind": "llm_auth",
+      "providerFailure": "auth_failed",
+      "quota": null,
+      "quotaRefusalText": false,
+      "connectFailure": false
+    }
+  },
+  {
+    "id": "claude.bad_key.session",
+    "provider": "claude",
+    "truth": "auth",
+    "source": "induced",
+    "path": "session",
+    "channel": "error_event",
+    "errorCode": "auth_rejected",
+    "message": "Failed to authenticate. API Error: 401 API key is invalid.",
+    "sdkStructure": {
+      "assistant.error": "authentication_failed",
+      "result.is_error": true,
+      "result.api_error_status": 401
+    },
+    "note": "以**正文 text 事件**出来,后面跟一个正常的 result 事件 —— 会话层看不出这一轮失败了。 第 2 步(2026-10-02)起:provider 读 SDK 的 `error=authentication_failed`,哨兵没中 ⇒ `auth_rejected` error 事件,不再当正文发出(红线 A:文案不说登录过期)。",
+    "current": {
+      "claudeSentinel": false,
+      "assistantText": false,
+      "sdkError": false,
+      "authFailError": false,
+      "llmHealthAuth": true,
+      "registryAuthCode": false,
+      "healthKind": "llm_auth",
+      "providerFailure": "auth_failed",
+      "quota": null,
+      "quotaRefusalText": false,
+      "connectFailure": false
+    }
+  },
+  {
+    "id": "claude.forbidden_403.cheap_eval",
+    "provider": "claude",
+    "truth": "auth",
+    "source": "harvested",
+    "path": "cheap_eval",
+    "channel": "thrown",
+    "errorCode": null,
+    "message": "Claude Code returned an error result: Failed to authenticate. API Error: 403 Request not allowed",
+    "note": "launchd.err.log 2026-09 ingest 抽取,90 次;failure-shapes.jsonl 2026-09-07 也有一条。不是双哨兵 ⇒ 按红线不报「登录过期」。",
+    "current": {
+      "claudeSentinel": false,
+      "assistantText": false,
+      "sdkError": false,
+      "authFailError": false,
+      "llmHealthAuth": true,
+      "registryAuthCode": false,
+      "healthKind": "llm_auth",
+      "providerFailure": "auth_failed",
+      "quota": null,
+      "quotaRefusalText": false,
+      "connectFailure": false
+    }
+  },
+  {
+    "id": "claude.forbidden_403.session",
+    "provider": "claude",
+    "truth": "auth",
+    "source": "harvested",
+    "path": "session",
+    "channel": "error_event",
+    "errorCode": "auth_rejected",
+    "message": "Failed to authenticate. API Error: 403 Request not allowed",
+    "sdkStructure": {
+      "assistant.error": "authentication_failed",
+      "result.is_error": true,
+      "result.api_error_status": 403,
+      "inferred": true
+    },
+    "note": "channel.log 2026-07-28 `[FALLBACK_REPLY] provider=claude chunks=1` —— 这句被当成回复原样发到了主人微信。 第 2 步(2026-10-02)起同 bad_key:`auth_rejected`,回合记 auth_failed、不再外发。采集样本只有正文,SDK 结构按同一模板(`Failed to authenticate. API Error: <status>`)的诱发样本推定(inferred)。",
+    "current": {
+      "claudeSentinel": false,
+      "assistantText": false,
+      "sdkError": false,
+      "authFailError": false,
+      "llmHealthAuth": true,
+      "registryAuthCode": false,
+      "healthKind": "llm_auth",
+      "providerFailure": "auth_failed",
+      "quota": null,
+      "quotaRefusalText": false,
+      "connectFailure": false
+    }
+  },
+  {
+    "id": "claude.net_refused.cheap_eval",
+    "provider": "claude",
+    "truth": "network",
+    "source": "induced",
+    "path": "cheap_eval",
+    "channel": "thrown",
+    "errorCode": null,
+    "message": "Claude Code returned an error result: API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)",
+    "droppedStructure": {
+      "assistant.error": "server_error",
+      "result.is_error": true,
+      "result.terminal_reason": "api_error"
+    },
+    "current": {
+      "claudeSentinel": false,
+      "assistantText": false,
+      "sdkError": false,
+      "authFailError": false,
+      "llmHealthAuth": false,
+      "registryAuthCode": false,
+      "healthKind": "network",
+      "providerFailure": "transient",
+      "quota": null,
+      "quotaRefusalText": false,
+      "connectFailure": true
+    }
+  },
+  {
+    "id": "claude.net_refused.session",
+    "provider": "claude",
+    "truth": "network",
+    "source": "induced",
+    "path": "session",
+    "channel": "error_event",
+    "errorCode": "network",
+    "message": "API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)",
+    "sdkStructure": {
+      "assistant.error": "server_error",
+      "result.is_error": true,
+      "result.api_error_status": null
+    },
+    "note": "第 2 步(2026-10-02)起:`server_error` + 无 HTTP status ⇒ `network` error 事件,不再当正文发出。",
+    "current": {
+      "claudeSentinel": false,
+      "assistantText": false,
+      "sdkError": false,
+      "authFailError": false,
+      "llmHealthAuth": false,
+      "registryAuthCode": false,
+      "healthKind": "network",
+      "providerFailure": "transient",
+      "quota": null,
+      "quotaRefusalText": false,
+      "connectFailure": true
+    }
+  },
+  {
+    "id": "claude.net_dns.cheap_eval",
+    "provider": "claude",
+    "truth": "network",
+    "source": "induced",
+    "path": "cheap_eval",
+    "channel": "thrown",
+    "errorCode": null,
+    "message": "Claude Code returned an error result: API Error: Connection dropped (ECONNRESET)",
+    "note": "base URL 指向 *.invalid;本机 DNS 走代理 fake-ip,所以「解析失败」长成 ECONNRESET。",
+    "current": {
+      "claudeSentinel": false,
+      "assistantText": false,
+      "sdkError": false,
+      "authFailError": false,
+      "llmHealthAuth": false,
+      "registryAuthCode": false,
+      "healthKind": "network",
+      "providerFailure": "transient",
+      "quota": null,
+      "quotaRefusalText": false,
+      "connectFailure": true
+    }
+  },
+  {
+    "id": "claude.timeout.cheap_eval",
+    "provider": "claude",
+    "truth": "timeout",
+    "source": "induced",
+    "path": "cheap_eval",
+    "channel": "thrown",
+    "errorCode": null,
+    "message": "Claude Code returned an error result: Request timed out",
+    "droppedStructure": {
+      "assistant.error": "server_error",
+      "result.is_error": true,
+      "result.terminal_reason": "api_error"
+    },
+    "note": "黑洞地址 10.255.255.1 + API_TIMEOUT_MS=4000 + MAX_RETRIES=0。",
+    "current": {
+      "claudeSentinel": false,
+      "assistantText": false,
+      "sdkError": false,
+      "authFailError": false,
+      "llmHealthAuth": false,
+      "registryAuthCode": false,
+      "healthKind": "network",
+      "providerFailure": "transient",
+      "quota": null,
+      "quotaRefusalText": false,
+      "connectFailure": false
+    }
+  },
+  {
+    "id": "claude.timeout.session",
+    "provider": "claude",
+    "truth": "timeout",
+    "source": "induced",
+    "path": "session",
+    "channel": "error_event",
+    "errorCode": "network",
+    "message": "Request timed out",
+    "sdkStructure": {
+      "assistant.error": "server_error",
+      "result.is_error": true,
+      "result.api_error_status": null,
+      "inferred": true
+    },
+    "note": "第 2 步(2026-10-02)起同 net_refused:`network`。SDK 结构取自同 case 的 cheap_eval 原始层(inferred)。",
+    "current": {
+      "claudeSentinel": false,
+      "assistantText": false,
+      "sdkError": false,
+      "authFailError": false,
+      "llmHealthAuth": false,
+      "registryAuthCode": false,
+      "healthKind": "network",
+      "providerFailure": "transient",
+      "quota": null,
+      "quotaRefusalText": false,
+      "connectFailure": false
+    }
+  },
+  {
+    "id": "claude.tls.cheap_eval",
+    "provider": "claude",
+    "truth": "network",
+    "source": "harvested",
+    "path": "cheap_eval",
+    "channel": "thrown",
+    "errorCode": null,
+    "message": "Claude Code returned an error result: API Error: Unable to connect to API (UNKNOWN_CERTIFICATE_VERIFICATION_ERROR)",
+    "current": {
+      "claudeSentinel": false,
+      "assistantText": false,
+      "sdkError": false,
+      "authFailError": false,
+      "llmHealthAuth": false,
+      "registryAuthCode": false,
+      "healthKind": "network",
+      "providerFailure": "transient",
+      "quota": null,
+      "quotaRefusalText": false,
+      "connectFailure": true
+    }
+  },
+  {
+    "id": "claude.sleep.cheap_eval",
+    "provider": "claude",
+    "truth": "network",
+    "source": "harvested",
+    "path": "cheap_eval",
+    "channel": "thrown",
+    "errorCode": null,
+    "message": "Claude Code returned an error result: API Error: Your computer went to sleep mid-response. The response above may be incomplete.",
+    "current": {
+      "claudeSentinel": false,
+      "assistantText": false,
+      "sdkError": false,
+      "authFailError": false,
+      "llmHealthAuth": false,
+      "registryAuthCode": false,
+      "healthKind": "unknown",
+      "providerFailure": "unknown",
+      "quota": null,
+      "quotaRefusalText": false,
+      "connectFailure": false
+    }
+  },
+  {
+    "id": "claude.turn_watchdog.session",
+    "provider": "claude",
+    "truth": "not_provider",
+    "source": "harvested",
+    "path": "session",
+    "channel": "error_event",
+    "errorCode": null,
+    "message": "turn timed out after 600000ms with no activity",
+    "note": "daemon 自己的回合看门狗(turn_records outcome=timeout),codex 也有同一句。",
+    "current": {
+      "claudeSentinel": false,
+      "assistantText": false,
+      "sdkError": false,
+      "authFailError": false,
+      "llmHealthAuth": false,
+      "registryAuthCode": false,
+      "healthKind": "network",
+      "providerFailure": "transient",
+      "quota": null,
+      "quotaRefusalText": false,
+      "connectFailure": false
+    }
+  }
+]

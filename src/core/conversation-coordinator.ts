@@ -30,6 +30,7 @@ import {
 } from './chatroom-conductor'
 import { assertSupported, capabilitiesFor, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
 import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } from './agent-provider'
+import { isAuthErrorCode } from '../lib/provider-error-code'
 import { resolveEffectiveTier, resolveTier, TIER_PROFILES, type TierProfile } from './user-tier'
 import type { Access } from '../lib/access'
 import { unprotectedMessage, type NetworkGate } from '../lib/network-gate'
@@ -73,6 +74,9 @@ export interface TurnRecord {
   textChunks: number
   /** Failure detail for `timeout` / `error` outcomes; undefined otherwise. */
   error?: string
+  /** provider 边界产的结构化码(lib/provider-error-code;`turn_timeout` 也在这)。
+   *  health 判定有码就只看码,不再扫 `error` 文本。 */
+  errorCode?: string
 }
 
 export interface ConversationCoordinatorDeps {
@@ -198,11 +202,16 @@ export interface ConversationCoordinatorDeps {
   networkGate?: NetworkGate
 }
 
-/** User-facing notice when a provider reports auth_failed.
- *  Per-provider phrasing: the user already authenticated once; the
- *  session lapsed and they need to re-run the provider's login command
- *  on the same machine. */
-export function authFailNotice(providerId: ProviderId): string {
+/** User-facing notice when a provider reports an auth failure.
+ *  `auth_failed`(默认):the user already authenticated once; the session
+ *  lapsed and they need to re-run the provider's login command on the same
+ *  machine.
+ *  `auth_rejected`:凭证被 API 拒了(401/403),但**没有**证据说是登录过期 ——
+ *  红线 A(owner 2026-10-02 细化):这时不许说「登录过期 / 重新登录」。 */
+export function authFailNotice(providerId: ProviderId, code: string = 'auth_failed'): string {
+  if (code === 'auth_rejected') {
+    return `我这会儿够不着自己的脑子了:${providerId} 认证没通过(API 返回 401/403)。请主人在电脑上检查一下账号或密钥,弄好之后再发我一条,我就回来了。`
+  }
   const hint = capabilitiesFor(providerId).authFailHint
   return hint
     ? `我这会儿够不着自己的脑子了,${providerId} 的登录好像过期了。\n${hint}\n弄好之后再发我一条,我就回来了。`
@@ -418,7 +427,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     const last = authFailLastNotifyAt.get(chatId) ?? 0
     if (nowMs() - last < authFailThrottleMs) return
     authFailLastNotifyAt.set(chatId, nowMs())
-    await deps.sendAssistantText?.(chatId, authFailNotice(providerId))
+    await deps.sendAssistantText?.(chatId, authFailNotice(providerId, summary.errorCode))
   }
 
   /** On a per-turn watchdog timeout: the agent stream stalled silently.
@@ -654,7 +663,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // assistant text and re-emitted it as a coded error. Suppress fallback
       // and send a throttled neutral notice instead — never leak provider
       // failure text to the user.
-      if (summary.errorCode === 'auth_failed') {
+      if (isAuthErrorCode(summary.errorCode)) {
         outcome = 'auth_failed'
         await handleAuthFailed(msg.chatId, proj.alias, providerId, summary)
         return
@@ -708,6 +717,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         toolCalls: summary?.toolCalls ?? [],
         textChunks: summary?.assistantText.length ?? 0,
         error: summary?.error,
+        errorCode: summary?.errorCode,
       })
     }
   }
@@ -957,7 +967,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       const recOutcome: TurnRecord['outcome'] =
         r.status === 'rejected' ? 'error'
         : r.value.errorCode === TURN_TIMEOUT_CODE ? 'timeout'
-        : r.value.errorCode === 'auth_failed' ? 'auth_failed'
+        : isAuthErrorCode(r.value.errorCode) ? 'auth_failed'
         : r.value.error ? 'error'
         : 'completed'
       deps.recordTurn?.({
@@ -973,6 +983,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         toolCalls: recSummary?.toolCalls ?? [],
         textChunks: recSummary?.assistantText.length ?? 0,
         error: recSummary?.error ?? (r.status === 'rejected' ? (r.reason instanceof Error ? r.reason.message : String(r.reason)) : undefined),
+        errorCode: recSummary?.errorCode,
       })
 
       if (r.status === 'rejected') {
@@ -990,7 +1001,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // also fires (one throttled neutral notice across both providers per
       // chat per hour). The other provider's reply (if any) still goes
       // through below — partial reply is better than no reply.
-      if (r.value.errorCode === 'auth_failed') {
+      if (isAuthErrorCode(r.value.errorCode)) {
         await handleAuthFailed(msg.chatId, proj.alias, providerId, r.value)
         continue
       }
@@ -1062,7 +1073,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       const outcome: TurnRecord['outcome'] =
         err ? 'error'
         : summary?.errorCode === TURN_TIMEOUT_CODE ? 'timeout'
-        : summary?.errorCode === 'auth_failed' ? 'auth_failed'
+        : isAuthErrorCode(summary?.errorCode) ? 'auth_failed'
         : summary?.error ? 'error'
         : 'completed'
       deps.recordTurn?.({
@@ -1072,6 +1083,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         toolCalls: summary?.toolCalls ?? [],
         textChunks: summary?.assistantText.length ?? 0,
         error: summary?.error ?? err,
+        errorCode: summary?.errorCode,
       })
       // Self-heal parity with dispatchParallel: release wedged/stale sessions
       // and notify the user, per-provider, so beats continue for healthy agents.

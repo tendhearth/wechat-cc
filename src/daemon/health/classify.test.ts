@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { classifyFailure } from './classify'
+import { errorWithProviderCode } from '../../lib/provider-error-code'
 
 describe('classifyFailure', () => {
   it('被接管 → 可操作(要主人去扫码)', () => {
@@ -87,5 +88,38 @@ describe('classifyFailure —— 必须认识本仓库自己的 auth_failed 码'
 
   it('连 auth_failed 码撞上连接失败也让位给 network(同一条通则)', () => {
     expect(classifyFailure(new Error('auth_failed: connection refused')).kind).toBe('network')
+  })
+})
+
+describe('classifyFailure — provider 码优先(arch backlog #4 第 2 步)', () => {
+  const coded = (msg: string, code: string) => errorWithProviderCode(msg, code)
+
+  it('有码只看码:auth_rejected 是要动手的认证失败,但文案不说登录(红线 A)', () => {
+    const k = classifyFailure(coded('Failed to authenticate. API Error: 403 Request not allowed', 'auth_rejected'))
+    expect(k.kind).toBe('llm_auth')
+    expect(k.actionable).toBe(true)
+    expect(`${k.title}${k.body}`).not.toMatch(/登录|过期/)
+    expect(k.body).toContain('401/403')
+  })
+
+  it('auth_failed(哨兵)仍是「模型登录已失效」', () => {
+    expect(classifyFailure(coded('claude reports not logged in: Not logged in', 'auth_failed')).title).toBe('模型登录已失效')
+  })
+
+  it('network / server_error ⇒ network,哪怕正文里有认证散文', () => {
+    expect(classifyFailure(coded('Request timed out', 'network')).kind).toBe('network')
+    expect(classifyFailure(coded('API Error: 529 authentication service overloaded', 'server_error')).kind).toBe('network')
+  })
+
+  it('限流 / 额度 / 坏请求 / 未分类 ⇒ unknown(不把 LLM 链路判坏)', () => {
+    for (const code of ['rate_limited', 'quota', 'invalid_request', 'provider_error']) {
+      expect(classifyFailure(coded('API Error: 401 something', code)).kind, code).toBe('unknown')
+    }
+  })
+
+  it('不在闭集里的码被忽略,回退到文本判定', () => {
+    const e = Object.assign(new Error('401 unauthorized'), { providerErrorCode: 'made_up' })
+    expect(classifyFailure(e).kind).toBe('llm_auth')
+    expect(classifyFailure(errorWithProviderCode('connection refused', undefined)).kind).toBe('network')
   })
 })
