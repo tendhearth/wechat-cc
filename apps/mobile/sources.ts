@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { renderTokensCss } from '../../packages/design-tokens/src/index'
 
 export const MOBILE_SRC = new URL('./src/', import.meta.url)
 /** daemon 吃的生成物;与 mobile-presence-art.json 同理 —— 编译后的 sidecar 没有源码树。 */
@@ -18,6 +19,7 @@ export const CCM_PLACEHOLDER = '/*@@CCM@@*/'
 
 export function readMobileSource(name: string): string {
   const source = readFileSync(new URL(name, MOBILE_SRC), 'utf8')
+  if (name === 'tokens.css') return renderTokensCss() + source
   if (name === 'markdown.js') {
     if (source.split(CCM_PLACEHOLDER).length !== 2) throw Error('mobile page: markdown.js must have exactly one Markdown placeholder')
     const markdownJs = readFileSync(new URL('markdown-generated.js', MOBILE_SRC), 'utf8')
