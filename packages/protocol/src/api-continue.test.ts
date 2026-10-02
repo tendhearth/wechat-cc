@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { MatterDetail, PHONE_API_SCHEMAS, SESSION_CONTINUE_STATES, SessionContinue, SessionContinueResult } from './index'
+import { MatterDetail, NativeSessionPage, PHONE_API_SCHEMAS, SESSION_CONTINUE_STATES, SessionContinue, SessionContinueResult } from './index'
 
 describe('接着做电脑会话的 schema(spec 2026-10-01-tendhearth-continue-sessions §4.3)', () => {
+  it('阅读窗口兼容旧后台,只接受明确的最近 / 从头窗口', () => {
+    const page = { session: { key: 'k', provider: 'codex', title: 't', project: null, updatedAt: null, active: false }, messages: [], nextCursor: null, managed: false }
+    expect(NativeSessionPage.safeParse(page).success).toBe(true)
+    for (const window of ['recent', 'start']) expect(NativeSessionPage.safeParse({ ...page, window }).success).toBe(true)
+    expect(NativeSessionPage.safeParse({ ...page, window: 'latest-ish' }).success).toBe(false)
+  })
   it('预览接受全部八种状态,拒绝未知状态 / 未知执行者', () => {
     for (const state of SESSION_CONTINUE_STATES) expect(SessionContinue.safeParse({ state, provider: 'codex', project: null, mode: null, matterId: null }).success, state).toBe(true)
     expect(SessionContinue.safeParse({ state: 'running', provider: 'claude', project: 'p', mode: null, matterId: null }).success).toBe(false)

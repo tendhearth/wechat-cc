@@ -1,6 +1,8 @@
 /* 「跟 CC 说」:CC 的话无底,我的话 rail 底;输入是一条胶囊,只有发送用 accent。零字面色值,无阴影。 */
 .converse-page { display: flex; flex-direction: column; flex: 1; min-height: 0; background: var(--th-paper); color: var(--th-ink); }
 .converse-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: var(--th-space-xl); padding: 28px max(24px, calc((100% - 780px) / 2)); }
+.converse-latest { align-self:center; flex:none; padding:8px 12px; border:0; background:transparent; color:var(--th-accent); font:inherit; font-size:var(--th-size-small); cursor:pointer; }
+.converse-latest[hidden] { display:none; }
 .converse-scroll .empty-state { padding: 40px; text-align: center; color: var(--th-ink-soft); font-size: var(--th-size-small); }
 
 .converse-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 320px; padding: 20px 0; text-align: center; }

@@ -15,7 +15,8 @@ import { icon } from "./icons.js"
 
 import { escapeHtml } from "../view.js"
 import { formatInvokeError } from "../ipc.js"
-import { renderWorkbenchMarkdown, renderWorkbenchUserText, captureUserSources, restoreUserSources } from "./workbench-markdown.js"
+import { renderWorkbenchMarkdown, renderWorkbenchUserText } from "./workbench-markdown.js"
+import { paintConversation, syncConversationLatest, showConversationLatest, conversationInteractionActive } from "./converse-reading.js"
 
 /**
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
@@ -61,6 +62,7 @@ let recordingTimer = null
 function renderSkeleton(root, deps) {
   root.innerHTML = `
     <div id="converse-scroll" class="converse-scroll"></div>
+    <button id="converse-latest" class="converse-latest" type="button" hidden>有新回复 · 回到最新</button>
     <div class="converse-compose">
       <textarea id="converse-input" class="converse-textarea" aria-label="消息" placeholder="跟 CC 说点什么…" rows="2"></textarea>
       <div id="converse-recording" class="converse-recording" hidden>
@@ -343,15 +345,10 @@ async function loadSharedHistory(deps) {
   } catch { /* 没有登记处或读不到:桌面照旧从空白开始 */ }
 }
 
-function renderMessages() {
+function renderMessages({ follow = false } = {}) {
   const scroll = document.getElementById("converse-scroll")
   if (scroll) {
-    const open=captureUserSources(scroll)
-    scroll.innerHTML = messages.length === 0
-      ? emptyStateHtml()
-      : messages.map(messageHtml).join("")
-    restoreUserSources(scroll,open)
-    requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight })
+    paintConversation(scroll,messages,messageHtml,emptyStateHtml(),{follow,latest:/** @type {HTMLButtonElement|null} */(document.getElementById("converse-latest"))})
   }
   for (const cb of listeners) {
     try { cb(messages) } catch (err) { console.error("converse subscriber threw", err) }
@@ -390,15 +387,15 @@ async function sendMessage(deps) {
   reflectMic()
   sendBtn.disabled = true
   input.disabled = true
-  renderMessages()
+  renderMessages({ follow: true })
 
   // A turn legitimately takes 1-3 minutes when the owner session cold-starts
   // — a bare "…" for that long reads as "it's broken". Stage the pending
   // copy over time so the wait explains itself.
   const PENDING_STAGES = [
-    [8_000, "正在想…"],
-    [30_000, "还在想——第一次开口要先热身，可能要一两分钟。"],
-    [90_000, "在认真组织语言，再等等我。"],
+    [8_000, "还在等待 CC 的回复…"],
+    [30_000, "还没收到回复，你可以先查看上面的内容。"],
+    [90_000, "这次等待较久，收到回复后会显示在这里。"],
   ]
   const pendingTimers = PENDING_STAGES.map(([delay, copy]) => setTimeout(() => {
     const m = messages.find(x => x.id === pendingId)
@@ -440,7 +437,9 @@ async function sendMessage(deps) {
     sendBtn.disabled = false
     input.disabled = false
     renderMessages()
-    input.focus()
+    const scroll=document.getElementById("converse-scroll")
+    const focused=document.activeElement
+    if((!focused || focused===input || focused===document.body) && (!scroll || !conversationInteractionActive(scroll)))input.focus()
   }
 }
 
@@ -474,6 +473,12 @@ async function delegateDraft(deps) {
 
 /** @param {HTMLElement} root @param {Deps} deps */
 function wireEvents(root, deps) {
+  const scroll=root.querySelector("#converse-scroll")
+  const latest=/** @type {HTMLButtonElement|null} */(root.querySelector("#converse-latest"))
+  if(scroll instanceof HTMLElement){
+    scroll.addEventListener("scroll",()=>syncConversationLatest(scroll,latest),{passive:true})
+    latest?.addEventListener("click",()=>showConversationLatest(scroll,latest))
+  }
   root.querySelector("#converse-delegate")?.addEventListener("click", () => { void delegateDraft(deps) })
   root.querySelector("#converse-send")?.addEventListener("click", () => {
     sendMessage(deps).catch(err => console.error("converse send failed", err))
@@ -502,9 +507,7 @@ function wireEvents(root, deps) {
     toggleMic(deps).catch(err => console.error("converse mic failed", err))
   })
 
-  // Delegated: bubbles (and their ▶ buttons) are re-created on every
-  // renderMessages(), so bind once on the scroll container rather than
-  // per-bubble.
+  // Delegated so appended and updated replies share one handler.
   root.querySelector("#converse-scroll")?.addEventListener("click", (ev) => {
     const target = ev.target
     if (!(target instanceof Element)) return
