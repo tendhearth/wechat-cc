@@ -38,6 +38,14 @@ export function parseMarkdown(value: string): Token[] {
   return markdown.lexer(String(value ?? ''))
 }
 
+const FORMATTED_TOKENS = new Set(['heading', 'list', 'table', 'blockquote', 'code', 'codespan', 'strong', 'em', 'del', 'link', 'image', 'hr', 'escape'])
+
+/** Plain messages need no extra source control; formatted messages keep one. */
+export function hasMarkdownFormatting(value: string): boolean {
+  const contains = (tokens: Token[]): boolean => tokens.some(token => FORMATTED_TOKENS.has(token.type) || ('tokens' in token && !!token.tokens && contains(token.tokens)))
+  return contains(parseMarkdown(value))
+}
+
 /** Decode prose entities; code remains literal. No DOM or platform APIs. */
 export function decodeMarkdownEntities(value: string): string {
   return value.replace(/&(#(?:x[0-9a-f]+|\d+)|amp|lt|gt|quot|apos|nbsp);/gi, (match, name: string) => {

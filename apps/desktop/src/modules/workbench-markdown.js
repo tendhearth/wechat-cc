@@ -4,4 +4,5 @@ export {
   escapeMarkdownHtml as escapeWorkbenchHtml,
   renderMarkdown as renderWorkbenchMarkdown,
   markdownPlainText,
+  hasMarkdownFormatting,
 } from '../vendor/markdown.js'

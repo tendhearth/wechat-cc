@@ -1,7 +1,7 @@
-import { renderMarkdown, markdownPlainText } from './index'
+import { renderMarkdown, markdownPlainText, hasMarkdownFormatting } from './index'
 
 declare global {
-  var CCM: { renderMarkdown: typeof renderMarkdown; markdownPlainText: typeof markdownPlainText }
+  var CCM: { renderMarkdown: typeof renderMarkdown; markdownPlainText: typeof markdownPlainText; hasMarkdownFormatting: typeof hasMarkdownFormatting }
 }
 
-globalThis.CCM = { renderMarkdown, markdownPlainText }
+globalThis.CCM = { renderMarkdown, markdownPlainText, hasMarkdownFormatting }

@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { decodeMarkdownEntities, markdownPlainText, parseMarkdown, renderMarkdown, safeMarkdownUrl } from './index'
+import { decodeMarkdownEntities, hasMarkdownFormatting, markdownPlainText, parseMarkdown, renderMarkdown, safeMarkdownUrl } from './index'
 
 describe('transcript Markdown across reading surfaces', () => {
+  it('offers source inspection for formatted messages and leaves plain messages uncluttered', () => {
+    for (const source of ['**用户原文**', '# 标题', '- 一项', '`a * b`', '[资料](/Users/owner/a.md)', '  **嵌套重点**', '\\*字面星号']) expect(hasMarkdownFormatting(source)).toBe(true)
+    for (const source of ['', '你好', '第一行\n\n  原始缩进', '计算 a * b', '<script>literal()</script>']) expect(hasMarkdownFormatting(source)).toBe(false)
+  })
+
   it('renders prose, lists, tables and literal code without changing source text', () => {
     const source = '**可以继续**\n\n- 第一项\n- 第二项\n\n```ts\n  const value = "**literal**"\n```\n\n| 名称 | 结果 |\n| --- | --- |\n| 原会话 | 已保留 |'
     const html = renderMarkdown(source)
