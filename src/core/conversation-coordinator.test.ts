@@ -2963,3 +2963,80 @@ describe('network gate (2026-10-02)', () => {
     expect(acquire).toHaveBeenCalledTimes(1)
   })
 })
+
+// 评审 #193 P2-4:/both、/chat 被守护筛到只剩一个模型时,执行退成单模型,排队也必须跟着退成单模型。
+describe('guard-filtered group → one executing model is scheduled like solo (review #193 P2)', () => {
+  const UNSAFE = { check: async () => ({ safe: false, source: 'bx' as const, detail: 'bx 未保护' }) }
+  const cursorAuto: AgentProvider = {
+    spawn: dummyProvider.spawn,
+    callTarget: () => ({ provider: 'cursor', model: 'auto' }),
+  } as AgentProvider
+  const claudeOfficial: AgentProvider = {
+    spawn: dummyProvider.spawn,
+    callTarget: () => ({ provider: 'claude', model: null, baseUrl: null }),
+  } as AgentProvider
+
+  function make(mode: Mode) {
+    const store = makeMockStore()
+    store.set('chat-1', mode)
+    const registry = createProviderRegistry()
+    registry.register('claude', claudeOfficial, { displayName: 'Claude', canResume: () => true })
+    registry.register('cursor' as ProviderId, cursorAuto, { displayName: 'Cursor', canResume: () => true })
+    // 一个 ACP 式会话:同一会话上一轮还没完就再来一轮 → acp_turn_already_running(真实 cursor 的行为)。
+    let active = false
+    const ran: string[] = []
+    const errors: string[] = []
+    let releaseFirst: () => void = () => {}
+    const firstGate = new Promise<void>(r => { releaseFirst = r })
+    let n = 0
+    const acquire = vi.fn(async (req: AcquireRequest) => ({
+      alias: 'p', path: '/p', providerId: req.providerId, lastUsedAt: 0,
+      dispatch: (text: string): AsyncIterable<AgentEvent> => {
+        if (active) { errors.push('acp_turn_already_running'); throw new Error('acp_turn_already_running') }
+        active = true
+        const me = ++n
+        return {
+          async *[Symbol.asyncIterator]() {
+            try {
+              if (me === 1) await firstGate
+              ran.push(text)
+              yield { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 0 } as AgentEvent
+            } finally { active = false }
+          },
+        }
+      },
+      cancel: async () => {}, close: async () => {},
+    }))
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'p', path: '/p' }),
+      manager: { acquire } as never,
+      conversationStore: store,
+      registry,
+      defaultProviderId: 'claude',
+      format: (m) => m.text,
+      permissionMode: 'strict',
+      loadAccess: adminAccess,
+      log: () => {},
+      sendAssistantText: async () => {},
+      haikuEval: async () => 'x',
+      networkGate: UNSAFE,
+    })
+    return { c, acquire, ran, errors, releaseFirst }
+  }
+
+  it.each<[string, Mode]>([
+    ['chatroom (/chat)', { kind: 'chatroom', participants: ['claude', 'cursor' as ProviderId] }],
+    ['parallel (/both)', { kind: 'parallel', participants: ['claude', 'cursor' as ProviderId] }],
+  ])('%s filtered to Cursor only: a 2nd message sent while the 1st runs waits its turn and is executed', async (_n, mode) => {
+    const { c, ran, errors, releaseFirst } = make(mode)
+    const p1 = c.dispatch(inbound('chat-1', 'first'))
+    await new Promise(r => setTimeout(r, 10))
+    const p2 = c.dispatch(inbound('chat-1', 'second'))
+    await new Promise(r => setTimeout(r, 10))
+    expect(errors).toEqual([])          // 第二条没有撞上还在跑的第一条
+    releaseFirst()
+    await Promise.all([p1, p2])
+    expect(errors).toEqual([])
+    expect(ran.map(t => t.includes('first') ? 'first' : t.includes('second') ? 'second' : t)).toEqual(['first', 'second'])
+  })
+})
