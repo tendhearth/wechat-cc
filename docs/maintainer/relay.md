@@ -68,7 +68,7 @@ v2 **默认关**:daemon 只有在 `agent-config.json` 里显式设了 `relay_v2_
 | 现象 | 原因 / 处理 |
 |---|---|
 | `login_failed` | 身份文件(`relay-identity.json`)不对或被换过。挑战签名不看时间,所以不是时钟问题。 |
-| `not_configured` | Worker 的 secrets 没设(见第 4 节)。 |
+| `not_configured` | Worker 的 secrets 没设(见第 4 节)。**刚设完也会这样**:已在跑的房间(Durable Object)还拿着设之前的 env,健康检查却已显示 `apns:true`。等 daemon 的中继连接断开重连一次(日志 `relay v2 login ok`)再测;2026-10-01 设 staging 时实测如此。 |
 | `InvalidProviderToken` | APNs:`.p8` / key id / team id 不对。 |
 | `DeviceTokenNotForTopic` | `APNS_TOPIC` 与 app 的 bundle id 不符。 |
 
