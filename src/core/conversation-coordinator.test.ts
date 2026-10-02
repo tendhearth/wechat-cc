@@ -3042,3 +3042,67 @@ describe('guard-filtered group → one executing model is scheduled like solo (r
     expect(ran.map(t => t.includes('first') ? 'first' : t.includes('second') ? 'second' : t)).toEqual(['first', 'second'])
   })
 })
+
+// 第二轮评审 #194 P2:网络来回切换时,单模型队列和群聊抢占两条路的交接。复现:①不安全,第一条由 Cursor
+// 单独执行;②恢复,第二条按群聊等待;③又不安全,第三条进单模型队列。第一条结束后第二、三条同时调
+// Cursor ⇒ acp_turn_already_running。规矩:同一个底层会话同一时刻只有一个回合。
+describe('unsafe → safe → unsafe flips: one turn per underlying session at a time (review #194 P2)', () => {
+  it('three back-to-back messages across the flips never overlap on the Cursor session', async () => {
+    const net = { safe: false }
+    const gate = { check: async () => ({ safe: net.safe, source: 'bx' as const, detail: net.safe ? 'bx 保护中' : 'bx 未保护' }) }
+    const store = makeMockStore()
+    store.set('chat-1', { kind: 'chatroom', participants: ['claude', 'cursor' as ProviderId] })
+    const registry = createProviderRegistry()
+    registry.register('claude', { spawn: dummyProvider.spawn, callTarget: () => ({ provider: 'claude', model: null }) } as AgentProvider, { displayName: 'Claude', canResume: () => true })
+    registry.register('cursor' as ProviderId, { spawn: dummyProvider.spawn, callTarget: () => ({ provider: 'cursor', model: 'auto' }) } as AgentProvider, { displayName: 'Cursor', canResume: () => true })
+    const active = new Set<string>()
+    const errors: string[] = []
+    const ran: string[] = []
+    let releaseFirst: () => void = () => {}
+    const firstGate = new Promise<void>(r => { releaseFirst = r })
+    let firstSeen = false
+    const acquire = vi.fn(async (req: AcquireRequest) => ({
+      alias: 'p', path: '/p', providerId: req.providerId, lastUsedAt: 0,
+      dispatch: (text: string): AsyncIterable<AgentEvent> => {
+        // 一个 ACP 式会话:同一 provider 的会话上一轮没完又来一轮就拒。
+        if (active.has(req.providerId)) { errors.push(`${req.providerId}:acp_turn_already_running`); throw new Error('acp_turn_already_running') }
+        active.add(req.providerId)
+        const isFirst = !firstSeen && text.includes('first')
+        if (isFirst) firstSeen = true
+        return {
+          async *[Symbol.asyncIterator]() {
+            try {
+              if (isFirst) await firstGate
+              await new Promise(r => setTimeout(r, 2))
+              ran.push(`${req.providerId}:${text.includes('first') ? 'first' : text.includes('second') ? 'second' : text.includes('third') ? 'third' : 'beat'}`)
+              yield { kind: 'text', text: `${req.providerId} says` } as AgentEvent
+              yield { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 0 } as AgentEvent
+            } finally { active.delete(req.providerId) }
+          },
+        }
+      },
+      cancel: async () => {}, close: async () => {},
+    }))
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'p', path: '/p' }),
+      manager: { acquire } as never,
+      conversationStore: store, registry, defaultProviderId: 'claude',
+      format: (m) => m.text, permissionMode: 'strict', loadAccess: adminAccess, log: () => {},
+      sendAssistantText: async () => {}, haikuEval: async () => '{"converged":true}', networkGate: gate,
+    })
+    const tick = () => new Promise(r => setTimeout(r, 10))
+    const p1 = c.dispatch(inbound('chat-1', 'first'))      // 不安全:只剩 Cursor,单模型
+    await tick()
+    net.safe = true
+    const p2 = c.dispatch(inbound('chat-1', 'second'))     // 恢复:群聊
+    await tick()
+    net.safe = false
+    const p3 = c.dispatch(inbound('chat-1', 'third'))      // 又不安全:单模型
+    await tick()
+    releaseFirst()
+    await Promise.all([p1, p2, p3])
+    expect(errors).toEqual([])
+    expect(ran).toContain('cursor:first')
+    expect(ran).toContain('cursor:third')
+  })
+})

@@ -489,6 +489,23 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
   // two rapid inbound messages for one chat never run concurrently. Chatroom
   // is exempt — see the comment on `dispatch`.
   const mutex = makeChatMutex()
+  // 第二轮评审 #194 P2:**同一个底层会话同一时刻只有一个回合**。按 (chat, project, provider) —— 和
+  // SessionManager 的会话键同一个粒度 —— 串行每一次发送:单模型队列(上面的 per-chat 锁)和 /chat
+  // 抢占(不持 per-chat 锁)两条路在网络来回切换时会交接,两条路的回合都落到这把锁上,就不可能
+  // 在同一个会话上撞车(acp_turn_already_running)。它是叶子锁:持有它的时候从不去拿 per-chat 锁。
+  // 锁空着就**当场**开始(不多让出一拍):取消 / 抢占靠同步登记,不能因为这把锁晚一拍。
+  const sessionTails = new Map<string, Promise<void>>()
+  function oneTurnPerSession<T>(chatId: string, alias: string, providerId: ProviderId, fn: () => Promise<T>): Promise<T> {
+    const key = `${chatId}\u0000${alias}\u0000${providerId}`
+    const prev = sessionTails.get(key)
+    let run: Promise<T>
+    if (prev) run = prev.then(fn, fn)
+    else { try { run = fn() } catch (err) { run = Promise.reject(err) } }
+    const tail = run.then(() => undefined, () => undefined)
+    sessionTails.set(key, tail)
+    void tail.then(() => { if (sessionTails.get(key) === tail) sessionTails.delete(key) })
+    return run
+  }
 
   function validateMode(mode: Mode): void {
     // Reject unknown providers up front so the caller (mode-commands or
@@ -648,7 +665,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           deps.log?.('HANDOFF', `chat=${msg.chatId} cold-start ${providerId} recent=${recent.length}`)
         }
       }
-      summary = await collectTurn(handle.dispatch(text), { timeoutMs: deps.turnTimeoutMs, onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) })
+      summary = await oneTurnPerSession(msg.chatId, proj.alias, providerId, () => collectTurn(handle.dispatch(text), { timeoutMs: deps.turnTimeoutMs, onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) }))
       const assistantTexts = summary.assistantText
       const replyToolCalled = summary.replyToolCalled
 
@@ -947,7 +964,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     try {
       settled = await Promise.allSettled(acquired.map(a =>
         a.status === 'fulfilled'
-          ? collectTurn(a.value.dispatch(text), { timeoutMs: deps.turnTimeoutMs, onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) })
+          ? oneTurnPerSession(msg.chatId, proj.alias, a.value.providerId, () => collectTurn(a.value.dispatch(text), { timeoutMs: deps.turnTimeoutMs, onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) }))
           : Promise.reject(a.reason),
       ))
     } finally {
@@ -1067,7 +1084,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           alias: proj.alias, path: proj.path, providerId,
           chatId: msg.chatId, tierProfile, permissionMode: deps.permissionMode,
         })
-        summary = await collectTurn(handle.dispatch(promptFor(providerId)), { timeoutMs: Math.min(deps.turnTimeoutMs ?? CHATROOM_BEAT_TIMEOUT_MS, CHATROOM_BEAT_TIMEOUT_MS), onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) })
+        summary = await oneTurnPerSession(msg.chatId, proj.alias, providerId, () => collectTurn(handle.dispatch(promptFor(providerId)), { timeoutMs: Math.min(deps.turnTimeoutMs ?? CHATROOM_BEAT_TIMEOUT_MS, CHATROOM_BEAT_TIMEOUT_MS), onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) }))
       } catch (e) {
         err = e instanceof Error ? e.message : String(e)
       }
