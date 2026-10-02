@@ -37,6 +37,7 @@ maestro test .maestro/           # 模拟器上跑演示流程(要先有 develop
 | `.maestro/chat.yaml` | 此刻 → 跟 CC 说一句 → 对话页 → 发一句 → 「在想…」→ 演示回复出现 → 一起做的置顶「和 CC 的对话」回到对话页 |
 | `.maestro/connections.yaml` | 设置 → CC 的连接卡(演示数据)→ 各项状态词 → 电脑上的会话列表(只读) |
 | `.maestro/compose.yaml` | 此刻 → 跟 CC 说 → 显式选「交给 CC 去做一件事」→ 输入 → 交给 CC → 新事项的进展页 → 「一起做」里出现它(交办不再是默认动作) |
+| `.maestro/quota-handoff.yaml` | 一起做 → 周报那件(Claude Code 额度用完)→ 灰字 +「交给 Codex 继续」→ 确认卡如实说(同一文件夹新开一件、原来那件不动、Codex 看不到之前的对话、会用 Codex 的额度)→ 交出去 → 进新那件 → 返回,原来那件说「已经交给 Codex 继续」 |
 | `.maestro/demo-walkthrough.yaml` | 欢迎 → 先看看 → 此刻 → 一起做 → 某件事 → 展开改动 / 过程 → 设置 → 切语言 → 退出演示回欢迎页 |
 | `.maestro/pair-invalid.yaml` | 欢迎 → 配对 → 粘贴无效链接 / 局域网链接 → 各自的提示(不联网;真配对是主人真机验收) |
 | `.maestro/pair-link.yaml` | 开发构建用自定义 scheme 打开配对链接 ⇒ 确认卡出现、显示中继主机与核对码、没有自动配对;再开一个锚点丢了的链接 ⇒ 「没带全」提示 |
@@ -65,7 +66,7 @@ scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl 
 
 ## 界面只认 Backend 接口
 
-页面只通过 `src/backend/types.ts` 的 `Backend` 拿数据和提交动作(订阅主题、`matter` / `insight` / `changes` / `decide` / `answer` / `say` / `create` …)。演示后端在 `src/backend/demo.ts`:三件种子事(作品集 `a1b2c3d4` 带一条模型说明的待批准、零散想法 `e5f6a7b8` 已回复、出差 `c9d0e1f2` 带一个问题),动作后 2 秒推进到「这一轮已回复」;设置里「退出演示」会重置。
+页面只通过 `src/backend/types.ts` 的 `Backend` 拿数据和提交动作(订阅主题、`matter` / `insight` / `changes` / `decide` / `answer` / `say` / `create` …)。演示后端在 `src/backend/demo.ts`:四件种子事(作品集 `a1b2c3d4` 带一条模型说明的待批准、零散想法 `e5f6a7b8` 已回复、出差 `c9d0e1f2` 带一个问题、周报 `f3a4b5c6` Claude Code 额度用完可交给 Codex),动作后 2 秒推进到「这一轮已回复」;设置里「退出演示」会重置。
 真后端在 `src/backend/live.ts`(纯 TS,socket 注入);连接状态机 `src/net/connection.ts`;错误映射 `src/net/errors.ts`;配对 `src/net/pairing.ts` + `src/app/pair.tsx`;钥匙串 `src/net/credentials.ts`(键 `tendhearth.pairing.v1` / `tendhearth.prefs.v1`)。界面不用关心用的是哪个。
 
 ## 真连接的规矩
@@ -78,6 +79,7 @@ scripts/          sim-push.ts:模拟器推送工具(合成开发令牌 + simctl 
 - **跟 CC 说走 `/m/api/chat*`,收下即回**:`/m/api/chat/say` 立刻返回(走 companion 路径,与微信同一个主人会话),回复靠 `matter/<聊天>` 主题唤醒后拉取;一次只等一句(上一句在等 ⇒ 409 `chat_busy`,草稿留着),10 分钟超时。`requestId` 用 `requestIdFor('chat', 正文)`。老网页壳 `/m/api/matter/say` 的同步语义不动。主人的对话在「一起做」里置顶;访客的聊天不出现在手机上。
 - **「可能没送到」**:本机收过回执,但 daemon 那边既不 pending 也没历史 ⇒ 显示未确认气泡(可重试、可忽略);重试用同一个 `requestId`,daemon 去重,所以即使其实已落在历史别页也安全。原因:任务表只在内存,daemon 重启会丢正在等的那句。不自动重发(不重试风暴)。
 - **连接卡与会话页拿到的都是 admin 以下的投影:没有路径**(无插件目录、无 cwd / nativeId)。连接卡「不知道」永不显示成绿;知识库没开不是故障(不显示红),开了没建起来才红;知识库陈旧按最近一次同步判,微信聊天记录的日期按 wxvault 解密时间。会话列表查询只读、只给目录名；#166 另提供确认后「接着做」的写入入口，查询投影与续接授权分别验收。
+- **额度用完交给另一位**(spec continue-sessions §7-3):详情的 `quotaHandoff`(daemon 算:`offer` / `none` / `handed`)⇒ 进展页底部一块;确认卡确认后 `POST /m/api/matter/handoff {id, requestId, providerId}`,`requestId` 每次点开卡换一个、卡里重试沿用,daemon 按它幂等、一件事也只交一次。`quota_handoff_*` ⇒ `handoff_changed`(重读详情,不说「没送到」)。与微信「交给 X 继续？」同一个信号、同一个动作。
 - **撤销 ≠ 离线**:撤销 ⇒ 停止提交、清掉钥匙串里的设备令牌、显示「重新配对」;暂时离线 ⇒ 显示上次同步时间、草稿照写、发送 / 批准 / 拒绝锁住。两者文案与 testID 都不同。
 - **草稿永不自动发送**:重连后只重拉读,不重放写;不做乐观成功。
 - **令牌不进日志**、错误文案或 `console`:`LiveBackend` 的 `log` 只写错误码与路由键。
@@ -186,3 +188,4 @@ CI:`app · native push vectors`(`.github/workflows/ci.yml`,仅 `apps/app/native/
 5. CC 的连接卡:微信聊天记录日期与 wxvault 同步时间一致;关掉某个插件后变红;不知道的项不是绿。
 6. 设置 → 电脑上的会话:能看到 Claude Code / Codex 会话并读几页(只读)。
 7. **对话输入框在真机上能聚焦、键盘不遮挡**(模拟器验不出)。
+8. 额度用完交给另一位(spec continue-sessions §7-3):让一个执行者真的用完额度(或等它自己用完),手机进那件事 ⇒ 灰字说约几分钟恢复 +「交给 X 继续」⇒ 确认 ⇒ 电脑上同一文件夹多一件 X 的任务、第一句写着「接替 …（额度用完）」;再点 / 另一台手机点都回同一件。

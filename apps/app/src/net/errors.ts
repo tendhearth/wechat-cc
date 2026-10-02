@@ -16,6 +16,8 @@ const SPECIFIC: ReadonlyMap<string, BackendCode> = new Map<string, BackendCode>(
   ['native_history_changed', 'session_changed'], ['native_history_empty', 'session_empty'], ['native_session_already_managed', 'session_managed'],
   // 第一句(continueImported)时:记录在确认之后又变了(终端里的 Claude Code 还在写)/ 原会话已经不能直接接上 ⇒ 都按「会话刚变」说(final fix I1)
   ['external_close_confirmation_stale', 'session_changed'], ['restart_confirmation_required', 'session_changed'],
+  // 额度用完交给另一位(spec continue-sessions §7-3):额度已恢复 / 接手人变了 / 现在没人能接 ⇒ 都是「情况变了」,页面重读详情
+  ['quota_handoff_not_needed', 'handoff_changed'], ['quota_handoff_changed', 'handoff_changed'], ['quota_handoff_unavailable', 'handoff_changed'],
 ])
 const errOf = (body: unknown): string | null => {
   if (typeof body !== 'object' || body === null) return null
