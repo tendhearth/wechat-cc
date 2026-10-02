@@ -8,12 +8,12 @@
 
 命名已统一为 **Tendhearth CC**，角色称呼为 **CC**；技术兼容边界见[产品命名规范](reference/product-naming.md)。手机端的实现、真机验收和商店发布是不同交付状态，以 [apps/app](../apps/app/README.md) 及各批验证记录为准。
 
-## 现状:最新公开版本 1.7.1
+## 现状:最新公开版本 1.7.2
 
 | 事实 | 怎么看(别写死数字,每次改这页先跑) |
 |---|---|
-| 最近一次**公开**发版 | `gh release list --limit 1`(2026-09-29:`desktop-v1.7.1`,master `0e667c87`;第一版 Developer ID 签名 + 公证的 macOS 包) |
-| 自动更新源 | `curl -s https://dl.tendhearth.com/wechat-cc/latest.json \| grep version`(2026-09-29:1.7.1,与 GitHub 一致) |
+| 最近一次**公开**发版 | `gh release list --limit 1`(2026-10-02:`desktop-v1.7.2`,master `7c07de44`;1.7.1 起 macOS 包都是 Developer ID 签名 + 公证) |
+| 自动更新源 | `curl -s https://dl.tendhearth.com/wechat-cc/latest.json \| grep version`(2026-10-02:1.7.2,与 GitHub 一致) |
 | `dev` 领先 master | `git rev-list --count origin/master..origin/dev`(簿记合并之后是真实差值) |
 
 1.7.0 是发版链 09-03 改造后第一次真跑,一路踩到五个「加进去后没在真 tag 上跑过」的坑,全部修在 dev 并有守卫/手册条目:dev→master 簿记合并(#121)、e2e 作业装浏览器(#122)、sd.cpp 子模块(#119)、公证变量空串(#123)、R2 令牌失效还报绿(#125)。**发版从此全自动**:合 PR、打 tag、两道 `release-signing` 审批(助手用主人 gh 凭据经 API)、Publish、核对更新源,主人不用点;细则 [maintainer/release.md](maintainer/release.md)。
@@ -26,7 +26,10 @@
 
 本批统一 README、维护入口、手机说明与全景导图。后续桌面与手机批次应按[产品命名规范](reference/product-naming.md)检查应用显示名、窗口标题、关于页、权限说明和商店素材，统一为 **Tendhearth CC**；对话仍称 **CC**。这项文案验收纳入各端原有交付，不新增底层标识迁移，不阻塞正在进行的手机功能开发。
 
-## 当前主线与验收顺序(2026-10-01 整理)
+## 当前主线与验收顺序(2026-10-02 更新)
+
+**10-02 进展**:中继 v2 staging(`relay-staging.tendhearth.com`)上线并配好 APNs,本机 daemon 已切过去;真 iPhone 全自动验收 `bun run e2e:device`(XCUITest,见 [apps/app](../apps/app/README.md))配对 / 重复码 / 聊天 / 真推送批准 / 撤销 / 收尾全绿,第 2 条的主体已由它覆盖。下一步:要出 TestFlight 时上中继生产(主人在 `relay-production` 环境批准一次)+ 开 `RELAY_WATCH`;商店与安卓按主人 10-01 的话往后放。
+
 
 1. **收口当前手机主线。** 协议、中继、Expo 骨架、真连接、原生通知、手机聊天与设计统一已按各批次进入 dev；#165 配对体验与 #166 手机续接原生会话也已合入 dev，#167 补充了发送拒绝的诚实提示。实现状态与验收边界见下一节和 [apps/app](../apps/app/README.md)。未合入的工作不作为 dev 的已交付能力。
 2. **完成用户能实际走通的验收。** 真机配对 → 与 CC 聊天 / 交办 → 查看进展 → 点真实通知 → 在上下文中批准 → 电脑实际执行；覆盖断网、撤销与重复提交。模拟器、进程内端到端和解密向量分别证明各自范围，不代替这条闭环。
@@ -83,16 +86,17 @@
 这三周的东西**单测和 selftest 绿 ≠ 用户能用**,以下都没在真机上走过:
 
 - ~~桌面同一个文件夹连开两件事,看等待行说的话对不对(一个文件夹一个活会话)。~~ 2026-09-28 真机核对通过:第二件 `waitingFor={reason:same_path, holderWriting:true}`、第一件独占在写(workbench service 拆分 PR 9 合入后,脚本见 PR 10 计划)。
+- **手机真机(2026-10-02)**:`bun run e2e:device` 全自动覆盖配对(经深链,不经相机)、重复码、聊天、真 APNs 推送批准、撤销、收尾。仍需人手:系统相机扫码、锁屏通知文字、杀掉 app 后点通知、设置里关 / 开通知权限、iOS 备份恢复、安卓(下面 7a 清单的 3 / 5 / 7)。
 - `self change --no-deploy` 走一条完整链路,确认每条运行一个 worktree 全程成立。
 - 桌宠 Phase B 的权限卡闭环(微信 y/n 只认被问的那个 chat)。
 - 介绍 2 跳的完整链路(需要第三台真机)。
 - 社交层两台真机重新配对后的 wish / postcard 信道。
 - `@码 resume` 与「脑手转发」全链(CLI hook)。
 - 配对体验真机(计划 7a Task 12 Step 3),其中 iOS 备份恢复与安卓指纹是主人的:
-  1. 部署中继 Worker(`docs/maintainer/relay.md` §9),设 `ANDROID_CERT_SHA256`;`curl -sI https://relay-staging.tendhearth.com/.well-known/apple-app-site-association` ⇒ 200 `application/json`。
-  2. 本机 `relay_v2_url` 必须已设,桌面「连接手机」才出二维码;没设时应显示「手机连接服务还没开通」。
+  1. ~~部署中继 Worker~~ staging 已部署(10-01),AASA 200 `application/json` 已核;`ANDROID_CERT_SHA256` 等安卓时再设。原文:部署中继 Worker(`docs/maintainer/relay.md` §9),设 `ANDROID_CERT_SHA256`;`curl -sI https://relay-staging.tendhearth.com/.well-known/apple-app-site-association` ⇒ 200 `application/json`。
+  2. ~~本机 `relay_v2_url`~~ 已设为 staging(10-01)。原文:本机 `relay_v2_url` 必须已设,桌面「连接手机」才出二维码;没设时应显示「手机连接服务还没开通」。
   3. iPhone 系统相机扫码(通用链接)⇒ 直进确认卡(主机名对、有核对码)⇒「连接」⇒ 回此刻、CC 变 Light、桌面弹层变「已连上」。
-  4. 同一个码再扫 ⇒「这个码已经用过或过期了…」。
+  4. (e2e:device 已自动化)同一个码再扫 ⇒「这个码已经用过或过期了…」。
   5. 安卓 App Link(设了指纹后);没设时打开网页壳属预期。
   6. 重新配对:旧位消失(旧电脑离线则旧位留着,需在桌面设备列表手动移除)。
   7. iOS 加密备份恢复到另一台 ⇒ 配对仍在、启动核验通过;电脑上撤掉后再恢复 ⇒ 回欢迎页「这台手机和电脑的配对已经失效了。」。
@@ -102,12 +106,12 @@
 
 - **发版节奏本身要有纪律** —— 三周不发版是这轮最大的结构性问题,不是某个功能的问题。
 - 安卓凭据恢复走 Google Block Store(配对体验 7a 之后)。
-- iCloud 钥匙串同步(`kSecAttrSynchronizable`)—— 待主人定。
-- **e2e 只在 master 相关的分支跑**(`.github/workflows/ci.yml:152` 的分支条件)—— dev 上推送不跑 e2e,于是积压的 e2e 红会在开 PR 那一刻一次性砸下来(这次砸了 8 条)。要不要让 dev 也跑是成本取舍。
+- ~~iCloud 钥匙串同步(`kSecAttrSynchronizable`)~~ ⟨2026-10-01 主人定:不同步。换机重扫一次码,守住「一个码只配一台」⟩
+- ~~**e2e 只在 master 相关的分支跑**~~ 口径过时:09-18 起 dev 推送动了 `apps/desktop/**` 就跑 desktop-e2e(`changes` 作业);只剩重型 `e2e` 作业按 base_ref 限 master,这是有意的成本取舍。
 - ~~**自改的工作树回收缺一个显式入口** —— 现在只回收 `done`/`declined` 的运行,可 resume 的和被 kill 的永不回收(磁盘单调增长)。缺的是「这条我不接了」这个动作。~~ **2026-10-01 完成**:`wechat-cc self change --abandon <id>` 把一条记成 `abandoned`(第三种不可恢复的终局,`--resume` 拒绝)并当场删它的工作树,正在跑的那条拒绝(锁里新记了 runId);`--list` 每条标出在跑 / 被杀 / 可 --resume / 已收场 / 已作废和盘上的树路径。微信「自改」没加作废口(理由见 [maintainer/self-change.md](maintainer/self-change.md) 已知限制)。
 - ~~**设备 token 进 token-registry、http 默认 loopback**(梳理第 6 步)~~ **2026-09-29 完成(#149)**:链接 / 设备令牌进内部 API 同一个注册表(origin `link` / `device` + routeAllow `PHONE_ROUTES`),按台撤销,只允局域网的操作收成 `LAN_ONLY_OPS`,`serve()` 缺省 127.0.0.1。**没做的范围 B**:`/m/api/*` 并进内部 API dispatcher。现状见 [reference/internal-api-auth.md](reference/internal-api-auth.md)。
 - ~~**拆三个大文件**(梳理第 7 步)—— `core/workbench/service.ts`(1622 行闭包,按 20 份 `service-*.test.ts` 的边界抽)、`bootstrap/index.ts`(剩余 8 个关注点进 `wire-*.ts`)、`cli.ts`(按命令族下沉;`scripts/cli-ratchet.guard.test.ts` 先钉住不再增长)。~~ **2026-09-28 三件全部完成**:`cli.ts` 4332→157(#128)、`bootstrap/index.ts` 1321→460(#131)、`core/workbench/service.ts` 1965→179 行 / 内函数 68→3(PR #132–#141 + PR 10,十个域进 `service/<domain>.ts`,棘轮守卫 `scripts/workbench-service-ratchet.guard.test.ts` 只降不升;19 份旧测试一行没改)。
-- **错误通道结构化**(arch backlog #4)—— 要 owner 参与定两条判定红线。
+- **错误通道结构化**(arch backlog #4)—— 2026-10-01 主人定:开工,两条红线不变(Claude 只认两个哨兵才报登录过期;agy 模糊报错按瞬时)。第 1 步「真机采集各 provider 的真实失败形状」进行中(10-02),第 2 步再改成 provider 边界产结构化 code。
 - ~~**纯 JS 的锚定文件访问**(评审 #3)—— 去 ffi 之后没有 `openat`,逐级 lstat 是多个时刻的观察;两条路(写清威胁模型 + 目录替换回归测试,或 macOS/Linux 恢复原生 openat),安全边界取舍等 owner。~~ **2026-10-01 owner 选 (a)**:保留纯 JS,威胁模型写进 [reference/workbench-file-guard.md](reference/workbench-file-guard.md)(防失误与项目内路径把戏,不防并发换目录的恶意本机进程),`anchored-fs.threat-model.test.ts` 钉住;顺手修了附件落盘从深层路径开文件、`mkdirAnchored` 逐级只 lstat 叶子两个洞。
 - **动态 provider 注册** —— 等 openai-compatible 这条路被外部集成者真用起来、暴露出覆盖不了的需求再做。
 - **Widget / Live Activities** —— 仍属于后续体验。早期「PWA 验证 + Apple $99 才开原生」路线已被 Expo 路线取代；原生通知实现已有单独批次，待真实投递验收，不能与 Widget 一起记为未开发。
@@ -124,6 +128,7 @@
 
 ## 修订记录
 
+- 2026-10-02:现状改 1.7.2;主线补 staging 中继 + `e2e:device` 全绿;手机真机账按自动化覆盖重排;iCloud 同步(不同步)、e2e 口径、错误通道第 1 步入账。
 - 2026-10-02:1.7.2 发版(版本号 + `docs/releases/desktop-v1.7.2.md`);发版前在真 iPhone 上 `bun run e2e:device` 全绿(daemon 029582ee、staging 中继)。
 - 2026-10-01:手机 app 真机全自动验收 `bun run e2e:device`(XCUITest + devicectl,对着在跑的 daemon 与 staging 中继 v2):配对 / 同码重用被拒 / 跟 CC 说 / 真 APNs 横幅点开批准 / 撤销 / 收尾放回原配对,在 iPhone SE(iOS 27.0.1)上全过;顺手修了三处:推送 token 监听自激成每 0.6 秒一次登记的重试风暴、已配对的手机从系统链接进配对页点返回落到欢迎页、同一部手机两个设备位都登记推送 ⇒ 重复且解不开的通知(daemon 侧,待部署)。
 - 2026-10-01:中继 v2「按 IP 限连接尝试」改在 Worker 内做(Workers Rate Limiting 绑定 `IP_LIMIT`,60 次 / 10 秒,只管 `/v2/`):Free 计划的唯一一条 WAF 限速规则已给 dl.tendhearth.com;relay.md 补「首次部署前先开 Analytics Engine(否则 10089)」。
