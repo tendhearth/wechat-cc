@@ -186,6 +186,12 @@ export interface BuildSystemPromptArgs {
   coreMemory?: string
   /** 每晚整理的长期记忆 memory.md 正文(去尾注);有它就不再注入 coreMemory(2026-09-25)。 */
   curatedMemory?: string
+  /**
+   * 今天的草稿 today-draft.md(同日失忆修复,2026-10-01):CC 白天写进 profile.md 的新行,daemon 抄一份,
+   * 今晚整理前就跟着 curatedMemory 一起注入。只随 curatedMemory 出现 —— 没有 memory.md 时 profile.md
+   * 本身在注入,草稿就是重复的。
+   */
+  todayDraft?: string
   /** Daemon-distilled objective plugin knowledge (knowledge.md), injected after core memory. */
   knowledgeMemory?: string
   /**
@@ -312,7 +318,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
     baseChannelSection(providerId, model),
     args.persona && args.persona.trim().length > 0 ? personaSection(args.persona) : '',
     args.curatedMemory && args.curatedMemory.trim().length > 0
-      ? curatedMemorySection(args.curatedMemory)
+      ? curatedMemorySection(args.curatedMemory, args.todayDraft)
       : args.coreMemory && args.coreMemory.trim().length > 0 ? coreMemorySection(args.coreMemory) : '',
     args.knowledgeMemory && args.knowledgeMemory.trim().length > 0 ? knowledgeMemorySection(args.knowledgeMemory) : '',
     toolsSection(),
@@ -518,14 +524,26 @@ ${capped}`
 }
 
 export const CURATED_MEMORY_MAX_CHARS = 3200
+/** 草稿注入的兜底上限;daemon 写入时已按 600 字封顶,这里只防调用方出错。 */
+export const TODAY_DRAFT_PROMPT_MAX_CHARS = 700
 
-/** 长期记忆段:每晚整理的 memory.md。CC 白天不改它(daemon 会拒写),新东西记到 profile.md / notes/。 */
-export function curatedMemorySection(content: string): string {
+/**
+ * 长期记忆段:每晚整理的 memory.md,后面跟「今天的草稿」(有才出现)。CC 白天不改这两份(daemon 会拒写),
+ * 新东西记到 profile.md / notes/;写进 profile.md 的新行会自动进今天的草稿。
+ */
+export function curatedMemorySection(content: string, todayDraft?: string): string {
   const body = content.length > CURATED_MEMORY_MAX_CHARS ? `${content.slice(0, CURATED_MEMORY_MAX_CHARS)}\n(长期记忆已截断)` : content
+  const draft = (todayDraft ?? '').trim()
   return [
     '## 长期记忆(每晚整理的你眼中的 ta)',
     body,
-    '这份每晚整理,你白天别改它;聊天里得知的新情况、主人说哪条不对,记到 profile.md 或 notes/,今晚会整理进来。',
+    ...(draft
+      ? [
+          '### 今天的草稿(白天新记下的,还没整理进上面;和上面冲突时以这里为准)',
+          draft.length > TODAY_DRAFT_PROMPT_MAX_CHARS ? `${draft.slice(0, TODAY_DRAFT_PROMPT_MAX_CHARS)}\n(草稿已截断)` : draft,
+        ]
+      : []),
+    '这份每晚整理,你白天别改它;聊天里得知的新情况、主人说哪条不对,记到 profile.md 或 notes/,今晚会整理进来。写进 profile.md 的新行会马上出现在「今天的草稿」里,别的对话也看得到。',
   ].join('\n')
 }
 

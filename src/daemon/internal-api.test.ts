@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, statSync, existsSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createInternalApi, type InternalApi } from './internal-api'
@@ -429,6 +429,48 @@ describe('internal-api', () => {
         // gates caller.origin === 'session'.
         const fileWrite = await write(port, token, 'ownerchat/memory.md')
         expect(await fileWrite.json()).toEqual({ ok: true })
+      })
+
+      it('today-draft.md is daemon-only too: a session (even admin) cannot write or delete it; the CLI/operator path still can', async () => {
+        memoryRoot = join(stateDir, 'memory')
+        const memory = makeMemoryFS({ rootDir: memoryRoot })
+        const db = openTestDb()
+        api = createInternalApi({ stateDir, daemonPid: 999, memory, db })
+        const { port, tokenFilePath } = await api.start()
+        const token = readFileSync(tokenFilePath, 'utf8').trim()
+        const admin = api.mintSessionToken('admin', 'claude/a/ownerchat')
+        for (const p of ['ownerchat/today-draft.md', './ownerchat/Today-Draft.md', 'ownerchat/x/../today-draft.md/']) {
+          const w = await write(port, admin, p)
+          expect(await w.json()).toMatchObject({ ok: false, error: 'curated_memory_readonly' })
+        }
+        const del = await fetch(`http://127.0.0.1:${port}/v1/memory/delete`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${admin}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ chat_id: 'ownerchat', path: 'ownerchat/today-draft.md', reason: 'attempted draft delete' }),
+        })
+        expect(await del.json()).toMatchObject({ ok: false, error: 'curated_memory_readonly' })
+        expect(await (await write(port, token, 'ownerchat/today-draft.md')).json()).toEqual({ ok: true })
+        db.close()
+      })
+
+      it('a session writing <chat>/profile.md appends the new lines to today-draft.md once memory.md exists (同日失忆)', async () => {
+        const { port } = await startWithMemory()
+        const admin = api!.mintSessionToken('admin', 'claude/a/ownerchat')
+        const put = (path: string, content: string) => fetch(`http://127.0.0.1:${port}/v1/memory/write`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${admin}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ path, content }),
+        })
+        // No memory.md yet ⇒ profile.md is still injected itself, no draft.
+        expect(await (await put('ownerchat/profile.md', '- 叫大人\n')).json()).toEqual({ ok: true })
+        expect(existsSync(join(memoryRoot, 'ownerchat', 'today-draft.md'))).toBe(false)
+        mkdirSync(join(memoryRoot, 'ownerchat'), { recursive: true })
+        writeFileSync(join(memoryRoot, 'ownerchat', 'memory.md'), '## 关于你\n- 叫大人\n')
+        expect(await (await put('ownerchat/profile.md', '- 叫大人\n- 下周三去上海出差\n')).json()).toEqual({ ok: true })
+        expect(readFileSync(join(memoryRoot, 'ownerchat', 'today-draft.md'), 'utf8')).toBe('- 下周三去上海出差\n')
+        // A note elsewhere is not a profile write.
+        await put('ownerchat/notes/trip.md', '- 订了酒店\n')
+        expect(readFileSync(join(memoryRoot, 'ownerchat', 'today-draft.md'), 'utf8')).toBe('- 下周三去上海出差\n')
       })
 
       it('write guard survives path spellings that normalize to the same memory.md: ./, //, x/../, trailing slash(es), case-insensitive', async () => {
