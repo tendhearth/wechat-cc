@@ -3,6 +3,7 @@ import {afterEach,describe,expect,it,vi} from 'vitest'
 import {patchLiveTimeline,clearLiveTimelinePatches,hasLiveTimelineInteraction} from './workbench-live.js'
 import {renderWorkbenchMarkdown} from './workbench-markdown.js'
 import {permissionControlId} from './workbench-permission-focus.js'
+import {workbenchTimelineEventId} from './workbench-timeline.js'
 
 const event=text=>({id:'1',taskId:'A',kind:'text',text,createdAt:1})
 const render={eventId:e=>`wb-event-${e.id}`,message:e=>`<article id="wb-event-${e.id}" class="wb-message"><div class="wb-message-body wb-markdown">${renderWorkbenchMarkdown(e.text)}</div></article>`,operation:()=>''}
@@ -85,6 +86,26 @@ async function pageFixture(){
  return{root,controller,invokeWorkbenchApi,content,geometry,permission,push:async events=>{await vi.waitFor(()=>expect(release).toBeTypeOf('function'));const resolve=release;release=null;detail={...detail,version:detail.version+1,events};resolve(detail);await settle()}}
 }
 describe('workbench page interaction through actual controls',()=>{
+ it('retains read nodes, source disclosure, selection and link focus through a permission/status full paint',async()=>{
+  const f=await pageFixture(),text='保持选区文本\n\n[查看网页](https://example.test/read)\n\n```ts\nwide code\n```'
+  f.controller.state.detail.events=[event(text),{...event('**用户要求**'),id:'2',kind:'user'}];f.controller.paint(true);f.geometry()
+  const row=f.root.querySelector('#'+workbenchTimelineEventId(event(text))),paragraph=row.querySelector('p'),link=row.querySelector('a'),pre=row.querySelector('pre'),source=f.root.querySelector('[data-user-source]')
+  source.open=true;link.focus();const selection=select(paragraph.firstChild,2,4);pre.scrollLeft=120;f.content().scrollTop=250
+  f.controller.state.detail.permissions=[];f.controller.state.detail.task={...f.controller.state.detail.task,status:'completed'}
+  f.controller.paint(true)
+  expect(f.root.querySelector('#'+row.id)).toBe(row);expect(row.querySelector('p')).toBe(paragraph)
+  expect(document.activeElement).toBe(link);expect(pre.scrollLeft).toBe(120);expect(source.open).toBe(true)
+  expect(selection.toString()).toBe('选区');expect(selection.anchorOffset).toBe(2);expect(selection.focusOffset).toBe(4)
+  expect(f.content().scrollTop).toBe(250)
+ })
+ it('defers a destructive message format change during full paint until the reader releases selection',async()=>{
+  const f=await pageFixture();f.controller.state.detail.events=[event('开头 **选中文字')];f.controller.paint(true)
+  const id=workbenchTimelineEventId(event('')),node=f.root.querySelector('#'+id+' p').firstChild,selection=select(node,5,9)
+  f.controller.state.detail.events=[event('开头 **选中文字** 最新版')];f.controller.paint(true)
+  expect(f.root.querySelector('#'+id+' strong')).toBeNull();expect(selection.toString()).toBe('选中文字')
+  selection.removeAllRanges();document.dispatchEvent(new Event('selectionchange'));await settle()
+  expect(f.root.querySelector('#'+id+' strong')?.textContent).toBe('选中文字');expect(f.root.textContent).toContain('最新版')
+ })
  it('gives distinct stable control identities to ambiguous task/request boundaries',()=>{
   expect(permissionControlId('a','bc','allow-permission')).not.toBe(permissionControlId('ab','c','allow-permission'))
  })

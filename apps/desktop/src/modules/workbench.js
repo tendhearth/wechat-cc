@@ -22,6 +22,7 @@ import { createWorkbenchInteractions, captureWorkbenchQuestionDrafts, syncWorkbe
 import { renderWorkbenchTimeline, workbenchTimelineEventId, renderWorkbenchOperation, captureWorkbenchTimelineAnchor, restoreWorkbenchTimelineAnchor } from './workbench-timeline.js'
 import { mergeEvents, structuralSignature, patchLiveTimeline, createLongPoll, clearLiveTimelinePatches, hasLiveTimelineInteraction } from './workbench-live.js'
 import {permissionControlId,capturePermissionFocus,restorePermissionFocus} from './workbench-permission-focus.js'
+import {captureTimelineReading,restoreTimelineReading} from './workbench-reading-dom.js'
 
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed',holderWriting?:boolean,closeInMs?:number|null}} WaitingFor */
 /** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot}} Task */
@@ -749,6 +750,7 @@ export function initWorkbenchPage(deps) {
     if (currentTaskInfoScroll !== undefined) taskInfoScrollPositions.set(renderedScope, currentTaskInfoScroll)
     const nextPermissionSignature = permissionSignatureFor(state)
     const sameScope = renderedScope === scopeFor(state)
+    const timelineReading = sameScope ? captureTimelineReading(root) : null
     const questionPanelScroll = root.querySelector('.wb-questions')?.scrollTop ?? 0
     const nextDraft=pageDrafts.get(nextScope),providerId=state.detail?.task.providerId??nextDraft.providerId??state.defaultProvider??'',path=state.detail?.task.path??nextDraft.path
     root.innerHTML = renderWorkbench(state, interactions,nextDraft,attachments.error(nextScope),{catalog:catalogs.get(providerId||state.defaultProvider||'',path),...(restartPreviewContext()?{restartPreview:recoveryPreviews.get(/** @type {import('./workbench-execution.js').ContinuationContext} */(restartPreviewContext()))}:{}),busy:busy.has(state.detail?`task:${state.detail.task.id}`:'create')})
@@ -762,6 +764,7 @@ export function initWorkbenchPage(deps) {
     const search = input('wb-search'); if (search) search.value = searchDraft
     const sidebar = root.querySelector('.wb-sidebar'); if (sidebar) sidebar.scrollTop = sidebarScroll
     for (const [id, open] of disclosures.get(scopeFor(state)) ?? []) root.querySelector(`#${id}`)?.toggleAttribute('open', open)
+    restoreTimelineReading(root,timelineReading)
     const content = root.querySelector('.wb-content')
     if (content) {
       const follow = nextScope.startsWith('task:') && nextReading.following && (newActivity || !sameScope)

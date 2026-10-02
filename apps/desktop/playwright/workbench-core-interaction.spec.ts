@@ -4,7 +4,7 @@ import {fileURLToPath} from 'node:url'
 
 // Production modules and CSS, synthetic API data only; this never connects to a daemon.
 const source=fileURLToPath(new URL('../src/',import.meta.url))
-const fixture=`<!doctype html><html lang="zh"><head><meta charset="utf-8"><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/styles/workbench.css"><style>html,body{margin:0;height:100%;overflow:hidden}#workbench-root{height:100%}</style></head><body><div id="workbench-root"></div><script type="module">
+const fixture=`<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/fonts.css"><link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/styles/workbench.css"><style>html,body{margin:0;height:100%;overflow:hidden}#workbench-root{height:100%}</style></head><body><div id="workbench-root"></div><script type="module">
 import {initWorkbenchPage,stopWorkbenchPolling} from '/modules/workbench.js'
 const task={id:'A',title:'流式阅读与成果返回',path:'/synthetic-fixture',providerId:'codex',status:'running',createdAt:1,updatedAt:1,error:null}
 const event=(id,text)=>({id:String(id),taskId:'A',kind:'text',text,createdAt:id})
@@ -40,6 +40,9 @@ for(const width of [1000,390])test(`keeps core workbench interactions at ${width
   return{row:document.querySelector('.wb-dialogue > .wb-message:last-child')===n.row,paragraph:n.row.querySelector('p')===n.paragraph,link:n.row.querySelector('a')===n.link,focus:document.activeElement===n.link,pre:n.row.querySelector('pre')===n.pre,left:n.pre.scrollLeft,expectedLeft:qa.left,selection:document.getSelection()!.toString(),start:document.getSelection()!.anchorOffset,end:document.getSelection()!.focusOffset,newReply:n.row.textContent.includes('新回复仍正常到达')}
  })
  expect(retained).toEqual({row:true,paragraph:true,link:true,focus:true,pre:true,left:120,expectedLeft:120,selection:'选区',start:2,end:4,newReply:true})
+ // Permissions and reconnection can trigger a full paint while the old text is being read.
+ await page.evaluate(()=>(window as any).qa.setPermissions(['p1','p2']))
+ expect(await page.evaluate(()=>{const n=(window as any).qa.nodes;return {row:document.querySelector('.wb-dialogue > .wb-message:last-child')===n.row,focus:document.activeElement===n.link,left:n.pre.scrollLeft,selection:document.getSelection()!.toString()}})).toEqual({row:true,focus:true,left:120,selection:'选区'})
  await page.screenshot({path:testInfo.outputPath(`stream-reading-${width}.png`)})
 
  // A structural inline-format change waits until selection releases, using the latest receipt.
