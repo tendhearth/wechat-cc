@@ -29,7 +29,11 @@ wrangler 会在 `apps/relay/.wrangler/` 留临时目录,已在 `.gitignore`。
 - 部署前跑 typecheck + 单测;部署后轮询 `https://<host>/healthz`,直到返回的 `version` 等于本次提交前 8 位(`RELAY_VERSION`)。
 - 回滚:`cd apps/relay && bunx wrangler rollback --env production`。
 - 手动部署一律带 `--env staging` / `--env production`。`wrangler.toml` 顶层 `name` 是 `wechat-cc-relay-dev`,不带 `--env` 的裸 `wrangler deploy` 只会建出一个无路由的 dev worker,覆盖不了生产。
-- **WAF 限速(每个环境一次,必做)**:Cloudflare 控制台 → 区域 `tendhearth.com` → Security → WAF → Rate limiting rules,加一条:表达式 `http.host in {"relay.tendhearth.com" "relay-staging.tendhearth.com"} and starts_with(http.request.uri.path, "/v2/")`,按 **IP** 计数,**60 次 / 10 秒**,超了 **Block 60 秒**。这是 spec §6「按 IP 限制连接尝试」的落点——房间里的限额只管已知 id 的单个房间,挡不住一个 IP 狂开连接 / 扫 id。
+- **按 IP 限速(Worker 内,随部署生效,不用手动配)**:spec §6「按 IP 限制连接尝试」落在 Worker 里——Workers Rate Limiting 绑定 `IP_LIMIT`(`wrangler.toml` 的 `ratelimits`,staging `namespace_id = "1101"`、production `"1001"`,各自计数),按 `CF-Connecting-IP` 计 **60 次 / 10 秒**,只管 `/v2/` 路径;超了回 **429** + `Retry-After: 10` + `{"error":"rate_limited"}`。代码 `apps/relay/src/ip-limit.ts`。房间里的限额只管已知 id 的单个房间,挡不住一个 IP 狂开连接 / 扫 id,这一层就是补这个的。
+  - 不记 IP、不记 `?id=`(spec §7):超限只打一个不带标识的 Analytics 计数 `ip_rate_limited`。
+  - 没绑(本地 `wrangler dev`、裸顶层配置)或拿不到客户端 IP ⇒ 不限;绑定自己出错 ⇒ 放行。计数按机房本地、最终一致,不是精确账本。
+  - `period` 只能 10 或 60;改了要同步 `IP_LIMIT_RETRY_AFTER_S`。`namespace_id` 是账号内唯一的正整数字符串,新环境别复用。
+  - **为什么不用 WAF 限速规则**:区域 `tendhearth.com` 是 Free 计划,只允许 **一条** rate limiting rule,已经给更新源 `dl.tendhearth.com` 用掉了。升到付费计划后可以**另加**一条 WAF 规则当外层(表达式 `http.host in {"relay.tendhearth.com" "relay-staging.tendhearth.com"} and starts_with(http.request.uri.path, "/v2/")`,按 IP、60 次 / 10 秒、Block 60 秒)——它在 Worker 之前拦,不计 Worker 请求数;但这是可选加固,Worker 内这层不要因此拿掉。
 - 巡检:`Relay watch` 每小时查生产 `/healthz`(非 200 或 `ok!=true` 即失败,GitHub 发失败邮件),并用 Analytics Engine SQL API 查过去 1 小时 `push_ok` / `push_fail`:`fail ≥ 20` 且 `fail/(ok+fail) > 0.5` 即失败。没设 `CF_ANALYTICS_TOKEN` 时只跳过后一步并打印提示。
 
 ## 4. Secrets(只列名字)
@@ -64,13 +68,14 @@ v2 **默认关**:daemon 只有在 `agent-config.json` 里显式设了 `relay_v2_
 | 现象 | 原因 / 处理 |
 |---|---|
 | `login_failed` | 身份文件(`relay-identity.json`)不对或被换过。挑战签名不看时间,所以不是时钟问题。 |
-| `not_configured` | Worker 的 secrets 没设(见第 4 节)。 |
+| `not_configured` | Worker 的 secrets 没设(见第 4 节)。**刚设完也会这样**:已在跑的房间(Durable Object)还拿着设之前的 env,健康检查却已显示 `apns:true`。等 daemon 的中继连接断开重连一次(日志 `relay v2 login ok`)再测;2026-10-01 设 staging 时实测如此。 |
 | `InvalidProviderToken` | APNs:`.p8` / key id / team id 不对。 |
 | `DeviceTokenNotForTopic` | `APNS_TOPIC` 与 app 的 bundle id 不符。 |
 
 ## 8. 上线前后必读 / go-live notes
 
-- **上线步骤(顺序不能反)**:① 生产 Worker 部署完、secrets 设好、`https://relay.tendhearth.com/healthz` 正常;② WAF 限速规则已加(第 3 节,必做);③ 再在 `agent-config.json` 设 `"relay_v2_url": "wss://relay.tendhearth.com"` 并重启 daemon(`self deploy`)。设了之后 daemon 会把新生成的链接、`/m` 页的 REMOTE、手机上存的 `ccRemote` 全部切到 v2 中继(`r…` id)。没设这个键时,带这次改动的 daemon 部署下去也只走老中继,所以 daemon 可以先于中继发版。
+- **首次部署前:先开 Workers Analytics Engine(账号级,一次)**:`wrangler.toml` 两个环境都绑了 `analytics_engine_datasets`(`METRICS`)。账号没开 Analytics Engine 时 `wrangler deploy` 直接失败,报错码 **10089**。到 Cloudflare 控制台 → Workers & Pages → Analytics Engine,点一次启用即可(数据集会在第一次写入时自动建)。**别为了让部署过去而删掉这个绑定**——巡检的 `push_ok` / `push_fail` 和 `ip_rate_limited` 计数都靠它。
+- **上线步骤(顺序不能反)**:① 生产 Worker 部署完、secrets 设好、`https://relay.tendhearth.com/healthz` 正常;② 按 IP 限速随部署自带(第 3 节,Worker 内的 `IP_LIMIT`,无需手动配);③ 再在 `agent-config.json` 设 `"relay_v2_url": "wss://relay.tendhearth.com"` 并重启 daemon(`self deploy`)。设了之后 daemon 会把新生成的链接、`/m` 页的 REMOTE、手机上存的 `ccRemote` 全部切到 v2 中继(`r…` id)。没设这个键时,带这次改动的 daemon 部署下去也只走老中继,所以 daemon 可以先于中继发版。
 - **id 变化**:daemon id 从 `t…` 变 `r…` 时,手机网页里按 id 存的浏览器缓存(首页缓存、附件 / 事项 / 条目草稿)会被孤立一次——预期行为。
 - **自建中继**:只设 `remote_relay_url` 的自建者不受影响——v2 不会被隐式打开,链接照旧指向自建的老中继。
 - **身份文件损坏**:`relay-identity.json` 损坏的 daemon 只跑老中继(日志 `relay v2 disabled this boot: relay_identity_corrupt`)。修好它,或有意删掉(= 新身份,手机要重新配对)。

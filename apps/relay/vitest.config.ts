@@ -17,6 +17,9 @@ export default defineConfig({
           FCM_HOST: 'https://fake-fcm.test',
           FCM_TOKEN_URL: 'https://fake-oauth.test/token',
         },
+        // 顶层 wrangler.toml 不绑 IP_LIMIT(只在 staging / production);这里给测试绑一个小限额。
+        // 只有带 CF-Connecting-IP 的请求才计数,其它用例不带这个头,不受影响。
+        ratelimits: { IP_LIMIT: { namespace_id: '9001', simple: { limit: 3, period: 10 } } },
       },
     }),
   ],
