@@ -16,7 +16,7 @@ import { TopBar } from '../../ui/TopBar'
 import { Txt } from '../../ui/Txt'
 import { useTheme } from '../../ui/useTheme'
 import { canSubmit } from '../../view/connection'
-import { CONTINUE_RECHECK, continueBlock, continueConfirmLabel, continueErrorDot, continueErrorText, continueSheetLines } from '../../view/continue'
+import { CONTINUE_RECHECK, continueBlock, continueConfirmLabel, continueErrorDot, continueErrorText, continueSheetLines, providerName } from '../../view/continue'
 import { adoptStep, previewTracker } from '../../view/continue-flow'
 
 type Msg = NativeSessionPageT['messages'][number]
@@ -159,6 +159,7 @@ export default function SessionReader() {
               style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '85%', backgroundColor: c.paper, borderColor: c.hair, borderWidth: 1, paddingHorizontal: space.l, paddingVertical: space.m, gap: space.xs,
                 borderTopLeftRadius: radius.bubble, borderTopRightRadius: radius.bubble, borderBottomLeftRadius: mine ? radius.bubble : 4, borderBottomRightRadius: mine ? 4 : radius.bubble }}
             >
+              <Txt role="caption" tone="inkSoft">{mine ? t(lang, 'chat.me') : rowProvider ? providerName(rowProvider, lang) : t(lang, 'cc.label')}</Txt>
               <MessageText role={mine ? 'user' : 'assistant'} text={m.text} />
               {m.truncated ? <Txt role="caption" tone="inkSoft">{t(lang, 'chat.truncated')}</Txt> : null}
             </View>

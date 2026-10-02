@@ -265,6 +265,8 @@ const en = {
   'chat.from.phone': 'Phone',
   'chat.truncated': '…(more on your computer)',
   'chat.me': 'You',
+  'message.showSource': 'View original',
+  'message.hideSource': 'Hide original',
   'progress.conversation': 'Conversation',
   'progress.stepsN': '{n} steps',
   'progress.noSummary': 'No summary yet',

@@ -176,8 +176,9 @@ export default function Matter() {
               </View>
             ) : (
               <View key={i} style={{ alignItems: e.kind === 'me' ? 'flex-end' : 'flex-start' }}>
-                {/* 卡里不再套底色块:「我」靠右、CC 靠左,只靠位置区分 */}
-                <View accessible={e.kind === 'me'} accessibilityLabel={`${e.kind === 'me' ? t(lang, 'chat.me') : t(lang, 'cc.label')}: ${e.text}`} style={{ maxWidth: '88%' }}>
+                {/* 「我」靠右、CC 靠左;说话人独立一行,原文按钮和链接各自可访问 */}
+                <View style={{ maxWidth: '88%', gap: space.xs }}>
+                  <Txt role="caption" tone="inkSoft" style={{ textAlign: e.kind === 'me' ? 'right' : 'left' }}>{t(lang, e.kind === 'me' ? 'chat.me' : 'cc.label')}</Txt>
                   <MessageText role={e.kind === 'me' ? 'user' : 'assistant'} text={e.text} typeRole="bubble" userAlign="right" />
                 </View>
               </View>

@@ -1,6 +1,8 @@
-import { decodeMarkdownEntities, parseMarkdown, safeMarkdownUrl, type Token, type Tokens } from '@wechat-cc/markdown'
-import { memo, useMemo, type ReactNode } from 'react'
-import { Linking, ScrollView, View } from 'react-native'
+import { decodeMarkdownEntities, hasMarkdownFormatting, parseMarkdown, safeMarkdownUrl, type Token, type Tokens } from '@wechat-cc/markdown'
+import { memo, useMemo, useState, type ReactNode } from 'react'
+import { Linking, Pressable, ScrollView, View } from 'react-native'
+import { t } from '../i18n'
+import { useLang } from '../i18n/useLang'
 import { radius, space } from './tokens'
 import { Txt, type Tone } from './Txt'
 import { useTheme } from './useTheme'
@@ -15,10 +17,30 @@ export const Markdown = memo(function Markdown({ text, typeRole = 'body' }: Prop
   return <View style={{ maxWidth: '100%', minWidth: 0, gap: space.s }}><Blocks tokens={tokens} typeRole={typeRole} /></View>
 })
 
-/** 用户消息保持原样。系统、错误、工具日志不进入此组件。 */
+/** 用户与助手共用阅读格式;用户原文只在需要时展开。系统、错误、工具日志不进入此组件。 */
 export function MessageText({ text, role, typeRole = 'body', userAlign = 'left' }: Props & { role: 'user' | 'assistant'; userAlign?: 'left' | 'right' }) {
-  return role === 'assistant' ? <Markdown text={text} typeRole={typeRole} /> : <Txt selectable role={typeRole} content="user" style={{ textAlign: userAlign }}>{text}</Txt>
+  return role === 'assistant' ? <Markdown text={text} typeRole={typeRole} /> : <UserMessage text={text} typeRole={typeRole} userAlign={userAlign} />
 }
+
+const UserMessage = memo(function UserMessage({ text, typeRole = 'body', userAlign }: Props & { userAlign: 'left' | 'right' }) {
+  const lang = useLang()
+  const formatted = useMemo(() => hasMarkdownFormatting(text), [text])
+  const [sourceFor, setSourceFor] = useState<string | null>(null)
+  const expanded = sourceFor === text
+  if (!formatted) return <Txt selectable role={typeRole} content="user" style={{ textAlign: userAlign }}>{text}</Txt>
+  const label = t(lang, expanded ? 'message.hideSource' : 'message.showSource')
+  return (
+    <View style={{ maxWidth: '100%', minWidth: 0, gap: space.xs }}>
+      <Markdown text={text} typeRole={typeRole} />
+      <Pressable testID="message-source-toggle" accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ expanded }}
+        onPress={() => setSourceFor(expanded ? null : text)} hitSlop={6}
+        style={({ pressed }) => ({ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center', opacity: pressed ? 0.7 : 1 })}>
+        <Txt role="caption" tone="inkSoft">{label}</Txt>
+      </Pressable>
+      {expanded ? <Txt testID="message-source-text" selectable role={typeRole} content="user">{text}</Txt> : null}
+    </View>
+  )
+})
 
 function Inline({ tokens, typeRole, tone = 'ink' }: { tokens: Token[]; typeRole: InlineRole; tone?: Tone }): ReactNode {
   const { c } = useTheme()

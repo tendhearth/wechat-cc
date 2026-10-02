@@ -267,6 +267,8 @@ const zh: Record<keyof typeof en, string> = {
   'chat.from.phone': '手机',
   'chat.truncated': '…（太长，其余在电脑上看）',
   'chat.me': '我',
+  'message.showSource': '查看原文',
+  'message.hideSource': '收起原文',
   'progress.conversation': '对话',
   'progress.stepsN': '做了 {n} 步',
   'progress.noSummary': '还没有概括',
