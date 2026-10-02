@@ -36,6 +36,8 @@ export interface NightlyRunDeps {
   sources: NightlySources
   cheapEval: () => ((p: string) => Promise<string>) | null
   ownerRecentlyActive: () => Promise<boolean>
+  /** 网络闸门(2026-10-02):false ⇒ 本次跳过(不算失败、不记 failed_today),下一拍再看。缺省 = 不拦。 */
+  networkSafe?: () => Promise<boolean>
   now: () => number
   newId: () => string
   log: (tag: string, line: string) => void
@@ -192,6 +194,8 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
     if (state.lastFailDay === day) return { status: 'skipped', reason: 'failed_today' }
     if (await deps.ownerRecentlyActive()) return { status: 'skipped', reason: 'owner_busy' }
   }
+  // 放在「该不该跑」之后:不到点的 15 分钟 tick 不必去问 bx。
+  if (deps.networkSafe && !(await deps.networkSafe())) return { status: 'skipped', reason: 'network_unprotected' }
 
   mkdirSync(root, { recursive: true })
   const memPath = join(root, MEMORY_FILENAME)

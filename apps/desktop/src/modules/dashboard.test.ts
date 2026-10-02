@@ -1628,3 +1628,30 @@ describe('loadFsAccess —— daemon 自己读不到主人的文件夹时要说�
     await loadFsAccess({ invokeApi: async () => { throw new Error('down') } }); expect(els['dash-fs-access']!.hidden).toBe(true)
   })
 })
+
+describe('loadGuardLine —— 网络未受保护时此刻页要说出来(2026-10-02)', async () => {
+  const { loadGuardLine } = await import('./dashboard.js')
+  const mk = () => {
+    const el = { hidden: true, textContent: '', title: '', dataset: {} as Record<string, string> }
+    // @ts-expect-error stub
+    globalThis.document = { getElementById: (id: string) => (id === 'dash-guard-line' ? el : null) }
+    return el
+  }
+  it('bx 不安全 → 显示红色一行,带原因;bx 保护中 → 绿色', async () => {
+    const el = mk()
+    await loadGuardLine({ invokeApi: async () => ({ guard: { enabled: true, source: 'bx', safe: false, detail: 'bx 没在运行或读不出状态(exit 1)', ip: null, checked_at: null } }) })
+    expect(el.hidden).toBe(false)
+    expect(el.dataset.state).toBe('down')
+    expect(el.textContent).toContain('⚠ 网络未受保护，CC 暂停')
+    expect(el.title).toContain('bx leakcheck')
+    await loadGuardLine({ invokeApi: async () => ({ guard: { enabled: true, source: 'bx', safe: true, detail: 'bx 保护中', ip: null, checked_at: null } }) })
+    expect(el.dataset.state).toBe('ok')
+    expect(el.textContent).toBe('bx 保护中')
+  })
+  it('守护关着 / 老 daemon / 读不到 health → 不显示', async () => {
+    const el = mk()
+    await loadGuardLine({ invokeApi: async () => ({ guard: { enabled: false, source: 'off', safe: true, detail: '', ip: null, checked_at: null } }) }); expect(el.hidden).toBe(true)
+    await loadGuardLine({ invokeApi: async () => ({}) }); expect(el.hidden).toBe(true)
+    await loadGuardLine({ invokeApi: async () => { throw new Error('down') } }); expect(el.hidden).toBe(true)
+  })
+})

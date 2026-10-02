@@ -31,7 +31,7 @@ import {
   onPdfRequest as docsOnPdfRequest,
 } from '../../docs'
 import { makeIlinkContext, type Account } from './ilink/context'
-import { makeVoice } from './ilink/voice'
+import { gateVoice, makeVoice } from './ilink/voice'
 import { makeCompanion } from './ilink/companion'
 import { makeTransport } from './ilink/transport'
 import { makeOutboundHealthTracker, isProactiveWindowClosed, type OutboundHealth } from './ilink/outbound-health'
@@ -170,12 +170,14 @@ export function makeIlinkAdapter(opts: {
   accounts: Account[]
   db: Db
   conversationStore: ConversationStore
+  /** 网络闸门(2026-10-02):语音合成 / 识别出门前问一次。 */
+  networkGate?: import('../lib/network-gate').NetworkGate
 }): IlinkAdapter {
   const ctx = makeIlinkContext(opts)
   const messagesStore = makeMessagesStore(opts.db)
   const { stateDir, accounts, ctxStore, conversationStore, acctStore, sessionState, pending, sweepTimer, projectsFile, resolveAccount, assertChatRoutable } = ctx
 
-  const voice = makeVoice(ctx)
+  const voice = gateVoice(makeVoice(ctx), opts.networkGate)
   const companion = makeCompanion(ctx)
   const outbound = makeOutboundHealthTracker({ log: (t, l) => log(t, l) })
 

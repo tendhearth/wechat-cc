@@ -13,6 +13,8 @@ import type { PollingDeps } from '../polling-lifecycle'
 import type { StartupSweepDeps } from '../startup-sweeps'
 import { loadCompanionConfig } from '../companion/config'
 import { loadGuardConfig } from '../guard/store'
+import { findBx } from '../guard/bx'
+import { unprotectedMessage } from '../../lib/network-gate'
 import { parseUpdates } from '../poll-loop'
 import { writeHeartbeat, HEARTBEAT_FILE } from '../single-instance'
 import { join } from 'node:path'
@@ -28,6 +30,9 @@ export interface LifecycleDepsOpts {
   boot: Bootstrap
   dangerously: boolean
   log: (tag: string, line: string, fields?: Record<string, unknown>) => void
+  /** 网络守护运行时(2026-10-02):后台 tick 不安全就跳过;翻到不安全时停工作台执行者。 */
+  guardRuntime?: import('../guard/runtime').GuardRuntime
+  workbench?: Pick<import('../../core/workbench/service').WorkbenchService, 'pauseForNetwork'>
   /**
    * Optional override for both push + introspect scheduler intervals.
    * When set, both schedulers use this value instead of their defaults.
@@ -48,6 +53,8 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
   startupDeps: StartupSweepDeps
 } {
   const { stateDir, db, ilink, accounts, boot, dangerously, log } = opts
+  // 后台 tick 的网络闸门(2026-10-02):不安全就安静跳过一拍(同一段不安全期只记一行日志),不重试。
+  const gated = (name: string, fn: () => Promise<void>) => opts.guardRuntime ? opts.guardRuntime.skipWhenUnsafe(name, fn) : fn
 
   // Heartbeat store — single instance shared for the lifetime of the daemon.
   // Backed by the same db handle as all other stores.
@@ -83,17 +90,24 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
     // the self-restart idle check reads (boot.holdBusy / busyRegistry.hold
     // in bootstrap/index.ts), forwarded to all three companion schedulers
     // so a running tick can't be misjudged as idle.
-    companionPushDeps: { shouldRun, log, onTick: ticks.pushTick, intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
-    companionIntrospectDeps: { shouldRun, log, onTick: ticks.introspectTick, intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
-    companionIngestDeps: { shouldRun: shouldRunIngest, log, onTick: ticks.ingestTick, intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
+    companionPushDeps: { shouldRun, log, onTick: gated('companion.push', () => ticks.pushTick()), intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
+    companionIntrospectDeps: { shouldRun, log, onTick: gated('companion.introspect', () => ticks.introspectTick()), intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
+    companionIngestDeps: { shouldRun: shouldRunIngest, log, onTick: gated('companion.ingest', () => ticks.ingestTick()), intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
     guardDeps: {
       pollMs: 30_000,
       isEnabled: () => loadGuardConfig(stateDir).enabled,
       probeUrl: () => loadGuardConfig(stateDir).probe_url,
       ipifyUrl: () => loadGuardConfig(stateDir).ipify_url,
+      // 装了 bx 就以 bx 为准(2026-10-02);没装走旧的 ipify+探测。
+      findBx: () => findBx(),
       log,
       onStateChange: async (prev, next) => {
         if (prev.reachable && !next.reachable) {
+          // 已经起来的工作台执行者进程自己会继续调模型,闸门拦不到 —— 停下(之后照常可「继续」)。
+          try {
+            const n = opts.workbench?.pauseForNetwork(`${unprotectedMessage(next)}已停止本轮,恢复后可以继续。`) ?? 0
+            if (n > 0) log('GUARD', `network unprotected — paused ${n} workbench run(s)`)
+          } catch (err) { log('GUARD', `workbench pause failed: ${err instanceof Error ? err.message : String(err)}`) }
           log('GUARD', `network DOWN — shutting down all sessions (was ${prev.ip}, now ${next.ip})`)
           try {
             log('GUARD', 'sessionManager.shutdown start')

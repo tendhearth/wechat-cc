@@ -241,6 +241,20 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
       catch { try { store.addEvent(running.taskId,'system','已请求停止，正在等待执行程序退出。');ctx.hub.touched(running.taskId) } catch { /* cancellation remains active */ } }
     }
   }
+  /**
+   * 网络从安全翻到不安全(2026-10-02):停下所有在跑 / 排队的执行者。已经起来的
+   * 执行者进程自己会继续调模型,闸门拦不到它们,只能停。每个任务记一条说明,
+   * 之后照常可以「继续」(那时会再过一次闸门)。返回停了几个。
+   */
+  function pauseForNetwork(message:string):number {
+    let n=0
+    for (const running of [...state.runsByTask.values()]) {
+      if (running.cancelled||running.finishing||running.state==='uncertain') continue
+      try { store.addEvent(running.taskId,'system',message); ctx.hub.touched(running.taskId) } catch { /* 停仍然要停 */ }
+      try { cancelRun(running); n++ } catch { /* 下一个照停 */ }
+    }
+    return n
+  }
   function setArchived(id:string,archived:boolean):WorkbenchTaskView {
     if(typeof archived!=='boolean')throw new Error('invalid_request')
     const task=store.get(id)
@@ -283,6 +297,6 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     return state.shutdownPromise
   }
 
-  return { revokeCredentials,quiet,handoffGraceMs,retainedIdleMs,armIdleClose,cancelIdleClose,closeForIdle,reportOnce,recollectOnce,settleQuiet,settleAfterDecision,releaseReservation,confirmLateClose,markUncertain,pump,cancelRun, setArchived,cancel,shutdown }
+  return { revokeCredentials,quiet,handoffGraceMs,retainedIdleMs,armIdleClose,cancelIdleClose,closeForIdle,reportOnce,recollectOnce,settleQuiet,settleAfterDecision,releaseReservation,confirmLateClose,markUncertain,pump,cancelRun,pauseForNetwork, setArchived,cancel,shutdown }
 }
 export type LifecycleDomain = ReturnType<typeof makeLifecycleDomain>

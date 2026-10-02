@@ -936,6 +936,13 @@ describe('GuardStatusOutput', () => {
       probe_ms: null,
     }).success).toBe(true)
   })
+  it('accepts the bx-sourced snapshot (2026-10-02)', () => {
+    expect(GuardStatusOutput.safeParse({
+      enabled: true, ip: '1.2.3.4', reachable: false, probe_url: 'https://probe.example.com',
+      ip_error: null, probe_error: null, probe_ms: null,
+      source: 'bx', safe: false, detail: 'bx 未保护(protection_state=off)', bx_path: '/usr/local/bin/bx',
+    }).success).toBe(true)
+  })
   it('rejects an empty object', () => {
     expect(GuardStatusOutput.safeParse({}).success).toBe(false)
   })

@@ -40,6 +40,16 @@ beforeEach(() => {
 })
 
 describe('runMemoryNightly', () => {
+  it('network unprotected (2026-10-02) → skipped without calling the model and WITHOUT marking failed_today; runs once safe', async () => {
+    let safe = false
+    const d = deps({ networkSafe: async () => safe })
+    expect(await runMemoryNightly(d, { force: false })).toEqual({ status: 'skipped', reason: 'network_unprotected' })
+    expect(await runMemoryNightly(d, { force: true })).toEqual({ status: 'skipped', reason: 'network_unprotected' })
+    expect(calls).toHaveLength(0)
+    expect(readNightlyState(stateDir)).toMatchObject({ failures: 0, lastFailDay: null })
+    safe = true
+    expect((await runMemoryNightly(d, { force: false })).status).toBe('written')
+  })
   it('first run: writes memory.md, logs ops, sets the first-run notice, records state', async () => {
     const r = await runMemoryNightly(deps(), { force: false })
     expect(r.status).toBe('written')

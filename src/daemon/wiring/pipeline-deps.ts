@@ -148,6 +148,8 @@ export function makeDelegateToHand(deps: DelegateDeps) {
 
 export interface PipelineDepsOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
+  /** 网络守护运行时(2026-10-02):微信入站闸门 + 每晚整理记忆的跳过判据。 */
+  guardRuntime?: import('../guard/runtime').GuardRuntime
   /** 内部 API 的 token-registry 窄接口,给手机设置面板登记链接 / 设备令牌(梳理第 6 步)。 */
   panelTokens?: import('../internal-api/token-registry').PanelTokens
   matters?: import('../../core/matters/store').MatterStore
@@ -367,6 +369,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       const o = nightlyOwner()
       return o ? resolveCheapEval({ getMode: (c) => boot.coordinator.getMode(c), registry: boot.registry }, o) : boot.registry.getCheapEval()
     },
+    ...(opts.guardRuntime ? { networkSafe: async () => (await opts.guardRuntime!.gate.check()).safe } : {}),
     ownerRecentlyActive: async () => {
       const o = nightlyOwner()
       if (!o) return false
@@ -933,6 +936,8 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     guard: {
       guardEnabled: () => loadGuardConfig(stateDir).enabled,
       guardState: () => refs.guard.current?.current() ?? { reachable: true, ip: null },
+      // 网络闸门(2026-10-02):给了就以它为准(bx 优先、读不出就拦)。
+      ...(opts.guardRuntime ? { gate: opts.guardRuntime.gate } : {}),
       sendMessage: (c, t) => ilink.sendMessage(c, t).then(r => r as { msgId: string }),
       log,
     },

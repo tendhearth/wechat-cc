@@ -15,6 +15,28 @@ import type { AgentProvider, CheapEval } from './agent-provider'
 import type { WorkbenchExecutorCapabilities } from './workbench/executor-capabilities'
 import type { ProviderId } from './conversation'
 import { hasAuthCode } from '../lib/auth-failure'
+import { assertNetworkSafe, isNetworkUnprotectedError, type NetworkGate } from '../lib/network-gate'
+
+/**
+ * 网络闸门包装(2026-10-02):spawn / cheapEval / strongEval / modelCatalog 出发前
+ * 先问闸门,不安全就抛 NetworkUnprotectedError —— 不起子进程、不发请求。用 Proxy
+ * 而不是展开:有的 provider 带额外方法(probeStatus 等),展开会丢原型方法和 this。
+ * 注册进 registry 的每一个 provider 都套这一层,所以凡是从 registry 拿 provider 的
+ * 调用方(会话、委派、自检、后台评估、llm-health 拨测、工作台执行者)都被覆盖。
+ */
+export function withNetworkGate<P extends AgentProvider>(inner: P, gate: NetworkGate): P {
+  const gated = new Set<PropertyKey>(['spawn', 'cheapEval', 'strongEval', 'modelCatalog'])
+  return new Proxy(inner, {
+    get(target, prop, receiver) {
+      const v = Reflect.get(target, prop, receiver)
+      if (!gated.has(prop) || typeof v !== 'function') return v
+      return async (...args: unknown[]) => {
+        await assertNetworkSafe(gate)
+        return (v as (...a: unknown[]) => unknown).apply(target, args)
+      }
+    },
+  })
+}
 
 export interface ProviderRegistration {
   /** Explicitly opted-in task protocol; a normal chat provider is not sufficient. */
@@ -119,15 +141,22 @@ export function createProviderRegistry(opts?: {
    */
   onProviderFailure?: (info: { provider: string; op: 'cheap_eval'; errorCode: string | null; message: string }) => void
   log?: (line: string) => void
+  /**
+   * 网络闸门(2026-10-02)。给了就把注册进来的每个 provider 套上 withNetworkGate;
+   * cheapEval 故障转移在挑候选之前先问一次,不安全直接抛,**不**给任何候选记冷却
+   * (网络恢复那一刻就该能用)。缺省 = 不拦。
+   */
+  networkGate?: NetworkGate
 }): ProviderRegistry {
   const now = opts?.now ?? Date.now
   const entries = new Map<ProviderId, { provider: AgentProvider; opts: ProviderRegistration }>()
   // cheapEval failover state — per-registry (= per-daemon-lifetime), never persisted.
   const cheapEvalCooldownUntil = new Map<ProviderId, number>()
+  const networkGate = opts?.networkGate
   const registry: ProviderRegistry = {
     register(id, provider, opts) {
       if (entries.has(id)) throw new Error(`provider already registered: ${id}`)
-      entries.set(id, { provider, opts })
+      entries.set(id, { provider: networkGate ? withNetworkGate(provider, networkGate) : provider, opts })
     },
     get(id) {
       return entries.get(id) ?? null
@@ -171,6 +200,8 @@ export function createProviderRegistry(opts?: {
       // error propagate (callers' watermark-preserving retry semantics rely
       // on that).
       return async (prompt: string) => {
+        // 网络不安全:整次评估不出发,也不让任何候选入冷却。
+        await assertNetworkSafe(networkGate)
         let lastErr: unknown = new Error('no cheapEval provider available')
         let attempted = 0
         let preflightSkipped = 0
@@ -194,6 +225,8 @@ export function createProviderRegistry(opts?: {
           try {
             return await c.fn(prompt)
           } catch (err) {
+            // 评估途中网络掉了(闸门在候选里拦下):原样抛,不记冷却。
+            if (isNetworkUnprotectedError(err)) throw err
             const cd = isAuthError(err) ? CHEAP_EVAL_AUTH_COOLDOWN_MS : CHEAP_EVAL_COOLDOWN_MS
             cheapEvalCooldownUntil.set(c.id, now() + cd)
             lastErr = err

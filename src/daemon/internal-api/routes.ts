@@ -154,6 +154,8 @@ const onlineStickerCursor = new Map<string, number>()
         heartbeat_fresh: deps.heartbeatFresh?.() ?? null,
         ...(deps.version ? { version: deps.version() } : {}),
         subsystems: deps.subsystems?.() ?? [],
+        // 网络守护(2026-10-02):safe=false 时所有模型调用都暂停。桌面「网络守护」那一行读它。
+        ...(deps.guard ? { guard: deps.guard() } : {}),
         ...(deps.outbound ? { outbound: toWireOutbound(deps.outbound()) } : {}),
         // 启动时实际加载的插件(2026-09-30)。null = bootstrap 还在接线;`self deploy`
         // 的健康门等它变成对象,再看 expected_missing / pointer_broken。这条路由是 guest

@@ -29,6 +29,7 @@ import { runSelftestConverse } from './selftest'
 import { makeMessagesStore } from '../lib/messages-store'
 import { registerCompanionPush, registerCompanionIntrospect, registerIngest } from './companion/lifecycle'
 import { registerGuard } from './guard/lifecycle'
+import { makeGuardRuntime } from './guard/runtime'
 import { registerPolling } from './polling-lifecycle'
 import { registerSessions } from './sessions-lifecycle'
 import { registerIlink } from './ilink-lifecycle'
@@ -183,7 +184,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     migrateFromFile: join(stateDir, 'conversations.json'),
     migrateFromUserNamesFile: join(stateDir, 'user_names.json'),
   })
-  const ilink = makeIlinkAdapter({ stateDir, accounts, db, conversationStore })
+  // 网络守护运行时(2026-10-02):闸门要比 ilink / internal-api / bootstrap 都先有 ——
+  // 语音、provider registry、SessionManager、协调器、工作台都接它;guard 生命周期在后面才 start。
+  const guardRt = makeGuardRuntime({ stateDir, log: (t, l) => log(t, l) })
+  const ilink = makeIlinkAdapter({ stateDir, accounts, db, conversationStore, networkGate: guardRt.gate })
   const memoryFS = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
   const lc = new LifecycleSet((tag, line) => log(tag, line))
   // Subsystem degraded-boot (spec 2026-08-17) — 只包可选子系统;核心链不经它。
@@ -352,6 +356,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // Subsystem degraded-boot (spec 2026-08-17) — sup 在本调用之前创建,
       // 直接传引用,无需 thunk-over-bootRef 姿势。
       subsystems: () => sup.statuses(),
+      // 网络守护此刻的判断(2026-10-02):safe=false ⇒ 所有模型调用暂停。
+      guard: () => guardRt.health(),
       // 插件快照(2026-09-30):bootstrap 之前是 null,self deploy 的健康门会等它。
       plugins: () => bootRef?.pluginsHealth ?? null,
       outbound: () => ilink.outboundHealth(),
@@ -417,7 +423,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     lc.register(internalApi)
     // 2. bootstrap composes provider registry / session manager / coordinator
     const boot = await buildBootstrap({
-      stateDir, db, ilink, loadProjects: ilink.loadProjects,
+      stateDir, db, ilink, loadProjects: ilink.loadProjects, networkGate: guardRt.gate,
       lastActiveChatId: ilink.lastActiveChatId, log: (t, l, f) => log(t, l, f),
       fallbackProject: () => ({ alias: '_default', path: process.cwd() }),
       dangerouslySkipPermissions: dangerously, conversationStore,
@@ -677,7 +683,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // A legacy runner's early pipe return is not proof that its writer exited.
       return(closed:boolean)=>{if(closed)release()}
     }
-    const replyCore = makeCliReplyCore({ executionConflict,reserveExecution,hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously })
+    const replyCore = makeCliReplyCore({ executionConflict,reserveExecution,hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously, networkGate: guardRt.gate })
     const handExecutor = makeHandReplyExecutor(replyCore, {
       hub: cliEvents,
       notifyBrain: async (text) => {
@@ -714,6 +720,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       holdBusy: (l) => boot.holdBusy(l),
       log: (t, l) => log(t, l),
       dangerously,
+      networkGate: guardRt.gate,
       localMachine: osHostname(),
       ...(a2a ? { remote: makeRemoteReply({ registry: a2a.registry, client: a2a.client, selfId: boot.selfId }) } : {}),
     })
@@ -721,7 +728,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     const matters = makeMatterStore(db)
     // 回报投递队列(v65,task-3,2026-09-23):每轮答复入队一次,sweeper 按到期时间取件送达。
     const reportOutbox = makeReportOutboxStore(db)
-    const workbench = wireWorkbench({ db, stateDir, boot, internalApi, matters, reportOutbox,
+    const workbench = wireWorkbench({ db, stateDir, boot, internalApi, matters, reportOutbox, networkGate: guardRt.gate,
       executionConflict:(path,providerId,nativeId)=>boot.sessionManager.hasProjectConflict(path)||
         (!!nativeId&&Object.values(boot.sessionStore.all()).some(s=>s.provider===providerId&&s.session_id===nativeId))||
         legacyClaims.conflicts({owner:'workbench',path,providerId,nativeId})||
@@ -730,7 +737,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     internalApi.setWorkbench(workbench)
     lc.register({ name: 'workbench', stop: () => workbench.shutdown() })
     const wired = wireMain({
-      workbench, matters,
+      workbench, matters, guardRuntime: guardRt,
       panelTokens: internalApi.panelTokens,
       cliReply: cliReplyHandler,
       stickers: stickerLib,

@@ -894,6 +894,9 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 }
 .guard-status-line[data-state="ok"]   { color: var(--green-ink); }
 .guard-status-line[data-state="down"] { color: var(--rouge); }
+/* 此刻页的网络守护一行(2026-10-02) */
+.dash-guard-line { display: block; margin: 0 0 12px; font-size: 13px; line-height: 1.5; }
+.dash-guard-line[hidden] { display: none; }
 
 /* agent picker */
 .agent-grid {

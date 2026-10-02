@@ -5,6 +5,7 @@
  * wechat-voice MCP can depend on this module directly instead of re-
  * importing the full ilink-glue surface.
  */
+import { assertNetworkSafe, unprotectedMessage, type NetworkGate, type NetworkGateVerdict } from '../../lib/network-gate'
 import { join } from 'node:path'
 import { mkdirSync, writeFileSync, unlinkSync } from 'node:fs'
 import type { WechatVoiceDep } from '../wechat-tool-deps'
@@ -195,5 +196,38 @@ export function makeVoice(ctx: IlinkContext): WechatVoiceDep {
       if (!cfg) return { configured: false as const }
       return { configured: true as const, provider: 'http_stt' as const, base_url: cfg.base_url, model: cfg.model, saved_at: cfg.saved_at }
     },
+  }
+}
+
+/**
+ * 网络闸门包装(2026-10-02)。语音合成 / 识别都要把内容送出本机(自建网关或
+ * 通义 dashscope 这类带账号的供应商),所以与模型调用同等对待:不安全就不出门。
+ * 只读的 configStatus / sttStatus 不拦。
+ */
+export function gateVoice(inner: WechatVoiceDep, gate: NetworkGate | undefined): WechatVoiceDep {
+  if (!gate) return inner
+  const unsafe = async (): Promise<NetworkGateVerdict | null> => { const v = await gate.check(); return v.safe ? null : v }
+  return {
+    ...inner,
+    async replyVoice(chatId, text) {
+      const v = await unsafe()
+      if (v) { log('VOICE', `replyVoice skipped chat=${chatId}: network unprotected [${v.source}]`); return { ok: false as const, reason: unprotectedMessage(v) } }
+      return inner.replyVoice(chatId, text)
+    },
+    async synthesizeSpeech(text) {
+      await assertNetworkSafe(gate)
+      return inner.synthesizeSpeech(text)
+    },
+    async saveConfig(input) {
+      const v = await unsafe()
+      if (v) return { ok: false as const, reason: 'network_unprotected', detail: unprotectedMessage(v) }
+      return inner.saveConfig(input)
+    },
+    ...(inner.transcribe ? { async transcribe(audio: Buffer, mime: string) { await assertNetworkSafe(gate); return inner.transcribe!(audio, mime) } } : {}),
+    ...(inner.saveSTTConfig ? { async saveSTTConfig(input: Parameters<NonNullable<WechatVoiceDep['saveSTTConfig']>>[0]) {
+      const v = await unsafe()
+      if (v) return { ok: false as const, reason: 'network_unprotected', detail: unprotectedMessage(v) }
+      return inner.saveSTTConfig!(input)
+    } } : {}),
   }
 }

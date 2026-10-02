@@ -50,7 +50,7 @@ function mappedError(err: unknown,entry=false): ReturnType<RouteHandler> {
   if(code==='invalid_entry_owner')return{status:403,body:{error:code}}
   if(['creation_conflict','managed_workspace_changed'].includes(code))return{status:409,body:{error:code}}
   if(['entry_not_wired','managed_workspace_unavailable','invalid_managed_workspace','workbench_stopping'].includes(code))return{status:503,body:{error:code}}
-  if(['model_catalog_unavailable','model_catalog_invalid'].includes(code))return{status:503,body:{error:code}}
+  if(['model_catalog_unavailable','model_catalog_invalid','network_unprotected'].includes(code))return{status:503,body:{error:code}}
   if(/^execution_.+_(unsupported|unknown)$/.test(code))return{status:400,body:{error:code}}
   if(code==='execution_conflict')return{status:409,body:{error:code}}
   if(['attachment_limit','attachment_storage_limit','invalid_attachment_size','request_body_too_large'].includes(code))return{status:413,body:{error:code}}

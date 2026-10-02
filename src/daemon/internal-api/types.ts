@@ -513,6 +513,11 @@ export interface InternalApiDeps {
    */
   subsystems?: () => import('../subsystems').SubsystemStatus[]
   /**
+   * GET /v1/health 的 `guard` 字段(2026-10-02):网络守护此刻的判断。
+   * undefined ⇒ 字段不输出(老 daemon / minimal-deps 测试路径)。
+   */
+  guard?: () => GuardHealth
+  /**
    * GET /v1/health 的 `plugins` 字段:启动时实际加载的插件快照
    * (src/daemon/plugins/health.ts)。null ⇒ bootstrap 还没接线完;
    * undefined ⇒ 字段不输出(老 daemon / minimal-deps 测试路径)。
@@ -714,4 +719,14 @@ export type RouteTable = Record<string, RouteHandler | undefined>
 
 export function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+/** /v1/health 的 guard 块。source=off ⇒ 守护关着(不拦);safe=false ⇒ 模型调用全部暂停。 */
+export interface GuardHealth {
+  enabled: boolean
+  source: 'bx' | 'probe' | 'off'
+  safe: boolean
+  detail: string
+  ip: string | null
+  checked_at: string | null
 }

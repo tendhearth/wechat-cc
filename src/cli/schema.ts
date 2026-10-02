@@ -795,6 +795,12 @@ export const GuardStatusOutput = z.object({
   ip_error: z.string().nullable(),
   probe_error: z.string().nullable(),
   probe_ms: z.number().nullable(),
+  // 2026-10-02 bx 优先:装了 bx 时以 `bx status --json` 为准(source=bx),不再探 google。
+  // 可选:老 CLI 没有这几个字段。
+  source: z.enum(['bx', 'probe']).optional(),
+  safe: z.boolean().optional(),
+  detail: z.string().optional(),
+  bx_path: z.string().nullable().optional(),
 })
 export type GuardStatusOutputT = z.infer<typeof GuardStatusOutput>
 

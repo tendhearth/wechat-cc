@@ -1104,3 +1104,24 @@ it('guards cached dispatch and retains directory ownership while a close is pend
  const closing=manager.release(req);expect(manager.hasProjectConflict('/project/sub')).toBe(true);finish();await closing
  expect(manager.hasProjectConflict('/project/sub')).toBe(false);expect(spawn).toHaveBeenCalledTimes(1)
 })
+
+describe('SessionManager network gate (2026-10-02)', () => {
+  it('unsafe → acquire refuses to spawn; dispatch on a live session refuses before touching the provider', async () => {
+    let safe = true
+    const onDispatch = vi.fn()
+    const spawn = vi.fn(async () => makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }], onDispatch }))
+    const mgr = new SessionManager({
+      maxConcurrent: 4, idleEvictMs: 60_000,
+      registry: registryWithProvider({ spawn } as unknown as AgentProvider),
+      networkGate: { check: async () => ({ safe, source: 'bx', detail: safe ? 'ok' : 'bx 未保护' }) },
+    })
+    const req = { alias: 'a', path: '/a', providerId: 'claude' as const, chatId: 'c', tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' as const }
+    const h = await mgr.acquire(req)
+    safe = false
+    await expect((async () => { for await (const _ of h.dispatch('x')) { /* drain */ } })()).rejects.toMatchObject({ code: 'network_unprotected' })
+    expect(onDispatch).not.toHaveBeenCalled()
+    await expect(mgr.acquire({ ...req, chatId: 'c2' })).rejects.toMatchObject({ code: 'network_unprotected' })
+    expect(spawn).toHaveBeenCalledTimes(1)
+    await mgr.shutdown()
+  })
+})

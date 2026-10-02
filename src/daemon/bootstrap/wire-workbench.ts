@@ -120,21 +120,25 @@ export function wireWorkbench(opts: {
   matters?: import('../../core/matters/store').MatterStore
   /** 回报投递队列(task-3,2026-09-23):与 matters 一起有才接得上 ReportSink,单传一个不够。 */
   reportOutbox?: import('../reports/outbox').ReportOutboxStore
+  /** 网络闸门(2026-10-02):执行者 registry、起执行者 / 投补充、额度查询都过它。 */
+  networkGate?: import('../../lib/network-gate').NetworkGate
 }) {
+  // 网络不安全时额度查询直接不出门(两条都带着账号凭据直连供应商)。
+  const gatedUsage=<T>(fn:()=>Promise<T|null>)=>async():Promise<T|null>=>opts.networkGate&&!(await opts.networkGate.check()).safe?null:fn()
   // 订阅额度监视器:Codex 问 app-server,Claude 用 Claude Code 自己的 OAuth 凭据问 usage 接口(subscription-usage.ts)。
   const usageMonitor=makeUsageMonitor({sources:{
-    ...(opts.boot.registry.has('codex')&&findCodexBinary()?{codex:async()=>{const r=await readCodexRateLimits({codexPathOverride:findCodexBinary()!});return r?parseCodexRateLimits(r,Date.now()):null}}:{}),
-    ...(opts.boot.registry.has('claude')?{claude:async()=>{
+    ...(opts.boot.registry.has('codex')&&findCodexBinary()?{codex:gatedUsage(async()=>{const r=await readCodexRateLimits({codexPathOverride:findCodexBinary()!});return r?parseCodexRateLimits(r,Date.now()):null})}:{}),
+    ...(opts.boot.registry.has('claude')?{claude:gatedUsage(async()=>{
       const cred=readClaudeOAuthToken({platform:process.platform,keychain:()=>spawnSync(['security','find-generic-password','-s','Claude Code-credentials','-w']).stdout.toString(),readFile:()=>readFileSync(join(homedir(),'.claude','.credentials.json'),'utf8'),now:Date.now})
       if(!cred)return null
       const r=await fetch('https://api.anthropic.com/api/oauth/usage',{headers:{authorization:`Bearer ${cred.token}`,'anthropic-beta':'oauth-2025-04-20'},signal:AbortSignal.timeout(8_000)})
       if(!r.ok)return null
       return parseClaudeUsage(await r.json().catch(()=>null),Date.now(),cred.plan)
-    }}:{}),
+    })}:{}),
   },ttlMs:5*60_000})
 
   const ownerChatId=() => resolveAdminChatId(loadAccess(),loadCompanionConfig(opts.stateDir),null)
-  const registry=createProviderRegistry()
+  const registry=createProviderRegistry(opts.networkGate?{networkGate:opts.networkGate}:undefined)
   const agentConfig=loadAgentConfig(opts.stateDir)
   const claude=opts.boot.registry.get('claude')
   if (claude) registry.register('claude',createClaudeAgentProvider({
@@ -204,6 +208,7 @@ export function wireWorkbench(opts: {
   }):undefined
   return makeWorkbenchService({
     managedWorkspaceRoot:join(homedir(),'CC','Tasks'),
+    ...(opts.networkGate?{networkGate:opts.networkGate}:{}),
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
     store,registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,reports,recollect,log:opts.log,

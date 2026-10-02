@@ -861,7 +861,7 @@ OPTIONS
 `;
 
 exports[`cli.ts --help 快照(逐字节) > guard --help > guard status --help 1`] = `
-"Live one-shot probe — current external IP + reachability (guard status)
+"Live one-shot check — bx protection (if installed) or external IP + reachability (guard status)
 
 USAGE guard status [OPTIONS] 
 
@@ -880,9 +880,9 @@ USAGE wechat-cc guard status|enable|disable
 
 COMMANDS
 
-   status    Live one-shot probe — current external IP + reachability
-   enable    Enable network-guard scheduler (next daemon start)      
-  disable    Disable network-guard scheduler                         
+   status    Live one-shot check — bx protection (if installed) or external IP + reachability
+   enable    Enable network-guard scheduler (next daemon start)                              
+  disable    Disable network-guard scheduler                                                 
 
 Use wechat-cc guard <command> --help for more information about a command.
 

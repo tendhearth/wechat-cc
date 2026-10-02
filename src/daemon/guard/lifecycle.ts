@@ -3,6 +3,8 @@ import { startGuardScheduler, type SchedulerDeps, type GuardState } from './sche
 
 export interface GuardLifecycle extends Lifecycle {
   current(): GuardState
+  /** 马上跑一拍(单飞);网络闸门在读数过期时用。 */
+  pokeNow(): Promise<GuardState>
 }
 
 export function registerGuard(deps: SchedulerDeps): GuardLifecycle {
@@ -12,5 +14,6 @@ export function registerGuard(deps: SchedulerDeps): GuardLifecycle {
     name: 'guard',
     stop: async () => { if (!stopped) { stopped = true; await handle.stop() } },
     current: () => handle.current(),
+    pokeNow: () => handle.pokeNow(),
   }
 }

@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto'
 import type { AgentEvent, AgentSession, AgentExecutionChoice } from '../../agent-provider'
 import type { MatterStore } from '../../matters/store'
 import { classifyProviderError } from '../../provider-quota'
+import { isNetworkUnprotectedError } from '../../../lib/network-gate'
 import { TIER_PROFILES, sessionAuthEnv } from '../../user-tier'
 import { canonicalProject, outputDirectory } from '../artifacts'
 import type { Attachment } from '../attachments'
@@ -142,6 +143,9 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       if(running.cancelled){finalStatus='cancelled';return}
       if(ctx.deps.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
       const entry=requireInput(task.providerId,running.attachments,running.execution,running.continuation.mode==='resume')
+      // 网络闸门(2026-10-02):起执行者之前最后问一次 —— 不安全就不 spawn,任务以 network_unprotected 失败。
+      if(ctx.deps.networkGate&&!(await ctx.deps.networkGate.check()).safe)throw new Error('network_unprotected')
+      if(running.cancelled){finalStatus='cancelled';return}
       const token=ctx.deps.mintSessionToken?.(sessionKey)
       running.credentialsMinted=!!ctx.deps.mintSessionToken
       if (running.cancelled) revokeCredentials(running)
@@ -279,7 +283,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         ctx.hub.touched(task.id)
       } else { finalStatus='completed'; quota.clear(task.providerId) }
     } catch (error) {
-      const message=error instanceof Error ? error.message : 'task_failed'
+      const message=isNetworkUnprotectedError(error) ? 'network_unprotected' : error instanceof Error ? error.message : 'task_failed'
       finalStatus=running.cancelled ? 'cancelled' : 'failed'; finalError=running.cancelled ? null : message
       if (!running.cancelled) { store.addEvent(task.id,'error',message==='restart_confirmation_required' ? RECOVERY_MESSAGE : executionFailureMessage(message)); ctx.hub.touched(task.id) }
     } finally {

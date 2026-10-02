@@ -16,7 +16,7 @@
 
 import { invoke as ipcInvoke, formatInvokeError } from "./ipc.js"
 import { invokeApi, invokeWorkbenchApi } from "./api.js"
-import { initialMode, restartButtonState, afterScanTarget , showToast } from "./view.js"
+import { initialMode, restartButtonState, afterScanTarget , showToast, guardLine } from "./view.js"
 import { createDoctorPoller } from "./doctor-poller.js"
 import { createPresencePoller } from "./presence-poller.js"
 import { createConversationsPoller } from "./conversations-poller.js"
@@ -28,7 +28,7 @@ import {
 import { refreshQr } from "./modules/qr.js"
 import { mountPhoneConnect, mountOnboardPhone } from "./modules/phone-connect.js"
 import { serviceAction, forceKillDaemon } from "./modules/service.js"
-import { renderDashboard, renderRestartButton, setPending, setLastProbe, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, checkIncidentsOnPoll, checkFsAccessOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
+import { renderDashboard, renderRestartButton, setPending, setLastProbe, restartDaemon, stopDaemon, handleAccountRowClick, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, checkIncidentsOnPoll, checkFsAccessOnPoll, checkGuardOnPoll, checkBrainHealthOnPoll, loadBrainHealth, runTroubleshoot, runBrainDial, closeTroubleshoot, renderNoBrain, openBrainSetup, saveBrainKey } from "./modules/dashboard.js"
 import { renderConversations } from "./modules/conversations.js"
 import { loadMemoryPane, wireMemoryButtons, loadMemoryTopZone, loadMemoryDecisions, archiveObservation, synthesizeMemory, generateMemoryProfile, loadProjectMemory, isMemoryEmbryoEnabled, setMemoryEmbryoEnabled, renderMemoryProfileOverview, jumpToMemorySource } from "./modules/memory.js"
 import { rerenderLogs, loadLogsPane, startLogsAutoRefresh, stopLogsAutoRefresh } from "./modules/logs.js"
@@ -356,11 +356,15 @@ async function refreshGuardStatus() {
       }
       return
     }
+    // 2026-10-02:装了 bx 以 bx 为准(source=bx);老 CLI 没有 source 字段时退回 IP · google。
+    const line = r.source ? guardLine({ enabled: r.enabled, source: r.source, safe: r.safe ?? r.reachable, detail: r.detail ?? "" }) : null
     const ipPart = r.ip ? `IP ${r.ip}` : "IP 未知"
-    const probePart = r.reachable ? "google ✓" : "google ✗"
+    const text = line
+      ? (r.source === "bx" ? (line.state === "down" && line.detail ? `${line.text}(${line.detail})` : line.text) : `${ipPart} · ${r.reachable ? "google ✓" : "google ✗"}${line.state === "down" ? ` · ${line.text}` : ""}`)
+      : `${ipPart} · ${r.reachable ? "google ✓" : "google ✗"}`
     for (const el of statusEls) {
-      el.textContent = `${ipPart} · ${probePart}`
-      el.dataset.state = r.reachable ? "ok" : "down"
+      el.textContent = text
+      el.dataset.state = (line ? line.state === "ok" : r.reachable) ? "ok" : "down"
     }
   } catch (err) {
     for (const el of statusEls) {
@@ -437,6 +441,7 @@ function wireDoctorSubscribers() {
   // needing to revisit the overview pane.
   doctorPoller.subscribe(() => checkIncidentsOnPoll(deps))
   doctorPoller.subscribe(() => checkFsAccessOnPoll({ ...deps, ipcInvoke: invoke }))
+  doctorPoller.subscribe(() => checkGuardOnPoll(deps))
   doctorPoller.subscribe(() => checkBrainHealthOnPoll(deps))
   conversationsPoller.subscribe(report => {
     if (state.mode === "dashboard") renderConversations(report, { invoke })
