@@ -162,10 +162,26 @@ function mSettleUnsure(d) {
   delete mUnsure[d.matter.id]
   mNotice(pending?"这项请求仍在等待。请确认当前内容，再决定是否提交。":"这项请求已结束或被其他设备处理，无法确认刚才的提交是否生效。请查看任务记录。")
 }
+/** A compact, non-control identity for keeping source sections open during polling. */
+function mEventSourceKey(event) {
+  var signature=JSON.stringify([event.createdAt,event.source||'',event.text]),hash=2166136261
+  for(var i=0;i<signature.length;i++)hash=Math.imul(hash^signature.charCodeAt(i),16777619)
+  return signature.length+':'+(hash>>>0).toString(36)
+}
 function mRenderEvents(events) {
   var root=document.getElementById('m-events'),expanded=root.querySelectorAll('details.m-tool-events[open]').length>0
+  var expandedSources=new Set(),sourceKeys={}
+  root.querySelectorAll('details.m-message-source[open]').forEach(function(/** @type {HTMLElement} */ source){expandedSources.add(source.dataset.eventKey)})
   var dialogue=events.filter(function(e){return ['user','text','error','system'].indexOf(e.kind)>=0}).map(function(e){
     var body=e.kind==='text'?'<div class="m-markdown">'+CCM.renderMarkdown(e.text)+'</div>':'<p>'+esc(e.text)+'</p>'
+    if(e.kind==='user'&&CCM.hasMarkdownFormatting(e.text)){
+      // Matter events have no id; equal records use their occurrence to stay distinct.
+      var identity=mEventSourceKey(e),occurrence=sourceKeys[identity]||0
+      sourceKeys[identity]=occurrence+1
+      var key=identity+':'+occurrence
+      // A code child prevents HTML's pre-leading-LF rule; a CR entity keeps CRLF exact.
+      body='<div class="m-markdown">'+CCM.renderMarkdown(e.text)+'</div><details class="m-message-source" data-event-key="'+esc(key)+'"'+(expandedSources.has(key)?' open':'')+'><summary>查看原文</summary><pre class="m-description"><code>'+esc(e.text).replace(/\r/g,'&#13;')+'</code></pre></details>'
+    }
     return '<div class="card ev"><div class="k">'+(e.kind==='user'?'你':e.kind==='text'?'CC':'·')+'</div><div class="tx">'+body+mMaterialCards(e.attachments)+'<small>'+esc(ago(new Date(e.createdAt).toISOString()))+'</small></div></div>'
   }).join('')
   var tools=events.filter(function(e){return e.kind==='tool_call'})

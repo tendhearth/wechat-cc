@@ -15,3 +15,5 @@
 .m-markdown hr{border:0;border-top:1px solid var(--line);margin:16px 0}
 .m-markdown .wb-markdown-image{color:var(--soft)}
 .m-artifact-source{margin:12px 0}.m-artifact-source summary{cursor:pointer;color:var(--soft);font-size:13px}.m-artifact-source pre{font-size:12px;max-height:50vh;overflow:auto}
+.m-message-source{margin:8px 0}.m-message-source>summary{cursor:pointer;color:var(--soft);font-size:13px;min-height:44px;box-sizing:border-box;padding:12px 0}
+.m-message-source pre{margin:0 0 8px;font:var(--th-size-body,16px)/1.65 var(--font);color:var(--ink);max-height:50vh;overflow:auto}.m-message-source code{font:inherit}

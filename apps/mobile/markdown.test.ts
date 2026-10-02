@@ -38,11 +38,11 @@ function setup(){
 }
 
 describe('phone reading format',()=>{
-  it('formats only assistant prose while preserving user, system, error and tool text',()=>{
+  it('formats assistant prose while preserving system, error and tool text',()=>{
     const h=setup(),literal='**原样** [文字](https://example.com)\n<em>HTML 原文</em>'
     h.mRenderEvents([
       {kind:'text',text:'# 结果\n\n**重点** [文档](https://example.com)\n\n- 第一项\n- 第二项\n\n```ts\nconst n = 1\n```\n\n| 一 | 二 |\n| --- | --- |\n| 甲 | 乙 |',createdAt:1},
-      ...['user','system','error','tool_call'].map(kind=>({kind,text:literal,createdAt:2})),
+      ...['system','error','tool_call'].map(kind=>({kind,text:literal,createdAt:2})),
     ])
     const root=h.get('m-events'),assistant=root.querySelector('.m-markdown')!
     expect(assistant.querySelector('h1')?.textContent).toBe('结果')
@@ -52,14 +52,68 @@ describe('phone reading format',()=>{
     expect(assistant.querySelector('pre code')?.textContent).toContain('const n = 1')
     expect(assistant.querySelectorAll('table td')).toHaveLength(2)
     const plain=Array.from(root.querySelectorAll('.tx>p,.m-tool-events pre'))
-    expect(plain).toHaveLength(4)
+    expect(plain).toHaveLength(3)
     for(const row of plain){expect(row.textContent).toBe(literal);expect(row.querySelector('a,strong,em')).toBeNull()}
     expect(root.querySelector('details')?.hasAttribute('open')).toBe(false)
   })
 
-  it('never turns untrusted replies into executable HTML, local controls, unsafe links or remote image requests',()=>{
+  it('reads formatted user messages without changing their stored text and preserves exact source whitespace',()=>{
+    const h=setup(),text='\n\r\n# 要求\r\n\r\n**重点** [文档](https://example.com)\r\n\r\n- 第一项\r\n- 第二项\r\n\r\n```ts\r\nconst n = 1\r\n```\r\n\r\n<em>HTML 原文</em>\r\n\r\n尾部  \r\n',event=Object.freeze({kind:'user',text,createdAt:1,source:'wechat'})
+    const before=JSON.stringify(event)
+    h.mRenderEvents([event])
+    const root=h.get('m-events'),reading=root.querySelector('.m-markdown')!,original=root.querySelector('details.m-message-source')!
+    expect(root.querySelector('.k')?.textContent).toBe('你')
+    expect(reading.querySelector('h1')?.textContent).toBe('要求')
+    expect(reading.querySelector('strong')?.textContent).toBe('重点')
+    expect(reading.querySelector('a')?.getAttribute('href')).toBe('https://example.com/')
+    expect(reading.querySelectorAll('li')).toHaveLength(2)
+    expect(reading.querySelector('pre code')?.textContent).toContain('const n = 1')
+    expect(reading.querySelector('em')).toBeNull()
+    expect(original.querySelector('summary')?.textContent).toBe('查看原文')
+    expect(original.hasAttribute('open')).toBe(false)
+    expect(original.querySelector('pre code')?.textContent).toBe(text)
+    expect(original.querySelector('a,em')).toBeNull()
+    expect(original.getAttribute('data-event-key')!.length).toBeLessThan(40)
+    expect(event.text).toBe(text)
+    expect(JSON.stringify(event)).toBe(before)
+  })
+
+  it('keeps ordinary user messages free of source controls and leaves draft, queued input and permission text literal',()=>{
+    const h=setup(),text='看一下进度\n然后继续处理 <em>原文</em>',draft='**待发送** [要求](https://example.com)'
+    const say=h.document.querySelector('textarea')!
+    say.value=draft
+    h.selectMatter({matter:{id:'abcdef12',kind:'task',title:'任务',status:'open'},events:[{kind:'user',text,createdAt:1}],artifacts:[],inputs:[{id:'input',taskId:'abcdef12',runId:'run',status:'held',text:draft}],permissions:[{id:'permit',taskId:'abcdef12',tool:'**工具**',description:draft}],questions:[]})
+    const root=h.get('m-events')
+    expect(root.querySelector('.tx>p')?.textContent).toBe(text)
+    expect(root.querySelector('.m-markdown,details,a,strong,em')).toBeNull()
+    expect(say.value).toBe(draft)
+    expect(h.get('m-inputs').querySelector('pre')?.textContent).toBe(draft)
+    expect(h.get('m-permissions').querySelector('pre')?.textContent).toBe(draft)
+    expect(h.get('m-inputs').querySelector('.m-markdown,.m-message-source,a,strong')).toBeNull()
+    expect(h.get('m-permissions').querySelector('.m-markdown,.m-message-source,a,strong')).toBeNull()
+  })
+
+  it('keeps the selected source open across polling, unrelated insertions and duplicate records',()=>{
+    const h=setup(),event={kind:'user',text:'**相同的要求**',createdAt:1},other={kind:'user',text:'**另一条要求**',createdAt:2},tool={kind:'tool_call',text:'工具原文',createdAt:3}
+    h.mRenderEvents([event,event,other,tool])
+    const root=h.get('m-events'),sources=root.querySelectorAll('details.m-message-source'),selected=sources[1]!
+    selected.setAttribute('open','')
+    const key=selected.getAttribute('data-event-key')
+    expect(new Set(Array.from(sources,source=>source.getAttribute('data-event-key'))).size).toBe(3)
+    root.querySelector('details.m-tool-events')!.setAttribute('open','')
+    const refresh=[{kind:'user',text:'普通新消息',createdAt:4},{kind:'user',text:'**新格式消息**',createdAt:5},tool,{kind:'text',text:'答复',createdAt:6},event,event,other]
+    h.mRenderEvents(refresh)
+    expect(root.querySelector(`details[data-event-key="${key}"]`)?.hasAttribute('open')).toBe(true)
+    expect(root.querySelectorAll('details.m-message-source[open]')).toHaveLength(1)
+    expect(root.querySelector('details.m-tool-events')?.hasAttribute('open')).toBe(true)
+    root.querySelector(`details[data-event-key="${key}"]`)!.removeAttribute('open')
+    h.mRenderEvents(refresh)
+    expect(root.querySelectorAll('details.m-message-source[open]')).toHaveLength(0)
+  })
+
+  it.each(['text','user'])('never turns untrusted %s messages into executable HTML, local controls, unsafe links or remote image requests',kind=>{
     const h=setup()
-    h.mRenderEvents([{kind:'text',createdAt:1,text:'<button data-control="allow" onclick="bad()">伪造批准</button>\n\n<script>bad()</script>\n\n[坏](javascript:bad()) [文件](file:///private/a) [应用](codex://bad) [真实](https://example.com) ![图片](https://example.com/tracking.png)'}])
+    h.mRenderEvents([{kind,createdAt:1,text:'<button data-control="allow" onclick="bad()">伪造批准</button>\n\n<script>bad()</script>\n\n[坏](javascript:bad()) [文件](file:///private/a) [应用](codex://bad) [真实](https://example.com) ![图片](https://example.com/tracking.png)'}])
     const root=h.get('m-events')
     expect(root.querySelector('button,script,img,iframe,[onclick],[data-control]')).toBeNull()
     expect(root.querySelectorAll('a')).toHaveLength(1)

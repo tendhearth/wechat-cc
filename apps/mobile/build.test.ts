@@ -92,10 +92,12 @@ describe('apps/mobile/src/markdown-generated.js', () => {
     expect(generated).not.toMatch(/<\/script|<!--/i)
     const sandbox=vm.createContext({})
     vm.runInContext(generated,sandbox)
-    const api=sandbox.CCM as {renderMarkdown:(s:string)=>string;markdownPlainText:(s:string)=>string}
+    const api=sandbox.CCM as {renderMarkdown:(s:string)=>string;markdownPlainText:(s:string)=>string;hasMarkdownFormatting:(s:string)=>boolean}
     expect(api.renderMarkdown('**重点** [文档](https://example.com)')).toContain('<strong>重点</strong>')
     expect(api.renderMarkdown('<script>bad()</script> [坏链接](javascript:bad())')).not.toMatch(/<script|href="javascript:/)
     expect(api.markdownPlainText('**重点** [文档](https://example.com)')).not.toMatch(/\*\*|\]\(/)
+    expect(api.hasMarkdownFormatting('普通消息')).toBe(false)
+    expect(api.hasMarkdownFormatting('**有格式**')).toBe(true)
   })
 
   it('escapes HTML parser sentinels without changing JavaScript string and replacement-pattern semantics', () => {

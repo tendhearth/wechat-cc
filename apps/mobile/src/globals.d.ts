@@ -7,6 +7,7 @@ interface Window { __CC_SHELL__?: { relay: string; id: string } }
 declare var CCM: {
   renderMarkdown(value: string): string
   markdownPlainText(value: string): string
+  hasMarkdownFormatting(value: string): boolean
 }
 
 /**
