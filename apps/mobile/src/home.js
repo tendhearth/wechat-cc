@@ -157,7 +157,7 @@ function markMemoriesSeen(){
   if(homeState&&document.visibilityState==='visible'&&document.getElementById('p-memory').classList.contains('on')&&!document.getElementById('banner').textContent)
     api('/m/api/seen',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({until:homeState.synced_at})}).catch(function(){})
 }
-document.querySelector('nav button[data-p="memory"]').addEventListener('click',markMemoriesSeen)
+document.getElementById('memory-open').addEventListener('click',markMemoriesSeen)
 setInterval(function(){if(!document.hidden&&document.getElementById('p-today').classList.contains('on'))loadHome()},15000)
 document.getElementById("feed").addEventListener("click", function(ev) {
   var b = /** @type {HTMLButtonElement} */ (/** @type {Element} */ (ev.target).closest("button.more"))

@@ -15,8 +15,7 @@ function loadPresenceArt() {
 }
 loadPresenceArt()
 function mobilePane(name) {
-  var button=/** @type {HTMLButtonElement} */ (document.querySelector('nav button[data-p="'+name+'"]'))
-  if(button)button.click()
+  ccMobilePane(name)
 }
 function renderPresenceHome(s,stale) {
   var slot=document.getElementById('home-focus'),work=s.work||{focus:null,partial:true}
