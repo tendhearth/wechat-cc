@@ -111,6 +111,82 @@ describe('phone reading format',()=>{
     expect(root.querySelectorAll('details.m-message-source[open]')).toHaveLength(0)
   })
 
+  it('retains reading nodes when a preceding reply changes and a later reply arrives',()=>{
+    const h=setup(),events=[{kind:'text',text:'先前答复',createdAt:1},{kind:'user',text:'\n\r\n**用户原文**\r\n',createdAt:2},{kind:'text',text:'保持选区\n\n[文档](https://example.com)\n\n```ts\nconst wide = 1\n```',createdAt:3}]
+    h.mRenderEvents(events)
+    const root=h.get('m-events'),source=root.querySelector('details.m-message-source')!,link=root.querySelector('a')!,paragraph=link.closest('.m-markdown')!.querySelector('p')!,pre=root.querySelector('.m-markdown pre')!,selection=h.document.getSelection()!,range=h.document.createRange()
+    source.setAttribute('open','');link.focus();pre.scrollLeft=120
+    range.setStart(paragraph.firstChild!,2);range.setEnd(paragraph.firstChild!,4);selection.addRange(range)
+    const currentAge=root.querySelector('[data-m-event-time]')!.textContent
+    root.querySelectorAll('[data-m-event-time]').forEach(time=>{time.textContent='先前时间'})
+    const updated=[{...events[0],text:'修正后的答复'},...events.slice(1).map(event=>({...event})),{kind:'text',text:'新的完整答复',createdAt:4}],before=JSON.stringify(updated)
+    h.mRenderEvents(updated)
+    expect(root.querySelector('details.m-message-source')).toBe(source)
+    expect(source.hasAttribute('open')).toBe(true)
+    expect(root.querySelector('a')).toBe(link)
+    expect(h.document.activeElement).toBe(link)
+    expect(root.querySelector('a')!.closest('.m-markdown')!.querySelector('p')).toBe(paragraph)
+    expect(root.querySelector('.m-markdown pre')).toBe(pre)
+    expect(selection.toString()).toBe('选区')
+    expect(pre.scrollLeft).toBe(120)
+    expect(root.textContent).toContain('修正后的答复')
+    expect(root.textContent).toContain('新的完整答复')
+    expect(root.querySelector('[data-m-event-time]')?.textContent).toBe(currentAge)
+    expect(link.closest('.tx')!.querySelector('small')?.textContent).toBe('先前时间')
+    expect(JSON.stringify(updated)).toBe(before)
+  })
+
+  it('shows the latest changed reply after selection is released without discarding appended replies',()=>{
+    const h=setup(),event={kind:'text',text:'正在阅读旧回复',createdAt:1}
+    h.mRenderEvents([event])
+    const root=h.get('m-events'),paragraph=root.querySelector('p')!,selection=h.document.getSelection()!,range=h.document.createRange()
+    range.selectNodeContents(paragraph);selection.addRange(range)
+    const latest=[{...event,text:'最新回复\n\n**完成** <script>bad()</script>'},{kind:'text',text:'后续答复',createdAt:2}]
+    h.mRenderEvents(latest)
+    expect(root.querySelector('p')).toBe(paragraph)
+    expect(selection.toString()).toBe('正在阅读旧回复')
+    expect(root.textContent).toContain('后续答复')
+    expect(root.textContent).not.toContain('最新回复')
+    selection.removeAllRanges();h.mRenderEvents(latest)
+    expect(root.querySelector('p')).not.toBe(paragraph)
+    expect(root.textContent).toContain('最新回复')
+    expect(root.querySelector('strong')?.textContent).toBe('完成')
+    expect(root.querySelector('script')).toBeNull()
+  })
+
+  it('keeps horizontal reading of changed code and tables until the reader returns to the left edge',()=>{
+    const h=setup(),text='```ts\nconst original = 1\n```\n\n| 甲 | 乙 |\n| --- | --- |\n| 原文 | 内容 |',event={kind:'text',text,createdAt:1}
+    h.mRenderEvents([event])
+    const root=h.get('m-events'),pre=root.querySelector('pre')!,table=root.querySelector('table')!
+    pre.scrollLeft=100;table.scrollLeft=40
+    const latest=[{...event,text:text.replace('original','updated').replace('原文','最新')}]
+    h.mRenderEvents(latest)
+    expect(root.querySelector('pre')).toBe(pre);expect(root.querySelector('table')).toBe(table)
+    expect(pre.scrollLeft).toBe(100);expect(table.scrollLeft).toBe(40)
+    pre.scrollLeft=0;h.mRenderEvents(latest)
+    expect(root.querySelector('table')).toBe(table)
+    table.scrollLeft=0;h.mRenderEvents(latest)
+    expect(root.querySelector('pre code')?.textContent).toContain('updated')
+    expect(root.querySelector('td')?.textContent).toBe('最新')
+  })
+
+  it('keeps expanded tool records intact and refreshes them after closing',()=>{
+    const h=setup(),event={kind:'tool_call',text:'**工具原文**',createdAt:1}
+    h.mRenderEvents([event])
+    const root=h.get('m-events'),tools=root.querySelector('details.m-tool-events')!
+    tools.setAttribute('open','')
+    const latest=[event,{kind:'tool_call',text:'[原始命令](https://example.com)',createdAt:2}]
+    h.mRenderEvents(latest)
+    expect(root.querySelector('details.m-tool-events')).toBe(tools)
+    expect(tools.querySelectorAll('pre')).toHaveLength(1)
+    tools.removeAttribute('open');h.mRenderEvents(latest)
+    expect(root.querySelectorAll('details.m-tool-events pre')).toHaveLength(2)
+    expect(root.querySelector('details.m-tool-events a,strong')).toBeNull()
+    h.mRenderEvents([])
+    expect(root.textContent).toBe('还没有对话记录')
+    expect(root.querySelector('details,.card')).toBeNull()
+  })
+
   it.each(['text','user'])('never turns untrusted %s messages into executable HTML, local controls, unsafe links or remote image requests',kind=>{
     const h=setup()
     h.mRenderEvents([{kind,createdAt:1,text:'<button data-control="allow" onclick="bad()">伪造批准</button>\n\n<script>bad()</script>\n\n[坏](javascript:bad()) [文件](file:///private/a) [应用](codex://bad) [真实](https://example.com) ![图片](https://example.com/tracking.png)'}])

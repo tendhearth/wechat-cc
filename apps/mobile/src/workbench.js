@@ -168,11 +168,44 @@ function mEventSourceKey(event) {
   for(var i=0;i<signature.length;i++)hash=Math.imul(hash^signature.charCodeAt(i),16777619)
   return signature.length+':'+(hash>>>0).toString(36)
 }
+function mEventReading(node) {
+  var document=node.ownerDocument,selection=document.getSelection(),active=document.activeElement
+  if(active&&active!==document.body&&node.contains(active))return true
+  if(selection&&!selection.isCollapsed)for(var i=0;i<selection.rangeCount;i++)try{if(selection.getRangeAt(i).intersectsNode(node))return true}catch(e){}
+  if(node.matches('details[open]')||node.querySelector('details[open]'))return true
+  return Array.from(node.querySelectorAll('pre,table')).some(function(reader){return reader.scrollLeft>0||reader.scrollTop>0})
+}
+function mPatchEventRows(root,html) {
+  // Some contract tests supply a text-only host; the webview always has an ownerDocument.
+  if(!root.ownerDocument){root.innerHTML=html;return}
+  var template=root.ownerDocument.createElement('template');template.innerHTML=html
+  var previous=new Map(Array.from(root.children).map(function(/** @type {HTMLElement} */ node){return[node.dataset.mRowKey,node]})),keep=new Set()
+  var rows=Array.from(template.content.children).map(function(/** @type {HTMLElement} */ next){
+    var old=previous.get(next.dataset.mRowKey),node=next
+    if(old){
+      var oldTimes=Array.from(old.querySelectorAll('[data-m-event-time]')),newTimes=Array.from(next.querySelectorAll('[data-m-event-time]')),times=newTimes.map(function(time){return time.textContent})
+      // Relative age may change every poll; it must not replace the message being read.
+      if(oldTimes.length===newTimes.length)newTimes.forEach(function(time,index){time.textContent=oldTimes[index].textContent})
+      var unchanged=old.isEqualNode(next),reading=mEventReading(old)
+      if(unchanged||reading){node=old;if(unchanged&&!reading)oldTimes.forEach(function(time,index){time.textContent=times[index]})}
+      else newTimes.forEach(function(time,index){time.textContent=times[index]})
+      // A changed message being used stays in place. The next normal poll retries using mDetail's latest events.
+    }
+    keep.add(node)
+    return node
+  })
+  // Remove replaced rows before ordering: a changed earlier reply must not move later reading nodes.
+  Array.from(root.childNodes).forEach(function(node){if(!keep.has(node))root.removeChild(node)})
+  var cursor=root.firstChild
+  rows.forEach(function(node){if(node===cursor)cursor=cursor.nextSibling;else root.insertBefore(node,cursor)})
+}
 function mRenderEvents(events) {
   var root=document.getElementById('m-events'),expanded=root.querySelectorAll('details.m-tool-events[open]').length>0
-  var expandedSources=new Set(),sourceKeys={}
+  var expandedSources=new Set(),sourceKeys={},rowKeys={}
   root.querySelectorAll('details.m-message-source[open]').forEach(function(/** @type {HTMLElement} */ source){expandedSources.add(source.dataset.eventKey)})
   var dialogue=events.filter(function(e){return ['user','text','error','system'].indexOf(e.kind)>=0}).map(function(e){
+    var rowIdentity=mEventSourceKey({createdAt:e.createdAt,source:e.source,text:e.kind+':'+(e.id||'')}),rowOccurrence=rowKeys[rowIdentity]||0
+    rowKeys[rowIdentity]=rowOccurrence+1
     var body=e.kind==='text'?'<div class="m-markdown">'+CCM.renderMarkdown(e.text)+'</div>':'<p>'+esc(e.text)+'</p>'
     if(e.kind==='user'&&CCM.hasMarkdownFormatting(e.text)){
       // Matter events have no id; equal records use their occurrence to stay distinct.
@@ -182,11 +215,11 @@ function mRenderEvents(events) {
       // A code child prevents HTML's pre-leading-LF rule; a CR entity keeps CRLF exact.
       body='<div class="m-markdown">'+CCM.renderMarkdown(e.text)+'</div><details class="m-message-source" data-event-key="'+esc(key)+'"'+(expandedSources.has(key)?' open':'')+'><summary>查看原文</summary><pre class="m-description"><code>'+esc(e.text).replace(/\r/g,'&#13;')+'</code></pre></details>'
     }
-    return '<div class="card ev"><div class="k">'+(e.kind==='user'?'你':e.kind==='text'?'CC':'·')+'</div><div class="tx">'+body+mMaterialCards(e.attachments)+'<small>'+esc(ago(new Date(e.createdAt).toISOString()))+'</small></div></div>'
+    return '<div class="card ev" data-m-row-key="'+rowIdentity+':'+rowOccurrence+'"><div class="k">'+(e.kind==='user'?'你':e.kind==='text'?'CC':'·')+'</div><div class="tx">'+body+mMaterialCards(e.attachments)+'<small data-m-event-time>'+esc(ago(new Date(e.createdAt).toISOString()))+'</small></div></div>'
   }).join('')
   var tools=events.filter(function(e){return e.kind==='tool_call'})
-  var folded=tools.length?'<details class="m-tool-events"'+(expanded?' open':'')+'><summary>工具记录（'+tools.length+'）</summary>'+tools.map(function(e){return '<div class="card"><pre class="m-description">'+esc(e.text)+'</pre><small>'+esc(ago(new Date(e.createdAt).toISOString()))+'</small></div>'}).join('')+'</details>':''
-  root.innerHTML=dialogue+folded||'<div class="empty">还没有对话记录</div>'
+  var folded=tools.length?'<details class="m-tool-events" data-m-row-key="tools"'+(expanded?' open':'')+'><summary>工具记录（'+tools.length+'）</summary>'+tools.map(function(e){return '<div class="card"><pre class="m-description">'+esc(e.text)+'</pre><small data-m-event-time>'+esc(ago(new Date(e.createdAt).toISOString()))+'</small></div>'}).join('')+'</details>':''
+  mPatchEventRows(root,dialogue+folded||'<div class="empty" data-m-row-key="empty">还没有对话记录</div>')
 }
 function renderMatter(d) {
   mDetail=d;mTooLarge=false;mDetailFresh=true
