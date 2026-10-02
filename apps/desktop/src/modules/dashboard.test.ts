@@ -17,7 +17,7 @@ beforeEach(() => {
 })
 
 // Import AFTER document stub so setPending's getElementById doesn't crash
-const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, __resetDashboardState, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, advanceCompanionHeroCopy, loadLastIncident, checkIncidentsOnPoll, saveBrainKey } = await import('./dashboard.js')
+const { renderDashboard, renderRestartButton, restartDaemon, runRestartSequence, stopDaemon, __resetDashboardState, toggleProviderMenu, toggleUserProviderMenu, closeProviderMenu, loadLastIncident, checkIncidentsOnPoll, saveBrainKey } = await import('./dashboard.js')
 
 // Map-backed getElementById so saveBrainKey can read form input values.
 function stubBrainForm(fields: Record<string, string>) {
@@ -340,8 +340,9 @@ describe('dashboard button state', () => {
     renderDashboard(report)
     renderRestartButton(report)
 
-    expect(els.heroHeadline.textContent).toBe('此刻，陪你一起看鱼')
-    expect(els.heroMeta.textContent).toBe('把鼠标轻轻移进鱼缸，看看谁会先回应你')
+    // 鱼缸画布 2026-10-01 退休(主人拍板):连接结论只说事实,不再轮换「看鱼」的暖场文案。
+    expect(els.heroHeadline.textContent).toBe('微信已连接')
+    expect(els.heroMeta.textContent).toBe('这台电脑在替 CC 收发微信')
     expect(els.dashStop.hidden).toBe(false)
     expect(els.connectionOptions.hidden).toBe(false)
     expect(els.accountsBody.innerHTML).toContain('添加使用者')
@@ -349,22 +350,16 @@ describe('dashboard button state', () => {
     expect(els.dashRestart.hidden).toBe(true)
   })
 
-  it('returning to the overview advances the warm hero copy once', () => {
+  it('连接结论在每次轮询里保持同一句(不再轮换暖场文案)', () => {
     const els = installDashboardDom()
     const report = dashboardReport({ checks: { daemon: { alive: true, pid: 1234 } } })
-
     renderDashboard(report)
-    expect(els.heroHeadline.textContent).toBe('此刻，陪你一起看鱼')
-    advanceCompanionHeroCopy()
     renderDashboard(report)
-    expect(els.heroHeadline.textContent).toBe('给忙碌留一小片水光')
-    expect(els.heroMeta.textContent).toBe('在这里慢慢游一会儿，也没关系')
+    expect(els.heroHeadline.textContent).toBe('微信已连接')
   })
 
   it('bound account but daemon NOT alive → recovering (was falsely "connected")', () => {
     // dashboardReport() has daemon.alive=false, accounts.count=1.
-    // Connected state uses the warm companion headline; a failed probe still
-    // takes precedence through the warning state above.
     // New behaviour: state "recovering" → honest reconnect affordance shown.
     const els = installDashboardDom()
     const report = dashboardReport()

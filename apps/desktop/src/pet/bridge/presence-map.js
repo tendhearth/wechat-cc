@@ -1,6 +1,8 @@
 // @ts-check
-// presence-map.js — presence(处境)→ CC 的意图(spec §5.1 处境部分)。Phase A 先用 presence 的
-// 「在聊」(3 分钟入站窗)当微光;Phase B 换成真实 contact 时间与 turn 端点。纯函数。
+// presence-map.js — presence(处境)→ CC 的意图(spec §5.1 处境部分)。纯函数。
+// 明暗:够得着 daemon = Light,与「此刻」页、手机同一个信号(ccPresence;主人 2026-10-01 拍板,
+// spec 2026-10-01-tendhearth-design-unify §4/§9)。不再只在「在聊」时亮。
+import { ccPresence } from '../../modules/now-home.js'
 
 /** @typedef {import('../../presence-poller.js').Presence} Presence */
 /** @typedef {import('../domain/types.js').PetBehavior} PetBehavior */
@@ -18,7 +20,7 @@ const unreadOf = (p) => Math.max(0, Math.trunc(Number(p?.news?.unread) || 0))
  * @returns {PetIntent}
  */
 export function presenceToPet(p, prev) {
-  if (!p || p.presence === 'down') return { form: 'unlit', behavior: 'sleep', props: [], badge: 0, hint: 'daemon 没起', oneShots: [] }
+  if (!p || ccPresence(p) === 'away') return { form: 'unlit', behavior: 'sleep', props: [], badge: 0, hint: 'daemon 没起', oneShots: [] }
   const unread = unreadOf(p)
   const badge = unread
   /** @type {string[]} */
@@ -30,13 +32,13 @@ export function presenceToPet(p, prev) {
   // 拿它当基准会让下一次拉通时凭空「收到」一堆信 —— 所以 down 不作数(窗口那边也不更新 prev)。
   // offline 一样会收到信(明信片、串门都还在落库),所以这条沿在离线时也算。
   const received = !!prev && prev.presence !== 'down' && unread > unreadOf(prev)
-  if (p.presence === 'offline') return { form: 'unlit', behavior: 'sleep', props: envelope, badge, hint: null, oneShots: received ? ['receive'] : [] }
 
-  const degraded = p.presence === 'degraded'
-  if (degraded) { props.push('exclamation'); if (!prev || prev.presence !== 'degraded') oneShots.push('error') }
+  // offline 指的是**微信外发**不通:CC 本人还在电脑上答话,所以照样亮,只像 degraded 一样挂感叹号。
+  const troubled = p.presence === 'degraded' || p.presence === 'offline'
+  if (troubled) { props.push('exclamation'); if (!prev || prev.presence !== p.presence) oneShots.push('error') }
   const kind = p.activity?.kind ?? 'idle'
   /** @type {'unlit' | 'lit'} */
-  const form = kind === 'chatting' ? 'lit' : 'unlit'
+  const form = 'lit'
   /** @type {PetBehavior} */
   let behavior = 'idle'
   if (COMPANION_KINDS.has(kind)) behavior = 'companion'

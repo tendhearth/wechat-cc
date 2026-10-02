@@ -31,15 +31,28 @@ export function latestCCLine(messages) {
   return null
 }
 
-/** @param {{tasks:Array<{id:string,title:string,pendingPermissionCount:number,pendingQuestionCount:number}>,stale:boolean}|null} state */
+// 每行像手机那样写问题 / 权限本身(GET /v1/workbench/attention 的 first,daemon 已压成一行并截断;
+// spec 2026-10-01 §9-4 主人拍板),说明行是所属任务标题。旧 daemon 没有 first ⇒ 退回任务标题 + 计数。
+/** @typedef {{kind:'permission'|'question',text:string}} AttentionFirst */
+/** @param {{tasks:Array<{id:string,title:string,pendingPermissionCount:number,pendingQuestionCount:number,first?:AttentionFirst|null}>,stale:boolean}|null} state */
 export function waitingRows(state) {
   if (!state || state.stale) return []
-  return state.tasks.map(t => ({
-    id: t.id,
-    title: t.title,
-    detail: [t.pendingPermissionCount ? `${t.pendingPermissionCount} 项权限` : '', t.pendingQuestionCount ? `${t.pendingQuestionCount} 个问题` : ''].filter(Boolean).join(' · '),
-    go: /** @type {'看清楚'|'回答'} */ (t.pendingPermissionCount > 0 ? '看清楚' : '回答'),
-  }))
+  return state.tasks.map(t => {
+    const first = t.first && typeof t.first.text === 'string' && t.first.text.trim() ? t.first : null
+    const total = t.pendingPermissionCount + t.pendingQuestionCount
+    if (first) return {
+      id: t.id,
+      title: first.text.trim(),
+      detail: [t.title, total > 1 ? `共 ${total} 项` : ''].filter(Boolean).join(' · '),
+      go: /** @type {'看清楚'|'回答'} */ (first.kind === 'permission' ? '看清楚' : '回答'),
+    }
+    return {
+      id: t.id,
+      title: t.title,
+      detail: [t.pendingPermissionCount ? `${t.pendingPermissionCount} 项权限` : '', t.pendingQuestionCount ? `${t.pendingQuestionCount} 个问题` : ''].filter(Boolean).join(' · '),
+      go: /** @type {'看清楚'|'回答'} */ (t.pendingPermissionCount > 0 ? '看清楚' : '回答'),
+    }
+  })
 }
 
 // 「N 件事等你」那一行:读不到(stale)不等于没有 ⇒ 灰字说不知道,而不是悄悄消失(终审 M3)。还没拉到第一拍(null)不说话。

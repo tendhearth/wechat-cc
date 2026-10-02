@@ -1,6 +1,6 @@
 # Tendhearth 设计统一(桌面 + 手机)· spec 增补(plan 6)
 
-日期:2026-10-01。状态:设计稿。基线 origin/dev 474354f7(#162 手机 app 跟 CC 说话)。增补 `2026-09-30-tendhearth-app-v1-design.md` 与 `2026-10-01-tendhearth-app-chat-design.md`;桌面侧推翻 `2026-09-26-web-design-unify` 之前「Clean Light / Geist」那套风格。
+日期:2026-10-01。状态:已实施(#163);§9 六条主人已拍板。基线 origin/dev 474354f7(#162 手机 app 跟 CC 说话)。增补 `2026-09-30-tendhearth-app-v1-design.md` 与 `2026-10-01-tendhearth-app-chat-design.md`;桌面侧推翻 `2026-09-26-web-design-unify` 之前「Clean Light / Geist」那套风格。
 
 依据(主人 2026-10-01 拍板,**有约束力**):
 - `~/Documents/tendhearth/cc-screens-2026-09-30/CC-设计原则.md`(下称「原则」)
@@ -36,7 +36,7 @@
 | `paper` | `#faf7f2` | 页面(两端唯一底色) |
 | `rail` | `#f3eee6` | 桌面侧栏;手机底部标签栏 |
 | `ink` | `#2a2622` | 正文 |
-| `inkSoft` | `#70665d` | 次要文字(稿里 `#7a7067` 在 `rail` 上只有 4.19:1,调深到 4.85:1 过 AA) |
+| `inkSoft` | `#70665d` | 次要文字(稿里 `#7a7067` 在 `rail` 上只有 4.19:1,调深到 4.85:1 过 AA;主人 2026-10-01 已拍板,§9-1) |
 | `hair` | `#e4ddd2` | 细线、气泡 / 输入框描边 |
 | `accent` | `#4f6b4f` | 唯一强调色:主动作、焦点、悬停 |
 | `onAccent` | `#fbfaf6` | 强调色上的字 |
@@ -91,9 +91,9 @@
 
 为什么只看「够不够得着」:「电脑离线」与「CC 睡了」落到信号上都是 daemon 答不上话(电脑合盖 / 关机 / 断网 ⇒ 手机隧道断;daemon 没跑 ⇒ 桌面轮询失败)。`presence.presence === 'offline'` 指的是**微信外发**不通,CC 本人还在电脑上答话,所以 app 里不变暗(状态点另外报)。伙伴静音(snooze)只是不主动找你,CC 照样答话,也不变暗。
 
-不在身边时:CC 换 Dark 图、身后的光消失、呼吸停;状态行写「家里的电脑 · 不在线 · 20:34 同步」(手机用 `lastSyncedAt`;桌面是电脑本身,写「CC 没在运行」)。状态点照原则 §4:在线 = 绿,离线 / 已撤销 / 桌面 daemon 没跑 = 红(没连上),正在连接 = 灰(不知道)。稿里离线画的是灰点 —— 原则的文字更明确,按原则来,交主人确认(§9)。图都已在库(`apps/app/assets/cc/{lit,unlit}.png`、`apps/desktop/src/assets/pet/cc-v1/canonical/{lit,unlit}/front.png`,与稿用的 `cc-light.png` 同一张),**不需要新美术**。
+不在身边时:CC 换 Dark 图、身后的光消失、呼吸停;状态行写「家里的电脑 · 不在线 · 20:34 同步」(手机用 `lastSyncedAt`;桌面是电脑本身,写「CC 没在运行」)。状态点照原则 §4:在线 = 绿,离线 / 已撤销 / 桌面 daemon 没跑 = 红(没连上),正在连接 = 灰(不知道)。稿里离线画的是灰点 —— 原则的文字更明确,按原则来;主人 2026-10-01 已拍板(§9-6):离线一律红,灰只给「正在连接…」。图都已在库(`apps/app/assets/cc/{lit,unlit}.png`、`apps/desktop/src/assets/pet/cc-v1/canonical/{lit,unlit}/front.png`,与稿用的 `cc-light.png` 同一张),**不需要新美术**。
 
-不在本计划:桌面浮窗桌宠(`companion-window` / `pet/bridge/presence-map.js`)现在只在「在聊」时点亮;它跟 app 页的规则对不对齐,交主人定(§9)。
+桌面浮窗桌宠(`companion-window` / `pet/bridge/presence-map.js`)同一条规则(主人 2026-10-01 拍板,§9-2):复用 `ccPresence`,presence 拉得到(含 `offline`,那只是微信外发不通,挂感叹号)就 Light,拉不到才 Dark;不再只在「在聊」时亮,「20 分钟没联系就退潮」删掉。联系时间只剩两个用处:前进时播一次 receive、决定 pet 端点轮询快慢档。
 
 ## 5. 手机
 
@@ -140,7 +140,7 @@
 ### 6.3 此刻(照稿)
 `article.cc-now-pane` 有两个状态 `data-now="home" | "chat"`:
 
-- **home**(默认):右上状态行(= `.cc-home-details > summary`,含 `#dash-rail-dot`、`#dash-rail-text`,文字如「CC 在家 · 运行中」),点它展开连接面板(原「鱼缸与连接」整块内容,改为浮在右上的单层面板,`Esc` / 点外面收起);问候 `display`;右侧 CC 气泡(主人对话里最近一条 CC 的话 + 时间)与 CC 形象(150px,Light 带光 / Dark 无光);「N 件事等你」行列表(数据:`/v1/workbench/attention`,每行 = 任务标题 + 一行「1 项权限 · 1 个问题」+「看清楚 ›」/「回答 ›」,整行 ⇒ 打开工作台该任务);底部 composer = 现有 `#converse-input` + `#converse-send`(home 状态只露这两样)。
+- **home**(默认):右上状态行(= `.cc-home-details > summary`,含 `#dash-rail-dot`、`#dash-rail-text`,文字如「CC 在家 · 运行中」),点它展开连接面板(「CC 的连接」+ 底部「浮到桌面」按钮,浮在右上的单层面板,`Esc` / 点外面收起;鱼缸画布已退休,§9-3);问候 `display`;右侧 CC 气泡(主人对话里最近一条 CC 的话 + 时间)与 CC 形象(150px,Light 带光 / Dark 无光);「N 件事等你」行列表(数据:`/v1/workbench/attention`;主人 2026-10-01 拍板(§9-4)后每行像手机一样 = 第一件待决的原文(接口的 `first`,权限优先,「工具: 说明」/ 第一问)+ 一行任务标题(多于一项补「共 N 项」)+「看清楚 ›」/「回答 ›」;旧 daemon 没有 `first` 时退回任务标题 + 计数;整行 ⇒ 打开工作台该任务);底部 composer = 现有 `#converse-input` + `#converse-send`(home 状态只露这两样)。
 - **chat**:点气泡 / CC、在 composer 里发出一句、或导航到 `converse` ⇒ 切到 chat:顶部一行「‹ 此刻」返回、对话记录(`#converse-scroll`)占满、composer 的完整工具条(语音输入、朗读回复、交给 CC 做)出现。语音输入在桌面是已上线功能(Tauri `agent_transcribe`),所以留。
 - 此刻页可见时,全局的 `#workbench-attention` 横条隐藏(同一件事不出现两次);离开此刻照旧。
 - 「CC 正在照看的事」入口(care sheet)从此刻页撤下:它与「N 件事等你」和「一起做」重复。模块与测试保留,入口去掉。
@@ -161,14 +161,14 @@
 
 - 手机网页 `/m`(`apps/mobile`,有自己的 `tokens.css`)与 `/set`:本计划不动,留下一份。
 - 桌面浮窗桌宠、动画实验室、pet-lab 的样式。
-- 新功能:不加任何新接口;CC 气泡用的是已有的对话读取。
-- 退休鱼缸画布:它还在连接面板里(e2e 依赖 `#companion-stage` 可见),去留交主人。
+- 新功能:不加任何新接口;CC 气泡用的是已有的对话读取。(§9-4 拍板后例外一处:attention 每条多一个有上限的 `first` 字段,不是新接口。)
+- ~~退休鱼缸画布~~:主人 2026-10-01 拍板退休(§9-3),已做。
 
-## 9. 交主人定(不挡执行)
+## 9. 主人的决定(2026-10-01 已拍板,原「交主人定」六条)
 
-1. `inkSoft` 从稿的 `#7a7067` 调深到 `#70665d`(为了侧栏上的字过 AA)。
-2. 桌面浮窗桌宠要不要也改成「够得着 = Light」(现在只在「在聊」时亮)。
-3. 连接面板里的鱼缸画布(「进入这一刻」「浮到桌面」的舞台)去留。
-4. 桌面「N 件事等你」的行标题用任务标题(attention 接口只给计数);要像手机那样显示「可以安装图片处理组件吗?」得再读一次任务详情 —— 要不要。
-5. 安装包体积:字体约 +20–30 MB(手机)/ +10–20 MB(桌面),以实测为准。
-6. 离线状态点:稿画灰点,原则写「红 = 没连上」;计划按原则用红,连接中才是灰。
+1. **`inkSoft` = `#70665d`**(从稿的 `#7a7067` 调深,侧栏上的字过 AA)。`packages/design-tokens` 与生成的 `apps/desktop/src/tokens.css` 里都是这个值,仓库里不再有 `#7a7067`。
+2. **桌面浮窗桌宠也是「够得着 = Light」**,与此刻页、手机同一个信号(见 §4 末段)。实现:`pet/bridge/presence-map.js` 用 `ccPresence`;`runtime-events.js` 的明暗只随 presence。
+3. **鱼缸画布退休。** 「生活与工具 › 鱼缸」整页、`#companion-stage` 画布、「进入这一刻」沉浸模式、离线鱼缸插画、主窗口里挂的 `animation-lab.js`、`companion-presence.js` / `companion-scene-state.js` 与对应样式全部删掉;动画实验室(`animation-lab.html`,独立调试页)保留。浮窗桌宠原本只有「浮到桌面」一个入口,改成此刻页右上连接面板底部的普通按钮(`#companion-desktop-start`)。原来写在鱼缸页上的连接结论(`#hero-card`:重连失败、权限不足等)搬到设置抽屉「连接」段顶上,connected 时说「微信已连接」,不再轮换「看鱼」文案。
+4. **「N 件事等你」行写问题 / 权限本身。** `GET /v1/workbench/attention` 每个任务多 `first: {kind:'permission'|'question', text} | null`(权限优先、最早一件;写法与手机 approvals 话题一致;压成一行、上限 120 字),还是一次轮询,不逐行再读详情。
+5. **安装包体积:字体子集化。** 两端的 CJK 衬线字只保留常用字(《通用规范汉字表》一级 + 二级 + GB2312,外加拉丁 / 标点 / 全角),子集外的字退回系统衬线;脚本与前后字节数见字体子集化那份 PR 与 §3。
+6. **离线状态点 = 红,灰只给「正在连接…」**(以及「不知道」:读不到 / 陈旧 / 演示)。代码核对:桌面 `nowStatusLine`(没拉到第一拍 = 灰,daemon 没跑 / 够不着 = 红)、手机 `statusLine`(connecting / 握手未同步 = 灰,offline / revoked = 红)、两端连接页电脑离线 = 红,均有测试钉住。

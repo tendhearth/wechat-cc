@@ -26,7 +26,14 @@ describe('createPetBridge', () => {
     b.notePresence(presence(2))
     expect(b.tick(null).intent.oneShots).toEqual([])
   })
-  it('快档:亮着 / 有轮次 / 有待决权限任一为真', () => {
+  it('够得着就亮(与此刻页同一个信号):没说过话也亮;拉不到 daemon 才暗', () => {
+    const b = createPetBridge({ now: () => 1_000 })
+    b.notePresence(presence(0))
+    expect(b.tick(turnAt()).intent.form).toBe('lit')
+    b.notePresence({ presence: 'down', news: { unread: 0 } } as any)
+    expect(b.tick(turnAt()).intent.form).toBe('unlit')
+  })
+  it('快档:刚说过话 / 有轮次 / 有待决权限任一为真(亮着本身不算,不然够得着就一直 2 秒一拉)', () => {
     const b = createPetBridge({ now: () => 1_000 })
     b.notePresence(presence(0))
     expect(b.tick(turnAt()).fast).toBe(false)

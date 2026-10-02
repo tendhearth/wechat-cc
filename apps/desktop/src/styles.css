@@ -1070,7 +1070,6 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .toggle-row .sub { font-size: 11.5px; color: var(--ink-3); margin-top: 3px; line-height: 1.45; }
 .toggle-row .sub code { font-family: var(--mono); background: var(--paper-2); padding: 1px 5px; border-radius: 3px; font-size: 11px; color: var(--ink); }
 
-
 .toggle {
   width: 36px; height: 20px;
   border-radius: 999px;
@@ -1594,7 +1593,6 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
   font-size: 14px;
   line-height: 1.6;
 }
-@media (max-width: 900px) {}
 .dialogue-sidebar {
   min-width: 0;
   padding: 24px 20px 30px 32px;
@@ -2157,351 +2155,9 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
   letter-spacing: .04em;
 }
 
-/* overview body */
-.moment-body {
-  flex: 1;
-  min-height: 0;
-  /* 52px floor: the rail's wavy paper edge overhangs ~20px into the pane —
-     a shorter clamp let the headline ride up underneath it on short windows. */
-  padding: clamp(52px, 6vh, 60px) clamp(30px, 3.4vw, 42px) 28px;
-  display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(285px, .8fr);
-  gap: clamp(28px, 3vw, 42px);
-  /* safe: when content is taller than the viewport, centering must not
-     push the title above the scrollable area (classic center-overflow). */
-  align-items: safe center;
-  overflow-y: auto;
-  background: var(--app-bg);
-}
-
-.moment-ai {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  color: var(--th-ink);
-}
-
-.ai-orbit-visual {
-  width: min(500px, 48vw, calc((100vh - 320px) * 4 / 3));
-  min-width: 0;
-  aspect-ratio: 4 / 3;
-  position: relative;
-  margin-bottom: 14px;
-}
-
-.companion-intro {
-  width: min(500px, 48vw, calc((100vh - 320px) * 4 / 3));
-  min-width: 0;
-  align-self: center;
-  margin-bottom: 15px;
-  text-align: center;
-}
-.companion-intro h1 {
-  margin: 0;
-  color: var(--th-ink);
-  font-size: clamp(21px, 2.15vw, 26px);
-  line-height: 1.2;
-  font-weight: 500;
-  letter-spacing: -.025em;
-}
-.companion-intro h1::after {
-  content: "";
-  display: block;
-  width: 24px;
-  height: 2px;
-  margin: 9px auto 0;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--th-hair) 58%, transparent);
-}
-.hero-letter,
-.hero-letter-mark {
-  display: inline-block;
-}
-.hero-letter {
-  position: relative;
-  min-width: 1em;
-  cursor: default;
-  transition: color .12s ease, transform .16s ease;
-}
-.hero-letter::after {
-  content: "";
-  position: absolute;
-  z-index: 1;
-  top: 50%;
-  left: 50%;
-  width: 1.34em;
-  height: .78em;
-  opacity: 0;
-  pointer-events: none;
-  background: url("./assets/animation/fish-yellow-left.png") center / contain no-repeat;
-  transform: translate(-50%, -50%) scale(.55) rotate(-8deg);
-  transform-origin: center;
-  transition: opacity .1s ease, transform .16s ease;
-}
-.hero-letter[data-fish="1"]::after {
-  background-image: url("./assets/animation/fish-orange.png");
-}
-.hero-letter[data-fish="2"]::after {
-  background-image: url("./assets/animation/fish-blue.png");
-}
-.hero-letter:hover {
-  color: transparent;
-  transform: translateY(-1px);
-}
-.hero-letter:hover::after {
-  opacity: 1;
-  transform: translate(-50%, -50%) scale(1) rotate(0deg);
-  animation: hero-letter-fish .5s ease-in-out both;
-}
-@keyframes hero-letter-fish {
-  0%, 100% { translate: 0 0; }
-  48% { translate: 2px -1px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .hero-letter,
-  .hero-letter::after { transition: none; animation: none; }
-}
-.companion-intro #hero-meta {
-  max-width: 360px;
-  margin: 9px auto 0;
-  color: color-mix(in srgb, var(--th-ink-soft) 68%, transparent);
-  font-size: clamp(11px, 1.15vw, 13px);
-  font-weight: 500;
-  line-height: 1.6;
-  letter-spacing: .015em;
-}
-.companion-mode-actions {
-  position: absolute;
-  z-index: 5;
-  top: 65px;
-  right: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  left: auto;
-  margin: 0;
-  transform: translateY(-100%);
-}
-.companion-immersive-trigger,
-.companion-desktop-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 30px;
-  margin: 0;
-  padding: 5px 9px 5px 7px;
-  border: 1px solid color-mix(in srgb, var(--th-hair) 26%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--th-paper) 88%, transparent);
-  box-shadow: none;
-  color: var(--th-ink-soft);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: transform .18s ease, background-color .18s ease, box-shadow .18s ease, opacity .18s ease;
-}
-.companion-desktop-trigger { color: color-mix(in srgb, var(--th-ink-soft) 78%, transparent); }
-.companion-immersive-icon {
-  display: grid;
-  width: 16px;
-  height: 16px;
-  place-items: center;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--th-hair) 16%, transparent);
-  color: var(--th-ink-soft);
-  font-size: 14px;
-  line-height: 1;
-}
-.companion-immersive-trigger:hover,
-.companion-desktop-trigger:hover {
-  background: color-mix(in srgb, var(--th-paper) 96%, transparent);
-  box-shadow: none;
-  transform: translateY(-2px);
-}
-.companion-immersive-trigger:focus-visible,
-.companion-desktop-trigger:focus-visible,
-.companion-immersive-tools button:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--th-hair) 60%, transparent);
-  outline-offset: 3px;
-}
-.companion-immersive-tools {
-  display: none;
-}
-
-.moment-illustration {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: contain;
-}
-
-.moment-illustration-offline {
-  display: none;
-  transform: scale(1.1);
-  transform-origin: center;
-}
-.offline-aquarium { width: 100%; height: 100%; object-fit: contain; display: block; }
-/* Same 4:3 stage, square sprite and pixel-470 foot anchor as the live canvas. */
-.offline-fish {
-  position: absolute; width: 10%; aspect-ratio: 1; opacity: .65;
-  background: url('./assets/home-cc-fish-atlas.png') no-repeat; background-size: 300% 100%;
-}
-.offline-fish-gold { left: 48%; top: 46%; background-position: 0 0; }
-.offline-fish-coral { left: 62%; top: 55%; background-position: 50% 0; }
-.offline-fish-blue { left: 72%; top: 44%; background-position: 100% 0; }
-.offline-cc { position: absolute; width: 34%; height: auto; left: 8.8%; top: 38.986%; }
-.offline-cc-shadow {
-  position: absolute; left: 14.92%; top: 78.923%; width: 21.76%; height: 4.08%;
-  background: radial-gradient(ellipse, color-mix(in srgb, var(--th-ink-soft) 20%, transparent), color-mix(in srgb, var(--th-ink-soft) 14%, transparent) 45%, transparent 72%);
-}
-
-.moment-animation-stage {
-  position: absolute;
-  inset: 0;
-  transform: scale(1.1);
-  transform-origin: center;
-}
-.moment-animation-stage #companion-stage {
-  width: 100%;
-  height: 100%;
-  display: block;
-  cursor: crosshair;
-}
-.moment-animation-stage .stage-hint,
-.moment-animation-stage .bear-message {
-  position: absolute;
-  opacity: 0;
-  transform: translate(-50%, 8px);
-  pointer-events: none;
-  transition: opacity .35s ease, transform .35s ease;
-}
-.moment-animation-stage .stage-hint {
-  top: 8%;
-  left: 50%;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 7px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--th-paper) 80%, transparent);
-  backdrop-filter: blur(6px);
-  color: var(--th-ink-soft);
-  font-size: 9px;
-  line-height: 1.25;
-  white-space: nowrap;
-}
-.moment-animation-stage .stage-hint::before {
-  content: "";
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-}
-.moment-animation-stage .stage-hint.is-water-hint {
-  background: color-mix(in srgb, var(--th-rail) 90%, transparent);
-  border: 1px solid color-mix(in srgb, var(--th-hair) 42%, transparent);
-  color: var(--th-ink-soft);
-  box-shadow: none;
-}
-.moment-animation-stage .stage-hint.is-water-hint::before {
-  border: 1.4px solid var(--th-hair);
-  border-radius: 50%;
-  box-shadow: none;
-}
-.moment-animation-stage .stage-hint.is-grass-hint {
-  background: color-mix(in srgb, var(--th-rail) 92%, transparent);
-  border: 1px dashed color-mix(in srgb, var(--th-hair) 54%, transparent);
-  border-radius: 8px 13px 13px 13px;
-  color: var(--th-ink-soft);
-  box-shadow: none;
-}
-.moment-animation-stage .stage-hint.is-grass-hint::before {
-  background: var(--th-hair);
-  border-radius: 8px 1px 8px 1px;
-  transform: rotate(-35deg);
-}
-.moment-animation-stage .bear-message {
-  left: var(--bear-message-x, 26.2%);
-  top: calc(var(--bear-message-y, 38%) - 20px);
-  width: max-content;
-  max-width: 180px;
-  padding: 8px 11px;
-  border-radius: 13px 13px 13px 4px;
-  background: var(--th-paper);
-  box-shadow: none;
-  color: var(--th-ink);
-  font-size: 11px;
-  font-weight: 500;
-  transform-origin: center top;
-  transform: translate(-50%, 8px) scale(var(--bear-message-scale, .9));
-}
-.moment-animation-stage .stage-hint.is-visible {
-  opacity: 1;
-  transform: translate(-50%, 0);
-}
-.moment-animation-stage .bear-message.is-visible {
-  opacity: 1;
-  transform: translate(-50%, 0) scale(var(--bear-message-scale, .9));
-}
-.crab-escape {
-  position: fixed;
-  z-index: 100;
-  top: 0;
-  left: 0;
-  width: 86px;
-  opacity: 0;
-  pointer-events: none;
-  transform-origin: center;
-  will-change: transform, opacity;
-}
-
-.moment-animation-lab {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  position: absolute;
-  top: calc(8% + 50px);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1;
-  padding: 0;
-  color: color-mix(in srgb, var(--th-ink-soft) 66%, transparent);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1;
-  text-decoration: none;
-}
-.moment-animation-lab .ic,
-.moment-animation-lab .ic svg {
-  width: 14px;
-  height: 14px;
-}
-.moment-animation-lab:hover {
-  color: var(--th-ink);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-.moment-animation-lab:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--th-hair) 60%, transparent);
-  outline-offset: 4px;
-}
 .moment-actions {
   width: min(228px, 100%);
   margin-top: 12px;
-}
-@media (min-width: 901px) {
-  .moment-body:not(.is-companion-immersive) .companion-intro {
-    transform: translate(50px, -50px);
-  }
-  .moment-body:not(.is-companion-immersive) .moment-actions {
-    transform: translateX(50px);
-  }
-  .moment-body:not(.is-companion-immersive) .ai-orbit-visual {
-    transform: translateY(-50px);
-  }
 }
 .moment-actions .pending {
   display: block;
@@ -2563,14 +2219,6 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
   height: 14px;
 }
 
-.moment-ai.warn .moment-illustration-online {
-  display: none;
-}
-
-.moment-ai.warn .moment-illustration-offline {
-  display: block;
-}
-
 /* 上次故障横幅(Task 8) — same amber warning pair as .toggle-row.warn-edge /
    .badge.warn: a past-tense notice, not an active-error red. */
 .dash-health-banner {
@@ -2602,68 +2250,6 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 }
 .atelier-gallery-panel { align-self: stretch; margin-top: 42px; }
 
-/* Optional immersive companion mode. The normal dashboard remains the
-   default; this temporarily elevates the aquarium without losing user data. */
-.moment-body.is-companion-immersive {
-  display: block;
-  padding: 0;
-  overflow: visible;
-}
-.moment-body.is-companion-immersive .moment-ai {
-  position: fixed;
-  inset: 0;
-  z-index: 45;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: radial-gradient(circle at 50% 54%, color-mix(in srgb, var(--th-paper) 96%, transparent), var(--th-paper));
-}
-.moment-body.is-companion-immersive .companion-intro {
-  position: absolute;
-  z-index: 1;
-  top: clamp(50px, 7vh, 68px);
-  left: 50%;
-  width: min(620px, 82vw);
-  margin: 0;
-  transform: translateX(-50%);
-}
-.moment-body.is-companion-immersive .companion-mode-actions,
-.moment-body.is-companion-immersive .moment-actions {
-  display: none;
-}
-.moment-body.is-companion-immersive .ai-orbit-visual {
-  width: min(900px, 78vw);
-  margin: 0;
-}
-.moment-body.is-companion-immersive .companion-immersive-tools {
-  position: fixed;
-  z-index: 65;
-  top: 52px;
-  right: 24px;
-  display: inline-flex;
-  gap: 8px;
-}
-.companion-immersive-tools button {
-  min-height: 30px;
-  padding: 5px 10px;
-  border: 1px solid color-mix(in srgb, var(--th-hair) 22%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--th-paper) 82%, transparent);
-  color: var(--th-ink-soft);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  backdrop-filter: blur(8px);
-}
-@media (max-width: 720px) {
-  .moment-body.is-companion-immersive .ai-orbit-visual {
-    width: min(720px, 90vw);
-  }
-  .moment-body.is-companion-immersive .companion-immersive-tools {
-    top: 42px;
-    right: 14px;
-  }
-}
 .moment-users h2,
 .moment-subhead h2 {
   margin: 0;
@@ -2923,24 +2509,11 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .add-ic svg { display: none; }
 
 @media (max-width: 900px) {
-  .moment-body {
-    grid-template-columns: 1fr;
-    align-items: start;
-  }
   .moment-side { grid-column: 1; grid-row: auto; }
   .atelier-gallery-panel, .moment-users { justify-self: stretch; max-width: none; }
-  .ai-orbit-visual {
-    width: min(430px, 74vw);
-  }
-  .companion-intro {
-    width: min(430px, 74vw);
-  }
 }
 
 @media (max-width: 720px) {
-  .moment-body {
-    padding: 28px 18px;
-  }
   .sub-user-grid {
     grid-template-columns: 1fr;
   }
@@ -2966,53 +2539,6 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
    exceeds the viewport, and `.card { overflow: hidden }` then silently
    clips the inner table rows. The dash-body is the scroll container. */
 .dash-body > .card { flex-shrink: 0; }
-
-/* hero card */
-.hero-card {
-  border: 1px solid var(--hair);
-  border-radius: 10px;
-  padding: 16px 18px;
-  background: var(--paper);
-  display: grid;
-  grid-template-columns: 12px 1fr;
-  gap: 14px;
-  align-items: start;
-}
-.hero-card .pulse {
-  width: 10px; height: 10px;
-  border-radius: 50%;
-  background: var(--green);
-  margin-top: 8px;
-  box-shadow: none;
-  position: relative;
-}
-.hero-card .pulse::after {
-  content: ""; position: absolute; inset: -3px;
-  border-radius: 50%; border: 1px solid var(--green);
-  opacity: .35;
-  animation: pulse 2.4s ease-out infinite;
-}
-.hero-card.warn .pulse { background: var(--amber); box-shadow: none; }
-.hero-card.warn .pulse::after { border-color: var(--amber); }
-@keyframes pulse {
-  0%   { transform: scale(.9); opacity: .55; }
-  100% { transform: scale(1.9); opacity: 0; }
-}
-.hero-card h1 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  color: var(--ink);
-}
-.hero-card .meta {
-  margin-top: 6px;
-  font-size: 11.5px;
-  color: var(--ink-3);
-  display: flex; flex-wrap: wrap; gap: 0;
-}
-.hero-card .meta b { color: var(--ink-2); font-weight: 500; }
-.hero-card .meta .sep { color: var(--ink-4); padding: 0 8px; }
 
 /* table */
 .tbl { width: 100%; border-collapse: collapse; }
