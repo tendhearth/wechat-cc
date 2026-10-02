@@ -16,6 +16,15 @@
 // over the already-open KnowledgeStore + embed script/interpreter paths).
 
 export interface RunKnowledgeCycleDeps {
+  /**
+   * Brings the upstream snapshot (wxvault's decrypted DBs) up to date BEFORE
+   * the adapter reads it — see wxvault-refresh.ts. The adapter reads those
+   * files directly, so without this the store only advances when someone
+   * happens to query wxvault. A throw is logged and swallowed: the adapter
+   * still runs over whatever snapshot already exists. `undefined` when the
+   * source isn't wxvault-managed (e.g. a `knowledge_source_dir` override).
+   */
+  refreshSource?: () => Promise<unknown>
   /** Runs the source adapter against the already-open KnowledgeStore;
    *  returns how many source rows it ingested this pass. */
   runAdapter: () => { ingested: number } | Promise<{ ingested: number }>
@@ -88,6 +97,14 @@ export async function runKnowledgeCycle(
 
   knowledgeCycleRunning = true
   try {
+    if (deps.refreshSource) {
+      try {
+        await deps.refreshSource()
+      } catch (err) {
+        deps.log('KNOWLEDGE', `source refresh failed — ingesting the existing snapshot: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+
     let ingested = 0
     try {
       ingested = (await deps.runAdapter()).ingested
