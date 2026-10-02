@@ -17,6 +17,11 @@ export interface CareLedger {
   /** 记忆通知发出前登记(at-most-once,同 claimHunt)。 */
   claimMemory(chatId: string, nowIso: string): void
   resetNoReply(chatId: string): void
+  /**
+   * 把这个 chat 的台账放回登记之前的样子(评审 #193 P2-3):先登记再出门之后,那一次模型调用
+   * 被网络守护拒了 —— 什么都没发出去,这次登记不能算数(否则冷却 / 无回复计数被白白吃掉)。
+   */
+  restore(chatId: string, entry: CareLedgerEntry): void
 }
 
 const DEFAULT_ENTRY: CareLedgerEntry = { noReplyCount: 0 }
@@ -54,6 +59,9 @@ export function makeCareLedger(stateDir: string, deps?: { store?: StateStore }):
       const cur = read(chatId)
       const next: CareLedgerEntry = { ...cur, lastMemoryAtIso: nowIso, noReplyCount: cur.noReplyCount + 1 }
       store.set(chatId, JSON.stringify(next))
+    },
+    restore(chatId, entry) {
+      store.set(chatId, JSON.stringify(entry))
     },
     resetNoReply(chatId) {
       const raw = store.get(chatId)

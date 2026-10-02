@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { NetworkUnprotectedError } from '../lib/network-gate'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeStickerLib } from './stickers'
@@ -123,6 +124,27 @@ describe('runStickerArtist', () => {
     const r = await runStickerArtist({ stateDir, lib, cheapEval, rasterize, notify, log: () => {}, now: () => 1_000 })
     expect(r.drawn).toBe(STICKER_MOOD_POOL[0])
     expect(lib.allTags()).toContain(STICKER_MOOD_POOL[0])
+    rmSync(stateDir, { recursive: true, force: true })
+  })
+})
+
+// 评审 #193 P2-3:画画那次模型调用被网络守护拒了 —— 不算「试过一次」,标记不前移,下一拍还能画。
+describe('runStickerArtist — guard refusal (review #193)', () => {
+  it('refused eval → marker unchanged (no attempt consumed), next run tries again', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'artist-guard-'))
+    const lib = makeStickerLib(stateDir)
+    let refuse = true
+    const cheapEval = vi.fn(async () => {
+      if (refuse) throw new NetworkUnprotectedError({ safe: false, source: 'bx', detail: 'bx 未保护' }, 'Claude')
+      return JSON.stringify({ form: 'dark', pose: 'company', sceneSvg: GOOD_SVG })
+    })
+    const rasterize = vi.fn(async (_svg: string, workDir: string) => tempPng(workDir))
+    const d = { stateDir, lib, cheapEval, rasterize, notify: vi.fn(async () => {}), log: () => {} }
+    expect((await runStickerArtist({ ...d, now: () => 1_000 })).drawn).toBeNull()
+    expect(existsSync(join(stateDir, 'sticker-artist.json'))).toBe(false)
+    refuse = false
+    expect((await runStickerArtist({ ...d, now: () => 2_000 })).drawn).toBe(STICKER_MOOD_POOL[0])
+    expect(cheapEval).toHaveBeenCalledTimes(2)
     rmSync(stateDir, { recursive: true, force: true })
   })
 })

@@ -13,6 +13,8 @@ import type { CareLedger } from '../companion/care-ledger'
 import { makeChatMutex, type ChatMutex } from '../../core/async-mutex'
 import { readPlanLog } from '../companion/plan-memory'
 import { formatLocal, PLAN_EVAL_TIMEOUT_MS } from '../../core/companion-plan'
+import { NetworkUnprotectedError } from '../../lib/network-gate'
+import { loadCompanionConfig } from '../companion/config'
 
 /** Minimal in-memory fake of the structural chatPrefs subset TickDeps needs. */
 function makeFakeChatPrefs(
@@ -49,6 +51,10 @@ function makeFakeCareLedger(entries: Record<string, CareLedgerEntry> = {}): Care
     resetNoReply: (chatId) => {
       const cur = entries[chatId]
       if (cur) entries[chatId] = { ...cur, noReplyCount: 0 }
+    },
+    restore: (chatId, entry) => {
+      if (entry === undefined || (entry.noReplyCount === 0 && Object.keys(entry).length === 1)) delete entries[chatId]
+      else entries[chatId] = entry
     },
   }
 }
@@ -1303,6 +1309,23 @@ describe('人类做客 —— 朋友来聊过、走了,伙伴跟主人提一句'
     expect(evalFn).not.toHaveBeenCalled()
   })
 
+  // 评审 #193 P2-3:讲给主人那次模型调用被网络守护拒了 —— 没讲过,水位不能前移;下一拍网络恢复照讲。
+  it('评审 #193:讲述被网络守护拒了 → 水位不动、没发消息;下一拍照常讲', async () => {
+    const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
+    cleanup.push(s.stateDir)
+    await seedGuest(s, 'guest@im.wechat', '2026-05-13T09:15:00.000Z')
+    const { evalFn, sent } = armEval(s)
+    evalFn.mockImplementationOnce(async () => { throw new NetworkUnprotectedError({ safe: false, source: 'bx', detail: 'bx 未保护' }, 'Claude') })
+    const ticks = buildTickBodies(s.deps)
+    await ticks.pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(sent).toEqual([])
+    const statePath = join(s.stateDir, 'companion', 'guest-visits.json')
+    expect(existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')).narrated['guest@im.wechat'] : undefined).toBeUndefined()
+    await ticks.pushTick({ nowIso: '2026-05-13T10:05:00.000Z' })
+    expect(evalFn).toHaveBeenCalledTimes(2)
+    expect(sent).toEqual(['🛎 刚才小王来过,问了工具的事。'])
+  })
+
   it('只说了一句「在吗」→ 不算做客', async () => {
     const s = setupDeps({ defaultChatId: 'owner', inFlight: false, ...quiet('owner') })
     cleanup.push(s.stateDir)
@@ -1537,5 +1560,80 @@ describe('日程判断(spec 2026-09-05-companion-plan)', () => {
     expect(log).toHaveLength(1)
     expect(log[0]!.why).toBe('(failed) 出门')
     expect(s.logs.some(l => l.includes('companion tick failed'))).toBe(true)
+  })
+})
+
+// 评审 #193 P2-3:后台任务里那一次模型调用被守护拒了 = 这一拍跳过 —— 什么进度都不记(待办不打勾、
+// 台账不登记、时间戳不前移、plan-log 不写),下一拍网络恢复了照常再来。
+describe('guard refusal inside a background round = skipped, nothing committed (review #193 P2)', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => { for (const d of cleanup) { try { rmSync(d, { recursive: true, force: true }) } catch { /* */ } } })
+  const NOW = '2026-05-13T10:00:00.000Z'
+  const refused = () => new NetworkUnprotectedError({ safe: false, source: 'bx', detail: 'bx 未保护' }, 'Claude')
+  // 真的 SessionManager:在用的会话被闸门拒,是在碰 provider **之前**抛的 —— 一个字都没发出去。
+  const refusingDispatch = () => ({ async *[Symbol.asyncIterator]() { throw refused() } })
+  const agendaFile = (s: Setup) => join(s.stateDir, 'memory', 'chat-1', 'agenda.md')
+  const planLog = (s: Setup) => readPlanLog(s.stateDir, formatLocal(NOW).slice(0, 10))
+
+  it('agenda: the turn is refused → the intention stays due, the care ledger is untouched; next tick sends it', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 ping me about the gym', chatPrefsEntries: { 'chat-1': { hunt: false } } })
+    cleanup.push(s.stateDir)
+    s.dispatch.mockImplementationOnce(refusingDispatch)
+    const { pushTick } = buildTickBodies(s.deps)
+    await pushTick({ nowIso: NOW })
+    expect(readFileSync(agendaFile(s), 'utf8')).toBe('- [ ] due:2026-05-13 ping me about the gym')
+    expect(s.careLedgerEntries['chat-1']).toBeUndefined()
+    expect(s.logs.some(l => l.includes('network unprotected') && l.includes('next tick'))).toBe(true)
+    await pushTick({ nowIso: '2026-05-13T10:20:00.000Z' })
+    expect(s.dispatch).toHaveBeenCalledTimes(2)
+    expect(readFileSync(agendaFile(s), 'utf8')).toContain('- [x] done:2026-05-13 ping me about the gym')
+  })
+
+  it('hunt: the turn is refused → no hunt claimed, no plan-log entry recorded as done', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    s.dispatch.mockImplementationOnce(refusingDispatch)
+    await buildTickBodies({ ...s.deps, planEval: async () => '{"action":"hunt","why":"上午没人聊"}' }).pushTick({ nowIso: NOW })
+    expect(s.dispatch).toHaveBeenCalledOnce()
+    expect(s.careLedgerEntries['chat-1']).toBeUndefined()
+    expect(planLog(s)).toEqual([])
+  })
+
+  it('plan judge refused by the guard → no fallback action this round, nothing recorded; asks again next tick', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: true })
+    const planEval = vi.fn(async () => { throw refused() })
+    const ticks = buildTickBodies({ ...s.deps, planEval })
+    await ticks.pushTick({ nowIso: NOW })
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(startVisit).not.toHaveBeenCalled()
+    expect(s.careLedgerEntries['chat-1']).toBeUndefined()
+    expect(planLog(s)).toEqual([])
+    await ticks.pushTick({ nowIso: '2026-05-13T10:10:00.000Z' })
+    expect(planEval).toHaveBeenCalledTimes(2)   // 没有退避:这一拍不算问过
+  })
+
+  it('visit: the opening eval is refused → the visit is not counted (ledger restored), nothing recorded', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, careLedgerEntries: { 'chat-1': { noReplyCount: 1, lastVisitAtIso: '2026-05-10T10:00:00.000Z' } } })
+    cleanup.push(s.stateDir)
+    const startVisit = withVisit(s, { hasOpen: true, result: { ok: false, reason: 'network_unprotected' } })
+    await buildTickBodies({ ...s.deps, planEval: async () => '{"action":"visit","why":"去串门"}' }).pushTick({ nowIso: NOW })
+    expect(startVisit).toHaveBeenCalledOnce()
+    expect(s.careLedgerEntries['chat-1']).toEqual({ noReplyCount: 1, lastVisitAtIso: '2026-05-10T10:00:00.000Z' })
+    expect(planLog(s)).toEqual([])
+  })
+
+  it('introspect: the eval is refused → last_introspect_at does not move, no failure event; retried next tick', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    const cheapEval = vi.fn(async () => { throw refused() })
+    s.deps.boot = { ...s.deps.boot, registry: { getCheapEval: () => cheapEval, getStrongEval: () => null } as never }
+    const { introspectTick } = buildTickBodies(s.deps)
+    await introspectTick()
+    expect(cheapEval).toHaveBeenCalled()
+    expect(loadCompanionConfig(s.stateDir).last_introspect_at ?? null).toBeNull()
+    expect(s.logs.some(l => l.startsWith('INTROSPECT|') && l.includes('network unprotected'))).toBe(true)
   })
 })

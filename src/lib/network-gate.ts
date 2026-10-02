@@ -60,6 +60,12 @@ export class NetworkUnprotectedError extends Error {
   }
 }
 
+/**
+ * 后台任务里「这一次模型调用被守护拒了」的结构化原因(评审 #193 P2-3)。返回 `{ ok:false, reason }`
+ * 而不是抛错的那些路径(串门、社交判断……)用它,调用方据此**不记任何进度**,下一拍再来。
+ */
+export const NETWORK_UNPROTECTED_REASON = 'network_unprotected' as const
+
 export function isNetworkUnprotectedError(err: unknown): err is NetworkUnprotectedError {
   return err instanceof NetworkUnprotectedError
     || (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'network_unprotected')

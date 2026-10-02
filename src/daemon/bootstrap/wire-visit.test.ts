@@ -1,5 +1,6 @@
 import { composeCcInk } from '../../lib/cc-ink-compose'
 import { describe, it, expect, vi } from 'vitest'
+import { NetworkUnprotectedError } from '../../lib/network-gate'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -127,6 +128,14 @@ describe('串门:两只伙伴对着聊', () => {
     const r = await A.visit.startVisit('ch')
     expect(r.ok).toBe(false)
     expect((r as { reason: string }).reason).toContain('provider down')
+  })
+
+  // 评审 #193 P2-3:开场那句的模型调用被网络守护拒了 —— 结构化的原因,调用方据此不记这趟。
+  it('eval 被网络守护拒了 → ok:false reason=network_unprotected(不是 eval_failed),一封信都没发', async () => {
+    const A = side('阿一', async () => { throw new NetworkUnprotectedError({ safe: false, source: 'bx', detail: 'bx 未保护' }, 'Claude') })
+    const B = side('阿二', async () => 'x'); A.setPeer(B); B.setPeer(A)
+    expect(await A.visit.startVisit('ch')).toEqual({ ok: false, reason: 'network_unprotected' })
+    expect(A.letters).toEqual([])
   })
 
   it('provenChannels:只列 open 且收到过串门信的信道,带「第 N 度的朋友」label', async () => {

@@ -1,4 +1,5 @@
 import { composeCcInk } from '../../lib/cc-ink-compose'
+import { isNetworkUnprotectedError, NETWORK_UNPROTECTED_REASON } from '../../lib/network-gate'
 /**
  * wire-visit.ts — 「串门」的 daemon 接线。协议与 prompt 在 core/visit.ts。
  *
@@ -318,6 +319,8 @@ export function makeVisit(deps: VisitDeps): Visit {
     catch (err) {
       clear(s.id)
       if (err instanceof VisitAbort) return { ok: false, reason: err.reason }
+      // 评审 #193 P2-3:开场那句被网络守护拒了 —— 一个字没说,也没出门;调用方据此不记这趟。
+      if (isNetworkUnprotectedError(err)) return { ok: false, reason: NETWORK_UNPROTECTED_REASON }
       return { ok: false, reason: `eval_failed: ${err instanceof Error ? err.message : String(err)}` }
     }
     deps.log('VISIT', `visit=${s.id} 去了${s.peerLabel}家 turns=${s.transcript().length}`)
@@ -331,6 +334,7 @@ export function makeVisit(deps: VisitDeps): Visit {
     catch (err) {
       clear(s.id)
       if (err instanceof VisitAbort) return { ok: false, reason: err.reason }
+      if (isNetworkUnprotectedError(err)) return { ok: false, reason: NETWORK_UNPROTECTED_REASON }
       return { ok: false, reason: `eval_failed: ${err instanceof Error ? err.message : String(err)}` }
     }
     deps.log('VISIT', `visit=${s.id} 出门了 → ${channelId}`)

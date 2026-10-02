@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { readJsonFile } from '../lib/read-json-file'
+import { isNetworkUnprotectedError } from '../lib/network-gate'
 import { dirname, join } from 'node:path'
 import { buildRenderBrief, renderBriefToPrompt, parseArtImpulse, type ArtImpulse, type RenderBrief } from './art-impulse'
 import type { ArtworkRenderer, RenderedArtwork } from './artwork-renderer'
@@ -68,7 +69,7 @@ export interface AtelierRuntimeDeps {
 }
 
 export type AtelierRunResult =
-  | { status: 'skipped_off' | 'skipped_no_renderer' | 'skipped_cadence' | 'no_impulse' | 'invalid_impulse' | 'privacy_rejected' | 'render_failed' | 'save_failed' }
+  | { status: 'skipped_off' | 'skipped_no_renderer' | 'skipped_cadence' | 'skipped_network' | 'no_impulse' | 'invalid_impulse' | 'privacy_rejected' | 'render_failed' | 'save_failed' }
   | { status: 'created'; recordId: string; shared: boolean }
 
 const DEFAULT_EVALUATION_INTERVAL_MS = 24 * 3600_000
@@ -147,12 +148,22 @@ export async function runAtelierCycle(d: AtelierRuntimeDeps): Promise<AtelierRun
 
   // Stamp the opportunity before invoking a provider: a thrown planner must
   // not create a hot loop on every daemon restart.
+  const priorEvaluatedAt = cadence.lastEvaluatedAt
   cadence.lastEvaluatedAt = nowDate.toISOString()
   writeAtelierCadence(d.stateDir, cadence)
   let planned: ArtImpulse | unknown
   try {
     planned = await d.planner.plan(d.context)
   } catch (error) {
+    // 评审 #193 P2-3:构思被网络守护拒了 = 没评估过(一个请求都没发),把这次机会还回去。
+    if (isNetworkUnprotectedError(error)) {
+      const restored = readAtelierCadence(d.stateDir)
+      if (priorEvaluatedAt === undefined) delete restored.lastEvaluatedAt
+      else restored.lastEvaluatedAt = priorEvaluatedAt
+      writeAtelierCadence(d.stateDir, restored)
+      log('ATELIER', 'skipped — network unprotected; cadence unchanged, next tick retries')
+      return { status: 'skipped_network' }
+    }
     log('ATELIER', `planner failed: ${String(error)}`)
     return { status: 'invalid_impulse' }
   }

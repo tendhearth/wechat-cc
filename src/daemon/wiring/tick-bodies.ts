@@ -55,6 +55,7 @@ import {
 } from '../../core/companion-plan'
 import { readPlanLog, appendPlanLog } from '../companion/plan-memory'
 import { readJournalSeen } from '../../core/journal-seen'
+import { isNetworkUnprotectedError, NETWORK_UNPROTECTED_REASON } from '../../lib/network-gate'
 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
@@ -433,7 +434,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
    */
   async function dispatchToChat(
     chatId: string,
-    args: { claim: () => void; buildText: () => string },
+    args: { claim: () => (() => void) | void; buildText: () => string },
   ): Promise<boolean> {
     const gate = resolveDispatch(chatId)
     if (gate.blocked === 'wechat_degraded') {
@@ -477,13 +478,19 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       // reported pain and a missed nudge is low-stakes (the agent can
       // re-author it, or the gap/agenda gate will surface it again later).
       // See docs/superpowers/specs/2026-06-25-companion-push-at-most-once-design.md
-      args.claim()
+      const undo = args.claim()
       const tickText = args.buildText()
       try {
         for await (const ev of handle.dispatch(tickText)) {
           if (ev.kind === 'error') deps.log('SCHED', `companion tick dispatch error event: ${ev.code ? `${ev.code}: ` : ''}${ev.message}`)
         }
       } catch (err) {
+        // 评审 #193 P2-3:网络守护拒了这一轮 —— SessionManager 在碰 provider **之前**就拒,一个字都
+        // 没发出去。这不是「发了一半」,at-most-once 不适用:撤回登记,整拍算跳过,下一拍再来。
+        if (isNetworkUnprotectedError(err)) {
+          try { undo?.() } catch (e) { deps.log('SCHED', `undo claim failed: ${errMsg(e)}`) }
+          throw err
+        }
         deps.log('SCHED', `companion tick dispatch failed: ${errMsg(err)}`)
       }
     })
@@ -527,9 +534,15 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       }
       await dispatchToChat(chatId, {
         claim: () => {
+          const before = deps.careLedger.get(chatId)
           const updated = markResolved(agendaMd, item, today)
           if (updated !== agendaMd) agendaFs.write('agenda.md', updated)
           deps.careLedger.claim(chatId, nowIso)
+          // 撤回:只在 agenda.md 还是我们刚写的那样时放回原样(别盖掉别人的改动)。
+          return () => {
+            if (updated !== agendaMd && agendaFs.read('agenda.md') === updated) agendaFs.write('agenda.md', agendaMd)
+            deps.careLedger.restore(chatId, before)
+          }
         },
         buildText: () => buildPushTickText({ nowIso, defaultChatId: chatId, intention: item.body }),
       })
@@ -555,7 +568,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       try { releaseHunt = (deps.boot as { holdBusy?: (l: string) => () => void }).holdBusy?.('hunt') } catch { releaseHunt = undefined }
       try {
         return await dispatchToChat(chatId, {
-          claim: () => { deps.careLedger.claimHunt(chatId, nowIso) },
+          claim: () => { const before = deps.careLedger.get(chatId); deps.careLedger.claimHunt(chatId, nowIso); return () => deps.careLedger.restore(chatId, before) },
           buildText: () => buildHuntText({ nowIso }),
         })
       } finally {
@@ -576,14 +589,20 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     // 不走 dispatchToChat:串门不是一次 agent turn(不带工具、不进会话),它
     // 有自己的 eval 链;这里只做登记 + 出门。`target` 是模型从
     // provenChannels 里挑的信道 id;没挑就还是 startVisit() 自己挑。
-    async function runVisit(target?: string): Promise<boolean> {
+    async function runVisit(target?: string): Promise<boolean | 'refused'> {
       const visit = deps.boot.social?.penpal
       if (!visit) return false
       // 先登记再出门(at-most-once,同打猎):出门一半 daemon 重启,不该
       // 下一拍再出一次门 —— 两趟串门比一趟没出门的观感差得多。
       // 总有地方可去:没有真信道就去邻居家(core/neighbors.ts)。
+      const before = deps.careLedger.get(chatId)
       deps.careLedger.claimVisit(chatId, nowIso)
       const r = target === undefined ? await visit.startVisit() : await visit.startVisit(target)
+      // 评审 #193 P2-3:开场那句的模型调用被网络守护拒了 —— 没出门,这趟不算,台账放回去。
+      if (!r.ok && r.reason === NETWORK_UNPROTECTED_REASON) {
+        deps.careLedger.restore(chatId, before)
+        return 'refused'
+      }
       deps.log('VISIT', r.ok ? `tick: 出门了 visit=${r.id} → ${r.channel}` : `tick: 没出得了门 reason=${r.reason}`)
       return r.ok
     }
@@ -594,7 +613,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         ? Math.floor((Date.parse(nowIso) - Date.parse(lastInboundAtIso)) / 86_400_000)
         : 0
       return await dispatchToChat(chatId, {
-        claim: () => { deps.careLedger.claim(chatId, nowIso) },
+        claim: () => { const before = deps.careLedger.get(chatId); deps.careLedger.claim(chatId, nowIso); return () => deps.careLedger.restore(chatId, before) },
         buildText: () => buildGapCheckinText({ nowIso, chatId, daysSinceContact }),
       })
     }
@@ -627,7 +646,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
 
     const today10 = formatLocal(nowIso).slice(0, 10)
     const nowMs = Date.parse(nowIso)
-    const run = async (action: PlanAction, target?: string): Promise<boolean> => {
+    const run = async (action: PlanAction, target?: string): Promise<boolean | 'refused'> => {
       if (action === 'hunt') return await runHunt()
       else if (action === 'visit') return await runVisit(target)
       else if (action === 'gap') return await runGap()
@@ -646,8 +665,13 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
      * 会话又忙起来了)导致送时被跳过 → 标 `(skipped) `,不算「做过了」。
      */
     const runAndRecord = async (action: PlanAction, why: string, source: PlanLogEntry['source'], target?: string) => {
-      let dispatched: boolean
-      try { dispatched = await run(action, target) } catch (err) { record(action, `(failed) ${why}`, source); throw err }
+      let dispatched: boolean | 'refused'
+      try { dispatched = await run(action, target) } catch (err) {
+        // 评审 #193 P2-3:网络守护拒了那一次模型调用 —— 什么都没做,不进台账,下一拍再来。
+        if (isNetworkUnprotectedError(err)) dispatched = 'refused'
+        else { record(action, `(failed) ${why}`, source); throw err }
+      }
+      if (dispatched === 'refused') { deps.log('PLAN', `skip chat=${chatId} action=${action}: network unprotected — nothing sent, not recorded; next tick retries`); return }
       record(action, dispatched ? why : `(skipped) ${why}`, source)
     }
     const fallback = async (reason: string) => {
@@ -679,6 +703,12 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('timeout')), PLAN_EVAL_TIMEOUT_MS) }),
       ])
     } catch (err) {
+      // 评审 #193 P2-3:判断这一步被网络守护拒了 = 这一拍没判断过。不按老顺序硬做(那等于没问
+      // 就替它做了决定),不进 plan-log(也就不退避),下一拍再问。
+      if (isNetworkUnprotectedError(err)) {
+        deps.log('PLAN', `skip chat=${chatId}: plan judge needs a protected provider and the network is unprotected — nothing done; next tick retries`)
+        return
+      }
       await fallback(err instanceof Error && err.message === 'timeout' ? 'timeout' : 'error')
       return
     } finally {
@@ -754,7 +784,8 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       try {
         await pushTickForChat(chatId, { defaultChatId: cfg.default_chat_id ?? undefined, nowIso, today, messagesStore })
       } catch (err) {
-        deps.log('SCHED', `companion tick failed for chat=${chatId}: ${errMsg(err)}`)
+        if (isNetworkUnprotectedError(err)) deps.log('SCHED', `companion tick skipped for chat=${chatId}: network unprotected — nothing sent, nothing recorded; next tick retries`)
+        else deps.log('SCHED', `companion tick failed for chat=${chatId}: ${errMsg(err)}`)
       }
     }
 
@@ -793,6 +824,8 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       }, state, nowMs)
       if (!due) continue
       // 先记水位再讲:讲到一半 daemon 重启,不该下一拍再讲一遍。
+      const priorMark = state.narrated[chatId]
+      const priorVisits = state.visits
       state.narrated[chatId] = latestInboundTs
       state.visits = { ...(state.visits ?? {}), [chatId]: ((state.visits ?? {})[chatId] ?? 0) + 1 }
       changed = true
@@ -800,13 +833,25 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       if (!evalText) continue
       const name = guestLabel(deps.boot.conversationStore?.getIdentity(chatId)?.last_user_name, chatId)
       const cfgAgent = loadAgentConfig(deps.stateDir)
-      const text = (await evalText(buildGuestVisitNarrationPrompt({
-        myName: cfgAgent.bot_name?.trim() || '我',
-        persona: null, ownerOverview: null,
-        disclosurePolicy: cfgAgent.social_disclosure_policy ?? '别转述朋友的私事。',
-        guestName: name,
-        lines: due.map(m => ({ who: m.direction === 'in' ? 'guest' as const : 'me' as const, text: m.text })),
-      }))).trim().replace(/^[「『"“]+|[」』"”]+$/g, '')
+      let raw: string
+      try {
+        raw = await evalText(buildGuestVisitNarrationPrompt({
+          myName: cfgAgent.bot_name?.trim() || '我',
+          persona: null, ownerOverview: null,
+          disclosurePolicy: cfgAgent.social_disclosure_policy ?? '别转述朋友的私事。',
+          guestName: name,
+          lines: due.map(m => ({ who: m.direction === 'in' ? 'guest' as const : 'me' as const, text: m.text })),
+        }))
+      } catch (err) {
+        if (!isNetworkUnprotectedError(err)) throw err
+        // 评审 #193 P2-3:讲述被网络守护拒了 —— 没讲过,这一位的水位放回去;这一拍到此为止
+        // (前面已经讲完的几位照常落盘),下一拍再讲。
+        if (priorMark === undefined) delete state.narrated[chatId]; else state.narrated[chatId] = priorMark
+        state.visits = priorVisits
+        deps.log('VISIT', `guest narration skipped: chat=${chatId} — network unprotected; watermark unchanged, next tick retries`)
+        break
+      }
+      const text = raw.trim().replace(/^[「『"“]+|[」』"”]+$/g, '')
       if (!text) continue
       await deps.ilink.sendMessage(ownerChat, `🛎 ${text}`)
       try { deps.huntStore?.recordVisit?.({ chatId: ownerChat, text, peerLabel: `${name}来过`, nowIso }) }
@@ -870,7 +915,10 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       await runIntrospectTick({ events, observations, agent, chatId, log: deps.log })
       await saveCompanionConfig(deps.stateDir, { ...loadCompanionConfig(deps.stateDir), last_introspect_at: new Date().toISOString() })
     } catch (err) {
-      deps.log('INTROSPECT', `tick failed: ${err instanceof Error ? err.message : err}`)
+      // 评审 #193 P2-3:反思那一次模型调用被网络守护拒了 —— 没反思过,last_introspect_at 不能前移
+      // (否则开机补跑会以为今天跑过了)。
+      if (isNetworkUnprotectedError(err)) deps.log('INTROSPECT', 'skipped — network unprotected; last_introspect_at unchanged, next tick retries')
+      else deps.log('INTROSPECT', `tick failed: ${err instanceof Error ? err.message : err}`)
     }
 
     // Threads extraction — independent eval, same cheap model, same tick.
