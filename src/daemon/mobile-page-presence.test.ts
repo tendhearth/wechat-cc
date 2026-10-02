@@ -17,7 +17,11 @@ describe('production phone presence',()=>{
     const html=phoneHtml('test',null)
     expect(html).toContain('id="p-memory"')
     expect(html.indexOf('id="feed"')).toBeGreaterThan(html.indexOf('id="p-memory"'))
-    expect(html).toContain('data-p="memory"')
+    expect(html).toContain('id="memory-open"')
+    const nav=html.match(/<nav>[\s\S]*?<\/nav>/)?.[0]??''
+    expect(nav.match(/data-p=/g)).toHaveLength(2)
+    expect(nav).toContain('data-p="today"');expect(nav).toContain('data-p="matters"')
+    expect(nav).not.toContain('data-p="memory"')
     expect(html).toContain('id="home-focus"')
     expect(html).toContain('id="home-result"')
     for(const id of ['todos','portrait','stickers'])expect(html).toContain(`id="${id}"`)
