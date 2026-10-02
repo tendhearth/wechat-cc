@@ -1,0 +1,50 @@
+[
+  {
+    "id": "gemini.bad_key.cheap_eval",
+    "provider": "gemini",
+    "truth": "auth",
+    "source": "induced",
+    "path": "cheap_eval",
+    "channel": "thrown",
+    "errorCode": null,
+    "status": 400,
+    "message": "{\"error\":{\"code\":400,\"message\":\"API key not valid. Please pass a valid API key.\",\"status\":\"INVALID_ARGUMENT\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.ErrorInfo\",\"reason\":\"API_KEY_INVALID\",\"domain\":\"googleapis.com\",\"metadata\":{\"service\":\"generativelanguage.googleapis.com\"}}]}}",
+    "note": "Google 对无效 key 回 **400** 不是 401;ApiError.status=400。",
+    "current": {
+      "claudeSentinel": false,
+      "assistantText": false,
+      "sdkError": false,
+      "authFailError": false,
+      "llmHealthAuth": false,
+      "registryAuthCode": false,
+      "healthKind": "unknown",
+      "providerFailure": "unknown",
+      "quota": null,
+      "quotaRefusalText": false,
+      "connectFailure": false
+    }
+  },
+  {
+    "id": "gemini.net_refused.cheap_eval",
+    "provider": "gemini",
+    "truth": "network",
+    "source": "induced",
+    "path": "cheap_eval",
+    "channel": "thrown",
+    "errorCode": null,
+    "message": "Unable to connect. Is the computer able to access the url?",
+    "current": {
+      "claudeSentinel": false,
+      "assistantText": false,
+      "sdkError": false,
+      "authFailError": false,
+      "llmHealthAuth": false,
+      "registryAuthCode": false,
+      "healthKind": "network",
+      "providerFailure": "transient",
+      "quota": null,
+      "quotaRefusalText": false,
+      "connectFailure": true
+    }
+  }
+]

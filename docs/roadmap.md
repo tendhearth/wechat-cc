@@ -107,7 +107,7 @@
 - ~~**自改的工作树回收缺一个显式入口** —— 现在只回收 `done`/`declined` 的运行,可 resume 的和被 kill 的永不回收(磁盘单调增长)。缺的是「这条我不接了」这个动作。~~ **2026-10-01 完成**:`wechat-cc self change --abandon <id>` 把一条记成 `abandoned`(第三种不可恢复的终局,`--resume` 拒绝)并当场删它的工作树,正在跑的那条拒绝(锁里新记了 runId);`--list` 每条标出在跑 / 被杀 / 可 --resume / 已收场 / 已作废和盘上的树路径。微信「自改」没加作废口(理由见 [maintainer/self-change.md](maintainer/self-change.md) 已知限制)。
 - ~~**设备 token 进 token-registry、http 默认 loopback**(梳理第 6 步)~~ **2026-09-29 完成(#149)**:链接 / 设备令牌进内部 API 同一个注册表(origin `link` / `device` + routeAllow `PHONE_ROUTES`),按台撤销,只允局域网的操作收成 `LAN_ONLY_OPS`,`serve()` 缺省 127.0.0.1。**没做的范围 B**:`/m/api/*` 并进内部 API dispatcher。现状见 [reference/internal-api-auth.md](reference/internal-api-auth.md)。
 - ~~**拆三个大文件**(梳理第 7 步)—— `core/workbench/service.ts`(1622 行闭包,按 20 份 `service-*.test.ts` 的边界抽)、`bootstrap/index.ts`(剩余 8 个关注点进 `wire-*.ts`)、`cli.ts`(按命令族下沉;`scripts/cli-ratchet.guard.test.ts` 先钉住不再增长)。~~ **2026-09-28 三件全部完成**:`cli.ts` 4332→157(#128)、`bootstrap/index.ts` 1321→460(#131)、`core/workbench/service.ts` 1965→179 行 / 内函数 68→3(PR #132–#141 + PR 10,十个域进 `service/<domain>.ts`,棘轮守卫 `scripts/workbench-service-ratchet.guard.test.ts` 只降不升;19 份旧测试一行没改)。
-- **错误通道结构化**(arch backlog #4)—— 要 owner 参与定两条判定红线。
+- **错误通道结构化**(arch backlog #4)—— 两条判定红线已定(claude 只在双哨兵上报登录过期;agy 歧义句按瞬时)。第 1 步「先采真实形状」2026-10-02 完成:[reference/provider-error-shapes.md](reference/provider-error-shapes.md)(56 条样本钉成 fixture);第 2 步「边界产码」提议见该文档 §5,claude `authentication_failed` 的文案要 owner 拍板。
 - ~~**纯 JS 的锚定文件访问**(评审 #3)—— 去 ffi 之后没有 `openat`,逐级 lstat 是多个时刻的观察;两条路(写清威胁模型 + 目录替换回归测试,或 macOS/Linux 恢复原生 openat),安全边界取舍等 owner。~~ **2026-10-01 owner 选 (a)**:保留纯 JS,威胁模型写进 [reference/workbench-file-guard.md](reference/workbench-file-guard.md)(防失误与项目内路径把戏,不防并发换目录的恶意本机进程),`anchored-fs.threat-model.test.ts` 钉住;顺手修了附件落盘从深层路径开文件、`mkdirAnchored` 逐级只 lstat 叶子两个洞。
 - **动态 provider 注册** —— 等 openai-compatible 这条路被外部集成者真用起来、暴露出覆盖不了的需求再做。
 - **Widget / Live Activities** —— 仍属于后续体验。早期「PWA 验证 + Apple $99 才开原生」路线已被 Expo 路线取代；原生通知实现已有单独批次，待真实投递验收，不能与 Widget 一起记为未开发。
@@ -124,6 +124,7 @@
 
 ## 修订记录
 
+- 2026-10-02:错误通道结构化(#4)第 1 步 —— 采集真机日志 + 沙箱诱发(临时 HOME、假 key、拒连 / 黑洞地址,主人凭据零接触;agy 无法隔离只采集),56 条真实失败样本进 `src/daemon/diagnostics/__fixtures__/provider-errors/`,测试钉住今天全部判定处的答案(不改判定)。最大的发现:claude 会话路径的 API 错误(401 / 拒连 / 超时)是正文 text 事件,会被 fallback 原样发给主人(真机 2026-07-28 发生过),而 SDK 本来给了 `error: authentication_failed` 等结构;cursor 的 `acp_auth_required` 没有下游认;codex 与 openai 兼容在断网时没有超时、只有沉默。详见 [reference/provider-error-shapes.md](reference/provider-error-shapes.md)。
 - 2026-10-02:1.7.2 发版(版本号 + `docs/releases/desktop-v1.7.2.md`);发版前在真 iPhone 上 `bun run e2e:device` 全绿(daemon 029582ee、staging 中继)。
 - 2026-10-01:手机 app 真机全自动验收 `bun run e2e:device`(XCUITest + devicectl,对着在跑的 daemon 与 staging 中继 v2):配对 / 同码重用被拒 / 跟 CC 说 / 真 APNs 横幅点开批准 / 撤销 / 收尾放回原配对,在 iPhone SE(iOS 27.0.1)上全过;顺手修了三处:推送 token 监听自激成每 0.6 秒一次登记的重试风暴、已配对的手机从系统链接进配对页点返回落到欢迎页、同一部手机两个设备位都登记推送 ⇒ 重复且解不开的通知(daemon 侧,待部署)。
 - 2026-10-01:中继 v2「按 IP 限连接尝试」改在 Worker 内做(Workers Rate Limiting 绑定 `IP_LIMIT`,60 次 / 10 秒,只管 `/v2/`):Free 计划的唯一一条 WAF 限速规则已给 dl.tendhearth.com;relay.md 补「首次部署前先开 Analytics Engine(否则 10089)」。
