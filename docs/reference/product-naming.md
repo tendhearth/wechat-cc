@@ -22,7 +22,7 @@ English: Your personal AI companion, at home on your own computer. Talk to CC, f
 
 沿用桌面正式 CC 资产与暖纸色体系。CC 的正式形象使用 C 形附肢和竖眼；不要用熊、其他动物或临时重画的角色代替正式资产。资产以桌面 `apps/desktop/src/assets/pet/cc-v1/canonical/` 及其验收记录为准。
 
-手机浅色界面与桌面统一。手机深色方案是基于同一色系的设计延伸，不代表桌面已提供深色主题。
+2026-10-01 的[两端设计统一](../superpowers/specs/2026-10-01-tendhearth-design-unify-design.md)取代早期浅深色预览：桌面与原生手机都使用同一张暖纸，不提供深色模式。Light / Dark CC 表示真实的在场 / 连接状态，不再跟随系统主题。颜色、字体和形状以 `packages/design-tokens/src/index.ts` 为准，本文不复制另一套色板。
 
 ## 保留兼容标识
 
