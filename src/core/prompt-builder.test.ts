@@ -192,6 +192,7 @@ describe('buildSystemPrompt', () => {
     expect(out).toContain('默认先调用 wxvault')
     expect(out).toContain('长期记忆只用于辅助理解，不能代替原始聊天记录')
     expect(out).toContain('snapshot_at')
+    expect(out).toContain('up_to_date')
     expect(out).toContain('不要凭空归因成「手机端没同步」')
   })
 
