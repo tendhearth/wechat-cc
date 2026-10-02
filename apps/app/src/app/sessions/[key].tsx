@@ -2,7 +2,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Modal, Pressable, ScrollView, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import type { NativeSessionPageT, SessionContinueT } from '../../backend/types'
+import { BackendError, type Backend, type NativeSessionPageT, type SessionContinueT } from '../../backend/types'
 import { t } from '../../i18n'
 import { useLang } from '../../i18n/useLang'
 import { useBackendCtx } from '../../state/BackendProvider'
@@ -22,6 +22,8 @@ import { mergeSessionMessages } from '../../view/sessions'
 
 type Msg = NativeSessionPageT['messages'][number]
 type Cont = SessionContinueT | 'loading' | 'failed'
+type ReadingContext = { key: string; window: 'recent' | 'start'; backend: Backend }
+const sameReading = (a: ReadingContext | null, b: ReadingContext) => !!a && a.key === b.key && a.window === b.window && a.backend === b.backend
 
 // 读一个电脑上的会话 + 在手机上接着做(spec 2026-10-01-tendhearth-continue-sessions §4.4)。
 // 默认近期20条;从头查看时按 nextCursor 追加。预览在焦点/重连时复核,继续提交仍需主人停止确认。
@@ -61,6 +63,7 @@ export default function SessionReader() {
   keyRef.current = key
   const contextRef = useRef({ key, window, backend })
   contextRef.current = { key, window, backend }
+  const loadedContext = useRef<ReadingContext | null>(null)
   const focused = useRef(false)
   const online = canSubmit(conn)
 
@@ -68,10 +71,12 @@ export default function SessionReader() {
     if (cursor && (busyRef.current || window !== 'start')) return
     const my = ++req.current
     busyRef.current = true; setBusy(true)
-    if (!cursor) { setState('loading'); setConfirmedWindow(undefined) }
+    if (!cursor && !sameReading(loadedContext.current, { key, window, backend })) { setState('loading'); setConfirmedWindow(undefined) }
     try {
       const p = await backend.session(key, cursor, window)
       if (my !== req.current || contextRef.current.key !== key || contextRef.current.window !== window || contextRef.current.backend !== backend) return
+      if (p.session.key !== key) throw new BackendError('unknown')
+      loadedContext.current = { key, window, backend }
       setTitle(p.session.title)
       setRowProvider(p.session.provider)
       setMsgs(m => mergeSessionMessages(cursor ? m : [], p.messages))
@@ -79,7 +84,7 @@ export default function SessionReader() {
       setConfirmedWindow(p.window)
       setState('ok'); setMoreFailed(false)
     } catch (e) {
-      if (my !== req.current) return
+      if (my !== req.current || !sameReading({ key, window, backend }, contextRef.current)) return
       const code = typeof e === 'object' && e !== null ? (e as { code?: unknown }).code : undefined
       if (cursor) setMoreFailed(true)
       else setState(code === 'not_found' ? 'missing' : 'slow')
@@ -95,17 +100,22 @@ export default function SessionReader() {
   useFocusEffect(useCallback(() => {
     focused.current = true
     busyRef.current = false; setBusy(false)
-    setTitle(''); setRowProvider(null); setMsgs([]); setNext(null); setConfirmedWindow(undefined); setMoreFailed(false); setState('loading')
     setCont('loading'); setSheet(false); setFailure(null)
-    void load(); void check()
+    // 阅读区属于这一次成功读取的上下文。普通回页只核验续聊,不替换多页/展开原文。
+    // 首次读取在 blur 中作废时还没有成功上下文,下一次 focus 会再读。
+    if (!sameReading(loadedContext.current, { key, window, backend })) {
+      setTitle(''); setRowProvider(null); setMsgs([]); setNext(null); setConfirmedWindow(undefined); setMoreFailed(false); setState('loading')
+      void load()
+    }
+    void check()
     return () => { focused.current = false; req.current++; tracker.cancel() }
-  }, [load, check, tracker]))
+  }, [key, window, backend, load, check, tracker]))
   const lastEpoch = useRef(conn.epoch)
   useEffect(() => {
     if (lastEpoch.current === conn.epoch) return
     lastEpoch.current = conn.epoch
-    if (focused.current) { void check(); void load() }
-  }, [conn.epoch, check, load])
+    if (focused.current) void check()
+  }, [conn.epoch, check])
 
   // 执行者的名字只来自电脑(预览 / 会话行),从不假定是 Claude(裁决 R5);都还没有 ⇒ null,失败句说「这个执行者」。
   const provider = typeof cont === 'object' ? cont.provider : rowProvider
@@ -164,6 +174,9 @@ export default function SessionReader() {
       <View style={{ paddingHorizontal: space.xl, paddingBottom: space.m, gap: space.s }}>
         {confirmedWindow === 'recent' ? <Txt testID="session-window" role="meta" tone="inkSoft">{t(lang, 'sessions.recent')}</Txt> : window === 'start' && state === 'ok' ? <Txt testID="session-window" role="meta" tone="inkSoft">{t(lang, 'sessions.start')}</Txt> : null}
         <Button kind="secondary" testID={window === 'recent' ? 'session-view-start' : 'session-view-recent'} label={t(lang, window === 'recent' ? 'sessions.viewStart' : 'sessions.viewRecent')} onPress={() => chooseWindow(window === 'recent' ? 'start' : 'recent')} />
+        {sameReading(loadedContext.current, { key, window, backend }) ? <Pressable testID="session-refresh" accessibilityRole="button" accessibilityLabel={t(lang, 'sessions.refreshRecords')} accessibilityState={{ disabled: !online || busy, busy }} disabled={!online || busy} onPress={() => void load()} style={{ alignSelf: 'flex-start', minHeight: 36, justifyContent: 'center' }}>
+          <Txt role="small" style={{ textDecorationLine: 'underline' }}>{t(lang, 'sessions.refreshRecords')}</Txt>
+        </Pressable> : null}
       </View>
       <ScrollView contentContainerStyle={{ paddingHorizontal: space.xl, paddingBottom: space.xl, gap: space.m }}>
         {state === 'loading' ? <Txt role="bubble" tone="inkSoft">{t(lang, 'sessions.loading')}</Txt> : null}

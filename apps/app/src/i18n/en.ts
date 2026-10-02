@@ -248,6 +248,7 @@ const en = {
   'sessions.activeObserved': 'The original tool reported it running',
   'sessions.activeCached': 'Last seen running',
   'sessions.refresh': 'Check again',
+  'sessions.refreshRecords': 'Refresh records',
   'sessions.recent': 'Recent messages',
   'sessions.start': 'From the beginning',
   'sessions.viewStart': 'Read from the beginning',

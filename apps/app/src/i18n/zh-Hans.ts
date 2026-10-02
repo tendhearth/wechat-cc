@@ -250,6 +250,7 @@ const zh: Record<keyof typeof en, string> = {
   'sessions.activeObserved': '原工具报告正在执行',
   'sessions.activeCached': '上次看到正在执行',
   'sessions.refresh': '重新检查',
+  'sessions.refreshRecords': '刷新记录',
   'sessions.recent': '最近的对话',
   'sessions.start': '从头的记录',
   'sessions.viewStart': '从头查看',

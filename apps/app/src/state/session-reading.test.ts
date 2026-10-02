@@ -204,7 +204,7 @@ describe('session reading with real LiveBackend and native UI', () => {
     expect(host.replace).toHaveBeenCalledWith('/matter/ab12cd34')
     expect(host.push).toHaveBeenCalledWith('/compose?matter=ab12cd34&focus=1')
   })
-  it('rechecks preview and read on focus and reconnect without starting a task', async () => {
+  it('rechecks only preview on focus and reconnect without replacing loaded records or starting a task', async () => {
     const h = harness(); h.setPreview(() => ok({ ok: true, ...ready('busy_folder') }))
     const ui = await mount(SessionReader)
     await focus(false)
@@ -214,8 +214,81 @@ describe('session reading with real LiveBackend and native UI', () => {
     const before = h.requests.length
     await act(() => { h.status('down'); h.status('ready') }); await flush()
     expect(h.requests.slice(before).map(request => request.path)).toContain('/m/api/session/continue?key=k1')
-    expect(h.requests.slice(before).map(request => request.path)).toContain('/m/api/session?key=k1&window=recent')
+    expect(h.requests.filter(request => request.path.startsWith('/m/api/session?'))).toHaveLength(1)
     expect(h.posts()).toHaveLength(0)
+  })
+  it('keeps from-head pages and expanded exact source across focus and epoch; explicit refresh replaces them', async () => {
+    const h = harness()
+    const raw = '\r\n**保留原文**\r\n'
+    let refreshed = false
+    h.setRead(url => {
+      const window = url.searchParams.get('window') ?? 'start'
+      if (refreshed) return ok({ ok: true, session: row(), messages: [{ id: 'new', role: 'assistant', text: '明确刷新的记录', truncated: false }], nextCursor: null, managed: false, window })
+      const chunk = url.searchParams.has('cursor') ? messages(19, 40) : window === 'recent' ? messages(20, 40) : [{ id: 'source', role: 'user', text: raw, truncated: false }, ...messages(1, 20)]
+      return ok({ ok: true, session: row(), messages: chunk, nextCursor: window === 'start' && !url.searchParams.has('cursor') ? 'next' : null, managed: false, window })
+    })
+    const ui = await mount(SessionReader)
+    await ui.click('session-view-start'); await ui.click('session-more'); await ui.click('message-source-toggle')
+    expect(ui.container.querySelectorAll('[data-testid^="session-message-"]')).toHaveLength(40)
+    expect(ui.byId('message-source-text').textContent).toBe(raw)
+    const readsBefore = h.requests.filter(request => request.path.startsWith('/m/api/session?')).length
+    const sourceElement = ui.byId('message-source-text')
+    refreshed = true
+    await focus(false); await focus(true)
+    await act(() => { h.status('down'); h.status('ready') }); await flush()
+    expect(h.requests.filter(request => request.path.startsWith('/m/api/session?'))).toHaveLength(readsBefore)
+    expect(ui.container.querySelectorAll('[data-testid^="session-message-"]')).toHaveLength(40)
+    expect(ui.byId('message-source-text')).toBe(sourceElement)
+    expect(ui.byId('message-source-text').textContent).toBe(raw)
+    expect(ui.container.textContent).not.toContain('明确刷新的记录')
+    await ui.click('session-refresh')
+    expect(h.requests.at(-1)!.path).toBe('/m/api/session?key=k1&window=start')
+    expect(ui.container.querySelectorAll('[data-testid^="session-message-"]')).toHaveLength(1)
+    expect(ui.container.textContent).toContain('明确刷新的记录')
+    expect(ui.byId('message-source-text')).toBeNull()
+  })
+  it('retries the first read after blur interrupted it; a late interrupted response cannot become the loaded context', async () => {
+    const h = harness(), first = gate<Reply>()
+    h.setRead(() => first.promise)
+    const ui = await mount(SessionReader)
+    expect(ui.byId('session-refresh')).toBeNull()
+    await focus(false)
+    h.setRead(() => ok({ ok: true, session: row(), messages: [{ id: 'fresh', role: 'assistant', text: '回页重新读取', truncated: false }], nextCursor: null, managed: false, window: 'recent' }))
+    await focus(true)
+    await act(() => first.resolve(ok({ ok: true, session: row(), messages: [{ id: 'late', role: 'assistant', text: '已打断的旧读取', truncated: false }], nextCursor: null, managed: false, window: 'recent' }))); await flush()
+    expect(h.requests.filter(request => request.path.startsWith('/m/api/session?'))).toHaveLength(2)
+    expect(ui.container.textContent).toContain('回页重新读取')
+    expect(ui.container.textContent).not.toContain('已打断的旧读取')
+    expect(ui.byId('session-refresh')).not.toBeNull()
+  })
+  it('does not hide a failed explicit refresh on return; keeps the previously read body available', async () => {
+    const h = harness(), ui = await mount(SessionReader)
+    h.setRead(() => new Error('daemon_offline'))
+    await ui.click('session-refresh')
+    expect(ui.byId('sessions-slow')).not.toBeNull()
+    expect(ui.container.textContent).toContain('第39条')
+    const reads = h.requests.filter(request => request.path.startsWith('/m/api/session?')).length
+    await focus(false); await focus(true)
+    await act(() => { h.status('down'); h.status('ready') }); await flush()
+    expect(ui.byId('sessions-slow')).not.toBeNull()
+    expect(ui.container.textContent).toContain('第39条')
+    expect(h.requests.filter(request => request.path.startsWith('/m/api/session?'))).toHaveLength(reads)
+  })
+  it('loads a changed backend context instead of keeping the old computer body, and refuses a mismatched key', async () => {
+    harness()
+    const ui = await mount(SessionReader)
+    expect(ui.container.textContent).toContain('第39条')
+    const other = harness()
+    other.setRead(() => ok({ ok: true, session: row(), messages: [{ id: 'other', role: 'assistant', text: '另一台电脑的记录', truncated: false }], nextCursor: null, managed: false, window: 'recent' }))
+    await act(() => ui.root.render(createElement(SessionReader))); await flush()
+    expect(other.requests.filter(request => request.path.startsWith('/m/api/session?'))).toHaveLength(1)
+    expect(ui.container.textContent).toContain('另一台电脑的记录')
+    expect(ui.container.textContent).not.toContain('第39条')
+    other.setRead(() => ok({ ok: true, session: row('unexpected'), messages: [{ id: 'wrong', role: 'assistant', text: '不属于这页的记录', truncated: false }], nextCursor: null, managed: false, window: 'recent' }))
+    await ui.click('session-refresh')
+    expect(ui.byId('sessions-slow')).not.toBeNull()
+    expect(ui.container.textContent).not.toContain('不属于这页的记录')
+    expect(ui.container.textContent).toContain('另一台电脑的记录')
   })
   it('puts a plain sessions entry on Together without adding a tab or requiring a pinned chat', async () => {
     const h = harness(), ui = await mount(Together)
