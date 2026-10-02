@@ -4,6 +4,8 @@
 
 「自己电脑上的个人 AI + 指挥编码 agent」的手机端。这一版有**演示模式**与**真连接**:没配对时是演示后端;扫码配对后换成 `src/backend/live.ts`,经中继连回家里的电脑。配对后收系统通知:iOS 通知服务扩展与安卓消息服务在本机解密(`native/`),由 `plugins/` 在 prebuild 时接进构建。
 
+对话页、事项对话和电脑会话记录的助手正文用原生 Markdown 阅读组件,首页最近一句只提取可读文字。用户消息与日志保留原文。只允许打开绝对 HTTP/S 链接;文件与应用链接只显示名称,图片只显示替代文字。长代码与表格在各自区域内横向滚动。中文继续使用已打包的 Noto Serif SC Regular,重点以强调墨色和轻底色呈现。
+
 - 设计:`docs/superpowers/specs/2026-09-30-tendhearth-app-v1-design.md`,设计稿 `docs/design/tendhearth-app-v1/`
 - 计划:`docs/superpowers/plans/2026-09-30-tendhearth-app-skeleton.md`(骨架 + 演示)、`docs/superpowers/plans/2026-09-30-tendhearth-app-live.md`(真连接与配对)、`docs/superpowers/plans/2026-09-30-tendhearth-app-push.md`(原生通知)、`docs/superpowers/plans/2026-10-01-tendhearth-app-chat.md`(跟 CC 说话 + 真历史 + CC 的连接 + 原生会话;spec `docs/superpowers/specs/2026-10-01-tendhearth-app-chat-design.md`)
 

@@ -1,4 +1,5 @@
 import type { ApprovalItemT, AgentsTopicT, ChatPageT, MatterT } from '../backend/types'
+import { markdownPlainText } from '@wechat-cc/markdown'
 import { statusOfMatter, type StatusKey } from './status'
 
 export function matterStatus(m: MatterT, agents: AgentsTopicT, pending: number): StatusKey {
@@ -32,7 +33,10 @@ export function latestCCLine(page: ChatPageT | undefined): { text: string; at: n
   if (!page) return null
   for (let i = page.messages.length - 1; i >= 0; i--) {
     const m = page.messages[i]!
-    if (m.role === 'cc' && m.text.trim() !== '') return { text: m.text.trim(), at: m.at }
+    if (m.role === 'cc') {
+      const text = markdownPlainText(m.text).trim()
+      if (text !== '') return { text, at: m.at }
+    }
   }
   return null
 }

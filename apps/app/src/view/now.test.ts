@@ -45,4 +45,10 @@ describe('latestCCLine', () => {
     expect(latestCCLine(page([msg('1', 'me', 'hi', 1)]))).toBeNull()
     expect(latestCCLine(page([msg('1', 'cc', '   ', 1)]))).toBeNull()
   })
+  it('首页预览保留文字,去掉 Markdown 语法与链接目标;用户消息不作为 CC 预览', () => {
+    const raw = '## 已整理\n\n**可以继续**，查看 [资料](/Users/owner/a.md:13)。'
+    const p = page([msg('1', 'cc', raw, 1), msg('2', 'me', '**保留原文**', 2)])
+    expect(latestCCLine(p)).toEqual({ text: '已整理\n\n可以继续，查看 资料。', at: 1 })
+    expect(p.messages[0].text).toBe(raw)
+  })
 })

@@ -10,6 +10,7 @@ import { ConnectionNotice } from '../../ui/ConnectionNotice'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { Dot } from '../../ui/Dot'
+import { MessageText } from '../../ui/Markdown'
 import { SayBar } from '../../ui/SayBar'
 import { Sheet } from '../../ui/Sheet'
 import { StatusPill } from '../../ui/StatusPill'
@@ -176,8 +177,8 @@ export default function Matter() {
             ) : (
               <View key={i} style={{ alignItems: e.kind === 'me' ? 'flex-end' : 'flex-start' }}>
                 {/* 卡里不再套底色块:「我」靠右、CC 靠左,只靠位置区分 */}
-                <View accessible accessibilityLabel={`${e.kind === 'me' ? t(lang, 'chat.me') : t(lang, 'cc.label')}: ${e.text}`} style={{ maxWidth: '88%' }}>
-                  <Txt selectable role="bubble" content="user" style={{ textAlign: e.kind === 'me' ? 'right' : 'left' }}>{e.text}</Txt>
+                <View accessible={e.kind === 'me'} accessibilityLabel={`${e.kind === 'me' ? t(lang, 'chat.me') : t(lang, 'cc.label')}: ${e.text}`} style={{ maxWidth: '88%' }}>
+                  <MessageText role={e.kind === 'me' ? 'user' : 'assistant'} text={e.text} typeRole="bubble" userAlign="right" />
                 </View>
               </View>
             ),
