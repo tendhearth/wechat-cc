@@ -17,8 +17,8 @@ async function mockNow(page: any) {
     { kind: 'user', text: '帮我看看下周出差', createdAt: Date.now() - 3_600_000 },
     { kind: 'text', text: '行程的几个备选方案整理好了，你看看？', createdAt: Date.now() - 1_800_000 } ] } }))
   await page.route('**/v1/workbench/attention**', (r: any) => r.fulfill({ json: { tasks: [
-    { id: 't1', title: '让作品集在手机上更好看', providerId: 'claude', pendingPermissionCount: 1, pendingQuestionCount: 0, attentionKey: '["p1"]' },
-    { id: 't2', title: '整理下周出差安排', providerId: 'claude', pendingPermissionCount: 0, pendingQuestionCount: 1, attentionKey: '["q1"]' } ] } }))
+    { id: 't1', title: '让作品集在手机上更好看', providerId: 'claude', pendingPermissionCount: 1, pendingQuestionCount: 0, attentionKey: '["p1"]', first: { kind: 'permission', text: 'Bash: npm install sharp' } },
+    { id: 't2', title: '整理下周出差安排', providerId: 'claude', pendingPermissionCount: 0, pendingQuestionCount: 1, attentionKey: '["q1"]', first: { kind: 'question', text: '可以安装图片处理组件吗?' } } ] } }))
 }
 
 for (const [label, size] of [['wide', { width: 1440, height: 900 }], ['narrow', { width: 760, height: 1100 }]] as const) {
