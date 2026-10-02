@@ -19,6 +19,7 @@ import { createProviderRegistry } from '../core/provider-registry'
 import { makeMatterStore, type MatterStore } from '../core/matters/store'
 import { makeMessagesStore, type MessagesStore } from '../lib/messages-store'
 import { makeMattersService } from '../core/matters/service'
+import { makeSayReceipts } from '../core/matters/say-receipts'
 import { makeWorkbenchStore } from '../core/workbench/store'
 import { makeWorkbenchService, type WorkbenchService } from '../core/workbench/service'
 import { encodeNativeHistoryKey, historyPreview, type NativeHistoryItem, type NativeHistoryReader } from '../core/workbench/native-history'
@@ -98,25 +99,27 @@ beforeEach(async () => {
     }
   } }, { displayName: 'Claude', canResume: () => true, workbench: MANAGED_NATIVE_CAPABILITIES })
   workbench = makeWorkbenchService({ store, registry, stateDir: root, managedWorkspaceRoot: managedRoot, ownerChatId: () => 'owner', defaultProvider: 'claude', matters, retainedIdleCloseMs: 0, handoffGraceMs: 0, nativeHistory: { claude: nativeReader } })
-  const service = makeMattersService({ store: matters, workbench })
   // 跟 CC 说:真 makePhoneChat + 真 messages store;converse 是可放行的闸门(生产里是 companionConverse)。
+  // 对聊天那件事的「说一句」(/m/api/matter/say)也走这同一个闸门,带真回执表(v70)。
   const phoneOwner = makePhoneOwner({ ownerChatId: () => 'owner', matters })
   let turn = 0
+  const converse = (text: string) => {
+    conversed.push(text)
+    return new Promise<{ reply: string }>((resolve, reject) => {
+      converseGates.push({ text, go: reply => {
+        if (!reply) { reject(new Error('released_by_teardown')); return }
+        const t0 = Date.now() + turn++ * 2
+        void (async () => {
+          await messages.append({ id: `app:phone:${t0}:in`, chatId: 'owner', ts: new Date(t0).toISOString(), direction: 'in', kind: 'text', text, source: 'phone' })
+          await messages.append({ id: `app:phone:${t0}:out`, chatId: 'owner', ts: new Date(t0 + 1).toISOString(), direction: 'out', kind: 'text', text: reply, source: 'phone' })
+          resolve({ reply })
+        })().catch(reject)
+      } })
+    })
+  }
+  const service = makeMattersService({ store: matters, workbench, chat: { ownerChatId: () => 'owner', say: text => converse(text) }, sayReceipts: makeSayReceipts(db) })
   const phoneChat = makePhoneChat({
-    converse: text => {
-      conversed.push(text)
-      return new Promise<{ reply: string }>((resolve, reject) => {
-        converseGates.push({ text, go: reply => {
-          if (!reply) { reject(new Error('released_by_teardown')); return }
-          const t0 = Date.now() + turn++ * 2
-          void (async () => {
-            await messages.append({ id: `app:phone:${t0}:in`, chatId: 'owner', ts: new Date(t0).toISOString(), direction: 'in', kind: 'text', text, source: 'phone' })
-            await messages.append({ id: `app:phone:${t0}:out`, chatId: 'owner', ts: new Date(t0 + 1).toISOString(), direction: 'out', kind: 'text', text: reply, source: 'phone' })
-            resolve({ reply })
-          })().catch(reject)
-        } })
-      })
-    },
+    converse,
     ownerMatterId: () => phoneOwner.ensure(),
     onSettled: () => { wiring?.events.poke() },
   })
@@ -420,6 +423,27 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
     await new Promise(r => setTimeout(r, 100))
     expect(gates.length).toBe(runs)
     await release(task)
+  })
+
+  it('对微信聊天那件事说一句「不确定」后同一 requestId 重发 ⇒ daemon 按回执去重:只说一遍、拿回原来的回复;同 id 异文 ⇒ busy', async () => {
+    const chat = matters.ensureChat('owner')
+    const b = live(deviceToken, 400)
+    const rid = randomUUID()
+    // 回合扣住不放:这次 say 超时(协议客户端同 rid 自动重发一次,也跟上同一轮)
+    await expect(b.say(chat.id, '只说一次', rid)).rejects.toMatchObject({ code: 'timeout' })
+    await expect.poll(() => conversed.length, P).toBe(1)
+    await releaseConverse('听到了')
+    await expect.poll(async () => (await messages.listRange('owner', { limit: 10 })).at(-1)?.text, P).toBe('听到了')
+    // 「不确定」之后用同一个 requestId 重发:成功、不起第二轮
+    await b.say(chat.id, '只说一次', rid)
+    await expect(b.say(chat.id, '换了一句', rid)).rejects.toMatchObject({ code: 'busy' })   // input_conflict
+    await new Promise(r => setTimeout(r, 100))
+    expect(conversed).toEqual(['只说一次'])
+    // 换一个 requestId 才是新的一句
+    const next = b.say(chat.id, '只说一次', randomUUID())
+    await releaseConverse('又听到了')
+    await next
+    expect(conversed).toEqual(['只说一次', '只说一次'])
   })
 
   it('前后台:setActive(false) 关连接;setActive(true) 新握手、订阅重挂', async () => {

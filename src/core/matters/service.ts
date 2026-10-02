@@ -5,6 +5,7 @@ import type {PendingUserInput} from '../workbench/user-input'
 import type {Artifact} from '../workbench/store'
 import {normalizeInputRequestId,type LiveInput} from '../workbench/live-inputs'
 import type {Attachment} from '../workbench/attachments'
+import {sayTextHash,type SayReceipts} from './say-receipts'
 
 /**
  * matters/service.ts — 各表面共用的"一件事"读写面:列表、详情、往一件事说话。
@@ -46,6 +47,8 @@ export interface MattersServiceDeps {
   }
   /** 对主人的 chat 说话(app 对话通道),surface 记这句是从哪个表面来的;recent 读该 chat 的消息流(微信 / 桌面 / 手机三处进同一条)。 */
   chat?:{ownerChatId():string|null;say(text:string,surface?:'desktop'|'phone'):Promise<{reply:string}>;recent?(chatId:string,limit:number):Promise<MatterEvent[]>}
+  /** 聊天那件事「说一句」的 requestId 回执(v70);没接 ⇒ 不去重(老行为)。 */
+  sayReceipts?:SayReceipts
   now?:()=>number
 }
 export interface MattersService {
@@ -61,6 +64,8 @@ export interface MattersService {
 const ID=/^[a-f0-9]{8}$/
 
 export function makeMattersService(deps:MattersServiceDeps):MattersService {
+  /** 同一 requestId 还在说的那一轮:重发直接跟上它,不起第二轮(回执表只管跨重启与已说完的)。 */
+  const chatInFlight=new Map<string,Promise<{kind:'chat';reply:string}>>()
   const require=(id:string):Matter=>{if(!ID.test(id))throw new Error('invalid_matter_id');const m=deps.store.get(id);if(!m)throw new Error('matter_not_found');return m}
   const taskDetail=(id:string)=>{
     if(require(id).kind!=='task')throw Error('matter_task_required')
@@ -156,9 +161,31 @@ export function makeMattersService(deps:MattersServiceDeps):MattersService {
         const owner=deps.chat.ownerChatId()
         const boundToOwner=!!owner&&deps.store.bindings(id).some(b=>b.surface==='wechat'&&b.surfaceKey===owner)
         if(!boundToOwner)throw new Error('matter_say_unsupported')
-        const {reply}=await deps.chat.say(text,surface)
-        deps.store.touch(id)
-        return {kind:'chat',reply}
+        const chat=deps.chat
+        const speak=async():Promise<{kind:'chat';reply:string}>=>{
+          const {reply}=await chat.say(text,surface)
+          deps.store.touch(id)
+          return {kind:'chat',reply}
+        }
+        // 与工作台输入回执同一规矩:带 requestId ⇒ 同 id 同文的重发拿原来的结果、不再说;同 id 异文 ⇒ input_conflict。
+        const receipts=deps.sayReceipts
+        if(!input||!receipts)return speak()
+        const requestId=normalizeInputRequestId(input.requestId)
+        const {fresh,receipt}=receipts.reserve({requestId,matterId:id,textHash:sayTextHash(text)})
+        if(!fresh){
+          if(receipt.matterId!==id||receipt.textHash!==sayTextHash(text))throw Error('input_conflict')
+          const flight=chatInFlight.get(requestId)
+          if(flight)return flight
+          // 说完了 ⇒ 原来的回复;还是 pending 却没人在说 ⇒ 那一轮被 daemon 重启打断了:这句已经收下、
+          // 可能已经进了 CC 的会话,不能再说一遍(同工作台被重启扣下的输入:回执在,重发不再派发)。
+          return {kind:'chat',reply:receipt.status==='replied'?receipt.reply??'':''}
+        }
+        const flight=speak().then(
+          result=>{chatInFlight.delete(requestId);try{receipts.settle(requestId,result.reply)}catch{/* 回执写不进不影响这次结果 */}return result},
+          error=>{chatInFlight.delete(requestId);try{receipts.drop(requestId)}catch{/* 同上 */}throw error},
+        )
+        chatInFlight.set(requestId,flight)
+        return flight
       }
       throw new Error('matter_say_unsupported')
     },
