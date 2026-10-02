@@ -57,6 +57,8 @@ export interface SchedulerDeps {
   fetchPublicIp?: typeof fetchPublicIp        // injectable for tests
   probeReachable?: typeof probeReachable      // injectable for tests
   onStateChange?: (prev: GuardState, next: GuardState) => void | Promise<void>
+  /** 每次真读到一次(bx 读一次 / probe 探一次)都调用,不管翻没翻转。停执行者的防抖靠它。 */
+  onReading?: (state: GuardState) => void | Promise<void>
   log?: (tag: string, msg: string) => void
   /** 返回 bx 可执行文件路径;null = 没装 → 走旧的 ipify+探测。缺省视为没装。 */
   findBx?: () => string | null
@@ -92,6 +94,8 @@ export function startGuardScheduler(deps: SchedulerDeps): SchedulerHandle {
     const flipped = state.reachable !== next.reachable || state.ip !== next.ip || state.source !== next.source
     const prev = state
     state = next
+    try { await deps.onReading?.(next) }
+    catch (err) { log('GUARD', `onReading threw: ${err instanceof Error ? err.message : String(err)}`) }
     if (flipped) {
       log('GUARD', `state[${next.source}] ip=${prevIp ?? '?'} → ${next.ip ?? '?'} safe=${prev.reachable} → ${next.reachable} (${next.detail})${next.lastError && next.source === 'probe' ? ` err=${next.lastError}` : ''}`)
       try { await deps.onStateChange?.(prev, next) }
@@ -141,7 +145,10 @@ export function startGuardScheduler(deps: SchedulerDeps): SchedulerHandle {
         // so we always know reachable status before any inbound arrives.
         // Leaving bx mode (bx uninstalled) also forces a fresh probe.
         const firstPoll = (state.lastChecked === null || state.source !== 'probe') && ipRes.ip !== null
-        if (!ipChanged && !firstPoll) return state
+        // 不通的时候每拍都再探一次(只在不通期间):这样恢复不必等换 IP,停执行者的
+        // 「连续两次不安全」防抖也才有第二次读数。
+        const stillDown = !state.reachable && state.source === 'probe' && ipRes.ip !== null
+        if (!ipChanged && !firstPoll && !stillDown) return state
         const probe = await fProbe(deps.probeUrl())
         return await commit({
           ip: ipRes.ip,

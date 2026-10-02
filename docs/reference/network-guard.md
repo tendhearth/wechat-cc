@@ -18,7 +18,7 @@
 |---|---|---|
 | 装了 bx(`/usr/local/bin/bx` 或 `/opt/homebrew/bin/bx`) | `bx status --json` 里 `protection_state == "protected"` **且** `tunnel_healthy == true` | 两项都满足才安全 |
 | 装了 bx,但读不出来 | 进程起不来 / 超时(6s,bx 自己的观测封顶是 5s)/ 非零退出(bx 没在跑时 `--json` 直接报错)/ 不是 JSON / 缺字段 / 类型不对 | **不安全**(fail closed) |
-| 没装 bx | 旧逻辑不变:每 30s 查公网 IP(ipify),IP 变了 HEAD 一次 google `generate_204` | 探得通才安全 |
+| 没装 bx | 旧逻辑:每 30s 查公网 IP(ipify),IP 变了 HEAD 一次 google `generate_204`;**不通期间每拍再探一次**(恢复不必等换 IP,也给下面停执行者的防抖第二次读数) | 探得通才安全 |
 | `guard.json` 里 `enabled: false` | 不判 | 放行(开关语义不变) |
 
 `protection_state` 的六个值是 bx 的对外契约(`internal/protectionstate`):`off / starting / recovering / protected / blocked / needs_attention`,只有 `protected` 算数。
@@ -37,7 +37,8 @@
 | `SessionManager.spawn` 与 `handle.dispatch`(`src/core/session-manager.ts`) | 绕开协调器的会话调用(陪伴推送 / 打猎 / 议程的 `dispatchToChat`) | 抛错,不起子进程 / 不发请求 |
 | delegate(`src/daemon/bootstrap/delegate.ts`) | `primary_tool` 的 peer、A2A 委派 —— 它们自建 provider、不进 registry | 同上,单独套 `withNetworkGate` |
 | 工作台 `execute()` / `submitInput()`(`src/core/workbench/service/*`)+ 工作台自己的 registry | claude / codex / cursor ACP / agy / openai API 执行者的起步、续接、补充 | 任务以 `network_unprotected` 失败,事件里一句人话;补充返回 503 `network_unprotected` |
-| 网络翻成不安全的那一刻(`lifecycle-deps.ts` 的 `onStateChange`) | **已经在跑**的执行者进程(它们自己会继续调模型,闸门拦不到) | 停掉在跑 / 排队的工作台任务(之后可以「继续」),关闭所有对话会话 |
+| **已经在跑**的工作台执行者(`lifecycle-deps.ts` 的 `onReading` + `guard/pause-policy.ts`) | 起来以后自己调模型的执行者进程,闸门拦不到 | **信号来自 bx:不停。** bx 是 fail-closed,隧道一断在跑的进程本来就出不去,不会漏;停掉不会更安全,bx 自动恢复那十来秒的波动反而会杀掉跑了很久的任务 —— 只拦新的启动 / 续接 / 补充。**信号来自老的 probe**(没装 bx,不保证 fail-closed):**连续两次**读到不安全才停在跑 / 排队的任务(每段不安全期只停一次,之后可「继续」) |
+| 网络翻成不安全的那一刻(`onStateChange`) | 对话会话 | 关闭所有对话会话(原有行为;下一条消息会续接,代价小) |
 | 工作台额度查询(`wire-workbench.ts`) | `api.anthropic.com/api/oauth/usage`、codex app-server 限额 —— 带账号凭据直连供应商 | 返回 null,不出门 |
 | `cli-reply-handler.ts` 的 `resume` | 微信「@码 文本」、手侧 A2A `/a2a/cli/reply` 起的 `claude -p --resume` / `codex exec resume` | 不起 CLI,回「没跑起来(网络未受保护…)」 |
 | 语音 `gateVoice`(`src/daemon/ilink/voice.ts`) | TTS(自建网关 / 通义 dashscope)、STT、两个配置探测 | 不出门;`replyVoice` 返回 `ok:false` 带统一文案 |
@@ -48,7 +49,7 @@
 - **本地推理:** 嵌入(transformers.js / python embed-runner,本机算,不出门)、atelier 本地 sd-cli 渲染。首次下载权重(HuggingFace)不带模型账号,不算。
 - **非模型流量:** 微信 ilink、中继、A2A、邮箱轮询、ipify / google 探测本身、R2 更新源。这些不是模型供应商账号;微信走 bx 的直连规则本来就是设计内的。
 - **CLI 一次性命令:** `wechat-cc memory …` / `wechat-cc sessions …` 在 CLI 进程里直接调 SDK —— 那是主人在终端前手动发起的,和他直接敲 `claude` 同一个性质。`wechat-cc guard status` 会照实告诉他此刻是否受保护。
-- **已经起来的会话进程中途:** 守护只能在出发前拦。翻到不安全时,对话会话被关闭、工作台执行者被停下;在这之前已经发出的那一个请求拦不回来 —— 这正是 bx fail-closed 兜底的那一段。
+- **已经起来的进程中途:** 守护只能在出发前拦。bx 来源下在跑的工作台执行者不停 —— 它们的流量由 bx 的 fail-closed 兜住;probe 来源下连续两次不安全才停。对话会话翻到不安全时照旧关闭。已经发出的那一个请求拦不回来。
 
 ## 看得见
 

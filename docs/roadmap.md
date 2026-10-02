@@ -128,7 +128,7 @@
 
 ## 修订记录
 
-- 2026-10-02:网络守护改为 bx 优先并覆盖所有模型入口(主人拍板:直连供应商可能封号)。装了 bx 以 `bx status --json` 的 `protection_state=protected` 且 `tunnel_healthy` 为准,读不出即不安全;没装保持 ipify+探测。拦截点:协调器每轮、provider registry(spawn/cheapEval/strongEval/modelCatalog)、SessionManager、delegate、工作台起步/补充/额度查询、终端会话 resume、语音;翻到不安全时停工作台执行者;后台 tick 与每晚记忆安静跳过。`/v1/health.guard` + 桌面此刻页一行。见 `reference/network-guard.md`。
+- 2026-10-02:网络守护改为 bx 优先并覆盖所有模型入口(主人拍板:直连供应商可能封号)。装了 bx 以 `bx status --json` 的 `protection_state=protected` 且 `tunnel_healthy` 为准,读不出即不安全;没装保持 ipify+探测。拦截点:协调器每轮、provider registry(spawn/cheapEval/strongEval/modelCatalog)、SessionManager、delegate、工作台起步/补充/额度查询、终端会话 resume、语音;已在跑的工作台执行者:bx 来源不停(fail-closed),probe 来源连续两次不安全才停;后台 tick 与每晚记忆安静跳过。`/v1/health.guard` + 桌面此刻页一行。见 `reference/network-guard.md`。
 - 2026-10-02:现状改 1.7.2;主线补 staging 中继 + `e2e:device` 全绿;手机真机账按自动化覆盖重排;iCloud 同步(不同步)、e2e 口径、错误通道第 1 步入账。
 - 2026-10-02:1.7.2 发版(版本号 + `docs/releases/desktop-v1.7.2.md`);发版前在真 iPhone 上 `bun run e2e:device` 全绿(daemon 029582ee、staging 中继)。
 - 2026-10-01:手机 app 真机全自动验收 `bun run e2e:device`(XCUITest + devicectl,对着在跑的 daemon 与 staging 中继 v2):配对 / 同码重用被拒 / 跟 CC 说 / 真 APNs 横幅点开批准 / 撤销 / 收尾放回原配对,在 iPhone SE(iOS 27.0.1)上全过;顺手修了三处:推送 token 监听自激成每 0.6 秒一次登记的重试风暴、已配对的手机从系统链接进配对页点返回落到欢迎页、同一部手机两个设备位都登记推送 ⇒ 重复且解不开的通知(daemon 侧,待部署)。

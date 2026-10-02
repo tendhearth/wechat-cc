@@ -14,6 +14,7 @@ import type { StartupSweepDeps } from '../startup-sweeps'
 import { loadCompanionConfig } from '../companion/config'
 import { loadGuardConfig } from '../guard/store'
 import { findBx } from '../guard/bx'
+import { makeExecutorPausePolicy } from '../guard/pause-policy'
 import { unprotectedMessage } from '../../lib/network-gate'
 import { parseUpdates } from '../poll-loop'
 import { writeHeartbeat, HEARTBEAT_FILE } from '../single-instance'
@@ -54,6 +55,7 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
 } {
   const { stateDir, db, ilink, accounts, boot, dangerously, log } = opts
   // 后台 tick 的网络闸门(2026-10-02):不安全就安静跳过一拍(同一段不安全期只记一行日志),不重试。
+  const pausePolicy = makeExecutorPausePolicy()
   const gated = (name: string, fn: () => Promise<void>) => opts.guardRuntime ? opts.guardRuntime.skipWhenUnsafe(name, fn) : fn
 
   // Heartbeat store — single instance shared for the lifetime of the daemon.
@@ -101,13 +103,17 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
       // 装了 bx 就以 bx 为准(2026-10-02);没装走旧的 ipify+探测。
       findBx: () => findBx(),
       log,
+      // 已经在跑的工作台执行者:bx 来源永远不停(fail-closed,出不去也就漏不了);
+      // 老的 probe 来源连续两次不安全才停(pause-policy.ts)。新的启动 / 续接 / 补充一律由闸门拦。
+      onReading: (s) => {
+        if (!pausePolicy.observe(s)) return
+        try {
+          const n = opts.workbench?.pauseForNetwork(`${unprotectedMessage(s)}已停止本轮,恢复后可以继续。`) ?? 0
+          log('GUARD', `network unprotected [probe, 2 reads] — paused ${n} workbench run(s)`)
+        } catch (err) { log('GUARD', `workbench pause failed: ${err instanceof Error ? err.message : String(err)}`) }
+      },
       onStateChange: async (prev, next) => {
         if (prev.reachable && !next.reachable) {
-          // 已经起来的工作台执行者进程自己会继续调模型,闸门拦不到 —— 停下(之后照常可「继续」)。
-          try {
-            const n = opts.workbench?.pauseForNetwork(`${unprotectedMessage(next)}已停止本轮,恢复后可以继续。`) ?? 0
-            if (n > 0) log('GUARD', `network unprotected — paused ${n} workbench run(s)`)
-          } catch (err) { log('GUARD', `workbench pause failed: ${err instanceof Error ? err.message : String(err)}`) }
           log('GUARD', `network DOWN — shutting down all sessions (was ${prev.ip}, now ${next.ip})`)
           try {
             log('GUARD', 'sessionManager.shutdown start')
