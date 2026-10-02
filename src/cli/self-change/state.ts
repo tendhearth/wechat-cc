@@ -190,8 +190,9 @@ function defaultIsAlive(pid: number): boolean {
  * 刚建好的锁删了 —— 两边都以为自己拿到了。一次 writeFileSync 带 flag 是同一组
  * 系统标志,但建文件和写 pid 在同一个调用里,没有那个空窗。
  */
-function createLockExclusive(fs: StateFs, file: string, pid: number): void {
-  fs.writeFileSync(file, JSON.stringify({ pid, at: Date.now() }) + '\n', { flag: 'wx', mode: 0o600 })
+function createLockExclusive(fs: StateFs, file: string, pid: number, runId?: string): void {
+  const body = runId === undefined ? { pid, at: Date.now() } : { pid, at: Date.now(), runId }
+  fs.writeFileSync(file, JSON.stringify(body) + '\n', { flag: 'wx', mode: 0o600 })
 }
 
 /**
@@ -215,12 +216,17 @@ function createLockExclusive(fs: StateFs, file: string, pid: number): void {
  * 最后在 finally 里把标记撤掉。
  *
  * `isAlive` 注入是为了测试能演「死 pid」而不用真去 kill 谁。
+ *
+ * `runId`:持锁的这一个**在跑哪条**,一起写进锁文件。`--abandon <id>` 靠它分清
+ * 「持锁的就是这条」(绝不能作废)和「持锁的是别的一条」(可以 —— 这条要恢复
+ * 也得先拿锁,拿不到)。老格式的锁文件没有这一格,读出来是 null(见 readLockHolder)。
  */
 export function acquireLock(
   stateDir: string,
   pid: number,
   fs: StateFs = NODE_FS,
   isAlive: (pid: number) => boolean = defaultIsAlive,
+  runId?: string,
 ): { ok: true; release: () => void } | { ok: false; holder: number } {
   const dir = selfChangeDir(stateDir)
   const file = join(dir, LOCK_FILE)
@@ -235,7 +241,7 @@ export function acquireLock(
   }
 
   try {
-    createLockExclusive(fs, file, pid)
+    createLockExclusive(fs, file, pid, runId)
     return mine
   } catch { /* 已经有人建过了,下面看看是谁 */ }
 
@@ -266,7 +272,7 @@ export function acquireLock(
     // 锁文件可能已经被上一个抢占者删掉了(ENOENT)—— 那更省事,照样去建。
     try { fs.unlinkSync(file) } catch { /* 本来就没了 */ }
     try {
-      createLockExclusive(fs, file, pid)
+      createLockExclusive(fs, file, pid, runId)
       return mine
     } catch {
       return busy()
@@ -275,6 +281,29 @@ export function acquireLock(
     // 桥要还:不还的话下一次抢占会一直以为有人在抢。
     try { fs.unlinkSync(steal) } catch { /* 已经没了 */ }
   }
+}
+
+/**
+ * 现在**活着的**持锁者:pid 和它在跑哪条(老格式的锁没记 ⇒ `runId: null`)。
+ * 没有锁、读不懂、持有者已经死了 ⇒ null —— 和 acquireLock 的「死锁当没人持有」
+ * 是同一个口径。只读,不抢不删。
+ */
+export function readLockHolder(
+  stateDir: string,
+  fs: StateFs = NODE_FS,
+  isAlive: (pid: number) => boolean = defaultIsAlive,
+): { pid: number; runId: string | null } | null {
+  const file = join(selfChangeDir(stateDir), LOCK_FILE)
+  const pid = readHolder(fs, file)
+  if (pid === null || !isAlive(pid)) return null
+  let runId: string | null = null
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8') as string)
+    const r = typeof parsed === 'object' && parsed !== null ? (parsed as { runId?: unknown }).runId : undefined
+    // 和 load() 同一道门:这个 id 会被拿去比对、拼路径。
+    if (typeof r === 'string' && ID_RE.test(r)) runId = r
+  } catch { /* 读不懂就当没记 */ }
+  return { pid, runId }
 }
 
 function readHolder(fs: StateFs, file: string): number | null {
