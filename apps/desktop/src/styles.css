@@ -1947,6 +1947,7 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .cc-readable-markdown.wb-markdown h1 { font-size:1.2em; }
 .cc-readable-markdown.wb-markdown h2 { font-size:1.1em; }
 .cc-readable-markdown.wb-markdown strong { display:inline; color:inherit; font-size:inherit; font-weight:500; }
+.wb-markdown :is(strong,b) { background:var(--th-ground); -webkit-box-decoration-break:clone; box-decoration-break:clone; }
 .cc-readable-markdown.wb-markdown li+li { margin-top:.3em; }
 .cc-readable-markdown.wb-markdown>:first-child { margin-top:0; }
 .cc-readable-markdown.wb-markdown>:last-child { margin-bottom:0; }
