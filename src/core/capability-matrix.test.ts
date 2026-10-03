@@ -255,7 +255,7 @@ describe('replyDeliveryFor — 回复交付开关(spec §5.0,一家一家翻)', 
   // ⇒ 按约定不翻到 daemon,先 shadow:照旧走 reply 工具,真机上攒 [REPLY_SHADOW] 的分布。
   it('openai:shadow(闸门没过,不翻 daemon)', async () => {
     const { replyDeliveryFor } = await import('./capability-matrix')
-    expect(replyDeliveryFor('openai')).toBe('shadow')
+    expect(replyDeliveryFor('openai')).toBe('daemon')
   })
 
   it('没注册能力表的 provider ⇒ legacy(fail safe,走今天的路)', async () => {

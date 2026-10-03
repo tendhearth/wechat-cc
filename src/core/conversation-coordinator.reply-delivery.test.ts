@@ -104,12 +104,12 @@ describe('legacy(第 0 步的默认)', () => {
     expect(t.records[0]!.delivery).toBeUndefined()
   })
 
-  it('没注入 replyDeliveryModeFor ⇒ 读能力表(openai 现在是 shadow:照旧发,另记比对)', async () => {
+  it('没注入 replyDeliveryModeFor ⇒ 读能力表(openai 2026-10-03 起是 daemon:由交付端口送达,不走 sendAssistantText)', async () => {
     const p = fakePort()
     const t = setup([{ kind: 'text', text: '你好' }, RESULT], { port: p.port })
     await t.c.dispatch(inbound())
-    expect(p.begun.map(b => b.mode)).toEqual(['shadow'])
-    expect(t.sendAssistantText).toHaveBeenCalledWith('chat-1', '你好')
+    expect(p.begun.map(b => b.mode)).toEqual(['daemon'])
+    expect(t.sendAssistantText).not.toHaveBeenCalled()
   })
 })
 
