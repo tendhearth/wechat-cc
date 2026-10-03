@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { createInternalApi, type InternalApi, type InternalApiDeps } from '../internal-api'
 import { makeReplySinks } from '../reply-sinks'
 import { makeRoutes, makeMaybePrefix } from './routes'
-import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDenial } from './send-scope'
+import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDecision } from './send-scope'
 import { minTierFor } from './route-tiers'
 
 /**
@@ -14,42 +14,49 @@ import { minTierFor } from './route-tiers'
  * 身份给任意 chat 发消息。
  */
 
-describe('sendScopeDenial (pure rule)', () => {
+describe('sendScopeDecision (pure rule)', () => {
   const guest = { tier: 'guest' as const, origin: 'session' as const, chatId: 'g1', sessionKey: 'claude/a/g1' }
   const trusted = { tier: 'trusted' as const, origin: 'session' as const, chatId: 't1', sessionKey: 'claude/a/t1' }
   const admin = { tier: 'admin' as const, origin: 'session' as const, chatId: 'owner', sessionKey: 'claude/a/owner' }
+  const kind = (t: Parameters<typeof sendScopeDecision>[0], c: Parameters<typeof sendScopeDecision>[1]) => sendScopeDecision(t, c).kind
 
   it('session callers of every tier may target their own chat', () => {
-    expect(sendScopeDenial('g1', guest)).toBeNull()
-    expect(sendScopeDenial('t1', trusted)).toBeNull()
-    expect(sendScopeDenial('owner', admin)).toBeNull()
+    expect(kind('g1', guest)).toBe('allow')
+    expect(kind('t1', trusted)).toBe('allow')
+    expect(kind('owner', admin)).toBe('allow')
   })
-  it('session callers of every tier are denied another chat (admin too — no feature relies on it)', () => {
-    expect(sendScopeDenial('owner', guest)).toMatch(/chat_scope/)
-    expect(sendScopeDenial('owner', trusted)).toMatch(/chat_scope/)
-    expect(sendScopeDenial('g1', admin)).toMatch(/chat_scope/)
+  it('guest / trusted sessions are denied another chat, with an honest message', () => {
+    const d = sendScopeDecision('owner', guest)
+    expect(d).toEqual({ kind: 'deny', message: expect.stringMatching(/chat_scope.*nothing was sent/) })
+    expect(kind('owner', trusted)).toBe('deny')
   })
-  it('broadcast: only admin sessions', () => {
-    expect(sendScopeDenial(ALL_CHATS, guest)).toMatch(/chat_scope/)
-    expect(sendScopeDenial(ALL_CHATS, trusted)).toMatch(/chat_scope/)
-    expect(sendScopeDenial(ALL_CHATS, admin)).toBeNull()
+  it('admin session → another chat is allowed FOR NOW but flagged admin_cross (to be logged)', () => {
+    // 主人会让 CC「帮我告诉某个访客……」—— 模型发起的 reply 到别的 chat。等 admin 专用
+    // `message` 工具落地(回复交付 spec §5)再收紧;在那之前放行并记日志。
+    expect(kind('g1', admin)).toBe('admin_cross')
+    expect(kind('x', { tier: 'admin', origin: 'session' })).toBe('admin_cross')
   })
-  it('a session whose sessionKey yields no chat is denied (fail closed)', () => {
-    expect(sendScopeDenial('x', { tier: 'trusted', origin: 'session', chatId: '', sessionKey: 'odd' })).toMatch(/chat_scope/)
-    expect(sendScopeDenial('x', { tier: 'admin', origin: 'session' })).toMatch(/chat_scope/)
+  it('broadcast: only admin sessions (plain allow, not admin_cross)', () => {
+    expect(kind(ALL_CHATS, guest)).toBe('deny')
+    expect(kind(ALL_CHATS, trusted)).toBe('deny')
+    expect(kind(ALL_CHATS, admin)).toBe('allow')
+  })
+  it('a non-admin session whose sessionKey yields no chat is denied (fail closed)', () => {
+    expect(kind('x', { tier: 'trusted', origin: 'session', chatId: '', sessionKey: 'odd' })).toBe('deny')
+    expect(kind('x', { tier: 'guest', origin: 'session' })).toBe('deny')
   })
   it('agy-static (shared across every agy conversation, no own chat) keeps current behaviour', () => {
     const agy = { tier: 'trusted' as const, origin: 'session' as const, chatId: '', sessionKey: 'agy-static' }
-    expect(sendScopeDenial('anyone', agy)).toBeNull()
-    expect(sendScopeDenial(ALL_CHATS, agy)).toBeNull()
+    expect(kind('anyone', agy)).toBe('allow')
+    expect(kind(ALL_CHATS, agy)).toBe('allow')
   })
   it('file / operator tokens are unrestricted', () => {
-    expect(sendScopeDenial('anyone', { tier: 'trusted', origin: 'file' })).toBeNull()
-    expect(sendScopeDenial(ALL_CHATS, { tier: 'trusted', origin: 'file' })).toBeNull()
-    expect(sendScopeDenial('anyone', { tier: 'admin', origin: 'operator' })).toBeNull()
+    expect(kind('anyone', { tier: 'trusted', origin: 'file' })).toBe('allow')
+    expect(kind(ALL_CHATS, { tier: 'trusted', origin: 'file' })).toBe('allow')
+    expect(kind('anyone', { tier: 'admin', origin: 'operator' })).toBe('allow')
   })
   it('a request that names no chat is not gated', () => {
-    expect(sendScopeDenial(null, guest)).toBeNull()
+    expect(kind(null, guest)).toBe('allow')
   })
 })
 
@@ -217,7 +224,7 @@ describe('send routes over HTTP — chat scope', () => {
     expect(m.sendReply).toHaveBeenCalledWith('weird/chat', 'hi')
   })
 
-  it('broadcast: trusted session ⇒ 403; admin session ⇒ allowed (the one admin cross-chat feature)', async () => {
+  it('broadcast: trusted session ⇒ 403; admin session ⇒ allowed', async () => {
     const m = mocks()
     const { port } = await boot(m)
     const trusted = api!.mintSessionToken('trusted', 'claude/a/t1')
@@ -230,15 +237,22 @@ describe('send routes over HTTP — chat scope', () => {
     expect(m.broadcast).toHaveBeenCalledWith('hi all', undefined)
   })
 
-  it('admin session → another chat via reply ⇒ 403 (no existing feature sends cross-chat through reply)', async () => {
+  it('admin session → another chat is allowed for now, sends, and logs chat_scope_admin_cross', async () => {
     const m = mocks()
-    const { port } = await boot(m)
+    const log = vi.fn()
+    const { port } = await boot(m, { log })
     const admin = api!.mintSessionToken('admin', 'claude/a/owner')
-    const r = await post(port, admin, '/v1/wechat/reply', { chat_id: 'guest@im.wechat', text: 'hi' })
-    expect(r.status).toBe(403)
-    expect(r.body.error).toBe('chat_scope')
-    nothingSent(m)
+    const r = await post(port, admin, '/v1/wechat/reply', { chat_id: 'guest@im.wechat', text: '主人让我告诉你' })
+    expect(r.status).toBe(200)
+    expect(r.body).toEqual({ ok: true, msg_id: 'm1' })
+    expect(m.sendReply).toHaveBeenCalledWith('guest@im.wechat', '主人让我告诉你')
+    const ev = log.mock.calls.find(c => (c[2] as { event?: string } | undefined)?.event === 'chat_scope_admin_cross')
+    expect(ev).toBeTruthy()
+    expect(ev![2]).toMatchObject({ path: 'POST /v1/wechat/reply', callerChat: 'owner', target: 'guest@im.wechat' })
+    // own chat: no admin_cross line
+    log.mockClear()
     expect((await post(port, admin, '/v1/wechat/reply', { chat_id: 'owner', text: 'hi' })).status).toBe(200)
+    expect(log.mock.calls.some(c => (c[2] as { event?: string } | undefined)?.event === 'chat_scope_admin_cross')).toBe(false)
   })
 
   it('file token (daemon-wide, CLI) keeps current behaviour: any chat + broadcast', async () => {

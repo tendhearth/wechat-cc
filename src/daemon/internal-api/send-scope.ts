@@ -11,12 +11,14 @@
  *   - 只管 session 来源的令牌(每个 agent 会话一枚,sessionKey =
  *     `provider/alias/chatId`)。file / operator / device / link 令牌照旧 ——
  *     它们是 daemon 内部、CLI 与桌面宿主,不是某一个 chat 的会话。
- *   - 指名一个 chat 的路由:**任何档**(guest / trusted / admin)都只能发给
- *     自己会话的 chat。主人会话发往别的 chat,现有功能里没有一处靠它:提醒本来
- *     就按本 chat 限(routes-reminders.ts),社交 / A2A / 串门 / 主动关怀走自己的
- *     路由或 daemon 内部直接调 ilink,App 通道的 sink 开在主人自己的 chat 上。
+ *   - 指名一个 chat 的路由:guest / trusted 会话只能发给自己会话的 chat。
+ *   - admin(主人自己的)会话发往别的 chat **暂时放行**,但记一条
+ *     `chat_scope_admin_cross` 日志统计用量。原因:主人会直接让 CC「帮我告诉
+ *     某个访客……」,这是模型发起的 reply 到别的 chat,代码里没有对应调用点,
+ *     一拦就断。收紧时间点:回复交付重构做出 admin 专用的 `message` 工具之后,
+ *     reply 收紧到只能发本 chat(回复交付 spec §5)。
  *   - broadcast(发给所有人,天然跨 chat):只有 admin 会话可以;非 admin ⇒ 拒。
- *   - session 令牌读不出 chat(sessionKey 不是三段)⇒ 拒(fail closed),
+ *   - 非 admin 的 session 令牌读不出 chat(sessionKey 不是三段)⇒ 拒(fail closed),
  *     唯一例外是 `agy-static`,见下。
  *   - `agy-static`:agy 只有一份全局 MCP 配置,所有 agy 对话共用这一枚 trusted
  *     令牌,它没有「自己的 chat」。照旧放行 —— 它与 trusted 的 file 令牌同级
@@ -80,12 +82,21 @@ export const CHAT_SCOPE_MESSAGE =
 export const BROADCAST_SCOPE_MESSAGE =
   'chat_scope: broadcast is owner-only for agent sessions; nothing was sent'
 
-/** null = 放行;否则是给调用方的拒绝说明。 */
-export function sendScopeDenial(target: SendTarget, caller: SendScopeCaller): string | null {
-  if (target === null) return null
-  if (caller.origin !== 'session') return null
-  if (caller.sessionKey === AGY_STATIC_SESSION_KEY) return null
-  if (target === ALL_CHATS) return caller.tier === 'admin' ? null : BROADCAST_SCOPE_MESSAGE
-  if (!caller.chatId) return CHAT_SCOPE_MESSAGE
-  return caller.chatId === target ? null : CHAT_SCOPE_MESSAGE
+export type SendScopeDecision =
+  | { kind: 'allow' }
+  /** admin 会话发往别的 chat:暂时放行,调用方要记 `chat_scope_admin_cross`。 */
+  | { kind: 'admin_cross' }
+  | { kind: 'deny'; message: string }
+
+const ALLOW: SendScopeDecision = { kind: 'allow' }
+
+export function sendScopeDecision(target: SendTarget, caller: SendScopeCaller): SendScopeDecision {
+  if (target === null) return ALLOW
+  if (caller.origin !== 'session') return ALLOW
+  if (caller.sessionKey === AGY_STATIC_SESSION_KEY) return ALLOW
+  if (target === ALL_CHATS) return caller.tier === 'admin' ? ALLOW : { kind: 'deny', message: BROADCAST_SCOPE_MESSAGE }
+  if (caller.chatId && caller.chatId === target) return ALLOW
+  // 暂时放行(见模块注释):等 admin 专用 `message` 工具落地再收紧。
+  if (caller.tier === 'admin') return { kind: 'admin_cross' }
+  return { kind: 'deny', message: CHAT_SCOPE_MESSAGE }
 }

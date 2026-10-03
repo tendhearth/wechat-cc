@@ -39,8 +39,9 @@ daemon 的内部 HTTP API 只监听 127.0.0.1,地址与 token 文件路径写在
 
 规则:
 
-- `session` 令牌(sessionKey = `provider/alias/chatId`):**任何档**都只能以自己的 chat 为目标;broadcast 只许 `admin` 会话。sessionKey 读不出 chat ⇒ 拒(fail closed)。
-- 主人(admin)会话也不能 reply 到别的 chat:核过现有功能,没有一处靠它 —— 提醒本来就按本 chat 限(`routes-reminders.ts`,任何档);社交 / A2A / 串门 / 主动关怀走各自路由或 daemon 内部直接调 ilink;App 通道的 sink 开在主人自己的 chat 上、会话也是主人 chat 的会话;主动关怀的推送会话按目标 chat 起。主人会话唯一靠跨 chat 的是 broadcast。
+- `session` 令牌(sessionKey = `provider/alias/chatId`):`guest` / `trusted` 只能以自己的 chat 为目标;broadcast 只许 `admin` 会话。非 admin 的 session 读不出 chat ⇒ 拒(fail closed)。
+- **admin(主人自己的)会话跨 chat 暂时放行**,每次记一条 `chat_scope_admin_cross` 日志(本会话 chat、目标、路由),用来统计这个用法。原因:主人会直接让 CC「帮我告诉某个访客……」,这是模型发起的 reply 到别的 chat,代码里没有对应调用点,一拦就断。**收紧时间点**:回复交付重构做出 admin 专用的 `message` 工具之后,reply 收紧到只能发本 chat(回复交付 spec §5)。代码里的其它跨 chat 发送都不经过这些路由:提醒本来就按本 chat 限(`routes-reminders.ts`,任何档);社交 / A2A / 串门 / 主动关怀走各自路由或 daemon 内部直接调 ilink;App 通道的 sink 开在主人 chat 上、会话也是主人 chat 的;主动关怀推送会话按目标 chat 起。
+- 放行期间,admin 会话往主人 chat 开着的 App sink 里写也算「跨 chat」(同一个主人,记日志)。guest / trusted 写不进别的 chat 的 sink。
 - `file` / `operator` / `device` / `link` 令牌不受这道门影响(daemon 内部、CLI、桌面宿主;operator 本来就被 routeAllow 框住,够不着这些路由)。
 - 例外 `agy-static`:所有 agy 对话共用这一枚 trusted 令牌,没有「自己的 chat」,照旧放行。它与 trusted 的 file 令牌同级(同样落盘、同样跨对话),补偿控制仍是 `/agy` 拒 guest。**已知缺口**,等回复投递重设计。
 - 拒绝:403 `{ error: 'chat_scope', message }`,message 明说什么都没发出去;不回显被请求的 chat_id;本地日志记 `chat_scope_denied`(含本会话 chat 与目标)。
