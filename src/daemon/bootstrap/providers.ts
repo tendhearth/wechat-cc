@@ -31,6 +31,7 @@ import { agyVersionOk } from './agy-version-check'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
 import { makeCheapEvalPreflight } from './cheap-eval-preflight'
 import type { BootstrapDeps } from './types'
+import { AGY_STATIC_SESSION_KEY } from '../internal-api/token-registry'
 import codexCliPkg from '@openai/codex/package.json' with { type: 'json' }
 
 // Locate the wechat-cc source-mode install root (where package.json lives).
@@ -660,7 +661,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       if (wechatStdioForAgy && mintSessionToken) {
         setupAgyGlobalMcp({
           wechatSpec: wechatStdioForAgy,
-          mintToken: () => mintSessionToken('trusted', 'agy-static'),
+          mintToken: () => mintSessionToken('trusted', AGY_STATIC_SESSION_KEY),
           geminiConfigDir: agyGeminiConfigDir,
           log: deps.log,
         })

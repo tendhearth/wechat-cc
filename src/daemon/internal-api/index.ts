@@ -38,6 +38,7 @@ import {
 import { makeMaybePrefix, makeRoutes } from './routes'
 import { computePresence } from './routes-presence'
 import { REQUEST_SCHEMAS } from './schema'
+import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDenial } from './send-scope'
 
 export type {
   InternalApi,
@@ -268,6 +269,24 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       ? caller.sessionKey.split('/').slice(2).join('/')
       : undefined
     const callerInfo = { tier: caller.tier, origin: caller.origin, chatId: callerChatId }
+
+    // Chat-scope gate for the send family (send-scope.ts, 2026-10-03): a
+    // session may only send to / edit in its OWN chat (broadcast: admin
+    // sessions only). Runs after schema validation and BEFORE the handler,
+    // so a denied request never reaches the App reply sink, the outbound
+    // tap, or ilink. File / operator tokens are not affected.
+    const sendTarget = SEND_SCOPED_ROUTES[routeKey]
+    if (sendTarget) {
+      const target = sendTarget(body)
+      const denial = sendScopeDenial(target, { ...callerInfo, sessionKey: caller.sessionKey })
+      if (denial) {
+        deps.log?.('INTERNAL_API', `403 ${routeKey} caller=${caller.tier}/${caller.origin} chat_scope own=${callerChatId ?? '-'} target=${target === ALL_CHATS ? '*' : target}`, {
+          event: 'chat_scope_denied', path: routeKey, caller: caller.tier, origin: caller.origin,
+          callerChat: callerChatId ?? null, target: target === ALL_CHATS ? '*' : target,
+        })
+        return send(res, 403, { error: 'chat_scope', message: denial }, origin)
+      }
+    }
 
     // busy-registry hold (spec 2026-08-11 §2) — non-GET authenticated
     // request awaits the handler with a token held, released right after.

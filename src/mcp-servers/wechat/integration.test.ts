@@ -405,6 +405,49 @@ describe('wechat-mcp stdio integration', () => {
     expect(calls[4]).toEqual(['broadcast', 'hi all', undefined])
   })
 
+  it('session token: reply passes chat_id through UNCHANGED and the daemon\'s chat_scope 403 reaches the agent (no silent rewrite)', async () => {
+    // send-scope.ts (2026-10-03). The MCP side must not quietly substitute the
+    // session's own chat — that would hide a cross-chat attempt instead of
+    // refusing it. It forwards what the model asked for; the daemon decides.
+    const sent: Array<[string, string]> = []
+    const ilinkDep = {
+      sendReply: async (chatId: string, text: string) => { sent.push([chatId, text]); return { msgId: 'm-1' } },
+      sendFile: async () => {}, editMessage: async () => {},
+      broadcast: async () => ({ ok: 0, failed: 0 }),
+    }
+    const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
+    api = createInternalApi({ stateDir, daemonPid: 7777, memory, ilink: ilinkDep })
+    const { port, tokenFilePath } = await api.start()
+    const sessionToken = api.mintSessionToken('guest', 'claude/a/guest@im.wechat')
+    const baseEnv = { ...process.env as Record<string, string> }
+    delete baseEnv.WECHAT_SESSION_TIER
+    const transport = new StdioClientTransport({
+      command: RUNTIME, args: [WECHAT_MCP_MAIN],
+      env: {
+        ...baseEnv,
+        WECHAT_INTERNAL_API: `http://127.0.0.1:${port}`,
+        WECHAT_INTERNAL_TOKEN_FILE: tokenFilePath,
+        WECHAT_SESSION_TIER: 'guest',
+        WECHAT_SESSION_TOKEN: sessionToken,
+      },
+      stderr: 'pipe',
+    })
+    const c = new Client({ name: 'integration-scope', version: '0.0.1' }, { capabilities: {} })
+    await c.connect(transport)
+    client = c
+
+    const foreign = await c.callTool({ name: 'reply', arguments: { chat_id: 'owner@im.wechat', text: 'injected' } })
+    const foreignText = ((foreign.content as Array<{ text?: string }>)[0]?.text)!
+    expect(foreignText).toContain('403')
+    expect(foreignText).toContain('chat_scope')
+    expect(foreignText).toContain('nothing was sent')
+    expect(sent).toEqual([])
+
+    const own = await c.callTool({ name: 'reply', arguments: { chat_id: 'guest@im.wechat', text: 'hi' } })
+    expect(JSON.parse(((own.content as Array<{ text?: string }>)[0]?.text)!)).toEqual({ ok: true, msg_id: 'm-1' })
+    expect(sent).toEqual([['guest@im.wechat', 'hi']])
+  })
+
   it('reply_voice with text > 500 chars surfaces ok:false reason without crossing ilink (legacy cap)', async () => {
     const memory = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
     const replyVoiceCalls: number[] = []

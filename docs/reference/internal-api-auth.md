@@ -26,6 +26,29 @@ daemon 的内部 HTTP API 只监听 127.0.0.1,地址与 token 文件路径写在
 | `link` | 微信里要来的设置链接(`/set?t=…`,`t` + 32 hex) | `admin` | **有**:`PHONE_ROUTES`(`src/daemon/phone-routes.ts`),只对手机面板生效 | 只在内存;10 分钟过期,同一时刻只一枚 |
 | `device` | 配对过的手机(`d` + 48 hex,加主屏后一直用) | `admin` | **有**:同上 | `settings-devices.json`(0600,≤ 20 台);永不过期,可按台撤销 |
 
+## 发送类路由的 chat 范围(2026-10-03)
+
+第三道门,只管**往某个 chat 发 / 改消息**的路由,只管 `session` 令牌。代码:`src/daemon/internal-api/send-scope.ts`(`SEND_SCOPED_ROUTES` + `sendScopeDenial`),在 dispatcher(`index.ts`)里 schema 校验之后、handler 之前执行 —— 被拒的请求碰不到 App 回复截流口(reply sink)、打猎旁听、分片和 ilink。
+
+| 路由 | 目标 |
+|---|---|
+| `wechat/reply`、`reply_voice`、`send_file`、`edit_message`、`send_sticker`、`search_online_sticker`、`send_online_sticker_candidate`、`sticker_feedback` | 请求体 `chat_id` |
+| `share/page` | 请求体 `chat_id`(决定「发 PDF 到微信」推给谁;不带就不设门) |
+| `conversation/set-mode` | 请求体 `chatId`(切那个 chat 的模式,并往那里发「已切换」) |
+| `wechat/broadcast` | 所有 chat |
+
+规则:
+
+- `session` 令牌(sessionKey = `provider/alias/chatId`):**任何档**都只能以自己的 chat 为目标;broadcast 只许 `admin` 会话。sessionKey 读不出 chat ⇒ 拒(fail closed)。
+- 主人(admin)会话也不能 reply 到别的 chat:核过现有功能,没有一处靠它 —— 提醒本来就按本 chat 限(`routes-reminders.ts`,任何档);社交 / A2A / 串门 / 主动关怀走各自路由或 daemon 内部直接调 ilink;App 通道的 sink 开在主人自己的 chat 上、会话也是主人 chat 的会话;主动关怀的推送会话按目标 chat 起。主人会话唯一靠跨 chat 的是 broadcast。
+- `file` / `operator` / `device` / `link` 令牌不受这道门影响(daemon 内部、CLI、桌面宿主;operator 本来就被 routeAllow 框住,够不着这些路由)。
+- 例外 `agy-static`:所有 agy 对话共用这一枚 trusted 令牌,没有「自己的 chat」,照旧放行。它与 trusted 的 file 令牌同级(同样落盘、同样跨对话),补偿控制仍是 `/agy` 拒 guest。**已知缺口**,等回复投递重设计。
+- 拒绝:403 `{ error: 'chat_scope', message }`,message 明说什么都没发出去;不回显被请求的 chat_id;本地日志记 `chat_scope_denied`(含本会话 chat 与目标)。
+- 诚实的边界:对 `trusted` 会话这只是纵深防御 —— trusted agent 有 shell,能读 file 令牌(trusted、不限 chat)。真正被这道门挡住的是 guest 会话(没有 shell、拿不到 file 令牌)。
+- wechat MCP 侧把模型给的 chat_id 原样转发,不替换成本会话的 chat(替换会把越界尝试藏起来);`integration.test.ts` 钉住了这一点。
+
+新加一条往某个 chat 发消息、guest / trusted 够得着的路由:登记进 `SEND_SCOPED_ROUTES`,或在 `send-scope.test.ts` 的豁免表里写明理由。
+
 ## 新加一条路由要登记几处
 
 - **桌面不调**:`routes-*.ts` 写 handler → `route-tiers.ts` 声明 tier →(若有请求体校验)`schema.ts`。
