@@ -169,6 +169,7 @@ describe('collectTurn', () => {
     const summary = await collectTurn(events())
     expect(summary).toEqual({
       assistantText: [], replyToolCalled: false, toolCalls: [], result: undefined, error: undefined, errorCode: undefined,
+      finalText: '', narration: [],
     })
   })
 
@@ -300,4 +301,24 @@ describe('collectTurn 丢掉空文本事件 —— 空的不是一条消息', ()
     })()
     expect((await collectTurn(stream)).assistantText).toEqual(['  缩进要留着\n'])
   })
+})
+
+describe('collectTurn 顺手取出「最后的话」(回复交付 §4.1)', () => {
+  it('以 tool_call 为界分段:最后一段非空文字是 finalText,之前的是 narration', async () => {
+    const s = await collectTurn(events(
+      { kind: 'text', text: '我查一下' },
+      { kind: 'tool_call', server: 'wechat', tool: 'list_projects' },
+      { kind: 'text', text: '你有两个项目' },
+      { kind: 'result', sessionId: 's', numTurns: 2, durationMs: 1 },
+    ))
+    expect(s.finalText).toBe('你有两个项目')
+    expect(s.narration).toEqual(['我查一下'])
+  })
+
+  it('看门狗超时的摘要也带上已有的分段(调用方决定交不交付)', async () => {
+    const { stream } = hangingEvents([{ kind: 'text', text: 'partial' }])
+    const s = await collectTurn(stream, { timeoutMs: 30 })
+    expect(s.errorCode).toBe('turn_timeout')
+    expect(s.finalText).toBe('partial')
+  }, 2000)
 })

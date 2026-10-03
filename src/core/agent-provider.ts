@@ -3,6 +3,7 @@ import type { PermissionMode } from './permission-mode'
 import type { ProviderId } from './conversation'
 import { isAuthFail } from './auth-fail'
 import type { CallTarget } from '../lib/call-classifier'
+import { makeTurnTextCollector } from './turn-reply'
 
 // Re-export so existing imports `import type { PermissionMode } from
 // './agent-provider'` keep working.
@@ -355,6 +356,12 @@ export interface ProviderCapabilities {
    *  这条说的是"provider 自带的工具(Cursor 自己的读写/执行)有没有一道按 tier 收紧的门"。
    *  缺省(未声明)= true:老 provider 的工具面要么走 daemon 的权限桥,要么由 SDK 的 sandbox 收着。 */
   guestSafe?: boolean
+  /**
+   * 回复交付开关(spec 2026-10-03-reply-delivery §5.0)。缺省 = 'legacy':走 reply 工具 + FALLBACK_REPLY。
+   * 'shadow':照旧,但每轮算一次新路会发什么,记 [REPLY_SHADOW];'daemon':最后的话就是回复。
+   * 读它用 capability-matrix 的 `replyDeliveryFor`。迁移按 openai → agy → Cursor → Codex → Claude 一家一家翻。
+   */
+  replyDelivery?: import('./turn-reply').ReplyDeliveryMode
 }
 
 export interface AgentProvider {
@@ -511,6 +518,14 @@ export interface TurnSummary {
    *  'auth_rejected' / 'network') — lets the coordinator branch on failure
    *  category without string-matching the message. */
   errorCode?: string
+  /**
+   * 「最后的话」(回复交付 spec §4.1,core/turn-reply.ts):以 tool_call 为界分段,最后一段非空文字。
+   * 只有 outcome === 'completed' 的轮才可以交付它;error 事件的文案从不进来。可选只是为了让手写的
+   * TurnSummary(测试、spawn 失败路径)不必补;collectTurn 总是填。
+   */
+  finalText?: string
+  /** 最后的话之前的各段文字(旁白)。 */
+  narration?: string[]
 }
 
 /** Sentinel error code stamped on a TurnSummary when the per-turn watchdog
@@ -549,8 +564,10 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
   let error: string | undefined
   let errorCode: string | undefined
   const toolCalls: string[] = []
+  const segments = makeTurnTextCollector()
 
   const apply = (ev: AgentEvent): void => {
+    segments.push(ev)
     if (ev.kind === 'text') {
       // **空的不是一条消息。** 这里是所有路径的共用收口:solo 会为每个
       // chunk 发一次(空的注定失败)、chatroom/parallel 会 join,而
@@ -576,7 +593,7 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
   const timeoutMs = opts?.timeoutMs
   if (!timeoutMs || timeoutMs <= 0) {
     for await (const ev of events) { observe(ev); apply(ev) }
-    return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode }
+    return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode, ...segments.parts() }
   }
 
   // Watchdog path: race each `next()` against an idle timer that resets per
@@ -605,6 +622,7 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
           result,
           error: `turn timed out after ${timeoutMs}ms with no activity`,
           errorCode: TURN_TIMEOUT_CODE,
+          ...segments.parts(),
         }
       }
       if (step.done) break
@@ -614,5 +632,5 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
   } finally {
     if (timer) clearTimeout(timer)
   }
-  return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode }
+  return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode, ...segments.parts() }
 }

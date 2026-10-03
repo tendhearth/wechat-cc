@@ -28,7 +28,8 @@ import {
   parsePeerRank, aggregateRanking, formatRankingFooter, buildParallelSynthesisPrompt,
   type Opening, type Contention, type RankedSpeaker,
 } from './chatroom-conductor'
-import { assertSupported, capabilitiesFor, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
+import { assertSupported, capabilitiesFor, replyDeliveryFor, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
+import type { DeliveryKind, ReplyDeliveryMode, ReplyDeliveryPort, TurnDeliveryHandle } from './turn-reply'
 import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } from './agent-provider'
 import { isAuthErrorCode, providerErrorCodeOf } from '../lib/provider-error-code'
 import { resolveEffectiveTier, resolveTier, TIER_PROFILES, type TierProfile } from './user-tier'
@@ -77,6 +78,17 @@ export interface TurnRecord {
   /** provider 边界产的结构化码(lib/provider-error-code;`turn_timeout` 也在这)。
    *  health 判定有码就只看码,不再扫 `error` 文本。 */
   errorCode?: string
+  /**
+   * 回复交付(spec 2026-10-03 §4.10):这一轮主人到底收到了什么。只有 daemon 模式的轮才填;legacy /
+   * shadow 的轮留空(那时「说没说话」由 reply 工具决定,记在 replyToolCalled)。
+   */
+  delivery?: DeliveryKind
+  /** 发出的文字气泡条数(交给 app 接收器的非空文字算 1)。 */
+  bubbles?: number
+  /** 发出的附件数(语音 / 表情 / 文件)。 */
+  attachments?: number
+  /** 最后的话之前的旁白段数(不发微信)。 */
+  narrationSegments?: number
 }
 
 export interface ConversationCoordinatorDeps {
@@ -148,6 +160,19 @@ export interface ConversationCoordinatorDeps {
    */
   onFallbackStreak?: (providerId: ProviderId, streak: number) => void
   sendAssistantText?: (chatId: string, text: string) => Promise<void>
+  /**
+   * 系统通知(认证失败 / 超时 / 守护拒绝 / spawn 失败 / 本轮出错 / provider 不可用……,spec §4.3 末段
+   * 「系统通知分家」)。和 agent 的话分开:日志里是 NOTICE 而不是 FALLBACK_REPLY,也不进打猎旁听。
+   * app 接收器照样接(通知在 app 里也要看得见)。缺省 ⇒ 退回 sendAssistantText(老嵌入 / 测试不变)。
+   */
+  sendNotice?: (chatId: string, text: string) => Promise<void>
+  /**
+   * 回复交付端口(daemon/reply-delivery.ts)。shadow / daemon 模式的 provider 才用到;缺省 ⇒ 一律按
+   * legacy 走(没有端口就不可能交付)。
+   */
+  replyDelivery?: ReplyDeliveryPort
+  /** 每家 provider 的交付模式;缺省读 capability-matrix 的 `replyDeliveryFor`。测试 / 实验可以注入。 */
+  replyDeliveryModeFor?: (providerId: ProviderId) => ReplyDeliveryMode
   /**
    * Optional `fields` arg lands in the JSONL sidecar (channel.log.jsonl)
    * for programmatic consumers. Stubs that don't care can ignore it
@@ -335,6 +360,12 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
   const handoffLedger = makeHandoffLedger()
   // 每家 provider 连续走 fallback 的轮数(见 deps.onFallbackStreak)。
   const fallbackStreak = new Map<ProviderId, number>()
+  /** 系统通知走 sendNotice(没接就退回 sendAssistantText)—— 与 agent 的话分家(spec §4.3)。 */
+  const notice = (chatId: string, text: string): Promise<void> | undefined =>
+    (deps.sendNotice ?? deps.sendAssistantText)?.(chatId, text)
+  /** 这一轮这家 provider 的交付模式。没有端口 ⇒ 只能 legacy。 */
+  const deliveryModeFor = (providerId: ProviderId): ReplyDeliveryMode =>
+    deps.replyDelivery ? (deps.replyDeliveryModeFor ?? replyDeliveryFor)(providerId) : 'legacy'
   function defaultMode(): Mode {
     return { kind: 'solo', provider: deps.defaultProviderId }
   }
@@ -447,7 +478,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     const last = authFailLastNotifyAt.get(chatId) ?? 0
     if (nowMs() - last < authFailThrottleMs) return
     authFailLastNotifyAt.set(chatId, nowMs())
-    await deps.sendAssistantText?.(chatId, authFailNotice(providerId, summary.errorCode))
+    await notice(chatId, authFailNotice(providerId, summary.errorCode))
   }
 
   /** On a per-turn watchdog timeout: the agent stream stalled silently.
@@ -470,7 +501,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     } catch (err) {
       deps.log('TURN_TIMEOUT', `release ${alias}/${providerId} threw: ${err instanceof Error ? err.message : err}`)
     }
-    await deps.sendAssistantText?.(chatId, '想了半天没想出来,刚才那条掉了…再发我一次?')
+    await notice(chatId, '想了半天没想出来,刚才那条掉了…再发我一次?')
   }
   // RFC 03 review #11 — per-chat AbortController for in-flight chatroom
   // loops. dispatchChatroom registers; coordinator.cancel() signals; /stop
@@ -612,7 +643,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           chat_id: msg.chatId,
           provider: providerId,
         })
-        await deps.sendAssistantText?.(msg.chatId, describeProviderDenial(denial, slashFor(providerId)))
+        await notice(msg.chatId, describeProviderDenial(denial, slashFor(providerId)))
         return
       }
     }
@@ -634,6 +665,9 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     let outcome: TurnRecord['outcome'] = 'error'
     let summary: TurnSummary | undefined
     let unregisterCancel: (() => void) | undefined
+    // 回复交付 shadow(spec §5.1 第 3 项):照旧走 legacy,另外把「按新路会发什么」与 legacy 实际
+    // 发出去的比一比,只记日志。从 dispatch 开始前就开着,reply 路由 / fallback 发出的每一条才旁听得到。
+    let shadow: TurnDeliveryHandle | undefined
     try {
       // Per-chat model pin lives on the solo mode row; only solo carries it.
       const cur = getMode(msg.chatId)
@@ -667,7 +701,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           return
         }
         outcome = 'error'
-        await deps.sendAssistantText?.(msg.chatId, spawnFailedNotice(providerId, detail, code))
+        await notice(msg.chatId, spawnFailedNotice(providerId, detail, code))
         return
       }
       // Registered before collectTurn starts draining so /stop can reach
@@ -692,6 +726,9 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           text = `${buildColdStartBlock(providerId, recent)}\n\n${text}`
           deps.log?.('HANDOFF', `chat=${msg.chatId} cold-start ${providerId} recent=${recent.length}`)
         }
+      }
+      if (deliveryModeFor(providerId) === 'shadow') {
+        try { shadow = deps.replyDelivery!.begin(msg.chatId, { mode: 'shadow', context: 'dm', providerId }) } catch { shadow = undefined }
       }
       summary = await oneTurnPerSession(msg.chatId, proj.alias, providerId, () => collectTurn(handle.dispatch(text), { timeoutMs: deps.turnTimeoutMs, onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) }))
       const assistantTexts = summary.assistantText
@@ -725,7 +762,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // fix lives. Unthrottled on purpose (same rationale as the timeout
       // notice: each dropped message deserves an acknowledgement).
       if (summary.error && !replyToolCalled && assistantTexts.length === 0) {
-        await deps.sendAssistantText?.(msg.chatId, turnErrorNotice(providerId, summary.error, summary.errorCode))
+        await notice(msg.chatId, turnErrorNotice(providerId, summary.error, summary.errorCode))
         return
       }
 
@@ -750,6 +787,15 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       }
     } finally {
       unregisterCancel?.()
+      // shadow 只是记账:绝不能影响这一轮(抛错就地吞掉)。只有 completed 的轮才比 —— 新路也只交付那些。
+      if (shadow) {
+        try {
+          if (outcome === 'completed' && summary) await shadow.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
+          else shadow.abandon(outcome)
+        } catch (err) {
+          deps.log('REPLY_SHADOW', `chat=${msg.chatId} provider=${providerId} shadow threw: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
       const endedAt = nowMs()
       deps.recordTurn?.({
         chatId: msg.chatId,
@@ -847,7 +893,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
 
       const openings = await runBeat(msg, proj, tierProfile, participants, (p) => buildOpeningPrompt(question, participants, p))
       if (openings.length === 0) {
-        await deps.sendAssistantText?.(msg.chatId, '⚠️ 这轮没有 AI 成功回应，请稍后重发一次。')
+        await notice(msg.chatId, '⚠️ 这轮没有 AI 成功回应，请稍后重发一次。')
         return
       }
 
@@ -1195,7 +1241,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     if (refused.length > 0) {
       const labels = [...new Set(refused.map(r => r.label))].join('、')
       deps.log('GUARD', `chat=${msg.chatId} protected call refused (${labels}) — network unprotected [${refused[0]!.source}] ${refused[0]!.detail}`, { event: 'network_unprotected', chat_id: msg.chatId })
-      await deps.sendAssistantText?.(msg.chatId, unprotectedMessage(refused[0]!, labels))
+      await notice(msg.chatId, unprotectedMessage(refused[0]!, labels))
     }
     return allowed
   }

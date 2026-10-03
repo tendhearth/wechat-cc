@@ -18,7 +18,7 @@ import { assertNotAuthFailed, type CheapEval } from '../../core/agent-provider'
 import type { SessionManager } from '../../core/session-manager'
 import type { HealthRuntime } from '../health'
 import { shouldNoteTurnEnd } from '../pet-signals'
-import { makeSendAssistantText } from './fallback-reply'
+import { makeSendAssistantText, makeSendNotice } from './fallback-reply'
 import { reportLlmTurnOutcome } from './wire-health'
 import type { Bootstrap, BootstrapDeps, BootstrapCtx } from './types'
 import type { ModelOptionsSlice } from './wire-model-options'
@@ -54,7 +54,7 @@ export interface CoordinatorSlice {
 }
 
 export function wireCoordinator(
-  deps: Pick<BootstrapDeps, 'ilink' | 'log' | 'onTurnRecord' | 'petSignals' | 'replySinks' | 'outboundTaps' | 'networkGate'>,
+  deps: Pick<BootstrapDeps, 'ilink' | 'log' | 'onTurnRecord' | 'petSignals' | 'replySinks' | 'outboundTaps' | 'networkGate' | 'replyDelivery'>,
   ctx: Pick<BootstrapCtx, 'db'>,
   parts: {
     health: HealthRuntime
@@ -83,7 +83,9 @@ export function wireCoordinator(
   // Extracted as a named variable so routeA2ANotify can also call it.
   // v0.5.3 — extracted to fallback-reply.ts so the failure paths log
   // [FALLBACK_REPLY_FAIL] / success path logs [FALLBACK_REPLY_SENT].
-  const sendAssistantText = makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log, capture: deps.replySinks?.capture, observe: deps.outboundTaps?.observe })
+  const sendAssistantText = makeSendAssistantText({ sendMessage: deps.ilink.sendMessage, log: deps.log, capture: deps.replySinks?.capture, observe: deps.outboundTaps?.observe, ...(deps.replyDelivery ? { shadow: deps.replyDelivery.observeLegacy } : {}) })
+  // 系统通知分家(回复交付 spec §4.3 末段):同样认 app 接收器,但不进打猎旁听、不进 shadow 比对,日志是 NOTICE_*。
+  const sendNotice = makeSendNotice({ sendMessage: deps.ilink.sendMessage, log: deps.log, capture: deps.replySinks?.capture })
 
   // (turnTimeoutMs is resolved earlier now — see the block just above
   // registerProviders() — so the agy provider's `--print-timeout` can be
@@ -103,7 +105,11 @@ export function wireCoordinator(
     const toolsPart = record.toolCalls?.length
       ? ` tools=${[...new Set(record.toolCalls)].join(',')}`
       : ''
-    deps.log('TURN', `chat=${record.chatId} provider=${record.provider} outcome=${record.outcome} dur=${record.durationMs}ms reply=${record.replyToolCalled} chunks=${record.textChunks}${toolsPart}${record.error ? ` error=${JSON.stringify(record.error.slice(0, 160))}` : ''}`, {
+    // 回复交付(spec §4.10):daemon 模式的轮记「主人收到了什么」(delivery / bubbles),legacy 照旧记 reply=。
+    const replyPart = record.delivery !== undefined
+      ? `delivery=${record.delivery} bubbles=${record.bubbles ?? 0}${record.attachments ? ` attachments=${record.attachments}` : ''}${record.narrationSegments ? ` narration=${record.narrationSegments}` : ''}`
+      : `reply=${record.replyToolCalled}`
+    deps.log('TURN', `chat=${record.chatId} provider=${record.provider} outcome=${record.outcome} dur=${record.durationMs}ms ${replyPart} chunks=${record.textChunks}${toolsPart}${record.error ? ` error=${JSON.stringify(record.error.slice(0, 160))}` : ''}`, {
       event: 'turn_record',
       ...record,
     })
@@ -165,6 +171,8 @@ export function wireCoordinator(
     // main.ts injects a real ilink.sendMessage closure; bootstrap.ts only
     // wires the structural piece.
     sendAssistantText,
+    ...(sendNotice ? { sendNotice } : {}),
+    ...(deps.replyDelivery ? { replyDelivery: deps.replyDelivery } : {}),
     // Task 10 — coordinator resolves per-chat tier on every dispatch.
     // loadAccess() reads access.json with a 5s in-process TTL cache, so
     // this is cheap to call per inbound. Admin/trusted/guest classification

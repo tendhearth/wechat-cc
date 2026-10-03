@@ -165,6 +165,11 @@ export interface InternalApiDeps {
    */
   outboundTaps?: { observe(chatId: string, text: string): void }
   /**
+   * 回复交付(spec 2026-10-03-reply-delivery)。第 0 步只用 `observeLegacy`:reply 路由把每一条
+   * legacy 回复交给 shadow 轮比对;attach / message 路由(第 1 步)也挂在这上面。
+   */
+  replyDelivery?: import('../reply-delivery').ReplyDeliveryRuntime
+  /**
    * 伙伴日志读写(GET/POST /v1/journal*)。缺失 ⇒ 路由 503,桌面端显示
    * 「这个 daemon 还没有战利品记录」而不是空清单 —— 空清单会被读成
    * 「CC 什么都没打到」。

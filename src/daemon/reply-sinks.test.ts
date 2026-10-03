@@ -74,4 +74,27 @@ describe('reply-sinks', () => {
     expect(sinks.capture('c1', 'again')).toBe(true)
     expect(h2.close()).toBe('again')
   })
+
+  // 回复交付(spec 2026-10-03 §4.3 第 2 步):新路径把整个 TurnReply 交给接收器 —— 文字照常拼进 close(),
+  // 附件与旁白另外取(桌面 / 手机显示;语音 / 表情不再漏到微信)。
+  it('captureReply:文字进 close(),附件与旁白从 extras() 取', () => {
+    const sinks = makeReplySinks()
+    const handle = sinks.open('c1')
+    expect(sinks.isOpen?.('c1')).toBe(true)
+    expect(sinks.captureReply?.('c1', { text: '晚安', silent: false, attachments: [{ kind: 'voice', text: '晚安' }], narration: ['看了下日程'] })).toBe(true)
+    expect(handle.extras?.()).toEqual({ attachments: [{ kind: 'voice', text: '晚安' }], narration: ['看了下日程'] })
+    expect(handle.close()).toBe('晚安')
+    expect(sinks.isOpen?.('c1')).toBe(false)
+  })
+
+  it('captureReply:静默 / 空文字 ⇒ 认领,但 close() 是空串', () => {
+    const sinks = makeReplySinks()
+    const handle = sinks.open('c1')
+    expect(sinks.captureReply?.('c1', { text: '', silent: true, attachments: [], narration: [] })).toBe(true)
+    expect(handle.close()).toBe('')
+  })
+
+  it('captureReply 没开接收器 ⇒ false', () => {
+    expect(makeReplySinks().captureReply?.('c1', { text: 'x', silent: false, attachments: [], narration: [] })).toBe(false)
+  })
 })

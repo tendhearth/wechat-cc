@@ -540,6 +540,9 @@ const onlineStickerCursor = new Map<string, number>()
       if (!text.trim()) {
         return { status: 200, body: { ok: false, error: 'empty_text: nothing was sent (text was empty or whitespace only); the user saw nothing, so do not apologize for it' } }
       }
+      // 回复交付 shadow(spec 2026-10-03 §5.1 第 3 项):legacy 实际交付的每一条都交一份去比对。
+      // 放在接收器截流之前 —— app 这一轮被截走的也是 legacy 交付的结果。没开 shadow 轮 ⇒ 无操作。
+      deps.replyDelivery?.observeLegacy(chat_id, text)
       // App-conversation-channel, Stage 0: when a reply sink is open for
       // this chat, capture the RAW text (whole, pre-split, pre-prefix — the
       // app shows the whole reply) instead of ilink-sending it.

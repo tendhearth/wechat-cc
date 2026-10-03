@@ -244,3 +244,15 @@ describe('provider id single source', () => {
     expect([...capabilityProviderIds()].sort()).toEqual([...PROVIDER_IDS].sort())
   })
 })
+
+describe('replyDeliveryFor — 回复交付开关(spec §5.0,一家一家翻)', () => {
+  it('第 0 步:所有执行者默认 legacy(不改任何人的行为)', async () => {
+    const { replyDeliveryFor, capabilityProviderIds } = await import('./capability-matrix')
+    for (const p of capabilityProviderIds()) expect(replyDeliveryFor(p)).toBe('legacy')
+  })
+
+  it('没注册能力表的 provider ⇒ legacy(fail safe,走今天的路)', async () => {
+    const { replyDeliveryFor } = await import('./capability-matrix')
+    expect(replyDeliveryFor('no-such-provider' as never)).toBe('legacy')
+  })
+})

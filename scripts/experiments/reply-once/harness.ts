@@ -21,6 +21,11 @@
  * 用法:
  *   bun scripts/experiments/reply-once/harness.ts --arm baseline --scenarios a,b,c,d --runs 5 --out /tmp/x.jsonl
  *   bun scripts/experiments/reply-once/harness.ts --summarize /tmp/x.jsonl
+ *   bun scripts/experiments/reply-once/harness.ts --gate /tmp/x.jsonl      # 回复交付 spec §5.8 的过关线(daemon vs baseline)
+ *
+ * 场景(2026-10-03 起 a–i,回复交付 spec §5.8):
+ *   a 一句简短的话 / b 历史里有连发 + 「停」/ c 分三条 / d 我有哪些项目 / e 新会话连跑四轮
+ *   f 用语音说晚安 / g 伙伴推送 + 议程已过期(该静默)/ h 要 3–4 次工具的查询 / i 私聊里「不用回」
  *
  * 候选(--arm):
  *   baseline     现在的 dev
@@ -31,9 +36,11 @@
  *   v_condense   历史侧:之前几轮里的多条 reply 合并成一条再给模型看
  *   shipped      提交进 provider 的正式实现(不靠 harness 包装)
  */
-import { mkdtempSync, readFileSync, appendFileSync, existsSync } from 'node:fs'
+// 隔离护栏必须第一个求值(见 isolate.ts:STATE_DIR 在 import 期就被定下来了)。
+import { STATE_DIR } from './isolate'
+import { readFileSync, appendFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir, homedir } from 'node:os'
+import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -58,19 +65,18 @@ import { formatInbound } from '../../../src/core/prompt-format'
 import { buildColdStartBlock, type HandoffTurn } from '../../../src/core/provider-handoff'
 import { TIER_PROFILES } from '../../../src/core/user-tier'
 import type { AgentEvent } from '../../../src/core/agent-provider'
+import { extractTurnReply } from '../../../src/core/turn-reply'
+import { buildPushTickText } from '../../../src/daemon/wiring/tick-bodies'
+import { summarize, evaluateGate, formatGate, META_RE, REPLY_FAMILY, SPEAKING_TOOLS, type Arm, type Scenario, type RunResult } from './gate'
+export { summarize, evaluateGate, type Arm, type Scenario, type RunResult }
 
-// ─── 隔离护栏 ─────────────────────────────────────────────────────────────
-const STATE_DIR = mkdtempSync(join(tmpdir(), 'reply-once-'))
-process.env.WECHAT_STATE_DIR = STATE_DIR
-delete process.env.WECHAT_INTERNAL_API
-delete process.env.WECHAT_INTERNAL_TOKEN_FILE
+// ─── 隔离护栏:见 isolate.ts(STATE_DIR 是临时目录,第一个 import 就设好)───────────
 
 const CHAT_ID = 'o9demo_owner@im.wechat'
-const REPLY_FAMILY = new Set(['reply', 'reply_voice'])
 const HARNESS_MAX_STEPS = 12 // 生产是 25;这里够看出失控,又不烧网关
-
-export type Arm = 'baseline' | 'i_plain_ack' | 'ii_prompt' | 'iii_drop' | 'iv_restrict' | 'v_condense' | 'shipped'
-export type Scenario = 'a' | 'b' | 'b_guarded_seed' | 'b_cold' | 'c' | 'd' | 'e'
+/** g:议程里一条早就过了具体时刻的跟进(一个多月前那晚的直播)—— 按推送提示应当不发。 */
+const G_NOW_ISO = '2026-10-03T10:00:00+08:00'
+const G_INTENTION = '8 月 20 日晚上 8 点提醒他看那场发布会直播'
 
 const SCENARIO_PROMPT: Record<Scenario, string> = {
   a: 'e2e 测试:回我一句简短的话就行。',
@@ -81,7 +87,14 @@ const SCENARIO_PROMPT: Record<Scenario, string> = {
   d: '我现在有哪些项目?',
   // e:同一个新会话里真跑四轮(前三轮是 SEED_TURNS 的用户话,模型自己回),看会不会一轮比一轮多。
   e: 'e2e 测试:回我一句简短的话就行。',
+  f: '用语音跟我说句晚安吧。',
+  g: '', // 伙伴推送:提示由 buildPushTickText 生成(见 promptFor)
+  h: '帮我看看我现在有哪些项目,再翻翻你记忆里关于我的 profile,然后告诉我最近应该先推进哪一个。',
+  i: '不用回我了,我就是随便发发。',
 }
+
+/** g 是伙伴推送那一种场合(NO_REPLY 只在这类场合被认可);其余都是私聊。 */
+const contextOf = (sc: Scenario): 'dm' | 'tick' => sc === 'g' ? 'tick' : 'dm'
 
 // 真机那次的升级过程:同一会话里一轮比一轮多发,还用 reply 发「停」。
 const SEED_TURNS: { user: string; replies: string[] }[] = [
@@ -112,8 +125,8 @@ export function assertProviderSeams(arm: Arm, providerSource: string = createOpe
 }
 
 // ─── 记账 ────────────────────────────────────────────────────────────────
-interface Ledger { replies: string[]; tools: string[]; modelCalls: number; dropped: string[] }
-const newLedger = (): Ledger => ({ replies: [], tools: [], modelCalls: 0, dropped: [] })
+interface Ledger { replies: string[]; texts: string[]; voices: string[]; tools: string[]; modelCalls: number; dropped: string[] }
+const newLedger = (): Ledger => ({ replies: [], texts: [], voices: [], tools: [], modelCalls: 0, dropped: [] })
 
 function fakeInternalApi(ledger: () => Ledger): InternalApiClient {
   let n = 0
@@ -121,8 +134,18 @@ function fakeInternalApi(ledger: () => Ledger): InternalApiClient {
     async request<T>(_method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
       const b = (body ?? {}) as Record<string, unknown>
       if (path === '/v1/wechat/reply' || path === '/v1/wechat/reply_voice') {
+        // 2026-10-02 的口径:replies 里 reply 与 reply_voice 都算;voices 另记一份给新指标。
         ledger().replies.push(String(b.text ?? ''))
+        if (path === '/v1/wechat/reply_voice') ledger().voices.push(String(b.text ?? ''))
+        else ledger().texts.push(String(b.text ?? ''))
         return { ok: true, msg_id: `sent:${++n}` } as T
+      }
+      // h:有一份假的 profile 可读(只在内存里,不碰主人的记忆)。
+      if (path.startsWith('/v1/memory/list')) return { files: [`${CHAT_ID}/profile.md`] } as T
+      if (path === '/v1/memory/read') {
+        return (String(b.path ?? '').endsWith('profile.md')
+          ? { exists: true, content: '他最近在赶 wechat-cc 的回复交付重构,很在意这周能不能合进 dev;blog 已经停更两个月了。' }
+          : { exists: false }) as T
       }
       if (path === '/v1/projects/list') {
         return [
@@ -164,7 +187,6 @@ function fakeBuiltins(ledger: () => Ledger) {
 }
 
 // ─── 候选包装 ─────────────────────────────────────────────────────────────
-const META_RE = /停|不再发|不发了|多发|又多了|就到这|打住|收手|结束了|不说了/
 
 function partsOf(m: ChatMessage): any[] { return Array.isArray((m as any).content) ? (m as any).content : [] }
 
@@ -311,17 +333,51 @@ function systemPrompt(arm: Arm, model: string): string {
   return p.replace(bubble, `${bubble}\n\n${II_PROMPT_LINE}`)
 }
 
+/**
+ * 只许打主人自建、没有封号风险的网关(2026-10-03 的约定:llm.youdamaster.cc 上的 Qwen3.8)。
+ * 直连供应商会封号 —— harness 不过 daemon 的网络守护,所以在这里按主机名硬拦。
+ */
+export const ALLOWED_GATEWAY_HOSTS = (process.env.REPLY_ONCE_ALLOWED_HOSTS ?? 'llm.youdamaster.cc').split(',').map(h => h.trim()).filter(Boolean)
+export function assertGatewayHost(baseURL: string, allowed: readonly string[] = ALLOWED_GATEWAY_HOSTS): void {
+  let host: string
+  try { host = new URL(baseURL).hostname } catch { throw new Error(`[reply-once] base URL 不是合法 URL:${baseURL}`) }
+  if (!allowed.includes(host)) throw new Error(`[reply-once] 只许打 ${allowed.join(' / ')},这次是 ${host} —— 拒跑(直连供应商会封号)。`)
+}
+
+/** 这一轮的提示:g 是伙伴推送(议程已过期),其余是主人的一句话。 */
+function promptFor(scenario: Scenario): string {
+  if (scenario === 'g') return buildPushTickText({ nowIso: G_NOW_ISO, defaultChatId: CHAT_ID, intention: G_INTENTION })
+  return inbound(SCENARIO_PROMPT[scenario])
+}
+
+/**
+ * legacy 一轮「主人到底收到了什么」:私聊里调过 reply ⇒ 只有 reply 的文字;没调 ⇒ FALLBACK_REPLY 把
+ * 每段文字各发一条(旁白也在里面)。伙伴推送只认 reply 工具,文字全丢(tick-bodies 的旧行为)。
+ */
+export function measureLegacy(evs: AgentEvent[], ledger: { replies: string[]; texts: string[]; voices: string[] }, context: 'dm' | 'tick'): Pick<RunResult, 'delivered' | 'attachments' | 'narrationLeaked' | 'tokenLeaked' | 'silent' | 'budgetExhausted' | 'context' | 'finalText'> {
+  const texts = ledger.texts
+  const segs = extractTurnReply(evs)
+  const fallback = context === 'dm' && ledger.replies.length === 0
+    ? evs.filter((e): e is Extract<AgentEvent, { kind: 'text' }> => e.kind === 'text' && e.text.trim() !== '').map(e => e.text)
+    : []
+  const delivered = [...texts, ...fallback]
+  const attachments = ledger.voices.map(() => 'voice')
+  const err = evs.find(e => e.kind === 'error') as Extract<AgentEvent, { kind: 'error' }> | undefined
+  return {
+    delivered,
+    attachments,
+    narrationLeaked: fallback.length > 0 ? segs.narration.length : 0,
+    tokenLeaked: delivered.some(t => /NO_REPLY/i.test(t)),
+    silent: delivered.length === 0 && attachments.length === 0,
+    budgetExhausted: err?.code === 'step_budget',
+    context,
+    finalText: segs.finalText.slice(0, 300),
+  }
+}
+
 const inbound = (text: string, ms = Date.now()) => formatInbound({ chatId: CHAT_ID, userId: CHAT_ID, userName: '主人', accountId: 'bot-demo', msgType: 'text', text, createTimeMs: ms })
 
 // ─── 一次运行 ────────────────────────────────────────────────────────────
-export interface RunResult {
-  arm: Arm; scenario: Scenario; run: number
-  replies: string[]; nonReplyTools: string[]; steps: number; modelCalls: number
-  cleanEnd: boolean; error?: string; dropped: string[]; assistantText: string; ms: number
-  /** 只有场景 e:前三轮(真模型)各自的 reply 条数与非 reply 工具。 */
-  warmup?: { replies: string[]; nonReplyTools: string[]; dropped: string[] }[]
-}
-
 async function runOnce(arm: Arm, scenario: Scenario, run: number, gw: ReturnType<typeof gatewayConfig>): Promise<RunResult> {
   let ledger = newLedger()
   const cur = () => ledger
@@ -365,10 +421,10 @@ async function runOnce(arm: Arm, scenario: Scenario, run: number, gw: ReturnType
       ledger = newLedger()
       const evs = await drain(inbound(s.user, t0)); t0 += 60_000
       const tools = evs.filter((e): e is Extract<AgentEvent, { kind: 'tool_call' }> => e.kind === 'tool_call').map(e => e.tool)
-      warmup.push({ replies: ledger.replies, nonReplyTools: tools.filter(t => !REPLY_FAMILY.has(t)), dropped: ledger.dropped })
+      warmup.push({ replies: ledger.replies, nonReplyTools: tools.filter(t => !SPEAKING_TOOLS.has(t)), dropped: ledger.dropped, delivered: measureLegacy(evs, ledger, 'dm').delivered })
     }
   }
-  let prompt = inbound(SCENARIO_PROMPT[scenario])
+  let prompt = promptFor(scenario)
   if (scenario === 'b_cold') {
     const recent: HandoffTurn[] = []
     for (const s of SEED_TURNS) {
@@ -388,7 +444,7 @@ async function runOnce(arm: Arm, scenario: Scenario, run: number, gw: ReturnType
   return {
     arm, scenario, run,
     replies: ledger.replies,
-    nonReplyTools: toolEvents.filter(t => !REPLY_FAMILY.has(t)),
+    nonReplyTools: toolEvents.filter(t => !SPEAKING_TOOLS.has(t)),
     steps: finish?.numTurns ?? ledger.modelCalls,
     modelCalls: ledger.modelCalls,
     cleanEnd: !err,
@@ -397,39 +453,18 @@ async function runOnce(arm: Arm, scenario: Scenario, run: number, gw: ReturnType
     assistantText: evs.filter(e => e.kind === 'text').map((e: any) => e.text).join('\n').slice(0, 300),
     ms: Date.now() - start,
     ...(warmup.length ? { warmup } : {}),
+    ...measureLegacy(evs, ledger, contextOf(scenario)),
   }
-}
-
-// ─── 汇总 ────────────────────────────────────────────────────────────────
-export function summarize(rows: RunResult[]): string {
-  const key = (r: RunResult) => `${r.arm}|${r.scenario}`
-  const groups = new Map<string, RunResult[]>()
-  for (const r of rows) groups.set(key(r), [...(groups.get(key(r)) ?? []), r])
-  const lines = ['| arm | 场景 | n | reply/轮 (各次) | 元话语 reply | 非 reply 工具 | 步数均值 | 干净结束 | 纯文字回落 |', '|---|---|---|---|---|---|---|---|---|']
-  for (const [k, rs] of [...groups].sort()) {
-    const [arm, sc] = k.split('|')
-    const per = rs.map(r => r.replies.length)
-    const warm = rs.some(r => r.warmup) ? ` 〔逐轮 ${rs.map(r => [...(r.warmup ?? []).map(w => w.replies.length), r.replies.length].join('→')).join(' / ')}〕` : ''
-    const warmTools = rs.flatMap(r => (r.warmup ?? []).flatMap(w => w.nonReplyTools))
-    const meta = rs.reduce((a, r) => a + r.replies.filter(t => META_RE.test(t)).length, 0)
-    const tools = [...rs.flatMap(r => r.nonReplyTools), ...warmTools]
-    const toolStr = tools.length === 0 ? '0' : `${tools.length} (${[...new Set(tools)].join(',')})`
-    const steps = (rs.reduce((a, r) => a + r.steps, 0) / rs.length).toFixed(1)
-    const clean = rs.filter(r => r.cleanEnd).length
-    // 没调 reply、只吐了文字 ⇒ 走 daemon 的 FALLBACK_REPLY(用户收得到,但算异常)
-    const fallback = rs.filter(r => r.replies.length === 0 && r.assistantText.trim().length > 0).length
-    lines.push(`| ${arm} | ${sc} | ${rs.length} | ${(per.reduce((a, b) => a + b, 0) / rs.length).toFixed(1)} (${per.join(',')})${warm} | ${meta} | ${toolStr} | ${steps} | ${clean}/${rs.length} | ${fallback} |`)
-  }
-  return lines.join('\n')
 }
 
 async function main() {
   const args = process.argv.slice(2)
   const get = (f: string) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : undefined }
   const sumFile = get('--summarize')
-  if (sumFile) {
-    const rows = readFileSync(sumFile, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as RunResult)
-    console.log(summarize(rows))
+  const gateFile = get('--gate')
+  if (sumFile || gateFile) {
+    const rows = readFileSync((sumFile ?? gateFile)!, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as RunResult)
+    console.log(sumFile ? summarize(rows) : formatGate(evaluateGate(rows)))
     return
   }
   const arm = (get('--arm') ?? 'baseline') as Arm
@@ -438,6 +473,7 @@ async function main() {
   const out = get('--out') ?? join(STATE_DIR, 'results.jsonl')
   assertProviderSeams(arm)
   const gw = gatewayConfig()
+  assertGatewayHost(gw.baseURL)
   console.error(`[reply-once] arm=${arm} scenarios=${scenarios.join(',')} runs=${runs} model=${gw.model} state=${STATE_DIR} out=${out}`)
   const rows: RunResult[] = []
   for (const sc of scenarios) {
@@ -449,7 +485,7 @@ async function main() {
       rows.push(res)
       appendFileSync(out, JSON.stringify(res) + '\n')
       for (const [k, w] of (res.warmup ?? []).entries()) console.error(`  ${sc}#${r} warm${k + 1}: replies=${w.replies.length} ${JSON.stringify(w.replies)} tools=${JSON.stringify(w.nonReplyTools)}${w.dropped.length ? ` dropped=${JSON.stringify(w.dropped)}` : ''}`)
-      console.error(`  ${sc}#${r}: replies=${res.replies.length} ${JSON.stringify(res.replies)} tools=${JSON.stringify(res.nonReplyTools)} steps=${res.steps} ${res.error ?? 'ok'}${res.dropped.length ? ` dropped=${JSON.stringify(res.dropped)}` : ''}`)
+      console.error(`  ${sc}#${r}: delivered=${(res.delivered ?? res.replies).length} ${JSON.stringify(res.delivered ?? res.replies)}${res.attachments?.length ? ` attachments=${res.attachments.join(',')}` : ''}${res.silent ? ' silent' : ''} tools=${JSON.stringify(res.nonReplyTools)} steps=${res.steps} ${res.error ?? 'ok'}${res.dropped.length ? ` dropped=${JSON.stringify(res.dropped)}` : ''}`)
     }
   }
   console.log(summarize(rows))

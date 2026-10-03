@@ -22,6 +22,7 @@
  */
 // src/core/capability-matrix.ts
 
+import type { ReplyDeliveryMode } from './turn-reply'
 import type { Mode, ProviderId } from './conversation'
 import type { ProviderCapabilities, PermissionMode } from './agent-provider'
 import { CLAUDE_CAPABILITIES } from './claude-agent-provider'
@@ -126,6 +127,15 @@ export function capabilitiesFor(provider: ProviderId): ProviderCapabilities {
     throw new Error(`capability-matrix: no ProviderCapabilities registered for provider=${provider}`)
   }
   return cap
+}
+
+/**
+ * 回复交付开关(回复交付 spec §5.0):这家执行者这一轮走 legacy(reply 工具说话)、shadow(照旧 +
+ * 影子记账)还是 daemon(最后的话就是回复)。协调器 / 伙伴推送 / app 轮 / 提示词 / 工具表都按**当轮
+ * provider** 的这个值走。没声明或没注册能力表 ⇒ legacy(今天的路,fail safe)。
+ */
+export function replyDeliveryFor(provider: ProviderId): ReplyDeliveryMode {
+  return CAPABILITIES_BY_PROVIDER[provider]?.replyDelivery ?? 'legacy'
 }
 
 /**

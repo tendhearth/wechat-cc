@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { makeSendAssistantText } from './fallback-reply'
+import { makeSendAssistantText, makeSendNotice } from './fallback-reply'
 
 describe('makeSendAssistantText (FALLBACK_REPLY diagnostic logger)', () => {
   it('returns undefined when no underlying sendMessage exists', () => {
@@ -105,5 +105,41 @@ describe('makeSendAssistantText (FALLBACK_REPLY diagnostic logger)', () => {
 
       expect(sendMessage).toHaveBeenCalledWith('some_chat', 'text')
     })
+  })
+})
+
+describe('makeSendAssistantText — shadow 旁听(回复交付 §5.1 第 3 项)', () => {
+  it('legacy 出口发出的每一条都先交给 shadow 旁听(app 接收器截走的也算)', async () => {
+    const shadow = vi.fn()
+    const send = makeSendAssistantText({ sendMessage: vi.fn(async () => ({ msgId: 'm' })), log: vi.fn(), capture: () => true, shadow })!
+    await send('c1', '你好')
+    expect(shadow).toHaveBeenCalledWith('c1', '你好')
+  })
+})
+
+describe('makeSendNotice — 系统通知与 agent 的话分家(spec §4.3)', () => {
+  it('app 接收器开着 ⇒ 截给 app(通知在 app 里也要看得见)', async () => {
+    const sendMessage = vi.fn(async () => ({ msgId: 'm' }))
+    const notice = makeSendNotice({ sendMessage, log: vi.fn(), capture: () => true })!
+    await notice('c1', '登录过期了')
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('不进打猎旁听,也不进 shadow 旁听;日志是 NOTICE_SENT', async () => {
+    const observe = vi.fn()
+    const shadow = vi.fn()
+    const log = vi.fn()
+    const notice = makeSendNotice({ sendMessage: vi.fn(async () => ({ msgId: 'm9' })), log, observe, shadow })!
+    await notice('c1', '刚刚脑子卡了一下')
+    expect(observe).not.toHaveBeenCalled()
+    expect(shadow).not.toHaveBeenCalled()
+    expect(log).toHaveBeenCalledWith('NOTICE_SENT', expect.stringContaining('msgId=m9'))
+  })
+
+  it('发送失败 ⇒ NOTICE_FAIL', async () => {
+    const log = vi.fn()
+    const notice = makeSendNotice({ sendMessage: vi.fn(async () => ({ msgId: '', error: 'errcode=-2' })), log })!
+    await notice('c1', 'x')
+    expect(log).toHaveBeenCalledWith('NOTICE_FAIL', expect.stringContaining('errcode=-2'))
   })
 })

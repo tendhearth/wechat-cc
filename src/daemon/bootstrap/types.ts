@@ -233,6 +233,12 @@ export interface BootstrapDeps {
   /** 旁听(不改道)—— 让 sendAssistantText 的 fallback 路径也进战利品清单。 */
   outboundTaps?: { observe: (chatId: string, text: string) => void }
   /**
+   * 回复交付(spec 2026-10-03-reply-delivery)—— main.ts 里造的**同一个**实例,也传给
+   * internal-api(attach / message 路由、reply 路由的 shadow 旁听)和 wireMain(伙伴推送、app 轮)。
+   * 不接 ⇒ 所有 provider 一律按 legacy 走(老 fixture 不变)。
+   */
+  replyDelivery?: import('../reply-delivery').ReplyDeliveryRuntime
+  /**
    * 桌宠信号(spec 2026-09-05-cc-desktop-pet §5.1)—— main.ts 里造的**同一个**
    * 实例,也传给 wireMain/pipeline-deps(读的那一头在 GET /v1/companion/pet)。
    * bootstrap 只写两笔:coordinator 的 onTurnEvent 里的 tool_call,和 recordTurn
