@@ -61,6 +61,12 @@ export interface OpenAiAgentProviderOptions {
   cwd?: string
   maxSteps?: number
   log?: (tag: string, line: string) => void
+  /**
+   * 实验专用注入口(回复交付 spec §5.1 第 1 项;原样来自 PR #196):把 Read/Write/Edit/Bash/view_image
+   * 换成别的实现。`scripts/experiments/reply-once/harness.ts` 用它换成只记账的假工具 —— 没有这个口,
+   * 真模型调的 Bash 会被真的执行,所以 harness 发现没有它就拒跑。生产路径从不传(缺省 = 真的 builtinTools)。
+   */
+  makeBuiltins?: (cwd: string) => BuiltinTool[]
 }
 
 const DEFAULT_MAX_STEPS = 25
@@ -280,7 +286,7 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
       const sessionId = randomUUID()
       const cwd = opts.cwd ?? project.path
       const bridge = await opts.makeMcpBridge(ctx.mcpEnv ?? {})
-      const builtins = builtinTools(cwd)
+      const builtins = (opts.makeBuiltins ?? builtinTools)(cwd)
       const builtinByName = new Map<string, BuiltinTool>(builtins.map(b => [b.spec.name, b]))
       const toolSpecs: ToolSpec[] = [...bridge.tools, ...builtins.map(b => b.spec)]
 

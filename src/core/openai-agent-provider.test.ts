@@ -503,3 +503,49 @@ describe('openai provider —— 流式 delta 必须聚合成完整消息再发'
     expect(texts[1]).toBe('后半段')                        // 第二步也聚合
   })
 })
+
+describe('openai provider — makeBuiltins 注入口(实验 harness 专用,回复交付 spec §5.1 第 1 项)', () => {
+  it('给了 makeBuiltins ⇒ 内置工具换成注入的(模型调 Bash 只记账,不真跑)', async () => {
+    const { mkdtempSync, existsSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'oai-builtins-'))
+    // 无害的哨兵:真执行了就会留下这个文件。
+    const sentinel = join(dir, 'ran')
+    const command = `touch ${JSON.stringify(sentinel)}`
+    try {
+      const ran: string[] = []
+      let n = 0
+      const model: ChatModelClient = {
+        streamTurn(_m, tools) {
+          n++
+          const first = n === 1
+          expect(tools.map(t => t.name)).toContain('Bash')
+          const toolCalls = first ? [{ id: 'b1', name: 'Bash', input: { command } }] : []
+          async function* deltas() { if (first) yield { kind: 'tool_call' as const, id: 'b1', name: 'Bash', input: { command } }; else yield { kind: 'text' as const, text: '好了' } }
+          return { deltas: deltas(), finished: Promise.resolve({ messages: [{ role: 'assistant', content: '' } as any], toolCalls }) }
+        },
+        async generate() { return 'ok' },
+        userMessage: (t) => ({ role: 'user', content: t } as any),
+        systemMessage: (t) => ({ role: 'system', content: t } as any),
+        toolResultMessage: (_id, name, r) => ({ role: 'tool', content: `${name}:${String(r)}` } as any),
+      }
+      const provider = createOpenAiAgentProvider({
+        makeChatModel: () => model,
+        makeMcpBridge: async () => fakeBridge([]),
+        makeBuiltins: () => [{
+          spec: { name: 'Bash', description: 'fake', parameters: { type: 'object' } },
+          risk: 'caution',
+          async execute(input) { ran.push(String((input as any).command)); return '(实验:未执行)' },
+        }],
+        cwd: dir,
+      })
+      const session = await provider.spawn({ alias: 'a', path: dir }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'dangerously', chatId: 'c' } as any)
+      const summary = await collectTurn(session.dispatch('跑一下'))
+      expect(ran).toEqual([command])
+      expect(existsSync(sentinel)).toBe(false)
+      expect(summary.finalText).toBe('好了')
+      await session.close()
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})

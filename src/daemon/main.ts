@@ -53,6 +53,7 @@ import { makeOutboundTaps } from './outbound-taps'
 import { makePetSignals } from './pet-signals'
 import { makeJournal } from '../core/journal-store'
 import { makeReplySinks } from './reply-sinks'
+import { makeReplyDeliveryRuntime } from './reply-delivery'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
@@ -284,6 +285,17 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 路径(internal-api reply 路由 / bootstrap 的 fallback);两个实例等于
     // 永远收不到东西,而且不会报任何错。
     const outboundTaps = makeOutboundTaps()
+    // 回复交付(spec 2026-10-03-reply-delivery):daemon 负责送达的那一条路。同样必须是**同一个
+    // 实例** —— 开轮的是协调器 / 伙伴推送,往里登记附件、旁听 legacy 出口的是 internal-api 与
+    // fallback。第 0 步所有 provider 都还是 legacy,它只在 shadow 轮里记账。
+    const replyDelivery = makeReplyDeliveryRuntime({
+      sendText: (c, t) => ilink.sendMessage(c, t),
+      sink: { captureReply: (c, r) => replySinks.captureReply?.(c, r) ?? false },
+      isSinkOpen: (c) => replySinks.isOpen?.(c) ?? false,
+      observe: (c, t) => outboundTaps.observe(c, t),
+      chatPrefs: (c) => chatPrefs.get(c),
+      log: (t, l, f) => log(t, l, f),
+    })
     // 桌宠信号(spec 2026-09-05-cc-desktop-pet §5.1)。和 replySinks/outboundTaps
     // 同样的理由必须是**同一个实例**:写的三处分别在 bootstrap(tool_call、
     // 回合结束)、pipeline-deps(起飞、app 联系)与下面的权限 resolve;读的
@@ -303,6 +315,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       stickerSource,
       replySinks,
       outboundTaps,
+      replyDelivery,
       hunt: huntStore,
       // 待决权限的桌面面(spec §6)。和微信「y/n <hash>」共用 ilink 里那一份
       // PendingPermissions —— 从哪边拍板都算数,另一边随之失效。拍板本身也是
@@ -432,6 +445,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // sendAssistantText fallback sink-aware.
       replySinks,
       outboundTaps,
+      replyDelivery,
       petSignals,
       onTurnRecord: (r) => turnRecordStore.append(r),
       mintSessionToken: internalApi.mintSessionToken,

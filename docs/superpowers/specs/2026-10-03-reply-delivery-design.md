@@ -361,5 +361,6 @@ message({ to: 'owner' | <chat_id> | 'broadcast', text, account_id? })
 
 ## 修订记录
 
+- 2026-10-03:第 0 步落地时的两处对齐:① 开关做成三值 `replyDelivery: 'legacy' | 'shadow' | 'daemon'`(§5.0 原写 `'tool' | 'final_text'`):shadow 就是 §5.1 第 3 项的影子记账,单独一档才能一家一家先影子、再翻;提示词参数仍是 `'tool' | 'final_text'`,由开关推出。② harness 的隔离护栏原来在模块体里才设 `WECHAT_STATE_DIR`,而 `lib/config` 在 import 期就定下 STATE_DIR —— 挪到第一个 import(`scripts/experiments/reply-once/isolate.ts`),并按主机名只许打主人自建网关。
 - 2026-10-03:§6 待主人定 → 已定(维护者按推荐定,主人授权);补备注:reply 路由不核对 chat_id 的越权已另一个 PR 单独修,附件工具不带 chat_id 的设计照旧。
 - 2026-10-03:初稿。harness 与 2026-10-02 的 110 回合数据从 PR #196 搬入(`scripts/experiments/reply-once/`);dev 上 provider 还没有 `makeBuiltins` 注入口,harness 加了拒跑保护(§5.1 第 1 项把注入口加回来)。

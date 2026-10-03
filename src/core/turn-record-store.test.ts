@@ -141,4 +141,16 @@ describe('tool_calls —— 一条回答是「查来的」还是「想出来的�
     db.exec("UPDATE turn_records SET tool_calls = '{oops'")
     expect(store.recentForChat('c1', 10)[0]!.toolCalls).toEqual([])
   })
+
+  // 回复交付(spec 2026-10-03 §4.10):「主人到底收到了什么」落库;legacy 的轮这几列为空。
+  it('delivery / bubbles / attachments / narrationSegments round-trip;legacy 行不带这几列', () => {
+    const db = openDb({ path: ':memory:' })
+    const store = makeTurnRecordStore(db)
+    store.append(rec({ endedAt: 1, replyToolCalled: false, delivery: 'text', bubbles: 3, attachments: 1, narrationSegments: 2 }))
+    store.append(rec({ endedAt: 2 }))
+    const [legacy, daemon] = store.recentForChat('chat-1', 10)
+    expect(daemon).toMatchObject({ delivery: 'text', bubbles: 3, attachments: 1, narrationSegments: 2, replyToolCalled: false })
+    expect(legacy!.delivery).toBeUndefined()
+    expect(legacy!.bubbles).toBeUndefined()
+  })
 })
