@@ -85,7 +85,12 @@ export const MatterInput = z.object({
   id: z.string(), taskId: z.string(), runId: z.string(), text: z.string(),
   status: z.enum(['pending', 'sending', 'delivered', 'held', 'withdrawn']),
   attachments: z.array(Attachment).optional(),
+  /** Single-receipt reads preserve the durable delivery reason; older backends omit it. */
+  error: z.string().nullable().optional(),
 })
+
+export const MatterInputReceiptResult = z.object({ ok: z.literal(true), input: MatterInput })
+export type MatterInputReceiptResultT = z.infer<typeof MatterInputReceiptResult>
 
 export const MatterPermission = z.object({
   id: z.string(), taskId: z.string(), tool: z.string(), description: z.string(), createdAt: z.number(),
@@ -390,6 +395,7 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   ]),
   'GET /m/api/matter/changes': z.union([z.object({ ok: z.literal(true), turn: PhoneChangesTurn.nullable() }), PhoneErrorResponse]),
   'GET /m/api/matter': z.union([z.object({ ok: z.literal(true) }).extend(MatterDetail.shape), PhoneErrorResponse]),
+  'GET /m/api/matter/input-receipt': z.union([MatterInputReceiptResult, PhoneErrorResponse]),
   'POST /m/api/matter/say': z.union([z.object({ ok: z.literal(true), result: MatterSayResult }), PhoneErrorResponse]),
   'GET /m/api/chat': z.union([z.object({ ok: z.literal(true) }).extend(ChatPage.shape), PhoneErrorResponse]),
   'POST /m/api/chat/say': z.union([z.object({ ok: z.literal(true), matterId: z.string(), job: ChatJob }), PhoneErrorResponse]),
