@@ -18,11 +18,23 @@ describe('classifyCall — owner table (默认)', () => {
     ['Cursor + gpt-5', { provider: 'cursor', model: 'gpt-5' }, true],
     ['Cursor + o3', { provider: 'cursor', model: 'o3' }, true],
     ['Cursor + gemini', { provider: 'cursor', model: 'gemini-2.5-pro' }, true],
-    ['Cursor + 不认识的模型 ⇒ 默认保护', { provider: 'cursor', model: 'kimi-k2' }, true],
-    ['Kimi 国际版(api.moonshot.ai)按 host 判成海外', { provider: 'openai', baseUrl: 'https://api.moonshot.ai/v1' }, true],
+    ['Cursor + 不认识的模型 ⇒ 保护', { provider: 'cursor', model: 'kimi-k2' }, true],
+    // 主人定(2026-10-02):「Cursor 除了 auto，其他都要网络」—— Cursor 自家模型也保护
+    ['Cursor composer(自家模型也要网络)', { provider: 'cursor', model: 'composer-2' }, true],
+    ['Cursor composer 带参数后缀', { provider: 'cursor', model: 'composer-2.5[fast=true]' }, true],
+    ['Cursor cursor-small', { provider: 'cursor', model: 'cursor-small' }, true],
+    ['Cursor glm', { provider: 'cursor', model: 'glm-5.2[reasoning=high]' }, true],
+    ['Cursor grok', { provider: 'cursor', model: 'grok-4' }, true],
+    ['Cursor autopilot(不是 auto)', { provider: 'cursor', model: 'auto-max' }, true],
     // 不需要保护
     ['DeepSeek', { provider: 'openai', baseUrl: 'https://api.deepseek.com/v1' }, false],
+    // 主人定(2026-10-02):「Kimi 都不需要判断」—— .cn / .ai 一样
     ['Kimi 国内版(moonshot.cn)', { provider: 'openai', baseUrl: 'https://api.moonshot.cn/v1' }, false],
+    ['Kimi 国际版(moonshot.ai)', { provider: 'openai', baseUrl: 'https://api.moonshot.ai/v1' }, false],
+    ['Kimi moonshot.ai 其它子域', { provider: 'openai', baseUrl: 'https://platform.moonshot.ai' }, false],
+    ['Kimi kimi.com', { provider: 'openai', baseUrl: 'https://api.kimi.com/coding/v1' }, false],
+    ['Kimi kimi.ai', { provider: 'openai', baseUrl: 'https://api.kimi.ai/v1' }, false],
+    ['Claude Code 指到 Kimi 的 Anthropic 兼容端点', { provider: 'claude', baseUrl: 'https://api.moonshot.ai/anthropic' }, false],
     ['通义 DashScope', { provider: 'openai', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' }, false],
     ['智谱', { provider: 'openai', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' }, false],
     ['localhost', { provider: 'openai', baseUrl: 'http://localhost:11434/v1' }, false],
@@ -32,26 +44,33 @@ describe('classifyCall — owner table (默认)', () => {
     ['主人自己的网关(自定义,默认不保护)', { provider: 'openai', baseUrl: 'https://llm.youdamaster.cc/v1' }, false],
     ['Claude Code + ANTHROPIC_BASE_URL 指向网关', { provider: 'claude', baseUrl: 'https://gw.example.com' }, false],
     ['Cursor auto', { provider: 'cursor', model: 'auto' }, false],
+    ['Cursor Auto(大小写)', { provider: 'cursor', model: 'Auto' }, false],
     ['Cursor 没选模型 ⇒ auto', { provider: 'cursor' }, false],
-    ['Cursor composer', { provider: 'cursor', model: 'composer-2' }, false],
+    ['Cursor 空模型名 ⇒ auto', { provider: 'cursor', model: '  ' }, false],
+    ['cursor-agent default[] = Auto', { provider: 'cursor', model: 'default[]' }, false],
+    ['cursor-agent default', { provider: 'cursor', model: 'default' }, false],
     ['语音 通义 TTS', { provider: 'voice', baseUrl: 'https://dashscope.aliyuncs.com' }, false],
   ])('%s', (_name, t, expected) => {
     expect(classifyCall(t).protected).toBe(expected)
   })
 
   it('Cursor auto vs claude model: same provider, different verdicts, honest labels', () => {
-    expect(classifyCall({ provider: 'cursor', model: 'auto' })).toMatchObject({ protected: false, kind: 'cursor_own' })
-    expect(classifyCall({ provider: 'cursor', model: 'claude-4.5-sonnet' })).toMatchObject({ protected: true, kind: 'cursor_overseas', label: 'Cursor(claude-4.5-sonnet)' })
-    expect(classifyCall({ provider: 'cursor', model: 'mystery-1' })).toMatchObject({ protected: true, kind: 'cursor_unknown' })
+    expect(classifyCall({ provider: 'cursor', model: 'auto' })).toMatchObject({ protected: false, kind: 'cursor_auto' })
+    expect(classifyCall({ provider: 'cursor', model: 'claude-4.5-sonnet' })).toMatchObject({ protected: true, kind: 'cursor_model', label: 'Cursor(claude-4.5-sonnet)' })
+    expect(classifyCall({ provider: 'cursor', model: 'mystery-1' })).toMatchObject({ protected: true, kind: 'cursor_model' })
+    expect(classifyCall({ provider: 'cursor', model: 'composer-2' })).toMatchObject({ protected: true, kind: 'cursor_model', label: 'Cursor(composer-2)' })
     // 列模型目录不选模型
-    expect(classifyCall({ provider: 'cursor', purpose: 'catalog' }).protected).toBe(false)
+    expect(classifyCall({ provider: 'cursor', purpose: 'catalog' })).toMatchObject({ protected: false, kind: 'cursor_setup' })
+    // Kimi:「Kimi 都不需要判断」
+    expect(classifyCall({ provider: 'openai', baseUrl: 'https://api.moonshot.ai/v1' }, { protectCustomGateways: true })).toMatchObject({ protected: false, kind: 'kimi' })
   })
 
   it('labels name what gets paused', () => {
     expect(classifyCall({ provider: 'claude' }).label).toBe('Claude')
     expect(classifyCall({ provider: 'claude', baseUrl: 'https://api.anthropic.com/' }).label).toBe('Claude')
     expect(classifyCall({ provider: 'openai', baseUrl: 'https://openrouter.ai/api/v1' }).label).toBe('OpenRouter')
-    expect(classifyCall({ provider: 'openai', baseUrl: 'https://api.moonshot.ai/v1' }).label).toBe('Kimi 国际版')
+    expect(classifyCall({ provider: 'openai', baseUrl: 'https://api.moonshot.ai/v1' }).label).toBe('Kimi')
+    expect(classifyCall({ provider: 'openai', baseUrl: 'https://api.moonshot.cn/v1' }).label).toBe('Kimi')
   })
 
   it('custom gateways: a user switch opts them in', () => {
@@ -72,14 +91,19 @@ describe('classifyCall — guard.json overrides', () => {
   it('trust: unknown Cursor model can be released by provider:model pattern', () => {
     expect(classifyCall({ provider: 'cursor', model: 'kimi-k2' }, { trust: ['cursor:kimi-*'] }).protected).toBe(false)
   })
-  it('trust by host: Kimi 国际版', () => {
-    expect(classifyCall({ provider: 'openai', baseUrl: 'https://api.moonshot.ai/v1' }, { trust: ['api.moonshot.ai'] })).toMatchObject({ protected: false, kind: 'override' })
+  it('trust by host: 通义国际版', () => {
+    expect(classifyCall({ provider: 'openai', baseUrl: 'https://dashscope-intl.aliyuncs.com/v1' }, { trust: ['dashscope-intl.aliyuncs.com'] })).toMatchObject({ protected: false, kind: 'override' })
+  })
+  it('trust releases a non-auto Cursor model (composer)', () => {
+    expect(classifyCall({ provider: 'cursor', model: 'composer-2' }, { trust: ['cursor:composer-*'] })).toMatchObject({ protected: false, kind: 'override' })
+  })
+  it('protect still opts Kimi back in', () => {
+    expect(classifyCall({ provider: 'openai', baseUrl: 'https://api.moonshot.cn/v1' }, { protect: ['*.moonshot.cn'] })).toMatchObject({ protected: true, kind: 'override' })
   })
   it('protect by host / glob / URL / bare provider', () => {
     expect(classifyCall({ provider: 'openai', baseUrl: 'https://llm.youdamaster.cc/v1' }, { protect: ['*.youdamaster.cc'] }).protected).toBe(true)
     expect(classifyCall({ provider: 'openai', baseUrl: 'https://llm.youdamaster.cc/v1' }, { protect: ['https://llm.youdamaster.cc'] }).protected).toBe(true)
     expect(classifyCall({ provider: 'cursor', model: 'auto' }, { protect: ['cursor'] }).protected).toBe(true)
-    expect(classifyCall({ provider: 'cursor', model: 'composer-2' }, { protect: ['cursor:composer-*'] }).protected).toBe(true)
   })
   it('protect beats trust (fail safe)', () => {
     expect(classifyCall({ provider: 'claude' }, { protect: ['claude'], trust: ['claude'] }).protected).toBe(true)
@@ -106,13 +130,14 @@ describe('helpers', () => {
 
 describe('review #193: actual targets reported by executors', () => {
   it('cursor-agent ACP model ids carry a [params] suffix — default[] is Auto, claude-…[…] is protected', () => {
-    expect(classifyCall({ provider: 'cursor', model: 'default[]' })).toMatchObject({ protected: false, kind: 'cursor_own' })
-    expect(classifyCall({ provider: 'cursor', model: 'composer-2.5[fast=true]' })).toMatchObject({ protected: false, kind: 'cursor_own' })
-    expect(classifyCall({ provider: 'cursor', model: 'claude-opus-5[thinking=true,context=300k]' })).toMatchObject({ protected: true, kind: 'cursor_overseas' })
+    expect(classifyCall({ provider: 'cursor', model: 'default[]' })).toMatchObject({ protected: false, kind: 'cursor_auto' })
+    expect(classifyCall({ provider: 'cursor', model: 'composer-2.5[fast=true]' })).toMatchObject({ protected: true, kind: 'cursor_model' })
+    expect(classifyCall({ provider: 'cursor', model: 'claude-opus-5[thinking=true,context=300k]' })).toMatchObject({ protected: true, kind: 'cursor_model' })
     expect(classifyCall({ provider: 'cursor', model: 'gpt-5.5[context=272k]' })).toMatchObject({ protected: true })
   })
   it('opening an ACP session (setup) is not a model turn for Cursor', () => {
     expect(classifyCall({ provider: 'cursor', purpose: 'setup' }).protected).toBe(false)
+    expect(classifyCall({ provider: 'cursor', model: 'composer-2', purpose: 'usage' }).protected).toBe(false)
   })
   it('unresolved target → protected even for a provider that is usually domestic; trust by provider still applies', () => {
     expect(classifyCall({ provider: 'openai', unresolved: true })).toMatchObject({ protected: true, kind: 'unresolved' })
