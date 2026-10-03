@@ -880,3 +880,15 @@ describe('replyDelivery: final_text(回复交付 spec 2026-10-03 §4.11)', () =>
     expect(buildSystemPrompt({ ...base, replyDelivery: 'final_text' })).not.toContain('`message(to, text)`')
   })
 })
+
+describe('final_text × 聊天型模型(replyText: all_segments,2026-10-03 修订)', () => {
+  const base = { providerId: 'openai' as const, peerProviderId: 'claude' as const, companionEnabled: false, delegateAvailable: false, replyDelivery: 'final_text' as const }
+  it('聊天型:讲「这一轮写下的文字都会按顺序发出去」,不说「中间的话不发」', () => {
+    const p = buildSystemPrompt({ ...base, replyText: 'all_segments' })
+    expect(p).toContain('按顺序发给对方')
+    expect(p).not.toContain('不会发给对方')
+  })
+  it('编码型(缺省 last_segment):讲「最后那段才是回复」', () => {
+    expect(buildSystemPrompt(base)).toContain('最后写下的那段话就是发给对方的回复')
+  })
+})

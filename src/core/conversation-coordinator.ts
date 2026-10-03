@@ -28,8 +28,8 @@ import {
   parsePeerRank, aggregateRanking, formatRankingFooter, buildParallelSynthesisPrompt,
   type Opening, type Contention, type RankedSpeaker,
 } from './chatroom-conductor'
-import { assertSupported, capabilitiesFor, replyDeliveryFor, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
-import { makeTurnTextCollector, parseSilence, type DeliveryKind, type DeliveryReport, type ReplyDeliveryMode, type ReplyDeliveryPort, type TurnDeliveryHandle } from './turn-reply'
+import { assertSupported, capabilitiesFor, replyDeliveryFor, replyTextStrategyFor, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
+import { buildTurnReply, makeTurnTextCollector, type DeliveryKind, type DeliveryReport, type ReplyDeliveryMode, type ReplyDeliveryPort, type ReplyTextStrategy, type TurnDeliveryHandle } from './turn-reply'
 import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } from './agent-provider'
 import { isAuthErrorCode, providerErrorCodeOf } from '../lib/provider-error-code'
 import { resolveEffectiveTier, resolveTier, TIER_PROFILES, type TierProfile } from './user-tier'
@@ -178,6 +178,8 @@ export interface ConversationCoordinatorDeps {
   replyDelivery?: ReplyDeliveryPort
   /** 每家 provider 的交付模式;缺省读 capability-matrix 的 `replyDeliveryFor`。测试 / 实验可以注入。 */
   replyDeliveryModeFor?: (providerId: ProviderId) => ReplyDeliveryMode
+  /** 每家 provider 哪些文字算回复;缺省读能力表的 `replyTextStrategyFor`。测试注入。 */
+  replyTextStrategyFor?: (providerId: ProviderId) => ReplyTextStrategy
   /**
    * daemon 模式下「应答轮交付为空」的连击(spec §4.10,取代 FALLBACK 连击):私聊 / app 一轮 completed 但
    * 什么都没交付(空文字、没附件)或写了 NO_REPLY ⇒ +1;正常交付 ⇒ 0。bootstrap 记进 /mode 并在 ≥3 时打
@@ -391,6 +393,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
   /** 这一轮这家 provider 的交付模式。没有端口 ⇒ 只能 legacy。 */
   const deliveryModeFor = (providerId: ProviderId): ReplyDeliveryMode =>
     deps.replyDelivery ? (deps.replyDeliveryModeFor ?? replyDeliveryFor)(providerId) : 'legacy'
+  const textStrategyFor = (providerId: ProviderId): ReplyTextStrategy => (deps.replyTextStrategyFor ?? replyTextStrategyFor)(providerId)
   function defaultMode(): Mode {
     return { kind: 'solo', provider: deps.defaultProviderId }
   }
@@ -759,12 +762,16 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       }
       const deliveryMode = deliveryModeFor(providerId)
       if (deliveryMode === 'shadow') {
-        try { shadow = deps.replyDelivery!.begin(msg.chatId, { mode: 'shadow', context: 'dm', providerId }) } catch { shadow = undefined }
+        try { shadow = deps.replyDelivery!.begin(msg.chatId, { mode: 'shadow', context: 'dm', providerId, textStrategy: textStrategyFor(providerId) }) } catch { shadow = undefined }
       }
-      // daemon:开轮(附件从此刻起登记到这一轮),并挂上长任务进度(已定 ①:一轮最多一次,有旁白用最近一段)。
+      // daemon:开轮(附件从此刻起登记到这一轮)。编码型执行者(last_segment)挂上长任务进度(已定 ①:
+      // 一轮最多一次,有旁白用最近一段);聊天型模型(all_segments)每段都会交付,不发进度。
+      const textStrategy = textStrategyFor(providerId)
       const live = deliveryMode === 'daemon' ? makeTurnTextCollector() : undefined
       if (deliveryMode === 'daemon') {
-        delivery = deps.replyDelivery!.begin(msg.chatId, { mode: 'daemon', context: 'dm', providerId })
+        delivery = deps.replyDelivery!.begin(msg.chatId, { mode: 'daemon', context: 'dm', providerId, textStrategy })
+      }
+      if (delivery && textStrategy === 'last_segment') {
         const d = delivery
         progressTimer = setTimeout(() => {
           progressTimer = undefined
@@ -1098,7 +1105,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     const deliveries = acquired.map((a, i) => {
       if (a.status !== 'fulfilled' || deliveryModeFor(participants[i]!) !== 'daemon') return undefined
       const dn = deps.registry.get(participants[i]!)?.opts.displayName ?? participants[i]!
-      return deps.replyDelivery!.begin(msg.chatId, { mode: 'daemon', context: 'parallel', providerId: participants[i]!, participantLabel: dn })
+      return deps.replyDelivery!.begin(msg.chatId, { mode: 'daemon', context: 'parallel', providerId: participants[i]!, participantLabel: dn, textStrategy: textStrategyFor(participants[i]!) })
     })
     // Register every acquired handle's cancel BEFORE dispatching — /stop must
     // reach whichever participants are in flight, not just the first. Each
@@ -1176,9 +1183,11 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       }
       if (turnDelivery) {
         if (r.value.error) continue
-        const final = parseSilence(r.value.finalText ?? '')
-        await turnDelivery.deliver({ finalText: r.value.finalText ?? '', narration: r.value.narration ?? [] })
-        if (!final.silent && final.text.trim()) answers.push({ speaker: providerId, text: final.text.trim() })
+        const parts = { finalText: r.value.finalText ?? '', narration: r.value.narration ?? [] }
+        await turnDelivery.deliver(parts)
+        // 综合用的答案和交付出去的是同一份文字(同一个策略、同样剥掉令牌)。
+        const said = buildTurnReply(parts, [], 'parallel', textStrategyFor(providerId)).reply
+        if (!said.silent && said.text.trim()) answers.push({ speaker: providerId, text: said.text.trim() })
         continue
       }
       const { assistantText, replyToolCalled } = r.value

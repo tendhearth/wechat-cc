@@ -69,7 +69,8 @@ import { formatInbound } from '../../../src/core/prompt-format'
 import { buildColdStartBlock, type HandoffTurn } from '../../../src/core/provider-handoff'
 import { TIER_PROFILES } from '../../../src/core/user-tier'
 import type { AgentEvent } from '../../../src/core/agent-provider'
-import { extractTurnReply } from '../../../src/core/turn-reply'
+import { extractTurnReply, parseSilence, type ReplyTextStrategy } from '../../../src/core/turn-reply'
+import { replyTextStrategyFor } from '../../../src/core/capability-matrix'
 import { buildPushTickText } from '../../../src/daemon/wiring/tick-bodies'
 import { summarize, evaluateGate, formatGate, META_RE, REPLY_FAMILY, SPEAKING_TOOLS, type Arm, type Scenario, type RunResult } from './gate'
 export { summarize, evaluateGate, type Arm, type Scenario, type RunResult }
@@ -369,7 +370,7 @@ function systemPrompt(arm: Arm, model: string): string {
   const p = buildSystemPrompt({
     providerId: 'openai', model, peerProviderId: 'claude', companionEnabled: false, delegateAvailable: false,
     daemonOpsAvailable: true, fileLocateAvailable: true, bubbleReplies: true,
-    ...(arm === 'daemon' ? { replyDelivery: 'final_text' as const, messageToolAvailable: true } : {}),
+    ...(arm === 'daemon' ? { replyDelivery: 'final_text' as const, replyText: replyTextStrategyFor('openai'), messageToolAvailable: true } : {}),
   })
   if (arm !== 'ii_prompt') return p
   const bubble = bubbleRepliesSection()
@@ -389,7 +390,7 @@ export function assertGatewayHost(baseURL: string, allowed: readonly string[] = 
 
 /** 这一轮的提示:g 是伙伴推送(议程已过期),其余是主人的一句话。 */
 function promptFor(scenario: Scenario, arm: Arm): string {
-  if (scenario === 'g') return buildPushTickText({ nowIso: G_NOW_ISO, defaultChatId: CHAT_ID, intention: G_INTENTION }, { replyDelivery: arm === 'daemon' ? 'final_text' : 'tool' })
+  if (scenario === 'g') return buildPushTickText({ nowIso: G_NOW_ISO, defaultChatId: CHAT_ID, intention: G_INTENTION }, { replyDelivery: arm === 'daemon' ? 'final_text' : 'tool', allSegments: arm === 'daemon' && replyTextStrategyFor('openai') === 'all_segments' })
   return inbound(SCENARIO_PROMPT[scenario])
 }
 
@@ -400,7 +401,8 @@ export function measureDaemon(
   parts: { finalText: string; narration: string[] } | undefined,
   report: { delivery: string } | undefined,
   context: 'dm' | 'tick',
-): Pick<RunResult, 'delivered' | 'attachments' | 'narrationLeaked' | 'tokenLeaked' | 'silent' | 'silentInDm' | 'budgetExhausted' | 'context' | 'finalText'> {
+  strategy: ReplyTextStrategy = replyTextStrategyFor('openai'),
+): Pick<RunResult, 'delivered' | 'attachments' | 'narrationLeaked' | 'tokenLeaked' | 'silent' | 'silentInDm' | 'budgetExhausted' | 'context' | 'finalText' | 'textStrategy' | 'segmentsLost'> {
   const err = evs.find(e => e.kind === 'error') as Extract<AgentEvent, { kind: 'error' }> | undefined
   const delivered = [...ledger.delivered]
   // 旁白与最后的话一字不差(模型调工具前后说了同一句)不算外泄 —— 只发出去一次。
@@ -416,7 +418,19 @@ export function measureDaemon(
     budgetExhausted: err?.code === 'step_budget',
     context,
     finalText: (parts?.finalText ?? '').slice(0, 300),
+    textStrategy: strategy,
+    // 聊天型:模型写下的每一段(去掉令牌)都该送到;静默的轮不算丢。编码型不量(旁白本来就不发)。
+    ...(strategy === 'all_segments' ? { segmentsLost: report?.delivery === 'silent' ? 0 : lostSegments(parts, delivered) } : {}),
   }
+}
+
+const normText = (t: string) => t.replace(/[\s\p{P}\p{S}]/gu, '')
+function lostSegments(parts: { finalText: string; narration: string[] } | undefined, delivered: string[]): number {
+  if (!parts) return 0
+  const sent = normText(delivered.join(''))
+  return [...parts.narration, parts.finalText]
+    .map(t => normText(parseSilence(t).text))
+    .filter(t => t.length > 0 && !sent.includes(t)).length
 }
 
 /**
@@ -479,7 +493,8 @@ async function runOnce(arm: Arm, scenario: Scenario, run: number, gw: ReturnType
   }
   /** daemon 臂的一轮:和协调器一样 —— 开轮(附件登记得上)→ 跑 → 只有完成的轮交付最后的话。 */
   const daemonTurn = async (text: string, context: 'dm' | 'tick') => {
-    const handle = rt!.begin(CHAT_ID, { mode: 'daemon', context, providerId: 'openai' })
+    // 和协调器一样按能力表声明策略:openai 是聊天型(all_segments)。
+    const handle = rt!.begin(CHAT_ID, { mode: 'daemon', context, providerId: 'openai', textStrategy: replyTextStrategyFor('openai') })
     const evs = await drain(text)
     if (evs.some(e => e.kind === 'error')) { handle.abandon('error'); return { evs, parts: undefined, report: undefined } }
     const parts = extractTurnReply(evs)

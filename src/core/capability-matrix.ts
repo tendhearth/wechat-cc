@@ -22,7 +22,7 @@
  */
 // src/core/capability-matrix.ts
 
-import type { ReplyDeliveryMode } from './turn-reply'
+import type { ReplyDeliveryMode, ReplyTextStrategy } from './turn-reply'
 import type { Mode, ProviderId } from './conversation'
 import type { ProviderCapabilities, PermissionMode } from './agent-provider'
 import { CLAUDE_CAPABILITIES } from './claude-agent-provider'
@@ -136,6 +136,11 @@ export function capabilitiesFor(provider: ProviderId): ProviderCapabilities {
  */
 export function replyDeliveryFor(provider: ProviderId): ReplyDeliveryMode {
   return CAPABILITIES_BY_PROVIDER[provider]?.replyDelivery ?? 'legacy'
+}
+
+/** 这家执行者哪些文字算回复;没声明 ⇒ last_segment(spec 的原规则)。 */
+export function replyTextStrategyFor(provider: ProviderId): ReplyTextStrategy {
+  return CAPABILITIES_BY_PROVIDER[provider]?.replyText ?? 'last_segment'
 }
 
 /**

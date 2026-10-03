@@ -362,6 +362,12 @@ export interface ProviderCapabilities {
    * 读它用 capability-matrix 的 `replyDeliveryFor`。迁移按 openai → agy → Cursor → Codex → Claude 一家一家翻。
    */
   replyDelivery?: import('./turn-reply').ReplyDeliveryMode
+  /**
+   * 哪些文字算回复(2026-10-03 修订):'last_segment'(缺省,编码型执行者 —— Claude Code / Codex / Cursor,
+   * 之前的段是长任务旁白)或 'all_segments'(聊天型模型 —— openai 兼容、agy:本轮所有文字段按顺序都交付)。
+   * 读它用 capability-matrix 的 `replyTextStrategyFor`。
+   */
+  replyText?: import('./turn-reply').ReplyTextStrategy
 }
 
 export interface AgentProvider {

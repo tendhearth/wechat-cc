@@ -1721,12 +1721,19 @@ describe('伙伴推送 × 回复交付(spec 2026-10-03 §4.4 / 已定 ③)', () 
     }
   })
 
+  it('聊天型模型的推送提示:说清楚这一轮写的都会发出去;不发就只写 NO_REPLY 别解释', () => {
+    const t = buildPushTickText({ nowIso: 't', defaultChatId: 'c', intention: 'x' }, { replyDelivery: 'final_text', allSegments: true })
+    expect(t).toContain('都会原样发出去')
+    expect(t).toContain('别解释为什么不发')
+    expect(buildPushTickText({ nowIso: 't', defaultChatId: 'c', intention: 'x' }, { replyDelivery: 'final_text' })).toContain('最后写下的话就是推送')
+  })
+
   it('daemon:最后的话经交付端口送出(context=tick),旁白不发', async () => {
     const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project' })
     cleanup.push(s.stateDir)
     const d = withDelivery(s, [{ kind: 'text', text: '我看看记忆' }, { kind: 'tool_call', server: 'wechat', tool: 'memory_read' }, { kind: 'text', text: '项目最近顺利吗?' }, { kind: 'result', sessionId: 's', numTurns: 2, durationMs: 1 }])
     await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
-    expect(d.begun).toEqual([{ chatId: 'chat-1', mode: 'daemon', context: 'tick', providerId: 'claude' }])
+    expect(d.begun).toEqual([{ chatId: 'chat-1', mode: 'daemon', context: 'tick', providerId: 'claude', textStrategy: 'last_segment' }])
     expect(d.delivered).toEqual([{ finalText: '项目最近顺利吗?', narration: ['我看看记忆'] }])
     const text = (s.dispatch.mock.calls[0] as unknown[])[0] as string
     expect(text).toContain('NO_REPLY')
@@ -1750,6 +1757,30 @@ describe('伙伴推送 × 回复交付(spec 2026-10-03 §4.4 / 已定 ③)', () 
     expect(d.delivered).toEqual([])
     expect(d.abandoned).toHaveLength(1)
     expect(s.careLedgerEntries['chat-1']).toBeDefined()
+  })
+
+  // 结构保障(2026-10-03 审稿第 4 条):「推不推」在调用模型之前就由 shouldSpeak / 日程判断决定了;
+  // daemon 模式下这一步仍然先于生成 —— 判了不推,就既不开轮也不调模型。NO_REPLY 只是第二道闸。
+  it('daemon:议程冷却中(shouldSpeak 拒)⇒ 不开轮、不调模型', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project', careLedgerEntries: { 'chat-1': { noReplyCount: 0, lastProactiveAtIso: '2026-05-13T09:00:00.000Z' } } })
+    cleanup.push(s.stateDir)
+    const d = withDelivery(s, [{ kind: 'text', text: '在吗' }, { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 }])
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(d.begun).toEqual([])
+    expect(s.dispatch).not.toHaveBeenCalled()
+    expect(s.logs.some(l => l.includes('reason=agenda_cooldown'))).toBe(true)
+  })
+
+  it('daemon:日程判断选 none ⇒ 不开轮、不调模型', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false })
+    cleanup.push(s.stateDir)
+    withVisit(s, { hasOpen: true })
+    const d = withDelivery(s, [{ kind: 'text', text: '在吗' }, { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 }])
+    const planEval = vi.fn(async () => '{"action":"none","why":"主人在聊"}')
+    await buildTickBodies({ ...s.deps, planEval }).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(planEval).toHaveBeenCalledOnce()
+    expect(d.begun).toEqual([])
+    expect(s.dispatch).not.toHaveBeenCalled()
   })
 
   it('legacy(缺省):不碰端口,提示里照旧是 reply', async () => {

@@ -1,4 +1,8 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { assertGatewayHost, assertProviderSeams, measureLegacy, measureDaemon } from './harness'
 import { STATE_DIR } from './isolate'
 import type { AgentEvent } from '../../../src/core/agent-provider'
@@ -55,15 +59,21 @@ describe('measureLegacy — legacy 一轮主人到底收到了什么', () => {
 })
 
 describe('measureDaemon — daemon 臂一轮主人到底收到了什么', () => {
+  it('聊天型(all_segments):每段都送到 ⇒ segmentsLost 0;漏一段 ⇒ 1', () => {
+    const parts = { finalText: '第三条:早点睡', narration: ['第一条:出门走走', '第二条:吃顿好的'] }
+    expect(measureDaemon([], { delivered: ['第一条:出门走走', '第二条:吃顿好的', '第三条:早点睡'], attachments: [], logs: [] }, parts, { delivery: 'text' }, 'dm', 'all_segments').segmentsLost).toBe(0)
+    expect(measureDaemon([], { delivered: ['第二条:吃顿好的', '第三条:早点睡'], attachments: [], logs: [] }, parts, { delivery: 'text' }, 'dm', 'all_segments').segmentsLost).toBe(1)
+  })
+
   it('交付的就是 deliverTurnReply 发出的;旁白没进外发', () => {
-    const m = measureDaemon([], { delivered: ['你有两个项目'], attachments: [], logs: ['REPLY'] }, { finalText: '你有两个项目', narration: ['我先查一下项目列表'] }, { delivery: 'text' }, 'dm')
+    const m = measureDaemon([], { delivered: ['你有两个项目'], attachments: [], logs: ['REPLY'] }, { finalText: '你有两个项目', narration: ['我先查一下项目列表'] }, { delivery: 'text' }, 'dm', 'last_segment')
     expect(m.delivered).toEqual(['你有两个项目'])
     expect(m.narrationLeaked).toBe(0)
     expect(m.silent).toBe(false)
   })
 
   it('旁白出现在外发里 ⇒ 记外泄;静默 + REPLY_SILENT_IN_DM 记下来', () => {
-    expect(measureDaemon([], { delivered: ['我先查一下项目列表\n\n有两个'], attachments: [], logs: [] }, { finalText: 'x', narration: ['我先查一下项目列表'] }, { delivery: 'text' }, 'dm').narrationLeaked).toBe(1)
+    expect(measureDaemon([], { delivered: ['我先查一下项目列表\n\n有两个'], attachments: [], logs: [] }, { finalText: 'x', narration: ['我先查一下项目列表'] }, { delivery: 'text' }, 'dm', 'last_segment').narrationLeaked).toBe(1)
     const s = measureDaemon([], { delivered: [], attachments: [], logs: ['REPLY_SILENT_IN_DM'] }, { finalText: 'NO_REPLY', narration: [] }, { delivery: 'silent' }, 'dm')
     expect(s.silent).toBe(true)
     expect(s.silentInDm).toBe(true)
@@ -72,4 +82,30 @@ describe('measureDaemon — daemon 臂一轮主人到底收到了什么', () => 
   it('旁白与最后的话一字不差 ⇒ 不算外泄(只发出去一次)', () => {
     expect(measureDaemon([], { delivered: ['收到,你忙你的'], attachments: [], logs: [] }, { finalText: '收到,你忙你的', narration: ['收到,你忙你的'] }, { delivery: 'text' }, 'dm').narrationLeaked).toBe(0)
   })
+})
+
+describe('状态目录隔离:导入任何模块之前 WECHAT_STATE_DIR 已经指向临时目录(2026-10-03 审稿第 6 条)', () => {
+  const dir = import.meta.dirname
+
+  it('harness.ts 的第一个 import 就是 ./isolate,而 isolate.ts 只引 node 内置模块', () => {
+    const imports = (f: string) => [...readFileSync(join(dir, f), 'utf8').matchAll(/^import\s.*?from\s+['"]([^'"]+)['"]/gm)].map(m => m[1]!)
+    expect(imports('harness.ts')[0]).toBe('./isolate')
+    expect(imports('isolate.ts').every(m => m.startsWith('node:'))).toBe(true)
+  })
+
+  it('新进程里导入 harness:lib/config 定下的 STATE_DIR 就是临时目录(不是 ~/.claude/channels/wechat)', () => {
+    const home = mkdtempSync(join(tmpdir(), 'reply-once-home-'))
+    try {
+      const code = `await import(${JSON.stringify(join(dir, 'harness.ts'))}); const iso = await import(${JSON.stringify(join(dir, 'isolate.ts'))}); const cfg = await import(${JSON.stringify(join(dir, '../../../src/lib/config.ts'))}); console.log(JSON.stringify({ iso: iso.STATE_DIR, cfg: cfg.STATE_DIR, env: process.env.WECHAT_STATE_DIR }))`
+      const env = { ...process.env, HOME: home }
+      delete (env as Record<string, string | undefined>).WECHAT_STATE_DIR
+      const r = spawnSync(process.execPath, ['-e', code], { env, encoding: 'utf8', timeout: 60_000 })
+      expect(r.status, r.stderr).toBe(0)
+      const out = JSON.parse(r.stdout.trim().split('\n').pop()!) as { iso: string; cfg: string; env: string }
+      expect(out.cfg).toBe(out.iso)
+      expect(out.env).toBe(out.iso)
+      expect(out.cfg).toContain('reply-once-')
+      expect(out.cfg).not.toContain('.claude/channels')
+    } finally { rmSync(home, { recursive: true, force: true }) }
+  }, 70_000)
 })

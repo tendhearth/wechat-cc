@@ -275,6 +275,12 @@ export interface BuildSystemPromptArgs {
   replyDelivery?: 'tool' | 'final_text'
   /** final_text 时:这个会话有没有 admin 的 `message` 工具(trusted / guest 不注册)。 */
   messageToolAvailable?: boolean
+  /**
+   * final_text 时哪些文字算回复(2026-10-03 修订):'last_segment'(缺省,编码型执行者)只有最后一段发出去;
+   * 'all_segments'(聊天型模型)本轮写下的文字按顺序都发出去。提示词必须和交付一致,否则模型以为
+   * 「中间的话不发」,会把要说的话写成过程独白。
+   */
+  replyText?: 'last_segment' | 'all_segments'
 }
 
 /**
@@ -325,13 +331,13 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
 
   const finalText = args.replyDelivery === 'final_text'
   const sections: string[] = [
-    baseChannelSection(providerId, model, finalText),
+    baseChannelSection(providerId, model, finalText, args.replyText === 'all_segments'),
     args.persona && args.persona.trim().length > 0 ? personaSection(args.persona) : '',
     args.curatedMemory && args.curatedMemory.trim().length > 0
       ? curatedMemorySection(args.curatedMemory, args.todayDraft)
       : args.coreMemory && args.coreMemory.trim().length > 0 ? coreMemorySection(args.coreMemory) : '',
     args.knowledgeMemory && args.knowledgeMemory.trim().length > 0 ? knowledgeMemorySection(args.knowledgeMemory) : '',
-    toolsSection(finalText, args.messageToolAvailable === true),
+    toolsSection(finalText, args.messageToolAvailable === true, args.replyText === 'all_segments'),
     args.bubbleReplies === true ? bubbleRepliesSection(finalText) : '',
     delegateAvailable ? delegateSection(peerProviderId) : '',
     a2aSection(),
@@ -356,7 +362,7 @@ export function buildSystemPrompt(args: BuildSystemPromptArgs): string {
 
 // ─── sections ──────────────────────────────────────────────────────────
 
-function baseChannelSection(providerId: ProviderId, model?: string, finalText = false): string {
+function baseChannelSection(providerId: ProviderId, model?: string, finalText = false, allSegments = false): string {
   const modelTag = model !== undefined ? `当前模型 ${model}` : '当前模型:provider 默认,未单独固定'
   return `你是 ${providerId}(${modelTag})。你在 wechat-cc 的消息通道里接收来自作者个人微信的消息。基础规则：
 - 用户问你是谁 / 哪个模型 / 用的谁家 → 按上面这行**如实回答**(provider + 模型 id),不要凭感觉猜自己的版本。
@@ -366,27 +372,29 @@ function baseChannelSection(providerId: ProviderId, model?: string, finalText = 
 - 用户引用/回复某条历史消息时，被引用内容会以 \`<quote type="text|image|voice|file|...">被引用的原文</quote>\` 出现在该条消息体的开头。把它当作用户这次发言的上下文来理解。
 - 管理员询问“我和某人的聊天记录 / 最后一条 / 最近聊了什么”等微信原始聊天内容时，**默认先调用 wxvault**（先定位会话，再读消息）；长期记忆只用于辅助理解，不能代替原始聊天记录。wxvault 查询前会自动增量刷新，返回里的 \`up_to_date\` 表示快照是否已含本机 Mac 微信写入的全部内容、\`snapshot_at\` 是快照对应的微信写入时刻。不要把记忆或本地文件搜索结果冒充为微信原始记录；不要凭空归因成「手机端没同步」—— 只有 \`up_to_date\` 为 true 而消息仍缺时，才提手机端未同步到 Mac 的可能；为 false 或 null 时如实报 \`snapshot_at\` 和该会话最新一条的时间，必要时调 \`sync_wechat_data\` 兜底刷新。
 - 用户是个人开发者，偏好简短直接的中文回复。
-${finalText
+${finalText && allSegments
+  ? '- **你这一轮写下的文字会按顺序发给对方**(调工具之前、之后说的都算),daemon 负责分条和送达;说完就结束这一轮,不需要调任何工具来「发送」。所以只写要对对方说的话,不写只给自己看的过程独白。'
+  : finalText
   ? '- **你这一轮最后写下的那段话就是发给对方的回复**,daemon 负责分条和送达;说完就结束这一轮,不需要调任何工具来「发送」。中间过程里写的话(比如「我查一下」)不会发给对方,所以结论要写在最后那段里、写全。'
   : '- 回复时**用 \`reply\` 工具**而非直接生成 plain text。如果你不调 reply 而只输出 assistant text，daemon 的 fallback 路径会把文本发出去（channel.log 记 [FALLBACK_REPLY]），用户能收到但 daemon 视为 anomaly — 不要依赖。'}`
 }
 
 /** final_text 版的「说话」小节:没有 reply 族工具,只有本轮回复的附件(+ admin 的 message)。 */
-function speakingFinalTextBlock(messageTool: boolean): string {
-  return `说话:不用工具 —— 你这一轮最后写下的文字就是回复。语音 / 表情 / 文件是这条回复的**附件**(在文字之后发出,不用填 chat_id):
+function speakingFinalTextBlock(messageTool: boolean, allSegments = false): string {
+  return `说话:不用工具 —— 你这一轮${allSegments ? '写下的文字' : '最后写下的文字'}就是回复。语音 / 表情 / 文件是这条回复的**附件**(在文字之后发出,不用填 chat_id):
 - \`voice(text)\` — 把这段话作为语音附上。用户要语音,或短的、道晚安 / 安慰这类适合用声音的时刻,你也可以主动用(一两句话,默认还是文字为主)。≤ 500 字,不放代码 / 链接 / 长列表。只想发语音时,最后的文字留空或写同一句就只发语音;合成失败 daemon 会自动改发文字。
 - \`attach_file(path)\` — 附上本机文件(绝对路径)。
 附件要真的调用上面的工具;在文字里写「[voice: …]」「[attach_file: …]」不会变成语音或文件,只会原样发给对方。${messageTool ? `
 - \`message(to, text)\` — 只用于往**别处**发:to='owner'(主人自己的微信)/ 某个 chat_id / 'broadcast'(群发所有在线用户)。本轮这个聊天要说的话直接写在最后,不要用它(会报错)。` : ''}`
 }
 
-function toolsSection(finalText = false, messageTool = false): string {
+function toolsSection(finalText = false, messageTool = false, allSegments = false): string {
   // Lists the wechat-mcp tools (loaded on every regular session via
   // wechatStdioMcpSpec in bootstrap.ts). Grouped by intent so the agent
   // can find the right tool quickly.
   if (finalText) {
     return LEGACY_TOOLS_SECTION
-      .replace(LEGACY_SPEAKING_BLOCK, speakingFinalTextBlock(messageTool))
+      .replace(LEGACY_SPEAKING_BLOCK, speakingFinalTextBlock(messageTool, allSegments))
       .replace('未配置则 reply 引导用户发 API 配置', '未配置则直接告诉用户怎么发 API 配置')
   }
   return LEGACY_TOOLS_SECTION

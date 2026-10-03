@@ -43,7 +43,7 @@ describe('wireInstructions × 回复交付(spec 2026-10-03 §4.11)', () => {
   it('provider 走 daemon ⇒ final_text 版(不教 reply,讲「最后的话」);admin 才提 message', () => {
     vi.spyOn(capabilityMatrix, 'replyDeliveryFor').mockImplementation(p => p === 'openai' ? 'daemon' : 'legacy')
     const admin = build()('openai', TIER_PROFILES.admin, 'c')
-    expect(admin).toContain('最后写下的那段话就是发给对方的回复')
+    expect(admin).toContain('按顺序发给对方') // openai 是聊天型(all_segments)
     expect(admin).not.toContain('`reply(chat_id, text)`')
     expect(admin).toContain('`message(to, text)`')
     expect(build()('openai', TIER_PROFILES.trusted, 'c')).not.toContain('`message(to, text)`')

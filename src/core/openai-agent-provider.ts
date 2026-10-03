@@ -32,6 +32,8 @@ export const OPENAI_CAPABILITIES: ProviderCapabilities = {
   // 2026-10-03)c / d / g 三项没过线 ⇒ 按约定先 shadow —— 照旧用 reply 工具说话,每轮另记
   // [REPLY_SHADOW] 比对。数据与下一步见 docs/reference/reply-once-experiment.md「2026-10-03」。
   replyDelivery: 'shadow',
+  // 聊天型模型:本轮所有文字段按顺序都交付(工具前说的话也是聊天内容,不是长任务旁白)。
+  replyText: 'all_segments',
 }
 
 /**

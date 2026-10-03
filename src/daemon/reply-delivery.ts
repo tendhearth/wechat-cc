@@ -114,7 +114,10 @@ export async function deliverTurnReply(input: DeliverInput, deps: DeliverDeps): 
     deps.observe?.(chatId, text)
     // 5. 分条 + 4. 前缀(每条都加,第 2 条起不会丢掉署名)
     const prefix = input.participantLabel ? `[${input.participantLabel}] ` : ''
-    const parts = splitBubbles(text, { split: deps.chatPrefs?.(chatId)?.split !== false }).map(p => `${prefix}${p}`)
+    // 聊天型模型的多段:每段按 ④ 各自分条,依次发(spec 修订 2026-10-03);否则整段分条。
+    const split = deps.chatPrefs?.(chatId)?.split !== false
+    const sources = reply.segments && reply.segments.length > 0 && !reply.silent ? reply.segments : [text]
+    const parts = sources.flatMap(seg => splitBubbles(seg, { split })).map(p => `${prefix}${p}`)
     for (let i = 0; i < parts.length; i++) {
       if (!(await sendOne(parts[i]!))) {
         deps.log('REPLY_DELIVERY_FAIL', `chat=${chatId} sent=${bubbles}/${parts.length} err=${failures[failures.length - 1]}`)
@@ -195,8 +198,9 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
         async deliver(parts: TurnTextParts): Promise<DeliveryReport> {
           const legacy = [...turn.legacy]
           finish()
-          const { reply } = buildTurnReply(parts, [], opts.context)
-          const wouldSend = reply.silent ? [] : splitBubbles(reply.text, { split: deps.chatPrefs?.(chatId)?.split !== false })
+          const { reply } = buildTurnReply(parts, [], opts.context, opts.textStrategy)
+          const split = deps.chatPrefs?.(chatId)?.split !== false
+          const wouldSend = reply.silent ? [] : (reply.segments ?? [reply.text]).flatMap(seg => splitBubbles(seg, { split }))
           const legacyJoined = legacy.join('\n')
           const match = legacy.length === 0 && wouldSend.length === 0 ? 'both_empty'
             : legacy.length === 0 ? 'legacy_empty'
@@ -230,7 +234,7 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
         const pending = [...turn.attachments]
         const messagedOwner = [...turn.messagedOwner]
         finish()
-        const built = buildTurnReply(parts, pending.map(p => p.attachment), opts.context)
+        const built = buildTurnReply(parts, pending.map(p => p.attachment), opts.context, opts.textStrategy)
         if (built.mixed) deps.log('NO_REPLY_MIXED', `chat=${chatId} provider=${opts.providerId} 令牌行已剥掉,其余照发`)
         if (built.silentInDm) {
           deps.log('REPLY_SILENT_IN_DM', `chat=${chatId} provider=${opts.providerId} 私聊里写了 NO_REPLY —— 不显示、不替模型补话,记一次应答轮交付为空`, { event: 'reply_silent_in_dm', chat_id: chatId, provider: opts.providerId })

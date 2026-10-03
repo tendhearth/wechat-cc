@@ -263,3 +263,13 @@ describe('replyDeliveryFor — 回复交付开关(spec §5.0,一家一家翻)', 
     expect(replyDeliveryFor('no-such-provider' as never)).toBe('legacy')
   })
 })
+
+describe('replyTextStrategyFor — 按执行者类型(2026-10-03 修订)', () => {
+  it('聊天型模型 all_segments;编码型执行者与没声明的 last_segment', async () => {
+    const { replyTextStrategyFor } = await import('./capability-matrix')
+    expect(replyTextStrategyFor('openai')).toBe('all_segments')
+    expect(replyTextStrategyFor('agy')).toBe('all_segments')
+    for (const p of ['claude', 'codex', 'cursor'] as const) expect(replyTextStrategyFor(p)).toBe('last_segment')
+    expect(replyTextStrategyFor('no-such' as never)).toBe('last_segment')
+  })
+})

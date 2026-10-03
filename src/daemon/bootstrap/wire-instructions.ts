@@ -9,7 +9,7 @@
 import type { ProviderId } from '../../core/conversation'
 import type { TierProfile } from '../../core/user-tier'
 import { buildSystemPrompt } from '../../core/prompt-builder'
-import { capabilitiesFor, replyDeliveryFor } from '../../core/capability-matrix'
+import { capabilitiesFor, replyDeliveryFor, replyTextStrategyFor } from '../../core/capability-matrix'
 import type { Ref } from '../../lib/lifecycle'
 import type { Bootstrap, BootstrapDeps } from './types'
 import type { PluginsSlice } from './wire-plugins'
@@ -83,7 +83,7 @@ export function wireInstructions(
     const finalText = replyDeliveryFor(providerId) === 'daemon'
     return buildSystemPrompt({
       providerId,
-      ...(finalText ? { replyDelivery: 'final_text' as const, messageToolAvailable: tierProfile.allow.has('message_other') && capabilitiesFor(providerId).adminMcpTools } : {}),
+      ...(finalText ? { replyDelivery: 'final_text' as const, replyText: replyTextStrategyFor(providerId), messageToolAvailable: tierProfile.allow.has('message_other') && capabilitiesFor(providerId).adminMcpTools } : {}),
       // 让 bot 知道自己此刻跑的是哪个模型(session-manager 按 spawn 解析后
       // 传进来;claude 的解析见下面 currentModelFor 的 claude 分支)。
       model,

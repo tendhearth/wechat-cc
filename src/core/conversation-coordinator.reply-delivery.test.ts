@@ -119,7 +119,7 @@ describe('shadow', () => {
     const t = setup([{ kind: 'text', text: '我查一下' }, { kind: 'tool_call', server: 'wechat', tool: 'list_projects' }, { kind: 'text', text: '你有两个项目' }, RESULT], { port: p.port, mode: 'shadow' })
     await t.c.dispatch(inbound())
     expect(t.sendAssistantText.mock.calls.map(c => c[1])).toEqual(['我查一下', '你有两个项目'])
-    expect(p.begun).toEqual([{ chatId: 'chat-1', mode: 'shadow', context: 'dm', providerId: 'openai' }])
+    expect(p.begun).toEqual([{ chatId: 'chat-1', mode: 'shadow', context: 'dm', providerId: 'openai', textStrategy: 'all_segments' }])
     expect(p.delivered).toEqual([{ finalText: '你有两个项目', narration: ['我查一下'] }])
     expect(t.records[0]!.delivery).toBeUndefined()
   })
@@ -162,7 +162,7 @@ describe('daemon(最后的话就是回复)', () => {
     const p = fakePort({ delivery: 'text', bubbles: 2 })
     const t = setup([{ kind: 'text', text: '我查一下' }, { kind: 'tool_call', server: 'wechat', tool: 'list_projects' }, { kind: 'text', text: '你有两个项目' }, RESULT], { port: p.port, mode: 'daemon' })
     await t.c.dispatch(inbound())
-    expect(p.begun).toEqual([{ chatId: 'chat-1', mode: 'daemon', context: 'dm', providerId: 'openai' }])
+    expect(p.begun).toEqual([{ chatId: 'chat-1', mode: 'daemon', context: 'dm', providerId: 'openai', textStrategy: 'all_segments' }])
     expect(p.delivered).toEqual([{ finalText: '你有两个项目', narration: ['我查一下'] }])
     expect(t.sendAssistantText).not.toHaveBeenCalled()
     expect(t.records[0]).toMatchObject({ outcome: 'completed', replyToolCalled: false, delivery: 'text', bubbles: 2, attachments: 0, narrationSegments: 1 })
@@ -200,7 +200,7 @@ describe('daemon(最后的话就是回复)', () => {
 
   it('长任务:超过阈值还没结束 ⇒ 发一次进度(最近一段旁白),只发一次', async () => {
     const p = fakePort()
-    const t = setup([], { port: p.port, mode: 'daemon', session: slowSession(80), extra: { replyProgressAfterMs: 20 } })
+    const t = setup([], { port: p.port, mode: 'daemon', session: slowSession(80), extra: { replyProgressAfterMs: 20, replyTextStrategyFor: () => 'last_segment' } })
     await t.c.dispatch(inbound())
     expect(p.progress).toEqual(['我去翻翻日程'])
     expect(p.delivered).toEqual([{ finalText: '明天下午三点有会', narration: ['我去翻翻日程'] }])
@@ -209,7 +209,7 @@ describe('daemon(最后的话就是回复)', () => {
   it('长任务还没说过话 ⇒ 进度用固定文案', async () => {
     const p = fakePort()
     const quiet: AgentSession = { dispatch: () => (async function* () { await new Promise(r => setTimeout(r, 60)); yield { kind: 'text', text: '好了' } as AgentEvent; yield RESULT })(), async close() {} }
-    const t = setup([], { port: p.port, mode: 'daemon', session: quiet, extra: { replyProgressAfterMs: 15 } })
+    const t = setup([], { port: p.port, mode: 'daemon', session: quiet, extra: { replyProgressAfterMs: 15, replyTextStrategyFor: () => 'last_segment' } })
     await t.c.dispatch(inbound())
     expect(p.progress).toEqual(['还在弄,有点久,好了告诉你'])
   })
@@ -240,9 +240,27 @@ describe('daemon × /both(parallel)', () => {
       sendAssistantText, replyDelivery: p.port, replyDeliveryModeFor: (id) => id === 'openai' ? 'daemon' : 'legacy',
     })
     await c.dispatch(inbound())
-    expect(p.begun).toEqual([{ chatId: 'chat-1', mode: 'daemon', context: 'parallel', providerId: 'openai', participantLabel: 'Qwen' }])
+    expect(p.begun).toEqual([{ chatId: 'chat-1', mode: 'daemon', context: 'parallel', providerId: 'openai', participantLabel: 'Qwen', textStrategy: 'all_segments' }])
     expect(p.delivered).toEqual([{ finalText: '选 A', narration: ['我想想'] }])
     // claude 仍是 legacy:每段一条(今天的形状)
     expect(sendAssistantText.mock.calls.map(c => (c as unknown[])[1])).toEqual(['[Claude] 我想想', '[Claude] 选 A'])
+  })
+})
+
+describe('按执行者类型分两种策略(2026-10-03 修订)', () => {
+  it('聊天型模型(all_segments):不挂长任务进度 —— 每段都会交付', async () => {
+    const p = fakePort()
+    const t = setup([], { port: p.port, mode: 'daemon', session: slowSession(60), extra: { replyProgressAfterMs: 15, replyTextStrategyFor: () => 'all_segments' } })
+    await t.c.dispatch(inbound())
+    expect(p.progress).toEqual([])
+    expect(p.begun[0]).toMatchObject({ textStrategy: 'all_segments' })
+  })
+
+  it('编码型执行者(last_segment):照旧挂进度,开轮时声明策略', async () => {
+    const p = fakePort()
+    const t = setup([], { port: p.port, mode: 'daemon', session: slowSession(60), extra: { replyProgressAfterMs: 15, replyTextStrategyFor: () => 'last_segment' } })
+    await t.c.dispatch(inbound())
+    expect(p.progress).toEqual(['我去翻翻日程'])
+    expect(p.begun[0]).toMatchObject({ textStrategy: 'last_segment' })
   })
 })

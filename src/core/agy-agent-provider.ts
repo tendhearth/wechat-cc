@@ -41,6 +41,8 @@ export const AGY_CAPABILITIES: ProviderCapabilities = {
   supportsResume: true,
   defaultPeer: 'claude',
   authFailHint: 'agy 登录态失效，请在电脑上跑一次 `agy` 重新登录后再发消息。',
+  // 聊天型(订阅版 Gemini 的 CLI):翻到 daemon 时本轮所有文字段都交付,不只取最后一段(2026-10-03 修订)。
+  replyText: 'all_segments',
 }
 
 /** Test-time (and default Bun.spawn) seam for the agy child process. */

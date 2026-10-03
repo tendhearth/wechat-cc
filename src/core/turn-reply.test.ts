@@ -132,3 +132,46 @@ describe('buildTurnReply — 场合决定静默算不算数(已定 ②)', () => 
     expect(b.reply.narration).toEqual([])
   })
 })
+
+describe('buildTurnReply — 聊天型模型:本轮所有文字段按顺序都交付(2026-10-03 修订)', () => {
+  it('all_segments:旁白不再丢,按顺序成为 segments;text 是它们拼起来', () => {
+    const b = buildTurnReply({ finalText: '第二条和第三条', narration: ['第一条建议'] }, [], 'dm', 'all_segments')
+    expect(b.reply.segments).toEqual(['第一条建议', '第二条和第三条'])
+    expect(b.reply.text).toBe('第一条建议\n\n第二条和第三条')
+    expect(b.reply.narration).toEqual([])
+  })
+
+  it('last_segment(缺省,编码型执行者):照旧只取最后一段', () => {
+    const b = buildTurnReply({ finalText: '结论', narration: ['我去查'] }, [], 'dm')
+    expect(b.reply.segments).toBeUndefined()
+    expect(b.reply.text).toBe('结论')
+    expect(b.reply.narration).toEqual(['我去查'])
+  })
+
+  it('all_segments + 推送:最后一段是 NO_REPLY ⇒ 整轮静默(前面的「我看看记忆」也不发)', () => {
+    const b = buildTurnReply({ finalText: 'NO_REPLY', narration: ['我先看看记忆'] }, [], 'tick', 'all_segments')
+    expect(b.reply.silent).toBe(true)
+    expect(b.reply.text).toBe('')
+    expect(b.reply.segments).toEqual([])
+  })
+
+  it('all_segments + 私聊:最后一段是 NO_REPLY ⇒ 令牌吞掉、记异常,前面真说过的话照发', () => {
+    const b = buildTurnReply({ finalText: 'NO_REPLY', narration: ['好的,我记下了'] }, [], 'dm', 'all_segments')
+    expect(b.silentInDm).toBe(true)
+    expect(b.reply.silent).toBe(false)
+    expect(b.reply.segments).toEqual(['好的,我记下了'])
+  })
+
+  it('all_segments:每段里的令牌行都剥掉', () => {
+    const b = buildTurnReply({ finalText: '好的', narration: ['先说一句\nNO_REPLY'] }, [], 'dm', 'all_segments')
+    expect(b.reply.segments).toEqual(['先说一句', '好的'])
+    expect(b.mixed).toBe(true)
+  })
+})
+
+describe('all_segments:只有标点 / 空白的段不是一句话', () => {
+  it('「。」这种段丢掉,不发成一条气泡(第 3 轮闸门 f#2 抓到的)', () => {
+    const b = buildTurnReply({ finalText: '。', narration: ['晚安'] }, [], 'dm', 'all_segments')
+    expect(b.reply.segments).toEqual(['晚安'])
+  })
+})
