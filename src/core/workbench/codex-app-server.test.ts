@@ -1052,3 +1052,30 @@ describe('Codex retained workbench runtime', () => {
     }
   })
 })
+
+describe('守护:工作台 Codex 的实际端点问 codex 自己(config/read,2026-10-03)', () => {
+  const emptyHome = { env: { HOME: '/nonexistent-home', CODEX_HOME: '/nonexistent-codex-home' }, systemDir: null }
+  const withEnvGateway = async (fn: () => unknown) => {
+    const prior = process.env.OPENAI_BASE_URL
+    process.env.OPENAI_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+    try { await fn() } finally { if (prior === undefined) delete process.env.OPENAI_BASE_URL; else process.env.OPENAI_BASE_URL = prior }
+  }
+  it('config/read 报默认(没有 model_provider)⇒ 官方 OpenAI —— 哪怕 OPENAI_BASE_URL 指到国内网关', () => withEnvGateway(async () => {
+    const { session } = await start({}, { codexTargetOptions: () => emptyHome })
+    expect(session.callTarget?.()).toEqual({ provider: 'codex', model: null, baseUrl: null, exact: true })
+  }))
+  it('config/read 报自定义 provider ⇒ 用它的 base_url(codex 自己的回答覆盖按文件的预测)', async () => {
+    nativeConfig = { ...nativeConfig, model_provider: 'ds', model_providers: { ds: { name: 'DeepSeek', base_url: 'https://api.deepseek.com/v1', wire_api: 'responses' } } }
+    const { session } = await start({}, { codexTargetOptions: () => emptyHome })
+    expect(session.callTarget?.()).toEqual({ provider: 'codex', model: null, baseUrl: 'https://api.deepseek.com/v1', exact: true })
+  })
+  it('config/read 报不出能认的 provider ⇒ unresolved(按需要保护)', async () => {
+    nativeConfig = { ...nativeConfig, model_provider: 'ghost' }
+    const { session } = await start({}, { codexTargetOptions: () => emptyHome })
+    expect(session.callTarget?.()).toMatchObject({ provider: 'codex', unresolved: true })
+  })
+  it('起会话前的预测按 codex 配置层,不看 OPENAI_BASE_URL', () => withEnvGateway(() => {
+    const provider = createWorkbenchCodexProvider({ codexPathOverride: '/codex', codexTargetOptions: () => emptyHome })
+    expect(provider.callTarget?.('spawn', { model: 'gpt-5.5' })).toEqual({ provider: 'codex', model: 'gpt-5.5', baseUrl: null, exact: true })
+  }))
+})

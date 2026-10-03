@@ -125,11 +125,12 @@ export function wireWorkbench(opts: {
   networkGate?: import('../../lib/network-gate').NetworkGate
 }) {
   // 额度查询带着账号凭据直连供应商(守护 v2:按真正连到的端点分类 —— Claude 的 usage 接口永远是
-  // api.anthropic.com,哪怕会话走的是自定义网关);需要保护且不安全就不出门。
+  // api.anthropic.com,哪怕会话走的是自定义网关;Codex 的额度是 ChatGPT 账号的,永远是 OpenAI 官方,
+  // 哪怕 model_provider 指到了别处);需要保护且不安全就不出门。
   const gatedUsage=<T>(target:import('../../lib/network-gate').CallTarget,fn:()=>Promise<T|null>)=>async():Promise<T|null>=>!(await decideCall(opts.networkGate,target)).allowed?null:fn()
   // 订阅额度监视器:Codex 问 app-server,Claude 用 Claude Code 自己的 OAuth 凭据问 usage 接口(subscription-usage.ts)。
   const usageMonitor=makeUsageMonitor({sources:{
-    ...(opts.boot.registry.has('codex')&&findCodexBinary()?{codex:gatedUsage({provider:'codex',purpose:'usage'},async()=>{const r=await readCodexRateLimits({codexPathOverride:findCodexBinary()!});return r?parseCodexRateLimits(r,Date.now()):null})}:{}),
+    ...(opts.boot.registry.has('codex')&&findCodexBinary()?{codex:gatedUsage({provider:'codex',baseUrl:'https://chatgpt.com',purpose:'usage',exact:true},async()=>{const r=await readCodexRateLimits({codexPathOverride:findCodexBinary()!});return r?parseCodexRateLimits(r,Date.now()):null})}:{}),
     ...(opts.boot.registry.has('claude')?{claude:gatedUsage({provider:'claude',baseUrl:'https://api.anthropic.com',purpose:'usage'},async()=>{
       const cred=readClaudeOAuthToken({platform:process.platform,keychain:()=>spawnSync(['security','find-generic-password','-s','Claude Code-credentials','-w']).stdout.toString(),readFile:()=>readFileSync(join(homedir(),'.claude','.credentials.json'),'utf8'),now:Date.now})
       if(!cred)return null

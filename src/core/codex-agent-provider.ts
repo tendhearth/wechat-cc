@@ -6,6 +6,7 @@ import type { TierProfile } from './user-tier'
 import type { McpStdioSpec } from './mcp-stdio-spec'
 import { makeTurnEmitter } from './turn-emitter'
 import { log } from '../lib/log'
+import { codexCallTarget, type ResolveCodexTargetOptions } from '../lib/codex-target'
 
 /**
  * RFC 05 Phase 2 — Codex SDK has no per-tool callback (every dispatch
@@ -129,6 +130,11 @@ export interface CodexAgentProviderOptions {
   dangerouslyBypassApprovalsAndSandbox?: boolean
   /** Test-only: inject a mock Codex factory. Production omits this. */
   codexFactory?: CodexFactory
+  /**
+   * 守护:codex 这一次实际连到哪里(lib/codex-target.ts)。缺省按调用那一刻的 process.env
+   * (CODEX_HOME / HOME)读 codex 自己的配置层;测试注入 env / systemDir,不碰主人的 ~/.codex。
+   */
+  codexTargetOptions?: () => Omit<ResolveCodexTargetOptions, 'cwd' | 'overrides'>
 }
 
 export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): AgentProvider {
@@ -147,13 +153,16 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
     ...(opts.codexPathOverride ? { codexPathOverride: opts.codexPathOverride } : {}),
   })
 
-  // 守护(评审 #193 P1-1):SDK 每一轮都起一个新的 codex exec,继承**那一刻**的 process.env ——
-  // 所以这一轮实际连的端点就是此刻 process.env 里的 OPENAI_BASE_URL(按调用时读,正好对得上)。
-  const codexBaseUrl = () => process.env.OPENAI_BASE_URL || null
+  // 守护(评审 #193 P1-1 + 2026-10-03):SDK 每一轮都起一个新的 codex exec,继承**那一刻**的
+  // process.env、重新读**那一刻**的 codex 配置 —— 所以按调用时解析,正好对得上。codex 0.153 不认
+  // OPENAI_BASE_URL:端点只看 CODEX_HOME/config.toml 的 model_provider / base_url 和 `-c` 覆盖。
+  // 起会话前的预测不知道项目目录(SpawnContext 没有),项目层由会话自己的 callTarget 再判一次。
+  const targetOf = (model: string | null | undefined, cwd: string | null, overrides?: Record<string, unknown>) =>
+    codexCallTarget({ model }, { env: process.env, ...(opts.codexTargetOptions?.() ?? {}), cwd, overrides: overrides ?? null })
   return {
     callTarget(kind, ctx) {
-      if (kind === 'cheapEval' || kind === 'strongEval') return { provider: 'codex', model: cheapModel ?? null, baseUrl: codexBaseUrl() }
-      return { provider: 'codex', model: ctx?.model ?? opts.model ?? null, baseUrl: codexBaseUrl() }
+      if (kind === 'cheapEval' || kind === 'strongEval') return targetOf(cheapModel ?? null, tmpdir())
+      return targetOf(ctx?.model ?? opts.model ?? null, null, opts.dangerouslyBypassApprovalsAndSandbox ? { dangerously_bypass_approvals_and_sandbox: true } : undefined)
     },
     /** CLI 子进程一档(约 3-5s/次),给 20s 余量。 */
     cheapEvalBudgetMs: 20_000,
@@ -259,7 +268,7 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
       let instructionsInjected = !appendInstructions
 
       return {
-        callTarget: () => ({ provider: 'codex', model: model ?? null, baseUrl: codexBaseUrl() }),
+        callTarget: () => targetOf(model ?? null, project.path, config),
         dispatch(text: string): AsyncIterable<AgentEvent> {
           return {
             async *[Symbol.asyncIterator](): AsyncGenerator<AgentEvent> {

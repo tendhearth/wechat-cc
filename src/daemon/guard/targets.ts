@@ -2,7 +2,8 @@
  * 守护 v2:把「provider id + 可能缺省的模型」补成一次调用**真正连到的地方**,好让分类器判。
  *
  *   claude → ANTHROPIC_BASE_URL(daemon.env 或 ~/.claude/settings.json 灌进来的;没设 = 官方)
- *   codex  → OPENAI_BASE_URL(没设 = 官方)
+ *   codex  → codex 自己的配置层(CODEX_HOME/config.toml 的 model_provider / base_url;lib/codex-target.ts)。
+ *            codex 0.153 不认 OPENAI_BASE_URL,所以**不看**它;拿不准 ⇒ unresolved ⇒ 需要保护
  *   openai → agent-config.openaiBaseUrl(openai-compatible:DeepSeek / Kimi / 自建网关都走它)
  *   cursor → 没给模型就用 agent-config.cursorModel,再没有就是 auto
  *   agy / gemini → 官方(Google)
@@ -18,6 +19,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { loadAgentConfig, modelForProvider, type AgentConfig } from '../../lib/agent-config'
 import { classifyCall, type CallTarget } from '../../lib/call-classifier'
+import { codexCallTarget, type ResolveCodexTargetOptions } from '../../lib/codex-target'
 import { findOnPath } from '../../lib/util'
 import { loadGuardConfig } from './store'
 
@@ -31,17 +33,24 @@ export interface ProviderInUse {
   target?: CallTarget
 }
 
-export function makeResolveTarget(agentConfig: () => AgentConfig | null, env: NodeJS.ProcessEnv = process.env): (t: CallTarget) => CallTarget {
+export function makeResolveTarget(
+  agentConfig: () => AgentConfig | null,
+  env: NodeJS.ProcessEnv = process.env,
+  codexOpts: Omit<ResolveCodexTargetOptions, 'env'> = {},
+): (t: CallTarget) => CallTarget {
   return (t) => {
     // 评审 #193 P1-1:执行者报出来的实际目标(exact)/ 拿不准的(unresolved)一律不拿此刻的配置去补 ——
     // 配置后来改了,在用的会话不会跟着改。只有「还没起来、按配置推」的目标(health / guard status)才补。
     if (t.exact || t.unresolved) return t
+    // 2026-10-03:codex 按它自己的配置层判(codex 0.153 不认 OPENAI_BASE_URL);拿不准 ⇒ unresolved。
+    if (t.provider === 'codex' && (t.baseUrl === undefined || t.baseUrl === null)) {
+      return { ...codexCallTarget({ model: t.model ?? null }, { ...codexOpts, env }), ...(t.purpose ? { purpose: t.purpose } : {}) }
+    }
     let cfg: AgentConfig | null = null
     try { cfg = agentConfig() } catch { cfg = null }
     const out: CallTarget = { ...t }
     if (out.baseUrl === undefined || out.baseUrl === null) {
       if (t.provider === 'claude') out.baseUrl = env.ANTHROPIC_BASE_URL || null
-      else if (t.provider === 'codex') out.baseUrl = env.OPENAI_BASE_URL || null
       else if (t.provider === 'openai') out.baseUrl = cfg?.openaiBaseUrl || null
     }
     if (t.provider === 'cursor' && (out.model === undefined || out.model === null || out.model === '') && t.purpose !== 'catalog') {
@@ -57,11 +66,12 @@ export function configuredProviders(cfg: AgentConfig | null, registered: readonl
 }
 
 /**
- * CLI 进程拿不到 daemon 的 process.env:按 daemon 同样的来源补出两个 base URL(只读名字和值里的
- * URL,不碰密钥)。真实环境变量优先,其次 daemon.env,再次 ~/.claude/settings.json 的 env。
+ * CLI 进程拿不到 daemon 的 process.env:按 daemon 同样的来源补出判端点要用的几个变量(只读名字和值里的
+ * URL / 路径,不碰密钥)。真实环境变量优先,其次 daemon.env,再次 ~/.claude/settings.json 的 env。
+ * Codex 只看 CODEX_HOME(定位它的 config.toml)和 CODEX_OSS_*(内置 ollama / lmstudio);不看 OPENAI_BASE_URL。
  */
 export function guardEnvFor(stateDir: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const keys = ['ANTHROPIC_BASE_URL', 'OPENAI_BASE_URL'] as const
+  const keys = ['ANTHROPIC_BASE_URL', 'CODEX_HOME', 'CODEX_OSS_BASE_URL', 'CODEX_OSS_PORT', 'HOME'] as const
   const out: NodeJS.ProcessEnv = {}
   for (const k of keys) if (base[k]) out[k] = base[k]
   const fromFile = (path: string, pick: (raw: string) => Record<string, unknown>) => {

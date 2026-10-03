@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { classifyCall } from '../lib/call-classifier'
 import type { Codex, Thread, ThreadEvent, ThreadOptions } from '@openai/codex-sdk'
 import { createCodexAgentProvider, tierProfileToCodexSdkOpts, type CodexFactory } from './codex-agent-provider'
 import type { AgentEvent } from './agent-provider'
@@ -620,4 +624,56 @@ describe('tierProfileToCodexSdkOpts', () => {
     expect(out.sandboxMode).toBe('read-only')
     expect(out.approvalPolicy).toBe('untrusted')
   })
+})
+
+describe('守护:对话侧 Codex 的实际端点按 codex 自己的配置(2026-10-03)', () => {
+  // codex 0.153 不认 OPENAI_BASE_URL —— 只认 CODEX_HOME/config.toml。全用临时 CODEX_HOME,不碰主人的 ~/.codex。
+  const withHome = (configToml: string | null, fn: (opts: { env: NodeJS.ProcessEnv; systemDir: null }, root: string) => Promise<void> | void) => async () => {
+    const root = mkdtempSync(join(tmpdir(), 'codex-chat-target-'))
+    try {
+      const home = join(root, 'codex-home')
+      mkdirSync(home, { recursive: true })
+      if (configToml !== null) writeFileSync(join(home, 'config.toml'), configToml)
+      await fn({ env: { HOME: root, CODEX_HOME: home, OPENAI_BASE_URL: 'https://dashscope.aliyuncs.com/compatible-mode/v1' }, systemDir: null }, root)
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  }
+
+  it('bug:OPENAI_BASE_URL 指到国内网关、config 默认 ⇒ 对话 / cheapEval / 会话都按官方,需要保护', withHome('model = "gpt-5.5"\n', async (o) => {
+    const { provider: p } = provider({ codexTargetOptions: () => o })
+    for (const t of [p.callTarget!('session', { model: 'gpt-5.5' }), p.callTarget!('cheapEval')]) {
+      expect(t).toMatchObject({ provider: 'codex', baseUrl: null, exact: true })
+      expect(classifyCall(t!)).toMatchObject({ protected: true, kind: 'official' })
+    }
+    const s = await p.spawn({ alias: 'a', path: tmpdir() }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c' })
+    expect(classifyCall(s.callTarget!()!)).toMatchObject({ protected: true, kind: 'official', host: 'api.openai.com' })
+  }))
+
+  it('config 自定义 provider 指到国内 ⇒ 不需要保护', withHome('model_provider = "ds"\n[model_providers.ds]\nname = "d"\nbase_url = "https://api.deepseek.com/v1"\n', async (o) => {
+    const { provider: p } = provider({ codexTargetOptions: () => o })
+    expect(classifyCall(p.callTarget!('session')!)).toMatchObject({ protected: false, kind: 'domestic' })
+    const s = await p.spawn({ alias: 'a', path: tmpdir() }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c' })
+    expect(classifyCall(s.callTarget!()!)).toMatchObject({ protected: false, kind: 'domestic' })
+  }))
+
+  it('会话按调用那一刻的配置判(codex exec 每一轮都重新读):配置切回官方 ⇒ 下一轮需要保护', withHome('model_provider = "ds"\n[model_providers.ds]\nname = "d"\nbase_url = "https://api.deepseek.com/v1"\n', async (o) => {
+    const { provider: p } = provider({ codexTargetOptions: () => o })
+    const s = await p.spawn({ alias: 'a', path: tmpdir() }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c' })
+    expect(classifyCall(s.callTarget!()!).protected).toBe(false)
+    writeFileSync(join(o.env.CODEX_HOME!, 'config.toml'), 'model_provider = "openai"\n# changed\n')
+    expect(classifyCall(s.callTarget!()!)).toMatchObject({ protected: true, kind: 'official' })
+  }))
+
+  it('坏的 config.toml ⇒ unresolved ⇒ 需要保护', withHome('model_provider = \n', async (o) => {
+    const { provider: p } = provider({ codexTargetOptions: () => o })
+    expect(classifyCall(p.callTarget!('session')!)).toMatchObject({ protected: true, kind: 'unresolved' })
+  }))
+
+  it('项目目录的 .codex/config.toml 改了 model_provider ⇒ 会话按拿不准', withHome('model_provider = "ds"\n[model_providers.ds]\nname = "d"\nbase_url = "https://api.deepseek.com/v1"\n', async (o, root) => {
+    const proj = join(root, 'proj')
+    mkdirSync(join(proj, '.codex'), { recursive: true })
+    writeFileSync(join(proj, '.codex', 'config.toml'), 'model_provider = "openai"\n')
+    const { provider: p } = provider({ codexTargetOptions: () => o })
+    const s = await p.spawn({ alias: 'a', path: proj }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c' })
+    expect(classifyCall(s.callTarget!()!)).toMatchObject({ protected: true, kind: 'unresolved' })
+  }))
 })

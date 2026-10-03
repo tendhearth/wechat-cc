@@ -2,7 +2,8 @@
  * NetworkGate 的 daemon 实现(守护 v2,2026-10-02)。两件事:
  *
  * 一、分类(classify):这一次调用要不要保护。补齐端点(claude 的 ANTHROPIC_BASE_URL、openai 的
- *     openaiBaseUrl……)和 Cursor 的默认模型,再套 guard.json 的 protect / trust 覆盖。
+ *     openaiBaseUrl、codex 按它自己的配置层 —— 不看 OPENAI_BASE_URL)和 Cursor 的默认模型,
+ *     再套 guard.json 的 protect / trust 覆盖。
  *     判定本身在 lib/call-classifier.ts。
  *
  * 二、信号(check):只有需要保护的调用才问。

@@ -10,12 +10,18 @@ import { executionModel, nativeModelId, readCodexModelCatalog } from './native-m
 
 import { CodexChildOccurrence } from './codex-runtime'
 import { APP_VERSION } from '../../lib/app-version'
+import { codexCallTarget, codexTargetFromConfig, codexTargetToCall, type ResolveCodexTargetOptions } from '../../lib/codex-target'
+import type { CallTarget } from '../../lib/call-classifier'
 
 type RpcId = string | number
 // The JSONL boundary is checked below before any request is routed or action accepted.
 type ObjectValue = Record<string, any>
 interface Message { id?: RpcId; method?: string; params?: ObjectValue; result?: ObjectValue; error?: { code?: number; message?: string } }
-interface Options { codexPathOverride: string; model?: string; rpcTimeoutMs?: number; closeTimeoutMs?: number }
+interface Options {
+  codexPathOverride: string; model?: string; rpcTimeoutMs?: number; closeTimeoutMs?: number
+  /** 守护:按 codex 配置层预测端点时的注入(测试给临时 CODEX_HOME / systemDir;缺省 = 子进程的环境)。 */
+  codexTargetOptions?: () => Omit<ResolveCodexTargetOptions, 'cwd' | 'overrides'>
+}
 interface Approval { controller: AbortController; turn: Turn; rejection: 'decline' | 'cancel'; mcp?: boolean }
 interface UserQuestion { controller: AbortController; turn: Turn }
 interface Turn { terminal?: boolean; threadId: string; occurrence?: CodexChildOccurrence; id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; completedItems: Set<string>; questionIds: Set<RpcId>; startedAt: number }
@@ -119,9 +125,10 @@ function approvalScope(params: ObjectValue): string | null {
 export function createWorkbenchCodexProvider(options: Options): AgentProvider {
   return {
     modelCatalog: project => discoverCodexModels(options.codexPathOverride, project.path, options.rpcTimeoutMs),
-    // 守护(评审 #193 P1-1):起会话前的预测 —— 子进程会继承此刻的环境(OPENAI_BASE_URL)。
+    // 守护(评审 #193 P1-1 + 2026-10-03):起会话前的预测 —— 按子进程会拿到的环境(CODEX_HOME)读 codex
+    // 自己的配置层(codex 0.153 不认 OPENAI_BASE_URL)。会话起来以后改用 codex 自己 config/read 的结果。
     callTarget: (kind, context) => kind === 'cheapEval' || kind === 'strongEval' ? null
-      : { provider: 'codex', model: context?.execution?.model ?? context?.model ?? options.model ?? null, baseUrl: workbenchCodexEnv().OPENAI_BASE_URL || null },
+      : codexCallTarget({ model: context?.execution?.model ?? context?.model ?? options.model ?? null }, { env: workbenchCodexEnv(), ...(options.codexTargetOptions?.() ?? {}) }),
     async spawn(project, context) {
       const execution = context.execution ? {...context.execution} : undefined
       const model = execution ? execution.model ?? (execution.defaults === 'provider' && !context.resumeSessionId ? context.model ?? options.model : undefined) : context.model ?? options.model
@@ -136,8 +143,9 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
       const { web_search: _startupSearch, ...startupConfig } = discovery.config
       const enabledMcp = new Set<string>()
       const childEnv = workbenchCodexEnv()
-      // 守护(评审 #193 P1-1):app-server 是常驻子进程,端点在这一刻随环境定下。
-      const spawnTarget = { provider: 'codex', model: model ?? null, baseUrl: childEnv.OPENAI_BASE_URL || null }
+      // 守护(评审 #193 P1-1 + 2026-10-03):app-server 是常驻子进程,端点在它起来那一刻按配置定下。
+      // 先按配置层预测;initialize 之后问 codex 自己(config/read),用它报的有效配置覆盖。
+      let spawnTarget: CallTarget = codexCallTarget({ model: model ?? null }, { env: childEnv, ...(options.codexTargetOptions?.() ?? {}), cwd: project.path, overrides: startupConfig })
       const child = spawn(options.codexPathOverride, [...workbenchCodexArgs(startupConfig), 'app-server', '--listen', 'stdio://'], {
         cwd: project.path, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true, detached: true,
@@ -663,6 +671,8 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         if (lifetime && !registrationVerified) retained = true
         send({ method: 'initialized' })
         const native = await request('config/read', { cwd: project.path, includeLayers: false })
+        // codex 自己报的有效配置(含 MDM / 云端托管层、项目信任、-c 覆盖)才是这个会话真正的端点。
+        spawnTarget = codexTargetToCall(codexTargetFromConfig(native.config, childEnv), model ?? null)
         const config = workbenchCodexNativeConfig(discovery.servers, native.config)
         const catalog = execution && (execution.model || execution.reasoningEffort) ? await readCodexModelCatalog(request, project.path) : undefined
         if (catalog && execution?.model) selectedModel = executionModel(catalog, execution)
