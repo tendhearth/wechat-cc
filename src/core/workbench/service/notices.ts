@@ -100,7 +100,9 @@ export function makeNoticesDomain(ctx:ServiceCtx):NoticesDomain {
     if(!watch?.enabled||watch.ownerChatId!==running.task.ownerChatId||watch.ownerChatId!==ctx.deps.ownerChatId())return
     let reply=store.events(running.taskId).filter(e=>e.runId===running.identity&&e.kind==='text').at(-1)?.text
     const label={completed:'这一轮已完成',failed:'这一轮需要处理',interrupted:'这一轮已中断',cancelled:'这一轮已停止'}[status as 'completed'|'failed'|'interrupted'|'cancelled']
-    if(status==='failed'&&(error==='provider_quota_exhausted'||error==='provider_rate_limited')){
+    // 网络守护暂停到顶停下的:说那句老实话(「网络一直没恢复，任务已停止，可以接着做」),不贴半截回复。
+    if(running.stopNotice)reply=running.stopNotice
+    else if(status==='failed'&&(error==='provider_quota_exhausted'||error==='provider_rate_limited')){
       const code=error,other=ctx.actions.deref('notices').fallbackExecutor(running.task.providerId)
       reply=`${executionFailureMessage(code)}${other?`\n交给 ${providerDisplayName(other)} 继续？回「是」我就把这件事交给它。`:''}`
     }else if(status==='failed'&&error&&PROVIDER_FAILURE_NOTICE.has(error)){

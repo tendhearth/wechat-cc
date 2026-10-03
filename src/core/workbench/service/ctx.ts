@@ -78,6 +78,8 @@ export interface ServiceActions {
   held():Active[]
   stageFinishedNotice(running:Active,status:TaskStatus,error?:string|null,suppressCompleted?:boolean):void
   publishFinishedNotices():void
+  /** 网络守护暂停时给订了微信提醒的任务发一条「已暂停(网络未受保护)」(lifecycle 域用)。 */
+  enqueueNotice?(task:StoredTask,runId:string,kind:import('../wechat-notifications').WechatNoticeKind,text:string,requestId?:string|null):void
 }
 /** service 的外部依赖里域会用到的那几样(opts 的子集,只读);按需加,不整个 opts 透传。 */
 export interface ServiceDeps {

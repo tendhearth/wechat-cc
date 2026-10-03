@@ -26,6 +26,8 @@ export interface GuardRuntime {
   health(): GuardHealth
   /** main.ts 在 bootstrap 之后接上:此刻配置 / 在用的 provider(health、后台任务判断用)。 */
   setProvidersInUse(fn: () => ProviderInUse[]): void
+  /** main.ts 在工作台起来之后接上:此刻被网络守护冻住的任务(health / `guard status`)。 */
+  setSuspendedTasks(fn: () => SuspendedTask[]): void
   /** 已配置 / 在用的 provider 各自的分类。 */
   classifyInUse(): Array<ProviderInUse & { cls: CallClass }>
   /**
@@ -43,6 +45,9 @@ export interface GuardRuntime {
    */
   skipWhenUnsafe(name: string, fn: () => Promise<void>): () => Promise<void>
 }
+
+/** 被网络守护冻住(暂停)的工作台任务(主人 2026-10-03)。 */
+export interface SuspendedTask { taskId: string; title: string; providerId: string; since: number }
 
 export interface GuardRuntimeDeps {
   stateDir: string
@@ -84,6 +89,7 @@ export function makeGuardRuntime(deps: GuardRuntimeDeps): GuardRuntime {
     log: deps.log,
   })
   let providersInUse: () => ProviderInUse[] = () => []
+  let suspendedTasks: () => SuspendedTask[] = () => []
   const skipLogged = new Set<string>()
 
   function classifyInUse(): Array<ProviderInUse & { cls: CallClass }> {
@@ -111,7 +117,13 @@ export function makeGuardRuntime(deps: GuardRuntimeDeps): GuardRuntime {
     } else if (s && s.lastChecked) base = { enabled: true, source: s.source, safe: s.safe, detail: s.detail, ip: s.ip, checked_at: s.lastChecked }
     else if (last && last.source !== 'off') base = { enabled: true, source: last.source, safe: last.safe, detail: last.detail, ip: null, checked_at: null }
     else base = { enabled: true, source: 'probe', safe: false, detail: '尚未探测', ip: null, checked_at: null }
-    return { ...base, ...extra, paused: base.enabled && !base.safe && protectedInUse }
+    let suspended: SuspendedTask[] = []
+    try { suspended = suspendedTasks() } catch { suspended = [] }
+    return {
+      ...base, ...extra, paused: base.enabled && !base.safe && protectedInUse,
+      suspended: suspended.length,
+      suspended_tasks: suspended.map(t => ({ task_id: t.taskId, title: t.title, provider: t.providerId, since: new Date(t.since).toISOString() })),
+    }
   }
 
   function skipWhenUnsafe(name: string, fn: () => Promise<void>): () => Promise<void> {
@@ -138,6 +150,7 @@ export function makeGuardRuntime(deps: GuardRuntimeDeps): GuardRuntime {
     gate: { check: () => gate.check(), classify: (t) => gate.classify(t) },
     health,
     setProvidersInUse(fn) { providersInUse = fn },
+    setSuspendedTasks(fn) { suspendedTasks = fn },
     classifyInUse,
     skipWhenUnsafe,
   }

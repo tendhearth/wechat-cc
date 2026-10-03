@@ -756,4 +756,8 @@ export interface GuardHealth {
   paused?: boolean
   /** 已配置 / 在用的 provider 各自的分类。 */
   providers?: Array<{ id: string; model: string | null; host: string | null; protected: boolean; kind: string; label: string; reason: string }>
+  /** 此刻被网络守护冻住(暂停)的任务数(主人 2026-10-03:probe 来源连续两次不安全 ⇒ 暂停,不停)。 */
+  suspended?: number
+  /** 被冻住的任务。 */
+  suspended_tasks?: Array<{ task_id: string; title: string; provider: string; since: string }>
 }

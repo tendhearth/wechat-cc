@@ -14,6 +14,9 @@ import type { ServiceCtx } from './ctx'
 import { liveRunTarget } from './call-target'
 import type { CallTarget } from '../../../lib/network-gate'
 
+/** 桌面 / 手机 / 微信同一句状态(主人 2026-10-03)。 */
+export const NETWORK_SUSPENDED_LABEL='已暂停(网络未受保护)'
+
 export function makeLifecycleDomain(ctx:ServiceCtx) {
   const { store, state } = ctx
   const act=()=>ctx.actions.deref('lifecycle')
@@ -53,7 +56,8 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
    * 没人等 ⇒ 长空闲(别让一个闲着的原生进程占着资源)。已经排好的短让位不会被长空闲推迟。
    */
   function armIdleClose(running:Active):void {
-    if (!quiet(running)||running.finishing||running.cancelled||act().hasUndeliveredInput(running)) return
+    // 网络守护冻住期间不武装:到点去关一棵冻住的树,只会把「在等网络」判成收工(放开时 settleAfterDecision 再评估)。
+    if (!quiet(running)||running.finishing||running.cancelled||running.networkSuspended||act().hasUndeliveredInput(running)) return
     const wanted=state.queue.some(item=>item.state==='queued'&&!!findPathBlocker(item,[running]))
     const ms=wanted?handoffGraceMs():retainedIdleMs()
     const at=Date.now()+ms
@@ -237,32 +241,86 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     if (running.state==='uncertain') return
     if (!running.cancelled) {
       if (act().isReplied(running)) running.closedWhileReplied=true
-      running.cancelled=true; running.permissions.rejectAll('cancelled'); ctx.hub.bumped(running.taskId); revokeCredentials(running); running.signalStop()
+      running.cancelled=true
+      // 冻住的树要停(主人取消 / 暂停到顶 / daemon 关):不放开、直接整棵杀掉 —— 放开那一下它就会
+      // 接着用不受保护的网络。之后的 cancel() / close() 不再指望进程配合。
+      if (running.networkSuspended) {
+        running.networkSuspended=undefined
+        try { running.session?.suspension?.terminate() } catch { /* close 兜底 */ }
+        try { running.permissions.resume() } catch { /* 下面 rejectAll 照样收掉 */ }
+      }
+      running.permissions.rejectAll('cancelled'); ctx.hub.bumped(running.taskId); revokeCredentials(running); running.signalStop()
       try { store.update(running.taskId,'cancelling'); ctx.hub.touched(running.taskId) } catch { /* stop the writer even when persistence is unavailable */ }
       try { if (running.session?.cancel) void running.session.cancel().catch(() => {}) }
       catch { try { store.addEvent(running.taskId,'system','已请求停止，正在等待执行程序退出。');ctx.hub.touched(running.taskId) } catch { /* cancellation remains active */ } }
     }
   }
   /**
-   * 网络不安全(probe 来源连续两次读数,见 daemon/guard/pause-policy.ts):停下在跑 / 排队的执行者。
-   * 已经起来的执行者进程自己会继续调模型,闸门拦不到它们,只能停。每个任务记一条说明,之后照常
-   * 可以「继续」(那时会再过一次闸门)。返回停了几个。
+   * 网络守护「暂停在跑的任务」(主人 2026-10-03):probe 来源连续两次不安全 ⇒ **冻住**需要保护的执行者
+   * (SIGSTOP 整棵进程树),不停。`select` 返回这条 run 的说明 = 需要保护;null = 不需要保护,不动。
    *
-   * 守护 v2:`select` 按 (执行者, 这一轮的模型) 决定停不停 —— 返回这条任务要记的说明,null = 不停
-   * (不需要保护的执行者永远不停)。传字符串 = 全停(老接法)。
+   * 冻得住的(会话实现了 suspension、且这一下真的冻住了):记 networkSuspended,daemon 侧为它起的计时器
+   * 一律停表 —— 回合看门狗按「在等」算(execute.ts)、批准期限停表、空闲收工撤掉不武装;时间线记一句、
+   * 订了微信提醒的发一条「已暂停(网络未受保护)」。
+   * 冻不住的(执行者没实现 / 沙盒里没验证过能接上:agy、Cursor ACP、openai API;win32;会话还没起来):
+   * 退回原来的停法(#191 那一套:记一句、按取消停下,之后照常可以「继续」)。排队的不动 —— 轮到它时闸门会按调用拦。
    */
-  function pauseForNetwork(select:string|((run:{providerId:string;model:string|null;target:CallTarget})=>string|null)):number {
+  function suspendForNetwork(select:(run:{providerId:string;model:string|null;target:CallTarget})=>string|null):{suspended:number;stopped:number} {
+    let suspended=0,stopped=0
+    for (const running of [...state.runsByTask.values()]) {
+      if (running.cancelled||running.finishing||running.state!=='active'||running.networkSuspended) continue
+      let message:string|null
+      try { message=select({providerId:running.task.providerId,model:running.execution.model,target:liveRunTarget(running,ctx.deps.registry.get(running.task.providerId)?.provider)}) } catch { message=null }
+      if (message===null) continue
+      let frozen=false
+      try { frozen=!!running.session?.suspension?.suspend() } catch { frozen=false }
+      if (frozen) {
+        running.networkSuspended={since:Date.now()}
+        cancelIdleClose(running)
+        try { running.permissions.pause() } catch { /* 期限照走也只是拒掉那一张卡 */ }
+        const text=`${NETWORK_SUSPENDED_LABEL}：${message}恢复后自动继续。`
+        try { store.addEvent(running.taskId,'system',text,null,running.identity); ctx.hub.touched(running.taskId) } catch { /* 冻住照样生效 */ }
+        try { act().enqueueNotice?.(running.task,running.identity,'interrupted',`${running.title.replace(/[\r\n]+/g,' ')} · ${running.taskId}\n${running.task.providerId} · ${NETWORK_SUSPENDED_LABEL}\n\n${message}恢复后自动继续。\n\n查看：任务 ${running.taskId}`,`network-suspend-${running.networkSuspended.since}`) } catch { /* 提醒失败不影响暂停 */ }
+        ctx.hub.bumped(running.taskId)
+        suspended++
+        continue
+      }
+      try { store.addEvent(running.taskId,'system',`网络未受保护：${message}这个执行者暂停不了，已停止本轮，恢复后可以继续。`); ctx.hub.touched(running.taskId) } catch { /* 停仍然要停 */ }
+      try { cancelRun(running); stopped++ } catch { /* 下一个照停 */ }
+    }
+    return {suspended,stopped}
+  }
+  /** 网络恢复(probe 读到安全,或改用 bx):放开冻住的树,计时器从这一刻接着走。返回放开了几个。 */
+  function resumeFromNetwork():number {
     let n=0
     for (const running of [...state.runsByTask.values()]) {
-      if (running.cancelled||running.finishing||running.state==='uncertain') continue
-      let message:string|null
-      // 评审 #193 P1-1:target = 这条在跑的会话实际连到的目标,停不停按它判。
-      try { message=typeof select==='string'?select:select({providerId:running.task.providerId,model:running.execution.model,target:liveRunTarget(running,ctx.deps.registry.get(running.task.providerId)?.provider)}) } catch { message=null }
-      if (message===null) continue
-      try { store.addEvent(running.taskId,'system',message); ctx.hub.touched(running.taskId) } catch { /* 停仍然要停 */ }
+      if (!running.networkSuspended) continue
+      running.networkSuspended=undefined
+      try { running.session?.suspension?.resume() } catch { /* 放不开的会由它自己的错误收尾 */ }
+      // 回合看门狗从放开这一刻重新算(collectWorkbenchTurn 看的是 max(起点, interactionAt))。
+      running.interactionAt=Date.now()
+      try { running.permissions.resume() } catch { /* best effort */ }
+      try { store.addEvent(running.taskId,'system','网络恢复，已继续。',null,running.identity); ctx.hub.touched(running.taskId) } catch { /* 放开照样生效 */ }
+      ctx.hub.bumped(running.taskId)
+      settleAfterDecision(running)
+      n++
+    }
+    return n
+  }
+  /** 暂停到顶(guard.json max_suspend_minutes,缺省 30 分钟)还没恢复:按收工停下(冻住的树直接杀,不放开),终态通知用 `message`。 */
+  function stopSuspendedForNetwork(message:string):number {
+    let n=0
+    for (const running of [...state.runsByTask.values()]) {
+      if (!running.networkSuspended) continue
+      running.stopNotice=message
+      try { store.addEvent(running.taskId,'system',message,null,running.identity); ctx.hub.touched(running.taskId) } catch { /* 停仍然要停 */ }
       try { cancelRun(running); n++ } catch { /* 下一个照停 */ }
     }
     return n
+  }
+  /** 此刻被网络守护冻住的任务(health / `guard status` / 手机)。 */
+  function networkSuspended():Array<{taskId:string;title:string;providerId:string;since:number}> {
+    return [...state.runsByTask.values()].flatMap(r=>r.networkSuspended?[{taskId:r.taskId,title:r.title,providerId:r.task.providerId,since:r.networkSuspended.since}]:[])
   }
   function setArchived(id:string,archived:boolean):WorkbenchTaskView {
     if(typeof archived!=='boolean')throw new Error('invalid_request')
@@ -306,6 +364,6 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
     return state.shutdownPromise
   }
 
-  return { revokeCredentials,quiet,handoffGraceMs,retainedIdleMs,armIdleClose,cancelIdleClose,closeForIdle,reportOnce,recollectOnce,settleQuiet,settleAfterDecision,releaseReservation,confirmLateClose,markUncertain,pump,cancelRun,pauseForNetwork, setArchived,cancel,shutdown }
+  return { revokeCredentials,quiet,handoffGraceMs,retainedIdleMs,armIdleClose,cancelIdleClose,closeForIdle,reportOnce,recollectOnce,settleQuiet,settleAfterDecision,releaseReservation,confirmLateClose,markUncertain,pump,cancelRun,suspendForNetwork,resumeFromNetwork,stopSuspendedForNetwork,networkSuspended, setArchived,cancel,shutdown }
 }
 export type LifecycleDomain = ReturnType<typeof makeLifecycleDomain>
