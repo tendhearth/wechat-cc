@@ -12,7 +12,7 @@ const kind = (e: unknown): string => {
   return e instanceof Error ? e.name : 'unknown'
 }
 
-/** 配对与偏好各读各的:偏好读失败不连累配对(否则已配对的手机会悄悄跑成演示);配对读失败 ⇒ 当没配对。 */
+/** 配对与偏好各读各的:偏好失败不连累配对;配对读取失败保留未知状态,等待重读。 */
 export async function loadSession(store: CredentialStore, log: Log = devLog): Promise<{ pairing: PairingRecord | null; lang: Lang | null; pairingReadFailed?: true }> {
   const [p, prefs] = await Promise.allSettled([store.load(), store.loadPrefs()])
   if (p.status === 'rejected') log(`pairing load failed (${kind(p.reason)})`)
