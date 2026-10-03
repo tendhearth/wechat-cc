@@ -35,6 +35,7 @@
 | 原生手机（Expo） | [roadmap.md](roadmap.md);[app 怎么跑与硬要求](../apps/app/README.md) | spec `superpowers/specs/2026-09-30-tendhearth-app-v1-design.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-backend.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-skeleton.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-live.md` + 计划 `superpowers/plans/2026-09-30-tendhearth-app-push.md` + spec `superpowers/specs/2026-10-01-tendhearth-app-chat-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-app-chat.md` + 设计稿 `design/tendhearth-app-v1/` |
 | 两端设计统一 | [roadmap.md](roadmap.md) | spec `superpowers/specs/2026-10-01-tendhearth-design-unify-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-design-unify.md`;验收截图与对稿记录在仓库外 `~/Documents/tendhearth/cc-screens-2026-10-01-design/` |
 | 三端阅读与核心旅程优化 | [实施与验收清单](superpowers/specs/2026-10-02-core-experience-optimization.md) | 竞品一手依据、设计约束、真实回执、已有会话阅读与交付边界 |
+| 重启恢复、额度接手与模型失败 | [本轮对照与验收](superpowers/specs/2026-10-03-recovery-and-competitor-comparison.md) | 固定竞品源码依据、SecureStore 提交日志、单回执读取与两端确认流程 |
 | 手机配对 | [roadmap.md](roadmap.md);[中继 §9 通用链接](maintainer/relay.md) | spec `superpowers/specs/2026-10-01-tendhearth-pairing-ux-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-pairing-ux.md` |
 | 原生会话续接 | [roadmap.md](roadmap.md) | spec `superpowers/specs/2026-10-01-tendhearth-continue-sessions-design.md` + 计划 `superpowers/plans/2026-10-01-tendhearth-continue-sessions.md` |
 | 交办后的回报(形状已定,细节未完) | — | `superpowers/specs/2026-09-23-delegation-report-design.md` |

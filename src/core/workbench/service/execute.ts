@@ -16,6 +16,7 @@ import { canonicalProject, outputDirectory } from '../artifacts'
 import type { Attachment } from '../attachments'
 import type { CreationReceipt } from '../creation-receipts'
 import { makeDeltaCoalescer } from '../delta-coalescer'
+import { CodexExecutionError } from '../codex-execution-error'
 import { executionFailureMessage, normalizeExecutionChoice, PROVIDER_EXECUTION_CHOICE, sameExecutionChoice, taskErrorForProviderCode } from '../execution-settings'
 import { isProviderErrorCode, providerErrorCodeOf } from '../../../lib/provider-error-code'
 import { isUnattendedExecutor } from '../executor-capabilities'
@@ -283,25 +284,24 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       else if (summary.error || !summary.result || runtime?.snapshot().retained) {
         // An old foreground result cannot turn an unexpected retained EOF into success.
         const raw=summary.error ?? (runtime?.snapshot().retained?'background_runtime_ended':'stream_ended_without_result')
-        // provider 边界产的码优先(arch backlog #4 第 2 步):认证 / 网络 / 额度 / 限流 / 服务端
-        // 各有稳定错误码与一句老实话,桌面、手机、微信通知都读它。没码才回退到正文里认额度
-        // (真机 2026-09-16:Codex 额度耗尽,原文当错误码存进 task.error,通知空白)。
+        // Native model and guard refusals keep their specific meaning. Every provider code
+        // is authoritative; only uncoded legacy errors may infer quota from text.
+        const modelRejected=summary.errorCode==='execution_model_unsupported'
+        const networkRefused=summary.errorCode==='network_unprotected'
         const providerCode=isProviderErrorCode(summary.errorCode)?summary.errorCode:undefined
-        const quotaKind=providerCode?(providerCode==='quota'?'quota':providerCode==='rate_limited'?'rate_limit':null):summary.error?classifyProviderError(summary.error):null
-        const error=taskErrorForProviderCode(providerCode,raw)??(quotaKind==='quota'?'provider_quota_exhausted':quotaKind==='rate_limit'?'provider_rate_limited':raw)
+        const quotaKind=providerCode?(providerCode==='quota'?'quota':providerCode==='rate_limited'?'rate_limit':null):!summary.errorCode&&summary.error?classifyProviderError(summary.error):null
+        const error=modelRejected?'execution_model_unsupported':networkRefused?'network_unprotected':taskErrorForProviderCode(providerCode,raw)??(quotaKind==='quota'?'provider_quota_exhausted':quotaKind==='rate_limit'?'provider_rate_limited':raw)
         if(quotaKind)quota.note(task.providerId,summary.error!,providerCode)
         finalStatus='failed'; finalError=error
         const coded=error!==raw&&!!summary.error
-        store.addEvent(task.id,'error',error==='background_runtime_ended'?'后台执行会话意外结束；对话已保留，请检查后再继续。':coded?`${executionFailureMessage(error)}\n原文：${summary.error!.trim().slice(0,200)}`:executionFailureMessage(error))
+        if(!modelRejected&&!networkRefused)store.addEvent(task.id,'error',error==='background_runtime_ended'?'后台执行会话意外结束；对话已保留，请检查后再继续。':coded?`${executionFailureMessage(error)}\n原文：${summary.error!.trim().slice(0,200)}`:executionFailureMessage(error))
         ctx.hub.touched(task.id)
       } else { finalStatus='completed'; quota.clear(task.providerId) }
     } catch (error) {
-      // 守护拒绝(network_unprotected)不是 provider 错误,永远不按 provider 码改写;
-      // 抛出物上挂着 provider 码的(比如 Cursor ACP 建会话失败)按码换成稳定错误码。
-      const thrown=isNetworkUnprotectedError(error) ? 'network_unprotected' : error instanceof Error ? error.message : 'task_failed'
-      const message=thrown==='network_unprotected' ? thrown : taskErrorForProviderCode(providerErrorCodeOf(error),thrown) ?? thrown
+      const thrown=isNetworkUnprotectedError(error)?'network_unprotected':error instanceof CodexExecutionError?error.code:error instanceof Error?error.message:'task_failed'
+      const message=thrown==='network_unprotected'||error instanceof CodexExecutionError?thrown:taskErrorForProviderCode(providerErrorCodeOf(error),thrown)??thrown
       finalStatus=running.cancelled ? 'cancelled' : 'failed'; finalError=running.cancelled ? null : message
-      if (!running.cancelled) { store.addEvent(task.id,'error',message==='restart_confirmation_required' ? RECOVERY_MESSAGE : executionFailureMessage(message)); ctx.hub.touched(task.id) }
+      if (!running.cancelled) { store.addEvent(task.id,'error',error instanceof CodexExecutionError?error.message:message==='restart_confirmation_required' ? RECOVERY_MESSAGE : executionFailureMessage(message)); ctx.hub.touched(task.id) }
     } finally {
       cancelIdleClose(running)
       running.finishing=true;running.questions.close();ctx.hub.bumped(task.id)

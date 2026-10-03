@@ -4,7 +4,7 @@ const STALE = new Set(['permission_stale', 'question_stale'])
 /** daemon 的 409:这件事这一轮还在跑 / 上一条补充还没交付 / 会话正在回话。请求内容冲突另说,不能当排队。 */
 const BUSY = new Set(['workbench_busy', 'input_delivery_busy', 'reply_sink_busy', 'chat_busy'])
 /** 找不到:事项不在 / 还没有主人那条对话(页面当空对话)/ 原生会话读不了。 */
-const NOT_FOUND = new Set(['matter_not_found', 'no_owner_chat', 'unsupported'])
+const NOT_FOUND = new Set(['matter_not_found', 'no_owner_chat', 'unsupported', 'not_found'])
 /** daemon 这一块没接上(503):推送 / 跟 CC 说 / 连接 / 原生会话。 */
 const UNAVAILABLE = new Set(['push_not_wired', 'chat_not_wired', 'connections_not_wired', 'sessions_not_wired'])
 /** 接着做电脑上的会话(spec 2026-10-01-tendhearth-continue-sessions D11):各有各的一句话,不能都说「没送到」。

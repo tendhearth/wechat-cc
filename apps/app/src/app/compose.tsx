@@ -8,8 +8,10 @@ import { useLang } from '../i18n/useLang'
 import { deleteDraft, getDraft, pairingGen, requestIdFor, setDraft } from '../state/drafts'
 import { useConnection, useQuery, useSubmit, useTopic } from '../state/hooks'
 import { useBackendCtx } from '../state/BackendProvider'
-import { beginMatterInput, consumeMatterInputDraft, matchesMatterInput, matterInputs, updateMatterInput, type InputSnapshot } from '../state/matter-inputs'
-import { useMatterInputs } from '../state/useMatterInputs'
+import { consumeMatterInputDraft, matchesMatterInput, matterInputState, matterInputs, updateMatterInput, type InputSnapshot } from '../state/matter-inputs'
+import { useInputRecovery, useMatterInputs } from '../state/useMatterInputs'
+import { InputJournalError } from '../state/input-journal'
+import { useSession } from '../state/session'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { ChoiceRow } from '../ui/Rows'
@@ -36,6 +38,8 @@ export default function Compose() {
   const conn = useConnection()
   const submit = useSubmit()
   const { backend } = useBackendCtx()
+  const session = useSession()
+  const recovery = useInputRecovery()
   const params = useLocalSearchParams<{ matter?: string; focus?: string }>()
   const matter = one(params.matter) || undefined
   // 从「接着做」进来:输入框直接聚焦,主人接着打字(spec §4.4)
@@ -72,9 +76,11 @@ export default function Compose() {
     setOutcome(null); setInputNotice(null)
   }, [draftKey, backend])
   useEffect(() => {
-    if (matter && consumeMatterInputDraft(matter)) {
-      textRef.current = getDraft(matter); setTextState(textRef.current)
-    }
+    let alive = true
+    if (matter) void consumeMatterInputDraft(matter).then(cleared => {
+      if (cleared && alive && draftKeyRef.current === matter) { textRef.current = getDraft(matter); setTextState(textRef.current) }
+    }).catch(() => {})
+    return () => { alive = false }
   }, [matter, localInputs])
   const isTask = detail.data?.matter.kind === 'task'
   const inputHint = matterInputHint(detail.data, lang)
@@ -84,28 +90,44 @@ export default function Compose() {
   const provider = providerId ? opt?.providers.find((p) => p.id === providerId) : null
 
   // 不在线(连接中 / 离线 / 撤销)⇒ 草稿照写,「交给 CC」锁住,ConnectionNotice 说明原因。
-  const online = canSubmit(conn)
+  const online = canSubmit(conn) && recovery.phase === 'ready' && (backend.mode !== 'live' || !!recovery.scope && recovery.scope === session.inputScope)
   const firstSendReady = !matter || (detail.fresh && !detail.loading && !detail.error)
   const retryDraft = localInputs.some(row => row.text === text.trim() && ['uncertain', 'failed'].includes(row.status))
-  const sendInput = async (snapshot: InputSnapshot) => {
+  const sendInput = async (rawText: string, runId?: string, retry?: InputSnapshot) => {
     if (sending.current || !online) return
     const atGen = pairingGen()
+    const journalGen = matterInputState.generation()
     sending.current = true; setBusy(true); setOutcome(null); setInputNotice(null)
-    updateMatterInput(snapshot, { status: 'submitting' }, atGen)
+    let snapshot: InputSnapshot
+    try {
+      snapshot = await matterInputState.prepare(matter!, rawText, runId, retry, backend.mode === 'live')
+    } catch (e) {
+      sending.current = false
+      if (atGen === pairingGen()) {
+        setBusy(false)
+        setInputNotice(e instanceof InputJournalError && e.code === 'input_scope' ? null : t(lang, e instanceof InputJournalError && e.code === 'input_capacity' ? 'input.capacity' : 'input.storageNotSent'))
+      }
+      return
+    }
+    if (atGen !== pairingGen() || journalGen !== matterInputState.generation() || !canSubmit(backend.connection())) { sending.current = false; setBusy(false); return }
     const r = await submit(`compose:${snapshot.taskId}`, async () => {
       const result = await backend.say(snapshot.taskId, snapshot.text, snapshot.requestId, snapshot.runId ? { runId: snapshot.runId } : undefined)
       if (result.kind !== 'task' || result.task.id !== snapshot.taskId) throw new BackendError('unknown')
       if (result.input && !matchesMatterInput(snapshot, result.input)) throw new BackendError('input_conflict')
-      updateMatterInput(snapshot, { status: result.input?.status ?? 'accepted' }, atGen)
+      // A subscription/GET may already have a newer receipt while this POST waited.
+      // Compare the prepared row itself so even a later retry cannot accept this response.
+      const current = matterInputs(snapshot.taskId).find(row => row.requestId === snapshot.requestId)
+      if (current !== snapshot || current.status !== 'submitting') return
+      await updateMatterInput(snapshot, { status: result.input?.status ?? 'accepted' }, atGen, journalGen)
     })
     sending.current = false
-    if (atGen !== pairingGen() || draftKeyRef.current !== snapshot.taskId) return
+    if (atGen !== pairingGen() || journalGen !== matterInputState.generation() || draftKeyRef.current !== snapshot.taskId) return
     setBusy(false)
     if (r !== 'ok') {
       // 重连查询若已核实真正回执,较晚的传输错误不能把它降成“不确定”。
       const current = matterInputs(snapshot.taskId).find(row => row.requestId === snapshot.requestId)
       if (!current || ['submitting', 'accepted', 'uncertain', 'failed', 'refused'].includes(current.status)) {
-        updateMatterInput(snapshot, inputFailure(r === 'busy' ? 'busy' : r.error), atGen)
+        await updateMatterInput(snapshot, inputFailure(r === 'busy' ? 'busy' : r.error), atGen, journalGen).catch(() => {})
       }
     }
     void refreshDetail()
@@ -118,9 +140,9 @@ export default function Compose() {
     if (composeTooLong(body)) { setOutcome('tooLong'); return }
     if (matter) {
       const retry = matterInputs(matter).findLast(row => row.text === body && ['uncertain', 'failed'].includes(row.status))
-      if (retry) { await sendInput(retry); return }
+      if (retry) { await sendInput(retry.rawText, retry.runId, retry); return }
       if (!firstSendReady) return
-      if (isTask) { await sendInput(beginMatterInput(matter, rawText, detail.data?.runId)); return }
+      if (isTask) { await sendInput(rawText, detail.data?.runId); return }
     }
     const atGen = pairingGen()
     const myKey = draftKey
@@ -200,6 +222,10 @@ export default function Compose() {
           )}
           <Button kind="primary" testID="compose-send" label={t(lang, isTask ? 'input.send' : 'compose.send')} onPress={send} disabled={!text.trim() || !online || (!firstSendReady && !retryDraft)} busy={busy} />
           <ConnectionNotice />
+          {recovery.phase !== 'ready' ? <View style={{ gap: space.s }}>
+            <Txt testID="input-recovery-state" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{t(lang, recovery.phase === 'loading' ? 'input.recovering' : 'input.recoveryFailed')}</Txt>
+            {recovery.phase === 'error' ? <Button kind="secondary" testID="input-recovery-retry" label={t(lang, 'input.recoveryRetry')} onPress={() => void matterInputState.retryStorage(session.pairing).catch(() => {})} /> : null}
+          </View> : null}
           {matter && !firstSendReady ? <View style={{ gap: space.xs }}>
             <Txt testID="compose-detail-state" role="meta" tone="inkSoft">{t(lang, detail.error ? 'input.detailUnavailable' : 'input.detailLoading')}</Txt>
             {detail.error ? <Button kind="secondary" testID="compose-detail-reload" label={t(lang, 'input.reload')} onPress={() => void refreshDetail()} disabled={!online} busy={detail.loading} /> : null}
@@ -210,7 +236,7 @@ export default function Compose() {
               <Txt testID={`compose-${outcome}`} role="meta" tone="inkSoft" accessibilityLiveRegion="polite" style={{ flex: 1 }}>{composeOutcomeText(outcome, lang, matter ? detail.data?.task?.providerId ?? null : provider?.id ?? null, !!matter)}</Txt>
             </View>
           ) : null}
-          {rows.length ? <InputReceipts rows={rows} onRestore={restoreInput} onRetry={row => void sendInput(row)} disabled={busy || !online} /> : null}
+          {rows.length ? <InputReceipts rows={rows} onRestore={restoreInput} onRetry={row => void sendInput(row.rawText, row.runId, row)} disabled={busy || !online} /> : null}
           {inputNotice ? <Txt testID="compose-input-notice" role="meta" tone="inkSoft" accessibilityLiveRegion="polite">{inputNotice}</Txt> : null}
           {matter && rows.length ? <Button kind="secondary" testID="compose-progress" label={t(lang, 'input.viewProgress')} onPress={() => router.canGoBack() ? router.back() : router.replace(`/matter/${encodeURIComponent(matter)}`)} /> : null}
           <Txt role="small" tone="inkSoft" style={{ textAlign: 'center' }}>{t(lang, 'compose.willAskYou')}</Txt>

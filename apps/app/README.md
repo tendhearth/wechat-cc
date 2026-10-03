@@ -6,7 +6,15 @@
 
 对话页、事项对话和电脑会话记录的用户与助手正文共用原生 Markdown 阅读组件,首页最近一句只提取可读文字。带格式的用户消息可展开「查看原文」,原始换行与字面语法完整保留且可选择复制;普通文字不增加控件。日志、输入、发送和存储保持原样。只允许打开绝对 HTTP/S 链接;文件与应用链接只显示名称,图片只显示替代文字。长代码与表格在各自区域内横向滚动。中文继续使用已打包的 Noto Serif SC Regular,重点以强调墨色和轻底色呈现。
 
-事项「补充要求」携带读取到的执行轮次,按电脑实际能力补充当前一轮或排队;界面逐条显示受理、交付、保留、撤回及拒绝回执。发送结果不确定时保留首次 requestId、runId、正文和输入原文,重连只核对详情中的回执,重试沿用同一份快照,不会重新绑定另一轮。原文可取回,发送中编辑的新草稿不会被清掉或覆盖。这些本机快照与现有草稿同为内存保存,切换页面或前后台仍在,进程结束或换配对后清除。
+事项「补充要求」携带首次执行轮次,逐条显示受理、交付、保留、撤回及拒绝回执。原文和首次 requestId/runId 写入本机 SecureStore 分片日志：单片 UTF-8 ≤1800 字节，总计 ≤64 条/512 KiB；只清理已确认且已处理草稿的旧记录，不淘汰未确认补充。正文不可变，回执写入小型状态索引，最后切换版本化提交指针；部分写失败保留上次提交。启动恢复完成前锁住发送，恢复中的 submitting 变为 uncertain，首次发送必须保存成功并复查配对世代。进程结束后仍可恢复；「一起做 → 保留的补充」显示全部未确认项，归档或详情超出中继大小也不隐藏原文。恢复和重连只 GET 单条回执；缺失、旧服务 404/unsupported 不解释为未送达；只有用户显式重试才 POST，沿用原始身份与正文。取回原文不覆盖新草稿，draftHandled 持久化。普通未提交草稿仍只保存在内存中。
+
+日志配对身份使用中继地址、daemon/device 与完整 deviceToken 的 SHA256，不保存明文令牌。换配对、换令牌、演示、解除、撤销、stale 同步隔离内存，先提交 tombstone 后删除分片，迟到读写不能复活。钥匙串拒绝清除时暂停发送并显示错误，不能宣称未实际删除的字节已擦除。
+
+本轮模块测试使用新的存储/控制器实例读取已提交日志，覆盖 20k 中文/emoji/CRLF、缺省 runId、body/index/pointer 部分写失败、恢复零 POST、配对/撤销世代、清除失败 tombstone、64 条和 512 KiB 拒发、已交付禁重试与 draftHandled。真实 SessionProvider 与凭证存储测试验证配对读取暂时失败时保留日志、旧连接迟到撤销不能删除新配对，以及取消配对不能启用无日志的发送。草稿绑定进程归属和修改版本；异步确认之后重新核对当前回执，重启或同文重填都不误清新稿。真实 Compose + LiveBackend 组件测试验证保存失败零 POST、启动锁定、全部未确认可见，以及原始模型错误仅在展开后以纯文本显示。64 条状态更新最多 12 次模拟 SecureStore 写、仅一次 hash，不重写原文；这是调用数量证据，不代表真实 Keychain 调用数量或时延。
+
+2026-10-03 普通 Release 在专用 iOS 27 模拟器完成真实 SecureStore 跨进程验收：正常粘贴链接、核对、连接自有测试设备，在自有事项提交受控补充；实际结束旧进程，再启动新进程，从「一起做 → 保留的补充 → 取回原文」恢复。输入框实际 165 字节 ASCII 原文的全文 SHA256 与 requestId 前后相同，首尾和内部空白保留，held 回执保持；服务端单条回执另行核对。包内无 e2eBuild，使用 Xcode 生成的模拟器 Keychain entitlements；签名修复前后 main.jsbundle SHA 相同。初次无 Keychain 权限的构建显示读取失败并锁住发送，未把读取失败当作无配对清除。
+
+此次 OS 样本包含 Markdown、括号链接和空白，UI 驱动将命令中的换行转为空格，因此只以实际输入框原文作比较；中文、CRLF、多片、容量与故障竞态仍由模块测试覆盖。未独立采集真实网络 POST 次数或 Keychain 调用时延，自动恢复不 POST 的证据来自源码与故障回归；UI 导航和等待耗时不计为 Keychain 性能。物理 iPhone 的持久恢复尚未实测。
 
 - 设计:`docs/superpowers/specs/2026-09-30-tendhearth-app-v1-design.md`,设计稿 `docs/design/tendhearth-app-v1/`
 - 计划:`docs/superpowers/plans/2026-09-30-tendhearth-app-skeleton.md`(骨架 + 演示)、`docs/superpowers/plans/2026-09-30-tendhearth-app-live.md`(真连接与配对)、`docs/superpowers/plans/2026-09-30-tendhearth-app-push.md`(原生通知)、`docs/superpowers/plans/2026-10-01-tendhearth-app-chat.md`(跟 CC 说话 + 真历史 + CC 的连接 + 原生会话;spec `docs/superpowers/specs/2026-10-01-tendhearth-app-chat-design.md`)

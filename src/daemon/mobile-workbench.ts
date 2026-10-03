@@ -5,7 +5,7 @@ import type {MattersService,MatterSayInput} from '../core/matters/service'
 import {entryErrorStatus,parseEntryInput,type EntryInput,type EntryOptions} from '../core/workbench/task-entry'
 import type {NativeContinuePreview} from '../core/workbench/native-adoption'
 
-export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'>>
+export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'>>
 export interface MobileEntryActions {
   entryOptions():EntryOptions
   createEntry(input:EntryInput):EntryResult
@@ -48,6 +48,16 @@ export function mobileSayInput(body:Record<string,unknown>):MatterSayInput|undef
 }
 /** Called only inside settings-panel's existing authenticated-device boundary. */
 export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined,url:URL,req:Request,entry?:MobileEntryActions,uploads?:MobileUploadActions):Promise<Response|null>{
+  if(url.pathname==='/m/api/matter/input-receipt'){
+    if(req.method!=='GET')return json({ok:false,error:'method_not_allowed'},405)
+    try{
+      const q=url.searchParams,id=q.get('id'),requestId=q.get('requestId')
+      if(q.getAll('id').length!==1||q.getAll('requestId').length!==1||[...q.keys()].some(key=>!['id','requestId','t','d','_via'].includes(key))||!id||!ID.test(id)||!requestId||!UUID.test(requestId))throw Error('invalid_request')
+      if(!actions?.inputReceipt)throw Error('workbench_not_wired')
+      const input=actions.inputReceipt(id,requestId.toLowerCase())
+      return input?json({ok:true,input}):json({ok:false,error:'not_found'},404)
+    }catch(error){return mobileMatterError(error)}
+  }
   const uploadOperation=url.pathname==='/m/api/attachment/chunk'?'chunk':url.pathname==='/m/api/attachment/upload'?'status':url.pathname==='/m/api/attachment/discard'?'discard':null
   if(uploadOperation){
     if(req.method!==(uploadOperation==='status'?'GET':'POST'))return json({ok:false,error:'method_not_allowed'},405)

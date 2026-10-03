@@ -79,6 +79,8 @@
 
 ## 其他近期运行修复
 
+- **恢复、额度与模型失败补齐**（2026-10-03，dev）—— 原生保存不可变提交与只读单回执，退出后先查询、未知结果不自动重发；桌面 / PWA 补额度接手的确认与同身份重试；具体 Codex 模型拒绝能进入当前任务模型设置。源码、生产浏览器与普通原生包恢复分别验收，本机签名安装已完成；同期更新中断、Cursor 套餐限制及手机自检的进程关闭未确认单列，未记作公开发版或真手机已更新。对照、证明及边界见 [恢复与模型失败验收](superpowers/specs/2026-10-03-recovery-and-competitor-comparison.md)。
+
 - **三端会话阅读与核心体验优化**（2026-10-02，dev）—— 共用安全 Markdown 与精确原文；中文常规字体用浅底色辨识重点；聊天等待和工作台刷新保留阅读交互。两种手机入口补齐已有会话、搜索、最近窗口和同页重新检查；原生运行中补充固定轮次与提交身份，显示真实回执。完整检查、普通 iOS 模拟器示例、本机安装与执行/中继闭环已通过；额外修复保留会话自检的安全收尾。Cursor 套餐和用户原生 Codex 无效默认模型的失败证据保留；Codex 临时选择可用模型的自检通过。未记作公开发版或主人真手机已更新。策略、证据与边界见 [核心体验优化](superpowers/specs/2026-10-02-core-experience-optimization.md)。
 
 - **内置插件回归修复**(2026-09-30,`fix-bundled-plugins`)—— 09-11 起 LaunchAgent 改拉 `.app`,打包版 daemon 一个插件都没加载(wxvault / 客户回顾 / wxsearch 全丢)且一声不吭。修法:状态目录里登记插件来源(`wechat-cc plugin source`,源码模式 `self deploy` 自动登记)、启动日志 + `/v1/health.plugins` + 部署插件门(`--allow-missing-plugins` 逃生口)。安装包仍按设计不带插件。**信任取舍**:登记的来源按内置算、默认开(放进去就跑)。**真机账**:部署后看 `[BOOT] plugin:` 与微信里一次 wxvault 调用。见 [maintainer/deploy.md「内置插件」](maintainer/deploy.md)。

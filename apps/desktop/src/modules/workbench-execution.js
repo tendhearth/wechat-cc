@@ -20,7 +20,7 @@ export const executionSignature=value=>JSON.stringify(value?[value.defaults,valu
 export function executionErrorMessage(error){
  const code=error instanceof Error?error.message:String(error)
  const messages=/** @type {Record<string,string>} */({
-  execution_model_unsupported:'当前模型不可用，请重新选择模型，或使用自动。',
+  execution_model_unsupported:'当前模型不可用。请为这件事选择可用的模型后继续；自动会沿用原设置。',
   execution_effort_unsupported:'这个模型不支持所选思考强度，请重新选择，或使用自动。',
   execution_model_unknown:'暂时无法确认当前模型，请明确选择一个模型后重试。',
   execution_image_unsupported:'所选模型不接收图片，请更换支持图片的模型，或移除图片。',
@@ -98,7 +98,7 @@ export function createExecutionCatalogs(deps){
     if(c?.source!=='native'||!Array.isArray(c.models)||c.models.length>500||c.models.some(m=>!identifier(m.id)||!identifier(m.displayName)||!Array.isArray(m.reasoningEfforts)||m.reasoningEfforts.length>30||m.reasoningEfforts.some(e=>!identifier(e))))throw Error('invalid_catalog')
     if(!alive)return
     values.set(id,{status:'ready',catalog:structuredClone(c),error:''})
-   }catch{if(!alive)return;values.set(id,{status:'error',catalog:null,error:'暂时无法读取模型；自动模式仍可继续。'})}
+   }catch{if(!alive)return;values.set(id,{status:'error',catalog:null,error:'暂时无法读取模型，请重新读取后再选择。自动会沿用原设置。'})}
    if(alive)deps.changed?.(providerId,path)
   },
   destroy(){alive=false},

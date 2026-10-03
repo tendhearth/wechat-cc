@@ -1,6 +1,6 @@
 import type { MatterDetailT } from '../backend/types'
 
-export type ConvItem = { kind: 'me' | 'cc' | 'steps' | 'error'; text: string; at: number; count?: number }
+export type ConvItem = { kind: 'me' | 'cc' | 'steps' | 'error'; text: string; at: number; count?: number; diagnostic?: string }
 const MAX = 4000
 const clip = (s: string) => (s.length > MAX ? s.slice(0, MAX) + '…' : s)
 
@@ -10,7 +10,7 @@ export function conversationView(events: MatterDetailT['events']): ConvItem[] {
   for (const e of events) {
     if (e.kind === 'user') out.push({ kind: 'me', text: clip(e.text), at: e.createdAt })
     else if (e.kind === 'text') out.push({ kind: 'cc', text: clip(e.text), at: e.createdAt })
-    else if (e.kind === 'error') out.push({ kind: 'error', text: clip(e.text), at: e.createdAt })
+    else if (e.kind === 'error') out.push({ kind: 'error', text: clip(e.text), at: e.createdAt, ...(e.diagnostic ? { diagnostic: e.diagnostic } : {}) })
     else if (e.kind === 'tool_call') {
       const prev = out[out.length - 1]
       if (prev?.kind === 'steps') { prev.count = (prev.count ?? 1) + 1; prev.text = clip(e.text); prev.at = e.createdAt }

@@ -59,7 +59,8 @@ it('keeps recovery previews scoped to task, retained version and selected execut
 })
 it('explains execution choice failures without exposing machine codes or changing unrelated errors',async()=>{
  const {executionErrorMessage}=await import('./workbench-execution.js')
- expect(executionErrorMessage('execution_model_unsupported')).toContain('重新选择模型')
+ expect(executionErrorMessage('execution_model_unsupported')).toContain('为这件事选择可用的模型')
+ expect(executionErrorMessage('execution_model_unsupported')).toContain('自动会沿用原设置')
  expect(executionErrorMessage('execution_effort_unsupported')).toContain('思考强度')
  expect(executionErrorMessage('execution_model_unknown')).toContain('明确选择')
  expect(executionErrorMessage('execution_image_unsupported')).toContain('不接收图片')

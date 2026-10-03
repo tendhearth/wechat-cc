@@ -16,7 +16,7 @@ import { assembleMobilePage } from '../../apps/mobile/assemble'
 import { readMobileSource } from '../../apps/mobile/sources'
 
 const IDS = ['m-list', 'm-detail', 'm-back', 'm-title', 'm-notice', 'm-controls', 'm-permissions',
-  'm-questions', 'm-events', 'm-artifacts', 'm-artifact-preview', 'm-inputs', 'm-say-box', 'm-say', 'm-send', 'm-conn']
+  'm-questions', 'm-events', 'm-artifacts', 'm-artifact-preview', 'm-inputs', 'm-say-box', 'm-say', 'm-send', 'm-conn', 'm-task-status']
 
 type Handler = (ev: unknown) => void
 interface FakeEl {

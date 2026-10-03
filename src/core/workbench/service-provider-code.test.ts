@@ -78,3 +78,28 @@ it('no code ⇒ unchanged fallback (raw text, quota still recognised from the te
   await settled(task.id)
   expect(service.detail(task.id).task.error).toBe('something odd happened')
 })
+
+const misleadingQuota="You've hit your usage limit. HTTP 429 overloaded"
+it.each([
+  ['network','provider_network'],
+  ['auth_failed','provider_auth_expired'],
+  ['auth_rejected','provider_auth_rejected'],
+  ['server_error','provider_server_error'],
+  ['invalid_request','provider_invalid_request'],
+  ['provider_error',misleadingQuota],
+  ['network_unprotected','network_unprotected'],
+] as const)('authoritative %s does not infer quota from the error text',async(code,taskError)=>{
+  next=async()=>failing({kind:'error',message:misleadingQuota,code})
+  const task=service.create({path:project,providerId:'codex',text:'x'})
+  await settled(task.id)
+  expect(service.detail(task.id).task.error).toBe(taskError)
+  expect(service.quotaExhausted('codex')).toBeNull()
+})
+
+it('uncoded quota text retains the task mapping and quota registration fallback',async()=>{
+  next=async()=>failing({kind:'error',message:misleadingQuota})
+  const task=service.create({path:project,providerId:'codex',text:'x'})
+  await settled(task.id)
+  expect(service.detail(task.id).task.error).toBe('provider_quota_exhausted')
+  expect(service.quotaExhausted('codex')).toMatchObject({kind:'quota',message:misleadingQuota})
+})

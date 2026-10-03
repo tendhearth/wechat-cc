@@ -705,6 +705,29 @@ describe('workbench Codex app-server', () => {
     expect(closed).toBe(true)
   })
 
+  it('preserves the model classification through a real native turn/start RPC rejection',async()=>{
+    const raw=JSON.stringify({type:'error',status:400,error:{type:'invalid_request_error',message:"The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account."}})
+    const {session,child}=await start();child.autoTurnStart=false
+    const run=collect(session);await begun(child)
+    const request=child.sent.find(m=>m.method==='turn/start')!
+    child.send({id:request.id,error:{code:-32603,message:raw}});await run.done
+    expect(run.events.filter(e=>e.kind==='error')).toEqual([{kind:'error',message:raw,code:'execution_model_unsupported'}])
+  })
+
+  it.each([
+    ['error', undefined], ['turn/completed', undefined],
+    ['error', 'badRequest'], ['turn/completed', 'badRequest'],
+  ] as const)('tags an observed model rejection on native %s / %s without touching user text', async (method, codexErrorInfo) => {
+    const raw=JSON.stringify({type:'error',status:400,error:{type:'invalid_request_error',message:"The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account."}})
+    const {session,child}=await start();const run=collect(session,raw);await begun(child)
+    expect(child.sent.find(m=>m.method==='turn/start')?.params.input[0].text).toBe(raw)
+    const error={message:raw,...(codexErrorInfo?{codexErrorInfo}:{})}
+    child.notify(method,method==='error'?{threadId:'thread-1',turnId:'turn-1',willRetry:false,error}:{threadId:'thread-1',turn:{id:'turn-1',status:'failed',error}})
+    await run.done
+    expect(run.events.filter(e=>e.kind==='error')).toEqual([{kind:'error',message:raw,code:'execution_model_unsupported'}])
+    expect(run.events.some(e=>e.kind==='result')).toBe(false)
+  })
+
   it('does not turn retrying errors, failed or interrupted turns into success', async () => {
     const { session, child } = await start(); const run = collect(session); await begun(child)
     child.notify('error', { threadId: 'thread-1', turnId: 'turn-1', willRetry: true, error: { message: 'retrying' } })

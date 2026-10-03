@@ -47,6 +47,8 @@ export interface Backend {
   answer(p: { id: string; runId: string; requestId: string; answers: Record<string, string[]> | null }): Promise<void>
   /** 工作台补充携带首次提交的 runId;重发时 requestId / runId / text 保持同一份快照。缺省仍兼容聊天与首次接续。 */
   say(id: string, text: string, requestId: string, options?: { runId?: string }): Promise<MatterSayResultT>
+  /** A single exact receipt, independent of the bounded matter detail. Missing/old server stays unconfirmed. */
+  matterInputReceipt(id: string, requestId: string): Promise<MatterInputT | null>
   entryOptions(lang: Lang): Promise<EntryOptionsT>
   /** requestId:同一份草稿、同样的正文重发用同一个(daemon 据此去重、超时后查回执)。projectId 缺省 ⇒ 由 CC 安排(managed)。 */
   create(p: { requestId: string; text: string; projectId?: string; providerId?: string }): Promise<{ matterId: string }>

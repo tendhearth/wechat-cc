@@ -7,6 +7,11 @@ import { DETAIL } from '../backend/fixtures'
 const local: InputSnapshot = { taskId: 't', requestId: 'r', runId: 'run', text: '**hi**', rawText: '\r\n**hi**\r\n', status: 'uncertain' }
 const receipt: MatterInputT = { id: 'r', taskId: 't', runId: 'run', text: '**hi**', status: 'delivered' }
 describe('input reading', () => {
+  it('reads daemon newest-first receipts oldest→newest and keeps every unconfirmed local request', () => {
+    const old = { ...receipt, id: 'old', text: 'old' }, newest = { ...receipt, id: 'new', text: 'new' }
+    const retained = Array.from({ length: 8 }, (_, i) => ({ ...local, requestId: `kept-${i}`, text: `kept-${i}`, rawText: `kept-${i}` }))
+    expect(inputRows([newest, old], retained).map(r => r.requestId)).toEqual(['old', 'new', ...retained.map(r => r.requestId)])
+  })
   it('uses actual receipts and preserves the original source; mismatches never appear delivered', () => {
     expect(inputRows([receipt], [local])).toEqual([expect.objectContaining({ rawText: local.rawText, status: 'delivered' })])
     expect(inputRows([{ ...receipt, runId: 'other' }], [local])[0]).toMatchObject({ status: 'refused', error: 'input_conflict', rawText: local.rawText })

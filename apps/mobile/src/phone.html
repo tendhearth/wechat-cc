@@ -73,6 +73,7 @@
 .m-option textarea{border:1px solid var(--line);border-radius:var(--r-s);background:var(--card);color:var(--ink)}
 #m-controls :focus-visible,#m-send:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .m-tool-events{margin:12px 0}.m-tool-events>summary{cursor:pointer;color:var(--soft);font-size:13px;min-height:44px;padding:12px 0}.m-tool-events .m-description{margin:0 0 8px;font-size:13px}.m-tool-events small{color:var(--soft);font-size:11.5px}
+.m-handoff{margin:20px 0;padding:16px 0;border-top:1px solid var(--line);color:var(--soft);overflow-wrap:anywhere}.m-handoff p{margin:0 0 12px}.m-handoff button{font:inherit;min-height:44px;padding:9px 16px;border:1px solid var(--accent);border-radius:var(--r-s);background:var(--accent);color:var(--card);cursor:pointer}.m-handoff .more{margin:0;background:var(--card);border-color:var(--line);color:var(--ink)}.m-handoff button:disabled{opacity:.5}.m-handoff :focus-visible{outline:2px solid var(--accent);outline-offset:3px}.m-task-note{color:var(--soft)}.m-error-diagnostic summary{min-height:44px;padding:12px 0;cursor:pointer;color:var(--soft)}
 </style>
 <div class="pane" id="p-you">
   <button id="you-back" class="you-back" type="button">← 回去</button>
@@ -92,6 +93,7 @@
     <div id="m-controls"><div id="m-permissions"></div><div id="m-questions"></div></div>
     <div id="m-artifacts"></div><div id="m-artifact-preview"></div><div id="m-inputs"></div>
     <section aria-label="对话与执行记录"><div id="m-events"></div></section>
+    <section id="m-task-status" aria-label="继续这件事"></section>
     <div class="card" id="m-say-box"><textarea id="m-say" rows="2" placeholder="接着说…" style="width:100%;font:inherit;border:1px solid var(--line);border-radius:var(--r-s);padding:8px;box-sizing:border-box"></textarea>
       <div id="m-say-materials"></div>
       <button id="m-send" class="done-btn" type="button" style="margin-top:6px">发送</button></div>
