@@ -273,3 +273,17 @@ describe('replyTextStrategyFor — 按执行者类型(2026-10-03 修订)', () =>
     expect(replyTextStrategyFor('no-such' as never)).toBe('last_segment')
   })
 })
+
+describe('replyDeliveryFor × 运行时覆盖(agent-config reply_delivery)', () => {
+  it('覆盖优先于能力表;清空后回到能力表', async () => {
+    const { replyDeliveryFor, setReplyDeliveryOverrides } = await import('./capability-matrix')
+    const before = replyDeliveryFor('openai')
+    try {
+      setReplyDeliveryOverrides({ openai: 'legacy', claude: 'shadow' })
+      expect(replyDeliveryFor('openai')).toBe('legacy')
+      expect(replyDeliveryFor('claude')).toBe('shadow')
+      expect(replyDeliveryFor('codex')).toBe('legacy')
+    } finally { setReplyDeliveryOverrides(undefined) }
+    expect(replyDeliveryFor('openai')).toBe(before)
+  })
+})

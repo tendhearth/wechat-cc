@@ -892,3 +892,19 @@ describe('final_text × 聊天型模型(replyText: all_segments,2026-10-03 修�
     expect(buildSystemPrompt(base)).toContain('最后写下的那段话就是发给对方的回复')
   })
 })
+
+describe('聊天型模型的结构性约束(2026-10-03 审稿第二轮,只进聊天型那一版)', () => {
+  const base = { providerId: 'openai' as const, peerProviderId: 'claude' as const, companionEnabled: false, delegateAvailable: false, replyDelivery: 'final_text' as const }
+  it('聊天型:一轮只在最后说话、工具前不先说一句(除非明显很慢);发了语音不再补一句收尾', () => {
+    const p = buildSystemPrompt({ ...base, replyText: 'all_segments' })
+    expect(p).toContain('一轮只在最后说话')
+    expect(p).toContain('工具调用前不要先说一句')
+    expect(p).toContain('明显很慢')
+    expect(p).toContain('发了语音就不要再补一句文字收尾')
+  })
+  it('编码型那一版不带这两条', () => {
+    const p = buildSystemPrompt(base)
+    expect(p).not.toContain('一轮只在最后说话')
+    expect(p).not.toContain('发了语音就不要再补一句文字收尾')
+  })
+})

@@ -1728,6 +1728,20 @@ describe('伙伴推送 × 回复交付(spec 2026-10-03 §4.4 / 已定 ③)', () 
     expect(buildPushTickText({ nowIso: 't', defaultChatId: 'c', intention: 'x' }, { replyDelivery: 'final_text' })).toContain('最后写下的话就是推送')
   })
 
+  // 审稿第二轮第 3 条:推不推已经由 plan / shouldSpeak 在调用模型之前定了 ⇒ compose 这一轮是「写出这条推送」,
+  // NO_REPLY 只是兜底,并且明说「写不出值得发的内容才用」。
+  it('final_text 的三种推送提示:已决定要推送、请写出这条推送;NO_REPLY 只在写不出值得发的内容时用', () => {
+    for (const t of [
+      buildPushTickText({ nowIso: 't', defaultChatId: 'c', intention: 'x' }, { replyDelivery: 'final_text', allSegments: true }),
+      buildGapCheckinText({ nowIso: 't', chatId: 'c', daysSinceContact: 3 }, { replyDelivery: 'final_text', allSegments: true }),
+      buildHuntText({ nowIso: 't' }, { replyDelivery: 'final_text', allSegments: true }),
+    ]) {
+      expect(t).toContain('已决定要推送')
+      expect(t).toContain('写不出值得发的内容')
+      expect(t).toContain('NO_REPLY')
+    }
+  })
+
   it('daemon:最后的话经交付端口送出(context=tick),旁白不发', async () => {
     const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project' })
     cleanup.push(s.stateDir)

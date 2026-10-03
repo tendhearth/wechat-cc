@@ -253,15 +253,20 @@ function tickVoice(style: TickTextStyle, last: string): string {
 }
 /** 不发的说法:只写 NO_REPLY,别解释为什么不发(解释会被当成推送)。 */
 const TICK_SILENT = '只写 NO_REPLY,别的一个字都不写,也别解释为什么不发(这个词不会发出去)'
+/**
+ * 审稿第二轮第 3 条(2026-10-03):推不推已经由 shouldSpeak / 日程判断在调用模型**之前**定了 ——
+ * compose 这一轮的任务是「写出这条推送」;NO_REPLY 只是兜底,写不出值得发的内容才用。
+ */
+const TICK_DECIDED = '已决定要推送,请写出这条推送'
+const TICK_FALLBACK = `只有写不出值得发的内容时才不发——那就${TICK_SILENT}`
 
 export function buildPushTickText(opts: BuildPushTickTextOpts, style: TickTextStyle = {}): string {
   if (style.replyDelivery === 'final_text') {
     return (
       `<companion_tick ts="${opts.nowIso}" default_chat_id="${opts.defaultChatId}" />\n` +
-      `有一条到点的跟进：「${opts.intention}」\n` +
-      `先 memory_read 相关 .md，看看它是否还有意义、用户是不是已经自己说过结果。\n` +
-      `默认就是发：写一句简短、自然的问候（别催、别灌鸡汤）——${tickVoice(style, '你这一轮最后写下的话就是推送')}。晚了几天也照常发，自然带一句就行（"前两天那个…"），不用为迟到道歉。\n` +
-      `"已过期"指这件事本身已经没意义了——约定的具体时刻早过去很久、或明显已无关；单纯晚几天不算过期。只有真的没意义、或用户已经自己说过结果，才不发——那就${TICK_SILENT}。`
+      `有一条到点的跟进：「${opts.intention}」——${TICK_DECIDED}。\n` +
+      `先 memory_read 相关 .md，再写一句简短、自然的问候（别催、别灌鸡汤）——${tickVoice(style, '你这一轮最后写下的话就是推送')}。晚了几天也照常发，自然带一句就行（"前两天那个…"），不用为迟到道歉。\n` +
+      `如果这件事本身已经没意义了（约定的具体时刻早过去很久、或用户已经自己说过结果），就是写不出值得发的内容。${TICK_FALLBACK}。`
     )
   }
   return (
@@ -289,9 +294,9 @@ export function buildGapCheckinText(opts: BuildGapCheckinTextOpts, style: TickTe
   if (style.replyDelivery === 'final_text') {
     return (
       `<companion_tick ts="${opts.nowIso}" chat_id="${opts.chatId}" kind="gap" />\n` +
-      `这是一次主动问候（距离上次对话 ${opts.daysSinceContact} 天）；` +
-      `结合你对这位用户的了解，如果有自然的话头，写**一条**简短自然的问候（${tickVoice(style, '你这一轮最后的话就是推送')}）；` +
-      `如果实在没有自然的话头，可以这次不发——${TICK_SILENT}。`
+      `这是一次主动问候（距离上次对话 ${opts.daysSinceContact} 天）——${TICK_DECIDED}：` +
+      `结合你对这位用户的了解，写**一条**简短自然的问候（${tickVoice(style, '你这一轮最后的话就是推送')}）；` +
+      `${TICK_FALLBACK}。`
     )
   }
   return (
@@ -311,9 +316,9 @@ export function buildHuntText(opts: { nowIso: string }, style: TickTextStyle = {
   if (style.replyDelivery === 'final_text') {
     return (
       `<companion_tick ts="${opts.nowIso}" kind="hunt" />\n` +
-      `每日打猎时间——回顾你记忆里主人的兴趣和最近关注，用网络工具（搜索/抓取）找新鲜的、他真会感兴趣的内容；` +
+      `每日打猎时间——${TICK_DECIDED}：回顾你记忆里主人的兴趣和最近关注，用网络工具（搜索/抓取）找新鲜的、他真会感兴趣的内容；` +
       `只挑真正值得的 1-2 条分享，每条一句"为什么你会感兴趣" + 链接，条与条之间空一行（${tickVoice(style, '你这一轮最后的话就是分享的内容')}）；` +
-      `如果今天没猎到值得分享的，可以不发——${TICK_SILENT}；` +
+      `今天没猎到值得分享的就是写不出值得发的内容，${TICK_FALLBACK}；` +
       `别分享你们最近已经聊过的东西。`
     )
   }

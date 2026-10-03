@@ -959,3 +959,29 @@ describe('provider enum follows lib/provider-ids', () => {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 })
+
+describe('agent-config reply_delivery(回复交付的运行时回滚开关,2026-10-03)', () => {
+  it('合法值保留,非法值逐项丢掉(不整块作废)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ reply_delivery: { openai: 'legacy', claude: 'shadow', agy: 'bogus', cursor: 3 } }))
+      expect(loadAgentConfig(dir).reply_delivery).toEqual({ openai: 'legacy', claude: 'shadow' })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('没写 / 不是对象 ⇒ 没有这个字段', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-'))
+    try {
+      writeFileSync(join(dir, 'agent-config.json'), JSON.stringify({ reply_delivery: 'legacy' }))
+      expect(loadAgentConfig(dir).reply_delivery).toBeUndefined()
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('save → load 不丢这个字段', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-config-'))
+    try {
+      saveAgentConfig(dir, { ...loadAgentConfig(dir), reply_delivery: { openai: 'shadow' } })
+      expect(loadAgentConfig(dir).reply_delivery).toEqual({ openai: 'shadow' })
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})

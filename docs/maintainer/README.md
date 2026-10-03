@@ -71,6 +71,7 @@ wechat-cc self change "<需求>"       # --no-deploy 只合 dev;--list / --resum
 | [mobile-presence.md](mobile-presence.md) | 手机此刻、待处理入口、成果与回忆,断线提交和冻结资产的接线边界 |
 | [ci-and-flakes.md](ci-and-flakes.md) | 三平台作业、Windows 排除清单的规矩、`ci triage` 与 flake 登记表、PR 与合并纪律 |
 | [self-change.md](self-change.md) | 让 CC 自己改自己:五道闸门、修复轮上限、退出码、停机与 `--unhalt`、微信不通时怎么拍板(`--approve` / 桌面卡)、禁改清单、费用、微信「自改」 |
+| [reply-delivery.md](reply-delivery.md) | 回复交付的每家开关(legacy / shadow / daemon)、`agent-config.json` 的 `reply_delivery` 不重新部署就回滚、排查看哪几行日志 |
 | [migrations.md](migrations.md) | `user_version` 是计数、新迁移要改的三处测试、指纹与 `foreign_keys` 坑 |
 | [rules-from-real-machines.md](rules-from-real-machines.md) | 真机(而不是单测)抓到的规矩清单 —— 写代码前先扫一眼 |
 
