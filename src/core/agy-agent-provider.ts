@@ -41,11 +41,11 @@ export const AGY_CAPABILITIES: ProviderCapabilities = {
   supportsResume: true,
   defaultPeer: 'claude',
   authFailHint: 'agy 登录态失效，请在电脑上跑一次 `agy` 重新登录后再发消息。',
-  // 回复交付第 2 步(2026-10-03):daemon 路径全部接好(静态 MCP 配置跟着开关换工具表、共享令牌的附件绑到
-  // 本轮、#199 的豁免在 daemon 下取消)。沙盒闸门(真 agy,56 轮)两臂打平 —— 在 harness 里 legacy 本来就没有
-  // 坏(双发旁白已被命名空间折叠修住),按「daemon 在故障点上明显好于 legacy 才翻」的约定先 shadow,
-  // 每轮记 [REPLY_SHADOW]。翻到 daemon 只改这一行(或 agent-config 的 reply_delivery: { agy: 'daemon' } + 重启)。
-  replyDelivery: 'shadow',
+  // 回复交付第 2 步(2026-10-03):维护者决定切 daemon(主人授权)。沙盒闸门(真 agy,56 轮)两臂行为打平、
+  // daemon 非回复工具调用更少(10.3 vs 15.0);结构收益:双发不再依赖命名空间折叠、共享令牌的附件绑到本轮
+  // (#199 豁免在 daemon 下取消)、走统一交付路径(终局要删 legacy)。回滚:agent-config 的
+  // reply_delivery: { agy: 'legacy' } + 重启 daemon(docs/maintainer/reply-delivery.md)。
+  replyDelivery: 'daemon',
   // 聊天型(订阅版 Gemini 的 CLI):翻到 daemon 时本轮所有文字段都交付,不只取最后一段(2026-10-03 修订)。
   replyText: 'all_segments',
 }

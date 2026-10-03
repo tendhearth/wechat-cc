@@ -8,6 +8,7 @@ import { makeRoutes, makeMaybePrefix } from './routes'
 import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDecision, sharedTokenTurn } from './send-scope'
 import { makeReplyDeliveryRuntime } from '../reply-delivery'
 import { setReplyDeliveryOverrides } from '../../core/capability-matrix'
+import { onTestFinished } from 'vitest'
 import { minTierFor } from './route-tiers'
 
 /**
@@ -297,6 +298,9 @@ describe('send routes over HTTP — chat scope', () => {
   })
 
   it('agy-static (shared trusted token, no own chat) keeps current behaviour while agy is legacy / shadow', async () => {
+    // 2026-10-03 起 agy 缺省是 daemon;这条钉的是回滚到 legacy 时共享令牌的豁免还在。
+    setReplyDeliveryOverrides({ agy: 'legacy' })
+    onTestFinished(() => setReplyDeliveryOverrides(undefined))
     const m = mocks()
     const { port } = await boot(m)
     const agy = api!.mintSessionToken('trusted', 'agy-static')

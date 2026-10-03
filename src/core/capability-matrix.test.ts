@@ -257,7 +257,7 @@ describe('replyDeliveryFor — 回复交付开关(spec §5.0,一家一家翻)', 
     const { replyDeliveryFor } = await import('./capability-matrix')
     expect(replyDeliveryFor('openai')).toBe('daemon')
     // 第 2 步(2026-10-03):agy 接线完成,闸门两臂打平 ⇒ 先 shadow。
-    expect(replyDeliveryFor('agy')).toBe('shadow')
+    expect(replyDeliveryFor('agy')).toBe('daemon')
   })
 
   it('没注册能力表的 provider ⇒ legacy(fail safe,走今天的路)', async () => {
