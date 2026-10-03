@@ -142,17 +142,27 @@ describe('classification through the daemon gate (endpoint + model resolution)',
     expect((await decideCall(rt({ env: { ANTHROPIC_BASE_URL: 'https://gw.example.com' }, guard: { protect_custom_gateways: true } }).gate, PROTECTED)).allowed).toBe(false)
     expect((await decideCall(rt().gate, PROTECTED)).allowed).toBe(false)
   })
-  it('openai provider takes its endpoint from agent-config: Kimi .cn vs .ai', async () => {
+  it('openai provider takes its endpoint from agent-config: Kimi .cn and .ai both unprotected (主人:「Kimi 都不需要判断」)', async () => {
     const t: CallTarget = { provider: 'openai', purpose: 'turn' }
     expect((await decideCall(rt({ agent: { openaiBaseUrl: 'https://api.moonshot.cn/v1' } }).gate, t)).allowed).toBe(true)
-    expect((await decideCall(rt({ agent: { openaiBaseUrl: 'https://api.moonshot.ai/v1' } }).gate, t)).allowed).toBe(false)
+    expect((await decideCall(rt({ agent: { openaiBaseUrl: 'https://api.moonshot.ai/v1' } }).gate, t)).allowed).toBe(true)
+    expect((await decideCall(rt({ agent: { openaiBaseUrl: 'https://api.moonshot.ai/v1' }, guard: { protect_custom_gateways: true } }).gate, t)).allowed).toBe(true)
+    expect((await decideCall(rt({ agent: { openaiBaseUrl: 'https://api.openai.com/v1' } }).gate, t)).allowed).toBe(false)
     expect((await decideCall(rt({ agent: { openaiBaseUrl: 'http://localhost:11434/v1' } }).gate, t)).allowed).toBe(true)
   })
   it('Cursor with no per-call model falls back to agent-config cursorModel, then auto', async () => {
     const t: CallTarget = { provider: 'cursor', purpose: 'turn' }
     expect((await decideCall(rt().gate, t)).allowed).toBe(true)                                         // auto
     expect((await decideCall(rt({ agent: { cursorModel: 'gpt-5' } }).gate, t)).allowed).toBe(false)      // 全局选了 GPT
-    expect((await decideCall(rt({ agent: { cursorModel: 'gpt-5' } }).gate, { ...t, model: 'composer-2' })).allowed).toBe(true)  // 这一轮钉了 composer
+    expect((await decideCall(rt({ agent: { cursorModel: 'gpt-5' } }).gate, { ...t, model: 'auto' })).allowed).toBe(true)  // 这一轮钉了 auto
+    expect((await decideCall(rt({ agent: { cursorModel: 'gpt-5' } }).gate, { ...t, model: 'default[]' })).allowed).toBe(true)  // cursor-agent 的 Auto id
+  })
+  it('Cursor: only auto is unprotected — composer / Cursor\'s own models are protected (主人:「Cursor 除了 auto，其他都要网络」)', async () => {
+    const t: CallTarget = { provider: 'cursor', purpose: 'turn' }
+    expect((await decideCall(rt().gate, { ...t, model: 'composer-2' })).allowed).toBe(false)
+    expect((await decideCall(rt({ agent: { cursorModel: 'composer-2' } }).gate, t)).allowed).toBe(false)
+    expect((await decideCall(rt().gate, { ...t, model: 'composer-2.5[fast=true]' })).allowed).toBe(false)
+    expect((await decideCall(rt({ guard: { trust: ['cursor:composer-*'] } }).gate, { ...t, model: 'composer-2' })).allowed).toBe(true)
   })
   it('unknown Cursor model ⇒ protected by default, guard.json trust releases it', async () => {
     const t: CallTarget = { provider: 'cursor', model: 'kimi-k2', purpose: 'turn' }

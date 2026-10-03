@@ -12,23 +12,21 @@
 ### 已决定(主人,2026-10-02 对话中)
 
 1. **守护只管一件事:** 根据约定的网络信号,判断 CC 能不能**开始**一次需要保护的调用。不需要保护的调用不看信号、照常走。
-2. **按调用分类,看它真正连到哪、用哪个模型**(不是按 provider 家族):Anthropic(Claude API / Claude Code / Agent SDK 走官方端点)、OpenAI(API、Codex)、Google(Gemini、agy/Antigravity)、OpenRouter 这类海外聚合默认需要保护;DeepSeek、Kimi 国内版(moonshot.cn)、通义/DashScope、智谱等国内平台和自建默认不需要。
+2. **按调用分类,看它真正连到哪、用哪个模型**(不是按 provider 家族):Anthropic(Claude API / Claude Code / Agent SDK 走官方端点)、OpenAI(API、Codex)、Google(Gemini、agy/Antigravity)、OpenRouter 这类海外聚合默认需要保护;DeepSeek、Kimi、通义/DashScope、智谱等国内平台和自建默认不需要。
 3. **自定义网关由用户自己决定:** 默认不保护(包括把 `ANTHROPIC_BASE_URL` 指到别处的 Claude Code),guard.json 一个开关(`protect_custom_gateways`)或 `protect` 表可以纳入。
 4. **bx 在保护 ⇒ 无条件信任**(`protection_state == "protected"` 且 `tunnel_healthy`)。
 5. **没装 bx ⇒ 用 daemon 自己的 Google 探测**(daemon 进程内 fetch)。没有结果按失败算 —— 修掉 v1 开机头一拍之前一律放行的 fail-open。
 6. **国内 / 自建永远不能被全局守护连累:** 只拒绝那一次需要保护的调用;国内 / 自建的失败仍是普通连接错误,**永远不贴「网络未受保护」**。
 7. **控制操作永远放行:** 查看 / 状态、取消、权限 y/n 回复、换模型 / 换 provider、/set 等。入站 `mw-guard` 已删。
-8. **Cursor:** `auto` 和 Cursor 自家模型(composer-\* 等)不需要保护;**明确选了 Claude / GPT / o 系列 / Gemini 模型**的需要保护。
+8. **Cursor:** 主人原话「Cursor 除了 auto，其他都要网络」。只有 `auto` 不需要保护(没选模型、`auto`、cursor-agent 的 `default[]` 都是 Auto);**其它所有 Cursor 模型都需要保护** —— Claude / GPT / Gemini、Cursor 自家的 composer-\* 等、不认识的模型名(Grok、Kimi、GLM …)。`trust` 可逐个放开(如 `cursor:composer-*`)。
 9. **cheapEval 继续钉在 agy**(主人在对话里说保持现状)。
 10. **`llm.youdamaster.cc` 是主人自建的 ⇒ 不需要保护**(按第 3 条,它本来就是缺省不保护的自定义网关;主人确认过不要纳入)。
 11. **装了 bx、但 bx 关着 / 恢复中 / 读不出 ⇒ 暂停需要保护的调用,不回退到 Google 探测;** guard.json 里写 `signal_source: "probe"`(装着 bx、实际在用别的 VPN)可以显式改用 Google 探测。实现见 `gate.ts` / `owner-table.test.ts`。
+12. **Kimi:** 主人原话「Kimi 都不需要判断」。Kimi 的所有端点(`moonshot.cn`、`moonshot.ai`、`kimi.com`、`kimi.ai` 及其子域)都不需要保护,国内版、国际版不分;`protect_custom_gateways` 也不会把它们纳入(它们不算自定义网关),要纳入只能写进 `protect`。
 
 ### 待定(现在的行为只是临时缺省)
 
 - **什么时候(要不要)停掉已经在跑的任务。** 暂时沿用 #191 的行为作为临时缺省:bx 来源从不停在跑的执行者(bx fail-closed,出不去也就漏不了);probe 来源连续两次读到不安全才停,每段不安全期只停一次;只停需要保护的执行者,不需要保护的永远不停。网络翻成不安全时只关需要保护的对话会话。**这不是主人的决定。**
-- **Kimi `.ai` 与 `.cn` 怎么分:** 现在按端点 host 判 —— `api.moonshot.cn` 国内不保护,`api.moonshot.ai` 判成海外需要保护(`trust` 可放开)。
-- **不认识的 Cursor 模型名缺省怎么算:** 现在缺省需要保护(fail safe,`trust` 可放开)。
-- **Cursor 其它模型(Grok、Kimi、GLM、Muse 等)要不要保护:** 现在因为「不认识」而落进上一条的缺省 —— 需要保护。
 
 ### 由上面推出来的实现约束
 
@@ -72,11 +70,12 @@
 |---|---|---|
 | `official` | `*.anthropic.com` `claude.ai` `*.openai.com` `chatgpt.com` `*.googleapis.com` `x.ai` `mistral.ai` `groq.com` … | 是 |
 | `aggregator` | `openrouter.ai` `together.xyz` `fireworks.ai` `deepinfra.com` `poe.com` | 是 |
-| `overseas_other`(拿不准、按 host 判成海外) | **Kimi 国际版 `api.moonshot.ai` / `moonshot.ai`**、通义国际版 `dashscope-intl.aliyuncs.com` | 是(`trust` 可放开) |
-| `cursor_overseas` | Cursor + `claude*` `*sonnet*` `*opus*` `*haiku*` `gpt*` `o<数字>*` `*gemini*` `*codex*` | 是 |
-| `cursor_unknown` | Cursor + 不认识的模型名(如 `kimi-k2`、`grok-4`) | 是(`trust` 可放开) |
-| `cursor_own` | Cursor `auto` / `default` / `composer-*` / `cursor-*`;列模型目录;起 ACP 会话(`setup`)。cursor-agent 的模型 id 带参数后缀(`default[]` = Auto、`claude-opus-5[thinking=true,…]`),按去掉 `[…]` 的名字判 | 否 |
-| `domestic` | `deepseek.com` `moonshot.cn` `aliyuncs.com`(DashScope) `bigmodel.cn` `volces.com` `siliconflow.cn` `baidubce.com` `minimax(i).chat/com` `lingyiwanwu.com` `tencentcloudapi.com` `baichuan-ai.com` `stepfun.com` `xf-yun.com` `sensenova.cn` `modelscope.cn` | 否 |
+| `overseas_other`(拿不准、按 host 判成海外) | 通义国际版 `dashscope-intl.aliyuncs.com`、`api.deepseek.ai` | 是(`trust` 可放开) |
+| `cursor_model` | Cursor + `auto` 以外的**任何**模型:Claude / GPT / Gemini、Cursor 自家的 `composer-*`、不认识的名字(`kimi-k2`、`grok-4`、`glm-*` …) | 是(`trust` 可放开) |
+| `cursor_auto` | Cursor 没选模型 / `auto` / `default`。cursor-agent 的模型 id 带参数后缀(`default[]` = Auto、`claude-opus-5[thinking=true,…]`),按去掉 `[…]` 的名字判 | 否 |
+| `cursor_setup` | Cursor 列模型目录、查额度、起 ACP 会话(`setup`)—— 不是模型回合 | 否 |
+| `kimi` | Kimi 的所有端点:`moonshot.cn` `moonshot.ai` `kimi.com` `kimi.ai`(国内版、国际版不分) | 否(`protect_custom_gateways` 不影响) |
+| `domestic` | `deepseek.com` `aliyuncs.com`(DashScope) `bigmodel.cn` `volces.com` `siliconflow.cn` `baidubce.com` `minimax(i).chat/com` `lingyiwanwu.com` `tencentcloudapi.com` `baichuan-ai.com` `stepfun.com` `xf-yun.com` `sensenova.cn` `modelscope.cn` | 否 |
 | `self_hosted` | `localhost` / 回环 / `10.x` `172.16–31.x` `192.168.x` / `169.254.x` / `100.64–127.x`(tailnet)/ `.local` `.lan` `.internal` `.home.arpa` `.ts.net` / 私网 IPv6 / 不带点的主机名 | 否 |
 | `custom_gateway` | 其它任何 base URL(如主人的 `llm.youdamaster.cc`、Claude Code 的 `ANTHROPIC_BASE_URL=https://gw.example.com`) | 否;`protect_custom_gateways: true` ⇒ 是 |
 | `unknown_provider` | 不认识的 provider、又没给端点 | 是(fail safe) |
@@ -105,10 +104,10 @@
 | 写法 | 例子 | 匹配 |
 |---|---|---|
 | `provider:模型通配`(含冒号、不含 `://`) | `cursor:kimi-*`、`cursor:composer-*`、`openai:*` | provider 相同且模型匹配(`*` / `?` 通配,不分大小写);模型通配不是 `*` 时,没有模型的调用不匹配 |
-| host(含点;可 `*.` 前缀,也可写整个 URL) | `api.moonshot.ai`、`*.youdamaster.cc`、`https://gw.example.com/v1` | 端点 host 等于它或是它的子域 |
+| host(含点;可 `*.` 前缀,也可写整个 URL) | `dashscope-intl.aliyuncs.com`、`*.youdamaster.cc`、`https://gw.example.com/v1` | 端点 host 等于它或是它的子域 |
 | 裸 provider id(不含点也不含冒号) | `codex`、`cursor` | 这个 provider 的所有调用 |
 
-**`protect` 压过 `trust`**(两边都命中按保护算,fail safe)。例:放开一个不认识的 Cursor 模型 `"trust": ["cursor:kimi-k2"]`;把主人自己的网关也纳入 `"protect": ["*.youdamaster.cc"]`;放开 Kimi 国际版 `"trust": ["api.moonshot.ai"]`。
+**`protect` 压过 `trust`**(两边都命中按保护算,fail safe)。例:放开 Cursor 自家模型 `"trust": ["cursor:composer-*"]`;把主人自己的网关也纳入 `"protect": ["*.youdamaster.cc"]`;放开通义国际版 `"trust": ["dashscope-intl.aliyuncs.com"]`。
 
 ## 信号(只对需要保护的调用)
 
