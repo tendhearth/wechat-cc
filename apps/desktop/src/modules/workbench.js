@@ -11,6 +11,7 @@ import { createWorkbenchDraftStore, loadWorkbenchView, saveWorkbenchView, workbe
 export { createWorkbenchDraftStore } from './workbench-window-state.js'
 
 import { mountHandoffDialog, mountHandoffRecord, defaultReviewArtifacts } from './workbench-handoff.js'
+import {createQuotaHandoffAttempts,mountQuotaHandoffDialog,renderQuotaHandoff} from './workbench-quota-handoff.js'
 import { mountHistoryDialog } from './workbench-history.js'
 import { isAckRequiredError, isUnattendedProvider, mountUnattendedDialog, unattendedLabelSuffix } from './workbench-unattended.js'
 import { escapeWorkbenchHtml, renderWorkbenchMarkdown, renderWorkbenchUserText } from './workbench-markdown.js'
@@ -45,7 +46,7 @@ function providerLabel(p) {
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeSource} NativeSource */
 /** @typedef {import('../../../../src/core/workbench/native-adoption').NativeResumeDecision} NativeResume */
 /** @typedef {import('../../../../src/core/workbench/handoff').HandoffView} Handoff */
-/** @typedef {{execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number}} Detail */
+/** @typedef {{quotaHandoff?:import('./workbench-quota-handoff.js').Offer|null,execution?:ExecutionChoice,lastExecution?:import('./workbench-execution.js').RunExecution|null,attachments?:import('./workbench-attachments.js').Attachment[],handoffs?:Handoff[],requiresExternalClose?:boolean,source?:NativeSource,task:Task,events:WorkbenchEvent[],artifacts:Artifact[],permissions?:Permission[],continuation?:Continuation,runId?:string,inputMode?:'steer'|'send'|'queue',runtime?:RuntimeSnapshot,questions?:import('./workbench-interaction.js').QuestionRequest[],inputs?:import('./workbench-interaction.js').LiveInput[],version?:number}} Detail */
 /** @typedef {{q:string,archived:'exclude'|'only'|'all'}} TaskQuery */
 /** @typedef {{limit:number,total:number,hasMore:boolean,nextCursor:string|null}} TaskPage */
 /** @typedef {{tasks:Task[],providers:Provider[],defaultProvider:string|null,canWechat:boolean,historyProviders?:string[],page?:TaskPage,projects?:Array<{id:string,name:string,path:string,providerId:string}>,projectProviders?:Record<string,string>}} ListResult */
@@ -80,6 +81,7 @@ const emptyDraft = () => ({ path: '', text: '', title: '', providerId: '', follo
 const appendHandoverText = (existing, incoming) => !incoming ? existing : existing.trim() ? `${existing}\n\n—— 从聊天交办 ——\n${incoming}` : incoming
 
 const pageDrafts = createWorkbenchDraftStore(windowStorage)
+const quotaHandoffAttempts=createQuotaHandoffAttempts(windowStorage)
 /** @type {Map<string,import('./workbench-interaction.js').InputAttempt>} */
 const pageInputAttempts = new Map()
 
@@ -238,7 +240,7 @@ export function renderMessageFor({ detail, helper, handoffs, actionable, lastRep
   }
 }
 
-/** @param {{catalog?:import('./workbench-execution.js').CatalogState,restartPreview?:import('./workbench-execution.js').ContinuationPreviewState,busy?:boolean}} [executionView] @param {WorkbenchState} state @param {import('./workbench-interaction.js').Interactions} [interactions] @param {Draft} [draft] @param {string} [attachmentError] */
+/** @param {{quotaAttempt?:import('./workbench-quota-handoff.js').Attempt|null,catalog?:import('./workbench-execution.js').CatalogState,restartPreview?:import('./workbench-execution.js').ContinuationPreviewState,busy?:boolean}} [executionView] @param {WorkbenchState} state @param {import('./workbench-interaction.js').Interactions} [interactions] @param {Draft} [draft] @param {string} [attachmentError] */
 export function renderWorkbench(state, interactions, draft, attachmentError='',executionView={}) {
   const tasks = state.tasks ?? []
   const detail = state.detail
@@ -307,7 +309,8 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
     <section class="wb-dialogue" aria-live="polite">${dialogueHtml}</section>
     ${queuedGuidance}
     ${renderWorkbenchInputs(detail.task.id, detail.inputs ?? [], interactions,!!detail.runtime?.retained)}
-    ${detail.task.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(executionErrorMessage(detail.task.error)??detail.task.error)}${detail.task.error==='execution_model_unsupported'&&!executionDisabled?'<button type="button" class="wb-new" data-action="choose-task-model">为这件事选择模型</button>':''}</div>` : ''}
+    ${renderQuotaHandoff(detail,state.providers,executionView.quotaAttempt)}
+    ${detail.task.error&&(!detail.quotaHandoff||!['provider_quota_exhausted','provider_rate_limited'].includes(detail.task.error)) ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(executionErrorMessage(detail.task.error)??detail.task.error)}${detail.task.error==='execution_model_unsupported'&&!executionDisabled?'<button type="button" class="wb-new" data-action="choose-task-model">为这件事选择模型</button>':''}</div>` : ''}
     ${reviewHtml}
     ${artifactHtml}` : !state.loadingId && state.projects?.length === 0 && state.newScope !== 'new:add-project' && !draft?.text.trim() ? `
     <div class="wb-welcome"><p class="wb-kicker">随手交办</p><h1>希望 CC 帮你做什么？</h1><p>直接写下要求、加上材料。CC 会为这件事准备独立文件夹。</p><button type="button" class="wb-btn wb-btn-primary" data-action="task-entry">交给 CC 做</button></div>` : !detail && !state.loadingId && state.projects && !activeProject ? `
@@ -595,6 +598,7 @@ export function initWorkbenchPage(deps) {
   const busy = new Set()
   let alive = true
   let handoffCleanup = /** @type {(()=>void)|null} */ (null)
+  let quotaHandoffCleanup=/** @type {(()=>void)|null} */(null)
   let nativeHistoryCleanup = /** @type {(()=>void)|null} */ (null)
   let artifactRequest = 0
   let navigationGeneration = 0
@@ -754,7 +758,7 @@ export function initWorkbenchPage(deps) {
     const timelineReading = sameScope ? captureTimelineReading(root) : null
     const questionPanelScroll = root.querySelector('.wb-questions')?.scrollTop ?? 0
     const nextDraft=pageDrafts.get(nextScope),providerId=state.detail?.task.providerId??nextDraft.providerId??state.defaultProvider??'',path=state.detail?.task.path??nextDraft.path
-    root.innerHTML = renderWorkbench(state, interactions,nextDraft,attachments.error(nextScope),{catalog:catalogs.get(providerId||state.defaultProvider||'',path),...(restartPreviewContext()?{restartPreview:recoveryPreviews.get(/** @type {import('./workbench-execution.js').ContinuationContext} */(restartPreviewContext()))}:{}),busy:busy.has(state.detail?`task:${state.detail.task.id}`:'create')})
+    root.innerHTML = renderWorkbench(state, interactions,nextDraft,attachments.error(nextScope),{quotaAttempt:quotaHandoffAttempts.get(state.detail?.task.id??''),catalog:catalogs.get(providerId||state.defaultProvider||'',path),...(restartPreviewContext()?{restartPreview:recoveryPreviews.get(/** @type {import('./workbench-execution.js').ContinuationContext} */(restartPreviewContext()))}:{}),busy:busy.has(state.detail?`task:${state.detail.task.id}`:'create')})
     thumbnails.mount(root)
     const questionPanel = root.querySelector('.wb-questions')
     if (questionPanel && sameScope) questionPanel.scrollTop = questionPanelScroll
@@ -861,7 +865,7 @@ export function initWorkbenchPage(deps) {
   }
   const openTask = async (/** @type {string} */ id) => {
     if (!alive || !id) return
-    captureDraft(); artifactRequest++
+    captureDraft();quotaHandoffCleanup?.();quotaHandoffCleanup=null; artifactRequest++
     const navigation = ++navigationGeneration
     try { await controller.selectTask(id) }
     catch (error) { if (alive && navigation === navigationGeneration) fail(error) }
@@ -1002,6 +1006,12 @@ export function initWorkbenchPage(deps) {
       if(current){current.following=atEnd(content)&&!browsingResults();if(current.following)current.unread=false}
       showReadingNotice()
       return
+    }
+    if(action==='quota-handoff-open'&&target.dataset.quotaTask)return openTask(target.dataset.quotaTask)
+    if(action==='quota-handoff'){
+      const detail=controller.state.detail;if(!detail||(!detail.quotaHandoff&&!quotaHandoffAttempts.get(detail.task.id)))return
+      captureDraft();quotaHandoffCleanup?.();const navigation=navigationGeneration,sourceId=detail.task.id
+      quotaHandoffCleanup=mountQuotaHandoffDialog({invoke:deps.invokeWorkbenchApi,source:detail.task,initial:detail.quotaHandoff??null,providers:controller.state.providers,attempts:quotaHandoffAttempts,current:()=>alive&&navigation===navigationGeneration&&controller.state.selectedId===sourceId,opened:async id=>{if(alive&&navigation===navigationGeneration&&controller.state.selectedId===sourceId)await openTask(id)}});return
     }
     if(action==='handoff-record'&&controller.state.selectedId&&target.dataset.handoffId){
       captureDraft();handoffCleanup?.();handoffCleanup=mountHandoffRecord(deps.invokeWorkbenchApi,controller.state.selectedId,target.dataset.handoffId);return
@@ -1338,7 +1348,7 @@ export function initWorkbenchPage(deps) {
     resumeSearch = input('wb-search')?.value ?? searchDraft
     if (controller.state.selectedId) resumeScope = `task:${controller.state.selectedId}`
     else if (document.getElementById('wb-create-form')) resumeScope = scopeFor(controller.state)
-    clearLiveTimelinePatches(root);thumbnails.destroy();recoveryPreviews.destroy();catalogs.destroy();root.removeEventListener('toggle',onToggle,true);handoffCleanup?.(); nativeHistoryCleanup?.();attachmentPreviewCleanup?.();root.removeEventListener('paste',onPaste);root.removeEventListener('drop',onDrop);root.removeEventListener('dragover',onDragOver); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', onInput); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick, true); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
+    clearLiveTimelinePatches(root);thumbnails.destroy();recoveryPreviews.destroy();catalogs.destroy();root.removeEventListener('toggle',onToggle,true);handoffCleanup?.();quotaHandoffCleanup?.(); nativeHistoryCleanup?.();attachmentPreviewCleanup?.();root.removeEventListener('paste',onPaste);root.removeEventListener('drop',onDrop);root.removeEventListener('dragover',onDragOver); alive = false; artifactRequest++; controller.destroy(); root.removeEventListener('input', onInput); window.removeEventListener?.('pagehide', saveWindowState); root.removeEventListener('scroll', onScroll, true); root.removeEventListener('change', onChange); root.removeEventListener('click', onClick, true); root.removeEventListener('submit', onSubmit); if (objectUrl) URL.revokeObjectURL(objectUrl)
   } }
   return controller
 }

@@ -17,6 +17,7 @@ import type { Active } from './state'
 import type { ServiceCtx } from './ctx'
 import type { PendingWorkbenchPermission } from '../permissions'
 import type { PendingUserInput } from '../user-input'
+import type { QuotaHandoffView } from './types'
 
 /** attention 里「第一件待决」原文的上限(字符)。桌面「N 件事等你」一行放得下的量;不在这里截就会把整段命令塞进轮询。 */
 export const ATTENTION_TEXT_MAX = 120
@@ -31,7 +32,7 @@ function firstPending(permissions:readonly PendingWorkbenchPermission[],question
   return text?{kind:'question',text}:null
 }
 
-export function makeViewDomain(ctx:ServiceCtx) {
+export function makeViewDomain(ctx:ServiceCtx, queries?:{quotaHandoff(id:string):QuotaHandoffView|null}) {
   const { store, state } = ctx
   /** 当前占着文件夹的 run。 */
   const held=()=>[...state.reservations.values()]
@@ -109,7 +110,7 @@ export function makeViewDomain(ctx:ServiceCtx) {
     const runtime=runtimeSnapshot(running)
     const subscription=store.wechatNotifications.subscription(id)
     const wechatNotifications={enabled:!!subscription?.enabled,notices:store.wechatNotifications.list(id).slice(-10).map(({id,runId,kind,status,reason,createdAt})=>({id,runId,kind,status,reason,createdAt}))}
-    const result={...detail,events:detail.events.map(readableExecutionEvent),wechatNotifications,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
+    const result={...detail,events:detail.events.map(readableExecutionEvent),wechatNotifications,quotaHandoff:queries?.quotaHandoff(id)??null,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
       // The timeline stays live through cancellation and process cleanup;
       // accepting supplemental input is a separate, narrower capability.
       ...(running?{runId:running.identity}:{}),

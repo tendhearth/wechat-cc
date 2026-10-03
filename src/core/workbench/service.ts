@@ -82,7 +82,7 @@ export function makeWorkbenchService(opts: Options) {
   const {fallbackExecutor}=quotaDomain
   const admissionDomain=makeAdmissionDomain(ctx)
   const {provider,requireInput,canResume,continuation,taskVersion}=admissionDomain
-  const viewDomain=makeViewDomain(ctx)
+  const viewDomain=makeViewDomain(ctx,{quotaHandoff:id=>quotaHandoffDomain.quotaHandoff(id)})
   const {held,runtimeSnapshot,inputMode,isReplied,taskView}=viewDomain
   const nativeDomain=makeNativeDomain(ctx)
   const inputsDomain=makeInputsDomain(ctx)
