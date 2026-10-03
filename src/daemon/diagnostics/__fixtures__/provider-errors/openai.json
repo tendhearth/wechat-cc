@@ -264,11 +264,11 @@
       "authFailError": false,
       "llmHealthAuth": false,
       "registryAuthCode": false,
-      "healthKind": "unknown",
-      "providerFailure": "unknown",
+      "healthKind": "network",
+      "providerFailure": "transient",
       "quota": null,
       "quotaRefusalText": false,
-      "connectFailure": false
+      "connectFailure": true
     }
   },
   {

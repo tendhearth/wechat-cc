@@ -86,7 +86,7 @@
       "assistantText": true,
       "sdkError": true,
       "authFailError": true,
-      "llmHealthAuth": true,
+      "llmHealthAuth": false,
       "registryAuthCode": false,
       "healthKind": "network",
       "providerFailure": "transient",

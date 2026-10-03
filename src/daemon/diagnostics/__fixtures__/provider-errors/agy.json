@@ -14,7 +14,7 @@
       "assistantText": true,
       "sdkError": false,
       "authFailError": false,
-      "llmHealthAuth": true,
+      "llmHealthAuth": false,
       "registryAuthCode": false,
       "healthKind": "network",
       "providerFailure": "transient",
@@ -85,11 +85,11 @@
       "authFailError": false,
       "llmHealthAuth": false,
       "registryAuthCode": false,
-      "healthKind": "unknown",
-      "providerFailure": "unknown",
+      "healthKind": "network",
+      "providerFailure": "transient",
       "quota": null,
       "quotaRefusalText": false,
-      "connectFailure": false
+      "connectFailure": true
     }
   },
   {
@@ -108,11 +108,11 @@
       "authFailError": false,
       "llmHealthAuth": false,
       "registryAuthCode": false,
-      "healthKind": "unknown",
-      "providerFailure": "unknown",
+      "healthKind": "network",
+      "providerFailure": "transient",
       "quota": null,
       "quotaRefusalText": false,
-      "connectFailure": false
+      "connectFailure": true
     }
   },
   {
@@ -131,11 +131,11 @@
       "authFailError": false,
       "llmHealthAuth": false,
       "registryAuthCode": false,
-      "healthKind": "unknown",
-      "providerFailure": "unknown",
+      "healthKind": "network",
+      "providerFailure": "transient",
       "quota": null,
       "quotaRefusalText": false,
-      "connectFailure": false
+      "connectFailure": true
     }
   },
   {

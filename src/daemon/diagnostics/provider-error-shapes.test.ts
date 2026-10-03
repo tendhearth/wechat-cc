@@ -53,6 +53,8 @@ describe('provider 失败样本 —— 两条 owner 红线今天守住了没有'
       expect(s.current.healthKind, s.id).toBe('network')
       expect(s.current.providerFailure, s.id).toBe('transient')
       expect(s.current.registryAuthCode, s.id).toBe(false)
+      // 第 2 步:「测试连接」(llm-health)也守住了 —— 以前它直接跑宽档散文正则,报 AUTH FAILED + 去重新登录。
+      expect(s.current.llmHealthAuth, s.id).toBe(false)
     }
   })
 

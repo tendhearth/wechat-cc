@@ -238,13 +238,14 @@ describe('claude 会话 → coordinator:API 错误不当回复发出去', () => 
     expect(records[0]).toMatchObject({ outcome: 'auth_failed', errorCode: 'auth_failed' })
   })
 
-  it.each(['claude.net_refused.session', 'claude.timeout.session'])('%s:回合 error + 码 network,走通用错误提示,不提认证', async (id) => {
+  // 第 2 步余下部分:错误提示按码说老实的原因(network ⇒「连不上 … 网络问题」),不再是笼统的「脑子卡了一下」。
+  it.each(['claude.net_refused.session', 'claude.timeout.session'])('%s:回合 error + 码 network,提示说网络问题,不提认证', async (id) => {
     const s = sample(id)
     const { sent, records, release } = await runCoordinatorTurn(s)
     expect(sent).toHaveLength(1)
     expect(sent[0]).not.toContain(s.message)
     expect(sent[0]).not.toMatch(/登录|认证|过期/)
-    expect(sent[0]).toContain('脑子卡了一下')
+    expect(sent[0]).toMatch(/连不上 claude 的服务.*网络问题/)
     expect(records[0]).toMatchObject({ outcome: 'error', errorCode: 'network', error: s.message })
     expect(release).not.toHaveBeenCalled()
   })

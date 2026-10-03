@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createConversationCoordinator, authFailNotice, turnPolicy } from './conversation-coordinator'
+import { createConversationCoordinator, authFailNotice, turnPolicy, turnErrorNotice } from './conversation-coordinator'
+import { errorWithProviderCode } from '../lib/provider-error-code'
 import { createProviderRegistry } from './provider-registry'
 import * as capabilityMatrix from './capability-matrix'
 import { makeFakeSession } from './test-helpers'
@@ -2837,6 +2838,51 @@ describe('spawn failure is told to the user (first-use probe / missing binary)',
     expect(text).toContain('requires a newer version of Codex')
     expect(text).toContain('/cc')
     expect(log).toHaveBeenCalledWith('COORDINATOR', expect.stringContaining('spawn failed'), expect.objectContaining({ event: 'spawn_failed' }))
+  })
+})
+
+describe('spawn failure carrying a provider code (arch backlog #4 第 2 步)', () => {
+  function setup(err: Error) {
+    const registry = createProviderRegistry()
+    registry.register('cursor', dummyProvider, { displayName: 'Cursor', canResume: () => true })
+    registry.register('claude', dummyProvider, { displayName: 'Claude', canResume: () => true })
+    const store = makeMockStore(); store.set('chat-1', { kind: 'solo', provider: 'cursor' })
+    const sendAssistantText = vi.fn(async () => {})
+    const recordTurn = vi.fn()
+    const release = vi.fn(async () => {})
+    const c = createConversationCoordinator({
+      resolveProject: () => ({ alias: 'a', path: '/p' }),
+      manager: { acquire: vi.fn(async () => { throw err }), release },
+      conversationStore: store, registry, defaultProviderId: 'claude', format: m => m.text, sendAssistantText, permissionMode: 'strict', loadAccess: adminAccess, log: vi.fn(), recordTurn,
+    })
+    return { c, sendAssistantText, recordTurn, release }
+  }
+  it('auth code (ACP -32000 未登录) ⇒ 认证分支:节流提示 + 回合 auth_failed,不把裸码 acp_auth_required 发给主人', async () => {
+    const { c, sendAssistantText, recordTurn } = setup(errorWithProviderCode('acp_auth_required', 'auth_failed'))
+    await c.dispatch(inbound('chat-1', 'hi'))
+    const text = (sendAssistantText.mock.calls[0] as unknown as [string, string])[1]
+    expect(text).not.toContain('acp_auth_required')
+    expect(text).toMatch(/cursor-agent login/)
+    expect(recordTurn).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'auth_failed', errorCode: 'auth_failed', error: 'acp_auth_required' }))
+  })
+  it('network code ⇒ 说网络问题;回合记下原文与码(以前 spawn 失败的回合 error 为空)', async () => {
+    const { c, sendAssistantText, recordTurn } = setup(errorWithProviderCode('acp_session_failed: Failed to reach the Cursor API', 'network'))
+    await c.dispatch(inbound('chat-1', 'hi'))
+    const text = (sendAssistantText.mock.calls[0] as unknown as [string, string])[1]
+    expect(text).toContain('cursor 这次没起来')
+    expect(text).toMatch(/网络问题/)
+    expect(recordTurn).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'error', errorCode: 'network' }))
+  })
+})
+
+describe('turnErrorNotice / providerFailureReason — 按码说原因', () => {
+  it('network / server_error / rate_limited / quota 各有一句老实话;无码保持通用说法', () => {
+    expect(turnErrorNotice('codex', 'x', 'network')).toMatch(/连不上 codex 的服务/)
+    expect(turnErrorNotice('openai', 'x', 'server_error')).toMatch(/服务那边出错/)
+    expect(turnErrorNotice('openai', 'x', 'rate_limited')).toMatch(/限流/)
+    expect(turnErrorNotice('codex', 'x', 'quota')).toMatch(/额度用完/)
+    expect(turnErrorNotice('codex', 'boom', undefined)).toContain('脑子卡了一下')
+    expect(turnErrorNotice('codex', 'boom', 'provider_error')).toContain('脑子卡了一下')
   })
 })
 
