@@ -1,3 +1,4 @@
+import { turnRoutes } from './routes-turn'
 import { mattersRoutes } from './routes-matters'
 import { connectionsRoutes } from './routes-connections'
 import { phoneRoutes } from './routes-phone'
@@ -136,7 +137,9 @@ const onlineStickerCooldown = makeCooldown(5 * 60_000)
 // Rotate through upstream candidates per chat so repeated requests do not
 // always pick the first (often identical) GIPHY result.
 const onlineStickerCursor = new Map<string, number>()
-  return {
+  const table: RouteTable = {
+    // 回复交付(spec 2026-10-03 §4.5 / §4.6):附件登记 + admin 往别处发。表情附件交付时复用本表里的老路由。
+    ...turnRoutes(deps, () => table),
     ...workbenchRoutes(deps),
     ...mattersRoutes(deps),
     ...connectionsRoutes(deps),
@@ -748,7 +751,8 @@ const onlineStickerCursor = new Map<string, number>()
       }
       try {
         const r = await deps.companionConverse(text)
-        return { status: 200, body: { ok: true, reply: r.reply } }
+        // 回复交付(spec 2026-10-03 §4.10):daemon 模式的轮把附件与旁白一起交还;旧路径没有这两个字段。
+        return { status: 200, body: { ok: true, reply: r.reply, ...(r.attachments ? { attachments: r.attachments } : {}), ...(r.narration ? { narration: r.narration } : {}) } }
       } catch (err) {
         const msg = errMsg(err)
         if (msg === 'reply_sink_busy') return { status: 409, body: { ok: false, error: 'session_busy' } }
@@ -1042,6 +1046,7 @@ const onlineStickerCursor = new Map<string, number>()
     ...federationRoutes(deps),
     ...fileRoutes(),
   }
+  return table
 }
 
 /**

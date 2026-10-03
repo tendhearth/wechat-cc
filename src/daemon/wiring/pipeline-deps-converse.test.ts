@@ -189,6 +189,15 @@ describe('companionConverse in-flight guard (buildPipelineDeps)', () => {
     return { companionConverse, pipelineDeps, ilink, dispatch, dispatchInner, runExclusive, isInFlight, replySinksOpen, markInboundActivity }
   }
 
+  // 回复交付(spec 2026-10-03 §4.10「app 接收器」):daemon 模式的 provider 把整个 TurnReply 交给接收器;
+  // 附件与旁白随回复一起交还给桌面 / 手机(不再漏到微信)。旧路径没有 extras ⇒ 返回值形状不变。
+  it('app 轮把接收器里的附件与旁白一起交还;没有就不带这两个字段', async () => {
+    const { companionConverse, replySinksOpen } = setup({ inFlight: false })
+    replySinksOpen.mockImplementationOnce(() => ({ close: () => '晚安', extras: () => ({ attachments: [{ kind: 'voice' as const, text: '晚安' }], narration: ['看了下日程'] }) }) as never)
+    expect(await companionConverse('睡了')).toEqual({ reply: '晚安', attachments: [{ kind: 'voice', text: '晚安' }], narration: ['看了下日程'] })
+    expect(await companionConverse('在吗')).toEqual({ reply: 'reply text' })
+  })
+
   it('answers an explicit owner task query from the workbench without entering the companion session', async () => {
     const store=makeWorkbenchStore(db)
     const task=store.create({title:'合成周报',path:stateDir,providerId:'codex',ownerChatId:'owner_chat'})

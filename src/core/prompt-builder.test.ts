@@ -851,3 +851,32 @@ describe('daemonSelfHealSection — 换模型是正常操作,不只是修故障'
     expect(t).toContain('provider_switch')
   })
 })
+
+describe('replyDelivery: final_text(回复交付 spec 2026-10-03 §4.11)', () => {
+  const base = { providerId: 'openai' as const, peerProviderId: 'claude' as const, companionEnabled: true, delegateAvailable: false, bubbleReplies: true, stickerTags: ['庆祝'] }
+
+  it("缺省 / 'tool' ⇒ 与今天逐字相同", () => {
+    expect(buildSystemPrompt({ ...base, replyDelivery: 'tool' })).toBe(buildSystemPrompt(base))
+  })
+
+  it('final_text:不再教 reply 工具,讲清「最后写下的话就是回复」', () => {
+    const p = buildSystemPrompt({ ...base, replyDelivery: 'final_text' })
+    expect(p).toContain('最后写下的那段话就是发给对方的回复')
+    expect(p).not.toMatch(/`reply\(|调 reply|用 reply|用 `reply`|reply 工具|FALLBACK_REPLY|send_sticker\(|send_online_sticker_candidate\(|reply_voice|edit_message|broadcast\(/)
+    expect(p).toContain('`voice(text)`')
+    expect(p).toContain('`sticker(')
+    expect(p).toContain('才用空行分成几段')
+  })
+
+  it('final_text:NO_REPLY 只在伙伴推送那段里教,私聊基础段不教', () => {
+    const p = buildSystemPrompt({ ...base, replyDelivery: 'final_text' })
+    const companion = p.slice(p.indexOf('## Companion 主动推送'))
+    expect(companion).toContain('NO_REPLY')
+    expect(p.slice(0, p.indexOf('## Companion 主动推送'))).not.toContain('NO_REPLY')
+  })
+
+  it('message 工具只在 admin(messageToolAvailable)时出现', () => {
+    expect(buildSystemPrompt({ ...base, replyDelivery: 'final_text', messageToolAvailable: true })).toContain('`message(to, text)`')
+    expect(buildSystemPrompt({ ...base, replyDelivery: 'final_text' })).not.toContain('`message(to, text)`')
+  })
+})

@@ -772,7 +772,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       requestRestart: (reason) => requestRestart(reason),
       llmHealth,
       stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,
-      outboundTaps, huntStore, petSignals,
+      outboundTaps, huntStore, petSignals, replyDelivery,
       // 随身 CC 首屏:聊天日摘要读 turn_records;presence 走 internal-api 的共用入口。
       turns: turnRecordStore,
       presence: () => internalApi.getPresence(),

@@ -361,6 +361,7 @@ message({ to: 'owner' | <chat_id> | 'broadcast', text, account_id? })
 
 ## 修订记录
 
+- 2026-10-03:第 1 步(openai)接线完成、闸门没过 ⇒ openai 先 `shadow`(见 `reference/reply-once-experiment.md`)。落地时与稿子不一样的几处:① reply 族工具不是在 `openai-mcp-bridge` 里过滤,而是 daemon 给 wechat MCP 子进程设 `WECHAT_REPLY_DELIVERY=daemon`、注册时就换工具表(任何走 `wechatStdioMcpSpec` 的 provider 翻开关即生效;agy / cursor 的静态 MCP 配置翻的时候要各自加);② `search_online_sticker`(搜 + 发一步)并进 `sticker(mood, query)`;③ §5.8 场景 d「1 条」与已定 ④ 冲突 —— 去掉 100 字门槛后,「列表 + 一句收尾」按空行就是 2 条;分条另加了两条规则(冒号引导段并入下一段、同一列表不拆);④ `sendAssistantText` 没有整体改名:协调器里的系统通知改走新的 `sendNotice`,H / I 类转发仍用原名;⑤ /both 的 daemon 参与者的 TurnRecord 还没记交付列;桌面 / 手机还不显示 converse 返回的附件与旁白。
 - 2026-10-03:第 0 步落地时的两处对齐:① 开关做成三值 `replyDelivery: 'legacy' | 'shadow' | 'daemon'`(§5.0 原写 `'tool' | 'final_text'`):shadow 就是 §5.1 第 3 项的影子记账,单独一档才能一家一家先影子、再翻;提示词参数仍是 `'tool' | 'final_text'`,由开关推出。② harness 的隔离护栏原来在模块体里才设 `WECHAT_STATE_DIR`,而 `lib/config` 在 import 期就定下 STATE_DIR —— 挪到第一个 import(`scripts/experiments/reply-once/isolate.ts`),并按主机名只许打主人自建网关。
 - 2026-10-03:§6 待主人定 → 已定(维护者按推荐定,主人授权);补备注:reply 路由不核对 chat_id 的越权已另一个 PR 单独修,附件工具不带 chat_id 的设计照旧。
 - 2026-10-03:初稿。harness 与 2026-10-02 的 110 回合数据从 PR #196 搬入(`scripts/experiments/reply-once/`);dev 上 provider 还没有 `makeBuiltins` 注入口,harness 加了拒跑保护(§5.1 第 1 项把注入口加回来)。

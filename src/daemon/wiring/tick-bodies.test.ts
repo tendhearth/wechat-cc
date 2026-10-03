@@ -1686,3 +1686,79 @@ describe('guard refusal undo keeps activity that happened meanwhile (review #194
     expect(readFileSync(file, 'utf8')).toBe('- [ ] due:2026-05-13 ping me about the gym\n- [ ] due:2026-06-01 added meanwhile')
   })
 })
+
+describe('伙伴推送 × 回复交付(spec 2026-10-03 §4.4 / 已定 ③)', () => {
+  let cleanup: string[]
+  beforeEach(() => { cleanup = [] })
+  afterEach(() => { for (const d of cleanup) rmSync(d, { recursive: true, force: true }) })
+
+  function withDelivery(s: Setup, events: unknown[], report: { delivery: 'text' | 'silent' | 'empty' | 'attachments_only' } = { delivery: 'text' }) {
+    s.dispatch.mockImplementation(() => ({ async *[Symbol.asyncIterator]() { for (const e of events) yield e } }))
+    const begun: unknown[] = []
+    const delivered: unknown[] = []
+    const abandoned: string[] = []
+    ;(s.deps as TickDeps).replyDelivery = {
+      begin(chatId, o) {
+        begun.push({ chatId, ...o })
+        return {
+          mode: 'daemon', progress: async () => {},
+          deliver: async (parts) => { delivered.push(parts); return { target: 'wechat', bubbles: report.delivery === 'text' ? 1 : 0, attachmentsSent: 0, failures: [], msgIds: [], ...report } },
+          abandon: (r) => { abandoned.push(r) },
+        }
+      },
+    }
+    ;(s.deps as TickDeps).replyDeliveryModeFor = () => 'daemon'
+    return { begun, delivered, abandoned }
+  }
+
+  it('推送提示的 final_text 版:写一句就是推送,不发就只写 NO_REPLY(不提 reply)', () => {
+    const push = buildPushTickText({ nowIso: 't', defaultChatId: 'c', intention: 'x' }, { replyDelivery: 'final_text' })
+    const gap = buildGapCheckinText({ nowIso: 't', chatId: 'c', daysSinceContact: 3 }, { replyDelivery: 'final_text' })
+    const hunt = buildHuntText({ nowIso: 't' }, { replyDelivery: 'final_text' })
+    for (const t of [push, gap, hunt]) {
+      expect(t).toContain('NO_REPLY')
+      expect(t).not.toMatch(/reply\b/)
+    }
+  })
+
+  it('daemon:最后的话经交付端口送出(context=tick),旁白不发', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project' })
+    cleanup.push(s.stateDir)
+    const d = withDelivery(s, [{ kind: 'text', text: '我看看记忆' }, { kind: 'tool_call', server: 'wechat', tool: 'memory_read' }, { kind: 'text', text: '项目最近顺利吗?' }, { kind: 'result', sessionId: 's', numTurns: 2, durationMs: 1 }])
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(d.begun).toEqual([{ chatId: 'chat-1', mode: 'daemon', context: 'tick', providerId: 'claude' }])
+    expect(d.delivered).toEqual([{ finalText: '项目最近顺利吗?', narration: ['我看看记忆'] }])
+    const text = (s.dispatch.mock.calls[0] as unknown[])[0] as string
+    expect(text).toContain('NO_REPLY')
+  })
+
+  it('daemon:写了 NO_REPLY(静默)⇒ 撤回登记(没发出去就不算发过)', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project' })
+    cleanup.push(s.stateDir)
+    withDelivery(s, [{ kind: 'text', text: 'NO_REPLY' }, { kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 }], { delivery: 'silent' })
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(s.careLedgerEntries['chat-1']).toBeUndefined()
+    expect(readFileSync(join(s.stateDir, 'memory', 'chat-1', 'agenda.md'), 'utf8')).toContain('- [ ] due:2026-05-13')
+    expect(s.logs.some(l => l.includes('REPLY_SILENT') || l.includes('silent'))).toBe(true)
+  })
+
+  it('daemon:这一轮出错 ⇒ 不交付(abandon),登记保留(at-most-once 不变)', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project' })
+    cleanup.push(s.stateDir)
+    const d = withDelivery(s, [{ kind: 'text', text: '半句' }, { kind: 'error', message: 'boom' }])
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(d.delivered).toEqual([])
+    expect(d.abandoned).toHaveLength(1)
+    expect(s.careLedgerEntries['chat-1']).toBeDefined()
+  })
+
+  it('legacy(缺省):不碰端口,提示里照旧是 reply', async () => {
+    const s = setupDeps({ defaultChatId: 'chat-1', inFlight: false, agendaMd: '- [ ] due:2026-05-13 check in on project' })
+    cleanup.push(s.stateDir)
+    const d = withDelivery(s, [{ kind: 'result', sessionId: 's', numTurns: 1, durationMs: 1 }])
+    ;(s.deps as TickDeps).replyDeliveryModeFor = () => 'legacy'
+    await buildTickBodies(s.deps).pushTick({ nowIso: '2026-05-13T10:00:00.000Z' })
+    expect(d.begun).toEqual([])
+    expect((s.dispatch.mock.calls[0] as unknown[])[0]).toContain('不调用 reply')
+  })
+})

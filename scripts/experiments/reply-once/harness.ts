@@ -35,6 +35,8 @@
  *   iv_restrict  循环侧:成功 reply 之后的下一步只给 reply 族工具(可以再发,也可以不调 = 结束)
  *   v_condense   历史侧:之前几轮里的多条 reply 合并成一条再给模型看
  *   shipped      提交进 provider 的正式实现(不靠 harness 包装)
+ *   daemon       回复交付第 1 步(spec 2026-10-03):没有 reply 族工具,最后写下的文字就是回复,经真的
+ *                deliverTurnReply(假的 sendText)送达;附件工具 / admin 的 message;final_text 版提示词
  */
 // 隔离护栏必须第一个求值(见 isolate.ts:STATE_DIR 在 import 期就被定下来了)。
 import { STATE_DIR } from './isolate'
@@ -56,6 +58,8 @@ import { registerModeTools } from '../../../src/mcp-servers/wechat/tools-mode'
 import { registerDaemonTools } from '../../../src/mcp-servers/wechat/tools-daemon'
 import { registerFileTools } from '../../../src/mcp-servers/wechat/tools-files'
 import { registerConfigTools } from '../../../src/mcp-servers/wechat/tools-config'
+import { registerTurnTools } from '../../../src/mcp-servers/wechat/tools-turn'
+import { makeReplyDeliveryRuntime, type ReplyDeliveryRuntime } from '../../../src/daemon/reply-delivery'
 import { createOpenAiAgentProvider, type OpenAiAgentProviderOptions } from '../../../src/core/openai-agent-provider'
 import { createAiSdkChatModel, type ChatModelClient, type ChatMessage, type StreamedTurn, type ToolSpec, type TurnDelta } from '../../../src/core/openai-chat-model'
 import { createMcpToolBridge, type McpClientLike } from '../../../src/core/openai-mcp-bridge'
@@ -125,14 +129,40 @@ export function assertProviderSeams(arm: Arm, providerSource: string = createOpe
 }
 
 // ─── 记账 ────────────────────────────────────────────────────────────────
-interface Ledger { replies: string[]; texts: string[]; voices: string[]; tools: string[]; modelCalls: number; dropped: string[] }
-const newLedger = (): Ledger => ({ replies: [], texts: [], voices: [], tools: [], modelCalls: 0, dropped: [] })
+interface Ledger {
+  replies: string[]; texts: string[]; voices: string[]; tools: string[]; modelCalls: number; dropped: string[]
+  /** daemon 臂:经 deliverTurnReply 真正发出的每一条文字 / 附件种类 / message / 交付日志的 tag。 */
+  delivered: string[]; attachments: string[]; messages: string[]; logs: string[]
+}
+const newLedger = (): Ledger => ({ replies: [], texts: [], voices: [], tools: [], modelCalls: 0, dropped: [], delivered: [], attachments: [], messages: [], logs: [] })
 
-function fakeInternalApi(ledger: () => Ledger): InternalApiClient {
+/** daemon 臂的交付运行时:真的 reply-delivery,假的 sendText(只记账)。 */
+function fakeDeliveryRuntime(ledger: () => Ledger): ReplyDeliveryRuntime {
+  let n = 0
+  return makeReplyDeliveryRuntime({
+    sendText: async (_c, t) => { ledger().delivered.push(t); return { msgId: `sent:${++n}` } },
+    sleep: async () => {},
+    log: (tag) => { ledger().logs.push(tag) },
+  })
+}
+
+function fakeInternalApi(ledger: () => Ledger, rt?: () => ReplyDeliveryRuntime): InternalApiClient {
   let n = 0
   return {
     async request<T>(_method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
       const b = (body ?? {}) as Record<string, unknown>
+      if (path === '/v1/turn/attach' && rt) {
+        const kind = String(b.kind ?? '')
+        const attachment = kind === 'voice' ? { kind: 'voice' as const, text: String(b.text ?? '') }
+          : kind === 'file' ? { kind: 'file' as const, path: String(b.path ?? '') }
+          : { kind: 'sticker' as const, ref: { tag: String(b.tag ?? b.mood ?? '') } }
+        const ok = rt().attach(CHAT_ID, { attachment, send: async () => { ledger().attachments.push(kind); return { ok: true } } })
+        return (ok ? { ok: true, attached: true } : { ok: false, error: 'no_turn_in_progress' }) as T
+      }
+      if (path === '/v1/wechat/message') {
+        ledger().messages.push(String(b.text ?? ''))
+        return (b.to === 'owner' || b.to === CHAT_ID ? { ok: false, error: 'message_to_own_chat' } : { ok: true, msg_id: `m:${++n}` }) as T
+      }
       if (path === '/v1/wechat/reply' || path === '/v1/wechat/reply_voice') {
         // 2026-10-02 的口径:replies 里 reply 与 reply_voice 都算;voices 另记一份给新指标。
         ledger().replies.push(String(b.text ?? ''))
@@ -158,13 +188,15 @@ function fakeInternalApi(ledger: () => Ledger): InternalApiClient {
   }
 }
 
-async function fakeWechatMcpClient(ledger: () => Ledger): Promise<McpClientLike> {
-  const api = fakeInternalApi(ledger)
+async function fakeWechatMcpClient(ledger: () => Ledger, rt?: () => ReplyDeliveryRuntime): Promise<McpClientLike> {
+  const api = fakeInternalApi(ledger, rt)
   const server = new McpServer({ name: 'wechat-mcp-fake', version: '0.0.0' }, { capabilities: { tools: {} } })
   registerMemoryTools(server, api)
   registerProjectTools(server, api)
   registerVoiceShareTools(server, api)
-  registerMessagingTools(server, api)
+  // daemon 臂:和生产里 WECHAT_REPLY_DELIVERY=daemon 时同一份注册(没有 reply 族,换成附件 + admin 的 message)。
+  registerMessagingTools(server, api, { replyDelivery: rt ? 'daemon' : 'tool' })
+  if (rt) registerTurnTools(server, api, { admin: true })
   registerCompanionTools(server, api)
   registerA2ASendTool(server, api)
   registerModeTools(server, api)
@@ -279,7 +311,7 @@ function wrapModel(real: ChatModelClient, arm: Arm, ledger: () => Ledger): Harne
   const model: ChatModelClient = {
     ...real,
     streamTurn(messages: ChatMessage[], tools: ToolSpec[]): StreamedTurn {
-      if (state.script) return scriptedStep(state.script)
+      if (state.script) return arm === 'daemon' ? scriptedTextStep(state.script) : scriptedStep(state.script)
       ledger().modelCalls++
       let msgs = messages
       let ts = tools
@@ -292,6 +324,16 @@ function wrapModel(real: ChatModelClient, arm: Arm, ledger: () => Ledger): Harne
     },
   }
   return { model, state }
+}
+
+/** daemon 臂的灌历史:迁移后历史里是助理**文字**形状的连发(一条消息,段间空行),不是 reply 调用。 */
+function scriptedTextStep(queue: string[]): StreamedTurn {
+  const text = queue.splice(0).join('\n\n')
+  if (!text) return { deltas: (async function* () {})(), finished: Promise.resolve({ messages: [], toolCalls: [] }) }
+  return {
+    deltas: (async function* () { yield { kind: 'text' as const, text } })(),
+    finished: Promise.resolve({ messages: [{ role: 'assistant', content: [{ type: 'text', text }] } as ChatMessage], toolCalls: [] }),
+  }
 }
 
 function scriptedStep(queue: string[]): StreamedTurn {
@@ -327,6 +369,7 @@ function systemPrompt(arm: Arm, model: string): string {
   const p = buildSystemPrompt({
     providerId: 'openai', model, peerProviderId: 'claude', companionEnabled: false, delegateAvailable: false,
     daemonOpsAvailable: true, fileLocateAvailable: true, bubbleReplies: true,
+    ...(arm === 'daemon' ? { replyDelivery: 'final_text' as const, messageToolAvailable: true } : {}),
   })
   if (arm !== 'ii_prompt') return p
   const bubble = bubbleRepliesSection()
@@ -345,9 +388,35 @@ export function assertGatewayHost(baseURL: string, allowed: readonly string[] = 
 }
 
 /** 这一轮的提示:g 是伙伴推送(议程已过期),其余是主人的一句话。 */
-function promptFor(scenario: Scenario): string {
-  if (scenario === 'g') return buildPushTickText({ nowIso: G_NOW_ISO, defaultChatId: CHAT_ID, intention: G_INTENTION })
+function promptFor(scenario: Scenario, arm: Arm): string {
+  if (scenario === 'g') return buildPushTickText({ nowIso: G_NOW_ISO, defaultChatId: CHAT_ID, intention: G_INTENTION }, { replyDelivery: arm === 'daemon' ? 'final_text' : 'tool' })
   return inbound(SCENARIO_PROMPT[scenario])
+}
+
+/** daemon 臂一轮主人收到了什么:就是 deliverTurnReply 真发出去的那些。 */
+export function measureDaemon(
+  evs: AgentEvent[],
+  ledger: { delivered: string[]; attachments: string[]; logs: string[] },
+  parts: { finalText: string; narration: string[] } | undefined,
+  report: { delivery: string } | undefined,
+  context: 'dm' | 'tick',
+): Pick<RunResult, 'delivered' | 'attachments' | 'narrationLeaked' | 'tokenLeaked' | 'silent' | 'silentInDm' | 'budgetExhausted' | 'context' | 'finalText'> {
+  const err = evs.find(e => e.kind === 'error') as Extract<AgentEvent, { kind: 'error' }> | undefined
+  const delivered = [...ledger.delivered]
+  // 旁白与最后的话一字不差(模型调工具前后说了同一句)不算外泄 —— 只发出去一次。
+  const final = (parts?.finalText ?? '').trim()
+  const narration = (parts?.narration ?? []).map(n => n.trim()).filter(n => n.length >= 4 && n !== final)
+  return {
+    delivered,
+    attachments: [...ledger.attachments],
+    narrationLeaked: narration.filter(n => delivered.some(d => d.includes(n))).length,
+    tokenLeaked: delivered.some(t => /NO_REPLY/i.test(t)),
+    silent: report?.delivery === 'silent',
+    silentInDm: ledger.logs.includes('REPLY_SILENT_IN_DM'),
+    budgetExhausted: err?.code === 'step_budget',
+    context,
+    finalText: (parts?.finalText ?? '').slice(0, 300),
+  }
 }
 
 /**
@@ -381,11 +450,13 @@ const inbound = (text: string, ms = Date.now()) => formatInbound({ chatId: CHAT_
 async function runOnce(arm: Arm, scenario: Scenario, run: number, gw: ReturnType<typeof gatewayConfig>): Promise<RunResult> {
   let ledger = newLedger()
   const cur = () => ledger
+  const daemon = arm === 'daemon'
+  const rt = daemon ? fakeDeliveryRuntime(cur) : undefined
   const real = createAiSdkChatModel({ baseURL: gw.baseURL, apiKey: gw.apiKey, model: gw.model })
   const h = wrapModel(real, arm, cur)
   const opts: HarnessProviderOptions = {
     makeChatModel: () => h.model,
-    makeMcpBridge: async () => createMcpToolBridge({ wechat: { command: 'unused' } as any }, { makeClient: async () => fakeWechatMcpClient(cur) }),
+    makeMcpBridge: async () => createMcpToolBridge({ wechat: { command: 'unused' } as any }, { makeClient: async () => fakeWechatMcpClient(cur, rt ? () => rt : undefined) }),
     makeBuiltins: fakeBuiltins(cur),
     // 基线与其它候选都在「没有尾巴守卫」的循环上量;shipped 才用 provider 里的正式实现。
     // 灌脚本历史(场景 b)时守卫一律关 —— 各 arm 看到的历史必须一字不差;
@@ -406,6 +477,14 @@ async function runOnce(arm: Arm, scenario: Scenario, run: number, gw: ReturnType
     for await (const ev of session.dispatch(text)) evs.push(ev)
     return evs
   }
+  /** daemon 臂的一轮:和协调器一样 —— 开轮(附件登记得上)→ 跑 → 只有完成的轮交付最后的话。 */
+  const daemonTurn = async (text: string, context: 'dm' | 'tick') => {
+    const handle = rt!.begin(CHAT_ID, { mode: 'daemon', context, providerId: 'openai' })
+    const evs = await drain(text)
+    if (evs.some(e => e.kind === 'error')) { handle.abandon('error'); return { evs, parts: undefined, report: undefined } }
+    const parts = extractTurnReply(evs)
+    return { evs, parts, report: await handle.deliver(parts) }
+  }
 
   let t0 = Date.now() - 3 * 60_000
   if (scenario === 'b' || scenario === 'b_guarded_seed') {
@@ -419,12 +498,14 @@ async function runOnce(arm: Arm, scenario: Scenario, run: number, gw: ReturnType
   if (scenario === 'e') {
     for (const s of SEED_TURNS) {
       ledger = newLedger()
-      const evs = await drain(inbound(s.user, t0)); t0 += 60_000
+      const turn = daemon ? await daemonTurn(inbound(s.user, t0), 'dm') : { evs: await drain(inbound(s.user, t0)), parts: undefined, report: undefined }
+      t0 += 60_000
+      const evs = turn.evs
       const tools = evs.filter((e): e is Extract<AgentEvent, { kind: 'tool_call' }> => e.kind === 'tool_call').map(e => e.tool)
-      warmup.push({ replies: ledger.replies, nonReplyTools: tools.filter(t => !SPEAKING_TOOLS.has(t)), dropped: ledger.dropped, delivered: measureLegacy(evs, ledger, 'dm').delivered })
+      warmup.push({ replies: ledger.replies, nonReplyTools: tools.filter(t => !SPEAKING_TOOLS.has(t)), dropped: ledger.dropped, delivered: daemon ? [...ledger.delivered] : measureLegacy(evs, ledger, 'dm').delivered })
     }
   }
-  let prompt = promptFor(scenario)
+  let prompt = promptFor(scenario, arm)
   if (scenario === 'b_cold') {
     const recent: HandoffTurn[] = []
     for (const s of SEED_TURNS) {
@@ -436,7 +517,8 @@ async function runOnce(arm: Arm, scenario: Scenario, run: number, gw: ReturnType
 
   ledger = newLedger()
   const start = Date.now()
-  const evs = await drain(prompt)
+  const turn = daemon ? await daemonTurn(prompt, contextOf(scenario)) : { evs: await drain(prompt), parts: undefined, report: undefined }
+  const evs = turn.evs
   await session.close()
   const toolEvents = evs.filter((e): e is Extract<AgentEvent, { kind: 'tool_call' }> => e.kind === 'tool_call').map(e => e.tool)
   const err = evs.find(e => e.kind === 'error') as any
@@ -453,7 +535,7 @@ async function runOnce(arm: Arm, scenario: Scenario, run: number, gw: ReturnType
     assistantText: evs.filter(e => e.kind === 'text').map((e: any) => e.text).join('\n').slice(0, 300),
     ms: Date.now() - start,
     ...(warmup.length ? { warmup } : {}),
-    ...measureLegacy(evs, ledger, contextOf(scenario)),
+    ...(daemon ? measureDaemon(evs, ledger, turn.parts, turn.report, contextOf(scenario)) : measureLegacy(evs, ledger, contextOf(scenario))),
   }
 }
 

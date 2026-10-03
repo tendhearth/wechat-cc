@@ -20,7 +20,9 @@ import { resolveEffectiveTier, TIER_PROFILES } from '../../core/user-tier'
 import { dueGuestVisit, guestLabel, type GuestVisitState } from '../companion/guest-visits'
 import { buildGuestVisitNarrationPrompt } from '../../core/visit'
 import type { Access } from '../../lib/access'
-import type { PermissionMode } from '../../core/capability-matrix'
+import { replyDeliveryFor, type PermissionMode } from '../../core/capability-matrix'
+import { collectTurn } from '../../core/agent-provider'
+import type { ReplyDeliveryMode, ReplyDeliveryPort } from '../../core/turn-reply'
 import { makeMemoryFS } from '../memory/fs-api'
 import { parseAgenda, selectDue, markResolved, unmarkResolved } from '../companion/agenda'
 import { makeMessagesStore, type MessagesStore } from '../../lib/messages-store'
@@ -137,6 +139,13 @@ export interface TickDeps {
    * must remain throw-safe so art can never starve memory maintenance.
    */
   runAtelierTick?: (opts?: { nowIso?: string }) => Promise<void>
+  /**
+   * 回复交付(spec 2026-10-03 §4.10「伙伴主动推送」):当轮 provider 走 daemon 交付时,推送也是一轮 ——
+   * 最后的话就是推送,不想发写 `NO_REPLY`(静默 ⇒ 撤回登记)。缺省 ⇒ 一律 legacy(只认 reply 工具)。
+   */
+  replyDelivery?: ReplyDeliveryPort
+  /** 每家 provider 的交付模式;缺省读能力表(`replyDeliveryFor`)。测试注入。 */
+  replyDeliveryModeFor?: (providerId: string) => ReplyDeliveryMode
 }
 
 /**
@@ -231,7 +240,19 @@ export interface BuildPushTickTextOpts {
  * pushTick so the eval harness can drive the body with a virtual `ts`
  * without going through the scheduler. Production code path is unchanged.
  */
-export function buildPushTickText(opts: BuildPushTickTextOpts): string {
+/** 推送提示的两个版本:'tool' = 今天的(调 reply);'final_text' = 回复交付(最后的话就是推送,不发写 NO_REPLY)。 */
+export interface TickTextStyle { replyDelivery?: 'tool' | 'final_text' }
+
+export function buildPushTickText(opts: BuildPushTickTextOpts, style: TickTextStyle = {}): string {
+  if (style.replyDelivery === 'final_text') {
+    return (
+      `<companion_tick ts="${opts.nowIso}" default_chat_id="${opts.defaultChatId}" />\n` +
+      `有一条到点的跟进：「${opts.intention}」\n` +
+      `先 memory_read 相关 .md，看看它是否还有意义、用户是不是已经自己说过结果。\n` +
+      `默认就是发：写一句简短、自然的问候（别催、别灌鸡汤）——你这一轮最后写下的话就是推送。晚了几天也照常发，自然带一句就行（"前两天那个…"），不用为迟到道歉。\n` +
+      `"已过期"指这件事本身已经没意义了——约定的具体时刻早过去很久、或明显已无关；单纯晚几天不算过期。只有真的没意义、或用户已经自己说过结果，才不发——那就只写 NO_REPLY（这个词不会发出去）。`
+    )
+  }
   return (
     `<companion_tick ts="${opts.nowIso}" default_chat_id="${opts.defaultChatId}" />\n` +
     `有一条到点的跟进：「${opts.intention}」\n` +
@@ -253,7 +274,15 @@ export interface BuildGapCheckinTextOpts {
  * item; the calibration gate decided a quiet-days check-in is due instead).
  * Mirrors buildPushTickText's structure/extraction rationale.
  */
-export function buildGapCheckinText(opts: BuildGapCheckinTextOpts): string {
+export function buildGapCheckinText(opts: BuildGapCheckinTextOpts, style: TickTextStyle = {}): string {
+  if (style.replyDelivery === 'final_text') {
+    return (
+      `<companion_tick ts="${opts.nowIso}" chat_id="${opts.chatId}" kind="gap" />\n` +
+      `这是一次主动问候（距离上次对话 ${opts.daysSinceContact} 天）；` +
+      `结合你对这位用户的了解，如果有自然的话头，写**一条**简短自然的问候（你这一轮最后的话就是推送）；` +
+      `如果实在没有自然的话头，可以这次不发——只写 NO_REPLY 就行。`
+    )
+  }
   return (
     `<companion_tick ts="${opts.nowIso}" chat_id="${opts.chatId}" kind="gap" />\n` +
     `这是一次主动问候（距离上次对话 ${opts.daysSinceContact} 天）；` +
@@ -267,7 +296,16 @@ export function buildGapCheckinText(opts: BuildGapCheckinTextOpts): string {
  * the calibration gate decided a hunt is due for the owner's chat instead).
  * Mirrors buildGapCheckinText's structure/extraction rationale.
  */
-export function buildHuntText(opts: { nowIso: string }): string {
+export function buildHuntText(opts: { nowIso: string }, style: TickTextStyle = {}): string {
+  if (style.replyDelivery === 'final_text') {
+    return (
+      `<companion_tick ts="${opts.nowIso}" kind="hunt" />\n` +
+      `每日打猎时间——回顾你记忆里主人的兴趣和最近关注，用网络工具（搜索/抓取）找新鲜的、他真会感兴趣的内容；` +
+      `只挑真正值得的 1-2 条分享，每条一句"为什么你会感兴趣" + 链接，条与条之间空一行（你这一轮最后的话就是分享的内容）；` +
+      `如果今天没猎到值得分享的，可以不发——只写 NO_REPLY；` +
+      `别分享你们最近已经聊过的东西。`
+    )
+  }
   return (
     `<companion_tick ts="${opts.nowIso}" kind="hunt" />\n` +
     `每日打猎时间——回顾你记忆里主人的兴趣和最近关注，用网络工具（搜索/抓取）找新鲜的、他真会感兴趣的内容；` +
@@ -434,7 +472,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
    */
   async function dispatchToChat(
     chatId: string,
-    args: { claim: () => (() => void) | void; buildText: () => string },
+    args: { claim: () => (() => void) | void; buildText: (style: TickTextStyle) => string },
   ): Promise<boolean> {
     const gate = resolveDispatch(chatId)
     if (gate.blocked === 'wechat_degraded') {
@@ -479,12 +517,32 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       // re-author it, or the gap/agenda gate will surface it again later).
       // See docs/superpowers/specs/2026-06-25-companion-push-at-most-once-design.md
       const undo = args.claim()
-      const tickText = args.buildText()
+      // 回复交付(spec 2026-10-03,已定 ③):当轮 provider 走 daemon ⇒ 推送也是一轮,最后的话就是推送,
+      // `NO_REPLY` = 这次不发(撤回登记);legacy ⇒ 照旧只认 reply 工具。
+      const delivery = deps.replyDelivery && (deps.replyDeliveryModeFor ?? replyDeliveryFor)(providerId) === 'daemon' ? deps.replyDelivery : undefined
+      const tickText = args.buildText({ replyDelivery: delivery ? 'final_text' : 'tool' })
+      const turn = delivery?.begin(chatId, { mode: 'daemon', context: 'tick', providerId })
       try {
-        for await (const ev of handle.dispatch(tickText)) {
-          if (ev.kind === 'error') deps.log('SCHED', `companion tick dispatch error event: ${ev.code ? `${ev.code}: ` : ''}${ev.message}`)
+        if (turn) {
+          const summary = await collectTurn(handle.dispatch(tickText))
+          if (summary.error) {
+            deps.log('SCHED', `companion tick dispatch error event: ${summary.errorCode ? `${summary.errorCode}: ` : ''}${summary.error}`)
+            turn.abandon(summary.errorCode ?? 'error')
+          } else {
+            const report = await turn.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
+            if (report.delivery === 'silent' || report.delivery === 'empty') {
+              // 没发出去就不算发过:撤回登记(at-most-once 只管「发了一半」,静默是一个决定)。
+              deps.log('COMPANION', `chat=${chatId} tick delivered nothing (${report.delivery}) — claim undone`)
+              try { undo?.() } catch (e) { deps.log('SCHED', `undo claim failed: ${errMsg(e)}`) }
+            }
+          }
+        } else {
+          for await (const ev of handle.dispatch(tickText)) {
+            if (ev.kind === 'error') deps.log('SCHED', `companion tick dispatch error event: ${ev.code ? `${ev.code}: ` : ''}${ev.message}`)
+          }
         }
       } catch (err) {
+        turn?.abandon('threw')
         // 评审 #193 P2-3:网络守护拒了这一轮 —— SessionManager 在碰 provider **之前**就拒,一个字都
         // 没发出去。这不是「发了一半」,at-most-once 不适用:撤回登记,整拍算跳过,下一拍再来。
         if (isNetworkUnprotectedError(err)) {
@@ -548,7 +606,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
             deps.careLedger.unclaim(chatId, ticket)
           }
         },
-        buildText: () => buildPushTickText({ nowIso, defaultChatId: chatId, intention: item.body }),
+        buildText: (style) => buildPushTickText({ nowIso, defaultChatId: chatId, intention: item.body }, style),
       })
       return
     }
@@ -573,7 +631,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       try {
         return await dispatchToChat(chatId, {
           claim: () => { const ticket = deps.careLedger.claimHunt(chatId, nowIso); return () => deps.careLedger.unclaim(chatId, ticket) },
-          buildText: () => buildHuntText({ nowIso }),
+          buildText: (style) => buildHuntText({ nowIso }, style),
         })
       } finally {
         try { releaseHunt?.() } catch { /* release 永不抛 */ }
@@ -618,7 +676,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         : 0
       return await dispatchToChat(chatId, {
         claim: () => { const ticket = deps.careLedger.claim(chatId, nowIso); return () => deps.careLedger.unclaim(chatId, ticket) },
-        buildText: () => buildGapCheckinText({ nowIso, chatId, daysSinceContact }),
+        buildText: (style) => buildGapCheckinText({ nowIso, chatId, daysSinceContact }, style),
       })
     }
 

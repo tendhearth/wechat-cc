@@ -28,6 +28,10 @@ export const OPENAI_CAPABILITIES: ProviderCapabilities = {
   supportsResume: false,
   defaultPeer: 'claude',
   authFailHint: 'openai: set WECHAT_OPENAI_API_KEY (and check base_url/model in agent config).',
+  // 回复交付第 1 步(spec 2026-10-03 §5.2):daemon 路径已全部接好,但 reply-once 闸门(真 Qwen3.8,
+  // 2026-10-03)c / d / g 三项没过线 ⇒ 按约定先 shadow —— 照旧用 reply 工具说话,每轮另记
+  // [REPLY_SHADOW] 比对。数据与下一步见 docs/reference/reply-once-experiment.md「2026-10-03」。
+  replyDelivery: 'shadow',
 }
 
 /**

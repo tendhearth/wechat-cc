@@ -4,7 +4,7 @@
  * 和 reply-split.ts 的 `splitReply` 不同:那是给「一次 reply 调用里的一大段」做的机械切分(≥100 字才切、
  * 最多 3 条、按长度均分);这里的边界**由模型给出** —— 它像发微信那样每个意思一段、段间空一行,
  * daemon 照段分条:
- *   - 空行分隔的段是候选气泡;代码块永远整块(围栏里的空行不算分隔)
+ *   - 空行分隔的段是候选气泡;代码块永远整块(围栏里的空行不算分隔);以冒号结尾的引导段并入下一段;同一个列表的各项不拆
  *   - < 10 个可见字的碎段并入上一条(第一条就是碎段 ⇒ 并入下一条)
  *   - 最多 4 条,多出来的从后往前两两合并
  *   - 单段超过约 300 字再按句末切
@@ -22,6 +22,7 @@ const LONG_PARAGRAPH = 300
 const FENCE_BUDGET = MAX_TEXT_CHUNK - 16
 
 const FENCE_RE = /^\s*```/
+const LIST_ITEM = /^\s*(?:[-*•]|\d+[.)、])\s/
 const visible = (s: string) => s.replace(/\s/g, '').length
 
 interface Para { text: string; fenced: boolean }
@@ -109,6 +110,20 @@ export function splitBubbles(text: string, opts?: { split?: boolean }): string[]
   for (const p of paragraphs(text)) {
     if (p.fenced) units.push(p.text)
     else units.push(...splitLongParagraph(p.text))
+  }
+
+  // 1b. 以冒号结尾的引导段(「你有两个项目:」)和紧跟的那段是同一个意思 —— 合起来,别把引子单独发一条。
+  for (let i = units.length - 2; i >= 0; i--) {
+    if (/[:：]\s*$/.test(units[i]!)) units.splice(i, 2, `${units[i]}\n\n${units[i + 1]}`)
+  }
+
+  // 1c. 同一个列表:上一段以列表项(或它缩进的子项)结尾、这一段又是列表项 ⇒ 是同一个列表,中间的空行不算分条。
+  for (let i = 1; i < units.length; i++) {
+    const prevLast = units[i - 1]!.split('\n').filter(l => l.trim() !== '').pop() ?? ''
+    if (LIST_ITEM.test(units[i]!) && (LIST_ITEM.test(prevLast) || /^\s+\S/.test(prevLast))) {
+      units.splice(i - 1, 2, `${units[i - 1]}\n\n${units[i]}`)
+      i--
+    }
   }
 
   // 2. 碎段并入上一条(第一条就是碎段 ⇒ 留给下一条吸收)

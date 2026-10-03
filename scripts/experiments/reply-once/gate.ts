@@ -16,7 +16,7 @@ export const SPEAKING_TOOLS = new Set([
 ])
 
 /** 「停」「多发」这类收尾元话语(和 2026-10-02 那次同一个宽正则)。 */
-export const META_RE = /停|不再发|不发了|多发|又多了|就到这|打住|收手|结束了|不说了/
+export const META_RE = /停(?!更|车|留|顿)|不再发|不发了|多发|又多了|就到这|打住|收手|结束了|不说了/
 
 export interface WarmupResult { replies: string[]; nonReplyTools: string[]; dropped: string[]; delivered?: string[] }
 

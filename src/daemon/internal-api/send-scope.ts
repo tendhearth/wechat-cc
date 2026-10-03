@@ -68,6 +68,14 @@ export const SEND_SCOPED_ROUTES: Readonly<Record<string, (body: unknown) => Send
   // 切那个 chat 的模式,并(非 quiet 时)往那个 chat 发一句「已切换」。
   'POST /v1/conversation/set-mode': byChatId('chatId'),
   'POST /v1/wechat/broadcast': () => ALL_CHATS,
+  // 回复交付 §4.6 的 message:to=broadcast ⇒ 所有人;to=owner ⇒ 由路由解析成主人聊天(只有 admin 能调,不设门);
+  // 其余就是那个 chat_id。路由本身是 admin 级,这里的作用是把跨 chat 记进 chat_scope_admin_cross。
+  'POST /v1/wechat/message': (body: unknown): SendTarget => {
+    const to = bodyField(body, 'to')
+    if (to === 'broadcast') return ALL_CHATS
+    if (to === 'owner' || typeof to !== 'string') return null
+    return to
+  },
 }
 
 export interface SendScopeCaller {

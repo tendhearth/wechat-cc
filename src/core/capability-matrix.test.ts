@@ -246,9 +246,16 @@ describe('provider id single source', () => {
 })
 
 describe('replyDeliveryFor — 回复交付开关(spec §5.0,一家一家翻)', () => {
-  it('第 0 步:所有执行者默认 legacy(不改任何人的行为)', async () => {
+  it('其余执行者仍是 legacy(一家一家翻)', async () => {
     const { replyDeliveryFor, capabilityProviderIds } = await import('./capability-matrix')
-    for (const p of capabilityProviderIds()) expect(replyDeliveryFor(p)).toBe('legacy')
+    for (const p of capabilityProviderIds()) if (p !== 'openai') expect(replyDeliveryFor(p)).toBe('legacy')
+  })
+
+  // 第 1 步的闸门(reply-once harness,2026-10-03,见 docs/reference/reply-once-experiment.md)没过 c / d / g
+  // ⇒ 按约定不翻到 daemon,先 shadow:照旧走 reply 工具,真机上攒 [REPLY_SHADOW] 的分布。
+  it('openai:shadow(闸门没过,不翻 daemon)', async () => {
+    const { replyDeliveryFor } = await import('./capability-matrix')
+    expect(replyDeliveryFor('openai')).toBe('shadow')
   })
 
   it('没注册能力表的 provider ⇒ legacy(fail safe,走今天的路)', async () => {
