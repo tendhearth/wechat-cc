@@ -50,6 +50,9 @@ export const HealthResponse = z.object({
       id: z.string(), model: z.string().nullable(), host: z.string().nullable(),
       protected: z.boolean(), kind: z.string(), label: z.string(), reason: z.string(),
     })).optional(),
+    // 暂停在跑的任务(2026-10-03):被冻住的任务数与清单。老 daemon 没有。
+    suspended: z.number().optional(),
+    suspended_tasks: z.array(z.object({ task_id: z.string(), title: z.string(), provider: z.string(), since: z.string() })).optional(),
   }).optional(),
   // 文件访问(macOS TCC,2026-09-04)—— daemon 进程自己能不能读主人的文件夹。
   // 权限缺失此前是静默的;这里让它进 health / doctor / 桌面。

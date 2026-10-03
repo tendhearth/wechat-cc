@@ -119,7 +119,7 @@ function mSetButtons() {
 }
 function loadMatters() {
   mApi("/m/api/matters?status=open,replied,done").then(function(r){
-    document.getElementById("m-list").innerHTML=r.matters.filter(function(m){return m.kind!=="companion"}).map(function(m){return '<button type="button" class="card todo" data-mid="'+esc(m.id)+'"><span class="tx"><b>'+esc(m.title)+'</b><small>'+esc(M_KIND[m.kind]||m.kind)+' · '+esc(M_STATUS[m.status]||m.status)+(m.projectPath?' · '+esc(m.projectPath.split(/[\\/]/).filter(Boolean).pop()||m.projectPath):'')+'</small></span></button>'}).join("") || '<div class="empty">还没有事，微信或桌面上交代一件就会出现在这里</div>'
+    document.getElementById("m-list").innerHTML=r.matters.filter(function(m){return m.kind!=="companion"}).map(function(m){return '<button type="button" class="card todo" data-mid="'+esc(m.id)+'"><span class="tx"><b>'+esc(m.title)+'</b><small>'+esc(M_KIND[m.kind]||m.kind)+' · '+esc(m.networkSuspended?"已暂停(网络未受保护)":(M_STATUS[m.status]||m.status))+(m.projectPath?' · '+esc(m.projectPath.split(/[\\/]/).filter(Boolean).pop()||m.projectPath):'')+'</small></span></button>'}).join("") || '<div class="empty">还没有事，微信或桌面上交代一件就会出现在这里</div>'
   }).catch(function(e){document.getElementById("m-list").textContent=mError(e.message)})
 }
 function mQuestionDraft(request) { return mRead(mCurrent+":question:"+request.id) || {} }

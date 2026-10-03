@@ -1,5 +1,6 @@
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { Options, SpawnOptions } from '@anthropic-ai/claude-agent-sdk'
+import { makeProcessTreeFreezer } from '../lib/process-tree-freeze'
 
 interface ProcessRow { pid: number; parent: number; group: number }
 const remaining = (deadline: number) => {
@@ -26,9 +27,15 @@ const signal = (group: number, value: NodeJS.Signals) => {
  * Freezing each owned group bounds new descendants while taking the snapshot.
  * Missing ancestry or an already-lost process cannot prove cleanup and rejects. */
 export function ownClaudeWorkbenchProcess(stderr: Options['stderr']) {
-  let child: ChildProcessWithoutNullStreams | undefined, exited = false, closing = false
+  let child: ChildProcessWithoutNullStreams | undefined, exited = false, closing = false, terminated = false
   const groups = new Set<number>(), pids = new Set<number>()
+  // 网络守护「暂停在跑的任务」(2026-10-03):冻住 / 放开整棵树。冻住期间要停 ⇒ terminate 直接
+  // SIGKILL 冻住的那些组(绝不先放开),close 不再要求进程还活着。
+  const freezer = makeProcessTreeFreezer(() => (child && !exited && !closing ? child.pid : undefined))
   return {
+    freeze(): boolean { return !closing && !terminated && !!child?.pid && !exited && freezer.freeze() },
+    thaw(): void { if (!terminated) freezer.thaw() },
+    terminate(): void { terminated = true; freezer.kill() },
     spawn(options: SpawnOptions) {
       if (closing || child) throw new Error('claude_runtime_closed_or_duplicate_spawn')
       child = spawn(options.command, options.args, { cwd: options.cwd, env: options.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true, windowsHide: true, signal: options.signal })
@@ -41,6 +48,8 @@ export function ownClaudeWorkbenchProcess(stderr: Options['stderr']) {
     prepareClose(deadline: number) {
       closing = true
       if (!child) return
+      // 冻住时已经整棵杀掉:没有什么要再冻、也不再要求它活着(close 下面照样等它们全退)。
+      if (terminated) return
       if (!child.pid || exited || !alive(child.pid)) throw new Error('claude_runtime_process_ownership_lost')
       signal(child.pid, 'SIGSTOP')
       for (let pass = 0; pass < 10; pass++) {
@@ -71,6 +80,16 @@ export function ownClaudeWorkbenchProcess(stderr: Options['stderr']) {
       child.stdin.end()
       // Never resume a frozen descendant: a TERM handler could fork a fresh
       // detached group after the ownership snapshot and escape verification.
+      if (terminated) {
+        // 冻住时已经整棵 SIGKILL 过(登记在 freezer 里,含根组);这里只等它们全退。
+        // 不走下面那条:僵尸组上 kill(-组) 在 macOS 报 EPERM,严格版 signal / alive 会把它当成错误。
+        freezer.kill()
+        while (!exited || freezer.alive()) {
+          if (Date.now() >= deadline) { freezer.kill(); throw new Error('claude_runtime_process_not_exited') }
+          await new Promise<void>(resolve => setTimeout(resolve, 15))
+        }
+        return
+      }
       for (const group of groups) signal(group, 'SIGKILL')
       while (!exited || [...groups].some(group => alive(-group)) || [...pids].some(pid => alive(pid))) {
         if (Date.now() >= deadline) {

@@ -13,6 +13,17 @@ function render(observed=runtime,status='running'){
     ],artifacts:[]}})
 }
 
+describe('network-guard suspension (2026-10-03)',()=>{
+  it('a frozen run shows 已暂停(网络未受保护) in the list and the detail header, not 进行中',()=>{
+    const task={id:'A',title:'Native task',path:'/project',providerId:'claude',status:'running',createdAt:1,updatedAt:2,error:null,runtime:{...runtime,foreground:'running' as const},networkSuspended:{since:1}}
+    const html=renderWorkbench({tasks:[task],providers:[{id:'claude',displayName:'Claude'}],defaultProvider:'claude',canWechat:false,selectedId:'A',selectedArtifactId:null,error:'',preview:null,
+      detail:{task,runtime:task.runtime,runId:'epoch',inputMode:'send',events:[],artifacts:[]}})
+    expect(html.match(/已暂停\(网络未受保护\)/g)?.length).toBeGreaterThanOrEqual(2)
+    expect(html).toContain('data-status="paused"')
+    expect(html).not.toContain('>进行中<')
+  })
+})
+
 describe('retained workbench runtime presentation',()=>{
   it('shows retention in the list and detail without claiming complete or showing active status',()=>{
     const html=render()

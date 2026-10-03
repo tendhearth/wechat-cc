@@ -1,3 +1,5 @@
+import { makePausableTimers, type PausableTimer } from '../../lib/pausable-timers'
+import { makeProcessTreeFreezer } from '../../lib/process-tree-freeze'
 import { spawn } from 'node:child_process'
 import type { AgentAttachment, AgentEvent, AgentExecutionModel, AgentProvider, AgentWorkbenchRuntime } from '../agent-provider'
 import { discoverWorkbenchCodexConfig, workbenchCodexArgs, workbenchCodexEnv, workbenchCodexNativeConfig } from './codex-config'
@@ -28,7 +30,7 @@ interface Options {
 }
 interface Approval { controller: AbortController; turn: Turn; rejection: 'decline' | 'cancel'; mcp?: boolean }
 interface UserQuestion { controller: AbortController; turn: Turn }
-interface Turn { terminal?: boolean; watchdog?: ReturnType<typeof setTimeout>; watchdogKind?: 'first_event' | 'connect'; lastRetry?: ObjectValue; threadId: string; occurrence?: CodexChildOccurrence; id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; completedItems: Set<string>; questionIds: Set<RpcId>; startedAt: number }
+interface Turn { terminal?: boolean; watchdog?: PausableTimer; watchdogKind?: 'first_event' | 'connect'; lastRetry?: ObjectValue; threadId: string; occurrence?: CodexChildOccurrence; id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; completedItems: Set<string>; questionIds: Set<RpcId>; startedAt: number }
 
 function turnInput(text: string, attachments: readonly AgentAttachment[] = []) {
   const input: Array<{ type: 'text'; text: string; text_elements: [] } | { type: 'image'; url: string; detail: 'high' }> = text || !attachments.length ? [{ type: 'text', text, text_elements: [] }] : []
@@ -154,7 +156,13 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         cwd: project.path, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true, detached: true,
       })
-      const rpcs = new Map<RpcId, { resolve: (value: ObjectValue) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>()
+      const rpcs = new Map<RpcId, { resolve: (value: ObjectValue) => void; reject: (error: Error) => void; clear: () => void }>()
+      // 网络守护「暂停在跑的任务」(2026-10-03):冻住整棵树时,这个会话自己的计时器(连接 / 首个事件
+      // 超时、RPC 请求超时)一起停,放开时按剩下的时间接着走 —— 不然冻住期间到点,会把只是在等网络的
+      // 一轮判成失败。收尾路上的 cleanupRequest 用自己的截止时间,不在此列。
+      const timers = makePausableTimers()
+      const freezer = makeProcessTreeFreezer(() => (!exited && !closing ? child.pid : undefined))
+      let terminated = false
       const approvals = new Map<RpcId, Approval>()
       const questions = new Map<RpcId, UserQuestion>()
       let sequence = 0, threadId = '', active: Turn | undefined, buffer = ''
@@ -235,7 +243,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         }
       }
       const rejectRpcs = (error: Error) => {
-        for (const rpc of rpcs.values()) { clearTimeout(rpc.timer); rpc.reject(error) }
+        for (const rpc of rpcs.values()) { rpc.clear(); rpc.reject(error) }
         rpcs.clear()
       }
       const retainUnfinishedCommands = (turn: Turn) => {
@@ -249,13 +257,13 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
        * 到点 ⇒ 带码(`network`,或最后一条重试里 codexErrorInfo 认出的码)收掉这一轮,并请 codex 中断。
        */
       const timeouts = options.timeouts ?? codexTimeoutsFromEnv()
-      const clearWatchdog = (turn: Turn) => { if (turn.watchdog) clearTimeout(turn.watchdog); turn.watchdog = undefined; turn.watchdogKind = undefined }
+      const clearWatchdog = (turn: Turn) => { if (turn.watchdog) timers.clear(turn.watchdog); turn.watchdog = undefined; turn.watchdogKind = undefined }
       const armWatchdog = (turn: Turn, kind: 'first_event' | 'connect') => {
         if (turn.occurrence || turn.watchdogKind === kind || (kind === 'first_event' && turn.watchdog)) return
         clearWatchdog(turn)
         const ms = kind === 'connect' ? timeouts.connectTimeoutMs : timeouts.firstEventTimeoutMs
         turn.watchdogKind = kind
-        turn.watchdog = setTimeout(() => {
+        turn.watchdog = timers.set(() => {
           turn.watchdog = undefined
           if (active !== turn || turn.cancelled) return
           const last = turn.lastRetry
@@ -264,8 +272,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           const message = kind === 'connect' ? `Codex 连不上服务,${Math.round(ms / 1000)}s 内没有恢复${lastText}` : `Codex ${Math.round(ms / 1000)}s 内没有任何回应${lastText}`
           if (turn.id) void request('turn/interrupt', { threadId, turnId: turn.id }).catch(() => {})
           finish(turn, { kind: 'error', message, code })
-        }, ms)
-        turn.watchdog.unref?.()
+        }, ms, { unref: true })
       }
       const finish = (turn: Turn, event: AgentEvent) => {
         clearWatchdog(turn)
@@ -303,7 +310,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         const id = `cc-close-${++sequence}`
         return new Promise((resolve, reject) => {
           const timer = setTimeout(() => { rpcs.delete(id); reject(new Error('codex_terminal_cleanup_unverified')) }, Math.max(1, deadline - Date.now()))
-          rpcs.set(id, {resolve,reject,timer}); send({id,method,params})
+          rpcs.set(id, {resolve,reject,clear:()=>clearTimeout(timer)}); send({id,method,params})
         })
       }
       const close = (): Promise<void> => {
@@ -318,7 +325,9 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         const timeout = Math.min(options.closeTimeoutMs ?? 2_000, 2_500), deadline = Date.now() + timeout
         closePromise = Promise.resolve().then(async () => {
           let cleanupFailure: Error | undefined
-          if (lifetime && threadId && !exited) {
+          // 冻住期间被整棵杀掉(terminate):进程已经不在了,收尾 RPC 没人接;后台终端是它的后代,
+          // 冻住时一起登记、一起 SIGKILL 了 —— 不再当成「清理没核实」。
+          if (lifetime && threadId && !exited && !terminated) {
             const cleanupDeadline = Date.now() + Math.max(50, Math.floor((deadline - Date.now()) * .55))
             const fence = async (turn: Turn) => {
               if (!turn.id || turn.terminal) return
@@ -366,14 +375,16 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
             const uncoveredChild = [...unknownBackground].some(key => key.startsWith('child:') && !cleanupOwners.has(key.slice(6)) && !unverifiedChildren.includes(key.slice(6)))
             if (uncoveredChild || [...descendants.keys()].some(id => !cleanupOwners.has(id)) || candidates.size || [...childTurns.values()].some(turn => !turn.terminal)) cleanupFailure = new Error('codex_terminal_cleanup_unverified')
             if (cleanupResults.some(result => result.status === 'rejected')) cleanupFailure = new Error('codex_terminal_cleanup_unverified')
-          } else if (lifetime && (retained || unknownBackground.size || stoppingTurns.some(turn => [...turn.items.values()].some(item => item.type === 'commandExecution')))) cleanupFailure = new Error('codex_terminal_cleanup_unverified')
+          } else if (lifetime && !terminated && (retained || unknownBackground.size || stoppingTurns.some(turn => [...turn.items.values()].some(item => item.type === 'commandExecution')))) cleanupFailure = new Error('codex_terminal_cleanup_unverified')
           closing = true; rejectRpcs(new Error('codex_session_closed'))
           if (active) { if (!lifetime) active.events.end(); active = undefined }
           for (const turn of childTurns.values()) { turn.occurrence!.finish('interrupted'); lifetime?.push(turn.occurrence!.event()) }
           childTurns.clear(); unknownBackground.clear(); endRuntime()
-          child.stdin.end(); signalOwned('SIGTERM')
-          let killed = false
-          while (!exited || groupAlive()) {
+          child.stdin.end()
+          // 冻住时已经整棵 SIGKILL 过:只等它们全退(僵尸组上 kill(-组) 在 macOS 报 EPERM,别再发信号)。
+          let killed = terminated
+          if (terminated) freezer.kill(); else signalOwned('SIGTERM')
+          while (!exited || (terminated ? freezer.alive() : groupAlive())) {
             if (Date.now() >= deadline) throw new Error('codex_process_not_exited')
             if (!killed && Date.now() >= deadline - Math.max(50, timeout / 4)) { signalOwned('SIGKILL'); killed = true }
             const pause = new Promise<void>(resolve => setTimeout(resolve, 15))
@@ -396,8 +407,8 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         if (broken || closing || exited) return Promise.reject(broken ?? new Error('codex_session_closed'))
         const id = `cc-${++sequence}`
         return new Promise((resolve, reject) => {
-          const timer = setTimeout(() => { fatal(`codex_rpc_timeout: ${method}`) }, options.rpcTimeoutMs ?? 30_000)
-          rpcs.set(id, { resolve, reject, timer })
+          const timer = timers.set(() => { fatal(`codex_rpc_timeout: ${method}`) }, options.rpcTimeoutMs ?? 30_000)
+          rpcs.set(id, { resolve, reject, clear: () => timers.clear(timer) })
           try { send({ id, method, params }) } catch { fatal('codex_protocol_write_failed') }
         })
       }
@@ -680,7 +691,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         } else if (rpcId(message.id)) {
           const rpc = rpcs.get(message.id)
           if (!rpc) return // A timed-out or cancelled client's late response.
-          rpcs.delete(message.id); clearTimeout(rpc.timer)
+          rpcs.delete(message.id); rpc.clear()
           if (message.error) rpc.reject(codexRpcError(typeof message.error.message === 'string' ? message.error.message : 'codex_rpc_failed'))
           else if (object(message.result)) rpc.resolve(message.result)
           else { rpc.reject(new Error('codex_invalid_rpc_response')); fatal('codex_invalid_rpc_response') }
@@ -812,6 +823,16 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
       return {
         ...(runtime ? { workbenchRuntime: runtime } : {}),
         callTarget: () => spawnTarget,
+        // 沙盒验证过(src/core/workbench/suspend-resume.sandbox.test.ts):冻住期间被掐断的流,放开后 codex 自己
+        // 「Reconnecting… 1/5」重试接上;放开后再收到的 willRetry 由 connect 看门狗照常管。
+        suspension: {
+          suspend() {
+            if (closing || exited || broken || terminated || !freezer.freeze()) return false
+            timers.pause(); return true
+          },
+          resume() { if (terminated) return; freezer.thaw(); timers.resume() },
+          terminate() { terminated = true; freezer.kill(); timers.resume() },
+        },
         dispatch(text, attachments) {
           if (runtime) throw new Error('codex_runtime_requires_lifetime_stream')
           const { turn, accepted } = launch(text, attachments)

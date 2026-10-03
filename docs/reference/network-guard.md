@@ -23,10 +23,23 @@
 10. **`llm.youdamaster.cc` 是主人自建的 ⇒ 不需要保护**(按第 3 条,它本来就是缺省不保护的自定义网关;主人确认过不要纳入)。
 11. **装了 bx、但 bx 关着 / 恢复中 / 读不出 ⇒ 暂停需要保护的调用,不回退到 Google 探测;** guard.json 里写 `signal_source: "probe"`(装着 bx、实际在用别的 VPN)可以显式改用 Google 探测。实现见 `gate.ts` / `owner-table.test.ts`。
 12. **Kimi:** 主人原话「Kimi 都不需要判断」。Kimi 的所有端点(`moonshot.cn`、`moonshot.ai`、`kimi.com`、`kimi.ai` 及其子域)都不需要保护,国内版、国际版不分;`protect_custom_gateways` 也不会把它们纳入(它们不算自定义网关),要纳入只能写进 `protect`。
+13. **已经在跑的任务(主人 2026-10-03,原文照录):**
+
+    > - Signal source bx ⇒ never stop or suspend running tasks (bx is fail-closed).
+    > - Signal source probe (no bx) ⇒ after TWO consecutive unsafe readings, SUSPEND (not kill) running executors whose calls are protected; unprotected ones (domestic/self-hosted/Cursor auto) keep running.
+    > - Suspend = SIGSTOP the whole process tree/group (not SIGTSTP — it can be caught), resume = SIGCONT when the signal becomes safe again.
+    > - While suspended, pause every daemon-side timer for that task/turn (turn watchdog, codex connect/first-event timeouts, ACP/app-server request timeouts, idle-reap, lease/one-folder bookkeeping timers) so nothing marks it failed; resume them on SIGCONT.
+    > - On resume, in-flight model requests may have been dropped by the server; rely on each executor's own retry/reconnect. Verify per executor in sandbox (fake servers on 127.0.0.1 that drop the stream while the process is stopped): if an executor does NOT recover after SIGCONT, fall back to the previous graceful stop for that executor and document which.
+    > - Max suspension 30 minutes (configurable in guard.json): then gracefully stop the task and notify the owner on the originating surface: 「网络一直没恢复，任务已停止，可以接着做」.
+    > - Windows: no SIGSTOP ⇒ keep the existing stop behaviour (document; NtSuspendProcess later).
+    > - Chat sessions of protected providers: decide consistently — prefer suspend for long-lived session processes too if they're single-turn-safe; otherwise keep current close-on-unsafe; document the choice.
+    > - Visibility: workbench task state shows "已暂停(网络未受保护)" on desktop/phone/WeChat notices; `wechat-cc guard status` lists suspended tasks; /v1/health guard block includes suspended count.
+
+    怎么落地见下面「暂停在跑的任务」一节。
 
 ### 待定(现在的行为只是临时缺省)
 
-- **什么时候(要不要)停掉已经在跑的任务。** 暂时沿用 #191 的行为作为临时缺省:bx 来源从不停在跑的执行者(bx fail-closed,出不去也就漏不了);probe 来源连续两次读到不安全才停,每段不安全期只停一次;只停需要保护的执行者,不需要保护的永远不停。网络翻成不安全时只关需要保护的对话会话。**这不是主人的决定。**
+(目前没有。原来唯一的一条「什么时候 / 要不要停掉已经在跑的任务」2026-10-03 由主人定了,见上面第 13 条。)
 
 ### 由上面推出来的实现约束
 
@@ -112,7 +125,8 @@ codex 只按自己的配置连:`model_provider`(缺省 `openai`)→ 自定义 id
   "signal_source": "auto",               // 新:auto = 装了 bx 只认 bx,没装用探测;probe = 装着 bx 也用探测
   "protect": [],                         // 新:一定要保护的调用
   "trust": [],                           // 新:不需要保护的调用(覆盖默认)
-  "protect_custom_gateways": false       // 新:自定义网关也纳入保护
+  "protect_custom_gateways": false,      // 新:自定义网关也纳入保护
+  "max_suspend_minutes": 30              // 新(2026-10-03):暂停在跑的任务的上限,到点按收工停下;1–1440,越界取 30
 }
 ```
 
@@ -164,10 +178,52 @@ codex 只按自己的配置连:`model_provider`(缺省 `openai`)→ 自定义 id
 | 后台 tick(companion push / introspect / ingest)`skipWhenUnsafe` | 已注册 provider 报的目标 + 在用会话的实际目标 | 信号不安全且**全都**需要保护 ⇒ 这一拍安静跳过;有不需要保护的 ⇒ 照跑,里面需要保护的那几次被各自的闸门拒掉。同一段不安全期同一个任务只记一行日志 |
 | 后台任务内部被拒的那一次(评审 #193 P2-3) | — | **这一拍跳过,什么进度都不记**(`NetworkUnprotectedError` / `NETWORK_UNPROTECTED_REASON` 一路传上来):议程 / 打猎 / 问候定向撤回「先登记再出门」的那一次登记(agenda.md 只放回本次打勾的那一行,care 台账按回执 `unclaim`,期间的新活动保留),不写 plan-log;日程判断被拒不走老顺序兜底、不退避;串门开场被拒台账放回;反思不记 `cron_eval_failed`、`last_introspect_at` 不动;画表情 / 画室不吃掉这一期;人类做客讲述被拒那一位水位放回;社交判官被拒原样抛出(不当成「不能」去转问)。摄入抽取、线索、概览、画像、园丁本来就只在成功后提交 |
 | 每晚整理记忆 | 它用的 cheapEval | 评估被守护拒 ⇒ `skipped: network_unprotected`,**不记** `failed_today` |
-| **已经在跑**的工作台执行者(`lifecycle-deps.ts` `onReading` + `pause-policy.ts`) | 在用会话的实际目标 | **待定,临时缺省沿用 #191:** bx 来源不停(bx fail-closed,出不去也就漏不了)。probe 来源连续两次不安全才停,**只停需要保护的执行者**,不需要保护的永远不停 |
-| 网络翻成不安全的那一刻(`onStateChange`) | 会话的实际目标 | `SessionManager.shutdownProtected()`:只关需要保护的对话会话(同上,临时缺省) |
+| **已经在跑**的工作台执行者(`lifecycle-deps.ts` `onReading` → `pause-policy.ts` → `workbench/service/lifecycle.ts`) | 在用会话的实际目标 | **主人已定(第 13 条):** bx 来源从不停、不暂停。probe 来源连续两次不安全 ⇒ **暂停**(SIGSTOP 整棵进程树)需要保护的执行者,读到安全 ⇒ 放开;暂停 30 分钟(可配)还没恢复 ⇒ 按收工停下并告诉主人。暂停不了的执行者退回原来的停法。见「暂停在跑的任务」 |
+| 已经在跑的对话会话(同一时刻:probe 连续两次不安全) | 会话的实际目标 | `SessionManager.shutdownProtected()`:只关需要保护的对话会话(不暂停,理由见「暂停在跑的任务」);bx 来源从不关。网络翻转本身(`onStateChange`)不再关会话 |
 
 **入站不再拦。** 微信入站链里原来的 `mw-guard` 已删除:管理 / 模式命令、`y`/`n` 权限回复、取消、换模型、`/set` 照常;闲聊进协调器,由上表按调用拦。
+
+## 暂停在跑的任务(主人 2026-10-03,第 13 条)
+
+**什么时候:** 只看 probe 来源(没装 bx,或 `signal_source: "probe"`)。调度器每读一次喂一次 `pause-policy.ts`:连续两次不安全 ⇒ 暂停;同一段不安全期只暂停一次;读到安全 ⇒ 放开;暂停期间改用了 bx(fail-closed)⇒ 也放开;暂停期间守护被关掉 ⇒ 放开(关了就什么都不判)。bx 来源从不暂停、从不停。
+
+**暂停谁:** 工作台里在跑的、按**会话实际目标**判成需要保护的执行者(`classifyWith(gate, run.target)`);国内 / 自建 / Cursor auto 不动。排队还没起来的不动 —— 轮到它时闸门按调用拦。
+
+**怎么暂停**(`src/lib/process-tree-freeze.ts`):SIGSTOP(不是 SIGTSTP,那个能被捕获)。执行者都是 `detached` 起的组长:先冻根组(挡住新 fork),再按 `ps` 的父子关系找全后代,后代另起的组逐个冻(Claude 的 Bash、codex 的后台终端、MCP 子进程),挂在别人组里的后代单独冻;最多十遍直到没有新面孔。放开:先放后代再放根。**冻住的树只会被放开或被杀掉,绝不为了「优雅收尾」先放开** —— 放开那一下它就会接着用不受保护的网络。
+
+**冻住期间停表的计时器**(否则冻住期间到点,会把只是在等网络的任务判成失败):
+
+| 计时器 | 在哪 | 冻住时 | 放开时 |
+|---|---|---|---|
+| 工作台回合看门狗(`timeoutMs`,缺省 10 分钟) | `service/execute.ts` `collectWorkbenchTurn` | 按「在等」算,不判超时 | `interactionAt` 记成放开那一刻,从头算 |
+| codex 连接 / 首个事件超时(#197) | `codex-app-server.ts` `armWatchdog` | `lib/pausable-timers.ts` 停表 | 按剩下的时间接着走;放开后 codex 发的 `willRetry` 照常武装 connect |
+| codex app-server RPC 请求超时 | `codex-app-server.ts` `request()` | 同上 | 同上 |
+| 权限卡批准期限(5 分钟) | `workbench/permissions.ts` | 停表 | 期限按冻住的时长顺延 |
+| 空闲自动收工 / 文件夹让位(一个文件夹一个活会话) | `service/lifecycle.ts` `armIdleClose` | 撤掉、不武装 | `settleAfterDecision` 重新评估 |
+| 起会话超时(`session_start_timeout`) | `service/execute.ts` | 不涉及:会话没起来的 run 冻不了,按原来的停法 | — |
+| ACP 请求超时(`acp/rpc.ts`) | — | 不涉及:Cursor ACP 不暂停(见下表),退回停 | — |
+
+忙碌登记(`holdBusy`)在冻住期间照旧持有 ⇒ 空闲自重启不会把冻住的任务当成空闲。
+
+**放开之后:** 冻住期间服务端可能已经把在途的流掐了,靠执行者自己的重试 / 重连接上。逐个执行者在沙盒验证(真的 CLI 连 127.0.0.1 的假模型服务;第一次流式请求吐半句挂住 → 冻住 → 服务端掐断 → 停 3 秒 → 放开;要求这一轮以 `RECOVERED` 正常结束、服务端看到第二次请求):
+
+| 执行者 | 结果 | 守护怎么对它 |
+|---|---|---|
+| Claude Code(工作台保留会话,2.1.288) | **接上**:放开后自己重发请求,这一轮正常结束(另测过冻住期间 `API_TIMEOUT_MS` 已到期,同样接上) | 暂停(`claude-workbench-runtime.ts` `suspension`) |
+| Codex(工作台 app-server,0.153.4) | **接上**:`Reconnecting... 1/5` 后正常结束(`codex exec` 同样) | 暂停(`codex-app-server.ts` `suspension`) |
+| Cursor(ACP) | **没法在沙盒验**:cursor-agent 只连 Cursor 自己的服务,没有能指到本机的端点 | 退回原来的停法 |
+| agy(Antigravity) | **没法在沙盒验**:私有二进制只连 Google;每轮一个子进程,也不在自己的进程组里 | 退回原来的停法 |
+| openai 兼容(工作台 API 执行者) | 进程内循环,没有能冻的进程 | 退回原来的停法 |
+
+验证脚本是 `src/core/workbench/suspend-resume.sandbox.test.ts`(显式打开才跑:`WECHAT_CC_SUSPEND_SANDBOX=1 bun --bun vitest run src/core/workbench/suspend-resume.sandbox.test.ts`)。流量一律不出本机:端点钉 127.0.0.1;`HTTP(S)_PROXY` 指 127.0.0.1:9(死端口);`HOME` / `CLAUDE_CONFIG_DIR` / `CODEX_HOME` 全是临时目录;codex 不认 `OPENAI_BASE_URL`,端点写进沙盒 `CODEX_HOME/config.toml` 的自定义 `model_provider`。执行者升级后要重跑这一份;接不上了就把它的 `suspension` 摘掉(退回停)并改这张表。
+
+**退回停的执行者 / 情形**(同 #191 的老行为:时间线记一句「网络未受保护：……这个执行者暂停不了，已停止本轮，恢复后可以继续。」,任务记已停止,之后可以「继续」):上表三家;会话还没起来的 run;`suspend()` 返回 false(进程已经没了)。**Windows:** 没有 SIGSTOP(`freeze()` 直接返回 false)⇒ 全部退回停;以后再上 NtSuspendProcess。
+
+**暂停到顶**(guard.json `max_suspend_minutes`,缺省 30):冻住的树直接 SIGKILL(不放开),任务按收工停下(已停止,可以接着做 —— Claude / Codex 的原生会话在磁盘上,续接时按原会话恢复),时间线与终态微信通知说主人原话「网络一直没恢复，任务已停止，可以接着做」。冻住期间主人点「停止」/ daemon 关闭 也走同一条:先整棵杀,再按原来的取消收尾;close 不再要求进程配合(codex 不发收尾 RPC,后台终端是冻住时一起登记、一起杀掉的后代)。
+
+**对话会话不暂停,仍然关(主人让定,本版定为):** 对话侧的常驻会话(Claude SDK 会话、Cursor ACP 会话)的回合计时、回复送达、按 (chat, project, provider) 的会话锁都在协调器里,冻住它要把这些一起停表,不是单轮安全的;codex 对话每轮一个 `codex exec`,也没有能跨轮冻的进程。所以对话会话**关**(下一条消息按原生会话续上),只关需要保护的;时刻和工作台一致(probe 连续两次不安全),bx 来源从不关 —— 和第 13 条第一句同一条规矩。以前是「网络一翻转就关」(bx 来源也会触发),这一版改掉。
+
+**看得见:** 任务状态「已暂停(网络未受保护)」—— 桌面列表 / 详情 / 「此刻」页、手机「一件事」列表(`/v1/matters` 带 `networkSuspended`)、微信「任务」查询;时间线记「已暂停(网络未受保护)：……恢复后自动继续。」与「网络恢复，已继续。」;订了微信提醒的任务暂停时收一条提醒。`/v1/health` 的 guard 块带 `suspended`(个数)与 `suspended_tasks`;`wechat-cc guard status` 列出被暂停的任务(问在跑的 daemon,本机回环)。
 
 ## 刻意不拦
 
@@ -179,9 +235,9 @@ codex 只按自己的配置连:`model_provider`(缺省 `openai`)→ 自定义 id
 
 ## 看得见
 
-- `GET /v1/health` 的 `guard` 块:`{ enabled, source: 'bx'|'probe'|'off', safe, detail, ip, checked_at, signal_source, protected_in_use, paused, providers: [{ id, model, host, protected, kind, label, reason }] }`。`safe` 只是信号;`paused = enabled && !safe && protected_in_use` 才是「有需要保护的调用此刻被停」。新字段都可选,老 daemon 没有。
+- `GET /v1/health` 的 `guard` 块:`{ enabled, source: 'bx'|'probe'|'off', safe, detail, ip, checked_at, signal_source, protected_in_use, paused, providers: [{ id, model, host, protected, kind, label, reason }], suspended, suspended_tasks: [{ task_id, title, provider, since }] }`(`suspended*` 2026-10-03:被暂停的在跑任务,见「暂停在跑的任务」)。`safe` 只是信号;`paused = enabled && !safe && protected_in_use` 才是「有需要保护的调用此刻被停」。新字段都可选,老 daemon 没有。
 - 桌面「此刻」页连接区一行:`bx 保护中`(绿)/ `⚠ 网络未受保护：用到 Claude 等的调用暂停`(红,`Claude` 换成第一个需要保护的接口名;悬停提示可跑 `bx leakcheck`)/ `当前没有用到需要保护的接口`(中性,不报红)。守护关着不显示;老 daemon 没有 `protected_in_use` 时按「有」算,不默认绿。设置抽屉里那一行同口径。
-- `wechat-cc guard status [--json]`:信号(`source` / `safe` / `detail` / `bx_path` / `signal_source`)+ 按配置推出的 provider 分类(`providers`、`protected_in_use`;只读配置,不发流量)。Codex 那一行按 codex 配置层判(`CODEX_HOME` 依次取 CLI 环境、`daemon.env`、`~/.claude/settings.json` 的 env)。
+- `wechat-cc guard status [--json]`:信号(`source` / `safe` / `detail` / `bx_path` / `signal_source`)+ 按配置推出的 provider 分类(`providers`、`protected_in_use`;只读配置,不发流量)+ 被暂停的任务(`suspended` / `suspended_tasks`,问在跑的 daemon 的 `/v1/health`;daemon 没在跑就不给,不说「没有」)。Codex 那一行按 codex 配置层判(`CODEX_HOME` 依次取 CLI 环境、`daemon.env`、`~/.claude/settings.json` 的 env)。
 - 日志 tag `GUARD`:状态翻转、每个被拒的回合(带被停的接口名)、cheapEval 跳过的候选、每个被跳过的后台任务(每段一次)。
 
 ## 怎么验
@@ -191,4 +247,4 @@ bx status --json | jq '{protection_state, tunnel_healthy}'   # 只读,本机 soc
 wechat-cc guard status                                        # 信号 + 各 provider 是否需要保护
 ```
 
-不要为了验证去 `bx down`、`bx setup`,也不要跑任何会把流量送出隧道的检查(例如 `bx leakcheck --compare-direct`)。断网路径由单测覆盖:`src/lib/call-classifier.test.ts`(分类表)、`src/daemon/guard/owner-table.test.ts`(主人那张表逐格 + 端点 / 模型解析 + health)、`src/daemon/guard/*.test.ts`(bx JSON、超时、fail closed、第一次探测的有界等待)、`src/core/provider-registry.network-gate.test.ts`(逐候选故障转移、Claude 聊天停 + DeepSeek 后台照常)、`src/daemon/guard/effective-target.test.ts`(评审 #193:配置改了在用的执行者不跟、Cursor 一次性评估、报不出目标按保护)、`src/lib/codex-target.test.ts`(Codex 按自己的配置层判:默认 / 自定义国内 / `OPENAI_BASE_URL` 不算 / 读不出按保护 / `-c` 覆盖 / 项目层)、`src/core/codex-agent-provider.test.ts` 与 `src/core/workbench/codex-app-server.test.ts`(对话侧与工作台 `config/read`)、`src/core/acp-agent-provider.test.ts`(cursor-agent 自报的当前模型)、`src/daemon/wiring/tick-bodies.test.ts`(被拒 = 这一拍跳过)、`src/core/conversation-coordinator.test.ts`(network gate 一节)、`src/core/session-manager.test.ts`、`src/core/workbench/service-network-gate.test.ts`、`src/daemon/inbound/pipeline.integration.test.ts`(入站控制照常)、`src/daemon/ilink/voice-gate.test.ts`、`src/daemon/cli-reply-handler.test.ts`、`src/daemon/memory/nightly.test.ts`、健康路由与桌面渲染测试。测试里永远注入执行器 / 探测,单测进程下 `findBx()` 不认真的 bx、闸门不真探 google;`vitest.setup.ts` 把 `CODEX_HOME` 指到空临时目录,测试不读主人的 `~/.codex`。
+不要为了验证去 `bx down`、`bx setup`,也不要跑任何会把流量送出隧道的检查(例如 `bx leakcheck --compare-direct`)。断网路径由单测覆盖:`src/lib/call-classifier.test.ts`(分类表)、`src/daemon/guard/owner-table.test.ts`(主人那张表逐格 + 端点 / 模型解析 + health)、`src/daemon/guard/*.test.ts`(bx JSON、超时、fail closed、第一次探测的有界等待)、`src/core/provider-registry.network-gate.test.ts`(逐候选故障转移、Claude 聊天停 + DeepSeek 后台照常)、`src/daemon/guard/effective-target.test.ts`(评审 #193:配置改了在用的执行者不跟、Cursor 一次性评估、报不出目标按保护)、`src/lib/codex-target.test.ts`(Codex 按自己的配置层判:默认 / 自定义国内 / `OPENAI_BASE_URL` 不算 / 读不出按保护 / `-c` 覆盖 / 项目层)、`src/core/codex-agent-provider.test.ts` 与 `src/core/workbench/codex-app-server.test.ts`(对话侧与工作台 `config/read`)、`src/core/acp-agent-provider.test.ts`(cursor-agent 自报的当前模型)、`src/daemon/wiring/tick-bodies.test.ts`(被拒 = 这一拍跳过)、`src/core/conversation-coordinator.test.ts`(network gate 一节)、`src/core/session-manager.test.ts`、`src/core/workbench/service-network-gate.test.ts`、`src/daemon/inbound/pipeline.integration.test.ts`(入站控制照常)、`src/daemon/ilink/voice-gate.test.ts`、`src/daemon/cli-reply-handler.test.ts`、`src/daemon/memory/nightly.test.ts`、健康路由与桌面渲染测试。暂停在跑的任务:`src/daemon/guard/pause-policy.test.ts`(bx 从不暂停 / probe 两次暂停 / 安全放开 / 30 分钟到顶停下 / 守护关掉放开,假时钟)、`src/lib/process-tree-freeze.test.ts`(真的子进程树:根、同组孩子、另起一组的孩子都停止计数、放开后接着数、冻住时直接杀)、`src/lib/pausable-timers.test.ts`(假时钟)、`src/core/workbench/service-network-suspend.test.ts`(冻住期间回合看门狗与批准期限不走、冻不住退回停、到顶 / 取消只杀不放)、`src/core/workbench/codex-app-server.test.ts`(冻住期间首个事件超时不触发、terminate 后 close 不发收尾 RPC)、`src/core/claude-workbench-process.test.ts`、`src/daemon/wiring/lifecycle-deps.test.ts`(接线);逐执行者沙盒见上。测试里永远注入执行器 / 探测,单测进程下 `findBx()` 不认真的 bx、闸门不真探 google;`vitest.setup.ts` 把 `CODEX_HOME` 指到空临时目录,测试不读主人的 `~/.codex`。

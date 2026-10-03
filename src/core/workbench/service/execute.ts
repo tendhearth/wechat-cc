@@ -274,6 +274,8 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
               }
             }
           },()=>{
+            // 网络守护冻住期间按「在等」算:回合看门狗不走(放开时 interactionAt 记成那一刻,从头算)。
+            if(running.networkSuspended)return true
             const snapshot=runtimeSnapshot(running)
             return running.questions.pending().length>0||running.permissions.pending().length>0||!!(snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0)
           },()=>running.interactionAt,runtime?()=>runtime.start(request,material):undefined)

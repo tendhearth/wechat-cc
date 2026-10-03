@@ -143,6 +143,24 @@ export interface AgentSession {
    * 当前模型……),不是此刻配置里写的。null / 未实现 ⇒ 拿不准 ⇒ 网络闸门按需要保护(fail closed)。
    */
   callTarget?(): CallTarget | null
+  /**
+   * 网络守护「暂停在跑的任务」(主人 2026-10-03):冻住 / 放开这条会话的整棵进程树,连同会话
+   * 自己的计时器。只有在沙盒里验证过「冻住期间流被掐断、放开后能自己重试接上」的执行者才实现它;
+   * 没实现 ⇒ 守护退回原来的停法。见 docs/reference/network-guard.md「暂停在跑的任务」。
+   */
+  suspension?: AgentSessionSuspension
+}
+
+export interface AgentSessionSuspension {
+  /** SIGSTOP 整棵进程树 + 暂停会话自己的计时器。false = 做不到(进程没了 / 平台不支持),调用方改用停。 */
+  suspend(): boolean
+  /** SIGCONT + 计时器接着走。幂等。 */
+  resume(): void
+  /**
+   * 冻住期间要停(主人取消 / 暂停到顶 / daemon 关):直接 SIGKILL 冻住的树,**不先放开**
+   * (放开那一下它就会接着用不受保护的网络)。之后的 close() 不能再指望进程配合收尾。
+   */
+  terminate(): void
 }
 
 /** `AgentProvider.callTarget` 问的是哪一种调用。 */
