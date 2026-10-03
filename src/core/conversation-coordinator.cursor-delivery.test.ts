@@ -200,6 +200,50 @@ describe.skipIf(process.platform === 'win32')('Cursor:双发旁白在 daemon 模
     expect(t.notices).toHaveLength(1)
     expect(t.records[0]).toMatchObject({ outcome: 'error', errorCode: 'quota' })
   })
+
+  // Cursor 把自己的报错写进助理消息、stopReason 仍是 end_turn(#206 发现)。ACP 边界认出最后那一整块 ⇒ 带码错误收尾。
+  const LOOPING = 'Error: NonRetriableError: Agent Looping Detected The model got stuck in a repeating response pattern, so this turn was stopped. Please try again with a different model or start a new conversation. If the problem persists, please contact support.'
+  it('两臂:Cursor 的带内报错(Agent Looping Detected)不当回复发;回合记 error + provider_error;daemon 只发一条通知', async () => {
+    const turn = (): ScriptedTurn => ({ steps: [say('我再 ping 一次。'), mcp('ping'), say('data must NOT have additional properties'), { cliError: LOOPING }] })
+    const d = rig({ turns: [turn()], mode: 'daemon' })
+    await d.send(); await d.close()
+    expect(d.wechat).toEqual([])
+    expect(d.notices).toHaveLength(1)
+    expect(d.notices[0]).not.toMatch(/Looping|NonRetriable/)
+    expect(d.records[0]).toMatchObject({ outcome: 'error', errorCode: 'provider_error' })
+    const l = rig({ turns: [turn()], mode: 'legacy' })
+    await l.send(); await l.close()
+    expect(l.wechat.join('\n')).not.toMatch(/Looping|NonRetriable/)
+    expect(l.records[0]).toMatchObject({ outcome: 'error', errorCode: 'provider_error' })
+  })
+
+  it('daemon:正文里只是提到 looping / Agent Looping Detected ⇒ 照常交付', async () => {
+    const prose = '我检查过了，日志里没有 Agent Looping Detected，也没有 looping。'
+    const t = rig({ turns: [{ steps: [say(prose)] }], mode: 'daemon' })
+    await t.send(); await t.close()
+    expect(t.wechat).toEqual([prose])
+    expect(t.notices).toEqual([])
+    expect(t.records[0]).toMatchObject({ outcome: 'completed' })
+  })
+
+  it('daemon:「Please sign in to continue」⇒ auth_failed:不发原文,走登录提示(带 cursor-agent login)', async () => {
+    const t = rig({ turns: [{ steps: [{ cliError: 'Please sign in to continue' }] }], mode: 'daemon' })
+    await t.send(); await t.close()
+    expect(t.wechat).toEqual([])
+    expect(t.notices.join('\n')).toContain('cursor-agent login')
+    expect(t.notices.join('\n')).not.toContain('Please sign in')
+    expect(t.records[0]).toMatchObject({ outcome: 'auth_failed', errorCode: 'auth_failed' })
+  })
+
+  it('daemon:带内的限流 / 断网按码说原因(不读原文)', async () => {
+    for (const [body, code] of [['Error: RetriableError: [resource_exhausted] slow down', 'rate_limited'], ['Error: RetriableError: [unavailable] getaddrinfo ENOTFOUND api2.cursor.sh', 'network']] as const) {
+      const t = rig({ turns: [{ steps: [{ cliError: body }] }], mode: 'daemon' })
+      await t.send(); await t.close()
+      expect(t.wechat).toEqual([])
+      expect(t.records[0]).toMatchObject({ outcome: 'error', errorCode: code })
+      expect(t.notices[0]).not.toContain('RetriableError')
+    }
+  })
 })
 
 // ─── 原样回放 2026-09-17 真机录到的 cursor-agent 报文 ──────────────────────────────
@@ -230,6 +274,19 @@ describe.skipIf(process.platform === 'win32')('Cursor:回放真机报文(2026-09
     await d.send(); await d.close()
     expect(d.wechat).toEqual(['已创建 `hello.txt`，内容为一行 `hello`。'])
     expect(d.records[0]).toMatchObject({ narrationSegments: 1, bubbles: 1 })
+  })
+
+  it('c4both(真机:最后一块是 Cursor 自己写的「Agent Looping Detected」,stopReason end_turn)⇒ 两臂都不把这句当回复', async () => {
+    const d = rig({ turns: [recordedTurn('c4both')], mode: 'daemon' })
+    await d.send(); await d.close()
+    expect(d.wechat).toEqual([])
+    expect(d.notices).toHaveLength(1)
+    expect(d.records[0]).toMatchObject({ outcome: 'error', errorCode: 'provider_error' })
+    expect(d.records[0]!.error).toMatch(/^Error: NonRetriableError: Agent Looping Detected/)
+    const l = rig({ turns: [recordedTurn('c4both')], mode: 'legacy' })
+    await l.send(); await l.close()
+    expect(l.wechat.join('\n')).not.toContain('Agent Looping Detected')
+    expect(l.records[0]).toMatchObject({ outcome: 'error', errorCode: 'provider_error' })
   })
 
   it('c2(命令被拒,一段两句):两臂一样 —— 只有一段文字,daemon 按空行分两条;legacy FALLBACK 一条', async () => {

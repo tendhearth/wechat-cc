@@ -35,6 +35,11 @@ export type ScriptStep =
   | { native: 'read' | 'edit' | 'search' | 'execute'; title: string; path?: string; command?: string }
   /** 原样发一条录到的 `session/update` 的 update。 */
   | { raw: unknown }
+  /**
+   * cursor-agent 一轮出错时的写法(ACP 服务端 processPrompt 的 catch):`\n\n` + 报错,**一整块**
+   * agent_message_chunk,之后这一轮什么都不再发(剧本里把它放最后一步;stopReason 照常 end_turn)。
+   */
+  | { cliError: string }
   /** 停一会儿(长任务)。 */
   | { delayMs: number }
 
@@ -145,6 +150,7 @@ export function createScriptedAcpAgent(options: ScriptedAgentOptions): ScriptedA
         if ('say' in step) for (const c of chunkText(step.say, chunkSize)) update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: c } })
         else if ('think' in step) update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: step.think } })
         else if ('raw' in step) update(step.raw)
+        else if ('cliError' in step) update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `\n\n${step.cliError}` } })
         else if ('delayMs' in step) await sleep(step.delayMs)
         else if ('mcp' in step) {
           // 真机的 toolCallId 里嵌着字面换行(acp/events.ts 头注释)—— 照抄。

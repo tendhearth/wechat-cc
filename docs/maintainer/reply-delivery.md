@@ -76,5 +76,5 @@ Cursor 走 ACP:每个会话一个常驻 `cursor-agent acp`,wechat MCP 是**逐�
 |---|---|
 | 主人只收到过程话、没收到结论 | 模型把结论写在了中间、最后又补了一句 —— `[TURN]` 的 `delivery= bubbles=` 与 `turn_records.narration_segments`;桌面那一轮的旁白里能看到结论。真模型闸门还欠着(额度),见 `reference/reply-once-experiment.md`「第 3 步」残留 |
 | 一轮很长、主人收到一句进度 | `[REPLY_PROGRESS] … provider=cursor`(一轮最多一次,用最近一段旁白) |
-| 收到一句 Cursor 自己的报错(「Agent Looping Detected」之类) | 已知,两条路都有,不是本步引入的:Cursor 把报错写进了助理消息、stopReason 仍是 end_turn |
+| 收到一句 Cursor 自己的报错(「Agent Looping Detected」之类) | 2026-10-03 起 ACP 边界认 cursor-agent 的固定写法(本轮最后一整块 `\n\n…`),带码当错误收尾,只发通知;TurnRecord 看 `error` / `error_code`。还收到原文 ⇒ cursor-agent 换了句式,按 `reference/provider-error-shapes.md` §8 的位置重新核对 |
 | 语音没发出去 | strict 权限下 ACP 的权限卡全拒 ⇒ 附件工具调不成(文字照常交付);`[REPLY] … attachments=0/0` |
