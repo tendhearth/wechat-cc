@@ -38,6 +38,11 @@ interface FakeThread {
   runStreamedCalls: FakeRunRecord[]
   runCalls: { input: string }[]
   pushTurn(events: ThreadEvent[]): void
+  /** events, then the stream never ends (codex retrying a dead network). */
+  pushHangingTurn(events: ThreadEvent[]): void
+  /** events, then runStreamed's iterator throws (codex exec exited non-zero). */
+  pushThrowingTurn(events: ThreadEvent[], error: Error): void
+  /** cheapEval: one completed turn whose agent_message items are `items`. */
   pushRunResult(items: unknown[]): void
 }
 
@@ -49,6 +54,7 @@ interface FakeCodex {
 
 function makeFakeCodex(initialThreadId: string | null = null): { codex: Codex; fake: FakeCodex } {
   const queuedTurns: ThreadEvent[][] = []
+  const turnTails = new Map<ThreadEvent[], 'hang' | Error>()
   const queuedRunItems: unknown[][] = []
   const runStreamedCalls: FakeRunRecord[] = []
   const runCalls: { input: string }[] = []
@@ -72,8 +78,11 @@ function makeFakeCodex(initialThreadId: string | null = null): { codex: Codex; f
       })
       // Capture thread.started's thread_id to mirror real SDK behaviour.
       for (const ev of events) if (ev.type === 'thread.started') threadId = ev.thread_id
+      const tail = turnTails.get(events)
       async function* gen(): AsyncGenerator<ThreadEvent> {
         for (const ev of events) yield ev
+        if (tail === 'hang') await new Promise<never>(() => {})
+        if (tail instanceof Error) throw tail
       }
       return { events: gen() }
     },
@@ -87,7 +96,16 @@ function makeFakeCodex(initialThreadId: string | null = null): { codex: Codex; f
       runStreamedCalls,
       runCalls,
       pushTurn(events) { queuedTurns.push(events) },
-      pushRunResult(items) { queuedRunItems.push(items) },
+      pushHangingTurn(events) { turnTails.set(events, 'hang'); queuedTurns.push(events) },
+      pushThrowingTurn(events, error) { turnTails.set(events, error); queuedTurns.push(events) },
+      pushRunResult(items) {
+        queuedRunItems.push(items)
+        queuedTurns.push([
+          { type: 'turn.started' } as ThreadEvent,
+          ...items.map(item => ({ type: 'item.completed', item }) as unknown as ThreadEvent),
+          { type: 'turn.completed', usage: null } as unknown as ThreadEvent,
+        ])
+      },
     },
   }
 
@@ -524,7 +542,7 @@ describe('Codex agent provider', () => {
     expect((errs[0] as { code?: string }).code).toBe('auth_failed')
   })
 
-  it('does not emit code=auth_failed for non-auth stream-level errors', async () => {
+  it('non-auth stream-level errors carry the boundary code (network), never auth_failed', async () => {
     const fakeCodex = makeFakeCodex()
     fakeCodex.fake.thread.pushTurn([
       { type: 'thread.started', thread_id: 't1' },
@@ -537,7 +555,7 @@ describe('Codex agent provider', () => {
 
     const errs = events.filter((e) => e.kind === 'error')
     expect(errs).toHaveLength(1)
-    expect((errs[0] as { code?: string }).code).toBeUndefined()
+    expect((errs[0] as { code?: string }).code).toBe('network')
   })
 
   describe('cheapEval (PR F)', () => {
@@ -563,10 +581,12 @@ describe('Codex agent provider', () => {
       expect(o.networkAccessEnabled).toBe(false)
       expect(o.skipGitRepoCheck).toBe(true)
 
-      // run() called once, not runStreamed (we don't need events).
-      expect(fake.thread.runCalls).toHaveLength(1)
-      expect(fake.thread.runCalls[0]?.input).toBe('what is 9-1?')
-      expect(fake.thread.runStreamedCalls).toHaveLength(0)
+      // runStreamed (not run): run() swallows codex's Reconnecting notices, so a dead
+      // network would hang the eval forever — streamed + boundary timeouts can't.
+      expect(fake.thread.runCalls).toHaveLength(0)
+      expect(fake.thread.runStreamedCalls).toHaveLength(1)
+      expect(fake.thread.runStreamedCalls[0]?.input).toBe('what is 9-1?')
+      expect(fake.thread.runStreamedCalls[0]?.signal).toBeInstanceOf(AbortSignal)
     })
 
     it('concatenates multiple agent_message items, skipping other item types', async () => {

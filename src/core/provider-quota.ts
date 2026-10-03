@@ -70,8 +70,10 @@ export function makeQuotaRegistry(now: () => number = Date.now, usage?: UsageLoo
   }
   return {
     /** 认出额度/限流就登记并返回类别;不是就返回 null、不登记。 */
-    note(providerId: string, message: string): QuotaKind | null {
-      const kind = classifyProviderError(message)
+    note(providerId: string, message: string, code?: string): QuotaKind | null {
+      // provider 边界产的码优先(arch backlog #4 第 2 步):quota / rate_limited 直接登记;
+      // 有别的码 ⇒ 不是额度;没码才回退到正文里认。
+      const kind: QuotaKind | null = code === 'quota' ? 'quota' : code === 'rate_limited' ? 'rate_limit' : code ? null : classifyProviderError(message)
       if (!kind) return null
       const since = now()
       const resetAt = (kind === 'quota' ? parseResetAt(message) : null) ?? since + (kind === 'quota' ? QUOTA_TTL_MS : RATE_LIMIT_TTL_MS)

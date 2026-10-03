@@ -357,4 +357,28 @@ describe('Claude workbench retained runtime', () => {
     ])
   })
 
+
+  // arch backlog #4 第 2 步:工作台 Claude 运行时与对话侧同一规矩 —— SDK 标了 `error` 的主回合
+  // 助理消息不进时间线,不推 result(不能让失败回合算「完成 / 额度恢复」),带码收掉这一轮。
+  it.each([
+    ['authentication_failed', 401, 'Failed to authenticate. API Error: 401 API key is invalid.', 'auth_rejected'],
+    ['server_error', null, 'API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)', 'network'],
+    ['server_error', 529, 'API Error: 529 Overloaded', 'server_error'],
+    ['rate_limit', 429, 'API Error: 429 rate limited', 'rate_limited'],
+  ] as const)('an SDK-labelled API failure (%s, %s) ends the epoch with a coded error, never as timeline text', async (sdkError, status, text, code) => {
+    const run = await open(); run.runtime.start('start'); init()
+    native.emit({ type: 'assistant', uuid: 'e1', parent_tool_use_id: null, error: sdkError, message: { id: 'msg_err', model: '<synthetic>', content: [{ type: 'text', text }] } })
+    native.emit({ type: 'result', subtype: 'success', session_id: 'native-parent', num_turns: 1, duration_ms: 3, is_error: true, api_error_status: status, result: text })
+    await run.drained
+    expect(textEvents(run.events)).toEqual([])
+    expect(run.events.some(event => event.kind === 'result')).toBe(false)
+    expect(run.events.filter(event => event.kind === 'error')).toEqual([{ kind: 'error', message: text, code }])
+  })
+
+  it('the claude sentinel still ends the epoch as auth_failed (the only 登录过期 code)', async () => {
+    const run = await open(); run.runtime.start('start'); init()
+    native.emit({ type: 'assistant', uuid: 'e2', parent_tool_use_id: null, error: 'authentication_failed', message: { id: 'msg_s', model: '<synthetic>', content: [{ type: 'text', text: 'Not logged in · Please run /login' }] } })
+    await run.drained
+    expect(run.events.filter(event => event.kind === 'error')).toEqual([{ kind: 'error', message: 'claude reports not logged in', code: 'auth_failed' }])
+  })
 })

@@ -7,7 +7,8 @@ import { isCompanionMcp, nativeMcpInputPreview } from './workbench/claude-native
 import { log } from '../lib/log'
 import { AsyncQueue } from './async-queue'
 import { isAuthFail } from './auth-fail'
-import type { ProviderErrorCode } from '../lib/provider-error-code'
+import { errorWithProviderCode, type ProviderErrorCode } from '../lib/provider-error-code'
+import { claudeApiErrorCode } from './claude-api-error-code'
 import { discoverClaudeModels } from './workbench/claude-model-catalog'
 import { executionModel, nativeModelId } from './workbench/native-model-catalog'
 import { createClaudeWorkbenchSession } from './claude-workbench-runtime'
@@ -269,7 +270,7 @@ const CLAUDE_CHEAP_MODEL_DEFAULT = 'claude-haiku-4-5'
 type AssistantBlock = { type?: string; text?: string; name?: string; id?: string }
 type AssistantContent = string | Array<AssistantBlock>
 // `error`: the SDK's own label for a synthetic "this API call failed" assistant
-// message (SDKAssistantMessageError). See claudeApiErrorCode below.
+// message (SDKAssistantMessageError). See ./claude-api-error-code.
 type AssistantMsg = { type: 'assistant'; uuid?: string; parent_tool_use_id?: string | null; error?: string; message?: { id?: string; model?: string; content?: AssistantContent } }
 // SDKUserMessage.message is the Anthropic MessageParam. Its tool_result
 // blocks correlate to tool_use.id through tool_use_id; result content can
@@ -324,35 +325,8 @@ function extractText(content: AssistantContent | undefined): string {
 // zero true-positive gain, since the claude binary itself only ever
 // emits these two sentinel phrases.
 
-/**
- * SDK 对一次 API 失败的结构化标注 → 本仓库的 provider 错误码(arch backlog #4
- * 第 2 步,owner 2026-10-02)。
- *
- * WHY:会话路径上,Claude 的 401/403、拒连、超时以前是「一条正文 text 事件 +
- * 一个正常的 result」—— 回合记成 completed,fallback 把错误原文当回复发到
- * 微信(真机 2026-07-28:`Failed to authenticate. API Error: 403 Request not
- * allowed`)。SDK 其实在助理消息上标了 `error`,结果消息上给了
- * `api_error_status`,这里只读这两个结构字段,不扫正文。
- *
- *   · `authentication_failed` → `auth_rejected`。**不是** `auth_failed`:红线 A
- *     规定「登录过期」只属于两句哨兵,哨兵由调用方先判(命中就仍是 auth_failed)。
- *   · `server_error` 有 HTTP status → `server_error`;没有(null / 缺)→ `network`
- *     —— SDK 自己的约定:status 为 null 表示连接层失败,没拿到响应(拒连、
- *     重置、TLS、请求超时、睡眠断线)。
- *   · `max_output_tokens` 不是失败(正文只是被截断),返回 null,正文照常发。
- *   · 认不得的新标注 → `provider_error`:SDK 说了这是失败,就别当正文发出去。
- */
-export function claudeApiErrorCode(sdkError: string | undefined, apiErrorStatus?: number | null): ProviderErrorCode | null {
-  switch (sdkError) {
-    case undefined: case '': case 'max_output_tokens': return null
-    case 'authentication_failed': return 'auth_rejected'
-    case 'billing_error': return 'quota'
-    case 'rate_limit': return 'rate_limited'
-    case 'invalid_request': return 'invalid_request'
-    case 'server_error': return typeof apiErrorStatus === 'number' ? 'server_error' : 'network'
-    default: return 'provider_error'
-  }
-}
+// claudeApiErrorCode 搬到 ./claude-api-error-code(工作台运行时也要用,放这里会成环);这里再导出。
+export { claudeApiErrorCode }
 
 /**
  * Fire-and-forget invoker that survives both sync throws and async
@@ -441,18 +415,37 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     })
     let text = ''
     let resultText = ''
-    for await (const raw of q as AsyncGenerator<SDKMessage>) {
-      const msg = narrow(raw)
-      if (msg?.type === 'assistant') {
-        text += extractText(msg.message?.content)
-      } else if (msg?.type === 'result' && typeof msg.result === 'string') {
-        // Recent Claude CLI/SDK combinations can emit the final answer only
-        // on the result event for one-shot, maxTurns=1 calls. Prefer streamed
-        // assistant text when present, but retain this provider-level fallback
-        // so every CheapEval consumer receives the promised string.
-        resultText = msg.result
-      }
+    // SDK 对一次 API 失败的结构化标注(与会话路径同一套,见 claudeApiErrorCode)。以前这里
+    // 什么都不看:SDK 抛 `Claude Code returned an error result: …` 时结构全丢(§4.1 末),
+    // 不抛时(标注了但 result 正常)错误原文还会被当成评估答案返回。
+    let apiError: { sdkError: string; text: string } | null = null
+    let apiErrorStatus: number | null | undefined
+    const coded = (message: string): Error => {
+      const sentinelText = apiError?.text ?? message
+      const code: ProviderErrorCode | undefined = isAuthFail('claude-sentinel', sentinelText) ? 'auth_failed'
+        : apiError ? claudeApiErrorCode(apiError.sdkError, apiErrorStatus) ?? 'provider_error'
+        : undefined
+      return errorWithProviderCode(message, code)
     }
+    try {
+      for await (const raw of q as AsyncGenerator<SDKMessage>) {
+        const msg = narrow(raw)
+        if (msg?.type === 'assistant') {
+          if (claudeApiErrorCode(msg.error) !== null) { apiError = { sdkError: msg.error!, text: extractText(msg.message?.content) }; continue }
+          text += extractText(msg.message?.content)
+        } else if (msg?.type === 'result') {
+          apiErrorStatus = msg.api_error_status
+          // Recent Claude CLI/SDK combinations can emit the final answer only
+          // on the result event for one-shot, maxTurns=1 calls. Prefer streamed
+          // assistant text when present, but retain this provider-level fallback
+          // so every CheapEval consumer receives the promised string.
+          if (typeof msg.result === 'string') resultText = msg.result
+        }
+      }
+    } catch (err) {
+      throw coded(err instanceof Error ? err.message : String(err))
+    }
+    if (apiError) throw coded(apiError.text.trim() || `claude api error: ${apiError.sdkError}`)
     return text.trim().length > 0 ? text : resultText
   }
   return {

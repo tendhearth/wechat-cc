@@ -4,15 +4,19 @@
  * 样本:`__fixtures__/provider-errors/*.json`(真机日志采集 + 沙箱诱发,已脱敏)。
  * 背景与错判清单:docs/reference/provider-error-shapes.md。
  *
- * 这个测试**故意**把错判也钉住(例如 cursor 的 `acp_auth_required` 今天被判
- * unknown)。arch backlog #4 第 2 步改判定时它会红 —— 那是预期的:把 fixture
- * 里对应样本的 `current` 改成新答案,并在文档里划掉那一条错判。
- * 不要为了让它绿而改样本的 `message`:那是真机原文。
+ * 这个测试**故意**把错判也钉住(例如 cursor ACP 上 `-32603` 的假 key 判
+ * `provider_error` ⇒ unknown —— 与死代理逐字相同,不猜)。改判定时它会红 —— 那是
+ * 预期的:把 fixture 里对应样本的 `current` / `errorCode` 改成新答案,并在文档里
+ * 划掉那一条错判。第 2 步(2026-10-02)起每条样本的 `errorCode` 是 provider 边界
+ * 现在挂上的码,各家边界的测试(codex-errors / cursor-errors / agy-errors /
+ * claude-cheap-eval-error …)对拍同一份 fixture。
+ * 不要为了让它绿而改样本的 `message`:那是真机原文(唯一的例外是我们自己加的包装,
+ * 比如 openai 一次性评估以前加的 `auth_failed:` 前缀,第 2 步删掉了)。
  */
 import { describe, expect, it } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { currentVerdicts, type ProviderErrorSample } from './provider-error-verdicts'
+import { currentVerdicts, expectedHealthKind, type ProviderErrorSample } from './provider-error-verdicts'
 import { classifyFailure } from '../health/classify'
 import { errorWithProviderCode } from '../../lib/provider-error-code'
 import { authFailNotice } from '../../core/conversation-coordinator'
@@ -53,6 +57,8 @@ describe('provider 失败样本 —— 两条 owner 红线今天守住了没有'
       expect(s.current.healthKind, s.id).toBe('network')
       expect(s.current.providerFailure, s.id).toBe('transient')
       expect(s.current.registryAuthCode, s.id).toBe(false)
+      // 第 2 步:「测试连接」(llm-health)也守住了 —— 以前它直接跑宽档散文正则,报 AUTH FAILED + 去重新登录。
+      expect(s.current.llmHealthAuth, s.id).toBe(false)
     }
   })
 
@@ -93,5 +99,33 @@ describe('provider 失败样本 —— 两条 owner 红线今天守住了没有'
       expect(s.errorCode, s.id).toBe('network')
       expect(s.current.healthKind, s.id).toBe('network')
     }
+  })
+})
+
+describe('第 2 步:每家边界都产码(arch backlog #4,2026-10-02)', () => {
+  it('除了信息在边界就丢光的、daemon 自己的错误与对照样本,每条 provider 失败都带码', () => {
+    const uncoded = samples.filter(s => !s.errorCode).map(s => s.id).sort()
+    expect(uncoded).toEqual([
+      'claude.turn_watchdog.session',            // daemon 的回合看门狗,不是 provider 错误
+      'codex.empty_error.session',               // 空错误
+      'codex.exec_exit_bare.session',            // stderr 只剩一行
+      'openai.bad_key_moonshot.status_lost',     // 对照样本:「假如 status 丢了」
+      'openai.step_budget.session',              // daemon 的步数预算
+    ])
+  })
+
+  it('认证码只来自认证真相;歧义句永远不是认证码(红线 B)', () => {
+    for (const s of samples) {
+      if (s.errorCode === 'auth_failed' || s.errorCode === 'auth_rejected') expect(s.truth, s.id).toBe('auth')
+    }
+    for (const s of samples.filter(x => x.truth === 'auth_ambiguous')) expect(s.errorCode, s.id).toBe('network')
+  })
+
+  it('除了 Cursor ACP 上那两条不猜的,决定通知的判定不再有 ✗', () => {
+    const wrong = samples.filter(s => {
+      const exp = expectedHealthKind(s.truth)
+      return exp === 'not_llm_auth' ? s.current.healthKind === 'llm_auth' : s.current.healthKind !== exp
+    }).map(s => s.id).sort()
+    expect(wrong).toEqual(['cursor.bad_key.acp', 'cursor.net_proxy.acp'])
   })
 })

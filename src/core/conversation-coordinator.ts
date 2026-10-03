@@ -30,7 +30,7 @@ import {
 } from './chatroom-conductor'
 import { assertSupported, capabilitiesFor, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
 import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } from './agent-provider'
-import { isAuthErrorCode } from '../lib/provider-error-code'
+import { isAuthErrorCode, providerErrorCodeOf } from '../lib/provider-error-code'
 import { resolveEffectiveTier, resolveTier, TIER_PROFILES, type TierProfile } from './user-tier'
 import type { Access } from '../lib/access'
 import { decideCall, unprotectedMessage, type NetworkGate } from '../lib/network-gate'
@@ -226,14 +226,33 @@ export function authFailNotice(providerId: ProviderId, code: string = 'auth_fail
  *  transient hiccup. Both point at the desktop 大脑 card, in CC's voice. */
 /** spawn 阶段的失败(不是回合中途):探测没过 / 二进制不在。把 provider 自己
  *  给的人话原样带上 —— first-use-probe 的 failureMessage 就是写给用户看的。 */
-export function spawnFailedNotice(providerId: ProviderId, detail: string): string {
+/**
+ * provider 边界产的码 → 给主人的一句**老实的原因**(arch backlog #4 第 2 步)。
+ * 只按码说话,不读错误原文;认证两码不在这里(它们走 authFailNotice,措辞按红线 A 分)。
+ * 没码 / 码说不出具体原因 ⇒ undefined,调用方用原来的通用说法。
+ */
+export function providerFailureReason(providerId: ProviderId, code: string | undefined): string | undefined {
+  switch (code) {
+    case 'network': return `这条没接住:连不上 ${providerId} 的服务(网络问题,不是你的消息有问题)。网络好了再发我一次就行。`
+    case 'server_error': return `这条没接住:${providerId} 的服务那边出错了(服务端 5xx),通常过一会儿自己会好,稍后再发我一次。`
+    case 'rate_limited': return `这条没接住:${providerId} 暂时限流了,等几分钟再发我一次。`
+    case 'quota': return `这条没接住:${providerId} 的额度用完了。等额度恢复,或者先换一个脑子(比如 /cc)。`
+    default: return undefined
+  }
+}
+
+export function spawnFailedNotice(providerId: ProviderId, detail: string, code?: string): string {
   const head = `❌ ${providerId} 这次没起来,这条我没接住。`
+  const reason = providerFailureReason(providerId, code)
+  if (reason) return `${head}${reason.replace(/^这条没接住:/, '')}\n先 /cc 用 Claude 也行。`
   const d = detail.trim()
   if (/enoent|not found|no such file|not installed/i.test(d)) return `${head}它好像还没在电脑上接好 —— 主人在「此刻」页的大脑卡里帮我接上,或者 /cc 先用 Claude。`
   return `${head}${d.length > 0 ? d.slice(0, 300) : ''}\n先 /cc 用 Claude 也行。`
 }
 
-export function turnErrorNotice(providerId: ProviderId, error: string | undefined): string {
+export function turnErrorNotice(providerId: ProviderId, error: string | undefined, code?: string): string {
+  const reason = providerFailureReason(providerId, code)
+  if (reason) return reason
   const e = (error ?? '').toLowerCase()
   if (/enoent|not found|no such file|spawn|not installed/.test(e)) {
     return `这条我收到了,但没想起来怎么回——我的脑子(${providerId})好像还没在电脑上接好。麻烦主人打开 wechat-cc,在「此刻」页点一下大脑卡帮我接上,弄好再发我一条就行。`
@@ -637,9 +656,18 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         // 之前这个异常一路冒到 dispatch 外层只记日志,用户端一片沉默。
         // 沉默 = 被无视;把原因用人话交给用户,并记一条 turn。
         const detail = err instanceof Error ? err.message : String(err)
+        // 边界在抛出物上挂了码(比如 Cursor ACP 建会话时的 -32000 未登录)就按码走:
+        // 认证 ⇒ 与回合里的认证失败同一条路(释放 + 节流提示,措辞按码分);其余 ⇒ 老实的原因。
+        const code = providerErrorCodeOf(err)
+        summary = { assistantText: [], replyToolCalled: false, toolCalls: [], error: detail, ...(code ? { errorCode: code } : {}) }
+        deps.log('COORDINATOR', `chat=${msg.chatId} provider=${providerId} spawn failed${code ? ` code=${code}` : ''}: ${detail.slice(0, 300)}`, { event: 'spawn_failed', chat_id: msg.chatId, provider: providerId })
+        if (isAuthErrorCode(code)) {
+          outcome = 'auth_failed'
+          await handleAuthFailed(msg.chatId, proj.alias, providerId, summary)
+          return
+        }
         outcome = 'error'
-        deps.log('COORDINATOR', `chat=${msg.chatId} provider=${providerId} spawn failed: ${detail.slice(0, 300)}`, { event: 'spawn_failed', chat_id: msg.chatId, provider: providerId })
-        await deps.sendAssistantText?.(msg.chatId, spawnFailedNotice(providerId, detail))
+        await deps.sendAssistantText?.(msg.chatId, spawnFailedNotice(providerId, detail, code))
         return
       }
       // Registered before collectTurn starts draining so /stop can reach
@@ -697,7 +725,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // fix lives. Unthrottled on purpose (same rationale as the timeout
       // notice: each dropped message deserves an acknowledgement).
       if (summary.error && !replyToolCalled && assistantTexts.length === 0) {
-        await deps.sendAssistantText?.(msg.chatId, turnErrorNotice(providerId, summary.error))
+        await deps.sendAssistantText?.(msg.chatId, turnErrorNotice(providerId, summary.error, summary.errorCode))
         return
       }
 

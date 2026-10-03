@@ -5,6 +5,8 @@ import { resolveCodexCheapModel } from './codex-cheap-model'
 import type { TierProfile } from './user-tier'
 import type { McpStdioSpec } from './mcp-stdio-spec'
 import { makeTurnEmitter } from './turn-emitter'
+import { codexErrorCode, codexTimeoutsFromEnv, watchCodexEvents, type CodexTimeouts } from './codex-errors'
+import { providerErrorCodeOf, withProviderCode } from '../lib/provider-error-code'
 import { log } from '../lib/log'
 
 /**
@@ -89,8 +91,13 @@ export function tierProfileToCodexSdkOpts(tp: TierProfile, permissionMode: Permi
  *   item.completed{type=agent_message}          → { kind: 'text', text }
  *   item.completed{type=mcp_tool_call}          → { kind: 'tool_call', server, tool }
  *   turn.completed                              → { kind: 'result', sessionId, numTurns, durationMs }
- *   turn.failed                                 → { kind: 'error', message }
- *   error                                       → { kind: 'error', message }
+ *   turn.failed                                 → { kind: 'error', message, code }
+ *   error                                       → { kind: 'error', message, code }
+ *   error「Reconnecting...」                     → (不是终态:只记日志,见 codex-errors)
+ *
+ * `code` 是边界产的结构化码(codex-errors.codexErrorCode;arch backlog #4 第 2 步)。
+ * 连不上时 codex 会无限期地发「Reconnecting... waiting for network」—— 两个边界超时
+ * (codex-errors.CodexTimeouts)把这一轮以 `network` 收掉,不再一片沉默。
  */
 
 // Auth-failure classification now lives in auth-fail.ts's sdk-error wide
@@ -129,6 +136,8 @@ export interface CodexAgentProviderOptions {
   dangerouslyBypassApprovalsAndSandbox?: boolean
   /** Test-only: inject a mock Codex factory. Production omits this. */
   codexFactory?: CodexFactory
+  /** 边界超时;缺省读 WECHAT_CODEX_FIRST_EVENT_TIMEOUT_MS / WECHAT_CODEX_CONNECT_TIMEOUT_MS(见 codex-errors)。 */
+  timeouts?: CodexTimeouts
 }
 
 export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): AgentProvider {
@@ -137,6 +146,7 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
   // model cache entries on next daemon restart, matching how the user
   // adds models (codex login → cache refreshes → restart daemon).
   const cheapModel = resolveCodexCheapModel()
+  const timeouts = (): CodexTimeouts => opts.timeouts ?? codexTimeoutsFromEnv()
   // Hoisted Codex instance reused across every cheapEval call. The
   // Codex constructor itself does NOT spawn a CLI subprocess (only
   // startThread + run/runStreamed do), so a single instance is safe to
@@ -175,14 +185,24 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
         workingDirectory: tmpdir(),
         skipGitRepoCheck: true,
       })
-      const turn = await thread.run(prompt)
-      // Concatenate agent_message items — that's the assistant's text
-      // output. Reasoning items and tool calls are filtered out.
+      // runStreamed(而不是 run):run 把「Reconnecting…」吞在里面,连不上时一直挂着
+      // (ingest / gardener 这类没设预算的调用方就跟着挂)。流式 + 边界超时 ⇒ 带码抛出。
+      const aborter = new AbortController()
       const parts: string[] = []
-      for (const item of turn.items as ThreadItem[]) {
-        if (item.type === 'agent_message') {
-          parts.push((item as ThreadItem & { text: string }).text)
+      try {
+        const { events } = await thread.runStreamed(prompt, { signal: aborter.signal })
+        for await (const ev of watchCodexEvents(events as AsyncGenerator<ThreadEvent>, { timeouts: timeouts(), abort: () => aborter.abort(), onNotice: m => log('CODEX_RECONNECT', `cheapEval ${m.slice(0, 200)}`) })) {
+          // Concatenate agent_message items — that's the assistant's text
+          // output. Reasoning items and tool calls are filtered out.
+          if (ev.type === 'item.completed' && ev.item.type === 'agent_message') parts.push(ev.item.text)
+          else if (ev.type === 'turn.failed') throw withProviderCode(new Error(ev.error.message), codexErrorCode(ev.error.message))
+          else if (ev.type === 'error') throw withProviderCode(new Error(ev.message), codexErrorCode(ev.message))
         }
+      } catch (err) {
+        // 已经带码的(超时 / 上面的终态)原样抛;codex 子进程自己退出的(`Codex Exec exited
+        // with code 1: …` + stderr)在这里补码。
+        if (providerErrorCodeOf(err)) throw err
+        throw withProviderCode(err, codexErrorCode(err instanceof Error ? err.message : String(err)))
       }
       return parts.join('')
     },
@@ -279,9 +299,17 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
                 instructionsInjected = true
               }
 
+              // 这一轮已经发过终态错误(turn.failed / 终止的 error)之后,codex 子进程照例
+              // 以 exit 1 收尾、SDK 再抛一次 —— 那一下不是新信息,不再往下送。
+              let terminalErrorSent = false
               try {
                 const { events } = await thread.runStreamed(dispatchedText, { signal: turnAborter.signal })
-                for await (const ev of events as AsyncGenerator<ThreadEvent>) {
+                const watched = watchCodexEvents(events as AsyncGenerator<ThreadEvent>, {
+                  timeouts: timeouts(),
+                  abort: () => turnAborter.abort(),
+                  onNotice: m => log('CODEX_RECONNECT', `alias=${project.alias} ${m.slice(0, 300)}`),
+                })
+                for await (const ev of watched) {
                   if (ev.type === 'thread.started') {
                     if (!initEmitted) {
                       log('SESSION_INIT', `alias=${project.alias} thread_id=${ev.thread_id} provider=codex`)
@@ -300,14 +328,25 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
                   } else if (ev.type === 'turn.failed') {
                     const m = ev.error.message
                     console.error(`wechat channel: [SESSION_RESULT] alias=${project.alias} provider=codex turn.failed=${m.slice(0, 400)}`)
-                    yield em.errorText(m)
+                    terminalErrorSent = true
+                    yield em.errorText(m, { code: codexErrorCode(m) })
                   } else if (ev.type === 'error') {
                     const m = (ev as { type: 'error'; message: string }).message
                     console.error(`wechat channel: [SESSION_ERROR] alias=${project.alias} provider=codex stream-error=${m.slice(0, 400)}`)
-                    yield em.errorText(m)
+                    terminalErrorSent = true
+                    yield em.errorText(m, { code: codexErrorCode(m) })
                   }
                 }
               } catch (err) {
+                // 边界超时(watchCodexEvents 抛的,已带码):这一轮以带码的 error 事件收尾,
+                // 不往外抛 —— 抛出去 coordinator 就拿不到 summary,主人收不到任何话。
+                const timeoutCode = providerErrorCodeOf(err)
+                if (timeoutCode) {
+                  const m = err instanceof Error ? err.message : String(err)
+                  console.error(`wechat channel: [SESSION_ERROR] alias=${project.alias} provider=codex timeout code=${timeoutCode}: ${m.slice(0, 300)}`)
+                  yield em.errorText(m, { code: timeoutCode })
+                  return
+                }
                 // Skip the SESSION_ERROR log on user/preempt-initiated
                 // aborts — both `/stop` and "new dispatch preempts prior"
                 // legitimately abort the in-flight runStreamed, and the
@@ -316,11 +355,17 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
                 // obscure real SDK failures.
                 const isAbort = err instanceof Error
                   && (err.name === 'AbortError' || turnAborter.signal.aborted)
-                if (!isAbort) {
-                  const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
-                  console.error(`wechat channel: [SESSION_ERROR] alias=${project.alias} provider=codex dispatch threw: ${detail}`)
-                }
-                throw err
+                if (isAbort) throw err
+                const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+                console.error(`wechat channel: [SESSION_ERROR] alias=${project.alias} provider=codex dispatch threw: ${detail}`)
+                // codex 子进程以非零码退出(`Codex Exec exited with code 1: …` + stderr)。
+                // 已经发过终态错误就不再重复;否则把它变成带码的 error 事件(stderr 里常有
+                // 真因,比如 `failed to connect to websocket: HTTP error: 401`)—— 以前它被
+                // 原样抛出,coordinator 拿不到 summary,回合记成 error 且 error 为空(§4.7)。
+                if (terminalErrorSent) return
+                const m = err instanceof Error ? err.message : String(err)
+                yield em.errorText(m, { code: codexErrorCode(m) })
+                return
               } finally {
                 if (activeAborter === turnAborter) activeAborter = null
               }

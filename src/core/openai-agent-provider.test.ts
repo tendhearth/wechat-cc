@@ -347,13 +347,9 @@ describe('openai provider loop', () => {
     await expect(provider.strongEval!('ping')).rejects.toThrow(/auth_failed/)
   })
 
-  it('cheapEval classifies a thrown 401 (real gateway auth error, no longer masked by NoOutputGeneratedError) as auth_failed', async () => {
-    // Post-fix, openai-chat-model's generate() surfaces the real transport
-    // error instead of swallowing it — this proves the eval-path caller
-    // catches that thrown error and re-wraps it into the same
-    // `auth_failed: …` contract assertNotAuthFailed uses for error-shaped
-    // TEXT, so downstream consumers (wrapCheapEvalWithAuthFailCheck,
-    // gardener.ts) don't need to know which shape the failure took.
+  it('cheapEval rethrows a thrown 401 (real gateway auth error) with code auth_rejected, status and message intact', async () => {
+    // arch backlog #4 第 2 步:以前这里重抛成 `auth_failed: …` 且丢了 status;401 只说明凭证
+    // 被拒,不说明登录过期(红线 A 的细化)⇒ 原错误 + providerErrorCode=auth_rejected。
     const authThrowModel: ChatModelClient = {
       streamTurn() { throw new Error('not used in this test') },
       async generate() { throw Object.assign(new Error('Authentication Error'), { statusCode: 401 }) },
@@ -362,10 +358,11 @@ describe('openai provider loop', () => {
       toolResultMessage: (id, name, r) => ({ role: 'tool', content: `${name}:${JSON.stringify(r)}` } as any),
     }
     const provider = createOpenAiAgentProvider({ makeChatModel: () => authThrowModel, makeMcpBridge: async () => fakeBridge([]) })
-    await expect(provider.cheapEval!('ping')).rejects.toThrow(/^auth_failed:/)
+    const err = await provider.cheapEval!('ping').catch(e => e)
+    expect(err).toMatchObject({ message: 'Authentication Error', statusCode: 401, providerErrorCode: 'auth_rejected' })
   })
 
-  it('strongEval classifies a thrown 401 as auth_failed', async () => {
+  it('strongEval rethrows a thrown 401 with code auth_rejected', async () => {
     const authThrowModel: ChatModelClient = {
       streamTurn() { throw new Error('not used in this test') },
       async generate() { throw Object.assign(new Error('Authentication Error'), { statusCode: 401 }) },
@@ -374,7 +371,7 @@ describe('openai provider loop', () => {
       toolResultMessage: (id, name, r) => ({ role: 'tool', content: `${name}:${JSON.stringify(r)}` } as any),
     }
     const provider = createOpenAiAgentProvider({ makeChatModel: () => authThrowModel, makeMcpBridge: async () => fakeBridge([]) })
-    await expect(provider.strongEval!('ping')).rejects.toThrow(/^auth_failed:/)
+    await expect(provider.strongEval!('ping')).rejects.toMatchObject({ providerErrorCode: 'auth_rejected' })
   })
 
   it('cheapEval passes through a non-auth thrown error unchanged (no false auth_failed classification)', async () => {
