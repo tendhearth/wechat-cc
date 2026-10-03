@@ -434,7 +434,7 @@ describe('success path', () => {
         return jsonResponse(202, { task: { id: 'task-1', status: 'queued', phase: 'queued' } })
       }
       if (u.pathname === '/v1/workbench/archive') return jsonResponse(200, { task: { id: 'task-1', archivedAt: 1 } })
-      if (u.pathname === '/v1/workbench/task') return jsonResponse(200, { task: { id: 'task-1', status: taskStatus, phase: 'working' } })
+      if (u.pathname === '/v1/workbench/task') return jsonResponse(200, { task: { id: 'task-1', status: taskStatus, phase: 'working', canArchive: taskStatus === 'completed' } })
       if (u.pathname === '/set/api/apply') return jsonResponse(200, { ok: true })
       throw new Error(`unexpected fetch: ${u.pathname}`)
     }) as unknown as typeof fetch
@@ -732,7 +732,7 @@ function makeHarness(opts: { linkUrl: string }): Harness {
       return jsonResponse(202, { task: { id: 'task-1' } })
     }
     if (u.pathname === '/v1/workbench/archive') return jsonResponse(200, { task: { id: 'task-1' } })
-    if (u.pathname === '/v1/workbench/task') return jsonResponse(200, { task: { id: 'task-1', status: taskStatus, phase: 'working' } })
+    if (u.pathname === '/v1/workbench/task') return jsonResponse(200, { task: { id: 'task-1', status: taskStatus, phase: 'working', canArchive: taskStatus === 'completed' } })
     if (u.pathname === '/set/api/apply') return jsonResponse(200, { ok: true })
     throw new Error(`unexpected fetch: ${key}`)
   }) as unknown as typeof fetch
@@ -775,7 +775,7 @@ const V1_LINK = 'https://cc.tendhearth.com/pset/#id=tdeadbeef&t=link-tok&p=%2Fse
  * successful cancel response nor a missing relay row ends a real task. */
 function lifecycleHarness() {
   const state = {
-    now: 1000, status: 'running', phase: 'working', visible: true,
+    now: 1000, status: 'running', phase: 'working', visible: true, canArchive: false as boolean | undefined,
     cancelStatus: 202, archiveStatus: 200, readCount: 0, unsubscribed: false, publishCreatedTask: true,
     detailError: undefined as Error | undefined,
     cancelError: undefined as Error | undefined,
@@ -795,7 +795,7 @@ function lifecycleHarness() {
   }
   const hooks = {
     onRead: () => {},
-    onSleep: () => { state.status = 'completed'; emit(false) },
+    onSleep: () => { state.status = 'completed'; state.canArchive = true; emit(false) },
   }
   let deviceConnections = 0
   const deps = baseDeps({
@@ -817,8 +817,8 @@ function lifecycleHarness() {
         state.readCount++
         hooks.onRead()
         if (state.detailError) throw state.detailError
-        timeline.push(`read:${state.status}:${state.visible}`)
-        return jsonResponse(200, { task: { id: state.detailId, status: state.status, phase: state.phase } })
+        timeline.push(`read:${state.status}:${state.visible}:${state.canArchive}`)
+        return jsonResponse(200, { task: { id: state.detailId, status: state.status, phase: state.phase, canArchive: state.canArchive } })
       }
       if (u.pathname === '/v1/workbench/cancel') {
         expect(body).toEqual({ id: 'own-task' })
@@ -865,17 +865,17 @@ describe('phone task closure and scratch safety', () => {
     let sleeps = 0
     h.hooks.onSleep = () => {
       if (++sleeps === 1) { h.state.status = 'cancelling'; h.emit(false) }
-      else if (sleeps === 2) { h.state.status = 'completed'; h.emit(true) }
+      else if (sleeps === 2) { h.state.status = 'completed'; h.state.canArchive = true; h.emit(true) }
       else h.emit(false)
     }
     const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 1000 })
     expect(r.ok).toBe(true)
     expect(h.calls.filter((c) => c.path === '/v1/workbench/cancel')).toHaveLength(1)
-    expect(h.timeline).toContain('read:cancelling:false')
-    expect(h.timeline).toContain('read:completed:true')
-    expect(h.timeline.indexOf('archive')).toBeGreaterThan(h.timeline.indexOf('read:completed:false'))
+    expect(h.timeline).toContain('read:cancelling:false:false')
+    expect(h.timeline).toContain('read:completed:true:true')
+    expect(h.timeline.indexOf('archive')).toBeGreaterThan(h.timeline.indexOf('read:completed:false:true'))
     expect(h.timeline.indexOf('rm')).toBeGreaterThan(h.timeline.indexOf('archive'))
-    expect(h.timeline.indexOf('unsubscribe')).toBeGreaterThan(h.timeline.indexOf('read:completed:false'))
+    expect(h.timeline.indexOf('unsubscribe')).toBeGreaterThan(h.timeline.indexOf('read:completed:false:true'))
     expect(h.dirs.size).toBe(0)
     assertDeviceRevoked(r)
   })
@@ -883,18 +883,60 @@ describe('phone task closure and scratch safety', () => {
   it('does not cancel an already terminal task and waits for the relay to remove it', async () => {
     const h = lifecycleHarness()
     h.state.status = 'completed'
+    h.state.canArchive = true
     const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 1000 })
     expect(r.ok).toBe(true)
-    expect(h.timeline).toContain('read:completed:true')
-    expect(h.timeline).toContain('read:completed:false')
+    expect(h.timeline).toContain('read:completed:true:true')
+    expect(h.timeline).toContain('read:completed:false:true')
     expect(h.timeline).not.toContain('cancel')
+    assertDeviceRevoked(r)
+  })
+
+  it.each([false, undefined])('preserves terminal scratch after feed removal when canArchive is %s', async (canArchive) => {
+    const h = lifecycleHarness()
+    h.state.status = 'interrupted'
+    h.state.phase = 'interrupted'
+    h.state.canArchive = canArchive
+    h.hooks.onSleep = () => h.emit(false)
+    const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 200 })
+    expect(r.ok).toBe(false)
+    expect(r.durationMs).toBe(20_200)
+    expect(r.checks.find((c) => c.name === 'agents_task_terminal')?.ok).toBe(false)
+    expect(r.checks.find((c) => c.name === 'task_closed')?.ok).toBe(false)
+    expect(h.timeline).toContain(`read:interrupted:false:${canArchive}`)
+    expect(h.timeline).not.toContain('cancel')
+    expect(h.timeline).not.toContain('archive')
+    expect(h.timeline).not.toContain('rm')
+    expect(h.dirs.size).toBe(1)
+    assertDeviceRevoked(r)
+  })
+
+  it('waits for late writer closure after terminal status and feed removal before archiving', async () => {
+    const h = lifecycleHarness()
+    h.state.status = 'interrupted'
+    h.state.phase = 'interrupted'
+    let sleeps = 0
+    h.hooks.onSleep = () => {
+      expect(h.timeline).not.toContain('archive')
+      expect(h.timeline).not.toContain('rm')
+      if (++sleeps === 2) h.state.canArchive = true
+      h.emit(false)
+    }
+    const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 1000 })
+    expect(r.ok).toBe(true)
+    expect(h.timeline).toContain('read:interrupted:false:false')
+    expect(h.timeline).toContain('read:interrupted:false:true')
+    expect(h.timeline.indexOf('archive')).toBeGreaterThan(h.timeline.indexOf('read:interrupted:false:true'))
+    expect(h.timeline.indexOf('rm')).toBeGreaterThan(h.timeline.indexOf('archive'))
+    expect(h.timeline).not.toContain('cancel')
+    expect(h.dirs.size).toBe(0)
     assertDeviceRevoked(r)
   })
 
   it('uses a fresh cleanup budget after the original timeout without changing the failed result', async () => {
     const h = lifecycleHarness()
     h.hooks.onSleep = () => {
-      if (h.timeline.includes('cancel')) { h.state.status = 'cancelled'; h.emit(false) }
+      if (h.timeline.includes('cancel')) { h.state.status = 'cancelled'; h.state.canArchive = true; h.emit(false) }
     }
     const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 200 })
     expect(r.ok).toBe(false)
@@ -969,6 +1011,7 @@ describe('phone task closure and scratch safety', () => {
       if (h.state.readCount === 2) {
         h.state.now += 19_975
         h.state.status = 'completed'
+        h.state.canArchive = true
         h.emit(false)
       }
     }
@@ -1005,6 +1048,7 @@ describe('phone task closure and scratch safety', () => {
       if (h.state.readCount === 2) {
         h.state.now += 20_000
         h.state.status = 'completed'
+        h.state.canArchive = true
         h.emit(false)
       }
     }
@@ -1061,6 +1105,7 @@ describe('phone task closure and scratch safety', () => {
   it('never treats an unrelated terminal task detail as proof that this scratch is idle', async () => {
     const h = lifecycleHarness()
     h.state.status = 'completed'
+    h.state.canArchive = true
     h.state.detailId = 'somebody-elses-task'
     const r = await runPhoneSelftest(h.deps, { executor: 'claude', timeoutMs: 200 })
     expect(r.ok).toBe(false)
