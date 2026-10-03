@@ -3,6 +3,7 @@ import {lstatSync} from 'node:fs'
 import {relative,sep} from 'node:path'
 import type {AgentAttachment,AgentEvent,AgentProvider,AgentSession,SpawnContext} from '../agent-provider'
 import {AsyncQueue} from '../async-queue'
+import {openaiErrorCode,openaiErrorMessage} from '../openai-error-code'
 import {canonicalProject,readAnchoredRegular} from './artifacts'
 import {API_FILE_TOOLS,prepareApiFileTool} from './api-files'
 import type {APIModel,ChatMessage} from './api-model'
@@ -14,6 +15,7 @@ interface Options {
   /** 守护(评审 #193 P1-1):`model` 实际连的 base URL(和建 APIModel 的是同一份)。不给 ⇒ 闸门按需要保护。 */
   baseURL?:string
   maxSteps?:number;closeTimeoutMs?:number;privateStateDir?:string
+  log?:(tag:string,line:string)=>void
 }
 const TEXT_MIMES=new Set(['text/plain','text/markdown','text/csv','application/json'])
 const IMAGE_MIMES=new Set(['image/png','image/jpeg','image/webp'])
@@ -204,7 +206,12 @@ export function createApiTaskProvider(options:Options):AgentProvider&{canResume(
           if(saved.state==='active')persist(saved.messages,'interrupted')
           const reason=signal.aborted?'api_task_cancelled':error instanceof Error?error.message:''
           const code=/^(api_task_[a-z_]+|workbench_execution_unsupported)$/.test(reason)?reason:'api_task_request_failed'
-          queue.push({kind:'error',message:code,code})
+          // 请求本身失败:message 仍是稳定的任务码,code 换成边界分好的 provider 码
+          // (401 ⇒ auth_rejected、连不上 ⇒ network、429 ⇒ rate_limited …;arch backlog #4 第 2 步),
+          // 工作台据它给主人说老实的原因。分不出来就保持任务码。
+          const providerCode=code==='api_task_request_failed'?openaiErrorCode(error):undefined
+          if(providerCode)options.log?.('API_TASK_ERROR',`code=${providerCode} ${openaiErrorMessage(error).slice(0,200)}`)
+          queue.push({kind:'error',message:code,code:providerCode??code})
         }finally{controller?.abort();queue.end()}
       }
       const session:AgentSession={

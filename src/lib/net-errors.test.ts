@@ -14,13 +14,17 @@ const REAL_WORLD = [
   'connect ECONNREFUSED 10.84.6.254:8717',
   'getaddrinfo ENOTFOUND cc.tendhearth.com',
   'socket hang up',
+  // provider-error-shapes §4.6(arch backlog #4 第 2 步补进来的)
+  "The socket connection was closed unexpectedly. For more information, pass 'verbose: true' in the second argument to fetch()", // Bun,openai 兼容
+  'dial tcp: lookup daily-cloudcode-pa.googleapis.com: no such host',          // Go,agy
+  'Post "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist": EOF', // Go,agy
 ]
 
 describe('isConnectFailure', () => {
   it.each(REAL_WORLD)('认得出:%s', (s) => { expect(isConnectFailure(s)).toBe(true) })
 
   it('不把无关错误当成连不上', () => {
-    for (const s of ['HTTP 401 unauthorized', 'malformed hand response', 'unknown_peer: claude', '']) {
+    for (const s of ['HTTP 401 unauthorized', 'malformed hand response', 'unknown_peer: claude', '', 'unexpected EOF in JSON', 'EOFError']) {
       expect(isConnectFailure(s)).toBe(false)
     }
   })

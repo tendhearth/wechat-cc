@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { makeLlmHealth } from './llm-health'
+import { errorWithProviderCode } from '../lib/provider-error-code'
 
 function reg(providers: Record<string, { cheapEval?: (p: string) => Promise<string> }>) {
   return {
@@ -29,6 +30,34 @@ describe('makeLlmHealth', () => {
     expect(by['codex']).toMatchObject({ ok: false, auth_failed: false })
     expect(r.default_provider).toBe('claude')
     expect(typeof r.checked_at).toBe('string')
+  })
+
+  // arch backlog #4 第 2 步 + 红线 B:「测试连接」以前直接跑宽档散文正则,agy 那句
+  // `authentication failed or timed out` 被报成 AUTH FAILED + 去重新登录。现在码优先,
+  // 无码回退到网络优先的文本判定。
+  it('reads the provider code first; the agy ambiguous line is never AUTH FAILED; auth_rejected gets no re-login hint', async () => {
+    const h = makeLlmHealth({
+      registry: reg({
+        agy: { cheapEval: async () => { throw new Error('agy result status=ERROR: authentication failed or timed out') } },
+        agyCoded: { cheapEval: async () => { throw errorWithProviderCode('agy result status=ERROR: authentication failed or timed out', 'network') } },
+        openai: { cheapEval: async () => { throw errorWithProviderCode('Invalid Authentication', 'auth_rejected') } },
+        claude: { cheapEval: async () => { throw errorWithProviderCode('Not logged in · Please run /login', 'auth_failed') } },
+        codex: { cheapEval: async () => { throw errorWithProviderCode('unexpected status 401 Unauthorized ... (rate limit)', 'rate_limited') } },
+      }) as never,
+      defaultProviderId: 'claude' as never,
+      hintFor: () => '请重新登录一次',
+      timeoutMs: 5_000,
+      log: () => {},
+    })
+    const by = Object.fromEntries((await h.dial()).results.map((x: { provider: string }) => [x.provider, x]))
+    expect(by['agy']).toMatchObject({ ok: false, auth_failed: false })
+    expect(by['agy']).not.toHaveProperty('hint')
+    expect(by['agyCoded']).toMatchObject({ ok: false, auth_failed: false, code: 'network' })
+    expect(by['openai']).toMatchObject({ ok: false, auth_failed: true, code: 'auth_rejected' })
+    expect((by['openai'] as unknown as { hint: string }).hint).not.toMatch(/登录/)
+    expect(by['claude']).toMatchObject({ ok: false, auth_failed: true, code: 'auth_failed', hint: '请重新登录一次' })
+    // 码说「限流」⇒ 不是认证,哪怕正文里有 401。
+    expect(by['codex']).toMatchObject({ ok: false, auth_failed: false, code: 'rate_limited' })
   })
 
   it('a hung provider is classified timeout, not a hang for the caller', async () => {

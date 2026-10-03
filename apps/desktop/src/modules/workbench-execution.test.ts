@@ -70,6 +70,12 @@ it('explains execution choice failures without exposing machine codes or changin
  expect(executionErrorMessage('workbench_execution_unsupported')).toContain('自动')
  expect(executionErrorMessage('workbench_resume_unsupported')).toContain('桌面')
  expect(executionErrorMessage('provider_quota_exhausted')).toContain('额度')
+ // arch backlog #4 第 2 步:按 provider 码来的失败都有一句人话;auth_rejected 不说登录(红线 A)。
+ expect(executionErrorMessage('provider_network')).toContain('网络')
+ expect(executionErrorMessage('provider_auth_expired')).toContain('重新登录')
+ expect(executionErrorMessage('provider_auth_rejected')).toContain('401/403')
+ expect(executionErrorMessage('provider_auth_rejected')).not.toMatch(/登录|过期/)
+ expect(executionErrorMessage('provider_server_error')).toContain('5xx')
  expect(executionErrorMessage('provider_rate_limited')).toContain('稍后')
  expect(executionErrorMessage('workbench_busy')).toContain('文件夹')
  expect(executionErrorMessage('review_file_unmarkable')).toContain('不能标记')

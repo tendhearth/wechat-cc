@@ -47,6 +47,12 @@ export function executionErrorMessage(error){
   api_task_cancelled:'API 任务已停止，没有继续执行后续操作。',
   provider_quota_exhausted:'这个执行者的额度已用完。可以交给另一位执行者继续，或等额度恢复后再试。',
   provider_rate_limited:'这个执行者暂时被限流，请稍后再试；也可以交给另一位执行者继续。',
+  // provider 边界产的结构化码(arch backlog #4 第 2 步;与 core/workbench/execution-settings 同一组)。
+  provider_auth_expired:'这个执行者的登录已失效。请在电脑上重新登录它，再继续。',
+  provider_auth_rejected:'这个执行者的服务拒绝了账号或密钥（API 返回 401/403）。请检查账号或密钥后再继续。',
+  provider_network:'连不上这个执行者的服务（网络问题）。网络恢复后再继续。',
+  provider_server_error:'这个执行者的服务端出错了（5xx），通常过一会儿会恢复，稍后再继续。',
+  provider_invalid_request:'这个执行者拒绝了这次请求（比如内容太长或模型不可用）。请调整后再继续。',
   workbench_busy:'这个文件夹正有另一个任务在写，等它答复后再续接。',
   review_file_unmarkable:'这个文件没有展开差异，不能标记。',
   invalid_review_reference:'改动记录已经变了，请刷新后再试。',
