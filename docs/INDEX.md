@@ -58,7 +58,7 @@
 | 引导与访客 | [reference/access-control.md](reference/access-control.md) | `superpowers/specs/2026-08-18-{owner-onboarding,guest-path}-design.md` |
 | 提醒 | — | `superpowers/specs/2026-08-20-reminders-port-design.md` |
 | 外发健康 | — | `superpowers/specs/2026-08-22-outbound-health-design.md` |
-| 回复交付(一轮最后的话就是回复、daemon 统一分条 / 节奏 / 三端送达、`NO_REPLY`、附件、`message` 工具;**设计稿,待主人审**) | — | `superpowers/specs/2026-10-03-reply-delivery-design.md` |
+| 回复交付(一轮最后的话就是回复、daemon 统一分条 / 节奏 / 三端送达、`NO_REPLY`、附件、`message` 工具;设计已定 2026-10-03,§6 八条按推荐定) | — | `superpowers/specs/2026-10-03-reply-delivery-design.md` |
 | openai 兼容后端「发完话还在发」:实验 harness、各候选对照表(#196 已关,harness 留作回复交付迁移的验收工具) | [reference/reply-once-experiment.md](reference/reply-once-experiment.md) | 实验结论(2026-10-02),见 roadmap 修订记录 |
 | 功能全表 / 权限模式 / 微信命令 / 运行时目录 / 访问控制 / A2A / 常见问题 | [reference/](reference/) 下同名文件 | — |
 | 插件(含内置插件来源:不随包、`plugin source` 登记、按内置默认开) | [plugins.md](plugins.md);部署侧 [maintainer/deploy.md「内置插件」](maintainer/deploy.md) | `src/lib/plugins-source.ts` + `src/daemon/plugins/health.ts` |

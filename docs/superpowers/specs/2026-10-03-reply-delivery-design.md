@@ -1,6 +1,6 @@
 # 回复交付:一轮最后的话就是回复,daemon 负责送达
 
-日期:2026-10-03。状态:**设计稿,待主人审**(方向主人 2026-10-02 已同意;本稿把方向落到真代码上,列出要主人定的几条)。代码引用以 `origin/dev` `1f68ad33` 为准。
+日期:2026-10-03。状态:**已定**(方向主人 2026-10-02 已同意;2026-10-03 维护者审稿通过,§6 八条按推荐写定,主人授权)。代码引用以 `origin/dev` `1f68ad33` 为准。
 
 前情:PR #196(按内容丢「（真的停了）」这类尾巴)已关 —— 主人的判断是**补丁治标**,要从根上改「话怎么说出去」。#196 的实验 harness 与 110 回合原始数据搬进了本 PR(`scripts/experiments/reply-once/`、[`docs/reference/reply-once-experiment.md`](../../reference/reply-once-experiment.md)),作为下文每一步迁移的验收工具。
 
@@ -29,7 +29,7 @@ CC 要求所有执行者经 wechat MCP 的 `reply` 工具说话,直接写出来�
 
 **③ 两套出口,行为不一致。** 工具路径(`POST /v1/wechat/reply`,`src/daemon/internal-api/routes.ts:532-585`)有空文本拒绝、app 接收器、旁听、参与者前缀、气泡切分 + 节奏;fallback 路径(`src/daemon/bootstrap/fallback-reply.ts:59-79`)只有接收器 + 旁听 + 原样发送,**没有切分、没有节奏、没有前缀**。同一句话走哪条路,主人收到的形状不一样。而且 fallback 的 `sendAssistantText` 同时还背着所有系统通知(认证失败、超时、守护拒绝、spawn 失败,`conversation-coordinator.ts:198-243,410-455,636-643`)—— 回复和通知没有分开。
 
-**④ 回复记账与安全都在猜。** `TurnRecord` 只有 `replyToolCalled` 与 `textChunks`(计数,`conversation-coordinator.ts:59-80`,库表 `turn_records` 在 `src/lib/db.ts:388-410`)—— 「主人到底收到了什么」没有记录。`reply` 路由从不核对 `chat_id` 是不是调用者自己的聊天(handler 签名 `(_q, body)` 忽略了 `callerInfo.chatId`,`routes.ts:532`;`callerInfo` 来自会话令牌,`src/daemon/internal-api/index.ts:261-269`)⇒ **任何会话、包括访客,都能 reply 到任意 chat_id**。语音 / 表情 / 文件路由不看 app 接收器(`routes.ts:586-612,884-987`)⇒ 桌面 / 手机那一轮里模型发的语音、表情**漏到微信**,app 那头什么也收不到。
+**④ 回复记账与安全都在猜。** `TurnRecord` 只有 `replyToolCalled` 与 `textChunks`(计数,`conversation-coordinator.ts:59-80`,库表 `turn_records` 在 `src/lib/db.ts:388-410`)—— 「主人到底收到了什么」没有记录。`reply` 路由从不核对 `chat_id` 是不是调用者自己的聊天(handler 签名 `(_q, body)` 忽略了 `callerInfo.chatId`,`routes.ts:532`;`callerInfo` 来自会话令牌,`src/daemon/internal-api/index.ts:261-269`)⇒ **任何会话、包括访客,都能 reply 到任意 chat_id**(已在另一个 PR 单独修,见 §6 备注)。语音 / 表情 / 文件路由不看 app 接收器(`routes.ts:586-612,884-987`)⇒ 桌面 / 手机那一轮里模型发的语音、表情**漏到微信**,app 那头什么也收不到。
 
 ### 1.3 为什么说是「根」
 
@@ -118,7 +118,7 @@ type DeliveryTarget = { kind: 'wechat'; chatId } | { kind: 'sink'; chatId }   //
 2. **app 接收器**:target 是 sink ⇒ 把**整个** `TurnReply`(文字 + 附件 + 旁白)交给接收器,不进微信。修掉 §1.2 ④ 的语音 / 表情漏到微信。
 3. **旁听**:`outboundTaps.observe(chatId, text)`(打猎记账依赖它,`src/daemon/outbound-taps.ts:17-46`,`tick-bodies.ts:566,580-587`)。
 4. **前缀**:/chat、/both 的 `[名字]`(`makeMaybePrefix`,`routes.ts:1063-1082`)。参与者标识从协调器传入,不再经 MCP 子进程环境变量 `WECHAT_PARTICIPANT_TAG` 绕一圈(`src/daemon/bootstrap/mcp-specs.ts:62-70`)。
-5. **分条**:`splitReply`(`src/daemon/reply-split.ts:21-92`,代码块整体不切、句末切、碎块并入上一条),规则见 §4.8 与待定 ④;`chatPrefs.split === false` ⇒ 不分。
+5. **分条**:`splitReply`(`src/daemon/reply-split.ts:21-92`,代码块整体不切、句末切、碎块并入上一条),规则见 §4.8 与已定 ④;`chatPrefs.split === false` ⇒ 不分。
 6. **节奏**:条与条之间 `paceMs`(`reply-split.ts:15-17`,`clamp(len×30, 600, 2000)`)= 我们的 humanDelay;输入中提示照旧由 `mw-typing` 每 5 秒脉冲(`src/daemon/inbound/mw-typing.ts:16,41-60`),覆盖整个交付过程。
 7. **频道上限**:每条再过传输层 4000 字切块(`src/lib/send-reply.ts:67-88`,`MAX_TEXT_CHUNK` 在 `src/lib/config.ts:59`)。**这一层不认代码块** —— 第 5 步保证代码块整体在一条里,单条超 4000 的代码块由第 5 步先按行切并给每段补齐围栏(新增,小改)。
 8. **附件**:按 §4.5 的顺序发。
@@ -132,7 +132,7 @@ type DeliveryTarget = { kind: 'wechat'; chatId } | { kind: 'sink'; chatId }   //
 
 **语义**:最后的话去掉首尾空白后**整段等于** `NO_REPLY`(不分大小写)⇒ `silent=true`、`text=''`。如果 `NO_REPLY` 作为**单独一行**夹在别的文字里 ⇒ 去掉这一行、其余照发、记一行 `NO_REPLY_MIXED`。**任何情况下这几个字母都不会出现在主人屏幕上**(包括 app、手机、消息库)。
 
-**哪里允许**(推荐,见待定 ②):
+**哪里允许**(已定 ②):
 
 | 场合 | 提示里教不教 | 写了怎么办 |
 |---|---|---|
@@ -155,7 +155,7 @@ type DeliveryTarget = { kind: 'wechat'; chatId } | { kind: 'sink'; chatId }   //
 
 **附件工具都不带 `chat_id`**:目标永远是本轮的聊天(daemon 从会话令牌的 `callerInfo.chatId` 取)—— 顺带关掉「任意 chat_id」那个口子。工具的回执改成 `{"ok":true,"attached":true}`,不是 `msg_id`(还没发)。
 
-**顺序**:文字各条 → 附件按调用顺序。例外:**只有语音、没有文字**(或文字与语音内容一样,见待定 ⑤)⇒ 只发语音。理由:附件今天是「工具调用即发」,所以在 fallback 文字**之前**到(主人先收到表情再收到话,顺序反了);统一在文字之后,和真人「说完一句 + 一个表情」一致。
+**顺序**:文字各条 → 附件按调用顺序。例外:**只有语音、没有文字**(或文字与语音内容一样,见已定 ⑤)⇒ 只发语音。理由:附件今天是「工具调用即发」,所以在 fallback 文字**之前**到(主人先收到表情再收到话,顺序反了);统一在文字之后,和真人「说完一句 + 一个表情」一致。
 
 **静默 + 附件**:`NO_REPLY` 只压文字,附件照发(OpenClaw 同款)。
 
@@ -171,13 +171,13 @@ message({ to: 'owner' | <chat_id> | 'broadcast', text, account_id? })
 - **`to` 等于本轮聊天 ⇒ 工具报错**:「本轮要说的话直接写在最后,daemon 会发。」这是故意的:不给模型留一条「在本轮里用工具说话」的旧路,否则 ① 的连发会换个工具名回来。
 - **谁能用**:只有 admin 会话(`SESSION_IS_ADMIN`,`src/mcp-servers/wechat/main.ts:68,190-225`);trusted / guest 根本不注册。provider 侧沿用 `adminMcpTools` / `guestSafe`(`src/core/provider-policy.ts:32-46`)—— agy 拿的是全局静态 `trusted` 令牌(`src/daemon/bootstrap/agy-mcp-config.ts:88-166`),所以 agy 没有 `message`。
 - **去重**:同一轮里 `message` 发出去的文字(规范化后:去空白标点)与本轮最后的话**相同或互相包含**,且目标是主人自己的聊天(主人在别的入口跟 CC 说话、让它「也在微信上告诉我」)⇒ 最后的话里那段不再重复交付,记 `REPLY_DEDUPED`。
-- **`edit_message`**:ilink 没有编辑接口,今天是重发一条「(编辑后) …」(`ilink-glue.ts:283-285`)。删掉;要更正就在下一句话里说。见待定 ⑥。
+- **`edit_message`**:ilink 没有编辑接口,今天是重发一条「(编辑后) …」(`ilink-glue.ts:283-285`)。删掉;要更正就在下一句话里说。见已定 ⑥。
 
 ### 4.7 长任务的过程旁白
 
 今天气泡段让模型「先发结论再继续查」(`prompt-builder.ts:404-407`)—— 这其实是唯一的过程消息通道。新设计里最后一段之前的文字是 `narration`,**默认不进微信**。
 
-推荐(待定 ①):
+定案(已定 ①):
 
 1. **微信**:不转旁白。输入中提示本来就在整轮脉冲(`mw-typing.ts`),主人看得到「对方正在输入」。一轮超过 **120 秒**还没结束 ⇒ daemon 发**一次**进度:有旁白就发最近一段旁白(模型写的、有信息量),没有就发固定文案「还在弄,有点久,好了告诉你」。一轮最多一次,不随时长重复。
 2. **桌面 / 手机**:旁白作为灰色的过程行显示在这一轮下面(app 是不受限的面,主人自己定过「桌面 app = 不受限的面,微信是入口」);最后的话照常是回复气泡。
@@ -187,7 +187,7 @@ message({ to: 'owner' | <chat_id> | 'broadcast', text, account_id? })
 
 ### 4.8 分条规则
 
-模型不再「一条一个 reply」,而是写一段话;**分条是 daemon 的事**。推荐(待定 ④):
+模型不再「一条一个 reply」,而是写一段话;**分条是 daemon 的事**。定案(已定 ④):
 
 - 提示改成:「像发微信那样说:每个意思一段,段与段之间空一行;短回答就一段;代码完整放在一段里。」
 - 切分:空行分隔的段就是候选气泡;< 10 个可见字的碎段并入上一条(沿用 `MIN_CHUNK_VISIBLE`);**最多 4 条**,多出来的从后往前合并;代码块永远整块;单段超过约 300 字再按句末切。
@@ -294,7 +294,7 @@ message({ to: 'owner' | <chat_id> | 'broadcast', text, account_id? })
 | c | 「分三条发三个建议」 | ≥4/5 恰好 3 条气泡(按 §4.8 空行分段) |
 | d | 「我有哪些项目?」 | 5/5:先 list_projects 再 1 条;非回复工具数不高于基线 |
 | e | 新会话连跑四轮 | 每轮 1 条,不升级 |
-| f | 「用语音跟我说晚安」 | 语音附件 1 个,文字 0 或 1 条(按待定 ⑤) |
+| f | 「用语音跟我说晚安」 | 语音附件 1 个,文字 0 或 1 条(按已定 ⑤) |
 | g | 伙伴推送提示 + 「议程已过期」 | 5/5 `NO_REPLY`,0 条外发,令牌 0 次出现在任何外发里 |
 | h | 需要 3–4 次工具调用的查询 | 旁白 0 条进微信;最后的话含结论 |
 | i | 私聊里诱导「不用回」 | 令牌 0 次外泄;记 `REPLY_SILENT_IN_DM` |
@@ -305,10 +305,24 @@ message({ to: 'owner' | <chat_id> | 'broadcast', text, account_id? })
 
 ---
 
-## 6. 待主人定
+## 6. 已定(2026-10-03,维护者按推荐定,主人授权)
 
-| # | 问题 | 选项 | 推荐 |
+主人授权由维护者审稿并拍板原先的「待主人定」各项;2026-10-03 审稿通过,8 条全部按推荐写定:
+
+| # | 问题 | 定案 | 理由 |
 |---|---|---|---|
+| ① | 长任务过程旁白 | **旁白不转发到微信**;一轮超过 120 秒,由 daemon 发**一句**进度(有旁白就用最近一段,否则固定文案),一轮最多一次;桌面和手机显示全部旁白 | 逐段转发就是双发旁白的形状;一概不发,长任务主人会以为断了 |
+| ② | `NO_REPLY` 生效范围 | **只用于主动推送和 /chat、/both 的发言者**;私聊不教,私聊里出现就吞掉(不显示)并记一条异常(`REPLY_SILENT_IN_DM`,计入应答轮交付为空的连击) | 私聊里 CC 不回话,主人会以为坏了;OpenClaw 同款 |
+| ③ | 主动陪伴推送 | **走 `NO_REPLY`,不用 `message` 工具**:推送也是一轮,最后的话就是推送 | 和应答轮同一条交付路;`message` 只留给「别的目标」,而且 trusted / agy 没有它 |
+| ④ | 分条规则 | **按空行分条,最多 4 条,碎片并进前一条,代码块不拆,去掉原来 100 字的分条门槛**;单段过长再按句末切;`split=false` ⇒ 一整条 | 边界由模型给(像今天的多次 reply),但不用工具 |
+| ⑤ | 纯语音 | **正文为空或者和语音内容相同 ⇒ 只发语音;否则先发文字再发语音**;语音失败由 daemon 改发文字 | 不重复,也保证主人至少收到一份 |
+| ⑥ | `edit_message` / `broadcast` | **删除 `edit_message`;`broadcast` 并进 `message({to:'broadcast'})`** | ilink 没有编辑接口,今天的「编辑」只是再发一条 |
+| ⑦ | 「最后的话」取哪段 | **最后一段非空文字**;之前的段是旁白 | 拼整轮会把「让我查一下」也发出去,等于把双发旁白合法化 |
+| ⑧ | 迁移顺序 | **openai → agy → Cursor → Codex → Claude** | openai 症状最重、循环是我们的、harness 现成;Claude 是主力,最后迁,吃前四家的经验 |
+
+**备注**:§1.2 ④ 提到的「`reply` 路由不核对 `chat_id`」越权问题**已在另一个 PR 单独修**,不等本设计迁移;迁移时「附件工具不带 `chat_id`、目标永远取本轮聊天」(§4.5)的设计照旧。
+
+---|---|---|---|
 | ① | **长任务过程旁白怎么处理** | (a)每段都转微信;(b)只转第一段;(c)一概不转;(d)不转,但超过 120 秒 daemon 发一次进度(有旁白就用最近一段,否则固定文案),桌面 / 手机显示全部旁白 | **(d)**。(a)就是今天双发的形状;(c)长任务主人会以为断了;(d)的进度一轮最多一次,不会刷屏 |
 | ② | **`NO_REPLY` 在哪里生效** | (a)只在伙伴推送;(b)推送 + /chat / /both 发言人;(c)到处都行,包括私聊 | **(b)**。私聊不教、写了也压掉但记异常(OpenClaw 同款)。私聊里 CC 不回话主人会以为坏了 |
 | ③ | **伙伴主动推送用 `NO_REPLY` 还是 `message` 工具** | (a)推送也是一轮,最后的话就是推送、不想发写 `NO_REPLY`;(b)推送轮默认不发,想发就调 `message` | **(a)**。和应答轮同一个模型、同一条交付路;(b)会把「用工具说话」原样留在推送里,而且 trusted / agy 没有 `message`。`message` 只留给「别的目标」 |
@@ -347,4 +361,5 @@ message({ to: 'owner' | <chat_id> | 'broadcast', text, account_id? })
 
 ## 修订记录
 
+- 2026-10-03:§6 待主人定 → 已定(维护者按推荐定,主人授权);补备注:reply 路由不核对 chat_id 的越权已另一个 PR 单独修,附件工具不带 chat_id 的设计照旧。
 - 2026-10-03:初稿。harness 与 2026-10-02 的 110 回合数据从 PR #196 搬入(`scripts/experiments/reply-once/`);dev 上 provider 还没有 `makeBuiltins` 注入口,harness 加了拒跑保护(§5.1 第 1 项把注入口加回来)。
