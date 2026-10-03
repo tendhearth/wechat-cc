@@ -352,7 +352,7 @@ bun scripts/experiments/reply-once/harness.ts --gate /tmp/x.jsonl --gate-arms ag
 ### 残留(这一步量不到的)
 
 - **模型行为没量**:Cursor 在 final_text 提示词下会不会把结论写在最后一段、会不会在结论后再补一句「已完成。」(那句会变成回复、结论落进旁白)。提示词写了「结论要写在最后那段里、写全」;额度回来后用真 Cursor 补 a / d / h 各几轮,并按 §5.8(2)在真机 `selftest chat --provider cursor` + 主人微信聊几句。
-- **Cursor 自己的错误文字混在助理消息里**:录到的 c4both 最后一段是复读的 MCP 报错 + 「Error: NonRetriableError: Agent Looping Detected …」,stopReason 仍是 end_turn。legacy 会把三段都 FALLBACK 出去,daemon 只交付最后一段 —— **两臂都会把这句 Cursor 报错当回复发出去**(#190 红线的同一类)。不是本步引入的,单独一件事:要在 ACP 边界上认出这句、当错误收尾。
+- **Cursor 自己的错误文字混在助理消息里**:录到的 c4both 最后一段是复读的 MCP 报错 + 「Error: NonRetriableError: Agent Looping Detected …」,stopReason 仍是 end_turn。legacy 会把三段都 FALLBACK 出去,daemon 只交付最后一段 —— **两臂都会把这句 Cursor 报错当回复发出去**(#190 红线的同一类)。不是本步引入的,单独一件事:要在 ACP 边界上认出这句、当错误收尾。 **2026-10-03 已修**:ACP 边界认出这一整块、带码(`provider_error`)收尾,两臂都只发通知 —— 见 [provider-error-shapes.md](provider-error-shapes.md) §8。
 - 已经在跑的常驻 `cursor-agent acp`:开关在开机定,重启 daemon 之后的新会话才是新工具表;`session/load` 续上的旧会话历史里还有旧提示词,新提示词照常在第一轮注入。
 
 ### 复跑

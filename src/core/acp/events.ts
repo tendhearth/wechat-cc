@@ -15,14 +15,27 @@ export interface AcpTranslatorOptions {
   /** 'append'(缺省):token 级 chunk 带 itemId(工作台逐字流);'messages':每条助理消息一条 text 事件 ——
    *  对话侧的 solo 协调器给每条 text 事件发一条微信,token 级会发成几十条。 */
   text?: 'append' | 'messages'
+  /**
+   * 带内错误认定(Cursor:`cursor-errors.cursorAcpInbandError`)。agent 把自己的报错写成一整块
+   * agent_message_chunk、照常 end_turn 时用:认得出的那一块**先扣住**(不进逐字流、不进攒着的消息);
+   * 之后又来了文字或工具调用 ⇒ 它是正文,按原顺序放行;直到回合结束都没人接 ⇒ 它就是本轮的错误
+   * (`turnError()`),原文永远不作为 text 事件出去。缺省不认(别家 ACP agent 没有这个约定)。
+   */
+  inbandError?: (chunk: string) => AcpTurnError | null
 }
+/** 本轮以错误收尾的带内证据:码 + 原文(给日志 / TurnRecord / 工作台事件,不给主人当回复)。 */
+export interface AcpTurnError { code: string; message: string }
 export interface AcpTranslator {
   update(update: unknown): AgentEvent[]
   beginTurn(): void
   /** messages 模式:把攒着的助理文本吐成一条 text 事件(空白不吐);append 模式恒空。 */
   endTurn(): AgentEvent[]
-  /** 本轮整条输出(无工具调用)就是 Cursor 的额度催升级话 ⇒ 返回该文本,否则 null。 */
-  quotaRefusal(): string | null
+  /**
+   * 本轮其实是以 agent 的带内错误收尾的 ⇒ 码 + 原文,否则 null。两种证据:
+   *  - 最后一个可见 update 是 `inbandError` 认得出的一整块(见上);
+   *  - 整轮输出(无工具调用)就是 Cursor 的额度催升级话(provider-quota.isQuotaRefusalText,老规矩)。
+   */
+  turnError(): AcpTurnError | null
 }
 
 type Obj = Record<string, unknown>
@@ -51,6 +64,8 @@ interface Remembered { kind: string; title: string; name: string; status: AgentA
 export function createAcpTranslator(options: AcpTranslatorOptions = {}): AcpTranslator {
   const messages = options.text === 'messages'
   let turn = 0, message = 0, textSeen = false, buffer = '', turnText = '', sawCall = false
+  // 扣住的那一块(可能是带内错误):下一个可见 update 到来前不发;回合结束还在 ⇒ 它就是错误。
+  let held: { text: string; messageId: unknown; error: AcpTurnError } | null = null
   const calls = new Map<string, Remembered>()
   const flushBuffer = (): AgentEvent[] => {
     const text = buffer; buffer = ''
@@ -70,21 +85,39 @@ export function createAcpTranslator(options: AcpTranslatorOptions = {}): AcpTran
     if (call.server !== undefined && call.tool !== undefined) return { kind: 'tool_call', server: call.server, tool: call.tool, activity }
     return { kind: 'tool_call', tool: call.name || call.kind || 'tool', activity }
   }
+  const quotaNag = (): boolean => !sawCall && isQuotaRefusalText(turnText)
+  const say = (text: string, messageId: unknown): AgentEvent[] => {
+    textSeen = true; turnText += text
+    if (messages) { buffer += text; return [] }
+    const itemId = typeof messageId === 'string' && messageId ? `acp:msg:${acpActivityId(messageId)}` : `acp:turn:${turn}:${message}`
+    return [{ kind: 'text', text, itemId, textMode: 'append' }]
+  }
+  /** 扣住的那一块后面又有可见 update ⇒ 它是正文,按原顺序放出去。 */
+  const release = (): AgentEvent[] => {
+    if (!held) return []
+    const { text, messageId } = held; held = null
+    return say(text, messageId)
+  }
   return {
-    beginTurn() { turn++; message = 0; textSeen = false; buffer = ''; turnText = ''; sawCall = false; calls.clear() },
-    quotaRefusal() { return !sawCall && isQuotaRefusalText(turnText) ? turnText.trim() : null },
-    endTurn() { return messages && !(!sawCall && isQuotaRefusalText(turnText)) ? flushBuffer() : [] },
+    beginTurn() { turn++; message = 0; textSeen = false; buffer = ''; turnText = ''; sawCall = false; held = null; calls.clear() },
+    turnError() {
+      if (held) return held.error
+      return quotaNag() ? { code: 'quota', message: turnText.trim() } : null
+    },
+    // 扣住的块不在 buffer 里:带内错误永远不作为 text 事件出去;它之前的文字照常吐(与进程死掉 / prompt 报错同一条规矩)。
+    endTurn() { return messages && !(!held && quotaNag()) ? flushBuffer() : [] },
     update(update) {
       if (!object(update) || typeof update.sessionUpdate !== 'string') return []
       if (update.sessionUpdate === 'agent_message_chunk') {
         if (!object(update.content) || update.content.type !== 'text' || typeof update.content.text !== 'string') return []
-        textSeen = true; turnText += update.content.text
-        if (messages) { buffer += update.content.text; return [] }
-        const itemId = typeof update.messageId === 'string' && update.messageId ? `acp:msg:${acpActivityId(update.messageId)}` : `acp:turn:${turn}:${message}`
-        return [{ kind: 'text', text: update.content.text, itemId, textMode: 'append' }]
+        const released = release()
+        const error = options.inbandError?.(update.content.text) ?? null
+        if (error) { held = { text: update.content.text, messageId: update.messageId, error }; return released }
+        return [...released, ...say(update.content.text, update.messageId)]
       }
       if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') return []
       if (typeof update.toolCallId !== 'string' || !update.toolCallId) return []
+      const released = release()
       const id = acpActivityId(update.toolCallId)
       sawCall = true
       const previous = calls.get(id) ?? { kind: '', title: '', name: '', status: 'running' as const, paths: [] }
@@ -104,10 +137,10 @@ export function createAcpTranslator(options: AcpTranslatorOptions = {}): AcpTran
       // 不可见的调用(kind 'think')不切分助理消息:用户那边什么都不会出现,
       // 却把攒着的半句话先发出去 ⇒ 一条回复被 think 拦腰斩成两条微信。
       // 同理也不推 message 计数(append 模式的 itemId 靠它换行)。
-      if (!event) return []
+      if (!event) return released
       const flushed = update.sessionUpdate === 'tool_call' && messages ? flushBuffer() : []
       if (update.sessionUpdate === 'tool_call' && textSeen) { message++; textSeen = false }
-      return [...flushed, event]
+      return [...released, ...flushed, event]
     },
   }
 }

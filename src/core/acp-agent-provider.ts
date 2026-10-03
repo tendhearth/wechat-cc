@@ -17,7 +17,7 @@ import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession, SpawnCon
 import { AsyncQueue } from './async-queue'
 import { makeTurnEmitter } from './turn-emitter'
 import { isAuthFail } from './auth-fail'
-import { acpErrorCode } from './cursor-errors'
+import { acpErrorCode, cursorAcpInbandError } from './cursor-errors'
 import { withProviderCode } from '../lib/provider-error-code'
 import { AcpRequestError, createAcpConnection, type AcpConnection } from './acp/rpc'
 import { acpPermissionDescription, acpPermissionOption, createAcpTranslator } from './acp/events'
@@ -166,7 +166,8 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
       const permissions = new Map<string | number, PendingPermission>()
       const logged = new Set<string>()
       const logOnce = (kind: string, line: string) => { if (!options.log || logged.has(kind)) return; logged.add(kind); options.log('ACP', line) }
-      const translator = createAcpTranslator({ text: options.text })
+      // 带内错误按 cursor-agent 的约定认(这个通用客户端今天只接 cursor-agent;acpErrorCode 同理)。
+      const translator = createAcpTranslator({ text: options.text, inbandError: cursorAcpInbandError })
       let sessionId = '', active: Turn | undefined, loading = true, imageOk = false
       // agent 自报的当前模型(session/new|load 应答,或 set_config_option 成功之后);null = 没报。
       let currentModel: string | null = null
@@ -394,13 +395,14 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
           const settle = (event: AgentEvent) => { if (active !== turn) return; for (const e of translator.endTurn()) turn.queue.push(e); finish(turn, event) }
           void connection.request('session/prompt', { sessionId, prompt: blocks }, 0).then(
             result => {
-              const refusal = translator.quotaRefusal()
+              const inband = translator.turnError()
               const reason = object(result) && typeof result.stopReason === 'string' ? result.stopReason : 'end_turn'
               // turn.cancelled(我们自己叫停的)优先于 reason 本身怎么说:agent 的回复完全可能在
               // session/cancel 生效前就已经在路上、报的是 end_turn —— 半截话不能因为这条race而漏发。
               if (turn.cancelled) finish(turn, { kind: 'error', message: 'acp_turn_cancelled' })
-              // Cursor 额度耗尽:回合照常 end_turn、文本就是催升级的话 ⇒ 当错误收尾,让额度登记/管家接得住,主人也收不到原文。
-              else if (refusal) settle(em.errorText(refusal, { code: 'quota' }))
+              // Cursor 的带内错误(额度催升级、要登录、Agent Looping Detected …):回合照常 end_turn、报错写在助理消息里
+              // ⇒ 当带码的错误收尾(#190 红线:错误不许当回复发),额度登记 / 管家 / 工作台按码接,主人只收到老实的通知。
+              else if (inband) settle(em.errorText(inband.message, { code: inband.code }))
               else if (reason === 'end_turn' || reason === 'cancelled') settle(em.finish({ sessionId, numTurns: 1, durationMs: Date.now() - turn.startedAt }))
               else settle({ kind: 'error', message: `acp_stop_${reason}` })
             },
