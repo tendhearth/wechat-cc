@@ -261,7 +261,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
             coalescer.push(ev)
             // 额度/限流在错误到达时就登记(评审 #5:只在结算时看,保留会话永远等不到结算);
             // 任何一个成功回合(result)即视为这家恢复。
-            if (ev.kind==='error') quota.note(task.providerId,ev.message)
+            if (ev.kind==='error'&&!['execution_model_unsupported','network_unprotected'].includes(ev.code??'')) quota.note(task.providerId,ev.message)
             if (ev.kind==='result') quota.clear(task.providerId)
             if (ev.kind==='result') settleQuiet(running)
             // observe 是**故意**会往外抛的(身份不符那条),所以探测器自己抛出会把整轮带走。
@@ -285,13 +285,14 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         const raw=summary.error ?? (runtime?.snapshot().retained?'background_runtime_ended':'stream_ended_without_result')
         // 额度/限流(真机 2026-09-16:Codex 额度耗尽,原文当错误码存进 task.error,通知空白):
         // 认出来就换成稳定错误码、登记这家耗尽,事件里说人话并附原文摘要。
-        const quotaKind=summary.error?classifyProviderError(summary.error):null
         const modelRejected=summary.errorCode==='execution_model_unsupported'
-        const error=modelRejected?'execution_model_unsupported':quotaKind==='quota'?'provider_quota_exhausted':quotaKind==='rate_limit'?'provider_rate_limited':raw
+        const networkRefused=summary.errorCode==='network_unprotected'
+        const quotaKind=summary.error&&!modelRejected&&!networkRefused?classifyProviderError(summary.error):null
+        const error=modelRejected?'execution_model_unsupported':networkRefused?'network_unprotected':quotaKind==='quota'?'provider_quota_exhausted':quotaKind==='rate_limit'?'provider_rate_limited':raw
         if(quotaKind)quota.note(task.providerId,summary.error!)
         finalStatus='failed'; finalError=error
-        // The native model error is already persisted once and translated by the reading projection.
-        if(!modelRejected)store.addEvent(task.id,'error',error==='background_runtime_ended'?'后台执行会话意外结束；对话已保留，请检查后再继续。':quotaKind?`${executionFailureMessage(error)}\n原文：${summary.error!.trim().slice(0,200)}`:executionFailureMessage(error))
+        // Known model or guarded-runtime errors are already recorded by their original events.
+        if(!modelRejected&&!networkRefused)store.addEvent(task.id,'error',error==='background_runtime_ended'?'后台执行会话意外结束；对话已保留，请检查后再继续。':quotaKind?`${executionFailureMessage(error)}\n原文：${summary.error!.trim().slice(0,200)}`:executionFailureMessage(error))
         ctx.hub.touched(task.id)
       } else { finalStatus='completed'; quota.clear(task.providerId) }
     } catch (error) {
