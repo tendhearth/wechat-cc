@@ -237,7 +237,8 @@ describe('手机协议 v2 进程内端到端', () => {
     const phaseOf = (id: string) => (got.at(-1)!.data.tasks as Array<{ id: string; phase: string }>).find(t => t.id === id)?.phase
     await expect.poll(() => [phaseOf(a.id), phaseOf(b.id)]).toEqual(['working', 'queued'])
     expect(got.at(-1)!.data).toMatchObject({ running: 1, waiting: 1 })
-    expect(got.at(-1)!.data.tasks.map((t: { title: string }) => t.title)).toEqual(['shared#a', 'shared#b'])
+    // 两次创建可能落在同一毫秒，此时快照按随机任务 ID 排序；这里只核对成员，阶段由上面的 ID 断言核对。
+    expect(got.at(-1)!.data.tasks.map((t: { title: string }) => t.title).sort()).toEqual(['shared#a', 'shared#b'])
 
     await release(a)
     await expect.poll(() => phaseOf(b.id)).toBe('working')
