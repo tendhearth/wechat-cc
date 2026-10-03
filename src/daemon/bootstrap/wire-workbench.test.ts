@@ -98,7 +98,7 @@ it('registers cursor through the ACP provider with ACP capabilities when the bin
   const registered = registerAcpExecutors(target, source, { cursorAgentBin: '/opt/cursor-agent' }, { create, findOnPath: () => null, log })
   expect(registered).toEqual(['cursor'])
   // log 必须接到 provider 上,否则 sessionId 对不上而丢掉的更新在 daemon 日志里一声不吭。
-  expect(create).toHaveBeenCalledWith({ command: '/opt/cursor-agent', args: ['acp'], displayName: 'Cursor', log })
+  expect(create).toHaveBeenCalledWith({ command: '/opt/cursor-agent', args: ['acp'], displayName: 'Cursor', log, targetProvider: 'cursor' })
   expect(target.get('cursor')!.provider).toBe(acp)
   expect(target.get('cursor')!.opts.displayName).toBe('Cursor')
   expect(target.get('cursor')!.opts.workbench).toBe(ACP_CAPABILITIES)

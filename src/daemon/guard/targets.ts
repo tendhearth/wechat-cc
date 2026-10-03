@@ -8,6 +8,10 @@
  *   agy / gemini → 官方(Google)
  *
  * 只读配置,从不打印密钥:这里只碰 base URL 和模型名。
+ *
+ * 评审 #193 P1-1:**真正出发的调用不再走这里补**。执行者 / 会话自己报实际目标(AgentProvider.callTarget
+ * / AgentSession.callTarget,带 exact),配置后来改了它们也不跟;报不出来的是 unresolved ⇒ 按需要保护。
+ * 这里的按配置推只剩给「还没有执行者可问」的地方用:CLI 的 `guard status`、语音 / 终端会话这类外部出口。
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -23,10 +27,15 @@ export interface ProviderInUse {
   baseUrl?: string | null
   /** configured = 已注册 provider 的配置模型;session = 某个在用会话钉的模型。 */
   via?: 'configured' | 'session'
+  /** 评审 #193 P1-1:provider / 会话自己报的实际目标;有就按它判,不按此刻的配置补。 */
+  target?: CallTarget
 }
 
 export function makeResolveTarget(agentConfig: () => AgentConfig | null, env: NodeJS.ProcessEnv = process.env): (t: CallTarget) => CallTarget {
   return (t) => {
+    // 评审 #193 P1-1:执行者报出来的实际目标(exact)/ 拿不准的(unresolved)一律不拿此刻的配置去补 ——
+    // 配置后来改了,在用的会话不会跟着改。只有「还没起来、按配置推」的目标(health / guard status)才补。
+    if (t.exact || t.unresolved) return t
     let cfg: AgentConfig | null = null
     try { cfg = agentConfig() } catch { cfg = null }
     const out: CallTarget = { ...t }
@@ -77,16 +86,30 @@ export function guardEnvFor(stateDir: string, base: NodeJS.ProcessEnv = process.
   return out
 }
 
-/** 已注册 provider 的配置模型 + 在用会话钉的模型,按 (id, model) 去重。 */
-export function providersInUse(cfg: AgentConfig | null, registered: readonly string[], sessions: ReadonlyArray<{ id: string; model: string | null }>): ProviderInUse[] {
-  const out = configuredProviders(cfg, registered)
-  const seen = new Set(out.map(p => `${p.id}\u0000${p.model ?? ''}`))
+/**
+ * 已注册 provider + 在用会话,按 (id, 实际目标) 去重。评审 #193 P1-1:`targetOf` 给了就用
+ * provider 自己报的目标(它注册那一刻定下的端点 / 模型),会话带了 `target` 就用会话实际的;
+ * 都没有才退回按配置推(CLI 的 guard status 只能这样)。
+ */
+export function providersInUse(
+  cfg: AgentConfig | null,
+  registered: readonly string[],
+  sessions: ReadonlyArray<{ id: string; model: string | null; target?: CallTarget }>,
+  targetOf?: (id: string) => CallTarget | null,
+): ProviderInUse[] {
+  const out = configuredProviders(cfg, registered).map(p => {
+    const t = targetOf?.(p.id) ?? null
+    return t ? { ...p, model: t.model ?? p.model ?? null, target: t } : p
+  })
+  const keyOf = (p: { id: string; model?: string | null; target?: CallTarget }) => `${p.id}\u0000${p.target?.model ?? p.model ?? ''}\u0000${p.target?.baseUrl ?? ''}\u0000${p.target?.unresolved ? 'u' : ''}`
+  const seen = new Set(out.map(keyOf))
   for (const s of sessions) {
-    if (!s.model) continue
-    const k = `${s.id}\u0000${s.model}`
+    if (!s.model && !s.target) continue
+    const p: ProviderInUse = { id: s.id, model: s.target?.model ?? s.model, via: 'session', ...(s.target ? { target: s.target } : {}) }
+    const k = keyOf(p)
     if (seen.has(k)) continue
     seen.add(k)
-    out.push({ id: s.id, model: s.model, via: 'session' })
+    out.push(p)
   }
   return out
 }

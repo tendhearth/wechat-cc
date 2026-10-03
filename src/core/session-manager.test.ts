@@ -1130,7 +1130,9 @@ describe('SessionManager network gate (2026-10-02)', () => {
     const onDispatch = vi.fn()
     const spawn = vi.fn(async () => makeFakeSession({ events: [{ kind: 'result', sessionId: '_', numTurns: 1, durationMs: 0 }], onDispatch }))
     const registry = createProviderRegistry()
-    registry.register('cursor' as never, { spawn } as unknown as AgentProvider, { displayName: 'Cursor', canResume: () => false })
+    // provider 报自己实际的目标:cursor + 这次钉的模型(评审 #193)。
+    const callTarget = (_k: string, ctx?: { model?: string }) => ({ provider: 'cursor', model: ctx?.model ?? null })
+    registry.register('cursor' as never, { spawn, callTarget } as unknown as AgentProvider, { displayName: 'Cursor', canResume: () => false })
     const mgr = new SessionManager({ maxConcurrent: 4, idleEvictMs: 60_000, registry, networkGate: { check } })
     const base = { alias: 'a', path: '/a', providerId: 'cursor' as never, tierProfile: TIER_PROFILES.admin, permissionMode: 'strict' as const }
     const h = await mgr.acquire({ ...base, chatId: 'c-auto', model: 'auto' })

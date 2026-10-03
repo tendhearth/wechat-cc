@@ -15,6 +15,7 @@ import { findBx, readBxStatus } from './bx'
 import { createNetworkGate } from './gate'
 import type { GuardLifecycle } from './lifecycle'
 import { probeReachable } from './probe'
+import { DEFAULT_PROBE_TTL_MS } from './scheduler'
 import { loadGuardConfig, type GuardConfig } from './store'
 import { makeResolveTarget, type ProviderInUse } from './targets'
 import type { GuardHealth } from '../internal-api/types'
@@ -34,6 +35,10 @@ export interface GuardRuntime {
    *     会被各自的闸门单独拒掉,不需要保护的照常(Claude 聊天暂停不该连累 DeepSeek 的后台判断)。
    *   - 信号不安全、在用的全都需要保护 → 这一拍安静跳过。
    *   - 任务里冒出来的「网络未受保护」不当成失败:同一段不安全期同一个任务只记一行日志。
+   *   - 评审 #193 P2-3:这层只兜底**逃出来的**拒绝。任务内部被拒的那一次调用必须由任务自己按「这一拍
+   *     跳过」处理 —— 不打勾、不登记、不前移时间戳(isNetworkUnprotectedError / NETWORK_UNPROTECTED_REASON
+   *     是那个专门的结果类型;见 tick-bodies、introspect、sticker-artist、atelier-runtime、wire-visit、
+   *     social-judge、memory/nightly)。
    * 不抛、不重试。
    */
   skipWhenUnsafe(name: string, fn: () => Promise<void>): () => Promise<void>
@@ -84,7 +89,7 @@ export function makeGuardRuntime(deps: GuardRuntimeDeps): GuardRuntime {
   function classifyInUse(): Array<ProviderInUse & { cls: CallClass }> {
     let list: ProviderInUse[] = []
     try { list = providersInUse() } catch { list = [] }
-    return list.map(p => ({ ...p, cls: gate.classify({ provider: p.id, model: p.model ?? null, ...(p.baseUrl ? { baseUrl: p.baseUrl } : {}), purpose: 'turn' }) }))
+    return list.map(p => ({ ...p, cls: gate.classify(p.target ?? { provider: p.id, model: p.model ?? null, ...(p.baseUrl ? { baseUrl: p.baseUrl } : {}), purpose: 'turn' }) }))
   }
 
   function health(): GuardHealth {
@@ -100,7 +105,10 @@ export function makeGuardRuntime(deps: GuardRuntimeDeps): GuardRuntime {
     const extra = { signal_source: cfg?.signal_source ?? 'auto', protected_in_use: protectedInUse, providers } as const
     let base: Omit<GuardHealth, 'signal_source' | 'protected_in_use' | 'providers' | 'paused'>
     if (!enabled) base = { enabled: false, source: 'off', safe: true, detail: '网络守护未开启', ip: s?.ip ?? null, checked_at: s?.lastChecked ?? null }
-    else if (s && s.lastChecked) base = { enabled: true, source: s.source, safe: s.safe, detail: s.detail, ip: s.ip, checked_at: s.lastChecked }
+    else if (s && s.lastChecked && s.source === 'probe' && Date.now() - Date.parse(s.lastChecked) >= DEFAULT_PROBE_TTL_MS + 60_000) {
+      // 过期的探测结果 = 不知道(评审 #193 P1-2),和闸门同一口径。
+      base = { enabled: true, source: 'probe', safe: false, detail: '探测结果已过期,等待重新探测', ip: s.ip, checked_at: s.lastChecked }
+    } else if (s && s.lastChecked) base = { enabled: true, source: s.source, safe: s.safe, detail: s.detail, ip: s.ip, checked_at: s.lastChecked }
     else if (last && last.source !== 'off') base = { enabled: true, source: last.source, safe: last.safe, detail: last.detail, ip: null, checked_at: null }
     else base = { enabled: true, source: 'probe', safe: false, detail: '尚未探测', ip: null, checked_at: null }
     return { ...base, ...extra, paused: base.enabled && !base.safe && protectedInUse }

@@ -69,7 +69,7 @@ function setupCursor(provider:AgentProvider){
 
 it('unsafe → a Cursor(auto) executor still starts (not protected); the signal decides nothing for it',async()=>{
   const spawn=vi.fn(async()=>({async *dispatch(){yield {kind:'result' as const,sessionId:'s',numTurns:1,durationMs:1}},async close(){}}))
-  setupCursor({spawn} as unknown as AgentProvider)
+  setupCursor({spawn,callTarget:()=>({provider:'cursor',model:'auto'})} as unknown as AgentProvider)
   net.safe=false
   const task=service.create({path:project,providerId:'cursor',text:'do it'});await settled(task.id)
   expect(spawn).toHaveBeenCalledTimes(1)
@@ -78,12 +78,67 @@ it('unsafe → a Cursor(auto) executor still starts (not protected); the signal 
 
 it('pauseForNetwork(select) only stops runs the selector marks protected; unprotected runs keep going',async()=>{
   const hold=gateOpen()
-  setupCursor({async spawn(){return{async *dispatch(){yield {kind:'init' as const,sessionId:'s'};await hold.promise;yield {kind:'result' as const,sessionId:'s',numTurns:1,durationMs:1}},async close(){hold.resolve()},async cancel(){hold.resolve()}}}} as unknown as AgentProvider)
+  setupCursor({async spawn(){return{async *dispatch(){yield {kind:'init' as const,sessionId:'s'};await hold.promise;yield {kind:'result' as const,sessionId:'s',numTurns:1,durationMs:1}},async close(){hold.resolve()},async cancel(){hold.resolve()}}},callTarget:()=>({provider:'cursor',model:'auto'})} as unknown as AgentProvider)
   const task=service.create({path:project,providerId:'cursor',text:'start'})
   await expect.poll(()=>service.detail(task.id).task.status).toBe('running')
   const seen:Array<{providerId:string;model:string|null}>=[]
   expect(service.pauseForNetwork(run=>{seen.push(run);return null})).toBe(0)
-  expect(seen).toEqual([{providerId:'cursor',model:null}])
+  expect(seen).toEqual([expect.objectContaining({providerId:'cursor',model:null,target:expect.objectContaining({provider:'cursor'})})])
   expect(service.detail(task.id).task.status).toBe('running')
+  hold.resolve();await settled(task.id)
+})
+
+// 评审 #193 P1-1:续接 / 补充 / 起步按**会话实际在用**的目标判,不按任务记录的模型(或此刻的配置)判。
+// Cursor 工作台执行者不钉模型,实际模型是 cursor-agent 起会话时报上来的那个(ACP configOptions.currentValue)。
+function cursorExecutor(actualModel:string,hold?:Promise<void>){
+  const dispatched=vi.fn()
+  const spawn=vi.fn(async()=>({
+    async *dispatch(){dispatched();yield {kind:'init' as const,sessionId:'s'};if(hold)await hold;yield {kind:'result' as const,sessionId:'s',numTurns:1,durationMs:1}},
+    async close(){},async cancel(){},
+    callTarget:()=>({provider:'cursor',model:actualModel}),
+  }))
+  // 起会话本身不发模型请求(ACP session/new);这一轮真正用什么模型要等会话起来才知道。
+  const provider={spawn,callTarget:(kind:string)=>kind==='spawn'?{provider:'cursor',purpose:'setup' as const}:null} as unknown as AgentProvider
+  return {provider,spawn,dispatched}
+}
+
+it('review #193: a Cursor run whose live session is on a Claude model → supplement refused while unsafe, though the task never pinned a model',async()=>{
+  const hold=gateOpen()
+  const {provider}=cursorExecutor('claude-opus-5[thinking=true]',hold.promise)
+  setupCursor(provider)
+  const task=service.create({path:project,providerId:'cursor',text:'start'})
+  await expect.poll(()=>service.detail(task.id).runId).toBeTruthy()
+  net.safe=false
+  await expect(service.submitInput(task.id,{runId:service.detail(task.id).runId!,requestId:randomUUID(),text:'more'})).rejects.toThrow('network_unprotected')
+  hold.resolve();await settled(task.id)
+})
+
+it('review #193: unsafe + a Cursor executor that comes up on a Claude model → no turn is sent; task fails network_unprotected',async()=>{
+  const {provider,dispatched}=cursorExecutor('claude-opus-5[thinking=true]')
+  setupCursor(provider)
+  net.safe=false
+  const task=service.create({path:project,providerId:'cursor',text:'do it'});await settled(task.id)
+  expect(dispatched).not.toHaveBeenCalled()
+  expect(service.detail(task.id).task.error).toBe('network_unprotected')
+})
+
+it('review #193: unsafe + a Cursor executor that comes up on Auto → runs normally',async()=>{
+  const {provider,dispatched}=cursorExecutor('default[]')
+  setupCursor(provider)
+  net.safe=false
+  const task=service.create({path:project,providerId:'cursor',text:'do it'});await settled(task.id)
+  expect(dispatched).toHaveBeenCalledTimes(1)
+  expect(service.detail(task.id).task.error).not.toBe('network_unprotected')
+})
+
+it('review #193: pauseForNetwork hands the selector the live session target',async()=>{
+  const hold=gateOpen()
+  const {provider}=cursorExecutor('gpt-5.5[context=272k]',hold.promise)
+  setupCursor(provider)
+  const task=service.create({path:project,providerId:'cursor',text:'start'})
+  await expect.poll(()=>service.detail(task.id).task.status).toBe('running')
+  const seen:unknown[]=[]
+  service.pauseForNetwork(run=>{seen.push(run);return null})
+  expect(seen).toEqual([expect.objectContaining({providerId:'cursor',target:expect.objectContaining({provider:'cursor',model:'gpt-5.5[context=272k]'})})])
   hold.resolve();await settled(task.id)
 })

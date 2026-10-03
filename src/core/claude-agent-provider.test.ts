@@ -938,3 +938,30 @@ describe('claude-agent-provider', () => {
     await session.close()
   })
 })
+
+// 评审 #193 P1-1:Claude Code 子进程在 spawn 那一刻拿到 ANTHROPIC_BASE_URL;之后 daemon 的环境再怎么变,
+// 这条会话还连着原来那个端点。守护必须按 spawn 时捕获的那一个判。
+describe('Claude call target is captured at spawn (review #193 P1)', () => {
+  const project = { alias: 'a', path: '/tmp' }
+  const context = { tierProfile: TIER_PROFILES.trusted, permissionMode: 'strict' as const, chatId: 'c' }
+  it('session keeps the ANTHROPIC_BASE_URL (and model) it was spawned with', async () => {
+    const saved = process.env.ANTHROPIC_BASE_URL
+    try {
+      delete process.env.ANTHROPIC_BASE_URL   // spawn 时:官方端点
+      const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({ model: 'claude-x' }) })
+      const session = await provider.spawn(project, context)
+      process.env.ANTHROPIC_BASE_URL = 'https://gw.example.com'   // 之后 daemon 环境变了
+      expect(session.callTarget?.()).toEqual({ provider: 'claude', model: 'claude-x', baseUrl: null })
+      expect(provider.callTarget?.('session', {})).toMatchObject({ provider: 'claude', baseUrl: 'https://gw.example.com' })
+      await session.close()
+    } finally {
+      if (saved === undefined) delete process.env.ANTHROPIC_BASE_URL; else process.env.ANTHROPIC_BASE_URL = saved
+    }
+  })
+  it('an explicit options.env (workbench) is what the subprocess gets — that is the captured endpoint', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({ model: 'claude-x', env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8080' } }) })
+    const session = await provider.spawn(project, context)
+    expect(session.callTarget?.()).toEqual({ provider: 'claude', model: 'claude-x', baseUrl: 'http://127.0.0.1:8080' })
+    await session.close()
+  })
+})

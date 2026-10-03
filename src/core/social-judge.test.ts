@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { makeJudge, type JudgeInput } from './social-judge'
+import { NetworkUnprotectedError } from '../lib/network-gate'
 
 const card: JudgeInput = { topic: '找摄影搭子' }
 
@@ -28,6 +29,13 @@ describe('makeJudge', () => {
       runTurn: async () => JSON.stringify({ match: 'no' }),
     })
     expect(await judge(card)).toEqual({ match: 'no' })
+  })
+
+  // 评审 #193 P2-3:被网络守护拒了 ≠ 判了「不能」。判成 no 会让心愿被转问、主人听到「我说不知道」——
+  // 可判官根本没跑。原样抛出,调用方整件事算跳过。
+  it('runTurn refused by the network guard → rethrows (not a silent no)', async () => {
+    const judge = makeJudge({ policy: 'p', runTurn: async () => { throw new NetworkUnprotectedError({ safe: false, source: 'bx', detail: 'bx 未保护' }, 'Claude') } })
+    await expect(judge(card)).rejects.toMatchObject({ code: 'network_unprotected' })
   })
 
   it('unparseable garbage → match:no (fail closed, never leak)', async () => {

@@ -103,3 +103,20 @@ describe('helpers', () => {
     expect(matchesOverride('cursor:gpt-*', { provider: 'cursor' }, null)).toBe(false)
   })
 })
+
+describe('review #193: actual targets reported by executors', () => {
+  it('cursor-agent ACP model ids carry a [params] suffix — default[] is Auto, claude-…[…] is protected', () => {
+    expect(classifyCall({ provider: 'cursor', model: 'default[]' })).toMatchObject({ protected: false, kind: 'cursor_own' })
+    expect(classifyCall({ provider: 'cursor', model: 'composer-2.5[fast=true]' })).toMatchObject({ protected: false, kind: 'cursor_own' })
+    expect(classifyCall({ provider: 'cursor', model: 'claude-opus-5[thinking=true,context=300k]' })).toMatchObject({ protected: true, kind: 'cursor_overseas' })
+    expect(classifyCall({ provider: 'cursor', model: 'gpt-5.5[context=272k]' })).toMatchObject({ protected: true })
+  })
+  it('opening an ACP session (setup) is not a model turn for Cursor', () => {
+    expect(classifyCall({ provider: 'cursor', purpose: 'setup' }).protected).toBe(false)
+  })
+  it('unresolved target → protected even for a provider that is usually domestic; trust by provider still applies', () => {
+    expect(classifyCall({ provider: 'openai', unresolved: true })).toMatchObject({ protected: true, kind: 'unresolved' })
+    expect(classifyCall({ provider: 'cursor', model: 'auto', unresolved: true }).protected).toBe(true)
+    expect(classifyCall({ provider: 'openai', unresolved: true }, { trust: ['openai'] }).protected).toBe(false)
+  })
+})

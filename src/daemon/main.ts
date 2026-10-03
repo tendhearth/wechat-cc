@@ -550,11 +550,14 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     {
       const { makeMtimeCachedConfigReader } = await import('../lib/agent-config')
       const { providersInUse } = await import('./guard/targets')
+      const { providerCallTarget } = await import('../core/provider-registry')
       const readCfg = makeMtimeCachedConfigReader(stateDir)
+      // 评审 #193 P1-1:按 provider / 会话自己报的实际目标,不按此刻的配置推。
       guardRt.setProvidersInUse(() => providersInUse(
         (() => { try { return readCfg() } catch { return null } })(),
         boot.registry.list(),
-        boot.sessionManager.list().map(s => ({ id: s.providerId, model: s.model ?? null })),
+        boot.sessionManager.list().map(s => ({ id: s.providerId, model: s.model ?? null, target: boot.sessionManager.effectiveTarget(s) })),
+        (id) => providerCallTarget(boot.registry.get(id)?.provider, id, 'session'),
       ))
     }
     internalApi.setDelegate({ dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() })

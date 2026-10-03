@@ -120,6 +120,9 @@ function approvalScope(params: ObjectValue): string | null {
 export function createWorkbenchCodexProvider(options: Options): AgentProvider {
   return {
     modelCatalog: project => discoverCodexModels(options.codexPathOverride, project.path, options.rpcTimeoutMs),
+    // 守护(评审 #193 P1-1):起会话前的预测 —— 子进程会继承此刻的环境(OPENAI_BASE_URL)。
+    callTarget: (kind, context) => kind === 'cheapEval' || kind === 'strongEval' ? null
+      : { provider: 'codex', model: context?.execution?.model ?? context?.model ?? options.model ?? null, baseUrl: workbenchCodexEnv().OPENAI_BASE_URL || null },
     async spawn(project, context) {
       const execution = context.execution ? {...context.execution} : undefined
       const model = execution ? execution.model ?? (execution.defaults === 'provider' && !context.resumeSessionId ? context.model ?? options.model : undefined) : context.model ?? options.model
@@ -133,8 +136,11 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
       // without overwriting the user's web-search mode before config/read.
       const { web_search: _startupSearch, ...startupConfig } = discovery.config
       const enabledMcp = new Set<string>()
+      const childEnv = workbenchCodexEnv()
+      // 守护(评审 #193 P1-1):app-server 是常驻子进程,端点在这一刻随环境定下。
+      const spawnTarget = { provider: 'codex', model: model ?? null, baseUrl: childEnv.OPENAI_BASE_URL || null }
       const child = spawn(options.codexPathOverride, [...workbenchCodexArgs(startupConfig), 'app-server', '--listen', 'stdio://'], {
-        cwd: project.path, env: workbenchCodexEnv(), stdio: ['pipe', 'pipe', 'pipe'],
+        cwd: project.path, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true, detached: true,
       })
       const rpcs = new Map<RpcId, { resolve: (value: ObjectValue) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>()
@@ -749,6 +755,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
       } : undefined
       return {
         ...(runtime ? { workbenchRuntime: runtime } : {}),
+        callTarget: () => spawnTarget,
         dispatch(text, attachments) {
           if (runtime) throw new Error('codex_runtime_requires_lifetime_stream')
           const { turn, accepted } = launch(text, attachments)

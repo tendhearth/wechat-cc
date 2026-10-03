@@ -168,6 +168,7 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
           const baseURL = configuredAgent.openaiBaseUrl
           const defaultModel = configuredAgent.openaiModel
           return createOpenAiAgentProvider({
+            endpoint: { baseUrl: baseURL, model: defaultModel },
             makeChatModel: (model) =>
               createAiSdkChatModel({ baseURL, apiKey: openaiKey, model: model ?? defaultModel }),
             // Empty spec set → bridge with zero MCP tools (bare-bones).

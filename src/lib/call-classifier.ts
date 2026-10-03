@@ -23,8 +23,18 @@ export interface CallTarget {
   model?: string | null
   /** 实际连的 base URL;undefined/null = provider 的官方默认端点。 */
   baseUrl?: string | null
-  /** 只影响 Cursor:列模型目录不是一次模型回合(不选模型),按 Cursor 自家处理。 */
-  purpose?: 'turn' | 'eval' | 'catalog' | 'usage' | 'voice'
+  /**
+   * 只影响 Cursor:列模型目录(catalog / usage)和起会话(setup:ACP session/new|load,不发模型请求)
+   * 都不是一次模型回合,按 Cursor 自家处理。
+   */
+  purpose?: 'turn' | 'eval' | 'catalog' | 'usage' | 'voice' | 'setup'
+  /**
+   * 评审 #193 P1-1:执行者 / 会话报出来的**实际**目标(端点 + 模型都是它真正会用的)。
+   * true ⇒ daemon 不再按此刻的配置补端点 / 默认模型 —— 配置后来改了,在用的执行者不会跟着改。
+   */
+  exact?: boolean
+  /** 拿不准这一次实际连到哪里(执行者没报目标)⇒ 按需要保护(fail closed)。 */
+  unresolved?: boolean
 }
 
 export interface ClassifyPolicy {
@@ -47,6 +57,7 @@ export type CallKind =
   | 'self_hosted'     // localhost / 局域网 / 私网 / tailnet
   | 'custom_gateway'  // 其它自定义 base URL
   | 'unknown_provider'
+  | 'unresolved'      // 执行者没报出实际目标 —— 拿不准,按需要保护
   | 'override'
 
 export interface CallClass {
@@ -162,8 +173,9 @@ export function matchesOverride(pattern: string, t: CallTarget, host: string | n
 
 function cursorModelClass(model: string | null | undefined, purpose: CallTarget['purpose']): CallClass {
   const host = PROVIDER_DEFAULT_HOST.cursor!.host
-  const m = (model ?? '').trim().toLowerCase()
-  if (purpose === 'catalog' || purpose === 'usage') return { protected: false, kind: 'cursor_own', label: 'Cursor', host, reason: '列模型目录不选模型,按 Cursor 自家处理' }
+  // cursor-agent 的 ACP 模型 id 带参数后缀:`default[]`(= Auto)、`claude-opus-5[thinking=true,…]`。
+  const m = (model ?? '').trim().toLowerCase().replace(/\[[^\]]*\]$/, '')
+  if (purpose === 'catalog' || purpose === 'usage' || purpose === 'setup') return { protected: false, kind: 'cursor_own', label: 'Cursor', host, reason: '列模型目录不选模型,按 Cursor 自家处理' }
   if (!m || CURSOR_OWN.some(r => r.test(m))) return { protected: false, kind: 'cursor_own', label: `Cursor(${m || 'auto'})`, host, reason: 'Cursor auto / 自家模型' }
   if (CURSOR_OVERSEAS.some(r => r.test(m))) return { protected: true, kind: 'cursor_overseas', label: `Cursor(${model})`, host, reason: 'Cursor 上选了 Claude / GPT / o 系列 / Gemini 模型' }
   return { protected: true, kind: 'cursor_unknown', label: `Cursor(${model})`, host, reason: '不认识的 Cursor 模型名,默认保护(guard.json trust 可放开)' }
@@ -186,7 +198,10 @@ export function classifyCall(t: CallTarget, policy: ClassifyPolicy = {}): CallCl
   const providerLabel = def?.label ?? provider ?? '?'
   const explicitHost = hostOf(t.baseUrl)
   let base: CallClass
-  if (explicitHost) {
+  if (t.unresolved) {
+    // 评审 #193 P1-1:执行者没报出这一次实际连到哪里 —— 不拿此刻的配置去猜,按需要保护。
+    base = { protected: true, kind: 'unresolved', label: providerLabel, host: null, reason: '拿不准这一次实际连到哪里,按需要保护' }
+  } else if (explicitHost) {
     // 显式 base URL 指回官方端点,还是官方(ANTHROPIC_BASE_URL=https://api.anthropic.com)。
     base = hostClass(explicitHost, providerLabel, policy)
     if (base.kind === 'official' && def && (explicitHost === def.host || explicitHost.endsWith(`.${def.host}`))) base = { ...base, label: providerLabel }

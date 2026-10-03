@@ -17,7 +17,7 @@
  */
 import type { SessionManager } from './session-manager'
 import type { ConversationStore } from './conversation-store'
-import type { ProviderRegistry } from './provider-registry'
+import { providerCallTarget, type ProviderRegistry } from './provider-registry'
 import type { Mode, ProviderId } from './conversation'
 import type { InboundMsg } from './prompt-format'
 import { makeHandoffLedger, buildHandoffBlock, buildColdStartBlock, type HandoffTurn } from './provider-handoff'
@@ -81,7 +81,7 @@ export interface TurnRecord {
 
 export interface ConversationCoordinatorDeps {
   resolveProject(chatId: string): { alias: string; path: string } | null
-  manager: Pick<SessionManager, 'acquire'> & Partial<Pick<SessionManager, 'release' | 'releaseFor' | 'has'>>
+  manager: Pick<SessionManager, 'acquire'> & Partial<Pick<SessionManager, 'release' | 'releaseFor' | 'has' | 'effectiveTarget'>>
   conversationStore: Pick<ConversationStore, 'get' | 'set' | 'setParticipants'>
   registry: Pick<ProviderRegistry, 'has' | 'list' | 'get'>
   /**
@@ -489,6 +489,23 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
   // two rapid inbound messages for one chat never run concurrently. Chatroom
   // is exempt — see the comment on `dispatch`.
   const mutex = makeChatMutex()
+  // 第二轮评审 #194 P2:**同一个底层会话同一时刻只有一个回合**。按 (chat, project, provider) —— 和
+  // SessionManager 的会话键同一个粒度 —— 串行每一次发送:单模型队列(上面的 per-chat 锁)和 /chat
+  // 抢占(不持 per-chat 锁)两条路在网络来回切换时会交接,两条路的回合都落到这把锁上,就不可能
+  // 在同一个会话上撞车(acp_turn_already_running)。它是叶子锁:持有它的时候从不去拿 per-chat 锁。
+  // 锁空着就**当场**开始(不多让出一拍):取消 / 抢占靠同步登记,不能因为这把锁晚一拍。
+  const sessionTails = new Map<string, Promise<void>>()
+  function oneTurnPerSession<T>(chatId: string, alias: string, providerId: ProviderId, fn: () => Promise<T>): Promise<T> {
+    const key = `${chatId}\u0000${alias}\u0000${providerId}`
+    const prev = sessionTails.get(key)
+    let run: Promise<T>
+    if (prev) run = prev.then(fn, fn)
+    else { try { run = fn() } catch (err) { run = Promise.reject(err) } }
+    const tail = run.then(() => undefined, () => undefined)
+    sessionTails.set(key, tail)
+    void tail.then(() => { if (sessionTails.get(key) === tail) sessionTails.delete(key) })
+    return run
+  }
 
   function validateMode(mode: Mode): void {
     // Reject unknown providers up front so the caller (mode-commands or
@@ -648,7 +665,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           deps.log?.('HANDOFF', `chat=${msg.chatId} cold-start ${providerId} recent=${recent.length}`)
         }
       }
-      summary = await collectTurn(handle.dispatch(text), { timeoutMs: deps.turnTimeoutMs, onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) })
+      summary = await oneTurnPerSession(msg.chatId, proj.alias, providerId, () => collectTurn(handle.dispatch(text), { timeoutMs: deps.turnTimeoutMs, onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) }))
       const assistantTexts = summary.assistantText
       const replyToolCalled = summary.replyToolCalled
 
@@ -947,7 +964,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     try {
       settled = await Promise.allSettled(acquired.map(a =>
         a.status === 'fulfilled'
-          ? collectTurn(a.value.dispatch(text), { timeoutMs: deps.turnTimeoutMs, onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) })
+          ? oneTurnPerSession(msg.chatId, proj.alias, a.value.providerId, () => collectTurn(a.value.dispatch(text), { timeoutMs: deps.turnTimeoutMs, onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) }))
           : Promise.reject(a.reason),
       ))
     } finally {
@@ -1067,7 +1084,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           alias: proj.alias, path: proj.path, providerId,
           chatId: msg.chatId, tierProfile, permissionMode: deps.permissionMode,
         })
-        summary = await collectTurn(handle.dispatch(promptFor(providerId)), { timeoutMs: Math.min(deps.turnTimeoutMs ?? CHATROOM_BEAT_TIMEOUT_MS, CHATROOM_BEAT_TIMEOUT_MS), onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) })
+        summary = await oneTurnPerSession(msg.chatId, proj.alias, providerId, () => collectTurn(handle.dispatch(promptFor(providerId)), { timeoutMs: Math.min(deps.turnTimeoutMs ?? CHATROOM_BEAT_TIMEOUT_MS, CHATROOM_BEAT_TIMEOUT_MS), onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) }))
       } catch (e) {
         err = e instanceof Error ? e.message : String(e)
       }
@@ -1137,7 +1154,13 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     const refused: { label: string; source: 'bx' | 'probe' | 'off'; detail: string }[] = []
     for (const p of providers) {
       const model = cur.kind === 'solo' && cur.provider === p ? cur.model : undefined
-      const d = await decideCall(deps.networkGate, { provider: p, model: model ?? null, purpose: 'turn' })
+      // 评审 #193 P1-1:按这一轮**实际**会连到的目标判 —— 有在用的会话就是它起来时定下的端点 + 模型,
+      // 没有就是 provider 按这次的模型报的;都报不出来 ⇒ 按需要保护。不按此刻的配置猜。
+      const proj = deps.resolveProject(msg.chatId)
+      const target = proj && deps.manager.effectiveTarget
+        ? deps.manager.effectiveTarget({ alias: proj.alias, providerId: p, chatId: msg.chatId }, model)
+        : providerCallTarget(deps.registry.get(p)?.provider, p, 'session', model !== undefined ? { model } : {})
+      const d = await decideCall(deps.networkGate, target)
       if (d.allowed) allowed.push(p)
       else refused.push({ label: d.cls.label, source: d.verdict!.source, detail: d.verdict!.detail })
     }
@@ -1149,7 +1172,25 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     return allowed
   }
 
-  async function dispatchInner(msg: InboundMsg): Promise<void> {
+  /**
+   * parallel / chatroom 这一轮**实际**要执行的参与者:解析参与者,再拿掉此刻不能出发的
+   * (需要保护 + 网络不安全,统一回一句话)。null = 全被守护挡下(话已经回过了),这一轮到此为止。
+   */
+  function resolveAndAdmit(msg: InboundMsg, mode: Mode & { kind: 'parallel' | 'chatroom' }): ProviderId[] | Promise<ProviderId[] | null> {
+    const participants = resolveParticipants(mode, msg.chatId)
+    // 没接守护就同步返回:不多让出一拍(取消 / latest-wins 抢占都靠同步登记)。
+    return participants.length > 0 && deps.networkGate ? admitOrNull(msg, participants) : participants
+  }
+  async function admitOrNull(msg: InboundMsg, participants: ProviderId[]): Promise<ProviderId[] | null> {
+    const admitted = await admitProviders(msg, participants)
+    return admitted.length === 0 ? null : admitted
+  }
+
+  /**
+   * `plan`:submitTurn 已经替 chatroom 算好的实际参与者(为了按实际执行的集合决定排队方式,
+   * 评审 #193 P2-4)。只在排队期间模式没变时沿用;否则这里重新算。admitted=null = 全被守护挡下。
+   */
+  async function dispatchInner(msg: InboundMsg, plan?: { mode: Mode; admitted: ProviderId[] | null }): Promise<void> {
     const proj = deps.resolveProject(msg.chatId)
       if (!proj) {
         deps.log('COORDINATOR', `drop: no project for chat=${msg.chatId}`)
@@ -1162,12 +1203,11 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // or N=1) and use the resolved set for the capability-matrix check.
       let participants: ProviderId[] | null = null
       if (mode.kind === 'parallel' || mode.kind === 'chatroom') {
-        participants = resolveParticipants(mode, msg.chatId)
         // 守护 v2:先拿掉此刻不能出发的(需要保护 + 网络不安全),其余照常;全被挡下就到此为止。
-        if (participants.length > 0 && deps.networkGate) {
-          participants = await admitProviders(msg, participants)
-          if (participants.length === 0) return
-        }
+        const planned = plan && JSON.stringify(plan.mode) === JSON.stringify(mode) ? plan.admitted : resolveAndAdmit(msg, mode)
+        const resolved = planned instanceof Promise ? await planned : planned
+        if (resolved === null) return
+        participants = resolved
         if (participants.length === 0) {
           deps.log('COORDINATOR', `chat=${msg.chatId} ${mode.kind} resolved to empty participants; falling back to solo+${deps.defaultProviderId}`)
           return dispatchSolo(msg, proj, deps.defaultProviderId, mode.kind)
@@ -1245,12 +1285,45 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     msg: InboundMsg,
     opts?: { within?: (dispatch: () => Promise<void>) => Promise<T> },
   ): Promise<T | void> {
+    const mode = getMode(msg.chatId)
+    let policy = turnPolicy(mode)
+    let plan: { mode: Mode; admitted: ProviderId[] | null } | undefined
+    // 评审 #193 P2-4:排队方式跟着**实际执行的集合**走,不跟着模式名走。/chat 被守护筛到只剩
+    // 一个(或一个都不剩)时执行已经退成单模型 —— 那就得像 solo 一样排队,否则第二条消息会在
+    // 同一个会话上撞上还在跑的第一条(ACP 的 acp_turn_already_running,第二条就丢了)。
+    if (policy === 'preempt' && mode.kind === 'chatroom' && deps.resolveProject(msg.chatId)) {
+      // 没接守护时同步算(不多让出一拍,latest-wins 的抢占时机不变)。
+      const participants = resolveParticipants(mode, msg.chatId)
+      // 记下解析之后的模式(老数据第一次解析会回填参与者),dispatchInner 按它判断排队期间模式变没变。
+      plan = { mode: getMode(msg.chatId), admitted: participants.length > 0 && deps.networkGate ? await admitOrNull(msg, participants) : participants }
+      if (plan.admitted === null || plan.admitted.length < 2) policy = 'queue'
+    }
     const run = async (): Promise<T | void> => {
-      const doDispatch = (): Promise<void> => dispatchInner(msg)
+      const doDispatch = (): Promise<void> => dispatchInner(msg, plan)
       return opts?.within ? opts.within(doDispatch) : doDispatch()
     }
-    if (turnPolicy(getMode(msg.chatId)) === 'preempt') return run()
+    if (policy === 'preempt') {
+      // 真的一组人在辩:latest-wins 的抢占照旧(不持锁)。但先等排着队的单模型回合跑完 ——
+      // 它们和辩论会用到同一个会话。
+      const queued = mutex.tail(msg.chatId)
+      if (queued) await queued
+      return run()
+    }
+    // 退成单模型的 /chat:先按 latest-wins 停掉还在跑的整组辩论(和它共用会话),再排队。
+    if (mode.kind === 'chatroom') await preemptInFlightChatroom(msg.chatId)
     return mutex.runExclusive(msg.chatId, run)
+  }
+
+  /** 停掉这个 chat 正在跑的 /chat 辩论并等它收尾(dispatchChatroom 开头的 latest-wins 同一套)。 */
+  async function preemptInFlightChatroom(chatId: string): Promise<void> {
+    while (true) {
+      const priorAborter = inFlightAborters.get(chatId)
+      const priorPromise = inFlightDispatchPromises.get(chatId)
+      if (!priorAborter || !priorPromise) return
+      deps.log('COORDINATOR_CHATROOM', `chat=${chatId} → preempting prior in-flight dispatch (next turn runs single-model)`)
+      priorAborter.abort()
+      try { await priorPromise } catch { /* prior dispatch's own error path */ }
+    }
   }
 
   // Back-compat thin wrapper — the WeChat inbound path. Identical behavior to

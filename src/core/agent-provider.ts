@@ -2,6 +2,7 @@ import type { TierProfile } from './user-tier'
 import type { PermissionMode } from './permission-mode'
 import type { ProviderId } from './conversation'
 import { isAuthFail } from './auth-fail'
+import type { CallTarget } from '../lib/call-classifier'
 
 // Re-export so existing imports `import type { PermissionMode } from
 // './agent-provider'` keep working.
@@ -135,7 +136,22 @@ export interface AgentSession {
    */
   cancel?(): Promise<void>
   close(): Promise<void>
+  /**
+   * 守护(评审 #193 P1-1):这条会话每一轮**真正**连到哪里 —— 起来那一刻定下的端点 + 模型
+   * (Claude 子进程拿到的 ANTHROPIC_BASE_URL、openai-compatible 的 base URL、cursor-agent 报上来的
+   * 当前模型……),不是此刻配置里写的。null / 未实现 ⇒ 拿不准 ⇒ 网络闸门按需要保护(fail closed)。
+   */
+  callTarget?(): CallTarget | null
 }
+
+/** `AgentProvider.callTarget` 问的是哪一种调用。 */
+export type CallTargetKind =
+  /** 起会话本身。缺省 = 'session'(多数执行者起会话就定下了端点和模型)。ACP 起会话不发模型请求,报 purpose:'setup'。 */
+  | 'spawn'
+  /** 按这份 SpawnContext 起出来的会话,每一轮会连到哪里(还没起来时的预测)。 */
+  | 'session'
+  | 'cheapEval'
+  | 'strongEval'
 
 /**
  * One-shot LLM eval used for routing / observation / decision flows that
@@ -386,6 +402,12 @@ export interface AgentProvider {
    * Missing → caller falls back to cheapEval.
    */
   strongEval?: CheapEval
+  /**
+   * 守护(评审 #193 P1-1):这一次调用会**真正**连到哪里 —— 用的是和 spawn / cheapEval 自己完全
+   * 同一份已解析的参数(构造时定下的 base URL、构造时的默认模型、ctx 里钉的模型……),不读此刻的配置。
+   * 网络闸门就按它判。null / 未实现 ⇒ 拿不准 ⇒ 按需要保护(fail closed)。
+   */
+  callTarget?(kind: CallTargetKind, ctx?: Partial<SpawnContext>): CallTarget | null
 }
 
 /**

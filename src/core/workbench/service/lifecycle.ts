@@ -11,6 +11,8 @@ import { publicTask, TERMINAL_TASK_STATUSES } from '../store'
 import type { Active } from './state'
 import type { WorkbenchTaskView } from './types'
 import type { ServiceCtx } from './ctx'
+import { liveRunTarget } from './call-target'
+import type { CallTarget } from '../../../lib/network-gate'
 
 export function makeLifecycleDomain(ctx:ServiceCtx) {
   const { store, state } = ctx
@@ -249,12 +251,13 @@ export function makeLifecycleDomain(ctx:ServiceCtx) {
    * 守护 v2:`select` 按 (执行者, 这一轮的模型) 决定停不停 —— 返回这条任务要记的说明,null = 不停
    * (不需要保护的执行者永远不停)。传字符串 = 全停(老接法)。
    */
-  function pauseForNetwork(select:string|((run:{providerId:string;model:string|null})=>string|null)):number {
+  function pauseForNetwork(select:string|((run:{providerId:string;model:string|null;target:CallTarget})=>string|null)):number {
     let n=0
     for (const running of [...state.runsByTask.values()]) {
       if (running.cancelled||running.finishing||running.state==='uncertain') continue
       let message:string|null
-      try { message=typeof select==='string'?select:select({providerId:running.task.providerId,model:running.execution.model}) } catch { message=null }
+      // 评审 #193 P1-1:target = 这条在跑的会话实际连到的目标,停不停按它判。
+      try { message=typeof select==='string'?select:select({providerId:running.task.providerId,model:running.execution.model,target:liveRunTarget(running,ctx.deps.registry.get(running.task.providerId)?.provider)}) } catch { message=null }
       if (message===null) continue
       try { store.addEvent(running.taskId,'system',message); ctx.hub.touched(running.taskId) } catch { /* 停仍然要停 */ }
       try { cancelRun(running); n++ } catch { /* 下一个照停 */ }

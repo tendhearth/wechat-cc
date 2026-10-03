@@ -11,6 +11,7 @@
  */
 import type { EventsStore } from '../events/store'
 import type { ObservationsStore, ObservationTone } from '../observations/store'
+import { isNetworkUnprotectedError } from '../../lib/network-gate'
 
 export interface IntrospectAgent {
   runIntrospect(): Promise<{
@@ -34,6 +35,8 @@ export async function runIntrospectTick(deps: IntrospectDeps): Promise<void> {
   try {
     result = await deps.agent.runIntrospect()
   } catch (err) {
+    // 评审 #193 P2-3:被网络守护拒了 = 没反思过,不记 cron_eval_failed;交给上层整拍跳过。
+    if (isNetworkUnprotectedError(err)) throw err
     const msg = err instanceof Error ? err.message : String(err)
     deps.log('INTROSPECT', `agent failed: ${msg}`)
     await deps.events.append({

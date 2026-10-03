@@ -112,7 +112,8 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
         try {
           const gate = opts.guardRuntime?.gate
           const n = opts.workbench?.pauseForNetwork((run) => {
-            const cls = classifyWith(gate, { provider: run.providerId, model: run.model, purpose: 'turn' })
+            // 评审 #193 P1-1:按这条在跑的会话实际连到的目标判,不按任务记录的模型 / 此刻的配置。
+            const cls = classifyWith(gate, run.target)
             return cls.protected ? `${unprotectedMessage(s, cls.label)}已停止本轮,恢复后可以继续。` : null
           }) ?? 0
           log('GUARD', `network unprotected [probe, 2 reads] — paused ${n} protected workbench run(s)`)

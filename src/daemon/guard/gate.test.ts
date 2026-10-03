@@ -114,3 +114,26 @@ describe('assertCallAllowed', () => {
     await expect(assertCallAllowed(createNetworkGate(deps()), CLAUDE)).resolves.toBeUndefined()
   })
 })
+
+// 评审 #193 P1-2:过期的探测结果按「不知道」处理 —— 要先拿到新结果,拿不到按不安全。
+describe('probe result freshness (review #193 P1)', () => {
+  const probeState = (safe: boolean, at: number): GuardState => ({ ...initialState(), source: 'probe', safe, reachable: safe, detail: safe ? '探测可达' : '探测失败', lastChecked: new Date(at).toISOString() })
+
+  it('an expired probe result is not trusted — re-polls; no fresh result → unsafe', async () => {
+    const stale = probeState(true, 0)
+    const g = createNetworkGate(deps({ findBx: () => null, current: () => stale, pokeNow: () => Promise.resolve(stale), probeStaleMs: 60_000, firstProbeWaitMs: 10 }))
+    const v = await g.check()
+    expect(v.safe).toBe(false)
+    expect(v.source).toBe('probe')
+  })
+
+  it('a fresh probe result is used as-is', async () => {
+    const g = createNetworkGate(deps({ findBx: () => null, current: () => probeState(true, 1_000_000 - 1_000), probeStaleMs: 60_000 }))
+    expect((await g.check()).safe).toBe(true)
+  })
+
+  it('expired result + the poke returns a fresh probe → uses the fresh one', async () => {
+    const g = createNetworkGate(deps({ findBx: () => null, current: () => probeState(true, 0), pokeNow: () => Promise.resolve(probeState(false, 1_000_000)), probeStaleMs: 60_000 }))
+    expect(await g.check()).toEqual({ safe: false, source: 'probe', detail: '探测失败' })
+  })
+})
