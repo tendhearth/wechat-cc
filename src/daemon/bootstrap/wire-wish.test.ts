@@ -3,6 +3,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeWish, type WishDeps } from './wire-wish'
+import { NetworkUnprotectedError } from '../../lib/network-gate'
 import { readWishes } from '../companion/wish-memory'
 import { readIntroIndex, writeIntroIndex } from '../companion/intro-memory'
 import type { Envelope } from '../../core/envelope'
@@ -101,6 +102,13 @@ describe('心愿:两只伙伴对着问', () => {
     const p = await A.wish.propose('x'); if (!p.ok) throw new Error()
     await A.wish.send(p.id); await flush()
     expect(B.owner).toEqual([]); expect(B.logs.some(l => l.includes('provider down'))).toBe(true)
+  })
+  it('评审 #193:B 的判官被网络守护拒了 → 不转问、不说「我说不知道」,只记日志', async () => {
+    const A = side('A'), B = side('B', new NetworkUnprotectedError({ safe: false, source: 'bx', detail: 'bx 未保护' }, 'Claude')); A.setPeer(B); B.setPeer(A)
+    const p = await A.wish.propose('x'); if (!p.ok) throw new Error()
+    await A.wish.send(p.id); await flush()
+    expect(B.owner).toEqual([])
+    expect(B.letters.filter(l => l.direction === 'out')).toEqual([])
   })
   it('同一条心愿重投 → B 只判一次', async () => {
     const A = side('A'), B = side('B', { match: 'no' }); A.setPeer(B); B.setPeer(A)

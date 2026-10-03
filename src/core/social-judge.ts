@@ -16,6 +16,7 @@
  * before anything crosses the wire — this module's ONLY job is producing a
  * best-effort verdict, never enforcing disclosure itself.
  */
+import { isNetworkUnprotectedError } from '../lib/network-gate'
 
 /** 判官要的全部输入 —— 一个话题,可选一个城市。 */
 export interface JudgeInput {
@@ -92,7 +93,10 @@ export function makeJudge(deps: JudgeDeps): (card: JudgeInput) => Promise<JudgeV
     let raw: string
     try {
       raw = await deps.runTurn(sys, userPrompt(card) + (grounding ? '\n\n' + grounding : ''))
-    } catch {
+    } catch (err) {
+      // 评审 #193 P2-3:被网络守护拒了 = 判官没跑,不是判了「不能」—— 原样抛出(调用方整件事算跳过,
+      // 不转问、不跟主人说「我说不知道」)。
+      if (isNetworkUnprotectedError(err)) throw err
       // runTurn threw (model down, spawn failed, …) — fail to a silent no,
       // never surface the error as a match.
       return { match: 'no' }

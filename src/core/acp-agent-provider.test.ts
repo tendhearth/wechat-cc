@@ -338,3 +338,37 @@ describe('attachments into the prompt', () => {
     child.finishPrompt(); await attached
   })
 })
+
+// 评审 #193 P1-1:网络闸门要的是这条会话**实际**用的模型 —— cursor-agent 起会话 / 续会话时自己报的
+// (configOptions 的 currentValue),而不是我们想钉的那个(钉不上、或续会话根本不钉)。
+describe('ACP provider — reports the model the session actually runs (review #193)', () => {
+  const modelOption = (currentValue: string, values: string[] = [currentValue]) => [{ id: 'model', category: 'model', type: 'select', currentValue, options: values.map(value => ({ value, name: value })) }]
+
+  it('unpinned new session → the model cursor-agent reports (default[] = Auto); spawn itself is setup only', async () => {
+    const provider = createAcpProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor', permissions: 'mode', text: 'messages', targetProvider: 'cursor' })
+    expect(provider.callTarget?.('spawn', {})).toEqual({ provider: 'cursor', purpose: 'setup' })
+    expect(provider.callTarget?.('session', {})).toBeNull()   // 没钉模型:起来之前说不准
+    const { session } = await start({}, c => { c.newResult = { sessionId: 'sess-1', configOptions: modelOption('default[]') } }, { targetProvider: 'cursor' })
+    expect(session.callTarget?.()).toEqual({ provider: 'cursor', model: 'default[]' })
+  })
+
+  it('pin accepted → the pinned model; pin not offered → whatever the agent reports', async () => {
+    const pinned = await start({ model: 'gpt-5' }, c => { c.newResult = { sessionId: 'sess-1', configOptions: modelOption('default[]', ['default[]', 'gpt-5']) } }, { targetProvider: 'cursor', model: ctx => ctx.model })
+    await expect.poll(() => pinned.session.callTarget?.()).toEqual({ provider: 'cursor', model: 'gpt-5' })
+    const notOffered = await start({ model: 'claude-4.5-sonnet' }, c => { c.newResult = { sessionId: 'sess-2', configOptions: modelOption('default[]') } }, { targetProvider: 'cursor', model: ctx => ctx.model, log: () => {} })
+    expect(notOffered.session.callTarget?.()).toEqual({ provider: 'cursor', model: 'default[]' })
+  })
+
+  it('resumed session → the model session/load reports (the pin is not applied to loaded sessions)', async () => {
+    const { session, child } = await start({ resumeSessionId: 'sess-old', model: 'auto' }, c => { c.loadResult = { configOptions: modelOption('claude-opus-5[thinking=true]') } }, { targetProvider: 'cursor', model: ctx => ctx.model })
+    expect(child.sent.some(m => m.method === 'session/set_config_option')).toBe(false)
+    expect(session.callTarget?.()).toEqual({ provider: 'cursor', model: 'claude-opus-5[thinking=true]' })
+  })
+
+  it('agent reports no model → null (the gate then treats it as protected); no targetProvider → no callTarget at all', async () => {
+    const quiet = await start({}, c => { c.newResult = { sessionId: 'sess-1' } }, { targetProvider: 'cursor' })
+    expect(quiet.session.callTarget?.()).toBeNull()
+    const anonymous = await start({}, c => { c.newResult = { sessionId: 'sess-2', configOptions: modelOption('default[]') } })
+    expect(anonymous.session.callTarget).toBeUndefined()
+  })
+})

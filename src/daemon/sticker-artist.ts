@@ -13,11 +13,11 @@ import { CC_INK_IDENTITY } from '../lib/cc-ink'
  * non-fatal and stamps the daily marker, so a broken model/renderer costs
  * one attempt per day, never a hot loop.
  */
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { isNetworkUnprotectedError } from '../lib/network-gate'
 import { join } from 'node:path'
 import { composeCcInk, ccInkOutputInstructions } from '../lib/cc-ink-compose'
 import type { StickerLib } from './stickers'
-import { readJsonFile } from '../lib/read-json-file'
 import { spawnSync } from '../lib/runtime/process'
 
 /** Phase-1 moods (基础情绪) — drawn one per DAY until covered. */
@@ -126,11 +126,14 @@ export async function runStickerArtist(d: StickerArtistDeps): Promise<{ drawn: s
   // Cadence gate (daily in phase 1, weekly after) — stamped on every ATTEMPT
   // (success or failure) so a broken model/renderer costs one try per
   // period, never a retry loop.
+  let priorMarker: string | null = null
   try {
-    const marker = readJsonFile(markerPath) as { last_at?: number }
+    priorMarker = readFileSync(markerPath, 'utf8')
+    const marker = JSON.parse(priorMarker) as { last_at?: number }
     if (typeof marker.last_at === 'number' && now() - marker.last_at < target.intervalMs) return { drawn: null }
   } catch { /* no marker yet */ }
-  writeFileSync(markerPath, JSON.stringify({ last_at: now() }))
+  const stamped = JSON.stringify({ last_at: now() })
+  writeFileSync(markerPath, stamped)
   const mood = target.mood
 
   const workDir = join(d.stateDir, 'tmp-sticker-artist')
@@ -156,6 +159,17 @@ export async function runStickerArtist(d: StickerArtistDeps): Promise<{ drawn: s
     }
     return { drawn: mood }
   } catch (e) {
+    // 评审 #193 P2-3:被网络守护拒了 = 根本没试过(一个请求都没发),不吃掉这一期的机会。
+    if (isNetworkUnprotectedError(e)) {
+      // 只撤这一次的标记(第二轮评审 #194):标记已经不是我们写的那一份(期间别人又写过)就不动。
+      try {
+        if (readFileSync(markerPath, 'utf8') === stamped) {
+          if (priorMarker === null) rmSync(markerPath, { force: true }); else writeFileSync(markerPath, priorMarker)
+        }
+      } catch { /* 恢复不了就等下一期 */ }
+      d.log('STICKERS', `artist: skipped 「${mood}」 — network unprotected; marker unchanged, next tick retries`)
+      return { drawn: null }
+    }
     d.log('STICKERS', `artist: draw failed for 「${mood}」: ${String(e)}`)
     return { drawn: null }
   } finally {

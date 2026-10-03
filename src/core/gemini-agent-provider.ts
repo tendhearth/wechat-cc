@@ -359,6 +359,8 @@ export function createGeminiAgentProvider(opts: GeminiAgentProviderOptions): Age
   const newSessionId = () => `gemini-${Date.now()}-${++uuidCounter}`
 
   return {
+    // 守护(评审 #193 P1-1):API key 直连 Google;模型和 spawn / cheapEval 用的是同一份。
+    callTarget: (kind) => ({ provider: 'gemini', model: kind === 'cheapEval' ? opts.cheapModel ?? opts.model : opts.model }),
     async spawn(_project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
       const conn = await opts.mcpConnect(ctx.mcpEnv)
       let functionDeclarations: GeminiFunctionDeclaration[]

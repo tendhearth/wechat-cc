@@ -9,6 +9,8 @@ import type { AgentEvent, AgentSession, AgentExecutionChoice } from '../../agent
 import type { MatterStore } from '../../matters/store'
 import { classifyProviderError } from '../../provider-quota'
 import { decideCall, isNetworkUnprotectedError } from '../../../lib/network-gate'
+import { providerCallTarget } from '../../provider-registry'
+import { liveRunTarget } from './call-target'
 import { TIER_PROFILES, sessionAuthEnv } from '../../user-tier'
 import { canonicalProject, outputDirectory } from '../artifacts'
 import type { Attachment } from '../attachments'
@@ -143,9 +145,10 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       if(running.cancelled){finalStatus='cancelled';return}
       if(ctx.deps.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
       const entry=requireInput(task.providerId,running.attachments,running.execution,running.continuation.mode==='resume')
-      // 网络闸门(守护 v2):起执行者之前按 (执行者, 这一轮选的模型) 分类;需要保护且不安全才不 spawn,
-      // 任务以 network_unprotected 失败。不需要保护的执行者(Cursor auto、国内 / 自建网关)照常起。
-      if(ctx.deps.networkGate&&!(await decideCall(ctx.deps.networkGate,{provider:task.providerId,model:running.execution.model,purpose:'turn'})).allowed)throw new Error('network_unprotected')
+      // 网络闸门(守护 v2;评审 #193 按实际目标判):起执行者之前问执行者「这次 spawn 实际会连到哪里」
+      // (它用的端点 + 模型,不是此刻的配置);需要保护且不安全才不 spawn,任务以 network_unprotected 失败。
+      // 不需要保护的执行者(Cursor auto、国内 / 自建网关)照常起。会话起来以后、发第一轮之前还会再判一次。
+      if(ctx.deps.networkGate&&!(await decideCall(ctx.deps.networkGate,providerCallTarget(entry.provider,task.providerId,'spawn',{execution:{...running.execution},...(resume?{resumeSessionId:resume}:{})}))).allowed)throw new Error('network_unprotected')
       if(running.cancelled){finalStatus='cancelled';return}
       const token=ctx.deps.mintSessionToken?.(sessionKey)
       running.credentialsMinted=!!ctx.deps.mintSessionToken
@@ -192,6 +195,10 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           },() => confirmLateClose(running,false))
         }
       }
+      if (running.cancelled) { finalStatus='cancelled'; return }
+      // 评审 #193 P1-1:会话起来了,这一轮实际连哪里现在才确定(比如 cursor-agent 自报的当前模型)。
+      // 需要保护且不安全 ⇒ 一轮都不发。
+      if(ctx.deps.networkGate&&!(await decideCall(ctx.deps.networkGate,liveRunTarget(running,entry.provider))).allowed)throw new Error('network_unprotected')
       if (running.cancelled) { finalStatus='cancelled'; return }
       store.markSourceDispatched(task.id)
       const material=store.attachments.prepare(task.id,running.attachments,running.path,ctx.stateDir)

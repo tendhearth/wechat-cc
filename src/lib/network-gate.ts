@@ -60,9 +60,32 @@ export class NetworkUnprotectedError extends Error {
   }
 }
 
+/**
+ * 后台任务里「这一次模型调用被守护拒了」的结构化原因(评审 #193 P2-3)。返回 `{ ok:false, reason }`
+ * 而不是抛错的那些路径(串门、社交判断……)用它,调用方据此**不记任何进度**,下一拍再来。
+ */
+export const NETWORK_UNPROTECTED_REASON = 'network_unprotected' as const
+
 export function isNetworkUnprotectedError(err: unknown): err is NetworkUnprotectedError {
   return err instanceof NetworkUnprotectedError
     || (typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'network_unprotected')
+}
+
+/** 拿不准实际目标时的占位:classify 一律判成需要保护(fail closed)。 */
+export function unresolvedTarget(provider: string, purpose: CallTarget['purpose'] = 'turn'): CallTarget {
+  return { provider, purpose, unresolved: true }
+}
+
+/**
+ * 一个**在用的**会话 / 执行者这一轮真正连到哪里(评审 #193 P1-1):它在起来那一刻定下的端点 + 模型,
+ * 而不是此刻配置里写的。会话没报(或报错)⇒ unresolved ⇒ 按需要保护。
+ */
+export function sessionCallTarget(session: { callTarget?: () => CallTarget | null } | null | undefined, provider: string): CallTarget {
+  try {
+    const t = session?.callTarget?.()
+    if (t) return { ...t, exact: true }
+  } catch { /* 报不出来就按拿不准处理 */ }
+  return unresolvedTarget(provider)
 }
 
 export function classifyWith(gate: NetworkGate | undefined, target: CallTarget): CallClass {

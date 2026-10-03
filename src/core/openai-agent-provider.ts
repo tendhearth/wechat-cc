@@ -51,6 +51,12 @@ export interface OpenAiAgentProviderOptions {
   // no per-chat pin, so they always pass `undefined` (the default model).
   makeChatModel: (model?: string) => ChatModelClient
   makeMcpBridge: (mcpEnv: Record<string, string>) => Promise<McpToolBridge>
+  /**
+   * 守护(评审 #193 P1-1):`makeChatModel` 实际连的 base URL 和它的默认模型 —— 与传给
+   * createAiSdkChatModel 的是**同一份**值(bootstrap 在注册那一刻读的配置)。闸门按它判,
+   * 不按此刻的 agent-config 判。不给 ⇒ 闸门拿不准 ⇒ 按需要保护。
+   */
+  endpoint?: { baseUrl: string; model: string }
   cwd?: string
   maxSteps?: number
   log?: (tag: string, line: string) => void
@@ -266,7 +272,10 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
   const log = opts.log ?? (() => {})
   const maxSteps = opts.maxSteps ?? DEFAULT_MAX_STEPS
 
+  const callTarget = (model?: string) => opts.endpoint ? { provider: 'openai', baseUrl: opts.endpoint.baseUrl, model: model ?? opts.endpoint.model } : null
   return {
+    // 会话 / 评估都用 makeChatModel(构造时的 base URL);模型:会话钉的 ?? 默认,评估永远默认。
+    callTarget: (kind, ctx) => callTarget(kind === 'cheapEval' || kind === 'strongEval' ? undefined : ctx?.model),
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
       const sessionId = randomUUID()
       const cwd = opts.cwd ?? project.path
@@ -280,6 +289,7 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
       // released, matching the codebase convention (claude/codex/cursor
       // already hot-reload the SAME way: re-read per spawn, not per turn).
       const chatModel = opts.makeChatModel(ctx.model)
+      const target = callTarget(ctx.model)
 
       // Conversation history for this live session (in-memory; no resume in v1).
       const messages: ChatMessage[] = []
@@ -297,6 +307,7 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
         firstRef: { first: true },
       })
       log('SESSION_SPAWN', `alias=${project.alias} provider=openai session=${sessionId}`)
+      session.callTarget = () => target
       return session
     },
 

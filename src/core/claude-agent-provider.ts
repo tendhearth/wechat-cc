@@ -415,6 +415,11 @@ function claudeActivityLabel(name: string): Pick<AgentActivity, 'type' | 'label'
   }
 }
 
+/** Claude Code 子进程会连的端点:给了 env 就看它(那就是子进程的整份环境),否则看 daemon 自己的 process.env。null = 官方。 */
+export function claudeBaseUrl(env?: Record<string, string | undefined>): string | null {
+  return (env ?? process.env).ANTHROPIC_BASE_URL || null
+}
+
 export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): AgentProvider {
   // One-shot eval with no tools, no MCP, no session continuation — shared by
   // cheapEval (haiku-class) and strongEval (the verdict's main model). Both
@@ -461,6 +466,13 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
     // lets users pin to a newer haiku without a code change.
     cheapEval: (prompt: string) =>
       oneShot(prompt, process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || CLAUDE_CHEAP_MODEL_DEFAULT),
+    // 守护(评审 #193 P1-1):一次性评估每次都起新子进程,继承此刻的 process.env;会话的目标在
+    // spawn 里捕获(见下面 spawnTarget),这里的 'session' 只是还没起来时的预测。
+    callTarget(kind, ctx) {
+      if (kind === 'cheapEval') return { provider: 'claude', model: process.env['WECHAT_CLAUDE_CHEAP_MODEL'] || CLAUDE_CHEAP_MODEL_DEFAULT, baseUrl: claudeBaseUrl() }
+      if (kind === 'strongEval') return opts.strongModel ? { provider: 'claude', model: opts.strongModel(), baseUrl: claudeBaseUrl() } : null
+      return { provider: 'claude', model: ctx?.execution?.model ?? ctx?.model ?? null, baseUrl: claudeBaseUrl() }
+    },
     // One-shot on the STRONG/main model — only offered when bootstrap wires a
     // strongModel resolver. Powers the /chat verdict (deps.verdictEval).
     ...(opts.strongModel ? { strongEval: (prompt: string) => oneShot(prompt, opts.strongModel!()) } : {}),
@@ -501,9 +513,14 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       // now actually reaps the subprocess through this.
       const aborter = options.abortController ?? new AbortController()
       options.abortController = aborter
+      // 守护(评审 #193 P1-1):子进程在这一刻拿到的端点 + 模型就是这条会话以后每一轮连的地方。
+      // options.env 给了就是子进程的整份环境(工作台);没给 SDK 继承 process.env。
+      const spawnTarget = { provider: 'claude', model: typeof options.model === 'string' ? options.model : null, baseUrl: claudeBaseUrl(options.env) }
 
       if (spawnOpts.workbenchLifecycle) {
-        return createClaudeWorkbenchSession(options, spawnOpts, { content: userContent, tool: parseToolUseToEvent, label: claudeActivityLabel })
+        const workbenchSession = createClaudeWorkbenchSession(options, spawnOpts, { content: userContent, tool: parseToolUseToEvent, label: claudeActivityLabel })
+        workbenchSession.callTarget = () => spawnTarget
+        return workbenchSession
       }
 
       const q = query({ prompt: sdkQueue.iterable(), options })
@@ -689,6 +706,7 @@ export function createClaudeAgentProvider(opts: ClaudeAgentProviderOptions): Age
       })()
 
       return {
+        callTarget: () => spawnTarget,
         dispatch(text: string, attachments?: readonly AgentAttachment[]): AsyncIterable<AgentEvent> {
           if (closed) {
             // Already closed — return an iterable that yields nothing.

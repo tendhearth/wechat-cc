@@ -10,7 +10,8 @@
  *   - 装了 bx(且 signal_source 不是 'probe')→ **bx 是唯一权威**:用调度器最近一次 bx 读数;
  *     读数缺失或过期就当场读一次(单飞 + 短缓存),读不出 → 不安全。不回落到 google。
  *   - 没装 bx(或 guard.json 明确 signal_source='probe')→ daemon 自己的 google 探测。
- *     **还没有第一次探测结果时**:等一小会儿(有上限,缺省 4s)让它出来;还没有 → 按失败算。
+ *     **还没有第一次探测结果、或结果已过期时**:等一小会儿(有上限,缺省 4s)让新结果出来;
+ *     还没有 → 按失败算(评审 #193 P1-2:过期的结果 = 不知道)。
  *     (修掉 v1 的 fail-open:调度器初始 reachable=true,开机头一拍之前一律放行。)
  *
  * check() / classify() 永不抛。
@@ -18,7 +19,7 @@
 import type { NetworkGate, NetworkGateVerdict } from '../../lib/network-gate'
 import { classifyCall, type CallClass, type CallTarget, type ClassifyPolicy } from '../../lib/call-classifier'
 import type { BxVerdict } from './bx'
-import type { GuardState } from './scheduler'
+import { DEFAULT_PROBE_TTL_MS, type GuardState } from './scheduler'
 
 export interface NetworkGateDeps {
   isEnabled: () => boolean
@@ -35,6 +36,9 @@ export interface NetworkGateDeps {
   firstProbeWaitMs?: number
   /** bx 读数多旧算过期。缺省 30s(调度器每 10s 读一次)。 */
   staleMs?: number
+  /** probe 读数多旧算过期(评审 #193 P1-2):过期 = 不知道 → 先要新结果,拿不到按不安全。
+   *  缺省 = 调度器的探测有效期 + 一分钟余量。 */
+  probeStaleMs?: number
   /** guard.json 的覆盖。缺省无覆盖。 */
   policy?: () => ClassifyPolicy
   /** 补齐这一次调用的端点 / 默认模型。缺省原样。 */
@@ -49,6 +53,9 @@ export const FIRST_PROBE_WAIT_MS = 4_000
 export function createNetworkGate(deps: NetworkGateDeps): NetworkGate & { classify(t: CallTarget): CallClass; lastVerdict(): NetworkGateVerdict | null } {
   const now = deps.now ?? Date.now
   const staleMs = deps.staleMs ?? 30_000
+  const probeStaleMs = deps.probeStaleMs ?? DEFAULT_PROBE_TTL_MS + 60_000
+  const freshProbe = (s: GuardState | null): s is GuardState =>
+    !!s && s.source === 'probe' && !!s.lastChecked && now() - Date.parse(s.lastChecked) < probeStaleMs
   const waitMs = deps.firstProbeWaitMs ?? FIRST_PROBE_WAIT_MS
   let cached: { at: number; v: NetworkGateVerdict } | null = null
   let inFlight: Promise<NetworkGateVerdict> | null = null
@@ -92,7 +99,7 @@ export function createNetworkGate(deps: NetworkGateDeps): NetworkGate & { classi
       try {
         const poked = deps.pokeNow?.() ?? null
         const attempt: Promise<NetworkGateVerdict | null> = poked
-          ? poked.then(s => (s.source === 'probe' && s.lastChecked ? fromState(s) : null))
+          ? poked.then(s => (freshProbe(s) ? fromState(s) : null))
           : deps.probeOnce
             ? deps.probeOnce().then(r => ({ safe: r.reachable, source: 'probe' as const, detail: r.reachable ? '探测可达' : `探测失败${r.error ? `(${r.error})` : ''}` }))
             : Promise.resolve(null)
@@ -100,7 +107,7 @@ export function createNetworkGate(deps: NetworkGateDeps): NetworkGate & { classi
         if (r === 'timeout' || r === null) {
           // 调度器那一拍可能没赶上探测(比如 ipify 失败没触发);再看一眼当前状态。
           const s = deps.current()
-          if (s && s.source === 'probe' && s.lastChecked) return fromState(s)
+          if (freshProbe(s)) return fromState(s)
           return noResult
         }
         return r
@@ -125,7 +132,8 @@ export function createNetworkGate(deps: NetworkGateDeps): NetworkGate & { classi
       if (s && s.source === 'bx' && s.lastChecked && now() - Date.parse(s.lastChecked) < staleMs) return fromState(s)
       return onDemandBx(bin)
     }
-    if (s && s.source === 'probe' && s.lastChecked) return { safe: s.reachable, source: 'probe', detail: s.detail }
+    // 只信**新鲜**的探测结果;没有或过期 → 等一次新结果(有上限),等不到按不安全。
+    if (freshProbe(s)) return { safe: s.reachable, source: 'probe', detail: s.detail }
     return firstProbe()
   }
 

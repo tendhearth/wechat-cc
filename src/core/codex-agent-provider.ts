@@ -147,7 +147,14 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
     ...(opts.codexPathOverride ? { codexPathOverride: opts.codexPathOverride } : {}),
   })
 
+  // 守护(评审 #193 P1-1):SDK 每一轮都起一个新的 codex exec,继承**那一刻**的 process.env ——
+  // 所以这一轮实际连的端点就是此刻 process.env 里的 OPENAI_BASE_URL(按调用时读,正好对得上)。
+  const codexBaseUrl = () => process.env.OPENAI_BASE_URL || null
   return {
+    callTarget(kind, ctx) {
+      if (kind === 'cheapEval' || kind === 'strongEval') return { provider: 'codex', model: cheapModel ?? null, baseUrl: codexBaseUrl() }
+      return { provider: 'codex', model: ctx?.model ?? opts.model ?? null, baseUrl: codexBaseUrl() }
+    },
     /** CLI 子进程一档(约 3-5s/次),给 20s 余量。 */
     cheapEvalBudgetMs: 20_000,
     async cheapEval(prompt: string): Promise<string> {
@@ -252,6 +259,7 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
       let instructionsInjected = !appendInstructions
 
       return {
+        callTarget: () => ({ provider: 'codex', model: model ?? null, baseUrl: codexBaseUrl() }),
         dispatch(text: string): AsyncIterable<AgentEvent> {
           return {
             async *[Symbol.asyncIterator](): AsyncGenerator<AgentEvent> {
