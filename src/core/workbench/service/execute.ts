@@ -14,6 +14,7 @@ import { canonicalProject, outputDirectory } from '../artifacts'
 import type { Attachment } from '../attachments'
 import type { CreationReceipt } from '../creation-receipts'
 import { makeDeltaCoalescer } from '../delta-coalescer'
+import { CodexExecutionError } from '../codex-execution-error'
 import { executionFailureMessage, normalizeExecutionChoice, PROVIDER_EXECUTION_CHOICE, sameExecutionChoice } from '../execution-settings'
 import { isUnattendedExecutor } from '../executor-capabilities'
 import { captureGitBaseline } from '../git-review'
@@ -47,6 +48,7 @@ async function collectWorkbenchTurn(events: AsyncIterable<AgentEvent>, stop: Pro
   const iterator=events[Symbol.asyncIterator]()
   let result: Extract<AgentEvent,{kind:'result'}> | undefined
   let error: string | undefined
+  let errorCode: string | undefined
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     // Install the lifetime consumer before native start can publish any events.
@@ -68,10 +70,10 @@ async function collectWorkbenchTurn(events: AsyncIterable<AgentEvent>, stop: Pro
       })()
       if (timer) { clearTimeout(timer); timer=undefined }
       if (!step) return null
-      if (step.done) return { result,error }
+      if (step.done) return { result,error,errorCode }
       observe(step.value)
       if (step.value.kind==='result') result=step.value
-      if (step.value.kind==='error') error=step.value.message
+      if (step.value.kind==='error') { error=step.value.message;errorCode=step.value.code }
     }
   } finally {
     if (timer) clearTimeout(timer)
@@ -277,16 +279,18 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
         // 额度/限流(真机 2026-09-16:Codex 额度耗尽,原文当错误码存进 task.error,通知空白):
         // 认出来就换成稳定错误码、登记这家耗尽,事件里说人话并附原文摘要。
         const quotaKind=summary.error?classifyProviderError(summary.error):null
-        const error=quotaKind==='quota'?'provider_quota_exhausted':quotaKind==='rate_limit'?'provider_rate_limited':raw
+        const modelRejected=summary.errorCode==='execution_model_unsupported'
+        const error=modelRejected?'execution_model_unsupported':quotaKind==='quota'?'provider_quota_exhausted':quotaKind==='rate_limit'?'provider_rate_limited':raw
         if(quotaKind)quota.note(task.providerId,summary.error!)
         finalStatus='failed'; finalError=error
-        store.addEvent(task.id,'error',error==='background_runtime_ended'?'后台执行会话意外结束；对话已保留，请检查后再继续。':quotaKind?`${executionFailureMessage(error)}\n原文：${summary.error!.trim().slice(0,200)}`:executionFailureMessage(error))
+        // The native model error is already persisted once and translated by the reading projection.
+        if(!modelRejected)store.addEvent(task.id,'error',error==='background_runtime_ended'?'后台执行会话意外结束；对话已保留，请检查后再继续。':quotaKind?`${executionFailureMessage(error)}\n原文：${summary.error!.trim().slice(0,200)}`:executionFailureMessage(error))
         ctx.hub.touched(task.id)
       } else { finalStatus='completed'; quota.clear(task.providerId) }
     } catch (error) {
-      const message=isNetworkUnprotectedError(error) ? 'network_unprotected' : error instanceof Error ? error.message : 'task_failed'
+      const message=isNetworkUnprotectedError(error) ? 'network_unprotected' : error instanceof CodexExecutionError ? error.code : error instanceof Error ? error.message : 'task_failed'
       finalStatus=running.cancelled ? 'cancelled' : 'failed'; finalError=running.cancelled ? null : message
-      if (!running.cancelled) { store.addEvent(task.id,'error',message==='restart_confirmation_required' ? RECOVERY_MESSAGE : executionFailureMessage(message)); ctx.hub.touched(task.id) }
+      if (!running.cancelled) { store.addEvent(task.id,'error',error instanceof CodexExecutionError?error.message:message==='restart_confirmation_required' ? RECOVERY_MESSAGE : executionFailureMessage(message)); ctx.hub.touched(task.id) }
     } finally {
       cancelIdleClose(running)
       running.finishing=true;running.questions.close();ctx.hub.bumped(task.id)

@@ -79,6 +79,7 @@ export const MatterTaskView = z.object({
 export const MatterEvent = z.object({
   kind: z.string(), text: z.string(), createdAt: z.number(),
   source: z.string().optional(), attachments: z.array(Attachment).optional(),
+  errorCode: z.literal('execution_model_unsupported').optional(), diagnostic: z.string().optional(),
 })
 
 export const MatterInput = z.object({

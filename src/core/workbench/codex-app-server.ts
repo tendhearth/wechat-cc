@@ -8,6 +8,7 @@ import { codexNativeCapabilityNotice } from './native-capability-notice'
 import { discoverCodexModels } from './codex-model-catalog'
 import { executionModel, nativeModelId, readCodexModelCatalog } from './native-model-catalog'
 
+import { codexErrorEvent, codexRpcError } from './codex-execution-error'
 import { CodexChildOccurrence } from './codex-runtime'
 import { APP_VERSION } from '../../lib/app-version'
 
@@ -605,7 +606,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
               if (event) turn.events.push(turn.occurrence && event.kind === 'tool_call' && event.activity ? { ...event, activity: { ...event.activity, id: `${turn.occurrence.id}:${event.activity.id}`, parentId: turn.occurrence.id } } : event)
             }
           } else if (message.method === 'error' && !params.willRetry) {
-            finish(turn, { kind: 'error', message: typeof params.error?.message === 'string' ? params.error.message : 'codex_turn_failed' })
+            finish(turn, codexErrorEvent(typeof params.error?.message === 'string' ? params.error.message : 'codex_turn_failed'))
           } else if (message.method === 'turn/completed') {
             turn.terminal = true
             if (turn.occurrence) {
@@ -615,13 +616,13 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
             }
             if (params.turn?.status === 'completed' && !turn.cancelled) finish(turn, { kind: 'result', sessionId: threadId, numTurns: 1, durationMs: typeof params.turn.durationMs === 'number' ? params.turn.durationMs : Date.now() - turn.startedAt })
             else if (params.turn?.status === 'interrupted') finish(turn, { kind: 'error', message: turn.cancelled ? 'Codex 本轮已停止。' : turn.rejectedOperation ? '这次操作已被拒绝，Codex 已结束本轮。可以补充要求后继续。' : 'Codex 本轮已中断，未能确认完成。可以补充要求后继续。' })
-            else finish(turn, { kind: 'error', message: typeof params.turn?.error?.message === 'string' ? params.turn.error.message : 'Codex 本轮未能完成，可以补充要求后重试。' })
+            else finish(turn, codexErrorEvent(typeof params.turn?.error?.message === 'string' ? params.turn.error.message : 'Codex 本轮未能完成，可以补充要求后重试。'))
           }
         } else if (rpcId(message.id)) {
           const rpc = rpcs.get(message.id)
           if (!rpc) return // A timed-out or cancelled client's late response.
           rpcs.delete(message.id); clearTimeout(rpc.timer)
-          if (message.error) rpc.reject(new Error(typeof message.error.message === 'string' ? message.error.message : 'codex_rpc_failed'))
+          if (message.error) rpc.reject(codexRpcError(typeof message.error.message === 'string' ? message.error.message : 'codex_rpc_failed'))
           else if (object(message.result)) rpc.resolve(message.result)
           else { rpc.reject(new Error('codex_invalid_rpc_response')); fatal('codex_invalid_rpc_response') }
         } else fatal('codex_invalid_protocol_message')
@@ -702,7 +703,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           for (const message of turn.early.splice(0)) route(message)
         }).catch(error => {
           if (!broken && !stopped) pendingStarts.delete(turn)
-          if (active === turn) finish(turn, {kind:'error',message:error instanceof Error ? error.message : 'codex_turn_start_failed'})
+          if (active === turn) finish(turn, codexErrorEvent(error instanceof Error ? error.message : 'codex_turn_start_failed'))
           throw error
         })
         return { turn, accepted }
@@ -715,7 +716,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           if (runtimeStarted) throw new Error('codex_runtime_already_started')
           const launched = launch(text, attachments); runtimeStarted = true
           initialAcceptance = launched.accepted
-          void initialAcceptance.catch(error => { if (active === launched.turn) finish(launched.turn, { kind: 'error', message: String(error.message ?? error) }) })
+          void initialAcceptance.catch(error => { if (active === launched.turn) finish(launched.turn, codexErrorEvent(String(error.message ?? error))) })
         },
         submit(requestId, text, attachments) {
           attachments = attachments?.map(item => ({...item}))
@@ -751,7 +752,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         dispatch(text, attachments) {
           if (runtime) throw new Error('codex_runtime_requires_lifetime_stream')
           const { turn, accepted } = launch(text, attachments)
-          void accepted.catch(error => { if (active === turn) finish(turn, { kind: 'error', message: error instanceof Error ? error.message : 'codex_turn_start_failed' }) })
+          void accepted.catch(error => { if (active === turn) finish(turn, codexErrorEvent(error instanceof Error ? error.message : 'codex_turn_start_failed')) })
           return turn.events.iterate()
         },
         async steer(text, attachments) {

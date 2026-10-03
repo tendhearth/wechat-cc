@@ -27,7 +27,7 @@ import {captureTimelineReading,restoreTimelineReading} from './workbench-reading
 /** @typedef {{taskId:string,title:string,reason:'same_path'|'nested_path'|'writer_not_closed',holderWriting?:boolean,closeInMs?:number|null}} WaitingFor */
 /** @typedef {{id:string,title:string,path:string,workspaceKind?:'managed'|'project',providerId:string,status:string,createdAt:number,updatedAt:number,error:string|null,phase?:string,archivedAt?:number|null,canArchive?:boolean,pendingPermissionCount?:number,pendingQuestionCount?:number,waitingFor?:WaitingFor|null,importedOnly?:boolean,runtime?:RuntimeSnapshot}} Task */
 /** @typedef {{id:string,type:'command'|'read'|'edit'|'search'|'tool'|'agent',status:'running'|'completed'|'failed'|'cancelled'|'interrupted',label:string,detail?:string,output?:string,parentId?:string,agentIds?:string[]}} WorkbenchActivity */
-/** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,activity?:WorkbenchActivity}} WorkbenchEvent */
+/** @typedef {{id:string,taskId:string,kind:'user'|'text'|'tool_call'|'system'|'error',text:string,createdAt:number,attachments?:import('./workbench-attachments.js').Attachment[],sourceId?:string|null,runId?:string,activity?:WorkbenchActivity,errorCode?:'execution_model_unsupported',diagnostic?:string}} WorkbenchEvent */
 /** @typedef {{id:string,taskId:string,name:string,mime:string,size:number,sha256:string,createdAt:number,approvedAt:number|null}} Artifact */
 /** @typedef {{id:string,taskId:string,tool:string,description:string,createdAt:number}} Permission */
 /** @typedef {{id:string,displayName:string,capabilities?:{attachments?:boolean,execution?:boolean,resume?:boolean,permissions?:string},quota?:{kind:'quota'|'rate_limit',resetAt?:number}|null,usage?:{windows:Array<{name:string,usedPercent:number}>}|null}} Provider */
@@ -227,9 +227,10 @@ export function renderMessageFor({ detail, helper, handoffs, actionable, lastRep
     const handoff=handoffs.find(h=>h.requestEventId===Number(event.id))
     const text=handoff?.request??event.text
     const body=event.kind==='user'?renderWorkbenchUserText(text,`task:${event.taskId}:${event.id}`):event.kind==='text'?renderWorkbenchMarkdown(text):escapeWorkbenchHtml(text)
+    const diagnostic=event.kind==='error'&&event.errorCode==='execution_model_unsupported'&&event.diagnostic?`<details class="wb-error-diagnostic" id="wb-error-source-${escapeWorkbenchHtml(event.id)}"><summary>查看原始错误</summary><pre><code>${escapeWorkbenchHtml(event.diagnostic)}</code></pre></details>`:''
     return `<article class="wb-message" id="${workbenchTimelineEventId(event)}" data-timeline-anchor data-kind="${escapeWorkbenchHtml(event.kind)}">
     <header><span>${event.kind === 'user' ? '你' : `<span class="wb-provider-badge">${escapeWorkbenchHtml(helper)}</span>`}</span><time>${escapeWorkbenchHtml((event.sourceId?'原会话记录':time(event.createdAt)))}</time></header>
-    <div class="wb-message-body${event.kind==='text'?' wb-markdown':''}">${body}${handoff?`<button class="wb-new" data-action="handoff-record" data-handoff-id="${escapeWorkbenchHtml(handoff.id)}">查看随附的交接内容</button>`:''}</div>
+    <div class="wb-message-body${event.kind==='text'?' wb-markdown':''}">${body}${diagnostic}${handoff?`<button class="wb-new" data-action="handoff-record" data-handoff-id="${escapeWorkbenchHtml(handoff.id)}">查看随附的交接内容</button>`:''}</div>
     ${renderMessageAttachments(detail?.task.id??'',event.attachments)}
     ${event.kind==='text'&&detail?renderImageArtifacts(detail.task.id,(detail.artifacts??[]).filter(a=>detail.events.filter(message=>message.kind==='text'&&message.createdAt<=a.createdAt).at(-1)?.id===event.id)):''}
     ${actionable&&event.kind==='text'&&(origin||(event===lastReply&&otherProvider))?`<button type="button" class="wb-new wb-handoff-action" data-action="${origin?'handoff-revision':'handoff-review'}" data-event-id="${event.id}">${origin?'选择意见，交回原任务':`交给 ${escapeWorkbenchHtml(otherProvider?.displayName)} 检查`}</button>`:''}
@@ -306,7 +307,7 @@ export function renderWorkbench(state, interactions, draft, attachmentError='',e
     <section class="wb-dialogue" aria-live="polite">${dialogueHtml}</section>
     ${queuedGuidance}
     ${renderWorkbenchInputs(detail.task.id, detail.inputs ?? [], interactions,!!detail.runtime?.retained)}
-    ${detail.task.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(executionErrorMessage(detail.task.error)??detail.task.error)}</div>` : ''}
+    ${detail.task.error ? `<div class="wb-error" role="alert">${escapeWorkbenchHtml(executionErrorMessage(detail.task.error)??detail.task.error)}${detail.task.error==='execution_model_unsupported'&&!executionDisabled?'<button type="button" class="wb-new" data-action="choose-task-model">为这件事选择模型</button>':''}</div>` : ''}
     ${reviewHtml}
     ${artifactHtml}` : !state.loadingId && state.projects?.length === 0 && state.newScope !== 'new:add-project' && !draft?.text.trim() ? `
     <div class="wb-welcome"><p class="wb-kicker">随手交办</p><h1>希望 CC 帮你做什么？</h1><p>直接写下要求、加上材料。CC 会为这件事准备独立文件夹。</p><button type="button" class="wb-btn wb-btn-primary" data-action="task-entry">交给 CC 做</button></div>` : !detail && !state.loadingId && state.projects && !activeProject ? `
@@ -896,6 +897,7 @@ export function initWorkbenchPage(deps) {
     }
     if(action==='retry-continuation-preview'){const context=restartPreviewContext();if(context)void recoveryPreviews.load(context,true);return}
     if(action==='retry-execution-models'){loadExecutionCatalog(true);return}
+    if(action==='choose-task-model'){const info=root.querySelector('#wb-task-info');if(info instanceof HTMLDetailsElement){info.open=true;loadExecutionCatalog();const model=root.querySelector('#wb-model');if(model instanceof HTMLElement)model.focus()}return}
     if(action==='remove-attachment'&&target.dataset.attachmentId){captureDraft();attachments.remove(renderedScope,target.dataset.attachmentId);if(controller.state.selectedId)interactions.editInputDraft(controller.state.selectedId,input('wb-followup-text')?.value??'',pageDrafts.get(renderedScope).attachments,pageDrafts.get(renderedScope).execution);return}
     if((action==='preview-input-attachment'||action==='download-input-attachment'||action==='preview-image-artifact')&&(target.dataset.attachmentId||target.dataset.artifactId)){
       if(target.dataset.thumbnailId)thumbnails.retry(target)

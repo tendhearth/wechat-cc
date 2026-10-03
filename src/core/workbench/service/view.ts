@@ -5,6 +5,7 @@
  * 跨域三处走 ctx.actions:addProject 的 provider(admission)、list 的 quotaExhausted(quota)、detail 的 continuation(admission)。
  */
 import { canonicalProject } from '../artifacts'
+import { readableExecutionEvent } from '../codex-execution-error'
 import { isWorkbenchExecutorCapabilities, isWorkbenchProviderId } from '../executor-capabilities'
 import { makeProjectCatalog } from '../project-catalog'
 import { findPathBlocker } from '../scheduler'
@@ -108,7 +109,7 @@ export function makeViewDomain(ctx:ServiceCtx) {
     const runtime=runtimeSnapshot(running)
     const subscription=store.wechatNotifications.subscription(id)
     const wechatNotifications={enabled:!!subscription?.enabled,notices:store.wechatNotifications.list(id).slice(-10).map(({id,runId,kind,status,reason,createdAt})=>({id,runId,kind,status,reason,createdAt}))}
-    const result={...detail,wechatNotifications,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
+    const result={...detail,events:detail.events.map(readableExecutionEvent),wechatNotifications,...(runtime?{runtime}:{}),execution:store.execution.choice(id),lastExecution:store.execution.last(id),attachments:store.attachments.list(id),task:taskView(detail.task,true),inputs:store.liveInputs.list(id),questions:running?.questions.pending()??[],
       // The timeline stays live through cancellation and process cleanup;
       // accepting supplemental input is a separate, narrower capability.
       ...(running?{runId:running.identity}:{}),

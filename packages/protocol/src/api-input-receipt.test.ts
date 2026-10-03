@@ -20,3 +20,12 @@ describe('durable single input receipt contract',()=>{
     expect(schema.safeParse({ok:true,input:{...input,error:4}}).success).toBe(false)
   })
 })
+
+
+it('preserves a readable model error and its inert diagnostic while accepting older events',async()=>{
+  const {MatterEvent}=await import('./index')
+  const old={kind:'error',text:'old message',createdAt:1}
+  expect(MatterEvent.parse(old)).toEqual(old)
+  const current={...old,text:'当前账号不支持所用模型。',errorCode:'execution_model_unsupported',diagnostic:'<script>literal</script>'}
+  expect(MatterEvent.parse(current)).toEqual(current)
+})
