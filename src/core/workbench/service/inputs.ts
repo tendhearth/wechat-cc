@@ -23,6 +23,19 @@ const INPUT_UNCONFIRMED='未确认执行者收到，请检查当前对话后再�
 export function makeInputsDomain(ctx:ServiceCtx) {
   const { store, state } = ctx
   const act=()=>ctx.actions.deref('inputs')
+  /** Read one durable receipt without loading a timeline or touching its task. */
+  function inputReceipt(id:string,requestId:string):LiveInput|null {
+    if(!/^[a-f0-9]{8}$/.test(id))throw Error('invalid_matter_id')
+    const key=normalizeInputRequestId(requestId),owner=ctx.deps.ownerChatId()
+    if(!owner)return null
+    let task:ReturnType<typeof store.get>
+    try{task=store.get(id)}catch(error){if(error instanceof Error&&error.message==='not_found')return null;throw error}
+    // Matter/task are one-to-one. Check ownership and linkage before looking up
+    // a globally unique request UUID, then reject any cross-task receipt.
+    if(task.ownerChatId!==owner||store.taskMatterId(id)!==id)return null
+    const input=store.liveInputs.get(key)
+    return input?.id===key&&input.taskId===id?input:null
+  }
   function holdInputs(id:string,error:string){
     state.autoContinueBlocked.add(id)
     try{
@@ -193,6 +206,6 @@ export function makeInputsDomain(ctx:ServiceCtx) {
     act().settleAfterDecision(running)
   }
 
-  return { holdInputs,hasUndeliveredInput,drainInputs,settleRuntimeInput, submitInput,withdrawInput,resolveAnswer,resolvePermission }
+  return { inputReceipt,holdInputs,hasUndeliveredInput,drainInputs,settleRuntimeInput, submitInput,withdrawInput,resolveAnswer,resolvePermission }
 }
 export type InputsDomain = ReturnType<typeof makeInputsDomain>

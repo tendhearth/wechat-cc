@@ -20,7 +20,7 @@ export const executionSignature=value=>JSON.stringify(value?[value.defaults,valu
 export function executionErrorMessage(error){
  const code=error instanceof Error?error.message:String(error)
  const messages=/** @type {Record<string,string>} */({
-  execution_model_unsupported:'当前模型不可用，请重新选择模型，或使用自动。',
+  execution_model_unsupported:'当前模型不可用。请为这件事选择可用的模型后继续；自动会沿用原设置。',
   execution_effort_unsupported:'这个模型不支持所选思考强度，请重新选择，或使用自动。',
   execution_model_unknown:'暂时无法确认当前模型，请明确选择一个模型后重试。',
   execution_image_unsupported:'所选模型不接收图片，请更换支持图片的模型，或移除图片。',
@@ -47,6 +47,12 @@ export function executionErrorMessage(error){
   api_task_cancelled:'API 任务已停止，没有继续执行后续操作。',
   provider_quota_exhausted:'这个执行者的额度已用完。可以交给另一位执行者继续，或等额度恢复后再试。',
   provider_rate_limited:'这个执行者暂时被限流，请稍后再试；也可以交给另一位执行者继续。',
+  // provider 边界产的结构化码(arch backlog #4 第 2 步;与 core/workbench/execution-settings 同一组)。
+  provider_auth_expired:'这个执行者的登录已失效。请在电脑上重新登录它，再继续。',
+  provider_auth_rejected:'这个执行者的服务拒绝了账号或密钥（API 返回 401/403）。请检查账号或密钥后再继续。',
+  provider_network:'连不上这个执行者的服务（网络问题）。网络恢复后再继续。',
+  provider_server_error:'这个执行者的服务端出错了（5xx），通常过一会儿会恢复，稍后再继续。',
+  provider_invalid_request:'这个执行者拒绝了这次请求（比如内容太长或模型不可用）。请调整后再继续。',
   workbench_busy:'这个文件夹正有另一个任务在写，等它答复后再续接。',
   review_file_unmarkable:'这个文件没有展开差异，不能标记。',
   invalid_review_reference:'改动记录已经变了，请刷新后再试。',
@@ -92,7 +98,7 @@ export function createExecutionCatalogs(deps){
     if(c?.source!=='native'||!Array.isArray(c.models)||c.models.length>500||c.models.some(m=>!identifier(m.id)||!identifier(m.displayName)||!Array.isArray(m.reasoningEfforts)||m.reasoningEfforts.length>30||m.reasoningEfforts.some(e=>!identifier(e))))throw Error('invalid_catalog')
     if(!alive)return
     values.set(id,{status:'ready',catalog:structuredClone(c),error:''})
-   }catch{if(!alive)return;values.set(id,{status:'error',catalog:null,error:'暂时无法读取模型；自动模式仍可继续。'})}
+   }catch{if(!alive)return;values.set(id,{status:'error',catalog:null,error:'暂时无法读取模型，请重新读取后再选择。自动会沿用原设置。'})}
    if(alive)deps.changed?.(providerId,path)
   },
   destroy(){alive=false},

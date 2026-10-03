@@ -267,6 +267,8 @@ export async function runPhoneSelftest(
   // Only the id returned by this run's create call may be cancelled. A
   // retained session's reply is not a terminal task, and a cancel ACK or
   // disappearing feed row alone is not proof that its scratch is idle.
+  // canArchive also confirms that the server has released the runtime
+  // and has no uncertain writer; terminal status can precede that release.
   const cancelTask = async (until: number): Promise<boolean> => {
     if (cancelAttempted || !taskId || deps.now() >= until) return false
     cancelAttempted = true
@@ -283,7 +285,7 @@ export async function runPhoneSelftest(
         return false
       }
       taskTerminal = TERMINAL_TASK_STATUSES.has(task.status)
-      if (taskTerminal && !hasTask(agentEvents.at(-1), taskId!)) return true
+      if (taskTerminal && task.canArchive === true && !hasTask(agentEvents.at(-1), taskId!)) return true
       if (!taskTerminal && task.status === 'running' && task.phase === 'replied' && !cancelAttempted) {
         if (!await cancelTask(until)) return false
       }
@@ -399,7 +401,7 @@ export async function runPhoneSelftest(
     if (!seen) stop()
 
     taskClosed = await waitForTaskClosed(deadline)
-    rec.push('agents_task_terminal', taskClosed, taskClosed ? undefined : 'could not confirm terminal task status and removal from the agents feed')
+    rec.push('agents_task_terminal', taskClosed, taskClosed ? undefined : 'could not confirm archive eligibility and removal from the agents feed')
 
     const ordered = agentsEventOrderOk(agentEvents)
     rec.push('agents_event_order', ordered, ordered ? undefined : 'out-of-order agents event (seq did not increase within an epoch)')

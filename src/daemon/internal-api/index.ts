@@ -38,6 +38,7 @@ import {
 import { makeMaybePrefix, makeRoutes } from './routes'
 import { computePresence } from './routes-presence'
 import { REQUEST_SCHEMAS } from './schema'
+import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDecision } from './send-scope'
 
 export type {
   InternalApi,
@@ -268,6 +269,32 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       ? caller.sessionKey.split('/').slice(2).join('/')
       : undefined
     const callerInfo = { tier: caller.tier, origin: caller.origin, chatId: callerChatId }
+
+    // Chat-scope gate for the send family (send-scope.ts, 2026-10-03): a
+    // guest/trusted session may only send to / edit in its OWN chat;
+    // admin sessions crossing chats are allowed for now but logged
+    // (chat_scope_admin_cross); broadcast: admin sessions only. Runs after schema validation and BEFORE the handler,
+    // so a denied request never reaches the App reply sink, the outbound
+    // tap, or ilink. File / operator tokens are not affected.
+    const sendTarget = SEND_SCOPED_ROUTES[routeKey]
+    if (sendTarget) {
+      const target = sendTarget(body)
+      const decision = sendScopeDecision(target, { ...callerInfo, sessionKey: caller.sessionKey })
+      const targetLabel = target === ALL_CHATS ? '*' : target
+      if (decision.kind === 'deny') {
+        deps.log?.('INTERNAL_API', `403 ${routeKey} caller=${caller.tier}/${caller.origin} chat_scope own=${callerChatId ?? '-'} target=${targetLabel}`, {
+          event: 'chat_scope_denied', path: routeKey, caller: caller.tier, origin: caller.origin,
+          callerChat: callerChatId ?? null, target: targetLabel,
+        })
+        return send(res, 403, { error: 'chat_scope', message: decision.message }, origin)
+      }
+      if (decision.kind === 'admin_cross') {
+        // 暂时放行(send-scope.ts):记下来,统计主人「帮我告诉某人」的用量。
+        deps.log?.('INTERNAL_API', `${routeKey} admin cross-chat own=${callerChatId ?? '-'} target=${targetLabel}`, {
+          event: 'chat_scope_admin_cross', path: routeKey, callerChat: callerChatId ?? null, target: targetLabel,
+        })
+      }
+    }
 
     // busy-registry hold (spec 2026-08-11 §2) — non-GET authenticated
     // request awaits the handler with a token held, released right after.

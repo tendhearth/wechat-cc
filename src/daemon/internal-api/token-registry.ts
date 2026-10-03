@@ -66,6 +66,9 @@ import type { UserTier } from '../../core/user-tier'
  *     app. Session and file tokens leave routeAllow unset (unrestricted by
  *     route, tier gate only, as before).
  */
+/** agy 全部对话共用的那一枚 trusted session 令牌的 sessionKey(见上方 AGY-STATIC 说明)。 */
+export const AGY_STATIC_SESSION_KEY = 'agy-static'
+
 /** `device` / `link`:手机设置面板的长期设备令牌与 10 分钟链接令牌(梳理第 6 步,2026-09-29)。 */
 export type TokenOrigin = 'file' | 'session' | 'operator' | 'device' | 'link'
 
@@ -234,6 +237,7 @@ export function makeTokenRegistry(
       'POST /v1/workbench/import',
       'POST /v1/workbench/prepare-resume',
       'POST /v1/workbench/prepare-continuation',
+      'POST /v1/workbench/quota-handoff',
       'POST /v1/workbench/handoff-preview',
       'POST /v1/workbench/handoff',
       'GET /v1/workbench/handoff',

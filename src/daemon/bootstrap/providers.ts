@@ -24,13 +24,14 @@ import { checkCodexVersion } from './codex-version-check'
 import { attemptCodexAutofix } from '../../lib/codex-autofix'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { buildOpenaiMcpSpecs, type McpStdioSpec } from './mcp-specs'
+import { buildOpenaiMcpSpecs, openaiMcpBridgeOptions, type McpStdioSpec } from './mcp-specs'
 import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
 import { setupAgyGlobalMcp } from './agy-mcp-config'
 import { agyVersionOk } from './agy-version-check'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
 import { makeCheapEvalPreflight } from './cheap-eval-preflight'
 import type { BootstrapDeps } from './types'
+import { AGY_STATIC_SESSION_KEY } from '../internal-api/token-registry'
 import codexCliPkg from '@openai/codex/package.json' with { type: 'json' }
 
 // Locate the wechat-cc source-mode install root (where package.json lives).
@@ -529,11 +530,14 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           // sessionEnv (WECHAT_SESSION_TOKEN) — third-party plugin MCP specs
           // must never receive the daemon's loopback bearer token. See
           // mcp-specs.ts buildOpenaiMcpSpecs doc comment.
+          // Plugins are optional per session (openaiMcpBridgeOptions): one slow
+          // plugin must not take the whole openai spawn down with it.
           makeMcpBridge: async (sessionEnv) => createMcpToolBridge(
             buildOpenaiMcpSpecs(
               { wechat: wechatStdioForOpenai, delegate: delegateStdioForOpenai, pluginMcp },
               sessionEnv,
             ),
+            openaiMcpBridgeOptions(deps.log),
           ),
           log: deps.log,
         }),
@@ -660,7 +664,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       if (wechatStdioForAgy && mintSessionToken) {
         setupAgyGlobalMcp({
           wechatSpec: wechatStdioForAgy,
-          mintToken: () => mintSessionToken('trusted', 'agy-static'),
+          mintToken: () => mintSessionToken('trusted', AGY_STATIC_SESSION_KEY),
           geminiConfigDir: agyGeminiConfigDir,
           log: deps.log,
         })

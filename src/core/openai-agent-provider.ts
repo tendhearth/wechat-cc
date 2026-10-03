@@ -9,7 +9,8 @@ import {
   type ProviderCapabilities,
   assertNotAuthFailed,
 } from './agent-provider'
-import { isAuthFailError } from './auth-fail'
+import { isAuthErrorCode, withProviderCode } from '../lib/provider-error-code'
+import { openaiErrorCode, openaiErrorMessage } from './openai-error-code'
 import type { ChatModelClient, ChatMessage, ToolSpec, TurnDelta } from './openai-chat-model'
 import type { McpToolBridge } from './openai-mcp-bridge'
 import { builtinTools, type BuiltinTool } from './openai-tools'
@@ -215,7 +216,11 @@ function makeOpenAiSession(args: {
           }
           yield em.finish({ sessionId, numTurns: steps })
         } catch (err) {
-          yield em.error(err)
+          // 边界产码(arch backlog #4 第 2 步):HTTP status / 重试链里最后一次的 status /
+          // 连接层系统码 / 我们自己的超时 ⇒ 码;消息里把 RetryError 吃掉的真实 status 拼回来
+          // (以前是 `Failed after 3 attempts. Last error: <none>`,§4.5)。分不出 ⇒ 旧的回退。
+          const code = openaiErrorCode(err)
+          yield code ? em.errorText(openaiErrorMessage(err), { code }) : em.error(err)
         } finally {
           if (activeAbort === abort) activeAbort = null
         }
@@ -232,37 +237,32 @@ function makeOpenAiSession(args: {
 }
 
 /**
- * Shared cheapEval/strongEval body: run `chatModel.generate` and normalize
- * BOTH ways an eval call can signal auth failure into the same shape:
+ * Shared cheapEval/strongEval body: run `chatModel.generate`.
  *  - error-shaped TEXT (Claude/Codex sentinel strings) → assertNotAuthFailed
  *    below throws on the returned text, as before.
- *  - a THROWN transport error (e.g. a real gateway 401 APICallError, now
- *    surfaced instead of masked — see openai-chat-model.ts generate()) →
- *    classified via isAuthFailError and rethrown as `Error('auth_failed: …')`,
- *    mirroring the shape assertNotAuthFailed already produces, for log-tag
- *    consistency — no consumer currently branches on this message text
- *    (wrapCheapEvalWithAuthFailCheck in bootstrap/index.ts never catches the
- *    rejection, only screens resolved text; gardener.ts's catch just logs
- *    and counts). The structured, actually-branched-on auth classification
- *    for the live session path is the separate AgentEvent errorCode channel
- *    (turn-emitter's `em.error`/`code: 'auth_failed'`, see D4/B3). This
- *    fix's real value here is accurate error propagation (the 401's real
- *    cause is no longer lost behind a generic NoOutputGeneratedError) plus
- *    a new AUTH_FAILED log line for what was previously an invisible
- *    thrown-401 case.
- * Non-auth throws (network blips, etc.) pass through unchanged.
+ *  - a THROWN transport error (a real gateway 401 APICallError, a refused
+ *    connection, our own boundary timeout, …) → the SAME error is rethrown
+ *    with a structured `providerErrorCode` attached (openai-error-code), so
+ *    the registry's cooldown / llm-health / health classify read the code
+ *    instead of the text. The real status is kept (it used to be dropped
+ *    when the 401 was rewrapped as `auth_failed: …`).
  */
 async function runEval(chatModel: ChatModelClient, prompt: string, log: (tag: string, line: string) => void, source: string): Promise<string> {
   let text: string
   try {
     text = await chatModel.generate([chatModel.userMessage(prompt)])
   } catch (err) {
-    if (isAuthFailError(err)) {
-      const msg = err instanceof Error ? err.message.slice(0, 160) : String(err)
-      log('AUTH_FAILED', `${source} credentials stale: ${msg}`)
-      throw new Error(`auth_failed: ${err instanceof Error ? err.message.slice(0, 120) : String(err)}`)
+    // 边界产码,挂在抛出物上原样抛(registry 冷却、llm-health、health 都只看码)。
+    // 以前这里把 401 重抛成 `auth_failed: …` 且**丢了 status**(§4.5)—— 而 401 只说明
+    // 凭证被拒,不说明登录过期(红线 A 的细化),码是 auth_rejected。
+    const code = openaiErrorCode(err)
+    if (isAuthErrorCode(code)) log('AUTH_FAILED', `${source} credentials rejected (${code}): ${openaiErrorMessage(err).slice(0, 160)}`)
+    // RetryError(`Failed after 3 attempts. Last error: <none>` 这类)把真实 status 藏在
+    // errors[] 里 —— 换成带 status 的那句,原错误挂在 cause 上。
+    if (code && err instanceof Error && Array.isArray((err as { errors?: unknown }).errors)) {
+      throw withProviderCode(Object.assign(new Error(openaiErrorMessage(err)), { cause: err }), code)
     }
-    throw err
+    throw withProviderCode(err, code)
   }
   assertNotAuthFailed(text, log, source)
   return text

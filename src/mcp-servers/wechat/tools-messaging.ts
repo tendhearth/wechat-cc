@@ -19,7 +19,7 @@ export function registerMessagingTools(server: McpServer, client: InternalApiCli
     'reply',
     {
       title: 'Reply text to a wechat user',
-      description: '给当前微信用户回复文本。chat_id 必填。长文本会自动分段。',
+      description: '给当前微信用户回复文本。chat_id=当前对话的 chat_id(服务端校验,只能发给本聊天,别的 chat 会被 403 chat_scope)。长文本会自动分段。',
       inputSchema: { chat_id: z.string(), text: z.string() },
     },
     async ({ chat_id, text }) => {
@@ -56,7 +56,7 @@ export function registerMessagingTools(server: McpServer, client: InternalApiCli
     'send_file',
     {
       title: 'Send a local file to a wechat user',
-      description: '给当前用户发送文件（本地绝对路径）。',
+      description: '给当前用户发送文件（本地绝对路径）。chat_id=当前对话的 chat_id(只能发给本聊天)。',
       inputSchema: { chat_id: z.string(), path: z.string() },
     },
     async ({ chat_id, path }) => {
@@ -180,7 +180,7 @@ export function registerMessagingTools(server: McpServer, client: InternalApiCli
     'broadcast',
     {
       title: 'Broadcast text to all online users',
-      description: '向所有在线用户群发文本。account_id 可选（不填则默认主账号）。',
+      description: '向所有在线用户群发文本。仅主人(admin)会话可用。account_id 可选（不填则默认主账号）。',
       inputSchema: { text: z.string(), account_id: z.string().optional() },
     },
     async (args) => {

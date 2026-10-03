@@ -14,6 +14,8 @@ import { tmpdir } from 'node:os'
 import { assertNotAuthFailed, normalizeWechatMcpServer, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type CheapEval, type ProviderCapabilities, type SpawnContext } from './agent-provider'
 import { makeAgyStreamParser } from './agy-stream'
 import { makeTurnEmitter } from './turn-emitter'
+import { agyErrorCode } from './agy-errors'
+import { errorWithProviderCode } from '../lib/provider-error-code'
 import { spawn } from '../lib/runtime/process'
 import { wrapForProcessTree } from '../lib/jobspawn'
 
@@ -279,10 +281,11 @@ async function oneShotEval(spawnFn: AgySpawnFn, model: string, prompt: string, t
     if (ev.kind === 'text') texts.push(ev.text)
   }
   const code = await proc.exited
-  if (errMsg) throw new Error(errMsg)
+  // 边界产码(arch backlog #4 第 2 步;agy-errors):红线 B 那句固定判 network。
+  if (errMsg) throw errorWithProviderCode(errMsg, agyErrorCode(errMsg))
   if (code !== 0 && !sawResult) {
     const stderrText = await proc.stderr()
-    throw new Error(`agy exited ${code}: ${stderrText.slice(0, 300)}`)
+    throw errorWithProviderCode(`agy exited ${code}: ${stderrText.slice(0, 300)}`, agyErrorCode(stderrText))
   }
   return texts.join('')
 }
@@ -436,7 +439,7 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
                     }
                     // ev.kind === 'error'
                     sawResult = true
-                    yield em.errorText(ev.message)
+                    yield em.errorText(ev.message, { code: agyErrorCode(ev.message) })
                   }
                 }
                 if (abort.signal.aborted) return // cancelled — no further events
@@ -458,7 +461,8 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
                   // throwing out of dispatch.
                   const stderrResult = await raceAbort(proc.stderr().catch(() => ''), abort.signal)
                   if (stderrResult === ABORTED) return
-                  yield em.error(new Error(`agy exited ${code}: ${stderrResult.slice(0, 300)}`))
+                  const stderrCode = agyErrorCode(stderrResult)
+                  yield em.error(new Error(`agy exited ${code}: ${stderrResult.slice(0, 300)}`), stderrCode ? { code: stderrCode } : undefined)
                 }
               } finally {
                 currentProc = null

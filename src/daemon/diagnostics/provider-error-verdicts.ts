@@ -17,7 +17,7 @@
 import { isAuthFail, isAuthFailError } from '../../core/auth-fail'
 import { classifyProviderError, isQuotaRefusalText } from '../../core/provider-quota'
 import { isAuthError } from '../../core/provider-registry'
-import { classifyProviderFailure, looksLikeAuthFailure, type ProviderFailureKind } from '../../lib/auth-failure'
+import { classifyProviderFailure, type ProviderFailureKind } from '../../lib/auth-failure'
 import { isConnectFailure } from '../../lib/net-errors'
 import { classifyFailure, type FailureKind } from '../health/classify'
 import { errorWithProviderCode } from '../../lib/provider-error-code'
@@ -53,7 +53,7 @@ export interface ProviderErrorSample {
   /** provider 层**丢掉了**的结构化信号(SDK 原本给了,我们没传下去)。 */
   droppedStructure?: Record<string, unknown>
   /**
-   * provider 边界**现在读**的结构化信号(第 2 步起;只 claude 会话)。键沿用
+   * provider 边界**现在读**的结构化信号(第 2 步起)。键沿用
    * droppedStructure 的写法(`assistant.error` / `result.api_error_status`),
    * `assistant.text` 缺省即 `message`;`inferred: true` = 采集样本只有正文,
    * 结构按同模板的诱发样本推定。provider 级测试拿它重放 SDK 消息。
@@ -73,7 +73,8 @@ export interface CurrentVerdicts {
   sdkError: boolean
   /** core/auth-fail:isAuthFailError(status === 401 或宽集) */
   authFailError: boolean
-  /** lib/auth-failure:码 + 厂商散文(llm-health 的 AUTH_RE 就是它) */
+  /** daemon/llm-health(「测试连接」报不报 AUTH FAILED + 登录提示):第 2 步起码优先,
+   *  没码回退到 health/classify 的网络优先文本判定(以前是裸的宽档散文正则)。 */
   llmHealthAuth: boolean
   /** core/provider-registry:只认 `auth_failed` 码(决定冷却时长) */
   registryAuthCode: boolean
@@ -106,7 +107,8 @@ export function currentVerdicts(sample: Pick<ProviderErrorSample, 'errorCode' | 
     assistantText: isAuthFail('assistant-text', message),
     sdkError: isAuthFail('sdk-error', message),
     authFailError: isAuthFailError(asError),
-    llmHealthAuth: looksLikeAuthFailure(message),
+    // 与 llm-health.probeOne 同一句判定(码优先;无码走网络优先的文本回退)。
+    llmHealthAuth: classifyFailure(asError).kind === 'llm_auth',
     registryAuthCode: isAuthError(asError),
     healthKind: classifyFailure(asError).kind,
     providerFailure: classifyProviderFailure(errorCode, message, isTransient),
