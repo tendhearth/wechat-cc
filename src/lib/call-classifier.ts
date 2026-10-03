@@ -4,13 +4,15 @@
  * 守护不再按「是不是模型调用」一刀切,而是按**这一次调用真正连到哪里 + 用哪个模型**判:
  *
  *   默认需要保护:Anthropic(Claude API / Claude Code / Agent SDK 走官方端点)、OpenAI(API、
- *     Codex)、Google(Gemini、agy/Antigravity)、OpenRouter 这类海外模型聚合;Cursor **只有**
- *     选了明确的 Claude / GPT / o 系列 / Gemini 模型时才算。
- *   默认不需要保护:DeepSeek、Kimi 国内版(moonshot.cn)、通义/DashScope、智谱等国内平台;
- *     自建(localhost / 局域网 / 私网 IP / 主人自己的服务器);Cursor 的 auto 和它自家模型
- *     (composer-*);自定义网关(任何非官方 base URL,包括把 ANTHROPIC_BASE_URL 指到别处的
- *     Claude Code)—— 自定义网关默认不保护,guard.json 里一个开关可以把它们一并纳入。
- *   拿不准的端点(Kimi 国际版 api.moonshot.ai 等)按端点 host 判;未知的 Cursor 模型名默认保护。
+ *     Codex)、Google(Gemini、agy/Antigravity)、OpenRouter 这类海外模型聚合;Cursor 除了 auto
+ *     以外的**所有**模型(Claude / GPT / Gemini、Cursor 自家的 composer-*、不认识的名字)——
+ *     主人 2026-10-02:「Cursor 除了 auto，其他都要网络」。
+ *   默认不需要保护:Kimi 的所有端点(moonshot.cn / moonshot.ai / kimi.com …,主人 2026-10-02:
+ *     「Kimi 都不需要判断」);DeepSeek、通义/DashScope、智谱等国内平台;自建(localhost / 局域网 /
+ *     私网 IP / 主人自己的服务器);Cursor auto(含 cursor-agent 的 `default[]`);自定义网关(任何
+ *     非官方 base URL,包括把 ANTHROPIC_BASE_URL 指到别处的 Claude Code)—— 自定义网关默认不保护,
+ *     guard.json 里一个开关可以把它们一并纳入。
+ *   拿不准的端点(通义国际版 dashscope-intl 等)按端点 host 判成海外。
  *
  * 覆盖写在 guard.json 的 `protect` / `trust` 两张表里(见 docs/reference/network-guard.md)。
  * 纯函数、零依赖:core(协调器 / registry / 工作台)和 daemon、CLI 都用同一份判定。
@@ -49,10 +51,11 @@ export interface ClassifyPolicy {
 export type CallKind =
   | 'official'        // 海外官方端点(Anthropic / OpenAI / Google …)
   | 'aggregator'      // 海外模型聚合(OpenRouter …)
-  | 'overseas_other'  // 拿不准、按 host 判成海外的(Kimi 国际版、dashscope-intl …)
-  | 'cursor_overseas' // Cursor + 明确的 Claude / GPT / o / Gemini 模型
-  | 'cursor_unknown'  // Cursor + 不认识的模型名(默认保护)
-  | 'cursor_own'      // Cursor auto / composer-* 等自家模型
+  | 'overseas_other'  // 拿不准、按 host 判成海外的(dashscope-intl …)
+  | 'cursor_model'    // Cursor + auto 以外的任何模型(Claude / GPT / Gemini / composer / 不认识的)
+  | 'cursor_auto'     // Cursor auto(没选模型、`auto`、cursor-agent 的 `default[]`)
+  | 'cursor_setup'    // Cursor 列模型目录 / 查额度 / 起 ACP 会话 —— 不是模型回合
+  | 'kimi'            // Kimi 的任何端点(.cn / .ai / kimi.com …)—— 主人:不需要判断
   | 'domestic'        // 国内平台
   | 'self_hosted'     // localhost / 局域网 / 私网 / tailnet
   | 'custom_gateway'  // 其它自定义 base URL
@@ -95,13 +98,16 @@ const AGGREGATOR_HOSTS: Array<[string, string]> = [
 ]
 /** 拿不准、按 host 判成海外的(默认保护,trust 可放开)。 */
 const OVERSEAS_OTHER_HOSTS: Array<[string, string]> = [
-  ['api.moonshot.ai', 'Kimi 国际版'], ['moonshot.ai', 'Kimi 国际版'],
   ['dashscope-intl.aliyuncs.com', '通义国际版'],
   ['api.deepseek.ai', 'DeepSeek(海外域名)'],
 ]
+/** Kimi(Moonshot)的所有端点:主人 2026-10-02「Kimi 都不需要判断」—— .cn / .ai 一样不保护。 */
+const KIMI_HOSTS: Array<[string, string]> = [
+  ['moonshot.cn', 'Kimi'], ['moonshot.ai', 'Kimi'], ['kimi.com', 'Kimi'], ['kimi.ai', 'Kimi'],
+]
 /** 国内平台(默认不保护)。 */
 const DOMESTIC_HOSTS: Array<[string, string]> = [
-  ['deepseek.com', 'DeepSeek'], ['moonshot.cn', 'Kimi'], ['aliyuncs.com', '通义/DashScope'],
+  ['deepseek.com', 'DeepSeek'], ['aliyuncs.com', '通义/DashScope'],
   ['bigmodel.cn', '智谱'], ['volces.com', '火山方舟'], ['volcengine.com', '火山引擎'], ['siliconflow.cn', '硅基流动'],
   ['baidubce.com', '百度千帆'], ['minimax.chat', 'MiniMax'], ['minimaxi.com', 'MiniMax'],
   ['lingyiwanwu.com', '零一万物'], ['tencentcloudapi.com', '腾讯混元'], ['baichuan-ai.com', '百川'],
@@ -139,9 +145,9 @@ export function isSelfHostedHost(host: string): boolean {
   return !h.includes('.')
 }
 
-// Cursor 模型名:自家的不保护;明确的海外模型保护;其余(不认识)保护。
-const CURSOR_OWN = [/^auto$/, /^default$/, /^composer(\b|[-.\d])/, /^cursor(\b|[-.])/]
-const CURSOR_OVERSEAS = [/claude/, /sonnet/, /opus/, /haiku/, /^gpt/, /^o\d/, /gemini/, /codex/, /^chatgpt/]
+// Cursor 模型名:主人 2026-10-02「Cursor 除了 auto，其他都要网络」—— 只有 Auto 不保护。
+// Auto 的写法:没给 / 空、`auto`、cursor-agent ACP 的 `default[]`(去掉 `[…]` 后是 `default`)。
+const CURSOR_AUTO_IDS = new Set(['', 'auto', 'default'])
 
 function globToRegExp(glob: string): RegExp {
   const esc = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')
@@ -175,14 +181,14 @@ function cursorModelClass(model: string | null | undefined, purpose: CallTarget[
   const host = PROVIDER_DEFAULT_HOST.cursor!.host
   // cursor-agent 的 ACP 模型 id 带参数后缀:`default[]`(= Auto)、`claude-opus-5[thinking=true,…]`。
   const m = (model ?? '').trim().toLowerCase().replace(/\[[^\]]*\]$/, '')
-  if (purpose === 'catalog' || purpose === 'usage' || purpose === 'setup') return { protected: false, kind: 'cursor_own', label: 'Cursor', host, reason: '列模型目录不选模型,按 Cursor 自家处理' }
-  if (!m || CURSOR_OWN.some(r => r.test(m))) return { protected: false, kind: 'cursor_own', label: `Cursor(${m || 'auto'})`, host, reason: 'Cursor auto / 自家模型' }
-  if (CURSOR_OVERSEAS.some(r => r.test(m))) return { protected: true, kind: 'cursor_overseas', label: `Cursor(${model})`, host, reason: 'Cursor 上选了 Claude / GPT / o 系列 / Gemini 模型' }
-  return { protected: true, kind: 'cursor_unknown', label: `Cursor(${model})`, host, reason: '不认识的 Cursor 模型名,默认保护(guard.json trust 可放开)' }
+  if (purpose === 'catalog' || purpose === 'usage' || purpose === 'setup') return { protected: false, kind: 'cursor_setup', label: 'Cursor', host, reason: '列模型目录 / 起会话,不是模型回合' }
+  if (CURSOR_AUTO_IDS.has(m)) return { protected: false, kind: 'cursor_auto', label: 'Cursor(auto)', host, reason: 'Cursor auto' }
+  return { protected: true, kind: 'cursor_model', label: `Cursor(${model})`, host, reason: 'Cursor 选了 auto 以外的模型(guard.json trust 可放开)' }
 }
 
 function hostClass(host: string, providerLabel: string, policy: ClassifyPolicy): CallClass {
   let label: string | null
+  if ((label = suffixMatch(host, KIMI_HOSTS))) return { protected: false, kind: 'kimi', label, host, reason: 'Kimi 不需要保护' }
   if ((label = suffixMatch(host, OVERSEAS_OTHER_HOSTS))) return { protected: true, kind: 'overseas_other', label, host, reason: '海外端点(按 host 判)' }
   if ((label = suffixMatch(host, OFFICIAL_HOSTS))) return { protected: true, kind: 'official', label, host, reason: '海外官方端点' }
   if ((label = suffixMatch(host, AGGREGATOR_HOSTS))) return { protected: true, kind: 'aggregator', label, host, reason: '海外模型聚合' }

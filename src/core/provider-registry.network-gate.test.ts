@@ -56,12 +56,13 @@ describe('withNetworkGate', () => {
     const gt = gate(st)
     const cursor = withNetworkGate(f.p, gt, 'cursor')
     await cursor.spawn({ alias: 'a', path: '/a' }, { model: 'auto' } as never)
-    await cursor.spawn({ alias: 'a', path: '/a' }, { model: 'composer-2' } as never)
+    await cursor.spawn({ alias: 'a', path: '/a' }, { model: 'default[]' } as never)  // cursor-agent 的 Auto
     await cursor.modelCatalog!({ alias: 'a', path: '/a' })
     expect(f.spawn).toHaveBeenCalledTimes(2)
     expect(gt.check).not.toHaveBeenCalled()
-    // 同一个 Cursor,选了 Claude 模型 → 需要保护 → 拒
+    // 同一个 Cursor,选了 auto 以外的模型(Claude,或 Cursor 自家的 composer)→ 需要保护 → 拒
     await expect(cursor.spawn({ alias: 'a', path: '/a' }, { model: 'claude-4.5-sonnet' } as never)).rejects.toMatchObject({ code: 'network_unprotected' })
+    await expect(cursor.spawn({ alias: 'a', path: '/a' }, { model: 'composer-2' } as never)).rejects.toMatchObject({ code: 'network_unprotected' })
     expect(f.spawn).toHaveBeenCalledTimes(2)
   })
 
