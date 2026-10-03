@@ -90,7 +90,7 @@ export default function Compose() {
   const provider = providerId ? opt?.providers.find((p) => p.id === providerId) : null
 
   // 不在线(连接中 / 离线 / 撤销)⇒ 草稿照写,「交给 CC」锁住,ConnectionNotice 说明原因。
-  const online = canSubmit(conn) && recovery.phase === 'ready'
+  const online = canSubmit(conn) && recovery.phase === 'ready' && (backend.mode !== 'live' || !!recovery.scope && recovery.scope === session.inputScope)
   const firstSendReady = !matter || (detail.fresh && !detail.loading && !detail.error)
   const retryDraft = localInputs.some(row => row.text === text.trim() && ['uncertain', 'failed'].includes(row.status))
   const sendInput = async (rawText: string, runId?: string, retry?: InputSnapshot) => {
@@ -100,7 +100,7 @@ export default function Compose() {
     sending.current = true; setBusy(true); setOutcome(null); setInputNotice(null)
     let snapshot: InputSnapshot
     try {
-      snapshot = await matterInputState.prepare(matter!, rawText, runId, retry)
+      snapshot = await matterInputState.prepare(matter!, rawText, runId, retry, backend.mode === 'live')
     } catch (e) {
       sending.current = false
       if (atGen === pairingGen()) {

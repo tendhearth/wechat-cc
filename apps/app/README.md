@@ -10,7 +10,7 @@
 
 日志配对身份使用中继地址、daemon/device 与完整 deviceToken 的 SHA256，不保存明文令牌。换配对、换令牌、演示、解除、撤销、stale 同步隔离内存，先提交 tombstone 后删除分片，迟到读写不能复活。钥匙串拒绝清除时暂停发送并显示错误，不能宣称未实际删除的字节已擦除。
 
-本轮模块测试使用新的存储/控制器实例读取已提交日志，覆盖 20k 中文/emoji/CRLF、缺省 runId、body/index/pointer 部分写失败、恢复零 POST、配对/撤销世代、清除失败 tombstone、64 条和 512 KiB 拒发、已交付禁重试与 draftHandled。真实 Compose + LiveBackend 组件测试验证保存失败零 POST、启动锁定、全部未确认可见，以及原始模型错误仅在展开后以纯文本显示。64 条状态更新最多 12 次模拟 SecureStore 写、仅一次 hash，不重写原文；这是调用数量证据，尚不能证明实际 Keychain 时延或 OS 跨进程恢复，普通 Release 模拟器验收由整合者另行安排。
+本轮模块测试使用新的存储/控制器实例读取已提交日志，覆盖 20k 中文/emoji/CRLF、缺省 runId、body/index/pointer 部分写失败、恢复零 POST、配对/撤销世代、清除失败 tombstone、64 条和 512 KiB 拒发、已交付禁重试与 draftHandled。真实 SessionProvider 与凭证存储测试验证配对读取暂时失败时保留日志、旧连接迟到撤销不能删除新配对，以及取消配对不能启用无日志的发送。草稿绑定进程归属和修改版本；异步确认之后重新核对当前回执，重启或同文重填都不误清新稿。真实 Compose + LiveBackend 组件测试验证保存失败零 POST、启动锁定、全部未确认可见，以及原始模型错误仅在展开后以纯文本显示。64 条状态更新最多 12 次模拟 SecureStore 写、仅一次 hash，不重写原文；这是调用数量证据，尚不能证明实际 Keychain 时延或 OS 跨进程恢复，普通 Release 模拟器验收由整合者另行安排。
 
 - 设计:`docs/superpowers/specs/2026-09-30-tendhearth-app-v1-design.md`,设计稿 `docs/design/tendhearth-app-v1/`
 - 计划:`docs/superpowers/plans/2026-09-30-tendhearth-app-skeleton.md`(骨架 + 演示)、`docs/superpowers/plans/2026-09-30-tendhearth-app-live.md`(真连接与配对)、`docs/superpowers/plans/2026-09-30-tendhearth-app-push.md`(原生通知)、`docs/superpowers/plans/2026-10-01-tendhearth-app-chat.md`(跟 CC 说话 + 真历史 + CC 的连接 + 原生会话;spec `docs/superpowers/specs/2026-10-01-tendhearth-app-chat-design.md`)

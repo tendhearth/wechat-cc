@@ -17,8 +17,8 @@ describe('loadSession(配对与偏好各读各的)', () => {
     expect(await loadSession(store({ load: async () => REC, loadPrefs: async () => { throw new Error('keychain') } }), log)).toEqual({ pairing: REC, lang: null })
     expect(log).toHaveBeenCalledWith('prefs load failed (Error)')
   })
-  it('只有配对读失败 ⇒ 当没配对,偏好照样在', async () => {
-    expect(await loadSession(store({ load: async () => { throw new Error('x') }, loadPrefs: async () => ({ lang: 'en' }) }), () => {})).toEqual({ pairing: null, lang: 'en' })
+  it('只有配对读失败 ⇒ 配对状态未知,偏好照样在;不把失败解释为无配对', async () => {
+    expect(await loadSession(store({ load: async () => { throw new Error('x') }, loadPrefs: async () => ({ lang: 'en' }) }), () => {})).toEqual({ pairing: null, lang: 'en', pairingReadFailed: true })
   })
 })
 

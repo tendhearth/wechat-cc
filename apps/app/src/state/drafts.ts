@@ -3,11 +3,18 @@ import { uuid } from '../net/uuid'
 
 // 交办草稿只存内存,按 matter 参数分开('new' = 新事项)。
 const drafts = new Map<string, string>()
+const revisions = new Map<string, number>()
+let revision = 0
+let draftOwner: string | undefined
+export type DraftStamp = { owner: string; revision: number }
+/** A process-owned revision distinguishes retyped identical text from the submitted draft. */
+export const getDraftStamp = (key: string): DraftStamp => ({ owner: draftOwner ??= uuid(), revision: revisions.get(key) ?? revision })
+export const sameDraftStamp = (a: DraftStamp | undefined, b: DraftStamp) => !!a && a.owner === b.owner && a.revision === b.revision
 const requestIds = new Map<string, { text: string; id: string }>()
 export const getDraft = (key: string) => drafts.get(key) ?? ''
-export const setDraft = (key: string, v: string) => { drafts.set(key, v) }
-export const deleteDraft = (key: string) => { drafts.delete(key); requestIds.delete(key) }
-export const clearDrafts = () => { gen++; drafts.clear(); requestIds.clear(); replied.clear(); clearReceipts() }
+export const setDraft = (key: string, v: string) => { drafts.set(key, v); revisions.set(key, ++revision) }
+export const deleteDraft = (key: string) => { drafts.delete(key); requestIds.delete(key); revisions.set(key, ++revision) }
+export const clearDrafts = () => { gen++; revision++; drafts.clear(); revisions.clear(); requestIds.clear(); replied.clear(); clearReceipts() }
 
 /**
  * 这些都只对「当前这台电脑」有意义(复评):换配对(配上 / 解除 / 换电脑 / 演示↔真连)⇒ 全清,配对代 +1。
@@ -25,6 +32,7 @@ export function setPairingScope(key: string): void {
   scope = key
   if (first) return
   gen++
+  revision++; revisions.clear()
   drafts.clear(); requestIds.clear(); replied.clear()
   if (receipts.length) { receipts = []; queueMicrotask(notifyReceipts) }
 }

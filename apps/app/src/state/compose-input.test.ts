@@ -48,7 +48,7 @@ vi.mock('react-native-safe-area-context', async () => {
 vi.mock('expo-router', () => ({ useLocalSearchParams: () => host.params, useRouter: () => ({ canGoBack: () => true, back: host.back, push: host.push, replace: host.replace }), Redirect: () => null }))
 vi.mock('../i18n/useLang', () => ({ useLang: () => 'zh-Hans' }))
 vi.mock('../state/BackendProvider', () => ({ useBackendCtx: () => host.ctx }))
-vi.mock('../state/session', () => ({ useSession: () => ({ pairing: null }) }))
+vi.mock('../state/session', () => ({ useSession: () => ({ pairing: null, inputScope: matterInputState.recovery().scope }) }))
 vi.mock('../ui/TopBar', () => ({ TopBar: () => null }))
 
 type Reply = { status: number; json: unknown } | Error
@@ -115,7 +115,12 @@ function harness() {
     version: (version: number) => clients.at(-1)!.subs.get(`matter/${ID}`)?.({ found: true, kind: 'task', version, phase: 'working' }),
   }
 }
-beforeEach(() => { clearDrafts(); host.back.mockClear(); host.push.mockClear(); host.replace.mockClear(); host.sources.length = 0 })
+beforeEach(async () => {
+  clearDrafts(); host.back.mockClear(); host.push.mockClear(); host.replace.mockClear(); host.sources.length = 0
+  const disk = new Map<string,string>()
+  matterInputState.configure(makeInputJournal({ getItemAsync: async k => disk.get(k) ?? null, setItemAsync: async (k,v) => { disk.set(k,v) }, deleteItemAsync: async k => { disk.delete(k) } }, async s => createHash('sha256').update(s).digest('hex')))
+  await matterInputState.activate({ v: 1, relayHost: 'test', relayUrl: 'wss://test', daemonId: 'test', deviceId: 'test', deviceToken: 'private-test-token', pairedAt: 1 })
+})
 afterEach(async () => {
   await act(() => { for (const root of roots.splice(0)) root.unmount() })
   for (const dispose of disposers.splice(0)) dispose()

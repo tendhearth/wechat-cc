@@ -164,4 +164,81 @@ describe('native durable input journal', () => {
     const reboot = makeMatterInputState({ journal: makeInputJournal(storage(f.disk).ss, hash), getDraft: () => draft, deleteDraft: () => { draft = '' } })
     await reboot.activate(REC); draft = first.rawText; expect(await reboot.consume('t')).toBe(false); expect(draft).toBe(first.rawText)
   })
+  it('does not clear a retyped identical draft while draftHandled persistence is pending', async () => {
+    const f = storage(); let draft = 'original', revision = 1
+    const state = makeMatterInputState({ journal: makeInputJournal(f.ss, hash), mk: () => 'req', getDraft: () => draft, getDraftStamp: () => ({ owner: 'process-A', revision }), deleteDraft: () => { draft = ''; revision++ } })
+    await state.activate(REC); const row = await state.prepare('t', draft, 'run'); await state.update(row, { status: 'pending' })
+    const reached = gate(), release = gate()
+    f.beforeWrite(async k => { if (k.includes('.index.') && !k.endsWith('.count')) { reached.resolve(); await release.promise } })
+    const consuming = state.consume('t'); await reached.promise
+    draft = 'different'; revision++; draft = row.rawText; revision++
+    release.resolve(); expect(await consuming).toBe(false); expect(draft).toBe('original')
+  })
+  it.each(['held','withdrawn'] as const)('does not clear a pending draft that became %s during its persistence await', async status => {
+    const f = storage(); let draft = 'original', revision = 1
+    const state = makeMatterInputState({ journal: makeInputJournal(f.ss, hash), mk: () => 'req', getDraft: () => draft, getDraftStamp: () => ({ owner: 'process-A', revision }), deleteDraft: () => { draft = ''; revision++ } })
+    await state.activate(REC); const row = await state.prepare('t', draft, 'run'); await state.update(row, { status: 'pending' })
+    const reached = gate(), release = gate()
+    f.beforeWrite(async k => { if (k.includes('.index.') && !k.endsWith('.count')) { reached.resolve(); await release.promise } })
+    const consuming = state.consume('t'); await reached.promise
+    const observing = state.observe('t', [receipt(row, status)])
+    expect(state.all()[0]?.status).toBe(status)
+    release.resolve(); expect(await consuming).toBe(false); await observing
+    expect(draft).toBe('original'); expect(state.all()[0]?.status).toBe(status)
+    const reboot = controller(storage(f.disk)); await reboot.activate(REC); expect(reboot.all()[0]?.status).toBe(status)
+  })
+  it('a late GET cannot clear text retyped after prepare, and a new process owner never owns an old same-text draft', async () => {
+    const f = storage(); let draft = 'original', revision = 1
+    const state = makeMatterInputState({ journal: makeInputJournal(f.ss, hash), mk: () => 'req', getDraft: () => draft, getDraftStamp: () => ({ owner: 'process-A', revision }), deleteDraft: () => { draft = ''; revision++ } })
+    await state.activate(REC); const row = await state.prepare('t', draft, 'run'); await state.update(row, { status: 'uncertain' })
+    const reached = gate(), release = gate()
+    const checking = state.reconcile({ matterInputReceipt: async () => { reached.resolve(); await release.promise; return receipt(row, 'sending') } }); await reached.promise
+    draft = ''; revision++; draft = 'original'; revision++; release.resolve(); await checking
+    expect(await state.consume('t')).toBe(false); expect(draft).toBe('original')
+    // Force an unhandled accepted row to disk, then model a different OS process's draft nonce.
+    const g = storage(); const before = makeMatterInputState({ journal: makeInputJournal(g.ss, hash), mk: () => 'req', getDraft: () => 'original', getDraftStamp: () => ({ owner: 'process-A', revision: 1 }) })
+    await before.activate(REC); const old = await before.prepare('t','original','run'); await before.update(old, { status: 'sending' })
+    let newDraft = 'original'
+    const reboot = makeMatterInputState({ journal: makeInputJournal(storage(g.disk).ss, hash), getDraft: () => newDraft, getDraftStamp: () => ({ owner: 'process-B', revision: 1 }), deleteDraft: () => { newDraft = '' } })
+    await reboot.activate(REC); expect(reboot.all()[0]).toMatchObject({ draftOwner: 'process-A', draftRevision: 1 })
+    expect(await reboot.consume('t')).toBe(false); expect(newDraft).toBe('original')
+  })
+  it('clears only the still-owned unchanged draft after its handled marker is durable', async () => {
+    const f = storage(); let draft = 'original', revision = 1
+    const state = makeMatterInputState({ journal: makeInputJournal(f.ss, hash), mk: () => 'req', getDraft: () => draft, getDraftStamp: () => ({ owner: 'process-A', revision }), deleteDraft: () => { draft = ''; revision++ } })
+    await state.activate(REC); const row = await state.prepare('t',draft,'run'); await state.update(row,{status:'pending'})
+    expect(await state.consume('t')).toBe(true); expect(draft).toBe('')
+    const reboot = controller(storage(f.disk)); await reboot.activate(REC); expect(reboot.all()[0]?.draftHandled).toBe(true)
+  })
+  it.each(['held', 'withdrawn'] as const)('late pending GET cannot overwrite a newer %s receipt or clear its original', async status => {
+    const f = storage(); let draft = 'original', revision = 1
+    const state = makeMatterInputState({ journal: makeInputJournal(f.ss, hash), mk: () => 'req', getDraft: () => draft, getDraftStamp: () => ({ owner: 'process-A', revision }), deleteDraft: () => { draft = ''; revision++ } })
+    await state.activate(REC); const row = await state.prepare('t', draft, 'run'); await state.update(row, { status: 'uncertain' })
+    const reached = gate(), release = gate()
+    const checking = state.reconcile({ matterInputReceipt: async () => { reached.resolve(); await release.promise; return receipt(row, 'pending') } })
+    await reached.promise; await state.observe('t', [receipt(row, status)]); release.resolve(); await checking
+    expect(state.all()[0]?.status).toBe(status); expect(await state.consume('t')).toBe(false); expect(draft).toBe('original')
+    const reboot = controller(storage(f.disk)); await reboot.activate(REC); expect(reboot.all()[0]?.status).toBe(status)
+    await state.reconcile({ matterInputReceipt: async () => receipt(row, 'pending') })
+    if (status === 'held') { expect(state.all()[0]?.status).toBe('pending'); expect(await state.consume('t')).toBe(true); expect(draft).toBe('') }
+    else { expect(state.all()[0]?.status).toBe('withdrawn'); expect(draft).toBe('original') }
+  })
+  it('live sending can never fall back to scope-null memory after cancellation or erasure', async () => {
+    const f = storage(), state = controller(f); await state.activate(REC); await state.clear()
+    const writes = f.writes.length, post = vi.fn()
+    await expect(state.prepare('live', 'must not POST', 'run', undefined, true).then(post)).rejects.toMatchObject({ code: 'input_scope' })
+    expect(post).not.toHaveBeenCalled(); expect(f.writes).toHaveLength(writes)
+    await expect(makeMatterInputState().prepare('live','must not POST','run',undefined,true)).rejects.toMatchObject({ code: 'input_scope' })
+  })
+  it('serializes concurrent snapshot/status commits and a fresh instance reads every committed row', async () => {
+    const f = storage(), state = controller(f), reached = gate(), release = gate(); await state.activate(REC)
+    let active = 0, maximum = 0
+    f.beforeWrite(async () => { active++; maximum = Math.max(maximum,active); reached.resolve(); await release.promise; active-- })
+    const one = state.prepare('t','one','run'), two = state.prepare('t','two','run')
+    await reached.promise; expect(maximum).toBe(1); release.resolve(); const [a,b] = await Promise.all([one,two])
+    await Promise.all([state.update(a,{status:'uncertain'}),state.update(b,{status:'held'})])
+    expect(maximum).toBe(1)
+    const reboot = controller(storage(f.disk)); await reboot.activate(REC); expect(reboot.all().map(r=>[r.rawText,r.status])).toEqual([['one','uncertain'],['two','held']])
+  })
+
 })

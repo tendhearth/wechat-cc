@@ -293,6 +293,7 @@ const en = {
   'input.openTask': 'Open this task',
   'progress.rawError': 'View original error',
   'progress.modelUnavailable': 'Choose a model supported by your account for this task on the desktop, then continue.',
+  'pair.sessionReadFailed': 'Your phone could not read its pairing record. Saved requests have not been erased. Please check again.',
   'input.send': 'Send request',
   'input.submitting': 'Sending this request…',
   'input.accepted': 'Your computer accepted it; waiting for the helper to confirm.',

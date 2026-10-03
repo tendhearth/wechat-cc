@@ -295,6 +295,7 @@ const zh: Record<keyof typeof en, string> = {
   'input.openTask': '打开这件事',
   'progress.rawError': '查看原始错误',
   'progress.modelUnavailable': '请在桌面为这件事选择账号可用的模型后继续。',
+  'pair.sessionReadFailed': '手机暂时没能读取配对记录，保留的补充没有清除；请重新核对。',
   'input.send': '发送补充',
   'input.submitting': '正在发送这条补充…',
   'input.accepted': '补充已受理，等待执行者确认。',
