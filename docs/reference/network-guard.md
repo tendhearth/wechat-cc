@@ -48,7 +48,7 @@
 | provider | 实际目标 |
 |---|---|
 | `claude` | 会话:**spawn 那一刻**子进程拿到的 `ANTHROPIC_BASE_URL`(`options.env` 给了就看它,否则 daemon 的 `process.env`)+ 那一刻的模型;一次性评估每次起新子进程,看调用那一刻的环境。没设 = `api.anthropic.com` |
-| `codex` | 对话侧 SDK 每一轮起一个新 `codex exec`、继承那一刻的环境 ⇒ 按调用时的 `OPENAI_BASE_URL`;工作台 app-server 是常驻子进程 ⇒ spawn 时捕获。没设 = `api.openai.com` |
+| `codex` | **按 codex 自己的配置,不看 `OPENAI_BASE_URL`**(2026-10-03:codex 0.153 不认这个变量,也不认 `OPENAI_API_KEY`)。见下面「Codex 的端点」。对话侧 SDK 每一轮起一个新 `codex exec`、重新读那一刻的配置 ⇒ 按调用时解析;工作台 app-server 是常驻子进程 ⇒ 起来以后问 codex 自己(`config/read`),用它报的有效配置。没配 = `api.openai.com`(ChatGPT 登录是 `chatgpt.com`,同为官方) |
 | `openai`(openai-compatible,对话 / delegate / 工作台 API) | **注册那一刻**读的 `openaiBaseUrl` + 默认模型(和建模型客户端用的是同一份值);之后改 agent-config 不影响在用的 provider |
 | `gemini` / `agy` | Google 官方 |
 | `cursor`(ACP,对话 + 工作台) | 起会话本身(initialize + `session/new` / `session/load`)不发模型请求 ⇒ `setup`,不保护;每一轮按 **cursor-agent 自己报的当前模型**(应答里 `configOptions` 的 `currentValue`;钉模型成功就是钉的那个;续会话就是续上的那个)。没报 ⇒ 按需要保护 |
@@ -59,10 +59,27 @@
 
 按配置推的 `targets.ts` `makeResolveTarget` 只剩给「还没有执行者可问」的地方:CLI `guard status`、语音、终端会话 resume。
 
+### Codex 的端点(`src/lib/codex-target.ts`,2026-10-03)
+
+codex 只按自己的配置连:`model_provider`(缺省 `openai`)→ 自定义 id 用 `model_providers.<id>.base_url`(+ `wire_api`);内置 `openai` 用 `openai_base_url`(没写 = 官方);内置 `ollama` / `lmstudio` = 本机(`CODEX_OSS_BASE_URL` / `CODEX_OSS_PORT` 可改)。配置层按 codex 同一顺序合并(低 → 高):系统 `/etc/codex/config.toml` → 用户 `$CODEX_HOME/config.toml`(`CODEX_HOME` 取子进程拿到的环境,缺省 `~/.codex`)→ 项目 `.codex/config.toml` → daemon 传的 `-c` 覆盖 → `managed_config.toml`。
+
+**拿不准 ⇒ `unresolved` ⇒ 需要保护:** 配置读不出 / 坏 TOML、`model_provider` 指到没定义的 id、自定义 provider 没写 `base_url`、`model_providers` 重定义内置 id(codex 会拒绝起)、老式顶层 `profile = "…"`(0.153 报错)、项目层 `.codex/config.toml` 改了端点相关的键(是否生效取决于主人有没有信任这个项目,daemon 判不了)、不认识的内置 provider(如 Bedrock)。`[profiles.x]` 表不看:新版 profile 只能靠 `--profile`,daemon 从不传。
+
+**哪一份更准:** 工作台 app-server 会话起来以后用 codex 自己 `config/read` 报的有效配置(含 MDM / 云端托管层与项目信任,这些按文件读不到);对话侧 `codex exec` 没有这个接口,按文件解析(每次调用读,按 mtime 缓存)。只读 provider id 与 base URL,从不读、从不打印密钥。
+
+| 场景 | 判定 |
+|---|---|
+| 没有 config.toml / 没写 `model_provider` | `api.openai.com`,需要保护 |
+| `OPENAI_BASE_URL` 指国内网关、config 是默认 | **仍需要保护**(codex 不看这个变量 —— 2026-10-03 修掉的直连漏洞) |
+| 自定义 provider 指到国内 / 自建 / 局域网 | 不需要保护 |
+| 自定义 provider 指到 OpenAI / OpenRouter | 需要保护 |
+| `-c model_provider=…` / `-c model_providers.x.base_url=…` | 覆盖压过文件 |
+| 读不出 / 拿不准(见上) | 需要保护 |
+
 | 出口 | 连到哪 |
 |---|---|
 | 语音 | 通义 TTS = `dashscope.aliyuncs.com`;`http_tts` / STT = 配置里的 `base_url`;没配置 = 什么都不出门,不判 |
-| 工作台额度查询 | Claude 的 usage 接口永远是 `api.anthropic.com`(哪怕会话走网关);Codex 同 codex |
+| 工作台额度查询 | Claude 的 usage 接口永远是 `api.anthropic.com`(哪怕会话走网关);Codex 的额度是 ChatGPT 账号的,永远按 OpenAI 官方(哪怕 `model_provider` 指到了别处) |
 
 **默认判定:**
 
@@ -141,8 +158,8 @@
 | 会话自己的发送方法(`provider-registry.ts` `guardSession`,第二轮 #194) | 同上(会话此刻的实际目标) | registry / delegate 发出去的每个会话:dispatch / steer / 工作台 submit 先判再发;工作台 `start` 是同步的,先挂住等守护答复,被拒就从不 start、事件流报 `network_unprotected`。selftest chat 与 `POST /v1/selftest/converse` 因此也过守护 |
 | delegate(`src/daemon/bootstrap/delegate.ts`) | 同 registry(带 provider id 包一层) | 同上 |
 | 工作台 `execute()` / `submitInput()` | spawn 前:执行者报的 `spawn` 目标;会话起来后、第一轮之前与每次补充:在用会话的实际目标(`workbench/service/call-target.ts`) | 任务以 `network_unprotected` 失败 / 补充返回 503;Cursor auto、国内网关的执行者照常起 |
-| 工作台额度查询(`wire-workbench.ts`) | Claude → `api.anthropic.com`;Codex → codex | 返回 null,不出门 |
-| `cli-reply-handler` resume(微信「@码 文本」、A2A `/a2a/cli/reply`) | 终端会话来源(claude / codex,各自的 base URL) | 不起 CLI,回统一的话 |
+| 工作台额度查询(`wire-workbench.ts`) | Claude → `api.anthropic.com`;Codex → OpenAI 官方(`chatgpt.com`) | 返回 null,不出门 |
+| `cli-reply-handler` resume(微信「@码 文本」、A2A `/a2a/cli/reply`) | 终端会话来源:claude 看 `ANTHROPIC_BASE_URL`;codex 按 codex 配置层(含这个会话目录的项目层) | 不起 CLI,回统一的话 |
 | 语音 `gateVoice` | 这一次连到的端点 | 不出门;通义 / 自建 / 局域网照常 |
 | 后台 tick(companion push / introspect / ingest)`skipWhenUnsafe` | 已注册 provider 报的目标 + 在用会话的实际目标 | 信号不安全且**全都**需要保护 ⇒ 这一拍安静跳过;有不需要保护的 ⇒ 照跑,里面需要保护的那几次被各自的闸门拒掉。同一段不安全期同一个任务只记一行日志 |
 | 后台任务内部被拒的那一次(评审 #193 P2-3) | — | **这一拍跳过,什么进度都不记**(`NetworkUnprotectedError` / `NETWORK_UNPROTECTED_REASON` 一路传上来):议程 / 打猎 / 问候定向撤回「先登记再出门」的那一次登记(agenda.md 只放回本次打勾的那一行,care 台账按回执 `unclaim`,期间的新活动保留),不写 plan-log;日程判断被拒不走老顺序兜底、不退避;串门开场被拒台账放回;反思不记 `cron_eval_failed`、`last_introspect_at` 不动;画表情 / 画室不吃掉这一期;人类做客讲述被拒那一位水位放回;社交判官被拒原样抛出(不当成「不能」去转问)。摄入抽取、线索、概览、画像、园丁本来就只在成功后提交 |
@@ -164,7 +181,7 @@
 
 - `GET /v1/health` 的 `guard` 块:`{ enabled, source: 'bx'|'probe'|'off', safe, detail, ip, checked_at, signal_source, protected_in_use, paused, providers: [{ id, model, host, protected, kind, label, reason }] }`。`safe` 只是信号;`paused = enabled && !safe && protected_in_use` 才是「有需要保护的调用此刻被停」。新字段都可选,老 daemon 没有。
 - 桌面「此刻」页连接区一行:`bx 保护中`(绿)/ `⚠ 网络未受保护：用到 Claude 等的调用暂停`(红,`Claude` 换成第一个需要保护的接口名;悬停提示可跑 `bx leakcheck`)/ `当前没有用到需要保护的接口`(中性,不报红)。守护关着不显示;老 daemon 没有 `protected_in_use` 时按「有」算,不默认绿。设置抽屉里那一行同口径。
-- `wechat-cc guard status [--json]`:信号(`source` / `safe` / `detail` / `bx_path` / `signal_source`)+ 按配置推出的 provider 分类(`providers`、`protected_in_use`;只读配置,不发流量)。
+- `wechat-cc guard status [--json]`:信号(`source` / `safe` / `detail` / `bx_path` / `signal_source`)+ 按配置推出的 provider 分类(`providers`、`protected_in_use`;只读配置,不发流量)。Codex 那一行按 codex 配置层判(`CODEX_HOME` 依次取 CLI 环境、`daemon.env`、`~/.claude/settings.json` 的 env)。
 - 日志 tag `GUARD`:状态翻转、每个被拒的回合(带被停的接口名)、cheapEval 跳过的候选、每个被跳过的后台任务(每段一次)。
 
 ## 怎么验
@@ -174,4 +191,4 @@ bx status --json | jq '{protection_state, tunnel_healthy}'   # 只读,本机 soc
 wechat-cc guard status                                        # 信号 + 各 provider 是否需要保护
 ```
 
-不要为了验证去 `bx down`、`bx setup`,也不要跑任何会把流量送出隧道的检查(例如 `bx leakcheck --compare-direct`)。断网路径由单测覆盖:`src/lib/call-classifier.test.ts`(分类表)、`src/daemon/guard/owner-table.test.ts`(主人那张表逐格 + 端点 / 模型解析 + health)、`src/daemon/guard/*.test.ts`(bx JSON、超时、fail closed、第一次探测的有界等待)、`src/core/provider-registry.network-gate.test.ts`(逐候选故障转移、Claude 聊天停 + DeepSeek 后台照常)、`src/daemon/guard/effective-target.test.ts`(评审 #193:配置改了在用的执行者不跟、Cursor 一次性评估、报不出目标按保护)、`src/core/acp-agent-provider.test.ts`(cursor-agent 自报的当前模型)、`src/daemon/wiring/tick-bodies.test.ts`(被拒 = 这一拍跳过)、`src/core/conversation-coordinator.test.ts`(network gate 一节)、`src/core/session-manager.test.ts`、`src/core/workbench/service-network-gate.test.ts`、`src/daemon/inbound/pipeline.integration.test.ts`(入站控制照常)、`src/daemon/ilink/voice-gate.test.ts`、`src/daemon/cli-reply-handler.test.ts`、`src/daemon/memory/nightly.test.ts`、健康路由与桌面渲染测试。测试里永远注入执行器 / 探测,单测进程下 `findBx()` 不认真的 bx、闸门不真探 google。
+不要为了验证去 `bx down`、`bx setup`,也不要跑任何会把流量送出隧道的检查(例如 `bx leakcheck --compare-direct`)。断网路径由单测覆盖:`src/lib/call-classifier.test.ts`(分类表)、`src/daemon/guard/owner-table.test.ts`(主人那张表逐格 + 端点 / 模型解析 + health)、`src/daemon/guard/*.test.ts`(bx JSON、超时、fail closed、第一次探测的有界等待)、`src/core/provider-registry.network-gate.test.ts`(逐候选故障转移、Claude 聊天停 + DeepSeek 后台照常)、`src/daemon/guard/effective-target.test.ts`(评审 #193:配置改了在用的执行者不跟、Cursor 一次性评估、报不出目标按保护)、`src/lib/codex-target.test.ts`(Codex 按自己的配置层判:默认 / 自定义国内 / `OPENAI_BASE_URL` 不算 / 读不出按保护 / `-c` 覆盖 / 项目层)、`src/core/codex-agent-provider.test.ts` 与 `src/core/workbench/codex-app-server.test.ts`(对话侧与工作台 `config/read`)、`src/core/acp-agent-provider.test.ts`(cursor-agent 自报的当前模型)、`src/daemon/wiring/tick-bodies.test.ts`(被拒 = 这一拍跳过)、`src/core/conversation-coordinator.test.ts`(network gate 一节)、`src/core/session-manager.test.ts`、`src/core/workbench/service-network-gate.test.ts`、`src/daemon/inbound/pipeline.integration.test.ts`(入站控制照常)、`src/daemon/ilink/voice-gate.test.ts`、`src/daemon/cli-reply-handler.test.ts`、`src/daemon/memory/nightly.test.ts`、健康路由与桌面渲染测试。测试里永远注入执行器 / 探测,单测进程下 `findBx()` 不认真的 bx、闸门不真探 google;`vitest.setup.ts` 把 `CODEX_HOME` 指到空临时目录,测试不读主人的 `~/.codex`。

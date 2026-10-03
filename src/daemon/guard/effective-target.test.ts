@@ -9,7 +9,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createNetworkGate } from './gate'
 import { initialState, type GuardState } from './scheduler'
-import { makeResolveTarget } from './targets'
+import { classifyConfiguredForCli, makeResolveTarget } from './targets'
+import { classifyCall } from '../../lib/call-classifier'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { AgentConfig } from '../../lib/agent-config'
 import { createProviderRegistry } from '../../core/provider-registry'
 import { SessionManager } from '../../core/session-manager'
@@ -190,4 +194,49 @@ describe('every send on a session handed out by the gated registry passes the gu
     expect(f.sent).not.toHaveBeenCalled()
     expect(check).toHaveBeenCalled()
   })
+})
+
+describe('Codex 的端点按 codex 自己的配置(2026-10-03:codex 0.153 不认 OPENAI_BASE_URL)', () => {
+  const DS = 'model_provider = "ds"\n[model_providers.ds]\nname = "d"\nbase_url = "https://api.deepseek.com/v1"\n'
+  const withHome = (fn: (home: string, root: string) => void) => () => {
+    const root = mkdtempSync(join(tmpdir(), 'guard-codex-'))
+    try { const home = join(root, 'codex-home'); mkdirSync(home, { recursive: true }); fn(home, root) } finally { rmSync(root, { recursive: true, force: true }) }
+  }
+  const GW = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+
+  it('按配置推(health / 语音 / resume 的预测):OPENAI_BASE_URL 指国内但 config 默认 ⇒ 需要保护', withHome((home) => {
+    const resolve = makeResolveTarget(() => ({}) as AgentConfig, { CODEX_HOME: home, OPENAI_BASE_URL: GW }, { systemDir: null })
+    expect(classifyCall(resolve({ provider: 'codex', purpose: 'turn' }))).toMatchObject({ protected: true, kind: 'official', host: 'api.openai.com' })
+    writeFileSync(join(home, 'config.toml'), DS)
+    expect(classifyCall(resolve({ provider: 'codex', purpose: 'turn' }))).toMatchObject({ protected: false, kind: 'domestic' })
+    writeFileSync(join(home, 'config.toml'), 'model_provider = [broken\n')
+    expect(classifyCall(resolve({ provider: 'codex', purpose: 'turn' }))).toMatchObject({ protected: true, kind: 'unresolved' })
+  }))
+
+  it('执行者自己报的目标(exact)不被配置覆盖;Codex 额度查询永远是 OpenAI 官方', withHome((home) => {
+    writeFileSync(join(home, 'config.toml'), DS)
+    const resolve = makeResolveTarget(() => ({}) as AgentConfig, { CODEX_HOME: home }, { systemDir: null })
+    expect(resolve({ provider: 'codex', baseUrl: null, exact: true })).toEqual({ provider: 'codex', baseUrl: null, exact: true })
+    expect(classifyCall(resolve({ provider: 'codex', baseUrl: 'https://chatgpt.com', purpose: 'usage', exact: true }))).toMatchObject({ protected: true, kind: 'official' })
+  }))
+
+  it('daemon 闸门:config 默认 + OPENAI_BASE_URL 指国内 + 信号不安全 ⇒ codex 被拒', withHome((home) => {
+    const { gate } = daemonGate({}, { safe: false }, { CODEX_HOME: home, HOME: home, OPENAI_BASE_URL: GW })
+    expect(gate.classify({ provider: 'codex', purpose: 'turn' })).toMatchObject({ protected: true })
+  }))
+
+  it('wechat-cc guard status 按 CODEX_HOME 里的 config 判 codex', withHome((home, root) => {
+    const prior = { h: process.env.CODEX_HOME, b: process.env.OPENAI_BASE_URL }
+    process.env.CODEX_HOME = home; process.env.OPENAI_BASE_URL = GW
+    try {
+      const stateDir = join(root, 'state'); mkdirSync(stateDir, { recursive: true })
+      const row = () => classifyConfiguredForCli(stateDir, { onPath: () => null }).find(p => p.id === 'codex')!
+      expect(row()).toMatchObject({ protected: true, kind: 'official', host: 'api.openai.com' })
+      writeFileSync(join(home, 'config.toml'), DS)
+      expect(row()).toMatchObject({ protected: false, kind: 'domestic', host: 'api.deepseek.com' })
+    } finally {
+      if (prior.h === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = prior.h
+      if (prior.b === undefined) delete process.env.OPENAI_BASE_URL; else process.env.OPENAI_BASE_URL = prior.b
+    }
+  }))
 })
