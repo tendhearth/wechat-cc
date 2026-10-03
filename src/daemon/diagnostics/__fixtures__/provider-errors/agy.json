@@ -6,9 +6,9 @@
     "source": "harvested",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
+    "errorCode": "network",
     "message": "agy result status=ERROR: authentication failed or timed out",
-    "note": "日志 128 次 + failure-shapes.jsonl 3 次。owner 2026-08-27 确认能登录 ⇒ 实为网络;红线:按瞬时。",
+    "note": "红线 B:owner 确认 agy 能登录,这句其实是网络 / 超时。第 2 步起 agy 边界固定映射到 network(不是认证码);桌面「测试连接」也不再报 AUTH FAILED + 重新登录(以前 llm-health 直接跑宽档散文正则)。",
     "current": {
       "claudeSentinel": false,
       "assistantText": true,
@@ -30,7 +30,7 @@
     "source": "harvested",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
+    "errorCode": "network",
     "message": "agy result status=ERROR: Eligibility check failed: failed to get profile picture: Get \"https://lh3.googleusercontent.com/a/«opaque»=s96-c\": net/http: TLS handshake timeout",
     "current": {
       "claudeSentinel": false,
@@ -53,7 +53,7 @@
     "source": "harvested",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
+    "errorCode": "server_error",
     "message": "agy result status=ERROR: Eligibility check failed: failed to fetch user info: 500 Internal Server Error",
     "current": {
       "claudeSentinel": false,
@@ -62,7 +62,7 @@
       "authFailError": false,
       "llmHealthAuth": false,
       "registryAuthCode": false,
-      "healthKind": "unknown",
+      "healthKind": "network",
       "providerFailure": "unknown",
       "quota": null,
       "quotaRefusalText": false,
@@ -76,7 +76,7 @@
     "source": "harvested",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
+    "errorCode": "network",
     "message": "agy result status=ERROR: Eligibility check failed: Post \"https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist\": dial tcp: lookup daily-cloudcode-pa.googleapis.com: no such host",
     "current": {
       "claudeSentinel": false,
@@ -99,7 +99,7 @@
     "source": "harvested",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
+    "errorCode": "network",
     "message": "agy result status=ERROR: Eligibility check failed: Post \"https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist\": EOF",
     "current": {
       "claudeSentinel": false,
@@ -122,7 +122,7 @@
     "source": "harvested",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
+    "errorCode": "network",
     "message": "agy result status=ERROR: Eligibility check failed: Get \"https://www.googleapis.com/oauth2/v2/userinfo\": EOF",
     "current": {
       "claudeSentinel": false,
@@ -145,7 +145,7 @@
     "source": "harvested",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
+    "errorCode": "network",
     "message": "agy result status=ERROR: There was a network issue connecting to the server, please try again.",
     "current": {
       "claudeSentinel": false,
@@ -154,7 +154,7 @@
       "authFailError": false,
       "llmHealthAuth": false,
       "registryAuthCode": false,
-      "healthKind": "unknown",
+      "healthKind": "network",
       "providerFailure": "unknown",
       "quota": null,
       "quotaRefusalText": false,
