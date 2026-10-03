@@ -405,3 +405,11 @@
 .wb-draft-thumbnail { width:64px; height:64px; object-fit:contain; border-radius:6px; }
 .wb-thumbnail:focus-visible { outline:2px solid var(--wb-accent,var(--th-accent)); outline-offset:2px; }
 .wb-result-thumbnail { max-width:280px; }
+
+/* Native diagnostics stay available without crowding the recovery explanation. */
+.wb-error-diagnostic { margin-top: 12px; color: var(--th-ink-soft); }
+.wb-error-diagnostic summary { cursor: pointer; font-size: 13px; }
+.wb-error-diagnostic pre { max-width: 100%; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: var(--th-ground); border: 1px solid var(--th-hair); border-radius: 8px; color: var(--th-ink); }
+.wb-error > button { display: block; margin-top: 10px; }
+.wb-quota-handoff { margin: 16px 0; padding: 16px; border: 1px solid var(--th-hair); border-radius: 12px; background: var(--th-ground); }
+.wb-quota-handoff p { margin: 0 0 10px; line-height: 1.65; }

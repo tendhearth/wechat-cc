@@ -29,50 +29,139 @@ export interface McpToolBridge {
 
 const EMPTY_SCHEMA = { type: 'object', properties: {} } as const
 
-async function connectStdio(spec: McpStdioSpec): Promise<McpClientLike> {
+/**
+ * Default per-server startup budget (spawn + `initialize` + `tools/list`).
+ * Equal to the MCP SDK's own per-request default, so callers that don't opt
+ * into anything keep the old ceiling; callers with optional servers pass a
+ * tighter one (see `McpToolBridgeDeps`).
+ */
+export const DEFAULT_MCP_STARTUP_TIMEOUT_MS = 60_000
+
+async function connectStdio(spec: McpStdioSpec, opts: { timeoutMs: number }): Promise<McpClientLike> {
   const transport = new StdioClientTransport({
     command: spec.command,
     args: spec.args ?? [],
     env: childEnvFor(spec),
   })
   const client = new Client({ name: 'wechat-openai-provider', version: '1.0.0' }, { capabilities: {} })
-  await client.connect(transport)
-  return client as unknown as McpClientLike
+  // The SDK closes the transport (kills the child) itself when `initialize`
+  // fails or times out; passing our budget makes that happen at OUR deadline
+  // instead of the SDK's fixed 60s.
+  await client.connect(transport, { timeout: opts.timeoutMs })
+  return {
+    listTools: () => client.listTools(undefined, { timeout: opts.timeoutMs }) as ReturnType<McpClientLike['listTools']>,
+    callTool: (args) => client.callTool(args as Parameters<Client['callTool']>[0]) as ReturnType<McpClientLike['callTool']>,
+    close: () => client.close(),
+  }
+}
+
+export interface McpToolBridgeDeps {
+  makeClient?: (spec: McpStdioSpec, opts: { timeoutMs: number }) => Promise<McpClientLike>
+  /**
+   * Servers for which a failed / too-slow start is NOT fatal: the bridge comes
+   * up without their tools and reports them via `onSkip`. Default: none (every
+   * server required — the old atomic behaviour, which callers like customer
+   * review rely on). The openai provider marks third-party plugins optional:
+   * 2026-10-03 the wxvault plugin took >60s to answer `initialize` inside the
+   * daemon and every openai spawn (the owner's chat AND selftest) threw
+   * `MCP error -32001: Request timed out`, while claude just ran without it.
+   */
+  isOptional?: (serverName: string) => boolean
+  /** Per-server budget for spawn + initialize + tools/list. */
+  startupTimeoutMs?: number
+  onSkip?: (serverName: string, reason: string) => void
+}
+
+interface Started { client: McpClientLike; tools: { name: string; description?: string; inputSchema?: unknown }[] }
+
+/**
+ * Start one server, bounded by `timeoutMs`. If the deadline wins, a client
+ * that still comes up later is closed the moment it does — a given-up server
+ * must never leave an orphaned child process behind.
+ */
+function startServer(
+  make: NonNullable<McpToolBridgeDeps['makeClient']>,
+  name: string,
+  spec: McpStdioSpec,
+  timeoutMs: number,
+): Promise<Started> {
+  let gaveUp = false
+  const attempt = (async (): Promise<Started> => {
+    const client = await make(spec, { timeoutMs })
+    if (gaveUp) { await client.close().catch(() => {}); throw new Error('abandoned') }
+    try {
+      const { tools } = await client.listTools()
+      if (gaveUp) throw new Error('abandoned')
+      return { client, tools }
+    } catch (err) {
+      await client.close().catch(() => {})
+      throw err
+    }
+  })()
+  attempt.catch(() => {}) // a loss after the deadline is handled inside `attempt`
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      gaveUp = true
+      reject(new Error(`mcp server "${name}" did not start within ${timeoutMs}ms`))
+    }, timeoutMs)
+  })
+  return Promise.race([attempt, deadline]).finally(() => clearTimeout(timer))
 }
 
 export async function createMcpToolBridge(
   specs: Record<string, McpStdioSpec>,
-  deps?: { makeClient?: (spec: McpStdioSpec) => Promise<McpClientLike> },
+  deps?: McpToolBridgeDeps,
 ): Promise<McpToolBridge> {
   const make = deps?.makeClient ?? connectStdio
+  const isOptional = deps?.isOptional ?? (() => false)
+  const timeoutMs = deps?.startupTimeoutMs ?? DEFAULT_MCP_STARTUP_TIMEOUT_MS
   const owners = new Map<string, McpClientLike>() // toolName → client
   const toolServer = new Map<string, string>() // toolName → owning server name (spec key)
   const clients: McpClientLike[] = []
   const tools: ToolSpec[] = []
 
-  try {
-    for (const [serverName, spec] of Object.entries(specs)) {
-      const client = await make(spec)
-      clients.push(client)
-      const { tools: mcpTools } = await client.listTools()
-      for (const t of mcpTools) {
-        owners.set(t.name, client)
-        toolServer.set(t.name, serverName) // last-server-wins on duplicate tool names
-        tools.push({
-          name: t.name,
-          description: t.description ?? t.name,
-          parameters: (t.inputSchema as Record<string, unknown>) ?? { ...EMPTY_SCHEMA },
-        })
-      }
+  // All servers start concurrently: spawn latency is the slowest server, not
+  // the sum of all of them (this used to be a sequential loop, so one slow
+  // plugin also delayed every server after it).
+  const entries = Object.entries(specs)
+  const results = await Promise.allSettled(entries.map(([name, spec]) => startServer(make, name, spec, timeoutMs)))
+
+  let fatal: unknown
+  let failed = false
+  results.forEach((r, i) => {
+    const name = entries[i]![0]
+    if (r.status === 'fulfilled') { clients.push(r.value.client); return }
+    if (isOptional(name)) {
+      deps?.onSkip?.(name, r.reason instanceof Error ? r.reason.message : String(r.reason))
+    } else if (!failed) {
+      failed = true
+      fatal = r.reason
     }
-  } catch (err) {
-    // A spec whose client connects (process spawned) but then fails listTools
-    // would otherwise leave that child process orphaned — the McpToolBridge
-    // (which owns .close()) is never returned. Close everything connected so
-    // far before rethrowing.
+  })
+  if (failed) {
+    // A required server is down. The McpToolBridge (which owns .close()) is
+    // never returned, so close every server that DID come up before
+    // rethrowing — otherwise their child processes are orphaned.
     await Promise.all(clients.map(c => c.close().catch(() => {})))
-    throw err
+    throw fatal
   }
+
+  // Walk in spec order, so tool order (and last-server-wins on duplicate
+  // names) stays deterministic regardless of which server answered first.
+  results.forEach((r, i) => {
+    if (r.status !== 'fulfilled') return
+    const serverName = entries[i]![0]
+    for (const t of r.value.tools) {
+      owners.set(t.name, r.value.client)
+      toolServer.set(t.name, serverName) // last-server-wins on duplicate tool names
+      tools.push({
+        name: t.name,
+        description: t.description ?? t.name,
+        parameters: (t.inputSchema as Record<string, unknown>) ?? { ...EMPTY_SCHEMA },
+      })
+    }
+  })
 
   return {
     tools,

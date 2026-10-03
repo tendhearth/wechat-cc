@@ -9,7 +9,7 @@ afterEach(async()=>{await Promise.all(windows.splice(0).map(window=>window.happy
 function setup(){
   const window=new Window({url:'https://cc.example/m'});windows.push(window)
   const document=window.document
-  const ids=['m-list','m-detail','m-back','m-title','m-notice','m-controls','m-permissions','m-questions','m-events','m-artifacts','m-artifact-preview','m-inputs','m-say-box','m-say','m-send','m-conn','home-focus','home-result','home-context','home-entry','home-work','feed','refresh','todos','portrait','stickers']
+  const ids=['m-list','m-detail','m-back','m-title','m-notice','m-controls','m-permissions','m-questions','m-events','m-artifacts','m-artifact-preview','m-inputs','m-say-box','m-say','m-send','m-conn','m-task-status','home-focus','home-result','home-context','home-entry','home-work','feed','refresh','todos','portrait','stickers']
   document.body.innerHTML=ids.map(id=>id==='m-say'?'<textarea id="m-say"></textarea>':`<div id="${id}"></div>`).join('')+'<nav><button data-p="matters"></button><button data-p="memory"></button></nav><div class="home-character"></div>'
   const downloads:Blob[]=[],api=vi.fn(async(_path:string)=>({status:200,json:async()=>({ok:true})}))
   class PreviewUrl extends URL {

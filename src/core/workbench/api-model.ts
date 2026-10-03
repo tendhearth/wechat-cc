@@ -1,5 +1,6 @@
 import {createOpenAICompatible} from '@ai-sdk/openai-compatible'
 import {makeThinkFilter} from '../think-tags'
+import {makeTimeoutFetch,openaiFetchTimeoutsFromEnv,type FetchTimeouts} from '../../lib/timeout-fetch'
 import {jsonSchema,streamText,tool,type LanguageModel,type ModelMessage} from 'ai'
 
 export type ChatMessage=ModelMessage
@@ -12,7 +13,7 @@ export interface APIModel{
   }
 }
 
-export interface APIModelOptions{baseURL:string;apiKey:string;model:string;maxOutputTokens?:number}
+export interface APIModelOptions{baseURL:string;apiKey:string;model:string;maxOutputTokens?:number;timeouts?:FetchTimeouts}
 export type LanguageModelFactory=(options:Readonly<APIModelOptions>)=>LanguageModel
 const DEFAULT_MAX_OUTPUT_TOKENS=4096
 
@@ -27,7 +28,9 @@ export function createApiModel(options:APIModelOptions,languageModelFactory?:Lan
   const maxOutputTokens=options.maxOutputTokens??DEFAULT_MAX_OUTPUT_TOKENS
   if(!baseURL||!apiKey||!modelId||!Number.isSafeInteger(maxOutputTokens)||maxOutputTokens<1||maxOutputTokens>16_384)throw Error('invalid_api_model')
   const frozen=Object.freeze({...options,baseURL,model:modelId,maxOutputTokens})
-  const model=languageModelFactory?.(frozen)??createOpenAICompatible({name:'workbench-api',baseURL,apiKey}).chatModel(modelId)
+  const model=languageModelFactory?.(frozen)??createOpenAICompatible({name:'workbench-api',baseURL,apiKey,
+    // 边界超时(arch backlog #4 第 2 步):连不上 / 流停住 ⇒ 带 network 码,不再等工作台 10 分钟空闲上限。
+    fetch:makeTimeoutFetch(options.timeouts??openaiFetchTimeoutsFromEnv()) as typeof fetch}).chatModel(modelId)
   return{
     stream(messages,toolSpecs,signal){
       const first=messages[0]

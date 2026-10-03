@@ -63,10 +63,11 @@ export default function Matter() {
   const [sending, setSending] = useState(false)
   const [failure, setFailure] = useState<{ text: string; dot: 'bad' | 'warn' | 'unknown' } | null>(null)
   const [inputNotice, setInputNotice] = useState<string | null>(null)
+  const [openErrors, setOpenErrors] = useState<ReadonlySet<number>>(() => new Set())
   const handoffReq = useRef('')
   const idRef = useRef(id)
   idRef.current = id
-  useEffect(() => { setSheet(false); setFailure(null); setInputNotice(null) }, [id])
+  useEffect(() => { setSheet(false); setFailure(null); setInputNotice(null); setOpenErrors(new Set()) }, [id])
   const { refresh: refreshDetail } = detail
   const { refresh: refreshInsight } = insight
   const { refresh: refreshChanges } = changes
@@ -142,6 +143,7 @@ export default function Matter() {
         <Txt role="small" tone="inkSoft">{t(lang, 'progress.breadcrumb')}</Txt>
         <Txt role="title" content="user" accessibilityRole="header">{v.title}</Txt>
         <View testID="progress-status"><StatusPill status={v.status} /></View>
+        {d.task?.error === 'execution_model_unsupported' ? <Txt testID="progress-model-guidance" role="meta" tone="inkSoft">{t(lang, 'progress.modelUnavailable')}</Txt> : null}
         {d.nativeStart ? (
           // 接过来、还没发第一句的电脑会话(spec D12):第一句会怎样 + 先让原来那个停下;发过第一句就没有了
           <View testID="progress-native-start" style={{ gap: space.xs }}>
@@ -189,7 +191,15 @@ export default function Matter() {
             ) : e.kind === 'error' ? (
               <View key={i} style={{ flexDirection: 'row', gap: space.s, alignItems: 'flex-start' }}>
                 <View style={{ paddingTop: space.s }}><Dot kind="warn" size={8} /></View>
-                <Txt role="meta" tone="inkSoft" content="user" style={{ flex: 1 }}>{e.text}</Txt>
+                <View style={{ flex: 1, gap: space.s }}>
+                  <Txt role="meta" tone="inkSoft" content="user">{e.text}</Txt>
+                  {e.diagnostic ? <>
+                    <Pressable testID={`progress-error-raw-toggle-${i}`} accessibilityRole="button" accessibilityState={{ expanded: openErrors.has(i) }} accessibilityLabel={t(lang, 'progress.rawError')} onPress={() => setOpenErrors(prev => { const next = new Set(prev); if (next.has(i)) next.delete(i); else next.add(i); return next })} style={{ minHeight: 36, justifyContent: 'center' }}>
+                      <Txt role="small" tone="inkSoft" style={{ textDecorationLine: 'underline' }}>{t(lang, 'progress.rawError')}</Txt>
+                    </Pressable>
+                    {openErrors.has(i) ? <Txt testID={`progress-error-raw-${i}`} role="code" tone="inkSoft" content="user" selectable>{e.diagnostic}</Txt> : null}
+                  </> : null}
+                </View>
               </View>
             ) : (
               <View key={i} style={{ alignItems: e.kind === 'me' ? 'flex-end' : 'flex-start' }}>

@@ -59,7 +59,8 @@ it('keeps recovery previews scoped to task, retained version and selected execut
 })
 it('explains execution choice failures without exposing machine codes or changing unrelated errors',async()=>{
  const {executionErrorMessage}=await import('./workbench-execution.js')
- expect(executionErrorMessage('execution_model_unsupported')).toContain('重新选择模型')
+ expect(executionErrorMessage('execution_model_unsupported')).toContain('为这件事选择可用的模型')
+ expect(executionErrorMessage('execution_model_unsupported')).toContain('自动会沿用原设置')
  expect(executionErrorMessage('execution_effort_unsupported')).toContain('思考强度')
  expect(executionErrorMessage('execution_model_unknown')).toContain('明确选择')
  expect(executionErrorMessage('execution_image_unsupported')).toContain('不接收图片')
@@ -69,6 +70,12 @@ it('explains execution choice failures without exposing machine codes or changin
  expect(executionErrorMessage('workbench_execution_unsupported')).toContain('自动')
  expect(executionErrorMessage('workbench_resume_unsupported')).toContain('桌面')
  expect(executionErrorMessage('provider_quota_exhausted')).toContain('额度')
+ // arch backlog #4 第 2 步:按 provider 码来的失败都有一句人话;auth_rejected 不说登录(红线 A)。
+ expect(executionErrorMessage('provider_network')).toContain('网络')
+ expect(executionErrorMessage('provider_auth_expired')).toContain('重新登录')
+ expect(executionErrorMessage('provider_auth_rejected')).toContain('401/403')
+ expect(executionErrorMessage('provider_auth_rejected')).not.toMatch(/登录|过期/)
+ expect(executionErrorMessage('provider_server_error')).toContain('5xx')
  expect(executionErrorMessage('provider_rate_limited')).toContain('稍后')
  expect(executionErrorMessage('workbench_busy')).toContain('文件夹')
  expect(executionErrorMessage('review_file_unmarkable')).toContain('不能标记')

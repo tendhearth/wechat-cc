@@ -10,6 +10,7 @@ import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {PROVIDER_EXECUTION_CHOICE as automatic} from './execution-settings'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {codexErrorEvent,codexRpcError} from './codex-execution-error'
 import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,service:WorkbenchService,store:ReturnType<typeof makeWorkbenchStore>
@@ -154,6 +155,19 @@ it('keeps model failure codes diagnostic while explaining the next action in the
   const task=service.create({path:project,providerId:'codex',text:'work',execution:selected});await settled(task.id)
   const detail=service.detail(task.id)
   expect(detail.task.error).toBe('execution_model_unsupported')
-  expect(detail.events.filter(e=>e.kind==='error').at(-1)?.text).toBe('当前模型不可用，请重新选择模型，或使用自动。')
+  expect(detail.events.filter(e=>e.kind==='error').at(-1)?.text).toBe('当前模型不可用。请为这件事选择可用的模型后继续；自动会沿用原设置。')
   expect(detail.execution).toEqual(selected);expect(detail.lastExecution?.effective).toBeNull()
+})
+
+
+it.each(['native-error-event','rpc-rejection'])('preserves one model diagnostic with a stable task failure for %s',async path=>{
+  const raw=JSON.stringify({type:'error',status:400,error:{type:'invalid_request_error',message:"The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account."}})
+  setup({async spawn(){if(path==='rpc-rejection')throw codexRpcError(raw);return{async *dispatch(){yield codexErrorEvent(raw)},async close(){}}}})
+  const task=service.create({path:project,providerId:'codex',text:'work',execution:automatic});await settled(task.id)
+  const detail=service.detail(task.id),errors=detail.events.filter(e=>e.kind==='error')
+  expect(detail.task.error).toBe('execution_model_unsupported');expect(detail.task.status).toBe('failed')
+  expect(errors).toHaveLength(1)
+  expect(errors[0]).toMatchObject({text:expect.stringContaining('当前账号不支持'),diagnostic:raw,errorCode:'execution_model_unsupported'})
+  expect(store.events(task.id).filter(e=>e.kind==='error').map(e=>e.text)).toEqual([raw])
+  expect(detail.execution).toEqual(automatic)
 })

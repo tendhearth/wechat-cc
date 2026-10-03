@@ -142,3 +142,14 @@ it('review #193: pauseForNetwork hands the selector the live session target',asy
   expect(seen).toEqual([expect.objectContaining({providerId:'cursor',target:expect.objectContaining({provider:'cursor',model:'gpt-5.5[context=272k]'})})])
   hold.resolve();await settled(task.id)
 })
+
+
+it('a final guarded-runtime refusal retains its stable code and one honest event',async()=>{
+  const message='网络未受保护：暂缓这轮，保留原要求。'
+  setup({async spawn(){return{async *dispatch(){yield {kind:'error' as const,code:'network_unprotected',message}},async close(){}}}} as unknown as AgentProvider)
+  const task=service.create({path:project,providerId:'claude',text:'keep this request'});await settled(task.id)
+  const d=service.detail(task.id)
+  expect(d.task.status).toBe('failed');expect(d.task.error).toBe('network_unprotected')
+  expect(d.events.filter(e=>e.kind==='error')).toEqual([expect.objectContaining({text:message})])
+  expect(d.events.some(e=>e.errorCode==='execution_model_unsupported')).toBe(false)
+})

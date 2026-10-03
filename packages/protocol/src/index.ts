@@ -20,7 +20,7 @@ export type { ProtocolSocket, ClientOpts, ClientStatus, ProtocolClient, Protocol
 export { makeProtocolClient } from './client'
 export {
   PhoneErrorResponse, PhonePlainError, DeviceRow, PHONE_SAY_MAX_CHARS, PHONE_ANSWER_MAX_JSON, PHONE_HTML_ROUTES, PHONE_API_SCHEMAS,
-  Attachment, Matter, MatterBinding, MatterSession, MatterTaskView, MatterEvent, MatterInput,
+  Attachment, Matter, MatterBinding, MatterSession, MatterTaskView, MatterEvent, MatterInput, MatterInputReceiptResult,
   ApprovalExplanation, ProgressSummary, MatterPermission, MatterQuestion, MatterArtifact, MatterDetail, MatterSayResult,
   ProjectCatalogEntry, EntryOptions, WorkbenchExecutorCapabilities, WorkbenchTaskView, EntryReceipt, EntryResult,
   UploadState, MatterArtifactChunk, FeedEvent, Presence, HomeWork, PhoneChangesTurn,
@@ -28,7 +28,7 @@ export {
   NativeSessionRow, NativeSessionMessage, NativeSessionPage,
   MatterNativeStart, SESSION_CONTINUE_STATES, SessionContinue, SessionContinueResult, MatterQuotaHandoff, MatterHandoffResult,
 } from './api'
-export type { DeviceRowT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, SessionContinueT, MatterQuotaHandoffT } from './api'
+export type { DeviceRowT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, SessionContinueT, MatterQuotaHandoffT, MatterInputReceiptResultT } from './api'
 export {
   base32Lower, RELAY_ID_RE, RELAY_SUBPROTOCOL, relayIdProtocol, relayIdFromPub, relayKeyPair, relayLoginMessage,
   signRelayLogin, verifyRelayLogin, RELAY_ERRORS, PushPlatform, pushTokenValid, PUSH_SEALED_MAX_CHARS, DaemonControl, RoomControl,

@@ -33,29 +33,29 @@ describe('workbench input snapshots', () => {
     observeMatterInputs('task', [remote(input, 'pending')])
     expect(matterInputs('task')[0]).toMatchObject({ status: 'pending', error: undefined })
   })
-  it('clears only the unchanged accepted draft once and lets a later restore keep its exact source', () => {
+  it('clears only the unchanged accepted draft once and lets a later restore keep its exact source', async () => {
     const raw = '\r\n**go**\r\n'
     setDraft('task', raw)
     const input = beginMatterInput('task', raw, 'run', () => 'req')
     observeMatterInputs('task', [remote(input, 'sending')])
-    expect(consumeMatterInputDraft('task')).toBe(true)
+    expect(await consumeMatterInputDraft('task')).toBe(true)
     expect(getDraft('task')).toBe('')
     setDraft('task', raw)
     observeMatterInputs('task', [remote(input)])
-    expect(consumeMatterInputDraft('task')).toBe(false)
+    expect(await consumeMatterInputDraft('task')).toBe(false)
     expect(getDraft('task')).toBe(raw)
   })
-  it('preserves a draft edited during delivery, and held/withdrawn/refused/uncertain never clear it', () => {
+  it('preserves a draft edited during delivery, and held/withdrawn/refused/uncertain never clear it', async () => {
     const input = beginMatterInput('task', 'first', 'run', () => 'req')
     setDraft('task', 'newer')
     observeMatterInputs('task', [remote(input)])
-    expect(consumeMatterInputDraft('task')).toBe(false)
+    expect(await consumeMatterInputDraft('task')).toBe(false)
     expect(getDraft('task')).toBe('newer')
     for (const status of ['held', 'withdrawn', 'refused', 'uncertain'] as const) {
       const another = beginMatterInput('task', status, 'run', () => status)
       setDraft('task', status)
       updateMatterInput(another, { status })
-      expect(consumeMatterInputDraft('task')).toBe(false)
+      expect(await consumeMatterInputDraft('task')).toBe(false)
       expect(getDraft('task')).toBe(status)
     }
   })

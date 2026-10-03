@@ -6,23 +6,21 @@
     "source": "induced",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
+    "errorCode": "auth_failed",
     "message": "Claude Code returned an error result: Not logged in · Please run /login",
-    "droppedStructure": {
+    "note": "第 2 步起一次性评估也读 SDK 标注:哨兵先判 ⇒ auth_failed(唯一可以说「登录过期」的码),挂在抛出物上。",
+    "sdkStructure": {
       "assistant.error": "authentication_failed",
-      "assistant.is_api_error_message": true,
-      "result.is_error": true,
-      "result.terminal_reason": "api_error",
+      "assistant.text": "Not logged in · Please run /login",
       "result.api_error_status": null
     },
-    "note": "沙箱:空 CLAUDE_CONFIG_DIR + 临时 HOME,无 key。",
     "current": {
       "claudeSentinel": true,
       "assistantText": true,
       "sdkError": true,
       "authFailError": true,
       "llmHealthAuth": true,
-      "registryAuthCode": false,
+      "registryAuthCode": true,
       "healthKind": "llm_auth",
       "providerFailure": "auth_failed",
       "quota": null,
@@ -66,22 +64,21 @@
     "source": "induced",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
+    "errorCode": "auth_rejected",
     "message": "Claude Code returned an error result: Failed to authenticate. API Error: 401 API key is invalid.",
-    "droppedStructure": {
+    "note": "第 2 步起:标注 authentication_failed、哨兵没中 ⇒ auth_rejected(不说登录过期)。",
+    "sdkStructure": {
       "assistant.error": "authentication_failed",
-      "result.is_error": true,
-      "result.terminal_reason": "api_error",
+      "assistant.text": "Failed to authenticate. API Error: 401 API key is invalid.",
       "result.api_error_status": 401
     },
-    "note": "要 CLAUDE_CODE_MAX_RETRIES=0 才在 2s 内出来;默认重试下 90s 内什么都不返回。",
     "current": {
       "claudeSentinel": false,
       "assistantText": false,
       "sdkError": false,
       "authFailError": false,
       "llmHealthAuth": true,
-      "registryAuthCode": false,
+      "registryAuthCode": true,
       "healthKind": "llm_auth",
       "providerFailure": "auth_failed",
       "quota": null,
@@ -110,7 +107,7 @@
       "sdkError": false,
       "authFailError": false,
       "llmHealthAuth": true,
-      "registryAuthCode": false,
+      "registryAuthCode": true,
       "healthKind": "llm_auth",
       "providerFailure": "auth_failed",
       "quota": null,
@@ -125,16 +122,22 @@
     "source": "harvested",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
+    "errorCode": "auth_rejected",
     "message": "Claude Code returned an error result: Failed to authenticate. API Error: 403 Request not allowed",
     "note": "launchd.err.log 2026-09 ingest 抽取,90 次;failure-shapes.jsonl 2026-09-07 也有一条。不是双哨兵 ⇒ 按红线不报「登录过期」。",
+    "sdkStructure": {
+      "assistant.error": "authentication_failed",
+      "assistant.text": "Failed to authenticate. API Error: 403 Request not allowed",
+      "result.api_error_status": 403,
+      "inferred": true
+    },
     "current": {
       "claudeSentinel": false,
       "assistantText": false,
       "sdkError": false,
       "authFailError": false,
       "llmHealthAuth": true,
-      "registryAuthCode": false,
+      "registryAuthCode": true,
       "healthKind": "llm_auth",
       "providerFailure": "auth_failed",
       "quota": null,
@@ -164,7 +167,7 @@
       "sdkError": false,
       "authFailError": false,
       "llmHealthAuth": true,
-      "registryAuthCode": false,
+      "registryAuthCode": true,
       "healthKind": "llm_auth",
       "providerFailure": "auth_failed",
       "quota": null,
@@ -179,12 +182,12 @@
     "source": "induced",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
+    "errorCode": "network",
     "message": "Claude Code returned an error result: API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)",
-    "droppedStructure": {
+    "sdkStructure": {
       "assistant.error": "server_error",
-      "result.is_error": true,
-      "result.terminal_reason": "api_error"
+      "assistant.text": "API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)",
+      "result.api_error_status": null
     },
     "current": {
       "claudeSentinel": false,
@@ -236,9 +239,15 @@
     "source": "induced",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
+    "errorCode": "network",
     "message": "Claude Code returned an error result: API Error: Connection dropped (ECONNRESET)",
     "note": "base URL 指向 *.invalid;本机 DNS 走代理 fake-ip,所以「解析失败」长成 ECONNRESET。",
+    "sdkStructure": {
+      "assistant.error": "server_error",
+      "assistant.text": "API Error: Connection dropped (ECONNRESET)",
+      "result.api_error_status": null,
+      "inferred": true
+    },
     "current": {
       "claudeSentinel": false,
       "assistantText": false,
@@ -260,14 +269,14 @@
     "source": "induced",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
+    "errorCode": "network",
     "message": "Claude Code returned an error result: Request timed out",
-    "droppedStructure": {
-      "assistant.error": "server_error",
-      "result.is_error": true,
-      "result.terminal_reason": "api_error"
-    },
     "note": "黑洞地址 10.255.255.1 + API_TIMEOUT_MS=4000 + MAX_RETRIES=0。",
+    "sdkStructure": {
+      "assistant.error": "server_error",
+      "assistant.text": "Request timed out",
+      "result.api_error_status": null
+    },
     "current": {
       "claudeSentinel": false,
       "assistantText": false,
@@ -319,8 +328,14 @@
     "source": "harvested",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
+    "errorCode": "network",
     "message": "Claude Code returned an error result: API Error: Unable to connect to API (UNKNOWN_CERTIFICATE_VERIFICATION_ERROR)",
+    "sdkStructure": {
+      "assistant.error": "server_error",
+      "assistant.text": "API Error: Unable to connect to API (UNKNOWN_CERTIFICATE_VERIFICATION_ERROR)",
+      "result.api_error_status": null,
+      "inferred": true
+    },
     "current": {
       "claudeSentinel": false,
       "assistantText": false,
@@ -342,8 +357,15 @@
     "source": "harvested",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
+    "errorCode": "network",
     "message": "Claude Code returned an error result: API Error: Your computer went to sleep mid-response. The response above may be incomplete.",
+    "sdkStructure": {
+      "assistant.error": "server_error",
+      "assistant.text": "API Error: Your computer went to sleep mid-response. The response above may be incomplete.",
+      "result.api_error_status": null,
+      "inferred": true
+    },
+    "note": "采集样本只有正文;结构按同模板(server_error + 无 HTTP status)推定。第 2 步起 ⇒ network(以前判 unknown,§4.6)。",
     "current": {
       "claudeSentinel": false,
       "assistantText": false,
@@ -351,7 +373,7 @@
       "authFailError": false,
       "llmHealthAuth": false,
       "registryAuthCode": false,
-      "healthKind": "unknown",
+      "healthKind": "network",
       "providerFailure": "unknown",
       "quota": null,
       "quotaRefusalText": false,

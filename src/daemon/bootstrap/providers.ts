@@ -24,7 +24,7 @@ import { checkCodexVersion } from './codex-version-check'
 import { attemptCodexAutofix } from '../../lib/codex-autofix'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { buildOpenaiMcpSpecs, type McpStdioSpec } from './mcp-specs'
+import { buildOpenaiMcpSpecs, openaiMcpBridgeOptions, type McpStdioSpec } from './mcp-specs'
 import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
 import { setupAgyGlobalMcp } from './agy-mcp-config'
 import { agyVersionOk } from './agy-version-check'
@@ -530,11 +530,14 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
           // sessionEnv (WECHAT_SESSION_TOKEN) — third-party plugin MCP specs
           // must never receive the daemon's loopback bearer token. See
           // mcp-specs.ts buildOpenaiMcpSpecs doc comment.
+          // Plugins are optional per session (openaiMcpBridgeOptions): one slow
+          // plugin must not take the whole openai spawn down with it.
           makeMcpBridge: async (sessionEnv) => createMcpToolBridge(
             buildOpenaiMcpSpecs(
               { wechat: wechatStdioForOpenai, delegate: delegateStdioForOpenai, pluginMcp },
               sessionEnv,
             ),
+            openaiMcpBridgeOptions(deps.log),
           ),
           log: deps.log,
         }),

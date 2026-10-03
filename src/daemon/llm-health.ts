@@ -22,6 +22,8 @@
  */
 import type { ProviderId } from '../core/conversation'
 import { looksLikeAuthFailure } from '../lib/auth-failure'
+import { providerErrorCodeOf } from '../lib/provider-error-code'
+import { classifyFailure } from './health/classify'
 
 export interface LlmProbeResult {
   provider: string
@@ -30,6 +32,8 @@ export interface LlmProbeResult {
   latency_ms: number
   error?: string
   auth_failed?: boolean
+  /** provider 边界挂在抛出物上的结构化码(lib/provider-error-code);没有就不带。 */
+  code?: string
   hint?: string
 }
 
@@ -85,7 +89,6 @@ const TIMEOUT_SENTINEL: unique symbol = Symbol('llm-probe-timeout')
  *  所以宁可多认一点。词汇来自 lib/auth-failure,不再自己写一份。
  *  仍然导出:诊断采集要如实调用它本体(见 diagnostics/failure-shapes)。 */
 export const LLM_HEALTH_AUTH_RE = { test: (t: string) => looksLikeAuthFailure(t) }
-const AUTH_RE = LLM_HEALTH_AUTH_RE
 
 export function makeLlmHealth(deps: LlmHealthDeps): LlmHealth {
   const timeoutMs = deps.timeoutMs ?? 45_000
@@ -110,11 +113,21 @@ export function makeLlmHealth(deps: LlmHealthDeps): LlmHealth {
       return { provider: id, ok: true, latency_ms: now() - start }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      const auth = AUTH_RE.test(msg)
-      const hint = auth ? deps.hintFor?.(id) : undefined
+      // 码优先(arch backlog #4 第 2 步):边界已经分好类就只看码。没码才回退到
+      // health/classify 的文本判定 —— 它是「网络优先」的,所以 agy 那句
+      // `authentication failed or timed out` 不会再被报成 AUTH FAILED + 去重新登录
+      // (红线 B;以前这里直接跑宽档 AUTH_RE,顺序里没有网络)。
+      const code = providerErrorCodeOf(e)
+      const auth = classifyFailure(e).kind === 'llm_auth'
+      // 「重新登录」的提示只给登录失效(`auth_failed` 或旧的无码文本回退);凭证被拒
+      // (`auth_rejected`,401/403)不说登录 —— 红线 A 的细化。
+      const hint = !auth ? undefined
+        : code === 'auth_rejected' ? '凭证被服务拒绝(API 返回 401/403),请检查账号或密钥。'
+        : deps.hintFor?.(id)
       return {
         provider: id, ok: false, latency_ms: now() - start,
         error: msg.slice(0, 200), auth_failed: auth,
+        ...(code ? { code } : {}),
         ...(hint ? { hint } : {}),
       }
     } finally {

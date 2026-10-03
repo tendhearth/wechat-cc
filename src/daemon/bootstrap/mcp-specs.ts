@@ -114,3 +114,31 @@ export function buildOpenaiMcpSpecs(
   }
   return mergeEnvIntoMcpServers(raw, sessionEnv, CORE_MCP_SERVER_NAMES)
 }
+
+/**
+ * Per-server startup budget for the openai provider's MCP children. Core
+ * servers answer in ~0.3s and plugins normally in 0.1–6s (wxvault, cold);
+ * a server not up by then is treated as down for THIS session.
+ */
+export const OPENAI_MCP_STARTUP_TIMEOUT_MS = 20_000
+
+/**
+ * How the openai provider's per-spawn bridge treats a server that won't
+ * start: core wechat/delegate are required (no reply tool ⇒ no session),
+ * third-party plugins are optional — the session comes up without that
+ * plugin's tools and the skip is logged, the same way the Claude SDK treats a
+ * failed MCP server. 2026-10-03: wxvault took >60s to answer `initialize`
+ * inside the daemon and EVERY openai spawn (owner chat and selftest) threw
+ * `MCP error -32001: Request timed out`, while claude merely lost wxvault.
+ */
+export function openaiMcpBridgeOptions(log: (tag: string, line: string) => void): {
+  isOptional: (serverName: string) => boolean
+  startupTimeoutMs: number
+  onSkip: (serverName: string, reason: string) => void
+} {
+  return {
+    isOptional: (name) => !CORE_MCP_SERVER_NAMES.has(name),
+    startupTimeoutMs: OPENAI_MCP_STARTUP_TIMEOUT_MS,
+    onSkip: (name, reason) => log('MCP', `openai session: plugin "${name}" unavailable, continuing without its tools — ${reason}`),
+  }
+}

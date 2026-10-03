@@ -3,6 +3,8 @@ import { t, type Lang } from '../i18n'
 import { matchesMatterInput, type InputSnapshot, type InputStatus } from '../state/matter-inputs'
 
 export function inputStatusText(status: InputStatus, lang: Lang, error?: string): string {
+  if (status === 'failed' && ['input_storage', 'input_recovery'].includes(error ?? '')) return t(lang, 'input.storageNotSent')
+  if (status === 'failed' && error === 'input_capacity') return t(lang, 'input.capacity')
   if (status === 'refused' && error === 'input_stale') return t(lang, 'input.stale')
   if (status === 'refused' && error === 'input_conflict') return t(lang, 'input.conflict')
   return t(lang, `input.${status}`)
@@ -15,7 +17,8 @@ export function inputFailure(error: string): { status: InputStatus; error: strin
 
 /** 远端回执作准;本机仅补入尚未查到的快照,并保留用户最初的换行和空白。 */
 export function inputRows(remote: readonly MatterInputT[], local: readonly InputSnapshot[]): InputSnapshot[] {
-  const rows = remote.map(input => {
+  // Daemon detail is newest-first; read and display oldest→newest, retaining all pending locals.
+  const rows = [...remote].reverse().map(input => {
     const original = local.find(row => row.requestId === input.id && row.taskId === input.taskId)
     if (original && !matchesMatterInput(original, input)) return { ...original, status: 'refused' as const, error: 'input_conflict' }
     return { taskId: input.taskId, requestId: input.id, runId: input.runId, text: input.text, rawText: original?.rawText ?? input.text, status: input.status } as InputSnapshot

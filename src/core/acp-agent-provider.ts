@@ -17,6 +17,8 @@ import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession, SpawnCon
 import { AsyncQueue } from './async-queue'
 import { makeTurnEmitter } from './turn-emitter'
 import { isAuthFail } from './auth-fail'
+import { acpErrorCode } from './cursor-errors'
+import { withProviderCode } from '../lib/provider-error-code'
 import { AcpRequestError, createAcpConnection, type AcpConnection } from './acp/rpc'
 import { acpPermissionDescription, acpPermissionOption, createAcpTranslator } from './acp/events'
 import { workbenchSubprocessEnv } from './workbench/subprocess-env'
@@ -293,11 +295,14 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
         const tail = stderrTail.trim().slice(-300)
         return new Error(tail ? `${message}\n${tail}` : message)
       }
+      // 码挂在抛出物上(arch backlog #4 第 2 步):message 仍是工作台文案认的那几个稳定串,
+      // 下游(coordinator / 工作台 / health)读 providerErrorCode。
       const setupError = (error: unknown): Error => {
         // acp_auth_required stays a bare code — the login-hint copy upstream is keyed on this
         // exact string, and stderr for an auth failure is rarely more informative than the code.
-        if (error instanceof AcpRequestError && (error.code === -32000 || isAuthFail('sdk-error', error.message))) return new Error('acp_auth_required')
-        if (error instanceof AcpRequestError) return withTail(`acp_session_failed: ${error.message}`)
+        if (error instanceof AcpRequestError && (error.code === -32000 || isAuthFail('sdk-error', error.message))) return withProviderCode(new Error('acp_auth_required'), 'auth_failed') as Error
+        // -32603 Internal error:假 key 与死代理在这一面逐字相同 —— data 没说清就是 provider_error,不猜。
+        if (error instanceof AcpRequestError) return withProviderCode(withTail(`acp_session_failed: ${error.message}`), acpErrorCode(error)) as Error
         // 进程在 setup 途中死掉(老版本没有 acp 子命令、spawn 失败)⇒ 挂起的 RPC 被 fatal 的 dispose
         // 掀掉。真因在 broken 里,stderr 尾巴才是主人能看懂的那一行,按 acp_session_failed 同样的规矩带上。
         if (broken && (error === broken || (error instanceof Error && error.message === 'acp_session_closed'))) return withTail(broken.message)
@@ -395,11 +400,11 @@ export function createAcpProvider(options: AcpProviderOptions): AgentProvider {
               // session/cancel 生效前就已经在路上、报的是 end_turn —— 半截话不能因为这条race而漏发。
               if (turn.cancelled) finish(turn, { kind: 'error', message: 'acp_turn_cancelled' })
               // Cursor 额度耗尽:回合照常 end_turn、文本就是催升级的话 ⇒ 当错误收尾,让额度登记/管家接得住,主人也收不到原文。
-              else if (refusal) settle(em.errorText(refusal))
+              else if (refusal) settle(em.errorText(refusal, { code: 'quota' }))
               else if (reason === 'end_turn' || reason === 'cancelled') settle(em.finish({ sessionId, numTurns: 1, durationMs: Date.now() - turn.startedAt }))
               else settle({ kind: 'error', message: `acp_stop_${reason}` })
             },
-            (error: unknown) => { if (active === turn) settle(em.errorText(error instanceof Error ? error.message : String(error))) },
+            (error: unknown) => { if (active === turn) settle(em.errorText(error instanceof Error ? error.message : String(error), { code: acpErrorCode(error) })) },
           )
           const iterable = turn.queue.iterable()
           return {

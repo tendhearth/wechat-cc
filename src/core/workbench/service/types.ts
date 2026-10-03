@@ -1,4 +1,5 @@
 /** service.ts 对外的公共类型。放在 service/ 里是为了让域模块能引用而不 import ../service(那会成环)。 */
+import type { QuotaKind } from '../../provider-quota'
 import type { AgentRuntimeSnapshot } from '../../agent-provider'
 import type { Task } from '../store'
 import type { EntryReceipt } from '../task-entry'
@@ -20,3 +21,9 @@ export type EntryResult = {receipt: EntryReceipt; task: WorkbenchTaskView}
 /** 已准入的执行者登记项:登记处的条目 + 一定带 workbench 能力(admission.provider 的返回;放这里是为了 ctx.ts 能引用而不 import admission 成环)。 */
 type RegistryEntry = NonNullable<ReturnType<ProviderRegistry['get']>>
 export type AdmittedProvider = RegistryEntry & {opts:RegistryEntry['opts']&{workbench:WorkbenchExecutorCapabilities}}
+
+/** 工作台详情里的额度交接:能交(offer)/ 没人能接(none)/ 已经交出去了(handed,matterId = 新的那件事)。 */
+export type QuotaHandoffView =
+  | { state: 'offer'; from: string; to: string; kind: QuotaKind; resetAt: number }
+  | { state: 'none'; from: string; kind: QuotaKind; resetAt: number }
+  | { state: 'handed'; from: string; to: string; matterId: string }

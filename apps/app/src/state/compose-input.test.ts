@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { createHash } from 'node:crypto'
 import { act, createElement, type ReactNode } from 'react'
 import { createRequire } from 'node:module'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,7 +10,8 @@ import type { Backend, MatterInputT } from '../backend/types'
 import { clearDrafts, getDraft, setDraft } from '../state/drafts'
 import { makeStore, type Store } from '../state/store'
 import { watchConnection } from '../state/wiring'
-import { matterInputs } from '../state/matter-inputs'
+import { makeInputJournal } from './input-journal'
+import { matterInputState, matterInputs } from '../state/matter-inputs'
 import Compose from '../app/compose'
 import Matter from '../app/matter/[id]'
 
@@ -46,6 +48,7 @@ vi.mock('react-native-safe-area-context', async () => {
 vi.mock('expo-router', () => ({ useLocalSearchParams: () => host.params, useRouter: () => ({ canGoBack: () => true, back: host.back, push: host.push, replace: host.replace }), Redirect: () => null }))
 vi.mock('../i18n/useLang', () => ({ useLang: () => 'zh-Hans' }))
 vi.mock('../state/BackendProvider', () => ({ useBackendCtx: () => host.ctx }))
+vi.mock('../state/session', () => ({ useSession: () => ({ pairing: null, inputScope: matterInputState.recovery().scope }) }))
 vi.mock('../ui/TopBar', () => ({ TopBar: () => null }))
 
 type Reply = { status: number; json: unknown } | Error
@@ -72,6 +75,11 @@ function harness() {
         const path = req.path.split('?')[0]
         let reply: Reply
         if (path === '/m/api/matter') reply = read ? await read() : ok({ ok: true, ...detail })
+        else if (path === '/m/api/matter/input-receipt') {
+          const id = new URLSearchParams(req.path.split('?')[1]).get('requestId')
+          const input = detail.inputs.find((row: MatterInputT) => row.id === id)
+          reply = input ? ok({ ok: true, input }) : ok({ ok: false, error: 'not_found' }, 404)
+        }
         else if (path === '/m/api/matter/say') reply = await say(request)
         else if (path === '/m/api/matter/create') reply = await create(request)
         else if (path === '/m/api/entry/options') reply = ok({ ok: true, ...OPTIONS })
@@ -107,10 +115,16 @@ function harness() {
     version: (version: number) => clients.at(-1)!.subs.get(`matter/${ID}`)?.({ found: true, kind: 'task', version, phase: 'working' }),
   }
 }
-beforeEach(() => { clearDrafts(); host.back.mockClear(); host.push.mockClear(); host.replace.mockClear(); host.sources.length = 0 })
+beforeEach(async () => {
+  clearDrafts(); host.back.mockClear(); host.push.mockClear(); host.replace.mockClear(); host.sources.length = 0
+  const disk = new Map<string,string>()
+  matterInputState.configure(makeInputJournal({ getItemAsync: async k => disk.get(k) ?? null, setItemAsync: async (k,v) => { disk.set(k,v) }, deleteItemAsync: async k => { disk.delete(k) } }, async s => createHash('sha256').update(s).digest('hex')))
+  await matterInputState.activate({ v: 1, relayHost: 'test', relayUrl: 'wss://test', daemonId: 'test', deviceId: 'test', deviceToken: 'private-test-token', pairedAt: 1 })
+})
 afterEach(async () => {
   await act(() => { for (const root of roots.splice(0)) root.unmount() })
   for (const dispose of disposers.splice(0)) dispose()
+  await act(async () => { matterInputState.configure(undefined); await matterInputState.clear() })
   document.body.innerHTML = ''
 })
 async function flush() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) }) }
@@ -137,7 +151,7 @@ describe('real LiveBackend + native compose inputs', () => {
     await ui.click('compose-send')
     const post = h.posts()[0]!
     expect(post.body).toEqual({ id: ID, runId: RUN, requestId: expect.any(String), text: '**把按钮放左边**' })
-    expect(post.retry).toBe(true)
+    expect(post.retry).toBe(false)
     expect(post.body).not.toHaveProperty('inputMode')
     expect(ui.byId(`input-status-${post.body.requestId}`).textContent).toBe('正在交给执行者。')
     expect(ui.container.textContent).toContain('补充这一轮的要求')
@@ -271,6 +285,23 @@ describe('real LiveBackend + native compose inputs', () => {
     expect(ui.byId(`input-status-${request.requestId}`).textContent).toBe('执行者已收到这条补充。')
     expect(h.posts()).toHaveLength(1)
   })
+  it.each(['held', 'withdrawn'] as const)('a late pending POST response cannot overwrite a newer %s subscription receipt or clear the original', async status => {
+    const h = harness(), sent = gate<Reply>(), refresh = gate<Reply>(), raw = '\r\n  **保留这一条原文**\r\n'
+    h.setSay(() => sent.promise)
+    const ui = await mount(); await act(() => h.version(1)); await ui.type(raw)
+    await act(() => ui.byId<HTMLButtonElement>('compose-send').click()); await flush()
+    const request = h.posts()[0]!.body
+    const newer = { id: request.requestId, taskId: ID, runId: RUN, text: request.text, status }
+    h.detail().inputs = [newer]; await act(() => h.version(2)); await flush()
+    expect(matterInputs(ID)[0]?.status).toBe(status); expect(getDraft(ID)).toBe(raw)
+    // Keep the post-response detail read pending so it cannot hide a transient wrong update.
+    h.setRead(() => refresh.promise)
+    await act(() => sent.resolve(ok({ ok: true, result: { kind: 'task', task: WB_TASK, input: { ...newer, status: 'pending' } } }))); await flush()
+    expect(matterInputs(ID)[0]?.status).toBe(status); expect(getDraft(ID)).toBe(raw)
+    expect(ui.byId<HTMLTextAreaElement>('compose-input').value).toBe(raw)
+    expect(h.posts()).toHaveLength(1)
+    await act(() => refresh.resolve(ok({ ok: true, ...h.detail() }))); await flush()
+  })
   it('keeps old chat say and create routes compatible, including a draft edited during a successful create', async () => {
     const h = harness(); h.detail().matter.kind = 'chat'; h.detail().task = null; h.detail().inputs = []
     h.setSay(() => ok({ ok: true, result: { kind: 'chat', reply: '好' } }))
@@ -301,5 +332,56 @@ describe('real LiveBackend + native compose inputs', () => {
     expect(getDraft(ID)).toBe('\n**要求**\n')
     expect(host.push).toHaveBeenCalledWith(`/compose?matter=${ID}`)
     expect(matterInputs(ID)[0]!.rawText).toBe('\n**要求**\n')
+  })
+})
+
+
+describe('real Compose durable send boundary', () => {
+  const rec = { v: 1 as const, relayHost: 'test', relayUrl: 'wss://test', daemonId: 'test', deviceId: 'test', deviceToken: 'private-test-token', pairedAt: 1 }
+  const hash = async (text: string) => createHash('sha256').update(text).digest('hex')
+  it('a Keychain failure happens before POST and leaves the exact original in the input and record', async () => {
+    const h = harness(), disk = new Map<string, string>(); let failing = false
+    const journal = makeInputJournal({
+      getItemAsync: async k => disk.get(k) ?? null,
+      setItemAsync: async (k, v) => { if (failing) throw new Error('keychain'); disk.set(k, v) },
+      deleteItemAsync: async k => { disk.delete(k) },
+    }, hash)
+    matterInputState.configure(journal); await matterInputState.activate(rec)
+    const ui = await mount(), raw = '\n  **尚未发送**\n'
+    await ui.type(raw); failing = true; await ui.click('compose-send')
+    expect(h.posts()).toHaveLength(0); expect(getDraft(ID)).toBe(raw)
+    expect(matterInputs(ID)[0]).toMatchObject({ rawText: raw, status: 'failed', error: 'input_storage' })
+    expect(ui.byId('compose-input-notice').textContent).toContain('尚未发送')
+    expect(ui.byId<HTMLButtonElement>('compose-send').disabled).toBe(true)
+    expect(ui.byId<HTMLButtonElement>(`input-retry-${matterInputs(ID)[0]!.requestId}`).disabled).toBe(true)
+    failing = false
+  })
+  it('while startup recovery is suspended, sending/retry stay locked and no network writes are made', async () => {
+    const h = harness(), read = gate<string | null>(), disk = new Map<string, string>(); let blocked = true
+    const journal = makeInputJournal({ getItemAsync: async k => blocked ? read.promise : disk.get(k) ?? null, setItemAsync: async (k,v) => { disk.set(k,v) }, deleteItemAsync: async k => { disk.delete(k) } }, hash)
+    matterInputState.configure(journal); const restoring = matterInputState.activate(rec)
+    const ui = await mount(); await ui.type('恢复途中草稿')
+    expect(ui.byId<HTMLButtonElement>('compose-send').disabled).toBe(true); await ui.click('compose-send'); expect(h.posts()).toHaveLength(0)
+    blocked = false; await act(async () => { read.resolve(null); await restoring }); await flush()
+    expect(ui.byId<HTMLButtonElement>('compose-send').disabled).toBe(false)
+    expect(getDraft(ID)).toBe('恢复途中草稿'); expect(h.posts()).toHaveLength(0)
+  })
+  it('all eight unresolved originals remain visible, including the earliest beyond the old three-row slice', async () => {
+    const h = harness(); h.setSay(() => new Error('timeout')); const ui = await mount()
+    for (let i=0; i<8; i++) { await ui.type(`未确认-${i}`); await ui.click('compose-send') }
+    expect(matterInputs(ID)).toHaveLength(8)
+    expect(ui.container.querySelectorAll('[data-testid^="input-receipt-"]')).toHaveLength(8)
+    expect(ui.byId(`input-restore-${h.posts()[0]!.body.requestId}`)).not.toBeNull()
+  })
+  it('raw model diagnostics are collapsed literal text, while account guidance is visible', async () => {
+    const h = harness(), diagnostic = '**raw error**\r\nhttps://example.com\r\n'
+    h.detail().task.error = 'execution_model_unsupported'
+    h.detail().events = [{ kind: 'error', createdAt: 1, text: '账号暂不能用这个模型。', diagnostic, errorCode: 'execution_model_unsupported' }]
+    const ui = await mount(Matter)
+    expect(ui.byId('progress-model-guidance').textContent).toContain('账号可用的模型')
+    expect(ui.byId('progress-error-raw-0')).toBeNull()
+    await ui.click('progress-error-raw-toggle-0')
+    expect(ui.byId('progress-error-raw-0').textContent).toBe(diagnostic)
+    expect(ui.byId('progress-error-raw-0').querySelector('a,strong')).toBeNull()
   })
 })

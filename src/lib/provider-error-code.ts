@@ -6,8 +6,14 @@
  * `TurnSummary.errorCode` → `TurnRecord.errorCode` → health 判定)。下游**有码
  * 就只看码**,码缺失(还没迁移的 provider)才回退到今天的文本判定。
  *
- * 第一片只有 Claude 会话路径产这些码(owner 2026-10-02)。其余 provider 照旧
- * 走文本判定,别在这里为它们预留码 —— 等它们真的迁移时按样本再加。
+ * 第一片(#190)只有 Claude 会话路径产码;第 2 步余下部分(owner 2026-10-02 批准)
+ * 让**每家** provider 的边界都产这一组码(codex / openai 兼容 / cursor / agy /
+ * Claude 一次性评估与工作台)。各家怎么从自己的结构(HTTP status、JSON-RPC
+ * code、SDK 标注、CLI 固定句式)映射到这里,写在各自边界旁边;下游只认码。
+ * 文本判定只剩「码缺失」时的最后回退。
+ *
+ * 守护拒绝(`network_unprotected`,lib/network-gate)**不是** provider 错误 ——
+ * 那一次调用根本没发出去。它永远不进这个闭集,也永远不会被归成 `network`。
  *
  * 红线 A(owner 2026-10-02 细化):「登录过期 / 请重新登录」的文案**只**属于
  * `auth_failed`,而 Claude 只在两句哨兵上产 `auth_failed`。SDK 标了
@@ -59,6 +65,42 @@ export function providerErrorCodeOf(err: unknown): ProviderErrorCode | undefined
   let code: unknown
   try { code = (err as Record<string, unknown>)[PROVIDER_ERROR_CODE_PROP] } catch { return undefined }
   return isProviderErrorCode(code) ? code : undefined
+}
+
+/**
+ * 给一个已有的抛出物挂上码(保留原 message / stack / status 等字段),再原样抛出。
+ * 码不在闭集里就什么都不挂。非 Error 的抛出物包成 Error。
+ */
+export function withProviderCode<E>(err: E, code: ProviderErrorCode | undefined): E | Error {
+  if (!code) return err
+  const target: Error = err instanceof Error ? err : new Error(String(err))
+  try { Object.assign(target, { [PROVIDER_ERROR_CODE_PROP]: code }) } catch { return errorWithProviderCode(target.message, code) }
+  return target
+}
+
+/**
+ * HTTP status → 码。给**拿到了 HTTP 响应**的边界用(openai 兼容 / gemini / codex
+ * 文本里的 `unexpected status N` / codex app-server 的 `httpStatusCode`)。
+ *
+ *   · 401 / 403 → `auth_rejected`(不是 `auth_failed`:401 说明凭证被拒,不说明是
+ *     「登录过期」—— 红线 A 的细化)
+ *   · 400 且正文明说 key 无效(Gemini:`API_KEY_INVALID` / `API key not valid`)→
+ *     `auth_rejected`;其余 400 / 404 / 413 / 422 → `invalid_request`
+ *   · 402 → `quota`;429 → `rate_limited`
+ *   · 408 → `network`(请求超时,没拿到正文)
+ *   · 5xx(含 Cloudflare 524、Anthropic 529)→ `server_error`
+ *   · 其余 → undefined(调用方自己决定回退)
+ */
+export function codeForHttpStatus(status: unknown, body?: string): ProviderErrorCode | undefined {
+  if (typeof status !== 'number' || !Number.isFinite(status)) return undefined
+  if (status === 401 || status === 403) return 'auth_rejected'
+  if (status === 400 && typeof body === 'string' && /API_KEY_INVALID|API key not valid|invalid[_ ]api[_ ]key/i.test(body)) return 'auth_rejected'
+  if (status === 402) return 'quota'
+  if (status === 429) return 'rate_limited'
+  if (status === 408) return 'network'
+  if (status >= 500 && status <= 599) return 'server_error'
+  if (status >= 400 && status <= 499) return 'invalid_request'
+  return undefined
 }
 
 /** 造一个带码的 Error(给 health 这类只吃抛出物的判定用)。 */
