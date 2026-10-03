@@ -285,6 +285,23 @@ describe('real LiveBackend + native compose inputs', () => {
     expect(ui.byId(`input-status-${request.requestId}`).textContent).toBe('执行者已收到这条补充。')
     expect(h.posts()).toHaveLength(1)
   })
+  it.each(['held', 'withdrawn'] as const)('a late pending POST response cannot overwrite a newer %s subscription receipt or clear the original', async status => {
+    const h = harness(), sent = gate<Reply>(), refresh = gate<Reply>(), raw = '\r\n  **保留这一条原文**\r\n'
+    h.setSay(() => sent.promise)
+    const ui = await mount(); await act(() => h.version(1)); await ui.type(raw)
+    await act(() => ui.byId<HTMLButtonElement>('compose-send').click()); await flush()
+    const request = h.posts()[0]!.body
+    const newer = { id: request.requestId, taskId: ID, runId: RUN, text: request.text, status }
+    h.detail().inputs = [newer]; await act(() => h.version(2)); await flush()
+    expect(matterInputs(ID)[0]?.status).toBe(status); expect(getDraft(ID)).toBe(raw)
+    // Keep the post-response detail read pending so it cannot hide a transient wrong update.
+    h.setRead(() => refresh.promise)
+    await act(() => sent.resolve(ok({ ok: true, result: { kind: 'task', task: WB_TASK, input: { ...newer, status: 'pending' } } }))); await flush()
+    expect(matterInputs(ID)[0]?.status).toBe(status); expect(getDraft(ID)).toBe(raw)
+    expect(ui.byId<HTMLTextAreaElement>('compose-input').value).toBe(raw)
+    expect(h.posts()).toHaveLength(1)
+    await act(() => refresh.resolve(ok({ ok: true, ...h.detail() }))); await flush()
+  })
   it('keeps old chat say and create routes compatible, including a draft edited during a successful create', async () => {
     const h = harness(); h.detail().matter.kind = 'chat'; h.detail().task = null; h.detail().inputs = []
     h.setSay(() => ok({ ok: true, result: { kind: 'chat', reply: '好' } }))

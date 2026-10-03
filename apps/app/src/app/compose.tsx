@@ -114,6 +114,10 @@ export default function Compose() {
       const result = await backend.say(snapshot.taskId, snapshot.text, snapshot.requestId, snapshot.runId ? { runId: snapshot.runId } : undefined)
       if (result.kind !== 'task' || result.task.id !== snapshot.taskId) throw new BackendError('unknown')
       if (result.input && !matchesMatterInput(snapshot, result.input)) throw new BackendError('input_conflict')
+      // A subscription/GET may already have a newer receipt while this POST waited.
+      // Compare the prepared row itself so even a later retry cannot accept this response.
+      const current = matterInputs(snapshot.taskId).find(row => row.requestId === snapshot.requestId)
+      if (current !== snapshot || current.status !== 'submitting') return
       await updateMatterInput(snapshot, { status: result.input?.status ?? 'accepted' }, atGen, journalGen)
     })
     sending.current = false
