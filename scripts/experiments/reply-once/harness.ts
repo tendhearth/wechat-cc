@@ -39,6 +39,10 @@
  *                deliverTurnReply(假的 sendText)送达;附件工具 / admin 的 message;final_text 版提示词
  *   agy_legacy / agy_daemon  回复交付第 2 步:**真 agy**(连 Google,每轮前查 bx),沙盒工作区 + 假 internal API,
  *                见 agy-sandbox.ts。先 --agy-init <目录> 建 agy 项目,再 --agy-ws <目录> --agy-project <id>。
+ *   cursor_legacy / cursor_daemon  回复交付第 3 步:**不连模型**。照真机报文形状演的假 cursor-agent acp + 生产的
+ *                ACP 客户端 / 协调器 / 交付运行时,见 cursor-fixture.ts。--arm cursor 一次跑两臂:
+ *                bun scripts/experiments/reply-once/harness.ts --arm cursor --out x.jsonl
+ *                bun scripts/experiments/reply-once/harness.ts --gate x.jsonl --gate-arms cursor_daemon,cursor_legacy
  */
 // 隔离护栏必须第一个求值(见 isolate.ts:STATE_DIR 在 import 期就被定下来了)。
 import { STATE_DIR } from './isolate'
@@ -65,6 +69,7 @@ import { makeReplyDeliveryRuntime, type ReplyDeliveryRuntime } from '../../../sr
 import { createOpenAiAgentProvider, type OpenAiAgentProviderOptions } from '../../../src/core/openai-agent-provider'
 import { createAgyAgentProvider, DEFAULT_AGY_MODEL } from '../../../src/core/agy-agent-provider'
 import { assertBxProtected, createAgyProject, sandboxSpawnFn, startFakeInternalApi, writeAgySandboxWorkspace } from './agy-sandbox'
+import { byVariant, runCursorGate, CURSOR_SCENARIOS, type CursorArm } from './cursor-fixture'
 import { createAiSdkChatModel, type ChatModelClient, type ChatMessage, type StreamedTurn, type ToolSpec, type TurnDelta } from '../../../src/core/openai-chat-model'
 import { createMcpToolBridge, type McpClientLike } from '../../../src/core/openai-mcp-bridge'
 import { builtinTools, type BuiltinTool } from '../../../src/core/openai-tools'
@@ -693,10 +698,22 @@ async function main() {
     console.log(await createAgyProject({ bin: get('--agy-bin') ?? 'agy', workspace: agyInit }))
     return
   }
-  const arm = (get('--arm') ?? 'baseline') as Arm
+  const arm = (get('--arm') ?? 'baseline') as Arm | 'cursor'
+  const out = get('--out') ?? join(STATE_DIR, 'results.jsonl')
+  if (arm === 'cursor' || arm === 'cursor_legacy' || arm === 'cursor_daemon') {
+    // 不连模型、不过 bx:纯进程内(见 cursor-fixture.ts 文件头)。每个场景按外部条件跑(recorded / drift / strict)。
+    const arms: CursorArm[] = arm === 'cursor' ? ['cursor_legacy', 'cursor_daemon'] : [arm]
+    const scenarios = get('--scenarios') ? get('--scenarios')!.split(',') as Scenario[] : CURSOR_SCENARIOS
+    const rows = await runCursorGate(arms, scenarios)
+    for (const r of rows) appendFileSync(out, JSON.stringify(r) + '\n')
+    console.log(summarize(rows))
+    console.log('')
+    console.log(byVariant(rows))
+    if (arms.length === 2) { console.log(''); console.log(formatGate(evaluateGate(rows, 'cursor_daemon', 'cursor_legacy'))); console.log(''); console.log(formatGate(evaluateGate(rows, 'cursor_legacy', 'cursor_legacy'))) }
+    return
+  }
   const scenarios = (get('--scenarios') ?? 'a,b,c,d').split(',') as Scenario[]
   const runs = Number(get('--runs') ?? '5')
-  const out = get('--out') ?? join(STATE_DIR, 'results.jsonl')
   if (arm === 'agy_legacy' || arm === 'agy_daemon') {
     const workspace = get('--agy-ws'), projectId = get('--agy-project')
     if (!workspace || !projectId) throw new Error('agy 臂要 --agy-ws <沙盒工作区> --agy-project <id>(先跑 --agy-init <目录>)')

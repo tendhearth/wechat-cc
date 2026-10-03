@@ -12,7 +12,7 @@
 
 默认值写在代码里(各 provider 的 `ProviderCapabilities.replyDelivery`,读法 `capability-matrix.replyDeliveryFor`)。
 
-现在(2026-10-03):openai `daemon`;agy `shadow`(第 2 步接线完成,闸门两臂打平,见下面「agy」一节);其余 `legacy`。
+现在(2026-10-03,以代码为准):openai `daemon`;agy `daemon`(第 2 步闸门两臂打平,合入时维护者按结构收益翻了,见下面「agy」一节);Cursor `daemon`(第 3 步,见下面「Cursor」一节);Codex、Claude、gemini `legacy`。
 
 ## 不重新部署就回滚
 
@@ -61,3 +61,20 @@ agy 是外部 CLI,**只读一份静态的全局 MCP 配置** `~/.gemini/config/m
 |---|---|
 | agy 想发语音却没发出去 | 工具回执 `ambiguous_turn`(两个聊天同时在跟 agy 说话)或 `no_turn_in_progress`;`[REPLY] … provider=agy … attachments=` |
 | agy 的共享令牌被拒 | `[INTERNAL_API] 403 … chat_scope own=-(agy-static turn=none|ambiguous)` |
+
+## Cursor(第 3 步,2026-10-03)
+
+Cursor 走 ACP:每个会话一个常驻 `cursor-agent acp`,wechat MCP 是**逐会话**注入的(`session/new` / `session/load` 的 `mcpServers`,带会话令牌与 tier,`acpMcpServersFor`)。所以它和 agy 不一样,没有静态配置要改写:
+
+- **工具表**:`wechatStdioMcpSpec(…, 'cursor')` 按开关带 `WECHAT_REPLY_DELIVERY=daemon`,`acpMcpServersFor` 原样放进会话的 env ⇒ 子进程不注册 reply 族,只有 `voice` / `sticker` / `attach_file`,owner(admin)会话另有 `message`。`src/mcp-servers/wechat/integration.test.ts` 用会话 env 起子进程核对过;翻回 legacy,reply 工具回来。开关开机定 ⇒ **重启 daemon 之后新起的会话**才是新工具表(常驻进程随重启一起换)。
+- **附件**:会话令牌里有 chat,`/v1/turn/attach` 直接挂到本轮,不需要 agy 那种「按本轮绑定」。
+- **最后的话**:编码型,`replyText: 'last_segment'` —— 最后一段非空文字是回复,之前的段是旁白(不进微信;一轮超过 120 秒 daemon 发一句进度;桌面 / 手机显示全部旁白)。messages 模式下 ACP 翻译器每遇到 tool_call 冲一段,`end_turn` 冲最后一段;被取消的轮不冲(不产回复);额度用完那句当错误收尾,只发通知。
+- **Cursor SDK 兜底**(没装 cursor-agent、有 `CURSOR_API_KEY` 时的 `cursor-agent-provider.ts`)注册在同一个 `cursor` id 下,吃同一个开关、同一份 wechat MCP spec。
+- 回滚:`{ "reply_delivery": { "cursor": "legacy" } }` + 重启 daemon。
+
+| 现象 | 看哪里 |
+|---|---|
+| 主人只收到过程话、没收到结论 | 模型把结论写在了中间、最后又补了一句 —— `[TURN]` 的 `delivery= bubbles=` 与 `turn_records.narration_segments`;桌面那一轮的旁白里能看到结论。真模型闸门还欠着(额度),见 `reference/reply-once-experiment.md`「第 3 步」残留 |
+| 一轮很长、主人收到一句进度 | `[REPLY_PROGRESS] … provider=cursor`(一轮最多一次,用最近一段旁白) |
+| 收到一句 Cursor 自己的报错(「Agent Looping Detected」之类) | 已知,两条路都有,不是本步引入的:Cursor 把报错写进了助理消息、stopReason 仍是 end_turn |
+| 语音没发出去 | strict 权限下 ACP 的权限卡全拒 ⇒ 附件工具调不成(文字照常交付);`[REPLY] … attachments=0/0` |

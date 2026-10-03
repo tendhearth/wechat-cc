@@ -295,3 +295,71 @@ bun scripts/experiments/reply-once/harness.ts --gate /tmp/x.jsonl --gate-arms ag
 ```
 
 两臂并行跑要各用一个工作区(每轮会重写工作区里的 agent / 插件配置)。
+
+## 2026-10-03:回复交付第 3 步的闸门(Cursor → daemon,不连模型)
+
+**为什么不用真模型**:Cursor 的真 API 没法沙盒化(`cursor-agent` 连 Cursor 的服务、用主人的登录与额度),主人的 Cursor 额度此刻也是用完的(「Upgrade your plan to continue」)。这一步**一次真 Cursor 调用都没有做**。闸门量的是**交付管道**,不是模型。
+
+### 怎么搭的
+
+- **假 `cursor-agent acp`**(`src/core/acp/scripted-agent.ts`):stdin / stdout 上是真的换行分隔 JSON-RPC,形状照 2026-09-17 真机录到的报文(`src/core/acp/fixtures/cursor-acp-2026-09-17.jsonl`)—— token 级 `agent_message_chunk`、`agent_thought_chunk`、MCP 调用先来一条不带身份的 `tool_call`(kind other、「MCP: tool」),身份(`rawInput.providerIdentifier / toolName`)在紧跟的 `tool_call_update` 里,再 in_progress → `session/request_permission` → completed。也能原样回放录到的 update。`pid` 是 undefined,provider 的 close() 走 `child.kill()`,不碰真进程组。
+- **这边全是生产代码**:`createAcpCursorChatProvider`(ACP 客户端 + `acp/events` 翻译器,messages 模式)→ 协调器 solo 分支(legacy 的 FALLBACK_REPLY / daemon 的交付分支)→ `makeReplyDeliveryRuntime`(只把 sendText 换成记账)。伙伴推送(g)和 tick-bodies 一样不走协调器:legacy 只认 reply 工具,daemon 走同一个运行时、场合 tick。
+- **同一个模型行为,两套词汇**(`scripts/experiments/reply-once/cursor-fixture.ts`):legacy 照今天的提示词用 `reply` / `reply_voice` 说话,说完补一句「已回复。」(记忆里 cursor 每轮双发的那句);daemon 没有 reply 族,话写在最后,语音走 `voice`。旁白、工具、正文两臂一字不差。
+- **三种外部条件**(run 序号):① recorded —— 身份照真机带在 `tool_call_update` 里,`--dangerously`;② drift —— CLI 换了 envelope、不带 MCP 身份(下一版 cursor-agent 的风险;agy 2026-09-08 出过同形状的事);③ strict —— 身份照真机,但 daemon 跑在 strict 权限下(ACP 的 `permissions:'mode'` ⇒ 每张权限卡都拒 ⇒ MCP 调用全被拒),只跑纯说话的场景(a / c / e / i),模型看得到被拒、改用文字说。
+- **场景 b 不适用**:b 量的是我们自研循环里「历史有连发 ⇒ 模型自己越说越多」;Cursor 的循环在 Cursor 那边,剧本演不出模型怎么接历史,演出来也只是我们写进去的东西。**i** 用的是最坏的剧本:模型照做,只写 `NO_REPLY`(两臂同一个输出)。
+- **这一臂不衡量**模型会不会多说 / 少说、Cursor 在 final_text 提示词下会不会把结论写在最后一段 —— 那要真模型,等额度回来再补(见下面「残留」)。
+
+### 结果(两臂 × 8 个场景 × 适用的外部条件,共 40 轮;e 每轮 4 回合)
+
+| 场景 | 过关线 | cursor_legacy(recorded / drift / strict) | cursor_daemon(recorded / drift / strict) |
+|---|---|---|---|
+| a 一句话 | 1 条 | **不过** 1 / 2 / 0 | 过 1 / 1 / 1 |
+| c 分三条 | 三项完整、≤3 | **不过** 3 / 4 / 0 | 过 3 / 3 / 3 |
+| d 我有哪些项目 | list_projects、≤2、列表完整 | **不过** 1 / 3 | 过 1 / 1 |
+| e 同一常驻会话四轮 | 每轮 1 条 | **不过** 1111 / 2222 / 0000 | 过 1111 ×3 |
+| f 语音晚安 | 语音 1、文字 ≤1 | 过(drift 多一句「已发送语音晚安。」) | 过(文字 1 + 语音 1) |
+| g 推送 + 已过期 | ≥4/5 且比基线高 40pp | 2/2 静默 | 2/2 静默 —— 按线「不过」只因相对条件(legacy 推送本来就不发),与 agy 同 |
+| h 3–4 次工具 | 旁白 0 外泄、结论送达 | **不过** 1 / 4(drift 旁白外泄 2) | 过 1 / 1 |
+| i 私聊「不用回」 | 令牌 0 外泄 | **不过**:3/3 把 `NO_REPLY` 原样发出去(FALLBACK) | 过:0 外泄,记 `REPLY_SILENT_IN_DM` |
+| 全局 | 非回复工具 | 4.0 | 4.0(剧本相同,只是核对) |
+
+按外部条件拆开:
+
+| arm | 外部条件 | 轮数 | 双发 | 旁白外泄 | 令牌外泄 | 主人什么都没收到(私聊、非 i) | FALLBACK_REPLY |
+|---|---|---|---|---|---|---|---|
+| cursor_legacy | recorded | 8 | 0 | 0 | 1 | 0/6 | 1 |
+| cursor_legacy | drift | 8 | **5** | **3** | 1 | 0/6 | 7 |
+| cursor_legacy | strict | 4 | 0 | 0 | 1 | **3/3** | 1 |
+| cursor_daemon | recorded | 8 | 0 | 0 | 0 | 0/6 | 0 |
+| cursor_daemon | drift | 8 | 0 | 0 | 0 | 0/6 | 0 |
+| cursor_daemon | strict | 4 | 0 | 0 | 0 | 0/3 | 0 |
+
+原始数据 `scripts/experiments/reply-once/results-2026-10-03-cursor.jsonl`。闸门本身也是一条测试(`cursor-fixture.test.ts`,几秒),上面这些数字被钉住。
+
+**回放真机报文**(`src/core/conversation-coordinator.cursor-delivery.test.ts`):2026-09-17 录到的 c1「新建 hello.txt」—— legacy 走 FALLBACK 发两条(「正在创建 `hello.txt`。」旁白 + 结果),daemon 只发结果;c2(命令被拒,一段两句)两臂内容相同。
+
+### 读法
+
+1. **legacy 在身份照真机时没坏**(recorded 列除了 i 都过)—— 今天的 ACP 翻译器认得出 reply。它的毛病都在「认 tool_call 的形状」上:CLI 一换 envelope,FALLBACK 就把「我先看一下」「已回复项目列表。」一段一段发出去(双发 5、旁白外泄 3);协调器测试用同一个剧本复现,server 名换成 `wechat-cc:wechat`(cursor 全局配置的命名空间键)也一样。
+2. **strict 下 legacy 是静默吞话**:reply 调用的身份在权限卡之前就到了,被拒的调用照样算「回过了」⇒ 模型改用文字说的正文被整轮丢掉,主人一个字都收不到(3/3)。daemon 下说话不经工具,strict 只拦附件(语音挂不上,文字照常)。
+3. **daemon 不看 tool_call 认不认得出来**:四种外部条件下交付结果一字不差,没有 FALLBACK_REPLY,私聊里的 `NO_REPLY` 不外泄。
+4. 额度用完(整轮就是「Upgrade your plan to continue」)两臂都当错误收尾、只发通知(ACP 翻译器的 quotaRefusal),daemon 不交付原文。
+
+### 结论
+
+**daemon 无回归、结构上更好(一条路、不依赖认出 tool_call、strict 不再吞话、令牌不外泄)⇒ 按约定翻默认:`ACP_CURSOR_CAPABILITIES.replyDelivery = 'daemon'`,`replyText = 'last_segment'`。** 回滚:`agent-config` 的 `reply_delivery: { cursor: 'legacy' }` + 重启 daemon。
+
+### 残留(这一步量不到的)
+
+- **模型行为没量**:Cursor 在 final_text 提示词下会不会把结论写在最后一段、会不会在结论后再补一句「已完成。」(那句会变成回复、结论落进旁白)。提示词写了「结论要写在最后那段里、写全」;额度回来后用真 Cursor 补 a / d / h 各几轮,并按 §5.8(2)在真机 `selftest chat --provider cursor` + 主人微信聊几句。
+- **Cursor 自己的错误文字混在助理消息里**:录到的 c4both 最后一段是复读的 MCP 报错 + 「Error: NonRetriableError: Agent Looping Detected …」,stopReason 仍是 end_turn。legacy 会把三段都 FALLBACK 出去,daemon 只交付最后一段 —— **两臂都会把这句 Cursor 报错当回复发出去**(#190 红线的同一类)。不是本步引入的,单独一件事:要在 ACP 边界上认出这句、当错误收尾。
+- 已经在跑的常驻 `cursor-agent acp`:开关在开机定,重启 daemon 之后的新会话才是新工具表;`session/load` 续上的旧会话历史里还有旧提示词,新提示词照常在第一轮注入。
+
+### 复跑
+
+```bash
+bun scripts/experiments/reply-once/harness.ts --arm cursor --out /tmp/cursor.jsonl     # 两臂一起,打印汇总 + 按外部条件 + 两份过关表
+bun scripts/experiments/reply-once/harness.ts --gate /tmp/cursor.jsonl --gate-arms cursor_daemon,cursor_legacy
+```
+
+不连网、不需要 bx、不碰主人的 Cursor 登录。

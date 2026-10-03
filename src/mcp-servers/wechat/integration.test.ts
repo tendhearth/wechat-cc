@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs'
 import { wechatStdioMcpSpec } from '../../daemon/bootstrap/mcp-specs'
 import { setupAgyGlobalMcp, AGY_WECHAT_MCP_NAMESPACE_ID } from '../../daemon/bootstrap/agy-mcp-config'
 import { setReplyDeliveryOverrides } from '../../core/capability-matrix'
+import { acpMcpServersFor } from '../../core/acp-cursor-chat'
 
 /**
  * P1.A end-to-end: this test wires up the complete provider→stdio MCP→
@@ -836,6 +837,46 @@ describe('wechat-mcp stdio integration', () => {
       expect(JSON.parse(readFileSync(join(geminiDir, 'mcp_config.json'), 'utf8')).mcpServers[AGY_WECHAT_MCP_NAMESPACE_ID].env.WECHAT_REPLY_DELIVERY).toBeUndefined()
       for (const t of ['reply', 'reply_voice', 'send_sticker']) expect(legacyTools).toContain(t)
       for (const t of ['voice', 'attach_file']) expect(legacyTools).not.toContain(t)
+    })
+  })
+
+  // 回复交付第 3 步(2026-10-03):Cursor 的 wechat MCP 是**逐会话**注入的(session/new 的 mcpServers,带会话令牌与 tier)。
+  // 完整链:能力表开关 → wechatStdioMcpSpec('cursor') → acpMcpServersFor(会话 env)→ 用那份 env 起子进程 → tools/list。
+  // owner 会话是 admin ⇒ daemon 下另有往别处发的 message。
+  describe('cursor per-session MCP follows cursor\'s reply-delivery mode', () => {
+    afterEach(() => setReplyDeliveryOverrides(undefined))
+    const REPLY_FAMILY = ['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast', 'send_sticker', 'search_online_sticker', 'send_online_sticker_candidate']
+
+    async function toolsForCursorSession(port: number, tokenFilePath: string): Promise<{ tools: string[]; env: Record<string, string> }> {
+      const spec = wechatStdioMcpSpec({ baseUrl: `http://127.0.0.1:${port}`, tokenFilePath }, 'cursor')
+      const [entry] = acpMcpServersFor({ wechat: spec, delegate: null }, { WECHAT_SESSION_TOKEN: 'cursor-session-tok', WECHAT_SESSION_TIER: 'admin' })
+      const env = Object.fromEntries(entry!.env.map(e => [e.name, e.value]))
+      const baseEnv = { ...process.env as Record<string, string> }
+      delete baseEnv.WECHAT_REPLY_DELIVERY
+      delete baseEnv.WECHAT_SESSION_TIER
+      delete baseEnv.WECHAT_SESSION_TOKEN
+      // command 用 RUNTIME(源码模式下 spec.command 是 process.execPath,node 跑测试时不是 bun)。
+      const transport = new StdioClientTransport({ command: RUNTIME, args: entry!.args, env: { ...baseEnv, ...env }, stderr: 'pipe' })
+      const c = new Client({ name: 'cursor-session-int', version: '0.0.1' }, { capabilities: {} })
+      await c.connect(transport)
+      try { return { tools: (await c.listTools()).tools.map(t => t.name), env } } finally { await c.close() }
+    }
+
+    it('daemon ⇒ session/new env carries WECHAT_REPLY_DELIVERY=daemon and the child hides the reply family (admin keeps message); legacy ⇒ reply tools back', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 7777 })
+      const { port, tokenFilePath } = await api.start()
+
+      setReplyDeliveryOverrides({ cursor: 'daemon' })
+      const daemon = await toolsForCursorSession(port, tokenFilePath)
+      expect(daemon.env).toMatchObject({ WECHAT_REPLY_DELIVERY: 'daemon', WECHAT_PARTICIPANT_TAG: 'cursor', WECHAT_SESSION_TIER: 'admin' })
+      for (const t of REPLY_FAMILY) expect(daemon.tools).not.toContain(t)
+      for (const t of ['voice', 'sticker', 'attach_file', 'message', 'sticker_feedback']) expect(daemon.tools).toContain(t)
+
+      setReplyDeliveryOverrides({ cursor: 'legacy' })
+      const legacy = await toolsForCursorSession(port, tokenFilePath)
+      expect(legacy.env.WECHAT_REPLY_DELIVERY).toBeUndefined()
+      for (const t of ['reply', 'reply_voice', 'send_sticker']) expect(legacy.tools).toContain(t)
+      for (const t of ['voice', 'attach_file', 'message']) expect(legacy.tools).not.toContain(t)
     })
   })
 })

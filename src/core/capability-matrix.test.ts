@@ -248,7 +248,7 @@ describe('provider id single source', () => {
 describe('replyDeliveryFor — 回复交付开关(spec §5.0,一家一家翻)', () => {
   it('其余执行者仍是 legacy(一家一家翻)', async () => {
     const { replyDeliveryFor, capabilityProviderIds } = await import('./capability-matrix')
-    for (const p of capabilityProviderIds()) if (p !== 'openai' && p !== 'agy') expect(replyDeliveryFor(p)).toBe('legacy')
+    for (const p of capabilityProviderIds()) if (p !== 'openai' && p !== 'agy' && p !== 'cursor') expect(replyDeliveryFor(p)).toBe('legacy')
   })
 
   // 第 1 步的闸门(reply-once harness,2026-10-03,见 docs/reference/reply-once-experiment.md)没过 c / d / g
@@ -258,6 +258,13 @@ describe('replyDeliveryFor — 回复交付开关(spec §5.0,一家一家翻)', 
     expect(replyDeliveryFor('openai')).toBe('daemon')
     // 第 2 步(2026-10-03):agy 接线完成,闸门两臂打平 ⇒ 先 shadow。
     expect(replyDeliveryFor('agy')).toBe('daemon')
+  })
+
+  // 第 3 步(2026-10-03):Cursor 接线完成;不连模型的闸门(假 cursor-agent acp + 生产全链)daemon 无回归、结构上更好 ⇒ daemon。
+  it('cursor:daemon(第 3 步),编码型取最后一段', async () => {
+    const { replyDeliveryFor, replyTextStrategyFor } = await import('./capability-matrix')
+    expect(replyDeliveryFor('cursor')).toBe('daemon')
+    expect(replyTextStrategyFor('cursor')).toBe('last_segment')
   })
 
   it('没注册能力表的 provider ⇒ legacy(fail safe,走今天的路)', async () => {
