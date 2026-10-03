@@ -18,7 +18,8 @@ const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g
 export const stripAnsi = (text: string): string => text.replace(ANSI, '')
 
 const AUTH_REQUIRED = /Authentication required|Please run '?(?:cursor-)?agent login'?|Not logged in/i
-const KEY_INVALID = /provided API key is invalid|invalid api key/i
+// 只认 cursor-agent 自己的原话(「invalid api key」这类通用词汇只能在 lib/auth-failure 里,见那里的仓库守卫)。
+const KEY_INVALID = /The provided API key is invalid/i
 const UNREACHABLE = /Failed to reach the Cursor API|network socket disconnected|socket hang up|\[unavailable\]|ETIMEDOUT|timed out/i
 const QUOTA = /Upgrade your plan to continue|hit your usage limit|usage limit reached|out of (?:fast )?requests/i
 
