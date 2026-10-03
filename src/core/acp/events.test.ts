@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { isReplyToolCall } from '../agent-provider'
 import { acpActivityId, acpPermissionDescription, acpPermissionOption, createAcpTranslator } from './events'
+import { cursorAcpInbandError } from '../cursor-errors'
 
 const chunk = (text: string, messageId?: string) => ({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text }, ...(messageId ? { messageId } : {}) })
 const call = (extra: Record<string, unknown> = {}) => ({ sessionUpdate: 'tool_call', toolCallId: 'call-1', title: 'Edit File', kind: 'edit', status: 'pending', rawInput: { path: 'secret.txt', content: 'SECRET' }, locations: [{ path: '/p/a.ts' }], ...extra })
@@ -151,19 +152,77 @@ describe('quota refusal detection', () => {
   it('flags a turn whose whole output is the nag and suppresses it in messages mode', () => {
     const t = createAcpTranslator({ text: 'messages' }); t.beginTurn()
     t.update(chunk('\n\n')); t.update(chunk(nag))
-    expect(t.quotaRefusal()).toBe(nag)
+    expect(t.turnError()).toEqual({ code: 'quota', message: nag })
     expect(t.endTurn()).toEqual([])
   })
   it('does not flag normal replies, or a nag after a tool call', () => {
     const t = createAcpTranslator({ text: 'messages' }); t.beginTurn()
     t.update(chunk('正常回复'))
-    expect(t.quotaRefusal()).toBeNull()
+    expect(t.turnError()).toBeNull()
     expect(t.endTurn()).toEqual([{ kind: 'text', text: '正常回复' }])
     t.beginTurn(); t.update(call()); t.update(chunk(nag))
-    expect(t.quotaRefusal()).toBeNull()
+    expect(t.turnError()).toBeNull()
   })
   it('flags in append mode too (text was already streamed)', () => {
     const t = createAcpTranslator(); t.beginTurn(); t.update(chunk(nag))
-    expect(t.quotaRefusal()).toBe(nag)
+    expect(t.turnError()).toEqual({ code: 'quota', message: nag })
+  })
+})
+
+/**
+ * cursor-agent acp 的带内错误:catch 里一次 sendAgentMessageChunk(`\n\n…`),之后这一轮什么都不再发、
+ * stopReason end_turn。翻译器的结构条件:这一整块是**本轮最后一个可见 update** 才算错误;在它之后又来了
+ * 文字或工具调用 ⇒ 它是正文,原样放行。
+ */
+describe('in-band errors (cursor-agent writes its own error into the assistant message)', () => {
+  const LOOPING = '\n\nError: NonRetriableError: Agent Looping Detected The model got stuck in a repeating response pattern, so this turn was stopped. Please try again with a different model or start a new conversation. If the problem persists, please contact support.'
+  const opts = { inbandError: cursorAcpInbandError }
+  it('messages mode: the trailing error block never reaches a text event; the text before it still does', () => {
+    const t = createAcpTranslator({ text: 'messages', ...opts }); t.beginTurn()
+    for (const c of ['data must', ' NOT have', ' additional properties']) expect(t.update(chunk(c))).toEqual([])
+    expect(t.update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: '准备粘贴' } })).toEqual([])
+    expect(t.update(chunk(LOOPING))).toEqual([])
+    expect(t.turnError()).toEqual({ code: 'provider_error', message: LOOPING.slice(2) })
+    const out = t.endTurn()
+    expect(out).toEqual([{ kind: 'text', text: 'data must NOT have additional properties' }])
+    expect(JSON.stringify(out)).not.toContain('Looping')
+  })
+  it('append mode (workbench): the error block is held back, never streamed', () => {
+    const t = createAcpTranslator(opts); t.beginTurn()
+    expect(t.update(chunk('好'))).toHaveLength(1)
+    expect(t.update(chunk('\n\nPlease sign in to continue'))).toEqual([])
+    expect(t.turnError()).toEqual({ code: 'auth_failed', message: 'Please sign in to continue' })
+    expect(t.endTurn()).toEqual([])
+  })
+  it('a held block followed by more text or a tool call was prose: released in order, no error', () => {
+    const t = createAcpTranslator(opts); t.beginTurn()
+    expect(t.update(chunk(LOOPING))).toEqual([])
+    const out = t.update(chunk(' — 上面是我复述的报错。'))
+    expect(out.map(e => (e as { text: string }).text)).toEqual([LOOPING, ' — 上面是我复述的报错。'])
+    expect(out.every(e => (e as { itemId?: string }).itemId === 'acp:turn:1:0')).toBe(true)
+    expect(t.turnError()).toBeNull()
+    const m = createAcpTranslator({ text: 'messages', ...opts }); m.beginTurn()
+    m.update(chunk('\n\nUpgrade your plan to continue'))
+    const flushed = m.update(call())
+    expect(flushed[0]).toEqual({ kind: 'text', text: '\n\nUpgrade your plan to continue' })
+    expect(flushed[1]).toMatchObject({ kind: 'tool_call' })
+    expect(m.turnError()).toBeNull()
+  })
+  it('prose that merely mentions looping is delivered untouched', () => {
+    const t = createAcpTranslator({ text: 'messages', ...opts }); t.beginTurn()
+    for (const c of ['我检查过了，', '没有出现 Agent Looping Detected，', '也没有 looping。']) t.update(chunk(c))
+    expect(t.turnError()).toBeNull()
+    expect(t.endTurn()).toEqual([{ kind: 'text', text: '我检查过了，没有出现 Agent Looping Detected，也没有 looping。' }])
+  })
+  it('without the classifier (other ACP agents) nothing is held back', () => {
+    const t = createAcpTranslator(); t.beginTurn()
+    expect(t.update(chunk(LOOPING))).toHaveLength(1)
+    expect(t.turnError()).toBeNull()
+  })
+  it('beginTurn drops a block held from an earlier turn', () => {
+    const t = createAcpTranslator(opts); t.beginTurn()
+    t.update(chunk(LOOPING)); t.beginTurn()
+    expect(t.turnError()).toBeNull()
+    expect(t.update(chunk('新'))).toEqual([{ kind: 'text', text: '新', itemId: 'acp:turn:2:0', textMode: 'append' }])
   })
 })

@@ -300,6 +300,20 @@ describe('ACP workbench provider', () => {
     const c = collect(session); await prompted(child, 3); child.finishPrompt('refusal'); await c.done
     expect(c.events.at(-1)).toEqual({ kind: 'error', message: 'acp_stop_refusal' })
   })
+  it('Cursor 的带内报错(最后一整块助理文字 + end_turn)⇒ 带码 error,原文不进逐字流;正文里提到 looping 照常流出', async () => {
+    const { session, child } = await start()
+    const a = collect(session); await prompted(child, 1)
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '改好了一半' } })
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '\n\nError: NonRetriableError: Agent Looping Detected The model got stuck in a repeating response pattern, so this turn was stopped.' } })
+    child.finishPrompt(); await a.done
+    expect(a.events.filter(e => e.kind === 'text').map(e => (e as { text: string }).text)).toEqual(['改好了一半'])
+    expect(a.events.at(-1)).toMatchObject({ kind: 'error', code: 'provider_error', message: expect.stringMatching(/^Error: NonRetriableError: Agent Looping Detected/) })
+    const b = collect(session); await prompted(child, 2)
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '没有发现 Agent Looping Detected,也没有 looping。' } })
+    child.finishPrompt(); await b.done
+    expect(b.events.filter(e => e.kind === 'text').map(e => (e as { text: string }).text)).toEqual(['没有发现 Agent Looping Detected,也没有 looping。'])
+    expect(b.events.at(-1)).toMatchObject({ kind: 'result' })
+  })
   it('surfaces a session/prompt JSON-RPC error as a turn error event', async () => {
     const { session, child } = await start()
     const { events, done } = collect(session)

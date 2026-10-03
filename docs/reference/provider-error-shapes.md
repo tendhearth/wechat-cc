@@ -3,6 +3,7 @@
 > 2026-10-02 · 采集 + 沙箱诱发 · 第 1 步只记录,不改判定。
 > **第 2 步第一片(只 Claude 会话)2026-10-02 已落地**:§4.1 修掉,owner 决定与码闭集见 §6。
 > **第 2 步余下部分 2026-10-02 已落地**(owner 当天批准):每家 provider 边界都产码,下游只读码,文本判定只剩「码缺失」时的回退 —— 见 §7。§3 的表按新形状重生成;§4 每一条都标了修掉了没有、没修的为什么。
+> **2026-10-03 补一块**:Cursor ACP 把自己的报错**写进助理消息**、照常 `end_turn`(#206 发现的「Agent Looping Detected」)—— ACP 边界按 cursor-agent 的固定写法认出来,带码收尾,见 §8。
 > 方向(owner 已定):每个 provider 边界产出结构化错误码,下游不再对错误文本跑正则。动手之前,先把每家**真实**失败长什么样、今天各判定处怎么判它们摸清楚。这一份就是那张底。
 > 样本(已脱敏)在 `src/daemon/diagnostics/__fixtures__/provider-errors/*.json`,`provider-error-shapes.test.ts` 把今天每一处判定对每条样本的回答钉住。第 2 步改判定时它会红,这是有意的:改 fixture 里那条的 `current`,再回这里划掉对应的错判。
 
@@ -309,6 +310,7 @@ agy(Go)`dial tcp: lookup …: no such host`、`…: EOF`、`There was a network 
 | codex 工作台 | `core/workbench/codex-app-server.ts` | app-server 的 `TurnError.codexErrorInfo`(结构化;`httpStatusCode: null` = 没拿到响应) | 同上 + `rate_limited` / `server_error` |
 | openai 兼容 / 工作台 API / gemini | `core/openai-error-code.ts` | `APICallError.statusCode` + `responseBody`、`RetryError.errors[]` 最后一次的 status、fetch 系统码、`lib/timeout-fetch` 自己的码 | 按 `codeForHttpStatus`;连不上 / 证书 / socket closed / 超时 ⇒ `network` |
 | cursor ACP(对话 + 工作台) | `core/cursor-errors.ts` `acpErrorCode` | JSON-RPC `code` / `data` | `-32000` ⇒ `auth_failed`;`data` 说清原因才用它;`-32603` 无可用 data ⇒ `provider_error`(**不猜**) |
+| cursor ACP 带内错误(对话 + 工作台,§8) | `core/cursor-errors.ts` `cursorAcpInbandError` + `acp/events` 翻译器 | 本轮**最后一个可见 update** 是一整块 `\n\n` + cursor-agent 的固定句 / `Error: ${String(e)}` 模板,stopReason `end_turn` | 见 §8 的表 |
 | cursor print(一次性评估) | `core/cursor-errors.ts` `cursorPrintErrorCode` | 剥 ANSI 后 cursor-agent 的固定输出 | key 无效 ⇒ `auth_rejected`;`Failed to reach the Cursor API` ⇒ `network`;`Upgrade your plan` ⇒ `quota`;`Authentication required` ⇒ `auth_failed` |
 | agy | `core/agy-errors.ts` | `result status=ERROR:` 后的 Go 固定措辞 | 歧义句 ⇒ **`network`**(红线 B);`no such host` / `": EOF` / TLS 超时 / network issue ⇒ `network`;5xx ⇒ `server_error`;**不产认证码** |
 | claude 一次性评估 / 工作台 | `core/claude-agent-provider.ts` oneShot、`core/claude-workbench-runtime.ts`(码表在 `core/claude-api-error-code.ts`) | 与会话同一套 SDK 标注 | 同 §6 |
@@ -355,3 +357,36 @@ agy(Go)`dial tcp: lookup …: no such host`、`…: EOF`、`There was a network 
 - `turn_timeout`(daemon 自己的回合看门狗)不是 provider 码,照旧。
 - 文本回退(`AUTH_FAIL_SDK_ERROR` 宽集、`looksLikeAuthFailure`)还在:码缺失时(认不出的新措辞、旧路径)仍要用。等真机跑一段确认码覆盖够了再删。
 
+## 8. Cursor ACP 的带内错误(2026-10-03)
+
+**现象**(#206 回放真机 c4both 时发现):cursor-agent acp 一轮里出错时**不回 JSON-RPC 错误**,而是把报错写成一块 `agent_message_chunk`,然后照常回 `{"stopReason":"end_turn"}`。于是两条交付路(legacy 的 FALLBACK、daemon 的「最后一段」)都把这句报错当 CC 的回复发给主人 —— #190「错误不许当回复发」的同一类。
+
+**协议 / CLI 实际给了什么**(cursor-agent `2026.09.02-c22c1a3`,ACP 服务端 `processPrompt` 的 catch,对照 c4both 录到的报文):
+
+- **协议字段没有任何错误信号**:stopReason 只有 `end_turn` / `cancelled` 两种(`handlePrompt` 写死);没有 `_meta`、没有 error 字段、没有专门的 `session/update` 种类;进程不退出(没有退出码可读)。
+- 唯一的结构信号是**写法本身**:catch 里**恰好一次** `sendAgentMessageChunk`(一整块,不是 token 流),前面固定两个换行,之后这一轮什么都不再发。
+- 三种写法:
+
+| 写法(一整块) | cursor 内部 | 码 |
+|---|---|---|
+| `\n\nPlease sign in to continue` | `ActionRequiredError` action=login(NOT_LOGGED_IN / AUTH_TOKEN_EXPIRED / UNAUTHORIZED …) | `auth_failed`(修法就是 `cursor-agent login`,合红线 A 对别家的约束) |
+| `\n\nUpgrade your plan to continue` | action=upgrade(FREE/PRO 用量上限 **与** 各种 RATE_LIMIT 并在一句里) | `quota`(分不开,沿用已有判定) |
+| `\n\nAdd a payment method to continue` | action=payment(USAGE_PRICING_REQUIRED) | `quota` |
+| `\n\nCheck your settings to continue` | action=config(BAD_API_KEY / BAD_USER_API_KEY / OUTDATED_CLIENT 混在一起) | `provider_error`(不猜是 key 还是版本) |
+| `\n\nError: [unauthenticated] Backend rejected authentication. Verify this is a User API Key …`(整句固定) | 未包装的 ConnectError,code Unauthenticated | `auth_rejected` |
+| `\n\nError: ${String(e)}` —— `<Name>Error: ` 和 / 或 `[connect code] ` 开头 | `RetriableError` / `NonRetriableError`(`name: message`,ConnectError 的 message 以 `[code] ` 开头);真机的 `Error: NonRetriableError: Agent Looping Detected The model got stuck …` 就是这一种 | connect code:`unauthenticated` / `permission_denied` ⇒ `auth_rejected`;`resource_exhausted` ⇒ `rate_limited`;`unavailable` / `deadline_exceeded` / `aborted` ⇒ `network`;`internal` ⇒ `server_error`;`invalid_argument` / `failed_precondition` / `out_of_range` ⇒ `invalid_request`;没有 code 但正文是连不上(`isConnectFailure`)⇒ `network`;其余(含 Agent Looping Detected、Conversation data missing)⇒ `provider_error` |
+
+`CancelledError` 不写(静默结束);action 不在表里时写的是服务端给的任意 message —— **认不出,照旧当正文**(没有固定句就不猜)。`No prompt content provided.` 只在空 prompt 时出现,我们不发空 prompt,不认。
+
+**判定**(`core/cursor-errors.ts` `cursorAcpInbandError` + `core/acp/events.ts` 翻译器的 `inbandError` 选项):
+
+1. 只看**一整块** chunk:必须以 `\n\n` 开头,余下部分**整句等于**上表的固定句,或匹配 `Error: ` + String(e) 模板(至少有错误类名或 connect code 之一,且后面还有正文)。正文里提到这些词、不是整块、没有 `\n\n` 前缀、模板对不上 ⇒ 一律不算。
+2. 结构条件:认得出的那一块**先扣住**(工作台不流出、对话侧不进攒着的消息);它之后又来了文字或工具调用 ⇒ 它是正文,按原顺序放行;**直到 `end_turn` 都没人接** ⇒ 它就是本轮的错误。
+3. 回合以 `{kind:'error', code, message: 原文}` 收尾(不是 `result`)。它**之前**的文字照常吐(与进程死掉 / prompt 报错同一条规矩);报错原文永远不作为 text 事件出去。
+4. 老规则保留:整轮(无工具调用)输出就是催升级话 ⇒ `quota`(`provider-quota.isQuotaRefusalText`)。
+
+**下游**(没有新代码,全是 §7 的既有收法):对话侧 daemon 交付 ⇒ 出错只发通知(`turnErrorNotice` 按码说原因;`auth_failed` 走认证分支 + `cursor-agent login` 提示),TurnRecord 记 `error` + `errorCode`;legacy(回滚开关)⇒ 报错原文不再被 FALLBACK,但它**之前**的文字照旧 FALLBACK 出去、且不发通知(legacy 对「出错但有文字」的轮本来就这样,与 Cursor 无关,不在本片改)。工作台 ⇒ `taskErrorForProviderCode` 映射成稳定错误码(`provider_quota_exhausted` / `provider_rate_limited` / `provider_network` …);`provider_error` 保留原文当 task.error。
+
+**测试**(全用照真机形状演的假 `cursor-agent acp`,没有一次真 Cursor 调用):`cursor-errors.test.ts`(每种写法的码 + 「正文提到 looping」等反例)、`acp/events.test.ts`(扣住 / 放行 / 跨轮清空)、`acp-agent-provider.test.ts` 与 `acp-workbench-provider.test.ts`(对话 messages 模式与工作台 append 模式)、`conversation-coordinator.cursor-delivery.test.ts`(生产的 ACP 客户端 + 协调器 + 交付运行时:两臂都不把报错当回复;原样回放真机 c4both;`acp/scripted-agent.ts` 新增 `{ cliError }` 步骤照 catch 的写法发一整块)。
+
+**残留**:cursor-agent 换版本可能改句式 —— 认不出就退回今天的行为(当正文发出去),不会误伤正文;换版本时按上面的位置(`processPrompt` 的 catch)重新核对一遍。
