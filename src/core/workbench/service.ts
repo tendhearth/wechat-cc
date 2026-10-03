@@ -125,7 +125,7 @@ export function makeWorkbenchService(opts: Options) {
     attention:viewDomain.attention,
     resolveAnswer:inputsDomain.resolveAnswer,
     withdrawInput:inputsDomain.withdrawInput,
-    submitInput:inputsDomain.submitInput,
+    submitInput:inputsDomain.submitInput,inputReceipt:inputsDomain.inputReceipt,
     ...nativeDomain.api,
     addProject:viewDomain.addProject,
     list:viewDomain.list,
