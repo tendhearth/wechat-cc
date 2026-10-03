@@ -363,3 +363,90 @@ bun scripts/experiments/reply-once/harness.ts --gate /tmp/cursor.jsonl --gate-ar
 ```
 
 不连网、不需要 bx、不碰主人的 Cursor 登录。
+
+## 2026-10-03:回复交付第 4 步的闸门(Codex → daemon)
+
+对象:spec 第 4 步 —— Codex 对话侧(`@openai/codex-sdk` 的 `runStreamed`,每一轮一次 `codex exec`;工作台的 app-server 不在本步)。两臂:legacy(今天:reply 族工具说话,FALLBACK_REPLY 兜底)与 daemon(没有 reply 族;编码型 `last_segment`,一轮最后一条非空 agent_message 是回复,之前的是旁白)。闸门分两部分:**剧本臂**(不连模型,和 Cursor 臂同一个做法)+ **真模型小批**(35 次真 Codex 调用,上限 40)。
+
+### 接线时发现、并修掉的(provider 里)
+
+spec §4.2 原写「Codex 不用改 provider」,落地时不对:
+
+1. **只有 mcp_tool_call 产 tool_call**:shell(`command_execution`)、改文件(`file_change`)、联网搜索、计划(`todo_list`)一概不产 ⇒「顺便看下仓库状态。」→ 跑命令 →「结论」两条消息被当成同一段,旁白跟着结论一起交付。现在:**不是助理消息、不是思考、不是非致命 error 的 item 都算一次工具调用**(`codexItemToolCall`),包括 SDK 不认识的新 item 类型(用户的 CLI 常比我们带的 SDK 新)—— 分段不再依赖「认出每一种工具的形状」。每个 item 只产一次,在第一次见到它时(通常是 `item.started`)。
+2. **两条 agent_message 之间只隔一段思考也会粘**:text 事件加了 `ownSegment`(AgentEvent / `makeTurnTextCollector`),Codex 的每条 agent_message 自成一段,对上 spec 的定义「turn.completed 之前最后一条 agent_message」。
+3. `turn.completed` 之后 codex exec 才以非零码退出 ⇒ 以前会补一个 error 事件,daemon 交付会把一轮已完成的回复当出错丢掉;现在只记日志。非致命的 error item 只记日志(`CODEX_ITEM_ERROR`),永不进文字。
+
+### 剧本臂(不连模型)
+
+- **假 Codex**(`src/core/codex-scripted.ts`):注入生产 `createCodexAgentProvider` 的 `codexFactory`,每轮按剧本吐 ThreadEvent,形状照 SDK 0.144 的类型与下面真跑录到的流(整条 agent_message;调工具前一句开场;legacy 下 reply 之后再收一条**空**消息;MCP `item.started → item.completed`;shell 是 `command_execution`)。不起进程、不连网。
+- **这边全是生产代码**:Codex provider 的事件翻译 → 协调器 solo 分支 → legacy 的 FALLBACK_REPLY / daemon 的交付运行时(只把 sendText 换成记账)。推送(g)和 tick-bodies 一样不走协调器。
+- **三种外部条件**:① recorded —— `mcp_tool_call` 照 SDK 形状,`--dangerously`(bypass,MCP 放得过);② drift —— 用户的 codex CLI 比 SDK 新(2026-09-09 定案的常态),MCP 调用换了一个 SDK 不认识的 item 类型,下游认不出 reply;③ strict —— daemon 跑在 strict 下、没有 bypass ⇒ codex 拒掉每一次 MCP 调用(真机原话「MCP tool call requires approval, but approval policy is never」),只跑纯说话的场景(a / c / e / i)。
+- 场景 b 不适用(量的是自研循环接历史);i 用最坏剧本(模型只写 `NO_REPLY`;真机 5/5 写的是一条空消息)。h 比 Cursor 多一步 shell。
+
+| 场景 | 过关线 | codex_legacy(recorded / drift / strict) | codex_daemon(recorded / drift / strict) |
+|---|---|---|---|
+| a 一句话 | 1 条 | **不过** 1 / 2 / 0 | 过 1 / 1 / 1 |
+| c 分三条 | 三项完整、≤3 | **不过** 3 / 4 / 0 | 过 3 / 3 / 3 |
+| d 我有哪些项目 | list_projects、≤2、列表完整 | 过 1 / 2(drift 多出开场一句) | 过 1 / 1 |
+| e 同一 thread 四轮 | 每轮 1 条 | **不过** 1111 / 2222 / 0000 | 过 1111 ×3 |
+| f 语音晚安 | 语音 1、文字 ≤1 | 过(drift 多一句开场) | 过(最后一句与语音同文 ⇒ 按已定 ⑤ 只发语音) |
+| g 推送 + 已过期 | ≥4/5 且比基线高 40pp | 2/2 静默 | 2/2 静默 —— 按线「不过」只因相对条件(legacy 推送本来就不发),与 agy / Cursor 同 |
+| h 3–4 次工具 + shell | 旁白 0 外泄、结论送达 | **不过** 1 / 3(drift 旁白外泄 2) | 过 1 / 1 |
+| i 私聊「不用回」 | 令牌 0 外泄 | **不过**:3/3 把 `NO_REPLY` 原样发出去(FALLBACK) | 过:0 外泄,记 `REPLY_SILENT_IN_DM` |
+| 全局 | 非回复工具 | 8.0 | 8.0(剧本相同,只是核对) |
+
+| arm | 外部条件 | 轮数 | 双发 | 旁白外泄 | 令牌外泄 | 主人什么都没收到(私聊、非 i) | FALLBACK_REPLY |
+|---|---|---|---|---|---|---|---|
+| codex_legacy | recorded | 8 | 0 | 0 | 1 | 0/6 | 1 |
+| codex_legacy | drift | 8 | 0 | **7** | 1 | 0/6 | 7 |
+| codex_legacy | strict | 4 | 0 | 0 | 1 | **3/3** | 1 |
+| codex_daemon | recorded | 8 | 0 | 0 | 0 | 0/6 | 0 |
+| codex_daemon | drift | 8 | 0 | 0 | 0 | 0/6 | 0 |
+| codex_daemon | strict | 4 | 0 | 0 | 0 | 0/3 | 0 |
+
+(「双发」按 `DELIVERY_NARRATION_RE` 数「已回复…」这类自述;真 codex 在 reply 之后写的是空消息,所以 legacy 漏出去的是**开场旁白**,记在「旁白外泄」一列。)原始数据 `scripts/experiments/reply-once/results-2026-10-03-codex.jsonl`;闸门本身是测试(`codex-fixture.test.ts`,一两秒)。
+
+### 真模型小批(35 次真 Codex 调用,上限 40)
+
+**沙盒**(`scripts/experiments/reply-once/codex-sandbox.ts`):临时 `CODEX_HOME` / `HOME` / 工作目录;**只复制** `~/.codex/auth.json`(只读源文件,不改它;复制前确认 `last_refresh` 在 7 天内 —— codex 超过 8 天才主动刷新令牌,刷新会轮换 refresh token 让主人那份失效;跑完核对过沙盒里的 auth.json 与源文件逐字节相同,即没有刷新);config.toml 是最小配置(模型 + 思考强度),不继承主人的 MCP / hooks / AGENTS.md / skills;线程一律 `read-only` + approval never,不给 bypass(它会连 shell 沙盒一起关);wechat MCP 是**生产的**入口,用 codex 自己的 `mcp_servers.wechat.default_tools_approval_mode = "approve"` 放行(生产对主人会话是 bypass),背后是假 internal API;每一轮之前 `bx status` 必须 protected + healthy,另按沙盒的 CODEX_HOME 判一次实际端点(官方、需要保护)。真 codex 0.153.4,模型 `gpt-6-astra`,思考 medium。
+
+- **模型的偏离**:主人配置的默认 `gpt-6.1-sol` 被服务端以「The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account」400 拒了(第 1 次调用,记在 35 次里);沙盒里 CLI 0.153.4 拿到的模型目录只有 gpt-6-astra / gpt-5.6-* / gpt-5.5(主人的目录是 Codex 桌面 0.160 拉的)。这和「codex 版本耦合」那条定案是同一件事:**daemon 用的 CLI 0.153.4 + 主人默认模型 6.1-sol,真机上可能就是这个 400**,与本步无关,另记。
+- e 没跑(每次 4 轮,预算留给别的场景;剧本臂 + 协调器测试覆盖)。
+
+| 场景 | 过关线 | codex_real_legacy | codex_real_daemon |
+|---|---|---|---|
+| a 一句话 | 1 条 | 过 1,1 | 过 1,1,1 |
+| c 分三条 | 三项完整、≤3 | — | 过 3,3,3(三段一条消息,按空行分条) |
+| d 我有哪些项目 | list_projects、≤2、列表完整 | 过 1,1 | 过 1,1,1;非回复工具 3.0 / 次 vs 基线 3.0 |
+| f 语音晚安 | 语音 1、文字 ≤1 | 过(reply_voice) | 过 3/3:最后一句与语音同文 ⇒ 只发语音 |
+| g 推送 + 已过期 | ≥4/5 且比基线高 40pp | 1/1 不推(没调 reply) | 3/3 `NO_REPLY` —— 只差相对条件 |
+| h 3 次工具 | 旁白 0 外泄、结论送达 | 过 1,1 | 过 1,1,1 |
+| i 私聊「不用回」 | 令牌 0 外泄 | 过(都是空消息,什么都没发) | 过(都是空消息 ⇒ `delivery=empty`,计入应答轮交付为空) |
+| 全局 | 非回复工具 | 14.0 | **11.0** |
+
+真模型上能看到的形状(都在 `results-2026-10-03-codex-raw.jsonl`):
+
+1. **codex 调工具之前先写一句开场**(「我查一下当前登记的项目。」「我先看项目列表和记忆里的近况…」):daemon 臂 12/12 个用了工具的轮都有(legacy 9 轮里 8 轮)—— daemon 下全部落进旁白,0 外泄(g 是「开场 + 最后写 NO_REPLY」⇒ 整轮静默,开场也不发);同一条流走 legacy 若认不出 reply(drift),开场就是第二条消息。
+2. **legacy 下 reply 之后 codex 照例再写一条空消息**,所以 legacy 的 FALLBACK 漏出去的是开场,不是「已回复」。
+3. **strict 吞话真机复现**(`results-2026-10-03-codex-real-strict.jsonl`,2 次):legacy 下 reply 被拒(「MCP tool call requires approval, but approval policy is never」),模型改用文字写「收到。reply 工具因审批策略被拒绝，本条通过备用通道回复。」,协调器只看「调过 reply」⇒ 主人一个字都收不到;daemon 下 voice 被拒,模型改用文字说晚安 ⇒ 那句话照常送达(开场旁白没发)。
+4. 录到的六轮原样放进 `src/core/fixtures/codex-exec-2026-10-03.jsonl`,由 `conversation-coordinator.codex-delivery.test.ts` 回放。
+
+### 结论
+
+**daemon 无回归、结构上更好 ⇒ 按约定翻默认:`CODEX_CAPABILITIES.replyDelivery = 'daemon'`,`replyText = 'last_segment'`。** 理由与 Cursor 同:legacy 在形状照 SDK 时没坏,它的毛病都在「认 tool_call 的形状」(CLI 比 SDK 新就把开场旁白发出去)和 strict(reply 被拒仍算回过 ⇒ 吞话,真机复现);daemon 只有一条路、不看 tool_call 认不认得出来,剧本三种条件全 0,真模型适用场景全过、非回复工具更少(11.0 vs 14.0)。g 两臂都静默,只差「比基线高 40pp」的相对条件。回滚:`agent-config` 的 `reply_delivery: { codex: 'legacy' }` + 重启 daemon。
+
+### 残留
+
+- strict(非 --dangerously)下 codex 拒掉所有 MCP 调用 ⇒ daemon 模式的附件(语音 / 表情 / 文件)调不成,文字照常交付。要附件在 strict 下也能用,得给 wechat MCP 配 `default_tools_approval_mode = "approve"`(只放行我们自己的 MCP,不碰 shell 沙盒)—— 那是改 provider 的权限姿态,本步不做,spec §8 也写明不在本稿重评 bypass。
+- 私聊里 codex 对「不用回」写空消息(5/5),daemon 记 `delivery=empty` 进连击,不替模型补话(已定 ②);真机上要看这条连击会不会被这类轮次刷高。
+- 真机 `selftest chat --provider codex --resume` 与主人微信试聊(§5.8(2))留给整合者部署后做。
+
+### 复跑
+
+```bash
+bun scripts/experiments/reply-once/harness.ts --arm codex --out /tmp/codex.jsonl         # 剧本臂,两臂一起,不连网
+bun scripts/experiments/reply-once/harness.ts --gate /tmp/codex.jsonl --gate-arms codex_daemon,codex_legacy
+# 真模型(连 api.openai.com,每轮查 bx;--budget 必填,--strict 不放行 MCP)
+bun scripts/experiments/reply-once/harness.ts --arm codex_real_daemon --scenarios a,c,d,f,g,h,i --runs 3 --budget 21 --codex-model gpt-6-astra --codex-raw /tmp/raw.jsonl --out /tmp/real.jsonl
+bun scripts/experiments/reply-once/harness.ts --gate /tmp/real.jsonl --gate-arms codex_real_daemon,codex_real_legacy
+```

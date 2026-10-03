@@ -73,7 +73,12 @@ export interface AgentActivity {
 }
 
 export type AgentEvent =
-  | { kind: 'text'; text: string; itemId?: string; textMode?: 'append' | 'replace' }
+  /**
+   * `ownSegment`:这条文字是一条**独立的**助理消息,自成一段(回复交付「最后的话」的分段,core/turn-reply.ts)——
+   * 哪怕和上一条之间没有 tool_call。Codex 的 agent_message 就是这样:一轮里的每条都是完整消息,spec §4.2 的定义是
+   * 「turn.completed 之前最后一条 agent_message」。不设 ⇒ 同一段里的多条文字用空行拼(Claude 一条消息的多个文字块)。
+   */
+  | { kind: 'text'; text: string; itemId?: string; textMode?: 'append' | 'replace'; ownSegment?: true }
   | { kind: 'tool_call'; server?: string; tool: string; activity?: AgentActivity }
   | { kind: 'init'; sessionId: string }
   | { kind: 'result'; sessionId: string; numTurns: number; durationMs: number }

@@ -105,11 +105,12 @@ export interface ReplyDeliveryPort {
 // ─── 「最后的话」 ─────────────────────────────────────────────────────────
 
 /** AgentEvent 的结构子集 —— 只看 text / tool_call 两种(不 import agent-provider,免得两个模块互相引用)。 */
-export interface SegmentEvent { kind: string; text?: string; itemId?: string; textMode?: 'append' | 'replace' }
+export interface SegmentEvent { kind: string; text?: string; itemId?: string; textMode?: 'append' | 'replace'; ownSegment?: boolean }
 
 /**
  * 增量版:按事件顺序喂进来,`tool_call` 是段与段的边界。同一段里的多条 text 事件用空行拼 ——
  * 每条 text 事件按 AgentEvent 的契约是「一条完整的助理消息」,空行正好是 daemon 分条的边界。
+ * 带 `ownSegment` 的 text(Codex 的 agent_message)自成一段:最后的话 = 最后一条非空的那条消息。
  * `error` 事件**从不**进任何一段(#190:错误不许当回复发)。
  */
 export function makeTurnTextCollector(): {
@@ -136,6 +137,7 @@ export function makeTurnTextCollector(): {
         return
       }
       if (ev.text.trim() === '') return
+      if (ev.ownSegment && seg.length > 0) { segments.push([ev.text]); itemIndex.clear(); if (ev.itemId !== undefined) itemIndex.set(ev.itemId, 0); return }
       if (ev.itemId !== undefined) itemIndex.set(ev.itemId, seg.length)
       seg.push(ev.text)
     },
