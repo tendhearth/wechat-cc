@@ -8,6 +8,8 @@
 export type Arm = 'baseline' | 'i_plain_ack' | 'ii_prompt' | 'iii_drop' | 'iv_restrict' | 'v_condense' | 'shipped' | 'daemon'
   /** 回复交付第 2 步(2026-10-03):真 agy(沙盒 agent + 假 wechat MCP)。legacy = 今天的 reply 工具;daemon = 新路。 */
   | 'agy_legacy' | 'agy_daemon'
+  /** 回复交付第 3 步(2026-10-03):Cursor,不连模型 —— 照真机报文形状演的假 cursor-agent acp + 生产的 ACP 客户端与协调器(cursor-fixture.ts)。 */
+  | 'cursor_legacy' | 'cursor_daemon'
 export type Scenario = 'a' | 'b' | 'b_guarded_seed' | 'b_cold' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i'
 
 /** 只算「说话」的工具:legacy 的回复族 + daemon 的附件工具。其余都是「非回复工具」。 */
