@@ -16,7 +16,7 @@ export function createQuotaHandoffAttempts(storage=null){
   get(/** @type {string} */id){
    if(!TASK.test(id))return null
    if(memory.has(id))return structuredClone(memory.get(id))
-   try{const raw=storage?.getItem(key(id)),a=raw?JSON.parse(raw):null;if(a&&UUID.test(a.requestId)&&typeof a.providerId==='string'&&PROVIDER.test(a.providerId)){memory.set(id,a);return structuredClone(a)}}catch{/* Optional per-window recovery. */}
+   try{const raw=storage?.getItem(key(id)),a=raw?JSON.parse(raw):null;if(a&&typeof a.requestId==='string'&&UUID.test(a.requestId)&&typeof a.providerId==='string'&&PROVIDER.test(a.providerId)){const attempt={requestId:a.requestId,providerId:a.providerId};memory.set(id,attempt);return structuredClone(attempt)}}catch{/* Optional per-window recovery. */}
    return null
   },
   set(/** @type {string} */id,/** @type {Attempt} */attempt){memory.set(id,structuredClone(attempt));try{storage?.setItem(key(id),JSON.stringify(attempt))}catch{/* Keep the in-memory request identity. */}},
@@ -24,7 +24,8 @@ export function createQuotaHandoffAttempts(storage=null){
  }
 }
 /** @typedef {ReturnType<typeof createQuotaHandoffAttempts>} Attempts */
-const name=(/** @type {string} */id,/** @type {Provider[]} */providers)=>providers.find(p=>p.id===id)?.displayName??({claude:'Claude',codex:'Codex',cursor:'Cursor',gemini:'Gemini'}[id]??id)
+const KNOWN_NAMES=new Map([['claude','Claude'],['codex','Codex'],['cursor','Cursor'],['gemini','Gemini']])
+const name=(/** @type {string} */id,/** @type {Provider[]} */providers)=>providers.find(p=>p.id===id)?.displayName??KNOWN_NAMES.get(id)??id
 /** @param {Offer|null|undefined} offer @param {Provider[]} providers */
 export function quotaHandoffCopy(offer,providers){
  if(!offer)return ''
@@ -106,7 +107,7 @@ export function createQuotaHandoffController(deps){
 export function renderQuotaHandoffConfirmation(state,source,providers){
  const q=state.offer,to=state.attempt?name(state.attempt.providerId,providers):q?.state==='offer'?name(q.to,providers):''
  const confirming=state.ready&&(state.unknown&&!!state.attempt||q?.state==='offer')
- return `<header class="wb-history-head"><h2>交给另一位继续</h2><button type="button" class="wb-new" data-quota="close">关闭</button></header><div class="wb-handoff-body"><p>${esc(quotaHandoffCopy(q,providers)||'当前无需交接。')}</p><p>交接会在同一个文件夹为 ${esc(to||'接手者')} 新开任务；原来的任务仍保留。使用接手执行者的额度。</p><p>只带任务标题和继续工作的要求提示。接手者会查看文件夹里的现有文件；完整原聊天和附件不会自动带过去。</p><dl><dt>任务</dt><dd>${esc(source.title)}</dd><dt>文件夹</dt><dd>${esc(source.path)}</dd></dl>${state.attempt&&q?.state==='offer'&&state.attempt.providerId!==q.to?`<p role="status">当前接手人已变为 ${esc(name(q.to,providers))}。本次仍只核对先前交给 ${esc(to)} 的请求；确定未交出后，再重新确认。</p>`:''}${state.unknown?'<p role="status">上次交接结果尚未确认。重新连接不会自动重发；这次只核对或重试原来的请求和接手人。</p>':''}${state.error?`<p class="wb-error" role="alert">${esc(state.error)}</p>`:''}</div><footer class="wb-handoff-footer"><button type="button" class="wb-btn" data-quota="check"${state.busy?' disabled':''}>${state.busy?'正在检查…':'检查交接状态'}</button>${confirming?`<button type="button" class="wb-btn wb-btn-primary" data-quota="confirm"${state.busy?' disabled':''}>${state.unknown?'核对并重试':'确认'}交给 ${esc(to)}，使用其额度</button>`:''}</footer>`
+ return `<header class="wb-history-head"><h2>交给另一位继续</h2><button type="button" class="wb-new" data-quota="close">关闭</button></header><div class="wb-handoff-body"><p>${esc(quotaHandoffCopy(q,providers)||'当前无需交接。')}</p><p>交接会在同一个文件夹为 ${esc(to||'接手者')} 新开任务；原来的任务仍保留。使用接手执行者的额度。</p><p>只带任务标题和「接着原来的要求做」提示。接手者可从文件夹里的现有文件接着做；完整原聊天和附件不会自动带过去。</p><dl><dt>任务</dt><dd>${esc(source.title)}</dd><dt>文件夹</dt><dd>${esc(source.path)}</dd></dl>${state.attempt&&q?.state==='offer'&&state.attempt.providerId!==q.to?`<p role="status">当前接手人已变为 ${esc(name(q.to,providers))}。本次仍只核对先前交给 ${esc(to)} 的请求；确定未交出后，再重新确认。</p>`:''}${state.unknown?'<p role="status">上次交接结果尚未确认。重新连接不会自动重发；这次只核对或重试原来的请求和接手人。</p>':''}${state.error?`<p class="wb-error" role="alert">${esc(state.error)}</p>`:''}</div><footer class="wb-handoff-footer"><button type="button" class="wb-btn" data-quota="check"${state.busy?' disabled':''}>${state.busy?'正在检查…':'检查交接状态'}</button>${confirming?`<button type="button" class="wb-btn wb-btn-primary" data-quota="confirm"${state.busy?' disabled':''}>${state.unknown?'核对并重试':'确认'}交给 ${esc(to)}，使用其额度</button>`:''}</footer>`
 }
 /** @param {{invoke:Invoke,source:Source,initial:Offer|null,providers:Provider[],attempts:Attempts,opened:(id:string)=>Promise<void>|void,current:()=>boolean}} deps */
 export function mountQuotaHandoffDialog(deps){

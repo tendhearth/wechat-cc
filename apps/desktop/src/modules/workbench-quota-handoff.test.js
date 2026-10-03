@@ -16,6 +16,10 @@ function setup(invoke,options={}){
  cleanup=()=>controller.destroy();return{controller,attempts,opened,changed}
 }
 describe('desktop quota handoff confirmation and recovery',()=>{
+ it('restores only the request identity and recipient from saved attempts',()=>{
+  const requestId=crypto.randomUUID();sessionStorage.setItem('cc.workbench.quota-handoff.v1:deadbeef',JSON.stringify({requestId,providerId:'codex',id:'12345678',owner:'forged'}))
+  expect(createQuotaHandoffAttempts(sessionStorage).get(source.id)).toEqual({requestId,providerId:'codex'})
+ })
  it('shows actual candidates, unavailable and handed states in the default task detail',()=>{
   document.body.innerHTML=renderQuotaHandoff(detail(offer),providers)
   expect(document.body.textContent).toContain('Claude 的额度已用完');expect(document.body.textContent).toContain('交给 Codex 继续')
