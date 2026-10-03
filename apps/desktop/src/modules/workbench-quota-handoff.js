@@ -19,8 +19,14 @@ export function createQuotaHandoffAttempts(storage=null){
    try{const raw=storage?.getItem(key(id)),a=raw?JSON.parse(raw):null;if(a&&typeof a.requestId==='string'&&UUID.test(a.requestId)&&typeof a.providerId==='string'&&PROVIDER.test(a.providerId)){const attempt={requestId:a.requestId,providerId:a.providerId};memory.set(id,attempt);return structuredClone(attempt)}}catch{/* Optional per-window recovery. */}
    return null
   },
-  set(/** @type {string} */id,/** @type {Attempt} */attempt){memory.set(id,structuredClone(attempt));try{storage?.setItem(key(id),JSON.stringify(attempt))}catch{/* Keep the in-memory request identity. */}},
-  delete(/** @type {string} */id){memory.delete(id);try{storage?.removeItem(key(id))}catch{/* Optional persistence. */}},
+  set(/** @type {string} */id,/** @type {Attempt} */attempt){
+   if(!storage)return false
+   try{const saved=JSON.stringify(attempt);storage.setItem(key(id),saved);if(storage.getItem(key(id))!==saved)return false;memory.set(id,structuredClone(attempt));return true}catch{return false}
+  },
+  delete(/** @type {string} */id){
+   if(!storage)return false
+   try{storage.removeItem(key(id));if(storage.getItem(key(id))!==null)return false;memory.delete(id);return true}catch{return false}
+  },
  }
 }
 /** @typedef {ReturnType<typeof createQuotaHandoffAttempts>} Attempts */
@@ -48,7 +54,7 @@ function readOffer(raw,id){
  if(d.task?.id!==id)throw Error('quota_handoff_unknown_response')
  if(q==null)return null
  if(typeof q.from!=='string'||!PROVIDER.test(q.from))throw Error('quota_handoff_unknown_response')
- if(q.state==='handed'&&typeof q.to==='string'&&PROVIDER.test(q.to)&&TASK.test(q.matterId))return q
+ if(q.state==='handed'&&typeof q.to==='string'&&PROVIDER.test(q.to)&&TASK.test(q.matterId)&&q.matterId!==id)return q
  if((q.state==='offer'||q.state==='none')&&(q.kind==='quota'||q.kind==='rate_limit')&&Number.isFinite(q.resetAt)&&(q.state==='none'||PROVIDER.test(q.to)))return q
  throw Error('quota_handoff_unknown_response')
 }
@@ -66,7 +72,7 @@ export function createQuotaHandoffController(deps){
  const check=async()=>{
   const offer=readOffer(await invoke('GET',`/v1/workbench/task?id=${encodeURIComponent(source.id)}`),source.id)
   if(!valid())return null
-  state.offer=offer;state.ready=true
+  state.offer=offer;state.attempt=attempts.get(source.id);state.unknown=!!state.attempt;state.ready=true
   if(offer?.state==='handed')await complete(offer.matterId)
   return offer
  }
@@ -79,24 +85,26 @@ export function createQuotaHandoffController(deps){
   },
   async submit(){
    if(!valid()||state.busy||!state.ready||(!state.unknown&&state.offer?.state!=='offer')||state.done)return
-   const confirmed=state.offer
+   const confirmed=state.offer,confirmedAttempt=state.attempt
    state.busy=true;state.error='';notify()
    try{
     const latest=await check()
     if(!valid()||state.done)return
     const old=attempts.get(source.id)
+    if(old&&(old.requestId!==confirmedAttempt?.requestId||old.providerId!==confirmedAttempt?.providerId)){state.error='发现一条未确认的交接记录。请先查看原来的接手人，再确认核对或重试。';return}
     if(!old&&signature(latest)!==signature(confirmed)){state.error='额度或接手人已变化，请查看上面的最新说明，再确认一次。';return}
     if(!old&&latest?.state!=='offer')return
     // Absence of a handed receipt in GET does not prove an earlier POST was rejected.
     // Unknown submissions keep their exact identity until handOff returns a definite outcome.
     const attempt=old??{requestId:crypto.randomUUID(),providerId:/** @type {Extract<Offer,{state:'offer'}>} */(latest).to}
-    attempts.set(source.id,attempt);state.attempt=attempt;state.unknown=true
+    if(!old&&!attempts.set(source.id,attempt)){state.ready=false;state.error='确认无法保存，尚未交接。请恢复本地存储后，检查状态并重新确认。';return}
+    state.attempt=attempt;state.unknown=true
     const raw=await invoke('POST','/v1/workbench/quota-handoff',{id:source.id,...attempt})
     const result=/** @type {{taskId?:string,created?:boolean}|null} */(raw)
-    if(!result||typeof result.taskId!=='string'||!TASK.test(result.taskId)||typeof result.created!=='boolean')throw Error('quota_handoff_unknown_response')
+    if(!result||typeof result.taskId!=='string'||!TASK.test(result.taskId)||result.taskId===source.id||typeof result.created!=='boolean')throw Error('quota_handoff_unknown_response')
     await complete(result.taskId)
    }catch(e){
-    if(definite(e)){attempts.delete(source.id);state.attempt=null;state.unknown=false;state.ready=false;if(valid())state.error=errorCopy(e)}
+    if(definite(e)){const cleared=attempts.delete(source.id);state.attempt=cleared?null:attempts.get(source.id);state.unknown=!!state.attempt;state.ready=false;if(valid())state.error=errorCopy(e)+(state.unknown?' 原交接编号暂时无法清理，请恢复本地存储后再检查。':'')}
     else{state.ready=false;state.unknown=!!attempts.get(source.id);if(valid())state.error=state.unknown?'交接的结果还未确认。已保留这次请求；请先检查状态，再决定是否重试。':'暂时没能确认最新状态，请手动重新检查。'}
    }finally{state.busy=false;notify()}
   },
