@@ -6,14 +6,15 @@
     "source": "induced",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
-    "message": "auth_failed: Authentication Fails, Your api key: «masked-key» is invalid (request_id: «req-id»)",
-    "note": "runEval 靠 APICallError.statusCode=401 判 auth 后重抛成 `auth_failed: …`;重抛的 Error 不再带 status。",
+    "errorCode": "auth_rejected",
+    "message": "Authentication Fails, Your api key: «masked-key» is invalid (request_id: «req-id»)",
+    "note": "#188 时 runEval 把它重抛成 `auth_failed: …` 且丢了 status。第 2 步起:原错误原样抛出,status 保留,边界挂码 auth_rejected(401 = 凭证被拒,不说登录过期)。",
+    "status": 401,
     "current": {
       "claudeSentinel": false,
       "assistantText": false,
       "sdkError": false,
-      "authFailError": false,
+      "authFailError": true,
       "llmHealthAuth": true,
       "registryAuthCode": true,
       "healthKind": "llm_auth",
@@ -30,7 +31,7 @@
     "source": "induced",
     "path": "session",
     "channel": "error_event",
-    "errorCode": "auth_failed",
+    "errorCode": "auth_rejected",
     "status": 401,
     "message": "Authentication Fails, Your api key: «masked-key» is invalid (request_id: «req-id»)",
     "current": {
@@ -54,13 +55,15 @@
     "source": "induced",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
-    "message": "auth_failed: Invalid Authentication",
+    "errorCode": "auth_rejected",
+    "message": "Invalid Authentication",
+    "status": 401,
+    "note": "#188 时是 `auth_failed: Invalid Authentication`(前缀是我们自己加的,status 丢了)。第 2 步起原错误 + 码 auth_rejected。",
     "current": {
       "claudeSentinel": false,
       "assistantText": false,
       "sdkError": false,
-      "authFailError": false,
+      "authFailError": true,
       "llmHealthAuth": true,
       "registryAuthCode": true,
       "healthKind": "llm_auth",
@@ -77,10 +80,10 @@
     "source": "induced",
     "path": "session",
     "channel": "error_event",
-    "errorCode": "auth_failed",
+    "errorCode": "auth_rejected",
     "status": 401,
     "message": "Invalid Authentication",
-    "note": "Kimi 的 401 文案不含任何散文词 —— 只有 status 救得回来。",
+    "note": "Kimi 的 401 文案不含任何散文词 —— 只有 status 救得回来。第 2 步起边界按 status 产 auth_rejected。",
     "current": {
       "claudeSentinel": false,
       "assistantText": false,
@@ -104,7 +107,7 @@
     "channel": "error_event",
     "errorCode": null,
     "message": "Invalid Authentication",
-    "note": "同一条 401,假如 status 在中途丢了(例如被包成别的 Error)会怎样:对照样本。",
+    "note": "对照样本:同一条 401,假如 status 在中途丢了(例如被包成别的 Error)会怎样。第 2 步起 cheapEval 不再重新包装(码挂在原错误上),这个形状不再从我们的代码里产生;这里只留作「无码回退」的对照。",
     "current": {
       "claudeSentinel": false,
       "assistantText": false,
@@ -126,7 +129,7 @@
     "source": "induced",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
+    "errorCode": "network",
     "message": "Unable to connect. Is the computer able to access the url?",
     "droppedStructure": {
       "err.code": "ConnectionRefused"
@@ -152,7 +155,7 @@
     "source": "induced",
     "path": "session",
     "channel": "error_event",
-    "errorCode": null,
+    "errorCode": "network",
     "message": "Unable to connect. Is the computer able to access the url?",
     "current": {
       "claudeSentinel": false,
@@ -175,12 +178,12 @@
     "source": "induced",
     "path": "cheap_eval",
     "channel": "thrown",
-    "errorCode": null,
+    "errorCode": "network",
     "message": "unknown certificate verification error",
     "droppedStructure": {
       "err.code": "UNKNOWN_CERTIFICATE_VERIFICATION_ERROR"
     },
-    "note": "fake-ip DNS 下 *.invalid 解析到代理,表现为证书错误。",
+    "note": "fake-ip DNS 下 *.invalid 解析到代理,表现为证书错误。第 2 步起边界读 err.code=UNKNOWN_CERTIFICATE_VERIFICATION_ERROR ⇒ network。",
     "current": {
       "claudeSentinel": false,
       "assistantText": false,
@@ -202,9 +205,9 @@
     "source": "harvested",
     "path": "session",
     "channel": "error_event",
-    "errorCode": null,
+    "errorCode": "server_error",
     "message": "Failed after 3 attempts. Last error: litellm.ServiceUnavailableError: ServiceUnavailableError: OpenAIException - <html>\r\n<head><title>503 Service Temporarily Unavailable</title></head>",
-    "note": "自建 litellm 网关(turn_records)。",
+    "note": "自建 litellm 网关(turn_records)。第 2 步起边界从 RetryError.errors[] 取最后一次的 status 503 ⇒ server_error;给人看的话换成 `HTTP 503 (after 3 attempts): …`。",
     "current": {
       "claudeSentinel": false,
       "assistantText": false,
@@ -212,7 +215,7 @@
       "authFailError": false,
       "llmHealthAuth": false,
       "registryAuthCode": false,
-      "healthKind": "unknown",
+      "healthKind": "network",
       "providerFailure": "unknown",
       "quota": null,
       "quotaRefusalText": false,
@@ -226,14 +229,14 @@
     "source": "harvested",
     "path": "session",
     "channel": "error_event",
-    "errorCode": null,
+    "errorCode": "server_error",
     "message": "Failed after 3 attempts. Last error: <none>",
     "droppedStructure": {
       "RetryError.errors[].statusCode": 524,
       "RetryError.reason": "maxRetriesExceeded",
       "APICallError.isRetryable": true
     },
-    "note": "Cloudflare 524(源站超时);status 只在 RetryError.errors[] 里,message 什么都没有。",
+    "note": "Cloudflare 524(源站超时);status 只在 RetryError.errors[] 里,message 什么都没有。第 2 步起边界取回 524 ⇒ server_error,给人看的话是 `HTTP 524 (after 3 attempts): <正文摘要>`(沙箱用本地假网关回 524 复现过)。",
     "current": {
       "claudeSentinel": false,
       "assistantText": false,
@@ -241,7 +244,7 @@
       "authFailError": false,
       "llmHealthAuth": false,
       "registryAuthCode": false,
-      "healthKind": "unknown",
+      "healthKind": "network",
       "providerFailure": "unknown",
       "quota": null,
       "quotaRefusalText": false,
@@ -255,7 +258,7 @@
     "source": "harvested",
     "path": "session",
     "channel": "error_event",
-    "errorCode": null,
+    "errorCode": "network",
     "message": "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
     "current": {
       "claudeSentinel": false,
@@ -264,11 +267,11 @@
       "authFailError": false,
       "llmHealthAuth": false,
       "registryAuthCode": false,
-      "healthKind": "unknown",
-      "providerFailure": "unknown",
+      "healthKind": "network",
+      "providerFailure": "transient",
       "quota": null,
       "quotaRefusalText": false,
-      "connectFailure": false
+      "connectFailure": true
     }
   },
   {

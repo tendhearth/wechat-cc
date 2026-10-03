@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createProviderRegistry, DEFAULT_CHEAP_EVAL_BUDGET_MS } from './provider-registry'
+import { createProviderRegistry, DEFAULT_CHEAP_EVAL_BUDGET_MS, isAuthError } from './provider-registry'
+import { errorWithProviderCode } from '../lib/provider-error-code'
 import { makeFakeSession } from './test-helpers'
 import type { AgentProvider } from './agent-provider'
 
@@ -360,5 +361,17 @@ describe('cheapEvalProvider as a getter (hot-reload)', () => {
     expect(r.getCheapEval()).toBe(evB)
     pin = undefined
     expect(r.getCheapEval()).not.toBeNull()   // 回落偏好序
+  })
+})
+
+describe('isAuthError — 冷却时长按 provider 码判(arch backlog #4 第 2 步)', () => {
+  it('auth_failed / auth_rejected 码 ⇒ 长冷却;其它码 ⇒ 不是认证,哪怕正文带 auth_failed 前缀', () => {
+    expect(isAuthError(errorWithProviderCode('Invalid Authentication', 'auth_rejected'))).toBe(true)
+    expect(isAuthError(errorWithProviderCode('Not logged in', 'auth_failed'))).toBe(true)
+    expect(isAuthError(errorWithProviderCode('auth_failed: but really a timeout', 'network'))).toBe(false)
+  })
+  it('无码回退到 `auth_failed:` 前缀(旧路径不变);agy 歧义句不算', () => {
+    expect(isAuthError(new Error('auth_failed: Not logged in'))).toBe(true)
+    expect(isAuthError(new Error('agy result status=ERROR: authentication failed or timed out'))).toBe(false)
   })
 })

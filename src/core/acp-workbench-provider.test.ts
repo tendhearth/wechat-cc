@@ -306,7 +306,25 @@ describe('ACP workbench provider', () => {
     await prompted(child)
     child.rejectPrompt({ code: -32603, message: 'model unavailable' })
     await done
-    expect(events.at(-1)).toEqual({ kind: 'error', message: 'model unavailable' })
+    // -32603 没有可用 data:不猜是 key 还是网络 ⇒ provider_error(arch backlog #4 第 2 步)。
+    expect(events.at(-1)).toEqual({ kind: 'error', message: 'model unavailable', code: 'provider_error' })
+  })
+  // arch backlog #4 第 2 步:setup 错误把码挂在抛出物上,message 仍是工作台文案认的稳定串。
+  it('setup errors carry a provider code: -32000 ⇒ auth_failed; -32603 with no telling data ⇒ provider_error; data that names the cause wins', async () => {
+    const provider = createAcpWorkbenchProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor', rpcTimeoutMs: 200, closeTimeoutMs: 250 })
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ code: -32000, message: 'Authentication required', data: { message: "Authentication required. Please run 'agent login' first" } }, 'auth_failed'],
+      [{ code: -32603, message: 'Internal error', data: { message: 'Failed to initialize session services' } }, 'provider_error'],
+      [{ code: -32603, message: 'Internal error' }, 'provider_error'],
+      [{ code: -32603, message: 'Internal error', data: { message: 'Failed to reach the Cursor API' } }, 'network'],
+      [{ code: -32603, message: 'Internal error', data: { message: 'The provided API key is invalid.' } }, 'auth_rejected'],
+    ]
+    for (const [i, [error, code]] of cases.entries()) {
+      const p = provider.spawn({ alias: 'a', path: '/project' }, context())
+      await expect.poll(() => children.length).toBe(i + 1); children[i]!.newResult = { error }
+      const err = await p.catch(e => e)
+      expect((err as { providerErrorCode?: string }).providerErrorCode, JSON.stringify(error)).toBe(code)
+    }
   })
   it('appends a captured stderr tail to acp_session_failed, but leaves acp_auth_required a bare code', async () => {
     const provider = createAcpWorkbenchProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor', rpcTimeoutMs: 200, closeTimeoutMs: 250 })

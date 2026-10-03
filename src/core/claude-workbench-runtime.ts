@@ -5,6 +5,8 @@ import { AsyncQueue } from './async-queue'
 import { ClaudeWorkbenchEvents } from './claude-workbench-events'
 import { ownClaudeWorkbenchProcess } from './claude-workbench-process'
 import { isAuthFail } from './auth-fail'
+import { claudeApiErrorCode } from './claude-api-error-code'
+import { errorWithProviderCode } from '../lib/provider-error-code'
 
 type ToolEvent = Extract<AgentEvent, { kind: 'tool_call' }>
 type ActivityEvent = ToolEvent & { activity: AgentActivity }
@@ -49,6 +51,14 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
   const requestIds = new Set<string>()
   let retained = false, foreground: AgentRuntimeSnapshot['foreground'] = 'unknown', started = false, ended = false, closing = false
   let sessionId = context.resumeSessionId, registrationKnown = false, sequence = 0
+  // SDK 标了 `error` 的主回合助理消息 = 一次 API 失败(与对话侧同一套,arch backlog #4 第 2 步):
+  // 不当正文进时间线;等同一轮的 result 拿 api_error_status,再带码收掉这一轮。
+  let pendingApiError: { sdkError: string; text: string } | null = null
+  const apiFailure = (status?: number | null): Error => {
+    const { sdkError, text } = pendingApiError!
+    pendingApiError = null
+    return errorWithProviderCode(text.trim().slice(0, 400) || `claude api error: ${sdkError}`, claudeApiErrorCode(sdkError, status) ?? 'provider_error')
+  }
   let closePromise: Promise<void> | undefined, resolveDrain!: () => void
   const drained = new Promise<void>(resolve => { resolveDrain = resolve })
   const q = query({ prompt: input.iterable(), options })
@@ -205,7 +215,8 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
       const blocks = typeof rawContent === 'string' ? [{ type: 'text', text: rawContent }] : Array.isArray(rawContent) ? rawContent : []
       const messageKey = id(message.uuid) ?? id(message.message?.id) ?? `message-${++sequence}`
       const combined = blocks.map(block => object(block) && block.type === 'text' && typeof block.text === 'string' ? block.text : '').join('')
-      if (!parent && isAuthFail('claude-sentinel', combined)) { finish(new Error('claude reports not logged in')); return }
+      if (!parent && isAuthFail('claude-sentinel', combined)) { finish(errorWithProviderCode('claude reports not logged in', 'auth_failed')); return }
+      if (!parent && claudeApiErrorCode(message.error) !== null) { pendingApiError = { sdkError: String(message.error), text: combined }; return }
       const owner = parent ? taskByTool.get(parent) ?? task(`tool:${parent}`, parent) : undefined
       if (owner && owner.background !== false) { retained = true; if (!owner.terminal) live.add(owner.key) }
       for (const [index, block] of blocks.entries()) {
@@ -242,6 +253,8 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
       return
     }
     if (message.type === 'result') {
+      // 这一轮是 API 失败:不推 result(不能让失败回合被当成「完成 / 这家恢复了」),带码收尾。
+      if (pendingApiError) { finish(apiFailure(typeof message.api_error_status === 'number' ? message.api_error_status : null)); return }
       foreground = 'idle'
       streamMessageId = null; streamed.clear(); suppressedStream.clear() // a turn boundary bounds streamed-text lifetime explicitly
       output.push({ kind: 'result', sessionId: typeof message.session_id === 'string' ? message.session_id : sessionId ?? '', numTurns: typeof message.num_turns === 'number' ? message.num_turns : 0, durationMs: typeof message.duration_ms === 'number' ? message.duration_ms : 0 })
@@ -254,7 +267,7 @@ export function createClaudeWorkbenchSession(baseOptions: Options, context: Spaw
     try {
       for await (const message of q) if (object(message)) receive(message)
       if (!closing && !ended) finish(new Error('claude_runtime_stream_ended'))
-    } catch (error) { if (!closing) finish(error instanceof Error ? error : new Error(String(error))) }
+    } catch (error) { if (!closing) finish(pendingApiError ? apiFailure() : error instanceof Error ? error : new Error(String(error))) }
     finally { resolveDrain() }
   })()
   return {

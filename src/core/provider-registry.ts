@@ -15,6 +15,7 @@ import type { AgentAttachment, AgentEvent, AgentProvider, AgentSession, AgentWor
 import type { WorkbenchExecutorCapabilities } from './workbench/executor-capabilities'
 import type { ProviderId } from './conversation'
 import { hasAuthCode } from '../lib/auth-failure'
+import { isAuthErrorCode, providerErrorCodeOf } from '../lib/provider-error-code'
 import { assertCallAllowed, decideCall, isNetworkUnprotectedError, NetworkUnprotectedError, sessionCallTarget, unprotectedMessage, unresolvedTarget, type CallTarget, type NetworkGate } from '../lib/network-gate'
 
 /**
@@ -204,8 +205,13 @@ const CHEAP_EVAL_COOLDOWN_MS = 10 * 60_000
 // 隧道 churn 同源),那是瞬时错误,该走短冷却自愈,不能误判成登录过期。
 const CHEAP_EVAL_AUTH_COOLDOWN_MS = 60 * 60_000
 /** 冷却时长这类内部决策用**窄档** —— 只认结构化码,不让厂商散文带偏。
- *  词汇来自 lib/auth-failure。导出还为了诊断采集如实调用它本体。 */
+ *  先看边界挂在抛出物上的 provider 码(arch backlog #4 第 2 步:`auth_failed` /
+ *  `auth_rejected` 都是要主人动手的认证失败,不会自愈);有码但不是认证 ⇒ 不是。
+ *  没码才回退到 `auth_failed:` 前缀(词汇来自 lib/auth-failure)。
+ *  导出还为了诊断采集如实调用它本体。 */
 export function isAuthError(err: unknown): boolean {
+  const code = providerErrorCodeOf(err)
+  if (code) return isAuthErrorCode(code)
   return err instanceof Error && hasAuthCode(err.message)
 }
 
