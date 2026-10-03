@@ -14,6 +14,7 @@ it('offers task-scoped model recovery and keeps exact diagnostics collapsed and 
   expect(source.open).toBe(false);expect(source.querySelector('code')!.textContent).toBe(raw)
   expect(source.querySelector('script,strong,a')).toBeNull()
   expect(document.querySelector('[data-action="choose-task-model"]')?.textContent).toBe('为这件事选择模型')
+  expect(document.querySelector('.wb-error')?.textContent).toBe('为这件事选择模型')
   expect(renderMessageFor(workbenchMessageContext(state))({...event,kind:'text'})).not.toContain('wb-error-diagnostic')
 })
 it('opens real model controls and only reads the native catalog, without resending or changing defaults',async()=>{
