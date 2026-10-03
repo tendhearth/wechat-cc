@@ -109,7 +109,7 @@ describe('LiveBackend 提交', () => {
     const input = { id: SAY_REQ, taskId: ID, runId: RUN, text: '**补充**', status: 'pending' }
     const { b, reqs } = harness({ 'POST /m/api/matter/say': ({ body }) => body.runId ? ok({ ok: true, result: { kind: 'task', task: WB_TASK, input } }) : ok({ ok: true, result: { kind: 'chat', reply: 'reply' } }) })
     expect(await b.say(ID, '**补充**', SAY_REQ, { runId: RUN })).toMatchObject({ kind: 'task', task: { id: ID, status: 'queued' }, input })
-    expect(reqs[0]).toMatchObject({ body: { id: ID, runId: RUN, text: '**补充**', requestId: SAY_REQ }, retry: true })
+    expect(reqs[0]).toMatchObject({ body: { id: ID, runId: RUN, text: '**补充**', requestId: SAY_REQ }, retry: false })
     expect(reqs[0]!.body).not.toHaveProperty('mode')
     expect(await b.say(ID, 'hi', SAY_REQ2)).toEqual({ kind: 'chat', reply: 'reply' })
     expect(reqs[1]!.body).not.toHaveProperty('runId')
@@ -137,7 +137,7 @@ describe('LiveBackend 提交', () => {
     const { b, reqs } = harness({ 'POST /m/api/matter/say': ok({ ok: true, result: { kind: 'chat', reply: 'ok' } }) })
     await b.say(ID, 'hi', SAY_REQ)
     await b.say(ID, 'hi', SAY_REQ)
-    expect(reqs[0]).toMatchObject({ body: { id: ID, text: 'hi', requestId: SAY_REQ }, retry: true })
+    expect(reqs[0]).toMatchObject({ body: { id: ID, text: 'hi', requestId: SAY_REQ }, retry: false })
     expect(reqs[1]?.body.requestId).toBe(SAY_REQ)
     await expect(b.say(ID, 'x'.repeat(20_001), SAY_REQ)).rejects.toMatchObject({ code: 'invalid' })
     expect(reqs).toHaveLength(2)
@@ -482,5 +482,26 @@ describe('跟 CC 说 / 连接 / 原生会话', () => {
     expect(await b.handoff({ id: 'cafebabe', requestId: REQ, providerId: 'codex' })).toEqual({ matterId: 'deadbeef' })
     expect(reqs.at(-1)).toMatchObject({ key: 'POST /m/api/matter/handoff', path: '/m/api/matter/handoff', body: { id: 'cafebabe', requestId: REQ, providerId: 'codex' }, retry: true })
     await expect(b.handoff({ id: 'cafebabe', requestId: REQ, providerId: 'gemini' })).rejects.toMatchObject({ code: 'handoff_changed' })
+  })
+})
+
+describe('durable single input receipt', () => {
+  it('queries the exact task/request with GET only, retaining optional reason and old-server missing semantics', async () => {
+    const input = { id: SAY_REQ, taskId: ID, runId: RUN, text: '保留原文', status: 'held', error: 'process_closed' }
+    const found = harness({ 'GET /m/api/matter/input-receipt': ok({ ok: true, input }) })
+    expect(await found.b.matterInputReceipt(ID, SAY_REQ)).toEqual(input)
+    expect(found.reqs).toEqual([expect.objectContaining({ key: 'GET /m/api/matter/input-receipt', path: `/m/api/matter/input-receipt?id=${ID}&requestId=${SAY_REQ}`, body: undefined })])
+    for (const error of ['not_found', 'unsupported']) {
+      const missing = harness({ 'GET /m/api/matter/input-receipt': ok({ ok: false, error }, 404) })
+      expect(await missing.b.matterInputReceipt(ID, SAY_REQ)).toBeNull()
+      expect(missing.reqs.every(r => r.key.startsWith('GET '))).toBe(true)
+    }
+  })
+  it('a malformed receipt is never confirmation; revoke still closes the backend', async () => {
+    const malformed = harness({ 'GET /m/api/matter/input-receipt': ok({ ok: true, input: { id: SAY_REQ } }) })
+    await expect(malformed.b.matterInputReceipt(ID, SAY_REQ)).rejects.toMatchObject({ code: 'unknown' })
+    const revoked = harness({ 'GET /m/api/matter/input-receipt': ok({ ok: false, error: 'unauthorized' }, 401) })
+    await expect(revoked.b.matterInputReceipt(ID, SAY_REQ)).rejects.toMatchObject({ code: 'revoked' })
+    expect(revoked.b.connection().state).toBe('revoked')
   })
 })

@@ -114,6 +114,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   /** 读时按请求的语言出一份拷贝:标题、事件、未处理的种子问题都换成 l。状态(已批准 / 已回答 / 阶段)在 e 里,不因语言变。 */
   function localize(e: Entry, l: Lang): MatterDetailT {
     const d = structuredClone(e.detail)
+    d.inputs.reverse() // match daemon's recent receipt list (newest first)
     d.events = e.evs.map(r => ({ kind: r.kind, createdAt: r.createdAt, text: r.key ? t(l, r.key) + (r.extra ?? '') : (r.text ?? '') }))
     const title = titleOf(e, l)
     d.matter.title = title
@@ -200,6 +201,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     async matters(l) { noteLang(l); return list().map(e => localize(e, l).matter).sort((a, b) => b.updatedAt - a.updatedAt) },
     async matter(id, l) { noteLang(l); return localize(get(id), l) },
+    async matterInputReceipt(id, requestId) { return get(id).detail.inputs.find(row => row.id === requestId) ?? null },
     async insight(id, l) {
       noteLang(l)
       const e = get(id)

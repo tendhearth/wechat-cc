@@ -14,7 +14,7 @@ export function InputReceipts({ rows, onRestore, onRetry, disabled }: {
 }) {
   const lang = useLang()
   return <View style={{ gap: space.m }}>
-    {rows.slice(-3).map(row => (
+    {rows.map(row => (
       <View key={row.requestId} testID={`input-receipt-${row.requestId}`} style={{ gap: space.xs }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s }}>
           <Dot kind={row.status === 'delivered' ? 'ok' : row.status === 'refused' || row.status === 'failed' ? 'bad' : row.status === 'held' ? 'warn' : 'unknown'} size={8} />

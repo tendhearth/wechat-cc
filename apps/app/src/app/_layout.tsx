@@ -4,6 +4,7 @@ import { StatusBar } from 'expo-status-bar'
 import { View } from 'react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { credentials } from '../net/secure-store'
+import { inputJournal } from '../net/input-journal-native'
 import { pushForget } from '../push/native'
 import { PushProvider } from '../push/PushProvider'
 import { PushRouter } from '../push/PushRouter'
@@ -19,7 +20,7 @@ import { fontGate } from '../ui/type'
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
-      <SessionProvider store={credentials} push={pushForget}>
+      <SessionProvider store={credentials} push={pushForget} inputs={inputJournal}>
         <Themed />
       </SessionProvider>
     </SafeAreaProvider>
@@ -34,7 +35,7 @@ function Themed() {
   const theme = { ...DefaultTheme, colors: { ...DefaultTheme.colors, background: c.paper, card: c.paper, text: c.ink, border: c.hair, primary: c.accent } }
   if (!session.ready || fontGate(loaded, error) === 'wait') return <View style={{ flex: 1, backgroundColor: c.paper }} />
   return (
-    <BackendProvider lang={lang} pairing={session.pairing} onRevoked={session.dropStoredPairing} onStale={session.forgetStale}>
+    <BackendProvider lang={lang} pairing={session.pairing} inputScope={session.inputScope} onRevoked={session.dropStoredPairing} onStale={session.forgetStale}>
       <PushProvider>
         <ThemeProvider value={theme}>
           <StatusBar style="dark" />
