@@ -54,7 +54,7 @@ describe('makeLlmHealth', () => {
     expect(by['agy']).not.toHaveProperty('hint')
     expect(by['agyCoded']).toMatchObject({ ok: false, auth_failed: false, code: 'network' })
     expect(by['openai']).toMatchObject({ ok: false, auth_failed: true, code: 'auth_rejected' })
-    expect((by['openai'] as { hint: string }).hint).not.toMatch(/登录/)
+    expect((by['openai'] as unknown as { hint: string }).hint).not.toMatch(/登录/)
     expect(by['claude']).toMatchObject({ ok: false, auth_failed: true, code: 'auth_failed', hint: '请重新登录一次' })
     // 码说「限流」⇒ 不是认证,哪怕正文里有 401。
     expect(by['codex']).toMatchObject({ ok: false, auth_failed: false, code: 'rate_limited' })
