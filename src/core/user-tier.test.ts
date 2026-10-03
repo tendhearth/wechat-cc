@@ -98,7 +98,7 @@ describe('TIER_PROFILES', () => {
     expect(TIER_PROFILES.trusted.relay.has('memory_delete')).toBe(true)
     // trusted denies all admin-exclusive tools (was 0 before
     // self-diagnosis / remediation / plugin tools existed).
-    expect(TIER_PROFILES.trusted.deny.size).toBe(12)
+    expect(TIER_PROFILES.trusted.deny.size).toBe(13) // +message_other(回复交付 §4.6)
     expect(TIER_PROFILES.trusted.deny.has('daemon_introspect')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('daemon_remediate')).toBe(true)
     expect(TIER_PROFILES.trusted.deny.has('file_locate')).toBe(true)
@@ -467,5 +467,25 @@ describe('social_act tier kind (social-tools 2026-09-05)', () => {
     expect(TIER_PROFILES.trusted.allow.has('social_act')).toBe(false)
     expect(TIER_PROFILES.guest.deny.has('social_act')).toBe(true)
     expect(TIER_PROFILES.guest.allow.has('social_act')).toBe(false)
+  })
+})
+
+describe('回复交付的新工具(spec 2026-10-03 §4.5 / §4.6)', () => {
+  it('voice / sticker 是附件,和 reply 同级(访客也能用)', () => {
+    expect(classifyToolUse('mcp__wechat__voice', {})).toBe('reply')
+    expect(classifyToolUse('mcp__wechat__sticker', {})).toBe('reply')
+    expect(TIER_PROFILES.guest.allow.has('reply')).toBe(true)
+  })
+
+  it('attach_file 读本机文件再发出去:访客不行', () => {
+    expect(classifyToolUse('mcp__wechat__attach_file', {})).toBe('fs_read')
+    expect(TIER_PROFILES.guest.deny.has('fs_read')).toBe(true)
+  })
+
+  it('message(往别处发)只给 admin', () => {
+    expect(classifyToolUse('mcp__wechat__message', {})).toBe('message_other')
+    expect(TIER_PROFILES.admin.allow.has('message_other')).toBe(true)
+    expect(TIER_PROFILES.trusted.deny.has('message_other')).toBe(true)
+    expect(TIER_PROFILES.guest.deny.has('message_other')).toBe(true)
   })
 })

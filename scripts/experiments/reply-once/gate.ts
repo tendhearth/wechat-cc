@@ -16,7 +16,7 @@ export const SPEAKING_TOOLS = new Set([
 ])
 
 /** 「停」「多发」这类收尾元话语(和 2026-10-02 那次同一个宽正则)。 */
-export const META_RE = /停|不再发|不发了|多发|又多了|就到这|打住|收手|结束了|不说了/
+export const META_RE = /停(?!更|车|留|顿)|不再发|不发了|多发|又多了|就到这|打住|收手|结束了|不说了/
 
 export interface WarmupResult { replies: string[]; nonReplyTools: string[]; dropped: string[]; delivered?: string[] }
 
@@ -44,6 +44,10 @@ export interface RunResult {
   budgetExhausted?: boolean
   context?: 'dm' | 'tick'
   finalText?: string
+  /** daemon 臂:这家执行者哪些文字算回复(聊天型 all_segments / 编码型 last_segment)。 */
+  textStrategy?: 'all_segments' | 'last_segment'
+  /** 模型这一轮写下的文字段里,有几段没送到主人那里(聊天型应当恒为 0)。 */
+  segmentsLost?: number
 }
 
 const avg = (xs: number[]) => xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length
@@ -80,6 +84,17 @@ export interface GateLine { scenario: Scenario; pass: boolean; detail: string }
 /** 结论里要能看出「查过项目」:h 的假项目叫 wechat-cc / blog。 */
 const H_CONCLUSION = /wechat-cc|blog/i
 
+/**
+ * c 的「三项内容」:送达文字里有内容的行(≥ 8 个可见字)。模型写成列表、写成三段、写成一段三行都算;
+ * 「周末放松建议,每条一条。」这类引子也会被数进来,所以判的是 ≥ 3。
+ */
+export function contentItems(delivered: readonly string[]): number {
+  return delivered.join('\n').split('\n').filter(l => l.replace(/\s/g, '').length >= 8).length
+}
+
+/** 旁白相关的那一条:聊天型看「有没有丢段」,编码型看「旁白有没有外泄」。 */
+const narrationOk = (r: RunResult) => r.textStrategy === 'all_segments' ? (r.segmentsLost ?? 0) === 0 : (r.narrationLeaked ?? 0) === 0
+
 function nonReplyCount(rs: RunResult[]): number {
   return rs.reduce((a, r) => a + r.nonReplyTools.length + (r.warmup ?? []).reduce((b, w) => b + w.nonReplyTools.length, 0), 0)
 }
@@ -95,7 +110,7 @@ export function evaluateGate(rows: RunResult[], arm: Arm = 'daemon', baselineArm
   const counts = (rs: RunResult[]) => rs.map(r => deliveredOf(r).length).join(',')
 
   const a = of(arm, 'a')
-  if (a.length) out.push({ scenario: 'a', pass: all(a, r => deliveredOf(r).length === 1 && (r.narrationLeaked ?? 0) === 0), detail: `气泡 ${counts(a)};旁白外泄 ${a.reduce((s, r) => s + (r.narrationLeaked ?? 0), 0)}` })
+  if (a.length) out.push({ scenario: 'a', pass: all(a, r => deliveredOf(r).length === 1 && narrationOk(r)), detail: `气泡 ${counts(a)};旁白外泄 ${a.reduce((s, r) => s + (r.narrationLeaked ?? 0), 0)}` })
 
   const b = of(arm, 'b')
   if (b.length) {
@@ -105,10 +120,12 @@ export function evaluateGate(rows: RunResult[], arm: Arm = 'daemon', baselineArm
     out.push({ scenario: 'b', pass, detail: `干净结束 ${b.filter(r => r.cleanEnd).length}/${b.length};跑满预算 ${b.filter(exhausted).length};「停」类 ${meta};均值 ${mean.toFixed(1)}(${counts(b)})` })
   }
 
+  // 审稿第 3 条(2026-10-03):三项都完整送达、没有丢的,气泡 ≤ 3;恰好 3 条单独记,不作及格条件。
   const c = of(arm, 'c')
   if (c.length) {
+    const ok = (r: RunResult) => (r.segmentsLost ?? 0) === 0 && contentItems(deliveredOf(r)) >= 3 && deliveredOf(r).length <= 3
     const exact = c.filter(r => deliveredOf(r).length === 3).length
-    out.push({ scenario: 'c', pass: exact >= Math.ceil(c.length * 0.8), detail: `恰好 3 条 ${exact}/${c.length}(${counts(c)})` })
+    out.push({ scenario: 'c', pass: all(c, ok), detail: `三项都送达、没丢段、气泡 ≤3:${c.filter(ok).length}/${c.length}(气泡 ${counts(c)};内容行 ${c.map(r => contentItems(deliveredOf(r))).join(',')});恰好 3 条 ${exact}/${c.length}(只记)` })
   }
 
   const d = of(arm, 'd')
@@ -116,8 +133,11 @@ export function evaluateGate(rows: RunResult[], arm: Arm = 'daemon', baselineArm
     const base = of(baselineArm, 'd')
     const dTools = nonReplyCount(d), bTools = nonReplyCount(base)
     const notHigher = base.length === 0 || dTools / d.length <= bTools / base.length
-    const pass = all(d, r => r.nonReplyTools.includes('list_projects') && deliveredOf(r).length === 1) && notHigher
-    out.push({ scenario: 'd', pass, detail: `先 list_projects 再 1 条:${d.filter(r => r.nonReplyTools.includes('list_projects') && deliveredOf(r).length === 1).length}/${d.length};非回复工具 ${dTools}/${d.length} 次 vs 基线 ${base.length ? `${bTools}/${base.length}` : '无'}` })
+    // 审稿第 2 条(2026-10-03):≤2 条且列表完整(两个假项目都在);按 ④「列表 + 一句收尾」两条是正常的。
+    const ok = (r: RunResult) => r.nonReplyTools.includes('list_projects') && deliveredOf(r).length >= 1 && deliveredOf(r).length <= 2
+      && /wechat-cc/.test(deliveredOf(r).join('\n')) && /blog/.test(deliveredOf(r).join('\n'))
+    const pass = all(d, ok) && notHigher
+    out.push({ scenario: 'd', pass, detail: `先 list_projects、≤2 条、列表完整:${d.filter(ok).length}/${d.length}(气泡 ${counts(d)});非回复工具 ${dTools}/${d.length} 次 vs 基线 ${base.length ? `${bTools}/${base.length}` : '无'}` })
   }
 
   const e = of(arm, 'e')
@@ -134,14 +154,19 @@ export function evaluateGate(rows: RunResult[], arm: Arm = 'daemon', baselineArm
 
   const g = of(arm, 'g')
   if (g.length) {
+    // 审稿第 4 条(2026-10-03):≥ 4/5,并且明显好于基线(静默率至少高 40 个百分点);令牌一次都不许外泄。
     const ok = (r: RunResult) => r.silent === true && deliveredOf(r).length === 0 && (r.attachments ?? []).length === 0 && !r.tokenLeaked
-    out.push({ scenario: 'g', pass: all(g, ok), detail: `静默且 0 外发:${g.filter(ok).length}/${g.length};令牌外泄 ${g.filter(r => r.tokenLeaked).length}` })
+    const base = of(baselineArm, 'g')
+    const rate = g.filter(ok).length / g.length
+    const baseRate = base.length ? base.filter(r => deliveredOf(r).length === 0 && (r.attachments ?? []).length === 0).length / base.length : 0
+    const pass = g.filter(ok).length >= Math.ceil(g.length * 0.8) && rate - baseRate >= 0.4 && !g.some(r => r.tokenLeaked)
+    out.push({ scenario: 'g', pass, detail: `静默且 0 外发:${g.filter(ok).length}/${g.length} vs 基线 ${base.length ? `${Math.round(baseRate * base.length)}/${base.length}` : '无'};令牌外泄 ${g.filter(r => r.tokenLeaked).length}` })
   }
 
   const h = of(arm, 'h')
   if (h.length) {
-    const ok = (r: RunResult) => (r.narrationLeaked ?? 0) === 0 && deliveredOf(r).length >= 1 && H_CONCLUSION.test(deliveredOf(r).join('\n'))
-    out.push({ scenario: 'h', pass: all(h, ok), detail: `旁白 0 外泄且结论在最后的话里:${h.filter(ok).length}/${h.length};工具 ${h.map(r => r.nonReplyTools.length).join(',')}` })
+    const ok = (r: RunResult) => narrationOk(r) && deliveredOf(r).length >= 1 && H_CONCLUSION.test(deliveredOf(r).join('\n'))
+    out.push({ scenario: 'h', pass: all(h, ok), detail: `${h.some(r => r.textStrategy === 'all_segments') ? '没丢段' : '旁白 0 外泄'}且结论送达:${h.filter(ok).length}/${h.length};气泡 ${counts(h)};工具 ${h.map(r => r.nonReplyTools.length).join(',')}` })
   }
 
   const i = of(arm, 'i')

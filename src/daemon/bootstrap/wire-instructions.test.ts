@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import * as capabilityMatrix from '../../core/capability-matrix'
 import { Ref } from '../../lib/lifecycle'
 import { TIER_PROFILES } from '../../core/user-tier'
 import { wireInstructions } from './wire-instructions'
@@ -32,5 +33,24 @@ describe('wireInstructions', () => {
     const build = wireInstructions({ ...deps(), stickerTagsFor: () => [] }, parts(ref))
     expect(build('claude', TIER_PROFILES.guest, 'c')).not.toContain('search_online_sticker_candidates')
     expect(build('claude', TIER_PROFILES.admin, 'c')).toContain('search_online_sticker_candidates')
+  })
+})
+
+describe('wireInstructions × 回复交付(spec 2026-10-03 §4.11)', () => {
+  afterEach(() => vi.restoreAllMocks())
+  const build = () => { const ref = new Ref<boolean>('socialWired'); ref.set(false); return wireInstructions(deps(), parts(ref)) }
+
+  it('provider 走 daemon ⇒ final_text 版(不教 reply,讲「最后的话」);admin 才提 message', () => {
+    vi.spyOn(capabilityMatrix, 'replyDeliveryFor').mockImplementation(p => p === 'openai' ? 'daemon' : 'legacy')
+    const admin = build()('openai', TIER_PROFILES.admin, 'c')
+    expect(admin).toContain('按顺序发给对方') // openai 是聊天型(all_segments)
+    expect(admin).not.toContain('`reply(chat_id, text)`')
+    expect(admin).toContain('`message(to, text)`')
+    expect(build()('openai', TIER_PROFILES.trusted, 'c')).not.toContain('`message(to, text)`')
+  })
+
+  it('legacy / shadow ⇒ 照旧教 reply', () => {
+    vi.spyOn(capabilityMatrix, 'replyDeliveryFor').mockReturnValue('shadow')
+    expect(build()('openai', TIER_PROFILES.admin, 'c')).toContain('`reply(chat_id, text)`')
   })
 })

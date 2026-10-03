@@ -39,8 +39,8 @@ describe('splitBubbles — 模型空行分段,daemon 照段分条(已定 ④)', 
   })
 
   it('未闭合的围栏吞到结尾,不切', () => {
-    const t = '看这段代码就明白了:\n\n```py\nprint(1)\n\nprint(2)'
-    expect(splitBubbles(t)).toEqual(['看这段代码就明白了:', '```py\nprint(1)\n\nprint(2)'])
+    const t = '先说一句足够长的开场白。\n\n```py\nprint(1)\n\nprint(2)'
+    expect(splitBubbles(t)).toEqual(['先说一句足够长的开场白。', '```py\nprint(1)\n\nprint(2)'])
   })
 
   it('单段超过约 300 字 ⇒ 按句末切', () => {
@@ -50,6 +50,16 @@ describe('splitBubbles — 模型空行分段,daemon 照段分条(已定 ④)', 
     expect(out.length).toBeGreaterThan(1)
     expect(out.join('')).toBe(long)
     for (const b of out) expect(b.endsWith('。')).toBe(true)
+  })
+
+  it('以冒号结尾的引导段和后面那段是一个意思,不拆开(「你有两个项目:」+ 列表)', () => {
+    expect(splitBubbles('你目前注册了两个项目：\n\n- wechat-cc(当前)\n- blog\n\n要切换的话跟我说一声就行。'))
+      .toEqual(['你目前注册了两个项目：\n\n- wechat-cc(当前)\n- blog', '要切换的话跟我说一声就行。'])
+  })
+
+  it('同一个列表的各项之间有空行(带缩进子项)也不拆', () => {
+    expect(splitBubbles('项目：\n\n1. **wechat-cc**\n   - 当前\n\n2. **blog**\n   - 停更\n\n建议先推进 wechat-cc,这周有交付窗口。'))
+      .toEqual(['项目：\n\n1. **wechat-cc**\n   - 当前\n\n2. **blog**\n   - 停更', '建议先推进 wechat-cc,这周有交付窗口。'])
   })
 
   it('split=false ⇒ 一整条', () => {

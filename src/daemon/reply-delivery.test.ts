@@ -275,3 +275,21 @@ describe('makeReplyDeliveryRuntime — 一轮的句柄', () => {
     expect(() => rt.observeLegacy('c1', 'x')).not.toThrow()
   })
 })
+
+describe('deliverTurnReply — 聊天型模型的多段(每段按 ④ 各自分条)', () => {
+  it('segments 依次交付,每段各自分条;旁听拿到的是拼起来的原文', async () => {
+    const observe = vi.fn()
+    const h = harness({ observe })
+    const r = await deliverTurnReply({ chatId: 'c1', reply: reply('第一段的意思在这里\n\n第二段 A 的意思在这里\n\n第二段 B 的意思在这里', { segments: ['第一段的意思在这里', '第二段 A 的意思在这里\n\n第二段 B 的意思在这里'] }), attachments: [], context: 'dm' }, h.deps)
+    expect(h.sent).toEqual(['第一段的意思在这里', '第二段 A 的意思在这里', '第二段 B 的意思在这里'])
+    expect(r.bubbles).toBe(3)
+    expect(observe).toHaveBeenCalledTimes(1)
+  })
+
+  it('句柄:begin 时声明 textStrategy=all_segments ⇒ 工具前说的话也送达', async () => {
+    const h = harness()
+    const rt = makeReplyDeliveryRuntime(h.deps)
+    await rt.begin('c1', { mode: 'daemon', context: 'dm', providerId: 'openai', textStrategy: 'all_segments' }).deliver({ finalText: '第三条:早点睡觉吧', narration: ['第一条:出门走走晒太阳', '第二条:做一顿好吃的'] })
+    expect(h.sent).toEqual(['第一条:出门走走晒太阳', '第二条:做一顿好吃的', '第三条:早点睡觉吧'])
+  })
+})

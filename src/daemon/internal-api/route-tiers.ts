@@ -65,6 +65,11 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // guest — liveness + read/reply
   'GET /v1/health': 'guest',
   'POST /v1/wechat/reply': 'guest',
+  // 回复交付(spec 2026-10-03 §4.5):语音 / 表情附件与 reply 同级;文件附件在 handler 里再收紧到 trusted
+  // (与 send_file 同级)。目标永远是会话令牌里的 chat,不收 chat_id。
+  'POST /v1/turn/attach': 'guest',
+  // §4.6:往别处发(别的聊天 / 主人微信 / 群发)只给 admin;trusted / guest 根本不注册这个工具。
+  'POST /v1/wechat/message': 'admin',
   'POST /v1/wechat/reply_voice': 'guest',
   'POST /v1/memory/read': 'guest',
   'GET /v1/memory/list': 'guest',

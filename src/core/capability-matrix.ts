@@ -22,7 +22,7 @@
  */
 // src/core/capability-matrix.ts
 
-import type { ReplyDeliveryMode } from './turn-reply'
+import type { ReplyDeliveryMode, ReplyTextStrategy } from './turn-reply'
 import type { Mode, ProviderId } from './conversation'
 import type { ProviderCapabilities, PermissionMode } from './agent-provider'
 import { CLAUDE_CAPABILITIES } from './claude-agent-provider'
@@ -135,7 +135,22 @@ export function capabilitiesFor(provider: ProviderId): ProviderCapabilities {
  * provider** 的这个值走。没声明或没注册能力表 ⇒ legacy(今天的路,fail safe)。
  */
 export function replyDeliveryFor(provider: ProviderId): ReplyDeliveryMode {
-  return CAPABILITIES_BY_PROVIDER[provider]?.replyDelivery ?? 'legacy'
+  return replyDeliveryOverrides?.[provider] ?? CAPABILITIES_BY_PROVIDER[provider]?.replyDelivery ?? 'legacy'
+}
+
+/**
+ * 运行时回滚开关(agent-config `reply_delivery`,2026-10-03):按 provider 覆盖上面的能力表默认值。
+ * daemon 开机时由 bootstrap 装一次(daemon/bootstrap/reply-delivery-config.ts),在任何 MCP spec / 提示词 /
+ * 协调器读开关之前 —— 所以全 daemon 看到的是同一个值。传 undefined 清掉。
+ */
+let replyDeliveryOverrides: Partial<Record<string, ReplyDeliveryMode>> | undefined
+export function setReplyDeliveryOverrides(overrides: Partial<Record<string, ReplyDeliveryMode>> | undefined): void {
+  replyDeliveryOverrides = overrides && Object.keys(overrides).length > 0 ? { ...overrides } : undefined
+}
+
+/** 这家执行者哪些文字算回复;没声明 ⇒ last_segment(spec 的原规则)。 */
+export function replyTextStrategyFor(provider: ProviderId): ReplyTextStrategy {
+  return CAPABILITIES_BY_PROVIDER[provider]?.replyText ?? 'last_segment'
 }
 
 /**

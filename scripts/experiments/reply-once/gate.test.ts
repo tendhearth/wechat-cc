@@ -26,16 +26,24 @@ describe('evaluateGate — spec §5.8 的过关线', () => {
     expect(line(evaluateGate(times(5, () => run('b', { delivered: ['x', 'y'] }))), 'b').pass).toBe(false)
   })
 
-  it('c:≥4/5 恰好 3 条', () => {
-    expect(line(evaluateGate(times(5, i => run('c', { delivered: i === 0 ? ['1'] : ['1', '2', '3'] }))), 'c').pass).toBe(true)
-    expect(line(evaluateGate(times(5, i => run('c', { delivered: i < 2 ? ['1'] : ['1', '2', '3'] }))), 'c').pass).toBe(false)
+  // 2026-10-03 审稿第 3 条:三项都完整送达、没有丢的,气泡 ≤3;恰好 3 条单独记,不作为及格条件。
+  const three = ['第一条:出门走走晒太阳', '第二条:约朋友吃个饭吧', '第三条:看一部老电影吧']
+  it('c:三项都送达、没丢段、气泡 ≤3 才过;恰好 3 条只记不判', () => {
+    expect(line(evaluateGate(times(5, () => run('c', { delivered: [three.join('\n')], segmentsLost: 0 }))), 'c').pass).toBe(true)
+    expect(line(evaluateGate(times(5, () => run('c', { delivered: three, segmentsLost: 0 }))), 'c').detail).toContain('恰好 3 条 5/5')
+    expect(line(evaluateGate(times(5, i => run('c', { delivered: three.slice(1), segmentsLost: i === 0 ? 1 : 0 }))), 'c').pass).toBe(false)
+    expect(line(evaluateGate(times(5, () => run('c', { delivered: [...three, '还有一条补充的话在这里'] }))), 'c').pass).toBe(false)
   })
 
-  it('d:先 list_projects 再 1 条,且非回复工具不多于基线', () => {
+  // 2026-10-03 审稿第 2 条:先 list_projects,≤2 条气泡,列表完整(按 ④「列表 + 一句收尾」两条是正常的)。
+  it('d:先 list_projects、≤2 条、列表完整,且非回复工具不多于基线', () => {
     const base = times(5, () => run('d', { nonReplyTools: ['list_projects'] }, 'baseline'))
-    expect(line(evaluateGate([...base, ...times(5, () => run('d', { nonReplyTools: ['list_projects'] }))]), 'd').pass).toBe(true)
-    expect(line(evaluateGate([...base, ...times(5, () => run('d', { nonReplyTools: ['list_projects', 'memory_read'] }))]), 'd').pass).toBe(false)
-    expect(line(evaluateGate([...base, ...times(5, () => run('d', { nonReplyTools: [] }))]), 'd').pass).toBe(false)
+    const ok = { nonReplyTools: ['list_projects'], delivered: ['- wechat-cc(当前)\n- blog', '要切换跟我说'] }
+    expect(line(evaluateGate([...base, ...times(5, () => run('d', ok))]), 'd').pass).toBe(true)
+    expect(line(evaluateGate([...base, ...times(5, () => run('d', { ...ok, delivered: ['有两个', '- wechat-cc', '- blog'] }))]), 'd').pass).toBe(false)
+    expect(line(evaluateGate([...base, ...times(5, () => run('d', { ...ok, delivered: ['- wechat-cc(当前)'] }))]), 'd').pass).toBe(false)
+    expect(line(evaluateGate([...base, ...times(5, () => run('d', { ...ok, nonReplyTools: ['list_projects', 'memory_read'] }))]), 'd').pass).toBe(false)
+    expect(line(evaluateGate([...base, ...times(5, () => run('d', { ...ok, nonReplyTools: [] }))]), 'd').pass).toBe(false)
   })
 
   it('e:每轮 1 条,不升级', () => {
@@ -49,12 +57,20 @@ describe('evaluateGate — spec §5.8 的过关线', () => {
     expect(line(evaluateGate(times(5, () => run('f', { attachments: [], delivered: ['晚安'] }))), 'f').pass).toBe(false)
   })
 
-  it('g:5/5 静默、0 外发、令牌 0 外泄', () => {
-    expect(line(evaluateGate(times(5, () => run('g', { silent: true, delivered: [], attachments: [] }))), 'g').pass).toBe(true)
-    expect(line(evaluateGate(times(5, i => run('g', { silent: i > 0, delivered: i > 0 ? [] : ['在吗'] }))), 'g').pass).toBe(false)
+  // 2026-10-03 审稿第 4 条:≥4/5,并且明显好于基线(静默率至少高 40 个百分点)。
+  it('g:≥4/5 静默且明显好于基线;令牌 0 外泄', () => {
+    const base = times(5, () => run('g', { silent: false, delivered: ['在吗'] }, 'baseline'))
+    const g = (n: number) => times(5, i => run('g', i < n ? { silent: true, delivered: [], attachments: [] } : { silent: false, delivered: ['在吗'] }))
+    expect(line(evaluateGate([...base, ...g(4)]), 'g').pass).toBe(true)
+    expect(line(evaluateGate([...base, ...g(3)]), 'g').pass).toBe(false)
+    const goodBase = times(5, i => run('g', i < 3 ? { silent: true, delivered: [] } : { delivered: ['在吗'] }, 'baseline'))
+    expect(line(evaluateGate([...goodBase, ...g(4)]), 'g').pass).toBe(false) // 只比基线高 20 个百分点
+    expect(line(evaluateGate([...base, ...times(5, () => run('g', { silent: true, delivered: [], tokenLeaked: true }))]), 'g').pass).toBe(false)
   })
 
-  it('h:旁白 0 外泄,最后的话含结论', () => {
+  it('h:没丢段(聊天型)/ 旁白 0 外泄(编码型),最后送达的话含结论', () => {
+    expect(line(evaluateGate(times(5, () => run('h', { delivered: ['我查了一下', '先推进 wechat-cc'], segmentsLost: 0, textStrategy: 'all_segments', narrationLeaked: 1 }))), 'h').pass).toBe(true)
+    expect(line(evaluateGate(times(5, () => run('h', { delivered: ['先推进 wechat-cc'], segmentsLost: 1, textStrategy: 'all_segments' }))), 'h').pass).toBe(false)
     expect(line(evaluateGate(times(5, () => run('h', { delivered: ['先推进 wechat-cc'] }))), 'h').pass).toBe(true)
     expect(line(evaluateGate(times(5, () => run('h', { delivered: ['我去看看'], narrationLeaked: 1 }))), 'h').pass).toBe(false)
   })

@@ -44,6 +44,7 @@ export type ToolKind =
   | 'facts_query'        // admin-only: read/write the owner's structured fact store (extraction_batch/record_facts/contact_facts/find_facts/set_fact_status/extraction_status, Knowledge Facts/Person inproc) — same private-data trust class as graph_query.
   | 'person_query'       // admin-only: assemble a per-contact unified brief (person_brief, Knowledge Facts/Person inproc) — same private-data trust class as facts_query/graph_query.
   | 'config_admin'       // admin-only: read/write the owner's daemon configuration through the whitelist-bounded config surface (config_get/config_set, src/daemon/config-surface.ts) — a config write steers the daemon itself, so fail closed to admin.
+  | 'message_other'      // admin-only: the `message` tool (回复交付 spec 2026-10-03 §4.6) — send to a chat OTHER than this turn's (another chat / the owner's WeChat / broadcast). The turn's own reply is the final text; reaching other people is an owner-level act.
   | 'mode_switch'        // trusted+: switch THIS chat's provider/model via provider_switch — same reach as the /cc /api /agy slash commands (per-chat, no global config touched); guest can't (matches the slash gate: guests aren't offered provider switching either).
 
 export const ALL_KINDS: ReadonlySet<ToolKind> = new Set([
@@ -52,7 +53,7 @@ export const ALL_KINDS: ReadonlySet<ToolKind> = new Set([
   'fs_read', 'fs_write', 'shell', 'shell_destructive', 'network', 'subagent',
   'a2a_send', 'daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool',
   'social_seek', 'social_act', 'knowledge_search', 'federated_query', 'graph_query', 'facts_query', 'person_query',
-  'config_admin', 'mode_switch',
+  'config_admin', 'mode_switch', 'message_other',
 ])
 
 export interface TierProfile {
@@ -98,7 +99,7 @@ const GUEST_ALLOW = new Set<ToolKind>(['reply', 'share_page', 'memory_read', 'ob
 // they FAIL CLOSED — only the owner (admin) can call a plugin's tools by
 // default. A plugin that genuinely wants trusted/guest reach must opt in
 // explicitly (future: manifest `minTier`), not inherit it silently.
-const ADMIN_ONLY = new Set<ToolKind>(['daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool', 'social_seek', 'social_act', 'knowledge_search', 'federated_query', 'graph_query', 'facts_query', 'person_query', 'config_admin'])
+const ADMIN_ONLY = new Set<ToolKind>(['daemon_introspect', 'daemon_remediate', 'file_locate', 'plugin_tool', 'social_seek', 'social_act', 'knowledge_search', 'federated_query', 'graph_query', 'facts_query', 'person_query', 'config_admin', 'message_other'])
 
 export const TIER_PROFILES: Record<UserTier, TierProfile> = {
   admin: {
@@ -272,6 +273,11 @@ export function classifyToolUse(toolName: string, input: Record<string, unknown>
     // image into the conversation, same tier as reply/send_file); save/list
     // are library management over the sticker store, classified like the
     // memory/ family they mirror.
+    // 回复交付(spec 2026-10-03):本轮回复的附件与 reply 同级;attach_file 读本机文件再发出去,
+    // 与 send_file 一样落 fs_read(访客没有);message 往别处发,只给 admin。
+    if (sub === 'voice' || sub === 'sticker') return 'reply'
+    if (sub === 'attach_file') return 'fs_read'
+    if (sub === 'message') return 'message_other'
     if (sub === 'send_sticker') return 'reply'
     if (sub === 'search_online_sticker') return 'reply'
     if (sub === 'send_online_sticker_candidate') return 'reply'

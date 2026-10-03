@@ -80,6 +80,7 @@ const TOOL_KIND_TO_CLAUDE_BUILTINS: Record<ToolKind, ReadonlyArray<string>> = {
   person_query: [],        // MCP-only (mcp__wechat__person_brief), admin-only, gated by canUseTool
   config_admin: [],        // MCP-only (mcp__wechat__config_get / config_set), admin-only, gated by canUseTool
   mode_switch: [],         // MCP-only (mcp__wechat__provider_switch), trusted+, gated by canUseTool
+  message_other: [],       // MCP-only (mcp__wechat__message, 回复交付 §4.6), admin-only, gated by canUseTool
 }
 
 export interface ClaudeTierSdkOpts {

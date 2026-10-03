@@ -28,8 +28,8 @@ import {
   parsePeerRank, aggregateRanking, formatRankingFooter, buildParallelSynthesisPrompt,
   type Opening, type Contention, type RankedSpeaker,
 } from './chatroom-conductor'
-import { assertSupported, capabilitiesFor, replyDeliveryFor, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
-import type { DeliveryKind, ReplyDeliveryMode, ReplyDeliveryPort, TurnDeliveryHandle } from './turn-reply'
+import { assertSupported, capabilitiesFor, replyDeliveryFor, replyTextStrategyFor, UnsupportedCombinationError, type PermissionMode } from './capability-matrix'
+import { buildTurnReply, makeTurnTextCollector, type DeliveryKind, type DeliveryReport, type ReplyDeliveryMode, type ReplyDeliveryPort, type ReplyTextStrategy, type TurnDeliveryHandle } from './turn-reply'
 import { collectTurn, TURN_TIMEOUT_CODE, type AgentEvent, type TurnSummary } from './agent-provider'
 import { isAuthErrorCode, providerErrorCodeOf } from '../lib/provider-error-code'
 import { resolveEffectiveTier, resolveTier, TIER_PROFILES, type TierProfile } from './user-tier'
@@ -46,6 +46,11 @@ import { makeChatMutex } from './async-mutex'
  * (e.g. in tests) still wins.
  */
 const CHATROOM_BEAT_TIMEOUT_MS = 120_000
+
+/** 已定 ①:一轮超过 120 秒还没结束,daemon 发一次进度(微信里;app 那头本来就看得见旁白)。 */
+const LONG_TURN_PROGRESS_MS = 120_000
+/** 还没写过任何旁白时的进度文案。 */
+export const LONG_TURN_PROGRESS = '还在弄,有点久,好了告诉你'
 
 /**
  * Structured, per-turn outcome record — the AI-native observability surface.
@@ -173,6 +178,16 @@ export interface ConversationCoordinatorDeps {
   replyDelivery?: ReplyDeliveryPort
   /** 每家 provider 的交付模式;缺省读 capability-matrix 的 `replyDeliveryFor`。测试 / 实验可以注入。 */
   replyDeliveryModeFor?: (providerId: ProviderId) => ReplyDeliveryMode
+  /** 每家 provider 哪些文字算回复;缺省读能力表的 `replyTextStrategyFor`。测试注入。 */
+  replyTextStrategyFor?: (providerId: ProviderId) => ReplyTextStrategy
+  /**
+   * daemon 模式下「应答轮交付为空」的连击(spec §4.10,取代 FALLBACK 连击):私聊 / app 一轮 completed 但
+   * 什么都没交付(空文字、没附件)或写了 NO_REPLY ⇒ +1;正常交付 ⇒ 0。bootstrap 记进 /mode 并在 ≥3 时打
+   * [PROVIDER_ANOMALY]。
+   */
+  onEmptyReplyStreak?: (providerId: ProviderId, streak: number) => void
+  /** 长任务进度的阈值(已定 ①,默认 120 秒):一轮超过它还没结束,daemon 发一次进度。测试注入小值。 */
+  replyProgressAfterMs?: number
   /**
    * Optional `fields` arg lands in the JSONL sidecar (channel.log.jsonl)
    * for programmatic consumers. Stubs that don't care can ignore it
@@ -360,12 +375,25 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
   const handoffLedger = makeHandoffLedger()
   // 每家 provider 连续走 fallback 的轮数(见 deps.onFallbackStreak)。
   const fallbackStreak = new Map<ProviderId, number>()
+  // 每家 provider 连续「应答轮交付为空」的轮数(daemon 模式,见 deps.onEmptyReplyStreak)。
+  const emptyReplyStreak = new Map<ProviderId, number>()
+  const noteDelivery = (providerId: ProviderId, delivery: DeliveryKind): void => {
+    const empty = delivery === 'empty' || delivery === 'silent'
+    const prev = emptyReplyStreak.get(providerId) ?? 0
+    if (!empty) {
+      if (prev > 0) { emptyReplyStreak.set(providerId, 0); deps.onEmptyReplyStreak?.(providerId, 0) }
+      return
+    }
+    emptyReplyStreak.set(providerId, prev + 1)
+    deps.onEmptyReplyStreak?.(providerId, prev + 1)
+  }
   /** 系统通知走 sendNotice(没接就退回 sendAssistantText)—— 与 agent 的话分家(spec §4.3)。 */
   const notice = (chatId: string, text: string): Promise<void> | undefined =>
     (deps.sendNotice ?? deps.sendAssistantText)?.(chatId, text)
   /** 这一轮这家 provider 的交付模式。没有端口 ⇒ 只能 legacy。 */
   const deliveryModeFor = (providerId: ProviderId): ReplyDeliveryMode =>
     deps.replyDelivery ? (deps.replyDeliveryModeFor ?? replyDeliveryFor)(providerId) : 'legacy'
+  const textStrategyFor = (providerId: ProviderId): ReplyTextStrategy => (deps.replyTextStrategyFor ?? replyTextStrategyFor)(providerId)
   function defaultMode(): Mode {
     return { kind: 'solo', provider: deps.defaultProviderId }
   }
@@ -668,6 +696,11 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     // 回复交付 shadow(spec §5.1 第 3 项):照旧走 legacy,另外把「按新路会发什么」与 legacy 实际
     // 发出去的比一比,只记日志。从 dispatch 开始前就开着,reply 路由 / fallback 发出的每一条才旁听得到。
     let shadow: TurnDeliveryHandle | undefined
+    // 回复交付 daemon(spec §4.3):最后的话经端口送达;report 落进 TurnRecord。
+    let delivery: TurnDeliveryHandle | undefined
+    let report: DeliveryReport | undefined
+    let deliverySettled = false
+    let progressTimer: ReturnType<typeof setTimeout> | undefined
     try {
       // Per-chat model pin lives on the solo mode row; only solo carries it.
       const cur = getMode(msg.chatId)
@@ -727,18 +760,36 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
           deps.log?.('HANDOFF', `chat=${msg.chatId} cold-start ${providerId} recent=${recent.length}`)
         }
       }
-      if (deliveryModeFor(providerId) === 'shadow') {
-        try { shadow = deps.replyDelivery!.begin(msg.chatId, { mode: 'shadow', context: 'dm', providerId }) } catch { shadow = undefined }
+      const deliveryMode = deliveryModeFor(providerId)
+      if (deliveryMode === 'shadow') {
+        try { shadow = deps.replyDelivery!.begin(msg.chatId, { mode: 'shadow', context: 'dm', providerId, textStrategy: textStrategyFor(providerId) }) } catch { shadow = undefined }
       }
-      summary = await oneTurnPerSession(msg.chatId, proj.alias, providerId, () => collectTurn(handle.dispatch(text), { timeoutMs: deps.turnTimeoutMs, onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) }))
+      // daemon:开轮(附件从此刻起登记到这一轮)。编码型执行者(last_segment)挂上长任务进度(已定 ①:
+      // 一轮最多一次,有旁白用最近一段);聊天型模型(all_segments)每段都会交付,不发进度。
+      const textStrategy = textStrategyFor(providerId)
+      const live = deliveryMode === 'daemon' ? makeTurnTextCollector() : undefined
+      if (deliveryMode === 'daemon') {
+        delivery = deps.replyDelivery!.begin(msg.chatId, { mode: 'daemon', context: 'dm', providerId, textStrategy })
+      }
+      if (delivery && textStrategy === 'last_segment') {
+        const d = delivery
+        progressTimer = setTimeout(() => {
+          progressTimer = undefined
+          void d.progress(live!.latestSegment() ?? LONG_TURN_PROGRESS).catch(() => {})
+        }, deps.replyProgressAfterMs ?? LONG_TURN_PROGRESS_MS)
+      }
+      summary = await oneTurnPerSession(msg.chatId, proj.alias, providerId, () => collectTurn(handle.dispatch(text), { timeoutMs: deps.turnTimeoutMs, onEvent: (ev) => { live?.push(ev); deps.onTurnEvent?.(msg.chatId, ev) } }))
+      if (progressTimer) { clearTimeout(progressTimer); progressTimer = undefined }
       const assistantTexts = summary.assistantText
       const replyToolCalled = summary.replyToolCalled
+      const settle = (reason: string) => { if (delivery && !deliverySettled) { deliverySettled = true; delivery.abandon(reason) } }
 
       // Per-turn watchdog fired: the SDK stream went silent. Discard the
       // wedged session and tell the user to retry — must come before the
       // fallback-text path so a stalled turn never leaks a partial reply.
       if (summary.errorCode === TURN_TIMEOUT_CODE) {
         outcome = 'timeout'
+        settle('timeout')
         await handleTurnTimeout(msg.chatId, proj.alias, providerId, summary)
         return
       }
@@ -749,11 +800,26 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // failure text to the user.
       if (isAuthErrorCode(summary.errorCode)) {
         outcome = 'auth_failed'
+        settle('auth_failed')
         await handleAuthFailed(msg.chatId, proj.alias, providerId, summary)
         return
       }
 
       outcome = summary.error ? 'error' : 'completed'
+
+      // 回复交付 daemon(spec §4.2 末段 / §4.3):只有 completed 的轮交付最后的话;出错一律只发通知、
+      // 不发残文(与 #190「错误不许当回复发」同一条红线)。没有 FALLBACK_REPLY:有文字没调工具是正常路径。
+      if (delivery) {
+        if (outcome !== 'completed') {
+          settle('error')
+          await notice(msg.chatId, turnErrorNotice(providerId, summary.error, summary.errorCode))
+          return
+        }
+        deliverySettled = true
+        report = await delivery.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
+        noteDelivery(providerId, report.delivery)
+        return
+      }
 
       // Generic-error silence guard (2026-08-25): a turn that died with an
       // error, called no reply tool and produced no assistant text used to
@@ -787,6 +853,8 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       }
     } finally {
       unregisterCancel?.()
+      if (progressTimer) clearTimeout(progressTimer)
+      if (delivery && !deliverySettled) { deliverySettled = true; try { delivery.abandon(outcome) } catch { /* 记账不影响回合 */ } }
       // shadow 只是记账:绝不能影响这一轮(抛错就地吞掉)。只有 completed 的轮才比 —— 新路也只交付那些。
       if (shadow) {
         try {
@@ -811,6 +879,12 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         textChunks: summary?.assistantText.length ?? 0,
         error: summary?.error,
         errorCode: summary?.errorCode,
+        ...(report ? {
+          delivery: report.delivery,
+          bubbles: report.bubbles,
+          attachments: report.attachmentsSent,
+          narrationSegments: summary?.narration?.length ?? 0,
+        } : {}),
       })
     }
   }
@@ -1026,6 +1100,13 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
     )
     const text = deps.format(msg)
     const startedAt = nowMs()
+    // 回复交付 daemon:这家参与者的最后的话经端口送达(前缀 [名字] 由 daemon 加);开轮在 dispatch 之前,
+    // 附件才登记得上。legacy 的参与者照旧每段一条。
+    const deliveries = acquired.map((a, i) => {
+      if (a.status !== 'fulfilled' || deliveryModeFor(participants[i]!) !== 'daemon') return undefined
+      const dn = deps.registry.get(participants[i]!)?.opts.displayName ?? participants[i]!
+      return deps.replyDelivery!.begin(msg.chatId, { mode: 'daemon', context: 'parallel', providerId: participants[i]!, participantLabel: dn, textStrategy: textStrategyFor(participants[i]!) })
+    })
     // Register every acquired handle's cancel BEFORE dispatching — /stop must
     // reach whichever participants are in flight, not just the first. Each
     // handle gets its own slot in the shared per-chat set (dispatchSolo's
@@ -1079,6 +1160,8 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         errorCode: recSummary?.errorCode,
       })
 
+      const turnDelivery = deliveries[i]
+      if (turnDelivery && (r.status === 'rejected' || r.value.error)) turnDelivery.abandon(r.status === 'rejected' ? 'threw' : (r.value.errorCode ?? 'error'))
       if (r.status === 'rejected') {
         deps.log('COORDINATOR_PARALLEL', `provider=${providerId} threw: ${r.reason instanceof Error ? r.reason.message : r.reason}`)
         continue
@@ -1096,6 +1179,15 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       // through below — partial reply is better than no reply.
       if (isAuthErrorCode(r.value.errorCode)) {
         await handleAuthFailed(msg.chatId, proj.alias, providerId, r.value)
+        continue
+      }
+      if (turnDelivery) {
+        if (r.value.error) continue
+        const parts = { finalText: r.value.finalText ?? '', narration: r.value.narration ?? [] }
+        await turnDelivery.deliver(parts)
+        // 综合用的答案和交付出去的是同一份文字(同一个策略、同样剥掉令牌)。
+        const said = buildTurnReply(parts, [], 'parallel', textStrategyFor(providerId)).reply
+        if (!said.silent && said.text.trim()) answers.push({ speaker: providerId, text: said.text.trim() })
         continue
       }
       const { assistantText, replyToolCalled } = r.value

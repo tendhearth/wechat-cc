@@ -851,3 +851,60 @@ describe('daemonSelfHealSection — 换模型是正常操作,不只是修故障'
     expect(t).toContain('provider_switch')
   })
 })
+
+describe('replyDelivery: final_text(回复交付 spec 2026-10-03 §4.11)', () => {
+  const base = { providerId: 'openai' as const, peerProviderId: 'claude' as const, companionEnabled: true, delegateAvailable: false, bubbleReplies: true, stickerTags: ['庆祝'] }
+
+  it("缺省 / 'tool' ⇒ 与今天逐字相同", () => {
+    expect(buildSystemPrompt({ ...base, replyDelivery: 'tool' })).toBe(buildSystemPrompt(base))
+  })
+
+  it('final_text:不再教 reply 工具,讲清「最后写下的话就是回复」', () => {
+    const p = buildSystemPrompt({ ...base, replyDelivery: 'final_text' })
+    expect(p).toContain('最后写下的那段话就是发给对方的回复')
+    expect(p).not.toMatch(/`reply\(|调 reply|用 reply|用 `reply`|reply 工具|FALLBACK_REPLY|send_sticker\(|send_online_sticker_candidate\(|reply_voice|edit_message|broadcast\(/)
+    expect(p).toContain('`voice(text)`')
+    expect(p).toContain('`sticker(')
+    expect(p).toContain('才用空行分成几段')
+  })
+
+  it('final_text:NO_REPLY 只在伙伴推送那段里教,私聊基础段不教', () => {
+    const p = buildSystemPrompt({ ...base, replyDelivery: 'final_text' })
+    const companion = p.slice(p.indexOf('## Companion 主动推送'))
+    expect(companion).toContain('NO_REPLY')
+    expect(p.slice(0, p.indexOf('## Companion 主动推送'))).not.toContain('NO_REPLY')
+  })
+
+  it('message 工具只在 admin(messageToolAvailable)时出现', () => {
+    expect(buildSystemPrompt({ ...base, replyDelivery: 'final_text', messageToolAvailable: true })).toContain('`message(to, text)`')
+    expect(buildSystemPrompt({ ...base, replyDelivery: 'final_text' })).not.toContain('`message(to, text)`')
+  })
+})
+
+describe('final_text × 聊天型模型(replyText: all_segments,2026-10-03 修订)', () => {
+  const base = { providerId: 'openai' as const, peerProviderId: 'claude' as const, companionEnabled: false, delegateAvailable: false, replyDelivery: 'final_text' as const }
+  it('聊天型:讲「这一轮写下的文字都会按顺序发出去」,不说「中间的话不发」', () => {
+    const p = buildSystemPrompt({ ...base, replyText: 'all_segments' })
+    expect(p).toContain('按顺序发给对方')
+    expect(p).not.toContain('不会发给对方')
+  })
+  it('编码型(缺省 last_segment):讲「最后那段才是回复」', () => {
+    expect(buildSystemPrompt(base)).toContain('最后写下的那段话就是发给对方的回复')
+  })
+})
+
+describe('聊天型模型的结构性约束(2026-10-03 审稿第二轮,只进聊天型那一版)', () => {
+  const base = { providerId: 'openai' as const, peerProviderId: 'claude' as const, companionEnabled: false, delegateAvailable: false, replyDelivery: 'final_text' as const }
+  it('聊天型:一轮只在最后说话、工具前不先说一句(除非明显很慢);发了语音不再补一句收尾', () => {
+    const p = buildSystemPrompt({ ...base, replyText: 'all_segments' })
+    expect(p).toContain('一轮只在最后说话')
+    expect(p).toContain('工具调用前不要先说一句')
+    expect(p).toContain('明显很慢')
+    expect(p).toContain('发了语音就不要再补一句文字收尾')
+  })
+  it('编码型那一版不带这两条', () => {
+    const p = buildSystemPrompt(base)
+    expect(p).not.toContain('一轮只在最后说话')
+    expect(p).not.toContain('发了语音就不要再补一句文字收尾')
+  })
+})

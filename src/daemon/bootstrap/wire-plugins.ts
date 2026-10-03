@@ -10,6 +10,8 @@
 import type { ProviderId } from '../../core/conversation'
 import { capabilitiesFor, capabilityProviderIds } from '../../core/capability-matrix'
 import { wechatStdioMcpSpec, delegateStdioMcpSpec, type McpStdioSpec } from './mcp-specs'
+import { loadAgentConfig } from '../../lib/agent-config'
+import { applyReplyDeliveryConfig } from './reply-delivery-config'
 import { loadPlugins, pluginMcpSpecs } from '../plugins/registry'
 import { resolveBundledPlugins, type BundledPluginsResolution } from '../plugins/paths'
 import { buildPluginsHealth, pluginsHealthWarning, type PluginsHealth } from '../plugins/health'
@@ -44,6 +46,9 @@ export function wirePlugins(
   /** Injectable for tests: the live resolver reads env + the real repo's plugins/. */
   resolve: (stateDir: string) => BundledPluginsResolution | null = resolveBundledPlugins,
 ): PluginsSlice {
+  // 回复交付的运行时回滚开关(agent-config `reply_delivery`):必须在造 wechat MCP spec 之前装上 ——
+  // 工具表(WECHAT_REPLY_DELIVERY)就在下面按开关定;之后的提示词 / 协调器读的是同一个值。
+  applyReplyDeliveryConfig(loadAgentConfig(ctx.stateDir), ctx.log)
   // RFC 03 §5 — standalone wechat-mcp stdio server. When deps.internalApi is
   // wired, both providers receive a `wechat` MCP server spec that spawns
   // the wechat-mcp child with token-auth env vars.

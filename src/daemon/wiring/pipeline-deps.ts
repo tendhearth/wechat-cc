@@ -4,6 +4,7 @@
  *
  * Refs are passed in for late-bound polling/guard access from closures.
  */
+import type { TurnAttachment } from '../../core/turn-reply'
 import { join } from 'node:path'
 import { recallFromMemory } from '../memory/recall'
 import { randomBytes } from 'node:crypto'
@@ -1051,7 +1052,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:in`, chatId: ownerChatId, ts, direction: 'in', kind: 'text', text, source: origin }).catch(() => {})
     if (reply) void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:out`, chatId: ownerChatId, ts: new Date(Date.now() + 1).toISOString(), direction: 'out', kind: 'text', text: reply, source: origin }).catch(() => {})
   }
-  const companionConverse = async (text: string, origin: 'desktop' | 'phone' = 'desktop'): Promise<{ reply: string }> => {
+  const companionConverse = async (text: string, origin: 'desktop' | 'phone' = 'desktop'): Promise<{ reply: string; attachments?: TurnAttachment[]; narration?: string[] }> => {
     // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code,
     // Task 3 review finding #1) — an App /converse turn is real owner
     // activity, but it dispatches straight through the coordinator and
@@ -1142,7 +1143,12 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
           const sink = replySinks.open(ownerChatId)
           try {
             await dispatch()
-            return { reply: sink.close() }
+            // 回复交付 daemon 模式:附件与旁白随回复交还(桌面 / 手机显示);旧路径没有就不带。
+            const extras = sink.extras?.()
+            const reply = sink.close()
+            return extras && (extras.attachments.length > 0 || extras.narration.length > 0)
+              ? { reply, attachments: extras.attachments, narration: extras.narration }
+              : { reply }
           } catch (err) {
             sink.close()
             throw err

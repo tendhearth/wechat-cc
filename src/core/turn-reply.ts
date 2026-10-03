@@ -13,6 +13,16 @@
 
 export type ReplyDeliveryMode = 'legacy' | 'shadow' | 'daemon'
 
+/**
+ * 一轮的哪些文字算回复(2026-10-03 修订,见 spec 修订记录):
+ *   last_segment  编码型执行者(Claude Code / Codex / Cursor):最后一段非空文字是回复,之前是长任务旁白
+ *                 (不进微信,长任务 120 秒发一句进度)。spec 的原规则就是为它们设计的。
+ *   all_segments  聊天型模型(openai 兼容,以后也包括 agy 这类):本轮所有文字段按顺序都交付,每段按 ④ 分条。
+ *                 工具调用前说的「我查一下」也是正常的聊天内容 —— 用「最后一段」会把内容吞掉(场景 c 的第一项)。
+ * 这是按执行者类型的结构性区分,不按内容猜。
+ */
+export type ReplyTextStrategy = 'last_segment' | 'all_segments'
+
 /** 这一轮属于哪种场合 —— 决定 NO_REPLY 是不是一个被认可的决定(已定 ②)。 */
 export type ReplyContext = 'dm' | 'tick' | 'chatroom' | 'parallel'
 
@@ -36,8 +46,10 @@ export interface TurnReply {
   silent: boolean
   /** 按模型调用顺序。 */
   attachments: TurnAttachment[]
-  /** 最后的话之前的各段文字 —— 不发微信(已定 ①),桌面 / 手机显示成过程行。 */
+  /** 最后的话之前的各段文字 —— 不发微信(已定 ①),桌面 / 手机显示成过程行。all_segments 时为空。 */
   narration: string[]
+  /** all_segments:要按顺序交付的各段(每段各自分条);`text` 是它们用空行拼起来。last_segment 时不设。 */
+  segments?: string[]
 }
 
 export interface TurnTextParts {
@@ -85,6 +97,8 @@ export interface ReplyDeliveryPort {
     providerId: string
     /** /chat、/both 的发言人显示名 —— 前缀 `[名字]` 由 daemon 加(§4.3 第 4 步)。 */
     participantLabel?: string
+    /** 哪些文字算回复;缺省 last_segment。 */
+    textStrategy?: ReplyTextStrategy
   }): TurnDeliveryHandle
 }
 
@@ -184,7 +198,27 @@ export function buildTurnReply(
   parts: TurnTextParts,
   attachments: readonly TurnAttachment[],
   context: ReplyContext,
+  strategy: ReplyTextStrategy = 'last_segment',
 ): { reply: TurnReply; silentInDm: boolean; mixed: boolean } {
+  if (strategy === 'all_segments') {
+    // 每段各自剥令牌。最后一段是 NO_REPLY = 模型的最终决定:允许静默的场合整轮不发(前面的「我先看看」
+    // 也不发);私聊不认静默 —— 令牌吞掉、记异常,前面真说过的话照发(不替模型补话,也不吞它的话)。
+    const raw = [...parts.narration, parts.finalText].filter(t => t.trim() !== '')
+    const parsed = raw.map(t => parseSilence(t))
+    const last = parsed[parsed.length - 1]
+    const finalSilent = last?.silent === true
+    const mixed = parsed.some(p => p.mixed)
+    if (finalSilent && silenceAllowed(context)) {
+      return { reply: { text: '', silent: true, attachments: [...attachments], narration: [], segments: [] }, silentInDm: false, mixed }
+    }
+    // 只有标点 / 空白的段(「。」)不是一句话,不单独发成一条气泡。
+    const segments = parsed.filter(p => !p.silent && p.text.replace(/[\s\p{P}]/gu, '') !== '').map(p => p.text)
+    return {
+      reply: { text: segments.join('\n\n'), silent: finalSilent && segments.length === 0, attachments: [...attachments], narration: [], segments },
+      silentInDm: finalSilent && !silenceAllowed(context),
+      mixed,
+    }
+  }
   const s = parseSilence(parts.finalText)
   const narration = parts.narration
     .map(n => parseSilence(n))

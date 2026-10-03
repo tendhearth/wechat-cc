@@ -246,13 +246,44 @@ describe('provider id single source', () => {
 })
 
 describe('replyDeliveryFor — 回复交付开关(spec §5.0,一家一家翻)', () => {
-  it('第 0 步:所有执行者默认 legacy(不改任何人的行为)', async () => {
+  it('其余执行者仍是 legacy(一家一家翻)', async () => {
     const { replyDeliveryFor, capabilityProviderIds } = await import('./capability-matrix')
-    for (const p of capabilityProviderIds()) expect(replyDeliveryFor(p)).toBe('legacy')
+    for (const p of capabilityProviderIds()) if (p !== 'openai') expect(replyDeliveryFor(p)).toBe('legacy')
+  })
+
+  // 第 1 步的闸门(reply-once harness,2026-10-03,见 docs/reference/reply-once-experiment.md)没过 c / d / g
+  // ⇒ 按约定不翻到 daemon,先 shadow:照旧走 reply 工具,真机上攒 [REPLY_SHADOW] 的分布。
+  it('openai:shadow(闸门没过,不翻 daemon)', async () => {
+    const { replyDeliveryFor } = await import('./capability-matrix')
+    expect(replyDeliveryFor('openai')).toBe('daemon')
   })
 
   it('没注册能力表的 provider ⇒ legacy(fail safe,走今天的路)', async () => {
     const { replyDeliveryFor } = await import('./capability-matrix')
     expect(replyDeliveryFor('no-such-provider' as never)).toBe('legacy')
+  })
+})
+
+describe('replyTextStrategyFor — 按执行者类型(2026-10-03 修订)', () => {
+  it('聊天型模型 all_segments;编码型执行者与没声明的 last_segment', async () => {
+    const { replyTextStrategyFor } = await import('./capability-matrix')
+    expect(replyTextStrategyFor('openai')).toBe('all_segments')
+    expect(replyTextStrategyFor('agy')).toBe('all_segments')
+    for (const p of ['claude', 'codex', 'cursor'] as const) expect(replyTextStrategyFor(p)).toBe('last_segment')
+    expect(replyTextStrategyFor('no-such' as never)).toBe('last_segment')
+  })
+})
+
+describe('replyDeliveryFor × 运行时覆盖(agent-config reply_delivery)', () => {
+  it('覆盖优先于能力表;清空后回到能力表', async () => {
+    const { replyDeliveryFor, setReplyDeliveryOverrides } = await import('./capability-matrix')
+    const before = replyDeliveryFor('openai')
+    try {
+      setReplyDeliveryOverrides({ openai: 'legacy', claude: 'shadow' })
+      expect(replyDeliveryFor('openai')).toBe('legacy')
+      expect(replyDeliveryFor('claude')).toBe('shadow')
+      expect(replyDeliveryFor('codex')).toBe('legacy')
+    } finally { setReplyDeliveryOverrides(undefined) }
+    expect(replyDeliveryFor('openai')).toBe(before)
   })
 })

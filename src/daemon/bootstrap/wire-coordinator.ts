@@ -153,6 +153,14 @@ export function wireCoordinator(
       anomalyNotes.set(providerId, `最近 ${streak} 轮连续走 fallback(有文字、零 reply 工具)—— 像是流格式变了,看 channel.log 的 tools=`)
       if (streak === 3 || streak % 10 === 0) deps.log('PROVIDER_ANOMALY', `provider=${providerId} fallback streak=${streak}: 有文字、零 reply 工具,像是流格式变了(tool_call 解析不出来);见 TURN 行的 tools=`, { event: 'fallback_streak', provider: providerId, streak })
     },
+    // 回复交付 daemon(spec §4.10):取代 FALLBACK 连击 —— 私聊 / app 一轮完成了却什么都没交付(空 / NO_REPLY)
+    // 连着 ≥3 轮,就是「这家执行者在这条路上不正常」的形状,同样记进 /mode 并打 [PROVIDER_ANOMALY]。
+    onEmptyReplyStreak: (providerId, streak) => {
+      if (streak === 0) { anomalyNotes.delete(providerId); return }
+      if (streak < 3) return
+      anomalyNotes.set(providerId, `最近 ${streak} 轮应答连续交付为空(完成了但没有文字 / 写了 NO_REPLY)—— 看 channel.log 的 REPLY / REPLY_SILENT_IN_DM`)
+      if (streak === 3 || streak % 10 === 0) deps.log('PROVIDER_ANOMALY', `provider=${providerId} empty-reply streak=${streak}: 应答轮完成了却什么都没交付;见 REPLY 行`, { event: 'empty_reply_streak', provider: providerId, streak })
+    },
     recentTurns: async (chatId, n) => {
       const rows = await handoffMessages.listRange(chatId, { limit: n })
       return rows.filter(r => r.text.trim().length > 0)

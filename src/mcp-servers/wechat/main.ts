@@ -36,6 +36,7 @@ import { registerFactsTools } from './tools-facts'
 import { registerConfigTools } from './tools-config'
 import { registerPersonTools } from './tools-person'
 import { registerModeTools } from './tools-mode'
+import { registerTurnTools } from './tools-turn'
 
 const baseUrl = process.env.WECHAT_INTERNAL_API
 const tokenFilePath = process.env.WECHAT_INTERNAL_TOKEN_FILE
@@ -66,6 +67,10 @@ const server = new McpServer(
 // tools registered, AND the route layer rejects a non-admin token anyway
 // (defence in depth).
 const SESSION_IS_ADMIN = process.env.WECHAT_SESSION_TIER === 'admin'
+
+// 回复交付(spec 2026-10-03-reply-delivery):daemon 给 `replyDelivery = daemon` 的 provider 的 MCP 子进程设这个
+// 变量 —— 它们不用工具说话(最后写下的文字就是回复),只拿附件工具;admin 另有往别处发的 message。
+const REPLY_DELIVERY_DAEMON = process.env.WECHAT_REPLY_DELIVERY === 'daemon'
 
 // `ping` stays inline — the canonical "is the MCP-over-stdio + internal-api
 // channel alive" probe that integration tests assert against.
@@ -177,7 +182,8 @@ server.registerTool(
 registerMemoryTools(server, client)
 registerProjectTools(server, client)
 registerVoiceShareTools(server, client)
-registerMessagingTools(server, client)
+registerMessagingTools(server, client, { replyDelivery: REPLY_DELIVERY_DAEMON ? 'daemon' : 'tool' })
+if (REPLY_DELIVERY_DAEMON) registerTurnTools(server, client, { admin: SESSION_IS_ADMIN })
 registerCompanionTools(server, client)
 registerA2ASendTool(server, client)
 // 换后端/换模型(按对话)—— 和 /cc /api /agy 斜杠命令同一条路。guest 会话

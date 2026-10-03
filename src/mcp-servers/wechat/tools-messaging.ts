@@ -7,15 +7,23 @@
  * MCP child; `reply` forwards it so internal-api can prefix `[Claude]`/`[Codex]`
  * in parallel + chatroom modes (ignored in solo).
  */
-import { z } from 'zod'
+// 默认导入:zod v4 的具名 { z } 在 vitest 进程内加载时会解析成 undefined(见 tools-federated.ts)
+import z from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { InternalApiClient } from './client'
 import { passthroughErrorResult } from './tool-helpers'
 
 const PARTICIPANT_TAG = process.env.WECHAT_PARTICIPANT_TAG
 
-export function registerMessagingTools(server: McpServer, client: InternalApiClient): void {
-  server.registerTool(
+/**
+ * `replyDelivery: 'daemon'`(回复交付 spec 2026-10-03):这个 provider 的回复就是它最后写下的文字,daemon 送达 ——
+ * 「用工具说话」的那些(reply / reply_voice / send_file / edit_message / send_sticker / search_online_sticker /
+ * send_online_sticker_candidate / broadcast)一个都不注册,只留下不说话的 search_online_sticker_candidates 与
+ * sticker_feedback;附件与 message 由 tools-turn.ts 注册。缺省 'tool' = 今天的工具表。
+ */
+export function registerMessagingTools(server: McpServer, client: InternalApiClient, opts: { replyDelivery?: 'tool' | 'daemon' } = {}): void {
+  const speaking = opts.replyDelivery !== 'daemon'
+  if (speaking) server.registerTool(
     'reply',
     {
       title: 'Reply text to a wechat user',
@@ -35,7 +43,7 @@ export function registerMessagingTools(server: McpServer, client: InternalApiCli
     },
   )
 
-  server.registerTool(
+  if (speaking) server.registerTool(
     'reply_voice',
     {
       title: 'Reply via voice message',
@@ -52,7 +60,7 @@ export function registerMessagingTools(server: McpServer, client: InternalApiCli
     },
   )
 
-  server.registerTool(
+  if (speaking) server.registerTool(
     'send_file',
     {
       title: 'Send a local file to a wechat user',
@@ -69,7 +77,7 @@ export function registerMessagingTools(server: McpServer, client: InternalApiCli
     },
   )
 
-  server.registerTool(
+  if (speaking) server.registerTool(
     'edit_message',
     {
       title: 'Edit a previously-sent message',
@@ -86,7 +94,7 @@ export function registerMessagingTools(server: McpServer, client: InternalApiCli
     },
   )
 
-  server.registerTool(
+  if (speaking) server.registerTool(
     'send_sticker',
     {
       title: 'Send a sticker from the local library',
@@ -103,7 +111,7 @@ export function registerMessagingTools(server: McpServer, client: InternalApiCli
     },
   )
 
-  server.registerTool(
+  if (speaking) server.registerTool(
     'search_online_sticker',
     {
       title: 'Search the internet for a sticker and send it',
@@ -146,7 +154,7 @@ export function registerMessagingTools(server: McpServer, client: InternalApiCli
     },
   )
 
-  server.registerTool(
+  if (speaking) server.registerTool(
     'send_online_sticker_candidate',
     {
       title: 'Send a selected online sticker candidate',
@@ -176,7 +184,7 @@ export function registerMessagingTools(server: McpServer, client: InternalApiCli
     },
   )
 
-  server.registerTool(
+  if (speaking) server.registerTool(
     'broadcast',
     {
       title: 'Broadcast text to all online users',
