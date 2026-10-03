@@ -116,6 +116,11 @@ async function pageFixture(post){
  return{controller,invoke,root:document.getElementById('workbench-root')}
 }
 describe('actual desktop task-detail hooks',()=>{
+ it('keeps a separate actionable execution failure visible alongside a later quota offer',async()=>{
+  const f=await pageFixture(async()=>({taskId:'abcdef12',created:true}))
+  f.controller.state.detail.task.error='execution_image_unsupported';f.controller.paint(true)
+  expect(f.root.textContent).toContain('不接收图片');expect(f.root.querySelector('[data-action="quota-handoff"]')).not.toBeNull()
+ })
  it('opens the task ID actually returned by quota handOff through the visible confirmation controls',async()=>{
   const f=await pageFixture(async()=>({taskId:'abcdef12',created:true}))
   f.root.querySelector('[data-action="quota-handoff"]').click()
