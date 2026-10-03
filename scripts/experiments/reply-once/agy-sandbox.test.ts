@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { agentMarkdown, assertBxProtected, sandboxAgyArgs, sandboxMcpEnv, startFakeInternalApi, writeAgySandboxWorkspace, AGY_SANDBOX_AGENT, WECHAT_MCP_MAIN } from './agy-sandbox'
 
-describe('agy 沙盒(回复交付第 2 步)', () => {
+// agy 沙盒实验只在维护者的 Mac 上跑(agy 不在 Windows 注册);生成文件里的路径在 win32 会被转义,断言不适用。
+describe.skipIf(process.platform === 'win32')('agy 沙盒(回复交付第 2 步)', () => {
   it('agent 定义:不继承全局定制、不继承全局 MCP;frontmatter 里没有 mcpServers(写了 agy 就找不到这个 agent)', () => {
     const md = agentMarkdown('/abs/plugin')
     expect(md).toContain('inheritCustomizations: false')
