@@ -714,6 +714,42 @@ describe('workbench Codex app-server', () => {
     expect(run.events.some(e => e.kind === 'result')).toBe(false)
   })
 
+  // arch backlog #4 第 2 步:连不上时 app-server 只发 willRetry 的 error,永不结束(以前工作台
+  // 只能等 10 分钟空闲上限)。connect 上限后以 network 码收掉这一轮,并请 codex 中断。
+  it('ends a turn stuck in retries with a network-coded error after the connect bound, and interrupts it', async () => {
+    const { session, child } = await start({}, { timeouts: { firstEventTimeoutMs: 10_000, connectTimeoutMs: 40 } }); const run = collect(session); await begun(child)
+    child.notify('error', { threadId: 'thread-1', turnId: 'turn-1', willRetry: true, error: { message: 'Reconnecting... waiting for network', codexErrorInfo: { responseStreamConnectionFailed: { httpStatusCode: null } }, additionalDetails: null } })
+    await run.done
+    expect(run.events.filter(e => e.kind === 'error')).toEqual([expect.objectContaining({ code: 'network' })])
+    expect(run.events.some(e => e.kind === 'result')).toBe(false)
+    expect(child.sent.some(m => m.method === 'turn/interrupt')).toBe(true)
+  })
+
+  it('a silent turn (no progress at all) ends at the first-event bound; progress disarms it', async () => {
+    const silent = await start({}, { timeouts: { firstEventTimeoutMs: 40, connectTimeoutMs: 10_000 } }); const quiet = collect(silent.session); await begun(silent.child)
+    await quiet.done
+    expect(quiet.events.filter(e => e.kind === 'error')).toEqual([expect.objectContaining({ code: 'network' })])
+
+    const busy = await start({}, { timeouts: { firstEventTimeoutMs: 40, connectTimeoutMs: 10_000 } }); const run = collect(busy.session); await begun(busy.child)
+    busy.child.notify('item/agentMessage/delta', { threadId: 'thread-1', turnId: 'turn-1', itemId: 'msg-1', delta: 'working' })
+    await new Promise(resolve => setTimeout(resolve, 80))
+    expect(run.events.some(e => e.kind === 'error')).toBe(false)
+    completed(busy.child); await run.done
+    expect(run.events.some(e => e.kind === 'result')).toBe(true)
+  })
+
+  it('terminal errors carry the code from codexErrorInfo (unauthorized ⇒ auth_rejected, usage limit ⇒ quota)', async () => {
+    const a = await start(); const auth = collect(a.session); await begun(a.child)
+    a.child.notify('error', { threadId: 'thread-1', turnId: 'turn-1', willRetry: false, error: { message: 'unexpected status 401 Unauthorized', codexErrorInfo: 'unauthorized', additionalDetails: null } })
+    await auth.done
+    expect(auth.events).toContainEqual(expect.objectContaining({ kind: 'error', code: 'auth_rejected' }))
+
+    const q = await start(); const quota = collect(q.session); await begun(q.child)
+    q.child.notify('turn/completed', { threadId: 'thread-1', turn: { id: 'turn-1', status: 'failed', error: { message: "You've hit your usage limit.", codexErrorInfo: 'usageLimitExceeded', additionalDetails: null }, durationMs: 4 } })
+    await quota.done
+    expect(quota.events).toContainEqual(expect.objectContaining({ kind: 'error', code: 'quota' }))
+  })
+
   it.each(['malformed', 'exit', 'unknown-request'])('fails and shuts down on %s without inventing a result', async failure => {
     const { session, child } = await start(); const run = collect(session); await begun(child)
     if (failure === 'malformed') child.stdout.write('invalid json\n')
