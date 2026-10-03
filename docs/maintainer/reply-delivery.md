@@ -12,7 +12,7 @@
 
 默认值写在代码里(各 provider 的 `ProviderCapabilities.replyDelivery`,读法 `capability-matrix.replyDeliveryFor`)。
 
-现在(2026-10-03,以代码为准):openai `daemon`;agy `daemon`(第 2 步闸门两臂打平,合入时维护者按结构收益翻了,见下面「agy」一节);Cursor `daemon`(第 3 步,见下面「Cursor」一节);Codex、Claude、gemini `legacy`。
+现在(2026-10-03,以代码为准):openai `daemon`;agy `daemon`(第 2 步闸门两臂打平,合入时维护者按结构收益翻了,见下面「agy」一节);Cursor `daemon`(第 3 步,见下面「Cursor」一节);Codex `daemon`(第 4 步,见下面「Codex」一节);Claude、gemini `legacy`。
 
 ## 不重新部署就回滚
 
@@ -78,3 +78,20 @@ Cursor 走 ACP:每个会话一个常驻 `cursor-agent acp`,wechat MCP 是**逐�
 | 一轮很长、主人收到一句进度 | `[REPLY_PROGRESS] … provider=cursor`(一轮最多一次,用最近一段旁白) |
 | 收到一句 Cursor 自己的报错(「Agent Looping Detected」之类) | 已知,两条路都有,不是本步引入的:Cursor 把报错写进了助理消息、stopReason 仍是 end_turn |
 | 语音没发出去 | strict 权限下 ACP 的权限卡全拒 ⇒ 附件工具调不成(文字照常交付);`[REPLY] … attachments=0/0` |
+
+## Codex(第 4 步,2026-10-03)
+
+Codex 对话侧每一轮是一次 `codex exec`(`@openai/codex-sdk` 的 `runStreamed`;工作台的 app-server 不归这里管)。wechat MCP 是 provider 构造时的 spec,**每次 spawn** 把会话 env(令牌 + tier)合进去,经 SDK 的 config(`--config mcp_servers.wechat.*`)交给 codex:
+
+- **工具表**:`wechatStdioMcpSpec(…, 'codex')` 按开关带 `WECHAT_REPLY_DELIVERY=daemon` ⇒ 没有 reply 族,只有 `voice` / `sticker` / `attach_file`,owner(admin)会话另有 `message`。`src/mcp-servers/wechat/integration.test.ts` 走完整链(spec → spawn 的 config → 起子进程 → tools/list)。开关开机定,codex 每轮新起 exec ⇒ **重启 daemon 之后的下一轮**就是新工具表。
+- **附件**:会话令牌里有 chat,`/v1/turn/attach` 直接挂到本轮。
+- **最后的话**:编码型 `last_segment` —— 一轮最后一条非空 agent_message 是回复;之前的(codex 调工具前总会先写一句开场,「我查一下当前登记的项目。」)是旁白,不进微信;一轮超过 120 秒 daemon 发一句进度。分段边界:不是消息 / 思考 / 非致命 error 的 item 都算一次工具调用(shell、改文件、搜索、计划、SDK 不认识的新 item 类型都算);每条 agent_message 自成一段。
+- **出错**:`turn.failed` / 流级 error / 边界超时只发通知(#197 的码),不交付残文;`turn.completed` 之后 exec 才非零退出不算出错;非致命 error item 只记 `CODEX_ITEM_ERROR`。
+- 回滚:`{ "reply_delivery": { "codex": "legacy" } }` + 重启 daemon。
+
+| 现象 | 看哪里 |
+|---|---|
+| 主人只收到一句「我查一下…」 | 不该发生(那是旁白)。看 `[TURN]` 的 `tools=` 有没有工具把它和结论隔开、`turn_records.narration_segments`;以前 shell 不产 tool_call 时就是这个形状 |
+| 语音 / 表情没发出去 | daemon 不是 `--dangerously`(strict)时 codex 拒掉所有 MCP 调用(「MCP tool call requires approval, but approval policy is never」),附件挂不上,文字照常交付;`[REPLY] … attachments=0/0` |
+| 私聊里一轮什么都没发 | codex 对「不用回」常写一条**空**消息 ⇒ `delivery=empty`,计入 `[PROVIDER_ANOMALY] … empty-reply streak=` |
+| 每轮都 400「model is not supported when using Codex with a ChatGPT account」 | 版本耦合,不是回复交付:CLI 太旧、拿不到配置的模型(2026-10-03 沙盒里 CLI 0.153.4 + `gpt-6.1-sol` 就是这样) |

@@ -10,6 +10,8 @@ export type Arm = 'baseline' | 'i_plain_ack' | 'ii_prompt' | 'iii_drop' | 'iv_re
   | 'agy_legacy' | 'agy_daemon'
   /** 回复交付第 3 步(2026-10-03):Cursor,不连模型 —— 照真机报文形状演的假 cursor-agent acp + 生产的 ACP 客户端与协调器(cursor-fixture.ts)。 */
   | 'cursor_legacy' | 'cursor_daemon'
+  /** 回复交付第 4 步(2026-10-03):Codex。剧本臂不连模型(codex-fixture.ts);real 臂是沙盒 CODEX_HOME 里的真 codex + 真模型(codex-sandbox.ts)。 */
+  | 'codex_legacy' | 'codex_daemon' | 'codex_real_legacy' | 'codex_real_daemon'
 export type Scenario = 'a' | 'b' | 'b_guarded_seed' | 'b_cold' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i'
 
 /** 只算「说话」的工具:legacy 的回复族 + daemon 的附件工具。其余都是「非回复工具」。 */

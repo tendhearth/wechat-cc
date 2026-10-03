@@ -63,6 +63,15 @@ describe('extractTurnReply — 最后一段非空文字就是回复(spec §4.1 /
     c.push(text('查到了'))
     expect(c.parts()).toEqual({ finalText: '查到了', narration: ['我去查'] })
   })
+
+  // 回复交付第 4 步(Codex):每条 agent_message 是一条完整消息、自成一段 —— 两条之间没有工具也不粘。
+  it('ownSegment 的文字自成一段:最后的话 = 最后一条非空消息;空消息不算;不带 ownSegment 的照旧同段拼', () => {
+    const own = (t: string) => ({ kind: 'text', text: t, ownSegment: true }) as AgentEvent
+    expect(extractTurnReply([own('我先想一想。'), own('结论是 X。')])).toEqual({ finalText: '结论是 X。', narration: ['我先想一想。'] })
+    expect(extractTurnReply([own('我先查一下。'), tool('list_projects'), own('有两个项目。'), own('')])).toEqual({ finalText: '有两个项目。', narration: ['我先查一下。'] })
+    expect(extractTurnReply([own('只有一句。')])).toEqual({ finalText: '只有一句。', narration: [] })
+    expect(extractTurnReply([text('第一块'), text('第二块')])).toEqual({ finalText: '第一块\n\n第二块', narration: [] })
+  })
 })
 
 describe('parseSilence — NO_REPLY 永不出现在主人屏幕上(spec §4.4)', () => {

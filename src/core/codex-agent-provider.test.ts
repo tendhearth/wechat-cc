@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { classifyCall } from '../lib/call-classifier'
 import type { Codex, Thread, ThreadEvent, ThreadOptions } from '@openai/codex-sdk'
-import { createCodexAgentProvider, tierProfileToCodexSdkOpts, type CodexFactory } from './codex-agent-provider'
+import { createCodexAgentProvider, tierProfileToCodexSdkOpts, codexItemToolCall, CODEX_CAPABILITIES, type CodexFactory } from './codex-agent-provider'
+import { extractTurnReply } from './turn-reply'
 import type { AgentEvent } from './agent-provider'
 import { TIER_PROFILES } from './user-tier'
 
@@ -230,7 +231,7 @@ describe('Codex agent provider', () => {
     const events = await drain(session.dispatch('hi'))
 
     expect(events[0]).toEqual({ kind: 'init', sessionId: 't1' })
-    expect(events[1]).toEqual({ kind: 'text', text: 'hello from codex' })
+    expect(events[1]).toEqual({ kind: 'text', text: 'hello from codex', ownSegment: true })
     expect(events[events.length - 1]?.kind).toBe('result')
     const resultEv = events.find(e => e.kind === 'result')
     expect(resultEv).toBeDefined()
@@ -696,4 +697,108 @@ describe('守护:对话侧 Codex 的实际端点按 codex 自己的配置(2026-1
     const s = await p.spawn({ alias: 'a', path: proj }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c' })
     expect(classifyCall(s.callTarget!()!)).toMatchObject({ protected: true, kind: 'unresolved' })
   }))
+})
+
+describe('回复交付第 4 步:codex 的「最后的话」分段边界(每个工具类 item 一次 tool_call)', () => {
+  const usage = { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 }
+  const ev = (e: unknown) => e as ThreadEvent
+  async function run(events: ThreadEvent[], opts: { throwAfter?: Error } = {}): Promise<AgentEvent[]> {
+    const fakeCodex = makeFakeCodex()
+    if (opts.throwAfter) fakeCodex.fake.thread.pushThrowingTurn(events, opts.throwAfter)
+    else fakeCodex.fake.thread.pushTurn(events)
+    const { provider: p } = provider({}, fakeCodex)
+    const session = await p.spawn({ alias: 'a', path: '/p' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'dangerously', chatId: '_test' })
+    return drain(session.dispatch('hi'))
+  }
+
+  it('codexItemToolCall:消息 / 思考 / 非致命 error 不是工具;shell / 改文件 / 搜索 / 计划 / 不认识的新 item 都是', () => {
+    for (const type of ['agent_message', 'reasoning', 'error']) expect(codexItemToolCall({ type })).toBeNull()
+    expect(codexItemToolCall({ type: 'mcp_tool_call', server: 'wechat', tool: 'list_projects' })).toEqual({ kind: 'tool_call', server: 'wechat', tool: 'list_projects' })
+    expect(codexItemToolCall({ type: 'command_execution' })).toEqual({ kind: 'tool_call', tool: 'shell' })
+    expect(codexItemToolCall({ type: 'file_change' })).toEqual({ kind: 'tool_call', tool: 'apply_patch' })
+    expect(codexItemToolCall({ type: 'web_search' })).toEqual({ kind: 'tool_call', tool: 'web_search' })
+    expect(codexItemToolCall({ type: 'todo_list' })).toEqual({ kind: 'tool_call', tool: 'update_plan' })
+    // 用户的 codex CLI 比 SDK 新,冒出 SDK 不认识的 item 类型:照样是边界(名字用原 type)。
+    expect(codexItemToolCall({ type: 'dynamic_tool_call' })).toEqual({ kind: 'tool_call', tool: 'dynamic_tool_call' })
+  })
+
+  it('「我先跑个命令」→ shell →「结论」:以前粘成一段(旁白混进回复),现在 shell 是边界 ⇒ 最后的话只有结论', async () => {
+    const events = await run([
+      ev({ type: 'thread.started', thread_id: 't1' }),
+      ev({ type: 'item.completed', item: { id: 'r0', type: 'reasoning', text: '想一想' } }),
+      ev({ type: 'item.completed', item: { id: 'm1', type: 'agent_message', text: '我先跑个命令看看 git 状态。' } }),
+      ev({ type: 'item.started', item: { id: 'c1', type: 'command_execution', command: 'git status', aggregated_output: '', status: 'in_progress' } }),
+      ev({ type: 'item.completed', item: { id: 'c1', type: 'command_execution', command: 'git status', aggregated_output: 'clean', exit_code: 0, status: 'completed' } }),
+      ev({ type: 'item.completed', item: { id: 'm2', type: 'agent_message', text: '工作区是干净的。' } }),
+      ev({ type: 'turn.completed', usage }),
+    ])
+    // 每个 item 只产一次(started 那一刻),不是 started + completed 两次。
+    expect(events.filter(e => e.kind === 'tool_call')).toEqual([{ kind: 'tool_call', tool: 'shell' }])
+    expect(extractTurnReply(events)).toEqual({ finalText: '工作区是干净的。', narration: ['我先跑个命令看看 git 状态。'] })
+  })
+
+  it('mcp_tool_call 有 started + completed ⇒ 只产一次;不认识的新 item 类型也是边界', async () => {
+    const events = await run([
+      ev({ type: 'thread.started', thread_id: 't1' }),
+      ev({ type: 'item.completed', item: { id: 'm1', type: 'agent_message', text: '我先看一下项目列表。' } }),
+      ev({ type: 'item.started', item: { id: 'x1', type: 'mcp_tool_call', server: 'wechat', tool: 'list_projects', arguments: {}, status: 'in_progress' } }),
+      ev({ type: 'item.completed', item: { id: 'x1', type: 'mcp_tool_call', server: 'wechat', tool: 'list_projects', arguments: {}, status: 'completed' } }),
+      ev({ type: 'item.completed', item: { id: 'm2', type: 'agent_message', text: '再翻一下记忆。' } }),
+      ev({ type: 'item.started', item: { id: 'n1', type: 'dynamic_tool_call', tool: 'memory_read' } }),
+      ev({ type: 'item.completed', item: { id: 'n1', type: 'dynamic_tool_call', tool: 'memory_read' } }),
+      ev({ type: 'item.completed', item: { id: 'm3', type: 'agent_message', text: '你有 wechat-cc 和 blog 两个项目。' } }),
+      ev({ type: 'turn.completed', usage }),
+    ])
+    expect(events.filter(e => e.kind === 'tool_call')).toEqual([
+      { kind: 'tool_call', server: 'wechat', tool: 'list_projects' },
+      { kind: 'tool_call', tool: 'dynamic_tool_call' },
+    ])
+    expect(extractTurnReply(events)).toEqual({ finalText: '你有 wechat-cc 和 blog 两个项目。', narration: ['我先看一下项目列表。', '再翻一下记忆。'] })
+  })
+
+  it('两条 agent_message 之间只隔一段思考(没有工具)⇒ 照样各自成段,最后的话是后一条(spec §4.2)', async () => {
+    const events = await run([
+      ev({ type: 'thread.started', thread_id: 't1' }),
+      ev({ type: 'item.completed', item: { id: 'm1', type: 'agent_message', text: '我先理一下思路。' } }),
+      ev({ type: 'item.completed', item: { id: 'r1', type: 'reasoning', text: '…' } }),
+      ev({ type: 'item.completed', item: { id: 'm2', type: 'agent_message', text: '结论:先推进 wechat-cc。' } }),
+      ev({ type: 'turn.completed', usage }),
+    ])
+    expect(extractTurnReply(events)).toEqual({ finalText: '结论:先推进 wechat-cc。', narration: ['我先理一下思路。'] })
+  })
+
+  it('非致命的 error item 永远不进文字(#190 / #197 的红线)', async () => {
+    const events = await run([
+      ev({ type: 'thread.started', thread_id: 't1' }),
+      ev({ type: 'item.completed', item: { id: 'e1', type: 'error', message: 'MCP client for `wechat` failed to start' } }),
+      ev({ type: 'item.completed', item: { id: 'm1', type: 'agent_message', text: '好的。' } }),
+      ev({ type: 'turn.completed', usage }),
+    ])
+    expect(events.filter(e => e.kind === 'text')).toEqual([{ kind: 'text', text: '好的。', ownSegment: true }])
+    expect(events.some(e => e.kind === 'error')).toBe(false)
+  })
+
+  it('turn.completed 之后 codex exec 才非零退出 ⇒ 这一轮仍是完成的(不补 error 事件,回复不被当出错丢掉)', async () => {
+    const events = await run([
+      ev({ type: 'thread.started', thread_id: 't1' }),
+      ev({ type: 'item.completed', item: { id: 'm1', type: 'agent_message', text: '好的。' } }),
+      ev({ type: 'turn.completed', usage }),
+    ], { throwAfter: new Error('Codex Exec exited with code 1: shutdown') })
+    expect(events.some(e => e.kind === 'error')).toBe(false)
+    expect(events[events.length - 1]?.kind).toBe('result')
+  })
+
+  it('没走到 turn.completed 就非零退出 ⇒ 仍是带码的 error(不变)', async () => {
+    const events = await run([
+      ev({ type: 'thread.started', thread_id: 't1' }),
+      ev({ type: 'item.completed', item: { id: 'm1', type: 'agent_message', text: '半句' } }),
+    ], { throwAfter: new Error('Codex Exec exited with code 1: failed to connect to websocket: HTTP error: 401') })
+    expect(events.some(e => e.kind === 'error')).toBe(true)
+    expect(events.some(e => e.kind === 'result')).toBe(false)
+  })
+
+  it('能力表:Codex 走 daemon,编码型取最后一段', () => {
+    expect(CODEX_CAPABILITIES.replyDelivery).toBe('daemon')
+    expect(CODEX_CAPABILITIES.replyText).toBe('last_segment')
+  })
 })

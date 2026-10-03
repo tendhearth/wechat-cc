@@ -879,4 +879,55 @@ describe('wechat-mcp stdio integration', () => {
       for (const t of ['voice', 'attach_file', 'message']) expect(legacy.tools).not.toContain(t)
     })
   })
+
+  // 回复交付第 4 步(2026-10-03):Codex 的 wechat MCP 是 provider 构造时给的 spec,**每次 spawn** 把会话 env
+  // (令牌 + tier)合进去,再经 SDK 的 config(mcp_servers.wechat.*)交给 codex exec。
+  // 完整链:能力表开关 → wechatStdioMcpSpec('codex') → createCodexAgentProvider.spawn(会话 env)→ 交给 Codex 构造的 config
+  // → 用那份 command / args / env 起子进程 → tools/list。owner 会话是 admin ⇒ daemon 下另有往别处发的 message。
+  describe('codex per-spawn MCP config follows codex\'s reply-delivery mode', () => {
+    afterEach(() => setReplyDeliveryOverrides(undefined))
+    const REPLY_FAMILY = ['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast', 'send_sticker', 'search_online_sticker', 'send_online_sticker_candidate']
+
+    async function toolsForCodexSession(port: number, tokenFilePath: string): Promise<{ tools: string[]; env: Record<string, string> }> {
+      const { createCodexAgentProvider } = await import('../../core/codex-agent-provider')
+      const { createScriptedCodex } = await import('../../core/codex-scripted')
+      const { TIER_PROFILES } = await import('../../core/user-tier')
+      const scripted = createScriptedCodex({ turns: [] })
+      const spec = wechatStdioMcpSpec({ baseUrl: `http://127.0.0.1:${port}`, tokenFilePath }, 'codex')
+      const provider = createCodexAgentProvider({ codexFactory: scripted.factory, mcpServers: { wechat: spec } })
+      await provider.spawn({ alias: 'a', path: stateDir }, {
+        tierProfile: TIER_PROFILES.admin, permissionMode: 'dangerously', chatId: 'o9owner@im.wechat',
+        mcpEnv: { WECHAT_SESSION_TOKEN: 'codex-session-tok', WECHAT_SESSION_TIER: 'admin' },
+      })
+      // 最后一次构造是 spawn 的那个 Codex(第一次是 cheapEval 的,没有 config)。
+      const config = scripted.constructed[scripted.constructed.length - 1]!.config as { mcp_servers: Record<string, { command: string; args: string[]; env: Record<string, string> }> }
+      const entry = config.mcp_servers.wechat!
+      const baseEnv = { ...process.env as Record<string, string> }
+      delete baseEnv.WECHAT_REPLY_DELIVERY
+      delete baseEnv.WECHAT_SESSION_TIER
+      delete baseEnv.WECHAT_SESSION_TOKEN
+      // command 用 RUNTIME(源码模式下 spec.command 是 process.execPath,node 跑测试时不是 bun)。
+      const transport = new StdioClientTransport({ command: RUNTIME, args: entry.args, env: { ...baseEnv, ...entry.env }, stderr: 'pipe' })
+      const c = new Client({ name: 'codex-session-int', version: '0.0.1' }, { capabilities: {} })
+      await c.connect(transport)
+      try { return { tools: (await c.listTools()).tools.map(t => t.name), env: entry.env } } finally { await c.close() }
+    }
+
+    it('daemon ⇒ spawn 的 config 带 WECHAT_REPLY_DELIVERY=daemon + 会话令牌,子进程不注册 reply 族(admin 有 message);legacy ⇒ reply 工具回来', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 7777 })
+      const { port, tokenFilePath } = await api.start()
+
+      setReplyDeliveryOverrides({ codex: 'daemon' })
+      const daemon = await toolsForCodexSession(port, tokenFilePath)
+      expect(daemon.env).toMatchObject({ WECHAT_REPLY_DELIVERY: 'daemon', WECHAT_PARTICIPANT_TAG: 'codex', WECHAT_SESSION_TIER: 'admin', WECHAT_SESSION_TOKEN: 'codex-session-tok' })
+      for (const t of REPLY_FAMILY) expect(daemon.tools).not.toContain(t)
+      for (const t of ['voice', 'sticker', 'attach_file', 'message', 'sticker_feedback']) expect(daemon.tools).toContain(t)
+
+      setReplyDeliveryOverrides({ codex: 'legacy' })
+      const legacy = await toolsForCodexSession(port, tokenFilePath)
+      expect(legacy.env.WECHAT_REPLY_DELIVERY).toBeUndefined()
+      for (const t of ['reply', 'reply_voice', 'send_sticker']) expect(legacy.tools).toContain(t)
+      for (const t of ['voice', 'attach_file', 'message']) expect(legacy.tools).not.toContain(t)
+    })
+  })
 })

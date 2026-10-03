@@ -23,6 +23,40 @@ export const CODEX_CAPABILITIES: ProviderCapabilities = {
   supportsResume: true,
   defaultPeer: 'claude',
   authFailHint: '⚠ Codex 登录已过期，请在电脑上跑 `codex login` 后再发消息。',
+  // 回复交付第 4 步(2026-10-03,维护者按约定定,主人授权):最后一段非空文字(= 一轮最后一条 agent_message)
+  // 就是回复,之前的段是旁白(不进微信,超过 120 秒 daemon 发一句进度)。wechat MCP 是按 spawn 合进 SDK config
+  // 的(mcpServers + 会话 env),wechatStdioMcpSpec('codex') 按这个开关带 WECHAT_REPLY_DELIVERY=daemon ⇒ 没有
+  // reply 族,只有附件工具(+ admin 的 message);会话令牌里有 chat,附件不带 chat_id。
+  // 闸门见 docs/reference/reply-once-experiment.md「第 4 步」。
+  // 回滚:agent-config 的 reply_delivery: { codex: 'legacy' } + 重启 daemon(docs/maintainer/reply-delivery.md)。
+  replyDelivery: 'daemon',
+  // 编码型执行者:只取最后一段(spec §4.2 / 修订记录 2026-10-03)。
+  replyText: 'last_segment',
+}
+
+/**
+ * Codex 的 item 里哪些算「调了一次工具」—— 也就是「最后的话」分段的边界(core/turn-reply.ts 以 tool_call 为界)。
+ *
+ * 以前只有 mcp_tool_call 产 tool_call;shell / 改文件 / 联网搜索一概不产 ⇒ 「我先跑个命令看看」→ 跑命令 →
+ * 「结论」两条 agent_message 被当成同一段,旁白和结论粘在一起交付。现在:**不是助理消息、不是思考、不是
+ * 非致命错误的 item 都算一次工具调用**,包括这个 SDK 版本不认识的新 item 类型(用户的 codex CLI 常比我们
+ * 带的 SDK 新,2026-09-09 定案)—— 分段就不依赖「认出每一种工具的形状」。名字只给日志 / 桌宠看。
+ */
+const CODEX_BUILTIN_TOOL_NAMES: Readonly<Record<string, string>> = {
+  command_execution: 'shell',
+  file_change: 'apply_patch',
+  web_search: 'web_search',
+  todo_list: 'update_plan',
+}
+const NOT_A_TOOL_ITEM: ReadonlySet<string> = new Set(['agent_message', 'reasoning', 'error'])
+
+/** item → tool_call 事件;不是工具的 item ⇒ null。纯函数(单测直接打)。 */
+export function codexItemToolCall(item: { type: string; server?: unknown; tool?: unknown }): Extract<AgentEvent, { kind: 'tool_call' }> | null {
+  if (NOT_A_TOOL_ITEM.has(item.type)) return null
+  if (item.type === 'mcp_tool_call' && typeof item.tool === 'string') {
+    return typeof item.server === 'string' ? { kind: 'tool_call', server: item.server, tool: item.tool } : { kind: 'tool_call', tool: item.tool }
+  }
+  return { kind: 'tool_call', tool: CODEX_BUILTIN_TOOL_NAMES[item.type] ?? item.type }
 }
 
 export interface CodexTierSdkOpts {
@@ -90,7 +124,10 @@ export function tierProfileToCodexSdkOpts(tp: TierProfile, permissionMode: Permi
  *
  *   thread.started                              → { kind: 'init', sessionId }
  *   item.completed{type=agent_message}          → { kind: 'text', text }
- *   item.completed{type=mcp_tool_call}          → { kind: 'tool_call', server, tool }
+ *   item.*{type=mcp_tool_call}(每 item 一次)  → { kind: 'tool_call', server, tool }
+ *   item.*{其余非消息 / 非思考 / 非 error 的 item}  → { kind: 'tool_call', tool }(shell / apply_patch / web_search / …;
+ *                                                  回复交付分段的边界,见 codexItemToolCall)
+ *   item.completed{type=error}                  → (只记日志,永不当回复)
  *   turn.completed                              → { kind: 'result', sessionId, numTurns, durationMs }
  *   turn.failed                                 → { kind: 'error', message, code }
  *   error                                       → { kind: 'error', message, code }
@@ -133,6 +170,10 @@ export interface CodexAgentProviderOptions {
    * because MCP approval has its own gate that only the bypass key opens.
    * The daemon flips this on whenever the operator passed `--dangerously` so
    * codex can actually call `mcp__wechat__reply` headlessly.
+   *
+   * 回复交付 daemon 模式(2026-10-03)下话不再经 reply 说,但 MCP 的查询 / 附件工具(voice / sticker /
+   * attach_file / list_projects / memory_*)照样要它 —— 0.153 没有它时原话是「MCP tool call requires approval,
+   * but approval policy is never」。重评这个开关不在回复交付 spec 的范围(§8)。
    */
   dangerouslyBypassApprovalsAndSandbox?: boolean
   /** Test-only: inject a mock Codex factory. Production omits this. */
@@ -311,6 +352,10 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
               // 这一轮已经发过终态错误(turn.failed / 终止的 error)之后,codex 子进程照例
               // 以 exit 1 收尾、SDK 再抛一次 —— 那一下不是新信息,不再往下送。
               let terminalErrorSent = false
+              // turn.completed 已经发了:这一轮是完成的。之后 codex exec 才以非零码退出(收尾时某个 MCP 子进程没关好之类)
+              // 不是这一轮的错 —— 只记日志,不再补一个 error 事件(否则 daemon 交付把一轮完成的回复当出错丢掉)。
+              let completed = false
+              const toolItemsSeen = new Set<string>()
               try {
                 const { events } = await thread.runStreamed(dispatchedText, { signal: turnAborter.signal })
                 const watched = watchCodexEvents(events as AsyncGenerator<ThreadEvent>, {
@@ -325,14 +370,27 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
                       initEmitted = true
                     }
                     yield { kind: 'init', sessionId: ev.thread_id }
-                  } else if (ev.type === 'item.completed') {
-                    const item = (ev as { item: ThreadItem }).item
+                  } else if (ev.type === 'item.started' || ev.type === 'item.updated' || ev.type === 'item.completed') {
+                    const item = (ev as { item: ThreadItem }).item as ThreadItem & { id?: string; type: string }
                     if (item.type === 'agent_message') {
-                      yield { kind: 'text', text: item.text }
-                    } else if (item.type === 'mcp_tool_call') {
-                      yield { kind: 'tool_call', server: item.server, tool: item.tool }
+                      // 每条 agent_message 是一条完整消息、自成一段(spec §4.2:最后的话 = turn.completed 之前最后一条
+                      // agent_message)—— 两条之间没有工具(比如只隔了一段思考)也不粘在一起。
+                      if (ev.type === 'item.completed') yield { kind: 'text', text: (item as { text: string }).text, ownSegment: true }
+                      continue
                     }
+                    if (item.type === 'error') {
+                      // 非致命的错误 item(比如某个 MCP 起不来):只记日志,**永远不当回复**(#190 / #197)。
+                      if (ev.type === 'item.completed') log('CODEX_ITEM_ERROR', `alias=${project.alias} ${String((item as { message?: unknown }).message ?? '').slice(0, 300)}`)
+                      continue
+                    }
+                    // 工具类 item:每个 item 只产一次 tool_call,在第一次见到它时(通常是 item.started —— 分段边界
+                    // 落在命令开跑之前,桌宠也更早知道它在干什么)。没有 id 的(老测试替身)只在 completed 时产。
+                    if (item.id !== undefined ? toolItemsSeen.has(item.id) : ev.type !== 'item.completed') continue
+                    if (item.id !== undefined) toolItemsSeen.add(item.id)
+                    const call = codexItemToolCall(item)
+                    if (call) yield call
                   } else if (ev.type === 'turn.completed') {
+                    completed = true
                     yield em.finish({ sessionId: thread.id ?? '', numTurns: ++turnCount })
                   } else if (ev.type === 'turn.failed') {
                     const m = ev.error.message
@@ -372,6 +430,10 @@ export function createCodexAgentProvider(opts: CodexAgentProviderOptions = {}): 
                 // 真因,比如 `failed to connect to websocket: HTTP error: 401`)—— 以前它被
                 // 原样抛出,coordinator 拿不到 summary,回合记成 error 且 error 为空(§4.7)。
                 if (terminalErrorSent) return
+                if (completed) {
+                  console.error(`wechat channel: [SESSION_ERROR] alias=${project.alias} provider=codex exec exited after turn.completed (turn kept): ${detail.slice(0, 300)}`)
+                  return
+                }
                 const m = err instanceof Error ? err.message : String(err)
                 yield em.errorText(m, { code: codexErrorCode(m) })
                 return

@@ -43,6 +43,11 @@
  *                ACP 客户端 / 协调器 / 交付运行时,见 cursor-fixture.ts。--arm cursor 一次跑两臂:
  *                bun scripts/experiments/reply-once/harness.ts --arm cursor --out x.jsonl
  *                bun scripts/experiments/reply-once/harness.ts --gate x.jsonl --gate-arms cursor_daemon,cursor_legacy
+ *   codex_legacy / codex_daemon  回复交付第 4 步的剧本臂:**不连模型**。照 codex exec 事件形状演的假 Codex + 生产的
+ *                Codex provider / 协调器 / 交付运行时,见 codex-fixture.ts。--arm codex 一次跑两臂。
+ *   codex_real_legacy / codex_real_daemon  第 4 步的真模型小批:**真 codex + api.openai.com**(每轮前查 bx),沙盒
+ *                CODEX_HOME(只复制登录)+ 假 internal API,见 codex-sandbox.ts。必须给 --budget;--strict 不放行 MCP
+ *                (照生产 strict 看 codex 怎么拒);--codex-raw <jsonl> 录原始事件流。
  */
 // 隔离护栏必须第一个求值(见 isolate.ts:STATE_DIR 在 import 期就被定下来了)。
 import { STATE_DIR } from './isolate'
@@ -68,8 +73,12 @@ import { registerTurnTools } from '../../../src/mcp-servers/wechat/tools-turn'
 import { makeReplyDeliveryRuntime, type ReplyDeliveryRuntime } from '../../../src/daemon/reply-delivery'
 import { createOpenAiAgentProvider, type OpenAiAgentProviderOptions } from '../../../src/core/openai-agent-provider'
 import { createAgyAgentProvider, DEFAULT_AGY_MODEL } from '../../../src/core/agy-agent-provider'
-import { assertBxProtected, createAgyProject, sandboxSpawnFn, startFakeInternalApi, writeAgySandboxWorkspace } from './agy-sandbox'
+import { assertBxProtected, createAgyProject, sandboxMcpEnv, sandboxSpawnFn, startFakeInternalApi, writeAgySandboxWorkspace, WECHAT_MCP_MAIN } from './agy-sandbox'
 import { byVariant, runCursorGate, CURSOR_SCENARIOS, type CursorArm } from './cursor-fixture'
+import { byVariant as codexByVariant, runCodexFixtureGate, CODEX_SCENARIOS, type CodexArm } from './codex-fixture'
+import { makeCodexSandbox, assertSandboxTarget, sandboxCodexFactory } from './codex-sandbox'
+import { createCodexAgentProvider } from '../../../src/core/codex-agent-provider'
+import { isReplyToolCall } from '../../../src/core/agent-provider'
 import { createAiSdkChatModel, type ChatModelClient, type ChatMessage, type StreamedTurn, type ToolSpec, type TurnDelta } from '../../../src/core/openai-chat-model'
 import { createMcpToolBridge, type McpClientLike } from '../../../src/core/openai-mcp-bridge'
 import { builtinTools, type BuiltinTool } from '../../../src/core/openai-tools'
@@ -680,6 +689,111 @@ export async function runOnceAgy(arm: Arm, scenario: Scenario, run: number, cfg:
   }
 }
 
+// ─── Codex 真模型臂(回复交付第 4 步,2026-10-03)───────────────────────────────
+//
+// 真 codex CLI + 真模型(api.openai.com,每一轮之前先过 bx),沙盒 CODEX_HOME(只复制登录,见 codex-sandbox.ts),
+// **生产的** Codex provider(createCodexAgentProvider:事件翻译、指令前置、超时)+ 生产的 wechat MCP 入口,背后是本进程
+// 里的假 internal API。legacy 臂量的是「协调器会发什么」:调过认得出的 reply ⇒ 只有 reply 路由发的;没调 ⇒
+// FALLBACK 把每条 agent_message 各发一条(和 conversation-coordinator 的 solo 分支同一个判定 isReplyToolCall)。
+export interface CodexRunConfig { bin: string; model: string; effort: string; root: string; approveMcp: boolean; rawLog?: string }
+
+function codexSystemPrompt(arm: Arm, model: string): string {
+  return buildSystemPrompt({
+    providerId: 'codex', model, peerProviderId: 'claude', companionEnabled: false, delegateAvailable: false,
+    daemonOpsAvailable: true, fileLocateAvailable: true, bubbleReplies: true,
+    // owner 会话是 admin,codex 的 MCP 按会话 tier ⇒ 有 message(和 wire-instructions 一样按能力表推)。
+    ...(arm === 'codex_real_daemon' ? { replyDelivery: 'final_text' as const, replyText: replyTextStrategyFor('codex'), messageToolAvailable: true } : {}),
+  })
+}
+
+export async function runOnceCodexReal(arm: Arm, scenario: Scenario, run: number, cfg: CodexRunConfig): Promise<RunResult> {
+  await assertBxProtected() // 每一轮之前:不保护就不调(codex 连 api.openai.com)
+  let ledger = newLedger()
+  const cur = () => ledger
+  const daemon = arm === 'codex_real_daemon'
+  const rt = daemon ? fakeDeliveryRuntime(cur) : undefined
+  const api = fakeInternalApi(cur, rt ? () => rt : undefined)
+  const runRoot = join(cfg.root, `${arm}-${scenario}-${run}-${Date.now()}`)
+  mkdirSync(runRoot, { recursive: true })
+  const sb = makeCodexSandbox(runRoot, { model: cfg.model, effort: cfg.effort })
+  assertSandboxTarget(sb, cfg.model)
+  const server = await startFakeInternalApi(runRoot, (m, path, body) => api.request(m, path, body))
+  const raw: unknown[] = []
+  const mcpEnv = { ...sandboxMcpEnv({ mode: daemon ? 'daemon' : 'tool', api: server, stateDir: STATE_DIR }), WECHAT_PARTICIPANT_TAG: 'codex', WECHAT_SESSION_TIER: 'admin' }
+  const provider = createCodexAgentProvider({
+    codexPathOverride: cfg.bin,
+    model: cfg.model,
+    codexFactory: sandboxCodexFactory({ sandbox: sb, approveMcp: cfg.approveMcp, onEvent: (ev) => raw.push(ev), onRun: () => { cur().modelCalls++ } }),
+    mcpServers: { wechat: { command: process.execPath, args: [WECHAT_MCP_MAIN], env: mcpEnv } },
+    codexTargetOptions: () => ({ env: { HOME: sb.home, CODEX_HOME: sb.codexHome }, systemDir: null }),
+  })
+  try {
+    const session = await provider.spawn({ alias: 'demo', path: sb.workdir }, {
+      tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: CHAT_ID,
+      appendInstructions: codexSystemPrompt(arm, cfg.model),
+    } as any)
+    const drain = async (text: string) => {
+      const evs: AgentEvent[] = []
+      for await (const ev of session.dispatch(text)) evs.push(ev)
+      return evs
+    }
+    const start = Date.now()
+    const prompt = scenario === 'g'
+      ? buildPushTickText({ nowIso: G_NOW_ISO, defaultChatId: CHAT_ID, intention: G_INTENTION }, { replyDelivery: daemon ? 'final_text' : 'tool', allSegments: false })
+      : inbound(SCENARIO_PROMPT[scenario])
+    let evs: AgentEvent[]
+    let parts: { finalText: string; narration: string[] } | undefined
+    let report: { delivery: string } | undefined
+    if (daemon) {
+      const handle = rt!.begin(CHAT_ID, { mode: 'daemon', context: contextOf(scenario), providerId: 'codex', textStrategy: replyTextStrategyFor('codex') })
+      evs = await drain(prompt)
+      if (evs.some(e => e.kind === 'error')) handle.abandon('error')
+      else { parts = extractTurnReply(evs); report = await handle.deliver(parts) }
+    } else {
+      evs = await drain(prompt)
+    }
+    await session.close()
+    if (cfg.rawLog) appendFileSync(cfg.rawLog, JSON.stringify({ arm, scenario, run, approveMcp: cfg.approveMcp, events: raw }) + '\n')
+    const toolEvents = evs.filter((e): e is Extract<AgentEvent, { kind: 'tool_call' }> => e.kind === 'tool_call')
+    const err = evs.find(e => e.kind === 'error') as any
+    // legacy:协调器的判定 —— 认得出的 reply(哪怕被拒)⇒ 文字全丢;认不出 ⇒ FALLBACK 每条 agent_message 一条。推送只认 reply 工具。
+    const measured = daemon
+      ? measureDaemon(evs, ledger, parts, report, contextOf(scenario), replyTextStrategyFor('codex'))
+      : (() => {
+          const ctx = contextOf(scenario)
+          const replied = toolEvents.some(isReplyToolCall)
+          const segs = extractTurnReply(evs)
+          const fallback = ctx === 'dm' && !replied && !err ? evs.filter((e): e is Extract<AgentEvent, { kind: 'text' }> => e.kind === 'text' && e.text.trim() !== '').map(e => e.text) : []
+          const delivered = [...ledger.texts, ...fallback]
+          const attachments = ledger.voices.map(() => 'voice')
+          return {
+            delivered, attachments,
+            narrationLeaked: fallback.length > 0 ? segs.narration.length : 0,
+            tokenLeaked: delivered.some(t => /NO_REPLY/i.test(t)),
+            silent: delivered.length === 0 && attachments.length === 0,
+            budgetExhausted: false, context: ctx, finalText: segs.finalText.slice(0, 300),
+          }
+        })()
+    return {
+      arm, scenario, run,
+      replies: ledger.replies,
+      nonReplyTools: toolEvents.map(e => e.tool).filter(t => !SPEAKING_TOOLS.has(t)),
+      steps: evs.filter(e => e.kind === 'tool_call').length,
+      modelCalls: ledger.modelCalls,
+      cleanEnd: !err,
+      ...(err ? { error: String(err.code ?? err.message ?? 'error').slice(0, 200) } : {}),
+      dropped: [],
+      assistantText: evs.filter(e => e.kind === 'text').map((e: any) => e.text).join('\n').slice(0, 300),
+      ms: Date.now() - start,
+      ...measured,
+      doubleSend: doubleSends(measured.delivered ?? []),
+      apiPaths: [...new Set(ledger.api), ...(cfg.approveMcp ? [] : ['variant:strict']), ...toolEvents.map(e => `tool:${e.server ? `${e.server}/` : ''}${e.tool}`)],
+    }
+  } finally {
+    await server.close()
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2)
   const get = (f: string) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : undefined }
@@ -698,7 +812,7 @@ async function main() {
     console.log(await createAgyProject({ bin: get('--agy-bin') ?? 'agy', workspace: agyInit }))
     return
   }
-  const arm = (get('--arm') ?? 'baseline') as Arm | 'cursor'
+  const arm = (get('--arm') ?? 'baseline') as Arm | 'cursor' | 'codex'
   const out = get('--out') ?? join(STATE_DIR, 'results.jsonl')
   if (arm === 'cursor' || arm === 'cursor_legacy' || arm === 'cursor_daemon') {
     // 不连模型、不过 bx:纯进程内(见 cursor-fixture.ts 文件头)。每个场景按外部条件跑(recorded / drift / strict)。
@@ -712,8 +826,52 @@ async function main() {
     if (arms.length === 2) { console.log(''); console.log(formatGate(evaluateGate(rows, 'cursor_daemon', 'cursor_legacy'))); console.log(''); console.log(formatGate(evaluateGate(rows, 'cursor_legacy', 'cursor_legacy'))) }
     return
   }
+  if (arm === 'codex' || arm === 'codex_legacy' || arm === 'codex_daemon') {
+    // 剧本臂:不连模型、不过 bx,纯进程内(见 codex-fixture.ts 文件头)。
+    const arms: CodexArm[] = arm === 'codex' ? ['codex_legacy', 'codex_daemon'] : [arm]
+    const scenarios = get('--scenarios') ? get('--scenarios')!.split(',') as Scenario[] : CODEX_SCENARIOS
+    const rows = await runCodexFixtureGate(arms, scenarios)
+    for (const r of rows) appendFileSync(out, JSON.stringify(r) + '\n')
+    console.log(summarize(rows))
+    console.log('')
+    console.log(codexByVariant(rows))
+    if (arms.length === 2) { console.log(''); console.log(formatGate(evaluateGate(rows, 'codex_daemon', 'codex_legacy'))); console.log(''); console.log(formatGate(evaluateGate(rows, 'codex_legacy', 'codex_legacy'))) }
+    return
+  }
   const scenarios = (get('--scenarios') ?? 'a,b,c,d').split(',') as Scenario[]
   const runs = Number(get('--runs') ?? '5')
+  if (arm === 'codex_real_legacy' || arm === 'codex_real_daemon') {
+    const budget = Number(get('--budget') ?? '0')
+    if (!(budget > 0)) throw new Error('codex 真模型臂要 --budget <这一批最多几轮>(真 OpenAI 调用,主人定的总上限 40)')
+    const cfg: CodexRunConfig = {
+      bin: get('--codex-bin') ?? join(homedir(), '.local/bin/codex'),
+      model: get('--codex-model') ?? 'gpt-6.1-sol',
+      effort: get('--codex-effort') ?? 'medium',
+      root: get('--codex-root') ?? join(STATE_DIR, 'codex'),
+      approveMcp: !args.includes('--strict'),
+      ...(get('--codex-raw') ? { rawLog: get('--codex-raw')! } : {}),
+    }
+    console.error(`[reply-once] arm=${arm} scenarios=${scenarios.join(',')} runs=${runs} model=${cfg.model}/${cfg.effort} approveMcp=${cfg.approveMcp} out=${out} bx=${await assertBxProtected()}`)
+    const rows: RunResult[] = []
+    let used = 0
+    for (const sc of scenarios) {
+      for (let r = 1; r <= runs; r++) {
+        if (used >= budget) { console.error(`  预算用完(${budget} 轮),停`); break }
+        let res: RunResult
+        try { res = await runOnceCodexReal(arm, sc, r, cfg) } catch (e) {
+          if (/网络未受保护|找不到 bx|拒跑/.test(String(e))) throw e // 守护 / 沙盒护栏:整批中止
+          res = { arm, scenario: sc, run: r, replies: [], nonReplyTools: [], steps: 0, modelCalls: 1, cleanEnd: false, error: String(e).slice(0, 200), dropped: [], assistantText: '', ms: 0 }
+        }
+        used += Math.max(1, res.modelCalls)
+        rows.push(res)
+        appendFileSync(out, JSON.stringify(res) + '\n')
+        console.error(`  ${sc}#${r}: delivered=${(res.delivered ?? res.replies).length} ${JSON.stringify(res.delivered ?? res.replies)}${res.attachments?.length ? ` attachments=${res.attachments.join(',')}` : ''}${res.silent ? ' silent' : ''} final=${JSON.stringify(res.finalText ?? '')} tools=${JSON.stringify(res.nonReplyTools)} api=${JSON.stringify(res.apiPaths ?? [])} ${res.error ?? 'ok'} ${res.ms}ms`)
+      }
+    }
+    console.error(`  真模型回合:${used}`)
+    console.log(summarize(rows))
+    return
+  }
   if (arm === 'agy_legacy' || arm === 'agy_daemon') {
     const workspace = get('--agy-ws'), projectId = get('--agy-project')
     if (!workspace || !projectId) throw new Error('agy 臂要 --agy-ws <沙盒工作区> --agy-project <id>(先跑 --agy-init <目录>)')

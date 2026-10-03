@@ -248,7 +248,7 @@ describe('provider id single source', () => {
 describe('replyDeliveryFor — 回复交付开关(spec §5.0,一家一家翻)', () => {
   it('其余执行者仍是 legacy(一家一家翻)', async () => {
     const { replyDeliveryFor, capabilityProviderIds } = await import('./capability-matrix')
-    for (const p of capabilityProviderIds()) if (p !== 'openai' && p !== 'agy' && p !== 'cursor') expect(replyDeliveryFor(p)).toBe('legacy')
+    for (const p of capabilityProviderIds()) if (p !== 'openai' && p !== 'agy' && p !== 'cursor' && p !== 'codex') expect(replyDeliveryFor(p)).toBe('legacy')
   })
 
   // 第 1 步的闸门(reply-once harness,2026-10-03,见 docs/reference/reply-once-experiment.md)没过 c / d / g
@@ -265,6 +265,14 @@ describe('replyDeliveryFor — 回复交付开关(spec §5.0,一家一家翻)', 
     const { replyDeliveryFor, replyTextStrategyFor } = await import('./capability-matrix')
     expect(replyDeliveryFor('cursor')).toBe('daemon')
     expect(replyTextStrategyFor('cursor')).toBe('last_segment')
+  })
+
+  // 第 4 步(2026-10-03):Codex 接线完成;闸门(照 codex exec 事件形状演的假流 + 生产全链,外加小批真模型)见
+  // docs/reference/reply-once-experiment.md「第 4 步」。编码型,取最后一段。
+  it('codex:daemon(第 4 步),编码型取最后一段', async () => {
+    const { replyDeliveryFor, replyTextStrategyFor } = await import('./capability-matrix')
+    expect(replyDeliveryFor('codex')).toBe('daemon')
+    expect(replyTextStrategyFor('codex')).toBe('last_segment')
   })
 
   it('没注册能力表的 provider ⇒ legacy(fail safe,走今天的路)', async () => {
@@ -291,7 +299,7 @@ describe('replyDeliveryFor × 运行时覆盖(agent-config reply_delivery)', () 
       setReplyDeliveryOverrides({ openai: 'legacy', claude: 'shadow' })
       expect(replyDeliveryFor('openai')).toBe('legacy')
       expect(replyDeliveryFor('claude')).toBe('shadow')
-      expect(replyDeliveryFor('codex')).toBe('legacy')
+      expect(replyDeliveryFor('gemini')).toBe('legacy')
     } finally { setReplyDeliveryOverrides(undefined) }
     expect(replyDeliveryFor('openai')).toBe(before)
   })
