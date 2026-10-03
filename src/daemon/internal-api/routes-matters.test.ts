@@ -20,6 +20,10 @@ describe('matters routes',()=>{
     for(const bad of ['kind=x','status=weird','since=-1','limit=0','limit=999','kind=task&kind=chat','surface=fax'])expect((await routes['GET /v1/matters']!(q(bad),undefined)).status).toBe(400)
     expect((await mattersRoutes({} as InternalApiDeps)['GET /v1/matters']!(q(),undefined)).status).toBe(503)
   })
+  it('marks matters whose workbench run is frozen by the network guard (2026-10-03)',async()=>{
+    const d={...deps(),workbench:{networkSuspended:()=>[{taskId:'deadbeef',title:'整理周报',providerId:'codex',since:1}]}} as unknown as InternalApiDeps
+    expect(await mattersRoutes(d)['GET /v1/matters']!(q(),undefined)).toEqual({status:200,body:{matters:[{...MATTER,networkSuspended:true}]}})
+  })
   it('returns the owner chat matter (binding the desktop surface) or 404 when no owner is configured',async()=>{
     const d=deps(),routes=mattersRoutes(d)
     expect((await routes['GET /v1/matter/owner-chat']!(q(),undefined)).status).toBe(200)

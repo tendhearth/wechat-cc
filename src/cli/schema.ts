@@ -808,6 +808,9 @@ export const GuardStatusOutput = z.object({
     id: z.string(), model: z.string().nullable(), host: z.string().nullable(),
     protected: z.boolean(), kind: z.string(), label: z.string(), reason: z.string(),
   })).optional(),
+  // 暂停在跑的任务(2026-10-03):问在跑的 daemon(/v1/health);daemon 没在跑就没有这两项。
+  suspended: z.number().optional(),
+  suspended_tasks: z.array(z.object({ task_id: z.string(), title: z.string(), provider: z.string(), since: z.string() })).optional(),
 })
 export type GuardStatusOutputT = z.infer<typeof GuardStatusOutput>
 

@@ -22,6 +22,11 @@ export interface GuardConfig {
   trust: string[]
   /** 自定义网关(非官方、非国内、非自建的 base URL)是否也要保护。缺省 false。 */
   protect_custom_gateways: boolean
+  /**
+   * 暂停在跑的任务的上限(分钟,主人 2026-10-03):probe 来源网络不安全时冻住的任务,超过这么久还没恢复
+   * 就按收工停下并告诉主人。缺省 30;合法范围 1–1440,越界取缺省。
+   */
+  max_suspend_minutes: number
 }
 
 function stringList(v: unknown): string[] {
@@ -39,6 +44,7 @@ export function defaultGuardConfig(): GuardConfig {
     protect: [],
     trust: [],
     protect_custom_gateways: false,
+    max_suspend_minutes: 30,
   }
 }
 
@@ -60,6 +66,7 @@ export function loadGuardConfig(stateDir: string): GuardConfig {
       protect: stringList(raw.protect),
       trust: stringList(raw.trust),
       protect_custom_gateways: raw.protect_custom_gateways === true,
+      max_suspend_minutes: typeof raw.max_suspend_minutes === 'number' && Number.isFinite(raw.max_suspend_minutes) && raw.max_suspend_minutes >= 1 && raw.max_suspend_minutes <= 1440 ? raw.max_suspend_minutes : d.max_suspend_minutes,
     }
   } catch {
     return defaultGuardConfig()

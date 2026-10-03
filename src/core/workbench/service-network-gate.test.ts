@@ -49,12 +49,12 @@ it('unsafe → a supplement to a live run is refused (network_unprotected), noth
   hold.resolve();await settled(task.id)
 })
 
-it('pauseForNetwork stops a running executor and records why',async()=>{
+it('suspendForNetwork: an executor without suspension falls back to stopping and records why',async()=>{
   const hold=gateOpen()
   setup({async spawn(){return{async *dispatch(){yield {kind:'init' as const,sessionId:'s'};await hold.promise;yield {kind:'result' as const,sessionId:'s',numTurns:1,durationMs:1}},async close(){hold.resolve()},async cancel(){hold.resolve()}}}} as unknown as AgentProvider)
   const task=service.create({path:project,providerId:'claude',text:'start'})
   await expect.poll(()=>service.detail(task.id).task.status).toBe('running')
-  expect(service.pauseForNetwork('网络未受保护(bx 未连上),CC 先暂停，恢复后再试。已停止本轮。')).toBe(1)
+  expect(service.suspendForNetwork(()=>'VPN 探测连续两次失败，这个任务用到 Claude。')).toEqual({suspended:0,stopped:1})
   await settled(task.id)
   expect(service.detail(task.id).task.status).toBe('cancelled')
   expect(JSON.stringify(service.detail(task.id))).toContain('已停止本轮')
@@ -76,13 +76,13 @@ it('unsafe → a Cursor(auto) executor still starts (not protected); the signal 
   expect(service.detail(task.id).task.error).not.toBe('network_unprotected')
 })
 
-it('pauseForNetwork(select) only stops runs the selector marks protected; unprotected runs keep going',async()=>{
+it('suspendForNetwork(select) only touches runs the selector marks protected; unprotected runs keep going',async()=>{
   const hold=gateOpen()
   setupCursor({async spawn(){return{async *dispatch(){yield {kind:'init' as const,sessionId:'s'};await hold.promise;yield {kind:'result' as const,sessionId:'s',numTurns:1,durationMs:1}},async close(){hold.resolve()},async cancel(){hold.resolve()}}},callTarget:()=>({provider:'cursor',model:'auto'})} as unknown as AgentProvider)
   const task=service.create({path:project,providerId:'cursor',text:'start'})
   await expect.poll(()=>service.detail(task.id).task.status).toBe('running')
   const seen:Array<{providerId:string;model:string|null}>=[]
-  expect(service.pauseForNetwork(run=>{seen.push(run);return null})).toBe(0)
+  expect(service.suspendForNetwork(run=>{seen.push(run);return null})).toEqual({suspended:0,stopped:0})
   expect(seen).toEqual([expect.objectContaining({providerId:'cursor',model:null,target:expect.objectContaining({provider:'cursor'})})])
   expect(service.detail(task.id).task.status).toBe('running')
   hold.resolve();await settled(task.id)
@@ -131,14 +131,14 @@ it('review #193: unsafe + a Cursor executor that comes up on Auto → runs norma
   expect(service.detail(task.id).task.error).not.toBe('network_unprotected')
 })
 
-it('review #193: pauseForNetwork hands the selector the live session target',async()=>{
+it('review #193: suspendForNetwork hands the selector the live session target',async()=>{
   const hold=gateOpen()
   const {provider}=cursorExecutor('gpt-5.5[context=272k]',hold.promise)
   setupCursor(provider)
   const task=service.create({path:project,providerId:'cursor',text:'start'})
   await expect.poll(()=>service.detail(task.id).task.status).toBe('running')
   const seen:unknown[]=[]
-  service.pauseForNetwork(run=>{seen.push(run);return null})
+  service.suspendForNetwork(run=>{seen.push(run);return null})
   expect(seen).toEqual([expect.objectContaining({providerId:'cursor',target:expect.objectContaining({provider:'cursor',model:'gpt-5.5[context=272k]'})})])
   hold.resolve();await settled(task.id)
 })

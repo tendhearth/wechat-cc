@@ -1138,3 +1138,68 @@ describe('守护:工作台 Codex 的实际端点问 codex 自己(config/read,202
     expect(provider.callTarget?.('spawn', { model: 'gpt-5.5' })).toEqual({ provider: 'codex', model: 'gpt-5.5', baseUrl: null, exact: true })
   }))
 })
+
+describe('网络守护:暂停在跑的任务(2026-10-03)—— 冻住期间自己的计时器不走', () => {
+  // FakeProcess 给一个 pid,process.kill 记账:组信号落在 FakeProcess 上(SIGKILL / SIGTERM ⇒ 退出)。
+  function spawnWithPid(pid: number) {
+    mocks.spawn.mockImplementation((_binary: string, args: string[]) => {
+      const child = new FakeProcess(args.includes('mcp')); children.push(child)
+      if (child.probe) queueMicrotask(() => { child.stdout.write(discovery); child.exit(discoveryExit) })
+      else Object.defineProperty(child, 'pid', { value: pid })
+      return child
+    })
+  }
+  function trackSignals(child: FakeProcess, pid: number) {
+    const signals: Array<[number, string | number]> = []
+    vi.spyOn(process, 'kill').mockImplementation(((target: number, sig?: string | number) => {
+      signals.push([target, sig ?? 'SIGTERM'])
+      if (Math.abs(target) !== pid) throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' })
+      const gone = child.exitCode !== null || child.signalCode !== null
+      if (sig === 0 && gone) throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' })
+      if (sig === 'SIGKILL' || sig === 'SIGTERM') queueMicrotask(() => child.exit(null, String(sig)))
+      return true
+    }) as typeof process.kill)
+    return signals
+  }
+
+  it('first-event watchdog does not fire while suspended; after resume the turn completes normally', async () => {
+    spawnWithPid(4242)
+    const { session, child } = await start({}, { timeouts: { firstEventTimeoutMs: 40, connectTimeoutMs: 40 } })
+    const signals = trackSignals(child, 4242)
+    const run = collect(session); await begun(child)
+    expect(session.suspension?.suspend()).toBe(true)
+    expect(signals).toContainEqual([-4242, 'SIGSTOP'])
+    await new Promise(resolve => setTimeout(resolve, 150))          // 远超 40ms 的首个事件上限
+    expect(run.events.some(e => e.kind === 'error')).toBe(false)
+    session.suspension!.resume()
+    expect(signals).toContainEqual([-4242, 'SIGCONT'])
+    // 放开后 codex 自己重连(willRetry)再接上:connect 看门狗照常武装,有进展就撤。
+    child.notify('error', { threadId: 'thread-1', turnId: 'turn-1', willRetry: true, error: { message: 'Reconnecting... 1/5', codexErrorInfo: null, additionalDetails: null } })
+    child.notify('item/agentMessage/delta', { threadId: 'thread-1', turnId: 'turn-1', itemId: 'msg-1', delta: 'RECOVERED' })
+    completed(child); await run.done
+    expect(run.events.some(e => e.kind === 'result')).toBe(true)
+    expect(run.events.filter(e => e.kind === 'error')).toEqual([])
+  })
+
+  it('without suspension the same 40ms bound does fire (control)', async () => {
+    const { session, child } = await start({}, { timeouts: { firstEventTimeoutMs: 40, connectTimeoutMs: 40 } })
+    const run = collect(session); await begun(child)
+    await run.done
+    expect(run.events.filter(e => e.kind === 'error')).toEqual([expect.objectContaining({ code: 'network' })])
+  })
+
+  it('terminate while suspended: SIGKILLs the frozen tree (never SIGCONT) and close() settles without cleanup RPCs', async () => {
+    spawnWithPid(4343)
+    const { session, child } = await start({ workbenchLifecycle: true })
+    const signals = trackSignals(child, 4343)
+    session.workbenchRuntime!.start('work')
+    await begun(child)
+    expect(session.suspension?.suspend()).toBe(true)
+    const before = child.sent.length
+    session.suspension!.terminate()
+    await expect(session.close()).resolves.toBeUndefined()
+    expect(signals.some(([, s]) => s === 'SIGCONT')).toBe(false)
+    expect(signals).toContainEqual([-4343, 'SIGKILL'])
+    expect(child.sent.slice(before).some(m => m.method === 'turn/interrupt' || m.method === 'thread/backgroundTerminals/clean')).toBe(false)
+  })
+})
