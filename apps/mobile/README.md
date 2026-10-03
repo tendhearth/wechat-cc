@@ -23,6 +23,14 @@ daemon 在 `/m` 服务的 PWA。源码在 `src/`,构建期组装成 `src/daemon/
 - **只走 HTTP。** 本目录不 import `src/`,daemon 不 import 本目录(depcheck)。
 - **512KB。** 整页 base64 后加信封要塞进中继一帧(`src/daemon/mobile-page-presence.test.ts`)。
 
+## 额度接手
+
+任务详情按后端 `quotaHandoff` 显示可接手、目前无人可接或已接手的真实状态。接手前重新读取详情并明确确认：同一个文件夹由另一位执行者新开一件，只带标题与继续原要求，不带旧会话。提交只调用 `POST /m/api/matter/handoff`，不走普通创建。
+
+确认后的 `requestId`、执行者与原确认保存在该任务独立的本地记录中。未知回包、刷新和重连只读状态；手动核对才沿用同一请求与原执行者提交一次。候选后来改变也不能替换未知确认；明确拒绝后才允许重新确认新候选。直连失败不会把同一个 POST 自动再发到隧道。迟到结果不会打开在其他页面之上的任务，也不修改补充草稿。
+
+交互回归见 `quota-handoff.test.ts`，真实组装页面验收运行 `bun apps/mobile/__e2e__/quota-handoff.browser.mjs`，使用合成数据与拦截请求，截图和证据写入 `/tmp/tendhearth-pwa-quota-handoff-qa`。
+
 ## 类型
 
 `tsconfig.json`:DOM lib + `checkJs`,`strict` 暂关;`sw.js` 不在检查范围。DOM 取回的元素用 JSDoc 转换:`/** @type {HTMLTextAreaElement} */ (document.getElementById("m-say")).value`;回调参数用 `function(/** @type {HTMLButtonElement} */ b){…}`。

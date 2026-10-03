@@ -5,6 +5,8 @@ var M_INPUT_STATUS={pending:"补充已保存，等待执行者接收。",sending
 var mCurrent = null, mDetail = null, mPoll = null, mSeq = 0, mActive = false, mBusy = {}, mQuestionKey = "", mObjectUrls = [], mTooLarge = false
 var mDetailFresh = false, mConnectionEpoch = 0, mOffline = false
 var mAutoPreview = ''
+// A round trip may finish after leaving and returning to the same task.
+var mHandoffViewEpoch = 0
 /** 最后一次真正联系上 daemon 的时刻。断网时它会停住变旧 —— 这正是"你看到的是几点的样子"要报的那个数。 */
 var mLastOkAt = null
 /** 连续几次没联系上才浮提示:一次抖动不打扰人。按"次数"而不是"过了多久"判 ——
@@ -72,6 +74,16 @@ function mConn() {
   el.textContent = stale ? (mLastOkAt===null?"还没有连上 CC，请检查电脑连接。":"连不上 CC —— 你看到的是 " + mClock(mLastOkAt) + " 的样子") : ""
 }
 function mError(code) {
+  if (code === "provider_quota_exhausted") return "这位执行者的额度暂时用完了。你的补充已保留，可以查看任务中的接手选择，或等额度恢复后再继续。"
+  if (code === "execution_model_unsupported") return "请在桌面为这件事选择账号可用的模型后继续。你的补充已保留。"
+  if (code === "quota_handoff_changed") return "接手者刚变了，请查看当前选择，再重新确认。"
+  if (code === "quota_handoff_not_needed") return "这件事现在不需要额度接手，请查看当前进展。"
+  if (code === "quota_handoff_unavailable") return "目前没有可用的接手者，可以等额度恢复后再继续。"
+  if (code === "invalid_entry_owner") return "这件事的主人身份未确认，请到桌面检查后再继续。"
+  if (code === "creation_conflict") return "这次接手确认与已有请求不一致，请查看任务记录或到桌面处理。"
+  if (code === "native_session_busy" || code === "native_folder_busy") return "电脑上的会话或文件夹正在使用，请先在电脑结束它，再查看当前任务。"
+  if (code === "invalid_path") return "电脑上找不到这个任务的文件夹了，请到桌面检查后继续。"
+  if (code === "unavailable_provider") return "电脑上的执行者暂不可用，请到桌面检查连接后继续。"
   if (code === "detail_too_large") return "完整内容过长，请到桌面查看。草稿已保留，这里暂时不能提交判断或补充。"
   if (code === "unauthorized") return "这台手机的连接已失效，请从微信重新打开随身 CC。"
   if (/stale|artifact_changed/.test(code || "")) return "内容已变化或已经处理，请查看刷新后的任务。"
@@ -82,22 +94,23 @@ function mError(code) {
   if (code === "artifact_checksum") return "文件校验未通过，没有打开或下载。请重试。"
   return "暂时没能完成，请检查连接后重试。草稿已保留。"
 }
-function mApi(path,opts) {
-  var timer, epoch=mConnectionEpoch
-  return Promise.race([api(path,opts).then(function(r){return r.json().then(function(b){if (!r.status || r.status < 400) { if (b.ok) return b }; throw new Error(b.error || "unavailable")})}),new Promise(function(_r,reject){timer=setTimeout(function(){reject(new Error("timeout"))},15000)})])
+function mApi(path,opts,sender) {
+  var timer, epoch=mConnectionEpoch, pageId=mCurrent, pageEpoch=mHandoffViewEpoch
+  return Promise.race([(sender||api)(path,opts).then(function(r){return r.json().then(function(b){if (!r.status || r.status < 400) { if (b.ok) return b }; throw Object.assign(new Error(b.error || "unavailable"),{status:r.status})})}),new Promise(function(_r,reject){timer=setTimeout(function(){reject(new Error("timeout"))},15000)})])
     .then(function(b){
       // 只在"从断线里回来"这一下清提示:断线期间那条错误不清就会赖到下一次操作,
       // 让人以为刚才的动作失败了。平时成功不动它 —— 否则会把"已提交""补充已送达"
       // 这些该留着的话一起抹掉。
       if(epoch!==mConnectionEpoch||mOffline)return b
       var recovered = mMisses > 0
-      mLastOkAt=Date.now();mMisses=0;mConn();if(recovered)mNotice("")
+      mLastOkAt=Date.now();mMisses=0;mConn();if(recovered&&mCurrent===pageId&&mHandoffViewEpoch===pageEpoch)mNotice("")
       return b
-    },function(e){if(epoch===mConnectionEpoch){mMisses++;mDetailFresh=false;mConn();mSetButtons()}throw e})
+    },function(e){if(epoch===mConnectionEpoch){if(e.status>=400){mLastOkAt=Date.now();mMisses=0}else mMisses++;if(mCurrent===pageId&&mHandoffViewEpoch===pageEpoch)mDetailFresh=false;mConn();mSetButtons()}throw e})
     .finally(function(){clearTimeout(timer)})
 }
 function mClearPreview() { mObjectUrls.forEach(function(u){URL.revokeObjectURL(u)});mObjectUrls=[];document.getElementById("m-artifact-preview").replaceChildren() }
 function mSetButtons() {
+  document.querySelectorAll('#m-task-status [data-handoff]').forEach(function(/** @type {HTMLButtonElement} */ b){b.disabled=!mDetailFresh||mTooLarge||mOffline||!!mBusy[mCurrent+':handoff']})
   document.querySelectorAll("#m-controls button[data-request]").forEach(function(/** @type {HTMLButtonElement} */ b){b.disabled=!mDetailFresh||!!mBusy[b.dataset.task+":"+b.dataset.request]})
   document.querySelectorAll("#m-questions [data-question-request]").forEach(function(/** @type {HTMLElement} */ card){var disabled=!!mBusy[mCurrent+":"+card.dataset.questionRequest];card.querySelectorAll('input,textarea').forEach(function(/** @type {HTMLInputElement} */ input){input.disabled=disabled})})
   var send=/** @type {HTMLButtonElement} */ (document.getElementById("m-send")),say=/** @type {HTMLTextAreaElement} */ (document.getElementById("m-say"))
@@ -162,6 +175,87 @@ function mSettleUnsure(d) {
   delete mUnsure[d.matter.id]
   mNotice(pending?"这项请求仍在等待。请确认当前内容，再决定是否提交。":"这项请求已结束或被其他设备处理，无法确认刚才的提交是否生效。请查看任务记录。")
 }
+function mProviderName(id) { return ({claude:'Claude Code',codex:'Codex',cursor:'Cursor',agy:'Antigravity'})[id]||id }
+function mHandoffView(value) {
+  if(!value||typeof value.from!=='string'||!/^[a-z][a-z0-9._-]{0,63}$/.test(value.from))return null
+  if(value.state==='handed')return typeof value.to==='string'&&/^[a-z][a-z0-9._-]{0,63}$/.test(value.to)&&typeof value.matterId==='string'&&/^[a-f0-9]{8}$/.test(value.matterId)?value:null
+  if((value.state!=='offer'&&value.state!=='none')||['quota','rate_limit'].indexOf(value.kind)<0||!Number.isFinite(value.resetAt))return null
+  return value.state==='none'||typeof value.to==='string'&&/^[a-z][a-z0-9._-]{0,63}$/.test(value.to)?value:null
+}
+function mHandoffSignature(view) { return JSON.stringify([view.from,view.to,view.kind]) }
+function mHandoffCurrentSignature(view) { return view?mHandoffSignature(view):'none' }
+function mHandoffPending(id) {
+  var record=mRead(id+':quota-handoff')
+  if(!record)return null
+  return typeof record.requestId==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(record.requestId)&&mHandoffView(record.offer)&&record.offer.state==='offer'&&record.providerId===record.offer.to?record:{invalid:true}
+}
+function mQuotaText(view) {
+  var wait=Math.max(1,Math.ceil((view.resetAt-Date.now())/60000))
+  return mProviderName(view.from)+(view.kind==='rate_limit'?' 暂时受限，请求太频繁了。':' 的额度已用完。')+'预计约 '+wait+' 分钟后可再试。'
+}
+function mRenderHandoff(d) {
+  var root=document.getElementById('m-task-status'),view=mHandoffView(d.quotaHandoff),pending=mHandoffPending(d.matter.id),html=''
+  if(d.task&&d.task.error==='execution_model_unsupported')html='<p class="m-task-note">请在桌面为这件事选择账号可用的模型后继续。</p>'
+  if(d.matter.kind==='task'&&(view||pending)){
+    if(view&&view.state==='handed')html+='<div class="m-handoff"><p>已经交给 '+esc(mProviderName(view.to))+' 继续。</p><button type="button" class="done-btn" data-handoff="open" data-task="'+esc(d.matter.id)+'">打开接手的任务</button></div>'
+    else{
+      html+='<div class="m-handoff"><p>'+esc(view?mQuotaText(view):'当前任务已不再显示额度接手选择。')+'</p>'
+      if(view&&view.state==='none')html+='<p>目前没有可用的接手者，可以等额度恢复后再继续。</p>'
+      if(pending)html+='<p>'+(pending.invalid?'这台手机保存的接手确认不完整，无法安全重试。请刷新查看结果，或到桌面处理。':'上次交给 '+esc(mProviderName(pending.providerId))+' 继续的结果还未确认。原确认已保留；先核对当前情况，再由你决定是否重试。')+'</p>'
+      if(view&&view.state==='offer')html+='<p>可以让 '+esc(mProviderName(view.to))+' 在电脑上同一个文件夹里新开一件事接着做。确认前会再核对一次。</p>'
+      if((view&&view.state==='offer'||pending)&&!(pending&&pending.invalid))html+='<button type="button" class="done-btn" data-handoff="confirm" data-task="'+esc(d.matter.id)+'" data-handoff-offer="'+esc(mHandoffCurrentSignature(view))+'">'+(pending?view&&view.state==='offer'&&mHandoffSignature(pending.offer)===mHandoffSignature(view)?'核对并重试交给 '+esc(mProviderName(pending.providerId))+' 继续':'核对上次交给 '+esc(mProviderName(pending.providerId))+' 的结果':'交给 '+esc(mProviderName(view.to))+' 继续')+'</button>'
+      else html+='<button type="button" class="more" data-handoff="refresh" data-task="'+esc(d.matter.id)+'">刷新查看</button>'
+      html+='</div>'
+    }
+  }
+  if(root.innerHTML!==html)root.innerHTML=html
+}
+function mHandoffVisible(id,epoch) { return mCurrent===id&&mHandoffViewEpoch===epoch&&mActive&&!document.hidden&&!mOffline }
+/** A POST selects one transport once. A lost LAN reply must never send it again through the tunnel. */
+function mHandoffSend(path,opts) {
+  if(preferTunnel&&REMOTE)return tunnel().then(function(send){return send(path,opts)})
+  var ctrl=new AbortController(),timer=setTimeout(function(){ctrl.abort()},2500)
+  return fetch(q(path),Object.assign({signal:ctrl.signal},opts)).catch(function(e){if(REMOTE)preferTunnel=true;throw e}).finally(function(){clearTimeout(timer)})
+}
+async function mHandoff(action,shown) {
+  var id=mCurrent,epoch=mHandoffViewEpoch,key=id+':handoff',post=false
+  if(!id||!mDetail||mDetail.matter.id!==id||!mDetailFresh||mTooLarge||mOffline||mBusy[key])return
+  mBusy[key]=true;clearTimeout(mPoll);++mSeq;mSetButtons();mNotice('正在核对接手情况…')
+  try{
+    var d=await mApi('/m/api/matter?id='+encodeURIComponent(id))
+    if(!mHandoffVisible(id,epoch))return
+    if(!d.matter||d.matter.id!==id||d.matter.kind!=='task')throw new Error('handoff_detail_mismatch')
+    renderMatter(d)
+    var view=mHandoffView(d.quotaHandoff)
+    if(view&&view.state==='handed'){if(view.matterId===id)throw new Error('handoff_detail_mismatch');mWrite(id+':quota-handoff',null);await openMatter(view.matterId);return}
+    if(action==='refresh'){mNotice('已核对当前情况。');return}
+    var pending=mHandoffPending(id)
+    if(pending&&pending.invalid){mNotice('原接手确认不完整，无法安全重试。请刷新查看结果，或到桌面处理。');return}
+    if(!pending&&(!view||view.state!=='offer')){mNotice(mError(view&&view.state==='none'?'quota_handoff_unavailable':'quota_handoff_not_needed'));return}
+    if(action!=='confirm'||shown!==mHandoffCurrentSignature(view)){mNotice('接手者或额度情况刚变了，请查看当前选择，再重新确认。');return}
+    var confirmed=pending?pending.offer:view,to=mProviderName(confirmed.to),from=mProviderName(confirmed.from),changed=pending&&(!view||view.state!=='offer'||mHandoffSignature(pending.offer)!==mHandoffSignature(view))
+    var message=(view?mQuotaText(view):'当前任务已不再显示额度接手选择。')+'\n\n会在你电脑上同一个文件夹里，让 '+to+' 新开一件事接着做；原来这件留着。\n\n'+to+' 看不到 '+from+' 之前的对话，只拿到这件事的标题和“接着原来的要求做”。\n\n会用掉 '+to+' 的额度。'+(pending?'\n\n这次重试沿用上次确认；如果已经交出，会打开已有的接手任务。':'')+(changed?'\n\n'+(view&&view.state==='offer'?'当前可接手者已变为 '+mProviderName(view.to)+'。':'当前情况已改变。')+'这次先核对上次交给 '+to+' 的结果，原确认不会改成新的接手者。':'')+'\n\n'+(changed?'确认核对上次接手结果？':'确认交给 '+to+' 继续？')
+    if(!window.confirm(message)){if(mHandoffVisible(id,epoch))mNotice('尚未交给 '+to+' 继续。');return}
+    if(!mHandoffVisible(id,epoch))return
+    var record=pending||{requestId:mUuid(),providerId:view.to,offer:view}
+    if(!mWrite(id+':quota-handoff',record)){mNotice('这台手机暂时无法保存接手确认，请恢复存储后再试。');return}
+    post=true;mNotice('正在交给 '+to+' 继续…')
+    var result=await mApi('/m/api/matter/handoff',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:id,requestId:record.requestId,providerId:record.providerId})},mHandoffSend)
+    if(typeof result.matterId!=='string'||!/^[a-f0-9]{8}$/.test(result.matterId)||result.matterId===id||typeof result.created!=='boolean')throw new Error('handoff_receipt_mismatch')
+    mWrite(id+':quota-handoff',null)
+    if(mHandoffVisible(id,epoch))await openMatter(result.matterId)
+  }catch(e){
+    if(!mHandoffVisible(id,epoch))return
+    // Only named, definitive rejections end this confirmation. Unknown responses keep its exact identity.
+    var rejected=['quota_handoff_changed','quota_handoff_not_needed','quota_handoff_unavailable','provider_quota_exhausted','workbench_busy','native_session_busy','native_folder_busy','invalid_path','unavailable_provider','invalid_entry_owner','creation_conflict','matter_not_found','invalid_request','invalid_provider'].indexOf(e.message)>=0&&e.status>=400
+    if(post&&rejected)mWrite(id+':quota-handoff',null)
+    var message=post&&!rejected?'接手结果还未确认。原确认已保留，请刷新查看；只有你再次确认才会用同一请求重试。':mError(e.message)
+    if(post){await mRefresh();if(!mHandoffVisible(id,epoch))return}
+    if(mDetail)mRenderHandoff(mDetail)
+    mNotice(message)
+  }finally{delete mBusy[key];if(mHandoffVisible(id,epoch)){mSetButtons();mSchedule()}}
+}
+document.getElementById('m-task-status').addEventListener('click',function(ev){var b=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-handoff]'));if(b&&b.dataset.task===mCurrent)return mHandoff(b.dataset.handoff,b.dataset.handoffOffer)})
 /** A compact, non-control identity for keeping source sections open during polling. */
 function mEventSourceKey(event) {
   var signature=JSON.stringify([event.createdAt,event.source||'',event.text]),hash=2166136261
@@ -207,6 +301,7 @@ function mRenderEvents(events) {
     var rowIdentity=mEventSourceKey({createdAt:e.createdAt,source:e.source,text:e.kind+':'+(e.id||'')}),rowOccurrence=rowKeys[rowIdentity]||0
     rowKeys[rowIdentity]=rowOccurrence+1
     var body=e.kind==='text'?'<div class="m-markdown">'+CCM.renderMarkdown(e.text)+'</div>':'<p>'+esc(e.text)+'</p>'
+    if(e.kind==='error'&&typeof e.diagnostic==='string'&&e.diagnostic)body+='<details class="m-error-diagnostic"><summary>查看原始错误</summary><pre class="m-description"><code>'+esc(e.diagnostic).replace(/\r/g,'&#13;')+'</code></pre></details>'
     if(e.kind==='user'&&CCM.hasMarkdownFormatting(e.text)){
       // Matter events have no id; equal records use their occurrence to stay distinct.
       var identity=mEventSourceKey(e),occurrence=sourceKeys[identity]||0
@@ -229,6 +324,7 @@ function renderMatter(d) {
   mRenderQuestions(d)
   mRenderInputs(d)
   mSettleUnsure(d)
+  mRenderHandoff(d)
   document.getElementById("m-artifacts").innerHTML=(d.artifacts||[]).filter(function(a){return a.taskId===d.matter.id}).map(function(a){return '<div class="card"><b>'+esc(a.name)+'</b><small>已保存 · '+Math.ceil(a.size/1024)+' KB</small><button type="button" class="more" data-artifact="'+esc(a.id)+'">查看 '+esc(a.name)+'</button></div>'}).join("")
   document.getElementById("m-say-box").hidden=d.matter.kind==='companion'||d.matter.status==='archived'
   mMountMaterials(d.matter.id)
@@ -239,19 +335,20 @@ function renderMatter(d) {
     if(mAutoPreview!==previewKey){mAutoPreview=previewKey;mArtifact(preview)}
   }
 }
-function mSchedule() { clearTimeout(mPoll);if(mActive&&mCurrent&&!document.hidden&&!mTooLarge)mPoll=setTimeout(mRefresh,3000) }
+function mSchedule() { clearTimeout(mPoll);if(mActive&&mCurrent&&!document.hidden&&!mTooLarge&&!mBusy[mCurrent+':handoff'])mPoll=setTimeout(mRefresh,3000) }
 function mRefresh() {
   clearTimeout(mPoll);if(!mActive||!mCurrent||document.hidden||mOffline)return Promise.resolve()
   var id=mCurrent,seq=++mSeq
   return mApi('/m/api/matter?id='+encodeURIComponent(id)).then(function(d){if(mCurrent===id&&seq===mSeq&&d.matter.id===id)renderMatter(d)}).catch(function(e){if(mCurrent===id&&seq===mSeq){
-    if(e.message==='detail_too_large'){mTooLarge=true;mDetail=null;mQuestionKey="";['m-permissions','m-questions','m-events','m-artifacts','m-inputs'].forEach(function(key){document.getElementById(key).replaceChildren()});mClearPreview();mSetButtons()}
+    if(e.message==='detail_too_large'){mTooLarge=true;mDetail=null;mQuestionKey="";['m-permissions','m-questions','m-events','m-artifacts','m-inputs','m-task-status'].forEach(function(key){document.getElementById(key).replaceChildren()});mClearPreview();mSetButtons()}
     mNotice(mError(e.message))
   }}).finally(function(){if(mCurrent===id&&seq===mSeq)mSchedule()})
 }
 function openMatter(id) {
+  mHandoffViewEpoch++
   mDetailFresh=false
   if(mCurrent!==id)mAutoPreview=''
-  if(mCurrent!==id){mDisposeMaterials();mSeq++;mDetail=null;mTooLarge=false;mQuestionKey="";mClearPreview();document.getElementById("m-events").replaceChildren();document.getElementById("m-permissions").replaceChildren();document.getElementById("m-questions").replaceChildren();document.getElementById("m-artifacts").replaceChildren();document.getElementById('m-inputs').replaceChildren();mSetButtons();mNotice("");document.getElementById("m-title").textContent="正在读…"}
+  if(mCurrent!==id){mDisposeMaterials();mSeq++;mDetail=null;mTooLarge=false;mQuestionKey="";mClearPreview();document.getElementById("m-events").replaceChildren();document.getElementById("m-permissions").replaceChildren();document.getElementById("m-questions").replaceChildren();document.getElementById("m-artifacts").replaceChildren();document.getElementById('m-inputs').replaceChildren();document.getElementById('m-task-status').replaceChildren();mSetButtons();mNotice("");document.getElementById("m-title").textContent="正在读…"}
   mCurrent=id;mActive=true
   var draft=mRead(id+":say");/** @type {HTMLTextAreaElement} */ (document.getElementById("m-say")).value=draft&&typeof draft.text==='string'?draft.text:""
   document.getElementById("m-list").hidden=true;document.getElementById("m-detail").hidden=false
@@ -330,14 +427,15 @@ document.getElementById('m-inputs').addEventListener('click',function(ev){
   ta.value=input.text;mWrite(mCurrent+':say',snapshot||{requestId:input.id,runId:input.runId,text:input.text});mDisposeMaterials();mMountMaterials(mCurrent);mNotice(M_INPUT_STATUS[input.status]||'原文和材料已取回，发送会继续核对同一条补充。')
 })
 document.getElementById("m-list").addEventListener("click",function(ev){var c=/** @type {HTMLElement} */ (/** @type {Element} */ (ev.target).closest('[data-mid]'));if(c)openMatter(c.dataset.mid)})
-document.getElementById("m-back").addEventListener("click",function(){mDisposeMaterials();mSeq++;mCurrent=null;mDetail=null;clearTimeout(mPoll);mClearPreview();document.getElementById("m-detail").hidden=true;document.getElementById("m-list").hidden=false;loadMatters()})
-document.querySelectorAll('nav button[data-p]').forEach(function(/** @type {HTMLButtonElement} */ b){b.addEventListener('click',function(){mActive=b.dataset.p==='matters';clearTimeout(mPoll);if(mActive){if(mCurrent)mRefresh();else loadMatters()}})})
+document.getElementById("m-back").addEventListener("click",function(){mHandoffViewEpoch++;mDisposeMaterials();mSeq++;mCurrent=null;mDetail=null;clearTimeout(mPoll);mClearPreview();document.getElementById("m-detail").hidden=true;document.getElementById("m-list").hidden=false;loadMatters()})
+document.querySelectorAll('nav button[data-p]').forEach(function(/** @type {HTMLButtonElement} */ b){b.addEventListener('click',function(){mHandoffViewEpoch++;mActive=b.dataset.p==='matters';clearTimeout(mPoll);if(mActive){if(mCurrent)mRefresh();else loadMatters()}})})
+document.addEventListener('cc:pane',function(){mHandoffViewEpoch++})
 // 回前台按当前页分路:在详情页刷详情,在列表页刷列表。此前只调 mRefresh(),而它要
 // mCurrent —— 停在列表上回来时什么都不刷,人看到的还是切走之前那份。
-document.addEventListener('visibilitychange',function(){clearTimeout(mPoll);mSeq++;mConnectionEpoch++;mDetailFresh=false;mSetButtons();if(!document.hidden&&mActive){if(mCurrent)mRefresh();else loadMatters()}})
-window.addEventListener('offline',function(){clearTimeout(mPoll);mOffline=true;mSeq++;mConnectionEpoch++;mDetailFresh=false;mMisses=M_STALE_MISSES;mConn();mSetButtons()})
+document.addEventListener('visibilitychange',function(){mHandoffViewEpoch++;clearTimeout(mPoll);mSeq++;mConnectionEpoch++;mDetailFresh=false;mSetButtons();if(!document.hidden&&mActive){if(mCurrent)mRefresh();else loadMatters()}})
+window.addEventListener('offline',function(){mHandoffViewEpoch++;clearTimeout(mPoll);mOffline=true;mSeq++;mConnectionEpoch++;mDetailFresh=false;mMisses=M_STALE_MISSES;mConn();mSetButtons()})
 window.addEventListener('online',function(){mOffline=false;if(mActive){if(mCurrent)mRefresh();else loadMatters()}})
-window.addEventListener('pagehide',function(){clearTimeout(mPoll);mSeq++;mConnectionEpoch++;mDetailFresh=false;mSetButtons()})
+window.addEventListener('pagehide',function(){mHandoffViewEpoch++;clearTimeout(mPoll);mSeq++;mConnectionEpoch++;mDetailFresh=false;mSetButtons()})
 window.addEventListener('pageshow',function(){if(mActive){if(mCurrent)mRefresh();else loadMatters()}})
 // Markdown results retain an exact source preview alongside the reading view.
 function mRenderTextArtifact(preview,mime,text,truncated) {
