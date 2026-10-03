@@ -37,10 +37,12 @@
  *   shipped      提交进 provider 的正式实现(不靠 harness 包装)
  *   daemon       回复交付第 1 步(spec 2026-10-03):没有 reply 族工具,最后写下的文字就是回复,经真的
  *                deliverTurnReply(假的 sendText)送达;附件工具 / admin 的 message;final_text 版提示词
+ *   agy_legacy / agy_daemon  回复交付第 2 步:**真 agy**(连 Google,每轮前查 bx),沙盒工作区 + 假 internal API,
+ *                见 agy-sandbox.ts。先 --agy-init <目录> 建 agy 项目,再 --agy-ws <目录> --agy-project <id>。
  */
 // 隔离护栏必须第一个求值(见 isolate.ts:STATE_DIR 在 import 期就被定下来了)。
 import { STATE_DIR } from './isolate'
-import { readFileSync, appendFileSync, existsSync } from 'node:fs'
+import { readFileSync, appendFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -61,6 +63,8 @@ import { registerConfigTools } from '../../../src/mcp-servers/wechat/tools-confi
 import { registerTurnTools } from '../../../src/mcp-servers/wechat/tools-turn'
 import { makeReplyDeliveryRuntime, type ReplyDeliveryRuntime } from '../../../src/daemon/reply-delivery'
 import { createOpenAiAgentProvider, type OpenAiAgentProviderOptions } from '../../../src/core/openai-agent-provider'
+import { createAgyAgentProvider, DEFAULT_AGY_MODEL } from '../../../src/core/agy-agent-provider'
+import { assertBxProtected, createAgyProject, sandboxSpawnFn, startFakeInternalApi, writeAgySandboxWorkspace } from './agy-sandbox'
 import { createAiSdkChatModel, type ChatModelClient, type ChatMessage, type StreamedTurn, type ToolSpec, type TurnDelta } from '../../../src/core/openai-chat-model'
 import { createMcpToolBridge, type McpClientLike } from '../../../src/core/openai-mcp-bridge'
 import { builtinTools, type BuiltinTool } from '../../../src/core/openai-tools'
@@ -72,7 +76,7 @@ import type { AgentEvent } from '../../../src/core/agent-provider'
 import { extractTurnReply, parseSilence, type ReplyTextStrategy } from '../../../src/core/turn-reply'
 import { replyTextStrategyFor } from '../../../src/core/capability-matrix'
 import { buildPushTickText } from '../../../src/daemon/wiring/tick-bodies'
-import { summarize, evaluateGate, formatGate, META_RE, REPLY_FAMILY, SPEAKING_TOOLS, type Arm, type Scenario, type RunResult } from './gate'
+import { summarize, evaluateGate, formatGate, doubleSends, META_RE, REPLY_FAMILY, SPEAKING_TOOLS, type Arm, type Scenario, type RunResult } from './gate'
 export { summarize, evaluateGate, type Arm, type Scenario, type RunResult }
 
 // ─── 隔离护栏:见 isolate.ts(STATE_DIR 是临时目录,第一个 import 就设好)───────────
@@ -134,8 +138,10 @@ interface Ledger {
   replies: string[]; texts: string[]; voices: string[]; tools: string[]; modelCalls: number; dropped: string[]
   /** daemon 臂:经 deliverTurnReply 真正发出的每一条文字 / 附件种类 / message / 交付日志的 tag。 */
   delivered: string[]; attachments: string[]; messages: string[]; logs: string[]
+  /** 假 internal API 收到的每个请求路径(agy 臂:证明 MCP 调用真的到了我们的假 API,不是别处)。 */
+  api: string[]
 }
-const newLedger = (): Ledger => ({ replies: [], texts: [], voices: [], tools: [], modelCalls: 0, dropped: [], delivered: [], attachments: [], messages: [], logs: [] })
+const newLedger = (): Ledger => ({ replies: [], texts: [], voices: [], tools: [], modelCalls: 0, dropped: [], delivered: [], attachments: [], messages: [], logs: [], api: [] })
 
 /** daemon 臂的交付运行时:真的 reply-delivery,假的 sendText(只记账)。 */
 function fakeDeliveryRuntime(ledger: () => Ledger): ReplyDeliveryRuntime {
@@ -147,19 +153,29 @@ function fakeDeliveryRuntime(ledger: () => Ledger): ReplyDeliveryRuntime {
   })
 }
 
-function fakeInternalApi(ledger: () => Ledger, rt?: () => ReplyDeliveryRuntime): InternalApiClient {
+function fakeInternalApi(ledger: () => Ledger, rt?: () => ReplyDeliveryRuntime, opts: { sharedTokenProvider?: string } = {}): InternalApiClient {
   let n = 0
   return {
     async request<T>(_method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
       const b = (body ?? {}) as Record<string, unknown>
+      ledger().api.push(path.split('?')[0]!)
       if (path === '/v1/turn/attach' && rt) {
+        // 共享令牌(agy-static):和生产一样,按「这家 provider 此刻正在跑的那一轮」认聊天。
+        let chat: string | undefined = CHAT_ID
+        if (opts.sharedTokenProvider) {
+          const bnd = rt().turnChatFor(opts.sharedTokenProvider)
+          if (bnd.kind === 'ambiguous') return { ok: false, error: 'ambiguous_turn' } as T
+          chat = bnd.kind === 'bound' ? bnd.chatId : undefined
+          if (!chat) return { ok: false, error: 'no_turn_in_progress' } as T
+        }
         const kind = String(b.kind ?? '')
         const attachment = kind === 'voice' ? { kind: 'voice' as const, text: String(b.text ?? '') }
           : kind === 'file' ? { kind: 'file' as const, path: String(b.path ?? '') }
           : { kind: 'sticker' as const, ref: { tag: String(b.tag ?? b.mood ?? '') } }
-        const ok = rt().attach(CHAT_ID, { attachment, send: async () => { ledger().attachments.push(kind); return { ok: true } } })
+        const ok = rt().attach(chat, { attachment, send: async () => { ledger().attachments.push(kind); return { ok: true } } })
         return (ok ? { ok: true, attached: true } : { ok: false, error: 'no_turn_in_progress' }) as T
       }
+      if (path.startsWith('/v1/health')) return { ok: true, daemon_pid: 0 } as T
       if (path === '/v1/wechat/message') {
         ledger().messages.push(String(b.text ?? ''))
         return (b.to === 'owner' || b.to === CHAT_ID ? { ok: false, error: 'message_to_own_chat' } : { ok: true, msg_id: `m:${++n}` }) as T
@@ -554,6 +570,111 @@ async function runOnce(arm: Arm, scenario: Scenario, run: number, gw: ReturnType
   }
 }
 
+// ─── agy 臂(回复交付第 2 步,2026-10-03)────────────────────────────────────
+//
+// 真 agy(订阅版 Gemini,连 Google —— 每一轮之前先过 bx),沙盒工作区里的自定义 agent(见 agy-sandbox.ts:
+// 不继承主人的全局 MCP / skills / rules),MCP 是**生产的** wechat MCP 入口,背后是本进程里的假 internal API。
+// agy 是外部进程,回合历史不能像 openai 臂那样脚本化灌进去:b 用生产里换 provider 时的冷启动交接块
+// (buildColdStartBlock)把同一段连发历史放进提示 —— 两臂一样。
+export interface AgyRunConfig { bin: string; workspace: string; projectId: string; model: string; turnTimeoutMs: number; rawLog?: string }
+
+function agySystemPrompt(arm: Arm, model: string): string {
+  return buildSystemPrompt({
+    providerId: 'agy', model, peerProviderId: 'claude', companionEnabled: false, delegateAvailable: false,
+    daemonOpsAvailable: true, fileLocateAvailable: true, bubbleReplies: true,
+    // agy 的 MCP 钉死 trusted(没有 message);和 wire-instructions 一样按能力表推。
+    ...(arm === 'agy_daemon' ? { replyDelivery: 'final_text' as const, replyText: replyTextStrategyFor('agy'), messageToolAvailable: false } : {}),
+  })
+}
+
+function agyPromptFor(scenario: Scenario, arm: Arm): string {
+  const daemon = arm === 'agy_daemon'
+  if (scenario === 'g') return buildPushTickText({ nowIso: G_NOW_ISO, defaultChatId: CHAT_ID, intention: G_INTENTION }, { replyDelivery: daemon ? 'final_text' : 'tool', allSegments: daemon && replyTextStrategyFor('agy') === 'all_segments' })
+  const base = inbound(SCENARIO_PROMPT[scenario])
+  if (scenario !== 'b') return base
+  const recent: HandoffTurn[] = []
+  for (const s of SEED_TURNS) {
+    recent.push({ dir: 'in', text: s.user, ts: '' })
+    for (const r of s.replies) recent.push({ dir: 'out', text: r, ts: '' })
+  }
+  return `${buildColdStartBlock('agy', recent)}\n\n${base}`
+}
+
+export async function runOnceAgy(arm: Arm, scenario: Scenario, run: number, cfg: AgyRunConfig): Promise<RunResult> {
+  await assertBxProtected() // 每一轮之前:不保护就不调 agy(连 Google)
+  let ledger = newLedger()
+  const cur = () => ledger
+  const daemon = arm === 'agy_daemon'
+  const rt = daemon ? fakeDeliveryRuntime(cur) : undefined
+  const api = fakeInternalApi(cur, rt ? () => rt : undefined, { sharedTokenProvider: 'agy' })
+  const server = await startFakeInternalApi(STATE_DIR, (m, path, body) => api.request(m, path, body))
+  writeAgySandboxWorkspace(cfg.workspace, { mode: daemon ? 'daemon' : 'tool', api: server, stateDir: STATE_DIR })
+  const provider = createAgyAgentProvider({
+    bin: cfg.bin, model: cfg.model, turnTimeoutMs: cfg.turnTimeoutMs,
+    log: () => {},
+    spawnFn: sandboxSpawnFn({ bin: cfg.bin, workspace: cfg.workspace, projectId: cfg.projectId, onArgs: () => { cur().modelCalls++ }, ...(cfg.rawLog ? { rawLog: (c: string) => appendFileSync(cfg.rawLog!, c) } : {}) }),
+  })
+  try {
+    const session = await provider.spawn({ alias: 'demo', path: cfg.workspace }, {
+      tierProfile: TIER_PROFILES.admin, permissionMode: 'dangerously', chatId: CHAT_ID,
+      appendInstructions: agySystemPrompt(arm, cfg.model),
+    } as any)
+    const drain = async (text: string) => {
+      const evs: AgentEvent[] = []
+      for await (const ev of session.dispatch(text)) evs.push(ev)
+      return evs
+    }
+    const daemonTurn = async (text: string, context: 'dm' | 'tick') => {
+      const handle = rt!.begin(CHAT_ID, { mode: 'daemon', context, providerId: 'agy', textStrategy: replyTextStrategyFor('agy') })
+      const evs = await drain(text)
+      if (evs.some(e => e.kind === 'error')) { handle.abandon('error'); return { evs, parts: undefined, report: undefined } }
+      const parts = extractTurnReply(evs)
+      return { evs, parts, report: await handle.deliver(parts) }
+    }
+    const warmup: NonNullable<RunResult['warmup']> = []
+    let t0 = Date.now() - 3 * 60_000
+    if (scenario === 'e') {
+      for (const s of SEED_TURNS) {
+        await assertBxProtected()
+        ledger = newLedger()
+        const turn = daemon ? await daemonTurn(inbound(s.user, t0), 'dm') : { evs: await drain(inbound(s.user, t0)), parts: undefined, report: undefined }
+        t0 += 60_000
+        const tools = turn.evs.filter((e): e is Extract<AgentEvent, { kind: 'tool_call' }> => e.kind === 'tool_call').map(e => e.tool)
+        warmup.push({ replies: ledger.replies, nonReplyTools: tools.filter(t => !SPEAKING_TOOLS.has(t)), dropped: [], delivered: daemon ? [...ledger.delivered] : measureLegacy(turn.evs, ledger, 'dm').delivered })
+      }
+      await assertBxProtected()
+    }
+    ledger = newLedger()
+    const start = Date.now()
+    const prompt = agyPromptFor(scenario, arm)
+    const turn = daemon ? await daemonTurn(prompt, contextOf(scenario)) : { evs: await drain(prompt), parts: undefined, report: undefined }
+    await session.close()
+    const evs = turn.evs
+    const toolEvents = evs.filter((e): e is Extract<AgentEvent, { kind: 'tool_call' }> => e.kind === 'tool_call').map(e => e.tool)
+    const err = evs.find(e => e.kind === 'error') as any
+    const finish = evs.find(e => e.kind === 'result') as any
+    const measured = daemon ? measureDaemon(evs, ledger, turn.parts, turn.report, contextOf(scenario), replyTextStrategyFor('agy')) : measureLegacy(evs, ledger, contextOf(scenario))
+    return {
+      arm, scenario, run,
+      replies: ledger.replies,
+      nonReplyTools: toolEvents.filter(t => !SPEAKING_TOOLS.has(t)),
+      steps: finish?.numTurns ?? 0,
+      modelCalls: ledger.modelCalls,
+      cleanEnd: !err,
+      ...(err ? { error: String(err.code ?? err.message ?? 'error').slice(0, 200) } : {}),
+      dropped: [],
+      assistantText: evs.filter(e => e.kind === 'text').map((e: any) => e.text).join('\n').slice(0, 300),
+      ms: Date.now() - start,
+      ...(warmup.length ? { warmup } : {}),
+      ...measured,
+      doubleSend: doubleSends(measured.delivered ?? []),
+      apiPaths: [...new Set(ledger.api)],
+    }
+  } finally {
+    await server.close()
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2)
   const get = (f: string) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : undefined }
@@ -561,13 +682,43 @@ async function main() {
   const gateFile = get('--gate')
   if (sumFile || gateFile) {
     const rows = readFileSync((sumFile ?? gateFile)!, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as RunResult)
-    console.log(sumFile ? summarize(rows) : formatGate(evaluateGate(rows)))
+    const [gArm, gBase] = (get('--gate-arms') ?? 'daemon,baseline').split(',') as [Arm, Arm]
+    console.log(sumFile ? summarize(rows) : formatGate(evaluateGate(rows, gArm, gBase)))
+    return
+  }
+  const agyInit = get('--agy-init')
+  if (agyInit) {
+    await assertBxProtected()
+    mkdirSync(agyInit, { recursive: true })
+    console.log(await createAgyProject({ bin: get('--agy-bin') ?? 'agy', workspace: agyInit }))
     return
   }
   const arm = (get('--arm') ?? 'baseline') as Arm
   const scenarios = (get('--scenarios') ?? 'a,b,c,d').split(',') as Scenario[]
   const runs = Number(get('--runs') ?? '5')
   const out = get('--out') ?? join(STATE_DIR, 'results.jsonl')
+  if (arm === 'agy_legacy' || arm === 'agy_daemon') {
+    const workspace = get('--agy-ws'), projectId = get('--agy-project')
+    if (!workspace || !projectId) throw new Error('agy 臂要 --agy-ws <沙盒工作区> --agy-project <id>(先跑 --agy-init <目录>)')
+    const cfg: AgyRunConfig = { bin: get('--agy-bin') ?? 'agy', workspace, projectId, model: get('--agy-model') ?? DEFAULT_AGY_MODEL, turnTimeoutMs: 180_000, ...(get('--agy-raw') ? { rawLog: get('--agy-raw')! } : {}) }
+    console.error(`[reply-once] arm=${arm} scenarios=${scenarios.join(',')} runs=${runs} model=${cfg.model} ws=${workspace} out=${out} bx=${await assertBxProtected()}`)
+    const rows: RunResult[] = []
+    for (const sc of scenarios) {
+      for (let r = 1; r <= runs; r++) {
+        let res: RunResult
+        try { res = await runOnceAgy(arm, sc, r, cfg) } catch (e) {
+          if (String(e).includes('网络未受保护') || String(e).includes('找不到 bx')) throw e // 守护:整批中止
+          res = { arm, scenario: sc, run: r, replies: [], nonReplyTools: [], steps: 0, modelCalls: 0, cleanEnd: false, error: String(e).slice(0, 200), dropped: [], assistantText: '', ms: 0 }
+        }
+        rows.push(res)
+        appendFileSync(out, JSON.stringify(res) + '\n')
+        for (const [k, w] of (res.warmup ?? []).entries()) console.error(`  ${sc}#${r} warm${k + 1}: delivered=${JSON.stringify(w.delivered)} tools=${JSON.stringify(w.nonReplyTools)}`)
+        console.error(`  ${sc}#${r}: delivered=${(res.delivered ?? res.replies).length} ${JSON.stringify(res.delivered ?? res.replies)}${res.attachments?.length ? ` attachments=${res.attachments.join(',')}` : ''}${res.silent ? ' silent' : ''} tools=${JSON.stringify(res.nonReplyTools)} api=${JSON.stringify(res.apiPaths ?? [])} calls=${res.modelCalls} ${res.error ?? 'ok'}`)
+      }
+    }
+    console.log(summarize(rows))
+    return
+  }
   assertProviderSeams(arm)
   const gw = gatewayConfig()
   assertGatewayHost(gw.baseURL)

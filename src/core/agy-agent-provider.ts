@@ -41,6 +41,11 @@ export const AGY_CAPABILITIES: ProviderCapabilities = {
   supportsResume: true,
   defaultPeer: 'claude',
   authFailHint: 'agy 登录态失效，请在电脑上跑一次 `agy` 重新登录后再发消息。',
+  // 回复交付第 2 步(2026-10-03):维护者决定切 daemon(主人授权)。沙盒闸门(真 agy,56 轮)两臂行为打平、
+  // daemon 非回复工具调用更少(10.3 vs 15.0);结构收益:双发不再依赖命名空间折叠、共享令牌的附件绑到本轮
+  // (#199 豁免在 daemon 下取消)、走统一交付路径(终局要删 legacy)。回滚:agent-config 的
+  // reply_delivery: { agy: 'legacy' } + 重启 daemon(docs/maintainer/reply-delivery.md)。
+  replyDelivery: 'daemon',
   // 聊天型(订阅版 Gemini 的 CLI):翻到 daemon 时本轮所有文字段都交付,不只取最后一段(2026-10-03 修订)。
   replyText: 'all_segments',
 }

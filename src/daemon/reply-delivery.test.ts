@@ -178,6 +178,25 @@ describe('makeReplyDeliveryRuntime — 一轮的句柄', () => {
     expect(rt.attach('c1', s)).toBe(false) // 交付完就关了
   })
 
+  it('turnChatFor:共享令牌按「这家 provider 此刻在跑的 daemon 轮」认聊天(none / bound / ambiguous;shadow 不算;交付或放弃后解绑)', async () => {
+    const h = harness()
+    const rt = makeReplyDeliveryRuntime(h.deps)
+    expect(rt.turnChatFor('agy')).toEqual({ kind: 'none' })
+    const shadow = rt.begin('c0', { mode: 'shadow', context: 'dm', providerId: 'agy' })
+    expect(rt.turnChatFor('agy')).toEqual({ kind: 'none' }) // shadow 轮没有附件工具,不绑定
+    const a = rt.begin('c1', { mode: 'daemon', context: 'dm', providerId: 'agy' })
+    const other = rt.begin('c9', { mode: 'daemon', context: 'dm', providerId: 'openai' })
+    expect(rt.turnChatFor('agy')).toEqual({ kind: 'bound', chatId: 'c1' }) // 别家的轮不相干
+    const b = rt.begin('c2', { mode: 'daemon', context: 'tick', providerId: 'agy' })
+    expect(rt.turnChatFor('agy')).toEqual({ kind: 'ambiguous', count: 2 })
+    await b.deliver({ finalText: 'NO_REPLY', narration: [] })
+    expect(rt.turnChatFor('agy')).toEqual({ kind: 'bound', chatId: 'c1' })
+    a.abandon('error')
+    a.abandon('again') // 幂等:不会把计数减成负的
+    expect(rt.turnChatFor('agy')).toEqual({ kind: 'none' })
+    shadow.abandon('x'); other.abandon('x')
+  })
+
   it('私聊里 NO_REPLY ⇒ 不显示、记 REPLY_SILENT_IN_DM', async () => {
     const h = harness()
     const rt = makeReplyDeliveryRuntime(h.deps)

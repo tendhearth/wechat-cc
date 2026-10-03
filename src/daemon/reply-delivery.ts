@@ -168,12 +168,32 @@ export interface ReplyDeliveryRuntime extends ReplyDeliveryPort {
   noteMessage(chatId: string, m: { toOwner: boolean; text: string }): void
   /** legacy 出口旁听(reply 路由 / fallback):shadow 轮开着才记。 */
   observeLegacy(chatId: string, text: string): void
+  /**
+   * 这家 provider 此刻正在 daemon 模式下跑的那一轮是哪个聊天。给**没有自己的 chat 的共享令牌**用
+   * (agy 的 `agy-static`:一份全局 MCP 配置,所有 agy 对话共用一枚 trusted 令牌 —— 令牌里读不出 chat)。
+   * 恰好一个聊天有这家的 daemon 轮开着 ⇒ 就是它;没有 ⇒ none;不止一个 ⇒ ambiguous(说不清是哪一轮,
+   * 调用方必须拒绝,绝不猜)。
+   */
+  turnChatFor(providerId: string): TurnChatBinding
 }
+
+export type TurnChatBinding =
+  | { kind: 'bound'; chatId: string }
+  | { kind: 'none' }
+  | { kind: 'ambiguous'; count: number }
 
 interface OpenTurn { attachments: PendingAttachment[]; messagedOwner: string[]; legacy: string[]; refs: number }
 
 export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyDeliveryRuntime {
   const open = new Map<string, OpenTurn>()
+  // providerId → (chatId → 开着的 daemon 轮数)。只记 daemon 模式:附件工具只在 daemon 模式下注册。
+  const daemonTurns = new Map<string, Map<string, number>>()
+  const trackDaemon = (providerId: string, chatId: string, delta: 1 | -1): void => {
+    const byChat = daemonTurns.get(providerId) ?? new Map<string, number>()
+    const n = (byChat.get(chatId) ?? 0) + delta
+    if (n > 0) byChat.set(chatId, n); else byChat.delete(chatId)
+    if (byChat.size > 0) daemonTurns.set(providerId, byChat); else daemonTurns.delete(providerId)
+  }
 
   const acquire = (chatId: string): OpenTurn => {
     let t = open.get(chatId)
@@ -218,6 +238,8 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
       }
     }
 
+    trackDaemon(opts.providerId, chatId, 1)
+    const finishDaemon = () => { if (!done) trackDaemon(opts.providerId, chatId, -1); finish() }
     return {
       mode: 'daemon',
       async progress(text: string) {
@@ -233,7 +255,7 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
       async deliver(parts: TurnTextParts): Promise<DeliveryReport> {
         const pending = [...turn.attachments]
         const messagedOwner = [...turn.messagedOwner]
-        finish()
+        finishDaemon()
         const built = buildTurnReply(parts, pending.map(p => p.attachment), opts.context, opts.textStrategy)
         if (built.mixed) deps.log('NO_REPLY_MIXED', `chat=${chatId} provider=${opts.providerId} 令牌行已剥掉,其余照发`)
         if (built.silentInDm) {
@@ -252,7 +274,7 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
       abandon(reason: string) {
         if (done) return
         if (turn.attachments.length > 0) deps.log('REPLY_ABANDONED', `chat=${chatId} provider=${opts.providerId} reason=${reason} dropped_attachments=${turn.attachments.length}`)
-        finish()
+        finishDaemon()
       },
     }
   }
@@ -271,6 +293,12 @@ export function makeReplyDeliveryRuntime(deps: ReplyDeliveryRuntimeDeps): ReplyD
     },
     observeLegacy(chatId, text) {
       open.get(chatId)?.legacy.push(text)
+    },
+    turnChatFor(providerId) {
+      const byChat = daemonTurns.get(providerId)
+      if (!byChat || byChat.size === 0) return { kind: 'none' }
+      if (byChat.size > 1) return { kind: 'ambiguous', count: byChat.size }
+      return { kind: 'bound', chatId: [...byChat.keys()][0]! }
     },
   }
 }

@@ -239,3 +239,59 @@ bun scripts/experiments/reply-once/harness.ts --gate /tmp/x.jsonl
 **f 比第 3 轮差(3/5 → 2/5),按约定没有切换,openai 仍是 `shadow`。** a、g 都好于第 3 轮(g 达到修订后的过关线)。f 的失败形状三轮一致:语音工具调用之后的那一步模型还会写一句话,而聊天型策略会把它交付出去。可选的结构性做法(未实现、未验证):聊天型在一轮里调过 `voice` 后,把语音调用**之后**的文字段视为收尾不交付;或者接受 f 的线放宽到「语音 1、文字 ≤2」。
 
 累计真模型调用:145 + 52 + 15 = 212 轮(每批都在给定上限内),只打 llm.youdamaster.cc。
+
+---
+
+## 2026-10-03:回复交付第 2 步的闸门(agy → daemon)
+
+对象:spec 第 2 步 —— agy(订阅版 Gemini 的 Antigravity CLI 1.2.16,模型 `gemini-3.7-flash-medium`,生产默认)。两臂:`agy_legacy`(今天:reply 族工具说话)与 `agy_daemon`(没有 reply 族;一轮写下的文字按聊天型 `all_segments` 由真的 `deliverTurnReply`(假 sendText)交付;附件经 `/v1/turn/attach`,按共享令牌的**本轮绑定**挂上)。原始记录 `scripts/experiments/reply-once/results-2026-10-03-agy.jsonl`;表由 `--summarize` / `--gate … --gate-arms agy_daemon,agy_legacy` 生成。
+
+### 沙盒怎么搭的(agy 是外部进程,和 openai 臂不一样)
+
+agy 只读全局 `~/.gemini/config/mcp_config.json`,那里是**正在跑的 daemon** 的条目和真令牌,实验不能碰、也不能让 agy 看见。`scripts/experiments/reply-once/agy-sandbox.ts`:
+
+- 临时工作区里放一个工作区自定义 agent(`.agents/agents/wccsandbox/agent.md`),`inheritCustomizations: false` + **`inheritMcp: false`**;我们的 MCP 放进 agent 带的插件(`plugin.json` + `mcp_config.json`,插件路径写绝对路径)。插件起的是**生产的** wechat MCP 入口(`src/mcp-servers/wechat/main.ts`),环境和 daemon 写进全局配置的同形(`WECHAT_SESSION_TIER=trusted`,daemon 臂多 `WECHAT_REPLY_DELIVERY=daemon`),`WECHAT_INTERNAL_API` 指向 harness 进程里的假 internal API(127.0.0.1,令牌校验,只记账)。
+- 试出来的坑(都在代码注释里):frontmatter 里写 `mcpServers` ⇒ agent「not found」静默退回默认 agent(默认 agent 加载全局 MCP);只有 `inheritCustomizations: false` 不够,全局 MCP 要 `inheritMcp: false`;插件相对路径报 `AgentBasePath is not set`;`--new-project` 那一次找不到工作区 agent ⇒ 先 `--agy-init` 建项目(启动后、发消息前就杀掉),之后每轮 `--project <id> --agent wccsandbox`。
+- **偏离 spec §5.3 的一处**:print 模式不带 `--dangerously-skip-permissions` 时,agy 把每一次 MCP 调用都软拒(`cli.log`:`Print mode: soft-denying tool confirmation "CallMcpTool"`,冒烟实测)—— 两臂都发不出东西,量的不是生产(生产对主人会话带这个开关)。所以保留它,补偿:临时工作区、不继承任何全局定制、工具全是假的、终端走 `--sandbox`。
+- 每一轮之前 `bx status --json` 必须 protected + tunnel_healthy,否则整批中止(`assertBxProtected`);e 的每个暖场轮前也查。
+- b:agy 的历史不能脚本化灌进去,用生产里换 provider 时的冷启动交接块(`buildColdStartBlock`)把同一段连发历史放进提示,两臂一样。
+
+**agy 真正看到的工具表**(真 agy、各 1 轮,让它列出能用的 MCP 工具、不许调用):legacy 列出的是 `plugin_wechat/` 下的 37 个,含 `reply` / `reply_voice` / `send_file` / `edit_message` / `send_sticker` / `search_online_sticker` / `send_online_sticker_candidate` / `broadcast`;daemon 列出 32 个,上面 8 个都没有,多了 `voice` / `sticker` / `attach_file`,没有 `message`(钉死 trusted);两次都**没有**全局的 `wechat-cc-wechat`(同一个问题在没加 `inheritMcp: false` 时列出的正是全局那 37 个)。生产链路(能力表 → `wechatStdioMcpSpec('agy')` → `setupAgyGlobalMcp` 写的文件 → 用文件里的 env 起子进程 → tools/list)由 `src/mcp-servers/wechat/integration.test.ts` 钉住,翻回 legacy 时条目被改写、reply 工具回来。
+
+### 结果(每场景 3 次,e 1 次 × 4 轮;两臂共 56 轮)
+
+| 场景 | 过关线 | agy_legacy | agy_daemon | 明细(daemon) |
+|---|---|---|---|---|
+| a 一句话 | 1 条 | 过 1,1,1 | 过 1,1,1 | |
+| b 历史有连发 | 干净、0「停」、0 跑满、均值 ≤1.5 | 过 | 过 | 都 1 条,没有复述「停」 |
+| c 分三条 | 三项完整、没丢段、≤3 | 过 3,3,3 | 过 3,3,3 | |
+| d 我有哪些项目 | list_projects、≤2 条、列表完整 | 过 1,1,1 | 过 1,1,1 | 非回复工具 7 vs 7 |
+| e 新会话四轮 | 每轮 1 条 | 过 1→1→1→1 | 过 1→1→1→1 | |
+| f 语音晚安 | 语音 1、文字 ≤1 | 过 | 过 | 语音都经 `/v1/turn/attach` 绑到本轮(共享令牌),文字 0 |
+| g 推送 + 已过期 | ≥4/5 且静默率比基线高 40pp | 3/3 静默 | 3/3 静默 | **按线「不过」只因相对条件**:agy 的 legacy 推送本来就 3/3 不发(legacy 推送只认 reply 工具,模型没调) |
+| h 3–4 次工具 | 没丢段、结论送达 | 过 1,1,2 | 过 2,2,2 | 「列表一段 + 建议一段」两条,结论都送到 |
+| i 私聊「不用回」 | 令牌 0 外泄 | 过 | 过 | 都回了一句,没有静默 |
+| 双发(新指标) | 重复气泡 + 「已回复…」旁白 | 0 | 0 | |
+| 全局 | 非回复工具 | 15.0 | **10.3** | 差额主要是 agy 调 reply 前先 `view_file` 读工具 schema |
+
+### 结论
+
+**两臂打平,daemon 没有回归,但在 harness 能量到的故障点上也不是「明显更好」—— 按约定先 `shadow`,不翻默认。** agy 在沙盒里的 legacy 本来就没有坏:2026-09-08 的双发旁白已经被命名空间折叠修住(`agent-provider.ts` 的 `normalizeWechatMcpServer`),所以这里量不出差。daemon 的好处是**结构性**的,由测试而不是由回合数证明:
+
+1. 双发旁白不再依赖「认出这一家的 tool_call 形状」—— `src/core/conversation-coordinator.agy-delivery.test.ts` 用真 agy 解析器喂一个没登记过的命名空间:legacy 复现双发(FALLBACK_REPLY 把「已回复用户的问候。」当第二条),daemon 只交付一次、没有 FALLBACK、server 名认得出认不出交付结果一字不差。
+2. 共享令牌 `agy-static` 的 #199 缺口:daemon 下附件绑本轮、发送类路由只许本轮的聊天;legacy / shadow 下仍是豁免(见 `reference/internal-api-auth.md`)。
+
+翻到 daemon 只改 `AGY_CAPABILITIES.replyDelivery` 一行,或 `agent-config` 的 `reply_delivery: { agy: 'daemon' }` + 重启(开机会把全局 MCP 条目改成 daemon 工具表)。shadow 期间看 `[REPLY_SHADOW] … provider=agy` 的分布。
+
+真模型调用合计 74 轮(上限 80):探路 18 轮(其中 7 轮是为了不发消息而提前杀进程、但消息已经发出去的半轮,按整轮记;另有 1 次 TLS 握手超时在认证阶段就失败、没有到模型)+ 闸门 56 轮。每一批都在 bx protected + healthy 时跑。
+
+### 复跑
+
+```bash
+bun scripts/experiments/reply-once/harness.ts --agy-init <临时目录>           # 打印 agy 项目 id,不发消息
+bun scripts/experiments/reply-once/harness.ts --arm agy_legacy --scenarios a,b,c,d,f,g,h,i --runs 3 --agy-ws <临时目录> --agy-project <id> --out /tmp/x.jsonl
+bun scripts/experiments/reply-once/harness.ts --arm agy_daemon --scenarios e --runs 1 --agy-ws <另一个临时目录> --agy-project <id2> --out /tmp/x.jsonl
+bun scripts/experiments/reply-once/harness.ts --gate /tmp/x.jsonl --gate-arms agy_daemon,agy_legacy
+```
+
+两臂并行跑要各用一个工作区(每轮会重写工作区里的 agent / 插件配置)。

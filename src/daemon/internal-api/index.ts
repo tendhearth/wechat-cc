@@ -38,7 +38,8 @@ import {
 import { makeMaybePrefix, makeRoutes } from './routes'
 import { computePresence } from './routes-presence'
 import { REQUEST_SCHEMAS } from './schema'
-import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDecision } from './send-scope'
+import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDecision, sharedTokenTurn } from './send-scope'
+import { replyDeliveryFor } from '../../core/capability-matrix'
 
 export type {
   InternalApi,
@@ -268,7 +269,18 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     const callerChatId = caller.origin === 'session' && caller.sessionKey
       ? caller.sessionKey.split('/').slice(2).join('/')
       : undefined
-    const callerInfo = { tier: caller.tier, origin: caller.origin, chatId: callerChatId }
+    // 共享令牌按本轮绑定(回复交付第 2 步):agy 走 daemon 交付时,`agy-static` 的「自己的 chat」就是此刻
+    // 正在跑的那一轮 agy 的聊天 —— 附件路由与发送类的 chat 范围门用它。其它路由(记忆 / 提醒……)照旧
+    // 只看令牌里读出来的 chatId(agy-static 没有)。
+    const sharedTurn = sharedTokenTurn(caller, {
+      agyDaemon: replyDeliveryFor('agy') === 'daemon',
+      turnChatFor: deps.replyDelivery ? (p) => deps.replyDelivery!.turnChatFor(p) : undefined,
+    })
+    const turnChatId = sharedTurn?.kind === 'bound' ? sharedTurn.chatId : undefined
+    const callerInfo = {
+      tier: caller.tier, origin: caller.origin, chatId: callerChatId,
+      ...(sharedTurn ? { sharedTurn: sharedTurn.kind, ...(turnChatId ? { turnChatId } : {}) } : {}),
+    }
 
     // Chat-scope gate for the send family (send-scope.ts, 2026-10-03): a
     // guest/trusted session may only send to / edit in its OWN chat;
@@ -279,12 +291,16 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     const sendTarget = SEND_SCOPED_ROUTES[routeKey]
     if (sendTarget) {
       const target = sendTarget(body)
-      const decision = sendScopeDecision(target, { ...callerInfo, sessionKey: caller.sessionKey })
+      const decision = sendScopeDecision(target, sharedTurn
+        ? { tier: caller.tier, origin: caller.origin, chatId: turnChatId, sessionKey: caller.sessionKey, sharedTokenBound: true }
+        : { ...callerInfo, sessionKey: caller.sessionKey })
       const targetLabel = target === ALL_CHATS ? '*' : target
       if (decision.kind === 'deny') {
-        deps.log?.('INTERNAL_API', `403 ${routeKey} caller=${caller.tier}/${caller.origin} chat_scope own=${callerChatId ?? '-'} target=${targetLabel}`, {
+        const own = sharedTurn ? (turnChatId ?? `-(agy-static turn=${sharedTurn.kind})`) : (callerChatId ?? '-')
+        deps.log?.('INTERNAL_API', `403 ${routeKey} caller=${caller.tier}/${caller.origin} chat_scope own=${own} target=${targetLabel}`, {
           event: 'chat_scope_denied', path: routeKey, caller: caller.tier, origin: caller.origin,
-          callerChat: callerChatId ?? null, target: targetLabel,
+          callerChat: (sharedTurn ? turnChatId : callerChatId) ?? null, target: targetLabel,
+          ...(sharedTurn ? { sharedTurn: sharedTurn.kind } : {}),
         })
         return send(res, 403, { error: 'chat_scope', message: decision.message }, origin)
       }

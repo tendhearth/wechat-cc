@@ -21,9 +21,14 @@
  *   - 非 admin 的 session 令牌读不出 chat(sessionKey 不是三段)⇒ 拒(fail closed),
  *     唯一例外是 `agy-static`,见下。
  *   - `agy-static`:agy 只有一份全局 MCP 配置,所有 agy 对话共用这一枚 trusted
- *     令牌,它没有「自己的 chat」。照旧放行 —— 它与 trusted 的 file 令牌同级
- *     (同样落盘、同样跨对话),补偿控制仍是 `/agy` 拒 guest。已知缺口,写在
- *     docs/reference/internal-api-auth.md。
+ *     令牌,它没有「自己的 chat」。
+ *       · agy 走 legacy / shadow(用 reply 工具说话):照旧放行 —— 它与 trusted 的 file
+ *         令牌同级(同样落盘、同样跨对话),补偿控制仍是 `/agy` 拒 guest。
+ *       · agy 走 daemon 交付(回复交付第 2 步,2026-10-03):它不再需要按 chat_id 发任何
+ *         东西(回复由 daemon 送达,附件绑在本轮上)⇒ 豁免取消。它的「自己的 chat」就是
+ *         此刻正在跑的那一轮 agy 的聊天(`ReplyDeliveryRuntime.turnChatFor('agy')`);
+ *         没有轮在跑 / 同时有两轮 ⇒ 读不出 ⇒ 按 trusted 规则拒(fail closed)。
+ *     见 docs/reference/internal-api-auth.md。
  *
  * 拒绝:403 `{ error: 'chat_scope', message }`,message 明说什么都没发出去;
  * 不回显被请求的 chat_id(同 reminder_scope_denied 的做法),目标只进本地日志。
@@ -83,6 +88,8 @@ export interface SendScopeCaller {
   origin: TokenOrigin
   chatId?: string | undefined
   sessionKey?: string | undefined
+  /** 共享令牌已按本轮绑定(agy daemon 模式):不再豁免,`chatId` 是绑定到的那一轮的聊天(可能读不出)。 */
+  sharedTokenBound?: boolean
 }
 
 export const CHAT_SCOPE_MESSAGE =
@@ -101,10 +108,23 @@ const ALLOW: SendScopeDecision = { kind: 'allow' }
 export function sendScopeDecision(target: SendTarget, caller: SendScopeCaller): SendScopeDecision {
   if (target === null) return ALLOW
   if (caller.origin !== 'session') return ALLOW
-  if (caller.sessionKey === AGY_STATIC_SESSION_KEY) return ALLOW
+  if (caller.sessionKey === AGY_STATIC_SESSION_KEY && caller.sharedTokenBound !== true) return ALLOW
   if (target === ALL_CHATS) return caller.tier === 'admin' ? ALLOW : { kind: 'deny', message: BROADCAST_SCOPE_MESSAGE }
   if (caller.chatId && caller.chatId === target) return ALLOW
   // 暂时放行(见模块注释):等 admin 专用 `message` 工具落地再收紧。
   if (caller.tier === 'admin') return { kind: 'admin_cross' }
   return { kind: 'deny', message: CHAT_SCOPE_MESSAGE }
+}
+
+/**
+ * 共享令牌按「本轮」绑定(回复交付第 2 步)。只对 `agy-static` 且 agy 走 daemon 交付时生效;否则 undefined
+ * (调用方照旧)。纯函数:模式与运行时的查询由 dispatcher 注入。
+ */
+export function sharedTokenTurn(
+  caller: { origin: TokenOrigin; sessionKey?: string | undefined },
+  opts: { agyDaemon: boolean; turnChatFor?: ((providerId: string) => { kind: 'bound'; chatId: string } | { kind: 'none' } | { kind: 'ambiguous'; count: number }) | undefined },
+): { kind: 'bound'; chatId: string } | { kind: 'none' } | { kind: 'ambiguous' } | undefined {
+  if (caller.origin !== 'session' || caller.sessionKey !== AGY_STATIC_SESSION_KEY || !opts.agyDaemon) return undefined
+  const b = opts.turnChatFor?.('agy') ?? { kind: 'none' as const }
+  return b.kind === 'bound' ? b : b.kind === 'ambiguous' ? { kind: 'ambiguous' } : { kind: 'none' }
 }
