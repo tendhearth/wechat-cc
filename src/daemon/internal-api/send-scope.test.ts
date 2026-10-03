@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os'
 import { createInternalApi, type InternalApi, type InternalApiDeps } from '../internal-api'
 import { makeReplySinks } from '../reply-sinks'
 import { makeRoutes, makeMaybePrefix } from './routes'
-import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDecision } from './send-scope'
+import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDecision, sharedTokenTurn } from './send-scope'
+import { makeReplyDeliveryRuntime } from '../reply-delivery'
+import { setReplyDeliveryOverrides } from '../../core/capability-matrix'
 import { minTierFor } from './route-tiers'
 
 /**
@@ -49,6 +51,24 @@ describe('sendScopeDecision (pure rule)', () => {
     const agy = { tier: 'trusted' as const, origin: 'session' as const, chatId: '', sessionKey: 'agy-static' }
     expect(kind('anyone', agy)).toBe('allow')
     expect(kind(ALL_CHATS, agy)).toBe('allow')
+  })
+  it('agy-static bound to its turn (agy in daemon delivery): own turn chat only, no broadcast, no turn ⇒ deny', () => {
+    // 回复交付第 2 步:agy 不再按 chat_id 发东西,共享令牌的豁免取消;「自己的 chat」= 此刻在跑的那一轮。
+    const bound = { tier: 'trusted' as const, origin: 'session' as const, chatId: 'owner', sessionKey: 'agy-static', sharedTokenBound: true }
+    expect(kind('owner', bound)).toBe('allow')
+    expect(kind('someone-else', bound)).toBe('deny')
+    expect(kind(ALL_CHATS, bound)).toBe('deny')
+    expect(kind('owner', { ...bound, chatId: undefined })).toBe('deny')
+  })
+  it('sharedTokenTurn: only agy-static, only when agy is in daemon delivery', () => {
+    const turnChatFor = (p: string) => p === 'agy' ? { kind: 'bound' as const, chatId: 'owner' } : { kind: 'none' as const }
+    const agy = { origin: 'session' as const, sessionKey: 'agy-static' }
+    expect(sharedTokenTurn(agy, { agyDaemon: false, turnChatFor })).toBeUndefined()
+    expect(sharedTokenTurn({ origin: 'session', sessionKey: 'claude/a/owner' }, { agyDaemon: true, turnChatFor })).toBeUndefined()
+    expect(sharedTokenTurn({ origin: 'file' }, { agyDaemon: true, turnChatFor })).toBeUndefined()
+    expect(sharedTokenTurn(agy, { agyDaemon: true, turnChatFor })).toEqual({ kind: 'bound', chatId: 'owner' })
+    expect(sharedTokenTurn(agy, { agyDaemon: true, turnChatFor: () => ({ kind: 'ambiguous', count: 2 }) })).toEqual({ kind: 'ambiguous' })
+    expect(sharedTokenTurn(agy, { agyDaemon: true })).toEqual({ kind: 'none' })
   })
   it('file / operator tokens are unrestricted', () => {
     expect(kind('anyone', { tier: 'trusted', origin: 'file' })).toBe('allow')
@@ -276,12 +296,74 @@ describe('send routes over HTTP — chat scope', () => {
     expect(r.body.error).toBe('route_not_allowed')
   })
 
-  it('agy-static (shared trusted token, no own chat) keeps current behaviour', async () => {
+  it('agy-static (shared trusted token, no own chat) keeps current behaviour while agy is legacy / shadow', async () => {
     const m = mocks()
     const { port } = await boot(m)
     const agy = api!.mintSessionToken('trusted', 'agy-static')
     expect((await post(port, agy, '/v1/wechat/reply', { chat_id: 'some@im.wechat', text: 'hi' })).status).toBe(200)
     expect(m.sendReply).toHaveBeenCalledWith('some@im.wechat', 'hi')
+  })
+
+  describe('agy-static under daemon delivery (回复交付第 2 步:附件绑到本轮,共享令牌不再豁免)', () => {
+    afterEach(() => setReplyDeliveryOverrides(undefined))
+    const rtFor = (m: Mocks) => makeReplyDeliveryRuntime({ sendText: async (c, t) => m.sendReply(c, t), sleep: async () => {}, log: () => {} })
+
+    it('no agy turn in flight ⇒ chat-targeted sends 403 and attach reports no turn', async () => {
+      setReplyDeliveryOverrides({ agy: 'daemon' })
+      const m = mocks()
+      const replyDelivery = rtFor(m)
+      const { port } = await boot(m, { replyDelivery })
+      const agy = api!.mintSessionToken('trusted', 'agy-static')
+      const r = await post(port, agy, '/v1/wechat/reply', { chat_id: 'some@im.wechat', text: 'hi' })
+      expect(r.status).toBe(403)
+      expect(r.body.error).toBe('chat_scope')
+      const a = await post(port, agy, '/v1/turn/attach', { kind: 'voice', text: '晚安' })
+      expect(a.body).toMatchObject({ ok: false, error: expect.stringMatching(/^no_turn_in_progress/) })
+      nothingSent(m)
+    })
+
+    it('one agy turn in flight ⇒ attach binds to that chat; sends to its chat pass, to any other chat 403', async () => {
+      setReplyDeliveryOverrides({ agy: 'daemon' })
+      const m = mocks()
+      const replyDelivery = rtFor(m)
+      const { port } = await boot(m, { replyDelivery })
+      const agy = api!.mintSessionToken('trusted', 'agy-static')
+      const turn = replyDelivery.begin('owner@im.wechat', { mode: 'daemon', context: 'dm', providerId: 'agy', textStrategy: 'all_segments' })
+      expect((await post(port, agy, '/v1/turn/attach', { kind: 'voice', text: '晚安' })).body).toEqual({ ok: true, attached: true })
+      expect((await post(port, agy, '/v1/wechat/sticker_feedback', { chat_id: 'owner@im.wechat', signal: 'positive' })).status).toBe(200)
+      const other = await post(port, agy, '/v1/wechat/sticker_feedback', { chat_id: 'victim@im.wechat', signal: 'positive' })
+      expect(other.status).toBe(403)
+      expect(JSON.stringify(other.body)).not.toContain('victim')
+      const report = await turn.deliver({ finalText: '', narration: [] })
+      expect(report).toMatchObject({ delivery: 'attachments_only', attachmentsSent: 1 })
+      expect(m.replyVoice).toHaveBeenCalledWith('owner@im.wechat', '晚安')
+    })
+
+    it('two agy turns in flight (two chats) ⇒ attach refuses as ambiguous instead of guessing', async () => {
+      setReplyDeliveryOverrides({ agy: 'daemon' })
+      const m = mocks()
+      const replyDelivery = rtFor(m)
+      const { port } = await boot(m, { replyDelivery })
+      const agy = api!.mintSessionToken('trusted', 'agy-static')
+      const t1 = replyDelivery.begin('owner@im.wechat', { mode: 'daemon', context: 'dm', providerId: 'agy' })
+      const t2 = replyDelivery.begin('friend@im.wechat', { mode: 'daemon', context: 'dm', providerId: 'agy' })
+      const a = await post(port, agy, '/v1/turn/attach', { kind: 'voice', text: '晚安' })
+      expect(a.body).toMatchObject({ ok: false, error: expect.stringMatching(/^ambiguous_turn/) })
+      expect((await post(port, agy, '/v1/wechat/sticker_feedback', { chat_id: 'owner@im.wechat', signal: 'positive' })).status).toBe(403)
+      t1.abandon('test'); t2.abandon('test')
+      nothingSent(m)
+    })
+
+    it('a claude turn in flight does not bind agy-static (binding is per provider)', async () => {
+      setReplyDeliveryOverrides({ agy: 'daemon', claude: 'daemon' })
+      const m = mocks()
+      const replyDelivery = rtFor(m)
+      const { port } = await boot(m, { replyDelivery })
+      const agy = api!.mintSessionToken('trusted', 'agy-static')
+      const t = replyDelivery.begin('owner@im.wechat', { mode: 'daemon', context: 'dm', providerId: 'claude' })
+      expect((await post(port, agy, '/v1/turn/attach', { kind: 'voice', text: '晚安' })).body).toMatchObject({ ok: false, error: expect.stringMatching(/^no_turn_in_progress/) })
+      t.abandon('test')
+    })
   })
 
   it('share_page without chat_id is not gated', async () => {

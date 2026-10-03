@@ -717,7 +717,18 @@ export interface InternalApi {
 export type RouteHandler = (
   query: URLSearchParams,
   body: unknown,
-  caller?: { tier: UserTier; origin: import('./token-registry').TokenOrigin; chatId?: string },
+  caller?: {
+    tier: UserTier
+    origin: import('./token-registry').TokenOrigin
+    chatId?: string
+    /**
+     * 共享令牌(`agy-static`)在 daemon 交付模式下绑定到的那一轮的聊天(回复交付第 2 步):令牌里读不出 chat,
+     * daemon 按「这家 provider 此刻正在跑的那一轮」认。`sharedTurn` 说明绑定结果(bound / none / ambiguous)。
+     * 只有附件路由与发送类的 chat 范围门用它;`chatId` 照旧是令牌里读出来的(agy-static 永远没有)。
+     */
+    turnChatId?: string
+    sharedTurn?: 'bound' | 'none' | 'ambiguous'
+  },
 ) => Promise<{ status: number; body: unknown }> | { status: number; body: unknown }
 
 export type RouteTable = Record<string, RouteHandler | undefined>

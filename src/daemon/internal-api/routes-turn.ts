@@ -4,7 +4,8 @@
  *
  * POST /v1/turn/attach —— 语音 / 表情 / 文件是**这一轮回复的附件**:工具调用时只登记,daemon 在交付时
  *   (文字之后、按调用顺序)才真的发。**不收 chat_id**:目标永远是会话令牌里的那个 chat —— 顺带关掉
- *   「任意 chat_id」的口子。表情 / 文件的真正发送原样复用老路由(冷却、GIPHY 白名单、偏好记账不变)。
+ *   「任意 chat_id」的口子。共享令牌(agy 的 `agy-static`,令牌里没有 chat)绑到 agy 此刻正在跑的那一轮
+ *   (dispatcher 的 `turnChatId`);同时有两轮 agy 在跑 ⇒ 说不清是哪一轮 ⇒ 拒,不猜。表情 / 文件的真正发送原样复用老路由(冷却、GIPHY 白名单、偏好记账不变)。
  *   回执是 `{ok:true, attached:true}`,不是 msg_id(还没发)。
  *
  * POST /v1/wechat/message —— admin 往**别处**发(别的聊天 / 主人自己的微信 / 群发)。`to` 等于本轮
@@ -21,6 +22,7 @@ import { tierMeets } from './route-tiers'
 const VOICE_LIMIT = 500
 
 const NO_TURN = 'no_turn_in_progress: nothing was attached — attachments only ride on the reply of a turn that is in progress in this chat'
+const AMBIGUOUS = 'ambiguous_turn: nothing was attached — this shared session token is answering more than one conversation right now, so it cannot tell which reply to attach to. Say it in words instead.'
 const OWN_CHAT = 'message_to_own_chat: nothing was sent — what you want to say in THIS chat goes in your final text; the daemon delivers it. `message` is only for other targets.'
 
 const str = (v: unknown): string | undefined => typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined
@@ -43,7 +45,10 @@ export function turnRoutes(deps: InternalApiDeps, table: () => RouteTable): Rout
     'POST /v1/turn/attach': async (_q, body, caller) => {
       const rd = deps.replyDelivery
       if (!rd) return { status: 503, body: { error: 'reply_delivery_not_wired' } }
-      const chatId = caller?.origin === 'session' ? caller.chatId : undefined
+      // 会话令牌里的 chat;共享令牌(agy-static)用 dispatcher 按本轮绑定出来的那个(回复交付第 2 步)。
+      if (caller?.sharedTurn === 'ambiguous') return { status: 200, body: { ok: false, error: AMBIGUOUS } }
+      const chatId = caller?.origin === 'session' ? (caller.chatId || caller.turnChatId) : undefined
+      if (!chatId && caller?.sharedTurn === 'none') return { status: 200, body: { ok: false, error: NO_TURN } }
       if (!chatId) return { status: 400, body: { ok: false, error: 'no_turn_chat: only an agent session can attach to its own turn' } }
       const b = (body ?? {}) as Record<string, unknown>
 

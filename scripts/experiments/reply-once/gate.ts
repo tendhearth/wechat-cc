@@ -6,6 +6,8 @@
  */
 
 export type Arm = 'baseline' | 'i_plain_ack' | 'ii_prompt' | 'iii_drop' | 'iv_restrict' | 'v_condense' | 'shipped' | 'daemon'
+  /** 回复交付第 2 步(2026-10-03):真 agy(沙盒 agent + 假 wechat MCP)。legacy = 今天的 reply 工具;daemon = 新路。 */
+  | 'agy_legacy' | 'agy_daemon'
 export type Scenario = 'a' | 'b' | 'b_guarded_seed' | 'b_cold' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i'
 
 /** 只算「说话」的工具:legacy 的回复族 + daemon 的附件工具。其余都是「非回复工具」。 */
@@ -48,6 +50,28 @@ export interface RunResult {
   textStrategy?: 'all_segments' | 'last_segment'
   /** 模型这一轮写下的文字段里,有几段没送到主人那里(聊天型应当恒为 0)。 */
   segmentsLost?: number
+  // ── 2026-10-03 第 2 步(agy)起 ──
+  /** 双发:外发里重复的气泡 + 「已回复 / 已发送」这类说自己发过了的旁白(agy 双发旁白的形状)。 */
+  doubleSend?: number
+  /** 假 internal API 收到的请求路径(agy 臂:MCP 调用真的打到了假 API)。 */
+  apiPaths?: string[]
+}
+
+/** 「已回复用户的问候。」这一类:模型在说自己刚发过话(2026-09-08 真机 agy 双发的第二条就是这个形状)。 */
+export const DELIVERY_NARRATION_RE = /已(经)?(回复|发送|发出|回答)|(回复|消息)已(发送|发出|送达)|\breplied\b|\bsent (the|a) (reply|message)/i
+
+/** 双发计数:规范化后重复的气泡数 + 自述已发送的旁白数。 */
+export function doubleSends(delivered: readonly string[]): number {
+  const norm = (t: string) => t.replace(/[\s\p{P}\p{S}]/gu, '')
+  const seen = new Set<string>()
+  let n = 0
+  for (const d of delivered) {
+    const k = norm(d)
+    if (k.length > 0 && seen.has(k)) n++
+    else if (DELIVERY_NARRATION_RE.test(d)) n++
+    seen.add(k)
+  }
+  return n
 }
 
 const avg = (xs: number[]) => xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length
@@ -62,8 +86,8 @@ export function summarize(rows: RunResult[]): string {
   const groups = new Map<string, RunResult[]>()
   for (const r of rows) groups.set(key(r), [...(groups.get(key(r)) ?? []), r])
   const lines = [
-    '| arm | 场景 | n | 外发气泡/轮 (各次) | 元话语 | 非回复工具 | 步数均值 | 干净结束 | 跑满预算 | 旁白外泄 | 令牌外泄 | 静默 | 附件 |',
-    '|---|---|---|---|---|---|---|---|---|---|---|---|---|',
+    '| arm | 场景 | n | 外发气泡/轮 (各次) | 元话语 | 非回复工具 | 步数均值 | 干净结束 | 跑满预算 | 旁白外泄 | 令牌外泄 | 静默 | 附件 | 双发 |',
+    '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|',
   ]
   for (const [k, rs] of [...groups].sort()) {
     const [arm, sc] = k.split('|')
@@ -72,7 +96,7 @@ export function summarize(rows: RunResult[]): string {
     const tools = [...rs.flatMap(r => r.nonReplyTools), ...rs.flatMap(r => (r.warmup ?? []).flatMap(w => w.nonReplyTools))]
     const toolStr = tools.length === 0 ? '0' : `${tools.length} (${[...new Set(tools)].join(',')})`
     const atts = rs.flatMap(r => r.attachments ?? [])
-    lines.push(`| ${arm} | ${sc} | ${rs.length} | ${avg(per).toFixed(1)} (${per.join(',')})${warm} | ${rs.reduce((a, r) => a + metaCount(r), 0)} | ${toolStr} | ${avg(rs.map(r => r.steps)).toFixed(1)} | ${rs.filter(r => r.cleanEnd).length}/${rs.length} | ${rs.filter(exhausted).length} | ${rs.reduce((a, r) => a + (r.narrationLeaked ?? 0), 0)} | ${rs.filter(r => r.tokenLeaked).length} | ${rs.filter(r => r.silent).length} | ${atts.length === 0 ? '0' : atts.join(',')} |`)
+    lines.push(`| ${arm} | ${sc} | ${rs.length} | ${avg(per).toFixed(1)} (${per.join(',')})${warm} | ${rs.reduce((a, r) => a + metaCount(r), 0)} | ${toolStr} | ${avg(rs.map(r => r.steps)).toFixed(1)} | ${rs.filter(r => r.cleanEnd).length}/${rs.length} | ${rs.filter(exhausted).length} | ${rs.reduce((a, r) => a + (r.narrationLeaked ?? 0), 0)} | ${rs.filter(r => r.tokenLeaked).length} | ${rs.filter(r => r.silent).length} | ${atts.length === 0 ? '0' : atts.join(',')} | ${rs.reduce((a, r) => a + (r.doubleSend ?? doubleSends(deliveredOf(r))), 0)} |`)
   }
   return lines.join('\n')
 }
