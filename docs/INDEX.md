@@ -27,6 +27,7 @@
 | ACP(Cursor 走 `cursor-agent acp`) | [cc-workbench.md](cc-workbench.md#免审执行者与-acp) | `superpowers/specs/2026-09-17-acp-evaluation.md`(定案)+ `2026-09-17-acp-cursor-executor-design.md` + `2026-09-18-acp-cursor-chat-design.md` |
 | 工作台文件锚定层的威胁模型(防什么 / 不防什么 / 从锚点开整条链) | [reference/workbench-file-guard.md](reference/workbench-file-guard.md) | 评审 #3 owner 定案(2026-10-01),见 roadmap 修订记录 |
 | 网络守护(守护 v2 按调用判:哪些调用需要保护、guard.json 覆盖、bx / 探测信号、拦在哪、刻意不拦什么、怎么验) | [reference/network-guard.md](reference/network-guard.md) | 主人拍板(2026-10-02 两次,第二次收窄),见 roadmap 修订记录 |
+| openai 兼容后端「发完话还在发」:实验 harness、各候选对照表、落地的尾巴守卫与残留风险 | [reference/reply-once-experiment.md](reference/reply-once-experiment.md) | 实验结论(2026-10-02),见 roadmap 修订记录 |
 | 内部 API 鉴权(tier / token / routeAllow / 登记几处) | [reference/internal-api-auth.md](reference/internal-api-auth.md) | `superpowers/specs/2026-06-21-internal-api-tier-authz-design.md` |
 | 发版(tag → 三平台构建 → Publish → R2 更新源) | [maintainer/release.md](maintainer/release.md) | — |
 | 自维护(部署 / 自检 / CI 闸门) | [maintainer/](maintainer/README.md) | `superpowers/specs/2026-09-18-{self-maintenance,ci-triage}-design.md` |

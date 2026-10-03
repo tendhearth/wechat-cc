@@ -8,6 +8,7 @@ import {
   type SpawnContext,
   type ProviderCapabilities,
   assertNotAuthFailed,
+  isReplyToolCall,
 } from './agent-provider'
 import { isAuthFailError } from './auth-fail'
 import type { ChatModelClient, ChatMessage, ToolSpec, TurnDelta } from './openai-chat-model'
@@ -15,6 +16,7 @@ import type { McpToolBridge } from './openai-mcp-bridge'
 import { builtinTools, type BuiltinTool } from './openai-tools'
 import { gateTool } from './openai-gate'
 import { makeTurnEmitter } from './turn-emitter'
+import { isReplyTail } from './reply-tail'
 
 export const OPENAI_CAPABILITIES: ProviderCapabilities = {
   // We own the loop, so per-tool gating IS realisable.
@@ -58,11 +60,33 @@ export interface OpenAiAgentProviderOptions {
    */
   endpoint?: { baseUrl: string; model: string }
   cwd?: string
+  /**
+   * 内置工具(Read/Write/Edit/Bash/view_image)的构造器;不给 ⇒ 真的 `builtinTools`。
+   * 只给实验 harness 用(scripts/experiments/reply-once):换成只记录、绝不执行的假工具,
+   * 好拿真模型测循环而不碰主人的机器。
+   */
+  makeBuiltins?: (cwd: string) => BuiltinTool[]
+  /**
+   * 发过话之后丢掉「（真的停了）」这类尾巴并结束本轮(reply-tail.ts)。默认开。只有实验 harness
+   * 会关:量基线时整段关,灌脚本历史时临时关(所以也收函数,每步现读)。
+   */
+  replyTailGuard?: boolean | (() => boolean)
   maxSteps?: number
   log?: (tag: string, line: string) => void
 }
 
 const DEFAULT_MAX_STEPS = 25
+
+/** 真正「发一句话」的两个工具 —— 尾巴判定只看它们(回复族里的 send_file / 贴纸不算)。 */
+const SPEAKING_TOOLS: ReadonlySet<string> = new Set(['reply', 'reply_voice'])
+
+function speaks(tool: string, server: string | undefined): boolean {
+  return SPEAKING_TOOLS.has(tool) && isReplyToolCall({ kind: 'tool_call', tool, server })
+}
+
+function sentOk(result: string): boolean {
+  try { return (JSON.parse(result) as { ok?: unknown })?.ok === true } catch { return false }
+}
 
 /**
  * Build a live session's `dispatch` closure — the owned tool loop. Extracted
@@ -84,8 +108,10 @@ function makeOpenAiSession(args: {
   maxSteps: number
   messages: ChatMessage[]
   firstRef: { first: boolean }
+  log: (tag: string, line: string) => void
+  replyTailGuard: () => boolean
 }): AgentSession {
-  const { sessionId, chatModel, bridge, builtinByName, toolSpecs, ctx, maxSteps, messages, firstRef } = args
+  const { sessionId, chatModel, bridge, builtinByName, toolSpecs, ctx, maxSteps, messages, firstRef, log, replyTailGuard } = args
 
   // Per-dispatch AbortController holder. We own the loop, so cancel() is
   // boundary-checked rather than a true mid-stream abort: `streamTurn`'s
@@ -117,6 +143,10 @@ function makeOpenAiSession(args: {
         const prepared = await prepareImageParts(extractImagePaths(text))
         messages.push(chatModel.userMessage(appendImageNotes(text, prepared.notes), prepared.parts))
         const em = makeTurnEmitter()
+        // 本轮已经成功发出去的话(reply / reply_voice 的 text)。见 reply-tail.ts:
+        // 发过话之后,下一步若只是 reply、且每条都是「（真的停了）」这类尾巴,就不发、
+        // 不进历史、直接结束这一轮 —— 不加提示、不限工具、不设条数上限。
+        const sentThisTurn: string[] = []
         try {
           let steps = 0
           for (;;) {
@@ -150,18 +180,34 @@ function makeOpenAiSession(args: {
               yield mapDeltaToEvent({ kind: 'text', text: textBuf })
               textBuf = ''
             }
+            // 第一个工具调用之后的事件先压着,等这一步收完(finished)再放 —— 这一步要是
+            // 整个被判成尾巴,它的 tool_call 事件也不该出现。工具调用的 delta 本来就在
+            // 一步的末尾才到,压着几乎不延迟;之前的文本照常先发,顺序不变。
+            const held: AgentEvent[] = []
             for await (const d of turn.deltas) {
               if (d.kind === 'text') { textBuf += d.text; continue }
               // 工具调用之前先把已攒的文本吐出来,保持「先说后做」的事件顺序。
-              yield* flushText()
+              if (held.length === 0) yield* flushText()
+              else held.push(...flushText())
               // Stamp `server` from the REAL owning MCP server (never assume
               // `wechat` for every MCP tool) — see McpToolBridge.serverOf doc
               // and isReplyToolCall, which keys reply-detection on this field.
               const mcpServer = bridge.serverOf(d.name)
-              yield { kind: 'tool_call', tool: d.name, ...(mcpServer !== undefined ? { server: mcpServer } : {}) }
+              held.push({ kind: 'tool_call', tool: d.name, ...(mcpServer !== undefined ? { server: mcpServer } : {}) })
             }
-            yield* flushText()
+            if (held.length === 0) yield* flushText()
+            else held.push(...flushText())
             const { messages: assistantMsgs, toolCalls } = await turn.finished
+            const tail = sentThisTurn.length > 0 && replyTailGuard() && toolCalls.length > 0 && toolCalls.every(tc =>
+              speaks(tc.name, bridge.serverOf(tc.name))
+              && isReplyTail(String((tc.input as { text?: unknown } | null)?.text ?? ''), sentThisTurn))
+            if (tail) {
+              // 只丢这一步的工具调用;这一步里先说的文字(若有)照常交出去。
+              for (const ev of held) if (ev.kind === 'text') yield ev
+              log('REPLY_TAIL_DROPPED', `session=${sessionId} n=${toolCalls.length} sent=${sentThisTurn.length}`)
+              break
+            }
+            yield* held
             messages.push(...assistantMsgs)
             if (toolCalls.length === 0) break
             const followUps: ChatMessage[] = []
@@ -197,6 +243,9 @@ function makeOpenAiSession(args: {
                 } catch (err) {
                   result = `Tool error: ${err instanceof Error ? err.message : String(err)}`
                 }
+              }
+              if (decision !== 'deny' && speaks(tc.name, mcpServer) && sentOk(result)) {
+                sentThisTurn.push(String((tc.input as { text?: unknown } | null)?.text ?? ''))
               }
               messages.push(chatModel.toolResultMessage(tc.id, tc.name, result))
             }
@@ -280,7 +329,7 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
       const sessionId = randomUUID()
       const cwd = opts.cwd ?? project.path
       const bridge = await opts.makeMcpBridge(ctx.mcpEnv ?? {})
-      const builtins = builtinTools(cwd)
+      const builtins = (opts.makeBuiltins ?? builtinTools)(cwd)
       const builtinByName = new Map<string, BuiltinTool>(builtins.map(b => [b.spec.name, b]))
       const toolSpecs: ToolSpec[] = [...bridge.tools, ...builtins.map(b => b.spec)]
 
@@ -305,6 +354,8 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
         maxSteps,
         messages,
         firstRef: { first: true },
+        log,
+        replyTailGuard: typeof opts.replyTailGuard === 'function' ? opts.replyTailGuard : (() => opts.replyTailGuard !== false),
       })
       log('SESSION_SPAWN', `alias=${project.alias} provider=openai session=${sessionId}`)
       session.callTarget = () => target

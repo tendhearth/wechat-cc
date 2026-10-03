@@ -506,3 +506,109 @@ describe('openai provider —— 流式 delta 必须聚合成完整消息再发'
     expect(texts[1]).toBe('后半段')                        // 第二步也聚合
   })
 })
+
+// 2026-10-02 reply-once 实验(docs/reference/reply-once-experiment.md):Qwen3.8 在发完话之后
+// 被循环叫回来,接着用 reply 发「（停，不再发了 😅）」「（真的停了）」…… 循环侧的守卫:本轮已经
+// 成功发过话,下一步若**只是** reply 且每条都是尾巴 ⇒ 不发、不进历史、直接结束。不加提示、
+// 不限工具、不设条数上限。
+describe('openai provider —— 发完话之后的尾巴', () => {
+  type Step = { name: string; text?: string }[]
+  function stepModel(next: (i: number) => Step, seen: number[] = []): ChatModelClient & { calls: () => number } {
+    let i = 0
+    return {
+      calls: () => i,
+      streamTurn(messages) {
+        seen.push(messages.length)
+        const step = next(i++)
+        const toolCalls = step.map((c, k) => ({ id: `s${i}c${k}`, name: c.name, input: { chat_id: 'c', text: c.text } }))
+        async function* deltas() { for (const tc of toolCalls) yield { kind: 'tool_call' as const, ...tc } }
+        return { deltas: deltas(), finished: Promise.resolve({ messages: [{ role: 'assistant', content: JSON.stringify(step) }] as any, toolCalls }) }
+      },
+      async generate() { return 'ok' },
+      userMessage: (t) => ({ role: 'user', content: t } as any),
+      systemMessage: (t) => ({ role: 'system', content: t } as any),
+      toolResultMessage: (_id, name, r) => ({ role: 'tool', content: `${name}:${String(r)}` } as any),
+    }
+  }
+  function recordingBridge(sent: { name: string; text: unknown }[], replyResult = '{"ok":true,"msg_id":"sent:1"}'): McpToolBridge {
+    return {
+      tools: ['reply', 'reply_voice', 'list_projects'].map(name => ({ name, description: name, parameters: { type: 'object' } })),
+      async call(name, input) {
+        sent.push({ name, text: (input as { text?: unknown }).text })
+        return name === 'list_projects' ? '[{"alias":"a"}]' : replyResult
+      },
+      async close() {},
+      serverOf(name) { return ['reply', 'reply_voice', 'list_projects'].includes(name) ? 'wechat' : undefined },
+    }
+  }
+  const adminSpawn = { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: 'c' } as any
+
+  async function run(steps: Step[], opts: { replyResult?: string; replyTailGuard?: boolean } = {}) {
+    const sent: { name: string; text: unknown }[] = []
+    const model = stepModel(i => steps[i] ?? [])
+    const logs: string[] = []
+    const provider = createOpenAiAgentProvider({
+      makeChatModel: () => model,
+      makeMcpBridge: async () => recordingBridge(sent, opts.replyResult),
+      log: (tag) => logs.push(tag),
+      ...(opts.replyTailGuard !== undefined ? { replyTailGuard: opts.replyTailGuard } : {}),
+    })
+    const session = await provider.spawn({ alias: 'a', path: '/tmp' }, adminSpawn)
+    const events: AgentEvent[] = []
+    for await (const ev of session.dispatch('hi')) events.push(ev)
+    await session.close()
+    return { sent, modelCalls: model.calls(), events, logs }
+  }
+
+  it('发完一句之后的「（停，不再发了 😅）」不发,本轮就此结束', async () => {
+    const r = await run([[{ name: 'reply', text: '收到,e2e 正常。' }], [{ name: 'reply', text: '（停，不再发了 😅）' }], [{ name: 'reply', text: '（真的停了）' }]])
+    expect(r.sent.map(s => s.text)).toEqual(['收到,e2e 正常。'])
+    expect(r.modelCalls).toBe(2) // 第三步根本没被叫
+    expect(r.events.filter(e => e.kind === 'tool_call')).toHaveLength(1) // 被丢的那步也不出 tool_call 事件
+    expect(r.events.some(e => e.kind === 'error')).toBe(false)
+    expect(r.events.at(-1)?.kind).toBe('result')
+    expect(r.logs).toContain('REPLY_TAIL_DROPPED')
+  })
+
+  it('被丢的那一步不进历史:下一轮模型看不到它', async () => {
+    const sent: { name: string; text: unknown }[] = []
+    const seen: number[] = []
+    const script: Step[] = [[{ name: 'reply', text: '第一句' }], [{ name: 'reply', text: '（真的停了）' }], [{ name: 'reply', text: '第二轮' }], []]
+    const model = stepModel(i => script[i] ?? [], seen)
+    const provider = createOpenAiAgentProvider({ makeChatModel: () => model, makeMcpBridge: async () => recordingBridge(sent) })
+    const session = await provider.spawn({ alias: 'a', path: '/tmp' }, adminSpawn)
+    await collectTurn(session.dispatch('一'))
+    await collectTurn(session.dispatch('二'))
+    await session.close()
+    expect(sent.map(s => s.text)).toEqual(['第一句', '第二轮'])
+    // 第二轮第一步看到:user一 + assistant(第一句) + tool + user二 —— 没有「（真的停了）」那条
+    expect(seen).toEqual([1, 3, 4, 6])
+  })
+
+  it('正常的 2-4 条气泡照发(不设条数上限)', async () => {
+    const texts = ['1) 出门走走,晒晒太阳。', '2) 做一顿平时懒得做的菜。', '3) 看部轻松的电影。']
+    const r = await run([...texts.map(text => [{ name: 'reply', text }]), []])
+    expect(r.sent.map(s => s.text)).toEqual(texts)
+    expect(r.logs).not.toContain('REPLY_TAIL_DROPPED')
+  })
+
+  it('发一句「我查一下」→ 调工具 → 再发结果:都照常(守卫只管只有 reply 的那一步)', async () => {
+    const r = await run([[{ name: 'reply', text: '我查一下' }], [{ name: 'list_projects' }], [{ name: 'reply', text: '你有一个项目:a' }], []])
+    expect(r.sent.map(s => s.name)).toEqual(['reply', 'list_projects', 'reply'])
+  })
+
+  it('尾巴和别的工具同一步 ⇒ 整步照常执行(不替模型挑着丢)', async () => {
+    const r = await run([[{ name: 'reply', text: '收到' }], [{ name: 'reply', text: '（停）' }, { name: 'list_projects' }], []])
+    expect(r.sent.map(s => s.name)).toEqual(['reply', 'reply', 'list_projects'])
+  })
+
+  it('前一条没发成功(ok:false)⇒ 不算发过话,下一条照发', async () => {
+    const r = await run([[{ name: 'reply', text: '收到' }], [{ name: 'reply', text: '收到' }], []], { replyResult: '{"ok":false,"error":"x"}' })
+    expect(r.sent.map(s => s.text)).toEqual(['收到', '收到'])
+  })
+
+  it('replyTailGuard:false(实验 harness 量基线用)⇒ 原样照发', async () => {
+    const r = await run([[{ name: 'reply', text: '收到' }], [{ name: 'reply', text: '（真的停了）' }], []], { replyTailGuard: false })
+    expect(r.sent.map(s => s.text)).toEqual(['收到', '（真的停了）'])
+  })
+})
