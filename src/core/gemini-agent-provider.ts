@@ -35,6 +35,12 @@ export const GEMINI_CAPABILITIES: ProviderCapabilities = {
   supportsDelegation: false,
   supportsResume: false,
   defaultPeer: 'claude',
+  // 回复交付收尾(spec 2026-10-03 §5.7 删除清单「gemini 二选一」,2026-10-04 定:迁到 daemon,不删)。
+  // 和 openai 同一种形状:自研循环(没有 functionCall 的那一步就是一轮的结束)、聊天型模型 ⇒ 全部文字段按
+  // 顺序交付。迁过来后 legacy 路径不再有任何默认使用者,第 6 步可以整块删。这家一直没有真模型闸门(主人
+  // 机器上从没配过 GEMINI_API_KEY);回滚同其它家:agent-config 的 reply_delivery: { gemini: 'legacy' } + 重启。
+  replyDelivery: 'daemon',
+  replyText: 'all_segments',
 }
 
 export interface GeminiTierSdkOpts {

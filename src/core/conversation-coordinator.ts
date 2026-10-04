@@ -96,6 +96,23 @@ export interface TurnRecord {
   narrationSegments?: number
 }
 
+/**
+ * TurnRecord 的交付列 —— solo、/both、/chat 三处同一个写法(spec §4.10)。只有真的交付过(daemon 模式、
+ * completed)才有 report;legacy / shadow / 出错的轮不填。
+ */
+function deliveryColumns(
+  report: DeliveryReport | undefined,
+  summary: Pick<TurnSummary, 'narration'> | undefined,
+): Pick<TurnRecord, 'delivery' | 'bubbles' | 'attachments' | 'narrationSegments'> {
+  if (!report) return {}
+  return {
+    delivery: report.delivery,
+    bubbles: report.bubbles,
+    attachments: report.attachmentsSent,
+    narrationSegments: summary?.narration?.length ?? 0,
+  }
+}
+
 export interface ConversationCoordinatorDeps {
   resolveProject(chatId: string): { alias: string; path: string } | null
   manager: Pick<SessionManager, 'acquire'> & Partial<Pick<SessionManager, 'release' | 'releaseFor' | 'has' | 'effectiveTarget'>>
@@ -884,12 +901,7 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         textChunks: summary?.assistantText.length ?? 0,
         error: summary?.error,
         errorCode: summary?.errorCode,
-        ...(report ? {
-          delivery: report.delivery,
-          bubbles: report.bubbles,
-          attachments: report.attachmentsSent,
-          narrationSegments: summary?.narration?.length ?? 0,
-        } : {}),
+        ...deliveryColumns(report, summary),
       })
     }
   }
@@ -1139,9 +1151,9 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       const r = settled[i]!
       const providerId = participants[i]!
 
-      // Emit one TurnRecord per participant BEFORE the side-effect branches
-      // below — they each `continue`, so recording here guarantees exactly
-      // one record per provider regardless of which branch is taken.
+      // Exactly one TurnRecord per participant, emitted in the finally below — every branch
+      // `continue`s, the finally still records. Recorded AFTER delivery so a daemon participant's
+      // record carries the delivery columns like a solo turn (spec §4.10).
       const recSummary = r.status === 'fulfilled' ? r.value : undefined
       const recOutcome: TurnRecord['outcome'] =
         r.status === 'rejected' ? 'error'
@@ -1149,63 +1161,67 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         : isAuthErrorCode(r.value.errorCode) ? 'auth_failed'
         : r.value.error ? 'error'
         : 'completed'
-      deps.recordTurn?.({
-        chatId: msg.chatId,
-        provider: providerId,
-        alias: proj.alias,
-        mode: 'parallel',
-        startedAt,
-        endedAt,
-        durationMs: endedAt - startedAt,
-        outcome: recOutcome,
-        replyToolCalled: recSummary?.replyToolCalled ?? false,
-        toolCalls: recSummary?.toolCalls ?? [],
-        textChunks: recSummary?.assistantText.length ?? 0,
-        error: recSummary?.error ?? (r.status === 'rejected' ? (r.reason instanceof Error ? r.reason.message : String(r.reason)) : undefined),
-        errorCode: recSummary?.errorCode,
-      })
-
-      const turnDelivery = deliveries[i]
-      if (turnDelivery && (r.status === 'rejected' || r.value.error)) turnDelivery.abandon(r.status === 'rejected' ? 'threw' : (r.value.errorCode ?? 'error'))
-      if (r.status === 'rejected') {
-        deps.log('COORDINATOR_PARALLEL', `provider=${providerId} threw: ${r.reason instanceof Error ? r.reason.message : r.reason}`)
-        continue
+      let report: DeliveryReport | undefined
+      try {
+        const turnDelivery = deliveries[i]
+        if (turnDelivery && (r.status === 'rejected' || r.value.error)) turnDelivery.abandon(r.status === 'rejected' ? 'threw' : (r.value.errorCode ?? 'error'))
+        if (r.status === 'rejected') {
+          deps.log('COORDINATOR_PARALLEL', `provider=${providerId} threw: ${r.reason instanceof Error ? r.reason.message : r.reason}`)
+          continue
+        }
+        // Watchdog fired for this participant — release its wedged session and
+        // notify; the other provider's reply (handled below) still goes out.
+        if (r.value.errorCode === TURN_TIMEOUT_CODE) {
+          await handleTurnTimeout(msg.chatId, proj.alias, providerId, r.value)
+          continue
+        }
+        // Same self-heal as solo: the failing provider's session is released
+        // so the next /both dispatch spawns a fresh subprocess. handleAuthFailed
+        // also fires (one throttled neutral notice across both providers per
+        // chat per hour). The other provider's reply (if any) still goes
+        // through below — partial reply is better than no reply.
+        if (isAuthErrorCode(r.value.errorCode)) {
+          await handleAuthFailed(msg.chatId, proj.alias, providerId, r.value)
+          continue
+        }
+        if (turnDelivery) {
+          if (r.value.error) continue
+          const parts = { finalText: r.value.finalText ?? '', narration: r.value.narration ?? [] }
+          report = await turnDelivery.deliver(parts)
+          // 综合用的答案和交付出去的是同一份文字(同一个策略、同样剥掉令牌)。
+          const said = buildTurnReply(parts, [], 'parallel', textStrategyFor(providerId)).reply
+          if (!said.silent && said.text.trim()) answers.push({ speaker: providerId, text: said.text.trim() })
+          continue
+        }
+        const { assistantText, replyToolCalled } = r.value
+        if (replyToolCalled || assistantText.length === 0) continue
+        // Provider didn't call reply tool — fall back to forwarding raw
+        // assistant text, prefixed so the user can tell who said what.
+        const dn = deps.registry.get(providerId)?.opts.displayName ?? providerId
+        deps.log('FALLBACK_REPLY', `chat=${msg.chatId} provider=${providerId} chunks=${assistantText.length} (parallel)`)
+        for (const t of assistantText) {
+          await deps.sendAssistantText?.(msg.chatId, `[${dn}] ${t}`)
+        }
+        const joined = assistantText.join('\n').trim()
+        if (joined) answers.push({ speaker: providerId, text: joined })
+      } finally {
+        deps.recordTurn?.({
+          chatId: msg.chatId,
+          provider: providerId,
+          alias: proj.alias,
+          mode: 'parallel',
+          startedAt,
+          endedAt,
+          durationMs: endedAt - startedAt,
+          outcome: recOutcome,
+          replyToolCalled: recSummary?.replyToolCalled ?? false,
+          toolCalls: recSummary?.toolCalls ?? [],
+          textChunks: recSummary?.assistantText.length ?? 0,
+          error: recSummary?.error ?? (r.status === 'rejected' ? (r.reason instanceof Error ? r.reason.message : String(r.reason)) : undefined),
+          errorCode: recSummary?.errorCode,
+          ...deliveryColumns(report, recSummary),
+        })
       }
-      // Watchdog fired for this participant — release its wedged session and
-      // notify; the other provider's reply (handled below) still goes out.
-      if (r.value.errorCode === TURN_TIMEOUT_CODE) {
-        await handleTurnTimeout(msg.chatId, proj.alias, providerId, r.value)
-        continue
-      }
-      // Same self-heal as solo: the failing provider's session is released
-      // so the next /both dispatch spawns a fresh subprocess. handleAuthFailed
-      // also fires (one throttled neutral notice across both providers per
-      // chat per hour). The other provider's reply (if any) still goes
-      // through below — partial reply is better than no reply.
-      if (isAuthErrorCode(r.value.errorCode)) {
-        await handleAuthFailed(msg.chatId, proj.alias, providerId, r.value)
-        continue
-      }
-      if (turnDelivery) {
-        if (r.value.error) continue
-        const parts = { finalText: r.value.finalText ?? '', narration: r.value.narration ?? [] }
-        await turnDelivery.deliver(parts)
-        // 综合用的答案和交付出去的是同一份文字(同一个策略、同样剥掉令牌)。
-        const said = buildTurnReply(parts, [], 'parallel', textStrategyFor(providerId)).reply
-        if (!said.silent && said.text.trim()) answers.push({ speaker: providerId, text: said.text.trim() })
-        continue
-      }
-      const { assistantText, replyToolCalled } = r.value
-      if (replyToolCalled || assistantText.length === 0) continue
-      // Provider didn't call reply tool — fall back to forwarding raw
-      // assistant text, prefixed so the user can tell who said what.
-      const dn = deps.registry.get(providerId)?.opts.displayName ?? providerId
-      deps.log('FALLBACK_REPLY', `chat=${msg.chatId} provider=${providerId} chunks=${assistantText.length} (parallel)`)
-      for (const t of assistantText) {
-        await deps.sendAssistantText?.(msg.chatId, `[${dn}] ${t}`)
-      }
-      const joined = assistantText.join('\n').trim()
-      if (joined) answers.push({ speaker: providerId, text: joined })
     }
 
     // ── /both 的收口。原本是「N 条答案并排丢给用户」,合并的活全推给人 ——
@@ -1250,11 +1266,19 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
       const startedAt = nowMs()
       let summary: Awaited<ReturnType<typeof collectTurn>> | undefined
       let err: string | undefined
+      const dn = deps.registry.get(providerId)?.opts.displayName ?? providerId
+      // 回复交付 daemon(spec §4.9):这位发言人的最后的话经端口送达(前缀 [名字] 由 daemon 加,/chat 一人一条
+      // 不分条);开轮在 dispatch 之前,附件才登记得上。legacy 的发言人照旧拼全部文字一条发。
+      let delivery: TurnDeliveryHandle | undefined
+      let report: DeliveryReport | undefined
       try {
         const handle = await deps.manager.acquire({
           alias: proj.alias, path: proj.path, providerId,
           chatId: msg.chatId, tierProfile, permissionMode: deps.permissionMode,
         })
+        if (deliveryModeFor(providerId) === 'daemon') {
+          delivery = deps.replyDelivery!.begin(msg.chatId, { mode: 'daemon', context: 'chatroom', providerId, participantLabel: dn, textStrategy: textStrategyFor(providerId) })
+        }
         summary = await oneTurnPerSession(msg.chatId, proj.alias, providerId, () => collectTurn(handle.dispatch(promptFor(providerId)), { timeoutMs: Math.min(deps.turnTimeoutMs ?? CHATROOM_BEAT_TIMEOUT_MS, CHATROOM_BEAT_TIMEOUT_MS), onEvent: (ev) => deps.onTurnEvent?.(msg.chatId, ev) }))
       } catch (e) {
         err = e instanceof Error ? e.message : String(e)
@@ -1266,43 +1290,59 @@ export function createConversationCoordinator(deps: ConversationCoordinatorDeps)
         : isAuthErrorCode(summary?.errorCode) ? 'auth_failed'
         : summary?.error ? 'error'
         : 'completed'
-      deps.recordTurn?.({
-        chatId: msg.chatId, provider: providerId, alias: proj.alias, mode: 'chatroom',
-        startedAt, endedAt, durationMs: endedAt - startedAt, outcome,
-        replyToolCalled: summary?.replyToolCalled ?? false,
-        toolCalls: summary?.toolCalls ?? [],
-        textChunks: summary?.assistantText.length ?? 0,
-        error: summary?.error ?? err,
-        errorCode: summary?.errorCode,
-      })
-      // Self-heal parity with dispatchParallel: release wedged/stale sessions
-      // and notify the user, per-provider, so beats continue for healthy agents.
-      if (outcome === 'timeout' && summary) {
-        await handleTurnTimeout(msg.chatId, proj.alias, providerId, summary)
-        return null
+      try {
+        if (delivery && outcome !== 'completed') delivery.abandon(outcome)
+        // Self-heal parity with dispatchParallel: release wedged/stale sessions
+        // and notify the user, per-provider, so beats continue for healthy agents.
+        if (outcome === 'timeout' && summary) {
+          await handleTurnTimeout(msg.chatId, proj.alias, providerId, summary)
+          return null
+        }
+        if (outcome === 'auth_failed' && summary) {
+          await handleAuthFailed(msg.chatId, proj.alias, providerId, summary)
+          return null
+        }
+        if (delivery) {
+          if (outcome !== 'completed' || !summary) return null
+          // `#RANK:` 是内部信号:先在 conductor 这一侧剥掉(§4.9),交付与互评用同一份剥过的文字。
+          const ranks: string[][] = []
+          const strip = (t: string): string => { const p = parsePeerRank(t); if (p.ranking.length) ranks.push(p.ranking); return p.text }
+          const parts = { finalText: strip(summary.finalText ?? ''), narration: (summary.narration ?? []).map(strip) }
+          report = await delivery.deliver(parts)
+          const said = buildTurnReply(parts, [], 'chatroom', textStrategyFor(providerId)).reply
+          const text = said.silent ? '' : said.text.trim()
+          if (!text) return null
+          return { speaker: providerId, text, ranking: countRank ? (ranks[ranks.length - 1] ?? []) : [] }
+        }
+        // Defense-in-depth: canUseTool already denies the reply tool in
+        // chatroom mode, but if an agent still gets one through, its plain
+        // `assistantText` is meta-chatter ("（本轮结束）"), not its real
+        // argument — forwarding it leaks garbage AND poisons the verdict
+        // transcript. Drop the turn instead. (Mirrors dispatchParallel.)
+        if (summary?.replyToolCalled) {
+          deps.log('COORDINATOR_CHATROOM', `chat=${msg.chatId} provider=${providerId} used reply tool in a beat — dropped`)
+          return null
+        }
+        const raw = (summary?.assistantText ?? []).join('\n').trim()
+        if (!raw) return null
+        const parsed = parsePeerRank(raw)
+        const text = parsed.text
+        const ranking = countRank ? parsed.ranking : []
+        if (!text) return null
+        await deps.sendAssistantText?.(msg.chatId, `[${dn}] ${text}`)
+        return { speaker: providerId, text, ranking }
+      } finally {
+        deps.recordTurn?.({
+          chatId: msg.chatId, provider: providerId, alias: proj.alias, mode: 'chatroom',
+          startedAt, endedAt, durationMs: endedAt - startedAt, outcome,
+          replyToolCalled: summary?.replyToolCalled ?? false,
+          toolCalls: summary?.toolCalls ?? [],
+          textChunks: summary?.assistantText.length ?? 0,
+          error: summary?.error ?? err,
+          errorCode: summary?.errorCode,
+          ...deliveryColumns(report, summary),
+        })
       }
-      if (outcome === 'auth_failed' && summary) {
-        await handleAuthFailed(msg.chatId, proj.alias, providerId, summary)
-        return null
-      }
-      // Defense-in-depth: canUseTool already denies the reply tool in
-      // chatroom mode, but if an agent still gets one through, its plain
-      // `assistantText` is meta-chatter ("（本轮结束）"), not its real
-      // argument — forwarding it leaks garbage AND poisons the verdict
-      // transcript. Drop the turn instead. (Mirrors dispatchParallel.)
-      if (summary?.replyToolCalled) {
-        deps.log('COORDINATOR_CHATROOM', `chat=${msg.chatId} provider=${providerId} used reply tool in a beat — dropped`)
-        return null
-      }
-      const raw = (summary?.assistantText ?? []).join('\n').trim()
-      if (!raw) return null
-      const parsed = parsePeerRank(raw)
-      const text = parsed.text
-      const ranking = countRank ? parsed.ranking : []
-      if (!text) return null
-      const dn = deps.registry.get(providerId)?.opts.displayName ?? providerId
-      await deps.sendAssistantText?.(msg.chatId, `[${dn}] ${text}`)
-      return { speaker: providerId, text, ranking }
     }))
     return results.filter((r): r is BeatResult => r !== null)
   }

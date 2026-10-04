@@ -50,6 +50,15 @@ describe('deliverTurnReply — 微信目标', () => {
     expect(h.sent).toEqual(['[Claude] 第一条消息的内容在这里', '[Claude] 第二条消息的内容在这里'])
   })
 
+  it('/chat(chatroom):一人一条、不分条 —— 多段也只发一条,带前缀(§4.9)', async () => {
+    const h = harness()
+    await deliverTurnReply({ chatId: 'c1', reply: reply('第一条消息的内容在这里\n\n第二条消息的内容在这里'), attachments: [], context: 'chatroom', participantLabel: 'Claude' }, h.deps)
+    expect(h.sent).toEqual(['[Claude] 第一条消息的内容在这里\n\n第二条消息的内容在这里'])
+    const g = harness()
+    await deliverTurnReply({ chatId: 'c1', reply: reply('甲段内容在这里写着\n\n乙段内容在这里写着', { segments: ['甲段内容在这里写着', '乙段内容在这里写着'] }), attachments: [], context: 'chatroom', participantLabel: 'Qwen' }, g.deps)
+    expect(g.sent).toEqual(['[Qwen] 甲段内容在这里写着\n\n乙段内容在这里写着'])
+  })
+
   it('第一条失败就停:剩下的文字和附件都不发,记 REPLY_DELIVERY_FAIL sent=0/2', async () => {
     const att = pending({ kind: 'voice', text: '晚安' })
     const h = harness({ sendText: vi.fn(async () => ({ msgId: '', error: 'errcode=-14' })) })
