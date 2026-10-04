@@ -287,7 +287,6 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
 
   const recordInbound = makeRecordInbound({
     stateDir, db,
-    sendMessage: (cid, txt) => ilink.sendMessage(cid, txt) as Promise<{ msgId?: string; error?: string }>,
     log: (tag, line) => log(tag, line),
     dayTzOffsetMinutes: boot.agentConfig.day_tz_offset_minutes,
   })

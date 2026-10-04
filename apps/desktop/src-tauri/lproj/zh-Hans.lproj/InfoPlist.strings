@@ -7,3 +7,6 @@
 */
 "CFBundleDisplayName" = "Tendhearth CC";
 "CFBundleName" = "Tendhearth CC";
+
+/* macOS 申请麦克风权限时显示(桌面「语音输入」)。 */
+"NSMicrophoneUsageDescription" = "Tendhearth CC 需要使用麦克风,才能把你的「语音输入」转成文字。只在你点语音输入时录音。";

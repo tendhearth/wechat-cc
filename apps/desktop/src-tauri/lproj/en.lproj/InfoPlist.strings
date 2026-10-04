@@ -13,3 +13,6 @@
 "NSDesktopFolderUsageDescription" = "Tendhearth CC reads files on your Desktop so it can handle the things you drop there.";
 "NSDownloadsFolderUsageDescription" = "Tendhearth CC reads files in Downloads so it can look at what you just downloaded.";
 "NSAppleEventsUsageDescription" = "Tendhearth CC controls other apps (such as opening a browser) to finish what you asked for.";
+
+/* Shown by macOS when Tendhearth CC asks for microphone access (desktop Voice Input). */
+"NSMicrophoneUsageDescription" = "Tendhearth CC uses the microphone to turn your Voice Input into text. It only records while you use Voice Input.";
