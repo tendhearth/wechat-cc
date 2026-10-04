@@ -11,12 +11,12 @@
  *   - 只管 session 来源的令牌(每个 agent 会话一枚,sessionKey =
  *     `provider/alias/chatId`)。file / operator / device / link 令牌照旧 ——
  *     它们是 daemon 内部、CLI 与桌面宿主,不是某一个 chat 的会话。
- *   - 指名一个 chat 的路由:guest / trusted 会话只能发给自己会话的 chat。
- *   - admin(主人自己的)会话发往别的 chat **暂时放行**,但记一条
- *     `chat_scope_admin_cross` 日志统计用量。原因:主人会直接让 CC「帮我告诉
- *     某个访客……」,这是模型发起的 reply 到别的 chat,代码里没有对应调用点,
- *     一拦就断。收紧时间点:回复交付重构做出 admin 专用的 `message` 工具之后,
- *     reply 收紧到只能发本 chat(回复交付 spec §5)。
+ *   - 指名一个 chat 的路由:**所有档**(guest / trusted / admin)的会话都只能发给自己会话的 chat。
+ *   - 跨 chat 只有一条路:admin 专用的 `message` 工具(`POST /v1/wechat/message`,回复交付 spec §4.6)。
+ *     它在这里放行并记一条 `chat_scope_admin_cross`(本会话 chat、目标、路由),留作审计。
+ *     历史:#199 起 admin 会话的 reply 跨 chat 暂时放行 + 记日志;2026-10-04 `message` 已在五家 daemon
+ *     执行者的工具表里,按 #199 的计划收紧 —— 被拒的 admin 会话收到的 403 明说「改用 message」。
+ *     收紧前主人机器上的 `chat_scope_admin_cross` 是 0 行(#199 部署后),没有正在用的路被拦断。
  *   - broadcast(发给所有人,天然跨 chat):只有 admin 会话可以;非 admin ⇒ 拒。
  *   - 非 admin 的 session 令牌读不出 chat(sessionKey 不是三段)⇒ 拒(fail closed),
  *     唯一例外是 `agy-static`,见下。
@@ -74,7 +74,8 @@ export const SEND_SCOPED_ROUTES: Readonly<Record<string, (body: unknown) => Send
   'POST /v1/conversation/set-mode': byChatId('chatId'),
   'POST /v1/wechat/broadcast': () => ALL_CHATS,
   // 回复交付 §4.6 的 message:to=broadcast ⇒ 所有人;to=owner ⇒ 由路由解析成主人聊天(只有 admin 能调,不设门);
-  // 其余就是那个 chat_id。路由本身是 admin 级,这里的作用是把跨 chat 记进 chat_scope_admin_cross。
+  // 其余就是那个 chat_id。路由本身是 admin 级;它是会话跨 chat 的唯一一条路(CROSS_CHAT_ROUTE),
+  // 这里的作用是把跨 chat 记进 chat_scope_admin_cross(审计)。
   'POST /v1/wechat/message': (body: unknown): SendTarget => {
     const to = bodyField(body, 'to')
     if (to === 'broadcast') return ALL_CHATS
@@ -92,27 +93,35 @@ export interface SendScopeCaller {
   sharedTokenBound?: boolean
 }
 
+/** 会话跨 chat 发送的唯一一条路(admin 专用的 `message` 工具,回复交付 spec §4.6)。 */
+export const CROSS_CHAT_ROUTE = 'POST /v1/wechat/message'
+
 export const CHAT_SCOPE_MESSAGE =
   'chat_scope: this conversation may only send to its own chat_id; nothing was sent'
+/** admin 会话被拒时多一句:跨 chat 改用 `message`(只有它能发往别的聊天)。 */
+export const ADMIN_CHAT_SCOPE_MESSAGE =
+  "chat_scope: this conversation may only send to its own chat_id; nothing was sent. To reach another chat (or the owner's own WeChat), use the `message` tool: message({ to: '<chat_id>' | 'owner' | 'broadcast', text }). What you want to say in THIS chat goes in your final text."
 export const BROADCAST_SCOPE_MESSAGE =
   'chat_scope: broadcast is owner-only for agent sessions; nothing was sent'
 
 export type SendScopeDecision =
   | { kind: 'allow' }
-  /** admin 会话发往别的 chat:暂时放行,调用方要记 `chat_scope_admin_cross`。 */
+  /** admin 会话经 `message` 发往别的 chat:放行,调用方要记 `chat_scope_admin_cross`(审计)。 */
   | { kind: 'admin_cross' }
   | { kind: 'deny'; message: string }
 
 const ALLOW: SendScopeDecision = { kind: 'allow' }
 
-export function sendScopeDecision(target: SendTarget, caller: SendScopeCaller): SendScopeDecision {
+export function sendScopeDecision(target: SendTarget, caller: SendScopeCaller, routeKey?: string): SendScopeDecision {
   if (target === null) return ALLOW
   if (caller.origin !== 'session') return ALLOW
   if (caller.sessionKey === AGY_STATIC_SESSION_KEY && caller.sharedTokenBound !== true) return ALLOW
   if (target === ALL_CHATS) return caller.tier === 'admin' ? ALLOW : { kind: 'deny', message: BROADCAST_SCOPE_MESSAGE }
   if (caller.chatId && caller.chatId === target) return ALLOW
-  // 暂时放行(见模块注释):等 admin 专用 `message` 工具落地再收紧。
-  if (caller.tier === 'admin') return { kind: 'admin_cross' }
+  if (caller.tier === 'admin') {
+    // 2026-10-04 收紧(#199 的计划):admin 会话跨 chat 只能走 `message`;reply 族 / share / set-mode 只许本 chat。
+    return routeKey === CROSS_CHAT_ROUTE ? { kind: 'admin_cross' } : { kind: 'deny', message: ADMIN_CHAT_SCOPE_MESSAGE }
+  }
   return { kind: 'deny', message: CHAT_SCOPE_MESSAGE }
 }
 

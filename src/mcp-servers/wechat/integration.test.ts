@@ -975,4 +975,63 @@ describe('wechat-mcp stdio integration', () => {
       for (const t of ['voice', 'attach_file', 'message']) expect(legacy.tools).not.toContain(t)
     })
   })
+
+  // 2026-10-04:`message`(admin 往别处发,spec §4.6)在每一家 daemon 执行者的工具表里都有 —— 上面四段核对了
+  // agy(钉死 trusted,故意没有)/ cursor / codex / claude;这里补上两家自研循环:openai(每次 spawn 由
+  // buildOpenaiMcpSpecs 把会话 env 合进 wechat 条目)与 gemini(connectWechatMcp 用 childEnvFor 合)。
+  // admin 会话有 message,trusted 会话没有(注册门 SESSION_IS_ADMIN)。
+  describe('own-loop providers (openai / gemini): daemon tool list carries `message` for admin sessions only', () => {
+    afterEach(() => setReplyDeliveryOverrides(undefined))
+    const REPLY_FAMILY = ['reply', 'reply_voice', 'send_file', 'edit_message', 'broadcast', 'send_sticker', 'search_online_sticker', 'send_online_sticker_candidate']
+    const strip = (env: Record<string, string>) => {
+      const e = { ...env }
+      delete e.WECHAT_REPLY_DELIVERY
+      delete e.WECHAT_SESSION_TIER
+      delete e.WECHAT_SESSION_TOKEN
+      return e
+    }
+
+    async function toolsForOpenai(port: number, tokenFilePath: string, tier: 'admin' | 'trusted'): Promise<{ tools: string[]; env: Record<string, string> }> {
+      const { buildOpenaiMcpSpecs } = await import('../../daemon/bootstrap/mcp-specs')
+      const spec = wechatStdioMcpSpec({ baseUrl: `http://127.0.0.1:${port}`, tokenFilePath }, 'openai')
+      const entry = buildOpenaiMcpSpecs({ wechat: spec, delegate: null, pluginMcp: {} }, { WECHAT_SESSION_TOKEN: 'openai-session-tok', WECHAT_SESSION_TIER: tier }).wechat!
+      const env = entry.env ?? {}
+      const transport = new StdioClientTransport({ command: RUNTIME, args: entry.args ?? [], env: { ...strip(process.env as Record<string, string>), ...env }, stderr: 'pipe' })
+      const c = new Client({ name: 'openai-session-int', version: '0.0.1' }, { capabilities: {} })
+      await c.connect(transport)
+      try { return { tools: (await c.listTools()).tools.map(t => t.name), env } } finally { await c.close() }
+    }
+
+    async function toolsForGemini(port: number, tokenFilePath: string, tier: 'admin' | 'trusted'): Promise<string[]> {
+      const { connectWechatMcp } = await import('../../core/gemini-agent-provider')
+      const spec = wechatStdioMcpSpec({ baseUrl: `http://127.0.0.1:${port}`, tokenFilePath }, 'gemini')
+      expect(spec.env).toMatchObject({ WECHAT_REPLY_DELIVERY: 'daemon', WECHAT_PARTICIPANT_TAG: 'gemini' })
+      // command 用 RUNTIME(源码模式下 spec.command 是 process.execPath,node 跑测试时不是 bun)。
+      const conn = await connectWechatMcp({ ...spec, command: RUNTIME }, { WECHAT_SESSION_TOKEN: 'gemini-session-tok', WECHAT_SESSION_TIER: tier })
+      try { return (await conn.listTools()).map(t => t.name) } finally { await conn.close() }
+    }
+
+    it('openai(第 1 步起 daemon):admin 有 message、trusted 没有;都没有 reply 族', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 7777 })
+      const { port, tokenFilePath } = await api.start()
+      const admin = await toolsForOpenai(port, tokenFilePath, 'admin')
+      expect(admin.env).toMatchObject({ WECHAT_REPLY_DELIVERY: 'daemon', WECHAT_SESSION_TIER: 'admin', WECHAT_SESSION_TOKEN: 'openai-session-tok' })
+      for (const t of REPLY_FAMILY) expect(admin.tools).not.toContain(t)
+      for (const t of ['voice', 'sticker', 'attach_file', 'message']) expect(admin.tools).toContain(t)
+      const trusted = await toolsForOpenai(port, tokenFilePath, 'trusted')
+      expect(trusted.tools).toContain('voice')
+      expect(trusted.tools).not.toContain('message')
+    })
+
+    it('gemini(2026-10-04 迁到 daemon):admin 有 message、trusted 没有;都没有 reply 族', async () => {
+      api = createInternalApi({ stateDir, daemonPid: 7777 })
+      const { port, tokenFilePath } = await api.start()
+      const admin = await toolsForGemini(port, tokenFilePath, 'admin')
+      for (const t of REPLY_FAMILY) expect(admin).not.toContain(t)
+      for (const t of ['voice', 'sticker', 'attach_file', 'message']) expect(admin).toContain(t)
+      const trusted = await toolsForGemini(port, tokenFilePath, 'trusted')
+      expect(trusted).toContain('voice')
+      expect(trusted).not.toContain('message')
+    })
+  })
 })
