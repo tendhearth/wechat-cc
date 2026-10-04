@@ -19,7 +19,8 @@ import { makeGraphQueryApi } from '../../core/knowledge/graph-query'
 import { makeFactsApi } from '../../core/knowledge/facts'
 import { makePersonApi } from '../../core/knowledge/person'
 import { runKnowledgeCycle } from '../../core/knowledge/cycle'
-import { makeWxvaultRefresh } from '../../core/knowledge/wxvault-refresh'
+import { gateRefreshOnFullDiskAccess, makeWxvaultRefresh } from '../../core/knowledge/wxvault-refresh'
+import { FDA_MISSING_HINT, hasFullDiskAccess } from '../../lib/fs-access'
 import type { Bootstrap, BootstrapCtx } from './types'
 import type { PluginsSlice } from './wire-plugins'
 
@@ -144,12 +145,14 @@ export function wireKnowledge(
       // (absolute python, launchd-safe), so the refresh runs exactly as
       // wxvault's MCP server does.
       const wxvaultPlugin = loadedPlugins.find(p => p.name === 'wxvault' && p.enabled && p.ready)
+      // 无人值守:没有「完全磁盘访问」就不去碰微信的容器(否则每次 daemon 重启
+      // 都会弹「想访问其他 App 的数据」,见 gateRefreshOnFullDiskAccess)。
       const refreshSource = wxvaultPlugin && !ctx.configuredAgent.knowledge_source_dir
-        ? makeWxvaultRefresh({
+        ? gateRefreshOnFullDiskAccess(makeWxvaultRefresh({
             pythonBin: wxvaultPlugin.spec.command,
             pluginDir: wxvaultPlugin.dir,
             stateDir: wxvaultPlugin.spec.env?.WXVAULT_STATE_DIR ?? pluginDataDir(ctx.stateDir, 'wxvault'),
-          })
+          }), { hasFda: () => hasFullDiskAccess(), log: ctx.log, hint: FDA_MISSING_HINT })
         : undefined
       const runKnowledgeAdapter = (onBoot: boolean) => runKnowledgeCycle(
         {

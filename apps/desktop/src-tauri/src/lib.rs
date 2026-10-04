@@ -1415,8 +1415,44 @@ async fn pet_permission_resolve(hash: String, decision: String) -> Result<bool, 
     Ok(body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
 }
 
+/// User-visible product name (docs/reference/product-naming.md). Display text
+/// only — `productName` stays "wechat-cc" because it names the .app file,
+/// updater artifacts and LaunchAgent paths; the bundle id is untouched too.
+/// Pinned by apps/desktop/src/display-name.test.ts.
+#[cfg(target_os = "macos")]
+const DISPLAY_NAME: &str = "Tendhearth CC";
+
+/// macOS default menu, except the About panel says "Tendhearth CC".
+/// Tauri's `Menu::default` feeds `package_info().name` (= productName,
+/// "wechat-cc") into the About panel; Hide/Quit/About item labels already come
+/// from the localized bundle name (InfoPlist.strings), so only the panel's
+/// metadata needs replacing. Only on macOS: on Windows/Linux setting a menu
+/// would add a menu bar the app never had.
+#[cfg(target_os = "macos")]
+fn app_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{AboutMetadata, Menu, MenuItemKind, PredefinedMenuItem};
+    let menu = Menu::default(app)?;
+    if let Some(MenuItemKind::Submenu(app_submenu)) = menu.items()?.into_iter().next() {
+        let about = PredefinedMenuItem::about(
+            app,
+            None,
+            Some(AboutMetadata {
+                name: Some(DISPLAY_NAME.to_string()),
+                version: Some(app.package_info().version.to_string()),
+                ..Default::default()
+            }),
+        )?;
+        app_submenu.remove_at(0)?;
+        app_submenu.insert(&about, 0)?;
+    }
+    Ok(menu)
+}
+
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(app_menu);
+    builder
         .manage(PendingNavigate(Mutex::new(None)))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())

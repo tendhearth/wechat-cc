@@ -30,6 +30,13 @@ English: Your personal AI companion, at home on your own computer. Talk to CC, f
 
 原生 app 的显示名、桌面窗口标题、关于页、权限文案、安装页面与商店截图需要按发布批次检查。显示文案可以统一；底层标识迁移应另行设计并验证升级兼容性。
 
+### 桌面 macOS 显示名(1.7.4 起)
+
+- 显示名来自 `apps/desktop/src-tauri/lproj/{en,zh-Hans}.lproj/InfoPlist.strings` 的 `CFBundleDisplayName` / `CFBundleName`,`Info.plist` 设 `LSHasLocalizedDisplayName`。基础名仍由 tauri 按 `productName` 生成为 `wechat-cc` —— 它必须与 `.app` 文件名一致,Finder / 程序坞才会用本地化名。
+- 关于面板的名字在 `src-tauri/src/lib.rs` 的 `app_menu` 里换(tauri 默认菜单用 `productName`)。
+- LaunchAgent 带 `AssociatedBundleIdentifiers`(= bundle id),登录项里显示 app 名与图标;`Label` 是技术标识,不改。
+- 不改:`productName`、bundle id、主二进制名、sidecar 名、LaunchAgent Label、dmg 卷名。它们的迁移见 [roadmap](../roadmap.md)「命名统一的后续交付」。守卫:`apps/desktop/src/display-name.test.ts`。
+
 ## 当前入口与发布状态
 
 - 桌面与微信：继续使用现有入口。

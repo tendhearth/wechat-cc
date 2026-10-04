@@ -895,7 +895,7 @@ export async function loadLastIncident(deps) {
 
   try {
     await deps.invoke("notify_user", {
-      title: ended ? "wechat-cc: bot 已恢复" : "wechat-cc: bot 当前处于断开状态",
+      title: ended ? "Tendhearth CC: bot 已恢复" : "Tendhearth CC: bot 当前处于断开状态",
       body: message,
     })
   } catch (err) {
@@ -1215,7 +1215,7 @@ export async function loadFsAccess(deps) {
   const h = await deps.invokeApi("GET", "/v1/health").catch(() => null)
   const fs = h && h.fs_access
   if (!fs || !fs.any_denied) { card.hidden = true; return }
-  text.textContent = String(fs.hint ?? "系统没给 wechat-cc 读文件夹的权限")
+  text.textContent = String(fs.hint ?? "系统没给 Tendhearth CC 读文件夹的权限")
   card.hidden = false
   if (btn && !btn.dataset.wired) {
     btn.dataset.wired = "1"

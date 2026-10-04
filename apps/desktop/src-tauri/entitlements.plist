@@ -13,5 +13,10 @@
   <!-- sidecar 要 spawn claude / codex / agy(用户自己装的、没签名的二进制) -->
   <key>com.apple.security.cs.allow-dyld-environment-variables</key><true/>
   <key>com.apple.security.automation.apple-events</key><true/>
+  <!--
+    桌面「语音输入」(2026-10-04):hardened runtime 下没有这条,麦克风会被系统静默拒绝
+    (不弹框、getUserMedia 拿不到)。配套的用途说明在 Info.plist 的 NSMicrophoneUsageDescription。
+  -->
+  <key>com.apple.security.device.audio-input</key><true/>
 </dict>
 </plist>

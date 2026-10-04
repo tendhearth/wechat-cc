@@ -731,8 +731,15 @@ export async function probeFsAccessWarning(
           headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(3000),
         })
         if (res.ok) {
-          const body = await res.json() as { fs_access?: { any_denied?: boolean; hint?: string } }
-          if (body.fs_access) return body.fs_access.any_denied ? `⚠️ ${body.fs_access.hint}` : null
+          const body = await res.json() as { fs_access?: { any_denied?: boolean; hint?: string; full_disk_access?: boolean | null; fda_hint?: string } }
+          if (body.fs_access) {
+            const lines = [
+              ...(body.fs_access.any_denied ? [`⚠️ ${body.fs_access.hint}`] : []),
+              // 没有完全磁盘访问 ⇒ 后台微信记录同步暂停(否则每次重启都弹「访问其他 App 的数据」)。
+              ...(body.fs_access.full_disk_access === false && body.fs_access.fda_hint ? [`⚠️ ${body.fs_access.fda_hint}`] : []),
+            ]
+            return lines.length > 0 ? lines.join('\n') : null
+          }
         }
       } catch { /* 落到本地探 */ }
     }
