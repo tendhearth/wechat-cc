@@ -21,7 +21,8 @@ import { paintConversation, syncConversationLatest, showConversationLatest, conv
 /**
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
  * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, onDelegate?: (draft: import('./task-entry.js').Draft) => Promise<import('./task-entry.js').EntryResult|null>, onSend?: () => void }} Deps
- * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean, at?: number, source?: string }} ConverseMsg
+ * @typedef {{ kind: 'voice', text: string } | { kind: 'sticker', label: string, file?: string, image?: string } | { kind: 'file', name: string, ref?: string }} ReplyAttachment
+ * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean, at?: number, source?: string, attachments?: ReplyAttachment[], narration?: string[] }} ConverseMsg
  */
 
 // ── module state ───────────────────────────────────────────────────────
@@ -99,6 +100,68 @@ function setVoiceOut(v) {
 
 // ── rendering ──────────────────────────────────────────────────────────
 
+/**
+ * agent_converse 的回包 → 统一的回复对象(回复交付,2026-10-04)。新 Rust 回 `{ reply, attachments, narration }`
+ * (文件只带一次性 ref,路径不进网页);老 Rust 回裸字符串。认不得的附件逐条丢掉。
+ * @param {unknown} res @returns {{ reply: string, attachments: ReplyAttachment[], narration: string[] }}
+ */
+export function normalizeConverseReply(res) {
+  if (typeof res === "string" || res == null) return { reply: String(res ?? ""), attachments: [], narration: [] }
+  const o = /** @type {Record<string, unknown>} */ (res)
+  /** @type {ReplyAttachment[]} */
+  const attachments = []
+  for (const a of Array.isArray(o.attachments) ? o.attachments : []) {
+    if (!a || typeof a !== "object") continue
+    const x = /** @type {Record<string, unknown>} */ (a)
+    if (x.kind === "voice" && typeof x.text === "string") attachments.push({ kind: "voice", text: x.text })
+    else if (x.kind === "sticker" && typeof x.label === "string") attachments.push({ kind: "sticker", label: x.label, ...(typeof x.file === "string" ? { file: x.file } : {}), ...(typeof x.image === "string" && x.image.startsWith("data:image/") ? { image: x.image } : {}) })
+    else if (x.kind === "file" && typeof x.name === "string") attachments.push({ kind: "file", name: x.name, ...(typeof x.ref === "string" ? { ref: x.ref } : {}) })
+  }
+  const narration = (Array.isArray(o.narration) ? o.narration : []).filter(n => typeof n === "string" && n.trim() !== "").map(String)
+  return { reply: typeof o.reply === "string" ? o.reply : "", attachments, narration }
+}
+
+/**
+ * 过程:最后的话之前 CC 写下的过程话。灰、默认收起;说清它没发到微信(不假装它是回复)。
+ * @param {ConverseMsg} m
+ */
+function narrationHtml(m) {
+  const lines = m.narration ?? []
+  if (!lines.length) return ""
+  return `<details class="converse-process" data-msg-id="${m.id}">
+    <summary title="CC 在最后回复之前写下的过程话,只在这里显示,没有发到微信">过程 · ${lines.length} 段</summary>
+    <ol class="converse-process-lines">${lines.map(l => `<li>${escapeHtml(l)}</li>`).join("")}</ol>
+  </details>`
+}
+
+/**
+ * 附件:语音(点了才合成、播放)、表情(本地表情是一张图;联网表情 daemon 不替你取图,只写情绪)、
+ * 文件(名字 + 在访达中显示 —— 只显示不打开,打开附件可能直接运行程序)。
+ * @param {ConverseMsg} m
+ */
+function attachmentsHtml(m) {
+  const list = m.attachments ?? []
+  if (!list.length) return ""
+  const items = list.map((a, i) => {
+    if (a.kind === "voice") {
+      return `<div class="converse-att converse-att-voice">
+        <button class="converse-att-play" type="button" data-msg-id="${m.id}" data-att="${i}" aria-label="播放语音">${icon("play")}<span>语音</span></button>
+        <span class="converse-att-text">${escapeHtml(a.text)}</span>
+      </div>`
+    }
+    if (a.kind === "sticker") {
+      return a.image
+        ? `<img class="converse-att-sticker" src="${escapeHtml(a.image)}" alt="表情:${escapeHtml(a.label)}" title="${escapeHtml(a.label)}" />`
+        : `<div class="converse-att converse-att-sticker-label">${icon("smile")}<span>表情 · ${escapeHtml(a.label)}</span></div>`
+    }
+    return `<div class="converse-att converse-att-file">
+      ${icon("attachment")}<span class="converse-att-name">${escapeHtml(a.name)}</span>
+      ${a.ref ? `<button class="converse-att-reveal" type="button" data-file-ref="${escapeHtml(a.ref)}">在访达中显示</button>` : ""}
+    </div>`
+  })
+  return `<div class="converse-attachments">${items.join("")}</div>`
+}
+
 /** @param {ConverseMsg} m */
 function messageHtml(m) {
   if (m.role === "error") {
@@ -115,10 +178,17 @@ function messageHtml(m) {
     ? `<button class="voice-replay-btn" type="button" data-msg-id="${m.id}" aria-label="朗读这条回复" title="朗读">${icon("play")} </button>`
     : ""
   const markdown = m.role === "cc" && !m.pending
+  const bubble = `<div class="converse-bubble${markdown ? ' cc-readable-markdown wb-markdown' : m.role==='user' ? ' cc-user-bubble' : ''}">${markdown ? renderWorkbenchMarkdown(m.text) : m.role==='user' ? renderWorkbenchUserText(m.text,`converse:${m.id}`) : escapeHtml(m.text)}</div>`
+  const extras = m.role === "cc" && ((m.attachments?.length ?? 0) > 0 || (m.narration?.length ?? 0) > 0)
+  // 带附件 / 过程的回复:过程在上、回复居中、附件在下,一列排;没有的照旧(样式与测试不动)。
+  // 朗读按钮永远贴着正文最后一行(带附件时放进正文那一行里),不随附件块漂。
+  const body = extras
+    ? `<div class="converse-cc-body">${narrationHtml(m)}${m.text.trim() ? `<div class="converse-cc-line">${bubble}${replayBtn}</div>` : ""}${attachmentsHtml(m)}</div>`
+    : bubble
   return `<div class="converse-msg ${roleCls}${pendingCls}">
     ${m.role === "cc" ? '<img class="converse-avatar" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="CC" width="32" height="32" />' : ""}
-    <div class="converse-bubble${markdown ? ' cc-readable-markdown wb-markdown' : m.role==='user' ? ' cc-user-bubble' : ''}">${markdown ? renderWorkbenchMarkdown(m.text) : m.role==='user' ? renderWorkbenchUserText(m.text,`converse:${m.id}`) : escapeHtml(m.text)}</div>
-    ${replayBtn}
+    ${body}
+    ${extras || !m.text.trim() ? "" : replayBtn}
   </div>`
 }
 
@@ -201,6 +271,34 @@ function reflectMic() {
   if (delegate) delegate.toggleAttribute("disabled", busy || sending || delegating || !input?.value.trim())
 }
 
+/** 等系统麦克风授权的上限:系统弹框等人点,给足时间;超时就说清楚去哪儿看。 */
+const MIC_REQUEST_TIMEOUT_MS = 30_000
+const MIC_SETTINGS_PATH = "系统设置 › 隐私与安全性 › 麦克风"
+
+/**
+ * 麦克风拿不到时给主人的一句话 —— 按 getUserMedia 的错误名分开说,每句都能照做。
+ * @param {unknown} err
+ */
+export function micFailureText(err) {
+  const name = err && typeof err === "object" && "name" in err ? String(/** @type {{name: unknown}} */ (err).name) : ""
+  if (name === "NotAllowedError" || name === "SecurityError" || name === "PermissionDeniedError") {
+    return `麦克风权限没开:去 ${MIC_SETTINGS_PATH},打开 wechat-cc,再点一次「语音输入」。`
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError" || name === "OverconstrainedError") {
+    return "没找到可用的麦克风:接上麦克风,或在系统设置 › 声音 › 输入里选一个设备后再试。"
+  }
+  if (name === "NotReadableError" || name === "TrackStartError" || name === "AbortError") {
+    return "麦克风被别的应用占着或暂时打不开,关掉占用它的应用后再试。"
+  }
+  if (name === "MicTimeout") {
+    return `一直没拿到麦克风:看看屏幕上有没有系统的授权弹框;没有的话去 ${MIC_SETTINGS_PATH},打开 wechat-cc。`
+  }
+  if (name === "MicUnsupported") {
+    return "这个版本的桌面 app 用不了麦克风,更新到最新版后再试。"
+  }
+  return `麦克风用不了:去 ${MIC_SETTINGS_PATH} 看看 wechat-cc 是否已打开,或检查输入设备。`
+}
+
 /** Read a Blob as bare base64 (no data: prefix). @param {Blob} blob */
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
@@ -224,20 +322,36 @@ async function toggleMic(deps) {
   if (recording) { try { mediaRecorder?.stop() } catch { /* already stopped */ } return }
 
   const md = deps.media ?? {
-    getUserMedia: (c) => navigator.mediaDevices.getUserMedia(c),
+    getUserMedia: (c) => {
+      if (!navigator.mediaDevices?.getUserMedia) return Promise.reject(Object.assign(new Error("no mediaDevices"), { name: "MicUnsupported" }))
+      return navigator.mediaDevices.getUserMedia(c)
+    },
     makeRecorder: (s) => new MediaRecorder(s),
   }
   let stream
   requestingMic = true
   reflectMic()
+  // 2026-10-04:签名 + hardened runtime 的包缺麦克风 entitlement / 用途说明时,系统会
+  // 静默拒绝 —— 以前这里只推一条很淡的 system 小字,主人看到的是「点了没反应」。
+  // 现在:拒绝/没设备/被占用各说一句能照做的话(error 级,醒目);迟迟没有回应也不
+  // 无限转圈,超时就告诉主人去哪儿看。
+  let micTimer
+  const request = Promise.resolve().then(() => md.getUserMedia({ audio: true }))
   try {
-    stream = await md.getUserMedia({ audio: true })
+    stream = await Promise.race([
+      request,
+      new Promise((_, reject) => { micTimer = setTimeout(() => reject(Object.assign(new Error("mic timeout"), { name: "MicTimeout" })), MIC_REQUEST_TIMEOUT_MS) }),
+    ])
   } catch (err) {
+    // 超时之后系统才放行的话,别让麦克风一直开着。
+    if (/** @type {{name?: string}} */ (err)?.name === "MicTimeout") request.then(s => s.getTracks().forEach(t => t.stop()), () => {})
     requestingMic = false
     reflectMic()
-    messages.push({ id: nextId++, role: "system", text: "麦克风用不了（权限或设备问题）" })
+    messages.push({ id: nextId++, role: "error", text: micFailureText(err) })
     renderMessages()
     return
+  } finally {
+    clearTimeout(micTimer)
   }
 
   requestingMic = false
@@ -403,17 +517,21 @@ async function sendMessage(deps) {
   }, Number(delay)))
 
   try {
-    const reply = await deps.invoke("agent_converse", { text })
+    const res = normalizeConverseReply(await deps.invoke("agent_converse", { text }))
     pendingTimers.forEach(clearTimeout)
     messages = messages.filter(m => m.id !== pendingId)
-    const replyText = String(reply ?? "")
+    const replyText = res.reply
+    const extras = { ...(res.attachments.length ? { attachments: res.attachments } : {}), ...(res.narration.length ? { narration: res.narration } : {}) }
     if (replyText.trim() === "") {
-      // Bubble replies mean a turn can legitimately produce no text output
-      // (e.g. the agent only sent stickers/files to WeChat). Don't render a
-      // blank CC bubble for that — show a muted system note instead.
-      messages.push({ id: nextId++, role: "system", text: "（CC 这轮没有用文字回复）" })
+      // 只有附件(一张表情、一段语音)也是回复:照常画 CC 那一行,只是没有文字气泡。
+      // 什么都没有(或只有过程话)⇒ 灰色一句说明,过程照样能展开看。
+      if (res.attachments.length) messages.push({ id: nextId++, role: "cc", text: "", at: Date.now(), ...extras })
+      else {
+        if (res.narration.length) messages.push({ id: nextId++, role: "cc", text: "", at: Date.now(), narration: res.narration })
+        messages.push({ id: nextId++, role: "system", text: "（CC 这轮没有用文字回复）" })
+      }
     } else {
-      messages.push({ id: nextId++, role: "cc", text: replyText, at: Date.now() })
+      messages.push({ id: nextId++, role: "cc", text: replyText, at: Date.now(), ...extras })
       // Fire-and-forget: autoplay must not block clearing the "sending"
       // state or the compose box. Errors are handled inside speakAndPlay.
       if (voiceOut) speakAndPlay(deps, replyText).catch(() => {})
@@ -519,6 +637,23 @@ function wireEvents(root, deps) {
         input.focus()
         input.dispatchEvent(new Event("input", { bubbles: true }))
       }
+      return
+    }
+    const play = target.closest(".converse-att-play")
+    if (play instanceof HTMLElement) {
+      const msg = messages.find(m => m.id === Number(play.dataset.msgId))
+      const att = msg?.attachments?.[Number(play.dataset.att)]
+      if (att?.kind === "voice") speakAndPlay(deps, att.text).catch(() => {})
+      return
+    }
+    const reveal = target.closest(".converse-att-reveal")
+    if (reveal instanceof HTMLElement) {
+      const ref = reveal.dataset.fileRef ?? ""
+      Promise.resolve(deps.invoke("reveal_reply_file", { token: ref })).catch(err => {
+        const raw = formatInvokeError(err)
+        messages.push({ id: nextId++, role: "system", text: /reply_file_missing/.test(raw) ? "这个文件已经不在原来的位置了" : /reply_file_unknown/.test(raw) ? "重新打开应用后找不到这个文件了,可以在微信或文件夹里找" : "暂时无法在访达中显示" })
+        renderMessages()
+      })
       return
     }
     const btn = target.closest(".voice-replay-btn")

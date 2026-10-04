@@ -15,7 +15,7 @@ describe('applyReplyDeliveryConfig — 开机时把 agent-config 的 reply_deliv
   it('没配 ⇒ 清掉上一次的覆盖(回到能力表默认)', () => {
     setReplyDeliveryOverrides({ openai: 'legacy' })
     applyReplyDeliveryConfig({}, () => {})
-    expect(replyDeliveryFor('gemini')).toBe('legacy')
+    expect(replyDeliveryFor('gemini')).toBe('daemon')
     expect(replyDeliveryFor('openai')).not.toBe('legacy')
   })
 })

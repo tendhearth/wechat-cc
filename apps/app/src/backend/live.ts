@@ -230,6 +230,12 @@ export function makeLiveBackend(d: LiveDeps): Backend {
       if (text.length > PHONE_SAY_MAX_CHARS) throw new BackendError('invalid')
       return (await call<{ job: ChatJobT }>('POST /m/api/chat/say', '/m/api/chat/say', { body: { requestId, text }, retry: true })).job
     },
+    async chatVoice(messageId, index) {
+      return strip(await call<{ ok: true; mime: string; data: string }>('GET /m/api/chat/voice', `/m/api/chat/voice?id=${encodeURIComponent(messageId)}&i=${index}`))
+    },
+    async sticker(file) {
+      return strip(await call<{ ok: true; mime: string; data: string }>('GET /m/api/sticker/', `/m/api/sticker/${encodeURIComponent(file)}?b64=1`))
+    },
     async connections() {
       return strip(await call<{ ok: true } & ConnectionsT>('GET /m/api/connections', '/m/api/connections'))
     },

@@ -1,6 +1,6 @@
 {
   "name": "wechat-cc-desktop",
-  "version": "1.7.2",
+  "version": "1.7.4",
   "private": true,
   "type": "module",
   "scripts": {

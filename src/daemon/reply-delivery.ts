@@ -115,8 +115,10 @@ export async function deliverTurnReply(input: DeliverInput, deps: DeliverDeps): 
     // 5. 分条 + 4. 前缀(每条都加,第 2 条起不会丢掉署名)
     const prefix = input.participantLabel ? `[${input.participantLabel}] ` : ''
     // 聊天型模型的多段:每段按 ④ 各自分条,依次发(spec 修订 2026-10-03);否则整段分条。
-    const split = deps.chatPrefs?.(chatId)?.split !== false
-    const sources = reply.segments && reply.segments.length > 0 && !reply.silent ? reply.segments : [text]
+    // /chat 一人一条、不分条(§4.9):辩论的一次发言是一个整体,拆开了在群里会和别人的发言交错。
+    const oneMessage = context === 'chatroom'
+    const split = !oneMessage && deps.chatPrefs?.(chatId)?.split !== false
+    const sources = !oneMessage && reply.segments && reply.segments.length > 0 && !reply.silent ? reply.segments : [text]
     const parts = sources.flatMap(seg => splitBubbles(seg, { split })).map(p => `${prefix}${p}`)
     for (let i = 0; i < parts.length; i++) {
       if (!(await sendOne(parts[i]!))) {

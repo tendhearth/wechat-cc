@@ -24,11 +24,11 @@ export {
   ApprovalExplanation, ProgressSummary, MatterPermission, MatterQuestion, MatterArtifact, MatterDetail, MatterSayResult,
   ProjectCatalogEntry, EntryOptions, WorkbenchExecutorCapabilities, WorkbenchTaskView, EntryReceipt, EntryResult,
   UploadState, MatterArtifactChunk, FeedEvent, Presence, HomeWork, PhoneChangesTurn,
-  ChatMessage, ChatJob, ChatPage, CHAT_PAGE_MAX, CHAT_TEXT_MAX, ConnectionSource, Connections,
+  ChatMessage, ChatJob, ChatPage, CHAT_PAGE_MAX, CHAT_TEXT_MAX, ChatAttachment, ChatVoice, CHAT_NARRATION_MAX, ConnectionSource, Connections,
   NativeSessionRow, NativeSessionMessage, NativeSessionPage,
   MatterNativeStart, SESSION_CONTINUE_STATES, SessionContinue, SessionContinueResult, MatterQuotaHandoff, MatterHandoffResult,
 } from './api'
-export type { DeviceRowT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, SessionContinueT, MatterQuotaHandoffT, MatterInputReceiptResultT } from './api'
+export type { DeviceRowT, ChatAttachmentT, ConnectionsT, NativeSessionRowT, NativeSessionPageT, SessionContinueT, MatterQuotaHandoffT, MatterInputReceiptResultT } from './api'
 export {
   base32Lower, RELAY_ID_RE, RELAY_SUBPROTOCOL, relayIdProtocol, relayIdFromPub, relayKeyPair, relayLoginMessage,
   signRelayLogin, verifyRelayLogin, RELAY_ERRORS, PushPlatform, pushTokenValid, PUSH_SEALED_MAX_CHARS, DaemonControl, RoomControl,

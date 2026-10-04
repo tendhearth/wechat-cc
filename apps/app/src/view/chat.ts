@@ -1,9 +1,16 @@
 // 「跟 CC 说」对话页的纯视图模型。被根目录测试 import:纯 TS,不碰 react / expo。
 import { CHAT_TEXT_MAX } from '@wechat-cc/protocol'
-import type { ChatMessageT, ChatPageT } from '../backend/types'
+import type { ChatAttachmentT, ChatMessageT, ChatPageT } from '../backend/types'
 import { composeOutcome } from './compose'
 
-export type Bubble = { key: string; side: 'me' | 'cc'; text: string; at: number; source: 'wechat' | 'desktop' | 'phone'; state: 'sent' | 'thinking' | 'failed'; failedKind?: 'busy' | 'unavailable' | 'notConfigured' | 'maybeLost' | 'notConfirmed'; requestId?: string; truncated: boolean }
+export type Bubble = {
+  key: string; side: 'me' | 'cc'; text: string; at: number; source: 'wechat' | 'desktop' | 'phone'; state: 'sent' | 'thinking' | 'failed'
+  failedKind?: 'busy' | 'unavailable' | 'notConfigured' | 'maybeLost' | 'notConfirmed'; requestId?: string; truncated: boolean
+  /** CC 回复里的语音 / 表情 / 文件(回复交付,2026-10-04);语音按 (key = 消息 id, 下标) 向电脑要声音。 */
+  attachments?: ChatAttachmentT[]
+  /** 最后的话之前的过程话(没发到微信):灰、默认收起。 */
+  narration?: string[]
+}
 export type Accepted = { requestId: string; text: string; at: number }
 type JobState = Pick<ChatPageT, 'pending' | 'failed'>
 
@@ -48,7 +55,11 @@ function landed(msgs: ChatMessageT[], accepted: Accepted): boolean {
  * daemon 的 failed 那句若其实已落进对话(超时后回复才到,终审 I2)⇒ 不画失败气泡,免得主人点重试。
  */
 export function chatBubbles(msgs: ChatMessageT[], page: JobState, accepted: Accepted | readonly Accepted[] | null, now: number): Bubble[] {
-  const out: Bubble[] = msgs.map(m => ({ key: m.id, side: m.role, text: m.text, at: m.at, source: m.source, state: 'sent', truncated: m.truncated }))
+  const out: Bubble[] = msgs.map(m => ({
+    key: m.id, side: m.role, text: m.text, at: m.at, source: m.source, state: 'sent', truncated: m.truncated,
+    ...(m.role === 'cc' && m.attachments?.length ? { attachments: m.attachments } : {}),
+    ...(m.role === 'cc' && m.narration?.length ? { narration: m.narration } : {}),
+  }))
   const { pending, failed } = page
   if (!pending && failed && !landed(msgs, { requestId: failed.requestId, text: failed.text, at: failed.since })) {
     const failedKind = failed.error === 'busy' ? 'busy' : failed.error === 'not_configured' ? 'notConfigured' : 'unavailable'
@@ -113,4 +124,23 @@ export function chatSendOutcome(r: 'ok' | 'busy' | { error: string }): 'ok' | 'b
 /** 只有主人的那条聊天才改道去 /chat(Ruling 9);ownerChatMatterId 来自 GET chat 的 matterId,没主人 ⇒ null。 */
 export function isOwnerChatMatter(m: { id: string; kind: string }, ownerChatMatterId: string | null): boolean {
   return m.kind === 'chat' && ownerChatMatterId !== null && m.id === ownerChatMatterId
+}
+
+/** 一条气泡里有没有文字要画(只有附件的回复不画空气泡)。 */
+export function hasBubbleText(b: Pick<Bubble, 'text' | 'attachments'>): boolean {
+  return b.text.trim() !== '' || !b.attachments?.length
+}
+
+/** 语音放不出来时说哪一句:太长(一帧装不下)/ 电脑没设朗读 / 其它。 */
+export function voiceFailureKey(code: string): 'chat.voiceTooLong' | 'chat.voiceNotSet' | 'chat.voiceFailed' {
+  return code === 'too_large' ? 'chat.voiceTooLong' : code === 'no_voice' ? 'chat.voiceNotSet' : 'chat.voiceFailed'
+}
+
+/** 声音的 mime → 存缓存文件用的扩展名(播放器按扩展名认格式)。 */
+export function audioExt(mime: string): string {
+  const m = mime.toLowerCase()
+  if (m.includes('wav')) return 'wav'
+  if (m.includes('ogg') || m.includes('opus')) return 'ogg'
+  if (m.includes('mp4') || m.includes('m4a') || m.includes('aac')) return 'm4a'
+  return 'mp3'
 }

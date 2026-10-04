@@ -1,0 +1,52 @@
+# 跟 CC 说 · 回复的附件与过程(回复交付,2026-10-04):发一句 → 演示回复带「过程 · 2 段」(默认收起)、
+# 语音、本地表情(从表情库取图)、联网表情(只写情绪)→ 展开过程看得到「没有发到微信」的说明 → 点语音(演示里是一小段静音,不报错)。
+appId: com.tendhearth.app
+---
+- runFlow: subflows/_start.yaml
+- tapOn:
+    id: welcome-look-first
+- extendedWaitUntil:
+    visible:
+      id: now-say
+    timeout: 10000
+- tapOn:
+    id: now-say
+- extendedWaitUntil:
+    visible:
+      id: chat-input
+    timeout: 5000
+- waitForAnimationToEnd
+- retry:
+    maxRetries: 2
+    commands:
+      - tapOn:
+          id: chat-input
+      - inputText: "Maestro extras"
+      - assertVisible:
+          id: chat-send
+          enabled: true
+- tapOn:
+    id: chat-send
+    waitToSettleTimeoutMs: 300
+- extendedWaitUntil:
+    visible: ".*(演示模式|This is the demo).*"
+    timeout: 10000
+# 过程默认收起:只看得到「过程 · 2 段」那一行
+- assertVisible:
+    id: chat-process-toggle
+- assertNotVisible:
+    id: chat-process-lines
+- assertVisible:
+    id: chat-att-voice
+- assertVisible:
+    id: chat-att-sticker
+- assertVisible: ".*(表情 · 加油|Sticker · cheer).*"
+- tapOn:
+    id: chat-process-toggle
+- assertVisible:
+    id: chat-process-lines
+- assertVisible: ".*(没有发到微信|not sent to WeChat).*"
+- tapOn:
+    id: chat-att-voice
+- assertNotVisible:
+    id: chat-att-voice-failed

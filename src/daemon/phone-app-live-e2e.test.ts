@@ -8,7 +8,7 @@
  * 状态目录全在 mkdtemp 里,不碰真 state dir。
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -131,7 +131,12 @@ beforeEach(async () => {
     changes: () => [],
     matters: { ...service, say: (id, text, input) => service.say(id, text, 'phone', input), seenOnPhone: id => { matters.bind(id, 'phone', 'pwa') } },
     sessionContinue: { preview: k => workbench.previewNativeContinue(k), adopt: k => workbench.adoptNativeSession(k) },
-    chat: { owner: () => phoneOwner.peek(), history: (chatId, o) => messages.listRange(chatId, o), chat: phoneChat },
+    chat: {
+      owner: () => phoneOwner.peek(), history: (chatId, o) => messages.listRange(chatId, o), chat: phoneChat,
+      message: (chatId, id) => messages.get(chatId, id),
+      speak: async text => ({ audio: Buffer.from(`voice:${text}`), mime: 'audio/mpeg' }),
+    },
+    stickers: { list: () => [{ file: 'happy.png', tags: ['开心'] }], dir: join(root, 'stickers') },
     // 连接:真 buildConnections(插件快照还没出来 ⇒ unknown;知识库没开 ⇒ 不出现)+ 真工作台;detail 只在 admin 视图里有,手机路由去掉。
     connections: () => buildConnections({
       plugins: () => null, wechatSyncedAt: () => null,
@@ -508,6 +513,26 @@ describe('手机 app LiveBackend 对着进程内真 daemon', () => {
     await expect.poll(() => versions.at(-1)?.phase, P).not.toBe('working')
     expect(versions.length).toBeGreaterThan(1)
     expect(conversed).toHaveLength(1)
+  })
+
+  // 回复交付(2026-10-04):回复行的附件与过程经真中继到手机;语音按需合成、表情从表情库取图,文件只有名字。
+  it('跟 CC 说:回复的附件与过程经 LiveBackend 到手机;语音 / 表情取得到,别的下标 not_found', async () => {
+    matters.ensureChat('owner')
+    mkdirSync(join(root, 'stickers'), { recursive: true })
+    writeFileSync(join(root, 'stickers', 'happy.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    await messages.append({
+      id: 'app:desktop:1:out', chatId: 'owner', ts: new Date().toISOString(), direction: 'out', kind: 'text', text: '好了', source: 'desktop',
+      extras: JSON.stringify({ attachments: [{ kind: 'voice', text: '晚安' }, { kind: 'sticker', label: '开心', file: 'happy.png' }, { kind: 'file', name: 'r.pdf', path: '/Users/me/r.pdf' }], narration: ['我先看看。'] }),
+    })
+    const b = live()
+    await expect.poll(() => b.connection().state, P).toBe('online')
+    const m = (await b.chat({})).messages.at(-1)!
+    expect(m).toMatchObject({ text: '好了', narration: ['我先看看。'], attachments: [{ kind: 'voice', text: '晚安' }, { kind: 'sticker', label: '开心', file: 'happy.png' }, { kind: 'file', name: 'r.pdf' }] })
+    expect(JSON.stringify(m)).not.toContain('/Users/me')
+    expect(await b.chatVoice(m.id, 0)).toEqual({ mime: 'audio/mpeg', data: Buffer.from('voice:晚安').toString('base64') })
+    await expect(b.chatVoice(m.id, 2)).rejects.toMatchObject({ code: 'not_found' })
+    expect(await b.sticker('happy.png')).toEqual({ mime: 'image/png', data: Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString('base64') })
+    await expect(b.sticker('nope.png')).rejects.toMatchObject({ code: 'not_found' })
   })
 
   it('还没有主人对话 ⇒ chat() not_found(页面当空对话);照样能说,第一句建出对话', async () => {

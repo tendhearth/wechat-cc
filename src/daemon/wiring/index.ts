@@ -128,7 +128,7 @@ export interface WiredDeps {
    * main.ts late-binds this onto internal-api via setCompanionConverse()
    * once wireMain returns (bootstrap must be ready first).
    */
-  companionConverse: (text: string, origin?: 'desktop' | 'phone') => Promise<{ reply: string }>
+  companionConverse: (text: string, origin?: 'desktop' | 'phone') => Promise<import('../app-reply').ConverseResult>
   /**
    * 桌宠 turn 闭包(CC 桌宠 Phase B)。main.ts 在 setCompanionConverse 旁边
    * setPetTurn 到 internal-api —— 同样要等 bootstrap 就绪。

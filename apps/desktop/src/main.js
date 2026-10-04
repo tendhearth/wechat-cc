@@ -474,7 +474,7 @@ function checkExpiredDiff(report) {
     if (!lastExpiredIds.has(id)) {
       const shortId = id.replace(/-im-bot$/, "").slice(0, 12)
       invoke("notify_user", {
-        title: `wechat-cc: 账号 ${shortId} 已失效`,
+        title: `Tendhearth CC: 账号 ${shortId} 已失效`,
         body: "绑定被另一处替换。点击打开 dashboard 重新扫码。",
       }).catch(err => console.warn("notify_user failed:", err))
     }

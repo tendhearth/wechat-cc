@@ -472,6 +472,46 @@ vi.mock('@openai/codex-sdk', () => {
     yield { type: 'turn.completed', usage: null }
   }
 
+  /**
+   * Is this thread one of `cheapEval`'s ephemeral one-shot threads?
+   *
+   * `codex-agent-provider.ts` builds those with `networkAccessEnabled: false`
+   * (plus low reasoning, read-only, web search off); session spawns never set
+   * `networkAccessEnabled` at all — `codex-agent-provider.test.ts` pins both
+   * halves of that contract, so this check can't silently drift.
+   *
+   * One-shot threads:
+   *   - are NOT wired to `codexScript` — routing the probe prompt into the
+   *     test's onDispatch would make the script observe a message the user
+   *     never sent (and could bridge stray tool calls into the outbox);
+   *   - do NOT fire the spawn recorder — it must only see real session spawns
+   *     (see installCodexSpawnRecorder);
+   *   - DO answer: since 2026-09-09 the codex provider is wrapped in
+   *     `withFirstUseProbe`, whose probe IS a cheapEval call, so every codex
+   *     e2e goes through here before the first spawn. An empty answer makes
+   *     the probe fail and the provider refuses every dispatch.
+   * The moderator script gets first refusal, mirroring the Claude
+   * single-shot path, so codex-as-cheap-model tests can still steer it.
+   */
+  function isCodexOneShotThread(opts: Record<string, unknown> | null): boolean {
+    return opts?.networkAccessEnabled === false
+  }
+
+  async function oneShotAnswer(prompt: string): Promise<string> {
+    return moderatorScript ? await moderatorScript.onEval(prompt) : 'ok'
+  }
+
+  async function* buildOneShotEvents(
+    threadId: string,
+    prompt: string,
+    emitStarted: boolean,
+  ): AsyncGenerator<Record<string, unknown>> {
+    if (emitStarted) yield { type: 'thread.started', thread_id: threadId }
+    yield { type: 'turn.started' }
+    yield { type: 'item.completed', item: { type: 'agent_message', text: await oneShotAnswer(prompt) } }
+    yield { type: 'turn.completed', usage: null }
+  }
+
   class FakeCodexThread {
     readonly id: string | null
     private _firstRun = true
@@ -482,7 +522,7 @@ vi.mock('@openai/codex-sdk', () => {
      * the spawn is actually exercised, not just constructed).
      *
      * Held as `unknown` so the field works for the cheapEval path too
-     * (whose `run()` never fires the recorder — see below).
+     * (whose one-shot threads never fire the recorder — see isCodexOneShotThread).
      */
     private readonly _threadOptions: Record<string, unknown> | null
 
@@ -498,12 +538,19 @@ vi.mock('@openai/codex-sdk', () => {
       const text = typeof input === 'string' ? input : JSON.stringify(input)
       const threadId = this.id ?? `thread_${makeId()}`
       const emitStarted = this._firstRun
+      // cheapEval 的一次性线程(首用探测「只回复两个字母:ok」、主持人、内省……)。
+      // 2026-10-02 #197 起 cheapEval 走 runStreamed(不再是 run():run 会把
+      // Reconnecting 吞掉、断网时一直挂),所以这里必须按线程认出它,而不是按
+      // 方法 —— 否则探测提示会漏进测试的 onDispatch、还会被当成一次会话 spawn 记下。
+      if (isCodexOneShotThread(this._threadOptions)) {
+        this._firstRun = false
+        return { events: buildOneShotEvents(threadId, text, emitStarted) }
+      }
       // Fire the spawn recorder ONCE per thread on the first runStreamed
       // — matches the Claude side, which records inside `query()` so
       // cheapEval (single-shot string path) is naturally excluded.
-      // Codex's cheapEval uses `thread.run()` (below, which deliberately
-      // does NOT record), so this branch is only reachable from the
-      // provider's session spawn.
+      // cheapEval threads are diverted above, so this branch is only
+      // reachable from the provider's session spawn.
       if (this._firstRun && codexSpawnRecorder && this._threadOptions) {
         try { codexSpawnRecorder(this._threadOptions) } catch {}
       }
@@ -513,27 +560,15 @@ vi.mock('@openai/codex-sdk', () => {
     }
 
     /**
-     * One-shot eval path. `codex-agent-provider.ts` uses `thread.run()`
-     * (NOT runStreamed) for `cheapEval`, and since 2026-09-09 the codex
-     * provider is wrapped in `withFirstUseProbe`, whose probe IS a
-     * cheapEval call — so every codex e2e now goes through here before
-     * the first spawn. Returning a turn with one `agent_message` is what
-     * the real SDK does; an empty/throwing run() makes the boot probe
-     * fail and the provider refuses every dispatch.
-     *
-     * Deliberately NOT wired to `codexScript` and NOT recording a spawn:
-     *   - the spawn recorder must only see real session spawns (see
-     *     installCodexSpawnRecorder), and
-     *   - routing the probe prompt into the test's onDispatch would make
-     *     the script observe a message the user never sent (and could
-     *     bridge stray tool calls into the outbox).
-     * The moderator script gets first refusal, mirroring the Claude
-     * single-shot path, so codex-as-cheap-model tests can still steer it.
+     * Legacy one-shot path. Production cheapEval stopped calling `run()` in
+     * #197 (it uses runStreamed + boundary timeouts now — see above); kept so
+     * a regression back to run() still gets a sane answer rather than a hang.
+     * Same rules as the one-shot runStreamed branch: never wired to
+     * `codexScript`, never records a spawn.
      */
     async run(prompt: unknown): Promise<{ items: Array<Record<string, unknown>> }> {
       const text = typeof prompt === 'string' ? prompt : JSON.stringify(prompt)
-      const out = moderatorScript ? await moderatorScript.onEval(text) : 'ok'
-      return { items: [{ type: 'agent_message', text: out }] }
+      return { items: [{ type: 'agent_message', text: await oneShotAnswer(text) }] }
     }
   }
 

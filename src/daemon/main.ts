@@ -44,7 +44,7 @@ import { makeReportOutboxStore } from './reports/outbox'
 import { makeWorkbenchStore } from '../core/workbench/store'
 import { buildInboundPipeline } from './inbound/build'
 import { runStartupSweeps } from './startup-sweeps'
-import { markPlannedRestart } from './notify-startup'
+import { consumePreviousRunEvidence, markCleanShutdown, markPlannedRestart } from '../lib/restart-markers'
 import { wireMain } from './wiring'
 import type { TickBodies } from './wiring/tick-bodies'
 import { makeChatPrefs } from './chat-prefs'
@@ -149,6 +149,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   // turn (or macOS sleep/wake) can't let the heartbeat go stale and invite a
   // second daemon to steal the lock. The poll loop's per-cycle stamp stays as a
   // belt-and-suspenders signal.
+  // 上一个进程是怎么停的(计划内纸条 / 优雅退出纸条 / 最后一跳心跳)——
+  // **必须**在写本进程第一跳心跳之前读,否则停机时长就量成了 0。
+  // 读完就删,结果交给 notify-startup 决定要不要在微信里说话。
+  const previousRun = consumePreviousRunEvidence(stateDir)
   writeHeartbeat(HEARTBEAT_PATH)
   const stopHeartbeat = startHeartbeatTicker(HEARTBEAT_PATH)
   // v0.5.6: collapse duplicate ilink bot bindings to one per wechat userId
@@ -245,8 +249,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   // closure rather than two restart mechanisms.
   const requestRestart = (reason: string) => {
     log('DAEMON', `restart requested (${reason}) — shutting down for KeepAlive respawn`)
-    // 给下次开机留一张「这次是计划内的」纸条,notify-startup 据此决定
-    // 要不要在微信里播报 —— 自愈重启是主人 commit 触发的,不该打扰他。
+    // 给下次开机留一张「这次是计划内的」纸条:daemon 自己要求的重启(空闲加载
+    // 新代码、换后端、运维 POST /v1/daemon/restart …)一律不在微信里播报。
     markPlannedRestart(stateDir, reason)
     setTimeout(() => { void shutdown().finally(() => process.exit(0)) }, 500)
   }
@@ -910,7 +914,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     }))
     if (reportsLc) lc.register(reportsLc)
     // 5. one-shot startup sweeps — fire-and-forget
-    runStartupSweeps(wired.startupDeps)
+    runStartupSweeps({ ...wired.startupDeps, previousRun })
     // 外部集成反馈 #6:这个 flag 的语义像"跳过工具确认",实际是全局提权
     // (resolveEffectiveTier 对每个 allowlist 会话都返回 admin)。日志明说,
     // 让 operator 看清 blast radius;按会话生效见导图 [待]。
@@ -1001,6 +1005,9 @@ export async function main() {
   const cliShutdown = async (sig: string) => {
     if (alreadyShuttingDown) { log('DAEMON', `${sig} during shutdown — forcing exit`); process.exit(130) }
     alreadyShuttingDown = true; log('DAEMON', `${sig} received, shutting down`)
+    // 有人让它停(launchctl kickstart -k / bootout、App 更新换包、注销关机)——
+    // 先留纸条再收尾:哪怕收尾中途被 SIGKILL,下次开机也认得出这是计划内的。
+    markCleanShutdown(stateDir, sig)
     await handle.shutdown(); process.exit(0)
   }
   process.on('SIGINT', () => void cliShutdown('SIGINT'))

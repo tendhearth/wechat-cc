@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { CHAT_TEXT_MAX } from '@wechat-cc/protocol'
-import { ACCEPTED_TTL_MS, acceptedSettled, chatBubbles, chatSendOutcome, isOwnerChatMatter, mergeChatPages, olderCursor, rebaseOlder, textAfterSend } from './chat'
+import { ACCEPTED_TTL_MS, acceptedSettled, audioExt, chatBubbles, chatSendOutcome, hasBubbleText, isOwnerChatMatter, mergeChatPages, olderCursor, rebaseOlder, textAfterSend, voiceFailureKey } from './chat'
+import { makeDemoBackend } from '../backend/demo'
 import { t } from '../i18n'
 import type { ChatMessageT, ChatPageT } from '../backend/types'
 
@@ -154,6 +155,52 @@ describe('chat 视图', () => {
       expect(rebaseOlder(p1, page([msg('m9', 9)], { hasMore: true, nextBefore: 't9' }), [])).toEqual([])
       expect(rebaseOlder(p1, p1, old)).toBe(old)
       expect(rebaseOlder(undefined, p1, old)).toBe(old)
+    })
+  })
+
+  // 回复交付(2026-10-04):CC 回复行的附件与过程随气泡带出;只有附件的回复不画空气泡。
+  describe('回复的附件与过程', () => {
+    it('cc 气泡带上 attachments / narration;我的气泡与老形状不带', () => {
+      const cc: ChatMessageT = { ...msg('o', 2, 'cc', '好了', 'phone'), attachments: [{ kind: 'voice', text: '晚安' }, { kind: 'file', name: 'r.pdf' }], narration: ['先看看'] }
+      const b = chatBubbles([msg('i', 1), cc, msg('old', 3, 'cc')], { pending: null, failed: null }, null, 10)
+      expect(b[1]).toMatchObject({ key: 'o', attachments: [{ kind: 'voice', text: '晚安' }, { kind: 'file', name: 'r.pdf' }], narration: ['先看看'] })
+      expect('attachments' in b[0]!).toBe(false)
+      expect('narration' in b[2]!).toBe(false)
+    })
+    it('只有附件、没有文字 ⇒ 不画文字气泡;没有附件的空文字照旧画(不吞掉这一行)', () => {
+      expect(hasBubbleText({ text: '', attachments: [{ kind: 'sticker', label: '开心' }] })).toBe(false)
+      expect(hasBubbleText({ text: '好', attachments: [{ kind: 'sticker', label: '开心' }] })).toBe(true)
+      expect(hasBubbleText({ text: '' })).toBe(true)
+    })
+    it('语音放不出来的三种说法;声音格式 → 缓存文件扩展名', () => {
+      expect(voiceFailureKey('too_large')).toBe('chat.voiceTooLong')
+      expect(voiceFailureKey('no_voice')).toBe('chat.voiceNotSet')
+      expect(voiceFailureKey('offline')).toBe('chat.voiceFailed')
+      expect(t('zh-Hans', voiceFailureKey('too_large'))).toContain('电脑上听')
+      expect([audioExt('audio/mpeg'), audioExt('audio/wav'), audioExt('audio/ogg; codecs=opus'), audioExt('audio/mp4')]).toEqual(['mp3', 'wav', 'ogg', 'm4a'])
+    })
+    it('过程的文案说清没发到微信', () => {
+      expect(t('zh-Hans', 'chat.process', { n: 2 })).toBe('过程 · 2 段')
+      expect(t('zh-Hans', 'chat.processHint')).toContain('没有发到微信')
+      expect(t('en', 'chat.processHint')).toContain('not sent to WeChat')
+    })
+    it('演示后端:回复带过程 + 语音 / 本地表情 / 联网表情;语音与表情都取得到,别的下标 / 文件取不到', async () => {
+      let fire: (() => void) | null = null
+      const demo = makeDemoBackend({ lang: 'zh-Hans', setTimeout: ((fn: () => void) => { fire = fn; return 0 }) as unknown as typeof setTimeout })
+      await demo.chatSay('明天有空吗', '11111111-1111-4111-8111-111111111111')
+      fire!()
+      const p = await demo.chat({})
+      const out = p.messages.at(-1)!
+      expect(out.narration).toEqual(['我先看一下你今天的安排。', '再对一下已经设好的提醒。'])
+      expect(out.attachments?.map(a => a.kind)).toEqual(['voice', 'sticker', 'sticker'])
+      const sticker = out.attachments![1] as { kind: 'sticker'; file?: string }
+      expect((await demo.sticker(sticker.file!)).mime).toBe('image/png')
+      expect((await demo.chatVoice(out.id, 0)).mime).toBe('audio/wav')
+      await expect(demo.chatVoice(out.id, 1)).rejects.toMatchObject({ code: 'not_found' })
+      await expect(demo.sticker('../x.png')).rejects.toMatchObject({ code: 'not_found' })
+      // 种子里电脑上那一轮带一份文件,只有名字
+      expect(p.messages.find(m => m.id === 'demo-chat-3')?.attachments).toEqual([{ kind: 'file', name: 'portfolio-notes.md' }])
+      demo.dispose()
     })
   })
 })

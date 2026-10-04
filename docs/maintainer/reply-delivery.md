@@ -12,7 +12,7 @@
 
 默认值写在代码里(各 provider 的 `ProviderCapabilities.replyDelivery`,读法 `capability-matrix.replyDeliveryFor`)。
 
-现在(2026-10-03,以代码为准):openai `daemon`;agy `daemon`(第 2 步闸门两臂打平,合入时维护者按结构收益翻了,见下面「agy」一节);Cursor `daemon`(第 3 步,见下面「Cursor」一节);Codex `daemon`(第 4 步,见下面「Codex」一节);Claude `daemon`(第 5 步,见下面「Claude」一节)。**迁移序列的五家全部是 daemon**;只剩已 deprecated 的 gemini(API key 版)是 `legacy`。legacy 路径保留到收尾(spec §5.7 的观察期 + 删除清单)之前,回滚照下面一节。
+现在(2026-10-03,以代码为准):openai `daemon`;agy `daemon`(第 2 步闸门两臂打平,合入时维护者按结构收益翻了,见下面「agy」一节);Cursor `daemon`(第 3 步,见下面「Cursor」一节);Codex `daemon`(第 4 步,见下面「Codex」一节);Claude `daemon`(第 5 步,见下面「Claude」一节)。**迁移序列的五家全部是 daemon**;已 deprecated 的 gemini(API key 版)2026-10-04 也迁到 `daemon`(见下面「gemini」一节)⇒ **没有任何 provider 默认走 legacy**。legacy 路径保留到收尾(spec §5.7 的观察期 + 删除清单)之前,只作回滚的去处,回滚照下面一节。
 
 ## 不重新部署就回滚
 
@@ -47,6 +47,42 @@ launchctl kickstart -k gui/$(id -u)/com.wechat-cc.daemon
 | 连着几轮什么都没交付 | `[PROVIDER_ANOMALY] … empty-reply streak=` |
 | 第一条就发失败 | `[REPLY_DELIVERY_FAIL] sent=n/m`(不会再调模型) |
 | shadow 的分布 | `[REPLY_SHADOW] … match=same / contains / differs / legacy_empty / shadow_empty` |
+| /both、/chat 里每位参与者交付了什么 | 每位参与者一条 `turn_records`(`mode=parallel` / `chatroom`),daemon 模式的参与者和 solo 一样带 delivery / bubbles / attachments / narration_segments(2026-10-04 起;之前只有 solo 有);`[REPLY] … context=parallel` / `context=chatroom` |
+| 模型想「帮我告诉某人」却被 403 | 2026-10-04 起会话跨 chat 只能用 `message`(admin 专用);reply 族 / share / set-mode 一律只许本 chat。`[INTERNAL_API] 403 … chat_scope`(`chat_scope_denied`,`caller=admin` 就是这种);`message` 的跨 chat 记 `chat_scope_admin_cross`。规则见 `reference/internal-api-auth.md`「发送类路由的 chat 范围」 |
+
+## /both 与 /chat(2026-10-04 补齐)
+
+两种扇出都按「当轮 provider 的开关」走,随每一家一起切(spec §4.9):
+
+- **/both(parallel)**:daemon 参与者的最后的话经端口交付,前缀 `[名字]` 由 daemon 加,按 ④ 分条;旁白不发;收口的综合用同一份文字。
+- **/chat(chatroom)**:daemon 发言人每一拍(开场 / 互驳 / 加时)都开一轮交付:`#RANK:` 行先在协调器里剥掉(交付与互评用同一份剥过的文字),**一人一条、不分条**(`deliverTurnReply` 对 `context=chatroom` 只发一条);旁白不发;出错 / 超时 / 认证失败的发言人只 abandon,不发残文(legacy 时出错的发言人仍会把文字发出去)。
+- **TurnRecord**:每位参与者 / 每一拍一条记录,交付之后才写(所以 daemon 参与者带交付列);legacy 参与者照旧只有 `reply_tool_called` / `text_chunks`。
+- `message` 在扇出里:Claude 的 `canUseTool` 拒;其它家(自研循环的 openai / gemini、Codex、Cursor)没有按模式拒 —— 它们在扇出里调 `message` 发往本聊天会被路由拒(`message_to_own_chat`),发往别的聊天照常(admin 才有这个工具)。
+
+## gemini(收尾前的二选一,2026-10-04)
+
+spec §5.7 的删除清单要求删 legacy 之前对 gemini 二选一:连 provider 一起删,或迁到 daemon。**定:迁到 daemon,不删。**
+
+- **为什么不删**:2026-09-27 主人拍板的是「标 deprecated 保留」(给已经配了 `GEMINI_API_KEY` 的用户,对外发布的包里可能有人在用);删它要动 `/gemini` 命令、`provider set gemini`、设置面板的 key 保存(`llm-keys.ts`)、桌面面板等一百多处,是另一件事,也推翻了主人的决定。
+- **为什么能迁**:它和 openai 同一种形状 —— 自研循环(没有 functionCall 的那一步就是结束)、wechat MCP 经 `wechatStdioMcpSpec('gemini')` + `connectWechatMcp` 每次 spawn 合会话 env、提示词由 `wire-instructions` 按开关出 final_text 版。改动只有能力表两行:`replyDelivery: 'daemon'`、`replyText: 'all_segments'`(聊天型,和 openai 一样全部文字段按顺序交付)。
+- **用量**:主人机器上从 7 月到现在的 576 次开机,每一次都是 `[BOOT] gemini: GEMINI_API_KEY not set — provider not registered`,`provider=gemini` 的回合 0 条。所以**没有真模型闸门**(没 key 也没用户数据);闸门是生产的 gemini 循环 + 剧本 genai + 生产的协调器 / 交付运行时(`conversation-coordinator.gemini-delivery.test.ts`:工具前后两段都交付、私聊 `NO_REPLY` 不外发、循环中途出错不发残文),工具表由 `integration.test.ts` 起真子进程核对(无 reply 族、admin 有 `message`、trusted 没有)。
+- 回滚:`{ "reply_delivery": { "gemini": "legacy" } }` + 重启 daemon。迁过来之后 legacy 路径没有任何默认使用者,第 6 步可以整块删(gemini 跟着 daemon 路径留下)。
+
+## 桌面 / 手机怎么显示(2026-10-04)
+
+app 那一轮(桌面「跟 CC 说」、手机「跟 CC 说」)的接收器收下的是整个 `TurnReply`。显示链:
+
+1. **投影**(`src/daemon/app-reply.ts`,`companionConverse` 里做一次):语音 `{kind:'voice', text}`;表情 `{kind:'sticker', label, file?}` —— 标签当场经表情库 `resolve` 成一张、只记文件名(桌面与手机看到同一张),联网表情(情绪 + 网址 / 搜索词)只有 label,daemon 不替 app 去外网取图;文件 `{kind:'file', name, path}`。旁白去空段、只留最后 20 段、每段 ≤ 4000 字。
+2. **落库**:回复那一行的 `messages.extras`(v72,JSON,可空)。只有附件没文字的一轮也写这一行(text 为空)。旁白不另起行 —— 消息库的其它读者(线索抽取、交接、夜间记忆、搜索)只读 text,不会把旁白当成 CC 说的话。
+3. **桌面**:`POST /v1/companion/converse` 回 `{ok, reply, attachments, narration}`,两个数组总在;本地表情多一个 `image`(data URI,≤ 1 MiB;桌面 CSP 只许 data: / blob: 图)。Rust `agent_converse` 把文件的 `path` 换成进程内一次性 `ref`(至多记 200 个),网页只能拿 ref 调 `reveal_reply_file`(`open -R`,只在访达里显示,不打开)。app 重开之后旧 ref 失效 ⇒ 提示去微信或文件夹里找。
+4. **手机**:`GET /m/api/chat` 的回复消息多两个可选字段 `attachments` / `narration`(协议 `ChatMessage`;认不得的附件逐条丢);文件只给 `name`。语音 `GET /m/api/chat/voice?id=<消息 id>&i=<下标>`:只合成库里那一行第 i 个附件、且必须是语音;一帧装不下 ⇒ 413 `too_large`,没配朗读 ⇒ 422 `no_voice_config`。表情图走已有的 `GET /m/api/sticker/<file>?b64=1`。文件**没有**取文件的路由(有意不开)。
+
+| 现象 | 看哪里 |
+|---|---|
+| 桌面 / 手机没显示附件 | 这一轮的 provider 是不是 daemon(legacy 的附件仍直接发微信);库里 `SELECT extras FROM messages WHERE id LIKE 'app:%:out' ORDER BY ts DESC LIMIT 1` |
+| 表情只显示「表情 · xx」 | 联网表情(正常);或本地表情的文件被删了 / 超过 1 MiB(桌面)/ 取图失败(手机) |
+| 手机点语音说「到电脑上听」 | 413 `too_large`:合成出来的声音装不进中继一帧 |
+| 桌面点「在访达中显示」说找不到 | 文件被挪走(`reply_file_missing`),或 app 重开过(`reply_file_unknown`) |
 
 ## agy(第 2 步,2026-10-03)
 

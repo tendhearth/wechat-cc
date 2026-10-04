@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { createInternalApi, type InternalApi, type InternalApiDeps } from '../internal-api'
 import { makeReplySinks } from '../reply-sinks'
 import { makeRoutes, makeMaybePrefix } from './routes'
-import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDecision, sharedTokenTurn } from './send-scope'
+import { ADMIN_CHAT_SCOPE_MESSAGE, ALL_CHATS, CHAT_SCOPE_MESSAGE, CROSS_CHAT_ROUTE, SEND_SCOPED_ROUTES, sendScopeDecision, sharedTokenTurn } from './send-scope'
 import { makeReplyDeliveryRuntime } from '../reply-delivery'
 import { setReplyDeliveryOverrides } from '../../core/capability-matrix'
 import { onTestFinished } from 'vitest'
@@ -33,11 +33,21 @@ describe('sendScopeDecision (pure rule)', () => {
     expect(d).toEqual({ kind: 'deny', message: expect.stringMatching(/chat_scope.*nothing was sent/) })
     expect(kind('owner', trusted)).toBe('deny')
   })
-  it('admin session → another chat is allowed FOR NOW but flagged admin_cross (to be logged)', () => {
-    // 主人会让 CC「帮我告诉某个访客……」—— 模型发起的 reply 到别的 chat。等 admin 专用
-    // `message` 工具落地(回复交付 spec §5)再收紧;在那之前放行并记日志。
-    expect(kind('g1', admin)).toBe('admin_cross')
-    expect(kind('x', { tier: 'admin', origin: 'session' })).toBe('admin_cross')
+  it('admin session → another chat via reply 族 / share / set-mode ⇒ denied (2026-10-04 收紧), 403 text points at `message`', () => {
+    // #199 起暂时放行 + 记 chat_scope_admin_cross;`message` 在五家 daemon 执行者里都有了 ⇒ 按计划收紧。
+    for (const route of ['POST /v1/wechat/reply', 'POST /v1/wechat/send_file', 'POST /v1/share/page', 'POST /v1/conversation/set-mode', undefined]) {
+      const d = sendScopeDecision('g1', admin, route)
+      expect(d).toEqual({ kind: 'deny', message: ADMIN_CHAT_SCOPE_MESSAGE })
+    }
+    expect(ADMIN_CHAT_SCOPE_MESSAGE).toMatch(/nothing was sent.*`message` tool/)
+    expect(kind('x', { tier: 'admin', origin: 'session' })).toBe('deny')
+    // 非 admin 的拒绝文案不提 message(它们根本没有这个工具)
+    expect(sendScopeDecision('owner', guest, 'POST /v1/wechat/reply')).toEqual({ kind: 'deny', message: CHAT_SCOPE_MESSAGE })
+  })
+  it('admin session → another chat via `message` (CROSS_CHAT_ROUTE) ⇒ admin_cross (allowed, logged)', () => {
+    expect(sendScopeDecision('g1', admin, CROSS_CHAT_ROUTE).kind).toBe('admin_cross')
+    expect(sendScopeDecision('owner', admin, CROSS_CHAT_ROUTE).kind).toBe('allow') // 本 chat:路由自己报 message_to_own_chat
+    expect(sendScopeDecision('owner', trusted, CROSS_CHAT_ROUTE).kind).toBe('deny') // 走不到这里(路由是 admin 级),兜底也拒
   })
   it('broadcast: only admin sessions (plain allow, not admin_cross)', () => {
     expect(kind(ALL_CHATS, guest)).toBe('deny')
@@ -258,22 +268,49 @@ describe('send routes over HTTP — chat scope', () => {
     expect(m.broadcast).toHaveBeenCalledWith('hi all', undefined)
   })
 
-  it('admin session → another chat is allowed for now, sends, and logs chat_scope_admin_cross', async () => {
+  // 2026-10-04 收紧(#199 的计划):admin 会话也只能发本 chat;跨 chat 只走 `message`。
+  for (const tc of CASES) {
+    it(`admin session → ANOTHER chat on ${tc.path} ⇒ 403 chat_scope telling it to use \`message\`, nothing sent`, async () => {
+      const m = mocks()
+      const log = vi.fn()
+      const { port } = await boot(m, { log })
+      const tok = api!.mintSessionToken('admin', 'claude/a/owner')
+      const r = await post(port, tok, tc.path, tc.body('victim@im.wechat'))
+      expect(r.status).toBe(403)
+      expect(r.body.error).toBe('chat_scope')
+      expect(String(r.body.message)).toMatch(/nothing was sent.*`message` tool/)
+      expect(JSON.stringify(r.body)).not.toContain('victim')
+      nothingSent(m)
+      expect(log.mock.calls.find(c => (c[2] as { event?: string } | undefined)?.event === 'chat_scope_denied')![2]).toMatchObject({ caller: 'admin', callerChat: 'owner' })
+      expect(log.mock.calls.some(c => (c[2] as { event?: string } | undefined)?.event === 'chat_scope_admin_cross')).toBe(false)
+    })
+  }
+
+  it('admin session → own chat on reply still goes through (no admin_cross line)', async () => {
     const m = mocks()
     const log = vi.fn()
     const { port } = await boot(m, { log })
     const admin = api!.mintSessionToken('admin', 'claude/a/owner')
-    const r = await post(port, admin, '/v1/wechat/reply', { chat_id: 'guest@im.wechat', text: '主人让我告诉你' })
+    expect((await post(port, admin, '/v1/wechat/reply', { chat_id: 'owner', text: 'hi' })).body).toEqual({ ok: true, msg_id: 'm1' })
+    expect(m.sendReply).toHaveBeenCalledWith('owner', 'hi')
+    expect(log.mock.calls.some(c => (c[2] as { event?: string } | undefined)?.event === 'chat_scope_admin_cross')).toBe(false)
+  })
+
+  it('admin session → another chat via `message` ⇒ sent, logged chat_scope_admin_cross (the one cross-chat path)', async () => {
+    const m = mocks()
+    const log = vi.fn()
+    const { port } = await boot(m, { log })
+    const admin = api!.mintSessionToken('admin', 'claude/a/owner')
+    const r = await post(port, admin, '/v1/wechat/message', { to: 'guest@im.wechat', text: '主人让我告诉你' })
     expect(r.status).toBe(200)
     expect(r.body).toEqual({ ok: true, msg_id: 'm1' })
     expect(m.sendReply).toHaveBeenCalledWith('guest@im.wechat', '主人让我告诉你')
     const ev = log.mock.calls.find(c => (c[2] as { event?: string } | undefined)?.event === 'chat_scope_admin_cross')
-    expect(ev).toBeTruthy()
-    expect(ev![2]).toMatchObject({ path: 'POST /v1/wechat/reply', callerChat: 'owner', target: 'guest@im.wechat' })
-    // own chat: no admin_cross line
-    log.mockClear()
-    expect((await post(port, admin, '/v1/wechat/reply', { chat_id: 'owner', text: 'hi' })).status).toBe(200)
-    expect(log.mock.calls.some(c => (c[2] as { event?: string } | undefined)?.event === 'chat_scope_admin_cross')).toBe(false)
+    expect(ev![2]).toMatchObject({ path: 'POST /v1/wechat/message', callerChat: 'owner', target: 'guest@im.wechat' })
+    // trusted 会话够不着 message(路由是 admin 级)
+    const trusted = api!.mintSessionToken('trusted', 'claude/a/t1')
+    expect((await post(port, trusted, '/v1/wechat/message', { to: 'guest@im.wechat', text: 'x' })).status).toBe(403)
+    expect(m.sendReply).toHaveBeenCalledTimes(1)
   })
 
   it('file token (daemon-wide, CLI) keeps current behaviour: any chat + broadcast', async () => {

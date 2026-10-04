@@ -5,7 +5,8 @@ import { cleanupOldInbox } from './media'
 import { loadCompanionConfig } from './companion/config'
 import { loadAgentConfig } from '../lib/agent-config'
 import { loadAccess } from '../lib/access'
-import { notifyStartup } from './notify-startup'
+import { notifyStartup, resolveRestartNoticeSettings } from './notify-startup'
+import type { PreviousRunEvidence } from '../lib/restart-markers'
 import { buildDetectorContext } from './milestones/build-context'
 import { detectMilestones } from './milestones/detector'
 import { makeMilestonesStore } from './milestones/store'
@@ -17,10 +18,12 @@ export interface StartupSweepDeps {
   db: Db
   ilink: IlinkAdapter
   log: (tag: string, line: string) => void
-  /** Bound account count for the startup notification text (admins see "accounts=N"). */
+  /** Bound account count (logged only; the WeChat notice no longer carries it). */
   accountCount: number
-  /** `--dangerously` flag for the startup notification mode string. */
+  /** `--dangerously` flag (kept for callers; not shown to the owner any more). */
   dangerously: boolean
+  /** 开机最早时读到的「上一个进程怎么停的」证据(main.ts consumePreviousRunEvidence)。 */
+  previousRun?: PreviousRunEvidence
   /** introspect tick body — invoked if 24h+ since last */
   runIntrospectOnce: () => Promise<void>
 }
@@ -83,8 +86,10 @@ async function runStartupNotify(deps: StartupSweepDeps): Promise<void> {
         },
         send: (cid, txt) => deps.ilink.sendMessage(cid, txt),
         log: deps.log,
+        ...(deps.previousRun ? { evidence: deps.previousRun } : {}),
+        settings: resolveRestartNoticeSettings(loadAgentConfig(deps.stateDir).restart_notice),
       },
-      { pid: process.pid, accounts: deps.accountCount, dangerously: deps.dangerously },
+      { pid: process.pid },
     )
   } catch (err) {
     deps.log('NOTIFY', `unhandled: ${err instanceof Error ? err.message : err}`)
