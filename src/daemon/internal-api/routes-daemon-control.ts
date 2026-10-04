@@ -8,6 +8,7 @@
 import { type InternalApiDeps, type RouteTable } from './types'
 import { loadAgentConfig, saveAgentConfig, activeModel, withActiveModel, modelForProvider, withModelForProvider } from '../../lib/agent-config'
 import { PROVIDER_IDS } from '../../lib/provider-ids'
+import { isCliId } from '../../core/cli-upgrade/specs'
 
 /** provider ids /v1/model accepts in its optional `provider` field. Mirrors
  *  the switch inside modelForProvider/withModelForProvider — anything else
@@ -170,6 +171,26 @@ export function daemonControlRoutes(deps: InternalApiDeps): RouteTable {
       })
       if (result === null) return { status: 503, body: { error: 'selftest_not_wired' } }
       return { status: 200, body: result }
+    },
+
+    // 外部 agent CLI 自动升级(2026-10-04,docs/maintainer/cli-auto-upgrade.md)——`wechat-cc cli upgrade|rollback`
+    // 走这两条(operator 凭据)。照样只在空闲时动手(不空闲 ⇒ 200 + result:'not_idle'),同一时刻只做一件
+    // (⇒ result:'busy');升级后自检、不过就退回,都在这一次请求里做完,所以可能要几分钟。
+    'POST /v1/cli/upgrade': async (_q, body) => {
+      if (!deps.cliUpgrade) return { status: 503, body: { error: 'cli_upgrade_not_wired' } }
+      const b = (body ?? {}) as { name?: unknown; force?: unknown }
+      if (!isCliId(b.name)) return { status: 400, body: { error: 'invalid_request', hint: 'name: claude | codex | cursor | agy' } }
+      // 手动升级之前先查一次最新(手动时主人想要的是「现在就看看有没有新的」)。
+      await deps.cliUpgrade.check(b.name, 'manual')
+      const outcome = await deps.cliUpgrade.upgrade(b.name, { source: 'manual', force: b.force === true })
+      return { status: 200, body: { outcome, status: deps.cliUpgrade.status().clis.find(c => c.id === b.name) ?? null } }
+    },
+    'POST /v1/cli/rollback': async (_q, body) => {
+      if (!deps.cliUpgrade) return { status: 503, body: { error: 'cli_upgrade_not_wired' } }
+      const b = (body ?? {}) as { name?: unknown }
+      if (!isCliId(b.name)) return { status: 400, body: { error: 'invalid_request', hint: 'name: claude | codex | cursor | agy' } }
+      const outcome = await deps.cliUpgrade.rollback(b.name)
+      return { status: 200, body: { outcome, status: deps.cliUpgrade.status().clis.find(c => c.id === b.name) ?? null } }
     },
 
     // Per-turn outcome feed for diagnosis. With chatId → that chat's turns

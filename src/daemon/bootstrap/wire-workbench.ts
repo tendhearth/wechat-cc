@@ -123,6 +123,8 @@ export function wireWorkbench(opts: {
   reportOutbox?: import('../reports/outbox').ReportOutboxStore
   /** 网络闸门(2026-10-02):执行者 registry、起执行者 / 投补充、额度查询都过它。 */
   networkGate?: import('../../lib/network-gate').NetworkGate
+  /** 执行者一轮失败时的错误通道 —— CLI 自动升级的报错触发(2026-10-04)。 */
+  onTurnError?: (providerId: string, code: string | undefined, message: string) => void
 }) {
   // 额度查询带着账号凭据直连供应商(守护 v2:按真正连到的端点分类 —— Claude 的 usage 接口永远是
   // api.anthropic.com,哪怕会话走的是自定义网关;Codex 的额度是 ChatGPT 账号的,永远是 OpenAI 官方,
@@ -218,6 +220,7 @@ export function wireWorkbench(opts: {
     usage:(id)=>id==='claude'||id==='codex'?usageMonitor.cached(id):null,
     registeredProjects:()=>listProjects(join(opts.stateDir,'projects.json')),
     defaultProvider:opts.boot.defaultProviderId,holdBusy:opts.boot.holdBusy,
+    ...(opts.onTurnError?{onTurnError:opts.onTurnError}:{}),
     // Empty allowlist is deliberate: office tasks never send messages or read
     // personal memory through the daemon, even if a CLI discovers old config.
     mintSessionToken:key => opts.internalApi.mintSessionToken('trusted',key,{routeAllow:new Set()}),

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runSelftestConverse, type SelftestConverseDeps } from './selftest'
 import { makeFakeSession } from '../core/test-helpers'
-import type { AgentEvent, AgentProject, AgentSession, SpawnContext } from '../core/agent-provider'
+import type { AgentEvent, AgentProject, AgentProvider, AgentSession, SpawnContext } from '../core/agent-provider'
 import type { ProviderRegistry } from '../core/provider-registry'
 
 /** Scratch project path the runner uses (mirrors SELFTEST_PROJECT_PATH in
@@ -74,6 +74,7 @@ describe('runSelftestConverse', () => {
       sessionId: 's1',
       texts: ['pong 42'],
       toolCalls: ['wechat/ping'],
+      eventKinds: ['text', 'tool_call', 'result'],
       durationMs: expect.any(Number),
     })
 
@@ -143,6 +144,18 @@ describe('runSelftestConverse', () => {
       durationMs: expect.any(Number),
     })
     expect(mintSessionToken).not.toHaveBeenCalled()
+  })
+
+  it('a network-guard refusal comes back with errorCode network_unprotected (CLI auto-upgrade defers on it)', async () => {
+    const refusing: Pick<ProviderRegistry, 'get'> = {
+      get: () => ({
+        provider: { spawn: async () => { throw Object.assign(new Error('网络未受保护'), { code: 'network_unprotected' }) } } as unknown as AgentProvider,
+        opts: {} as never,
+      }),
+    }
+    const result = await runSelftestConverse(makeDeps({ registry: refusing }), { providerId: 'claude', text: 'ping' })
+    expect(result.ok).toBe(false)
+    expect(result.errorCode).toBe('network_unprotected')
   })
 
   it('surfaces an error event as ok:false with error/errorCode', async () => {

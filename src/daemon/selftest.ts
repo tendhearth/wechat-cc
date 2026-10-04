@@ -25,7 +25,20 @@ export interface SelftestConverseResult {
   toolCalls: string[]
   error?: string
   errorCode?: string
+  /**
+   * 这一轮经过我们自己的解析器出来的事件种类(去重、按首次出现排序)。CLI 自动升级的「协议烟测」
+   * 看它:升级后 text / tool_call / result 还在不在 —— 输出格式变了、解析器认不出时,这里先缺。
+   */
+  eventKinds?: string[]
   durationMs: number
+}
+
+/** 把一路事件原样转出去,顺手记下见过哪些种类。 */
+async function* tapKinds<T extends { kind: string }>(events: AsyncIterable<T>, seen: string[]): AsyncIterable<T> {
+  for await (const ev of events) {
+    if (!seen.includes(ev.kind)) seen.push(ev.kind)
+    yield ev
+  }
 }
 
 export interface SelftestConverseDeps {
@@ -98,6 +111,7 @@ export async function runSelftestConverse(
   // holding its handle. Teardown belongs in `finally`, and the route's
   // contract is a RESULT (`ok:false`), never an exception.
   let session: Awaited<ReturnType<typeof entry.provider.spawn>> | undefined
+  const eventKinds: string[] = []
   try {
     session = await entry.provider.spawn(
       { alias: 'selftest', path: projectPath },
@@ -111,7 +125,7 @@ export async function runSelftestConverse(
       },
     )
 
-    const summary = await collectTurn(session.dispatch(input.text), {
+    const summary = await collectTurn(tapKinds(session.dispatch(input.text), eventKinds), {
       timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     })
 
@@ -123,11 +137,14 @@ export async function runSelftestConverse(
       toolCalls: summary.toolCalls,
       ...(summary.error !== undefined ? { error: summary.error } : {}),
       ...(summary.errorCode !== undefined ? { errorCode: summary.errorCode } : {}),
+      eventKinds,
       durationMs: now() - startedAt,
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     deps.log('SELFTEST', `converse failed for ${sessionKey}: ${message}`)
+    // 网络守护拒绝(NetworkUnprotectedError.code)要带码出去:CLI 自动升级据此把自检记成「暂缓」而不是「失败」。
+    const code = typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'network_unprotected' ? 'network_unprotected' : undefined
     return {
       ok: false,
       providerId: input.providerId,
@@ -135,6 +152,8 @@ export async function runSelftestConverse(
       texts: [],
       toolCalls: [],
       error: message,
+      ...(code ? { errorCode: code } : {}),
+      eventKinds,
       durationMs: now() - startedAt,
     }
   } finally {

@@ -43,6 +43,7 @@ import { socialCmd } from './src/cli/commands/social'
 import { pairCmd } from './src/cli/commands/pair'
 import { licenseCmd } from './src/cli/commands/license'
 import { backupCmd } from './src/cli/commands/backup'
+import { cliCmd } from './src/cli/commands/cli'
 
 // PR4 batch 3c: parseCliArgs + CliArgs union deleted. All subcommands now
 // flow through citty (see `cittyRoot` below). The previous gate
@@ -56,8 +57,6 @@ import { backupCmd } from './src/cli/commands/backup'
 // updates itself, and there's no `cittyRoot.subCommands as Record<string,
 // unknown>` cast needed (which would have hidden a future Resolvable<>
 // refactor — citty's type allows lazy / promise forms — from typecheck).
-
-
 
 
 const SUBCOMMANDS = {
@@ -106,6 +105,7 @@ const SUBCOMMANDS = {
   // CI 信号面 — `ci triage` (spec 2026-09-18-ci-triage §3);「看 CI」不再是人的判断。
   ci: ciCmd,
   'install-progress': installProgressCmd,
+  cli: cliCmd,   // 外部 agent CLI 版本与自动升级(主人 2026-10-04)
   mode: modeCmd,
   'mcp-server': mcpServerCmd,
   // A2A agent management (Task 7).
