@@ -1,6 +1,6 @@
 {
   "name": "claude-channel-wechat",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "description": "A local-first AI companion and unified task workspace for Claude, Codex and API models, with desktop and WeChat access.",
   "keywords": [
     "claude-code",
