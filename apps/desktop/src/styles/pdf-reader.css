@@ -1,4 +1,4 @@
-.cc-pdf-reader { display:flex; flex-direction:column; height:100%; min-height:320px; color:var(--th-ink); font:var(--th-size-body)/var(--th-lh-body) var(--th-font-serif); }
+.cc-pdf-reader { display:flex; flex-direction:column; height:100%; min-height:320px; color:var(--th-ink); font:var(--th-size-body)/var(--th-lh-body) var(--th-font-sans); }
 .cc-pdf-tools { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; padding:8px 0 12px; flex-shrink:0; }
 .cc-pdf-tools[hidden], .cc-pdf-password[hidden], .cc-pdf-page[hidden] { display:none; }
 .cc-pdf-tools form, .cc-pdf-tools label { display:flex; align-items:center; gap:6px; margin:0; }

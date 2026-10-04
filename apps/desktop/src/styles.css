@@ -1,7 +1,7 @@
 /* =========================================================
-   Tendhearth 暖纸 · 衬线 · 一个深绿(spec 2026-10-01)
+   Tendhearth 暖纸 · 系统无衬线 · 一个深绿(spec 2026-10-01 §10)
    颜色、字号、字体都从 tokens.css(--th-*)来;下面的旧变量名
-   只是别名,让既有样式表不用一次全改。字体在 fonts.css,全部本地。
+   只是别名,让既有样式表不用一次全改。品牌衬线在 fonts.css,全部本地。
    ========================================================= */
 
 :root {
@@ -25,8 +25,8 @@
   --amber-soft: transparent;
   --rouge: var(--th-bad);
   --rouge-soft: transparent;
-  --sans: var(--th-font-serif);
-  --cjk: var(--th-font-serif);
+  --sans: var(--th-font-sans);
+  --cjk: var(--th-font-sans);
   --mono: var(--th-font-mono);
   --radius: var(--th-radius-bubble);
   --radius-sm: var(--th-radius-nav);
@@ -324,7 +324,7 @@ input { font: inherit; color: inherit; }
 }
 /* 开发横幅占着顶上 32px 时,窗口别再多出一屏把页脚顶出去。 */
 body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32px); }
-.wz-wordmark { font-size: 24px; }
+.wz-wordmark { font-family: var(--th-font-serif); font-size: 24px; }
 
 .wz-top {
   display: flex; align-items: center;
@@ -693,7 +693,7 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 #screen-provider .agent-grid { padding:0; gap:16px; }
 #screen-provider .agent .name { font-size:var(--th-size-item); font-weight:400; }
 #screen-provider .agent .desc { font-size:var(--th-size-body); line-height:var(--th-lh-body); }
-#screen-provider .agent .path { font:var(--th-size-meta)/var(--th-lh-meta) var(--th-font-serif); }
+#screen-provider .agent .path { font:var(--th-size-meta)/var(--th-lh-meta) var(--th-font-sans); }
 #screen-provider .agent:disabled { cursor:default; opacity:.65; }
 #screen-provider .wz-foot { margin-top:24px; gap:16px; align-items:flex-start; }
 #provider-state, #provider-error, .service-enter-hint { margin:0; font-size:var(--th-size-meta); color:var(--th-ink-soft); line-height:var(--th-lh-meta); }
@@ -1340,7 +1340,7 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
   background: var(--th-paper);
   color: var(--th-ink);
 }
-.settings-drawer .license-row input::placeholder { color: var(--th-ink-soft); font-family: var(--th-font-serif); } /* 提示是话,不是代码;填进去的 key 才用等宽 */
+.settings-drawer .license-row input::placeholder { color: var(--th-ink-soft); font-family: var(--th-font-sans); } /* 提示是话,不是代码;填进去的 key 才用等宽 */
 /* 「升级到 Pro」是链接做的按钮:与同排的次级按钮同一副样子,不加下划线(终审 R2) */
 .settings-drawer a.btn { text-decoration: none; font-weight: 400; display: inline-flex; align-items: center; }
 .settings-drawer .license-status { color: var(--th-ink-soft); }
@@ -1400,7 +1400,8 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
   padding: 9px 12px;
   border-radius: var(--th-radius-nav);
   color: var(--th-ink-soft);
-  font-size: var(--th-size-body);
+  font-size: var(--th-size-meta);
+  line-height: var(--th-lh-meta);
   font-weight: 400;
   background: none; border: 0;
   text-align: left;
@@ -1854,13 +1855,13 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .dialogue-turn ol { margin: 0 0 14px; padding-left: 20px; color: var(--th-ink); }
 .dialogue-turn li { margin-bottom: 4px; font-size: 13px; line-height: 1.7; }
 .dialogue-turn strong { color: var(--th-ink); font-weight: 500; }
-.dialogue-message-text { min-width:0; max-width:70ch; font-size:var(--th-size-body); line-height:1.8; overflow-wrap:anywhere; }
+.dialogue-message-text { min-width:0; max-width:70ch; font-size:var(--th-size-body); line-height:var(--th-lh-body); overflow-wrap:anywhere; }
 .dialogue-message-plain,.dialogue-cmd { white-space:pre-wrap; }
 
 /* Full assistant replies and discussion excerpts share one reading layout. */
 .cc-readable-markdown.wb-markdown {
   --wb-line:var(--th-hair); --wb-secondary:var(--th-ink-soft); --wb-muted:var(--th-ink-soft);
-  min-width:0; max-width:70ch; color:var(--th-ink); font-size:var(--th-size-body); line-height:1.8;
+  min-width:0; max-width:70ch; color:var(--th-ink); font-size:var(--th-size-body); line-height:var(--th-lh-body);
   white-space:normal; overflow-wrap:anywhere;
 }
 .cc-readable-markdown.wb-markdown :is(p,ul,ol,blockquote,pre,table) { margin:.85em 0; }
@@ -4782,7 +4783,7 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 /* ── 接大脑引导卡(新装机/无 provider)── */
 .brain-nobrain { flex-basis: 100%; }
 .nb-head { text-align: center; margin-bottom: 12px; }
-.nb-head b { display: block; font-family: var(--serif, Georgia), serif; font-size: 16px; color: var(--th-ink-soft); }
+.nb-head b { display: block; font-family: var(--th-font-sans); font-size: 16px; color: var(--th-ink-soft); }
 .nb-head small { color: var(--th-ink-soft); font-size: 12.5px; }
 .nb-opts { display: grid; gap: 10px; grid-template-columns: 1fr; }
 @media (min-width: 520px) { .nb-opts { grid-template-columns: 1fr 1fr; } }

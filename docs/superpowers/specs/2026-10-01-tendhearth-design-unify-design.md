@@ -172,3 +172,16 @@
 4. **「N 件事等你」行写问题 / 权限本身。** `GET /v1/workbench/attention` 每个任务多 `first: {kind:'permission'|'question', text} | null`(权限优先、最早一件;写法与手机 approvals 话题一致;压成一行、上限 120 字),还是一次轮询,不逐行再读详情。
 5. **安装包体积:字体子集化。** 两端的 CJK 衬线字只保留常用字(《通用规范汉字表》一级 + 二级 + GB2312,外加拉丁 / 标点 / 全角),子集外的字退回系统衬线;脚本与前后字节数见字体子集化那份 PR 与 §3。
 6. **离线状态点 = 红,灰只给「正在连接…」**(以及「不知道」:读不到 / 陈旧 / 演示)。代码核对:桌面 `nowStatusLine`(没拉到第一拍 = 灰,daemon 没跑 / 够不着 = 红)、手机 `statusLine`(connecting / 握手未同步 = 灰,offline / revoked = 红)、两端连接页电脑离线 = 红,均有测试钉住。
+
+## 10. 桌面字体修订(2026-10-04 主人确认)
+
+主人对照 Claude 桌面截图认为 CC 字体过大、阅读不舒服,确认将桌面界面与聊天改为系统无衬线。此条覆盖本 spec 的桌面全局衬线要求;原生手机字体方案保留。
+
+- macOS 使用系统西文字体与苹方(PingFang SC);Windows / Linux 使用本地系统与 CJK 无衬线回退。字体栈仍从 design-tokens 生成,不下载或复制 Claude 的字体。
+- 侧栏导航 14px / 1.5;聊天正文 16px / 1.6,用户气泡沿用 15px / 1.6。输入框、待办、设置与阅读面板统一使用界面字体。
+- 桌面品牌字(侧栏与引导)保留 TH Serif 4;代码继续使用 Geist Mono。
+- 验证使用独立工作区内的既有样式检查、Bun / Node 测试、类型与模块边界检查,并用 dry-run 演示数据核对宽、窄窗口。安装包需重新构建,共享安装与部署仍由指定整合者串行完成。
+
+本批交接:开发负责人 Codex(当前对话);工作区 `/Users/nategu_mac_company/.codex/worktrees/cc-desktop-typography/wechat-cc`;分支 `codex/desktop-typography`;起点 `dev` 的 `c122defa17aa9c104d38274cbabcb700f6d4929d`。整合者待指定;未合入、未安装、未部署或推送 `dev`。
+
+验证(2026-10-04):`bun run test --maxWorkers=4` 11699 通过 / 14 跳过;`npm run test:node -- --maxWorkers=4` 10009 通过 / 18 跳过;`bun run typecheck` 通过;`bun run depcheck` 0 错误 / 21 警告;独立 dry-run 的 `design-shots.spec.ts` 宽、窄、离线 3 项通过。首次同时跑全套与出图时,两个子进程用例失败且字体资产测试触发页面热刷新;分开复测与最终全套均通过。浏览器确认导航和「生活与工具」为 14px / 21px、回复与输入框为 16px / 25.6px,中文实际字体为 PingFang SC;品牌字仍用 TH Serif 4。共享网页生成物仅多出尚未使用的无衬线变量。独立代码复核无剩余问题。

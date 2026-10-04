@@ -7,7 +7,7 @@
   overflow-y: auto;
   background: var(--th-paper);
   color: var(--th-ink);
-  font-family: var(--th-font-serif);
+  font-family: var(--th-font-sans);
 }
 .todos-head, .todos-list { max-width: 860px; margin-inline: auto; }
 .todos-head {

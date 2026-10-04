@@ -1,5 +1,5 @@
 /* 侧栏(2026-10-01):只放导航。字标 + 三个主入口 + 生活与工具 + 设置;无图标、无标语、无版本号。 */
-.cc-life-nav-more{position:relative;color:var(--th-ink-soft);font-size:var(--th-size-body)}
+.cc-life-nav-more{position:relative;color:var(--th-ink-soft);font-size:var(--th-size-meta);line-height:var(--th-lh-meta)}
 .cc-life-nav-more summary{white-space:nowrap;cursor:pointer;padding:9px 12px;list-style:none;border-radius:var(--th-radius-nav)}
 .cc-life-nav-more summary::-webkit-details-marker{display:none}
 .cc-life-nav-more summary:hover,.cc-life-nav-more[open] summary{color:var(--th-ink)}
