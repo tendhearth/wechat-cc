@@ -197,6 +197,10 @@ export interface AgentConfig {
    *  自己回写的停机状态(连红两次就停,直到 `--unhalt`),不是主人手填的。
    *  见 docs/superpowers/specs/2026-09-18-self-change-pipeline-design.md §配置。 */
   self_change?: SelfChangeSettings
+  /** 意外重启通知(daemon/notify-startup.ts)。计划内的重启永远不通知,这里只管意外的那种:
+   *  `enabled` 缺省 true;`min_downtime_s` 停机至少多久才说(缺省 120);
+   *  `min_interval_h` 两条之间至少隔多久(缺省 6)。 */
+  restart_notice?: { enabled?: boolean; min_downtime_s?: number; min_interval_h?: number }
 }
 
 // ── A2A sub-schemas ──────────────────────────────────────────────────────────
@@ -353,6 +357,11 @@ const AgentConfigSchema = z.object({
   workbench_retained_idle_close_ms: z.number().int().nonnegative().optional(),
   workbench_handoff_grace_ms: z.number().int().nonnegative().optional(),
   self_change: SelfChangeSettings.optional(),
+  restart_notice: z.object({
+    enabled: z.boolean().optional(),
+    min_downtime_s: z.number().nonnegative().optional(),
+    min_interval_h: z.number().nonnegative().optional(),
+  }).strict().optional(),
 })
 
 /**
@@ -418,6 +427,18 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
           return typeof r.enabled === 'boolean' ? { enabled: r.enabled } : undefined
         })()
       : undefined
+    // 重启通知:逐项挑合法的留下(坏一项不该把 enabled 也作废)。
+    const restartNotice = typeof parsed.restart_notice === 'object' && parsed.restart_notice !== null && !Array.isArray(parsed.restart_notice)
+      ? (() => {
+          const r = parsed.restart_notice as Record<string, unknown>
+          const ok = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0
+          return {
+            ...(typeof r.enabled === 'boolean' ? { enabled: r.enabled } : {}),
+            ...(ok(r.min_downtime_s) ? { min_downtime_s: r.min_downtime_s } : {}),
+            ...(ok(r.min_interval_h) ? { min_interval_h: r.min_interval_h } : {}),
+          }
+        })()
+      : undefined
     const forwardBudget = parsed.forward_budget != null
       ? ForwardBudgetConfig.safeParse(parsed.forward_budget).data
       : undefined
@@ -467,6 +488,7 @@ export function loadAgentConfig(stateDir: string): AgentConfig {
       ...(typeof parsed.workbench_retained_idle_close_ms === 'number' ? { workbench_retained_idle_close_ms: parsed.workbench_retained_idle_close_ms } : {}),
       ...(typeof parsed.workbench_handoff_grace_ms === 'number' ? { workbench_handoff_grace_ms: parsed.workbench_handoff_grace_ms } : {}),
       ...(selfChange ? { self_change: selfChange } : {}),
+      ...(restartNotice && Object.keys(restartNotice).length > 0 ? { restart_notice: restartNotice } : {}),
     }
   } catch {
     return { provider: 'claude', dangerouslySkipPermissions: true, autoStart: true, closeStopsDaemon: false }

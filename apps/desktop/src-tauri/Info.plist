@@ -16,6 +16,14 @@
   <string>wechat-cc 需要读取「下载」里的文件,才能替你查看刚下载的内容。</string>
   <key>NSAppleEventsUsageDescription</key>
   <string>wechat-cc 需要控制其它应用(如打开浏览器)来完成你交代的事。</string>
+  <!--
+    桌面「语音输入」(2026-10-04)。1.7.1 起 app 是 Developer ID + hardened runtime:
+    没有这条用途说明(和 entitlements.plist 里的 device.audio-input),系统会静默拒绝
+    麦克风,按钮看起来「点了没反应」。英文版在 lproj/en.lproj/InfoPlist.strings,
+    由 tauri.conf.json 的 bundle.macOS.files 放进包里。
+  -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Tendhearth CC 需要使用麦克风,才能把你的「语音输入」转成文字。只在你点语音输入时录音。</string>
   <!-- 微信本地数据库(客户回顾 / wxvault)在「完全磁盘访问」之下,那个不能用弹框申请,
        只能在系统设置里手动勾;app 里的「文件访问」检查会带你过去。 -->
 </dict>

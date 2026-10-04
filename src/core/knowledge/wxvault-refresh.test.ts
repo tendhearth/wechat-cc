@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { makeWxvaultRefresh } from './wxvault-refresh'
+import { gateRefreshOnFullDiskAccess, makeWxvaultRefresh } from './wxvault-refresh'
 
 const PY = process.platform === 'win32' ? 'python' : 'python3'
 
@@ -47,5 +47,32 @@ describe('makeWxvaultRefresh', () => {
     stub('import time; time.sleep(5)')
     const refresh = makeWxvaultRefresh({ pythonBin: PY, pluginDir: dir, stateDir: dir, timeoutMs: 300 })
     await expect(refresh()).rejects.toThrow(/failed/)
+  })
+})
+
+describe('gateRefreshOnFullDiskAccess —— 没有 FDA 就不在后台碰微信的容器', () => {
+  it('没有 FDA ⇒ 不跑 sync.py、只记一次日志;有了 FDA ⇒ 恢复', async () => {
+    let fda: boolean | null = false
+    let runs = 0
+    const logs: string[] = []
+    const gated = gateRefreshOnFullDiskAccess(async () => { runs++; return { upToDate: true } }, {
+      hasFda: () => fda, log: (_t, l) => { logs.push(l) }, hint: 'HINT',
+    })
+    expect(await gated()).toEqual({ upToDate: null })
+    expect(await gated()).toEqual({ upToDate: null })
+    expect(runs).toBe(0)
+    expect(logs.filter(l => l.includes('skipped'))).toHaveLength(1)   // 每 5 分钟一次的 tick 不刷屏
+    expect(logs[0]).toContain('HINT')
+    fda = true
+    expect(await gated()).toEqual({ upToDate: true })
+    expect(runs).toBe(1)
+    expect(logs.some(l => l.includes('resumed'))).toBe(true)
+  })
+
+  it('说不清(非 macOS / 探针无结论)⇒ 照常刷新,不改变别的平台', async () => {
+    let runs = 0
+    const gated = gateRefreshOnFullDiskAccess(async () => { runs++; return { upToDate: true } }, { hasFda: () => null, log: () => {}, hint: '' })
+    await gated()
+    expect(runs).toBe(1)
   })
 })

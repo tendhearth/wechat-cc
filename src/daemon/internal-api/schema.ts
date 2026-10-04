@@ -61,6 +61,9 @@ export const HealthResponse = z.object({
     folders: z.array(z.object({ folder: z.string(), path: z.string(), state: z.enum(['ok', 'denied', 'missing', 'unknown']) })),
     settings_url: z.string(),
     hint: z.string(),
+    // 完全磁盘访问(2026-10-04):null = 非 macOS / 说不清;false 时后台 wxvault 同步暂停。
+    full_disk_access: z.boolean().nullable().optional(),
+    fda_hint: z.string().optional(),
   }).optional(),
   // 启动时实际加载的插件(2026-09-30)。null = bootstrap 还在接线;老 daemon 没有这个字段。
   plugins: z.object({

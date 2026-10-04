@@ -271,6 +271,34 @@ function reflectMic() {
   if (delegate) delegate.toggleAttribute("disabled", busy || sending || delegating || !input?.value.trim())
 }
 
+/** 等系统麦克风授权的上限:系统弹框等人点,给足时间;超时就说清楚去哪儿看。 */
+const MIC_REQUEST_TIMEOUT_MS = 30_000
+const MIC_SETTINGS_PATH = "系统设置 › 隐私与安全性 › 麦克风"
+
+/**
+ * 麦克风拿不到时给主人的一句话 —— 按 getUserMedia 的错误名分开说,每句都能照做。
+ * @param {unknown} err
+ */
+export function micFailureText(err) {
+  const name = err && typeof err === "object" && "name" in err ? String(/** @type {{name: unknown}} */ (err).name) : ""
+  if (name === "NotAllowedError" || name === "SecurityError" || name === "PermissionDeniedError") {
+    return `麦克风权限没开:去 ${MIC_SETTINGS_PATH},打开 wechat-cc,再点一次「语音输入」。`
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError" || name === "OverconstrainedError") {
+    return "没找到可用的麦克风:接上麦克风,或在系统设置 › 声音 › 输入里选一个设备后再试。"
+  }
+  if (name === "NotReadableError" || name === "TrackStartError" || name === "AbortError") {
+    return "麦克风被别的应用占着或暂时打不开,关掉占用它的应用后再试。"
+  }
+  if (name === "MicTimeout") {
+    return `一直没拿到麦克风:看看屏幕上有没有系统的授权弹框;没有的话去 ${MIC_SETTINGS_PATH},打开 wechat-cc。`
+  }
+  if (name === "MicUnsupported") {
+    return "这个版本的桌面 app 用不了麦克风,更新到最新版后再试。"
+  }
+  return `麦克风用不了:去 ${MIC_SETTINGS_PATH} 看看 wechat-cc 是否已打开,或检查输入设备。`
+}
+
 /** Read a Blob as bare base64 (no data: prefix). @param {Blob} blob */
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
@@ -294,20 +322,36 @@ async function toggleMic(deps) {
   if (recording) { try { mediaRecorder?.stop() } catch { /* already stopped */ } return }
 
   const md = deps.media ?? {
-    getUserMedia: (c) => navigator.mediaDevices.getUserMedia(c),
+    getUserMedia: (c) => {
+      if (!navigator.mediaDevices?.getUserMedia) return Promise.reject(Object.assign(new Error("no mediaDevices"), { name: "MicUnsupported" }))
+      return navigator.mediaDevices.getUserMedia(c)
+    },
     makeRecorder: (s) => new MediaRecorder(s),
   }
   let stream
   requestingMic = true
   reflectMic()
+  // 2026-10-04:签名 + hardened runtime 的包缺麦克风 entitlement / 用途说明时,系统会
+  // 静默拒绝 —— 以前这里只推一条很淡的 system 小字,主人看到的是「点了没反应」。
+  // 现在:拒绝/没设备/被占用各说一句能照做的话(error 级,醒目);迟迟没有回应也不
+  // 无限转圈,超时就告诉主人去哪儿看。
+  let micTimer
+  const request = Promise.resolve().then(() => md.getUserMedia({ audio: true }))
   try {
-    stream = await md.getUserMedia({ audio: true })
+    stream = await Promise.race([
+      request,
+      new Promise((_, reject) => { micTimer = setTimeout(() => reject(Object.assign(new Error("mic timeout"), { name: "MicTimeout" })), MIC_REQUEST_TIMEOUT_MS) }),
+    ])
   } catch (err) {
+    // 超时之后系统才放行的话,别让麦克风一直开着。
+    if (/** @type {{name?: string}} */ (err)?.name === "MicTimeout") request.then(s => s.getTracks().forEach(t => t.stop()), () => {})
     requestingMic = false
     reflectMic()
-    messages.push({ id: nextId++, role: "system", text: "麦克风用不了（权限或设备问题）" })
+    messages.push({ id: nextId++, role: "error", text: micFailureText(err) })
     renderMessages()
     return
+  } finally {
+    clearTimeout(micTimer)
   }
 
   requestingMic = false

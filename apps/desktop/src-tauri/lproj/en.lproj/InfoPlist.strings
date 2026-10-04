@@ -1,0 +1,2 @@
+/* Shown by macOS when Tendhearth CC asks for microphone access (desktop Voice Input). */
+"NSMicrophoneUsageDescription" = "Tendhearth CC uses the microphone to turn your Voice Input into text. It only records while you use Voice Input.";
