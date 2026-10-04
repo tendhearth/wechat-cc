@@ -77,6 +77,21 @@ describe('verifyCliProvider — the same checks as `selftest chat --resume` (+ w
   it('provider not registered in this daemon ⇒ skipped', async () => {
     const r = await verifyCliProvider(CLI_SPECS.agy, deps({ hasProvider: () => false }))
     expect(r.status).toBe('skipped')
+    // 不在重探名单里(reprobe ⇒ null)也一样
+    expect((await verifyCliProvider(CLI_SPECS.agy, deps({ hasProvider: () => false, reprobe: async () => null }))).status).toBe('skipped')
+  })
+
+  it('#211:开机探测失败、还在重探 ⇒ 立刻重探;还没好 ⇒ deferred(不永久免检),通过 ⇒ 照常自检', async () => {
+    const reprobe = vi.fn(async () => false)
+    const r = await verifyCliProvider(CLI_SPECS.agy, deps({ hasProvider: () => false, reprobe }))
+    expect(r.status).toBe('deferred')
+    expect(reprobe).toHaveBeenCalledWith('agy')
+
+    let registered = false
+    const d = deps({ hasProvider: () => registered, reprobe: async () => { registered = true; return true } })
+    const r2 = await verifyCliProvider({ ...CLI_SPECS.agy, workbench: false }, d)
+    expect(r2.status).toBe('pass')
+    expect(d.converse).toHaveBeenCalled()
   })
 
   it('workbench executors also run `selftest workbench`; a failing check fails the upgrade', async () => {

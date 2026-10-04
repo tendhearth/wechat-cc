@@ -5,21 +5,13 @@ import { GuardStatusOutput, GuardEnableOutput, GuardDisableOutput } from '../sch
 
 type SuspendedTaskRow = { task_id: string; title: string; provider: string; since: string }
 /**
- * 被网络守护冻住的任务(主人 2026-10-03)只有在跑的 daemon 知道:问它的 /v1/health(本机回环,
- * 不出门)。daemon 没在跑 / 读不出 ⇒ null(不是 0 —— 不知道就别说没有)。
+ * 被网络守护冻住的任务(主人 2026-10-03)和开机探测失败、正在重探的 provider(2026-10-04)
+ * 只有在跑的 daemon 知道:问它的 /v1/health(本机回环,不出门)。daemon 没在跑 / 读不出 ⇒ null
+ * (不是 0 —— 不知道就别说没有)。
  */
-async function daemonSuspendedTasks(): Promise<SuspendedTaskRow[] | null> {
-  try {
-    const { readDaemon } = await import('../doctor')
-    const { readFileSync } = await import('node:fs')
-    const d = readDaemon(STATE_DIR)
-    if (!d.alive || !d.internal_api) return null
-    const token = readFileSync(d.internal_api.token_file_path, 'utf8').trim()
-    const res = await fetch(`http://127.0.0.1:${d.internal_api.port}/v1/health`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(3000) })
-    if (!res.ok) return null
-    const body = await res.json() as { guard?: { suspended_tasks?: SuspendedTaskRow[] } }
-    return Array.isArray(body.guard?.suspended_tasks) ? body.guard!.suspended_tasks! : null
-  } catch { return null }
+function suspendedTasksFrom(health: Record<string, unknown> | null): SuspendedTaskRow[] | null {
+  const g = health?.guard as { suspended_tasks?: SuspendedTaskRow[] } | undefined
+  return Array.isArray(g?.suspended_tasks) ? g!.suspended_tasks! : null
 }
 const guardStatusCmd = defineCommand({
   meta: { name: 'status', description: "Live one-shot check — bx protection (if installed) or external IP + reachability" },
@@ -41,8 +33,14 @@ const guardStatusCmd = defineCommand({
     // 守护 v2:按调用判 —— 列出已配置 provider 各自要不要保护(只读配置,不发流量)。
     const providers = classifyConfiguredForCli(STATE_DIR)
     const protectedInUse = providers.some(p => p.protected)
-    const suspendedTasks = await daemonSuspendedTasks()
-    const suspendedOut = suspendedTasks ? { suspended: suspendedTasks.length, suspended_tasks: suspendedTasks } : {}
+    const { fetchDaemonHealth, providerProbesFrom, formatProviderProbes } = await import('../daemon-health')
+    const health = await fetchDaemonHealth(STATE_DIR)
+    const suspendedTasks = suspendedTasksFrom(health)
+    const providerProbes = providerProbesFrom(health)
+    const suspendedOut = {
+      ...(suspendedTasks ? { suspended: suspendedTasks.length, suspended_tasks: suspendedTasks } : {}),
+      ...(providerProbes ? { provider_probes: providerProbes } : {}),
+    }
     let out
     if (bxPath) {
       const v = await readBxStatus(bxPath)
@@ -85,6 +83,8 @@ const guardStatusCmd = defineCommand({
         console.log(`paused:  ${suspendedTasks.length} 个任务已暂停(网络未受保护),恢复后自动继续;超过 ${cfg.max_suspend_minutes} 分钟没恢复就停下`)
         for (const t of suspendedTasks) console.log(`  ${t.task_id}  ${t.provider}  ${t.title}  (从 ${t.since})`)
       }
+      // 开机 `--version` 探测失败、正在退避重探的 provider(2026-10-04):还没注册时它的调用不会发生。
+      for (const line of formatProviderProbes(providerProbes)) console.log(line)
     }
   },
 })

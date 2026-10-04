@@ -27,6 +27,11 @@ export const CHAT_RESUME_TEXT = '我上一句让你调用的工具叫什么？�
 
 export interface VerifyDeps {
   hasProvider: (providerId: string) => boolean
+  /**
+   * 这家没注册时问一句:是不是开机 `--version` 探测一时失败、正在退避重探(2026-10-04)?是 ⇒ 立刻重探
+   * 一次(刚升完的新版本可能正好好了)。true = 现在注册上了;false = 还在重探;null / 没接 = 不在重探名单。
+   */
+  reprobe?: (providerId: string) => Promise<boolean | null>
   /** 此刻这家的一次 spawn 过不过得了网络守护(decideCall)。 */
   guardAllows: (providerId: string) => Promise<{ allowed: boolean; detail?: string }>
   converse: (input: { providerId: string; text: string; resumeSessionId?: string }) => Promise<SelftestConverseResult>
@@ -57,7 +62,13 @@ function summarize(checks: Check[]): string {
 
 export async function verifyCliProvider(spec: CliSpec, deps: VerifyDeps): Promise<VerifyResult> {
   const pid = spec.providerId
-  if (!deps.hasProvider(pid)) return { status: 'skipped', detail: `${pid} 这次没在 daemon 里注册,跑不了自检` }
+  if (!deps.hasProvider(pid)) {
+    // 开机探测一时失败、还在重探的那家不能按「跑不了自检」直接接受新版本(skipped 会永久免检):
+    // 先立刻重探一次;通过了就照常自检,还没好就欠着(deferred),等它注册上再验。
+    const re = deps.reprobe ? await deps.reprobe(pid).catch(() => null) : null
+    if (re === false) return { status: 'deferred', detail: `${pid} 开机探测失败、还在重探,注册上之后再自检` }
+    if (re !== true || !deps.hasProvider(pid)) return { status: 'skipped', detail: `${pid} 这次没在 daemon 里注册,跑不了自检` }
+  }
   const g = await deps.guardAllows(pid)
   if (!g.allowed) return { status: 'deferred', detail: `network_unprotected${g.detail ? `:${g.detail}` : ''}` }
 

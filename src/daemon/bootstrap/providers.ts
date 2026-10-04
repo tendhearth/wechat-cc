@@ -27,7 +27,7 @@ import { dirname, join } from 'node:path'
 import { buildOpenaiMcpSpecs, openaiMcpBridgeOptions, type McpStdioSpec } from './mcp-specs'
 import { claudeSessionJsonlPath, codexSessionJsonlPaths } from './session-paths'
 import { setupAgyGlobalMcp } from './agy-mcp-config'
-import { agyVersionOk } from './agy-version-check'
+import { probeVersion, describeProbeFailure, createProbeRetrier, type VersionProbeResult, type ProbeRetrierOptions, type ProbeRetryStatus, type ProbeAttempt } from './provider-probe'
 import { UNDER_TEST_RUNNER } from '../../lib/config'
 import { makeCheapEvalPreflight } from './cheap-eval-preflight'
 import type { BootstrapDeps } from './types'
@@ -106,6 +106,16 @@ export interface ProviderDeps {
   agyGeminiConfigDir?: string
   /** 网络闸门(2026-10-02):注册进 registry 的每个 provider 都套一层,见 withNetworkGate。 */
   networkGate?: import('../../lib/network-gate').NetworkGate
+  /**
+   * 测试接缝(2026-10-04):外部 CLI 的 `--version` 探测。缺省 provider-probe.ts 的
+   * `probeVersion`(超时按事件循环醒着的时间计,失败带原因)。
+   */
+  probeVersion?: (bin: string) => Promise<VersionProbeResult>
+  /**
+   * 测试接缝:探测失败后的退避重探(档位 / 计时器)。生产不传 ⇒ 2s、4s … 60s,之后每 10 分钟。
+   * 测试 runner 下不传 ⇒ 不重探(单测里的 buildBootstrap 不该在背后排计时器去起真 CLI)。
+   */
+  probeRetry?: Partial<Omit<ProbeRetrierOptions, 'log'>>
 }
 
 export interface ProviderWiring {
@@ -115,6 +125,12 @@ export interface ProviderWiring {
   codexVersionCheck: ReturnType<typeof checkCodexVersion> | null
   /** 各 provider 一句话状态(/mode 显示):codex 的版本差 + 首次使用探测结果。 */
   providerNotes: () => Partial<Record<ProviderId, string>>
+  /** 开机探测失败、正在退避重探(或已晚注册)的外部 CLI provider。进 /v1/health.provider_probes。 */
+  providerProbes: () => ProbeRetryStatus[]
+  /** daemon 关停时清掉重探计时器。 */
+  stopProviderProbes: () => void
+  /** 立刻重探一家(CLI 自动升级器升完时用)。语义见 ProbeRetrier.reprobeNow。 */
+  reprobeProvider: (id: string) => Promise<boolean | null>
 }
 
 export async function registerProviders(deps: ProviderDeps): Promise<ProviderWiring> {
@@ -132,6 +148,17 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // mtime 缓存的 config 读法(一次 stat):给注册表的 cheap_eval_provider
   // getter 用,/set cheap 改完不用重启。
   const readAgentConfig = makeMtimeCachedConfigReader(deps.stateDir)
+
+  // 外部 CLI 的开机探测 + 失败后的退避重探(2026-10-04,见 provider-probe.ts 文件头)。
+  const probe = deps.probeVersion ?? ((bin: string) => probeVersion(bin))
+  const probeRetrier = createProbeRetrier({ ...deps.probeRetry, log: deps.log })
+  const retryEnabled = !UNDER_TEST_RUNNER || deps.probeRetry !== undefined
+  const scheduleProbeRetry = (id: ProviderId, firstError: string, attempt: ProbeAttempt) => {
+    if (!retryEnabled) return
+    probeRetrier.schedule(id, firstError, attempt)
+  }
+  /** 晚注册时补一次开机末尾那道矩阵检查(只查这一个 id)。 */
+  const assertLateRegistration = (id: ProviderId) => assertMatrixComplete([id])
 
   const defaultProviderId: ProviderId = deps.agentProviderKind
     ?? (process.env.WECHAT_AGENT_PROVIDER === 'codex' ? 'codex' : configuredAgent.provider)
@@ -292,21 +319,21 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // and every dispatch returns empty assistantText (no reply, no error —
   // see src/lib/find-codex-binary.ts:81-86). Better to refuse registration
   // loudly than ship a provider that will silently never reply.
-  const codexVersionCheck = codexBinary
-    ? checkCodexVersion({
-        binary: codexBinary,
-        probe: probeBinaryVersion,
-        expectedVersion: codexCliPkg.version,
-      })
-    : null
-  // 2026-09-09 两次真机探测定案:SDK 0.144.4 驱动用户的 CLI 0.153.4 正常
-  // 拿到 agent_message;而 SDK 自带的 0.144.4 二进制被 OpenAI 服务端以
-  // 「这个模型需要更新的 Codex」400 拒掉。结论:(1) 版本号判不出能不能用,
-  // (2) 能跑新模型的只有用户那个更新的 CLI。于是版本不匹配只记日志、照常
-  // 注册,把「能不能用」交给首次使用时的真探测(core/first-use-probe.ts);
-  // 只有 --version 都打不出来(二进制坏了)才不注册。
+  // 2026-10-04:异步探测(不再 spawnSync 3s 卡住事件循环),失败带具体原因。
+  const codexCheckFrom = (binary: string, r: VersionProbeResult) => checkCodexVersion({
+    binary,
+    probe: () => (r.ok ? r.firstLine : null),
+    expectedVersion: codexCliPkg.version,
+  })
+  let codexProbeFailure: string | null = null
+  let codexVersionCheck: ReturnType<typeof checkCodexVersion> | null = null
+  if (codexBinary) {
+    const r = await probe(codexBinary)
+    codexVersionCheck = codexCheckFrom(codexBinary, r)
+    if (!r.ok) codexProbeFailure = describeProbeFailure(r)
+  }
   let codexNote: string | null = null
-  if (codexBinary && codexVersionCheck && codexVersionCheck.reason !== 'version_probe_failed') {
+  const registerCodex = (codexBinary: string, codexVersionCheck: ReturnType<typeof checkCodexVersion>) => {
     const actual = codexVersionCheck.actualSemver ?? codexVersionCheck.rawVersion ?? '?'
     const gap = codexVersionCheck.ok ? '' : `(与 SDK ${codexVersionCheck.expectedVersion} 不同版,首次使用时真跑一句探测)`
     codexNote = `你的 CLI ${actual}${gap} · 未探测`
@@ -344,13 +371,13 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
       probe: () => codexInner.cheapEval!('只回复两个字母:ok'),
       failureMessage: (detail) =>
         `codex 探测没通过:${detail.slice(0, 200)}\n` +
-        `你的 codex CLI(${actual})和 wechat-cc 的 SDK(${codexVersionCheck!.expectedVersion})可能不合。` +
-        `试试 \`npm i -g @openai/codex@${codexVersionCheck!.expectedVersion}\`,或者等 wechat-cc 更新。`,
+        `你的 codex CLI(${actual})和 wechat-cc 的 SDK(${codexVersionCheck.expectedVersion})可能不合。` +
+        `试试 \`npm i -g @openai/codex@${codexVersionCheck.expectedVersion}\`,或者等 wechat-cc 更新。`,
       onResult: (r) => {
         codexNote = r.ok
           ? `你的 CLI ${actual} · 探测通过 ✓(${(r.ms / 1000).toFixed(1)}s)`
           : `你的 CLI ${actual} · 探测失败 ✗:${r.detail.slice(0, 120)}`
-        deps.log('CODEX_PROBE', r.ok ? `ok in ${r.ms}ms (CLI ${actual}, SDK ${codexVersionCheck!.expectedVersion})` : `FAILED in ${r.ms}ms: ${r.detail.slice(0, 300)}`)
+        deps.log('CODEX_PROBE', r.ok ? `ok in ${r.ms}ms (CLI ${actual}, SDK ${codexVersionCheck.expectedVersion})` : `FAILED in ${r.ms}ms: ${r.detail.slice(0, 300)}`)
       },
     })
     registry.register(
@@ -361,10 +388,32 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         canResume: (_cwd, sid) => codexSessionJsonlPaths(HOME, sid).some(p => existsSync(p)),
       },
     )
+  }
+  if (codexBinary && codexVersionCheck && codexVersionCheck.reason !== 'version_probe_failed') {
+    registerCodex(codexBinary, codexVersionCheck)
   } else if (codexBinary && codexVersionCheck && codexVersionCheck.reason === 'version_probe_failed') {
-    deps.log('BOOT',
-      `codex provider NOT registered — ${codexBinary} 连 --version 都打不出来(二进制损坏或权限问题)。` +
-      `重装:\`npm i -g @openai/codex\` 或用 codex 官方安装器,然后重启 daemon。`)
+    if (codexProbeFailure) {
+      // 探测本身失败(超时 / 非零退出 / 起不来)—— 开机负载下可能只是一时的:退避重探,
+      // 通过就注册,不用重启。
+      deps.log('BOOT', `codex: ${codexBinary} --version 探测失败(${codexProbeFailure})— 先不注册,后台退避重探`)
+      const bin = codexBinary
+      scheduleProbeRetry('codex', codexProbeFailure, async () => {
+        if (registry.has('codex')) return { ok: true }
+        const r = await probe(bin)
+        if (!r.ok) return { ok: false, reason: describeProbeFailure(r) }
+        const check = codexCheckFrom(bin, r)
+        if (check.reason === 'version_probe_failed') return { ok: false, reason: `--version 输出里没有版本号:${check.rawVersion ?? '(空)'}` }
+        codexVersionCheck = check
+        registerCodex(bin, check)
+        assertLateRegistration('codex')
+        return { ok: true }
+      })
+    } else {
+      // 跑起来了、退出码 0,但打不出版本号 —— 这是确定性的,不重探。
+      deps.log('BOOT',
+        `codex provider NOT registered — ${codexBinary} --version 的输出里没有版本号(${codexVersionCheck.rawVersion ?? '空'})。` +
+        `重装:\`npm i -g @openai/codex\` 或用 codex 官方安装器,然后重启 daemon。`)
+    }
   } else {
     // NOT INSTALLED: no codex on PATH or in ~/.nvm. Tell the user the
     // exact one-time setup. We deliberately don't bundle codex (post
@@ -397,12 +446,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // bootstrap — tests opt in via `cursorAgentBin` in seeded agent-config.
   const cursorAgentBin = configuredAgent.cursorAgentBin ?? (UNDER_TEST_RUNNER ? null : findOnPath('cursor-agent'))
   let cursorCliRegistered = false
-  // ACP provider 的 close() 靠杀进程组收尾,Windows 上那条路没验过(acp-agent-provider.ts
-  // spawn 时会直接抛)。注册了等于每一轮对话都撞一次那句抛错 —— 不如干脆不注册,
-  // 让下面的 SDK 兜底照旧判断(有 CURSOR_API_KEY 就走 SDK,没有就是"未注册")。
-  if (cursorAgentBin && process.platform === 'win32') {
-    deps.log('BOOT', 'cursor: ACP 对话 provider 暂不支持 Windows(进程组清理未验证),未注册')
-  } else if (cursorAgentBin && probeBinaryVersion(cursorAgentBin) !== null) {
+  let cursorCliProbeFailure: string | null = null
+  const registerCursorCli = async (cursorAgentBin: string): Promise<boolean> => {
     try {
       const { createAcpCursorChatProvider, DEFAULT_CURSOR_MODEL } = await import('../../core/acp-cursor-chat')
       // 上一版往 ~/.cursor/mcp.json 塞过一把静态 trusted 钥匙(tier C);对话侧走 ACP 后 MCP 按会话注入,
@@ -433,10 +478,24 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         }),
         { displayName: 'Cursor', canResume: () => true },
       )
-      cursorCliRegistered = true
       deps.log('BOOT', 'cursor: cursor-agent CLI present (subscription auth) — provider registered (ACP, per-session MCP)')
+      return true
     } catch (err) {
       deps.log('BOOT', `cursor: CLI registration failed — ${err instanceof Error ? err.message : String(err)}`)
+      return false
+    }
+  }
+  // ACP provider 的 close() 靠杀进程组收尾,Windows 上那条路没验过(acp-agent-provider.ts
+  // spawn 时会直接抛)。注册了等于每一轮对话都撞一次那句抛错 —— 不如干脆不注册,
+  // 让下面的 SDK 兜底照旧判断(有 CURSOR_API_KEY 就走 SDK,没有就是"未注册")。
+  if (cursorAgentBin && process.platform === 'win32') {
+    deps.log('BOOT', 'cursor: ACP 对话 provider 暂不支持 Windows(进程组清理未验证),未注册')
+  } else if (cursorAgentBin) {
+    const r = await probe(cursorAgentBin)
+    if (r.ok) cursorCliRegistered = await registerCursorCli(cursorAgentBin)
+    else {
+      cursorCliProbeFailure = describeProbeFailure(r)
+      deps.log('BOOT', `cursor: ${cursorAgentBin} --version 探测失败(${cursorCliProbeFailure})— 先不注册 ACP 对话 provider,后台退避重探`)
     }
   }
 
@@ -485,6 +544,19 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
     }
   } else {
     deps.log('BOOT', 'cursor: CURSOR_API_KEY not set — provider not registered')
+  }
+
+  // cursor-agent 探测失败(且 SDK 兜底也没注册上 cursor)⇒ 退避重探,通过就注册 ACP 对话 provider。
+  if (cursorCliProbeFailure && cursorAgentBin && !registry.has('cursor')) {
+    const bin = cursorAgentBin
+    scheduleProbeRetry('cursor', cursorCliProbeFailure, async () => {
+      if (registry.has('cursor')) return { ok: true }
+      const r = await probe(bin)
+      if (!r.ok) return { ok: false, reason: describeProbeFailure(r) }
+      if (!(await registerCursorCli(bin))) return { ok: false, reason: '探测通过但注册失败(见上一行 BOOT)' }
+      assertLateRegistration('cursor')
+      return { ok: true }
+    })
   }
 
   // ──────────────────────────────────────────────────────────────
@@ -644,7 +716,7 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   // like agyGeminiConfigDir below must be explicit to exercise the MCP
   // write path. Production (not under a test runner) is unchanged.
   const agyBin = configuredAgent.agyBin ?? (UNDER_TEST_RUNNER ? null : findOnPath('agy'))
-  if (agyBin && await agyVersionOk(agyBin)) {
+  const registerAgy = async (agyBin: string): Promise<boolean> => {
     try {
       const { createAgyAgentProvider } = await import('../../core/agy-agent-provider')
       // Tier C (spec §3): agy has no per-session MCP config surface — the
@@ -682,11 +754,31 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
         { displayName: 'Gemini (agy)', canResume: () => true },
       )
       deps.log('BOOT', 'agy: binary present — provider registered')
+      return true
     } catch (err) {
       deps.log('BOOT', `agy: registration failed — ${err instanceof Error ? err.message : String(err)}`)
+      return false
     }
+  }
+  if (!agyBin) {
+    deps.log('BOOT', 'agy: binary not found (PATH or agyBin) — provider not registered')
   } else {
-    deps.log('BOOT', 'agy: binary not found (PATH or agyBin) or --version probe failed — provider not registered')
+    // 2026-10-04:一次探测失败不再让 agy 掉线到下次重启 —— 记下真实原因,后台退避重探,
+    // 通过就注册。钉在 agy 上的 cheapEval 由注册表按调用现取,注册上的那一刻起就回到 agy。
+    const r = await probe(agyBin)
+    if (r.ok) await registerAgy(agyBin)
+    else {
+      const why = describeProbeFailure(r)
+      deps.log('BOOT', `agy: ${agyBin} --version 探测失败(${why})— 先不注册,后台退避重探`)
+      scheduleProbeRetry('agy', why, async () => {
+        if (registry.has('agy')) return { ok: true }
+        const r2 = await probe(agyBin)
+        if (!r2.ok) return { ok: false, reason: describeProbeFailure(r2) }
+        if (!(await registerAgy(agyBin))) return { ok: false, reason: '探测通过但注册失败(见上一行 BOOT)' }
+        assertLateRegistration('agy')
+        return { ok: true }
+      })
+    }
   }
 
   // Fail-fast at boot if any registered provider is missing matrix rows.
@@ -701,5 +793,8 @@ export async function registerProviders(deps: ProviderDeps): Promise<ProviderWir
   return {
     registry, defaultProviderId, codexBinary, codexVersionCheck,
     providerNotes: () => ({ claude: claudeNote(), ...(codexNote ? { codex: codexNote } : {}) }),
+    providerProbes: () => probeRetrier.status(),
+    stopProviderProbes: () => probeRetrier.stop(),
+    reprobeProvider: (id) => probeRetrier.reprobeNow(id),
   }
 }

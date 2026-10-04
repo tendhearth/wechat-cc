@@ -53,7 +53,7 @@
 - 网络守护说此刻不安全(自检是模型调用,要过守护;下载 / 查元数据不过守护)—— 先问守护,一个字都不发;
 - 供应商侧的结构化码:`quota` / `rate_limited` / `auth_failed` / `auth_rejected` / `network` / `server_error`(工作台里对应的固定人话也认)。`invalid_request` 不在里面 ——「这个模型需要更新的 CLI」恰恰是它。
 
-这家 provider 这次没在 daemon 里注册(比如 agy 开机探测没过)⇒ `skipped`:接受这个版本、标「未验证」,不重试。
+这家 provider 这次没在 daemon 里注册 ⇒ 先看它是不是开机 `--version` 探测一时失败、正在退避重探(#211,`bootstrap/provider-probe.ts`):是 ⇒ 立刻重探一次(刚升完的新版本可能正好好了),通过就照常自检,还没好就 `deferred`(欠着,注册上之后再验)—— 不能按 `skipped` 永久免检。不在重探名单里(根本没装 / 没配)⇒ `skipped`:接受这个版本、标「未验证」,不重试。
 
 ## 设置
 

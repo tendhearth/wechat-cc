@@ -19,6 +19,8 @@ export interface StartCliUpgradeDeps {
   busyLabels: () => string[]
   holdBusy: (label: string) => () => void
   registry: Pick<ProviderRegistry, 'get' | 'has'>
+  /** 开机探测失败、正在退避重探的那家:立刻重探一次(bootstrap 的 reprobeProvider)。没接 ⇒ 不重探。 */
+  reprobeProvider?: (providerId: string) => Promise<boolean | null>
   networkGate?: NetworkGate
   mintSessionToken: (tier: UserTier, key: string, opts?: { routeAllow?: ReadonlySet<string>; ttlMs?: number }) => string
   invalidateSession: (key: string) => void
@@ -45,6 +47,7 @@ export function startCliUpgrade(d: StartCliUpgradeDeps): { upgrader: CliUpgrader
     },
     verify: (spec) => verifyCliProvider(spec, {
       hasProvider: (id) => d.registry.has(id),
+      ...(d.reprobeProvider ? { reprobe: d.reprobeProvider } : {}),
       guardAllows: async (id) => {
         const entry = d.registry.get(id)
         const decision = await decideCall(d.networkGate, providerCallTarget(entry?.provider, id, 'spawn'))
