@@ -53,6 +53,7 @@ const BOUNDARY: Record<string, string> = {
   defaultExec: 'spawns sips / powershell / convert to shrink an image before it goes to the model (src/lib/image-prep.ts)',
   defaultTerminalChatId: 'reads user_account_ids.json / context_tokens.json under STATE_DIR to pick the last chat (src/lib/send-reply.ts, seam in src/cli/commands/reply.ts)',
   defaultBxExec: 'spawns `bx status --json` (execFile + timeout) for the network guard (src/daemon/guard/bx.ts; driven against a stand-in script, never the real bx)',
+  defaultProviderProbes: 'reads server.pid / internal-api-info.json and GETs the running daemon\'s /v1/health over loopback (src/cli/cli-status.ts; the real default is driven by cli-status.test.ts \'prints "running"\' with node:fs mocked)',
   defaultCursorSpawnFn: 'spawns the cursor-agent CLI child process for a one-shot cheapEval/strongEval print-mode call (src/core/cursor-eval.ts, used from src/core/acp-cursor-chat.ts)',
 }
 

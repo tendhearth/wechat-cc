@@ -74,6 +74,17 @@ export const HealthResponse = z.object({
     pointer_dir: z.string().nullable().optional(),
     plugins: z.array(z.object({ name: z.string(), source: z.enum(['bundled', 'user']), enabled: z.boolean(), ready: z.boolean(), reason: z.string().optional() })).optional(),
   }).nullable().optional(),
+  // 开机 `--version` 探测失败的外部 CLI provider(2026-10-04)。retrying = 还没注册、在退避
+  // 重探(turn / selftest 照旧说不可用);registered = 晚注册成功。老 daemon 没有。
+  provider_probes: z.array(z.object({
+    id: z.string(),
+    state: z.enum(['retrying', 'registered']),
+    attempts: z.number(),
+    last_error: z.string(),
+    first_failed_at: z.string(),
+    next_attempt_at: z.string().nullable(),
+    registered_at: z.string().nullable(),
+  })).optional(),
   // Passive outbound link health (spec 2026-08-22-outbound-health) — sibling
   // of subsystems by design: subsystems is the supervisor's BOOT-time list,
   // outbound is a RUNTIME link signal. Optional for older daemons.

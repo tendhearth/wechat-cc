@@ -373,6 +373,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       guard: () => guardRt.health(),
       // 插件快照(2026-09-30):bootstrap 之前是 null,self deploy 的健康门会等它。
       plugins: () => bootRef?.pluginsHealth ?? null,
+      // 开机探测失败、正在退避重探的外部 CLI provider(2026-10-04):bootstrap 之前是空表。
+      providerProbes: () => bootRef?.providerProbes?.() ?? [],
       outbound: () => ilink.outboundHealth(),
       // Admin remediation hooks (POST /v1/sessions/release, /v1/daemon/restart).
       releaseSession: (k) => bootRef?.sessionManager?.release(k) ?? Promise.resolve(),
@@ -815,6 +817,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     }
     const guardLc = await sup.start('guard', () => registerGuard(wired.guardDeps))
     if (guardLc) { wireRef(wired.refs.guard, guardLc); lc.register(guardLc) }
+    // 外部 CLI provider 的退避重探计时器(2026-10-04)—— 关停时别再起探测、别再晚注册。
+    lc.register({ name: 'provider-probes', stop: async () => { boot.stopProviderProbes?.() } })
     lc.register(registerSessions(wired.sessionsDeps))
     lc.register(registerIlink(wired.ilinkDeps))
     let workbenchNotifications:ReturnType<typeof wireWorkbenchNotifications>|undefined

@@ -78,7 +78,7 @@ function userBinaryRoots(home = homedir()): string[] {
   return roots
 }
 
-function augmentedPathEnv(): string {
+export function augmentedPathEnv(): string {
   const home = homedir()
   const parts = (process.env.PATH ?? '').split(delimiter).filter(Boolean)
   const seen = new Set(parts)

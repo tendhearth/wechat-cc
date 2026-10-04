@@ -42,6 +42,19 @@ describe('GET /v1/health', () => {
     expect((r2.body as any).guard).toBeUndefined()
   })
 
+  it('GET /v1/health renders provider_probes (2026-10-04: 开机探测失败、正在重探) — reason for trusted+, hidden from guest; omitted when unwired', async () => {
+    const { HealthResponse } = await import('./schema')
+    const row = { id: 'agy', state: 'retrying' as const, attempts: 2, last_error: '超时 — 5012ms 内没退出', first_failed_at: '2026-10-04T03:14:38.250Z', next_attempt_at: '2026-10-04T03:14:52.000Z', registered_at: null }
+    const routes = makeRoutesUnderTest({ providerProbes: () => [row] })
+    const trusted = await routes['GET /v1/health']!({} as any, undefined, { tier: 'trusted', origin: 'file' } as any)
+    expect((trusted.body as any).provider_probes).toEqual([row])
+    expect(HealthResponse.safeParse(trusted.body).success).toBe(true)
+    const guest = await routes['GET /v1/health']!({} as any, undefined, { tier: 'guest', origin: 'session' } as any)
+    expect((guest.body as any).provider_probes).toEqual([{ ...row, last_error: '' }])
+    const without = await makeRoutesUnderTest({})['GET /v1/health']!({} as any, undefined)
+    expect('provider_probes' in (without.body as any)).toBe(false)
+  })
+
   it('GET /v1/health renders outbound from the dep and omits it when unwired', async () => {
     const withDep = makeRoutesUnderTest({ outbound: () => ({
       state: 'degraded', consecutiveFailures: 2, lastOkAt: null,

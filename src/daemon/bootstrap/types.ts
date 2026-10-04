@@ -289,6 +289,11 @@ export interface Bootstrap {
   codeHead?: string | null
   /** 启动时实际加载的插件快照(GET /v1/health.plugins)。可选:测试里的假 boot 没有它。 */
   pluginsHealth?: import('../plugins/health').PluginsHealth
+  /** 开机 `--version` 探测失败、正在退避重探(或已晚注册)的外部 CLI provider(2026-10-04)。
+   *  GET /v1/health.provider_probes。可选:测试里的假 boot 没有它。 */
+  providerProbes?: () => import('./provider-probe').ProbeRetryStatus[]
+  /** daemon 关停时清掉重探计时器。可选:测试里的假 boot 没有它。 */
+  stopProviderProbes?: () => void
   /** Backward-compat alias for defaultProviderId. Pre-P2 callers expected this name. */
   agentProviderKind: ProviderId
   /**

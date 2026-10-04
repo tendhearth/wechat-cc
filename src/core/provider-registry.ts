@@ -254,6 +254,100 @@ export function createProviderRegistry(opts?: {
   // cheapEval failover state — per-registry (= per-daemon-lifetime), never persisted.
   const cheapEvalCooldownUntil = new Map<ProviderId, number>()
   const networkGate = opts?.networkGate
+  const readPinnedId = (): string | undefined =>
+    typeof opts?.cheapEvalProvider === 'function' ? opts.cheapEvalProvider() : opts?.cheapEvalProvider
+  /** 不看钉死项的解析:偏好序 → 其余;多个候选时带运行时故障转移。 */
+  const resolveUnpinned = (): CheapEval | null => {
+    // Preferred order first, then any other registered provider. The
+    // implementations are arrow-like (close over `opts`, never `this`),
+    // so calling them unbound is safe.
+    const candidates: Array<{ id: ProviderId; fn: CheapEval }> = []
+    for (const id of CHEAP_EVAL_PREFERENCE) {
+      const ce = entries.get(id)?.provider.cheapEval
+      if (ce) candidates.push({ id, fn: ce })
+    }
+    for (const [id, entry] of entries) {
+      if (CHEAP_EVAL_PREFERENCE.includes(id)) continue
+      if (entry.provider.cheapEval) candidates.push({ id, fn: entry.provider.cheapEval })
+    }
+    if (candidates.length === 0) return null
+    if (candidates.length === 1) return candidates[0]!.fn
+
+    // Runtime failover (2026-08-24): the static preference order once froze
+    // the entire ingest pipeline — agy sat at slot 2 with a dead credential
+    // and every extract/judge call failed for hours without ever trying the
+    // healthy providers behind it. A throwing provider goes on cooldown and
+    // the call falls through; only when EVERY candidate fails does the
+    // error propagate (callers' watermark-preserving retry semantics rely
+    // on that).
+    return async (prompt: string) => {
+      let lastErr: unknown = new Error('no cheapEval provider available')
+      let attempted = 0
+      let preflightSkipped = 0
+      // 守护 v2:需要保护且网络不安全的候选跳过(不入冷却);不需要保护的照常试。
+      let guardRefusal: NetworkUnprotectedError | null = null
+      const coolingEligible: typeof candidates = []
+      for (const c of candidates) {
+        if (networkGate) {
+          const d = await decideCall(networkGate, providerCallTarget(entries.get(c.id)?.provider, c.id, 'cheapEval'))
+          if (!d.allowed) {
+            guardRefusal ??= new NetworkUnprotectedError(d.verdict!, d.cls.label)
+            opts?.log?.(`cheapEval: ${c.id} 需要网络保护、此刻不安全 — 跳过(不入冷却)`)
+            continue
+          }
+        }
+        const until = cheapEvalCooldownUntil.get(c.id) ?? 0
+        if (until > now()) { coolingEligible.push(c); continue }
+        if (opts?.cheapEvalPreflight) {
+          let reachable = true
+          try {
+            reachable = await opts.cheapEvalPreflight(c.id)
+          } catch {
+            // fail-open: a broken probe must never block evals
+          }
+          if (!reachable) {
+            preflightSkipped++
+            opts.log?.(`cheapEval preflight: ${c.id} 端点不可达 — 跳过(不入冷却)`)
+            continue
+          }
+        }
+        attempted++
+        try {
+          return await c.fn(prompt)
+        } catch (err) {
+          // 评估途中网络掉了(闸门在这个候选里拦下):不记冷却,换下一个候选。
+          if (isNetworkUnprotectedError(err)) { attempted--; guardRefusal ??= err as NetworkUnprotectedError; continue }
+          const cd = isAuthError(err) ? CHEAP_EVAL_AUTH_COOLDOWN_MS : CHEAP_EVAL_COOLDOWN_MS
+          cheapEvalCooldownUntil.set(c.id, now() + cd)
+          lastErr = err
+          // 只采集,不改判。绝不让采集影响冷却/失败转移。
+          try {
+            const msg = err instanceof Error ? err.message : String(err)
+            const m = /^([a-z_]+):/.exec(msg)
+            opts?.onProviderFailure?.({ provider: c.id, op: 'cheap_eval', errorCode: m ? m[1]! : null, message: msg })
+          } catch { /* 采集永不外泄 */ }
+        }
+      }
+      if (attempted === 0) {
+        // 网络预检把所有人都拦了 → 抛错让调用方按「本轮失败,下轮重试」
+        // 处理(所有后台 judge 都有这个姿势),绝不硬闯——硬闯正是要防
+        // 的那次 agy spawn。
+        if (preflightSkipped > 0) {
+          throw new Error('no reachable cheapEval provider (network preflight)')
+        }
+        // Everyone (still eligible under the network guard) is cooling down —
+        // try the first one anyway rather than failing on a stale blacklist.
+        const first = coolingEligible[0]
+        if (first) {
+          cheapEvalCooldownUntil.delete(first.id)
+          return first.fn(prompt)
+        }
+        // 能试的候选全被守护挡下:一个都不出门,抛统一的「网络未受保护」。
+        if (guardRefusal) throw guardRefusal
+      }
+      throw lastErr
+    }
+  }
   const registry: ProviderRegistry = {
     register(id, provider, opts) {
       if (entries.has(id)) throw new Error(`provider already registered: ${id}`)
@@ -272,101 +366,29 @@ export function createProviderRegistry(opts?: {
       // 显式指定优先 — 见 opts.cheapEvalProvider 文档。
       // 可以是 getter(bootstrap 传 mtime 缓存的 config 读法),这样 /set cheap
       // 改完下一次评估就生效,不用重启。
-      const pinnedId = typeof opts?.cheapEvalProvider === 'function' ? opts.cheapEvalProvider() : opts?.cheapEvalProvider
+      const pinnedId = readPinnedId()
       if (pinnedId) {
         const pinned = entries.get(pinnedId as ProviderId)?.provider.cheapEval
         if (pinned) return pinned
         opts?.log?.(`cheap_eval_provider=${pinnedId} 未注册或无 cheapEval — 回落偏好序`)
-      }
-      // Preferred order first, then any other registered provider. The
-      // implementations are arrow-like (close over `opts`, never `this`),
-      // so calling them unbound is safe.
-      const candidates: Array<{ id: ProviderId; fn: CheapEval }> = []
-      for (const id of CHEAP_EVAL_PREFERENCE) {
-        const ce = entries.get(id)?.provider.cheapEval
-        if (ce) candidates.push({ id, fn: ce })
-      }
-      for (const [id, entry] of entries) {
-        if (CHEAP_EVAL_PREFERENCE.includes(id)) continue
-        if (entry.provider.cheapEval) candidates.push({ id, fn: entry.provider.cheapEval })
-      }
-      if (candidates.length === 0) return null
-      if (candidates.length === 1) return candidates[0]!.fn
-
-      // Runtime failover (2026-08-24): the static preference order once froze
-      // the entire ingest pipeline — agy sat at slot 2 with a dead credential
-      // and every extract/judge call failed for hours without ever trying the
-      // healthy providers behind it. A throwing provider goes on cooldown and
-      // the call falls through; only when EVERY candidate fails does the
-      // error propagate (callers' watermark-preserving retry semantics rely
-      // on that).
-      return async (prompt: string) => {
-        let lastErr: unknown = new Error('no cheapEval provider available')
-        let attempted = 0
-        let preflightSkipped = 0
-        // 守护 v2:需要保护且网络不安全的候选跳过(不入冷却);不需要保护的照常试。
-        let guardRefusal: NetworkUnprotectedError | null = null
-        const coolingEligible: typeof candidates = []
-        for (const c of candidates) {
-          if (networkGate) {
-            const d = await decideCall(networkGate, providerCallTarget(entries.get(c.id)?.provider, c.id, 'cheapEval'))
-            if (!d.allowed) {
-              guardRefusal ??= new NetworkUnprotectedError(d.verdict!, d.cls.label)
-              opts?.log?.(`cheapEval: ${c.id} 需要网络保护、此刻不安全 — 跳过(不入冷却)`)
-              continue
-            }
+        // 钉的 provider 此刻没注册(2026-10-04:开机 `--version` 探测一时失败、正在后台
+        // 退避重探)。很多调用方在开机时就把这里返回的函数缓存住了(coordinator 的
+        // haikuEval、social 的闸门 …),所以不能把「回落」焊死:返回一个**按调用现取**的
+        // 派发器 —— 钉的那家晚注册上的那一刻起,每一次评估都回到它。
+        const fallback = resolveUnpinned()
+        if (!fallback) return null
+        let returned = false
+        return async (prompt: string) => {
+          const id = readPinnedId()
+          const live = id ? entries.get(id as ProviderId)?.provider.cheapEval : undefined
+          if (live) {
+            if (!returned) { returned = true; opts?.log?.(`cheap_eval_provider=${id} 已注册 — 后台评估回到它`) }
+            return live(prompt)
           }
-          const until = cheapEvalCooldownUntil.get(c.id) ?? 0
-          if (until > now()) { coolingEligible.push(c); continue }
-          if (opts?.cheapEvalPreflight) {
-            let reachable = true
-            try {
-              reachable = await opts.cheapEvalPreflight(c.id)
-            } catch {
-              // fail-open: a broken probe must never block evals
-            }
-            if (!reachable) {
-              preflightSkipped++
-              opts.log?.(`cheapEval preflight: ${c.id} 端点不可达 — 跳过(不入冷却)`)
-              continue
-            }
-          }
-          attempted++
-          try {
-            return await c.fn(prompt)
-          } catch (err) {
-            // 评估途中网络掉了(闸门在这个候选里拦下):不记冷却,换下一个候选。
-            if (isNetworkUnprotectedError(err)) { attempted--; guardRefusal ??= err as NetworkUnprotectedError; continue }
-            const cd = isAuthError(err) ? CHEAP_EVAL_AUTH_COOLDOWN_MS : CHEAP_EVAL_COOLDOWN_MS
-            cheapEvalCooldownUntil.set(c.id, now() + cd)
-            lastErr = err
-            // 只采集,不改判。绝不让采集影响冷却/失败转移。
-            try {
-              const msg = err instanceof Error ? err.message : String(err)
-              const m = /^([a-z_]+):/.exec(msg)
-              opts?.onProviderFailure?.({ provider: c.id, op: 'cheap_eval', errorCode: m ? m[1]! : null, message: msg })
-            } catch { /* 采集永不外泄 */ }
-          }
+          return (resolveUnpinned() ?? fallback)(prompt)
         }
-        if (attempted === 0) {
-          // 网络预检把所有人都拦了 → 抛错让调用方按「本轮失败,下轮重试」
-          // 处理(所有后台 judge 都有这个姿势),绝不硬闯——硬闯正是要防
-          // 的那次 agy spawn。
-          if (preflightSkipped > 0) {
-            throw new Error('no reachable cheapEval provider (network preflight)')
-          }
-          // Everyone (still eligible under the network guard) is cooling down —
-          // try the first one anyway rather than failing on a stale blacklist.
-          const first = coolingEligible[0]
-          if (first) {
-            cheapEvalCooldownUntil.delete(first.id)
-            return first.fn(prompt)
-          }
-          // 能试的候选全被守护挡下:一个都不出门,抛统一的「网络未受保护」。
-          if (guardRefusal) throw guardRefusal
-        }
-        throw lastErr
       }
+      return resolveUnpinned()
     },
     getStrongEval(id) {
       return entries.get(id)?.provider.strongEval ?? null
@@ -375,7 +397,7 @@ export function createProviderRegistry(opts?: {
       // 与 getCheapEval 同一套候选解析(钉死优先,再偏好序,再其余),
       // 否则超时会按一批「其实不会被调用的 provider」来定。
       // cheapEvalProvider 可能是 getter(bootstrap 就这么传),与 getCheapEval 同一种解析。
-      const pinnedId = typeof opts?.cheapEvalProvider === 'function' ? opts.cheapEvalProvider() : opts?.cheapEvalProvider
+      const pinnedId = readPinnedId()
       if (pinnedId) {
         const pinned = entries.get(pinnedId as ProviderId)
         if (pinned?.provider.cheapEval) return pinned.provider.cheapEvalBudgetMs ?? DEFAULT_CHEAP_EVAL_BUDGET_MS

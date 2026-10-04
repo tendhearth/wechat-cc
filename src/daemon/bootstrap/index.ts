@@ -166,7 +166,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     return Number.isFinite(n) && n >= 0 ? n : 10 * 60_000
   })()
 
-  const { registry, defaultProviderId, codexBinary, codexVersionCheck, providerNotes: baseProviderNotes } = await registerProviders({
+  const { registry, defaultProviderId, codexBinary, codexVersionCheck, providerNotes: baseProviderNotes, providerProbes, stopProviderProbes } = await registerProviders({
     log: deps.log, networkGate: deps.networkGate,
     stateDir: deps.stateDir,
     ilink: deps.ilink,
@@ -378,7 +378,7 @@ export async function buildBootstrap(deps: BootstrapDeps): Promise<Bootstrap> {
     formatInbound,
     sdkOptionsForProject,
     buildInstructions,
-    defaultProviderId, pluginsHealth,
+    defaultProviderId, pluginsHealth, providerProbes, stopProviderProbes,
     codeHead: wiredSelfRestart?.loadedHead ?? null,
     providerNotes: () => {
       const out: Partial<Record<ProviderId, string>> = { ...baseProviderNotes() }

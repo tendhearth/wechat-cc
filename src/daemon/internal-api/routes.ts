@@ -160,6 +160,10 @@ const onlineStickerCursor = new Map<string, number>()
         // 网络守护(2026-10-02):safe=false 时所有模型调用都暂停。桌面「网络守护」那一行读它。
         ...(deps.guard ? { guard: deps.guard() } : {}),
         ...(deps.outbound ? { outbound: toWireOutbound(deps.outbound()) } : {}),
+        // 开机 `--version` 探测失败的外部 CLI provider(2026-10-04):还在退避重探 / 已晚注册。
+        // guest 只给 provider 名、状态、次数和时间;失败原因(可能带路径 / stderr)给 trusted 以上
+        // —— CLI 拿的 file token 就是 trusted,`wechat-cc status` 要能说出「为什么」。
+        ...(deps.providerProbes ? { provider_probes: deps.providerProbes().map(p => caller?.tier === 'admin' || caller?.tier === 'trusted' ? p : { ...p, last_error: '' }) } : {}),
         // 启动时实际加载的插件(2026-09-30)。null = bootstrap 还在接线;`self deploy`
         // 的健康门等它变成对象,再看 expected_missing / pointer_broken。这条路由是 guest
         // 档:admin 以下只给计数和缺了哪些名字,不给绝对路径与 not-ready 原因。
