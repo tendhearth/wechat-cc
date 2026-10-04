@@ -8,14 +8,24 @@
     所以这些字符串就是 daemon 及其全部子进程(claude / codex / agy / wxvault)
     申请权限时用户看到的话。2026-09-04,见 src/daemon_mode.rs。
   -->
+  <!--
+    显示名(2026-10-04,1.7.4 起):程序坞 / 菜单栏 / 关于 / 通知 / 权限弹框显示「Tendhearth CC」。
+    做法是「本地化显示名」,不改 productName:基础 CFBundleDisplayName / CFBundleName 仍由 tauri
+    按 productName 生成为 "wechat-cc" —— 必须与 .app 文件名一致,Finder 才肯用本地化名;
+    真正的显示名在 lproj/*.lproj/InfoPlist.strings(tauri.conf.json 的 bundle.macOS.files 放进包)。
+    改 .app 文件名(/Applications/Tendhearth CC.app)是另一项迁移(LaunchAgent 路径、self deploy、
+    更新器),见 docs/roadmap.md。守护测试:apps/desktop/src/display-name.test.ts。
+  -->
+  <key>LSHasLocalizedDisplayName</key>
+  <true/>
   <key>NSDocumentsFolderUsageDescription</key>
-  <string>wechat-cc 需要读取「文稿」里的项目文件,才能替你查看代码、整理笔记。只在你让它做事时读。</string>
+  <string>Tendhearth CC 需要读取「文稿」里的项目文件,才能替你查看代码、整理笔记。只在你让它做事时读。</string>
   <key>NSDesktopFolderUsageDescription</key>
-  <string>wechat-cc 需要读取「桌面」上的文件,才能替你处理你丢在桌面上的东西。</string>
+  <string>Tendhearth CC 需要读取「桌面」上的文件,才能替你处理你丢在桌面上的东西。</string>
   <key>NSDownloadsFolderUsageDescription</key>
-  <string>wechat-cc 需要读取「下载」里的文件,才能替你查看刚下载的内容。</string>
+  <string>Tendhearth CC 需要读取「下载」里的文件,才能替你查看刚下载的内容。</string>
   <key>NSAppleEventsUsageDescription</key>
-  <string>wechat-cc 需要控制其它应用(如打开浏览器)来完成你交代的事。</string>
+  <string>Tendhearth CC 需要控制其它应用(如打开浏览器)来完成你交代的事。</string>
   <!-- 微信本地数据库(客户回顾 / wxvault)在「完全磁盘访问」之下,那个不能用弹框申请,
        只能在系统设置里手动勾;app 里的「文件访问」检查会带你过去。 -->
 </dict>

@@ -14,7 +14,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "wechat-cc",
+        "title": "Tendhearth CC",
         "width": 1100,
         "height": 860,
         "minWidth": 760,
@@ -60,6 +60,10 @@
     ],
     "macOS": {
       "entitlements": "entitlements.plist",
+      "files": {
+        "Resources/en.lproj/InfoPlist.strings": "lproj/en.lproj/InfoPlist.strings",
+        "Resources/zh-Hans.lproj/InfoPlist.strings": "lproj/zh-Hans.lproj/InfoPlist.strings"
+      },
       "dmg": {
         "background": "dmg/background.tiff",
         "windowSize": {
