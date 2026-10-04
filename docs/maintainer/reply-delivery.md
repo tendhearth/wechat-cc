@@ -12,7 +12,7 @@
 
 默认值写在代码里(各 provider 的 `ProviderCapabilities.replyDelivery`,读法 `capability-matrix.replyDeliveryFor`)。
 
-现在(2026-10-03,以代码为准):openai `daemon`;agy `daemon`(第 2 步闸门两臂打平,合入时维护者按结构收益翻了,见下面「agy」一节);Cursor `daemon`(第 3 步,见下面「Cursor」一节);Codex `daemon`(第 4 步,见下面「Codex」一节);Claude、gemini `legacy`。
+现在(2026-10-03,以代码为准):openai `daemon`;agy `daemon`(第 2 步闸门两臂打平,合入时维护者按结构收益翻了,见下面「agy」一节);Cursor `daemon`(第 3 步,见下面「Cursor」一节);Codex `daemon`(第 4 步,见下面「Codex」一节);Claude `daemon`(第 5 步,见下面「Claude」一节)。**迁移序列的五家全部是 daemon**;只剩已 deprecated 的 gemini(API key 版)是 `legacy`。legacy 路径保留到收尾(spec §5.7 的观察期 + 删除清单)之前,回滚照下面一节。
 
 ## 不重新部署就回滚
 
@@ -95,3 +95,20 @@ Codex 对话侧每一轮是一次 `codex exec`(`@openai/codex-sdk` 的 `runStrea
 | 语音 / 表情没发出去 | daemon 不是 `--dangerously`(strict)时 codex 拒掉所有 MCP 调用(「MCP tool call requires approval, but approval policy is never」),附件挂不上,文字照常交付;`[REPLY] … attachments=0/0` |
 | 私聊里一轮什么都没发 | codex 对「不用回」常写一条**空**消息 ⇒ `delivery=empty`,计入 `[PROVIDER_ANOMALY] … empty-reply streak=` |
 | 每轮都 400「model is not supported when using Codex with a ChatGPT account」 | 版本耦合,不是回复交付:CLI 太旧、拿不到配置的模型(2026-10-03 沙盒里 CLI 0.153.4 + `gpt-6.1-sol` 就是这样) |
+
+## Claude(第 5 步,2026-10-03)
+
+Claude 对话侧是一个常驻的 Agent SDK `query()`(流式输入,一轮一条 user 消息)。wechat MCP 是开机造的 `wechatStdioMcpSpec('claude')`,每次 spawn 由 `sdkOptionsForProject` 把会话 env(令牌 + tier)合进 SDK 的 `mcpServers.wechat`:
+
+- **工具表**:按开关带 `WECHAT_REPLY_DELIVERY=daemon` ⇒ 没有 reply 族,只有 `voice` / `sticker` / `attach_file`,owner(admin)会话另有 `message`(`integration.test.ts` 走 `wireModelOptions` 的完整链核对过)。开关开机定 ⇒ **重启 daemon 之后新起的会话**才是新工具表。续接的旧会话第一轮模型可能照旧去调 reply(「No such tool available」),然后把话写在最后 —— 剧本臂场景 b 演过。
+- **附件**:会话令牌里有 chat,`/v1/turn/attach` 直接挂本轮。扇出(/chat、/both)里 `canUseTool` 拒 `message`(以前拒 reply 族),附件工具不拦。
+- **最后的话**:编码型 `last_segment`。provider 两处修正:① 事件**按内容块的顺序**发(以前同一条消息里先发 tool_call 再发拼起来的文字,「我先看看」被算进工具之后的段);② 子 agent(Task,`parent_tool_use_id`)的文字不进任何一段,只记 `CLAUDE_SUBAGENT_TEXT`。真 Claude Code(2.1.289)每个内容块单独一条 assistant 消息,22/22 轮核对过。
+- **SDK 的 `result.result`**:只在成功轮作为 `result.finalText` 带出来,**只用来核对**(真跑 22/22 与分段一字不差);交付永远用分段。对不上记 `[REPLY_FINAL_CHECK] … match=differs`。出错轮(`is_error` / SDK `error` 标注)的 `result.result` 是错误原文,从不带出;只有 `is_error` 没有标注的那种,provider 补一个 `provider_error` 码的 error,只发通知。
+- 回滚:`{ "reply_delivery": { "claude": "legacy" } }` + 重启 daemon(`reply-tool-bridge.e2e.test.ts` 钉着回滚后的两条旧契约)。
+
+| 现象 | 看哪里 |
+|---|---|
+| 主人只收到「我先看看…」,没收到结论 | 不该发生。看 `[TURN]` 的 `tools=` 有没有把它和结论隔开、`turn_records.narration_segments`;有 `[REPLY_FINAL_CHECK] match=differs` ⇒ 分段和 SDK 自己的定义对不上,按 `reference/reply-once-experiment.md`「第 5 步」重新核对 SDK 的消息形状 |
+| 收到子 agent 的过程话 | 不该发生(`parent_tool_use_id` 的文字不进回复)。`channel.log` 的 `CLAUDE_SUBAGENT_TEXT` 说明子 agent 说过话、被挡住了 |
+| 收到一句 API 报错原文 | 不该发生(#190 红线)。`CLAUDE_API_ERROR` 行;`turn_records.error_code` |
+| 私聊里一轮什么都没发 | Claude 很少写 `NO_REPLY`(真跑「不用回」2/2 回了一句轻的);若写了 ⇒ `[REPLY_SILENT_IN_DM]`,计入连击 |

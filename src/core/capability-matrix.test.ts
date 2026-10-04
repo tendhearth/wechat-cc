@@ -246,9 +246,13 @@ describe('provider id single source', () => {
 })
 
 describe('replyDeliveryFor — 回复交付开关(spec §5.0,一家一家翻)', () => {
-  it('其余执行者仍是 legacy(一家一家翻)', async () => {
+  // 第 5 步(2026-10-03)之后五家都是 daemon;只剩已 deprecated 的 gemini(API key 版,2026-09-27 起由 agy 接替,
+  // 不在 spec ⑧ 的迁移序列里)仍是 legacy —— 删 legacy 路径之前要么迁、要么连 provider 一起删(spec §5.7)。
+  it('迁移序列的五家都是 daemon;其余(只剩 deprecated 的 gemini)仍是 legacy', async () => {
     const { replyDeliveryFor, capabilityProviderIds } = await import('./capability-matrix')
-    for (const p of capabilityProviderIds()) if (p !== 'openai' && p !== 'agy' && p !== 'cursor' && p !== 'codex') expect(replyDeliveryFor(p)).toBe('legacy')
+    const migrated = new Set(['openai', 'agy', 'cursor', 'codex', 'claude'])
+    for (const p of capabilityProviderIds()) expect(replyDeliveryFor(p), p).toBe(migrated.has(p) ? 'daemon' : 'legacy')
+    expect(capabilityProviderIds().filter(p => !migrated.has(p))).toEqual(['gemini'])
   })
 
   // 第 1 步的闸门(reply-once harness,2026-10-03,见 docs/reference/reply-once-experiment.md)没过 c / d / g
@@ -273,6 +277,14 @@ describe('replyDeliveryFor — 回复交付开关(spec §5.0,一家一家翻)', 
     const { replyDeliveryFor, replyTextStrategyFor } = await import('./capability-matrix')
     expect(replyDeliveryFor('codex')).toBe('daemon')
     expect(replyTextStrategyFor('codex')).toBe('last_segment')
+  })
+
+  // 第 5 步(2026-10-03):Claude 最后迁;剧本臂(照 Claude Agent SDK 消息形状演的假 query() + 生产全链)见
+  // docs/reference/reply-once-experiment.md「第 5 步」。编码型,取最后一段。
+  it('claude:daemon(第 5 步),编码型取最后一段', async () => {
+    const { replyDeliveryFor, replyTextStrategyFor } = await import('./capability-matrix')
+    expect(replyDeliveryFor('claude')).toBe('daemon')
+    expect(replyTextStrategyFor('claude')).toBe('last_segment')
   })
 
   it('没注册能力表的 provider ⇒ legacy(fail safe,走今天的路)', async () => {

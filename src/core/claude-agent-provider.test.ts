@@ -235,7 +235,31 @@ describe('claude-agent-provider', () => {
     await session.close()
   })
 
-  it('keeps normal chat tool-first combined text and ignores tool-result lifecycle', async () => {
+  // 回复交付第 5 步:result.result 只在成功轮作为 finalText 带出来(只用于核对);子 agent 的文字不发 text。
+  it('result carries finalText only on a clean turn; subagent text is never a text event', async () => {
+    const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
+    const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
+    const p1 = drain(session.dispatch('one'))
+    emitSdk({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'task-1', name: 'Task', input: {} }] } })
+    emitSdk({ type: 'assistant', parent_tool_use_id: 'task-1', message: { content: [{ type: 'text', text: 'SUBAGENT_NOTES' }, { type: 'tool_use', id: 'g1', name: 'Grep', input: {} }] } })
+    emitSdk({ type: 'assistant', message: { content: [{ type: 'text', text: 'Final answer' }] } })
+    emitSdk({ type: 'result', subtype: 'success', session_id: 's', num_turns: 2, duration_ms: 1, is_error: false, result: 'Final answer' })
+    const e1 = await p1
+    expect(JSON.stringify(e1)).not.toContain('SUBAGENT_NOTES')
+    expect(e1.filter(e => e.kind === 'text')).toEqual([{ kind: 'text', text: 'Final answer' }])
+    expect(e1[e1.length - 1]).toMatchObject({ kind: 'result', finalText: 'Final answer' })
+    // is_error 的 result:result.result 是错误原文 —— 不带 finalText,补一个带码的 error。
+    const p2 = drain(session.dispatch('two'))
+    emitSdk({ type: 'result', subtype: 'success', session_id: 's', num_turns: 1, duration_ms: 1, is_error: true, result: 'API Error: 500 boom' })
+    const e2 = await p2
+    expect(e2.find(e => e.kind === 'error')).toMatchObject({ code: 'provider_error' })
+    expect(e2[e2.length - 1]).not.toHaveProperty('finalText')
+    await session.close()
+  })
+
+  // 回复交付第 5 步(2026-10-03):以前这里钉的是「先发 tool_call、再发拼起来的文字」(BeforeAfter)—— 那正是
+  // spec §4.2 要修的顺序:开场「Before」被算进工具之后的段。现在按块的顺序发,工具前后各是一段。
+  it('emits chat events in block order (text before a tool_use is its own segment) and ignores tool-result lifecycle', async () => {
     const provider = createClaudeAgentProvider({ sdkOptionsForProject: () => ({}) })
     const session = await provider.spawn({ alias: 'foo', path: '/tmp' }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: '_test' })
     const eventsPromise = drain(session.dispatch('inspect'))
@@ -244,7 +268,7 @@ describe('claude-agent-provider', () => {
     ] } })
     emitSdk({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'read-1', content: 'done' }] } })
     finishSdkTurn()
-    expect((await eventsPromise).slice(0, -1)).toEqual([{ kind: 'tool_call', tool: 'Read' }, { kind: 'text', text: 'BeforeAfter' }])
+    expect((await eventsPromise).slice(0, -1)).toEqual([{ kind: 'text', text: 'Before' }, { kind: 'tool_call', tool: 'Read' }, { kind: 'text', text: 'After' }])
     await session.close()
   })
 

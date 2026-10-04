@@ -450,3 +450,90 @@ bun scripts/experiments/reply-once/harness.ts --gate /tmp/codex.jsonl --gate-arm
 bun scripts/experiments/reply-once/harness.ts --arm codex_real_daemon --scenarios a,c,d,f,g,h,i --runs 3 --budget 21 --codex-model gpt-6-astra --codex-raw /tmp/raw.jsonl --out /tmp/real.jsonl
 bun scripts/experiments/reply-once/harness.ts --gate /tmp/real.jsonl --gate-arms codex_real_daemon,codex_real_legacy
 ```
+
+## 2026-10-03:回复交付第 5 步的闸门(Claude → daemon)
+
+对象:spec 第 5 步 —— Claude 对话侧(Agent SDK 常驻 `query()`,流式输入;工作台不在本步)。两臂:legacy(reply 族工具说话,FALLBACK_REPLY 兜底)与 daemon(没有 reply 族;编码型 `last_segment`)。闸门照第 3 / 4 步:**剧本臂**(不连模型)+ **真模型小批**(25 次真 Claude 回合,上限 40)。
+
+### 接线时改的(provider 里,spec §4.2 Claude 行)
+
+1. **事件按内容块的顺序发**:以前同一条 assistant 消息里先发所有 tool_call、再发拼起来的文字 ⇒「我先看看」+ tool_use 的那条消息把开场算进了工具**之后**的段,和下一条消息的结论粘成最后的话。现在相邻文字块攒成一条 text,遇到 tool_use 先冲出去。真 Claude Code 2.1.289 每个内容块本来就单独一条 assistant 消息(真跑 22/22 轮),所以这个顺序 bug 在今天的 CLI 上碰不到 —— 但 SDK 类型允许一条消息多个块(回放 / 旧版本),剧本臂 `bundled` 条件钉住它。
+2. **子 agent 的文字不进回复**:带 `parent_tool_use_id` 的消息是子 agent(Task)自己的过程,文字不发 text 事件(记 `CLAUDE_SUBAGENT_TEXT`),工具调用照发(桌宠 / `[TURN] tools=`)。spec §5.6「子 agent / 后台任务的文字不混进最后的话」。legacy 也一样受益(以前没调 reply 时子 agent 的话会进 FALLBACK)。
+3. **`result.result` 的去向(spec 原写「以它为准」,改为只核对)**:它和分段的最后一段在所有正常轮里**按构造相同**(最后一条 assistant 消息就是最后一段),真跑 22/22 一字不差;不同的只有两种轮 —— 出错轮(`is_error` 时 `result.result` 就是错误原文,#190 红线)和子 agent / 多文字块这类分段本身要处理的情况。所以交付统一用分段(五家同一条路),`result.result` 只在成功轮作为 `result.finalText` 带出,协调器对不上时记 `[REPLY_FINAL_CHECK] match=differs` 留给真机看。
+4. **只有 `is_error`、没有 SDK `error` 标注的结果**:以前这一轮记 completed、文字照发;现在 provider 补一个 `provider_error` 码的 error,只发通知。#190 的 14 条真实样本走 daemon 全部 0 交付(`conversation-coordinator.claude-delivery.test.ts`)。
+5. 扇出(/chat、/both)里 `canUseTool` 现在也拒 `mcp__wechat__message`(reply 族已经不注册;同一个理由:协调器看不到那句话)。
+
+### 剧本臂(不连模型)
+
+- **假 SDK**(`src/core/claude-scripted.ts`):注入生产 `createClaudeAgentProvider` 的 `queryImpl`,每收到一条 user 消息按剧本吐 SDK 消息(`system/init` → assistant / user{tool_result} → `result{result: 最后一条助理消息的文字}`);也能原样回放录到的消息。不起进程、不连网。
+- **这边全是生产代码**:Claude provider 的消息翻译 → 协调器 solo 分支 → legacy 的 FALLBACK_REPLY / daemon 的交付运行时。推送(g)和 tick-bodies 一样不走协调器。
+- **剧本照真跑录到的形状写**:legacy 下 reply 之后真 Claude **每轮**再写一句自述(真跑 6/6:「已回复,测试通过。」「晚安语音发出去了 🌙」「嗯，回了一句轻的就好。」,d 那轮把列表又写了一遍)—— 认得出 reply 时被丢掉,认不出就是第二条。
+- **四种外部条件**:① recorded —— 每个内容块一条 assistant 消息(真 CLI 的样子);② bundled —— 一次响应的所有块在一条消息里;③ drift —— wechat MCP 挂在 Claude Code 插件 MCP 的名字下(`mcp__plugin_<插件>_<server>__reply`,provider 的 `mcp__([^_]+)__` 抓不到 server)⇒ 认不出 reply;④ tool_error —— wechat 的工具调用失败(MCP 起不来 / 内部 API 拒了),模型看得到失败、改用文字说,只跑纯说话的场景(a / c / e / i)。Claude 的 `canUseTool` 在所有 tier 下都放行 reply,所以 Codex / Cursor 那种 strict 吞话碰不到;同一个症状换成了 tool_error。
+- **场景 b(Claude 版)= 会话续接跨过开关**:前一轮是 legacy 的 reply 连发;翻到 daemon 后同一个会话续上,第一轮模型照旧去调 reply(工具已不在表里,失败),再把话写在最后(spec §7 的风险)。
+
+| 场景 | 过关线 | claude_legacy(recorded / bundled / drift / tool_error) | claude_daemon(四种) |
+|---|---|---|---|
+| a 一句话 | 1 条 | **不过** 1 / 1 / 2 / 0 | 过 1 ×4 |
+| b 续接跨过开关 | 干净结束、0「停」、均值 ≤1.5 | 过 1 / 1 / 2 | 过 1 ×3(失败的 reply 调用之后话写在最后) |
+| c 分三条 | 三项完整、≤3 | **不过** 3 / 3 / 4 / 0 | 过 3 ×4 |
+| d 我有哪些项目 | list_projects、≤2、列表完整 | **不过** 1 / 1 / 3 | 过 1 ×3 |
+| e 同一会话四轮 | 每轮 1 条 | **不过** 1111 / 1111 / 2222 / 0000 | 过 1111 ×4 |
+| f 语音晚安 | 语音 1、文字 ≤1 | **不过**(drift 多两句) | 过(与语音同文 ⇒ 只发语音) |
+| g 推送 + 已过期 | ≥4/5 且比基线高 40pp | 3/3 静默 | 3/3 静默 —— 只差相对条件,与前四家同 |
+| h 3 次工具 + Bash | 旁白 0 外泄、结论送达 | **不过** 1 / 1 / 4 | 过 1 ×3 |
+| i 私聊「不用回」 | 令牌 0 外泄 | **不过**:4/4 把 `NO_REPLY` 原样发出去 | 过:0 外泄,记 `REPLY_SILENT_IN_DM` |
+| 全局 | 非回复工具 | 8.0 | 8.0(剧本相同,只是核对) |
+
+| arm | 外部条件 | 轮数 | 双发 | 旁白外泄 | 令牌外泄 | 主人什么都没收到(私聊、非 i) | FALLBACK_REPLY |
+|---|---|---|---|---|---|---|---|
+| claude_legacy | recorded | 9 | 0 | 0 | 1 | 0/7 | 1 |
+| claude_legacy | bundled | 9 | 0 | 0 | 1 | 0/7 | 1 |
+| claude_legacy | drift | 9 | **6** | **4** | 1 | 0/7 | 8 |
+| claude_legacy | tool_error | 4 | 0 | 0 | 1 | **3/3** | 1 |
+| claude_daemon | 四种 | 31 | 0 | 0 | 0 | 0 | 0 |
+
+原始数据 `scripts/experiments/reply-once/results-2026-10-03-claude.jsonl`;闸门本身是测试(`claude-fixture.test.ts`,一两秒)。
+
+### 真模型小批(25 次真 Claude 回合,上限 40)
+
+**沙盒**(`scripts/experiments/reply-once/claude-sandbox.ts`):**HOME 是临时目录**(于是 Claude Code 的配置目录也在沙盒里:不读主人的 settings / CLAUDE.md / hooks / skills / 插件,不往主人的 `~/.claude` 写会话、历史);`settingSources: []`;工作目录是临时目录。**登录只读、不落盘**:Claude Code 的登录在钥匙串,沙盒 HOME 下它找不到 —— 进程内读一次那条钥匙串的 access token,只经 `CLAUDE_CODE_OAUTH_TOKEN` 环境变量交给子进程,不写文件、不打印,**不给 refresh token**(子进程没法刷新 / 轮换主人的登录);离过期不到 60 分钟就拒跑;每次运行跑完核对那条钥匙串的修改时间没变(22 次运行全都没变)。内置工具一律经 `canUseTool` 记账并拒绝,wechat MCP 是**生产的**入口(放行,背后是假 internal API)。每一轮之前 `bx status` 必须 protected + healthy,另按守护的判定核对端点(官方、需要保护)。`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`。真 Claude Code 2.1.289,`claude-opus-4-8`(daemon 的内置默认)。
+
+| 场景 | 过关线 | claude_real_legacy | claude_real_daemon |
+|---|---|---|---|
+| a 一句话 | 1 条 | 过 1 | 过 1,1,1 |
+| c 分三条 | 三项完整、≤3 | — | 过 3,3(三段一条消息,按空行分条) |
+| d 我有哪些项目 | list_projects、≤2、列表完整 | 过 1 | 过 2,1;非回复工具 2.0 / 次 = 基线 |
+| e 同一会话四轮 | 每轮 1 条 | — | 过 1→1→1→1 |
+| f 语音晚安 | 语音 1、文字 ≤1 | 过(reply_voice) | 过 2/2:最后一句与语音同文 ⇒ 只发语音 |
+| g 推送 + 已过期 | ≥4/5 且比基线高 40pp | 1/1 不推(没调 reply,写了一段解释) | 2/2 `NO_REPLY` —— 只差相对条件 |
+| h 3 次工具 | 旁白 0 外泄、结论送达 | 过 2 | 过 2,2 |
+| i 私聊「不用回」 | 令牌 0 外泄 | 过(reply 了一句轻的) | 过(回了一句轻的,没写 `NO_REPLY`) |
+| 全局 | 非回复工具 | 13.0 | **10.0** |
+
+真模型上能看到的:
+
+1. **SDK 的消息形状**:每个内容块单独一条 assistant 消息(thinking / text / tool_use 各一条,同一个 message.id),22/22;`result.result` 与分段的最后一段 22/22 一字不差 ⇒ 分段规则对真 CLI 成立,`[REPLY_FINAL_CHECK]` 不会在正常轮里响。
+2. **legacy 下 reply 之后每轮再写一句自述**(6/6)—— legacy 靠认出 reply 才不把它当第二条发;录到的流换个 MCP 名字回放,FALLBACK 就把它发出去(`conversation-coordinator.claude-delivery.test.ts` 的回放组)。
+3. **legacy 每轮要先 ToolSearch 一次才找得到 reply**(Claude Code 把 MCP 工具放在 ToolSearch 后面):a / i 这种纯说话的轮,legacy 1 次 ToolSearch + 1 次 reply,daemon 0 次工具;耗时 a 8.3s vs 5.1s(均值)、i 11.4s vs 4.0s。非回复工具 13.0 vs 10.0 主要就是这一项。
+4. daemon 下 Claude 这批**没有**在工具前写开场(0 段旁白);h 用两条气泡(先列项目和记忆,再给结论)—— 按空行分条,是模型自己分的段。
+5. 录到的七轮(scrub 过签名 / 用量 / 限额信息)放进 `src/core/fixtures/claude-sdk-2026-10-03.jsonl`,由 `conversation-coordinator.claude-delivery.test.ts` 回放。
+
+### 结论
+
+**daemon 无回归、结构上更好 ⇒ 按约定翻默认:`CLAUDE_CAPABILITIES.replyDelivery = 'daemon'`,`replyText = 'last_segment'`。** legacy 在名字照 `mcp__wechat__reply`、工具调用成功时没坏;它的毛病全在「认 tool_call 的名字」(换个 MCP 名字 ⇒ 每轮把自述当第二条发出去,真跑 6/6 轮都有这句自述)和「reply 调用失败仍算回过」(⇒ 吞话)。daemon 只有一条路,剧本四种条件全 0,真模型适用场景全过、非回复工具更少、纯说话的轮快一半。g 两臂都静默,只差相对条件。回滚:`agent-config` 的 `reply_delivery: { claude: 'legacy' }` + 重启 daemon。
+
+### 残留
+
+- 真机 `selftest chat --provider claude --resume`、`bun run e2e:device` 与主人微信试聊(§5.8(2))留给整合者部署后做。
+- 沙盒用的是 `claude-opus-4-8`(daemon 的内置默认);主人若在 agent-config 里钉了别的 Claude 模型,真机试聊时顺带看一眼。
+- 续接的旧会话第一轮可能去调已经不存在的 reply(剧本 b 演过,话照常写在最后);真模型没量(预算)。
+
+### 复跑
+
+```bash
+bun scripts/experiments/reply-once/harness.ts --arm claude --out /tmp/claude.jsonl        # 剧本臂,两臂一起,不连网
+bun scripts/experiments/reply-once/harness.ts --gate /tmp/claude.jsonl --gate-arms claude_daemon,claude_legacy
+# 真模型(连 api.anthropic.com,每轮查 bx;--budget 必填,e 一次扣 4)
+bun scripts/experiments/reply-once/harness.ts --arm claude_real_daemon --scenarios a,c,d,f,g,h,i --runs 2 --budget 14 --claude-raw /tmp/raw.jsonl --out /tmp/real.jsonl
+bun scripts/experiments/reply-once/harness.ts --gate /tmp/real.jsonl --gate-arms claude_real_daemon,claude_real_legacy
+```

@@ -48,6 +48,11 @@
  *   codex_real_legacy / codex_real_daemon  第 4 步的真模型小批:**真 codex + api.openai.com**(每轮前查 bx),沙盒
  *                CODEX_HOME(只复制登录)+ 假 internal API,见 codex-sandbox.ts。必须给 --budget;--strict 不放行 MCP
  *                (照生产 strict 看 codex 怎么拒);--codex-raw <jsonl> 录原始事件流。
+ *   claude_legacy / claude_daemon  回复交付第 5 步的剧本臂:**不连模型**。照 Agent SDK 消息形状演的假 query() + 生产的
+ *                Claude provider / 协调器 / 交付运行时,见 claude-fixture.ts。--arm claude 一次跑两臂。
+ *   claude_real_legacy / claude_real_daemon  第 5 步的真模型小批:**真 Claude Code + api.anthropic.com**(每轮前查 bx),
+ *                沙盒 HOME(登录只读、只经环境变量给 access token,不给 refresh token)+ 假 internal API,见
+ *                claude-sandbox.ts。必须给 --budget;--claude-raw <jsonl> 录原始 SDK 消息。
  */
 // 隔离护栏必须第一个求值(见 isolate.ts:STATE_DIR 在 import 期就被定下来了)。
 import { STATE_DIR } from './isolate'
@@ -78,6 +83,9 @@ import { byVariant, runCursorGate, CURSOR_SCENARIOS, type CursorArm } from './cu
 import { byVariant as codexByVariant, runCodexFixtureGate, CODEX_SCENARIOS, type CodexArm } from './codex-fixture'
 import { makeCodexSandbox, assertSandboxTarget, sandboxCodexFactory } from './codex-sandbox'
 import { createCodexAgentProvider } from '../../../src/core/codex-agent-provider'
+import { byVariant as claudeByVariant, runClaudeFixtureGate, CLAUDE_SCENARIOS, type ClaudeArm } from './claude-fixture'
+import { makeClaudeSandbox, assertSandboxTarget as assertClaudeTarget, assertKeychainUntouched, sandboxCanUseTool, sandboxSdkOptions, teeQuery } from './claude-sandbox'
+import { createClaudeAgentProvider, DEFAULT_CLAUDE_MODEL } from '../../../src/core/claude-agent-provider'
 import { isReplyToolCall } from '../../../src/core/agent-provider'
 import { createAiSdkChatModel, type ChatModelClient, type ChatMessage, type StreamedTurn, type ToolSpec, type TurnDelta } from '../../../src/core/openai-chat-model'
 import { createMcpToolBridge, type McpClientLike } from '../../../src/core/openai-mcp-bridge'
@@ -794,6 +802,128 @@ export async function runOnceCodexReal(arm: Arm, scenario: Scenario, run: number
   }
 }
 
+// ─── Claude 真模型臂(回复交付第 5 步,2026-10-03)───────────────────────────────
+//
+// 真 Claude Code + 真模型(api.anthropic.com,每一轮之前先过 bx),沙盒 HOME(登录只读、只经环境变量给 access token,
+// 见 claude-sandbox.ts),**生产的** Claude provider(createClaudeAgentProvider:消息翻译、事件顺序、子 agent / 错误过滤)
+// + 生产的 wechat MCP 入口,背后是本进程里的假 internal API。legacy 臂量的是「协调器会发什么」(同 codex 真模型臂)。
+// 另外记两件第 5 步要核对的事(进 apiPaths):SDK 是不是每个内容块一条 assistant 消息(shape:*),以及 result.result
+// 和分段算出来的最后的话对不对得上(final_check:*)。
+export interface ClaudeRunConfig { bin: string; model: string; root: string; rawLog?: string }
+
+function claudeSystemPrompt(arm: Arm, model: string): string {
+  return buildSystemPrompt({
+    providerId: 'claude', model, peerProviderId: 'codex', companionEnabled: false, delegateAvailable: false,
+    daemonOpsAvailable: true, fileLocateAvailable: true, bubbleReplies: true,
+    ...(arm === 'claude_real_daemon' ? { replyDelivery: 'final_text' as const, replyText: replyTextStrategyFor('claude'), messageToolAvailable: true } : {}),
+  })
+}
+
+export async function runOnceClaudeReal(arm: Arm, scenario: Scenario, run: number, cfg: ClaudeRunConfig, onTurn: () => void): Promise<RunResult> {
+  await assertBxProtected() // 每一轮之前:不保护就不调(Claude 连 api.anthropic.com)
+  let ledger = newLedger()
+  const cur = () => ledger
+  const daemon = arm === 'claude_real_daemon'
+  const rt = daemon ? fakeDeliveryRuntime(cur) : undefined
+  const api = fakeInternalApi(cur, rt ? () => rt : undefined)
+  const runRoot = join(cfg.root, `${arm}-${scenario}-${run}-${Date.now()}`)
+  mkdirSync(runRoot, { recursive: true })
+  const sb = makeClaudeSandbox(runRoot)
+  assertClaudeTarget(sb, cfg.model)
+  const server = await startFakeInternalApi(runRoot, (m, path, body) => api.request(m, path, body))
+  const raw: unknown[] = []
+  const builtins: string[] = []
+  const mcpEnv = { ...sandboxMcpEnv({ mode: daemon ? 'daemon' : 'tool', api: server, stateDir: STATE_DIR }), WECHAT_PARTICIPANT_TAG: 'claude', WECHAT_SESSION_TIER: 'admin' }
+  const append = claudeSystemPrompt(arm, cfg.model)
+  const provider = createClaudeAgentProvider({
+    sdkOptionsForProject: () => sandboxSdkOptions(sb, { model: cfg.model, claudeBin: cfg.bin, append, wechat: { command: process.execPath, args: [WECHAT_MCP_MAIN], env: mcpEnv }, canUseTool: sandboxCanUseTool(n => builtins.push(n)) }),
+    queryImpl: teeQuery({ onMessage: (m) => raw.push(m), onTurn: () => { cur().modelCalls++; onTurn() } }),
+  })
+  try {
+    const session = await provider.spawn({ alias: 'demo', path: sb.workdir }, { tierProfile: TIER_PROFILES.admin, permissionMode: 'strict', chatId: CHAT_ID } as any)
+    const drain = async (text: string) => {
+      const evs: AgentEvent[] = []
+      for await (const ev of session.dispatch(text)) evs.push(ev)
+      return evs
+    }
+    const turnOnce = async (text: string, ctx: 'dm' | 'tick') => {
+      if (!daemon) return { evs: await drain(text), parts: undefined, report: undefined }
+      const handle = rt!.begin(CHAT_ID, { mode: 'daemon', context: ctx, providerId: 'claude', textStrategy: replyTextStrategyFor('claude') })
+      const evs = await drain(text)
+      if (evs.some(e => e.kind === 'error')) { handle.abandon('error'); return { evs, parts: undefined, report: undefined } }
+      const parts = extractTurnReply(evs)
+      return { evs, parts, report: await handle.deliver(parts) }
+    }
+    // legacy:协调器的判定 —— 认得出的 reply ⇒ 文字全丢;认不出 ⇒ FALLBACK 每段文字一条。推送只认 reply 工具。
+    const legacyMeasure = (evs: AgentEvent[], ctx: 'dm' | 'tick') => {
+      const toolEvents = evs.filter((e): e is Extract<AgentEvent, { kind: 'tool_call' }> => e.kind === 'tool_call')
+      const err = evs.find(e => e.kind === 'error')
+      const replied = toolEvents.some(isReplyToolCall)
+      const segs = extractTurnReply(evs)
+      const fallback = ctx === 'dm' && !replied && !err ? evs.filter((e): e is Extract<AgentEvent, { kind: 'text' }> => e.kind === 'text' && e.text.trim() !== '').map(e => e.text) : []
+      const delivered = [...ledger.texts, ...fallback]
+      const attachments = ledger.voices.map(() => 'voice')
+      return {
+        delivered, attachments,
+        narrationLeaked: fallback.length > 0 ? segs.narration.length : 0,
+        tokenLeaked: delivered.some(t => /NO_REPLY/i.test(t)),
+        silent: delivered.length === 0 && attachments.length === 0,
+        budgetExhausted: false, context: ctx, finalText: segs.finalText.slice(0, 300),
+      }
+    }
+    const warmup: NonNullable<RunResult['warmup']> = []
+    if (scenario === 'e') {
+      let t0 = Date.now() - 3 * 60_000
+      for (const s of SEED_TURNS) {
+        await assertBxProtected()
+        ledger = newLedger()
+        const t = await turnOnce(inbound(s.user, t0), 'dm'); t0 += 60_000
+        const tools = t.evs.filter((e): e is Extract<AgentEvent, { kind: 'tool_call' }> => e.kind === 'tool_call').map(e => e.tool)
+        warmup.push({ replies: ledger.replies, nonReplyTools: tools.filter(x => !SPEAKING_TOOLS.has(x)), dropped: [], delivered: daemon ? [...ledger.delivered] : legacyMeasure(t.evs, 'dm').delivered })
+      }
+      await assertBxProtected()
+    }
+    ledger = newLedger()
+    const start = Date.now()
+    const ctx = contextOf(scenario)
+    const prompt = scenario === 'g'
+      ? buildPushTickText({ nowIso: G_NOW_ISO, defaultChatId: CHAT_ID, intention: G_INTENTION }, { replyDelivery: daemon ? 'final_text' : 'tool', allSegments: false })
+      : inbound(SCENARIO_PROMPT[scenario])
+    const rawStart = raw.length
+    const turn = await turnOnce(prompt, ctx)
+    await session.close()
+    assertKeychainUntouched(sb)
+    const evs = turn.evs
+    const turnRaw = raw.slice(rawStart) as Array<{ type?: string; message?: { content?: unknown[] }; parent_tool_use_id?: string | null }>
+    if (cfg.rawLog) appendFileSync(cfg.rawLog, JSON.stringify({ arm, scenario, run, messages: turnRaw.filter(m => m.type !== 'system') }) + '\n')
+    const toolEvents = evs.filter((e): e is Extract<AgentEvent, { kind: 'tool_call' }> => e.kind === 'tool_call')
+    const err = evs.find(e => e.kind === 'error') as any
+    const resultEv = evs.find(e => e.kind === 'result') as Extract<AgentEvent, { kind: 'result' }> | undefined
+    const segFinal = extractTurnReply(evs).finalText.trim()
+    const finalCheck = resultEv?.finalText === undefined ? 'none' : resultEv.finalText.trim() === segFinal ? 'same' : 'differs'
+    const multiBlock = turnRaw.some(m => m.type === 'assistant' && Array.isArray(m.message?.content) && m.message!.content!.filter((b: any) => b?.type !== 'thinking').length > 1)
+    const measured = daemon ? measureDaemon(evs, ledger, turn.parts, turn.report, ctx, replyTextStrategyFor('claude')) : legacyMeasure(evs, ctx)
+    return {
+      arm, scenario, run,
+      replies: ledger.replies,
+      nonReplyTools: toolEvents.map(e => e.tool).filter(t => !SPEAKING_TOOLS.has(t)),
+      steps: toolEvents.length,
+      modelCalls: ledger.modelCalls,
+      cleanEnd: !err,
+      ...(err ? { error: String(err.code ?? err.message ?? 'error').slice(0, 200) } : {}),
+      dropped: [],
+      assistantText: evs.filter(e => e.kind === 'text').map((e: any) => e.text).join('\n').slice(0, 300),
+      ms: Date.now() - start,
+      ...(warmup.length ? { warmup } : {}),
+      ...measured,
+      doubleSend: doubleSends(measured.delivered ?? []),
+      apiPaths: [...new Set(ledger.api), `shape:${multiBlock ? 'bundled' : 'per_block'}`, `final_check:${finalCheck}`, ...builtins.map(b => `denied:${b}`), ...toolEvents.map(e => `tool:${e.server ? `${e.server}/` : ''}${e.tool}`)],
+    }
+  } finally {
+    await server.close()
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2)
   const get = (f: string) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : undefined }
@@ -812,7 +942,7 @@ async function main() {
     console.log(await createAgyProject({ bin: get('--agy-bin') ?? 'agy', workspace: agyInit }))
     return
   }
-  const arm = (get('--arm') ?? 'baseline') as Arm | 'cursor' | 'codex'
+  const arm = (get('--arm') ?? 'baseline') as Arm | 'cursor' | 'codex' | 'claude'
   const out = get('--out') ?? join(STATE_DIR, 'results.jsonl')
   if (arm === 'cursor' || arm === 'cursor_legacy' || arm === 'cursor_daemon') {
     // 不连模型、不过 bx:纯进程内(见 cursor-fixture.ts 文件头)。每个场景按外部条件跑(recorded / drift / strict)。
@@ -838,8 +968,51 @@ async function main() {
     if (arms.length === 2) { console.log(''); console.log(formatGate(evaluateGate(rows, 'codex_daemon', 'codex_legacy'))); console.log(''); console.log(formatGate(evaluateGate(rows, 'codex_legacy', 'codex_legacy'))) }
     return
   }
+  if (arm === 'claude' || arm === 'claude_legacy' || arm === 'claude_daemon') {
+    // 剧本臂:不连模型、不过 bx,纯进程内(见 claude-fixture.ts 文件头)。
+    const arms: ClaudeArm[] = arm === 'claude' ? ['claude_legacy', 'claude_daemon'] : [arm]
+    const scenarios = get('--scenarios') ? get('--scenarios')!.split(',') as Scenario[] : CLAUDE_SCENARIOS
+    const rows = await runClaudeFixtureGate(arms, scenarios)
+    for (const r of rows) appendFileSync(out, JSON.stringify(r) + '\n')
+    console.log(summarize(rows))
+    console.log('')
+    console.log(claudeByVariant(rows))
+    if (arms.length === 2) { console.log(''); console.log(formatGate(evaluateGate(rows, 'claude_daemon', 'claude_legacy'))); console.log(''); console.log(formatGate(evaluateGate(rows, 'claude_legacy', 'claude_legacy'))) }
+    return
+  }
   const scenarios = (get('--scenarios') ?? 'a,b,c,d').split(',') as Scenario[]
   const runs = Number(get('--runs') ?? '5')
+  if (arm === 'claude_real_legacy' || arm === 'claude_real_daemon') {
+    const budget = Number(get('--budget') ?? '0')
+    if (!(budget > 0)) throw new Error('claude 真模型臂要 --budget <这一批最多几轮>(真 Anthropic 调用,总上限 40)')
+    const cfg: ClaudeRunConfig = {
+      bin: get('--claude-bin') ?? join(homedir(), '.local/bin/claude'),
+      model: get('--claude-model') ?? DEFAULT_CLAUDE_MODEL,
+      root: get('--claude-root') ?? join(STATE_DIR, 'claude'),
+      ...(get('--claude-raw') ? { rawLog: get('--claude-raw')! } : {}),
+    }
+    console.error(`[reply-once] arm=${arm} scenarios=${scenarios.join(',')} runs=${runs} model=${cfg.model} budget=${budget} out=${out} bx=${await assertBxProtected()}`)
+    const rows: RunResult[] = []
+    let used = 0
+    for (const sc of scenarios) {
+      for (let r = 1; r <= runs; r++) {
+        // e 一次是四轮,预算按真回合数(每条 user 消息)扣。
+        if (used + (sc === 'e' ? 4 : 1) > budget) { console.error(`  预算不够(${used}/${budget}),停`); break }
+        let res: RunResult
+        try { res = await runOnceClaudeReal(arm, sc, r, cfg, () => { used++ }) } catch (e) {
+          if (/网络未受保护|找不到 bx|拒跑|钥匙串|登录/.test(String(e))) throw e // 守护 / 沙盒护栏:整批中止
+          res = { arm, scenario: sc, run: r, replies: [], nonReplyTools: [], steps: 0, modelCalls: 0, cleanEnd: false, error: String(e).slice(0, 200), dropped: [], assistantText: '', ms: 0 }
+        }
+        rows.push(res)
+        appendFileSync(out, JSON.stringify(res) + '\n')
+        for (const [k, w] of (res.warmup ?? []).entries()) console.error(`  ${sc}#${r} warm${k + 1}: delivered=${JSON.stringify(w.delivered)} tools=${JSON.stringify(w.nonReplyTools)}`)
+        console.error(`  ${sc}#${r}: delivered=${(res.delivered ?? res.replies).length} ${JSON.stringify(res.delivered ?? res.replies)}${res.attachments?.length ? ` attachments=${res.attachments.join(',')}` : ''}${res.silent ? ' silent' : ''} final=${JSON.stringify(res.finalText ?? '')} api=${JSON.stringify(res.apiPaths ?? [])} ${res.error ?? 'ok'} ${res.ms}ms`)
+      }
+    }
+    console.error(`  真模型回合:${used}`)
+    console.log(summarize(rows))
+    return
+  }
   if (arm === 'codex_real_legacy' || arm === 'codex_real_daemon') {
     const budget = Number(get('--budget') ?? '0')
     if (!(budget > 0)) throw new Error('codex 真模型臂要 --budget <这一批最多几轮>(真 OpenAI 调用,主人定的总上限 40)')
