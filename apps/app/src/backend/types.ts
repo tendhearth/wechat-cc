@@ -1,7 +1,7 @@
 import type { z } from 'zod'
 import type {
   Matter, MatterDetail, ApprovalExplanation, ProgressSummary, PhoneChangesTurn, EntryOptions, DeviceRowT, PushPlatformT,
-  ChatPage, ChatJob, ChatMessage, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult,
+  ChatPage, ChatJob, ChatMessage, ChatAttachment, Connections, NativeSessionRow, NativeSessionPage, SessionContinueT, MatterSayResult,
 } from '@wechat-cc/protocol'
 import type { Lang } from '../i18n'
 
@@ -16,6 +16,7 @@ export type EntryOptionsT = z.infer<typeof EntryOptions>
 export type ChatPageT = z.infer<typeof ChatPage>
 export type ChatJobT = z.infer<typeof ChatJob>
 export type ChatMessageT = z.infer<typeof ChatMessage>
+export type ChatAttachmentT = z.infer<typeof ChatAttachment>
 export type ConnectionsT = z.infer<typeof Connections>
 export type NativeSessionRowT = z.infer<typeof NativeSessionRow>
 export type NativeSessionPageT = z.infer<typeof NativeSessionPage>
@@ -31,6 +32,7 @@ export type BackendCode = 'stale' | 'busy' | 'offline' | 'revoked' | 'timeout' |
   | 'session_busy' | 'folder_busy' | 'provider_missing' | 'folder_missing' | 'quota' | 'session_changed' | 'session_empty' | 'session_managed'
   | 'handoff_changed'
   | 'input_stale' | 'input_conflict'
+  | 'too_large' | 'no_voice'
 export type Unsubscribe = () => void
 
 export interface Backend {
@@ -63,6 +65,10 @@ export interface Backend {
   /** 收下即回;回复经 matter/<matterId> 主题唤醒后再 chat() 拉。上一句还在等 ⇒ BackendError('busy')。
    *  requestId:只在上次失败 / 不确定时重发同一个;已知回复过的绝不重发(daemon 的去重表 50 条 / 1 小时就过期)。 */
   chatSay(text: string, requestId: string): Promise<ChatJobT>
+  /** 回复里第 index 个附件(必须是语音)按需合成的声音(GET /m/api/chat/voice)。太长 ⇒ BackendError('too_large');电脑没设朗读 ⇒ 'no_voice'。 */
+  chatVoice(messageId: string, index: number): Promise<{ mime: string; data: string }>
+  /** 表情库里的一张图(GET /m/api/sticker/<file>?b64=1)。不在库里 ⇒ BackendError('not_found')。 */
+  sticker(file: string): Promise<{ mime: string; data: string }>
   /** CC 的连接快照(手机版,没有 detail)。 */
   connections(): Promise<ConnectionsT>
   /** 电脑上的原生会话(只读);cursor = 上一页的 nextCursor。 */

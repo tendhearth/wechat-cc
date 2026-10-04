@@ -17,6 +17,11 @@ export interface MessageRecord {
   text: string
   provider?: string
   source: string        // live | workbench | backfill:claude | backfill:codex
+  /**
+   * 桌面 / 手机那一轮回复的附件与旁白(JSON,v72)。只在 app 轮 CC 的回复行上有;形状由
+   * src/daemon/app-reply.ts 定义并解析(lib 不认识它,只原样存取)。
+   */
+  extras?: string
 }
 
 export interface ListRangeOpts {
@@ -28,6 +33,8 @@ export interface ListRangeOpts {
 export interface MessagesStore {
   /** Returns the number of rows actually inserted (0 if ignored by INSERT OR IGNORE). */
   append(rec: MessageRecord): Promise<number>
+  /** 按 id 取一行,并且必须属于这个 chat(否则 null)。 */
+  get(chatId: string, id: string): Promise<MessageRecord | null>
   listRange(chatId: string, opts: ListRangeOpts): Promise<MessageRecord[]>
   search(chatId: string, query: string, limit: number): Promise<MessageRecord[]>
   latestTs(chatId: string): Promise<string | null>
@@ -83,6 +90,8 @@ export function inboundFallbackMessageId(userId: string, text: string): string {
 interface Row {
   id: string; chat_id: string; ts: string; direction: string
   kind: string; text: string; provider: string | null; source: string
+  /** v72;更老的测试库可能没有这一列 ⇒ undefined。 */
+  extras?: string | null
 }
 
 function rowToRecord(r: Row): MessageRecord {
@@ -91,6 +100,7 @@ function rowToRecord(r: Row): MessageRecord {
     direction: r.direction as MessageDirection,
     kind: r.kind, text: r.text, source: r.source,
     ...(r.provider !== null ? { provider: r.provider } : {}),
+    ...(r.extras != null ? { extras: r.extras } : {}),
   }
 }
 
@@ -99,6 +109,14 @@ export function makeMessagesStore(db: Db): MessagesStore {
     `INSERT OR IGNORE INTO messages(id, chat_id, ts, direction, kind, text, provider, source)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   )
+  // extras 列是 v72 才有的;只在真要写它的时候才用这条语句(从 user_version=9 起跑的测试库照样能 append)。
+  type ExtrasArgs = [string, string, string, string, string, string, string | null, string, string]
+  let stmtInsertExtras: { run(...args: ExtrasArgs): unknown } | null = null
+  const insertExtras = () => stmtInsertExtras ??= db.query<{ changes: number }, ExtrasArgs>(
+    `INSERT OR IGNORE INTO messages(id, chat_id, ts, direction, kind, text, provider, source, extras)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+  const stmtGet = db.query<Row, [string, string]>('SELECT * FROM messages WHERE id = ? AND chat_id = ?')
   const stmtListNewest = db.query<Row, [string, number]>(
     `SELECT * FROM (
        SELECT * FROM messages WHERE chat_id = ? ORDER BY ts DESC LIMIT ?
@@ -136,8 +154,14 @@ export function makeMessagesStore(db: Db): MessagesStore {
 
   return {
     async append(rec) {
-      const result = stmtInsert.run(rec.id, rec.chatId, rec.ts, rec.direction, rec.kind, rec.text, rec.provider ?? null, rec.source)
+      const result = rec.extras !== undefined
+        ? insertExtras().run(rec.id, rec.chatId, rec.ts, rec.direction, rec.kind, rec.text, rec.provider ?? null, rec.source, rec.extras)
+        : stmtInsert.run(rec.id, rec.chatId, rec.ts, rec.direction, rec.kind, rec.text, rec.provider ?? null, rec.source)
       return (result as unknown as { changes: number }).changes
+    },
+    async get(chatId, id) {
+      const r = stmtGet.get(id, chatId)
+      return r ? rowToRecord(r) : null
     },
     async listRange(chatId, opts) {
       const rows = opts.beforeTs

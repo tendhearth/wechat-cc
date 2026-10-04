@@ -33,7 +33,7 @@ bun run export:check             # expo export 两个平台,证明能打包
 maestro test .maestro/           # 模拟器上跑演示流程(要先有 development build + 开着 expo start)
 ```
 
-- 加了 `expo-crypto` / `expo-camera` 之后要重新 `bunx expo run:ios` 生成 development build,模拟器才有这些原生模块。
+- 加了 `expo-crypto` / `expo-camera`、以及 2026-10-04 的 `expo-audio` / `expo-file-system`(回复里的语音附件)之后要重新 `bunx expo run:ios` 生成 development build,模拟器才有这些原生模块。
 - `ios/`、`android/` **不进 git**(`.gitignore` 已列);原生部分以后走 Expo config plugin,保持「预构建可重生」。
 - `expo start` / `expo prebuild` 可能改写 `tsconfig.json` / `package.json`,别把这些改动提交。
 - 换过 bundle 相关的东西后用 `bunx expo start --clear`,免得模拟器拿到旧 bundle。
@@ -47,6 +47,7 @@ maestro test .maestro/           # 模拟器上跑演示流程(要先有 develop
 |---|---|
 | `.maestro/approve.yaml` | 先看看 → 此刻第一张「等你决定」卡 → 批准页**原始命令直接可见** → 允许 → 进展页 → 2 秒后「这一轮已回复」 |
 | `.maestro/chat.yaml` | 此刻 → 跟 CC 说一句 → 对话页 → 发一句 → 「在想…」→ 演示回复出现 → 一起做的置顶「和 CC 的对话」回到对话页 |
+| `.maestro/chat-extras.yaml` | 跟 CC 说 → 发一句 → 演示回复带「过程 · 2 段」(默认收起)、语音、本地表情(图)、联网表情(只写情绪)→ 展开过程看到「没有发到微信」→ 点语音不报错(2026-10-04) |
 | `.maestro/connections.yaml` | 设置 → CC 的连接卡(演示数据)→ 各项状态词 → 电脑上的会话列表(只读) |
 | `.maestro/compose.yaml` | 此刻 → 跟 CC 说 → 显式选「交给 CC 去做一件事」→ 输入 → 交给 CC → 新事项的进展页 → 「一起做」里出现它(交办不再是默认动作) |
 | `.maestro/quota-handoff.yaml` | 一起做 → 周报那件(Claude Code 额度用完)→ 灰字 +「交给 Codex 继续」→ 确认卡如实说(同一文件夹新开一件、原来那件不动、Codex 看不到之前的对话、会用 Codex 的额度)→ 交出去 → 进新那件 → 返回,原来那件说「已经交给 Codex 继续」 |

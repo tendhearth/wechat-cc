@@ -3,6 +3,7 @@ import type { MessageRecord } from '../lib/messages-store'
 import type { MatterStore } from '../core/matters/store'
 import type { ChatJob, PhoneChat } from './phone-chat'
 import { framedTooLarge } from './mobile-matter-response'
+import { parseExtras, phoneExtrasFields } from './app-reply'
 
 /**
  * mobile-chat.ts — 手机「跟 CC 说」的两条路由(spec 2026-10-01 §3)。路由字面量被
@@ -12,6 +13,9 @@ import { framedTooLarge } from './mobile-matter-response'
  * - say 收下即回:`chat.say` 抛 'no_owner_chat' | 'chat_busy' | 'input_conflict';回复由接线方给的
  *   converse(companionConverse —— 与微信 / 桌面同一条回合串行入口)在后台跑。
  * - 正文不进日志。
+ * - 回复行的附件与旁白(messages.extras,2026-10-04)随行带出;文件只给名字。语音不进页:
+ *   `GET /m/api/chat/voice?id=<消息 id>&i=<第几个附件>` 按需合成 —— 只合成库里那一行真有的那段语音,
+ *   不是一个「给什么字都念」的口子。
  */
 export interface MobileChatDeps {
   /** 只读:主人的 chat matter;没有就 null(⇒ 404 no_owner_chat)。 */
@@ -19,6 +23,10 @@ export interface MobileChatDeps {
   /** 升序;有 beforeTs 时是「严格早于它的最后 limit 条」。 */
   history(chatId: string, opts: { beforeTs?: string; limit: number }): Promise<MessageRecord[]>
   chat: PhoneChat
+  /** 主人对话里的一行(必须属于这个 chat);语音路由用它找那段要念的话。 */
+  message?(chatId: string, id: string): Promise<MessageRecord | null>
+  /** 合成语音(与桌面 agent_speak 同一个 synthesizeSpeech)。没接 ⇒ 语音路由 503。 */
+  speak?(text: string): Promise<{ audio: Buffer; mime: string }>
 }
 
 /** 主人 chat matter 的两种取法:peek 只读(GET 用),ensure 建 / 找并登记手机露面(说一句用)。 */
@@ -74,6 +82,7 @@ const message = (r: MessageRecord) => ({
   id: r.id, role: r.direction === 'in' ? 'me' as const : 'cc' as const, kind: r.kind,
   text: r.text.length > CHAT_TEXT_MAX ? r.text.slice(0, CHAT_TEXT_MAX) : r.text, truncated: r.text.length > CHAT_TEXT_MAX,
   at: Date.parse(r.ts), source: sourceOf(r.source),
+  ...(r.direction === 'out' ? phoneExtrasFields(r.extras) : {}),
 })
 
 export async function mobileChatRoute(deps: MobileChatDeps | undefined, url: URL, req: Request): Promise<Response | null> {
@@ -108,6 +117,28 @@ export async function mobileChatRoute(deps: MobileChatDeps | undefined, url: URL
       hasMore = true
       body = build()
     }
+    return new Response(body, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
+  }
+  if (url.pathname === '/m/api/chat/voice') {
+    if (req.method !== 'GET') return err('method_not_allowed', 405)
+    if (!deps?.message || !deps.speak) return err('voice_not_wired', 503)
+    const id = url.searchParams.get('id'), rawIdx = url.searchParams.get('i')
+    if (!id || id.length > 200 || rawIdx === null || !/^\d{1,2}$/.test(rawIdx)) return err('invalid', 400)
+    let owner: ReturnType<MobileChatDeps['owner']>
+    try { owner = deps.owner() } catch { return err('unavailable', 503) }
+    if (!owner) return err('no_owner_chat', 404)
+    let row: MessageRecord | null
+    try { row = await deps.message(owner.chatId, id) } catch { return err('unavailable', 503) }
+    const att = row && row.direction === 'out' ? parseExtras(row.extras)?.attachments[Number(rawIdx)] : undefined
+    if (!att || att.kind !== 'voice') return err('not_found', 404)
+    let audio: { audio: Buffer; mime: string }
+    try { audio = await deps.speak(att.text) } catch (e) {
+      const m = e instanceof Error ? e.message : ''
+      return /no.?voice.?config|not configured/i.test(m) ? err('no_voice_config', 422) : err('unavailable', 503)
+    }
+    const body = JSON.stringify({ ok: true, mime: audio.mime, data: audio.audio.toString('base64') })
+    // 一帧装不下(很长的一段)⇒ 413,手机提示去电脑上听;不切片(语音附件本来就 ≤ 500 字)。
+    if (framedTooLarge(body)) return err('too_large', 413)
     return new Response(body, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
   }
   if (url.pathname === '/m/api/chat/say') {
