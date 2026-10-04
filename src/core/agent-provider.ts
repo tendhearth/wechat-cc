@@ -81,7 +81,13 @@ export type AgentEvent =
   | { kind: 'text'; text: string; itemId?: string; textMode?: 'append' | 'replace'; ownSegment?: true }
   | { kind: 'tool_call'; server?: string; tool: string; activity?: AgentActivity }
   | { kind: 'init'; sessionId: string }
-  | { kind: 'result'; sessionId: string; numTurns: number; durationMs: number }
+  /**
+   * `finalText`:provider 自己对「这一轮最后的话」的定义(Claude Agent SDK 的 `result.result`)。只在这一轮
+   * **成功**(没有 SDK 错误标注、`is_error` 不为真)时才带 —— 出错轮的 `result.result` 就是错误原文(#190)。
+   * 只用来**核对**分段算出来的最后的话(collectTurn → TurnSummary.providerFinalText,协调器记
+   * `[REPLY_FINAL_CHECK]`),交付永远用分段的结果(回复交付第 5 步定案,spec 修订记录)。
+   */
+  | { kind: 'result'; sessionId: string; numTurns: number; durationMs: number; finalText?: string }
   /** `code`:provider 边界产的结构化码 —— lib/provider-error-code 的闭集(另有
    *  collectTurn 自己的 `turn_timeout`)。下游有码就只看码;`message` 只给人/日志看,
    *  **永远不当回复发出去**。 */
@@ -555,6 +561,8 @@ export interface TurnSummary {
   finalText?: string
   /** 最后的话之前的各段文字(旁白)。 */
   narration?: string[]
+  /** result 事件带的 provider 自己的「最后的话」(只有 Claude 的成功轮有),只用于核对,不交付。 */
+  providerFinalText?: string
 }
 
 /** Sentinel error code stamped on a TurnSummary when the per-turn watchdog
@@ -594,6 +602,8 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
   let errorCode: string | undefined
   const toolCalls: string[] = []
   const segments = makeTurnTextCollector()
+  let providerFinalText: string | undefined
+  const extra = (): Pick<TurnSummary, 'providerFinalText'> => (providerFinalText !== undefined ? { providerFinalText } : {})
 
   const apply = (ev: AgentEvent): void => {
     segments.push(ev)
@@ -608,6 +618,7 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
       if (isReplyToolCall(ev)) replyToolCalled = true
     } else if (ev.kind === 'result') {
       result = { sessionId: ev.sessionId, numTurns: ev.numTurns, durationMs: ev.durationMs }
+      if (typeof ev.finalText === 'string') providerFinalText = ev.finalText
     } else if (ev.kind === 'error') {
       error = ev.message
       if (ev.code) errorCode = ev.code
@@ -622,7 +633,7 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
   const timeoutMs = opts?.timeoutMs
   if (!timeoutMs || timeoutMs <= 0) {
     for await (const ev of events) { observe(ev); apply(ev) }
-    return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode, ...segments.parts() }
+    return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode, ...segments.parts(), ...extra() }
   }
 
   // Watchdog path: race each `next()` against an idle timer that resets per
@@ -661,5 +672,5 @@ export async function collectTurn(events: AsyncIterable<AgentEvent>, opts?: Coll
   } finally {
     if (timer) clearTimeout(timer)
   }
-  return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode, ...segments.parts() }
+  return { assistantText: texts, replyToolCalled, toolCalls, result, error, errorCode, ...segments.parts(), ...extra() }
 }

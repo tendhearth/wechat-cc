@@ -281,9 +281,42 @@ message({ to: 'owner' | <chat_id> | 'broadcast', text, account_id? })
 
 主人的主力,最后迁,前面四家的经验都用上。要特别验:SDK `result.result` 与分段结果一致;子 agent / 后台任务的文字不混进最后的话。
 
+落地(2026-10-03):接线完成;剧本臂(照 Agent SDK 消息形状演的假 `query()` + 生产全链,四种外部条件)daemon 无回归且结构上更好,真模型小批(沙盒 HOME,25 回合)适用场景全过、`result.result` 与分段 22/22 一字不差 ⇒ Claude 翻 `daemon`。**迁移序列的五家至此全部是 daemon。** `result.result` 改为只核对、不作交付依据,见修订记录。
+
 ### 5.7 第 6 步:收尾
 
 删回复族工具与 `isReplyToolCall` 的判定用途、`FALLBACK_REPLY`、`'tool'` 版提示词、`NO_REPLY_TOOL` 常量、`WECHAT_PARTICIPANT_TAG`;改写 `reply-tool-bridge.e2e.test.ts`;docs(`reference/features.md`、`architecture.md`)同步。
+
+**观察期(2026-10-03 定,第 5 步合入之后)**。legacy 路径是回滚开关(agent-config `reply_delivery`)唯一的去处,删它之前先确认没人需要回滚:
+
+1. **起点**:第 5 步部署到主人机器、`[BOOT]` 行没有 `reply_delivery override`(即五家都在用代码默认的 daemon)的那一天。
+2. **时长**:至少 **14 天**,且其中每家执行者至少有 **20 个完成的应答轮**(`turn_records` 按 provider 数 `outcome='completed'`;某一家用得少就延长到够数,或主人明确说「这家不用了」)。
+3. **每天看的东西**(都在 `channel.log` / `turn_records`,`maintainer/reply-delivery.md` 的排查表):
+   - 回滚开关没被用过(没有 `[BOOT] reply_delivery override`);
+   - `[PROVIDER_ANOMALY] … empty-reply streak` 没有比迁移前的 FALLBACK 连击更多;
+   - `[REPLY_FINAL_CHECK] match=differs` 为 0(有就说明 Claude 的分段和 SDK 自己的定义对不上,先查清);
+   - `[REPLY_DELIVERY_FAIL]` 只出现在外发健康本来就红的时段;
+   - `turn_records.delivery` 的分布:`empty` / `silent` 在私聊里的占比不高于 5%;
+   - 主人没有报「只收到过程话」「收到两遍」「没回」这三类问题。
+4. **过关 ⇒ 开第 6 步的 PR**;不过 ⇒ 那一家先回滚(agent-config),修好后观察期对那一家重新计。
+5. 观察期内允许改 daemon 路径本身(修 bug、调分条),但不改 legacy 路径(它只是回滚的去处)。
+
+**第 6 步的删除清单**(2026-10-03 按代码核对;一个 PR,先删再跑全套 + e2e):
+
+| 删什么 | 在哪 |
+|---|---|
+| 开关本身:`ProviderCapabilities.replyDelivery` / `replyDeliveryFor` / `setReplyDeliveryOverrides`、agent-config `reply_delivery`、`reply-delivery-config.ts`;`shadow` 档与 `[REPLY_SHADOW]`(`observeLegacy`) | `core/agent-provider.ts`、`core/capability-matrix.ts`、`lib/agent-config`、`daemon/bootstrap/reply-delivery-config.ts`、`daemon/reply-delivery.ts` |
+| 协调器的 legacy / shadow 分支、`FALLBACK_REPLY` 与 fallback 连击、`sendAssistantText` 的回复用途(H / I 类转发改名 `sendNotice`) | `core/conversation-coordinator.ts`(solo / parallel / chatroom 三处)、`daemon/bootstrap/fallback-reply.ts`、`wire-coordinator.ts` |
+| 回复族工具与路由:`reply` / `reply_voice` / `send_file` / `edit_message` / `broadcast` / `send_sticker` / `search_online_sticker` / `send_online_sticker_candidate` 的注册与 `/v1/wechat/*` 路由;`WECHAT_REPLY_DELIVERY`(只剩一套工具表) | `mcp-servers/wechat/tools-messaging.ts`、`daemon/internal-api/routes.ts` / `types.ts`、`bootstrap/mcp-specs.ts` |
+| `isReplyToolCall` / `isReplyToolName` / `REPLY_TOOLS` 的判定用途、`TurnSummary.replyToolCalled`(库表列保留读历史,新写 0);扇出拒 `message` 那一条改成只看 `message` | `core/agent-provider.ts`、`core/permission-relay.ts` |
+| `'tool'` 版提示词:`buildSystemPrompt` 的 `replyDelivery` 参数、`LEGACY_SPEAKING_BLOCK`、各段 legacy 文案;推送提示的 `'tool'` 版 | `core/prompt-builder.ts`、`daemon/wiring/tick-bodies.ts` |
+| `NO_REPLY_TOOL` 常量、`WECHAT_PARTICIPANT_TAG`(前缀早由协调器传) | `core/chatroom-conductor.ts`、`bootstrap/mcp-specs.ts`、`mcp-servers/wechat/tools-daemon.ts` |
+| 访客 `GUEST_ALLOW` 里的 `reply` 类(附件仍归它) | `core/user-tier.ts` |
+| gemini(API key 版,2026-09-27 起 deprecated,唯一还在 legacy 的 provider):**连 provider 一起删**,或先按第 1 步的做法迁到 daemon —— 删 legacy 之前必须二选一 | `core/gemini-agent-provider.ts`、`bootstrap/providers.ts` |
+| 测试:`reply-tool-bridge.e2e.test.ts` 里回滚那组、fake-sdk 的 reply 桥、`*-delivery.test.ts` 的 legacy 对照组、reply-once harness 的 legacy 臂(数据文件留作记录) | `daemon/__e2e__/`、`core/*-delivery.test.ts`、`scripts/experiments/reply-once/` |
+| docs:`reference/features.md`、`architecture.md`、`maintainer/reply-delivery.md`(回滚一节改成「已无回滚」)、`internal-api-auth.md` 的回复路由 | `docs/` |
+
+另外两件不删但收尾时做:`cli/selftest.ts` 的 `replied` 改看交付报告、加「旁白没进回复」一项(§4.10);`external-cli-contract.live.test.ts` 加「最后一段」的契约断言(§7)。
 
 伙伴推送、/chat、/both、app 轮不单独成步:它们按「当轮 provider 的开关」走,随每一家一起切。
 
@@ -367,6 +400,7 @@ message({ to: 'owner' | <chat_id> | 'broadcast', text, account_id? })
 
 ## 修订记录
 
+- 2026-10-03:第 5 步(Claude)接线完成,**Claude 翻 `daemon`;迁移序列的五家全部是 daemon**(编码型 `last_segment`;数据见 `reference/reply-once-experiment.md`「第 5 步」)。落地时与稿子不一样 / 稿子没写到的几处:① **§4.2 Claude 行「以 `result.result` 为准」改为只核对**:正常轮里它和分段的最后一段按构造相同(真跑 22/22 一字不差),不同的只有出错轮(`is_error` 时它就是错误原文,#190 红线)和分段本身要处理的情况(子 agent、多文字块)⇒ 交付统一用分段(五家同一条路),`result.result` 只在成功轮作为 `result.finalText` 带出,对不上记 `[REPLY_FINAL_CHECK]`。② **事件顺序**按稿子修了(按块的顺序发);但真 Claude Code 2.1.289 每个内容块本来就单独一条 assistant 消息,这个 bug 在今天的 CLI 上碰不到,剧本臂的 `bundled` 条件钉住它。③ **子 agent**:带 `parent_tool_use_id` 的消息文字不进任何一段(legacy 也受益)。④ **只有 `is_error` 没有 SDK 标注的结果**补一个 `provider_error` 码,只发通知。⑤ 扇出里 `canUseTool` 也拒 `message`(§4.9)。⑥ `sessions/searcher.ts` 改认入站信封 `<wechat chat_id=`(旧会话的 reply 标记一并认)。⑦ **闸门**:Claude 的 `canUseTool` 在所有 tier 下都放行 reply,Codex / Cursor 那种 strict 吞话碰不到 —— 剧本臂的四种外部条件换成 recorded / bundled / drift(插件 MCP 名)/ tool_error(reply 调用失败 ⇒ legacy 吞话);场景 b 改成「会话续接跨过开关」(§7 的风险)。真模型小批的沙盒:临时 HOME,登录只读、只经 `CLAUDE_CODE_OAUTH_TOKEN` 给 access token(不给 refresh token),每次运行核对钥匙串没被改。⑧ **决定**:legacy 在名字照 `mcp__wechat__reply`、调用成功时没坏;真 Claude 在 reply 之后每轮再写一句自述(6/6),认不出 reply 就是第二条(剧本 drift 双发 6、旁白外泄 4);reply 失败 ⇒ 3/3 轮吞话;私聊 `NO_REPLY` 原样外发。daemon 四种条件全 0,真模型适用场景全过、非回复工具 10.0 vs 13.0(legacy 每轮要先 ToolSearch 才找得到 reply),纯说话的轮快一半 ⇒ 翻默认。⑨ §5.7 补了观察期与删除清单(本步**不删** legacy,保留回滚)。
 - 2026-10-03:第 4 步(Codex)接线完成,**Codex 翻 `daemon`**(编码型 `last_segment`;数据见 `reference/reply-once-experiment.md`「第 4 步」)。落地时与稿子不一样 / 稿子没写到的几处:① **§4.2 的 Codex 行「不用改 provider」不成立**:只有 `mcp_tool_call` 产 tool_call,shell / 改文件 / 搜索 / 计划都不产 ⇒「顺便看下仓库状态。」→ 跑命令 →「结论」粘成一段,旁白跟着交付。改为不是消息 / 思考 / 非致命 error 的 item 都是一次工具调用(`codexItemToolCall`,含 SDK 不认识的新 item 类型),每个 item 只产一次;另给 text 事件加 `ownSegment`,Codex 每条 agent_message 自成一段,对上本节「turn.completed 之前最后一个 agent_message」的定义(两条之间只隔思考也不粘)。顺手:`turn.completed` 之后 exec 才非零退出不再补 error 事件(否则完成的回复被当出错丢掉);非致命 error item 只记日志。② **工具表**:Codex 的 wechat MCP 是构造时的 spec + 每次 spawn 合进会话 env,经 SDK config 交给 `codex exec`;`wechatStdioMcpSpec('codex')` 按开关带 `WECHAT_REPLY_DELIVERY=daemon`,不用改写任何静态配置;会话令牌里有 chat,附件不带 chat_id。③ **闸门两部分**:剧本臂(`src/core/codex-scripted.ts` 注入 `codexFactory`,三种外部条件:形状照 SDK / CLI 比 SDK 新、MCP 换了 item 类型 / strict 没有 bypass ⇒ codex 拒 MCP)+ 真模型小批(沙盒 CODEX_HOME 只复制登录、read-only、MCP 用 codex 自己的 `default_tools_approval_mode = "approve"` 放行、每轮查 bx;35 次调用)。真模型上看到:codex 调工具前总先写一句开场(daemon 12/12),legacy 下 reply 之后再收一条空消息 ⇒ legacy 认不出 reply 时漏的是开场;**strict 吞话真机复现**(reply 被拒「MCP tool call requires approval, but approval policy is never」,模型改用文字说,legacy 一个字都不发)。④ **决定**:legacy 在形状照 SDK 时没坏;CLI 比 SDK 新 ⇒ 旁白外泄 7、strict ⇒ 3/3 轮主人什么都没收到、私聊 `NO_REPLY` 原样外发;daemon 三种条件全 0,真模型适用场景全过、非回复工具 11.0 vs 14.0(g 两臂都静默,只差相对条件)⇒ 无回归且结构上更好,翻默认。⑤ 残留:strict 下 codex 拒所有 MCP ⇒ daemon 的附件调不成(文字照发),要修得给 wechat MCP 配 approve —— 属于重评 bypass,§8 写明不在本稿;主人默认模型 `gpt-6.1-sol` 在 CLI 0.153.4 + ChatGPT 账号下被服务端拒(版本耦合,与本步无关,另记)。
 - 2026-10-03:第 3 步(Cursor)接线完成,**Cursor 翻 `daemon`**(数据见 `reference/reply-once-experiment.md`「第 3 步」)。落地时与稿子不一样 / 稿子没写到的几处:① **工具表**:Cursor 的 wechat MCP 是逐会话注入的(`acpMcpServersFor` 把 `wechatStdioMcpSpec('cursor')` 的 env 原样放进 `session/new` 的 `mcpServers`),所以翻开关不用改写任何静态配置,重启后新会话即是新工具表;会话令牌里有 chat,附件直接挂本轮,不需要 agy 的按轮绑定。② **闸门不连模型**:Cursor 的真 API 没法沙盒化(连 Cursor 的服务、用主人的登录与额度),而主人额度用完了 —— §5.8(1)「真模型、假工具」改成「同一个模型行为的剧本 + 照 2026-09-17 真机报文形状演的假 `cursor-agent acp`(`src/core/acp/scripted-agent.ts`)+ 生产的 ACP 客户端 / 协调器 / 交付运行时」,每个场景跑三种外部条件(身份照真机 / CLI 不带身份 / strict 权限)。场景 b 不适用(量的是自研循环接历史,剧本演不出)。这一臂衡量的是交付管道,不是模型 —— 「Cursor 会不会把结论写在最后一段」留到额度回来用真模型补。③ **决定**:legacy 在身份照真机时没坏;CLI 不带身份 ⇒ 双发 5 次、旁白外泄 3 次;strict 下 reply 调用被拒仍算「回过了」⇒ 3/3 轮主人什么都没收到(稿子没写到的又一种症状);私聊 `NO_REPLY` 被 FALLBACK 原样发出。daemon 在三种条件下都 0 双发 / 0 外泄 / 0 吞话,适用场景全过(g 只差相对基线那条,与 agy 同)⇒ 无回归且结构上更好,翻默认;双发的结构性消失由 `conversation-coordinator.cursor-delivery.test.ts` 用生产 ACP 客户端证明(含回放真机 c1)。④ 两臂共有、不是本步引入的:Cursor 把自己的报错(「Agent Looping Detected」)写进助理消息、stopReason 仍是 end_turn ⇒ 会被当回复发出,另做。
 - 2026-10-03:第 2 步(agy)接线完成、闸门两臂打平 ⇒ agy 先 `shadow`(数据见 `reference/reply-once-experiment.md`「第 2 步」)。落地时与稿子不一样 / 稿子没写到的几处:① **静态 MCP 配置跟着开关走**:agy 的工具表是 daemon 开机写进全局 `mcp_config.json` 的,`wechatStdioMcpSpec('agy')` 在 daemon 模式带 `WECHAT_REPLY_DELIVERY=daemon`,`setupAgyGlobalMcp` 按内容变化改写条目;agy 每轮新进程、启动时读 ⇒ 翻开关 = 改能力表或 agent-config + 重启 daemon(集成测试用文件里写出的 env 起子进程核对工具表)。② **共享令牌的附件绑到本轮**:`agy-static` 令牌里没有 chat,daemon 模式下 dispatcher 按「agy 此刻正在跑的那一轮」认聊天(`ReplyDeliveryRuntime.turnChatFor`):`/v1/turn/attach` 挂到那一轮;发送类路由的 #199 豁免取消,只许那个聊天;没有轮 / 两个聊天并发 ⇒ 拒(`ambiguous_turn`,不猜)。记忆、提醒的范围门不在这一步改(agy-static 在那里一直是拒的),写进 `internal-api-auth.md`。③ **双发旁白**:daemon 模式下交付不再看 tool_call 认不认得出来,结构性消失;`conversation-coordinator.agy-delivery.test.ts` 用没登记过的命名空间证明(legacy 复现双发,daemon 只交付一次)。④ §5.3「不给 `--dangerously-skip-permissions`」在沙盒里做不到:agy 1.2.16 的 print 模式不带它就软拒每一次 MCP 调用,两臂都量不到生产;改为保留它 + `--sandbox` + 临时工作区 + 不继承任何全局定制的工作区 agent + 全假工具。⑤ **决定**:闸门 a–i 两臂都过(g 只差「比基线高 40pp」的相对条件 —— agy 的 legacy 推送本来就 3/3 不发),daemon 无回归、非回复工具更少(10.3 vs 15.0),但 harness 能量到的故障点上两臂打平(legacy 的双发早被命名空间折叠修住),按「daemon 在故障点上明显好于 legacy 才翻」的约定不翻,先 shadow 攒 `[REPLY_SHADOW]`;翻的理由(结构性去掉双发的依赖、关掉共享令牌的跨 chat 豁免)由测试证明,留给维护者定,翻只改一行。
