@@ -247,6 +247,91 @@ describe('daemon × /both(parallel)', () => {
   })
 })
 
+/** /both、/chat 的扇出夹具:每家一个 provider,事件按 provider 给;交付模式按 provider 注入。 */
+function fanout(kind: 'parallel' | 'chatroom', events: Record<string, AgentEvent[] | ((prompt: string) => AgentEvent[])>, modeFor: (id: string) => ReplyDeliveryMode, port: ReplyDeliveryPort, extra: Partial<ConversationCoordinatorDeps> = {}) {
+  const registry = createProviderRegistry()
+  const names: Record<string, string> = { openai: 'Qwen', claude: 'Claude', codex: 'Codex' }
+  const ids = Object.keys(events)
+  for (const id of ids) registry.register(id, { spawn: async () => makeFakeSession({ events: [] }) }, { displayName: names[id] ?? id, canResume: () => false })
+  const sendAssistantText = vi.fn(async (_c: string, _t: string) => {})
+  const records: TurnRecord[] = []
+  const c = createConversationCoordinator({
+    resolveProject: () => ({ alias: 'a', path: '/p' }),
+    manager: {
+      acquire: vi.fn(async (req: { providerId: string }) => {
+        const ev = events[req.providerId]!
+        return {
+          alias: 'a', path: '/p', providerId: req.providerId, lastUsedAt: 0, close: async () => {},
+          dispatch: (prompt: string) => makeFakeSession({ events: typeof ev === 'function' ? ev(prompt) : ev }).dispatch(prompt),
+        }
+      }),
+    } as never,
+    conversationStore: { get: () => ({ mode: { kind, participants: ids } as Mode }), set: vi.fn(), setParticipants: vi.fn() },
+    registry, defaultProviderId: 'claude', format: (m) => m.text, permissionMode: 'strict',
+    loadAccess: () => ({ dmPolicy: 'allowlist', allowFrom: [], admins: ['chat-1'] }), log: () => {},
+    sendAssistantText, recordTurn: (r) => { records.push(r) },
+    replyDelivery: port, replyDeliveryModeFor: modeFor, replyTextStrategyFor: (id) => id === 'openai' ? 'all_segments' : 'last_segment',
+    ...extra,
+  })
+  return { c, sendAssistantText, records }
+}
+
+describe('/both、/chat 的 TurnRecord 记交付列(spec §4.10,和 solo 一样)', () => {
+  const evs: AgentEvent[] = [{ kind: 'text', text: '我想想' }, { kind: 'tool_call', server: 'wechat', tool: 'x' }, { kind: 'text', text: '选 A' }, RESULT]
+
+  it('/both:daemon 参与者的记录带 delivery / bubbles / attachments / narrationSegments;legacy 参与者不带', async () => {
+    const p = fakePort({ delivery: 'text', bubbles: 1, attachmentsSent: 1 })
+    const t = fanout('parallel', { openai: evs, claude: evs }, (id) => id === 'openai' ? 'daemon' : 'legacy', p.port)
+    await t.c.dispatch(inbound())
+    const byProvider = Object.fromEntries(t.records.map(r => [r.provider, r]))
+    expect(t.records).toHaveLength(2)
+    expect(byProvider.openai).toMatchObject({ mode: 'parallel', outcome: 'completed', delivery: 'text', bubbles: 1, attachments: 1, narrationSegments: 1 })
+    expect(byProvider.claude!.delivery).toBeUndefined()
+    expect(byProvider.claude).toMatchObject({ mode: 'parallel', outcome: 'completed' })
+  })
+
+  it('/both:daemon 参与者出错 ⇒ abandon、不交付,记录照样一条(不带交付列)', async () => {
+    const p = fakePort()
+    const t = fanout('parallel', { openai: [{ kind: 'text', text: '半句' }, { kind: 'error', message: 'boom', code: 'provider_error' }], claude: evs }, () => 'daemon', p.port)
+    await t.c.dispatch(inbound())
+    expect(p.abandoned).toEqual(['provider_error'])
+    const rec = t.records.find(r => r.provider === 'openai')!
+    expect(rec).toMatchObject({ outcome: 'error' })
+    expect(rec.delivery).toBeUndefined()
+    expect(t.records.find(r => r.provider === 'claude')).toMatchObject({ delivery: 'text', narrationSegments: 1 })
+  })
+
+  it('/chat:daemon 发言人经端口交付(context=chatroom、[名字] 由 daemon 加),旁白不发;#RANK 先剥掉;每一拍的记录都带交付列', async () => {
+    const p = fakePort({ delivery: 'text', bubbles: 1 })
+    // 互驳拍的提示里要求交 `#RANK:` 票;开场拍没有。
+    const beat = (prompt: string): AgentEvent[] => prompt.includes('#RANK')
+      ? [{ kind: 'text', text: '我看了一下' }, { kind: 'tool_call', server: 'x', tool: 'y' }, { kind: 'text', text: '反驳:A 忽略了成本\n#RANK: B > A' }, RESULT]
+      : evs
+    const t = fanout('chatroom', { claude: beat, codex: beat }, () => 'daemon', p.port)
+    await t.c.dispatch(inbound('A 还是 B?'))
+    // 开场两位 + 互驳两位(没有 haikuEval ⇒ 照常互驳)
+    expect(p.begun.length).toBe(4)
+    expect(p.begun.every(b => b.context === 'chatroom' && b.mode === 'daemon')).toBe(true)
+    expect(p.begun.map(b => b.participantLabel).sort()).toEqual(['Claude', 'Claude', 'Codex', 'Codex'])
+    // 开场:最后的话「选 A」,旁白「我想想」只记段数
+    expect(p.delivered.slice(0, 2)).toEqual([{ finalText: '选 A', narration: ['我想想'] }, { finalText: '选 A', narration: ['我想想'] }])
+    // 互驳:#RANK 行在交付之前就被剥掉
+    for (const d of p.delivered.slice(2)) expect(d.finalText).toBe('反驳:A 忽略了成本')
+    expect(t.sendAssistantText).not.toHaveBeenCalled()
+    expect(t.records).toHaveLength(4)
+    for (const r of t.records) expect(r).toMatchObject({ mode: 'chatroom', outcome: 'completed', delivery: 'text', bubbles: 1, attachments: 0, narrationSegments: 1 })
+  })
+
+  it('/chat:legacy 发言人照旧拼全部文字一条发,记录不带交付列', async () => {
+    const p = fakePort()
+    const t = fanout('chatroom', { claude: evs, codex: evs }, () => 'legacy', p.port)
+    await t.c.dispatch(inbound('A 还是 B?'))
+    expect(p.begun).toEqual([])
+    expect(t.sendAssistantText.mock.calls.map(c => (c as unknown[])[1])).toContain('[Claude] 我想想\n选 A')
+    for (const r of t.records) expect(r.delivery).toBeUndefined()
+  })
+})
+
 describe('按执行者类型分两种策略(2026-10-03 修订)', () => {
   it('聊天型模型(all_segments):不挂长任务进度 —— 每段都会交付', async () => {
     const p = fakePort()

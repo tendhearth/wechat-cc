@@ -246,13 +246,18 @@ describe('provider id single source', () => {
 })
 
 describe('replyDeliveryFor — 回复交付开关(spec §5.0,一家一家翻)', () => {
-  // 第 5 步(2026-10-03)之后五家都是 daemon;只剩已 deprecated 的 gemini(API key 版,2026-09-27 起由 agy 接替,
-  // 不在 spec ⑧ 的迁移序列里)仍是 legacy —— 删 legacy 路径之前要么迁、要么连 provider 一起删(spec §5.7)。
-  it('迁移序列的五家都是 daemon;其余(只剩 deprecated 的 gemini)仍是 legacy', async () => {
+  // 第 5 步(2026-10-03)之后五家都是 daemon;deprecated 的 gemini(API key 版)2026-10-04 按 spec §5.7「二选一」
+  // 迁到 daemon(聊天型,和 openai 同形状)⇒ 每一家注册过能力表的 provider 都不再默认 legacy,legacy 只剩回滚用途。
+  it('每一家都是 daemon(迁移序列五家 + gemini);没有默认走 legacy 的 provider', async () => {
     const { replyDeliveryFor, capabilityProviderIds } = await import('./capability-matrix')
-    const migrated = new Set(['openai', 'agy', 'cursor', 'codex', 'claude'])
-    for (const p of capabilityProviderIds()) expect(replyDeliveryFor(p), p).toBe(migrated.has(p) ? 'daemon' : 'legacy')
-    expect(capabilityProviderIds().filter(p => !migrated.has(p))).toEqual(['gemini'])
+    for (const p of capabilityProviderIds()) expect(replyDeliveryFor(p), p).toBe('daemon')
+    expect(capabilityProviderIds()).toContain('gemini')
+  })
+
+  it('gemini:daemon(2026-10-04,收尾前的二选一),聊天型全部文字段', async () => {
+    const { replyDeliveryFor, replyTextStrategyFor } = await import('./capability-matrix')
+    expect(replyDeliveryFor('gemini')).toBe('daemon')
+    expect(replyTextStrategyFor('gemini')).toBe('all_segments')
   })
 
   // 第 1 步的闸门(reply-once harness,2026-10-03,见 docs/reference/reply-once-experiment.md)没过 c / d / g
@@ -298,6 +303,7 @@ describe('replyTextStrategyFor — 按执行者类型(2026-10-03 修订)', () =>
     const { replyTextStrategyFor } = await import('./capability-matrix')
     expect(replyTextStrategyFor('openai')).toBe('all_segments')
     expect(replyTextStrategyFor('agy')).toBe('all_segments')
+    expect(replyTextStrategyFor('gemini')).toBe('all_segments')
     for (const p of ['claude', 'codex', 'cursor'] as const) expect(replyTextStrategyFor(p)).toBe('last_segment')
     expect(replyTextStrategyFor('no-such' as never)).toBe('last_segment')
   })
@@ -311,7 +317,7 @@ describe('replyDeliveryFor × 运行时覆盖(agent-config reply_delivery)', () 
       setReplyDeliveryOverrides({ openai: 'legacy', claude: 'shadow' })
       expect(replyDeliveryFor('openai')).toBe('legacy')
       expect(replyDeliveryFor('claude')).toBe('shadow')
-      expect(replyDeliveryFor('gemini')).toBe('legacy')
+      expect(replyDeliveryFor('gemini')).toBe('daemon') // 没写进覆盖的照旧读能力表
     } finally { setReplyDeliveryOverrides(undefined) }
     expect(replyDeliveryFor('openai')).toBe(before)
   })

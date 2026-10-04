@@ -26,9 +26,9 @@ daemon 的内部 HTTP API 只监听 127.0.0.1,地址与 token 文件路径写在
 | `link` | 微信里要来的设置链接(`/set?t=…`,`t` + 32 hex) | `admin` | **有**:`PHONE_ROUTES`(`src/daemon/phone-routes.ts`),只对手机面板生效 | 只在内存;10 分钟过期,同一时刻只一枚 |
 | `device` | 配对过的手机(`d` + 48 hex,加主屏后一直用) | `admin` | **有**:同上 | `settings-devices.json`(0600,≤ 20 台);永不过期,可按台撤销 |
 
-## 发送类路由的 chat 范围(2026-10-03)
+## 发送类路由的 chat 范围(2026-10-03 起;2026-10-04 收紧到 admin)
 
-第三道门,只管**往某个 chat 发 / 改消息**的路由,只管 `session` 令牌。代码:`src/daemon/internal-api/send-scope.ts`(`SEND_SCOPED_ROUTES` + `sendScopeDenial`),在 dispatcher(`index.ts`)里 schema 校验之后、handler 之前执行 —— 被拒的请求碰不到 App 回复截流口(reply sink)、打猎旁听、分片和 ilink。
+第三道门,只管**往某个 chat 发 / 改消息**的路由,只管 `session` 令牌。代码:`src/daemon/internal-api/send-scope.ts`(`SEND_SCOPED_ROUTES` + `sendScopeDecision`),在 dispatcher(`index.ts`)里 schema 校验之后、handler 之前执行 —— 被拒的请求碰不到 App 回复截流口(reply sink)、打猎旁听、分片和 ilink。
 
 | 路由 | 目标 |
 |---|---|
@@ -36,12 +36,17 @@ daemon 的内部 HTTP API 只监听 127.0.0.1,地址与 token 文件路径写在
 | `share/page` | 请求体 `chat_id`(决定「发 PDF 到微信」推给谁;不带就不设门) |
 | `conversation/set-mode` | 请求体 `chatId`(切那个 chat 的模式,并往那里发「已切换」) |
 | `wechat/broadcast` | 所有 chat |
+| `wechat/message`(admin 级路由,回复交付 spec §4.6) | 请求体 `to`:`broadcast` ⇒ 所有 chat;`owner` ⇒ 不设门(路由自己解析成主人聊天);其余就是那个 chat_id |
 
 规则:
 
-- `session` 令牌(sessionKey = `provider/alias/chatId`):`guest` / `trusted` 只能以自己的 chat 为目标;broadcast 只许 `admin` 会话。非 admin 的 session 读不出 chat ⇒ 拒(fail closed)。
-- **admin(主人自己的)会话跨 chat 暂时放行**,每次记一条 `chat_scope_admin_cross` 日志(本会话 chat、目标、路由),用来统计这个用法。原因:主人会直接让 CC「帮我告诉某个访客……」,这是模型发起的 reply 到别的 chat,代码里没有对应调用点,一拦就断。**收紧时间点**:回复交付重构做出 admin 专用的 `message` 工具之后,reply 收紧到只能发本 chat(回复交付 spec §5)。代码里的其它跨 chat 发送都不经过这些路由:提醒本来就按本 chat 限(`routes-reminders.ts`,任何档);社交 / A2A / 串门 / 主动关怀走各自路由或 daemon 内部直接调 ilink;App 通道的 sink 开在主人 chat 上、会话也是主人 chat 的;主动关怀推送会话按目标 chat 起。
-- 放行期间,admin 会话往主人 chat 开着的 App sink 里写也算「跨 chat」(同一个主人,记日志)。guest / trusted 写不进别的 chat 的 sink。
+- `session` 令牌(sessionKey = `provider/alias/chatId`):**所有档**(`guest` / `trusted` / `admin`)都只能以自己的 chat 为目标;broadcast 只许 `admin` 会话。非 admin 的 session 读不出 chat ⇒ 拒(fail closed)。
+- **跨 chat 只有一条路:admin 专用的 `message` 工具**(`POST /v1/wechat/message`,`CROSS_CHAT_ROUTE`)。admin 会话经它发往别的 chat ⇒ 放行,记一条 `chat_scope_admin_cross`(本会话 chat、目标、路由)作审计;`to` 等于本轮聊天 ⇒ 路由自己报 `message_to_own_chat`(本轮要说的话写在最后,daemon 会发)。`message` 只注册给 admin 会话(wechat MCP 的 `SESSION_IS_ADMIN`),daemon 执行者里 openai / Cursor / Codex / Claude / gemini 的 owner 会话都有(`integration.test.ts` 逐家核对);agy 钉死 trusted,没有。
+- **admin 会话用 reply 族 / share / set-mode 发往别的 chat ⇒ 403**,message 里明说什么都没发出去、并提示「去别的聊天用 `message` 工具」(`ADMIN_CHAT_SCOPE_MESSAGE`);日志 `chat_scope_denied`(`caller=admin`)。
+- **历史与收紧依据**:#199(2026-10-03)起 admin 会话跨 chat 暂时放行 + 记 `chat_scope_admin_cross`,理由是主人会直接让 CC「帮我告诉某个访客……」而那时只有 reply 能做到。2026-10-04 `message` 已在每一家给 owner 会话的 daemon 工具表里 ⇒ 按计划收紧。收紧前核对过主人机器:#199 部署之后 `channel.log` / `channel.log.jsonl` 里 `chat_scope_admin_cross` 是 **0 行**(`chat_scope_denied` 也是 0),没有正在用的路被拦断。
+- 代价(写明):回滚到 legacy 的那一家(agent-config `reply_delivery`)没有 `message` 工具(只在 daemon 工具表里注册)⇒ 回滚期间那家的 owner 会话没法往别的聊天发;主人可以自己在那个聊天里说、或用桌面 / CLI。
+- 代码里的其它跨 chat 发送都不经过这些路由:提醒本来就按本 chat 限(`routes-reminders.ts`,任何档);社交 / A2A / 串门 / 主动关怀走各自路由或 daemon 内部直接调 ilink;App 通道的 sink 开在主人 chat 上、会话也是主人 chat 的;主动关怀推送会话按目标 chat 起。
+- guest / trusted / admin 都写不进别的 chat 开着的 App sink。
 - `file` / `operator` / `device` / `link` 令牌不受这道门影响(daemon 内部、CLI、桌面宿主;operator 本来就被 routeAllow 框住,够不着这些路由)。
 - `agy-static`:所有 agy 对话共用这一枚 trusted 令牌,令牌里读不出「自己的 chat」。
   - agy 走 `legacy` / `shadow`(用 reply 工具说话):照旧放行。它与 trusted 的 file 令牌同级(同样落盘、同样跨对话),补偿控制仍是 `/agy` 拒 guest。
@@ -51,7 +56,7 @@ daemon 的内部 HTTP API 只监听 127.0.0.1,地址与 token 文件路径写在
 - 诚实的边界:对 `trusted` 会话这只是纵深防御 —— trusted agent 有 shell,能读 file 令牌(trusted、不限 chat)。真正被这道门挡住的是 guest 会话(没有 shell、拿不到 file 令牌)。
 - wechat MCP 侧把模型给的 chat_id 原样转发,不替换成本会话的 chat(替换会把越界尝试藏起来);`integration.test.ts` 钉住了这一点。
 
-新加一条往某个 chat 发消息、guest / trusted 够得着的路由:登记进 `SEND_SCOPED_ROUTES`,或在 `send-scope.test.ts` 的豁免表里写明理由。
+新加一条往某个 chat 发消息、guest / trusted 够得着的路由:登记进 `SEND_SCOPED_ROUTES`,或在 `send-scope.test.ts` 的豁免表里写明理由。新加的路由默认就是「admin 也只许本 chat」;要让会话跨 chat,只能扩 `message`,不要再开第二条路。
 
 ## 新加一条路由要登记几处
 

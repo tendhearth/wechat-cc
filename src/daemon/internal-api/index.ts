@@ -282,10 +282,10 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       ...(sharedTurn ? { sharedTurn: sharedTurn.kind, ...(turnChatId ? { turnChatId } : {}) } : {}),
     }
 
-    // Chat-scope gate for the send family (send-scope.ts, 2026-10-03): a
-    // guest/trusted session may only send to / edit in its OWN chat;
-    // admin sessions crossing chats are allowed for now but logged
-    // (chat_scope_admin_cross); broadcast: admin sessions only. Runs after schema validation and BEFORE the handler,
+    // Chat-scope gate for the send family (send-scope.ts): a session of ANY
+    // tier may only send to / edit in its OWN chat (tightened 2026-10-04 for
+    // admin too); the one cross-chat path is the admin-only `message` route,
+    // allowed and logged (chat_scope_admin_cross); broadcast: admin sessions only. Runs after schema validation and BEFORE the handler,
     // so a denied request never reaches the App reply sink, the outbound
     // tap, or ilink. File / operator tokens are not affected.
     const sendTarget = SEND_SCOPED_ROUTES[routeKey]
@@ -293,7 +293,7 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
       const target = sendTarget(body)
       const decision = sendScopeDecision(target, sharedTurn
         ? { tier: caller.tier, origin: caller.origin, chatId: turnChatId, sessionKey: caller.sessionKey, sharedTokenBound: true }
-        : { ...callerInfo, sessionKey: caller.sessionKey })
+        : { ...callerInfo, sessionKey: caller.sessionKey }, routeKey)
       const targetLabel = target === ALL_CHATS ? '*' : target
       if (decision.kind === 'deny') {
         const own = sharedTurn ? (turnChatId ?? `-(agy-static turn=${sharedTurn.kind})`) : (callerChatId ?? '-')
@@ -305,7 +305,7 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
         return send(res, 403, { error: 'chat_scope', message: decision.message }, origin)
       }
       if (decision.kind === 'admin_cross') {
-        // 暂时放行(send-scope.ts):记下来,统计主人「帮我告诉某人」的用量。
+        // `message` 跨 chat(send-scope.ts):放行,记一笔审计 —— 主人「帮我告诉某人」的用量。
         deps.log?.('INTERNAL_API', `${routeKey} admin cross-chat own=${callerChatId ?? '-'} target=${targetLabel}`, {
           event: 'chat_scope_admin_cross', path: routeKey, callerChat: callerChatId ?? null, target: targetLabel,
         })
