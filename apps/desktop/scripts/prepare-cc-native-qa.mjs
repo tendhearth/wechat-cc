@@ -9,7 +9,8 @@ export function prepareNativeQA(destination = join(qa, 'dist')) {
   rmSync(destination, { recursive: true, force: true })
   mkdirSync(destination, { recursive: true })
   for (const name of ['cc-native-qa.html', 'cc-native-qa.css', 'cc-native-qa.js']) cpSync(join(qa, name), join(destination, name))
-  cpSync(join(desktop, 'src/companion-window.css'), join(destination, 'companion-window.css'))
+  for (const name of ['companion-window.css', 'tokens.css', 'fonts.css']) cpSync(join(desktop, 'src', name), join(destination, name))
+  cpSync(join(desktop, 'src/fonts'), join(destination, 'fonts'), { recursive: true })
   cpSync(join(desktop, 'src/pet'), join(destination, 'pet'), {
     recursive: true, filter: path => statSync(path).isDirectory() || path.endsWith('.js'),
   })

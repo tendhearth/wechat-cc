@@ -17,8 +17,9 @@
 .cc-recollections button,.cc-life-redirect button{font:inherit;cursor:pointer;color:var(--th-accent);background:var(--th-paper);border:1px solid var(--th-hair);border-radius:12px;padding:10px 16px}
 .cc-life-kicker{font-size:var(--th-size-meta);letter-spacing:.12em;color:var(--th-ink-soft)}
 .cc-recollections{padding:40px clamp(22px,6vw,100px);color:var(--th-ink)}
-.cc-recollections header h1{font-size:var(--th-size-title);margin:12px 0}
-.cc-recollections header p,.cc-life-note{font-size:var(--th-size-body);color:var(--th-ink-soft);line-height:1.8}
+.cc-recollections header h1{font-size:var(--th-size-title);line-height:var(--th-lh-title);font-weight:var(--th-weight-title);margin:var(--th-space-m) 0 var(--th-space-s)}
+.cc-recollections header p{margin:0;font-size:var(--th-size-body);color:var(--th-ink-soft);line-height:var(--th-lh-body)}
+.cc-life-note{font-size:var(--th-size-body);color:var(--th-ink-soft);line-height:1.8}
 .cc-memory-tabs{display:flex;flex-wrap:wrap;gap:10px;margin:30px 0}
 /* 回忆里的两排选择(分类标签 + 明信片筛选)只用一种选中样子:墨色字 + rail 底;没选中 = 浅墨字、无框无底(终审 R3,与侧栏、工作台历史筛选同一套) */
 .cc-memory-tabs button,.cc-recollections .pc-toolbar button{background:transparent;border-color:transparent;color:var(--th-ink-soft)}

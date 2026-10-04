@@ -106,6 +106,7 @@
 .wb-message time { color:var(--th-ink-soft); font-size:var(--th-size-caption); }
 .wb-provider-badge { color:var(--wb-secondary); font-weight:500; }
 .wb-message-body { margin:7px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--wb-text); font-size:var(--th-size-body); line-height:1.8; }
+.wb-message[data-kind=text] .wb-message-body { font-family:var(--th-font-reading); }
 .wb-markdown { white-space:normal; }
 .wb-markdown>:first-child { margin-top:0; }
 .wb-markdown>:last-child { margin-bottom:0; }
@@ -385,12 +386,12 @@
 .wb-history-meta,.wb-history-note { color:var(--th-ink-soft); font-size:var(--th-size-small); }.wb-history-error { color:var(--th-bad); font-size:13px; }
 .wb-history-body>h3 { margin:16px 0 8px; font-size:var(--th-size-item); font-weight:500; overflow-wrap:anywhere; }
 .wb-history-dialog details { font-size:var(--th-size-small); color:var(--th-ink-soft); overflow-wrap:anywhere; }
-.wb-history-message { width:100%; max-width:70ch; min-width:0; margin:24px auto; font-size:var(--th-size-body); line-height:1.8; }
+.wb-history-message { width:100%; max-width:70ch; min-width:0; margin:24px auto; font-size:var(--th-size-body); line-height:var(--th-lh-body); }
 .wb-history-message+.wb-history-message { padding-top:24px; border-top:1px solid var(--th-hair); }
 .wb-history-message-author { margin-bottom:8px; color:var(--th-ink-soft); font-size:var(--th-size-small); font-weight:500; line-height:var(--th-lh-small); }
 .wb-history-message-user .wb-history-message-author { color:var(--th-ink); }
 .wb-history-message-body { min-width:0; color:var(--th-ink); overflow-wrap:anywhere; }
-.wb-history-message-body.wb-markdown { white-space:normal; }
+.wb-history-message-body.wb-markdown { font-family:var(--th-font-reading); white-space:normal; }
 .wb-history-message-body strong { color:inherit; font-size:inherit; font-weight:500; }
 .wb-history-message-body.wb-markdown :is(h1,h2,h3,h4,h5,h6) { font-weight:500; overflow-wrap:anywhere; }
 .wb-history-message-body.wb-markdown :is(p,ul,ol,blockquote,pre,table) { margin:.85em 0; }

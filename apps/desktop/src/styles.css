@@ -1851,17 +1851,17 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
   font-size: 14px;
   font-weight: 500;
 }
-.dialogue-turn p { margin: 0 0 12px; color: var(--th-ink); font-size: 13px; line-height: 1.75; }
+.dialogue-turn p { margin: 0 0 12px; color: var(--th-ink); font-size: var(--th-size-body); line-height: var(--th-lh-body); }
 .dialogue-turn ol { margin: 0 0 14px; padding-left: 20px; color: var(--th-ink); }
-.dialogue-turn li { margin-bottom: 4px; font-size: 13px; line-height: 1.7; }
+.dialogue-turn li { margin-bottom: 4px; font-size: var(--th-size-body); line-height: var(--th-lh-body); }
 .dialogue-turn strong { color: var(--th-ink); font-weight: 500; }
-.dialogue-message-text { min-width:0; max-width:70ch; font-size:var(--th-size-body); line-height:var(--th-lh-body); overflow-wrap:anywhere; }
+.dialogue-message-text { min-width:0; max-width:70ch; font-family:var(--th-font-reading); font-size:var(--th-size-body); line-height:var(--th-lh-body); overflow-wrap:anywhere; }
 .dialogue-message-plain,.dialogue-cmd { white-space:pre-wrap; }
 
 /* Full assistant replies and discussion excerpts share one reading layout. */
 .cc-readable-markdown.wb-markdown {
   --wb-line:var(--th-hair); --wb-secondary:var(--th-ink-soft); --wb-muted:var(--th-ink-soft);
-  min-width:0; max-width:70ch; color:var(--th-ink); font-size:var(--th-size-body); line-height:var(--th-lh-body);
+  min-width:0; max-width:70ch; color:var(--th-ink); font-family:var(--th-font-reading); font-size:var(--th-size-body); line-height:var(--th-lh-body);
   white-space:normal; overflow-wrap:anywhere;
 }
 .cc-readable-markdown.wb-markdown :is(p,ul,ol,blockquote,pre,table) { margin:.85em 0; }
@@ -1870,7 +1870,6 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .cc-readable-markdown.wb-markdown h1 { font-size:1.2em; }
 .cc-readable-markdown.wb-markdown h2 { font-size:1.1em; }
 .cc-readable-markdown.wb-markdown strong { display:inline; color:inherit; font-size:inherit; font-weight:500; }
-.wb-markdown :is(strong,b) { background:var(--th-hair); -webkit-box-decoration-break:clone; box-decoration-break:clone; }
 .cc-readable-markdown.wb-markdown li+li { margin-top:.3em; }
 .cc-readable-markdown.wb-markdown>:first-child { margin-top:0; }
 .cc-readable-markdown.wb-markdown>:last-child { margin-bottom:0; }
@@ -1878,7 +1877,8 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .cc-readable-markdown.wb-markdown pre code { white-space:inherit; overflow-wrap:inherit; word-break:inherit; }
 .cc-readable-markdown.wb-markdown table { max-width:100%; font-size:.875em; overflow-wrap:normal; word-break:normal; }
 .cc-readable-markdown.wb-markdown :is(th,td) { min-width:6em; }
-.cc-user-reading { min-width:0; max-width:100%; white-space:normal; }
+.cc-user-reading { min-width:0; max-width:100%; font-family:var(--th-font-sans); white-space:normal; }
+.cc-user-reading .cc-readable-markdown.wb-markdown { font-family:var(--th-font-sans); }
 .cc-user-plain { white-space:pre-wrap; overflow-wrap:anywhere; }
 .cc-message-source { margin-top:8px; font-size:12px; line-height:1.6; color:var(--th-ink-soft); white-space:normal; }
 .cc-message-source>summary { width:fit-content; cursor:pointer; list-style:none; }

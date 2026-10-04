@@ -175,11 +175,12 @@
 
 ## 10. 桌面字体修订(2026-10-04 主人确认)
 
-主人对照 Claude 桌面截图认为 CC 字体过大、阅读不舒服,确认将桌面界面与聊天改为无衬线,并追加「英文也对齐」。此条覆盖本 spec 的桌面全局衬线要求;原生手机字体方案保留。
+主人对照 Claude 桌面截图认为 CC 字体过大、阅读不舒服,确认缩小界面字号、中文改为无衬线,并追加「英文也对齐」及统一样式。随后实看本机 Claude 2.19675.0:界面用 Anthropic Sans,聊天字体设置为 Anthropic Serif,已有 Cowork 对话也使用英文衬线。桌面依用途分配字体,此条覆盖本 spec 的桌面全局衬线要求;原生手机字体方案保留。
 
-- 英文优先引用本机已安装的 Anthropic Sans,normal / italic 只声明界面使用的 400–500 可变字重,延续克制的字重规则。macOS 中文使用苹方(PingFang SC);缺少 Anthropic Sans 的设备继续使用本地系统与 CJK 无衬线回退。字体栈仍从 design-tokens 生成,仓库与安装包不包含或下载 Claude 的字体。
-- 当前机器以 `~/Library/Fonts/CC-Claude-AnthropicSans{,-Italic}.woff2` 符号链接引用已安装 Claude 2.16120.0 的界面 WOFF2,通过 CoreText 注册为个人字体;常规与斜体的 PostScript 名分别为 `AnthropicSansVariable-TextLight`、`AnthropicSansVariable-TextLightItalic`。此为本机设置,不入库;Claude 更新后若移除原资源,重新注册当前字体即可,缺失时界面自动回退。
-- 侧栏导航 14px / 1.5;聊天正文 16px / 1.6,用户气泡沿用 15px / 1.6。输入框、待办、设置与阅读面板统一使用界面字体。
+- 界面英文与用户消息引用本机 Anthropic Sans;助手回复与历史阅读的英文引用本机 Anthropic Serif。normal / italic 只声明实际使用的 400–500 可变字重,延续克制的字重规则。macOS 中文使用苹方(PingFang SC);缺少本机字体时,界面回退系统无衬线,英文阅读回退已打包的 TH Serif 4,中文仍走系统 CJK 无衬线。两个角色的字体栈均从 design-tokens 生成,仓库与安装包不包含或下载 Claude 字体。
+- 当前机器以 `~/Library/Fonts/CC-Claude-Anthropic{Sans,Serif}{,-Italic}.woff2` 符号链接引用已安装 Claude 2.19675.0 的 WOFF2,通过 CoreText 注册为个人字体。CSS 引用常规与斜体的 `Anthropic{Sans,Serif}Variable-TextLight{,Italic}`;实际 400 / 500 渲染实例分别为 TextRegular / TextMedium。此为本机设置,不入库;Claude 更新后若移除原资源,重新注册当前字体即可,缺失时自动回退。
+- 侧栏导航 14px / 1.5;聊天与历史正文 16px / 1.6,纯文本用户气泡沿用 15px / 1.6。工作台任务正文保留适合长阅读的 1.8 行距,英文阅读字体与聊天一致。输入框、待办、设置与生活记录面板使用界面字体;用户 Markdown 也明确使用 Sans。
+- 回忆、待办与觅食标题统一为 22px / 1.3 / 400,回忆标题与说明使用一致间距。正文强调用 500 字重,移除统一底色。桌面陪伴窗口与独立 QA 入口加载相同字体角色;代码与权限原文继续等宽。
 - 桌面品牌字(侧栏与引导)保留 TH Serif 4;代码继续使用 Geist Mono。
 - 验证使用独立工作区内的既有样式检查、Bun / Node 测试、类型与模块边界检查,并用 dry-run 演示数据核对宽、窄窗口。安装包需重新构建,共享安装与部署仍由指定整合者串行完成。
 
@@ -188,3 +189,5 @@
 验证(2026-10-04):`bun run test --maxWorkers=4` 11699 通过 / 14 跳过;`npm run test:node -- --maxWorkers=4` 10009 通过 / 18 跳过;`bun run typecheck` 通过;`bun run depcheck` 0 错误 / 21 警告;独立 dry-run 的 `design-shots.spec.ts` 宽、窄、离线 3 项通过。首次同时跑全套与出图时,两个子进程用例失败且字体资产测试触发页面热刷新;分开复测与最终全套均通过。浏览器确认导航和「生活与工具」为 14px / 21px、回复与输入框为 16px / 25.6px,中文实际字体为 PingFang SC;品牌字仍用 TH Serif 4。共享网页生成物仅多出尚未使用的无衬线变量。独立代码复核无剩余问题。
 
 英文追加验证(同日):Bun 全套 11699 通过 / 14 跳过、Node 全套 10009 通过 / 18 跳过、类型检查通过、模块边界 0 错误 / 21 既有警告、宽 / 窄 / 离线出图 3 项通过。实际渲染为 Anthropic Sans 的 TextRegular(400)、TextMedium(500)、TextRegularItalic;混排中文仍为 PingFang SC,代码仍为 Geist Mono。模拟本机缺少该字体时,英文正确回退 SF NS,中文保持苹方。首次声明 300–800 被既有字重守卫拒绝,收窄为 400–500 后全套通过;未放宽守卫。共享网页生成物的三处差异均仅为未使用的 sans 别名,独立复核无剩余问题。
+
+阅读与样式收口验证(同日):最终 Bun 全套 11699 通过 / 14 跳过、Node 全套 10009 通过 / 18 跳过、类型检查通过、模块边界 0 错误 / 21 既有警告。回忆、觅食、待办与对话的既有浏览器交互检查 42 项通过,包含宽窄窗口及完整阅读面板。独立渲染检查确认英文回复为 Anthropic Serif 的 TextRegular / TextMedium / TextRegularItalic,用户消息为 Anthropic Sans TextRegular,中文仍为 PingFang SC,代码为 Geist Mono;工作台任务正文使用 Serif / 16px / 1.8,历史阅读为 Serif / 16px / 1.6,用户 Markdown 为 Sans。默认未聚焦 composer 为 hair 边框,正文强调无底色;回忆标题为 22px / 1.3 / 400,伴随窗口已加载 Sans 与等宽字体依赖。模拟缺少本机 Claude 字体时英文阅读回退 TH Serif 4,中文仍为苹方。共享网页生成物的三处差异仅多出未使用的 reading 变量。独立代码与截图复核无剩余问题。首次 Bun 全套仅真实 Git 远端更新检查超时;该项单独复测 4.11s 通过,随后全套重跑通过,未改测试或超时。原生新 app 尚未构建安装,当前安装版仍为旧样式。
