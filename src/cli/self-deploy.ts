@@ -586,8 +586,9 @@ function sealApp(signing: SelfDeploySigning, deps: SelfDeployDeps): SelfDeploySt
 function kickstart(deps: SelfDeployDeps, plan: SelfDeployPlan, reason: string): SelfDeployStep {
   // 先留「计划内重启」纸条再 kickstart:部署/回滚是维护者故意的,新 daemon
   // 开机读到它就不在微信里播报(daemon/notify-startup.ts)。状态目录就是
-  // internal-api-info.json 所在的目录。
-  deps.markPlannedRestart?.(posixDirname(plan.infoPath), reason)
+  // internal-api-info.json 所在的目录。用 node 的 dirname 而不是 posixDirname:
+  // 后者只认 '/',遇到 win32 的反斜杠路径会退化成 '/',纸条就写错了地方(CI windows 抓到)。
+  deps.markPlannedRestart?.(dirname(plan.infoPath), reason)
   const r = deps.spawnSync('launchctl', ['kickstart', '-k', plan.serviceTarget], { windowsHide: true })
   if (r.status !== 0) return { name: 'restart', ok: false, detail: `launchctl kickstart exited ${r.status ?? 'null'}: ${r.stderr.trim()}` }
   return { name: 'restart', ok: true }

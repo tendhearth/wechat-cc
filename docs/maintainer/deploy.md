@@ -111,7 +111,7 @@ planned 纸条 10 分钟过期,只用一次。
 2. tccd 先查完全磁盘访问:`Failed to match existing code requirement for subject com.tendhearth.wechat-cc and service kTCCServiceSystemPolicyAllFiles` —— 系统设置里的勾是 09-28 换 Developer ID **之前**(ad-hoc,cdhash 当指定要求)勾的,对现在的签名不算数;
 3. 于是落到 `kTCCServiceSystemPolicyAppData`,它的「允许」按进程会话记(`Session scoped auth is invalid for client`),daemon 一重启就作废。
 
-代码侧:后台刷新先用不弹框的探针(打开 TCC.db,无 FDA 时静默 EPERM)确认有完全磁盘访问,没有就跳过并在 `/v1/health.fs_access.full_disk_access` / `doctor` 里说。主人侧**一次性**:系统设置 › 隐私与安全性 › 完全磁盘访问,把 wechat-cc 用「−」删掉、再「+」加回 `/Applications/wechat-cc.app` 并打开(只拨开关不会刷新旧的指定要求),然后重启 daemon。现在的指定要求是「identifier + Team ID」,之后换包、重签都不会再掉。
+代码侧:后台刷新先用不弹框的探针(打开 TCC.db,无 FDA 时静默 EPERM)确认有完全磁盘访问,没有就跳过并在 `/v1/health.fs_access.full_disk_access` / `doctor` 里说。主人侧**一次性**:系统设置 › 隐私与安全性 › 完全磁盘访问,把 Tendhearth CC(#218 之前的包显示为 wechat-cc)用「−」删掉、再「+」加回 `/Applications/wechat-cc.app` 并打开(只拨开关不会刷新旧的指定要求),然后重启 daemon。现在的指定要求是「identifier + Team ID」,之后换包、重签都不会再掉。
 
 ## 中继壳页 `relay/pset.html` 是生成物(2026-09-29)
 

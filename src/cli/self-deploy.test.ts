@@ -514,8 +514,8 @@ describe('executeSelfDeploy', () => {
     // 纸条落在 kickstart 之前(第 n 次 kickstart 时已有 n 张纸条)。
     expect(marks.map((m) => m.kickstartsSoFar)).toEqual([0, 1])
     // 状态目录 = internal-api-info.json 所在目录(daemon 开机读它的地方)。
-    expect(marks.every((m) => m.stateDir === h.plan.infoPath.slice(0, h.plan.infoPath.lastIndexOf('/')))).toBe(true)
-    expect(h.plan.infoPath.endsWith('/internal-api-info.json')).toBe(true)
+    // 用 join 回拼来比:win32 上路径是反斜杠,这条曾在 CI windows 上抓到纸条写到 '/' 的 bug。
+    expect(marks.map((m) => join(m.stateDir, 'internal-api-info.json'))).toEqual([h.plan.infoPath, h.plan.infoPath])
   })
 
   it('does not roll back when rollback:false', async () => {
