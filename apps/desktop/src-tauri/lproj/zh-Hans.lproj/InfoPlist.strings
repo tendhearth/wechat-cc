@@ -1,2 +1,12 @@
+/*
+  对用户显示的 app 名(程序坞、菜单栏、关于、通知、权限弹框)。
+  只是显示文案:.app 文件名(wechat-cc.app)、bundle id、CLI、路径仍是 `wechat-cc`。
+  Finder 肯用这里的名字,前提是 Info.plist 的基础 CFBundleDisplayName 仍与文件名一致、
+  且设了 LSHasLocalizedDisplayName。见 docs/reference/product-naming.md。
+  权限用途说明的中文版就是 Info.plist 里的基础值,这里不重复。
+*/
+"CFBundleDisplayName" = "Tendhearth CC";
+"CFBundleName" = "Tendhearth CC";
+
 /* macOS 申请麦克风权限时显示(桌面「语音输入」)。 */
 "NSMicrophoneUsageDescription" = "Tendhearth CC 需要使用麦克风,才能把你的「语音输入」转成文字。只在你点语音输入时录音。";

@@ -415,6 +415,14 @@ function tryRunCommands(commands: string[][]): { ok: true } | { ok: false; exitC
   return { ok: true }
 }
 
+/**
+ * 桌面 app 的 bundle id(apps/desktop/src-tauri/tauri.conf.json `identifier`)。写进 LaunchAgent 的
+ * AssociatedBundleIdentifiers,系统设置 › 通用 › 登录项(后台项目)与「已添加后台项目」通知就显示
+ * app 的显示名(Tendhearth CC)和图标,而不是 Label / 可执行文件名。只是归属声明:Label、plist
+ * 路径都是技术标识,不动(2026-10-04,docs/reference/product-naming.md)。
+ */
+export const DESKTOP_APP_BUNDLE_ID = 'com.tendhearth.wechat-cc'
+
 function launchAgentPlist(opts: { bunPath: string; binaryPath?: string; appBinaryPath?: string; cwd: string; runArgs: string[]; runAtLoad: boolean; logDir: string; bundledPluginsDir?: string }): string {
   // 优先级:app 主二进制(--daemon)> sidecar > bun + cli.ts(开发模式)。
   const argv = opts.appBinaryPath
@@ -463,6 +471,7 @@ function launchAgentPlist(opts: { bunPath: string; binaryPath?: string; appBinar
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>com.wechat-cc.daemon</string>
+  <key>AssociatedBundleIdentifiers</key><array><string>${DESKTOP_APP_BUNDLE_ID}</string></array>
   <key>ProgramArguments</key><array>
 ${argsXml}
   </array>

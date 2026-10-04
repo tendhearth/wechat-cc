@@ -68,7 +68,7 @@ export function probeFsAccess(opts: { home?: string; platform?: NodeJS.Platform;
 export function describeFsAccess(r: FsAccessReport): string {
   const denied = r.folders.filter(f => f.state === 'denied').map(f => FOLDERS[f.folder])
   if (denied.length === 0) return '文件访问正常'
-  return `系统没给 wechat-cc 读「${denied.join('」「')}」的权限 —— 去 系统设置 › 隐私与安全性 › 完全磁盘访问 勾上 wechat-cc,然后重启 daemon`
+  return `系统没给 Tendhearth CC 读「${denied.join('」「')}」的权限 —— 去 系统设置 › 隐私与安全性 › 完全磁盘访问 勾上 Tendhearth CC,然后重启 daemon`
 }
 
 /**

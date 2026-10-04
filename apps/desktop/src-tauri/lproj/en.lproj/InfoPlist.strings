@@ -1,2 +1,18 @@
+/*
+  User-visible app name (Dock, menu bar, About, notifications, permission prompts).
+  Display text only: the .app file name (wechat-cc.app), bundle id, CLI and paths
+  stay `wechat-cc`. Finder only uses these because Info.plist's base
+  CFBundleDisplayName still matches the file name and LSHasLocalizedDisplayName is set.
+  See docs/reference/product-naming.md.
+*/
+"CFBundleDisplayName" = "Tendhearth CC";
+"CFBundleName" = "Tendhearth CC";
+
+/* Privacy prompts, shown when the daemon (this app's main binary, --daemon) asks macOS. */
+"NSDocumentsFolderUsageDescription" = "Tendhearth CC reads project files in Documents so it can look at code and organize notes for you. It only reads when you ask it to do something.";
+"NSDesktopFolderUsageDescription" = "Tendhearth CC reads files on your Desktop so it can handle the things you drop there.";
+"NSDownloadsFolderUsageDescription" = "Tendhearth CC reads files in Downloads so it can look at what you just downloaded.";
+"NSAppleEventsUsageDescription" = "Tendhearth CC controls other apps (such as opening a browser) to finish what you asked for.";
+
 /* Shown by macOS when Tendhearth CC asks for microphone access (desktop Voice Input). */
 "NSMicrophoneUsageDescription" = "Tendhearth CC uses the microphone to turn your Voice Input into text. It only records while you use Voice Input.";
