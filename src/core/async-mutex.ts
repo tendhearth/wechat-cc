@@ -28,6 +28,11 @@ export interface ChatMutex {
    */
   runExclusive<T>(chatId: string, fn: () => Promise<T>): Promise<T>
   /**
+   * 这个 chat 当前排着的最后一个回合结束(fulfill 或 reject 都算)的 promise;没有在排的 = undefined。
+   * 给不持锁、但要等前面排队回合跑完再动的调用方用(/chat 辩论,见 conversation-coordinator submitTurn)。
+   */
+  tail(chatId: string): Promise<void> | undefined
+  /**
    * Test-only: number of keys with a live (pending or not-yet-cleaned-up)
    * chain entry. Not part of the public contract — used by async-mutex.test.ts
    * to assert the map doesn't grow unboundedly.
@@ -57,6 +62,7 @@ export function makeChatMutex(): ChatMutex {
 
   return {
     runExclusive,
+    tail: (chatId) => tails.get(chatId),
     _size: () => tails.size,
   }
 }

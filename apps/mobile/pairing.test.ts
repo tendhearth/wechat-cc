@@ -14,7 +14,7 @@ function el() {
 }
 
 function runNav(opts: { shell: boolean }) {
-  const els: Record<string, ReturnType<typeof el>> = { pairbtn: el(), pairbar: el(), 'nav-set': el() }
+  const els: Record<string, ReturnType<typeof el>> = { pairbtn: el(), pairbar: el(), 'nav-set': el(), 'memory-open': el(), 'memory-back': el() }
   els.pairbar!.hidden = false
   const store = new Map<string, string>()
   const env = {

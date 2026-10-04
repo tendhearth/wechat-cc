@@ -1,6 +1,7 @@
 import { PHONE_SAY_MAX_CHARS } from '@wechat-cc/protocol'
 import { labelJoin, type Lang } from '../i18n'
-import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT } from './types'
+import { DEMO_STICKER, DEMO_STICKER_FILE, DEMO_VOICE } from './demo-media'
+import { BackendError, type Backend, type Connection, type MatterT, type MatterDetailT, type ApprovalExplanationT, type ChatJobT, type ChatMessageT, type SessionContinueT, type MatterSayResultT } from './types'
 import {
   copy, IDS, CHAT_ID, PERM_ID, QUESTION_ID, RUN_IDS, t, explanation, progress, changesTurn, entryOptions,
   demoConnections, demoSessions, demoSessionMessages, demoSessionTitleKey, DEMO_SESSION_MESSAGES, type Stage,
@@ -14,7 +15,9 @@ type Entry = { detail: MatterDetailT; stage: Stage; version: number; evs: EvRec[
 const DAY = 86_400_000
 const HOUR = 3_600_000
 /** 主人对话里的一条:key 的在读时按语言出文案;text 是用户自己的字。 */
-type ChatRec = { id: string; role: 'me' | 'cc'; key?: Copy; text?: string; at: number; source: ChatMessageT['source'] }
+type ChatRec = { id: string; role: 'me' | 'cc'; key?: Copy; text?: string; at: number; source: ChatMessageT['source']; narr?: Copy[]; atts?: DemoAtt[] }
+/** 演示回复的附件:文案按语言生成;表情有 file ⇒ 走 sticker() 取图,没有 ⇒ 联网表情只写情绪。 */
+type DemoAtt = { kind: 'voice'; key: Copy } | { kind: 'sticker'; label: Copy; file?: string } | { kind: 'file'; name: string }
 
 /** 演示里 CC 回一句要多久:「在想…」留得够久,主人看得见,模拟器 UI 测试(一次点击 2 秒多)也看得见。 */
 export const DEMO_CHAT_REPLY_MS = 5000
@@ -29,7 +32,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   let epoch = 0 // reset() 之后让旧定时器失效
   let seq = 0
   let createdBy = new Map<string, string>()
-  let saidBy = new Set<string>()
+  let saidBy = new Map<string, MatterSayResultT>()
   let deviceLabel = ''
   // 接着做(演示):会话 key → 接成的那件事
   let adopted = new Map<string, string>()
@@ -102,7 +105,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     chatMsgs = [
       { id: 'demo-chat-1', role: 'cc', key: 'chatSeed1', at: n - 3 * HOUR, source: 'wechat' },
       { id: 'demo-chat-2', role: 'me', key: 'chatSeed2', at: n - 3 * HOUR + 120_000, source: 'wechat' },
-      { id: 'demo-chat-3', role: 'cc', key: 'chatSeed3', at: n - 2 * HOUR, source: 'desktop' },
+      { id: 'demo-chat-3', role: 'cc', key: 'chatSeed3', at: n - 2 * HOUR, source: 'desktop', atts: [{ kind: 'file', name: 'portfolio-notes.md' }] },
       { id: 'demo-chat-4', role: 'me', key: 'chatSeed4', at: n - HOUR, source: 'phone' },
     ]
     chatPending = null
@@ -110,10 +113,15 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
   }
   function seed() { const b = buildSeed(); entries = b.map; order = b.ids; seedChat() }
   const chatText = (m: ChatRec, l: Lang) => (m.key ? t(l, m.key) : m.text ?? '')
+  const chatExtras = (m: ChatRec, l: Lang): Pick<ChatMessageT, 'attachments' | 'narration'> => ({
+    ...(m.narr?.length ? { narration: m.narr.map(k => t(l, k)) } : {}),
+    ...(m.atts?.length ? { attachments: m.atts.map(a => a.kind === 'voice' ? { kind: 'voice' as const, text: t(l, a.key) } : a.kind === 'sticker' ? { kind: 'sticker' as const, label: t(l, a.label), ...(a.file ? { file: a.file } : {}) } : a) } : {}),
+  })
   const titleOf = (e: Entry, l: Lang) => (e.titleKey ? t(l, e.titleKey) : e.detail.matter.title)
   /** 读时按请求的语言出一份拷贝:标题、事件、未处理的种子问题都换成 l。状态(已批准 / 已回答 / 阶段)在 e 里,不因语言变。 */
   function localize(e: Entry, l: Lang): MatterDetailT {
     const d = structuredClone(e.detail)
+    d.inputs.reverse() // match daemon's recent receipt list (newest first)
     d.events = e.evs.map(r => ({ kind: r.kind, createdAt: r.createdAt, text: r.key ? t(l, r.key) + (r.extra ?? '') : (r.text ?? '') }))
     const title = titleOf(e, l)
     d.matter.title = title
@@ -200,6 +208,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     },
     async matters(l) { noteLang(l); return list().map(e => localize(e, l).matter).sort((a, b) => b.updatedAt - a.updatedAt) },
     async matter(id, l) { noteLang(l); return localize(get(id), l) },
+    async matterInputReceipt(id, requestId) { return get(id).detail.inputs.find(row => row.id === requestId) ?? null },
     async insight(id, l) {
       noteLang(l)
       const e = get(id)
@@ -212,7 +221,7 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       return {
         matterId: CHAT_ID, title: t(l, 'chatTitle'), hasMore: false, nextBefore: null, failed: null,
         pending: chatPending ? { ...chatPending } : null,
-        messages: chatMsgs.map(m => ({ id: m.id, role: m.role, kind: 'text', text: chatText(m, l), truncated: false, at: m.at, source: m.source })),
+        messages: chatMsgs.map(m => ({ id: m.id, role: m.role, kind: 'text', text: chatText(m, l), truncated: false, at: m.at, source: m.source, ...chatExtras(m, l) })),
       }
     },
     async chatSay(text, requestId) {
@@ -228,7 +237,11 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
         const ts = now()
         chatMsgs.push(
           { id: `demo-${requestId}-in`, role: 'me', text, at: ts, source: 'phone' },
-          { id: `demo-${requestId}-out`, role: 'cc', key: 'chatDemoReply', at: ts + 1, source: 'phone' },
+          {
+            id: `demo-${requestId}-out`, role: 'cc', key: 'chatDemoReply', at: ts + 1, source: 'phone',
+            narr: ['chatDemoNarr1', 'chatDemoNarr2'],
+            atts: [{ kind: 'voice', key: 'chatDemoVoice' }, { kind: 'sticker', label: 'chatDemoSticker', file: DEMO_STICKER_FILE }, { kind: 'sticker', label: 'chatDemoSticker2' }],
+          },
         )
         job.status = 'replied'; chatPending = null
         const e = entries.get(CHAT_ID)
@@ -237,12 +250,27 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       })
       return { ...job }
     },
+    async chatVoice(messageId, index) {
+      const a = chatMsgs.find(m => m.id === messageId)?.atts?.[index]
+      if (!a || a.kind !== 'voice') throw new BackendError('not_found')
+      return { ...DEMO_VOICE }
+    },
+    async sticker(file) {
+      if (file !== DEMO_STICKER_FILE) throw new BackendError('not_found')
+      return { ...DEMO_STICKER }
+    },
     async connections() { return demoConnections(lastLang, now()) },
-    async sessions(provider) { return { items: demoSessions(lastLang, now(), provider), nextCursor: null } },
-    async session(key) {
+    async sessions(provider, _cursor, q) {
+      if (q !== undefined && (q.length > 200 || q.includes('\0'))) throw new BackendError('invalid')
+      const needle = q?.trim().toLowerCase() ?? ''
+      return { items: demoSessions(lastLang, now(), provider).filter(row => !needle || `${row.title}\n${row.project ?? ''}`.toLowerCase().includes(needle)), nextCursor: null }
+    },
+    async session(key, cursor, window = 'start') {
+      if (window === 'recent' && cursor !== undefined) throw new BackendError('invalid')
       const row = demoSessions(lastLang, now()).find(r => r.key === key)
       if (!row) throw new BackendError('not_found')
-      return { session: row, managed: adopted.has(key), nextCursor: null, messages: demoSessionMessages(lastLang) }
+      const messages = demoSessionMessages(lastLang)
+      return { session: row, managed: adopted.has(key), window, nextCursor: null, messages: window === 'recent' ? messages.slice(-20) : messages }
     },
     async continuePreview(key) {
       const row = sessionRow(key), matterId = adopted.get(key) ?? null
@@ -320,18 +348,32 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
       ev(e, 'tool_call', 'evAnswered', text); e.stage = 'answered'; touch(e, { phase: 'working' }); publish([id])
       later(2000, () => { e.stage = 'replied'; touch(e, { phase: 'replied', status: 'replied' }); publish([id]) })
     },
-    async say(id, text, requestId) {
+    async say(id, text, requestId, options) {
       const e = get(id)
       // 与 daemon 一致:同一个 requestId 重发 ⇒ 当作已收到,不重复记。
-      if (saidBy.has(requestId)) return
-      saidBy.add(requestId)
+      const prior = saidBy.get(requestId)
+      if (prior) {
+        if (prior.kind === 'task' && prior.input && (prior.input.taskId !== id || prior.input.text !== text || options?.runId && prior.input.runId !== options.runId)) throw new BackendError('input_conflict')
+        return prior
+      }
+      if (options?.runId && options.runId !== e.detail.runId) throw new BackendError('input_stale')
       evText(e, 'user', text)
       // 接过来的那件事:第一句一发,「第一句会怎样」的说明就该消失,执行者开始跑(与 daemon 一致);回话后这一轮结束
       const started = !!e.detail.nativeStart
       if (started) { const { nativeStart: _sent, ...rest } = e.detail; e.detail = rest; touch(e, { phase: 'working' }) }
       else touch(e, {})
+      const result: MatterSayResultT = e.detail.task ? {
+        kind: 'task', task: e.detail.task,
+        input: { id: requestId, taskId: id, runId: options?.runId ?? e.detail.runId ?? `run-${id}`, text, status: e.detail.inputMode === 'queue' ? 'pending' : 'sending' },
+      } : { kind: 'chat', reply: t(lastLang, 'ccReply') }
+      if (result.kind === 'task' && result.input) e.detail = { ...e.detail, inputs: [...e.detail.inputs, result.input] }
+      saidBy.set(requestId, result)
       publish([id])
-      later(2000, () => { ev(e, 'text', 'ccReply'); touch(e, started ? { phase: 'replied' } : {}); publish([id]) })
+      later(2000, () => {
+        if (result.kind === 'task' && result.input) result.input.status = 'delivered'
+        ev(e, 'text', 'ccReply'); touch(e, started ? { phase: 'replied' } : {}); publish([id])
+      })
+      return result
     },
     async entryOptions(l) { noteLang(l); return entryOptions(l) },
     async create({ requestId, text, projectId }) {
@@ -363,6 +405,6 @@ export function makeDemoBackend(opts: { now?: () => number; setTimeout?: typeof 
     async unpair() {},
     setActive() {},
     dispose() {},
-    reset() { epoch++; seq = 0; createdBy = new Map(); saidBy = new Set(); adopted = new Map(); handedBy = new Map(); deviceLabel = ''; seed(); publish([...order]) },
+    reset() { epoch++; seq = 0; createdBy = new Map(); saidBy = new Map(); adopted = new Map(); handedBy = new Map(); deviceLabel = ''; seed(); publish([...order]) },
   }
 }

@@ -1,4 +1,5 @@
 import type { AgentEvent } from './agent-provider'
+import { providerErrorCodeOf } from '../lib/provider-error-code'
 
 /** A retained epoch must not accumulate an unbounded backlog behind a slow UI. */
 export class ClaudeWorkbenchEvents implements AsyncIterable<AgentEvent> {
@@ -20,7 +21,9 @@ export class ClaudeWorkbenchEvents implements AsyncIterable<AgentEvent> {
   fail(error: Error) {
     // Keep the error observable even if normal delivery exhausted its budget.
     const message = error.message.slice(0, Math.min(1024, Math.floor((this.byteLimit - 32) / 6)))
-    const event: AgentEvent = { kind: 'error', message }, bytes = Buffer.byteLength(JSON.stringify(event))
+    // provider 码随错误事件往下走(arch backlog #4 第 2 步):工作台据它说老实的原因。
+    const code = providerErrorCodeOf(error)
+    const event: AgentEvent = { kind: 'error', message, ...(code ? { code } : {}) }, bytes = Buffer.byteLength(JSON.stringify(event))
     while (this.buffer.length && (this.buffer.length >= this.eventLimit || this.bytes + bytes > this.byteLimit)) this.bytes -= this.buffer.shift()!.bytes
     try { this.push(event) } finally { this.end() }
   }

@@ -1,6 +1,8 @@
 /* 「跟 CC 说」:CC 的话无底,我的话 rail 底;输入是一条胶囊,只有发送用 accent。零字面色值,无阴影。 */
 .converse-page { display: flex; flex-direction: column; flex: 1; min-height: 0; background: var(--th-paper); color: var(--th-ink); }
 .converse-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: var(--th-space-xl); padding: 28px max(24px, calc((100% - 780px) / 2)); }
+.converse-latest { align-self:center; flex:none; padding:8px 12px; border:0; background:transparent; color:var(--th-accent); font:inherit; font-size:var(--th-size-small); cursor:pointer; }
+.converse-latest[hidden] { display:none; }
 .converse-scroll .empty-state { padding: 40px; text-align: center; color: var(--th-ink-soft); font-size: var(--th-size-small); }
 
 .converse-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 320px; padding: 20px 0; text-align: center; }
@@ -16,7 +18,9 @@
 .converse-msg-user { justify-content: flex-end; }
 .converse-msg-cc { justify-content: flex-start; }
 .converse-avatar { width: 32px; height: 32px; object-fit: contain; align-self: flex-start; margin-top: 8px; flex: none; }
-.converse-bubble { max-width: 85%; padding: 4px 0; font-size: var(--th-size-bubble); line-height: var(--th-lh-bubble); white-space: pre-wrap; word-break: break-word; }
+.converse-bubble { min-width:0; max-width: 85%; padding: 4px 0; font-size: var(--th-size-bubble); line-height: var(--th-lh-bubble); white-space: pre-wrap; word-break: break-word; }
+.converse-msg-cc .converse-bubble.cc-readable-markdown { max-width:min(70ch,calc(100% - 74px)); }
+.converse-msg-user .converse-bubble.cc-user-bubble { max-width:min(70ch,85%); white-space:normal; }
 .converse-msg-cc .converse-bubble { background: transparent; color: var(--th-ink); }
 .converse-msg-user .converse-bubble { padding: 12px 16px; border-radius: var(--th-radius-bubble); background: var(--th-rail); color: var(--th-ink); }
 .converse-msg-cc.is-pending .converse-bubble { color: var(--th-ink-soft); }
@@ -27,6 +31,30 @@
 .voice-replay-btn svg { width: 14px; height: 14px; }
 .voice-replay-btn:hover { background: var(--th-rail); }
 .converse-msg:hover .voice-replay-btn, .voice-replay-btn:focus-visible { opacity: 1; }
+
+/* 回复的附件与过程(回复交付 2026-10-04):过程在上、灰、默认收起;附件在下,细线框,不上色块。 */
+.converse-cc-body { min-width:0; max-width:min(70ch,calc(100% - 74px)); display:flex; flex-direction:column; gap:var(--th-space-s); }
+.converse-cc-body .converse-bubble.cc-readable-markdown { max-width:none; }
+.converse-process { color:var(--th-ink-soft); font-size:var(--th-size-small); line-height:var(--th-lh-small); }
+.converse-cc-line { display:flex; align-items:flex-end; gap:6px; min-width:0; }
+.converse-cc-line .converse-bubble { min-width:0; }
+.converse-cc-line:hover .voice-replay-btn { opacity:1; }
+.converse-process summary { cursor:pointer; display:inline-flex; align-items:center; gap:6px; width:max-content; max-width:100%; min-height:28px; list-style:none; padding:2px 0; }
+.converse-process summary::-webkit-details-marker { display:none; }
+/* 展开 / 收起的指示与文字同一层级:同色、同字号的实心三角,收起朝右、展开朝下。 */
+.converse-process summary::before { content:''; flex:none; width:0; height:0; border-style:solid; border-width:5px 0 5px 7px; border-color:transparent transparent transparent currentColor; transition:transform .15s; }
+.converse-process[open] summary::before { transform:rotate(90deg); }
+.converse-process summary:hover { color:var(--th-ink); }
+.converse-process-lines { margin:4px 0 0; padding:0 0 0 14px; border-left:1px solid var(--th-hair); list-style:none; display:flex; flex-direction:column; gap:4px; white-space:pre-wrap; word-break:break-word; }
+.converse-attachments { display:flex; flex-wrap:wrap; align-items:flex-start; gap:var(--th-space-s); }
+.converse-att { display:inline-flex; align-items:center; gap:8px; max-width:100%; min-height:36px; padding:4px 12px; border:1px solid var(--th-hair); border-radius:var(--th-radius-bubble); color:var(--th-ink); font-size:var(--th-size-small); }
+.converse-att svg { width:16px; height:16px; flex:none; color:var(--th-ink-soft); }
+.converse-att-text, .converse-att-name { min-width:0; overflow-wrap:anywhere; }
+.converse-att-voice .converse-att-text { color:var(--th-ink-soft); }
+.converse-att button { display:inline-flex; align-items:center; gap:6px; min-height:28px; padding:2px 10px; border:1px solid var(--th-hair); border-radius:var(--th-radius-control); background:transparent; color:var(--th-ink); font:inherit; font-size:var(--th-size-caption); cursor:pointer; flex:none; }
+.converse-att button:hover { background:var(--th-rail); }
+.converse-att-sticker { display:block; max-width:140px; max-height:140px; object-fit:contain; border-radius:var(--th-radius-bubble); }
+.converse-att-sticker-label { color:var(--th-ink-soft); }
 
 /* 输入:一条胶囊,输入 + 工具条。「一起做」之外只有此刻的聊天页会用到;此刻页再按 data-now 收放。 */
 .converse-compose { display: flex; flex-direction: row; flex-wrap: wrap; gap: 10px; align-items: center; box-sizing: border-box; flex: none; width: min(780px, calc(100% - 48px)); margin: 12px auto 24px; padding: 8px 8px 8px 22px; border: 1px solid var(--th-hair); border-radius: var(--th-radius-control); background: var(--th-paper); }

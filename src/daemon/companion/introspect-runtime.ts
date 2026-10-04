@@ -20,6 +20,7 @@ import { loadCompanionConfig } from './config'
 import { buildIntrospectPrompt, parseIntrospectResponse } from './introspect-prompt'
 import type { EventsStore } from '../events/store'
 import type { ObservationsStore } from '../observations/store'
+import { isNetworkUnprotectedError } from '../../lib/network-gate'
 
 export interface IntrospectAgentDeps {
   chatId: string
@@ -63,6 +64,8 @@ export function makeIntrospectAgent(deps: IntrospectAgentDeps): IntrospectAgent 
         }
         return decision
       } catch (err) {
+        // 评审 #193 P2-3:被网络守护拒了不是「模型出错」—— 原样抛出,让这一拍整个算跳过。
+        if (isNetworkUnprotectedError(err)) throw err
         return { write: false, reasoning: `SDK error: ${err instanceof Error ? err.message : String(err)}` }
       }
     },

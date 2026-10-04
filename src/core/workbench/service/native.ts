@@ -10,7 +10,7 @@ import { canonicalProject } from '../artifacts'
 import { restartPreview, type Continuation } from '../continuation'
 import { normalizeExecutionChoice, PROVIDER_EXECUTION_CHOICE, sameExecutionChoice } from '../execution-settings'
 import { handoffArtifactText, handoffContext, handoffToken, handoffTokenHash, validateHandoffInput, type ArtifactSelection, type AttachmentSelection, type HandoffInput, type HandoffPreview } from '../handoff'
-import { decodeNativeHistoryKey, historyDeadline, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryListInput, type NativeHistoryPreview, type NativeHistoryProvider, type NativeHistoryReadInput } from '../native-history'
+import { decodeNativeHistoryKey, historyDeadline, historyHash, normalizeHistoryList, normalizeHistoryRead, type NativeHistoryListInput, type NativeHistoryMessage, type NativeHistoryPreview, type NativeHistoryProvider, type NativeHistoryReadInput } from '../native-history'
 import { NATIVE_CONTINUE_REFUSAL, nativeImportInput, nativeResumeToken, pageInput, publicSource, readNativeImport, selectNativeImportMessages, snapshotHash, type AcceptedNativeResume, type ImportPage, type NativeContinuePreview, type NativeContinueState, type NativeImportInput, type NativeResumeDecision } from '../native-adoption'
 import { pathsConflict } from '../scheduler'
 import type { AgentExecutionChoice } from '../../agent-provider'
@@ -28,6 +28,9 @@ const NATIVE_TAIL_MAX_READS=400
 export const NATIVE_TAIL_WALK_MS=60_000
 /** 能 seek 时从离结尾几条处开始读:5 页 × 100 正好装下且最后一页不满(nextCursor 为 null),不多一次空读。 */
 const NATIVE_TAIL_ROWS=499
+/** A read-only recent window must settle before the phone's request budget. */
+export const NATIVE_RECENT_HISTORY_MS=8_000
+export const NATIVE_RECENT_MAX_READS=80
 /** 本进程记住的第一句 requestId 上限;只淘汰已落定的,在途的永不淘汰。 */
 const FIRST_INPUTS_MAX=500
 /**
@@ -297,6 +300,36 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     const managedTaskId=store.sourceByIdentity(providerId,nativeId)?.taskId??store.taskByNativeIdentity(providerId,nativeId)?.id
     return {...preview,...(managedTaskId?{managedTaskId}:{})}
   }
+  /** Recent reading never imports or takes ownership of the provider session. */
+  async function readRecentNativeHistory(key:string,input:{limit:number}):Promise<NativeHistoryPreview> {
+    const {providerId,nativeId}=decodeNativeHistoryKey(key),reader=nativeReader(providerId)
+    const {limit}=normalizeHistoryRead({limit:input?.limit}),expiresAt=Date.now()+NATIVE_RECENT_HISTORY_MS,budget=historyDeadline(NATIVE_RECENT_HISTORY_MS)
+    const call=async<T>(run:()=>Promise<T>):Promise<T>=>{
+      const result=await budget(run)
+      if(Date.now()>=expiresAt)throw new Error('native_history_unavailable')
+      return result
+    }
+    let cursor=reader.tailCursor?await call(()=>reader.tailCursor!(key,limit)):null
+    const startCursor=cursor,seenCursors=new Set<string|null>(),messages=new Map<string,NativeHistoryMessage>(),fingerprints:string[]=[]
+    let first:NativeHistoryPreview|undefined
+    for(let reads=0;reads<NATIVE_RECENT_MAX_READS;reads++){
+      if(seenCursors.has(cursor))throw new Error('native_history_unavailable')
+      seenCursors.add(cursor)
+      const page=await call(()=>reader.read(key,{limit:100,...(cursor!==null?{cursor}:{})}))
+      if(page.session.key!==key||page.session.providerId!==providerId||(first&&page.session.cwd!==first.session.cwd))throw new Error('native_history_changed')
+      first??=page;fingerprints.push(page.sourceFingerprint)
+      for(const message of page.messages){
+        messages.delete(message.id);messages.set(message.id,message)
+        if(messages.size>limit)messages.delete(messages.keys().next().value!)
+      }
+      if(page.nextCursor===null){
+        const recent=[...messages.values()],managedTaskId=store.sourceByIdentity(providerId,nativeId)?.taskId??store.taskByNativeIdentity(providerId,nativeId)?.id
+        return {...page,messages:recent,nextCursor:null,page:{limit,cursor:startCursor},truncated:recent.some(message=>message.truncated),sourceFingerprint:historyHash({window:'recent',key,fingerprints,messages:recent}),...(managedTaskId?{managedTaskId}:{})}
+      }
+      cursor=page.nextCursor
+    }
+    throw new Error('native_history_unavailable')
+  }
 
   /**
    * 手机「接着做」:这条电脑上的会话现在能不能接、接的话是哪种(spec 2026-10-01-tendhearth-continue-sessions §4.1)。
@@ -391,11 +424,11 @@ export function makeNativeDomain(ctx:ServiceCtx) {
     }
   }
   /** 门面(service.ts)整块展开的公开面;nativeReader / currentNativePages / validateNativeDecision 是域内与 execute 用的,不进门面。 */
-  const api={ previewHandoff,handoff,handoffRecord,conflictsExternal,importNativeHistory,prepareNativeResume,continueNativeTask,listNativeHistory,readNativeHistory,
+  const api={ previewHandoff,handoff,handoffRecord,conflictsExternal,importNativeHistory,prepareNativeResume,continueNativeTask,listNativeHistory,readNativeHistory,readRecentNativeHistory,
     /** 手机「接着做」(spec 2026-10-01-tendhearth-continue-sessions):只读预览 / 幂等地接成一件事。 */
     previewNativeContinue,adoptNativeSession,
     /** 手机说的第一句给「导入了、还没发过第一句」的任务(spec D5):令牌不出 daemon、按 requestId 幂等。 */
     continueImported }
-  return { nativeReader,currentNativePages,validateNativeDecision, previewHandoff,handoff,handoffRecord,conflictsExternal,importNativeHistory,prepareNativeResume,continueNativeTask,continueImported,listNativeHistory,readNativeHistory,previewNativeContinue,adoptNativeSession, api }
+  return { nativeReader,currentNativePages,validateNativeDecision, previewHandoff,handoff,handoffRecord,conflictsExternal,importNativeHistory,prepareNativeResume,continueNativeTask,continueImported,listNativeHistory,readNativeHistory,readRecentNativeHistory,previewNativeContinue,adoptNativeSession, api }
 }
 export type NativeDomain = ReturnType<typeof makeNativeDomain>

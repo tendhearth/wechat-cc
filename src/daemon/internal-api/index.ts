@@ -38,6 +38,8 @@ import {
 import { makeMaybePrefix, makeRoutes } from './routes'
 import { computePresence } from './routes-presence'
 import { REQUEST_SCHEMAS } from './schema'
+import { ALL_CHATS, SEND_SCOPED_ROUTES, sendScopeDecision, sharedTokenTurn } from './send-scope'
+import { replyDeliveryFor } from '../../core/capability-matrix'
 
 export type {
   InternalApi,
@@ -267,7 +269,48 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     const callerChatId = caller.origin === 'session' && caller.sessionKey
       ? caller.sessionKey.split('/').slice(2).join('/')
       : undefined
-    const callerInfo = { tier: caller.tier, origin: caller.origin, chatId: callerChatId }
+    // 共享令牌按本轮绑定(回复交付第 2 步):agy 走 daemon 交付时,`agy-static` 的「自己的 chat」就是此刻
+    // 正在跑的那一轮 agy 的聊天 —— 附件路由与发送类的 chat 范围门用它。其它路由(记忆 / 提醒……)照旧
+    // 只看令牌里读出来的 chatId(agy-static 没有)。
+    const sharedTurn = sharedTokenTurn(caller, {
+      agyDaemon: replyDeliveryFor('agy') === 'daemon',
+      turnChatFor: deps.replyDelivery ? (p) => deps.replyDelivery!.turnChatFor(p) : undefined,
+    })
+    const turnChatId = sharedTurn?.kind === 'bound' ? sharedTurn.chatId : undefined
+    const callerInfo = {
+      tier: caller.tier, origin: caller.origin, chatId: callerChatId,
+      ...(sharedTurn ? { sharedTurn: sharedTurn.kind, ...(turnChatId ? { turnChatId } : {}) } : {}),
+    }
+
+    // Chat-scope gate for the send family (send-scope.ts): a session of ANY
+    // tier may only send to / edit in its OWN chat (tightened 2026-10-04 for
+    // admin too); the one cross-chat path is the admin-only `message` route,
+    // allowed and logged (chat_scope_admin_cross); broadcast: admin sessions only. Runs after schema validation and BEFORE the handler,
+    // so a denied request never reaches the App reply sink, the outbound
+    // tap, or ilink. File / operator tokens are not affected.
+    const sendTarget = SEND_SCOPED_ROUTES[routeKey]
+    if (sendTarget) {
+      const target = sendTarget(body)
+      const decision = sendScopeDecision(target, sharedTurn
+        ? { tier: caller.tier, origin: caller.origin, chatId: turnChatId, sessionKey: caller.sessionKey, sharedTokenBound: true }
+        : { ...callerInfo, sessionKey: caller.sessionKey }, routeKey)
+      const targetLabel = target === ALL_CHATS ? '*' : target
+      if (decision.kind === 'deny') {
+        const own = sharedTurn ? (turnChatId ?? `-(agy-static turn=${sharedTurn.kind})`) : (callerChatId ?? '-')
+        deps.log?.('INTERNAL_API', `403 ${routeKey} caller=${caller.tier}/${caller.origin} chat_scope own=${own} target=${targetLabel}`, {
+          event: 'chat_scope_denied', path: routeKey, caller: caller.tier, origin: caller.origin,
+          callerChat: (sharedTurn ? turnChatId : callerChatId) ?? null, target: targetLabel,
+          ...(sharedTurn ? { sharedTurn: sharedTurn.kind } : {}),
+        })
+        return send(res, 403, { error: 'chat_scope', message: decision.message }, origin)
+      }
+      if (decision.kind === 'admin_cross') {
+        // `message` 跨 chat(send-scope.ts):放行,记一笔审计 —— 主人「帮我告诉某人」的用量。
+        deps.log?.('INTERNAL_API', `${routeKey} admin cross-chat own=${callerChatId ?? '-'} target=${targetLabel}`, {
+          event: 'chat_scope_admin_cross', path: routeKey, callerChat: callerChatId ?? null, target: targetLabel,
+        })
+      }
+    }
 
     // busy-registry hold (spec 2026-08-11 §2) — non-GET authenticated
     // request awaits the handler with a token held, released right after.
@@ -437,6 +480,9 @@ export function createInternalApi(deps: InternalApiDeps): InternalApi {
     setPhoneConnect(p) { deps.phoneConnect = p },
     setMemoryNightly(r) {
       deps.memoryNightly = r
+    },
+    setCliUpgrade(u) {
+      deps.cliUpgrade = u
     },
     mintSessionToken,
     invalidateSession(sessionKey: string) {

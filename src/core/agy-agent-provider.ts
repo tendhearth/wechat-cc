@@ -14,6 +14,8 @@ import { tmpdir } from 'node:os'
 import { assertNotAuthFailed, normalizeWechatMcpServer, type AgentEvent, type AgentProject, type AgentProvider, type AgentSession, type CheapEval, type ProviderCapabilities, type SpawnContext } from './agent-provider'
 import { makeAgyStreamParser } from './agy-stream'
 import { makeTurnEmitter } from './turn-emitter'
+import { agyErrorCode } from './agy-errors'
+import { errorWithProviderCode } from '../lib/provider-error-code'
 import { spawn } from '../lib/runtime/process'
 import { wrapForProcessTree } from '../lib/jobspawn'
 
@@ -39,6 +41,13 @@ export const AGY_CAPABILITIES: ProviderCapabilities = {
   supportsResume: true,
   defaultPeer: 'claude',
   authFailHint: 'agy 登录态失效，请在电脑上跑一次 `agy` 重新登录后再发消息。',
+  // 回复交付第 2 步(2026-10-03):维护者决定切 daemon(主人授权)。沙盒闸门(真 agy,56 轮)两臂行为打平、
+  // daemon 非回复工具调用更少(10.3 vs 15.0);结构收益:双发不再依赖命名空间折叠、共享令牌的附件绑到本轮
+  // (#199 豁免在 daemon 下取消)、走统一交付路径(终局要删 legacy)。回滚:agent-config 的
+  // reply_delivery: { agy: 'legacy' } + 重启 daemon(docs/maintainer/reply-delivery.md)。
+  replyDelivery: 'daemon',
+  // 聊天型(订阅版 Gemini 的 CLI):翻到 daemon 时本轮所有文字段都交付,不只取最后一段(2026-10-03 修订)。
+  replyText: 'all_segments',
 }
 
 /** Test-time (and default Bun.spawn) seam for the agy child process. */
@@ -279,10 +288,11 @@ async function oneShotEval(spawnFn: AgySpawnFn, model: string, prompt: string, t
     if (ev.kind === 'text') texts.push(ev.text)
   }
   const code = await proc.exited
-  if (errMsg) throw new Error(errMsg)
+  // 边界产码(arch backlog #4 第 2 步;agy-errors):红线 B 那句固定判 network。
+  if (errMsg) throw errorWithProviderCode(errMsg, agyErrorCode(errMsg))
   if (code !== 0 && !sawResult) {
     const stderrText = await proc.stderr()
-    throw new Error(`agy exited ${code}: ${stderrText.slice(0, 300)}`)
+    throw errorWithProviderCode(`agy exited ${code}: ${stderrText.slice(0, 300)}`, agyErrorCode(stderrText))
   }
   return texts.join('')
 }
@@ -293,6 +303,8 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
   const turnTimeoutMs = opts.turnTimeoutMs && opts.turnTimeoutMs > 0 ? opts.turnTimeoutMs : DEFAULT_TURN_TIMEOUT_MS
 
   return {
+    // 守护(评审 #193 P1-1):agy 永远连 Google;模型和下面 spawn / oneShotEval 用的是同一份。
+    callTarget: (kind, ctx) => ({ provider: 'agy', model: kind === 'cheapEval' ? CHEAP_EVAL_MODEL : kind === 'strongEval' ? opts.model : ctx?.model ?? opts.model }),
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
       // resumeSessionId-seeded spawns already have a handle — their first
       // dispatch uses `--conversation`, never `--new-project` (RULING 1).
@@ -434,7 +446,7 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
                     }
                     // ev.kind === 'error'
                     sawResult = true
-                    yield em.errorText(ev.message)
+                    yield em.errorText(ev.message, { code: agyErrorCode(ev.message) })
                   }
                 }
                 if (abort.signal.aborted) return // cancelled — no further events
@@ -456,7 +468,8 @@ export function createAgyAgentProvider(opts: AgyAgentProviderOptions): AgentProv
                   // throwing out of dispatch.
                   const stderrResult = await raceAbort(proc.stderr().catch(() => ''), abort.signal)
                   if (stderrResult === ABORTED) return
-                  yield em.error(new Error(`agy exited ${code}: ${stderrResult.slice(0, 300)}`))
+                  const stderrCode = agyErrorCode(stderrResult)
+                  yield em.error(new Error(`agy exited ${code}: ${stderrResult.slice(0, 300)}`), stderrCode ? { code: stderrCode } : undefined)
                 }
               } finally {
                 currentProc = null

@@ -1455,6 +1455,43 @@ export const migrations: Migration[] = [
     CREATE INDEX IF NOT EXISTS matter_say_receipts_created ON matter_say_receipts(created_at);`)
   },
 
+  // v71 — 回复交付(spec 2026-10-03-reply-delivery §4.10):turn_records 记「主人到底收到了什么」。
+  //
+  // WHY:以前只有 reply_tool_called 与 text_chunks(计数)—— 「这轮说没说话」靠的是模型调没调
+  // reply 工具,主人收到几条、有没有附件、是不是静默,库里一个字都没有。daemon 模式的轮写这四列;
+  // legacy 的轮留空(NULL = 不知道,不是「什么都没发」)。旧列保留以读历史,daemon 模式写
+  // reply_tool_called=0。
+  //
+  // 守列存在(同 v35):#79 的修复路径会重放 v19+,但不会 drop turn_records。
+  (db) => {
+    const has = db
+      .query<{ cnt: number }, []>("SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type='table' AND name='turn_records'")
+      .get()
+    if (!has || has.cnt === 0) return
+    const cols = new Set(db.query<{ name: string }, []>("PRAGMA table_info('turn_records')").all().map(c => c.name))
+    if (!cols.has('delivery')) db.exec(`ALTER TABLE turn_records ADD COLUMN delivery TEXT;`)
+    if (!cols.has('bubbles')) db.exec(`ALTER TABLE turn_records ADD COLUMN bubbles INTEGER;`)
+    if (!cols.has('attachments')) db.exec(`ALTER TABLE turn_records ADD COLUMN attachments INTEGER;`)
+    if (!cols.has('narration_segments')) db.exec(`ALTER TABLE turn_records ADD COLUMN narration_segments INTEGER;`)
+  },
+
+  // v72 — 回复交付:桌面 / 手机那一轮的附件与旁白跟着回复那一行落库(messages.extras,JSON)。
+  //
+  // WHY:手机「跟 CC 说」是收下即回、回复从消息库里拉(/m/api/chat),converse 的返回值它根本看不到;
+  // 不落库,手机永远见不到语音 / 表情 / 文件和过程行。放在回复那一行的一个可空列里而不是另起几行 ——
+  // 消息库的读者很多(线索抽取、交接、夜间记忆、搜索),旁白要是变成「CC 说的话」的行,它们会
+  // 一并读进去。NULL = 这一行没有附件也没有旁白(包括所有旧行)。
+  //
+  // 守表与守列(同 v71):v14 建 messages;测试从 user_version=9 起跑的阶梯也要能过。
+  (db) => {
+    const has = db
+      .query<{ cnt: number }, []>("SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type='table' AND name='messages'")
+      .get()
+    if (!has || has.cnt === 0) return
+    const cols = new Set(db.query<{ name: string }, []>("PRAGMA table_info('messages')").all().map(c => c.name))
+    if (!cols.has('extras')) db.exec(`ALTER TABLE messages ADD COLUMN extras TEXT;`)
+  },
+
 ]
 
 /**

@@ -187,6 +187,41 @@ describe('ACP provider — chat-side options', () => {
     expect(events.at(-1)).toMatchObject({ kind: 'error' })
     expect(events.some(e => e.kind === 'result')).toBe(false)
   })
+  // 真机 c4both(2026-09-17):cursor-agent 把「Agent Looping Detected」写成最后一整块助理文字,stopReason 仍是 end_turn。
+  const LOOPING = '\n\nError: NonRetriableError: Agent Looping Detected The model got stuck in a repeating response pattern, so this turn was stopped. Please try again with a different model or start a new conversation. If the problem persists, please contact support.'
+  it('chat: a trailing in-band error block ends the turn as a coded error; the error text is never a text event', async () => {
+    const { session, child } = await start()
+    const { events, done } = collect(session); await prompted(child)
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'data must NOT' } })
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: LOOPING } })
+    child.finishPrompt(); await done
+    expect(events.map(e => e.kind)).toEqual(['init', 'text', 'error'])
+    expect(events[1]).toEqual({ kind: 'text', text: 'data must NOT' })
+    expect(events[2]).toMatchObject({ kind: 'error', code: 'provider_error', message: LOOPING.slice(2) })
+    expect(events.some(e => e.kind === 'result')).toBe(false)
+  })
+  it.each([
+    ['\n\nPlease sign in to continue', 'auth_failed'],
+    ['\n\nUpgrade your plan to continue', 'quota'],
+    ['\n\nError: RetriableError: [unavailable] getaddrinfo ENOTFOUND api2.cursor.sh', 'network'],
+  ] as const)('workbench (append): in-band %j ⇒ %s, never streamed', async (block, code) => {
+    const { session, child } = await start({}, undefined, { text: 'append', permissions: 'bridge' })
+    const { events, done } = collect(session); await prompted(child)
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '先看看' } })
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: block } })
+    child.finishPrompt(); await done
+    expect(events.filter(e => e.kind === 'text').map(e => (e as { text: string }).text)).toEqual(['先看看'])
+    expect(events.at(-1)).toMatchObject({ kind: 'error', code })
+  })
+  it('prose that mentions looping, or an error-shaped block followed by more output, still ends as a normal result', async () => {
+    const { session, child } = await start()
+    const { events, done } = collect(session); await prompted(child)
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: LOOPING } })
+    child.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '\n\n上面是 Cursor 报的 Agent Looping Detected,我换个思路继续。' } })
+    child.finishPrompt(); await done
+    expect(events.map(e => e.kind)).toEqual(['init', 'text', 'result'])
+    expect((events[1] as { text: string }).text).toBe(`${LOOPING}\n\n上面是 Cursor 报的 Agent Looping Detected,我换个思路继续。`)
+  })
   it('strict resume (default) still rejects on load failure', async () => {
     const provider = createAcpProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor', rpcTimeoutMs: 200, closeTimeoutMs: 250, permissions: 'bridge', text: 'append' })
     const p = provider.spawn({ alias: 'a', path: '/project' }, context({ resumeSessionId: 'gone' }))
@@ -336,5 +371,39 @@ describe('attachments into the prompt', () => {
     await prompted(child)
     expect(child.sent.findLast(m => m.method === 'session/prompt')!.params.prompt[1]).toEqual({ type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=' })
     child.finishPrompt(); await attached
+  })
+})
+
+// 评审 #193 P1-1:网络闸门要的是这条会话**实际**用的模型 —— cursor-agent 起会话 / 续会话时自己报的
+// (configOptions 的 currentValue),而不是我们想钉的那个(钉不上、或续会话根本不钉)。
+describe('ACP provider — reports the model the session actually runs (review #193)', () => {
+  const modelOption = (currentValue: string, values: string[] = [currentValue]) => [{ id: 'model', category: 'model', type: 'select', currentValue, options: values.map(value => ({ value, name: value })) }]
+
+  it('unpinned new session → the model cursor-agent reports (default[] = Auto); spawn itself is setup only', async () => {
+    const provider = createAcpProvider({ command: '/cursor-agent', args: ['acp'], displayName: 'Cursor', permissions: 'mode', text: 'messages', targetProvider: 'cursor' })
+    expect(provider.callTarget?.('spawn', {})).toEqual({ provider: 'cursor', purpose: 'setup' })
+    expect(provider.callTarget?.('session', {})).toBeNull()   // 没钉模型:起来之前说不准
+    const { session } = await start({}, c => { c.newResult = { sessionId: 'sess-1', configOptions: modelOption('default[]') } }, { targetProvider: 'cursor' })
+    expect(session.callTarget?.()).toEqual({ provider: 'cursor', model: 'default[]' })
+  })
+
+  it('pin accepted → the pinned model; pin not offered → whatever the agent reports', async () => {
+    const pinned = await start({ model: 'gpt-5' }, c => { c.newResult = { sessionId: 'sess-1', configOptions: modelOption('default[]', ['default[]', 'gpt-5']) } }, { targetProvider: 'cursor', model: ctx => ctx.model })
+    await expect.poll(() => pinned.session.callTarget?.()).toEqual({ provider: 'cursor', model: 'gpt-5' })
+    const notOffered = await start({ model: 'claude-4.5-sonnet' }, c => { c.newResult = { sessionId: 'sess-2', configOptions: modelOption('default[]') } }, { targetProvider: 'cursor', model: ctx => ctx.model, log: () => {} })
+    expect(notOffered.session.callTarget?.()).toEqual({ provider: 'cursor', model: 'default[]' })
+  })
+
+  it('resumed session → the model session/load reports (the pin is not applied to loaded sessions)', async () => {
+    const { session, child } = await start({ resumeSessionId: 'sess-old', model: 'auto' }, c => { c.loadResult = { configOptions: modelOption('claude-opus-5[thinking=true]') } }, { targetProvider: 'cursor', model: ctx => ctx.model })
+    expect(child.sent.some(m => m.method === 'session/set_config_option')).toBe(false)
+    expect(session.callTarget?.()).toEqual({ provider: 'cursor', model: 'claude-opus-5[thinking=true]' })
+  })
+
+  it('agent reports no model → null (the gate then treats it as protected); no targetProvider → no callTarget at all', async () => {
+    const quiet = await start({}, c => { c.newResult = { sessionId: 'sess-1' } }, { targetProvider: 'cursor' })
+    expect(quiet.session.callTarget?.()).toBeNull()
+    const anonymous = await start({}, c => { c.newResult = { sessionId: 'sess-2', configOptions: modelOption('default[]') } })
+    expect(anonymous.session.callTarget).toBeUndefined()
   })
 })

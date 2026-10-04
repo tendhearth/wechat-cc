@@ -1,3 +1,5 @@
+import { makePausableTimers, type PausableTimer } from '../../lib/pausable-timers'
+import { makeProcessTreeFreezer } from '../../lib/process-tree-freeze'
 import { spawn } from 'node:child_process'
 import type { AgentAttachment, AgentEvent, AgentExecutionModel, AgentProvider, AgentWorkbenchRuntime } from '../agent-provider'
 import { discoverWorkbenchCodexConfig, workbenchCodexArgs, workbenchCodexEnv, workbenchCodexNativeConfig } from './codex-config'
@@ -8,17 +10,27 @@ import { codexNativeCapabilityNotice } from './native-capability-notice'
 import { discoverCodexModels } from './codex-model-catalog'
 import { executionModel, nativeModelId, readCodexModelCatalog } from './native-model-catalog'
 
+import { codexErrorEvent, codexRpcError } from './codex-execution-error'
 import { CodexChildOccurrence } from './codex-runtime'
+import { codexAppServerErrorCode, codexTimeoutsFromEnv, type CodexTimeouts } from '../codex-errors'
 import { APP_VERSION } from '../../lib/app-version'
+import { codexCallTarget, codexTargetFromConfig, codexTargetToCall, type ResolveCodexTargetOptions } from '../../lib/codex-target'
+import type { CallTarget } from '../../lib/call-classifier'
 
 type RpcId = string | number
 // The JSONL boundary is checked below before any request is routed or action accepted.
 type ObjectValue = Record<string, any>
 interface Message { id?: RpcId; method?: string; params?: ObjectValue; result?: ObjectValue; error?: { code?: number; message?: string } }
-interface Options { codexPathOverride: string; model?: string; rpcTimeoutMs?: number; closeTimeoutMs?: number }
+interface Options {
+  codexPathOverride: string; model?: string; rpcTimeoutMs?: number; closeTimeoutMs?: number
+  /** 守护:按 codex 配置层预测端点时的注入(测试给临时 CODEX_HOME / systemDir;缺省 = 子进程的环境)。 */
+  codexTargetOptions?: () => Omit<ResolveCodexTargetOptions, 'cwd' | 'overrides'>
+  /** 边界超时(arch backlog #4 第 2 步);缺省读环境变量,见 core/codex-errors。 */
+  timeouts?: CodexTimeouts
+}
 interface Approval { controller: AbortController; turn: Turn; rejection: 'decline' | 'cancel'; mcp?: boolean }
 interface UserQuestion { controller: AbortController; turn: Turn }
-interface Turn { terminal?: boolean; threadId: string; occurrence?: CodexChildOccurrence; id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; completedItems: Set<string>; questionIds: Set<RpcId>; startedAt: number }
+interface Turn { terminal?: boolean; watchdog?: PausableTimer; watchdogKind?: 'first_event' | 'connect'; lastRetry?: ObjectValue; threadId: string; occurrence?: CodexChildOccurrence; id: string | null; cancelled: boolean; rejectedOperation: boolean; events: EventQueue; early: Message[]; items: Map<string, ObjectValue>; completedItems: Set<string>; questionIds: Set<RpcId>; startedAt: number }
 
 function turnInput(text: string, attachments: readonly AgentAttachment[] = []) {
   const input: Array<{ type: 'text'; text: string; text_elements: [] } | { type: 'image'; url: string; detail: 'high' }> = text || !attachments.length ? [{ type: 'text', text, text_elements: [] }] : []
@@ -119,6 +131,10 @@ function approvalScope(params: ObjectValue): string | null {
 export function createWorkbenchCodexProvider(options: Options): AgentProvider {
   return {
     modelCatalog: project => discoverCodexModels(options.codexPathOverride, project.path, options.rpcTimeoutMs),
+    // 守护(评审 #193 P1-1 + 2026-10-03):起会话前的预测 —— 按子进程会拿到的环境(CODEX_HOME)读 codex
+    // 自己的配置层(codex 0.153 不认 OPENAI_BASE_URL)。会话起来以后改用 codex 自己 config/read 的结果。
+    callTarget: (kind, context) => kind === 'cheapEval' || kind === 'strongEval' ? null
+      : codexCallTarget({ model: context?.execution?.model ?? context?.model ?? options.model ?? null }, { env: workbenchCodexEnv(), ...(options.codexTargetOptions?.() ?? {}) }),
     async spawn(project, context) {
       const execution = context.execution ? {...context.execution} : undefined
       const model = execution ? execution.model ?? (execution.defaults === 'provider' && !context.resumeSessionId ? context.model ?? options.model : undefined) : context.model ?? options.model
@@ -132,11 +148,21 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
       // without overwriting the user's web-search mode before config/read.
       const { web_search: _startupSearch, ...startupConfig } = discovery.config
       const enabledMcp = new Set<string>()
+      const childEnv = workbenchCodexEnv()
+      // 守护(评审 #193 P1-1 + 2026-10-03):app-server 是常驻子进程,端点在它起来那一刻按配置定下。
+      // 先按配置层预测;initialize 之后问 codex 自己(config/read),用它报的有效配置覆盖。
+      let spawnTarget: CallTarget = codexCallTarget({ model: model ?? null }, { env: childEnv, ...(options.codexTargetOptions?.() ?? {}), cwd: project.path, overrides: startupConfig })
       const child = spawn(options.codexPathOverride, [...workbenchCodexArgs(startupConfig), 'app-server', '--listen', 'stdio://'], {
-        cwd: project.path, env: workbenchCodexEnv(), stdio: ['pipe', 'pipe', 'pipe'],
+        cwd: project.path, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true, detached: true,
       })
-      const rpcs = new Map<RpcId, { resolve: (value: ObjectValue) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>()
+      const rpcs = new Map<RpcId, { resolve: (value: ObjectValue) => void; reject: (error: Error) => void; clear: () => void }>()
+      // 网络守护「暂停在跑的任务」(2026-10-03):冻住整棵树时,这个会话自己的计时器(连接 / 首个事件
+      // 超时、RPC 请求超时)一起停,放开时按剩下的时间接着走 —— 不然冻住期间到点,会把只是在等网络的
+      // 一轮判成失败。收尾路上的 cleanupRequest 用自己的截止时间,不在此列。
+      const timers = makePausableTimers()
+      const freezer = makeProcessTreeFreezer(() => (!exited && !closing ? child.pid : undefined))
+      let terminated = false
       const approvals = new Map<RpcId, Approval>()
       const questions = new Map<RpcId, UserQuestion>()
       let sequence = 0, threadId = '', active: Turn | undefined, buffer = ''
@@ -217,14 +243,39 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         }
       }
       const rejectRpcs = (error: Error) => {
-        for (const rpc of rpcs.values()) { clearTimeout(rpc.timer); rpc.reject(error) }
+        for (const rpc of rpcs.values()) { rpc.clear(); rpc.reject(error) }
         rpcs.clear()
       }
       const retainUnfinishedCommands = (turn: Turn) => {
         if (!lifetime) return
         for (const item of turn.items.values()) if (item.type === 'commandExecution' && !turn.completedItems.has(item.id)) { retained = true; retainUnknown(`command:${turn.id}:${item.id}`) }
       }
+      /**
+       * 主回合的边界超时(arch backlog #4 第 2 步;与对话侧 codex-errors.watchCodexEvents 同一规矩)。
+       * 连不上时 app-server 不停发 `error{willRetry:true}`,本轮永远不结束 —— 工作台以前只能等
+       * 10 分钟空闲上限。first_event:起轮后一条有进展的消息都没有;connect:开始重试后再没有进展。
+       * 到点 ⇒ 带码(`network`,或最后一条重试里 codexErrorInfo 认出的码)收掉这一轮,并请 codex 中断。
+       */
+      const timeouts = options.timeouts ?? codexTimeoutsFromEnv()
+      const clearWatchdog = (turn: Turn) => { if (turn.watchdog) timers.clear(turn.watchdog); turn.watchdog = undefined; turn.watchdogKind = undefined }
+      const armWatchdog = (turn: Turn, kind: 'first_event' | 'connect') => {
+        if (turn.occurrence || turn.watchdogKind === kind || (kind === 'first_event' && turn.watchdog)) return
+        clearWatchdog(turn)
+        const ms = kind === 'connect' ? timeouts.connectTimeoutMs : timeouts.firstEventTimeoutMs
+        turn.watchdogKind = kind
+        turn.watchdog = timers.set(() => {
+          turn.watchdog = undefined
+          if (active !== turn || turn.cancelled) return
+          const last = turn.lastRetry
+          const code = (last && codexAppServerErrorCode(last)) || 'network'
+          const lastText = typeof last?.message === 'string' ? `(最后一条:${last.message.slice(0, 200)})` : ''
+          const message = kind === 'connect' ? `Codex 连不上服务,${Math.round(ms / 1000)}s 内没有恢复${lastText}` : `Codex ${Math.round(ms / 1000)}s 内没有任何回应${lastText}`
+          if (turn.id) void request('turn/interrupt', { threadId, turnId: turn.id }).catch(() => {})
+          finish(turn, { kind: 'error', message, code })
+        }, ms, { unref: true })
+      }
       const finish = (turn: Turn, event: AgentEvent) => {
+        clearWatchdog(turn)
         if (turn.occurrence) {
           if (!turn.occurrence.running) return
           dropPendingRequests(turn); retainUnfinishedCommands(turn)
@@ -259,7 +310,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         const id = `cc-close-${++sequence}`
         return new Promise((resolve, reject) => {
           const timer = setTimeout(() => { rpcs.delete(id); reject(new Error('codex_terminal_cleanup_unverified')) }, Math.max(1, deadline - Date.now()))
-          rpcs.set(id, {resolve,reject,timer}); send({id,method,params})
+          rpcs.set(id, {resolve,reject,clear:()=>clearTimeout(timer)}); send({id,method,params})
         })
       }
       const close = (): Promise<void> => {
@@ -274,7 +325,9 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         const timeout = Math.min(options.closeTimeoutMs ?? 2_000, 2_500), deadline = Date.now() + timeout
         closePromise = Promise.resolve().then(async () => {
           let cleanupFailure: Error | undefined
-          if (lifetime && threadId && !exited) {
+          // 冻住期间被整棵杀掉(terminate):进程已经不在了,收尾 RPC 没人接;后台终端是它的后代,
+          // 冻住时一起登记、一起 SIGKILL 了 —— 不再当成「清理没核实」。
+          if (lifetime && threadId && !exited && !terminated) {
             const cleanupDeadline = Date.now() + Math.max(50, Math.floor((deadline - Date.now()) * .55))
             const fence = async (turn: Turn) => {
               if (!turn.id || turn.terminal) return
@@ -322,14 +375,16 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
             const uncoveredChild = [...unknownBackground].some(key => key.startsWith('child:') && !cleanupOwners.has(key.slice(6)) && !unverifiedChildren.includes(key.slice(6)))
             if (uncoveredChild || [...descendants.keys()].some(id => !cleanupOwners.has(id)) || candidates.size || [...childTurns.values()].some(turn => !turn.terminal)) cleanupFailure = new Error('codex_terminal_cleanup_unverified')
             if (cleanupResults.some(result => result.status === 'rejected')) cleanupFailure = new Error('codex_terminal_cleanup_unverified')
-          } else if (lifetime && (retained || unknownBackground.size || stoppingTurns.some(turn => [...turn.items.values()].some(item => item.type === 'commandExecution')))) cleanupFailure = new Error('codex_terminal_cleanup_unverified')
+          } else if (lifetime && !terminated && (retained || unknownBackground.size || stoppingTurns.some(turn => [...turn.items.values()].some(item => item.type === 'commandExecution')))) cleanupFailure = new Error('codex_terminal_cleanup_unverified')
           closing = true; rejectRpcs(new Error('codex_session_closed'))
           if (active) { if (!lifetime) active.events.end(); active = undefined }
           for (const turn of childTurns.values()) { turn.occurrence!.finish('interrupted'); lifetime?.push(turn.occurrence!.event()) }
           childTurns.clear(); unknownBackground.clear(); endRuntime()
-          child.stdin.end(); signalOwned('SIGTERM')
-          let killed = false
-          while (!exited || groupAlive()) {
+          child.stdin.end()
+          // 冻住时已经整棵 SIGKILL 过:只等它们全退(僵尸组上 kill(-组) 在 macOS 报 EPERM,别再发信号)。
+          let killed = terminated
+          if (terminated) freezer.kill(); else signalOwned('SIGTERM')
+          while (!exited || (terminated ? freezer.alive() : groupAlive())) {
             if (Date.now() >= deadline) throw new Error('codex_process_not_exited')
             if (!killed && Date.now() >= deadline - Math.max(50, timeout / 4)) { signalOwned('SIGKILL'); killed = true }
             const pause = new Promise<void>(resolve => setTimeout(resolve, 15))
@@ -352,8 +407,8 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         if (broken || closing || exited) return Promise.reject(broken ?? new Error('codex_session_closed'))
         const id = `cc-${++sequence}`
         return new Promise((resolve, reject) => {
-          const timer = setTimeout(() => { fatal(`codex_rpc_timeout: ${method}`) }, options.rpcTimeoutMs ?? 30_000)
-          rpcs.set(id, { resolve, reject, timer })
+          const timer = timers.set(() => { fatal(`codex_rpc_timeout: ${method}`) }, options.rpcTimeoutMs ?? 30_000)
+          rpcs.set(id, { resolve, reject, clear: () => timers.clear(timer) })
           try { send({ id, method, params }) } catch { fatal('codex_protocol_write_failed') }
         })
       }
@@ -568,6 +623,8 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           }
           const eventTurn = message.method.startsWith('turn/') ? params.turn?.id : params.turnId
           if (eventTurn !== turn.id) { if (isRequest) send({ id: message.id, result: rejectedRequest(message) }); return }
+          // 有进展(条目、增量、审批/提问请求、回合结束)⇒ 撤掉边界超时;重试通知不算进展。
+          if (!turn.occurrence && (isRequest || message.method.startsWith('item/') || message.method === 'turn/completed')) clearWatchdog(turn)
           if (isRequest && (approvals.get(message.id!)?.turn ?? questions.get(message.id!)?.turn) && (approvals.get(message.id!)?.turn ?? questions.get(message.id!)?.turn) !== turn) {
             send({id:message.id,result:rejectedRequest(message)}); fatal('codex_duplicate_server_request'); return
           }
@@ -604,8 +661,16 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
               const event = codexActivityEvent(item, true)
               if (event) turn.events.push(turn.occurrence && event.kind === 'tool_call' && event.activity ? { ...event, activity: { ...event.activity, id: `${turn.occurrence.id}:${event.activity.id}`, parentId: turn.occurrence.id } } : event)
             }
+          } else if (message.method === 'error' && params.willRetry) {
+            // 非终止:codex 自己在重试(连不上 / 流断了)。记下最后一条,起 connect 上限。
+            if (!turn.occurrence) { turn.lastRetry = object(params.error) ? params.error : undefined; armWatchdog(turn, 'connect') }
           } else if (message.method === 'error' && !params.willRetry) {
-            finish(turn, { kind: 'error', message: typeof params.error?.message === 'string' ? params.error.message : 'codex_turn_failed' })
+            const message=typeof params.error?.message==='string'?params.error.message:'codex_turn_failed'
+            const event=codexErrorEvent(message)
+            const providerCode=codexAppServerErrorCode(params.error)
+            // Precise model rejection refines bad-request; other native classes stay authoritative.
+            const code=providerCode&&providerCode!=='invalid_request'?providerCode:event.code??providerCode
+            finish(turn,{...event,...(code?{code}:{})})
           } else if (message.method === 'turn/completed') {
             turn.terminal = true
             if (turn.occurrence) {
@@ -615,13 +680,19 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
             }
             if (params.turn?.status === 'completed' && !turn.cancelled) finish(turn, { kind: 'result', sessionId: threadId, numTurns: 1, durationMs: typeof params.turn.durationMs === 'number' ? params.turn.durationMs : Date.now() - turn.startedAt })
             else if (params.turn?.status === 'interrupted') finish(turn, { kind: 'error', message: turn.cancelled ? 'Codex 本轮已停止。' : turn.rejectedOperation ? '这次操作已被拒绝，Codex 已结束本轮。可以补充要求后继续。' : 'Codex 本轮已中断，未能确认完成。可以补充要求后继续。' })
-            else finish(turn, { kind: 'error', message: typeof params.turn?.error?.message === 'string' ? params.turn.error.message : 'Codex 本轮未能完成，可以补充要求后重试。' })
+            else { const message=typeof params.turn?.error?.message==='string'?params.turn?.error.message:'Codex 本轮未能完成，可以补充要求后重试。'
+            const event=codexErrorEvent(message)
+            const providerCode=codexAppServerErrorCode(params.turn?.error)
+            // Precise model rejection refines bad-request; other native classes stay authoritative.
+            const code=providerCode&&providerCode!=='invalid_request'?providerCode:event.code??providerCode
+            finish(turn,{...event,...(code?{code}:{})})
+            }
           }
         } else if (rpcId(message.id)) {
           const rpc = rpcs.get(message.id)
           if (!rpc) return // A timed-out or cancelled client's late response.
-          rpcs.delete(message.id); clearTimeout(rpc.timer)
-          if (message.error) rpc.reject(new Error(typeof message.error.message === 'string' ? message.error.message : 'codex_rpc_failed'))
+          rpcs.delete(message.id); rpc.clear()
+          if (message.error) rpc.reject(codexRpcError(typeof message.error.message === 'string' ? message.error.message : 'codex_rpc_failed'))
           else if (object(message.result)) rpc.resolve(message.result)
           else { rpc.reject(new Error('codex_invalid_rpc_response')); fatal('codex_invalid_rpc_response') }
         } else fatal('codex_invalid_protocol_message')
@@ -657,6 +728,8 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         if (lifetime && !registrationVerified) retained = true
         send({ method: 'initialized' })
         const native = await request('config/read', { cwd: project.path, includeLayers: false })
+        // codex 自己报的有效配置(含 MDM / 云端托管层、项目信任、-c 覆盖)才是这个会话真正的端点。
+        spawnTarget = codexTargetToCall(codexTargetFromConfig(native.config, childEnv), model ?? null)
         const config = workbenchCodexNativeConfig(discovery.servers, native.config)
         const catalog = execution && (execution.model || execution.reasoningEffort) ? await readCodexModelCatalog(request, project.path) : undefined
         if (catalog && execution?.model) selectedModel = executionModel(catalog, execution)
@@ -690,6 +763,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
         validateAttachments(attachments)
         const input = turnInput(text, attachments), turn = makeTurn()
         active = turn; if (lifetime) pendingStarts.add(turn); turn.events.push({ kind: 'init', sessionId: threadId })
+        armWatchdog(turn, 'first_event')
         const accepted = request('turn/start', { threadId, input }).then(response => {
           if (closing) throw new Error('codex_session_closed')
           if (typeof response.turn?.id !== 'string' || !response.turn.id) { fatal('codex_missing_turn_id'); throw new Error('codex_missing_turn_id') }
@@ -702,7 +776,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           for (const message of turn.early.splice(0)) route(message)
         }).catch(error => {
           if (!broken && !stopped) pendingStarts.delete(turn)
-          if (active === turn) finish(turn, {kind:'error',message:error instanceof Error ? error.message : 'codex_turn_start_failed'})
+          if (active === turn) finish(turn, codexErrorEvent(error instanceof Error ? error.message : 'codex_turn_start_failed'))
           throw error
         })
         return { turn, accepted }
@@ -715,7 +789,7 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
           if (runtimeStarted) throw new Error('codex_runtime_already_started')
           const launched = launch(text, attachments); runtimeStarted = true
           initialAcceptance = launched.accepted
-          void initialAcceptance.catch(error => { if (active === launched.turn) finish(launched.turn, { kind: 'error', message: String(error.message ?? error) }) })
+          void initialAcceptance.catch(error => { if (active === launched.turn) finish(launched.turn, codexErrorEvent(String(error.message ?? error))) })
         },
         submit(requestId, text, attachments) {
           attachments = attachments?.map(item => ({...item}))
@@ -748,10 +822,21 @@ export function createWorkbenchCodexProvider(options: Options): AgentProvider {
       } : undefined
       return {
         ...(runtime ? { workbenchRuntime: runtime } : {}),
+        callTarget: () => spawnTarget,
+        // 沙盒验证过(src/core/workbench/suspend-resume.sandbox.test.ts):冻住期间被掐断的流,放开后 codex 自己
+        // 「Reconnecting… 1/5」重试接上;放开后再收到的 willRetry 由 connect 看门狗照常管。
+        suspension: {
+          suspend() {
+            if (closing || exited || broken || terminated || !freezer.freeze()) return false
+            timers.pause(); return true
+          },
+          resume() { if (terminated) return; freezer.thaw(); timers.resume() },
+          terminate() { terminated = true; freezer.kill(); timers.resume() },
+        },
         dispatch(text, attachments) {
           if (runtime) throw new Error('codex_runtime_requires_lifetime_stream')
           const { turn, accepted } = launch(text, attachments)
-          void accepted.catch(error => { if (active === turn) finish(turn, { kind: 'error', message: error instanceof Error ? error.message : 'codex_turn_start_failed' }) })
+          void accepted.catch(error => { if (active === turn) finish(turn, codexErrorEvent(error instanceof Error ? error.message : 'codex_turn_start_failed')) })
           return turn.events.iterate()
         },
         async steer(text, attachments) {

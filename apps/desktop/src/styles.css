@@ -894,6 +894,11 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 }
 .guard-status-line[data-state="ok"]   { color: var(--green-ink); }
 .guard-status-line[data-state="down"] { color: var(--rouge); }
+/* 守护 v2:信号不安全、但没用到需要保护的接口 —— 中性,不报警 */
+.guard-status-line[data-state="idle"] { color: var(--th-ink-soft); }
+/* 此刻页的网络守护一行(2026-10-02) */
+.dash-guard-line { display: block; margin: 0 0 12px; font-size: 13px; line-height: 1.5; }
+.dash-guard-line[hidden] { display: none; }
 
 /* agent picker */
 .agent-grid {
@@ -1927,6 +1932,39 @@ body:has(.dev-banner:not([hidden])) .wizard-window { min-height: calc(100vh - 32
 .dialogue-turn ol { margin: 0 0 14px; padding-left: 20px; color: var(--th-ink); }
 .dialogue-turn li { margin-bottom: 4px; font-size: 13px; line-height: 1.7; }
 .dialogue-turn strong { color: var(--th-ink); font-weight: 500; }
+.dialogue-message-text { min-width:0; max-width:70ch; font-size:var(--th-size-body); line-height:1.8; overflow-wrap:anywhere; }
+.dialogue-message-plain,.dialogue-cmd { white-space:pre-wrap; }
+
+/* Full assistant replies and discussion excerpts share one reading layout. */
+.cc-readable-markdown.wb-markdown {
+  --wb-line:var(--th-hair); --wb-secondary:var(--th-ink-soft); --wb-muted:var(--th-ink-soft);
+  min-width:0; max-width:70ch; color:var(--th-ink); font-size:var(--th-size-body); line-height:1.8;
+  white-space:normal; overflow-wrap:anywhere;
+}
+.cc-readable-markdown.wb-markdown :is(p,ul,ol,blockquote,pre,table) { margin:.85em 0; }
+.cc-readable-markdown.wb-markdown :is(p,li) { font-size:inherit; line-height:inherit; }
+.cc-readable-markdown.wb-markdown :is(h1,h2,h3,h4,h5,h6) { margin:1.15em 0 .5em; font-size:1em; font-weight:500; line-height:1.5; }
+.cc-readable-markdown.wb-markdown h1 { font-size:1.2em; }
+.cc-readable-markdown.wb-markdown h2 { font-size:1.1em; }
+.cc-readable-markdown.wb-markdown strong { display:inline; color:inherit; font-size:inherit; font-weight:500; }
+.wb-markdown :is(strong,b) { background:var(--th-hair); -webkit-box-decoration-break:clone; box-decoration-break:clone; }
+.cc-readable-markdown.wb-markdown li+li { margin-top:.3em; }
+.cc-readable-markdown.wb-markdown>:first-child { margin-top:0; }
+.cc-readable-markdown.wb-markdown>:last-child { margin-bottom:0; }
+.cc-readable-markdown.wb-markdown pre { max-width:100%; white-space:pre; overflow-wrap:normal; word-break:normal; }
+.cc-readable-markdown.wb-markdown pre code { white-space:inherit; overflow-wrap:inherit; word-break:inherit; }
+.cc-readable-markdown.wb-markdown table { max-width:100%; font-size:.875em; overflow-wrap:normal; word-break:normal; }
+.cc-readable-markdown.wb-markdown :is(th,td) { min-width:6em; }
+.cc-user-reading { min-width:0; max-width:100%; white-space:normal; }
+.cc-user-plain { white-space:pre-wrap; overflow-wrap:anywhere; }
+.cc-message-source { margin-top:8px; font-size:12px; line-height:1.6; color:var(--th-ink-soft); white-space:normal; }
+.cc-message-source>summary { width:fit-content; cursor:pointer; list-style:none; }
+.cc-message-source>summary::before { content:'›'; display:inline-block; margin-right:5px; }
+.cc-message-source[open]>summary::before { transform:rotate(90deg); }
+.cc-message-source>summary::-webkit-details-marker { display:none; }
+.cc-message-source>summary:focus-visible { outline:2px solid var(--th-accent); outline-offset:3px; }
+.cc-message-source>pre { max-width:100%; margin:8px 0 0; padding:10px; overflow:auto; border:1px solid var(--th-hair); border-radius:var(--th-radius-control); background:var(--th-paper); color:var(--th-ink); white-space:pre; overflow-wrap:normal; word-break:normal; font:12px/1.7 var(--mono); }
+.cc-message-source>pre>code { white-space:inherit; font:inherit; }
 .privacy-submit {
   height: 36px;
   padding: 0 18px;

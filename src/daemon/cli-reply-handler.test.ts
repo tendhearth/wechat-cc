@@ -152,3 +152,41 @@ it('refuses workbench-owned native replies and only releases a positively closed
  await makeCliReplyCore(deps).resume(sess(),'go');expect(settle).toHaveBeenCalledWith(false)
  run.mockResolvedValueOnce({code:0,stdout:'done',stderr:'',timedOut:false,closed:true});await makeCliReplyCore(deps).resume(sess(),'go');expect(settle).toHaveBeenLastCalledWith(true)
 })
+
+it('network unprotected (2026-10-02) → resume never spawns the CLI; says why',async()=>{
+ const run=vi.fn(async()=>({code:0,stdout:'done',stderr:'',timedOut:false,closed:true})),reserveExecution=vi.fn(()=>()=>{})
+ const core=makeCliReplyCore({hub:{lookup:()=>sess(),sessions:()=>[sess()]},run,reserveExecution,log:()=>{},dangerously:false,networkGate:{check:async()=>({safe:false,source:'bx',detail:'bx 未保护'})}})
+ const r=await core.resume(sess(),'go')
+ expect(r.kind).toBe('failed');expect(r.text).toBe('网络未受保护(bx 未连上),用到 Claude 的这一步先暂停，恢复后再试。');expect(run).not.toHaveBeenCalled();expect(reserveExecution).not.toHaveBeenCalled()
+})
+
+it('守护 v2: a terminal Claude session behind a custom gateway (ANTHROPIC_BASE_URL) is not protected → resumes while unsafe',async()=>{
+ const run=vi.fn(async()=>({code:0,stdout:'done',stderr:'',timedOut:false,closed:true})),check=vi.fn(async()=>({safe:false,source:'bx' as const,detail:'bx 未保护'}))
+ const {classifyCall}=await import('../lib/call-classifier')
+ const core=makeCliReplyCore({hub:{lookup:()=>sess(),sessions:()=>[sess()]},run,reserveExecution:()=>()=>{},log:()=>{},dangerously:false,networkGate:{check,classify:t=>classifyCall({...t,baseUrl:'https://gw.example.com'})}})
+ const r=await core.resume(sess(),'go')
+ expect(r.kind).not.toBe('failed');expect(run).toHaveBeenCalled();expect(check).not.toHaveBeenCalled()
+})
+
+it('守护(2026-10-03):终端 Codex 会话按 codex 自己的配置判,不看 OPENAI_BASE_URL',async()=>{
+ const {classifyCall}=await import('../lib/call-classifier')
+ const {mkdirSync}=await import('node:fs')
+ const root=mkdtempSync(join(tmpdir(),'cli-reply-codex-')),home=join(root,'codex-home'),prior={home:process.env.CODEX_HOME,base:process.env.OPENAI_BASE_URL}
+ mkdirSync(home,{recursive:true})
+ process.env.CODEX_HOME=home;process.env.OPENAI_BASE_URL='https://dashscope.aliyuncs.com/compatible-mode/v1'
+ try{
+  const run=vi.fn(async()=>({code:0,stdout:'done',stderr:'',timedOut:false,closed:true})),check=vi.fn(async()=>({safe:false,source:'bx' as const,detail:'bx 未保护'}))
+  const core=makeCliReplyCore({hub:{lookup:()=>sess(),sessions:()=>[sess()]},run,reserveExecution:()=>()=>{},log:()=>{},dangerously:false,networkGate:{check,classify:t=>classifyCall(t)}})
+  const codex=sess({source:'codex',cwd:root})
+  // config 默认(官方)⇒ 需要保护 ⇒ 不起 CLI —— 哪怕 OPENAI_BASE_URL 指到国内
+  const r=await core.resume(codex,'go')
+  expect(r.kind).toBe('failed');expect(r.text).toContain('Codex');expect(run).not.toHaveBeenCalled()
+  // config 指到国内 ⇒ 不需要保护 ⇒ 照常起
+  writeFileSync(join(home,'config.toml'),'model_provider = "ds"\n[model_providers.ds]\nname = "d"\nbase_url = "https://api.deepseek.com/v1"\n')
+  expect((await core.resume(codex,'go')).kind).not.toBe('failed');expect(run).toHaveBeenCalled()
+ }finally{
+  if(prior.home===undefined)delete process.env.CODEX_HOME;else process.env.CODEX_HOME=prior.home
+  if(prior.base===undefined)delete process.env.OPENAI_BASE_URL;else process.env.OPENAI_BASE_URL=prior.base
+  rmSync(root,{recursive:true,force:true})
+ }
+})

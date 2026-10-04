@@ -15,11 +15,14 @@ import { icon } from "./icons.js"
 
 import { escapeHtml } from "../view.js"
 import { formatInvokeError } from "../ipc.js"
+import { renderWorkbenchMarkdown, renderWorkbenchUserText } from "./workbench-markdown.js"
+import { paintConversation, syncConversationLatest, showConversationLatest, conversationInteractionActive } from "./converse-reading.js"
 
 /**
  * @typedef {{ getUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>, makeRecorder: (s: MediaStream) => MediaRecorder }} MediaDeps
  * @typedef {{ invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>, media?: MediaDeps, invokeWorkbenchApi?: (method: 'GET'|'POST', path: string, body?: Record<string, unknown>) => Promise<unknown>, onDelegate?: (draft: import('./task-entry.js').Draft) => Promise<import('./task-entry.js').EntryResult|null>, onSend?: () => void }} Deps
- * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean, at?: number }} ConverseMsg
+ * @typedef {{ kind: 'voice', text: string } | { kind: 'sticker', label: string, file?: string, image?: string } | { kind: 'file', name: string, ref?: string }} ReplyAttachment
+ * @typedef {{ id: number, role: 'user'|'cc'|'error'|'system', text: string, pending?: boolean, at?: number, attachments?: ReplyAttachment[], narration?: string[] }} ConverseMsg
  */
 
 // ── module state ───────────────────────────────────────────────────────
@@ -60,6 +63,7 @@ let recordingTimer = null
 function renderSkeleton(root, deps) {
   root.innerHTML = `
     <div id="converse-scroll" class="converse-scroll"></div>
+    <button id="converse-latest" class="converse-latest" type="button" hidden>有新回复 · 回到最新</button>
     <div class="converse-compose">
       <textarea id="converse-input" class="converse-textarea" aria-label="消息" placeholder="跟 CC 说点什么…" rows="2"></textarea>
       <div id="converse-recording" class="converse-recording" hidden>
@@ -96,6 +100,68 @@ function setVoiceOut(v) {
 
 // ── rendering ──────────────────────────────────────────────────────────
 
+/**
+ * agent_converse 的回包 → 统一的回复对象(回复交付,2026-10-04)。新 Rust 回 `{ reply, attachments, narration }`
+ * (文件只带一次性 ref,路径不进网页);老 Rust 回裸字符串。认不得的附件逐条丢掉。
+ * @param {unknown} res @returns {{ reply: string, attachments: ReplyAttachment[], narration: string[] }}
+ */
+export function normalizeConverseReply(res) {
+  if (typeof res === "string" || res == null) return { reply: String(res ?? ""), attachments: [], narration: [] }
+  const o = /** @type {Record<string, unknown>} */ (res)
+  /** @type {ReplyAttachment[]} */
+  const attachments = []
+  for (const a of Array.isArray(o.attachments) ? o.attachments : []) {
+    if (!a || typeof a !== "object") continue
+    const x = /** @type {Record<string, unknown>} */ (a)
+    if (x.kind === "voice" && typeof x.text === "string") attachments.push({ kind: "voice", text: x.text })
+    else if (x.kind === "sticker" && typeof x.label === "string") attachments.push({ kind: "sticker", label: x.label, ...(typeof x.file === "string" ? { file: x.file } : {}), ...(typeof x.image === "string" && x.image.startsWith("data:image/") ? { image: x.image } : {}) })
+    else if (x.kind === "file" && typeof x.name === "string") attachments.push({ kind: "file", name: x.name, ...(typeof x.ref === "string" ? { ref: x.ref } : {}) })
+  }
+  const narration = (Array.isArray(o.narration) ? o.narration : []).filter(n => typeof n === "string" && n.trim() !== "").map(String)
+  return { reply: typeof o.reply === "string" ? o.reply : "", attachments, narration }
+}
+
+/**
+ * 过程:最后的话之前 CC 写下的过程话。灰、默认收起;说清它没发到微信(不假装它是回复)。
+ * @param {ConverseMsg} m
+ */
+function narrationHtml(m) {
+  const lines = m.narration ?? []
+  if (!lines.length) return ""
+  return `<details class="converse-process" data-msg-id="${m.id}">
+    <summary title="CC 在最后回复之前写下的过程话,只在这里显示,没有发到微信">过程 · ${lines.length} 段</summary>
+    <ol class="converse-process-lines">${lines.map(l => `<li>${escapeHtml(l)}</li>`).join("")}</ol>
+  </details>`
+}
+
+/**
+ * 附件:语音(点了才合成、播放)、表情(本地表情是一张图;联网表情 daemon 不替你取图,只写情绪)、
+ * 文件(名字 + 在访达中显示 —— 只显示不打开,打开附件可能直接运行程序)。
+ * @param {ConverseMsg} m
+ */
+function attachmentsHtml(m) {
+  const list = m.attachments ?? []
+  if (!list.length) return ""
+  const items = list.map((a, i) => {
+    if (a.kind === "voice") {
+      return `<div class="converse-att converse-att-voice">
+        <button class="converse-att-play" type="button" data-msg-id="${m.id}" data-att="${i}" aria-label="播放语音">${icon("play")}<span>语音</span></button>
+        <span class="converse-att-text">${escapeHtml(a.text)}</span>
+      </div>`
+    }
+    if (a.kind === "sticker") {
+      return a.image
+        ? `<img class="converse-att-sticker" src="${escapeHtml(a.image)}" alt="表情:${escapeHtml(a.label)}" title="${escapeHtml(a.label)}" />`
+        : `<div class="converse-att converse-att-sticker-label">${icon("smile")}<span>表情 · ${escapeHtml(a.label)}</span></div>`
+    }
+    return `<div class="converse-att converse-att-file">
+      ${icon("attachment")}<span class="converse-att-name">${escapeHtml(a.name)}</span>
+      ${a.ref ? `<button class="converse-att-reveal" type="button" data-file-ref="${escapeHtml(a.ref)}">在访达中显示</button>` : ""}
+    </div>`
+  })
+  return `<div class="converse-attachments">${items.join("")}</div>`
+}
+
 /** @param {ConverseMsg} m */
 function messageHtml(m) {
   if (m.role === "error") {
@@ -111,10 +177,18 @@ function messageHtml(m) {
   const replayBtn = m.role === "cc" && !m.pending
     ? `<button class="voice-replay-btn" type="button" data-msg-id="${m.id}" aria-label="朗读这条回复" title="朗读">${icon("play")} </button>`
     : ""
+  const markdown = m.role === "cc" && !m.pending
+  const bubble = `<div class="converse-bubble${markdown ? ' cc-readable-markdown wb-markdown' : m.role==='user' ? ' cc-user-bubble' : ''}">${markdown ? renderWorkbenchMarkdown(m.text) : m.role==='user' ? renderWorkbenchUserText(m.text,`converse:${m.id}`) : escapeHtml(m.text)}</div>`
+  const extras = m.role === "cc" && ((m.attachments?.length ?? 0) > 0 || (m.narration?.length ?? 0) > 0)
+  // 带附件 / 过程的回复:过程在上、回复居中、附件在下,一列排;没有的照旧(样式与测试不动)。
+  // 朗读按钮永远贴着正文最后一行(带附件时放进正文那一行里),不随附件块漂。
+  const body = extras
+    ? `<div class="converse-cc-body">${narrationHtml(m)}${m.text.trim() ? `<div class="converse-cc-line">${bubble}${replayBtn}</div>` : ""}${attachmentsHtml(m)}</div>`
+    : bubble
   return `<div class="converse-msg ${roleCls}${pendingCls}">
     ${m.role === "cc" ? '<img class="converse-avatar" src="./assets/pet/cc-v1/canonical/lit/front.png" alt="CC" width="32" height="32" />' : ""}
-    <div class="converse-bubble">${escapeHtml(m.text)}</div>
-    ${replayBtn}
+    ${body}
+    ${extras || !m.text.trim() ? "" : replayBtn}
   </div>`
 }
 
@@ -341,13 +415,10 @@ async function loadSharedHistory(deps) {
   } catch { /* 没有登记处或读不到:桌面照旧从空白开始 */ }
 }
 
-function renderMessages() {
+function renderMessages({ follow = false } = {}) {
   const scroll = document.getElementById("converse-scroll")
   if (scroll) {
-    scroll.innerHTML = messages.length === 0
-      ? emptyStateHtml()
-      : messages.map(messageHtml).join("")
-    requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight })
+    paintConversation(scroll,messages,messageHtml,emptyStateHtml(),{follow,latest:/** @type {HTMLButtonElement|null} */(document.getElementById("converse-latest"))})
   }
   for (const cb of listeners) {
     try { cb(messages) } catch (err) { console.error("converse subscriber threw", err) }
@@ -386,15 +457,15 @@ async function sendMessage(deps) {
   reflectMic()
   sendBtn.disabled = true
   input.disabled = true
-  renderMessages()
+  renderMessages({ follow: true })
 
   // A turn legitimately takes 1-3 minutes when the owner session cold-starts
   // — a bare "…" for that long reads as "it's broken". Stage the pending
   // copy over time so the wait explains itself.
   const PENDING_STAGES = [
-    [8_000, "正在想…"],
-    [30_000, "还在想——第一次开口要先热身，可能要一两分钟。"],
-    [90_000, "在认真组织语言，再等等我。"],
+    [8_000, "还在等待 CC 的回复…"],
+    [30_000, "还没收到回复，你可以先查看上面的内容。"],
+    [90_000, "这次等待较久，收到回复后会显示在这里。"],
   ]
   const pendingTimers = PENDING_STAGES.map(([delay, copy]) => setTimeout(() => {
     const m = messages.find(x => x.id === pendingId)
@@ -402,17 +473,21 @@ async function sendMessage(deps) {
   }, Number(delay)))
 
   try {
-    const reply = await deps.invoke("agent_converse", { text })
+    const res = normalizeConverseReply(await deps.invoke("agent_converse", { text }))
     pendingTimers.forEach(clearTimeout)
     messages = messages.filter(m => m.id !== pendingId)
-    const replyText = String(reply ?? "")
+    const replyText = res.reply
+    const extras = { ...(res.attachments.length ? { attachments: res.attachments } : {}), ...(res.narration.length ? { narration: res.narration } : {}) }
     if (replyText.trim() === "") {
-      // Bubble replies mean a turn can legitimately produce no text output
-      // (e.g. the agent only sent stickers/files to WeChat). Don't render a
-      // blank CC bubble for that — show a muted system note instead.
-      messages.push({ id: nextId++, role: "system", text: "（CC 这轮没有用文字回复）" })
+      // 只有附件(一张表情、一段语音)也是回复:照常画 CC 那一行,只是没有文字气泡。
+      // 什么都没有(或只有过程话)⇒ 灰色一句说明,过程照样能展开看。
+      if (res.attachments.length) messages.push({ id: nextId++, role: "cc", text: "", at: Date.now(), ...extras })
+      else {
+        if (res.narration.length) messages.push({ id: nextId++, role: "cc", text: "", at: Date.now(), narration: res.narration })
+        messages.push({ id: nextId++, role: "system", text: "（CC 这轮没有用文字回复）" })
+      }
     } else {
-      messages.push({ id: nextId++, role: "cc", text: replyText, at: Date.now() })
+      messages.push({ id: nextId++, role: "cc", text: replyText, at: Date.now(), ...extras })
       // Fire-and-forget: autoplay must not block clearing the "sending"
       // state or the compose box. Errors are handled inside speakAndPlay.
       if (voiceOut) speakAndPlay(deps, replyText).catch(() => {})
@@ -436,7 +511,9 @@ async function sendMessage(deps) {
     sendBtn.disabled = false
     input.disabled = false
     renderMessages()
-    input.focus()
+    const scroll=document.getElementById("converse-scroll")
+    const focused=document.activeElement
+    if((!focused || focused===input || focused===document.body) && (!scroll || !conversationInteractionActive(scroll)))input.focus()
   }
 }
 
@@ -470,6 +547,12 @@ async function delegateDraft(deps) {
 
 /** @param {HTMLElement} root @param {Deps} deps */
 function wireEvents(root, deps) {
+  const scroll=root.querySelector("#converse-scroll")
+  const latest=/** @type {HTMLButtonElement|null} */(root.querySelector("#converse-latest"))
+  if(scroll instanceof HTMLElement){
+    scroll.addEventListener("scroll",()=>syncConversationLatest(scroll,latest),{passive:true})
+    latest?.addEventListener("click",()=>showConversationLatest(scroll,latest))
+  }
   root.querySelector("#converse-delegate")?.addEventListener("click", () => { void delegateDraft(deps) })
   root.querySelector("#converse-send")?.addEventListener("click", () => {
     sendMessage(deps).catch(err => console.error("converse send failed", err))
@@ -498,9 +581,7 @@ function wireEvents(root, deps) {
     toggleMic(deps).catch(err => console.error("converse mic failed", err))
   })
 
-  // Delegated: bubbles (and their ▶ buttons) are re-created on every
-  // renderMessages(), so bind once on the scroll container rather than
-  // per-bubble.
+  // Delegated so appended and updated replies share one handler.
   root.querySelector("#converse-scroll")?.addEventListener("click", (ev) => {
     const target = ev.target
     if (!(target instanceof Element)) return
@@ -512,6 +593,23 @@ function wireEvents(root, deps) {
         input.focus()
         input.dispatchEvent(new Event("input", { bubbles: true }))
       }
+      return
+    }
+    const play = target.closest(".converse-att-play")
+    if (play instanceof HTMLElement) {
+      const msg = messages.find(m => m.id === Number(play.dataset.msgId))
+      const att = msg?.attachments?.[Number(play.dataset.att)]
+      if (att?.kind === "voice") speakAndPlay(deps, att.text).catch(() => {})
+      return
+    }
+    const reveal = target.closest(".converse-att-reveal")
+    if (reveal instanceof HTMLElement) {
+      const ref = reveal.dataset.fileRef ?? ""
+      Promise.resolve(deps.invoke("reveal_reply_file", { token: ref })).catch(err => {
+        const raw = formatInvokeError(err)
+        messages.push({ id: nextId++, role: "system", text: /reply_file_missing/.test(raw) ? "这个文件已经不在原来的位置了" : /reply_file_unknown/.test(raw) ? "重新打开应用后找不到这个文件了,可以在微信或文件夹里找" : "暂时无法在访达中显示" })
+        renderMessages()
+      })
       return
     }
     const btn = target.closest(".voice-replay-btn")

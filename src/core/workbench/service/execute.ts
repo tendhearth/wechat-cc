@@ -8,12 +8,17 @@ import { randomUUID } from 'node:crypto'
 import type { AgentEvent, AgentSession, AgentExecutionChoice } from '../../agent-provider'
 import type { MatterStore } from '../../matters/store'
 import { classifyProviderError } from '../../provider-quota'
+import { decideCall, isNetworkUnprotectedError } from '../../../lib/network-gate'
+import { providerCallTarget } from '../../provider-registry'
+import { liveRunTarget } from './call-target'
 import { TIER_PROFILES, sessionAuthEnv } from '../../user-tier'
 import { canonicalProject, outputDirectory } from '../artifacts'
 import type { Attachment } from '../attachments'
 import type { CreationReceipt } from '../creation-receipts'
 import { makeDeltaCoalescer } from '../delta-coalescer'
-import { executionFailureMessage, normalizeExecutionChoice, PROVIDER_EXECUTION_CHOICE, sameExecutionChoice } from '../execution-settings'
+import { CodexExecutionError } from '../codex-execution-error'
+import { executionFailureMessage, normalizeExecutionChoice, PROVIDER_EXECUTION_CHOICE, sameExecutionChoice, taskErrorForProviderCode } from '../execution-settings'
+import { isProviderErrorCode, providerErrorCodeOf } from '../../../lib/provider-error-code'
 import { isUnattendedExecutor } from '../executor-capabilities'
 import { captureGitBaseline } from '../git-review'
 import { handoffArtifactText, type ArtifactSelection } from '../handoff'
@@ -46,6 +51,7 @@ async function collectWorkbenchTurn(events: AsyncIterable<AgentEvent>, stop: Pro
   const iterator=events[Symbol.asyncIterator]()
   let result: Extract<AgentEvent,{kind:'result'}> | undefined
   let error: string | undefined
+  let errorCode: string | undefined
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     // Install the lifetime consumer before native start can publish any events.
@@ -67,10 +73,10 @@ async function collectWorkbenchTurn(events: AsyncIterable<AgentEvent>, stop: Pro
       })()
       if (timer) { clearTimeout(timer); timer=undefined }
       if (!step) return null
-      if (step.done) return { result,error }
+      if (step.done) return { result,error,errorCode }
       observe(step.value)
       if (step.value.kind==='result') result=step.value
-      if (step.value.kind==='error') error=step.value.message
+      if (step.value.kind==='error') { error=step.value.message; errorCode=step.value.code }
     }
   } finally {
     if (timer) clearTimeout(timer)
@@ -142,6 +148,11 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       if(running.cancelled){finalStatus='cancelled';return}
       if(ctx.deps.executionConflict?.(task.path,task.providerId,task.sessionId))throw new Error('native_session_busy')
       const entry=requireInput(task.providerId,running.attachments,running.execution,running.continuation.mode==='resume')
+      // 网络闸门(守护 v2;评审 #193 按实际目标判):起执行者之前问执行者「这次 spawn 实际会连到哪里」
+      // (它用的端点 + 模型,不是此刻的配置);需要保护且不安全才不 spawn,任务以 network_unprotected 失败。
+      // 不需要保护的执行者(Cursor auto、国内 / 自建网关)照常起。会话起来以后、发第一轮之前还会再判一次。
+      if(ctx.deps.networkGate&&!(await decideCall(ctx.deps.networkGate,providerCallTarget(entry.provider,task.providerId,'spawn',{execution:{...running.execution},...(resume?{resumeSessionId:resume}:{})}))).allowed)throw new Error('network_unprotected')
+      if(running.cancelled){finalStatus='cancelled';return}
       const token=ctx.deps.mintSessionToken?.(sessionKey)
       running.credentialsMinted=!!ctx.deps.mintSessionToken
       if (running.cancelled) revokeCredentials(running)
@@ -187,6 +198,10 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
           },() => confirmLateClose(running,false))
         }
       }
+      if (running.cancelled) { finalStatus='cancelled'; return }
+      // 评审 #193 P1-1:会话起来了,这一轮实际连哪里现在才确定(比如 cursor-agent 自报的当前模型)。
+      // 需要保护且不安全 ⇒ 一轮都不发。
+      if(ctx.deps.networkGate&&!(await decideCall(ctx.deps.networkGate,liveRunTarget(running,entry.provider))).allowed)throw new Error('network_unprotected')
       if (running.cancelled) { finalStatus='cancelled'; return }
       store.markSourceDispatched(task.id)
       const material=store.attachments.prepare(task.id,running.attachments,running.path,ctx.stateDir)
@@ -247,7 +262,7 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
             coalescer.push(ev)
             // 额度/限流在错误到达时就登记(评审 #5:只在结算时看,保留会话永远等不到结算);
             // 任何一个成功回合(result)即视为这家恢复。
-            if (ev.kind==='error') quota.note(task.providerId,ev.message)
+            if (ev.kind==='error') quota.note(task.providerId,ev.message,ev.code)
             if (ev.kind==='result') quota.clear(task.providerId)
             if (ev.kind==='result') settleQuiet(running)
             // observe 是**故意**会往外抛的(身份不符那条),所以探测器自己抛出会把整轮带走。
@@ -259,6 +274,8 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
               }
             }
           },()=>{
+            // 网络守护冻住期间按「在等」算:回合看门狗不走(放开时 interactionAt 记成那一刻,从头算)。
+            if(running.networkSuspended)return true
             const snapshot=runtimeSnapshot(running)
             return running.questions.pending().length>0||running.permissions.pending().length>0||!!(snapshot?.retained&&snapshot.foreground==='idle'&&snapshot.backgroundCount===0)
           },()=>running.interactionAt,runtime?()=>runtime.start(request,material):undefined)
@@ -269,19 +286,26 @@ export function makeExecuteDomain(ctx:ServiceCtx, domains:ExecuteDomains) {
       else if (summary.error || !summary.result || runtime?.snapshot().retained) {
         // An old foreground result cannot turn an unexpected retained EOF into success.
         const raw=summary.error ?? (runtime?.snapshot().retained?'background_runtime_ended':'stream_ended_without_result')
-        // 额度/限流(真机 2026-09-16:Codex 额度耗尽,原文当错误码存进 task.error,通知空白):
-        // 认出来就换成稳定错误码、登记这家耗尽,事件里说人话并附原文摘要。
-        const quotaKind=summary.error?classifyProviderError(summary.error):null
-        const error=quotaKind==='quota'?'provider_quota_exhausted':quotaKind==='rate_limit'?'provider_rate_limited':raw
-        if(quotaKind)quota.note(task.providerId,summary.error!)
+        // Native model and guard refusals keep their specific meaning. Every provider code
+        // is authoritative; only uncoded legacy errors may infer quota from text.
+        const modelRejected=summary.errorCode==='execution_model_unsupported'
+        const networkRefused=summary.errorCode==='network_unprotected'
+        const providerCode=isProviderErrorCode(summary.errorCode)?summary.errorCode:undefined
+        const quotaKind=providerCode?(providerCode==='quota'?'quota':providerCode==='rate_limited'?'rate_limit':null):!summary.errorCode&&summary.error?classifyProviderError(summary.error):null
+        const error=modelRejected?'execution_model_unsupported':networkRefused?'network_unprotected':taskErrorForProviderCode(providerCode,raw)??(quotaKind==='quota'?'provider_quota_exhausted':quotaKind==='rate_limit'?'provider_rate_limited':raw)
+        if(quotaKind)quota.note(task.providerId,summary.error!,providerCode)
+        if(summary.error&&!networkRefused)try{ctx.deps.onTurnError?.(task.providerId,summary.errorCode,summary.error)}catch{/* 只是个提示,不影响收尾 */}
         finalStatus='failed'; finalError=error
-        store.addEvent(task.id,'error',error==='background_runtime_ended'?'后台执行会话意外结束；对话已保留，请检查后再继续。':quotaKind?`${executionFailureMessage(error)}\n原文：${summary.error!.trim().slice(0,200)}`:executionFailureMessage(error))
+        const coded=error!==raw&&!!summary.error
+        if(!modelRejected&&!networkRefused)store.addEvent(task.id,'error',error==='background_runtime_ended'?'后台执行会话意外结束；对话已保留，请检查后再继续。':coded?`${executionFailureMessage(error)}\n原文：${summary.error!.trim().slice(0,200)}`:executionFailureMessage(error))
         ctx.hub.touched(task.id)
       } else { finalStatus='completed'; quota.clear(task.providerId) }
     } catch (error) {
-      const message=error instanceof Error ? error.message : 'task_failed'
+      const thrown=isNetworkUnprotectedError(error)?'network_unprotected':error instanceof CodexExecutionError?error.code:error instanceof Error?error.message:'task_failed'
+      const message=thrown==='network_unprotected'||error instanceof CodexExecutionError?thrown:taskErrorForProviderCode(providerErrorCodeOf(error),thrown)??thrown
       finalStatus=running.cancelled ? 'cancelled' : 'failed'; finalError=running.cancelled ? null : message
-      if (!running.cancelled) { store.addEvent(task.id,'error',message==='restart_confirmation_required' ? RECOVERY_MESSAGE : executionFailureMessage(message)); ctx.hub.touched(task.id) }
+      if(!running.cancelled&&thrown!=='network_unprotected')try{ctx.deps.onTurnError?.(task.providerId,error instanceof CodexExecutionError?error.code:providerErrorCodeOf(error),error instanceof Error?error.message:String(error))}catch{/* 只是个提示 */}
+      if (!running.cancelled) { store.addEvent(task.id,'error',error instanceof CodexExecutionError?error.message:message==='restart_confirmation_required' ? RECOVERY_MESSAGE : executionFailureMessage(message)); ctx.hub.touched(task.id) }
     } finally {
       cancelIdleClose(running)
       running.finishing=true;running.questions.close();ctx.hub.bumped(task.id)

@@ -115,6 +115,8 @@ describe('真实返回校验 — workbench + matters', () => {
           owner: () => owner.peek(),
           history: (chatId: string, o: { beforeTs?: string; limit: number }) => makeMessagesStore(db).listRange(chatId, o),
           chat: makePhoneChat({ converse: async () => ({ reply: 'ok' }), ownerMatterId: () => owner.ensure() }),
+          message: (chatId: string, id: string) => makeMessagesStore(db).get(chatId, id),
+          speak: async (text: string) => ({ audio: Buffer.from(`voice:${text}`), mime: 'audio/mpeg' }),
         }
       })(),
     })
@@ -245,6 +247,33 @@ describe('真实返回校验 — workbench + matters', () => {
     const page = parseAs('GET /m/api/chat', await (await request('/m/api/chat?limit=2')).json()) as { hasMore: boolean; messages: unknown[] }
     expect(page).toMatchObject({ hasMore: true })
     expect(page.messages).toHaveLength(2)
+  })
+
+  // 回复交付(2026-10-04):回复行的附件与旁白随页带出,文件只给名字;语音按需合成,只念库里那一行真有的那段。
+  it('chat 页带出回复的附件与旁白(文件不带路径),chat/voice 只合成那一行的语音附件', async () => {
+    await request('/m/api/chat/say', { requestId: randomUUID(), text: '先登记主人对话' })
+    const ms = makeMessagesStore(db)
+    const extras = JSON.stringify({
+      attachments: [{ kind: 'voice', text: '晚安' }, { kind: 'sticker', label: '开心', file: 'a.png' }, { kind: 'file', name: 'r.pdf', path: '/Users/me/r.pdf' }],
+      narration: ['我先看看日程。'],
+    })
+    await ms.append({ id: 'app:phone:1:out', chatId: 'owner', ts: new Date(Date.UTC(2026, 9, 4)).toISOString(), direction: 'out', kind: 'text', text: '好了', source: 'phone', extras })
+    const raw = await (await request('/m/api/chat')).json() as { messages: Array<Record<string, unknown>> }
+    expect(JSON.stringify(raw)).not.toContain('/Users/me')
+    const page = parseAs('GET /m/api/chat', raw) as { messages: Array<{ id: string; attachments?: unknown; narration?: unknown }> }
+    expect(page.messages.find(m => m.id === 'app:phone:1:out')).toMatchObject({
+      attachments: [{ kind: 'voice', text: '晚安' }, { kind: 'sticker', label: '开心', file: 'a.png' }, { kind: 'file', name: 'r.pdf' }],
+      narration: ['我先看看日程。'],
+    })
+    const ok = await request('/m/api/chat/voice?id=app:phone:1:out&i=0')
+    expect(ok.status).toBe(200)
+    expect(parseAs('GET /m/api/chat/voice', await ok.json())).toEqual({ ok: true, mime: 'audio/mpeg', data: Buffer.from('voice:晚安').toString('base64') })
+    // 第 1 个是表情,不是语音;没有的行;坏参数 —— 都不念。
+    const notVoice = await request('/m/api/chat/voice?id=app:phone:1:out&i=1')
+    expect(notVoice.status).toBe(404)
+    parseAs('GET /m/api/chat/voice', await notVoice.json())
+    expect((await request('/m/api/chat/voice?id=nope&i=0')).status).toBe(404)
+    expect((await request('/m/api/chat/voice?id=app:phone:1:out')).status).toBe(400)
   })
 
   it('matter/changes 真实返回符合 schema(无改动 ⇒ turn:null;未知任务 ⇒ 404)', async () => {

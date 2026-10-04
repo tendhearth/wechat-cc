@@ -23,6 +23,13 @@ if (!process.env.WECHAT_CC_BUNDLED_PLUGINS_DIR) {
 }
 
 /**
+ * 守护按 codex 自己的配置层判 Codex 的端点(lib/codex-target.ts,2026-10-03)。不给测试一个空的
+ * CODEX_HOME,凡是分类 codex 的测试都会去读主人真的 ~/.codex/config.toml —— 结果随机器而变。
+ * 需要特定 codex 配置的测试自己建临时目录、显式传 env。
+ */
+process.env.CODEX_HOME = mkdtempSync(join(tmpdir(), 'wcc-test-empty-codex-home-'))
+
+/**
  * `vi.waitFor` 的缺省上限跟 `expect.poll` 对齐(见 vitest.config.ts 的 `expect.poll.timeout`)。
  *
  * 2026-09-27 那次只抬了 `expect.poll` 的缺省 1s,`vi.waitFor` 没有对应的配置项,于是 18 个文件

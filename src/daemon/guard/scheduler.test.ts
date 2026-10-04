@@ -119,4 +119,144 @@ describe('startGuardScheduler', () => {
     expect(ipFn).toHaveBeenCalledTimes(1)
     await sched.stop()
   })
+
+  // 评审 #193 P1-2:公网 IP 查不到时,google 探测结果不能冻住。
+  describe('probe freshness when the public-IP lookup keeps failing (review #193 P1)', () => {
+    it('first probe FAILED + ipify keeps failing → still re-probes every tick and recovers', async () => {
+      let reachable = false
+      const probeFn = vi.fn(async () => (reachable ? { reachable: true, ms: 1 } : { reachable: false, ms: null, error: 'timeout' }))
+      const sched = startGuardScheduler(makeDeps({
+        fetchPublicIp: async () => ({ ip: null, error: 'ipify down' }),
+        probeReachable: probeFn,
+      }))
+      await sched.pokeNow()
+      expect(sched.current().safe).toBe(false)
+      reachable = true   // VPN 恢复了,ipify 仍然查不到
+      await sched.pokeNow()
+      expect(probeFn).toHaveBeenCalledTimes(2)
+      expect(sched.current().safe).toBe(true)
+      await sched.stop()
+    })
+
+    it('first probe OK + ipify keeps failing → re-probes once the result expires and sees the network die', async () => {
+      let t = 0
+      let reachable = true
+      const probeFn = vi.fn(async () => (reachable ? { reachable: true, ms: 1 } : { reachable: false, ms: null, error: 'timeout' }))
+      const sched = startGuardScheduler(makeDeps({
+        now: () => t,
+        probeTtlMs: 60_000,
+        fetchPublicIp: async () => ({ ip: null, error: 'ipify down' }),
+        probeReachable: probeFn,
+      }))
+      await sched.pokeNow()
+      expect(sched.current().safe).toBe(true)
+      reachable = false   // 网络死了,IP 也查不到
+      t += 30_000; await sched.pokeNow()
+      expect(probeFn).toHaveBeenCalledTimes(1)   // 结果还新鲜,不多探
+      t += 31_000; await sched.pokeNow()        // 过期 → 重探
+      expect(probeFn).toHaveBeenCalledTimes(2)
+      expect(sched.current().safe).toBe(false)
+      await sched.stop()
+    })
+
+    it('IP known and steady → still re-probes after the TTL (no frozen result)', async () => {
+      let t = 0
+      const probeFn = vi.fn(async () => ({ reachable: true, ms: 1 }))
+      const sched = startGuardScheduler(makeDeps({
+        now: () => t,
+        probeTtlMs: 60_000,
+        fetchPublicIp: async () => ({ ip: '1.2.3.4' }),
+        probeReachable: probeFn,
+      }))
+      await sched.pokeNow()
+      t += 61_000; await sched.pokeNow()
+      expect(probeFn).toHaveBeenCalledTimes(2)
+      expect(sched.current().lastChecked).toBe(new Date(61_000).toISOString())
+      await sched.stop()
+    })
+  })
+
+  describe('bx mode', () => {
+    const SAFE = { safe: true, protection: 'protected', tunnelHealthy: true, detail: 'bx 保护中' }
+    const DOWN = { safe: false, protection: 'off', tunnelHealthy: false, detail: 'bx 未保护(protection_state=off)' }
+
+    it('bx installed → reads bx every tick (not the google probe); safe mirrors bx', async () => {
+      const probeFn = vi.fn(async () => ({ reachable: true, ms: 1 }))
+      const readBx = vi.fn(async () => SAFE)
+      const sched = startGuardScheduler(makeDeps({
+        findBx: () => '/fake/bx',
+        readBx,
+        fetchPublicIp: async () => ({ ip: '1.2.3.4' }),
+        probeReachable: probeFn,
+      }))
+      await sched.pokeNow()
+      await sched.pokeNow()
+      expect(probeFn).not.toHaveBeenCalled()
+      expect(readBx).toHaveBeenCalledWith('/fake/bx')
+      expect(readBx.mock.calls.length).toBeGreaterThanOrEqual(2)
+      expect(sched.current()).toEqual(expect.objectContaining({ source: 'bx', safe: true, reachable: true, detail: 'bx 保护中' }))
+      await sched.stop()
+    })
+
+    it('bx unreadable / unprotected → unsafe and onStateChange fires (sessions get shut down)', async () => {
+      let v: typeof SAFE | typeof DOWN = SAFE
+      const changes: Array<[boolean, boolean]> = []
+      const sched = startGuardScheduler(makeDeps({
+        findBx: () => '/fake/bx',
+        readBx: async () => v,
+        fetchPublicIp: async () => ({ ip: '1.2.3.4' }),
+        probeReachable: async () => ({ reachable: true, ms: 1 }),
+        onStateChange: (p, n) => { changes.push([p.reachable, n.reachable]) },
+      }))
+      await sched.pokeNow()
+      v = DOWN
+      await sched.pokeNow()
+      expect(sched.current()).toEqual(expect.objectContaining({ source: 'bx', safe: false, reachable: false }))
+      expect(changes.at(-1)).toEqual([true, false])
+      await sched.stop()
+    })
+
+    it('ipify is throttled to pollMs while bx is read each tick', async () => {
+      let t = 0
+      const ipFn = vi.fn(async () => ({ ip: '1.2.3.4' }))
+      const readBx = vi.fn(async () => SAFE)
+      const sched = startGuardScheduler(makeDeps({
+        pollMs: 30_000,
+        now: () => t,
+        findBx: () => '/fake/bx',
+        readBx,
+        fetchPublicIp: ipFn,
+      }))
+      await sched.pokeNow()
+      t += 10_000; await sched.pokeNow()
+      t += 10_000; await sched.pokeNow()
+      expect(ipFn).toHaveBeenCalledTimes(1)
+      t += 15_000; await sched.pokeNow()
+      expect(ipFn).toHaveBeenCalledTimes(2)
+      expect(readBx.mock.calls.length).toBeGreaterThanOrEqual(4)
+      await sched.stop()
+    })
+
+    it('bx not installed → legacy ipify+probe path, source=probe', async () => {
+      const readBx = vi.fn(async () => SAFE)
+      const sched = startGuardScheduler(makeDeps({
+        findBx: () => null,
+        readBx,
+        fetchPublicIp: async () => ({ ip: '1.2.3.4' }),
+        probeReachable: async () => ({ reachable: false, ms: null, error: 'timeout' }),
+      }))
+      await sched.pokeNow()
+      expect(readBx).not.toHaveBeenCalled()
+      expect(sched.current()).toEqual(expect.objectContaining({ source: 'probe', safe: false, reachable: false }))
+      await sched.stop()
+    })
+
+    it('disabled → never reads bx', async () => {
+      const readBx = vi.fn(async () => SAFE)
+      const sched = startGuardScheduler(makeDeps({ isEnabled: () => false, findBx: () => '/fake/bx', readBx }))
+      await sched.pokeNow()
+      expect(readBx).not.toHaveBeenCalled()
+      await sched.stop()
+    })
+  })
 })

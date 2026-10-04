@@ -795,6 +795,27 @@ export const GuardStatusOutput = z.object({
   ip_error: z.string().nullable(),
   probe_error: z.string().nullable(),
   probe_ms: z.number().nullable(),
+  // 2026-10-02 bx 优先:装了 bx 时以 `bx status --json` 为准(source=bx),不再探 google。
+  // 可选:老 CLI 没有这几个字段。
+  source: z.enum(['bx', 'probe']).optional(),
+  safe: z.boolean().optional(),
+  detail: z.string().optional(),
+  bx_path: z.string().nullable().optional(),
+  // 守护 v2(按调用判):信号来源设置 + 已配置 provider 各自的分类。老 CLI 没有。
+  signal_source: z.enum(['auto', 'probe']).optional(),
+  protected_in_use: z.boolean().optional(),
+  providers: z.array(z.object({
+    id: z.string(), model: z.string().nullable(), host: z.string().nullable(),
+    protected: z.boolean(), kind: z.string(), label: z.string(), reason: z.string(),
+  })).optional(),
+  // 暂停在跑的任务(2026-10-03):问在跑的 daemon(/v1/health);daemon 没在跑就没有这两项。
+  suspended: z.number().optional(),
+  suspended_tasks: z.array(z.object({ task_id: z.string(), title: z.string(), provider: z.string(), since: z.string() })).optional(),
+  // 开机 `--version` 探测失败的外部 CLI provider(2026-10-04):daemon 的 /v1/health.provider_probes 原样转出。
+  provider_probes: z.array(z.object({
+    id: z.string(), state: z.enum(['retrying', 'registered']), attempts: z.number(), last_error: z.string(),
+    first_failed_at: z.string(), next_attempt_at: z.string().nullable(), registered_at: z.string().nullable(),
+  })).optional(),
 })
 export type GuardStatusOutputT = z.infer<typeof GuardStatusOutput>
 

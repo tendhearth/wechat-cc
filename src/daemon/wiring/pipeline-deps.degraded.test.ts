@@ -75,10 +75,10 @@ function setup() {
 }
 
 describe('pipeline-deps degraded-consumer fallbacks (guard / ingestNudge)', () => {
-  it('guardState() falls back to reachable:true, ip:null when the guard Ref was never wired', () => {
+  it('no inbound guard stage (守护 v2): the pipeline deps carry no guard block', () => {
     const { stateDir, pipelineDeps } = setup()
     try {
-      expect(pipelineDeps.guard.guardState()).toEqual({ reachable: true, ip: null })
+      expect('guard' in pipelineDeps).toBe(false)
     } finally {
       rmSync(stateDir, { recursive: true, force: true })
     }

@@ -9,7 +9,8 @@ import {
   type ProviderCapabilities,
   assertNotAuthFailed,
 } from './agent-provider'
-import { isAuthFailError } from './auth-fail'
+import { isAuthErrorCode, withProviderCode } from '../lib/provider-error-code'
+import { openaiErrorCode, openaiErrorMessage } from './openai-error-code'
 import type { ChatModelClient, ChatMessage, ToolSpec, TurnDelta } from './openai-chat-model'
 import type { McpToolBridge } from './openai-mcp-bridge'
 import { builtinTools, type BuiltinTool } from './openai-tools'
@@ -27,6 +28,13 @@ export const OPENAI_CAPABILITIES: ProviderCapabilities = {
   supportsResume: false,
   defaultPeer: 'claude',
   authFailHint: 'openai: set WECHAT_OPENAI_API_KEY (and check base_url/model in agent config).',
+  // 回复交付第 1 步(spec 2026-10-03 §5.2):2026-10-03 维护者决定切 daemon(主人授权)。四轮 reply-once
+  // 闸门里新路在真正的故障点上全面好于 legacy(污染会话 15/15 干净收住 vs legacy 8.4 条、3/5 跑满步数;
+  // 推送该静默 4/5 vs 0/5);剩下的是「语音后多一句」这类小毛病。回滚:agent-config 的
+  // reply_delivery: { openai: 'legacy' } + 重启 daemon(docs/maintainer/reply-delivery.md)。
+  replyDelivery: 'daemon',
+  // 聊天型模型:本轮所有文字段按顺序都交付(工具前说的话也是聊天内容,不是长任务旁白)。
+  replyText: 'all_segments',
 }
 
 /**
@@ -51,9 +59,21 @@ export interface OpenAiAgentProviderOptions {
   // no per-chat pin, so they always pass `undefined` (the default model).
   makeChatModel: (model?: string) => ChatModelClient
   makeMcpBridge: (mcpEnv: Record<string, string>) => Promise<McpToolBridge>
+  /**
+   * 守护(评审 #193 P1-1):`makeChatModel` 实际连的 base URL 和它的默认模型 —— 与传给
+   * createAiSdkChatModel 的是**同一份**值(bootstrap 在注册那一刻读的配置)。闸门按它判,
+   * 不按此刻的 agent-config 判。不给 ⇒ 闸门拿不准 ⇒ 按需要保护。
+   */
+  endpoint?: { baseUrl: string; model: string }
   cwd?: string
   maxSteps?: number
   log?: (tag: string, line: string) => void
+  /**
+   * 实验专用注入口(回复交付 spec §5.1 第 1 项;原样来自 PR #196):把 Read/Write/Edit/Bash/view_image
+   * 换成别的实现。`scripts/experiments/reply-once/harness.ts` 用它换成只记账的假工具 —— 没有这个口,
+   * 真模型调的 Bash 会被真的执行,所以 harness 发现没有它就拒跑。生产路径从不传(缺省 = 真的 builtinTools)。
+   */
+  makeBuiltins?: (cwd: string) => BuiltinTool[]
 }
 
 const DEFAULT_MAX_STEPS = 25
@@ -209,7 +229,11 @@ function makeOpenAiSession(args: {
           }
           yield em.finish({ sessionId, numTurns: steps })
         } catch (err) {
-          yield em.error(err)
+          // 边界产码(arch backlog #4 第 2 步):HTTP status / 重试链里最后一次的 status /
+          // 连接层系统码 / 我们自己的超时 ⇒ 码;消息里把 RetryError 吃掉的真实 status 拼回来
+          // (以前是 `Failed after 3 attempts. Last error: <none>`,§4.5)。分不出 ⇒ 旧的回退。
+          const code = openaiErrorCode(err)
+          yield code ? em.errorText(openaiErrorMessage(err), { code }) : em.error(err)
         } finally {
           if (activeAbort === abort) activeAbort = null
         }
@@ -226,37 +250,32 @@ function makeOpenAiSession(args: {
 }
 
 /**
- * Shared cheapEval/strongEval body: run `chatModel.generate` and normalize
- * BOTH ways an eval call can signal auth failure into the same shape:
+ * Shared cheapEval/strongEval body: run `chatModel.generate`.
  *  - error-shaped TEXT (Claude/Codex sentinel strings) → assertNotAuthFailed
  *    below throws on the returned text, as before.
- *  - a THROWN transport error (e.g. a real gateway 401 APICallError, now
- *    surfaced instead of masked — see openai-chat-model.ts generate()) →
- *    classified via isAuthFailError and rethrown as `Error('auth_failed: …')`,
- *    mirroring the shape assertNotAuthFailed already produces, for log-tag
- *    consistency — no consumer currently branches on this message text
- *    (wrapCheapEvalWithAuthFailCheck in bootstrap/index.ts never catches the
- *    rejection, only screens resolved text; gardener.ts's catch just logs
- *    and counts). The structured, actually-branched-on auth classification
- *    for the live session path is the separate AgentEvent errorCode channel
- *    (turn-emitter's `em.error`/`code: 'auth_failed'`, see D4/B3). This
- *    fix's real value here is accurate error propagation (the 401's real
- *    cause is no longer lost behind a generic NoOutputGeneratedError) plus
- *    a new AUTH_FAILED log line for what was previously an invisible
- *    thrown-401 case.
- * Non-auth throws (network blips, etc.) pass through unchanged.
+ *  - a THROWN transport error (a real gateway 401 APICallError, a refused
+ *    connection, our own boundary timeout, …) → the SAME error is rethrown
+ *    with a structured `providerErrorCode` attached (openai-error-code), so
+ *    the registry's cooldown / llm-health / health classify read the code
+ *    instead of the text. The real status is kept (it used to be dropped
+ *    when the 401 was rewrapped as `auth_failed: …`).
  */
 async function runEval(chatModel: ChatModelClient, prompt: string, log: (tag: string, line: string) => void, source: string): Promise<string> {
   let text: string
   try {
     text = await chatModel.generate([chatModel.userMessage(prompt)])
   } catch (err) {
-    if (isAuthFailError(err)) {
-      const msg = err instanceof Error ? err.message.slice(0, 160) : String(err)
-      log('AUTH_FAILED', `${source} credentials stale: ${msg}`)
-      throw new Error(`auth_failed: ${err instanceof Error ? err.message.slice(0, 120) : String(err)}`)
+    // 边界产码,挂在抛出物上原样抛(registry 冷却、llm-health、health 都只看码)。
+    // 以前这里把 401 重抛成 `auth_failed: …` 且**丢了 status**(§4.5)—— 而 401 只说明
+    // 凭证被拒,不说明登录过期(红线 A 的细化),码是 auth_rejected。
+    const code = openaiErrorCode(err)
+    if (isAuthErrorCode(code)) log('AUTH_FAILED', `${source} credentials rejected (${code}): ${openaiErrorMessage(err).slice(0, 160)}`)
+    // RetryError(`Failed after 3 attempts. Last error: <none>` 这类)把真实 status 藏在
+    // errors[] 里 —— 换成带 status 的那句,原错误挂在 cause 上。
+    if (code && err instanceof Error && Array.isArray((err as { errors?: unknown }).errors)) {
+      throw withProviderCode(Object.assign(new Error(openaiErrorMessage(err)), { cause: err }), code)
     }
-    throw err
+    throw withProviderCode(err, code)
   }
   assertNotAuthFailed(text, log, source)
   return text
@@ -266,12 +285,15 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
   const log = opts.log ?? (() => {})
   const maxSteps = opts.maxSteps ?? DEFAULT_MAX_STEPS
 
+  const callTarget = (model?: string) => opts.endpoint ? { provider: 'openai', baseUrl: opts.endpoint.baseUrl, model: model ?? opts.endpoint.model } : null
   return {
+    // 会话 / 评估都用 makeChatModel(构造时的 base URL);模型:会话钉的 ?? 默认,评估永远默认。
+    callTarget: (kind, ctx) => callTarget(kind === 'cheapEval' || kind === 'strongEval' ? undefined : ctx?.model),
     async spawn(project: AgentProject, ctx: SpawnContext): Promise<AgentSession> {
       const sessionId = randomUUID()
       const cwd = opts.cwd ?? project.path
       const bridge = await opts.makeMcpBridge(ctx.mcpEnv ?? {})
-      const builtins = builtinTools(cwd)
+      const builtins = (opts.makeBuiltins ?? builtinTools)(cwd)
       const builtinByName = new Map<string, BuiltinTool>(builtins.map(b => [b.spec.name, b]))
       const toolSpecs: ToolSpec[] = [...bridge.tools, ...builtins.map(b => b.spec)]
 
@@ -280,6 +302,7 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
       // released, matching the codebase convention (claude/codex/cursor
       // already hot-reload the SAME way: re-read per spawn, not per turn).
       const chatModel = opts.makeChatModel(ctx.model)
+      const target = callTarget(ctx.model)
 
       // Conversation history for this live session (in-memory; no resume in v1).
       const messages: ChatMessage[] = []
@@ -297,6 +320,7 @@ export function createOpenAiAgentProvider(opts: OpenAiAgentProviderOptions): Age
         firstRef: { first: true },
       })
       log('SESSION_SPAWN', `alias=${project.alias} provider=openai session=${sessionId}`)
+      session.callTarget = () => target
       return session
     },
 

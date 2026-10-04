@@ -11,6 +11,26 @@ export interface GuardConfig {
   enabled: boolean
   probe_url: string
   ipify_url: string
+  /**
+   * 网络信号从哪来(守护 v2)。'auto'(缺省):装了 bx 只认 bx,没装用 google 探测。
+   * 'probe':装了 bx 也改用探测 —— 给「装着 bx、实际在用别的 VPN」的情形。
+   */
+  signal_source: 'auto' | 'probe'
+  /** 一定要保护的调用:host / `provider:模型通配` / 裸 provider id(见 lib/call-classifier.ts)。 */
+  protect: string[]
+  /** 不需要保护的调用(覆盖默认分类)。protect 压过 trust。 */
+  trust: string[]
+  /** 自定义网关(非官方、非国内、非自建的 base URL)是否也要保护。缺省 false。 */
+  protect_custom_gateways: boolean
+  /**
+   * 暂停在跑的任务的上限(分钟,主人 2026-10-03):probe 来源网络不安全时冻住的任务,超过这么久还没恢复
+   * 就按收工停下并告诉主人。缺省 30;合法范围 1–1440,越界取缺省。
+   */
+  max_suspend_minutes: number
+}
+
+function stringList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map(x => x.trim()) : []
 }
 
 export function defaultGuardConfig(): GuardConfig {
@@ -20,6 +40,11 @@ export function defaultGuardConfig(): GuardConfig {
     // checks, returns 204 with empty body. No CDN dance, no auth, no logs.
     probe_url: 'https://www.google.com/generate_204',
     ipify_url: 'https://api.ipify.org',
+    signal_source: 'auto',
+    protect: [],
+    trust: [],
+    protect_custom_gateways: false,
+    max_suspend_minutes: 30,
   }
 }
 
@@ -37,6 +62,11 @@ export function loadGuardConfig(stateDir: string): GuardConfig {
       enabled: typeof raw.enabled === 'boolean' ? raw.enabled : d.enabled,
       probe_url: typeof raw.probe_url === 'string' ? raw.probe_url : d.probe_url,
       ipify_url: typeof raw.ipify_url === 'string' ? raw.ipify_url : d.ipify_url,
+      signal_source: raw.signal_source === 'probe' ? 'probe' : 'auto',
+      protect: stringList(raw.protect),
+      trust: stringList(raw.trust),
+      protect_custom_gateways: raw.protect_custom_gateways === true,
+      max_suspend_minutes: typeof raw.max_suspend_minutes === 'number' && Number.isFinite(raw.max_suspend_minutes) && raw.max_suspend_minutes >= 1 && raw.max_suspend_minutes <= 1440 ? raw.max_suspend_minutes : d.max_suspend_minutes,
     }
   } catch {
     return defaultGuardConfig()

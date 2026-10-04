@@ -69,8 +69,18 @@ export async function mockInvoke(command, args, state) {
   }
   if (command === "wechat_cli_text") return "ok"
   if (command === "agent_converse") {
-    return `（模拟回复）收到你说的："${String(args?.text ?? "")}"`
+    // 整个回复对象(回复交付,2026-10-04):过程 + 语音 / 联网表情 / 文件(文件只有一次性 ref,与 lib.rs 一样)。
+    return {
+      reply: `（模拟回复）收到你说的："${String(args?.text ?? "")}"`,
+      narration: ["我先看一下明天的日程。"],
+      attachments: [
+        { kind: "voice", text: "收到啦。" },
+        { kind: "sticker", label: "开心" },
+        { kind: "file", name: "示例.md", ref: "rf1" },
+      ],
+    }
   }
+  if (command === "reveal_reply_file") return null
   if (command === "agent_speak") {
     // Tiny valid WAV (silence, ~11ms @8kHz mono) — just needs to decode and
     // play so the 🔊 toggle / ▶ replay path is exercisable in browser dev

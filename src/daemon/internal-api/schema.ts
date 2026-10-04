@@ -34,6 +34,26 @@ export const HealthResponse = z.object({
   version: z.object({ cli: z.string(), head: z.string().nullable(), boot_at: z.string() }).optional(),
   // Subsystem degraded-boot (spec 2026-08-17) — 启动降级状态表。
   subsystems: z.array(SubsystemStatusSchema).optional(),
+  // 网络守护(2026-10-02)—— bx 优先;safe=false ⇒ CC 暂停所有模型调用。老 daemon 没有。
+  guard: z.object({
+    enabled: z.boolean(),
+    source: z.enum(['bx', 'probe', 'off']),
+    safe: z.boolean(),
+    detail: z.string(),
+    ip: z.string().nullable(),
+    checked_at: z.string().nullable(),
+    // 守护 v2(按调用判):老 daemon 没有这几项。
+    signal_source: z.enum(['auto', 'probe']).optional(),
+    protected_in_use: z.boolean().optional(),
+    paused: z.boolean().optional(),
+    providers: z.array(z.object({
+      id: z.string(), model: z.string().nullable(), host: z.string().nullable(),
+      protected: z.boolean(), kind: z.string(), label: z.string(), reason: z.string(),
+    })).optional(),
+    // 暂停在跑的任务(2026-10-03):被冻住的任务数与清单。老 daemon 没有。
+    suspended: z.number().optional(),
+    suspended_tasks: z.array(z.object({ task_id: z.string(), title: z.string(), provider: z.string(), since: z.string() })).optional(),
+  }).optional(),
   // 文件访问(macOS TCC,2026-09-04)—— daemon 进程自己能不能读主人的文件夹。
   // 权限缺失此前是静默的;这里让它进 health / doctor / 桌面。
   fs_access: z.object({
@@ -54,6 +74,17 @@ export const HealthResponse = z.object({
     pointer_dir: z.string().nullable().optional(),
     plugins: z.array(z.object({ name: z.string(), source: z.enum(['bundled', 'user']), enabled: z.boolean(), ready: z.boolean(), reason: z.string().optional() })).optional(),
   }).nullable().optional(),
+  // 开机 `--version` 探测失败的外部 CLI provider(2026-10-04)。retrying = 还没注册、在退避
+  // 重探(turn / selftest 照旧说不可用);registered = 晚注册成功。老 daemon 没有。
+  provider_probes: z.array(z.object({
+    id: z.string(),
+    state: z.enum(['retrying', 'registered']),
+    attempts: z.number(),
+    last_error: z.string(),
+    first_failed_at: z.string(),
+    next_attempt_at: z.string().nullable(),
+    registered_at: z.string().nullable(),
+  })).optional(),
   // Passive outbound link health (spec 2026-08-22-outbound-health) — sibling
   // of subsystems by design: subsystems is the supervisor's BOOT-time list,
   // outbound is a RUNTIME link signal. Optional for older daemons.
@@ -63,7 +94,29 @@ export const HealthResponse = z.object({
     last_ok_at: z.string().nullable(),
     last_error: z.string().nullable(),
   }).optional(),
+  // 外部 agent CLI 自动升级(2026-10-04)。老 daemon 没有。
+  cli_upgrade: z.object({
+    enabled: z.boolean(),
+    check_hour: z.number(),
+    active: z.string().nullable(),
+    clis: z.array(z.object({
+      id: z.string(), label: z.string(), auto: z.boolean(),
+      installed: z.string().nullable(), latest: z.string().nullable(), update_available: z.boolean(),
+      accepted: z.string().nullable(),
+      verify: z.enum(['ok', 'failed', 'unverified', 'unknown']), verify_detail: z.string().nullable(),
+      last_check_at: z.string().nullable(), last_check_error: z.string().nullable(), next_check_at: z.string().nullable(),
+      pending: z.string().nullable(),
+      last_upgrade: z.object({
+        from: z.string().nullable(), to: z.string().nullable(), at: z.string(), source: z.string(), result: z.string(), detail: z.string().optional(),
+      }).nullable(),
+      known_bad: z.array(z.string()),
+    })),
+  }).optional(),
 })
+
+// ── POST /v1/cli/upgrade|rollback(外部 agent CLI 自动升级,2026-10-04) ─────────
+export const CliUpgradeRequest = z.object({ name: z.enum(['claude', 'codex', 'cursor', 'agy']), force: z.boolean().optional() })
+export const CliRollbackRequest = z.object({ name: z.enum(['claude', 'codex', 'cursor', 'agy']) })
 
 // ── POST /v1/atelier/share ─────────────────────────────────────────────────
 
@@ -758,6 +811,8 @@ export const REQUEST_SCHEMAS: Record<string, z.ZodTypeAny | undefined> = {
   'POST /v1/plugins/install': PluginInstallRequest,
   'POST /v1/plugins/upgrade': PluginInstallRequest,
   'POST /v1/license/activate': LicenseActivateRequest,
+  'POST /v1/cli/upgrade': CliUpgradeRequest,
+  'POST /v1/cli/rollback': CliRollbackRequest,
 
   // reminders
   'POST /v1/reminders/schedule': ReminderScheduleRequest,

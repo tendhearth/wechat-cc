@@ -13,6 +13,9 @@ import type { PollingDeps } from '../polling-lifecycle'
 import type { StartupSweepDeps } from '../startup-sweeps'
 import { loadCompanionConfig } from '../companion/config'
 import { loadGuardConfig } from '../guard/store'
+import { findBx } from '../guard/bx'
+import { makeNetworkSuspendController } from '../guard/pause-policy'
+import { classifyWith } from '../../lib/network-gate'
 import { parseUpdates } from '../poll-loop'
 import { writeHeartbeat, HEARTBEAT_FILE } from '../single-instance'
 import { join } from 'node:path'
@@ -28,6 +31,9 @@ export interface LifecycleDepsOpts {
   boot: Bootstrap
   dangerously: boolean
   log: (tag: string, line: string, fields?: Record<string, unknown>) => void
+  /** 网络守护运行时(2026-10-02):后台 tick 不安全就跳过;probe 来源连续两次不安全时暂停需要保护的工作台执行者。 */
+  guardRuntime?: import('../guard/runtime').GuardRuntime
+  workbench?: Pick<import('../../core/workbench/service').WorkbenchService, 'suspendForNetwork' | 'resumeFromNetwork' | 'stopSuspendedForNetwork'>
   /**
    * Optional override for both push + introspect scheduler intervals.
    * When set, both schedulers use this value instead of their defaults.
@@ -48,6 +54,38 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
   startupDeps: StartupSweepDeps
 } {
   const { stateDir, db, ilink, accounts, boot, dangerously, log } = opts
+  // 后台 tick 的网络闸门(2026-10-02):不安全就安静跳过一拍(同一段不安全期只记一行日志),不重试。
+  // 已经在跑的任务(主人 2026-10-03,pause-policy.ts):bx 来源从不停 / 不暂停;probe 来源连续两次不安全 ⇒
+  // 冻住需要保护的工作台执行者(冻不住的退回停)、关掉需要保护的对话会话;读到安全 ⇒ 放开;到顶 ⇒ 按收工停下。
+  const suspender = makeNetworkSuspendController({
+    maxSuspendMs: () => loadGuardConfig(stateDir).max_suspend_minutes * 60_000,
+    isEnabled: () => loadGuardConfig(stateDir).enabled,
+    log,
+    suspend: () => {
+      const gate = opts.guardRuntime?.gate
+      // 评审 #193 P1-1:按这条在跑的会话实际连到的目标判,不按任务记录的模型 / 此刻的配置。
+      const r = opts.workbench?.suspendForNetwork((run) => {
+        const cls = classifyWith(gate, run.target)
+        return cls.protected ? `VPN 探测连续两次失败，这个任务用到 ${cls.label}。` : null
+      }) ?? { suspended: 0, stopped: 0 }
+      log('GUARD', `suspended ${r.suspended} protected workbench run(s); stopped ${r.stopped} that cannot be suspended`)
+      // 对话会话:常驻会话的回合计时 / 回复送达 / 会话锁都在协调器里,冻住它不是单轮安全的 ⇒ 仍然关
+      // (下一条消息按原生会话续上)。只关需要保护的;和工作台同一个时刻(probe 两次)、同一条规矩(bx 不动)。
+      void boot.sessionManager.shutdownProtected().then(
+        n => log('GUARD', `closed ${n} protected chat session(s)`),
+        err => log('GUARD', `sessionManager.shutdownProtected failed: ${err instanceof Error ? err.stack || err.message : String(err)}`),
+      )
+    },
+    resume: () => {
+      const n = opts.workbench?.resumeFromNetwork() ?? 0
+      log('GUARD', `resumed ${n} suspended workbench run(s)`)
+    },
+    stopSuspended: (message) => {
+      const n = opts.workbench?.stopSuspendedForNetwork(message) ?? 0
+      log('GUARD', `stopped ${n} workbench run(s) after the suspension cap`)
+    },
+  })
+  const gated = (name: string, fn: () => Promise<void>) => opts.guardRuntime ? opts.guardRuntime.skipWhenUnsafe(name, fn) : fn
 
   // Heartbeat store — single instance shared for the lifetime of the daemon.
   // Backed by the same db handle as all other stores.
@@ -83,28 +121,21 @@ export function buildLifecycleDeps(opts: LifecycleDepsOpts, ticks: TickBodies): 
     // the self-restart idle check reads (boot.holdBusy / busyRegistry.hold
     // in bootstrap/index.ts), forwarded to all three companion schedulers
     // so a running tick can't be misjudged as idle.
-    companionPushDeps: { shouldRun, log, onTick: ticks.pushTick, intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
-    companionIntrospectDeps: { shouldRun, log, onTick: ticks.introspectTick, intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
-    companionIngestDeps: { shouldRun: shouldRunIngest, log, onTick: ticks.ingestTick, intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
+    companionPushDeps: { shouldRun, log, onTick: gated('companion.push', () => ticks.pushTick()), intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
+    companionIntrospectDeps: { shouldRun, log, onTick: gated('companion.introspect', () => ticks.introspectTick()), intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
+    companionIngestDeps: { shouldRun: shouldRunIngest, log, onTick: gated('companion.ingest', () => ticks.ingestTick()), intervalMs: opts.schedulerIntervalMs, holdBusy: boot.holdBusy },
     guardDeps: {
       pollMs: 30_000,
       isEnabled: () => loadGuardConfig(stateDir).enabled,
       probeUrl: () => loadGuardConfig(stateDir).probe_url,
       ipifyUrl: () => loadGuardConfig(stateDir).ipify_url,
+      // 装了 bx 就只认 bx(2026-10-02);没装走 ipify+探测。guard.json signal_source='probe'
+      // (装着 bx、实际在用别的 VPN)⇒ 装了也走探测。
+      findBx: () => (loadGuardConfig(stateDir).signal_source === 'probe' ? null : findBx()),
       log,
-      onStateChange: async (prev, next) => {
-        if (prev.reachable && !next.reachable) {
-          log('GUARD', `network DOWN — shutting down all sessions (was ${prev.ip}, now ${next.ip})`)
-          try {
-            log('GUARD', 'sessionManager.shutdown start')
-            await boot.sessionManager.shutdown()
-            log('GUARD', 'sessionManager.shutdown complete')
-          } catch (err) {
-            log('GUARD', `sessionManager.shutdown failed: ${err instanceof Error ? err.stack || err.message : String(err)}`)
-            throw err
-          }
-        }
-      },
+      // 已经在跑的任务:见上面 suspender(pause-policy.ts)。网络翻转本身不再关对话会话 ——
+      // 那是 bx 来源也会触发的,而 bx 来源从不停在跑的东西(主人 2026-10-03)。
+      onReading: (s) => suspender.observe(s),
     },
     sessionsDeps: {
       sessionManager: boot.sessionManager,

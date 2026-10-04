@@ -1,4 +1,5 @@
 import {createClaudeHistoryReader} from '../../core/workbench/native-claude-history'
+import { decideCall } from '../../lib/network-gate'
 import {createCodexHistoryReader} from '../../core/workbench/native-codex-history'
 import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk'
 import type { Db } from '../../lib/db'
@@ -95,7 +96,7 @@ export function registerAcpExecutors(target: ProviderRegistry, source: Pick<Prov
   if (!entry) return []
   const launch = resolveAcpAgent('cursor', config, deps.findOnPath ?? findOnPath)
   if (!launch) { deps.log?.('WORKBENCH', 'cursor: cursor-agent binary not resolvable — ACP executor not registered'); return [] }
-  const provider = (deps.create ?? createAcpWorkbenchProvider)({ command: launch.command, args: launch.args, displayName: launch.displayName, log: deps.log })
+  const provider = (deps.create ?? createAcpWorkbenchProvider)({ command: launch.command, args: launch.args, displayName: launch.displayName, log: deps.log, targetProvider: 'cursor' })
   target.register('cursor', provider, { ...entry.opts, workbench: ACP_CAPABILITIES })
   return ['cursor']
 }
@@ -120,21 +121,29 @@ export function wireWorkbench(opts: {
   matters?: import('../../core/matters/store').MatterStore
   /** 回报投递队列(task-3,2026-09-23):与 matters 一起有才接得上 ReportSink,单传一个不够。 */
   reportOutbox?: import('../reports/outbox').ReportOutboxStore
+  /** 网络闸门(2026-10-02):执行者 registry、起执行者 / 投补充、额度查询都过它。 */
+  networkGate?: import('../../lib/network-gate').NetworkGate
+  /** 执行者一轮失败时的错误通道 —— CLI 自动升级的报错触发(2026-10-04)。 */
+  onTurnError?: (providerId: string, code: string | undefined, message: string) => void
 }) {
+  // 额度查询带着账号凭据直连供应商(守护 v2:按真正连到的端点分类 —— Claude 的 usage 接口永远是
+  // api.anthropic.com,哪怕会话走的是自定义网关;Codex 的额度是 ChatGPT 账号的,永远是 OpenAI 官方,
+  // 哪怕 model_provider 指到了别处);需要保护且不安全就不出门。
+  const gatedUsage=<T>(target:import('../../lib/network-gate').CallTarget,fn:()=>Promise<T|null>)=>async():Promise<T|null>=>!(await decideCall(opts.networkGate,target)).allowed?null:fn()
   // 订阅额度监视器:Codex 问 app-server,Claude 用 Claude Code 自己的 OAuth 凭据问 usage 接口(subscription-usage.ts)。
   const usageMonitor=makeUsageMonitor({sources:{
-    ...(opts.boot.registry.has('codex')&&findCodexBinary()?{codex:async()=>{const r=await readCodexRateLimits({codexPathOverride:findCodexBinary()!});return r?parseCodexRateLimits(r,Date.now()):null}}:{}),
-    ...(opts.boot.registry.has('claude')?{claude:async()=>{
+    ...(opts.boot.registry.has('codex')&&findCodexBinary()?{codex:gatedUsage({provider:'codex',baseUrl:'https://chatgpt.com',purpose:'usage',exact:true},async()=>{const r=await readCodexRateLimits({codexPathOverride:findCodexBinary()!});return r?parseCodexRateLimits(r,Date.now()):null})}:{}),
+    ...(opts.boot.registry.has('claude')?{claude:gatedUsage({provider:'claude',baseUrl:'https://api.anthropic.com',purpose:'usage'},async()=>{
       const cred=readClaudeOAuthToken({platform:process.platform,keychain:()=>spawnSync(['security','find-generic-password','-s','Claude Code-credentials','-w']).stdout.toString(),readFile:()=>readFileSync(join(homedir(),'.claude','.credentials.json'),'utf8'),now:Date.now})
       if(!cred)return null
       const r=await fetch('https://api.anthropic.com/api/oauth/usage',{headers:{authorization:`Bearer ${cred.token}`,'anthropic-beta':'oauth-2025-04-20'},signal:AbortSignal.timeout(8_000)})
       if(!r.ok)return null
       return parseClaudeUsage(await r.json().catch(()=>null),Date.now(),cred.plan)
-    }}:{}),
+    })}:{}),
   },ttlMs:5*60_000})
 
   const ownerChatId=() => resolveAdminChatId(loadAccess(),loadCompanionConfig(opts.stateDir),null)
-  const registry=createProviderRegistry()
+  const registry=createProviderRegistry(opts.networkGate?{networkGate:opts.networkGate}:undefined)
   const agentConfig=loadAgentConfig(opts.stateDir)
   const claude=opts.boot.registry.get('claude')
   if (claude) registry.register('claude',createClaudeAgentProvider({
@@ -204,12 +213,14 @@ export function wireWorkbench(opts: {
   }):undefined
   return makeWorkbenchService({
     managedWorkspaceRoot:join(homedir(),'CC','Tasks'),
+    ...(opts.networkGate?{networkGate:opts.networkGate}:{}),
     executionConflict:opts.executionConflict,
     nativeHistory:{claude:createClaudeHistoryReader(),...(binary?{codex:createCodexHistoryReader({codexPathOverride:binary})}:{})},
     store,registry,stateDir:opts.stateDir,ownerChatId,matters:opts.matters,reports,recollect,log:opts.log,
     usage:(id)=>id==='claude'||id==='codex'?usageMonitor.cached(id):null,
     registeredProjects:()=>listProjects(join(opts.stateDir,'projects.json')),
     defaultProvider:opts.boot.defaultProviderId,holdBusy:opts.boot.holdBusy,
+    ...(opts.onTurnError?{onTurnError:opts.onTurnError}:{}),
     // Empty allowlist is deliberate: office tasks never send messages or read
     // personal memory through the daemon, even if a CLI discovers old config.
     mintSessionToken:key => opts.internalApi.mintSessionToken('trusted',key,{routeAllow:new Set()}),

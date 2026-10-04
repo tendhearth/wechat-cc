@@ -4,6 +4,8 @@
  *
  * Refs are passed in for late-bound polling/guard access from closures.
  */
+import type { SinkExtras } from '../reply-sinks'
+import { encodeExtras, hasExtras, projectReplyExtras, stickerDataUri, withStickerImages, type AppReplyExtras, type ConverseResult } from '../app-reply'
 import { join } from 'node:path'
 import { recallFromMemory } from '../memory/recall'
 import { randomBytes } from 'node:crypto'
@@ -71,7 +73,6 @@ import { findOnPath } from '../../lib/util'
 import { isCompiledBundle } from '../../lib/runtime-info'
 import type { A2AAgentRecord } from '../../lib/agent-config'
 import { materializeAttachments } from '../media'
-import { loadGuardConfig } from '../guard/store'
 import { makeFireMilestonesFor, makeRecordInbound, makeMaybeWriteWelcomeObservation } from './side-effects'
 import { makeMessagesStore } from '../../lib/messages-store'
 import { makeMemoryLlmOps, resolveCheapEval } from '../memory-llm-ops'
@@ -148,6 +149,8 @@ export function makeDelegateToHand(deps: DelegateDeps) {
 
 export interface PipelineDepsOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
+  /** 网络守护运行时(2026-10-02):微信入站闸门 + 每晚整理记忆的跳过判据。 */
+  guardRuntime?: import('../guard/runtime').GuardRuntime
   /** 内部 API 的 token-registry 窄接口,给手机设置面板登记链接 / 设备令牌(梳理第 6 步)。 */
   panelTokens?: import('../internal-api/token-registry').PanelTokens
   matters?: import('../../core/matters/store').MatterStore
@@ -238,7 +241,7 @@ export interface BuildPipelineDepsResult {
    * registration time (see main.ts's staged startup: internal-api first,
    * then bootstrap, then this wiring pass).
    */
-  companionConverse: (text: string, origin?: 'desktop' | 'phone') => Promise<{ reply: string }>
+  companionConverse: (text: string, origin?: 'desktop' | 'phone') => Promise<import('../app-reply').ConverseResult>
   /**
    * 桌宠 turn 的组装闭包(CC 桌宠 Phase B)。和 companionConverse 挨着造,因为
    * 需要同一批东西:ownerChatId(companion 配置)、resolveOwnerSessionKey +
@@ -585,6 +588,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // 「一件事」读写面:工作台续接 + 对主人 chat 的 app 通道;手机页与内部 API 共用这一个实例。
   const mattersService = opts.matters ? makeMattersService({
     store: opts.matters,
+    ownerChatId,
     ...(opts.workbench ? { workbench: opts.workbench } : {}),
     // companionConverse 在下面才定义;这里只是捕获引用,真正调用发生在请求到来时。
     chat: {
@@ -622,7 +626,7 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     ...(opts.workbench ? { workbench: opts.workbench } : {}),
   }))
   // 原生会话读:单飞 + 短缓存(裁定 8),10 s 预算超了也不会堆积后台扫描。
-  const phoneSessions = opts.workbench ? cacheSessions({ list: (p, i) => opts.workbench!.listNativeHistory(p, i), read: (k, i) => opts.workbench!.readNativeHistory(k, i) }) : null
+  const phoneSessions = opts.workbench ? cacheSessions({ list: (p, i) => opts.workbench!.listNativeHistory(p, i), read: (k, i) => opts.workbench!.readNativeHistory(k, i), readRecent: (k, i) => opts.workbench!.readRecentNativeHistory(k, i) }) : null
   const settingsPanel = makeSettingsPanel({
     connections,
     ...(phoneSessions ? { sessions: phoneSessions } : {}),
@@ -654,8 +658,14 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       entryReceipt:(requestId:string)=>opts.workbench!.entryReceipt(requestId,{ownerKey:ownerChatId()??'',surface:'phone'}),
     }}:{}),
     curatedMemory: () => memoryNightly.curatedView(),
-    ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
-    ...(phoneOwner && phoneChat ? { chat: { owner: () => phoneOwner.peek(), history: (chatId: string, o: { beforeTs?: string; limit: number }) => messagesStore.listRange(chatId, o), chat: phoneChat } } : {}),
+    ...(mattersService && opts.matters ? { matters: { list: (f) => mattersService.list(f), detail: (id) => mattersService.detail(id), inputReceipt:mattersService.inputReceipt, say: (id, text, input) => mattersService.say(id, text, 'phone',input), permission:mattersService.permission,answer:mattersService.answer,artifactChunk:mattersService.artifactChunk,handoff:mattersService.handoff,seenOnPhone: (id) => opts.matters!.bind(id, 'phone', 'pwa') } } : {}),
+    ...(phoneOwner && phoneChat ? { chat: {
+      owner: () => phoneOwner.peek(),
+      history: (chatId: string, o: { beforeTs?: string; limit: number }) => messagesStore.listRange(chatId, o),
+      chat: phoneChat,
+      message: (chatId: string, id: string) => messagesStore.get(chatId, id),
+      speak: (text: string) => ilink.voice.synthesizeSpeech(text),
+    } } : {}),
     ...(remoteTunnel ? { remoteInfo: () => remoteTunnel } : {}),
     ...(phonePush ? { push: phonePush } : {}),
     // 「默认大脑」改完自己重启(与远程开关同一条路)。
@@ -930,12 +940,6 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       log,
     },
     ...(opts.cliReply ? { cliReply: { handle: (t: string, c: string) => opts.cliReply!.handle(t, c), log } } : {}),
-    guard: {
-      guardEnabled: () => loadGuardConfig(stateDir).enabled,
-      guardState: () => refs.guard.current?.current() ?? { reachable: true, ip: null },
-      sendMessage: (c, t) => ilink.sendMessage(c, t).then(r => r as { msgId: string }),
-      log,
-    },
     attachments: { materializeAttachments, inboxDir, log },
     transcribeVoice: {
       // ilink.voice.transcribe loads STT config internally and throws
@@ -1049,13 +1053,20 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
   // inbound. The agent's `reply` tool still posts to POST /v1/wechat/reply
   // as normal; the open sink captures it instead of ilink-sending.
   // 「一件事」:桌面 / 手机上跟 CC 说的话和微信里的进同一条消息流(source 记表面),三个入口看到的是同一段对话。落库失败不影响这一轮。
-  const persistAppTurn = (origin: 'desktop' | 'phone', synthetic: InboundMsg, text: string, reply: string | undefined) => {
+  // 回复交付(2026-10-04):附件与旁白跟着回复那一行落库(messages.extras),手机从消息库拉对话时才看得到;
+  // 只有附件、没有文字的一轮也写这一行(text 为空),否则那张表情 / 那段语音就没地方挂。
+  const persistAppTurn = (origin: 'desktop' | 'phone', synthetic: InboundMsg, text: string, reply: string | undefined, extras?: AppReplyExtras | null) => {
     const ts = new Date().toISOString()
     const ownerChatId = synthetic.chatId
     void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:in`, chatId: ownerChatId, ts, direction: 'in', kind: 'text', text, source: origin }).catch(() => {})
-    if (reply) void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:out`, chatId: ownerChatId, ts: new Date(Date.now() + 1).toISOString(), direction: 'out', kind: 'text', text: reply, source: origin }).catch(() => {})
+    const encoded = encodeExtras(extras)
+    if (reply || encoded) void messagesStore.append({ id: `app:${origin}:${synthetic.createTimeMs}:out`, chatId: ownerChatId, ts: new Date(Date.now() + 1).toISOString(), direction: 'out', kind: 'text', text: reply ?? '', source: origin, ...(encoded ? { extras: encoded } : {}) }).catch(() => {})
   }
-  const companionConverse = async (text: string, origin: 'desktop' | 'phone' = 'desktop'): Promise<{ reply: string }> => {
+  // 本地表情:解析一次(标签 → 表情库里随机一张),落库与桌面回包看到的是同一张。
+  const stickerDir = join(stateDir, 'stickers')
+  const projectExtras = (x: SinkExtras | undefined): AppReplyExtras | null =>
+    x ? projectReplyExtras(x, { stickerFile: tag => opts.stickers?.resolve(tag) ?? null }) : null
+  const companionConverse = async (text: string, origin: 'desktop' | 'phone' = 'desktop'): Promise<ConverseResult> => {
     // self-restart (spec 2026-08-03-daemon-self-restart-on-stale-code,
     // Task 3 review finding #1) — an App /converse turn is real owner
     // activity, but it dispatches straight through the coordinator and
@@ -1141,12 +1152,15 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
     // 并且同样用 finally 配对 —— 两条进来的路,同一套 start/stop 语义。
     opts.petSignals?.noteTurnStart(ownerChatId)
     try {
-      const result = await boot.coordinator.submitTurn(synthetic, {
+      const captured = await boot.coordinator.submitTurn(synthetic, {
         within: async (dispatch) => {
           const sink = replySinks.open(ownerChatId)
           try {
             await dispatch()
-            return { reply: sink.close() }
+            // 回复交付 daemon 模式:附件与旁白随回复交还(桌面 / 手机显示);旧路径两样都是空的。
+            const extras = projectExtras(sink.extras?.())
+            const reply = sink.close()
+            return { reply, extras }
           } catch (err) {
             sink.close()
             throw err
@@ -1155,8 +1169,14 @@ export function buildPipelineDeps(opts: PipelineDepsOpts, refs: PipelineDepsRefs
       })
       // 「一件事」:桌面 / 手机上跟 CC 说的话和微信里的进同一条消息流(source 记表面),
       // 三个入口看到的是同一段对话。落库失败不影响这一轮。
-      persistAppTurn(origin, synthetic, text, result.reply)
-      return result
+      persistAppTurn(origin, synthetic, text, captured.reply, captured.extras)
+      const x = captured.extras
+      if (!hasExtras(x)) return { reply: captured.reply }
+      return {
+        reply: captured.reply,
+        ...(x.attachments.length ? { attachments: withStickerImages(x.attachments, f => stickerDataUri(stickerDir, f)) } : {}),
+        ...(x.narration.length ? { narration: x.narration } : {}),
+      }
     } finally {
       opts.petSignals?.noteTurnStop(ownerChatId)
     }

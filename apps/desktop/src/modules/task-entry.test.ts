@@ -1,4 +1,5 @@
 import {afterEach, beforeEach, expect, it, vi} from 'vitest'
+import {Window} from 'happy-dom'
 
 // The existing dialog tests use this small DOM surface; events drive the real module.
 class Dialog {
@@ -72,6 +73,32 @@ it('only submits selected real recent messages, with cc mapped to assistant', as
   await pending
   expect(drafts[0]?.context).toEqual({source: 'owner-chat', excerpts: messages.slice(3).map(m => ({role: m.role === 'cc' ? 'assistant' : 'user', text: m.text}))})
   expect(dialog.innerHTML).not.toContain('尚未完成')
+})
+
+it('shows formatted discussion with inspectable user source, but submits original selected excerpts', async () => {
+  const {createTaskEntry} = await import('./task-entry.js')
+  const messages = [
+    {role:'user' as const,text:'\n\n**原样要求**\r\n\r\n    原样缩进'},
+    {role:'cc' as const,text:'## 完成\n\n**已整理**\n\n- 文档\n\n```js\nconst value = 1\n```\n\n| 项目 | 状态 |\n| --- | --- |\n| 文档 | 好了 |\n\n<script>alert(1)</script>\n\n[坏链接](javascript:alert(1))\n\n![外部图片](https://example.test/image.png)'},
+  ]
+  const entry = createTaskEntry({invokeWorkbenchApi:api(),storage})
+  const pending = entry.open({text:'继续做',visibleMessages:messages})
+  await settle()
+  const document=new Window().document;document.body.innerHTML=dialog.innerHTML
+  const user=document.querySelector('.task-entry-excerpt')!
+  expect(user.querySelector('.cc-readable-markdown strong')?.textContent).toBe('原样要求')
+  const source=user.querySelector('details')!;source.open=true
+  expect(source.querySelector('pre code')?.textContent).toBe(messages[0]!.text)
+  expect(dialog.innerHTML).toContain('<h2>完成</h2>')
+  expect(dialog.innerHTML).toContain('<strong>已整理</strong>')
+  expect(dialog.innerHTML).toContain('<ul>')
+  expect(dialog.innerHTML).toContain('<pre><code class="language-js">const value = 1')
+  expect(dialog.innerHTML).toContain('<table>')
+  expect(dialog.innerHTML).not.toContain('<script>')
+  expect(dialog.innerHTML).not.toContain('href="javascript:')
+  expect(dialog.innerHTML).not.toContain('https://example.test/image.png')
+  dialog.click('recent'); dialog.submit(); await settle(); await pending
+  expect(drafts[0]?.context).toEqual({source:'owner-chat',excerpts:messages.map(m=>({role:m.role==='cc'?'assistant':'user',text:m.text}))})
 })
 
 it('uses the options catalog ID and retains canceled edited requirements', async () => {

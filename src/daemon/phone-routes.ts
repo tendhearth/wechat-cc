@@ -27,12 +27,15 @@ export const PHONE_ROUTES: ReadonlySet<string> = new Set([
   'POST /m/api/seen',
   'GET /m/api/matters',
   'GET /m/api/matter',
+  'GET /m/api/matter/input-receipt',
   'GET /m/api/matter/insight',
   'GET /m/api/matter/changes',
   'POST /m/api/matter/say',
   // 跟 CC 说(spec 2026-10-01,mobile-chat.ts):主人对话一页 + 收下即回的说一句
   'GET /m/api/chat',
   'POST /m/api/chat/say',
+  // 回复里的语音附件按需合成(2026-10-04):只念库里那一行真有的那段
+  'GET /m/api/chat/voice',
   // CC 的连接(spec 2026-10-01,mobile-reads.ts),去掉 detail
   'GET /m/api/connections',
   // 电脑上的原生会话(只读,spec 2026-10-01),项目只给目录名

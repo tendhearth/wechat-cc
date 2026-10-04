@@ -7,6 +7,7 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, read
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { readJsonFile } from '../../lib/read-json-file'
+import { isNetworkUnprotectedError } from '../../lib/network-gate'
 import { MEMORY_FILENAME, assignMissingIds, parseMemoryDoc, serializeMemoryDoc } from './curated-doc'
 import { applyNightly, parseOps } from './nightly-ops'
 import { composeNotice, noticeItems, type NightlyRunResult } from './nightly-notify'
@@ -226,6 +227,11 @@ export async function runMemoryNightly(deps: NightlyRunDeps, opts: { force: bool
   try {
     raw = await withTimeout(evalFn(buildNightlyPrompt({ today: day, current: serializeMemoryDoc(doc, ''), material })), EVAL_TIMEOUT_MS)
   } catch (e) {
+    // 守护 v2:评估要用的接口需要保护、此刻网络不安全 —— 不算失败、不记 failed_today,下一拍再看。
+    if (isNetworkUnprotectedError(e)) {
+      deps.log('MEMORY_NIGHTLY', 'skipped — the eval needs a protected provider and the network is unprotected')
+      return { status: 'skipped', reason: 'network_unprotected' }
+    }
     return fail(`eval_error:${e instanceof Error ? e.message : String(e)}`)
   }
   const ops = parseOps(raw)

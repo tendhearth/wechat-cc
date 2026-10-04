@@ -1,6 +1,6 @@
 {
   "name": "claude-channel-wechat",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "description": "A local-first AI companion and unified task workspace for Claude, Codex and API models, with desktop and WeChat access.",
   "keywords": [
     "claude-code",
@@ -37,6 +37,7 @@
     "spike:atelier-renderer": "bun scripts/atelier-renderer-spike.ts",
     "smoke:atelier-sidecar": "bun scripts/atelier-sidecar-smoke.ts",
     "build:mobile": "bun apps/mobile/build.ts",
+    "build:markdown": "bun packages/markdown/build.ts",
     "e2e:device": "bun scripts/device-e2e.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p apps/mobile && tsc --noEmit -p apps/relay && tsc --noEmit -p apps/app",
     "build:map": "bun scripts/build-map.ts",
@@ -52,6 +53,7 @@
     "ai": "^5",
     "marked": "^18.0.0",
     "qrcode-terminal": "^0.12.0",
+    "smol-toml": "^1.9.0",
     "yaml": "^2.9.0",
     "zod": "^4.0.0"
   },

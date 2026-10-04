@@ -29,6 +29,32 @@ const SAMPLE_INCIDENT = {
 }
 
 describe('GET /v1/health', () => {
+  it('renders the network guard block (2026-10-02) and omits it when unwired; validates against HealthResponse', async () => {
+    const { HealthResponse } = await import('./schema')
+    const guard = { enabled: true, source: 'bx' as const, safe: false, detail: 'bx 未保护(protection_state=off)', ip: '1.2.3.4', checked_at: '2026-10-02T10:00:00.000Z',
+      // 守护 v2:按调用判的字段
+      signal_source: 'auto' as const, protected_in_use: true, paused: true,
+      providers: [{ id: 'claude', model: null, host: 'api.anthropic.com', protected: true, kind: 'official', label: 'Claude', reason: '官方端点' }] }
+    const r = await makeRoutesUnderTest({ guard: () => guard })['GET /v1/health']!({} as any, undefined)
+    expect((r.body as any).guard).toEqual(guard)
+    expect(HealthResponse.safeParse(r.body).success).toBe(true)
+    const r2 = await makeRoutesUnderTest({})['GET /v1/health']!({} as any, undefined)
+    expect((r2.body as any).guard).toBeUndefined()
+  })
+
+  it('GET /v1/health renders provider_probes (2026-10-04: 开机探测失败、正在重探) — reason for trusted+, hidden from guest; omitted when unwired', async () => {
+    const { HealthResponse } = await import('./schema')
+    const row = { id: 'agy', state: 'retrying' as const, attempts: 2, last_error: '超时 — 5012ms 内没退出', first_failed_at: '2026-10-04T03:14:38.250Z', next_attempt_at: '2026-10-04T03:14:52.000Z', registered_at: null }
+    const routes = makeRoutesUnderTest({ providerProbes: () => [row] })
+    const trusted = await routes['GET /v1/health']!({} as any, undefined, { tier: 'trusted', origin: 'file' } as any)
+    expect((trusted.body as any).provider_probes).toEqual([row])
+    expect(HealthResponse.safeParse(trusted.body).success).toBe(true)
+    const guest = await routes['GET /v1/health']!({} as any, undefined, { tier: 'guest', origin: 'session' } as any)
+    expect((guest.body as any).provider_probes).toEqual([{ ...row, last_error: '' }])
+    const without = await makeRoutesUnderTest({})['GET /v1/health']!({} as any, undefined)
+    expect('provider_probes' in (without.body as any)).toBe(false)
+  })
+
   it('GET /v1/health renders outbound from the dep and omits it when unwired', async () => {
     const withDep = makeRoutesUnderTest({ outbound: () => ({
       state: 'degraded', consecutiveFailures: 2, lastOkAt: null,

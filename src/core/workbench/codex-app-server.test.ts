@@ -705,6 +705,29 @@ describe('workbench Codex app-server', () => {
     expect(closed).toBe(true)
   })
 
+  it('preserves the model classification through a real native turn/start RPC rejection',async()=>{
+    const raw=JSON.stringify({type:'error',status:400,error:{type:'invalid_request_error',message:"The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account."}})
+    const {session,child}=await start();child.autoTurnStart=false
+    const run=collect(session);await begun(child)
+    const request=child.sent.find(m=>m.method==='turn/start')!
+    child.send({id:request.id,error:{code:-32603,message:raw}});await run.done
+    expect(run.events.filter(e=>e.kind==='error')).toEqual([{kind:'error',message:raw,code:'execution_model_unsupported'}])
+  })
+
+  it.each([
+    ['error', undefined], ['turn/completed', undefined],
+    ['error', 'badRequest'], ['turn/completed', 'badRequest'],
+  ] as const)('tags an observed model rejection on native %s / %s without touching user text', async (method, codexErrorInfo) => {
+    const raw=JSON.stringify({type:'error',status:400,error:{type:'invalid_request_error',message:"The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account."}})
+    const {session,child}=await start();const run=collect(session,raw);await begun(child)
+    expect(child.sent.find(m=>m.method==='turn/start')?.params.input[0].text).toBe(raw)
+    const error={message:raw,...(codexErrorInfo?{codexErrorInfo}:{})}
+    child.notify(method,method==='error'?{threadId:'thread-1',turnId:'turn-1',willRetry:false,error}:{threadId:'thread-1',turn:{id:'turn-1',status:'failed',error}})
+    await run.done
+    expect(run.events.filter(e=>e.kind==='error')).toEqual([{kind:'error',message:raw,code:'execution_model_unsupported'}])
+    expect(run.events.some(e=>e.kind==='result')).toBe(false)
+  })
+
   it('does not turn retrying errors, failed or interrupted turns into success', async () => {
     const { session, child } = await start(); const run = collect(session); await begun(child)
     child.notify('error', { threadId: 'thread-1', turnId: 'turn-1', willRetry: true, error: { message: 'retrying' } })
@@ -712,6 +735,42 @@ describe('workbench Codex app-server', () => {
     completed(child, 'failed'); await run.done
     expect(run.events).toContainEqual({ kind: 'error', message: 'execution failed' })
     expect(run.events.some(e => e.kind === 'result')).toBe(false)
+  })
+
+  // arch backlog #4 第 2 步:连不上时 app-server 只发 willRetry 的 error,永不结束(以前工作台
+  // 只能等 10 分钟空闲上限)。connect 上限后以 network 码收掉这一轮,并请 codex 中断。
+  it('ends a turn stuck in retries with a network-coded error after the connect bound, and interrupts it', async () => {
+    const { session, child } = await start({}, { timeouts: { firstEventTimeoutMs: 10_000, connectTimeoutMs: 40 } }); const run = collect(session); await begun(child)
+    child.notify('error', { threadId: 'thread-1', turnId: 'turn-1', willRetry: true, error: { message: 'Reconnecting... waiting for network', codexErrorInfo: { responseStreamConnectionFailed: { httpStatusCode: null } }, additionalDetails: null } })
+    await run.done
+    expect(run.events.filter(e => e.kind === 'error')).toEqual([expect.objectContaining({ code: 'network' })])
+    expect(run.events.some(e => e.kind === 'result')).toBe(false)
+    expect(child.sent.some(m => m.method === 'turn/interrupt')).toBe(true)
+  })
+
+  it('a silent turn (no progress at all) ends at the first-event bound; progress disarms it', async () => {
+    const silent = await start({}, { timeouts: { firstEventTimeoutMs: 40, connectTimeoutMs: 10_000 } }); const quiet = collect(silent.session); await begun(silent.child)
+    await quiet.done
+    expect(quiet.events.filter(e => e.kind === 'error')).toEqual([expect.objectContaining({ code: 'network' })])
+
+    const busy = await start({}, { timeouts: { firstEventTimeoutMs: 40, connectTimeoutMs: 10_000 } }); const run = collect(busy.session); await begun(busy.child)
+    busy.child.notify('item/agentMessage/delta', { threadId: 'thread-1', turnId: 'turn-1', itemId: 'msg-1', delta: 'working' })
+    await new Promise(resolve => setTimeout(resolve, 80))
+    expect(run.events.some(e => e.kind === 'error')).toBe(false)
+    completed(busy.child); await run.done
+    expect(run.events.some(e => e.kind === 'result')).toBe(true)
+  })
+
+  it('terminal errors carry the code from codexErrorInfo (unauthorized ⇒ auth_rejected, usage limit ⇒ quota)', async () => {
+    const a = await start(); const auth = collect(a.session); await begun(a.child)
+    a.child.notify('error', { threadId: 'thread-1', turnId: 'turn-1', willRetry: false, error: { message: 'unexpected status 401 Unauthorized', codexErrorInfo: 'unauthorized', additionalDetails: null } })
+    await auth.done
+    expect(auth.events).toContainEqual(expect.objectContaining({ kind: 'error', code: 'auth_rejected' }))
+
+    const q = await start(); const quota = collect(q.session); await begun(q.child)
+    q.child.notify('turn/completed', { threadId: 'thread-1', turn: { id: 'turn-1', status: 'failed', error: { message: "You've hit your usage limit.", codexErrorInfo: 'usageLimitExceeded', additionalDetails: null }, durationMs: 4 } })
+    await quota.done
+    expect(quota.events).toContainEqual(expect.objectContaining({ kind: 'error', code: 'quota' }))
   })
 
   it.each(['malformed', 'exit', 'unknown-request'])('fails and shuts down on %s without inventing a result', async failure => {
@@ -1050,5 +1109,97 @@ describe('Codex retained workbench runtime', () => {
       expect(run.api.snapshot().retained).toBe(true); expect(run.ended()).toBe(false)
       await run.session.close(); await run.done
     }
+  })
+})
+
+describe('守护:工作台 Codex 的实际端点问 codex 自己(config/read,2026-10-03)', () => {
+  const emptyHome = { env: { HOME: '/nonexistent-home', CODEX_HOME: '/nonexistent-codex-home' }, systemDir: null }
+  const withEnvGateway = async (fn: () => unknown) => {
+    const prior = process.env.OPENAI_BASE_URL
+    process.env.OPENAI_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+    try { await fn() } finally { if (prior === undefined) delete process.env.OPENAI_BASE_URL; else process.env.OPENAI_BASE_URL = prior }
+  }
+  it('config/read 报默认(没有 model_provider)⇒ 官方 OpenAI —— 哪怕 OPENAI_BASE_URL 指到国内网关', () => withEnvGateway(async () => {
+    const { session } = await start({}, { codexTargetOptions: () => emptyHome })
+    expect(session.callTarget?.()).toEqual({ provider: 'codex', model: null, baseUrl: null, exact: true })
+  }))
+  it('config/read 报自定义 provider ⇒ 用它的 base_url(codex 自己的回答覆盖按文件的预测)', async () => {
+    nativeConfig = { ...nativeConfig, model_provider: 'ds', model_providers: { ds: { name: 'DeepSeek', base_url: 'https://api.deepseek.com/v1', wire_api: 'responses' } } }
+    const { session } = await start({}, { codexTargetOptions: () => emptyHome })
+    expect(session.callTarget?.()).toEqual({ provider: 'codex', model: null, baseUrl: 'https://api.deepseek.com/v1', exact: true })
+  })
+  it('config/read 报不出能认的 provider ⇒ unresolved(按需要保护)', async () => {
+    nativeConfig = { ...nativeConfig, model_provider: 'ghost' }
+    const { session } = await start({}, { codexTargetOptions: () => emptyHome })
+    expect(session.callTarget?.()).toMatchObject({ provider: 'codex', unresolved: true })
+  })
+  it('起会话前的预测按 codex 配置层,不看 OPENAI_BASE_URL', () => withEnvGateway(() => {
+    const provider = createWorkbenchCodexProvider({ codexPathOverride: '/codex', codexTargetOptions: () => emptyHome })
+    expect(provider.callTarget?.('spawn', { model: 'gpt-5.5' })).toEqual({ provider: 'codex', model: 'gpt-5.5', baseUrl: null, exact: true })
+  }))
+})
+
+describe('网络守护:暂停在跑的任务(2026-10-03)—— 冻住期间自己的计时器不走', () => {
+  // FakeProcess 给一个 pid,process.kill 记账:组信号落在 FakeProcess 上(SIGKILL / SIGTERM ⇒ 退出)。
+  function spawnWithPid(pid: number) {
+    mocks.spawn.mockImplementation((_binary: string, args: string[]) => {
+      const child = new FakeProcess(args.includes('mcp')); children.push(child)
+      if (child.probe) queueMicrotask(() => { child.stdout.write(discovery); child.exit(discoveryExit) })
+      else Object.defineProperty(child, 'pid', { value: pid })
+      return child
+    })
+  }
+  function trackSignals(child: FakeProcess, pid: number) {
+    const signals: Array<[number, string | number]> = []
+    vi.spyOn(process, 'kill').mockImplementation(((target: number, sig?: string | number) => {
+      signals.push([target, sig ?? 'SIGTERM'])
+      if (Math.abs(target) !== pid) throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' })
+      const gone = child.exitCode !== null || child.signalCode !== null
+      if (sig === 0 && gone) throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' })
+      if (sig === 'SIGKILL' || sig === 'SIGTERM') queueMicrotask(() => child.exit(null, String(sig)))
+      return true
+    }) as typeof process.kill)
+    return signals
+  }
+
+  it('first-event watchdog does not fire while suspended; after resume the turn completes normally', async () => {
+    spawnWithPid(4242)
+    const { session, child } = await start({}, { timeouts: { firstEventTimeoutMs: 40, connectTimeoutMs: 40 } })
+    const signals = trackSignals(child, 4242)
+    const run = collect(session); await begun(child)
+    expect(session.suspension?.suspend()).toBe(true)
+    expect(signals).toContainEqual([-4242, 'SIGSTOP'])
+    await new Promise(resolve => setTimeout(resolve, 150))          // 远超 40ms 的首个事件上限
+    expect(run.events.some(e => e.kind === 'error')).toBe(false)
+    session.suspension!.resume()
+    expect(signals).toContainEqual([-4242, 'SIGCONT'])
+    // 放开后 codex 自己重连(willRetry)再接上:connect 看门狗照常武装,有进展就撤。
+    child.notify('error', { threadId: 'thread-1', turnId: 'turn-1', willRetry: true, error: { message: 'Reconnecting... 1/5', codexErrorInfo: null, additionalDetails: null } })
+    child.notify('item/agentMessage/delta', { threadId: 'thread-1', turnId: 'turn-1', itemId: 'msg-1', delta: 'RECOVERED' })
+    completed(child); await run.done
+    expect(run.events.some(e => e.kind === 'result')).toBe(true)
+    expect(run.events.filter(e => e.kind === 'error')).toEqual([])
+  })
+
+  it('without suspension the same 40ms bound does fire (control)', async () => {
+    const { session, child } = await start({}, { timeouts: { firstEventTimeoutMs: 40, connectTimeoutMs: 40 } })
+    const run = collect(session); await begun(child)
+    await run.done
+    expect(run.events.filter(e => e.kind === 'error')).toEqual([expect.objectContaining({ code: 'network' })])
+  })
+
+  it('terminate while suspended: SIGKILLs the frozen tree (never SIGCONT) and close() settles without cleanup RPCs', async () => {
+    spawnWithPid(4343)
+    const { session, child } = await start({ workbenchLifecycle: true })
+    const signals = trackSignals(child, 4343)
+    session.workbenchRuntime!.start('work')
+    await begun(child)
+    expect(session.suspension?.suspend()).toBe(true)
+    const before = child.sent.length
+    session.suspension!.terminate()
+    await expect(session.close()).resolves.toBeUndefined()
+    expect(signals.some(([, s]) => s === 'SIGCONT')).toBe(false)
+    expect(signals).toContainEqual([-4343, 'SIGKILL'])
+    expect(child.sent.slice(before).some(m => m.method === 'turn/interrupt' || m.method === 'thread/backgroundTerminals/clean')).toBe(false)
   })
 })

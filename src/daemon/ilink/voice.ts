@@ -5,6 +5,7 @@
  * wechat-voice MCP can depend on this module directly instead of re-
  * importing the full ilink-glue surface.
  */
+import { assertCallAllowed, decideCall, unprotectedMessage, type CallTarget, type NetworkGate } from '../../lib/network-gate'
 import { join } from 'node:path'
 import { mkdirSync, writeFileSync, unlinkSync } from 'node:fs'
 import type { WechatVoiceDep } from '../wechat-tool-deps'
@@ -195,5 +196,57 @@ export function makeVoice(ctx: IlinkContext): WechatVoiceDep {
       if (!cfg) return { configured: false as const }
       return { configured: true as const, provider: 'http_stt' as const, base_url: cfg.base_url, model: cfg.model, saved_at: cfg.saved_at }
     },
+  }
+}
+
+/** 通义 TTS(qwen provider)走的端点 —— 国内 DashScope。 */
+const QWEN_TTS_BASE_URL = 'https://dashscope.aliyuncs.com'
+
+/**
+ * 网络闸门包装(守护 v2)。语音合成 / 识别要把内容送出本机,按**这一次连到哪**分类:通义
+ * DashScope(国内)、主人自建网关、局域网都不需要保护,照常;只有连到需要保护的端点(海外官方、
+ * 或 guard.json 纳入的自定义网关)且网络不安全时才不出门。只读的 configStatus / sttStatus 不拦。
+ */
+export function gateVoice(inner: WechatVoiceDep, gate: NetworkGate | undefined): WechatVoiceDep {
+  if (!gate) return inner
+  const ttsTarget = (provider: string | undefined, baseUrl: string | undefined): CallTarget =>
+    ({ provider: 'voice', baseUrl: provider === 'http_tts' ? (baseUrl ?? null) : QWEN_TTS_BASE_URL, purpose: 'voice' })
+  // 没配置 ⇒ null:什么都不会出门,交给 inner 自己报 not_configured / no_stt_config。
+  const currentTts = (): CallTarget | null => {
+    const st = inner.configStatus() as { configured: boolean; provider?: string; base_url?: string }
+    return st.configured ? ttsTarget(st.provider, st.base_url) : null
+  }
+  const currentStt = (): CallTarget | null => {
+    const st = (inner.sttStatus?.() ?? { configured: false }) as { configured: boolean; base_url?: string }
+    return st.configured ? { provider: 'voice', baseUrl: st.base_url ?? null, purpose: 'voice' } : null
+  }
+  const refused = async (t: CallTarget | null): Promise<string | null> => {
+    if (!t) return null
+    const d = await decideCall(gate, t)
+    return d.allowed ? null : unprotectedMessage(d.verdict!, `语音(${d.cls.label})`)
+  }
+  return {
+    ...inner,
+    async replyVoice(chatId, text) {
+      const why = await refused(currentTts())
+      if (why) { log('VOICE', `replyVoice skipped chat=${chatId}: network unprotected`); return { ok: false as const, reason: why } }
+      return inner.replyVoice(chatId, text)
+    },
+    async synthesizeSpeech(text) {
+      const t = currentTts()
+      if (t) await assertCallAllowed(gate, t)
+      return inner.synthesizeSpeech(text)
+    },
+    async saveConfig(input) {
+      const why = await refused(ttsTarget(input.provider, input.base_url))
+      if (why) return { ok: false as const, reason: 'network_unprotected', detail: why }
+      return inner.saveConfig(input)
+    },
+    ...(inner.transcribe ? { async transcribe(audio: Buffer, mime: string) { const t = currentStt(); if (t) await assertCallAllowed(gate, t); return inner.transcribe!(audio, mime) } } : {}),
+    ...(inner.saveSTTConfig ? { async saveSTTConfig(input: Parameters<NonNullable<WechatVoiceDep['saveSTTConfig']>>[0]) {
+      const why = await refused({ provider: 'voice', baseUrl: input.base_url ?? null, purpose: 'voice' })
+      if (why) return { ok: false as const, reason: 'network_unprotected', detail: why }
+      return inner.saveSTTConfig!(input)
+    } } : {}),
   }
 }

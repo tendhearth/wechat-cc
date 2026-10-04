@@ -641,7 +641,7 @@ describe('ReminderScheduleRequest', () => {
 // ── schema lookup tables ─────────────────────────────────────────────────────
 
 describe('schema lookup tables', () => {
-  it('REQUEST_SCHEMAS has 45 entries', () => {
+  it('REQUEST_SCHEMAS has 47 entries', () => {
     // 19 original + 4 a2a dashboard routes (preview, install, remove, pause)
     // + 1 a2a server-side test route (Test button) + 1 memory/delete
     // + 1 companion/import-local + 3 plugins (toggle, install, upgrade)
@@ -651,7 +651,7 @@ describe('schema lookup tables', () => {
     // (P4: social/seek's SocialSeekRequest was deleted — the propose/
     // confirm/cancel routes that replaced it are inline-validated, no
     // REQUEST_SCHEMAS entry, per the pair/inbound routes' precedent.)
-    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(45)
+    expect(Object.keys(REQUEST_SCHEMAS).length).toBe(47)
   })
   it('RESPONSE_SCHEMAS has 36 entries (one per route)', () => {
     // 25 original + 2 a2a dashboard response schemas (preview, install)

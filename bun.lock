@@ -14,6 +14,7 @@
         "ai": "^5",
         "marked": "^18.0.0",
         "qrcode-terminal": "^0.12.0",
+        "smol-toml": "^1.9.0",
         "yaml": "^2.9.0",
         "zod": "^4.0.0",
       },
@@ -36,11 +37,14 @@
       "version": "1.0.0",
       "dependencies": {
         "@wechat-cc/design-tokens": "workspace:*",
+        "@wechat-cc/markdown": "workspace:*",
         "@wechat-cc/protocol": "workspace:*",
         "expo": "~57.0.26",
+        "expo-audio": "~57.0.5",
         "expo-camera": "~57.0.6",
         "expo-constants": "~57.0.20",
         "expo-crypto": "~57.0.3",
+        "expo-file-system": "~57.0.7",
         "expo-font": "~57.0.4",
         "expo-linking": "~57.0.11",
         "expo-localization": "~57.0.2",
@@ -65,7 +69,7 @@
     },
     "apps/desktop": {
       "name": "wechat-cc-desktop",
-      "version": "1.7.1",
+      "version": "1.7.2",
       "dependencies": {
         "@tauri-apps/plugin-process": "^2.3.1",
         "@tauri-apps/plugin-updater": "^2.10.1",
@@ -90,6 +94,13 @@
     "packages/design-tokens": {
       "name": "@wechat-cc/design-tokens",
       "version": "0.0.1",
+    },
+    "packages/markdown": {
+      "name": "@wechat-cc/markdown",
+      "version": "0.0.1",
+      "dependencies": {
+        "marked": "^18.0.0",
+      },
     },
     "packages/protocol": {
       "name": "@wechat-cc/protocol",
@@ -805,6 +816,8 @@
 
     "@wechat-cc/design-tokens": ["@wechat-cc/design-tokens@workspace:packages/design-tokens"],
 
+    "@wechat-cc/markdown": ["@wechat-cc/markdown@workspace:packages/markdown"],
+
     "@wechat-cc/protocol": ["@wechat-cc/protocol@workspace:packages/protocol"],
 
     "@wechat-cc/relay": ["@wechat-cc/relay@workspace:apps/relay"],
@@ -1064,6 +1077,8 @@
     "expo-application": ["expo-application@57.0.3", "", { "peerDependencies": { "expo": "*" } }, "sha512-t/CxeLio0NjY9/cOak1tQp62/hAUjzJxmhR4rVUR7K5bb9YoEtfl1ZekTn+Iuh+dYOMYzF0l72ODMSmY3CR1NA=="],
 
     "expo-asset": ["expo-asset@57.0.18", "", { "dependencies": { "@expo/image-utils": "^0.11.5", "expo-constants": "~57.0.19" }, "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }, "sha512-zDIQkUr0NM2S7YRj98Zohf/OBuM1q0o4ctxLz1C1oe4/33lHNLjp+2v3qUtBWVwn0zKka8UGADmS8M+83Wi6pw=="],
+
+    "expo-audio": ["expo-audio@57.0.5", "", { "peerDependencies": { "expo": "*", "expo-asset": "*", "react": "*", "react-native": "*" } }, "sha512-39fX5JC5zDvELB4/eDJPj2XAYRN0W9+K2DfDWm5N3aC5WZ7HRrhupWtT6hbH09NlfYpsRSqYOwEZnocFM42ynQ=="],
 
     "expo-camera": ["expo-camera@57.0.6", "", { "dependencies": { "barcode-detector": "^3.0.0" }, "peerDependencies": { "expo": "*", "react": "*", "react-native": "*", "react-native-web": "*" }, "optionalPeers": ["react-native-web"] }, "sha512-eswB77bOzQ2OEvll/hV5VnzywaICFnYF21HIwcyokebFcSTSMfGQk8+VW06DRec9JnWuRExs0QXlfxyMPjS6KQ=="],
 
@@ -1658,6 +1673,8 @@
     "sisteransi": ["sisteransi@1.0.5", "", {}, "sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg=="],
 
     "slugify": ["slugify@1.6.9", "", {}, "sha512-vZ7rfeehZui7wQs438JXBckYLkIIdfHOXsaVEUMyS5fHo1483l1bMdo0EDSWYclY0yZKFOipDy4KHuKs6ssvdg=="],
+
+    "smol-toml": ["smol-toml@1.9.0", "", {}, "sha512-hpd+HLON7HdZXqYchMM/+LaTTbdK0AU3NngIJ4KVyWbY9bfQqdL9cD+4yf6dUoU2Ap4VsU0JkQi6FxAI1B2mXQ=="],
 
     "source-map": ["source-map@0.5.7", "", {}, "sha512-LbrmJOMUSdEVxIKvdcJzQC+nQhe8FUZQTXQy6+I75skNgn3OoQ0DZA8YnFa7gp8tqtL3KPf1kmo0R5DoApeSGQ=="],
 

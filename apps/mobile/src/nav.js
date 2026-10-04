@@ -13,10 +13,25 @@ document.getElementById("pairbtn").addEventListener("click", function() {
     } else toast("没配上:" + (r.error || ""))
   }).catch(function(){ toast("没配上,网络不通") })
 })
+function ccSelectMobilePane(name) {
+  var main=name==='memory'||name==='sessions'?'matters':name
+  document.querySelectorAll('nav button[data-p]').forEach(function(/** @type {HTMLButtonElement} */ button){button.classList.toggle('on',button.dataset.p===main)})
+  document.querySelectorAll('.pane').forEach(function(pane){pane.classList.toggle('on',pane.id==='p-'+name)})
+  document.dispatchEvent(new CustomEvent('cc:pane',{detail:{pane:name}}))
+}
+function ccMobilePane(name) {
+  var button=/** @type {HTMLButtonElement} */ (document.querySelector('nav button[data-p="'+name+'"]'))
+  // Preserve the existing workbench/entry navigation hooks for the two main destinations.
+  if(button){button.click();return}
+  if(typeof mActive!=='undefined'){mActive=false;clearTimeout(mPoll);mSeq++;mDetailFresh=false;mSetButtons()}
+  if(typeof eViewEpoch!=='undefined')eViewEpoch++
+  ccSelectMobilePane(name)
+}
 document.querySelectorAll("nav button[data-p]").forEach(function(/** @type {HTMLButtonElement} */ b) {
   b.addEventListener("click", function() {
-    document.querySelectorAll("nav button").forEach(function(o){ o.classList.toggle("on", o === b) })
-    document.querySelectorAll(".pane").forEach(function(p){ p.classList.toggle("on", p.id === "p-" + b.dataset.p) })
+    ccSelectMobilePane(b.dataset.p)
   })
 })
+document.getElementById('memory-open').addEventListener('click',function(){ccMobilePane('memory')})
+document.getElementById('memory-back').addEventListener('click',function(){ccMobilePane('matters')})
 document.getElementById("nav-set").addEventListener("click", function(){ ccNav("/set") })

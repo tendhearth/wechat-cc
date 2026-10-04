@@ -10,14 +10,17 @@ import {makeWorkbenchStore} from './store'
 import {makeWorkbenchService,type WorkbenchService} from './service'
 import {PROVIDER_EXECUTION_CHOICE as automatic} from './execution-settings'
 import {MANAGED_NATIVE_CAPABILITIES} from './executor-capabilities'
+import {codexErrorEvent,codexRpcError} from './codex-execution-error'
 import {removeTempDir} from '../../lib/test-temp'
 
 let root:string,project:string,db:Db,service:WorkbenchService,store:ReturnType<typeof makeWorkbenchStore>
 const selected:AgentExecutionChoice={defaults:'provider',model:'fixture-model',reasoningEffort:'high'}
+let turnErrors:Array<[string,string|undefined,string]>=[]
 function setup(provider:AgentProvider,resume=true){
   const registry=createProviderRegistry()
   for(const id of ['claude','codex'])registry.register(id,provider,{displayName:id,canResume:()=>resume,workbench:MANAGED_NATIVE_CAPABILITIES})
-  store=makeWorkbenchStore(db);service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null})
+  turnErrors=[]
+  store=makeWorkbenchStore(db);service=makeWorkbenchService({store,registry,stateDir:root,ownerChatId:()=>null,onTurnError:(p,c,m)=>{turnErrors.push([p,c,m])}})
 }
 function gate(){let resolve!:()=>void;const promise=new Promise<void>(r=>resolve=r);return{promise,resolve}}
 async function settled(id:string){await expect.poll(()=>service.detail(id).task.status).not.toMatch(/^(queued|running|cancelling)$/)}
@@ -154,6 +157,21 @@ it('keeps model failure codes diagnostic while explaining the next action in the
   const task=service.create({path:project,providerId:'codex',text:'work',execution:selected});await settled(task.id)
   const detail=service.detail(task.id)
   expect(detail.task.error).toBe('execution_model_unsupported')
-  expect(detail.events.filter(e=>e.kind==='error').at(-1)?.text).toBe('当前模型不可用，请重新选择模型，或使用自动。')
+  expect(detail.events.filter(e=>e.kind==='error').at(-1)?.text).toBe('当前模型不可用。请为这件事选择可用的模型后继续；自动会沿用原设置。')
   expect(detail.execution).toEqual(selected);expect(detail.lastExecution?.effective).toBeNull()
+})
+
+
+it.each(['native-error-event','rpc-rejection'])('preserves one model diagnostic with a stable task failure for %s',async path=>{
+  const raw=JSON.stringify({type:'error',status:400,error:{type:'invalid_request_error',message:"The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account."}})
+  setup({async spawn(){if(path==='rpc-rejection')throw codexRpcError(raw);return{async *dispatch(){yield codexErrorEvent(raw)},async close(){}}}})
+  const task=service.create({path:project,providerId:'codex',text:'work',execution:automatic});await settled(task.id)
+  const detail=service.detail(task.id),errors=detail.events.filter(e=>e.kind==='error')
+  expect(detail.task.error).toBe('execution_model_unsupported');expect(detail.task.status).toBe('failed')
+  expect(errors).toHaveLength(1)
+  expect(errors[0]).toMatchObject({text:expect.stringContaining('当前账号不支持'),diagnostic:raw,errorCode:'execution_model_unsupported'})
+  expect(store.events(task.id).filter(e=>e.kind==='error').map(e=>e.text)).toEqual([raw])
+  // CLI 自动升级的报错触发:错误通道(码 + 原文)交出去,两条路一样
+  expect(turnErrors).toEqual([['codex','execution_model_unsupported',raw]])
+  expect(detail.execution).toEqual(automatic)
 })

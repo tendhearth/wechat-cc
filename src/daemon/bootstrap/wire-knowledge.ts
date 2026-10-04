@@ -19,6 +19,7 @@ import { makeGraphQueryApi } from '../../core/knowledge/graph-query'
 import { makeFactsApi } from '../../core/knowledge/facts'
 import { makePersonApi } from '../../core/knowledge/person'
 import { runKnowledgeCycle } from '../../core/knowledge/cycle'
+import { makeWxvaultRefresh } from '../../core/knowledge/wxvault-refresh'
 import type { Bootstrap, BootstrapCtx } from './types'
 import type { PluginsSlice } from './wire-plugins'
 
@@ -134,8 +135,25 @@ export function wireKnowledge(
       // ordering, error-swallowing, and the "still running" concurrency guard
       // now live there with direct unit coverage (cycle.test.ts) instead of
       // only being reachable through this closure.
+      // The adapter reads wxvault's decrypted files directly, bypassing
+      // wxvault's query-time refresh — so refresh them first each cycle
+      // (incremental; no-op when WeChat wrote nothing). Only when the source
+      // IS wxvault's own output dir and the wxvault plugin resolved; a
+      // `knowledge_source_dir` override is someone else's snapshot to manage.
+      // Interpreter + state dir come from wxvault's own resolved spawn spec
+      // (absolute python, launchd-safe), so the refresh runs exactly as
+      // wxvault's MCP server does.
+      const wxvaultPlugin = loadedPlugins.find(p => p.name === 'wxvault' && p.enabled && p.ready)
+      const refreshSource = wxvaultPlugin && !ctx.configuredAgent.knowledge_source_dir
+        ? makeWxvaultRefresh({
+            pythonBin: wxvaultPlugin.spec.command,
+            pluginDir: wxvaultPlugin.dir,
+            stateDir: wxvaultPlugin.spec.env?.WXVAULT_STATE_DIR ?? pluginDataDir(ctx.stateDir, 'wxvault'),
+          })
+        : undefined
       const runKnowledgeAdapter = (onBoot: boolean) => runKnowledgeCycle(
         {
+          refreshSource,
           runAdapter: () => Promise.resolve(runSourceAdapter({ decryptedDir, store: knowledgeStore })),
           // Uses the shared `embedder` above (no per-cycle spawn/close —
           // Task 2). `embedder.model_id` (not the outer

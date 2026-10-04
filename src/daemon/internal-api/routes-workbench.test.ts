@@ -315,12 +315,22 @@ describe('Workbench internal HTTP API', () => {
   it('bounds chunked uploads without trusting a content length and keeps the API usable',async()=>{
     const uploadAttachment=vi.fn(),{port,adminToken,request}=await start(service({uploadAttachment}))
     const result=await new Promise<{status:number;body:string;connection:string|undefined}>((resolve,reject)=>{
+      let stopped=false,sent=0
       const req=httpRequest({host:'127.0.0.1',port,path:'/v1/workbench/attachment',method:'POST',headers:{authorization:`Bearer ${adminToken}`,'content-type':'application/json','transfer-encoding':'chunked'}},res=>{
-        let body='';res.setEncoding('utf8');res.on('data',chunk=>{body+=chunk});res.on('end',()=>resolve({status:res.statusCode!,body,connection:res.headers.connection}));res.on('error',reject)
+        stopped=true
+        let body='';res.setEncoding('utf8');res.on('data',chunk=>{body+=chunk});res.on('end',()=>{req.destroy();resolve({status:res.statusCode!,body,connection:res.headers.connection})});res.on('error',error=>{req.destroy();reject(error)})
       })
-      req.on('error',reject)
-      for(let i=0;i<13;i++)req.write(Buffer.alloc(1024*1024,32))
-      req.end()
+      req.on('error',error=>{stopped=true;req.destroy();reject(error)})
+      const chunk=Buffer.alloc(64*1024,32)
+      // Respect backpressure and let the early 413 stop the upload before queuing more data.
+      const send=()=>{
+        if(stopped)return
+        if(sent===13*1024*1024){req.end();return}
+        sent+=chunk.length
+        if(req.write(chunk))setImmediate(send)
+        else req.once('drain',()=>setImmediate(send))
+      }
+      send()
     })
     expect(result.status).toBe(413)
     expect(result.connection).toBe('close')

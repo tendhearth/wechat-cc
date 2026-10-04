@@ -15,5 +15,5 @@
   "include": ["src/*.js", "src/globals.d.ts"],
   // protocol-generated.js 是 packages/protocol 打包出的 IIFE(bun run build:mobile 写出),
   // 单行 44KB 的机器产物,不是手写源码,checkJs 没有意义(而且会很慢)。
-  "exclude": ["src/sw.js", "src/protocol-generated.js"]
+  "exclude": ["src/sw.js", "src/protocol-generated.js", "src/markdown-generated.js"]
 }

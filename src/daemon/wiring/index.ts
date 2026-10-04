@@ -36,6 +36,8 @@ import { existsSync, readFileSync } from 'node:fs'
 
 export interface WireMainOpts {
   workbench?: import('../../core/workbench/service').WorkbenchService
+  /** 网络守护运行时(2026-10-02,main.ts 建):闸门 + 调度器 Ref + 后台任务跳过包装。缺省 = 老行为。 */
+  guardRuntime?: import('../guard/runtime').GuardRuntime
   /** 内部 API 的 token-registry 窄接口 → 手机设置面板(梳理第 6 步)。 */
   panelTokens?: import('../internal-api/token-registry').PanelTokens
   /** 「一件事」登记处(matters store);微信入站登记 chat、app 对话绑桌面表面、管家候选集都从这里来。 */
@@ -92,6 +94,11 @@ export interface WireMainOpts {
    * 透传进 buildTickBodies。
    */
   outboundTaps?: { tap(chatId: string): { close(): string[] } }
+  /**
+   * 回复交付(spec 2026-10-03):main.ts 里那**同一个** runtime。经 `...opts` 透传进 buildTickBodies ——
+   * 当轮 provider 走 daemon 时,伙伴推送的最后的话经它送达。缺省 ⇒ 推送照旧只认 reply 工具。
+   */
+  replyDelivery?: import('../../core/turn-reply').ReplyDeliveryPort
   // 三条用途:tick-bodies 用 recordHunt(打猎入库)与 list/summary(日程判断
   // 要看包袱里堆了什么),pipeline-deps 用 list(微信「背包」命令)。这里给
   // 全,下游各取所需 —— main.ts 传的是完整 Journal。
@@ -121,7 +128,7 @@ export interface WiredDeps {
    * main.ts late-binds this onto internal-api via setCompanionConverse()
    * once wireMain returns (bootstrap must be ready first).
    */
-  companionConverse: (text: string, origin?: 'desktop' | 'phone') => Promise<{ reply: string }>
+  companionConverse: (text: string, origin?: 'desktop' | 'phone') => Promise<import('../app-reply').ConverseResult>
   /**
    * 桌宠 turn 闭包(CC 桌宠 Phase B)。main.ts 在 setCompanionConverse 旁边
    * setPetTurn 到 internal-api —— 同样要等 bootstrap 就绪。
@@ -172,7 +179,7 @@ export interface WiredDeps {
 export function wireMain(opts: WireMainOpts): WiredDeps {
   const refs = {
     polling: new Ref<PollingLifecycle>('polling'),
-    guard: new Ref<GuardLifecycle>('guard'),
+    guard: opts.guardRuntime?.ref ?? new Ref<GuardLifecycle>('guard'),
     pipeline: new Ref<PipelineRun>('pipeline'),
     appTurn: new Ref<AppTurn>('appTurn'),
     ingestNudge: new Ref<() => void>('ingestNudge'),

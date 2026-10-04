@@ -9,12 +9,14 @@ import { useConnection } from '../state/hooks'
 import { useChat, type ChatSendOutcome } from '../state/useChat'
 import { ConnectionNotice } from '../ui/ConnectionNotice'
 import { Dot } from '../ui/Dot'
+import { MessageText } from '../ui/Markdown'
+import { ReplyAttachments, ReplyProcess } from '../ui/ReplyExtras'
 import { TextField } from '../ui/TextField'
 import { radius, space } from '../ui/tokens'
 import { TopBar } from '../ui/TopBar'
 import { Txt } from '../ui/Txt'
 import { useTheme } from '../ui/useTheme'
-import { textAfterSend, type Bubble } from '../view/chat'
+import { hasBubbleText, textAfterSend, type Bubble } from '../view/chat'
 import { canSubmit } from '../view/connection'
 
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -160,22 +162,23 @@ function ChatBubble({ b, lang, canRetry, onRetry, onDismiss }: { b: Bubble; lang
   const me = b.side === 'me'
   if (b.state === 'thinking') return <Thinking lang={lang} />
   const from = t(lang, `chat.from.${b.source}`)
+  // CC 的回复:过程(灰、默认收起)在上,附件在下;只有附件的回复不画空的文字气泡。
   return (
     <View style={{ alignItems: me ? 'flex-end' : 'flex-start', gap: space.xs }}>
-      <View
+      {!me && b.narration?.length ? <ReplyProcess lines={b.narration} lang={lang} testID="chat-process" /> : null}
+      {hasBubbleText(b) ? <View
         testID={me ? 'chat-bubble-me' : 'chat-bubble-cc'}
-        accessible
-        accessibilityLabel={`${me ? t(lang, 'chat.me') : t(lang, 'cc.label')}: ${b.text}${b.truncated ? ` ${t(lang, 'chat.truncated')}` : ''}`}
         style={{
-          maxWidth: '85%', paddingHorizontal: space.l, paddingVertical: space.m, ...bubbleShape(me),
+          maxWidth: '85%', paddingHorizontal: space.l, paddingVertical: space.m, gap: space.xs, ...bubbleShape(me),
           backgroundColor: c.paper, borderWidth: 1, borderColor: c.hair,
           opacity: b.state === 'failed' ? 0.8 : 1,
         }}
       >
-        <Txt selectable role="body" content="user">
-          {b.text}{b.truncated ? t(lang, 'chat.truncated') : ''}
-        </Txt>
-      </View>
+        <Txt role="caption" tone="inkSoft">{t(lang, me ? 'chat.me' : 'cc.label')}</Txt>
+        <MessageText role={me ? 'user' : 'assistant'} text={b.text} />
+        {b.truncated ? <Txt role="caption" tone="inkSoft">{t(lang, 'chat.truncated')}</Txt> : null}
+      </View> : null}
+      {!me && b.attachments?.length ? <ReplyAttachments messageId={b.key} items={b.attachments} lang={lang} /> : null}
       <Txt role="caption" tone="inkSoft">{from} · {hhmm(b.at)}</Txt>
       {b.state === 'failed' && b.failedKind ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.m }}>

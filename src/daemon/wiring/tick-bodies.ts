@@ -20,9 +20,11 @@ import { resolveEffectiveTier, TIER_PROFILES } from '../../core/user-tier'
 import { dueGuestVisit, guestLabel, type GuestVisitState } from '../companion/guest-visits'
 import { buildGuestVisitNarrationPrompt } from '../../core/visit'
 import type { Access } from '../../lib/access'
-import type { PermissionMode } from '../../core/capability-matrix'
+import { replyDeliveryFor, replyTextStrategyFor, type PermissionMode } from '../../core/capability-matrix'
+import { collectTurn } from '../../core/agent-provider'
+import type { ReplyDeliveryMode, ReplyDeliveryPort } from '../../core/turn-reply'
 import { makeMemoryFS } from '../memory/fs-api'
-import { parseAgenda, selectDue, markResolved } from '../companion/agenda'
+import { parseAgenda, selectDue, markResolved, unmarkResolved } from '../companion/agenda'
 import { makeMessagesStore, type MessagesStore } from '../../lib/messages-store'
 import { recentInboundTexts } from './recent-inbound'
 import { makeThreadsStore } from '../../lib/threads-store'
@@ -55,6 +57,7 @@ import {
 } from '../../core/companion-plan'
 import { readPlanLog, appendPlanLog } from '../companion/plan-memory'
 import { readJournalSeen } from '../../core/journal-seen'
+import { isNetworkUnprotectedError, NETWORK_UNPROTECTED_REASON } from '../../lib/network-gate'
 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err) }
 
@@ -136,6 +139,13 @@ export interface TickDeps {
    * must remain throw-safe so art can never starve memory maintenance.
    */
   runAtelierTick?: (opts?: { nowIso?: string }) => Promise<void>
+  /**
+   * 回复交付(spec 2026-10-03 §4.10「伙伴主动推送」):当轮 provider 走 daemon 交付时,推送也是一轮 ——
+   * 最后的话就是推送,不想发写 `NO_REPLY`(静默 ⇒ 撤回登记)。缺省 ⇒ 一律 legacy(只认 reply 工具)。
+   */
+  replyDelivery?: ReplyDeliveryPort
+  /** 每家 provider 的交付模式;缺省读能力表(`replyDeliveryFor`)。测试注入。 */
+  replyDeliveryModeFor?: (providerId: string) => ReplyDeliveryMode
 }
 
 /**
@@ -230,7 +240,35 @@ export interface BuildPushTickTextOpts {
  * pushTick so the eval harness can drive the body with a virtual `ts`
  * without going through the scheduler. Production code path is unchanged.
  */
-export function buildPushTickText(opts: BuildPushTickTextOpts): string {
+/** 推送提示的两个版本:'tool' = 今天的(调 reply);'final_text' = 回复交付(最后的话就是推送,不发写 NO_REPLY)。 */
+export interface TickTextStyle {
+  replyDelivery?: 'tool' | 'final_text'
+  /** 聊天型模型(all_segments,2026-10-03 修订):这一轮写下的文字**都会**发出去 —— 提示要说清楚,别写过程独白。 */
+  allSegments?: boolean
+}
+
+/** final_text 版推送提示里「哪些话会发出去」那半句,按执行者类型说。 */
+function tickVoice(style: TickTextStyle, last: string): string {
+  return style.allSegments ? '你这一轮写下的文字都会原样发出去,所以只写要发给他的话,不写过程' : last
+}
+/** 不发的说法:只写 NO_REPLY,别解释为什么不发(解释会被当成推送)。 */
+const TICK_SILENT = '只写 NO_REPLY,别的一个字都不写,也别解释为什么不发(这个词不会发出去)'
+/**
+ * 审稿第二轮第 3 条(2026-10-03):推不推已经由 shouldSpeak / 日程判断在调用模型**之前**定了 ——
+ * compose 这一轮的任务是「写出这条推送」;NO_REPLY 只是兜底,写不出值得发的内容才用。
+ */
+const TICK_DECIDED = '已决定要推送,请写出这条推送'
+const TICK_FALLBACK = `只有写不出值得发的内容时才不发——那就${TICK_SILENT}`
+
+export function buildPushTickText(opts: BuildPushTickTextOpts, style: TickTextStyle = {}): string {
+  if (style.replyDelivery === 'final_text') {
+    return (
+      `<companion_tick ts="${opts.nowIso}" default_chat_id="${opts.defaultChatId}" />\n` +
+      `有一条到点的跟进：「${opts.intention}」——${TICK_DECIDED}。\n` +
+      `先 memory_read 相关 .md，再写一句简短、自然的问候（别催、别灌鸡汤）——${tickVoice(style, '你这一轮最后写下的话就是推送')}。晚了几天也照常发，自然带一句就行（"前两天那个…"），不用为迟到道歉。\n` +
+      `如果这件事本身已经没意义了（约定的具体时刻早过去很久、或用户已经自己说过结果），就是写不出值得发的内容。${TICK_FALLBACK}。`
+    )
+  }
   return (
     `<companion_tick ts="${opts.nowIso}" default_chat_id="${opts.defaultChatId}" />\n` +
     `有一条到点的跟进：「${opts.intention}」\n` +
@@ -252,7 +290,15 @@ export interface BuildGapCheckinTextOpts {
  * item; the calibration gate decided a quiet-days check-in is due instead).
  * Mirrors buildPushTickText's structure/extraction rationale.
  */
-export function buildGapCheckinText(opts: BuildGapCheckinTextOpts): string {
+export function buildGapCheckinText(opts: BuildGapCheckinTextOpts, style: TickTextStyle = {}): string {
+  if (style.replyDelivery === 'final_text') {
+    return (
+      `<companion_tick ts="${opts.nowIso}" chat_id="${opts.chatId}" kind="gap" />\n` +
+      `这是一次主动问候（距离上次对话 ${opts.daysSinceContact} 天）——${TICK_DECIDED}：` +
+      `结合你对这位用户的了解，写**一条**简短自然的问候（${tickVoice(style, '你这一轮最后的话就是推送')}）；` +
+      `${TICK_FALLBACK}。`
+    )
+  }
   return (
     `<companion_tick ts="${opts.nowIso}" chat_id="${opts.chatId}" kind="gap" />\n` +
     `这是一次主动问候（距离上次对话 ${opts.daysSinceContact} 天）；` +
@@ -266,7 +312,16 @@ export function buildGapCheckinText(opts: BuildGapCheckinTextOpts): string {
  * the calibration gate decided a hunt is due for the owner's chat instead).
  * Mirrors buildGapCheckinText's structure/extraction rationale.
  */
-export function buildHuntText(opts: { nowIso: string }): string {
+export function buildHuntText(opts: { nowIso: string }, style: TickTextStyle = {}): string {
+  if (style.replyDelivery === 'final_text') {
+    return (
+      `<companion_tick ts="${opts.nowIso}" kind="hunt" />\n` +
+      `每日打猎时间——${TICK_DECIDED}：回顾你记忆里主人的兴趣和最近关注，用网络工具（搜索/抓取）找新鲜的、他真会感兴趣的内容；` +
+      `只挑真正值得的 1-2 条分享，每条一句"为什么你会感兴趣" + 链接，条与条之间空一行（${tickVoice(style, '你这一轮最后的话就是分享的内容')}）；` +
+      `今天没猎到值得分享的就是写不出值得发的内容，${TICK_FALLBACK}；` +
+      `别分享你们最近已经聊过的东西。`
+    )
+  }
   return (
     `<companion_tick ts="${opts.nowIso}" kind="hunt" />\n` +
     `每日打猎时间——回顾你记忆里主人的兴趣和最近关注，用网络工具（搜索/抓取）找新鲜的、他真会感兴趣的内容；` +
@@ -433,7 +488,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
    */
   async function dispatchToChat(
     chatId: string,
-    args: { claim: () => void; buildText: () => string },
+    args: { claim: () => (() => void) | void; buildText: (style: TickTextStyle) => string },
   ): Promise<boolean> {
     const gate = resolveDispatch(chatId)
     if (gate.blocked === 'wechat_degraded') {
@@ -477,13 +532,40 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       // reported pain and a missed nudge is low-stakes (the agent can
       // re-author it, or the gap/agenda gate will surface it again later).
       // See docs/superpowers/specs/2026-06-25-companion-push-at-most-once-design.md
-      args.claim()
-      const tickText = args.buildText()
+      const undo = args.claim()
+      // 回复交付(spec 2026-10-03,已定 ③):当轮 provider 走 daemon ⇒ 推送也是一轮,最后的话就是推送,
+      // `NO_REPLY` = 这次不发(撤回登记);legacy ⇒ 照旧只认 reply 工具。
+      const delivery = deps.replyDelivery && (deps.replyDeliveryModeFor ?? replyDeliveryFor)(providerId) === 'daemon' ? deps.replyDelivery : undefined
+      const allSegments = replyTextStrategyFor(providerId) === 'all_segments'
+      const tickText = args.buildText({ replyDelivery: delivery ? 'final_text' : 'tool', allSegments })
+      const turn = delivery?.begin(chatId, { mode: 'daemon', context: 'tick', providerId, textStrategy: replyTextStrategyFor(providerId) })
       try {
-        for await (const ev of handle.dispatch(tickText)) {
-          if (ev.kind === 'error') deps.log('SCHED', `companion tick dispatch error event: ${ev.code ? `${ev.code}: ` : ''}${ev.message}`)
+        if (turn) {
+          const summary = await collectTurn(handle.dispatch(tickText))
+          if (summary.error) {
+            deps.log('SCHED', `companion tick dispatch error event: ${summary.errorCode ? `${summary.errorCode}: ` : ''}${summary.error}`)
+            turn.abandon(summary.errorCode ?? 'error')
+          } else {
+            const report = await turn.deliver({ finalText: summary.finalText ?? '', narration: summary.narration ?? [] })
+            if (report.delivery === 'silent' || report.delivery === 'empty') {
+              // 没发出去就不算发过:撤回登记(at-most-once 只管「发了一半」,静默是一个决定)。
+              deps.log('COMPANION', `chat=${chatId} tick delivered nothing (${report.delivery}) — claim undone`)
+              try { undo?.() } catch (e) { deps.log('SCHED', `undo claim failed: ${errMsg(e)}`) }
+            }
+          }
+        } else {
+          for await (const ev of handle.dispatch(tickText)) {
+            if (ev.kind === 'error') deps.log('SCHED', `companion tick dispatch error event: ${ev.code ? `${ev.code}: ` : ''}${ev.message}`)
+          }
         }
       } catch (err) {
+        turn?.abandon('threw')
+        // 评审 #193 P2-3:网络守护拒了这一轮 —— SessionManager 在碰 provider **之前**就拒,一个字都
+        // 没发出去。这不是「发了一半」,at-most-once 不适用:撤回登记,整拍算跳过,下一拍再来。
+        if (isNetworkUnprotectedError(err)) {
+          try { undo?.() } catch (e) { deps.log('SCHED', `undo claim failed: ${errMsg(e)}`) }
+          throw err
+        }
         deps.log('SCHED', `companion tick dispatch failed: ${errMsg(err)}`)
       }
     })
@@ -529,9 +611,19 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         claim: () => {
           const updated = markResolved(agendaMd, item, today)
           if (updated !== agendaMd) agendaFs.write('agenda.md', updated)
-          deps.careLedger.claim(chatId, nowIso)
+          const ticket = deps.careLedger.claim(chatId, nowIso)
+          // 撤回只撤这一次(第二轮评审 #194):只把我们打勾的那一行放回去,文件里期间的其他改动留着;
+          // 台账按回执定向撤。
+          return () => {
+            if (updated !== agendaMd) {
+              const cur = agendaFs.read('agenda.md') ?? ''
+              const back = unmarkResolved(cur, item, today)
+              if (back !== cur) agendaFs.write('agenda.md', back)
+            }
+            deps.careLedger.unclaim(chatId, ticket)
+          }
         },
-        buildText: () => buildPushTickText({ nowIso, defaultChatId: chatId, intention: item.body }),
+        buildText: (style) => buildPushTickText({ nowIso, defaultChatId: chatId, intention: item.body }, style),
       })
       return
     }
@@ -555,8 +647,8 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       try { releaseHunt = (deps.boot as { holdBusy?: (l: string) => () => void }).holdBusy?.('hunt') } catch { releaseHunt = undefined }
       try {
         return await dispatchToChat(chatId, {
-          claim: () => { deps.careLedger.claimHunt(chatId, nowIso) },
-          buildText: () => buildHuntText({ nowIso }),
+          claim: () => { const ticket = deps.careLedger.claimHunt(chatId, nowIso); return () => deps.careLedger.unclaim(chatId, ticket) },
+          buildText: (style) => buildHuntText({ nowIso }, style),
         })
       } finally {
         try { releaseHunt?.() } catch { /* release 永不抛 */ }
@@ -576,14 +668,20 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
     // 不走 dispatchToChat:串门不是一次 agent turn(不带工具、不进会话),它
     // 有自己的 eval 链;这里只做登记 + 出门。`target` 是模型从
     // provenChannels 里挑的信道 id;没挑就还是 startVisit() 自己挑。
-    async function runVisit(target?: string): Promise<boolean> {
+    async function runVisit(target?: string): Promise<boolean | 'refused'> {
       const visit = deps.boot.social?.penpal
       if (!visit) return false
       // 先登记再出门(at-most-once,同打猎):出门一半 daemon 重启,不该
       // 下一拍再出一次门 —— 两趟串门比一趟没出门的观感差得多。
       // 总有地方可去:没有真信道就去邻居家(core/neighbors.ts)。
-      deps.careLedger.claimVisit(chatId, nowIso)
+      const ticket = deps.careLedger.claimVisit(chatId, nowIso)
       const r = target === undefined ? await visit.startVisit() : await visit.startVisit(target)
+      // 评审 #193 P2-3:开场那句的模型调用被网络守护拒了 —— 没出门,这趟不算。只撤这一次登记
+      // (第二轮 #194):期间主人来信清零、别的登记都留着。
+      if (!r.ok && r.reason === NETWORK_UNPROTECTED_REASON) {
+        deps.careLedger.unclaim(chatId, ticket)
+        return 'refused'
+      }
       deps.log('VISIT', r.ok ? `tick: 出门了 visit=${r.id} → ${r.channel}` : `tick: 没出得了门 reason=${r.reason}`)
       return r.ok
     }
@@ -594,8 +692,8 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         ? Math.floor((Date.parse(nowIso) - Date.parse(lastInboundAtIso)) / 86_400_000)
         : 0
       return await dispatchToChat(chatId, {
-        claim: () => { deps.careLedger.claim(chatId, nowIso) },
-        buildText: () => buildGapCheckinText({ nowIso, chatId, daysSinceContact }),
+        claim: () => { const ticket = deps.careLedger.claim(chatId, nowIso); return () => deps.careLedger.unclaim(chatId, ticket) },
+        buildText: (style) => buildGapCheckinText({ nowIso, chatId, daysSinceContact }, style),
       })
     }
 
@@ -627,7 +725,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
 
     const today10 = formatLocal(nowIso).slice(0, 10)
     const nowMs = Date.parse(nowIso)
-    const run = async (action: PlanAction, target?: string): Promise<boolean> => {
+    const run = async (action: PlanAction, target?: string): Promise<boolean | 'refused'> => {
       if (action === 'hunt') return await runHunt()
       else if (action === 'visit') return await runVisit(target)
       else if (action === 'gap') return await runGap()
@@ -646,8 +744,13 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
      * 会话又忙起来了)导致送时被跳过 → 标 `(skipped) `,不算「做过了」。
      */
     const runAndRecord = async (action: PlanAction, why: string, source: PlanLogEntry['source'], target?: string) => {
-      let dispatched: boolean
-      try { dispatched = await run(action, target) } catch (err) { record(action, `(failed) ${why}`, source); throw err }
+      let dispatched: boolean | 'refused'
+      try { dispatched = await run(action, target) } catch (err) {
+        // 评审 #193 P2-3:网络守护拒了那一次模型调用 —— 什么都没做,不进台账,下一拍再来。
+        if (isNetworkUnprotectedError(err)) dispatched = 'refused'
+        else { record(action, `(failed) ${why}`, source); throw err }
+      }
+      if (dispatched === 'refused') { deps.log('PLAN', `skip chat=${chatId} action=${action}: network unprotected — nothing sent, not recorded; next tick retries`); return }
       record(action, dispatched ? why : `(skipped) ${why}`, source)
     }
     const fallback = async (reason: string) => {
@@ -679,6 +782,12 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
         new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('timeout')), PLAN_EVAL_TIMEOUT_MS) }),
       ])
     } catch (err) {
+      // 评审 #193 P2-3:判断这一步被网络守护拒了 = 这一拍没判断过。不按老顺序硬做(那等于没问
+      // 就替它做了决定),不进 plan-log(也就不退避),下一拍再问。
+      if (isNetworkUnprotectedError(err)) {
+        deps.log('PLAN', `skip chat=${chatId}: plan judge needs a protected provider and the network is unprotected — nothing done; next tick retries`)
+        return
+      }
       await fallback(err instanceof Error && err.message === 'timeout' ? 'timeout' : 'error')
       return
     } finally {
@@ -754,7 +863,8 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       try {
         await pushTickForChat(chatId, { defaultChatId: cfg.default_chat_id ?? undefined, nowIso, today, messagesStore })
       } catch (err) {
-        deps.log('SCHED', `companion tick failed for chat=${chatId}: ${errMsg(err)}`)
+        if (isNetworkUnprotectedError(err)) deps.log('SCHED', `companion tick skipped for chat=${chatId}: network unprotected — nothing sent, nothing recorded; next tick retries`)
+        else deps.log('SCHED', `companion tick failed for chat=${chatId}: ${errMsg(err)}`)
       }
     }
 
@@ -793,6 +903,7 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       }, state, nowMs)
       if (!due) continue
       // 先记水位再讲:讲到一半 daemon 重启,不该下一拍再讲一遍。
+      const priorMark = state.narrated[chatId]
       state.narrated[chatId] = latestInboundTs
       state.visits = { ...(state.visits ?? {}), [chatId]: ((state.visits ?? {})[chatId] ?? 0) + 1 }
       changed = true
@@ -800,13 +911,28 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       if (!evalText) continue
       const name = guestLabel(deps.boot.conversationStore?.getIdentity(chatId)?.last_user_name, chatId)
       const cfgAgent = loadAgentConfig(deps.stateDir)
-      const text = (await evalText(buildGuestVisitNarrationPrompt({
-        myName: cfgAgent.bot_name?.trim() || '我',
-        persona: null, ownerOverview: null,
-        disclosurePolicy: cfgAgent.social_disclosure_policy ?? '别转述朋友的私事。',
-        guestName: name,
-        lines: due.map(m => ({ who: m.direction === 'in' ? 'guest' as const : 'me' as const, text: m.text })),
-      }))).trim().replace(/^[「『"“]+|[」』"”]+$/g, '')
+      let raw: string
+      try {
+        raw = await evalText(buildGuestVisitNarrationPrompt({
+          myName: cfgAgent.bot_name?.trim() || '我',
+          persona: null, ownerOverview: null,
+          disclosurePolicy: cfgAgent.social_disclosure_policy ?? '别转述朋友的私事。',
+          guestName: name,
+          lines: due.map(m => ({ who: m.direction === 'in' ? 'guest' as const : 'me' as const, text: m.text })),
+        }))
+      } catch (err) {
+        if (!isNetworkUnprotectedError(err)) throw err
+        // 评审 #193 P2-3:讲述被网络守护拒了 —— 没讲过,这一位的水位放回去;这一拍到此为止
+        // (前面已经讲完的几位照常落盘),下一拍再讲。
+        // 只撤这一位的水位和这一次的计数(第二轮评审 #194),前面几位这一拍讲完的照常保留。
+        if (priorMark === undefined) delete state.narrated[chatId]; else state.narrated[chatId] = priorMark
+        const n = (state.visits ?? {})[chatId] ?? 0
+        if (n > 1) state.visits = { ...state.visits, [chatId]: n - 1 }
+        else if (state.visits) { const { [chatId]: _drop, ...rest } = state.visits; state.visits = rest }
+        deps.log('VISIT', `guest narration skipped: chat=${chatId} — network unprotected; watermark unchanged, next tick retries`)
+        break
+      }
+      const text = raw.trim().replace(/^[「『"“]+|[」』"”]+$/g, '')
       if (!text) continue
       await deps.ilink.sendMessage(ownerChat, `🛎 ${text}`)
       try { deps.huntStore?.recordVisit?.({ chatId: ownerChat, text, peerLabel: `${name}来过`, nowIso }) }
@@ -870,7 +996,10 @@ export function buildTickBodies(deps: TickDeps): TickBodies {
       await runIntrospectTick({ events, observations, agent, chatId, log: deps.log })
       await saveCompanionConfig(deps.stateDir, { ...loadCompanionConfig(deps.stateDir), last_introspect_at: new Date().toISOString() })
     } catch (err) {
-      deps.log('INTROSPECT', `tick failed: ${err instanceof Error ? err.message : err}`)
+      // 评审 #193 P2-3:反思那一次模型调用被网络守护拒了 —— 没反思过,last_introspect_at 不能前移
+      // (否则开机补跑会以为今天跑过了)。
+      if (isNetworkUnprotectedError(err)) deps.log('INTROSPECT', 'skipped — network unprotected; last_introspect_at unchanged, next tick retries')
+      else deps.log('INTROSPECT', `tick failed: ${err instanceof Error ? err.message : err}`)
     }
 
     // Threads extraction — independent eval, same cheap model, same tick.

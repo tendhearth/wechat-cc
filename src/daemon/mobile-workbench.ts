@@ -5,7 +5,7 @@ import type {MattersService,MatterSayInput} from '../core/matters/service'
 import {entryErrorStatus,parseEntryInput,type EntryInput,type EntryOptions} from '../core/workbench/task-entry'
 import type {NativeContinuePreview} from '../core/workbench/native-adoption'
 
-export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'>>
+export type MobileMatterActions=Partial<Pick<MattersService,'permission'|'answer'|'artifactChunk'|'handoff'|'inputReceipt'>>
 export interface MobileEntryActions {
   entryOptions():EntryOptions
   createEntry(input:EntryInput):EntryResult
@@ -29,7 +29,7 @@ export function mobileMatterError(error:unknown):Response {
   if(['upload_conflict','upload_changed','upload_offset','attachment_in_use'].includes(code))return json({ok:false,error:code},409)
   if(code==='invalid_entry_owner')return json({ok:false,error:code},403)
   if(['creation_conflict','managed_workspace_changed','attachment_scope','attachment_conflict'].includes(code))return json({ok:false,error:code},409)
-  if(['entry_not_wired','managed_workspace_unavailable','invalid_managed_workspace','workbench_stopping','unavailable_provider','provider_quota_exhausted','quota_handoff_unavailable'].includes(code))return json({ok:false,error:code},503)
+  if(['entry_not_wired','managed_workspace_unavailable','invalid_managed_workspace','workbench_stopping','unavailable_provider','provider_quota_exhausted','quota_handoff_unavailable','network_unprotected'].includes(code))return json({ok:false,error:code},503)
   if(['permission_stale','question_stale','input_stale','input_conflict','input_delivery_busy','workbench_busy','reply_sink_busy','workbench_archived','artifact_changed','restart_confirmation_required','restart_confirmation_stale','external_close_confirmation_required','external_close_confirmation_stale','native_session_busy','native_folder_busy','native_history_changed','quota_handoff_not_needed','quota_handoff_changed'].includes(code))return json({ok:false,error:code},409)
   if(code.endsWith('_not_wired')||code==='input_storage_unavailable')return json({ok:false,error:'unavailable'},503)
   if(code.startsWith('invalid_')||['matter_task_required','matter_say_unsupported'].includes(code))return json({ok:false,error:code},400)
@@ -48,6 +48,16 @@ export function mobileSayInput(body:Record<string,unknown>):MatterSayInput|undef
 }
 /** Called only inside settings-panel's existing authenticated-device boundary. */
 export async function mobileWorkbenchRoute(actions:MobileMatterActions|undefined,url:URL,req:Request,entry?:MobileEntryActions,uploads?:MobileUploadActions):Promise<Response|null>{
+  if(url.pathname==='/m/api/matter/input-receipt'){
+    if(req.method!=='GET')return json({ok:false,error:'method_not_allowed'},405)
+    try{
+      const q=url.searchParams,id=q.get('id'),requestId=q.get('requestId')
+      if(q.getAll('id').length!==1||q.getAll('requestId').length!==1||[...q.keys()].some(key=>!['id','requestId','t','d','_via'].includes(key))||!id||!ID.test(id)||!requestId||!UUID.test(requestId))throw Error('invalid_request')
+      if(!actions?.inputReceipt)throw Error('workbench_not_wired')
+      const input=actions.inputReceipt(id,requestId.toLowerCase())
+      return input?json({ok:true,input}):json({ok:false,error:'not_found'},404)
+    }catch(error){return mobileMatterError(error)}
+  }
   const uploadOperation=url.pathname==='/m/api/attachment/chunk'?'chunk':url.pathname==='/m/api/attachment/upload'?'status':url.pathname==='/m/api/attachment/discard'?'discard':null
   if(uploadOperation){
     if(req.method!==(uploadOperation==='status'?'GET':'POST'))return json({ok:false,error:'method_not_allowed'},405)

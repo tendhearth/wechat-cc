@@ -7,12 +7,14 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { MOBILE_TOKENS_CSS, mobilePhoneHtml, MOBILE_BOOTSTRAP_HTML } from './mobile-page'
 import { pageHtml, EXPIRED_HTML } from './settings-panel-html'
+import { renderTokensCss } from '../../packages/design-tokens/src/index'
 
 const LEGACY = ['#f5ead8', '#5a3f2d', '#8b5e3c', '#b0563a', 'rgba(176,86,58', 'rgba(89,63,44', '#d8c6ae']
 const hexes = (s: string) => new Set((s.toLowerCase().match(/#[0-9a-f]{6}\b/g) ?? []))
 
 describe('one design language across the owner-facing web pages', () => {
   it('tokens define the palette, radii and fonts', () => {
+    expect(MOBILE_TOKENS_CSS).toContain(renderTokensCss())
     for (const v of ['--paper:#f9f7f1', '--ink:#483f35', '--soft:#7e7365', '--accent:#735b3e', '--line:#e5dfd3', '--r-m:14px', '--hand:'])
       expect(MOBILE_TOKENS_CSS.replace(/\s+/g, '')).toContain(v.replace(/\s+/g, ''))
   })

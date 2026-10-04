@@ -48,9 +48,10 @@ function mappedError(err: unknown,entry=false): ReturnType<RouteHandler> {
   if(['upload_discarded','upload_expired'].includes(code))return{status:410,body:{error:code}}
   if(code==='attachment_in_use')return{status:409,body:{error:code}}
   if(code==='invalid_entry_owner')return{status:403,body:{error:code}}
-  if(['creation_conflict','managed_workspace_changed'].includes(code))return{status:409,body:{error:code}}
+  if(['creation_conflict','managed_workspace_changed','quota_handoff_changed','quota_handoff_not_needed'].includes(code))return{status:409,body:{error:code}}
+  if(code==='quota_handoff_unavailable')return{status:503,body:{error:code}}
   if(['entry_not_wired','managed_workspace_unavailable','invalid_managed_workspace','workbench_stopping'].includes(code))return{status:503,body:{error:code}}
-  if(['model_catalog_unavailable','model_catalog_invalid'].includes(code))return{status:503,body:{error:code}}
+  if(['model_catalog_unavailable','model_catalog_invalid','network_unprotected'].includes(code))return{status:503,body:{error:code}}
   if(/^execution_.+_(unsupported|unknown)$/.test(code))return{status:400,body:{error:code}}
   if(code==='execution_conflict')return{status:409,body:{error:code}}
   if(['attachment_limit','attachment_storage_limit','invalid_attachment_size','request_body_too_large'].includes(code))return{status:413,body:{error:code}}
@@ -69,6 +70,7 @@ function mappedError(err: unknown,entry=false): ReturnType<RouteHandler> {
   if (code === 'native_history_unavailable') return {status:503,body:{error:code}}
   // 打回改走 submitInput 之后这条路由也能吐它:存不下补充是「这会儿没法办」,不是 500(终审 M7)。
   if (code === 'input_storage_unavailable') return {status:503,body:{error:code}}
+  if (code === 'matter_not_found') return { status: 404, body: { error: code } }
   if (code === 'not_found') return { status: 404, body: { error: code } }
   if (code === 'unavailable_provider') return { status: 422, body: { error: code } }
   if (code === 'unattended_ack_required') return { status: 428, body: { error: code } }
@@ -192,6 +194,12 @@ export function workbenchRoutes(deps: InternalApiDeps): RouteTable {
       }catch(error){return mappedError(error)}
     },
 
+    'POST /v1/workbench/quota-handoff':async(query,body)=>{
+      const value=objectBody(body)
+      if(query.size||!value||Object.keys(value).some(key=>!['id','requestId','providerId'].includes(key))||typeof value.id!=='string'||!TASK_ID.test(value.id)||typeof value.requestId!=='string'||!REQUEST_ID.test(value.requestId)||!isWorkbenchProviderId(value.providerId))return invalid()
+      if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
+      try{return{status:202,body:deps.workbench.handOff(value.id,{requestId:value.requestId,providerId:value.providerId})}}catch(error){return mappedError(error)}
+    },
     'POST /v1/workbench/handoff-preview':async(_query,body)=>{
       if(!deps.workbench)return{status:503,body:{error:'workbench_not_wired'}}
       try{return{status:200,body:await deps.workbench.previewHandoff(validateHandoffInput(body as HandoffInput))}}catch(error){return mappedError(error)}

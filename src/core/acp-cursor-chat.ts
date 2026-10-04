@@ -27,6 +27,17 @@ export const ACP_CURSOR_CAPABILITIES: ProviderCapabilities = {
   guestSafe: false,
   defaultPeer: 'claude',
   authFailHint: 'cursor 登录态失效,请在电脑上跑一次 `cursor-agent login` 重新登录后再发消息。',
+  // 回复交付第 3 步(2026-10-03,维护者按约定定,主人授权):最后一段非空文字就是回复,之前的段是旁白(不进微信,
+  // 超过 120 秒 daemon 发一句进度)。wechat MCP 是逐会话注入的(acpMcpServersFor),wechatStdioMcpSpec('cursor')
+  // 按这个开关带 WECHAT_REPLY_DELIVERY=daemon ⇒ 没有 reply 族,只有附件工具(+ admin 的 message)。
+  // 闸门(不连模型:照真机报文演的假 cursor-agent acp + 生产的 ACP 客户端 / 协调器 / 交付运行时,
+  // docs/reference/reply-once-experiment.md「第 3 步」):daemon 全部适用场景过关、无回归;legacy 在
+  // 「CLI 不带 MCP 身份」下双发 5 次、strict 下 3/3 轮主人什么都没收到,daemon 都是 0。
+  // 回滚:agent-config 的 reply_delivery: { cursor: 'legacy' } + 重启 daemon(docs/maintainer/reply-delivery.md)。
+  // Cursor 的 SDK 兜底(cursor-agent-provider.ts,没装 CLI 时)也注册在 'cursor' 这个 id 下,同一个开关。
+  replyDelivery: 'daemon',
+  // 编码型执行者:只取最后一段(spec §4.2 / 修订记录 2026-10-03)。
+  replyText: 'last_segment',
 }
 
 export interface AcpCursorChatOptions {
@@ -56,13 +67,16 @@ export function acpMcpServersFor(specs: AcpCursorChatOptions['mcpSpecs'], mcpEnv
 export function createAcpCursorChatProvider(options: AcpCursorChatOptions): AgentProvider {
   const evalSpawn = options.evalSpawn ?? defaultCursorSpawnFn(options.bin)
   const base = createAcpProvider({
-    command: options.bin, args: ['acp'], displayName: 'Cursor', log: options.log, spawn: options.spawn,
+    command: options.bin, args: ['acp'], displayName: 'Cursor', log: options.log, spawn: options.spawn, targetProvider: 'cursor',
     permissions: 'mode', text: 'messages', resume: 'fallback', notice: null,
     mcpServers: (context: SpawnContext) => acpMcpServersFor(options.mcpSpecs, context.mcpEnv),
     model: (context: SpawnContext) => context.model ?? options.model,
   })
   return {
     spawn: base.spawn,
+    // 守护(评审 #193 P1-1):一次性评估用的是构造时的 options.model(下面 cursorOneShotEval 的那个),
+    // 不是此刻配置里的;会话那一侧交给 ACP 自报的当前模型。
+    callTarget: (kind, ctx) => kind === 'cheapEval' || kind === 'strongEval' ? { provider: 'cursor', model: options.model } : base.callTarget?.(kind, ctx) ?? null,
     /** CLI 子进程一档,与 codex 同量级。 */
     cheapEvalBudgetMs: 20_000,
     async cheapEval(prompt: string): Promise<string> {

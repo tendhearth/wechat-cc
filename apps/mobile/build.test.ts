@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
 import { assembleMobilePage, serializeMobilePage } from './assemble'
 import { readMobileSource, MOBILE_PAGE_OUT, MOBILE_SRC } from './sources'
-import { buildProtocolJs, assembleRelayShell, PROTOCOL_JS_OUT, PSET_SHELL_SRC, PSET_SHELL_OUT } from './build'
+import { buildProtocolJs, buildMarkdownJs, escapeInlineMarkdownScript, assembleRelayShell, PROTOCOL_JS_OUT, MARKDOWN_JS_OUT, PSET_SHELL_SRC, PSET_SHELL_OUT } from './build'
 import * as serverEntry from '../../src/core/workbench/task-entry'
 
 describe('apps/mobile → src/daemon/mobile-page.generated.json', () => {
@@ -20,7 +20,7 @@ describe('apps/mobile → src/daemon/mobile-page.generated.json', () => {
     const paths = [
       'apps/mobile/src/phone.html', 'apps/mobile/src/workbench.js', 'apps/desktop/src/shared/task-entry-contract.js', 'src/daemon/mobile-page.generated.json',
       // 手机协议包 v2 Task 4:三份新生成物,同一个理由(整份文本比对,CRLF 必红)。
-      'apps/mobile/src/protocol-generated.js', 'relay/pset.src.html', 'relay/pset.html',
+      'apps/mobile/src/protocol-generated.js', 'apps/mobile/src/markdown-generated.js', 'relay/pset.src.html', 'relay/pset.html',
     ]
     const root = fileURLToPath(new URL('../../', import.meta.url))
     const out = execFileSync('git', ['check-attr', 'eol', '--', ...paths], { cwd: root, encoding: 'utf8' })
@@ -52,6 +52,16 @@ describe('apps/mobile → src/daemon/mobile-page.generated.json', () => {
     expect(page.phone).not.toMatch(/<link[^>]*rel="stylesheet"/)
   })
 
+  it('loads the shared Markdown bundle exactly once before the dialogue renderer, inside a syntax-valid inline script', () => {
+    expect(page.phone).toContain(readMobileSource('markdown.js'))
+    expect(page.phone.match(/globalThis\.CCM=/g)).toHaveLength(1)
+    expect(page.phone.indexOf('globalThis.CCM=')).toBeLessThan(page.phone.indexOf('function mRenderEvents'))
+    expect(page.phone).not.toContain('@@CCM@@')
+    const script=/<script>([\s\S]*?)<\/script>/.exec(page.phone)![1]!
+      .replace('{{TOKEN_JSON}}','"fixture"').replace('{{REMOTE_JSON}}','null')
+    expect(()=>new Function(script)).not.toThrow()
+  })
+
   it('inlines the same browser-safe entry contract into the classic script without importing runtime modules',()=>{
     const source=readMobileSource('entry.js')
     const contract=new Function('REMOTE','location',source+'\nreturn eContract')(null,{host:'localhost'})
@@ -67,6 +77,36 @@ describe('apps/mobile → src/daemon/mobile-page.generated.json', () => {
     const root=fileURLToPath(new URL('../../',import.meta.url))
     const production=execFileSync('bun',['--eval',"import {readMobileSource} from './apps/mobile/sources.ts'; process.stdout.write(readMobileSource('entry.js'))"],{cwd:root,encoding:'utf8'})
     expect(production).toBe(readMobileSource('entry.js'))
+  })
+})
+
+describe('apps/mobile/src/markdown-generated.js', () => {
+  const generated=readFileSync(MARKDOWN_JS_OUT,'utf8')
+
+  it.skipIf(!process.versions.bun)('is in sync with packages/markdown/src/browser.ts (fix: bun run build:mobile)', async () => {
+    expect(generated).toBe(await buildMarkdownJs())
+  })
+
+  it('is self-contained, has no HTML script boundaries, and preserves Markdown rendering in a browser sandbox', () => {
+    expect(generated).not.toMatch(/\b(?:import|require)\(/)
+    expect(generated).not.toMatch(/<\/script|<!--/i)
+    const sandbox=vm.createContext({})
+    vm.runInContext(generated,sandbox)
+    const api=sandbox.CCM as {renderMarkdown:(s:string)=>string;markdownPlainText:(s:string)=>string;hasMarkdownFormatting:(s:string)=>boolean}
+    expect(api.renderMarkdown('**重点** [文档](https://example.com)')).toContain('<strong>重点</strong>')
+    expect(api.renderMarkdown('<script>bad()</script> [坏链接](javascript:bad())')).not.toMatch(/<script|href="javascript:/)
+    expect(api.markdownPlainText('**重点** [文档](https://example.com)')).not.toMatch(/\*\*|\]\(/)
+    expect(api.hasMarkdownFormatting('普通消息')).toBe(false)
+    expect(api.hasMarkdownFormatting('**有格式**')).toBe(true)
+  })
+
+  it('escapes HTML parser sentinels without changing JavaScript string and replacement-pattern semantics', () => {
+    const source='globalThis.fixture="</ScRiPt><script><!-- $& $1 $$ $`"'
+    const escaped=escapeInlineMarkdownScript(source)
+    expect(escaped).not.toMatch(/<\/script|<!--/i)
+    const sandbox=vm.createContext({})
+    vm.runInContext(escaped,sandbox)
+    expect(sandbox.fixture).toBe('</ScRiPt><script><!-- $& $1 $$ $`')
   })
 })
 

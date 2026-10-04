@@ -79,6 +79,7 @@ describe('token-registry', () => {
       'POST /v1/workbench/import',
       'POST /v1/workbench/prepare-resume',
       'POST /v1/workbench/prepare-continuation',
+      'POST /v1/workbench/quota-handoff',
       'POST /v1/workbench/handoff-preview',
       'POST /v1/workbench/handoff',
       'GET /v1/workbench/handoff',
@@ -91,6 +92,8 @@ describe('token-registry', () => {
       'POST /v1/self-change/ask',
       'GET /v1/self-change/decision',
       'GET /v1/settings/link',
+      'POST /v1/cli/upgrade',
+      'POST /v1/cli/rollback',
     ]))
     expect(opInfo?.routeAllow).not.toContain('POST /v1/daemon/restart')
     expect(r.resolve('cc'.repeat(32))).toEqual({ tier: 'trusted', origin: 'file' })
@@ -129,6 +132,7 @@ describe('token-registry', () => {
       'POST /v1/workbench/import',
       'POST /v1/workbench/prepare-resume',
       'POST /v1/workbench/prepare-continuation',
+      'POST /v1/workbench/quota-handoff',
       'POST /v1/workbench/handoff-preview',
       'POST /v1/workbench/handoff',
       'GET /v1/workbench/handoff',

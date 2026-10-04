@@ -1,4 +1,3 @@
-import { spawn } from '../../lib/runtime/process'
 /**
  * agy-version-check — boot-time gate: does `<bin> --version` exit 0?
  *
@@ -6,36 +5,17 @@ import { spawn } from '../../lib/runtime/process'
  * 2026-08-17-agy-provider-design.md) needs a cheap "is this actually a
  * working agy binary" probe before registering the provider — a present
  * but non-functional/wedged binary must not (a) register a provider that
- * fails every turn, or (b) stall daemon boot waiting on it. This is the
- * async counterpart to `probeBinaryVersion` (src/lib/util.ts, used
- * synchronously by codex's version check) — agy's gate only needs a
- * boolean pass/fail, not the version string itself, and boot-time async
- * code (providers.ts already awaits dynamic imports in the surrounding
- * registration blocks) reads more naturally with an async probe here.
+ * fails every turn, or (b) stall daemon boot waiting on it.
+ *
+ * 2026-10-04:实现搬进 provider-probe.ts 的 `probeVersion`(超时只按事件循环醒着的
+ * 时间计、失败带具体原因、失败后有退避重探)。providers.ts 直接用那边;这里留一个
+ * 布尔版本的薄壳,签名不变。
  */
+import { probeVersion, type VersionProbeHandle, type VersionProbeSpawn } from './provider-probe'
 
-/** Injection seam for tests — defaults to `Bun.spawn`. */
-export interface AgyVersionProbeHandle {
-  exited: Promise<number>
-  kill(): void
-}
-export type AgyVersionProbeSpawn = (bin: string, args: string[]) => AgyVersionProbeHandle
-
-const DEFAULT_TIMEOUT_MS = 5000
-
-function defaultSpawn(bin: string, args: string[]): AgyVersionProbeHandle {
-  const proc = spawn([bin, ...args], { stdout: 'ignore', stderr: 'ignore' })
-  return {
-    exited: proc.exited,
-    kill: () => {
-      try {
-        proc.kill()
-      } catch {
-        // already gone — best effort
-      }
-    },
-  }
-}
+/** Injection seam for tests — defaults to a piped `spawn`. */
+export type AgyVersionProbeHandle = VersionProbeHandle
+export type AgyVersionProbeSpawn = VersionProbeSpawn
 
 /**
  * Resolves `true` iff `<bin> --version` exits 0 within `timeoutMs`.
@@ -47,29 +27,5 @@ export async function agyVersionOk(
   bin: string,
   opts?: { timeoutMs?: number; spawnFn?: AgyVersionProbeSpawn },
 ): Promise<boolean> {
-  const spawnFn = opts?.spawnFn ?? defaultSpawn
-  const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS
-  let proc: AgyVersionProbeHandle
-  try {
-    proc = spawnFn(bin, ['--version'])
-  } catch {
-    return false
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const timedOut = Symbol('agy-version-check-timeout')
-  const timeout = new Promise<typeof timedOut>((resolve) => {
-    timer = setTimeout(() => resolve(timedOut), timeoutMs)
-  })
-  try {
-    const result = await Promise.race([proc.exited, timeout])
-    if (result === timedOut) {
-      proc.kill()
-      return false
-    }
-    return result === 0
-  } catch {
-    return false
-  } finally {
-    if (timer !== undefined) clearTimeout(timer)
-  }
+  return (await probeVersion(bin, opts)).ok
 }

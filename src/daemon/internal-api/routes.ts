@@ -1,3 +1,4 @@
+import { turnRoutes } from './routes-turn'
 import { mattersRoutes } from './routes-matters'
 import { connectionsRoutes } from './routes-connections'
 import { phoneRoutes } from './routes-phone'
@@ -136,7 +137,9 @@ const onlineStickerCooldown = makeCooldown(5 * 60_000)
 // Rotate through upstream candidates per chat so repeated requests do not
 // always pick the first (often identical) GIPHY result.
 const onlineStickerCursor = new Map<string, number>()
-  return {
+  const table: RouteTable = {
+    // 回复交付(spec 2026-10-03 §4.5 / §4.6):附件登记 + admin 往别处发。表情附件交付时复用本表里的老路由。
+    ...turnRoutes(deps, () => table),
     ...workbenchRoutes(deps),
     ...mattersRoutes(deps),
     ...connectionsRoutes(deps),
@@ -154,7 +157,16 @@ const onlineStickerCursor = new Map<string, number>()
         heartbeat_fresh: deps.heartbeatFresh?.() ?? null,
         ...(deps.version ? { version: deps.version() } : {}),
         subsystems: deps.subsystems?.() ?? [],
+        // 网络守护(2026-10-02):safe=false 时所有模型调用都暂停。桌面「网络守护」那一行读它。
+        ...(deps.guard ? { guard: deps.guard() } : {}),
         ...(deps.outbound ? { outbound: toWireOutbound(deps.outbound()) } : {}),
+        // 开机 `--version` 探测失败的外部 CLI provider(2026-10-04):还在退避重探 / 已晚注册。
+        // guest 只给 provider 名、状态、次数和时间;失败原因(可能带路径 / stderr)给 trusted 以上
+        // —— CLI 拿的 file token 就是 trusted,`wechat-cc status` 要能说出「为什么」。
+        ...(deps.providerProbes ? { provider_probes: deps.providerProbes().map(p => caller?.tier === 'admin' || caller?.tier === 'trusted' ? p : { ...p, last_error: '' }) } : {}),
+        // 外部 agent CLI 自动升级(2026-10-04):各家装的 / 最新的版本、上次检查与升级、坏版本名单、自检状态。
+        // 只有版本号与时间,没有路径(这条路由是 guest 档)。
+        ...(deps.cliUpgrade ? { cli_upgrade: (() => { try { return deps.cliUpgrade!.status() } catch { return undefined } })() } : {}),
         // 启动时实际加载的插件(2026-09-30)。null = bootstrap 还在接线;`self deploy`
         // 的健康门等它变成对象,再看 expected_missing / pointer_broken。这条路由是 guest
         // 档:admin 以下只给计数和缺了哪些名字,不给绝对路径与 not-ready 原因。
@@ -531,6 +543,16 @@ const onlineStickerCursor = new Map<string, number>()
       if (!deps.ilink) return { status: 503, body: { error: 'ilink_not_wired' } }
       // Body is pre-validated by index.ts via WechatReplyRequest schema.
       const { chat_id, text, participant_tag } = body as WechatReplyRequestT
+      // 空白回复在任何表面都不是一条消息(2026-10-02 手机真机验收:模型调了一次
+      // text 为空的 reply,App 回复里多一行空行,模型自己还补一句「上面那条空的是
+      // 误发」)。不截、不发,并且明说什么都没发出去 —— 模型不必补发或道歉。
+      // 放在 sink 检查之前,两个表面给模型的回答一致。
+      if (!text.trim()) {
+        return { status: 200, body: { ok: false, error: 'empty_text: nothing was sent (text was empty or whitespace only); the user saw nothing, so do not apologize for it' } }
+      }
+      // 回复交付 shadow(spec 2026-10-03 §5.1 第 3 项):legacy 实际交付的每一条都交一份去比对。
+      // 放在接收器截流之前 —— app 这一轮被截走的也是 legacy 交付的结果。没开 shadow 轮 ⇒ 无操作。
+      deps.replyDelivery?.observeLegacy(chat_id, text)
       // App-conversation-channel, Stage 0: when a reply sink is open for
       // this chat, capture the RAW text (whole, pre-split, pre-prefix — the
       // app shows the whole reply) instead of ilink-sending it.
@@ -736,7 +758,10 @@ const onlineStickerCursor = new Map<string, number>()
       }
       try {
         const r = await deps.companionConverse(text)
-        return { status: 200, body: { ok: true, reply: r.reply } }
+        // 回复交付(spec 2026-10-03 §4.10,app 显示 2026-10-04):附件与旁白**总在**(没有就是空数组),桌面不用分新旧形状。
+        // 附件是 app 的形状(src/daemon/app-reply.ts):语音 { text }、表情 { label, file?, image? }、文件 { name, path }。
+        // path 只给桌面的 Rust 层(换成一次性引用再交给网页,见 lib.rs agent_converse);这条路由本来就只认 admin 令牌。
+        return { status: 200, body: { ok: true, reply: r.reply, attachments: r.attachments ?? [], narration: r.narration ?? [] } }
       } catch (err) {
         const msg = errMsg(err)
         if (msg === 'reply_sink_busy') return { status: 409, body: { ok: false, error: 'session_busy' } }
@@ -1030,6 +1055,7 @@ const onlineStickerCursor = new Map<string, number>()
     ...federationRoutes(deps),
     ...fileRoutes(),
   }
+  return table
 }
 
 /**

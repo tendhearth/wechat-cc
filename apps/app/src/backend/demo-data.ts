@@ -67,6 +67,12 @@ export const copy = {
   chatSeed3: ['作品集那件我先放着，明天接着看？', 'Shall I park the portfolio and pick it up tomorrow?'],
   chatSeed4: ['可以', 'Sounds good'],
   chatDemoReply: ['收到。这是演示模式，真连上你的电脑后，这里就是 CC 本人在回你。', 'Got it. This is the demo; once you pair with your computer, CC itself replies here.'],
+  // 回复的附件与过程(回复交付,2026-10-04)
+  chatDemoNarr1: ['我先看一下你今天的安排。', 'Let me check your day first.'],
+  chatDemoNarr2: ['再对一下已经设好的提醒。', 'And the reminders you already have.'],
+  chatDemoVoice: ['收到啦，演示里也能听。', 'Got it — you can hear this one even in the demo.'],
+  chatDemoSticker: ['开心', 'happy'],
+  chatDemoSticker2: ['加油', 'cheer'],
   sessPortfolio: ['首页在手机上排版乱了', 'Homepage layout breaks on mobile'],
   sessNotes: ['把笔记按主题归一下', 'Group my notes by topic'],
   sessTrip: ['给出差行程加个打包清单', 'Add a packing list to the trip planner'],

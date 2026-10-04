@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runMemoryNightly, readNightlyState, writeNightlyState, gatherMaterial, buildNightlyPrompt, MATERIAL_BUDGET, MEMORY_LOG_FILE, type NightlyRunDeps } from './nightly'
 import { parseMemoryDoc } from './curated-doc'
+import { NetworkUnprotectedError } from '../../lib/network-gate'
 
 const OWNER = 'owner@im.wechat'
 let stateDir: string, root: string, calls: string[], reply: string, now: number
@@ -40,6 +41,19 @@ beforeEach(() => {
 })
 
 describe('runMemoryNightly', () => {
+  it('守护 v2: the eval needs a protected provider and the network is unprotected → skipped, WITHOUT marking failed_today; runs once safe', async () => {
+    let safe = false
+    const d = deps({ cheapEval: () => async (p: string) => {
+      if (!safe) throw new NetworkUnprotectedError({ safe: false, source: 'bx', detail: 'bx 未保护' }, 'Claude')
+      calls.push(p); return reply
+    } })
+    expect(await runMemoryNightly(d, { force: false })).toEqual({ status: 'skipped', reason: 'network_unprotected' })
+    expect(await runMemoryNightly(d, { force: true })).toEqual({ status: 'skipped', reason: 'network_unprotected' })
+    expect(calls).toHaveLength(0)
+    expect(readNightlyState(stateDir)).toMatchObject({ failures: 0, lastFailDay: null })
+    safe = true
+    expect((await runMemoryNightly(d, { force: false })).status).toBe('written')
+  })
   it('first run: writes memory.md, logs ops, sets the first-run notice, records state', async () => {
     const r = await runMemoryNightly(deps(), { force: false })
     expect(r.status).toBe('written')

@@ -3,6 +3,7 @@
  * 显式、只读、不含 service 对象本身:域需要「别的域 / service 的动作」一律 ctx.actions.deref() 在**调用时**取
  * —— Ref 由 service.ts 在 public 对象建好后 set 一次;工厂体里不许 deref(那时还没 set)。
  */
+import type { NetworkGate } from '../../../lib/network-gate'
 import type { Ref } from '../../../lib/lifecycle'
 import type { ProviderRegistry } from '../../provider-registry'
 import type { UsageSnapshot } from '../../subscription-usage'
@@ -77,6 +78,8 @@ export interface ServiceActions {
   held():Active[]
   stageFinishedNotice(running:Active,status:TaskStatus,error?:string|null,suppressCompleted?:boolean):void
   publishFinishedNotices():void
+  /** 网络守护暂停时给订了微信提醒的任务发一条「已暂停(网络未受保护)」(lifecycle 域用)。 */
+  enqueueNotice?(task:StoredTask,runId:string,kind:import('../wechat-notifications').WechatNoticeKind,text:string,requestId?:string|null):void
 }
 /** service 的外部依赖里域会用到的那几样(opts 的子集,只读);按需加,不整个 opts 透传。 */
 export interface ServiceDeps {
@@ -114,8 +117,12 @@ export interface ServiceDeps {
   closeTimeoutMs?: number
   /** 忙碌登记处:派发时持有,结算时释放(self-restart 靠它判空闲)。 */
   holdBusy?: (label: string) => () => void
+  /** 执行者一轮失败时的错误通道(码 + 原文)—— CLI 自动升级的报错触发。 */
+  onTurnError?: (providerId: string, code: string | undefined, message: string) => void
   /** 受管工作目录的根;不传 ⇒ entry 的 managed 目标一律 entry_not_wired。 */
   managedWorkspaceRoot?: string
+  /** 网络闸门(2026-10-02):起执行者 / 投补充之前问一次,不安全 ⇒ `network_unprotected`。不传 = 不拦。 */
+  networkGate?: NetworkGate
 }
 export interface ServiceCtx {
   store: WorkbenchStore

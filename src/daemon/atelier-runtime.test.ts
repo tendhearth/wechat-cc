@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildAtelierContext, runAtelierCycle, type AtelierContext, type AtelierRuntimeDeps } from './atelier-runtime'
+import { buildAtelierContext, readAtelierCadence, runAtelierCycle, type AtelierContext, type AtelierRuntimeDeps } from './atelier-runtime'
+import { NetworkUnprotectedError } from '../lib/network-gate'
 import { makeAtelierStore } from './atelier-store'
 import type { ArtworkRenderer, RenderedArtwork } from './artwork-renderer'
 
@@ -148,5 +149,19 @@ describe('atelier runtime', () => {
       now: () => new Date('2026-09-03T20:00:00Z'),
     })
     expect(capped.status).toBe('skipped_cadence')
+  })
+})
+
+// 评审 #193 P2-3:构思那次模型调用被网络守护拒了 —— 不算评估过,lastEvaluatedAt 不前移。
+describe('runAtelierCycle — guard refusal (review #193)', () => {
+  it('refused planner → skipped_network, cadence untouched; a later run evaluates again', async () => {
+    let refuse = true
+    const plan = vi.fn(async () => { if (refuse) throw new NetworkUnprotectedError({ safe: false, source: 'bx', detail: 'bx 未保护' }, 'Claude'); return { shouldPaint: false } })
+    const d = deps({ planner: { plan } })
+    expect(await runAtelierCycle(d)).toEqual({ status: 'skipped_network' })
+    expect(readAtelierCadence(d.stateDir).lastEvaluatedAt).toBeUndefined()
+    refuse = false
+    expect((await runAtelierCycle(d)).status).not.toBe('skipped_cadence')
+    expect(plan).toHaveBeenCalledTimes(2)
   })
 })

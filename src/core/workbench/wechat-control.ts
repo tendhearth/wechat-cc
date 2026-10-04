@@ -13,7 +13,7 @@ import {isWorkbenchProviderId} from './executor-capabilities'
 
 export interface WechatMessageIdentity {accountId:string;userId:string;msgId?:string;createTimeMs:number}
 export type WechatWorkbenchReply=string|{kind:'artifact_delivered';receiptId:string}
-type Detail=ReturnType<WorkbenchStore['detail']>&{runId?:string;runtime?:AgentRuntimeSnapshot;inputMode?:'steer'|'send'|'queue';inputs:LiveInput[];permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];wechatNotifications?:{enabled:boolean;notices:Array<{status:string}>};task:Task&{waitingFor?:TaskWaitingFor|null}}
+type Detail=ReturnType<WorkbenchStore['detail']>&{runId?:string;runtime?:AgentRuntimeSnapshot;inputMode?:'steer'|'send'|'queue';inputs:LiveInput[];permissions:PendingWorkbenchPermission[];questions:PendingUserInput[];wechatNotifications?:{enabled:boolean;notices:Array<{status:string}>};task:Task&{waitingFor?:TaskWaitingFor|null;networkSuspended?:{since:number}}}
 interface Actions {
   projects():ProjectCatalogEntry[]
   createWechat(input:CreateWechatTask):CreationReceipt
@@ -29,7 +29,9 @@ interface Actions {
 const UUID='[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}'
 const requestCommand=new RegExp(`^(权限|问题|允许|拒绝|回答)\\s+(${UUID})(?:\\s+([\\s\\S]+))?$`,'i')
 const STATUS:Record<string,string>={queued:'准备开始',running:'正在处理',cancelling:'正在停止',completed:'这一轮已完成',failed:'需要处理',cancelled:'已停止',interrupted:'已中断'}
-function runtimeStatus(status:string,runtime?:AgentRuntimeSnapshot){
+function runtimeStatus(status:string,runtime?:AgentRuntimeSnapshot,networkSuspended?:{since:number}){
+  // 网络守护冻住了这条 run(主人 2026-10-03):桌面 / 手机 / 微信同一句。
+  if(networkSuspended&&(status==='running'||status==='cancelling'))return '已暂停(网络未受保护)，恢复后自动继续'
   if(status==='running'&&runtime?.retained){
     if(runtime.backgroundCount>0)return `后台执行中 · ${runtime.backgroundCount}`
     if(runtime.foreground==='idle')return '会话保留中'
@@ -104,7 +106,7 @@ function statusReply(detail:Detail){
   const {task,events,artifacts,permissions,questions,inputs}=detail,id=task.id
   const latest=events.filter(e=>e.kind==='text').at(-1)
   const error=events.filter(e=>e.kind==='error').at(-1)?.text
-  const lines=[`${singleLine(task.title,120)} · ${id}`,`${task.providerId} · ${runtimeStatus(task.status,detail.runtime)}`]
+  const lines=[`${singleLine(task.title,120)} · ${id}`,`${task.providerId} · ${runtimeStatus(task.status,detail.runtime,task.networkSuspended)}`]
   if(detail.wechatNotifications){
     const unknown=detail.wechatNotifications.notices.filter(n=>n.status==='unknown'||n.status==='sending').length
     const waiting=detail.wechatNotifications.notices.filter(n=>n.status==='pending').length
@@ -201,7 +203,7 @@ export function makeWechatWorkbenchControl(opts:{store:WorkbenchStore;ownerChatI
     }
     if(!command||command==='列表'){
       const tasks=opts.store.listOwned(chatId,8)
-      return tasks.length?'最近的任务：\n'+tasks.map(t=>`${t.id} · ${singleLine(t.title)} · ${runtimeStatus(t.status,opts.actions.detail(t.id).runtime)}`).join('\n')+'\n\n查看或选择：任务 <任务编号>\n新建任务：先发送「任务 项目」':'还没有属于你的工作任务。发送「任务 项目」选择文件夹并交代任务。'
+      return tasks.length?'最近的任务：\n'+tasks.map(t=>`${t.id} · ${singleLine(t.title)} · ${(()=>{const d=opts.actions.detail(t.id);return runtimeStatus(t.status,d.runtime,d.task.networkSuspended)})()}`).join('\n')+'\n\n查看或选择：任务 <任务编号>\n新建任务：先发送「任务 项目」':'还没有属于你的工作任务。发送「任务 项目」选择文件夹并交代任务。'
     }
     const match=/^([a-f0-9]{8})(?:\s+([\s\S]+))?$/i.exec(command)
     if(!match)return usage()

@@ -244,3 +244,81 @@ describe('provider id single source', () => {
     expect([...capabilityProviderIds()].sort()).toEqual([...PROVIDER_IDS].sort())
   })
 })
+
+describe('replyDeliveryFor — 回复交付开关(spec §5.0,一家一家翻)', () => {
+  // 第 5 步(2026-10-03)之后五家都是 daemon;deprecated 的 gemini(API key 版)2026-10-04 按 spec §5.7「二选一」
+  // 迁到 daemon(聊天型,和 openai 同形状)⇒ 每一家注册过能力表的 provider 都不再默认 legacy,legacy 只剩回滚用途。
+  it('每一家都是 daemon(迁移序列五家 + gemini);没有默认走 legacy 的 provider', async () => {
+    const { replyDeliveryFor, capabilityProviderIds } = await import('./capability-matrix')
+    for (const p of capabilityProviderIds()) expect(replyDeliveryFor(p), p).toBe('daemon')
+    expect(capabilityProviderIds()).toContain('gemini')
+  })
+
+  it('gemini:daemon(2026-10-04,收尾前的二选一),聊天型全部文字段', async () => {
+    const { replyDeliveryFor, replyTextStrategyFor } = await import('./capability-matrix')
+    expect(replyDeliveryFor('gemini')).toBe('daemon')
+    expect(replyTextStrategyFor('gemini')).toBe('all_segments')
+  })
+
+  // 第 1 步的闸门(reply-once harness,2026-10-03,见 docs/reference/reply-once-experiment.md)没过 c / d / g
+  // ⇒ 按约定不翻到 daemon,先 shadow:照旧走 reply 工具,真机上攒 [REPLY_SHADOW] 的分布。
+  it('openai:daemon(第 1 步审稿后切换);agy:shadow(第 2 步闸门打平)', async () => {
+    const { replyDeliveryFor } = await import('./capability-matrix')
+    expect(replyDeliveryFor('openai')).toBe('daemon')
+    // 第 2 步(2026-10-03):agy 接线完成,闸门两臂打平 ⇒ 先 shadow。
+    expect(replyDeliveryFor('agy')).toBe('daemon')
+  })
+
+  // 第 3 步(2026-10-03):Cursor 接线完成;不连模型的闸门(假 cursor-agent acp + 生产全链)daemon 无回归、结构上更好 ⇒ daemon。
+  it('cursor:daemon(第 3 步),编码型取最后一段', async () => {
+    const { replyDeliveryFor, replyTextStrategyFor } = await import('./capability-matrix')
+    expect(replyDeliveryFor('cursor')).toBe('daemon')
+    expect(replyTextStrategyFor('cursor')).toBe('last_segment')
+  })
+
+  // 第 4 步(2026-10-03):Codex 接线完成;闸门(照 codex exec 事件形状演的假流 + 生产全链,外加小批真模型)见
+  // docs/reference/reply-once-experiment.md「第 4 步」。编码型,取最后一段。
+  it('codex:daemon(第 4 步),编码型取最后一段', async () => {
+    const { replyDeliveryFor, replyTextStrategyFor } = await import('./capability-matrix')
+    expect(replyDeliveryFor('codex')).toBe('daemon')
+    expect(replyTextStrategyFor('codex')).toBe('last_segment')
+  })
+
+  // 第 5 步(2026-10-03):Claude 最后迁;剧本臂(照 Claude Agent SDK 消息形状演的假 query() + 生产全链)见
+  // docs/reference/reply-once-experiment.md「第 5 步」。编码型,取最后一段。
+  it('claude:daemon(第 5 步),编码型取最后一段', async () => {
+    const { replyDeliveryFor, replyTextStrategyFor } = await import('./capability-matrix')
+    expect(replyDeliveryFor('claude')).toBe('daemon')
+    expect(replyTextStrategyFor('claude')).toBe('last_segment')
+  })
+
+  it('没注册能力表的 provider ⇒ legacy(fail safe,走今天的路)', async () => {
+    const { replyDeliveryFor } = await import('./capability-matrix')
+    expect(replyDeliveryFor('no-such-provider' as never)).toBe('legacy')
+  })
+})
+
+describe('replyTextStrategyFor — 按执行者类型(2026-10-03 修订)', () => {
+  it('聊天型模型 all_segments;编码型执行者与没声明的 last_segment', async () => {
+    const { replyTextStrategyFor } = await import('./capability-matrix')
+    expect(replyTextStrategyFor('openai')).toBe('all_segments')
+    expect(replyTextStrategyFor('agy')).toBe('all_segments')
+    expect(replyTextStrategyFor('gemini')).toBe('all_segments')
+    for (const p of ['claude', 'codex', 'cursor'] as const) expect(replyTextStrategyFor(p)).toBe('last_segment')
+    expect(replyTextStrategyFor('no-such' as never)).toBe('last_segment')
+  })
+})
+
+describe('replyDeliveryFor × 运行时覆盖(agent-config reply_delivery)', () => {
+  it('覆盖优先于能力表;清空后回到能力表', async () => {
+    const { replyDeliveryFor, setReplyDeliveryOverrides } = await import('./capability-matrix')
+    const before = replyDeliveryFor('openai')
+    try {
+      setReplyDeliveryOverrides({ openai: 'legacy', claude: 'shadow' })
+      expect(replyDeliveryFor('openai')).toBe('legacy')
+      expect(replyDeliveryFor('claude')).toBe('shadow')
+      expect(replyDeliveryFor('gemini')).toBe('daemon') // 没写进覆盖的照旧读能力表
+    } finally { setReplyDeliveryOverrides(undefined) }
+    expect(replyDeliveryFor('openai')).toBe(before)
+  })
+})

@@ -55,6 +55,7 @@
   {{>presence.html}}
 </div>
 <div class="pane" id="p-memory">
+  <button id="memory-back" class="sessions-text-action" type="button">← 一起做</button>
   <div class="grp">回忆</div>
   <div id="feed"></div>
   <details class="memory-pocket"><summary>待办、画像与表情</summary>
@@ -72,6 +73,7 @@
 .m-option textarea{border:1px solid var(--line);border-radius:var(--r-s);background:var(--card);color:var(--ink)}
 #m-controls :focus-visible,#m-send:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .m-tool-events{margin:12px 0}.m-tool-events>summary{cursor:pointer;color:var(--soft);font-size:13px;min-height:44px;padding:12px 0}.m-tool-events .m-description{margin:0 0 8px;font-size:13px}.m-tool-events small{color:var(--soft);font-size:11.5px}
+.m-handoff{margin:20px 0;padding:16px 0;border-top:1px solid var(--line);color:var(--soft);overflow-wrap:anywhere}.m-handoff p{margin:0 0 12px}.m-handoff button{font:inherit;min-height:44px;padding:9px 16px;border:1px solid var(--accent);border-radius:var(--r-s);background:var(--accent);color:var(--card);cursor:pointer}.m-handoff .more{margin:0;background:var(--card);border-color:var(--line);color:var(--ink)}.m-handoff button:disabled{opacity:.5}.m-handoff :focus-visible{outline:2px solid var(--accent);outline-offset:3px}.m-task-note{color:var(--soft)}.m-error-diagnostic summary{min-height:44px;padding:12px 0;cursor:pointer;color:var(--soft)}
 </style>
 <div class="pane" id="p-you">
   <button id="you-back" class="you-back" type="button">← 回去</button>
@@ -79,6 +81,7 @@
   <div id="you-body" aria-live="polite"></div>
 </div>
 <div class="pane" id="p-matters">
+  <div class="together-links"><button id="sessions-open" type="button">电脑上的会话 ↗</button><button id="memory-open" type="button">回忆 ↗</button></div>
   <!-- 连接提示:平时不在,连续两次联系不上 daemon 才浮出来,恢复后自己消失。
        放在列表与详情之外,两边共用同一行。 -->
   <div id="m-conn" role="status" aria-live="polite" hidden></div>
@@ -90,23 +93,52 @@
     <div id="m-controls"><div id="m-permissions"></div><div id="m-questions"></div></div>
     <div id="m-artifacts"></div><div id="m-artifact-preview"></div><div id="m-inputs"></div>
     <section aria-label="对话与执行记录"><div id="m-events"></div></section>
+    <section id="m-task-status" aria-label="继续这件事"></section>
     <div class="card" id="m-say-box"><textarea id="m-say" rows="2" placeholder="接着说…" style="width:100%;font:inherit;border:1px solid var(--line);border-radius:var(--r-s);padding:8px;box-sizing:border-box"></textarea>
       <div id="m-say-materials"></div>
       <button id="m-send" class="done-btn" type="button" style="margin-top:6px">发送</button></div>
   </div>
 </div>
+<div class="pane" id="p-sessions">
+  <button id="sessions-back" class="sessions-text-action" type="button">← 一起做</button>
+  <h2 class="sessions-heading">电脑上的会话</h2>
+  <p class="sessions-intro">原记录来自 Claude / Codex。查看不会启动任务。</p>
+  <div id="sessions-list-view">
+    <form id="sessions-search-form" class="sessions-search">
+      <label for="sessions-provider">来自<select id="sessions-provider"><option value="claude">Claude</option><option value="codex">Codex</option></select></label>
+      <label for="sessions-query" class="sessions-search-label">找会话<input id="sessions-query" type="search" maxlength="200" placeholder="会话名称或项目" autocomplete="off"></label>
+      <button type="submit" class="sessions-primary">搜索</button>
+    </form>
+    <div class="sessions-toolbar"><button id="sessions-refresh" class="sessions-text-action" type="button">刷新</button></div>
+    <p id="sessions-list-notice" class="sessions-notice" role="status" aria-live="polite"></p>
+    <div id="sessions-list"></div>
+    <button id="sessions-more" class="sessions-text-action" type="button" hidden>更多会话</button>
+  </div>
+  <div id="sessions-detail" hidden>
+    <button id="sessions-list-back" class="sessions-text-action" type="button">← 会话列表</button>
+    <h3 id="sessions-title" class="sessions-title"></h3>
+    <p id="sessions-meta" class="sessions-meta"></p>
+    <div class="sessions-read-tabs"><button id="sessions-recent" type="button">最近记录</button><button id="sessions-start" type="button">从头查看</button><button id="sessions-read-refresh" class="sessions-text-action" type="button">刷新记录</button></div>
+    <p id="sessions-read-notice" class="sessions-notice" role="status" aria-live="polite"></p>
+    <p id="sessions-source" class="sessions-meta"></p>
+    <div id="sessions-messages"></div>
+    <button id="sessions-read-more" class="sessions-text-action" type="button" hidden>继续往后读</button>
+    <section class="sessions-continue" aria-label="在一起做中继续"><p id="sessions-continue-notice" class="sessions-notice" role="status" aria-live="polite"></p><div id="sessions-continue-actions"></div><button id="sessions-check" class="sessions-text-action" type="button">重新检查能否接着做</button></section>
+  </div>
+</div>
 <nav>
   <button data-p="today" class="on">此刻</button>
   <button data-p="matters">一起做</button>
-  <button data-p="memory">回忆</button>
 </nav>
 <style>{{>presence.css}}</style>
 <style>{{>attachments.css}}</style>
 <style>{{>entry.css}}</style>
 <style>{{>you.css}}</style>
+<style>{{>markdown.css}}</style>
+<style>{{>sessions.css}}</style>
 <div id="toast"></div>
 <script>
 var T = {{TOKEN_JSON}}
-var REMOTE = {{REMOTE_JSON}}{{>boot.js}}{{>transport.js}}{{>nav.js}}{{>workbench.js}}
+var REMOTE = {{REMOTE_JSON}}{{>boot.js}}{{>transport.js}}{{>nav.js}}{{>markdown.js}}{{>workbench.js}}
 {{>attachments.js}}{{>entry.js}}
-{{>presence.js}}{{>you.js}}{{>home.js}}</script></body></html>
+{{>presence.js}}{{>you.js}}{{>home.js}}{{>sessions.js}}</script></body></html>

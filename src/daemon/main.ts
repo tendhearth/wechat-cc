@@ -10,7 +10,7 @@ import selfPkg from '../../package.json' with { type: 'json' }
 import { homedir } from 'node:os'
 import { acquireInstanceLock, releaseInstanceLock, isHeartbeatFresh, writeHeartbeat, startHeartbeatTicker, HEARTBEAT_FILE, HEARTBEAT_STALE_MS } from './single-instance'
 import { openDb } from '../lib/db'
-import { LifecycleSet, wireRef } from '../lib/lifecycle'
+import { LifecycleSet, Ref, wireRef } from '../lib/lifecycle'
 import { log } from '../lib/log'
 import { dedupeAccountsByUserId } from '../lib/dedupe-accounts'
 import { loadAccess, AccessConfigCorruptError } from '../lib/access'
@@ -26,9 +26,12 @@ import { providerDisplayName } from './provider-display-names'
 import { loadAllAccounts, makeIlinkAdapter } from './ilink-glue'
 import { registerInternalApi } from './internal-api/lifecycle'
 import { runSelftestConverse } from './selftest'
+import { startCliUpgrade } from './cli-upgrade/start'
+import type { CliUpgrader } from '../core/cli-upgrade/engine'
 import { makeMessagesStore } from '../lib/messages-store'
 import { registerCompanionPush, registerCompanionIntrospect, registerIngest } from './companion/lifecycle'
 import { registerGuard } from './guard/lifecycle'
+import { makeGuardRuntime } from './guard/runtime'
 import { registerPolling } from './polling-lifecycle'
 import { registerSessions } from './sessions-lifecycle'
 import { registerIlink } from './ilink-lifecycle'
@@ -52,6 +55,7 @@ import { makeOutboundTaps } from './outbound-taps'
 import { makePetSignals } from './pet-signals'
 import { makeJournal } from '../core/journal-store'
 import { makeReplySinks } from './reply-sinks'
+import { makeReplyDeliveryRuntime } from './reply-delivery'
 import { makeCareLedger } from './companion/care-ledger'
 import { careLevel } from './companion/calibration'
 import { loadCompanionConfig } from './companion/config'
@@ -174,6 +178,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
   // Created here so both the internal-api registration and bootstrap below
   // share the one instance.
   const turnRecordStore = makeTurnRecordStore(db)
+  // CLI 自动升级引擎:bootstrap 之后才造,回合记录与工作台的报错触发先拿着这个引用。
+  const cliUpgradeRef = new Ref<CliUpgrader>('cli-upgrade')
   // ConversationStore must be constructed BEFORE the ilink adapter —
   // PR5 Task 21 routes the adapter's setUserName/resolveUserName through
   // it, replacing the deprecated user_names.json store. Both legacy
@@ -183,7 +189,10 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     migrateFromFile: join(stateDir, 'conversations.json'),
     migrateFromUserNamesFile: join(stateDir, 'user_names.json'),
   })
-  const ilink = makeIlinkAdapter({ stateDir, accounts, db, conversationStore })
+  // 网络守护运行时(2026-10-02):闸门要比 ilink / internal-api / bootstrap 都先有 ——
+  // 语音、provider registry、SessionManager、协调器、工作台都接它;guard 生命周期在后面才 start。
+  const guardRt = makeGuardRuntime({ stateDir, log: (t, l) => log(t, l) })
+  const ilink = makeIlinkAdapter({ stateDir, accounts, db, conversationStore, networkGate: guardRt.gate })
   const memoryFS = makeMemoryFS({ rootDir: join(stateDir, 'memory') })
   const lc = new LifecycleSet((tag, line) => log(tag, line))
   // Subsystem degraded-boot (spec 2026-08-17) — 只包可选子系统;核心链不经它。
@@ -280,6 +289,17 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     // 路径(internal-api reply 路由 / bootstrap 的 fallback);两个实例等于
     // 永远收不到东西,而且不会报任何错。
     const outboundTaps = makeOutboundTaps()
+    // 回复交付(spec 2026-10-03-reply-delivery):daemon 负责送达的那一条路。同样必须是**同一个
+    // 实例** —— 开轮的是协调器 / 伙伴推送,往里登记附件、旁听 legacy 出口的是 internal-api 与
+    // fallback。第 0 步所有 provider 都还是 legacy,它只在 shadow 轮里记账。
+    const replyDelivery = makeReplyDeliveryRuntime({
+      sendText: (c, t) => ilink.sendMessage(c, t),
+      sink: { captureReply: (c, r) => replySinks.captureReply?.(c, r) ?? false },
+      isSinkOpen: (c) => replySinks.isOpen?.(c) ?? false,
+      observe: (c, t) => outboundTaps.observe(c, t),
+      chatPrefs: (c) => chatPrefs.get(c),
+      log: (t, l, f) => log(t, l, f),
+    })
     // 桌宠信号(spec 2026-09-05-cc-desktop-pet §5.1)。和 replySinks/outboundTaps
     // 同样的理由必须是**同一个实例**:写的三处分别在 bootstrap(tool_call、
     // 回合结束)、pipeline-deps(起飞、app 联系)与下面的权限 resolve;读的
@@ -299,6 +319,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       stickerSource,
       replySinks,
       outboundTaps,
+      replyDelivery,
       hunt: huntStore,
       // 待决权限的桌面面(spec §6)。和微信「y/n <hash>」共用 ilink 里那一份
       // PendingPermissions —— 从哪边拍板都算数,另一边随之失效。拍板本身也是
@@ -352,8 +373,12 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // Subsystem degraded-boot (spec 2026-08-17) — sup 在本调用之前创建,
       // 直接传引用,无需 thunk-over-bootRef 姿势。
       subsystems: () => sup.statuses(),
+      // 网络守护此刻的判断(2026-10-02):safe=false ⇒ 所有模型调用暂停。
+      guard: () => guardRt.health(),
       // 插件快照(2026-09-30):bootstrap 之前是 null,self deploy 的健康门会等它。
       plugins: () => bootRef?.pluginsHealth ?? null,
+      // 开机探测失败、正在退避重探的外部 CLI provider(2026-10-04):bootstrap 之前是空表。
+      providerProbes: () => bootRef?.providerProbes?.() ?? [],
       outbound: () => ilink.outboundHealth(),
       // Admin remediation hooks (POST /v1/sessions/release, /v1/daemon/restart).
       releaseSession: (k) => bootRef?.sessionManager?.release(k) ?? Promise.resolve(),
@@ -417,7 +442,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     lc.register(internalApi)
     // 2. bootstrap composes provider registry / session manager / coordinator
     const boot = await buildBootstrap({
-      stateDir, db, ilink, loadProjects: ilink.loadProjects,
+      stateDir, db, ilink, loadProjects: ilink.loadProjects, networkGate: guardRt.gate,
       lastActiveChatId: ilink.lastActiveChatId, log: (t, l, f) => log(t, l, f),
       fallbackProject: () => ({ alias: '_default', path: process.cwd() }),
       dangerouslySkipPermissions: dangerously, conversationStore,
@@ -426,8 +451,13 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // sendAssistantText fallback sink-aware.
       replySinks,
       outboundTaps,
+      replyDelivery,
       petSignals,
-      onTurnRecord: (r) => turnRecordStore.append(r),
+      onTurnRecord: (r) => {
+        turnRecordStore.append(r)
+        // CLI 自动升级的报错触发(2026-10-04):错误通道像「CLI 太旧」⇒ 排一次版本检查。
+        if (r.outcome !== 'completed') cliUpgradeRef.current?.onTurnError(r.provider, r.errorCode, r.error)
+      },
       mintSessionToken: internalApi.mintSessionToken,
       invalidateSession: internalApi.invalidateSession,
       internalApi: { baseUrl: internalApi.baseUrl, tokenFilePath: internalApi.tokenFilePath },
@@ -540,6 +570,20 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       supervisor: sup,
     })
     bootRef = boot
+    // 守护 v2:health / 后台任务判断要知道「此刻配置 / 在用的 provider 是哪些、各用什么模型」。
+    {
+      const { makeMtimeCachedConfigReader } = await import('../lib/agent-config')
+      const { providersInUse } = await import('./guard/targets')
+      const { providerCallTarget } = await import('../core/provider-registry')
+      const readCfg = makeMtimeCachedConfigReader(stateDir)
+      // 评审 #193 P1-1:按 provider / 会话自己报的实际目标,不按此刻的配置推。
+      guardRt.setProvidersInUse(() => providersInUse(
+        (() => { try { return readCfg() } catch { return null } })(),
+        boot.registry.list(),
+        boot.sessionManager.list().map(s => ({ id: s.providerId, model: s.model ?? null, target: boot.sessionManager.effectiveTarget(s) })),
+        (id) => providerCallTarget(boot.registry.get(id)?.provider, id, 'session'),
+      ))
+    }
     internalApi.setDelegate({ dispatchOneShot: boot.dispatchDelegate, knownPeers: () => boot.registry.list() })
     // Wire conversation dep now that coordinator is available. Routes access
     // deps.conversation at request time, so this late assignment is safe.
@@ -677,7 +721,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       // A legacy runner's early pipe return is not proof that its writer exited.
       return(closed:boolean)=>{if(closed)release()}
     }
-    const replyCore = makeCliReplyCore({ executionConflict,reserveExecution,hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously })
+    const replyCore = makeCliReplyCore({ executionConflict,reserveExecution,hub: cliEvents, holdBusy: (l) => boot.holdBusy(l), log: (t, l) => log(t, l), dangerously, networkGate: guardRt.gate })
     const handExecutor = makeHandReplyExecutor(replyCore, {
       hub: cliEvents,
       notifyBrain: async (text) => {
@@ -714,6 +758,7 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
       holdBusy: (l) => boot.holdBusy(l),
       log: (t, l) => log(t, l),
       dangerously,
+      networkGate: guardRt.gate,
       localMachine: osHostname(),
       ...(a2a ? { remote: makeRemoteReply({ registry: a2a.registry, client: a2a.client, selfId: boot.selfId }) } : {}),
     })
@@ -721,23 +766,26 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     const matters = makeMatterStore(db)
     // 回报投递队列(v65,task-3,2026-09-23):每轮答复入队一次,sweeper 按到期时间取件送达。
     const reportOutbox = makeReportOutboxStore(db)
-    const workbench = wireWorkbench({ db, stateDir, boot, internalApi, matters, reportOutbox,
+    const workbench = wireWorkbench({ db, stateDir, boot, internalApi, matters, reportOutbox, networkGate: guardRt.gate,
+      onTurnError: (providerId, code, message) => { cliUpgradeRef.current?.onTurnError(providerId, code, message) },
       executionConflict:(path,providerId,nativeId)=>boot.sessionManager.hasProjectConflict(path)||
         (!!nativeId&&Object.values(boot.sessionStore.all()).some(s=>s.provider===providerId&&s.session_id===nativeId))||
         legacyClaims.conflicts({owner:'workbench',path,providerId,nativeId})||
         (!!nativeId&&cliEvents.sessions().some(s=>s.source===providerId&&s.session_id===nativeId&&!!s.origin_agent)), askUser: ilink.askUser, log: (t,l) => log(t,l) })
     boot.sessionManager.setExecutionGuard((path,providerId,nativeId)=>workbench.conflictsExternal(path,providerId,nativeId))
     internalApi.setWorkbench(workbench)
+    // 暂停在跑的任务(2026-10-03):health 的 guard 块 / `guard status` 列出被冻住的任务。
+    guardRt.setSuspendedTasks(() => workbench.networkSuspended())
     lc.register({ name: 'workbench', stop: () => workbench.shutdown() })
     const wired = wireMain({
-      workbench, matters,
+      workbench, matters, guardRuntime: guardRt,
       panelTokens: internalApi.panelTokens,
       cliReply: cliReplyHandler,
       stickers: stickerLib,
       requestRestart: (reason) => requestRestart(reason),
       llmHealth,
       stateDir, db, ilink, accounts, boot, dangerously, chatPrefs, careLedger, replySinks,
-      outboundTaps, huntStore, petSignals,
+      outboundTaps, huntStore, petSignals, replyDelivery,
       // 随身 CC 首屏:聊天日摘要读 turn_records;presence 走 internal-api 的共用入口。
       turns: turnRecordStore,
       presence: () => internalApi.getPresence(),
@@ -778,6 +826,8 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     }
     const guardLc = await sup.start('guard', () => registerGuard(wired.guardDeps))
     if (guardLc) { wireRef(wired.refs.guard, guardLc); lc.register(guardLc) }
+    // 外部 CLI provider 的退避重探计时器(2026-10-04)—— 关停时别再起探测、别再晚注册。
+    lc.register({ name: 'provider-probes', stop: async () => { boot.stopProviderProbes?.() } })
     lc.register(registerSessions(wired.sessionsDeps))
     lc.register(registerIlink(wired.ilinkDeps))
     let workbenchNotifications:ReturnType<typeof wireWorkbenchNotifications>|undefined
@@ -801,6 +851,25 @@ export async function bootDaemon(opts: BootDaemonOpts): Promise<DaemonHandle> {
     }))
     if (memoryNightlyLc) lc.register(memoryNightlyLc)
     internalApi.setMemoryNightly(wired.memoryNightly)
+    // 外部 agent CLI 自动升级(主人 2026-10-04,docs/maintainer/cli-auto-upgrade.md):空闲时用官方升级器升、
+    // 升完立刻自检、不过就退回 + 记坏版本 + 告诉主人一次。可选子系统:坏了只降级。
+    const cliUpgrade = await sup.start('cli-upgrade', () => startCliUpgrade({
+      stateDir, sessionManager: boot.sessionManager, busyLabels: () => boot.busyLabels(), holdBusy: (l) => boot.holdBusy(l),
+      registry: boot.registry, networkGate: guardRt.gate,
+      // 开机探测失败、正在重探的 provider:升完立刻重探一次,注册上再自检(#211)。
+      reprobeProvider: (id) => boot.reprobeProvider?.(id) ?? Promise.resolve(null),
+      mintSessionToken: (tier, key, o) => internalApi.mintSessionToken(tier, key, o),
+      invalidateSession: (key) => internalApi.invalidateSession(key),
+      sendOwner: async (text) => {
+        const owner = resolveAdminChatId(loadAccess(), loadCompanionConfig(stateDir), null)
+        if (!owner) return false
+        const r = await ilink.sendMessage(owner, text) as { error?: string }
+        return !r.error
+      },
+      notifyDesktop: (t, b) => notifyDesktop(t, b),
+      log: (t, l) => log(t, l),
+    }))
+    if (cliUpgrade) { lc.register(cliUpgrade.lifecycle); wireRef(cliUpgradeRef, cliUpgrade.upgrader); internalApi.setCliUpgrade(cliUpgrade.upgrader) }
     // Reminder sweeper (spec 2026-08-20-reminders-port) — multi-user
     // precise-time delivery. Optional subsystem: a broken sweeper degrades,
     // never blocks boot. Store is db-backed so pending reminders survive

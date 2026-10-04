@@ -24,6 +24,10 @@ export interface ReachableResult {
   error?: string
 }
 
+// bx 状态读取也是一种「探测」;从这里再导出,好让 CLI 一次动态 import 拿全(cli-ratchet 只降不升)。
+export { findBx, readBxStatus } from './bx'
+export { classifyConfiguredForCli } from './targets'
+
 const DEFAULT_TIMEOUT_MS = 3000
 
 export async function fetchPublicIp(opts: { timeoutMs?: number; url?: string } = {}): Promise<PublicIpResult> {

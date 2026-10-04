@@ -1628,3 +1628,37 @@ describe('loadFsAccess —— daemon 自己读不到主人的文件夹时要说�
     await loadFsAccess({ invokeApi: async () => { throw new Error('down') } }); expect(els['dash-fs-access']!.hidden).toBe(true)
   })
 })
+
+describe('loadGuardLine —— 网络未受保护时此刻页要说出来(2026-10-02)', async () => {
+  const { loadGuardLine } = await import('./dashboard.js')
+  const mk = () => {
+    const el = { hidden: true, textContent: '', title: '', dataset: {} as Record<string, string> }
+    // @ts-expect-error stub
+    globalThis.document = { getElementById: (id: string) => (id === 'dash-guard-line' ? el : null) }
+    return el
+  }
+  it('bx 不安全 → 显示红色一行,带原因;bx 保护中 → 绿色', async () => {
+    const el = mk()
+    await loadGuardLine({ invokeApi: async () => ({ guard: { enabled: true, source: 'bx', safe: false, detail: 'bx 没在运行或读不出状态(exit 1)', ip: null, checked_at: null } }) })
+    expect(el.hidden).toBe(false)
+    expect(el.dataset.state).toBe('down')
+    expect(el.textContent).toContain('⚠ 网络未受保护：用到 Claude 等的调用暂停')
+    expect(el.title).toContain('bx leakcheck')
+    await loadGuardLine({ invokeApi: async () => ({ guard: { enabled: true, source: 'bx', safe: true, detail: 'bx 保护中', ip: null, checked_at: null } }) })
+    expect(el.dataset.state).toBe('ok')
+    expect(el.textContent).toBe('bx 保护中')
+  })
+  it('守护 v2:信号不安全但没用到需要保护的接口 → 中性一行,不报红', async () => {
+    const el = mk()
+    await loadGuardLine({ invokeApi: async () => ({ guard: { enabled: true, source: 'bx', safe: false, detail: 'bx 未保护', ip: null, checked_at: null, protected_in_use: false, paused: false, providers: [{ id: 'openai', model: 'Qwen3.8', host: 'llm.example.cc', protected: false, kind: 'custom_gateway', label: 'OpenAI(llm.example.cc)', reason: '自定义网关,默认不保护' }] } }) })
+    expect(el.hidden).toBe(false)
+    expect(el.dataset.state).toBe('idle')
+    expect(el.textContent).toBe('当前没有用到需要保护的接口')
+  })
+  it('守护关着 / 老 daemon / 读不到 health → 不显示', async () => {
+    const el = mk()
+    await loadGuardLine({ invokeApi: async () => ({ guard: { enabled: false, source: 'off', safe: true, detail: '', ip: null, checked_at: null } }) }); expect(el.hidden).toBe(true)
+    await loadGuardLine({ invokeApi: async () => ({}) }); expect(el.hidden).toBe(true)
+    await loadGuardLine({ invokeApi: async () => { throw new Error('down') } }); expect(el.hidden).toBe(true)
+  })
+})

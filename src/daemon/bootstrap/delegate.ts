@@ -10,6 +10,7 @@
  * Each delegate call spawns a fresh thread; SessionManager isn't involved
  * because these are throwaway one-shot consultations.
  */
+import { withNetworkGate } from '../../core/provider-registry'
 import { DEFAULT_CLAUDE_MODEL, createClaudeAgentProvider } from '../../core/claude-agent-provider'
 import { createCodexAgentProvider } from '../../core/codex-agent-provider'
 import { createOpenAiAgentProvider } from '../../core/openai-agent-provider'
@@ -24,6 +25,8 @@ import { TIER_PROFILES, type TierProfile } from '../../core/user-tier'
 export interface DelegateBuildDeps {
   /** State dir — used as the default cwd when caller doesn't pass one. */
   stateDir: string
+  /** 网络闸门(2026-10-02):delegate 的 provider 自己建、不进 registry,所以单独套一层。 */
+  networkGate?: import('../../lib/network-gate').NetworkGate
   /** Optional override path for the claude-code binary. */
   claudeBin?: string
   /**
@@ -165,6 +168,7 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
           const baseURL = configuredAgent.openaiBaseUrl
           const defaultModel = configuredAgent.openaiModel
           return createOpenAiAgentProvider({
+            endpoint: { baseUrl: baseURL, model: defaultModel },
             makeChatModel: (model) =>
               createAiSdkChatModel({ baseURL, apiKey: openaiKey, model: model ?? defaultModel }),
             // Empty spec set → bridge with zero MCP tools (bare-bones).
@@ -178,12 +182,16 @@ export function buildDelegateDispatch(deps: DelegateBuildDeps): DelegateDispatch
   if (!claudeAvailable) {
     deps.log?.('BOOT', 'claude delegate not registered — no Claude Code binary on this machine; 委派会点名本机实际可用的 provider')
   }
-  const providers: Partial<Record<ProviderId, AgentProvider>> = {
+  const rawProviders: Partial<Record<ProviderId, AgentProvider>> = {
     ...(claudeAvailable ? { claude: delegateClaude } : {}),
     ...(delegateCodex ? { codex: delegateCodex } : {}),
     ...(delegateOpenai ? { openai: delegateOpenai } : {}),
     ...(deps.delegateProviders ?? {}),
   }
+  const gate = deps.networkGate
+  const providers: Partial<Record<ProviderId, AgentProvider>> = gate
+    ? Object.fromEntries(Object.entries(rawProviders).map(([id, p]) => [id, p ? withNetworkGate(p, gate, id) : p]))
+    : rawProviders
 
   /**
    * Run a one-shot prompt against the bare delegate provider for `peer`.

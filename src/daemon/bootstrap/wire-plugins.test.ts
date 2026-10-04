@@ -6,6 +6,7 @@ import { removeTempDir } from '../../lib/test-temp'
 import { setPluginEnabled } from '../plugins/registry'
 import { resolveBundledPluginsDir, writePluginsSourcePointer } from '../plugins/paths'
 import { wirePlugins } from './wire-plugins'
+import { setReplyDeliveryOverrides } from '../../core/capability-matrix'
 
 const ctx = () => ({ stateDir: mkdtempSync(join(tmpdir(), 'wp-')), log: () => {} })
 
@@ -111,5 +112,22 @@ describe('wirePlugins — 内置插件来源与「丢了要出声」(2026-09-30 
     expect(slice.pluginsHealth.pointer_broken).toBe(true)
     expect(slice.pluginsHealth.expected_missing).toEqual(['wxvault'])
     expect(lines.some(l => l.includes('WARNING') && l.includes(join(root, 'gone')))).toBe(true)
+  })
+})
+
+describe('wirePlugins × 回复交付回滚开关(agent-config reply_delivery)', () => {
+  afterEach(() => setReplyDeliveryOverrides(undefined))
+  const api = { internalApi: { baseUrl: 'http://127.0.0.1:0', tokenFilePath: join(tmpdir(), 'tok') } }
+
+  it('agent-config 写 openai=daemon ⇒ openai 的 wechat spec 带 WECHAT_REPLY_DELIVERY=daemon(工具表按开关定)', () => {
+    const c = ctx()
+    writeFileSync(join(c.stateDir, 'agent-config.json'), JSON.stringify({ reply_delivery: { openai: 'daemon' } }))
+    expect(wirePlugins(api, c).wechatStdioForOpenai?.env?.WECHAT_REPLY_DELIVERY).toBe('daemon')
+  })
+
+  it('agent-config 写 openai=legacy ⇒ 不带(退回 reply 工具)', () => {
+    const c = ctx()
+    writeFileSync(join(c.stateDir, 'agent-config.json'), JSON.stringify({ reply_delivery: { openai: 'legacy' } }))
+    expect(wirePlugins(api, c).wechatStdioForOpenai?.env?.WECHAT_REPLY_DELIVERY).toBeUndefined()
   })
 })

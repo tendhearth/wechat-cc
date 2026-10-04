@@ -20,14 +20,14 @@ export function careSections(data, attention = null) {
   const result = { attention: [], working: [], recent: [], truncated: !!data?.page?.hasMore }
   for (const task of [...tasks.values()].sort((a,b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))) {
     const pending = count(task.pendingPermissionCount) + count(task.pendingQuestionCount)
-    const runtime = workbenchRuntimePresentation(task.status, task.runtime, task.phase)
+    const runtime = workbenchRuntimePresentation(task.status, task.runtime, task.phase, task.networkSuspended)
     const status = runtime?.status ?? task.status
     const label = pending ? [count(task.pendingPermissionCount) ? `${task.pendingPermissionCount} 项权限` : '', count(task.pendingQuestionCount) ? `${task.pendingQuestionCount} 个问题` : ''].filter(Boolean).join(' · ')
       : task.importedOnly ? '尚未执行' : task.waitingFor ? '等待前项任务'
       : runtime?.label ?? ({running:'执行中',queued:'排队中',completed:'已结束',failed:'执行遇到问题',cancelled:'已停止',interrupted:'执行已中断',pending_permission:'等待确认'}[status] ?? '打开查看状态')
     const row = {...task, label, project: names.get(task.path) || task.path?.split(/[\\/]/).filter(Boolean).at(-1) || '', provider: providers.get(task.providerId) || ({claude:'Claude',codex:'Codex',cursor:'Cursor'}[task.providerId] ?? task.providerId ?? '')}
     if (pending) result.attention.push(row)
-    else if (!task.importedOnly && ['running','queued','pending_permission'].includes(status)) result.working.push(row)
+    else if (!task.importedOnly && ['running','queued','pending_permission','paused'].includes(status)) result.working.push(row)
     else result.recent.push(row)
   }
   result.recent = result.recent.slice(0, 5)

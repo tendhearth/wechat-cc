@@ -58,12 +58,18 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   'POST /v1/workbench/import': 'admin',
   'POST /v1/workbench/prepare-resume': 'admin',
   'POST /v1/workbench/prepare-continuation': 'admin',
+  'POST /v1/workbench/quota-handoff': 'admin',
   'POST /v1/workbench/handoff-preview': 'admin',
   'POST /v1/workbench/handoff': 'admin',
   'GET /v1/workbench/handoff': 'admin',
   // guest — liveness + read/reply
   'GET /v1/health': 'guest',
   'POST /v1/wechat/reply': 'guest',
+  // 回复交付(spec 2026-10-03 §4.5):语音 / 表情附件与 reply 同级;文件附件在 handler 里再收紧到 trusted
+  // (与 send_file 同级)。目标永远是会话令牌里的 chat,不收 chat_id。
+  'POST /v1/turn/attach': 'guest',
+  // §4.6:往别处发(别的聊天 / 主人微信 / 群发)只给 admin;trusted / guest 根本不注册这个工具。
+  'POST /v1/wechat/message': 'admin',
   'POST /v1/wechat/reply_voice': 'guest',
   'POST /v1/memory/read': 'guest',
   'GET /v1/memory/list': 'guest',
@@ -189,6 +195,9 @@ export const ROUTE_MIN_TIER: Record<string, UserTier> = {
   // GET /v1/health)。admin 而非 trusted:允许任何持 file token 的会话
   // 白嫖 daemon 去开一整条真会话,不该比 daemon-control 的其它成员松。
   'POST /v1/selftest/converse': 'admin',
+  // admin —— 换主人电脑上的软件版本(外部 agent CLI 自动升级,2026-10-04);`wechat-cc cli` 用 operator 凭据调。
+  'POST /v1/cli/upgrade': 'admin',
+  'POST /v1/cli/rollback': 'admin',
   // admin — on-demand file locate over the owner's computer (file_locate)
   'GET /v1/locate': 'admin',
   // trusted — 觅食台 inbound toggle. DEMOTED admin→trusted 2026-07-22: the

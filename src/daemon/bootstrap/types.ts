@@ -17,6 +17,11 @@ import type { HealthRuntime } from '../health'
 
 export interface BootstrapDeps {
   stateDir: string
+  /**
+   * 网络闸门(2026-10-02,main.ts 建):provider registry / SessionManager / 协调器都接它。
+   * 缺省 = 不拦(测试 / 最小嵌入)。
+   */
+  networkGate?: import('../../lib/network-gate').NetworkGate
   ilink: {
     sendMessage: (chatId: string, text: string) => Promise<{ msgId: string }>
     sendFile: (chatId: string, path: string) => Promise<void>
@@ -228,6 +233,12 @@ export interface BootstrapDeps {
   /** 旁听(不改道)—— 让 sendAssistantText 的 fallback 路径也进战利品清单。 */
   outboundTaps?: { observe: (chatId: string, text: string) => void }
   /**
+   * 回复交付(spec 2026-10-03-reply-delivery)—— main.ts 里造的**同一个**实例,也传给
+   * internal-api(attach / message 路由、reply 路由的 shadow 旁听)和 wireMain(伙伴推送、app 轮)。
+   * 不接 ⇒ 所有 provider 一律按 legacy 走(老 fixture 不变)。
+   */
+  replyDelivery?: import('../reply-delivery').ReplyDeliveryRuntime
+  /**
    * 桌宠信号(spec 2026-09-05-cc-desktop-pet §5.1)—— main.ts 里造的**同一个**
    * 实例,也传给 wireMain/pipeline-deps(读的那一头在 GET /v1/companion/pet)。
    * bootstrap 只写两笔:coordinator 的 onTurnEvent 里的 tool_call,和 recordTurn
@@ -278,6 +289,13 @@ export interface Bootstrap {
   codeHead?: string | null
   /** 启动时实际加载的插件快照(GET /v1/health.plugins)。可选:测试里的假 boot 没有它。 */
   pluginsHealth?: import('../plugins/health').PluginsHealth
+  /** 开机 `--version` 探测失败、正在退避重探(或已晚注册)的外部 CLI provider(2026-10-04)。
+   *  GET /v1/health.provider_probes。可选:测试里的假 boot 没有它。 */
+  providerProbes?: () => import('./provider-probe').ProbeRetryStatus[]
+  /** daemon 关停时清掉重探计时器。可选:测试里的假 boot 没有它。 */
+  stopProviderProbes?: () => void
+  /** 立刻重探一家开机探测失败的 provider(CLI 自动升级器升完时用)。可选:测试里的假 boot 没有它。 */
+  reprobeProvider?: (id: string) => Promise<boolean | null>
   /** Backward-compat alias for defaultProviderId. Pre-P2 callers expected this name. */
   agentProviderKind: ProviderId
   /**

@@ -79,13 +79,19 @@ export const MatterTaskView = z.object({
 export const MatterEvent = z.object({
   kind: z.string(), text: z.string(), createdAt: z.number(),
   source: z.string().optional(), attachments: z.array(Attachment).optional(),
+  errorCode: z.literal('execution_model_unsupported').optional(), diagnostic: z.string().optional(),
 })
 
 export const MatterInput = z.object({
   id: z.string(), taskId: z.string(), runId: z.string(), text: z.string(),
   status: z.enum(['pending', 'sending', 'delivered', 'held', 'withdrawn']),
   attachments: z.array(Attachment).optional(),
+  /** Single-receipt reads preserve the durable delivery reason; older backends omit it. */
+  error: z.string().nullable().optional(),
 })
+
+export const MatterInputReceiptResult = z.object({ ok: z.literal(true), input: MatterInput })
+export type MatterInputReceiptResultT = z.infer<typeof MatterInputReceiptResult>
 
 export const MatterPermission = z.object({
   id: z.string(), taskId: z.string(), tool: z.string(), description: z.string(), createdAt: z.number(),
@@ -313,7 +319,7 @@ const PhoneStateSuccess = z.object({
 
 // ── 每条路由的响应形状(与 mobileMatterError 的 say 结果联合体）──────────
 
-const MatterSayResult = z.union([
+export const MatterSayResult = z.union([
   z.object({ kind: z.literal('task'), task: MatterTaskView, input: MatterInput.optional() }),
   z.object({ kind: z.literal('chat'), reply: z.string() }),
 ])
@@ -332,7 +338,37 @@ export const PhoneChangesTurn = z.object({
 export const CHAT_PAGE_MAX = 30
 /** 每条正文至多这么多字,超了截断并标 `truncated: true`。 */
 export const CHAT_TEXT_MAX = 4000
-export const ChatMessage = z.object({ id: z.string(), role: z.enum(['me', 'cc']), kind: z.string(), text: z.string(), truncated: z.boolean(), at: z.number(), source: z.enum(['wechat', 'desktop', 'phone']) })
+/**
+ * 一轮回复的附件(回复交付,2026-10-04):桌面 / 手机那一轮里 CC 发的语音 / 表情 / 文件,跟着回复那一行落库。
+ * - voice:要读出来的那句。手机点了才经 `GET /m/api/chat/voice` 合成(不预先合成、不进回包)。
+ * - sticker:`label` 是标签或情绪;`file` 是表情库里的文件名(经 `GET /m/api/sticker/<file>?b64=1` 取图)。
+ *   联网表情没有 `file`,只显示 label —— daemon 不替 app 去外网取图。
+ * - file:只给名字。文件在电脑上;手机没有取文件的路由(不为它新开一条)。
+ */
+export const ChatAttachment = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('voice'), text: z.string() }),
+  z.object({ kind: z.literal('sticker'), label: z.string(), file: z.string().optional() }),
+  z.object({ kind: z.literal('file'), name: z.string() }),
+])
+export type ChatAttachmentT = z.infer<typeof ChatAttachment>
+/** 认不得的附件(新 daemon 加了种类 / 字段坏了)逐条丢掉,不让整页解析失败 —— 旧手机照样看得到文字。 */
+const ChatAttachments = z.array(z.unknown()).transform(xs => xs.flatMap(x => {
+  const r = ChatAttachment.safeParse(x)
+  return r.success ? [r.data] : []
+}))
+/** 一条回复至多带这么多段旁白(取最后这几段);每段同样至多 CHAT_TEXT_MAX 字。 */
+export const CHAT_NARRATION_MAX = 20
+/**
+ * attachments / narration 是 2026-10-04 加的**可选**字段:老 daemon 不带(手机当没有);只有桌面 / 手机那一轮
+ * CC 的回复行才可能有。narration = 最后的话之前的过程话(没发到微信),手机显示成灰色、默认收起的「过程」。
+ */
+export const ChatMessage = z.object({
+  id: z.string(), role: z.enum(['me', 'cc']), kind: z.string(), text: z.string(), truncated: z.boolean(), at: z.number(), source: z.enum(['wechat', 'desktop', 'phone']),
+  attachments: ChatAttachments.optional(),
+  narration: z.array(z.string()).optional(),
+})
+/** 语音附件合成出来的声音(base64)。太长装不进中继一帧 ⇒ 413 too_large(手机提示去电脑上听)。 */
+export const ChatVoice = z.object({ mime: z.string(), data: z.string() })
 export const ChatJob = z.object({ requestId: z.string(), text: z.string(), status: z.enum(['pending', 'replied', 'failed']), since: z.number(), error: z.enum(['busy', 'unavailable', 'not_configured']).optional() })
 export const ChatPage = z.object({ matterId: z.string(), title: z.string(), messages: z.array(ChatMessage), hasMore: z.boolean(), nextBefore: z.string().nullable(), pending: ChatJob.nullable(), failed: ChatJob.nullable() })
 
@@ -352,7 +388,7 @@ export type ConnectionsT = z.infer<typeof Connections>
 // ── 电脑上的原生会话(只读,spec 2026-10-01):key 是 base64url{providerId,nativeId},不给 cwd / nativeId ──
 export const NativeSessionRow = z.object({ key: z.string(), provider: z.enum(['claude', 'codex']), title: z.string(), project: z.string().nullable(), updatedAt: z.number().nullable(), active: z.boolean() })
 export const NativeSessionMessage = z.object({ id: z.string(), role: z.enum(['user', 'assistant']), text: z.string(), truncated: z.boolean() })
-export const NativeSessionPage = z.object({ session: NativeSessionRow, messages: z.array(NativeSessionMessage), nextCursor: z.string().nullable(), managed: z.boolean() })
+export const NativeSessionPage = z.object({ session: NativeSessionRow, messages: z.array(NativeSessionMessage), nextCursor: z.string().nullable(), managed: z.boolean(), window: z.enum(['recent', 'start']).optional() })
 export type NativeSessionRowT = z.infer<typeof NativeSessionRow>
 export type NativeSessionPageT = z.infer<typeof NativeSessionPage>
 
@@ -390,9 +426,11 @@ export const PHONE_API_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = {
   ]),
   'GET /m/api/matter/changes': z.union([z.object({ ok: z.literal(true), turn: PhoneChangesTurn.nullable() }), PhoneErrorResponse]),
   'GET /m/api/matter': z.union([z.object({ ok: z.literal(true) }).extend(MatterDetail.shape), PhoneErrorResponse]),
+  'GET /m/api/matter/input-receipt': z.union([MatterInputReceiptResult, PhoneErrorResponse]),
   'POST /m/api/matter/say': z.union([z.object({ ok: z.literal(true), result: MatterSayResult }), PhoneErrorResponse]),
   'GET /m/api/chat': z.union([z.object({ ok: z.literal(true) }).extend(ChatPage.shape), PhoneErrorResponse]),
   'POST /m/api/chat/say': z.union([z.object({ ok: z.literal(true), matterId: z.string(), job: ChatJob }), PhoneErrorResponse]),
+  'GET /m/api/chat/voice': z.union([z.object({ ok: z.literal(true) }).extend(ChatVoice.shape), PhoneErrorResponse]),
   'GET /m/api/connections': z.union([z.object({ ok: z.literal(true) }).extend(Connections.shape), PhoneErrorResponse]),
   'GET /m/api/sessions': z.union([z.object({ ok: z.literal(true), items: z.array(NativeSessionRow), nextCursor: z.string().nullable() }), PhoneErrorResponse]),
   'GET /m/api/session': z.union([z.object({ ok: z.literal(true) }).extend(NativeSessionPage.shape), PhoneErrorResponse]),

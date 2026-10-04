@@ -7,7 +7,6 @@
  * (回执的 projectId 记成 `quota-handoff:<源任务>`,第二台设备再点回的是已交出的那件)。
  */
 import { createHash } from 'node:crypto'
-import type { QuotaKind } from '../../provider-quota'
 import { isWorkbenchProviderId } from '../executor-capabilities'
 import { normalizeInputRequestId } from '../live-inputs'
 import { quotaTakeoverText, QUOTA_TAKEOVER_DEFAULT_REQUEST } from '../quota-takeover'
@@ -15,11 +14,8 @@ import type { ServiceCtx } from './ctx'
 import type { ExecuteDomain } from './execute'
 import type { QuotaDomain } from './quota'
 
-/** 详情里给手机的那一块:能交(offer)/ 没人能接(none)/ 已经交出去了(handed,matterId = 新的那件事)。 */
-export type QuotaHandoffView =
-  | { state: 'offer'; from: string; to: string; kind: QuotaKind; resetAt: number }
-  | { state: 'none'; from: string; kind: QuotaKind; resetAt: number }
-  | { state: 'handed'; from: string; to: string; matterId: string }
+export type { QuotaHandoffView } from './types'
+import type { QuotaHandoffView } from './types'
 
 export interface QuotaHandoffDomains { execute: ExecuteDomain; quota: QuotaDomain }
 

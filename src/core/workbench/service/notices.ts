@@ -15,6 +15,9 @@ import type { SendWechatArtifact } from '../wechat-types'
 import type { Active } from './state'
 import type { ServiceCtx } from './ctx'
 
+/** 由 provider 结构化码而来的失败(execution-settings.taskErrorForProviderCode):通知里说原因。 */
+const PROVIDER_FAILURE_NOTICE=new Set(['provider_auth_expired','provider_auth_rejected','provider_network','provider_server_error','provider_invalid_request'])
+
 export interface NoticesDomain {
   wakeNotices(context?:{ownerChatId:string;accountId:string}): void
   enqueueNotice(task:StoredTask,runId:string,kind:WechatNoticeKind,text:string,requestId?:string|null): void
@@ -97,9 +100,14 @@ export function makeNoticesDomain(ctx:ServiceCtx):NoticesDomain {
     if(!watch?.enabled||watch.ownerChatId!==running.task.ownerChatId||watch.ownerChatId!==ctx.deps.ownerChatId())return
     let reply=store.events(running.taskId).filter(e=>e.runId===running.identity&&e.kind==='text').at(-1)?.text
     const label={completed:'这一轮已完成',failed:'这一轮需要处理',interrupted:'这一轮已中断',cancelled:'这一轮已停止'}[status as 'completed'|'failed'|'interrupted'|'cancelled']
-    if(status==='failed'&&(error==='provider_quota_exhausted'||error==='provider_rate_limited')){
+    // 网络守护暂停到顶停下的:说那句老实话(「网络一直没恢复，任务已停止，可以接着做」),不贴半截回复。
+    if(running.stopNotice)reply=running.stopNotice
+    else if(status==='failed'&&(error==='provider_quota_exhausted'||error==='provider_rate_limited')){
       const code=error,other=ctx.actions.deref('notices').fallbackExecutor(running.task.providerId)
       reply=`${executionFailureMessage(code)}${other?`\n交给 ${providerDisplayName(other)} 继续？回「是」我就把这件事交给它。`:''}`
+    }else if(status==='failed'&&error&&PROVIDER_FAILURE_NOTICE.has(error)){
+      // 认证 / 网络 / 服务端:微信里说老实的原因,而不是最后一段(可能是半截的)回复正文。
+      reply=executionFailureMessage(error)
     }
     const artifacts=store.artifacts(running.taskId).slice(0,5)
     const text=`${running.title.replace(/[\r\n]+/g,' ')} · ${running.taskId}\n${running.task.providerId} · ${label}\n\n${reply?reply.slice(0,1800)+'\n\n':''}${artifacts.length?'已保存成果：'+artifacts.map(a=>a.name).join('、').slice(0,500)+'\n\n':''}查看：任务 ${running.taskId}\n结果：任务 ${running.taskId} 结果`

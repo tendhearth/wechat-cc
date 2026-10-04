@@ -1412,7 +1412,7 @@ describe('internal-api', () => {
     // 'trusted' (see index.ts's registerFileToken comment), so route-contract
     // tests need a minted ADMIN session token, not the file token.
     async function startWithConverse(
-      companionConverse: (text: string) => Promise<{ reply: string }>,
+      companionConverse: (text: string) => Promise<import('./app-reply').ConverseResult>,
     ): Promise<{ port: number; token: string }> {
       api = createInternalApi({ stateDir, daemonPid: 1, companionConverse })
       const { port } = await api.start()
@@ -1466,8 +1466,26 @@ describe('internal-api', () => {
         body: JSON.stringify({ text: 'how are you' }),
       })
       expect(resp.status).toBe(200)
-      expect(await resp.json()).toEqual({ ok: true, reply: 'hey' })
+      // 附件与旁白总在(没有就是空数组):桌面不用分新旧形状(2026-10-04)。
+      expect(await resp.json()).toEqual({ ok: true, reply: 'hey', attachments: [], narration: [] })
       expect(companionConverse).toHaveBeenCalledWith('how are you')
+    })
+
+    it('reply object: attachments (voice / sticker / file) and narration pass through in order', async () => {
+      const attachments = [
+        { kind: 'voice' as const, text: '晚安' },
+        { kind: 'sticker' as const, label: '开心', file: 'a.png', image: 'data:image/png;base64,AA==' },
+        { kind: 'sticker' as const, label: '加油' },
+        { kind: 'file' as const, name: 'r.pdf', path: '/tmp/r.pdf' },
+      ]
+      const { port, token } = await startWithConverse(async () => ({ reply: '好了', attachments, narration: ['我先看看。'] }))
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/companion/converse`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '帮我看看' }),
+      })
+      expect(resp.status).toBe(200)
+      expect(await resp.json()).toEqual({ ok: true, reply: '好了', attachments, narration: ['我先看看。'] })
     })
 
     it('409 session_busy when the closure throws reply_sink_busy', async () => {
@@ -1560,7 +1578,7 @@ describe('internal-api', () => {
         body: JSON.stringify({ text: 'hi' }),
       })
       expect(resp.status).toBe(200)
-      expect(await resp.json()).toEqual({ ok: true, reply: 'echo:hi' })
+      expect(await resp.json()).toEqual({ ok: true, reply: 'echo:hi', attachments: [], narration: [] })
     })
 
     // ── route-scoping fix on top of option B: the operator token's admin
@@ -2209,6 +2227,38 @@ describe('internal-api', () => {
       expect(await resp.json()).toEqual({ ok: true, captured: true })
       expect(sendReply).not.toHaveBeenCalled()
       expect(handle.close()).toBe('hi')
+    })
+
+    // 2026-10-02 手机真机验收(device-e2e efs3tq):模型调了一次 text 为空的 reply,
+    // 手机那头的回复里多出一行空行。空白回复在两个表面都不算一条消息:不截、不发,
+    // 明确告诉模型什么都没发出去(免得它再补一条「刚才那条空的是误发」)。
+    it('POST /v1/wechat/reply rejects whitespace-only text on both surfaces (no capture, no send)', async () => {
+      const sendReply = vi.fn(async () => ({ msgId: 'm-123' }))
+      const replySinks = makeReplySinks()
+      const handle = replySinks.open('c1')
+      api = createInternalApi({
+        stateDir, daemonPid: 1,
+        ilink: { sendReply, sendFile: async () => {}, editMessage: async () => {}, broadcast: async () => ({ ok: 0, failed: 0 }) },
+        replySinks,
+        getChatPrefs: () => ({}),
+      })
+      const { port, tokenFilePath } = await api.start()
+      const token = readFileSync(tokenFilePath, 'utf8').trim()
+      for (const chat_id of ['c1', 'c2']) {
+        for (const text of ['', '  ', '\n\n']) {
+          const resp = await fetch(`http://127.0.0.1:${port}/v1/wechat/reply`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+            body: JSON.stringify({ chat_id, text }),
+          })
+          expect(resp.status).toBe(200)
+          const body = await resp.json() as { ok: boolean; error?: string }
+          expect(body.ok).toBe(false)
+          expect(body.error).toMatch(/^empty_text/)
+        }
+      }
+      expect(sendReply).not.toHaveBeenCalled()
+      expect(handle.close()).toBe('')
     })
 
     it('POST /v1/wechat/reply falls through to ilink when no sink is open for the chat', async () => {
@@ -4286,7 +4336,7 @@ describe('internal-api request validation', () => {
         body: JSON.stringify({ text: 'hi' }),
       })
       expect(resp.status).toBe(200)
-      expect(await resp.json()).toEqual({ ok: true, reply: 'hey' })
+      expect(await resp.json()).toEqual({ ok: true, reply: 'hey', attachments: [], narration: [] })
     })
   })
 })
