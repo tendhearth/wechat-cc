@@ -70,10 +70,11 @@ describe('ci.yml —— desktop-e2e 按路径在 dev 上跑', () => {
     expect(e2e.if).toContain("github.ref == 'refs/heads/master'")
   })
 
-  it('e2e(vitest 那条重型作业)不受影响 —— 仍是 master/PR-only,没有 needs', () => {
+  it('e2e(vitest 那条重型作业):进 master 和进 dev 的 PR 都跑、master 推送也跑,直接推 dev 跳过;没有 needs', () => {
+    // 2026-10-04:#197 把两条 e2e 弄红,只在 base=master 时跑 ⇒ 红了两天没人知道。
     const e2e = jobs.e2e!
     expect(e2e.needs).toBeUndefined()
-    expect(e2e.if).toBe("github.base_ref == 'master' || github.ref == 'refs/heads/master'")
+    expect(e2e.if).toBe("github.base_ref == 'master' || github.base_ref == 'dev' || github.ref == 'refs/heads/master'")
   })
 })
 
